@@ -148,7 +148,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 		});
 	};
 
-	const tracks = useActionTracks(run);
+	const tracks = useActionTracks(run, isOpen);
 	const tracksOf = (chain: Pick<ChainRunView, "id">, nodeId: string) =>
 		tracks.get(nodeKey({ chainInstanceId: chain.id, nodeId }));
 	const contentHeight = timelineContentHeight(

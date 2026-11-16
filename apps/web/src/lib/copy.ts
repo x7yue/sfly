@@ -260,6 +260,8 @@ export const NODE_ACTIONS = {
 		unfinished: "未结束",
 		mark: TERM.mark,
 	} satisfies Record<ActionResult | "running" | "mark", string>,
+	/** 超出上限、只记个数没有明细：「动作」页里只计数的那一行、时间线上的斜线和图例。 */
+	countOnly: "只计数",
 } as const;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */

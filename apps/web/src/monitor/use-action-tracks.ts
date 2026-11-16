@@ -3,6 +3,7 @@ import {
 	type ActionSummaryView,
 	type AttemptView,
 	actionsApi,
+	type ChainRunView,
 	MAX_ACTION_PAGE,
 	type RunView,
 } from "@sfly/schema";
@@ -56,17 +57,26 @@ const pageQuery = (taskId: string, query: PageQuery) =>
 	apiQuery(actionsApi.page, { params: { id: taskId }, query });
 
 /**
- * 时间线上的动作轨道要用的数据（use-task-actions.ts 之外的另一个读者）：运行里每个开始执行过的包节点的每次尝试读一份摘要
+ * 时间线上的动作轨道要用的数据（use-task-actions.ts 之外的另一个读者）：展开的链上每个开始执行过的包节点的每次尝试读一份摘要
  * （和底部面板共用缓存，执行中每 {@link STATUS_POLL_MS} 重读，结束时再读一次），有动作的再读最新一页明细
  * （{@link MAX_ACTION_PAGE} 条，明细不多时就是全部）；最新一页不是全部时，再读失败的一页和每种少见名称的一页。
  * 不连推送：每个有动作的节点一条 SSE 会占满浏览器对同源的连接数（polling.ts）。摘要里相关的计数变了才重读对应的页，
  * 所以执行中、动作很多的节点约每 5 秒重读一次最新一页。返回每个有动作的节点（nodeKey）合好的轨道数据。
  */
-export function useActionTracks(run: RunView): ReadonlyMap<string, PreparedTracks> {
+export function useActionTracks(
+	run: RunView,
+	/** 展开了节点的链：只给看得见的节点读（汇总模式下一个都不读）。 */
+	open: (chain: Pick<ChainRunView, "id">) => boolean,
+): ReadonlyMap<string, PreparedTracks> {
 	const queryClient = useQueryClient();
+	const openIds = run.chains
+		.filter(open)
+		.map((c) => c.id)
+		.join(" ");
+	// biome-ignore lint/correctness/useExhaustiveDependencies: openIds 代表 open 的结果
 	const started = useMemo(
 		() =>
-			run.chains.flatMap((chain) =>
+			run.chains.filter(open).flatMap((chain) =>
 				chain.nodes
 					.filter((n) => n.kind === "package")
 					.flatMap((n) =>
@@ -80,7 +90,7 @@ export function useActionTracks(run: RunView): ReadonlyMap<string, PreparedTrack
 							),
 					),
 			),
-		[run],
+		[run, openIds],
 	);
 
 	const summaries = useQueries({

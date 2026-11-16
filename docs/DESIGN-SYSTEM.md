@@ -56,7 +56,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 `tokens.css` 末尾有 `@media (prefers-contrast: more)` 加强档：描边三级、控件边界、辅助文字、网格、连线、端口、选中外圈与滚动条滑块各加强一档，组件不用改。
 
-工具类（`app.css` 的 `@utility`）：`selected-row`（`selected-bg` 底 + 左侧 2px 白条，表格、目录、列表的选中项都用它）、`focus-glow`（输入框聚焦光晕）、`pulse-ring`（执行中的脉冲，见 6.1）。
+工具类（`app.css` 的 `@utility`）：`selected-row`（`selected-bg` 底 + 左侧 2px 白条，表格、目录、列表的选中项和运行监控时间线上范围里的节点行都用它）、`focus-glow`（输入框聚焦光晕）、`pulse-ring`（执行中的脉冲，见 6.1）。
 
 ### 2.3 画布专用 `--canvas-*`
 
@@ -161,6 +161,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `canvas/CanvasDock`：`ToolButton` | 画布底部工具条（一个 Tab 停靠点）与它的图标按钮：按钮的提示从注册表取名称和按键。运行状态下工具条里多一个「跟随执行」按钮（`F`，准星图标）：打开时镜头框住所有执行中的节点（子流程里的连同子流程区域），框在没被顶栏、检查器、工具条占住的可见区域正中，缩放夹在 0.6 到 1，只移动镜头、不改选中的节点；执行前沿（执行中的节点）变化后停留 2 秒才平移（`FOLLOW_DWELL_MS`），平移的时长与「减少动效」同视口动画（见第 11 节）。拖动画布、缩放（滚轮或工具条的缩放按钮）、用方向键把选中移到视野外的节点时关闭，并在画布里的读屏实时区域（`<output aria-live="polite">`）播报「按 F 恢复」；运行结束后自动关闭、按钮禁用。按下用中性样式（`aria-pressed`，强制颜色下是系统高亮色轮廓），不用青色。第一次默认打开，之后记住这个浏览器里上次的选择（`lib/follow-execution`，localStorage `sfly.canvas.follow`），运行结束的自动关闭不算选择 |
 | `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认；`role="separator"`，`aria-valuemin` / `aria-valuemax` / `aria-valuenow` 是量出来的值（默认大小也有值），操作说明放在 `aria-describedby` 里，不只写在 `title`。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限是视口宽度的 60%；检查器的上限还要给画布留出小地图、工具条与间距（`INSPECTOR_CANVAS_RESERVE`），取两者里小的，拖到最宽也不会让工具条压住小地图；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它；行的属性（点击、样式、`data-*` 属性）由 `rowProps` 给出 |
+| `#/monitor/ActionTracks`：`ActionTracks`、`ActionLegend` | 运行监控时间线上有动作的节点下面的两条轨道和它们的图例，见 6.1「动作轨道」；数据只从 `monitor/use-action-tracks.ts` 读，排版是 `monitor/action-tracks.ts` 的纯函数（画出来的元素只和像素宽度有关，不随明细条数增长） |
 | `#/actions/ActionTable`：`ActionTable` | 运行监控「动作」页的表格（一个任务最多 10 万条明细）：行由 `actions/action-table.ts` 整理成「正在做」「最近 20 个」「更早的明细」三组，画成一张虚拟滚动的 `<table>`：每组一个 `<tbody>`，组名是 `scope="rowgroup"` 的表头，上下用占位行撑出高度，表头吸顶，列宽固定（见 6.5）。结果一列按状态语法：成功不着色，失败是红色菱形加完整的原因（换行），进行中是执行中的形状，标记是小旗；只计数的一段是一整行浅斜纹。离开顶部以后，推送来的行插在上面时视口里的行不动；滚到底部附近读更早的一页 |
 | `list-navigation`：`useListNavigation`、`focusFirstListItem` | 列表页的行导航，见第 7 节 |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`RackSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
@@ -206,6 +207,15 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 执行中满高，段尾加一个真实元素的脉冲头（实心 `signal`，`pulse-ring`），是监控页唯一按节点脉冲的地方。
 - 已取消是矮的空心虚线框（不再是斜纹）；排队是矮的灰色斜纹；等待是满高的琥珀底加描边，三者形状互不相同。
 - 图例按同样的形状画。时间线轨道与图例色块加 `data-viz`（见 6.2）。
+
+**动作轨道**（`monitor/ActionTracks`，排版在 `monitor/action-tracks.ts`）：有动作的节点下面两行，「动作」（最外层）和「└ 子动作」，行高和节点行一样，标签 12px 三级文字，随链收起。轨道是一张图：`role="img"`，可访问名称概括画了什么（正在做的、从几点起只计数、几个失败的、少见的子动作、几个标记），以「逐个查看见下方动作表」结尾；悬停提示写名称、开始、耗时和结果。
+
+- 够长、一条条画出来的动作：已结束的中性 `border-strong`，进行中的按 `STATUS.running.area`（`signal-fill` 底加 `signal-line` 描边，和执行中的区段一样，不脉冲：段尾的脉冲头仍是每个执行中节点唯一的一处），失败的按 `STATUS.failed.area`；最外层 12px 高、子动作 10px，够宽时在里面写名称（12px）。
+- 分不开的画成密度带：中性 `border-strong` 分三档不透明度，越密越实，不用状态色。
+- 只计数的段是浅斜线（`border-strong` 的 1px 45° 细线加 `border-soft` 描边），和排队段的灰色斜纹（节点行上的区段）、`FocusChart` 里没有新数据的斜线（图表的绘图区）不在同一种元素上。
+- 密度带上要认出来的：失败的动作是比带高的红色竖线（取 `STATUS.failed.tone`），少见的子动作是白色竖线（`fg-1`），标记是小旗（`FlagIcon`，`fg-1`，和「动作」页里标记的小旗一样）。白色在这里只是「少见」，不是选中，也不是主操作。
+- 图例：有动作的节点时在区段的图例后面加「动作」「只计数」「失败的动作」「少见的动作」「标记」；窗口窄于 2xl（1536px）时一行放不下两套，只留动作轨道的这几项。
+- 范围里的节点（选中的）是 `selected-row`。打开页面、换范围时时间线滚到它，版面变高以后再对准一次，用户自己滚动时间线以后不再跟着跳。
 
 **时间轴的跨度**（`monitor/timeline-model.ts`）：运行中的轴不随「现在」每秒伸缩。跨度只取一级一级的固定值（10 秒起，到一天，相邻两级相差 25% 到 50%），取已用时长加 20% 余量后向上的那一级；「现在」线越过轴的 1 / 1.2 才扩到下一级，两次扩轴之间区段与刻度纹丝不动，只有「现在」线向右推进，扩轴时一次到位。已结束的运行按实际时长定轴，末端留 8% 的空白，短运行也铺满轨道。
 

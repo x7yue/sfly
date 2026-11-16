@@ -19,7 +19,6 @@ import { NODE_ROW_HEIGHT, type TimeRange } from "./timeline-model";
 
 /** 轨道的名字（标签列）和图例。 */
 const TRACK_LABEL: Record<TrackId, string> = { top: TERM.action, child: `子${TERM.action}` };
-const COUNT_ONLY = "只计数";
 const FAILED = `失败的${TERM.action}`;
 const RARE = `少见的${TERM.action}`;
 /** 没读到的明细：时间线只读每次尝试最新的一页（和失败的、少见的），更早的只知道个数（use-action-tracks.ts）。 */
@@ -203,7 +202,7 @@ export function tracksLabel(name: string, o: TrackOverview): string {
 	const parts: string[] = [];
 	if (o.running.length > 0) parts.push(`${NODE_ACTIONS.doing}${quoted(o.running, 3)}`);
 	for (const c of o.countOnly.slice(0, 3)) {
-		parts.push(`「${c.name}」从 ${formatClock(c.from)} 起${COUNT_ONLY}`);
+		parts.push(`「${c.name}」从 ${formatClock(c.from)} 起${NODE_ACTIONS.countOnly}`);
 	}
 	if (o.failed > 0) parts.push(`${formatInteger(o.failed)} 个${FAILED}`);
 	if (o.rare.length > 0) parts.push(`${RARE}${quoted(o.rare, 5)}`);
@@ -217,7 +216,10 @@ export function tracksLabel(name: string, o: TrackOverview): string {
 export function ActionLegend() {
 	const items: [string, React.ReactNode][] = [
 		[TERM.action, <b key="a" className="inline-block h-2 w-3.5 rounded-[2px] bg-border-strong" />],
-		[COUNT_ONLY, <b key="c" className={cn("inline-block h-2.5 w-3.5 rounded-[2px]", HATCH)} />],
+		[
+			NODE_ACTIONS.countOnly,
+			<b key="c" className={cn("inline-block h-2.5 w-3.5 rounded-[2px]", HATCH)} />,
+		],
 		[FAILED, <b key="f" className={cn("inline-block h-3 w-0.5 bg-current", STATUS.failed.tone)} />],
 		[RARE, <b key="r" className="inline-block h-3 w-0.75 bg-fg-1" />],
 		[TERM.mark, <FlagIcon key="m" className="size-3 text-fg-1" />],
