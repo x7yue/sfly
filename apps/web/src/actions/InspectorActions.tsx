@@ -40,6 +40,9 @@ export const GUIDE = { page: "sdk-reference", section: "数量上限" } as const
 
 const FAILURES_LABEL = "最近的失败";
 
+/** 只超过每种名称的上限（`name_limit`）时，失败的动作仍有明细。 */
+const EXCEPT_FAILED = "（失败的动作除外）";
+
 /** 名称和字段：放不下时各自截断，悬停或聚焦看全文。 */
 function NameAndFields({
 	name,
@@ -221,6 +224,10 @@ function Failure({ failure, otherDay }: { failure: EndedActionView; otherDay: bo
  * 上限说明：哪些名称从几点起只计数，合计满了时说合计，以及开发文档里按批记录的建议。
  * 「从几点起」是第一个没有明细的动作开始的时刻，不是明细的终点：更早开始的动作结束时仍可能补上明细（失败的动作在
  * 合计满以前会补），所以只说「从这个时刻起开始的动作」，不说「之后没有明细」；合计满了（`capped_at`）也一样。
+ *
+ * 「失败的动作除外」只对 `name_limit` 的名称成立（只超过每种名称的上限，失败的动作仍有明细，直到合计满）；
+ * `total_limit` 的名称，失败的动作也没有明细。全是 `name_limit` 时写在开头的那一句里；两种都有时开头不写，
+ * 写在 `name_limit` 的名称后面；全是 `total_limit` 时不写。
  */
 function CapNote({
 	countOnly,
@@ -233,18 +240,22 @@ function CapNote({
 	otherDay: boolean;
 }) {
 	const clock = (iso: string) => (otherDay ? formatFullDateTime(iso) : formatClock(iso));
+	const hasNameLimit = countOnly.some((c) => c.reason === "name_limit");
+	const hasTotalLimit = countOnly.some((c) => c.reason === "total_limit");
 	return (
 		<div data-testid="action-cap-note" className="mt-1.5 text-xs leading-4.5 text-fg-2">
 			{countOnly.length > 0 && (
 				<>
 					<p className="m-0">
-						明细有上限：超过以后开始的动作只计数、没有明细（失败的动作除外），总数、失败数和
-						{FAILURES_LABEL}仍然准确。
+						明细有上限：超过以后开始的动作只计数、没有明细
+						{hasNameLimit && !hasTotalLimit && EXCEPT_FAILED}，总数、失败数和{FAILURES_LABEL}
+						仍然准确。
 					</p>
 					<ul className="m-0 my-1 list-none p-0 text-fg-1">
 						{countOnly.map((c) => (
 							<li key={c.name} className="min-w-0 wrap-anywhere">
 								「{c.name}」从 <span className="font-mono">{clock(c.from)}</span> 起只计数
+								{hasNameLimit && hasTotalLimit && c.reason === "name_limit" && EXCEPT_FAILED}
 							</li>
 						))}
 					</ul>

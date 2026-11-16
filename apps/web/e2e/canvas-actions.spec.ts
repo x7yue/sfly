@@ -319,6 +319,8 @@ test("检查器：每个只计数的名称都列出来；合计满了时说满�
 		"全部名称合计的明细已满，满了以后开始的动作都只计数（失败的也一样）；第一个因此没有明细的动作是 07:30:14 开始的。",
 	);
 	await expect(cap).not.toContainText("起，失败");
+	// 都是因为合计满了而只计数：失败的动作也没有明细，不能说「失败的动作除外」。
+	await expect(cap).not.toContainText("失败的动作除外");
 	await expect(cap.getByRole("link", { name: "开发节点（SDK 参考）" })).toBeVisible();
 
 	// 没有名称只计数、合计也没满时，没有这段说明。
@@ -331,6 +333,64 @@ test("检查器：每个只计数的名称都列出来；合计满了时说满�
 		"批次",
 	);
 	await expect(panel.getByTestId("action-cap-note")).toHaveCount(0);
+});
+
+test("检查器：「失败的动作除外」只对只超过每种名称上限的名称说", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const setup = await runningScenario(controlPlane, connectAgent, clock);
+	const verify = setup.tasks.verify as AssignedTask;
+	const now = clock.now().getTime();
+	const at = (ago: number) => setup.agent.stamp(now - ago);
+	const capped = (n: string, cappedAgo: number) => ({
+		name: n,
+		total: 60_000,
+		failed: 0,
+		reported: 50_000,
+		capped_ts: at(cappedAgo).ts,
+		capped_mono: at(cappedAgo).mono,
+	});
+	const totalFull = { capped_ts: at(30 * 60_000).ts, capped_mono: at(30 * 60_000).mono };
+
+	// 只有每种名称的上限、合计没满：写在开头那一句里，名称后面不再重复。
+	setup.agent.actionSummary(verify, {
+		total: 60_000,
+		reported: 50_000,
+		names: [capped("下单", 20 * 60_000)],
+	});
+	await setup.agent.sync();
+	const panel = await openNode(page, setup, clock, "verify");
+	const cap = panel.getByTestId("action-cap-note");
+	await expect(cap).toContainText("没有明细（失败的动作除外），总数、失败数和最近的失败仍然准确。");
+	await expect(cap.getByRole("listitem")).toHaveText(["「下单」从 07:40:14 起只计数"]);
+	await expect(cap).not.toContainText("合计");
+
+	// 两种都有：开头不说，写在只超过每种名称上限的名称后面；因合计满了而只计数的名称不写。
+	setup.agent.actionSummary(verify, {
+		total: 120_000,
+		reported: 100_000,
+		...totalFull,
+		names: [capped("下单", 40 * 60_000), capped("核对", 20 * 60_000)],
+	});
+	await expect(cap.getByRole("listitem")).toHaveText([
+		"「下单」从 07:20:14 起只计数（失败的动作除外）",
+		"「核对」从 07:40:14 起只计数",
+	]);
+	await expect(cap.getByText("没有明细，总数、失败数和最近的失败仍然准确。")).toBeVisible();
+	await expect(cap).toContainText("满了以后开始的动作都只计数（失败的也一样）");
+
+	// 只有合计的上限：哪里都不说「失败的动作除外」。
+	setup.agent.actionSummary(verify, {
+		total: 120_000,
+		reported: 100_000,
+		...totalFull,
+		names: [capped("核对", 20 * 60_000)],
+	});
+	await expect(cap.getByRole("listitem")).toHaveText(["「核对」从 07:40:14 起只计数"]);
+	await expect(cap).not.toContainText("失败的动作除外");
 });
 
 test("检查器：执行中每秒重新读取摘要，节点结束时再读一次，之后不再读", async ({
