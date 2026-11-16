@@ -81,6 +81,10 @@ const openRun = async (page: Page, scenarioId: string, runId: string) => {
 
 const followButton = (page: Page) => dock(page).getByRole("button", { name: "跟随执行" });
 
+/** 浏览器里记住的跟随执行的选择：1 打开，0 关闭，没选过时没有。 */
+const storedFollow = (page: Page) =>
+	page.evaluate(() => localStorage.getItem("sfly.canvas.follow"));
+
 /**
  * 这些元素是不是都框在可见区域里（检查器左边、工具条上面），整体水平居中在检查器左边的那一块：
  * 检查器左边的可见区域，左右两侧的边距相同，所以中心在检查器左边缘的一半。
@@ -102,6 +106,14 @@ async function framed(page: Page, targets: Locator[]) {
 }
 
 const region = (page: Page) => page.getByRole("region", { name: "子流程 监控" });
+
+/** 拖动画布的空白处。 */
+async function dragCanvas(page: Page) {
+	await page.mouse.move(300, 700);
+	await page.mouse.down();
+	await page.mouse.move(380, 720, { steps: 6 });
+	await page.mouse.up();
+}
 
 test("跟随执行：打开时镜头框住执行中的节点；执行前沿变化后镜头平移到新的节点，选中的节点不变", async ({
 	page,
@@ -149,10 +161,7 @@ test("拖动画布就停止跟随并播报，按 F 恢复；键盘选到视野�
 	const announcements = page.getByRole("status").filter({ hasText: "跟随执行" });
 
 	// 拖动画布：停止跟随，读屏收到播报。
-	await page.mouse.move(300, 700);
-	await page.mouse.down();
-	await page.mouse.move(380, 720, { steps: 6 });
-	await page.mouse.up();
+	await dragCanvas(page);
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
 	await expect(announcements).toHaveText("已停止跟随执行，按 F 恢复");
 
@@ -176,12 +185,16 @@ test("拖动画布就停止跟随并播报，按 F 恢复；键盘选到视野�
 	await expect.poll(() => framed(page, [nodeCard(page, "n2")]), { timeout: 10_000 }).toBe(true);
 	await expect(nodeCard(page, "entry")).toHaveAttribute("aria-pressed", "true");
 
-	// 运行结束：跟随自动关闭，按钮不能再按下，F 也不再生效。
+	// 运行结束：跟随自动关闭，按钮不能再按下，F 也不再生效。「仍是 aria-pressed=false」证明不了 F 没生效（结束后本来就是
+	// false），所以先用按钮把选择关掉（记在浏览器里：0），结束后按 F：生效的话会把选择改成 1。
+	await followButton(page).click();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	expect(await storedFollow(page)).toBe("0");
 	await finishRun(agent, afterN1.n2 as AssignedTask);
 	await expect(followButton(page)).toBeDisabled();
-	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
 	await page.keyboard.press("f");
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	expect(await storedFollow(page)).toBe("0");
 });
 
 test("点工具条的缩放按钮也停止跟随并播报，按 F 恢复", async ({
@@ -201,6 +214,57 @@ test("点工具条的缩放按钮也停止跟随并播报，按 F 恢复", async
 	await page.keyboard.press("f");
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
 	await expect.poll(() => framed(page, [nodeCard(page, "n1")])).toBe(true);
+});
+
+test("拖动画布、缩放、键盘选到视野外只在当前页面停止跟随：不写进浏览器，刷新后仍跟随；按钮和 F 的切换才记住", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const { agent, scenarioId, runId, n1 } = await startRun(controlPlane, connectAgent);
+	// n2 在远处执行：入口在视野外，键盘选到它时镜头要平移过去。
+	await agent.succeed(n1);
+	await assigns(agent, 1);
+	await openRun(page, scenarioId, runId);
+	await expect.poll(() => framed(page, [nodeCard(page, "n2")])).toBe(true);
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
+
+	// 拖动画布。
+	await dragCanvas(page);
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	expect(await storedFollow(page)).toBeNull();
+	await page.reload();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
+	await expect.poll(() => framed(page, [nodeCard(page, "n2")])).toBe(true);
+
+	// 工具条的缩放按钮。
+	await dock(page).getByRole("button", { name: "放大" }).click();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	expect(await storedFollow(page)).toBeNull();
+	await page.reload();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
+	await expect.poll(() => framed(page, [nodeCard(page, "n2")])).toBe(true);
+
+	// 键盘选到视野外的节点：入口在视野外，镜头平移过去并暂停跟随。
+	await page.locator("[data-canvas-region]").focus();
+	await page.keyboard.press("ArrowRight");
+	await expect(nodeCard(page, "entry")).toHaveAttribute("aria-pressed", "true");
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	expect(await storedFollow(page)).toBeNull();
+	await page.reload();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
+
+	// 停止之后按 F 恢复；按钮和 F 是用户的切换，这时才写进浏览器：F 记成打开，按钮关掉记成关闭，刷新后仍然关着。
+	await dock(page).getByRole("button", { name: "放大" }).click();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	await page.keyboard.press("f");
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
+	expect(await storedFollow(page)).toBe("1");
+	await followButton(page).click();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	expect(await storedFollow(page)).toBe("0");
+	await page.reload();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
 });
 
 test("跟随执行第一次默认打开，之后记住这个浏览器里上次的选择，刷新后保持；运行结束自动关闭不改这个选择", async ({

@@ -7,7 +7,10 @@ import {
 } from "./canvas-focus-support";
 import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
+import { saveVersion, setFocusItems } from "./focus-support";
+import { MONITOR_SCENARIO, metricPackage, runningScenario } from "./monitor-scenario";
 import { focusChart } from "./overview-support";
+import { publishPackage } from "./support";
 
 // 编排画布运行状态里的关注项（#353）：节点卡片左上角是关注项的个数，开始执行以后底部是前两项（有异常的排前、带三角）；
 // 检查器没选中节点时列出全部关注项，选中节点时列出它声明的图表，带「关注」开关。
@@ -81,6 +84,66 @@ test("卡片的可访问名称里有关注项的个数和需要注意的项数",
 	);
 	// 没有关注项的节点名称不变。
 	await expect(nodeCard(page, "verify")).toHaveAccessibleName(/^节点 verify，.+ 执行中$/);
+});
+
+test("场景没设关注项时，主指标有异常的卡片：主指标旁有琥珀三角，可访问名称写明原因；没有异常的卡片不变", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	await openCanvasRun(page, clock, running);
+	// verify 是第 2 次尝试，10 分钟以内开始的重试算异常（别处也这样判断）；probe 的主指标没有异常。
+	const verify = nodeCard(page, "verify");
+	await expect(verify.locator("[data-primary-metric]")).toBeVisible();
+	await expect(verify.locator('[data-status-dot="warn"]')).toHaveCount(1);
+	await expect(verify).toHaveAccessibleName(
+		/^节点 verify，.+ 执行中 1 项需要注意：主指标 level 重试（尝试 2）· \d\d:\d\d:\d\d$/,
+	);
+	// 没设关注项：没有眼睛图标和个数。
+	await expect(verify.getByTestId("node-focus-count")).toHaveCount(0);
+
+	const probe = nodeCard(page, "probe");
+	await expect(probe.locator("[data-primary-metric]")).toBeVisible();
+	await expect(probe.locator('[data-status-dot="warn"]')).toHaveCount(0);
+	await expect(probe).toHaveAccessibleName(/^节点 probe，.+ 执行中$/);
+});
+
+test("图表在这次运行的节点包版本里不存在的关注项：卡片上写明原因、不显示数值，可访问名称里也有", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	// 之后的版本升到 1.3.0，ping 多了一张图表「水位」，作者把它设为关注项；这次运行锁定的是 1.2.0，没有这张图表。
+	const nodes = metricPackage().nodes.map((node) =>
+		node.name === "ping"
+			? { ...node, charts: [{ title: "水位", type: "line", metrics: ["level"] }] }
+			: node,
+	);
+	await publishPackage(controlPlane, { version: "1.3.0", nodes });
+	await saveVersion(controlPlane, running.scenarioId, 1, {
+		...MONITOR_SCENARIO,
+		packages: { "demo-checks": "1.3.0" },
+	});
+	await setFocusItems(controlPlane, running.scenarioId, [
+		{ node_id: "probe", chart: "水位" },
+		{ node_id: "probe", chart: "total" },
+	]);
+	await openCanvasRun(page, clock, running);
+
+	const probe = nodeCard(page, "probe");
+	await expect(cardFocusRows(probe)).toHaveText([
+		/^水位\s*这个版本的节点没有图表 水位$/,
+		/^total\s*\d+$/,
+	]);
+	await expect(probe.getByTestId("node-focus")).not.toContainText("—");
+	await expect(probe.locator('[data-focus-row="水位"] [data-status-dot]')).toHaveCount(0);
+	await expect(probe).toHaveAccessibleName(
+		/^节点 probe，.+ 执行中 2 个关注项，这个版本的节点没有图表 水位$/,
+	);
 });
 
 test("没有选中节点时检查器列出全部关注项（有异常的在前），点一项选中它所在的节点", async ({

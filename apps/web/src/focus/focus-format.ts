@@ -12,6 +12,7 @@ import {
 	LOG_LEVEL_LABEL,
 	MESSAGE,
 	noDataLabel,
+	TERM,
 } from "#/lib/copy";
 import { formatClock, formatElapsed } from "#/lib/format";
 
@@ -25,6 +26,15 @@ export const emptyReadingsNote = (mode: RunFocus["mode"], executing: boolean): s
 			? MESSAGE.noPrimaryMetric
 			: MESSAGE.noRunningNodes
 		: FOCUS.noneInRun;
+
+/**
+ * 一项在紧凑处（Agent 槽位格、画布卡片可访问名称里的主指标）的名称：主指标前面写明是主指标（关注项的名称是作者起的
+ * 或图表标题，没有这个问题）。
+ */
+export const focusItemTitle = (
+	item: Pick<RunFocusItem, "title">,
+	mode: RunFocus["mode"],
+): string => (mode === "primary" ? `${TERM.primaryMetric} ${item.title}` : item.title);
 
 /** 来源节点：「显示名称（节点 ID）」，没有显示名称时只写节点 ID（docs/SEMANTICS.md §1.4）。 */
 export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_name">): string =>

@@ -42,16 +42,16 @@ export interface NodeDecoration {
 	 * （执行中配置摘要没什么可看的，卡片也不变高）；有主指标时两行都在，卡片往下长一行。
 	 */
 	activity?: CurrentActivity;
-	/** 属于这个节点的关注项（运行状态下，场景设了关注项时）。 */
+	/** 属于这个节点的关注项（运行状态下，场景设了关注项时）；没设时，主指标有异常的节点只带说明异常原因的 `label`。 */
 	focus?: CardFocus;
 	/** 版本对比的差异标记。 */
 	mark?: "added" | "removed" | "changed";
 }
 
-/** 节点卡片上属于这个节点的关注项。 */
+/** 节点卡片上属于这个节点的关注项（场景没设关注项时是主指标，只有 `label`）。 */
 export interface CardFocus {
-	/** 关注项的个数：左上角眼睛图标旁的数量。 */
-	count: number;
+	/** 关注项的个数：左上角眼睛图标旁的数量；场景没设关注项时没有。 */
+	count?: number;
 	/** 接在卡片可访问名称后面的一段：个数，有异常时还有几项需要注意和原因（CardFocus.tsx 的 `cardFocusLabel`）。 */
 	label: string;
 	/**

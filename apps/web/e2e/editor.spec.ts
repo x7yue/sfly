@@ -94,8 +94,12 @@ test("选中是中性高亮，只有相连的连线流动；端口常显：已�
 
 	await nodeCard(page, "fetch").click();
 	await expect(nodeCard(page, "fetch")).toHaveAttribute("aria-pressed", "true");
-	// --selected，中性灰白，不是青色；描边有 150ms 过渡，用会重试的断言等过渡结束。
-	await expect(nodeCard(page, "fetch")).toHaveCSS("border-color", "rgb(212, 212, 212)");
+	// --selected，中性灰白，不是青色：卡片外隔开一圈 2px 描边（先垫 3px 画布底色），卡片自己的描边不变；
+	// 有 150ms 过渡，用会重试的断言等过渡结束。
+	await expect(nodeCard(page, "fetch")).toHaveCSS(
+		"box-shadow",
+		/ 0px 0px 0px 3px, rgb\(212, 212, 212\) 0px 0px 0px 5px$/,
+	);
 
 	const highlighted = page.locator('[data-edge][data-highlighted="true"]');
 	await expect(highlighted).toHaveCount(2);

@@ -1,14 +1,11 @@
 import type { RunningTaskView } from "@sfly/schema";
-import { cn } from "cn";
 import type { CurrentActivity } from "#/actions/current-activity";
 import { Elapsed } from "#/components/elapsed";
 import { SlotCell } from "#/components/slot-cell";
-import { AnomalyMark } from "#/focus/AnomalyNote";
-import { FocusValue } from "#/focus/FocusValue";
-import { anomalyText, readingState, readingWhen } from "#/focus/focus-format";
-import { FOCUS, MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { FocusRows } from "#/focus/FocusRows";
+import { MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
 import { Truncate } from "@/components/ui/truncate";
-import { type SlotFocus, slotContent, slotItemTitle } from "./slot-content";
+import { slotContent } from "./slot-content";
 import type { RunFocusRead } from "./use-slot-focus";
 
 /**
@@ -29,7 +26,14 @@ export function TaskSlot({
 		<SlotCell task={task} summary={content.summary}>
 			{content.activity && <ActivityRow activity={content.activity} />}
 			{content.focus ? (
-				<FocusRows focus={content.focus} />
+				<FocusRows
+					variant="slot"
+					preview={content.focus}
+					generatedAt={content.focus.generatedAt}
+					mode={content.focus.mode}
+					aria-label={`这个任务的${content.focus.mode === "primary" ? TERM.primaryMetric : TERM.focusItem}`}
+					className="mt-2 gap-0.5 border-t border-border-soft pt-2"
+				/>
 			) : (
 				runFocus?.failed && (
 					<p className="m-0 mt-2 text-xs text-fg-3">{MESSAGE.loadFailed(TERM.focusItem)}</p>
@@ -62,67 +66,5 @@ function ActivityRow({ activity }: { activity: CurrentActivity }) {
 				<Truncate className="text-fg-1">{activity.message}</Truncate>
 			)}
 		</div>
-	);
-}
-
-/** 前两个关注项，每项一行：名称、最新值、右侧是多久前（最终值、没有值的原因）或异常的原因；多出的写「还有 N 个关注项」。 */
-function FocusRows({ focus }: { focus: SlotFocus }) {
-	const label = focus.mode === "primary" ? TERM.primaryMetric : TERM.focusItem;
-	return (
-		<ul
-			aria-label={`这个任务的${label}`}
-			className="m-0 mt-2 flex list-none flex-col gap-0.5 border-t border-border-soft p-0 pt-2"
-		>
-			{focus.shown.map((item) => (
-				<li
-					key={`${item.node_id}\n${item.chart}\n${item.position}`}
-					className="flex min-w-0 items-center gap-1.5 text-xs"
-				>
-					<FocusRow item={item} focus={focus} />
-				</li>
-			))}
-			{focus.more > 0 && <li className="text-xs text-fg-3">{FOCUS.moreItems(focus.more)}</li>}
-		</ul>
-	);
-}
-
-function FocusRow({ item, focus }: { item: SlotFocus["shown"][number]; focus: SlotFocus }) {
-	const reason = anomalyText(item, focus.generatedAt);
-	// 右侧：异常的原因；没有异常时是多久前（最终值、没有值的原因）。没设关注项时，不是异常的主指标写明为什么显示它，
-	// 代替「多久前」。图表在这次运行的版本里不存在时没有值可说，只有名称和原因。
-	const foot =
-		reason ??
-		(item.unavailable
-			? null
-			: focus.mode === "primary"
-				? FOCUS.noneSet
-				: readingWhen(item, focus.generatedAt));
-	// 只有「2s 前」是数值，用等宽；最终值、没有值的原因和「场景没有设置关注项」是中文说明。
-	const numeric =
-		reason === null &&
-		!item.unavailable &&
-		focus.mode === "focus" &&
-		readingState(item, focus.generatedAt).kind === "live";
-	return (
-		<>
-			{reason !== null && <AnomalyMark className="flex-none" />}
-			<Truncate className="min-w-6 text-fg-2">{slotItemTitle(item, focus.mode)}</Truncate>
-			{item.unavailable ? (
-				<Truncate className="text-fg-3">{FOCUS.chartMissing(item.chart)}</Truncate>
-			) : (
-				<FocusValue item={item} className="text-xs font-normal" />
-			)}
-			{foot !== null && (
-				<span
-					className={cn(
-						"ml-auto flex-none pl-1.5",
-						reason === null ? "text-fg-3" : "text-warn-fg",
-						numeric && "font-mono",
-					)}
-				>
-					{foot}
-				</span>
-			)}
-		</>
 	);
 }

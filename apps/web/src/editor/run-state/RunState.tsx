@@ -16,7 +16,7 @@ import { ActionArea, CurrentActions } from "#/actions/InspectorActions";
 import { actionAttempt } from "#/actions/summary-model";
 import { useActionSummary } from "#/actions/use-task-actions";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
-import { cardFocusLabel, FocusRows } from "#/components/canvas/CardFocus";
+import { cardFocusLabel } from "#/components/canvas/CardFocus";
 import type {
 	CanvasContextValue,
 	CanvasInfo,
@@ -26,12 +26,14 @@ import type {
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
 import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
-import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
+import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { runNodeName } from "#/components/node-name";
 import { SectionHeading } from "#/components/page";
 import { nodeStatusView, StatusPill } from "#/components/status";
+import { AnomalyMark } from "#/focus/AnomalyNote";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
-import { focusPreview, nodeFocusItems } from "#/focus/focus-preview";
+import { FocusRows } from "#/focus/FocusRows";
+import { focusPreview, nodeFocusItems, nodePrimaryItem } from "#/focus/focus-preview";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
 import {
@@ -86,9 +88,27 @@ function cardFocus(
 		count: items.length,
 		label: cardFocusLabel(items, focus.generated_at),
 		rows: started ? (
-			<FocusRows preview={focusPreview(items)} generatedAt={focus.generated_at} />
+			<FocusRows
+				variant="card"
+				preview={focusPreview(items)}
+				generatedAt={focus.generated_at}
+				mode={focus.mode}
+				aria-hidden
+				data-testid="node-focus"
+				className={cn("rounded-md bg-sunk px-2 py-0.5", ZOOM_TEXT_12, LOD_HIDDEN)}
+			/>
 		) : undefined,
 	};
+}
+
+/**
+ * 场景没设关注项时，卡片上的主指标有异常（读数里这个节点的主指标，和别处同一份）：主指标旁画三角，原因写进卡片的可访问名称，
+ * 没有异常时什么也不加。数值和迷你趋势仍是 `NodePrimaryMetric` 的。
+ */
+function primaryAnomaly(focus: RunFocus | undefined, id: string) {
+	const item = nodePrimaryItem(focus, id);
+	if (!focus || !item || item.anomaly === null) return undefined;
+	return { label: cardFocusLabel([item], focus.generated_at, "primary") };
 }
 
 /**
@@ -124,17 +144,22 @@ export function useRunDecorations(
 				const s = nodeStatusView(summary.node.status);
 				const entry = catalogEntry(metrics, summary.chain.id, id);
 				const started = summary.node.attempts.some((a) => a.started_at !== null);
+				// 三角画在主指标旁，卡片上没有主指标槽时不写异常（名称里也不写）。
+				const anomaly = entry?.primary_metric ? primaryAnomaly(focus, id) : undefined;
 				return {
 					run: summary.state,
 					activity: currentActivity(summary.node.attempts.at(-1)) ?? undefined,
-					focus: cardFocus(focus, id, started),
+					focus: cardFocus(focus, id, started) ?? anomaly,
 					slot: entry?.primary_metric ? (
-						<NodePrimaryMetric
-							runId={run.id}
-							entry={entry}
-							status={summary.node.status}
-							variant="inline"
-						/>
+						<>
+							{anomaly && <AnomalyMark className="flex-none" />}
+							<NodePrimaryMetric
+								runId={run.id}
+								entry={entry}
+								status={summary.node.status}
+								variant="inline"
+							/>
+						</>
 					) : undefined,
 					status: (
 						<StatusPill kind={s.kind} className={ZOOM_TEXT_12}>
