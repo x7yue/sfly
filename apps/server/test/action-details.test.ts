@@ -443,7 +443,7 @@ describe("动作明细", () => {
 			return agentClock(now + offsetMs, Number(agent.monotonicAt(now)));
 		};
 
-		it("任务成功：记为未结束，Agent 结束时间按结束时的时钟偏差折算；之后才到的结束照样记下真实的结果", async () => {
+		it("任务成功：记为未结束，Agent 结束时间按结束时的时钟偏差折算；之后才到的结束和新明细都丢弃，未结束定格在任务结束的那一刻", async () => {
 			const agent = await connect();
 			const { task } = await start(agent);
 			await twoActions(agent, task);
@@ -451,26 +451,17 @@ describe("动作明细", () => {
 
 			clock().set(iso(T0 + 10_000));
 			await agent.succeed(task, {}, skewed(agent, 7_000));
-			expect((await page(task.taskId)).actions).toEqual([
-				ended2,
-				unfinished(T0 + 10_000, T0 + 17_000),
-			]);
+			const frozen = [ended2, unfinished(T0 + 10_000, T0 + 17_000)];
+			expect((await page(task.taskId)).actions).toEqual(frozen);
+			const { rev } = await page(task.taskId);
 
-			// 断线期间结束的任务：结束晚于结果到达。
-			agent.actions(task, [agent.actionEnd(1, "failed", T0 + 9_000, { reason: "撤单失败" })]);
+			// 断线重连后补发的批次（Agent 在结果之前就发完了明细，之后才到的只可能是补发）：结束和新开始的动作都不记。
+			agent.actions(task, [
+				agent.actionEnd(1, "failed", T0 + 9_000, { reason: "撤单失败" }),
+				agent.actionStart(3, "补发的", T0 + 9_500),
+			]);
 			await agent.sync();
-			expect((await page(task.taskId)).actions[1]).toEqual(
-				action({
-					id: 1,
-					name: "保持 4 小时",
-					started_at: iso(T0 + 1_000),
-					result: "failed",
-					reason: "撤单失败",
-					ended_at: iso(T0 + 9_000),
-					agent_ended_at: iso(T0 + 9_000),
-					duration_ms: 8_000,
-				}),
-			);
+			expect(await page(task.taskId)).toMatchObject({ actions: frozen, rev });
 		});
 
 		it("任务失败、被取消：同样记为未结束；没有上报时钟读数时 Agent 结束时间为空", async () => {
@@ -622,5 +613,31 @@ describe("动作明细", () => {
 			}),
 		]);
 		expect(JSON.stringify(actions)).not.toContain("tk-secret");
+	});
+
+	it("前一批已经存下的动作，在下一批里重复开始又结束：重复的开始忽略，结束照样记下", async () => {
+		const agent = await connect();
+		const { task } = await start(agent);
+		agent.actions(task, [agent.actionStart(1, "撤单", T0 + 1_000)]);
+		await agent.sync();
+		agent.actions(task, [
+			agent.actionStart(1, "撤单", T0 + 1_000),
+			agent.actionEnd(1, "failed", T0 + 1_500, { reason: "余额不足", fields: { 订单: "1002" } }),
+		]);
+		await agent.sync();
+
+		expect((await page(task.taskId)).actions).toEqual([
+			action({
+				id: 1,
+				name: "撤单",
+				fields: { 订单: "1002" },
+				started_at: iso(T0 + 1_000),
+				result: "failed",
+				reason: "余额不足",
+				ended_at: iso(T0 + 1_500),
+				agent_ended_at: iso(T0 + 1_500),
+				duration_ms: 500,
+			}),
+		]);
 	});
 });
