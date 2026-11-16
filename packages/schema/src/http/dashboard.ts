@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { endpoint, Timestamp } from "./contract.js";
+import { RunFocusItem } from "./run-focus.js";
 import { RunListActiveNode } from "./run-list.js";
 
 /**
@@ -99,15 +100,24 @@ const EndedRunFields = {
 	ended_at: Timestamp,
 };
 
+/** 失败的运行最多带几项关注项的最终值。 */
+export const DASHBOARD_ENDED_FOCUS_MAX = 4;
+
 /**
  * 最近结束的一个运行。失败的带上最先出问题的节点；运行的任务记录里找不到失败的节点时（数据不完整，正常运行不会出现）
- * failure 为 null。
+ * failure 为 null。失败的还带 `focus`：场景现在的关注项在这次运行结束时的值。
  */
 export const DashboardEndedRun = z.discriminatedUnion("status", [
 	z.object({
 		...EndedRunFields,
 		status: z.literal("failed"),
 		failure: DashboardRunFailure.nullable(),
+		/**
+		 * 场景现在的关注项（不是运行时的，结束后改的也算）在这次运行结束时的读数：和 `GET /runs/:id/focus?points=0` 同一份
+		 * 解析规则（有异常的在最前，不带序列），取前 {@link DASHBOARD_ENDED_FOCUS_MAX} 项；场景没设关注项时是空数组
+		 * （不取执行中节点的主指标，运行已经结束）。
+		 */
+		focus: z.array(RunFocusItem).max(DASHBOARD_ENDED_FOCUS_MAX),
 	}),
 	z.object({ ...EndedRunFields, status: z.enum(["success", "cancelled"]) }),
 ]);

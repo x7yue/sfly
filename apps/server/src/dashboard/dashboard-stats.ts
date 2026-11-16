@@ -1,12 +1,13 @@
 import {
+	DASHBOARD_ENDED_FOCUS_MAX,
 	type DashboardEndedRun,
 	type DashboardRunFailure,
 	type DashboardView,
 	isOnAgentStatus,
+	type RunFocusItem,
 } from "@sfly/schema";
 import { and, count, desc, eq, gt, gte, isNotNull, lte } from "drizzle-orm";
 import type { AgentHub } from "../agents/agent-hub.js";
-import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
 	chainInstances,
@@ -17,6 +18,7 @@ import {
 } from "../db/schema.js";
 import { activeNodesOf, loadRunBoards } from "../engine/run-board.js";
 import { getRunView, type RunView } from "../engine/run-queries.js";
+import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { setupSummary } from "./setup-summary.js";
 
 const HOUR_MS = 3_600_000;
@@ -24,9 +26,7 @@ const HOUR_MS = 3_600_000;
 const RECENT_ENDED = 10;
 const WINDOW_MS = 24 * HOUR_MS;
 
-export interface DashboardDeps {
-	db: Db;
-	clock: Clock;
+export interface DashboardDeps extends RunFocusDeps {
 	hub: AgentHub;
 }
 
@@ -38,7 +38,8 @@ const isOutcome = (status: string): status is Outcome => (OUTCOMES as string[]).
  * 控制台统计（契约见 @sfly/schema 的 dashboardApi）。「现在」取注入的时钟，
  * 窗口是 [now − 24h, now]，运行按结束时间归入窗口。
  */
-export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<DashboardView> {
+export async function dashboardView(deps: DashboardDeps): Promise<DashboardView> {
+	const { db, clock, hub } = deps;
 	const now = clock.now();
 	const windowStart = new Date(now.getTime() - WINDOW_MS);
 
@@ -52,7 +53,7 @@ export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<
 	}
 
 	const running = await runningRuns(db);
-	const recentEnded = await recentEndedRuns(db, windowStart, now);
+	const recentEnded = await recentEndedRuns(deps, windowStart, now);
 	const failedSubflows = await failedSubflowCount(db, windowStart, now);
 	const agents = await hub.list();
 	const online = agents.filter((a) => a.status === "online");
@@ -183,8 +184,23 @@ function firstFailure(view: RunView): DashboardRunFailure | null {
 	};
 }
 
-/** 窗口内结束的运行（按结束时间从新到旧，最多 RECENT_ENDED 个）；失败的带上最先出问题的节点。 */
-async function recentEndedRuns(db: Db, from: Date, to: Date): Promise<DashboardEndedRun[]> {
+/**
+ * 失败的运行在结束时的关注项读数：场景现在的关注项（`resolveRunFocus`，和 `GET /runs/:id/focus?points=0` 同一份规则）的
+ * 前 {@link DASHBOARD_ENDED_FOCUS_MAX} 项。运行已经结束，场景没设关注项时读数是空的（主指标只取执行中的节点），
+ * 所以只取关注项模式的读数。
+ */
+async function endedFocus(deps: RunFocusDeps, runId: string): Promise<RunFocusItem[]> {
+	const focus = await resolveRunFocus(deps, runId, { points: 0 });
+	return focus?.mode === "focus" ? focus.items.slice(0, DASHBOARD_ENDED_FOCUS_MAX) : [];
+}
+
+/** 窗口内结束的运行（按结束时间从新到旧，最多 RECENT_ENDED 个）；失败的带上最先出问题的节点和关注项的最终值。 */
+async function recentEndedRuns(
+	deps: RunFocusDeps,
+	from: Date,
+	to: Date,
+): Promise<DashboardEndedRun[]> {
+	const { db } = deps;
 	const rows = await db
 		.select({
 			run: runs,
@@ -198,7 +214,7 @@ async function recentEndedRuns(db: Db, from: Date, to: Date): Promise<DashboardE
 		.orderBy(desc(runs.endedAt), desc(runs.id))
 		.limit(RECENT_ENDED);
 	const ended: DashboardEndedRun[] = [];
-	// 失败的运行逐个读运行视图（最多 RECENT_ENDED 个），不并发占用连接池。
+	// 失败的运行逐个读运行视图和关注项（最多 RECENT_ENDED 个），不并发占用连接池，也不放进事务。
 	for (const { run, name, version } of rows) {
 		if (!run.endedAt || !isOutcome(run.status)) continue;
 		const base = {
@@ -215,7 +231,12 @@ async function recentEndedRuns(db: Db, from: Date, to: Date): Promise<DashboardE
 			continue;
 		}
 		const view = await getRunView(db, run.id);
-		ended.push({ ...base, status: "failed", failure: view ? firstFailure(view) : null });
+		ended.push({
+			...base,
+			status: "failed",
+			failure: view ? firstFailure(view) : null,
+			focus: await endedFocus(deps, run.id),
+		});
 	}
 	return ended;
 }
