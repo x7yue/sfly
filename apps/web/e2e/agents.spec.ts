@@ -506,10 +506,16 @@ test.describe("版本不一致", () => {
 		await expect(updateNow("agent-current")).toHaveCount(0);
 		await expect(updateNow("agent-manual")).toHaveCount(0);
 		// 状态和告警在同一行（头部是一行，不换行成几块）。
-		const tops = await header(page, "agent-waiting")
+		// 按各元素的竖直中线比：按 8px 分桶的写法在页面上方的版面一变、中线跨过桶边界时会误报。
+		const middles = await header(page, "agent-waiting")
 			.locator("[data-status], h2, button")
-			.evaluateAll((all) => all.map((el) => Math.round(el.getBoundingClientRect().top)));
-		expect(new Set(tops.map((top) => Math.round(top / 8))).size).toBe(1);
+			.evaluateAll((all) =>
+				all.map((el) => {
+					const box = el.getBoundingClientRect();
+					return box.top + box.height / 2;
+				}),
+			);
+		expect(Math.max(...middles) - Math.min(...middles)).toBeLessThan(8);
 	});
 
 	test("立即更新：确认框列出会被终止的任务；取消不产生影响，确认后状态变为替换中", async ({
