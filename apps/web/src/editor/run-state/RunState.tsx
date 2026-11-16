@@ -40,6 +40,7 @@ import {
 	FOCUS,
 	MESSAGE,
 	MONITOR_DETAIL_LABEL,
+	NOT_RUN_IN_ENDED_RUN,
 	openInLabel,
 	PROGRESS_LABEL,
 	TERM,
@@ -114,7 +115,7 @@ export function useRunDecorations(
 						run: "pending",
 						status: (
 							<StatusPill kind="pending" className={ZOOM_TEXT_12}>
-								{ended ? "未执行" : "待执行"}
+								{ended ? NOT_RUN_IN_ENDED_RUN.label : NODE_STATUS.pending.label}
 							</StatusPill>
 						),
 						focus: cardFocus(focus, id, false),
@@ -426,7 +427,7 @@ function NodeRunInspector({
 				)}
 				{!view && (
 					<p className="m-0 mt-3 text-xs text-fg-2">
-						这个节点所在的子流程在这次运行里还没有触发，没有运行记录。
+						{NOT_RUN_IN_ENDED_RUN.subflowNote(run.status !== "running")}
 					</p>
 				)}
 				{running.length > 0 && actionSummary && (
@@ -575,7 +576,11 @@ function RunOverview({
 						<Row label={DURATION_LABEL}>{formatDuration(end - Date.parse(run.started_at))}</Row>
 					</dl>
 					{state.focus?.mode === "focus" && state.focus.items.length > 0 && (
-						<RunFocusList focus={state.focus} onSelect={(item) => onSelectNode(item.node_id)} />
+						<RunFocusList
+							focus={state.focus}
+							runEnded={run.status !== "running"}
+							onSelect={(item) => onSelectNode(item.node_id)}
+						/>
 					)}
 					<p className="m-0 mt-3.5 text-xs text-fg-3">选中节点查看它在这次运行里的摘要。{HINT}</p>
 				</>
@@ -596,9 +601,11 @@ function RunOverview({
  */
 function RunFocusList({
 	focus,
+	runEnded,
 	onSelect,
 }: {
 	focus: RunFocus;
+	runEnded: boolean;
 	onSelect(item: RunFocusItem): void;
 }) {
 	const headingId = useId();
@@ -613,6 +620,7 @@ function RunFocusList({
 			<FocusReadoutStrip
 				items={focus.items}
 				generatedAt={focus.generated_at}
+				runEnded={runEnded}
 				className="rounded-lg border border-border-soft bg-bg"
 				renderItem={(item) => <button type="button" onClick={() => onSelect(item)} />}
 			/>

@@ -321,6 +321,7 @@
 		/* 当前项、选中项从底色与左侧白条换成描边（:where 不加权重，键盘焦点环仍然优先） */
 		:where(
 				[aria-current="page"],
+				[aria-current="location"],
 				[aria-pressed="true"],
 				[aria-selected="true"],
 				[data-state="selected"],

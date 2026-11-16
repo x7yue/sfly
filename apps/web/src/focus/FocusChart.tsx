@@ -3,6 +3,7 @@ import { cn } from "cn";
 import { useMemo } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOCUS, hiddenSeriesLabel, MONITOR_VIEW_LABEL, openInLabel } from "#/lib/copy";
+import { attemptWindow } from "#/monitor/charts";
 import { Button } from "@/components/ui/button";
 import { AnomalyNote } from "./AnomalyNote";
 import { FocusPlot } from "./FocusPlot";
@@ -30,23 +31,24 @@ export function FocusChart({
 	generatedAt,
 	onOpen,
 	located = false,
+	runEnded = false,
 }: {
 	item: RunFocusItem;
 	generatedAt: string;
+	/** 运行已经结束：一直待执行的来源节点写「这次运行没有执行」。 */
+	runEnded?: boolean;
 	/** 在详情里打开来源节点。 */
 	onOpen: () => void;
 	/** 从别处（控制台运行块的读数）进来定位到这个节点：描边换成中性高亮，`aria-current="location"`。 */
 	located?: boolean;
 }) {
-	const started = item.source.started_at;
-	const axis = useMemo(() => {
-		if (started === null) return null;
-		const start = Date.parse(started);
-		const end = Date.parse(item.source.ended_at ?? generatedAt);
-		return { start, end: Math.max(end, start + 1000) };
-	}, [started, item.source.ended_at, generatedAt]);
+	const { started_at, ended_at } = item.source;
+	const axis = useMemo(
+		() => attemptWindow({ started_at, ended_at }, Date.parse(generatedAt)),
+		[started_at, ended_at, generatedAt],
+	);
 	const titleId = `focus-chart-${item.position}`;
-	const state = readingState(item, generatedAt);
+	const state = readingState(item, generatedAt, runEnded);
 
 	return (
 		<article
@@ -68,7 +70,9 @@ export function FocusChart({
 			{item.anomaly ? (
 				<AnomalyNote item={item} generatedAt={generatedAt} suffix={` · ${sourceNodeName(item)}`} />
 			) : (
-				<p className="m-0 font-mono text-xs text-fg-3">{readingFoot(item, generatedAt)}</p>
+				<p className="m-0 font-mono text-xs text-fg-3">
+					{readingFoot(item, generatedAt, runEnded)}
+				</p>
 			)}
 			{item.unavailable ? (
 				<p className="m-0 grid h-24 place-items-center text-xs text-fg-3">
@@ -83,7 +87,7 @@ export function FocusChart({
 					bucketSeconds={item.bucket_seconds}
 					staleSince={item.anomaly?.kind === "stale" ? item.last_at : null}
 					height={PLOT_HEIGHT}
-					label={readingLabel(item, generatedAt)}
+					label={readingLabel(item, generatedAt, runEnded)}
 					empty={state.kind === "empty" ? state.text : null}
 					gapText={anomalyText(item, generatedAt)}
 					hiddenNote={hiddenSeriesLabel.inView}

@@ -8,13 +8,13 @@ describe("排队任务的时间说明", () => {
 	it("写排队了多久和多久后排队超时", () => {
 		const task = { queued_at, queue_expires_at: "2026-01-01T00:10:00.000Z" };
 		expect(queueTiming(task, at(90))).toBe("排队 1m 30s · 8m 30s 后超时");
-		expect(queueTiming(task, at(5))).toBe("排队 5.0s · 9m 55s 后超时");
+		expect(queueTiming(task, at(5))).toBe("排队 5s · 9m 55s 后超时");
 	});
 
 	it("过了排队超时、控制面还没扫到时写「即将超时」", () => {
 		const task = { queued_at, queue_expires_at: "2026-01-01T00:00:30.000Z" };
-		expect(queueTiming(task, at(30))).toBe("排队 30.0s · 即将超时");
-		expect(queueTiming(task, at(33))).toBe("排队 33.0s · 即将超时");
+		expect(queueTiming(task, at(30))).toBe("排队 30s · 即将超时");
+		expect(queueTiming(task, at(33))).toBe("排队 33s · 即将超时");
 	});
 
 	it("没有设置排队超时的任务只写排队了多久", () => {

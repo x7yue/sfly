@@ -539,6 +539,8 @@ export interface DashboardRunningRun {
 	orchestration_name: string;
 	orchestration_version: number;
 	triggered_by: string;
+	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
+	triggered_via: string | null;
 	started_at: Timestamp;
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;

@@ -1,6 +1,7 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
 import {
 	type ActionResult,
+	type ChartView,
 	type CountOnlyPeriod,
 	focusChartMissing,
 	type LogLineView,
@@ -63,6 +64,14 @@ export const INSPECTOR_PAGE = {
 	docWithMetrics: "说明与指标",
 } as const;
 
+/** 图表类型：节点包管理页「声明的图表」、场景设置「关注项」页每一项的类型共用。 */
+export const CHART_TYPE_LABEL = {
+	line: "折线",
+	area: "面积",
+	bar: "柱状",
+	stat: "数值卡",
+} as const satisfies Record<ChartView["type"], string>;
+
 /** 节点用 `ctx.progress` 上报的进度：监控的图表工作区、时间线、运行抽屉、画布检查器共用（运行记录表里「进度」是各链进度，不是它）。 */
 export const PROGRESS_LABEL = "进度";
 
@@ -98,6 +107,10 @@ export const FOCUS = {
 	attentionCount: (count: number): string => `${count} 项${FOCUS.attention}`,
 	/** 只放得下前几项时，其余的个数（`moreLabel` 加上「关注项」）：控制台运行块读数区的最后一格、画布节点卡片和 Agent 槽位格的最后一行。 */
 	moreItems: (count: number): string => `${moreLabel(count)}${TERM.focusItem}`,
+	/** 场景没设关注项时，控制台运行块读数区的最后一格：放不下的是主指标，不是关注项。 */
+	morePrimary: (count: number): string => `${moreLabel(count)}${TERM.primaryMetric}`,
+	/** 场景设了关注项，但它们所在的节点都不在这次运行的版本里：概览和控制台运行块的读数区共用。 */
+	noneInRun: `这次运行里没有可显示的${TERM.focusItem}：场景设置的${TERM.focusItem}所在的节点不在这次运行的版本里。`,
 	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁、控制台运行块的读数区标题旁和 Agent 槽位格里的主指标共用这一句。 */
 	noneSet: `场景没有设置${TERM.focusItem}`,
 	/** 去场景设置的「关注项」页的入口：设了关注项是「调整关注项」，没设是「设置关注项」。 */
@@ -112,7 +125,7 @@ export const FOCUS = {
 	 * 异常原因的短句（规格 #344 的四种异常）：读数的脚注、图表卡片和别处的关注项读数都用这几句，
 	 * 由 `focus-format.ts` 的 `anomalyText` 按一项的 `anomaly` 选出。
 	 */
-	logReason: (level: string, clock: string) => `${level} · ${clock}`,
+	logReason: (count: number, level: string, clock: string) => `${count} 条 ${level} · ${clock}`,
 	staleFor: (ago: string) => `已 ${ago} 无新数据`,
 	sourceFailed: "来源节点失败",
 	retryReason: (attempt: number, clock: string) => `重试（${TERM.attempt} ${attempt}）· ${clock}`,
@@ -292,13 +305,22 @@ export const DURATION_LABEL = "耗时";
 export const slotUsageLabel = (used: number, slots: number) => `${used} / ${slots} 占用`;
 export const queuedLabel = (count: number) => `排队 ${count}`;
 
+/**
+ * 线路里当前站之前折起来的一段：都算完成的写「已完成 3 个」，不算完成的（取消的运行里已取消的节点）写它们的状态，
+ * 「已取消 4 个」。之后的一段是 {@link moreLabel}。
+ */
+export const FOLDED_LABEL = {
+	done: (count: number) => `已完成 ${count} 个`,
+	ended: (status: string, count: number) => `${status} ${count} 个`,
+} as const;
+
 /** 「还有 3 个」：列表或线路只画出前面一部分时，其余的个数（控制台的线路和进行中的节点、运行记录的卡片）。 */
 export const moreLabel = (count: number) => `还有 ${count} 个`;
 
 /**
  * 「进行中」：还没结束的统称，不等于任何一个状态名。运行抽屉的摘要里是还没结束、正在推进的节点（排队中、准备中、
  * 执行中、等待中）合起来的名称：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。控制台运行块
- * 的那一行同理。运行监控「动作」页的结果里是还没结束的动作（`NODE_ACTIONS.results.running`）。
+ * 和运行监控概览的链路里那一行同理。运行监控「动作」页的结果里是还没结束的动作（`NODE_ACTIONS.results.running`）。
  */
 export const ACTIVE_LABEL = "进行中";
 
@@ -394,11 +416,9 @@ export const RUNNING_PRIMARY_LABEL = `${NODE_STATUS.running.label}节点的${TER
 export const LIST_LABEL = {
 	legend: "图例",
 	chainProgress: "各链进度",
-	/** 运行监控的概览里，执行中的节点的列表；列表前的标题只写 `NODE_STATUS.running.label`。 */
-	runningNodes: `${NODE_STATUS.running.label}的${TERM.node}`,
 	/**
-	 * 运行抽屉的摘要、控制台的运行块里，还没结束、正在推进的节点（排队中、准备中、执行中、等待中）的列表，每个节点带自己的状态标签。
-	 * 说法不等于任何一个节点状态名；概览只列执行中的节点，用 `runningNodes`。
+	 * 运行抽屉的摘要、控制台的运行块和运行监控概览的链路里，还没结束、正在推进的节点（排队中、准备中、执行中、等待中）的列表，
+	 * 每个节点带自己的状态。说法不等于任何一个节点状态名。
 	 */
 	activeNodes: `${ACTIVE_LABEL}的${TERM.node}`,
 } as const;
@@ -426,6 +446,10 @@ export const MESSAGE = {
 	noAgents: "还没有 Agent 连接",
 	noPackages: "还没有发布节点包",
 	noScenarios: "还没有场景",
+	/** 控制台的场景列没有可列的场景：还没有新建过，或者都已归档（列表不含归档的）。两种情况下这句都是实话。 */
+	noScenariosListed: `没有${TERM.scenario}`,
+	/** 控制台的 Agent 列没有 Agent 时，去 Agent 管理页的链接：那里的空状态写着安装命令。 */
+	agentInstallLink: `打开 ${PAGE.agents}查看安装命令`,
 	noRuns: "没有运行记录",
 	noLogs: "还没有日志。",
 	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */
@@ -439,16 +463,36 @@ export const MESSAGE = {
 } as const;
 
 /**
- * 一次尝试没有数据时写什么：还没有开始执行写节点这个状态没有执行的原因（`NODE_STATUS` 的 `notRun`），已经开始还没有点写
- * 「还没有数据」，已经结束仍没有点写「这次尝试没有上报数据」。运行监控的概览（关注项读数）和详情（图表工作区）共用。
+ * 运行已经结束、节点一直是待执行（没有轮到它，或者所在的子流程没有触发）：它不会再执行了，不能再写「待执行」
+ * 「还没有开始执行」。状态写 `label`（和画布运行状态的「未执行」同一个词），没有数据的原因写 `note`。
+ */
+export const NOT_RUN_IN_ENDED_RUN = {
+	label: "未执行",
+	note: "这次运行没有执行",
+	/** 画布运行状态的检查器：选中的节点所在的子流程没有触发，运行中写「还没有」，运行结束后不再说「还」。 */
+	subflowNote: (runEnded: boolean) =>
+		`这个节点所在的子流程在这次运行里${runEnded ? "" : "还"}没有触发，没有运行记录。`,
+} as const;
+
+/**
+ * 一次尝试没有数据时写什么：还没有开始执行写节点这个状态没有执行的原因（`NODE_STATUS` 的 `notRun`；运行已经结束
+ * 还是待执行的写 {@link NOT_RUN_IN_ENDED_RUN}），已经开始还没有点写「还没有数据」，已经结束仍没有点写
+ * 「这次尝试没有上报数据」。运行监控的概览（关注项读数）和详情（图表工作区）共用。
  */
 export function noDataLabel(
 	attempt: { started_at: string | null; ended_at: string | null },
 	status: NodeStatus,
+	runEnded = false,
 ): string {
-	if (attempt.started_at === null) return notRunNote(status);
+	if (attempt.started_at === null) {
+		return runEnded && status === "pending" ? NOT_RUN_IN_ENDED_RUN.note : notRunNote(status);
+	}
 	return attempt.ended_at === null ? MESSAGE.noData : MESSAGE.noDataEnded;
 }
+
+/** 关注项来源节点的状态文字：运行已经结束、节点还是待执行时写「未执行」（{@link NOT_RUN_IN_ENDED_RUN}）。 */
+export const focusSourceStatus = (status: NodeStatus, runEnded: boolean): string =>
+	runEnded && status === "pending" ? NOT_RUN_IN_ENDED_RUN.label : NODE_STATUS[status].label;
 
 /**
  * 链和子流程的显示名称：画布、检查器、运行视图和运行通知的卡片共用（@sfly/orchestration 的 chain-label）。

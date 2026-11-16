@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { type ChartGroup, failedFirst } from "./chart-groups";
 import {
 	appendIncrement,
+	attemptWindow,
 	balancedColumns,
 	bucketAt,
 	bucketTimes,
@@ -68,6 +69,24 @@ describe("图表的时间范围", () => {
 		expect(
 			chartWindow({ started_at: at(10), ended_at: null }, { start: s(0), end: s(10) }, s(10)),
 		).toEqual({ start: s(10), end: s(11) });
+	});
+});
+
+describe("不随时间线缩放的图表的横轴", () => {
+	it("这次尝试的开始到结束；还没结束就到现在；刚开始至少 1 秒；还没开始没有横轴", () => {
+		expect(attemptWindow({ started_at: at(10), ended_at: at(40) }, s(90))).toEqual({
+			start: s(10),
+			end: s(40),
+		});
+		expect(attemptWindow({ started_at: at(10), ended_at: null }, s(30))).toEqual({
+			start: s(10),
+			end: s(30),
+		});
+		expect(attemptWindow({ started_at: at(10), ended_at: null }, s(10))).toEqual({
+			start: s(10),
+			end: s(11),
+		});
+		expect(attemptWindow({ started_at: null, ended_at: null }, s(30))).toBeNull();
 	});
 });
 

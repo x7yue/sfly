@@ -606,7 +606,7 @@ function ScenarioInspector({
 					<ScenarioOverview context={context} />
 				</TabsContent>
 				<TabsContent value="focus" className="overflow-auto px-3.5 py-3">
-					<FocusListPage orchestrationId={context.orchestrationId} />
+					<FocusListPage orchestrationId={context.orchestrationId} saved={context.saved} />
 				</TabsContent>
 			</Tabs>
 		</>

@@ -29,6 +29,7 @@ import {
 	ZOOM_IN_DETAIL_LABEL,
 } from "#/lib/copy";
 import { useNow } from "#/lib/use-now";
+import { attemptWindow } from "#/monitor/charts";
 import { seriesQuery } from "#/monitor/use-run-metrics";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -145,15 +146,7 @@ export function NodeCharts({
 	const attempt = node.attempts.find((a) => a.task_id === latest?.task_id);
 	const live = !!attempt?.started_at && attempt.ended_at === null;
 	const now = useNow(live);
-	const axis = attempt?.started_at
-		? {
-				start: Date.parse(attempt.started_at),
-				end: Math.max(
-					attempt.ended_at ? Date.parse(attempt.ended_at) : now,
-					Date.parse(attempt.started_at) + 1000,
-				),
-			}
-		: null;
+	const axis = attempt ? attemptWindow(attempt, now) : null;
 	const charts = orderCharts(entry.charts, readings?.items ?? [], (chart) =>
 		isFocused(focus.items, node.node_id, chart),
 	);

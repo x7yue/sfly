@@ -3,6 +3,7 @@ import { isOnAgentStatus } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef } from "react";
+import { activeDetail, activeOrder } from "#/components/active-node";
 import { listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
@@ -18,12 +19,13 @@ import {
 	ELAPSED_LABEL,
 	FOCUS,
 	LIST_LABEL,
+	MESSAGE,
 	MONITOR_VIEW_LABEL,
 	moreLabel,
 	RUNNING_PRIMARY_LABEL,
 	TERM,
 } from "#/lib/copy";
-import { formatClock, formatDuration, shortId } from "#/lib/format";
+import { formatElapsed, shortId } from "#/lib/format";
 import { useElementWidth } from "#/lib/use-element-width";
 import { useNow } from "#/lib/use-now";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
@@ -87,12 +89,12 @@ export function RunBlock({
 						</span>
 					</div>
 					<div className="mt-0.5 text-xs text-fg-3">
-						<TriggeredAt by={run.triggered_by} at={run.started_at} />
+						<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
 					</div>
 				</div>
 				<div className="flex-none text-right">
 					<span data-testid="run-elapsed" className="block font-mono text-2xl font-semibold">
-						{formatDuration(now - Date.parse(run.started_at))}
+						{formatElapsed(now - Date.parse(run.started_at))}
 					</span>
 					<span className="text-xs text-fg-3">{ELAPSED_LABEL}</span>
 				</div>
@@ -140,72 +142,81 @@ export function RunBlock({
 }
 
 /**
- * 运行块的读数区（`GET /runs/:id/focus?points=0`，只要最新值、异常和排序）。场景设了关注项：一排关注项读数，
- * 有异常的在最前，标题旁写「N 项需要注意」；按读数区的实际宽度放 3 或 4 格，有异常的总在里面，其余写
- * 「还有 N 个关注项 · 打开概览」；点一格进入运行监控概览并定位到它所在的节点。3 个以上运行时只放前 `limit` 项
- * （有异常的加上前两项，见 wall-rules 的 `readoutPlan`）。场景没设关注项：执行中节点的主指标，标题旁给出
- * 「设置关注项」。没有读数时不画这一块。
+ * 运行块的读数区（`GET /runs/:id/focus?points=0`，只要最新值、异常和排序）。场景设了关注项是一排关注项读数，没设是准备中、
+ * 执行中节点的主指标；两种都一样排：有异常的在最前，标题旁写「N 项需要注意」；按读数区的实际宽度放 3 或 4 格，有异常的总在
+ * 里面，其余写「还有 N 个关注项（主指标）· 打开概览」；点一格进入运行监控概览并定位到它所在的节点。3 个以上运行时只放前
+ * `limit` 项（有异常的加上前两项，见 wall-rules 的 `readoutPlan`）。标题行右侧总有去「关注项」页的入口；没设关注项时标题旁写明。
+ * 没有可显示的读数时写原因，读取失败时写「无法加载关注项」，都保留标题行。还没读到时不画这一块。
  */
 function RunReadout({ run, limit }: { run: DashboardRunningRun; limit: number | null }) {
 	const focus = useRunFocus(run.id, { live: true, points: 0 });
 	const [measure, width] = useElementWidth<HTMLElement>();
 	const data = focus.data;
-	if (!data || data.items.length === 0) return null;
-	if (data.mode === "primary") {
-		const items = limit === null ? data.items : data.items.slice(0, limit);
+	if (!data) {
+		if (!focus.isError) return null;
 		return (
-			<section ref={measure} aria-label={RUNNING_PRIMARY_LABEL} className="mt-3">
-				<ReadoutHeading
-					title={RUNNING_PRIMARY_LABEL}
-					orchestrationId={run.orchestration_id}
-					configured={false}
-				>
+			<section aria-label={TERM.focusItem} className="mt-3">
+				<ReadoutHeading title={TERM.focusItem} orchestrationId={null} configured={false}>
 					<RuleLine />
-					<span>{FOCUS.noneSet} ·</span>
 				</ReadoutHeading>
-				<FocusReadoutStrip
-					items={items}
-					generatedAt={data.generated_at}
-					className="rounded-md border border-border-soft"
-				/>
+				<p className="m-0 text-xs text-fg-3">{MESSAGE.loadFailed(TERM.focusItem)}</p>
 			</section>
 		);
 	}
+	const primary = data.mode === "primary";
+	const title = primary ? RUNNING_PRIMARY_LABEL : TERM.focusItem;
 	const { shown, more, attention, columns } = readoutPlan(data.items, width, limit);
+	const executing = run.active_nodes.some((node) => isOnAgentStatus(node.status));
 	return (
-		<section ref={measure} aria-label={TERM.focusItem} className="mt-3">
-			<ReadoutHeading title={TERM.focusItem} orchestrationId={run.orchestration_id} configured>
-				<span className="font-mono">{data.items.length}</span>
+		<section ref={measure} aria-label={title} className="mt-3">
+			<ReadoutHeading title={title} orchestrationId={run.orchestration_id} configured={!primary}>
+				{!primary && <span className="font-mono">{data.items.length}</span>}
 				{attention > 0 && <span className="text-warn-fg">· {FOCUS.attentionCount(attention)}</span>}
 				<RuleLine />
+				{primary && <span>{FOCUS.noneSet} ·</span>}
 			</ReadoutHeading>
-			<FocusReadoutStrip
-				items={shown}
-				generatedAt={data.generated_at}
-				columns={columns}
-				className="rounded-md border border-border-soft"
-				renderItem={(item) => (
-					<Link {...runMonitorLink(run.id, { view: "overview", node: item.node_id })} />
-				)}
-				trailing={
-					more > 0 && (
-						<Link
-							{...runMonitorLink(run.id, { view: "overview" })}
-							className="flex h-full min-w-0 items-center px-3 py-2 text-xs text-fg-2 no-underline hover:bg-fg-1/3 hover:text-fg-1"
-						>
-							<span>
-								<span className="whitespace-nowrap">{FOCUS.moreItems(more)}</span> ·{" "}
-								<span className="whitespace-nowrap">打开{MONITOR_VIEW_LABEL.overview}</span>
-							</span>
-						</Link>
-					)
-				}
-			/>
+			{data.items.length === 0 ? (
+				<p className="m-0 text-xs text-fg-3">
+					{primary
+						? executing
+							? MESSAGE.noPrimaryMetric
+							: MESSAGE.noRunningNodes
+						: FOCUS.noneInRun}
+				</p>
+			) : (
+				<FocusReadoutStrip
+					items={shown}
+					generatedAt={data.generated_at}
+					columns={columns}
+					className="rounded-md border border-border-soft"
+					renderItem={(item) => (
+						<Link {...runMonitorLink(run.id, { view: "overview", node: item.node_id })} />
+					)}
+					trailing={
+						more > 0 && (
+							<Link
+								{...runMonitorLink(run.id, { view: "overview" })}
+								className="flex h-full min-w-0 items-center px-3 py-2 text-xs text-fg-2 no-underline hover:bg-fg-1/3 hover:text-fg-1"
+							>
+								<span>
+									<span className="whitespace-nowrap">
+										{primary ? FOCUS.morePrimary(more) : FOCUS.moreItems(more)}
+									</span>{" "}
+									· <span className="whitespace-nowrap">打开{MONITOR_VIEW_LABEL.overview}</span>
+								</span>
+							</Link>
+						)
+					}
+				/>
+			)}
 		</section>
 	);
 }
 
-/** 读数区的标题行：标题、`children`（计数、分隔线、说明），右边是去场景设置「关注项」页的链接。 */
+/**
+ * 读数区的标题行：标题、`children`（计数、分隔线、说明），右边是去场景设置「关注项」页的链接；读取失败时
+ * 不知道场景设没设关注项，`orchestrationId` 传 null，不画链接。
+ */
 function ReadoutHeading({
 	title,
 	orchestrationId,
@@ -213,7 +224,7 @@ function ReadoutHeading({
 	children,
 }: {
 	title: string;
-	orchestrationId: string;
+	orchestrationId: string | null;
 	configured: boolean;
 	children: ReactNode;
 }) {
@@ -221,16 +232,14 @@ function ReadoutHeading({
 		<div className="mb-1.5 flex items-center gap-2 text-xs text-fg-3">
 			<h4 className="m-0 text-xs font-normal">{title}</h4>
 			{children}
-			<FocusSettingsLink orchestrationId={orchestrationId} configured={configured} />
+			{orchestrationId !== null && (
+				<FocusSettingsLink orchestrationId={orchestrationId} configured={configured} />
+			)}
 		</div>
 	);
 }
 
 const RuleLine = () => <span aria-hidden className="h-px min-w-4 flex-1 bg-border-soft" />;
-
-/** 先执行中（含准备中），再排队、等待；同一类按链与链上的顺序。 */
-const ORDER = (node: RunListActiveNode) =>
-	isOnAgentStatus(node.status) ? 0 : node.status === "queued" ? 1 : 2;
 
 /**
  * 进行中的节点那一行：节点、Agent、尝试号、已执行时长；准备中、排队中写状态，等待节点写唤醒时间。
@@ -246,7 +255,7 @@ function ActiveNodes({
 	now: number;
 }) {
 	if (nodes.length === 0) return null;
-	const ordered = [...nodes].sort((a, b) => ORDER(a) - ORDER(b));
+	const ordered = [...nodes].sort((a, b) => activeOrder(a) - activeOrder(b));
 	const shown = limit === null ? ordered : ordered.slice(0, limit);
 	return (
 		<div className="mt-3 flex items-baseline gap-x-4 border-t border-border-soft pt-2.5 text-xs">
@@ -273,19 +282,6 @@ function ActiveNodes({
 	);
 }
 
-/** 「agent-a · 尝试 2 · 1m 05s」；还没开始执行写状态，等待节点写「等待中 · 唤醒 10:30:00」。 */
-function activeDetail(node: RunListActiveNode, now: number): string {
-	const status = nodeStatusView(node.status);
-	if (node.agent === null) {
-		return node.wake_at === null
-			? status.label
-			: `${status.label} · 唤醒 ${formatClock(node.wake_at)}`;
-	}
-	const time =
-		node.started_at === null ? status.label : formatDuration(now - Date.parse(node.started_at));
-	return `${node.agent} · ${TERM.attempt} ${node.attempt} · ${time}`;
-}
-
 /**
  * 紧凑行（6 个以上运行时）：场景、运行编号、主链的线路缩略、当前节点、已运行，整行是展开按钮。
  * 紧凑行不取读数；展开后换成运行块。
@@ -307,7 +303,7 @@ export function CompactRunRow({
 		if (focusExpand) button.current?.focus();
 	}, [focusExpand]);
 	const [main] = lineChains(run.chains);
-	const current = [...run.active_nodes].sort((a, b) => ORDER(a) - ORDER(b))[0];
+	const current = [...run.active_nodes].sort((a, b) => activeOrder(a) - activeOrder(b))[0];
 	return (
 		<article
 			aria-label={`${TERM.run} ${shortId(run.id)}`}
@@ -350,7 +346,7 @@ export function CompactRunRow({
 				</span>
 				<span className="w-16 flex-none text-right font-mono text-sm">
 					<span className="sr-only">{ELAPSED_LABEL} </span>
-					{formatDuration(now - Date.parse(run.started_at))}
+					{formatElapsed(now - Date.parse(run.started_at))}
 				</span>
 				<ChevronDownIcon aria-hidden className="size-4 flex-none text-fg-3" />
 			</Truncate>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	foldLabel,
 	foldStations,
 	type LineChain,
 	type LineNode,
@@ -10,11 +11,9 @@ import {
 const chain = (statuses: string[], prefix = "n"): LineNode[] =>
 	statuses.map((status, i) => ({ node_id: `${prefix}${i + 1}`, status }));
 
-/** 折叠结果写成一行字：节点写 ID，折起来的一段写「已完成 N」「还有 N」。 */
+/** 折叠结果写成一行字：节点写 ID，折起来的一段写界面上的文字（「已完成 N」「还有 N」，去掉「个」）。 */
 const shape = (stations: Station[]) =>
-	stations.map((s) =>
-		s.kind === "node" ? s.node.node_id : `${s.side === "done" ? "已完成" : "还有"} ${s.count}`,
-	);
+	stations.map((s) => (s.kind === "node" ? s.node.node_id : foldLabel(s).replace(/ 个$/, "")));
 
 const repeat = (status: string, n: number) => Array.from({ length: n }, () => status);
 
@@ -103,6 +102,13 @@ describe("长链折叠", () => {
 			"n17",
 			"还有 3",
 		]);
+	});
+
+	it("取消的运行：已取消的节点不算进「已完成」，单独折成「已取消 N 个」", () => {
+		const nodes = chain([...repeat("success", 5), ...repeat("cancelled", 5)]);
+		expect(shape(foldStations(nodes))).toEqual(["已完成 5", "已取消 4", "n10"]);
+		const mixed = chain([...repeat("success", 3), "cancelled", ...repeat("success", 4)]);
+		expect(shape(foldStations(mixed))).toEqual(["已完成 3", "n4", "已完成 3", "n8"]);
 	});
 });
 

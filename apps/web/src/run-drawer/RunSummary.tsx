@@ -25,6 +25,7 @@ import {
 	formatClock,
 	formatDateTime,
 	formatDuration,
+	formatElapsed,
 	formatFullDateTime,
 	shortId,
 	spansOtherDay,
@@ -94,7 +95,9 @@ export function RunSummary({ runId }: { runId: string }) {
 				<span className="font-mono" data-slot="run-id">
 					{shortId(run.id)}
 				</span>
-				<span className="font-mono text-fg-3">{formatDuration(elapsed)}</span>
+				<span className="font-mono text-fg-3">
+					{run.ended_at ? formatDuration(elapsed) : formatElapsed(elapsed)}
+				</span>
 				<span className="ml-auto text-xs text-fg-3">
 					{run.triggered_by}
 					<ViaTag via={run.triggered_via} /> 触发 ·{" "}
@@ -217,7 +220,7 @@ function ActiveNode({
 				<NodeName node={node} />
 				{chain.depth > 0 && <span className="truncate text-xs text-fg-3">{chainLabel(chain)}</span>}
 				<span className="ml-auto font-mono text-2xs text-fg-3">
-					{[node.agent, since ? formatDuration(now - Date.parse(since)) : null]
+					{[node.agent, since ? formatElapsed(now - Date.parse(since)) : null]
 						.filter(Boolean)
 						.join(" · ")}
 				</span>

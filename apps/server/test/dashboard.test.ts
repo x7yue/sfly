@@ -183,6 +183,7 @@ describe("控制台统计", () => {
 			orchestration_name: "巡检",
 			orchestration_version: 1,
 			triggered_by: "tester",
+			triggered_via: null,
 			started_at: "2026-01-01T00:00:00.000Z",
 			cancelling: false,
 		});

@@ -5,7 +5,7 @@ import { Elapsed } from "#/components/elapsed";
 import { SlotCell } from "#/components/slot-cell";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { FocusValue } from "#/focus/FocusValue";
-import { anomalyText, readingWhen } from "#/focus/focus-format";
+import { anomalyText, readingState, readingWhen } from "#/focus/focus-format";
 import { FOCUS, MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
 import { Truncate } from "@/components/ui/truncate";
 import { type SlotFocus, slotContent, slotItemTitle } from "./slot-content";
@@ -97,6 +97,12 @@ function FocusRow({ item, focus }: { item: SlotFocus["shown"][number]; focus: Sl
 			: focus.mode === "primary"
 				? FOCUS.noneSet
 				: readingWhen(item, focus.generatedAt));
+	// 只有「2s 前」是数值，用等宽；最终值、没有值的原因和「场景没有设置关注项」是中文说明。
+	const numeric =
+		reason === null &&
+		!item.unavailable &&
+		focus.mode === "focus" &&
+		readingState(item, focus.generatedAt).kind === "live";
 	return (
 		<>
 			{reason !== null && <AnomalyMark className="flex-none" />}
@@ -104,16 +110,14 @@ function FocusRow({ item, focus }: { item: SlotFocus["shown"][number]; focus: Sl
 			{item.unavailable ? (
 				<Truncate className="text-fg-3">{FOCUS.chartMissing(item.chart)}</Truncate>
 			) : (
-				<FocusValue
-					item={item}
-					className={cn("text-xs font-normal", item.anomaly?.kind === "stale" && "text-fg-2")}
-				/>
+				<FocusValue item={item} className="text-xs font-normal" />
 			)}
 			{foot !== null && (
 				<span
 					className={cn(
 						"ml-auto flex-none pl-1.5",
-						reason === null ? "font-mono text-fg-3" : "text-warn-fg",
+						reason === null ? "text-fg-3" : "text-warn-fg",
+						numeric && "font-mono",
 					)}
 				>
 					{foot}

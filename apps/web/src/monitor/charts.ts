@@ -28,21 +28,37 @@ export type ChartBucket = Omit<MetricBucket, "agent_time"> & { agent_time: strin
 /** 图表横轴最短的时长：刚开始执行的节点也有可读的横轴。 */
 export const MIN_CHART_SPAN = 1000;
 
+type AttemptTimes = { started_at: string | null; ended_at: string | null };
+
+/** 这次尝试实际运行的时段：开始到结束，还没结束就到 `now`；还没开始执行时为 null。 */
+function attemptSpan(attempt: AttemptTimes, now: number): TimeRange | null {
+	if (attempt.started_at === null) return null;
+	const start = Date.parse(attempt.started_at);
+	return { start, end: attempt.ended_at === null ? now : Date.parse(attempt.ended_at) };
+}
+
 /**
- * 一张图表的横轴：节点（这次尝试）实际运行的时段（执行中到现在），与时间线当前显示的范围（拖选缩放）取交集。
+ * 不随时间线缩放的图表的横轴（概览的图表卡片、画布检查器的图表）：这次尝试的开始到结束（还没结束就到 `now`），
+ * 至少 {@link MIN_CHART_SPAN}。还没开始执行时为 null。
+ */
+export function attemptWindow(attempt: AttemptTimes, now: number): TimeRange | null {
+	const span = attemptSpan(attempt, now);
+	return span && { start: span.start, end: Math.max(span.end, span.start + MIN_CHART_SPAN) };
+}
+
+/**
+ * 运行监控详情里图表的横轴：这次尝试实际运行的时段（{@link attemptWindow}），与时间线当前显示的范围（拖选缩放）取交集。
  * 还没开始执行，或与显示的范围不相交时为 null。
  */
 export function chartWindow(
-	attempt: { started_at: string | null; ended_at: string | null },
+	attempt: AttemptTimes,
 	visible: TimeRange,
 	now: number,
 ): TimeRange | null {
-	if (attempt.started_at === null) return null;
-	const started = Date.parse(attempt.started_at);
-	const ended = attempt.ended_at === null ? now : Date.parse(attempt.ended_at);
-	if (ended < visible.start || started > visible.end) return null;
-	const start = Math.max(started, visible.start);
-	const end = Math.min(ended, visible.end);
+	const span = attemptSpan(attempt, now);
+	if (span === null || span.end < visible.start || span.start > visible.end) return null;
+	const start = Math.max(span.start, visible.start);
+	const end = Math.min(span.end, visible.end);
 	return { start, end: Math.max(end, start + MIN_CHART_SPAN) };
 }
 

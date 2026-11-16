@@ -142,7 +142,7 @@ describe("槽位格里的内容", () => {
 		);
 		const clock = formatClock(warn.at);
 		expect(content.summary).toBe(
-			`正在做 保持 4 小时，3 项需要注意：下单延迟 WARN · ${clock}；内存 已 2m 10s 无新数据；CPU WARN · ${clock}`,
+			`正在做 保持 4 小时，3 项需要注意：下单延迟 1 条 WARN · ${clock}；内存 已 2m 10s 无新数据；CPU 1 条 WARN · ${clock}`,
 		);
 	});
 

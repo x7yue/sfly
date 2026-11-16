@@ -1,5 +1,5 @@
 import type { AgentView, RunFocusItem } from "@sfly/schema";
-import { agentStatusView } from "#/agents/agent-status";
+import { acceptsTasks, agentStatusView } from "#/agents/agent-status";
 import { type FocusPreview, focusPreview } from "#/focus/focus-preview";
 
 /**
@@ -67,13 +67,15 @@ export function readoutPlan<T extends Pick<RunFocusItem, "anomaly">>(
 const AGENT_LIST_MAX = 5;
 
 /**
- * 控制台右栏的 Agent：不超过 5 台时全列；更多时只列忙碌（有执行中或排队的任务）、离线、更新中（以及安装中、版本不一致这些
- * 不是「在线」的状态）的 Agent，其余在线、空闲的合并成一个数。完整的列表在 Agent 管理页。
+ * 控制台右栏的 Agent：不超过 5 台时全列；更多时只列忙碌（有执行中或排队的任务）、接不了新任务（离线、准备环境中、版本不一致、
+ * 更新中，`acceptsTasks`）和其余不是「在线」状态（安装节点包中）的 Agent，其余在线、空闲、能接任务的合并成一个数。
+ * 完整的列表在 Agent 管理页。
  */
 export function agentColumn(agents: readonly AgentView[]): { listed: AgentView[]; idle: number } {
 	if (agents.length <= AGENT_LIST_MAX) return { listed: [...agents], idle: 0 };
 	const listed = agents.filter(
 		(agent) =>
+			!acceptsTasks(agent) ||
 			agentStatusView(agent).kind !== "ok" ||
 			agent.running_tasks.length > 0 ||
 			agent.queued_tasks.length > 0,

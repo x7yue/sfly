@@ -18,7 +18,7 @@ import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { controlPlaneNow } from "#/lib/control-plane-time";
 import { ACTION, AGENT_STATUS_LABEL, MESSAGE, TERM } from "#/lib/copy";
-import { formatDateTime, formatDuration } from "#/lib/format";
+import { formatDateTime, formatDuration, formatElapsed } from "#/lib/format";
 import { RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -119,7 +119,9 @@ function LastRunInfo({ run, className }: { run: LastRun | null; className?: stri
 			)}
 			<span className="font-mono">{formatDateTime(run.started_at)}</span>
 			<span className="@max-[22.5rem]/scenario:hidden">{run.triggered_by}</span>
-			<span className="font-mono">{formatDuration(end - new Date(run.started_at).getTime())}</span>
+			<span className="font-mono">
+				{(run.ended_at ? formatDuration : formatElapsed)(end - new Date(run.started_at).getTime())}
+			</span>
 		</span>
 	);
 }
