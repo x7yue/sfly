@@ -100,9 +100,17 @@ export function normalizeLogRow(row: Buffer): Buffer {
 	return Buffer.from(JSON.stringify(logLineView(JSON.parse(row.toString("utf8")))));
 }
 
-/** 保存的进度 → 接口里的进度。升级之前保存的只有一个 `time`（Agent 时间）：控制面时间未记录。 */
-export function taskProgressView(stored: TaskProgress): TaskProgressView {
-	const { current, total, message, time } = stored;
+/**
+ * 保存的进度 → 接口里的进度，说明按 `secrets`（运行此刻的全部 secret 值）打码。升级之前保存的只有一个 `time`
+ * （Agent 时间）：控制面时间未记录。
+ */
+export function taskProgressView(
+	stored: TaskProgress,
+	secrets: readonly string[],
+): TaskProgressView {
+	const { current, total, time } = stored;
+	// 写入时已经按那一刻的 secret 打过码；读取时再打一遍，之后才创建的子流程带来的 secret 也算（运行视图和 Agent 列表口径一样）。
+	const message = maskSecrets(stored.message, secrets);
 	return "agent_time" in stored
 		? { current, total, message, time, agent_time: stored.agent_time ?? null }
 		: { current, total, message, time: null, agent_time: time };

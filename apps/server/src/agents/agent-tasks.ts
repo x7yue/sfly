@@ -13,6 +13,7 @@ import {
 } from "../db/schema.js";
 import { nodeNameIn, subflowNameOf } from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
+import { secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 
 /** 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）。 */
@@ -26,7 +27,8 @@ export interface AgentTasks {
 /**
  * 符合 `where` 的任务（Agent 列表的 `running_tasks`、`queued_tasks`，立即更新返回的被终止任务）：
  * 任务行连上运行、场景和链实例，节点的显示名称、节点类型和子流程名称取自运行绑定的版本（不是场景现在的版本），
- * 占着槽位的任务带上存下的此刻在做的动作（src/actions/）和最新进度（写入时按那一刻这次运行已知的 secret 打码；运行视图读取时会按当时的 secret 再打一遍，这里不会）。
+ * 占着槽位的任务带上存下的此刻在做的动作（src/actions/）和最新进度，两者都按运行此刻的 secret 值再打一遍码
+ * （写入时按那一刻已知的打过；运行视图同一个口径）。
  * 版本文档按版本只读一次：排队的任务很多时，不会每个任务带一份文档。
  */
 export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promise<AgentTasks> {
@@ -68,6 +70,13 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 				).map((v) => [v.id, v.document]),
 	);
 
+	// 占着槽位的任务的进度说明和正在做的动作按运行此刻的 secret 值打码（和运行视图同一个口径）。
+	const secretsOf = await runSecretsOf(
+		db,
+		rows.filter((r) => r.status !== "queued"),
+		documents,
+	);
+
 	/** 没有 Agent（不会出现）或版本文档（外键保证有）的任务不列。 */
 	const identity = (row: (typeof rows)[number]) => {
 		const document = documents.get(row.versionId);
@@ -104,8 +113,8 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 					...found.fields,
 					status: row.status as RunningTaskView["status"],
 					started_at: row.startedAt?.toISOString() ?? null,
-					current_action: currentActionOfTask(row.status, row.currentAction),
-					progress: row.progress ? taskProgressView(row.progress) : null,
+					current_action: currentActionOfTask(row.status, row.currentAction, secretsOf(row.runId)),
+					progress: row.progress ? taskProgressView(row.progress, secretsOf(row.runId)) : null,
 				};
 				return [{ agent: found.agent, view }];
 			}),
@@ -120,4 +129,32 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 			return [{ agent: found.agent, view }];
 		}),
 	};
+}
+
+/**
+ * 这些任务所在的运行此刻的 secret 值（{@link secretValues}，和运行视图、日志同一个算法）：链实例按运行整批读一次。
+ * 返回按运行 ID 取的函数。
+ */
+async function runSecretsOf(
+	db: Db | Tx,
+	rows: ReadonlyArray<{ runId: string; versionId: string }>,
+	documents: ReadonlyMap<string, OrchestrationDocument>,
+): Promise<(runId: string) => string[]> {
+	const versionOf = new Map(rows.map((r) => [r.runId, r.versionId]));
+	if (versionOf.size === 0) return () => [];
+	const chains = await db
+		.select({
+			runId: chainInstances.runId,
+			chainId: chainInstances.chainId,
+			params: chainInstances.params,
+		})
+		.from(chainInstances)
+		.where(inArray(chainInstances.runId, [...versionOf.keys()]));
+	const secrets = new Map<string, string[]>();
+	for (const [runId, versionId] of versionOf) {
+		const document = documents.get(versionId);
+		const own = chains.filter((c) => c.runId === runId);
+		secrets.set(runId, document ? secretValues(document, own) : []);
+	}
+	return (runId) => secrets.get(runId) ?? [];
 }

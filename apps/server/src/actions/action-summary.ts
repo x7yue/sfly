@@ -8,6 +8,7 @@ import {
 } from "@sfly/schema";
 import { z } from "zod";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
+import { maskSecrets } from "../logs/secrets.js";
 import { actionField, actionName, actionReason } from "./action-text.js";
 
 /**
@@ -189,12 +190,16 @@ export function summaryOfTask(
 	return isDoing(status) ? stored : { ...stored, running: [], running_complete: true };
 }
 
-/** 任务此刻在做的动作：存下的那一个；任务已经结束时为 null。 */
+/**
+ * 任务此刻在做的动作：存下的那一个，名称按 `secrets`（运行此刻的全部 secret 值）再打一遍码（写入时已经按那一刻的打过，
+ * 之后才创建的子流程带来的 secret 也要算，和进度说明同一个口径）；任务已经结束时为 null。运行视图和 Agent 列表都用它。
+ */
 export function currentActionOfTask(
 	status: TaskStatus,
 	stored: CurrentAction | null,
+	secrets: readonly string[],
 ): CurrentAction | null {
-	return isDoing(status) ? stored : null;
+	return isDoing(status) && stored ? { ...stored, name: maskSecrets(stored.name, secrets) } : null;
 }
 
 /** 两个「此刻在做的动作」是不是同一个（名称和开始时间都相同）。 */

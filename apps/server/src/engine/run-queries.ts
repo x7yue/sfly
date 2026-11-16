@@ -12,7 +12,7 @@ import {
 	taskActionSummaries,
 	tasks,
 } from "../db/schema.js";
-import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
+import { maskDeep, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runListPreset, runPresetView } from "../presets/run-preset.js";
 import { agentFor, planRun } from "./chain.js";
@@ -132,13 +132,8 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						start_clock_offset: clockOffsetView(t.startClockOffsetMs, t.startClockOffsetMeasuredAt),
 						end_clock_offset: clockOffsetView(t.endClockOffsetMs, t.endClockOffsetMeasuredAt),
 						wake_at: iso(t.wakeAt),
-						progress: t.progress
-							? {
-									...taskProgressView(t.progress),
-									message: maskSecrets(t.progress.message, secrets),
-								}
-							: null,
-						current_action: currentActionOfTask(t.status, t.currentAction),
+						progress: t.progress ? taskProgressView(t.progress, secrets) : null,
+						current_action: currentActionOfTask(t.status, t.currentAction, secrets),
 					}));
 				const last = attempts.at(-1);
 				return {
