@@ -127,6 +127,28 @@ test("选中节点：卡片外隔开一圈中性描边，执行中节点的青�
 	await expect(fetch).toHaveCSS("outline-style", "none");
 });
 
+test("节点被滚进视野时画布不会被滚开：先把节点滚到顶端（浏览器聚焦、测试工具点击前都会这样做），点节点的中心仍然选中它", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { scenarioId, runId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 关掉跟随执行：镜头不动，量出来的中心点就是点击时节点的位置。
+	await page.addInitScript(() => localStorage.setItem("sfly.canvas.follow", "0"));
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 画布外层能被滚开的话，这一步会把它滚开，xyflow 随后滚回去，按滚开时算的中心点就点到了空白画布上。
+	const center = await nodeCard(page, "verify").evaluate((el) => {
+		el.scrollIntoView({ block: "start", inline: "start" });
+		const rect = el.getBoundingClientRect();
+		return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+	});
+	await page.mouse.click(center.x, center.y);
+	await expect(nodeCard(page, "verify")).toHaveAttribute("aria-pressed", "true");
+	await expect(inspector(page).getByTestId("run-summary")).toContainText("agent-a");
+});
+
 test("运行状态下 Enter 把焦点移到检查器、Esc 回到画布上的节点，焦点环都可见", async ({
 	page,
 	controlPlane,

@@ -349,6 +349,18 @@
 }
 
 /*
+ * 画布外层不能被滚动。xyflow 用行内样式把它设成 overflow: hidden，这样的元素仍然是滚动容器：聚焦节点、
+ * Playwright 点击前把元素滚进视野，都会把它滚开，xyflow 再在 scroll 事件里滚回去。中间画面跳一下，
+ * 按滚开时的位置算的点击落在空白画布上。clip 不是滚动容器，不会被滚开；行内样式只有 !important 压得过。
+ */
+@layer components {
+	.react-flow {
+		/* biome-ignore lint/complexity/noImportantStyles: 要压过 xyflow 的行内样式 overflow: hidden */
+		overflow: clip !important;
+	}
+}
+
+/*
  * 编排画布的运行状态 ↔ 运行监控（lib/view-transition.ts 按方向给出 type）：整页淡入淡出并朝前进的方向平移 12px，
  * 运行状态标签（vt-run-state）移动到另一页的位置。只有这一对入口发起过渡，减少动效时不发起，所以这里不再写降级。
  */
