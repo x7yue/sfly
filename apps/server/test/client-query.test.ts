@@ -201,7 +201,7 @@ describe("API 客户端查询测试控制面", () => {
 	it("读控制台统计、健康检查和飞书机器人", async () => {
 		const dashboard = await client.dashboard.get();
 		expect(dashboard.runs).toMatchObject({ success: 1, failed: 0 });
-		expect(dashboard.agents.list.map((a) => a.name)).toEqual(["agent-a", "agent-b"]);
+		expect(dashboard.agents).toMatchObject({ online: 0, offline: 2 });
 
 		expect(await client.system.health()).toMatchObject({ status: "ok", database: "ok" });
 		expect((await client.feishuBots.list()).bots).toEqual([]);

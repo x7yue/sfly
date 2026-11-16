@@ -1,13 +1,20 @@
 import { focusSeriesName, type RunFocusItem } from "@sfly/schema";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOCUS, LIST_LABEL, MONITOR_VIEW_LABEL } from "#/lib/copy";
 import type { ShownPick } from "#/monitor/charts";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { Button } from "@/components/ui/button";
+import { AnomalyNote } from "./AnomalyNote";
 import { FocusValue } from "./FocusValue";
 import { PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
-import { readingFoot, readingLabel, readingState, sourceNodeName } from "./focus-format";
+import {
+	anomalyText,
+	readingFoot,
+	readingLabel,
+	readingState,
+	sourceNodeName,
+} from "./focus-format";
 
 /** 绘图区的高度（px）；宽度取容器的实际宽度。 */
 const PLOT_HEIGHT = 156;
@@ -31,6 +38,8 @@ function useElementWidth<E extends HTMLElement>() {
  * 一个图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值、来源节点和多久前、按容器的实际尺寸画的图、
  * 序列多于一条时的图例，以及「在详情里打开」。图的横轴是来源节点这次尝试的开始到结束（还没结束就到读数生成的时刻），
  * 纵轴从 0 起。序列多于 10 条时只画平均值最高的那些（`shownSeries`），图例写明还有多少条。
+ * 有异常时「来源节点 · 多久前」一行换成琥珀三角、原因和来源节点；没有新数据时曲线停在最后一个点，之后到现在画斜线，
+ * 写明「已 2m 10s 无新数据」，图的可访问名称里也说明。
  */
 export function FocusChart({
 	item,
@@ -57,15 +66,25 @@ export function FocusChart({
 		const end = Date.parse(item.source.ended_at ?? generatedAt);
 		return { start, end: Math.max(end, start + 1000) };
 	}, [started, item.source.ended_at, generatedAt]);
+	const staleSince = item.anomaly?.kind === "stale" && item.last_at ? item.last_at : null;
 	const plot = useMemo(
 		() =>
 			axis && width > 0
-				? plotChart(series, axis, item.bucket_seconds, { width, height: PLOT_HEIGHT })
+				? plotChart(
+						series,
+						axis,
+						item.bucket_seconds,
+						{ width, height: PLOT_HEIGHT },
+						staleSince === null ? undefined : Date.parse(staleSince),
+					)
 				: null,
-		[axis, width, series, item.bucket_seconds],
+		[axis, width, series, item.bucket_seconds, staleSince],
 	);
 	const titleId = `focus-chart-${item.position}`;
+	const hatchId = useId();
 	const state = readingState(item, generatedAt);
+	const gap = plot?.gap ?? null;
+	const gapText = gap && anomalyText(item, generatedAt);
 
 	return (
 		<article
@@ -80,7 +99,11 @@ export function FocusChart({
 				</h3>
 				{!item.unavailable && <FocusValue item={item} className="ml-auto flex-none truncate" />}
 			</header>
-			<p className="m-0 font-mono text-xs text-fg-3">{readingFoot(item, generatedAt)}</p>
+			{item.anomaly ? (
+				<AnomalyNote item={item} generatedAt={generatedAt} suffix={` · ${sourceNodeName(item)}`} />
+			) : (
+				<p className="m-0 font-mono text-xs text-fg-3">{readingFoot(item, generatedAt)}</p>
+			)}
 			{item.unavailable ? (
 				<p className="m-0 grid h-24 place-items-center text-xs text-fg-3">
 					{FOCUS.chartMissing(item.chart)}
@@ -90,11 +113,34 @@ export function FocusChart({
 					{plot && (
 						<svg
 							role="img"
-							aria-label={readingLabel(item, generatedAt)}
+							aria-label={`${readingLabel(item, generatedAt)}${gap ? "，曲线停在最后一个点" : ""}`}
 							width={width}
 							height={PLOT_HEIGHT}
 							className="block"
 						>
+							{gap && (
+								<>
+									<defs>
+										<pattern
+											id={hatchId}
+											width={6}
+											height={6}
+											patternUnits="userSpaceOnUse"
+											patternTransform="rotate(45)"
+										>
+											<rect width={1.5} height={6} fill="var(--border-strong)" />
+										</pattern>
+									</defs>
+									<rect
+										data-stale-gap
+										x={gap.x}
+										y={PLOT_MARGIN.top}
+										width={gap.width}
+										height={PLOT_HEIGHT - PLOT_MARGIN.top - PLOT_MARGIN.bottom}
+										fill={`url(#${CSS.escape(hatchId)})`}
+									/>
+								</>
+							)}
 							{plot.yTicks.map((tick) => (
 								<g key={tick.label}>
 									<line
@@ -143,6 +189,19 @@ export function FocusChart({
 					{state.kind === "empty" && (
 						<span className="absolute inset-0 grid place-items-center pb-5 pl-11 text-xs text-fg-3">
 							{state.text}
+						</span>
+					)}
+					{gap && gapText && (
+						<span
+							aria-hidden="true"
+							className="absolute rounded-sm bg-surface px-1 text-xs whitespace-nowrap text-warn-fg"
+							style={{
+								bottom: PLOT_MARGIN.bottom + 6,
+								// 斜线在右半边时文字靠在它的左边，否则放进斜线里。
+								...(gap.x > width / 2 ? { right: width - gap.x + 6 } : { left: gap.x + 6 }),
+							}}
+						>
+							{gapText}
 						</span>
 					)}
 				</div>

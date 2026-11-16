@@ -2,6 +2,7 @@ import { z } from "zod";
 import { OrchestrationDocument } from "./orchestration-document.js";
 import { PackageMetadata } from "./package-metadata.js";
 
+export * from "./count-only-periods.js";
 export * from "./display-text.js";
 export * from "./focus-list.js";
 export * from "./focus-reading.js";

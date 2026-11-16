@@ -235,7 +235,7 @@ test.describe("卡片里的关注项", () => {
 			request?.json as { card: { body: { elements: Array<{ content: string }> } } }
 		).card.body.elements.map((e) => e.content);
 
-	test("场景设了关注项：运行失败后，卡片在失败的节点之后有「关注项」一段，写每一项运行结束时的值，来源节点失败的写明", async ({
+	test("场景设了关注项：运行失败后，卡片在失败的节点之后有「关注项」一段，写每一项运行结束时的值，来源节点失败的排在最前并写明", async ({
 		controlPlane,
 		connectAgent,
 		feishu,
@@ -282,10 +282,10 @@ test.describe("卡片里的关注项", () => {
 		expect(texts[2]).toBe(
 			[
 				"**关注项**",
+				"- 探活 level：8（节点失败）",
 				"- 下单延迟（latency_ms）：50 ms",
 				"- 请求数：390 次",
 				"- errors：1 次",
-				"- 探活 level：8（节点失败）",
 			].join("\n"),
 		);
 		expect(texts[0]).toContain(runId.slice(0, 8));

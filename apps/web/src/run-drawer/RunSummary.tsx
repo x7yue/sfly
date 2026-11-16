@@ -7,12 +7,19 @@ import {
 } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
-import { ChainBar, doneCount } from "#/components/chain-progress";
+import { ChainBar, chainProgressText } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { ACTIVE_LABEL, chainLabel as chainName, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import {
+	ACTIVE_LABEL,
+	chainLabel as chainName,
+	LIST_LABEL,
+	LOG_LEVEL_LABEL,
+	MESSAGE,
+	TERM,
+} from "#/lib/copy";
 import {
 	formatClock,
 	formatDateTime,
@@ -160,7 +167,6 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 }
 
 function ChainRow({ chain }: { chain: ChainRunView }) {
-	const done = doneCount(chain.nodes);
 	const label = chainLabelParts(chain);
 	return (
 		<li className="flex items-center gap-2.5 text-xs">
@@ -177,9 +183,7 @@ function ChainRow({ chain }: { chain: ChainRunView }) {
 				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name })}
 				nodes={chain.nodes}
 			/>
-			<span className="ml-auto font-mono text-2xs text-fg-3">
-				{done}/{chain.nodes.length}
-			</span>
+			<span className="ml-auto font-mono text-2xs text-fg-3">{chainProgressText(chain.nodes)}</span>
 		</li>
 	);
 }
@@ -262,10 +266,10 @@ function ActiveNode({
 }
 
 const LEVEL: Record<string, { label: string; className: string }> = {
-	debug: { label: "DEBUG", className: "text-log-debug" },
-	info: { label: "INFO", className: "text-log-info" },
-	warn: { label: "WARN", className: "text-log-warn" },
-	error: { label: "ERROR", className: "text-log-error" },
+	debug: { label: LOG_LEVEL_LABEL.debug, className: "text-log-debug" },
+	info: { label: LOG_LEVEL_LABEL.info, className: "text-log-info" },
+	warn: { label: LOG_LEVEL_LABEL.warn, className: "text-log-warn" },
+	error: { label: LOG_LEVEL_LABEL.error, className: "text-log-error" },
 };
 
 const NO_FILTER: never[] = [];
@@ -282,7 +286,13 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	)
 		? formatFullDateTime
 		: formatClock;
-	if (logs.error) return <p className="m-0 text-xs text-danger-fg">无法加载日志：{logs.error}</p>;
+	if (logs.error) {
+		return (
+			<p className="m-0 text-xs text-danger-fg">
+				{MESSAGE.loadFailed("日志")}：{logs.error}
+			</p>
+		);
+	}
 	if (!logs.loaded) return <Skeleton className="h-16 w-full" />;
 	if (lines.length === 0) return <p className="m-0 text-xs text-fg-3">还没有日志。</p>;
 	return (

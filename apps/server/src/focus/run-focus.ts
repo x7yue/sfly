@@ -19,6 +19,7 @@ import type { Tx } from "../engine/step.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
+import { focusAnomaly, isFinalStatus, SAMPLE_POINTS, sampleIntervalMs } from "./focus-anomaly.js";
 import type { FocusItem } from "./focus-list.js";
 import { declaredNodeType } from "./focus-views.js";
 
@@ -40,16 +41,23 @@ export interface RunFocusOptions {
 
 type AttemptRow = Pick<
 	typeof tasks.$inferSelect,
-	"id" | "chainInstanceId" | "nodeId" | "attempt" | "agentName" | "status" | "startedAt" | "endedAt"
+	| "id"
+	| "chainInstanceId"
+	| "nodeId"
+	| "attempt"
+	| "agentName"
+	| "status"
+	| "queuedAt"
+	| "startedAt"
+	| "endedAt"
+	| "errorMessage"
+	| "logIssues"
 >;
 
 /** 被跳过的节点、还没开始就被取消或停止的尝试只是占位，不算尝试（与运行视图一致）。 */
 const isPlaceholder = (t: Pick<AttemptRow, "status" | "startedAt">) =>
 	t.status === "skipped" ||
 	((t.status === "cancelled" || t.status === "stopped") && t.startedAt === null);
-
-/** 来源节点成功或已停止：只显示最终值。 */
-const isFinal = (status: NodeStatus) => status === "success" || status === "stopped";
 
 const iso = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 const isoOrNull = (date: Date | null) => (date ? date.toISOString() : null);
@@ -62,6 +70,8 @@ interface Source {
 	status: NodeStatus;
 	/** 最新一次尝试；节点还没有尝试时为 undefined。 */
 	attempt: AttemptRow | undefined;
+	/** 上一次尝试的错误信息（最新一次是重试时，重试的原因）；没有时为 null。 */
+	previousError: string | null;
 	type: NodeTypeView | undefined;
 }
 
@@ -80,14 +90,15 @@ interface Reading {
 
 /**
  * 一次运行的关注项读数（`GET /runs/:id/focus`，契约见 @sfly/schema 的 `RunFocus`）：场景设了关注项就按作者的顺序，
- * 没设就是准备中、执行中节点的主指标。运行不存在（或编号不是 UUID）时为 undefined。
+ * 没设就是准备中、执行中节点的主指标；有异常的项（focus-anomaly.ts）排在前面，两部分各自保持原来的顺序。
+ * 运行不存在（或编号不是 UUID）时为 undefined。
  *
  * - 只返回节点在这次运行绑定的版本里的项（`position` 仍是它在作者列表里的位置）；设了关注项时，
  *   节点还没开始也照样返回，所在的子流程还没触发的节点状态是 pending，没有链实例（`source.chain_instance_id` 为 null）。
  * - 来源是节点最新一次尝试的任务；图表的定义取这次运行绑定的版本锁定的节点包版本，那个版本里没有这张图表时
  *   `unavailable` 是 `chart_missing`。开发版本取 Agent 当前加载的源码，不一定是运行当时的定义。
- * - 数值卡只有第一个序列，其余图表是声明的全部序列；`latest` 是最近更新的那个序列的最后一个点。
- * - `anomaly` 和 `sample_interval_ms` 目前一律是 null。
+ * - 数值卡只有第一个序列，其余图表是声明的全部序列；`latest` 是最近更新的那个序列的最后一个点，采样间隔也按这个序列
+ *   最近的点估算。
  */
 export async function resolveRunFocus(
 	deps: RunFocusDeps,
@@ -141,35 +152,43 @@ export async function resolveRunFocus(
 	const sources = new Map<string, Source>();
 	for (const nodeId of wanted) {
 		const at = placed.get(nodeId) ?? { chainInstanceId: null, status: "pending" as const };
-		const attempt = attempts.get(nodeId);
+		const { latest: attempt, previous } = attempts.get(nodeId) ?? {};
 		sources.set(nodeId, {
 			...at,
 			displayName: nodeNameIn(document, nodeId),
 			attempt,
+			previousError: previous?.errorMessage ?? null,
 			type: await declaredNodeType(db, document, nodeId, attempt?.agentName),
 		});
 	}
 
 	const readings = mode === "focus" ? focusReadings(authored, sources) : primaryReadings(sources);
 	const reads = await readSeries(deps, expired, sources, readings, points);
+	const items = readings.map((reading) =>
+		itemOf(
+			reading,
+			sources.get(reading.nodeId) as Source,
+			reads.get(reading.nodeId),
+			points,
+			generatedAt,
+		),
+	);
 	return {
 		generated_at: generatedAt.toISOString(),
 		mode,
 		expired,
-		items: readings.map((reading) =>
-			itemOf(reading, sources.get(reading.nodeId) as Source, reads.get(reading.nodeId), points),
-		),
+		items: [...items.filter((i) => i.anomaly), ...items.filter((i) => !i.anomaly)],
 	};
 }
 
-/** 这些节点各自最新一次尝试（不含占位）。 */
+/** 这些节点各自最新一次尝试和它前面的一次（都不含占位）。 */
 async function latestAttempts(
 	db: Db | Tx,
 	runId: string,
 	nodeIds: readonly string[],
-): Promise<Map<string, AttemptRow>> {
-	const latest = new Map<string, AttemptRow>();
-	if (nodeIds.length === 0) return latest;
+): Promise<Map<string, { latest: AttemptRow; previous: AttemptRow | undefined }>> {
+	const found = new Map<string, { latest: AttemptRow; previous: AttemptRow | undefined }>();
+	if (nodeIds.length === 0) return found;
 	const rows = await db
 		.select({
 			id: tasks.id,
@@ -178,14 +197,21 @@ async function latestAttempts(
 			attempt: tasks.attempt,
 			agentName: tasks.agentName,
 			status: tasks.status,
+			queuedAt: tasks.queuedAt,
 			startedAt: tasks.startedAt,
 			endedAt: tasks.endedAt,
+			errorMessage: tasks.errorMessage,
+			logIssues: tasks.logIssues,
 		})
 		.from(tasks)
 		.where(and(eq(tasks.runId, runId), inArray(tasks.nodeId, [...nodeIds])))
 		.orderBy(asc(tasks.attempt));
-	for (const row of rows) if (!isPlaceholder(row)) latest.set(row.nodeId, row);
-	return latest;
+	for (const row of rows) {
+		if (!isPlaceholder(row)) {
+			found.set(row.nodeId, { latest: row, previous: found.get(row.nodeId)?.latest });
+		}
+	}
+	return found;
 }
 
 const unitOf = (metrics: readonly MetricDeclaration[] | undefined, name: string | undefined) =>
@@ -260,7 +286,13 @@ async function readSeries(
 			nodeId,
 			await deps.queries.taskSeries(
 				attempt.id,
-				{ declared: type.metrics ?? [], names: [...names], expired, points: Math.max(1, points) },
+				{
+					declared: type.metrics ?? [],
+					names: [...names],
+					expired,
+					points: Math.max(1, points),
+					recent: SAMPLE_POINTS,
+				},
 				deps.db,
 			),
 		);
@@ -288,12 +320,13 @@ const focusSeries = (s: SeriesRead): FocusSeries => ({
 	})),
 });
 
-/** 一项的读数：来源节点的状态、图表引用的指标和序列、最新值。 */
+/** 一项的读数：来源节点的状态、图表引用的指标和序列、最新值、采样间隔和异常（按 `now` 判断）。 */
 function itemOf(
 	reading: Reading,
 	source: Source,
 	read: TaskSeriesRead | undefined,
 	points: number,
+	now: Date,
 ): RunFocusItem {
 	const { attempt } = source;
 	const series = read ? seriesOf(reading, read) : [];
@@ -302,6 +335,18 @@ function itemOf(
 	for (const s of series) {
 		if (s.end && (!latest || s.end.at > latest.end.at)) latest = { end: s.end, series: s };
 	}
+	const interval = latest ? sampleIntervalMs(latest.series.recent) : null;
+	const anomaly = focusAnomaly(
+		{
+			status: source.status,
+			attempt,
+			previousError: source.previousError,
+			chartMissing: reading.chartMissing,
+			lastAt: latest ? latest.end.at * 1000 : null,
+			sampleIntervalMs: interval,
+		},
+		now,
+	);
 	return {
 		position: reading.position,
 		node_id: reading.nodeId,
@@ -334,8 +379,8 @@ function itemOf(
 		series: points === 0 ? [] : series.map(focusSeries),
 		bucket_seconds: read?.bucketSeconds ?? 1,
 		last_at: latest ? iso(latest.end.at) : null,
-		sample_interval_ms: null,
-		final: isFinal(source.status),
-		anomaly: null,
+		sample_interval_ms: interval,
+		final: isFinalStatus(source.status),
+		anomaly,
 	};
 }

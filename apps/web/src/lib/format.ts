@@ -104,6 +104,9 @@ export function formatClockMs(time: number | string): string {
 /** 指标值：`1.2M`、`12.3k`、`812`、`3.14`；和运行通知的卡片共用同一个定义。 */
 export { formatMetric } from "@sfly/schema";
 
+/** 整数加千位分隔：`1,284,819`（计数）。 */
+export const formatInteger = (n: number): string => Math.round(n).toLocaleString("en-US");
+
 /** 一个值在界面上怎么写：字符串原样，其余按 JSON（预设参数的值、保存的值）。 */
 export const valueText = (value: unknown): string =>
 	typeof value === "string" ? value : JSON.stringify(value);

@@ -16,13 +16,21 @@
 //   200 段；查询的数据是 1 小时 × 200 个序列（72 万个点）。
 // - query_300_chart_50 / query_300_chart_100：同一份带标签的数据，按运行监控页的用法只查一张图表引用的指标
 //   （#153）：1 个指标（50 个序列）、2 个指标（100 个序列，标准节点 process_monitor 最大的按进程图表），300 个桶。
+// - focus_*：关注项读数（resolveRunFocus）的读法，`taskSeries` 带 `recent`（每个序列另给最近 10 个点的时间，算采样间隔），
+//   与不带 `recent` 的同一个查询成对出现，差值就是多读的那一次（数据都已写库，每次都要读库里最近的段）：
+//   focus_1 是 10 个指标、1 个桶（只要最新值的读数），focus_60_chart_100 是一张图表的 2 个带标签指标（100 个序列）、
+//   60 个桶（概览的图表）。
+// - focus_c8_* / focus_c32_*：同样的两种读法，8 个、32 个并发读同一个任务（几个人同时开着概览，每 2 秒各读一次），
+//   带与不带 `recent`；一次迭代 = 一批并发读，吞吐 = 并发数 / 平均耗时。延迟之外，同一个测试再用 pg_stat_database
+//   在每种情况前后取差，打印每次读的库访问量（`[focus-db]` 开头的几行），看带 `recent` 多给数据库添了多少负载。
 import { create } from "@bufbuild/protobuf";
 import { MetricBatchSchema } from "@sfly/proto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, test } from "vitest";
 import { ConnectionClock } from "../../src/agents/agent-clock.js";
 import { type Database, openDatabase } from "../../src/db/database.js";
 import { tasks } from "../../src/db/schema.js";
+import { SAMPLE_POINTS } from "../../src/focus/focus-anomaly.js";
 import { MetricQueries } from "../../src/metrics/metric-queries.js";
 import { MetricRetention } from "../../src/metrics/metric-retention.js";
 import { type MetricSource, SEGMENT_POINTS, TaskMetrics } from "../../src/metrics/task-metrics.js";
@@ -258,3 +266,97 @@ test("一张图表的带标签降采样查询", async ({ bench }) => {
 	await bench("query_300_chart_50", () => one(300)).run(LABELED_RUN);
 	await bench("query_300_chart_100", () => two(300)).run(LABELED_RUN);
 });
+
+test("关注项读数的序列查询（带最近点的时间）", async ({ bench }) => {
+	const read = (task: BenchTask, names: readonly string[], points: number, recent: boolean) => () =>
+		queries.taskSeries(task.taskId, {
+			declared: names.map((name) => ({
+				name,
+				unit: "",
+				kind: "gauge" as const,
+				...(task === labeledQueryTask && { labels: ["pid", "name"] }),
+			})),
+			names,
+			expired: false,
+			points,
+			...(recent && { recent: SAMPLE_POINTS }),
+		});
+	const chart = LABELED_METRICS.slice(0, CHART_SERIES / PROCESSES.length);
+	// 先核对一次：每个序列都读到了最近 10 个点的时间，每秒一个。
+	for (const [task, names] of [
+		[queryTask, METRICS],
+		[labeledQueryTask, chart],
+	] as const) {
+		const { series } = await read(task, names, 1, true)();
+		for (const s of series) {
+			const last = s.recent.at(-1) ?? 0;
+			if (s.recent.length !== SAMPLE_POINTS || last - (s.recent[0] ?? 0) !== SAMPLE_POINTS - 1) {
+				throw new Error(`${s.name} 最近的点不对：${s.recent.join(",")}`);
+			}
+		}
+	}
+	await bench("focus_1", read(queryTask, METRICS, 1, false)).run(RUN);
+	await bench("focus_1_recent", read(queryTask, METRICS, 1, true)).run(RUN);
+	await bench("focus_60_chart_100", read(labeledQueryTask, chart, 60, false)).run(LABELED_RUN);
+	await bench("focus_60_chart_100_recent", read(labeledQueryTask, chart, 60, true)).run(
+		LABELED_RUN,
+	);
+});
+
+/** 同一时刻有 n 个读在途，共 batches 批。 */
+const concurrently = (read: () => Promise<unknown>, n: number) => async () => {
+	await Promise.all(Array.from({ length: n }, read));
+};
+
+/**
+ * 当前库的累计访问量（pg_stat_database）。各连接空闲时才把统计刷出来，刚刷过的连接要等 10 秒（PGSTAT_IDLE_INTERVAL）
+ * 才会再刷一次：读之前等够，前面的迭代才不会算进这一段里。
+ */
+const dbCounters = async () => {
+	await new Promise((resolve) => setTimeout(resolve, 11_000));
+	const { rows } = await database.db.execute(sql`
+		SELECT blks_hit + blks_read AS blocks, blks_read AS disk_blocks, tup_returned AS returned,
+		       tup_fetched AS fetched, xact_commit AS xacts
+		FROM pg_stat_database WHERE datname = current_database()`);
+	const row = rows[0] as Record<string, string>;
+	return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, Number(v)]));
+};
+
+test("关注项读数的并发读（8、32 个并发，带与不带最近点的时间）", async ({ bench }) => {
+	const read = (task: BenchTask, names: readonly string[], points: number, recent: boolean) => () =>
+		queries.taskSeries(task.taskId, {
+			declared: names.map((name) => ({
+				name,
+				unit: "",
+				kind: "gauge" as const,
+				...(task === labeledQueryTask && { labels: ["pid", "name"] }),
+			})),
+			names,
+			expired: false,
+			points,
+			...(recent && { recent: SAMPLE_POINTS }),
+		});
+	const chart = LABELED_METRICS.slice(0, CHART_SERIES / PROCESSES.length);
+	const shapes = [
+		{ id: "1", task: queryTask, names: METRICS, points: 1, run: RUN },
+		{ id: "chart_100", task: labeledQueryTask, names: chart, points: 60, run: LABELED_RUN },
+	] as const;
+	const DB_BATCHES = 20;
+	for (const shape of shapes) {
+		for (const n of [8, 32]) {
+			for (const recent of [false, true]) {
+				const name = `focus_c${n}_${shape.id}${recent ? "_recent" : ""}`;
+				const batch = concurrently(read(shape.task, shape.names, shape.points, recent), n);
+				await bench(name, batch).run(shape.run);
+				const before = await dbCounters();
+				for (let i = 0; i < DB_BATCHES; i++) await batch();
+				const after = await dbCounters();
+				const per = (k: string) =>
+					(((after[k] ?? 0) - (before[k] ?? 0)) / (n * DB_BATCHES)).toFixed(1);
+				console.log(
+					`[focus-db] ${name} 每次读：访问 ${per("blocks")} 个块（读盘 ${per("disk_blocks")}），返回 ${per("returned")} 行，取 ${per("fetched")} 行，${per("xacts")} 个事务`,
+				);
+			}
+		}
+	}
+}, 900_000);

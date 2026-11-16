@@ -3,7 +3,7 @@ import { z } from "zod";
 import { MONITOR_VIEWS } from "./monitor-view";
 
 /** 底部面板的页签。 */
-export const PANEL_TABS = ["logs", "attempts", "io", "artifacts"] as const;
+export const PANEL_TABS = ["logs", "actions", "attempts", "io", "artifacts"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 /**

@@ -13,17 +13,21 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { actionCount } from "#/actions/action-table";
+import { useActionSummary } from "#/actions/use-task-actions";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { MESSAGE } from "#/lib/copy";
+import { ACTION, LOG_LEVEL_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
 	formatDuration,
 	formatFullDateTime,
+	formatInteger,
+	formatMetric,
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
@@ -32,7 +36,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Truncate } from "@/components/ui/truncate";
+import { ActionsTab } from "./ActionsTab";
 import { attemptAgentTimes } from "./attempt-clock";
+import { Hint } from "./Hint";
 import { LogList, type LogReveal } from "./LogList";
 import type { LoadedLine } from "./log-buffer";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
@@ -65,6 +71,7 @@ import { type LogMoment, taskLogDownloadPath, useTaskLogs } from "./use-task-log
 
 const TABS: [PanelTab, string][] = [
 	["logs", "日志"],
+	["actions", TERM.action],
 	["attempts", "尝试"],
 	["io", "输入输出"],
 	["artifacts", "产物"],
@@ -74,9 +81,9 @@ const TABS: [PanelTab, string][] = [
 type MinLevel = "all" | "info" | "warn" | "error";
 const MIN_LEVELS: [MinLevel, string][] = [
 	["all", "全部"],
-	["info", "INFO"],
-	["warn", "WARN"],
-	["error", "ERROR"],
+	["info", LOG_LEVEL_LABEL.info],
+	["warn", LOG_LEVEL_LABEL.warn],
+	["error", LOG_LEVEL_LABEL.error],
 ];
 const levelsFrom = (min: MinLevel): LogLineView["level"][] =>
 	min === "all" ? [] : LOG_LEVELS.slice(LOG_LEVELS.indexOf(min));
@@ -97,7 +104,7 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 };
 
 /**
- * 底部面板（原型 bpBody）：日志、尝试、输入输出、产物四个页签，范围跟随时间线上选中的节点
+ * 底部面板（原型 bpBody）：日志、动作、尝试、输入输出、产物五个页签，范围跟随时间线上选中的节点
  * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter），两者都没有时是全部节点：
  * 日志页签把范围内节点的日志合并显示（#222、#224），点来源节点名切到这个节点的单节点日志。
  * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
@@ -175,6 +182,12 @@ export function BottomPanel({
 	const collapsed = panelOpen === null ? empty : !panelOpen;
 	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
 	const grows = !collapsed && height === null;
+	// 「动作」页签上的个数：看着「动作」页时由它的推送更新，没在看、任务还在执行时定时重新读。
+	const actionSummary = useActionSummary(
+		attempt?.task_id,
+		attempt?.status === "running" && !(tab === "actions" && !collapsed),
+	).data;
+	const actionsShown = actionSummary && actionSummary.total > 0 ? actionCount(actionSummary) : null;
 	return (
 		<section
 			ref={panel}
@@ -210,9 +223,19 @@ export function BottomPanel({
 							<TabsTrigger
 								key={value}
 								value={value}
+								aria-label={
+									value === "actions" && actionsShown !== null
+										? `${TERM.action}，共 ${formatInteger(actionsShown)} 个`
+										: undefined
+								}
 								className="relative -mb-0 h-full gap-0 border-b-0 px-3 pt-0 pb-0 text-fg-3 data-active:border-transparent data-active:text-fg-1 data-active:after:absolute data-active:after:right-2 data-active:after:bottom-0 data-active:after:left-2 data-active:after:h-0.5 data-active:after:bg-primary"
 							>
 								{label}
+								{value === "actions" && actionsShown !== null && (
+									<span aria-hidden className="ml-1 font-mono text-2xs text-fg-3">
+										{formatMetric(actionsShown)}
+									</span>
+								)}
 							</TabsTrigger>
 						))}
 					</TabsList>
@@ -268,7 +291,7 @@ export function BottomPanel({
 							</>
 						)}
 						<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
-							{collapsed ? "展开" : "收起"}
+							{collapsed ? ACTION.expand : ACTION.collapse}
 						</Button>
 					</div>
 				</div>
@@ -307,6 +330,17 @@ export function BottomPanel({
 									onEmpty={setLogsEmpty}
 									onOrigin={showOrigin}
 								/>
+							))}
+						{tab === "actions" &&
+							(attempt && node ? (
+								<ActionsTab
+									key={attempt.task_id}
+									node={node}
+									attempt={attempt}
+									day={run.started_at}
+								/>
+							) : (
+								<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的动作。"}</Hint>
 							))}
 						{tab === "attempts" && (
 							<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
@@ -373,10 +407,6 @@ function ScopeLabel({
 }
 
 const noAttempt = (node: NodeRunView) => `${runNodeName(node)} ${NODE_STATUS[node.status].notRun}`;
-
-function Hint({ children }: { children: ReactNode }) {
-	return <p className="m-0 p-4 text-sm text-fg-3">{children}</p>;
-}
 
 function Segmented({
 	label,
@@ -604,7 +634,7 @@ function LogsView<L extends LogLineView>({
 			{lines.length === 0 && !logs.hasOlder && !logs.hasNewer ? (
 				<Hint>
 					{logs.expired
-						? "这次运行的日志已超过保留期，已被清理。"
+						? MESSAGE.logsExpired
 						: filtered || scoped || zoom
 							? "没有符合条件的日志。"
 							: noOutput}

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file sfly/agent/v1/agent.proto.
  */
 export const file_sfly_agent_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIusDCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASLQoJaGVhcnRiZWF0GAIgASgLMhguc2ZseS5hZ2VudC52MS5IZWFydGJlYXRIABItCgdzdGFydGVkGAMgASgLMhouc2ZseS5hZ2VudC52MS5UYXNrU3RhcnRlZEgAEicKBGxvZ3MYBCABKAsyFy5zZmx5LmFnZW50LnYxLkxvZ0JhdGNoSAASKwoIcHJvZ3Jlc3MYBSABKAsyFy5zZmx5LmFnZW50LnYxLlByb2dyZXNzSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAEi0KB21ldHJpY3MYCCABKAsyGi5zZmx5LmFnZW50LnYxLk1ldHJpY0JhdGNoSAASMwoMbm90aWZpY2F0aW9uGAkgASgLMhsuc2ZseS5hZ2VudC52MS5Ob3RpZmljYXRpb25IABI2Cg5hY3Rpb25fc3VtbWFyeRgKIAEoCzIcLnNmbHkuYWdlbnQudjEuQWN0aW9uU3VtbWFyeUgAQgYKBGJvZHki7wEKDVNlcnZlck1lc3NhZ2USKQoHd2VsY29tZRgBIAEoCzIWLnNmbHkuYWdlbnQudjEuV2VsY29tZUgAEisKBmFzc2lnbhgCIAEoCzIZLnNmbHkuYWdlbnQudjEuQXNzaWduVGFza0gAEisKBmNhbmNlbBgDIAEoCzIZLnNmbHkuYWdlbnQudjEuQ2FuY2VsVGFza0gAEiEKA2FjaxgEIAEoCzISLnNmbHkuYWdlbnQudjEuQWNrSAASLgoKdXBkYXRlX25vdxgFIAEoCzIYLnNmbHkuYWdlbnQudjEuVXBkYXRlTm93SABCBgoEYm9keSKTAwoFSGVsbG8SDAoEbmFtZRgBIAEoCRINCgV0b2tlbhgCIAEoCRIVCg1hZ2VudF92ZXJzaW9uGAMgASgJEgoKAm9zGAQgASgJEgwKBGFyY2gYBSABKAkSDQoFc2xvdHMYBiABKA0SOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAcgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlEi8KDGRldl9wYWNrYWdlcxgIIAMoCzIZLnNmbHkuYWdlbnQudjEuRGV2UGFja2FnZRIxCg1ydW5uaW5nX3Rhc2tzGAkgAygLMhouc2ZseS5hZ2VudC52MS5SdW5uaW5nVGFzaxIaChJhZ2VudF90aW1lX3VuaXhfbXMYCiABKAMSFAoMbW9ub3RvbmljX21zGAsgASgDEi8KDGNhcGFiaWxpdGllcxgMIAMoCzIZLnNmbHkuYWdlbnQudjEuQ2FwYWJpbGl0eRIpCgRwZWVyGA0gASgLMhsuc2ZseS5hZ2VudC52MS5QZWVyRW5kcG9pbnQiKwoKQ2FwYWJpbGl0eRIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKA0iSgoMUGVlckVuZHBvaW50EgwKBHBvcnQYASABKA0SFgoOcHVibGljX2FkZHJlc3MYAiABKAkSFAoMbGlzdGVuX2Vycm9yGAMgASgJIkAKC1J1bm5pbmdUYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdzdGFydGVkGAMgASgIIpwBCglIZWFydGJlYXQSMQoNcnVubmluZ190YXNrcxgBIAMoCzIaLnNmbHkuYWdlbnQudjEuUnVubmluZ1Rhc2sSKgoGdXBkYXRlGAIgASgLMhouc2ZseS5hZ2VudC52MS5BZ2VudFVwZGF0ZRIaChJhZ2VudF90aW1lX3VuaXhfbXMYAyABKAMSFAoMbW9ub3RvbmljX21zGAQgASgDImYKC0FnZW50VXBkYXRlEi4KBXN0YXRlGAEgASgOMh8uc2ZseS5hZ2VudC52MS5BZ2VudFVwZGF0ZVN0YXRlEhcKD3JlbWFpbmluZ190YXNrcxgCIAEoDRIOCgZyZWFzb24YAyABKAkiYQoLVGFza1N0YXJ0ZWQSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEhoKEmFnZW50X3RpbWVfdW5peF9tcxgDIAEoAxIUCgxtb25vdG9uaWNfbXMYBCABKAMiQQoKRGV2UGFja2FnZRIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRIVCg1tZXRhZGF0YV9qc29uGAMgASgJIjEKEEluc3RhbGxlZFBhY2thZ2USDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIpgCCgdXZWxjb21lEjQKDGRpc3Bvc2l0aW9ucxgBIAMoCzIeLnNmbHkuYWdlbnQudjEuVGFza0Rpc3Bvc2l0aW9uEh0KFWhlYXJ0YmVhdF9pbnRlcnZhbF9tcxgCIAEoDRIVCg1zZGtfd2hlZWxfdXJsGAMgASgJEhgKEHNka193aGVlbF9zaGEyNTYYBCABKAkSEwoLcHlwaV9taXJyb3IYBSABKAkSHQoVZ2l0aHViX3JlbGVhc2VfbWlycm9yGAYgASgJEhwKFHRhcmdldF9hZ2VudF92ZXJzaW9uGAcgASgJEhgKEGFnZW50X2JpbmFyeV91cmwYCCABKAkSGwoTYWdlbnRfYmluYXJ5X3NoYTI1NhgJIAEoCSJeCg9UYXNrRGlzcG9zaXRpb24SDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEikKBmFjdGlvbhgDIAEoDjIZLnNmbHkuYWdlbnQudjEuVGFza0FjdGlvbiLaAgoKQXNzaWduVGFzaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDwoHcGFja2FnZRgDIAEoCRIXCg9wYWNrYWdlX3ZlcnNpb24YBCABKAkSDAoEbm9kZRgFIAEoCRITCgtpbnB1dHNfanNvbhgGIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYByABKA0SDgoGcnVuX2lkGAggASgJEg8KB25vZGVfaWQYCSABKAkSFgoOcGFja2FnZV9zaGEyNTYYCiABKAkSEwoLcGFja2FnZV91cmwYCyABKAkSGwoTYXJ0aWZhY3RfdXBsb2FkX3VybBgMIAEoCRI5ChFyZWZlcmVuY2VkX2FnZW50cxgNIAMoCzIeLnNmbHkuYWdlbnQudjEuUmVmZXJlbmNlZEFnZW50Eh4KFnJlZmVyZW5jZWRfZmVpc2h1X2JvdHMYDiADKAkiWgoPUmVmZXJlbmNlZEFnZW50EgwKBG5hbWUYASABKAkSDwoHYWRkcmVzcxgCIAEoCRIMCgRwb3J0GAMgASgNEhoKEnVuYXZhaWxhYmxlX3JlYXNvbhgEIAEoCSI9CgpDYW5jZWxUYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRINCgVmb3JjZRgDIAEoCCILCglVcGRhdGVOb3ci7AEKDUluc3RhbGxTdGF0dXMSDwoHcGFja2FnZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEioKBXN0YXRlGAMgASgOMhsuc2ZseS5hZ2VudC52MS5JbnN0YWxsU3RhdGUSDwoHdGFza19pZBgEIAEoCRIOCgZvdXRwdXQYBSABKAkSOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAYgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlEi8KDGRldl9wYWNrYWdlcxgHIAMoCzIZLnNmbHkuYWdlbnQudjEuRGV2UGFja2FnZSJTCghMb2dCYXRjaBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SJQoFbGluZXMYAyADKAsyFi5zZmx5LmFnZW50LnYxLkxvZ0xpbmUiogEKB0xvZ0xpbmUSCwoDc2VxGAEgASgEEhQKDHRpbWVfdW5peF9tcxgCIAEoAxIoCgZzb3VyY2UYAyABKA4yGC5zZmx5LmFnZW50LnYxLkxvZ1NvdXJjZRImCgVsZXZlbBgEIAEoDjIXLnNmbHkuYWdlbnQudjEuTG9nTGV2ZWwSDAoEdGV4dBgFIAEoCRIUCgxtb25vdG9uaWNfbXMYBiABKAMimAEKCFByb2dyZXNzEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdjdXJyZW50GAMgASgBEhIKBXRvdGFsGAQgASgBSACIAQESDwoHbWVzc2FnZRgFIAEoCRIUCgx0aW1lX3VuaXhfbXMYBiABKAMSFAoMbW9ub3RvbmljX21zGAcgASgDQggKBl90b3RhbCJzCgtNZXRyaWNCYXRjaBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKgoGcG9pbnRzGAMgAygLMhouc2ZseS5hZ2VudC52MS5NZXRyaWNQb2ludBIWCg5kcm9wcGVkX3BvaW50cxgEIAEoBCLWAQoLTWV0cmljUG9pbnQSDAoEbmFtZRgBIAEoCRITCgt0aW1lX3VuaXhfcxgCIAEoAxINCgV2YWx1ZRgDIAEoARILCgNtaW4YBCABKAESCwoDbWF4GAUgASgBEjYKBmxhYmVscxgGIAMoCzImLnNmbHkuYWdlbnQudjEuTWV0cmljUG9pbnQuTGFiZWxzRW50cnkSFAoMbW9ub3RvbmljX21zGAcgASgDGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiRAoMTm90aWZpY2F0aW9uEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRISCgpldmVudF9qc29uGAMgASgJIkUKDUFjdGlvblN1bW1hcnkSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEhIKCmV2ZW50X2pzb24YAyABKAkiygEKClRhc2tSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEikKBnN0YXR1cxgDIAEoDjIZLnNmbHkuYWdlbnQudjEuVGFza1N0YXR1cxIUCgxvdXRwdXRzX2pzb24YBCABKAkSJwoFZXJyb3IYBSABKAsyGC5zZmx5LmFnZW50LnYxLlRhc2tFcnJvchIaChJhZ2VudF90aW1lX3VuaXhfbXMYBiABKAMSFAoMbW9ub3RvbmljX21zGAcgASgDIkQKCVRhc2tFcnJvchImCgRraW5kGAEgASgOMhguc2ZseS5hZ2VudC52MS5FcnJvcktpbmQSDwoHbWVzc2FnZRgCIAEoCSInCgNBY2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNKpICChBBZ2VudFVwZGF0ZVN0YXRlEiIKHkFHRU5UX1VQREFURV9TVEFURV9VTlNQRUNJRklFRBAAEhsKF0FHRU5UX1VQREFURV9TVEFURV9OT05FEAESIgoeQUdFTlRfVVBEQVRFX1NUQVRFX0RPV05MT0FESU5HEAISKAokQUdFTlRfVVBEQVRFX1NUQVRFX1dBSVRJTkdfRk9SX1RBU0tTEAMSIAocQUdFTlRfVVBEQVRFX1NUQVRFX1JFUExBQ0lORxAEEh0KGUFHRU5UX1VQREFURV9TVEFURV9GQUlMRUQQBRIuCipBR0VOVF9VUERBVEVfU1RBVEVfTUFOVUFMX1VQR1JBREVfUkVRVUlSRUQQBipcCgpUYXNrQWN0aW9uEhsKF1RBU0tfQUNUSU9OX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19BQ1RJT05fQ09OVElOVUUQARIXChNUQVNLX0FDVElPTl9BQkFORE9OEAIqggEKDEluc3RhbGxTdGF0ZRIdChlJTlNUQUxMX1NUQVRFX1VOU1BFQ0lGSUVEEAASHAoYSU5TVEFMTF9TVEFURV9JTlNUQUxMSU5HEAESGwoXSU5TVEFMTF9TVEFURV9JTlNUQUxMRUQQAhIYChRJTlNUQUxMX1NUQVRFX0ZBSUxFRBADKn8KCUxvZ1NvdXJjZRIaChZMT0dfU09VUkNFX1VOU1BFQ0lGSUVEEAASFQoRTE9HX1NPVVJDRV9TVERPVVQQARIVChFMT0dfU09VUkNFX1NUREVSUhACEhIKDkxPR19TT1VSQ0VfU0RLEAMSFAoQTE9HX1NPVVJDRV9BR0VOVBAEKncKCExvZ0xldmVsEhkKFUxPR19MRVZFTF9VTlNQRUNJRklFRBAAEhMKD0xPR19MRVZFTF9ERUJVRxABEhIKDkxPR19MRVZFTF9JTkZPEAISEgoOTE9HX0xFVkVMX1dBUk4QAxITCg9MT0dfTEVWRUxfRVJST1IQBCp1CgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACEhkKFVRBU0tfU1RBVFVTX0NBTkNFTExFRBADKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
+  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIpoECgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASLQoJaGVhcnRiZWF0GAIgASgLMhguc2ZseS5hZ2VudC52MS5IZWFydGJlYXRIABItCgdzdGFydGVkGAMgASgLMhouc2ZseS5hZ2VudC52MS5UYXNrU3RhcnRlZEgAEicKBGxvZ3MYBCABKAsyFy5zZmx5LmFnZW50LnYxLkxvZ0JhdGNoSAASKwoIcHJvZ3Jlc3MYBSABKAsyFy5zZmx5LmFnZW50LnYxLlByb2dyZXNzSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAEi0KB21ldHJpY3MYCCABKAsyGi5zZmx5LmFnZW50LnYxLk1ldHJpY0JhdGNoSAASMwoMbm90aWZpY2F0aW9uGAkgASgLMhsuc2ZseS5hZ2VudC52MS5Ob3RpZmljYXRpb25IABI2Cg5hY3Rpb25fc3VtbWFyeRgKIAEoCzIcLnNmbHkuYWdlbnQudjEuQWN0aW9uU3VtbWFyeUgAEi0KB2FjdGlvbnMYCyABKAsyGi5zZmx5LmFnZW50LnYxLkFjdGlvbkJhdGNoSABCBgoEYm9keSLvAQoNU2VydmVyTWVzc2FnZRIpCgd3ZWxjb21lGAEgASgLMhYuc2ZseS5hZ2VudC52MS5XZWxjb21lSAASKwoGYXNzaWduGAIgASgLMhkuc2ZseS5hZ2VudC52MS5Bc3NpZ25UYXNrSAASKwoGY2FuY2VsGAMgASgLMhkuc2ZseS5hZ2VudC52MS5DYW5jZWxUYXNrSAASIQoDYWNrGAQgASgLMhIuc2ZseS5hZ2VudC52MS5BY2tIABIuCgp1cGRhdGVfbm93GAUgASgLMhguc2ZseS5hZ2VudC52MS5VcGRhdGVOb3dIAEIGCgRib2R5IpMDCgVIZWxsbxIMCgRuYW1lGAEgASgJEg0KBXRva2VuGAIgASgJEhUKDWFnZW50X3ZlcnNpb24YAyABKAkSCgoCb3MYBCABKAkSDAoEYXJjaBgFIAEoCRINCgVzbG90cxgGIAEoDRI7ChJpbnN0YWxsZWRfcGFja2FnZXMYByADKAsyHy5zZmx5LmFnZW50LnYxLkluc3RhbGxlZFBhY2thZ2USLwoMZGV2X3BhY2thZ2VzGAggAygLMhkuc2ZseS5hZ2VudC52MS5EZXZQYWNrYWdlEjEKDXJ1bm5pbmdfdGFza3MYCSADKAsyGi5zZmx5LmFnZW50LnYxLlJ1bm5pbmdUYXNrEhoKEmFnZW50X3RpbWVfdW5peF9tcxgKIAEoAxIUCgxtb25vdG9uaWNfbXMYCyABKAMSLwoMY2FwYWJpbGl0aWVzGAwgAygLMhkuc2ZseS5hZ2VudC52MS5DYXBhYmlsaXR5EikKBHBlZXIYDSABKAsyGy5zZmx5LmFnZW50LnYxLlBlZXJFbmRwb2ludCIrCgpDYXBhYmlsaXR5EgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoDSJKCgxQZWVyRW5kcG9pbnQSDAoEcG9ydBgBIAEoDRIWCg5wdWJsaWNfYWRkcmVzcxgCIAEoCRIUCgxsaXN0ZW5fZXJyb3IYAyABKAkiQAoLUnVubmluZ1Rhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB3N0YXJ0ZWQYAyABKAginAEKCUhlYXJ0YmVhdBIxCg1ydW5uaW5nX3Rhc2tzGAEgAygLMhouc2ZseS5hZ2VudC52MS5SdW5uaW5nVGFzaxIqCgZ1cGRhdGUYAiABKAsyGi5zZmx5LmFnZW50LnYxLkFnZW50VXBkYXRlEhoKEmFnZW50X3RpbWVfdW5peF9tcxgDIAEoAxIUCgxtb25vdG9uaWNfbXMYBCABKAMiZgoLQWdlbnRVcGRhdGUSLgoFc3RhdGUYASABKA4yHy5zZmx5LmFnZW50LnYxLkFnZW50VXBkYXRlU3RhdGUSFwoPcmVtYWluaW5nX3Rhc2tzGAIgASgNEg4KBnJlYXNvbhgDIAEoCSJhCgtUYXNrU3RhcnRlZBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SGgoSYWdlbnRfdGltZV91bml4X21zGAMgASgDEhQKDG1vbm90b25pY19tcxgEIAEoAyJBCgpEZXZQYWNrYWdlEgwKBG5hbWUYASABKAkSDgoGc291cmNlGAIgASgJEhUKDW1ldGFkYXRhX2pzb24YAyABKAkiMQoQSW5zdGFsbGVkUGFja2FnZRIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkimAIKB1dlbGNvbWUSNAoMZGlzcG9zaXRpb25zGAEgAygLMh4uc2ZseS5hZ2VudC52MS5UYXNrRGlzcG9zaXRpb24SHQoVaGVhcnRiZWF0X2ludGVydmFsX21zGAIgASgNEhUKDXNka193aGVlbF91cmwYAyABKAkSGAoQc2RrX3doZWVsX3NoYTI1NhgEIAEoCRITCgtweXBpX21pcnJvchgFIAEoCRIdChVnaXRodWJfcmVsZWFzZV9taXJyb3IYBiABKAkSHAoUdGFyZ2V0X2FnZW50X3ZlcnNpb24YByABKAkSGAoQYWdlbnRfYmluYXJ5X3VybBgIIAEoCRIbChNhZ2VudF9iaW5hcnlfc2hhMjU2GAkgASgJIl4KD1Rhc2tEaXNwb3NpdGlvbhIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGYWN0aW9uGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrQWN0aW9uItoCCgpBc3NpZ25UYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdwYWNrYWdlGAMgASgJEhcKD3BhY2thZ2VfdmVyc2lvbhgEIAEoCRIMCgRub2RlGAUgASgJEhMKC2lucHV0c19qc29uGAYgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgHIAEoDRIOCgZydW5faWQYCCABKAkSDwoHbm9kZV9pZBgJIAEoCRIWCg5wYWNrYWdlX3NoYTI1NhgKIAEoCRITCgtwYWNrYWdlX3VybBgLIAEoCRIbChNhcnRpZmFjdF91cGxvYWRfdXJsGAwgASgJEjkKEXJlZmVyZW5jZWRfYWdlbnRzGA0gAygLMh4uc2ZseS5hZ2VudC52MS5SZWZlcmVuY2VkQWdlbnQSHgoWcmVmZXJlbmNlZF9mZWlzaHVfYm90cxgOIAMoCSJaCg9SZWZlcmVuY2VkQWdlbnQSDAoEbmFtZRgBIAEoCRIPCgdhZGRyZXNzGAIgASgJEgwKBHBvcnQYAyABKA0SGgoSdW5hdmFpbGFibGVfcmVhc29uGAQgASgJIj0KCkNhbmNlbFRhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg0KBWZvcmNlGAMgASgIIgsKCVVwZGF0ZU5vdyLsAQoNSW5zdGFsbFN0YXR1cxIPCgdwYWNrYWdlGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSKgoFc3RhdGUYAyABKA4yGy5zZmx5LmFnZW50LnYxLkluc3RhbGxTdGF0ZRIPCgd0YXNrX2lkGAQgASgJEg4KBm91dHB1dBgFIAEoCRI7ChJpbnN0YWxsZWRfcGFja2FnZXMYBiADKAsyHy5zZmx5LmFnZW50LnYxLkluc3RhbGxlZFBhY2thZ2USLwoMZGV2X3BhY2thZ2VzGAcgAygLMhkuc2ZseS5hZ2VudC52MS5EZXZQYWNrYWdlIlMKCExvZ0JhdGNoEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIlCgVsaW5lcxgDIAMoCzIWLnNmbHkuYWdlbnQudjEuTG9nTGluZSKiAQoHTG9nTGluZRILCgNzZXEYASABKAQSFAoMdGltZV91bml4X21zGAIgASgDEigKBnNvdXJjZRgDIAEoDjIYLnNmbHkuYWdlbnQudjEuTG9nU291cmNlEiYKBWxldmVsGAQgASgOMhcuc2ZseS5hZ2VudC52MS5Mb2dMZXZlbBIMCgR0ZXh0GAUgASgJEhQKDG1vbm90b25pY19tcxgGIAEoAyKYAQoIUHJvZ3Jlc3MSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB2N1cnJlbnQYAyABKAESEgoFdG90YWwYBCABKAFIAIgBARIPCgdtZXNzYWdlGAUgASgJEhQKDHRpbWVfdW5peF9tcxgGIAEoAxIUCgxtb25vdG9uaWNfbXMYByABKANCCAoGX3RvdGFsInMKC01ldHJpY0JhdGNoEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIqCgZwb2ludHMYAyADKAsyGi5zZmx5LmFnZW50LnYxLk1ldHJpY1BvaW50EhYKDmRyb3BwZWRfcG9pbnRzGAQgASgEItYBCgtNZXRyaWNQb2ludBIMCgRuYW1lGAEgASgJEhMKC3RpbWVfdW5peF9zGAIgASgDEg0KBXZhbHVlGAMgASgBEgsKA21pbhgEIAEoARILCgNtYXgYBSABKAESNgoGbGFiZWxzGAYgAygLMiYuc2ZseS5hZ2VudC52MS5NZXRyaWNQb2ludC5MYWJlbHNFbnRyeRIUCgxtb25vdG9uaWNfbXMYByABKAMaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJECgxOb3RpZmljYXRpb24SDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEhIKCmV2ZW50X2pzb24YAyABKAkiRQoNQWN0aW9uU3VtbWFyeRIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SEgoKZXZlbnRfanNvbhgDIAEoCSJbCgtBY3Rpb25CYXRjaBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKgoGZXZlbnRzGAMgAygLMhouc2ZseS5hZ2VudC52MS5BY3Rpb25FdmVudCLCAQoLQWN0aW9uRXZlbnQSFAoMdGltZV91bml4X21zGAEgASgDEhQKDG1vbm90b25pY19tcxgCIAEoAxIrCgVzdGFydBgDIAEoCzIaLnNmbHkuYWdlbnQudjEuQWN0aW9uU3RhcnRIABInCgNlbmQYBCABKAsyGC5zZmx5LmFnZW50LnYxLkFjdGlvbkVuZEgAEikKBG1hcmsYBSABKAsyGS5zZmx5LmFnZW50LnYxLkFjdGlvbk1hcmtIAEIGCgRraW5kIpABCgtBY3Rpb25TdGFydBIKCgJpZBgBIAEoBBITCgZwYXJlbnQYAiABKARIAIgBARINCgVkZXB0aBgDIAEoDRIMCgRuYW1lGAQgASgJEioKBmZpZWxkcxgFIAMoCzIaLnNmbHkuYWdlbnQudjEuQWN0aW9uRmllbGQSDAoEbGF0ZRgGIAEoCEIJCgdfcGFyZW50IpABCglBY3Rpb25FbmQSCgoCaWQYASABKAQSKwoGcmVzdWx0GAIgASgOMhsuc2ZseS5hZ2VudC52MS5BY3Rpb25SZXN1bHQSEwoGcmVhc29uGAMgASgJSACIAQESKgoGZmllbGRzGAQgAygLMhouc2ZseS5hZ2VudC52MS5BY3Rpb25GaWVsZEIJCgdfcmVhc29uIoEBCgpBY3Rpb25NYXJrEgoKAmlkGAEgASgEEhMKBnBhcmVudBgCIAEoBEgAiAEBEg0KBWRlcHRoGAMgASgNEgwKBG5hbWUYBCABKAkSKgoGZmllbGRzGAUgAygLMhouc2ZseS5hZ2VudC52MS5BY3Rpb25GaWVsZEIJCgdfcGFyZW50IikKC0FjdGlvbkZpZWxkEgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCSLKAQoKVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGc3RhdHVzGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrU3RhdHVzEhQKDG91dHB1dHNfanNvbhgEIAEoCRInCgVlcnJvchgFIAEoCzIYLnNmbHkuYWdlbnQudjEuVGFza0Vycm9yEhoKEmFnZW50X3RpbWVfdW5peF9tcxgGIAEoAxIUCgxtb25vdG9uaWNfbXMYByABKAMiRAoJVGFza0Vycm9yEiYKBGtpbmQYASABKA4yGC5zZmx5LmFnZW50LnYxLkVycm9yS2luZBIPCgdtZXNzYWdlGAIgASgJIicKA0FjaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0qkgIKEEFnZW50VXBkYXRlU3RhdGUSIgoeQUdFTlRfVVBEQVRFX1NUQVRFX1VOU1BFQ0lGSUVEEAASGwoXQUdFTlRfVVBEQVRFX1NUQVRFX05PTkUQARIiCh5BR0VOVF9VUERBVEVfU1RBVEVfRE9XTkxPQURJTkcQAhIoCiRBR0VOVF9VUERBVEVfU1RBVEVfV0FJVElOR19GT1JfVEFTS1MQAxIgChxBR0VOVF9VUERBVEVfU1RBVEVfUkVQTEFDSU5HEAQSHQoZQUdFTlRfVVBEQVRFX1NUQVRFX0ZBSUxFRBAFEi4KKkFHRU5UX1VQREFURV9TVEFURV9NQU5VQUxfVVBHUkFERV9SRVFVSVJFRBAGKlwKClRhc2tBY3Rpb24SGwoXVEFTS19BQ1RJT05fVU5TUEVDSUZJRUQQABIYChRUQVNLX0FDVElPTl9DT05USU5VRRABEhcKE1RBU0tfQUNUSU9OX0FCQU5ET04QAiqCAQoMSW5zdGFsbFN0YXRlEh0KGUlOU1RBTExfU1RBVEVfVU5TUEVDSUZJRUQQABIcChhJTlNUQUxMX1NUQVRFX0lOU1RBTExJTkcQARIbChdJTlNUQUxMX1NUQVRFX0lOU1RBTExFRBACEhgKFElOU1RBTExfU1RBVEVfRkFJTEVEEAMqfwoJTG9nU291cmNlEhoKFkxPR19TT1VSQ0VfVU5TUEVDSUZJRUQQABIVChFMT0dfU09VUkNFX1NURE9VVBABEhUKEUxPR19TT1VSQ0VfU1RERVJSEAISEgoOTE9HX1NPVVJDRV9TREsQAxIUChBMT0dfU09VUkNFX0FHRU5UEAQqdwoITG9nTGV2ZWwSGQoVTE9HX0xFVkVMX1VOU1BFQ0lGSUVEEAASEwoPTE9HX0xFVkVMX0RFQlVHEAESEgoOTE9HX0xFVkVMX0lORk8QAhISCg5MT0dfTEVWRUxfV0FSThADEhMKD0xPR19MRVZFTF9FUlJPUhAEKoABCgxBY3Rpb25SZXN1bHQSHQoZQUNUSU9OX1JFU1VMVF9VTlNQRUNJRklFRBAAEhkKFUFDVElPTl9SRVNVTFRfU1VDQ0VTUxABEhgKFEFDVElPTl9SRVNVTFRfRkFJTEVEEAISHAoYQUNUSU9OX1JFU1VMVF9VTkZJTklTSEVEEAMqdQoKVGFza1N0YXR1cxIbChdUQVNLX1NUQVRVU19VTlNQRUNJRklFRBAAEhcKE1RBU0tfU1RBVFVTX1NVQ0NFU1MQARIWChJUQVNLX1NUQVRVU19GQUlMRUQQAhIZChVUQVNLX1NUQVRVU19DQU5DRUxMRUQQAyqsAQoJRXJyb3JLaW5kEhoKFkVSUk9SX0tJTkRfVU5TUEVDSUZJRUQQABIZChVFUlJPUl9LSU5EX05PREVfRVJST1IQARIWChJFUlJPUl9LSU5EX1RJTUVPVVQQAhIZChVFUlJPUl9LSU5EX0FHRU5UX0xPU1QQAxIYChRFUlJPUl9LSU5EX0VOVl9FUlJPUhAEEhsKF0VSUk9SX0tJTkRfQ09ORklHX0VSUk9SEAUyWAoMQWdlbnRHYXRld2F5EkgKB1Nlc3Npb24SGy5zZmx5LmFnZW50LnYxLkFnZW50TWVzc2FnZRocLnNmbHkuYWdlbnQudjEuU2VydmVyTWVzc2FnZSgBMAFiBnByb3RvMw");
 
 /**
  * Agent → 控制面。
@@ -81,6 +81,12 @@ export type AgentMessage = Message<"sfly.agent.v1.AgentMessage"> & {
      */
     value: ActionSummary;
     case: "actionSummary";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.ActionBatch actions = 11;
+     */
+    value: ActionBatch;
+    case: "actions";
   } | { case: undefined; value?: undefined };
 };
 
@@ -1215,6 +1221,245 @@ export const ActionSummarySchema: GenMessage<ActionSummary> = /*@__PURE__*/
   messageDesc(file_sfly_agent_v1_agent, 24);
 
 /**
+ * 一个任务新增的动作和标记的明细（ctx.action、ctx.mark，规格 #345）：事件管道里的 action_start、action_end、mark
+ * 三种事件，和日志一样约每 100 毫秒一批（一批最多 1000 个事件），同一批内按事件管道里的先后排列。任务结束前发完，
+ * 再发 TaskResult。断线排队与日志相同（排队的字节数有上限，超出时丢弃新的批次）。控制面不回 Ack，同一个动作 ID
+ * 的重复明细被忽略。事件的格式与规则见 sdk/python/src/sfly/context.py，这里是 Agent 解析之后的样子。
+ *
+ * @generated from message sfly.agent.v1.ActionBatch
+ */
+export type ActionBatch = Message<"sfly.agent.v1.ActionBatch"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * @generated from field: repeated sfly.agent.v1.ActionEvent events = 3;
+   */
+  events: ActionEvent[];
+};
+
+/**
+ * Describes the message sfly.agent.v1.ActionBatch.
+ * Use `create(ActionBatchSchema)` to create a new message.
+ */
+export const ActionBatchSchema: GenMessage<ActionBatch> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 25);
+
+/**
+ * @generated from message sfly.agent.v1.ActionEvent
+ */
+export type ActionEvent = Message<"sfly.agent.v1.ActionEvent"> & {
+  /**
+   * 事件发生时的 Agent 时间（Unix 毫秒）：SDK 写的 ts。
+   *
+   * @generated from field: int64 time_unix_ms = 1;
+   */
+  timeUnixMs: bigint;
+
+  /**
+   * 事件发生时的单调时钟读数（毫秒），含义同 Hello.monotonic_ms：优先取 SDK 写的 mono，没有时取 Agent 读到这一行
+   * 时的读数。控制面按这次连接的对应关系把它折算成控制面时间（ADR 0018），耗时取开始和结束两个读数之差。
+   *
+   * @generated from field: int64 monotonic_ms = 2;
+   */
+  monotonicMs: bigint;
+
+  /**
+   * @generated from oneof sfly.agent.v1.ActionEvent.kind
+   */
+  kind: {
+    /**
+     * @generated from field: sfly.agent.v1.ActionStart start = 3;
+     */
+    value: ActionStart;
+    case: "start";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.ActionEnd end = 4;
+     */
+    value: ActionEnd;
+    case: "end";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.ActionMark mark = 5;
+     */
+    value: ActionMark;
+    case: "mark";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message sfly.agent.v1.ActionEvent.
+ * Use `create(ActionEventSchema)` to create a new message.
+ */
+export const ActionEventSchema: GenMessage<ActionEvent> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 26);
+
+/**
+ * 一个动作开始（action_start）。
+ *
+ * @generated from message sfly.agent.v1.ActionStart
+ */
+export type ActionStart = Message<"sfly.agent.v1.ActionStart"> & {
+  /**
+   * 任务内的动作 ID（动作和标记共用一个序列，由 SDK 分配）。
+   *
+   * @generated from field: uint64 id = 1;
+   */
+  id: bigint;
+
+  /**
+   * 父动作的 ID；最外层没有。父动作不一定有明细。
+   *
+   * @generated from field: optional uint64 parent = 2;
+   */
+  parent?: bigint | undefined;
+
+  /**
+   * 层级：最外层是 0。
+   *
+   * @generated from field: uint32 depth = 3;
+   */
+  depth: number;
+
+  /**
+   * @generated from field: string name = 4;
+   */
+  name: string;
+
+  /**
+   * 说明字段，按 SDK 写的先后。
+   *
+   * @generated from field: repeated sfly.agent.v1.ActionField fields = 5;
+   */
+  fields: ActionField[];
+
+  /**
+   * 补发的 action_start（超过每种名称的上限、因为失败才补上明细），紧跟着就是它的 ActionEnd。
+   *
+   * @generated from field: bool late = 6;
+   */
+  late: boolean;
+};
+
+/**
+ * Describes the message sfly.agent.v1.ActionStart.
+ * Use `create(ActionStartSchema)` to create a new message.
+ */
+export const ActionStartSchema: GenMessage<ActionStart> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 27);
+
+/**
+ * 一个动作结束（action_end）。没有结束的动作没有这一条，控制面在任务结束时把它记为未结束。
+ *
+ * @generated from message sfly.agent.v1.ActionEnd
+ */
+export type ActionEnd = Message<"sfly.agent.v1.ActionEnd"> & {
+  /**
+   * @generated from field: uint64 id = 1;
+   */
+  id: bigint;
+
+  /**
+   * @generated from field: sfly.agent.v1.ActionResult result = 2;
+   */
+  result: ActionResult;
+
+  /**
+   * 失败的原因；其他结果没有。
+   *
+   * @generated from field: optional string reason = 3;
+   */
+  reason?: string | undefined;
+
+  /**
+   * note() 补充的说明字段，覆盖开始时同名的字段。
+   *
+   * @generated from field: repeated sfly.agent.v1.ActionField fields = 4;
+   */
+  fields: ActionField[];
+};
+
+/**
+ * Describes the message sfly.agent.v1.ActionEnd.
+ * Use `create(ActionEndSchema)` to create a new message.
+ */
+export const ActionEndSchema: GenMessage<ActionEnd> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 28);
+
+/**
+ * 一个标记（mark）：只有一个时刻，没有结束。
+ *
+ * @generated from message sfly.agent.v1.ActionMark
+ */
+export type ActionMark = Message<"sfly.agent.v1.ActionMark"> & {
+  /**
+   * @generated from field: uint64 id = 1;
+   */
+  id: bigint;
+
+  /**
+   * 所属的动作；不属于任何动作时没有。
+   *
+   * @generated from field: optional uint64 parent = 2;
+   */
+  parent?: bigint | undefined;
+
+  /**
+   * @generated from field: uint32 depth = 3;
+   */
+  depth: number;
+
+  /**
+   * @generated from field: string name = 4;
+   */
+  name: string;
+
+  /**
+   * @generated from field: repeated sfly.agent.v1.ActionField fields = 5;
+   */
+  fields: ActionField[];
+};
+
+/**
+ * Describes the message sfly.agent.v1.ActionMark.
+ * Use `create(ActionMarkSchema)` to create a new message.
+ */
+export const ActionMarkSchema: GenMessage<ActionMark> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 29);
+
+/**
+ * 一个说明字段（值都是 SDK 转好的文字）。
+ *
+ * @generated from message sfly.agent.v1.ActionField
+ */
+export type ActionField = Message<"sfly.agent.v1.ActionField"> & {
+  /**
+   * @generated from field: string key = 1;
+   */
+  key: string;
+
+  /**
+   * @generated from field: string value = 2;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message sfly.agent.v1.ActionField.
+ * Use `create(ActionFieldSchema)` to create a new message.
+ */
+export const ActionFieldSchema: GenMessage<ActionField> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 30);
+
+/**
  * 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
  *
  * @generated from message sfly.agent.v1.TaskResult
@@ -1269,7 +1514,7 @@ export type TaskResult = Message<"sfly.agent.v1.TaskResult"> & {
  * Use `create(TaskResultSchema)` to create a new message.
  */
 export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 25);
+  messageDesc(file_sfly_agent_v1_agent, 31);
 
 /**
  * @generated from message sfly.agent.v1.TaskError
@@ -1291,7 +1536,7 @@ export type TaskError = Message<"sfly.agent.v1.TaskError"> & {
  * Use `create(TaskErrorSchema)` to create a new message.
  */
 export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 26);
+  messageDesc(file_sfly_agent_v1_agent, 32);
 
 /**
  * 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
@@ -1315,7 +1560,7 @@ export type Ack = Message<"sfly.agent.v1.Ack"> & {
  * Use `create(AckSchema)` to create a new message.
  */
 export const AckSchema: GenMessage<Ack> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 27);
+  messageDesc(file_sfly_agent_v1_agent, 33);
 
 /**
  * @generated from enum sfly.agent.v1.AgentUpdateState
@@ -1528,6 +1773,39 @@ export const LogLevelSchema: GenEnum<LogLevel> = /*@__PURE__*/
   enumDesc(file_sfly_agent_v1_agent, 4);
 
 /**
+ * @generated from enum sfly.agent.v1.ActionResult
+ */
+export enum ActionResult {
+  /**
+   * @generated from enum value: ACTION_RESULT_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ACTION_RESULT_SUCCESS = 1;
+   */
+  SUCCESS = 1,
+
+  /**
+   * @generated from enum value: ACTION_RESULT_FAILED = 2;
+   */
+  FAILED = 2,
+
+  /**
+   * 因为取消离开 with。
+   *
+   * @generated from enum value: ACTION_RESULT_UNFINISHED = 3;
+   */
+  UNFINISHED = 3,
+}
+
+/**
+ * Describes the enum sfly.agent.v1.ActionResult.
+ */
+export const ActionResultSchema: GenEnum<ActionResult> = /*@__PURE__*/
+  enumDesc(file_sfly_agent_v1_agent, 5);
+
+/**
  * @generated from enum sfly.agent.v1.TaskStatus
  */
 export enum TaskStatus {
@@ -1558,7 +1836,7 @@ export enum TaskStatus {
  * Describes the enum sfly.agent.v1.TaskStatus.
  */
 export const TaskStatusSchema: GenEnum<TaskStatus> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 5);
+  enumDesc(file_sfly_agent_v1_agent, 6);
 
 /**
  * 失败类型（docs/SEMANTICS.md §3.3）。
@@ -1601,7 +1879,7 @@ export enum ErrorKind {
  * Describes the enum sfly.agent.v1.ErrorKind.
  */
 export const ErrorKindSchema: GenEnum<ErrorKind> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 6);
+  enumDesc(file_sfly_agent_v1_agent, 7);
 
 /**
  * Agent 网关：Agent 主动发起一条 gRPC 双向流，控制面在同一条流上推送指令（ADR 0003）。

@@ -71,19 +71,35 @@ export const FocusSource = z.object({
 	ended_at: Timestamp.nullable(),
 });
 
-/** 异常的四种原因：日志里有 WARN / ERROR（`log`）、很久没有新点（`stale`）、尝试失败（`failed`）、重试过（`retry`）。 */
+/**
+ * 异常的四种原因（规格 #344）：
+ * - `log`：来源任务最近一条 WARN / ERROR 在 10 分钟以内；
+ * - `stale`：来源节点在执行中（准备中、执行中），距离最后一个点超过「30 秒」和「6 倍采样间隔」里大的那个；
+ *   点不够两个时只按 30 秒判断，一个点都没有时从这次尝试开始执行算起（还没开始执行的准备中节点不判断）；
+ * - `failed`：来源节点失败；
+ * - `retry`：最新一次尝试的号大于 1，并且是 10 分钟以内开始的（还没开始执行时按进入排队的时间）。
+ *
+ * 同时满足几种时按 failed、log、retry、stale 的顺序只报一种。来源节点成功、已停止或已取消（`final`）时不判断。
+ * 时间一律按控制面时间（ADR 0018），判断只在控制面做，各页面都用这一份结果。
+ */
 export const FocusAnomalyKind = z.enum(["log", "stale", "failed", "retry"]);
 
-/** 一项的异常；没有异常为 null。目前每一项都是 null。 */
+/** 一项的异常；没有异常为 null。 */
 export const FocusAnomaly = z.object({
 	kind: FocusAnomalyKind,
 	/** `log` 时是最近一条日志的级别。 */
 	level: z.enum(["warn", "error"]).optional(),
-	/** 异常发生的时间（控制面时间）：最近一条日志、最后一个点、失败或重试开始的时间。 */
+	/**
+	 * 异常发生的时间（控制面时间）：`log` 是最近一条 WARN / ERROR 的时间，`stale` 是最后一个点的时间（一个点都没有时是
+	 * 这次尝试开始执行的时间），`failed` 是失败的时间，`retry` 是这次尝试开始执行的时间（还没开始时是进入排队的时间）。
+	 */
 	at: Timestamp,
-	/** 原因的原文，页面直接显示。 */
+	/**
+	 * 原因的原文，截到 500 个字符：`log` 是那一条日志的正文；`failed` 是这次尝试的错误信息、`retry` 是上一次尝试的错误信息，
+	 * 两者都只取第一行（之后是堆栈）；没有原文（`stale`，或没有错误信息）时是空串。
+	 */
 	message: z.string(),
-	/** `log` 时是这次尝试里 WARN / ERROR 的总条数。 */
+	/** `log` 时是这次尝试里 WARN / ERROR 的总条数（日志截断时写的截断标记也算一条，之后的行不再计数）。 */
 	count: z.number().int().positive().optional(),
 });
 
@@ -120,9 +136,12 @@ export const RunFocusItem = z.object({
 	bucket_seconds: z.number().int().positive(),
 	/** 最后一个点的控制面时间；一个点都没有为 null。 */
 	last_at: Timestamp.nullable(),
-	/** 采样间隔（毫秒）；目前总是 null。 */
+	/**
+	 * 估算的采样间隔（毫秒）：最近更新的那个序列最近 10 个点之间间隔的中位数。点的时间按秒取整，同一个序列一秒最多
+	 * 一个点，所以至少是 1000；点不够两个时为 null。
+	 */
 	sample_interval_ms: z.number().int().positive().nullable(),
-	/** 来源节点成功或已停止；没开始就被停止的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
+	/** 来源节点成功、已停止或已取消；没开始就被停止或取消的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
 	final: z.boolean(),
 	anomaly: FocusAnomaly.nullable(),
 });
@@ -134,7 +153,10 @@ export const RunFocus = z.object({
 	mode: z.enum(["focus", "primary"]),
 	/** 这次运行的指标已过保留期：每一项都没有数据。 */
 	expired: z.boolean(),
-	/** 按作者设定的顺序（`position` 升序）；没设关注项时按准备中、执行中节点在运行里的顺序。 */
+	/**
+	 * 有异常（`anomaly` 不为 null）的项在前，其余在后；两部分里各自按作者设定的顺序（`position` 升序），没设关注项时
+	 * 按准备中、执行中节点在运行里的顺序。
+	 */
 	items: z.array(RunFocusItem),
 });
 
@@ -143,7 +165,8 @@ export const runFocusApi = {
 	 * 一次运行的全部关注项：只返回节点在这次运行的版本里的那些项，取节点最新一次尝试的任务，图表的定义取这次运行
 	 * 锁定的节点包版本（那个版本里没有这张图表时 `unavailable` 为 `chart_missing`）。节点在这次运行绑定的版本里、
 	 * 但还没有开始（包括所在的子流程还没触发）时照样返回，`source.started_at` 为 null，没有数据。场景没设关注项时 `mode` 是
-	 * `primary`，返回准备中、执行中节点的主指标。运行不存在时 404。
+	 * `primary`，返回准备中、执行中节点的主指标。每一项带上异常（`anomaly`，规则见 {@link FocusAnomalyKind}），
+	 * 有异常的排在前面。运行不存在时 404。
 	 */
 	focus: endpoint({
 		method: "GET",

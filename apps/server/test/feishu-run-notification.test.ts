@@ -438,7 +438,7 @@ describe("运行通知", () => {
 			});
 		});
 
-		it("运行结束时卡片在失败的节点之后、按钮之前有「关注项」一段：每项一行写名称、运行结束时的值和单位，来源节点失败的写（节点失败），没有值的写 —", async () => {
+		it("运行结束时卡片在失败的节点之后、按钮之前有「关注项」一段：每项一行写名称、运行结束时的值和单位，有异常的项（来源节点失败）排在最前、写（节点失败），没有值的写 —", async () => {
 			const id = await scenario(
 				benchDocument([
 					["load", "load"],
@@ -479,10 +479,10 @@ describe("运行通知", () => {
 			expect(focusSection(card)?.content).toBe(
 				[
 					"**关注项**",
+					"- 探活：3（节点失败）",
 					"- 下单延迟：45 ms",
 					"- TPS：500 req/s",
 					"- orders：1.3M",
-					"- 探活：3（节点失败）",
 					"- 收尾：—",
 				].join("\n"),
 			);
@@ -681,7 +681,7 @@ describe("运行通知", () => {
 			}
 		});
 
-		it("在事务里读关注项（运行结束时就是这样读的）不从连接池另取连接：只有一个连接的连接池上照样读出最终值", async () => {
+		it("在事务里读关注项（运行结束时就是这样读的）不从连接池另取连接、一条一条地读：只有一个连接的连接池上照样读出最终值", async () => {
 			const id = await scenario(benchDocument(), { trigger: "always" });
 			await putFocusItemsOk(api, id, [
 				{ node_id: "load", chart: "TPS" },
@@ -703,6 +703,19 @@ describe("运行通知", () => {
 				max: 1,
 				connectionTimeoutMillis: 1000,
 			});
+			// 这个连接上同时在等结果的查询数：一条一条地读时不会超过 1。
+			let pending = 0;
+			let mostPending = 0;
+			pool.on("connect", (client) => {
+				const query = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+				client.query = ((...args: unknown[]) => {
+					pending += 1;
+					mostPending = Math.max(mostPending, pending);
+					return query(...args).finally(() => {
+						pending -= 1;
+					});
+				}) as typeof client.query;
+			});
 			try {
 				const db = drizzle(pool, { schema });
 				const queries = new MetricQueries({
@@ -717,6 +730,7 @@ describe("运行通知", () => {
 					);
 					expect(focus?.items.map((item) => item.latest?.value)).toEqual([500, 3]);
 				});
+				expect(mostPending).toBe(1);
 			} finally {
 				await pool.end();
 			}

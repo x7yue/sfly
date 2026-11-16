@@ -74,7 +74,7 @@ interface RunNotificationFacts {
 	endedAt: Date;
 	/** 按失败的先后。 */
 	failures: readonly FailedNode[];
-	/** 运行结束那一刻场景的关注项在这次运行里的值，按作者的顺序；没有时不写这一段。 */
+	/** 运行结束那一刻场景的关注项在这次运行里的值，顺序与 {@link resolveRunFocus} 相同（有异常的在前）；没有时不写这一段。 */
 	focus: readonly RunFocusItem[];
 	/** 「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时没有按钮。 */
 	runUrl: string | undefined;

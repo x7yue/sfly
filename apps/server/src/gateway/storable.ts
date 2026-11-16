@@ -1,4 +1,7 @@
 import type {
+	ActionBatch,
+	ActionEvent,
+	ActionField,
 	AgentMessage,
 	Capability,
 	DevPackage,
@@ -30,6 +33,7 @@ const ESCAPED_NUL = "\\u0000";
  * | MetricBatch | 指标名、标签键、标签值 | metric_series、metric_segments |
  * | Notification | event_json（键和值） | feishu_messages |
  * | ActionSummary | event_json（键和值） | task_action_summaries |
+ * | ActionBatch | 名称、字段的键和值、失败原因 | task_actions |
  *
  * 不处理的：
  * - LogBatch：日志写在日志文件里（每行一个 JSON，NUL 转义为 `\u0000`），不进数据库，原样保存。
@@ -96,6 +100,8 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 			return replaced(body, eventJsonOf(body.value));
 		case "actionSummary":
 			return replaced(body, eventJsonOf(body.value));
+		case "actions":
+			return replaced(body, actionBatch(body.value));
 		case "started":
 		case "logs":
 		case undefined:
@@ -197,6 +203,48 @@ function labelMap(labels: Record<string, string>): Record<string, string> {
 		}
 	}
 	return labels;
+}
+
+function actionBatch(batch: ActionBatch): ActionBatch {
+	const events = list(batch.events, actionEvent);
+	return events === batch.events ? batch : { ...batch, events };
+}
+
+function actionEvent(e: ActionEvent): ActionEvent {
+	const { kind } = e;
+	switch (kind.case) {
+		case "start": {
+			const value = named(kind.value);
+			return value === kind.value ? e : { ...e, kind: { case: "start", value } };
+		}
+		case "mark": {
+			const value = named(kind.value);
+			return value === kind.value ? e : { ...e, kind: { case: "mark", value } };
+		}
+		case "end": {
+			const reason = kind.value.reason === undefined ? undefined : text(kind.value.reason);
+			const fields = list(kind.value.fields, actionField);
+			if (reason === kind.value.reason && fields === kind.value.fields) return e;
+			return { ...e, kind: { case: "end", value: { ...kind.value, reason, fields } } };
+		}
+		case undefined:
+			return e;
+		default:
+			return kind satisfies never;
+	}
+}
+
+/** 动作开始、标记：名称和字段。 */
+function named<V extends { name: string; fields: ActionField[] }>(v: V): V {
+	const name = text(v.name);
+	const fields = list(v.fields, actionField);
+	return name === v.name && fields === v.fields ? v : { ...v, name, fields };
+}
+
+function actionField(f: ActionField): ActionField {
+	const key = text(f.key);
+	const value = text(f.value);
+	return key === f.key && value === f.value ? f : { ...f, key, value };
 }
 
 /** 每一项都没变时返回原数组。 */
