@@ -7,7 +7,7 @@ import { type EdgeFlow, liveEdgeIds, nextEdgeFlow, type RunOverlay } from "./run
 
 /**
  * 画布运行状态里跟着执行推进的两处动效：刚变成执行中的连线（`enteringEdges`，流动两遍）和「跟随执行」（`follow`，
- * 镜头框住执行中的节点）。`run`、`overlay`、`edges` 任何一个还没有（运行或版本文档在加载、不在运行状态）时都没有。
+ * 镜头框住执行中的节点；只有按钮和 F 的切换记住在浏览器里，画布自己停止跟随只在当前页面有效）。`run`、`overlay`、`edges` 任何一个还没有（运行或版本文档在加载、不在运行状态）时都没有。
  * 画布每次拿到新的运行视图只对比一次上一次看到的连线；不在运行状态期间不记，切回来时已经在执行的连线是静止的。
  */
 export function useRunMotion(
@@ -16,18 +16,24 @@ export function useRunMotion(
 	edges: readonly SfEdge[] | undefined,
 ) {
 	const preferred = useFollowExecution();
+	// 拖动、缩放、键盘选到视野外时的停止只在当前页面有效，不写进浏览器：按钮或 F 一按就恢复。
+	const [paused, setPaused] = useState(false);
 	const ended = run !== undefined && run.status !== "running";
 	const follow = useMemo(
 		(): FollowExecution | undefined =>
 			overlay && edges
 				? {
-						active: preferred && !ended,
+						active: preferred && !paused && !ended,
 						disabled: ended,
 						running: overlay.running,
-						onChange: setFollowExecution,
+						onChange: (on) => {
+							setPaused(false);
+							setFollowExecution(on);
+						},
+						onPause: () => setPaused(true),
 					}
 				: undefined,
-		[overlay, edges, preferred, ended],
+		[overlay, edges, preferred, paused, ended],
 	);
 
 	const [flow, setFlow] = useState<{ runId: string; value: EdgeFlow } | null>(null);
