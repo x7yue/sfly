@@ -127,7 +127,7 @@ test("检查器：有动作的节点底部多一个入口，打开监控详情�
 	await setup.agent.sync();
 	const panel = await openNode(page, setup, clock, "verify");
 
-	await expect(panel.getByRole("link", { name: "在监控页中打开 verify" })).toBeVisible();
+	await expect(panel.getByRole("link", { name: "在运行监控详情里打开 verify" })).toBeVisible();
 	await panel.getByRole("link", { name: "打开动作明细" }).click();
 	await expect(page).toHaveURL(`/runs/${setup.runId}?view=detail&node=verify&tab=actions`);
 	await expect(page.getByRole("tab", { name: /^动作/ })).toHaveAttribute("aria-selected", "true");

@@ -53,7 +53,7 @@ import {
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
 import { type DocEdge, docEdgeOf, edgeId, layoutOf, type SfEdge, type SfNode } from "./flow";
-import { createFrameScheduler, followViewport } from "./follow";
+import { createFrameScheduler, followViewport, framedInView } from "./follow";
 import {
 	type CanvasInsets,
 	FIT_MAX_ZOOM,
@@ -343,15 +343,15 @@ export function FlowCanvas({
 	);
 	// 适配视图把节点和注释框的范围一起放进视口：框的范围由成员算出，比节点的外接框大（子流程成员的框更大），
 	// 只按节点算的话，节点贴着适配的边距时，框的外沿会伸到视口或检查器、工具条下面去。
-	// 范围按布局里的位置和卡片的原高度算，不等 React Flow 量出节点尺寸（执行中长高的那十几 px 落在适配的边距里）。
+	// 卡片按布局里量出来的高度算（运行状态下会长高）；打开画布时还没量，按原高度。
 	const extent = useRef({ layout, boxes });
 	extent.current = { layout, boxes };
 	const fitTo = useCallback(
 		(duration: number) => {
 			const { layout: current, boxes: framed } = extent.current;
 			const rects = [
-				...current.nodes.flatMap(({ position: p }) =>
-					p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: NODE_HEIGHT }] : [],
+				...current.nodes.flatMap(({ position: p, height }) =>
+					p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: height ?? NODE_HEIGHT }] : [],
 				),
 				...framed.map(({ box: b }) => ({ x: b.x, y: b.y, width: b.w, height: b.h })),
 			];
@@ -381,9 +381,10 @@ export function FlowCanvas({
 	followRef.current = follow;
 	const areaRef = useRef(area);
 	areaRef.current = area;
+	/** 上一次框住的执行中节点：卡片长高后看它们还在不在可见区域里。 */
+	const framedRef = useRef<readonly string[] | null>(null);
 	const frameRunning = useCallback(
-		(duration: number) => {
-			const running = followRef.current?.running;
+		(duration: number, running = followRef.current?.running) => {
 			if (!running) return;
 			const el = wrapper.current;
 			if (!el) return;
@@ -393,6 +394,7 @@ export function FlowCanvas({
 				size: { width: el.clientWidth, height: el.clientHeight },
 				area: areaRef.current,
 			});
+			framedRef.current = running;
 			if (viewport) void flow.setViewport(viewport, { duration });
 		},
 		[flow],
@@ -415,6 +417,22 @@ export function FlowCanvas({
 	);
 	useEffect(() => frames.cancel, [frames]);
 	const following = follow?.active ?? false;
+	// 框好以后卡片才长高（关注项读到了、多了「正在做」一行）、长出来的部分落到可见区域外时，马上重新框上一次框的那些节点；
+	// 执行前沿的变化照旧等停留时间（上面的 frames）。
+	useEffect(() => {
+		const framed = framedRef.current;
+		const el = wrapper.current;
+		if (!following || !framed || !el) return;
+		const frame = {
+			running: framed,
+			layout,
+			size: { width: el.clientWidth, height: el.clientHeight },
+			area: areaRef.current,
+		};
+		if (!framedInView({ ...frame, viewport: flow.getViewport() })) {
+			frameRunning(viewportDuration(VIEWPORT_MS), framed);
+		}
+	}, [following, layout, flow, frameRunning]);
 	useEffect(() => {
 		if (following) setAnnouncement("");
 	}, [following]);
@@ -526,6 +544,8 @@ export function FlowCanvas({
 			if (!node || !el) return false;
 			const { x, y, zoom } = flow.getViewport();
 			const { x: nx, y: ny } = node.internals.positionAbsolute;
+			// 运行状态下卡片会长高：按量出来的高度判断。
+			const height = node.measured.height ?? NODE_HEIGHT;
 			const W = el.clientWidth;
 			const H = el.clientHeight;
 			const left = nx * zoom + x;
@@ -534,14 +554,14 @@ export function FlowCanvas({
 				left >= area.left &&
 				top >= area.top &&
 				left + NODE_WIDTH * zoom <= W - area.right &&
-				top + NODE_HEIGHT * zoom <= H - area.bottom;
+				top + height * zoom <= H - area.bottom;
 			if (visible) return false;
 			const cx = area.left + (W - area.left - area.right) / 2;
 			const cy = area.top + (H - area.top - area.bottom) / 2;
 			void flow.setViewport(
 				{
 					x: cx - (nx + NODE_WIDTH / 2) * zoom,
-					y: cy - (ny + NODE_HEIGHT / 2) * zoom,
+					y: cy - (ny + height / 2) * zoom,
 					zoom,
 				},
 				{ duration: viewportDuration(VIEWPORT_MS) },

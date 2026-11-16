@@ -87,9 +87,11 @@ export const FOCUS = {
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
 	attention: "需要注意",
-	/** 「1 项需要注意」：控制台运行块的读数区标题旁。 */
+	/** 「3 个关注项」：画布节点卡片的可访问名称。 */
+	itemCount: (count: number) => `${count} 个${TERM.focusItem}`,
+	/** 「1 项需要注意」：控制台运行块的读数区标题旁、画布节点卡片的可访问名称、画布检查器里关注项的标题旁。 */
 	attentionCount: (count: number): string => `${count} 项${FOCUS.attention}`,
-	/** 只放得下前几项时，其余的个数（`moreLabel` 加上「关注项」）：控制台运行块读数区的最后一格。 */
+	/** 只放得下前几项时，其余的个数（`moreLabel` 加上「关注项」）：控制台运行块读数区的最后一格、画布节点卡片的最后一行。 */
 	moreItems: (count: number): string => `${moreLabel(count)}${TERM.focusItem}`,
 	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁和控制台运行块的读数区标题旁共用这一句。 */
 	noneSet: `场景没有设置${TERM.focusItem}`,
@@ -251,6 +253,24 @@ export const PRESET_INVALID_LABEL = "已失效";
 
 /** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里打开」「在详情里查看」的说法共用。 */
 export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as const;
+
+/** 「运行监控详情」：运行监控页之外的地方（画布运行状态的检查器）指向运行监控的「详情」视图时这样写。 */
+export const MONITOR_DETAIL_LABEL = `${PAGE.monitor}${MONITOR_VIEW_LABEL.detail}`;
+
+/**
+ * 图例里放不下的序列：概览里是同一页切到「详情」视图，写「在详情里查看」；
+ * 检查器在运行监控之外，要去另一个页面，写「打开运行监控详情」。
+ */
+export const hiddenSeriesLabel = {
+	inView: (count: number) => `另有 ${count} 条序列在${MONITOR_VIEW_LABEL.detail}里查看`,
+	openPage: (count: number) => `另有 ${count} 条序列，打开${MONITOR_DETAIL_LABEL}`,
+};
+
+/** 检查器的图表列表里说明图表不能缩放，要缩放得去运行监控的详情。 */
+export const ZOOM_IN_DETAIL_LABEL = `要缩放，打开${MONITOR_DETAIL_LABEL}`;
+
+/** 「在详情里打开 fetch」「在运行监控详情里打开 fetch」：跳到某个视图里的这个节点的按钮或链接。 */
+export const openInLabel = (place: string, node: string) => `在${place}里打开 ${node}`;
 
 /** 关注项读数里来源节点成功、已停止或已取消后的「最终值」：读数的脚注和可访问名称共用。 */
 export const FINAL_VALUE_LABEL = "最终值";

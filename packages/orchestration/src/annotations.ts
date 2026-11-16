@@ -41,8 +41,6 @@ export interface AnnotationBox<A extends AnnotationMembers = AnnotationMembers> 
 	box: Box;
 }
 
-const cardAt = (p: Position): Box => ({ x: p.x, y: p.y, w: NODE_SIZE.width, h: NODE_SIZE.height });
-
 function paddedBounds(rects: readonly Box[]): Box {
 	const x = Math.min(...rects.map((r) => r.x)) - REGION_PADDING.left;
 	const y = Math.min(...rects.map((r) => r.y)) - REGION_PADDING.top;
@@ -51,20 +49,27 @@ function paddedBounds(rects: readonly Box[]): Box {
 	return { x, y, w: x1 - x, h: y1 - y };
 }
 
-const positionsOf = (doc: LayoutDocument) =>
-	new Map(doc.nodes.flatMap((n) => (n.position ? [[n.id, n.position] as const] : [])));
+const cardAt = (p: Position, height: number = NODE_SIZE.height): Box => ({
+	x: p.x,
+	y: p.y,
+	w: NODE_SIZE.width,
+	h: height,
+});
+
+/** 有位置的节点的卡片：宽度固定，高度取布局里量出来的，没有时是 NODE_SIZE 的高度。 */
+const cardsOf = (doc: LayoutDocument) =>
+	new Map(
+		doc.nodes.flatMap((n) => (n.position ? [[n.id, cardAt(n.position, n.height)] as const] : [])),
+	);
 
 /** 每个子流程（子流程入口节点及它链上的节点）的区域，按子流程入口在文档里的顺序；没有位置的节点不算。 */
 export function subflowRegions(doc: LayoutDocument): SubflowRegion[] {
-	const positions = positionsOf(doc);
+	const cardOf = cardsOf(doc);
 	const kindOf = new Map(doc.nodes.map((n) => [n.id, n.kind]));
 	const regions: SubflowRegion[] = [];
 	for (const [entry, members] of chainMembers(doc)) {
 		if (kindOf.get(entry) !== "subflow_entry") continue;
-		const cards = members.flatMap((id) => {
-			const p = positions.get(id);
-			return p ? [cardAt(p)] : [];
-		});
+		const cards = members.flatMap((id) => cardOf.get(id) ?? []);
 		if (cards.length > 0) regions.push({ entry, members, box: paddedBounds(cards) });
 	}
 	return regions;
@@ -77,12 +82,12 @@ export function subflowRegions(doc: LayoutDocument): SubflowRegion[] {
 export function annotationBoxes<A extends AnnotationMembers>(
 	doc: LayoutDocument & AnnotatedDocument<A>,
 ): AnnotationBox<A>[] {
-	const positions = positionsOf(doc);
+	const cardOf = cardsOf(doc);
 	const regions = new Map(subflowRegions(doc).map((r) => [r.entry, r]));
 	return (doc.annotations ?? []).flatMap((annotation) => {
 		const nodes = annotation.nodes.flatMap((id) => {
-			const p = positions.get(id);
-			return p ? [{ id, card: cardAt(p) }] : [];
+			const card = cardOf.get(id);
+			return card ? [{ id, card }] : [];
 		});
 		const subflows = annotation.subflows.flatMap((id) => regions.get(id) ?? []);
 		const rects = [...nodes.map((n) => n.card), ...subflows.map((r) => r.box)];
@@ -107,10 +112,11 @@ export function nonMembersInside(
 	{ members, box }: Pick<AnnotationBox, "members" | "box">,
 ): string[] {
 	const framed = new Set(members);
-	return doc.nodes.flatMap(({ id, position }) => {
+	return doc.nodes.flatMap(({ id, position, height }) => {
 		if (!position || framed.has(id)) return [];
-		const cx = position.x + NODE_SIZE.width / 2;
-		const cy = position.y + NODE_SIZE.height / 2;
+		const card = cardAt(position, height);
+		const cx = card.x + card.w / 2;
+		const cy = card.y + card.h / 2;
 		const inside = cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h;
 		return inside ? [id] : [];
 	});
