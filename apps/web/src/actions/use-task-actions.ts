@@ -8,6 +8,7 @@ import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-q
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiQuery, callApi } from "#/lib/api";
 import { useEventSource } from "#/lib/sse";
+import { useRefetchWhenPollingStops } from "#/lib/use-refetch-when-polling-stops";
 import {
 	type ActionDetails,
 	type ActionFilter,
@@ -21,7 +22,9 @@ import {
 /** 每页的明细数。 */
 const PAGE = 200;
 
-const summaryQuery = (taskId: string) => apiQuery(actionsApi.summary, { params: { id: taskId } });
+/** 读一个任务的动作摘要的查询：页面读摘要都用它，缓存里同一个任务只有一份。 */
+export const summaryQuery = (taskId: string) =>
+	apiQuery(actionsApi.summary, { params: { id: taskId } });
 
 /**
  * 一个任务（一次尝试）的动作摘要：页面读它的唯一入口，缓存只有一份。{@link useTaskActions} 连着推送时由推送更新，
@@ -39,16 +42,9 @@ export function useActionSummary(
 		enabled: taskId !== undefined,
 		refetchInterval: pollMs,
 	});
-	const { refetch } = query;
-	const previous = useRef({ taskId, polling: pollMs !== false });
-	useEffect(() => {
-		const before = previous.current;
-		const polling = pollMs !== false;
-		previous.current = { taskId, polling };
-		if (before.taskId === taskId && before.polling && !polling && taskId !== undefined) {
-			void refetch();
-		}
-	}, [taskId, pollMs, refetch]);
+	useRefetchWhenPollingStops(
+		taskId !== undefined && pollMs !== false ? [summaryQuery(taskId).queryKey] : [],
+	);
 	return query;
 }
 

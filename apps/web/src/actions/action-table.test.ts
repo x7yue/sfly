@@ -9,7 +9,13 @@ import type {
 } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { fromLatestPage, withLive } from "./action-details";
-import { type ActionRow, type ActionTableGroup, actionCount, actionTable } from "./action-table";
+import {
+	type ActionRow,
+	type ActionTableGroup,
+	actionCount,
+	actionTable,
+	groupNotes,
+} from "./action-table";
 
 const T0 = Date.UTC(2026, 0, 1, 9, 0, 0);
 const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -429,5 +435,67 @@ describe("只看失败时只计数的段", () => {
 describe("页签上的动作个数", () => {
 	it("标记不算", () => {
 		expect(actionCount(summary({ total: 1_284_820, marks: 1 }))).toBe(1_284_819);
+	});
+});
+
+describe("三组的说明", () => {
+	const notes = (
+		parts: Partial<Parameters<typeof groupNotes>[0]> & { summary?: ActionSummaryView } = {},
+	) =>
+		groupNotes({
+			summary: summary(),
+			controlPlanePeriods: [],
+			hasOlder: false,
+			failedOnly: false,
+			...parts,
+		});
+
+	it("没有超出上限、没有筛选：没有说明", () => {
+		expect(notes()).toEqual({});
+	});
+
+	it("正在做的列满 50 个：说可能还有没列出的", () => {
+		const listed = Array.from({ length: 50 }, (_, i) => running(i + 1, i));
+		expect(notes({ summary: summary({ running: listed, running_complete: false }) }).running).toBe(
+			"列满 50 个，可能还有没列出的",
+		);
+	});
+
+	it("最近 20 个：SDK 超出上限、或者读到了控制面丢弃的段，才写超过上限后也一直更新", () => {
+		expect(notes({ summary: summary({ capped: true }) }).recent).toBe("超过上限后也一直更新");
+		expect(notes({ controlPlanePeriods: [dropped("下单", 500)] }).recent).toBe(
+			"超过上限后也一直更新",
+		);
+	});
+
+	describe("只看失败时第三组", () => {
+		const earlier = (parts: Parameters<typeof notes>[0]) =>
+			notes({ failedOnly: true, ...parts }).earlier;
+
+		it("没有筛选时不写", () => {
+			expect(notes({ summary: summary({ capped_at: at(3_000) }) }).earlier).toBeUndefined();
+		});
+
+		it("合计没满、更早的页都读完了、没有控制面丢弃的段：失败的动作都有明细", () => {
+			expect(earlier({})).toBe("失败的动作仍有明细");
+		});
+
+		it("合计满了：失败的动作也没有明细，有没有控制面丢弃的段都一样", () => {
+			const full = summary({ capped_at: at(3_000) });
+			expect(earlier({ summary: full })).toBe("合计满 10 万个以后，失败的动作也没有明细");
+			expect(earlier({ summary: full, controlPlanePeriods: [dropped("下单", 500)] })).toBe(
+				"合计满 10 万个以后，失败的动作也没有明细",
+			);
+		});
+
+		it("合计没满、读到了控制面丢弃的段：控制面丢弃的除外", () => {
+			expect(earlier({ controlPlanePeriods: [dropped("下单", 500)] })).toBe(
+				"失败的动作仍有明细，控制面丢弃的除外",
+			);
+		});
+
+		it("合计没满、更早的页还没读完：不知道有没有控制面丢弃的段，也写除外", () => {
+			expect(earlier({ hasOlder: true })).toBe("失败的动作仍有明细，控制面丢弃的除外");
+		});
 	});
 });

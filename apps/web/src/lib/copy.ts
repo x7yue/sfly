@@ -347,11 +347,18 @@ export const NODE_ACTIONS = {
 	} satisfies Record<ActionResult | "running" | "mark", string>,
 	/** 超出上限、只记个数没有明细：「动作」页里只计数的那一行、时间线上的斜线和图例。 */
 	countOnly: "只计数",
+	/**
+	 * 检查器的上限说明末尾：控制面另外丢弃的明细摘要里没有，要到「动作」页的只计数的行里看（`ACTION_PAGE.countOnlyReason`
+	 * 的 `control_plane`）。写成「超过上限时」，没有丢弃过时同样是实话。
+	 */
+	controlPlaneDropped: `控制面收到的明细超过上限时，超出的会丢弃；丢弃了哪些名称，到${MONITOR_DETAIL_LABEL}的「动作」页里看。`,
 } as const;
 
-/** 失败的动作在只计数的段里怎么处理：只计数的原因和只看失败时第三组的说明共用这两句。 */
+/** 失败的动作在只计数的段里怎么处理：只计数的原因和只看失败时第三组的说明共用这几句。 */
 const FAILED_KEPT = "失败的动作仍有明细";
 const FAILED_DROPPED = "合计满 10 万个以后，失败的动作也没有明细";
+/** 控制面丢弃的明细里，失败的动作也没有（开始时还不知道会不会失败）。 */
+const FAILED_KEPT_EXCEPT_DROPPED = `${FAILED_KEPT}，控制面丢弃的除外`;
 
 /**
  * 运行监控「动作」页的文字（规格 #345，#358）：工具条、三组的名称、表头里的 Agent 时间、只计数的一行、读屏播报。
@@ -388,8 +395,15 @@ export const ACTION_PAGE = {
 		earlier: "更早的明细",
 		earlierFailed: "更早的失败",
 	},
-	/** 只看失败时第三组的说明：合计满了以后失败的动作也没有明细，没满时都有明细。 */
-	earlierFailedNote: (totalFull: boolean) => (totalFull ? FAILED_DROPPED : FAILED_KEPT),
+	/**
+	 * 只看失败时第三组的说明：合计满了以后失败的动作也没有明细；没满时有明细，控制面丢弃的除外。
+	 * `controlPlane`：已经读到控制面丢弃的段，或者更早的页还没读完、不知道有没有；确定没有时不写「除外」。
+	 * 合计满了的那句不管有没有控制面丢弃都是实话，所以不分。
+	 */
+	earlierFailedNote: (totalFull: boolean, controlPlane: boolean) =>
+		totalFull ? FAILED_DROPPED : controlPlane ? FAILED_KEPT_EXCEPT_DROPPED : FAILED_KEPT,
+	/** 「最近 20 个」那一组的说明：摘要里的最近 20 个不受明细上限影响（SDK 的、控制面的都一样）。 */
+	recentKeepsUpdating: "超过上限后也一直更新",
 	/** 只计数的段为什么没有明细；名称上限的段在合计也满了以后，失败的动作同样没有明细（`totalFull`）。 */
 	countOnlyReason: (reason: CountOnlyPeriod["reason"], totalFull: boolean) => {
 		switch (reason) {

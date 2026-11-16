@@ -448,39 +448,59 @@ describe("最新一页不是全部明细时", () => {
 });
 
 describe("10 万条明细", () => {
-	it("整理和排版的耗时和条数成正比，画出来的元素只和像素宽度有关", () => {
-		const details = Array.from({ length: 100_000 }, (_, i) =>
-			i % 1000 === 0 ? action(i + 2, i * 5, { result: "failed" }) : action(i + 2, i * 5),
-		);
-		const s = source({
+	/** 数读了几次：对象的属性每读一次加一。时间线不依赖耗时，只数操作次数，随条数平方增长的写法会超出上限。 */
+	const counter = () => {
+		const reads = { n: 0 };
+		const watch = <T extends object>(o: T): T =>
+			new Proxy(o, {
+				get(target, key, receiver) {
+					reads.n += 1;
+					return Reflect.get(target, key, receiver);
+				},
+			});
+		return { reads, watch };
+	};
+	const COUNT = 100_000;
+	const elements = (l: TrackLayout) =>
+		l.bars.length + l.ticks.length + l.flags.length + l.band.length + l.countOnly.length;
+	const bigSource = (watch: <T extends object>(o: T) => T) =>
+		source({
 			summary: summary({
-				total: 100_001,
-				reported: 100_001,
-				names: [count("保持 4 小时", 1), count("下单", 100_000, { failed: 100 })],
+				total: COUNT + 1,
+				reported: COUNT + 1,
+				names: [count("保持 4 小时", 1), count("下单", COUNT, { failed: 100 })],
 				running: [HOLD],
 			}),
-			details,
+			details: Array.from({ length: COUNT }, (_, i) =>
+				watch(i % 1000 === 0 ? action(i + 2, i * 5, { result: "failed" }) : action(i + 2, i * 5)),
+			),
 		});
-		const t0 = performance.now();
-		const prepared = prepareTracks([s]);
-		const t1 = performance.now();
-		const full = layoutTracks(prepared, view(0, 600_000));
-		const t2 = performance.now();
-		const zoomed = layoutTracks(prepared, view(250_000, 251_000));
-		const t3 = performance.now();
-		console.info(
-			`10 万条：整理 ${(t1 - t0).toFixed(1)}ms，全程排版 ${(t2 - t1).toFixed(1)}ms，放大排版 ${(t3 - t2).toFixed(1)}ms`,
-		);
-		// 全程：画出来的元素只和像素宽度有关（1000px 是 500 格），和明细的条数无关。
-		const elements = (l: TrackLayout) =>
-			l.bars.length + l.ticks.length + l.flags.length + l.band.length + l.countOnly.length;
+
+	it("整理时每条明细只读常数次", () => {
+		const { reads, watch } = counter();
+		const s = bigSource(watch);
+		prepareTracks([s]);
+		expect(reads.n).toBeLessThanOrEqual(COUNT * 20);
+	});
+
+	it("画出来的元素只和像素宽度有关，放大时只读范围里的明细", () => {
+		const prepared = prepareTracks([bigSource((o) => o)]);
+		const { reads, watch } = counter();
+		const child = prepared.tracks.child;
+		const watched = {
+			...prepared,
+			tracks: { ...prepared.tracks, child: { ...child, items: watch(child.items) } },
+		};
+		const full = layoutTracks(watched, view(0, 600_000));
+		// 全程：1000px 是 500 格，画出来的元素和明细的条数无关；每条明细只读常数次。
 		expect(elements(full.child)).toBeLessThanOrEqual(500 * 2);
 		expect(full.child.ticks.filter((t) => t.tone === "failed")).toHaveLength(100);
-		// 第 250 秒到 251 秒开始的 201 个一个个画出来。
+		expect(reads.n).toBeLessThanOrEqual(COUNT * 4);
+
+		// 第 250 秒到 251 秒开始的 201 个一个个画出来，其余的明细不读（二分查找范围的两端）。
+		reads.n = 0;
+		const zoomed = layoutTracks(watched, view(250_000, 251_000));
 		expect(zoomed.child.ticks).toHaveLength(201);
-		// 上限只用来拦住随条数平方增长的写法（10 万条时要几秒），留足垃圾回收和 CI 的余量。
-		expect(t1 - t0).toBeLessThan(2_000);
-		expect(t2 - t1).toBeLessThan(500);
-		expect(t3 - t2).toBeLessThan(500);
+		expect(reads.n).toBeLessThanOrEqual(2_000);
 	});
 });

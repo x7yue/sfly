@@ -129,20 +129,23 @@ test("在「动作」页换范围（切尝试）时，时间线滚回那个节�
 	const handle = page.getByRole("separator", { name: "调整时间线高度" });
 	await handle.focus();
 	for (let i = 0; i < 6; i++) await handle.press("ArrowUp");
-	const body = await timelineBody(page).boundingBox();
-	if (!body) throw new Error("没有时间线");
-	await page.mouse.move(body.x + body.width / 2, body.y + body.height / 2);
-	await page.mouse.wheel(0, 400);
-	await expect(verify).not.toBeInViewport();
+	// 每次都重新取时间线的坐标：调高之后版面还在变，取早了滚轮会落在时间线外。
+	const scrollAway = () =>
+		expect(async () => {
+			const body = await timelineBody(page).boundingBox();
+			if (!body) throw new Error("没有时间线");
+			await page.mouse.move(body.x + body.width / 2, body.y + body.height / 2);
+			await page.mouse.wheel(0, 400);
+			await expect(verify).not.toBeInViewport({ timeout: 500 });
+		}).toPass();
+	await scrollAway();
 
 	const attempts = panel(page).getByRole("group", { name: "尝试" });
 	await attempts.getByRole("button", { name: "第 1 次" }).click();
 	await expect(verify).toBeInViewport({ ratio: 1 });
 	await expect(verify).toHaveAttribute("data-selected", "true");
 
-	await page.mouse.move(body.x + body.width / 2, body.y + body.height / 2);
-	await page.mouse.wheel(0, 400);
-	await expect(verify).not.toBeInViewport();
+	await scrollAway();
 	await attempts.getByRole("button", { name: "第 2 次" }).click();
 	await expect(verify).toBeInViewport({ ratio: 1 });
 });
