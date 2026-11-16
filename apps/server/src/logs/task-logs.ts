@@ -1,7 +1,7 @@
 import { appendFile, mkdir, open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
-import type { TaskProgressView } from "@sfly/schema";
+import type { OrchestrationDocument, TaskProgressView } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
@@ -15,6 +15,7 @@ import {
 	type TaskProgress,
 	tasks,
 } from "../db/schema.js";
+import type { Tx } from "../engine/step.js";
 import { Topics } from "../sse/topics.js";
 import { clipChars } from "../util/text.js";
 import { readLogPage } from "./log-pages.js";
@@ -518,19 +519,14 @@ export class TaskLogs {
 		return state;
 	}
 
-	/** 一次运行当前的全部 secret 值（链实例可能在运行期间新增，每次现查）；动作摘要打码也用它。 */
+	/** 一次运行当前的全部 secret 值（{@link runSecretValues}）；动作摘要打码也用它。 */
 	async runSecrets(runId: string): Promise<string[]> {
 		const [row] = await this.deps.db
 			.select({ document: orchestrationVersions.document })
 			.from(runs)
 			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 			.where(eq(runs.id, runId));
-		if (!row) return [];
-		const chains = await this.deps.db
-			.select({ chainId: chainInstances.chainId, params: chainInstances.params })
-			.from(chainInstances)
-			.where(eq(chainInstances.runId, runId));
-		return secretValues(row.document, chains);
+		return row ? runSecretValues(this.deps.db, runId, row.document) : [];
 	}
 
 	async #load(taskId: string): Promise<TaskState | undefined> {
@@ -599,4 +595,20 @@ function formatBytes(n: number): string {
 	if (n >= 1024 * 1024 && n % (1024 * 1024) === 0) return `${n / (1024 * 1024)} MB`;
 	if (n >= 1024 && n % 1024 === 0) return `${n / 1024} KB`;
 	return `${n} 字节`;
+}
+
+/**
+ * 一次运行此刻的全部 secret 值（{@link secretValues}）：`document` 是运行绑定的版本，链实例可能在运行期间新增，所以每次现查。
+ * `db` 可以是事务（运行通知读关注项时）。写日志、动作时打码（{@link TaskLogs.runSecrets}）和关注项的异常原因都用它。
+ */
+export async function runSecretValues(
+	db: Db | Tx,
+	runId: string,
+	document: OrchestrationDocument,
+): Promise<string[]> {
+	const chains = await db
+		.select({ chainId: chainInstances.chainId, params: chainInstances.params })
+		.from(chainInstances)
+		.where(eq(chainInstances.runId, runId));
+	return secretValues(document, chains);
 }

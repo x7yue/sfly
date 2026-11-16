@@ -23,6 +23,8 @@ import {
 	nodeNameIn,
 } from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
+import { maskSecrets } from "../logs/secrets.js";
+import { runSecretValues } from "../logs/task-logs.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
@@ -49,6 +51,8 @@ export interface RunFocusOptions {
 /** 来源的一次尝试：运行板上的那一行，加上判断异常要读的错误信息和日志里的 WARN / ERROR。 */
 type SourceAttempt = BoardAttempt & Pick<typeof tasks.$inferSelect, "errorMessage" | "logIssues">;
 
+const maskOrNull = (text: string | null, secrets: readonly string[]) =>
+	text === null ? null : maskSecrets(text, secrets);
 const iso = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 const isoOrNull = (date: Date | null) => (date ? date.toISOString() : null);
 
@@ -133,7 +137,8 @@ export async function resolveRunFocus(
 						.filter(([id, at]) => isOnAgentStatus(at.node.status) && isPackage(id))
 						.map(([id]) => id),
 				);
-	const sources = await sourcesOf(db, document, wanted, placed);
+	const secrets = await runSecretValues(db, runId, document);
+	const sources = await sourcesOf(db, document, wanted, placed, secrets);
 
 	const readings = mode === "focus" ? focusReadings(authored, sources) : primaryReadings(sources);
 	const reads = await readSeries(deps, expired, sources, readings, points);
@@ -174,13 +179,15 @@ function placedNodes(chains: readonly BoardChain[]): Placed {
 /**
  * 每个要读的节点的来源（docs/ARCHITECTURE.md §6.1「运行里的关注项读数」）：链实例、状态、最新一次尝试和它前面的一次都出自
  * 运行板上同一个链实例的同一行（{@link placedNodes}），尝试不含占位。判断异常要的错误信息和 WARN / ERROR 按这两次尝试的
- * 任务 ID 补读一次。
+ * 任务 ID 补读一次；错误信息里的 secret 值（`secrets`，这次运行此刻的全部 secret 值）和运行视图一样在读取时打码，
+ * 所以异常原因（失败、重试的 `message`）在各页面和运行通知里都已打码。
  */
 async function sourcesOf(
 	db: Db | Tx,
 	document: OrchestrationDocument,
 	wanted: ReadonlySet<string>,
 	placed: Placed,
+	secrets: readonly string[],
 ): Promise<Map<string, Source>> {
 	const tried = (nodeId: string) => placed.get(nodeId)?.node.attempts ?? [];
 	const taskIds = [...wanted].flatMap((nodeId) =>
@@ -205,7 +212,7 @@ async function sourcesOf(
 	const withDetails = (attempt: BoardAttempt | undefined): SourceAttempt | undefined =>
 		attempt && {
 			...attempt,
-			errorMessage: details.get(attempt.taskId)?.errorMessage ?? null,
+			errorMessage: maskOrNull(details.get(attempt.taskId)?.errorMessage ?? null, secrets),
 			logIssues: details.get(attempt.taskId)?.logIssues ?? null,
 		};
 	const sources = new Map<string, Source>();
