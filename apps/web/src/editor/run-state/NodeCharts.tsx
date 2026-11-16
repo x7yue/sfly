@@ -4,6 +4,7 @@ import {
 	type ChartView,
 	type FocusLatest,
 	type FocusSeries,
+	latestSeries,
 	type MetricDeclaration,
 	type MetricSeries,
 	type NodeRunView,
@@ -93,18 +94,15 @@ const focusSeries = (s: MetricSeries["series"][number]): FocusSeries => ({
 });
 
 /**
- * 不是关注项的图表的最新值：最近更新的那个序列的最后一个点，同一时刻取排在前面的序列（和控制面给关注项取最新值的做法一样，
- * 只是这里按桶的时间比）。
+ * 不是关注项的图表的最新值：最近更新的那个序列的最后一个点（`latestSeries`，和控制面给关注项取最新值同一个取法，
+ * 按每个序列最后一个点的精确时间比）。
  */
-function latestOf(series: readonly FocusSeries[]): FocusLatest | null {
-	let latest: FocusLatest | null = null;
-	for (const s of series) {
-		const last = s.points.at(-1);
-		if (last && (latest === null || Date.parse(last.time) > Date.parse(latest.at))) {
-			latest = { value: last.last, metric: s.metric, labels: s.labels, at: last.time };
-		}
-	}
-	return latest;
+function latestOf(series: MetricSeries["series"]): FocusLatest | null {
+	const newest = latestSeries(series, (s) => (s.last_at === null ? null : Date.parse(s.last_at)));
+	const point = newest?.buckets.at(-1);
+	return newest?.last_at && point
+		? { value: point.last, metric: newest.name, labels: newest.labels, at: newest.last_at }
+		: null;
 }
 
 /** 关注项读数里属于这个节点的那些（按读数的顺序）和这份读数的生成时间（控制面时间，「多久前」按它算）。 */
@@ -279,13 +277,14 @@ function DeclaredChart({
 	noData: string;
 	toggle: ReactNode;
 }) {
-	const series = (result?.data?.series ?? []).map(focusSeries);
+	const raw = result?.data?.series ?? [];
+	const series = raw.map(focusSeries);
 	const metrics = readMetrics(chart).map((name) => ({
 		name,
 		label_keys: metricOf(name)?.labels ?? [],
 	}));
 	const unit = metricOf(chart.metrics[0] ?? "")?.unit ?? "";
-	const value = reading?.item ?? { latest: latestOf(series), metrics, unit };
+	const value = reading?.item ?? { latest: latestOf(raw), metrics, unit };
 	const state = reading ? readingState(reading.item, reading.at) : null;
 	const failed = result?.error && !result.data;
 	const empty =

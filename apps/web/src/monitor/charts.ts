@@ -76,7 +76,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 	const byKey = new Map(
 		series.series.map((s) => [
 			seriesKey(s.name, s.labels),
-			{ name: s.name, labels: s.labels, buckets: [...s.buckets] },
+			{ name: s.name, labels: s.labels, buckets: [...s.buckets], last_at: s.last_at },
 		]),
 	);
 	let added = false;
@@ -88,7 +88,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		const key = seriesKey(point.name, point.labels);
 		let entry = byKey.get(key);
 		if (!entry) {
-			entry = { name: point.name, labels: sortedLabels(point.labels), buckets: [] };
+			entry = { name: point.name, labels: sortedLabels(point.labels), buckets: [], last_at: null };
 			byKey.set(key, entry);
 			added = true;
 		}
@@ -98,6 +98,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		if (last && lastStart !== null && t < lastStart + span) {
 			// 落在最后一个桶里：每秒一个桶时就是同一秒（已经有了），否则合并。
 			if (span === 1000 || t <= lastStart) continue;
+			entry.last_at = point.time;
 			buckets[buckets.length - 1] = {
 				time: last.time,
 				agent_time: point.agent_time,
@@ -110,6 +111,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		} else {
 			if (lastStart !== null && t < lastStart) continue;
 			const k = Math.floor((t - origin) / span);
+			entry.last_at = point.time;
 			buckets.push({
 				time: new Date(origin + k * span).toISOString(),
 				agent_time: point.agent_time,

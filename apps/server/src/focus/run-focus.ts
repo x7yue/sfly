@@ -4,6 +4,7 @@ import {
 	type FocusSeries,
 	focusName,
 	isOnAgentStatus,
+	latestSeries,
 	type MetricDeclaration,
 	type NodeStatus,
 	type OrchestrationDocument,
@@ -25,7 +26,7 @@ import {
 import type { Tx } from "../engine/step.js";
 import { maskSecrets } from "../logs/secrets.js";
 import { runSecretValues } from "../logs/task-logs.js";
-import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
+import type { MetricQueries, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import {
@@ -354,11 +355,8 @@ function itemOf(
 ): RunFocusItem {
 	const { attempt } = source;
 	const series = read ? seriesOf(reading, read) : [];
-	// 最近更新的序列；同一时刻更新的取靠前的。
-	let latest: { end: SeriesEnd; series: SeriesRead } | undefined;
-	for (const s of series) {
-		if (s.end && (!latest || s.end.at > latest.end.at)) latest = { end: s.end, series: s };
-	}
+	const newest = latestSeries(series, (s) => s.end?.at);
+	const latest = newest?.end && { end: newest.end, series: newest };
 	const interval = latest ? sampleIntervalMs(latest.series.recent) : null;
 	const subject: AnomalySubject = {
 		status: source.status,

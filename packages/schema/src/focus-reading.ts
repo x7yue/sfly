@@ -36,3 +36,20 @@ export function focusLatestSeriesName(item: Pick<RunFocusItem, "latest" | "metri
 		? focusSeriesName(item, latest)
 		: "";
 }
+
+/**
+ * 最近更新的序列（规格 #344：`latest` 取最近更新的那个序列）：最后一个点最晚的那个，同一时刻取靠前的；都没有点时为
+ * undefined。`lastAt` 是序列最后一个点的时间（同一种单位就行），没有点为 null 或 undefined。控制面给关注项取最新值、
+ * 画布检查器给不是关注项的图表取最新值都用它，按最后一个点的精确时间比，不按桶。
+ */
+export function latestSeries<S>(
+	series: readonly S[],
+	lastAt: (s: S) => number | null | undefined,
+): S | undefined {
+	let latest: { series: S; at: number } | undefined;
+	for (const s of series) {
+		const at = lastAt(s);
+		if (at != null && (!latest || at > latest.at)) latest = { series: s, at };
+	}
+	return latest?.series;
+}

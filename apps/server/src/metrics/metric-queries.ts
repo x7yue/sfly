@@ -225,7 +225,12 @@ export class MetricQueries {
 				from: read.from === undefined ? null : isoOf(read.from),
 				to: read.to === undefined ? null : isoOf(read.to),
 				bucket_seconds: read.bucketSeconds,
-				series: read.series.map(({ name, labels, buckets }) => ({ name, labels, buckets })),
+				series: read.series.map(({ name, labels, buckets, end }) => ({
+					name,
+					labels,
+					buckets,
+					last_at: end ? isoOf(end.at) : null,
+				})),
 			},
 		};
 	}

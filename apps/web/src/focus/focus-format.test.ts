@@ -114,7 +114,7 @@ describe("序列的名字和详情里同一条序列的一样", () => {
 		chartLines(
 			names,
 			[cpu, mem],
-			series.map((s) => ({ ...s, buckets: [] })),
+			series.map((s) => ({ ...s, buckets: [], last_at: null })),
 		).map((line) => line.name);
 
 	it("标签值按声明的标签键的顺序排，不按键名排", () => {
