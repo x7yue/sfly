@@ -1,13 +1,13 @@
 import { isOnAgentStatus, type RunFocus, type RunFocusItem, type RunView } from "@sfly/schema";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { EyeIcon } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { RunLines } from "#/components/run-lines";
 import { StatusDot } from "#/components/status";
 import { FocusChart } from "#/focus/FocusChart";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
+import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
 import { useRunFocus } from "#/focus/use-run-focus";
 import {
 	chainCountLabel,
@@ -41,21 +41,34 @@ export interface OverviewTarget {
  * 一条读数，图表类两列排开，有异常的排在前面）和其他警告与错误。点任何一项都进入「详情」并定位到来源节点
  * （`onOpenNode`），「需要注意」的直达按钮还定位到那一行日志或那个页签。数据是 `GET /runs/:id/focus`，运行中每 2 秒
  * 重新读取。场景没设关注项时显示执行中节点的主指标，并给出「设置关注项」的入口。
+ * `located` 是地址里的 `node`（控制台运行块的读数进来时带上）：属于这个节点的关注项标出位置（`aria-current="location"`，
+ * 中性高亮），第一项滚到视野里。
  */
 export function Overview({
 	run,
 	onOpenNode,
+	located,
 }: {
 	run: RunView;
 	onOpenNode: (target: OverviewTarget) => void;
+	located?: string;
 }) {
 	const focus = useRunFocus(run.id, { live: run.status === "running" });
+	const container = useRef<HTMLDivElement>(null);
+	const loaded = focus.data !== undefined;
+	// 读数到了以后滚一次；之后每 2 秒重新读取不再动页面。
+	useEffect(() => {
+		if (located === undefined || !loaded) return;
+		container.current
+			?.querySelector('[aria-current="location"]')
+			?.scrollIntoView({ block: "nearest" });
+	}, [located, loaded]);
 	return (
-		<div className="min-h-0 flex-1 overflow-auto bg-bg">
+		<div ref={container} className="min-h-0 flex-1 overflow-auto bg-bg">
 			<div className="flex flex-col gap-5 p-4">
 				<ChainSection run={run} />
 				{focus.data && <Attention focus={focus.data} onOpen={onOpenNode} />}
-				<FocusSection run={run} focus={focus} onOpenNode={onOpenNode} />
+				<FocusSection run={run} focus={focus} onOpenNode={onOpenNode} located={located} />
 				<OtherWarnings run={run} focus={focus.data} onOpen={onOpenNode} />
 			</div>
 		</div>
@@ -137,10 +150,12 @@ function FocusSection({
 	run,
 	focus,
 	onOpenNode,
+	located,
 }: {
 	run: RunView;
 	focus: UseQueryResult<RunFocus>;
 	onOpenNode: (target: OverviewTarget) => void;
+	located?: string;
 }) {
 	const data = focus.data;
 	const primary = data?.mode === "primary";
@@ -158,20 +173,10 @@ function FocusSection({
 					</span>
 				)}
 				<span className="text-xs text-fg-3">
-					{primary
-						? `场景没有设置${TERM.focusItem}`
-						: `由场景设置，按设定的顺序排，${FOCUS.anomalyFirst}`}
+					{primary ? FOCUS.noneSet : `由场景设置，按设定的顺序排，${FOCUS.anomalyFirst}`}
 				</span>
 				<span className="flex-1" />
-				<Link
-					to="/orchestrations/$id"
-					params={{ id: run.orchestration_id }}
-					search={{ settings: "focus" }}
-					className="inline-flex items-center gap-1.5 rounded-sm text-xs text-fg-2 hover:text-fg-1"
-				>
-					<EyeIcon aria-hidden="true" className="size-3.5" />
-					{primary ? `设置${TERM.focusItem}` : `调整${TERM.focusItem}`}
-				</Link>
+				<FocusSettingsLink orchestrationId={run.orchestration_id} configured={!primary} />
 			</div>
 			{focus.error && !data ? (
 				<ErrorState
@@ -182,7 +187,12 @@ function FocusSection({
 			) : !data ? (
 				<Skeleton className="h-28 w-full" />
 			) : (
-				<FocusBody data={data} executing={executingNodes(run).length > 0} onOpen={open} />
+				<FocusBody
+					data={data}
+					executing={executingNodes(run).length > 0}
+					onOpen={open}
+					located={located}
+				/>
 			)}
 		</section>
 	);
@@ -192,11 +202,14 @@ function FocusBody({
 	data,
 	executing,
 	onOpen,
+	located,
 }: {
 	data: RunFocus;
 	/** 链路里列着执行中的节点：没设关注项时没有读数，原因就不是「没有执行中的节点」。 */
 	executing: boolean;
 	onOpen: (item: RunFocusItem) => void;
+	/** 要标出位置的节点（地址里的 `node`）。 */
+	located?: string;
 }) {
 	if (data.items.length === 0) {
 		return (
@@ -219,7 +232,14 @@ function FocusBody({
 					items={readouts}
 					generatedAt={data.generated_at}
 					className="rounded-lg border border-border-soft bg-surface"
-					renderItem={(item) => <button type="button" onClick={() => onOpen(item)} />}
+					renderItem={(item) => (
+						<button
+							type="button"
+							onClick={() => onOpen(item)}
+							aria-current={item.node_id === located ? "location" : undefined}
+							className={item.node_id === located ? "selected-row" : undefined}
+						/>
+					)}
 				/>
 			)}
 			{charts.length > 0 && (
@@ -230,6 +250,7 @@ function FocusBody({
 							item={item}
 							generatedAt={data.generated_at}
 							onOpen={() => onOpen(item)}
+							located={item.node_id === located}
 						/>
 					))}
 				</div>

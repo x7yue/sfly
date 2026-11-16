@@ -2,7 +2,7 @@ import type { DashboardChain, DashboardRunningRun, RunListActiveNode } from "@sf
 import { isOnAgentStatus } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
-import { useEffect, useId, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 import { listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
@@ -10,23 +10,28 @@ import { type LineChain, RunLines, RunLineThumb } from "#/components/run-lines";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { TriggeredAt } from "#/components/via-tag";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
+import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
 import { useRunFocus } from "#/focus/use-run-focus";
 import {
 	ACTION,
 	ACTIVE_LABEL,
 	ELAPSED_LABEL,
+	FOCUS,
 	LIST_LABEL,
+	MONITOR_VIEW_LABEL,
 	moreLabel,
 	RUNNING_PRIMARY_LABEL,
 	TERM,
 } from "#/lib/copy";
 import { formatClock, formatDuration, shortId } from "#/lib/format";
+import { useElementWidth } from "#/lib/use-element-width";
 import { useNow } from "#/lib/use-now";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { runMonitorLink } from "#/monitor/run-link";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
+import { readoutPlan } from "./wall-rules";
 
 /** 控制台统计里的链实例换成线路的输入。 */
 export const lineChains = (chains: readonly DashboardChain[]): LineChain[] =>
@@ -105,7 +110,7 @@ export function RunBlock({
 				)}
 			</div>
 			<RunLines chains={lineChains(run.chains)} className="mt-3.5" />
-			<RunReadout runId={run.id} limit={activeLimit} />
+			<RunReadout run={run} limit={activeLimit} />
 			<ActiveNodes nodes={run.active_nodes} limit={activeLimit} now={now} />
 			<div className="mt-2.5 flex gap-1.5">
 				<Link {...runMonitorLink(run.id, {})} className={buttonVariants({ size: "sm" })}>
@@ -135,27 +140,93 @@ export function RunBlock({
 }
 
 /**
- * 运行块的读数：现在是场景没设关注项时执行中节点的主指标（`GET /runs/:id/focus?points=0` 的 primary），
- * 设了关注项的场景这里暂时不显示（关注项读数由 #366 接在这里）。`limit` 同进行中的节点。
+ * 运行块的读数区（`GET /runs/:id/focus?points=0`，只要最新值、异常和排序）。场景设了关注项：一排关注项读数，
+ * 有异常的在最前，标题旁写「N 项需要注意」；按读数区的实际宽度放 3 或 4 格，有异常的总在里面，其余写
+ * 「还有 N 个关注项 · 打开概览」；点一格进入运行监控概览并定位到它所在的节点。3 个以上运行时只放前 `limit` 项
+ * （有异常的加上前两项，见 wall-rules 的 `readoutPlan`）。场景没设关注项：执行中节点的主指标，标题旁给出
+ * 「设置关注项」。没有读数时不画这一块。
  */
-function RunReadout({ runId, limit }: { runId: string; limit: number | null }) {
-	const focus = useRunFocus(runId, { live: true, points: 0 });
+function RunReadout({ run, limit }: { run: DashboardRunningRun; limit: number | null }) {
+	const focus = useRunFocus(run.id, { live: true, points: 0 });
+	const [measure, width] = useElementWidth<HTMLElement>();
 	const data = focus.data;
-	if (data?.mode !== "primary" || data.items.length === 0) return null;
-	const items = limit === null ? data.items : data.items.slice(0, limit);
+	if (!data || data.items.length === 0) return null;
+	if (data.mode === "primary") {
+		const items = limit === null ? data.items : data.items.slice(0, limit);
+		return (
+			<section ref={measure} aria-label={RUNNING_PRIMARY_LABEL} className="mt-3">
+				<ReadoutHeading
+					title={RUNNING_PRIMARY_LABEL}
+					orchestrationId={run.orchestration_id}
+					configured={false}
+				>
+					<RuleLine />
+					<span>{FOCUS.noneSet} ·</span>
+				</ReadoutHeading>
+				<FocusReadoutStrip
+					items={items}
+					generatedAt={data.generated_at}
+					className="rounded-md border border-border-soft"
+				/>
+			</section>
+		);
+	}
+	const { shown, more, attention, columns } = readoutPlan(data.items, width, limit);
 	return (
-		<section aria-label={RUNNING_PRIMARY_LABEL} className="mt-3">
-			<h4 className="m-0 mb-1.5 flex items-center gap-2 text-xs font-normal text-fg-3 after:h-px after:flex-1 after:bg-border-soft">
-				{RUNNING_PRIMARY_LABEL}
-			</h4>
+		<section ref={measure} aria-label={TERM.focusItem} className="mt-3">
+			<ReadoutHeading title={TERM.focusItem} orchestrationId={run.orchestration_id} configured>
+				<span className="font-mono">{data.items.length}</span>
+				{attention > 0 && <span className="text-warn-fg">· {FOCUS.attentionCount(attention)}</span>}
+				<RuleLine />
+			</ReadoutHeading>
 			<FocusReadoutStrip
-				items={items}
+				items={shown}
 				generatedAt={data.generated_at}
+				columns={columns}
 				className="rounded-md border border-border-soft"
+				renderItem={(item) => (
+					<Link {...runMonitorLink(run.id, { view: "overview", node: item.node_id })} />
+				)}
+				trailing={
+					more > 0 && (
+						<Link
+							{...runMonitorLink(run.id, { view: "overview" })}
+							className="flex h-full min-w-0 items-center px-3 py-2 text-xs text-fg-2 no-underline hover:bg-fg-1/3 hover:text-fg-1"
+						>
+							<span>
+								<span className="whitespace-nowrap">{FOCUS.moreItems(more)}</span> ·{" "}
+								<span className="whitespace-nowrap">打开{MONITOR_VIEW_LABEL.overview}</span>
+							</span>
+						</Link>
+					)
+				}
 			/>
 		</section>
 	);
 }
+
+/** 读数区的标题行：标题、`children`（计数、分隔线、说明），右边是去场景设置「关注项」页的链接。 */
+function ReadoutHeading({
+	title,
+	orchestrationId,
+	configured,
+	children,
+}: {
+	title: string;
+	orchestrationId: string;
+	configured: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<div className="mb-1.5 flex items-center gap-2 text-xs text-fg-3">
+			<h4 className="m-0 text-xs font-normal">{title}</h4>
+			{children}
+			<FocusSettingsLink orchestrationId={orchestrationId} configured={configured} />
+		</div>
+	);
+}
+
+const RuleLine = () => <span aria-hidden className="h-px min-w-4 flex-1 bg-border-soft" />;
 
 /** 先执行中（含准备中），再排队、等待；同一类按链与链上的顺序。 */
 const ORDER = (node: RunListActiveNode) =>

@@ -81,6 +81,14 @@ export const FOCUS = {
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
 	attention: "需要注意",
+	/** 「1 项需要注意」：控制台运行块的读数区标题旁。 */
+	attentionCount: (count: number): string => `${count} 项${FOCUS.attention}`,
+	/** 只放得下前几项时，其余的个数（`moreLabel` 加上「关注项」）：控制台运行块读数区的最后一格。 */
+	moreItems: (count: number): string => `${moreLabel(count)}${TERM.focusItem}`,
+	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁和控制台运行块的读数区标题旁共用这一句。 */
+	noneSet: `场景没有设置${TERM.focusItem}`,
+	/** 去场景设置的「关注项」页的入口：设了关注项是「调整关注项」，没设是「设置关注项」。 */
+	settingsLink: (configured: boolean): string => `${configured ? "调整" : "设置"}${TERM.focusItem}`,
 	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
 	otherAlerts: "其他警告与错误",
 	/** 上面那一段没有内容时的说明。 */

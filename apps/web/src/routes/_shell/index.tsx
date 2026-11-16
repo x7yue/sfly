@@ -135,7 +135,7 @@ function Wall({ data }: { data: DashboardView }) {
 		<div className={WALL}>
 			<div className="flex min-w-0 flex-col gap-3.5">
 				<RunningRuns runs={data.running_runs} />
-				<EndedPanel runs={data.recent_ended} />
+				<EndedPanel runs={data.recent_ended} generatedAt={data.generated_at} />
 			</div>
 			<div className="flex min-w-0 flex-col gap-3.5">
 				<AgentsPanel />

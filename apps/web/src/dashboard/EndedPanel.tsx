@@ -6,6 +6,7 @@ import { useState } from "react";
 import { listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
+import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { ACTION, DURATION_LABEL, PAGE, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { runViewQuery } from "#/monitor/live-run";
@@ -19,9 +20,16 @@ import { PanelLink } from "./panel-link";
 
 /**
  * 左栏下半：最近 24 小时结束的运行（最多 10 个），按结束时间从新到旧。失败的带错误类型、最先失败的节点、所在链、
- * 尝试号和最多两行错误信息，以及「打开失败节点」「再次运行」；成功和取消的只占一行。
+ * 尝试号和最多两行错误信息、关注项的最终值（场景现在的关注项，最多 4 项），以及「打开失败节点」「再次运行」；成功和取消的只占一行。
+ * `generatedAt` 是控制台统计的时刻（读数里「多久前」的参照）。
  */
-export function EndedPanel({ runs }: { runs: readonly DashboardEndedRun[] }) {
+export function EndedPanel({
+	runs,
+	generatedAt,
+}: {
+	runs: readonly DashboardEndedRun[];
+	generatedAt: string;
+}) {
 	return (
 		<DashboardPanel
 			title="最近结束"
@@ -33,7 +41,7 @@ export function EndedPanel({ runs }: { runs: readonly DashboardEndedRun[] }) {
 			) : (
 				<ul className="m-0 list-none p-0">
 					{runs.map((run) => (
-						<EndedRow key={run.id} run={run} />
+						<EndedRow key={run.id} run={run} generatedAt={generatedAt} />
 					))}
 				</ul>
 			)}
@@ -41,7 +49,7 @@ export function EndedPanel({ runs }: { runs: readonly DashboardEndedRun[] }) {
 	);
 }
 
-function EndedRow({ run }: { run: DashboardEndedRun }) {
+function EndedRow({ run, generatedAt }: { run: DashboardEndedRun; generatedAt: string }) {
 	const status = runStatusView(run.status);
 	const failure = run.status === "failed" ? run.failure : null;
 	const ended = (
@@ -105,6 +113,15 @@ function EndedRow({ run }: { run: DashboardEndedRun }) {
 					<p className="m-0 mt-1.5 line-clamp-2 rounded-md bg-inset px-2.5 py-1.5 font-mono text-xs wrap-anywhere whitespace-pre-line text-fg-2">
 						{failure.error.message}
 					</p>
+				)}
+				{run.focus.length > 0 && (
+					<FocusReadoutStrip
+						items={run.focus}
+						generatedAt={generatedAt}
+						// 最多 3 项排一行；4 项排成两行两列，不留空格。
+						columns={run.focus.length > 3 ? 2 : run.focus.length}
+						className="mt-2 rounded-md border border-border-soft"
+					/>
 				)}
 			</div>
 			<div className="flex flex-none gap-1">
