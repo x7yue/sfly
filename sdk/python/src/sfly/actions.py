@@ -425,8 +425,14 @@ class Actions:
         return rec
 
     def _default_parent(self, innermost: ActionScope | None) -> _Record | None:
-        # 当前上下文里的 with 动作可能属于另一个 Context（同一进程里有两个）：只认自己的。
-        while innermost is not None and innermost._actions is not self:
+        """当前上下文里最内层、属于自己、还没结束的 `with` 动作（规格 #345 的默认父动作）。"""
+        # 跳过另一个 Context 的（同一进程里有两个），也跳过已经结束的：
+        # with 里起的 asyncio 任务复制了上下文，可能比 with 活得久。
+        while innermost is not None and (
+            innermost._actions is not self
+            or innermost._rec is None
+            or innermost._rec.result is not None
+        ):
             innermost = innermost._outer
         return innermost._rec if innermost is not None else None
 

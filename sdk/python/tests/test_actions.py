@@ -185,7 +185,8 @@ def test_a_task_that_outlives_its_with_does_not_nest_under_the_ended_action() ->
 
     assert result.status == "success", result.error
     named = by_name(result)
-    # with 里起的任务复制了上下文；内层结束之后开始的动作挂到还没结束的外层下，外层也结束之后就在最外层。
+    # with 里起的任务复制了上下文：内层结束之后开始的动作挂到还没结束的外层下，
+    # 外层也结束之后就在最外层。
     assert named["内层结束之后"].parent == named["外层"].id
     assert named["内层结束之后"].depth == 1
     assert named["外层结束之后"].parent is None
