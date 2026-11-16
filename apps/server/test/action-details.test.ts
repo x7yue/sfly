@@ -615,6 +615,37 @@ describe("动作明细", () => {
 		expect(JSON.stringify(actions)).not.toContain("tk-secret");
 	});
 
+	it("字段的键里的 secret 值也打码（名称、字段值、失败原因之外）：明细和摘要都一样", async () => {
+		const agent = await connect();
+		const { task } = await start(agent);
+		agent.actions(task, [
+			agent.actionStart(1, "登录", T0 + 1_000, { fields: { "tk-secret": "1" } }),
+			agent.actionEnd(1, "success", T0 + 1_200, { fields: { "备注 tk-secret": "2" } }),
+		]);
+		agent.actionSummary(task, {
+			total: 1,
+			reported: 1,
+			running: [
+				{
+					id: 3,
+					parent: null,
+					depth: 0,
+					name: "查询",
+					fields: { "tk-secret": "3" },
+					...agent.stamp(T0 + 1_500),
+				},
+			],
+		});
+		await agent.sync();
+
+		const { actions } = await page(task.taskId);
+		expect(actions[0]?.fields).toEqual({ "******": "1", "备注 ******": "2" });
+		const res = await cp.fetch(`/tasks/${task.taskId}/actions/summary`);
+		const summary = actionsApi.summary.response.parse(await res.json());
+		expect(summary.running[0]?.fields).toEqual({ "******": "3" });
+		expect(JSON.stringify([actions, summary])).not.toContain("tk-secret");
+	});
+
 	it("前一批已经存下的动作，在下一批里重复开始又结束：重复的开始忽略，结束照样记下", async () => {
 		const agent = await connect();
 		const { task } = await start(agent);
