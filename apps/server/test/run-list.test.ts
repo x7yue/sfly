@@ -232,6 +232,39 @@ describe("跨场景的运行列表", () => {
 		expect(cancelling).toMatchObject({ status: "running", cancelling: true });
 	});
 
+	it("失败的链按失败的先后排：子流程里先失败、主链后失败时，第一项是子流程（与控制台、运行通知的「第一个失败的节点」一致）", async () => {
+		const scenario = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry, { id: "spawn", kind: "async", params: {} }, echo("main")],
+					[{ id: "sub", kind: "subflow_entry", params: [] }, echo("c"), echo("d")],
+				],
+				[["spawn", "sub"]],
+			),
+			"两条链都失败",
+		);
+		const runId = await api.triggerOk(scenario);
+		const tasks: Record<string, AssignedTask> = {};
+		for (let i = 0; i < 2; i++) {
+			const task = await agent.nextAssign();
+			tasks[task.nodeId] = task;
+		}
+		await agent.fail(tasks.c as AssignedTask);
+		clock.advance(1000);
+		await agent.fail(tasks.main as AssignedTask);
+		await eventually(async () => expect((await list()).runs[0]?.status).toBe("failed"));
+
+		const [item] = (await list()).runs;
+		expect(item?.failures.map((f) => [f.chain_id, f.node_id])).toEqual([
+			["sub", "c"],
+			["entry", "main"],
+		]);
+		const ended = (await api.getJson("/dashboard")) as {
+			recent_ended: Array<{ id: string; failure?: { node_id: string } }>;
+		};
+		expect(ended.recent_ended.find((r) => r.id === runId)?.failure?.node_id).toBe("c");
+	});
+
 	it("进行中的节点带上尝试号、Agent、开始时间与唤醒时间：准备中没有开始时间，重试后是新一次尝试，等待节点没有 Agent", async () => {
 		const scenario = await api.orchestrationWith(
 			orchestration([

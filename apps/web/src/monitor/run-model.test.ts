@@ -317,7 +317,12 @@ describe("运行视图与进度推送的合并（#110）", () => {
 });
 
 describe("失败的运行：失败摘要、默认选中的节点、标签页标题", () => {
-	const attempt = (n: number, status: AttemptView["status"], message?: string): AttemptView => ({
+	const attempt = (
+		n: number,
+		status: AttemptView["status"],
+		message?: string,
+		ended_at = "2026-01-01T00:00:01.000Z",
+	): AttemptView => ({
 		task_id: `00000000-0000-4000-8000-00000000000${n}`,
 		attempt: n,
 		status,
@@ -327,7 +332,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		error: message ? { kind: "node_error", message } : null,
 		queued_at: "2026-01-01T00:00:00.000Z",
 		started_at: "2026-01-01T00:00:00.000Z",
-		ended_at: "2026-01-01T00:00:01.000Z",
+		ended_at,
 		start_clock_offset: null,
 		end_clock_offset: null,
 		wake_at: null,
@@ -359,15 +364,22 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 	});
 	const failed: RunView = {
 		...view("failed"),
+		// 链实例按层级、开始时间排（契约的顺序）。verify 第 2 次尝试在第 2 秒失败，子流程里的 probe 在第 3 秒失败。
 		chains: [
-			// 子流程实例排在主链后面：按层级顺序找第一个失败的节点。
-			chain("child", 1, [node("probe", "failed", [attempt(1, "failed", "boom")])]),
 			chain("main", 0, [
 				node("fetch", "success", [attempt(1, "success")]),
 				node("verify", "failed", [
 					attempt(1, "failed", "AssertionError: 漏拦 3 笔"),
-					attempt(2, "failed", "AssertionError: 仍然漏拦\n\nTraceback (most recent call last):"),
+					attempt(
+						2,
+						"failed",
+						"AssertionError: 仍然漏拦\n\nTraceback (most recent call last):",
+						"2026-01-01T00:00:02.000Z",
+					),
 				]),
+			]),
+			chain("child", 1, [
+				node("probe", "failed", [attempt(1, "failed", "boom", "2026-01-01T00:00:03.000Z")]),
 			]),
 		],
 	};
@@ -400,18 +412,49 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		expect(initialSelection(failed, "fetch")).toEqual({ chainInstanceId: "main", nodeId: "fetch" });
 	});
 
+	it("第一个失败的节点按失败的先后，不按链的层级：子流程里先失败的就是它，失败摘要和默认选中的节点都是它", () => {
+		const subFirst: RunView = {
+			...failed,
+			chains: failed.chains.map((c) =>
+				c.id === "child"
+					? {
+							...c,
+							nodes: [
+								node("probe", "failed", [attempt(1, "failed", "boom", "2026-01-01T00:00:01.500Z")]),
+							],
+						}
+					: c,
+			),
+		};
+		expect(runFailure(subFirst)).toMatchObject({
+			ref: { chainInstanceId: "child", nodeId: "probe" },
+			attempt: 1,
+			message: "boom",
+		});
+		expect(initialSelection(subFirst)).toEqual({ chainInstanceId: "child", nodeId: "probe" });
+		expect(nextFailure(subFirst, null)).toEqual({ chainInstanceId: "child", nodeId: "probe" });
+	});
+
 	describe("下一个失败的节点（F）", () => {
 		const ref = (chainInstanceId: string, nodeId: string) => ({ chainInstanceId, nodeId });
 		const withTwoInMain: RunView = {
 			...failed,
 			chains: failed.chains.map((c) =>
 				c.id === "main"
-					? { ...c, nodes: [...c.nodes, node("report", "failed", [attempt(1, "failed", "boom")])] }
+					? {
+							...c,
+							nodes: [
+								...c.nodes,
+								node("report", "failed", [
+									attempt(1, "failed", "boom", "2026-01-01T00:00:02.500Z"),
+								]),
+							],
+						}
 					: c,
 			),
 		};
 
-		it("按链的层级与节点顺序依次取下一个，到末尾回到第一个", () => {
+		it("按失败的先后依次取下一个，到末尾回到第一个", () => {
 			expect(nextFailure(withTwoInMain, ref("main", "verify"))).toEqual(ref("main", "report"));
 			expect(nextFailure(withTwoInMain, ref("main", "report"))).toEqual(ref("child", "probe"));
 			expect(nextFailure(withTwoInMain, ref("child", "probe"))).toEqual(ref("main", "verify"));
