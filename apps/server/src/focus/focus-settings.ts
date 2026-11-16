@@ -2,6 +2,7 @@ import { type FocusEditView, type FocusItemView, focusKey, sameFocusList } from 
 import type { Actor } from "../actor.js";
 import type { Db } from "../db/database.js";
 import type { orchestrations, StoredFocusEdit } from "../db/schema.js";
+import type { Tx } from "../engine/step.js";
 import {
 	checkFocusList,
 	describeFocusChange,
@@ -18,10 +19,10 @@ export type FocusColumns = Pick<OrchestrationRow, "focusItems" | "focusEdit">;
 
 /**
  * 场景视图里的关注项：每项带它在最新版本里的状态，加上最后一次修改。
- * 在事务里调用时传 `tx`（`Tx` 可以当 `Db` 用）：事务已经占着一个连接，不能再去连接池里另取一个。
+ * 在事务里调用时传 `tx`：事务已经占着一个连接，不能再去连接池里另取一个（CODING_STANDARDS「数据库」）。
  */
 export async function focusFields(
-	db: Db,
+	db: Db | Tx,
 	row: OrchestrationRow,
 ): Promise<{ focus_items: FocusItemView[]; focus_edit: FocusEditView | null }> {
 	const { focusEdit } = row;
@@ -46,7 +47,7 @@ export type FocusReplacement =
  * 把上一次修改之前的列表写回去记为撤销：它回到的是原来的状态，里面已经失效的项（上一次修改移除的）不当作新加入的检查。
  */
 export async function replaceFocusItems(
-	db: Db,
+	db: Db | Tx,
 	row: OrchestrationRow,
 	requested: readonly FocusItem[],
 	actor: Actor,

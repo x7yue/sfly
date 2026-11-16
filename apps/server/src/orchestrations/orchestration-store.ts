@@ -149,7 +149,7 @@ export class OrchestrationStore {
 	 * 场景视图：基本信息，加上关注项和它们在最新版本里的状态（{@link focusFields}）。
 	 * `db` 必须传：在事务里是 `tx`（事务已经占着一个连接，不能再去连接池里另取一个），不在事务里是 `this.deps.db`。
 	 */
-	async #view(row: OrchestrationRow, db: Db): Promise<OrchestrationView> {
+	async #view(row: OrchestrationRow, db: Db | Tx): Promise<OrchestrationView> {
 		return { ...toBase(row), ...(await focusFields(db, row)) };
 	}
 
