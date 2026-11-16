@@ -35,7 +35,8 @@ interface Look {
 	Foot: ComponentType<CellProps> | null;
 }
 
-const isStale = (item: RunFocusItem) => item.anomaly?.kind === "stale";
+/** 没有新数据（`stale_since`，和报哪一种异常无关）：值退成次要文字色，和 {@link FocusValue} 一样。 */
+const isStale = (item: RunFocusItem) => item.stale_since !== null;
 
 /** 画布节点卡片的底部：行高 20px，字号随画布的语义缩放（容器给）。 */
 const CARD: Look = {
