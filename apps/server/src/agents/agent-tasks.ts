@@ -17,7 +17,7 @@ import { runSecretValues, taskProgressView } from "../logs/task-logs.js";
 
 /** 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）。 */
 export interface AgentTasks {
-	/** 占着槽位的（派发中、执行中），按派发顺序（`tasks.seq`）。 */
+	/** 占着槽位的（准备中、执行中），按派发顺序（`tasks.seq`）。 */
 	running: Array<{ agent: string; view: RunningTaskView }>;
 	/** 排队的，按排队顺序（`queued_at`，同一时刻按创建顺序），也就是派发时的先后。 */
 	queued: Array<{ agent: string; view: QueuedTaskView }>;

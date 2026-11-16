@@ -198,7 +198,7 @@ export async function loadRunBoards(
 	return boards;
 }
 
-/** 一个运行里进行中的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序；运行列表与控制台共用。 */
+/** 一个运行里进行中的节点（排队、准备中、执行中、等待唤醒），按链与链上的顺序；运行列表与控制台共用。 */
 export function activeNodesOf(chains: readonly BoardChain[]): RunListActiveNode[] {
 	return chains.flatMap((chain) =>
 		chain.nodes.flatMap(({ node_id, display_name, status, attempts }) => {

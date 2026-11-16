@@ -32,7 +32,7 @@ export const RunStatus = z.enum(["running", "success", "failed", "cancelled"]);
 
 /**
  * 任务（一次尝试）与节点的状态（docs/SEMANTICS.md §3.1）。节点另有 pending（还没有尝试）。
- * dispatched：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
+ * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
  * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（§4.1，不算失败）。
  */
 export const TaskStatus = z.enum([
@@ -50,7 +50,7 @@ export const NodeStatus = z.enum([...TaskStatus.options, "pending"]);
 
 /**
  * 状态分组（控制面与前端共用，不要在别处再写一份）：
- * - ON_AGENT_STATUSES：由 Agent 负责、占用槽位的任务状态（派发阶段和执行阶段，有租约），也是还会上报指标的状态；
+ * - ON_AGENT_STATUSES：由 Agent 负责、占用槽位的任务状态（准备中和执行中，有租约），也是还会上报指标的状态；
  * - ACTIVE_STATUSES：还没结束、正在推进的节点状态：排队中、准备中、执行中、等待中（「进行中的节点」）。
  */
 export const ON_AGENT_STATUSES = ["dispatched", "running"] as const satisfies readonly z.infer<
@@ -93,7 +93,7 @@ export const AttemptView = z.object({
 	outputs: z.record(z.string(), z.unknown()).nullable(),
 	error: ErrorView.nullable(),
 	queued_at: Timestamp,
-	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、派发阶段为 null。 */
+	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、准备中为 null。 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
 	/**

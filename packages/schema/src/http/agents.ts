@@ -50,9 +50,9 @@ export const RunningTaskView = z.object({
 	...AgentTaskFields,
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: z.enum(["dispatched", "running"]),
-	/** 执行器启动的时间；派发阶段为 null。 */
+	/** 执行器启动的时间；准备中为 null。 */
 	started_at: Timestamp.nullable(),
-	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，派发阶段也为 null。 */
+	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，准备中也为 null。 */
 	current_action: CurrentAction.nullable(),
 	/** 最新进度（ctx.progress）；没上报过时为 null。说明里的 secret 值按写入时这次运行已知的 secret 打码；运行视图读取时还会按当时的 secret 再打一遍，所以写入之后才出现的 secret 值，运行视图会打码、这里不会。 */
 	progress: TaskProgressView.nullable(),

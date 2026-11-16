@@ -303,7 +303,7 @@ export interface AttemptView {
 	outputs: Record<string, unknown> | null;
 	error: ErrorView | null;
 	queued_at: Timestamp;
-	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、派发阶段为 null。 */
+	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、准备中为 null。 */
 	started_at: Timestamp | null;
 	ended_at: Timestamp | null;
 	/**
@@ -527,7 +527,7 @@ export interface DashboardRunStats {
 	running: number;
 	/** 正在运行的链实例数（主链与子流程）。 */
 	running_chains: number;
-	/** 已派发给 Agent、还没结束的任务数（派发中与执行中）。 */
+	/** 已派发给 Agent、还没结束的任务数（准备中与执行中）。 */
 	running_tasks: number;
 	/** 排队等待 Agent 的任务数。 */
 	queued_tasks: number;
@@ -2162,9 +2162,9 @@ export interface RunningTaskView {
 	attempt: number;
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: "dispatched" | "running";
-	/** 执行器启动的时间；派发阶段为 null。 */
+	/** 执行器启动的时间；准备中为 null。 */
 	started_at: Timestamp | null;
-	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，派发阶段也为 null。 */
+	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，准备中也为 null。 */
 	current_action: CurrentAction | null;
 	/** 最新进度（ctx.progress）；没上报过时为 null。说明里的 secret 值按写入时这次运行已知的 secret 打码；运行视图读取时还会按当时的 secret 再打一遍，所以写入之后才出现的 secret 值，运行视图会打码、这里不会。 */
 	progress: TaskProgressView | null;
@@ -2320,7 +2320,7 @@ export interface TaskProgressView {
 
 /**
  * 任务（一次尝试）与节点的状态（docs/SEMANTICS.md §3.1）。节点另有 pending（还没有尝试）。
- * dispatched：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
+ * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
  * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（§4.1，不算失败）。
  */
 export type TaskStatus = "queued" | "dispatched" | "running" | "waiting" | "success" | "failed" | "skipped" | "cancelled" | "stopped";

@@ -20,7 +20,7 @@ export const DashboardRunStats = z.object({
 	running: z.number().int(),
 	/** 正在运行的链实例数（主链与子流程）。 */
 	running_chains: z.number().int(),
-	/** 已派发给 Agent、还没结束的任务数（派发中与执行中）。 */
+	/** 已派发给 Agent、还没结束的任务数（准备中与执行中）。 */
 	running_tasks: z.number().int(),
 	/** 排队等待 Agent 的任务数。 */
 	queued_tasks: z.number().int(),
