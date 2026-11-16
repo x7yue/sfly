@@ -1,7 +1,7 @@
 import type { RunFocus, RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 import { EyeIcon } from "lucide-react";
-import { anomalyText, focusItemTitle } from "#/focus/focus-format";
+import { attentionSummary, focusItemTitle } from "#/focus/focus-format";
 import { FOCUS } from "#/lib/copy";
 import type { CardFocus } from "./context";
 import { LOD_HIDDEN, ZOOM_TEXT_11 } from "./zoom-text";
@@ -17,19 +17,15 @@ export function cardFocusLabel(
 	generatedAt: string,
 	mode: RunFocus["mode"] = "focus",
 ): string {
-	const reasons = items.flatMap((item) => {
-		const reason = anomalyText(item, generatedAt);
-		const name = mode === "primary" ? focusItemTitle(item, mode) : item.chart;
-		return reason === null ? [] : [`${name} ${reason}`];
-	});
+	const attention = attentionSummary(items, generatedAt, (item) =>
+		mode === "primary" ? focusItemTitle(item, mode) : item.chart,
+	);
 	const missing = items.flatMap((item) =>
 		item.unavailable ? [FOCUS.chartMissing(item.chart)] : [],
 	);
 	return [
 		...(mode === "primary" ? [] : [FOCUS.itemCount(items.length)]),
-		...(reasons.length === 0
-			? []
-			: [`${FOCUS.attentionCount(reasons.length)}：${reasons.join("；")}`]),
+		...(attention === null ? [] : [attention]),
 		...(missing.length === 0 ? [] : [missing.join("；")]),
 	].join("，");
 }

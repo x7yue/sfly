@@ -16,7 +16,7 @@ import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/f
 import { useListNavigation } from "#/components/list-navigation";
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { ACTION, MESSAGE, PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { firstParagraph } from "#/lib/node-description";
 import { compareVersions } from "#/lib/package-versions";
@@ -77,9 +77,9 @@ function PackagesPage() {
 						>
 							<CodeBlock code="uv run sfly publish" className="mx-auto w-fit" />
 							<p className="m-0 mt-4 text-sm">
-								<DocPageLink page="quickstart">从零开始开发节点包</DocPageLink>
+								<DocPageLink page="quickstart" />
 								<span className="mx-2 text-fg-3">·</span>
-								<DocPageLink page="publish">{ACTION.publishPackage}</DocPageLink>
+								<DocPageLink page="publish" />
 							</p>
 						</EmptyState>
 					</Panel>

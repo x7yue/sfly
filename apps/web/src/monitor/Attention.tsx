@@ -1,4 +1,11 @@
-import type { FocusAnomaly, RunFocus, RunFocusItem, RunLogLine, RunView } from "@sfly/schema";
+import {
+	ALERT_LOG_LEVELS,
+	type FocusAnomaly,
+	type RunFocus,
+	type RunFocusItem,
+	type RunLogLine,
+	type RunView,
+} from "@sfly/schema";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { anomalyText, readingValue, sourceNodeName } from "#/focus/focus-format";
 import { FOCUS, LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
@@ -123,7 +130,6 @@ export function Attention({
 	);
 }
 
-const ALERT_LEVELS = ["warn", "error"] as const;
 /** 「其他警告与错误」最多列出最近的这么多条，其余在详情的日志里查看。 */
 const SHOWN_LINES = 20;
 
@@ -152,7 +158,7 @@ export function OtherWarnings({
 	focus: RunFocus | undefined;
 	onOpen: (target: OverviewTarget) => void;
 }) {
-	const logs = useRunLogs(run.id, undefined, ALERT_LEVELS);
+	const logs = useRunLogs(run.id, undefined, ALERT_LOG_LEVELS);
 	const others = logs.lines.filter((line) => !inAttention(focus, line));
 	const shown = others.slice(-SHOWN_LINES).reverse();
 	return (

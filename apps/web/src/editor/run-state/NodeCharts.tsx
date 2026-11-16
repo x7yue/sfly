@@ -1,9 +1,9 @@
 import {
-	bucketStartMs,
 	type CatalogNode,
 	type ChartView,
+	chartMetrics,
 	type FocusLatest,
-	type FocusSeries,
+	focusSeriesOf,
 	latestSeries,
 	type MetricDeclaration,
 	type MetricSeries,
@@ -79,20 +79,6 @@ export function orderCharts(
 	return rows.sort((a, b) => rank(a) - rank(b) || (a.focused ? at(a) - at(b) : 0));
 }
 
-/** 运行指标的一个序列换成关注项读数里的写法，图表和读数共用一套画法。 */
-const focusSeries = (s: MetricSeries["series"][number]): FocusSeries => ({
-	metric: s.name,
-	labels: s.labels,
-	points: s.buckets.map((b) => ({
-		time: new Date(bucketStartMs(b)).toISOString(),
-		min: b.min,
-		max: b.max,
-		avg: b.avg,
-		last: b.last,
-		points: b.points,
-	})),
-});
-
 /**
  * 不是关注项的图表的最新值：最近更新的那个序列的最后一个点（`latestSeries`，和控制面给关注项取最新值同一个取法，
  * 按每个序列最后一个点的精确时间比）。
@@ -158,7 +144,7 @@ export function NodeCharts({
 					chain_instance_id: entry.chain_instance_id,
 					node_id: entry.node_id,
 					attempt: latest?.attempt,
-					metrics: declared ? readMetrics(declared).join(",") : "",
+					metrics: declared ? chartMetrics(declared).join(",") : "",
 					points: CHART_POINTS,
 				},
 				!live,
@@ -276,8 +262,8 @@ function DeclaredChart({
 	toggle: ReactNode;
 }) {
 	const raw = result?.data?.series ?? [];
-	const series = raw.map(focusSeries);
-	const metrics = readMetrics(chart).map((name) => ({
+	const series = raw.map(focusSeriesOf);
+	const metrics = chartMetrics(chart).map((name) => ({
 		name,
 		label_keys: metricOf(name)?.labels ?? [],
 	}));
@@ -330,7 +316,3 @@ function DeclaredChart({
 
 /** 还没开始执行的尝试：没有数据的原因按节点状态写。 */
 const NOT_STARTED = { started_at: null, ended_at: null };
-
-/** 一张图表读哪些指标：数值卡只读第一个（与关注项读数一样），其余读声明的全部。 */
-const readMetrics = (chart: ChartView) =>
-	chart.type === "stat" ? chart.metrics.slice(0, 1) : chart.metrics;

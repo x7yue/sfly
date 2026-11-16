@@ -1,5 +1,6 @@
 import {
 	type CatalogNode,
+	errorHeadline,
 	isLabeled,
 	isOnAgentStatus,
 	MAX_SERIES,
@@ -12,13 +13,14 @@ import {
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
 import { BarChart3Icon, ChevronRightIcon, SearchIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
 import { attemptLabel, DURATION_LABEL, MESSAGE, noDataLabel, PROGRESS_LABEL } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
+import { useElementWidth } from "#/lib/use-element-width";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
 import { Badge } from "@/components/ui/badge";
@@ -104,7 +106,14 @@ export function ChartWorkspace({
 	const [opened, setOpened] = useState<Record<string, boolean>>({});
 	const scroller = useRef<HTMLElement>(null);
 	const toolbar = useRef<HTMLDivElement>(null);
-	const width = useWidth(scroller);
+	const [measure, width] = useElementWidth<HTMLElement>();
+	const scrollerRef = useCallback(
+		(el: HTMLElement | null) => {
+			scroller.current = el;
+			measure(el);
+		},
+		[measure],
+	);
 
 	const query = search.trim().toLowerCase();
 	const matches = (text: string) => text.toLowerCase().includes(query);
@@ -233,7 +242,7 @@ export function ChartWorkspace({
 
 	return (
 		<section
-			ref={scroller}
+			ref={scrollerRef}
 			aria-label="图表工作区"
 			className={cn(
 				"relative flex-initial overflow-auto px-3 [scrollbar-gutter:stable]",
@@ -398,20 +407,6 @@ function Notice({ children, compact }: { children: React.ReactNode; compact?: bo
 			{children}
 		</div>
 	);
-}
-
-/** 元素的内容宽度（随窗口与面板变化）。 */
-function useWidth(ref: React.RefObject<HTMLElement | null>) {
-	const [width, setWidth] = useState(1280);
-	useLayoutEffect(() => {
-		const el = ref.current;
-		if (!el) return;
-		setWidth(el.clientWidth);
-		const observer = new ResizeObserver(() => setWidth(el.clientWidth));
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, [ref]);
-	return width;
 }
 
 /**
@@ -742,7 +737,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 					<div className="text-xs text-fg-3">错误</div>
 					<div className="flex items-center gap-1.5 text-xs">
 						<Badge variant="danger">{node.error.kind}</Badge>
-						<span className="truncate text-danger-fg">{node.error.message.split("\n\n")[0]}</span>
+						<span className="truncate text-danger-fg">{errorHeadline(node.error.message)}</span>
 					</div>
 				</div>
 			)}

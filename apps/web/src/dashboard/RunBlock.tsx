@@ -12,6 +12,7 @@ import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/componen
 import { TriggeredAt } from "#/components/via-tag";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
+import { FocusTally } from "#/focus/FocusTally";
 import { emptyReadingsNote } from "#/focus/focus-format";
 import { useRunFocus } from "#/focus/use-run-focus";
 import {
@@ -170,13 +171,12 @@ function RunReadout({ run, limit }: { run: DashboardRunningRun; limit: number | 
 	}
 	const primary = data.mode === "primary";
 	const title = primary ? RUNNING_PRIMARY_LABEL : TERM.focusItem;
-	const { shown, more, attention, columns } = readoutPlan(data.items, width, limit);
+	const { shown, more, columns } = readoutPlan(data.items, width, limit);
 	const executing = run.active_nodes.some((node) => isOnAgentStatus(node.status));
 	return (
 		<section ref={measure} aria-label={title} className="mt-3">
 			<ReadoutHeading title={title} orchestrationId={run.orchestration_id} configured={!primary}>
-				{!primary && <span className="font-mono">{data.items.length}</span>}
-				{attention > 0 && <span className="text-warn-fg">· {FOCUS.attentionCount(attention)}</span>}
+				<FocusTally items={data.items} showCount={!primary} />
 				<RuleLine />
 				{primary && <span>{FOCUS.noneSet} ·</span>}
 			</ReadoutHeading>

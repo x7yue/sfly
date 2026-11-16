@@ -97,12 +97,12 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
   ```text
   已触发运行 331168f8-611c-46a6-9259-6830dbd7412b，链接：http://<控制面地址>/runs/331168f8-611c-46a6-9259-6830dbd7412b
   main:probe「探测接口」 执行中
-  main:probe「探测接口」 失败 0.1s
+  main:probe「探测接口」 失败 120ms
   ```
 
   ```text
   运行 331168f8-611c-46a6-9259-6830dbd7412b：失败
-  耗时：0.1s
+  耗时：120ms
   链接：http://<控制面地址>/runs/331168f8-611c-46a6-9259-6830dbd7412b
 
   失败的任务（1 个）：

@@ -1,7 +1,7 @@
 import { appendFile, mkdir, open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
-import type { OrchestrationDocument, TaskProgressView } from "@sfly/schema";
+import { isAlertLevel, type OrchestrationDocument, type TaskProgressView } from "@sfly/schema";
 import { eq, inArray } from "drizzle-orm";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
@@ -377,7 +377,7 @@ export class TaskLogs {
 				row = `${JSON.stringify(view)}\n`;
 				truncated = true;
 			}
-			if (view.level === "warn" || view.level === "error") {
+			if (isAlertLevel(view.level)) {
 				issues = {
 					count: (issues?.count ?? 0) + 1,
 					level: view.level,

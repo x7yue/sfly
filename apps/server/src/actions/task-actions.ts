@@ -1,5 +1,6 @@
 import type { ActionBatch, ActionSummary, AgentMessage } from "@sfly/proto";
 import {
+	ACTION_LIMITS,
 	type ActionDetailView,
 	type ActionNameCount,
 	type ActionPage,
@@ -30,13 +31,11 @@ import {
 	type DroppedDetails,
 	detailView,
 	encodeActionCursor,
-	NAME_DETAIL_LIMIT,
 	planBatch,
 	prepareEvents,
 	type StoredDetail,
 	startedNames,
 	type TaskEnd,
-	TOTAL_DETAIL_LIMIT,
 	taskEndOf,
 } from "./action-details.js";
 import {
@@ -75,7 +74,7 @@ const REPLAY_PAGE = 1000;
 
 /** 控制面兜底第一次丢弃明细时写进任务日志的警告（每个任务一次）。 */
 const CAPPED_WARNING =
-	`动作和标记的明细超过了控制面的上限（每个任务 ${TOTAL_DETAIL_LIMIT} 个，每种名称 ${NAME_DETAIL_LIMIT} 个，` +
+	`动作和标记的明细超过了控制面的上限（每个任务 ${ACTION_LIMITS.total} 个，每种名称 ${ACTION_LIMITS.perName} 个，` +
 	"失败的动作不受每种名称的限制），超出的明细不再保存";
 
 /**

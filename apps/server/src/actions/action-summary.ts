@@ -1,4 +1,5 @@
 import {
+	ACTION_LIMITS,
 	ActionResult,
 	type ActionSummaryView,
 	type CurrentAction,
@@ -23,10 +24,6 @@ import { actionField, actionName, actionReason, mergeFields } from "./action-tex
  *   任务怎么结束（成功、失败、取消、`agent_lost`）都一样，不用在每个结束的地方改存下的摘要。
  */
 
-/** SDK 摘要里各列表的上限（sdk/python/src/sfly/actions.py 的 RUNNING_LIMIT、RECENT_LIMIT、RECENT_FAILED_LIMIT）。 */
-export const RUNNING_LIMIT = 50;
-const RECENT_LIMIT = 20;
-const RECENT_FAILED_LIMIT = 5;
 /**
  * 摘要里最多列多少种名称：SDK 不限（超过 100 种时在任务日志里警告一次），名称里带订单号这样的写法会让每秒一份的摘要
  * 越来越大，这里只存前这么多种（SDK 按第一次出现的先后列），合计和其余字段照常。
@@ -124,7 +121,7 @@ export function actionSummaryView(
 		capped_at: mono === null ? null : at(mono),
 		agent_capped_at: ts === null ? null : agentAt(ts),
 	});
-	const doing = event.running.slice(0, RUNNING_LIMIT);
+	const doing = event.running.slice(0, ACTION_LIMITS.running);
 	const outermost = earliestOutermost(doing);
 	return {
 		summary: {
@@ -141,9 +138,9 @@ export function actionSummaryView(
 				...cappedAt(n.capped_ts, n.capped_mono),
 			})),
 			running: doing.map(running),
-			running_complete: event.running.length < RUNNING_LIMIT,
-			recent: event.recent.slice(0, RECENT_LIMIT).map(ended),
-			recent_failed: event.recent_failed.slice(0, RECENT_FAILED_LIMIT).map(ended),
+			running_complete: event.running.length < ACTION_LIMITS.running,
+			recent: event.recent.slice(0, ACTION_LIMITS.recent).map(ended),
+			recent_failed: event.recent_failed.slice(0, ACTION_LIMITS.recentFailed).map(ended),
 		},
 		current: outermost ? { name: name(outermost.name), started_at: at(outermost.mono) } : null,
 	};

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { failuresInOrder } from "../src/index.js";
+import { errorHeadline, failuresInOrder } from "../src/index.js";
 
 type Node = { id: string; status: string; at: number | null };
 const node = (id: string, status: string, at: number | null = null): Node => ({ id, status, at });
@@ -27,5 +27,16 @@ describe("第一个失败的节点", () => {
 
 	it("没有失败的节点时为空", () => {
 		expect(order([{ id: "main", nodes: [node("a", "success", 1)] }])).toEqual([]);
+	});
+});
+
+describe("错误信息的第一行", () => {
+	it("只取第一行（之后是堆栈），去掉首尾空白；没有错误信息时是空串", () => {
+		expect(errorHeadline("  漏拦 3 笔\nTraceback (most recent call last):\n  ...")).toBe(
+			"漏拦 3 笔",
+		);
+		expect(errorHeadline("漏拦 3 笔\n\nTraceback ...")).toBe("漏拦 3 笔");
+		expect(errorHeadline("超时")).toBe("超时");
+		expect(errorHeadline(null)).toBe("");
 	});
 });

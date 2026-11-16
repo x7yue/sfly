@@ -179,7 +179,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			expect(result.stdout).toContain(`sfly run logs ${runId} --node main:b`);
 			expect(result.stdout).not.toContain("main:a");
 			expect(result.stderr.split("\n")).toEqual(
-				expect.arrayContaining(["main:a 成功 0.0s", "main:b#2 失败 3.0s"]),
+				expect.arrayContaining(["main:a 成功 0ms", "main:b#2 失败 3.0s"]),
 			);
 
 			// 已经结束的运行上 run wait 直接输出摘要；--json 时是一个对象，字段相同。
@@ -437,7 +437,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			expect(result.stdout).toContain(`运行 ${runId}：失败`);
 			expect(result.stdout).toContain("断线之后失败");
 			expect(result.stderr).toContain("已重新连接");
-			expect(result.stderr.split("\n")).toContain("main:a 成功 0.0s");
+			expect(result.stderr.split("\n")).toContain("main:a 成功 0ms");
 		});
 
 		it("运行不存在时报错并提示 run list", async () => {

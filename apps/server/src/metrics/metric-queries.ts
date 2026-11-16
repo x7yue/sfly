@@ -7,7 +7,6 @@ import {
 	type MetricDeclaration,
 	type MetricSeries,
 	type MetricSeriesQuery,
-	NodeTypeMetadata,
 	type OrchestrationDocument,
 	type PlatformBucket,
 	type PlatformMetrics,
@@ -27,9 +26,8 @@ import {
 } from "../db/schema.js";
 import { isPlaceholderAttempt } from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
-import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
-import { nodeTypeOf } from "./node-types.js";
+import { nodeTypeOf, nodeTypeView } from "./node-types.js";
 import { decodeFloat8Array, decodeInt4Array, decodeInt8Array } from "./pg-array.js";
 import {
 	dataLossOf,
@@ -146,8 +144,7 @@ export class MetricQueries {
 			const latest = attempts[attempts.length - 1] as TaskRow;
 			const ref = await nodeTypeOf(this.deps.db, run.document, latest.nodeId, latest.agentName);
 			if (!ref) continue;
-			const parsed = NodeTypeMetadata.safeParse(ref.type);
-			const type = parsed.success ? withDefaultCharts(parsed.data) : undefined;
+			const type = nodeTypeView(ref.type);
 			nodes.push({
 				chain_instance_id: latest.chainInstanceId,
 				node_id: latest.nodeId,

@@ -8,6 +8,29 @@ import { endpoint, stream, Timestamp } from "./contract.js";
  * SDK 写的单调时钟读数折算，Agent 时间原样保存。
  */
 
+/**
+ * 动作的上限（规格 #345）：SDK 先执行（sdk/python/src/sfly/actions.py 里的同名常量），控制面按同一组兜底，
+ * 界面上的说明和接口的注释写的也是这几个数。和 SDK 一致由 packages/schema/test/action-limits.test.ts 检查。
+ */
+export const ACTION_LIMITS = {
+	/** 名称最长的字符数（控制面兜底时字段的键也按它截断）。 */
+	nameChars: 64,
+	/** 字段值（转成字符串后）最长的字符数。 */
+	valueChars: 256,
+	/** 失败原因最长的字符数。 */
+	reasonChars: 4096,
+	/** 一个动作或标记最多的字段数（开始时给的和 `note()` 补充的合计）。 */
+	fields: 8,
+	/** 每种名称最多记录的明细个数。 */
+	perName: 50_000,
+	/** 全部名称合计最多记录的明细个数。 */
+	total: 100_000,
+	/** 摘要里「正在做」「最近结束」「最近失败」最多列出的个数。 */
+	running: 50,
+	recent: 20,
+	recentFailed: 5,
+} as const;
+
 /** 路径里的任务 ID：不是 UUID 时控制面返回 404（与找不到相同），所以这里只要求是字符串。 */
 const IdParams = z.object({ id: z.string() });
 
@@ -38,7 +61,7 @@ export const EndedActionView = RunningActionView.extend({
 	/** 耗时（毫秒），按单调时钟算，不受 Agent 系统时间改动的影响。 */
 	duration_ms: z.number().int(),
 	result: ActionResult,
-	/** 失败的原因（最多 4096 个字符）；其他结果为 null。 */
+	/** 失败的原因（最多 `ACTION_LIMITS.reasonChars` 个字符）；其他结果为 null。 */
 	reason: z.string().nullable(),
 });
 
@@ -79,13 +102,13 @@ export const ActionSummaryView = z.object({
 	agent_capped_at: Timestamp.nullable(),
 	/** 每种名称一项，按第一次出现的先后。 */
 	names: z.array(ActionNameCount),
-	/** 正在做的动作，最多 50 个（层级浅的优先），按 ID 排列。 */
+	/** 正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。 */
 	running: z.array(RunningActionView),
-	/** `running` 是不是全部正在做的动作：列满 50 个时为 false，可能还有没列出的。 */
+	/** `running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。 */
 	running_complete: z.boolean(),
-	/** 最近结束的 20 个动作，最近结束的在前。 */
+	/** 最近结束的 `ACTION_LIMITS.recent` 个动作，最近结束的在前。 */
 	recent: z.array(EndedActionView),
-	/** 最近失败的 5 个动作，最近失败的在前。 */
+	/** 最近失败的 `ACTION_LIMITS.recentFailed` 个动作，最近失败的在前。 */
 	recent_failed: z.array(EndedActionView),
 });
 
@@ -132,7 +155,7 @@ export const ActionRecordDetail = DetailBase.extend({
 	agent_ended_at: Timestamp.nullable(),
 	/** 耗时（毫秒）：按单调时钟算，不受 Agent 系统时间改动的影响；记为未结束的按控制面时间算；还在做时为 null。 */
 	duration_ms: z.number().int().nullable(),
-	/** 失败的原因（最多 4096 个字符）；其他结果为 null。 */
+	/** 失败的原因（最多 `ACTION_LIMITS.reasonChars` 个字符）；其他结果为 null。 */
 	reason: z.string().nullable(),
 });
 
@@ -145,8 +168,8 @@ export const ActionDetailView = z.discriminatedUnion("kind", [
 /**
  * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
  *
- * - `name_limit`：这个名称超过了每种名称的上限（5 万个），失败的动作仍有明细，不在 `count` 里；
- * - `total_limit`：合计超过了上限（10 万个），之后所有名称都只计数，失败的也是；
+ * - `name_limit`：这个名称超过了每种名称的上限（`ACTION_LIMITS.perName`），失败的动作仍有明细，不在 `count` 里；
+ * - `total_limit`：合计超过了上限（`ACTION_LIMITS.total`），之后所有名称都只计数，失败的也是；
  * - `control_plane`：控制面兜底丢弃（被改过的 SDK 写出了超过上限的明细）。
  *
  * 每种名称、每种原因至多一段；算法见 docs/ARCHITECTURE.md §6.3。

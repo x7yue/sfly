@@ -1,8 +1,7 @@
 import type { RunFocus, RunFocusItem, RunningTaskView } from "@sfly/schema";
 import { activityLabel, type CurrentActivity, currentActivity } from "#/actions/current-activity";
-import { anomalyText, focusItemTitle } from "#/focus/focus-format";
+import { attentionSummary, focusItemTitle } from "#/focus/focus-format";
 import { focusPreview } from "#/focus/focus-preview";
-import { FOCUS } from "#/lib/copy";
 
 /** 槽位格里这个任务的关注项：前两项（读数里有异常的在最前）和没显示的个数。 */
 export interface SlotFocus {
@@ -29,17 +28,12 @@ export interface SlotContent {
 export function slotContent(task: RunningTaskView, focus: RunFocus | undefined): SlotContent {
 	const activity = currentActivity(task);
 	const mine = focus?.items.filter((item) => item.source.task_id === task.task_id) ?? [];
-	const reasons = focus
-		? mine.flatMap((item) => {
-				const reason = anomalyText(item, focus.generated_at);
-				return reason === null ? [] : [`${focusItemTitle(item, focus.mode)} ${reason}`];
-			})
-		: [];
+	const attention = focus
+		? attentionSummary(mine, focus.generated_at, (item) => focusItemTitle(item, focus.mode))
+		: null;
 	const parts = [
 		...(activity ? [activityLabel(activity)] : []),
-		...(reasons.length > 0
-			? [`${FOCUS.attentionCount(reasons.length)}：${reasons.join("；")}`]
-			: []),
+		...(attention === null ? [] : [attention]),
 	];
 	const { shown, more } = focusPreview(mine);
 	return {

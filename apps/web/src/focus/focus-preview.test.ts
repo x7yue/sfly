@@ -1,6 +1,6 @@
 import type { RunFocus, RunFocusItem } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { focusPreview, nodeFocusItems, nodePrimaryItem } from "./focus-preview";
+import { countAttention, focusPreview, nodeFocusItems, nodePrimaryItem } from "./focus-preview";
 
 type Item = Pick<RunFocusItem, "node_id" | "chart" | "anomaly">;
 
@@ -28,21 +28,24 @@ describe("只放得下几项时显示哪几项", () => {
 		const preview = focusPreview(nodeFocusItems(focusOf("focus", ITEMS), "load"));
 		expect(preview.shown.map((i) => i.chart)).toEqual(["下单延迟", "母单量"]);
 		expect(preview.more).toBe(2);
-		expect(preview.attention).toBe(1);
 	});
 
 	it("不到两项时全部显示，没有「还有 N 个」", () => {
 		const preview = focusPreview(nodeFocusItems(focusOf("focus", ITEMS), "proc_mon"));
 		expect(preview.shown.map((i) => i.chart)).toEqual(["CPU"]);
 		expect(preview.more).toBe(0);
-		expect(preview.attention).toBe(0);
 	});
 
 	it("可以按位置给出别的上限（控制台的运行块按宽度放 3 或 4 格）", () => {
 		const preview = focusPreview(ITEMS, 4);
 		expect(preview.shown.map((i) => i.chart)).toEqual(["内存使用率", "下单延迟", "母单量", "CPU"]);
 		expect(preview.more).toBe(2);
-		expect(preview.attention).toBe(2);
+	});
+
+	it("「N 项需要注意」数全部有异常的项，含没显示出来的", () => {
+		expect(countAttention(focusPreview(ITEMS, 1).shown)).toBe(1);
+		expect(countAttention(ITEMS)).toBe(2);
+		expect(countAttention(nodeFocusItems(focusOf("focus", ITEMS), "proc_mon"))).toBe(0);
 	});
 
 	it("场景没设关注项时读数是执行中节点的主指标，不算任何节点的关注项", () => {

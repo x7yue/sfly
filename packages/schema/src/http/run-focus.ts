@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ChartDeclaration, MetricName } from "../package-metadata.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { MetricLabels } from "./metrics.js";
-import { NodeStatus } from "./runs.js";
+import { ALERT_LOG_LEVELS, NodeStatus } from "./runs.js";
 
 /**
  * 一次运行的关注项读数的契约（约定见 ./contract.ts）：`GET /runs/:id/focus` 一次返回运行的全部关注项，
@@ -88,7 +88,7 @@ export const FocusAnomalyKind = z.enum(["log", "stale", "failed", "retry"]);
 export const FocusAnomaly = z.object({
 	kind: FocusAnomalyKind,
 	/** `log` 时是最近一条日志的级别。 */
-	level: z.enum(["warn", "error"]).optional(),
+	level: z.enum(ALERT_LOG_LEVELS).optional(),
 	/**
 	 * 异常发生的时间（控制面时间）：`log` 是最近一条 WARN / ERROR 的时间，`stale` 是最后一个点的时间（一个点都没有时是
 	 * 这次尝试开始执行的时间），`failed` 是失败的时间，`retry` 是这次尝试开始执行的时间（还没开始时是进入排队的时间）。

@@ -6,6 +6,7 @@ import {
 	FOLLOW_ZOOM,
 	followViewport,
 	framedInView,
+	rectInView,
 } from "./follow";
 
 type Rect = { x: number; y: number; width: number; height: number };
@@ -171,6 +172,22 @@ describe("跟随执行的镜头框选", () => {
 		expect(inView(NODE_SIZE.height + 60)).toBe(true);
 		// 可见区域 756 高，卡片在正中，下面还剩 (756 - 112) / 2 = 322。
 		expect(inView(NODE_SIZE.height + 400)).toBe(false);
+	});
+
+	it("矩形在不在可见区域里：扣掉悬浮控件，差 1px 以内算在里面", () => {
+		const view = { viewport: { x: 0, y: 0, zoom: 1 }, size: SIZE, area: AREA };
+		// 可见区域：x 从 12 到 1044，y 从 72 到 828。
+		const at = (x: number, y: number) => rectInView({ x, y, width: 100, height: 100 }, view);
+		expect(at(12, 72)).toBe(true);
+		expect(at(944, 728)).toBe(true);
+		expect(at(11.5, 72)).toBe(true);
+		expect(at(944.5, 72)).toBe(true);
+		expect(at(10, 72)).toBe(false);
+		expect(at(946, 72)).toBe(false);
+		expect(at(500, 730)).toBe(false);
+		const zoomed = { ...view, viewport: { x: 12, y: 72, zoom: 0.5 } };
+		expect(rectInView({ x: 1900, y: 0, width: 160, height: 100 }, zoomed)).toBe(true);
+		expect(rectInView({ x: 1950, y: 0, width: 160, height: 100 }, zoomed)).toBe(false);
 	});
 
 	it("缩放下限 0.6：执行中的节点离得很远时不再缩小，整体仍然居中", () => {

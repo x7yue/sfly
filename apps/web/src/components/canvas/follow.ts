@@ -111,23 +111,30 @@ export function followViewport(frame: FollowFrame): Viewport | null {
 }
 
 /**
- * 镜头在 `viewport` 时，`running` 要框住的东西是不是都在可见区域里。框好以后卡片可能才长高（关注项读到了、
- * 多了「正在做」一行），长出来的部分落到可见区域外时要重新框。
+ * 镜头在 `viewport` 时，画布坐标里的 `rect` 是不是整个在可见区域（`size` 扣掉四周悬浮控件占住的 `area`）里；
+ * 差 1px 以内算在里面（缩放后的坐标有小数）。跟随执行判断要不要重新框、改名时判断要不要把节点移进来都用它。
  */
-export function framedInView({
+export function rectInView(
+	rect: Rect,
+	{ viewport, size, area }: { viewport: Viewport; size: FollowFrame["size"]; area: CanvasInsets },
+): boolean {
+	const visible = visibleOf({ size, area });
+	const left = rect.x * viewport.zoom + viewport.x;
+	const top = rect.y * viewport.zoom + viewport.y;
+	return (
+		left >= area.left - 1 &&
+		top >= area.top - 1 &&
+		left + rect.width * viewport.zoom <= area.left + visible.width + 1 &&
+		top + rect.height * viewport.zoom <= area.top + visible.height + 1
+	);
+}
+
+/**
+ * 镜头在 `viewport` 时，`running` 要框住的东西是不是都在可见区域里（{@link rectInView}）。框好以后卡片可能才长高
+ * （关注项读到了、多了「正在做」一行），长出来的部分落到可见区域外时要重新框。
+ */
+export const framedInView = ({
 	viewport,
 	...frame
-}: FollowFrame & { viewport: Viewport }): boolean {
-	const { area } = frame;
-	const visible = visibleOf(frame);
-	return framedRects(frame.running, frame.layout).every((r) => {
-		const left = r.x * viewport.zoom + viewport.x;
-		const top = r.y * viewport.zoom + viewport.y;
-		return (
-			left >= area.left - 1 &&
-			top >= area.top - 1 &&
-			left + r.width * viewport.zoom <= area.left + visible.width + 1 &&
-			top + r.height * viewport.zoom <= area.top + visible.height + 1
-		);
-	});
-}
+}: FollowFrame & { viewport: Viewport }): boolean =>
+	framedRects(frame.running, frame.layout).every((r) => rectInView(r, { ...frame, viewport }));

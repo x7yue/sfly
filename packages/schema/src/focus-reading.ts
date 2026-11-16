@@ -1,6 +1,8 @@
+import { bucketStartMs, type MetricBucket } from "./http/metrics.js";
 import type { FocusSeries, RunFocusItem } from "./http/run-focus.js";
 import { formatMetric } from "./metric-format.js";
-import { seriesName } from "./series.js";
+import type { ChartDeclaration } from "./package-metadata.js";
+import { type Labels, seriesName } from "./series.js";
 
 /**
  * 关注项读数的写法（GLOSSARY「关注项」）：运行监控的读数和图表、运行通知的卡片共用，同一项在哪里看到说法都一样。
@@ -53,3 +55,29 @@ export function latestSeries<S>(
 	}
 	return latest?.series;
 }
+
+/** 一张图表读哪些指标：数值卡只读第一个，其余读声明的全部。关注项的读数和画布检查器里的图表都按它读。 */
+export const chartMetrics = <M extends string>(
+	chart: Pick<ChartDeclaration, "type"> & { metrics: readonly M[] },
+): M[] => chart.metrics.slice(0, chart.type === "stat" ? 1 : undefined);
+
+/**
+ * 指标的一个序列换成关注项读数里的写法（{@link FocusSeries}），图表和读数共用一套画法：点的时间是桶在时间轴上的起始位置
+ * （{@link bucketStartMs}：控制面时间，升级之前存下的数据用 Agent 时间）。控制面给关注项读数、画布检查器给不是关注项的图表都用它。
+ */
+export const focusSeriesOf = (series: {
+	name: string;
+	labels: Labels;
+	buckets: readonly MetricBucket[];
+}): FocusSeries => ({
+	metric: series.name,
+	labels: series.labels,
+	points: series.buckets.map((b) => ({
+		time: new Date(bucketStartMs(b)).toISOString(),
+		min: b.min,
+		max: b.max,
+		avg: b.avg,
+		last: b.last,
+		points: b.points,
+	})),
+});

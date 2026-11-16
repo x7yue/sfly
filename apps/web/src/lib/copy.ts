@@ -1,5 +1,6 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
 import {
+	ACTION_LIMITS,
 	type ActionResult,
 	type ChartView,
 	type CountOnlyPeriod,
@@ -194,12 +195,14 @@ export const PAGE = {
 	docs: "开发文档",
 } as const;
 
-/** 开发文档里被界面引用的页名（控制面 docs/guide/pages.json 里的标题）。 */
+/** 开发文档里被界面引用的页：slug → 页名（docs/guide/pages.json 里的标题，有单测对着它检查）。 */
 export const DOC_PAGE = {
 	quickstart: "快速开始",
+	"install-agent": "安装 Agent",
 	publish: "发布",
-	sdkReference: "开发节点（SDK 参考）",
+	"sdk-reference": "开发节点（SDK 参考）",
 } as const;
+export type DocPage = keyof typeof DOC_PAGE;
 
 /** 运行与链实例的状态。 */
 export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
@@ -390,9 +393,12 @@ export const NODE_ACTIONS = {
 	controlPlaneDropped: `控制面收到的明细超过上限时，超出的会丢弃；丢弃了哪些名称，到${MONITOR_DETAIL_LABEL}的「动作」页签里看。`,
 } as const;
 
+/** 动作的数量上限写成「10 万」这样（都是整万）。 */
+const tenThousands = (count: number) => `${count / 10_000} 万`;
+
 /** 失败的动作在只计数的段里怎么处理：只计数的原因和只看失败时第三组的说明共用这几句。 */
 const FAILED_KEPT = "失败的动作仍有明细";
-const FAILED_DROPPED = "合计满 10 万个以后，失败的动作也没有明细";
+const FAILED_DROPPED = `合计满 ${tenThousands(ACTION_LIMITS.total)}个以后，失败的动作也没有明细`;
 /** 控制面丢弃的明细里，失败的动作也没有（开始时还不知道会不会失败）。 */
 const FAILED_KEPT_EXCEPT_DROPPED = `${FAILED_KEPT}，控制面丢弃的除外`;
 
@@ -427,7 +433,7 @@ export const ACTION_PAGE = {
 	/** 三组的名称：只看失败时，第三组读到的都是失败的动作。 */
 	groups: {
 		running: NODE_ACTIONS.doing,
-		recent: "最近 20 个",
+		recent: `最近 ${ACTION_LIMITS.recent} 个`,
 		earlier: "更早的明细",
 		earlierFailed: "更早的失败",
 	},
@@ -444,9 +450,9 @@ export const ACTION_PAGE = {
 	countOnlyReason: (reason: CountOnlyPeriod["reason"], totalFull: boolean) => {
 		switch (reason) {
 			case "name_limit":
-				return `每种名称最多记录 5 万个${totalFull ? `；${FAILED_DROPPED}` : `，${FAILED_KEPT}`}`;
+				return `每种名称最多记录 ${tenThousands(ACTION_LIMITS.perName)}个${totalFull ? `；${FAILED_DROPPED}` : `，${FAILED_KEPT}`}`;
 			case "total_limit":
-				return "全部名称合计最多记录 10 万个";
+				return `全部名称合计最多记录 ${tenThousands(ACTION_LIMITS.total)}个`;
 			case "control_plane":
 				return "控制面收到的明细超过上限，超出的已丢弃";
 		}

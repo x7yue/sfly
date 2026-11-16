@@ -1,14 +1,7 @@
 import type { AttemptView, ChainRunView, NodeRunView, RunView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { toFlowEdge } from "#/components/canvas/flow";
-import {
-	type EdgeFlow,
-	errorSummary,
-	liveEdgeIds,
-	nextEdgeFlow,
-	nodeElapsed,
-	runOverlay,
-} from "./run-overlay";
+import { type EdgeFlow, liveEdgeIds, nextEdgeFlow, nodeElapsed, runOverlay } from "./run-overlay";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const at = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -299,14 +292,5 @@ describe("节点耗时", () => {
 		const queued = node("c", "queued", [attempt({ started_at: null, ended_at: null })]);
 		expect(nodeElapsed(queued, T0 + 10_000)).toBeNull();
 		expect(nodeElapsed(node("d", "pending"), T0)).toBeNull();
-	});
-});
-
-describe("错误摘要", () => {
-	it("只取空行之前的部分（之后是堆栈）", () => {
-		expect(errorSummary({ kind: "node_error", message: "漏拦 3 笔\n\nTraceback ..." })).toBe(
-			"漏拦 3 笔",
-		);
-		expect(errorSummary({ kind: "timeout", message: "超时" })).toBe("超时");
 	});
 });
