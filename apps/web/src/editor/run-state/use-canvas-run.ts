@@ -1,5 +1,6 @@
 import {
 	type OrchestrationDocument,
+	type RunFocus,
 	type RunMetricCatalog,
 	type RunView,
 	runsApi,
@@ -8,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { applyNodeChanges, type NodeChange } from "@xyflow/react";
 import { useCallback, useMemo, useState } from "react";
 import { type SfNode, toFlow } from "#/components/canvas/flow";
+import { useRunFocus } from "#/focus/use-run-focus";
 import { apiQuery } from "#/lib/api";
 import { useLiveRun } from "#/monitor/live-run";
 import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
@@ -24,13 +26,16 @@ export type CanvasRun =
 			overlay: RunOverlay;
 			/** 运行绑定的版本文档（画布在运行状态下显示这一版）；还在加载时为 undefined。 */
 			doc: OrchestrationDocument | undefined;
-			/** 运行的指标目录（节点卡片的主指标槽）；还在加载时为 undefined。 */
+			/** 运行的指标目录（节点卡片的主指标槽、检查器的图表）；还在加载时为 undefined。 */
 			metrics: RunMetricCatalog | undefined;
+			/** 运行的关注项读数（只要最新值：节点卡片、检查器）；还在加载时为 undefined。 */
+			focus: RunFocus | undefined;
 	  };
 
 /**
  * 画布「运行状态」模式的数据：指定的运行（从监控页带入），否则这个场景最近一次运行；
- * 运行中通过 SSE 实时更新（run 事件与指标增量）；指标目录供节点卡片的主指标槽使用。
+ * 运行中通过 SSE 实时更新（run 事件与指标增量）；指标目录供节点卡片的主指标槽和检查器的图表使用；
+ * 关注项读数（`useRunFocus`，运行中每 2 秒重新读取）供节点卡片和检查器使用。
  * enabled 为 false（编辑模式）时不请求。
  */
 export function useCanvasRun(
@@ -53,10 +58,22 @@ export function useCanvasRun(
 		...versionQuery(orchestrationId, run?.orchestration_version ?? 0),
 		enabled: enabled && !!run,
 	});
+	const focus = useRunFocus(run?.id ?? "", {
+		live: run?.status === "running",
+		points: 0,
+		enabled: enabled && !!run,
+	});
 	const overlay = useMemo(() => (run ? runOverlay(run) : undefined), [run]);
 
 	if (run && overlay) {
-		return { status: "ready", run, overlay, doc: version.data?.document, metrics: metrics.data };
+		return {
+			status: "ready",
+			run,
+			overlay,
+			doc: version.data?.document,
+			metrics: metrics.data,
+			focus: focus.data,
+		};
 	}
 	const error = runId ? runQuery.error : (latest.error ?? runQuery.error);
 	if (error) return { status: "error", error };

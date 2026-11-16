@@ -15,6 +15,7 @@ import { type CanvasSelection, NO_SELECTION } from "./selection";
  *   regionMeta 替换子流程区域标题行右侧的「由 X 触发 · N 个节点」（例如实例状态与实例切换）。
  * - 主指标槽（#43）：decorateNode 返回 `slot`，替换卡片底部的配置摘要。
  * - 正在做（#356）：decorateNode 返回 `activity`，执行中的卡片在标题下多一行，可访问名称里也有它。
+ * - 关注项（#353）：decorateNode 返回 `focus`，卡片左上角是眼睛图标和数量，节点开始执行以后底部的摘要槽换成前两项。
  * - 版本对比（#40）：decorateNode 返回 `mark`（新增 / 删除 / 修改），卡片加差异标记；
  *   配合 FlowCanvas 的 `editable={false}` 做只读画布。
  */
@@ -41,8 +42,23 @@ export interface NodeDecoration {
 	 * （执行中配置摘要没什么可看的，卡片也不变高）；有主指标时两行都在，卡片往下长一行。
 	 */
 	activity?: CurrentActivity;
+	/** 属于这个节点的关注项（运行状态下，场景设了关注项时）。 */
+	focus?: CardFocus;
 	/** 版本对比的差异标记。 */
 	mark?: "added" | "removed" | "changed";
+}
+
+/** 节点卡片上属于这个节点的关注项。 */
+export interface CardFocus {
+	/** 关注项的个数：左上角眼睛图标旁的数量。 */
+	count: number;
+	/** 接在卡片可访问名称后面的一段：个数，有异常时还有几项需要注意和原因（CardFocus.tsx 的 `cardFocusLabel`）。 */
+	label: string;
+	/**
+	 * 代替底部摘要槽（主指标、配置摘要）的前两项和「还有 N 个关注项」：节点开始执行以后才有，还没开始时照常显示摘要槽。
+	 * 卡片按内容长高。
+	 */
+	rows?: ReactNode;
 }
 
 export type EdgeDecoration = "live" | "failed";

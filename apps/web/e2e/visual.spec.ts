@@ -8,9 +8,11 @@ import {
 } from "../../server/test/support/fake-agent.js";
 import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
+import { canvasFocusRun, openCanvasRun } from "./canvas-focus-support";
 import {
 	createEditorScenario,
 	editorDocument,
+	inspector,
 	nodeCard,
 	typedDocument,
 	typedNodes,
@@ -1316,6 +1318,8 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	for (const id of ["fetch", "verify", "probe"]) {
 		await expect(nodeCard(page, id).locator("[data-sparkline]")).toBeVisible();
 	}
+	// verify 声明的图表：level 是折线（画出来），total 是数值卡。
+	await expect(inspector(page).locator('[data-node-chart] svg[role="img"]')).toHaveCount(1);
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-run-state.png", {
 		mask: [
@@ -1355,6 +1359,29 @@ test("编排画布：运行状态（检查器的「正在做」和「动作」�
 	// 摘要滚出去了，只有顶栏里的运行编号要遮住。
 	await expect(page).toHaveScreenshot("editor-run-actions.png", {
 		mask: [page.getByTestId("canvas-run").locator(".font-mono").first()],
+	});
+});
+
+test("编排画布：运行状态（选中有关注项的节点：卡片上的前两项、检查器里排好序的图表）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const running = await canvasFocusRun(controlPlane, connectAgent, clock);
+	await openCanvasRun(page, clock, running);
+	await nodeCard(page, "probe").click();
+	await expect(inspector(page).getByRole("article", { name: "total" })).toContainText("无新数据");
+	await expect(inspector(page).locator('[data-node-chart] svg[role="img"]')).toHaveCount(1);
+	for (const id of ["fetch", "probe"]) {
+		await expect(nodeCard(page, id).getByTestId("node-focus")).toBeVisible();
+	}
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-run-focus.png", {
+		mask: [
+			page.getByTestId("canvas-run").locator(".font-mono").first(),
+			page.getByTestId("run-summary").locator("dd").first(),
+		],
 	});
 });
 

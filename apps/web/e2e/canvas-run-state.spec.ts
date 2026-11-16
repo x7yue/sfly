@@ -53,12 +53,12 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 
 	await nodeCard(page, "fetch").click();
 	const panel = inspector(page);
-	await expect(panel.getByRole("heading")).toBeVisible();
+	await expect(panel.getByRole("heading", { level: 2 })).toBeVisible();
 	await expect(panel.getByTestId("run-summary")).toContainText(`${runId.slice(0, 8)} · v1`);
 	await expect(panel.getByTestId("run-summary")).toContainText("agent-a");
 	await expect(panel.getByTestId("run-summary")).toContainText("4.0s");
 	await expect(panel.getByTestId("run-attempts")).toHaveText("1");
-	await expect(panel).toContainText("日志、图表和每次尝试的详情都在运行监控页里");
+	await expect(panel).toContainText("日志和每次尝试的详情在运行监控页里");
 	await expect(panel.getByRole("tab")).toHaveCount(0);
 
 	// 实时更新：verify 第 2 次失败后，卡片与检查器显示失败与错误摘要（不显示堆栈）。
@@ -98,7 +98,7 @@ test("运行状态下 Enter 把焦点移到检查器、Esc 回到画布上的节
 	await expectFocusVisible(nodeCard(page, "fetch"));
 });
 
-test("从监控页「在画布中查看」带入该运行（不是最近一次），「在监控页中打开」跳转后定位到该节点", async ({
+test("从监控页「在画布中查看」带入该运行（不是最近一次），「在运行监控详情里打开」跳转后定位到该节点", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -120,7 +120,7 @@ test("从监控页「在画布中查看」带入该运行（不是最近一次�
 	await expect(nodeCard(page, "fetch")).toHaveAttribute("data-run", "done");
 
 	await nodeCard(page, "fetch").click();
-	await inspector(page).getByRole("link", { name: "在监控页中打开 fetch" }).click();
+	await inspector(page).getByRole("link", { name: "在运行监控详情里打开 fetch" }).click();
 	await expect(page).toHaveURL(`/runs/${runId}?view=detail&node=fetch`);
 	await expect(page.locator('[data-node-row="fetch"] button')).toHaveAttribute(
 		"aria-pressed",

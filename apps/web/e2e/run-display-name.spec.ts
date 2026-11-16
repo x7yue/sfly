@@ -229,7 +229,7 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 	await nodeCard(page, "fetch").click();
 	await expect(inspector(page).getByRole("heading", { name: "拉取订单" })).toBeVisible();
 	await expect(
-		inspector(page).getByRole("link", { name: "在监控页中打开 拉取订单（fetch）" }),
+		inspector(page).getByRole("link", { name: "在运行监控详情里打开 拉取订单（fetch）" }),
 	).toBeVisible();
 
 	await page.goto("/runs");

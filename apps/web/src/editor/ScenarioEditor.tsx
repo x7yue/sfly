@@ -281,7 +281,12 @@ function Editor({
 	const readyRun = runState.status === "ready" ? runState : undefined;
 	// 运行绑定的版本锁定的节点包（节点菜单「复制输出引用」按它列出输出）。
 	const runCatalog = usePackageCatalog(readyRun?.doc?.packages ?? NO_PACKAGES, agentList);
-	const decorations = useRunDecorations(readyRun?.run, readyRun?.overlay, readyRun?.metrics);
+	const decorations = useRunDecorations(
+		readyRun?.run,
+		readyRun?.overlay,
+		readyRun?.metrics,
+		readyRun?.focus,
+	);
 	const runFlow = useRunFlow(readyRun?.doc);
 	const runInfo: CanvasInfo = useMemo(
 		() =>
@@ -946,6 +951,11 @@ function Editor({
 							selection={shownSelection}
 							nodeOf={nodeOf}
 							info={runInfo}
+							saved={versioning.base.document}
+							onSelectNode={(id) => {
+								setSelection(selectNode(id));
+								focusInspector();
+							}}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}
 						/>
