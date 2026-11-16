@@ -296,13 +296,30 @@ test("最近结束的失败行：「打开失败节点」进入运行监控并�
 	await expect(page).toHaveURL(/view=detail/);
 });
 
-test("Agent 列：每台 Agent 的槽位格写节点、场景和已执行时长，空闲槽合并；离线的不画空闲槽、不写占用数", async ({
+test("Agent 列：每台 Agent 的槽位格写节点、场景和已执行时长，空闲槽合并；不放正在做和关注项；离线的不画空闲槽、不写占用数", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
-	await seedWall({ page, controlPlane, connectAgent, clock });
+	const { linux: agent, probe } = await seedWall({ page, controlPlane, connectAgent, clock });
+	// probe 正在做一个动作、上报了进度，场景没设关注项所以有主指标：Agent 管理页的槽位格会写出这些，控制台的紧凑槽位格不写。
+	agent.actionSummary(probe, {
+		total: 1,
+		reported: 1,
+		running: [
+			{
+				id: 1,
+				parent: null,
+				depth: 0,
+				name: "保持 4 小时",
+				fields: {},
+				...agent.stamp(clock.now().getTime()),
+			},
+		],
+	});
+	agent.progress(probe, 3, 10, "第 3 批");
+	await agent.sync();
 	await page.goto("/");
 	const agents = region(page, "Agent");
 	await expect(agents).toContainText("1 / 2 在线");
@@ -311,6 +328,7 @@ test("Agent 列：每台 Agent 的槽位格写节点、场景和已执行时长�
 	const slots = linux.getByRole("list").getByRole("listitem");
 	await expect(slots).toHaveText(["probe撮合压测15.0s", "3 个槽位空闲"]);
 	await expect(slots.first()).toHaveAccessibleName("节点 probe，场景 撮合压测");
+	await expect(linux.getByTestId("slot-activity")).toHaveCount(0);
 
 	const mac = agents.getByRole("region", { name: "agent-mac" });
 	await expect(mac).toContainText("离线");

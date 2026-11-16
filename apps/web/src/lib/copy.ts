@@ -307,6 +307,8 @@ export const ACTIVE_LABEL = "进行中";
 export const NODE_ACTIONS = {
 	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，检查器的「正在做」，「动作」页的第一组。 */
 	doing: "正在做",
+	/** 版面放得下时写在动作名称前的「正在」（Agent 槽位格、概览执行中那一行）；画布卡片只有 208px 宽，用执行中的形状代替它。 */
+	doingNow: "正在",
 	/** 正在做的动作列满了：接口只给前 50 个，可能还有没列出的（检查器的「正在做」、「动作」页的第一组共用）。 */
 	runningIncomplete: (listed: number) => `列满 ${listed} 个，可能还有没列出的`,
 	/**

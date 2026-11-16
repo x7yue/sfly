@@ -6,7 +6,7 @@ import { SlotCell } from "#/components/slot-cell";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { FocusValue } from "#/focus/FocusValue";
 import { anomalyText, readingWhen } from "#/focus/focus-format";
-import { FOCUS, MESSAGE, TERM } from "#/lib/copy";
+import { FOCUS, MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
 import { Truncate } from "@/components/ui/truncate";
 import { type SlotFocus, slotContent, slotItemTitle } from "./slot-content";
 import type { RunFocusRead } from "./use-slot-focus";
@@ -51,7 +51,7 @@ function ActivityRow({ activity }: { activity: CurrentActivity }) {
 		>
 			{activity.kind === "action" ? (
 				<>
-					<span className="flex-none text-fg-3">正在</span>
+					<span className="flex-none text-fg-3">{NODE_ACTIONS.doingNow}</span>
 					<Truncate className="text-fg-1">{activity.name}</Truncate>
 					<Elapsed
 						since={activity.startedAt}
