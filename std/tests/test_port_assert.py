@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import socket
 from collections.abc import Iterator
 from pathlib import Path
@@ -48,7 +49,7 @@ def test_passes_when_the_port_accepts_connections(tmp_path: Path, listening: int
 def test_fails_with_the_connect_error_when_the_port_is_closed(tmp_path: Path, closed: int) -> None:
     assert failure(run(tmp_path, port=closed)) == (
         f"sfly_std.port_assert.PortAssertionFailed: 127.0.0.1:{closed} 应能连接，"
-        "实际连接失败：[Errno 111] Connection refused"
+        f"实际连接失败：[Errno {errno.ECONNREFUSED}] Connection refused"
     )
 
 

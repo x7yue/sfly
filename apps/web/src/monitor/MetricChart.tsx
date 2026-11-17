@@ -65,8 +65,8 @@ export const SERIES_DASH: readonly (string | undefined)[] = [
 	"5 3",
 	"1.5 2.5",
 ];
-const seriesColor = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length] as string;
-const seriesDash = (i: number) => SERIES_DASH[i % SERIES_DASH.length];
+export const seriesColor = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length] as string;
+export const seriesDash = (i: number) => SERIES_DASH[i % SERIES_DASH.length];
 
 function SeriesSwatch({ color, dash }: { color: string; dash: string | undefined }) {
 	return (
@@ -195,7 +195,7 @@ export function MetricChart({
 				</div>
 			) : type === "stat" ? (
 				<>
-					<div className="mt-1.5 mb-0.5 font-mono text-2xl font-semibold" data-latest>
+					<div className="mt-1.5 mb-0.5 font-mono text-lg font-semibold" data-latest>
 						{latest === undefined ? "—" : formatMetric(latest)}
 						<small className="ml-1 text-xs font-normal text-fg-3">{unit}</small>
 					</div>

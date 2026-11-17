@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { endpoint, Timestamp } from "./contract.js";
+import { RunFocusItem } from "./run-focus.js";
+import { RunListActiveNode } from "./run-list.js";
 
 /**
  * 控制台统计接口的契约（约定见 ./contract.ts）。统计窗口是「最近 24 小时」：
- * [generated_at − 24h, generated_at]，按运行（或链实例）的结束时间归入窗口与按小时的桶。
+ * [generated_at − 24h, generated_at]，按运行（或链实例）的结束时间归入窗口。
  */
 
 /** 一次运行（或链）的结果计数。 */
@@ -13,15 +15,12 @@ const Outcomes = {
 	cancelled: z.number().int(),
 };
 
-/** 趋势里的一小时：[start, start + 1h) 内结束的运行数（恰好在 generated_at 结束的归入最后一个桶）。 */
-export const DashboardHour = z.object({ start: Timestamp, ...Outcomes });
-
 export const DashboardRunStats = z.object({
 	/** 正在运行的运行数（含取消中的）。 */
 	running: z.number().int(),
 	/** 正在运行的链实例数（主链与子流程）。 */
 	running_chains: z.number().int(),
-	/** 已派发给 Agent、还没结束的任务数（派发中与执行中）。 */
+	/** 已派发给 Agent、还没结束的任务数（准备中与执行中）。 */
 	running_tasks: z.number().int(),
 	/** 排队等待 Agent 的任务数。 */
 	queued_tasks: z.number().int(),
@@ -29,10 +28,6 @@ export const DashboardRunStats = z.object({
 	...Outcomes,
 	/** 窗口内失败的子流程实例数（不论所在运行是否已结束）。 */
 	failed_subflows: z.number().int(),
-	/** 成功率 = 成功 / 结束的运行数（0–1）；窗口内没有结束的运行时为 null。 */
-	success_rate: z.number().nullable(),
-	/** 前一个 24 小时的成功率，用于对比；没有结束的运行时为 null。 */
-	previous_success_rate: z.number().nullable(),
 });
 
 /** 运行中的链实例：节点按链上的顺序，状态与运行视图一致（pending、queued、running、success…）。 */
@@ -46,6 +41,10 @@ export const DashboardChain = z.object({
 	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name: z.string().optional(),
+	/** 触发这个子流程实例的异步任务节点所在的链实例；主链为 null。 */
+	parent_chain_instance_id: z.string().nullable(),
+	/** 触发这个子流程实例的异步任务节点；主链为 null。 */
+	async_node_id: z.string().nullable(),
 	status: z.string(),
 	nodes: z.array(
 		z.object({
@@ -63,19 +62,19 @@ export const DashboardRunningRun = z.object({
 	orchestration_name: z.string(),
 	orchestration_version: z.number().int(),
 	triggered_by: z.string(),
+	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
+	triggered_via: z.string().nullable(),
 	started_at: Timestamp,
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: z.boolean(),
+	/** 主链在前，子流程按深度、开始时间。 */
 	chains: z.array(DashboardChain),
+	/** 进行中的节点（与运行列表的 `active_nodes` 相同）。 */
+	active_nodes: z.array(RunListActiveNode),
 });
 
-/** 最近失败的一条：一个失败的链实例（主链失败即运行失败；子流程失败单独一条）。 */
-export const DashboardFailure = z.object({
-	run_id: z.string(),
-	orchestration_id: z.string(),
-	orchestration_name: z.string(),
-	/** 所在运行的当前状态（子流程失败时主链可能还在运行）。 */
-	run_status: z.string(),
+/** 失败的运行最先出问题的地方：跨所有链，最后一次尝试失败、最先结束的节点和它所在的链。 */
+export const DashboardRunFailure = z.object({
 	chain_instance_id: z.string(),
 	chain_id: z.string(),
 	subflow: z.boolean(),
@@ -84,25 +83,46 @@ export const DashboardFailure = z.object({
 	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name: z.string().optional(),
-	/** 最先失败的节点（最后一次尝试失败）；没有失败节点时（例如校验失败）为 null。 */
-	node_id: z.string().nullable(),
+	node_id: z.string(),
 	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name: z.string().optional(),
+	/** 失败节点最后一次尝试的尝试号。 */
+	attempt: z.number().int(),
+	/** 这次尝试的错误，其中的 secret 值已打码。 */
 	error: z.object({ kind: z.string(), message: z.string() }).nullable(),
-	/** 链实例结束的时间。 */
-	failed_at: Timestamp,
 });
 
-export const DashboardAgent = z.object({
-	name: z.string(),
-	status: z.enum(["online", "offline"]),
-	slots: z.number().int(),
-	/** 占用的槽位数（派发中与执行中的任务）。 */
-	used_slots: z.number().int(),
-	/** 正在安装的节点包；没有在安装时为 null。 */
-	installing: z.object({ package: z.string(), version: z.string() }).nullable(),
-	last_seen_at: Timestamp,
-});
+const EndedRunFields = {
+	id: z.string(),
+	orchestration_id: z.string(),
+	orchestration_name: z.string(),
+	orchestration_version: z.number().int(),
+	triggered_by: z.string(),
+	started_at: Timestamp,
+	ended_at: Timestamp,
+};
+
+/** 失败的运行最多带几项关注项的最终值。 */
+export const DASHBOARD_ENDED_FOCUS_MAX = 4;
+
+/**
+ * 最近结束的一个运行。失败的带上最先出问题的节点；运行的任务记录里找不到失败的节点时（数据不完整，正常运行不会出现）
+ * failure 为 null。失败的还带 `focus`：场景现在的关注项在这次运行结束时的值。
+ */
+export const DashboardEndedRun = z.discriminatedUnion("status", [
+	z.object({
+		...EndedRunFields,
+		status: z.literal("failed"),
+		failure: DashboardRunFailure.nullable(),
+		/**
+		 * 场景现在的关注项（不是运行时的，结束后改的也算）在这次运行结束时的读数：和 `GET /runs/:id/focus?points=0` 同一份
+		 * 解析规则（有异常的在最前，不带序列），取前 {@link DASHBOARD_ENDED_FOCUS_MAX} 项；场景没设关注项时是空数组
+		 * （不取执行中节点的主指标，运行已经结束）。
+		 */
+		focus: z.array(RunFocusItem).max(DASHBOARD_ENDED_FOCUS_MAX),
+	}),
+	z.object({ ...EndedRunFields, status: z.enum(["success", "cancelled"]) }),
+]);
 
 export const DashboardAgentStats = z.object({
 	online: z.number().int(),
@@ -110,31 +130,52 @@ export const DashboardAgentStats = z.object({
 	/** 在线 Agent 的槽位合计与占用。 */
 	slots: z.number().int(),
 	used_slots: z.number().int(),
-	/** 全部注册过的 Agent，按名称排序。 */
-	list: z.array(DashboardAgent),
 });
 
-export const DashboardPackage = z.object({
-	name: z.string(),
-	version: z.string(),
-	published_at: Timestamp,
-	/** 有多少个场景的最新版本锁定了这个版本。 */
-	locked_orchestrations: z.number().int(),
+/**
+ * 「开始使用」的四步（外壳页方案第 5 节）：各自是否完成，以及写在步骤上的事实。四步互不依赖，各自从现有数据判断；
+ * 出现第一个运行（`run.done`）之后控制台不再显示这个面板。
+ */
+export const DashboardSetup = z.object({
+	/** 接入一台 Agent：有在线的 Agent 就算完成。 */
+	agent: z.object({
+		done: z.boolean(),
+		/** 在线的 Agent 数。 */
+		online: z.number().int(),
+		/** 名称排在最前的在线 Agent；没有在线的为 null。 */
+		name: z.string().nullable(),
+	}),
+	/** 发布节点包：已经发布过任何一个版本就算完成。 */
+	package: z.object({
+		done: z.boolean(),
+		/** 已发布的节点包个数（按包名，不计版本数）。 */
+		count: z.number().int(),
+		/** 最近发布的版本；还没有为 null。 */
+		latest: z.object({ name: z.string(), version: z.string() }).nullable(),
+	}),
+	/** 新建场景：有没有归档的场景就算完成。 */
+	scenario: z.object({
+		done: z.boolean(),
+		/** 没有归档的场景数。 */
+		count: z.number().int(),
+		/** 最近新建的、没有归档的场景名称；没有为 null。 */
+		name: z.string().nullable(),
+	}),
+	/** 触发第一次运行：有过任何一个运行（不论结果、不论场景是否已归档）就算完成。 */
+	run: z.object({ done: z.boolean() }),
 });
 
 export const DashboardView = z.object({
 	/** 统计的时刻（控制面时钟），窗口的终点。 */
 	generated_at: Timestamp,
 	runs: DashboardRunStats,
-	/** 24 个小时桶，从旧到新；最后一个桶以 generated_at 为终点。 */
-	hourly: z.array(DashboardHour),
 	/** 正在运行的运行，按开始时间从新到旧。 */
 	running_runs: z.array(DashboardRunningRun),
-	/** 窗口内失败的链实例，按失败时间从新到旧（最多 10 条）。 */
-	recent_failures: z.array(DashboardFailure),
+	/** 窗口内结束的运行，按结束时间从新到旧（最多 10 个）。 */
+	recent_ended: z.array(DashboardEndedRun),
+	/** Agent 的在线数与槽位合计；每台 Agent 的状态与正在执行的任务用 Agent 列表接口（agentsApi.list）。 */
 	agents: DashboardAgentStats,
-	/** 最近发布的节点包版本，从新到旧（最多 5 个）。 */
-	recent_packages: z.array(DashboardPackage),
+	setup: DashboardSetup,
 });
 
 export const dashboardApi = {
@@ -148,9 +189,9 @@ export const dashboardApi = {
 	}),
 };
 
+export type DashboardSetup = z.infer<typeof DashboardSetup>;
 export type DashboardView = z.infer<typeof DashboardView>;
 export type DashboardRunningRun = z.infer<typeof DashboardRunningRun>;
 export type DashboardChain = z.infer<typeof DashboardChain>;
-export type DashboardFailure = z.infer<typeof DashboardFailure>;
-export type DashboardAgent = z.infer<typeof DashboardAgent>;
-export type DashboardHour = z.infer<typeof DashboardHour>;
+export type DashboardRunFailure = z.infer<typeof DashboardRunFailure>;
+export type DashboardEndedRun = z.infer<typeof DashboardEndedRun>;

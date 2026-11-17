@@ -70,10 +70,10 @@ test("检查器「说明与指标」：包节点显示节点类型声明的指�
 	await expect(metrics.getByRole("listitem").first()).toHaveText("latency_msms· 瞬时值主指标");
 	const charts = panel.getByRole("list", { name: "图表" });
 	await expect(charts.getByRole("listitem")).toHaveText([
-		"延迟折线latency_ms · p99_ms",
-		"吞吐面积rps",
-		"请求数柱状requests",
-		"errors数值卡errors默认",
+		"延迟折线latency_ms · p99_ms关注",
+		"吞吐面积rps关注",
+		"请求数柱状requests关注",
+		"errors数值卡errors默认关注",
 	]);
 
 	await nodeCard(page, "dispatch").click();
@@ -120,7 +120,7 @@ test("画布运行状态：节点卡片的指标槽显示主指标最新值与�
 	await expect(probe).toHaveText("level 42");
 });
 
-test("运行抽屉摘要：正在执行的节点显示主指标的最新值与趋势，实时更新", async ({
+test("运行抽屉摘要：进行中的节点显示主指标的最新值与趋势，实时更新", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -135,7 +135,7 @@ test("运行抽屉摘要：正在执行的节点显示主指标的最新值与�
 	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
-	const active = drawer.getByRole("list", { name: "正在执行的节点" });
+	const active = drawer.getByRole("list", { name: "进行中的节点" });
 	await expect(active).toContainText("执行中");
 
 	agent.metrics(task, pingPoints(START, 0, 3));
@@ -180,13 +180,14 @@ test("序列的响应早于指标点生成、晚于增量到达：运行抽屉�
 	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
-	const active = drawer.getByRole("list", { name: "正在执行的节点" });
+	const active = drawer.getByRole("list", { name: "进行中的节点" });
 	await expect(active).toContainText("执行中");
 	await firstRequest;
 
 	// 事件流里的增量没有可以观察的完成信号，等一小段时间让它先到达页面（增量来得更晚时
 	// 只是走了普通的追加路径，用例依然通过，不会因此误报）。
 	agent.metrics(task, pingPoints(START, 0, 3));
+	// biome-ignore lint/plugin/e2e-fixed-wait: 增量到达页面后先存着，释放序列响应之前页面上看不出变化，没有可等的状态（见上）
 	await page.waitForTimeout(500);
 	release();
 	const metric = active.locator('[data-primary-metric="level"]');

@@ -1,19 +1,21 @@
 import { UNNAMED_SUBFLOW_LABEL } from "@sfly/orchestration";
-import type {
-	AttemptView,
-	ChainRunView,
-	LogOrigin,
-	NodeRunView,
-	OrchestrationDocument,
-	OrchestrationNode,
-	ProgressEvent,
-	RunLogScope,
-	RunView,
-	TaskProgressView,
+import {
+	type AttemptView,
+	type ChainRunView,
+	errorHeadline,
+	type LogOrigin,
+	type NodeRunView,
+	type OrchestrationDocument,
+	type OrchestrationNode,
+	type ProgressEvent,
+	type RunLogScope,
+	type RunView,
+	runViewFailures,
+	type TaskProgressView,
 } from "@sfly/schema";
 import { type RunNodeName, runNodeName } from "#/components/node-name";
 import { runStatusView, type StatusKind } from "#/components/status";
-import { chainLabel as chainName } from "#/lib/copy";
+import { attemptLabel, chainLabel as chainName } from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { type NodeRef, nodeKey, sameNode } from "./monitor-state";
 
@@ -84,6 +86,13 @@ export function findNode(run: RunView, ref: NodeRef | null): NodeRunView | undef
 }
 
 /**
+ * 那一刻（控制面时间，毫秒）落在节点的哪一次尝试里：开始时间不晚于那一刻的最后一次。同一个节点的尝试一次只有一个在执行，
+ * 所以这次尝试要么正在执行，要么是下一次开始之前的最后一次；早于第一次尝试、或没有开始过的尝试时为 undefined。
+ */
+export const attemptAt = (node: NodeRunView, at: number): AttemptView | undefined =>
+	node.attempts.filter((a) => a.started_at !== null && Date.parse(a.started_at) <= at).at(-1);
+
+/**
  * 合并日志里一行的来源节点（#220）：「子流程名 / 显示名称（节点 ID） #尝试序号」。主链省略子流程名；
  * 显示名称取自运行视图（日志行只带节点 ID）；节点只有一次尝试时省略尝试序号（运行视图里还没有新的尝试时，
  * 按这一行自己的序号判断）。
@@ -121,16 +130,27 @@ const toRef = (pick: { chainInstanceId: string; nodeId: string } | undefined): N
 	pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
 
 /**
- * 监控页打开运行时默认选中的节点：链接里给的节点，其次第一个失败的节点（按链的层级与节点顺序）；都没有时不选，
+ * 监控页打开运行时默认选中的节点：链接里给的节点，其次第一个失败的节点（{@link runFailures}）；都没有时不选，
  * 底部面板显示全部节点合并后的日志。执行中的节点不默认选中：会把日志范围收窄到一个可能还没输出的节点，
- * 而别的节点正在写日志。
+ * 而别的节点正在写日志。节点 ID 在一次运行里只对应一个链实例（一个子流程最多一个实例，docs/SEMANTICS.md §1），
+ * 所以链接里给节点 ID 就能定位到它所在的实例。
  */
 export function initialSelection(run: RunView, linkedNode?: string): NodeRef | null {
-	const all = nodeRefs(run);
-	return toRef(
-		(linkedNode ? all.find((n) => n.nodeId === linkedNode) : undefined) ??
-			all.find((n) => n.status === "failed"),
-	);
+	const linked = linkedNode ? nodeRefs(run).find((n) => n.nodeId === linkedNode) : undefined;
+	return toRef(linked ?? runFailures(run)[0]);
+}
+
+/**
+ * 运行里最终失败的节点，按失败的先后（@sfly/schema 的 `runViewFailures`，链实例按运行视图的顺序）：第一项是
+ * 「第一个失败的节点」，控制台、运行记录、运行通知用同一份顺序。
+ */
+function runFailures(run: RunView) {
+	return runViewFailures(run.chains).map(({ chain, node }) => ({
+		chain,
+		node,
+		chainInstanceId: chain.id,
+		nodeId: node.node_id,
+	}));
 }
 
 /** 运行抽屉的摘要要看最近日志的节点：{@link initialSelection} 选中的节点，其次是还在进行的节点（运行抽屉没有「不选」）。 */
@@ -153,7 +173,7 @@ export function progressLabel(node: NodeRunView): string | null {
 	return progress.total === null ? `${progress.current}` : `${progress.current}/${progress.total}`;
 }
 
-/** 失败运行的摘要：第一个失败的节点（按链的层级与节点顺序）、它的第几次尝试与错误信息的第一行。 */
+/** 失败运行的摘要：第一个失败的节点（{@link runFailures}）、它的第几次尝试与错误信息的第一行。 */
 export interface RunFailure {
 	ref: NodeRef;
 	node: RunNodeName;
@@ -165,41 +185,39 @@ export interface RunFailure {
 
 /** 第一个失败的节点；没有失败的节点时为 null（运行中也可能已有失败的节点）。 */
 export function runFailure(run: RunView): RunFailure | null {
-	for (const chain of orderedChains(run)) {
-		const node = chain.nodes.find((n) => n.status === "failed");
-		if (!node) continue;
-		const attempt = [...node.attempts].reverse().find((a) => a.error) ?? node.attempts.at(-1);
-		const error = node.error ?? attempt?.error ?? null;
-		return {
-			ref: { chainInstanceId: chain.id, nodeId: node.node_id },
-			node: { node_id: node.node_id, display_name: node.display_name },
-			attempt: attempt?.attempt ?? null,
-			message: (error?.message ?? "").trim().split("\n")[0]?.trim() ?? "",
-		};
-	}
-	return null;
+	const [first] = runFailures(run);
+	if (!first) return null;
+	const { chain, node } = first;
+	const attempt = [...node.attempts].reverse().find((a) => a.error) ?? node.attempts.at(-1);
+	const error = node.error ?? attempt?.error ?? null;
+	return {
+		ref: { chainInstanceId: chain.id, nodeId: node.node_id },
+		node: { node_id: node.node_id, display_name: node.display_name },
+		attempt: attempt?.attempt ?? null,
+		message: errorHeadline(error?.message),
+	};
 }
 
 /**
- * 下一个失败的节点（F）：失败的节点按链的层级与节点顺序（与 {@link runFailure} 一致）排成一圈，选中的是其中一个时
+ * 下一个失败的节点（F）：失败的节点按失败的先后（与 {@link runFailure} 一致）排成一圈，选中的是其中一个时
  * 取它后面的一个，到末尾回到第一个；选中的不是失败节点（或没有选中）时从第一个开始。没有失败的节点为 null。
  */
 export function nextFailure(run: RunView, selected: NodeRef | null): NodeRef | null {
-	const failed = nodeRefs(run).filter((n) => n.status === "failed");
+	const failed = runFailures(run);
 	const at = failed.findIndex((n) => sameNode(n, selected));
 	return toRef(failed[at + 1] ?? failed[0]);
 }
 
-/** 失败的那次尝试：「（第 2 次）」；节点没有尝试记录时为空。 */
+/** 失败的那次尝试：「（第 2 次尝试）」；节点没有尝试记录时为空。 */
 export const failureAttempt = (failure: RunFailure): string =>
-	failure.attempt === null ? "" : `（第 ${failure.attempt} 次）`;
+	failure.attempt === null ? "" : `（${attemptLabel(failure.attempt)}）`;
 
 /** 错误信息前的分隔：紧跟全角括号时不再加空格。 */
 export const failureMessageSeparator = (failure: RunFailure): string =>
 	failure.attempt === null ? " · " : "· ";
 
 /**
- * 失败摘要：「失败于 核对结果（verify）（第 2 次）· AssertionError: 仍然漏拦」。
+ * 失败摘要：「失败于 核对结果（verify）（第 2 次尝试）· AssertionError: 仍然漏拦」。
  * 监控页顶栏（悬停提示）与运行结束的通知共用这一份文字。
  */
 export function failureSummary(failure: RunFailure): string {
@@ -228,7 +246,7 @@ export function cancelImpact(run: RunView, doc: OrchestrationDocument | undefine
 	const nodes = run.chains.flatMap((c) => c.nodes);
 	const notStarted = (n: NodeRunView) => n.status === "pending" || n.status === "queued";
 	return {
-		/** 正在执行（或派发中、等待中）的节点：先优雅终止。 */
+		/** 正在执行（或准备中、等待中）的节点：先优雅终止。 */
 		running: nodes.filter((n) => ["running", "dispatched", "waiting"].includes(n.status)),
 		/** 还没开始的 always 节点：照常执行清理。 */
 		always: nodes.filter((n) => notStarted(n) && isAlways(decls.get(n.node_id))),

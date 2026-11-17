@@ -249,7 +249,7 @@ function PresetList({
 											</div>
 										)}
 										<div className="mt-1 text-xs text-fg-3">
-											最后修改 {preset.updated_by} ·{" "}
+											{TERM.lastEdited} {preset.updated_by} ·{" "}
 											<span className="font-mono">{formatDateTime(preset.updated_at)}</span>
 										</div>
 									</div>

@@ -206,7 +206,7 @@ test("场景归档期间也能编辑运行预设：已归档的卡片有「更�
 
 	await page.goto("/orchestrations?archived=true");
 	const card = page.getByRole("article", { name: "旧场景" });
-	// 已归档的场景不能运行，其余操作仍然只有「恢复」和「查看运行记录」，加上预设。
+	// 已归档的场景不能运行，其余操作仍然只有「恢复」和「打开运行记录」，加上预设。
 	await expect(card.getByRole("button", { name: "运行", exact: true })).toHaveCount(0);
 	await card.getByRole("button", { name: "更多操作" }).click();
 	await expect(page.getByRole("menuitem")).toHaveText(["运行预设…"]);

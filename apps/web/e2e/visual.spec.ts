@@ -6,16 +6,27 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
+import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
+import { canvasFocusRun, openCanvasRun } from "./canvas-focus-support";
 import {
 	createEditorScenario,
 	editorDocument,
+	inspector,
 	nodeCard,
 	typedDocument,
 	typedNodes,
 	zoomOut,
 } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
+import {
+	createFocusScenario,
+	focusDocument,
+	openFocusList,
+	saveVersion,
+	selectMetricsTab,
+	setFocusItems,
+} from "./focus-support";
 import {
 	connPoint,
 	labeledRun,
@@ -27,6 +38,7 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
+import { attention, attentionRun, openOverview, overviewRun, readouts } from "./overview-support";
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
@@ -34,15 +46,17 @@ import { stoppingRun } from "./stop-subflow-scenario";
 import {
 	createFeishuBot,
 	createScenario,
+	elapseWithHeartbeats,
 	failApi,
 	holdApi,
 	publishPackage,
 	scenarioUsing,
-	seedDashboard,
 	setRunNotification,
 	triggerRun,
+	withSubflow,
 } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
+import { focusWallRun, longChainRun, manyRuns, seedWall } from "./wall-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
 // 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）、
@@ -72,16 +86,96 @@ async function twoAgents(connectAgent: E2eFixtures["connectAgent"]) {
 	return mac;
 }
 
-test("Agent 列表", async ({ page, connectAgent, controlPlane }) => {
-	const mac = await twoAgents(connectAgent);
-	await createScenario(controlPlane, "巡检", scenarioUsing("agent-linux"));
-	await mac.disconnect();
+test("Agent 列表", async ({ page, connectAgent, controlPlane, clock }) => {
+	const linux = await connectAgent({
+		name: "agent-linux",
+		agentVersion: "0.1.0",
+		os: "linux",
+		arch: "x86_64",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+		capabilities: [{ name: "files", version: 1 }],
+		peer: { port: 50052 },
+	});
+	const mac = await connectAgent({
+		name: "agent-mac",
+		agentVersion: "0.1.0",
+		os: "macos",
+		arch: "aarch64",
+		slots: 1,
+		capabilities: [{ name: "files", version: 1 }],
+		peer: { port: 50052, publicAddress: "10.20.30.40" },
+	});
+	const retired = await connectAgent({
+		name: "agent-retired",
+		agentVersion: "0.1.0",
+		os: "linux",
+		arch: "x86_64",
+	});
+	await retired.disconnect();
+	await publishPackage(controlPlane, metricPackage());
+	const soakScenario = await createScenario(
+		controlPlane,
+		"撮合浸泡",
+		withSubflow("agent-linux", { probe: "探测主机", subflow: "巡检子流程" }),
+	);
+	await setFocusItems(controlPlane, soakScenario, [
+		{ node_id: "probe", chart: "level", title: "探活 level" },
+		{ node_id: "probe", chart: "total" },
+		{ node_id: "verify", chart: "level", title: "核对 level" },
+	]);
+	const soak = await triggerRun(controlPlane, soakScenario);
+	const assigned = [await linux.nextAssign(), await linux.nextAssign()];
+	const probe = assigned.find((t) => t.nodeId === "probe") as AssignedTask;
+	const verify = assigned.find((t) => t.nodeId === "verify") as AssignedTask;
+	const inspect = await createScenario(controlPlane, "巡检", scenarioUsing("agent-mac"));
+	const running = await triggerRun(controlPlane, inspect);
+	const inspecting = await mac.nextAssign();
+	await elapseWithHeartbeats(clock, [linux, mac], 95_000);
+	const waiting = await triggerRun(controlPlane, inspect);
+	await elapseWithHeartbeats(clock, [linux, mac], 65_000);
 
+	// 槽位格里的内容：probe 在做动作、关注项有新数据；verify 只报告了进度，关注项已经 100 秒没有新数据；
+	// 巡检没设关注项，显示主指标。
+	const now = clock.now().getTime();
+	const nowSeconds = Math.floor(now / 1000);
+	linux.actionSummary(probe, {
+		total: 1,
+		reported: 1,
+		running: [
+			{
+				id: 1,
+				parent: null,
+				depth: 0,
+				name: "保持 4 小时",
+				fields: {},
+				...linux.stamp(now - 150_000),
+			},
+		],
+	});
+	linux.metrics(probe, [
+		["level", nowSeconds, 4],
+		["total", nowSeconds, 1_284_814],
+	]);
+	linux.progress(verify, 3, 10, "已校验 3 / 10 批");
+	linux.metrics(verify, [["level", nowSeconds - 100, 3]]);
+	mac.metrics(inspecting, [["level", nowSeconds, 2]]);
+	await linux.sync();
+	await mac.sync();
+
+	// 三个机架一屏放下。
+	await page.setViewportSize({ width: 1440, height: 960 });
 	await page.goto("/agents");
-	await expect(page.getByRole("row", { name: /agent-mac/ })).toContainText("离线");
-	await expect(page.getByRole("row", { name: /agent-linux/ })).toContainText("1 个场景");
-
-	await expect(page).toHaveScreenshot("agents.png");
+	await expect(page.getByRole("region", { name: "agent-retired", exact: true })).toContainText(
+		"离线",
+	);
+	await expect(page.getByRole("region", { name: "agent-mac", exact: true })).toContainText(
+		"排队 1",
+	);
+	// 运行编号是随机的。
+	await expect(page).toHaveScreenshot("agents.png", {
+		mask: [soak, running, waiting].map((id) => page.getByText(id.slice(0, 8))),
+	});
 });
 
 test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgent }) => {
@@ -110,8 +204,12 @@ test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgen
 		await agent.sync();
 	}
 
+	// 五个机架一屏放下，包括头部放不下时换行的那一台。
+	await page.setViewportSize({ width: 1440, height: 1280 });
 	await page.goto("/agents");
-	await expect(page.getByRole("row", { name: /agent-failed/ })).toContainText("更新失败");
+	await expect(page.getByRole("region", { name: "agent-failed", exact: true })).toContainText(
+		"更新失败",
+	);
 	await expect(page).toHaveScreenshot("agents-update.png");
 });
 
@@ -144,9 +242,9 @@ test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connec
 	await page.getByRole("button", { name: "立即更新" }).click();
 	const dialog = page.getByRole("dialog", { name: "立即更新 agent-linux？" });
 	await expect(dialog.getByRole("listitem")).toHaveCount(1);
-	// 运行 ID 是随机的。
+	// 运行 ID 是随机的：确认框里和后面机架的槽位格里各有一处。
 	await expect(page).toHaveScreenshot("agents-update-now.png", {
-		mask: [page.locator('ul[aria-label="会被终止的任务"] li > span.text-xs')],
+		mask: [page.getByText(held.runId.slice(0, 8))],
 	});
 });
 
@@ -394,7 +492,7 @@ test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, c
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
 	// 等实时推送接上（节点显示为执行中）再上报进度与日志。
-	await expect(drawer.getByRole("list", { name: "正在执行的节点" })).toContainText("执行中");
+	await expect(drawer.getByRole("list", { name: "进行中的节点" })).toContainText("执行中");
 	agent.progress(task, 40, 100, "第 40 步");
 	agent.logs(task, [
 		logLine(clock, 1, "连接 10.0.0.8"),
@@ -457,23 +555,132 @@ test("场景的运行通知设置：机器人已被删除时的提示", async ({
 });
 
 test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
-	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	const { stress, orders } = await seedWall({ page, controlPlane, connectAgent, clock });
+	// 撮合压测的 probe 在执行中、verify 失败（来源节点失败，有异常）；订单链路失败，带关注项的最终值。
+	await setFocusItems(controlPlane, stress, [
+		{ node_id: "probe", chart: "level" },
+		{ node_id: "probe", chart: "total" },
+		{ node_id: "verify", chart: "level" },
+		{ node_id: "verify", chart: "total" },
+	]);
+	await setFocusItems(controlPlane, orders, [
+		{ node_id: "submit", chart: "level" },
+		{ node_id: "submit", chart: "total" },
+	]);
+	// 页面在外壳里滚动，整页截图截不到：窗口加高，让失败行的最终值也在画面里。
+	await page.setViewportSize({ width: 1440, height: 1100 });
 	await page.goto("/");
 	await expect(
-		page.getByRole("region", { name: "最近失败", exact: true }).getByRole("link"),
+		page.getByRole("region", { name: "最近结束", exact: true }).locator("li[data-run-status]"),
 	).toHaveCount(2);
+	await expect(page.getByRole("region", { name: "关注项", exact: true })).toContainText(
+		"2 项需要注意",
+	);
+	await expect(
+		page.getByRole("region", { name: "最近结束", exact: true }).getByRole("group"),
+	).toHaveCount(2);
+	await expect(
+		page.getByRole("region", { name: "场景", exact: true }).getByRole("link"),
+	).toHaveCount(6);
 	// 运行 ID 是随机的，遮住。
 	await expect(page).toHaveScreenshot("dashboard.png", {
 		mask: [page.locator('[data-slot="run-id"]')],
 	});
 });
 
-test("控制台没有数据", async ({ page }) => {
+test("控制台：关注项读数按运行块的宽度放 3 格，有异常的排在最前，其余写「还有 N 个关注项」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await focusWallRun(controlPlane, agent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.setViewportSize({ width: 1280, height: 800 });
 	await page.goto("/");
-	await expect(page.getByRole("region", { name: "正在运行", exact: true })).toContainText(
-		"没有正在运行的运行",
+	const readout = page.getByRole("list", { name: "关注项读数" });
+	await expect(readout.getByRole("link")).toHaveCount(4);
+	await expect(readout).toContainText("还有 4 个关注项");
+	await expect(page).toHaveScreenshot("dashboard-focus-1280.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("控制台：全新环境的「开始使用」", async ({ page }) => {
+	await page.goto("/");
+	await expect(page.getByRole("region", { name: "开始使用", exact: true })).toContainText(
+		"还没有 Agent 连接",
 	);
 	await expect(page).toHaveScreenshot("dashboard-empty.png");
+});
+
+test("控制台：「开始使用」第 1、2 步已完成，白色按钮在第 3 步", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "verify-agent", slots: 2 });
+	await publishPackage(controlPlane);
+	await page.goto("/");
+	await expect(page.locator('[data-step="scenario"]')).toHaveAttribute("data-state", "next");
+	await expect(page).toHaveScreenshot("dashboard-empty-progress.png");
+});
+
+test("控制台：多个运行时换成紧凑行，点开一行展开成运行块；Agent 很多时只列要看的，其余合并成「N 台空闲」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 8 });
+	// 另外 6 台：3 台在线空闲，1 台离线，1 台版本不一致，1 台还在准备环境。
+	for (const name of ["agent-b", "agent-c", "agent-d"]) await connectAgent({ name, slots: 4 });
+	await (await connectAgent({ name: "agent-e", slots: 4 })).disconnect();
+	await connectAgent({ name: "agent-f", slots: 4, agentVersion: "0.0.1" });
+	await connectAgent({ name: "agent-g", slots: 4 }, { preparing: true });
+	await publishPackage(controlPlane);
+	await manyRuns(controlPlane, agent, clock, 7);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const left = page.getByRole("region", { name: "正在运行", exact: true });
+	await left.getByRole("button", { name: /浸泡 06/ }).click();
+	await expect(left.getByRole("region", { name: "浸泡 06", exact: true })).toBeVisible();
+	await expect(left.getByRole("button", { expanded: false })).toHaveCount(6);
+	const agents = page.getByRole("region", { name: "Agent", exact: true });
+	await expect(agents.getByRole("heading", { level: 3 })).toHaveText([
+		"agent-a",
+		"agent-e",
+		"agent-f",
+		"agent-g",
+	]);
+	await expect(agents).toContainText("3 台空闲");
+	await expect(page).toHaveScreenshot("dashboard-many.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("控制台：30 个节点的长链只画当前站附近几站，其余折成「已完成 N 个」「还有 N 个」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 4 });
+	await publishPackage(controlPlane);
+	await longChainRun(controlPlane, agent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const lines = page.getByRole("list", { name: "各链进度" });
+	await expect(lines).toContainText("已完成 15 个");
+	await expect(lines).toContainText("还有 13 个");
+	await expect(page).toHaveScreenshot("dashboard-long-chain.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
 });
 
 test("运行记录", async ({ page, controlPlane, connectAgent, clock }) => {
@@ -502,7 +709,7 @@ test("运行记录为空", async ({ page }) => {
 async function chartsLoaded(page: Page) {
 	const ws = page.getByRole("region", { name: "图表工作区" });
 	await expect(ws.locator("[data-group]").first()).toBeVisible();
-	await expect(ws.getByText("正在加载…")).toHaveCount(0);
+	await expect(ws.getByText("加载中")).toHaveCount(0);
 }
 
 /** 运行 ID 是随机的：截图时遮住显示运行编号与子流程实例编号的地方。 */
@@ -542,6 +749,54 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
 	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
+});
+
+test("运行监控：详情的「动作」页签（正在做的按层级缩进、最近 20 个）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await actionsScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId, "verify", "actions");
+	await expect(actionTable(page).locator('tr[data-action-id="1204"]')).toBeVisible();
+	await expect(actionTable(page).locator('tbody[data-group="recent"]')).toBeVisible();
+	await chartsLoaded(page);
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-actions.png", { mask: runIds(page) });
+});
+
+test("运行监控：概览（关注项的读数和图表，没有异常）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	await expect(readouts(page).getByRole("button")).toHaveCount(2);
+	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(3);
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview.png", {
+		mask: [...runIds(page), page.locator("[data-chain-id]")],
+	});
+});
+
+test("运行监控：概览（有异常：「需要注意」、WARN 的读数、没有新数据的图表）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await attentionRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	await expect(attention(page).getByRole("listitem")).toHaveCount(3);
+	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(4);
+	await expect(page.locator("[data-stale-gap]")).toHaveCount(1);
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview-attention.png", {
+		mask: [...runIds(page), page.locator("[data-chain-id]")],
+	});
 });
 
 test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({
@@ -842,10 +1097,7 @@ test.describe("编排画布", () => {
 	});
 
 	test("语义缩放", async ({ page }) => {
-		for (let i = 0; i < 3; i++) {
-			await page.getByRole("button", { name: "缩小" }).click();
-			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
-		}
+		await zoomOut(page, 3);
 		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
 		await idle(page);
 		await expect(page).toHaveScreenshot("editor-zoomed-out.png");
@@ -1143,6 +1395,56 @@ test("编排画布：检查器「说明与指标」", async ({ page, controlPlan
 	await expect(page).toHaveScreenshot("editor-inspector-metrics.png");
 });
 
+test("编排画布：检查器「说明与指标」里的关注开关（已按下、禁用，名额已满且含失效的项）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await twoAgents(connectAgent);
+	const id = await createFocusScenario(controlPlane);
+	await setFocusItems(controlPlane, id, [
+		...["延迟", "吞吐", "请求数", "errors"].map((chart) => ({ node_id: "fetch", chart })),
+		...["延迟", "吞吐"].map((chart) => ({ node_id: "fetch2", chart })),
+		...["level", "total"].map((chart) => ({ node_id: "ping", chart })),
+	]);
+	await saveVersion(controlPlane, id, 1, {
+		...focusDocument,
+		nodes: focusDocument.nodes.filter((n) => n.id !== "ping"),
+		edges: focusDocument.edges.filter((e) => e.to !== "ping"),
+	});
+	await page.goto(`/orchestrations/${id}`);
+	await expect(nodeCard(page, "fetch2")).toBeVisible();
+	await selectMetricsTab(page, "fetch2");
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-focus-toggles.png");
+});
+
+test("编排画布：场景设置的「关注项」页（排序列表、最后修改、失效的项）", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createFocusScenario(controlPlane);
+	const throughput = { node_id: "fetch", chart: "吞吐", title: "母单量" };
+	const rejects = { node_id: "fetch2", chart: "errors", title: "拒单数" };
+	const latency = { node_id: "fetch", chart: "延迟", title: "下单延迟" };
+	const rest = [
+		{ node_id: "fetch2", chart: "请求数" },
+		{ node_id: "ping", chart: "level" },
+	];
+	await setFocusItems(controlPlane, id, [throughput, rejects, latency, ...rest], "lin");
+	// 最后一次修改：lin 把「下单延迟」移到第 2 位。
+	await setFocusItems(controlPlane, id, [throughput, latency, rejects, ...rest], "lin");
+	// 第 2 版去掉了 ping，它的关注项失效。
+	await saveVersion(controlPlane, id, 1, {
+		...focusDocument,
+		nodes: focusDocument.nodes.filter((n) => n.id !== "ping"),
+		edges: focusDocument.edges.filter((e) => e.to !== "ping"),
+	});
+	await openFocusList(page, id, "fetch2");
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-scene-focus-list.png");
+});
+
 test("编排画布：运行状态（选中失败尝试后重试中的节点）", async ({
 	page,
 	controlPlane,
@@ -1153,13 +1455,73 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	await page.clock.setFixedTime(clock.now());
 	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 跟随执行把镜头平移到执行中的节点（缩放正好到 100%）：等平移停下再点节点，点击会打断还在进行的平移。
+	await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", /scale\(1\)/);
 	await nodeCard(page, "verify").click();
 	await expect(page.getByTestId("run-attempts")).toHaveText("2");
 	for (const id of ["fetch", "verify", "probe"]) {
 		await expect(nodeCard(page, id).locator("[data-sparkline]")).toBeVisible();
 	}
+	// verify 声明的图表：level 是折线（画出来），total 是数值卡。
+	await expect(inspector(page).locator('[data-node-chart] svg[role="img"]')).toHaveCount(1);
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-run-state.png", {
+		mask: [
+			page.getByTestId("canvas-run").locator(".font-mono").first(),
+			page.getByTestId("run-summary").locator("dd").first(),
+		],
+	});
+});
+
+test("编排画布：运行状态（检查器的「正在做」和「动作」：计数、上限说明、折行的失败原因）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId, agent, tasks } = await runningScenario(
+		controlPlane,
+		connectAgent,
+		clock,
+	);
+	agent.actionSummary(tasks.verify as AssignedTask, loadSummary(agent, clock.now().getTime()));
+	await agent.sync();
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 跟随执行把镜头平移到执行中的节点（缩放正好到 100%）：等平移停下再点节点，点击会打断还在进行的平移。
+	await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", /scale\(1\)/);
+	await nodeCard(page, "verify").click();
+	const area = page.getByRole("region", { name: "动作", exact: true });
+	await expect(area.getByRole("table")).toContainText("1,284,819");
+	// 从「正在做」的标题起往下看：摘要已经滚出去，正在做、动作区和前几个失败都在。
+	await page
+		.getByRole("region", { name: "正在做" })
+		.getByRole("heading")
+		.evaluate((el) => el.scrollIntoView({ block: "start" }));
+	await page.mouse.move(700, 760);
+	// 摘要滚出去了，只有顶栏里的运行编号要遮住。
+	await expect(page).toHaveScreenshot("editor-run-actions.png", {
+		mask: [page.getByTestId("canvas-run").locator(".font-mono").first()],
+	});
+});
+
+test("编排画布：运行状态（选中有关注项的节点：卡片上的前两项、检查器里排好序的图表）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const running = await canvasFocusRun(controlPlane, connectAgent, clock);
+	await openCanvasRun(page, clock, running);
+	await nodeCard(page, "probe").click();
+	await expect(inspector(page).getByRole("article", { name: "total" })).toContainText("无新数据");
+	await expect(inspector(page).locator('[data-node-chart] svg[role="img"]')).toHaveCount(1);
+	for (const id of ["fetch", "probe"]) {
+		await expect(nodeCard(page, id).getByTestId("node-focus")).toBeVisible();
+	}
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-run-focus.png", {
 		mask: [
 			page.getByTestId("canvas-run").locator(".font-mono").first(),
 			page.getByTestId("run-summary").locator("dd").first(),
@@ -1240,8 +1602,7 @@ test("运行监控：显示名称与备注图标（名称放不下时截断显�
 	});
 	const runId = await triggerRun(controlPlane, scenarioId);
 	await driveToRetry(agent, clock, await agent.nextAssign());
-	await openMonitor(page, clock, runId, "verify");
-	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
+	await openMonitor(page, clock, runId, "verify", "attempts");
 	await expect(page.getByRole("article", { name: /第 2 次尝试$/ })).toBeVisible();
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);

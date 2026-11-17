@@ -5,6 +5,7 @@ import {
 	systemApi,
 } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type { TaskActions } from "../actions/task-actions.js";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
@@ -28,6 +29,7 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { registerActionRoutes } from "./action-routes.js";
 import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
@@ -44,6 +46,7 @@ import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
+import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
@@ -62,6 +65,8 @@ export interface HttpApiDeps {
 	presence: PresenceRegistry;
 	preflight: Preflight;
 	logs: TaskLogs;
+	/** 任务的动作（src/actions/）。 */
+	actions: TaskActions;
 	metrics: TaskMetrics;
 	metricQueries: MetricQueries;
 	retention: Retention;
@@ -112,6 +117,7 @@ export function buildHttpApi({
 	presence,
 	preflight,
 	logs,
+	actions,
 	metrics,
 	metricQueries,
 	retention,
@@ -132,6 +138,18 @@ export function buildHttpApi({
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
 	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
+	// app.close() 只在开始时关掉当时空闲的 keep-alive 连接。当时还没发完的响应（例如产物下载）发完后，连接留在
+	// keep-alive 里，要等客户端或服务端的 keep-alive 超时（约 70 秒）才断开，app.close() 一直等它。
+	// 关闭开始之后发完的响应随即关掉连接，和 Connection: close 的响应一样。
+	let closing = false;
+	app.addHook("preClose", (done) => {
+		closing = true;
+		done();
+	});
+	app.addHook("onResponse", (request, _reply, done) => {
+		if (closing) request.raw.socket.destroySoon();
+		done();
+	});
 	// 所有路由都按 @sfly/schema 的 HTTP 契约注册（ADR 0007）：不在契约里的路由、没注册的接口都让启动失败。
 	guardHttpContract(app, httpContract);
 	// 每个响应都带控制面时间，页面据此修正浏览器时间（ADR 0018）；SSE 另有心跳事件。
@@ -171,7 +189,7 @@ export function buildHttpApi({
 	});
 
 	registerAgentRoutes(app, { hub, engine, orchestrations });
-	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
+	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerPresetRoutes(app, { presets });
@@ -187,6 +205,7 @@ export function buildHttpApi({
 		metrics: metrics.increments,
 	});
 	registerRunListRoutes(app, { db: database.db });
+	registerRunFocusRoutes(app, { db: database.db, clock, queries: metricQueries });
 	registerLogRoutes(app, {
 		logs,
 		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),
@@ -194,6 +213,7 @@ export function buildHttpApi({
 		isPurged: (runId) => retention.isPurged(runId),
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
+	registerActionRoutes(app, { actions, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });

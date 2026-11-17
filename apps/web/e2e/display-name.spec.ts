@@ -222,9 +222,9 @@ test("复制、粘贴、创建副本时带上显示名称，不加后缀", async
 	await expect(captionOf(copy)).toContainText("HTTP 检查");
 
 	await nodeCard(page, "fetch").click();
-	await page.keyboard.press("Control+c");
+	await page.keyboard.press("ControlOrMeta+c");
 	await nodeCard(page, "ping").click();
-	await page.keyboard.press("Control+v");
+	await page.keyboard.press("ControlOrMeta+v");
 	const pasted = nodeCard(page, "fetch_2");
 	await expect(pasted).toBeVisible();
 	await expect(titleOf(pasted)).toHaveText(NAME);

@@ -130,16 +130,10 @@ def stub() -> Iterator[Stub]:
 
 @pytest.fixture(autouse=True)
 def _no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 执行器子进程继承环境变量：别让本机的代理设置把请求转到别处。
-    for name in (
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "ALL_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "all_proxy",
-    ):
-        monkeypatch.delenv(name, raising=False)
+    # 执行器子进程继承环境变量：别让本机的代理设置把请求转到别处。只删代理变量不够：macOS 上 httpx
+    # 会改用系统代理，而且不认它的例外列表，127.0.0.1 也走代理。小写的优先，两个都设。
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
 
 
 def wait_for(what: str, check: Callable[[], bool], timeout: float = 10) -> None:

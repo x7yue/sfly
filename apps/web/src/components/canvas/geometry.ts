@@ -7,7 +7,10 @@ import { NODE_SIZE, REGION_PADDING } from "@sfly/orchestration";
  * 卡片尺寸与子流程区域留白来自整理布局算法（@sfly/orchestration 的 layout.ts，控制面也用它排初始布局）。
  */
 
-/** 节点卡片（原型 `.n`）。 */
+/**
+ * 节点卡片（原型 `.n`）。运行状态下卡片按内容长高（「正在做」一行与主指标都在时，#356；显示关注项时，#353）：
+ * 子流程区域、注释框、适配视图和跟随执行按量出来的高度算（flow.ts 的 `layoutOf`）。端口按这里的高度放，不随它移动。
+ */
 export const NODE_WIDTH = NODE_SIZE.width;
 export const NODE_HEIGHT = NODE_SIZE.height;
 /** 卡片圆角：设计体系的 `rounded-2xl`（20px），和注释框同一档，矮卡片读起来是一枚胶囊。 */
@@ -18,9 +21,9 @@ export const PORT_SIZE = 9;
 
 /** 端口中心相对节点左上角的位置。 */
 export const PORTS = {
-	/** 链入口：左侧中点（子流程入口节点在同一位置接收调度连线）。 */
+	/** 链入口：左侧中点（子流程入口节点在同一位置接收调度连线）；卡片长高时仍在原来的高度。 */
 	in: { x: 0, y: NODE_HEIGHT / 2 },
-	/** 链出口：右侧中点。 */
+	/** 链出口：右侧中点，同上。 */
 	out: { x: NODE_WIDTH, y: NODE_HEIGHT / 2 },
 	/** 调度出口：异步任务节点底边中点。 */
 	dispatch: { x: NODE_WIDTH / 2, y: NODE_HEIGHT },

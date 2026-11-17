@@ -1,4 +1,7 @@
-import { type ChartView, isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
+import { isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
+import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
+import type { FocusItems } from "#/focus/use-focus-items";
+import { CHART_TYPE_LABEL, FOCUS, MESSAGE, TERM } from "#/lib/copy";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -12,13 +15,6 @@ export type NodeMetricsInfo = Partial<Pick<NodeTypeView, "metrics" | "charts" | 
 const KIND_LABEL: Record<MetricDeclaration["kind"], string> = {
 	gauge: "瞬时值",
 	counter: "累计值",
-};
-
-const CHART_LABEL: Record<ChartView["type"], string> = {
-	line: "折线",
-	area: "面积",
-	bar: "柱状",
-	stat: "数值卡",
 };
 
 const metricTitle = (m: MetricDeclaration) =>
@@ -85,7 +81,7 @@ export function ChartsCell({ info }: { info: NodeMetricsInfo }) {
 			</div>
 			<div className="text-fg-3">
 				{charts.map((c, i) => (
-					<span key={c.title} title={`${CHART_LABEL[c.type]}：${c.metrics.join("、")}`}>
+					<span key={c.title} title={`${CHART_TYPE_LABEL[c.type]}：${c.metrics.join("、")}`}>
 						{i > 0 && " · "}
 						{c.title}
 						{c.default && " 默认"}
@@ -96,10 +92,27 @@ export function ChartsCell({ info }: { info: NodeMetricsInfo }) {
 	);
 }
 
-/** 检查器「说明与指标」里的「声明的指标与图表」；info 为 undefined 表示还在加载，null 表示找不到节点类型。 */
-export function MetricDeclarations({ info }: { info: NodeMetricsInfo | null | undefined }) {
+/** 检查器里每张图表上的「关注」开关：本场景的关注项（含名额），和这个节点的图表现在能不能设为关注项。 */
+export interface ChartFocus {
+	focus: FocusItems;
+	nodeId: string;
+	/** 节点已经保存进场景版本、节点类型和节点包版本没变：服务端按已保存的版本检查新加的关注项。 */
+	saved: boolean;
+}
+
+/**
+ * 检查器「说明与指标」里的「声明的指标与图表」；info 为 undefined 表示还在加载，null 表示找不到节点类型。
+ * 传了 `focus` 时每张图表带「关注」开关，图表上面写本场景的名额。
+ */
+export function MetricDeclarations({
+	info,
+	focus,
+}: {
+	info: NodeMetricsInfo | null | undefined;
+	focus?: ChartFocus;
+}) {
 	if (info === undefined) {
-		return <p className="m-0 text-xs text-fg-3">正在加载节点类型的元信息…</p>;
+		return <p className="m-0 text-xs text-fg-3">{MESSAGE.loading}</p>;
 	}
 	if (info === null) {
 		return <p className="m-0 text-xs text-fg-3">找不到这个节点类型，无法显示它声明的指标。</p>;
@@ -127,22 +140,31 @@ export function MetricDeclarations({ info }: { info: NodeMetricsInfo | null | un
 				))}
 			</ul>
 			<h4 className="mt-3 mb-1.5 text-xs font-semibold text-fg-2">图表 {charts.length} 张</h4>
-			<ul aria-label="图表" className="m-0 flex list-none flex-col gap-1 p-0">
+			{focus && <FocusQuota focus={focus.focus} saved={focus.saved} />}
+			<ul aria-label={TERM.chart} className="m-0 flex list-none flex-col gap-1 p-0">
 				{charts.map((c) => (
 					<li key={c.title} className="flex items-center gap-1.5 text-xs">
 						<span className="min-w-0 truncate">{c.title}</span>
-						<span className="flex-none text-fg-3">{CHART_LABEL[c.type]}</span>
+						<span className="flex-none text-fg-3">{CHART_TYPE_LABEL[c.type]}</span>
 						<span className="min-w-0 truncate font-mono text-fg-3">{c.metrics.join(" · ")}</span>
-						{c.default && (
-							<Badge className="ml-auto" title="没被任何图表引用的指标，由平台生成默认图表">
-								默认
-							</Badge>
-						)}
+						<span className="ml-auto flex flex-none items-center gap-1.5">
+							{c.default && <Badge title="没被任何图表引用的指标，由平台生成默认图表">默认</Badge>}
+							{focus && (
+								<FocusToggle
+									focus={focus.focus}
+									nodeId={focus.nodeId}
+									chart={c.title}
+									chartType={c.type}
+									enabled={focus.saved}
+								/>
+							)}
+						</span>
 					</li>
 				))}
 			</ul>
 			<p className="m-0 mt-2.5 text-xs text-fg-3">
 				图表定义来自节点包元信息，随锁定的版本走；场景里不需要配置。
+				{focus && FOCUS.notVersioned}
 			</p>
 		</>
 	);

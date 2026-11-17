@@ -213,7 +213,7 @@ test("画布工具条是一个 Tab 停靠点：← → 在按钮之间移动并�
 	).toBe(true);
 });
 
-test("画布节点的键盘焦点环离卡片外沿 3px", async ({ page, controlPlane }) => {
+test("画布节点的键盘焦点环在选中描边外面，离卡片外沿 9px", async ({ page, controlPlane }) => {
 	const id = await createEditorScenario(controlPlane);
 	await openEditor(page, id);
 	await page.getByRole("region", { name: /^编排画布/ }).focus();
@@ -223,7 +223,7 @@ test("画布节点的键盘焦点环离卡片外沿 3px", async ({ page, control
 		const s = getComputedStyle(el);
 		return { style: s.outlineStyle, width: s.outlineWidth, offset: s.outlineOffset };
 	});
-	expect(ring).toEqual({ style: "solid", width: "2px", offset: "3px" });
+	expect(ring).toEqual({ style: "solid", width: "2px", offset: "9px" });
 });
 
 test("选中执行失败的节点：进入它的连线保持红色", async ({

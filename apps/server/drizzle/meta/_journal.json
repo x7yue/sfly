@@ -176,6 +176,34 @@
       "when": 1794665694298,
       "tag": "0024_run_presets",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794714769174,
+      "tag": "0025_focus_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794736559200,
+      "tag": "0026_action_summaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794762074626,
+      "tag": "0028_log_issues",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794780213100,
+      "tag": "0029_action_details",
+      "breakpoints": true
     }
   ]
 }

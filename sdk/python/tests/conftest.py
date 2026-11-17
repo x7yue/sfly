@@ -54,6 +54,15 @@ def control_plane(sfly_wheel: Path, pypi_mirror: StaticServer) -> Iterator[FakeC
     server.close()
 
 
+@pytest.fixture
+def short_dir() -> Iterator[Path]:
+    """放本地 socket 的短目录（TMPDIR 下）：socket 路径有长度上限（Linux 108 字节，
+    macOS 104 字节），`tmp_path` 下的路径会超出。和 `tmp_path` 一样解析掉符号链接（macOS 的
+    /var 链接到 /private/var），切换到这里之后 `os.getcwd()` 与它一致。"""
+    with tempfile.TemporaryDirectory(prefix="sfly-") as tmp:
+        yield Path(tmp).resolve()
+
+
 @pytest.fixture(autouse=True)
 def _cancelled_once_per_test() -> Iterator[None]:
     """执行器进程里一次取消只抛一次 `Cancelled`（`sfly.context.cancelled_error`）；

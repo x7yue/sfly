@@ -2,6 +2,7 @@ import type { ArrangeMode, EdgeEnds, Position } from "@sfly/orchestration";
 import type { AnnotationColor } from "@sfly/schema";
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
+import type { CurrentActivity } from "#/actions/current-activity";
 import type { StatusView } from "#/components/status";
 import type { AnnotationDrop } from "./annotation-drop";
 import type { DocEdge, DocNode } from "./flow";
@@ -14,8 +15,11 @@ import { type CanvasSelection, NO_SELECTION } from "./selection";
  * - 运行状态（#41）：decorateNode 返回 `run`（卡片描边、小地图颜色）和 `status`（站点灯换成状态标记），
  *   `figure`（第一行右侧的实时数字）、`detail`（第二行的失败原因或主指标，#43）与 `progress`（底边的进度线）；
  *   decorateEdge 返回连线在线路图里的样子（走过的变亮、没走到的暗灰、进入执行中 / 失败 / 等待中节点的着状态色，
- *   子流程结束后调度连线变灰，见 EdgeDecoration）；
+ *   子流程结束后调度连线变灰，见 EdgeDecoration），enteringEdges 是其中刚变成执行中的连线（流动两遍）；
  *   regionMeta 替换子流程区域标题行右侧的「由 X 触发 · N 个节点」（例如实例状态与实例切换）。
+ * - 正在做（#356）：decorateNode 返回 `activity`，执行中的卡片第二行写它（有主指标时另起一行，卡片往下长），
+ *   可访问名称里也有它。
+ * - 关注项（#353）：decorateNode 返回 `focus`，卡片上边线外是眼睛图标和数量，节点开始执行以后两行字下面列出前两项。
  * - 版本对比（#40）：decorateNode 返回 `mark`（新增 / 删除 / 修改）和 `status`（第一行右侧的差异标签）；
  *   配合 FlowCanvas 的 `editable={false}` 做只读画布。
  */
@@ -49,8 +53,27 @@ export interface NodeDecoration {
 	 * 已运行时长、剩余时间或失败原因（看全图时卡片在前面加上标题）。只给这三种要盯的状态。
 	 */
 	overview?: ReactNode;
+	/**
+	 * 执行中的节点此刻在做什么（动作，没有动作时是进度的说明）。没有 `detail` 时它写在第二行、代替配置摘要
+	 * （执行中配置摘要没什么可看的，卡片也不变高）；有主指标时另起一行，卡片往下长一行。
+	 */
+	activity?: CurrentActivity;
+	/** 属于这个节点的关注项（运行状态下，场景设了关注项时）；没设时，主指标有异常的节点只带说明异常原因的 `label`。 */
+	focus?: CardFocus;
 	/** 版本对比的差异标记。 */
 	mark?: "added" | "removed" | "changed";
+}
+
+/** 节点卡片上属于这个节点的关注项（场景没设关注项时是主指标，只有 `label`）。 */
+export interface CardFocus {
+	/** 关注项的个数：卡片上边线外眼睛图标旁的数量；场景没设关注项时没有。 */
+	count?: number;
+	/** 接在卡片可访问名称后面的一段：个数，有异常时还有几项需要注意和原因（CardFocus.tsx 的 `cardFocusLabel`）。 */
+	label: string;
+	/**
+	 * 两行字下面的前两项和「还有 N 个关注项」：节点开始执行以后才有，还没开始时没有。卡片按内容长高。
+	 */
+	rows?: ReactNode;
 }
 
 /**
@@ -148,6 +171,8 @@ export interface CanvasContextValue {
 		to: string;
 		kind: "chain" | "dispatch";
 	}) => EdgeDecoration | undefined;
+	/** 刚变成执行中的连线（`edgeId`）：虚线流动两遍后停下；其余执行中的连线是静止的实线。 */
+	enteringEdges?: ReadonlySet<string>;
 	regionMeta?: (subflowEntryId: string) => ReactNode;
 	/** 适配视图（避开悬浮控件）；右键菜单的「适配视图」用它（CanvasMenu.tsx）。 */
 	fit(): void;

@@ -193,7 +193,16 @@ export const MetricSeries = z.object({
 	bucket_seconds: z.number().int().positive(),
 	...MetricDataLoss.pick({ truncated: true, series_capped: true }).shape,
 	series: z.array(
-		z.object({ name: MetricName, labels: MetricLabels, buckets: z.array(MetricBucket) }),
+		z.object({
+			name: MetricName,
+			labels: MetricLabels,
+			buckets: z.array(MetricBucket),
+			/**
+			 * 这个序列在查询范围里最后一个点的控制面时间（按秒取整，不随降采样变粗：同一个桶里的几个序列也分得出谁更新）；
+			 * 没有点为 null。最新值取最近更新的序列（`latestSeries`），和关注项读数的 `latest` 同一个取法。
+			 */
+			last_at: Timestamp.nullable(),
+		}),
 	),
 });
 

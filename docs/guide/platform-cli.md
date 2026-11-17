@@ -97,12 +97,12 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
   ```text
   已触发运行 331168f8-611c-46a6-9259-6830dbd7412b，链接：http://<控制面地址>/runs/331168f8-611c-46a6-9259-6830dbd7412b
   main:probe「探测接口」 执行中
-  main:probe「探测接口」 失败 0.1s
+  main:probe「探测接口」 失败 120ms
   ```
 
   ```text
   运行 331168f8-611c-46a6-9259-6830dbd7412b：失败
-  耗时：0.1s
+  耗时：120ms
   链接：http://<控制面地址>/runs/331168f8-611c-46a6-9259-6830dbd7412b
 
   失败的任务（1 个）：
@@ -188,7 +188,7 @@ sfly scenario push 回归.json
 - 再后面是「便签」一段：每张便签第一行是 `<标题>（<ID>）`，没有标题时只写 ID，下面是正文，每行缩进四格。没有便签的场景没有这一段。`--json` 里 `sticky_notes` 一直在（没有时是空数组），每项是 `id`、`title`（没有标题时不出现）、`text`、`color`（没写颜色时不出现），不带位置和大小。
 - 新加的节点不用写 `position`：控制面保存时按画布「整理布局」的算法给没有坐标的节点排好位置（压住已有节点时挪到附近的空位），已经有坐标的节点不动。
 - 别人在你 pull 之后保存了新版本时，push 报版本冲突（退出码 2），写明最新版本号、作者和保存时间，提示重新 pull、把你的改动合并进去再 push。没有强制覆盖的选项。命令行不会成为在线编辑者：浏览器里正在编辑同一个场景的人保存时，会收到界面已有的冲突提示。
-- `scenario copy` 复制场景（说明和运行通知设置一并复制）。联调副本的说明要改成讲联调：`scenario rename <副本> --description …`，第一行写「联调 <包名>，由 <昵称> 的 AI 编程助手创建」，后面接原场景的说明；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。
+- `scenario copy` 复制场景（说明、运行通知设置和关注项一并复制）。联调副本的说明要改成讲联调：`scenario rename <副本> --description …`，第一行写「联调 <包名>，由 <昵称> 的 AI 编程助手创建」，后面接原场景的说明；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。
 
 下面是一份写全了说明的场景文档：显示名称、备注、注释框，入口参数和子流程入口参数的说明。保存成文件，用 `scenario create --name 下单回归 --from 文件` 就能新建场景；这份文件只有 `document`，`scenario push` 用的文件还要带 pull 写出的 `scenario` 和 `base_version`。示例里的节点包 `shop-test` 是虚构的，用在自己的场景里时换成控制面上有的节点包和版本。
 

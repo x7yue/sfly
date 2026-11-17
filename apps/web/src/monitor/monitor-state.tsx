@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useRef, useSyncExternalStore } from "react";
+import type { PanelTab } from "./run-link";
 import type { TimeRange } from "./timeline-model";
 
 /**
@@ -15,16 +16,15 @@ import type { TimeRange } from "./timeline-model";
  *   actions.hover(t)            // 鼠标在图表上移动时（离开时传 null），时间线上同步显示竖线
  *   actions.zoom({ start, end }) // 在图表上拖选缩放；actions.followLive() 回到实时
  *   actions.select({ chainInstanceId, nodeId })  // 点图表分组选中节点，底部面板随之切换
+ *   actions.setScopeTask(taskId) // 底部面板换了看的那一次尝试（时间线随之滚到范围里的节点）
  *   actions.setFilter(keys)     // 图表工作区的节点筛选（nodeKey / PLATFORM_KEY 的集合，null 为全部）；
  *                               // 没有选中节点时，底部面板的范围跟随筛选
  *   actions.showPanel("attempts") // 打开底部面板的某个页签（顶栏的失败摘要用它跳到尝试页签）
+ *   actions.locateLog(node, at) // 选中节点，打开日志页签并定位到那一刻（控制面时间，毫秒）：地址里的 node、tab=logs、at 就是这个
  *
  * 时间都是毫秒时间戳。hoverAt 更新很频繁，状态放在一个外部 store 里，组件按 selector 订阅，
  * 只有用到的字段变化时才重新渲染；range / extent 每秒随「现在」变化，放在 context 里。
  */
-
-/** 底部面板的页签。 */
-export type PanelTab = "logs" | "attempts" | "io" | "artifacts";
 
 /** 时间线上的一个节点：同一个子流程可能有多个实例，所以要带链实例 ID。 */
 export interface NodeRef {
@@ -41,12 +41,22 @@ export interface MonitorState {
 	marker: number | null;
 	/** 选中的节点；底部面板的范围跟随它。 */
 	selected: NodeRef | null;
+	/**
+	 * 底部面板的范围里看的那一次尝试（任务 ID，底部面板写入）；没有选中节点或节点还没有尝试时为 null。
+	 * 范围（节点或尝试）换了，时间线就把那个节点滚到看得见的地方。
+	 */
+	scopeTask: string | null;
 	/** 图表工作区的节点筛选：{@link nodeKey} 与 {@link PLATFORM_KEY} 的集合；null 表示全部。 */
 	filter: ReadonlySet<string> | null;
 	/** 底部面板当前的页签。 */
 	panelTab: PanelTab;
 	/** 底部面板是否展开：用户展开 / 收起（或拖动高度、切换页签）后为 true / false；null 表示还没选过，按内容自动决定。 */
 	panelOpen: boolean | null;
+	/**
+	 * 要在这个节点的日志里定位的时刻（控制面时间，毫秒）。只对 `node` 有效，选中了别的节点时日志不定位；
+	 * `request` 每请求一次加一：同一个时刻再请求一次也重新定位（读者可能已经滚到别处）。
+	 */
+	logMoment: { node: NodeRef; at: number; request: number } | null;
 }
 
 export interface MonitorActions {
@@ -56,11 +66,14 @@ export interface MonitorActions {
 	followLive: () => void;
 	mark: (at: number | null) => void;
 	select: (node: NodeRef | null) => void;
+	setScopeTask: (taskId: string | null) => void;
 	setFilter: (filter: ReadonlySet<string> | null) => void;
 	/** 切换到底部面板的某个页签并展开面板。 */
 	showPanel: (tab: PanelTab) => void;
 	/** 展开 / 收起底部面板；null 回到按内容自动决定。 */
 	setPanelOpen: (open: boolean | null) => void;
+	/** 选中节点，打开日志页签并展开面板，定位到那一刻（控制面时间，毫秒）。 */
+	locateLog: (node: NodeRef, at: number) => void;
 }
 
 type Listener = () => void;
@@ -76,11 +89,14 @@ export function createMonitorStore(initial: Partial<MonitorState> = {}): Monitor
 		zoom: null,
 		marker: null,
 		selected: null,
+		scopeTask: null,
 		filter: null,
 		panelTab: "logs",
 		panelOpen: null,
+		logMoment: null,
 		...initial,
 	};
+	let requests = 0;
 	const listeners = new Set<Listener>();
 	const set = (patch: Partial<MonitorState>) => {
 		state = { ...state, ...patch };
@@ -97,9 +113,17 @@ export function createMonitorStore(initial: Partial<MonitorState> = {}): Monitor
 		followLive: () => set({ zoom: null }),
 		mark: (marker) => set({ marker }),
 		select: (selected) => set({ selected }),
+		setScopeTask: (scopeTask) => state.scopeTask !== scopeTask && set({ scopeTask }),
 		setFilter: (filter) => set({ filter }),
 		showPanel: (panelTab) => set({ panelTab, panelOpen: true }),
 		setPanelOpen: (panelOpen) => set({ panelOpen }),
+		locateLog: (node, at) =>
+			set({
+				selected: node,
+				panelTab: "logs",
+				panelOpen: true,
+				logMoment: { node, at, request: ++requests },
+			}),
 	};
 }
 
@@ -159,9 +183,11 @@ export function useMonitorActions(): MonitorActions {
 			followLive: store.followLive,
 			mark: store.mark,
 			select: store.select,
+			setScopeTask: store.setScopeTask,
 			setFilter: store.setFilter,
 			showPanel: store.showPanel,
 			setPanelOpen: store.setPanelOpen,
+			locateLog: store.locateLog,
 		}),
 		[store],
 	);

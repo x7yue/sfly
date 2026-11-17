@@ -125,7 +125,9 @@ describe("跨场景的运行列表", () => {
 		expect(body.runs[0]).toMatchObject({
 			status: "running",
 			ended_at: null,
-			active_nodes: [{ node_id: "a", status: "running", progress: null }],
+			active_nodes: [
+				{ node_id: "a", status: "running", attempt: 1, agent: "agent-a", progress: null },
+			],
 		});
 	});
 
@@ -171,7 +173,7 @@ describe("跨场景的运行列表", () => {
 		expect((await list("?limit=2")).runs).toHaveLength(2);
 	});
 
-	it("进行中的运行给出正在执行的节点与进度、失败的子流程与取消中标记", async () => {
+	it("进行中的运行给出进行中的节点与进度、失败的子流程与取消中标记", async () => {
 		const scenario = await api.orchestrationWith(
 			orchestration(
 				[
@@ -198,6 +200,10 @@ describe("跨场景的运行列表", () => {
 					chain_instance_id: expect.any(String),
 					node_id: "main",
 					status: "running",
+					attempt: 1,
+					agent: "agent-a",
+					started_at: "2026-01-01T00:00:00.000Z",
+					wake_at: null,
 					progress: { current: 3, total: 10 },
 				},
 			]);
@@ -224,6 +230,145 @@ describe("跨场景的运行列表", () => {
 		await api.cancelOk(runId);
 		const [cancelling] = (await list()).runs;
 		expect(cancelling).toMatchObject({ status: "running", cancelling: true });
+	});
+
+	it("失败的链按失败的先后排：子流程里先失败、主链后失败时，第一项是子流程（与控制台、运行通知的「第一个失败的节点」一致）", async () => {
+		const scenario = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry, { id: "spawn", kind: "async", params: {} }, echo("main")],
+					[{ id: "sub", kind: "subflow_entry", params: [] }, echo("c"), echo("d")],
+				],
+				[["spawn", "sub"]],
+			),
+			"两条链都失败",
+		);
+		const runId = await api.triggerOk(scenario);
+		const tasks: Record<string, AssignedTask> = {};
+		for (let i = 0; i < 2; i++) {
+			const task = await agent.nextAssign();
+			tasks[task.nodeId] = task;
+		}
+		await agent.fail(tasks.c as AssignedTask);
+		clock.advance(1000);
+		await agent.fail(tasks.main as AssignedTask);
+		await eventually(async () => expect((await list()).runs[0]?.status).toBe("failed"));
+
+		const [item] = (await list()).runs;
+		expect(item?.failures.map((f) => [f.chain_id, f.node_id])).toEqual([
+			["sub", "c"],
+			["entry", "main"],
+		]);
+		const ended = (await api.getJson("/dashboard")) as {
+			recent_ended: Array<{ id: string; failure?: { node_id: string } }>;
+		};
+		expect(ended.recent_ended.find((r) => r.id === runId)?.failure?.node_id).toBe("c");
+	});
+
+	it("进行中的节点带上尝试号、Agent、开始时间与唤醒时间：准备中没有开始时间，重试后是新一次尝试，等待节点没有 Agent", async () => {
+		const scenario = await api.orchestrationWith(
+			orchestration([
+				[entry, { ...echo("a"), retries: 1 }, { id: "nap", kind: "sleep", duration: "10m" }],
+			]),
+		);
+		const runId = await api.triggerOk(scenario);
+		const activeNode = async () => {
+			const item = (await list()).runs.find((r) => r.id === runId);
+			expect(item?.active_nodes).toHaveLength(1);
+			return item?.active_nodes[0];
+		};
+
+		const first = await agent.nextAssign({ start: false });
+		await eventually(async () =>
+			expect(await activeNode()).toMatchObject({
+				node_id: "a",
+				status: "dispatched",
+				attempt: 1,
+				agent: "agent-a",
+				started_at: null,
+				wake_at: null,
+			}),
+		);
+
+		clock.advance(2000);
+		await agent.started(first);
+		await eventually(async () =>
+			expect(await activeNode()).toMatchObject({
+				status: "running",
+				attempt: 1,
+				started_at: clock.now().toISOString(),
+			}),
+		);
+
+		// 第一次尝试失败后重试：开始时间是最后一次尝试的，第二次还没开始时为 null。
+		clock.advance(2000);
+		await agent.fail(first);
+		const second = await agent.nextAssign({ start: false });
+		expect(second.attempt).toBe(2);
+		await eventually(async () =>
+			expect(await activeNode()).toMatchObject({
+				status: "dispatched",
+				attempt: 2,
+				started_at: null,
+			}),
+		);
+		clock.advance(2000);
+		await agent.started(second);
+		await eventually(async () =>
+			expect(await activeNode()).toMatchObject({
+				status: "running",
+				attempt: 2,
+				started_at: clock.now().toISOString(),
+			}),
+		);
+
+		clock.advance(2000);
+		const napStart = clock.now();
+		await agent.succeed(second);
+		await eventually(async () =>
+			expect(await activeNode()).toEqual({
+				chain_instance_id: expect.any(String),
+				node_id: "nap",
+				status: "waiting",
+				attempt: 1,
+				agent: null,
+				started_at: napStart.toISOString(),
+				wake_at: new Date(napStart.getTime() + 10 * 60_000).toISOString(),
+				progress: null,
+			}),
+		);
+	});
+
+	it("排队中的节点给出它在等的 Agent，没有开始时间", async () => {
+		const busy = await FakeAgent.connect(cp.grpcUrl, { name: "agent-busy", slots: 1 });
+		try {
+			const scenario = await api.orchestrationWith({
+				...orchestration([[entry, echo("a"), echo("b")]]),
+				default_agent: "agent-busy",
+			});
+			const runId = await api.triggerOk(scenario);
+			await busy.nextAssign();
+			const second = await api.triggerOk(scenario);
+
+			await eventually(async () => {
+				const runs = (await list()).runs;
+				expect(runs.find((r) => r.id === runId)?.active_nodes).toMatchObject([
+					{ node_id: "a", status: "running", agent: "agent-busy" },
+				]);
+				expect(runs.find((r) => r.id === second)?.active_nodes).toEqual([
+					expect.objectContaining({
+						node_id: "a",
+						status: "queued",
+						attempt: 1,
+						agent: "agent-busy",
+						started_at: null,
+						wake_at: null,
+					}),
+				]);
+			});
+		} finally {
+			await busy.disconnect();
+		}
 	});
 
 	it("查询参数不符合契约时返回 400", async () => {

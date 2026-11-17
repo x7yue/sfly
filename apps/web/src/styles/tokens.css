@@ -95,7 +95,7 @@
 	--selection-bg: color-mix(in srgb, var(--base-white) 18%, transparent);
 
 	/* 状态色（docs/DESIGN-SYSTEM.md §6.1）：绿=成功，红=失败，琥珀=等待与警告，青=执行中，灰阶=待执行 / 排队 / 跳过 / 取消 / 停止。
-	   不带 -fg 的给标记、描边与色块；状态文字用 -fg（成功的绿本身就够亮） */
+	   不带 -fg 的给状态形状、描边与色块；状态文字用 -fg（成功的绿本身就够亮） */
 	--ok: var(--base-green-400);
 	--ok-soft: color-mix(in srgb, var(--ok) 8%, transparent);
 	--ok-line: color-mix(in srgb, var(--ok) 50%, transparent);

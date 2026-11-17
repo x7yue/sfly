@@ -4,9 +4,9 @@ import {
 	isLabeled,
 	type Labels,
 	type MetricBucket,
+	type MetricDeclaration,
 	type MetricSeries,
 	type MetricSeriesQuery,
-	NodeTypeMetadata,
 	type OrchestrationDocument,
 	type PlatformBucket,
 	type PlatformMetrics,
@@ -24,9 +24,10 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
-import { withDefaultCharts } from "../packages/default-charts.js";
+import { isPlaceholderAttempt } from "../engine/run-board.js";
+import type { Tx } from "../engine/step.js";
 import { isUuid } from "../util/uuid.js";
-import { nodeTypeOf } from "./node-types.js";
+import { nodeTypeOf, nodeTypeView } from "./node-types.js";
 import { decodeFloat8Array, decodeInt4Array, decodeInt8Array } from "./pg-array.js";
 import {
 	dataLossOf,
@@ -40,6 +41,32 @@ type TaskRow = typeof tasks.$inferSelect;
 export type SeriesOutcome =
 	| { ok: true; series: MetricSeries }
 	| { ok: false; status: 400 | 404; code: string; message: string };
+
+/** 序列最后一个点：控制面时间（Unix 秒）与值。 */
+export interface SeriesEnd {
+	at: number;
+	value: number;
+}
+
+/** {@link MetricQueries.taskSeries} 的结果。 */
+export interface TaskSeriesRead {
+	/** 实际的时间范围（Unix 秒）；没有数据且没有指定时为 undefined。 */
+	from: number | undefined;
+	to: number | undefined;
+	bucketSeconds: number;
+	series: Array<{
+		name: string;
+		labels: Labels;
+		buckets: MetricBucket[];
+		/** 最后一个点；序列还没有点（或已过保留期）为 undefined。 */
+		end: SeriesEnd | undefined;
+		/**
+		 * 最近 `recent` 个点的控制面时间（Unix 秒，升序，最后一个就是 `end.at`），不随降采样变粗；
+		 * 查询没有要 `recent` 时为空。
+		 */
+		recent: number[];
+	}>;
+}
 
 /** 一个桶的累计量。 */
 interface Acc {
@@ -78,11 +105,15 @@ interface SegmentRow extends Record<string, unknown> {
 	maxs: Buffer | null;
 }
 
-const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
+/** 一个序列最近的几段（{@link MetricQueries.taskSeries} 的 `recent`）：段的起始时间与时间偏移（array_send 的二进制）。 */
+interface TailRow extends Record<string, unknown> {
+	metric: string;
+	labels: Labels;
+	start_s: number;
+	offsets: Buffer;
+}
 
-/** 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试（与运行视图一致）。 */
-const isPlaceholder = (t: TaskRow) =>
-	t.status === "skipped" || (t.status === "cancelled" && t.startedAt === null);
+const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 
 /**
  * 指标的只读查询（#31）：运行的指标目录、序列查询（降采样）、平台自带图表。
@@ -113,8 +144,7 @@ export class MetricQueries {
 			const latest = attempts[attempts.length - 1] as TaskRow;
 			const ref = await nodeTypeOf(this.deps.db, run.document, latest.nodeId, latest.agentName);
 			if (!ref) continue;
-			const parsed = NodeTypeMetadata.safeParse(ref.type);
-			const type = parsed.success ? withDefaultCharts(parsed.data) : undefined;
+			const type = nodeTypeView(ref.type);
 			nodes.push({
 				chain_instance_id: latest.chainInstanceId,
 				node_id: latest.nodeId,
@@ -158,7 +188,7 @@ export class MetricQueries {
 					),
 				)
 				.orderBy(asc(tasks.attempt))
-		).filter((t) => !isPlaceholder(t));
+		).filter((t) => !isPlaceholderAttempt(t));
 		const task =
 			query.attempt === undefined
 				? attempts.at(-1)
@@ -168,67 +198,180 @@ export class MetricQueries {
 		const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
 		const declared = ref?.type?.metrics ?? [];
 		const names = query.metrics ?? declared.map((m) => m.name);
-		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));
 		// 已过保留期（#32）：数据已清理，不再查询，每个序列都没有桶。
 		const expired = run.run.metricsPurgedAt !== null;
+		const read = await this.taskSeries(
+			task.id,
+			{
+				declared,
+				names,
+				expired,
+				from: query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000),
+				to: query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000),
+				points: query.points,
+			},
+			this.deps.db,
+		);
+		return {
+			ok: true,
+			series: {
+				run_id: runId,
+				chain_instance_id: task.chainInstanceId,
+				node_id: task.nodeId,
+				task_id: task.id,
+				attempt: task.attempt,
+				truncated: task.metricTruncated,
+				series_capped: task.metricSeriesCapped,
+				expired,
+				from: read.from === undefined ? null : isoOf(read.from),
+				to: read.to === undefined ? null : isoOf(read.to),
+				bucket_seconds: read.bucketSeconds,
+				series: read.series.map(({ name, labels, buckets, end }) => ({
+					name,
+					labels,
+					buckets,
+					last_at: end ? isoOf(end.at) : null,
+				})),
+			},
+		};
+	}
+
+	/**
+	 * 一个任务（一次尝试）里这些指标的序列，按目标点数降采样（{@link MetricQueries.series} 与关注项读数共用）：
+	 * 时间范围 [from, to]（控制面时间，Unix 秒）默认是这些指标已有数据的首尾，分成跨度 bucket_seconds 的桶，
+	 * 含内存里尚未写库的点；每个序列另给最后一个点的精确时间与值（不随降采样变粗）。给了 `recent` 时，每个序列另给
+	 * 最近这么多个点的时间（关注项估算采样间隔用，与时间范围无关）。
+	 * 没有任何数据、也没有声明标签键的指标给出一个空序列；声明了标签键的没有序列。已过保留期（expired）时序列没有桶。
+	 * `db` 由调用方明写：在事务里读时传这个事务，查询都走它，不从连接池另取连接（CODING_STANDARDS「数据库」）。
+	 */
+	async taskSeries(
+		taskId: string,
+		query: {
+			/** 节点类型声明的指标（找出哪些带标签）。 */
+			declared: readonly MetricDeclaration[];
+			names: readonly string[];
+			expired: boolean;
+			from?: number | undefined;
+			to?: number | undefined;
+			points: number;
+			/** 每个序列另给最近这么多个点的时间；不给时不读。 */
+			recent?: number;
+		},
+		db: Db | Tx,
+	): Promise<TaskSeriesRead> {
+		const { declared, names, expired } = query;
+		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));
 		const unwritten = new Map(
 			expired
 				? []
-				: [...(await this.deps.metrics.unwritten(task.id))].filter(([, s]) =>
+				: [...(await this.deps.metrics.unwritten(taskId))].filter(([, s]) =>
 						names.includes(s.name),
 					),
 		);
 		const known = expired
 			? { series: [], first: undefined, last: undefined }
-			: await this.#known(task.id, names, unwritten);
+			: await this.#known(db, taskId, [...names], unwritten);
 		// 每个指标的全部序列；没有任何数据、也没有声明标签键的指标给出一个空序列（图表照常画出空图）。
 		const list = names.flatMap((name) => {
 			const found = known.series.filter((s) => s.name === name);
 			if (found.length > 0 || labeled.has(name)) return found;
 			return [{ name, labels: {}, key: name }];
 		});
-		let from = query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000);
-		let to = query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000);
-		from ??= known.first;
-		to ??= known.last;
-		const base = {
-			run_id: runId,
-			chain_instance_id: task.chainInstanceId,
-			node_id: task.nodeId,
-			task_id: task.id,
-			attempt: task.attempt,
-			truncated: task.metricTruncated,
-			series_capped: task.metricSeriesCapped,
-			expired,
-		};
+		const from = query.from ?? known.first;
+		const to = query.to ?? known.last;
 		if (expired || from === undefined || to === undefined || names.length === 0) {
 			return {
-				ok: true,
-				series: {
-					...base,
-					from: from === undefined ? null : isoOf(from),
-					to: to === undefined ? null : isoOf(to),
-					bucket_seconds: 1,
-					series: list.map(({ name, labels }) => ({ name, labels, buckets: [] })),
-				},
+				from,
+				to,
+				bucketSeconds: 1,
+				series: list.map(({ name, labels }) => ({
+					name,
+					labels,
+					buckets: [],
+					end: undefined,
+					recent: [],
+				})),
 			};
 		}
 		const width = Math.max(1, Math.ceil((to - from + 1) / query.points));
-		const buckets = await this.#bucketize(task.id, names, unwritten, from, to, width);
+		const { buckets, ends } = await this.#bucketize(
+			db,
+			taskId,
+			[...names],
+			unwritten,
+			from,
+			to,
+			width,
+		);
+		const recent =
+			query.recent === undefined
+				? new Map<string, number[]>()
+				: await this.#recent(db, taskId, list, unwritten, query.recent);
 		return {
-			ok: true,
-			series: {
-				...base,
-				from: isoOf(from),
-				to: isoOf(to),
-				bucket_seconds: width,
-				series: list.map(({ name, labels, key }) => ({
-					name,
-					labels,
-					buckets: buckets.get(key) ?? [],
-				})),
-			},
+			from,
+			to,
+			bucketSeconds: width,
+			series: list.map(({ name, labels, key }) => ({
+				name,
+				labels,
+				buckets: buckets.get(key) ?? [],
+				end: ends.get(key),
+				recent: recent.get(key) ?? [],
+			})),
 		};
+	}
+
+	/**
+	 * 每个序列（键是 {@link seriesKey}）最近 `n` 个点的控制面时间（Unix 秒，升序）。内存里的点（含当前段已经写过库的）
+	 * 是最新的；不够 `n` 个时再从库里按起始时间倒着取最近的段（每段至少一个点，所以最多 `n` 段），取到够 `n` 个点为止。
+	 * 同一个点可能内存和库里都有（当前段周期写库），按时间去重：同一序列里点的控制面时间严格递增。
+	 */
+	async #recent(
+		db: Db | Tx,
+		taskId: string,
+		list: ReadonlyArray<{ name: string; key: string }>,
+		unwritten: Map<string, UnwrittenSeries>,
+		n: number,
+	): Promise<Map<string, number[]>> {
+		const times = new Map<string, Set<number>>();
+		for (const { key } of list) {
+			times.set(
+				key,
+				new Set(
+					unwritten
+						.get(key)
+						?.points.slice(-n)
+						.map((p) => p.t),
+				),
+			);
+		}
+		const short = [
+			...new Set(list.filter((s) => (times.get(s.key)?.size ?? 0) < n).map((s) => s.name)),
+		];
+		if (short.length > 0) {
+			const result = await db.execute<TailRow>(sql`
+				select s.metric, s.labels, extract(epoch from g.start_at)::float8 as start_s,
+					array_send(g.offsets) as offsets
+				from metric_series s
+				cross join lateral (
+					select start_at, offsets, sum(points) over (order by start_at desc) - points as newer
+					from (
+						select start_at, offsets, points from metric_segments m
+						where m.task_id = s.task_id and m.metric = s.metric and m.labels = s.labels
+						order by start_at desc limit ${n}
+					) latest
+				) g
+				where s.task_id = ${taskId} and s.metric in (${sql.join(
+					short.map((name) => sql`${name}`),
+					sql`, `,
+				)}) and g.newer < ${n}`);
+			for (const row of result.rows) {
+				const set = times.get(seriesKey(row.metric, row.labels));
+				if (!set) continue;
+				for (const offset of decodeInt4Array(row.offsets)) set.add(row.start_s + offset);
+			}
+		}
+		return new Map([...times].map(([key, set]) => [key, [...set].sort((a, b) => a - b).slice(-n)]));
 	}
 
 	/**
@@ -236,6 +379,7 @@ export class MetricQueries {
 	 * 没有数据时首尾时间为 undefined。
 	 */
 	async #known(
+		db: Db | Tx,
 		taskId: string,
 		names: string[],
 		unwritten: Map<string, UnwrittenSeries>,
@@ -248,7 +392,7 @@ export class MetricQueries {
 		let last = Number.NEGATIVE_INFINITY;
 		const series = new Map<string, { name: string; labels: Labels; key: string }>();
 		if (names.length > 0) {
-			const rows = await this.deps.db
+			const rows = await db
 				.select({
 					metric: metricSeries.metric,
 					labels: metricSeries.labels,
@@ -279,15 +423,16 @@ export class MetricQueries {
 		};
 	}
 
-	/** 这些指标每个序列（键是 {@link seriesKey}）的非空桶。 */
+	/** 这些指标每个序列（键是 {@link seriesKey}）的非空桶，以及最后一个点。 */
 	async #bucketize(
+		db: Db | Tx,
 		taskId: string,
 		names: string[],
 		unwritten: Map<string, UnwrittenSeries>,
 		from: number,
 		to: number,
 		width: number,
-	): Promise<Map<string, MetricBucket[]>> {
+	): Promise<{ buckets: Map<string, MetricBucket[]>; ends: Map<string, SeriesEnd> }> {
 		// 段落在一个桶内、不和内存里的点重叠时只取段摘要（数组不读取、不解压）。
 		const memFirst = Math.min(
 			...[...unwritten.values()].map((s) => s.points[0]?.t ?? Number.POSITIVE_INFINITY),
@@ -299,7 +444,7 @@ export class MetricQueries {
 			and end_at < ${memBound}::timestamptz
 			and floor((extract(epoch from start_at)::float8 - ${from}::float8) / ${width}::float8)
 				= floor((extract(epoch from end_at)::float8 - ${from}::float8) / ${width}::float8))`;
-		const result = await this.deps.db.execute<SegmentRow>(sql`
+		const result = await db.execute<SegmentRow>(sql`
 			select metric, labels, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
 				points, min, max, avg, last,
 				case when ${summarized} then null else array_send(offsets) end as offsets,
@@ -396,7 +541,11 @@ export class MetricQueries {
 		}
 
 		const buckets = new Map<string, MetricBucket[]>();
+		const ends = new Map<string, SeriesEnd>();
 		for (const [key, byBucket] of accs) {
+			const lastBucket = Math.max(...byBucket.keys());
+			const lastAcc = byBucket.get(lastBucket);
+			if (lastAcc) ends.set(key, { at: lastAcc.lastAt, value: lastAcc.last });
 			buckets.set(
 				key,
 				[...byBucket.entries()]
@@ -413,7 +562,7 @@ export class MetricQueries {
 					})),
 			);
 		}
-		return buckets;
+		return { buckets, ends };
 	}
 
 	/**
@@ -522,7 +671,7 @@ export class MetricQueries {
 	#groups(rows: TaskRow[], include: (nodeId: string) => boolean): TaskRow[][] {
 		const groups = new Map<string, TaskRow[]>();
 		for (const t of rows) {
-			if (isPlaceholder(t) || !include(t.nodeId)) continue;
+			if (isPlaceholderAttempt(t) || !include(t.nodeId)) continue;
 			const key = `${t.chainInstanceId}/${t.nodeId}`;
 			const list = groups.get(key) ?? [];
 			list.push(t);

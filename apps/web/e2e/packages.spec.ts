@@ -128,14 +128,14 @@ test("还没有节点包时显示空状态和发布命令，链接到开发文�
 	const empty = page.getByRole("region", { name: "还没有发布节点包" });
 	await expect(empty).toContainText("uv run sfly publish");
 
-	await empty.getByRole("link", { name: "从零开始开发节点包" }).click();
+	await empty.getByRole("link", { name: "快速开始", exact: true }).click();
 	await expect(page).toHaveURL(/\/docs\/quickstart$/);
 	await expect(page.getByRole("article", { name: "快速开始" })).toBeVisible();
 
 	await page.goBack();
 	await page
 		.getByRole("region", { name: "还没有发布节点包" })
-		.getByRole("link", { name: "发布节点包" })
+		.getByRole("link", { name: "发布", exact: true })
 		.click();
 	await expect(page).toHaveURL(/\/docs\/publish$/);
 	await expect(page.getByRole("article", { name: "发布" })).toBeVisible();

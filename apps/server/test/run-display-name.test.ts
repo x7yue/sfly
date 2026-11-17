@@ -122,12 +122,13 @@ describe("运行里的节点带上显示名称", () => {
 			{ node_id: "spawn", display_name: "派发监控", status: "success" },
 			{ node_id: "check", display_name: "核对结果", status: "running" },
 		]);
-		expect(stats.recent_failures).toMatchObject([
-			{ chain_id: "sub", subflow_name: "压测监控", node_id: "probe" },
+		expect(stats.running_runs[0]?.active_nodes).toMatchObject([
+			{ node_id: "check", display_name: "核对结果" },
 		]);
-		expect(stats.recent_failures[0]).not.toHaveProperty("display_name");
+		// 主链还在运行：运行没有结束，不在最近结束里。
+		expect(stats.recent_ended).toEqual([]);
 
-		// 主链晚于子流程失败：最近失败按失败时间排序。
+		// 主链晚于子流程失败：运行结束，最先失败的是子流程里的 probe（没有显示名称）。
 		(cp.clock as ManualClock).advance(1000);
 		await agent.fail(check);
 		await api.saveVersion(scenarioId, document({ check: "复核结果", subflow: "延迟监控" }));
@@ -144,13 +145,35 @@ describe("运行里的节点带上显示名称", () => {
 		]);
 		expect(runs.find((r) => r.id === runId)?.chains[1]?.subflow_name).toBe("压测监控");
 		expect(runs.find((r) => r.id === next.runId)?.chains[1]?.subflow_name).toBe("延迟监控");
-		const failures = (await dashboard()).recent_failures;
-		expect(failures.filter((f) => f.run_id === runId)).toMatchObject([
-			{ subflow: false, node_id: "check", display_name: "核对结果" },
-			{ subflow: true, subflow_name: "压测监控" },
+
+		const afterNext = await dashboard();
+		expect(afterNext.recent_ended).toMatchObject([
+			{ id: runId, status: "failed", failure: { chain_id: "sub", subflow_name: "压测监控" } },
 		]);
-		expect(failures.find((f) => f.run_id === next.runId)).toMatchObject({
-			subflow_name: "延迟监控",
+		const [ended] = afterNext.recent_ended;
+		expect(ended?.status === "failed" && ended.failure).toMatchObject({ node_id: "probe" });
+		expect(ended?.status === "failed" && ended.failure).not.toHaveProperty("display_name");
+		const nextRunning = afterNext.running_runs.find((r) => r.id === next.runId);
+		expect(nextRunning?.chains.map((c) => [c.chain_id, c.subflow_name])).toEqual([
+			["entry", undefined],
+			["sub", "延迟监控"],
+		]);
+
+		// 主链的 check 先失败、子流程的 probe 后失败：失败节点带上显示名称。
+		const third = await api.triggerOk(scenarioId);
+		const tasks: Record<string, AssignedTask> = {};
+		for (let i = 0; i < 2; i++) {
+			const task = await agent.nextAssign();
+			tasks[task.nodeId] = task;
+		}
+		await agent.fail(tasks.check as AssignedTask);
+		(cp.clock as ManualClock).advance(1000);
+		await agent.fail(tasks.probe as AssignedTask);
+		const thirdEnded = (await dashboard()).recent_ended.find((r) => r.id === third);
+		expect(thirdEnded?.status === "failed" && thirdEnded.failure).toMatchObject({
+			subflow: false,
+			node_id: "check",
+			display_name: "复核结果",
 		});
 	});
 });

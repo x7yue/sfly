@@ -41,7 +41,9 @@ import {
 	useState,
 } from "react";
 import { useShortcut } from "#/components/shortcuts";
+import { ACTION } from "#/lib/copy";
 import { dialogOpen, isEditable } from "#/lib/focus";
+import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenu } from "@/components/ui/context-menu";
 import { AnnotationBoxes } from "./AnnotationBoxes";
 import {
@@ -67,6 +69,7 @@ import {
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
 import { type DocEdge, docEdgeOf, edgeId, layoutOf, type SfEdge, type SfNode } from "./flow";
+import { createFrameScheduler, followViewport, framedInView, rectInView } from "./follow";
 import {
 	type CanvasInsets,
 	COMPACT_THRESHOLD,
@@ -106,6 +109,27 @@ import {
 import { readableViewport } from "./viewport";
 
 /**
+ * 跟随执行（运行状态）：镜头框住 `running`（执行中的节点，含子流程区域，规则见 follow.ts）。打开时马上框，
+ * 之后执行前沿（`running`）变化后停留 follow.ts 的 `FOLLOW_DWELL_MS` 才平移；只移动镜头，不改选中的节点。
+ * 拖动画布、缩放（滚轮或工具条的按钮），或用方向键把选中移到视野外的节点（镜头平移过去）时关闭，并在读屏的实时区域播报。
+ */
+export interface FollowExecution {
+	/** 跟随着；运行结束后是 false。 */
+	active: boolean;
+	/** 不能打开（运行结束）：按钮禁用，F 不生效。 */
+	disabled: boolean;
+	/** 执行中的节点（画布上的 ID）。 */
+	running: readonly string[];
+	/** 按钮和 F 切换：这是用户的选择，要记住。 */
+	onChange(active: boolean): void;
+	/**
+	 * 画布自己在拖动、缩放和键盘选到视野外时停止跟随：只在当前页面有效，不是用户的选择，刷新后回到按钮或 F 上次选的状态。
+	 * 之后按钮或 F 恢复。
+	 */
+	onPause(): void;
+}
+
+/**
  * 可配置的编排画布（#35；以 xyflow 官方 React Flow UI 组件为起点）：铺满容器，控件悬浮在上面。
  *
  * 画布本身负责：节点卡片、连线、子流程区域、注释框、语义缩放（--canvas-zoom / data-lod，见 zoom-text.ts）、
@@ -119,7 +143,8 @@ import { readableViewport } from "./viewport";
  *
  * 扩展点（后续票据复用这一个组件，不再各写一套画布）：
  * - `editable={false}`：只读（不能拖动、连线、删除、多选），用于运行状态（#41）与版本对比（#40）；
- * - `decorateNode` / `decorateEdge` / `regionMeta`：叠加运行状态、主指标槽、差异标记（见 context.ts）；
+ * - `decorateNode` / `decorateEdge` / `enteringEdges` / `regionMeta`：叠加运行状态、主指标槽、差异标记（见 context.ts）；
+ * - `follow`：运行状态的「跟随执行」，镜头框住执行中的节点（见 FollowExecution）；
  * - `menu`：右键菜单的内容（CanvasMenu.tsx）；不给时空白处的菜单只有「适配视图」，节点没有菜单；
  *   连线菜单只在可编辑时打开（只读时右键连线等同于右键空白处）；
  * - `onInsertOnEdge`：悬停链上的连线时中点的「＋」；`reconnect`：拖动连线的端点改接（都只在可编辑时生效）；
@@ -156,7 +181,9 @@ export interface FlowCanvasProps {
 	insets: CanvasInsets;
 	decorateNode?: (id: string, node: SfNode["data"]["node"]) => NodeDecoration | undefined;
 	decorateEdge?: CanvasContextValue["decorateEdge"];
+	enteringEdges?: CanvasContextValue["enteringEdges"];
 	regionMeta?: CanvasContextValue["regionMeta"];
+	follow?: FollowExecution;
 	/** 选中了东西时按 Enter（焦点在画布上）：通常把焦点移到检查器。 */
 	onEnter?(): void;
 	/** 检查器开关（工具条按钮与 I 键）；检查器本身由使用方渲染。 */
@@ -247,7 +274,9 @@ export function FlowCanvas({
 	insets,
 	decorateNode,
 	decorateEdge,
+	enteringEdges,
 	regionMeta,
+	follow,
 	onEnter,
 	inspector,
 	outline,
@@ -390,7 +419,8 @@ export function FlowCanvas({
 	);
 	// 适配视图把节点和注释框的范围一起放进视口：框的范围由成员算出，比节点的外接框大（子流程成员的框更大），
 	// 只按节点算的话，节点贴着适配的边距时，框的外沿会伸到视口或检查器、工具条下面去。
-	// 范围按布局里的位置和卡片的固定大小算，不等 React Flow 量出节点尺寸。
+	// 范围按布局里的位置算，不等 React Flow 量出节点尺寸：卡片按布局里量出来的高度（运行状态下会长高），
+	// 打开画布时还没量，按原高度；便签按它的大小。
 	const placedNotes = useMemo(
 		() => stickyNotes.filter((s): s is PlacedStickyNote => s.position !== undefined),
 		[stickyNotes],
@@ -401,8 +431,8 @@ export function FlowCanvas({
 		const { layout: current, boxes: framed, placedNotes: notes } = extent.current;
 		const rects = [
 			...notes.map((s) => ({ ...s.position, ...stickyNoteSize(s) })),
-			...current.nodes.flatMap(({ position: p }) =>
-				p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: NODE_HEIGHT }] : [],
+			...current.nodes.flatMap(({ position: p, height }) =>
+				p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: height ?? NODE_HEIGHT }] : [],
 			),
 			// 注释框的标题写在框外上方，一起算进去。
 			...framed.map(({ box: b }) => ({
@@ -451,6 +481,68 @@ export function FlowCanvas({
 		fitted.current = true;
 		fitToRef.current(0);
 	}, [flow.viewportInitialized]);
+
+	// —— 跟随执行：镜头框住执行中的节点，只动镜头 ——
+	const followRef = useRef(follow);
+	followRef.current = follow;
+	const areaRef = useRef(area);
+	areaRef.current = area;
+	/** 上一次框住的执行中节点：卡片长高后看它们还在不在可见区域里。 */
+	const framedRef = useRef<readonly string[] | null>(null);
+	const frameRunning = useCallback(
+		(duration: number, running = followRef.current?.running) => {
+			if (!running) return;
+			const el = wrapper.current;
+			if (!el) return;
+			const viewport = followViewport({
+				running,
+				layout: extent.current.layout,
+				size: { width: el.clientWidth, height: el.clientHeight },
+				area: areaRef.current,
+			});
+			framedRef.current = running;
+			if (viewport) void flow.setViewport(viewport, { duration });
+		},
+		[flow],
+	);
+	const [announcement, setAnnouncement] = useState("");
+	/** 用户自己动镜头（拖动、缩放）或键盘选到视野外的节点：关闭跟随并告诉读屏用户怎么恢复。 */
+	const stopFollowing = useCallback((cause: "manual" | "keyboard") => {
+		const current = followRef.current;
+		if (!current?.active) return;
+		current.onPause();
+		const stopped = `已停止${ACTION.followExecution}，按 ${shortcutText("canvas-follow")} 恢复`;
+		setAnnouncement(cause === "manual" ? stopped : `镜头已移到选中的节点，${stopped}`);
+	}, []);
+	// 什么时候框见 createFrameScheduler；画布卸载时取消等待中的那一次。
+	const followKey = flow.viewportInitialized && follow?.active ? follow.running.join("\n") : null;
+	const [frames] = useState(createFrameScheduler);
+	useEffect(
+		() => frames.update(followKey, () => frameRunning(viewportDuration(VIEWPORT_MS))),
+		[frames, followKey, frameRunning],
+	);
+	useEffect(() => frames.cancel, [frames]);
+	const following = follow?.active ?? false;
+	// 框好以后卡片才长高（关注项读到了、多了「正在做」一行）、长出来的部分落到可见区域外时，马上重新框上一次框的那些节点；
+	// 执行前沿的变化照旧等停留时间（上面的 frames）。
+	useEffect(() => {
+		const framed = framedRef.current;
+		const el = wrapper.current;
+		if (!following || !framed || !el) return;
+		const frame = {
+			running: framed,
+			layout,
+			size: { width: el.clientWidth, height: el.clientHeight },
+			area: areaRef.current,
+		};
+		if (!framedInView({ ...frame, viewport: flow.getViewport() })) {
+			frameRunning(viewportDuration(VIEWPORT_MS), framed);
+		}
+	}, [following, layout, flow, frameRunning]);
+	useEffect(() => {
+		if (following) setAnnouncement("");
+	}, [following]);
+
 	const canEdit = editable && tool === "pointer";
 	const selectSubflow = useCallback(
 		(ids: readonly string[]) => onSelect(selectNodes(ids)),
@@ -603,6 +695,7 @@ export function FlowCanvas({
 			grounds,
 			decorateNode,
 			decorateEdge,
+			enteringEdges,
 			regionMeta,
 			fit,
 			...(canEdit && onInsertOnEdge ? { insertOnEdge: onInsertOnEdge, openEdgeMenu } : {}),
@@ -615,6 +708,7 @@ export function FlowCanvas({
 			grounds,
 			decorateNode,
 			decorateEdge,
+			enteringEdges,
 			regionMeta,
 			fit,
 			canEdit,
@@ -625,10 +719,10 @@ export function FlowCanvas({
 		],
 	);
 	useEffect(() => {
-		const onResize = () => fitToRef.current(0);
+		const onResize = () => (followRef.current?.active ? frameRunning(0) : fitToRef.current(0));
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
-	}, []);
+	}, [frameRunning]);
 	const touched = useRef(false);
 	const touch = () => {
 		touched.current = true;
@@ -648,34 +742,32 @@ export function FlowCanvas({
 		return () => observer.disconnect();
 	}, [refitOnResize]);
 
-	/** 节点不在可见区域（扣掉悬浮控件）里时，把它移到可见区域中央。 */
+	/** 节点不在可见区域（扣掉悬浮控件）里时，把它移到可见区域中央；返回镜头有没有移动。 */
 	const reveal = useCallback(
-		(id: string) => {
+		(id: string): boolean => {
 			const node = flow.getInternalNode(id);
 			const el = wrapper.current;
-			if (!node || !el) return;
-			const { x, y, zoom } = flow.getViewport();
+			if (!node || !el) return false;
+			const viewport = flow.getViewport();
+			const { zoom } = viewport;
 			const { x: nx, y: ny } = node.internals.positionAbsolute;
+			// 运行状态下卡片会长高：按量出来的高度判断。
+			const height = node.measured.height ?? NODE_HEIGHT;
 			const W = el.clientWidth;
 			const H = el.clientHeight;
-			const left = nx * zoom + x;
-			const top = ny * zoom + y;
-			const visible =
-				left >= area.left &&
-				top >= area.top &&
-				left + NODE_WIDTH * zoom <= W - area.right &&
-				top + NODE_HEIGHT * zoom <= H - area.bottom;
-			if (visible) return;
+			const rect = { x: nx, y: ny, width: NODE_WIDTH, height };
+			if (rectInView(rect, { viewport, size: { width: W, height: H }, area })) return false;
 			const cx = area.left + (W - area.left - area.right) / 2;
 			const cy = area.top + (H - area.top - area.bottom) / 2;
 			void flow.setViewport(
 				{
 					x: cx - (nx + NODE_WIDTH / 2) * zoom,
-					y: cy - (ny + NODE_HEIGHT / 2) * zoom,
+					y: cy - (ny + height / 2) * zoom,
 					zoom,
 				},
 				{ duration: viewportDuration(VIEWPORT_MS) },
 			);
+			return true;
 		},
 		[flow, area],
 	);
@@ -714,6 +806,7 @@ export function FlowCanvas({
 		reveal,
 		openNodeMenu,
 		removeSticky: editable ? stickyEdit?.remove : undefined,
+		stopFollowing,
 	});
 	latest.current = {
 		nodes,
@@ -724,6 +817,7 @@ export function FlowCanvas({
 		reveal,
 		openNodeMenu,
 		removeSticky: editable ? stickyEdit?.remove : undefined,
+		stopFollowing,
 	};
 	useEffect(() => {
 		const focusNode = (id: string) =>
@@ -745,8 +839,17 @@ export function FlowCanvas({
 				target?.closest("[data-node-id]") !== null ||
 				target?.classList.contains("react-flow__pane");
 			if (!onCanvas || !(target === document.body || root.contains(target))) return;
-			const { nodes, edges, selection, onSelect, onEnter, reveal, openNodeMenu, removeSticky } =
-				latest.current;
+			const {
+				nodes,
+				edges,
+				selection,
+				onSelect,
+				onEnter,
+				reveal,
+				openNodeMenu,
+				removeSticky,
+				stopFollowing,
+			} = latest.current;
 			const cardId = target?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
 			if (cardId && (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey))) {
 				// 拦下默认行为：浏览器自己的右键菜单不再弹出。
@@ -769,7 +872,8 @@ export function FlowCanvas({
 				);
 				if (next) {
 					onSelect(selectNode(next));
-					reveal(next);
+					// 选中的节点在视野外：镜头平移过去，跟随执行不再拉回，所以暂停。
+					if (reveal(next)) stopFollowing("keyboard");
 					focusNode(next);
 				}
 			} else if (event.key === "Enter" && selection.kind !== "none") {
@@ -795,6 +899,11 @@ export function FlowCanvas({
 	}, []);
 
 	useShortcut("canvas-fit", fit);
+	useShortcut(
+		"canvas-follow",
+		() => follow?.onChange(!follow.active),
+		follow !== undefined && !follow.disabled,
+	);
 	useShortcut("canvas-pointer", () => setTool("pointer"));
 	useShortcut("canvas-hand", () => setTool("hand"));
 	useShortcut("canvas-minimap", () => setMinimap((m) => !m));
@@ -840,6 +949,10 @@ export function FlowCanvas({
 				<p id={hintId} hidden>
 					方向键沿链浏览节点，↓ ↑ 进出子流程，Esc 取消选中
 				</p>
+				{/* 读屏的实时区域：跟随执行因为拖动画布或键盘选到视野外而关闭时在这里播报。 */}
+				<output aria-live="polite" className="sr-only">
+					{announcement}
+				</output>
 				<ReactFlow<SfNode, SfEdge>
 					nodes={shownNodes}
 					edges={edges}
@@ -863,6 +976,10 @@ export function FlowCanvas({
 						// 手动聚焦画布区域，并标记是鼠标放过来的（失焦时清掉）：编辑器据此决定 Tab 是添加节点
 						// 还是照常切换焦点（editor/ScenarioEditor.tsx）。
 						focusRegion();
+					}}
+					// 有事件的移动是用户在拖动或滚轮缩放画布；程序平移（跟随、适配视图、定位节点）的事件是 null。
+					onMove={(event) => {
+						if (event) stopFollowing("manual");
 					}}
 					onPaneContextMenu={(event) => {
 						event.preventDefault();
@@ -1005,7 +1122,15 @@ export function FlowCanvas({
 					minimap={minimap}
 					onToggleMinimap={() => setMinimap((m) => !m)}
 					outline={outline}
+					onZoom={() => stopFollowing("manual")}
 					inspector={inspector}
+					follow={
+						follow && {
+							active: follow.active,
+							disabled: follow.disabled,
+							onToggle: () => follow.onChange(!follow.active),
+						}
+					}
 					start={dockStart}
 					tools={dockTools}
 					clearRight={area.right}

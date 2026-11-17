@@ -23,17 +23,13 @@ import {
 	type OrchestrationDocument,
 	type OrchestrationNode,
 	type PackageMetadata,
+	type RunningTaskView,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { ClockOffset } from "../agents/agent-clock.js";
-import {
-	type AgentConnection,
-	type AgentHub,
-	devPackageInfo,
-	type RunningTaskView,
-	runningTaskView,
-} from "../agents/agent-hub.js";
+import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
+import { loadAgentTasks } from "../agents/agent-tasks.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -515,32 +511,23 @@ export class Engine implements AgentSessionHandler {
 				};
 			}
 			const held = await step.tx
-				.select({
-					task: tasks,
-					orchestrationId: runs.orchestrationId,
-					document: orchestrationVersions.document,
-				})
+				.select()
 				.from(tasks)
-				.innerJoin(runs, eq(runs.id, tasks.runId))
-				.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
 				.orderBy(asc(tasks.seq))
-				.for("update", { of: tasks });
-			const terminated = held.map(({ task, orchestrationId, document }) =>
-				runningTaskView(
-					{
-						taskId: task.id,
-						runId: task.runId,
-						orchestrationId,
-						nodeId: task.nodeId,
-						attempt: task.attempt,
-						status: task.status,
-						startedAt: task.startedAt,
-					},
-					document,
-				),
-			);
-			for (const { task } of held) {
+				.for("update");
+			// 返回给调用方的是锁住的这些任务，在失败之前取（失败后状态就变了）；
+			// 它们随即以 agent_lost 结束，不再有正在做的动作。
+			const terminated = (
+				await loadAgentTasks(
+					step.tx,
+					inArray(
+						tasks.id,
+						held.map((task) => task.id),
+					),
+				)
+			).running.map((t) => ({ ...t.view, current_action: null }));
+			for (const task of held) {
 				await this.#failTask(step, task, "agent_lost", "Agent 立即更新，终止了这个任务");
 			}
 			// 与派发消息一样在事务提交后发出。

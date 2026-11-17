@@ -9,6 +9,7 @@ import {
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import { packageMetadata } from "../../server/test/support/package-archive.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
+import type { PanelTab } from "../src/monitor/run-link";
 import { type E2eFixtures, expect } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
@@ -217,17 +218,34 @@ export async function runningScenario(
 	return { runId, scenarioId, agent, tasks: { fetch, ...first, verify: retry } };
 }
 
-/** 打开监控页：浏览器时间固定在手动时钟的当前时刻。 */
-export async function openMonitor(page: Page, clock: ManualClock, runId: string, node?: string) {
+/**
+ * 打开监控页的「详情」（原来的页面）：浏览器时间固定在手动时钟的当前时刻。
+ * tab：打开时就切到的底部面板页签。页面打开后再点页签会改变图表工作区的高度，而「滚到选中节点」只在目录到达时判断一次，
+ * 两者的先后取决于网络响应的快慢，截图里选中节点的组在不在视野内就不确定；要截图的用例用 tab 一开始就定下面板的状态。
+ */
+export async function openMonitor(
+	page: Page,
+	clock: ManualClock,
+	runId: string,
+	node?: string,
+	tab?: PanelTab,
+) {
 	await page.clock.setFixedTime(clock.now());
-	await page.goto(`/runs/${runId}${node ? `?node=${node}` : ""}`);
+	const search = new URLSearchParams({ view: "detail" });
+	if (node) search.set("node", node);
+	if (tab) search.set("tab", tab);
+	await page.goto(`/runs/${runId}?${search}`);
 	await expect(page.getByRole("region", { name: "链路时间线" })).toBeVisible();
 }
 
-/** 推进手动时钟；每 15 秒心跳一次，手上任务的租约（30 秒）不会过期。 */
-async function advance(clock: ManualClock, agent: FakeAgent, ms: number) {
+/**
+ * 推进手动时钟；每 15 秒心跳一次，手上任务的租约（30 秒）不会过期。`each` 在每一步推进之后、心跳之前调用
+ * （例如让某个节点每一步都上报一个点）。
+ */
+export async function advance(clock: ManualClock, agent: FakeAgent, ms: number, each?: () => void) {
 	for (let left = ms; left > 0; left -= 15_000) {
 		clock.advance(Math.min(left, 15_000));
+		each?.();
 		await agent.heartbeat();
 	}
 }
@@ -385,5 +403,5 @@ export async function labeledRun(
 	const clock0 = clock.now().getTime();
 	const runId = await triggerRun(controlPlane, scenarioId);
 	const task = await agent.nextAssign();
-	return { agent, task, runId, clock0 };
+	return { agent, task, runId, scenarioId, clock0 };
 }

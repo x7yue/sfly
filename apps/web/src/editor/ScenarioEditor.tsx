@@ -96,7 +96,7 @@ import {
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
-import { TERM } from "#/lib/copy";
+import { ACTION, TERM } from "#/lib/copy";
 import { dialogOpen } from "#/lib/focus";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
@@ -133,7 +133,12 @@ import {
 import { freeCardSpot } from "./free-spot";
 import { isNamedNode } from "./inspector/DisplayNameField";
 import { focusField } from "./inspector/fields";
-import { type FocusRequest, Inspector, type InspectorContext } from "./inspector/Inspector";
+import {
+	type FocusRequest,
+	Inspector,
+	type InspectorContext,
+	type ScenarioTab,
+} from "./inspector/Inspector";
 import { useInspectorWidth } from "./inspector/inspector-width";
 import { useNodeClipboard } from "./node-clipboard";
 import { OUTLINE_WIDTH, OutlinePanel } from "./OutlinePanel";
@@ -146,6 +151,7 @@ import {
 	useRunDecorations,
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
+import { useRunMotion } from "./run-state/use-run-motion";
 import {
 	documentFieldErrors,
 	type FieldError,
@@ -170,12 +176,15 @@ export function ScenarioEditor({
 	head,
 	initialRun,
 	initialNode,
+	initialSettings,
 }: {
 	orchestration: OrchestrationView;
 	head: OrchestrationHeadView;
 	initialRun?: string;
 	/** 打开时选中的节点（运行抽屉里预检问题的「前往」）。 */
 	initialNode?: string;
+	/** 打开时场景设置停在哪一页（运行监控概览的「设置关注项」直接去「关注项」页）。 */
+	initialSettings?: ScenarioTab;
 }) {
 	// 编辑起点：本地草稿（刷新不丢失）或最新版本；放弃本地修改后用最新版本重建画布。
 	const [start, setStart] = useState(() => startEditing(orchestration.id, head));
@@ -186,6 +195,7 @@ export function ScenarioEditor({
 				start={start}
 				initialRun={initialRun}
 				initialNode={initialNode}
+				initialSettings={initialSettings}
 				onReload={(latest) => setStart(startEditing(orchestration.id, latest, start.nonce + 1))}
 			/>
 		</ReactFlowProvider>
@@ -215,12 +225,14 @@ function Editor({
 	start,
 	initialRun,
 	initialNode,
+	initialSettings,
 	onReload,
 }: {
 	orchestration: OrchestrationView;
 	start: EditStart;
 	initialRun?: string;
 	initialNode?: string;
+	initialSettings?: ScenarioTab;
 	onReload: (head: OrchestrationHeadView) => void;
 }) {
 	const flow = useReactFlow<SfNode, SfEdge>();
@@ -325,6 +337,7 @@ function Editor({
 		readyRun?.run,
 		readyRun?.overlay,
 		readyRun?.metrics,
+		readyRun?.focus,
 		runNow,
 	);
 	const runFlow = useRunFlow(readyRun?.doc);
@@ -342,6 +355,12 @@ function Editor({
 		[readyRun?.doc, titleOf, info],
 	);
 	const running = mode === "run";
+	// 跟着执行推进的动效（刚变成执行中的连线、跟随执行）只在运行状态下有。
+	const runMotion = useRunMotion(
+		running ? readyRun?.run : undefined,
+		running ? readyRun?.overlay : undefined,
+		running ? runFlow?.edges : undefined,
+	);
 	const shownNodes = running && runFlow ? runFlow.nodes : nodes;
 	const shownEdges = running && runFlow ? runFlow.edges : edges;
 	const shownAnnotations =
@@ -1021,7 +1040,9 @@ function Editor({
 	useShortcut("canvas-run", () => setTriggering(true), !running);
 
 	const context: InspectorContext = {
+		orchestrationId: orchestration.id,
 		doc,
+		saved: versioning.base.document,
 		catalog,
 		info,
 		packages: packages.data?.packages,
@@ -1134,6 +1155,7 @@ function Editor({
 					stickyNotes={shownStickies}
 					info={running ? runInfo : info}
 					{...(running ? decorations : {})}
+					{...(running ? runMotion : {})}
 					selection={shownSelection}
 					onSelect={setSelection}
 					onNodesChange={running ? runFlow?.onNodesChange : history.onNodesChange}
@@ -1216,7 +1238,7 @@ function Editor({
 						running ? undefined : (
 							<>
 								<ToolButton
-									label="撤销"
+									label={ACTION.undo}
 									shortcut="canvas-undo"
 									disabled={!history.canUndo}
 									onClick={history.undo}
@@ -1261,6 +1283,11 @@ function Editor({
 							selection={shownSelection}
 							nodeOf={nodeOf}
 							info={runInfo}
+							saved={versioning.base.document}
+							onSelectNode={(id) => {
+								setSelection(selectNode(id));
+								focusInspector();
+							}}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}
 						/>
@@ -1273,6 +1300,7 @@ function Editor({
 							context={context}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}
+							initialScenarioTab={initialSettings}
 						/>
 					)}
 				</FlowCanvas>

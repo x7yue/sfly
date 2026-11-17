@@ -1,0 +1,14 @@
+language js
+
+// e2e 里移到文首、文尾和全选要写 ControlOrMeta：macOS 的 Chromium 里 Control+End 不会把光标移到文尾，
+// Control+a 是移到行首（#373）。应用自己的快捷键（Control+k、Control+s……）在两个平台都认 Control，不在这里。
+or {
+	`"Control+Home"`,
+	`"Control+End"`,
+	`"Control+a"`,
+	`"Control+Shift+Home"`,
+	`"Control+Shift+End"`
+} as $key where {
+	$filename <: r".*apps/web/e2e/.*",
+	register_diagnostic(span=$key, message="文本编辑快捷键写成 ControlOrMeta（例如「ControlOrMeta+End」）：macOS 的 Chromium 里 Control+End 不移到文尾，Control+a 是移到行首。")
+}

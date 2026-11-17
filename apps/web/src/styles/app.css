@@ -195,6 +195,17 @@
 			stroke-dashoffset: -11;
 		}
 	}
+	/* 刚变成执行中的连线：实线先变成虚线流动一个周期（7 + 5），播完回到实线。 */
+	@keyframes edge-enter {
+		from {
+			stroke-dasharray: 7 5;
+			stroke-dashoffset: 0;
+		}
+		to {
+			stroke-dasharray: 7 5;
+			stroke-dashoffset: -12;
+		}
+	}
 	@keyframes status-pulse {
 		from {
 			opacity: 0.7;
@@ -319,13 +330,29 @@
 
 	/*
 	 * 强制颜色模式（Windows 高对比度）：浏览器换掉作者的颜色、去掉 box-shadow 与渐变。
-	 * 状态标记是 currentColor 画的 SVG，形状语法照样可读，不需要处理；这里只补靠底色或阴影表达的东西。
+	 * 状态形状是 currentColor 画的 SVG，形状语法照样可读，不需要处理；这里只补靠底色或阴影表达的东西。
 	 */
 	@media (forced-colors: active) {
 		/* 当前项、选中项从底色与左侧白条换成描边（:where 不加权重，键盘焦点环仍然优先） */
-		:where([aria-current="page"], [aria-pressed="true"], [data-state="selected"], .selected-row) {
+		:where(
+				[aria-current="page"],
+				[aria-current="location"],
+				[aria-pressed="true"],
+				[aria-selected="true"],
+				[data-state="selected"],
+				.selected-row
+			) {
 			outline: 2px solid Highlight;
 			outline-offset: -2px;
+		}
+		/*
+		 * 画布节点卡片的选中靠外圈的 box-shadow，强制颜色下没有了：换成隔开一圈的系统高亮色轮廓，画在卡片外面
+		 * （上面通用的 -2px 内描边会盖住卡片里的内容）。同样用 :where 不加权重，键盘焦点环仍然优先；
+		 * 放在通用规则后面，权重相同时这条生效。
+		 */
+		:where(.selected [data-slot="base-node"]) {
+			outline: 3px solid Highlight;
+			outline-offset: 3px;
 		}
 		/* 进度段、缩略图、槽位条是数据图形，颜色与形状一起是信息：保留作者颜色，垫一块自己的深色底 */
 		[data-viz] {
@@ -333,6 +360,18 @@
 			background-color: var(--bg);
 			color: var(--fg-1);
 		}
+	}
+}
+
+/*
+ * 画布外层不能被滚动。xyflow 用行内样式把它设成 overflow: hidden，这样的元素仍然是滚动容器：聚焦节点、
+ * Playwright 点击前把元素滚进视野，都会把它滚开，xyflow 再在 scroll 事件里滚回去。中间画面跳一下，
+ * 按滚开时的位置算的点击落在空白画布上。clip 不是滚动容器，不会被滚开；行内样式只有 !important 压得过。
+ */
+@layer components {
+	.react-flow {
+		/* biome-ignore lint/complexity/noImportantStyles: 要压过 xyflow 的行内样式 overflow: hidden */
+		overflow: clip !important;
 	}
 }
 

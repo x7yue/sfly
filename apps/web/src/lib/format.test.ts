@@ -42,6 +42,20 @@ describe("formatDuration", () => {
 	});
 });
 
+describe("formatElapsed", () => {
+	it("每秒刷新的时长：一分钟以内只写整秒，之后写分秒、时分", () => {
+		expect(formatElapsed(0)).toBe("0s");
+		expect(formatElapsed(2400)).toBe("2s");
+		expect(formatElapsed(59_999)).toBe("59s");
+		expect(formatElapsed(130_000)).toBe("2m 10s");
+		expect(formatElapsed(3_720_000)).toBe("1h 02m");
+	});
+
+	it("时间倒退（读数早于最后一个点）当作 0", () => {
+		expect(formatElapsed(-5000)).toBe("0s");
+	});
+});
+
 describe("formatClockOffset", () => {
 	const SECOND = 1000;
 	const MINUTE = 60 * SECOND;
@@ -64,20 +78,6 @@ describe("formatClockOffset", () => {
 		expect(formatClockOffset(613 * DAY + 3 * HOUR)).toBe("快 613 天");
 		// Agent 时间被改到 1970 年。
 		expect(formatClockOffset(-20_154 * DAY)).toBe("慢 20154 天");
-	});
-});
-
-describe("formatElapsed", () => {
-	it("不到 1 分钟只写秒，之后写分和秒，超过 1 小时写小时和分", () => {
-		expect(formatElapsed(0)).toBe("0 秒");
-		expect(formatElapsed(45_999)).toBe("45 秒");
-		expect(formatElapsed(130_000)).toBe("2 分 10 秒");
-		expect(formatElapsed(59 * 60_000 + 59_000)).toBe("59 分 59 秒");
-		expect(formatElapsed(3_720_000)).toBe("1 小时 2 分");
-	});
-
-	it("时钟误差造成的负值按 0 秒算", () => {
-		expect(formatElapsed(-1500)).toBe("0 秒");
 	});
 });
 

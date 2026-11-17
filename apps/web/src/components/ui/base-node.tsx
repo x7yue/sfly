@@ -4,7 +4,9 @@ import type { ComponentProps } from "react";
 /**
  * React Flow UI 的 BaseNode（https://reactflow.dev/ui/components/base-node，拉取后按设计体系改写）：
  * 画布节点卡片的外壳。选中由 React Flow 给外层 `.react-flow__node` 加 `.selected`，这里用
- * `in-[.selected]:` 变体画中性高亮（selected 描边 + selected-ring），不用青色。
+ * `in-[.selected]:` 变体在卡片外面先垫 3px 画布底色、再画 2px 中性的 `selected` 描边（原型第四版），不用青色。
+ * 卡片自己的描边不变：执行中的青色、失败的红色选中后照样看得见；键盘焦点环再往外一圈（NodeCard 的 `outline-offset`）。
+ * 强制颜色模式下 box-shadow 没有了，改画隔开一圈的 `Highlight` 轮廓（styles/app.css）。
  * 尺寸由使用方给出（编排画布的几何常量在 components/canvas/geometry.ts）。
  */
 export function BaseNode({ className, ...props }: ComponentProps<"div">) {
@@ -13,7 +15,7 @@ export function BaseNode({ className, ...props }: ComponentProps<"div">) {
 			data-slot="base-node"
 			className={cn(
 				"relative border border-canvas-node-border bg-canvas-node-bg text-fg-1 transition-[border-color,box-shadow,opacity] duration-150 ease-standard hover:border-border-strong",
-				"in-[.selected]:border-canvas-node-selected in-[.selected]:hover:border-canvas-node-selected in-[.selected]:shadow-[0_0_0_4px_var(--canvas-node-selected-ring)]",
+				"in-[.selected]:shadow-[0_0_0_3px_var(--canvas-bg),0_0_0_5px_var(--canvas-node-selected)]",
 				className,
 			)}
 			{...props}

@@ -6,7 +6,8 @@ import { DataTable, dataColumns } from "#/components/data-table";
 import { runNodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { DURATION_LABEL } from "#/lib/copy";
+import { formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { ScenarioWithPreset } from "#/presets/ScenarioWithPreset";
 
 /** 表格里最多画几条链，其余只计数，保证行高一致。 */
@@ -80,12 +81,12 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 		}),
 		col.display({
 			id: "duration",
-			header: "耗时",
+			header: DURATION_LABEL,
 			meta: { width: "fit", className: "text-right font-mono", headClassName: "text-right" },
 			cell: ({ row }) => {
 				const run = row.original;
 				const end = run.ended_at ? Date.parse(run.ended_at) : run.now;
-				return formatDuration(end - Date.parse(run.started_at));
+				return formatSpan(end - Date.parse(run.started_at), !run.ended_at);
 			},
 		}),
 	]),
@@ -93,7 +94,7 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 
 /**
  * 历史运行（原型 viewRuns 的表格，TanStack Table）：编号、场景、状态（与失败节点同一行）、各链进度、版本、
- * 触发人、开始时间、耗时。行高固定，点整行进入运行详情（编号是可聚焦的链接）。
+ * 触发人、开始时间、耗时。行高固定，点整行进入运行监控（编号是可聚焦的链接）。
  */
 export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: number }) {
 	const navigate = useNavigate();
@@ -116,11 +117,14 @@ export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: numbe
 	);
 }
 
-/** 状态文字；失败时带上失败节点（子流程里的节点带上子流程名）。 */
+/**
+ * 状态文字；失败时带上第一个失败的节点（子流程里的节点带上子流程名）：`failures` 按失败的先后排，第一项就是它所在的链，
+ * 和控制台、运行监控的页头是同一个节点。
+ */
 function statusText(run: RunListItem): string {
 	const label = runStatusView(run.status).label;
 	if (run.status !== "failed") return label;
-	const failure = run.failures.find((f) => !f.subflow) ?? run.failures[0];
+	const [failure] = run.failures;
 	if (!failure?.node_id) return label;
 	const where = failure.subflow ? `${listChainLabel(failure)} / ` : "";
 	const node = runNodeName({ node_id: failure.node_id, display_name: failure.display_name });

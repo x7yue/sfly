@@ -1,6 +1,6 @@
 import {
 	feishuBotsApi,
-	type OrchestrationView,
+	type OrchestrationBase,
 	orchestrationsApi,
 	RUN_NOTIFICATION_NOTE_MAX,
 	RUN_NOTIFICATION_TITLE_MAX,
@@ -49,7 +49,7 @@ export function RunNotificationDialog({
 	onOpenChange,
 	returnFocus,
 }: {
-	scenario: OrchestrationView;
+	scenario: OrchestrationBase;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: React.RefObject<HTMLElement | null>;
@@ -117,7 +117,7 @@ export function RunNotificationDialog({
 						{missing && (
 							<p role="alert" className="m-0 text-xs text-danger-fg">
 								{TERM.feishuBot}「{settings.bot}
-								」已被删除，运行结束时不会发送通知，运行详情里记为「未发送」。
+								」已被删除，运行结束时不会发送通知，运行抽屉里记为「未发送」。
 								可以换一个机器人，或者到
 								<Link to="/feishu-bots" className="underline underline-offset-2">
 									{PAGE.feishuBots}

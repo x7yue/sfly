@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { type ChartGroup, failedFirst } from "./chart-groups";
 import {
 	appendIncrement,
+	attemptWindow,
 	balancedColumns,
 	bucketAt,
 	bucketTimes,
@@ -71,6 +72,24 @@ describe("图表的时间范围", () => {
 	});
 });
 
+describe("不随时间线缩放的图表的横轴", () => {
+	it("这次尝试的开始到结束；还没结束就到现在；刚开始至少 1 秒；还没开始没有横轴", () => {
+		expect(attemptWindow({ started_at: at(10), ended_at: at(40) }, s(90))).toEqual({
+			start: s(10),
+			end: s(40),
+		});
+		expect(attemptWindow({ started_at: at(10), ended_at: null }, s(30))).toEqual({
+			start: s(10),
+			end: s(30),
+		});
+		expect(attemptWindow({ started_at: at(10), ended_at: null }, s(10))).toEqual({
+			start: s(10),
+			end: s(11),
+		});
+		expect(attemptWindow({ started_at: null, ended_at: null }, s(30))).toBeNull();
+	});
+});
+
 describe("组内列数", () => {
 	it("放得下时一行排完", () => {
 		expect(balancedColumns(2, 1200, 340)).toBe(2);
@@ -116,6 +135,7 @@ const series = (buckets: [number, number][], bucketSeconds = 1): MetricSeries =>
 				avg: v,
 				last: v,
 			})),
+			last_at: buckets.length ? at(buckets.at(-1)?.[0] ?? 0) : null,
 		},
 	],
 });
@@ -180,7 +200,12 @@ describe("实时追加的指标点", () => {
 		const base: MetricSeries = {
 			...series([[0, 1]]),
 			series: [
-				{ name: "conn", labels: { host: "b" }, buckets: series([[0, 2]]).series[0]?.buckets ?? [] },
+				{
+					name: "conn",
+					labels: { host: "b" },
+					buckets: series([[0, 2]]).series[0]?.buckets ?? [],
+					last_at: at(0),
+				},
 				...series([[0, 1]]).series,
 			],
 		};
@@ -193,11 +218,13 @@ describe("实时追加的指标点", () => {
 				["p99", 1, 7],
 			]),
 		);
-		expect(result.series.map((x) => [x.name, x.labels, x.buckets.map((b) => b.last)])).toEqual([
-			["conn", { host: "a" }, [30]],
-			["conn", { host: "b" }, [2, 20]],
-			["tps", {}, [1, 5]],
-			["p99", {}, [7]],
+		expect(
+			result.series.map((x) => [x.name, x.labels, x.buckets.map((b) => b.last), x.last_at]),
+		).toEqual([
+			["conn", { host: "a" }, [30], at(1)],
+			["conn", { host: "b" }, [2, 20], at(1)],
+			["tps", {}, [1, 5], at(1)],
+			["p99", {}, [7], at(1)],
 		]);
 	});
 
@@ -464,8 +491,8 @@ describe("图表的线（#78）", () => {
 
 	it("每个序列一条线；带标签的序列用标签值命名并标为带标签", () => {
 		const lines = chartLines(["tps", "conn_tps"], declared, [
-			{ name: "tps", labels: {}, buckets: [bucket] },
-			{ name: "conn_tps", labels: { host: "a" }, buckets: [bucket] },
+			{ name: "tps", labels: {}, buckets: [bucket], last_at: at(0) },
+			{ name: "conn_tps", labels: { host: "a" }, buckets: [bucket], last_at: at(0) },
 		]);
 		expect(lines.map(({ name, labeled }) => ({ name, labeled }))).toEqual([
 			{ name: "tps", labeled: false },

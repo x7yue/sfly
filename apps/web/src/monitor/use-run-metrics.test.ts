@@ -19,7 +19,7 @@ const series = (runId: string): MetricSeries => ({
 	bucket_seconds: 1,
 	truncated: false,
 	series_capped: false,
-	series: [{ name: "tps", labels: {}, buckets: [] }],
+	series: [{ name: "tps", labels: {}, buckets: [], last_at: null }],
 });
 const keyOf = (runId: string, extra: Record<string, string> = {}) =>
 	queryKey(metricsApi.series, {

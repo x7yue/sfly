@@ -2,6 +2,10 @@
 
 import type { Download, Endpoint, RouteTable, Stream } from "../route.js";
 import type {
+	ActionChunk,
+	ActionPage,
+	ActionPageQuery,
+	ActionSummaryView,
 	AgentView,
 	ArtifactView,
 	DashboardView,
@@ -10,6 +14,7 @@ import type {
 	FeishuBotView,
 	FeishuTestResult,
 	FeishuWebhookUrl,
+	FocusItemInput,
 	ListOrchestrationsQuery,
 	LogChunk,
 	LogPage,
@@ -38,6 +43,8 @@ import type {
 	PresetParamInput,
 	PresetView,
 	ProgressEvent,
+	RunFocus,
+	RunFocusQuery,
 	RunListItem,
 	RunListQuery,
 	RunLogChunk,
@@ -57,6 +64,61 @@ import type {
 } from "./types.js";
 
 export interface Api {
+	actions: {
+		/**
+		 * `GET /tasks/:id/actions/summary`
+		 *
+		 * 一个任务（一次尝试）的动作摘要；没有记录过动作的任务返回各项为空的摘要，任务不存在时 404。
+		 */
+		summary: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			ActionSummaryView
+		>;
+		/**
+		 * `GET /tasks/:id/actions`
+		 *
+		 * 一个任务（一次尝试）的明细，按开始时间从新到旧分页，可以按名称、只看失败筛选；返回落在这一页范围里的只计数的段。
+		 * 任务不存在时 404，游标不是之前返回的 `before` 时 400。
+		 */
+		page: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				query?: ActionPageQuery;
+			},
+			ActionPage
+		>;
+		/**
+		 * `GET /tasks/:id/actions/events`
+		 *
+		 * 摘要和明细的实时推送（SSE）。`after` 用分页返回的 `rev`；断线重连时按 `Last-Event-ID` 请求头接上
+		 * （与 `after` 取较大者，API 客户端的订阅自动带上），不重复也不遗漏。
+		 *
+		 * - `summary`：连上时先发一份，之后每存下一份新的摘要发一份；任务结束时再发一份（正在做的动作为空）。
+		 * - `actions`：`after` 之后写入或结束的明细，之后每写入一批推送一批；任务结束时推送记为未结束的那些。
+		 *
+		 * 事件 ID 是推送到的修订号。运行已过保留期时只发摘要。任务不存在时 404。
+		 */
+		events: Stream<
+			{
+				params: {
+					id: string;
+				};
+				query?: {
+					after?: number;
+				};
+			},
+			{
+				summary: ActionSummaryView;
+				actions: ActionChunk;
+			}
+		>;
+	};
 	agents: {
 		/**
 		 * `GET /agents`
@@ -401,7 +463,7 @@ export interface Api {
 		/**
 		 * `GET /orchestrations/:id`
 		 *
-		 * 单个场景（名称、说明、最新版本号、归档时间）。
+		 * 单个场景（名称、说明、最新版本号、归档时间、运行通知设置、关注项）。
 		 */
 		get: Endpoint<
 			{
@@ -509,7 +571,19 @@ export interface Api {
 		/**
 		 * `PATCH /orchestrations/:id`
 		 *
-		 * 修改名称、说明和运行通知设置；不产生新的场景版本，立即生效。
+		 * 修改名称、说明、运行通知设置和关注项；不产生新的场景版本，立即生效。
+		 *
+		 * `focus_items` 是整份替换：给了就用它代替现在的列表（空数组即清空），按列表顺序保存；同时修改时后写的生效，
+		 * 不做乐观锁。不合格时返回 400，列表不变：
+		 *
+		 * - `focus_items_limit`：超过 `FOCUS_ITEMS_MAX` 项。已经失效的项也算在内。
+		 * - `focus_item_duplicate`：同一个 `(node_id, chart)` 出现了不止一次。
+		 * - `focus_item_unknown_chart`：新加入的项引用了最新版本里没有的节点，或者这个节点锁定的节点包版本没有这张图表。
+		 *   已经在列表里、后来失效的项允许原样保留（排序、改名都可以）；移除之后再加回去算新加入的。例外是撤销：
+		 *   写回上一次修改之前的列表（界面上的「撤销」就是这样做的）算撤销，整份不再检查，所以移除一个已经失效的项之后
+		 *   也能撤销回去。撤销之后没有可以再撤销的列表。
+		 *
+		 * 控制面比较新旧列表，记下最后一次修改（响应里的 `focus_edit`）；写入和现在一样的列表不算修改。
 		 */
 		update: Endpoint<
 			{
@@ -520,6 +594,7 @@ export interface Api {
 					name?: string;
 					description?: string;
 					run_notification?: RunNotificationChanges;
+					focus_items?: FocusItemInput[];
 				};
 			},
 			OrchestrationView
@@ -527,7 +602,9 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/copy`
 		 *
-		 * 复制场景并取新名字：说明、运行通知设置和运行预设（包括 secret 的值）一起复制，源场景最新版本的内容作为第 1 版。
+		 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
+		 * 源场景最新版本的内容作为第 1 版。有关注项时，副本的关注项最后修改记为复制的人，说明写「复制自「源场景名」」。
+		 * 联调副本也走这个接口。
 		 */
 		copy: Endpoint<
 			{
@@ -740,6 +817,24 @@ export interface Api {
 			}
 		>;
 		/**
+		 * `GET /runs/:id/focus`
+		 *
+		 * 一次运行的全部关注项：只返回节点在这次运行的版本里的那些项，取节点最新一次尝试的任务，图表的定义取这次运行
+		 * 锁定的节点包版本（那个版本里没有这张图表时 `unavailable` 为 `chart_missing`）。节点在这次运行绑定的版本里、
+		 * 但还没有开始（包括所在的子流程还没触发）时照样返回，`source.started_at` 为 null，没有数据。场景没设关注项时 `mode` 是
+		 * `primary`，返回准备中、执行中节点的主指标。每一项带上异常（`anomaly`，规则见 `FocusAnomalyKind`），
+		 * 有异常的排在前面。运行不存在时 404。
+		 */
+		focus: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				query?: RunFocusQuery;
+			},
+			RunFocus
+		>;
+		/**
 		 * `GET /orchestrations/:id/preflight`
 		 *
 		 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发），
@@ -869,6 +964,11 @@ export interface Api {
 }
 
 export const routes = {
+	actions: {
+		summary: { method: "GET", path: "/tasks/:id/actions/summary", kind: "endpoint" },
+		page: { method: "GET", path: "/tasks/:id/actions", kind: "endpoint" },
+		events: { method: "GET", path: "/tasks/:id/actions/events", kind: "stream" },
+	},
 	agents: {
 		list: { method: "GET", path: "/agents", kind: "endpoint" },
 		updateNow: { method: "POST", path: "/agents/:name/update-now", kind: "endpoint" },
@@ -931,6 +1031,7 @@ export const routes = {
 	},
 	runs: {
 		list: { method: "GET", path: "/runs", kind: "endpoint" },
+		focus: { method: "GET", path: "/runs/:id/focus", kind: "endpoint" },
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },
 		listForOrchestration: { method: "GET", path: "/orchestrations/:id/runs", kind: "endpoint" },
 		trigger: { method: "POST", path: "/orchestrations/:id/runs", kind: "endpoint" },

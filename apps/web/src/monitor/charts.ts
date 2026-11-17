@@ -7,6 +7,7 @@ import {
 	type MetricIncrement,
 	type MetricSeries,
 	seriesKey,
+	seriesName,
 	sortedLabels,
 } from "@sfly/schema";
 import { formatFullDateTime, formatMetric, TIME_NOT_RECORDED } from "#/lib/format";
@@ -27,21 +28,38 @@ export type ChartBucket = Omit<MetricBucket, "agent_time"> & { agent_time: strin
 /** 图表横轴最短的时长：刚开始执行的节点也有可读的横轴。 */
 export const MIN_CHART_SPAN = 1000;
 
+type AttemptTimes = { started_at: string | null; ended_at: string | null };
+
+/** 这次尝试实际运行的时段：开始到结束，还没结束就到 `now`；还没开始执行时为 null。 */
+function attemptSpan(attempt: AttemptTimes, now: number): TimeRange | null {
+	if (attempt.started_at === null) return null;
+	const start = Date.parse(attempt.started_at);
+	return { start, end: attempt.ended_at === null ? now : Date.parse(attempt.ended_at) };
+}
+
 /**
- * 一张图表的横轴：节点（这次尝试）实际运行的时段（执行中到现在），与时间线当前显示的范围（拖选缩放）取交集。
+ * 不随时间线缩放的图表的横轴（概览的图表卡片、画布检查器的图表）：这次尝试的开始到结束（还没结束就到 `now`），
+ * 至少 {@link MIN_CHART_SPAN}。还没开始执行时为 null。
+ */
+export function attemptWindow(attempt: AttemptTimes, now: number): TimeRange | null {
+	const span = attemptSpan(attempt, now);
+	return span && { start: span.start, end: Math.max(span.end, span.start + MIN_CHART_SPAN) };
+}
+
+/**
+ * 运行监控详情里图表的横轴：这次尝试实际运行的时段（开始到结束或 `now`），与时间线当前显示的范围（拖选缩放）取交集，
+ * 再像 {@link attemptWindow} 一样至少 {@link MIN_CHART_SPAN}。
  * 还没开始执行，或与显示的范围不相交时为 null。
  */
 export function chartWindow(
-	attempt: { started_at: string | null; ended_at: string | null },
+	attempt: AttemptTimes,
 	visible: TimeRange,
 	now: number,
 ): TimeRange | null {
-	if (attempt.started_at === null) return null;
-	const started = Date.parse(attempt.started_at);
-	const ended = attempt.ended_at === null ? now : Date.parse(attempt.ended_at);
-	if (ended < visible.start || started > visible.end) return null;
-	const start = Math.max(started, visible.start);
-	const end = Math.min(ended, visible.end);
+	const span = attemptSpan(attempt, now);
+	if (span === null || span.end < visible.start || span.start > visible.end) return null;
+	const start = Math.max(span.start, visible.start);
+	const end = Math.min(span.end, visible.end);
 	return { start, end: Math.max(end, start + MIN_CHART_SPAN) };
 }
 
@@ -75,7 +93,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 	const byKey = new Map(
 		series.series.map((s) => [
 			seriesKey(s.name, s.labels),
-			{ name: s.name, labels: s.labels, buckets: [...s.buckets] },
+			{ name: s.name, labels: s.labels, buckets: [...s.buckets], last_at: s.last_at },
 		]),
 	);
 	let added = false;
@@ -87,7 +105,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		const key = seriesKey(point.name, point.labels);
 		let entry = byKey.get(key);
 		if (!entry) {
-			entry = { name: point.name, labels: sortedLabels(point.labels), buckets: [] };
+			entry = { name: point.name, labels: sortedLabels(point.labels), buckets: [], last_at: null };
 			byKey.set(key, entry);
 			added = true;
 		}
@@ -97,6 +115,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		if (last && lastStart !== null && t < lastStart + span) {
 			// 落在最后一个桶里：每秒一个桶时就是同一秒（已经有了），否则合并。
 			if (span === 1000 || t <= lastStart) continue;
+			entry.last_at = point.time;
 			buckets[buckets.length - 1] = {
 				time: last.time,
 				agent_time: point.agent_time,
@@ -109,6 +128,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		} else {
 			if (lastStart !== null && t < lastStart) continue;
 			const k = Math.floor((t - origin) / span);
+			entry.last_at = point.time;
 			buckets.push({
 				time: new Date(origin + k * span).toISOString(),
 				agent_time: point.agent_time,
@@ -149,22 +169,6 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 }
 
 /**
- * 图例里一个序列的名字（#78）：不带标签时是指标名；带标签时是标签值以「 · 」连接（按声明的标签键的顺序，
- * 没有声明时按键名），图表引用多个指标时前面再加上指标名（例如 `read_bytes · sda`）。
- */
-export function seriesName(
-	name: string,
-	labels: Readonly<Record<string, string>>,
-	keys: readonly string[] | undefined,
-	multiMetric: boolean,
-): string {
-	const order = keys?.length ? keys : Object.keys(labels).sort();
-	const values = order.flatMap((k) => labels[k] ?? []);
-	if (values.length === 0) return name;
-	return (multiMetric ? [name, ...values] : values).join(" · ");
-}
-
-/**
  * 一张图表引用的指标画成的线：每个序列（指标名 + 标签）一条，按指标的引用顺序、同一指标按序列查询的顺序。
  * 还没有任何数据的指标：不带标签时占一条以指标名命名的空线（图表照常画出空图），带标签时没有线。
  */
@@ -196,11 +200,11 @@ export const DEFAULT_SHOWN = 10;
  * 从高到低取前 limit 个，平均值按桶的点数加权；没有数据的序列排在最后，平均值相同时取靠前的。
  */
 export function defaultShown(
-	lines: readonly { key: string; buckets: readonly ChartBucket[] }[],
+	lines: readonly { key: string; buckets: readonly Pick<ChartBucket, "points" | "avg">[] }[],
 	limit = DEFAULT_SHOWN,
 ): Set<string> {
 	if (lines.length <= limit) return new Set(lines.map((l) => l.key));
-	const average = (buckets: readonly ChartBucket[]) => {
+	const average = (buckets: readonly Pick<ChartBucket, "points" | "avg">[]) => {
 		let points = 0;
 		let sum = 0;
 		for (const b of buckets) {
@@ -232,7 +236,7 @@ export interface ShownPick {
  */
 export function pickShown(
 	previous: ShownPick | undefined,
-	lines: readonly { key: string; buckets: readonly ChartBucket[] }[],
+	lines: readonly { key: string; buckets: readonly Pick<ChartBucket, "points" | "avg">[] }[],
 	range: unknown,
 	limit = DEFAULT_SHOWN,
 ): ShownPick {

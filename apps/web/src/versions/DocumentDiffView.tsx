@@ -3,7 +3,7 @@ import { isEmptyDiff } from "@sfly/orchestration";
 import type { AnnotationColor } from "@sfly/schema";
 import { ANNOTATION_COLOR_LABEL } from "#/components/canvas/AnnotationColorPicker";
 import { KIND_META } from "#/components/canvas/node-display";
-import { ANNOTATION_FIELD_LABEL, TERM } from "#/lib/copy";
+import { ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 
 /**
  * 两份场景文档的差异列表：场景设置、节点（新增 / 删除 / 修改的字段）、连线、注释框、布局。
@@ -29,7 +29,7 @@ export function DocumentDiffView({
 				<span className="text-ok">+ {afterLabel}</span>
 			</p>
 			{diff.settings.length > 0 && (
-				<DiffSection title="场景设置">
+				<DiffSection title={INSPECTOR_PAGE.sceneSettings}>
 					{diff.settings.map((c) => (
 						<ChangeRow key={c.path} change={c} />
 					))}

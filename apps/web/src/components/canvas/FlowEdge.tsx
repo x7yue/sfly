@@ -12,12 +12,13 @@ import { LOD_HIDDEN, ZOOM_TEXT_12 } from "./zoom-text";
  * 链连线与调度连线。端点 = 节点位置 + geometry.ts 的端口偏移。选中节点相关的连线（或选中的连线本身）
  * 改成选中色，虚线流动两个周期后停住。运行状态下画成线路图（decorateEdge，见 context.ts 的 EdgeDecoration）：
  * 走过的路段变亮变粗，还没走到的暗灰，进入执行中节点的青色、失败节点的红色、等待中节点的琥珀色，都是实线、不降不透明度；
+ * 刚变成执行中的那一段（enteringEdges）青色虚线流动两遍后变回实线，减少动效时不流动。
  * 子流程结束后调度连线和「◆ 调度」标签变灰。选中时只加粗，颜色保持：执行信号不被选中覆盖。
  * 线宽不随视图缩放：缩小到 0.3 时屏幕上仍是 1.5px（运行状态下 2px）。
  * 可编辑时，悬停链上的连线在中点出现「＋」（EdgeInsert.tsx）；连线时（拖线、改接）不出现。
  */
 export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdge>) {
-	const { selection, decorateEdge, insertOnEdge, openEdgeMenu } = useFlowCanvas();
+	const { selection, decorateEdge, enteringEdges, insertOnEdge, openEdgeMenu } = useFlowCanvas();
 	const hover = useEdgeHover();
 	const connecting = useStore((s) => s.connection.inProgress);
 	const from = useInternalNode(source)?.internals.positionAbsolute;
@@ -48,6 +49,10 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 					kind === "chain" && run === "travelled" && "stroke-canvas-edge-travelled",
 					kind === "chain" && run === "ahead" && "stroke-canvas-edge-ahead",
 					kind === "chain" && run === "live" && "stroke-canvas-edge-live",
+					kind === "chain" &&
+						run === "live" &&
+						enteringEdges?.has(id) &&
+						"motion-safe:[animation:edge-enter_0.9s_linear_2]",
 					kind === "chain" && run === "failed" && "stroke-danger-line",
 					kind === "chain" && run === "waiting" && "stroke-warn-line",
 					highlighted &&

@@ -146,6 +146,13 @@ export const typedDocument = {
 /** 画布上的节点卡片（按节点 ID）。 */
 export const nodeCard = (page: Page, id: string) => page.locator(`[data-node-id="${id}"]`);
 
+/**
+ * 关掉运行状态的「跟随执行」（浏览器里记住的选择设成关闭），在打开页面之前调用：打开画布时是适配视图，执行中节点以外的
+ * 节点也在画面里。跟随执行时镜头按 100% 框住执行中的节点，左边已完成的节点在画面外点不到；测的不是跟随执行的用例先关掉它。
+ */
+export const withoutFollow = (page: Page) =>
+	page.addInitScript(() => window.localStorage.setItem("sfly.canvas.follow", "0"));
+
 /** 画布底部的工具条。 */
 export const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
 /** 添加节点菜单。 */

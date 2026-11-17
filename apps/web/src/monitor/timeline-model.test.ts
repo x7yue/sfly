@@ -35,6 +35,7 @@ function attempt(overrides: Partial<AttemptView>): AttemptView {
 		end_clock_offset: null,
 		wake_at: null,
 		progress: null,
+		current_action: null,
 		...overrides,
 	};
 }
@@ -71,7 +72,7 @@ describe("节点的时间线区段", () => {
 		expect(segs.at(-1)).toMatchObject({ kind: "run", start: s(2), end: s(30), live: true });
 	});
 
-	it("还在排队（或派发中）的尝试只有一段排队，延伸到现在", () => {
+	it("还在排队（或准备中）的尝试只有一段排队，延伸到现在", () => {
 		const segs = nodeSegments(
 			node("package", [attempt({ status: "dispatched", queued_at: at(5) })]),
 			s(9),
@@ -412,5 +413,13 @@ describe("时间线要保证看得见的行", () => {
 		expect(timelineContentHeight([main, sub], () => true)).toBe(22 + 30 + 3 * 26 + 30 + 26 + 8);
 		expect(timelineContentHeight([main, sub], () => false)).toBe(22 + 30 + 30 + 8);
 		expect(timelineContentHeight([], () => true)).toBe(22 + 8);
+	});
+
+	it("有动作的节点下面多两行轨道，链收起时一起收起", () => {
+		const tracked = (c: { id: string }) => (c.id === "main" ? 1 : 0);
+		expect(timelineContentHeight([main, sub], () => true, tracked)).toBe(
+			22 + 30 + 3 * 26 + 2 * 26 + 30 + 26 + 8,
+		);
+		expect(timelineContentHeight([main, sub], () => false, tracked)).toBe(22 + 30 + 30 + 8);
 	});
 });

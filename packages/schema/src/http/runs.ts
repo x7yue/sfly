@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
 import { RunLogNodesParam } from "../run-log-scope.js";
+import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
@@ -31,7 +32,7 @@ export const RunStatus = z.enum(["running", "success", "failed", "cancelled"]);
 
 /**
  * 任务（一次尝试）与节点的状态（docs/SEMANTICS.md §3.1）。节点另有 pending（还没有尝试）。
- * dispatched：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
+ * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
  * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（§4.1，不算失败）。
  */
 export const TaskStatus = z.enum([
@@ -49,8 +50,8 @@ export const NodeStatus = z.enum([...TaskStatus.options, "pending"]);
 
 /**
  * 状态分组（控制面与前端共用，不要在别处再写一份）：
- * - ON_AGENT_STATUSES：由 Agent 负责、占用槽位的任务状态（派发阶段和执行阶段，有租约），也是还会上报指标的状态；
- * - ACTIVE_STATUSES：还没结束、正在推进的节点状态：排队、派发中、执行中、等待唤醒（「正在执行的节点」）。
+ * - ON_AGENT_STATUSES：由 Agent 负责、占用槽位的任务状态（准备中和执行中，有租约），也是还会上报指标的状态；
+ * - ACTIVE_STATUSES：还没结束、正在推进的节点状态：排队中、准备中、执行中、等待中（「进行中的节点」）。
  */
 export const ON_AGENT_STATUSES = ["dispatched", "running"] as const satisfies readonly z.infer<
 	typeof TaskStatus
@@ -92,7 +93,7 @@ export const AttemptView = z.object({
 	outputs: z.record(z.string(), z.unknown()).nullable(),
 	error: ErrorView.nullable(),
 	queued_at: Timestamp,
-	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、派发阶段为 null。 */
+	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、准备中为 null。 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
 	/**
@@ -105,6 +106,8 @@ export const AttemptView = z.object({
 	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
 	wake_at: Timestamp.nullable(),
 	progress: TaskProgressView.nullable(),
+	/** 执行中的尝试此刻在做的动作（见 CurrentAction）；没有时为 null，尝试结束后也为 null。 */
+	current_action: CurrentAction.nullable(),
 });
 
 export const NodeRunView = z.object({
@@ -337,6 +340,15 @@ export const runsApi = {
 };
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+/** WARN 和 ERROR：关注项的日志异常、「其他警告与错误」都看这两级。 */
+export const ALERT_LOG_LEVELS = [
+	"warn",
+	"error",
+] as const satisfies readonly (typeof LOG_LEVELS)[number][];
+export type AlertLogLevel = (typeof ALERT_LOG_LEVELS)[number];
+/** 这一行日志的级别是不是 WARN 或 ERROR（{@link ALERT_LOG_LEVELS}）。 */
+export const isAlertLevel = (level: (typeof LOG_LEVELS)[number]): level is AlertLogLevel =>
+	(ALERT_LOG_LEVELS as readonly string[]).includes(level);
 export const LOG_SOURCES = ["stdout", "stderr", "sdk", "agent", "system"] as const;
 export const MAX_LOG_PAGE_LINES = 1000;
 
@@ -382,10 +394,32 @@ export const LogPageQuery = z
 		level: LevelsParam,
 		/** 只要这些来源，逗号分隔。 */
 		source: blankAsMissing(csv(LOG_SOURCES)),
+		/**
+		 * 定位到这个时刻（控制面时间）：返回包含那一刻的一页，前后各取一半（不足的一侧由另一侧补满），
+		 * 响应的 `locate` 写明那一刻的位置和有没有正好对应的行。不能与 before、after 同时给。
+		 */
+		at: blankAsMissing(Timestamp),
 	})
 	.refine((q) => q.before === undefined || q.after === undefined, {
 		message: "before 与 after 不能同时给",
+	})
+	.refine((q) => q.at === undefined || (q.before === undefined && q.after === undefined), {
+		message: "at 不能与 before、after 同时给",
 	});
+
+/**
+ * 按时刻定位（`at`）的结果。「正好对应」：行的控制面时间与 `at` 相差不超过 50 毫秒（含），并且这个范围里只有这一行；
+ * 有几行时分不出是哪一笔的，算没有。没有控制面时间的旧行从不算。判断只在筛选（`level`、`source`）之后的行里做，没有符合的行就是没有。
+ */
+export const LogLocate = z.object({
+	/**
+	 * 那一刻在日志文件里的位置：这个字节偏移之前的行，控制面时间都早于 `at`（旧行没有控制面时间，算在前面）；
+	 * 这个偏移起的行都不早于 `at`。晚于最后一行时是日志文件的大小，没有日志时是 0。
+	 */
+	at_offset: z.number().int(),
+	/** 正好对应那一刻的行的序号；没有这样的行时为 null，页面改为在 `at_offset` 的位置标出这一刻。 */
+	exact_seq: z.number().int().nullable(),
+});
 
 export const LogPage = z.object({
 	task_id: z.string(),
@@ -402,6 +436,8 @@ export const LogPage = z.object({
 	truncated: z.boolean(),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+	/** 请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。 */
+	locate: LogLocate.nullable(),
 });
 
 /** 合并日志里一行的来源：它是哪个节点的哪一次尝试（任务）输出的。 */
@@ -674,6 +710,7 @@ export type RunSummary = z.infer<typeof RunSummary>;
 export type ParamDeclView = z.infer<typeof ParamDeclView>;
 export type PreflightProblem = z.infer<typeof PreflightProblem>;
 export type LogLineView = z.infer<typeof LogLineView>;
+export type LogLocate = z.infer<typeof LogLocate>;
 export type LogPage = z.infer<typeof LogPage>;
 export type LogChunk = z.infer<typeof LogChunk>;
 export type LogOrigin = z.infer<typeof LogOrigin>;

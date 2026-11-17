@@ -67,7 +67,11 @@ export interface Position {
 
 /** 带布局的文档（只读取结构和位置）。 */
 export interface LayoutDocument extends StructureDocument {
-	nodes: readonly (StructureDocument["nodes"][number] & { position?: Position | undefined })[];
+	nodes: readonly (StructureDocument["nodes"][number] & {
+		position?: Position | undefined;
+		/** 卡片实际的高度：画布量出来的（运行状态下卡片按内容长高）。没有时按 NODE_SIZE 的高度算。 */
+		height?: number | undefined;
+	})[];
 }
 
 /** 整理布局读取的文档：结构，和注释框的成员与备注（可以没有）。 */

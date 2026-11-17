@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { optionalLine } from "../display-text.js";
 import { OrchestrationDocument } from "../orchestration-document.js";
+import { ChartDeclaration } from "../package-metadata.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
@@ -45,7 +47,64 @@ export const RunNotificationChanges = z
 	})
 	.refine((c) => Object.values(c).some((v) => v !== undefined), "没有要修改的运行通知设置");
 
-export const OrchestrationView = z.object({
+/** 关注项最多几个，失效的项也占名额。 */
+export const FOCUS_ITEMS_MAX = 8;
+/** 关注项的名字（场景作者起的）的长度上限（Unicode 字符数）。 */
+export const FOCUS_ITEM_TITLE_MAX = 40;
+
+/**
+ * 请求里的一个关注项（GLOSSARY「关注项」）：来源节点的 ID，和图表的标题（按标题引用，节点包元信息不给图表加 ID），
+ * 以及场景作者起的名字：不写、或者去掉首尾空白后为空，都是没起名，显示时用图表标题。名字只能写一行。
+ */
+export const FocusItemInput = z.strictObject({
+	node_id: z.string().min(1),
+	chart: z.string().min(1),
+	title: optionalLine(FOCUS_ITEM_TITLE_MAX),
+});
+
+const focusItemBase = {
+	node_id: z.string(),
+	chart: z.string(),
+	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
+	title: z.string().optional(),
+};
+
+/**
+ * 关注项和场景最新版本的对照（`status`）：
+ *
+ * - `ok`：节点在最新版本里，它锁定的节点包版本声明了这张图表（含平台为没被图表引用的指标生成的默认图表），带这张图表的类型 `chart_type`。
+ * - `node_missing`：节点不在最新版本里。`last_version` 是包含它的最后一个版本号；没有任何版本包含它时为 null
+ *   （复制场景时带过来的关注项）。运行绑定在这个版本及更早的版本时，这一项照常显示。
+ * - `chart_missing`：节点还在，但它锁定的节点包版本没有这张图表（图表改了标题、节点类型换了，或者节点已不是包节点）。
+ *
+ * 失效的项（后两种）保留在列表里，也占名额。
+ */
+export const FocusItemView = z.discriminatedUnion("status", [
+	z.object({
+		...focusItemBase,
+		status: z.literal("ok"),
+		/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）。 */
+		chart_type: ChartDeclaration.shape.type,
+	}),
+	z.object({
+		...focusItemBase,
+		status: z.literal("node_missing"),
+		last_version: z.number().int().nullable(),
+	}),
+	z.object({ ...focusItemBase, status: z.literal("chart_missing") }),
+]);
+
+/** 关注项最后一次修改：谁、什么时候（控制面时间）、一句话说明改了什么（控制面比较新旧列表生成）。 */
+export const FocusEditView = z.object({
+	/** 修改人的昵称。 */
+	updated_by: z.string(),
+	updated_at: Timestamp,
+	/** 例如「添加了「TPS」」「把「下单延迟」移到第 6 位」「撤销了移除「TPS」」「复制自「撮合浸泡」」。 */
+	summary: z.string(),
+});
+
+/** 场景的基本信息：场景列表和场景视图共用，不含需要对照最新版本才能得出的内容。 */
+export const OrchestrationBase = z.object({
 	id: z.string(),
 	name: z.string(),
 	description: z.string(),
@@ -55,6 +114,14 @@ export const OrchestrationView = z.object({
 	/** 归档时间；没有归档时为 null。 */
 	archived_at: Timestamp.nullable(),
 	run_notification: RunNotificationSettings,
+});
+
+export const OrchestrationView = z.object({
+	...OrchestrationBase.shape,
+	/** 关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。 */
+	focus_items: z.array(FocusItemView),
+	/** 关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。 */
+	focus_edit: FocusEditView.nullable(),
 });
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
@@ -181,7 +248,7 @@ export const LastRun = z.object({
 
 /** 场景列表里的一项（场景卡片与表格所需的全部数据）。 */
 export const OrchestrationSummary = z.object({
-	...OrchestrationView.shape,
+	...OrchestrationBase.shape,
 	/** 最近一次保存版本的时间；没有版本时为新建时间。 */
 	updated_at: Timestamp,
 	/** 最新版本的节点数（含入口节点）。 */
@@ -225,7 +292,7 @@ export const orchestrationsApi = {
 			archived_count: z.number().int(),
 		}),
 	}),
-	/** 单个场景（名称、说明、最新版本号、归档时间）。 */
+	/** 单个场景（名称、说明、最新版本号、归档时间、运行通知设置、关注项）。 */
 	get: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id",
@@ -314,7 +381,21 @@ export const orchestrationsApi = {
 		body: z.strictObject({ name: Name, description: z.string().default("") }),
 		response: OrchestrationView,
 	}),
-	/** 修改名称、说明和运行通知设置；不产生新的场景版本，立即生效。 */
+	/**
+	 * 修改名称、说明、运行通知设置和关注项；不产生新的场景版本，立即生效。
+	 *
+	 * `focus_items` 是整份替换：给了就用它代替现在的列表（空数组即清空），按列表顺序保存；同时修改时后写的生效，
+	 * 不做乐观锁。不合格时返回 400，列表不变：
+	 *
+	 * - `focus_items_limit`：超过 {@link FOCUS_ITEMS_MAX} 项。已经失效的项也算在内。
+	 * - `focus_item_duplicate`：同一个 `(node_id, chart)` 出现了不止一次。
+	 * - `focus_item_unknown_chart`：新加入的项引用了最新版本里没有的节点，或者这个节点锁定的节点包版本没有这张图表。
+	 *   已经在列表里、后来失效的项允许原样保留（排序、改名都可以）；移除之后再加回去算新加入的。例外是撤销：
+	 *   写回上一次修改之前的列表（界面上的「撤销」就是这样做的）算撤销，整份不再检查，所以移除一个已经失效的项之后
+	 *   也能撤销回去。撤销之后没有可以再撤销的列表。
+	 *
+	 * 控制面比较新旧列表，记下最后一次修改（响应里的 `focus_edit`）；写入和现在一样的列表不算修改。
+	 */
 	update: endpoint({
 		method: "PATCH",
 		path: "/orchestrations/:id",
@@ -326,15 +407,16 @@ export const orchestrationsApi = {
 				name: Name.optional(),
 				description: z.string().optional(),
 				run_notification: RunNotificationChanges.optional(),
+				focus_items: z.array(FocusItemInput).optional(),
 			})
-			.refine(
-				(b) =>
-					b.name !== undefined || b.description !== undefined || b.run_notification !== undefined,
-				"没有要修改的字段",
-			),
+			.refine((b) => Object.values(b).some((v) => v !== undefined), "没有要修改的字段"),
 		response: OrchestrationView,
 	}),
-	/** 复制场景并取新名字：说明、运行通知设置和运行预设（包括 secret 的值）一起复制，源场景最新版本的内容作为第 1 版。 */
+	/**
+	 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
+	 * 源场景最新版本的内容作为第 1 版。有关注项时，副本的关注项最后修改记为复制的人，说明写「复制自「源场景名」」。
+	 * 联调副本也走这个接口。
+	 */
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/copy",
@@ -364,7 +446,11 @@ export const orchestrationsApi = {
 	}),
 };
 
+export type OrchestrationBase = z.infer<typeof OrchestrationBase>;
 export type OrchestrationView = z.infer<typeof OrchestrationView>;
+export type FocusItemInput = z.output<typeof FocusItemInput>;
+export type FocusItemView = z.infer<typeof FocusItemView>;
+export type FocusEditView = z.infer<typeof FocusEditView>;
 export type RunNotificationSettings = z.infer<typeof RunNotificationSettings>;
 export type RunNotificationChanges = z.infer<typeof RunNotificationChanges>;
 export type RunNotificationTrigger = z.infer<typeof RunNotificationTrigger>;

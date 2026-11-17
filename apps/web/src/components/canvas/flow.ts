@@ -120,8 +120,16 @@ export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): Orche
 	};
 }
 
-/** 画布上的节点和连线，只留结构和位置（@sfly/orchestration 算子流程区域、注释框范围用）。 */
+/**
+ * 画布上的节点和连线，只留结构、位置和 React Flow 量出来的卡片高度（@sfly/orchestration 算子流程区域、注释框范围，
+ * 跟随执行框镜头用）：运行状态下卡片按内容长高，区域和镜头都要把长出来的部分框进去。还没量到时按卡片的原高度算。
+ */
 export const layoutOf = (nodes: readonly SfNode[], edges: readonly SfEdge[]): LayoutDocument => ({
-	nodes: nodes.map((n) => ({ id: n.id, kind: n.data.node.kind, position: n.position })),
+	nodes: nodes.map((n) => ({
+		id: n.id,
+		kind: n.data.node.kind,
+		position: n.position,
+		height: n.measured?.height,
+	})),
 	edges: edges.map(docEdgeOf),
 });

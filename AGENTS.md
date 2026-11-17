@@ -2,6 +2,8 @@ Agents must communicate with the user in Chinese.
 
 ## Agent skills
 
+This repo's version of `/implement-spec` is the `sfly-implement-spec` skill (`.agents/skills/sfly-implement-spec`, linked from `.claude/skills/`); use it instead of the user-level one.
+
 ### Issue tracker
 
 Issues are tracked in GitHub Issues for `x7yue/sfly`. See `docs/agents/issue-tracker.md`.

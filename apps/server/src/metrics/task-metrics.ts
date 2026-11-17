@@ -371,10 +371,13 @@ export class TaskMetrics {
 
 	/**
 	 * 内存里可能还没写库（或库里只是较早版本）的点：每个序列已攒满还没写入的段和当前段，按时间升序；
-	 * 键是 {@link seriesKey}。序列查询用它们覆盖库里同一时间范围的数据。不会为此从库里加载任务状态。
+	 * 键是 {@link seriesKey}。序列查询用它们覆盖库里同一时间范围的数据。不会为此从库里加载任务状态，
+	 * 也不等正在加载的状态（当作还没有内存里的点）：加载要从连接池取连接，运行结束的事务里读关注项时，
+	 * 连接池可能被等这个事务的写入占满，等它就互相等死。
 	 */
 	async unwritten(taskId: string): Promise<Map<string, UnwrittenSeries>> {
-		const state = await this.#states.get(taskId)?.catch(() => undefined);
+		// 已经有结果的状态先于 undefined 胜出（Promise.race 按顺序取第一个已经有结果的）；还在加载的取 undefined。
+		const state = await Promise.race([this.#states.get(taskId), undefined]).catch(() => undefined);
 		const result = new Map<string, UnwrittenSeries>();
 		for (const [key, s] of state?.series ?? []) {
 			const points = [...s.closed.flat(), ...s.segment].map((p) => ({ ...p }));

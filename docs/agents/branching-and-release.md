@@ -27,12 +27,17 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - PR（草稿也算）的每次推送、`main` 上的每个提交。分支上只推送、没有 PR 时不运行：要在合并前验证就开一个草稿 PR，
   或手动触发（`gh workflow run ci.yml --ref <分支>`）。
 - PR 有新的推送时，上一次推送还没跑完的 CI 被取消；`main` 上每个提交的 CI 都跑完，连着合入几个 PR 也不会互相取消。
+- `e2e` 在 PR 上先完整跑一遍，再把这个 PR 新增或改动的 `apps/web/e2e/**/*.spec.ts`（含 `visual.spec.ts`）重复运行 2–5 次
+  （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 上的 push 不跑重复这一步。
+  这一步失败说明用例不稳定，处理见 CODING_STANDARDS「测试」。
 - 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
-- `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
+- `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。`e2e` 也是汇总：端到端测试分 4 片并行
+  （`e2e (1/4)` 到 `e2e (4/4)`），全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
 - CI 失败时先用 `pnpm ci:failures <运行 ID>` 看失败的测试和断言差异，不用下载完整日志。
 
 ## PR
 
+- 新增 ADR 的 PR，合入前先把最新的 `main` 合进分支：`pnpm lint:docs` 会拿它和 `origin/main` 比，能发现编号这期间被占用；两个 PR 同时开着、各自拿了同一个编号时，检查单靠自己拦不住，后合入的那个要在先合入之后再合一次 `main`。
 - 标题用祈使句：squash 合入后它就是 `main` 上的提交标题（GitHub 自动追加 ` (#编号)`），各提交的信息成为正文。
 - 加上分类标签，Release 说明按它分组（`.github/release.yml`）：`enhancement` 新功能、`bug` 修复、`documentation` 文档；其余归入「其他」。
 - 让 API 客户端生成的类型（`packages/client/src/generated/`）出现不兼容变化的 PR，另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改。Release 说明把带这个标签的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。
@@ -49,10 +54,11 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 | 关键路径 | 主要位置 |
 |---|---|
-| Agent 日志转发 | `agent/src/logs.rs`（stdout/stderr 与事件管道合并、分批发往控制面、日志副本轮换、断线排队） |
-| 事件通道（SDK → Agent，ADR 0015） | SDK 的 `ctx.metric()` / `ctx.log` / 进度写入（`sdk/python/src/sfly/context.py`）、`events.fifo` 的创建与读取（`agent/src/executor.rs`、`agent/src/logs.rs`） |
+| Agent 日志转发 | `agent/src/logs.rs`（stdout/stderr 与事件管道合并、分批发往控制面、动作明细分批转发、进度与动作摘要只发最新一份、日志副本轮换、断线排队） |
+| 事件通道（SDK → Agent，ADR 0015） | SDK 的 `ctx.metric()` / `ctx.log` / 进度写入（`sdk/python/src/sfly/context.py`）、`ctx.action()` / `ctx.mark()` 的写入（`sdk/python/src/sfly/actions.py`）、`events.fifo` 的创建与读取（`agent/src/executor.rs`、`agent/src/logs.rs`） |
 | 指标合并 | `agent/src/metrics.rs`（按「指标 × 秒」合并、断线排队与丢弃计数） |
 | 控制面指标写入与查询（ADR 0009） | `apps/server/src/metrics/`（分段写入、摘要、降采样查询、保留期）及其表结构 |
+| 控制面动作明细写入 | `apps/server/src/actions/`（明细按批写入、兜底上限、分页与实时推送）及其表结构 |
 
 - 与发版基线的变化包含上次发版以来所有已合入的改动。要分清哪些来自这个 PR，在改动前（例如 `main` 上）先跑一次，
   再看改动后与本机上一次的对比。

@@ -258,6 +258,7 @@ describe("运行视图", () => {
 					end_clock_offset: null,
 					wake_at: null,
 					progress: null,
+					current_action: null,
 				},
 			]);
 		});

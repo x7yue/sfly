@@ -1,7 +1,9 @@
-import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
+import { NodeTypeMetadata, type OrchestrationDocument, type PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { agents, nodePackages } from "../db/schema.js";
+import type { Tx } from "../engine/step.js";
+import { type NodeTypeView, withDefaultCharts } from "../packages/default-charts.js";
 
 const DEV_VERSION = "dev";
 
@@ -20,7 +22,7 @@ export interface NodeTypeRef {
 
 /** 场景中 nodeId 这个包节点的节点类型；不是包节点时为 undefined。 */
 export async function nodeTypeOf(
-	db: Db,
+	db: Db | Tx,
 	document: OrchestrationDocument,
 	nodeId: string,
 	agentName: string | null,
@@ -48,4 +50,35 @@ export async function nodeTypeOf(
 	}
 	const type = metadata?.nodes?.find((n) => n.name === node.node);
 	return { package: node.package, node: node.node, version, type };
+}
+
+/**
+ * 节点类型的元信息校验后加上默认图表（平台为没被图表引用的指标生成的）；没有或者不合法时为 undefined（开发版本的元信息是
+ * Agent 上报的，没经过发布校验）。
+ */
+export function nodeTypeView(type: NodeTypeRef["type"]): NodeTypeView | undefined {
+	const parsed = NodeTypeMetadata.safeParse(type);
+	return parsed.success ? withDefaultCharts(parsed.data) : undefined;
+}
+
+/**
+ * 文档里 `nodeId` 这个节点的节点类型（图表含平台为没被图表引用的指标生成的默认图表）；节点不是包节点、锁定的节点包版本找不到、
+ * 或者元信息不合法时为 undefined。开发版本取 `agentName`（没给时是节点所在的 Agent）当前加载的源码，
+ * 不一定是运行当时的定义。
+ */
+export async function declaredNodeType(
+	db: Db | Tx,
+	document: OrchestrationDocument,
+	nodeId: string,
+	agentName?: string | null,
+): Promise<NodeTypeView | undefined> {
+	const node = document.nodes.find((n) => n.id === nodeId);
+	if (node?.kind !== "package") return undefined;
+	const ref = await nodeTypeOf(
+		db,
+		document,
+		nodeId,
+		agentName ?? node.agent ?? document.default_agent ?? null,
+	);
+	return nodeTypeView(ref?.type);
 }

@@ -1,10 +1,11 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChainBar, doneCount, listChainLabel } from "#/components/chain-progress";
+import { ChainBar, chainProgressText, listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
-import { ViaTag } from "#/components/via-tag";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { TriggeredAt } from "#/components/via-tag";
+import { ACTION, ELAPSED_LABEL, moreLabel } from "#/lib/copy";
+import { formatElapsed, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
@@ -19,8 +20,8 @@ const MAX_ACTIVE = 3;
 
 /**
  * 进行中的运行（原型 runCard）：场景、版本、已运行时长、各链进度、失败的子流程、
- * 当前执行的节点与主指标（节点类型有主指标时，#43）或进度，「打开运行详情」「取消运行」。
- * 点卡片空白处也进入运行详情。
+ * 还没结束的节点（各带状态标签）与主指标（节点类型有主指标时，#43）或进度，「打开运行监控」「取消运行」。
+ * 点卡片空白处也进入运行监控。
  */
 export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 	const navigate = useNavigate();
@@ -32,7 +33,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 	const open = () => void navigate({ to: "/runs/$id", params: { id: run.id } });
 	const status = runStatusView(run.status, { cancelling: run.cancelling });
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用户用卡片里的「打开运行详情」链接
+		// biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用户用卡片里的「打开运行监控」链接
 		<article
 			aria-label={`运行 ${shortId(run.id)}`}
 			onClick={(event) => {
@@ -57,13 +58,12 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					{shortId(run.id)}
 				</span>
 				<span className="flex-1" />
-				<span className="font-mono text-sm" title="已运行">
-					{formatDuration(now - Date.parse(run.started_at))}
+				<span className="font-mono text-sm" title={ELAPSED_LABEL}>
+					{formatElapsed(now - Date.parse(run.started_at))}
 				</span>
 			</div>
 			<div className="text-xs text-fg-3">
-				{run.triggered_by}
-				<ViaTag via={run.triggered_via} /> 触发 · 开始 {formatDateTime(run.started_at)}
+				<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
 				{failedSubflows.length > 0 && (
 					<>
 						{" · "}
@@ -82,9 +82,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 								{listChainLabel(chain)}
 							</span>
 							<ChainBar label={listChainLabel(chain)} nodes={chain.nodes} />
-							<span className="font-mono text-2xs text-fg-3">
-								{doneCount(chain.nodes)}/{chain.nodes.length}
-							</span>
+							<span className="font-mono text-2xs text-fg-3">{chainProgressText(chain.nodes)}</span>
 						</div>
 					))}
 			</div>
@@ -119,9 +117,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 						</li>
 					))}
 					{run.active_nodes.length > MAX_ACTIVE && (
-						<li className="text-xs text-fg-3">
-							另有 {run.active_nodes.length - MAX_ACTIVE} 个节点
-						</li>
+						<li className="text-xs text-fg-3">{moreLabel(run.active_nodes.length - MAX_ACTIVE)}</li>
 					)}
 				</ul>
 			)}
@@ -132,7 +128,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					data-list-primary
 					className={buttonVariants({ size: "sm" })}
 				>
-					打开运行详情
+					{ACTION.openRun}
 				</Link>
 				{run.status === "running" && (
 					<span className="ml-auto">

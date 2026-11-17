@@ -256,6 +256,28 @@ describe("指标查询", () => {
 			expect(seriesOf(done)).toEqual({ tps: [[65, 1, 7, 7, 7, 7]], ...expected });
 		});
 
+		it("每个序列带最后一个点的精确时间（不随降采样变粗）：同一个桶里的两个序列也分得出谁更新", async () => {
+			const agent = await connect();
+			const { runId, task } = await start(agent);
+			const conn = (host: string, t: number) => ({
+				name: "conn_tps",
+				labels: { host },
+				timeUnixS: BigInt(at(t)),
+				value: t,
+				min: t,
+				max: t,
+			});
+			agent.metrics(task, [conn("a", 0), conn("a", 123), conn("b", 0), conn("b", 129)]);
+			await agent.sync();
+
+			const result = await series(runId, { metrics: "conn_tps,p99", points: 2 });
+			expect(result.series.map((s) => [s.name, s.labels.host ?? null, s.last_at])).toEqual([
+				["conn_tps", "a", iso(123)],
+				["conn_tps", "b", iso(129)],
+				["p99", null, null],
+			]);
+		});
+
 		it("运行中尚未写库的点也能查到（断线重连后用来补齐实时增量）", async () => {
 			const agent = await connect();
 			const { runId, task } = await start(agent);
@@ -648,6 +670,53 @@ describe("指标查询", () => {
 				[task.taskId, 1, [["tps", 1]]],
 				[retry.taskId, 2, [["tps", 2]]],
 			]);
+		});
+
+		it("子流程被停止时还在排队的重试只是占位：目录里的尝试和运行视图里的一样，不列它", async () => {
+			const document = {
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "spawn", kind: "async", params: {} },
+					{ id: "nap", kind: "sleep", duration: "1m" },
+					{ id: "stop", kind: "stop_subflow", subflow: "mon" },
+					{ id: "mon", kind: "subflow_entry", name: "mon", params: [] },
+					{
+						id: "load",
+						kind: "package",
+						package: "bench",
+						node: "load",
+						agent: "agent-b",
+						retries: 1,
+					},
+				],
+				edges: [
+					{ from: "entry", to: "spawn", kind: "chain" },
+					{ from: "spawn", to: "nap", kind: "chain" },
+					{ from: "nap", to: "stop", kind: "chain" },
+					{ from: "mon", to: "load", kind: "chain" },
+					{ from: "spawn", to: "mon", kind: "dispatch" },
+				],
+				packages: { bench: "1.0.0" },
+			};
+			await connect("agent-a");
+			const remote = await connect("agent-b");
+			const { runId, task } = await start(remote, document);
+			// agent-b 断线，租约过期后第 1 次尝试以 agent_lost 失败，第 2 次排队等 agent-b；之后 nap 到点，停止 mon。
+			await remote.disconnect();
+			(cp.clock as ManualClock).advance(30_000);
+			const loadOf = async () =>
+				(await api.run(runId)).chains.flatMap((c) => c.nodes).find((n) => n.node_id === "load");
+			await eventually(async () =>
+				expect((await loadOf())?.attempts.map((a) => a.status)).toEqual(["failed", "queued"]),
+			);
+			(cp.clock as ManualClock).advance(30_000);
+			await eventually(async () => expect((await loadOf())?.status).toBe("stopped"));
+
+			const load = await loadOf();
+			expect(load?.attempts.map((a) => a.task_id)).toEqual([task.taskId]);
+			const [node] = (await catalog(runId)).nodes;
+			expect(node?.attempts.map((a) => [a.task_id, a.attempt])).toEqual([[task.taskId, 1]]);
 		});
 
 		it("开发版本的声明取任务所在 Agent 当前加载的源码", async () => {

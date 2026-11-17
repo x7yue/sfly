@@ -6,6 +6,8 @@ import { NoteIcon } from "#/components/note-icon";
 import { StatusDot, type StatusKind, StatusPill } from "#/components/status";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeaderTitle } from "@/components/ui/base-node";
+import { ActivityLine } from "./ActivityLine";
+import { FocusBadge } from "./CardFocus";
 import { type NodeDecoration, useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
@@ -108,8 +110,10 @@ type SfKindIcon = (typeof KIND_META)[keyof typeof KIND_META]["icon"];
  * 节点卡片（DESIGN-SYSTEM §2.3「站点胶囊」）：一枚矮胶囊，左边一盏站点灯（编辑时是种类图标，运行时是状态标记），
  * 第一行是标题和右侧的数字（运行时的进度、剩余时间、耗时；编辑时的警告），第二行是节点 ID（放不下时保留结尾）、
  * 原来的标题（有显示名称时）和配置摘要，运行时换成失败原因或主指标；执行中、等待中的底边有一条进度线。
- * 右上角标签（always、另选的 Agent、重试）。端口常显：左侧链入口，右侧链出口，异步任务节点底部的调度出口；
- * 子流程入口节点左侧接收调度连线。叠加的运行状态、主指标、差异标记来自 FlowCanvas 的 decorateNode（见 context.ts）。
+ * 执行中的站第二行写此刻正在做的事（有主指标时另起一行）；有关注项时上边线外左侧是个数，开始执行后两行字下面列出前两项，
+ * 卡片按内容长高。上边线外右侧是标签（always、另选的 Agent、重试）。端口常显：左侧链入口，右侧链出口，
+ * 异步任务节点底部的调度出口；子流程入口节点左侧接收调度连线。叠加的运行状态、正在做的事、主指标、关注项、差异标记
+ * 来自 FlowCanvas 的 decorateNode（见 context.ts）。
  */
 export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const { info, ports, grounds, decorateNode, rename } = useFlowCanvas();
@@ -138,6 +142,15 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const cardId = useId();
 	const statusId = useId();
 	const noteId = useId();
+	const activityId = useId();
+	const focusId = useId();
+	const activity = decoration?.activity;
+	const focus = decoration?.focus;
+	const focusRows = focus?.rows;
+	// 「正在做」写在第二行 ID 后面（代替配置摘要）；第二行已经有失败原因、主指标时另起一行。关注项列在两行字下面。
+	// 多出来的行让卡片按内容长高（缩小视图时它们都隐藏，卡片回到原高度）。
+	const activityRow = activity !== undefined && decoration?.detail !== undefined;
+	const grows = focusRows !== undefined || activityRow;
 	// 子流程入口节点没有显示名称，不进入原地编辑。
 	const editing = rename?.active === id && node.kind !== "subflow_entry";
 	const titleRef = useTitleDoubleClick(rename ? () => rename.start(id) : undefined);
@@ -147,10 +160,13 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			// 原地编辑标题时卡片是一组：按钮里不能放输入框。
 			role={editing ? "group" : "button"}
 			tabIndex={-1}
-			// 名称：「节点 ID，种类，标题」（aria-label，由自己的 id 引用）接上右侧的状态（运行状态和数字、警告、差异标记）。
+			// 名称：「节点 ID，种类，标题」（aria-label，由自己的 id 引用）接上右侧的状态（运行状态和数字、警告、差异标记），
+			// 执行中再接上「正在做 X」，有关注项时最后是关注项的个数（有异常时写几项需要注意、为什么）。
 			id={cardId}
 			aria-label={[`节点 ${id}`, caption, title !== id && title].filter(Boolean).join("，")}
-			aria-labelledby={`${cardId} ${statusId}`}
+			aria-labelledby={[cardId, statusId, activity && activityId, focus && focusId]
+				.filter(Boolean)
+				.join(" ")}
 			// 备注是描述：读屏用户用方向键切到节点时跟在名称后面读到（图标本身不可聚焦，见 NoteIcon）。
 			aria-describedby={note ? noteId : undefined}
 			aria-pressed={editing ? undefined : selected}
@@ -158,11 +174,19 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			data-run={decoration?.run}
 			data-mark={decoration?.mark}
 			data-ground={ground}
-			style={{ width: NODE_WIDTH, height: NODE_HEIGHT, borderRadius: NODE_RADIUS }}
+			style={{
+				width: NODE_WIDTH,
+				height: grows ? undefined : NODE_HEIGHT,
+				minHeight: NODE_HEIGHT,
+				borderRadius: NODE_RADIUS,
+			}}
 			className={cn(
 				"flex items-center gap-3 pr-4 pl-3.25 hover:border-canvas-node-hover",
 				"in-data-[lod=true]:gap-2.5 in-data-[lod-far=true]:pl-3",
-				"focus-visible:outline-offset-3",
+				// 长高时灯和前两行留在原来的位置（端口按原高度放）：灯的中心仍在 30px。
+				grows && "items-start py-[13px] in-data-[lod=true]:items-center in-data-[lod=true]:py-0",
+				// 键盘焦点环在选中描边（3px 底色加 2px 描边，BaseNode）的外面，两圈不重叠：键盘只会把焦点放在刚选中的节点上。
+				"focus-visible:outline-offset-9",
 				// 运行状态画在描边上；看全图时要盯的状态描边加粗到屏幕上 2px。
 				"data-[run=running]:border-canvas-run-running data-[run=failed]:border-canvas-run-failed data-[run=waiting]:border-warn-line",
 				"in-data-[lod-far=true]:data-[run=running]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[run=failed]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[run=waiting]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))]",
@@ -182,6 +206,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				"data-[mark=removed]:border-dashed data-[mark=removed]:border-danger data-[mark=removed]:text-fg-2 data-[mark=removed]:[&_[data-slot=base-node-title]]:line-through",
 			)}
 		>
+			{focus && <FocusBadge id={focusId} focus={focus} />}
 			{tags.length > 0 && (
 				// 标签贴在卡片上边线外面：语义缩放时标签和标题的字都会放大，压进卡片就会盖住标题。
 				<div className={cn("absolute right-5 bottom-[calc(100%-1px)] flex gap-1", LOD_HIDDEN)}>
@@ -275,40 +300,43 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 							title={id}
 							className={cn(
 								"flex shrink-0 font-mono text-fg-2",
-								// 运行时的失败原因、主指标排在 ID 后面，ID 最多占六成；其余时候 ID 优先，放得下摘要才显示摘要。
-								decoration?.detail ? "max-w-[60%]" : "max-w-full",
+								// 运行时的失败原因、主指标、正在做的事排在 ID 后面，ID 最多占六成；其余时候 ID 优先，放得下摘要才显示摘要。
+								decoration?.detail || activity ? "max-w-[60%]" : "max-w-full",
 							)}
 						>
 							{ids.head && <span className="min-w-[1.5ch] truncate">{ids.head}</span>}
 							<span className="flex-none">{ids.tail}</span>
 						</span>
-						{decoration?.detail ?? (
-							<>
-								{shownSlot && (
-									<span
-										aria-hidden
-										className={cn(
-											// 按三个半字的宽度判断放不放得下（basis），放得下再撑满。
-											"min-w-0 shrink grow basis-[3.5em] truncate",
-											// 还没有配置的摘要（没有参数、没有映射）用辅助文字、非等宽，不像一个配置值。
-											shownSlot.empty ? "text-fg-3" : "font-mono text-fg-2",
-										)}
-									>
-										{shownSlot.text}
-									</span>
-								)}
-								{shownCaption && (
-									// 原来的标题排在最后、最多五个字宽、不压缩摘要：放不下时它整个折走，摘要留下；
-									// 缩放低于 90%（data-compact）时第二行的字已经放大，不再显示它。
-									<span
-										aria-hidden
-										className="max-w-[5.2em] shrink-0 truncate in-data-[compact=true]:hidden"
-									>
-										{shownCaption}
-									</span>
-								)}
-							</>
-						)}
+						{decoration?.detail ??
+							(activity ? (
+								<ActivityLine id={activityId} activity={activity} variant="inline" />
+							) : (
+								<>
+									{shownSlot && (
+										<span
+											aria-hidden
+											className={cn(
+												// 按三个半字的宽度判断放不放得下（basis），放得下再撑满。
+												"min-w-0 shrink grow basis-[3.5em] truncate",
+												// 还没有配置的摘要（没有参数、没有映射）用辅助文字、非等宽，不像一个配置值。
+												shownSlot.empty ? "text-fg-3" : "font-mono text-fg-2",
+											)}
+										>
+											{shownSlot.text}
+										</span>
+									)}
+									{shownCaption && (
+										// 原来的标题排在最后、最多五个字宽、不压缩摘要：放不下时它整个折走，摘要留下；
+										// 缩放低于 90%（data-compact）时第二行的字已经放大，不再显示它。
+										<span
+											aria-hidden
+											className="max-w-[5.2em] shrink-0 truncate in-data-[compact=true]:hidden"
+										>
+											{shownCaption}
+										</span>
+									)}
+								</>
+							))}
 					</div>
 					{note && (
 						<NoteIcon
@@ -321,6 +349,10 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 						/>
 					)}
 				</div>
+				{activity && activityRow && (
+					<ActivityLine id={activityId} activity={activity} variant="row" />
+				)}
+				{focusRows}
 			</div>
 			{decoration?.progress !== undefined && (
 				// 进度线（执行中有总数的进度、等待中已经等过的时间）：卡片底边一条 2px 的线，看全图时收起。

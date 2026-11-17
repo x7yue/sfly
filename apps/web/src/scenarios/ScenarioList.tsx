@@ -17,8 +17,8 @@ import { createContext, type ReactNode, useContext, useRef, useState } from "rea
 import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { ACTION, TERM } from "#/lib/copy";
-import { formatDateTime, formatDuration } from "#/lib/format";
+import { ACTION, AGENT_STATUS_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import { formatDateTime, formatSpan } from "#/lib/format";
 import { RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -58,7 +58,7 @@ function AgentChips({
 	}
 	const offline = scenario.agents.filter((a) => a.status !== "online").length;
 	const chips = scenario.agents.map((a) => {
-		const state = a.status === "online" ? "在线" : a.status === "offline" ? "离线" : "未注册";
+		const state = a.status === "unknown" ? "未注册" : AGENT_STATUS_LABEL[a.status];
 		return (
 			<span
 				key={a.name}
@@ -99,7 +99,7 @@ function AgentChips({
 
 /** 最近一次运行：状态、开始时间、触发人、耗时；运行中时状态可以直接进入监控页。 */
 function LastRunInfo({ run, className }: { run: LastRun | null; className?: string }) {
-	if (!run) return <span className="text-fg-3">从未运行</span>;
+	if (!run) return <span className="text-fg-3">{MESSAGE.neverRun}</span>;
 	// 取消后等待清理的运行显示为「取消中」（故事 70）。
 	const status = runStatusView(run.status, { cancelling: run.cancelling });
 	const end = run.ended_at ? new Date(run.ended_at).getTime() : controlPlaneNow();
@@ -119,7 +119,9 @@ function LastRunInfo({ run, className }: { run: LastRun | null; className?: stri
 			)}
 			<span className="font-mono">{formatDateTime(run.started_at)}</span>
 			<span className="@max-[22.5rem]/scenario:hidden">{run.triggered_by}</span>
-			<span className="font-mono">{formatDuration(end - new Date(run.started_at).getTime())}</span>
+			<span className="font-mono">
+				{formatSpan(end - new Date(run.started_at).getTime(), !run.ended_at)}
+			</span>
 		</span>
 	);
 }
@@ -217,7 +219,7 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 					className={buttonVariants({ size: "sm", variant: "ghost" })}
 				>
 					<HistoryIcon />
-					{ACTION.viewRuns}
+					{ACTION.openRuns}
 				</Link>
 				<DropdownMenu>
 					<DropdownMenuTrigger

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type AnnotationMembers, annotationBoxes, type LayoutDocument } from "../src/index.js";
+import {
+	type AnnotationMembers,
+	annotationBoxes,
+	type LayoutDocument,
+	subflowRegions,
+} from "../src/index.js";
 
 type Node = LayoutDocument["nodes"][number];
 type Edge = LayoutDocument["edges"][number];
@@ -114,6 +119,24 @@ describe("由成员算出注释框的范围", () => {
 		const [box] = annotationBoxes({ ...longer, annotations: [annotation({ subflows: ["sub"] })] });
 		expect((box?.box.x ?? 0) + (box?.box.w ?? 0)).toBe(1700 + 256 + 24 + 24);
 		expect(box?.members).toEqual(["sub", "spawn2", "deep", "deep_ping", "more"]);
+	});
+
+	it("卡片长高了（布局里带着量出来的高度）：子流程区域和框住它的注释框跟着往下长，下边仍留 20", () => {
+		const grown: LayoutDocument = {
+			...doc,
+			// 长得比下级子流程 deep 的区域还低：框的下沿由它决定。
+			nodes: doc.nodes.map((n) => (n.id === "spawn2" ? { ...n, height: 300 } : n)),
+		};
+		const [region] = subflowRegions(grown);
+		expect(region?.box).toEqual({
+			x: 834 - 24,
+			y: 204 - 44,
+			w: 1134 + 256 - 834 + 48,
+			h: 300 + 64,
+		});
+		const [box] = annotationBoxes({ ...grown, annotations: [annotation({ subflows: ["sub"] })] });
+		// 注释框上下各留 20。
+		expect(box?.box.h).toBe(300 + 64 + 20 + 20);
 	});
 
 	it("按 annotations 的顺序给出（后面的画在上层）", () => {

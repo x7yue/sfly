@@ -1,6 +1,7 @@
 import { nodeNameBeforeId } from "@sfly/orchestration";
 import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
+import { currentActionOfTask } from "../actions/action-summary.js";
 import { clockOffsetView } from "../agents/agent-clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -8,13 +9,14 @@ import {
 	feishuMessages,
 	orchestrationVersions,
 	runs,
+	taskActionSummaries,
 	tasks,
 } from "../db/schema.js";
-import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
+import { maskDeep, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runListPreset, runPresetView } from "../presets/run-preset.js";
 import { agentFor, planRun } from "./chain.js";
-import { groupAttempts, nodeStatus, subflowNameOf } from "./run-board.js";
+import { groupAttempts, isPlaceholderAttempt, nodeStatus, subflowNameOf } from "./run-board.js";
 
 /** 运行视图的类型来自 HTTP 契约（@sfly/schema 的 runsApi）。 */
 export type { AttemptView, ChainRunView as ChainView, NodeRunView as NodeView, RunView };
@@ -61,11 +63,14 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		.from(chainInstances)
 		.where(eq(chainInstances.runId, runId))
 		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt), asc(chainInstances.id));
-	const allTasks = await db
-		.select()
-		.from(tasks)
-		.where(eq(tasks.runId, runId))
-		.orderBy(asc(tasks.attempt));
+	const allTasks = (
+		await db
+			.select({ task: tasks, currentAction: taskActionSummaries.currentAction })
+			.from(tasks)
+			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
+			.where(eq(tasks.runId, runId))
+			.orderBy(asc(tasks.attempt))
+	).map(({ task, currentAction }) => ({ ...task, currentAction }));
 	const attemptsOf = groupAttempts(allTasks);
 	const plan = planRun(document);
 	// 每个链实例只列出它那条链（主链或子流程）上的节点。
@@ -111,12 +116,8 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			ended_at: iso(chain.endedAt),
 			nodes: chainNodes(chain.chainId).map((node) => {
 				const rows = attemptsOf(chain.id, node.id);
-				// 被跳过的节点、还没开始就被取消或停止的尝试只是占位，不算尝试；节点状态取最后一行（含占位）。
-				const placeholder = (t: (typeof rows)[number]) =>
-					t.status === "skipped" ||
-					((t.status === "cancelled" || t.status === "stopped") && t.startedAt === null);
 				const attempts: AttemptView[] = rows
-					.filter((t) => !placeholder(t))
+					.filter((t) => !isPlaceholderAttempt(t))
 					.map((t) => ({
 						task_id: t.id,
 						attempt: t.attempt,
@@ -131,12 +132,8 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						start_clock_offset: clockOffsetView(t.startClockOffsetMs, t.startClockOffsetMeasuredAt),
 						end_clock_offset: clockOffsetView(t.endClockOffsetMs, t.endClockOffsetMeasuredAt),
 						wake_at: iso(t.wakeAt),
-						progress: t.progress
-							? {
-									...taskProgressView(t.progress),
-									message: maskSecrets(t.progress.message, secrets),
-								}
-							: null,
+						progress: t.progress ? taskProgressView(t.progress, secrets) : null,
+						current_action: currentActionOfTask(t.status, t.currentAction, secrets),
 					}));
 				const last = attempts.at(-1);
 				return {
