@@ -71,6 +71,23 @@ export function nodeSlot(node: DocNode): { text: string; empty: boolean } {
 	}
 }
 
+/**
+ * 卡片上的节点 ID 拆成两段（DESIGN-SYSTEM「标识符保留结尾」）：开头那段放不下时截断，结尾那段始终显示，
+ * 省略号因此落在中间。结尾按 `_` `-` `.` 分段保留整段，不把单词从中间切开：最后一段（`_monitor`）；
+ * 最后一段很短（`_1`、`_v2`）时再带上前一段（`_subflow_1`、`_atx_v2`），这样 `stop_subflow_1` 和
+ * `stop_subflow_2`、`order_monitor` 和 `resource_monitor` 截断后仍分得开。没有分隔符的 ID 保留结尾 6 个字符。
+ * 全文在卡片的读屏名称和悬停提示里。
+ */
+export function idParts(id: string): { head: string; tail: string } {
+	const cut = (at: number) => ({ head: id.slice(0, at), tail: id.slice(at) });
+	const seps = [...id.matchAll(/[_.-]/g)].map((m) => m.index).filter((i) => i > 0);
+	if (seps.length === 0) return id.length > 6 ? cut(id.length - 6) : { head: "", tail: id };
+	const last = seps.at(-1) ?? 0;
+	const before = seps.at(-2);
+	if (id.length - last <= 3 && before !== undefined && id.length - before <= 12) return cut(before);
+	return cut(last);
+}
+
 /** 卡片右上角的标签：always、另选的 Agent、重试次数。 */
 export function nodeTags(node: DocNode): string[] {
 	const tags: string[] = [];

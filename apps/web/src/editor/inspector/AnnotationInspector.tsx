@@ -1,12 +1,13 @@
-import { nodeNameWithId, subflowLabel } from "@sfly/orchestration";
+import { nodeNameWithId, subflowLabel, subflowTree } from "@sfly/orchestration";
 import { ANNOTATION_TITLE_MAX, type Annotation } from "@sfly/schema";
 import { Trash2Icon, XIcon } from "lucide-react";
+import { AnnotationColorPicker } from "#/components/canvas/AnnotationColorPicker";
 import { TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Truncate } from "@/components/ui/truncate";
-import { memberCount } from "../annotations";
+import { memberCount, withColor } from "../annotations";
 import { annotationFieldKey } from "../field-drafts";
 import { Field, FieldList, SectionTitle } from "./fields";
 import type { InspectorContext } from "./Inspector";
@@ -21,8 +22,8 @@ interface Member {
 }
 
 /**
- * 选中注释框时的检查器：标题、备注、成员列表（逐个移出、前往成员），删除注释框（成员节点不动）。
- * 标题和备注的连续输入各合成一步撤销；移出最后一个成员时注释框一起删除（和删节点一样，一步撤销能恢复）。
+ * 选中注释框时的检查器：标题、颜色、备注、成员列表（逐个移出、前往成员），删除注释框（成员节点不动）。
+ * 标题和备注的连续输入各合成一步撤销，换一次颜色是一步；选灰色时去掉 `color`（不写就是灰色）；移出最后一个成员时注释框一起删除（和删节点一样，一步撤销能恢复）。
  * 输入框带 `data-field-key`（annotationFieldKey）：新建后、保存被字段错误拦下时，编辑器用它把焦点放过来。
  */
 export function AnnotationInspector({
@@ -52,9 +53,12 @@ export function AnnotationInspector({
 		}),
 		...annotation.subflows.map((entryId): Member => {
 			const entry = nodes.get(entryId);
+			// 子流程成员连同它下级的子流程（SEMANTICS §1.6）：有下级时写出有几个，人才知道框里为什么还有它们。
+			const below = subflowTree(context.doc, entryId).length - 1;
+			const name = entry?.kind === "subflow_entry" ? subflowLabel(entry) : entryId;
 			return {
 				id: entryId,
-				label: `子流程 ${entry?.kind === "subflow_entry" ? subflowLabel(entry) : entryId}`,
+				label: below > 0 ? `子流程 ${name}（连同 ${below} 个下级子流程）` : `子流程 ${name}`,
 				exists: entry?.kind === "subflow_entry",
 				remove: (a) => ({ ...a, subflows: a.subflows.filter((s) => s !== entryId) }),
 			};
@@ -96,6 +100,16 @@ export function AnnotationInspector({
 							value={annotation.title}
 							placeholder={`这一组节点在做什么（最多 ${ANNOTATION_TITLE_MAX} 个字符）`}
 							onChange={(e) => change({ ...annotation, title: e.target.value }, "title")}
+						/>
+					)}
+				</Field>
+				<Field label="颜色">
+					{(control) => (
+						<AnnotationColorPicker
+							id={control.id}
+							aria-labelledby={`${control.id}-label`}
+							value={annotation.color ?? "gray"}
+							onChange={(color) => change(withColor(annotation, color))}
 						/>
 					)}
 				</Field>
@@ -150,7 +164,8 @@ export function AnnotationInspector({
 					))}
 				</ul>
 				<p className="m-0 mt-2 text-xs text-fg-3">
-					用节点的右键菜单把节点加入或移出注释框。移出最后一个成员时注释框一起删除；删除注释框时，里面的节点不动。
+					把节点拖进框里就加入，按住 Alt
+					拖出框就移出，也可以用节点的右键菜单。移出最后一个成员时注释框一起删除；删除注释框时，里面的节点不动。
 				</p>
 			</div>
 		</>

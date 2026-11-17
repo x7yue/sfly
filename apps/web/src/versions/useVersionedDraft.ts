@@ -40,6 +40,7 @@ const asCanvasDocument = (doc: OrchestrationDocument): OrchestrationDocument => 
 		default_agent: doc.default_agent,
 		packages: doc.packages,
 		annotations: doc.annotations,
+		sticky_notes: doc.sticky_notes ?? [],
 	});
 };
 

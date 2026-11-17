@@ -28,11 +28,11 @@ test("1280 宽检查器拖到最宽：画布留得下小地图和工具条，两
 	await nodeCard(page, "fetch").click();
 
 	const panel = await box(inspector(page));
-	// 上限 = 视口宽度减去给画布留的 742px（小地图 + 工具条 + 间距），不是视口的 60%（768px）。
-	expect(Math.round(panel.width)).toBe(538);
+	// 上限 = 视口宽度减去给画布留的 778px（小地图 + 工具条 + 间距），不是视口的 60%（768px）。
+	expect(Math.round(panel.width)).toBe(502);
 	const toolbar = await box(dock(page));
 	const minimap = await box(page.locator(".react-flow__minimap"));
-	expect(toolbar.width).toBeLessThanOrEqual(506);
+	expect(toolbar.width).toBeLessThanOrEqual(542);
 	expect(overlap(toolbar, minimap)).toBe(false);
 	expect(toolbar.x).toBeGreaterThanOrEqual(minimap.x + minimap.width + 8);
 	expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(panel.x - 8);

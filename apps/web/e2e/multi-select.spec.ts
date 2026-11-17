@@ -164,7 +164,10 @@ test("点子流程区域的标题，选中这个子流程链上的全部节点",
 	await openEditor(page, id);
 
 	await nodeCard(page, "fetch").click();
-	await page.getByRole("button", { name: "选中子流程 sub_entry 的全部节点" }).click();
+	// 从 dispatch 到子流程入口的调度连线会从标题上经过：点标题靠左的位置，避开连线。
+	await page
+		.getByRole("button", { name: "选中子流程 sub_entry 的全部节点" })
+		.click({ position: { x: 6, y: 6 } });
 	await expect.poll(() => selectedIn(page)).toEqual(["sub_entry", "sub_ping"]);
 	await expect(multiHeading(page, 2)).toBeVisible();
 });
@@ -187,7 +190,8 @@ test("拖动多选中的任意一个节点，整组一起移动，一步撤销",
 	await nodeCard(page, "fetch").click();
 	await nodeCard(page, "dispatch").click({ modifiers: ["ControlOrMeta"] });
 	const card = await box(nodeCard(page, "dispatch"));
-	await drag(page, { x: card.x + 60, y: card.y + 50 }, { x: card.x + 140, y: card.y + 170 });
+	const [grabX, grabY] = [card.x + card.width / 2, card.y + card.height / 2];
+	await drag(page, { x: grabX, y: grabY }, { x: grabX + 80, y: grabY + 120 });
 	const shift = (from: { x: number; y: number }, to: { x: number; y: number }) => ({
 		x: Math.round(to.x - from.x),
 		y: Math.round(to.y - from.y),

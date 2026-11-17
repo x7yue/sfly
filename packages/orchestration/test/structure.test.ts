@@ -6,6 +6,7 @@ import {
 	stopCandidates,
 	structureWarnings,
 	subflowName,
+	subflowTree,
 } from "../src/index.js";
 
 type Node = StructureDocument["nodes"][number];
@@ -379,5 +380,52 @@ describe("链的成员", () => {
 			["e", ["e", "a", "b"]],
 			["s", ["s", "c"]],
 		]);
+	});
+});
+
+describe("子流程和它下级的子流程", () => {
+	// 主链 e → go 调度 s；s → a1 → a2，a1 调度 x，a2 调度 y；x → deep 再调度 z。
+	const tree = doc(
+		[
+			entry("e"),
+			asyncNode("go"),
+			subflow("s"),
+			asyncNode("a1"),
+			asyncNode("a2"),
+			subflow("x"),
+			asyncNode("deep"),
+			subflow("y"),
+			subflow("z"),
+		],
+		[
+			chain("e", "go"),
+			dispatch("go", "s"),
+			chain("s", "a1"),
+			chain("a1", "a2"),
+			dispatch("a1", "x"),
+			dispatch("a2", "y"),
+			chain("x", "deep"),
+			dispatch("deep", "z"),
+		],
+	);
+
+	it("按广度优先列出它自己和直接、间接触发的子流程", () => {
+		expect(subflowTree(tree, "s")).toEqual(["s", "x", "y", "z"]);
+		expect(subflowTree(tree, "x")).toEqual(["x", "z"]);
+		expect(subflowTree(tree, "z")).toEqual(["z"]);
+	});
+
+	it("不是子流程入口时为空", () => {
+		expect(subflowTree(tree, "e")).toEqual([]);
+		expect(subflowTree(tree, "a1")).toEqual([]);
+		expect(subflowTree(tree, "gone")).toEqual([]);
+	});
+
+	it("调度连线绕成环时每个子流程只出现一次", () => {
+		const looped = doc(
+			[entry("e"), subflow("s"), asyncNode("back")],
+			[chain("s", "back"), dispatch("back", "s")],
+		);
+		expect(subflowTree(looped, "s")).toEqual(["s"]);
 	});
 });

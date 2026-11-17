@@ -178,35 +178,135 @@
 	/* ── 3. 画布专用 ── */
 	--canvas-bg: var(--bg);
 	--canvas-grid: color-mix(in srgb, var(--base-white) 6%, transparent);
+	/* 节点卡片比画布亮一档、比注释框的底板暗：放在画布上和放在底板上都分得开；
+	   已完成的节点「下沉」成只有轮廓的胶囊（--canvas-run-done-bg / -border） */
 	--canvas-node-bg: var(--raised);
-	--canvas-node-border: var(--border);
+	--canvas-node-border: var(--track);
+	/* 悬停描边：比默认描边亮一档，在注释框底板上也看得出 */
+	--canvas-node-hover: var(--base-gray-500);
 	--canvas-node-selected: var(--selected);
 	--canvas-node-selected-ring: var(--selected-ring);
 	--canvas-port: var(--base-gray-550); /* 可拖动的控件：对画布 3.3:1 */
 	--canvas-edge: var(--base-gray-575);
 	--canvas-edge-selected: var(--selected); /* 选中节点相关连线：灰色虚线流动 */
+	/* 运行状态的线路图：走过的路段变亮（在注释框底板上也 ≥ 4.5:1），还没走到的比编辑时暗一档 */
+	--canvas-edge-travelled: var(--base-gray-350);
+	--canvas-edge-ahead: var(--base-gray-600);
 	--canvas-edge-live: var(--signal); /* 进入执行中节点的连线 */
 	--canvas-edge-dispatch: var(--signal); /* 调度连线（虚线） */
 	--canvas-subflow: var(--base-violet-400); /* 紫色只用于子流程区域 */
 	--canvas-subflow-fg: var(--base-violet-200);
 	--canvas-subflow-line: color-mix(in srgb, var(--canvas-subflow) 52%, transparent);
 	--canvas-subflow-soft: color-mix(in srgb, var(--canvas-subflow) 7%, transparent);
-	/* 注释框：中性实线框，和紫色虚线的子流程区域分开；标题带是抬起一档的面 */
-	--canvas-annotation-line: var(--border-strong);
-	--canvas-annotation-soft: color-mix(in srgb, var(--base-white) 2.5%, transparent);
-	--canvas-annotation-band: var(--raised);
+	/* 注释框的颜色写在下面的 [data-annotation-color] 上（各部分按注释框自己的色相算出，不能写在 :root） */
 	--canvas-run-running: var(--signal);
 	--canvas-run-failed: var(--danger);
 	--canvas-run-cancelled: var(--cancelled); /* 虚线 */
 	--canvas-run-stopped: var(--stopped);
-	/* 已完成的节点「下沉」：卡片底色与画布相同、描边变淡，文字对比度不降（不用不透明度） */
+	/* 已完成的节点「下沉」：只留轮廓，按卡片所在的底色算，写在下面的 [data-ground] 上 */
 	--canvas-run-done-bg: var(--canvas-bg);
-	--canvas-run-done-border: var(--border-soft);
+	--canvas-run-done-border: color-mix(in srgb, var(--fg-3) 40%, var(--canvas-bg));
 	--canvas-minimap-mask: color-mix(
 		in srgb,
 		var(--base-black) 35%,
 		transparent
 	); /* 小地图上视口以外的遮罩 */
+}
+
+/*
+ * 注释框（ADR 0025）：框里三层明暗，备注便签最亮、底板居中、节点卡片（--canvas-node-bg）最暗；
+ * 底板一圈淡描边，标题是框外左上方的同色胶囊。颜色是场景作者选的分类色，不表达状态：
+ * 六种颜色只换色相，亮度相同，换颜色时卡片和底板的对比不变；没有青（执行中）、红（失败）、紫（子流程区域）。
+ * 各部分在 OKLCH 里按注释框元素上的色相 --annotation-hue 和色度系数 --annotation-chroma（灰色为 0）算出，
+ * 所以写在 [data-annotation-color] 上：注释框和颜色选择器的色块都带这个属性；节点卡片用 [data-ground] 取它所在注释框的底板色。
+ * 文字对比度：胶囊上 ≥ 6.9:1，便签上 ≥ 8:1；色块对 raised ≥ 5:1。
+ */
+[data-annotation-color],
+[data-ground] {
+	--canvas-annotation-panel: oklch(
+		0.33 calc(0.034 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	/* 拖动节点时松手会加入的注释框：底板亮一档 */
+	--canvas-annotation-panel-drop: oklch(
+		0.36 calc(0.038 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-line: oklch(
+		0.415 calc(0.05 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-chip: oklch(
+		0.405 calc(0.07 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-chip-hover: oklch(
+		0.45 calc(0.075 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-chip-fg: oklch(
+		0.92 calc(0.035 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-note: oklch(
+		0.385 calc(0.042 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-note-line: oklch(
+		0.44 calc(0.05 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-note-fg: oklch(
+		0.94 calc(0.022 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	--canvas-annotation-swatch: oklch(
+		0.72 calc(0.115 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	/* 便签（ADR 0026）：比注释框的底板亮一点的整块纸，正文两级文字 */
+	--canvas-sticky: oklch(0.335 calc(0.05 * var(--annotation-chroma)) var(--annotation-hue));
+	--canvas-sticky-line: oklch(0.42 calc(0.06 * var(--annotation-chroma)) var(--annotation-hue));
+	--canvas-sticky-fg: oklch(0.94 calc(0.03 * var(--annotation-chroma)) var(--annotation-hue));
+	--canvas-sticky-fg-2: oklch(0.84 calc(0.035 * var(--annotation-chroma)) var(--annotation-hue));
+}
+[data-annotation-color="gray"],
+[data-ground="gray"] {
+	--annotation-hue: 0;
+	--annotation-chroma: 0;
+}
+[data-annotation-color="blue"],
+[data-ground="blue"] {
+	--annotation-hue: 255;
+	--annotation-chroma: 1;
+}
+[data-annotation-color="green"],
+[data-ground="green"] {
+	--annotation-hue: 150;
+	--annotation-chroma: 1;
+}
+[data-annotation-color="yellow"],
+[data-ground="yellow"] {
+	--annotation-hue: 95;
+	--annotation-chroma: 1;
+}
+[data-annotation-color="orange"],
+[data-ground="orange"] {
+	--annotation-hue: 55;
+	--annotation-chroma: 1;
+}
+[data-annotation-color="pink"],
+[data-ground="pink"] {
+	--annotation-hue: 355;
+	--annotation-chroma: 1;
+}
+
+/*
+ * 节点卡片所在的底色（卡片上的 data-ground，FlowCanvas 按注释框和子流程区域给出）：已完成、跳过、停止的卡片
+ * 「下沉」成只有轮廓的胶囊——底色就是这层底色（画布、所在注释框的底板、子流程区域的淡底），一圈灰描边（对底色
+ * 约 1.8:1，比编辑时卡片和底板的差别还清楚）留住形状：不会在彩色底板上挖出一块最暗、最显眼的洞，也不会整个溶进
+ * 底板。不用不透明度；注释框的底板比卡片亮，下沉后辅助文字换成次要文字色（NodeCard），文字对比度不降。
+ */
+[data-ground] {
+	--node-ground: var(--canvas-annotation-panel);
+	--canvas-run-done-bg: var(--node-ground);
+	--canvas-run-done-border: color-mix(in srgb, var(--fg-3) 40%, var(--node-ground));
+}
+[data-ground="canvas"] {
+	--node-ground: var(--canvas-bg);
+}
+[data-ground="subflow"] {
+	--node-ground: color-mix(in srgb, var(--canvas-subflow) 7%, var(--canvas-bg));
 }
 
 /* 系统要求更高对比度时：安静的描边、辅助文字、网格与连线各加强一档（只加强已经达标的默认值） */
@@ -220,8 +320,18 @@
 		--chart-grid: color-mix(in srgb, var(--base-white) 12%, transparent);
 		--canvas-grid: color-mix(in srgb, var(--base-white) 12%, transparent);
 		--canvas-edge: var(--base-gray-500);
+		--canvas-edge-ahead: var(--base-gray-500);
+		--canvas-edge-travelled: var(--fg-1);
 		--canvas-port: var(--base-gray-450);
 		--selected-ring: color-mix(in srgb, var(--base-white) 20%, transparent);
 		--scrollbar-thumb: var(--fg-2);
+	}
+	[data-annotation-color] {
+		--canvas-annotation-line: oklch(
+			0.56 calc(0.06 * var(--annotation-chroma)) var(--annotation-hue)
+		);
+		--canvas-annotation-note-line: oklch(
+			0.58 calc(0.06 * var(--annotation-chroma)) var(--annotation-hue)
+		);
 	}
 }

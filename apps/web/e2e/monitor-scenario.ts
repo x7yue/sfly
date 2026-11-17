@@ -181,6 +181,7 @@ export async function runningScenario(
 	controlPlane: TestControlPlane,
 	connectAgent: E2eFixtures["connectAgent"],
 	clock: ManualClock,
+	document: Record<string, unknown> = MONITOR_SCENARIO,
 ): Promise<Running> {
 	const agent = await connectAgent({
 		name: "agent-a",
@@ -188,7 +189,7 @@ export async function runningScenario(
 		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
 	});
 	await publishPackage(controlPlane, metricPackage());
-	const scenarioId = await createScenario(controlPlane, "日终数据处理", MONITOR_SCENARIO);
+	const scenarioId = await createScenario(controlPlane, "日终数据处理", document);
 	const clock0 = clock.now().getTime();
 	const runId = await triggerRun(controlPlane, scenarioId);
 

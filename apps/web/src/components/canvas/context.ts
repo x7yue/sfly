@@ -1,6 +1,9 @@
-import type { EdgeEnds, Position } from "@sfly/orchestration";
+import type { ArrangeMode, EdgeEnds, Position } from "@sfly/orchestration";
+import type { AnnotationColor } from "@sfly/schema";
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
+import type { StatusView } from "#/components/status";
+import type { AnnotationDrop } from "./annotation-drop";
 import type { DocEdge, DocNode } from "./flow";
 import { type CanvasSelection, NO_SELECTION } from "./selection";
 
@@ -8,11 +11,12 @@ import { type CanvasSelection, NO_SELECTION } from "./selection";
  * 画布组件的扩展点（FlowCanvas 的 props 经 context 传给节点卡片、连线和子流程区域）。
  * 编辑模式（#35）只用 info；之后的票据在这里叠加信息，不需要改画布本身：
  *
- * - 运行状态（#41）：decorateNode 返回 `run`（卡片描边 / 透明度、小地图颜色）和 `status`（替换右上角的
- *   「N 警告」，没有警告时不显示）；decorateEdge 返回 `live`（进入执行中节点的连线，青色实线）或 `failed`；
+ * - 运行状态（#41）：decorateNode 返回 `run`（卡片描边、小地图颜色）和 `status`（站点灯换成状态标记），
+ *   `figure`（第一行右侧的实时数字）、`detail`（第二行的失败原因或主指标，#43）与 `progress`（底边的进度线）；
+ *   decorateEdge 返回连线在线路图里的样子（走过的变亮、没走到的暗灰、进入执行中 / 失败 / 等待中节点的着状态色，
+ *   子流程结束后调度连线变灰，见 EdgeDecoration）；
  *   regionMeta 替换子流程区域标题行右侧的「由 X 触发 · N 个节点」（例如实例状态与实例切换）。
- * - 主指标槽（#43）：decorateNode 返回 `slot`，替换卡片底部的配置摘要。
- * - 版本对比（#40）：decorateNode 返回 `mark`（新增 / 删除 / 修改），卡片加差异标记；
+ * - 版本对比（#40）：decorateNode 返回 `mark`（新增 / 删除 / 修改）和 `status`（第一行右侧的差异标签）；
  *   配合 FlowCanvas 的 `editable={false}` 做只读画布。
  */
 
@@ -29,15 +33,38 @@ export type NodeRunState =
 
 export interface NodeDecoration {
 	run?: NodeRunState;
-	/** 替换卡片右上角的状态。 */
-	status?: ReactNode;
-	/** 替换卡片底部的摘要槽（主指标）。 */
-	slot?: ReactNode;
+	/**
+	 * 状态（读屏名称里也带上）。有 `run` 时站点灯换成它的标记；没有 `run` 时（版本对比的差异）写在第一行右侧，
+	 * 替换「N 警告」。
+	 */
+	status?: StatusView;
+	/** 第一行右侧的实时数字：进度（282/600）、剩余时间、耗时。 */
+	figure?: ReactNode;
+	/** 第二行节点 ID 后面的内容（失败原因、主指标），替换配置摘要。 */
+	detail?: ReactNode;
+	/** 0–1：执行中有总数的进度、等待中已经等过的时间，画成卡片底边的进度线。 */
+	progress?: number;
+	/**
+	 * 站外一行：缩小视图时卡片里只放得下灯和标题，执行中、失败、等待中的站在胶囊下方挂一行，写进度、
+	 * 已运行时长、剩余时间或失败原因（看全图时卡片在前面加上标题）。只给这三种要盯的状态。
+	 */
+	overview?: ReactNode;
 	/** 版本对比的差异标记。 */
 	mark?: "added" | "removed" | "changed";
 }
 
-export type EdgeDecoration = "live" | "failed";
+/**
+ * 节点卡片所在的底色（卡片上的 data-ground，见 tokens.css）：所在注释框的颜色、子流程区域或画布。
+ * 已完成、跳过、停止的卡片「下沉」到这层底色：底色等于它，只留一圈灰描边。
+ */
+export type NodeGround = AnnotationColor | "subflow" | "canvas";
+
+/**
+ * 运行状态下连线的样子（线路图，DESIGN-SYSTEM §2.3）。链连线：`travelled` 走过的（两端都已完成，变亮变粗）、
+ * `ahead` 还没走到的（暗灰）、`live` 进入执行中节点的（青）、`failed` 进入失败节点的（红）、`waiting` 进入等待中节点的
+ * （琥珀）。调度连线：`live` 子流程还在运行（青色虚线）、`ended` 子流程已经结束或没有触发（灰色虚线）。
+ */
+export type EdgeDecoration = "live" | "failed" | "waiting" | "travelled" | "ahead" | "ended";
 
 /** 节点卡片需要的画布级信息；`titleOf` 和 `subflowLabelOf` 同时是节点显示规则（nodeCardText）要查的信息。 */
 export interface CanvasInfo {
@@ -71,10 +98,50 @@ export interface NodeRename {
 	cancel(): void;
 }
 
+/**
+ * 可编辑画布上注释框和多选的操作（FlowCanvas 的 `annotationEdit`）：原地改注释框标题、浮动工具条、
+ * 把节点拖进拖出注释框。状态和对场景的修改都在使用方，每个操作是一步撤销（拖进拖出和那次拖动合成一步）。
+ */
+export interface AnnotationEdit {
+	/** 正在原地改标题的注释框；没有时为 null。 */
+	renaming: string | null;
+	/** 进入原地编辑（双击标题、F2）。 */
+	startRename(id: string): void;
+	/** 确认（Enter、失焦）：`text` 是输入框里的原文，去掉首尾空白后为空或和原来相同时不改。 */
+	commitRename(id: string, text: string): void;
+	/** 取消（Esc）：不改场景。 */
+	cancelRename(): void;
+	setColor(id: string, color: AnnotationColor): void;
+	/** 删除注释框，成员节点不动。 */
+	remove(id: string): void;
+	/** 用这组节点新建注释框（成员的记法和节点菜单的「添加注释框」一样）。 */
+	create(ids: readonly string[]): void;
+	/** 把这组节点排成宫格、一行或一列。 */
+	arrange(ids: readonly string[], mode: ArrangeMode): void;
+	/** 拖动节点松手时加入、移出注释框。 */
+	drop(drop: AnnotationDrop): void;
+}
+
+/**
+ * 可编辑画布上便签的操作（FlowCanvas 的 `stickyEdit`，ADR 0026）。状态和对场景的修改都在使用方：
+ * 一次拖动、一次改大小各是一步撤销（`dragging` 为 true 的第一次记下修改前的状态，松手时为 false）。
+ */
+export interface StickyEdit {
+	select(id: string): void;
+	move(id: string, position: Position, dragging: boolean): void;
+	resize(id: string, size: { width: number; height: number }, dragging: boolean): void;
+	/** 双击：打开检查器改文字。 */
+	open(id: string): void;
+	setColor(id: string, color: AnnotationColor): void;
+	remove(id: string): void;
+}
+
 export interface CanvasContextValue {
 	info: CanvasInfo;
 	selection: CanvasSelection;
 	ports: ReadonlyMap<string, PortState>;
+	/** 节点 ID → 卡片所在的底色；不在注释框和子流程区域里的不在表里（画布）。 */
+	grounds: ReadonlyMap<string, NodeGround>;
 	decorateNode?: (id: string, node: DocNode) => NodeDecoration | undefined;
 	decorateEdge?: (edge: {
 		from: string;
@@ -107,6 +174,7 @@ export const FlowCanvasContext = createContext<CanvasContextValue>({
 	info: EMPTY_INFO,
 	selection: NO_SELECTION,
 	ports: new Map(),
+	grounds: new Map(),
 	fit: () => {},
 });
 

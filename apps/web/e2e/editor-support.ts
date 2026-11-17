@@ -24,13 +24,13 @@ export const editorDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "http_check",
-			position: { x: 252, y: 0 },
+			position: { x: 300, y: 0 },
 			inputs: { url: "https://example.test/snap" },
 		},
 		{
 			id: "dispatch",
 			kind: "async",
-			position: { x: 504, y: 0 },
+			position: { x: 600, y: 0 },
 			params: { date: "${{ params.biz_date }}" },
 		},
 		{
@@ -38,13 +38,13 @@ export const editorDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "ping",
-			position: { x: 756, y: 0 },
+			position: { x: 900, y: 0 },
 			inputs: { host: "${{ nodes.fetch.outputs.status }}" },
 		},
 		{
 			id: "sub_entry",
 			kind: "subflow_entry",
-			position: { x: 660, y: 230 },
+			position: { x: 640, y: 180 },
 			params: [{ name: "date", type: "string", required: true }],
 		},
 		{
@@ -52,7 +52,7 @@ export const editorDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "ping",
-			position: { x: 912, y: 230 },
+			position: { x: 940, y: 180 },
 			inputs: { host: "${{ params.date }}" },
 		},
 	],
@@ -118,7 +118,7 @@ export const typedDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "probe",
-			position: { x: 252, y: 0 },
+			position: { x: 300, y: 0 },
 			inputs: {},
 		},
 		{
@@ -126,7 +126,7 @@ export const typedDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "typed",
-			position: { x: 504, y: 0 },
+			position: { x: 600, y: 0 },
 			inputs: {
 				count: "${{ nodes.probe.outputs.status }}",
 				ratio: 0.5,

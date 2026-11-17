@@ -15,6 +15,7 @@ import type {
 	FeishuBotView,
 	OrchestrationDocument,
 	PackageSummary,
+	StickyNote,
 } from "@sfly/schema";
 import { cn } from "cn";
 import { SquareDashedIcon, Trash2Icon } from "lucide-react";
@@ -26,6 +27,7 @@ import {
 	type CanvasSelection,
 	multipleNodes,
 	selectedAnnotation,
+	selectedSticky,
 	soleNode,
 } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
@@ -59,6 +61,7 @@ import {
 import { NoteField } from "./node-note";
 import { ParamsEditor } from "./ParamsEditor";
 import { referenceChoices } from "./reference-completion";
+import { StickyInspector } from "./StickyInspector";
 
 /** 把焦点放到某个字段：`key` 是字段的草稿键（field-drafts.tsx），每次请求的 `nonce` 不同。 */
 export interface FocusRequest {
@@ -98,6 +101,9 @@ export interface InspectorContext {
 	onDeleteAnnotation(id: string): void;
 	/** 选中注释框（检查结果里的「前往」）。 */
 	onLocateAnnotation(id: string): void;
+	/** 改便签；同一个字段（`field`）的连续修改合成一步撤销。 */
+	onChangeSticky(note: StickyNote, field?: string): void;
+	onDeleteSticky(id: string): void;
 }
 
 /**
@@ -125,6 +131,8 @@ export const Inspector = forwardRef<
 	const group = multipleNodes(selection);
 	const annotationId = selectedAnnotation(selection);
 	const annotation = context.doc.annotations.find((a) => a.id === annotationId);
+	const stickyId = selectedSticky(selection);
+	const sticky = context.doc.sticky_notes.find((s) => s.id === stickyId);
 	return (
 		<aside
 			ref={ref}
@@ -136,10 +144,12 @@ export const Inspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface shadow-float"
 			style={{ width }}
 		>
-			{annotation ? (
+			{sticky ? (
+				<StickyInspector key={sticky.id} note={sticky} context={context} onCollapse={onCollapse} />
+			) : annotation ? (
 				<AnnotationInspector
 					key={annotation.id}
 					annotation={annotation}

@@ -415,6 +415,37 @@ export function stopCandidates(doc: StructureDocument, nodeId: string): string[]
 }
 
 /**
+ * 一个子流程和它直接或间接触发的下级子流程（链上的异步任务节点沿调度连线进入的子流程），按广度优先返回子流程入口的
+ * 节点 ID，它自己在最前。注释框的子流程成员连同它下级的子流程（SEMANTICS §1.6）。不是子流程入口时为空。
+ */
+export function subflowTree(
+	doc: StructureDocument,
+	entry: string,
+	chains: ReadonlyMap<string, readonly string[]> = chainMembers(doc),
+): string[] {
+	const kindOf = new Map(doc.nodes.map((n) => [n.id, n.kind]));
+	if (kindOf.get(entry) !== "subflow_entry") return [];
+	const dispatched = new Map<string, string[]>();
+	for (const e of doc.edges) {
+		if (e.kind !== "dispatch" || kindOf.get(e.from) !== "async") continue;
+		if (kindOf.get(e.to) !== "subflow_entry") continue;
+		dispatched.set(e.from, [...(dispatched.get(e.from) ?? []), e.to]);
+	}
+	const tree = [entry];
+	const seen = new Set(tree);
+	for (let i = 0; i < tree.length; i++) {
+		for (const id of chains.get(tree[i] as string) ?? []) {
+			for (const sub of dispatched.get(id) ?? []) {
+				if (seen.has(sub)) continue;
+				seen.add(sub);
+				tree.push(sub);
+			}
+		}
+	}
+	return tree;
+}
+
+/**
  * 每条链（主链和各个子流程）上的节点：起点节点 ID → 从起点沿链上的出线走到的节点 ID（按链上顺序，含起点）。
  * 画布按它画子流程区域，运行视图按它把节点对应到链实例。
  */

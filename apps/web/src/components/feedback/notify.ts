@@ -35,4 +35,6 @@ export const notify = {
 		toast.warning(message, withDefaults(DURATION * 2, options)),
 	error: (message: string, options?: NotifyOptions) =>
 		toast.error(message, { ...options, ...persistent }),
+	/** 收起一条通知（它说的操作已经过时，例如「还原」之后又做了别的修改）。 */
+	dismiss: (id: string | number) => toast.dismiss(id),
 };

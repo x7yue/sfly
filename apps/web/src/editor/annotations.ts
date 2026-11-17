@@ -1,5 +1,6 @@
 import { uniqueNodeId } from "@sfly/orchestration";
-import type { Annotation } from "@sfly/schema";
+import type { Annotation, AnnotationColor, StickyNote } from "@sfly/schema";
+import type { AnnotationDrop } from "#/components/canvas/annotation-drop";
 import { TERM } from "#/lib/copy";
 
 /**
@@ -56,9 +57,58 @@ export const leaveAnnotation = (
 		return memberCount(next) === 0 ? [] : [next];
 	});
 
+/** 换颜色：灰色不写（不写就是灰色），所以选灰色时去掉 `color`。 */
+export function withColor(annotation: Annotation, color: AnnotationColor): Annotation {
+	const { color: _, ...rest } = annotation;
+	return color === "gray" ? rest : { ...rest, color };
+}
+
+/** 便签换颜色：黄色不写（不写就是黄色，ADR 0026），所以选黄色时去掉 `color`。 */
+export function withStickyColor(note: StickyNote, color: AnnotationColor): StickyNote {
+	const { color: _, ...rest } = note;
+	return color === "yellow" ? rest : { ...rest, color };
+}
+
 /** 把列表里 ID 是 `id` 的注释框换成 `update` 的结果。 */
 export const updateAnnotation = (
 	annotations: readonly Annotation[],
 	id: string,
 	update: (annotation: Annotation) => Annotation,
 ): Annotation[] => annotations.map((a) => (a.id === id ? update(a) : a));
+
+/**
+ * 拖动节点松手后的注释框（components/canvas/annotation-drop.ts）：先从按住 Alt 拖出的框里移出拖动的节点
+ * （移出后没有成员的框一起删除），再把 `joining`（要加入的节点按 annotationMembersOfSelection 记成的成员）
+ * 并进要加入的框，已经是成员的不重复记。没有变化时返回原来的数组。
+ */
+export function applyAnnotationDrop(
+	annotations: readonly Annotation[],
+	drop: Pick<AnnotationDrop, "dragged" | "join" | "leave">,
+	joining: Pick<Annotation, "nodes" | "subflows">,
+): readonly Annotation[] {
+	if (drop.join === null && drop.leave.length === 0) return annotations;
+	const leaving = new Set(drop.leave.map((l) => l.id));
+	const dragged = new Set(drop.dragged);
+	return annotations.flatMap((a) => {
+		let next = a;
+		if (leaving.has(a.id)) {
+			next = {
+				...a,
+				nodes: a.nodes.filter((id) => !dragged.has(id)),
+				subflows: a.subflows.filter((id) => !dragged.has(id)),
+			};
+			if (memberCount(next) === 0) return [];
+		}
+		if (a.id === drop.join?.id) {
+			next = {
+				...next,
+				nodes: [...next.nodes, ...joining.nodes.filter((id) => !next.nodes.includes(id))],
+				subflows: [
+					...next.subflows,
+					...joining.subflows.filter((id) => !next.subflows.includes(id)),
+				],
+			};
+		}
+		return [next];
+	});
+}

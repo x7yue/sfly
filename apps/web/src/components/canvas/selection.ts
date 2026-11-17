@@ -1,19 +1,26 @@
 /**
- * 画布上选中了什么（单测见 selection.test.ts）：什么都没选、一组节点，或者一个注释框（#278）。
- * 节点和注释框不会同时选中；一组节点至少有一个，ID 不重复，按选中的先后排列。
+ * 画布上选中了什么（单测见 selection.test.ts）：什么都没选、一组节点、一个注释框（#278），或者一张便签（ADR 0026）。
+ * 它们不会同时选中；一组节点至少有一个，ID 不重复，按选中的先后排列。
  *
  * 一组节点来自框选、Ctrl/⌘ 加选和点子流程区域的标题（#309）；注释框来自点它的标题带、新建（#310）。
  */
 export type CanvasSelection =
 	| { readonly kind: "none" }
 	| { readonly kind: "nodes"; readonly ids: readonly [string, ...string[]] }
-	| { readonly kind: "annotation"; readonly id: string };
+	| { readonly kind: "annotation"; readonly id: string }
+	| { readonly kind: "sticky"; readonly id: string };
 
 export const NO_SELECTION: CanvasSelection = { kind: "none" };
 
 export const selectNode = (id: string): CanvasSelection => ({ kind: "nodes", ids: [id] });
 
 export const selectAnnotation = (id: string): CanvasSelection => ({ kind: "annotation", id });
+
+export const selectSticky = (id: string): CanvasSelection => ({ kind: "sticky", id });
+
+/** 选中的便签（没有选中便签时是 null）。 */
+export const selectedSticky = (selection: CanvasSelection): string | null =>
+	selection.kind === "sticky" ? selection.id : null;
 
 /** 选中的注释框（没有选中注释框时是 null）。 */
 export const selectedAnnotation = (selection: CanvasSelection): string | null =>
@@ -88,4 +95,12 @@ export function keepAnnotation(
 	exists: (id: string) => boolean,
 ): CanvasSelection {
 	return selection.kind === "annotation" && !exists(selection.id) ? NO_SELECTION : selection;
+}
+
+/** 选中的便签不在了（撤销了新建、删掉了）时什么都没选；其余情况返回原来的对象。 */
+export function keepSticky(
+	selection: CanvasSelection,
+	exists: (id: string) => boolean,
+): CanvasSelection {
+	return selection.kind === "sticky" && !exists(selection.id) ? NO_SELECTION : selection;
 }

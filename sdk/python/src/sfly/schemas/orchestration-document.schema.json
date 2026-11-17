@@ -621,6 +621,17 @@
             "type": "string",
             "maxLength": 2000
           },
+          "color": {
+            "type": "string",
+            "enum": [
+              "gray",
+              "blue",
+              "green",
+              "yellow",
+              "orange",
+              "pink"
+            ]
+          },
           "nodes": {
             "default": [],
             "type": "array",
@@ -641,6 +652,80 @@
         "required": [
           "id",
           "title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "sticky_notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "pattern": "^(?=[\\s\\S]*[^\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "gray",
+              "blue",
+              "green",
+              "yellow",
+              "orange",
+              "pink"
+            ]
+          },
+          "position": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ],
+            "additionalProperties": false
+          },
+          "size": {
+            "type": "object",
+            "properties": {
+              "width": {
+                "type": "number",
+                "minimum": 160,
+                "maximum": 4000
+              },
+              "height": {
+                "type": "number",
+                "minimum": 96,
+                "maximum": 4000
+              }
+            },
+            "required": [
+              "width",
+              "height"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "text"
         ],
         "additionalProperties": false
       }

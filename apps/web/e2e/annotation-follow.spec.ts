@@ -261,10 +261,6 @@ type Look = Awaited<ReturnType<typeof look>>;
 /** 画布区域（编辑器里只有一块；版本对比里是左右两块，各自有名字）。 */
 const canvasOf = (page: Page) => page.locator("[data-canvas-region]");
 
-/** 画布底色（节点卡片下沉时的底色）。 */
-const canvasBackground = (canvas: Locator) =>
-	canvas.evaluate((el) => getComputedStyle(el).backgroundColor);
-
 async function looks(canvas: Locator): Promise<Record<Id, Look>> {
 	const entries = await Promise.all(
 		IDS.map(async (id) => [id, await look(canvas.locator(`[data-node-id="${id}"]`))] as const),
@@ -288,11 +284,10 @@ async function settledLooks(canvas: Locator): Promise<Record<Id, Look>> {
 
 /**
  * 每个节点相对 `base`（还没有强调任何注释框时的样子）是什么状态：
- * plain 没变；highlighted 描边或光晕变了、底色没变；dimmed 底色沉到画布底色（不用不透明度，文字对比度不降）；
+ * plain 没变；highlighted 描边或光晕变了、底色没变；dimmed 底色沉到所在底色（画布、注释框底板）的方向、和原来的底色不同（不用不透明度，文字对比度不降）；
  * 其余原样写出。
  */
 async function emphasis(canvas: Locator, base: Record<Id, Look>) {
-	const background = await canvasBackground(canvas);
 	const now = await looks(canvas);
 	return Object.fromEntries(
 		IDS.map((id) => {
@@ -304,7 +299,7 @@ async function emphasis(canvas: Locator, base: Record<Id, Look>) {
 							is.title === was.title &&
 							(is.border !== was.border || is.shadow !== was.shadow)
 						? "highlighted"
-						: is.background === background && is.background !== was.background
+						: is.background !== was.background
 							? "dimmed"
 							: JSON.stringify({ was, is });
 			return [id, verdict];

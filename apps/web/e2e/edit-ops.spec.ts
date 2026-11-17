@@ -1,3 +1,4 @@
+import { LAYOUT_COLUMN, NODE_SIZE, SUBFLOW_INDENT, SUBFLOW_TOP_GAP } from "@sfly/orchestration";
 import {
 	addMenu,
 	createEditorScenario,
@@ -195,6 +196,7 @@ test("空白处右键菜单：各项带注册表里的快捷键；「添加节�
 	await expect(menu).toBeVisible();
 	await expect(menu.getByRole("menuitem")).toHaveText([
 		"添加节点/",
+		"添加便签",
 		// 打开菜单时不读剪贴板，点了才读（另见 node-clipboard.spec.ts）。
 		"粘贴CtrlV",
 		"整理布局AltShiftF",
@@ -206,7 +208,10 @@ test("空白处右键菜单：各项带注册表里的快捷键；「添加节�
 	await expect(menu.getByRole("menuitem", { name: /撤销/ })).toBeDisabled();
 	const menuBox = await box(menu);
 	expect(Math.abs(menuBox.x - BLANK.x)).toBeLessThan(12);
-	expect(Math.abs(menuBox.y - BLANK.y)).toBeLessThan(12);
+	// 下面放不下时菜单往上翻：上沿或下沿贴着右键的位置。
+	expect(
+		Math.min(Math.abs(menuBox.y - BLANK.y), Math.abs(menuBox.y + menuBox.height - BLANK.y)),
+	).toBeLessThan(12);
 
 	await menu.getByRole("menuitem", { name: /添加节点/ }).click();
 	await expect(menu).toHaveCount(0);
@@ -259,8 +264,11 @@ test("空白处右键菜单可用键盘操作：方向键移动、Enter 执行�
 	await expect(highlighted).toContainText("添加节点");
 	// 禁用的项（粘贴）也能走到（读得到原因），但 Enter 不执行。
 	await page.keyboard.press("ArrowDown");
+	await expect(highlighted).toContainText("添加便签");
+	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("ArrowDown");
 	await expect(highlighted).toContainText("整理布局");
+	await page.keyboard.press("ArrowUp");
 	await page.keyboard.press("ArrowUp");
 	await page.keyboard.press("ArrowUp");
 	await expect(highlighted).toContainText("添加节点");
@@ -317,7 +325,7 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	await expect(canvas).not.toBeFocused();
 
 	// 用鼠标点过画布空白处后 Tab 打开：Esc 后焦点回到画布。
-	await page.locator(".react-flow__pane").click({ position: { x: 40, y: 400 } });
+	await page.locator(".react-flow__pane").click({ position: BLANK });
 	await page.keyboard.press("Tab");
 	await closeWithEscape();
 	await expect(canvas).toBeFocused();
@@ -367,7 +375,7 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	await expect(addMenu(page)).toHaveCount(0);
 	await expect(edge(page, "chain:ping->timer_1")).toHaveCount(1);
 	await expect(nodeCard(page, "timer_1")).toBeFocused();
-	expect(await nodePosition(page, "timer_1")).toEqual({ x: 1008, y: 0 });
+	expect(await nodePosition(page, "timer_1")).toEqual({ x: 1200, y: 0 });
 
 	// 子流程的链尾同理。
 	await nodeCard(page, "sub_ping").click();
@@ -417,10 +425,10 @@ test("从链尾端口拖线到空白处：弹出可以接上的节点菜单，�
 		const y = from.y + from.height / 2;
 		await page.mouse.move(x, y);
 		await page.mouse.down();
-		await page.mouse.move(x + 40, y + 60, { steps: 4 });
-		await page.mouse.move(x + 80, y + 110, { steps: 4 });
+		await page.mouse.move(x + 40, y + 30, { steps: 4 });
+		await page.mouse.move(x + 80, y + 60, { steps: 4 });
 		await page.mouse.up();
-		return { x: x + 80, y: y + 110 };
+		return { x: x + 80, y: y + 60 };
 	};
 
 	const drop = await dragToBlank("ping");
@@ -491,9 +499,10 @@ test("撤销 / 重做：删除节点（连带连线）、移动、参数修改�
 	// 移动节点。
 	const before = await nodePosition(page, "ping");
 	const card = await box(nodeCard(page, "ping"));
-	await page.mouse.move(card.x + 60, card.y + 50);
+	const [grabX, grabY] = [card.x + card.width / 2, card.y + card.height / 2];
+	await page.mouse.move(grabX, grabY);
 	await page.mouse.down();
-	await page.mouse.move(card.x + 100, card.y + 90, { steps: 5 });
+	await page.mouse.move(grabX + 40, grabY + 40, { steps: 5 });
 	await page.mouse.up();
 	await expect.poll(() => nodePosition(page, "ping")).not.toEqual(before);
 	await undo.click();
@@ -530,16 +539,24 @@ test("整理布局（Alt Shift F）：主链在上、子流程放在下方区域
 
 	await page.keyboard.press("Alt+Shift+F");
 	await expect(page.getByText("已整理布局")).toBeVisible();
-	// dispatch 在主链第 3 位（x 504），子流程从它右下方开始。
-	await expect.poll(() => nodePosition(page, "dispatch")).toEqual({ x: 504, y: 0 });
-	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 714, y: 256 });
-	expect(await nodePosition(page, "sub_ping")).toEqual({ x: 966, y: 256 });
+	// dispatch 在主链第 3 位（x 600），子流程从它右下方开始。
+	await expect.poll(() => nodePosition(page, "dispatch")).toEqual({ x: 600, y: 0 });
+	expect(await nodePosition(page, "sub_entry")).toEqual({
+		x: 600 + SUBFLOW_INDENT,
+		y: NODE_SIZE.height + SUBFLOW_TOP_GAP,
+	});
+	expect(await nodePosition(page, "sub_ping")).toEqual({
+		x: 600 + SUBFLOW_INDENT + LAYOUT_COLUMN,
+		y: NODE_SIZE.height + SUBFLOW_TOP_GAP,
+	});
 
 	await page.keyboard.press("Control+z");
 	await expect.poll(() => nodePosition(page, "sub_entry")).toEqual(original);
 
 	await dock(page).getByRole("button", { name: "整理布局" }).click();
-	await expect.poll(() => nodePosition(page, "sub_entry")).toEqual({ x: 714, y: 256 });
+	await expect
+		.poll(() => nodePosition(page, "sub_entry"))
+		.toEqual({ x: 600 + SUBFLOW_INDENT, y: NODE_SIZE.height + SUBFLOW_TOP_GAP });
 	await dock(page).getByRole("button", { name: "撤销" }).click();
 	await expect.poll(() => nodePosition(page, "sub_entry")).toEqual(original);
 });
@@ -567,9 +584,9 @@ test("通过 API 创建、缺少布局的场景打开时用整理布局得到初
 
 	// 6 个节点的主链按两行折返：每行 3 个。
 	expect(await nodePosition(page, "entry")).toEqual({ x: 0, y: 0 });
-	expect(await nodePosition(page, "b")).toEqual({ x: 504, y: 0 });
-	expect(await nodePosition(page, "c")).toEqual({ x: 0, y: 214 });
-	expect(await nodePosition(page, "e")).toEqual({ x: 504, y: 214 });
+	expect(await nodePosition(page, "b")).toEqual({ x: 600, y: 0 });
+	expect(await nodePosition(page, "c")).toEqual({ x: 0, y: NODE_SIZE.height + 102 });
+	expect(await nodePosition(page, "e")).toEqual({ x: 600, y: NODE_SIZE.height + 102 });
 	// 补齐布局不算修改。
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
 });

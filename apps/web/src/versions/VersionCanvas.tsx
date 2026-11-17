@@ -7,8 +7,7 @@ import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import { toFlow } from "#/components/canvas/flow";
 import { usePackageTitles } from "#/components/canvas/package-titles";
 import { type CanvasSelection, NO_SELECTION } from "#/components/canvas/selection";
-import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
-import { type StatusKind, StatusPill } from "#/components/status";
+import type { StatusKind } from "#/components/status";
 
 export type NodeMark = NonNullable<NodeDecoration["mark"]>;
 
@@ -61,15 +60,7 @@ export function VersionCanvas({
 			const mark = marks?.get(id);
 			if (!mark) return undefined;
 			const { kind, label } = MARK_STATUS[mark];
-			return {
-				mark,
-				status: (
-					<StatusPill kind={kind} className={ZOOM_TEXT_12}>
-						{/* 缩小视图时只留色点：差异已由描边颜色与上方的差异列表说明，把宽度让给节点 ID。 */}
-						<span className={LOD_HIDDEN}>{label}</span>
-					</StatusPill>
-				),
-			};
+			return { mark, status: { kind, label } };
 		},
 		[marks],
 	);
@@ -81,6 +72,7 @@ export function VersionCanvas({
 				nodes={flow.nodes}
 				edges={flow.edges}
 				annotations={document.annotations}
+				stickyNotes={document.sticky_notes ?? []}
 				info={info}
 				selection={selection}
 				onSelect={setSelection}

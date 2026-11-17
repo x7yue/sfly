@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { optionalLine, optionalMultiline, requiredLine } from "./display-text.js";
+import {
+	optionalLine,
+	optionalMultiline,
+	requiredLine,
+	requiredMultiline,
+} from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 
 /**
@@ -17,6 +22,13 @@ export const NODE_NOTE_MAX = 2000;
 
 /** 注释框标题的长度上限（Unicode 字符数）。 */
 export const ANNOTATION_TITLE_MAX = 40;
+
+/**
+ * 注释框的颜色：场景作者选的分类色，只用于区分画布上的几个注释框，不表达状态（ADR 0025）。
+ * 不写就是灰色（gray）；色板里没有青、红、紫，它们分别是执行中、失败和子流程区域的颜色。
+ */
+export const ANNOTATION_COLORS = ["gray", "blue", "green", "yellow", "orange", "pink"] as const;
+export const AnnotationColor = z.enum(ANNOTATION_COLORS);
 
 export const ParamDeclaration = z.strictObject({
 	name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
@@ -200,6 +212,8 @@ export const Annotation = z.strictObject({
 	id: z.string().min(1),
 	title: requiredLine(ANNOTATION_TITLE_MAX),
 	note: optionalMultiline(NODE_NOTE_MAX),
+	/** 颜色，不写就是灰色；画布新建的注释框不写，选灰色时也去掉这一项。 */
+	color: AnnotationColor.optional(),
 	/** 成员节点的节点 ID。 */
 	nodes: z.array(z.string().min(1)).default([]),
 	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
@@ -216,6 +230,47 @@ const Annotations = z.array(Annotation).superRefine((annotations, ctx) => {
 	}
 });
 
+/** 便签正文的长度上限（Unicode 字符数），和备注一样。 */
+export const STICKY_NOTE_TEXT_MAX = NODE_NOTE_MAX;
+/** 便签不写大小时的宽高，和能缩到的最小宽高（画布坐标）。 */
+export const STICKY_NOTE_SIZE = { width: 280, height: 168 } as const;
+export const STICKY_NOTE_MIN_SIZE = { width: 160, height: 96 } as const;
+const STICKY_NOTE_MAX_SIDE = 4000;
+
+/**
+ * 便签：画布上自由摆放的说明（检查清单、已知问题、待办），不挂在任何节点上。属于版本内容，只用于显示，
+ * 不影响执行（docs/SEMANTICS.md §1.7，ADR 0026）。和注释框不同，它记下自己的位置和大小。
+ */
+export const StickyNote = z.strictObject({
+	/** 便签之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `sticky_1`。 */
+	id: z.string().min(1),
+	/** 加粗显示的第一行。 */
+	title: optionalLine(ANNOTATION_TITLE_MAX),
+	/** 正文：以 `- ` 开头的行显示成列表的一项，其余是普通段落。 */
+	text: requiredMultiline(STICKY_NOTE_TEXT_MAX),
+	/** 颜色，和注释框同一套色板；不写就是黄色，画布选黄色时也去掉这一项。 */
+	color: AnnotationColor.optional(),
+	/** 左上角的画布坐标；不写时由整理布局摆放。 */
+	position: Position.optional(),
+	/** 宽高；不写是 STICKY_NOTE_SIZE。 */
+	size: z
+		.strictObject({
+			width: z.number().min(STICKY_NOTE_MIN_SIZE.width).max(STICKY_NOTE_MAX_SIDE),
+			height: z.number().min(STICKY_NOTE_MIN_SIZE.height).max(STICKY_NOTE_MAX_SIDE),
+		})
+		.optional(),
+});
+
+const StickyNotes = z.array(StickyNote).superRefine((notes, ctx) => {
+	const seen = new Set<string>();
+	for (const [i, { id }] of notes.entries()) {
+		if (seen.has(id)) {
+			ctx.addIssue({ code: "custom", path: [i, "id"], message: `便签 ID ${id} 重复` });
+		}
+		seen.add(id);
+	}
+});
+
 export const OrchestrationDocument = z
 	.strictObject({
 		default_agent: z.string().min(1).optional(),
@@ -224,6 +279,7 @@ export const OrchestrationDocument = z
 		/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 		packages: z.record(PackageName, z.string().min(1)).default({}),
 		annotations: Annotations.default([]),
+		sticky_notes: StickyNotes.default([]),
 	})
 	.meta({ title: "sfly 编排文档" });
 
@@ -231,3 +287,5 @@ export type ParamDeclaration = z.infer<typeof ParamDeclaration>;
 export type OrchestrationDocument = z.infer<typeof OrchestrationDocument>;
 export type OrchestrationNode = z.infer<typeof OrchestrationNode>;
 export type Annotation = z.infer<typeof Annotation>;
+export type AnnotationColor = z.infer<typeof AnnotationColor>;
+export type StickyNote = z.infer<typeof StickyNote>;

@@ -49,7 +49,7 @@ test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节
 		"重命名F2",
 		"复制节点 ID",
 		"复制输出引用",
-		"添加注释框",
+		"添加注释框CtrlG",
 		"加入注释框没有可以加入的注释框",
 		"移出注释框这个节点不在注释框里",
 		"断开入线",
@@ -91,7 +91,7 @@ test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节
 		"重命名F2",
 		"复制节点 ID",
 		"复制输出引用这个节点没有声明输出",
-		"添加注释框",
+		"添加注释框CtrlG",
 		"加入注释框没有可以加入的注释框",
 		"移出注释框这个节点不在注释框里",
 		"断开入线这个节点没有入线",
@@ -192,22 +192,22 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 			].sort(),
 		);
 	// 新节点占了原来 dispatch 的位置，同一行后面的节点各后移一列；子流程那一行不动。
-	expect(await nodePosition(page, "sleep_1")).toEqual({ x: 504, y: 0 });
-	expect(await nodePosition(page, "dispatch")).toEqual({ x: 756, y: 0 });
-	expect(await nodePosition(page, "ping")).toEqual({ x: 1008, y: 0 });
-	expect(await nodePosition(page, "fetch")).toEqual({ x: 252, y: 0 });
-	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 660, y: 230 });
+	expect(await nodePosition(page, "sleep_1")).toEqual({ x: 600, y: 0 });
+	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
+	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
+	expect(await nodePosition(page, "fetch")).toEqual({ x: 300, y: 0 });
+	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 640, y: 180 });
 
 	// 一步撤销：节点、连线、位置都回去；重做再来。
 	await dock(page).getByRole("button", { name: "撤销" }).click();
 	await expect(nodeCard(page, "sleep_1")).toHaveCount(0);
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
-	expect(await nodePosition(page, "dispatch")).toEqual({ x: 504, y: 0 });
-	expect(await nodePosition(page, "ping")).toEqual({ x: 756, y: 0 });
+	expect(await nodePosition(page, "dispatch")).toEqual({ x: 600, y: 0 });
+	expect(await nodePosition(page, "ping")).toEqual({ x: 900, y: 0 });
 	await expect(dock(page).getByRole("button", { name: "撤销" })).toBeDisabled();
 	await dock(page).getByRole("button", { name: "重做" }).click();
 	await expect(nodeCard(page, "sleep_1")).toBeVisible();
-	expect(await nodePosition(page, "ping")).toEqual({ x: 1008, y: 0 });
+	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
 
 	// 焦点在非链尾节点上按 Tab 也是插入。
 	await nodeCard(page, "entry").click();
@@ -230,7 +230,7 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 	await expect(addMenu(page).getByText("新节点接在 ping 之后")).toBeVisible();
 	await addMenu(page).getByRole("option", { name: /定时/ }).click();
 	await expect(page.locator('[data-edge="chain:ping->timer_1"]')).toHaveCount(1);
-	expect(await nodePosition(page, "timer_1")).toEqual({ x: 1260, y: 0 });
+	expect(await nodePosition(page, "timer_1")).toEqual({ x: 1500, y: 0 });
 
 	// 保存下来的链是 entry → fetch → sleep_1 → dispatch → ping → timer_1。
 	await page.getByRole("button", { name: /保存/ }).click();

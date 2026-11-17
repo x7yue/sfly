@@ -65,14 +65,18 @@ describe("从选中的节点算出注释框的成员", () => {
 	});
 
 	it("混合：完整的子流程记子流程成员，另一个只选了一部分的子流程和主链上的节点按节点记", () => {
-		expect(annotationMembersOfSelection(doc, ["ping", ...SUB, "d"])).toEqual({
-			nodes: ["ping", "d"],
-			subflows: ["sub"],
+		expect(annotationMembersOfSelection(doc, ["ping", "deep", "d", "sub", "a"])).toEqual({
+			nodes: ["ping", "sub", "a"],
+			subflows: ["deep"],
 		});
 	});
 
-	it("子流程不含它下级的子流程：只选上级的链，下级的节点不跟着记", () => {
+	it("子流程成员连同它下级的子流程：只选上级的链就记上级，下级的子流程和节点不再单独记", () => {
 		expect(annotationMembersOfSelection(doc, SUB)).toEqual({ nodes: [], subflows: ["sub"] });
+		expect(annotationMembersOfSelection(doc, ["ping", ...SUB, "d"])).toEqual({
+			nodes: ["ping"],
+			subflows: ["sub"],
+		});
 		expect(annotationMembersOfSelection(doc, ["deep", "d"])).toEqual({
 			nodes: [],
 			subflows: ["deep"],
@@ -91,7 +95,7 @@ describe("从选中的节点算出注释框的成员", () => {
 			annotationMembersOfSelection(doc, ["deep", "d", "ping", "b", "spawn2", "a", "sub", "fetch"]),
 		).toEqual({
 			nodes: ["fetch", "ping"],
-			subflows: ["sub", "deep"],
+			subflows: ["sub"],
 		});
 	});
 

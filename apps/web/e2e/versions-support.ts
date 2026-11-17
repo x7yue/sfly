@@ -17,7 +17,7 @@ export const secondVersion = {
 			kind: "package",
 			package: "demo-checks",
 			node: "ping",
-			position: { x: 1008, y: 0 },
+			position: { x: 1200, y: 0 },
 			inputs: { host: "report.example.test" },
 		},
 	],

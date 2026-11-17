@@ -3,7 +3,7 @@ import { subflowName } from "./chain-label.js";
 
 /**
  * 两份编排文档的差异：用于保存冲突时对比本地修改与最新版本、对比任意两个历史版本。
- * 只列出差异，不做合并。节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。
+ * 只列出差异，不做合并。节点、注释框、便签按 ID 对应，连线按（起点、终点、种类）对应。
  */
 
 /**
@@ -16,6 +16,7 @@ export interface DiffableDocument {
 	edges?: readonly DiffEdge[];
 	packages?: Readonly<Record<string, string>>;
 	annotations?: readonly ({ readonly id: string; readonly title: string } & object)[];
+	sticky_notes?: readonly ({ readonly id: string } & object)[];
 }
 
 /** 一项字段的变化；before/after 为 undefined 表示该项不存在。 */
@@ -51,6 +52,17 @@ export interface AnnotationChange extends AnnotationRef {
 	changes: FieldChange[];
 }
 
+export interface StickyNoteRef {
+	id: string;
+	/** 写出这张便签时用的文字：标题，没有标题时是正文的第一行（修改后的）。 */
+	label: string;
+}
+
+/** 两边都有的便签改了什么：`title`、`text`、`color`（位置和大小算布局，见 `moved`）。 */
+export interface StickyNoteChange extends StickyNoteRef {
+	changes: FieldChange[];
+}
+
 export interface DocumentDiff {
 	/** 编排级设置：默认 Agent、锁定的包版本。 */
 	settings: FieldChange[];
@@ -60,16 +72,25 @@ export interface DocumentDiff {
 	moved: string[];
 	/** 注释框（标题是修改后的）。 */
 	annotations: { added: AnnotationRef[]; removed: AnnotationRef[]; changed: AnnotationChange[] };
+	/** 便签；`moved` 是两边都有、只是位置或大小变了的便签 ID（和节点的 `moved` 一样算布局）。 */
+	stickyNotes: {
+		added: StickyNoteRef[];
+		removed: StickyNoteRef[];
+		changed: StickyNoteChange[];
+		moved: string[];
+	};
 }
 
 type Node = Record<string, unknown> & { id: string; kind: string };
 type NormalAnnotation = Record<string, unknown> & AnnotationRef;
+type NormalStickyNote = Record<string, unknown> & { id: string };
 interface NormalDoc {
 	default_agent?: unknown;
 	nodes: Node[];
 	edges: DiffEdge[];
 	packages: Record<string, unknown>;
 	annotations: NormalAnnotation[];
+	sticky_notes: NormalStickyNote[];
 }
 
 /** 没有名称字段的旧版本子流程入口以节点 ID 作为名称（ADR 0016），按显示的名称比较。 */
@@ -77,6 +98,14 @@ const withSubflowName = (node: Node): Node =>
 	node.kind === "subflow_entry" && node.name === undefined
 		? { ...node, name: subflowName(node) }
 		: node;
+
+/** 注释框不写颜色就是灰色（ADR 0025）：写了 gray 和不写按同一种比较。 */
+const withDefaultColor = (a: NormalAnnotation): NormalAnnotation =>
+	a.color === "gray" ? { ...a, color: undefined } : a;
+
+/** 便签不写颜色就是黄色（ADR 0026）：写了 yellow 和不写按同一种比较。 */
+const withDefaultStickyColor = (s: NormalStickyNote): NormalStickyNote =>
+	s.color === "yellow" ? { ...s, color: undefined } : s;
 
 /** 补齐默认值；文档不完全合法（例如编辑到一半的草稿）时按原样比较。 */
 function normalize(doc: DiffableDocument): NormalDoc {
@@ -87,7 +116,8 @@ function normalize(doc: DiffableDocument): NormalDoc {
 		nodes: (d.nodes ?? []).map(withSubflowName),
 		edges: [...(d.edges ?? [])],
 		packages: d.packages ?? {},
-		annotations: d.annotations ?? [],
+		annotations: (d.annotations ?? []).map(withDefaultColor),
+		sticky_notes: (d.sticky_notes ?? []).map(withDefaultStickyColor),
 	};
 }
 
@@ -149,7 +179,7 @@ function nodeChanges(before: Node, after: Node): FieldChange[] {
 	return changes;
 }
 
-/** 注释框的字段：标题、备注、成员，按 before 中的顺序，再接 after 新增的。 */
+/** 注释框的字段：标题、备注、颜色、成员，按 before 中的顺序，再接 after 新增的。 */
 function annotationChanges(before: NormalAnnotation, after: NormalAnnotation): FieldChange[] {
 	const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
 		(k) => k !== "id",
@@ -174,6 +204,40 @@ function diffAnnotations(before: NormalAnnotation[], after: NormalAnnotation[]) 
 		added: after.filter((a) => !beforeById.has(a.id)).map(annotationRef),
 		removed: before.filter((a) => !afterById.has(a.id)).map(annotationRef),
 		changed,
+	};
+}
+
+/** 便签的写法：标题，没有标题时是正文的第一行。 */
+const stickyRef = (s: NormalStickyNote): StickyNoteRef => {
+	const title = typeof s.title === "string" ? s.title.trim() : "";
+	const first = typeof s.text === "string" ? (s.text.trim().split("\n")[0] ?? "") : "";
+	return { id: s.id, label: title || first.trim() || s.id };
+};
+
+const STICKY_LAYOUT_FIELDS = new Set(["position", "size"]);
+
+function diffStickyNotes(before: NormalStickyNote[], after: NormalStickyNote[]) {
+	const beforeById = new Map(before.map((s) => [s.id, s]));
+	const afterById = new Map(after.map((s) => [s.id, s]));
+	const changed: StickyNoteChange[] = [];
+	const moved: string[] = [];
+	for (const s of before) {
+		const other = afterById.get(s.id);
+		if (!other) continue;
+		const keys = [...new Set([...Object.keys(s), ...Object.keys(other)])].filter(
+			(k) => k !== "id" && !equal(s[k], other[k]),
+		);
+		const changes = keys
+			.filter((k) => !STICKY_LAYOUT_FIELDS.has(k))
+			.map((k) => ({ path: k, before: s[k], after: other[k] }));
+		if (changes.length > 0) changed.push({ ...stickyRef(other), changes });
+		if (keys.some((k) => STICKY_LAYOUT_FIELDS.has(k))) moved.push(s.id);
+	}
+	return {
+		added: after.filter((s) => !beforeById.has(s.id)).map(stickyRef),
+		removed: before.filter((s) => !afterById.has(s.id)).map(stickyRef),
+		changed,
+		moved,
 	};
 }
 
@@ -220,10 +284,11 @@ export function diffDocuments(before: DiffableDocument, after: DiffableDocument)
 		},
 		moved,
 		annotations: diffAnnotations(b.annotations, a.annotations),
+		stickyNotes: diffStickyNotes(b.sticky_notes, a.sticky_notes),
 	};
 }
 
-/** 没有任何差异；ignoreLayout 时忽略只移动了位置的节点。 */
+/** 没有任何差异；ignoreLayout 时忽略只移动了位置的节点和只移动了位置、改了大小的便签。 */
 export function isEmptyDiff(diff: DocumentDiff, options: { ignoreLayout?: boolean } = {}): boolean {
 	return (
 		diff.settings.length === 0 &&
@@ -235,6 +300,10 @@ export function isEmptyDiff(diff: DocumentDiff, options: { ignoreLayout?: boolea
 		diff.annotations.added.length === 0 &&
 		diff.annotations.removed.length === 0 &&
 		diff.annotations.changed.length === 0 &&
-		(options.ignoreLayout === true || diff.moved.length === 0)
+		diff.stickyNotes.added.length === 0 &&
+		diff.stickyNotes.removed.length === 0 &&
+		diff.stickyNotes.changed.length === 0 &&
+		(options.ignoreLayout === true ||
+			(diff.moved.length === 0 && diff.stickyNotes.moved.length === 0))
 	);
 }

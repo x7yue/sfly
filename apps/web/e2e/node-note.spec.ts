@@ -14,7 +14,7 @@ import {
 import { expect, test } from "./fixtures";
 import { box, createScenario, overlap, publishPackage } from "./support";
 
-// 节点的备注（#308）：搭场景的人在检查器里写多行备注，卡片头部出现备注图标，悬停或聚焦时显示全文；
+// 节点的备注（#308）：搭场景的人在检查器里写多行备注，卡片第二行出现备注图标，悬停或聚焦时显示全文；
 // 备注属于场景版本，复制、粘贴、版本对比都带着它。
 
 const NOTE = "每天 8 点拉取快照\n超时设为 600 秒：镜像很大，冷启动要 5 分钟";
@@ -42,7 +42,7 @@ async function writeNote(page: Page, node: string, note: string) {
 	await noteBox(page).fill(note);
 }
 
-test("写备注：卡片头部出现备注图标，没有备注的节点没有，卡片尺寸不变；保存刷新后图标还在", async ({
+test("写备注：卡片第二行出现备注图标，没有备注的节点没有，卡片尺寸不变；保存刷新后图标还在", async ({
 	page,
 	controlPlane,
 }) => {
@@ -57,9 +57,12 @@ test("写备注：卡片头部出现备注图标，没有备注的节点没有�
 
 	await expect(noteIcon(page, "fetch")).toHaveCount(1);
 	await expect(page.locator('[data-slot="note-icon"]')).toHaveCount(1);
-	// 图标在卡片头部，卡片的大小和位置都没变。
-	await expect(nodeCard(page, "fetch").locator("header")).toContainText("fetch");
-	await expect(nodeCard(page, "fetch").locator("header [data-slot='note-icon']")).toBeVisible();
+	// 图标在卡片第二行（节点 ID 那一行）的右端，卡片的大小和位置都没变。
+	const secondLine = nodeCard(page, "fetch")
+		.locator('[data-slot="base-node-title"]')
+		.locator("xpath=../following-sibling::div");
+	await expect(secondLine).toContainText("fetch");
+	await expect(secondLine.locator("[data-slot='note-icon']")).toBeVisible();
 	expect(await box(nodeCard(page, "fetch"))).toEqual(before);
 
 	// 只有空白等于没写。
@@ -134,7 +137,7 @@ test("键盘：用方向键把焦点移到节点上时显示备注，移开后�
 
 	// 点选带备注的节点：焦点在它上面，但不是键盘焦点，不弹出。
 	await page.mouse.move(5, 300);
-	await nodeCard(page, "fetch").click({ position: { x: 20, y: 60 } });
+	await nodeCard(page, "fetch").click({ position: { x: 20, y: 30 } });
 	await expect(nodeCard(page, "fetch")).toBeFocused();
 	await expect(tooltip(page)).toHaveCount(0);
 });
@@ -221,24 +224,25 @@ test("同时有警告和备注的节点：键盘聚焦到它时两个提示都�
 	expect(overlap(warnings, note)).toBe(false);
 });
 
-test("缩放：缩小到只留关键信息后图标还在，悬停显示的全文不随画布缩小", async ({
+test("缩放：缩小到只留关键信息时图标隐藏（每个写了备注的节点都有，只会添满画面），放大回来后悬停显示的全文不随画布缩小", async ({
 	page,
 	controlPlane,
 }) => {
 	const id = await createEditorScenario(controlPlane);
 	await openEditor(page, id);
 	await writeNote(page, "fetch", NOTE);
-	const normal = await box(noteIcon(page, "fetch"));
+	const lod = page.locator("[data-lod]");
 
 	for (let i = 0; i < 12; i++) await dock(page).getByRole("button", { name: "缩小" }).click();
 	await expect(page.getByRole("status", { name: "缩放比例" })).toHaveText("30%");
-	await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
-	await expect(noteIcon(page, "fetch")).toBeVisible();
-	// 缩小后图标在屏幕上的大小和 100% 时相近：它和卡片头部的文字一起语义缩放。
-	const small = await box(noteIcon(page, "fetch"));
-	expect(small.width).toBeGreaterThan(normal.width * 0.6);
-	expect(small.width).toBeLessThan(normal.width * 1.5);
+	await expect(lod).toHaveAttribute("data-lod", "true");
+	await expect(noteIcon(page, "fetch")).toBeHidden();
 
+	// 放大到刚好不再只留关键信息：画布仍是缩小的，图标回来了。
+	while ((await lod.getAttribute("data-lod")) === "true") {
+		await dock(page).getByRole("button", { name: "放大" }).click();
+	}
+	await expect(noteIcon(page, "fetch")).toBeVisible();
 	await noteIcon(page, "fetch").hover();
 	await expect(tooltip(page)).toHaveText(NOTE);
 	expect(await tooltip(page).evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
@@ -367,10 +371,18 @@ test("版本对比：列出备注的新增和修改，字段标签是「备注�
 	await expect(diff.locator("del")).toHaveText(NOTE);
 	await expect(diff.locator("ins")).toHaveText(edited);
 
-	// 只读的版本画布上，卡片同样有备注图标，悬停看全文。
+	// 只读的版本画布上，卡片同样有备注图标，悬停看全文。版本画布打开时是缩小的（只留关键信息，不显示备注图标），
+	// 放大到不再只留关键信息后图标出现。
 	const pane = page.getByRole("region", { name: "版本 3（只读）" });
 	await expect(pane.locator('[data-node-id="ping"]')).toBeVisible();
+	const icon = pane.locator('[data-node-id="fetch"] [data-slot="note-icon"]');
+	// 画布区域自己带着 data-lod。
+	await expect(pane).toHaveAttribute("data-lod", "true");
+	await expect(icon).toBeHidden();
+	while ((await pane.getAttribute("data-lod")) === "true") {
+		await pane.getByRole("button", { name: "放大" }).click();
+	}
 	await expect(pane.locator('[data-slot="note-icon"]')).toHaveCount(1);
-	await pane.locator('[data-node-id="fetch"] [data-slot="note-icon"]').hover();
+	await icon.hover();
 	await expect(tooltip(page)).toHaveText(edited);
 });

@@ -22,7 +22,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { InspectorWidthHandle, useInspectorWidth } from "../inspector/inspector-width";
 import { OnlineEditors } from "../OnlineEditors";
-import { errorSummary, type NodeRunSummary, nodeElapsed, type RunOverlay } from "./run-overlay";
+import {
+	errorSummary,
+	type NodeRunSummary,
+	nodeElapsed,
+	type RunOverlay,
+	withoutErrorClass,
+} from "./run-overlay";
 import type { CanvasRun } from "./use-canvas-run";
 
 /**
@@ -34,13 +40,16 @@ import type { CanvasRun } from "./use-canvas-run";
 type Decorations = Pick<CanvasContextValue, "decorateNode" | "decorateEdge" | "regionMeta">;
 
 /**
- * 节点卡片、连线与子流程区域的运行状态叠加。节点类型有主指标、节点开始执行过时，
- * 卡片底部的指标槽显示主指标的最新值与迷你趋势（#43），否则沿用配置摘要（关键输入）。
+ * 节点卡片、连线与子流程区域的运行状态叠加。卡片上（DESIGN-SYSTEM §2.3）：站点灯换成状态标记，第一行右侧是这次
+ * 运行里最要紧的那个数——执行中有总数的进度（282/600）、等待中的剩余时间、其余状态的耗时；第二行换成失败原因、
+ * 主指标的最新值与迷你趋势（#43）或第几次尝试，没有时沿用配置摘要；执行中、等待中的底边画进度线。
+ * `now` 是控制面时间（运行中每秒更新），剩余时间和耗时按它算。
  */
 export function useRunDecorations(
 	run: RunView | undefined,
 	overlay: RunOverlay | undefined,
 	metrics: RunMetricCatalog | undefined,
+	now: number,
 ) {
 	return useMemo((): Decorations => {
 		if (!run || !overlay) return {};
@@ -52,31 +61,66 @@ export function useRunDecorations(
 					// 子流程还没有触发（或运行结束时也没有触发）：节点没有运行记录。
 					return {
 						run: "pending",
-						status: (
-							<StatusPill kind="pending" className={ZOOM_TEXT_12}>
-								{ended ? "未执行" : "待执行"}
-							</StatusPill>
-						),
+						status: { kind: "pending", label: ended ? "未执行" : "待执行" },
 					};
 				}
-				const s = nodeStatusView(summary.node.status);
+				const { node } = summary;
+				const status = nodeStatusView(node.status);
+				const last = node.attempts.at(-1);
+				const elapsed = nodeElapsed(node, now);
 				const entry = catalogEntry(metrics, summary.chain.id, id);
-				return {
-					run: summary.state,
-					slot: entry?.primary_metric ? (
-						<NodePrimaryMetric
-							runId={run.id}
-							entry={entry}
-							status={summary.node.status}
-							variant="inline"
-						/>
-					) : undefined,
-					status: (
-						<StatusPill kind={s.kind} className={ZOOM_TEXT_12}>
-							{s.label}
-						</StatusPill>
-					),
-				};
+				const decoration: NodeDecoration = { run: summary.state, status };
+				if (elapsed !== null) {
+					decoration.figure = formatDuration(elapsed);
+					if (summary.state === "running" || summary.state === "waiting")
+						decoration.overview = (
+							<>
+								已运行 <span className="font-mono">{formatDuration(elapsed)}</span>
+							</>
+						);
+				}
+				if (summary.state === "waiting" && last?.wake_at && last.started_at) {
+					const start = Date.parse(last.started_at);
+					const wake = Date.parse(last.wake_at);
+					const left = formatDuration(wake - now);
+					decoration.figure = `剩 ${left}`;
+					decoration.overview = (
+						<>
+							剩 <span className="font-mono">{left}</span>
+						</>
+					);
+					if (wake > start) decoration.progress = (now - start) / (wake - start);
+				} else if (summary.state === "running" && last?.progress?.total) {
+					const done = `${last.progress.current}/${last.progress.total}`;
+					decoration.figure = done;
+					decoration.overview = <span className="font-mono">{done}</span>;
+					decoration.progress = last.progress.current / last.progress.total;
+				}
+				const error = node.error ?? last?.error;
+				// 失败原因在卡片和站外一行上去掉开头的异常类名，悬停提示和检查器里是全文。
+				const reason = summary.state === "failed" && error ? errorSummary(error) : "";
+				if (summary.state === "failed")
+					decoration.overview = (
+						<span title={reason || undefined} className="text-danger-fg">
+							{withoutErrorClass(reason) || "失败"}
+						</span>
+					);
+				if (reason) {
+					decoration.detail = (
+						<span title={reason} className="min-w-0 flex-1 truncate text-danger-fg">
+							{withoutErrorClass(reason)}
+						</span>
+					);
+				} else if (entry?.primary_metric) {
+					decoration.detail = (
+						<NodePrimaryMetric runId={run.id} entry={entry} status={node.status} variant="inline" />
+					);
+				} else if (summary.state === "running" && node.attempts.length > 1) {
+					decoration.detail = (
+						<span className="min-w-0 flex-1 truncate">第 {node.attempts.length} 次尝试</span>
+					);
+				}
+				return decoration;
 			},
 			decorateEdge: overlay.edge,
 			regionMeta: (entryId) => {
@@ -100,7 +144,7 @@ export function useRunDecorations(
 				);
 			},
 		};
-	}, [run, overlay, metrics]);
+	}, [run, overlay, metrics, now]);
 }
 
 /** 左上控件组里替换检查状态的部分：运行状态、运行编号、耗时。 */
@@ -205,7 +249,7 @@ export const RunStateInspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface shadow-float"
 			style={{ width }}
 		>
 			{state.status === "ready" && id !== null && node ? (

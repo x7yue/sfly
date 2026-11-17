@@ -6,6 +6,7 @@ import {
 	MapIcon,
 	MinusIcon,
 	MousePointer2Icon,
+	PanelLeftIcon,
 	PanelRightIcon,
 	PlusIcon,
 	ScanIcon,
@@ -19,7 +20,7 @@ import { viewportDuration } from "./motion";
 
 /** 悬浮控件组（原型 `.grp`）：半透明表面 + 浮起阴影。 */
 export const floatGroupClass =
-	"absolute z-10 flex items-center gap-1.5 rounded-xl border border-border-soft bg-surface/94 p-1.25 shadow-float";
+	"absolute z-10 flex items-center gap-1.5 rounded-xl border border-border-soft bg-surface p-1.25 shadow-float";
 
 export function GroupDivider() {
 	return <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />;
@@ -80,6 +81,7 @@ export function CanvasDock({
 	onFit,
 	minimap,
 	onToggleMinimap,
+	outline,
 	inspector,
 	start,
 	tools,
@@ -90,6 +92,7 @@ export function CanvasDock({
 	onFit(): void;
 	minimap: boolean;
 	onToggleMinimap(): void;
+	outline?: { open: boolean; onToggle(): void };
 	inspector?: { open: boolean; onToggle(): void };
 	start?: ReactNode;
 	tools?: ReactNode;
@@ -149,6 +152,16 @@ export function CanvasDock({
 					</>
 				)}
 				<GroupDivider />
+				{outline && (
+					<ToolButton
+						label="大纲"
+						shortcut="canvas-outline"
+						pressed={outline.open}
+						onClick={outline.onToggle}
+					>
+						<PanelLeftIcon />
+					</ToolButton>
+				)}
 				<ToolButton
 					label="小地图"
 					shortcut="canvas-minimap"

@@ -26,7 +26,7 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 				kind: "package",
 				package: "sfly-std",
 				node: "shell",
-				position: { x: 252, y: 0 },
+				position: { x: 300, y: 0 },
 				inputs: { command: "make dist" },
 			},
 			{
@@ -34,7 +34,7 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 				kind: "package",
 				package: "sfly-std",
 				node: "shell",
-				position: { x: 504, y: 0 },
+				position: { x: 600, y: 0 },
 				inputs: { command: "${{ nodes.build.outputs.stdout }}" },
 			},
 		],

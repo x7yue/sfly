@@ -20,6 +20,7 @@ const base: OrchestrationDocument = {
 	edges: [{ from: "entry", to: "wait", kind: "chain" }],
 	packages: {},
 	annotations: [],
+	sticky_notes: [],
 };
 
 describe("保存前的字段校验", () => {

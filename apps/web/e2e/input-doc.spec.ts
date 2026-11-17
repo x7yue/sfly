@@ -54,7 +54,7 @@ const document = {
 			kind: "package",
 			package: "demo-checks",
 			node: "upload",
-			position: { x: 252, y: 0 },
+			position: { x: 300, y: 0 },
 			inputs: { release_file: "a.zip" },
 		},
 	],

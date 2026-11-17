@@ -28,12 +28,14 @@ export const TERM = {
 	displayName: "显示名称",
 	note: "备注",
 	annotation: "注释框",
+	stickyNote: "便签",
 } as const;
 
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
 export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
 	title: "标题",
 	note: TERM.note,
+	color: "颜色",
 	nodes: "成员节点",
 	subflows: "成员子流程",
 };

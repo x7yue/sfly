@@ -21,7 +21,9 @@ const NAME = "创建测试用户";
 const OTHER = "查询测试用户";
 
 const titleOf = (card: Locator) => card.locator('[data-slot="base-node-title"]');
-const headerOf = (card: Locator) => card.locator('[data-slot="base-node-header"]');
+// 第二行：节点 ID、原来的标题（有显示名称时）和配置摘要。
+const captionOf = (card: Locator) =>
+	card.locator('[data-slot="base-node-title"]').locator("xpath=../following-sibling::div");
 const renameBox = (card: Locator) => card.getByRole("textbox", { name: "显示名称" });
 const undo = (page: Page) => dock(page).getByRole("button", { name: "撤销" });
 const redo = (page: Page) => dock(page).getByRole("button", { name: "重做" });
@@ -75,7 +77,7 @@ test("双击卡片标题原地改名：输入框有无障碍名称，卡片尺�
 
 	await expect(input).toHaveCount(0);
 	await expect(titleOf(fetch)).toHaveText(NAME);
-	await expect(headerOf(fetch)).toContainText("HTTP 检查");
+	await expect(captionOf(fetch)).toContainText("HTTP 检查");
 	await expect(fetch).toHaveAttribute("aria-label", `节点 fetch，HTTP 检查，${NAME}`);
 	expect(await box(fetch)).toEqual(before);
 	// 确认之后焦点回到卡片，键盘接着操作；检查器里是同一个名称。
@@ -149,7 +151,7 @@ test("选中节点后按 F2 原地改名；焦点在输入框里时 F2 不重复
 	await renameBox(nodeCard(page, "entry")).fill("每日入口");
 	await page.keyboard.press("Enter");
 	await expect(titleOf(nodeCard(page, "entry"))).toHaveText("每日入口");
-	await expect(headerOf(nodeCard(page, "entry"))).toContainText("入口");
+	await expect(captionOf(nodeCard(page, "entry"))).toContainText("入口");
 
 	await save(page, 2);
 	const nodes = (await headOf(controlPlane, id)).document.nodes as Record<string, unknown>[];
@@ -452,12 +454,12 @@ test("运行状态模式和版本查看的画布只读：双击标题、F2 都�
 	await expect(titleOf(card)).toHaveText(NAME);
 });
 
-test("快捷键面板列出 F2「重命名节点」", async ({ page, controlPlane }) => {
+test("快捷键面板列出 F2「重命名节点或注释框」", async ({ page, controlPlane }) => {
 	const id = await createEditorScenario(controlPlane);
 	await openEditor(page, id);
 	await page.keyboard.press("?");
 	const group = page
 		.getByRole("dialog", { name: "快捷键" })
 		.getByRole("region", { name: "编排画布" });
-	await expect(group.locator("div").filter({ hasText: /^重命名节点F2$/ })).toBeVisible();
+	await expect(group.locator("div").filter({ hasText: /^重命名节点或注释框F2$/ })).toBeVisible();
 });

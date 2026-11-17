@@ -1,5 +1,7 @@
 import type { AnnotationChange, DocumentDiff, FieldChange } from "@sfly/orchestration";
 import { isEmptyDiff } from "@sfly/orchestration";
+import type { AnnotationColor } from "@sfly/schema";
+import { ANNOTATION_COLOR_LABEL } from "#/components/canvas/AnnotationColorPicker";
 import { KIND_META } from "#/components/canvas/node-display";
 import { ANNOTATION_FIELD_LABEL, TERM } from "#/lib/copy";
 
@@ -19,7 +21,7 @@ export function DocumentDiffView({
 	if (isEmptyDiff(diff)) {
 		return <p className="m-0 text-sm text-fg-3">两边内容相同。</p>;
 	}
-	const { nodes, annotations } = diff;
+	const { nodes, annotations, stickyNotes } = diff;
 	return (
 		<div className="flex flex-col gap-3 text-sm">
 			<p className="m-0 text-xs text-fg-3">
@@ -116,12 +118,54 @@ export function DocumentDiffView({
 					))}
 				</DiffSection>
 			)}
-			{diff.moved.length > 0 && (
+			{stickyNotes.added.length + stickyNotes.removed.length + stickyNotes.changed.length > 0 && (
+				<DiffSection title={TERM.stickyNote}>
+					{stickyNotes.added.map((s) => (
+						<Row key={`+${s.id}`}>
+							<Ins>
+								+ {s.label}（{s.id}）
+							</Ins>
+						</Row>
+					))}
+					{stickyNotes.removed.map((s) => (
+						<Row key={`-${s.id}`}>
+							<Del>
+								− {s.label}（{s.id}）
+							</Del>
+						</Row>
+					))}
+					{stickyNotes.changed.map((s) => (
+						<div key={`~${s.id}`}>
+							<Row>
+								<span className="text-fg-1">{s.label}</span>
+								<span className="font-mono text-fg-3">（{s.id}）</span>
+							</Row>
+							{s.changes.map((c) => (
+								<ChangeRow
+									key={c.path}
+									change={stickyChange(c)}
+									label={STICKY_FIELD_LABEL[c.path] ?? c.path}
+									indent
+								/>
+							))}
+						</div>
+					))}
+				</DiffSection>
+			)}
+			{diff.moved.length + stickyNotes.moved.length > 0 && (
 				<DiffSection title="布局">
-					<Row>
-						<span className="text-fg-2">移动了：</span>
-						<span className="font-mono">{diff.moved.join(", ")}</span>
-					</Row>
+					{diff.moved.length > 0 && (
+						<Row>
+							<span className="text-fg-2">移动了：</span>
+							<span className="font-mono">{diff.moved.join(", ")}</span>
+						</Row>
+					)}
+					{stickyNotes.moved.length > 0 && (
+						<Row>
+							<span className="text-fg-2">移动或改了大小的便签：</span>
+							<span className="font-mono">{stickyNotes.moved.join(", ")}</span>
+						</Row>
+					)}
 				</DiffSection>
 			)}
 		</div>
@@ -173,12 +217,25 @@ function ChangeRow({
 	);
 }
 
-/** 成员列表写成「a、b」，没有成员写「（无）」。 */
+/** 成员列表写成「a、b」，没有成员写「（无）」；颜色写颜色名，不写颜色的是「灰」。 */
 function annotationChange(change: AnnotationChange["changes"][number]): FieldChange {
 	const members = (value: unknown) => (Array.isArray(value) ? value.join("、") || "（无）" : value);
+	const color = (value: unknown) =>
+		ANNOTATION_COLOR_LABEL[(value ?? "gray") as AnnotationColor] ?? value;
+	if (change.path === "color")
+		return { ...change, before: color(change.before), after: color(change.after) };
 	return change.path === "nodes" || change.path === "subflows"
 		? { ...change, before: members(change.before), after: members(change.after) }
 		: change;
+}
+
+/** 便签的字段名；颜色写颜色名，不写颜色的是「黄」。 */
+const STICKY_FIELD_LABEL: Record<string, string> = { title: "标题", text: "正文", color: "颜色" };
+function stickyChange(change: FieldChange): FieldChange {
+	if (change.path !== "color") return change;
+	const color = (value: unknown) =>
+		ANNOTATION_COLOR_LABEL[(value ?? "yellow") as AnnotationColor] ?? value;
+	return { ...change, before: color(change.before), after: color(change.after) };
 }
 
 const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.label ?? kind;

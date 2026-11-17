@@ -314,6 +314,7 @@ describe("sfly scenario list / show → 控制面", () => {
 				],
 				unlinked: [{ id: "loose", kind: "timer", always: false, display_name: "夜间触发" }],
 				annotations: [],
+				sticky_notes: [],
 			});
 		});
 

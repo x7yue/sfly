@@ -9,6 +9,7 @@ export interface TestAnnotation {
 	id: string;
 	title: string;
 	note?: string;
+	color?: string;
 	nodes?: string[];
 	subflows?: string[];
 }
@@ -26,6 +27,9 @@ export const annotationTitleBox = (page: Page) =>
 	inspector(page).getByRole("textbox", { name: "标题" });
 export const annotationNoteBox = (page: Page) =>
 	inspector(page).getByRole("textbox", { name: "备注" });
+/** 检查器里注释框的颜色选择（一组按钮，按颜色名找）。 */
+export const annotationColors = (page: Page) =>
+	inspector(page).getByRole("group", { name: "颜色" });
 /** 检查器里注释框的成员列表。 */
 export const memberList = (page: Page) => inspector(page).getByRole("list", { name: "成员" });
 

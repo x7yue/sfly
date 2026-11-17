@@ -45,7 +45,7 @@ const agentDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "probe",
-			position: { x: 252, y: 0 },
+			position: { x: 300, y: 0 },
 			inputs: {},
 		},
 		{
@@ -53,7 +53,7 @@ const agentDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "clean",
-			position: { x: 504, y: 0 },
+			position: { x: 600, y: 0 },
 			inputs: { source: "ghost" },
 		},
 	],

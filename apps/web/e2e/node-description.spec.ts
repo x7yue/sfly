@@ -85,7 +85,7 @@ test("检查器「说明」页：按纯文本显示节点类型说明的全文�
 				kind: "package",
 				package: "demo-checks",
 				node: "http_check",
-				position: { x: 252, y: 0 },
+				position: { x: 300, y: 0 },
 				inputs: { url: "https://example.test/snap" },
 			},
 			{
@@ -93,7 +93,7 @@ test("检查器「说明」页：按纯文本显示节点类型说明的全文�
 				kind: "package",
 				package: "demo-checks",
 				node: "ping",
-				position: { x: 504, y: 0 },
+				position: { x: 600, y: 0 },
 				inputs: { host: "h" },
 			},
 		],

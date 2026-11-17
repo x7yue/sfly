@@ -177,7 +177,9 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 			expect(json.nodes[1]).not.toHaveProperty("note");
 
 			const plain = await createScenario("空白场景 JSON", plainDocument);
-			expect((await cli("scenario", "show", plain, "--json")).stdout).not.toContain("note");
+			const plainJson = JSON.parse((await cli("scenario", "show", plain, "--json")).stdout);
+			expect(JSON.stringify(plainJson.nodes)).not.toContain("note");
+			expect(plainJson).not.toHaveProperty("entry_note");
 		});
 	});
 

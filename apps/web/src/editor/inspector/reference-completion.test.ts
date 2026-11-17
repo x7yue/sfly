@@ -41,6 +41,7 @@ const doc: OrchestrationDocument = {
 	],
 	packages: { demo: "1.0.0" },
 	annotations: [],
+	sticky_notes: [],
 } as OrchestrationDocument;
 
 const io = (outputs: Record<string, { type: string }>) => ({
