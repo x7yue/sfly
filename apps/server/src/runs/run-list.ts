@@ -121,9 +121,7 @@ function chainFailures({ chains, failures }: RunRead): RunListItem["failures"] {
 	});
 }
 
-const iso = (d: Date | null) => (d ? d.toISOString() : null);
-
-/** 一份编排的运行，按开始时间从新到旧（最多 limit 条）。 */
+/** 一个场景的运行，按开始时间从新到旧（最多 limit 条）。 */
 export async function listRuns(
 	db: Db,
 	orchestrationId: string,
@@ -146,6 +144,6 @@ export async function listRuns(
 		triggered_via: run.triggeredVia,
 		preset: runListPreset(run),
 		started_at: run.startedAt.toISOString(),
-		ended_at: iso(run.endedAt),
+		ended_at: run.endedAt ? run.endedAt.toISOString() : null,
 	}));
 }

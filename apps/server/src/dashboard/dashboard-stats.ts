@@ -157,9 +157,7 @@ function firstFailure(read: RunReadFull): DashboardRunFailure | null {
 		node_id: node.node_id,
 		display_name: node.display_name,
 		attempt: attempt?.attempt ?? 0,
-		error: attempt?.errorKind
-			? { kind: attempt.errorKind, message: attempt.errorMessage ?? "" }
-			: null,
+		error: attempt?.error ?? null,
 	};
 }
 

@@ -17,7 +17,6 @@ import type { Db, Tx } from "../db/database.js";
 import {
 	type ChainStatus,
 	chainInstances,
-	type ErrorKind,
 	feishuMessages,
 	orchestrations,
 	orchestrationVersions,
@@ -68,7 +67,9 @@ export interface RunAttempt {
 export interface RunAttemptDetail extends RunAttempt {
 	inputs: Record<string, unknown> | null;
 	outputs: Record<string, unknown> | null;
-	errorKind: ErrorKind | null;
+	/** 错误（错误类型和打码后的错误信息），同运行视图里尝试的 `error`；没有错误类型时为 null。 */
+	error: AttemptView["error"];
+	/** 打码后的错误信息（关注项按它判断失败和重试的原因）。 */
 	errorMessage: string | null;
 	logIssues: TaskLogIssues | null;
 	startClockOffset: AttemptView["start_clock_offset"];
@@ -130,7 +131,7 @@ export interface RunReadFull extends RunRead<RunAttemptDetail> {
 }
 
 /**
- * 读一批运行，按运行 ID 返回（不存在或不是 UUID 的运行不在结果里）。`db` 可以是事务：运行通知在写入运行最终状态的事务里读，
+ * 读一批运行，按传入的运行 ID 原样作键返回（UUID 不分大小写；不存在或不是 UUID 的运行不在结果里）。`db` 可以是事务：运行通知在写入运行最终状态的事务里读，
  * 要看到这个事务里刚写下的节点状态；所有查询一个接一个地走 `db`，不从连接池另取连接。
  */
 export async function readRuns(
@@ -148,7 +149,23 @@ export async function readRuns(
 	runIds: readonly string[],
 	detail: RunReadDetail = "board",
 ): Promise<Map<string, RunRead | RunReadFull>> {
-	const ids = [...new Set(runIds)].filter(isUuid);
+	const asked = runIds.filter(isUuid);
+	// 数据库里的 UUID 是小写：按小写读，再按传入的写法作键，调用方用原来的 ID 就取得到。
+	const reads = await readByIds(db, [...new Set(asked.map((id) => id.toLowerCase()))], detail);
+	return new Map(
+		asked.flatMap((id) => {
+			const read = reads.get(id.toLowerCase());
+			return read ? [[id, read] as const] : [];
+		}),
+	);
+}
+
+/** {@link readRuns} 的读取：`ids` 是小写、去重后的 UUID，结果按数据库里的运行 ID 作键。 */
+async function readByIds(
+	db: Db | Tx,
+	ids: readonly string[],
+	detail: RunReadDetail,
+): Promise<Map<string, RunRead | RunReadFull>> {
 	if (ids.length === 0) return new Map();
 	const rows = await db
 		.select({
@@ -295,7 +312,9 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 		...attemptOf(row, mask),
 		inputs: mask.deep(row.inputs),
 		outputs: mask.deep(row.outputs),
-		errorKind: row.errorKind,
+		error: row.errorKind
+			? { kind: row.errorKind, message: mask.text(row.errorMessage ?? "") }
+			: null,
 		errorMessage: row.errorMessage === null ? null : mask.text(row.errorMessage),
 		logIssues: row.logIssues,
 		startClockOffset: clockOffsetView(row.startClockOffsetMs, row.startClockOffsetMeasuredAt),
@@ -518,7 +537,7 @@ function attemptView(a: RunAttemptDetail): AttemptView {
 		agent: a.agent,
 		inputs: a.inputs,
 		outputs: a.outputs,
-		error: a.errorKind ? { kind: a.errorKind, message: a.errorMessage ?? "" } : null,
+		error: a.error,
 		queued_at: a.queuedAt.toISOString(),
 		started_at: iso(a.startedAt),
 		ended_at: iso(a.endedAt),
