@@ -72,13 +72,13 @@ test("Ctrl+D 与「创建副本」：参数相同、ID 不同、不带连线，�
 	await openEditor(page, id, "sub_ping");
 	const undo = dock(page).getByRole("button", { name: "撤销" });
 
-	// Ctrl+D：副本从原节点的位置往右下错开到不压住任何节点的地方，选中并聚焦。
+	// Ctrl+D：副本从原节点的位置往右下错开（步长 32，卡片高 60，错两步）到不压住任何节点的地方，选中并聚焦。
 	await nodeCard(page, "fetch").click();
 	await page.keyboard.press("Control+d");
 	await expect(nodeCard(page, "http_check_1")).toHaveCount(0);
 	await expect(nodeCard(page, "fetch_1")).toBeFocused();
 	await expect(nodeCard(page, "fetch_1")).toHaveAttribute("aria-pressed", "true");
-	expect(await nodePosition(page, "fetch_1")).toEqual({ x: 380, y: 128 });
+	expect(await nodePosition(page, "fetch_1")).toEqual({ x: 364, y: 64 });
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL_EDGES);
 	await expect(inspector(page).getByRole("combobox", { name: "输入 url" })).toHaveText(
 		"https://example.test/snap",
@@ -98,7 +98,7 @@ test("Ctrl+D 与「创建副本」：参数相同、ID 不同、不带连线，�
 		"重命名F2",
 		"复制节点 ID",
 		"复制输出引用",
-		"添加注释框",
+		"添加注释框CtrlG",
 		"加入注释框没有可以加入的注释框",
 		"移出注释框这个节点不在注释框里",
 		"断开入线",
@@ -262,7 +262,7 @@ test("右键粘贴落在右键位置；目标场景已锁定别的版本时用�
 				kind: "package",
 				package: "demo-checks",
 				node: "ping",
-				position: { x: 252, y: 0 },
+				position: { x: 300, y: 0 },
 				inputs: { host: "localhost" },
 			},
 		],

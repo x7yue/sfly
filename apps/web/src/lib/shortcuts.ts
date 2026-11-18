@@ -78,11 +78,12 @@ export const SHORTCUTS = [
 		keys: "Tab",
 		displayOnly: true,
 	},
-	// 选中的是节点时删除节点（editor/ScenarioEditor.tsx 的 deleteNodes，多选时是整组），是连线时断开连线（FlowCanvas）。
+	// 选中的是节点时删除节点（editor/ScenarioEditor.tsx 的 deleteNodes，多选时是整组），是连线时断开连线，
+	// 是便签时删除便签（FlowCanvas）。
 	{
 		id: "canvas-delete",
 		group: "编排画布",
-		label: "删除节点 / 断开连线",
+		label: "删除节点 / 断开连线 / 删除便签",
 		keys: "Delete",
 		displayOnly: true,
 	},
@@ -93,7 +94,17 @@ export const SHORTCUTS = [
 	{ id: "canvas-duplicate", group: "编排画布", label: "创建副本", keys: "Ctrl+D" },
 	// 原地改显示名称（editor/ScenarioEditor.tsx）：选中的恰好是一个可以起显示名称的节点时生效；双击卡片标题、
 	// 节点菜单的「重命名」同样进入原地编辑（components/canvas/NodeTitleEditor.tsx）。
-	{ id: "canvas-rename", group: "编排画布", label: "重命名节点", keys: "F2" },
+	// 选中注释框时 F2 原地改它的标题（双击框外的标题同样可以，components/canvas/AnnotationTitleEditor.tsx）。
+	{ id: "canvas-rename", group: "编排画布", label: "重命名节点或注释框", keys: "F2" },
+	// 注释框（editor/ScenarioEditor.tsx）：用选中的节点新建（和节点菜单的「添加注释框」一样），删除选中的注释框（成员节点不动）。
+	// Ctrl+G 本来是浏览器的「查找下一个」，在画布上让给新建注释框。
+	{ id: "canvas-annotate", group: "编排画布", label: "用选中的节点新建注释框", keys: "Ctrl+G" },
+	{
+		id: "canvas-annotation-delete",
+		group: "编排画布",
+		label: "删除选中的注释框",
+		keys: "Ctrl+Shift+G",
+	},
 	// 节点菜单（components/canvas/FlowCanvas.tsx）：焦点在节点卡片上时打开，菜单键同样可以。
 	{
 		id: "canvas-node-menu",
@@ -107,6 +118,7 @@ export const SHORTCUTS = [
 	{ id: "canvas-follow", group: "编排画布", label: ACTION.followExecution, keys: "F" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },
+	{ id: "canvas-outline", group: "编排画布", label: "大纲", keys: "O" },
 	{ id: "canvas-minimap", group: "编排画布", label: "小地图", keys: "M" },
 	{ id: "canvas-inspector", group: "编排画布", label: "检查器", keys: "I" },
 	{ id: "canvas-chain", group: "编排画布", label: "沿链切换节点", keys: "←/→", displayOnly: true },

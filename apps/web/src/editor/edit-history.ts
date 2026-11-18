@@ -31,7 +31,7 @@ export function useEditHistory(
 	apply: { nodes(changes: NodeChange<SfNode>[]): void; edges(changes: EdgeChange<SfEdge>[]): void },
 ) {
 	const [stack] = useState(() => new UndoStack<EditSnapshot>());
-	const [, setVersion] = useState(0);
+	const [version, setVersion] = useState(0);
 	const latest = useRef(state);
 	latest.current = state;
 	const handlers = useRef({ set, apply });
@@ -97,6 +97,8 @@ export function useEditHistory(
 		checkpoint,
 		undo,
 		redo,
+		/** 每记一步、撤销、重做都会变：用来判断某次修改之后有没有别的修改。 */
+		version,
 		canUndo: stack.canUndo,
 		canRedo: stack.canRedo,
 		onNodesChange,

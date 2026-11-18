@@ -54,8 +54,8 @@ export function NodeTitleEditor({
 			aria-label={`节点 ${id} 的显示名称`}
 			// nodrag / nopan / nowheel：在输入框里按住拖选文字不拖动节点，双击不触发画布的双击缩放。
 			className={cn(
-				"nodrag nopan nowheel mt-1.5 mb-1.25 -mx-1 block h-[1.6em] w-[calc(100%+0.5rem)] min-w-0 rounded-sm border-0 bg-sunk px-1 font-semibold text-fg-1 outline-hidden inset-ring-1 inset-ring-signal placeholder:font-normal placeholder:text-fg-3",
-				"leading-[1.6]",
+				"nodrag nopan nowheel -ml-1 block h-[1.5em] min-w-0 flex-1 rounded-sm border-0 bg-sunk px-1 font-semibold text-fg-1 outline-hidden inset-ring-1 inset-ring-signal placeholder:font-normal placeholder:text-fg-3",
+				"leading-[1.45]",
 				ZOOM_TEXT_TITLE,
 			)}
 			onChange={(e) => {

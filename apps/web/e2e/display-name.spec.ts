@@ -21,7 +21,9 @@ const LONG = "一二三四五六七八九十".repeat(4);
 
 const nameBox = (page: Page) => inspector(page).getByRole("textbox", { name: "显示名称" });
 const titleOf = (card: Locator) => card.locator('[data-slot="base-node-title"]');
-const headerOf = (card: Locator) => card.locator('[data-slot="base-node-header"]');
+// 第二行：节点 ID、原来的标题（有显示名称时）和配置摘要。
+const captionOf = (card: Locator) =>
+	card.locator('[data-slot="base-node-title"]').locator("xpath=../following-sibling::div");
 
 async function save(page: Page, version: number) {
 	await page.getByRole("button", { name: /保存/ }).click();
@@ -51,8 +53,8 @@ test("在检查器顶部填显示名称：卡片标题是显示名称，原标�
 
 	await nameBox(page).fill(`  ${NAME}  `);
 	await expect(titleOf(fetch)).toHaveText(NAME);
-	await expect(headerOf(fetch)).toContainText("fetch");
-	await expect(headerOf(fetch)).toContainText("HTTP 检查");
+	await expect(captionOf(fetch)).toContainText("fetch");
+	await expect(captionOf(fetch)).toContainText("HTTP 检查");
 	await expect(fetch).toHaveAttribute("aria-label", `节点 fetch，HTTP 检查，${NAME}`);
 	await expect(inspector(page).getByRole("heading", { level: 2 })).toHaveText(NAME);
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
@@ -70,7 +72,7 @@ test("在检查器顶部填显示名称：卡片标题是显示名称，原标�
 	await nodeCard(page, "dispatch").click();
 	await nameBox(page).fill("派发子流程");
 	await expect(titleOf(nodeCard(page, "dispatch"))).toHaveText("派发子流程");
-	await expect(headerOf(nodeCard(page, "dispatch"))).toContainText("异步任务");
+	await expect(captionOf(nodeCard(page, "dispatch"))).toContainText("异步任务");
 	await nodeCard(page, "fetch").click();
 
 	await save(page, 2);
@@ -81,7 +83,7 @@ test("在检查器顶部填显示名称：卡片标题是显示名称，原标�
 
 	await page.reload();
 	await expect(titleOf(nodeCard(page, "fetch"))).toHaveText(NAME);
-	await expect(headerOf(nodeCard(page, "fetch"))).toContainText("HTTP 检查");
+	await expect(captionOf(nodeCard(page, "fetch"))).toContainText("HTTP 检查");
 	await expect(titleOf(nodeCard(page, "ping"))).toHaveText("ping");
 	await expect(page.getByText("有未保存的修改")).toHaveCount(0);
 });
@@ -217,7 +219,7 @@ test("复制、粘贴、创建副本时带上显示名称，不加后缀", async
 	const copy = nodeCard(page, "fetch_1");
 	await expect(copy).toBeFocused();
 	await expect(titleOf(copy)).toHaveText(NAME);
-	await expect(headerOf(copy)).toContainText("HTTP 检查");
+	await expect(captionOf(copy)).toContainText("HTTP 检查");
 
 	await nodeCard(page, "fetch").click();
 	await page.keyboard.press("ControlOrMeta+c");
@@ -253,7 +255,7 @@ test("版本对比：列出显示名称的变化，字段标签是「显示名�
 	await expect(changes).toContainText("查询测试用户");
 	const newer = page.getByRole("region", { name: "版本 3（只读）" });
 	await expect(titleOf(newer.locator('[data-node-id="fetch"]'))).toHaveText("查询测试用户");
-	await expect(headerOf(newer.locator('[data-node-id="fetch"]'))).toContainText("HTTP 检查");
+	await expect(captionOf(newer.locator('[data-node-id="fetch"]'))).toContainText("HTTP 检查");
 	const older = page.getByRole("region", { name: "版本 2（只读）" });
 	await expect(titleOf(older.locator('[data-node-id="fetch"]'))).toHaveText(NAME);
 
@@ -326,7 +328,7 @@ test("引用选择器（非字符串输入旁的「插入引用」）也写出�
 				package: "demo-checks",
 				node: "probe",
 				display_name: NAME,
-				position: { x: 252, y: 0 },
+				position: { x: 300, y: 0 },
 				inputs: {},
 			},
 			{
@@ -334,7 +336,7 @@ test("引用选择器（非字符串输入旁的「插入引用」）也写出�
 				kind: "package",
 				package: "demo-checks",
 				node: "typed",
-				position: { x: 504, y: 0 },
+				position: { x: 600, y: 0 },
 				inputs: {},
 			},
 		],

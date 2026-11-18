@@ -46,9 +46,18 @@ export function runOverlay(run: RunView): RunOverlay {
 	return {
 		node: (id) => nodes.get(id),
 		edge: ({ from, to, kind }) => {
-			if (kind !== "chain" || nodes.get(from)?.state !== "done") return undefined;
+			if (kind === "dispatch") {
+				// 调度连线：子流程还有实例在运行时是青色虚线，结束了（或没有触发）就变灰，青色只留给正在发生的调度。
+				return chains.some((c) => c.chain_id === to && c.status === "running") ? "live" : "ended";
+			}
+			// 线路图：走过的路段变亮，还没走到的暗下去，进入执行中 / 失败 / 等待中节点的那一段着状态色。
+			if (nodes.get(from)?.state !== "done") return "ahead";
 			const target = nodes.get(to)?.state;
-			return target === "running" ? "live" : target === "failed" ? "failed" : undefined;
+			if (target === "running") return "live";
+			if (target === "failed") return "failed";
+			if (target === "waiting") return "waiting";
+			if (target === "done" || target === "stopped") return "travelled";
+			return "ahead";
 		},
 		instances: (chainId) => chains.filter((c) => c.chain_id === chainId),
 		running: [...nodes]
@@ -106,3 +115,10 @@ export function nodeElapsed(node: NodeRunView, now: number): number | null {
 	const end = last?.ended_at ? Date.parse(last.ended_at) : now;
 	return Math.max(0, end - Math.min(...started));
 }
+
+/**
+ * 卡片上的失败原因去掉开头的异常类名（`AssertionError: 漏拦 3 笔` → `漏拦 3 笔`）：卡片和站外一行只放得下
+ * 十来个字，类名会占掉最有用的那一段；带类名的原文在悬停提示和检查器里。只有类名、或者类名不在开头时保留原文。
+ */
+export const withoutErrorClass = (reason: string) =>
+	reason.replace(/^[A-Za-z_][\w.]*(?:Error|Exception)\s*[:：]\s*(?=\S)/, "");

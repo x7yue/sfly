@@ -42,6 +42,7 @@ interface Annotation {
 	id: string;
 	title: string;
 	note?: string;
+	color?: string;
 	nodes: string[];
 	subflows: string[];
 }
@@ -51,6 +52,7 @@ const annotations: Annotation[] = [
 		id: "annotation_1",
 		title: "发布与灰度",
 		note: "先发布到测试环境\n\n再等灰度生效",
+		color: "blue",
 		nodes: ["deploy", "pause"],
 		subflows: [],
 	},
@@ -195,13 +197,14 @@ describe("sfly scenario show / push：注释框 → 控制面", () => {
 			expect((await cli("scenario", "show", plain)).stdout).not.toContain("注释框");
 		});
 
-		it("--json：annotations 一直在（没有时是空数组），每项是文档里的 id、title、note（有才有）、nodes、subflows", async () => {
+		it("--json：annotations 一直在（没有时是空数组），每项是文档里的 id、title、note 和 color（有才有）、nodes、subflows", async () => {
 			const id = await createScenario("有注释框 JSON", { ...baseDocument, annotations });
 			const result = await cli("scenario", "show", id, "--json");
 			expect(result.code, result.stderr).toBe(0);
 			const json = JSON.parse(result.stdout) as { annotations: Annotation[] };
 			expect(json.annotations).toEqual(annotations);
 			expect(json.annotations[1]).not.toHaveProperty("note");
+			expect(json.annotations[1]).not.toHaveProperty("color");
 
 			const plain = await createScenario("空白场景 JSON", baseDocument);
 			const empty = JSON.parse((await cli("scenario", "show", plain, "--json")).stdout);

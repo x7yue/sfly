@@ -99,8 +99,8 @@ test("机器人没有登记时字段下有警告；改选已登记的机器人�
 		"压测通知",
 		scenario([
 			// 前面有一个带输出的节点：机器人字段也不能引用它的输出。
-			{ id: "wait", kind: "sleep", position: { x: 252, y: 0 }, duration: "5s" },
-			{ id: "notify", kind: "feishu_notify", position: { x: 504, y: 0 }, bot: "ghost", text: "hi" },
+			{ id: "wait", kind: "sleep", position: { x: 300, y: 0 }, duration: "5s" },
+			{ id: "notify", kind: "feishu_notify", position: { x: 600, y: 0 }, bot: "ghost", text: "hi" },
 		]),
 	);
 	await page.goto(`/orchestrations/${id}`);
@@ -140,7 +140,7 @@ test("飞书通知节点可以设为 always；节点卡片上有 always 标签",
 	const id = await createScenario(
 		controlPlane,
 		"压测通知",
-		scenario([{ id: "notify", kind: "feishu_notify", position: { x: 252, y: 0 }, text: "收尾" }]),
+		scenario([{ id: "notify", kind: "feishu_notify", position: { x: 300, y: 0 }, text: "收尾" }]),
 	);
 	await page.goto(`/orchestrations/${id}`);
 	await nodeCard(page, "notify").click();

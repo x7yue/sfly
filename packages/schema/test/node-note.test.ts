@@ -32,10 +32,10 @@ describe("节点的备注 note", () => {
 
 	it("没写、空串、只有空白：保存下来的文档里没有这个字段", () => {
 		const plain = OrchestrationDocument.parse({ nodes: KINDS });
-		expect(JSON.stringify(plain)).not.toContain("note");
+		expect(JSON.stringify(plain.nodes)).not.toContain("note");
 		for (const blank of ["", "  \n\t　"]) {
 			const parsed = OrchestrationDocument.parse(documentWith(blank));
-			expect(JSON.stringify(parsed), JSON.stringify(blank)).not.toContain("note");
+			expect(JSON.stringify(parsed.nodes), JSON.stringify(blank)).not.toContain("note");
 		}
 	});
 

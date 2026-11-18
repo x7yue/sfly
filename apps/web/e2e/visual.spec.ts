@@ -1261,19 +1261,20 @@ test.describe("编排画布：注释框", () => {
 			controlPlane,
 			"带注释框的场景",
 			annotated([
-				{
-					id: "annotation_1",
-					title: "派发对账",
-					note: "异步任务和它调度的子流程入口一起看",
-					nodes: ["dispatch", "sub_entry"],
-				},
+				{ id: "annotation_1", title: "派发对账", nodes: ["dispatch", "sub_entry"] },
 				{
 					id: "annotation_2",
 					title: "收尾：通知和对账子流程",
 					nodes: ["ping"],
 					subflows: ["sub_entry"],
 				},
-				{ id: "annotation_3", title: "拉取快照", nodes: ["entry", "fetch"] },
+				// 备注放在不和别的框交叠的框上：交叠的框，后画的那个的标题会压在前一个框的备注上（#337 同一类）。
+				{
+					id: "annotation_3",
+					title: "拉取快照",
+					note: "先拉取当天的快照，再派发对账",
+					nodes: ["entry", "fetch"],
+				},
 			]),
 		);
 		await page.goto(`/orchestrations/${id}`);
@@ -1282,9 +1283,19 @@ test.describe("编排画布：注释框", () => {
 	});
 
 	test("注释框和子流程区域交叠，选中其中一个", async ({ page }) => {
-		await annotationBand(page, "派发对账").click();
+		await annotationBand(page, "收尾：通知和对账子流程").click();
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-annotations.png");
+	});
+
+	test("左侧的大纲：按注释框分组，小地图上画出注释框", async ({ page }) => {
+		await page
+			.getByRole("toolbar", { name: "画布工具" })
+			.getByRole("button", { name: "大纲" })
+			.click();
+		await expect(page.getByRole("complementary", { name: "大纲" })).toBeVisible();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-outline.png");
 	});
 
 	test("缩小后的标题", async ({ page }) => {
@@ -1293,6 +1304,34 @@ test.describe("编排画布：注释框", () => {
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-annotations-zoomed-out.png");
 	});
+});
+
+test("编排画布：便签（选中一张，浮出工具条）", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "带便签的场景", {
+		...annotated([{ id: "annotation_1", title: "拉取快照", nodes: ["entry", "fetch"] }]),
+		sticky_notes: [
+			{
+				id: "sticky_1",
+				title: "跑之前确认",
+				text: "- Agent 都在线\n- 升级包已放到共享目录",
+				position: { x: 0, y: -260 },
+			},
+			{
+				id: "sticky_2",
+				text: "已知问题：重启偶尔超过 5 分钟",
+				color: "pink",
+				position: { x: 320, y: -260 },
+			},
+		],
+	});
+	await page.goto(`/orchestrations/${id}`);
+	await expect(nodeCard(page, "sub_ping")).toBeVisible();
+	await page.locator('[data-sticky-note="sticky_1"] > div').last().click();
+	await expect(page.getByRole("toolbar", { name: "便签的工具条" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-sticky-notes.png");
 });
 
 test.describe("编排画布：注释框的成员", () => {
@@ -1319,6 +1358,29 @@ test.describe("编排画布：注释框的成员", () => {
 	test("悬停注释框的标题带（没有选中）", async ({ page }) => {
 		await annotationBand(page, "首尾两步").hover();
 		await expect(page).toHaveScreenshot("editor-annotation-members-hovered.png");
+	});
+
+	test("拖动夹在框里的非成员：框高亮，卡片下面写着松手会加入", async ({ page }) => {
+		const card = await nodeCard(page, "dispatch").boundingBox();
+		if (!card) throw new Error("没有 dispatch 的卡片");
+		await page.mouse.move(card.x + card.width / 2, card.y + card.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(card.x + card.width / 2 + 24, card.y + card.height / 2 + 30, {
+			steps: 6,
+		});
+		await expect(
+			page.getByRole("status").filter({ hasText: "松手加入「首尾两步」" }),
+		).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-annotation-drop.png");
+		await page.mouse.up();
+	});
+
+	test("多选节点：上方的工具条", async ({ page }) => {
+		await nodeCard(page, "entry").click();
+		await nodeCard(page, "dispatch").click({ modifiers: ["ControlOrMeta"] });
+		await expect(page.getByRole("toolbar", { name: "选中节点的工具条" })).toBeVisible();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-selection-toolbar.png");
 	});
 });
 

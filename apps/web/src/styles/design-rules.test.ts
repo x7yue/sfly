@@ -1,12 +1,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { ANNOTATION_COLORS } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { STATUS, type StatusKind } from "#/components/status";
 import { buttonVariants } from "#/components/ui/button";
 
 /**
  * docs/DESIGN-SYSTEM.md 中能静态检查的规则：组件代码里不写色值（只有 styles/tokens.css 写），
- * 圆角只用 4 / 6 / 8 / 12 档（rounded-sm / md / lg / xl，另有 rounded-full；小于 12px 的指示元素用 2px）。
+ * 圆角只用 4 / 6 / 8 / 12 档（rounded-sm / md / lg / xl，另有 rounded-full；小于 12px 的指示元素用 2px），画布上的注释框用 20（rounded-2xl）。
  */
 const root = join(import.meta.dirname, "..");
 
@@ -136,6 +137,12 @@ describe("状态语法（components/status 的 STATUS）", () => {
 		expect(kinds.filter((k) => STATUS[k].pulse)).toEqual(["running"]);
 	});
 
+	it("画布上要盯的状态（站点灯放大、描边着色）就是满高的那几种", () => {
+		expect(kinds.filter((k) => STATUS[k].canvas.lamp === "watch")).toEqual(
+			kinds.filter((k) => STATUS[k].area.tall),
+		);
+	});
+
 	it("状态文字在所有表面上 ≥ 4.5:1，标记与色块的颜色 ≥ 3:1", () => {
 		const low = kinds.flatMap((k) => {
 			const text = token(STATUS[k].text.split(" "), /^text-(.+)$/) ?? "";
@@ -146,6 +153,47 @@ describe("状态语法（components/status 的 STATUS）", () => {
 			]);
 		});
 		expect(low).toEqual([]);
+	});
+
+	it("注释框的六种颜色（ADR 0025）：胶囊、注释框的备注和便签上的文字 ≥ 4.5:1，色块 ≥ 3:1；框里三层明暗是注释框的备注 > 底板 > 节点卡片", () => {
+		const problems = ANNOTATION_COLORS.flatMap((color) => {
+			const c = (role: string) => annotationRgb(color, role);
+			const card = rgbOf("--canvas-node-bg");
+			const panel = c("panel");
+			const note = c("note");
+			const checks: [string, number, number][] = [
+				["chip-fg on chip", ratio(c("chip-fg"), c("chip")), 4.5],
+				["chip-fg on chip-hover", ratio(c("chip-fg"), c("chip-hover")), 4.5],
+				["note-fg on note", ratio(c("note-fg"), note), 4.5],
+				["swatch on surface", ratio(c("swatch"), rgbOf("--surface")), 3],
+				["swatch on raised", ratio(c("swatch"), rgbOf("--raised")), 3],
+				[
+					"note brighter than panel",
+					luminance(note) > luminance(panel) ? ratio(note, panel) : 0,
+					1.15,
+				],
+				[
+					"panel brighter than card",
+					luminance(panel) > luminance(card) ? ratio(panel, card) : 0,
+					1.15,
+				],
+				["card brighter than canvas", ratio(card, rgbOf("--canvas-bg")), 1.1],
+				["sticky-fg on sticky", ratio(c("sticky-fg"), c("sticky")), 4.5],
+				["sticky-fg-2 on sticky", ratio(c("sticky-fg-2"), c("sticky")), 4.5],
+				["sticky brighter than canvas", ratio(c("sticky"), rgbOf("--canvas-bg")), 1.2],
+				// 框里下沉的节点卡片、框里子流程区域的标题行用的次要文字：底板上，和底板叠上子流程区域的淡紫上。
+				["fg-2 on panel", ratio(c("fg-2"), panel), 4.5],
+				[
+					"fg-2 on subflow over panel",
+					ratio(c("fg-2"), over(resolve("--canvas-subflow-soft"), panel)),
+					4.5,
+				],
+			];
+			return checks.flatMap(([what, got, min]) =>
+				got < min ? [`${color} ${what}: ${got.toFixed(2)} < ${min}`] : [],
+			);
+		});
+		expect(problems).toEqual([]);
 	});
 
 	it("色块形状相同（高度、描边、斜纹）的两种状态，在三种色觉缺陷下色差也够大（OKLab ΔE ≥ 10）", () => {
@@ -186,7 +234,11 @@ type Rgba = { rgb: [number, number, number]; alpha: number };
 const SURFACES = ["--bg", "--surface", "--raised", "--raised-2"];
 
 const tokensCss = readFileSync(join(root, "styles/tokens.css"), "utf8");
-const rootBlock = tokensCss.slice(tokensCss.indexOf(":root {"), tokensCss.indexOf("@media"));
+/** 注释框颜色的公式写在 `[data-annotation-color], [data-ground]` 上：节点卡片的 data-ground 也要算出所在底板的颜色。 */
+const ANNOTATION_RULE = "[data-annotation-color],\n[data-ground] {";
+const rootBlock = tokensCss.slice(tokensCss.indexOf(":root {"), tokensCss.indexOf(ANNOTATION_RULE));
+/** 注释框颜色的公式写在 :root 后面的 [data-annotation-color]（和 [data-ground]）上（各部分按注释框自己的色相算出）。 */
+const annotationBlock = tokensCss.slice(tokensCss.indexOf(ANNOTATION_RULE));
 const tokens = new Map(
 	[...rootBlock.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [
 		m[1] as string,
@@ -210,6 +262,38 @@ function resolve(name: string): Rgba {
 		(i) => Number.parseInt(value.slice(1 + i, 3 + i), 16) / 255,
 	);
 	return { rgb: [r, g, b], alpha: 1 };
+}
+
+/**
+ * 注释框各部分的颜色（tokens.css 的 [data-annotation-color]）：`oklch(L calc(C * var(--annotation-chroma)) var(--annotation-hue))`，
+ * 按每种颜色的色相和色度系数算成 sRGB。
+ */
+function annotationRgb(color: string, role: string): Rgba {
+	const formula = new RegExp(
+		`--canvas-(?:annotation-)?${role}:\\s*oklch\\(\\s*([\\d.]+)\\s+calc\\(([\\d.]+) \\* var\\(--annotation-chroma\\)\\)\\s+var\\(--annotation-hue\\)\\s*\\)`,
+	).exec(annotationBlock);
+	const params = new RegExp(
+		`\\[data-annotation-color="${color}"\\],\\s*\\[data-ground="${color}"\\] \\{\\s*--annotation-hue: ([\\d.]+);\\s*--annotation-chroma: ([\\d.]+);`,
+	).exec(tokensCss);
+	if (!formula || !params) throw new Error(`注释框颜色 ${color} 的 ${role} 无法计算`);
+	const [l, c] = [Number(formula[1]), Number(formula[2]) * Number(params[2])];
+	const h = (Number(params[1]) * Math.PI) / 180;
+	const [a, b] = [c * Math.cos(h), c * Math.sin(h)];
+	const lms = [
+		(l + 0.3963377774 * a + 0.2158037573 * b) ** 3,
+		(l - 0.1055613458 * a - 0.0638541728 * b) ** 3,
+		(l - 0.0894841775 * a - 1.291485548 * b) ** 3,
+	] as const;
+	const lin = [
+		4.0767416621 * lms[0] - 3.3077115913 * lms[1] + 0.2309699292 * lms[2],
+		-1.2684380046 * lms[0] + 2.6097574011 * lms[1] - 0.3413193965 * lms[2],
+		-0.0041960863 * lms[0] - 0.7034186147 * lms[1] + 1.707614701 * lms[2],
+	];
+	const encode = (x: number) => {
+		const v = Math.min(1, Math.max(0, x));
+		return v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055;
+	};
+	return { rgb: lin.map(encode) as Rgba["rgb"], alpha: 1 };
 }
 
 const over = (top: Rgba, under: Rgba): Rgba => ({

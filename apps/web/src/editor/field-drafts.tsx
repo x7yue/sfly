@@ -37,14 +37,20 @@ export const draftKey = (nodeId: string, field: string) => `${nodeId}/${field}`;
 export const annotationFieldKey = (annotationId: string, field: string) =>
 	`annotation:${annotationId}/${field}`;
 
+/** 便签字段的键（和注释框一样没有草稿，只用来找到出错的输入框）。 */
+export const stickyFieldKey = (stickyId: string, field: string) => `sticky:${stickyId}/${field}`;
+
 export const fieldErrorKey = (error: {
 	nodeId?: string | undefined;
 	annotationId?: string | undefined;
+	stickyId?: string | undefined;
 	field: string;
 }) =>
-	error.annotationId === undefined
-		? draftKey(error.nodeId ?? "", error.field)
-		: annotationFieldKey(error.annotationId, error.field);
+	error.annotationId !== undefined
+		? annotationFieldKey(error.annotationId, error.field)
+		: error.stickyId !== undefined
+			? stickyFieldKey(error.stickyId, error.field)
+			: draftKey(error.nodeId ?? "", error.field);
 
 export function useFieldDraftStore() {
 	const [drafts, setDrafts] = useState<ReadonlyMap<string, FieldDraft>>(new Map());

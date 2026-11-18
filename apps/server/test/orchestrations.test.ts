@@ -182,6 +182,7 @@ describe("编排版本", () => {
 				edges: [],
 				packages: {},
 				annotations: [],
+				sticky_notes: [],
 			},
 		});
 

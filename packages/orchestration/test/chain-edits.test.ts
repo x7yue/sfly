@@ -37,8 +37,8 @@ const reasonOf = <D>(edit: DocumentEdit<D>) => (edit.ok ? null : edit.reason);
 const positions = (d: LayoutDocument) =>
 	Object.fromEntries(d.nodes.map((n) => [n.id, n.position?.x]));
 
-/** entry → a → b，一行排开（列距 252）。 */
-const line = doc([entry(), pkg("a", 252), pkg("b", 504)], [chain("entry", "a"), chain("a", "b")]);
+/** entry → a → b，一行排开（列距 300）。 */
+const line = doc([entry(), pkg("a", 300), pkg("b", 600)], [chain("entry", "a"), chain("a", "b")]);
 
 describe("插入到连线上", () => {
 	it("新节点接在连线两端之间，原来的连线换成两条", () => {
@@ -50,14 +50,14 @@ describe("插入到连线上", () => {
 
 	it("新节点放在前一个节点右侧一列，同一行后面的节点后移一列", () => {
 		const next = done(insertOnEdge(line, { from: "entry", to: "a" }, pkg("x")));
-		expect(positions(next)).toEqual({ entry: 0, x: 252, a: 504, b: 756 });
-		expect(next.nodes.find((n) => n.id === "x")?.position).toEqual(at(252));
+		expect(positions(next)).toEqual({ entry: 0, x: 300, a: 600, b: 900 });
+		expect(next.nodes.find((n) => n.id === "x")?.position).toEqual(at(300));
 	});
 
 	it("新节点自带位置时就用它，不挪动别的节点", () => {
 		const next = done(insertOnEdge(line, { from: "a", to: "b" }, pkg("x", 400, 300)));
 		expect(next.nodes.find((n) => n.id === "x")?.position).toEqual(at(400, 300));
-		expect(positions(next)).toMatchObject({ entry: 0, a: 252, b: 504 });
+		expect(positions(next)).toMatchObject({ entry: 0, a: 300, b: 600 });
 	});
 
 	it("不改动传入的文档", () => {
@@ -73,7 +73,7 @@ describe("插入到连线上", () => {
 		const withSub = doc(
 			[
 				entry(),
-				{ id: "run", kind: "async", position: at(252) },
+				{ id: "run", kind: "async", position: at(300) },
 				{ id: "sub", kind: "subflow_entry" },
 			],
 			[chain("entry", "run"), dispatch("run", "sub")],
@@ -93,65 +93,65 @@ describe("插入到连线上", () => {
 
 describe("插入时的位置", () => {
 	it("后面的位置空着时不挪动任何节点", () => {
-		const spaced = doc([entry(), pkg("a", 600)], [chain("entry", "a")]);
-		expect(insertPlacement(spaced, "entry")).toEqual({ position: at(252), moved: new Map() });
+		const spaced = doc([entry(), pkg("a", 700)], [chain("entry", "a")]);
+		expect(insertPlacement(spaced, "entry")).toEqual({ position: at(300), moved: new Map() });
 	});
 
 	it("后面的节点挨得近时整体后移到刚好让出一列", () => {
 		const tight = doc(
-			[entry(), pkg("a", 300), pkg("b", 560)],
+			[entry(), pkg("a", 400), pkg("b", 660)],
 			[chain("entry", "a"), chain("a", "b")],
 		);
-		// a 压住了新位置（252）：a 移到 504，b 跟着移同样的距离。
+		// a 压住了新位置（300）：a 移到 600，b 跟着移同样的距离。
 		expect(insertPlacement(tight, "entry")).toEqual({
-			position: at(252),
+			position: at(300),
 			moved: new Map([
-				["a", at(504)],
-				["b", at(764)],
+				["a", at(600)],
+				["b", at(860)],
 			]),
 		});
 	});
 
 	it("只挪同一行里排在后面的节点：别的行、前面的节点不动", () => {
 		const rows = doc(
-			[entry(), pkg("a", 252), pkg("b", 504), pkg("below", 252, 214), pkg("left", -300)],
+			[entry(), pkg("a", 300), pkg("b", 600), pkg("below", 300, 162), pkg("left", -300)],
 			[chain("entry", "a"), chain("a", "b")],
 		);
 		expect([...insertPlacement(rows, "entry").moved.keys()]).toEqual(["a", "b"]);
 	});
 
 	it("来源节点没有位置时放在原点右侧一列", () => {
-		expect(insertPlacement(doc([pkg("a")]), "a").position).toEqual(at(252));
+		expect(insertPlacement(doc([pkg("a")]), "a").position).toEqual(at(300));
 	});
 });
 
 describe("在节点后面添加", () => {
 	it("链尾：追加，新节点放在右侧一列，不挪动别的节点", () => {
-		const withOrphan = doc([...line.nodes, pkg("orphan", 760)], line.edges);
+		const withOrphan = doc([...line.nodes, pkg("orphan", 904)], line.edges);
 		const next = done(insertAfter(withOrphan, "b", pkg("x")));
 		expect(next.edges).toEqual([...line.edges, chain("b", "x")]);
-		expect(positions(next)).toEqual({ entry: 0, a: 252, b: 504, orphan: 760, x: 756 });
+		expect(positions(next)).toEqual({ entry: 0, a: 300, b: 600, orphan: 904, x: 900 });
 	});
 
 	it("不是链尾：插在它和下一个节点之间，后面的节点后移", () => {
 		const next = done(insertAfter(line, "a", pkg("x")));
 		expect(next.edges).toEqual([chain("entry", "a"), chain("a", "x"), chain("x", "b")]);
-		expect(positions(next)).toEqual({ entry: 0, a: 252, x: 504, b: 756 });
+		expect(positions(next)).toEqual({ entry: 0, a: 300, x: 600, b: 900 });
 	});
 
 	it("游离节点后面也可以追加", () => {
 		const next = done(insertAfter(doc([entry(), pkg("lone", 100, 400)]), "lone", pkg("x")));
 		expect(next.edges).toEqual([chain("lone", "x")]);
-		expect(next.nodes.find((n) => n.id === "x")?.position).toEqual(at(352, 400));
+		expect(next.nodes.find((n) => n.id === "x")?.position).toEqual(at(400, 400));
 	});
 
 	it("异步任务节点后面插入时调度连线不动", () => {
 		const withSub = doc(
 			[
 				entry(),
-				{ id: "run", kind: "async", position: at(252) },
-				pkg("b", 504),
-				{ id: "sub", kind: "subflow_entry", position: at(462, 256) },
+				{ id: "run", kind: "async", position: at(300) },
+				pkg("b", 600),
+				{ id: "sub", kind: "subflow_entry", position: at(534, 204) },
 			],
 			[chain("entry", "run"), chain("run", "b"), dispatch("run", "sub")],
 		);
@@ -162,7 +162,7 @@ describe("在节点后面添加", () => {
 			chain("x", "b"),
 			dispatch("run", "sub"),
 		]);
-		expect(positions(next)).toEqual({ entry: 0, run: 252, x: 504, b: 756, sub: 462 });
+		expect(positions(next)).toEqual({ entry: 0, run: 300, x: 600, b: 900, sub: 534 });
 	});
 
 	it("来源节点不存在、子流程入口接在链上时拒绝", () => {
@@ -262,7 +262,7 @@ describe("断开入线 / 出线", () => {
 
 describe("改接连线", () => {
 	/** entry → a → b，另有游离节点 c。 */
-	const withLone = doc([...line.nodes, pkg("c", 252, 214)], line.edges);
+	const withLone = doc([...line.nodes, pkg("c", 300, 162)], line.edges);
 
 	it("改接终点：连线换到新节点上，留在原来的位置", () => {
 		const next = done(reconnectEdge(withLone, chain("a", "b"), { from: "a", to: "c" }));
@@ -345,7 +345,7 @@ describe("断开连线", () => {
 
 describe("拖线到空白处新建节点前的检查（outgoingProblem）", () => {
 	const d = doc(
-		[entry(), pkg("a", 252), { id: "spawn", kind: "async" }, { id: "sub", kind: "subflow_entry" }],
+		[entry(), pkg("a", 300), { id: "spawn", kind: "async" }, { id: "sub", kind: "subflow_entry" }],
 		[chain("entry", "a"), chain("a", "spawn"), dispatch("spawn", "sub")],
 	);
 

@@ -17,23 +17,23 @@ const at = (id: string, kind: Node["kind"], x: number, y: number): Node => ({
 const chain = (from: string, to: string): Edge => ({ from, to, kind: "chain" });
 const dispatch = (from: string, to: string): Edge => ({ from, to, kind: "dispatch" });
 const annotation = (
-	members: Partial<Pick<AnnotationMembers, "nodes" | "subflows">>,
+	members: Partial<Pick<AnnotationMembers, "nodes" | "subflows" | "note">>,
 	id = "annotation_1",
 ): AnnotationMembers => ({ id, nodes: [], subflows: [], ...members });
 
 /**
- * 主链 entry(0,0) → fetch(252,0) → spawn(504,0)，spawn 调度子流程 sub(660,230) → spawn2(912,230)，
- * spawn2 再调度下级子流程 deep(1068,460) → deep_ping(1320,460)。卡片 208×112。
+ * 主链 entry(0,0) → fetch(300,0) → spawn(600,0)，spawn 调度子流程 sub(834,204) → spawn2(1134,204)，
+ * spawn2 再调度下级子流程 deep(1368,368) → deep_ping(1668,368)。卡片 256×60。
  */
 const doc: LayoutDocument = {
 	nodes: [
 		at("entry", "entry", 0, 0),
-		at("fetch", "package", 252, 0),
-		at("spawn", "async", 504, 0),
-		at("sub", "subflow_entry", 660, 230),
-		at("spawn2", "async", 912, 230),
-		at("deep", "subflow_entry", 1068, 460),
-		at("deep_ping", "package", 1320, 460),
+		at("fetch", "package", 300, 0),
+		at("spawn", "async", 600, 0),
+		at("sub", "subflow_entry", 834, 204),
+		at("spawn2", "async", 1134, 204),
+		at("deep", "subflow_entry", 1368, 368),
+		at("deep_ping", "package", 1668, 368),
 	],
 	edges: [
 		chain("entry", "fetch"),
@@ -53,71 +53,90 @@ const boxOf = (members: Parameters<typeof annotation>[0]) =>
 		}),
 	);
 
-// 留白：左右 24，上 44（标题行），下 20。
+// 注释框的留白：四周 24 / 20 / 24 / 20（标题写在框外上方）；有备注时上方再留 56 + 12 放便签。子流程区域的留白：左右 24，上 44（标题行），下 20。
 describe("由成员算出注释框的范围", () => {
 	it("只有节点成员：成员卡片的外接框加留白", () => {
 		expect(boxOf({ nodes: ["fetch", "spawn"] })).toEqual([
 			{
 				id: "annotation_1",
 				members: ["fetch", "spawn"],
-				box: { x: 252 - 24, y: -44, w: 504 + 208 - 252 + 48, h: 112 + 64 },
+				box: { x: 300 - 24, y: -20, w: 600 + 256 - 300 + 48, h: 60 + 40 },
 			},
 		]);
 	});
 
 	it("节点成员不挨在一起：框住它们的外接框，中间的非成员不算成员", () => {
 		const [framed] = boxOf({ nodes: ["entry", "spawn"] });
-		expect(framed?.box).toEqual({ x: -24, y: -44, w: 504 + 208 + 48, h: 112 + 64 });
+		expect(framed?.box).toEqual({ x: -24, y: -20, w: 600 + 256 + 48, h: 60 + 40 });
 		expect(framed?.members).toEqual(["entry", "spawn"]);
 	});
 
-	it("只有子流程成员：子流程区域外面再加一圈留白，不含它下级的子流程", () => {
-		// 子流程 sub 的区域：sub、spawn2 两张卡片加留白，即 x 636 → 1144，y 186 → 362。
-		const region = { x: 660 - 24, y: 230 - 44, w: 912 + 208 - 660 + 48, h: 112 + 64 };
+	it("只有子流程成员：它和它下级子流程的区域合起来，外面再加一圈留白", () => {
+		// 子流程 sub 的区域：x 810 → 1414，y 160 → 284；下级子流程 deep 的区域：x 1344 → 1948，y 324 → 448。
 		expect(boxOf({ subflows: ["sub"] })).toEqual([
 			{
 				id: "annotation_1",
-				members: ["sub", "spawn2"],
-				box: {
-					x: region.x - 24,
-					y: region.y - 44,
-					w: region.w + 48,
-					h: region.h + 64,
-				},
+				members: ["sub", "spawn2", "deep", "deep_ping"],
+				box: { x: 810 - 24, y: 160 - 20, w: 1948 + 24 - 786, h: 448 + 20 - 140 },
 			},
 		]);
 	});
 
+	it("最下级的子流程成员只框它自己", () => {
+		const [framed] = boxOf({ subflows: ["deep"] });
+		expect(framed?.members).toEqual(["deep", "deep_ping"]);
+		expect(framed?.box).toEqual({
+			x: 1344 - 24,
+			y: 324 - 20,
+			w: 1948 - 1344 + 48,
+			h: 448 - 324 + 40,
+		});
+	});
+
 	it("节点成员和子流程成员混合：卡片和子流程区域合起来的外接框加留白", () => {
-		// fetch 的卡片：x 252 → 460，y 0 → 112；子流程 deep 的区域：x 1044 → 1552，y 416 → 592。
+		// fetch 的卡片：x 300 → 556，y 0 → 60；子流程 deep 的区域：x 1344 → 1948，y 324 → 448。
 		expect(boxOf({ nodes: ["fetch"], subflows: ["deep"] })).toEqual([
 			{
 				id: "annotation_1",
 				members: ["fetch", "deep", "deep_ping"],
-				box: { x: 252 - 24, y: -44, w: 1552 + 24 - 228, h: 592 + 20 + 44 },
+				box: { x: 300 - 24, y: -20, w: 1948 + 24 - 276, h: 448 + 20 + 20 },
 			},
 		]);
 	});
 
+	it("有备注时框的上方多留便签的位置（56 + 12）；备注只有空白时不留", () => {
+		const [noted] = boxOf({ nodes: ["fetch"], note: "先拉取快照" });
+		expect(noted?.box).toEqual({ x: 276, y: -20 - 68, w: 256 + 48, h: 60 + 40 + 68 });
+		const [blank] = boxOf({ nodes: ["fetch"], note: "  " });
+		expect(blank?.box.y).toBe(-20);
+	});
+
 	it("子流程成员的链变长，框跟着变大", () => {
 		const longer: LayoutDocument = {
-			nodes: [...doc.nodes, at("more", "package", 1164, 230)],
+			nodes: [...doc.nodes, at("more", "package", 1700, 204)],
 			edges: [...doc.edges, chain("spawn2", "more")],
 		};
 		const [box] = annotationBoxes({ ...longer, annotations: [annotation({ subflows: ["sub"] })] });
-		expect(box?.box.w).toBe(1164 + 208 - 660 + 48 + 48);
-		expect(box?.members).toEqual(["sub", "spawn2", "more"]);
+		expect((box?.box.x ?? 0) + (box?.box.w ?? 0)).toBe(1700 + 256 + 24 + 24);
+		expect(box?.members).toEqual(["sub", "spawn2", "deep", "deep_ping", "more"]);
 	});
 
 	it("卡片长高了（布局里带着量出来的高度）：子流程区域和框住它的注释框跟着往下长，下边仍留 20", () => {
 		const grown: LayoutDocument = {
 			...doc,
-			nodes: doc.nodes.map((n) => (n.id === "spawn2" ? { ...n, height: 170 } : n)),
+			// 长得比下级子流程 deep 的区域还低：框的下沿由它决定。
+			nodes: doc.nodes.map((n) => (n.id === "spawn2" ? { ...n, height: 300 } : n)),
 		};
 		const [region] = subflowRegions(grown);
-		expect(region?.box).toEqual({ x: 660 - 24, y: 230 - 44, w: 912 + 208 - 660 + 48, h: 170 + 64 });
+		expect(region?.box).toEqual({
+			x: 834 - 24,
+			y: 204 - 44,
+			w: 1134 + 256 - 834 + 48,
+			h: 300 + 64,
+		});
 		const [box] = annotationBoxes({ ...grown, annotations: [annotation({ subflows: ["sub"] })] });
-		expect(box?.box.h).toBe(170 + 64 + 64);
+		// 注释框上下各留 20。
+		expect(box?.box.h).toBe(300 + 64 + 20 + 20);
 	});
 
 	it("按 annotations 的顺序给出（后面的画在上层）", () => {

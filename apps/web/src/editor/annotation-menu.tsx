@@ -41,7 +41,9 @@ export function AnnotationMenuItems({
 	const containing = actions.annotations.filter((a) => hasMember(a, nodeId));
 	return (
 		<>
-			<ContextMenuItem onClick={actions.onAdd}>{ACTION.addAnnotation}</ContextMenuItem>
+			<ContextMenuItem shortcut="canvas-annotate" onClick={actions.onAdd}>
+				{ACTION.addAnnotation}
+			</ContextMenuItem>
 			<ContextMenuSub>
 				<ContextMenuSubTrigger disabledReason={joinable.length > 0 ? null : "没有可以加入的注释框"}>
 					加入注释框

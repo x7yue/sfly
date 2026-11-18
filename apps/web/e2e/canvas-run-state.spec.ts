@@ -1,9 +1,17 @@
 import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
-import { inspector, modes, nodeCard, switchMode } from "./editor-support";
+import { annotationFrame } from "./annotation-support";
+import { dock, inspector, modes, nodeCard, switchMode, withoutFollow } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { MONITOR_SCENARIO, openMonitor, runningScenario } from "./monitor-scenario";
-import { createScenario, expectFocusVisible, publishPackage, triggerRun } from "./support";
+import {
+	box,
+	createScenario,
+	expectFocusVisible,
+	publishPackage,
+	screenPixel,
+	triggerRun,
+} from "./support";
 
 // 编排画布的「运行状态」模式（原型 #/editor/:id?run=<id>）：节点叠加运行状态，检查器给出运行摘要与监控页入口。
 
@@ -21,6 +29,7 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 		connectAgent,
 		clock,
 	);
+	await withoutFollow(page);
 	await page.goto(`/orchestrations/${scenarioId}`);
 	await expect(nodeCard(page, "verify")).toBeVisible();
 	await expect(nodeCard(page, "verify")).not.toHaveAttribute("data-run");
@@ -35,16 +44,21 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 	await expect(page.getByTestId("canvas-run")).toContainText(runId.slice(0, 8));
 	await expect(nodeCard(page, "fetch")).toHaveAttribute("data-run", "done");
 	await expect(nodeCard(page, "fetch")).toContainText("成功");
-	await expect(nodeCard(page, "fetch")).toHaveAccessibleName("节点 fetch，HTTP 检查 成功");
+	// 读屏名称接上状态和卡片右侧的数字（这里是耗时）。
+	await expect(nodeCard(page, "fetch")).toHaveAccessibleName(
+		/^节点 fetch，HTTP 检查 成功 [\d.]+m?s$/,
+	);
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
 	await expect(nodeCard(page, "verify")).toContainText("执行中");
-	// 第 2 次尝试的重试是异常：场景没设关注项时，主指标的异常也写进名称。
+	// 第 2 次尝试的重试是异常：场景没设关注项时，主指标的异常也写进名称（接在状态和卡片右侧的数字后面）。
 	await expect(nodeCard(page, "verify")).toHaveAccessibleName(
-		/^节点 verify，.+ 执行中 1 项需要注意：主指标 level 重试（第 2 次尝试）· \d\d:\d\d:\d\d$/,
+		/^节点 verify，.+ 执行中 [\d/dhms. ]+ 1 项需要注意：主指标 level 重试（第 2 次尝试）· \d\d:\d\d:\d\d$/,
 	);
 	await expect(nodeCard(page, "cleanup")).toHaveAttribute("data-run", "pending");
 	await expect(edge(page, "spawn", "verify")).toHaveAttribute("data-run", "live");
-	await expect(edge(page, "fetch", "spawn")).not.toHaveAttribute("data-run");
+	// 线路图：两端都已完成的路段是「走过的」，执行中节点后面的还没走到。
+	await expect(edge(page, "fetch", "spawn")).toHaveAttribute("data-run", "travelled");
+	await expect(edge(page, "verify", "cleanup")).toHaveAttribute("data-run", "ahead");
 	// 子流程区域标题显示实例状态。
 	await expect(page.getByRole("region", { name: "子流程 sub" })).toContainText("运行中");
 	// 运行状态下只读：没有保存按钮。
@@ -156,6 +170,7 @@ test("运行状态下 Enter 把焦点移到检查器、Esc 回到画布上的节
 	clock,
 }) => {
 	const { scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	await withoutFollow(page);
 	await page.goto(`/orchestrations/${scenarioId}`);
 	await modes(page)
 		.getByRole("button", { name: /运行状态/ })
@@ -178,6 +193,7 @@ test("从监控页「在画布中打开」带入该运行（不是最近一次�
 	const { runId, scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
 	// 再触发一次：最近一次运行变成新的这一次（fetch 还在排队）。
 	const latest = await triggerRun(controlPlane, scenarioId);
+	await withoutFollow(page);
 	await openMonitor(page, clock, runId);
 
 	await page.getByRole("banner").getByRole("link", { name: "在画布中打开" }).click();
@@ -247,4 +263,120 @@ test("场景还没有运行过：运行状态模式给出提示，节点不叠�
 	await expect(page.getByTestId("canvas-run")).toHaveText("还没有运行");
 	await expect(nodeCard(page, "fetch")).not.toHaveAttribute("data-run");
 	await expect(inspector(page)).toContainText("这个场景还没有运行过");
+});
+
+/**
+ * 计算样式里的颜色（rgb()、color(srgb …)、oklch() 都有）在页面里画到 1×1 的画布上，读出 sRGB 分量（0–255）：
+ * 注释框的颜色是 OKLCH 写的，计算样式里也是 oklch()。
+ */
+const toSrgb = (page: Page, colors: string[]) =>
+	page.evaluate(
+		(list) =>
+			list.map((color) => {
+				const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+				ctx.fillStyle = color;
+				ctx.fillRect(0, 0, 1, 1);
+				return [...ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+			}),
+		colors,
+	);
+const luminance = (rgb: number[]) => {
+	const [r = 0, g = 0, b = 0] = rgb.map((v) => {
+		const c = v / 255;
+		return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+	});
+	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (fg: number[], bg: number[]) => {
+	const [a, b] = [luminance(fg), luminance(bg)];
+	return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+};
+
+test("注释框里已完成的站只留轮廓、辅助文字不低于 4.5:1；看全图时失败的站点灯是实心红，站外一行写标题和原因", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	// 绿色注释框：下沉后的卡片底比平常亮，是六种颜色里辅助文字对比度最低的。
+	const { runId, scenarioId, agent, tasks } = await runningScenario(
+		controlPlane,
+		connectAgent,
+		clock,
+		{
+			...MONITOR_SCENARIO,
+			annotations: [
+				{ id: "annotation_1", title: "取数", color: "green", nodes: ["fetch"], subflows: [] },
+				// 框住子流程：区域画在注释框的底板上，走完的子流程入口贴着「底板叠上区域的淡紫」。
+				{ id: "annotation_2", title: "子流程", color: "green", nodes: [], subflows: ["sub"] },
+			],
+		},
+	);
+	await withoutFollow(page);
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	const fetch = nodeCard(page, "fetch");
+	await expect(fetch).toHaveAttribute("data-run", "done");
+	await expect(fetch).toHaveAttribute("data-ground", "green");
+	const styles = await fetch.evaluate((el) => [
+		getComputedStyle(el.querySelector("[data-node-figure]") as Element).color,
+		getComputedStyle(el).backgroundColor,
+		getComputedStyle(el).borderTopColor,
+	]);
+	const panelStyle = await annotationFrame(page, "annotation_1").evaluate(
+		(el) => getComputedStyle(el).backgroundColor,
+	);
+	const [figure = [], card = [], outline = [], panel = []] = await toSrgb(page, [
+		...styles,
+		panelStyle,
+	]);
+	expect(contrast(figure, card)).toBeGreaterThanOrEqual(4.5);
+	// 走完的站只留轮廓：底色就是注释框的底板，靠一圈灰描边和底板分开。
+	expect(card).toEqual(panel);
+	expect(contrast(outline, panel)).toBeGreaterThanOrEqual(1.6);
+	// 框里的子流程：走完的卡片和旁边的区域画出来是同一个颜色，不会挖出一块暗洞。
+	const sub = nodeCard(page, "sub");
+	await expect(sub).toHaveAttribute("data-run", "done");
+	await expect(sub).toHaveAttribute("data-ground-subflow", "true");
+	await page.mouse.move(5, 5);
+	const subBox = await box(sub);
+	// 卡片里靠右、两行字和端口之外的一点；卡片正上方、子流程标题行下面的一点（左侧中点有调度连线进来，避开）。
+	const [inside, beside] = [
+		await screenPixel(page, { x: subBox.x + subBox.width - 8, y: subBox.y + subBox.height / 2 }),
+		await screenPixel(page, { x: subBox.x + subBox.width / 2, y: subBox.y - 6 }),
+	];
+	expect(Math.max(...inside.map((c, i) => Math.abs(c - (beside[i] ?? 0))))).toBeLessThanOrEqual(2);
+
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 还是漏拦");
+	const verify = nodeCard(page, "verify");
+	await expect(verify).toHaveAttribute("data-run", "failed");
+	// 失败原因去掉开头的异常类名，全文在悬停提示里。
+	await expect(verify).toContainText("还是漏拦");
+	await expect(verify).not.toContainText("AssertionError");
+	await expect(verify.getByTitle("AssertionError: 还是漏拦").first()).toBeAttached();
+	const overview = verify.locator("[data-node-overview]");
+	for (let i = 0; i < 12; i++) await dock(page).getByRole("button", { name: "缩小" }).click();
+	await expect(page.getByRole("status", { name: "缩放比例" })).toHaveText("30%");
+	// 看全图：站外一行写上标题和失败原因。
+	await expect(overview).toBeVisible();
+	const name = await verify.locator("[data-slot=base-node-title]").textContent();
+	await expect(overview).toHaveText(`${name} 还是漏拦`);
+	const lamp = verify.locator("[data-lamp]");
+	await expect
+		.poll(() =>
+			lamp.evaluate((el) => {
+				const probe = document.createElement("span");
+				probe.style.backgroundColor = "var(--danger)";
+				document.body.append(probe);
+				const danger = getComputedStyle(probe).backgroundColor;
+				probe.remove();
+				return getComputedStyle(el).backgroundColor === danger;
+			}),
+		)
+		.toBe(true);
+	// 放大到 65% 以上：卡片第二行写得下原因，站外一行收起。
+	const zoom = page.getByRole("status", { name: "缩放比例" });
+	const percent = async () => Number.parseInt((await zoom.textContent()) ?? "0", 10);
+	for (let i = 0; i < 20 && (await percent()) < 70; i++)
+		await dock(page).getByRole("button", { name: "放大" }).click();
+	await expect(overview).toBeHidden();
 });

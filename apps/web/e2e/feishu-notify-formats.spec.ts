@@ -23,7 +23,7 @@ const entry = {
 const scenario = (notify: Record<string, unknown>) => ({
 	nodes: [
 		entry,
-		{ id: "notify", kind: "feishu_notify", position: { x: 252, y: 0 }, bot: "ops", ...notify },
+		{ id: "notify", kind: "feishu_notify", position: { x: 300, y: 0 }, bot: "ops", ...notify },
 	],
 	edges: [{ from: "entry", to: "notify", kind: "chain" }],
 	packages: {},

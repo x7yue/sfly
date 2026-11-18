@@ -49,6 +49,16 @@ export interface StatusLook {
 		svg: string;
 	};
 	pulse: boolean;
+	/**
+	 * 画布上的样子（节点卡片与连线，DESIGN-SYSTEM §2.3「站点胶囊」）。
+	 * - `lamp`：站点灯的三种样子，要盯的（`watch`，和满高的面积色块是同一组）是状态色淡底加描边，看全图时放大；
+	 *   走完了的（`passed`）贴着所在底色，看全图时缩成小点；还没轮到的（`ahead`）只有一圈描边。
+	 * - `line`：要盯的状态的细线，站点灯的灯圈和卡片底边的进度线用它（执行中是 `signal-line`，不是实心青色）。
+	 * - `stroke`：要盯的状态画在卡片描边、站外一行和进入它的连线上的颜色。
+	 */
+	canvas:
+		| { lamp: "watch"; line: string; stroke: string }
+		| { lamp: "passed" | "ahead"; line?: undefined; stroke?: undefined };
 }
 
 export const STATUS: Record<StatusKind, StatusLook> = {
@@ -58,6 +68,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 		mark: "disc",
 		area: { tall: false, box: "bg-ok-fill", svg: "fill-ok-fill" },
 		pulse: false,
+		canvas: { lamp: "passed" },
 	},
 	running: {
 		tone: "text-signal",
@@ -69,6 +80,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 			svg: "fill-signal-fill stroke-signal-line",
 		},
 		pulse: true,
+		canvas: { lamp: "watch", line: "var(--signal-line)", stroke: "var(--signal)" },
 	},
 	failed: {
 		tone: "text-danger",
@@ -76,6 +88,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 		mark: "diamond",
 		area: { tall: true, box: "bg-danger-fill", svg: "fill-danger-fill" },
 		pulse: false,
+		canvas: { lamp: "watch", line: "var(--danger-line)", stroke: "var(--danger)" },
 	},
 	warn: {
 		tone: "text-warn",
@@ -87,6 +100,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 			svg: "fill-warn-fill stroke-warn-line",
 		},
 		pulse: false,
+		canvas: { lamp: "watch", line: "var(--warn-line)", stroke: "var(--warn-line)" },
 	},
 	pending: {
 		tone: "text-pending",
@@ -94,6 +108,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 		mark: "ring",
 		area: { tall: false, box: "bg-pending-fill", svg: "fill-pending-fill" },
 		pulse: false,
+		canvas: { lamp: "ahead" },
 	},
 	// 排队是「轮到了，在等 Agent 的槽位」，不是要人处理的等待，所以是中性灰；斜纹（缩略图里是描边）与待执行的空槽区分。
 	queued: {
@@ -106,6 +121,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 			svg: "fill-pending-fill stroke-pending",
 		},
 		pulse: false,
+		canvas: { lamp: "ahead" },
 	},
 	skipped: {
 		tone: "text-skipped",
@@ -117,6 +133,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 			svg: "fill-none stroke-border-strong",
 		},
 		pulse: false,
+		canvas: { lamp: "passed" },
 	},
 	cancelled: {
 		tone: "text-cancelled",
@@ -128,6 +145,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 			svg: "fill-none stroke-cancelled [stroke-dasharray:2_2]",
 		},
 		pulse: false,
+		canvas: { lamp: "ahead" },
 	},
 	// 停止是场景的正常流程（子流程被停止子流程节点停止），不用警示色；与成功同为矮段，靠描边区分。
 	stopped: {
@@ -140,6 +158,7 @@ export const STATUS: Record<StatusKind, StatusLook> = {
 			svg: "fill-stopped-fill stroke-stopped",
 		},
 		pulse: false,
+		canvas: { lamp: "passed" },
 	},
 };
 

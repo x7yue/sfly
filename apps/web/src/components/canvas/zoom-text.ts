@@ -10,10 +10,23 @@
 export const ZOOM_TEXT_11 = "text-[length:max(0.6875rem,calc(0.6875rem/var(--canvas-zoom)))]";
 /** 含中文的文字（卡片头部、状态、连线标签、区域标题、摘要槽）：12px。 */
 export const ZOOM_TEXT_12 = "text-[length:max(0.75rem,calc(0.75rem/var(--canvas-zoom)))]";
-/** 卡片标题：13px，语义缩放时在屏幕上约 12px。 */
-export const ZOOM_TEXT_TITLE = "text-[length:max(0.8125rem,calc(0.75rem/var(--canvas-zoom)))]";
-/** 语义缩放时隐藏的细节（摘要槽、标签、种类名）。 */
+/** 卡片标题：14px，语义缩放时在屏幕上约 12px。 */
+export const ZOOM_TEXT_TITLE = "text-[length:max(0.875rem,calc(0.75rem/var(--canvas-zoom)))]";
+/** 便签的正文：13px，语义缩放时在屏幕上约 12px。 */
+export const ZOOM_TEXT_STICKY_BODY =
+	"text-[length:max(0.8125rem,calc(0.75rem/var(--canvas-zoom)))]";
+/** 语义缩放时隐藏的细节（摘要槽、标签、种类名、卡片头部的节点 ID）。 */
 export const LOD_HIDDEN = "in-data-[lod=true]:hidden";
+/**
+ * 注释框的标题（框外左上方的胶囊）：屏幕上 15px，缩小视图时不小于 14px，比卡片标题大一号，看全图时先读到阶段名。
+ * 标题按底边放在框上方，字变大时往上长。
+ */
+export const ZOOM_TEXT_BAND = "text-[length:max(0.9375rem,calc(0.875rem/var(--canvas-zoom)))]";
+/** 便签的标题：14px，缩小视图时不小于 13px。 */
+export const ZOOM_TEXT_STICKY = "text-[length:max(0.875rem,calc(0.8125rem/var(--canvas-zoom)))]";
+/** 缩小视图时便签只留的那一行：和注释框的标题一样大（ZOOM_TEXT_BAND），看全图时读得到。 */
+export const ZOOM_TEXT_STICKY_LOD =
+	"in-data-[lod=true]:text-[length:max(0.9375rem,calc(0.875rem/var(--canvas-zoom)))]";
 /**
  * 节点种类图标的方块：方块与图标按所在文字的字号（em）取尺寸。卡片头部随语义缩放一起放大，缩小视图时
  * 仍能分辨种类，也不会撑高头部；添加节点菜单里放在 11px 文字中（约 18px）。

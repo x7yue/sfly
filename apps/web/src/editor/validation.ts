@@ -25,14 +25,15 @@ interface FieldErrorAt {
 }
 
 /**
- * 字段错误出在哪个对象上，三选一：节点（`nodeId`）、注释框（`annotationId`，标题、备注），
- * 或者都没有（场景级字段）。节点和注释框不会同时出现，靠 `nodeId`、`annotationId` 是否为 undefined 区分。
+ * 字段错误出在哪个对象上，四选一：节点（`nodeId`）、注释框（`annotationId`，标题、备注）、
+ * 便签（`stickyId`，标题、正文），或者都没有（场景级字段）。三个 ID 至多一个不是 undefined。
  */
 export type FieldError = FieldErrorAt &
 	(
-		| { nodeId: string; annotationId?: undefined }
-		| { annotationId: string; nodeId?: undefined }
-		| { nodeId?: undefined; annotationId?: undefined }
+		| { nodeId: string; annotationId?: undefined; stickyId?: undefined }
+		| { annotationId: string; nodeId?: undefined; stickyId?: undefined }
+		| { stickyId: string; nodeId?: undefined; annotationId?: undefined }
+		| { nodeId?: undefined; annotationId?: undefined; stickyId?: undefined }
 	);
 
 const TYPED_FIELD = /^(params\.\d+\.name|at|duration)$/;
@@ -55,7 +56,8 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 			const at = typeof index === "number" ? index : -1;
 			const node = head === "nodes" ? doc.nodes[at] : undefined;
 			const annotation = head === "annotations" ? doc.annotations[at] : undefined;
-			const field = (node || annotation ? rest : issue.path).map(String).join(".");
+			const sticky = head === "sticky_notes" ? doc.sticky_notes[at] : undefined;
+			const field = (node || annotation || sticky ? rest : issue.path).map(String).join(".");
 			const error = {
 				field,
 				message: messageOf(issue.path, issue.code, issue.message),
@@ -63,6 +65,7 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 			};
 			if (node) errors.push({ ...error, nodeId: node.id });
 			else if (annotation) errors.push({ ...error, annotationId: annotation.id });
+			else if (sticky) errors.push({ ...error, stickyId: sticky.id });
 			else errors.push(error);
 		}
 	}

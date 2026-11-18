@@ -36,7 +36,7 @@ const alertDocument = (bot: string) => ({
 			kind: "package",
 			package: "alerts",
 			node: "alert",
-			position: { x: 252, y: 0 },
+			position: { x: 300, y: 0 },
 			inputs: { bot },
 		},
 	],

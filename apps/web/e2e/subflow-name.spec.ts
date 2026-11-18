@@ -99,12 +99,12 @@ test("两个子流程重名时，两个子流程入口上都有警告", async ({
 		default_agent: "agent-linux",
 		nodes: [
 			{ id: "entry", kind: "entry", position: { x: 0, y: 0 }, params: [] },
-			{ id: "spawn1", kind: "async", position: { x: 252, y: 0 }, params: {} },
-			{ id: "spawn2", kind: "async", position: { x: 504, y: 0 }, params: {} },
-			{ id: "sub_a", kind: "subflow_entry", name: "监控", position: { x: 408, y: 230 } },
-			ping("ping_a", 660, 230),
-			{ id: "sub_b", kind: "subflow_entry", name: "监控", position: { x: 660, y: 460 } },
-			ping("ping_b", 912, 460),
+			{ id: "spawn1", kind: "async", position: { x: 300, y: 0 }, params: {} },
+			{ id: "spawn2", kind: "async", position: { x: 600, y: 0 }, params: {} },
+			{ id: "sub_a", kind: "subflow_entry", name: "监控", position: { x: 534, y: 204 } },
+			ping("ping_a", 834, 204),
+			{ id: "sub_b", kind: "subflow_entry", name: "监控", position: { x: 834, y: 368 } },
+			ping("ping_b", 1134, 368),
 		],
 		edges: [
 			{ from: "entry", to: "spawn1", kind: "chain" },

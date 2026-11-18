@@ -67,7 +67,7 @@ const document = {
 			kind: "package",
 			package: "demo-checks",
 			node: "fetch",
-			position: { x: 252, y: 0 },
+			position: { x: 300, y: 0 },
 			inputs: { url: "https://example.test/" },
 		},
 		{
@@ -75,7 +75,7 @@ const document = {
 			kind: "package",
 			package: "demo-checks",
 			node: "report",
-			position: { x: 504, y: 0 },
+			position: { x: 600, y: 0 },
 			inputs: { message: "完成" },
 		},
 	],

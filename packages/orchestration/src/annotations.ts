@@ -1,13 +1,20 @@
 import type { AnnotationMemberIds } from "./annotation-members.js";
-import { type LayoutDocument, NODE_SIZE, type Position, REGION_PADDING } from "./layout.js";
-import { chainMembers } from "./structure.js";
+import {
+	ANNOTATION_NOTE,
+	ANNOTATION_PADDING,
+	type LayoutDocument,
+	NODE_SIZE,
+	type Position,
+	REGION_PADDING,
+} from "./layout.js";
+import { chainMembers, subflowTree } from "./structure.js";
 
 /**
- * 画布上画出来的范围：子流程区域和注释框（GLOSSARY「注释框」，ADR 0023）。两者用同一套算法：
- * 框住的东西的外接框，四周按 REGION_PADDING 留白（上方留出标题行）。注释框不存坐标，范围全由成员算出：
- * 节点成员取它的卡片，子流程成员取它的区域（不含它下级的子流程）。
+ * 画布上画出来的范围：子流程区域和注释框（GLOSSARY「注释框」，ADR 0023）。两者都是框住的东西的外接框加四周留白。
+ * 子流程区域按 REGION_PADDING 留白（上方留出框里的标题行）；注释框的标题写在框外上方，框里四周按 ANNOTATION_PADDING
+ * 留白，有备注时最上方再留出备注卡片（ANNOTATION_NOTE）。注释框不存坐标，范围全由成员算出：
+ * 节点成员取它的卡片，子流程成员取它和它下级子流程的区域。
  */
-
 /** 画布坐标里的矩形：左上角和宽高。 */
 export interface Box {
 	x: number;
@@ -26,6 +33,8 @@ export interface SubflowRegion {
 
 /** 注释框的成员加上它的 ID（场景文档 `annotations` 里的一项，只读取画框要用的部分）。 */
 export interface AnnotationMembers extends AnnotationMemberIds {
+	/** 备注：有备注（去掉首尾空白后不为空）时框里最上方留出备注卡片的位置（ANNOTATION_NOTE）。 */
+	readonly note?: string | undefined;
 	readonly id: string;
 }
 
@@ -36,16 +45,19 @@ export interface AnnotatedDocument<A extends AnnotationMembers = AnnotationMembe
 
 export interface AnnotationBox<A extends AnnotationMembers = AnnotationMembers> {
 	annotation: A;
-	/** 框住的节点：成员节点和成员子流程链上的全部节点，按节点在文档里的顺序。 */
+	/** 框住的节点：成员节点，和成员子流程及其下级子流程链上的全部节点，按节点在文档里的顺序。 */
 	members: string[];
 	box: Box;
 }
 
-function paddedBounds(rects: readonly Box[]): Box {
-	const x = Math.min(...rects.map((r) => r.x)) - REGION_PADDING.left;
-	const y = Math.min(...rects.map((r) => r.y)) - REGION_PADDING.top;
-	const x1 = Math.max(...rects.map((r) => r.x + r.w)) + REGION_PADDING.right;
-	const y1 = Math.max(...rects.map((r) => r.y + r.h)) + REGION_PADDING.bottom;
+function paddedBounds(
+	rects: readonly Box[],
+	padding: { left: number; top: number; right: number; bottom: number } = REGION_PADDING,
+): Box {
+	const x = Math.min(...rects.map((r) => r.x)) - padding.left;
+	const y = Math.min(...rects.map((r) => r.y)) - padding.top;
+	const x1 = Math.max(...rects.map((r) => r.x + r.w)) + padding.right;
+	const y1 = Math.max(...rects.map((r) => r.y + r.h)) + padding.bottom;
 	return { x, y, w: x1 - x, h: y1 - y };
 }
 
@@ -84,20 +96,24 @@ export function annotationBoxes<A extends AnnotationMembers>(
 ): AnnotationBox<A>[] {
 	const cardOf = cardsOf(doc);
 	const regions = new Map(subflowRegions(doc).map((r) => [r.entry, r]));
+	const chains = chainMembers(doc);
 	return (doc.annotations ?? []).flatMap((annotation) => {
 		const nodes = annotation.nodes.flatMap((id) => {
 			const card = cardOf.get(id);
 			return card ? [{ id, card }] : [];
 		});
-		const subflows = annotation.subflows.flatMap((id) => regions.get(id) ?? []);
+		// 子流程成员连同它下级的子流程；同一个子流程只算一次（上级和下级都写了的时候）。
+		const entries = new Set(annotation.subflows.flatMap((id) => subflowTree(doc, id, chains)));
+		const subflows = [...entries].flatMap((id) => regions.get(id) ?? []);
 		const rects = [...nodes.map((n) => n.card), ...subflows.map((r) => r.box)];
 		if (rects.length === 0) return [];
+		const noted = annotation.note?.trim() ? ANNOTATION_NOTE.height + ANNOTATION_NOTE.gap : 0;
 		const framed = new Set([...nodes.map((n) => n.id), ...subflows.flatMap((r) => r.members)]);
 		return [
 			{
 				annotation,
 				members: doc.nodes.flatMap((n) => (framed.has(n.id) ? [n.id] : [])),
-				box: paddedBounds(rects),
+				box: paddedBounds(rects, { ...ANNOTATION_PADDING, top: ANNOTATION_PADDING.top + noted }),
 			},
 		];
 	});

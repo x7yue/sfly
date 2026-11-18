@@ -37,13 +37,14 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # version.sh 用 node 读 package.json，版本与 .node-version 一致。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
+          package-manager-cache: false # 这个 job 不装依赖：不要按 package.json 的 packageManager 自动缓存
       - id: version
         name: Version matches tag
         # 先赋值再写输出：`echo "version=$(…)"` 在检查失败时也成功，错误要到下一步用空版本号时才暴露（v0.1.2）。
@@ -85,7 +86,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -95,12 +96,11 @@ jobs:
         with:
           shared-key: sfly
           save-if: false
-      - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-node@v4 # pack-agent.sh 用 version.sh 取版本号
+      - uses: ./.github/actions/setup-protoc # agent/build.rs 需要 protoc
+      - uses: actions/setup-node@v7 # pack-agent.sh 用 version.sh 取版本号
         with:
           node-version-file: .node-version
+          package-manager-cache: false # 这个 job 不装依赖：不要按 package.json 的 packageManager 自动缓存
       - name: Build and pack
         run: bash scripts/release/pack-agent.sh ${{ matrix.target }}
       - name: Upload to release
@@ -117,13 +117,13 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: pnpm
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Download agents
@@ -138,14 +138,14 @@ jobs:
         name: Node major version
         run: echo "major=$(cat .node-version)" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -156,7 +156,7 @@ jobs:
             org.opencontainers.image.description=sfly 控制面：页面、HTTP API、SSE、Agent 网关
       # Dockerfile 里没有 RUN，arm64 镜像不需要 QEMU。
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: out/server
           file: apps/server/Dockerfile

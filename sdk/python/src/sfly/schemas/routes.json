@@ -1685,6 +1685,17 @@
                       "type": "string",
                       "maxLength": 2000
                     },
+                    "color": {
+                      "type": "string",
+                      "enum": [
+                        "gray",
+                        "blue",
+                        "green",
+                        "yellow",
+                        "orange",
+                        "pink"
+                      ]
+                    },
                     "nodes": {
                       "default": [],
                       "type": "array",
@@ -1708,6 +1719,80 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "sticky_notes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 2000,
+                      "pattern": "^(?=[\\s\\S]*[^\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])"
+                    },
+                    "color": {
+                      "type": "string",
+                      "enum": [
+                        "gray",
+                        "blue",
+                        "green",
+                        "yellow",
+                        "orange",
+                        "pink"
+                      ]
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "size": {
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "number",
+                          "minimum": 160,
+                          "maximum": 4000
+                        },
+                        "height": {
+                          "type": "number",
+                          "minimum": 96,
+                          "maximum": 4000
+                        }
+                      },
+                      "required": [
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
@@ -1728,6 +1813,21 @@
         ]
       },
       "notes": [
+        {
+          "part": "body",
+          "path": "document.sticky_notes[].text",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "body",
+          "path": "document.sticky_notes[].title",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "body",
+          "path": "document.sticky_notes",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验"
+        },
         {
           "part": "body",
           "path": "document.annotations[].note",

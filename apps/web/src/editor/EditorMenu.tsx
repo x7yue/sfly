@@ -1,9 +1,16 @@
-import { copyProblem, disconnectEdge, disconnectNode, nodeConnections } from "@sfly/orchestration";
+import {
+	type ArrangeMode,
+	copyProblem,
+	disconnectEdge,
+	disconnectNode,
+	nodeConnections,
+	type Position,
+} from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { type CanvasMenuTarget, FitViewMenuItem } from "#/components/canvas/CanvasMenu";
 import type { DocNode } from "#/components/canvas/flow";
-import { ACTION } from "#/lib/copy";
-import { ContextMenuItem } from "@/components/ui/context-menu";
+import { ACTION, ARRANGE_LABEL } from "#/lib/copy";
+import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import type { AddRequest } from "./AddNodeMenu";
 import { type AnnotationMenuActions, AnnotationMenuItems } from "./annotation-menu";
 import { EdgeMenu } from "./EdgeMenu";
@@ -32,7 +39,14 @@ export interface EditorMenuActions {
 	annotations(nodeId: string): AnnotationMenuActions;
 	/** 用选中的一组节点新建注释框（多选里的节点的菜单「添加注释框」）。 */
 	addAnnotationAround(ids: readonly string[]): void;
+	/** 排列选中的一组节点（宫格 / 横向 / 纵向），一步撤销。 */
+	arrange(ids: readonly string[], mode: ArrangeMode): void;
+	/** 在空白处菜单打开的位置新建便签（ADR 0026）。 */
+	addSticky(at: Position): void;
 }
+
+/** 多选的节点菜单里的排列（和多选工具条上的同一组）。 */
+const ARRANGE_MODES: readonly ArrangeMode[] = ["grid", "row", "column"];
 
 /**
  * 编排画布的右键菜单内容（FlowCanvas 的 `menu`），按右键的对象分：连线（EdgeMenu）、节点（NodeMenu）、
@@ -59,9 +73,20 @@ export function EditorMenu({
 	}
 	if (target.kind === "nodes") {
 		return edit ? (
-			<ContextMenuItem onClick={() => edit.addAnnotationAround(target.ids)}>
-				{ACTION.addAnnotation}
-			</ContextMenuItem>
+			<>
+				<ContextMenuItem
+					shortcut="canvas-annotate"
+					onClick={() => edit.addAnnotationAround(target.ids)}
+				>
+					{ACTION.addAnnotation}
+				</ContextMenuItem>
+				<ContextMenuSeparator />
+				{ARRANGE_MODES.map((mode) => (
+					<ContextMenuItem key={mode} onClick={() => edit.arrange(target.ids, mode)}>
+						{ARRANGE_LABEL[mode]}
+					</ContextMenuItem>
+				))}
+			</>
 		) : null;
 	}
 	if (!edit) return target.kind === "pane" ? <FitViewMenuItem /> : null;
@@ -90,6 +115,7 @@ export function EditorMenu({
 			}
 			onPaste={(copied) => edit.clipboard.paste(copied, target.position)}
 			onTidy={edit.tidy}
+			onAddSticky={() => edit.addSticky(target.position)}
 			onUndo={edit.undo}
 			onRedo={edit.redo}
 		/>

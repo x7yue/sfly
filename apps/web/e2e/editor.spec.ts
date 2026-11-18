@@ -559,7 +559,7 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 		...editorDocument,
 		nodes: [
 			...editorDocument.nodes,
-			{ id: "wait", kind: "sleep", duration: "5s", position: { x: 1164, y: 230 } },
+			{ id: "wait", kind: "sleep", duration: "5s", position: { x: 1240, y: 180 } },
 		],
 		edges: [...editorDocument.edges, { from: "sub_ping", to: "wait", kind: "chain" }],
 	});

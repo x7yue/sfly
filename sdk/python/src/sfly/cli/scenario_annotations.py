@@ -14,12 +14,16 @@ _NOTE_LABEL = "备注："
 
 
 def annotation_views(document: dict[str, Any]) -> list[dict[str, Any]]:
-    """`--json` 的 `annotations`：文档里的注释框，没有备注的不带 `note`。"""
+    """`--json` 的 `annotations`：文档里的注释框。
+
+    没有备注的不带 `note`，没写颜色（灰色）的不带 `color`。
+    """
     return [
         {
             "id": a["id"],
             "title": a["title"],
             **({"note": a["note"]} if a.get("note") else {}),
+            **({"color": a["color"]} if a.get("color") else {}),
             "nodes": a.get("nodes", []),
             "subflows": a.get("subflows", []),
         }

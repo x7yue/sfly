@@ -228,11 +228,15 @@ export interface Annotation {
 	id: string;
 	title: string;
 	note?: string;
+	/** 颜色，不写就是灰色；画布新建的注释框不写，选灰色时也去掉这一项。 */
+	color?: AnnotationColor;
 	/** 成员节点的节点 ID。 */
 	nodes: string[];
 	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
 	subflows: string[];
 }
+
+export type AnnotationColor = "gray" | "blue" | "green" | "yellow" | "orange" | "pink";
 
 /**
  * 注释框：给一组节点和子流程画的框，带标题和备注，说明它们合起来在场景里做什么。属于版本内容，只记成员、
@@ -244,6 +248,8 @@ export interface AnnotationInput {
 	id: string;
 	title: string;
 	note?: string;
+	/** 颜色，不写就是灰色；画布新建的注释框不写，选灰色时也去掉这一项。 */
+	color?: AnnotationColor;
 	/** 成员节点的节点 ID。 */
 	nodes?: string[];
 	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
@@ -1316,6 +1322,7 @@ export interface OrchestrationDocument {
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages: Record<PackageName, string>;
 	annotations: Annotation[];
+	sticky_notes: StickyNote[];
 }
 
 export interface OrchestrationDocumentInput {
@@ -1325,6 +1332,7 @@ export interface OrchestrationDocumentInput {
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages?: Record<PackageName, string>;
 	annotations?: AnnotationInput[];
+	sticky_notes?: StickyNote[];
 }
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
@@ -2211,6 +2219,31 @@ export interface SleepNodeInput {
 	always?: boolean;
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
 	duration: string;
+}
+
+/**
+ * 便签：画布上自由摆放的说明（检查清单、已知问题、待办），不挂在任何节点上。属于版本内容，只用于显示，
+ * 不影响执行（docs/SEMANTICS.md §1.7，ADR 0026）。和注释框不同，它记下自己的位置和大小。
+ */
+export interface StickyNote {
+	/** 便签之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `sticky_1`。 */
+	id: string;
+	/** 加粗显示的第一行。 */
+	title?: string;
+	/** 正文：以 `- ` 开头的行显示成列表的一项，其余是普通段落。 */
+	text: string;
+	/** 颜色，和注释框同一套色板；不写就是黄色，画布选黄色时也去掉这一项。 */
+	color?: AnnotationColor;
+	/** 左上角的画布坐标；不写时由整理布局摆放。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	/** 宽高；不写是 STICKY_NOTE_SIZE。 */
+	size?: {
+		width: number;
+		height: number;
+	};
 }
 
 export interface StopSubflowNode {

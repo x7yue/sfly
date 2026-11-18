@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ensureLayout, fillMissingPositions } from "@sfly/orchestration";
+import { ensureLayout, fillMissingPositions, withStickyNotePositions } from "@sfly/orchestration";
 import type {
 	FocusItemInput,
 	OrchestrationBase,
@@ -75,6 +75,7 @@ export const initialDocument = (): OrchestrationDocument =>
 		edges: [],
 		packages: {},
 		annotations: [],
+		sticky_notes: [],
 	});
 
 type OrchestrationRow = typeof orchestrations.$inferSelect;
@@ -371,7 +372,8 @@ export class OrchestrationStore {
 				const head = await versionRow(tx, orchestrationId, orchestration.headVersion);
 				return { kind: "conflict", head: head ? toSummary(head) : null };
 			}
-			const laidOut = fillMissingPositions(document);
+			// 命令行和 API 上传的节点、便签可以不写坐标：节点按整理布局补上，便签放进内容上方的那一行（ADR 0026）。
+			const laidOut = withStickyNotePositions(fillMissingPositions(document));
 			return { kind: "saved", version: await this.#append(tx, orchestration, laidOut, actor) };
 		});
 	}

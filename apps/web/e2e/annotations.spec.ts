@@ -3,6 +3,7 @@ import { dropDocumentFields } from "../../server/test/support/legacy-document.js
 import {
 	annotated,
 	annotationBand,
+	annotationColors,
 	annotationFrame,
 	annotationNoteBox,
 	annotationTitleBox,
@@ -83,7 +84,7 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	await openEditor(page, id);
 	let menu = await openMenu(page, "fetch");
 	await expect(menu.getByRole("menuitem", { name: /注释框/ })).toHaveText([
-		"添加注释框",
+		"添加注释框CtrlG",
 		"加入注释框没有可以加入的注释框",
 		"移出注释框这个节点不在注释框里",
 	]);
@@ -144,15 +145,14 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	await expect(frame).toBeVisible();
 	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(true);
 
-	// 点标题带选中注释框，写备注：标题带上出现备注图标，悬停显示全文。
+	// 点标题选中注释框，写备注：框里最上方出现便签，直接显示备注；框上没有备注图标（备注图标只在节点卡片上）。
 	await nodeCard(page, "entry").click();
 	await annotationBand(page, "造测试数据").click();
 	await expect(annotationBand(page, "造测试数据")).toHaveAttribute("aria-pressed", "true");
 	await annotationNoteBox(page).fill(`  ${NOTE}  `);
-	const noteIcon = frame.locator('[data-slot="note-icon"]');
-	await expect(noteIcon).toHaveCount(1);
-	await noteIcon.hover();
-	await expect(page.getByRole("tooltip")).toHaveText(NOTE);
+	const noteCard = frame.locator("[data-annotation-note]");
+	await expect(noteCard).toHaveText(NOTE);
+	await expect(frame.locator('[data-slot="note-icon"]')).toHaveCount(0);
 	await expect(annotationBand(page, "造测试数据")).toHaveAccessibleDescription(NOTE);
 
 	await save(page, 2);
@@ -162,7 +162,7 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	await page.reload();
 	await expect(annotationBand(page, "造测试数据")).toBeVisible();
 	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(true);
-	await expect(frame.locator('[data-slot="note-icon"]')).toHaveCount(1);
+	await expect(noteCard).toHaveText(NOTE);
 	await annotationBand(page, "造测试数据").click();
 	await expect(annotationNoteBox(page)).toHaveValue(NOTE);
 	await expect(annotationTitleBox(page)).toHaveValue("造测试数据");
@@ -296,6 +296,51 @@ test("检查器：逐个移出成员、跳到成员，删除注释框时成员�
 	await dock(page).getByRole("button", { name: "撤销" }).click();
 	await expect(annotationFrame(page, "annotation_1")).toHaveCount(0);
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
+});
+
+test("检查器里选颜色：框跟着换色，换一次是一步撤销；保存刷新后还在，选回灰色时文档里去掉 color", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await scenarioWith(controlPlane, [
+		{ id: "annotation_1", title: "准备数据", note: NOTE, nodes: ["fetch"] },
+	]);
+	await openEditor(page, id);
+	const frame = annotationFrame(page, "annotation_1");
+	const panel = () => frame.evaluate((el) => getComputedStyle(el).backgroundColor);
+	await expect(frame).toHaveAttribute("data-annotation-color", "gray");
+	const gray = await panel();
+
+	await annotationBand(page, "准备数据").click();
+	const colors = annotationColors(page);
+	await expect(colors.getByRole("button")).toHaveText(["灰", "蓝", "绿", "黄", "橙", "粉"]);
+	await expect(colors.getByRole("button", { name: "灰" })).toHaveAttribute("aria-pressed", "true");
+	await colors.getByRole("button", { name: "蓝" }).click();
+	await expect(frame).toHaveAttribute("data-annotation-color", "blue");
+	await expect(colors.getByRole("button", { name: "蓝" })).toHaveAttribute("aria-pressed", "true");
+	await expect(colors.getByRole("button", { name: "灰" })).toHaveAttribute("aria-pressed", "false");
+	expect(await panel()).not.toBe(gray);
+	await colors.getByRole("button", { name: "粉" }).click();
+	await expect(frame).toHaveAttribute("data-annotation-color", "pink");
+	await dock(page).getByRole("button", { name: "撤销" }).click();
+	await expect(frame).toHaveAttribute("data-annotation-color", "blue");
+
+	await save(page, 2);
+	expect((await savedAnnotations(controlPlane, id))?.[0]?.color).toBe("blue");
+	await page.reload();
+	await expect(annotationFrame(page, "annotation_1")).toHaveAttribute(
+		"data-annotation-color",
+		"blue",
+	);
+
+	await annotationBand(page, "准备数据").click();
+	await annotationColors(page).getByRole("button", { name: "灰" }).click();
+	await expect(annotationFrame(page, "annotation_1")).toHaveAttribute(
+		"data-annotation-color",
+		"gray",
+	);
+	await save(page, 3);
+	expect((await savedAnnotations(controlPlane, id))?.[0]).not.toHaveProperty("color");
 });
 
 test("标题为空时是字段错误，不能保存；保存被拦下时选中这个注释框并聚焦标题", async ({
@@ -458,6 +503,7 @@ test("运行状态模式和版本查看画布显示注释框（只读，标题�
 				id: "annotation_1",
 				title: "准备数据",
 				note: "两步都要成功",
+				color: "green",
 				nodes: ["fetch", "dispatch"],
 			},
 			{ id: "annotation_3", title: "对账", subflows: ["sub_entry"] },
@@ -477,6 +523,10 @@ test("运行状态模式和版本查看画布显示注释框（只读，标题�
 	await switchMode(page, "run");
 	await expect(annotationFrame(page, "annotation_3")).toBeVisible();
 	await expect(annotationFrame(page, "annotation_1")).toContainText("准备数据");
+	await expect(annotationFrame(page, "annotation_1")).toHaveAttribute(
+		"data-annotation-color",
+		"green",
+	);
 	await expect(page.getByRole("button", { name: /^选中注释框/ })).toHaveCount(0);
 	await switchMode(page, "edit");
 	await expect(annotationBand(page, "准备数据")).toBeVisible();
@@ -491,12 +541,17 @@ test("运行状态模式和版本查看画布显示注释框（只读，标题�
 	await expect(group).toContainText("标题 造测试数据 → 准备数据");
 	await expect(group).toContainText("备注 两步都要成功（新增）");
 	await expect(group).toContainText("成员节点 fetch → fetch、dispatch");
+	await expect(group).toContainText("颜色 灰 → 绿");
 	const a = page.getByRole("region", { name: "版本 1（只读）" });
 	const b = page.getByRole("region", { name: "版本 2（只读）" });
 	await expect(a.locator('[data-annotation="annotation_2"]')).toBeVisible();
 	await expect(b.locator('[data-annotation="annotation_3"]')).toBeVisible();
-	await expect(b.locator('[data-annotation="annotation_1"] [data-slot="note-icon"]')).toHaveCount(
-		1,
+	await expect(b.locator('[data-annotation="annotation_1"]')).toHaveAttribute(
+		"data-annotation-color",
+		"green",
+	);
+	await expect(b.locator('[data-annotation="annotation_1"] [data-annotation-note]')).toHaveText(
+		"两步都要成功",
 	);
 	await expect(page.getByRole("button", { name: /^选中注释框/ })).toHaveCount(0);
 });

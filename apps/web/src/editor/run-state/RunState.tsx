@@ -40,7 +40,9 @@ import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
 import {
 	ACTION,
+	attemptLabel,
 	DURATION_LABEL,
+	ELAPSED_LABEL,
 	FOCUS,
 	MESSAGE,
 	MONITOR_DETAIL_LABEL,
@@ -63,7 +65,12 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { InspectorWidthHandle, useInspectorWidth } from "../inspector/inspector-width";
 import { OnlineEditors } from "../OnlineEditors";
 import { NodeCharts } from "./NodeCharts";
-import { type NodeRunSummary, nodeElapsed, type RunOverlay } from "./run-overlay";
+import {
+	type NodeRunSummary,
+	nodeElapsed,
+	type RunOverlay,
+	withoutErrorClass,
+} from "./run-overlay";
 import type { CanvasRun } from "./use-canvas-run";
 
 /**
@@ -116,16 +123,19 @@ function primaryAnomaly(focus: RunFocus | undefined, id: string) {
 }
 
 /**
- * 节点卡片、连线与子流程区域的运行状态叠加。节点类型有主指标、节点开始执行过时，
- * 卡片底部的指标槽显示主指标的最新值与迷你趋势（#43），否则沿用配置摘要（关键输入）。
- * 执行中的节点在标题下写此刻在做什么（#356）：最外层、开始得最早的动作，没有动作时是进度的说明。
- * 有关注项的节点（#353）左上角写个数，开始执行过以后底部的指标槽换成前两项。
+ * 节点卡片、连线与子流程区域的运行状态叠加。卡片上（DESIGN-SYSTEM §2.3）：站点灯换成状态标记，第一行右侧是这次
+ * 运行里最要紧的那个数——执行中有总数的进度（282/600）、等待中的剩余时间、其余状态的耗时；第二行换成失败原因、
+ * 主指标的最新值与迷你趋势（#43）或第几次尝试，没有时沿用配置摘要；执行中、等待中的底边画进度线。
+ * `now` 是控制面时间（运行中每秒更新），剩余时间和耗时按它算。
+ * 执行中的节点第二行写此刻在做什么（#356）：最外层、开始得最早的动作，没有动作时是进度的说明。
+ * 有关注项的节点（#353）卡片上边线外写个数，开始执行过以后两行字下面列出前两项。
  */
 export function useRunDecorations(
 	run: RunView | undefined,
 	overlay: RunOverlay | undefined,
 	metrics: RunMetricCatalog | undefined,
 	focus: RunFocus | undefined,
+	now: number,
 ) {
 	return useMemo((): Decorations => {
 		if (!run || !overlay) return {};
@@ -137,40 +147,89 @@ export function useRunDecorations(
 					// 子流程还没有触发（或运行结束时也没有触发）：节点没有运行记录。
 					return {
 						run: "pending",
-						status: (
-							<StatusPill kind="pending" className={ZOOM_TEXT_12}>
-								{ended ? NOT_RUN_IN_ENDED_RUN.label : NODE_STATUS.pending.label}
-							</StatusPill>
-						),
+						status: {
+							kind: "pending",
+							label: ended ? NOT_RUN_IN_ENDED_RUN.label : NODE_STATUS.pending.label,
+						},
 						focus: cardFocus(focus, id, false, ended),
 					};
 				}
-				const s = nodeStatusView(summary.node.status);
+				const { node } = summary;
+				const status = nodeStatusView(node.status);
+				const last = node.attempts.at(-1);
+				const elapsed = nodeElapsed(node, now);
 				const entry = catalogEntry(metrics, summary.chain.id, id);
-				const started = summary.node.attempts.some((a) => a.started_at !== null);
-				// 三角画在主指标旁，卡片上没有主指标槽时不写异常（名称里也不写）。
+				const started = node.attempts.some((a) => a.started_at !== null);
+				// 三角画在主指标旁，卡片上没有主指标时不写异常（名称里也不写）。
 				const anomaly = entry?.primary_metric ? primaryAnomaly(focus, id) : undefined;
-				return {
+				const decoration: NodeDecoration = {
 					run: summary.state,
-					activity: currentActivity(summary.node.attempts.at(-1)) ?? undefined,
+					status,
+					activity: currentActivity(last) ?? undefined,
 					focus: cardFocus(focus, id, started, ended) ?? anomaly,
-					slot: entry?.primary_metric ? (
+				};
+				// 执行中、等待中的时长每秒都在变：按进行中的写法（formatSpan）。
+				const live = summary.state === "running" || summary.state === "waiting";
+				if (elapsed !== null) {
+					decoration.figure = formatSpan(elapsed, live);
+					if (live)
+						decoration.overview = (
+							<>
+								{ELAPSED_LABEL} <span className="font-mono">{formatSpan(elapsed, true)}</span>
+							</>
+						);
+				}
+				if (summary.state === "waiting" && last?.wake_at && last.started_at) {
+					const start = Date.parse(last.started_at);
+					const wake = Date.parse(last.wake_at);
+					const left = formatSpan(wake - now, true);
+					decoration.figure = `剩 ${left}`;
+					decoration.overview = (
+						<>
+							剩 <span className="font-mono">{left}</span>
+						</>
+					);
+					if (wake > start) decoration.progress = (now - start) / (wake - start);
+				} else if (summary.state === "running" && last?.progress?.total) {
+					const done = `${last.progress.current}/${last.progress.total}`;
+					decoration.figure = done;
+					decoration.overview = <span className="font-mono">{done}</span>;
+					decoration.progress = last.progress.current / last.progress.total;
+				}
+				const error = node.error ?? last?.error;
+				// 失败原因（错误的第一行，和检查器一样）在卡片和站外一行上去掉开头的异常类名，悬停提示里是带类名的原文；
+				// 多行错误的全文在运行监控里。
+				const reason = summary.state === "failed" && error ? errorHeadline(error.message) : "";
+				if (summary.state === "failed")
+					decoration.overview = (
+						<span title={reason || undefined} className="text-danger-fg">
+							{withoutErrorClass(reason) || NODE_STATUS.failed.label}
+						</span>
+					);
+				if (reason) {
+					decoration.detail = (
+						<span title={reason} className="min-w-0 flex-1 truncate text-danger-fg">
+							{withoutErrorClass(reason)}
+						</span>
+					);
+				} else if (entry?.primary_metric) {
+					decoration.detail = (
 						<>
 							{anomaly && <AnomalyMark className="flex-none" />}
 							<NodePrimaryMetric
 								runId={run.id}
 								entry={entry}
-								status={summary.node.status}
+								status={node.status}
 								variant="inline"
 							/>
 						</>
-					) : undefined,
-					status: (
-						<StatusPill kind={s.kind} className={ZOOM_TEXT_12}>
-							{s.label}
-						</StatusPill>
-					),
-				};
+					);
+				} else if (summary.state === "running" && node.attempts.length > 1) {
+					decoration.detail = (
+						<span className="min-w-0 flex-1 truncate">{attemptLabel(node.attempts.length)}</span>
+					);
+				}
+				return decoration;
 			},
 			decorateEdge: overlay.edge,
 			regionMeta: (entryId) => {
@@ -194,7 +253,7 @@ export function useRunDecorations(
 				);
 			},
 		};
-	}, [run, overlay, metrics, focus]);
+	}, [run, overlay, metrics, focus, now]);
 }
 
 /** 左上控件组里替换检查状态的部分：运行状态、运行编号、耗时。 */
@@ -307,7 +366,7 @@ export const RunStateInspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface shadow-float"
 			style={{ width }}
 		>
 			{state.status === "ready" && id !== null && node ? (

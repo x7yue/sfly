@@ -117,17 +117,17 @@ test("链上的连线右键有「在此插入节点」「断开连线」，调�
 			].sort(),
 		);
 	// 新节点放在 fetch 右侧一列，同一行后面的节点各后移一列；子流程那一行不动。
-	expect(await nodePosition(page, "sleep_1")).toEqual({ x: 504, y: 0 });
-	expect(await nodePosition(page, "dispatch")).toEqual({ x: 756, y: 0 });
-	expect(await nodePosition(page, "ping")).toEqual({ x: 1008, y: 0 });
-	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 660, y: 230 });
+	expect(await nodePosition(page, "sleep_1")).toEqual({ x: 600, y: 0 });
+	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
+	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
+	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 780, y: 180 });
 
 	// 一步撤销。
 	const undo = dock(page).getByRole("button", { name: "撤销" });
 	await undo.click();
 	await expect(nodeCard(page, "sleep_1")).toHaveCount(0);
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
-	expect(await nodePosition(page, "dispatch")).toEqual({ x: 504, y: 0 });
+	expect(await nodePosition(page, "dispatch")).toEqual({ x: 600, y: 0 });
 	await expect(undo).toBeDisabled();
 });
 
@@ -164,7 +164,7 @@ test("悬停链上的连线时中点出现「＋」，点它与「在此插入�
 	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
 	await expect(page.locator('[data-edge="chain:fetch->sleep_1"]')).toHaveCount(1);
 	await expect(page.locator('[data-edge="chain:sleep_1->dispatch"]')).toHaveCount(1);
-	expect(await nodePosition(page, "dispatch")).toEqual({ x: 756, y: 0 });
+	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
 
 	await page.keyboard.press("Control+z");
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
@@ -210,7 +210,7 @@ test("断开连线：菜单和 Delete 键都只删这一条连线，各是一步
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
 	await expect(undo).toBeDisabled();
 
-	// 快捷键面板写明 Delete 也能断开选中的连线。
+	// 快捷键面板写明 Delete 也能断开选中的连线（选中便签时删除便签）。
 	await page.locator("body").press("?");
 	const shortcuts = page.getByRole("dialog", { name: "快捷键" });
 	await expect(
@@ -218,7 +218,7 @@ test("断开连线：菜单和 Delete 键都只删这一条连线，各是一步
 			.getByRole("region", { name: "编排画布" })
 			.locator("dl > div")
 			.filter({ hasText: /Delete$/ }),
-	).toHaveText("删除节点 / 断开连线Delete");
+	).toHaveText("删除节点 / 断开连线 / 删除便签Delete");
 });
 
 test("拖动连线的终点或起点改接到另一个节点，是一步撤销；违反连线规则时回到原处并提示原因", async ({
@@ -236,7 +236,7 @@ test("拖动连线的终点或起点改接到另一个节点，是一步撤销�
 				kind: "package",
 				package: "demo-checks",
 				node: "ping",
-				position: { x: 252, y: 230 },
+				position: { x: 300, y: 204 },
 				inputs: { host: "h" },
 			},
 		],

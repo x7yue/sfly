@@ -47,6 +47,7 @@ describe("编排文档差异", () => {
 			edges: { added: [], removed: [] },
 			moved: [],
 			annotations: { added: [], removed: [], changed: [] },
+			stickyNotes: { added: [], removed: [], changed: [], moved: [] },
 		});
 	});
 
@@ -77,6 +78,7 @@ describe("编排文档差异", () => {
 			},
 			moved: [],
 			annotations: { added: [], removed: [], changed: [] },
+			stickyNotes: { added: [], removed: [], changed: [], moved: [] },
 		});
 	});
 
@@ -141,6 +143,7 @@ describe("编排文档差异", () => {
 			edges: { added: [], removed: [] },
 			moved: [],
 			annotations: { added: [], removed: [], changed: [] },
+			stickyNotes: { added: [], removed: [], changed: [], moved: [] },
 		});
 	});
 
@@ -235,5 +238,77 @@ describe("编排文档差异", () => {
 		]);
 		expect(isEmptyDiff(diffDocuments(named("创建测试用户"), named(" 创建测试用户 ")))).toBe(true);
 		expect(isEmptyDiff(diffDocuments(named(), named("   ")))).toBe(true);
+	});
+
+	it("改注释框的颜色也算有修改；不写颜色和写 gray 都是灰色，不算修改", () => {
+		const colored = (color?: string) => ({
+			...base,
+			annotations: [{ id: "a1", title: "检查", nodes: ["check"], ...(color ? { color } : {}) }],
+		});
+		expect(diffDocuments(colored(), colored("blue")).annotations.changed).toEqual([
+			{ id: "a1", title: "检查", changes: [{ path: "color", before: undefined, after: "blue" }] },
+		]);
+		expect(diffDocuments(colored("blue"), colored("pink")).annotations.changed[0]?.changes).toEqual(
+			[{ path: "color", before: "blue", after: "pink" }],
+		);
+		expect(isEmptyDiff(diffDocuments(colored(), colored("gray")))).toBe(true);
+		expect(isEmptyDiff(diffDocuments(colored("gray"), colored()))).toBe(true);
+	});
+
+	it("便签：新增、删除、改了标题 / 正文 / 颜色各自列出；只挪了位置、改了大小算布局；不写颜色和写 yellow 都是黄色", () => {
+		const withNotes = (...sticky_notes: ({ id: string } & Record<string, unknown>)[]) => ({
+			...base,
+			sticky_notes,
+		});
+		const before = withNotes(
+			{ id: "s1", title: "跑之前", text: "- 一\n- 二", position: { x: 0, y: -200 } },
+			{ id: "s2", text: "已知问题", position: { x: 300, y: -200 } },
+		);
+		const after = withNotes(
+			{
+				id: "s1",
+				title: "跑之前确认",
+				text: "- 一\n- 二",
+				color: "blue",
+				position: { x: 0, y: -200 },
+			},
+			{ id: "s3", text: "待办：补监控\n第二行", position: { x: 600, y: -200 } },
+		);
+		const diff = diffDocuments(before, after);
+		expect(diff.stickyNotes.added).toEqual([{ id: "s3", label: "待办：补监控" }]);
+		expect(diff.stickyNotes.removed).toEqual([{ id: "s2", label: "已知问题" }]);
+		expect(diff.stickyNotes.changed).toEqual([
+			{
+				id: "s1",
+				label: "跑之前确认",
+				changes: [
+					{ path: "title", before: "跑之前", after: "跑之前确认" },
+					{ path: "color", before: undefined, after: "blue" },
+				],
+			},
+		]);
+		expect(diff.stickyNotes.moved).toEqual([]);
+
+		const moved = diffDocuments(
+			before,
+			withNotes(
+				{ id: "s1", title: "跑之前", text: "- 一\n- 二", position: { x: 40, y: -200 } },
+				{
+					id: "s2",
+					text: "已知问题",
+					position: { x: 300, y: -200 },
+					size: { width: 300, height: 200 },
+				},
+			),
+		);
+		expect(moved.stickyNotes.changed).toEqual([]);
+		expect(moved.stickyNotes.moved).toEqual(["s1", "s2"]);
+		expect(isEmptyDiff(moved)).toBe(false);
+		expect(isEmptyDiff(moved, { ignoreLayout: true })).toBe(true);
+
+		const yellow = (color?: string) =>
+			withNotes({ id: "s1", text: "x", ...(color ? { color } : {}) });
+		expect(isEmptyDiff(diffDocuments(yellow(), yellow("yellow")))).toBe(true);
+		expect(isEmptyDiff(diffDocuments(base, withNotes()))).toBe(true);
 	});
 });

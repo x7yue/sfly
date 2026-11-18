@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { LAYOUT_COLUMN, LEGACY_LAYOUT_COLUMN } from "@sfly/orchestration";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import {
 	addMenu,
@@ -7,9 +8,11 @@ import {
 	editorDocument,
 	inspector,
 	nodeCard,
+	nodePosition,
 	openEditor,
 	paneMenu,
 	switchMode,
+	withoutFollow,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { runningScenario } from "./monitor-scenario";
@@ -28,11 +31,11 @@ test("1280 宽检查器拖到最宽：画布留得下小地图和工具条，两
 	await nodeCard(page, "fetch").click();
 
 	const panel = await box(inspector(page));
-	// 上限 = 视口宽度减去给画布留的 742px（小地图 + 工具条 + 间距），不是视口的 60%（768px）。
-	expect(Math.round(panel.width)).toBe(538);
+	// 上限 = 视口宽度减去给画布留的 778px（小地图 + 工具条 + 间距），不是视口的 60%（768px）。
+	expect(Math.round(panel.width)).toBe(502);
 	const toolbar = await box(dock(page));
 	const minimap = await box(page.locator(".react-flow__minimap"));
-	expect(toolbar.width).toBeLessThanOrEqual(506);
+	expect(toolbar.width).toBeLessThanOrEqual(542);
 	expect(overlap(toolbar, minimap)).toBe(false);
 	expect(toolbar.x).toBeGreaterThanOrEqual(minimap.x + minimap.width + 8);
 	expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(panel.x - 8);
@@ -99,6 +102,8 @@ test("运行状态里选中执行中的节点：进入它的连线仍是青色�
 	clock,
 }) => {
 	const { scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 线宽按缩放换算（max(2px, 2px/缩放)）：跟随执行移动视口时前后两次读数会因缩放不同而不可比。
+	await withoutFollow(page);
 	await page.goto(`/orchestrations/${scenarioId}`);
 	await switchMode(page, "run");
 	const live = page.locator('[data-edge="chain:spawn->verify"]');
@@ -242,4 +247,43 @@ test("选中执行失败的节点：进入它的连线保持红色", async ({
 	await nodeCard(page, "verify").click();
 	await expect(failed).toHaveAttribute("data-highlighted", "true");
 	expect(await failed.evaluate((el) => getComputedStyle(el).stroke)).toBe(stroke);
+});
+
+test("按旧的卡片尺寸排的场景：打开时提示节点叠在一起，「拉开」把横坐标按新列宽拉开，是一步撤销", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane);
+	// 卡片 208 宽时整理布局的列宽是 252：现在 256 宽的卡片同一行相邻的叠 4px。
+	const legacy = {
+		...editorDocument,
+		nodes: editorDocument.nodes.map((n) => ({
+			...n,
+			position: {
+				x: Math.round((n.position.x / LAYOUT_COLUMN) * LEGACY_LAYOUT_COLUMN),
+				y: n.position.y,
+			},
+		})),
+	};
+	const id = await createScenario(controlPlane, "旧布局", legacy);
+	await openEditor(page, id);
+	const notice = page
+		.locator("[data-sonner-toast]")
+		.filter({ hasText: "这个场景里有节点叠在一起" });
+	await expect(notice).toBeVisible();
+	expect(await nodePosition(page, "fetch")).toEqual({ x: LEGACY_LAYOUT_COLUMN, y: 0 });
+
+	await notice.getByRole("button", { name: "拉开" }).click();
+	await expect.poll(() => nodePosition(page, "fetch")).toEqual({ x: LAYOUT_COLUMN, y: 0 });
+	expect(await nodePosition(page, "ping")).toEqual({ x: LAYOUT_COLUMN * 3, y: 0 });
+	await expect(notice).toHaveCount(0);
+	await dock(page).getByRole("button", { name: "撤销" }).click();
+	await expect.poll(() => nodePosition(page, "fetch")).toEqual({ x: LEGACY_LAYOUT_COLUMN, y: 0 });
+});
+
+test("卡片没有叠在一起的场景：打开时不提示", async ({ page, controlPlane }) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	await expect(nodeCard(page, "fetch")).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });

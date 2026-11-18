@@ -1,4 +1,9 @@
-import { type LayoutDocument, type SubflowRegion, subflowRegions } from "@sfly/orchestration";
+import {
+	type LayoutDocument,
+	REGION_PADDING,
+	type SubflowRegion,
+	subflowRegions,
+} from "@sfly/orchestration";
 import { useStore, ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
 import { useMemo } from "react";
@@ -26,6 +31,11 @@ function namedRegions(layout: LayoutDocument, nodes: SfNode[], edges: SfEdge[]):
 
 /** 标题栏左右各留 14px（`left-3.5`）。 */
 const HEADER_INSET = 14;
+/**
+ * 标题行底边离区域顶边的距离：标题行按底边放在区域上方的留白里，缩小视图时文字变大往上长，
+ * 不被下面的卡片挡住（和注释框的标题带一样）。
+ */
+const HEADER_BOTTOM = REGION_PADDING.top - 14;
 
 /** 默认的元信息（谁触发、几个节点）放得下需要多宽，单位是标题栏的字号：窄于它就整段去掉，把空间留给名字。 */
 const META_FITS_EM = 24;
@@ -48,8 +58,15 @@ export function SubflowRegions({
 	edges: SfEdge[];
 	onSelect?: (ids: readonly string[]) => void;
 }) {
-	const { regionMeta } = useFlowCanvas();
+	const { regionMeta, decorateNode, grounds } = useFlowCanvas();
 	const regions = useMemo(() => namedRegions(layout, nodes, edges), [layout, nodes, edges]);
+	const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n.data.node])), [nodes]);
+	/** 区域里有挂着站外一行（NodeCard）的站：执行中、失败或等待中。 */
+	const watched = (r: Region) =>
+		r.members.some((id) => {
+			const node = byId.get(id);
+			return node !== undefined && decorateNode?.(id, node)?.overview !== undefined;
+		});
 	// 用 JS 算而不是容器查询：标题栏的字号随缩放变，Chromium 不会因为容器的字号变了重新计算依赖 em 的容器查询。
 	const zoom = useStore((s) => s.transform[2]);
 	const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
@@ -58,6 +75,10 @@ export function SubflowRegions({
 		<ViewportPortal>
 			{regions.map((r) => {
 				const custom = regionMeta?.(r.entry);
+				// 区域画在注释框的底板上时（框住了这个子流程），标题行的说明换成底板上的次要文字色：fg-3 在
+				// 「底板加区域的淡紫」上只有约 3.6:1。
+				const box = grounds.get(r.entry)?.color;
+				const framed = box !== undefined && box !== "canvas" ? box : undefined;
 				const fits = r.box.w - 2 * HEADER_INSET >= META_FITS_EM * fontPx;
 				const meta =
 					custom ??
@@ -68,14 +89,16 @@ export function SubflowRegions({
 					<section
 						key={r.entry}
 						aria-label={`子流程 ${r.name}`}
+						data-annotation-color={framed}
 						className="pointer-events-none absolute -z-10 rounded-xl border border-dashed border-canvas-subflow-line bg-canvas-subflow-soft"
 						style={{ left: r.box.x, top: r.box.y, width: r.box.w, height: r.box.h }}
 					>
 						<div
 							className={cn(
-								"absolute top-2.25 right-3.5 left-3.5 flex items-center gap-2 whitespace-nowrap text-canvas-subflow-fg",
+								"absolute right-3.5 left-3.5 flex items-center gap-2 whitespace-nowrap text-canvas-subflow-fg",
 								ZOOM_TEXT_12,
 							)}
+							style={{ bottom: r.box.h - HEADER_BOTTOM }}
 						>
 							{onSelect ? (
 								// 不进 Tab 顺序：画布只有画布区域一个停靠点（键盘用方向键浏览节点）。
@@ -92,7 +115,15 @@ export function SubflowRegions({
 								<RegionTitle name={r.name} />
 							)}
 							{meta && (
-								<span className="pointer-events-auto ml-auto min-w-0 shrink-100 truncate text-fg-3">
+								<span
+									className={cn(
+										"pointer-events-auto ml-auto min-w-0 shrink-100 truncate",
+										framed ? "text-canvas-annotation-fg-2" : "text-fg-3",
+										// 看全图时，区域里要盯的站自己挂着站外一行（标题加数字或原因），标题行右侧的运行状态和它重复：
+										// 藏起来，给上面一个区域伸下来的站外一行让出位置（invisible 保留位置，名字不重新排）。
+										custom !== undefined && watched(r) && "in-data-[lod-far=true]:invisible",
+									)}
+								>
 									{meta}
 								</span>
 							)}

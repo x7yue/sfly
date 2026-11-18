@@ -1,7 +1,14 @@
 import type { AttemptView, ChainRunView, NodeRunView, RunView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { toFlowEdge } from "#/components/canvas/flow";
-import { type EdgeFlow, liveEdgeIds, nextEdgeFlow, nodeElapsed, runOverlay } from "./run-overlay";
+import {
+	type EdgeFlow,
+	liveEdgeIds,
+	nextEdgeFlow,
+	nodeElapsed,
+	runOverlay,
+	withoutErrorClass,
+} from "./run-overlay";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const at = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -116,19 +123,64 @@ describe("画布运行状态叠加", () => {
 		expect(overlay.node("missing")).toBeUndefined();
 	});
 
-	it("进入执行中节点的链连线是 live，进入失败节点的是 failed；调度连线不叠加", () => {
+	it("线路图：走过的链连线是 travelled，没走到的是 ahead，进入执行中 / 失败 / 等待中节点的是 live / failed / waiting", () => {
 		const overlay = runOverlay(
 			run([
 				chain({
 					...main,
-					nodes: [node("a", "success"), node("b", "running"), node("c", "failed")],
+					nodes: [
+						node("a", "success"),
+						node("b", "running"),
+						node("c", "failed"),
+						node("d", "success"),
+						node("e", "waiting"),
+						node("f", "pending"),
+						node("g", "skipped"),
+					],
 				}),
 			]),
 		);
 		expect(overlay.edge({ from: "a", to: "b", kind: "chain" })).toBe("live");
-		expect(overlay.edge({ from: "b", to: "c", kind: "chain" })).toBeUndefined();
 		expect(overlay.edge({ from: "a", to: "c", kind: "chain" })).toBe("failed");
-		expect(overlay.edge({ from: "a", to: "b", kind: "dispatch" })).toBeUndefined();
+		expect(overlay.edge({ from: "a", to: "d", kind: "chain" })).toBe("travelled");
+		expect(overlay.edge({ from: "a", to: "e", kind: "chain" })).toBe("waiting");
+		expect(overlay.edge({ from: "a", to: "f", kind: "chain" })).toBe("ahead");
+		expect(overlay.edge({ from: "a", to: "g", kind: "chain" })).toBe("ahead");
+		// 起点还没完成：后面都还没走到。
+		expect(overlay.edge({ from: "b", to: "c", kind: "chain" })).toBe("ahead");
+		// 没有运行记录的节点（子流程没有触发）。
+		expect(overlay.edge({ from: "missing", to: "a", kind: "chain" })).toBe("ahead");
+	});
+
+	it("调度连线：子流程有实例还在运行时是 live，结束了或没有触发是 ended", () => {
+		const overlay = runOverlay(
+			run([
+				chain({ ...main, nodes: [node("spawn", "success"), node("spawn2", "success")] }),
+				chain({
+					id: "c-sub",
+					chain_id: "sub",
+					name: "sub",
+					parent_chain_instance_id: main.id,
+					async_node_id: "spawn",
+					depth: 1,
+					status: "running",
+					nodes: [node("sub", "success"), node("x", "running")],
+				}),
+				chain({
+					id: "c-done",
+					chain_id: "done_sub",
+					name: "done_sub",
+					parent_chain_instance_id: main.id,
+					async_node_id: "spawn2",
+					depth: 1,
+					status: "failed",
+					nodes: [node("done_sub", "success"), node("y", "failed")],
+				}),
+			]),
+		);
+		expect(overlay.edge({ from: "spawn", to: "sub", kind: "dispatch" })).toBe("live");
+		expect(overlay.edge({ from: "spawn2", to: "done_sub", kind: "dispatch" })).toBe("ended");
+		expect(overlay.edge({ from: "spawn2", to: "never", kind: "dispatch" })).toBe("ended");
 	});
 
 	it("子流程节点取第一个实例（与监控页 ?node= 定位的实例一致），并给出实例数；没有触发的子流程没有实例", () => {
@@ -292,5 +344,20 @@ describe("节点耗时", () => {
 		const queued = node("c", "queued", [attempt({ started_at: null, ended_at: null })]);
 		expect(nodeElapsed(queued, T0 + 10_000)).toBeNull();
 		expect(nodeElapsed(node("d", "pending"), T0)).toBeNull();
+	});
+});
+
+describe("卡片上的失败原因", () => {
+	it("去掉开头的异常类名，带模块路径的也去掉", () => {
+		expect(withoutErrorClass("AssertionError: 漏拦 3 笔")).toBe("漏拦 3 笔");
+		expect(withoutErrorClass("RuntimeError：磁盘使用率 97%")).toBe("磁盘使用率 97%");
+		expect(withoutErrorClass("requests.exceptions.ConnectionError: 连接被重置")).toBe("连接被重置");
+		expect(withoutErrorClass("ValueException: bad")).toBe("bad");
+	});
+	it("没有类名、只有类名或类名不在开头时保留原文", () => {
+		expect(withoutErrorClass("超时")).toBe("超时");
+		expect(withoutErrorClass("TimeoutError")).toBe("TimeoutError");
+		expect(withoutErrorClass("TimeoutError: ")).toBe("TimeoutError: ");
+		expect(withoutErrorClass("调用失败: KeyError: x")).toBe("调用失败: KeyError: x");
 	});
 });

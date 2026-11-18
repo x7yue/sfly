@@ -1,3 +1,4 @@
+import { NODE_SIZE } from "@sfly/orchestration";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import {
 	canvasFocusRun,
@@ -44,7 +45,9 @@ test("卡片：眼睛图标和数量、前两项、「还有 N 个关注项」�
 	// 「正在做」一行和关注项都在，卡片长高了，仍在子流程区域里面。
 	await expect(probe.getByTestId("node-activity")).toContainText("第 3 批");
 	const region = page.getByRole("region", { name: "子流程 sub" });
-	await expect.poll(async () => (await probe.boundingBox())?.height).toBeGreaterThan(140);
+	await expect
+		.poll(async () => (await probe.boundingBox())?.height)
+		.toBeGreaterThan(NODE_SIZE.height + 40);
 	await expect
 		.poll(async () => {
 			const [card, box] = [await probe.boundingBox(), await region.boundingBox()];
@@ -77,13 +80,15 @@ test("卡片的可访问名称里有关注项的个数和需要注意的项数",
 	await openCanvasRun(page, clock, running);
 	// 卡片上的三角旁边放不下原因：原因写在名称里。
 	await expect(nodeCard(page, "probe")).toHaveAccessibleName(
-		/^节点 probe，.+ 执行中 正在做 第 3 批 2 个关注项，1 项需要注意：total 已 2m \d+s 无新数据$/,
+		/^节点 probe，.+ 执行中 [\d/dhms. ]+ 正在做 第 3 批 2 个关注项，1 项需要注意：total 已 2m \d+s 无新数据$/,
 	);
 	await expect(nodeCard(page, "fetch")).toHaveAccessibleName(
-		"节点 fetch，HTTP 检查 成功 3 个关注项",
+		/^节点 fetch，HTTP 检查 成功 [\d.]+m?s 3 个关注项$/,
 	);
 	// 没有关注项的节点名称不变。
-	await expect(nodeCard(page, "verify")).toHaveAccessibleName(/^节点 verify，.+ 执行中$/);
+	await expect(nodeCard(page, "verify")).toHaveAccessibleName(
+		/^节点 verify，.+ 执行中 [\d/dhms. ]+$/,
+	);
 });
 
 test("场景没设关注项时，主指标有异常的卡片：主指标旁有琥珀三角，可访问名称写明原因；没有异常的卡片不变", async ({
@@ -99,7 +104,7 @@ test("场景没设关注项时，主指标有异常的卡片：主指标旁有�
 	await expect(verify.locator("[data-primary-metric]")).toBeVisible();
 	await expect(verify.locator('[data-status-dot="warn"]')).toHaveCount(1);
 	await expect(verify).toHaveAccessibleName(
-		/^节点 verify，.+ 执行中 1 项需要注意：主指标 level 重试（第 2 次尝试）· \d\d:\d\d:\d\d$/,
+		/^节点 verify，.+ 执行中 [\d/dhms. ]+ 1 项需要注意：主指标 level 重试（第 2 次尝试）· \d\d:\d\d:\d\d$/,
 	);
 	// 没设关注项：没有眼睛图标和个数。
 	await expect(verify.getByTestId("node-focus-count")).toHaveCount(0);
@@ -107,7 +112,7 @@ test("场景没设关注项时，主指标有异常的卡片：主指标旁有�
 	const probe = nodeCard(page, "probe");
 	await expect(probe.locator("[data-primary-metric]")).toBeVisible();
 	await expect(probe.locator('[data-status-dot="warn"]')).toHaveCount(0);
-	await expect(probe).toHaveAccessibleName(/^节点 probe，.+ 执行中$/);
+	await expect(probe).toHaveAccessibleName(/^节点 probe，.+ 执行中 [\d/dhms. ]+$/);
 });
 
 test("图表在这次运行的节点包版本里不存在的关注项：卡片上写明原因、不显示数值，可访问名称里也有", async ({
@@ -142,7 +147,7 @@ test("图表在这次运行的节点包版本里不存在的关注项：卡片�
 	await expect(probe.getByTestId("node-focus")).not.toContainText("—");
 	await expect(probe.locator('[data-focus-row="水位"] [data-status-dot]')).toHaveCount(0);
 	await expect(probe).toHaveAccessibleName(
-		/^节点 probe，.+ 执行中 2 个关注项，这个版本的节点没有图表 水位$/,
+		/^节点 probe，.+ 执行中 [\d/dhms. ]+ 2 个关注项，这个版本的节点没有图表 水位$/,
 	);
 });
 

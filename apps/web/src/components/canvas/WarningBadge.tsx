@@ -4,7 +4,7 @@ import { useHostKeyboardFocus } from "#/lib/host-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
- * 节点卡片右上角的「N 警告」：鼠标悬停在徽标上，或用键盘把焦点移到这张卡片上时，提示里列出每条警告。
+ * 节点卡片第一行右侧的「N 警告」（缩小视图时只留三角和数字）：鼠标悬停在徽标上，或用键盘把焦点移到这张卡片上时，提示里列出每条警告。
  * 节点卡片不在 Tab 顺序里（方向键切换），徽标本身也不可聚焦，所以键盘看警告跟随卡片的键盘焦点
  * （`:focus-visible`；鼠标点选卡片时不弹出）。
  */
@@ -23,7 +23,9 @@ export function WarningBadge({
 		<Tooltip open={hovered || focused} onOpenChange={setHovered}>
 			<TooltipTrigger render={<span ref={badge} className="inline-flex cursor-default" />}>
 				<StatusPill kind="warn" className={className}>
-					{warnings.length} 警告
+					{warnings.length}
+					{/* 缩小视图时只留琥珀三角和数字（颜色和形状已经说明是警告），把宽度让给标题；读屏照样读到「警告」。 */}
+					<span className="in-data-[lod=true]:sr-only"> 警告</span>
 				</StatusPill>
 			</TooltipTrigger>
 			<TooltipContent role="tooltip" side="top" align="end" className="max-w-sm">

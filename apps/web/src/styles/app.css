@@ -107,23 +107,33 @@
 	--color-canvas-grid: var(--canvas-grid);
 	--color-canvas-node-bg: var(--canvas-node-bg);
 	--color-canvas-node-border: var(--canvas-node-border);
+	--color-canvas-node-hover: var(--canvas-node-hover);
 	--color-canvas-node-selected: var(--canvas-node-selected);
 	--color-canvas-port: var(--canvas-port);
 	--color-canvas-edge: var(--canvas-edge);
 	--color-canvas-edge-selected: var(--canvas-edge-selected);
-	--color-canvas-edge-live: var(--canvas-edge-live);
+	--color-canvas-edge-travelled: var(--canvas-edge-travelled);
+	--color-canvas-edge-ahead: var(--canvas-edge-ahead);
 	--color-canvas-edge-dispatch: var(--canvas-edge-dispatch);
 	--color-canvas-subflow: var(--canvas-subflow);
 	--color-canvas-subflow-fg: var(--canvas-subflow-fg);
 	--color-canvas-subflow-line: var(--canvas-subflow-line);
 	--color-canvas-subflow-soft: var(--canvas-subflow-soft);
+	--color-canvas-annotation-panel: var(--canvas-annotation-panel);
+	--color-canvas-annotation-panel-drop: var(--canvas-annotation-panel-drop);
 	--color-canvas-annotation-line: var(--canvas-annotation-line);
-	--color-canvas-annotation-soft: var(--canvas-annotation-soft);
-	--color-canvas-annotation-band: var(--canvas-annotation-band);
-	--color-canvas-run-running: var(--canvas-run-running);
-	--color-canvas-run-failed: var(--canvas-run-failed);
-	--color-canvas-run-cancelled: var(--canvas-run-cancelled);
-	--color-canvas-run-stopped: var(--canvas-run-stopped);
+	--color-canvas-annotation-chip: var(--canvas-annotation-chip);
+	--color-canvas-annotation-chip-hover: var(--canvas-annotation-chip-hover);
+	--color-canvas-annotation-chip-fg: var(--canvas-annotation-chip-fg);
+	--color-canvas-annotation-note: var(--canvas-annotation-note);
+	--color-canvas-annotation-note-line: var(--canvas-annotation-note-line);
+	--color-canvas-annotation-note-fg: var(--canvas-annotation-note-fg);
+	--color-canvas-annotation-fg-2: var(--canvas-annotation-fg-2);
+	--color-canvas-annotation-swatch: var(--canvas-annotation-swatch);
+	--color-canvas-sticky: var(--canvas-sticky);
+	--color-canvas-sticky-line: var(--canvas-sticky-line);
+	--color-canvas-sticky-fg: var(--canvas-sticky-fg);
+	--color-canvas-sticky-fg-2: var(--canvas-sticky-fg-2);
 	--color-canvas-run-done-bg: var(--canvas-run-done-bg);
 	--color-canvas-run-done-border: var(--canvas-run-done-border);
 
@@ -157,12 +167,13 @@
 	--text-2xl: 1.375rem;
 	--text-2xl--line-height: 1.75rem;
 
-	/* 圆角：4 / 6 / 8 / 12 */
+	/* 圆角：4 / 6 / 8 / 12，注释框 20 */
 	--radius-*: initial;
 	--radius-sm: 4px;
 	--radius-md: 6px;
 	--radius-lg: 8px;
 	--radius-xl: 12px;
+	--radius-2xl: 20px; /* 画布上框住一组节点的注释框 */
 
 	--shadow-*: initial;
 	--shadow-float: var(--elevation-float);

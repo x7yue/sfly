@@ -31,7 +31,7 @@ export function cardFocusLabel(
 }
 
 /**
- * 卡片左上角的眼睛图标和关注项数量（原型 `.pin`，和右上角的标签同一个样子；场景没设关注项、卡片上只有主指标时没有）。
+ * 卡片上边线外左侧的眼睛图标和关注项数量（原型 `.pin`，和右侧的标签同一个样子；场景没设关注项、卡片上只有主指标时没有）。
  * 读屏从卡片的名称里读到 {@link cardFocusLabel}：卡片用 `aria-labelledby` 引用带 `id` 的那段隐藏文字。
  */
 export function FocusBadge({ id, focus }: { id: string; focus: CardFocus }) {
@@ -42,7 +42,8 @@ export function FocusBadge({ id, focus }: { id: string; focus: CardFocus }) {
 					aria-hidden
 					data-testid="node-focus-count"
 					className={cn(
-						"absolute -top-2.5 left-2.5 flex h-4.75 items-center gap-1 rounded-sm border border-border bg-raised-2 px-1.5 font-mono leading-4.25 text-fg-2",
+						// 和右上角的标签一样贴在卡片上边线外面，不压标题。
+						"absolute bottom-[calc(100%-1px)] left-5 flex items-center gap-1 rounded-md border border-border-strong bg-raised-2 px-1.5 font-mono leading-[1.4] text-fg-2",
 						ZOOM_TEXT_11,
 						LOD_HIDDEN,
 					)}

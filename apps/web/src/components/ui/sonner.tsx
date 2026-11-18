@@ -48,6 +48,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
 					description: "text-xs! text-fg-2!",
 					// 透明底加描边：raised 底的按钮比 raised-2 的通知还暗，看起来像凹进去的。
 					actionButton: "bg-transparent! text-fg-1! border! border-border-strong! hover:bg-fg-1/8!",
+					// 第二个按钮（「保留」这类不改东西的选择）：不描边，退后一档。
+					cancelButton: "bg-transparent! text-fg-2! hover:text-fg-1! hover:bg-fg-1/8!",
 					closeButton: "bg-raised-2! border-border-strong! text-fg-2! hover:text-fg-1!",
 				},
 			}}

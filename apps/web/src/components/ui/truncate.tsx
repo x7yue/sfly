@@ -70,12 +70,14 @@ function Clipped({
 	clipRef?: Ref<HTMLSpanElement>;
 }) {
 	const split = keepEnd > 0 && keepEnd < children.length;
+	// 拆成两段画时读屏会在两段之间读出一个停顿（「sub _ping」）：看得见的两段对读屏隐藏，读屏读完整的一段。
 	return split ? (
 		<span className="flex min-w-0 whitespace-nowrap">
-			<span ref={clipRef} data-truncate-clip="" className="truncate">
+			<span className="sr-only">{children}</span>
+			<span aria-hidden ref={clipRef} data-truncate-clip="" className="truncate">
 				{children.slice(0, -keepEnd)}
 			</span>
-			{children.slice(-keepEnd)}
+			<span aria-hidden>{children.slice(-keepEnd)}</span>
 		</span>
 	) : (
 		<span ref={clipRef} data-truncate-clip="" className="block truncate">

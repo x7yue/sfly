@@ -1,7 +1,7 @@
 import type { Page, Request } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { LONG_REASON, loadSummary, orderFields, REJECTS } from "./actions-support";
-import { inspector, nodeCard } from "./editor-support";
+import { inspector, nodeCard, withoutFollow } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { runningScenario } from "./monitor-scenario";
 import { openOverview } from "./overview-support";
@@ -15,6 +15,7 @@ type Clock = Parameters<typeof runningScenario>[2];
 
 /** 打开画布的运行状态并选中一个节点：控制面时间固定，已持续多久不随真实时间跳。 */
 async function openNode(page: Page, setup: Running, clock: Clock, node: string) {
+	await withoutFollow(page);
 	await page.clock.setFixedTime(clock.now());
 	await page.goto(`/orchestrations/${setup.scenarioId}?run=${setup.runId}`);
 	await expect(nodeCard(page, node)).toBeVisible();

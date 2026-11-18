@@ -238,11 +238,16 @@ def wheelhouse(requirements: list[str], out: Path) -> list[Path]:
 
 
 def uv_env(tmp: Path) -> dict[str, str]:
-    """运行 uv / sfly 的环境：不受开发者的 uv、sfly 配置和当前 venv 影响，不访问外网。"""
+    """运行 uv / sfly 的环境：不受开发者的 uv、sfly 配置和当前 venv 影响，不访问外网。
+
+    只留 UV_PYTHON_INSTALL_DIR：不让下载 Python，就得在 uv 装 Python 的位置找到解释器；
+    CI 的 astral-sh/setup-uv 把这个位置改到了临时目录。
+    """
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith(("UV_", "SFLY_")) and k not in ("VIRTUAL_ENV", "PYTHONPATH")
+        if k == "UV_PYTHON_INSTALL_DIR"
+        or (not k.startswith(("UV_", "SFLY_")) and k not in ("VIRTUAL_ENV", "PYTHONPATH"))
     }
     env.update(
         UV_CACHE_DIR=str(tmp / "uv-cache"),

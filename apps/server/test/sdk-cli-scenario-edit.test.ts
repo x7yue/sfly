@@ -577,6 +577,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			const id = await createScenario("推送-补坐标", sleepDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
+			// 把 pause 挪到整理布局给 tail 的位置 (600, 0) 附近，让这个位置被压住。
+			const pause = edited.document.nodes.find((n) => n.id === "pause");
+			if (pause) pause.position = { x: 640, y: 30 };
 			edited.document.nodes.push({ id: "tail", kind: "sleep", duration: "1s" } as never);
 			edited.document.edges.push({ from: "pause", to: "tail", kind: "chain" });
 			await writeScenarioFile(file, edited);
@@ -586,9 +589,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			const positions = Object.fromEntries(again.document.nodes.map((n) => [n.id, n.position]));
 			expect(positions).toEqual({
 				entry: { x: 40, y: 40 },
-				pause: { x: 300, y: 90 },
-				// 整理布局给的 (504, 0) 压在 pause 上，往右下错开一步。
-				tail: { x: 536, y: 32 },
+				pause: { x: 640, y: 30 },
+				// 整理布局给的 (600, 0) 压在 pause 上，往右下错开几步，直到不再压住。
+				tail: { x: 696, y: 96 },
 			});
 		});
 
@@ -637,8 +640,8 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect((await cli("scenario", "push", file)).code).toBe(0);
 			expect((await head(id)).document.nodes.map((n) => [n.id, n.position])).toEqual([
 				["entry", { x: 0, y: 0 }],
-				["a", { x: 252, y: 0 }],
-				["b", { x: 504, y: 0 }],
+				["a", { x: 300, y: 0 }],
+				["b", { x: 600, y: 0 }],
 			]);
 
 			const moved = {

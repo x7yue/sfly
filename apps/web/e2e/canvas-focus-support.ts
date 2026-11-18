@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
+import { withoutFollow } from "./editor-support";
 import type { E2eFixtures } from "./fixtures";
 import { advance, type Running } from "./monitor-scenario";
 import { overviewRun } from "./overview-support";
@@ -38,6 +39,8 @@ export async function openCanvasRun(
 	clock: ManualClock,
 	{ scenarioId, runId }: Pick<Running, "scenarioId" | "runId">,
 ) {
+	// 测的是关注项：关掉跟随执行，打开时是适配视图，已完成的节点也在画面里。
+	await withoutFollow(page);
 	await page.clock.setFixedTime(clock.now());
 	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
 	const viewport = page.locator(".react-flow__viewport");

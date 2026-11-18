@@ -15,7 +15,10 @@ export type SfNode = Node<{ node: DocNode }, DocNode["kind"]>;
 export type SfEdge = Edge<{ kind: EdgeKind }>;
 
 /** 文档中场景级（非节点、非连线）的部分：默认 Agent、包版本锁定、注释框。 */
-export type DocMeta = Pick<OrchestrationDocument, "default_agent" | "packages" | "annotations">;
+export type DocMeta = Pick<
+	OrchestrationDocument,
+	"default_agent" | "packages" | "annotations" | "sticky_notes"
+>;
 
 export const edgeId = (edge: DocEdge) => `${edge.kind}:${edge.from}->${edge.to}`;
 
@@ -104,6 +107,16 @@ export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): Orche
 		edges: edges.map(docEdgeOf),
 		packages,
 		annotations: meta.annotations,
+		// 拖动、拉大小得到的是小数，和节点的位置一样取整。
+		sticky_notes: meta.sticky_notes.map((s) => ({
+			...s,
+			...(s.position
+				? { position: { x: Math.round(s.position.x), y: Math.round(s.position.y) } }
+				: {}),
+			...(s.size
+				? { size: { width: Math.round(s.size.width), height: Math.round(s.size.height) } }
+				: {}),
+		})),
 	};
 }
 

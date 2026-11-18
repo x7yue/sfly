@@ -22,6 +22,7 @@ from sfly.cli.presets import preset_view, render_presets
 from sfly.cli.run_view import name_with_id, node_type_label, subflow_label
 from sfly.cli.scenario_annotations import annotation_views, render_annotations
 from sfly.cli.scenario_lookup import find_scenario
+from sfly.cli.scenario_sticky_notes import render_sticky_notes, sticky_note_views
 from sfly.cli.session import Session, command, common_options
 
 
@@ -107,7 +108,8 @@ def _show(session: Session, args: argparse.Namespace) -> None:
     presets = session.client.get(f"{scenario_path}/presets")["presets"]
     view = describe(scenario, head, presets)
     annotations = render_annotations(view["annotations"], head["document"])
-    session.out.emit(view, "\n".join([render(view), *annotations]))
+    sticky_notes = render_sticky_notes(view["sticky_notes"])
+    session.out.emit(view, "\n".join([render(view), *annotations, *sticky_notes]))
 
 
 def describe(
@@ -232,6 +234,7 @@ def describe(
         "subflows": subflows,
         "unlinked": unlinked,
         "annotations": annotation_views(document),
+        "sticky_notes": sticky_note_views(document),
     }
 
 
