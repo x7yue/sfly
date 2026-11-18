@@ -35,6 +35,7 @@
 		"test:stress": "bash scripts/stress.sh",
 		"ci:failures": "bash scripts/ci-failures.sh",
 		"linux": "bash scripts/linux/run.sh",
+		"heavy": "bash scripts/heavy.sh",
 		"perf": "pnpm --filter @sfly/server perf",
 		"perf:soak": "pnpm --filter @sfly/server perf:soak",
 		"proto:breaking": "bash scripts/proto-breaking.sh",
