@@ -6,7 +6,45 @@ import {
 	TriangleAlertIcon,
 } from "lucide-react";
 import type * as React from "react";
+import { useEffect } from "react";
 import { Toaster as Sonner, type ToasterProps } from "sonner";
+
+/** sonner 的通知列表（`<ol>`），Alt+T 把焦点移到它上面。 */
+const TOASTER = "[data-sonner-toaster]";
+
+/**
+ * sonner 在 Alt+T 把焦点移进通知区域时记下原来的元素，焦点离开通知区域（blur）时还回去，通知区域卸载时也还一次。
+ * 问题出在焦点所在的通知被移走的时候（点了「撤销」、通知消失）：sonner 收不到这次失焦（浏览器补发的 focusout 在节点被移走的过程中，到不了它的 onBlur），一直以为焦点还在里面，
+ * 几秒后最后一条通知消失、通知区域卸载，它才把焦点抢回记下的元素——这时用户可能已经在弹窗或别的输入里，
+ * 紧跟着的 Enter 就落在被抢到焦点的链接上。这里在焦点随通知消失的那一刻就让 sonner 收到一次 blur：焦点当场还回去，记录也清掉。
+ */
+function useReleaseFocusWithToast() {
+	useEffect(() => {
+		let inside = false;
+		const within = (element: Element | null) => element?.closest(TOASTER) != null;
+		const onFocusIn = (event: FocusEvent) => {
+			inside = within(event.target as Element | null);
+		};
+		const observer = new MutationObserver(() => {
+			if (!inside) return;
+			if (document.activeElement !== document.body) {
+				// 焦点已经在别处（通知区域卸载时 sonner 自己还回去了）。
+				inside = within(document.activeElement);
+				return;
+			}
+			inside = false;
+			const list = document.querySelector<HTMLElement>(TOASTER);
+			list?.focus({ preventScroll: true });
+			list?.blur();
+		});
+		document.addEventListener("focusin", onFocusIn);
+		observer.observe(document.body, { childList: true, subtree: true });
+		return () => {
+			document.removeEventListener("focusin", onFocusIn);
+			observer.disconnect();
+		};
+	}, []);
+}
 
 /**
  * 通知容器（sonner）。只做深色主题，挂在应用根部一次（GlobalOverlays）；
@@ -17,6 +55,7 @@ import { Toaster as Sonner, type ToasterProps } from "sonner";
  * Alt+T 把焦点移到通知区域（sonner 自带），带「撤销」的通知用键盘也点得到。
  */
 const Toaster = ({ ...props }: ToasterProps) => {
+	useReleaseFocusWithToast();
 	return (
 		<Sonner
 			theme="dark"
