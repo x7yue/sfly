@@ -200,8 +200,9 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			return rows.length ? { name, versions: rows.map(toSummary) } : undefined;
 		},
 
-		getVersion: (name: string, version: string): Promise<PackageVersion | undefined> =>
-			findPackageVersion(db, name, version),
+		async getVersion(name: string, version: string): Promise<PackageVersion | undefined> {
+			return findPackageVersion(db, name, version);
+		},
 
 		/** 归档文件在磁盘上的位置（供下载）。 */
 		async archive(name: string, version: string): Promise<StoredArchive | undefined> {

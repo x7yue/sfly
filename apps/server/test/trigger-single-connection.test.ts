@@ -101,7 +101,7 @@ describe("触发时的预检", () => {
 		expect(single.mostPending()).toBe(1);
 	});
 
-	it("预检不通过时同样只用事务的连接：400 并指出原因", async () => {
+	it("参数检查不通过时同样只用事务的连接：400 invalid_params", async () => {
 		const outcome = await engine().trigger(id, { params: { src: "ghost" } }, ACTOR);
 		expect(outcome).toMatchObject({ ok: false, status: 400, code: "invalid_params" });
 		expect(single.mostPending()).toBe(1);
