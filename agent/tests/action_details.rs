@@ -527,6 +527,17 @@ async fn batches_queued_while_disconnected_are_capped_and_the_result_still_arriv
 
     let (result, _) = cp.result("task-cap").await;
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    // 重连后 Agent 先重发没被 Ack 的结果，排队的批次随后才发出：看到结果时它们可能还在路上。
+    // 排队的消息按顺序发出，所以第二个任务的 TaskStarted 到达时，排在它前面的批次都已经到了。
+    cp.assign(stub_task("task-after", "echo", json!({ "text": "x" })))
+        .await;
+    cp.wait_for("the queued batches to be delivered", |all| {
+        all.iter().find_map(|r| match &r.message.body {
+            Some(agent_message::Body::Started(s)) if s.task_id == "task-after" => Some(()),
+            _ => None,
+        })
+    })
+    .await;
     let delivered = events_of(&batches_of(&cp.received_with_session(), "task-cap"));
     let written = flood_written(count).len();
     assert!(
