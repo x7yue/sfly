@@ -13,7 +13,7 @@ mkdir -p "$TMPDIR" "$JAR_DIR"
 
 # 只用 macOS 和 Linux 都有的写法：绝对路径不用 realpath -m（目录不存在时先建出来），sha256 在没有 sha256sum 时用 shasum。
 abspath() {
-	mkdir -p "$(dirname "$1")" && printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"
+	mkdir -p "$(dirname "$1")" && printf '%s/%s\n' "$(cd -P "$(dirname "$1")" && pwd -P)" "$(basename "$1")"
 }
 sha256() {
 	if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
