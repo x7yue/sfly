@@ -28,8 +28,6 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 .claude/skills/verify-task-dispatch/scripts/mutants.sh   # 约 5 秒；确认每条性质仍然能失败
 ```
 
-脚本依赖 GNU 的 `realpath -m` 和 `grep -P`、`sha256sum`、`flock`：在 macOS 上把 `grealpath`、`ggrep` 链接成 `realpath`、`grep` 放到 `PATH` 前面再运行（Linux 不需要）。
-
 第一次运行时，脚本会用 mise 装 Temurin 21（`java@temurin-21.0.13+9.0.LTS`），下载 tla2tools 1.8.0 到 `~/.cache/sfly-formal/` 并校验 sha256，都不改动仓库。完整输出和反例写到 `~/.local/state/sfly-formal/<时间>/<配置>.txt`。
 
 `check.sh` 跑三个配置（`model/*.cfg`），范围都一样：一个 Agent、一个包节点、`retries = 2`（3 次尝试）、1 个槽位、每个方向最多 3 条在途消息，断线和重连的次数不限。

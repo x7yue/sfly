@@ -11,11 +11,19 @@ JAR_SHA256=e1f11b75c4b5bc4478ba0ac5cb6ae28e40a01b0016bc33e0aa97da22dfdbcd7f
 export TMPDIR=${TMPDIR:-$HOME/.t}
 mkdir -p "$TMPDIR" "$JAR_DIR"
 
-model=$(realpath "$1") cfg=$(realpath "$2") out=${3:-/dev/stdout}
-[[ $out == /dev/stdout ]] || out=$(realpath -m "$out")
-if [[ ! -f $JAR ]] || [[ $(sha256sum "$JAR" | cut -d' ' -f1) != "$JAR_SHA256" ]]; then
+# 只用 macOS 和 Linux 都有的写法：绝对路径不用 realpath -m（目录不存在时先建出来），sha256 在没有 sha256sum 时用 shasum。
+abspath() {
+	mkdir -p "$(dirname "$1")" && printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"
+}
+sha256() {
+	if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+}
+
+model=$(abspath "$1") cfg=$(abspath "$2") out=${3:-/dev/stdout}
+[[ $out == /dev/stdout ]] || out=$(abspath "$out")
+if [[ ! -f $JAR ]] || [[ $(sha256 "$JAR") != "$JAR_SHA256" ]]; then
 	curl -fsSL -o "$JAR.part" https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar || exit 2
-	[[ $(sha256sum "$JAR.part" | cut -d' ' -f1) == "$JAR_SHA256" ]] || { echo "tla2tools.jar 的 sha256 不对" >&2; rm -f "$JAR.part"; exit 2; }
+	[[ $(sha256 "$JAR.part") == "$JAR_SHA256" ]] || { echo "tla2tools.jar 的 sha256 不对" >&2; rm -f "$JAR.part"; exit 2; }
 	mv "$JAR.part" "$JAR"
 fi
 mise where "$JAVA" >/dev/null 2>&1 || mise install "$JAVA" >&2 || exit 2

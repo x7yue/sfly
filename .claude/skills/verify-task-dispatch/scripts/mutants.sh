@@ -30,7 +30,7 @@ open(sys.argv[2], "w").write(re.sub(r"INVARIANTS\n(    .*\n)+", "INVARIANTS\n   
 ' "$MODEL/$cfg.cfg" "$WORK/$name/$cfg.cfg" "$want"
 	"$HERE/tlc.sh" "$WORK/$name/TaskDispatch.tla" "$WORK/$name/$cfg.cfg" "$WORK/$name/out.txt"
 	local got
-	got=$(grep -oP '^Error: Invariant \K\w+(?= is violated)' "$WORK/$name/out.txt" | head -1)
+	got=$(sed -n 's/^Error: Invariant \([A-Za-z0-9_]*\) is violated.*/\1/p' "$WORK/$name/out.txt" | head -1)
 	if [[ $got == "$want" ]]; then
 		echo "ok    $name（$cfg）：被 $want 抓到"
 	else
