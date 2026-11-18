@@ -7,16 +7,15 @@ import {
 	focusChartMissing,
 	focusLatestSeriesName,
 	focusValueText,
-	type OrchestrationDocument,
 	type RunFocusItem,
 	type RunNotificationTrigger,
 } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import { orchestrations, type RunStatus, runs } from "../db/schema.js";
-import { boardFailures, loadRunBoards } from "../engine/run-board.js";
 import type { RunRow, Step } from "../engine/step.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { runListPreset } from "../presets/run-preset.js";
+import { readRuns } from "../runs/run-read.js";
 import { registeredBots } from "./bot-checks.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
 import { type CardColor, type CardElement, fitCard, interactiveCard } from "./messages.js";
@@ -173,19 +172,12 @@ function runNotificationCard(facts: RunNotificationFacts) {
 }
 
 /**
- * 运行里最终失败的节点，按失败的先后（`boardFailures`：同一时刻的按链实例、再按节点在链上的顺序），
+ * 运行里最终失败的节点，按失败的先后（运行读取的 `failures`：同一时刻的按链实例、再按节点在链上的顺序），
  * 第一项和控制台、运行监控、运行记录的「第一个失败的节点」相同。在写入运行最终状态的事务里读（`step.tx`）。
  */
-async function failedNodes(
-	step: Step,
-	run: RunRow,
-	document: OrchestrationDocument,
-): Promise<FailedNode[]> {
-	const boards = await loadRunBoards(step.tx, [
-		{ id: run.id, versionId: run.orchestrationVersionId, document },
-	]);
-	const chains = boards.get(run.id) ?? [];
-	return boardFailures(chains).map(({ chain, node }) => ({
+async function failedNodes(step: Step, run: RunRow): Promise<FailedNode[]> {
+	const read = (await readRuns(step.tx, [run.id])).get(run.id);
+	return (read?.failures ?? []).map(({ chain, node }) => ({
 		chain: chainLabel(
 			{ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.subflow_name },
 			chain.id,
@@ -217,12 +209,14 @@ async function focusAtRunEnd(
 	if (scenario.focusItems.length === 0) return [];
 	try {
 		return await step.tx.transaction(async (savepoint) => {
+			const read = (await readRuns(savepoint, [run.id], "full")).get(run.id);
+			if (!read) return [];
 			const focus = await resolveRunFocus(
 				{ db: savepoint, clock: deps.clock, queries: deps.queries },
-				run.id,
+				read,
 				{ points: 0 },
 			);
-			return focus?.mode === "focus" ? focus.items : [];
+			return focus.mode === "focus" ? focus.items : [];
 		});
 	} catch (error) {
 		deps.onError(error);
@@ -240,13 +234,12 @@ export async function enqueueRunNotification(
 	input: {
 		run: RunRow;
 		status: FinishedStatus;
-		document: OrchestrationDocument;
 		runUrl: string | undefined;
 		/** 读关注项的依赖（卡片里「关注项」一段的列表是 `RunNotificationFacts.focus`）。 */
 		focusDeps: FocusAtRunEndDeps;
 	},
 ): Promise<void> {
-	const { run, status, document } = input;
+	const { run, status } = input;
 	const [scenario] = await step.tx
 		.select()
 		.from(orchestrations)
@@ -274,7 +267,7 @@ export async function enqueueRunNotification(
 		triggeredBy: run.triggeredBy,
 		startedAt: run.startedAt,
 		endedAt: step.now,
-		failures: await failedNodes(step, run, document),
+		failures: await failedNodes(step, run),
 		focus: await focusAtRunEnd(step, run, scenario, input.focusDeps),
 		runUrl: input.runUrl,
 	});

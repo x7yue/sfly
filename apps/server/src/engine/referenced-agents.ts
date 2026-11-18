@@ -4,11 +4,10 @@ import type { ReferencedAgentSchema } from "@sfly/proto";
 import type { NodeTypeMetadata, PackageMetadata } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
 import { agentEndpoint } from "../agents/agent-endpoint.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { type AgentInfo, agents } from "../db/schema.js";
 import { referencedAgentProblem } from "../packages/requires-agent.js";
 import type { PackageRef } from "../packages/requires-sdk.js";
-import type { Tx } from "./step.js";
 
 export type ReferencedAgentInit = MessageInitShape<typeof ReferencedAgentSchema>;
 

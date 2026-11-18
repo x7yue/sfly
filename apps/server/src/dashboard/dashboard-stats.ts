@@ -5,7 +5,6 @@ import {
 	type DashboardView,
 	isOnAgentStatus,
 	type RunFocusItem,
-	runViewFailures,
 } from "@sfly/schema";
 import { and, count, desc, eq, gt, gte, isNotNull, lte } from "drizzle-orm";
 import type { AgentHub } from "../agents/agent-hub.js";
@@ -17,9 +16,8 @@ import {
 	runs,
 	type TaskStatus,
 } from "../db/schema.js";
-import { activeNodesOf, loadRunBoards } from "../engine/run-board.js";
-import { getRunView, type RunView } from "../engine/run-queries.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
+import { type RunRead, type RunReadFull, readRuns } from "../runs/run-read.js";
 import { setupSummary } from "./setup-summary.js";
 
 const HOUR_MS = 3_600_000;
@@ -71,11 +69,11 @@ export async function dashboardView(deps: DashboardDeps): Promise<DashboardView>
 			...current,
 			failed_subflows: failedSubflows,
 		},
-		running_runs: running.map(({ run, name, version, chains }) => ({
+		running_runs: running.map(({ run, scenario, version, chains, activeNodes }) => ({
 			id: run.id,
 			orchestration_id: run.orchestrationId,
-			orchestration_name: name,
-			orchestration_version: version,
+			orchestration_name: scenario.name,
+			orchestration_version: version.number,
 			triggered_by: run.triggeredBy,
 			triggered_via: run.triggeredVia,
 			started_at: run.startedAt.toISOString(),
@@ -94,7 +92,7 @@ export async function dashboardView(deps: DashboardDeps): Promise<DashboardView>
 					status: n.status,
 				})),
 			})),
-			active_nodes: activeNodesOf(chains),
+			active_nodes: activeNodes,
 		})),
 		recent_ended: recentEnded,
 		agents: {
@@ -108,36 +106,20 @@ export async function dashboardView(deps: DashboardDeps): Promise<DashboardView>
 }
 
 /**
- * 正在运行的运行（按开始时间从新到旧）及其场景名称、各链节点状态；链与任务整批读取（engine/run-board.ts），
+ * 正在运行的运行（按开始时间从新到旧）及其场景名称、各链节点状态；整批读取（src/runs/run-read.ts），
  * 查询次数与运行数无关。
  */
-async function runningRuns(db: Db) {
+async function runningRuns(db: Db): Promise<RunRead[]> {
 	const rows = await db
-		.select({
-			run: runs,
-			name: orchestrations.name,
-			version: orchestrationVersions.number,
-			document: orchestrationVersions.document,
-		})
+		.select({ id: runs.id })
 		.from(runs)
-		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
-		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 		.where(eq(runs.status, "running"))
 		.orderBy(desc(runs.startedAt), desc(runs.id));
-	const boards = await loadRunBoards(
+	const reads = await readRuns(
 		db,
-		rows.map(({ run, document }) => ({
-			id: run.id,
-			versionId: run.orchestrationVersionId,
-			document,
-		})),
+		rows.map((r) => r.id),
 	);
-	return rows.map(({ run, name, version }) => ({
-		run,
-		name,
-		version,
-		chains: boards.get(run.id) ?? [],
-	}));
+	return rows.flatMap(({ id }) => reads.get(id) ?? []);
 }
 
 /** 窗口内失败的子流程实例数（按链实例的结束时间，不论所在运行是否已结束）。 */
@@ -158,12 +140,12 @@ async function failedSubflowCount(db: Db, from: Date, to: Date): Promise<number>
 }
 
 /**
- * 失败的运行最先出问题的地方：第一个失败的节点（@sfly/schema 的 `runViewFailures`，运行监控的页头、运行记录、运行通知
- * 用同一份顺序）；之后失败的 always 清理节点不算。错误信息取自运行视图，其中的 secret 值已打码。
+ * 失败的运行最先出问题的地方：第一个失败的节点（运行读取的 `failures`，运行监控的页头、运行记录、运行通知
+ * 用同一份顺序）；之后失败的 always 清理节点不算。错误信息的 secret 值在读取时已打码。
  * 链失败就一定有节点最终失败（引擎按同一个条件判断），找不到时是数据不完整，返回 null。
  */
-function firstFailure(view: RunView): DashboardRunFailure | null {
-	const [first] = runViewFailures(view.chains);
+function firstFailure(read: RunReadFull): DashboardRunFailure | null {
+	const [first] = read.failures;
 	if (!first) return null;
 	const { chain, node } = first;
 	const attempt = node.attempts.at(-1);
@@ -171,11 +153,13 @@ function firstFailure(view: RunView): DashboardRunFailure | null {
 		chain_instance_id: chain.id,
 		chain_id: chain.chain_id,
 		subflow: chain.depth > 0,
-		subflow_name: chain.name ?? undefined,
+		subflow_name: chain.subflow_name,
 		node_id: node.node_id,
 		display_name: node.display_name,
 		attempt: attempt?.attempt ?? 0,
-		error: attempt?.error ?? null,
+		error: attempt?.errorKind
+			? { kind: attempt.errorKind, message: attempt.errorMessage ?? "" }
+			: null,
 	};
 }
 
@@ -184,9 +168,9 @@ function firstFailure(view: RunView): DashboardRunFailure | null {
  * 前 {@link DASHBOARD_ENDED_FOCUS_MAX} 项。运行已经结束，场景没设关注项时读数是空的（主指标只取执行中的节点），
  * 所以只取关注项模式的读数。
  */
-async function endedFocus(deps: RunFocusDeps, runId: string): Promise<RunFocusItem[]> {
-	const focus = await resolveRunFocus(deps, runId, { points: 0 });
-	return focus?.mode === "focus" ? focus.items.slice(0, DASHBOARD_ENDED_FOCUS_MAX) : [];
+async function endedFocus(deps: RunFocusDeps, read: RunReadFull): Promise<RunFocusItem[]> {
+	const focus = await resolveRunFocus(deps, read, { points: 0 });
+	return focus.mode === "focus" ? focus.items.slice(0, DASHBOARD_ENDED_FOCUS_MAX) : [];
 }
 
 /** 窗口内结束的运行（按结束时间从新到旧，最多 RECENT_ENDED 个）；失败的带上最先出问题的节点和关注项的最终值。 */
@@ -208,8 +192,13 @@ async function recentEndedRuns(
 		.where(and(isNotNull(runs.endedAt), gte(runs.endedAt, from), lte(runs.endedAt, to)))
 		.orderBy(desc(runs.endedAt), desc(runs.id))
 		.limit(RECENT_ENDED);
+	// 失败的运行（最多 RECENT_ENDED 个）整批读一次，再逐个读关注项的序列：不并发占用连接池，也不放进事务。
+	const failed = await readRuns(
+		db,
+		rows.filter((r) => r.run.status === "failed").map((r) => r.run.id),
+		"full",
+	);
 	const ended: DashboardEndedRun[] = [];
-	// 失败的运行逐个读运行视图和关注项（最多 RECENT_ENDED 个），不并发占用连接池，也不放进事务。
 	for (const { run, name, version } of rows) {
 		if (!run.endedAt || !isOutcome(run.status)) continue;
 		const base = {
@@ -225,12 +214,12 @@ async function recentEndedRuns(
 			ended.push({ ...base, status: run.status });
 			continue;
 		}
-		const view = await getRunView(db, run.id);
+		const read = failed.get(run.id);
 		ended.push({
 			...base,
 			status: "failed",
-			failure: view ? firstFailure(view) : null,
-			focus: await endedFocus(deps, run.id),
+			failure: read ? firstFailure(read) : null,
+			focus: read ? await endedFocus(deps, read) : [],
 		});
 	}
 	return ended;

@@ -3,9 +3,8 @@ import type { ParamDeclaration, PresetChanges, PresetParamInput, PresetView } fr
 import { and, asc, eq } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runPresets } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 import { checkPresetParams, type PresetIssue } from "./preset-input.js";
 import { entryParams } from "./preset-validity.js";
 import { type PresetRow, toPresetView } from "./preset-view.js";
