@@ -65,7 +65,7 @@ export function registerRunRoutes(
 		return {
 			version: head.number,
 			params: declarations,
-			problems: await deps.preflight(head.document),
+			problems: await deps.preflight(deps.db, head.document),
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, head.document)).map((agent) => ({
 				...agent,

@@ -1,0 +1,19 @@
+language js
+
+// CODING_STANDARDS.md「数据库」：事务回调里只用事务对象，不另从连接池取连接（#354、#380）。
+// 事务持有行锁时，连接池里其余的连接可能正在等这把锁，再去连接池取连接就会互相等死。
+// 拦的是回调里直接写出来的 `deps.db`、`this.deps.db`；事务里调用的函数用了连接池拦不住，
+// 要靠函数的数据库参数写成 `Db | Tx`，由调用方传（见 apps/server/src/runs/preflight.ts）。
+or {
+	`$_.transaction($cb)`,
+	`$_.#event($cb)`,
+	`$_.#step($cb)`,
+	`$_.event($cb)`
+} where {
+	$filename <: r".*apps/server/src/.*",
+	$cb <: contains or {
+		`this.deps.db`,
+		`deps.db`
+	} as $pool,
+	register_diagnostic(span=$pool, message="事务回调里只用事务对象（tx），不另从连接池取连接（CODING_STANDARDS.md「数据库」，#354、#380）：事务持有行锁时，连接池里其余的连接可能正在等这把锁，再取连接会互相等死。读写都走 tx；事务里调用的函数把数据库参数写成 Db | Tx，由调用方传 tx。")
+}

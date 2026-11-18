@@ -316,7 +316,7 @@ export class Engine implements AgentSessionHandler {
 					message: "orchestration has no saved version",
 				};
 			}
-			const problems = await this.deps.preflight(version.document);
+			const problems = await this.deps.preflight(step.tx, version.document);
 			const plan = planRun(version.document);
 			if (problems.length > 0 || "errors" in plan) {
 				const details =
@@ -372,7 +372,12 @@ export class Engine implements AgentSessionHandler {
 					details: filled.errors,
 				};
 			}
-			const paramProblems = await this.deps.paramsCheck(version.document, plan, filled.params);
+			const paramProblems = await this.deps.paramsCheck(
+				step.tx,
+				version.document,
+				plan,
+				filled.params,
+			);
 			if (paramProblems.length > 0) {
 				return {
 					ok: false,

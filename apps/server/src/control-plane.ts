@@ -189,7 +189,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
-	const preflight = createPreflight({ db: database.db, packages, version });
+	const preflight = createPreflight({ version });
 	const logs = new TaskLogs({
 		db: database.db,
 		clock,
@@ -240,7 +240,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
-		paramsCheck: createParamsCheck({ db: database.db, packages }),
+		paramsCheck: createParamsCheck(),
 		notifications: new EngineNotifications({
 			logs,
 			delivery: feishuDelivery,
