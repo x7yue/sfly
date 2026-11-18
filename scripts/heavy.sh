@@ -31,7 +31,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 name=$(basename "$root")
 tmp_root=${SFLY_HEAVY_TMP_ROOT:-$HOME/.t}
 lock=${SFLY_HEAVY_LOCK:-$HOME/.t/sfly-heavy.lock}
-running_pid_file=$tmp_root/$name.heavy.pid
+# 每次运行一个 PID 文件：同一个工作区并行的几个 heavy（SFLY_HEAVY_LOCK=none 或 CI）各管各的，先结束的不会删掉别人的。
+pid_file_prefix=$tmp_root/$name.heavy.
 tmp_dir=$tmp_root/$name
 target_dir=$tmp_root/$name-target
 pg_label=sfly-heavy-pg=$name
@@ -48,10 +49,17 @@ while [[ ${1:-} == --* ]]; do
 	--clean)
 		[[ $# -eq 1 ]] || usage
 		# 只删已经没有进程在用的东西：这个工作区还有 heavy 在跑时保留短目录；容器只删 PID 已经不在的。
-		if [[ -f $running_pid_file ]] && kill -0 "$(cat "$running_pid_file" 2>/dev/null)" 2>/dev/null; then
-			echo "pnpm heavy：这个工作区还有 heavy 在运行（PID $(cat "$running_pid_file")），保留 $tmp_dir 和 $target_dir" >&2
+		alive=
+		for file in "$pid_file_prefix"*.pid; do
+			[[ -e $file ]] || continue
+			pid=${file#"$pid_file_prefix"}
+			pid=${pid%.pid}
+			if kill -0 "$pid" 2>/dev/null; then alive="$alive $pid"; else rm -f "$file"; fi
+		done
+		if [[ -n $alive ]]; then
+			echo "pnpm heavy：这个工作区还有 heavy 在运行（PID$alive），保留 $tmp_dir 和 $target_dir" >&2
 		else
-			rm -rf "$tmp_dir" "$target_dir" "$running_pid_file"
+			rm -rf "$tmp_dir" "$target_dir"
 			echo "pnpm heavy：已删除 $tmp_dir 和 $target_dir" >&2
 		fi
 		if command -v docker >/dev/null 2>&1; then
@@ -97,18 +105,23 @@ export TMPDIR=$tmp_dir CARGO_TARGET_DIR=$target_dir
 
 # 收尾：删这次运行的容器和「有 heavy 在运行」的记号。容器名在 docker run 之前就定好，所以 trap 也要在 docker run 之前设。
 container=
-owner=0
+pid_file=
 cleanup() {
-	if [[ -n $container ]]; then docker rm -f "$container" >/dev/null 2>&1 || true; fi
-	if ((owner)); then rm -f "$running_pid_file"; fi
+	if [[ -n $container ]]; then
+		# docker run 还在跑（Ctrl-C 落在这期间）：等它跑完，容器建出来之后才删得掉。唯一的后台作业就是它，没有时 wait 立即返回。
+		# 不按 PID 等：Ctrl-C 可能落在 `&` 和记下 $! 之间，那时还没有 PID。
+		wait 2>/dev/null || true
+		docker rm -f "$container" >/dev/null 2>&1 || true
+	fi
+	if [[ -n $pid_file ]]; then rm -f "$pid_file"; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # 记下这个工作区有 heavy 在运行，--clean 据此保留短目录。嵌套的 pnpm heavy 不记（SFLY_HEAVY_OWNER 已设）。
 if [[ -z ${SFLY_HEAVY_OWNER:-} ]]; then
-	owner=1
-	echo $$ >"$running_pid_file"
+	pid_file=$pid_file_prefix$$.pid
+	echo $$ >"$pid_file"
 	export SFLY_HEAVY_OWNER=$$
 fi
 
@@ -117,11 +130,18 @@ if ((use_pg)); then
 		echo "pnpm heavy：--pg 需要 docker" >&2
 		exit 1
 	}
-	# 容器名先记进 container，收尾的 trap 在上面已经设好：在 docker run 的那一刻按 Ctrl-C 也会按名字删容器。
+	# 容器名先记进 container，收尾的 trap 在上面已经设好：Ctrl-C 会让脚本退出并按名字删容器。
+	# docker run 放进它自己的进程组（set -m）后台运行：Ctrl-C 发给整个前台进程组，docker CLI 不在里面，不会被先杀掉。
+	# 先被杀掉的话，daemon 仍会把容器建出来，那时按名字删已经晚了，--rm 又管不到没启动过的容器。
+	# （只忽略 SIGINT 不行：Go 写的 docker CLI 自己注册了 SIGINT 的处理，照样会收到。）
+	# 脚本自己收到 SIGINT 时 wait 立刻返回，trap 退出，收尾（cleanup）等后台作业（就是 docker run）结束后再删容器。
 	container=sfly-heavy-pg-$name-$$
+	set -m
 	docker run -d --rm --name "$container" --label "$pg_label" -p 127.0.0.1::5432 \
 		-e POSTGRES_USER=sfly -e POSTGRES_PASSWORD=sfly -e POSTGRES_DB=sfly \
-		postgres:18 -c fsync=off -c max_connections=200 >/dev/null
+		postgres:18 -c fsync=off -c max_connections=200 >/dev/null &
+	set +m
+	wait "$!"
 	for _ in $(seq 120); do
 		if docker exec "$container" pg_isready -h 127.0.0.1 -U sfly -q; then break; fi
 		sleep 0.5
