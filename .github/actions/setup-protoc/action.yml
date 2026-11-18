@@ -1,0 +1,27 @@
+# agent/build.rs 要用 protoc 从 proto/ 生成 Rust 代码。arduino/setup-protoc 的最新版本仍跑在 Node 20 上
+# （GitHub 已停用 Node 20，强制换成 Node 24 运行并提示弃用），所以直接下载 protobuf 官方 Release 里固定版本的 protoc，
+# 核对 SHA-256 后加进 PATH。复合 action 不跑在 Node 上；版本也不再随上游的「最新」漂移，升级时改这里的版本号和校验和。
+name: 安装 protoc
+description: 下载固定版本的 protoc（Linux x86_64）并加入 PATH
+runs:
+  using: composite
+  steps:
+    - name: 安装 protoc
+      shell: bash
+      env:
+        PROTOC_VERSION: "36.2"
+        PROTOC_SHA256: 121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278
+      run: |
+        set -euo pipefail
+        if [[ "$RUNNER_OS-$RUNNER_ARCH" != Linux-X64 ]]; then
+          echo "::error::只准备了 Linux x86_64 的 protoc，这个 runner 是 $RUNNER_OS-$RUNNER_ARCH"
+          exit 1
+        fi
+        zip="$RUNNER_TEMP/protoc.zip"
+        dir="$RUNNER_TEMP/protoc"
+        curl -fsSL --retry 3 -o "$zip" \
+          "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+        echo "${PROTOC_SHA256}  ${zip}" | sha256sum --check --quiet
+        unzip -q -o "$zip" -d "$dir"
+        echo "$dir/bin" >> "$GITHUB_PATH"
+        "$dir/bin/protoc" --version

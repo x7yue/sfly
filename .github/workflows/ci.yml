@@ -33,11 +33,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4 # 版本取自 package.json 的 packageManager
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6 # 版本取自 package.json 的 packageManager
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
+          package-manager-cache: false # 这个 job 不装依赖：不要按 package.json 的 packageManager 自动缓存
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -45,10 +46,8 @@ jobs:
         with:
           shared-key: sfly-test
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: astral-sh/setup-uv@v6 # Agent 的测试用 uv 建节点包环境；Python 版本取自 .python-version
+      - uses: ./.github/actions/setup-protoc # agent/build.rs 需要 protoc
+      - uses: astral-sh/setup-uv@v7 # Agent 的测试用 uv 建节点包环境；Python 版本取自 .python-version
 
       - name: Lint
         run: pnpm lint:rust
@@ -60,12 +59,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
-      - uses: astral-sh/setup-uv@v6
+          package-manager-cache: false # 这个 job 不装依赖：不要按 package.json 的 packageManager 自动缓存
+      - uses: astral-sh/setup-uv@v7
 
       - name: Install
         run: uv sync --locked --all-packages
@@ -99,12 +99,12 @@ jobs:
     env:
       DATABASE_URL: postgres://sfly:sfly@127.0.0.1:5432/sfly
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # buf breaking 需要基线提交；lint:docs 要 origin/main 和合并基点（ADR 编号、已接受 ADR 的正文）
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: pnpm
@@ -113,10 +113,8 @@ jobs:
         with:
           shared-key: sfly-server
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: ./.github/actions/setup-protoc
+      - uses: astral-sh/setup-uv@v7
 
       - name: Install
         run: pnpm bootstrap
@@ -157,9 +155,9 @@ jobs:
     env:
       DATABASE_URL: postgres://sfly:sfly@127.0.0.1:5432/sfly
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: pnpm
@@ -172,10 +170,8 @@ jobs:
         with:
           shared-key: sfly
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: ./.github/actions/setup-protoc
+      - uses: astral-sh/setup-uv@v7
 
       - name: Install
         run: pnpm bootstrap
@@ -247,11 +243,11 @@ jobs:
       SFLY_VISUAL: "1"
       HOME: /root
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # 重复运行改动的 spec 要与基准分支比较
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: pnpm
@@ -267,7 +263,7 @@ jobs:
           pnpm test:e2e:changed "origin/${BASE_REF}" --shard=${{ matrix.shard }}/4
         env:
           BASE_REF: ${{ github.base_ref }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report-${{ matrix.shard }}
