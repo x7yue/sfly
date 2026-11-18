@@ -1261,19 +1261,20 @@ test.describe("编排画布：注释框", () => {
 			controlPlane,
 			"带注释框的场景",
 			annotated([
-				{
-					id: "annotation_1",
-					title: "派发对账",
-					note: "异步任务和它调度的子流程入口一起看",
-					nodes: ["dispatch", "sub_entry"],
-				},
+				{ id: "annotation_1", title: "派发对账", nodes: ["dispatch", "sub_entry"] },
 				{
 					id: "annotation_2",
 					title: "收尾：通知和对账子流程",
 					nodes: ["ping"],
 					subflows: ["sub_entry"],
 				},
-				{ id: "annotation_3", title: "拉取快照", nodes: ["entry", "fetch"] },
+				// 备注放在不和别的框交叠的框上：交叠的框，后画的那个的标题会压在前一个框的备注上（#337 同一类）。
+				{
+					id: "annotation_3",
+					title: "拉取快照",
+					note: "先拉取当天的快照，再派发对账",
+					nodes: ["entry", "fetch"],
+				},
 			]),
 		);
 		await page.goto(`/orchestrations/${id}`);
@@ -1282,7 +1283,7 @@ test.describe("编排画布：注释框", () => {
 	});
 
 	test("注释框和子流程区域交叠，选中其中一个", async ({ page }) => {
-		await annotationBand(page, "派发对账").click();
+		await annotationBand(page, "收尾：通知和对账子流程").click();
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-annotations.png");
 	});

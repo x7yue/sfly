@@ -27,7 +27,13 @@ describe("节点 ID 保留结尾", () => {
 	it("没有分隔符时保留结尾 6 个字符；短 ID 整个是结尾", () => {
 		expect(idParts("verifyreport")).toEqual({ head: "verify", tail: "report" });
 		expect(idParts("ping")).toEqual({ head: "", tail: "ping" });
+	});
+
+	it("开头只剩一两个字时不拆：整个 ID 是结尾，不会在开头撑出空隙", () => {
+		expect(idParts("cleanup")).toEqual({ head: "", tail: "cleanup" });
+		expect(idParts("ab_monitor")).toEqual({ head: "", tail: "ab_monitor" });
 		// 开头的分隔符不算分段。
-		expect(idParts("_hidden")).toEqual({ head: "_", tail: "hidden" });
+		expect(idParts("_hidden")).toEqual({ head: "", tail: "_hidden" });
+		expect(idParts("abc_monitor")).toEqual({ head: "abc", tail: "_monitor" });
 	});
 });

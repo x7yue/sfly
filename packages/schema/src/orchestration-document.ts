@@ -235,7 +235,8 @@ export const STICKY_NOTE_TEXT_MAX = NODE_NOTE_MAX;
 /** 便签不写大小时的宽高，和能缩到的最小宽高（画布坐标）。 */
 export const STICKY_NOTE_SIZE = { width: 280, height: 168 } as const;
 export const STICKY_NOTE_MIN_SIZE = { width: 160, height: 96 } as const;
-const STICKY_NOTE_MAX_SIDE = 4000;
+/** 便签宽、高的上限（画布坐标）：拖动改大小时按它截住。 */
+export const STICKY_NOTE_MAX_SIDE = 4000;
 
 /**
  * 便签：画布上自由摆放的说明（检查清单、已知问题、待办），不挂在任何节点上。属于版本内容，只用于显示，
@@ -289,3 +290,15 @@ export type OrchestrationNode = z.infer<typeof OrchestrationNode>;
 export type Annotation = z.infer<typeof Annotation>;
 export type AnnotationColor = z.infer<typeof AnnotationColor>;
 export type StickyNote = z.infer<typeof StickyNote>;
+
+/** 注释框不写颜色时是灰色（ADR 0025）：画布选回灰色时去掉 `color`，版本对比把两种写法当成同一种。 */
+export const ANNOTATION_DEFAULT_COLOR: AnnotationColor = "gray";
+/** 便签不写颜色时是黄色（ADR 0026），规则同上。 */
+export const STICKY_NOTE_DEFAULT_COLOR: AnnotationColor = "yellow";
+
+/** 注释框实际显示的颜色。 */
+export const annotationColor = (annotation: { color?: AnnotationColor | undefined }) =>
+	annotation.color ?? ANNOTATION_DEFAULT_COLOR;
+/** 便签实际显示的颜色。 */
+export const stickyNoteColor = (note: { color?: AnnotationColor | undefined }) =>
+	note.color ?? STICKY_NOTE_DEFAULT_COLOR;

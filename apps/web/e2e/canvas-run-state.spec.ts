@@ -4,7 +4,14 @@ import { annotationFrame } from "./annotation-support";
 import { dock, inspector, modes, nodeCard, switchMode, withoutFollow } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { MONITOR_SCENARIO, openMonitor, runningScenario } from "./monitor-scenario";
-import { createScenario, expectFocusVisible, publishPackage, triggerRun } from "./support";
+import {
+	box,
+	createScenario,
+	expectFocusVisible,
+	publishPackage,
+	screenPixel,
+	triggerRun,
+} from "./support";
 
 // 编排画布的「运行状态」模式（原型 #/editor/:id?run=<id>）：节点叠加运行状态，检查器给出运行摘要与监控页入口。
 
@@ -258,18 +265,29 @@ test("场景还没有运行过：运行状态模式给出提示，节点不叠�
 	await expect(inspector(page)).toContainText("这个场景还没有运行过");
 });
 
-/** 计算样式里的颜色（rgb() 或 color(srgb …)）转成 0–1 的 sRGB 分量。 */
-const srgb = (css: string) => {
-	const parts = css.match(/[\d.]+/g)?.map(Number) ?? [];
-	return css.startsWith("color(") ? parts.slice(0, 3) : parts.slice(0, 3).map((v) => v / 255);
-};
-const luminance = (css: string) => {
-	const [r = 0, g = 0, b = 0] = srgb(css).map((c) =>
-		c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4,
+/**
+ * 计算样式里的颜色（rgb()、color(srgb …)、oklch() 都有）在页面里画到 1×1 的画布上，读出 sRGB 分量（0–255）：
+ * 注释框的颜色是 OKLCH 写的，计算样式里也是 oklch()。
+ */
+const toSrgb = (page: Page, colors: string[]) =>
+	page.evaluate(
+		(list) =>
+			list.map((color) => {
+				const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+				ctx.fillStyle = color;
+				ctx.fillRect(0, 0, 1, 1);
+				return [...ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+			}),
+		colors,
 	);
+const luminance = (rgb: number[]) => {
+	const [r = 0, g = 0, b = 0] = rgb.map((v) => {
+		const c = v / 255;
+		return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+	});
 	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
-const contrast = (fg: string, bg: string) => {
+const contrast = (fg: number[], bg: number[]) => {
 	const [a, b] = [luminance(fg), luminance(bg)];
 	return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 };
@@ -289,25 +307,44 @@ test("注释框里已完成的站只留轮廓、辅助文字不低于 4.5:1；�
 			...MONITOR_SCENARIO,
 			annotations: [
 				{ id: "annotation_1", title: "取数", color: "green", nodes: ["fetch"], subflows: [] },
+				// 框住子流程：区域画在注释框的底板上，走完的子流程入口贴着「底板叠上区域的淡紫」。
+				{ id: "annotation_2", title: "子流程", color: "green", nodes: [], subflows: ["sub"] },
 			],
 		},
 	);
+	await withoutFollow(page);
 	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
 	const fetch = nodeCard(page, "fetch");
 	await expect(fetch).toHaveAttribute("data-run", "done");
 	await expect(fetch).toHaveAttribute("data-ground", "green");
-	const [figure, card, outline] = await fetch.evaluate((el) => [
+	const styles = await fetch.evaluate((el) => [
 		getComputedStyle(el.querySelector("[data-node-figure]") as Element).color,
 		getComputedStyle(el).backgroundColor,
 		getComputedStyle(el).borderTopColor,
 	]);
-	expect(contrast(figure, card)).toBeGreaterThanOrEqual(4.5);
-	// 走完的站只留轮廓：底色就是注释框的底板，靠一圈灰描边和底板分开。
-	const panel = await annotationFrame(page, "annotation_1").evaluate(
+	const panelStyle = await annotationFrame(page, "annotation_1").evaluate(
 		(el) => getComputedStyle(el).backgroundColor,
 	);
-	expect(card).toBe(panel);
+	const [figure = [], card = [], outline = [], panel = []] = await toSrgb(page, [
+		...styles,
+		panelStyle,
+	]);
+	expect(contrast(figure, card)).toBeGreaterThanOrEqual(4.5);
+	// 走完的站只留轮廓：底色就是注释框的底板，靠一圈灰描边和底板分开。
+	expect(card).toEqual(panel);
 	expect(contrast(outline, panel)).toBeGreaterThanOrEqual(1.6);
+	// 框里的子流程：走完的卡片和旁边的区域画出来是同一个颜色，不会挖出一块暗洞。
+	const sub = nodeCard(page, "sub");
+	await expect(sub).toHaveAttribute("data-run", "done");
+	await expect(sub).toHaveAttribute("data-ground-subflow", "true");
+	await page.mouse.move(5, 5);
+	const subBox = await box(sub);
+	// 卡片里靠右、两行字和端口之外的一点；卡片正上方、子流程标题行下面的一点（左侧中点有调度连线进来，避开）。
+	const [inside, beside] = [
+		await screenPixel(page, { x: subBox.x + subBox.width - 8, y: subBox.y + subBox.height / 2 }),
+		await screenPixel(page, { x: subBox.x + subBox.width / 2, y: subBox.y - 6 }),
+	];
+	expect(Math.max(...inside.map((c, i) => Math.abs(c - (beside[i] ?? 0))))).toBeLessThanOrEqual(2);
 
 	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 还是漏拦");
 	const verify = nodeCard(page, "verify");

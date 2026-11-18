@@ -1,5 +1,5 @@
 import { nodeNameWithId, subflowLabel, subflowTree } from "@sfly/orchestration";
-import { ANNOTATION_TITLE_MAX, type Annotation } from "@sfly/schema";
+import { ANNOTATION_TITLE_MAX, type Annotation, annotationColor } from "@sfly/schema";
 import { Trash2Icon, XIcon } from "lucide-react";
 import { AnnotationColorPicker } from "#/components/canvas/AnnotationColorPicker";
 import { TERM } from "#/lib/copy";
@@ -108,7 +108,7 @@ export function AnnotationInspector({
 						<AnnotationColorPicker
 							id={control.id}
 							aria-labelledby={`${control.id}-label`}
-							value={annotation.color ?? "gray"}
+							value={annotationColor(annotation)}
 							onChange={(color) => change(withColor(annotation, color))}
 						/>
 					)}

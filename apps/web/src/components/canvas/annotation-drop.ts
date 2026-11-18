@@ -48,7 +48,8 @@ export function detachedAnnotations(
 	);
 }
 
-const contains = (box: Box, p: Position) =>
+/** 点在矩形里（含边上）。 */
+export const boxContains = (box: Box, p: Position) =>
 	p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h;
 
 /** 卡片中心（画布坐标）。 */
@@ -89,7 +90,7 @@ export function annotationDrop({
 		if (!still) return [];
 		const own = !detach && dragged.some((id) => isMember(a, id));
 		const box = own ? (drawn.find((b) => b.annotation.id === a.id)?.box ?? still) : still;
-		return contains(box, center) ? [{ annotation: a, box }] : [];
+		return boxContains(box, center) ? [{ annotation: a, box }] : [];
 	});
 	const target = candidates.reduce<(typeof candidates)[number] | null>(
 		(best, c) => (best && best.box.w * best.box.h < c.box.w * c.box.h ? best : c),

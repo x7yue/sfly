@@ -114,7 +114,6 @@
 	--color-canvas-edge-selected: var(--canvas-edge-selected);
 	--color-canvas-edge-travelled: var(--canvas-edge-travelled);
 	--color-canvas-edge-ahead: var(--canvas-edge-ahead);
-	--color-canvas-edge-live: var(--canvas-edge-live);
 	--color-canvas-edge-dispatch: var(--canvas-edge-dispatch);
 	--color-canvas-subflow: var(--canvas-subflow);
 	--color-canvas-subflow-fg: var(--canvas-subflow-fg);
@@ -129,15 +128,12 @@
 	--color-canvas-annotation-note: var(--canvas-annotation-note);
 	--color-canvas-annotation-note-line: var(--canvas-annotation-note-line);
 	--color-canvas-annotation-note-fg: var(--canvas-annotation-note-fg);
+	--color-canvas-annotation-fg-2: var(--canvas-annotation-fg-2);
 	--color-canvas-annotation-swatch: var(--canvas-annotation-swatch);
 	--color-canvas-sticky: var(--canvas-sticky);
 	--color-canvas-sticky-line: var(--canvas-sticky-line);
 	--color-canvas-sticky-fg: var(--canvas-sticky-fg);
 	--color-canvas-sticky-fg-2: var(--canvas-sticky-fg-2);
-	--color-canvas-run-running: var(--canvas-run-running);
-	--color-canvas-run-failed: var(--canvas-run-failed);
-	--color-canvas-run-cancelled: var(--canvas-run-cancelled);
-	--color-canvas-run-stopped: var(--canvas-run-stopped);
 	--color-canvas-run-done-bg: var(--canvas-run-done-bg);
 	--color-canvas-run-done-border: var(--canvas-run-done-border);
 

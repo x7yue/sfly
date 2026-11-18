@@ -1,5 +1,5 @@
 import { type AnnotationBox, stickyNoteSize } from "@sfly/orchestration";
-import type { Annotation } from "@sfly/schema";
+import { type Annotation, annotationColor, stickyNoteColor } from "@sfly/schema";
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PlacedStickyNote } from "./StickyNotes";
@@ -51,7 +51,7 @@ export function MinimapAnnotations({
 			...boxes.map(({ annotation, box }) => (
 				<rect
 					key={annotation.id}
-					data-annotation-color={annotation.color ?? "gray"}
+					data-annotation-color={annotationColor(annotation)}
 					x={box.x}
 					y={box.y}
 					width={box.w}
@@ -66,7 +66,7 @@ export function MinimapAnnotations({
 					<rect
 						key={`sticky:${note.id}`}
 						data-minimap-sticky={note.id}
-						data-annotation-color={note.color ?? "yellow"}
+						data-annotation-color={stickyNoteColor(note)}
 						x={note.position.x}
 						y={note.position.y}
 						width={size.width}

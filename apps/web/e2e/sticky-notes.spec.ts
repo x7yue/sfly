@@ -140,9 +140,8 @@ test("拖动便签移动、拖右下角改大小，各是一步撤销；工具�
 	const before = await box(note);
 
 	await dragFrom(page, { x: before.x + 60, y: before.y + 60 }, { x: 120, y: 40 });
-	const moved = await box(note);
-	expect(moved.x - before.x).toBeGreaterThan(100);
-	expect(moved.width).toBeCloseTo(before.width, 0);
+	await expect.poll(async () => (await box(note)).x - before.x).toBeGreaterThan(100);
+	expect((await box(note)).width).toBeCloseTo(before.width, 0);
 	await undo(page);
 	await expect.poll(async () => (await box(note)).x).toBeCloseTo(before.x, 0);
 
@@ -156,8 +155,8 @@ test("拖动便签移动、拖右下角改大小，各是一步撤销；工具�
 		{ x: corner.x + corner.width / 2, y: corner.y + corner.height / 2 },
 		{ x: 80, y: 60 },
 	);
+	await expect.poll(async () => (await box(note)).width - before.width).toBeGreaterThan(60);
 	const resized = await box(note);
-	expect(resized.width - before.width).toBeGreaterThan(60);
 	expect(resized.height - before.height).toBeGreaterThan(40);
 	expect(resized.x).toBeCloseTo(before.x, 0);
 	await undo(page);

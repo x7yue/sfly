@@ -115,10 +115,10 @@ test("选中注释框：标题后面出现工具条，换颜色、纵向排列�
 	await expect(bar.getByRole("button", { name: "颜色：橙" })).toBeVisible();
 
 	await bar.getByRole("button", { name: "纵向排列" }).click();
+	await expect.poll(() => nodePosition(page, "dispatch")).toEqual({ x: 300, y: ARRANGE_STEP.y });
 	expect(await nodePosition(page, "fetch")).toEqual({ x: 300, y: 0 });
-	expect(await nodePosition(page, "dispatch")).toEqual({ x: 300, y: ARRANGE_STEP.y });
 	await undo(page);
-	expect(await nodePosition(page, "dispatch")).toEqual({ x: 600, y: 0 });
+	await expect.poll(() => nodePosition(page, "dispatch")).toEqual({ x: 600, y: 0 });
 	await expect(annotationFrame(page, "annotation_1")).toHaveAttribute(
 		"data-annotation-color",
 		"orange",
@@ -150,10 +150,10 @@ test("多选节点：上方出现工具条，可以排列、新建注释框；Ct
 	expect(tools.y + tools.height).toBeLessThan(entry.y);
 
 	await bar.getByRole("button", { name: "横向排列" }).click();
+	await expect.poll(() => nodePosition(page, "ping")).toEqual({ x: 300, y: 0 });
 	expect(await nodePosition(page, "entry")).toEqual({ x: 0, y: 0 });
-	expect(await nodePosition(page, "ping")).toEqual({ x: 300, y: 0 });
 	await undo(page);
-	expect(await nodePosition(page, "ping")).toEqual({ x: 900, y: 0 });
+	await expect.poll(() => nodePosition(page, "ping")).toEqual({ x: 900, y: 0 });
 
 	// 撤销后选中不变，Ctrl+G 用这两个节点新建注释框。
 	await page.keyboard.press("ControlOrMeta+g");
@@ -171,7 +171,7 @@ test("多选节点：上方出现工具条，可以排列、新建注释框；Ct
 	await nodeCard(page, "sub_ping").click({ button: "right" });
 	await expect(nodeMenu(page).getByRole("menuitem", { name: /添加注释框/ })).toContainText("Ctrl");
 	await nodeMenu(page).getByRole("menuitem", { name: "纵向排列" }).click();
-	expect(await nodePosition(page, "sub_ping")).toEqual({ x: 0, y: ARRANGE_STEP.y });
+	await expect.poll(() => nodePosition(page, "sub_ping")).toEqual({ x: 0, y: ARRANGE_STEP.y });
 });
 
 test("把节点拖进注释框：卡片中心进了框时框高亮，卡片下面写着「松手加入」；松手加入，和这次拖动一起是一步撤销", async ({
@@ -195,7 +195,7 @@ test("把节点拖进注释框：卡片中心进了框时框高亮，卡片下�
 	]);
 
 	await undo(page);
-	expect(await nodePosition(page, "ping")).toEqual(before);
+	await expect.poll(() => nodePosition(page, "ping")).toEqual(before);
 	expect(await membersOf(page, "取数")).toHaveLength(2);
 });
 

@@ -103,7 +103,7 @@ test("大纲：O 键或工具条开关；不在框里的节点在最前，每个
 	await search.fill("取数");
 	await expect(outline(page).getByRole("listitem")).toHaveCount(2);
 	await search.fill("没有这个");
-	await expect(outline(page)).toContainText("没有匹配的节点或注释框");
+	await expect(outline(page)).toContainText("没有符合条件的节点或注释框");
 	await search.fill("");
 
 	// 点节点：选中，定位到没被大纲和检查器挡住的地方。

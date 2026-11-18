@@ -6,6 +6,7 @@ import {
 	ANNOTATION_TITLE_SPACE,
 	REGION_PADDING,
 	STICKY_ROW_GAP,
+	stickyHeadline,
 	stickyNoteRow,
 	withStickyNotePositions,
 } from "../src/index.js";
@@ -90,5 +91,13 @@ describe("补便签的位置", () => {
 		});
 		const complete = { ...doc, sticky_notes: [placed] };
 		expect(withStickyNotePositions(complete)).toBe(complete);
+	});
+});
+
+describe("stickyHeadline", () => {
+	it("有标题时是标题，没有时是正文的第一行（去掉列表的「- 」）", () => {
+		expect(stickyHeadline({ title: " 跑之前确认 ", text: "- 一" })).toBe("跑之前确认");
+		expect(stickyHeadline({ text: "\n- Agent 都在线\n- 二" })).toBe("Agent 都在线");
+		expect(stickyHeadline({ title: "  ", text: "已知问题\n第二行" })).toBe("已知问题");
 	});
 });

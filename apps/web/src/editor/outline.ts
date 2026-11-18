@@ -1,6 +1,10 @@
-import { annotationBoxes, type LayoutDocument, readingOrder } from "@sfly/orchestration";
+import {
+	annotationBoxes,
+	type LayoutDocument,
+	readingOrder,
+	stickyHeadline,
+} from "@sfly/orchestration";
 import type { Annotation, StickyNote } from "@sfly/schema";
-import { stickyHeadline } from "#/components/canvas/sticky-text";
 
 /**
  * 画布的大纲（单测见 outline.test.ts）：不在任何注释框里的节点排在最前，接着每个注释框一组，列出它框住的节点

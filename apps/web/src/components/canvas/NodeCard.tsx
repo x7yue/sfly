@@ -3,12 +3,12 @@ import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import { type CSSProperties, useCallback, useId, useRef } from "react";
 import { NoteIcon } from "#/components/note-icon";
-import { StatusDot, type StatusKind, StatusPill } from "#/components/status";
+import { STATUS, StatusDot, StatusPill } from "#/components/status";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { ActivityLine } from "./ActivityLine";
 import { FocusBadge } from "./CardFocus";
-import { type NodeDecoration, useFlowCanvas } from "./context";
+import { CANVAS_GROUND, type NodeDecoration, useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
 import { NodeTitleEditor } from "./NodeTitleEditor";
@@ -46,24 +46,9 @@ function useTitleDoubleClick(onDoubleClick: (() => void) | undefined) {
 }
 
 /**
- * 站点灯的三种样子（DESIGN-SYSTEM §2.3）：要盯的状态（执行中、失败、等待中）是状态色的淡底加描边，看全图时放大；
- * 走完了的（成功、跳过、停止）贴着所在底色，看全图时缩成一个小点；还没轮到的（待执行、排队、取消）只有一圈描边。
- */
-const LAMP: Record<StatusKind, { tone: "tall" | "done" | "idle"; color: string; line: string }> = {
-	running: { tone: "tall", color: "var(--signal)", line: "var(--signal-line)" },
-	failed: { tone: "tall", color: "var(--danger)", line: "var(--danger-line)" },
-	warn: { tone: "tall", color: "var(--warn)", line: "var(--warn-line)" },
-	ok: { tone: "done", color: "var(--ok)", line: "var(--ok-line)" },
-	skipped: { tone: "done", color: "var(--skipped)", line: "var(--border-strong)" },
-	stopped: { tone: "done", color: "var(--stopped)", line: "var(--border-strong)" },
-	pending: { tone: "idle", color: "var(--pending)", line: "var(--border-strong)" },
-	queued: { tone: "idle", color: "var(--pending)", line: "var(--border-strong)" },
-	cancelled: { tone: "idle", color: "var(--cancelled)", line: "var(--border-strong)" },
-};
-
-/**
- * 卡片左侧的站点灯：编辑时是节点种类的图标，运行时换成状态标记。看全图（data-lod-far）时要盯的状态放大到屏幕上
- * 18px（失败是实心红灯），走完了和还没轮到的缩成屏幕上约 10px 的小点。
+ * 卡片左侧的站点灯：编辑时是节点种类的图标，运行时换成状态标记。三种样子取自状态表（`STATUS[kind].canvas.lamp`）：
+ * 要盯的状态是状态色的淡底加描边，看全图（data-lod-far）时放大到屏幕上 18px（失败是实心红灯）；走完了的贴着所在底色、
+ * 还没轮到的只有一圈描边，看全图时都缩成屏幕上约 10px 的小点。状态色就是灯的文字色（`STATUS[kind].tone`，currentColor）。
  */
 function Lamp({
 	decoration,
@@ -73,31 +58,30 @@ function Lamp({
 	kindIcon: SfKindIcon;
 }) {
 	const status = decoration?.run ? decoration.status : undefined;
-	const lamp = status ? LAMP[status.kind] : undefined;
+	const look = status ? STATUS[status.kind] : undefined;
 	return (
 		<span
 			aria-hidden
-			data-lamp={lamp?.tone ?? "kind"}
+			data-lamp={look?.canvas.lamp ?? "kind"}
 			data-lamp-status={status?.kind}
-			style={
-				lamp ? ({ "--lamp": lamp.color, "--lamp-line": lamp.line } as CSSProperties) : undefined
-			}
+			style={look?.canvas.line ? ({ "--lamp-line": look.canvas.line } as CSSProperties) : undefined}
 			className={cn(
 				"grid size-8.5 flex-none place-items-center rounded-full bg-raised-2 text-fg-2 shadow-[inset_0_0_0_1px_var(--border-strong)]",
+				look?.tone,
 				"[&>svg]:size-4 in-data-[lod-far=true]:size-[max(34px,calc(16px/var(--canvas-zoom)))] in-data-[lod-far=true]:[&>svg]:size-1/2",
 				// 要盯的状态。看全图时失败的灯是实心红：只给 --lamp-solid 赋值，不和这里的淡底写同一个属性——
 				// 两条规则特异性相同，谁赢取决于样式表里的先后，实心红曾被淡底盖掉。
-				"data-[lamp=tall]:bg-[color:var(--lamp-solid,color-mix(in_srgb,var(--lamp)_15%,var(--canvas-node-bg)))] data-[lamp=tall]:shadow-[inset_0_0_0_1.5px_var(--lamp-line)]",
-				"data-[lamp=tall]:[&>i]:size-3",
-				"in-data-[lod-far=true]:data-[lamp=tall]:size-[max(34px,calc(18px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[lamp=tall]:shadow-[inset_0_0_0_max(1.5px,calc(2px/var(--canvas-zoom)))_var(--lamp)] in-data-[lod-far=true]:data-[lamp=tall]:[&>i]:size-[42%]",
-				"in-data-[lod-far=true]:data-[lamp-status=failed]:[--lamp-solid:var(--danger)] in-data-[lod-far=true]:data-[lamp-status=failed]:[&>i]:text-canvas-bg",
+				"data-[lamp=watch]:bg-[color:var(--lamp-solid,color-mix(in_srgb,currentColor_15%,var(--canvas-node-bg)))] data-[lamp=watch]:shadow-[inset_0_0_0_1.5px_var(--lamp-line)]",
+				"data-[lamp=watch]:[&>i]:size-3",
+				"in-data-[lod-far=true]:data-[lamp=watch]:size-[max(34px,calc(18px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[lamp=watch]:shadow-[inset_0_0_0_max(1.5px,calc(2px/var(--canvas-zoom)))_currentColor] in-data-[lod-far=true]:data-[lamp=watch]:[&>i]:size-[42%]",
+				"in-data-[lod-far=true]:data-[lamp-status=failed]:[--lamp-solid:currentColor] in-data-[lod-far=true]:data-[lamp-status=failed]:[&>i]:text-canvas-bg",
 				// 走完了的、还没轮到的
-				"data-[lamp=done]:bg-transparent data-[lamp=done]:shadow-[inset_0_0_0_1px_var(--canvas-run-done-border)]",
-				"data-[lamp=idle]:bg-transparent",
-				"data-[lamp=done]:[&>i]:size-2.5 data-[lamp=idle]:[&>i]:size-2.5",
-				"in-data-[lod-far=true]:data-[lamp=done]:size-[max(16px,calc(10px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[lamp=idle]:size-[max(16px,calc(10px/var(--canvas-zoom)))]",
-				"in-data-[lod-far=true]:data-[lamp=done]:shadow-none in-data-[lod-far=true]:data-[lamp=idle]:shadow-none",
-				"in-data-[lod-far=true]:data-[lamp=done]:[&>i]:size-full in-data-[lod-far=true]:data-[lamp=idle]:[&>i]:size-full",
+				"data-[lamp=passed]:bg-transparent data-[lamp=passed]:shadow-[inset_0_0_0_1px_var(--canvas-run-done-border)]",
+				"data-[lamp=ahead]:bg-transparent",
+				"data-[lamp=passed]:[&>i]:size-2.5 data-[lamp=ahead]:[&>i]:size-2.5",
+				"in-data-[lod-far=true]:data-[lamp=passed]:size-[max(16px,calc(10px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[lamp=ahead]:size-[max(16px,calc(10px/var(--canvas-zoom)))]",
+				"in-data-[lod-far=true]:data-[lamp=passed]:shadow-none in-data-[lod-far=true]:data-[lamp=ahead]:shadow-none",
+				"in-data-[lod-far=true]:data-[lamp=passed]:[&>i]:size-full in-data-[lod-far=true]:data-[lamp=ahead]:[&>i]:size-full",
 			)}
 		>
 			{status ? <StatusDot kind={status.kind} /> : <KindIcon />}
@@ -126,8 +110,11 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const warnings = info.warnings.get(id) ?? [];
 	const decoration = decorateNode?.(id, node);
 	const running = decoration?.run !== undefined;
-	const ground = grounds.get(id) ?? "canvas";
-	const inAnnotation = ground !== "canvas" && ground !== "subflow";
+	// 要盯的状态（执行中、失败、等待中）画在描边、站外一行上的颜色，取自状态表。
+	const stroke =
+		running && decoration?.status ? STATUS[decoration.status.kind].canvas.stroke : undefined;
+	const ground = grounds.get(id) ?? CANVAS_GROUND;
+	const inAnnotation = ground.color !== "canvas";
 	const sunk =
 		decoration?.run === "done" || decoration?.run === "skipped" || decoration?.run === "stopped";
 	const port = ports.get(id) ?? { in: false, out: false, dispatch: false };
@@ -173,13 +160,17 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			data-node-id={id}
 			data-run={decoration?.run}
 			data-mark={decoration?.mark}
-			data-ground={ground}
-			style={{
-				width: NODE_WIDTH,
-				height: grows ? undefined : NODE_HEIGHT,
-				minHeight: NODE_HEIGHT,
-				borderRadius: NODE_RADIUS,
-			}}
+			data-ground={ground.color}
+			data-ground-subflow={ground.subflow || undefined}
+			style={
+				{
+					width: NODE_WIDTH,
+					height: grows ? undefined : NODE_HEIGHT,
+					minHeight: NODE_HEIGHT,
+					borderRadius: NODE_RADIUS,
+					"--status-stroke": stroke,
+				} as CSSProperties
+			}
 			className={cn(
 				"flex items-center gap-3 pr-4 pl-3.25 hover:border-canvas-node-hover",
 				"in-data-[lod=true]:gap-2.5 in-data-[lod-far=true]:pl-3",
@@ -187,22 +178,25 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				grows && "items-start py-[13px] in-data-[lod=true]:items-center in-data-[lod=true]:py-0",
 				// 键盘焦点环在选中描边（3px 底色加 2px 描边，BaseNode）的外面，两圈不重叠：键盘只会把焦点放在刚选中的节点上。
 				"focus-visible:outline-offset-9",
-				// 运行状态画在描边上；看全图时要盯的状态描边加粗到屏幕上 2px。
-				"data-[run=running]:border-canvas-run-running data-[run=failed]:border-canvas-run-failed data-[run=waiting]:border-warn-line",
-				"in-data-[lod-far=true]:data-[run=running]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[run=failed]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))] in-data-[lod-far=true]:data-[run=waiting]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))]",
-				// 走完了的（成功、跳过、停止）只留轮廓：底色等于所在的底色（画布、注释框底板、子流程区域，tokens.css 的
-				// data-ground），一圈屏幕上 1px 的灰描边留住胶囊的形状；退后的状态都不用不透明度，标题换成次要文字色，
-				// 文字对比度不降（DESIGN-SYSTEM §2.2）。
-				"data-[run=done]:border-canvas-run-done-border data-[run=done]:bg-canvas-run-done-bg data-[run=done]:border-[length:max(1px,calc(1px/var(--canvas-zoom)))]",
-				"data-[run=skipped]:border-canvas-run-done-border data-[run=skipped]:bg-canvas-run-done-bg data-[run=skipped]:border-[length:max(1px,calc(1px/var(--canvas-zoom)))] data-[run=skipped]:text-fg-2",
-				"data-[run=stopped]:border-canvas-run-done-border data-[run=stopped]:bg-canvas-run-done-bg data-[run=stopped]:border-[length:max(1px,calc(1px/var(--canvas-zoom)))] data-[run=stopped]:text-fg-2",
+				// 要盯的状态画在描边上（颜色见上面的 stroke）；看全图时描边加粗到屏幕上 2px。写在 data-[run] 下面：
+				// 和悬停的描边一样的优先级、排在它后面，悬停不会盖掉状态色。
+				stroke &&
+					"data-[run]:border-(--status-stroke) in-data-[lod-far=true]:data-[run]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))]",
+				// 走完了的（成功、跳过、停止）只留轮廓：底色等于所在的底色（画布或注释框底板，在子流程区域里再叠上区域的淡紫，
+				// tokens.css 的 data-ground），一圈屏幕上 1px 的灰描边留住胶囊的形状；退后的状态都不用不透明度，跳过、停止的
+				// 标题换成次要文字色，文字对比度不降（DESIGN-SYSTEM §2.2）。注释框里的次要文字换成按底板色相算的那一档。
+				sunk &&
+					"data-[run]:border-canvas-run-done-border data-[run]:bg-canvas-run-done-bg data-[run]:bg-[image:linear-gradient(var(--node-ground-tint),var(--node-ground-tint))] data-[run]:border-[length:max(1px,calc(1px/var(--canvas-zoom)))]",
+				inAnnotation && sunk && "[--fg-2:var(--canvas-annotation-fg-2)]",
+				"data-[run=skipped]:text-fg-2 data-[run=stopped]:text-fg-2",
 				"data-[run=pending]:text-fg-2",
 				"data-[run=cancelled]:border-dashed data-[run=cancelled]:border-border-control data-[run=cancelled]:text-fg-2",
 				"data-[mark=added]:border-ok data-[mark=changed]:border-warn",
 				// 选中或悬停注释框时（FlowCanvas 给节点外层加类名）：成员描边加光晕，框里的非成员「下沉」到所在底色、
 				// 标题换成次要文字色，和退后的运行状态一样不用不透明度，文字对比度不降。
 				"in-[.annotation-member]:border-canvas-node-selected in-[.annotation-member]:shadow-[0_0_0_2px_var(--canvas-node-selected-ring)]",
-				"in-[.annotation-dim]:border-canvas-run-done-border in-[.annotation-dim]:bg-canvas-run-done-bg in-[.annotation-dim]:border-[length:max(1px,calc(1px/var(--canvas-zoom)))] in-[.annotation-dim]:text-fg-2",
+				"in-[.annotation-dim]:border-canvas-run-done-border in-[.annotation-dim]:bg-canvas-run-done-bg in-[.annotation-dim]:bg-[image:linear-gradient(var(--node-ground-tint),var(--node-ground-tint))] in-[.annotation-dim]:border-[length:max(1px,calc(1px/var(--canvas-zoom)))] in-[.annotation-dim]:text-fg-2",
+				inAnnotation && "in-[.annotation-dim]:[--fg-2:var(--canvas-annotation-fg-2)]",
 				"data-[mark=removed]:border-dashed data-[mark=removed]:border-danger data-[mark=removed]:text-fg-2 data-[mark=removed]:[&_[data-slot=base-node-title]]:line-through",
 			)}
 		>
@@ -227,9 +221,9 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			<div
 				className={cn(
 					"flex min-w-0 flex-1 flex-col gap-0.5",
-					// 注释框的底板比卡片亮，下沉后卡片底就是底板，辅助文字（fg-3）在上面只剩约 4.1:1：换成次要文字色
-					// （≥ 5.0:1，和平常卡片上的辅助文字一样清楚）。画布和子流程区域的底更暗，辅助文字本来就够清楚。
-					// 写在文字外面这一层而不是卡片上：卡片的描边色也按 fg-3 算，不能跟着变。
+					// 注释框的底板比卡片亮，下沉后卡片底就是底板（框里的子流程还叠着淡紫），fg-3 在上面只剩约 3.6–4.3:1、
+					// fg-2 约 4.5:1：辅助文字和次要文字都换成卡片上换过的那一档（--canvas-annotation-fg-2，≥ 5.3:1）。
+					// fg-3 写在文字外面这一层而不是卡片上：卡片的描边色按 fg-3 算，不能跟着变。画布上的底更暗，不用换。
 					inAnnotation && sunk && "[--fg-3:var(--fg-2)]",
 					inAnnotation && "in-[.annotation-dim]:[--fg-3:var(--fg-2)]",
 				)}
@@ -366,9 +360,9 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 						style={
 							{
 								width: `${Math.round(Math.min(1, Math.max(0, decoration.progress)) * 1000) / 10}%`,
-								"--lamp-progress": decoration.status
-									? LAMP[decoration.status.kind].color
-									: "var(--fg-3)",
+								"--lamp-progress":
+									(decoration.status && STATUS[decoration.status.kind].canvas.line) ??
+									"var(--fg-3)",
 							} as CSSProperties
 						}
 					/>
@@ -387,7 +381,8 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 						"absolute top-full left-[calc(57px_-_0.6em)] hidden max-w-[16.5em] truncate rounded-b-xl border border-t-0 bg-canvas-node-bg px-[0.6em] pt-[0.1em] pb-[0.2em] leading-[1.45] text-fg-1",
 						ZOOM_TEXT_12,
 						"in-data-[lod=true]:block",
-						"in-data-[run=running]:border-canvas-run-running in-data-[run=failed]:border-canvas-run-failed in-data-[run=waiting]:border-warn-line",
+						// 描边和卡片同色（卡片上的 --status-stroke）。
+						"border-(--status-stroke)",
 						"in-data-[lod-far=true]:left-[18px] in-data-[lod-far=true]:border-x-[length:max(1px,calc(2px/var(--canvas-zoom)))] in-data-[lod-far=true]:border-b-[length:max(1px,calc(2px/var(--canvas-zoom)))]",
 					)}
 				>

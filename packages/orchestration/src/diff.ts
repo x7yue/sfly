@@ -1,5 +1,10 @@
-import { OrchestrationDocument } from "@sfly/schema";
+import {
+	ANNOTATION_DEFAULT_COLOR,
+	OrchestrationDocument,
+	STICKY_NOTE_DEFAULT_COLOR,
+} from "@sfly/schema";
 import { subflowName } from "./chain-label.js";
+import { stickyHeadline } from "./sticky-notes.js";
 
 /**
  * 两份编排文档的差异：用于保存冲突时对比本地修改与最新版本、对比任意两个历史版本。
@@ -101,11 +106,11 @@ const withSubflowName = (node: Node): Node =>
 
 /** 注释框不写颜色就是灰色（ADR 0025）：写了 gray 和不写按同一种比较。 */
 const withDefaultColor = (a: NormalAnnotation): NormalAnnotation =>
-	a.color === "gray" ? { ...a, color: undefined } : a;
+	a.color === ANNOTATION_DEFAULT_COLOR ? { ...a, color: undefined } : a;
 
 /** 便签不写颜色就是黄色（ADR 0026）：写了 yellow 和不写按同一种比较。 */
 const withDefaultStickyColor = (s: NormalStickyNote): NormalStickyNote =>
-	s.color === "yellow" ? { ...s, color: undefined } : s;
+	s.color === STICKY_NOTE_DEFAULT_COLOR ? { ...s, color: undefined } : s;
 
 /** 补齐默认值；文档不完全合法（例如编辑到一半的草稿）时按原样比较。 */
 function normalize(doc: DiffableDocument): NormalDoc {
@@ -207,11 +212,11 @@ function diffAnnotations(before: NormalAnnotation[], after: NormalAnnotation[]) 
 	};
 }
 
-/** 便签的写法：标题，没有标题时是正文的第一行。 */
+/** 便签的写法：和画布上同一个名字（stickyHeadline），都是空白时写 ID。草稿里的字段可能不是字符串。 */
 const stickyRef = (s: NormalStickyNote): StickyNoteRef => {
-	const title = typeof s.title === "string" ? s.title.trim() : "";
-	const first = typeof s.text === "string" ? (s.text.trim().split("\n")[0] ?? "") : "";
-	return { id: s.id, label: title || first.trim() || s.id };
+	const title = typeof s.title === "string" ? s.title : undefined;
+	const text = typeof s.text === "string" ? s.text : "";
+	return { id: s.id, label: stickyHeadline({ title, text }) || s.id };
 };
 
 const STICKY_LAYOUT_FIELDS = new Set(["position", "size"]);

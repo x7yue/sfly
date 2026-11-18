@@ -1,13 +1,18 @@
-import { stickyNoteSize } from "@sfly/orchestration";
-import { STICKY_NOTE_MIN_SIZE, type StickyNote } from "@sfly/schema";
+import { stickyHeadline, stickyNoteSize } from "@sfly/orchestration";
+import {
+	STICKY_NOTE_MAX_SIDE,
+	STICKY_NOTE_MIN_SIZE,
+	type StickyNote,
+	stickyNoteColor,
+} from "@sfly/schema";
 import { useStoreApi, ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
-import { StickyNoteIcon } from "lucide-react";
+import { NotepadTextIcon } from "lucide-react";
 import { type PointerEvent, useRef } from "react";
 import { TERM } from "#/lib/copy";
 import { StickyToolbar } from "./CanvasToolbar";
 import type { StickyEdit } from "./context";
-import { stickyBlocks, stickyHeadline } from "./sticky-text";
+import { stickyBlocks } from "./sticky-text";
 import { ZOOM_TEXT_STICKY, ZOOM_TEXT_STICKY_BODY, ZOOM_TEXT_STICKY_LOD } from "./zoom-text";
 
 /** 指针移动超过这么多屏幕像素才算拖动：之下是点击。 */
@@ -107,8 +112,15 @@ function Sticky({
 			edit?.resize(
 				note.id,
 				{
-					width: Math.max(STICKY_NOTE_MIN_SIZE.width, g.start.a + dx),
-					height: Math.max(STICKY_NOTE_MIN_SIZE.height, g.start.b + dy),
+					// 夹在场景文档允许的范围里：缩小视图时拖一点就是很多画布单位，拖过上限就保存不了。
+					width: Math.min(
+						STICKY_NOTE_MAX_SIDE,
+						Math.max(STICKY_NOTE_MIN_SIZE.width, g.start.a + dx),
+					),
+					height: Math.min(
+						STICKY_NOTE_MAX_SIDE,
+						Math.max(STICKY_NOTE_MIN_SIZE.height, g.start.b + dy),
+					),
 				},
 				dragging,
 			);
@@ -138,7 +150,7 @@ function Sticky({
 	return (
 		<div
 			data-sticky-note={note.id}
-			data-annotation-color={note.color ?? "yellow"}
+			data-annotation-color={stickyNoteColor(note)}
 			data-selected={selected || undefined}
 			className="absolute -z-[5]"
 			style={{
@@ -182,7 +194,7 @@ function Sticky({
 						ZOOM_TEXT_STICKY_LOD,
 					)}
 				>
-					<StickyNoteIcon
+					<NotepadTextIcon
 						aria-hidden
 						className="size-[1.05em] flex-none text-canvas-annotation-swatch"
 					/>

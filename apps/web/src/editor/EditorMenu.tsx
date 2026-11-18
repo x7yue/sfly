@@ -9,7 +9,7 @@ import {
 import type { OrchestrationDocument } from "@sfly/schema";
 import { type CanvasMenuTarget, FitViewMenuItem } from "#/components/canvas/CanvasMenu";
 import type { DocNode } from "#/components/canvas/flow";
-import { ACTION } from "#/lib/copy";
+import { ACTION, ARRANGE_LABEL } from "#/lib/copy";
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import type { AddRequest } from "./AddNodeMenu";
 import { type AnnotationMenuActions, AnnotationMenuItems } from "./annotation-menu";
@@ -46,11 +46,7 @@ export interface EditorMenuActions {
 }
 
 /** 多选的节点菜单里的排列（和多选工具条上的同一组）。 */
-const ARRANGE_ITEMS: readonly { mode: ArrangeMode; label: string }[] = [
-	{ mode: "grid", label: "宫格排列" },
-	{ mode: "row", label: "横向排列" },
-	{ mode: "column", label: "纵向排列" },
-];
+const ARRANGE_MODES: readonly ArrangeMode[] = ["grid", "row", "column"];
 
 /**
  * 编排画布的右键菜单内容（FlowCanvas 的 `menu`），按右键的对象分：连线（EdgeMenu）、节点（NodeMenu）、
@@ -85,9 +81,9 @@ export function EditorMenu({
 					{ACTION.addAnnotation}
 				</ContextMenuItem>
 				<ContextMenuSeparator />
-				{ARRANGE_ITEMS.map((a) => (
-					<ContextMenuItem key={a.mode} onClick={() => edit.arrange(target.ids, a.mode)}>
-						{a.label}
+				{ARRANGE_MODES.map((mode) => (
+					<ContextMenuItem key={mode} onClick={() => edit.arrange(target.ids, mode)}>
+						{ARRANGE_LABEL[mode]}
 					</ContextMenuItem>
 				))}
 			</>

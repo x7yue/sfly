@@ -1,5 +1,9 @@
 import { cn } from "cn";
 import { StickyNoteIcon } from "lucide-react";
+
+/** 备注的图标：节点卡片和页面上的备注图标、注释框的备注卡片共用（便签是另一个图标，ADR 0026）。 */
+export const NoteGlyph = StickyNoteIcon;
+
 import { useEffect, useId, useRef, useState } from "react";
 import { TERM } from "#/lib/copy";
 import { useHostKeyboardFocus } from "#/lib/host-focus";
@@ -95,7 +99,7 @@ export function NoteIcon({
 						)
 					}
 				>
-					<StickyNoteIcon aria-hidden />
+					<NoteGlyph aria-hidden />
 				</TooltipTrigger>
 				<TooltipContent role="tooltip" side={side} align={align} className="max-w-none p-0">
 					<div

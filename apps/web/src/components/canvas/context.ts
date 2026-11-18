@@ -77,10 +77,17 @@ export interface CardFocus {
 }
 
 /**
- * 节点卡片所在的底色（卡片上的 data-ground，见 tokens.css）：所在注释框的颜色、子流程区域或画布。
- * 已完成、跳过、停止的卡片「下沉」到这层底色：底色等于它，只留一圈灰描边。
+ * 节点卡片所在的底色（卡片上的 data-ground / data-ground-subflow，见 tokens.css）：所在注释框的颜色或画布，
+ * 在子流程区域里时再叠上区域的淡紫（框里的子流程两样都有）。已完成、跳过、停止的卡片「下沉」到这层底色：
+ * 底色等于它，只留一圈灰描边。
  */
-export type NodeGround = AnnotationColor | "subflow" | "canvas";
+export interface NodeGround {
+	color: AnnotationColor | "canvas";
+	subflow: boolean;
+}
+
+/** 不在注释框、也不在子流程区域里的节点。 */
+export const CANVAS_GROUND: NodeGround = { color: "canvas", subflow: false };
 
 /**
  * 运行状态下连线的样子（线路图，DESIGN-SYSTEM §2.3）。链连线：`travelled` 走过的（两端都已完成，变亮变粗）、

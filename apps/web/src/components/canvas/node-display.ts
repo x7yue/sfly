@@ -79,7 +79,10 @@ export function nodeSlot(node: DocNode): { text: string; empty: boolean } {
  * 全文在卡片的读屏名称和悬停提示里。
  */
 export function idParts(id: string): { head: string; tail: string } {
-	const cut = (at: number) => ({ head: id.slice(0, at), tail: id.slice(at) });
+	// 开头只剩一两个字时不拆：省略号本身就占一个字宽，截掉一两个字省不出地方，开头那段的最小宽度还会撑出空隙
+	// （「cleanup」显示成「c leanup」）。
+	const cut = (at: number) =>
+		at <= 2 ? { head: "", tail: id } : { head: id.slice(0, at), tail: id.slice(at) };
 	const seps = [...id.matchAll(/[_.-]/g)].map((m) => m.index).filter((i) => i > 0);
 	if (seps.length === 0) return id.length > 6 ? cut(id.length - 6) : { head: "", tail: id };
 	const last = seps.at(-1) ?? 0;

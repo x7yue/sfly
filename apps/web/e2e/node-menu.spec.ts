@@ -196,7 +196,7 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
 	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
 	expect(await nodePosition(page, "fetch")).toEqual({ x: 300, y: 0 });
-	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 640, y: 180 });
+	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 780, y: 180 });
 
 	// 一步撤销：节点、连线、位置都回去；重做再来。
 	await dock(page).getByRole("button", { name: "撤销" }).click();

@@ -120,7 +120,7 @@ test("链上的连线右键有「在此插入节点」「断开连线」，调�
 	expect(await nodePosition(page, "sleep_1")).toEqual({ x: 600, y: 0 });
 	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
 	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
-	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 640, y: 180 });
+	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 780, y: 180 });
 
 	// 一步撤销。
 	const undo = dock(page).getByRole("button", { name: "撤销" });

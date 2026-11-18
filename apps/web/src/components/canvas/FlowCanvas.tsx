@@ -8,7 +8,7 @@ import {
 	stickyNoteSize,
 	subflowRegions,
 } from "@sfly/orchestration";
-import type { Annotation, StickyNote } from "@sfly/schema";
+import { type Annotation, annotationColor, type StickyNote } from "@sfly/schema";
 import {
 	Background,
 	BackgroundVariant,
@@ -48,6 +48,7 @@ import { ContextMenu } from "@/components/ui/context-menu";
 import { AnnotationBoxes } from "./AnnotationBoxes";
 import {
 	annotationDrop,
+	boxContains,
 	cardCenter,
 	detachedAnnotations,
 	dropHint,
@@ -335,11 +336,14 @@ export function FlowCanvas({
 	const grounds = useMemo(() => {
 		const map = new Map<string, NodeGround>();
 		for (const box of boxes) {
-			const color = box.annotation.color ?? "gray";
-			for (const id of [...box.members, ...nonMembersInside(layout, box)]) map.set(id, color);
+			const color = annotationColor(box.annotation);
+			for (const id of [...box.members, ...nonMembersInside(layout, box)])
+				map.set(id, { color, subflow: false });
 		}
+		// 子流程区域画在注释框的底板上面：区域里的节点叠上区域的淡紫，注释框的颜色照旧。
 		for (const region of subflowRegions(layout)) {
-			for (const id of region.members) map.set(id, "subflow");
+			for (const id of region.members)
+				map.set(id, { color: map.get(id)?.color ?? "canvas", subflow: true });
 		}
 		return map;
 	}, [boxes, layout]);
@@ -632,14 +636,7 @@ export function FlowCanvas({
 			...at.map((p) => p.y),
 			// 卡片中心落在框里就算（不是成员也会被框的标题挡住）。
 			...boxes.flatMap((b) =>
-				at.some((p) => {
-					const c = cardCenter(p);
-					return (
-						c.x >= b.box.x && c.x <= b.box.x + b.box.w && c.y >= b.box.y && c.y <= b.box.y + b.box.h
-					);
-				})
-					? [b.box.y - ANNOTATION_TITLE_SPACE]
-					: [],
+				at.some((p) => boxContains(b.box, cardCenter(p))) ? [b.box.y - ANNOTATION_TITLE_SPACE] : [],
 			),
 			...subflowRegions(layout).flatMap((r) =>
 				r.members.some((id) => picked.includes(id)) ? [r.box.y] : [],

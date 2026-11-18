@@ -1,12 +1,21 @@
 import { EdgeLabelRenderer, type EdgeProps, useInternalNode, useStore } from "@xyflow/react";
 import { cn } from "cn";
-import { useFlowCanvas } from "./context";
+import type { CSSProperties } from "react";
+import { STATUS, type StatusKind } from "#/components/status";
+import { type EdgeDecoration, useFlowCanvas } from "./context";
 import { EdgeInsertButton, useEdgeHover } from "./EdgeInsert";
 import { edgePath, type Point } from "./edge-path";
 import type { SfEdge } from "./flow";
 import { PORTS } from "./geometry";
 import { isNodeSelected } from "./selection";
 import { LOD_HIDDEN, ZOOM_TEXT_12 } from "./zoom-text";
+
+/** 进入要盯的节点的链连线：着那个节点的状态色（状态表的 `canvas.stroke`，和卡片描边同色）。 */
+const ENTERING: Partial<Record<EdgeDecoration, StatusKind>> = {
+	live: "running",
+	failed: "failed",
+	waiting: "warn",
+};
 
 /**
  * 链连线与调度连线。端点 = 节点位置 + geometry.ts 的端口偏移。选中节点相关的连线（或选中的连线本身）
@@ -32,6 +41,7 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 	const highlighted =
 		selected || isNodeSelected(selection, source) || isNodeSelected(selection, target);
 	const run = decorateEdge?.({ from: source, to: target, kind });
+	const entering = kind === "chain" && run ? ENTERING[run] : undefined;
 	return (
 		<>
 			<path
@@ -39,6 +49,11 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 				data-edge={id}
 				data-highlighted={highlighted}
 				data-run={run}
+				style={
+					entering
+						? ({ "--status-stroke": STATUS[entering].canvas.stroke } as CSSProperties)
+						: undefined
+				}
 				className={cn(
 					"fill-none stroke-canvas-edge stroke-[length:max(1.5px,calc(1.5px/var(--canvas-zoom)))]",
 					kind === "dispatch" && "stroke-signal-line [stroke-dasharray:4_4]",
@@ -48,13 +63,11 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 					kind === "chain" && run && "stroke-[length:max(2px,calc(2px/var(--canvas-zoom)))]",
 					kind === "chain" && run === "travelled" && "stroke-canvas-edge-travelled",
 					kind === "chain" && run === "ahead" && "stroke-canvas-edge-ahead",
-					kind === "chain" && run === "live" && "stroke-canvas-edge-live",
+					entering && "stroke-(--status-stroke)",
 					kind === "chain" &&
 						run === "live" &&
 						enteringEdges?.has(id) &&
 						"motion-safe:[animation:edge-enter_0.9s_linear_2]",
-					kind === "chain" && run === "failed" && "stroke-danger-line",
-					kind === "chain" && run === "waiting" && "stroke-warn-line",
 					highlighted &&
 						!run &&
 						"stroke-canvas-edge-selected [stroke-dasharray:6_5] motion-safe:[animation:edge-flow_1s_linear_2]",

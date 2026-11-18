@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { LAYOUT_COLUMN, LEGACY_LAYOUT_COLUMN } from "@sfly/orchestration";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import {
 	addMenu,
@@ -7,6 +8,7 @@ import {
 	editorDocument,
 	inspector,
 	nodeCard,
+	nodePosition,
 	openEditor,
 	paneMenu,
 	switchMode,
@@ -242,4 +244,43 @@ test("选中执行失败的节点：进入它的连线保持红色", async ({
 	await nodeCard(page, "verify").click();
 	await expect(failed).toHaveAttribute("data-highlighted", "true");
 	expect(await failed.evaluate((el) => getComputedStyle(el).stroke)).toBe(stroke);
+});
+
+test("按旧的卡片尺寸排的场景：打开时提示节点叠在一起，「拉开」把横坐标按新列宽拉开，是一步撤销", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane);
+	// 卡片 208 宽时整理布局的列宽是 252：现在 256 宽的卡片同一行相邻的叠 4px。
+	const legacy = {
+		...editorDocument,
+		nodes: editorDocument.nodes.map((n) => ({
+			...n,
+			position: {
+				x: Math.round((n.position.x / LAYOUT_COLUMN) * LEGACY_LAYOUT_COLUMN),
+				y: n.position.y,
+			},
+		})),
+	};
+	const id = await createScenario(controlPlane, "旧布局", legacy);
+	await openEditor(page, id);
+	const notice = page
+		.locator("[data-sonner-toast]")
+		.filter({ hasText: "这个场景里有节点叠在一起" });
+	await expect(notice).toBeVisible();
+	expect(await nodePosition(page, "fetch")).toEqual({ x: LEGACY_LAYOUT_COLUMN, y: 0 });
+
+	await notice.getByRole("button", { name: "拉开" }).click();
+	await expect.poll(() => nodePosition(page, "fetch")).toEqual({ x: LAYOUT_COLUMN, y: 0 });
+	expect(await nodePosition(page, "ping")).toEqual({ x: LAYOUT_COLUMN * 3, y: 0 });
+	await expect(notice).toHaveCount(0);
+	await dock(page).getByRole("button", { name: "撤销" }).click();
+	await expect.poll(() => nodePosition(page, "fetch")).toEqual({ x: LEGACY_LAYOUT_COLUMN, y: 0 });
+});
+
+test("卡片没有叠在一起的场景：打开时不提示", async ({ page, controlPlane }) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	await expect(nodeCard(page, "fetch")).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });

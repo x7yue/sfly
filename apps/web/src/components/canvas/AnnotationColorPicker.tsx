@@ -1,16 +1,7 @@
 import { ANNOTATION_COLORS, type AnnotationColor } from "@sfly/schema";
 import { cn } from "cn";
 import { CheckIcon } from "lucide-react";
-
-/** 注释框颜色的名称（色块下面的字、版本对比里的写法）。 */
-export const ANNOTATION_COLOR_LABEL: Record<AnnotationColor, string> = {
-	gray: "灰",
-	blue: "蓝",
-	green: "绿",
-	yellow: "黄",
-	orange: "橙",
-	pink: "粉",
-};
+import { ANNOTATION_COLOR_LABEL } from "#/lib/copy";
 
 /**
  * 注释框的颜色选择（ADR 0025）：一排六个色块，下面写颜色名，当前的带对勾和描边；按钮用 aria-pressed，和 `Segmented` 一样。

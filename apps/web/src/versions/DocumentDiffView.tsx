@@ -1,9 +1,18 @@
 import type { AnnotationChange, DocumentDiff, FieldChange } from "@sfly/orchestration";
 import { isEmptyDiff } from "@sfly/orchestration";
-import type { AnnotationColor } from "@sfly/schema";
-import { ANNOTATION_COLOR_LABEL } from "#/components/canvas/AnnotationColorPicker";
+import {
+	ANNOTATION_DEFAULT_COLOR,
+	type AnnotationColor,
+	STICKY_NOTE_DEFAULT_COLOR,
+} from "@sfly/schema";
 import { KIND_META } from "#/components/canvas/node-display";
-import { ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE, TERM } from "#/lib/copy";
+import {
+	ANNOTATION_COLOR_LABEL,
+	ANNOTATION_FIELD_LABEL,
+	INSPECTOR_PAGE,
+	STICKY_FIELD_LABEL,
+	TERM,
+} from "#/lib/copy";
 
 /**
  * 两份场景文档的差异列表：场景设置、节点（新增 / 删除 / 修改的字段）、连线、注释框、布局。
@@ -221,7 +230,7 @@ function ChangeRow({
 function annotationChange(change: AnnotationChange["changes"][number]): FieldChange {
 	const members = (value: unknown) => (Array.isArray(value) ? value.join("、") || "（无）" : value);
 	const color = (value: unknown) =>
-		ANNOTATION_COLOR_LABEL[(value ?? "gray") as AnnotationColor] ?? value;
+		ANNOTATION_COLOR_LABEL[(value ?? ANNOTATION_DEFAULT_COLOR) as AnnotationColor] ?? value;
 	if (change.path === "color")
 		return { ...change, before: color(change.before), after: color(change.after) };
 	return change.path === "nodes" || change.path === "subflows"
@@ -229,12 +238,11 @@ function annotationChange(change: AnnotationChange["changes"][number]): FieldCha
 		: change;
 }
 
-/** 便签的字段名；颜色写颜色名，不写颜色的是「黄」。 */
-const STICKY_FIELD_LABEL: Record<string, string> = { title: "标题", text: "正文", color: "颜色" };
+/** 便签的颜色写颜色名，不写颜色的是「黄」。 */
 function stickyChange(change: FieldChange): FieldChange {
 	if (change.path !== "color") return change;
 	const color = (value: unknown) =>
-		ANNOTATION_COLOR_LABEL[(value ?? "yellow") as AnnotationColor] ?? value;
+		ANNOTATION_COLOR_LABEL[(value ?? STICKY_NOTE_DEFAULT_COLOR) as AnnotationColor] ?? value;
 	return { ...change, before: color(change.before), after: color(change.after) };
 }
 

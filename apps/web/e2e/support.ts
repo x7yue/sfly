@@ -216,6 +216,22 @@ export async function expectRingPainted(page: Page, at: { x: number; y: number }
 	expect(colors.pixel).toBe(colors.ring);
 }
 
+/** 屏幕上 (x, y) 这一像素实际画出来的颜色（sRGB，0–255）：叠在一起的几层都算进去。 */
+export async function screenPixel(page: Page, at: { x: number; y: number }): Promise<number[]> {
+	const png = await page.screenshot({
+		clip: { x: Math.round(at.x), y: Math.round(at.y), width: 1, height: 1 },
+	});
+	return page.evaluate(async (data) => {
+		const img = new Image();
+		img.src = `data:image/png;base64,${data}`;
+		await img.decode();
+		const ctx = document.createElement("canvas").getContext("2d");
+		if (!ctx) throw new Error("没有 2D canvas");
+		ctx.drawImage(img, 0, 0);
+		return [...ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+	}, png.toString("base64"));
+}
+
 /** 元素在页面上的位置和大小；不可见时报错。 */
 export async function box(locator: Locator) {
 	const b = await locator.boundingBox();

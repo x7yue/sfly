@@ -4,11 +4,11 @@ import {
 	type AnnotationBox,
 	type LayoutDocument,
 } from "@sfly/orchestration";
-import type { Annotation } from "@sfly/schema";
+import { type Annotation, annotationColor } from "@sfly/schema";
 import { type NodeChange, ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
-import { StickyNoteIcon } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useId, useMemo, useRef } from "react";
+import { NoteGlyph } from "#/components/note-icon";
 import { AnnotationTitleEditor } from "./AnnotationTitleEditor";
 import { type BandDrag, useBandDrag } from "./annotation-drag";
 import { AnnotationToolbar } from "./CanvasToolbar";
@@ -25,8 +25,8 @@ const TITLE_GAP = 6;
  * 各部分的颜色由 `data-annotation-color` 算出（tokens.css）。标题是框外左上方的同色胶囊（和框里写着标题的
  * 紫色子流程区域分开）；有备注时框里最上方是一张备注卡片，直接显示备注的前两行（缩小视图时一行），全文在检查器里看。
  * 范围由成员算出（@sfly/orchestration 的 annotationBoxes，由画布算好传进来），一个有效成员都没有的不画。
- * 给了 `onSelect` 时（可编辑的画布）点标题或便签选中注释框，给了 `onMove` 时拖动它们整组移动成员（子流程成员的全部节点）。
- * 鼠标在标题或便签上时通过 `onHover` 报告，只读的画布也一样：框身不挡鼠标。
+ * 给了 `onSelect` 时（可编辑的画布）点标题或备注卡片选中注释框，给了 `onMove` 时拖动它们整组移动成员（子流程成员的全部节点）。
+ * 鼠标在标题或备注卡片上时通过 `onHover` 报告，只读的画布也一样：框身不挡鼠标。
  * 给了 `edit` 时双击标题原地改标题，选中的注释框标题后面出现工具条（CanvasToolbar 的 AnnotationToolbar）；
  * `dropTarget` 是拖动节点时松手会加入的注释框：底板亮一档，外面一圈虚线。
  */
@@ -47,7 +47,7 @@ export function AnnotationBoxes({
 	/** 选中的注释框 ID。 */
 	selected: string | null;
 	onSelect?: (id: string) => void;
-	/** 鼠标移到某个注释框的标题或便签上（ID），或离开它（null）。 */
+	/** 鼠标移到某个注释框的标题或备注卡片上（ID），或离开它（null）。 */
 	onHover?: (id: string | null) => void;
 	/** 拖动标题移动成员：和 React Flow 拖动节点一样用位置变化报告，拖动中 `dragging` 为 true，松手时为 false。 */
 	onMove?: (changes: NodeChange<SfNode>[]) => void;
@@ -68,7 +68,7 @@ export function AnnotationBoxes({
 					<section
 						key={id}
 						data-annotation={id}
-						data-annotation-color={annotation.color ?? "gray"}
+						data-annotation-color={annotationColor(annotation)}
 						data-selected={selected === id || undefined}
 						data-drop-target={dropTarget === id || undefined}
 						aria-label={`注释框 ${annotation.title}`}
@@ -161,7 +161,7 @@ function Heading({
 			onHover(null);
 		},
 	};
-	// 能拖动时加 nopan：按在标题或便签上拖动移动成员，不平移画布（抓手工具下不能拖动，照常平移）。
+	// 能拖动时加 nopan：按在标题或备注卡片上拖动移动成员，不平移画布（抓手工具下不能拖动，照常平移）。
 	const handle = cn(
 		"pointer-events-auto",
 		onSelect && (drag ? "nopan cursor-grab active:cursor-grabbing" : "cursor-pointer"),
@@ -223,7 +223,7 @@ function Heading({
 				{toolbar}
 			</div>
 			{note && (
-				// 备注卡片：框里最上方，宽和框里的内容对齐，比底板亮、带便签图标，和比底板暗的节点卡片分开。
+				// 备注卡片：框里最上方，宽和框里的内容对齐，比底板亮、带备注图标，和比底板暗的节点卡片分开。
 				// 点它和点标题一样（读屏用的全文由标题的 aria-describedby 引用）。
 				<div
 					data-annotation-note=""
@@ -244,12 +244,12 @@ function Heading({
 				>
 					<p
 						className={cn(
-							// 缩小视图时只排一行（字号不变、便签变矮），行高收紧，缩到 30% 也放得下。
+							// 缩小视图时只排一行（字号不变、备注卡片变矮），行高收紧，缩到 30% 也放得下。
 							"line-clamp-2 leading-[1.5] whitespace-pre-line wrap-anywhere in-data-[lod=true]:line-clamp-1 in-data-[lod=true]:leading-[1.3]",
 							ZOOM_TEXT_12,
 						)}
 					>
-						<StickyNoteIcon className="mr-[0.45em] inline-block size-[1.1em] align-[-0.2em] text-canvas-annotation-swatch" />
+						<NoteGlyph className="mr-[0.45em] inline-block size-[1.1em] align-[-0.2em] text-canvas-annotation-swatch" />
 						{note}
 					</p>
 				</div>

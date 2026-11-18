@@ -1,6 +1,12 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import type { ArrangeMode } from "@sfly/orchestration";
-import type { Annotation, AnnotationColor, StickyNote } from "@sfly/schema";
+import {
+	type Annotation,
+	type AnnotationColor,
+	annotationColor,
+	type StickyNote,
+	stickyNoteColor,
+} from "@sfly/schema";
 import { cn } from "cn";
 import {
 	ChevronDownIcon,
@@ -11,9 +17,10 @@ import {
 	Trash2Icon,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { ANNOTATION_COLOR_LABEL, ARRANGE_LABEL } from "#/lib/copy";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ANNOTATION_COLOR_LABEL, AnnotationColorPicker } from "./AnnotationColorPicker";
+import { AnnotationColorPicker } from "./AnnotationColorPicker";
 import { GroupDivider, ToolButton } from "./CanvasDock";
 import type { AnnotationEdit, StickyEdit } from "./context";
 
@@ -49,15 +56,19 @@ function FloatingToolbar({
 	);
 }
 
-const ARRANGE: readonly { mode: ArrangeMode; label: string; icon: ReactNode }[] = [
-	{ mode: "grid", label: "宫格排列", icon: <LayoutGridIcon /> },
-	{ mode: "row", label: "横向排列", icon: <Columns3Icon /> },
-	{ mode: "column", label: "纵向排列", icon: <Rows3Icon /> },
+const ARRANGE: readonly { mode: ArrangeMode; icon: ReactNode }[] = [
+	{ mode: "grid", icon: <LayoutGridIcon /> },
+	{ mode: "row", icon: <Columns3Icon /> },
+	{ mode: "column", icon: <Rows3Icon /> },
 ];
 
 function ArrangeButtons({ ids, edit }: { ids: readonly string[]; edit: AnnotationEdit }) {
 	return ARRANGE.map((a) => (
-		<ToolButton key={a.mode} label={a.label} onClick={() => edit.arrange(ids, a.mode)}>
+		<ToolButton
+			key={a.mode}
+			label={ARRANGE_LABEL[a.mode]}
+			onClick={() => edit.arrange(ids, a.mode)}
+		>
 			{a.icon}
 		</ToolButton>
 	));
@@ -127,7 +138,7 @@ export function AnnotationToolbar({
 	return (
 		<FloatingToolbar label={`注释框 ${annotation.title} 的工具条`} origin="bottom-left">
 			<ColorButton
-				color={annotation.color ?? "gray"}
+				color={annotationColor(annotation)}
 				onChange={(color) => edit.setColor(annotation.id, color)}
 			/>
 			{arrangeable && (
@@ -153,7 +164,7 @@ export function StickyToolbar({ note, edit }: { note: StickyNote; edit: StickyEd
 	return (
 		<FloatingToolbar label="便签的工具条" origin="bottom-left">
 			<ColorButton
-				color={note.color ?? "yellow"}
+				color={stickyNoteColor(note)}
 				onChange={(color) => edit.setColor(note.id, color)}
 			/>
 			<GroupDivider />

@@ -118,7 +118,7 @@ export function nodeElapsed(node: NodeRunView, now: number): number | null {
 
 /**
  * 卡片上的失败原因去掉开头的异常类名（`AssertionError: 漏拦 3 笔` → `漏拦 3 笔`）：卡片和站外一行只放得下
- * 十来个字，类名会占掉最有用的那一段；全文在悬停提示和检查器里。只有类名、或者类名不在开头时保留原文。
+ * 十来个字，类名会占掉最有用的那一段；带类名的原文在悬停提示和检查器里。只有类名、或者类名不在开头时保留原文。
  */
 export const withoutErrorClass = (reason: string) =>
 	reason.replace(/^[A-Za-z_][\w.]*(?:Error|Exception)\s*[:：]\s*(?=\S)/, "");

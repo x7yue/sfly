@@ -1,4 +1,9 @@
-import { ANNOTATION_TITLE_MAX, STICKY_NOTE_TEXT_MAX, type StickyNote } from "@sfly/schema";
+import {
+	ANNOTATION_TITLE_MAX,
+	STICKY_NOTE_TEXT_MAX,
+	type StickyNote,
+	stickyNoteColor,
+} from "@sfly/schema";
 import { Trash2Icon } from "lucide-react";
 import { AnnotationColorPicker } from "#/components/canvas/AnnotationColorPicker";
 import { TERM } from "#/lib/copy";
@@ -89,7 +94,7 @@ export function StickyInspector({
 						<AnnotationColorPicker
 							id={control.id}
 							aria-labelledby={`${control.id}-label`}
-							value={note.color ?? "yellow"}
+							value={stickyNoteColor(note)}
 							onChange={(color) => change(withStickyColor(note, color))}
 						/>
 					)}

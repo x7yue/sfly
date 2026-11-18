@@ -8,6 +8,7 @@ import {
 	declaredOutputs,
 	documentWarnings,
 	ensureLayout,
+	hasOverlappingCards,
 	insertAfter,
 	insertOnEdge,
 	nodeCardText,
@@ -23,6 +24,7 @@ import {
 	subflowRegions,
 	tidyLayout,
 	uniqueNodeId,
+	widenedPosition,
 	withStickyNotePositions,
 } from "@sfly/orchestration";
 import {
@@ -161,8 +163,10 @@ import {
 
 /** 检查器右边距。 */
 
-/** 定位注释框时框四周至少留出的空白（屏幕像素）。 */
+/** 定位节点、便签、注释框时四周至少留出的空白（屏幕像素）。 */
 const LOCATE_MARGIN = 48;
+/** 定位到节点、便签、注释框时缩放至少到这里（看得清第二行），已经更大时不缩小。 */
+const LOCATE_ZOOM = 0.75;
 
 /**
  * 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布铺满视口，控件悬浮——左上场景名 / 版本 / 检查状态 /
@@ -470,22 +474,37 @@ function Editor({
 		[connectionProblem, flow, reconnect],
 	);
 
+	/**
+	 * 把画布上的一块（节点卡片、便签、注释框连同框外上方 `above` 高的标题）放到没被检查器和大纲占住的那部分画布的中间：
+	 * 缩放至少到 LOCATE_ZOOM，放不下时缩小到放得下（不小于 MIN_ZOOM）。
+	 */
+	const centerOn = useCallback(
+		(r: { x: number; y: number; w: number; h: number }, above = 0) => {
+			const room = {
+				w: window.innerWidth - inspectorSpace - outlineSpace - 2 * LOCATE_MARGIN,
+				h: window.innerHeight - TOP_GROUP_SPACE - DOCK_SPACE - 2 * LOCATE_MARGIN,
+			};
+			const fits = Math.min(room.w / r.w, room.h / (r.h + above));
+			const zoom = Math.max(MIN_ZOOM, Math.min(Math.max(flow.getZoom(), LOCATE_ZOOM), fits));
+			void flow.setCenter(
+				r.x + r.w / 2 + (inspectorSpace - outlineSpace) / 2 / zoom,
+				r.y + r.h / 2 - above / 2,
+				{ zoom, duration: viewportDuration(VIEWPORT_MS) },
+			);
+		},
+		[flow, inspectorSpace, outlineSpace],
+	);
 	/** 选中并定位到某个节点（检查结果、调度关系、触发预检里的「前往」）。 */
 	const locate = useCallback(
 		(id: string) => {
 			setSelection(selectNode(id));
 			const node = flow.getNode(id);
 			if (node) {
-				// 定位到没被检查器和大纲占住的那部分画布的中间。
-				const zoom = Math.max(flow.getZoom(), 0.8);
-				void flow.setCenter(
-					node.position.x + NODE_WIDTH / 2 + (inspectorSpace - outlineSpace) / 2 / zoom,
-					node.position.y + NODE_HEIGHT / 2,
-					{ zoom, duration: viewportDuration(VIEWPORT_MS) },
-				);
+				const { x, y } = node.position;
+				centerOn({ x, y, w: NODE_WIDTH, h: node.measured?.height ?? NODE_HEIGHT });
 			}
 		},
-		[flow, inspectorSpace, outlineSpace],
+		[flow, centerOn],
 	);
 	/** 视口里没被顶栏和检查器占住的那部分的中心（画布坐标）：没有位置的新节点、粘贴的节点放在这里。 */
 	const viewportCenter = () =>
@@ -614,12 +633,7 @@ function Editor({
 		if (!note?.position) return;
 		if (!running) setSelection(selectSticky(id));
 		const size = stickyNoteSize(note);
-		const zoom = Math.max(flow.getZoom(), 0.75);
-		void flow.setCenter(
-			note.position.x + size.width / 2 + (inspectorSpace - outlineSpace) / 2 / zoom,
-			note.position.y + size.height / 2,
-			{ zoom, duration: viewportDuration(VIEWPORT_MS) },
-		);
+		centerOn({ ...note.position, w: size.width, h: size.height });
 	};
 	/**
 	 * 定位到注释框：框放在没被检查器和大纲占住的那部分画布的中间，放不下时缩小到放得下；编辑模式下同时选中它
@@ -632,18 +646,7 @@ function Editor({
 			annotations: shownAnnotations,
 		}).find((b) => b.annotation.id === id);
 		if (!found) return;
-		const { box } = found;
-		const room = {
-			w: window.innerWidth - inspectorSpace - outlineSpace - 2 * LOCATE_MARGIN,
-			h: window.innerHeight - TOP_GROUP_SPACE - DOCK_SPACE - 2 * LOCATE_MARGIN,
-		};
-		const fits = Math.min(room.w / box.w, room.h / (box.h + ANNOTATION_TITLE_SPACE));
-		const zoom = Math.max(MIN_ZOOM, Math.min(Math.max(flow.getZoom(), 0.75), fits, 1));
-		void flow.setCenter(
-			box.x + box.w / 2 + (inspectorSpace - outlineSpace) / 2 / zoom,
-			box.y + box.h / 2 - ANNOTATION_TITLE_SPACE / 2,
-			{ zoom, duration: viewportDuration(VIEWPORT_MS) },
-		);
+		centerOn(found.box, ANNOTATION_TITLE_SPACE);
 	};
 
 	// —— 便签（ADR 0026）：空白处菜单新建，拖动、改大小、颜色、删除（FlowCanvas 的 stickyEdit），文字在检查器里改 ——
@@ -956,6 +959,41 @@ function Editor({
 		}
 	}, [history.version]);
 	useShortcut("canvas-tidy", tidy, !running);
+
+	// —— 按旧的卡片尺寸排的场景（卡片从 208 宽改成 256 宽之前）：同一行相邻的卡片叠在一起 ——
+	// 打开画布时提示一次，「拉开」把横坐标按新旧列宽的比例拉开（纵向和手排的相对位置不变），是一步可撤销的修改，
+	// 保存后生效；不重新排，作者手排的布局不会没了。之后有了别的修改就收起，免得拉开的是改过的布局。
+	const widenNotice = useRef<{ id: string | number; version: number | null } | "checked" | null>(
+		null,
+	);
+	const widen = () => {
+		history.checkpoint();
+		setNodes((ns) => ns.map((n) => ({ ...n, position: widenedPosition(n.position) })));
+		setMeta((m) => ({
+			...m,
+			sticky_notes: m.sticky_notes.map((s) =>
+				s.position ? { ...s, position: widenedPosition(s.position) } : s,
+			),
+		}));
+	};
+	useEffect(() => {
+		const notice = widenNotice.current;
+		if (notice === null) {
+			if (running) return;
+			widenNotice.current = "checked";
+			if (!hasOverlappingCards(doc.nodes)) return;
+			const id = notify.info("这个场景里有节点叠在一起", {
+				description:
+					"节点卡片比以前宽，按旧尺寸排的场景会挨在一起。可以把横坐标拉开，上下位置和你排的相对位置都不变，保存后生效。",
+				action: { label: "拉开", onClick: widen },
+				cancel: { label: "不用", onClick: () => {} },
+			});
+			widenNotice.current = { id, version: history.version };
+		} else if (notice !== "checked" && notice.version !== history.version) {
+			notify.dismiss(notice.id);
+			widenNotice.current = "checked";
+		}
+	});
 
 	// —— 复制、粘贴、创建副本（node-clipboard）：新节点有新的 ID、不带连线，各是一步撤销 ——
 	const clipboard = useNodeClipboard({

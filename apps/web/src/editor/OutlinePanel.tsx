@@ -1,8 +1,9 @@
-import type { Annotation } from "@sfly/schema";
+import { type Annotation, annotationColor } from "@sfly/schema";
 import { cn } from "cn";
-import { ChevronRightIcon, PanelLeftCloseIcon, SearchIcon, StickyNoteIcon } from "lucide-react";
+import { ChevronRightIcon, NotepadTextIcon, PanelLeftCloseIcon, SearchIcon } from "lucide-react";
 import { useState } from "react";
-import { KIND_META } from "#/components/canvas/node-display";
+import { idParts, KIND_META } from "#/components/canvas/node-display";
+import { MESSAGE, TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Truncate } from "@/components/ui/truncate";
@@ -75,7 +76,9 @@ export function OutlinePanel({
 			<div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
 				{empty ? (
 					<p className="m-0 px-2 py-3 text-xs text-fg-3">
-						{query.trim() ? "没有匹配的节点或注释框" : "画布上还没有节点"}
+						{query.trim()
+							? MESSAGE.noMatch(`${TERM.node}或${TERM.annotation}`)
+							: "画布上还没有节点"}
 					</p>
 				) : (
 					<>
@@ -117,7 +120,7 @@ export function OutlinePanel({
 														isSelected && "selected-row text-fg-1 hover:bg-selected-bg",
 													)}
 												>
-													<StickyNoteIcon aria-hidden className="size-3.5 flex-none text-fg-3" />
+													<NotepadTextIcon aria-hidden className="size-3.5 flex-none text-fg-3" />
 													<Truncate className="flex-1">{s.label}</Truncate>
 												</button>
 											</li>
@@ -174,7 +177,7 @@ function Group({
 					className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 pr-2 text-left text-sm font-semibold text-fg-1"
 				>
 					<span
-						data-annotation-color={annotation.color ?? "gray"}
+						data-annotation-color={annotationColor(annotation)}
 						aria-hidden
 						className="size-2.5 flex-none rounded-full bg-canvas-annotation-swatch forced-color-adjust-none"
 					/>
@@ -203,23 +206,32 @@ function NodeList({
 				const isSelected = selected.includes(n.id);
 				return (
 					<li key={n.id}>
-						<button
-							type="button"
-							onClick={() => onLocate(n.id)}
-							aria-current={isSelected || undefined}
-							className={cn(
-								"flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm text-fg-2 hover:bg-raised hover:text-fg-1",
-								isSelected && "selected-row text-fg-1 hover:bg-selected-bg",
-							)}
+						{/* 按钮本身弹出全文（名称和节点 ID）；节点 ID 和卡片上一样保留结尾（idParts），省略号落在中间。 */}
+						<Truncate
+							render={
+								<button
+									type="button"
+									onClick={() => onLocate(n.id)}
+									aria-current={isSelected || undefined}
+									className={cn(
+										"flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm text-fg-2 hover:bg-raised hover:text-fg-1",
+										isSelected && "selected-row text-fg-1 hover:bg-selected-bg",
+									)}
+								/>
+							}
+							label={n.title === n.id ? n.title : `${n.title}\n${n.id}`}
 						>
 							{Icon && <Icon aria-hidden className="size-3.5 flex-none text-fg-3" />}
 							<Truncate className="flex-1">{n.title}</Truncate>
 							{n.title !== n.id && (
-								<span className="max-w-[40%] flex-none truncate font-mono text-xs text-fg-3">
+								<Truncate
+									keepEnd={idParts(n.id).tail.length}
+									className="max-w-[40%] flex-none font-mono text-xs text-fg-3"
+								>
 									{n.id}
-								</span>
+								</Truncate>
 							)}
-						</button>
+						</Truncate>
 					</li>
 				);
 			})}

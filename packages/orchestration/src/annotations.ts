@@ -12,7 +12,7 @@ import { chainMembers, subflowTree } from "./structure.js";
 /**
  * 画布上画出来的范围：子流程区域和注释框（GLOSSARY「注释框」，ADR 0023）。两者都是框住的东西的外接框加四周留白。
  * 子流程区域按 REGION_PADDING 留白（上方留出框里的标题行）；注释框的标题写在框外上方，框里四周按 ANNOTATION_PADDING
- * 留白，有备注时最上方再留出便签（ANNOTATION_NOTE）。注释框不存坐标，范围全由成员算出：
+ * 留白，有备注时最上方再留出备注卡片（ANNOTATION_NOTE）。注释框不存坐标，范围全由成员算出：
  * 节点成员取它的卡片，子流程成员取它和它下级子流程的区域。
  */
 /** 画布坐标里的矩形：左上角和宽高。 */
@@ -33,7 +33,7 @@ export interface SubflowRegion {
 
 /** 注释框的成员加上它的 ID（场景文档 `annotations` 里的一项，只读取画框要用的部分）。 */
 export interface AnnotationMembers extends AnnotationMemberIds {
-	/** 备注：有备注（去掉首尾空白后不为空）时框里最上方留出便签的位置（ANNOTATION_NOTE）。 */
+	/** 备注：有备注（去掉首尾空白后不为空）时框里最上方留出备注卡片的位置（ANNOTATION_NOTE）。 */
 	readonly note?: string | undefined;
 	readonly id: string;
 }

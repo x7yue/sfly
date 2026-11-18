@@ -42,6 +42,7 @@ import {
 	ACTION,
 	attemptLabel,
 	DURATION_LABEL,
+	ELAPSED_LABEL,
 	FOCUS,
 	MESSAGE,
 	MONITOR_DETAIL_LABEL,
@@ -174,7 +175,7 @@ export function useRunDecorations(
 					if (live)
 						decoration.overview = (
 							<>
-								已运行 <span className="font-mono">{formatSpan(elapsed, true)}</span>
+								{ELAPSED_LABEL} <span className="font-mono">{formatSpan(elapsed, true)}</span>
 							</>
 						);
 				}
@@ -196,12 +197,13 @@ export function useRunDecorations(
 					decoration.progress = last.progress.current / last.progress.total;
 				}
 				const error = node.error ?? last?.error;
-				// 失败原因在卡片和站外一行上去掉开头的异常类名，悬停提示和检查器里是全文。
+				// 失败原因（错误的第一行，和检查器一样）在卡片和站外一行上去掉开头的异常类名，悬停提示里是带类名的原文；
+				// 多行错误的全文在运行监控里。
 				const reason = summary.state === "failed" && error ? errorHeadline(error.message) : "";
 				if (summary.state === "failed")
 					decoration.overview = (
 						<span title={reason || undefined} className="text-danger-fg">
-							{withoutErrorClass(reason) || "失败"}
+							{withoutErrorClass(reason) || NODE_STATUS.failed.label}
 						</span>
 					);
 				if (reason) {

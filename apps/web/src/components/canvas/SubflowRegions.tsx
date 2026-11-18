@@ -58,7 +58,7 @@ export function SubflowRegions({
 	edges: SfEdge[];
 	onSelect?: (ids: readonly string[]) => void;
 }) {
-	const { regionMeta, decorateNode } = useFlowCanvas();
+	const { regionMeta, decorateNode, grounds } = useFlowCanvas();
 	const regions = useMemo(() => namedRegions(layout, nodes, edges), [layout, nodes, edges]);
 	const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n.data.node])), [nodes]);
 	/** 区域里有挂着站外一行（NodeCard）的站：执行中、失败或等待中。 */
@@ -75,6 +75,10 @@ export function SubflowRegions({
 		<ViewportPortal>
 			{regions.map((r) => {
 				const custom = regionMeta?.(r.entry);
+				// 区域画在注释框的底板上时（框住了这个子流程），标题行的说明换成底板上的次要文字色：fg-3 在
+				// 「底板加区域的淡紫」上只有约 3.6:1。
+				const box = grounds.get(r.entry)?.color;
+				const framed = box !== undefined && box !== "canvas" ? box : undefined;
 				const fits = r.box.w - 2 * HEADER_INSET >= META_FITS_EM * fontPx;
 				const meta =
 					custom ??
@@ -85,6 +89,7 @@ export function SubflowRegions({
 					<section
 						key={r.entry}
 						aria-label={`子流程 ${r.name}`}
+						data-annotation-color={framed}
 						className="pointer-events-none absolute -z-10 rounded-xl border border-dashed border-canvas-subflow-line bg-canvas-subflow-soft"
 						style={{ left: r.box.x, top: r.box.y, width: r.box.w, height: r.box.h }}
 					>
@@ -112,7 +117,8 @@ export function SubflowRegions({
 							{meta && (
 								<span
 									className={cn(
-										"pointer-events-auto ml-auto min-w-0 shrink-100 truncate text-fg-3",
+										"pointer-events-auto ml-auto min-w-0 shrink-100 truncate",
+										framed ? "text-canvas-annotation-fg-2" : "text-fg-3",
 										// 看全图时，区域里要盯的站自己挂着站外一行（标题加数字或原因），标题行右侧的运行状态和它重复：
 										// 藏起来，给上面一个区域伸下来的站外一行让出位置（invisible 保留位置，名字不重新排）。
 										custom !== undefined && watched(r) && "in-data-[lod-far=true]:invisible",

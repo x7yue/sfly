@@ -44,7 +44,8 @@ export const editorDocument = {
 		{
 			id: "sub_entry",
 			kind: "subflow_entry",
-			position: { x: 640, y: 180 },
+			// 在 dispatch 的调度端口（底边中点）右边：调度连线往右下走，不折回来压住子流程的标题。
+			position: { x: 780, y: 180 },
 			params: [{ name: "date", type: "string", required: true }],
 		},
 		{
@@ -52,7 +53,7 @@ export const editorDocument = {
 			kind: "package",
 			package: "demo-checks",
 			node: "ping",
-			position: { x: 940, y: 180 },
+			position: { x: 1080, y: 180 },
 			inputs: { host: "${{ params.date }}" },
 		},
 	],

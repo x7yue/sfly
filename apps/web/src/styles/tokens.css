@@ -192,17 +192,12 @@
 	/* 运行状态的线路图：走过的路段变亮（在注释框底板上也 ≥ 4.5:1），还没走到的比编辑时暗一档 */
 	--canvas-edge-travelled: var(--base-gray-350);
 	--canvas-edge-ahead: var(--base-gray-600);
-	--canvas-edge-live: var(--signal); /* 进入执行中节点的连线 */
 	--canvas-edge-dispatch: var(--signal); /* 调度连线（虚线） */
 	--canvas-subflow: var(--base-violet-400); /* 紫色只用于子流程区域 */
 	--canvas-subflow-fg: var(--base-violet-200);
 	--canvas-subflow-line: color-mix(in srgb, var(--canvas-subflow) 52%, transparent);
 	--canvas-subflow-soft: color-mix(in srgb, var(--canvas-subflow) 7%, transparent);
 	/* 注释框的颜色写在下面的 [data-annotation-color] 上（各部分按注释框自己的色相算出，不能写在 :root） */
-	--canvas-run-running: var(--signal);
-	--canvas-run-failed: var(--danger);
-	--canvas-run-cancelled: var(--cancelled); /* 虚线 */
-	--canvas-run-stopped: var(--stopped);
 	/* 已完成的节点「下沉」：只留轮廓，按卡片所在的底色算，写在下面的 [data-ground] 上 */
 	--canvas-run-done-bg: var(--canvas-bg);
 	--canvas-run-done-border: color-mix(in srgb, var(--fg-3) 40%, var(--canvas-bg));
@@ -214,7 +209,7 @@
 }
 
 /*
- * 注释框（ADR 0025）：框里三层明暗，备注便签最亮、底板居中、节点卡片（--canvas-node-bg）最暗；
+ * 注释框（ADR 0025）：框里三层明暗，注释框的备注最亮、底板居中、节点卡片（--canvas-node-bg）最暗；
  * 底板一圈淡描边，标题是框外左上方的同色胶囊。颜色是场景作者选的分类色，不表达状态：
  * 六种颜色只换色相，亮度相同，换颜色时卡片和底板的对比不变；没有青（执行中）、红（失败）、紫（子流程区域）。
  * 各部分在 OKLCH 里按注释框元素上的色相 --annotation-hue 和色度系数 --annotation-chroma（灰色为 0）算出，
@@ -250,6 +245,14 @@
 	);
 	--canvas-annotation-note-fg: oklch(
 		0.94 calc(0.022 * var(--annotation-chroma)) var(--annotation-hue)
+	);
+	/*
+	 * 底板上（和框里子流程区域的淡紫上）的次要文字：注释框里走完的节点卡片下沉成底板的颜色，卡片上的次要、辅助文字
+	 * 换成它；框里的子流程区域标题行的说明也用它。比 fg-2 亮一点、带一点底板的色相，在两种底上都 ≥ 5.3:1，
+	 * 仍比标题（fg-1）暗一档。
+	 */
+	--canvas-annotation-fg-2: oklch(
+		0.78 calc(0.025 * var(--annotation-chroma)) var(--annotation-hue)
 	);
 	--canvas-annotation-swatch: oklch(
 		0.72 calc(0.115 * var(--annotation-chroma)) var(--annotation-hue)
@@ -292,21 +295,23 @@
 }
 
 /*
- * 节点卡片所在的底色（卡片上的 data-ground，FlowCanvas 按注释框和子流程区域给出）：已完成、跳过、停止的卡片
- * 「下沉」成只有轮廓的胶囊——底色就是这层底色（画布、所在注释框的底板、子流程区域的淡底），一圈灰描边（对底色
- * 约 1.8:1，比编辑时卡片和底板的差别还清楚）留住形状：不会在彩色底板上挖出一块最暗、最显眼的洞，也不会整个溶进
- * 底板。不用不透明度；注释框的底板比卡片亮，下沉后辅助文字换成次要文字色（NodeCard），文字对比度不降。
+ * 节点卡片所在的底色（卡片上的 data-ground：所在注释框的颜色或画布；在子流程区域里时另有 data-ground-subflow，
+ * FlowCanvas 给出）。已完成、跳过、停止的卡片「下沉」成只有轮廓的胶囊——底色就是这层底色，在子流程区域里再叠上
+ * 区域自己的淡紫（--node-ground-tint，和区域画的是同一个 token，叠法也一样，所以和区域分毫不差，框里的子流程也不例外），
+ * 一圈灰描边（对底色约 1.8:1）留住形状：不会挖出一块最暗、最显眼的洞，也不会整个溶进底板。不用不透明度；注释框里
+ * 下沉的卡片，次要文字换成 --canvas-annotation-fg-2（NodeCard），文字对比度不降。
  */
 [data-ground] {
 	--node-ground: var(--canvas-annotation-panel);
+	--node-ground-tint: transparent;
 	--canvas-run-done-bg: var(--node-ground);
 	--canvas-run-done-border: color-mix(in srgb, var(--fg-3) 40%, var(--node-ground));
 }
 [data-ground="canvas"] {
 	--node-ground: var(--canvas-bg);
 }
-[data-ground="subflow"] {
-	--node-ground: color-mix(in srgb, var(--canvas-subflow) 7%, var(--canvas-bg));
+[data-ground-subflow] {
+	--node-ground-tint: var(--canvas-subflow-soft);
 }
 
 /* 系统要求更高对比度时：安静的描边、辅助文字、网格与连线各加强一档（只加强已经达标的默认值） */

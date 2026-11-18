@@ -23,10 +23,3 @@ export function stickyBlocks(text: string): StickyBlock[] {
 	}
 	return blocks.filter((b) => b.kind === "list" || b.text !== "");
 }
-
-/** 缩小视图时只显示的一行：标题，没有标题时是正文的第一行（去掉列表的 `- `）。 */
-export function stickyHeadline(note: { title?: string | undefined; text: string }): string {
-	if (note.title?.trim()) return note.title.trim();
-	const first = note.text.trim().split("\n")[0] ?? "";
-	return first.replace(/^-\s+/, "").trim();
-}

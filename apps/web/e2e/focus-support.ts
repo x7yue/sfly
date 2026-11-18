@@ -23,9 +23,9 @@ export const focusDocument = {
 	default_agent: "agent-a",
 	nodes: [
 		{ id: "entry", kind: "entry", position: { x: 0, y: 0 } },
-		{ ...bench("fetch", "http_check"), position: { x: 252, y: 0 } },
-		{ ...bench("fetch2", "http_check"), position: { x: 504, y: 0 } },
-		{ ...bench("ping", "ping"), position: { x: 756, y: 0 } },
+		{ ...bench("fetch", "http_check"), position: { x: 300, y: 0 } },
+		{ ...bench("fetch2", "http_check"), position: { x: 600, y: 0 } },
+		{ ...bench("ping", "ping"), position: { x: 900, y: 0 } },
 	],
 	edges: [
 		{ from: "entry", to: "fetch", kind: "chain" },

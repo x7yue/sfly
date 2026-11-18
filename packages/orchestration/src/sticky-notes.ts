@@ -76,8 +76,12 @@ export function withStickyNotePositions<S extends StickyNoteBox, D extends Stick
 	};
 }
 
-/** 便签在画布坐标里的矩形（适配视图、小地图用）。 */
-export const stickyNoteRect = (note: StickyNoteBox & { position: Position }) => {
-	const size = stickyNoteSize(note);
-	return { x: note.position.x, y: note.position.y, w: size.width, h: size.height };
-};
+/**
+ * 便签的名字：标题，没有标题时是正文的第一行（去掉列表的 `- `）。画布上缩小视图只显示的那一行、大纲、读屏名称和
+ * 版本对比都用它，同一张便签在各处叫同一个名字。
+ */
+export function stickyHeadline(note: { title?: string | undefined; text: string }): string {
+	if (note.title?.trim()) return note.title.trim();
+	const first = note.text.trim().split("\n")[0] ?? "";
+	return first.replace(/^-\s+/, "").trim();
+}

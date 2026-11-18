@@ -137,6 +137,12 @@ describe("状态语法（components/status 的 STATUS）", () => {
 		expect(kinds.filter((k) => STATUS[k].pulse)).toEqual(["running"]);
 	});
 
+	it("画布上要盯的状态（站点灯放大、描边着色）就是满高的那几种", () => {
+		expect(kinds.filter((k) => STATUS[k].canvas.lamp === "watch")).toEqual(
+			kinds.filter((k) => STATUS[k].area.tall),
+		);
+	});
+
 	it("状态文字在所有表面上 ≥ 4.5:1，标记与色块的颜色 ≥ 3:1", () => {
 		const low = kinds.flatMap((k) => {
 			const text = token(STATUS[k].text.split(" "), /^text-(.+)$/) ?? "";
@@ -149,7 +155,7 @@ describe("状态语法（components/status 的 STATUS）", () => {
 		expect(low).toEqual([]);
 	});
 
-	it("注释框的六种颜色（ADR 0025）：胶囊和便签上的文字 ≥ 4.5:1，色块 ≥ 3:1；框里三层明暗是便签 > 底板 > 节点卡片", () => {
+	it("注释框的六种颜色（ADR 0025）：胶囊、注释框的备注和便签上的文字 ≥ 4.5:1，色块 ≥ 3:1；框里三层明暗是注释框的备注 > 底板 > 节点卡片", () => {
 		const problems = ANNOTATION_COLORS.flatMap((color) => {
 			const c = (role: string) => annotationRgb(color, role);
 			const card = rgbOf("--canvas-node-bg");
@@ -175,6 +181,13 @@ describe("状态语法（components/status 的 STATUS）", () => {
 				["sticky-fg on sticky", ratio(c("sticky-fg"), c("sticky")), 4.5],
 				["sticky-fg-2 on sticky", ratio(c("sticky-fg-2"), c("sticky")), 4.5],
 				["sticky brighter than canvas", ratio(c("sticky"), rgbOf("--canvas-bg")), 1.2],
+				// 框里下沉的节点卡片、框里子流程区域的标题行用的次要文字：底板上，和底板叠上子流程区域的淡紫上。
+				["fg-2 on panel", ratio(c("fg-2"), panel), 4.5],
+				[
+					"fg-2 on subflow over panel",
+					ratio(c("fg-2"), over(resolve("--canvas-subflow-soft"), panel)),
+					4.5,
+				],
 			];
 			return checks.flatMap(([what, got, min]) =>
 				got < min ? [`${color} ${what}: ${got.toFixed(2)} < ${min}`] : [],
