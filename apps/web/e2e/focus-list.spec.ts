@@ -146,6 +146,9 @@ test("移除之后又改了别的，撤销就消失了：它只管刚做的那�
 	// 别人在这期间改了列表：页面读到以后撤销就消失，它不能把别人的修改盖掉。
 	await panel.getByRole("button", { name: "移除关注项 子单量" }).click();
 	await expect(panel.getByRole("button", { name: "撤销" })).toBeVisible();
+	// 「最后修改」来自服务端：它写明移除了子单量，说明这次写入已经落库、页面也重新读过了。
+	// 不等这一步，bob 的修改可能落在页面这次重新读取的途中，随后的 visibilitychange 会并进这次读到旧列表的请求里。
+	await expect(panel.getByText("最后修改")).toContainText("移除了「子单量」");
 	await setFocusItems(controlPlane, id, [THROUGHPUT, LEVEL], "bob");
 	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
 	await expect.poll(() => focusNames(panel)).toEqual(["母单量", "level"]);
