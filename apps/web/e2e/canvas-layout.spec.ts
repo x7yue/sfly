@@ -12,6 +12,7 @@ import {
 	openEditor,
 	paneMenu,
 	switchMode,
+	withoutFollow,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { runningScenario } from "./monitor-scenario";
@@ -101,6 +102,8 @@ test("运行状态里选中执行中的节点：进入它的连线仍是青色�
 	clock,
 }) => {
 	const { scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 线宽按缩放换算（max(2px, 2px/缩放)）：跟随执行移动视口时前后两次读数会因缩放不同而不可比。
+	await withoutFollow(page);
 	await page.goto(`/orchestrations/${scenarioId}`);
 	await switchMode(page, "run");
 	const live = page.locator('[data-edge="chain:spawn->verify"]');
