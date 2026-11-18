@@ -1,6 +1,6 @@
 {
 	"name": "@sfly/client",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"private": true,
 	"type": "module",
 	"description": "sfly 的 API 客户端：自建页面和程序调用控制面 HTTP API 的 TypeScript 包（ADR 0022），没有运行时依赖",
