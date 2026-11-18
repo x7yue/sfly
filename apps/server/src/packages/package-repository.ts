@@ -7,6 +7,7 @@ import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
+import type { Tx } from "../engine/step.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
 
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */
@@ -199,10 +200,8 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			return rows.length ? { name, versions: rows.map(toSummary) } : undefined;
 		},
 
-		async getVersion(name: string, version: string): Promise<PackageVersion | undefined> {
-			const row = await findRow(db, name, version);
-			return row && toVersion(row);
-		},
+		getVersion: (name: string, version: string): Promise<PackageVersion | undefined> =>
+			findPackageVersion(db, name, version),
 
 		/** 归档文件在磁盘上的位置（供下载）。 */
 		async archive(name: string, version: string): Promise<StoredArchive | undefined> {
@@ -214,7 +213,17 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 
 export type PackageRepository = ReturnType<typeof createPackageRepository>;
 
-async function findRow(db: Db, name: string, version: string): Promise<Row | undefined> {
+/** 一个节点包版本。数据库由调用方传：在事务里读时传事务对象，不要另从连接池取连接。 */
+export async function findPackageVersion(
+	db: Db | Tx,
+	name: string,
+	version: string,
+): Promise<PackageVersion | undefined> {
+	const row = await findRow(db, name, version);
+	return row && toVersion(row);
+}
+
+async function findRow(db: Db | Tx, name: string, version: string): Promise<Row | undefined> {
 	const [row] = await db
 		.select()
 		.from(nodePackages)
