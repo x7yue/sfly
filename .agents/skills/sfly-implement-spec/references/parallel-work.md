@@ -17,11 +17,16 @@ pnpm heavy pnpm test
 pnpm heavy --pg pnpm --filter @sfly/server test   # this run gets its own PostgreSQL container
 ```
 
-It runs the command in the foreground under `flock -o`. `-o` keeps the lock out of the command's child processes; without it, a process a test leaves behind holds the lock and every queued command hangs. It does not lock on CI (`CI` is set). On macOS `flock` comes from Homebrew (`brew install flock`). Defaults: lock `~/.t/sfly-heavy.lock`, short directories under `~/.t`; override with `SFLY_HEAVY_LOCK` (`none` skips the lock) and `SFLY_HEAVY_TMP_ROOT`.
+It runs the command in the foreground under `flock -o`. `-o` keeps the lock out of the command's child processes; without it, a process a test leaves behind holds the lock and every queued command hangs. It does not lock on CI (`CI` is set). On macOS `flock` comes from Homebrew (`brew install flock`). Defaults: lock `~/.t/sfly-heavy.lock`, short directories under `~/.t`. The lock stays at that fixed path so every worktree queues on the same one; only `SFLY_HEAVY_LOCK` moves it (`none` skips the lock). `SFLY_HEAVY_TMP_ROOT` moves only the short directories.
 
 Run `pnpm perf` and `pnpm perf:soak` only when no other heavy command is running.
 
 The shared `sfly-pg` accepts 100 connections, and every control-plane test run opens many. Several worktrees testing at once fail with `too many clients`. `--pg` starts a `postgres:18` container just for that run (random port, removed when the command ends) and points `DATABASE_URL` at it. The test support code already creates one random database per test file from `DATABASE_URL`, so nothing else changes. Use it when more than one worktree runs control-plane tests or e2e. `pnpm linux` has its own `sfly-linux-pg` and ignores it.
+
+## End-to-end tests
+
+- Run a single end-to-end file as `pnpm test:e2e <file>`. A `--` before the file makes it run the whole suite.
+- Visual regression screenshots (`apps/web/e2e/__screenshots__/`) that conflict in a merge are regenerated rather than taken from either side. Merge the source files first, then run `pnpm test:e2e:docker e2e/visual.spec.ts --update-snapshots` in the Playwright image, and open the diff images. Done when every changed screenshot's difference traces to a change made on one of the two merged sides.
 
 ## Shared files
 
@@ -35,7 +40,7 @@ Stop every `Monitor` and background command you started before the final report.
 
 ## Temporary paths
 
-Tests create Unix sockets, and a socket path longer than 108 bytes fails with `AF_UNIX path too long`. `pnpm heavy` handles both cases below, with one pair of directories per worktree (named after the worktree directory): `~/.t/<worktree>` and `~/.t/<worktree>-target`. `pnpm heavy --clean` removes them. Outside `pnpm heavy`, do it by hand:
+Tests create Unix sockets, and a socket path longer than 108 bytes fails with `AF_UNIX path too long`. `pnpm heavy` handles both cases below, with one pair of directories per worktree (named after the worktree directory): `~/.t/<worktree>` and `~/.t/<worktree>-target`. `pnpm heavy --clean` removes them, unless a `pnpm heavy` of that worktree is still running (it also removes this worktree's leftover `--pg` containers whose run has ended). Two checkouts with the same directory name in different places share one pair of directories and one container label, so give each checkout a different directory name. Outside `pnpm heavy`, do it by hand:
 
 - Point `TMPDIR` at a short directory; pytest and the control-plane tests use it.
 - Agent tests put sockets under `target/tmp/`, as deep as the worktree path. In a deep worktree, point `CARGO_TARGET_DIR` at a short directory too.
