@@ -1,8 +1,7 @@
 import { NodeTypeMetadata, type OrchestrationDocument, type PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { agents, nodePackages } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 import { type NodeTypeView, withDefaultCharts } from "../packages/default-charts.js";
 
 const DEV_VERSION = "dev";

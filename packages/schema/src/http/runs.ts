@@ -10,7 +10,7 @@ import { PresetView } from "./presets.js";
 
 /**
  * 运行、任务日志与产物接口的契约（约定见 ./contract.ts）。
- * 运行视图由 apps/server/src/engine/run-queries.ts 生成：参数、输入、输出、错误信息与进度文字里的
+ * 运行视图由 apps/server/src/runs/run-read.ts 生成：参数、输入、输出、错误信息与进度文字里的
  * secret 值都已在控制面替换成掩码。
  */
 

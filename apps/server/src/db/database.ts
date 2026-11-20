@@ -5,6 +5,8 @@ import pg from "pg";
 import * as schema from "./schema.js";
 
 export type Db = NodePgDatabase<typeof schema>;
+/** 一个事务（`db.transaction` 回调收到的对象）：和 {@link Db} 一样可以查询，也可以开保存点。 */
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 export interface Database {
 	readonly db: Db;

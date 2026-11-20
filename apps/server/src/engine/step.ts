@@ -2,13 +2,12 @@ import type { ServerMessage } from "@sfly/proto";
 import type { OrchestrationNode } from "@sfly/schema";
 import type { SQL } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { type chainInstances, type ErrorKind, type runs, tasks } from "../db/schema.js";
 import type { PendingNotifications } from "../feishu/engine-notifications.js";
 import type { ChainPlan } from "./chain.js";
 import { taskId } from "./ids.js";
 
-export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type RunRow = typeof runs.$inferSelect;
 export type ChainRow = typeof chainInstances.$inferSelect;
 export type TaskRow = typeof tasks.$inferSelect;

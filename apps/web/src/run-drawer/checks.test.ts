@@ -201,7 +201,7 @@ describe("触发前检查清单", () => {
 
 	it("开发版本没有加载归到节点包版本一行（原来写「节点包版本已锁定」的那一行），不能触发", () => {
 		const message =
-			"节点 a 用的是开发版本 demo@dev，但它派发到的 Agent agent-b 没有加载：在 agent-b 所在的机器上运行 sfly dev 加载它，或者把这个节点的 Agent 改成已经加载它的 agent-a";
+			"节点 a 用的是开发版本 demo@dev，但它派发到的 Agent agent-b 没有加载：在 agent-b 所在的机器上、节点包源码目录下运行 sfly dev 加载它，或者把这个节点的 Agent 改成已经加载它的 agent-a";
 		const p: Preflight = {
 			...passed,
 			packages: { demo: "dev" },

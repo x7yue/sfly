@@ -16,7 +16,7 @@ import {
 } from "@sfly/schema";
 import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import {
 	agents as agentsTable,
 	metricSeries,
@@ -24,8 +24,7 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
-import { isPlaceholderAttempt } from "../engine/run-board.js";
-import type { Tx } from "../engine/step.js";
+import { isPlaceholderAttempt } from "../runs/run-read.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf, nodeTypeView } from "./node-types.js";
 import { decodeFloat8Array, decodeInt4Array, decodeInt8Array } from "./pg-array.js";

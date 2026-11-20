@@ -48,7 +48,11 @@ function secretTexts(chains: readonly KnownParams[]): Set<string> {
 	return texts;
 }
 
-/** 这个值是哪来的，以及怎么改（主链按触发时的取值来源，子流程按异步任务节点传入的）。 */
+/** 命令行触发时给这个参数的写法：整数输入写 `<整数>`，其他类型写 `<类型 类型的值>`。 */
+const commandHint = (name: string, expected: string): string =>
+	`sfly run start <场景> --param ${name}=${expected === "integer" ? "<整数>" : `<${expected} 类型的值>`}`;
+
+/** 这个值是哪来的，以及去哪里改（主链按触发时的取值来源，子流程按异步任务节点传入的）。 */
 function whereAndNext(
 	{ chain, source }: KnownParams,
 	main: ChainPlan,
@@ -59,25 +63,25 @@ function whereAndNext(
 	if (chain !== main) {
 		return {
 			where: source,
-			next: `请改这个异步任务节点的参数映射，让传给 ${name} 的值是 ${expected}`,
+			next: `请改这个异步任务节点的参数映射，让传给 ${name} 的值是 ${expected} 类型的值`,
 		};
 	}
 	const { preset } = origins;
 	if (preset?.params.has(name)) {
 		return {
 			where: `运行预设「${preset.name}」里的值`,
-			next: `请把运行预设「${preset.name}」里 ${name} 的值改成 ${expected}`,
+			next: `请在场景列表的「运行预设…」里把运行预设「${preset.name}」里 ${name} 的值改成 ${expected} 类型的值（命令行用 sfly api --list presets 列出修改预设的接口）`,
 		};
 	}
 	if (origins.given.has(name)) {
 		return {
 			where: "触发时给的值",
-			next: `请把 ${name} 改成 ${expected} 类型的值再触发`,
+			next: `请把 ${name} 改成 ${expected} 类型的值再触发，例如：${commandHint(name, expected)}`,
 		};
 	}
 	return {
 		where: "声明的默认值",
-		next: `请触发时给 ${name} 传 ${expected} 类型的值，或者把入口节点里它的默认值改成 ${expected} 类型的值`,
+		next: `请触发时给 ${name} 传值，例如：${commandHint(name, expected)}；或者在场景的入口节点里把 ${name} 的默认值改成 ${expected} 类型的值`,
 	};
 }
 

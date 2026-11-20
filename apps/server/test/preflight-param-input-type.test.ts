@@ -88,7 +88,7 @@ describe("触发前检查：入口参数的值接到类型不符的输入", () =
 			const error = await rejected(await api.trigger(id, { n: 8.5 }));
 			expect(error.code).toBe("invalid_params");
 			const message =
-				"节点 压测（t） 的输入 n 应为 integer，实际是 8.5（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发";
+				"节点 压测（t） 的输入 n 应为 integer，实际是 8.5（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发，例如：sfly run start <场景> --param n=<整数>";
 			expect(error.message).toBe(message);
 			expect(error.details).toEqual([{ code: "param_input_type_mismatch", message, node_id: "t" }]);
 			expect(await runsOf(id)).toEqual([]);
@@ -120,7 +120,7 @@ describe("触发前检查：入口参数的值接到类型不符的输入", () =
 			const id = await scenario([param("n", { type: "number", required: true, secret: true })]);
 			const error = await rejected(await api.trigger(id, { n: 8.5 }));
 			expect(error.message).toBe(
-				"节点 压测（t） 的输入 n 应为 integer，实际是 ******（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发",
+				"节点 压测（t） 的输入 n 应为 integer，实际是 ******（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发，例如：sfly run start <场景> --param n=<整数>",
 			);
 			expect(JSON.stringify(error)).not.toContain("8.5");
 			expect(await runsOf(id)).toEqual([]);
@@ -181,7 +181,7 @@ describe("触发前检查：入口参数的值接到类型不符的输入", () =
 			const error = await rejected(await api.trigger(id));
 			expect(error.message).toBe(
 				"节点 压测（t） 的输入 n 应为 integer，实际是 8.5（入口参数 n，声明的默认值）：" +
-					"请触发时给 n 传 integer 类型的值，或者把入口节点里它的默认值改成 integer 类型的值",
+					"请触发时给 n 传值，例如：sfly run start <场景> --param n=<整数>；或者在场景的入口节点里把 n 的默认值改成 integer 类型的值",
 			);
 			expect(await runsOf(id)).toEqual([]);
 
@@ -212,7 +212,7 @@ describe("触发前检查：入口参数的值接到类型不符的输入", () =
 			);
 			expect(error.message).toBe(
 				"节点 压测（t） 的输入 n 应为 integer，实际是 8.5（入口参数 n，运行预设「压测A」里的值）：" +
-					"请把运行预设「压测A」里 n 的值改成 integer",
+					"请在场景列表的「运行预设…」里把运行预设「压测A」里 n 的值改成 integer 类型的值（命令行用 sfly api --list presets 列出修改预设的接口）",
 			);
 			expect(await runsOf(id)).toEqual([]);
 
@@ -248,7 +248,7 @@ describe("触发前检查：入口参数的值接到类型不符的输入", () =
 			const error = await rejected(await api.trigger(id));
 			expect(error.message).toBe(
 				"节点 压测（t） 的输入 n 应为 integer，实际是 8.5（入口参数 n，取自子流程的参数，由异步任务节点 spawn 传入）：" +
-					"请改这个异步任务节点的参数映射，让传给 n 的值是 integer",
+					"请改这个异步任务节点的参数映射，让传给 n 的值是 integer 类型的值",
 			);
 			expect(await runsOf(id)).toEqual([]);
 		});

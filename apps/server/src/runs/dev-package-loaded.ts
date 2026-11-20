@@ -1,11 +1,10 @@
 import { nodeNameWithId } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { eq } from "drizzle-orm";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
 import { DEV_VERSION } from "../engine/assign-content.js";
 import { agentFor } from "../engine/chain.js";
-import type { Tx } from "../engine/step.js";
 import type { PreflightProblem } from "./preflight.js";
 
 /** 「已经加载它的 Agent」最多列出几台，多出来的写台数。 */
@@ -47,7 +46,7 @@ export function devPackageProblems(
 					}`;
 		problems.push({
 			code: "dev_package_not_loaded",
-			message: `节点 ${nodeNameWithId(node)} 用的是开发版本 ${node.package}@${DEV_VERSION}，但它派发到的 Agent ${agent} 没有加载：在 ${agent} 所在的机器上运行 sfly dev 加载它${alternative}`,
+			message: `节点 ${nodeNameWithId(node)} 用的是开发版本 ${node.package}@${DEV_VERSION}，但它派发到的 Agent ${agent} 没有加载：在 ${agent} 所在的机器上、节点包源码目录下运行 sfly dev 加载它${alternative}`,
 			node_id: node.id,
 		});
 	}

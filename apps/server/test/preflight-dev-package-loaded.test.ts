@@ -110,7 +110,7 @@ describe("触发前预检：开发版本没有加载", () => {
 				node_id: "a",
 				message:
 					"节点 探活（a） 用的是开发版本 demo-dev@dev，但它派发到的 Agent agent-plain 没有加载：" +
-					"在 agent-plain 所在的机器上运行 sfly dev 加载它，或者把这个节点的 Agent 改成已经加载它的 agent-dev",
+					"在 agent-plain 所在的机器上、节点包源码目录下运行 sfly dev 加载它，或者把这个节点的 Agent 改成已经加载它的 agent-dev",
 			},
 		]);
 
@@ -125,7 +125,7 @@ describe("触发前预检：开发版本没有加载", () => {
 		const id = await scenario("agent-plain", [node("a", "demo-dev")], { "demo-dev": "dev" });
 
 		expect((await preflight(id)).map((p) => p.message)).toEqual([
-			"节点 a 用的是开发版本 demo-dev@dev，但它派发到的 Agent agent-plain 没有加载：在 agent-plain 所在的机器上运行 sfly dev 加载它",
+			"节点 a 用的是开发版本 demo-dev@dev，但它派发到的 Agent agent-plain 没有加载：在 agent-plain 所在的机器上、节点包源码目录下运行 sfly dev 加载它",
 		]);
 	});
 

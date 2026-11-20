@@ -5,9 +5,8 @@ import { PackageMetadata } from "@sfly/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
 
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */

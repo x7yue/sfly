@@ -6,6 +6,7 @@ import { resolveRunFocus } from "../src/focus/run-focus.js";
 import { MetricQueries } from "../src/metrics/metric-queries.js";
 import { MetricRetention } from "../src/metrics/metric-retention.js";
 import { TaskMetrics } from "../src/metrics/task-metrics.js";
+import { readRuns } from "../src/runs/run-read.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
@@ -706,9 +707,10 @@ describe("运行通知", () => {
 				});
 				// 点写进库之后才读得到（这里的 MetricQueries 看不到控制面内存里还没写库的点）。
 				await eventually(async () => {
-					const focus = await db.transaction((tx) =>
-						resolveRunFocus({ db: tx, clock, queries }, runId, { points: 0 }),
-					);
+					const focus = await db.transaction(async (tx) => {
+						const read = (await readRuns(tx, [runId], "full")).get(runId);
+						return read && resolveRunFocus({ db: tx, clock, queries }, read, { points: 0 });
+					});
 					expect(focus?.items.map((item) => item.latest?.value)).toEqual([500, 3]);
 				});
 				expect(single.mostPending()).toBe(1);

@@ -8,7 +8,7 @@ import { box, createScenario, publishPackage } from "./support";
 
 const DEV_MESSAGE =
 	"节点 探活（d） 用的是开发版本 demo-dev@dev，但它派发到的 Agent agent-a 没有加载：" +
-	"在 agent-a 所在的机器上运行 sfly dev 加载它，或者把这个节点的 Agent 改成已经加载它的 agent-dev";
+	"在 agent-a 所在的机器上、节点包源码目录下运行 sfly dev 加载它，或者把这个节点的 Agent 改成已经加载它的 agent-dev";
 
 const devPackage = {
 	name: "demo-dev",
@@ -174,7 +174,7 @@ test("小数接到整数输入：触发被拒绝，提示写明参数、节点�
 	const alert = drawer.getByRole("alert");
 	await expect(alert).toContainText(
 		"触发失败：节点 探测（check） 的输入 expect 应为 integer，实际是 8.5（入口参数 expect，触发时给的值）：" +
-			"请把 expect 改成 integer 类型的值再触发",
+			"请把 expect 改成 integer 类型的值再触发，例如：sfly run start <场景> --param expect=<整数>",
 	);
 
 	await drawer.getByLabel("expect").fill("8");

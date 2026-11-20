@@ -176,7 +176,7 @@ describe("sfly run start 的预检警告 → 控制面", { timeout: 60_000 }, ()
 			expect(result.stdout).toBe("");
 			expect(result.stderr).toContain(`错误：场景「${name}」现在不能触发，有 1 个问题：`);
 			expect(result.stderr).toContain(
-				"  - dev_package_not_loaded：节点 d 用的是开发版本 demo-dev@dev，但它派发到的 Agent agent-a 没有加载：在 agent-a 所在的机器上运行 sfly dev 加载它",
+				"  - dev_package_not_loaded：节点 d 用的是开发版本 demo-dev@dev，但它派发到的 Agent agent-a 没有加载：在 agent-a 所在的机器上、节点包源码目录下运行 sfly dev 加载它",
 			);
 			expect(result.stderr).toContain(`下一步：sfly scenario show ${id}`);
 			expect(await runsOf(id)).toEqual([]);
@@ -210,7 +210,7 @@ describe("sfly run start 的预检警告 → 控制面", { timeout: 60_000 }, ()
 			const bad = await cli("run", "start", name, "--param", "n=8.5");
 			expect(bad.code).toBe(2);
 			expect(bad.stderr).toContain(
-				"错误：入口参数不对：节点 t 的输入 n 应为 integer，实际是 8.5（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发",
+				"错误：入口参数不对：节点 t 的输入 n 应为 integer，实际是 8.5（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发，例如：sfly run start <场景> --param n=<整数>",
 			);
 			expect(bad.stderr).toContain(`下一步：sfly scenario show ${id}`);
 			expect(await runsOf(id)).toEqual([]);
