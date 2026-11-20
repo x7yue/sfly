@@ -6,9 +6,8 @@ import {
 	packageKey,
 } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { agents, feishuBots } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 
 /** 开发版本只在本地开发模式的 Agent 上存在，控制面不知道它的元信息，跳过相关检查。 */

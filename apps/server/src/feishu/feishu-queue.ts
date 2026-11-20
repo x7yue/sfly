@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
+import type { Tx } from "../db/database.js";
 import { type FeishuMessageSource, feishuMessages } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 
 /** 要写进发送队列的一条消息。 */
 export interface NewFeishuMessage {

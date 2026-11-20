@@ -1,15 +1,9 @@
-import type { RunListItem } from "@sfly/schema";
+import type { RunListItem, RunSummary } from "@sfly/schema";
 import { and, count, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
-import { orchestrations, orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
-import {
-	activeNodesOf,
-	type BoardChain,
-	type BoardNode,
-	boardFailures,
-	loadRunBoards,
-} from "../engine/run-board.js";
+import { orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
 import { runListPreset } from "../presets/run-preset.js";
+import { type RunChain, type RunNode, type RunRead, readRuns } from "./run-read.js";
 
 export interface RunListFilter {
 	status?: RunStatus;
@@ -25,7 +19,7 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 /**
  * 跨场景的运行列表（契约见 @sfly/schema 的 runListApi）：按开始时间从新到旧，
  * 每项带各链的节点状态、进行中的节点与失败的链。链与任务按整页批量读取
- * （engine/run-board.ts，节点状态的取法与运行视图相同）。
+ * （src/runs/run-read.ts，节点状态的取法与运行视图相同）。
  */
 export async function listAllRuns(
 	db: Db,
@@ -40,16 +34,9 @@ export async function listAllRuns(
 	}
 	const where = filter.status ? [...scope, eq(runs.status, filter.status)] : scope;
 
-	const rows = await db
-		.select({
-			run: runs,
-			name: orchestrations.name,
-			version: orchestrationVersions.number,
-			document: orchestrationVersions.document,
-		})
+	const page = await db
+		.select({ id: runs.id })
 		.from(runs)
-		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
-		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 		.where(and(...where))
 		.orderBy(desc(runs.startedAt), desc(runs.id))
 		.limit(filter.limit);
@@ -62,24 +49,23 @@ export async function listAllRuns(
 	const counts: Record<RunStatus, number> = { running: 0, success: 0, failed: 0, cancelled: 0 };
 	for (const { status, n } of grouped) counts[status] = n;
 
-	const boards = await loadRunBoards(
+	const reads = await readRuns(
 		db,
-		rows.map(({ run, document }) => ({
-			id: run.id,
-			versionId: run.orchestrationVersionId,
-			document,
-		})),
+		page.map((r) => r.id),
 	);
 
 	return {
 		counts,
-		runs: rows.map(({ run, name, version }) => {
-			const chains = boards.get(run.id) ?? [];
+		// 运行不会被删除，每一个都读得到。
+		runs: page.flatMap(({ id }): RunListItem[] => {
+			const read = reads.get(id);
+			if (!read) return [];
+			const { run, chains } = read;
 			const item: RunListItem = {
 				id: run.id,
 				orchestration_id: run.orchestrationId,
-				orchestration_name: name,
-				orchestration_version: version,
+				orchestration_name: read.scenario.name,
+				orchestration_version: read.version.number,
 				status: run.status,
 				cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 				triggered_by: run.triggeredBy,
@@ -88,10 +74,9 @@ export async function listAllRuns(
 				started_at: run.startedAt.toISOString(),
 				ended_at: run.endedAt ? run.endedAt.toISOString() : null,
 				chains: [],
-				active_nodes: activeNodesOf(chains),
-				failures: [],
+				active_nodes: read.activeNodes,
+				failures: chainFailures(read),
 			};
-			item.failures = chainFailures(chains);
 			for (const chain of chains) {
 				const subflow = chain.depth > 0;
 				const nodes = chain.nodes.map(({ node_id, status }) => ({ node_id, status }));
@@ -104,19 +89,19 @@ export async function listAllRuns(
 					nodes,
 				});
 			}
-			return item;
+			return [item];
 		}),
 	};
 }
 
 /**
- * 失败的链实例（链失败或链上有节点最终失败），按失败的先后（`boardFailures`）：有失败节点的链按它
+ * 失败的链实例（链失败或链上有节点最终失败），按失败的先后（运行读取的 `failures`）：有失败节点的链按它
  * 第一个失败的节点排，每条链带的就是这个节点，所以第一项是这次运行「第一个失败的节点」所在的链；链失败了却没有失败的节点
  * （例如参数校验失败）的排在最后，按链的顺序。
  */
-function chainFailures(chains: readonly BoardChain[]): RunListItem["failures"] {
-	const first = new Map<BoardChain, BoardNode>();
-	for (const { chain, node } of boardFailures(chains)) {
+function chainFailures({ chains, failures }: RunRead): RunListItem["failures"] {
+	const first = new Map<RunChain, RunNode>();
+	for (const { chain, node } of failures) {
 		if (!first.has(chain)) first.set(chain, node);
 	}
 	const failed = [
@@ -134,4 +119,31 @@ function chainFailures(chains: readonly BoardChain[]): RunListItem["failures"] {
 			display_name: node?.display_name,
 		};
 	});
+}
+
+/** 一个场景的运行，按开始时间从新到旧（最多 limit 条）。 */
+export async function listRuns(
+	db: Db,
+	orchestrationId: string,
+	limit = 200,
+): Promise<RunSummary[]> {
+	const rows = await db
+		.select({ run: runs, number: orchestrationVersions.number })
+		.from(runs)
+		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
+		.where(eq(runs.orchestrationId, orchestrationId))
+		.orderBy(desc(runs.startedAt), desc(runs.id))
+		.limit(limit);
+	return rows.map(({ run, number }) => ({
+		id: run.id,
+		orchestration_id: run.orchestrationId,
+		orchestration_version: number,
+		status: run.status,
+		cancelling: run.status === "running" && run.cancelRequestedAt !== null,
+		triggered_by: run.triggeredBy,
+		triggered_via: run.triggeredVia,
+		preset: runListPreset(run),
+		started_at: run.startedAt.toISOString(),
+		ended_at: run.endedAt ? run.endedAt.toISOString() : null,
+	}));
 }

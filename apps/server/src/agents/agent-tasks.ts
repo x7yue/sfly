@@ -2,7 +2,7 @@ import { nodeOutsideCardText } from "@sfly/orchestration";
 import type { OrchestrationDocument, QueuedTaskView, RunningTaskView } from "@sfly/schema";
 import { asc, eq, inArray, type SQL } from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import {
 	chainInstances,
 	orchestrations,
@@ -11,9 +11,8 @@ import {
 	taskActionSummaries,
 	tasks,
 } from "../db/schema.js";
-import { nodeNameIn, subflowNameOf } from "../engine/run-board.js";
-import type { Tx } from "../engine/step.js";
 import { runSecretValues, taskProgressView } from "../logs/task-logs.js";
+import { nodeNameIn, subflowNameOf } from "../runs/run-read.js";
 
 /** 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）。 */
 export interface AgentTasks {

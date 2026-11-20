@@ -1,5 +1,4 @@
 import type { FeishuNotifyNode, ResolveScope } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
 import { tasks } from "../db/schema.js";
 import type { ChainRow, RunRow, Step } from "../engine/step.js";
 import { firstAttempt } from "../engine/step.js";
@@ -20,11 +19,10 @@ export interface PendingNotifications {
 
 export const noPendingNotifications = (): PendingNotifications => ({ logs: [], queued: false });
 
-/** 运行结束了：运行的最终状态，以及用它算「查看运行」链接、失败的节点的运行和文档。 */
+/** 运行结束了：运行和它的最终状态（「查看运行」链接、失败的节点、关注项都按这个运行读）。 */
 export interface FinishedRun {
 	run: RunRow;
 	status: "success" | "failed" | "cancelled";
-	document: OrchestrationDocument;
 }
 
 /**

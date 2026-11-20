@@ -11,11 +11,10 @@ import {
 } from "@sfly/orchestration";
 import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
 import { agentFor, type ChainPlan, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
-import type { Tx } from "../engine/step.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { findPackageVersion } from "../packages/package-repository.js";
