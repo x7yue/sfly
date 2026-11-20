@@ -860,7 +860,8 @@ function NodeRow({
 					}
 				>
 					<StatusDot kind={status.kind} />
-					<NodeName node={node} />
+					{/* 名称列很窄：显示名称优先，放不下时先截断节点 ID；后面的节点类型只用名称之后剩下的宽度。 */}
+					<NodeName node={node} priority="name" />
 					<Truncate className={cn("flex-1 text-xs text-fg-3", packageNode && "font-mono")}>
 						{shortTitle}
 					</Truncate>

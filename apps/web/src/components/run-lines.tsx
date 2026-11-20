@@ -1,7 +1,11 @@
 import { isActiveStatus } from "@sfly/schema";
 import { cn } from "cn";
 import type { CSSProperties } from "react";
-import { chainProgressText } from "#/components/chain-progress";
+import {
+	chainProgressName,
+	chainProgressText,
+	chainSkippedText,
+} from "#/components/chain-progress";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOLDED_LABEL, LIST_LABEL, moreLabel } from "#/lib/copy";
@@ -179,13 +183,14 @@ export function RunLines({
 			data-viz
 			style={{ "--line-columns": columns } as CSSProperties}
 			className={cn(
-				"m-0 grid list-none grid-cols-[fit-content(10rem)_repeat(var(--line-columns),minmax(0,5.5rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
+				"m-0 grid list-none grid-cols-[max-content_repeat(var(--line-columns),minmax(4rem,14rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
 				className,
 			)}
 		>
 			{rows.map((row, r) => (
 				<li key={row.chain.id} className="col-span-full grid grid-cols-subgrid">
-					<span className="flex min-w-0 pr-3 text-xs text-fg-3">
+					{/* 第一列取链名的全宽（最宽 10rem）：站名那几列分余量时不和它抢。 */}
+					<span className="flex min-w-0 max-w-40 pr-3 text-xs text-fg-3">
 						<Truncate>{row.chain.label}</Truncate>
 						{row.chain.instance && (
 							<span data-chain-id className="ml-1.5 flex-none font-mono">
@@ -204,12 +209,24 @@ export function RunLines({
 							/>
 						))}
 					</ol>
-					<span className="pl-2 text-right font-mono text-xs text-fg-3">
-						{chainProgressText(row.chain.nodes)}
-					</span>
+					<ChainCount nodes={row.chain.nodes} />
 				</li>
 			))}
 		</ul>
+	);
+}
+
+/**
+ * 一条链的计数：「已完成数 / 节点数」，有被跳过的节点时下面一行单独写「跳过 2」（被跳过的不算已完成）。
+ * 放在最后一列（auto）：站名那几列把余量用完时，计数照样有位置；两行叠着，不占更宽的列。
+ */
+function ChainCount({ nodes }: { nodes: readonly LineNode[] }) {
+	const skipped = chainSkippedText(nodes);
+	return (
+		<span className="col-[-2/-1] flex flex-col items-end pl-2 text-xs whitespace-nowrap text-fg-3">
+			<span className="font-mono">{chainProgressText(nodes)}</span>
+			{skipped && <span data-skipped-count>{skipped}</span>}
+		</span>
 	);
 }
 
@@ -259,7 +276,7 @@ function StationCell({
 			</span>
 			<span
 				className={cn(
-					"flex min-w-0 pr-2 pl-2.5 text-xs",
+					"flex min-w-0 pr-1 pl-2.5 text-xs",
 					station.kind === "fold"
 						? "text-fg-3"
 						: kind === "running"
@@ -284,7 +301,7 @@ function StationCell({
  */
 export function RunLineThumb({ chain }: { chain: LineChain }) {
 	const stations = foldStations(chain.nodes);
-	const text = `${chain.label} ${chainProgressText(chain.nodes)}`;
+	const text = chainProgressName(chain.label, chain.nodes);
 	return (
 		<span
 			role="img"

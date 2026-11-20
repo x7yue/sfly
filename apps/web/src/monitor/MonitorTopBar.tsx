@@ -1,9 +1,9 @@
+import { nameBeforeId } from "@sfly/orchestration";
 import { type RunView, runsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
-import { NodeName } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { TriggeredAt } from "#/components/via-tag";
@@ -66,7 +66,9 @@ function FocusFreshness({ run }: { run: RunView }) {
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
  * 运行切换（同场景的其他运行）、运行状态（概览里后面写「数据更新于」）、「概览 / 详情」标签页、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
  * 在画布中打开、取消（运行中）或再次运行（已结束，主操作）。
- * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。
+ * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。失败摘要只用别的内容占完之后剩下的宽度
+ * （最窄 96px，全文在悬停提示里；概览有失败区域、详情有横幅）：预设名、场景名和耗时在宽的窗口里原样显示，窄的窗口里
+ * 才按各链状态（整个收起，不留半截）、预设名、场景名与触发信息的顺序让位；耗时、状态、视图标签页和按钮不让位。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
  */
 export function MonitorTopBar({
@@ -108,15 +110,21 @@ export function MonitorTopBar({
 			>
 				<ArrowLeftIcon />
 			</Link>
-			<div className="flex min-w-36 shrink flex-col leading-tight">
+			{/* 窄的时候先截断场景名和触发人、开始时间；耗时是盯运行的人要看的，不让出位置。 */}
+			<div className="flex min-w-44 shrink-[2] flex-col leading-tight">
 				<h1 className="m-0 flex items-center gap-1.5 truncate text-sm font-semibold">
 					<span className="truncate">{name ?? "场景"}</span>
 					<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				</h1>
-				<span className="truncate text-xs text-fg-3">
-					<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} /> ·{" "}
-					<span className="font-mono" data-testid="run-elapsed">
-						{live ? ELAPSED_LABEL : DURATION_LABEL} {formatSpan(elapsed, live)}
+				<span className="flex min-w-0 text-xs text-fg-3">
+					<span className="min-w-0 truncate">
+						<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
+					</span>
+					<span className="flex-none whitespace-pre">
+						{" · "}
+						<span className="font-mono" data-testid="run-elapsed">
+							{live ? ELAPSED_LABEL : DURATION_LABEL} {formatSpan(elapsed, live)}
+						</span>
 					</span>
 				</span>
 			</div>
@@ -139,7 +147,7 @@ export function MonitorTopBar({
 			)}
 			<ul
 				aria-label="各链状态"
-				className="m-0 flex min-w-0 shrink-[4] list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
+				className="m-0 flex min-w-0 shrink-1000 list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
 			>
 				{chains.slice(0, MAX_CHAIN_BADGES).map((chain) => {
 					const s = chainRunStatus(chain, run.cancel !== null);
@@ -224,6 +232,21 @@ export function MonitorTopBar({
 }
 
 /**
+ * 节点名写成行内的文字：整句摘要放不下时从末尾截断（用 `NodeName` 的话它自己是一个 inline-flex，
+ * 窗口窄时名称先缩没了，只剩「失败于 …」）。
+ */
+function failureNodeName({ node }: RunFailure) {
+	const name = nameBeforeId(node.node_id, node.display_name);
+	return name === undefined ? (
+		<span className="font-mono">{node.node_id}</span>
+	) : (
+		<>
+			{name}（<span className="font-mono">{node.node_id}</span>）
+		</>
+	);
+}
+
+/**
  * 失败摘要：「失败于 verify（第 2 次尝试）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
  * 点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
  */
@@ -248,11 +271,11 @@ function FailureSummary({
 						actions.report({ type: "failure", node: failure.ref });
 						onShowDetail?.();
 					}}
-					className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
+					className="block h-6.5 min-w-24 max-w-max flex-[100_1_0%] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
 				/>
 			}
 		>
-			失败于 <NodeName node={failure.node} className="text-fg-1" />
+			失败于 <span className="text-fg-1">{failureNodeName(failure)}</span>
 			{failureAttempt(failure)}
 			{failure.message && (
 				<span className="text-danger-fg">

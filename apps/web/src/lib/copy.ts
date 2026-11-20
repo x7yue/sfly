@@ -174,6 +174,28 @@ export const FOCUS = {
 	dataUpdated: (clock: string) => `数据更新于 ${clock}`,
 } as const;
 
+/**
+ * 运行监控概览里的失败区域：第一个失败的节点、第几次尝试和失败原因（`errorHeadline`，完整显示），一步去它的尝试和日志；
+ * 运行还没结束、已有节点失败时也有。直达按钮的写法和「需要注意」里的相同（{@link FOCUS}）。
+ */
+export const FAILURE_AREA = {
+	/** 区域的可访问名称。 */
+	label: `失败的${TERM.node}`,
+	/** 标题按运行的状态：失败的运行；还在进行的运行里已有节点失败；取消的运行里也有节点失败。 */
+	title: {
+		failed: "运行失败",
+		running: `有${TERM.node}失败，${TERM.run}还在进行`,
+		ended: `有${TERM.node}失败`,
+	},
+	failedAt: (clock: string) => `${clock} 失败`,
+	/** 展开错误信息全文（含堆栈）的按钮：状态由 `aria-expanded` 和箭头表示，文字不变。 */
+	fullMessage: "完整的错误信息",
+	/** 另有几个节点也失败了：节点名在后面列出。 */
+	others: (count: number) => `另有 ${count} 个${TERM.node}也失败了`,
+	viewAttempts: (node: string) => FOCUS.viewNodeAttempts(node),
+	viewLogs: (node: string) => FOCUS.viewNodeLogs(node),
+} as const;
+
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
 export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
 	title: "标题",
@@ -367,13 +389,19 @@ export const QUEUED_LABEL = "排队";
 export const queuedLabel = (count: number) => `${QUEUED_LABEL} ${count}`;
 
 /**
- * 线路里当前站之前折起来的一段：都算完成的写「已完成 3 个」，不算完成的（取消的运行里已取消的节点）写它们的状态，
- * 「已取消 4 个」。之后的一段是 {@link moreLabel}。
+ * 线路里当前站之前折起来的一段：都算完成的写「已完成 3 个」，不算完成的（取消的运行里已取消的节点、失败之后被跳过的节点）
+ * 写它们的状态，「已取消 4 个」「已跳过 6 个」。之后的一段是 {@link moreLabel}。
  */
 export const FOLDED_LABEL = {
 	done: (count: number) => `已完成 ${count} 个`,
 	ended: (status: string, count: number) => `${status} ${count} 个`,
 } as const;
+
+/**
+ * 「跳过 2」：一条链上被跳过的节点单独计数，接在「已完成数 / 节点数」后面（线路的计数、各链进度条的读屏名称）：
+ * 被跳过的节点没有执行，不算进已完成。
+ */
+export const skippedCountLabel = (count: number) => `跳过 ${count}`;
 
 /** 「还有 3 个」：列表或线路只画出前面一部分时，其余的个数（控制台的线路和进行中的节点、运行记录的卡片）。 */
 export const moreLabel = (count: number) => `还有 ${count} 个`;

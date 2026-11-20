@@ -11,7 +11,7 @@ import {
 	scenarioUsing,
 	triggerRun,
 } from "./support";
-import { focusWallRun, mainChain, manyRuns, seedWall } from "./wall-support";
+import { focusWallRun, longChainRun, mainChain, manyRuns, seedWall } from "./wall-support";
 
 // 控制台的实况墙（外壳页方案 4.1）：页头一行；左栏是正在运行的运行块和最近结束，右栏是 Agent 的槽位和场景。
 
@@ -874,6 +874,32 @@ test("运行多时：6 个以上运行时运行块换成一行一个的紧凑行
 	await collapse.click();
 	await expect(block(page, "浸泡 06")).toHaveCount(0);
 	await expect(left.getByRole("button", { expanded: false }).first()).toBeFocused();
+});
+
+test("线路：站名分余量时不挤掉每条链的名称（30 个节点的长链和它的子流程）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 4 });
+	await publishPackage(controlPlane);
+	await longChainRun(controlPlane, agent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const lines = page.getByRole("list", { name: "各链进度" });
+	await expect(lines).toContainText("已完成 15 个");
+
+	// 每条链的名称整个看得见：「主链」「子流程 监控」（第一列取链名的全宽，站名那几列分余量时不和它抢）。
+	const labels = lines.locator("> li > span:first-child");
+	await expect(labels).toHaveCount(2);
+	for (const label of await labels.all()) {
+		const clipped = await label.evaluate((el) =>
+			[...el.querySelectorAll("[data-truncate-clip]")].some((c) => c.scrollWidth > c.clientWidth),
+		);
+		expect(clipped).toBe(false);
+	}
+	await expect(labels.nth(1)).toContainText("子流程 监控");
 });
 
 test("加载中显示骨架，加载失败显示错误详情，重试后恢复", async ({
