@@ -32,7 +32,9 @@ export const agentBinariesApi = {
 		response: z.object({
 			/** 控制面版本（也是这里的 Agent 版本）。 */
 			version: z.string(),
+			/** 一键安装脚本的完整地址（`curl -fsSL <地址> | sh -s -- --name <名称>`）。 */
 			install_script_url: z.string(),
+			/** 每种 CPU 架构一个 Agent 二进制。 */
 			binaries: z.array(AgentBinaryView),
 		}),
 	}),
@@ -44,7 +46,12 @@ export const agentBinariesApi = {
 		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
-		params: z.object({ version: z.string(), arch: z.string() }),
+		params: z.object({
+			/** Agent 版本（`GET /agent/binaries` 列出的）。 */
+			version: z.string(),
+			/** CPU 架构：`x86_64` 或 `aarch64`。 */
+			arch: z.string(),
+		}),
 		contentType: "application/octet-stream",
 	}),
 	/** 一键安装脚本：填好了控制面的 HTTP 地址、gRPC 地址、版本号和各架构 Agent 的 sha256。 */

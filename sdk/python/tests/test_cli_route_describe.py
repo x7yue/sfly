@@ -8,6 +8,7 @@ import pytest
 
 from sfly.cli.route_describe import (
     MAX_DEPTH,
+    MAX_NOTE,
     call_example,
     describe_route,
     effect_brief,
@@ -229,6 +230,33 @@ def test_fields_deeper_than_the_limit_are_left_out_and_say_so() -> None:
     assert "字段只列到" not in describe_route(
         route(response={"type": "object", "properties": {"a": {"type": "string"}}})
     )
+
+
+def test_field_descriptions_are_shown_after_the_type_on_one_line() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "keep": {"const": True, "description": "写 true 表示沿用原来的值。"},
+            "wrapped": {
+                "type": "string",
+                "description": (
+                    "分成两行写的\n  中文说明，接起来不留空格；English words\n  keep a space."
+                ),
+            },
+            "long": {"type": "string", "description": "长" * (MAX_NOTE + 50)},
+            "bare": {"type": "string"},
+        },
+        "required": ["keep"],
+    }
+    text = describe_route(route(method="POST", effect="write", params=None, body=schema))
+    lines = text.split("请求体（JSON，* 必填）\n")[1].splitlines()
+    assert lines[0] == "  keep*: true — 写 true 表示沿用原来的值。"
+    assert (
+        lines[1]
+        == "  wrapped: string — 分成两行写的中文说明，接起来不留空格；English words keep a space."
+    )
+    assert lines[2] == f"  long: string — {'长' * (MAX_NOTE - 1)}…"
+    assert lines[3] == "  bare: string"
 
 
 def test_responses_without_a_body_downloads_streams_and_uploads() -> None:

@@ -168,7 +168,7 @@ export const agentsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/agents",
-		summary: "列出全部注册过的 Agent：状态、槽位和正在执行的任务",
+		summary: "列出全部 Agent：在线还是离线、槽位、正在执行和排队的任务、已装的节点包",
 		effect: "read",
 		resource: { kind: "agent", target: "collection" },
 		client: true,
@@ -189,13 +189,19 @@ export const agentsApi = {
 	updateNow: endpoint({
 		method: "POST",
 		path: "/agents/:name/update-now",
-		summary: "让一个 Agent 立即更新到控制面的版本，并终止它正在执行的任务",
+		summary: "让正在更新的 Agent 不再等手上的任务跑完，立即更新（终止这些任务）",
 		effect: "write",
 		resource: { kind: "agent", target: { params: "name" } },
 		client: true,
 		key: ["agents", "update-now"],
-		params: z.object({ name: z.string().min(1) }),
-		response: z.object({ terminated_tasks: z.array(RunningTaskView) }),
+		params: z.object({
+			/** Agent 名称。 */
+			name: z.string().min(1),
+		}),
+		response: z.object({
+			/** 被终止的任务：它们以 agent_lost 失败，按重试配置重新排队。 */
+			terminated_tasks: z.array(RunningTaskView),
+		}),
 	}),
 };
 

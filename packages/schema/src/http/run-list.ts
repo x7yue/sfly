@@ -20,6 +20,7 @@ export const RunListQuery = z.object({
 	orchestration_id: blankAsMissing(z.uuid()),
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q: blankAsMissing(z.string().trim().max(200)),
+	/** 最多返回多少个运行（默认 200，最多 500），按开始时间从新到旧。 */
 	limit: z.coerce.number().int().min(1).max(500).default(200),
 });
 
@@ -82,6 +83,7 @@ export const RunListItem = z.object({
 	status: z.enum(RUN_STATUSES),
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: z.boolean(),
+	/** 触发人的昵称。 */
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: z.string().nullable(),
@@ -107,7 +109,7 @@ export const runListApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/runs",
-		summary: "列出运行，可按状态、场景、关键字筛选",
+		summary: "列出运行（执行记录），可按状态、场景、关键字筛选",
 		effect: "read",
 		resource: { kind: "run", target: "collection" },
 		client: true,

@@ -60,6 +60,7 @@ export const FeishuBotView = z.object({
 
 /** 「发送测试消息」的结果；失败也是 200，结果在 `ok` 里。 */
 export const FeishuTestResult = z.object({
+	/** 消息有没有送达。 */
 	ok: z.boolean(),
 	/** 一句话说明结果：成功是「测试消息已送达」，失败是中文原因（Webhook 地址已打码）。 */
 	message: z.string(),
@@ -89,7 +90,10 @@ export const FeishuBotScenario = z.object({
 	references: z.array(FeishuBotReference).min(1),
 });
 
-const NameParams = z.object({ name: z.string().min(1) });
+const NameParams = z.object({
+	/** 机器人名称（登记时起的，创建后不能改）。 */
+	name: z.string().min(1),
+});
 
 export const feishuBotsApi = {
 	/** 全部飞书机器人，按名称排序。 */
@@ -114,7 +118,12 @@ export const feishuBotsApi = {
 		resource: { kind: "feishu_bot", target: "collection" },
 		client: true,
 		key: ["feishu-bots", "create"],
-		body: z.object({ name: FeishuBotName, webhook_url: FeishuWebhookUrl }),
+		body: z.object({
+			/** 机器人名称：全局唯一，创建后不能改。 */
+			name: FeishuBotName,
+			/** 飞书自定义机器人的 Webhook 地址（相当于一个凭据，响应里是打码的）。 */
+			webhook_url: FeishuWebhookUrl,
+		}),
 		response: FeishuBotView,
 	}),
 	/**
@@ -130,7 +139,10 @@ export const feishuBotsApi = {
 		client: true,
 		key: ["feishu-bots", "replace-webhook"],
 		params: NameParams,
-		body: z.strictObject({ webhook_url: FeishuWebhookUrl }),
+		body: z.strictObject({
+			/** 新的 Webhook 地址（相当于一个凭据，响应里是打码的）。 */
+			webhook_url: FeishuWebhookUrl,
+		}),
 		requestError: ({ body }) =>
 			typeof body === "object" && body !== null && "name" in body
 				? {
@@ -154,7 +166,10 @@ export const feishuBotsApi = {
 		client: true,
 		key: ["feishu-bots", "references"],
 		params: NameParams,
-		response: z.object({ scenarios: z.array(FeishuBotScenario) }),
+		response: z.object({
+			/** 引用这个机器人的场景（最新版本里的飞书通知节点、「飞书机器人」类型的输入，以及运行通知设置），按场景名排序。 */
+			scenarios: z.array(FeishuBotScenario),
+		}),
 	}),
 	/** 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。 */
 	remove: endpoint({

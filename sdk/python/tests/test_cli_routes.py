@@ -123,3 +123,21 @@ def test_every_schema_in_the_manifest_is_a_valid_json_schema() -> None:
         for schema in schemas:
             if schema is not None:
                 Draft202012Validator.check_schema(schema)
+
+
+def test_every_route_in_the_manifest_has_a_one_line_summary_and_documented_request_fields() -> None:
+    routes = load_routes()
+    for route in routes:
+        assert route.summary == route.summary.strip() and "\n" not in route.summary, route.path
+        assert len(route.summary) <= 80, f"{route.method} {route.path}：说明超过 80 字"
+    # 请求参数和请求体的字段说明进了清单：keep 是审查举的「含义不明显」的例子
+    update = next(
+        r for r in routes if r.method == "PATCH" and r.path.endswith("/presets/:presetId")
+    )
+    assert update.body is not None
+    keep = update.body["properties"]["params"]["items"]["properties"]["keep"]
+    assert "沿用" in keep["description"]
+    # 按用途找：没见过这个平台的人会用的词
+    wanted = {"输出", "日志", "产物", "指标", "关注项", "预设", "取消", "失败原因"}
+    for word in wanted:
+        assert any(word in route.summary for route in routes), f"没有接口的说明里有「{word}」"

@@ -1,14 +1,18 @@
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { annotateSchema } from "../src/field-docs.js";
 import {
 	download,
 	endpoint,
+	httpApis,
 	httpContract,
 	RESOURCE_KIND_LABELS,
+	SUMMARY_MAX_LENGTH,
 	stream,
 	Timestamp,
 } from "../src/index.js";
+import { harvestRouteDocs } from "../src/route-docs.js";
 import { buildRouteManifest } from "../src/route-manifest.js";
 
 // 路由清单（随 SDK 打包的 routes.json）里每个接口的说明、读写标记、资源和响应的 JSON Schema。
@@ -229,6 +233,111 @@ describe("导出响应的规则", () => {
 		});
 		expect(() => buildRouteManifest([bad], lenient([bad]))).toThrow(
 			/GET \/x\/:id：缺少 summary[\s\S]*GET \/x\/:id：resource.target 的路径参数 name/,
+		);
+	});
+});
+
+describe("字段说明和按用途找接口", () => {
+	const docsFor = harvestRouteDocs(httpApis);
+	const withDocs = buildRouteManifest(httpContract, undefined, docsFor);
+	const entry = (method: string, path: string) => {
+		const found = withDocs.routes.find((r) => r.method === method && r.path === path);
+		if (!found) throw new Error(`清单里没有 ${method} ${path}`);
+		return found;
+	};
+	type Node = Record<string, unknown> & { description?: string };
+	/** 沿着字段名走（数组元素写 `[]`）；走不到就报错。 */
+	const prop = (schema: unknown, ...path: string[]): Node => {
+		let node = schema as Node;
+		for (const step of path) {
+			const next =
+				step === "[]"
+					? (node.items as Node | undefined)
+					: (node.properties as Record<string, Node> | undefined)?.[step];
+			if (next === undefined) throw new Error(`没有字段 ${path.join(".")}（停在 ${step}）`);
+			node = next;
+		}
+		return node;
+	};
+
+	it("契约里字段上的注释进了清单：请求的路径参数、查询参数、请求体字段，和响应的顶层字段", () => {
+		const update = entry("PATCH", "/orchestrations/:id/presets/:presetId");
+		expect(prop(update.params, "presetId").description).toBe("运行预设的 id。");
+		expect(prop(update.body, "params", "[]", "keep").description).toContain(
+			"沿用这个预设里这个 secret 参数原来的值",
+		);
+		expect(prop(update.body, "params", "[]", "value").description).toContain("固定的值");
+		const logs = entry("GET", "/runs/:id/logs");
+		expect(prop(logs.query, "level").description).toContain("逗号分隔");
+		expect(prop(logs.query, "nodes").description).toContain("链路实例 ID:节点 ID");
+		expect(prop(logs.response, "truncated_tasks").description).toContain(
+			"日志超过大小上限被截断的任务",
+		);
+		const run = entry("GET", "/runs/:id");
+		expect(prop(run.response, "preset").description).toContain("触发时选用的运行预设");
+	});
+
+	it("事件的顶层字段、字典和数组元素里的字段也带说明，没有说明的不凭空造", () => {
+		const events = entry("GET", "/runs/:id/events");
+		expect(prop(events.events?.run, "preset").description).toContain("触发时选用的运行预设");
+		// 没有写注释的字段没有 description
+		const health = entry("GET", "/health");
+		expect(prop(health.response, "status").description).toContain("控制面整体");
+	});
+
+	it("字段上的 zod 说明（.describe）优先于注释", () => {
+		const described = z.object({ a: z.string().describe("来自 describe") });
+		const json = z.toJSONSchema(described, { io: "input" }) as Record<string, unknown>;
+		annotateSchema(json, () => "来自注释");
+		expect(prop(json, "a").description).toBe("来自 describe");
+	});
+
+	it("请求体的字段（到第三层）和响应的顶层字段读注释，响应更深的不读", () => {
+		const run = entry("GET", "/runs/:id");
+		const chains = prop(run.response, "chains");
+		expect(chains.description ?? "").not.toBe("");
+		const chainItem = (chains.items as Record<string, unknown>).properties as Record<
+			string,
+			Record<string, unknown>
+		>;
+		// 链实例里的字段在响应第二层：不读注释
+		expect(Object.values(chainItem).every((f) => f.description === undefined)).toBe(true);
+	});
+
+	it("每个接口的一句话说明都是一行、不超长；每个接口都能按「平台之外的人会用的词」找到", () => {
+		for (const route of withDocs.routes) {
+			expect(route.summary.length, `${route.method} ${route.path}`).toBeLessThanOrEqual(
+				SUMMARY_MAX_LENGTH,
+			);
+		}
+		const find = (word: string) =>
+			withDocs.routes
+				.filter((r) => r.summary.toLowerCase().includes(word))
+				.map((r) => `${r.method} ${r.path}`);
+		// 一个没见过这个平台的人找东西会用的词
+		expect(find("输出")).toEqual(
+			expect.arrayContaining(["GET /runs/:id", "GET /tasks/:id/logs", "GET /runs/:id/logs"]),
+		);
+		for (const word of ["日志", "产物", "指标", "关注项", "预设", "取消", "失败原因", "开始运行"]) {
+			expect(find(word).length, word).toBeGreaterThan(0);
+		}
+		expect(find("取消")).toContain("POST /runs/:id/cancel");
+		expect(find("失败原因")).toContain("GET /runs/:id");
+		expect(find("产物")).toEqual(
+			expect.arrayContaining([
+				"GET /tasks/:id/artifacts",
+				"GET /tasks/:id/artifacts/*",
+				"PUT /tasks/:id/artifacts/*",
+			]),
+		);
+		expect(find("关注项")).toEqual(
+			expect.arrayContaining(["GET /runs/:id/focus", "PATCH /orchestrations/:id"]),
+		);
+		expect(find("预设")).toEqual(
+			expect.arrayContaining([
+				"POST /orchestrations/:id/presets",
+				"DELETE /orchestrations/:id/presets/:presetId",
+			]),
 		);
 	});
 });

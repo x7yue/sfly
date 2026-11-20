@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { annotateSchema, type FieldDocs, type RouteDocPart } from "./field-docs.js";
 import {
 	type Effect,
 	type EndpointDef,
@@ -198,6 +199,7 @@ function kindOf(def: RouteDef): RouteKind {
 export function buildRouteManifest(
 	contract: readonly RouteDef[],
 	rules: DeclarationRules = DECLARATION_RULES,
+	docs?: FieldDocs,
 ): RouteManifest {
 	const problems = [
 		...checkRouteDeclarations(contract, rules),
@@ -220,15 +222,25 @@ export function buildRouteManifest(
 		if (def.creates !== undefined) entry.creates = def.creates;
 		if (def.removes !== undefined) entry.removes = def.removes;
 		if ("contentType" in def) entry.content_type = def.contentType;
-		if (def.params) entry.params = exportPart("params", def.params, notes);
-		if (def.query) entry.query = exportPart("query", def.query, notes);
-		if ("body" in def && def.body) entry.body = exportPart("body", def.body, notes);
+		/** 字段说明：zod 的 `.describe()` 已经在里面，没有的用契约源码里字段上的注释（`docs`）。 */
+		const annotated = <T extends Record<string, unknown>>(json: T, part: RouteDocPart): T => {
+			if (docs) annotateSchema(json, (path) => docs(def, part, path));
+			return json;
+		};
+		if (def.params) entry.params = annotated(exportPart("params", def.params, notes), "params");
+		if (def.query) entry.query = annotated(exportPart("query", def.query, notes), "query");
+		if ("body" in def && def.body) {
+			entry.body = annotated(exportPart("body", def.body, notes), "body");
+		}
 		if ("response" in def && !hasNoBody(def.response)) {
-			entry.response = exportResponse(def.response);
+			entry.response = annotated(exportResponse(def.response), "response");
 		}
 		if ("events" in def) {
 			entry.events = Object.fromEntries(
-				Object.entries(def.events).map(([name, schema]) => [name, exportResponse(schema)]),
+				Object.entries(def.events).map(([name, schema]) => [
+					name,
+					annotated(exportResponse(schema), { event: name }),
+				]),
 			);
 		}
 		return { ...entry, notes: [...notes.values()] };

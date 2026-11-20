@@ -16,6 +16,8 @@ from sfly.cli.routes import EFFECT_LABELS, KIND_LABELS, Route
 
 # 字段大纲列到第几层；更深的只写类型。
 MAX_DEPTH = 3
+# 大纲里一个字段的说明最多写多少个字（超出的截断）。
+MAX_NOTE = 100
 
 _INDENT = "  "
 _TARGET_PARTS = {"params": "路径参数", "query": "查询参数", "body": "请求体字段"}
@@ -177,13 +179,30 @@ class _Outline:
         for name, prop in properties.items():
             note = self.resolve(prop)[0].get("description") or prop.get("description")
             text = f"{indent}{name}{'*' if name in required else ''}: {self.label(prop, seen)}"
-            lines.append(f"{text} — {note}" if note else text)
+            lines.append(f"{text} — {_one_line(note)}" if note else text)
             children = self.lines(prop, depth + 1, seen)
             if depth >= MAX_DEPTH:
                 self.truncated = self.truncated or bool(children)
             else:
                 lines.extend(children)
         return lines
+
+
+def _is_cjk(char: str) -> bool:
+    return ord(char) > 0x2E80
+
+
+def _one_line(note: str) -> str:
+    """字段说明在大纲里写成一行，太长的截断（完整的在 `--json` 的 `description` 里）。
+    注释里为了排版断开的行接起来：两边都是中文时不加空格。"""
+    text = ""
+    for line in (part.strip() for part in note.splitlines()):
+        if not line:
+            continue
+        if text and not (_is_cjk(text[-1]) and _is_cjk(line[0])):
+            text += " "
+        text += line
+    return text if len(text) <= MAX_NOTE else text[: MAX_NOTE - 1] + "…"
 
 
 def _required(schema: Mapping[str, Any] | None) -> list[str]:

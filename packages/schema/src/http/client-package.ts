@@ -24,7 +24,10 @@ export const clientPackageApi = {
 		resource: { kind: "system", target: "global" },
 		client: false,
 		key: ["client-package", "list"],
-		response: z.object({ tarballs: z.array(ClientTarballView) }),
+		response: z.object({
+			/** 控制面提供的 API 客户端安装包，每个版本一个。 */
+			tarballs: z.array(ClientTarballView),
+		}),
 	}),
 	/** 下载一个安装包；版本或文件名不存在时 404。 */
 	download: download({
@@ -33,7 +36,12 @@ export const clientPackageApi = {
 		effect: "read",
 		resource: { kind: "system", target: "global" },
 		client: false,
-		params: z.object({ version: z.string(), filename: z.string() }),
+		params: z.object({
+			/** 客户端版本（`GET /client` 列出的）。 */
+			version: z.string(),
+			/** 安装包的文件名（`GET /client` 列出的）。 */
+			filename: z.string(),
+		}),
 		contentType: "application/octet-stream",
 	}),
 };

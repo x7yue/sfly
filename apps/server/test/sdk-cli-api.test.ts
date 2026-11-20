@@ -304,6 +304,19 @@ describe("sfly api → 控制面", () => {
 			expect(paths).not.toContain("/health");
 		});
 
+		it("按用途找：输出、产物、预设、取消、失败原因都能找到对应的接口", async () => {
+			const paths = async (word: string) => {
+				const found = await cli("--list", word, "--json");
+				expect(found.code, `${word}：${found.stderr}`).toBe(0);
+				return (JSON.parse(found.stdout) as ListedRoute[]).map((r) => `${r.method} ${r.path}`);
+			};
+			expect(await paths("输出")).toEqual(expect.arrayContaining(["GET /runs/:id"]));
+			expect(await paths("产物")).toContain("GET /tasks/:id/artifacts");
+			expect(await paths("预设")).toContain("POST /orchestrations/:id/presets");
+			expect(await paths("取消")).toEqual(["POST /runs/:id/cancel"]);
+			expect(await paths("失败原因")).toContain("GET /runs/:id");
+		});
+
 		it("--list 和 --describe 不能同时给", async () => {
 			const both = await cli("--list", "--describe", "GET", "/health");
 			expect(both.code).toBe(2);
@@ -329,6 +342,21 @@ describe("sfly api → 控制面", () => {
 			expect(text).toContain("响应（JSON）\n");
 			expect(text).toContain('  status*: "running" | "success" | "failed" | "cancelled"');
 			expect(text).toContain("  chains*: object[]");
+		});
+
+		it("字段的说明写在类型后面（契约里写在字段上的注释）；没有说明的字段只有类型", async () => {
+			const preset = await cli("--describe", "PATCH", "/orchestrations/:id/presets/:presetId");
+			expect(preset.code, preset.stderr).toBe(0);
+			expect(preset.stdout).toContain("  presetId*: string — 运行预设的 id。");
+			expect(preset.stdout).toMatch(
+				/keep: true — 写 `true` 表示沿用这个预设里这个 secret 参数原来的值/,
+			);
+			expect(preset.stdout).toContain("  name: string — 新名称（场景内唯一）。");
+			const logs = await cli("--describe", "GET", "/runs/:id/logs");
+			expect(logs.stdout).toContain("  level: string — 只要这些级别的日志，逗号分隔");
+			expect(logs.stdout).toContain("  truncated_tasks*: object[] — 日志超过大小上限被截断的任务");
+			// 没有注释的字段只写类型
+			expect(logs.stdout).toContain("\n  run_id*: string\n");
 		});
 
 		it("路径可以带实际的 id，也可以带占位符；方法不分大小写", async () => {

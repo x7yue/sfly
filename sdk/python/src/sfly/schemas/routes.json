@@ -43,23 +43,28 @@
           "total": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "动作和标记合计的个数。"
           },
           "marks": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "其中标记的个数：动作的个数是 total 减去它。"
           },
           "reported": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "有明细的个数（最多 100000）。"
           },
           "capped": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "有没有超出 SDK 的上限：有动作或标记只计数、没有明细。"
           },
           "control_plane_capped": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "控制面兜底丢弃过这个任务的明细（被改过的 SDK 写出超过上限的明细时，规格 #345 故事 49）。SDK 的上限没超时 `capped`\n也可能是 false；哪些名称从几点起只计数在明细分页的 `count_only` 里（`reason` 为 `control_plane`）。"
           },
           "capped_at": {
             "anyOf": [
@@ -71,7 +76,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "合计已满、开始丢弃明细的时刻；没有丢弃过时为 null。不是明细的终点：之后仍可能有补上的失败的动作。"
           },
           "agent_capped_at": {
             "anyOf": [
@@ -83,7 +89,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "同 `capped_at`，用 Agent 时间表示。"
           },
           "names": {
             "type": "array",
@@ -141,7 +148,8 @@
                 "capped_at",
                 "agent_capped_at"
               ]
-            }
+            },
+            "description": "每种名称一项，按第一次出现的先后。"
           },
           "running": {
             "type": "array",
@@ -202,10 +210,12 @@
                 "started_at",
                 "agent_started_at"
               ]
-            }
+            },
+            "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。"
           },
           "running_complete": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "`running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。"
           },
           "recent": {
             "type": "array",
@@ -300,7 +310,8 @@
                 "result",
                 "reason"
               ]
-            }
+            },
+            "description": "最近结束的 `ACTION_LIMITS.recent` 个动作，最近结束的在前。"
           },
           "recent_failed": {
             "type": "array",
@@ -395,7 +406,8 @@
                 "result",
                 "reason"
               ]
-            }
+            },
+            "description": "最近失败的 `ACTION_LIMITS.recentFailed` 个动作，最近失败的在前。"
           }
         },
         "required": [
@@ -446,19 +458,23 @@
         "type": "object",
         "properties": {
           "before": {
-            "type": "string"
+            "type": "string",
+            "description": "读这个游标之前（更早开始）的明细；不给时读最新的一页。"
           },
           "limit": {
             "default": 100,
             "type": "integer",
             "minimum": 1,
-            "maximum": 500
+            "maximum": 500,
+            "description": "一页最多多少条明细（默认 100）。"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "只要这个名称的。"
           },
           "failed": {
-            "type": "string"
+            "type": "string",
+            "description": "true：只要失败的动作（没有标记）。"
           }
         }
       },
@@ -667,7 +683,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "读更早的一页：下一次请求的 before；没有更早的明细时为 null。"
           },
           "count_only": {
             "type": "array",
@@ -721,15 +738,18 @@
                 "to",
                 "count"
               ]
-            }
+            },
+            "description": "起点落在这一页范围里的只计数的段，从新到旧。只看失败时，`name_limit` 的段只在合计也满了时才有：合计没满时，\n超过每种名称上限之后失败的动作仍有明细。"
           },
           "rev": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "读这一页那一刻明细的修订号：实时推送（`events`）的 `after` 用它，之后写入或结束的明细都由推送送达。\n最新一页的这个值才有用。"
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "运行已超过保留期、明细已被清理（此时是空页）。"
           }
         },
         "required": [
@@ -789,7 +809,8 @@
           "after": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "已经读到的修订号（明细分页响应里的 `rev`）：只推送它之后的写入。"
           }
         }
       },
@@ -800,23 +821,28 @@
             "total": {
               "type": "integer",
               "minimum": -9007199254740991,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "动作和标记合计的个数。"
             },
             "marks": {
               "type": "integer",
               "minimum": -9007199254740991,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "其中标记的个数：动作的个数是 total 减去它。"
             },
             "reported": {
               "type": "integer",
               "minimum": -9007199254740991,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "有明细的个数（最多 100000）。"
             },
             "capped": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "有没有超出 SDK 的上限：有动作或标记只计数、没有明细。"
             },
             "control_plane_capped": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "控制面兜底丢弃过这个任务的明细（被改过的 SDK 写出超过上限的明细时，规格 #345 故事 49）。SDK 的上限没超时 `capped`\n也可能是 false；哪些名称从几点起只计数在明细分页的 `count_only` 里（`reason` 为 `control_plane`）。"
             },
             "capped_at": {
               "anyOf": [
@@ -828,7 +854,8 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "合计已满、开始丢弃明细的时刻；没有丢弃过时为 null。不是明细的终点：之后仍可能有补上的失败的动作。"
             },
             "agent_capped_at": {
               "anyOf": [
@@ -840,7 +867,8 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "同 `capped_at`，用 Agent 时间表示。"
             },
             "names": {
               "type": "array",
@@ -898,7 +926,8 @@
                   "capped_at",
                   "agent_capped_at"
                 ]
-              }
+              },
+              "description": "每种名称一项，按第一次出现的先后。"
             },
             "running": {
               "type": "array",
@@ -959,10 +988,12 @@
                   "started_at",
                   "agent_started_at"
                 ]
-              }
+              },
+              "description": "正在做的动作，最多 `ACTION_LIMITS.running` 个（层级浅的优先），按 ID 排列。"
             },
             "running_complete": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "`running` 是不是全部正在做的动作：列满 `ACTION_LIMITS.running` 个时为 false，可能还有没列出的。"
             },
             "recent": {
               "type": "array",
@@ -1057,7 +1088,8 @@
                   "result",
                   "reason"
                 ]
-              }
+              },
+              "description": "最近结束的 `ACTION_LIMITS.recent` 个动作，最近结束的在前。"
             },
             "recent_failed": {
               "type": "array",
@@ -1152,7 +1184,8 @@
                   "result",
                   "reason"
                 ]
-              }
+              },
+              "description": "最近失败的 `ACTION_LIMITS.recentFailed` 个动作，最近失败的在前。"
             }
           },
           "required": [
@@ -1400,10 +1433,12 @@
         "type": "object",
         "properties": {
           "version": {
-            "type": "string"
+            "type": "string",
+            "description": "控制面版本（也是这里的 Agent 版本）。"
           },
           "install_script_url": {
-            "type": "string"
+            "type": "string",
+            "description": "一键安装脚本的完整地址（`curl -fsSL <地址> | sh -s -- --name <名称>`）。"
           },
           "binaries": {
             "type": "array",
@@ -1433,7 +1468,8 @@
                 "sha256",
                 "url"
               ]
-            }
+            },
+            "description": "每种 CPU 架构一个 Agent 二进制。"
           }
         },
         "required": [
@@ -1460,10 +1496,12 @@
         "type": "object",
         "properties": {
           "version": {
-            "type": "string"
+            "type": "string",
+            "description": "Agent 版本（`GET /agent/binaries` 列出的）。"
           },
           "arch": {
-            "type": "string"
+            "type": "string",
+            "description": "CPU 架构：`x86_64` 或 `aarch64`。"
           }
         },
         "required": [
@@ -1495,7 +1533,7 @@
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出全部注册过的 Agent：状态、槽位和正在执行的任务",
+      "summary": "列出全部 Agent：在线还是离线、槽位、正在执行和排队的任务、已装的节点包",
       "effect": "read",
       "resource": {
         "kind": "agent",
@@ -2043,7 +2081,8 @@
             }
           },
           "control_plane_version": {
-            "type": "string"
+            "type": "string",
+            "description": "控制面版本，也就是 Agent 的目标版本。"
           }
         },
         "required": [
@@ -2061,7 +2100,7 @@
         "update-now"
       ],
       "kind": "endpoint",
-      "summary": "让一个 Agent 立即更新到控制面的版本，并终止它正在执行的任务",
+      "summary": "让正在更新的 Agent 不再等手上的任务跑完，立即更新（终止这些任务）",
       "effect": "write",
       "resource": {
         "kind": "agent",
@@ -2074,7 +2113,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Agent 名称。"
           }
         },
         "required": [
@@ -2238,7 +2278,8 @@
                 "current_action",
                 "progress"
               ]
-            }
+            },
+            "description": "被终止的任务：它们以 agent_lost 失败，按重试配置重新排队。"
           }
         },
         "required": [
@@ -2255,7 +2296,7 @@
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出一个任务上传的产物",
+      "summary": "列出一个任务上传的产物文件",
       "effect": "read",
       "resource": {
         "kind": "task",
@@ -2328,7 +2369,8 @@
             }
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "已过保留期：数据已被清理。"
           }
         },
         "required": [
@@ -2347,7 +2389,7 @@
         "upload"
       ],
       "kind": "upload",
-      "summary": "上传一个任务的产物（请求体是原始字节，Agent 用）",
+      "summary": "上传一个任务的产物文件（请求体是原始字节，Agent 用）",
       "effect": "write",
       "resource": {
         "kind": "task",
@@ -2359,10 +2401,12 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "任务 id。"
           },
           "*": {
-            "type": "string"
+            "type": "string",
+            "description": "产物的名称（上传时的路径，可以带 `/` 分隔的目录）。"
           }
         },
         "required": [
@@ -2374,7 +2418,8 @@
         "type": "object",
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "产物目录内的相对路径（`/` 分隔）。"
           },
           "size": {
             "type": "integer",
@@ -2387,7 +2432,8 @@
           "created_at": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "上传时间（控制面时间）。"
           },
           "agent_modified_at": {
             "anyOf": [
@@ -2399,10 +2445,12 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "文件在 Agent 上的修改时间（Agent 时间）；Agent 没有上报时为 null（未记录）。"
           },
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "对 Agent 可见的完整下载地址（节点输出里的产物引用）；浏览器用 `/api/tasks/:id/artifacts/<name>`。"
           }
         },
         "required": [
@@ -2421,7 +2469,7 @@
       "path": "/tasks/:id/artifacts/*",
       "key": null,
       "kind": "download",
-      "summary": "下载一个任务的一个产物",
+      "summary": "下载一个任务的一个产物文件",
       "effect": "read",
       "resource": {
         "kind": "task",
@@ -2434,10 +2482,12 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "任务 id。"
           },
           "*": {
-            "type": "string"
+            "type": "string",
+            "description": "产物的名称（上传时的路径，可以带 `/` 分隔的目录）。"
           }
         },
         "required": [
@@ -2488,7 +2538,8 @@
                 "sha256",
                 "url"
               ]
-            }
+            },
+            "description": "控制面提供的 API 客户端安装包，每个版本一个。"
           }
         },
         "required": [
@@ -2513,10 +2564,12 @@
         "type": "object",
         "properties": {
           "version": {
-            "type": "string"
+            "type": "string",
+            "description": "客户端版本（`GET /client` 列出的）。"
           },
           "filename": {
-            "type": "string"
+            "type": "string",
+            "description": "安装包的文件名（`GET /client` 列出的）。"
           }
         },
         "required": [
@@ -2546,7 +2599,8 @@
           "generated_at": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "统计的时刻（控制面时钟），窗口的终点。"
           },
           "runs": {
             "type": "object",
@@ -2807,7 +2861,8 @@
                 "chains",
                 "active_nodes"
               ]
-            }
+            },
+            "description": "正在运行的运行，按开始时间从新到旧。"
           },
           "recent_ended": {
             "type": "array",
@@ -3321,7 +3376,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "description": "窗口内结束的运行，按结束时间从新到旧（最多 10 个）。"
           },
           "agents": {
             "type": "object",
@@ -3352,7 +3408,8 @@
               "offline",
               "slots",
               "used_slots"
-            ]
+            ],
+            "description": "Agent 的在线数与槽位合计；每台 Agent 的状态与正在执行的任务用 Agent 列表接口（agentsApi.list）。"
           },
           "setup": {
             "type": "object",
@@ -3462,7 +3519,8 @@
               "package",
               "scenario",
               "run"
-            ]
+            ],
+            "description": "「开始使用」四步各自的完成情况；出现第一个运行之后控制台不再显示这个面板。"
           }
         },
         "required": [
@@ -3513,7 +3571,8 @@
                 "title",
                 "description"
               ]
-            }
+            },
+            "description": "文档的每一页，按目录里登记的顺序。"
           }
         },
         "required": [
@@ -3538,7 +3597,8 @@
         "type": "object",
         "properties": {
           "page": {
-            "type": "string"
+            "type": "string",
+            "description": "页面标识（`GET /docs` 列出的 slug），路径里写成 `<slug>.md`。"
           }
         },
         "required": [
@@ -3563,10 +3623,12 @@
         "type": "object",
         "properties": {
           "skill": {
-            "type": "string"
+            "type": "string",
+            "description": "skill 名称（`sfly-node-dev` 或 `sfly-platform`）。"
           },
           "file": {
-            "type": "string"
+            "type": "string",
+            "description": "skill 里的文件名（`SKILL.md` 或 `reference.md`）。"
           }
         },
         "required": [
@@ -3696,12 +3758,14 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 64
+            "maxLength": 64,
+            "description": "机器人名称：全局唯一，创建后不能改。"
           },
           "webhook_url": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 2048
+            "maxLength": 2048,
+            "description": "飞书自定义机器人的 Webhook 地址（相当于一个凭据，响应里是打码的）。"
           }
         },
         "required": [
@@ -3716,7 +3780,8 @@
             "type": "string"
           },
           "webhook_url": {
-            "type": "string"
+            "type": "string",
+            "description": "打码后的 Webhook 地址：只露出开头和结尾。完整地址不通过任何接口返回。"
           },
           "created_at": {
             "type": "string",
@@ -3752,12 +3817,14 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "最近一次投递；还没有投递过时为 null。"
           },
           "backlog": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "积压：还在排队、没有结果的消息条数（包括等着重试的）。"
           }
         },
         "required": [
@@ -3802,7 +3869,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "机器人名称（登记时起的，创建后不能改）。"
           }
         },
         "required": [
@@ -3815,7 +3883,8 @@
           "webhook_url": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 2048
+            "maxLength": 2048,
+            "description": "新的 Webhook 地址（相当于一个凭据，响应里是打码的）。"
           }
         },
         "required": [
@@ -3830,7 +3899,8 @@
             "type": "string"
           },
           "webhook_url": {
-            "type": "string"
+            "type": "string",
+            "description": "打码后的 Webhook 地址：只露出开头和结尾。完整地址不通过任何接口返回。"
           },
           "created_at": {
             "type": "string",
@@ -3866,12 +3936,14 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "最近一次投递；还没有投递过时为 null。"
           },
           "backlog": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "积压：还在排队、没有结果的消息条数（包括等着重试的）。"
           }
         },
         "required": [
@@ -3916,7 +3988,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "机器人名称（登记时起的，创建后不能改）。"
           }
         },
         "required": [
@@ -3999,7 +4072,8 @@
                 "name",
                 "references"
               ]
-            }
+            },
+            "description": "引用这个机器人的场景（最新版本里的飞书通知节点、「飞书机器人」类型的输入，以及运行通知设置），按场景名排序。"
           }
         },
         "required": [
@@ -4030,7 +4104,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "机器人名称（登记时起的，创建后不能改）。"
           }
         },
         "required": [
@@ -4060,7 +4135,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "机器人名称（登记时起的，创建后不能改）。"
           }
         },
         "required": [
@@ -4071,16 +4147,19 @@
         "type": "object",
         "properties": {
           "ok": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "消息有没有送达。"
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "一句话说明结果：成功是「测试消息已送达」，失败是中文原因（Webhook 地址已打码）。"
           },
           "next_step": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "失败时的下一步（中文）；成功时为 null。"
           },
           "feishu_code": {
             "anyOf": [
@@ -4092,7 +4171,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "飞书返回的错误码；成功，或者没有收到飞书的响应（网络错误、超时）时为 null。"
           },
           "http_status": {
             "anyOf": [
@@ -4104,7 +4184,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "收到响应时的 HTTP 状态码；网络错误和超时为 null。"
           }
         },
         "required": [
@@ -4125,7 +4206,7 @@
         "page"
       ],
       "kind": "endpoint",
-      "summary": "分页读一个任务的日志",
+      "summary": "分页读一个任务的日志（节点打印的输出），可按级别、来源筛选",
       "effect": "read",
       "resource": {
         "kind": "task",
@@ -4150,29 +4231,35 @@
           "before": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "往前翻页：读这个字节偏移之前的行（默认文件末尾）。"
           },
           "after": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "往后翻页：读这个字节偏移之后的行。不能与 before 同时给。"
           },
           "limit": {
             "default": 200,
             "type": "integer",
             "minimum": 1,
-            "maximum": 1000
+            "maximum": 1000,
+            "description": "一页最多多少行（默认 200）。"
           },
           "level": {
-            "type": "string"
+            "type": "string",
+            "description": "只要这些级别，逗号分隔。"
           },
           "source": {
-            "type": "string"
+            "type": "string",
+            "description": "只要这些来源，逗号分隔。"
           },
           "at": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "定位到这个时刻（控制面时间）：返回包含那一刻的一页，前后各取一半（不足的一侧由另一侧补满），\n响应的 `locate` 写明那一刻的位置和有没有正好对应的行。不能与 before、after 同时给。"
           }
         }
       },
@@ -4253,12 +4340,14 @@
                 "text",
                 "offset"
               ]
-            }
+            },
+            "description": "offset：这一行在日志文件中的字节偏移。"
           },
           "start": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "本页扫描范围 [start, end)：往前翻页用 `before=start`，往后翻页用 `after=end`。"
           },
           "end": {
             "type": "integer",
@@ -4268,18 +4357,22 @@
           "size": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "读取时的文件大小。"
           },
           "last_seq": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "已写入的最大序号：实时流用 `after_seq` 从这里接上。"
           },
           "truncated": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "日志超过大小上限被截断。"
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "运行已超过保留期、日志已被清理（此时是空页）。"
           },
           "locate": {
             "anyOf": [
@@ -4312,7 +4405,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。"
           }
         },
         "required": [
@@ -4393,7 +4487,8 @@
         "type": "object",
         "properties": {
           "after_seq": {
-            "type": "string"
+            "type": "string",
+            "description": "已经读到的最大序号（分页响应的 `last_seq`）：只推送它之后写入的行。"
           }
         }
       },
@@ -4491,7 +4586,7 @@
       "path": "/tasks/:id/logs/download",
       "key": null,
       "kind": "download",
-      "summary": "下载一个任务的完整日志",
+      "summary": "下载一个任务的完整日志（文件）",
       "effect": "read",
       "resource": {
         "kind": "task",
@@ -4521,7 +4616,7 @@
         "run-page"
       ],
       "kind": "endpoint",
-      "summary": "把一次运行里各节点的日志按时间合并，分页读",
+      "summary": "把一次运行里各节点的日志（打印的输出）按时间合并，分页读",
       "effect": "read",
       "resource": {
         "kind": "run",
@@ -4544,22 +4639,27 @@
         "type": "object",
         "properties": {
           "before": {
-            "type": "string"
+            "type": "string",
+            "description": "往前翻页：读这个游标之前的行。不给 before 和 after 时读最新的一页。"
           },
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "往后接续：读这个游标之后的行。不能与 before 同时给。"
           },
           "limit": {
             "default": 200,
             "type": "integer",
             "minimum": 1,
-            "maximum": 1000
+            "maximum": 1000,
+            "description": "一页最多多少行（默认 200）。"
           },
           "nodes": {
-            "type": "string"
+            "type": "string",
+            "description": "只看这些节点的日志，写法 `链路实例 ID:节点 ID,节点 ID;…`；不给是全部节点，给空字符串是没有节点。"
           },
           "level": {
-            "type": "string"
+            "type": "string",
+            "description": "只要这些级别的日志，逗号分隔（例如 `warn,error`）；不给是全部级别。"
           }
         }
       },
@@ -4683,22 +4783,28 @@
                 "node_index",
                 "task_started_at"
               ]
-            }
+            },
+            "description": "往前翻页时是游标之前（不给游标时是全部）的最后 limit 行，往后接续时是游标之后的前 limit 行，按上面的顺序。"
           },
           "before": {
-            "type": "string"
+            "type": "string",
+            "description": "读这一页之前的行：下一次往前翻页的 before。"
           },
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "读这一页之后的行：往后接续的 after。"
           },
           "reached_start": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "before 之前已经没有任何行（这一页之前就是运行的开头）。"
           },
           "reached_end": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "after 之后已经没有任何行（读取的那一刻）。往后接续时一页同样可能不满甚至为空，没到末尾就用 after 接着读；\n之后写入的行用 after 再读或由实时推送送达。"
           },
           "live_after": {
-            "type": "string"
+            "type": "string",
+            "description": "实时流起点：读这一页那一刻范围内每个任务已写入的位置。最新一页的这个值就是实时推送（`runEvents`）的 `after`：\n之后写入的行（包括之后才开始的任务）都由实时推送送达，与这一页和往前翻到的页合起来不重复、不遗漏。"
           },
           "truncated_tasks": {
             "type": "array",
@@ -4733,10 +4839,12 @@
                 "node_id",
                 "attempt"
               ]
-            }
+            },
+            "description": "日志超过大小上限被截断的任务，按运行视图里的顺序。"
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "运行已超过保留期、日志已被清理（此时是空页）。"
           }
         },
         "required": [
@@ -4784,7 +4892,7 @@
       "path": "/runs/:id/logs/download",
       "key": null,
       "kind": "download",
-      "summary": "下载一次运行的合并日志",
+      "summary": "下载一次运行的合并日志（文件）",
       "effect": "read",
       "resource": {
         "kind": "run",
@@ -4808,7 +4916,8 @@
         "type": "object",
         "properties": {
           "nodes": {
-            "type": "string"
+            "type": "string",
+            "description": "只看这些节点的日志，写法 `链路实例 ID:节点 ID,节点 ID;…`；不给是全部节点，给空字符串是没有节点。"
           }
         }
       },
@@ -4848,13 +4957,16 @@
         "type": "object",
         "properties": {
           "after": {
-            "type": "string"
+            "type": "string",
+            "description": "实时流的起点：最新一页的 `live_after`，断线重连时是上一个事件的 ID。"
           },
           "nodes": {
-            "type": "string"
+            "type": "string",
+            "description": "只看这些节点的日志，写法 `链路实例 ID:节点 ID,节点 ID;…`；不给是全部节点，给空字符串是没有节点。"
           },
           "level": {
-            "type": "string"
+            "type": "string",
+            "description": "只要这些级别的日志，逗号分隔（例如 `warn,error`）；不给是全部级别。"
           }
         }
       },
@@ -5042,7 +5154,8 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "已过保留期：这个运行的指标数据已被清理。"
           },
           "tasks": {
             "type": "array",
@@ -5221,7 +5334,8 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "已过保留期：这个运行的指标数据已被清理。"
           },
           "nodes": {
             "type": "array",
@@ -5488,7 +5602,7 @@
         "series"
       ],
       "kind": "endpoint",
-      "summary": "读一次运行里指标的时间序列",
+      "summary": "读一次运行里指标的时间序列（曲线的点）",
       "effect": "read",
       "resource": {
         "kind": "run",
@@ -5513,35 +5627,42 @@
           "chain_instance_id": {
             "type": "string",
             "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "链实例 id（运行视图里 `chains[].id`）。"
           },
           "node_id": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "节点 ID。"
           },
           "attempt": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "第几次尝试，从 1 开始；不给是最新一次。"
           },
           "metrics": {
-            "type": "string"
+            "type": "string",
+            "description": "只要这些指标，逗号分隔；不给是节点类型声明的全部指标。"
           },
           "from": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "时间范围的起点（控制面时间，闭区间，按秒取整）；不给是数据的第一个点。"
           },
           "to": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "时间范围的终点；不给是数据的最后一个点。"
           },
           "points": {
             "default": 300,
             "type": "integer",
             "minimum": 1,
-            "maximum": 5000
+            "maximum": 5000,
+            "description": "目标点数（降采样的桶数上限，默认 300）。"
           }
         },
         "required": [
@@ -5559,7 +5680,8 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "已过保留期：这个运行的指标数据已被清理。"
           },
           "chain_instance_id": {
             "type": "string",
@@ -5589,7 +5711,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "实际的时间范围（控制面时间，按秒取整）；没有指定且没有任何数据时为 null。"
           },
           "to": {
             "anyOf": [
@@ -5606,13 +5729,16 @@
           "bucket_seconds": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "每个桶的跨度（秒，至少 1）：桶 k 覆盖 [from + k × bucket_seconds, from + (k + 1) × bucket_seconds)。"
           },
           "truncated": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "指标数据超过单任务上限，之后的点已被丢弃。"
           },
           "series_capped": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "序列数超过单任务上限（`MAX_SERIES` 个，见 ../series.ts；不带标签的指标各算 1 个）：之后新出现的序列的点已被丢弃\n（计入 dropped_points），已有序列照常写入。"
           },
           "series": {
             "type": "array",
@@ -5767,7 +5893,8 @@
             "default": 120,
             "type": "integer",
             "minimum": 1,
-            "maximum": 5000
+            "maximum": 5000,
+            "description": "目标点数（降采样的桶数上限，默认 120）。"
           }
         },
         "additionalProperties": false
@@ -5783,22 +5910,26 @@
           "from": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "时间序列的起点：运行的开始时间（控制面时间）。"
           },
           "to": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "时间序列的终点：运行的结束时间，运行中是现在。"
           },
           "bucket_seconds": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "每个桶的跨度（秒）。"
           },
           "retries": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "所有节点的重试次数之和。"
           },
           "nodes": {
             "type": "array",
@@ -5852,7 +5983,8 @@
                 "queue_ms",
                 "wait_ms"
               ]
-            }
+            },
+            "description": "开始过的节点（链实例 × 节点），按任务创建顺序。时长单位毫秒，运行中的尝试算到现在。"
           },
           "concurrency": {
             "type": "array",
@@ -5879,7 +6011,8 @@
                 "max",
                 "avg"
               ]
-            }
+            },
+            "description": "本运行同时执行中的任务数（包节点从开始执行到结束）。"
           },
           "agents": {
             "type": "array",
@@ -5934,7 +6067,8 @@
                 "slots",
                 "occupancy"
               ]
-            }
+            },
+            "description": "本运行用到的每个 Agent 的槽位占用：这个 Agent 上同时执行中的任务数（含其他运行的任务）。"
           }
         },
         "required": [
@@ -5968,7 +6102,8 @@
         "type": "object",
         "properties": {
           "q": {
-            "type": "string"
+            "type": "string",
+            "description": "按名称、说明或引用的 Agent 搜索（不区分大小写的子串）。"
           },
           "status": {
             "type": "string",
@@ -5977,14 +6112,17 @@
               "success",
               "failed",
               "cancelled"
-            ]
+            ],
+            "description": "最近一次运行的状态。"
           },
           "agent": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "引用了这个 Agent（默认 Agent 或节点另选的 Agent）。"
           },
           "archived": {
-            "type": "string"
+            "type": "string",
+            "description": "true：只看已归档的场景；默认只列出没有归档的。"
           }
         }
       },
@@ -6274,7 +6412,8 @@
           "archived_count": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "已归档场景的总数（不受其他筛选影响）。"
           }
         },
         "required": [
@@ -6298,7 +6437,7 @@
         "detail"
       ],
       "kind": "endpoint",
-      "summary": "读一个场景的设置",
+      "summary": "读一个场景的设置：名称、说明、运行通知、关注项、最新版本号",
       "effect": "read",
       "resource": {
         "kind": "scenario",
@@ -6333,7 +6472,8 @@
           "head_version": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "最新版本号；0 表示还没有保存过版本。"
           },
           "created_at": {
             "type": "string",
@@ -6350,7 +6490,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "归档时间；没有归档时为 null。"
           },
           "run_notification": {
             "type": "object",
@@ -6381,7 +6522,8 @@
               "trigger",
               "title",
               "note"
-            ]
+            ],
+            "description": "运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。"
           },
           "focus_items": {
             "type": "array",
@@ -6480,7 +6622,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "description": "关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。"
           },
           "focus_edit": {
             "anyOf": [
@@ -6508,7 +6651,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
           }
         },
         "required": [
@@ -6533,7 +6677,7 @@
         "head"
       ],
       "kind": "endpoint",
-      "summary": "读一个场景的最新版本（含完整文档）",
+      "summary": "读一个场景的最新版本：节点、连线、入口参数（含完整文档）",
       "effect": "read",
       "resource": {
         "kind": "scenario",
@@ -6568,13 +6712,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "保存这个版本的人的昵称；还没有版本时为 null。"
           },
           "author_via": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。"
           },
           "created_at": {
             "anyOf": [
@@ -7339,7 +7485,7 @@
         "save-version"
       ],
       "kind": "endpoint",
-      "summary": "保存场景的新版本",
+      "summary": "保存场景的新版本：提交修改后的节点、连线和入口参数（场景文档）",
       "effect": "write",
       "resource": {
         "kind": "scenario",
@@ -7964,7 +8110,8 @@
                 "additionalProperties": {
                   "type": "string",
                   "minLength": 1
-                }
+                },
+                "description": "锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。"
               },
               "annotations": {
                 "type": "array",
@@ -8098,12 +8245,14 @@
               "nodes"
             ],
             "additionalProperties": false,
-            "title": "sfly 编排文档"
+            "title": "sfly 编排文档",
+            "description": "场景文档：入口、节点、连线、锁定的节点包版本等（格式见 sfly-platform skill 和 orchestration-document 的 JSON Schema）。"
           },
           "base_version": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。"
           }
         },
         "required": [
@@ -8126,7 +8275,8 @@
             "maximum": 9007199254740991
           },
           "author": {
-            "type": "string"
+            "type": "string",
+            "description": "保存这个版本的人的昵称。"
           },
           "author_via": {
             "type": [
@@ -8895,7 +9045,8 @@
                 "code",
                 "message"
               ]
-            }
+            },
+            "description": "保存时的静态检查警告：只提示，不阻止保存。"
           }
         },
         "required": [
@@ -8965,7 +9116,7 @@
         "versions"
       ],
       "kind": "endpoint",
-      "summary": "列出一个场景的全部版本",
+      "summary": "列出一个场景的全部版本（作者、保存时间）",
       "effect": "read",
       "resource": {
         "kind": "scenario",
@@ -9019,7 +9170,8 @@
                 "author_via",
                 "created_at"
               ]
-            }
+            },
+            "description": "全部版本（不含文档），按版本号从新到旧。"
           }
         },
         "required": [
@@ -9036,7 +9188,7 @@
         "version"
       ],
       "kind": "endpoint",
-      "summary": "读一个场景版本（含完整文档）",
+      "summary": "读一个场景的某个历史版本（含完整文档）",
       "effect": "read",
       "resource": {
         "kind": "scenario",
@@ -9049,11 +9201,13 @@
         "properties": {
           "id": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "场景 id。"
           },
           "number": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "版本号，从 1 开始。"
           }
         },
         "required": [
@@ -9076,7 +9230,8 @@
             "maximum": 9007199254740991
           },
           "author": {
-            "type": "string"
+            "type": "string",
+            "description": "保存这个版本的人的昵称。"
           },
           "author_via": {
             "type": [
@@ -9854,11 +10009,13 @@
         "properties": {
           "id": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "场景 id。"
           },
           "number": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "版本号，从 1 开始。"
           }
         },
         "required": [
@@ -9881,7 +10038,8 @@
             "maximum": 9007199254740991
           },
           "author": {
-            "type": "string"
+            "type": "string",
+            "description": "保存这个版本的人的昵称。"
           },
           "author_via": {
             "type": [
@@ -10650,7 +10808,8 @@
                 "code",
                 "message"
               ]
-            }
+            },
+            "description": "保存时的静态检查警告：只提示，不阻止保存。"
           }
         },
         "required": [
@@ -10685,11 +10844,13 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "场景名称。"
           },
           "description": {
             "default": "",
-            "type": "string"
+            "type": "string",
+            "description": "场景说明（可以是空的）。"
           }
         },
         "required": [
@@ -10712,7 +10873,8 @@
           "head_version": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "最新版本号；0 表示还没有保存过版本。"
           },
           "created_at": {
             "type": "string",
@@ -10729,7 +10891,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "归档时间；没有归档时为 null。"
           },
           "run_notification": {
             "type": "object",
@@ -10760,7 +10923,8 @@
               "trigger",
               "title",
               "note"
-            ]
+            ],
+            "description": "运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。"
           },
           "focus_items": {
             "type": "array",
@@ -10859,7 +11023,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "description": "关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。"
           },
           "focus_edit": {
             "anyOf": [
@@ -10887,7 +11052,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
           }
         },
         "required": [
@@ -10937,10 +11103,12 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "新名称。"
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "description": "新说明。"
           },
           "run_notification": {
             "type": "object",
@@ -10955,7 +11123,8 @@
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "发给哪个飞书机器人（名称）；null 关闭运行通知。"
               },
               "trigger": {
                 "type": "string",
@@ -10963,18 +11132,22 @@
                   "failed",
                   "failed_or_cancelled",
                   "always"
-                ]
+                ],
+                "description": "什么情况下发：仅失败、失败和取消、总是。"
               },
               "title": {
                 "type": "string",
-                "maxLength": 200
+                "maxLength": 200,
+                "description": "卡片标题；空字符串用场景名。"
               },
               "note": {
                 "type": "string",
-                "maxLength": 4000
+                "maxLength": 4000,
+                "description": "附加说明（Markdown，可以 @ 人），放在卡片正文的最前面；空字符串即没有。"
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "运行通知设置，只写要改的项。"
           },
           "focus_items": {
             "type": "array",
@@ -10983,16 +11156,19 @@
               "properties": {
                 "node_id": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "来源节点的 ID。"
                 },
                 "chart": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "图表的标题（节点类型在元信息里声明的）。"
                 },
                 "title": {
                   "type": "string",
                   "maxLength": 40,
-                  "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                  "pattern": "^[^\\r\\n]*(?![\\s\\S])",
+                  "description": "场景作者起的名字；不写即没起名，显示时用图表标题。"
                 }
               },
               "required": [
@@ -11000,7 +11176,8 @@
                 "chart"
               ],
               "additionalProperties": false
-            }
+            },
+            "description": "关注项：整份替换（空数组即清空）。"
           }
         },
         "additionalProperties": false
@@ -11020,7 +11197,8 @@
           "head_version": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "最新版本号；0 表示还没有保存过版本。"
           },
           "created_at": {
             "type": "string",
@@ -11037,7 +11215,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "归档时间；没有归档时为 null。"
           },
           "run_notification": {
             "type": "object",
@@ -11068,7 +11247,8 @@
               "trigger",
               "title",
               "note"
-            ]
+            ],
+            "description": "运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。"
           },
           "focus_items": {
             "type": "array",
@@ -11167,7 +11347,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "description": "关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。"
           },
           "focus_edit": {
             "anyOf": [
@@ -11195,7 +11376,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
           }
         },
         "required": [
@@ -11285,7 +11467,8 @@
           "head_version": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "最新版本号；0 表示还没有保存过版本。"
           },
           "created_at": {
             "type": "string",
@@ -11302,7 +11485,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "归档时间；没有归档时为 null。"
           },
           "run_notification": {
             "type": "object",
@@ -11333,7 +11517,8 @@
               "trigger",
               "title",
               "note"
-            ]
+            ],
+            "description": "运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。"
           },
           "focus_items": {
             "type": "array",
@@ -11432,7 +11617,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "description": "关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。"
           },
           "focus_edit": {
             "anyOf": [
@@ -11460,7 +11646,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
           }
         },
         "required": [
@@ -11521,7 +11708,8 @@
           "head_version": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "最新版本号；0 表示还没有保存过版本。"
           },
           "created_at": {
             "type": "string",
@@ -11538,7 +11726,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "归档时间；没有归档时为 null。"
           },
           "run_notification": {
             "type": "object",
@@ -11569,7 +11758,8 @@
               "trigger",
               "title",
               "note"
-            ]
+            ],
+            "description": "运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。"
           },
           "focus_items": {
             "type": "array",
@@ -11668,7 +11858,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "description": "关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。"
           },
           "focus_edit": {
             "anyOf": [
@@ -11696,7 +11887,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
           }
         },
         "required": [
@@ -11756,7 +11948,8 @@
           "head_version": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "最新版本号；0 表示还没有保存过版本。"
           },
           "created_at": {
             "type": "string",
@@ -11773,7 +11966,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "归档时间；没有归档时为 null。"
           },
           "run_notification": {
             "type": "object",
@@ -11804,7 +11998,8 @@
               "trigger",
               "title",
               "note"
-            ]
+            ],
+            "description": "运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。"
           },
           "focus_items": {
             "type": "array",
@@ -11903,7 +12098,8 @@
                   ]
                 }
               ]
-            }
+            },
+            "description": "关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。"
           },
           "focus_edit": {
             "anyOf": [
@@ -11931,7 +12127,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
           }
         },
         "required": [
@@ -12066,7 +12263,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "description": "节点包名。"
           }
         },
         "required": [
@@ -12135,7 +12333,8 @@
                 "nodes",
                 "locked_orchestrations"
               ]
-            }
+            },
+            "description": "按发布时间从新到旧。"
           }
         },
         "required": [
@@ -12166,11 +12365,13 @@
         "properties": {
           "name": {
             "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "description": "节点包名。"
           },
           "version": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "版本号。"
           }
         },
         "required": [
@@ -12455,15 +12656,18 @@
         "properties": {
           "name": {
             "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "description": "节点包名。"
           },
           "version": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "版本号。"
           },
           "node": {
             "type": "string",
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "description": "节点类型名。"
           }
         },
         "required": [
@@ -12484,11 +12688,13 @@
             "minLength": 1
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "description": "节点类型的说明：节点函数的文档字符串（去掉缩进，可以多段），显示在「添加节点」菜单（第一段）、\n节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。"
           },
           "entry": {
             "type": "string",
-            "pattern": "^[A-Za-z_][\\w.]*:[A-Za-z_]\\w*$"
+            "pattern": "^[A-Za-z_][\\w.]*:[A-Za-z_]\\w*$",
+            "description": "入口：`module:function`。"
           },
           "inputs": {
             "type": "object",
@@ -12606,7 +12812,8 @@
                 "kind"
               ],
               "additionalProperties": false
-            }
+            },
+            "description": "节点运行时上报的指标；早于指标功能构建的节点包没有这个字段。"
           },
           "charts": {
             "type": "array",
@@ -12649,7 +12856,8 @@
           },
           "primary_metric": {
             "type": "string",
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "description": "主指标：一个已声明的指标名；没有时紧凑位置不显示。"
           }
         },
         "required": [
@@ -12950,10 +13158,12 @@
         "type": "object",
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "节点包名。"
           },
           "version": {
-            "type": "string"
+            "type": "string",
+            "description": "版本号。"
           }
         },
         "required": [
@@ -12996,7 +13206,8 @@
           "session_id": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 200
+            "maxLength": 200,
+            "description": "这个标签页的会话 ID（浏览器每次打开编辑页面随机生成）。"
           }
         },
         "required": [
@@ -13022,7 +13233,8 @@
                 "session_id",
                 "nickname"
               ]
-            }
+            },
+            "description": "当前在线的编辑者，每个打开着编辑页面的标签页一项。"
           }
         },
         "required": [
@@ -13064,7 +13276,8 @@
           "session_id": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 200
+            "maxLength": 200,
+            "description": "这个标签页的会话 ID（浏览器每次打开编辑页面随机生成）。"
           }
         },
         "required": [
@@ -13120,7 +13333,8 @@
                   "session_id",
                   "nickname"
                 ]
-              }
+              },
+              "description": "当前在线的编辑者，每个打开着编辑页面的标签页一项。"
             }
           },
           "required": [
@@ -13139,7 +13353,7 @@
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出一个场景的运行预设",
+      "summary": "列出一个场景的运行预设（固定的入口参数取值，含失效的）",
       "effect": "read",
       "resource": {
         "kind": "scenario",
@@ -13302,12 +13516,16 @@
               "type": "object",
               "properties": {
                 "name": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "入口参数的名称。"
                 },
-                "value": {},
+                "value": {
+                  "description": "固定的值（预设参数取它保存的值，触发时不能改）。和 `keep` 二选一。"
+                },
                 "keep": {
                   "type": "boolean",
-                  "const": true
+                  "const": true,
+                  "description": "写 `true` 表示沿用这个预设里这个 secret 参数原来的值（接口不返回 secret 的原值）；只能用在已经有值的 secret 参数上。"
                 }
               },
               "required": [
@@ -13353,14 +13571,16 @@
                 "secret",
                 "value"
               ]
-            }
+            },
+            "description": "预设参数，按最新版本入口参数的声明顺序；已不在声明里的排在后面。"
           },
           "status": {
             "type": "string",
             "enum": [
               "ok",
               "invalid"
-            ]
+            ],
+            "description": "`invalid` 是失效的运行预设：不能用来触发运行（409 `preset_invalid`），改好之后恢复 `ok`。"
           },
           "problems": {
             "type": "array",
@@ -13386,15 +13606,18 @@
                 "reason",
                 "message"
               ]
-            }
+            },
+            "description": "失效的原因，按参数名称排序；`status` 为 `ok` 时为空。"
           },
           "updated_by": {
-            "type": "string"
+            "type": "string",
+            "description": "最后修改人的昵称。"
           },
           "updated_at": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "最后修改时间（控制面时间）。"
           }
         },
         "required": [
@@ -13429,7 +13652,7 @@
         "update"
       ],
       "kind": "endpoint",
-      "summary": "修改一个运行预设",
+      "summary": "修改一个运行预设（一组固定的入口参数取值）",
       "effect": "write",
       "resource": {
         "kind": "scenario",
@@ -13442,11 +13665,13 @@
         "properties": {
           "id": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "场景 id。"
           },
           "presetId": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "运行预设的 id。"
           }
         },
         "required": [
@@ -13459,10 +13684,12 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "新名称（场景内唯一）。"
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "description": "新说明。"
           },
           "params": {
             "type": "array",
@@ -13470,19 +13697,24 @@
               "type": "object",
               "properties": {
                 "name": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "入口参数的名称。"
                 },
-                "value": {},
+                "value": {
+                  "description": "固定的值（预设参数取它保存的值，触发时不能改）。和 `keep` 二选一。"
+                },
                 "keep": {
                   "type": "boolean",
-                  "const": true
+                  "const": true,
+                  "description": "写 `true` 表示沿用这个预设里这个 secret 参数原来的值（接口不返回 secret 的原值）；只能用在已经有值的 secret 参数上。"
                 }
               },
               "required": [
                 "name"
               ],
               "additionalProperties": false
-            }
+            },
+            "description": "预设参数的完整清单（整份替换）；不给就不改预设参数。"
           }
         },
         "additionalProperties": false
@@ -13517,14 +13749,16 @@
                 "secret",
                 "value"
               ]
-            }
+            },
+            "description": "预设参数，按最新版本入口参数的声明顺序；已不在声明里的排在后面。"
           },
           "status": {
             "type": "string",
             "enum": [
               "ok",
               "invalid"
-            ]
+            ],
+            "description": "`invalid` 是失效的运行预设：不能用来触发运行（409 `preset_invalid`），改好之后恢复 `ok`。"
           },
           "problems": {
             "type": "array",
@@ -13550,15 +13784,18 @@
                 "reason",
                 "message"
               ]
-            }
+            },
+            "description": "失效的原因，按参数名称排序；`status` 为 `ok` 时为空。"
           },
           "updated_by": {
-            "type": "string"
+            "type": "string",
+            "description": "最后修改人的昵称。"
           },
           "updated_at": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "最后修改时间（控制面时间）。"
           }
         },
         "required": [
@@ -13611,11 +13848,13 @@
         "properties": {
           "id": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "场景 id。"
           },
           "presetId": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "运行预设的 id。"
           }
         },
         "required": [
@@ -13666,14 +13905,16 @@
                 "secret",
                 "value"
               ]
-            }
+            },
+            "description": "预设参数，按最新版本入口参数的声明顺序；已不在声明里的排在后面。"
           },
           "status": {
             "type": "string",
             "enum": [
               "ok",
               "invalid"
-            ]
+            ],
+            "description": "`invalid` 是失效的运行预设：不能用来触发运行（409 `preset_invalid`），改好之后恢复 `ok`。"
           },
           "problems": {
             "type": "array",
@@ -13699,15 +13940,18 @@
                 "reason",
                 "message"
               ]
-            }
+            },
+            "description": "失效的原因，按参数名称排序；`status` 为 `ok` 时为空。"
           },
           "updated_by": {
-            "type": "string"
+            "type": "string",
+            "description": "最后修改人的昵称。"
           },
           "updated_at": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "最后修改时间（控制面时间）。"
           }
         },
         "required": [
@@ -13751,11 +13995,13 @@
         "properties": {
           "id": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "场景 id。"
           },
           "presetId": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "运行预设的 id。"
           }
         },
         "required": [
@@ -13773,7 +14019,7 @@
         "list"
       ],
       "kind": "endpoint",
-      "summary": "列出运行，可按状态、场景、关键字筛选",
+      "summary": "列出运行（执行记录），可按状态、场景、关键字筛选",
       "effect": "read",
       "resource": {
         "kind": "run",
@@ -13789,22 +14035,26 @@
               "success",
               "failed",
               "cancelled"
-            ]
+            ],
+            "description": "只要这个状态的运行。"
           },
           "orchestration_id": {
             "type": "string",
             "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "只要这个场景的运行。"
           },
           "q": {
             "type": "string",
-            "maxLength": 200
+            "maxLength": 200,
+            "description": "运行编号前缀或触发人（包含，不区分大小写）。"
           },
           "limit": {
             "default": 200,
             "type": "integer",
             "minimum": 1,
-            "maximum": 500
+            "maximum": 500,
+            "description": "最多返回多少个运行（默认 200，最多 500），按开始时间从新到旧。"
           }
         }
       },
@@ -14151,7 +14401,7 @@
         "focus"
       ],
       "kind": "endpoint",
-      "summary": "读一次运行的关注项读数",
+      "summary": "读一次运行的关注项读数：最新值、最终值、曲线、有没有异常",
       "effect": "read",
       "resource": {
         "kind": "run",
@@ -14177,7 +14427,8 @@
             "default": 60,
             "type": "integer",
             "minimum": 0,
-            "maximum": 300
+            "maximum": 300,
+            "description": "每个序列降采样成多少个点；0 只要最新值，不返回序列。"
           }
         },
         "additionalProperties": false
@@ -14188,17 +14439,20 @@
           "generated_at": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "控制面生成这份读数的时间；页面上的「多久前」按它算。"
           },
           "mode": {
             "type": "string",
             "enum": [
               "focus",
               "primary"
-            ]
+            ],
+            "description": "场景设了关注项是 `focus`；没设时是准备中、执行中节点的主指标 `primary`。"
           },
           "expired": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "这次运行的指标已过保留期：每一项都没有数据。"
           },
           "items": {
             "type": "array",
@@ -14542,7 +14796,8 @@
                 "final",
                 "anomaly"
               ]
-            }
+            },
+            "description": "有异常（`anomaly` 不为 null）的项在前，其余在后；两部分里各自按作者设定的顺序（`position` 升序），没设关注项时\n按准备中、执行中节点在运行里的顺序。"
           }
         },
         "required": [
@@ -14587,7 +14842,8 @@
           "version": {
             "type": "integer",
             "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "0 表示还没有版本。"
           },
           "params": {
             "type": "array",
@@ -14621,7 +14877,8 @@
                 "name",
                 "type"
               ]
-            }
+            },
+            "description": "入口参数的声明（名称、类型、默认值、是否必填），触发表单按它生成。"
           },
           "problems": {
             "type": "array",
@@ -14642,7 +14899,8 @@
                 "code",
                 "message"
               ]
-            }
+            },
+            "description": "不能触发的原因；空数组表示可以触发。"
           },
           "warnings": {
             "type": "array",
@@ -14663,7 +14921,8 @@
                 "code",
                 "message"
               ]
-            }
+            },
+            "description": "不阻断触发、但值得留意的配置（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到了它）；没有版本、已归档时为空。"
           },
           "packages": {
             "type": "object",
@@ -14672,7 +14931,8 @@
             },
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "description": "最新版本锁定的节点包版本（包名 → 版本）；没有版本时为空。"
           },
           "agents": {
             "type": "array",
@@ -14712,7 +14972,8 @@
                 "status",
                 "preparing_since"
               ]
-            }
+            },
+            "description": "最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。"
           },
           "presets": {
             "type": "array",
@@ -14800,7 +15061,8 @@
                 "updated_by",
                 "updated_at"
               ]
-            }
+            },
+            "description": "场景的运行预设，按名称排序（与 presetsApi.list 相同），`status` 对照这次检查用的最新版本。"
           }
         },
         "required": [
@@ -14823,7 +15085,7 @@
         "by-orchestration"
       ],
       "kind": "endpoint",
-      "summary": "列出一个场景的运行",
+      "summary": "列出一个场景的运行记录",
       "effect": "read",
       "resource": {
         "kind": "scenario",
@@ -14951,7 +15213,7 @@
         "trigger"
       ],
       "kind": "endpoint",
-      "summary": "触发一个场景最新版本的一次运行",
+      "summary": "触发一个场景最新版本的一次运行（开始运行；可按运行预设取参数）",
       "effect": "write",
       "resource": {
         "kind": "scenario",
@@ -14986,7 +15248,8 @@
             "additionalProperties": {}
           },
           "preset": {
-            "type": "string"
+            "type": "string",
+            "description": "运行预设的 ID；不给就是不用预设。"
           }
         },
         "additionalProperties": false
@@ -15015,13 +15278,15 @@
             ]
           },
           "triggered_by": {
-            "type": "string"
+            "type": "string",
+            "description": "触发人的昵称。"
           },
           "triggered_via": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。"
           },
           "params": {
             "type": "object",
@@ -15057,7 +15322,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "触发时选用的运行预设；没有用预设时为 null。"
           },
           "started_at": {
             "type": "string",
@@ -15118,7 +15384,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "取消请求；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。"
           },
           "run_notification": {
             "anyOf": [
@@ -15154,7 +15421,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
           },
           "chains": {
             "type": "array",
@@ -15613,7 +15881,8 @@
                 "ended_at",
                 "nodes"
               ]
-            }
+            },
+            "description": "按深度、开始时间排序。"
           }
         },
         "required": [
@@ -15642,7 +15911,7 @@
         "detail"
       ],
       "kind": "endpoint",
-      "summary": "读一次运行的状态：链、节点和任务",
+      "summary": "读一次运行的状态：各链、各节点的状态、输出、失败原因和每次尝试",
       "effect": "read",
       "resource": {
         "kind": "run",
@@ -15685,13 +15954,15 @@
             ]
           },
           "triggered_by": {
-            "type": "string"
+            "type": "string",
+            "description": "触发人的昵称。"
           },
           "triggered_via": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。"
           },
           "params": {
             "type": "object",
@@ -15727,7 +15998,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "触发时选用的运行预设；没有用预设时为 null。"
           },
           "started_at": {
             "type": "string",
@@ -15788,7 +16060,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "取消请求；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。"
           },
           "run_notification": {
             "anyOf": [
@@ -15824,7 +16097,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
           },
           "chains": {
             "type": "array",
@@ -16283,7 +16557,8 @@
                 "ended_at",
                 "nodes"
               ]
-            }
+            },
+            "description": "按深度、开始时间排序。"
           }
         },
         "required": [
@@ -16355,13 +16630,15 @@
             ]
           },
           "triggered_by": {
-            "type": "string"
+            "type": "string",
+            "description": "触发人的昵称。"
           },
           "triggered_via": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。"
           },
           "params": {
             "type": "object",
@@ -16397,7 +16674,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "触发时选用的运行预设；没有用预设时为 null。"
           },
           "started_at": {
             "type": "string",
@@ -16458,7 +16736,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "取消请求；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。"
           },
           "run_notification": {
             "anyOf": [
@@ -16494,7 +16773,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
           },
           "chains": {
             "type": "array",
@@ -16953,7 +17233,8 @@
                 "ended_at",
                 "nodes"
               ]
-            }
+            },
+            "description": "按深度、开始时间排序。"
           }
         },
         "required": [
@@ -17023,13 +17304,15 @@
               ]
             },
             "triggered_by": {
-              "type": "string"
+              "type": "string",
+              "description": "触发人的昵称。"
             },
             "triggered_via": {
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "description": "经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。"
             },
             "params": {
               "type": "object",
@@ -17065,7 +17348,8 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "触发时选用的运行预设；没有用预设时为 null。"
             },
             "started_at": {
               "type": "string",
@@ -17126,7 +17410,8 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "取消请求；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。"
             },
             "run_notification": {
               "anyOf": [
@@ -17162,7 +17447,8 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），\n或者投递记录已过保留期被清理时为 null。"
             },
             "chains": {
               "type": "array",
@@ -17621,7 +17907,8 @@
                   "ended_at",
                   "nodes"
                 ]
-              }
+              },
+              "description": "按深度、开始时间排序。"
             }
           },
           "required": [
@@ -17836,7 +18123,8 @@
                 "sha256",
                 "url"
               ]
-            }
+            },
+            "description": "控制面提供的 SDK 运行时 wheel，每个版本一个。"
           }
         },
         "required": [
@@ -17861,10 +18149,12 @@
         "type": "object",
         "properties": {
           "version": {
-            "type": "string"
+            "type": "string",
+            "description": "SDK 版本（`GET /sdk/python` 列出的）。"
           },
           "filename": {
-            "type": "string"
+            "type": "string",
+            "description": "wheel 的文件名（`GET /sdk/python` 列出的）。"
           }
         },
         "required": [
@@ -17909,19 +18199,22 @@
             "type": "string"
           },
           "sfly_index_url": {
-            "type": "string"
+            "type": "string",
+            "description": "sfly 简单索引的完整地址（带末尾 `/`）。"
           },
           "pypi_mirror": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "PyPI 镜像（简单索引地址）。"
           },
           "python_install_mirror": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "uv 的 Python 下载镜像：GitHub Release 镜像上的 `astral-sh/python-build-standalone/`。"
           }
         },
         "required": [
@@ -17949,7 +18242,8 @@
         "type": "object",
         "properties": {
           "project": {
-            "type": "string"
+            "type": "string",
+            "description": "索引里的项目名；只有 `sfly`。"
           }
         },
         "required": [
@@ -17980,19 +18274,22 @@
             "enum": [
               "ok",
               "unavailable"
-            ]
+            ],
+            "description": "控制面整体：`ok` 或 `unavailable`（数据库不可用时返回 503，响应体形状相同）。"
           },
           "database": {
             "type": "string",
             "enum": [
               "ok",
               "unavailable"
-            ]
+            ],
+            "description": "数据库连得上吗。"
           },
           "time": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "控制面的当前时间（控制面时间）。"
           }
         },
         "required": [

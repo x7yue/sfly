@@ -15,12 +15,17 @@ export const OnlineEditorView = z.object({
 /** 在线编辑者名单（心跳的响应、SSE 的 `editors` 事件）。 */
 export const EditorsEvent = z.object({
 	orchestration_id: z.string(),
+	/** 当前在线的编辑者，每个打开着编辑页面的标签页一项。 */
 	editors: z.array(OnlineEditorView),
 });
 
+/** 场景 id。 */
 const IdParams = z.object({ id: z.string() });
 /** 每次打开编辑页面随机生成的会话 ID：同一昵称在多个标签页打开时互不覆盖。 */
-const SessionBody = z.object({ session_id: z.string().trim().min(1).max(200) });
+const SessionBody = z.object({
+	/** 这个标签页的会话 ID（浏览器每次打开编辑页面随机生成）。 */
+	session_id: z.string().trim().min(1).max(200),
+});
 
 export const presenceApi = {
 	/** 心跳（需要昵称请求头）；场景不存在时 404。返回当前名单。 */
@@ -34,7 +39,10 @@ export const presenceApi = {
 		key: ["presence", "heartbeat"],
 		params: IdParams,
 		body: SessionBody,
-		response: z.object({ editors: z.array(OnlineEditorView) }),
+		response: z.object({
+			/** 当前在线的编辑者，每个打开着编辑页面的标签页一项。 */
+			editors: z.array(OnlineEditorView),
+		}),
 	}),
 	/**
 	 * 主动离开（204，没有响应体）：浏览器关闭页面时用 keepalive 请求发出，不要求昵称

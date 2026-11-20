@@ -45,7 +45,12 @@ export const PackageSummary = z.object({
 	versions: z.array(PackageVersionSummary),
 });
 
-const VersionParams = z.object({ name: PackageName, version: z.string().min(1) });
+const VersionParams = z.object({
+	/** 节点包名。 */
+	name: PackageName,
+	/** 版本号。 */
+	version: z.string().min(1),
+});
 
 export const packagesApi = {
 	/** 包列表（含各版本与节点类型摘要），按包名排序。 */
@@ -68,7 +73,10 @@ export const packagesApi = {
 		resource: { kind: "package", target: { params: "name" } },
 		client: true,
 		key: ["packages", "detail"],
-		params: z.object({ name: PackageName }),
+		params: z.object({
+			/** 节点包名。 */
+			name: PackageName,
+		}),
 		response: PackageSummary,
 	}),
 	/** 版本详情（含完整元信息）。 */
@@ -92,7 +100,10 @@ export const packagesApi = {
 		resource: { kind: "package", target: { params: "name" } },
 		client: true,
 		key: ["packages", "node-type"],
-		params: VersionParams.extend({ node: NodeName }),
+		params: VersionParams.extend({
+			/** 节点类型名。 */
+			node: NodeName,
+		}),
 		response: NodeTypeView,
 	}),
 	/**
@@ -117,7 +128,12 @@ export const packagesApi = {
 		effect: "read",
 		resource: { kind: "package", target: { params: "name" } },
 		client: false,
-		params: z.object({ name: z.string(), version: z.string() }),
+		params: z.object({
+			/** 节点包名。 */
+			name: z.string(),
+			/** 版本号。 */
+			version: z.string(),
+		}),
 		contentType: "application/octet-stream",
 	}),
 };

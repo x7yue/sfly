@@ -15,6 +15,7 @@ import { PresetView } from "./presets.js";
  */
 
 /** 路径里的 ID：不是 UUID 时控制面返回 404（与找不到相同），所以这里只要求是字符串。 */
+/** 运行 id（任务的日志、动作、产物接口里是任务 id）。 */
 const IdParams = z.object({ id: z.string() });
 
 const NODE_KINDS = [
@@ -176,6 +177,7 @@ export const RunView = z.object({
 	orchestration_id: z.string(),
 	orchestration_version: z.number().int(),
 	status: RunStatus,
+	/** 触发人的昵称。 */
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: z.string().nullable(),
@@ -265,7 +267,9 @@ export const runsApi = {
 		response: z.object({
 			/** 0 表示还没有版本。 */
 			version: z.number().int(),
+			/** 入口参数的声明（名称、类型、默认值、是否必填），触发表单按它生成。 */
 			params: z.array(ParamDeclView),
+			/** 不能触发的原因；空数组表示可以触发。 */
 			problems: z.array(PreflightProblem),
 			/** 不阻断触发、但值得留意的配置（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到了它）；没有版本、已归档时为空。 */
 			warnings: z.array(PreflightProblem),
@@ -281,7 +285,7 @@ export const runsApi = {
 	listForOrchestration: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/runs",
-		summary: "列出一个场景的运行",
+		summary: "列出一个场景的运行记录",
 		effect: "read",
 		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
@@ -301,7 +305,7 @@ export const runsApi = {
 	trigger: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/runs",
-		summary: "触发一个场景最新版本的一次运行",
+		summary: "触发一个场景最新版本的一次运行（开始运行；可按运行预设取参数）",
 		effect: "write",
 		resource: { kind: "scenario", target: { params: "id" } },
 		creates: "run",
@@ -322,7 +326,7 @@ export const runsApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/runs/:id",
-		summary: "读一次运行的状态：链、节点和任务",
+		summary: "读一次运行的状态：各链、各节点的状态、输出、失败原因和每次尝试",
 		effect: "read",
 		resource: { kind: "run", target: { params: "id" } },
 		client: true,
@@ -412,7 +416,9 @@ export const LogPageQuery = z
 		before: blankAsMissing(ByteOffset),
 		/** 往后翻页：读这个字节偏移之后的行。不能与 before 同时给。 */
 		after: blankAsMissing(ByteOffset),
+		/** 一页最多多少行（默认 200）。 */
 		limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
+		/** 只要这些级别，逗号分隔。 */
 		level: LevelsParam,
 		/** 只要这些来源，逗号分隔。 */
 		source: blankAsMissing(csv(LOG_SOURCES)),
@@ -503,11 +509,13 @@ const RunLogLiveCursor = z.string();
  * 不给 `nodes` 是全部节点；给了空字符串是没有节点（写法与判断函数见 run-log-scope.ts）。
  */
 export const RunLogScopeQuery = z.object({
+	/** 只看这些节点的日志，写法 `链路实例 ID:节点 ID,节点 ID;…`；不给是全部节点，给空字符串是没有节点。 */
 	nodes: RunLogNodesParam.optional(),
 });
 
 /** 按运行读取日志的级别参数：分页与实时推送共用（下载不受级别筛选影响）。 */
 export const RunLogLevelQuery = z.object({
+	/** 只要这些级别的日志，逗号分隔（例如 `warn,error`）；不给是全部级别。 */
 	level: LevelsParam,
 });
 
@@ -517,6 +525,7 @@ export const RunLogPageQuery = z
 		before: blankAsMissing(RunLogCursor),
 		/** 往后接续：读这个游标之后的行。不能与 before 同时给。 */
 		after: blankAsMissing(RunLogCursor),
+		/** 一页最多多少行（默认 200）。 */
 		limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
 		...RunLogScopeQuery.shape,
 		...RunLogLevelQuery.shape,
@@ -593,7 +602,7 @@ export const logsApi = {
 	page: endpoint({
 		method: "GET",
 		path: "/tasks/:id/logs",
-		summary: "分页读一个任务的日志",
+		summary: "分页读一个任务的日志（节点打印的输出），可按级别、来源筛选",
 		effect: "read",
 		resource: { kind: "task", target: { params: "id" } },
 		client: true,
@@ -613,13 +622,16 @@ export const logsApi = {
 		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		params: IdParams,
-		query: z.object({ after_seq: z.string().optional() }),
+		query: z.object({
+			/** 已经读到的最大序号（分页响应的 `last_seq`）：只推送它之后写入的行。 */
+			after_seq: z.string().optional(),
+		}),
 		events: { logs: LogChunk },
 	}),
 	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/logs/download",
-		summary: "下载一个任务的完整日志",
+		summary: "下载一个任务的完整日志（文件）",
 		effect: "read",
 		resource: { kind: "task", target: { params: "id" } },
 		client: true,
@@ -630,7 +642,7 @@ export const logsApi = {
 	runPage: endpoint({
 		method: "GET",
 		path: "/runs/:id/logs",
-		summary: "把一次运行里各节点的日志按时间合并，分页读",
+		summary: "把一次运行里各节点的日志（打印的输出）按时间合并，分页读",
 		effect: "read",
 		resource: { kind: "run", target: { params: "id" } },
 		client: true,
@@ -645,7 +657,7 @@ export const logsApi = {
 	 */
 	runDownload: download({
 		path: "/runs/:id/logs/download",
-		summary: "下载一次运行的合并日志",
+		summary: "下载一次运行的合并日志（文件）",
 		effect: "read",
 		resource: { kind: "run", target: { params: "id" } },
 		client: true,
@@ -671,6 +683,7 @@ export const logsApi = {
 		client: true,
 		params: IdParams,
 		query: z.object({
+			/** 实时流的起点：最新一页的 `live_after`，断线重连时是上一个事件的 ID。 */
 			after: blankAsMissing(RunLogLiveCursor),
 			...RunLogScopeQuery.shape,
 			...RunLogLevelQuery.shape,
@@ -695,14 +708,19 @@ export const ArtifactView = z.object({
 /** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版本 Agent 不带。 */
 export const AGENT_MODIFIED_MS_HEADER = "x-sfly-agent-modified-ms";
 
-const ArtifactParams = z.object({ id: z.string(), "*": z.string() });
+const ArtifactParams = z.object({
+	/** 任务 id。 */
+	id: z.string(),
+	/** 产物的名称（上传时的路径，可以带 `/` 分隔的目录）。 */
+	"*": z.string(),
+});
 
 export const artifactsApi = {
 	/** 一个任务的产物；运行已超过保留期被清理时 expired 为 true、列表为空。 */
 	list: endpoint({
 		method: "GET",
 		path: "/tasks/:id/artifacts",
-		summary: "列出一个任务上传的产物",
+		summary: "列出一个任务上传的产物文件",
 		effect: "read",
 		resource: { kind: "task", target: { params: "id" } },
 		client: true,
@@ -711,6 +729,7 @@ export const artifactsApi = {
 		response: z.object({
 			task_id: z.string(),
 			artifacts: z.array(ArtifactView),
+			/** 已过保留期：数据已被清理。 */
 			expired: z.boolean(),
 		}),
 	}),
@@ -722,7 +741,7 @@ export const artifactsApi = {
 	upload: endpoint({
 		method: "PUT",
 		path: "/tasks/:id/artifacts/*",
-		summary: "上传一个任务的产物（请求体是原始字节，Agent 用）",
+		summary: "上传一个任务的产物文件（请求体是原始字节，Agent 用）",
 		effect: "write",
 		resource: { kind: "task", target: { params: "id" } },
 		client: false,
@@ -734,7 +753,7 @@ export const artifactsApi = {
 	/** 下载一个产物（attachment）；运行已过保留期被清理时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/artifacts/*",
-		summary: "下载一个任务的一个产物",
+		summary: "下载一个任务的一个产物文件",
 		effect: "read",
 		resource: { kind: "task", target: { params: "id" } },
 		client: true,
