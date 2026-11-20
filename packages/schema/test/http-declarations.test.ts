@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+	checkDeclarationTables,
+	checkPathKindsCover,
 	checkRouteDeclarations,
+	DECLARATION_RULES,
+	type DeclarationRules,
+	dashboardApi,
 	download,
 	endpoint,
+	feishuBotsApi,
 	httpContract,
+	PATH_KINDS,
 	READS_WITH_TRACES,
 	RESOURCE_KIND_LABELS,
 	RESOURCE_KINDS,
@@ -153,8 +160,18 @@ describe("缺声明的接口：类型检查过不了", () => {
 	});
 });
 
+/** 只给这个接口自己的路径前缀登记它声明的类别（让路径前缀的检查不挡着别的测试）。 */
+const rulesFor = (def: RouteDef): DeclarationRules => {
+	const [first = ""] = def.path.split("/").filter(Boolean);
+	const kind = def.resource?.kind;
+	return {
+		pathKinds: kind ? { [`/${first}`]: { kind, why: "测试" } } : {},
+		readsWithTraces: READS_WITH_TRACES,
+	};
+};
+
 describe("写得不对的声明：检查给出具体的问题", () => {
-	const problems = (def: RouteDef) => checkRouteDeclarations([def]);
+	const problems = (def: RouteDef) => checkRouteDeclarations([def], rulesFor(def));
 
 	it("合法的声明没有问题", () => {
 		expect(problems(broken({}))).toEqual([]);
@@ -323,13 +340,169 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 	});
 
 	it("每个有问题的接口各报各的，带着方法和路径", () => {
-		const list = checkRouteDeclarations([
+		const defs = [
 			broken({ summary: "" }),
 			broken({}),
 			broken({ effect: "x" }, { method: "PATCH", path: "/other/:id" }),
-		]);
+		];
+		const list = checkRouteDeclarations(defs, {
+			pathKinds: {
+				"/things": { kind: "scenario", why: "测试" },
+				"/other": { kind: "scenario", why: "测试" },
+			},
+			readsWithTraces: {},
+		});
 		expect(list).toHaveLength(2);
 		expect(list[0]).toMatch(/^GET \/things\/:id：/);
 		expect(list[1]).toMatch(/^PATCH \/other\/:id：/);
+	});
+});
+
+describe("资源类别和路径前缀对得上（kind 写错、system 写错都拦得住）", () => {
+	const real = (key: string): RouteDef => {
+		const def = httpContract.find((d) => `${d.method} ${d.path}` === key);
+		if (!def) throw new Error(`契约里没有 ${key}`);
+		return def;
+	};
+	const withResource = (def: RouteDef, resource: RouteDef["resource"]) => ({ ...def, resource });
+	const problems = (def: RouteDef) => checkRouteDeclarations([def], DECLARATION_RULES);
+
+	it("现有接口都过", () => {
+		expect(checkRouteDeclarations(httpContract, DECLARATION_RULES)).toEqual([]);
+		expect(checkDeclarationTables(httpContract, DECLARATION_RULES)).toEqual([]);
+		expect(checkPathKindsCover(DECLARATION_RULES)).toEqual([]);
+	});
+
+	it("把 /dashboard 写成 system + global：拦住，说明写 system 就是公开，也说明怎么改", () => {
+		const wrong = withResource(dashboardApi.get, { kind: "system", target: "global" });
+		const [problem, ...rest] = problems(wrong);
+		expect(rest).toEqual([]);
+		expect(problem).toContain(
+			"GET /dashboard：resource.kind 写的是 system，PATH_KINDS 里 /dashboard 对应 run",
+		);
+		expect(problem).toContain("声明成 system 就等于这个接口不带项目、不需要凭据（公开）");
+		expect(problem).toContain("声明写错了就改成 run");
+		expect(problem).toContain("在 PATH_KINDS 里为它加一个更长的前缀并写明理由");
+	});
+
+	it("把平台自身的接口写成别的类别：拦住", () => {
+		const wrong = withResource(real("GET /health"), { kind: "run", target: "collection" });
+		expect(problems(wrong).join("\n")).toContain(
+			"/health 是平台自身的接口（system，不带项目、不需要凭据）",
+		);
+		const docs = withResource(real("GET /llms.txt"), { kind: "scenario", target: "collection" });
+		expect(problems(docs).join("\n")).toContain("声明写错了就改成 system");
+	});
+
+	it("写接口的 kind 写错：拦住（飞书测试消息写成 agent）", () => {
+		const wrong = withResource(feishuBotsApi.test, { kind: "agent", target: { params: "name" } });
+		expect(problems(wrong).join("\n")).toContain(
+			"resource.kind 写的是 agent，PATH_KINDS 里 /feishu-bots 对应 feishu_bot",
+		);
+	});
+
+	it("路径不在表里的新接口：拦住，说明要在表里加一项并写理由", () => {
+		const added = endpoint({
+			method: "GET",
+			path: "/accounts/:id",
+			summary: "读一个账号",
+			effect: "read",
+			resource: { kind: "scenario", target: { params: "id" } },
+			client: false,
+			key: ["accounts", "get"],
+			params: z.object({ id: z.string() }),
+			response: z.object({}),
+		});
+		const [problem] = problems(added);
+		expect(problem).toContain(
+			"路径 /accounts/:id 不在 PATH_KINDS（http/declarations.ts）的任何前缀下",
+		);
+		expect(problem).toContain('"/accounts": { kind: …, why: "…" }');
+		expect(problem).toContain("写 system 要格外说明");
+	});
+
+	it("前缀按路径段匹配，取最长的一项；例外写成更长的前缀", () => {
+		const rules: DeclarationRules = {
+			pathKinds: {
+				"/runs": { kind: "run", why: "运行" },
+				"/runs/:id/special": { kind: "system", why: "例外" },
+			},
+			readsWithTraces: {},
+		};
+		const make = (path: string, kind: "run" | "system") =>
+			endpoint({
+				method: "GET",
+				path,
+				summary: "测试",
+				effect: "read",
+				resource:
+					kind === "system" ? { kind, target: "global" } : { kind, target: { params: "id" } },
+				client: false,
+				key: ["x", "y"],
+				params: z.object({ id: z.string() }),
+				response: z.object({}),
+			});
+		expect(checkRouteDeclarations([make("/runs/:id", "run")], rules)).toEqual([]);
+		expect(checkRouteDeclarations([make("/runs/:id/special", "system")], rules)).toEqual([]);
+		expect(checkRouteDeclarations([make("/runs/:id/special", "run")], rules).join("\n")).toContain(
+			"对应 system",
+		);
+		// /runs-x 不在 /runs 下
+		expect(checkRouteDeclarations([make("/runs-x/:id", "run")], rules)[0]).toContain(
+			"不在 PATH_KINDS",
+		);
+	});
+
+	it("表本身：没有接口用的前缀、没有前缀的类别、登记了不存在或不是只读的接口，都报错", () => {
+		const contract = [real("GET /health"), real("GET /runs/:id")];
+		const tables = (rules: Partial<DeclarationRules>) =>
+			checkDeclarationTables(contract, { ...DECLARATION_RULES, ...rules });
+		const own = Object.fromEntries(
+			Object.entries(PATH_KINDS).filter(([prefix]) => ["/health", "/runs"].includes(prefix)),
+		);
+		expect(tables({ pathKinds: own, readsWithTraces: {} })).toEqual([]);
+		const cover = checkPathKindsCover({ pathKinds: own, readsWithTraces: {} }).join("\n");
+		expect(cover).toContain("资源类别 scenario 在 PATH_KINDS 里没有任何路径前缀");
+		expect(cover).not.toContain("资源类别 run ");
+
+		const stale = tables({
+			pathKinds: { ...own, "/old": { kind: "run", why: "旧的" } },
+			readsWithTraces: { "POST /gone": "没有这个接口", "GET /runs/:id": "不是写" },
+		}).join("\n");
+		expect(stale).toContain("PATH_KINDS 的 /old 没有接口在用");
+		expect(stale).toContain("READS_WITH_TRACES 的 POST /gone 不在契约里");
+		expect(stale).not.toContain("没有声明为只读");
+
+		const notRead = tables({
+			pathKinds: own,
+			readsWithTraces: { "GET /runs/:id": "" },
+		}).join("\n");
+		expect(notRead).toContain("READS_WITH_TRACES 的 GET /runs/:id：要写明写了什么");
+		const bad = tables({
+			pathKinds: { "no-slash": { kind: "run", why: "" } },
+			readsWithTraces: {},
+		}).join("\n");
+		expect(bad).toContain("PATH_KINDS 的键 no-slash 要以 / 开头");
+		expect(bad).toContain("PATH_KINDS 的 no-slash：要写明为什么");
+	});
+
+	it("{ params } 必须是路径里的第一个参数", () => {
+		const nested = endpoint({
+			method: "GET",
+			path: "/runs/:id/steps/:step",
+			summary: "测试",
+			effect: "read",
+			resource: { kind: "run", target: { params: "step" } },
+			client: false,
+			key: ["runs", "step"],
+			params: z.object({ id: z.string(), step: z.string() }),
+			response: z.object({}),
+		});
+		const [problem] = problems(nested);
+		expect(problem).toContain("路径参数 step 不是路径里的第一个参数 :id");
+		expect(problem).toContain('改成 { params: "id" }');
+		expect(problems({ ...nested, resource: { kind: "run", target: { params: "id" } } })).toEqual(
+			[],
+		);
 	});
 });

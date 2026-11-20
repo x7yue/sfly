@@ -97,8 +97,18 @@ describe("路由清单里每个接口的声明和响应", () => {
 });
 
 describe("导出响应的规则", () => {
+	/** 给这几个接口的路径前缀各登记它们声明的类别，不让路径前缀的检查挡着这里要测的东西。 */
+	const lenient = (defs: Parameters<typeof buildRouteManifest>[0]) => ({
+		pathKinds: Object.fromEntries(
+			defs.map((def) => [
+				`/${def.path.split("/").filter(Boolean)[0]}`,
+				{ kind: def.resource.kind, why: "测试" },
+			]),
+		),
+		readsWithTraces: {},
+	});
 	const build = (...defs: Parameters<typeof buildRouteManifest>[0]) =>
-		buildRouteManifest(defs).routes;
+		buildRouteManifest(defs, lenient(defs)).routes;
 
 	it("没写 strict 的对象不封闭，写了 strictObject 的封闭", () => {
 		const [route] = build(
@@ -194,6 +204,7 @@ describe("导出响应的规则", () => {
 				method: "GET",
 				path: "/a",
 				key: ["a", "list"],
+				resource: { kind: "scenario", target: "collection" },
 				response: z.object({}),
 			}),
 		);
@@ -216,7 +227,7 @@ describe("导出响应的规则", () => {
 			params: z.object({ id: z.string() }),
 			response: z.object({}),
 		});
-		expect(() => buildRouteManifest([bad])).toThrow(
+		expect(() => buildRouteManifest([bad], lenient([bad]))).toThrow(
 			/GET \/x\/:id：缺少 summary[\s\S]*GET \/x\/:id：resource.target 的路径参数 name/,
 		);
 	});

@@ -37,7 +37,9 @@ import { z } from "zod";
  *    它们进入路由清单（`sfly api --list` / `--describe` 读的就是它），
  *    以后的鉴权也在契约路由一处按它们判断一个请求要什么、作用在什么上，不靠各个接口自己记。
  *    `checkRouteDeclarations`（./declarations.ts）检查声明本身站得住，契约测试对每个接口运行它：
- *    GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口要在 `READS_WITH_TRACES` 登记；
+ *    GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口要在 `READS_WITH_TRACES` 登记，`{ params }` 用的是路径里的第一个参数，
+ *    接口的路径前缀和 `resource.kind` 要对上 `PATH_KINDS`（`system` 就是那张表里的 `system` 项：不带项目、不需要凭据，写错一个就是悄悄多一个公开的接口；
+ *    新接口的路径前缀不在表里、或加一个资源类别，都要改那张表，审查时看得见）；
  *    声明为 `read` 的接口真的不写库，由控制面的测试用真实的请求核对（apps/server/test/read-only-routes.test.ts）。
  *    响应的 JSON Schema 随路由清单一起导出（`response`；SSE 是 `events`），不用另写。
  */

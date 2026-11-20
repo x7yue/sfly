@@ -7,7 +7,12 @@ import {
 	type ResourceRef,
 	type RouteDef,
 } from "./http/contract.js";
-import { checkRouteDeclarations } from "./http/declarations.js";
+import {
+	checkDeclarationTables,
+	checkRouteDeclarations,
+	DECLARATION_RULES,
+	type DeclarationRules,
+} from "./http/declarations.js";
 
 /**
  * 路由清单：从 HTTP 契约导出的接口列表（方法、路径、key、种类、说明、只读还是有副作用、作用在哪类资源上，
@@ -190,8 +195,14 @@ function kindOf(def: RouteDef): RouteKind {
  * 从契约导出路由清单（顺序与契约一致）。接口声明（说明、只读还是有副作用、资源）有问题时抛错，不导出：
  * 类型保证写了，这里保证写得对（`checkRouteDeclarations`）。
  */
-export function buildRouteManifest(contract: readonly RouteDef[]): RouteManifest {
-	const problems = checkRouteDeclarations(contract);
+export function buildRouteManifest(
+	contract: readonly RouteDef[],
+	rules: DeclarationRules = DECLARATION_RULES,
+): RouteManifest {
+	const problems = [
+		...checkRouteDeclarations(contract, rules),
+		...checkDeclarationTables(contract, rules),
+	];
 	if (problems.length > 0) {
 		throw new Error(`HTTP 契约里有接口的声明不对：\n${problems.map((p) => `  ${p}`).join("\n")}`);
 	}
