@@ -178,7 +178,7 @@ export const withSubflow = (agent: string, names?: { probe: string; subflow: str
 };
 
 /**
- * 断言焦点在 locator 上，并且焦点环可见（DESIGN-SYSTEM §7：`:focus-visible` 时 2px 青色外框，
+ * 断言焦点在 locator 上，并且焦点环可见（docs/DESIGN-SYSTEM.md §7：`:focus-visible` 时 2px 青色外框，
  * 容器不能用 outline-none 去掉它）。
  */
 export async function expectFocusVisible(locator: Locator): Promise<void> {

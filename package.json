@@ -18,7 +18,7 @@
 		"lint:rust": "bash scripts/lint-rust.sh",
 		"lint:py": "uv run --locked ruff check && uv run --locked ruff format --check",
 		"lint:node": "bash scripts/check-node-version.sh",
-		"lint:docs": "bash scripts/check-adr-numbers.sh",
+		"lint:docs": "bash scripts/lint-docs.sh",
 		"lint:actions": "bash scripts/lint-actions.sh",
 		"format": "biome check --write . && buf format -w && cargo fmt --all && uv run ruff format && uv run ruff check --fix",
 		"typecheck": "pnpm typecheck:ts && pnpm typecheck:py",

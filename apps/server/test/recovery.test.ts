@@ -1,4 +1,4 @@
-// 切入点 A：Agent 断线、排队超时与控制面重启恢复（docs/SEMANTICS.md §3.3、ARCHITECTURE §6.1）。
+// 切入点 A：Agent 断线、排队超时与控制面重启恢复（docs/SEMANTICS.md §3.3、docs/ARCHITECTURE.md §6.1）。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL；时间只由手动时钟推进，不做真实等待。
 import { TaskAction } from "@sfly/proto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

@@ -1,4 +1,4 @@
-// 性能测试（ARCHITECTURE §7.6）的纯逻辑：判定、选对比基准（本机上一次、发版基线）、对比、发版报告的把关、报告生成。
+// 性能测试（docs/ARCHITECTURE.md §7.6）的纯逻辑：判定、选对比基准（本机上一次、发版基线）、对比、发版报告的把关、报告生成。
 // 负载测试本身（pnpm perf）不进 CI，这里只测不需要启动任何进程的部分。
 import { describe, expect, it } from "vitest";
 import {

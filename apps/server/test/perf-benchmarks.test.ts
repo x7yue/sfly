@@ -1,4 +1,4 @@
-// 性能测试（ARCHITECTURE §7.6）里的三个基准测试：读取各自工具的输出，换算成报告里的数值。
+// 性能测试（docs/ARCHITECTURE.md §7.6）里的三个基准测试：读取各自工具的输出，换算成报告里的数值。
 // 基准测试本身不进 CI，这里只检查读取与换算。
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

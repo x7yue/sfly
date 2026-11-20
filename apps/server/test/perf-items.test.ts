@@ -1,4 +1,4 @@
-// 性能测试（ARCHITECTURE §7.6）的项注册与目标：目标只写在 ARCHITECTURE §7.6 一处，报告从那里读取。
+// 性能测试（docs/ARCHITECTURE.md §7.6）的项注册与目标：目标只写在 docs/ARCHITECTURE.md §7.6 一处，报告从那里读取。
 // 负载测试本身（pnpm perf）不进 CI，这里只检查项的声明与目标表一致。
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,8 +31,8 @@ import {
 } from "../perf/targets.js";
 import { repoRoot } from "./support/agent-binary.js";
 
-describe("ARCHITECTURE §7.6 的目标表", () => {
-	it("按「范围 → 目标」读出 §7.6 里的表格，不读其他章节的表格", () => {
+describe("docs/ARCHITECTURE.md §7.6 的目标表", () => {
+	it("按「范围 → 目标」读出 docs/ARCHITECTURE.md §7.6 里的表格，不读其他章节的表格", () => {
 		const md = [
 			"### 7.5 别的",
 			"",
@@ -69,7 +69,7 @@ describe("ARCHITECTURE §7.6 的目标表", () => {
 	});
 });
 
-describe("§7.6 目标里的数量", () => {
+describe("docs/ARCHITECTURE.md §7.6 目标里的数量", () => {
 	it("读出目标原文里带单位的数量：「万」乘一万，分钟、小时换算成秒；p95 这样的名字不算数量", () => {
 		expect(
 			targetQuantities("持续每秒 1 万点 1 小时不积压；1 小时范围的指标查询 p95 < 500 ms"),
@@ -83,7 +83,7 @@ describe("§7.6 目标里的数量", () => {
 		expect(targetQuantities("没有数量")).toEqual([]);
 	});
 
-	it("各项判定与负载用的数字与仓库里 §7.6 目标表一致（改了表要同步改 perf/targets.ts）", async () => {
+	it("各项判定与负载用的数字与仓库里 docs/ARCHITECTURE.md §7.6 目标表一致（改了表要同步改 perf/targets.ts）", async () => {
 		const targets = parseTargets(await readFile(join(repoRoot, "docs/ARCHITECTURE.md"), "utf8"));
 		const quantities = (scope: string) => targetQuantities(targets.get(scope) ?? "");
 		expect(quantities("单个任务 SDK → Agent")).toEqual([{ value: EVENTS_PER_SECOND, unit: "次" }]);
@@ -116,7 +116,7 @@ describe("§7.6 目标里的数量", () => {
 });
 
 describe("项的注册", () => {
-	it("perf/items 下每个文件一项：标识唯一、与文件名一致，范围都能在 §7.6 的目标表里找到", async () => {
+	it("perf/items 下每个文件一项：标识唯一、与文件名一致，范围都能在 docs/ARCHITECTURE.md §7.6 的目标表里找到", async () => {
 		const items = await loadItems();
 		expect(items.length).toBeGreaterThan(0);
 		const ids = items.map((i) => i.id);

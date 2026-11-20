@@ -307,7 +307,7 @@ export class TaskLogs {
 
 	/**
 	 * 控制面自己写一行日志（source `system`，控制面时间取当前时钟）：飞书通知节点的解析告警、ctx.notify 的告警和投递结果
-	 * （docs/SEMANTICS.md §1.3）。任何任务都可以写，包括没有 Agent 的内置节点；序号接在最后一行后面，不占用 Agent 序号。
+	 * （docs/SEMANTICS.md §4.2）。任何任务都可以写，包括没有 Agent 的内置节点；序号接在最后一行后面，不占用 Agent 序号。
 	 * 与同一任务的其他写入串行执行；任务不存在、日志已被截断时什么也不写。
 	 */
 	appendSystem(taskId: string, level: LogLineView["level"], text: string): Promise<void> {

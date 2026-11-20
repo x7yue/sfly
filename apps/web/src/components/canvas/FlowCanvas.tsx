@@ -930,7 +930,7 @@ export function FlowCanvas({
 				data-tool={tool}
 				style={{ "--canvas-zoom": 1 } as React.CSSProperties}
 				className={cn(
-					// 画布铺满视口，焦点环画在内侧（DESIGN-SYSTEM §7）。React Flow、工具条和检查器会盖住画布区域自己的轮廓，
+					// 画布铺满视口，焦点环画在内侧（docs/DESIGN-SYSTEM.md §7）。React Flow、工具条和检查器会盖住画布区域自己的轮廓，
 					// 所以焦点环再画在最上层的 ::after 上。
 					"absolute inset-0 overflow-hidden bg-canvas-bg -outline-offset-2",
 					"after:pointer-events-none after:absolute after:inset-0 after:z-20 focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring",

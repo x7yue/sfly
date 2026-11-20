@@ -4,7 +4,7 @@ import type { TestControlPlane } from "../../server/test/support/test-control-pl
 import type { E2eFixtures } from "./fixtures";
 import { createScenario, publishPackage, triggerRun } from "./support";
 
-// 停止子流程节点（#85，SEMANTICS §4.1）的端到端测试与视觉回归共用的场景。
+// 停止子流程节点（#85，docs/SEMANTICS.md §4.1）的端到端测试与视觉回归共用的场景。
 
 const ping = (id: string, extra: Record<string, unknown> = {}) => ({
 	id,
