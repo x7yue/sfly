@@ -13,6 +13,7 @@
 // 没有用「只有 SELECT 权限的数据库角色」：控制面启动时要迁移，运行时后台有周期扫描和清理，用只读角色它起不来、
 // 也没法区分是哪个请求出的错；请求前后比较的办法不改控制面，还看得见「写回同样的值」「取了序列号」和「写了文件」。
 // 覆盖范围和做不到的见 PR 说明。
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,13 +25,20 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { ArrayCoverage } from "./support/array-coverage.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
-import { publishPackage } from "./support/package-archive.js";
+import { putFocusItemsOk } from "./support/focus-items.js";
+import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
 import { SseClient, type SseEvent } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
-import { diffFootprints, settledFootprint, takeFootprint } from "./support/write-footprint.js";
+import {
+	diffFootprints,
+	type Footprint,
+	settledFootprint,
+	takeFootprint,
+} from "./support/write-footprint.js";
 
 const VERSION = packageJson.version;
 const WHEEL = `sfly-${VERSION}-py3-none-any.whl`;
@@ -57,6 +65,7 @@ const FIXTURES = {
 	live: "还在跑的运行",
 	empty: "没有版本的场景",
 	archived: "已归档的场景",
+	rich: "有子流程、说明和失效预设的场景",
 } as const;
 type FixtureKey = keyof typeof FIXTURES;
 
@@ -78,6 +87,17 @@ interface Seeded {
 /** 每次运行的任务都上传了一个产物。 */
 const ARTIFACT = "报告/结果 1.json";
 
+/**
+ * 全部用例跑完，这些数组字段还是每次都是空的：它们的元素没有被响应 schema 对照过。键是「方法 路径 response（SSE 是事件名） 数组路径」，
+ * 值是为什么做不到。新的数组字段出现时先在 seed 里补数据，补不了再来这里写。
+ */
+const UNVERIFIED_ARRAYS: Record<string, string> = {
+	"GET /dashboard response recent_ended[].focus[].series[]":
+		"控制台汇总只要关注项的最新值：读数用 points=0，序列按设计就是空的（序列的元素由 GET /runs/:id/focus 对照）",
+	"GET /dashboard response recent_ended[].focus[].series[].points[]":
+		"同上：控制台汇总的关注项读数不带序列",
+};
+
 /** 接口用哪些数据调用：定位到场景、运行、任务的，每种状态各一遍；其余（列表、系统）一遍。 */
 function fixtureKeys(def: RouteDef): Array<FixtureKey | undefined> {
 	const { kind, target } = def.resource;
@@ -85,8 +105,8 @@ function fixtureKeys(def: RouteDef): Array<FixtureKey | undefined> {
 	// 没有版本的场景没有第 1 版：读版本只在有版本的场景上走得到成功的路径。
 	if (kind === "scenario") {
 		return def.path.includes(":number")
-			? ["done", "live", "archived"]
-			: ["done", "live", "empty", "archived"];
+			? ["done", "live", "archived", "rich"]
+			: ["done", "live", "empty", "archived", "rich"];
 	}
 	if (kind === "run" || kind === "task") return ["done", "failed", "live"];
 	return [undefined];
@@ -99,6 +119,8 @@ describe("声明为只读的接口真的不写库", () => {
 	let agent: FakeAgent;
 	/** 验证过的 SSE 事件（`方法 路径 事件名`）：证明对照响应 schema 不是空转。 */
 	const validatedEvents = new Set<string>();
+	/** 响应里的数组字段有没有非空过：每次都是空的，它的元素 schema 就没有对过任何数据。 */
+	const arrays = new ArrayCoverage();
 
 	beforeAll(async () => {
 		dir = await mkdtemp(join(tmpdir(), "sfly-readonly-"));
@@ -107,6 +129,8 @@ describe("声明为只读的接口真的不写库", () => {
 		await writeFile(join(dir, "agent-x86"), "x86");
 		await writeFile(join(dir, "agent-arm"), "arm");
 		cp = await startTestControlPlane({
+			// 一个任务的日志超过这个字节数就截断：失败的那次运行故意写得比它多
+			logLimitBytes: 1500,
 			sdkWheelDir: dir,
 			clientPackageDir: dir,
 			docsDir: join(repoRoot, "docs/guide"),
@@ -170,6 +194,21 @@ describe("声明为只读的接口真的不写库", () => {
 
 	const readRoutes = httpContract.filter((def) => def.effect === "read");
 
+	/**
+	 * 上一个用例结束时留下的痕迹。响应之后才发生的写（延迟的写、后台的写）可能晚于「连着两次一样」，
+	 * 就会出现在下一个用例开始时取的那份里：每个用例开始时和上一个用例结束时的比较一次，
+	 * 不一样就说是上一个接口（或更早的）在响应之后还写了东西，不冤枉当前这个接口；
+	 * 全部跑完再取一次，和最后一个用例结束时的比较。
+	 */
+	let previous: { name: string; after: Footprint } | undefined;
+	const lateWrites = (now: Footprint) => {
+		const changes = previous ? diffFootprints(previous.after, now) : [];
+		return {
+			changes,
+			message: `上一个用例「${previous?.name}」（或更早的）在响应之后还写了东西，不是当前这个接口：\n${changes.join("\n")}`,
+		};
+	};
+
 	it("有足够多的只读接口被核对", () => {
 		expect(readRoutes.length).toBeGreaterThan(50);
 	});
@@ -181,8 +220,13 @@ describe("声明为只读的接口真的不写库", () => {
 			it(`${name}：响应与清单里的 schema 一致，没有写任何东西`, async () => {
 				const url = requestUrl(def, seeded, key ? seeded.fixtures[key] : undefined);
 				const before = await settled();
+				const late = lateWrites(before);
+				const current = { name, after: before };
+				previous = current;
+				expect(late.changes, late.message).toEqual([]);
 				const events = await call(def, url);
 				const after = await settled();
+				current.after = after;
 
 				const changes = diffFootprints(before, after);
 				expect(
@@ -193,6 +237,11 @@ describe("声明为只读的接口真的不写库", () => {
 					const schema = manifestEntry(def)?.events?.[event.event];
 					expect(schema, `${def.path} 的事件 ${event.event} 不在清单里`).toBeDefined();
 					expectValid(`${name} 事件 ${event.event}`, schema, event.data);
+					arrays.record(
+						`${def.method} ${def.path} ${event.event}`,
+						schema as Record<string, unknown>,
+						event.data,
+					);
 					validatedEvents.add(`${def.method} ${def.path} ${event.event}`);
 				}
 			});
@@ -214,6 +263,26 @@ describe("声明为只读的接口真的不写库", () => {
 		]) {
 			expect(validatedEvents, expected).toContain(expected);
 		}
+	});
+
+	it("响应 schema 里的数组字段都至少有一次非空（除了下面写明没对照的）", () => {
+		const unseen = arrays.unseen();
+		const unlisted = unseen.filter((key) => !(key in UNVERIFIED_ARRAYS));
+		expect(
+			unlisted,
+			`这些数组字段在全部用例里每次都是空的，元素的 schema 没有对过数据：在 seed 里补上能让它们非空的数据，` +
+				`确实做不到的写进 UNVERIFIED_ARRAYS 并写明原因：\n${unlisted.join("\n")}`,
+		).toEqual([]);
+		const stale = Object.keys(UNVERIFIED_ARRAYS).filter((key) => !unseen.includes(key));
+		expect(
+			stale,
+			`UNVERIFIED_ARRAYS 里这些已经被对照过了（或接口改了），删掉：\n${stale.join("\n")}`,
+		).toEqual([]);
+	});
+
+	it("全部用例跑完之后，最后一个接口也没有在响应之后还写东西", async () => {
+		const late = lateWrites(await settled());
+		expect(late.changes, late.message).toEqual([]);
 	});
 
 	// ---- 调用
@@ -269,7 +338,9 @@ describe("声明为只读的接口真的不写库", () => {
 		}
 		expect(res.status, `${where}：${text.slice(0, 200)}`).toBe(200);
 		const json: unknown = JSON.parse(text);
-		expectValid(where, manifestEntry(def)?.response, json);
+		const schema = manifestEntry(def)?.response;
+		expectValid(where, schema, json);
+		arrays.record(`${def.method} ${def.path} response`, schema as Record<string, unknown>, json);
 		// 清单里的 schema 不能比 zod 更严：zod 认的响应，它也要认（上一行已经对过一遍，这行保证两边说的是同一件事）。
 		expect(() =>
 			(def as { response: { parse(v: unknown): unknown } }).response.parse(json),
@@ -350,64 +421,259 @@ const documentFor = () => ({
 			kind: "entry",
 			params: [{ name: "env", type: "string", default: "staging" }],
 		},
-		{ id: "check", kind: "package", package: "probe", node: "check" },
+		{
+			id: "check",
+			kind: "package",
+			package: "probe",
+			node: "check",
+			inputs: { url: "http://probe.test" },
+		},
 	],
 	edges: [{ from: "entry", to: "check", kind: "chain" }],
 	packages: { probe: "1.0.0" },
 });
 
+/**
+ * 有子流程（入口声明了参数、异步任务节点没传而子流程里用到了它：预检警告）、注释框、便签、飞书通知节点的场景。
+ * 入口参数用 `param` 命名：第二个版本改掉它，让第一个版本上建的运行预设失效。
+ */
+const richDocument = (param: string) => ({
+	default_agent: "agent-a",
+	nodes: [
+		{ id: "entry", kind: "entry", params: [{ name: param, type: "string", default: "staging" }] },
+		{
+			id: "check",
+			kind: "package",
+			package: "probe",
+			node: "check",
+			inputs: { url: "http://probe.test" },
+		},
+		{ id: "spawn", kind: "async", params: {} },
+		{ id: "notify", kind: "feishu_notify", bot: "运维群", text: "巡检完成" },
+		{
+			id: "report",
+			kind: "subflow_entry",
+			name: "report",
+			params: [{ name: "who", type: "string" }],
+		},
+		{
+			id: "send",
+			kind: "package",
+			package: "probe",
+			node: "check",
+			inputs: { url: "${{ params.who }}" },
+		},
+	],
+	edges: [
+		{ from: "entry", to: "check", kind: "chain" },
+		{ from: "check", to: "spawn", kind: "chain" },
+		{ from: "spawn", to: "notify", kind: "chain" },
+		{ from: "spawn", to: "report", kind: "dispatch" },
+		{ from: "report", to: "send", kind: "chain" },
+	],
+	packages: { probe: "1.0.0" },
+	annotations: [
+		{
+			id: "annotation_1",
+			title: "汇报",
+			note: "跑完后异步汇报",
+			nodes: ["notify"],
+			subflows: ["report"],
+		},
+	],
+	sticky_notes: [
+		{ id: "sticky_1", title: "跑之前确认", text: "Agent 都在线", position: { x: 0, y: -300 } },
+	],
+});
+
+/** 节点包 `probe`：入口和出口有必填与顺序，指标有带标签的，图表引用它们（让包的、运行的响应里的数组都有内容）。 */
+async function publishProbe(cp: TestControlPlane): Promise<void> {
+	const archive = packageArchive(
+		packageMetadata({
+			name: "probe",
+			version: "1.0.0",
+			nodes: [
+				{
+					name: "check",
+					title: "检查",
+					entry: "probe.nodes:check",
+					inputs: {
+						type: "object",
+						properties: { url: { type: "string" }, retries: { type: "integer", default: 3 } },
+						required: ["url"],
+						order: ["url", "retries"],
+					},
+					outputs: {
+						type: "object",
+						properties: { ok: {} },
+						required: ["ok"],
+						order: ["ok"],
+					},
+					metrics: [
+						{ name: "tps", unit: "req/s", kind: "gauge" },
+						{ name: "conn", unit: "个", kind: "gauge", labels: ["host"] },
+					],
+					charts: [
+						{ title: "TPS", type: "line", metrics: ["tps"] },
+						{ title: "连接", type: "line", metrics: ["conn"] },
+					],
+				},
+			],
+		}),
+		{ "probe-1.0.0-py3-none-any.whl": new TextEncoder().encode("wheel") },
+	);
+	const res = await cp.fetch("/packages", publishInit(archive));
+	if (res.status !== 201) throw new Error(`publish probe: ${await res.text()}`);
+}
+
 async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: FakeAgent }> {
 	const api = new ApiClient(cp);
-	await publishPackage(cp, "probe", "1.0.0", {
-		check: {
-			outputs: ["ok"],
-			metrics: [{ name: "tps", unit: "req/s", kind: "gauge" }],
-			charts: [{ title: "TPS", type: "line", metrics: ["tps"] }],
-		},
-	});
+	await publishProbe(cp);
 	const scenario = (name: string) => api.orchestrationWith(documentFor(), name);
 	const checked = await scenario("巡检");
 	const pressure = await scenario("压测");
 	const archived = await scenario("旧巡检");
 	const empty = await api.createOrchestration("空场景");
+	const rich = await api.orchestrationWith(richDocument("env"), "有子流程");
 	expect((await api.postEmpty(`/orchestrations/${archived}/archive`)).status).toBe(200);
 
+	// 关注项（场景和运行的读数里有内容）、预设（运行用它触发）、飞书机器人和引用它的场景
+	await putFocusItemsOk(api, checked, [
+		{ node_id: "check", chart: "TPS" },
+		{ node_id: "check", chart: "连接" },
+	]);
 	const preset = await createPresetOk(api, checked, {
 		name: "生产",
 		params: [{ name: "env", value: "prod" }],
 	});
-	const bot = await api.createFeishuBot(
-		"运维群",
-		"https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+	const bot = await api.createFeishuBot("运维群", "https://feishu.test/hook/ops");
+	await createPresetOk(api, rich, { name: "旧预设", params: [{ name: "env", value: "prod" }] });
+	expect(
+		(await api.patch(`/orchestrations/${rich}`, { run_notification: { bot: "运维群" } })).status,
+	).toBe(200);
+	// 第二个版本改掉入口参数：第一个版本上建的预设失效
+	await api.saveVersion(rich, richDocument("stage"));
+
+	// 在线编辑者：每个场景一个，在线编辑者名单推送的第一份里有人
+	for (const id of [checked, pressure, archived, empty, rich]) {
+		expect(
+			(await api.post(`/orchestrations/${id}/presence`, { session_id: `s-${id}` })).status,
+		).toBe(200);
+	}
+
+	// Agent：一个槽位（还在跑的运行占着它，下一次运行就排队）、有能力、装了节点包、加载了开发版本
+	const agent = await FakeAgent.connect(
+		cp.grpcUrl,
+		{
+			name: "agent-a",
+			slots: 1,
+			capabilities: [{ name: "files", version: 1 }],
+			installedPackages: [{ name: "probe", version: "1.0.0" }],
+			devPackages: [
+				{
+					name: "dev-probe",
+					source: "/home/dev/probe",
+					metadataJson: JSON.stringify(packageMetadata({ name: "dev-probe", version: "dev" })),
+				},
+			],
+		},
+		{ clock: cp.clock },
 	);
 
-	const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
-
-	/** 触发一次运行，Agent 领到它的任务，上报日志、指标、动作和一个产物；返回运行与任务。 */
-	const start = async (scenarioId: string, level: LogLevel, text: string) => {
-		const runId = await api.triggerOk(scenarioId, { env: "prod" });
+	/** 触发一次运行，Agent 领到它的任务，上报日志、指标、动作摘要和一个产物；返回运行与任务。 */
+	const start = async (
+		scenarioId: string,
+		level: LogLevel,
+		text: string,
+		{
+			presetId,
+			bulkLogs = false,
+			running = false,
+		}: { presetId?: string; bulkLogs?: boolean; running?: boolean } = {},
+	) => {
+		const runId = presetId
+			? await (async () => {
+					const res = await api.post(`/orchestrations/${scenarioId}/runs`, { preset: presetId });
+					expect(res.status, await res.clone().text()).toBe(201);
+					return ((await res.json()) as { id: string }).id;
+				})()
+			: await api.triggerOk(scenarioId, { env: "prod" });
 		const task = await agent.nextAssign();
 		await agent.started(task);
-		agent.logs(task, [
-			{
-				seq: 1n,
-				timeUnixMs: BigInt(T0),
-				source: level === LogLevel.ERROR ? LogSource.STDERR : LogSource.STDOUT,
-				level,
-				text,
-			},
-		]);
+		const line = (seq: number, body: string) => ({
+			seq: BigInt(seq),
+			timeUnixMs: BigInt(T0),
+			source: level === LogLevel.ERROR ? LogSource.STDERR : LogSource.STDOUT,
+			level,
+			text: body,
+		});
+		// 日志超过上限的任务：运行日志里「被截断的任务」不是空的
+		agent.logs(
+			task,
+			bulkLogs
+				? Array.from({ length: 40 }, (_, i) => line(i + 1, `${text}${"x".repeat(80)}`))
+				: [line(1, text)],
+		);
 		const second = Math.floor(cp.clock.now().getTime() / 1000);
 		agent.metrics(task, [
 			["tps", second, 10],
 			["tps", second + 1, 20],
+			{
+				name: "conn",
+				timeUnixS: BigInt(second),
+				value: 3,
+				min: 3,
+				max: 3,
+				labels: { host: "a" },
+			},
 		]);
 		agent.progress(task, 1, 2, "一半");
+		const failedRun = level === LogLevel.ERROR;
+		const stamp = agent.stamp(T0 + 1_000);
+		const action = (id: number, result: "success" | "failed") => ({
+			id,
+			parent: null,
+			depth: 0,
+			name: "巡检",
+			fields: {},
+			...stamp,
+			end_ts: stamp.ts + 500,
+			end_mono: stamp.mono + 500,
+			result,
+			reason: result === "failed" ? "连接被拒绝" : null,
+		});
 		agent.actions(task, [
 			agent.actionStart(1, "巡检", T0 + 1_000),
-			agent.actionEnd(1, level === LogLevel.ERROR ? "failed" : "success", T0 + 1_500),
+			agent.actionEnd(1, failedRun ? "failed" : "success", T0 + 1_500),
 		]);
-		agent.actionSummary(task, { total: 1, reported: 1 });
+		agent.actionSummary(task, {
+			total: 502,
+			reported: 102,
+			names: [
+				{
+					name: "巡检",
+					total: 2,
+					failed: failedRun ? 1 : 0,
+					reported: 2,
+					capped_ts: null,
+					capped_mono: null,
+				},
+				// 超过明细上限，只计数
+				{
+					name: "心跳",
+					total: 500,
+					failed: 0,
+					reported: 100,
+					capped_ts: stamp.ts + 10,
+					capped_mono: stamp.mono + 10,
+				},
+			],
+			running: running
+				? [{ id: 3, parent: null, depth: 0, name: "压测", fields: { 并发: "100" }, ...stamp }]
+				: [],
+			recent: [action(1, "success")],
+			recent_failed: failedRun ? [action(2, "failed")] : [],
+		});
 		await agent.sync();
 		const put = await fetch(
 			`${task.artifactUploadUrl}${ARTIFACT.split("/").map(encodeURIComponent).join("/")}`,
@@ -423,19 +689,25 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	const settle = (runId: string, status: string) =>
 		eventually(async () => expect((await api.run(runId)).status).toBe(status));
 
-	// 已结束的
-	const done = await start(checked, LogLevel.INFO, "巡检通过");
+	// 已结束的：用预设触发
+	const done = await start(checked, LogLevel.INFO, "巡检通过", { presetId: preset.id });
 	await agent.succeed(done.task, { ok: true });
 	await settle(done.runId, "success");
 
-	// 失败的
-	const failed = await start(checked, LogLevel.ERROR, "连接被拒绝");
+	// 失败的：日志超过上限
+	const failed = await start(checked, LogLevel.ERROR, "连接被拒绝", { bulkLogs: true });
 	await agent.fail(failed.task, "连接被拒绝");
 	await settle(failed.runId, "failed");
 
 	// 还在跑的：Agent 在线、任务占着槽位，直到测试结束
-	const live = await start(pressure, LogLevel.INFO, "压测中");
+	const live = await start(pressure, LogLevel.INFO, "压测中", { running: true });
 	await settle(live.runId, "running");
+	// 再来一次运行：Agent 的槽位满了，任务排队
+	await api.triggerOk(pressure, { env: "prod" });
+	await eventually(async () => {
+		const { agents } = await api.getJson<{ agents: Array<{ queued_tasks: unknown[] }> }>("/agents");
+		expect(agents[0]?.queued_tasks).toHaveLength(1);
+	});
 
 	const docs = await api.getJson<{ pages: Array<{ slug: string }> }>("/docs");
 	const fixture = async (
@@ -458,6 +730,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 				live: await fixture(pressure, live),
 				empty: await fixture(empty),
 				archived: await fixture(archived),
+				rich: await fixture(rich),
 			},
 			presetId: preset.id,
 			botName: bot.name,
