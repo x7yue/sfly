@@ -630,13 +630,13 @@
 		{
 			"name": "mark：一个标记",
 			"events": [
-				"{\"type\":\"mark\",\"ts\":1700000000000,\"mono\":5000000,\"id\":3,\"parent\":null,\"depth\":0,\"name\":\"收到第一笔成交\",\"fields\":{}}"
+				"{\"type\":\"mark\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"收到第一笔成交\",\"fields\":{}}"
 			],
 			"expect": {
 				"actions": [
 					{
 						"type": "mark",
-						"id": 3,
+						"id": 1,
 						"parent": null,
 						"depth": 0,
 						"name": "收到第一笔成交",

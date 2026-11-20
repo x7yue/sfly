@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from sfly import local
+from sfly import Cancelled, Metric, local
+from sfly.context import Context, TaskInfo
 from sfly.local import ActionRecord, Execution
 
 TESTDATA = Path(__file__).resolve().parents[3] / "testdata"
@@ -333,3 +335,137 @@ def test_constants_shared_with_the_agent_are_the_ones_in_the_case_file() -> None
         "stderr_tail_bytes": local._STDERR_TAIL_BYTES,
         "terminate_grace_ms": round(local.DEFAULT_GRACE * 1000),
     } == constants
+
+
+# ---- 写入端：SDK 写出来的行就是用例里的行 ----
+
+#: 用例名 → 产生那些行的 SDK 调用。没有列在这里的用例是手写的变体（别名、缺字段、写错了的内容），
+#: SDK 不会写出来。
+WRITERS: dict[str, Callable[[Context], None]] = {}
+#: 不逐行对的事件类型：动作摘要里是随时间变化的读数，没有一行能固定下来逐字段对。
+NOT_WRITTEN = {"action_summary"}
+#: 每次写入都不同的键，比较前去掉。
+VOLATILE = ("ts", "mono")
+
+
+def writes(name: str) -> Callable[[Callable[[Context], None]], Callable[[Context], None]]:
+    def register(call: Callable[[Context], None]) -> Callable[[Context], None]:
+        WRITERS[name] = call
+        return call
+
+    return register
+
+
+@writes("log：四个级别各记成对应级别的 SDK 日志，按写的先后")
+def _log_levels(ctx: Context) -> None:
+    ctx.log.debug("d")
+    ctx.log.info("i")
+    ctx.log.warn("w")
+    ctx.log.error("e")
+
+
+@writes("progress：当前值、总数和说明")
+def _progress(ctx: Context) -> None:
+    ctx.progress(1, 3, "第一步")
+
+
+@writes("progress：总数是 null 表示未知")
+def _progress_without_total(ctx: Context) -> None:
+    ctx.progress(2.5)
+
+
+@writes("metric：gauge")
+def _metric_gauge(ctx: Context) -> None:
+    ctx.metric("tps", 1.5)
+
+
+@writes("metric：counter")
+def _metric_counter(ctx: Context) -> None:
+    ctx.metric("requests", 7)
+
+
+@writes("metric：标签按键排序")
+def _metric_labels(ctx: Context) -> None:
+    ctx.metric("rss", 10, labels={"pid": 1234, "host": "a"})
+
+
+@writes("notify：文本通知")
+def _notify_text(ctx: Context) -> None:
+    ctx.notify("ops", "指标越界", at_all=True)
+
+
+@writes("notify：原始消息")
+def _notify_message(ctx: Context) -> None:
+    ctx.notify("ops", message={"msg_type": "text", "content": {"text": "hi"}})
+
+
+@writes("mark：一个标记")
+def _mark(ctx: Context) -> None:
+    ctx.mark("收到第一笔成交")
+    ctx.action.flush()
+
+
+@writes("action_end：动作成功结束")
+def _action_success(ctx: Context) -> None:
+    with ctx.action("下单", 订单="1001"):
+        pass
+    ctx.action.flush()
+
+
+@writes("action_end：失败带原因和 note 补充的字段")
+def _action_failed(ctx: Context) -> None:
+    with ctx.action("下单", 订单="1001") as action:
+        action.note(回报="rejected")
+        action.fail("ValueError: 拒单")
+    ctx.action.flush()
+
+
+@writes("action_end：因取消离开 with 是 unfinished")
+def _action_unfinished(ctx: Context) -> None:
+    try:
+        with ctx.action("下单", 订单="1001"):
+            raise Cancelled("任务被终止")
+    except Cancelled:
+        pass
+    ctx.action.flush()
+
+
+def without_volatile(event: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in event.items() if k not in VOLATILE}
+
+
+@pytest.mark.parametrize("name", list(WRITERS), ids=list(WRITERS))
+def test_the_lines_the_sdk_writes_are_the_lines_of_the_shared_cases(
+    name: str, tmp_path: Path
+) -> None:
+    case = next(c for c in EVENT_CASES if c["name"] == name)
+    path = tmp_path / "events.jsonl"
+    ctx = Context(
+        events_path=path,
+        cancel_path=None,
+        artifacts_dir=None,
+        artifacts_url=None,
+        metrics=[
+            Metric("tps"),
+            Metric("requests", kind="counter"),
+            Metric("rss", labels=["pid", "host"]),
+        ],
+        task=TaskInfo(),
+        procs_dir=tmp_path / "procs",
+    )
+    WRITERS[name](ctx)
+    written = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [without_volatile(e) for e in written if e["type"] != "action_summary"] == [
+        without_volatile(json.loads(line)) for line in case["events"]
+    ]
+
+
+def test_every_written_line_has_a_case_and_every_event_type_but_the_summary_is_written() -> None:
+    names = {case["name"] for case in EVENT_CASES}
+    assert set(WRITERS) <= names
+    written = {
+        json.loads(line)["type"]
+        for name in WRITERS
+        for line in next(c for c in EVENT_CASES if c["name"] == name)["events"]
+    }
+    assert written == set(FILE["event_types"]) - NOT_WRITTEN
