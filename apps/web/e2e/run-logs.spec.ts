@@ -386,6 +386,12 @@ test("合并视图筛选了节点、筛选出的节点里没有日志时底部�
 	await expect(scope).toHaveText("范围：跟随筛选（1 个节点）");
 	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
 	await expect(panel(page).getByRole("tabpanel")).toHaveCount(0);
+	// 展开看说明文字（用户展开以后就不再按内容自动决定），双击拖动条恢复默认：回到按内容自动，又自动收起。
+	await panel(page).getByRole("button", { name: "展开" }).click();
+	await expect(panel(page).getByRole("tabpanel")).toHaveText("没有符合条件的日志。");
+	await page.getByRole("separator", { name: "调整底部面板高度" }).dblclick();
+	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
+	await expect(panel(page).getByRole("tabpanel")).toHaveCount(0);
 
 	// verify 输出了日志：自动展开。
 	agent.logs(tasks.verify as AssignedTask, [logAt(agent, clock0)(1, 11_000, "verify 2 retrying")]);
