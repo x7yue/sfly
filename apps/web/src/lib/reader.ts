@@ -45,6 +45,7 @@ const NEVER_CHANGES = () => () => {};
  * 把读取器接到组件上：`key` 变了就换一个新的读取器（`make` 新建，旧的 `dispose`，在途的结果作废），
  * 组件卸载时 `dispose`。`make` 返回 null 表示这组条件下不读（例如面板收起了）。读取器建好之前——第一次渲染，
  * 以及 `key` 刚变、新的读取器还没建好的那一次渲染——和 `idle` 一样，没有读到任何东西，不会显示上一个读取器的状态。
+ * `idle` 要传模块级的常量：没有读取器时它就是 `useSyncExternalStore` 的快照，每次渲染都新建一个会让组件不停重渲染。
  */
 export function useReader<S, R extends Reader<S>>(
 	make: () => R | null,

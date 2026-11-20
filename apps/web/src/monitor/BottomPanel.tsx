@@ -556,9 +556,9 @@ function LogsView<L extends LogLineView>({
 	onOrigin?: (line: L) => void;
 	/** 截断提示；没有截断时为 null。 */
 	truncated: string | null;
-	/** 筛选了级别：没有日志时不算空（那是用户自己筛掉的），面板不自动收起。 */
+	/** 筛选了级别：没有日志时，说明文字是没有符合条件的日志。面板要不要自动收起不在这里判断，见 `hasNoLogs`。 */
 	filtered: boolean;
-	/** 只看筛选出的节点：这些节点里没有日志时仍算空（面板照常自动收起），说明文字是没有符合条件的日志。 */
+	/** 只看筛选出的节点：这些节点里没有日志时，说明文字也是没有符合条件的日志。 */
 	scoped?: boolean;
 	/** 没有任何日志时的说明。 */
 	noOutput: string;
