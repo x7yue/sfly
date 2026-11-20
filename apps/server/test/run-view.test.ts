@@ -1,7 +1,9 @@
 // 切入点 A：触发前的预检、运行列表、运行状态的 SSE 推送（#9）。
+import { runFocusApi, runSummaryApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { FakeAgent, type HelloInit } from "./support/fake-agent.js";
+import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
@@ -223,16 +225,34 @@ describe("运行视图", () => {
 			expect(((await res.json()) as { error: { code: string } }).error.code).toBe("not_found");
 		});
 
-		it("运行编号写成大写时照样查得到（UUID 不分大小写）", async () => {
-			await (await connect({ name: "agent-a" })).disconnect();
-			const id = await api.orchestrationWith(chain([{ id: "a" }]));
+		it("运行编号写成大写时照样查得到（UUID 不分大小写）：运行视图、关注项读数、运行摘要读到的和小写写法一样", async () => {
+			await publishBench(cp);
+			const agent = await connect({ name: "agent-a" });
+			const id = await api.orchestrationWith(benchDocument([["load", "load"]]));
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "TPS" }]);
 			const runId = await api.triggerOk(id);
+			// 任务开始执行：关注项的来源节点有状态和开始时间，不是只回一个 200。
+			await agent.nextAssign();
 			const upper = runId.toUpperCase();
 
 			const view = await api.get(`/runs/${upper}`);
 			expect(view.status).toBe(200);
 			expect(((await view.json()) as RunView).id).toBe(runId);
-			expect((await api.get(`/runs/${upper}/focus`)).status).toBe(200);
+
+			const focus = await cp.fetch(`/runs/${upper}/focus`);
+			expect(focus.status).toBe(200);
+			const { items } = runFocusApi.focus.response.parse(await focus.json());
+			expect(items).toHaveLength(1);
+			expect(items[0]?.node_id).toBe("load");
+			expect(items[0]?.source.status).toBe("running");
+			expect(items[0]?.source.started_at).not.toBeNull();
+
+			const summary = await cp.fetch(`/runs/${upper}/summary`);
+			expect(summary.status).toBe(200);
+			expect(runSummaryApi.summary.response.parse(await summary.json())).toMatchObject({
+				run_id: runId,
+				status: "running",
+			});
 		});
 
 		it("节点详情里每次尝试都有输入、输出、所在 Agent 和排队 / 开始 / 结束时间", async () => {

@@ -116,6 +116,11 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	version: { id: string; number: number; document: StoredOrchestrationDocument };
 	/** 场景此刻的名称和关注项（不属于场景版本）。 */
 	scenario: Pick<typeof orchestrations.$inferSelect, "name" | "focusItems">;
+	/**
+	 * 按这次运行此刻的 secret 值给一段文字打码：读取方在读取结果之外拿到用户内容（任务动作摘要里的失败的动作等）时，
+	 * 和读取结果里的用户内容用同一个口径。
+	 */
+	maskText: (text: string) => string;
 	chains: RunChain<A>[];
 	/** 进行中的节点（排队、准备中、执行中、等待唤醒），按链与链上的顺序。 */
 	activeNodes: RunListActiveNode[];
@@ -387,6 +392,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				run: { ...run, params: mask.deep(run.params) },
 				version,
 				scenario,
+				maskText: mask.text,
 				chains,
 				activeNodes: activeNodesOf(chains),
 				failures: failuresInOrder(

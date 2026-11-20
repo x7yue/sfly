@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RunState } from "./http/run-summary.js";
 import { OrchestrationDocument } from "./orchestration-document.js";
 import { PackageMetadata } from "./package-metadata.js";
 
@@ -14,12 +15,14 @@ export * from "./removed-nodes.js";
 export * from "./run-failures.js";
 export * from "./run-log-order.js";
 export * from "./run-log-scope.js";
+export * from "./run-state.js";
 export * from "./series.js";
 
 /** 导出给 Python CLI 使用的 JSON Schema：文件名（不含扩展名） → zod schema。 */
 export const exportedSchemas = {
 	"orchestration-document": OrchestrationDocument,
 	"package-metadata": PackageMetadata,
+	"run-state": RunState,
 } as const;
 
 /** 按输入形态导出 JSON Schema（draft 2020-12）；带默认值的字段在输入中可省略。 */

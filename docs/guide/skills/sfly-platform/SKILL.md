@@ -42,12 +42,12 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
    | 退出码 | 含义 | 下一步 |
    |---|---|---|
    | 0 | 运行成功 | 核对结果（见下），符合预期就完成 |
-   | 1 | 运行失败 | 读摘要里失败节点的错误和日志尾部，不够再 `uv run sfly run logs <运行> --failed`；改代码或场景，回到第 5 步 |
+   | 1 | 运行失败 | 读摘要里失败节点的错误、日志尾部和失败的动作，不够再 `uv run sfly run logs <运行> --failed`、`uv run sfly run actions <运行> --failed`；改代码或场景，回到第 5 步 |
    | 2 | 命令本身出错 | 按 stderr 里的「下一步」纠正（参数、预检问题、连不上控制面） |
    | 3 | 运行被取消 | 摘要写明了是谁取消的；把情况告诉用户，由用户决定是否再运行 |
    | 124 | 等待超时 | 运行仍在继续；`uv run sfly run wait <运行>` 接着等 |
 
-   **核对结果**：节点输出在 `uv run sfly api GET /runs/<运行>` 的各节点 `outputs` 里，日志用 `uv run sfly run logs <运行>`，指标用 `uv run sfly api GET /runs/<运行>/metrics/summary`。运行成功，且输出、日志、指标都符合预期，联调才算完成；有一项不符合，按失败处理，改代码后回到第 5 步。
+   **核对结果**：节点输出用 `uv run sfly run show <运行> --outputs`（只看一个节点加 `--node 链:节点`），业务阶段（动作）的情况用 `uv run sfly run actions <运行>`（只看失败的加 `--failed`），日志用 `uv run sfly run logs <运行>`，指标用 `uv run sfly run metrics <运行>`；不用拼 `sfly api`，也不用抄整段运行 id：`<运行>` 可以写 id 的前缀（至少 4 个字符），或 `latest`（你自己触发的最近一次，`run cancel` 除外）。输出被截断时命令会写明怎么读完整的。运行成功，且输出、动作、日志、指标都符合预期，联调才算完成；有一项不符合，按失败处理，改代码后回到第 5 步。
 
    **改完代码之后**：只改函数体时，回到第 5 步，下一个任务就用新代码。改了节点的输入、输出、指标声明、依赖，或增删节点时，先重新 `uv run sfly dev` 再回到第 5 步。改了场景时回到第 4 步。
 
