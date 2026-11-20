@@ -24,8 +24,8 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 ## 运行
 
 ```sh
-.claude/skills/verify-task-dispatch/scripts/check.sh     # 约 2 分钟（大部分是 SlowDelivery）；退出码 0 = 结果与下面记录的一致
-.claude/skills/verify-task-dispatch/scripts/mutants.sh   # 约 5 秒；确认每条性质仍然能失败
+.agents/skills/verify-task-dispatch/scripts/check.sh     # 约 2 分钟（大部分是 SlowDelivery）；退出码 0 = 结果与下面记录的一致
+.agents/skills/verify-task-dispatch/scripts/mutants.sh   # 约 5 秒；确认每条性质仍然能失败
 ```
 
 第一次运行时，脚本会用 mise 装 Temurin 21（`java@temurin-21.0.13+9.0.LTS`），下载 tla2tools 1.8.0 到 `~/.cache/sfly-formal/` 并校验 sha256，都不改动仓库。完整输出和反例写到 `~/.local/state/sfly-formal/<时间>/<配置>.txt`。
