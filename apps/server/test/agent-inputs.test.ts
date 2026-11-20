@@ -285,6 +285,8 @@ describe("「Agent」类型的输入", () => {
 				kind: "config_error",
 				message: "节点 c 的输入 source 选择的 Agent ghost 还没有注册过",
 			});
+			// 输入已经解析出来：失败的尝试上记着它们。
+			expect(node.attempts[0]?.inputs).toMatchObject({ source: "ghost" });
 		});
 		await runner.expectNoAssign();
 	});

@@ -177,6 +177,8 @@ describe("最低 Agent 版本", () => {
 				message:
 					"节点 c：节点包 logs@1.0.0 需要 Agent >=1.1，参数 source 选的 Agent old-source 的版本是 1.0.0：请升级 Agent old-source",
 			});
+			// 输入已经解析出来：失败的尝试上记着它们。
+			expect(node.attempts[0]?.inputs).toMatchObject({ source: "old-source" });
 		});
 		await runner.expectNoAssign();
 	});
@@ -202,6 +204,8 @@ describe("最低 Agent 版本", () => {
 				message:
 					"节点包 logs@dev 需要 Agent >=1.1，节点所在的 Agent runner 的版本是 1.0.0：请升级 Agent runner",
 			});
+			// 节点所在的 Agent 版本不满足时在校验输入之前就失败：尝试上没有记输入。
+			expect(node.attempts[0]?.inputs).toBeNull();
 		});
 		await runner.expectNoAssign();
 	});
