@@ -109,7 +109,8 @@ def http_check(
 | 没有注解、`Any`、`object` | 任意 JSON 值，不校验 |
 
 - 有默认值的参数是可选输入，默认值必须能序列化为 JSON；没有默认值的是必填输入。
-- 派发任务前按 schema 校验：缺少必填输入、或声明了的输入类型不符时，任务以 `config_error` 失败，节点不会执行。没有声明的输入不检查。
+- 派发任务前按 schema 校验：缺少必填输入、或声明了的输入类型不符时，任务以 `config_error` 失败，节点不会执行。
+- 输入里有节点没有声明的名字（多半是参数名写错了）时，执行器在调用节点函数之前就拒绝，任务同样以 `config_error` 失败，信息里写出多出来的名字和这个节点声明的输入，例如 `节点 http_load 没有声明输入 duraton，它声明的输入有：url、duration、concurrency`。`config_error` 不按 `retries` 重试；`sfly debug`、`sfly.testing` 和在 Agent 上执行一样。有 `**kwargs` 的函数（`sfly build` 不接受这样的节点）什么名字都收。
 - 不支持的注解（例如自定义类）让 `sfly build` 报错。
 
 ### 输入的说明：`Doc`
@@ -889,7 +890,7 @@ def test_countdown_cleans_up_when_cancelled(tmp_path: Path) -> None:
 `run_node(node, inputs=None, *, cancel_when=None, cancel_after=None, grace=10.0, work_dir=None, downloads=None, agents=None)` 在子进程里用和 Agent 相同的执行器执行节点，等它结束后返回 `Execution`：
 
 - `node`：`@node` 函数（模块顶层），或入口字符串 `"模块:函数"`。
-- `inputs`：输入，先按类型注解校验，不通过时 `status` 为 failed、`error.kind` 为 config_error，节点不执行。
+- `inputs`：输入，先按类型注解校验，不通过、或有节点没有声明的名字时 `status` 为 failed、`error.kind` 为 config_error，节点不执行。
 - `cancel_when(partial)`：执行中定期以到目前为止的结果调用，返回 True 时取消；`cancel_after`：开始后这么多秒取消。取消与平台相同：节点里抛出 `Cancelled`，宽限期 `grace` 秒后强制杀掉。
 - `work_dir`：任务工作目录，默认新建一个临时目录（不自动删除）；测试里传 pytest 的 `tmp_path`。
 - `downloads`：产物引用 → 本地内容，给 `ctx.artifacts.download` 用。内容是 bytes / str（按 UTF-8）时就是产物的内容，是路径（`Path`）时取该文件，写法与 `ctx.artifacts.save` 相同。没有列出的引用照常下载。
@@ -967,7 +968,7 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 - `ctx.notify` 不真的发送：和日志一起实时打印一行 `通知  发给飞书机器人「<名称>」（本地调试不发送）：<请求体 JSON>`。从 SDK 0.3.0 起可用。
 - 动作和标记和日志一起按时间实时打印：动作开始一行 `动作  开始 #<ID> <名称> <字段>`，结束一行 `动作  成功|失败|未结束 #<ID> <名称> <耗时> <字段> 原因：<失败原因>`，标记一行 `标记  <名称> <字段>`，按层级缩进（最多 3 层）。从 SDK 0.4.0 起可用。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉；节点结束后、打印结果期间的 Ctrl-C 被忽略。
-- 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。
+- 退出码：成功 0，节点失败 1，参数不合法（包括输入里有节点没有声明的名字）或找不到节点 2，取消 130。
 
 ### `sfly dev`
 

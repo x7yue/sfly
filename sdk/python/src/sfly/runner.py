@@ -5,7 +5,10 @@
 - `SFLY_TASK`：task.json，至少包含 `entry`（`模块:函数`）和 `inputs`（已解析的输入，JSON 对象）。
 - `SFLY_OUTPUT`：执行器写入结果的 output.json：
   - 成功：`{"status": "success", "outputs": {...}}`，退出码 0；
-  - 失败：`{"status": "failed", "error": {"type", "message", "traceback"}}`，退出码 1。
+  - 失败：`{"status": "failed", "error": {"type", "message", "traceback"}}`，退出码 1；
+    输入有节点没有声明的名字时，在调用节点之前就失败：
+    `{"status": "failed", "error": {"kind": "config_error", "message"}}`（没有 `type` 和
+    `traceback`）。`kind` 是读取端记的错误类型，没有这个键的失败是 `node_error`。
 - `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_EVENTS`、`SFLY_CANCEL`：产物目录、产物下载地址前缀、
   事件文件、取消标记（由 Context 使用）。
 
@@ -43,6 +46,10 @@ class NodeOutputError(Exception):
     """节点返回值不符合要求。"""
 
 
+class InputError(Exception):
+    """派发给节点的输入有问题（有节点没有声明的名字）：在调用节点函数之前就失败，记为配置错误。"""
+
+
 def load_entry(entry: str) -> Callable[..., Any]:
     module_name, sep, qualname = entry.partition(":")
     if not sep or not module_name or not qualname:
@@ -66,6 +73,31 @@ def _takes_context(fn: Callable[..., Any]) -> bool:
     return is_context_param(params[0], hint)
 
 
+def _declared_inputs(fn: Callable[..., Any]) -> list[str] | None:
+    """节点声明的输入名，按参数顺序（任务上下文不是输入）；有 `**kwargs` 时全收，返回 None。"""
+    params = list(inspect.signature(fn).parameters.values())
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return None
+    if _takes_context(fn):
+        params = params[1:]
+    by_name = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    return [p.name for p in params if p.kind in by_name]
+
+
+def _check_declared(fn: Callable[..., Any], inputs: Mapping[str, Any]) -> None:
+    """输入里有节点没有声明的名字时抛出 `InputError`，写出多出来的名字和节点声明了哪些输入。"""
+    declared = _declared_inputs(fn)
+    if declared is None:
+        return
+    extra = [name for name in inputs if name not in declared]
+    if not extra:
+        return
+    decl = getattr(fn, NODE_ATTR, None)
+    name = (decl.name if isinstance(decl, NodeDeclaration) else None) or fn.__name__
+    known = f"它声明的输入有：{'、'.join(declared)}" if declared else "它不接收任何输入"
+    raise InputError(f"节点 {name} 没有声明输入 {'、'.join(extra)}，{known}")
+
+
 def _declared_metrics(fn: Callable[..., Any]) -> Sequence[Metric] | None:
     """`@node` 声明的指标；入口没有用 `@node` 声明时为 None（不检查指标名和标签键）。"""
     decl = getattr(fn, NODE_ATTR, None)
@@ -75,6 +107,7 @@ def _declared_metrics(fn: Callable[..., Any]) -> Sequence[Metric] | None:
 
 
 def invoke(fn: Callable[..., Any], inputs: Mapping[str, Any]) -> dict[str, Any]:
+    _check_declared(fn, inputs)
     if _takes_context(fn):
         result = fn(Context(metrics=_declared_metrics(fn)), **inputs)
     else:
@@ -137,6 +170,11 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
     try:
         fn = load_entry(str(task["entry"]))
         return 0, _encode(invoke(fn, task.get("inputs") or {}))
+    except InputError as error:
+        # 配置错误：不是节点出错，没有堆栈可看，错误信息就是原因，不往标准错误写（ERROR 级的日志）。
+        # `kind` 让读取端记成 config_error（不重试）；没有这个键的失败是 node_error。
+        failure = {"status": "failed", "error": {"kind": "config_error", "message": str(error)}}
+        return 1, json.dumps(failure, ensure_ascii=False)
     except BaseException as error:  # noqa: BLE001 - 节点代码的任何异常（包括 SystemExit）都是失败
         if isinstance(error, KeyboardInterrupt):
             raise

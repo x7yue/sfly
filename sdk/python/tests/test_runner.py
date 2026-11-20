@@ -459,6 +459,154 @@ def test_sigterm_raises_cancelled_in_the_node_so_cleanup_runs(
     assert output["error"]["type"] == "Cancelled"
 
 
+# ---- 没有声明的输入：调用节点函数之前就失败，记为配置错误 ----
+#
+# 派发给节点的输入里有节点没有声明的名字（多半是写错了参数名）时，不让它跑进函数里再抛
+# `TypeError: f() got an unexpected keyword argument`（那会记成 node_error 并按重试次数重试）：
+# 执行器在调用前就以 config_error 失败，信息里写出多出来的名字和节点声明的输入。
+
+
+def test_inputs_the_node_does_not_declare_fail_as_config_error_before_the_node_runs(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    ran = tmp_path / "ran"
+    write_module(
+        code_dir,
+        "load",
+        f"""
+        from sfly import Context
+
+        def http_load(
+            ctx: Context, url: str, duration: float = 1.0, concurrency: int = 1
+        ) -> dict:
+            open({str(ran)!r}, "w").close()
+            return {{}}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "load:http_load", {"url": "http://x", "duraton": 2})
+
+    assert run.returncode == 1
+    assert not ran.exists()
+    # 配置错误没有异常类型和堆栈，标准错误里也不写：错误信息就是原因。
+    assert run.stderr == ""
+    assert run.output == {
+        "status": "failed",
+        "error": {
+            "kind": "config_error",
+            "message": (
+                "节点 http_load 没有声明输入 duraton，它声明的输入有：url、duration、concurrency"
+            ),
+        },
+    }
+
+
+def test_every_undeclared_input_is_named_and_the_context_parameter_is_not_an_input(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "two",
+        """
+        from sfly import Context
+
+        def work(ctx: Context, *, a: int, b: int = 0) -> dict:
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "two:work", {"a": 1, "x": 1, "ctx": 2, "y": 3})
+
+    assert run.output is not None
+    assert run.output["error"] == {
+        "kind": "config_error",
+        "message": "节点 work 没有声明输入 x、ctx、y，它声明的输入有：a、b",
+    }
+
+
+def test_a_node_without_inputs_says_it_takes_none(tmp_path: Path, code_dir: Path) -> None:
+    write_module(
+        code_dir,
+        "bare",
+        """
+        def ping() -> dict:
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "bare:ping", {"x": 1})
+
+    assert run.output is not None
+    assert run.output["error"] == {
+        "kind": "config_error",
+        "message": "节点 ping 没有声明输入 x，它不接收任何输入",
+    }
+
+
+def test_the_node_name_in_the_message_is_the_one_the_node_declares(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "named",
+        """
+        from sfly import node
+
+        @node(name="http-load", title="压测")
+        def run_load(url: str) -> dict:
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "named:run_load", {"url": "u", "urll": "u"})
+
+    assert run.output is not None
+    assert run.output["error"]["message"].startswith("节点 http-load 没有声明输入 urll，")
+
+
+def test_declared_inputs_missing_optional_ones_and_kwargs_nodes_are_not_affected(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "ok",
+        """
+        def work(a: int, b: int = 2) -> dict:
+            return {"sum": a + b}
+
+        def anything(**kwargs) -> dict:
+            return {"names": sorted(kwargs)}
+        """,
+    )
+
+    declared = execute(tmp_path, code_dir, "ok:work", {"a": 1})
+    kwargs = execute(tmp_path, code_dir, "ok:anything", {"x": 1, "y": 2})
+
+    assert declared.output == {"status": "success", "outputs": {"sum": 3}}
+    assert kwargs.output == {"status": "success", "outputs": {"names": ["x", "y"]}}
+
+
+def test_a_type_error_raised_inside_the_node_is_still_a_node_error(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 只拦调用之前的「没有声明的输入」：节点自己抛出的 TypeError 是节点出错，堆栈照旧。
+    write_module(
+        code_dir,
+        "typo",
+        """
+        def work(a: int) -> dict:
+            return {"x": a + "1"}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "typo:work", {"a": 1})
+
+    assert run.output is not None
+    assert run.output["error"]["type"] == "TypeError"
+    assert "kind" not in run.output["error"]
+    assert "Traceback" in run.stderr
+
+
 # ---- 被终止（取消、超时、被停止子流程节点停止）不写堆栈 ----
 #
 # 这三种情况 Agent 都是写取消标记再发 SIGTERM，执行器看到的都是节点里抛出的 `Cancelled`：

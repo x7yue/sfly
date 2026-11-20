@@ -77,6 +77,35 @@ async fn node_exception_fails_the_task_with_node_error_and_message() {
 }
 
 #[tokio::test]
+async fn an_input_the_node_does_not_declare_fails_with_config_error_without_a_traceback() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-undeclared"));
+    cp.hello(0).await;
+
+    cp.assign(stub_task(
+        "task-undeclared",
+        "echo",
+        json!({ "text": "你好", "tex": "写错了的名字" }),
+    ))
+    .await;
+
+    let (result, _) = cp.result("task-undeclared").await;
+    assert_eq!(result.status(), TaskStatus::Failed);
+    let error = result.error.expect("error");
+    // 配置错误不按重试次数重试，错误信息里有多出来的名字和节点声明的输入，没有堆栈。
+    assert_eq!(error.kind(), ErrorKind::ConfigError, "{error:?}");
+    assert_eq!(
+        error.message,
+        "节点 echo 没有声明输入 tex，它声明的输入有：text"
+    );
+    assert!(
+        cp.task_logs("task-undeclared").is_empty(),
+        "{:?}",
+        cp.task_logs("task-undeclared")
+    );
+}
+
+#[tokio::test]
 async fn package_not_installed_in_shared_venv_fails_with_env_error() {
     let cp = FakeControlPlane::start().await;
     let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-missing"));

@@ -170,7 +170,7 @@ queued / running / waiting / pending ──▶ stopped（所在子流程被停�
 | `timeout` | 执行超时 | 是 |
 | `agent_lost` | Agent 断线导致租约过期 | 是（仍派发到同一个 Agent） |
 | `env_error` | 节点包安装失败、依赖冲突、排队超时、Agent 版本不满足节点包需要的 SDK 版本 | 否 |
-| `config_error` | 参数校验失败、引用的输出缺失 | 否 |
+| `config_error` | 参数校验失败、引用的输出缺失、输入里有节点没有声明的名字（执行器在调用节点函数之前拒绝） | 否 |
 
 排队超时的报错写明排队了多久和原因：任务排队超时那一刻它的 Agent 在线、还在准备环境时是「排队超过 N 秒仍未派发：Agent X 一直在准备环境」，其他情况（Agent 不在线、槽位一直满着）是「排队超过 N 秒仍未派发：Agent X 不在线或没有空闲槽位」。
 

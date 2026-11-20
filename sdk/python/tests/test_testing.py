@@ -316,6 +316,29 @@ def test_invalid_inputs_are_a_config_error_and_the_node_does_not_run(tmp_path: P
     assert missing.error.message == "缺少必填输入 seconds"
 
 
+def test_an_input_the_node_does_not_declare_is_a_config_error_and_the_node_does_not_run(
+    tmp_path: Path,
+) -> None:
+    from sfly_stub import sleep
+
+    result = run_node(sleep, {"seconds": 30, "secnds": 1}, work_dir=tmp_path / "w")
+    by_entry = run_node("sfly_stub:echo", {"text": "x", "extra": 1})
+
+    # 本地调试和 Agent 上一样：在调用节点函数之前就失败，类型是 config_error（Agent 上不会重试）。
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.kind == "config_error"
+    assert result.error.message == "节点 sleep 没有声明输入 secnds，它声明的输入有：seconds"
+    assert result.error.type is None
+    assert result.error.traceback == ""
+    assert [line for line in result.logs if line.level == "error"] == []
+    assert by_entry.error is not None
+    assert (by_entry.error.kind, by_entry.error.message) == (
+        "config_error",
+        "节点 echo 没有声明输入 extra，它声明的输入有：text",
+    )
+
+
 def test_entry_string_runs_the_same_node() -> None:
 
     result = run_node("sfly_stub:echo", {"text": "x"})

@@ -297,7 +297,11 @@ def _report(result: Execution) -> int:
         print(f"已取消：{error.message if error else ''}", file=sys.stderr)
         return EXIT_CANCELLED
     if error is not None:
+        if error.kind == "config_error":
+            # 执行器在调用节点之前就拒绝了输入（没有声明的名字）：和其他参数不合法一样，退出码 2。
+            print(f"参数不合法：{error.message}", file=sys.stderr)
+            return EXIT_INVALID
         detail = f"\n\n{error.traceback.rstrip()}" if error.traceback else ""
         print(f"节点失败：{error.message}{detail}", file=sys.stderr)
-        return EXIT_INVALID if error.kind == "config_error" else EXIT_FAILED
+        return EXIT_FAILED
     return 0
