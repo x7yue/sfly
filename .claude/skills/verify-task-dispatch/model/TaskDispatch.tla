@@ -9,8 +9,8 @@
 (*   LateHeartbeats = FALSE：连接正常时租约不会过期（心跳总能在 30 秒租约内   *)
 (*                   被控制面处理）；断线期间租约照常过期。                  *)
 (*   PromptDelivery = TRUE：两边都在一个心跳间隔（10 秒）内处理完对方的消息： *)
-(*                   Agent 手上还有没处理的控制面消息、还有没交给 serve 循环 *)
-(*                   的结果、或上一次心跳控制面还没处理时，不会发下一次心跳。 *)
+(*                   Agent 手上还有没处理的控制面消息、或上一次心跳控制面还没 *)
+(*                   处理时，不会发下一次心跳。                              *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -27,11 +27,11 @@ VARIABLES
     ready,       \* 控制面这条连接已收到 Welcome 之后的第一次心跳（agent-hub.ts 连接阶段 ready）：只有这时才派发
     toCP,        \* Agent -> 控制面 的 gRPC 流（TaskStarted / TaskResult / Heartbeat）
     toAgent,     \* 控制面 -> Agent 的 gRPC 流（Assign / Cancel / Ack）
-    ag,          \* Agent 上每次尝试：none | held（在 cancels 里，安装/准备中）| started（执行器已启动）| done（run_task 已结束）
-    stopSig,     \* Agent 已对它调用 cancel_task（被告知停止）的尝试
-    chan,        \* results 通道里、还没被 serve 收下的结果 <<attempt, ok>>
-    unacked,     \* 已上报、还没收到 Ack 的结果 <<attempt, ok>>
-    abandoned,   \* 控制面在 Welcome 中放弃、结果不再上报的尝试
+    ag,          \* Agent 上每次尝试：none | held（台账里执行中，安装/准备中）| started（执行器已启动）| done（run_task 已结束）
+    stopSig,     \* Agent 已对它调用 Ledger::cancel（被告知停止）的尝试
+    chan,        \* 台账里结果待发（已交出、还没发出）的结果 <<attempt, ok>>
+    unacked,     \* 台账里待 Ack（已上报，或重连时收下等着重发）的结果 <<attempt, ok>>
+    abandoned,   \* 控制面在 Welcome 中放弃、还在执行的尝试：结束时结果直接丢弃
     hello,       \* 最近一次 Hello 的 running_tasks
     welcome,     \* 最近一次 Welcome 里放弃（ABANDON）的尝试
     okFinished   \* 真的在 Agent 上成功执行完的尝试（只用于检查）
@@ -42,6 +42,10 @@ vars == <<cp, suspects, conn, ready, toCP, toAgent, ag, stopSig, chan, unacked,
 AttemptsOf(R) == {r[1] : r \in R}
 Holding == {b \in Attempts : ag[b] \in {"held", "started"}}
 StartedOnAgent == {b \in Attempts : ag[b] = "started"}
+\* agent/src/ledger.rs Ledger::held：手上的任务就是台账里的全部，不论在哪个阶段：执行中的（安装中的和执行器
+\* 已启动的）、结果已交出还没发出的（chan）、结果还没收到 Ack 的（unacked）。Hello 和每次心跳都按它列出。
+Hand == Holding \cup AttemptsOf(chan) \cup AttemptsOf(unacked)
+HandStarted == StartedOnAgent \cup AttemptsOf(chan) \cup AttemptsOf(unacked)
 
 \* engine.ts #failTask：任务 failed；可重试时在同一个 Agent 上排队 attempt + 1。
 \* 所有失败（node_error / timeout / agent_lost）都按 retries 重试。
@@ -162,23 +166,20 @@ Disconnect ==
 
 (* ------------------------------- Agent --------------------------------- *)
 
-\* lib.rs run() 循环：held_collecting 持 cancels 锁把通道里的结果收进 unacked（放弃的丢弃），
-\* 列出手上任务，作为 Hello 的 running_tasks 连接控制面。
+\* lib.rs run() 循环：Ledger::hello 在一次持锁里把结果待发的结果收为待 Ack（随后重发），列出手上的任务，
+\* 作为 Hello 的 running_tasks 连接控制面。被放弃的任务的结果在 AgentFinish 时已经丢弃，不会在这里。
 AgentConnect ==
     /\ conn = "down"
-    /\ LET kept     == {r \in chan : r[1] \notin abandoned}
-           unacked2 == unacked \cup kept
-       IN /\ unacked' = unacked2
-          /\ abandoned' = abandoned \ AttemptsOf(chan)
-          /\ hello' = [held    |-> Holding \cup AttemptsOf(unacked2),
-                       started |-> StartedOnAgent \cup AttemptsOf(unacked2)]
+    /\ unacked' = unacked \cup chan
     /\ chan' = {}
+    /\ hello' = [held    |-> Hand,
+                 started |-> HandStarted]
     /\ conn' = "hello"
-    /\ UNCHANGED <<cp, suspects, ready, toCP, toAgent, ag, stopSig, welcome, okFinished>>
+    /\ UNCHANGED <<cp, suspects, ready, toCP, toAgent, ag, stopSig, abandoned, welcome, okFinished>>
 
-\* lib.rs run()：准备好环境后处理 Welcome 的 ABANDON（结果没 Ack 的直接删掉；还在执行的 force 取消并记入
-\* abandoned），然后进入 serve()：先重发全部 unacked 结果，再立即发一次心跳（Runtime::held），
-\* 不等心跳周期。控制面处理这次心跳后才派发（#219）。
+\* lib.rs run()：准备好环境后处理 Welcome 的 ABANDON（Ledger::abandon：结果没 Ack 的直接删掉；还在执行的 force
+\* 取消并记入 abandoned；结果已交出还没发出的不动，照常发出），然后进入 serve()：先重发全部 unacked 结果
+\*（Ledger::unacked），再立即发一次心跳（Ledger::held），不等心跳周期。控制面处理这次心跳后才派发（#219）。
 AgentWelcome ==
     /\ conn = "welcome"
     /\ LET dropped == {r \in unacked : r[1] \in welcome}
@@ -189,13 +190,13 @@ AgentWelcome ==
           /\ abandoned' = abandoned \cup kill
           /\ toCP' = toCP \o ResultMsgs(rest)
                      \o <<[type    |-> "hb",
-                           held    |-> Holding \cup AttemptsOf(rest),
-                           started |-> StartedOnAgent \cup AttemptsOf(rest)]>>
+                           held    |-> Holding \cup AttemptsOf(chan) \cup AttemptsOf(rest),
+                           started |-> StartedOnAgent \cup AttemptsOf(chan) \cup AttemptsOf(rest)]>>
     /\ conn' = "up"
     /\ UNCHANGED <<cp, suspects, ready, toAgent, ag, chan, hello, welcome, okFinished>>
 
-\* lib.rs serve()：Assign -> Runtime::accept（进 cancels，不检查槽位）并 spawn run_task；
-\* Cancel -> Runtime::cancel_task（不在 cancels 里的忽略；被杀的尝试照常上报结果）；Ack -> 从 unacked 删除。
+\* lib.rs serve()：Assign -> Ledger::accept（进台账成为执行中，不检查槽位）并 spawn run_task；
+\* Cancel -> Ledger::cancel（不在执行中的忽略；被杀的尝试照常上报结果）；Ack -> Ledger::ack（只对待 Ack 的结果生效，从台账删除）。
 AgentRecv ==
     /\ conn = "up"
     /\ toAgent # <<>>
@@ -220,39 +221,35 @@ AgentStart(a) ==
     /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, stopSig, chan, unacked, abandoned,
                    hello, welcome, okFinished>>
 
-\* lib.rs run_task 结束：持 cancels 锁把结果送进 results 通道并移出 cancels。
-\* 成功只可能来自真正执行了、没有被取消的尝试；安装失败、节点失败、被杀都是失败。
+\* lib.rs run_task 结束：Ledger::finish 在一次持锁里把执行中换成结果待发；被放弃的尝试的结果直接丢弃，
+\* 它也不再在手上。成功只可能来自真正执行了、没有被取消的尝试；安装失败、节点失败、被杀都是失败。
 AgentFinish(a, ok) ==
     /\ ag[a] \in {"held", "started"}
     /\ ok => (ag[a] = "started" /\ a \notin stopSig)
     /\ ag' = [ag EXCEPT ![a] = "done"]
-    /\ chan' = chan \cup {<<a, ok>>}
+    /\ chan' = IF a \in abandoned THEN chan ELSE chan \cup {<<a, ok>>}
+    /\ abandoned' = abandoned \ {a}
     /\ okFinished' = IF ok THEN okFinished \cup {a} ELSE okFinished
-    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, toAgent, stopSig, unacked, abandoned, hello, welcome>>
+    /\ UNCHANGED <<cp, suspects, conn, ready, toCP, toAgent, stopSig, unacked, hello, welcome>>
 
-\* lib.rs serve() 的 results.recv 分支：放弃的结果丢弃，否则记入 unacked 并上报。
+\* lib.rs serve() 的 next_result 分支（Ledger::next_result）：结果待发的结果记为待 Ack 并上报。
 AgentSendResult ==
     /\ conn = "up"
     /\ \E r \in chan :
         /\ chan' = chan \ {r}
-        /\ IF r[1] \in abandoned
-              THEN /\ abandoned' = abandoned \ {r[1]}
-                   /\ UNCHANGED <<unacked, toCP>>
-              ELSE /\ unacked' = unacked \cup {r}
-                   /\ toCP' = Append(toCP, [type |-> "result", a |-> r[1], ok |-> r[2]])
-                   /\ UNCHANGED abandoned
-    /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, ag, stopSig, hello, welcome, okFinished>>
+        /\ unacked' = unacked \cup {r}
+        /\ toCP' = Append(toCP, [type |-> "result", a |-> r[1], ok |-> r[2]])
+    /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, ag, stopSig, abandoned, hello, welcome, okFinished>>
 
-\* lib.rs serve() 的 heartbeat.tick 分支：running_tasks = Runtime::held(unacked)
-\* （cancels 里的，加上 unacked；还在 results 通道里的结果不在其中）。进入 serve() 时立即发的那一次在 AgentWelcome 里。
+\* lib.rs serve() 的 heartbeat.tick 分支：running_tasks = Ledger::held，即 Hand：台账里的全部，
+\* 包括结果已交出、还没发出的。进入 serve() 时立即发的那一次在 AgentWelcome 里。
 AgentHeartbeat ==
     /\ conn = "up"
     /\ PromptDelivery => /\ toAgent = <<>>
-                         /\ chan = {}
                          /\ \A i \in 1..Len(toCP) : toCP[i].type # "hb"
     /\ toCP' = Append(toCP, [type    |-> "hb",
-                             held    |-> Holding \cup AttemptsOf(unacked),
-                             started |-> StartedOnAgent \cup AttemptsOf(unacked)])
+                             held    |-> Hand,
+                             started |-> HandStarted])
     /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, ag, stopSig, chan, unacked, abandoned,
                    hello, welcome, okFinished>>
 
