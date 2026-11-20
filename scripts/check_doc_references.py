@@ -12,10 +12,17 @@
 3. Markdown 相对链接指向的文件或标题（锚点）不存在。
 
 不查：`docs/adr`、`docs/research`（旧名照旧保留）、`docs/perf/<版本>/`（历史报告）、生成的代码、
-测试夹具；符号链接的 .md 只查链接指向的那份。已知查不出的：章节号存在但指错了节；顶层目录整个改名后
-旧名开头的路径（顶层名取自现在的仓库）。确实要写一个不存在的引用时，在
-`scripts/doc-references.allow` 加一行 `文件 | 引用原文 | 原因`（原因必填；引用不再需要放行时，
-这一行也会报错，要删掉）。每处失效的引用报：文件和行、引用原文、能猜出来的正确写法。失败时退出码 1。
+测试夹具；符号链接的 .md 只查链接指向的那份。没有可用的 git 时说明跳过了检查，退出码 0
+（和 ADR 检查一样降级）。
+
+确实要写一个不存在的引用时，在 `scripts/doc-references.allow` 加一行 `文件 | 引用原文 | 原因`
+（原因必填；引用不再需要放行时，这一行也会报错，要删掉）。每处失效的引用报：文件和行、引用原文、
+能猜出来的正确写法。失败时退出码 1。
+
+已知的盲点：章节号存在但指错了节；顶层目录整个改名后旧名开头的路径（顶层名取自现在的仓库）；
+顶层名大小写写错的路径；`./` 开头的路径；缩进 4 格以上的代码块；经目录软链接的路径；
+`§4.1、4.2` 里没有 `§` 的后一个号。已知的误报：碰巧以顶层目录名开头的运行时路径（写进放行名单）；
+三份文档里指别的文档的「第 N 节」也会被要求改成 `§N`。
 """
 
 from __future__ import annotations
@@ -56,7 +63,10 @@ SECTION_NUMBER = r"\d+(?:\.\d+)*"
 SECTION_SIGN = re.compile(rf"§ ?({SECTION_NUMBER})")
 CANONICAL_BEFORE = re.compile(rf"(docs/(?:{DOC_NAMES})\.md) $")
 LOOSE_BEFORE = re.compile(rf"((?:docs/)?(?P<stem>{DOC_NAMES})(?:\.md)?`?\s*(?:的\s*)?)$")
-LIST_SEPARATOR = re.compile(r"(?:「[^」]*」)?[、，,]\s?$")
+# 两个 § 之间的空档：「、」「，」「,」，前面可以带「标题」或「第 N 条」。
+LIST_SEPARATOR = re.compile(r"(?:「[^」]*」|\s?第\s?\d+(?:\.\d+)?\s?条)?[、，,]\s?")
+# 别的规范的章节（RFC 9110 §15.5.20、ADR 0024 §2）不是这三份文档的。
+EXTERNAL_BEFORE = re.compile(r"\b(?:RFC|ADR)\s?-?\d+\s?$")
 # `第 4.1 节`、`第 3.3、3.4 节`、`见 7.4 节`；「4.2 节点包格式」里的「节点」不算。
 SECTION_WORD = re.compile(
     rf"第\s?{SECTION_NUMBER}(?:[、,]\s?{SECTION_NUMBER})*\s?节(?!点)"
@@ -360,27 +370,40 @@ def check_link(repo: Repo, path: str, number: int, target: str) -> Finding | Non
 # —— 2：章节引用 ——
 
 
+def version_key(number: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in number.split("."))
+
+
 def section_hints(repo: Repo, doc: str, num: str) -> list[str]:
+    """不存在的章节号：列出现有的小节。不给「第几条」的改法：那种写法检查不核对。"""
     numbers = repo.section_numbers(doc)
-    top, _, sub = num.partition(".")
+    parts = num.split(".")
+    for size in range(len(parts) - 1, 0, -1):  # 有标题的最长前缀
+        prefix = ".".join(parts[:size])
+        if prefix not in numbers:
+            continue
+        children = [n for n in numbers if n.startswith(prefix + ".") and n.count(".") == size]
+        if children:
+            return [f"§{prefix} 下的小节是 {'、'.join(sorted(children, key=version_key))}。"]
+        return [f"§{prefix} 没有再分的小节。"]
     chapters = sorted((n for n in numbers if "." not in n), key=int)
-    if top not in numbers:
-        if not chapters:
-            return [f"{doc} 里没有带章节号的标题。"]
-        return [f"{doc} 有 §{chapters[0]} 到 §{chapters[-1]} 章。"]
-    children = sorted(
-        (n for n in numbers if n.startswith(top + ".")),
-        key=lambda n: tuple(int(part) for part in n.split(".")),
-    )
-    if not children:
+    if not chapters:
+        return [f"{doc} 里没有带章节号的标题。"]
+    return [f"{doc} 有 §{chapters[0]} 到 §{chapters[-1]} 章。"]
+
+
+def unqualified_hints(repo: Repo, num: str) -> list[str]:
+    """没写文档的引用：不替人猜是哪份，列出三份里哪几份有这个章节号。"""
+    having = [doc for doc in NUMBERED_DOCS if num in repo.section_numbers(doc)]
+    if not having:
         return [
-            f"{doc} 的 §{top} 没有分小节。指里面的第几条时，"
-            f"写成 `{doc} §{top} 第 {sub or 'N'} 条`。"
+            f"三份文档（{'、'.join(NUMBERED_DOCS)}）里都没有章节号 {num}，先确认引用的是哪份文档。"
         ]
-    listed = "、".join(children)
+    if len(having) == 1:
+        return [f"三份文档里只有 {having[0]} 有 §{num}：引用的是它时，写成 `{having[0]} §{num}`。"]
     return [
-        f"§{top} 下的小节是 {listed}。指 §{top} 里的第几条时，写成 `{doc} §{top} 第 {sub} 条`"
-        f"（检查不看「第 N 条」）。"
+        f"三份文档里 {'、'.join(having)} 都有 §{num}：写成 `<引用的那份文档的仓库路径> §{num}`"
+        f"（{AGREED_FORM}）。"
     ]
 
 
@@ -392,11 +415,20 @@ def check_sections_in_line(repo: Repo, path: str, number: int, text: str) -> lis
     local_doc = path if path in NUMBERED_DOCS else None
     prev_end = -1
     chain_doc: str | None = None
+    chain_external = False
     for m in SECTION_SIGN.finditer(text):
         num = m.group(1)
         before = text[: m.start()]
+        continuation = prev_end >= 0 and LIST_SEPARATOR.fullmatch(text[prev_end : m.start()])
+        if continuation and chain_external:
+            prev_end = m.end()
+            continue
+        if not continuation and EXTERNAL_BEFORE.search(before):
+            chain_doc, chain_external, prev_end = None, True, m.end()
+            continue
+        chain_external = False
         doc: str | None
-        if prev_end >= 0 and LIST_SEPARATOR.fullmatch(text[prev_end : m.start()]):
+        if continuation:
             doc = chain_doc  # 「docs/SEMANTICS.md §1.2、§2.4」：沿用前面的文档
         elif canonical := CANONICAL_BEFORE.search(before):
             doc = canonical.group(1)
@@ -424,10 +456,7 @@ def check_sections_in_line(repo: Repo, path: str, number: int, text: str) -> lis
                     number,
                     f"§{num}",
                     f"章节引用 §{num} 没有写明是哪份文档，检查不了。",
-                    [
-                        f"写成 `docs/SEMANTICS.md §{num}`（{AGREED_FORM}；"
-                        f"文档是 {'、'.join(NUMBERED_DOCS)} 之一）。"
-                    ],
+                    unqualified_hints(repo, num),
                 )
             )
         chain_doc, prev_end = doc, m.end()
@@ -525,7 +554,28 @@ def load_allow(repo: Repo) -> tuple[dict[tuple[str, str], int], list[Finding]]:
     return entries, problems
 
 
+def git_unavailable_reason() -> str | None:
+    """没装 git、或这里不是 git 工作区：返回原因；能用时是 None。"""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as error:
+        return f"运行 git 失败：{error}"
+    if result.returncode != 0 or result.stdout.strip() != "true":
+        return "这里不是 git 工作区"
+    return None
+
+
 def main() -> int:
+    if reason := git_unavailable_reason():
+        # 和 ADR 检查一样降级：说一声没查什么，不当成失败。
+        print(f"没有可用的 git（{reason}），列不出仓库的文件：跳过文档引用检查。", file=sys.stderr)
+        return 0
     repo = Repo()
     findings: list[Finding] = []
     for path in sorted(repo.files):

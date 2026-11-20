@@ -12,6 +12,12 @@ from pathlib import Path
 
 import pytest
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_doc_references.py"
 ENV = {
     **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
@@ -284,8 +290,30 @@ def test_section_that_has_no_heading_fails_and_names_the_neighbours(repo: Path) 
     assert result.returncode == 1
     assert "apps/server/src/engine/ids.ts:1" in result.stderr
     assert "docs/SEMANTICS.md §4.6" in result.stderr
-    assert "4.1" in result.stderr and "4.2" in result.stderr
-    assert "§4 第 6 条" in result.stderr
+    assert "§4 下的小节是 4.1、4.2" in result.stderr
+    # 「§N 第 M 条」检查不再核对：提示不能把人引向查不出的写法。
+    assert "第 6 条" not in result.stderr
+
+
+def test_a_missing_deeper_section_names_the_longest_heading_that_exists(repo: Path) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §4.1.2\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "docs/SEMANTICS.md §4.1.2 指向的章节不存在" in result.stderr
+    assert "§4.1 没有再分的小节" in result.stderr
+    assert "第 1.2 条" not in result.stderr
+    assert "第 2 条" not in result.stderr
+
+
+def test_a_missing_chapter_lists_the_chapters_that_exist(repo: Path) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §9\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "§1 到 §5" in result.stderr
 
 
 def test_a_missing_section_inside_a_reference_list_is_reported(repo: Path) -> None:
@@ -331,7 +359,29 @@ def test_section_reference_without_a_document_fails(repo: Path) -> None:
     assert result.returncode == 1
     assert "apps/server/src/engine/ids.ts:1" in result.stderr
     assert "没有写明是哪份文档" in result.stderr
-    assert "docs/SEMANTICS.md §4.1" in result.stderr
+    assert "docs/SEMANTICS.md" in result.stderr
+
+
+def test_the_hint_for_a_section_without_a_document_names_only_the_documents_that_have_it(
+    repo: Path,
+) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": "// 性能测试的目标（§7.6）。\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "docs/ARCHITECTURE.md" in result.stderr
+    assert "docs/SEMANTICS.md" not in result.stderr
+    assert "docs/DESIGN-SYSTEM.md" not in result.stderr
+
+
+def test_the_hint_for_a_section_that_no_document_has_says_so(repo: Path) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": "// 见 §9.9\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "都没有" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -357,6 +407,40 @@ def test_other_ways_of_writing_a_section_reference_fail_and_show_the_agreed_one(
     assert result.returncode == 1
     assert "写法不统一" in result.stderr
     assert "docs/SEMANTICS.md §4.1" in result.stderr
+
+
+def test_an_item_number_and_a_reference_list_can_be_combined(repo: Path) -> None:
+    put(
+        repo,
+        {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §4 第 6 条、§1.1、§4.2 第 3 条\n"},
+    )
+    assert check(repo).returncode == 0
+
+    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §4 第 6 条、§9\n"})
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "docs/SEMANTICS.md §9 指向的章节不存在" in result.stderr
+    assert "没有写明是哪份文档" not in result.stderr
+
+
+def test_section_signs_that_follow_an_rfc_or_an_adr_number_are_not_ours(repo: Path) -> None:
+    put(
+        repo,
+        {
+            "apps/server/src/engine/ids.ts": (
+                "// 状态码见 RFC 9110 §15.5.20，ADR 0024 §2、§3，RFC 9110 §15.5.20、§15.5.21\n"
+            )
+        },
+    )
+    assert check(repo).returncode == 0
+
+    put(repo, {"apps/server/src/engine/ids.ts": "// RFC 9110 §15.5.20；本地的 §3.1\n"})
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "§3.1 没有写明是哪份文档" in result.stderr
+    assert "15.5" not in result.stderr
 
 
 def test_a_space_after_the_section_sign_does_not_hide_a_missing_section(repo: Path) -> None:
@@ -548,20 +632,49 @@ def test_links_in_a_file_that_a_symlink_points_to_also_resolve_from_the_symlink(
     assert result.returncode == 0, result.stderr
 
 
-def test_git_failing_is_an_error_not_a_pass(tmp_path: Path) -> None:
+def run_outside_a_repository(
+    tmp_path: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
     root = tmp_path / "not-a-repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, root / "scripts" / "check_doc_references.py")
-
-    result = subprocess.run(
+    return subprocess.run(
         [sys.executable, str(root / "scripts" / "check_doc_references.py")],
-        env={**ENV, "GIT_CEILING_DIRECTORIES": str(tmp_path)},
+        env=env,
         capture_output=True,
         text=True,
     )
 
-    assert result.returncode != 0
+
+def test_without_a_git_work_tree_it_says_what_it_skipped_and_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    result = run_outside_a_repository(tmp_path, {**ENV, "GIT_CEILING_DIRECTORIES": str(tmp_path)})
+
+    assert result.returncode == 0
+    assert result.stderr.count("\n") == 1
     assert "git" in result.stderr
+    assert "跳过" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_without_a_git_executable_it_says_what_it_skipped_and_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    result = run_outside_a_repository(tmp_path, {**ENV, "PATH": str(tmp_path / "empty")})
+
+    assert result.returncode == 0
+    assert result.stderr.count("\n") == 1
+    assert "跳过" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_pyproject_type_checks_the_script_and_only_collects_tests_from_directories() -> None:
+    config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "scripts/check_doc_references.py" in config["tool"]["mypy"]["files"]
+    for entry in config["tool"]["pytest"]["ini_options"]["testpaths"]:
+        assert (REPO_ROOT / entry).is_dir(), entry
 
 
 # —— 放行 ——

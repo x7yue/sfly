@@ -46,9 +46,5 @@
 
 - **已接受的 ADR 是当时的决定记录，改名或换做法时不回头改它的正文。** 命令、接口、术语改名后，ADR 里的旧名照旧保留：读者要能看到当时决定的是什么。
   决定被推翻时写一份新的 ADR，在旧 ADR 末尾加一行指向它（例如「已被 ADR 0021 取代」）。现行的说明写在 `docs/ARCHITECTURE.md`、`docs/guide/` 和 GLOSSARY 里，这些随改名一起改。
-- **Markdown 里的路径和链接、文档和代码注释里的章节号要能找到，`pnpm lint:docs` 检查**（`scripts/check_doc_references.py`，报错写明位置和改法）：
-  - 反引号里以仓库顶层目录名开头的路径（`apps/web/src/lib/api.ts`）要存在。运行时才有的（`task.json`、`out/…`、`~/.sfly/…`）、带 `*`、`<…>`、`{a,b}`、`…`、`X.Y.Z` 的占位写法、被 `.gitignore` 忽略的构建产物、代码块里的，不查。
-  - 引用文档的章节，写文档的仓库路径、空格、`§` 和章节号：`docs/SEMANTICS.md §3.4`；一组沿用前面的文档：`docs/SEMANTICS.md §1.2、§2.4`；章节里的第几条写在后面：`docs/SEMANTICS.md §4 第 6 条`；章节号后面可以跟「标题」（`docs/ARCHITECTURE.md §7.6「性能测试」`），检查不核对它。`docs/SEMANTICS.md`、`docs/ARCHITECTURE.md`、`docs/DESIGN-SYSTEM.md` 三份有章节号，源码注释、测试、其他文档引用它们都这样写；三份文档自己里面省掉路径，只写 `§` 加章节号，不写「第 N 节」。
-    章节号必须是有标题的那一级：列表里的第几条不是标题，要像上面那样写在章节号后面，不能拼成 `4.6`。检查只确认标题存在，指没指对要自己核对：改动、合并、拆分章节时，用 `git grep -n 'docs/SEMANTICS.md §'` 找出引用它的注释一起改。
-  - Markdown 相对链接和 `#锚点` 指向的文件、标题要存在。
-  - `docs/adr`、`docs/research`、`docs/perf/<版本>/` 不查（旧名照旧保留），生成的代码和 e2e 的文档夹具也不查。路径检查只认现在还有的顶层名：整个顶层目录改名后，旧名开头的路径查不出来，要自己 `git grep`。确实要写一个不存在的引用时（例如描述用户项目里的路径），在 `scripts/doc-references.allow` 加一行 `文件 | 引用原文 | 原因`，原因必填；引用不再需要放行时，检查会要求删掉这一行。
+- **文档里的路径、章节号和链接有 `pnpm lint:docs` 守着**（`scripts/check_doc_references.py`，报错写明位置和改法；查什么、不查什么见脚本开头的说明）。动笔前要知道的是章节引用的写法：文档的仓库路径、空格、`§`、章节号，`docs/SEMANTICS.md §3.4`；一组沿用前面的文档（`docs/SEMANTICS.md §1.2、§2.4`），章节里的第几条写在后面（`docs/SEMANTICS.md §4 第 6 条`）；`docs/SEMANTICS.md`、`docs/ARCHITECTURE.md`、`docs/DESIGN-SYSTEM.md` 自己里面只写 `§` 加章节号。
+  检查做不了、要人判断的：它只确认章节有标题，指没指对要人核对，改动、合并、拆分章节时用 `git grep -n 'docs/SEMANTICS.md §'` 找出引用它的注释一起改；顶层目录整个改名后，旧名开头的路径查不出。
