@@ -1,0 +1,531 @@
+"""评测环境：一个「槽位」是一整套互相隔离的容器。
+
+| 容器 | 作用 |
+|---|---|
+| `sfly-aeval-<槽位>-mirror` | 镜像站（PyPI、GitHub Release），网络别名 `mirror.internal` |
+| `sfly-aeval-<槽位>-pg` | PostgreSQL，数据在 tmpfs 里，重置时整库重建 |
+| `sfly-aeval-<槽位>-cp` | 控制面，网络别名 `sfly.internal`，HTTP 映射到宿主机 127.0.0.1 |
+| `sfly-aeval-<槽位>-dev` | 开发环境容器（工作台的雏形）：`--dev` 装的 Agent、uv、sfly、pi |
+| `sfly-aeval-<槽位>-sut` | 被测机：普通的 Agent，上面跑着被测服务 |
+| `sfly-aeval-<槽位>-pi` | 臂 B 的 pi：本地没有工作区，工具经能力端口落到 `dev` 上 |
+
+两个槽位可以同时跑会话，互不影响。容器、网络、卷都以 `sfly-aeval-` 开头，`down` 全部删掉。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from aeval import docker as d
+
+EVALS_DIR = Path(__file__).resolve().parent.parent
+DATA_HOME = Path(os.environ.get("AEVAL_HOME", Path.home() / ".local/share/sfly/evals"))
+DEFAULT_SERVER_IMAGE = "ghcr.io/x7yue/sfly-server:0.5.0"
+DEFAULT_WORKBENCH_IMAGE = "sfly-aeval-workbench:pi-1.6.0"
+REPO_DIR = EVALS_DIR.parent.parent
+POSTGRES_IMAGE = "postgres:18"
+SUT_AGENT = "sut-01"
+# install.sh --dev 的默认名称是 dev-<用户名>-<主机名>：容器里是 root、主机名 dev。
+DEV_AGENT = "dev-root-dev"
+SERVICE_PORT = 9000
+# 开发环境容器和被测机里放评测脚本（container/ 下的文件）的目录。
+OPT = "/opt/aeval"
+# 每台助手够得着的容器里放哪些脚本：只放这台要运行的，别的（假的模型端点、自检剧本……）不放。
+# 这些文件的内容、文件名都不能有指向答案或判分的东西，
+# 单测对着禁用词查（tests/test_assistant_files.py）。
+# 臂 A 的助手在 dev 上，臂 B 的命令也落在 dev 上；sut 的能力端口在评测网络里谁都连得上。
+ASSISTANT_SCRIPTS: dict[str, tuple[str, ...]] = {
+    "dev": ("session_driver.py", "pi_memory.py"),
+    "pi": ("session_driver.py", "pi_memory.py"),
+    "sut": ("demo_svc.py",),
+    "hardened": ("session_driver.py",),
+}
+
+
+SOURCE_LABEL = "sfly.aeval.source"
+
+
+def source_hash(paths: list[Path], *extra: str) -> str | None:
+    """构建一个镜像用到的源文件（目录取其中全部文件）的内容哈希；有文件不在（例如离线包里没有仓库的
+    生成代码）时是 None：这时不知道镜像是不是旧的，用现有的。"""
+    digest = hashlib.sha256()
+    for item in extra:
+        digest.update(item.encode())
+    for path in paths:
+        if not path.exists():
+            return None
+        files = sorted(f for f in path.rglob("*") if f.is_file()) if path.is_dir() else [path]
+        for file in files:
+            if "__pycache__" in file.parts:
+                continue
+            digest.update(file.name.encode())
+            digest.update(file.read_bytes())
+    return digest.hexdigest()[:16]
+
+
+def image_source(image: str) -> str | None:
+    result = d.docker(
+        "image",
+        "inspect",
+        "--format",
+        f'{{{{index .Config.Labels "{SOURCE_LABEL}"}}}}',
+        image,
+        check=False,
+    )
+    value = result.stdout.strip()
+    # 没有这个标签时 docker 打印 <no value>。
+    return value if result.returncode == 0 and value and value != "<no value>" else None
+
+
+def needs_build(image: str, wanted: str | None) -> bool:
+    """镜像不存在、或者它的源文件哈希和现在的不一样（改了 Dockerfile 或扩展）时要重新构建。"""
+    if not d.exists("image", image):
+        return True
+    return wanted is not None and image_source(image) != wanted
+
+
+def copy_scripts(container: str, role: str, evals_dir: Path = EVALS_DIR) -> None:
+    d.sh(container, f"mkdir -p {OPT}")
+    for name in ASSISTANT_SCRIPTS[role]:
+        d.copy_in(str(evals_dir / "container" / name), container, f"{OPT}/{name}")
+
+
+@dataclass
+class Stack:
+    """一个槽位的环境。"""
+
+    slot: int = 1
+    server_image: str = DEFAULT_SERVER_IMAGE
+    workbench_image: str = DEFAULT_WORKBENCH_IMAGE
+    # record：缺的文件从上游取并缓存；serve：只用缓存（离线）。
+    mirror_mode: str = "record"
+    # 断网：容器网络不通外网，也到不了宿主机（离线验证用）；模型只能用网络里的假端点。
+    internal: bool = False
+    # 在网络里起假的模型端点（fake-model.internal，只验证流程）。断网时总是起。
+    fake_model: bool = False
+    cache_dir: Path = field(default_factory=lambda: DATA_HOME / "mirror-cache")
+    # 已有的镜像站（例如内网的 PyPI 和 GitHub Release 镜像）：给了就不用评测自带的镜像站。
+    pypi_mirror: str = "http://mirror.internal:8000/pypi/simple"
+    github_mirror: str = "http://mirror.internal:8000/github-release"
+    evals_dir: Path = EVALS_DIR
+
+    def name(self, role: str) -> str:
+        return f"sfly-aeval-{self.slot}-{role}"
+
+    @property
+    def network(self) -> str:
+        return f"sfly-aeval-{self.slot}"
+
+    @property
+    def http_port(self) -> int:
+        return 18100 + self.slot
+
+    @property
+    def pi(self) -> str:
+        return self.name("pi")
+
+    @property
+    def dev(self) -> str:
+        return self.name("dev")
+
+    @property
+    def sut(self) -> str:
+        return self.name("sut")
+
+    @property
+    def cp_url(self) -> str:
+        return f"http://127.0.0.1:{self.http_port}"
+
+    # ---- 起停 ----
+
+    def ensure_images(self, log: Any = print) -> None:
+        """工作台镜像不存在时按 workbench/Dockerfile 构建；控制面和 PostgreSQL 的镜像要事先准备。"""
+        for image in (self.server_image, POSTGRES_IMAGE):
+            if not d.exists("image", image):
+                raise d.DockerError(
+                    f"没有镜像 {image}：先 docker load 或 docker pull，见 README.md「前提」"
+                )
+        wanted = self.workbench_source()
+        if not needs_build(self.workbench_image, wanted):
+            return
+        log(f"构建工作台镜像 {self.workbench_image}（几分钟）")
+        args = ["build", "-t", self.workbench_image, "--label", f"{SOURCE_LABEL}={wanted}"]
+        for key, env in (
+            ("DEBIAN_MIRROR", "AEVAL_DEBIAN_MIRROR"),
+            ("NPM_REGISTRY", "AEVAL_NPM_REGISTRY"),
+        ):
+            if os.environ.get(env):
+                args += ["--build-arg", f"{key}={os.environ[env]}"]
+        tag = self.workbench_image.rsplit(":pi-", 1)
+        if len(tag) == 2:
+            args += ["--build-arg", f"PI_VERSION={tag[1]}"]
+        d.docker(*args, str(self.evals_dir / "workbench"), timeout=3600)
+
+    def workbench_source(self) -> str | None:
+        return source_hash([self.evals_dir / "workbench"], self.workbench_image)
+
+    @property
+    def remote_image(self) -> str:
+        """臂 B 的 pi 镜像：工作台镜像加上远程工具扩展。"""
+        return self.workbench_image.replace("sfly-aeval-workbench", "sfly-aeval-pi-remote", 1)
+
+    def ensure_remote_image(self, log: Any = print) -> None:
+        gen = "packages/proto/src/gen/sfly/agent/v1"
+        wanted = source_hash(
+            [EVALS_DIR / "remote-tools", REPO_DIR / gen], image_source(self.workbench_image) or ""
+        )
+        if not needs_build(self.remote_image, wanted):
+            return
+        log(f"构建臂 B 的镜像 {self.remote_image}")
+        with tempfile.TemporaryDirectory(prefix="sfly-aeval-remote-") as tmp:
+            context = Path(tmp)
+            shutil.copytree(EVALS_DIR / "remote-tools", context / "evals/assistant/remote-tools")
+            shutil.copytree(REPO_DIR / gen, context / gen)
+            args = [
+                "build",
+                "-t",
+                self.remote_image,
+                "--build-arg",
+                f"WORKBENCH_IMAGE={self.workbench_image}",
+                "--label",
+                f"{SOURCE_LABEL}={wanted}",
+            ]
+            if os.environ.get("AEVAL_NPM_REGISTRY"):
+                args += ["--build-arg", f"NPM_REGISTRY={os.environ['AEVAL_NPM_REGISTRY']}"]
+            args += ["-f", str(context / "evals/assistant/remote-tools/Dockerfile"), str(context)]
+            d.docker(*args, timeout=3600)
+
+    def ensure_pi_container(self, log: Any = print) -> None:
+        """臂 B 的 pi 容器：同一个网络，能连到 dev 的能力端口和宿主机的模型转发口，什么都不挂载。"""
+        if d.container_running(self.pi):
+            return
+        self.ensure_remote_image(log)
+        self._run(
+            "pi",
+            self.remote_image,
+            ["sleep", "infinity"],
+            hostname="pi",
+            extra=["--memory", "2g", "--add-host", "host.docker.internal:host-gateway"],
+        )
+        copy_scripts(self.pi, "pi", self.evals_dir)
+
+    def network_internal(self) -> bool | None:
+        """网络现在是不是 internal（不通外网和宿主机）；网络不存在时是 None。"""
+        result = d.docker(
+            "network", "inspect", "--format", "{{.Internal}}", self.network, check=False
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() == "true"
+
+    def ensure_network(self, log: Any = print) -> None:
+        """网络已经存在、但是不是 internal 和要的不一样时（例如先 up、再 up --isolated），
+        删掉这个槽位的全部容器和网络重建：不然 --isolated 会在一个通外网的网络上「就绪」。"""
+        current = self.network_internal()
+        if current is not None and current != self.internal:
+            log(
+                f"网络 {self.network} 的 internal 是 {current}，"
+                f"要的是 {self.internal}：重建这个槽位"
+            )
+            self.down()
+            current = None
+        if current is None:
+            args = ["network", "create"]
+            if self.internal:
+                args.append("--internal")
+            d.docker(*args, self.network)
+
+    def verify_isolated(self) -> None:
+        """--isolated 时实际验证一次出不去：开发环境容器连不上外网，也连不上宿主机。
+
+        连得上就失败。"""
+        for url in ("https://mirrors.ustc.edu.cn/", "http://host.docker.internal:18900/"):
+            probe = d.sh(self.dev, f"curl -sS -m 5 -o /dev/null {url}", check=False)
+            if probe.returncode == 0:
+                raise d.DockerError(f"--isolated 的网络里还连得上 {url}，不是断网的环境")
+
+    def up(self, log: Any = print) -> None:
+        self.ensure_images(log)
+        self.ensure_network(log)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        log(f"镜像站（{self.mirror_mode}）")
+        self._run(
+            "mirror",
+            self.workbench_image,
+            ["python3", "/aeval/container/mirror.py", self.mirror_mode],
+            aliases=["mirror.internal"],
+            volumes=[f"{self.cache_dir}:/cache", f"{self.evals_dir}:/aeval:ro"],
+        )
+        if self.fake_model or self.internal:
+            log("假的模型端点")
+            self._run(
+                "fake",
+                self.workbench_image,
+                ["python3", "/aeval/container/fake_model.py"],
+                aliases=["fake-model.internal"],
+                volumes=[f"{self.evals_dir}:/aeval:ro"],
+            )
+        log("PostgreSQL")
+        self._start_postgres()
+        log(f"控制面 {self.server_image}")
+        self._start_control_plane()
+        for role, memory in (("dev", "4g"), ("sut", "1g")):
+            self._run(
+                role,
+                self.workbench_image,
+                ["sleep", "infinity"],
+                hostname=role,
+                aliases=[role],
+                extra=["--memory", memory, "--add-host", "host.docker.internal:host-gateway"],
+            )
+        # 评测目录不挂进这两台容器：里面有参考答案和看不到的断言，助手的命令够得着这两台。
+        # 只复制这台要运行的脚本（ASSISTANT_SCRIPTS）。
+        copy_scripts(self.dev, "dev", self.evals_dir)
+        copy_scripts(self.sut, "sut", self.evals_dir)
+        log("安装 Agent（按用户文档的 install.sh）")
+        self._install_agents()
+        self.start_agents()
+        self.wait_agents()
+        # 共享 venv 的基线：每次重置恢复成它，`sfly dev` 和装过的节点包都不会留到下一次会话。
+        self.stop_agents()
+        for container in (self.dev, self.sut):
+            d.sh(
+                container,
+                "rm -rf /root/.sfly/venv.base && cp -a /root/.sfly/venv /root/.sfly/venv.base",
+            )
+        self.start_service()
+        if self.internal:
+            self.verify_isolated()
+            log("已确认断网：开发环境容器连不上外网和宿主机")
+        log(f"环境就绪：控制面 {self.cp_url}")
+
+    def down(self) -> None:
+        for role in ("hardened", "pi", "dev", "sut", "cp", "pg", "mirror", "fake"):
+            d.docker("rm", "-f", self.name(role), check=False)
+        d.docker("volume", "rm", self.name("cpdata"), check=False)
+        d.docker("network", "rm", self.network, check=False)
+
+    def _run(
+        self,
+        role: str,
+        image: str,
+        argv: list[str],
+        *,
+        aliases: list[str] | None = None,
+        hostname: str | None = None,
+        volumes: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        ports: list[str] | None = None,
+        extra: list[str] | None = None,
+    ) -> None:
+        name = self.name(role)
+        d.docker("rm", "-f", name, check=False)
+        args = ["run", "-d", "--name", name, "--network", self.network, "--init"]
+        args += ["--label", "sfly.aeval=1"]
+        for alias in aliases or []:
+            args += ["--network-alias", alias]
+        if hostname:
+            args += ["--hostname", hostname]
+        for volume in volumes or []:
+            args += ["-v", volume]
+        for key, value in (env or {}).items():
+            args += ["-e", f"{key}={value}"]
+        for port in ports or []:
+            args += ["-p", port]
+        args += extra or []
+        d.docker(*args, image, *argv)
+
+    def _start_postgres(self) -> None:
+        self._run(
+            "pg",
+            POSTGRES_IMAGE,
+            [],
+            env={"POSTGRES_USER": "sfly", "POSTGRES_PASSWORD": "sfly", "POSTGRES_DB": "sfly"},
+            extra=["--tmpfs", "/var/lib/postgresql"],
+        )
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            ready = d.docker(
+                "exec", self.name("pg"), "pg_isready", "-U", "sfly", "-d", "sfly", check=False
+            )
+            if ready.returncode == 0:
+                return
+            time.sleep(1)
+        raise d.DockerError("PostgreSQL 60 秒内没有就绪")
+
+    def _start_control_plane(self) -> None:
+        d.docker("volume", "rm", self.name("cpdata"), check=False)
+        self._run(
+            "cp",
+            self.server_image,
+            [],
+            aliases=["sfly.internal"],
+            volumes=[f"{self.name('cpdata')}:/data"],
+            env={
+                "DATABASE_URL": f"postgres://sfly:sfly@{self.name('pg')}:5432/sfly",
+                "SFLY_PUBLIC_URL": "http://sfly.internal:8080",
+                "SFLY_PYPI_MIRROR": self.pypi_mirror,
+                "SFLY_GITHUB_RELEASE_MIRROR": self.github_mirror,
+            },
+            # 断网的网络发布不了端口；所有操作本来就经 docker exec，不依赖它。
+            ports=[] if self.internal else [f"127.0.0.1:{self.http_port}:8080"],
+        )
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            status = d.docker(
+                "inspect", "--format", "{{.State.Health.Status}}", self.name("cp"), check=False
+            ).stdout.strip()
+            if status == "healthy":
+                return
+            if not d.container_running(self.name("cp")):
+                logs = d.docker("logs", "--tail", "30", self.name("cp"), check=False)
+                raise d.DockerError("控制面容器退出了：\n" + logs.stdout + logs.stderr)
+            time.sleep(1)
+        raise d.DockerError("控制面 120 秒内没有变成 healthy")
+
+    def _install_agents(self) -> None:
+        url = "http://sfly.internal:8080/install.sh"
+        d.sh(self.dev, f"curl -fsSL {url} | sh -s -- --dev --no-service", timeout=600)
+        d.sh(self.sut, f"curl -fsSL {url} | sh -s -- --name {SUT_AGENT} --no-service", timeout=600)
+        # 安装脚本提示 ~/.local/bin 不在 PATH 上时，按用户文档把它加进 shell 配置。
+        d.sh(
+            self.dev,
+            "line='export PATH=\"$HOME/.local/bin:$PATH\"'; "
+            "for f in /root/.profile /root/.bashrc; do "
+            'grep -qxF "$line" $f 2>/dev/null || echo "$line" >> $f; done',
+        )
+
+    # ---- Agent ----
+
+    def start_agents(self) -> None:
+        for container in (self.dev, self.sut):
+            d.detach(
+                container,
+                ["sh", "-c", "exec /root/.sfly/bin/sfly-agent >> /var/log/sfly-agent.log 2>&1"],
+            )
+
+    def stop_agents(self) -> None:
+        for container in (self.dev, self.sut):
+            d.sh(
+                container,
+                "pkill -TERM -f '[/]root/.sfly/bin/sfly-agent' || true; "
+                "for i in $(seq 50); do "
+                "pgrep -f '[/]root/.sfly/bin/sfly-agent' >/dev/null || exit 0; sleep 0.2; done; "
+                "pkill -KILL -f '[/]root/.sfly/bin/sfly-agent' || true",
+            )
+
+    def agents(self) -> list[dict[str, Any]]:
+        out = self.sfly("agent", "list", "--json", check=False)
+        if out.returncode != 0:
+            return []
+        data = json.loads(out.stdout or "[]")
+        return data if isinstance(data, list) else []
+
+    def wait_agents(self, timeout: float = 600) -> None:
+        """等两台 Agent 都在线、准备好环境。第一次要下载 uv 和 Python，要一两分钟。"""
+        deadline = time.monotonic() + timeout
+        ready: set[str] = set()
+        while time.monotonic() < deadline:
+            ready = {
+                str(a.get("name"))
+                for a in self.agents()
+                if a.get("status") == "online" and not a.get("preparing_since")
+            }
+            if {DEV_AGENT, SUT_AGENT} <= ready:
+                return
+            for container in (self.dev, self.sut):
+                if not d.sh(
+                    container, "pgrep -f '[/]root/.sfly/bin/sfly-agent'", check=False
+                ).stdout:
+                    tail = d.sh(container, "tail -n 40 /var/log/sfly-agent.log", check=False).stdout
+                    raise d.DockerError(f"{container} 上的 Agent 退出了：\n{tail}")
+            time.sleep(2)
+        raise d.DockerError(f"Agent 没有在 {timeout:.0f} 秒内准备好（已就绪：{sorted(ready)}）")
+
+    # ---- 被测服务 ----
+
+    def start_service(self) -> None:
+        """在被测机上起被测服务（通用的 HTTP 服务，写自己的日志）。重置时也会重启它。"""
+        d.sh(
+            self.sut,
+            "pkill -f '[d]emo_svc.py' || true; mkdir -p /var/log/demo-svc",
+        )
+        d.detach(
+            self.sut,
+            [
+                "sh",
+                "-c",
+                f"exec python3 {OPT}/demo_svc.py --port {SERVICE_PORT} "
+                ">> /var/log/demo-svc/stdout.log 2>&1",
+            ],
+        )
+        for _ in range(50):
+            ok = d.sh(self.sut, f"curl -fsS http://127.0.0.1:{SERVICE_PORT}/health", check=False)
+            if ok.returncode == 0:
+                return
+            time.sleep(0.2)
+        raise d.DockerError("被测服务没有起来")
+
+    # ---- 重置 ----
+
+    def reset(self) -> None:
+        """回到刚 `up` 完的状态：控制面整库重建，Agent 的工作目录、开发包和共享 venv 恢复成基线。
+
+        dev、sut（和 pi）重启一次：上一次会话里助手起的后台进程不会留到下一次；/tmp 清空。
+        家目录里 Agent、uv、sfly 之外的东西不清（uv 的缓存要留着），这一点不完全隔离。
+        """
+        self.stop_agents()
+        containers = [c for c in (self.dev, self.sut, self.pi) if d.container_running(c)]
+        d.docker("restart", "-t", "2", *containers)
+        d.docker("rm", "-f", self.name("cp"), check=False)
+        pg = self.name("pg")
+        d.docker("exec", pg, "dropdb", "-U", "sfly", "--force", "--if-exists", "sfly")
+        d.docker("exec", pg, "createdb", "-U", "sfly", "sfly")
+        self._start_control_plane()
+        for container in (self.dev, self.sut):
+            d.sh(
+                container,
+                "rm -rf /root/.sfly/work /root/.sfly/procs /root/.sfly/venv /work /root/.pi "
+                f"/root/aeval-session {OPT} && find /tmp -mindepth 1 -delete "
+                "&& cp -a /root/.sfly/venv.base /root/.sfly/venv && : > /var/log/sfly-agent.log",
+            )
+        if self.pi in containers:
+            d.sh(
+                self.pi,
+                f"rm -rf /work /root/.pi /root/aeval-session {OPT} "
+                "&& find /tmp -mindepth 1 -delete",
+            )
+        # 每次重置都重新放一份脚本：环境起好以后改过的会话驱动等也能用上，以前多放的也清掉了。
+        copy_scripts(self.dev, "dev", self.evals_dir)
+        copy_scripts(self.sut, "sut", self.evals_dir)
+        if self.pi in containers:
+            copy_scripts(self.pi, "pi", self.evals_dir)
+        self.start_agents()
+        self.wait_agents(timeout=180)
+        self.start_service()
+
+    # ---- 在开发环境容器里执行 ----
+
+    def sfly(self, *args: str, check: bool = True, workdir: str | None = None) -> Any:
+        """以「评分」的身份在开发环境容器里执行 sfly 命令行。"""
+        quoted = " ".join(_quote(a) for a in args)
+        return d.sh(
+            self.dev,
+            f"sfly {quoted}",
+            env={"SFLY_NICKNAME": "grader"},
+            workdir=workdir,
+            check=check,
+            timeout=900,
+        )
+
+
+def _quote(value: str) -> str:
+    return "'" + value.replace("'", "'\\''") + "'"

@@ -1,0 +1,163 @@
+{
+	"说明": "工具自检的剧本：假的模型端点收到带 AEVAL-TOOLCHECK 的提示时依次发出这些工具调用。{full_output} 换成上一个工具结果里「Full output: 路径」的路径。工作目录是 /work/tc。",
+	"steps": [
+		{
+			"id": "write_new_dir",
+			"tool": "write",
+			"args": {
+				"path": "new/dir/a.txt",
+				"content": "hello\nworld\n"
+			}
+		},
+		{
+			"id": "read_back",
+			"tool": "read",
+			"args": {
+				"path": "new/dir/a.txt"
+			}
+		},
+		{
+			"id": "edit",
+			"tool": "edit",
+			"args": {
+				"path": "new/dir/a.txt",
+				"edits": [
+					{
+						"oldText": "world",
+						"newText": "remote"
+					}
+				]
+			}
+		},
+		{
+			"id": "edit_no_match",
+			"tool": "edit",
+			"args": {
+				"path": "new/dir/a.txt",
+				"edits": [
+					{
+						"oldText": "absent",
+						"newText": "x"
+					}
+				]
+			}
+		},
+		{
+			"id": "bash_cwd_env",
+			"tool": "bash",
+			"args": {
+				"command": "cat new/dir/a.txt; pwd; echo \"agent=$AI_AGENT nick=$SFLY_NICKNAME\"; command -v sfly uv",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_exit_code",
+			"tool": "bash",
+			"args": {
+				"command": "echo to-stderr >&2; exit 3",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_timeout",
+			"tool": "bash",
+			"args": {
+				"command": "echo started; sleep 5; echo never",
+				"timeout": 1
+			}
+		},
+		{
+			"id": "bash_no_timeout",
+			"tool": "bash",
+			"args": {
+				"command": "echo no-timeout-given"
+			}
+		},
+		{
+			"id": "bash_truncated",
+			"tool": "bash",
+			"args": {
+				"command": "seq 1 5000",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "read_full_output",
+			"tool": "read",
+			"args": {
+				"path": "{full_output}",
+				"offset": 4990
+			}
+		},
+		{
+			"id": "read_missing",
+			"tool": "read",
+			"args": {
+				"path": "missing.txt"
+			}
+		},
+		{
+			"id": "bash_background",
+			"tool": "bash",
+			"args": {
+				"command": "nohup python3 -m http.server 18777 >/tmp/aeval-bg.log 2>&1 & echo started",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_background_alive",
+			"tool": "bash",
+			"args": {
+				"command": "sleep 1; curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18777/ || echo dead",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_setsid_background",
+			"tool": "bash",
+			"args": {
+				"command": "setsid nohup python3 -m http.server 18778 >/tmp/aeval-bg2.log 2>&1 < /dev/null & echo started",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_setsid_alive",
+			"tool": "bash",
+			"args": {
+				"command": "sleep 1; curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18778/ || echo dead",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_setsid_wait_background",
+			"tool": "bash",
+			"args": {
+				"command": "setsid nohup python3 -m http.server 18779 >/tmp/aeval-bg3.log 2>&1 < /dev/null & sleep 1; echo started",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_setsid_wait_alive",
+			"tool": "bash",
+			"args": {
+				"command": "sleep 1; curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18779/ || echo dead",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "bash_cleanup",
+			"tool": "bash",
+			"args": {
+				"command": "pkill -f '[h]ttp.server 1877'; echo done",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "read_skill",
+			"tool": "read",
+			"args": {
+				"path": "/work/tc/.agents/skills/demo/SKILL.md"
+			}
+		}
+	]
+}
