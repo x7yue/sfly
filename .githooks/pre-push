@@ -11,7 +11,28 @@ set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
 branch_doc=docs/agents/branching-and-release.md
-prefixes=$({ sed -n '/^## 分支命名/,/^## /p' "$root/$branch_doc" 2>/dev/null || true; } | sed -nE 's#^\| `([a-z]+/)[^`]*` \|.*#\1#p' | tr '\n' ' ')
+
+# 读「分支命名」表：第一列写成单个 `前缀/…`（前缀是小写字母、数字和连字符），表头和分隔行跳过，
+# 单元格里的多余空白、行首缩进都不碍事。读不懂的行（一格里两个前缀、给前缀加粗……）收集起来，推送时明确报错，不静默丢掉。
+prefixes=""
+unreadable=()
+header=1
+cell_re='^`([a-z][a-z0-9-]*/)[^`]*`$'
+while IFS= read -r row; do
+	[[ $row =~ ^[[:space:]]*\| ]] || continue
+	cell=${row#*|}
+	cell=${cell%%|*}
+	cell=${cell#"${cell%%[![:space:]]*}"}
+	cell=${cell%"${cell##*[![:space:]]}"}
+	if [[ $cell =~ $cell_re ]]; then
+		prefixes+="${BASH_REMATCH[1]} "
+	elif [[ $cell =~ ^:?-+:?$ ]] || { ((header)) && [[ $cell != *\`* ]]; }; then
+		: # 分隔行；表头（表的第一行，第一列没有反引号）
+	else
+		unreadable+=("$row")
+	fi
+	header=0
+done < <({ sed -n '/^## 分支命名/,/^## /p' "$root/$branch_doc" 2>/dev/null || true; })
 prefixes=${prefixes% }
 
 branch_name_allowed() {
@@ -30,6 +51,13 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
 	[[ $local_sha == "$zero" || $remote_ref == refs/tags/* ]] && continue
 	branches=1
 	if [[ $remote_ref == refs/heads/* ]]; then
+		if ((${#unreadable[@]})); then
+			for row in "${unreadable[@]}"; do
+				echo "pre-push：读不懂 ${branch_doc}「分支命名」表的这一行：${row}" >&2
+			done
+			echo "  表的第一列要写成单个 \`前缀/…\`（前缀是小写字母、数字和连字符；不在一格里写两个前缀，不给前缀加粗），钩子按它读允许的前缀（跳过：git push --no-verify）" >&2
+			exit 1
+		fi
 		if [[ -z $prefixes ]]; then
 			echo "pre-push：读不出 ${branch_doc}「分支命名」表里的前缀，没法检查分支名：先把这张表改回「每行第一列是 \`前缀/…\`」的格式（跳过：git push --no-verify）" >&2
 			exit 1
