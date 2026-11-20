@@ -54,7 +54,7 @@ export const COMPACT_THRESHOLD = 0.9;
 export const LOD_THRESHOLD = 0.65;
 /**
  * 再小时（data-lod-far）卡片只留站点灯和标题：进度线也收起，执行中、失败、等待中的灯放大到屏幕上 18px，
- * 已完成、待执行的灯缩成一个小点——看全图时只有要盯的状态显眼（DESIGN-SYSTEM §2.3）。
+ * 已完成、待执行的灯缩成一个小点——看全图时只有要盯的状态显眼（docs/DESIGN-SYSTEM.md §2.3）。
  */
 export const LOD_FAR_THRESHOLD = 0.4;
 /**

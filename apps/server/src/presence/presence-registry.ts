@@ -17,7 +17,7 @@ interface Entry extends Editor {
 	lastSeen: number;
 }
 
-/** 没有心跳多久后移除（docs/ARCHITECTURE.md §6：浏览器每 10 秒一次，30 秒无心跳移除）。 */
+/** 没有心跳多久后移除（docs/ARCHITECTURE.md §6.4 第 6 条：浏览器每 10 秒一次，30 秒无心跳移除）。 */
 export const PRESENCE_TTL_MS = 30_000;
 
 /**

@@ -1,4 +1,4 @@
-//! 基准测试（ARCHITECTURE §7.6）：Agent 的指标合并与按行切分吞吐。只在本地运行，不进 CI：
+//! 基准测试（docs/ARCHITECTURE.md §7.6）：Agent 的指标合并与按行切分吞吐。只在本地运行，不进 CI：
 //! `cargo test` 不运行 benches/，`pnpm perf` 顺带运行并汇总进报告（apps/server/perf/items/08-bench-agent.ts）。
 //!
 //! 单独运行：`cargo bench -p sfly-agent --bench telemetry`；结果写在 `target/criterion/`

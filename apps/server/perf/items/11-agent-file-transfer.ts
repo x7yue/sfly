@@ -1,4 +1,4 @@
-// 负载：两台 Agent 之间传输一个大文件（ARCHITECTURE §7.6「两台 Agent 之间传输大文件」，ADR 0019）。
+// 负载：两台 Agent 之间传输一个大文件（docs/ARCHITECTURE.md §7.6「两台 Agent 之间传输大文件」，ADR 0019）。
 // 同一台机器上的两台 release Agent：perf-agent（节点所在，下载方）和 perf-source（文件所在）。
 // perf-agent 上的节点用 ctx.agent("perf-source").files.download 把 perf-source 上的文件下载到本地：
 // 数据由两台 Agent 之间的 gRPC 直接传输、由下载方的 Agent 写盘，不经过控制面和节点进程。

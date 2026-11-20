@@ -1,9 +1,9 @@
-// 长时负载测试（ARCHITECTURE §7.6）：`pnpm perf:soak`，默认 1 小时（--duration 指定），只在维护者要求时运行。
+// 长时负载测试（docs/ARCHITECTURE.md §7.6）：`pnpm perf:soak`，默认 1 小时（--duration 指定），只在维护者要求时运行。
 // 不放在 perf/items/ 下：pnpm perf 不运行它。
 //
 // 复现 #69 那样的持续压测，同一个打包后的控制面上同时施加两类负载：
 // - 控制面接收指标：与 pnpm perf 的 control-plane-metrics 相同（perf/control-plane-load.ts），跑满时长，
-//   对应 §7.6「持续每秒 1 万点 1 小时不积压；1 小时范围的指标查询 p95 < 500 ms」；
+//   对应 docs/ARCHITECTURE.md §7.6「持续每秒 1 万点 1 小时不积压；1 小时范围的指标查询 p95 < 500 ms」；
 // - 真实的 release Agent（4 个槽位）：一个任务从头到尾以每秒 1 万次上报指标（metric_rate），另外两个槽位
 //   不停地一个接一个执行短任务——定速输出 stdout（日志副本轮换）和短时上报指标（任务目录的创建与删除）。
 //   Agent 以 --task-dir-retention 0 启动，结果确认后立即删除任务目录，工作目录占用只反映执行中的任务。
@@ -41,7 +41,7 @@ export const sampleIntervalMs = (seconds: number) =>
 	Math.min(10_000, Math.max(1000, Math.round((seconds * 1000) / 720)));
 
 /**
- * 长任务的执行超时（秒）：节点默认 1 小时（SEMANTICS §3.1），1 小时的 soak 会让长任务在最后被平台按超时终止，
+ * 长任务的执行超时（秒）：节点默认 1 小时（docs/SEMANTICS.md §3.3），1 小时的 soak 会让长任务在最后被平台按超时终止，
  * 所以比计划时长多留 10 分钟（任务的开始晚于计时起点，结束后还要写完最后一批指标）。
  */
 export const longTaskTimeout = (seconds: number) => Math.ceil(seconds) + 600;

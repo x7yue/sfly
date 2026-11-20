@@ -53,7 +53,7 @@ export function AnnotationInspector({
 		}),
 		...annotation.subflows.map((entryId): Member => {
 			const entry = nodes.get(entryId);
-			// 子流程成员连同它下级的子流程（SEMANTICS §1.6）：有下级时写出有几个，人才知道框里为什么还有它们。
+			// 子流程成员连同它下级的子流程（docs/SEMANTICS.md §1.6）：有下级时写出有几个，人才知道框里为什么还有它们。
 			const below = subflowTree(context.doc, entryId).length - 1;
 			const name = entry?.kind === "subflow_entry" ? subflowLabel(entry) : entryId;
 			return {

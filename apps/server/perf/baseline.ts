@@ -1,4 +1,4 @@
-// 性能测试报告的两份对比基准与发版报告的把关（ARCHITECTURE §7.6）。纯逻辑，单测见 test/perf-baseline.test.ts。
+// 性能测试报告的两份对比基准与发版报告的把关（docs/ARCHITECTURE.md §7.6）。纯逻辑，单测见 test/perf-baseline.test.ts。
 //
 // - 本机上一次：本机结果目录（默认 ~/.local/share/sfly/perf，所有 worktree 共用）里同一台机器的最近一次；
 // - 发版基线：仓库里 docs/perf/<版本>/ 下最近一个版本的发版报告；不是同一台机器跑的就不对比。

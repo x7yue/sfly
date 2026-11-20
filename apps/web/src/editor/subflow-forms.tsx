@@ -6,7 +6,7 @@ import { PopoverClose } from "@/components/ui/popover";
 
 /**
  * 添加节点菜单里与子流程有关的两个表单（AddNodeMenu）：新建子流程入口时填写名称；添加异步任务节点时
- * 可以勾选「同时新建子流程」（#187）。名称必填、场景内唯一（SEMANTICS §1.2）：空名称在提交时提示，重名随输入提示。
+ * 可以勾选「同时新建子流程」（#187）。名称必填、场景内唯一（docs/SEMANTICS.md §1.2）：空名称在提交时提示，重名随输入提示。
  *
  * `focusRef` 是表单打开时拿到焦点的元素的 ref（AddNodeMenu 借它记下打开菜单前的焦点，关闭时交还）。
  */

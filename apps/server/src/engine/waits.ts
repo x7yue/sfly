@@ -79,7 +79,7 @@ export function waitOutputs(node: WaitNode, at: Date, late = false): Record<stri
 }
 
 /**
- * 定时 / Sleep 节点开始执行（§5）：唤醒时间已到就立即成功并返回 true；否则任务记为 waiting、
+ * 定时 / Sleep 节点开始执行（docs/SEMANTICS.md §5）：唤醒时间已到就立即成功并返回 true；否则任务记为 waiting、
  * 唤醒时间写进 PG，由 {@link wakeTimers} 唤醒。配置无效时以 config_error 失败（不重试）并返回 false。
  */
 export async function startWait(

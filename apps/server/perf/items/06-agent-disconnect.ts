@@ -1,4 +1,4 @@
-// 负载：任务持续上报期间 Agent 与控制面断线（ARCHITECTURE §7.6「Agent 断线」）。
+// 负载：任务持续上报期间 Agent 与控制面断线（docs/ARCHITECTURE.md §7.6「Agent 断线」）。
 // 两个任务同时运行：桩节点 metric_rate 每秒上报 1 万次指标，stdout_rate 每秒写 3 MiB 带序号的 stdout。
 // 连着控制面上报几秒后停掉打包后的控制面，断线一段时间（pnpm perf 里默认 45 秒；SFLY_PERF_DISCONNECT_SECONDS=300 跑满 5 分钟），
 // 再用同一个数据库、数据目录和端口重启，Agent 按原地址重连、补发排队的日志和指标，任务照常跑完。
@@ -347,7 +347,7 @@ export default definePerfItem({
 				},
 			],
 			notes: [
-				`控制面停掉 ${downSeconds} 秒${downSeconds < DISCONNECT_SECONDS ? `（§7.6 的目标是 ${DISCONNECT_SECONDS} 秒，设 ${DISCONNECT_SECONDS_ENV}=${DISCONNECT_SECONDS} 跑满）` : ""}；两个任务各跑 ${nodeSeconds} 秒：每秒 ${EVENTS_PER_SECOND} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout（每行 ${LINE_BYTES} 字节）。` +
+				`控制面停掉 ${downSeconds} 秒${downSeconds < DISCONNECT_SECONDS ? `（docs/ARCHITECTURE.md §7.6 的目标是 ${DISCONNECT_SECONDS} 秒，设 ${DISCONNECT_SECONDS_ENV}=${DISCONNECT_SECONDS} 跑满）` : ""}；两个任务各跑 ${nodeSeconds} 秒：每秒 ${EVENTS_PER_SECOND} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout（每行 ${LINE_BYTES} 字节）。` +
 					`日志排队上限用 Agent 默认的 ${LOG_QUEUE_BYTES / MB} MiB，指标排队上限调成 ${METRIC_QUEUE_POINTS} 个点：每个指标每秒只合并出 1 个点，断线 5 分钟也排不满默认的 50 万点，所以 50 万点排满时的内存没有测到。`,
 				`时间线（相对采样开始，秒）：${offset(stopAt)} 停掉控制面，${offset(restartAt)} 重启，${offset(welcomeAt)} Agent 重新连上；` +
 					`断线期间内存从 ${(growth.baselineBytes / MB).toFixed(1)} MB 涨到峰值 ${(growth.peakBytes / MB).toFixed(1)} MB。`,

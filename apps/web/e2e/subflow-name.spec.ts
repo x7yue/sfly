@@ -12,7 +12,7 @@ import {
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage } from "./support";
 
-// 子流程名称（#84，SEMANTICS §1.2）：新建子流程入口时填写，检查器里修改，名称为空或重复时警告；
+// 子流程名称（#84，docs/SEMANTICS.md §1.2）：新建子流程入口时填写，检查器里修改，名称为空或重复时警告；
 // 没有名称字段的旧版本以节点 ID 作为名称。
 
 const region = (page: Page, name: string) => page.getByRole("region", { name: `子流程 ${name}` });
