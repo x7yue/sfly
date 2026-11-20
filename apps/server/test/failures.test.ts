@@ -145,6 +145,8 @@ describe("失败处理", () => {
 			expect(b.status).toBe("failed");
 			expect(b.error?.kind).toBe("config_error");
 			expect(b.attempts).toHaveLength(1);
+			// 引用没有解析出来，没有可记的输入。
+			expect(b.attempts[0]?.inputs).toBeNull();
 		});
 	});
 
@@ -187,6 +189,8 @@ describe("失败处理", () => {
 			expect(b.status).toBe("failed");
 			expect(b.error).toEqual({ kind: "config_error", message: "输入 url 应为 string，实际是 42" });
 			expect(b.attempts).toHaveLength(1);
+			// 输入已经解析出来：失败的尝试上记着它们，方便看是哪个值不对。
+			expect(b.attempts[0]?.inputs).toEqual({ url: 42 });
 			expect((await api.run(runId)).status).toBe("failed");
 		});
 

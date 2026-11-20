@@ -71,6 +71,8 @@ describe("最低 SDK 版本", () => {
 		});
 		await agent.expectNoAssign();
 		expect((await api.run(runId)).status).toBe("failed");
+		// 版本不满足时在校验输入之前就失败：尝试上没有记输入。
+		expect((await api.node(runId, "p")).attempts[0]?.inputs).toBeNull();
 	});
 
 	it("满足要求时照常派发", async () => {
