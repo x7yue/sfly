@@ -21,17 +21,23 @@ _MODULE_PATH = re.compile(r"^(?:[a-z_][a-z0-9_]*\.)+(?=[A-Z][A-Za-z0-9_.]*(?::|$
 #: 堆栈的开头：异常信息之后接它，不算异常信息的下一行。
 _TRACEBACK = "Traceback (most recent call last)"
 _LINE_BREAK = re.compile(r"\r\n|\r|\n")
+#: 去掉首尾的空白，BOM 也算：和 JS 的 `trim()` 一致（Python 的 `strip()` 不去 BOM）。
+_TRIM = re.compile(r"^[\s\ufeff]+|[\s\ufeff]+$")
+
+
+def _trim(text: str) -> str:
+    return _TRIM.sub("", text)
 
 
 def split_error(message: str) -> tuple[str, list[str]]:
     """（失败原因的一行，没有并进这一行的各行原文）；没有错误信息时是 `("", [])`。"""
     lines = _LINE_BREAK.split(message.rstrip())
-    at = next((i for i, line in enumerate(lines) if line.strip()), None)
+    at = next((i for i, line in enumerate(lines) if _trim(line)), None)
     if at is None:
         return "", []
-    headline = _MODULE_PATH.sub("", lines[at].strip())
+    headline = _MODULE_PATH.sub("", _trim(lines[at]))
     used = at + 1
-    following = lines[used].strip() if used < len(lines) else ""
+    following = _trim(lines[used]) if used < len(lines) else ""
     if headline.endswith((":", "：")) and following and not following.startswith(_TRACEBACK):
         headline += following if headline.endswith("：") else f" {following}"
         used += 1

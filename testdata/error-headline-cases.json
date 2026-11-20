@@ -2,7 +2,8 @@
 	"$comment": [
 		"失败原因的一行（错误信息的摘要）怎么从错误信息里取：控制面和网页（packages/schema/src/run-failures.ts 的 errorHeadline）与命令行（sdk/python/src/sfly/cli/error_headline.py 的 error_headline）各有一份实现，都要通过这里的全部用例。",
 		"规则：取第一行有内容的文字（去掉首尾空白）；行首如果是异常的模块路径（小写字母、数字、下划线组成的名字加点，后面是首字母大写的异常类名，类名之后是冒号或行尾），去掉模块路径；第一行以冒号（半角 : 或全角 ：）结尾、下一行紧接着有内容（不是空行，也不是堆栈的开头）时，把下一行接上去，全角冒号后直接接，半角冒号后隔一个空格，只接一行。",
-		"只改这一行摘要的生成：完整的错误信息原样保留，页面和命令行在别处照旧显示它。"
+		"只改这一行摘要的生成：完整的错误信息原样保留，页面和命令行在别处照旧显示它。",
+		"字段 why 只是给人看的说明，两份实现的测试不读它。"
 	],
 	"cases": [
 		{
@@ -71,6 +72,12 @@
 			"headline": "config.yaml: 缺少字段 port"
 		},
 		{
+			"name": "行首是「小写.大写:」但不是异常类路径时照样去掉（已知行为，实际不会出现）",
+			"why": "任务的错误信息都来自异常的格式化输出，第一行总是以异常类（带模块路径）开头，所以行首出现「小写.大写:」而又不是异常类路径的情况实际不会出现；用文件名、配置项当开头的信息不会走到这里。两份实现对它的结果一致，这条用例把它钉住。",
+			"message": "config.Yaml: 读取失败",
+			"headline": "Yaml: 读取失败"
+		},
+		{
 			"name": "路径、域名不去掉",
 			"message": "/usr/local/bin/tool: not found",
 			"headline": "/usr/local/bin/tool: not found"
@@ -134,6 +141,16 @@
 			"name": "Windows 换行",
 			"message": "ValueError: 失败：\r\n原因\r\n\r\nTraceback",
 			"headline": "ValueError: 失败：原因"
+		},
+		{
+			"name": "开头的 BOM 和空白一起去掉",
+			"message": "﻿  漏拦 3 笔\nTraceback (most recent call last):",
+			"headline": "漏拦 3 笔"
+		},
+		{
+			"name": "只有 BOM 和空白的行不算有内容",
+			"message": "﻿ \n  ValueError: boom",
+			"headline": "ValueError: boom"
 		}
 	]
 }
