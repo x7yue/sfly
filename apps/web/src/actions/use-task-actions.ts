@@ -1,23 +1,21 @@
+import { type ActionSummaryView, actionsApi } from "@sfly/schema";
 import {
-	type ActionDetailView,
-	type ActionSummaryView,
-	actionsApi,
-	type CountOnlyPeriod,
-} from "@sfly/schema";
-import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+	type QueryClient,
+	type UseQueryResult,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { apiQuery, callApi } from "#/lib/api";
-import { useEventSource } from "#/lib/sse";
+import { useReader } from "#/lib/reader";
+import { openEventSource } from "#/lib/sse";
 import { useRefetchWhenPollingStops } from "#/lib/use-refetch-when-polling-stops";
+import { type ActionFilter, NO_FILTER } from "./action-details";
 import {
-	type ActionDetails,
-	type ActionFilter,
-	fromLatestPage,
-	matchesFilter,
-	NO_FILTER,
-	withLive,
-	withOlderPage,
-} from "./action-details";
+	createTaskActionReader,
+	emptyTaskActions,
+	type TaskActionPorts,
+	type TaskActionState,
+} from "./task-action-reader";
 
 /** 每页的明细数。 */
 const PAGE = 200;
@@ -48,21 +46,11 @@ export function useActionSummary(
 	return query;
 }
 
-export interface TaskActions {
+/** 读取器的状态（明细、只计数的段、有没有更早的……）加上摘要，和读取命令。 */
+export interface TaskActions extends TaskActionState {
 	/** 最新的摘要；还没读到时为 undefined。 */
 	summary: ActionSummaryView | undefined;
-	/** 读到的明细，按开始时间从新到旧，同一个 ID 只有一条（`action-details.ts`）。 */
-	details: readonly ActionDetailView[];
-	/** 分页读到的控制面兜底的只计数的段；SDK 上限的段由摘要算出（action-table.ts）。 */
-	controlPlanePeriods: readonly CountOnlyPeriod[];
-	/** 读到了第一页。 */
-	loaded: boolean;
-	/** 还有更早的明细没读：`loadOlder()` 读下一页。 */
-	hasOlder: boolean;
-	loadingOlder: boolean;
 	loadOlder: () => void;
-	/** 运行已超过保留期，明细已被清理。 */
-	expired: boolean;
 	/**
 	 * 最近一次读取失败的原因：第一页或摘要读不到时用 `retry()` 重读，读更早的一页失败时再滚动或点按钮就会重读。
 	 * 已经读到的摘要后台刷新失败不算。
@@ -72,31 +60,16 @@ export interface TaskActions {
 	retry: () => void;
 }
 
-/**
- * 一个任务（一次尝试）的动作：先读最新的一页明细，再用它的修订号接上实时推送（`actionsApi.events`；断线后
- * API 客户端带 `Last-Event-ID` 接上），`loadOlder()` 往前翻页。推送来的摘要写进 {@link useActionSummary} 的缓存，
- * 推送来的明细按筛选条件挑过再合并（合并规则在 action-details.ts，有单测）。任务或筛选条件（`name`、`failed`）
- * 变了重新读。
- */
-export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER): TaskActions {
-	const { name, failed } = filter;
-	const queryClient = useQueryClient();
-	const {
-		data: summary,
-		error: summaryError,
-		refetch: refetchSummary,
-	} = useActionSummary(taskId, false);
-	const [buffer, setBuffer] = useState<ActionDetails | null>(null);
-	const [loadingOlder, setLoadingOlder] = useState(false);
-	const [error, setError] = useState<Error | null>(null);
-	const [reloads, setReloads] = useState(0);
-	const generation = useRef(0);
-	const bufferRef = useRef(buffer);
-	bufferRef.current = buffer;
-	const olderInFlight = useRef(false);
+const noop = () => {};
 
-	const readPage = useCallback(
-		(before?: string) =>
+/** 读取器的生产适配器：分页请求带上名称、只看失败的筛选，实时推送是契约里的 SSE；推送来的摘要写进 {@link useActionSummary} 的缓存。 */
+function taskActionPorts(
+	taskId: string,
+	{ name, failed }: ActionFilter,
+	queryClient: QueryClient,
+): TaskActionPorts {
+	return {
+		readPage: ({ before }) =>
 			callApi(actionsApi.page, {
 				params: { id: taskId },
 				query: {
@@ -106,65 +79,50 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 					...(before !== undefined && { before }),
 				},
 			}),
-		[taskId, name, failed],
+		subscribeLive: (after, onActions) =>
+			openEventSource(
+				actionsApi.events,
+				{ params: { id: taskId }, query: { after } },
+				{
+					summary: (next) => queryClient.setQueryData(summaryQuery(taskId).queryKey, next),
+					actions: (chunk) => onActions(chunk.actions),
+				},
+			),
+	};
+}
+
+/**
+ * 一个任务（一次尝试）的动作：先读最新的一页明细，再用它的修订号接上实时推送（`actionsApi.events`；断线后
+ * API 客户端带 `Last-Event-ID` 接上），`loadOlder()` 往前翻页。推送来的摘要写进 {@link useActionSummary} 的缓存，
+ * 推送来的明细按筛选条件挑过再合并（合并规则和读取时序在 task-action-reader.ts，有单测）。这里只在任务或筛选条件
+ * （`name`、`failed`）变化时换一个读取器，并把它的状态接到组件上。
+ */
+export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER): TaskActions {
+	const { name, failed } = filter;
+	const queryClient = useQueryClient();
+	const {
+		data: summary,
+		error: summaryError,
+		refetch: refetchSummary,
+	} = useActionSummary(taskId, false);
+	const { state, reader } = useReader(
+		() =>
+			createTaskActionReader(taskActionPorts(taskId, { name, failed }, queryClient), {
+				name,
+				failed,
+			}),
+		`${taskId}\n${name}\n${failed}`,
+		emptyTaskActions,
 	);
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: retry() 改 reloads 就是要重读
-	useEffect(() => {
-		const current = ++generation.current;
-		setBuffer(null);
-		setError(null);
-		setLoadingOlder(false);
-		olderInFlight.current = false;
-		readPage()
-			.then((page) => generation.current === current && setBuffer(fromLatestPage(page)))
-			.catch((e: Error) => generation.current === current && setError(e));
-	}, [readPage, reloads]);
-
-	const accept = (detail: ActionDetailView) => matchesFilter(detail, { name, failed });
-	const after = buffer === null || buffer.expired ? null : buffer.rev;
-	useEventSource(
-		actionsApi.events,
-		after === null ? null : { params: { id: taskId }, query: { after } },
-		{
-			summary: (next) => queryClient.setQueryData(summaryQuery(taskId).queryKey, next),
-			actions: (chunk) => setBuffer((b) => b && withLive(b, chunk.actions, accept)),
-		},
-	);
-
-	const loadOlder = useCallback(() => {
-		const before = bufferRef.current?.before;
-		if (before == null || olderInFlight.current) return;
-		const current = generation.current;
-		olderInFlight.current = true;
-		setLoadingOlder(true);
-		readPage(before)
-			.then(
-				(page) => generation.current === current && setBuffer((b) => b && withOlderPage(b, page)),
-			)
-			.catch((e: Error) => generation.current === current && setError(e))
-			.finally(() => {
-				if (generation.current !== current) return;
-				olderInFlight.current = false;
-				setLoadingOlder(false);
-			});
-	}, [readPage]);
 
 	return {
+		...state,
 		summary,
-		details: buffer?.details ?? EMPTY,
-		controlPlanePeriods: buffer?.controlPlanePeriods ?? EMPTY,
-		loaded: buffer !== null,
-		hasOlder: buffer !== null && buffer.before !== null,
-		loadingOlder,
-		loadOlder,
-		expired: buffer?.expired ?? false,
-		error: error ?? (summary === undefined ? summaryError : null),
+		loadOlder: reader?.loadOlder ?? noop,
+		error: state.error ?? (summary === undefined ? summaryError : null),
 		retry: () => {
-			if (buffer === null && error !== null) setReloads((n) => n + 1);
+			reader?.retry();
 			if (summary === undefined) void refetchSummary();
 		},
 	};
 }
-
-const EMPTY: readonly never[] = [];
