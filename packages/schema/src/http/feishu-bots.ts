@@ -163,6 +163,7 @@ export const feishuBotsApi = {
 		summary: "删除一个飞书机器人",
 		effect: "write",
 		resource: { kind: "feishu_bot", target: { params: "name" } },
+		removes: true,
 		client: true,
 		key: ["feishu-bots", "remove"],
 		params: NameParams,

@@ -8,10 +8,26 @@ import {
 } from "./contract.js";
 
 /**
- * 接口声明（约定 10：`summary`、`effect`、`resource`）的检查。类型已经保证每个接口写了这三项，
- * 这里检查写出来的值站得住：说明不是空的，资源类别在枚举里，定位的字段真的在请求里。
+ * 接口声明（约定 10：`summary`、`effect`、`resource`，以及可选的 `creates`、`removes`）的检查。
+ * 类型已经保证每个接口写了必填的三项，这里检查写出来的值站得住：说明不是空的，资源类别在枚举里，
+ * 定位的字段真的在请求里，`creates` 和 `removes` 只出现在写接口上、互不同时出现；
+ * 再加三条守着下游的前提：GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口一定登记在
+ * {@link READS_WITH_TRACES}。
  * 契约测试对 `httpContract` 运行它；路由清单导出时也运行它，有问题就不导出。
  */
+
+/**
+ * 声明为只读、但调用后会留下点什么的接口：只写不影响任何资源内容的东西（心跳、访问日志、最后访问时间），
+ * 算只读，要在这里登记，写明写了什么。方法不是 GET 的只读接口（不是一眼看得出只读的）也一定在这里。
+ * 键是 `方法 路径`（路径模板）。契约测试检查表里的接口都存在、都声明为只读；
+ * 控制面的测试（read-only-routes.test.ts）对这里的接口同样要求库里和数据目录里没有变化，
+ * 所以只写内存的才能登记；写库的（访问日志）要先在那个测试里单独说明。
+ */
+export const READS_WITH_TRACES: Readonly<Record<string, string>> = {
+	"POST /orchestrations/:id/presence":
+		"心跳：只改内存里的在线编辑者名单（不落库），不影响场景的内容",
+	"POST /orchestrations/:id/presence/leave": "离开：只从内存里的在线编辑者名单里去掉这个会话",
+};
 
 /** 说明的长度上限：它是一句话，在 `sfly api --list` 的一行里显示。 */
 export const SUMMARY_MAX_LENGTH = 80;
@@ -81,6 +97,43 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 	return problems;
 }
 
+/** `effect`、`creates`、`removes` 之间、以及和 HTTP 方法之间的关系。 */
+function checkEffect(def: RouteDef): string[] {
+	const problems: string[] = [];
+	const key = `${def.method} ${def.path}`;
+	const creates: unknown = def.creates;
+	const removes: unknown = def.removes;
+	if (def.method === "GET" && def.effect !== "read") {
+		problems.push(
+			"GET 要声明为只读（effect: read）：有副作用的接口用别的方法，下游按「所有 GET 都没有副作用」判断",
+		);
+	}
+	if (def.method !== "GET" && def.effect === "read" && !(key in READS_WITH_TRACES)) {
+		problems.push(
+			"方法不是 GET 的只读接口要登记在 READS_WITH_TRACES（./declarations.ts），写明它为什么是只读；没有登记的写接口应声明 effect: write",
+		);
+	}
+	if (creates !== undefined) {
+		if (!(RESOURCE_KINDS as readonly unknown[]).includes(creates)) {
+			problems.push(
+				`creates 要写 ${RESOURCE_KINDS.join("、")} 之一，收到 ${JSON.stringify(creates)}`,
+			);
+		}
+		if (def.effect === "read") problems.push("只读接口不能声明 creates（新建就是写）");
+	}
+	if (removes !== undefined) {
+		if (removes !== true) problems.push("removes 只能写 true");
+		if (def.effect === "read") problems.push("只读接口不能声明 removes（删除、归档就是写）");
+		if (creates !== undefined) {
+			problems.push("creates 和 removes 不能同时声明：一个接口要么新建、要么让资源不再可用");
+		}
+	}
+	if (def.method === "DELETE" && removes !== true) {
+		problems.push("DELETE 接口要声明 removes: true（让资源不再可用）；删除不了的不要用 DELETE");
+	}
+	return problems;
+}
+
 /** 检查一组接口的声明；返回问题列表（每条以 `方法 路径` 开头），空表示全部站得住。 */
 export function checkRouteDeclarations(contract: readonly RouteDef[]): string[] {
 	const problems: string[] = [];
@@ -99,6 +152,7 @@ export function checkRouteDeclarations(contract: readonly RouteDef[]): string[] 
 		if (!(EFFECTS as readonly unknown[]).includes(effect)) {
 			add(def, `effect 要写 ${EFFECTS.join(" 或 ")}，收到 ${JSON.stringify(effect)}`);
 		}
+		for (const problem of checkEffect(def)) add(def, problem);
 
 		const resource: unknown = def.resource;
 		if (typeof resource !== "object" || resource === null) {

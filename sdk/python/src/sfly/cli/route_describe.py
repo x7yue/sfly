@@ -44,6 +44,16 @@ def effect_text(effect: str) -> str:
     return EFFECT_LABELS.get(effect, effect)
 
 
+def effect_brief(route: Route) -> str:
+    """`--list` 的「效果」一列：只读、有副作用，新建或删除的在括号里写明。"""
+    brief = effect_text(route.effect)
+    if route.creates_label:
+        return f"{brief}（新建{route.creates_label}）"
+    if route.removes:
+        return f"{brief}（删除或归档）"
+    return brief
+
+
 def call_example(route: Route) -> str:
     """调用这个接口的命令：路径里的参数写成 `<名称>`，必填的查询参数和请求体也列出来。"""
     path = _PATH_PARAM.sub(lambda m: f"<{m.group(1) or '剩余路径'}>", route.path)
@@ -201,6 +211,13 @@ def describe_route(route: Route) -> str:
         f"效果：{effect_text(route.effect)}",
         f"资源：{resource_text(route)}",
     ]
+    if route.creates_label:
+        lines.append(
+            f"新建：{route.creates_label}（定位到的{route.resource_label}只被读，写落在新建出来的"
+            f"{route.creates_label}上）"
+        )
+    if route.removes:
+        lines.append(f"删除或归档：是（让定位到的{route.resource_label}或它的一部分不再可用）")
     if route.kind == "upload":
         lines.append("请求体：原始字节（application/octet-stream），sfly api 不能直接调用")
     else:

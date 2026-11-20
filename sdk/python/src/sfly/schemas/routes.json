@@ -1,5 +1,5 @@
 {
-  "description": "sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。summary 是一句话说明；effect 是 read（只读，不改变控制面的任何状态）或 write（有副作用）；resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；upload 是具体的那一个在上传的内容里；global 是平台自身）。params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。response 是成功响应体的 JSON Schema（按输出方向导出，控制面以后可以加字段，所以对象不是封闭的），events 是 SSE 每个事件的 data 的 JSON Schema，没有这两个字段的接口没有 JSON 响应体。notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。",
+  "description": "sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。summary 是一句话说明；effect 是 read（只读：不改变平台里任何资源的内容，也不在平台之外产生副作用；只写心跳这类不影响资源内容的痕迹也算）或 write（有副作用）；resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；upload 是具体的那一个在上传的内容里；global 是平台自身）；有 creates 的接口新建一个这类资源，这时 resource 定位到的资源只被读、写落在新建出来的资源上；有 removes 的接口让 resource 定位到的资源（或它的一部分）不再可用（删除、归档）。params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。response 是成功响应体的 JSON Schema（按输出方向导出，控制面以后可以加字段，所以对象不是封闭的），events 是 SSE 每个事件的 data 的 JSON Schema，没有这两个字段的接口没有 JSON 响应体。notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。",
   "resource_kinds": {
     "scenario": "场景",
     "run": "运行",
@@ -4024,6 +4024,7 @@
           "params": "name"
         }
       },
+      "removes": true,
       "params": {
         "type": "object",
         "properties": {
@@ -11243,6 +11244,7 @@
           "params": "id"
         }
       },
+      "creates": "scenario",
       "params": {
         "type": "object",
         "properties": {
@@ -11491,6 +11493,7 @@
           "params": "id"
         }
       },
+      "removes": true,
       "params": {
         "type": "object",
         "properties": {
@@ -12969,7 +12972,7 @@
       ],
       "kind": "endpoint",
       "summary": "编辑页面的心跳：登记在线编辑者，返回当前名单",
-      "effect": "write",
+      "effect": "read",
       "resource": {
         "kind": "scenario",
         "target": {
@@ -13037,7 +13040,7 @@
       ],
       "kind": "endpoint",
       "summary": "编辑页面主动离开，移除这个在线编辑者",
-      "effect": "write",
+      "effect": "read",
       "resource": {
         "kind": "scenario",
         "target": {
@@ -13742,6 +13745,7 @@
           "params": "id"
         }
       },
+      "removes": true,
       "params": {
         "type": "object",
         "properties": {
@@ -14955,6 +14959,7 @@
           "params": "id"
         }
       },
+      "creates": "run",
       "params": {
         "type": "object",
         "properties": {

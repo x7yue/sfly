@@ -7,6 +7,9 @@
 // 每张表每一行连同 xmin、序列、数据目录里的文件），有任何差别就是写了。同时把响应拿去和随 SDK 打包的
 // 路由清单里的响应 JSON Schema 对照。
 //
+// 方法不是 GET 的只读接口（在线编辑者的心跳和离开，登记在 READS_WITH_TRACES）也在其中：它们只写内存里的名单，
+// 所以库和数据目录同样要求没有变化。
+//
 // 没有用「只有 SELECT 权限的数据库角色」：控制面启动时要迁移，运行时后台有周期扫描和清理，用只读角色它起不来、
 // 也没法区分是哪个请求出的错；请求前后比较的办法不改控制面，还看得见「写回同样的值」「取了序列号」和「写了文件」。
 // 覆盖范围和做不到的见 PR 说明。
@@ -14,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { httpContract, type RouteDef } from "@sfly/schema";
+import { httpContract, NICKNAME_HEADER, READS_WITH_TRACES, type RouteDef } from "@sfly/schema";
 import Ajv2020 from "ajv/dist/2020.js";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -196,6 +199,13 @@ describe("声明为只读的接口真的不写库", () => {
 		}
 	}
 
+	it("方法不是 GET 的只读接口（READS_WITH_TRACES）也被核对了", () => {
+		const tested = readRoutes
+			.filter((def) => def.method !== "GET")
+			.map((def) => `${def.method} ${def.path}`);
+		expect(tested.sort()).toEqual(Object.keys(READS_WITH_TRACES).sort());
+	});
+
 	it("事件流的事件都和清单里的 schema 对过一遍（不是空转）", () => {
 		for (const expected of [
 			"GET /runs/:id/events run",
@@ -233,7 +243,17 @@ describe("声明为只读的接口真的不写库", () => {
 				sse.close();
 			}
 		}
-		const res = await cp.fetch(url, { method: def.method });
+		const body = sampleBody(def);
+		const res = await cp.fetch(url, {
+			method: def.method,
+			...(body !== undefined && {
+				headers: {
+					"content-type": "application/json",
+					[NICKNAME_HEADER]: encodeURIComponent("tester"),
+				},
+				body: JSON.stringify(body),
+			}),
+		});
 		if ("kind" in def && def.kind === "download") {
 			const body = await res.arrayBuffer();
 			expect(res.status, `${where}：${Buffer.from(body).toString().slice(0, 200)}`).toBe(200);
@@ -241,12 +261,18 @@ describe("声明为只读的接口真的不写库", () => {
 			return [];
 		}
 		const text = await res.text();
+		if (manifestEntry(def)?.response === undefined) {
+			// 清单里没有 response：没有响应体（204）。
+			expect(res.status, `${where}：${text.slice(0, 200)}`).toBe(204);
+			expect(text).toBe("");
+			return [];
+		}
 		expect(res.status, `${where}：${text.slice(0, 200)}`).toBe(200);
-		const body: unknown = JSON.parse(text);
-		expectValid(where, manifestEntry(def)?.response, body);
+		const json: unknown = JSON.parse(text);
+		expectValid(where, manifestEntry(def)?.response, json);
 		// 清单里的 schema 不能比 zod 更严：zod 认的响应，它也要认（上一行已经对过一遍，这行保证两边说的是同一件事）。
 		expect(() =>
-			(def as { response: { parse(v: unknown): unknown } }).response.parse(body),
+			(def as { response: { parse(v: unknown): unknown } }).response.parse(json),
 		).not.toThrow();
 		return [];
 	}
@@ -281,6 +307,15 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		);
 	}
 	return value;
+}
+
+/** 有请求体的只读接口（心跳、离开）的请求体样本；认不出的报错，让新接口的作者补上。 */
+function sampleBody(def: RouteDef): unknown {
+	if (!("body" in def) || !def.body) return undefined;
+	if (`${def.method} ${def.path}` in READS_WITH_TRACES) return { session_id: "read-only-test" };
+	throw new Error(
+		`${def.method} ${def.path}：没有请求体的样本值，在 read-only-routes.test.ts 的 sampleBody 里补上`,
+	);
 }
 
 /** 个别接口的查询参数样本：不带就走不到成功的路径。 */

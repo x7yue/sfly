@@ -304,6 +304,7 @@ export const runsApi = {
 		summary: "触发一个场景最新版本的一次运行",
 		effect: "write",
 		resource: { kind: "scenario", target: { params: "id" } },
+		creates: "run",
 		client: true,
 		key: ["runs", "trigger"],
 		params: IdParams,

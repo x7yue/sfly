@@ -206,6 +206,7 @@ export const presetsApi = {
 		summary: "删除一个运行预设",
 		effect: "write",
 		resource: { kind: "scenario", target: { params: "id" } },
+		removes: true,
 		client: true,
 		key: ["presets", "remove"],
 		params: PresetIdParams,

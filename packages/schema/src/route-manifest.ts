@@ -48,10 +48,14 @@ export interface RouteManifestEntry {
 	kind: RouteKind;
 	/** 一句话说明这个接口做什么。 */
 	summary: string;
-	/** `read` 只读（不改变控制面的任何状态）；`write` 有副作用。 */
+	/** `read` 只读（不改变任何资源的内容，也没有平台之外的副作用）；`write` 有副作用。 */
 	effect: Effect;
 	/** 作用在哪类资源上，以及用请求的哪个字段定位到具体的那一个（契约的 `ResourceRef`）。 */
 	resource: ResourceRef;
+	/** 新建的是哪类资源：有这个字段时，`resource` 定位到的资源只被读，写落在新建出来的资源上。 */
+	creates?: ResourceKind;
+	/** 让 `resource` 定位到的资源（或它的一部分）不再可用：删除、归档。 */
+	removes?: true;
 	/** 下载成功时的 content-type。 */
 	content_type?: string;
 	params?: Record<string, unknown>;
@@ -74,10 +78,13 @@ export interface RouteManifest {
 
 const DESCRIPTION =
 	"sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。" +
-	"summary 是一句话说明；effect 是 read（只读，不改变控制面的任何状态）或 write（有副作用）；" +
+	"summary 是一句话说明；effect 是 read（只读：不改变平台里任何资源的内容，也不在平台之外产生副作用；" +
+	"只写心跳这类不影响资源内容的痕迹也算）或 write（有副作用）；" +
 	"resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：" +
 	"{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；" +
-	"upload 是具体的那一个在上传的内容里；global 是平台自身）。" +
+	"upload 是具体的那一个在上传的内容里；global 是平台自身）；" +
+	"有 creates 的接口新建一个这类资源，这时 resource 定位到的资源只被读、写落在新建出来的资源上；" +
+	"有 removes 的接口让 resource 定位到的资源（或它的一部分）不再可用（删除、归档）。" +
 	"params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；" +
 	"query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。" +
 	"response 是成功响应体的 JSON Schema（按输出方向导出，控制面以后可以加字段，所以对象不是封闭的），" +
@@ -199,6 +206,8 @@ export function buildRouteManifest(contract: readonly RouteDef[]): RouteManifest
 			effect: def.effect,
 			resource: def.resource,
 		};
+		if (def.creates !== undefined) entry.creates = def.creates;
+		if (def.removes !== undefined) entry.removes = def.removes;
 		if ("contentType" in def) entry.content_type = def.contentType;
 		if (def.params) entry.params = exportPart("params", def.params, notes);
 		if (def.query) entry.query = exportPart("query", def.query, notes);

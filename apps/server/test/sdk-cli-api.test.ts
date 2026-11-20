@@ -19,6 +19,8 @@ interface ListedRoute {
 	summary: string;
 	effect: "read" | "write";
 	resource: { kind: string; target: unknown };
+	creates?: string;
+	removes?: true;
 	body?: { required?: string[] };
 	response?: Record<string, unknown>;
 	events?: Record<string, unknown>;
@@ -245,6 +247,13 @@ describe("sfly api → 控制面", () => {
 			expect(row("GET", "/llms.txt")).toMatch(/下载\s+只读/);
 			expect(row("POST", "/packages")).toMatch(/上传\s+有副作用/);
 			expect(row("GET", "/runs")).toMatch(/query: .*limit/);
+			// 新建别类、新建同类、删除或归档，在效果一列里写明
+			expect(row("POST", "/orchestrations/:id/runs")).toMatch(
+				/有副作用（新建运行）\s+触发一个场景/,
+			);
+			expect(row("POST", "/orchestrations/:id/copy")).toMatch(/有副作用（新建场景）/);
+			expect(row("POST", "/orchestrations/:id/archive")).toMatch(/有副作用（删除或归档）/);
+			expect(row("DELETE", "/feishu-bots/:name")).toMatch(/有副作用（删除或归档）/);
 			expect(result.stdout).toContain("sfly api --describe <方法> <路径>");
 		});
 
@@ -337,6 +346,18 @@ describe("sfly api → 控制面", () => {
 			expect(result.stdout).toContain(
 				"请求体（JSON，* 必填）\n  name*: string\n  description: string",
 			);
+		});
+
+		it("新建和删除：写明新建的是什么、定位到的资源只被读；删除或归档", async () => {
+			const trigger = await cli("--describe", "POST", "/orchestrations/:id/runs");
+			expect(trigger.stdout).toContain("资源：场景，用路径参数 id 定位到具体的那一个");
+			expect(trigger.stdout).toContain("新建：运行（定位到的场景只被读，写落在新建出来的运行上）");
+			const archive = await cli("--describe", "POST", "/orchestrations/:id/archive");
+			expect(archive.stdout).toContain("删除或归档：是（让定位到的场景或它的一部分不再可用）");
+			expect(archive.stdout).not.toContain("新建：");
+			const save = await cli("--describe", "POST", "/orchestrations/:id/versions");
+			expect(save.stdout).not.toContain("新建：");
+			expect(save.stdout).not.toContain("删除或归档");
 		});
 
 		it("SSE 列出每个事件，下载写 content-type，上传说明不能直接调用，没有响应体的写 204", async () => {

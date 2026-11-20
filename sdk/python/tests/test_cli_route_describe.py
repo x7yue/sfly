@@ -10,6 +10,7 @@ from sfly.cli.route_describe import (
     MAX_DEPTH,
     call_example,
     describe_route,
+    effect_brief,
     effect_text,
     target_text,
 )
@@ -49,6 +50,36 @@ def test_header_says_what_it_does_whether_it_writes_and_what_it_acts_on() -> Non
         "调用：sfly api GET /things/<id>",
     ]
     assert "路径参数（* 必填）\n  id*: string" in text
+
+
+def test_creating_and_removing_are_spelled_out() -> None:
+    creating = route(
+        method="POST",
+        path="/things/:id/runs",
+        effect="write",
+        creates="run",
+    )
+    text = describe_route(creating)
+    assert "效果：有副作用" in text
+    assert "新建：运行（定位到的场景只被读，写落在新建出来的运行上）" in text
+    assert "删除或归档" not in text
+    assert effect_brief(creating) == "有副作用（新建运行）"
+    assert creating.to_json()["creates"] == "run"
+    assert "removes" not in creating.to_json()
+
+    removing = route(method="POST", path="/things/:id/archive", effect="write", removes=True)
+    text = describe_route(removing)
+    assert "删除或归档：是（让定位到的场景或它的一部分不再可用）" in text
+    assert "新建：" not in text
+    assert effect_brief(removing) == "有副作用（删除或归档）"
+    assert removing.to_json()["removes"] is True
+    assert "creates" not in removing.to_json()
+
+    # 同类新建（复制）和没有这两项的写、只读
+    copy = route(method="POST", effect="write", creates="scenario")
+    assert "新建：场景（定位到的场景只被读，写落在新建出来的场景上）" in describe_route(copy)
+    assert effect_brief(route(effect="write")) == "有副作用"
+    assert effect_brief(route()) == "只读"
 
 
 def test_effect_and_target_texts() -> None:

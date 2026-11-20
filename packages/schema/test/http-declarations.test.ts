@@ -5,6 +5,7 @@ import {
 	download,
 	endpoint,
 	httpContract,
+	READS_WITH_TRACES,
 	RESOURCE_KIND_LABELS,
 	RESOURCE_KINDS,
 	type RouteDef,
@@ -48,14 +49,65 @@ describe("契约里全部接口的声明", () => {
 		expect(Object.keys(RESOURCE_KIND_LABELS).sort()).toEqual([...RESOURCE_KINDS].sort());
 	});
 
-	it("GET 都是只读：GET 却有副作用的接口要先在这里登记，并在 PR 里说明", () => {
-		// 鉴权按声明判断一个请求要什么范围：GET 当成只读放行是各处的默认假设（跨站的链接、预取、爬虫都会发 GET）。
-		// 有副作用的接口用别的方法。确实有必须是 GET 又会写东西的，加到这个表里，写明为什么。
-		const getWithSideEffects: Record<string, string> = {};
-		const found = httpContract
-			.filter((def) => def.method === "GET" && def.effect === "write")
+	it("GET 都是只读，DELETE 都声明 removes，非 GET 的只读接口都登记了写什么", () => {
+		// 下游按「所有 GET 都没有副作用」判断（登录 Cookie 只对有副作用的方法做来源校验），
+		// 按「DELETE 与归档用 removes 标出」判断助手的会话能不能做；这些前提不靠约定。
+		const gets = httpContract.filter((def) => def.method === "GET");
+		expect(gets.length).toBeGreaterThan(40);
+		expect(gets.filter((def) => def.effect !== "read").map((d) => d.path)).toEqual([]);
+		const deletes = httpContract.filter((def) => def.method === "DELETE");
+		expect(deletes.length).toBeGreaterThan(0);
+		expect(deletes.filter((def) => def.removes !== true).map((d) => d.path)).toEqual([]);
+		const nonGetReads = httpContract
+			.filter((def) => def.method !== "GET" && def.effect === "read")
 			.map((def) => `${def.method} ${def.path}`);
-		expect(found.sort()).toEqual(Object.keys(getWithSideEffects).sort());
+		expect(nonGetReads.sort()).toEqual(Object.keys(READS_WITH_TRACES).sort());
+	});
+
+	it("READS_WITH_TRACES 里的接口都在契约里、都声明为只读，都写明了写什么", () => {
+		const known = new Map(httpContract.map((def) => [`${def.method} ${def.path}`, def]));
+		for (const [key, what] of Object.entries(READS_WITH_TRACES)) {
+			expect(known.get(key)?.effect, key).toBe("read");
+			expect(what.trim(), key).not.toBe("");
+		}
+	});
+
+	it("creates 和 removes：现有写接口各按定义声明", () => {
+		const find = (key: string) => httpContract.find((def) => `${def.method} ${def.path}` === key);
+		// 定位到一个已有资源后新建别类 / 同类
+		expect(find("POST /orchestrations/:id/runs")).toMatchObject({
+			effect: "write",
+			resource: { kind: "scenario", target: { params: "id" } },
+			creates: "run",
+		});
+		expect(find("POST /orchestrations/:id/copy")).toMatchObject({
+			resource: { kind: "scenario", target: { params: "id" } },
+			creates: "scenario",
+		});
+		// 新建、没有定位到已有资源：不写 creates
+		expect(find("POST /orchestrations")).toMatchObject({
+			resource: { kind: "scenario", target: "collection" },
+		});
+		expect(find("POST /orchestrations")?.creates).toBeUndefined();
+		// 让资源（或它的一部分）不再可用
+		const removing = httpContract
+			.filter((def) => def.removes)
+			.map((def) => `${def.method} ${def.path}`);
+		expect(removing.sort()).toEqual([
+			"DELETE /feishu-bots/:name",
+			"DELETE /orchestrations/:id/presets/:presetId",
+			"POST /orchestrations/:id/archive",
+		]);
+		// 恢复归档、改、取消都不是 removes
+		expect(find("POST /orchestrations/:id/unarchive")?.removes).toBeUndefined();
+		expect(find("POST /runs/:id/cancel")?.removes).toBeUndefined();
+		const creating = httpContract
+			.filter((def) => def.creates)
+			.map((def) => `${def.method} ${def.path}`);
+		expect(creating.sort()).toEqual([
+			"POST /orchestrations/:id/copy",
+			"POST /orchestrations/:id/runs",
+		]);
 	});
 
 	it("同一个方法和路径只声明一次", () => {
@@ -163,7 +215,11 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: { kind: "agent", target: { query: "owner" } } }))[0],
 		).toContain("没有对象形式的 query");
-		const withBody = { method: "POST", body: z.object({ name: z.string() }).refine(() => true) };
+		const withBody = {
+			method: "POST",
+			effect: "write",
+			body: z.object({ name: z.string() }).refine(() => true),
+		};
 		expect(
 			problems(broken({ resource: { kind: "agent", target: { body: "name" } } }, withBody)),
 		).toEqual([]);
@@ -171,7 +227,11 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			problems(broken({ resource: { kind: "agent", target: { body: "id" } } }, withBody))[0],
 		).toContain("字段 id，它不在 body 里");
 		// 套了一层包装的对象也认得出
-		const wrapped = { method: "POST", body: z.object({ name: z.string() }).optional() };
+		const wrapped = {
+			method: "POST",
+			effect: "write",
+			body: z.object({ name: z.string() }).optional(),
+		};
 		expect(
 			problems(broken({ resource: { kind: "agent", target: { body: "name" } } }, wrapped)),
 		).toEqual([]);
@@ -213,6 +273,53 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: { kind: "system", target: { params: "id" } } }))[0],
 		).toContain("system 没有具体的那一个");
+	});
+
+	it("GET 必须只读，DELETE 必须声明 removes，非 GET 的只读接口必须登记", () => {
+		expect(problems(broken({ effect: "write" }))[0]).toContain("GET 要声明为只读");
+		expect(problems(broken({ method: "DELETE", effect: "write" }))[0]).toContain(
+			"DELETE 接口要声明 removes: true",
+		);
+		expect(problems(broken({ method: "DELETE", effect: "write", removes: true }))).toEqual([]);
+		expect(
+			problems(broken({ method: "POST", effect: "read", path: "/things/:id/query" }))[0],
+		).toContain("READS_WITH_TRACES");
+		const [key] = Object.keys(READS_WITH_TRACES);
+		const [method, path] = (key as string).split(" ");
+		expect(
+			problems(
+				broken(
+					{
+						method,
+						path,
+						effect: "read",
+						resource: { kind: "scenario", target: { params: "id" } },
+					},
+					{ params: z.object({ id: z.string() }) },
+				),
+			),
+		).toEqual([]);
+	});
+
+	it("creates 要是资源类别、只能在写接口上；removes 只能写 true、只能在写接口上、不能和 creates 同时出现", () => {
+		const post = { method: "POST", effect: "write" };
+		expect(problems(broken({ ...post, creates: "run" }))).toEqual([]);
+		expect(problems(broken({ ...post, creates: "scenario" }))).toEqual([]);
+		expect(problems(broken({ ...post, creates: "orchestration" }))[0]).toContain(
+			"creates 要写 scenario",
+		);
+		expect(problems(broken({ creates: "run" }))).toHaveLength(1);
+		expect(problems(broken({ ...post, effect: "read", creates: "run" })).join("\n")).toContain(
+			"只读接口不能声明 creates",
+		);
+		expect(problems(broken({ ...post, removes: true }))).toEqual([]);
+		expect(problems(broken({ ...post, removes: false }))[0]).toContain("removes 只能写 true");
+		expect(problems(broken({ ...post, effect: "read", removes: true })).join("\n")).toContain(
+			"只读接口不能声明 removes",
+		);
+		expect(problems(broken({ ...post, removes: true, creates: "run" }))[0]).toContain(
+			"creates 和 removes 不能同时声明",
+		);
 	});
 
 	it("每个有问题的接口各报各的，带着方法和路径", () => {

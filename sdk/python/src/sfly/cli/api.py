@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl, urlsplit
 from sfly.cli.client import READ_CHUNK, ApiError
 from sfly.cli.errors import EXIT_INTERRUPTED, CliError
 from sfly.cli.output import dump_json, format_table
-from sfly.cli.route_describe import describe_route, effect_text
+from sfly.cli.route_describe import describe_route, effect_brief
 from sfly.cli.routes import KIND_LABELS, Resolution, Route, closest, load_routes, resolve
 from sfly.cli.session import Session, command, common_options
 
@@ -139,7 +139,7 @@ def _list(session: Session, routes: Sequence[Route], words: Sequence[str]) -> in
             route.method,
             route.path,
             KIND_LABELS.get(route.kind, route.kind),
-            effect_text(route.effect),
+            effect_brief(route),
             route.summary,
             _fields(route),
         ]

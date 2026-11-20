@@ -41,6 +41,11 @@ class Route:
     resource: dict[str, Any]
     # 资源类别的中文名（清单顶层的 `resource_kinds`）。
     resource_label: str
+    # 新建的是哪类资源（有它时 `resource` 定位到的资源只被读）及它的中文名；
+    # 是否让资源不再可用（删除、归档）。
+    creates: str | None
+    creates_label: str | None
+    removes: bool
     content_type: str | None
     params: dict[str, Any] | None
     query: dict[str, Any] | None
@@ -60,6 +65,7 @@ class Route:
         pattern, names = compile_template(entry["path"])
         key = entry.get("key")
         resource = entry["resource"]
+        creates = entry.get("creates")
         return cls(
             method=entry["method"],
             path=entry["path"],
@@ -69,6 +75,9 @@ class Route:
             effect=entry["effect"],
             resource=resource,
             resource_label=(resource_kinds or {}).get(resource["kind"], resource["kind"]),
+            creates=creates,
+            creates_label=(resource_kinds or {}).get(creates, creates) if creates else None,
+            removes=bool(entry.get("removes", False)),
             content_type=entry.get("content_type"),
             params=entry.get("params"),
             query=entry.get("query"),
@@ -91,6 +100,10 @@ class Route:
             "effect": self.effect,
             "resource": self.resource,
         }
+        if self.creates:
+            entry["creates"] = self.creates
+        if self.removes:
+            entry["removes"] = True
         if self.content_type:
             entry["content_type"] = self.content_type
         for name in ("params", "query", "body", "response", "events"):

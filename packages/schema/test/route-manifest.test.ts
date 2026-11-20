@@ -140,6 +140,8 @@ describe("导出响应的规则", () => {
 				method: "DELETE",
 				path: "/a",
 				key: ["a", "remove"],
+				effect: "write",
+				removes: true,
 				response: z.undefined(),
 			}),
 		);
@@ -161,6 +163,46 @@ describe("导出响应的规则", () => {
 		expect(file?.content_type).toBe("text/plain");
 		expect(file).not.toHaveProperty("response");
 		expect(file).not.toHaveProperty("events");
+	});
+
+	it("creates 和 removes 进入清单；没声明的不带这两个字段", () => {
+		const [creating, removing, plain] = build(
+			endpoint({
+				...common,
+				method: "POST",
+				path: "/a/:id/b",
+				key: ["a", "create-b"],
+				effect: "write",
+				resource: { kind: "scenario", target: { params: "id" } },
+				creates: "run",
+				params: z.object({ id: z.string() }),
+				response: z.object({}),
+			}),
+			endpoint({
+				...common,
+				method: "DELETE",
+				path: "/a/:id",
+				key: ["a", "remove"],
+				effect: "write",
+				resource: { kind: "scenario", target: { params: "id" } },
+				removes: true,
+				params: z.object({ id: z.string() }),
+				response: z.undefined(),
+			}),
+			endpoint({
+				...common,
+				method: "GET",
+				path: "/a",
+				key: ["a", "list"],
+				response: z.object({}),
+			}),
+		);
+		expect(creating).toMatchObject({ effect: "write", creates: "run" });
+		expect(creating).not.toHaveProperty("removes");
+		expect(removing).toMatchObject({ effect: "write", removes: true });
+		expect(removing).not.toHaveProperty("creates");
+		expect(plain).not.toHaveProperty("creates");
+		expect(plain).not.toHaveProperty("removes");
 	});
 
 	it("声明不对的接口不导出：报出每一个问题", () => {
