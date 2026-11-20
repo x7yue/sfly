@@ -26,6 +26,20 @@ const LOAD_OLDER_AT = 120;
 /** 离底部多近时加载更新的一页（像素）：定位到日志中间一页后，列表底部之后还有行。 */
 const LOAD_NEWER_AT = 120;
 
+/**
+ * 读取器给列表的翻页状态（`TaskLogs`、`RunLogs` 都满足）：往前翻页，和（定位到日志中间时）往后翻页。
+ * 按运行合并的日志没有「更新的行」，三个 `...Newer` 都不给。
+ */
+export interface LogPaging {
+	hasOlder: boolean;
+	loadingOlder: boolean;
+	loadOlder: () => void;
+	/** 最后一行之后还有没加载的行：不跟随末尾，滚动到底部或点按钮加载（`loadNewer`）。 */
+	hasNewer?: boolean;
+	loadingNewer?: boolean;
+	loadNewer?: () => void;
+}
+
 /** 「这一刻」行的键：不会和任何日志行的键相同（行键是序号，或「任务 ID:序号」）。 */
 const MOMENT_KEY = "moment";
 
@@ -85,12 +99,7 @@ export function LogList<L extends LogLineView>({
 	lineKey,
 	origin,
 	onOrigin,
-	hasOlder,
-	loadingOlder,
-	loadOlder,
-	hasNewer = false,
-	loadingNewer = false,
-	loadNewer,
+	paging,
 	reveal,
 	marked,
 	onPick,
@@ -104,13 +113,7 @@ export function LogList<L extends LogLineView>({
 	origin?: (line: L) => string;
 	/** 选中这一行的来源节点（点来源节点名，或行的右键菜单）；不给时来源节点名不能点，也没有菜单。 */
 	onOrigin?: (line: L) => void;
-	hasOlder: boolean;
-	loadingOlder: boolean;
-	loadOlder: () => void;
-	/** 最后一行之后还有没加载的行：不跟随末尾，滚动到底部或点按钮加载（`loadNewer`）。 */
-	hasNewer?: boolean;
-	loadingNewer?: boolean;
-	loadNewer?: () => void;
+	paging: LogPaging;
 	/** 定位到某一刻；不给时是普通的日志列表。正好对应的行被时间范围过滤掉时，不高亮也不标「这一刻」。 */
 	reveal?: LogReveal<L>;
 	/** 标记的行的键。 */
@@ -121,6 +124,14 @@ export function LogList<L extends LogLineView>({
 	/** 运行开始的时刻（控制面时间）：时间列要不要带日期按它那一天判断。 */
 	day: string;
 }) {
+	const {
+		hasOlder,
+		loadingOlder,
+		loadOlder,
+		hasNewer = false,
+		loadingNewer = false,
+		loadNewer,
+	} = paging;
 	const dated = useMemo(
 		() =>
 			spansOtherDay(

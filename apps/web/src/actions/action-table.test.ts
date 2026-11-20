@@ -8,7 +8,6 @@ import type {
 	RunningActionView,
 } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { fromLatestPage, withLive } from "./action-details";
 import {
 	type ActionRow,
 	type ActionTableGroup,
@@ -251,28 +250,20 @@ describe("只计数的段", () => {
 	});
 
 	it("打开时还没超出上限，之后某个名称开始只计数、期间又推送来很多明细：这一段出现在它开始的位置", () => {
-		const opened = fromLatestPage({
-			task_id: "t",
-			actions: Array.from({ length: 200 }, (_, i) => detail(1000 - i, 10_000 - i * 10)),
-			before: "c801",
-			count_only: [],
-			rev: 7,
-			expired: false,
-		});
+		const opened = Array.from({ length: 200 }, (_, i) => detail(1000 - i, 10_000 - i * 10));
 		const before = table({
 			summary: summary({ names: [count("下单", 1000)] }),
-			details: opened.details,
+			details: opened,
 			hasOlder: true,
 		});
 		expect(before.flatMap((g) => g.rows).some((r) => r.kind === "count-only")).toBe(false);
 
 		// 推送来 500 条更新的明细，「下单」从第 12 秒起只计数：比重新读一次最新一页的最早一条还早。
-		const pushed = Array.from({ length: 500 }, (_, i) => detail(1001 + i, 10_010 + i * 10));
-		const later = withLive(opened, pushed);
+		const pushed = Array.from({ length: 500 }, (_, i) => detail(1500 - i, 10_000 + (500 - i) * 10));
 		const groups = table({
 			summary: summary({ names: [count("下单", 1800, 1500, 12_000)] }),
-			details: later.details,
-			hasOlder: later.before !== null,
+			details: [...pushed, ...opened],
+			hasOlder: true,
 		});
 		const earlier = shape(groups).find(([name]) => name === "earlier")?.[1] ?? [];
 		const at12s = earlier.indexOf("~下单");

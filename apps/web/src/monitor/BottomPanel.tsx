@@ -42,8 +42,7 @@ import { ActionsTab } from "./ActionsTab";
 import { attemptAgentTimes } from "./attempt-clock";
 import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
-import { LogList, type LogReveal } from "./LogList";
-import type { LoadedLine } from "./log-buffer";
+import { LogList, type LogPaging, type LogReveal } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
 import {
 	type NodeRef,
@@ -55,7 +54,7 @@ import {
 	useTimeAxis,
 } from "./monitor-state";
 import type { PanelTab } from "./run-link";
-import { runLineKey } from "./run-log-buffer";
+import { runLineKey } from "./run-log-reader";
 import {
 	attemptAt,
 	documentNodes,
@@ -68,6 +67,7 @@ import {
 	secretParams,
 	stoppedSubflowLabel,
 } from "./run-model";
+import type { LoadedLine } from "./task-log-reader";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
 import { runLogDownloadPath, useRunLogs } from "./use-run-logs";
 import { type LogMoment, taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
@@ -571,16 +571,9 @@ function LogsView<L extends LogLineView>({
 	day,
 	onEmpty,
 }: {
-	logs: {
+	logs: LogPaging & {
 		lines: L[];
 		loaded: boolean;
-		hasOlder: boolean;
-		loadingOlder: boolean;
-		loadOlder: () => void;
-		/** 最后一行之后还有没加载的行（定位到日志中间时），向下滚动加载。 */
-		hasNewer?: boolean;
-		loadingNewer?: boolean;
-		loadNewer?: () => void;
 		expired: boolean;
 		error: string | null;
 	};
@@ -675,12 +668,7 @@ function LogsView<L extends LogLineView>({
 						lineKey={lineKey}
 						origin={origin}
 						onOrigin={onOrigin}
-						hasOlder={logs.hasOlder}
-						loadingOlder={logs.loadingOlder}
-						loadOlder={logs.loadOlder}
-						hasNewer={logs.hasNewer}
-						loadingNewer={logs.loadingNewer}
-						loadNewer={logs.loadNewer}
+						paging={logs}
 						reveal={reveal}
 						marked={marked}
 						timeKind={timeKind}
