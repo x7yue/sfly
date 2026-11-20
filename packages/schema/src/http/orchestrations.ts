@@ -284,6 +284,9 @@ export const orchestrationsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/orchestrations",
+		summary: "列出场景，可按名称、状态、Agent 筛选",
+		effect: "read",
+		resource: { kind: "scenario", target: "collection" },
 		client: true,
 		key: ["orchestrations", "list"],
 		query: ListOrchestrationsQuery,
@@ -296,6 +299,9 @@ export const orchestrationsApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id",
+		summary: "读一个场景的设置",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "detail"],
 		params: IdParams,
@@ -305,6 +311,9 @@ export const orchestrationsApi = {
 	head: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/head",
+		summary: "读一个场景的最新版本（含完整文档）",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "head"],
 		params: IdParams,
@@ -323,6 +332,9 @@ export const orchestrationsApi = {
 	saveVersion: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/versions",
+		summary: "保存场景的新版本",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "save-version"],
 		params: IdParams,
@@ -346,6 +358,9 @@ export const orchestrationsApi = {
 	versions: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/versions",
+		summary: "列出一个场景的全部版本",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "versions"],
 		params: IdParams,
@@ -355,6 +370,9 @@ export const orchestrationsApi = {
 	version: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/versions/:number",
+		summary: "读一个场景版本（含完整文档）",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "version"],
 		params: VersionParams,
@@ -367,6 +385,9 @@ export const orchestrationsApi = {
 	restoreVersion: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/versions/:number/restore",
+		summary: "用一个历史版本的内容保存出新版本",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "restore-version"],
 		params: VersionParams,
@@ -376,6 +397,9 @@ export const orchestrationsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/orchestrations",
+		summary: "新建一个场景",
+		effect: "write",
+		resource: { kind: "scenario", target: "collection" },
 		client: true,
 		key: ["orchestrations", "create"],
 		body: z.strictObject({ name: Name, description: z.string().default("") }),
@@ -399,6 +423,9 @@ export const orchestrationsApi = {
 	update: endpoint({
 		method: "PATCH",
 		path: "/orchestrations/:id",
+		summary: "修改场景的名称、说明、运行通知和关注项",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "update"],
 		params: IdParams,
@@ -420,6 +447,9 @@ export const orchestrationsApi = {
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/copy",
+		summary: "复制一个场景",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "copy"],
 		params: IdParams,
@@ -430,6 +460,9 @@ export const orchestrationsApi = {
 	archive: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/archive",
+		summary: "归档一个场景",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "archive"],
 		params: IdParams,
@@ -439,6 +472,9 @@ export const orchestrationsApi = {
 	unarchive: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/unarchive",
+		summary: "恢复一个已归档的场景",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "unarchive"],
 		params: IdParams,

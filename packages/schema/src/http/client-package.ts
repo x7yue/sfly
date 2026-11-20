@@ -19,6 +19,9 @@ export const clientPackageApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/client",
+		summary: "列出控制面提供的 API 客户端安装包",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		key: ["client-package", "list"],
 		response: z.object({ tarballs: z.array(ClientTarballView) }),
@@ -26,6 +29,9 @@ export const clientPackageApi = {
 	/** 下载一个安装包；版本或文件名不存在时 404。 */
 	download: download({
 		path: "/client/:version/:filename",
+		summary: "下载一个 API 客户端安装包",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		params: z.object({ version: z.string(), filename: z.string() }),
 		contentType: "application/octet-stream",

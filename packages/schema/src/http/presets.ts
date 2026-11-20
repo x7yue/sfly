@@ -123,6 +123,9 @@ export const presetsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/presets",
+		summary: "列出一个场景的运行预设",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "list"],
 		params: IdParams,
@@ -139,6 +142,9 @@ export const presetsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presets",
+		summary: "给一个场景新建运行预设",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "create"],
 		params: IdParams,
@@ -162,6 +168,9 @@ export const presetsApi = {
 	update: endpoint({
 		method: "PATCH",
 		path: "/orchestrations/:id/presets/:presetId",
+		summary: "修改一个运行预设",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "update"],
 		params: PresetIdParams,
@@ -177,6 +186,9 @@ export const presetsApi = {
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presets/:presetId/copy",
+		summary: "复制一个运行预设",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "copy"],
 		params: PresetIdParams,
@@ -191,6 +203,9 @@ export const presetsApi = {
 	remove: endpoint({
 		method: "DELETE",
 		path: "/orchestrations/:id/presets/:presetId",
+		summary: "删除一个运行预设",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "remove"],
 		params: PresetIdParams,

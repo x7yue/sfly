@@ -27,6 +27,9 @@ export const presenceApi = {
 	heartbeat: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presence",
+		summary: "编辑页面的心跳：登记在线编辑者，返回当前名单",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: false,
 		key: ["presence", "heartbeat"],
 		params: IdParams,
@@ -40,6 +43,9 @@ export const presenceApi = {
 	leave: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presence/leave",
+		summary: "编辑页面主动离开，移除这个在线编辑者",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: false,
 		key: ["presence", "leave"],
 		params: IdParams,
@@ -49,6 +55,9 @@ export const presenceApi = {
 	/** 名单的实时推送（SSE）：连上时先发一次，之后名单变化时再发（事件 `editors`）。 */
 	events: stream({
 		path: "/orchestrations/:id/presence/events",
+		summary: "实时推送一个场景的在线编辑者名单",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: false,
 		params: IdParams,
 		events: { editors: EditorsEvent },

@@ -23,6 +23,9 @@ export const agentBinariesApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/agent/binaries",
+		summary: "列出控制面提供的 Agent 二进制和一键安装脚本的地址",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		key: ["agent-binaries", "list"],
@@ -36,6 +39,9 @@ export const agentBinariesApi = {
 	/** 下载一个 Agent 二进制；版本或架构不存在时 404。 */
 	binary: download({
 		path: "/agent/binaries/:version/:arch",
+		summary: "下载一个版本、一种架构的 Agent 二进制",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		params: z.object({ version: z.string(), arch: z.string() }),
@@ -44,6 +50,9 @@ export const agentBinariesApi = {
 	/** 一键安装脚本：填好了控制面的 HTTP 地址、gRPC 地址、版本号和各架构 Agent 的 sha256。 */
 	installScript: download({
 		path: "/install.sh",
+		summary: "下载 Agent 的一键安装脚本",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		contentType: "text/plain; charset=utf-8",

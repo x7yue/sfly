@@ -52,6 +52,9 @@ export const packagesApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/packages",
+		summary: "列出节点包，含各版本与节点类型的摘要",
+		effect: "read",
+		resource: { kind: "package", target: "collection" },
 		client: true,
 		key: ["packages", "list"],
 		response: z.object({ packages: z.array(PackageSummary) }),
@@ -60,6 +63,9 @@ export const packagesApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/packages/:name",
+		summary: "列出一个节点包的全部版本",
+		effect: "read",
+		resource: { kind: "package", target: { params: "name" } },
 		client: true,
 		key: ["packages", "detail"],
 		params: z.object({ name: PackageName }),
@@ -69,6 +75,9 @@ export const packagesApi = {
 	version: endpoint({
 		method: "GET",
 		path: "/packages/:name/versions/:version",
+		summary: "读节点包一个版本的完整元信息",
+		effect: "read",
+		resource: { kind: "package", target: { params: "name" } },
 		client: true,
 		key: ["packages", "version"],
 		params: VersionParams,
@@ -78,6 +87,9 @@ export const packagesApi = {
 	nodeType: endpoint({
 		method: "GET",
 		path: "/packages/:name/versions/:version/nodes/:node",
+		summary: "读节点包一个版本里的一个节点类型",
+		effect: "read",
+		resource: { kind: "package", target: { params: "name" } },
 		client: true,
 		key: ["packages", "node-type"],
 		params: VersionParams.extend({ node: NodeName }),
@@ -90,6 +102,9 @@ export const packagesApi = {
 	publish: endpoint({
 		method: "POST",
 		path: "/packages",
+		summary: "发布节点包：请求体是 .sflypkg 归档的原始字节",
+		effect: "write",
+		resource: { kind: "package", target: "upload" },
 		client: false,
 		key: ["packages", "publish"],
 		upload: true,
@@ -98,6 +113,9 @@ export const packagesApi = {
 	/** 下载归档（Agent 安装用；`x-sfly-sha256` 响应头是归档的 sha256）。 */
 	archive: download({
 		path: "/packages/:name/versions/:version/archive",
+		summary: "下载节点包一个版本的归档（Agent 安装用）",
+		effect: "read",
+		resource: { kind: "package", target: { params: "name" } },
 		client: false,
 		params: z.object({ name: z.string(), version: z.string() }),
 		contentType: "application/octet-stream",

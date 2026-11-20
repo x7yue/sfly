@@ -183,6 +183,9 @@ export const dashboardApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/dashboard",
+		summary: "控制台统计：最近 24 小时的运行结果、运行中的运行、Agent 在线情况",
+		effect: "read",
+		resource: { kind: "run", target: "collection" },
 		client: true,
 		key: ["dashboard", "get"],
 		response: DashboardView,

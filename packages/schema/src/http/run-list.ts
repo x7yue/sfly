@@ -107,6 +107,9 @@ export const runListApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/runs",
+		summary: "列出运行，可按状态、场景、关键字筛选",
+		effect: "read",
+		resource: { kind: "run", target: "collection" },
 		client: true,
 		key: ["runs", "list"],
 		query: RunListQuery,

@@ -241,6 +241,9 @@ export const actionsApi = {
 	summary: endpoint({
 		method: "GET",
 		path: "/tasks/:id/actions/summary",
+		summary: "读一个任务的动作摘要：正在做的、各名称的总数和失败数、最近的失败",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		key: ["actions", "summary"],
 		params: IdParams,
@@ -253,6 +256,9 @@ export const actionsApi = {
 	page: endpoint({
 		method: "GET",
 		path: "/tasks/:id/actions",
+		summary: "分页读一个任务的动作明细，可按名称、是否失败筛选",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		key: ["actions", "page"],
 		params: IdParams,
@@ -270,6 +276,9 @@ export const actionsApi = {
 	 */
 	events: stream({
 		path: "/tasks/:id/actions/events",
+		summary: "实时推送一个任务的动作变化",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		params: IdParams,
 		query: z.object({ after: blankAsMissing(z.coerce.number().int().min(0)) }),

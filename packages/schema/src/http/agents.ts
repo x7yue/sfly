@@ -168,6 +168,9 @@ export const agentsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/agents",
+		summary: "列出全部注册过的 Agent：状态、槽位和正在执行的任务",
+		effect: "read",
+		resource: { kind: "agent", target: "collection" },
 		client: true,
 		key: ["agents", "list"],
 		response: z.object({
@@ -186,6 +189,9 @@ export const agentsApi = {
 	updateNow: endpoint({
 		method: "POST",
 		path: "/agents/:name/update-now",
+		summary: "让一个 Agent 立即更新到控制面的版本，并终止它正在执行的任务",
+		effect: "write",
+		resource: { kind: "agent", target: { params: "name" } },
 		client: true,
 		key: ["agents", "update-now"],
 		params: z.object({ name: z.string().min(1) }),

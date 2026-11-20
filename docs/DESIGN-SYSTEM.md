@@ -336,7 +336,8 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 约定的完整说明在 `packages/schema/src/http/contract.ts` 顶部，要点：
 
-- 每个接口在 `@sfly/schema` 的 `http/<领域>.ts` 中用 `endpoint({ method, path, client, key, params?, query?, body?, response })` 定义；数据 schema 用名词（`AgentView`），接口表用 `<领域>Api`（`agentsApi.list`）。SSE 用 `stream({ path, client, params?, query?, events })`，字节流下载用 `download({ path, client, params?, contentType })`。
+- 每个接口在 `@sfly/schema` 的 `http/<领域>.ts` 中用 `endpoint({ method, path, summary, effect, resource, client, key, params?, query?, body?, response })` 定义；数据 schema 用名词（`AgentView`），接口表用 `<领域>Api`（`agentsApi.list`）。SSE 用 `stream({ path, summary, effect, resource, client, params?, query?, events })`，字节流下载用 `download({ path, summary, effect, resource, client, params?, contentType })`。
+- `summary`（一句话说明）、`effect`（`read` 只读 / `write` 有副作用）、`resource`（`{ kind, target }`：作用在哪类资源上、用请求的哪个字段定位到具体的那一个）每个接口都必填，写法见 `contract.ts` 顶部的约定 10；新接口照同领域已有的接口写，`checkRouteDeclarations` 检查，`effect: "read"` 的接口要真的不写库（`read-only-routes.test.ts` 核对）。
 - `client` 写明接口是否进入 API 客户端（`@sfly/client`，ADR 0022）：开放给自建页面的为 true，给 Agent、安装脚本、控制台自己用的和上传接口为 false。`pnpm gen` 从契约生成 API 客户端的类型和路由表。
 - 控制面的**每个** HTTP 路由都在契约里：`httpApis`（`http/index.ts`）按领域列出全部接口表，`httpContract` 由它展开；控制面启动时 `guardHttpContract` 检查注册的路由与它一一对应，多一个少一个都启动失败。
 - 响应 schema 用 `z.object`，不写 transform / default / coerce（生产环境前端不解析响应）；请求部分可以用。字段 snake_case，时间用 `Timestamp`。

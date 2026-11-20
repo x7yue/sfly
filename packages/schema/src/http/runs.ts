@@ -256,6 +256,9 @@ export const runsApi = {
 	preflight: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/preflight",
+		summary: "触发前的预检：入口参数、不能触发的原因、引用的 Agent 和运行预设",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["runs", "preflight"],
 		params: IdParams,
@@ -278,6 +281,9 @@ export const runsApi = {
 	listForOrchestration: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/runs",
+		summary: "列出一个场景的运行",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["runs", "by-orchestration"],
 		params: IdParams,
@@ -295,6 +301,9 @@ export const runsApi = {
 	trigger: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/runs",
+		summary: "触发一个场景最新版本的一次运行",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["runs", "trigger"],
 		params: IdParams,
@@ -312,6 +321,9 @@ export const runsApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/runs/:id",
+		summary: "读一次运行的状态：链、节点和任务",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["runs", "detail"],
 		params: IdParams,
@@ -324,6 +336,9 @@ export const runsApi = {
 	cancel: endpoint({
 		method: "POST",
 		path: "/runs/:id/cancel",
+		summary: "取消一次运行；运行还没结束时再次调用即强制取消",
+		effect: "write",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["runs", "cancel"],
 		params: IdParams,
@@ -336,6 +351,9 @@ export const runsApi = {
 	 */
 	events: stream({
 		path: "/runs/:id/events",
+		summary: "实时推送一次运行的状态、任务进度和指标",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		params: IdParams,
 		events: { run: RunView, progress: ProgressEvent, metrics: MetricIncrement },
@@ -574,6 +592,9 @@ export const logsApi = {
 	page: endpoint({
 		method: "GET",
 		path: "/tasks/:id/logs",
+		summary: "分页读一个任务的日志",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		key: ["logs", "page"],
 		params: IdParams,
@@ -586,6 +607,9 @@ export const logsApi = {
 	 */
 	events: stream({
 		path: "/tasks/:id/logs/events",
+		summary: "实时推送一个任务的日志",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		params: IdParams,
 		query: z.object({ after_seq: z.string().optional() }),
@@ -594,6 +618,9 @@ export const logsApi = {
 	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/logs/download",
+		summary: "下载一个任务的完整日志",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		params: IdParams,
 		contentType: "application/x-ndjson",
@@ -602,6 +629,9 @@ export const logsApi = {
 	runPage: endpoint({
 		method: "GET",
 		path: "/runs/:id/logs",
+		summary: "把一次运行里各节点的日志按时间合并，分页读",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["logs", "run-page"],
 		params: IdParams,
@@ -614,6 +644,9 @@ export const logsApi = {
 	 */
 	runDownload: download({
 		path: "/runs/:id/logs/download",
+		summary: "下载一次运行的合并日志",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		params: IdParams,
 		query: RunLogScopeQuery,
@@ -631,6 +664,9 @@ export const logsApi = {
 	 */
 	runEvents: stream({
 		path: "/runs/:id/logs/events",
+		summary: "实时推送一次运行的合并日志",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		params: IdParams,
 		query: z.object({
@@ -665,6 +701,9 @@ export const artifactsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/tasks/:id/artifacts",
+		summary: "列出一个任务上传的产物",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		key: ["artifacts", "list"],
 		params: IdParams,
@@ -682,6 +721,9 @@ export const artifactsApi = {
 	upload: endpoint({
 		method: "PUT",
 		path: "/tasks/:id/artifacts/*",
+		summary: "上传一个任务的产物（请求体是原始字节，Agent 用）",
+		effect: "write",
+		resource: { kind: "task", target: { params: "id" } },
 		client: false,
 		key: ["artifacts", "upload"],
 		params: ArtifactParams,
@@ -691,6 +733,9 @@ export const artifactsApi = {
 	/** 下载一个产物（attachment）；运行已过保留期被清理时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/artifacts/*",
+		summary: "下载一个任务的一个产物",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		params: ArtifactParams,
 		contentType: "application/octet-stream",

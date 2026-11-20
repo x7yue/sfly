@@ -21,6 +21,9 @@ export const docsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/docs",
+		summary: "列出用户文档的页面",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		key: ["docs", "list"],
 		response: z.object({ pages: z.array(DocPageView) }),
@@ -28,6 +31,9 @@ export const docsApi = {
 	/** 一页的 Markdown 原文（占位符已替换）；未知页 404。 */
 	page: download({
 		path: "/docs/:page.md",
+		summary: "读一页用户文档的 Markdown 原文",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		params: z.object({ page: z.string() }),
@@ -40,6 +46,9 @@ export const docsApi = {
 	 */
 	skill: download({
 		path: "/docs/skills/:skill/:file",
+		summary: "读给 AI 编程助手的 skill 的一个文件",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		params: z.object({ skill: z.string(), file: z.string() }),
@@ -48,6 +57,9 @@ export const docsApi = {
 	/** llms.txt 索引：列出每一页原文的完整地址。 */
 	llms: download({
 		path: "/llms.txt",
+		summary: "给 AI 编程助手的文档索引（llms.txt）",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		raw: true,
 		contentType: "text/plain; charset=utf-8",
 		client: false,

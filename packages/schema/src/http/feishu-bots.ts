@@ -96,6 +96,9 @@ export const feishuBotsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/feishu-bots",
+		summary: "列出全部飞书机器人（Webhook 地址已打码）",
+		effect: "read",
+		resource: { kind: "feishu_bot", target: "collection" },
 		client: true,
 		key: ["feishu-bots", "list"],
 		response: z.object({ bots: z.array(FeishuBotView) }),
@@ -106,6 +109,9 @@ export const feishuBotsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/feishu-bots",
+		summary: "登记一个飞书机器人",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: "collection" },
 		client: true,
 		key: ["feishu-bots", "create"],
 		body: z.object({ name: FeishuBotName, webhook_url: FeishuWebhookUrl }),
@@ -118,6 +124,9 @@ export const feishuBotsApi = {
 	replaceWebhook: endpoint({
 		method: "PATCH",
 		path: "/feishu-bots/:name",
+		summary: "替换一个飞书机器人的 Webhook 地址",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
 		client: true,
 		key: ["feishu-bots", "replace-webhook"],
 		params: NameParams,
@@ -139,6 +148,9 @@ export const feishuBotsApi = {
 	references: endpoint({
 		method: "GET",
 		path: "/feishu-bots/:name/references",
+		summary: "列出引用一个飞书机器人的场景",
+		effect: "read",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
 		client: true,
 		key: ["feishu-bots", "references"],
 		params: NameParams,
@@ -148,6 +160,9 @@ export const feishuBotsApi = {
 	remove: endpoint({
 		method: "DELETE",
 		path: "/feishu-bots/:name",
+		summary: "删除一个飞书机器人",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
 		client: true,
 		key: ["feishu-bots", "remove"],
 		params: NameParams,
@@ -160,6 +175,9 @@ export const feishuBotsApi = {
 	test: endpoint({
 		method: "POST",
 		path: "/feishu-bots/:name/test",
+		summary: "向一个飞书机器人的群里同步发一条测试消息",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
 		client: true,
 		key: ["feishu-bots", "test"],
 		params: NameParams,

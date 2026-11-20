@@ -293,6 +293,9 @@ export const metricsApi = {
 	summary: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/summary",
+		summary: "读一次运行里各任务的指标摘要",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "summary"],
 		params: IdParams,
@@ -302,6 +305,9 @@ export const metricsApi = {
 	catalog: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics",
+		summary: "列出一次运行里各任务上报的指标和图表",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "catalog"],
 		params: IdParams,
@@ -314,6 +320,9 @@ export const metricsApi = {
 	series: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/series",
+		summary: "读一次运行里指标的时间序列",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "series"],
 		params: IdParams,
@@ -324,6 +333,9 @@ export const metricsApi = {
 	platform: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/platform",
+		summary: "读一次运行里平台自带图表的数据",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "platform"],
 		params: IdParams,

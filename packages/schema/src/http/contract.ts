@@ -31,6 +31,13 @@ import { z } from "zod";
  *    API 客户端的类型和路由表（client-export.ts，写到 `packages/client/src/generated/`）：
  *    方法按领域分组，领域名是 `httpApis` 的键，必须等于该领域 JSON 接口 key 第一段的驼峰写法（`feishu-bots` → `feishuBots`）；
  *    请求类型按输入方向、响应类型按输出方向，注释随类型带过去。
+ * 10. 每个接口都要声明三件关于它自己的事，类型上必填、没有默认值：`summary`（一句话说明它做什么）、
+ *    `effect`（`read` 只读 / `write` 有副作用）、`resource`（作用在哪类资源上、用请求的哪个字段定位到具体的那一个，
+ *    见 {@link ResourceRef}）。它们进入路由清单（`sfly api --list` / `--describe` 读的就是它），
+ *    以后的鉴权也在契约路由一处按它们判断一个请求要什么、作用在什么上，不靠各个接口自己记。
+ *    `checkRouteDeclarations`（./declarations.ts）检查声明本身站得住，契约测试对每个接口运行它；
+ *    声明为 `read` 的接口真的不写库，由控制面的测试用真实的请求核对（apps/server/test/read-only-routes.test.ts）。
+ *    响应的 JSON Schema 随路由清单一起导出（`response`；SSE 是 `events`），不用另写。
  */
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -48,12 +55,91 @@ export interface RawRequest {
 	body: unknown;
 }
 
+/**
+ * 接口作用在哪一类资源上（GLOSSARY 的词）；一个接口只有一个主要的资源：它的 id、名称就是请求用来定位的那个。
+ *
+ * - `scenario` 场景（场景版本、运行预设、在线编辑者都属于场景：定位用场景的 id）。
+ * - `run` 运行。
+ * - `task` 任务：任务的日志、动作和产物用任务 id 定位，它属于某次运行。
+ * - `package` 节点包（版本、节点类型、归档都属于节点包：定位用包名）。
+ * - `agent` Agent。
+ * - `feishu_bot` 飞书机器人。
+ * - `system` 平台自身：与具体的场景、运行都无关的东西（健康检查、用户文档、SDK 与 Agent 的安装包和安装脚本、
+ *   API 客户端安装包、项目设置）。
+ */
+export const RESOURCE_KINDS = [
+	"scenario",
+	"run",
+	"task",
+	"package",
+	"agent",
+	"feishu_bot",
+	"system",
+] as const;
+export type ResourceKind = (typeof RESOURCE_KINDS)[number];
+
+/** 资源类别的中文名（GLOSSARY 的词），路由清单带着它给命令行显示。 */
+export const RESOURCE_KIND_LABELS = {
+	scenario: "场景",
+	run: "运行",
+	task: "任务",
+	package: "节点包",
+	agent: "Agent",
+	feishu_bot: "飞书机器人",
+	system: "系统",
+} as const satisfies Record<ResourceKind, string>;
+
+/**
+ * 用请求里的哪个字段定位到具体的那一个资源：
+ *
+ * - `{ params: "id" }`、`{ query: "name" }`、`{ body: "name" }`：路径参数、查询参数、请求体字段的名字，值就是资源的标识
+ *   （路径参数必须是路径模板里的 `:名称`，查询参数与请求体字段必须在对应的 schema 里；契约测试检查）。
+ *   `/tasks/:id/logs` 的 `id` 是任务的标识，所以类别写 `task`。
+ * - `"collection"`：列表，或新建一个；请求没有指向某一个已有的资源（路径里不带任何参数）。
+ *   新建在别的资源名下的子资源（场景的运行预设、运行）时，定位的是那个上级资源。
+ * - `"upload"`：具体的那一个在上传的内容里（发布节点包：包名与版本在归档的元信息里），请求的字段里没有。
+ * - `"global"`：只用于 `system`，平台自身，没有「具体的那一个」。
+ */
+export type ResourceTarget =
+	| { params: string }
+	| { query: string }
+	| { body: string }
+	| "collection"
+	| "upload"
+	| "global";
+
+/** 接口作用在哪类资源上，以及怎么定位到具体的那一个。 */
+export interface ResourceRef {
+	kind: ResourceKind;
+	target: ResourceTarget;
+}
+
+/**
+ * 接口对控制面状态的影响：
+ *
+ * - `read` 只读：不改变控制面的任何状态（库、文件、内存里的状态），也不对外发出请求；重复调用不留痕迹。
+ * - `write` 有副作用：改变控制面的状态，或对外产生影响（给飞书发消息、让 Agent 更新）。
+ *
+ * 声明与 HTTP 方法无关：方法是 GET 不等于只读，要看它实际做了什么。
+ */
+export const EFFECTS = ["read", "write"] as const;
+export type Effect = (typeof EFFECTS)[number];
+
 interface RouteDefBase {
 	/**
 	 * Fastify 风格的路径模板，路径参数写作 `:name`，末尾的 `*` 匹配剩余路径（参数名为 `*`）；
 	 * 不含浏览器侧的 `/api` 前缀。
 	 */
 	path: string;
+	/**
+	 * 一句话说明这个接口做什么（路由清单与 `sfly api --list` / `--describe` 显示它）：写给调用方，
+	 * 说它做什么、作用在什么上，不重复方法和路径。必填，没有默认值。
+	 */
+	summary: string;
+	/** 只读还是有副作用（{@link Effect}）。必填，没有默认值。 */
+	effect: Effect;
+	/** 作用在哪类资源上、怎么定位到具体的那一个（{@link ResourceRef}）。必填，没有默认值。 */
+	resource: ResourceRef;
 	/**
 	 * 是否进入 API 客户端（`@sfly/client`，ADR 0022）：开放给自建页面的接口为 true；
 	 * 给 Agent、安装脚本、控制台自己用的接口和上传接口为 false（上传接口标 true 时生成失败）。
