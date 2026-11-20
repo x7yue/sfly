@@ -1,4 +1,8 @@
-import { NodeTypeMetadata, type OrchestrationDocument, type PackageMetadata } from "@sfly/schema";
+import {
+	NodeTypeMetadata,
+	type PackageMetadata,
+	type StoredOrchestrationDocument,
+} from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents, nodePackages } from "../db/schema.js";
@@ -22,7 +26,7 @@ export interface NodeTypeRef {
 /** 场景中 nodeId 这个包节点的节点类型；不是包节点时为 undefined。 */
 export async function nodeTypeOf(
 	db: Db | Tx,
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 	nodeId: string,
 	agentName: string | null,
 ): Promise<NodeTypeRef | undefined> {
@@ -67,7 +71,7 @@ export function nodeTypeView(type: NodeTypeRef["type"]): NodeTypeView | undefine
  */
 export async function declaredNodeType(
 	db: Db | Tx,
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 	nodeId: string,
 	agentName?: string | null,
 ): Promise<NodeTypeView | undefined> {

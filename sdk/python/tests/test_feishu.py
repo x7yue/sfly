@@ -1,8 +1,9 @@
 """`sfly.feishu`：Markdown 卡片的请求体，以及本地调试用的文本消息组装和原始消息校验。
 
-规则和用例与控制面共用（testdata/feishu-card-cases.json、feishu-text-cases.json、feishu-raw-cases.json，
-apps/server/test/feishu-messages.test.ts 跑同一组），保证节点代码里组装的卡片和本地调试打印的消息，
-与画布上的「Markdown 卡片」和控制面真正发出的请求体一致。
+规则和用例与控制面共用（testdata/feishu-card-cases.json、feishu-text-cases.json、feishu-raw-cases.json）：
+文本和原始消息的用例 apps/server/test/feishu-messages.test.ts 跑同一组，卡片的用例由
+apps/server/test/full-stack-notify.test.ts 验证控制面原样投递，保证节点代码里组装的卡片和
+本地调试打印的消息，与控制面真正发出的请求体一致。
 """
 
 from __future__ import annotations

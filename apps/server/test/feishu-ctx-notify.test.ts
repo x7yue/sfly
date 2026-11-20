@@ -2,7 +2,7 @@
 // 机器人必须在任务派发时下发的名单里（「飞书机器人」类型的输入引用的机器人）并且已登记，控制面才把它写进发送队列；
 // 否则在这个任务的日志里写一条 warning、不发送。投递结果写进这个任务的日志，不改变任务和运行的状态。
 // 发原始消息（#235，`ctx.notify(bot, message=...)`，含 sfly.feishu.card 组装的卡片）：完整的请求体原样发出，
-// 校验规则与飞书通知节点的原始消息相同，不合格的不发送、任务日志里有原因。
+// 只校验是对象、msg_type 是飞书支持的类型、不超过 20 KB（不截断），不合格的不发送、任务日志里有原因。
 // 控制面写进任务日志的行不占用 Agent 的日志序号，和 Agent 上报的行一样出现在按运行合并的日志里（#220）。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 假飞书 Webhook 服务（support/fake-feishu.ts）。
 import { logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
@@ -122,7 +122,7 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		return found as LogLine;
 	};
 
-	it("发给任务引用的机器人：请求体与飞书通知节点的文本格式相同，投递结果写进这个任务的日志", async () => {
+	it("发给任务引用的机器人：发出文本请求体，投递结果写进这个任务的日志", async () => {
 		const { runId, task } = await start();
 		expect(task.referencedFeishuBots).toEqual(["ops"]);
 
@@ -155,6 +155,18 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		notify(runner, task, { bot: "ops", text: "完成" });
 		await eventually(() => expect(feishu.requests).toHaveLength(1));
 		expect(feishu.requests[0]?.json).toEqual({ msg_type: "text", content: { text: "完成" } });
+	});
+
+	it("文本超过 20 KB：截断后发出，请求体不超过 20 KB，末尾带「…（已截断）」，「@所有人」仍在最后", async () => {
+		const { task } = await start();
+		notify(runner, task, { bot: "ops", text: "a".repeat(30_000), at_all: true });
+
+		await eventually(() => expect(feishu.requests).toHaveLength(1));
+		const request = feishu.requests[0];
+		expect(Buffer.byteLength(request?.body ?? "", "utf8")).toBeLessThanOrEqual(20 * 1024);
+		const text = (request?.json as { content: { text: string } }).content.text;
+		expect(text.startsWith("aaa")).toBe(true);
+		expect(text.endsWith('…（已截断）<at user_id="all">所有人</at>')).toBe(true);
 	});
 
 	it("文本含 NUL：换成 U+FFFD 后照常发送（发送队列存不下 NUL）", async () => {
@@ -197,6 +209,27 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		notify(runner, task, { bot: "ops", text: "ops 不在名单里" });
 		await logLine(task.taskId, (l) => l.text.includes("「ops」"));
 		expect(feishu.requests).toEqual([]);
+	});
+
+	it("任务派发之后机器人被删除：不发送，任务日志里写 warning，任务和运行不受影响", async () => {
+		const { runId, task } = await start();
+		expect(task.referencedFeishuBots).toEqual(["ops"]);
+		const res = await cp.fetch("/feishu-bots/ops", {
+			method: "DELETE",
+			headers: { "x-sfly-nickname": "tester" },
+		});
+		expect(res.status).toBe(204);
+
+		notify(runner, task, { bot: "ops", text: "机器人已经删了" });
+		const warning = await logLine(task.taskId, (l) => l.level === "warn");
+		expect(warning.source).toBe("system");
+		expect(warning.text).toContain("ctx.notify 的消息没有发送：");
+		expect(warning.text).toContain("「ops」");
+		expect(warning.text).toContain("已被删除");
+		expect(feishu.requests).toEqual([]);
+
+		await runner.succeed(task);
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
 	});
 
 	describe("原始消息：ctx.notify(bot, message=...)", () => {
@@ -354,10 +387,16 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		]);
 	});
 
-	it("控制面写的行（ctx.notify 的告警和投递结果、飞书通知节点的投递结果）出现在按运行合并的日志里：分页、往前翻页、实时推送和下载都恰好一次，与 Agent 上报的行按序号排在一起", async () => {
+	it("控制面写的行（ctx.notify 的告警和投递结果）出现在按运行合并的日志里：分页、往前翻页、实时推送和下载都恰好一次，与 Agent 上报的行按序号排在一起；只有控制面写的行的任务也在", async () => {
 		const doc = scenario("ops");
-		doc.nodes.push({ id: "note", kind: "feishu_notify", bot: "ops", text: "完成" } as never);
-		doc.edges.push({ from: "alert", to: "note", kind: "chain" });
+		doc.nodes.push({
+			id: "second",
+			kind: "package",
+			package: "alerts",
+			node: "alert",
+			inputs: { bot: "ops" },
+		} as never);
+		doc.edges.push({ from: "alert", to: "second", kind: "chain" });
 		const runId = await api.triggerOk(await api.orchestrationWith(doc));
 		const task = await runner.nextAssign();
 		runner.logs(task, [
@@ -383,9 +422,12 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 			notify(runner, task, { bot: "ops", text: "发对了" });
 			await logLine(task.taskId, (l) => l.text.includes("已送达"));
 			await runner.succeed(task);
+			// 第二个节点的任务没有 Agent 上报的行，日志里只有控制面写的投递结果。
+			const second = await runner.nextAssign();
+			notify(runner, second, { bot: "ops", text: "第二个节点" });
+			await logLine(second.taskId, (l) => l.text.includes("已送达"));
+			await runner.succeed(second);
 			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
-			const noteTask = (await api.node(runId, "note")).attempts[0]?.task_id as string;
-			await logLine(noteTask, (l) => l.text.includes("已送达"));
 
 			const brief = (l: Pick<RunLogLine, "node_id" | "seq" | "source" | "text">) =>
 				`${l.node_id}#${l.seq} ${l.source === "system" ? "system" : l.text}`;
@@ -395,7 +437,7 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 				"alert#3 system",
 				"alert#4 a3",
 				"alert#5 system",
-				"note#1 system",
+				"second#1 system",
 			];
 			const all = await runPage({ limit: 1000 });
 			expect(all.lines.map(brief)).toEqual(expected);

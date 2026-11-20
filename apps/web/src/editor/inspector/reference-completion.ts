@@ -10,7 +10,7 @@ import {
 	schemaDescription,
 	WHOLE_REFERENCE,
 } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 
 /**
  * 引用补全的纯逻辑（检查器的 ReferenceEditor、ReferencePicker 使用，单测覆盖）：可引用的值与来源说明、
@@ -28,7 +28,7 @@ export interface ReferenceChoice extends ReferenceOption {
  * 参数的类型（敏感参数标出），输出的类型与所属节点（写成「显示名称（节点 ID）」）。
  */
 export function referenceChoices(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	id: string,
 	catalog: PackageCatalog,
 ): ReferenceChoice[] {

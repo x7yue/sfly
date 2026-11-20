@@ -1,5 +1,10 @@
-import type { NodeTypeMetadata, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
-import { feishuReferableInputs } from "./feishu-notify.js";
+import {
+	isRemovedNodeKind,
+	type NodeTypeMetadata,
+	type OrchestrationNode,
+	type StoredNode,
+	type StoredOrchestrationDocument,
+} from "@sfly/schema";
 import { nodeNameWithId } from "./node-display.js";
 import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
 
@@ -27,7 +32,6 @@ export const BUILTIN_OUTPUTS: Record<Exclude<OrchestrationNode["kind"], "package
 	timer: ["triggered_at", "late"],
 	sleep: ["triggered_at"],
 	stop_subflow: ["status"],
-	feishu_notify: [],
 };
 
 /**
@@ -35,7 +39,7 @@ export const BUILTIN_OUTPUTS: Record<Exclude<OrchestrationNode["kind"], "package
  * null：没有锁定版本、版本不存在或版本里没有这个节点类型；undefined：目录里还没有这个版本的信息。
  */
 export function nodeTypeOf(
-	doc: Pick<OrchestrationDocument, "packages">,
+	doc: Pick<StoredOrchestrationDocument, "packages">,
 	node: { package: string; node: string },
 	catalog: PackageCatalog,
 ): NodeTypeIo | null | undefined {
@@ -48,10 +52,12 @@ export function nodeTypeOf(
 
 /** 节点已声明的输出键；节点类型未知时为 undefined（不能补全，也不检查）。 */
 export function declaredOutputs(
-	doc: OrchestrationDocument,
-	node: OrchestrationNode,
+	doc: StoredOrchestrationDocument,
+	node: StoredNode,
 	catalog: PackageCatalog,
 ): string[] | undefined {
+	// 已移除种类的节点不知道有哪些输出：不检查对它的引用，节点本身有 node_kind_removed 警告。
+	if (isRemovedNodeKind(node.kind)) return undefined;
 	if (node.kind !== "package") return BUILTIN_OUTPUTS[node.kind];
 	const type = nodeTypeOf(doc, node, catalog);
 	return type ? Object.keys(type.outputs.properties) : undefined;
@@ -61,11 +67,11 @@ export function declaredOutputs(
 export interface ReferenceScope {
 	/** 本链的起点（入口节点或子流程入口节点）；节点不在从起点开始的链上时为 undefined。 */
 	start: Extract<OrchestrationNode, { kind: "entry" | "subflow_entry" }> | undefined;
-	earlier: OrchestrationNode[];
+	earlier: StoredNode[];
 }
 
 /** 沿链上的入线往回走到链的起点。 */
-export function referenceScope(doc: OrchestrationDocument, nodeId: string): ReferenceScope {
+export function referenceScope(doc: StoredOrchestrationDocument, nodeId: string): ReferenceScope {
 	const byId = new Map(doc.nodes.map((n) => [n.id, n]));
 	const previous = new Map<string, string>();
 	for (const edge of doc.edges) {
@@ -73,13 +79,13 @@ export function referenceScope(doc: OrchestrationDocument, nodeId: string): Refe
 			previous.set(edge.to, edge.from);
 		}
 	}
-	const path: OrchestrationNode[] = [];
+	const path: StoredNode[] = [];
 	const seen = new Set([nodeId]);
 	const self = byId.get(nodeId);
 	if (self?.kind === "entry" || self?.kind === "subflow_entry") return { start: self, earlier: [] };
 	for (let id = previous.get(nodeId); id !== undefined && !seen.has(id); id = previous.get(id)) {
 		seen.add(id);
-		const node = byId.get(id) as OrchestrationNode;
+		const node = byId.get(id) as StoredNode;
 		path.unshift(node);
 		if (node.kind === "entry" || node.kind === "subflow_entry") {
 			return { start: node, earlier: path };
@@ -104,7 +110,7 @@ export const referenceText = (expression: string) => `\${{ ${expression} }}`;
 
 /** 引用补全：本链的入口参数，以及本链上前面节点已声明的输出键。 */
 export function referenceOptions(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	nodeId: string,
 	catalog: PackageCatalog,
 ): ReferenceOption[] {
@@ -169,7 +175,7 @@ export function referencesIn(value: unknown): (string | null)[] {
 }
 
 /** 节点里可以写引用的值：输入名 → 值（引用检查和判断一个入口参数有没有被用到都读它）。 */
-export function referableValues(node: OrchestrationNode): [string, unknown][] {
+export function referableValues(node: StoredNode): [string, unknown][] {
 	switch (node.kind) {
 		case "package":
 			return Object.entries(node.inputs);
@@ -177,11 +183,6 @@ export function referableValues(node: OrchestrationNode): [string, unknown][] {
 			return Object.entries(node.params);
 		case "sleep":
 			return [["duration", node.duration]];
-		case "feishu_notify":
-			return [
-				...(node.bot === undefined ? [] : ([["bot", node.bot]] as [string, unknown][])),
-				...Object.entries(feishuReferableInputs(node)),
-			];
 		default:
 			return [];
 	}
@@ -189,7 +190,7 @@ export function referableValues(node: OrchestrationNode): [string, unknown][] {
 
 /** 引用检查：引用的参数要在本链入口声明，引用的节点要在本链上当前节点之前，输出键要已声明。 */
 export function referenceWarnings(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	catalog: PackageCatalog,
 ): ReferenceWarning[] {
 	const warnings: ReferenceWarning[] = [];
@@ -252,7 +253,7 @@ export function referenceWarnings(
 
 /** 包版本锁定检查：每个包节点都锁定到一个存在的版本，且该版本里有这个节点类型。 */
 export function packageWarnings(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	catalog: PackageCatalog,
 ): ReferenceWarning[] {
 	const warnings: ReferenceWarning[] = [];
@@ -287,7 +288,7 @@ export function packageWarnings(
 
 /** 异步任务节点的调度连线连到的子流程入口节点。 */
 export function dispatchTarget(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	asyncNodeId: string,
 ): Extract<OrchestrationNode, { kind: "subflow_entry" }> | undefined {
 	for (const edge of doc.edges) {
@@ -302,7 +303,7 @@ export function dispatchTarget(
  * 参数映射检查（docs/SEMANTICS.md §4 第 2 条）：异步任务节点只能映射它触发的子流程入口声明的参数，
  * 没有默认值的必填参数必须映射。没有连到子流程入口节点时不检查（结构警告会指出）。
  */
-export function subflowParamWarnings(doc: OrchestrationDocument): ReferenceWarning[] {
+export function subflowParamWarnings(doc: StoredOrchestrationDocument): ReferenceWarning[] {
 	const warnings: ReferenceWarning[] = [];
 	for (const node of doc.nodes) {
 		if (node.kind !== "async") continue;

@@ -226,10 +226,14 @@ describeWithAgent("验收 S2：并行", () => {
 			expect(await read("watch-ready")).not.toBe("");
 			expect(await read("tail-ready")).not.toBe("");
 		}, 60_000);
+		// 就绪文件由节点代码写出，控制面可能还没处理 TaskStarted（仍是 dispatched），所以节点的状态也要等。
 		let run = await api.run(runId);
-		expect(run.status).toBe("running");
-		expect(nodeOf(chainOf(run, "mon"), "watch").status).toBe("running");
-		expect(nodeOf(chainOf(run, "logs"), "tail").status).toBe("running");
+		await eventually(async () => {
+			run = await api.run(runId);
+			expect(run.status).toBe("running");
+			expect(nodeOf(chainOf(run, "mon"), "watch").status).toBe("running");
+			expect(nodeOf(chainOf(run, "logs"), "tail").status).toBe("running");
+		}, 30_000);
 
 		// 压测结束 → 停止子流程「监控」：它和它触发的「日志」一起停止。
 		// 被停止的节点在节点代码里收到 Cancelled，finally 里的清理照常执行；子流程的 always 清理照常开始。

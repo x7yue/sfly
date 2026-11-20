@@ -1,4 +1,8 @@
-import type { OrchestrationDocument, OrchestrationHeadView, OrchestrationView } from "@sfly/schema";
+import type {
+	OrchestrationHeadView,
+	OrchestrationView,
+	StoredOrchestrationDocument,
+} from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
@@ -128,7 +132,7 @@ export function EditorTopRight({
 	orchestration: OrchestrationView;
 	/** 在线编辑者（useOtherEditors）。 */
 	editors: readonly string[];
-	doc: OrchestrationDocument;
+	doc: StoredOrchestrationDocument;
 	versioning: Versioning;
 	/** 正在原地改显示名称。 */
 	renaming: boolean;

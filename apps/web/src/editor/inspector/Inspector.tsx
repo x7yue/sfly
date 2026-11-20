@@ -9,19 +9,21 @@ import {
 	type OrchestrationWarning,
 	type PackageCatalog,
 } from "@sfly/orchestration";
-import type {
-	AgentView,
-	Annotation,
-	FeishuBotView,
-	OrchestrationDocument,
-	PackageSummary,
-	StickyNote,
+import {
+	type AgentView,
+	type Annotation,
+	type FeishuBotView,
+	type PackageSummary,
+	REMOVED_NODE_KIND_NAMES,
+	type RemovedNodeKind,
+	type StickyNote,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { cn } from "cn";
 import { SquareDashedIcon, Trash2Icon } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
-import type { DocNode } from "#/components/canvas/flow";
+import { type DocNode, isRemovedDocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
 import {
 	type CanvasSelection,
@@ -52,7 +54,6 @@ import { NodeOutputs } from "./NodeOutputs";
 import {
 	AsyncMapping,
 	ExecutionSettings,
-	FeishuNotifyForm,
 	PackageParams,
 	PackageVersionField,
 	SleepForm,
@@ -63,6 +64,7 @@ import {
 } from "./node-forms";
 import { NoteField } from "./node-note";
 import { ParamsEditor } from "./ParamsEditor";
+import { RemovedNodePanel } from "./RemovedNodePanel";
 import { referenceChoices } from "./reference-completion";
 import { StickyInspector } from "./StickyInspector";
 
@@ -80,14 +82,14 @@ export interface InspectorContext {
 	/** 场景的 ID：关注项存在场景的设置里，检查器直接读写。 */
 	orchestrationId: string;
 	/** 画布上正在编辑的文档。 */
-	doc: OrchestrationDocument;
+	doc: StoredOrchestrationDocument;
 	/** 编辑起点：已保存的版本。关注项只能引用已保存的节点，新加的节点要先保存。 */
-	saved: OrchestrationDocument;
+	saved: StoredOrchestrationDocument;
 	catalog: PackageCatalog;
 	info: CanvasInfo;
 	packages: PackageSummary[] | undefined;
 	agents: AgentView[];
-	/** 已登记的飞书机器人（飞书通知节点的下拉框）。 */
+	/** 已登记的飞书机器人（「飞书机器人」类型的输入的下拉框）。 */
 	bots: FeishuBotView[];
 	warnings: OrchestrationWarning[];
 	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
@@ -265,7 +267,6 @@ function NodeInspector({
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
 		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
 		...(node.kind === "subflow_entry" ? ["name"] : node.kind === "stop_subflow" ? ["subflow"] : []),
-		...(node.kind === "feishu_notify" ? ["bot", "text", "title", "markdown", "message"] : []),
 	]);
 	const general = warnings.filter(
 		(w) => !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
@@ -276,8 +277,7 @@ function NodeInspector({
 		node.kind === "package" ||
 		node.kind === "timer" ||
 		node.kind === "sleep" ||
-		node.kind === "stop_subflow" ||
-		node.kind === "feishu_notify";
+		node.kind === "stop_subflow";
 	const paramErrors = fieldErrors.length;
 	const version = node.kind === "package" ? doc.packages[node.package] : undefined;
 
@@ -318,23 +318,25 @@ function NodeInspector({
 					)
 				}
 			/>
-			<FieldList className="flex-none border-b border-border-soft px-3.5 pt-3">
-				{isNamedNode(node) && (
-					<DisplayNameField
+			{!isRemovedDocNode(node) && (
+				<FieldList className="flex-none border-b border-border-soft px-3.5 pt-3">
+					{isNamedNode(node) && (
+						<DisplayNameField
+							id={id}
+							node={node}
+							placeholder={nodeDefaultTitle(node, info)}
+							error={displayNameError}
+							onChange={change}
+						/>
+					)}
+					<NoteField
 						id={id}
-						node={node}
-						placeholder={nodeDefaultTitle(node, info)}
-						error={displayNameError}
-						onChange={change}
+						note={node.note}
+						error={fieldErrors.find((e) => e.field === "note")?.message}
+						onChange={(note) => change({ ...node, note })}
 					/>
-				)}
-				<NoteField
-					id={id}
-					note={node.note}
-					error={fieldErrors.find((e) => e.field === "note")?.message}
-					onChange={(note) => change({ ...node, note })}
-				/>
-			</FieldList>
+				</FieldList>
+			)}
 			<Tabs
 				value={tab}
 				onValueChange={(v) => setTab(v as Tab)}
@@ -416,15 +418,7 @@ function NodeInspector({
 							onLocate={context.onLocate}
 						/>
 					)}
-					{node.kind === "feishu_notify" && (
-						<FeishuNotifyForm
-							node={node}
-							bots={context.bots}
-							choices={choices}
-							problemsOf={problemsOf}
-							onChange={change}
-						/>
-					)}
+					{isRemovedDocNode(node) && <RemovedNodePanel node={node} />}
 					{fieldErrors
 						.filter(
 							(e) =>
@@ -465,8 +459,10 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 	sleep: "等待一段时长再继续，由控制面执行，不占用 Agent。",
 	stop_subflow:
 		"停止本链触发的某个子流程，等它完全结束（包括其中的 always 节点）后再继续；由控制面执行，不占用 Agent。",
-	feishu_notify:
-		"向飞书群里的机器人发一条消息，由控制面发出，不占用 Agent。消息交给发送队列后节点立即成功，发不出去也不影响节点和运行的结果。",
+	// 已移除种类的节点（ADR 0028）。
+	...(Object.fromEntries(
+		REMOVED_NODE_KIND_NAMES.map((kind) => [kind, "这种节点已不再支持，不能运行，也不能保存。"]),
+	) as Record<RemovedNodeKind, string>),
 	package: "在 Agent 上执行节点包里的函数。",
 };
 

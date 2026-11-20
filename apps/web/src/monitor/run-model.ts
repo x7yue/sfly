@@ -5,12 +5,12 @@ import {
 	errorHeadline,
 	type LogOrigin,
 	type NodeRunView,
-	type OrchestrationDocument,
-	type OrchestrationNode,
 	type ProgressEvent,
 	type RunLogScope,
 	type RunView,
 	runViewFailures,
+	type StoredNode,
+	type StoredOrchestrationDocument,
 	type TaskProgressView,
 } from "@sfly/schema";
 import { type RunNodeName, runNodeName } from "#/components/node-name";
@@ -66,7 +66,7 @@ export function chainLabelParts(chain: ChainRunView): { name: string; id: string
 }
 
 /** 节点 ID → 文档里的节点（标题、always 标记、引用了哪些参数）。 */
-export const documentNodes = (doc: OrchestrationDocument | undefined) =>
+export const documentNodes = (doc: StoredOrchestrationDocument | undefined) =>
 	new Map((doc?.nodes ?? []).map((n) => [n.id, n]));
 
 /** 停止子流程节点停止的子流程（按子流程入口 ID）在运行里的名称（每次运行每个子流程最多一个实例）。 */
@@ -75,7 +75,7 @@ export function stoppedSubflowLabel(run: RunView, subflowId: string): string {
 	return chainName({ chain_id: subflowId, subflow: true, name: chain?.name ?? null });
 }
 
-export const isAlways = (decl: OrchestrationNode | undefined) =>
+export const isAlways = (decl: StoredNode | undefined) =>
 	!!decl && "always" in decl && decl.always === true;
 
 export function findNode(run: RunView, ref: NodeRef | null): NodeRunView | undefined {
@@ -248,7 +248,7 @@ export function runDocumentTitle(run: Pick<RunView, "status" | "cancel">, name: 
 }
 
 /** 取消整个运行的影响（docs/SEMANTICS.md §3.4），在取消确认弹窗里列出。 */
-export function cancelImpact(run: RunView, doc: OrchestrationDocument | undefined) {
+export function cancelImpact(run: RunView, doc: StoredOrchestrationDocument | undefined) {
 	const decls = documentNodes(doc);
 	const nodes = run.chains.flatMap((c) => c.nodes);
 	const notStarted = (n: NodeRunView) => n.status === "pending" || n.status === "queued";
@@ -263,7 +263,7 @@ export function cancelImpact(run: RunView, doc: OrchestrationDocument | undefine
 }
 
 /** 入口参数和子流程入口参数中标记为敏感的参数名。 */
-export function secretParams(doc: OrchestrationDocument | undefined): Set<string> {
+export function secretParams(doc: StoredOrchestrationDocument | undefined): Set<string> {
 	return new Set(
 		(doc?.nodes ?? [])
 			.flatMap((n) =>
@@ -278,7 +278,7 @@ export function secretParams(doc: OrchestrationDocument | undefined): Set<string
  * （值可能是由敏感参数拼出来的）。
  */
 export function secretInputKeys(
-	decl: OrchestrationNode | undefined,
+	decl: StoredNode | undefined,
 	secrets: ReadonlySet<string>,
 ): Set<string> {
 	if (secrets.size === 0 || !decl) return new Set();

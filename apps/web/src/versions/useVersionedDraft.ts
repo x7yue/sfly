@@ -1,17 +1,23 @@
 import { diffDocuments, isEmptyDiff } from "@sfly/orchestration";
 import {
 	domainKey,
-	type OrchestrationDocument,
 	type OrchestrationHeadView,
 	orchestrationsApi,
 	queryKey,
 	type SavedVersionView,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fromFlow, toFlow } from "#/components/canvas/flow";
 import { callApi } from "#/lib/api";
-import { clearDraft, loadDraft, onDraftChangedElsewhere, writeDraft } from "./draft";
+import {
+	clearDraft,
+	loadDraft,
+	onDraftChangedElsewhere,
+	savableDocument,
+	writeDraft,
+} from "./draft";
 import { versionConflictOf } from "./queries";
 
 /** 一次编辑会话的起点：最新版本，或者浏览器里保存的本地草稿。 */
@@ -22,7 +28,7 @@ export interface EditStart {
 	head: OrchestrationHeadView;
 	base: Base;
 	/** 画布的初始内容。 */
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 	/** 是否从本地草稿恢复。 */
 	fromDraft: boolean;
 }
@@ -30,11 +36,11 @@ export interface EditStart {
 interface Base {
 	version: number;
 	author: string | null;
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 }
 
 /** 按画布的方式规整文档（补齐布局、去掉没用到的包锁定），让“未修改”的判断不受这些差别影响。 */
-const asCanvasDocument = (doc: OrchestrationDocument): OrchestrationDocument => {
+const asCanvasDocument = (doc: StoredOrchestrationDocument): StoredOrchestrationDocument => {
 	const { nodes, edges } = toFlow(doc);
 	return fromFlow(nodes, edges, {
 		default_agent: doc.default_agent,
@@ -87,7 +93,7 @@ const randomTabId = (): string =>
 export function useVersionedDraft(
 	orchestrationId: string,
 	start: EditStart,
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 ) {
 	const queryClient = useQueryClient();
 	const [base, setBase] = useState<Base>(start.base);
@@ -144,10 +150,10 @@ export function useVersionedDraft(
 	}, []);
 
 	const save = useMutation({
-		mutationFn: (document: OrchestrationDocument) =>
+		mutationFn: (document: StoredOrchestrationDocument) =>
 			callApi(orchestrationsApi.saveVersion, {
 				params: { id: orchestrationId },
-				body: { base_version: base.version, document },
+				body: { base_version: base.version, document: savableDocument(document) },
 			}),
 		onSuccess: (saved: SavedVersionView, document) => {
 			setBase({ version: saved.number, author: saved.author, document });

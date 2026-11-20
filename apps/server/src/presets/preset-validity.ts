@@ -1,4 +1,4 @@
-import type { OrchestrationDocument, ParamDeclaration } from "@sfly/schema";
+import type { ParamDeclaration, StoredOrchestrationDocument } from "@sfly/schema";
 import { matchesParamType } from "../engine/params.js";
 
 /**
@@ -11,7 +11,7 @@ export interface PresetProblem {
 }
 
 /** 场景版本入口节点的参数声明；没有入口节点时为空。 */
-export function entryParams(document: OrchestrationDocument): ParamDeclaration[] {
+export function entryParams(document: StoredOrchestrationDocument): ParamDeclaration[] {
 	const entry = document.nodes.find((n) => n.kind === "entry");
 	return entry?.kind === "entry" ? entry.params : [];
 }

@@ -1,13 +1,12 @@
 /**
- * 飞书消息的请求体组装（ADR 0020）。三种来源（飞书通知节点、`ctx.notify`、运行通知）共用这里的规则。
- * 文本消息的截断、Markdown 卡片和原始消息的校验与 SDK（`sfly.feishu`）一致，共用 `testdata/feishu-*-cases.json` 里的用例。
+ * 飞书消息的请求体组装（ADR 0020）。`ctx.notify` 和运行通知共用这里的规则。
+ * 文本消息的截断和原始消息的校验与 SDK（`sfly.feishu`）一致，共用 `testdata/feishu-*-cases.json` 里的用例。
  */
 import {
 	FEISHU_BODY_LIMIT_BYTES,
 	FEISHU_BODY_LIMIT_LABEL,
 	FEISHU_MSG_TYPES,
 } from "@sfly/orchestration";
-import type { OrchestrationNode } from "@sfly/schema";
 
 /** 「@所有人」：飞书文本消息里的写法。 */
 export const AT_ALL = '<at user_id="all">所有人</at>';
@@ -19,7 +18,7 @@ export const TRUNCATED_MARK = "…（已截断）";
 export const bodyBytes = (body: unknown): number => Buffer.byteLength(JSON.stringify(body), "utf8");
 
 /**
- * 请求体里有一段可以截断的文本（`text`：文本消息的正文、Markdown 卡片的正文、运行通知的附加说明）：`build` 用给定的文本
+ * 请求体里有一段可以截断的文本（`text`：文本消息的正文、运行通知的附加说明）：`build` 用给定的文本
  * 组装整个请求体。整个请求体超过 {@link FEISHU_BODY_LIMIT_BYTES} 时截断这段文本：留下最长的、放得下的前缀
  * （按 Unicode 字符，不把一个字符切成两半），末尾接上 {@link TRUNCATED_MARK}。
  * 其余部分太大，连空前缀加标记都放不下时返回 undefined。文本消息、卡片和 SDK 本地调试（`sfly.feishu`）用同一条规则。
@@ -66,7 +65,8 @@ export function textMessage(
 	return fitted;
 }
 
-export type CardColor = Extract<OrchestrationNode, { kind: "feishu_notify" }>["color"];
+/** 卡片标题的颜色（飞书卡片 header 的颜色模板）。 */
+export type CardColor = "blue" | "green" | "orange" | "red" | "grey";
 
 /** 卡片 JSON 2.0 里平台用到的元素：markdown 和打开链接的按钮。 */
 export type CardElement =
@@ -99,7 +99,7 @@ export type CardMessage = {
 	};
 };
 
-/** 卡片的组装规则：header 加一组 body 元素。Markdown 卡片和运行通知共用，不各写一份。 */
+/** 卡片的组装规则：header 加一组 body 元素（运行通知用）。 */
 export const interactiveCard = (
 	{ title, subtitle, color }: CardHeader,
 	elements: CardElement[],
@@ -117,7 +117,7 @@ export const interactiveCard = (
 });
 
 /**
- * 卡片里有一段可以截断的文本（`text`，Markdown 卡片的正文、运行通知的附加说明）：`build` 用给定的文本组装整张卡片，
+ * 卡片里有一段可以截断的文本（`text`，运行通知的附加说明）：`build` 用给定的文本组装整张卡片，
  * 请求体超过 {@link FEISHU_BODY_LIMIT_BYTES} 时截断这段文本（{@link fitToLimit}）；其余部分太大，
  * 连空前缀加标记都放不下时无法组装（`too_large`）。
  */
@@ -128,17 +128,6 @@ export function fitCard(
 	const body = fitToLimit(text, build);
 	return body === undefined ? { error: "too_large" } : { body };
 }
-
-/**
- * Markdown 卡片。标题和正文照原样放进去，空字符串也照常组装；请求体太大时截断正文（{@link fitCard}）。
- * 规则的细节和用例见 `testdata/feishu-card-cases.json`。
- */
-export const markdownCard = (
-	title: string,
-	markdown: string,
-	color: CardColor,
-): { body: CardMessage } | { error: "too_large" } =>
-	fitCard(markdown, (content) => interactiveCard({ title, color }, [{ tag: "markdown", content }]));
 
 /**
  * 原始消息：完整的飞书请求体，原样发出。只校验它是一个对象、`msg_type` 是飞书支持的类型、不超过
