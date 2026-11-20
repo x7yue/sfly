@@ -61,6 +61,7 @@ export const DashboardRunningRun = z.object({
 	orchestration_id: z.string(),
 	orchestration_name: z.string(),
 	orchestration_version: z.number().int(),
+	/** 触发人的昵称。 */
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
 	triggered_via: z.string().nullable(),
@@ -97,6 +98,7 @@ const EndedRunFields = {
 	orchestration_id: z.string(),
 	orchestration_name: z.string(),
 	orchestration_version: z.number().int(),
+	/** 触发人的昵称。 */
 	triggered_by: z.string(),
 	started_at: Timestamp,
 	ended_at: Timestamp,
@@ -175,6 +177,7 @@ export const DashboardView = z.object({
 	recent_ended: z.array(DashboardEndedRun),
 	/** Agent 的在线数与槽位合计；每台 Agent 的状态与正在执行的任务用 Agent 列表接口（agentsApi.list）。 */
 	agents: DashboardAgentStats,
+	/** 「开始使用」四步各自的完成情况；出现第一个运行之后控制台不再显示这个面板。 */
 	setup: DashboardSetup,
 });
 
@@ -183,6 +186,9 @@ export const dashboardApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/dashboard",
+		summary: "控制台统计：最近 24 小时的运行结果、运行中的运行、Agent 在线情况",
+		effect: "read",
+		resource: { kind: "run", target: "collection" },
 		client: true,
 		key: ["dashboard", "get"],
 		response: DashboardView,

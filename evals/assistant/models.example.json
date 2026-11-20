@@ -1,0 +1,26 @@
+{
+	"说明": "评测用的模型：示例。真实的配置放在仓库之外（默认 ~/.local/share/sfly/evals/models.json，或环境变量 AEVAL_MODELS 指定的文件），格式和这份一样；那里没有这个文件时用这份示例。endpoint 是容器里的 pi 访问模型的地址：宿主机上的转发口（http://host.docker.internal:18900/<pi 配置里的提供方名>，aeval.model_proxy 转发时加上凭据），或内网里的模型服务。不要写密钥。字段见 README.md「加一个模型」。假的模型端点 fake 是内置的，不用写。",
+	"models": {
+		"upper": {
+			"tier": "上限",
+			"api": "openai-responses",
+			"endpoint": "http://host.docker.internal:18900/<提供方名>",
+			"model": "<模型 id>",
+			"contextWindow": 400000,
+			"maxTokens": 128000,
+			"reasoning": true,
+			"thinking": "medium",
+			"toolCalls": true
+		},
+		"intranet-27b": {
+			"tier": "内网能部署（27B 开放权重）",
+			"api": "openai-completions",
+			"endpoint": "http://llm-gateway.internal/v1",
+			"model": "<模型 id>",
+			"contextWindow": 131072,
+			"maxTokens": 16384,
+			"reasoning": false,
+			"toolCalls": true
+		}
+	}
+}

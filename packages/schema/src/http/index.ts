@@ -23,6 +23,7 @@ export * from "./client-package.js";
 export * from "./clock-offset.js";
 export * from "./contract.js";
 export * from "./dashboard.js";
+export * from "./declarations.js";
 export * from "./docs.js";
 export * from "./feishu-bots.js";
 export * from "./metrics.js";

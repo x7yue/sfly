@@ -31,6 +31,17 @@ import { z } from "zod";
  *    API 客户端的类型和路由表（client-export.ts，写到 `packages/client/src/generated/`）：
  *    方法按领域分组，领域名是 `httpApis` 的键，必须等于该领域 JSON 接口 key 第一段的驼峰写法（`feishu-bots` → `feishuBots`）；
  *    请求类型按输入方向、响应类型按输出方向，注释随类型带过去。
+ * 10. 每个接口都要声明三件关于它自己的事，类型上必填、没有默认值：`summary`（一句话说明它做什么）、
+ *    `effect`（`read` 只读 / `write` 有副作用）、`resource`（作用在哪类资源上、用请求的哪个字段定位到具体的那一个，
+ *    见 {@link ResourceRef}）；写接口按需再声明 `creates`（新建的是哪类资源）、`removes`（让资源不再可用）。
+ *    它们进入路由清单（`sfly api --list` / `--describe` 读的就是它），
+ *    以后的鉴权也在契约路由一处按它们判断一个请求要什么、作用在什么上，不靠各个接口自己记。
+ *    `checkRouteDeclarations`（./declarations.ts）检查声明本身站得住，契约测试对每个接口运行它：
+ *    GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口要在 `READS_WITH_TRACES` 登记，`{ params }` 用的是路径里的第一个参数，
+ *    接口的路径前缀和 `resource.kind` 要对上 `PATH_KINDS`（`system` 就是那张表里的 `system` 项，每条路径单独列出：不带项目、不需要凭据，写错一个就是悄悄多一个公开的接口；
+ *    新接口的路径前缀不在表里、或加一个资源类别，都要改那张表，审查时看得见）；
+ *    声明为 `read` 的接口真的不写库，由控制面的测试用真实的请求核对（apps/server/test/read-only-routes.test.ts）。
+ *    响应的 JSON Schema 随路由清单一起导出（`response`；SSE 是 `events`），不用另写。
  */
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -48,12 +59,118 @@ export interface RawRequest {
 	body: unknown;
 }
 
+/**
+ * 接口作用在哪一类资源上（GLOSSARY 的词）；一个接口只有一个主要的资源：它的 id、名称就是请求用来定位的那个。
+ *
+ * - `scenario` 场景（场景版本、运行预设、在线编辑者都属于场景：定位用场景的 id）。
+ * - `run` 运行。
+ * - `task` 任务：任务的日志、动作和产物用任务 id 定位，它属于某次运行。
+ * - `package` 节点包（版本、节点类型、归档都属于节点包：定位用包名）。
+ * - `agent` Agent。
+ * - `feishu_bot` 飞书机器人。
+ * - `system` 平台自身：与具体的场景、运行都无关的东西（健康检查、用户文档、SDK 与 Agent 的安装包和安装脚本、
+ *   API 客户端安装包、项目设置）。
+ */
+export const RESOURCE_KINDS = [
+	"scenario",
+	"run",
+	"task",
+	"package",
+	"agent",
+	"feishu_bot",
+	"system",
+] as const;
+export type ResourceKind = (typeof RESOURCE_KINDS)[number];
+
+/** 资源类别的中文名（GLOSSARY 的词），路由清单带着它给命令行显示。 */
+export const RESOURCE_KIND_LABELS = {
+	scenario: "场景",
+	run: "运行",
+	task: "任务",
+	package: "节点包",
+	agent: "Agent",
+	feishu_bot: "飞书机器人",
+	system: "系统",
+} as const satisfies Record<ResourceKind, string>;
+
+/**
+ * 用请求里的哪个字段定位到具体的那一个资源：
+ *
+ * - `{ params: "id" }`、`{ query: "name" }`、`{ body: "name" }`：路径参数、查询参数、请求体字段的名字，值就是资源的标识
+ *   （路径参数必须是路径模板里的 `:名称`，查询参数与请求体字段必须在对应的 schema 里；契约测试检查）。
+ *   `/tasks/:id/logs` 的 `id` 是任务的标识，所以类别写 `task`。
+ * - `"collection"`：列表，或新建一个；请求没有指向某一个已有的资源（路径里不带任何参数）。
+ *   新建在别的资源名下的子资源（场景的运行预设、运行）时，定位的是那个上级资源。
+ * - `"upload"`：具体的那一个在上传的内容里（发布节点包：包名与版本在归档的元信息里），请求的字段里没有。
+ * - `"global"`：只用于 `system`，平台自身，没有「具体的那一个」。
+ */
+export type ResourceTarget =
+	| { params: string }
+	| { query: string }
+	| { body: string }
+	| "collection"
+	| "upload"
+	| "global";
+
+/** 接口作用在哪类资源上，以及怎么定位到具体的那一个。 */
+export interface ResourceRef {
+	kind: ResourceKind;
+	target: ResourceTarget;
+}
+
+/**
+ * 接口对平台的影响：
+ *
+ * - `read` 只读：不改变平台里任何资源的内容，也不在平台之外产生副作用。打开 SSE 流时登记的订阅随连接结束，不算；
+ *   只写访问日志、心跳、最后访问时间这类不影响任何资源内容的痕迹，也算只读，但要在 `READS_WITH_TRACES`
+ *   （./declarations.ts）登记写了什么。
+ * - `write` 有副作用：改变平台里的状态，或者在平台之外产生副作用（给飞书发消息、让 Agent 执行东西）。
+ *
+ * 声明与 HTTP 方法无关，要看接口实际做了什么；但 GET 一定是只读（`checkRouteDeclarations` 检查）。
+ */
+export const EFFECTS = ["read", "write"] as const;
+export type Effect = (typeof EFFECTS)[number];
+
 interface RouteDefBase {
 	/**
 	 * Fastify 风格的路径模板，路径参数写作 `:name`，末尾的 `*` 匹配剩余路径（参数名为 `*`）；
 	 * 不含浏览器侧的 `/api` 前缀。
 	 */
 	path: string;
+	/**
+	 * 一句话说明这个接口做什么（路由清单与 `sfly api --list` / `--describe` 显示它）：写给调用方，
+	 * 说它做什么、作用在什么上，不重复方法和路径。必填，没有默认值。
+	 */
+	summary: string;
+	/** 只读还是有副作用（{@link Effect}）。必填，没有默认值。 */
+	effect: Effect;
+	/** 作用在哪类资源上、怎么定位到具体的那一个（{@link ResourceRef}）。必填，没有默认值。 */
+	resource: ResourceRef;
+	/**
+	 * 这个写接口新建的是哪类资源（可选，只能和 `effect: "write"` 一起出现）。
+	 *
+	 * 声明了 `creates` 的接口，`resource` 定位到的那个资源**只被读**（它给出上下文，调用方要能读它），
+	 * 写落在新建出来的那个资源上；没有声明 `creates` 的写接口，写的就是 `resource` 定位到的那个资源本身。
+	 * 三种情况各举一例：
+	 *
+	 * - 新建、没有定位到任何已有资源（`target: "collection"`）：新建场景 `POST /orchestrations`，
+	 *   `resource: { kind: "scenario", target: "collection" }`，不写 `creates`：它的 `resource.kind` 就是新建的类别。
+	 * - 定位到一个已有资源后新建同类：复制场景 `POST /orchestrations/:id/copy`，
+	 *   `resource: { kind: "scenario", target: { params: "id" } }, creates: "scenario"`：来源场景只被读，新建的是另一个场景；
+	 *   不写 `creates` 就和「改这个场景」分不开。
+	 * - 定位到一个已有资源后新建别类：触发运行 `POST /orchestrations/:id/runs`，
+	 *   `resource: { kind: "scenario", target: { params: "id" } }, creates: "run"`：场景只被读，新建的是运行。
+	 *
+	 * 新建的东西不是独立的资源类别、而是上级资源的一部分时（场景的新版本、运行预设，任务的产物），不写 `creates`：
+	 * 改的是上级资源本身。
+	 */
+	creates?: ResourceKind;
+	/**
+	 * 这个接口让 `resource` 定位到的资源（或它的一部分，例如场景的一个运行预设）不再可用：删除、归档
+	 * （可选，只能和 `effect: "write"` 一起出现，不能和 `creates` 一起；恢复归档不算）。
+	 * 让资源从正常的列表里消失、或者不可恢复地去掉的都算。HTTP 方法是 DELETE 的接口必须声明（检查）。
+	 */
+	removes?: true;
 	/**
 	 * 是否进入 API 客户端（`@sfly/client`，ADR 0022）：开放给自建页面的接口为 true；
 	 * 给 Agent、安装脚本、控制台自己用的接口和上传接口为 false（上传接口标 true 时生成失败）。

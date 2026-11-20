@@ -74,4 +74,4 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
 - **超时或被中断之后先确认**：运行还在继续。`uv run sfly run list --scenario <联调副本>` 找到它，`uv run sfly run wait <运行>` 接着等；再次 `run start` 会再触发一次运行。
 - **取消**：`uv run sfly run cancel <运行>` 用于你自己触发、参数有误或不再需要的运行；别人触发的运行留给他们自己。
 - **输出太长时**：`uv run sfly run logs <运行> --all <文件>` 存成 JSONL 文件再用 grep 找；需要精确字段时加 `--json`。加了 `--json`，stdout 只有 JSON，「还有 N 条没有显示」「前面还有日志，用 --before 继续读」这类截断提示写在 stderr：stdout 和 stderr 都读，免得以为已经看全。
-- **命令没有覆盖的操作**：`uv run sfly api --list` 列出全部接口，`uv run sfly api <METHOD> <路径>` 调用。
+- **命令没有覆盖的操作**：`uv run sfly api --list` 列出全部接口（效果列写明只读还是有副作用，有副作用的先确认再调用），`uv run sfly api --describe <METHOD> <路径>` 看一个接口的请求和响应字段，`uv run sfly api <METHOD> <路径>` 调用。
