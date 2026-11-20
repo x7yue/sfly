@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：飞书通知节点（文本格式）与发送队列（#229，ADR 0020、docs/SEMANTICS.md §1.3、§2.4）。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
 import pg from "pg";

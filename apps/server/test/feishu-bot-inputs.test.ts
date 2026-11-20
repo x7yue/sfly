@@ -2,7 +2,6 @@
 // 常量必须是已登记的机器人（保存时警告，触发时阻断，指出节点和参数）；引用入口参数时触发时按实际值检查
 // （子流程里经异步任务节点传入的也一样）。派发时控制面把任务引用的机器人名单随任务下发，节点收到的参数值仍是名称。
 // 删除机器人之前列出的引用包含这种参数的常量值。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { feishuBotsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";

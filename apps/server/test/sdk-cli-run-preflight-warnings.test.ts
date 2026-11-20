@@ -2,7 +2,6 @@
 // 和控制台的触发对话框读的是同一份预检结果（`GET /orchestrations/:id/preflight` 的 warnings）。
 // 阻断的问题（开发版本没有加载、值接到类型不符的输入）和以前一样：预检的问题退出码 2，参数的问题报「入口参数不对」。
 // 真实的 sfly 进程对测试控制面，运行由假 Agent 接收。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";

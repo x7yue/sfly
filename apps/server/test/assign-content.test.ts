@@ -3,7 +3,6 @@
 // 模块直接连同一个数据库。版本要求和输入校验的各条规则、Agent 地址的取法由 HTTP 级的测试
 // （requires-sdk、requires-agent、agent-inputs、feishu-bot-inputs、failures）覆盖，这里只看模块自己的回答：
 // 派发内容有哪些字段、各个失败出口的类型、哪些失败带已解析的输入。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { createHash } from "node:crypto";
 import type { ResolveScope } from "@sfly/orchestration";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

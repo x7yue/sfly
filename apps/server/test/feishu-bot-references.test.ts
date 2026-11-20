@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：删除飞书机器人之前列出引用它的场景（#229，ADR 0020）。真实控制面 + 真实 PostgreSQL。
 import { feishuBotsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
