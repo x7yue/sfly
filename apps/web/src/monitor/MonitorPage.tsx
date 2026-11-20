@@ -102,6 +102,10 @@ function LoadedMonitor({ run, address }: { run: RunView; address: MonitorSearch 
 	useEffect(() => {
 		store.report({ type: "address", run, address });
 	}, [store, run, address]);
+	// 切到概览时详情卸载了，手动选的尝试不带回来：视图换了就报告（页面打开时也报一次，没有变化）。
+	useEffect(() => {
+		store.report({ type: "view", view });
+	}, [store, view]);
 	/**
 	 * 点概览里的一项：进入详情，定位到它所在的节点，给了页签就切过去，给了时刻就在日志里定位到那一刻（「需要注意」的
 	 * 直达按钮）。节点有链实例时在这里直接报告 `overview`，不等地址变化：地址可能和上一次直达时完全一样

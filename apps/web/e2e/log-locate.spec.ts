@@ -3,6 +3,7 @@ import { runsApi } from "@sfly/schema";
 import { type AssignedTask, LogLevel, LogSource } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import { runningScenario } from "./monitor-scenario";
+import { viewTab } from "./overview-support";
 
 // 运行监控页的地址能带节点、底部页签和一个时刻（控制面时间），日志定位到包含那一刻的一页（#347）：
 // 正好有一行日志（相差 50 毫秒以内、并且只有这一行）就高亮它（中性的白色短条），没有就在那一刻的位置插一条「这一刻」；
@@ -190,6 +191,42 @@ test("节点重试过：时刻落在哪一次尝试，就打开哪一次尝试�
 	await expect(logs).toContainText("AssertionError: 漏拦 3 笔");
 	await expect(logs.locator("[data-located]")).toHaveCount(0);
 	await expect(logs.locator("[data-moment]")).toHaveCount(0);
+});
+
+test("手动换了尝试，切到概览再回详情：选中的节点还在，看的是最近一次尝试，不带着手动选的那一次", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const at = logAt(agent, clock0);
+	const run = runsApi.get.response.parse(await (await controlPlane.fetch(`/runs/${runId}`)).json());
+	const first = run.chains[0]?.nodes.find((n) => n.node_id === "verify")?.attempts[0];
+	if (!first) throw new Error("没有 verify 的第 1 次尝试");
+	agent.logs({ taskId: first.task_id, attempt: 1 }, [at(1, 7_000, "verify 1 checking")]);
+	agent.logs(tasks.verify as AssignedTask, [at(1, 11_000, "verify 2 retrying")]);
+	await agent.sync();
+	const logs = logsOf(page);
+	const attempt = (n: number) =>
+		panel(page)
+			.getByRole("group", { name: "尝试" })
+			.getByRole("button", { name: `第 ${n} 次尝试` });
+
+	await page.goto(monitorUrl(runId, { view: "detail", node: "verify" }));
+	await expect(attempt(2)).toHaveAttribute("aria-pressed", "true");
+	await attempt(1).click();
+	await expect(scope(page)).toHaveText("范围：verify（第 1 次尝试）");
+	await expect(logs).toContainText("verify 1 checking");
+
+	await viewTab(page, "概览").click();
+	await expect(panel(page)).toHaveCount(0);
+	await viewTab(page, "详情").click();
+	await expect(scope(page)).toHaveText("范围：verify（第 2 次尝试）");
+	await expect(attempt(2)).toHaveAttribute("aria-pressed", "true");
+	await expect(logs).toContainText("verify 2 retrying");
+	await expect(logs).not.toContainText("verify 1 checking");
 });
 
 test("从定位到的那一页往前翻页、往后翻页：行连续不重复，翻到末尾后实时流才接上，新写入的行照常出现", async ({

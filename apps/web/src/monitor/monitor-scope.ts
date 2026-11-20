@@ -1,4 +1,5 @@
 import type { AttemptView, NodeRunView, RunView } from "@sfly/schema";
+import type { MonitorView } from "./monitor-view";
 import { type NodeRef, sameNode } from "./node-ref";
 import type { MonitorSearch, PanelTab } from "./run-link";
 import { findNode, initialSelection } from "./run-model";
@@ -13,7 +14,9 @@ import { findNode, initialSelection } from "./run-model";
  * 范围里的几项规则：
  *
  * - 换了节点，回到默认的那一次尝试（最近一次）；选中已经选中的节点不算换。
- * - 点合并日志里的来源节点名：选中这个节点，看的是那一行所在的尝试。
+ * - 点合并日志里的来源节点：选中这个节点，看的是那一行所在的尝试。
+ * - 手动选的尝试（切尝试、点来源）只在详情里算数：离开详情（切到概览）就丢掉，回到详情看的是默认的那一次尝试；
+ *   选中的节点、页签、展开与否不随视图丢。
  * - 定位日志：定位的时刻落在节点的哪一次尝试里就看哪一次（早于所有尝试时是最近一次）；之后手动切到别的尝试，
  *   那一刻不在它的日志里，不再定位，切回来再定位；同一个时刻再请求一次也重新定位（读者可能已经滚到别处）。
  *   定位的请求只对请求时的节点有效，选中别的节点时不定位。
@@ -34,7 +37,7 @@ export interface LogMoment {
 export interface ScopeState {
 	/** 选中的节点。 */
 	selected: NodeRef | null;
-	/** 用户指定的那一次尝试（任务 ID）；null 是默认：定位的时刻所在的、或最近的一次。换节点、定位日志后回到 null。 */
+	/** 用户指定的那一次尝试（任务 ID）；null 是默认：定位的时刻所在的、或最近的一次。换节点、定位日志、离开详情后回到 null。 */
 	attempt: string | null;
 	tab: PanelTab;
 	/** 用户展开 / 收起面板：true / false；null 表示还没选过，按内容自动决定。 */
@@ -62,7 +65,7 @@ export type ScopeEvent =
 	| { type: "overview"; run: RunView; address: MonitorSearch }
 	/** 点节点（时间线的节点行和区段）；`null` 是清除选中。 */
 	| { type: "select"; node: NodeRef | null }
-	/** 点合并日志里一行的来源节点名：选中这个节点，看那一行所在的尝试。 */
+	/** 点合并日志里一行的来源节点：选中这个节点，看那一行所在的尝试。 */
 	| { type: "origin"; node: NodeRef; taskId: string }
 	/** 手动切到节点的某一次尝试。 */
 	| { type: "attempt"; taskId: string }
@@ -70,6 +73,8 @@ export type ScopeEvent =
 	| { type: "locate"; node: NodeRef; at: number }
 	/** 看失败的节点：选中它，打开「尝试」页签。 */
 	| { type: "failure"; node: NodeRef }
+	/** 显示的视图换了（页面打开时报告一次，之后每次换视图报告）：离开详情就丢掉手动选的尝试。 */
+	| { type: "view"; view: MonitorView }
 	/** 切到底部面板的某个页签（用户选了页签，面板随之展开）。 */
 	| { type: "tab"; tab: PanelTab }
 	/** 用户展开 / 收起面板（拖动高度也算展开）；`null` 回到按内容自动决定。 */
@@ -134,6 +139,10 @@ export function reduceScope(state: ScopeState, event: ScopeEvent): ScopeState {
 			return locate(state, event.node, event.at);
 		case "failure":
 			return showTab(select(state, event.node), "attempts");
+		case "view":
+			return event.view === "detail" || state.attempt === null
+				? state
+				: { ...state, attempt: null };
 		case "tab":
 			return showTab(state, event.tab);
 		case "panel":

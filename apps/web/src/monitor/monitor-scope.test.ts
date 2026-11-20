@@ -163,7 +163,7 @@ describe("范围：看的是哪一次尝试", () => {
 		).toBe(1);
 	});
 
-	it("点合并日志里的来源节点名：选中这个节点，看那一行所在的尝试，不是最近一次", () => {
+	it("点合并日志里的来源节点：选中这个节点，看那一行所在的尝试，不是最近一次", () => {
 		const { scope } = play([{ type: "origin", node: ref("verify"), taskId: "verify-task-1" }]);
 		expect(scope.selected).toEqual(ref("verify"));
 		expect(scope.attempt?.attempt).toBe(1);
@@ -182,6 +182,50 @@ describe("范围：看的是哪一次尝试", () => {
 			]),
 		]);
 		expect(resolveScope(state, retried).attempt?.attempt).toBe(3);
+	});
+});
+
+describe("范围：手动选的尝试只在详情里算数", () => {
+	const first: ScopeEvent = { type: "attempt", taskId: "verify-task-1" };
+	const leave: ScopeEvent = { type: "view", view: "overview" };
+	const back: ScopeEvent = { type: "view", view: "detail" };
+
+	it("切到概览再回详情：手动切的尝试丢掉，看的是最近一次；选中的节点、页签、展开不丢", () => {
+		const { scope } = play([
+			select("verify"),
+			first,
+			{ type: "tab", tab: "attempts" },
+			leave,
+			back,
+		]);
+		expect(scope).toMatchObject({ selected: ref("verify"), tab: "attempts", panel: true });
+		expect(scope.attempt?.attempt).toBe(2);
+	});
+
+	it("点来源节点带来的尝试也一样", () => {
+		const origin: ScopeEvent = { type: "origin", node: ref("verify"), taskId: "verify-task-1" };
+		expect(attemptNumber([origin])).toBe(1);
+		expect(attemptNumber([origin, leave, back])).toBe(2);
+	});
+
+	it("在概览里点同一个节点的直达项：看的也是默认的那一次尝试", () => {
+		const jump: ScopeEvent = { type: "overview", run, address: { view: "detail", node: "verify" } };
+		expect(attemptNumber([select("verify"), first, leave, jump, back])).toBe(2);
+	});
+
+	it("定位的时刻落在的那一次是默认的：手动切走再离开详情，回来又定位到那一次", () => {
+		const { scope } = play([
+			{ type: "locate", node: ref("verify"), at: at(7) },
+			{ type: "attempt", taskId: "verify-task-2" },
+			leave,
+			back,
+		]);
+		expect(scope.attempt?.attempt).toBe(1);
+		expect(scope.locate).toMatchObject({ at: at(7) });
+	});
+
+	it("还在详情里（页面打开时报告一次、再报告详情）不丢手动切的尝试", () => {
+		expect(attemptNumber([select("verify"), first, back, back])).toBe(1);
 	});
 });
 
@@ -453,5 +497,8 @@ describe("没有变化时返回原来的状态", () => {
 		];
 		const state = events.reduce<ScopeState>(reduceScope, EMPTY_SCOPE);
 		for (const event of events) expect(reduceScope(state, event)).toBe(state);
+		// 没有手动选过尝试时换视图也没有变化。
+		const picked = reduceScope(EMPTY_SCOPE, select("verify"));
+		expect(reduceScope(picked, { type: "view", view: "overview" })).toBe(picked);
 	});
 });
