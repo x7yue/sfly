@@ -19,7 +19,7 @@
 
 | 命令 | 作用 |
 |---|---|
-| `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前检查 Node 版本和依赖与锁文件是否一致，再运行版本号检查、gen:check、lint、typecheck（跳过用 `git push --no-verify`）；测试在 CI 里跑 |
+| `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前检查分支名前缀、Node 版本和依赖与锁文件是否一致，再运行版本号检查、gen:check、lint、typecheck（跳过用 `git push --no-verify`）；测试在 CI 里跑 |
 | `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema、路由清单和 API 客户端的类型（`pnpm gen:check` 检查这些生成物没有过期） |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint），以及手工抄在几处的版本号是否一致（`pnpm lint:node`：Node 主版本、CI 的 Playwright 镜像标签与 `@playwright/test`、Python 版本、PostgreSQL 镜像，不一致时报出是哪两处）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查；控制面里依赖真实 Agent 的测试文件在 macOS 上自动跳过（跑完时有提示），用 `pnpm linux pnpm --filter @sfly/server test` 运行 |
 | `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh` |
