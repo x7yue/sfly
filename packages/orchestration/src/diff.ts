@@ -1,7 +1,7 @@
 import {
 	ANNOTATION_DEFAULT_COLOR,
-	OrchestrationDocument,
 	STICKY_NOTE_DEFAULT_COLOR,
+	StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { subflowName } from "./chain-label.js";
 import { stickyHeadline } from "./sticky-notes.js";
@@ -114,7 +114,7 @@ const withDefaultStickyColor = (s: NormalStickyNote): NormalStickyNote =>
 
 /** 补齐默认值；文档不完全合法（例如编辑到一半的草稿）时按原样比较。 */
 function normalize(doc: DiffableDocument): NormalDoc {
-	const parsed = OrchestrationDocument.safeParse(doc);
+	const parsed = StoredOrchestrationDocument.safeParse(doc);
 	const d = (parsed.success ? parsed.data : doc) as Partial<NormalDoc>;
 	return {
 		default_agent: d.default_agent,

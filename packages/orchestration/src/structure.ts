@@ -1,4 +1,4 @@
-import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import type { StoredNode, StoredOrchestrationDocument } from "@sfly/schema";
 import { subflowName } from "./chain-label.js";
 import { nodeNameWithId } from "./node-display.js";
 
@@ -10,7 +10,7 @@ export interface StructureDocument {
 	default_agent?: string | undefined;
 	nodes: readonly {
 		id: string;
-		kind: OrchestrationNode["kind"];
+		kind: StoredNode["kind"];
 		agent?: string | undefined;
 		/** 显示名称（子流程入口节点没有，用 `name`）。 */
 		display_name?: string | undefined;
@@ -19,7 +19,7 @@ export interface StructureDocument {
 		/** 停止子流程节点要停止的子流程（子流程入口的节点 ID）。 */
 		subflow?: string | undefined;
 	}[];
-	edges: readonly Pick<OrchestrationDocument["edges"][number], "from" | "to" | "kind">[];
+	edges: readonly Pick<StoredOrchestrationDocument["edges"][number], "from" | "to" | "kind">[];
 }
 
 type StructureNode = StructureDocument["nodes"][number];

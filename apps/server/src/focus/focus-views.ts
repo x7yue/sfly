@@ -1,4 +1,4 @@
-import type { ChartView, FocusItemView, OrchestrationDocument } from "@sfly/schema";
+import type { ChartView, FocusItemView, StoredOrchestrationDocument } from "@sfly/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { orchestrationVersions } from "../db/schema.js";
@@ -28,7 +28,7 @@ async function headDocument(db: Db | Tx, { id, headVersion }: HeadRef) {
 /** 文档里 `nodeId` 这个节点的节点类型声明的图表，含默认图表；见 {@link declaredNodeType}。 */
 export async function declaredCharts(
 	db: Db | Tx,
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 	nodeId: string,
 ): Promise<ChartView[] | undefined> {
 	const type = await declaredNodeType(db, document, nodeId);

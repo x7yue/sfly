@@ -2,11 +2,11 @@ import { nodeCardText } from "@sfly/orchestration";
 import {
 	errorHeadline,
 	isActiveStatus,
-	type OrchestrationDocument,
 	type RunFocus,
 	type RunFocusItem,
 	type RunMetricCatalog,
 	type RunView,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
@@ -342,7 +342,7 @@ export const RunStateInspector = forwardRef<
 		nodeOf(id: string): DocNode | undefined;
 		info: CanvasInfo;
 		/** 编辑起点的场景版本：控制面按已保存的版本检查新加的关注项，节点在那一版里变了就不能设。 */
-		saved: OrchestrationDocument;
+		saved: StoredOrchestrationDocument;
 		/** 选中一个节点（点概况里的一项关注项）。 */
 		onSelectNode(id: string): void;
 		onCollapse(): void;
@@ -442,7 +442,7 @@ function NodeRunInspector({
 	node: DocNode;
 	summary: NodeRunSummary | undefined;
 	info: CanvasInfo;
-	saved: OrchestrationDocument;
+	saved: StoredOrchestrationDocument;
 	onCollapse(): void;
 }) {
 	const { run, focus } = state;

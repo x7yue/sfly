@@ -98,6 +98,7 @@ describe("检查器的动作属于哪一次尝试", () => {
 			"sleep",
 			"async",
 			"stop_subflow",
+			// 历史运行里已移除种类的节点（ADR 0028）也不在 Agent 上执行。
 			"feishu_notify",
 			"entry",
 		] as const) {

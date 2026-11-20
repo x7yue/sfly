@@ -24,7 +24,7 @@ import type {
 	MetricSeriesQuery,
 	NodeName,
 	NodeTypeView,
-	OrchestrationDocumentInput,
+	OrchestrationDocument,
 	OrchestrationHeadView,
 	OrchestrationSummary,
 	OrchestrationVersionView,
@@ -242,8 +242,8 @@ export interface Api {
 		/**
 		 * `GET /feishu-bots/:name/references`
 		 *
-		 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里的飞书通知节点、
-		 * 「飞书机器人」类型的输入的常量值，以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
+		 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里「飞书机器人」类型的输入的常量值，
+		 * 以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
 		 * 机器人不存在 404 `not_found`。
 		 */
 		references: Endpoint<
@@ -492,7 +492,8 @@ export interface Api {
 		 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
 		 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 		 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
-		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
+		 * 错误信息写明哪些节点、怎么替换。
 		 *
 		 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
 		 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
@@ -504,7 +505,7 @@ export interface Api {
 					id: string;
 				};
 				body: {
-					document: OrchestrationDocumentInput;
+					document: OrchestrationDocument;
 					base_version: number;
 				};
 			},

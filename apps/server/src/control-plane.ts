@@ -246,7 +246,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		}),
 		admitTrigger: createTriggerAdmission({ preflight, paramsCheck: createParamsCheck() }),
 		notifications: new EngineNotifications({
-			logs,
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
 			focusDeps: {

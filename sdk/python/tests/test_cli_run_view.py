@@ -5,11 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
 from sfly.cli.run_view import (
     NODE_STATUS_LABEL,
     RUN_STATUS_LABEL,
     UNNAMED_SUBFLOW,
     format_duration,
+    node_type_label,
 )
 
 REPO = Path(__file__).resolve().parents[3]
@@ -42,3 +44,31 @@ def test_durations_are_written_one_way_in_every_command() -> None:
     assert [
         format_duration(ms) for ms in (None, 16, 999, 1000, 9_949, 12_400, 185_000, 3_725_000)
     ] == ["-", "16ms", "999ms", "1.0s", "9.9s", "12s", "3m05s", "1h02m"]
+
+
+def test_node_types_are_named_by_kind_and_package() -> None:
+    assert node_type_label({"kind": "entry"}) == "入口"
+    assert node_type_label({"kind": "stop_subflow"}) == "停止子流程"
+    assert node_type_label({"kind": "package", "package": "stub", "node": "echo"}) == "stub/echo"
+    # 只知道种类（读不到场景版本）时，包节点写 package
+    assert node_type_label({"kind": "package"}) == "package"
+
+
+def test_a_removed_node_kind_is_named_the_way_the_control_plane_names_it() -> None:
+    """已移除的种类（ADR 0028，例如 feishu_notify）在历史版本和历史运行里还留着：写成
+    「已移除的节点类型 <种类名>」，和控制面的 removedKindLabel 一致；不认识的种类原样写种类名。"""
+    assert node_type_label({"kind": "feishu_notify"}) == "已移除的节点类型 feishu_notify"
+    assert node_type_label({"kind": "some_future_kind"}) == "some_future_kind"
+    source = (REPO / "packages/schema/src/removed-nodes.ts").read_text(encoding="utf-8")
+    assert "`已移除的节点类型 ${kind}`" in source
+    assert removed_kind_label("feishu_notify") == "已移除的节点类型 feishu_notify"
+
+
+def test_the_removed_kinds_match_the_control_plane_registry() -> None:
+    """命令行的清单和控制面的 REMOVED_NODE_KINDS 是同一份：种类名、原来的名称、替换办法逐项一致。"""
+    source = (REPO / "packages/schema/src/removed-nodes.ts").read_text(encoding="utf-8")
+    body = source[source.index("export const REMOVED_NODE_KINDS") :].split("} as const", 1)[0]
+    entries = re.findall(r'(\w+): \{\s*label: "([^"]+)",\s*replacement: "([^"]+)",\s*\}', body)
+    assert {kind: (label, replacement) for kind, label, replacement in entries} == (
+        REMOVED_NODE_KINDS
+    )

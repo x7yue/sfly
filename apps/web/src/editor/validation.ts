@@ -5,11 +5,16 @@ import {
 	type PackageCatalog,
 	type WarningShape,
 } from "@sfly/orchestration";
-import { OrchestrationDocument } from "@sfly/schema";
+import {
+	isRemovedNodeKind,
+	OrchestrationDocument,
+	REMOVED_NODE_KINDS,
+	type StoredOrchestrationDocument,
+} from "@sfly/schema";
 
 /**
  * 保存前的字段校验（纯逻辑，单测见 validation.test.ts）。字段错误阻止保存——它们要么会被控制面拒绝
- * （文档不符合 OrchestrationDocument），要么会让文档有歧义（参数名重复）；静态检查的警告
+ * （文档不符合 OrchestrationDocument，含已移除种类的节点，ADR 0028），要么会让文档有歧义（参数名重复）；静态检查的警告
  * （@sfly/orchestration 的 documentWarnings）只提示、不阻止保存，触发运行时才必须通过。
  *
  * 输入框里还没生效的值（例如在整数输入里填了 abc）不在文档里，由 field-drafts.tsx 另外记录。
@@ -47,14 +52,25 @@ function messageOf(path: readonly PropertyKey[], code: string, fallback: string)
 	return fallback;
 }
 
-export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
+export function documentFieldErrors(doc: StoredOrchestrationDocument): FieldError[] {
 	const errors: FieldError[] = [];
-	const parsed = OrchestrationDocument.safeParse(doc);
+	// 已移除种类的节点不在可以保存的文档里：另外报错，其余节点照常按 OrchestrationDocument 检查
+	//（issue 的路径按去掉它们之后的位置算）。
+	const kept = doc.nodes.filter((n) => !isRemovedNodeKind(n.kind));
+	for (const node of doc.nodes) {
+		if (!isRemovedNodeKind(node.kind)) continue;
+		errors.push({
+			nodeId: node.id,
+			field: "kind",
+			message: `已不再支持，不能保存。替换办法：${REMOVED_NODE_KINDS[node.kind].replacement}`,
+		});
+	}
+	const parsed = OrchestrationDocument.safeParse({ ...doc, nodes: kept });
 	if (!parsed.success) {
 		for (const issue of parsed.error.issues) {
 			const [head, index, ...rest] = issue.path;
 			const at = typeof index === "number" ? index : -1;
-			const node = head === "nodes" ? doc.nodes[at] : undefined;
+			const node = head === "nodes" ? kept[at] : undefined;
 			const annotation = head === "annotations" ? doc.annotations[at] : undefined;
 			const sticky = head === "sticky_notes" ? doc.sticky_notes[at] : undefined;
 			const field = (node || annotation || sticky ? rest : issue.path).map(String).join(".");
@@ -69,7 +85,7 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 			else errors.push(error);
 		}
 	}
-	for (const node of doc.nodes) {
+	for (const node of kept) {
 		if (node.kind !== "entry" && node.kind !== "subflow_entry") continue;
 		const seen = new Set<string>();
 		node.params.forEach((p, i) => {
@@ -99,7 +115,7 @@ export interface InputNote {
  * 不阻止保存与触发，节点类型还没加载完时不算。检查器的「参数」页可以逐个移除。
  */
 export function undeclaredInputNotes(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	catalog: PackageCatalog,
 ): InputNote[] {
 	const notes: InputNote[] = [];

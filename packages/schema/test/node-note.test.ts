@@ -14,7 +14,6 @@ const KINDS = [
 	{ id: "at", kind: "timer", at: "10:00:00" },
 	{ id: "pause", kind: "sleep", duration: "5s" },
 	{ id: "stop", kind: "stop_subflow", subflow: "sub" },
-	{ id: "notify", kind: "feishu_notify" },
 	{ id: "work", kind: "package", package: "stub", node: "echo" },
 ] as const;
 

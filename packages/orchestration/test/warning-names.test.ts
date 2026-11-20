@@ -1,4 +1,4 @@
-import { OrchestrationDocument } from "@sfly/schema";
+import { OrchestrationDocument, StoredOrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	checkConnection,
@@ -31,7 +31,7 @@ const catalog: PackageCatalog = new Map<string, NodeTypeIo[]>([
 ]);
 
 const document = () =>
-	OrchestrationDocument.parse({
+	StoredOrchestrationDocument.parse({
 		default_agent: "linux",
 		nodes: [
 			{ id: "entry", kind: "entry" },
@@ -55,7 +55,7 @@ const document = () =>
 		packages: { demo: "1.0.0" },
 	});
 
-const messages = (doc: OrchestrationDocument, code?: string) =>
+const messages = (doc: StoredOrchestrationDocument, code?: string) =>
 	documentWarnings(doc, catalog, { agents: new Set(["linux"]), feishuBots: new Set() })
 		.filter((w) => code === undefined || w.code === code)
 		.map((w) => w.message);
@@ -72,7 +72,7 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 	});
 
 	it("输入：必填输入、Agent 类型的输入", () => {
-		const doc = OrchestrationDocument.parse({
+		const doc = StoredOrchestrationDocument.parse({
 			...document(),
 			nodes: document().nodes.map((n) =>
 				n.id === "fetch_1" && n.kind === "package" ? { ...n, inputs: { agent: "ghost" } } : n,
@@ -95,9 +95,9 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 		);
 	});
 
-	it("飞书通知节点没有选择机器人", () => {
-		expect(messages(document(), "feishu_bot_unset")).toEqual([
-			"节点 通知群（notify_1） 没有选择飞书机器人",
+	it("已移除种类的节点（ADR 0028）", () => {
+		expect(messages(document(), "node_kind_removed")).toEqual([
+			"节点 通知群（notify_1） 的类型（已移除的节点类型 feishu_notify，原来的「飞书通知」）已不再支持，不能运行。替换办法：在节点代码里用 ctx.notify 发飞书消息",
 		]);
 	});
 

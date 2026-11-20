@@ -1,4 +1,4 @@
-import type { NodeTypeMetadata, OrchestrationDocument } from "@sfly/schema";
+import type { NodeTypeMetadata, StoredOrchestrationDocument } from "@sfly/schema";
 import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 
@@ -138,7 +138,10 @@ export interface InputWarning {
  * 输入的静态检查（保存时警告，触发时必须通过）：包节点的必填输入要填写；常量要符合输入类型。
  * 含引用的值在派发时才知道类型，这里不检查；节点类型未知时跳过（包版本检查会指出）。
  */
-export function inputWarnings(doc: OrchestrationDocument, catalog: PackageCatalog): InputWarning[] {
+export function inputWarnings(
+	doc: StoredOrchestrationDocument,
+	catalog: PackageCatalog,
+): InputWarning[] {
 	const warnings: InputWarning[] = [];
 	for (const node of doc.nodes) {
 		if (node.kind !== "package") continue;

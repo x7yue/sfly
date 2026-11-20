@@ -1,9 +1,9 @@
 import {
-	type OrchestrationDocument,
 	type RunFocus,
 	type RunMetricCatalog,
 	type RunView,
 	runsApi,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { applyNodeChanges, type NodeChange } from "@xyflow/react";
@@ -25,7 +25,7 @@ export type CanvasRun =
 			run: RunView;
 			overlay: RunOverlay;
 			/** 运行绑定的版本文档（画布在运行状态下显示这一版）；还在加载时为 undefined。 */
-			doc: OrchestrationDocument | undefined;
+			doc: StoredOrchestrationDocument | undefined;
 			/** 运行的指标目录（节点卡片的主指标槽、检查器的图表）；还在加载时为 undefined。 */
 			metrics: RunMetricCatalog | undefined;
 			/** 运行的关注项读数（只要最新值：节点卡片、检查器）；还在加载时为 undefined。 */
@@ -85,7 +85,7 @@ export function useCanvasRun(
  * 运行状态下画布显示的节点与连线（运行绑定的版本文档）。节点由 React Flow 测量尺寸（小地图需要），
  * 所以放在本地状态里接收尺寸变化；文档变化时重建。doc 为 undefined（还在加载）时返回 undefined。
  */
-export function useRunFlow(doc: OrchestrationDocument | undefined) {
+export function useRunFlow(doc: StoredOrchestrationDocument | undefined) {
 	const initial = useMemo(() => (doc ? toFlow(doc) : undefined), [doc]);
 	const [from, setFrom] = useState(initial);
 	const [nodes, setNodes] = useState(initial?.nodes);

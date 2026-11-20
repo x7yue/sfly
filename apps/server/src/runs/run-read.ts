@@ -5,10 +5,10 @@ import {
 	failuresInOrder,
 	isActiveStatus,
 	type NodeStatus,
-	type OrchestrationDocument,
-	type OrchestrationNode,
 	type RunListActiveNode,
 	type RunView,
+	type StoredNode,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
@@ -27,7 +27,7 @@ import {
 	taskActionSummaries,
 	tasks,
 } from "../db/schema.js";
-import { agentFor, planRun } from "../engine/chain.js";
+import { agentFor, chainsForReading } from "../engine/chain.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
@@ -82,7 +82,8 @@ export interface RunNode<A extends RunAttempt = RunAttempt> {
 	node_id: string;
 	/** 运行绑定版本里的显示名称（子流程入口节点是子流程名称）；没有时为 undefined。 */
 	display_name: string | undefined;
-	kind: OrchestrationNode["kind"];
+	/** 运行绑定版本里的种类；已移除的种类（ADR 0028）是它当时的种类名，历史运行照常能看。 */
+	kind: StoredNode["kind"];
 	/** 节点包节点在这个版本里选的 Agent；内置节点为 null。 */
 	agent: string | null;
 	status: NodeStatus;
@@ -112,7 +113,7 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	/** 运行行；`params` 已打码。 */
 	run: typeof runs.$inferSelect;
 	/** 运行绑定的场景版本。 */
-	version: { id: string; number: number; document: OrchestrationDocument };
+	version: { id: string; number: number; document: StoredOrchestrationDocument };
 	/** 场景此刻的名称和关注项（不属于场景版本）。 */
 	scenario: Pick<typeof orchestrations.$inferSelect, "name" | "focusItems">;
 	chains: RunChain<A>[];
@@ -245,7 +246,7 @@ export const isPlaceholderAttempt = (t: { status: TaskStatus; startedAt: Date | 
 
 /** 链实例的子流程名称（链起点是子流程入口节点时，取自文档）；主链为 undefined。 */
 export function subflowNameOf(
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 	chainId: string,
 ): string | undefined {
 	const start = document.nodes.find((n) => n.id === chainId);
@@ -253,7 +254,10 @@ export function subflowNameOf(
 }
 
 /** 运行绑定版本里节点的显示名称（同运行视图里节点的 `display_name`）；没有这个节点或没有名称时为 undefined。 */
-export function nodeNameIn(document: OrchestrationDocument, nodeId: string): string | undefined {
+export function nodeNameIn(
+	document: StoredOrchestrationDocument,
+	nodeId: string,
+): string | undefined {
 	const node = document.nodes.find((n) => n.id === nodeId);
 	return node && nodeNameBeforeId(node);
 }
@@ -332,13 +336,13 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 ): Map<string, R> {
 	const tasksOf = groupBy(taskRows, (t) => `${t.chainInstanceId}/${t.nodeId}`);
 	const chainsOf = groupBy(chainRows, (c) => c.runId);
-	const plans = new Map<string, (chainId: string) => readonly OrchestrationNode[]>();
+	const plans = new Map<string, (chainId: string) => readonly StoredNode[]>();
 	const planOf = (version: RunRead["version"]) => {
 		let plan = plans.get(version.id);
 		if (!plan) {
-			const planned = planRun(version.document);
-			plan = (chainId) =>
-				("errors" in planned ? undefined : planned.chains.get(chainId)?.nodes) ?? [];
+			// 运行绑定的版本里可以有已移除种类的节点（ADR 0028）：历史运行照常读出它们。
+			const chains = chainsForReading(version.document);
+			plan = (chainId) => chains?.get(chainId) ?? [];
 			plans.set(version.id, plan);
 		}
 		return plan;

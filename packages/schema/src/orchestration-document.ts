@@ -6,6 +6,7 @@ import {
 	requiredMultiline,
 } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
+import { REMOVED_NODE_KIND_NAMES } from "./removed-nodes.js";
 
 /**
  * 编排文档：一个编排版本的内容（docs/SEMANTICS.md）。
@@ -129,44 +130,6 @@ export const StopSubflowNode = z.strictObject({
 	subflow: z.string().min(1).optional(),
 });
 
-/** 飞书通知节点的消息格式：文本、Markdown 卡片、原始消息（docs/SEMANTICS.md §4.2）。 */
-export const FeishuMessageFormat = z.enum(["text", "card", "raw"]);
-
-/** Markdown 卡片的标题颜色（飞书卡片 header 的颜色模板）。 */
-export const FeishuCardColor = z.enum(["blue", "green", "orange", "red", "grey"]);
-
-export const FeishuNotifyNode = z.strictObject({
-	...nodeBase,
-	...displayName,
-	kind: z.literal("feishu_notify"),
-	always: z.boolean().default(false),
-	/**
-	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §1.3）。
-	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
-	 */
-	bot: z.string().min(1).optional(),
-	/**
-	 * 消息格式，决定下面哪一组字段生效。切换格式时其他格式里填过的内容留在文档里，
-	 * 但不参与引用检查和解析，切回去还在。
-	 */
-	format: FeishuMessageFormat.default("text"),
-	/** 文本格式：消息文本，支持内嵌引用。 */
-	text: z.string().default(""),
-	/** 文本格式：在正文末尾追加 `<at user_id="all">所有人</at>`。 */
-	at_all: z.boolean().default(false),
-	/** Markdown 卡片：标题，支持内嵌引用。 */
-	title: z.string().default(""),
-	/** Markdown 卡片：标题颜色。 */
-	color: FeishuCardColor.default("blue"),
-	/** Markdown 卡片：Markdown 正文，支持内嵌引用。 */
-	markdown: z.string().default(""),
-	/**
-	 * 原始消息：完整的飞书请求体（JSON 对象），字符串字段里的引用逐个字段解析；也可以整值引用入口参数。
-	 * 可选：还没有填写时消息不发送，节点日志里写一条 warning。
-	 */
-	message: z.unknown().optional(),
-});
-
 export const PackageNode = z.strictObject({
 	...nodeBase,
 	...displayName,
@@ -191,9 +154,39 @@ export const OrchestrationNode = z.discriminatedUnion("kind", [
 	TimerNode,
 	SleepNode,
 	StopSubflowNode,
-	FeishuNotifyNode,
 	PackageNode,
 ]);
+
+/** 可以执行、可以保存的节点种类。 */
+export const NODE_KINDS = [
+	"entry",
+	"subflow_entry",
+	"async",
+	"timer",
+	"sleep",
+	"stop_subflow",
+	"package",
+] as const satisfies readonly OrchestrationNode["kind"][];
+
+/** 历史记录（历史版本、历史运行）里可能出现的节点种类：现在支持的，加上已移除的（ADR 0028）。 */
+export const STORED_NODE_KINDS = [...NODE_KINDS, ...REMOVED_NODE_KIND_NAMES] as const;
+
+/**
+ * 已移除种类的节点（ADR 0028，种类见 removed-nodes.ts）：读取历史版本时认得它，只读显示，不能保存。
+ * 只描述所有节点共有的字段；控制面读库时把它当时的其余配置原样带着（{@link keepRemovedNodeConfig}），
+ * 想把旧配置换成别的写法的人读得到。它不在可以保存的节点里（{@link OrchestrationNode}）：
+ * 保存带它的文档被拒绝，从画布上删掉之后才能保存。
+ */
+export const RemovedNode = z.object({
+	id: z.string().min(1),
+	kind: z.enum(REMOVED_NODE_KIND_NAMES),
+	position: Position.optional(),
+	note: z.string().optional(),
+	display_name: z.string().optional(),
+});
+
+/** 读到的节点：可以执行、可以保存的种类，加上已移除种类的占位。 */
+export const StoredNode = z.union([OrchestrationNode, RemovedNode]);
 
 export const Edge = z.strictObject({
 	from: z.string().min(1),
@@ -272,21 +265,34 @@ const StickyNotes = z.array(StickyNote).superRefine((notes, ctx) => {
 	}
 });
 
-export const OrchestrationDocument = z
-	.strictObject({
+const documentOf = <N extends z.ZodType>(node: N) =>
+	z.strictObject({
 		default_agent: z.string().min(1).optional(),
-		nodes: z.array(OrchestrationNode),
+		nodes: z.array(node),
 		edges: z.array(Edge).default([]),
 		/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 		packages: z.record(PackageName, z.string().min(1)).default({}),
 		annotations: Annotations.default([]),
 		sticky_notes: StickyNotes.default([]),
-	})
-	.meta({ title: "sfly 编排文档" });
+	});
+
+/** 可以保存的场景文档：节点都是现在支持的种类（保存、命令行的本地检查、导出给 Python 的 JSON Schema 用它）。 */
+export const OrchestrationDocument = documentOf(OrchestrationNode).meta({
+	title: "sfly 编排文档",
+});
+
+/**
+ * 读到的场景文档：和 {@link OrchestrationDocument} 一样，只是节点里可以有已移除种类的占位（{@link RemovedNode}）。
+ * 场景版本不可变，历史版本里留着已移除的节点，读取时认得它们（接口的响应、控制面读库、画布打开最新版本）。
+ */
+export const StoredOrchestrationDocument = documentOf(StoredNode);
 
 export type ParamDeclaration = z.infer<typeof ParamDeclaration>;
 export type OrchestrationDocument = z.infer<typeof OrchestrationDocument>;
+export type StoredOrchestrationDocument = z.infer<typeof StoredOrchestrationDocument>;
 export type OrchestrationNode = z.infer<typeof OrchestrationNode>;
+export type RemovedNode = z.infer<typeof RemovedNode>;
+export type StoredNode = z.infer<typeof StoredNode>;
 export type Annotation = z.infer<typeof Annotation>;
 export type AnnotationColor = z.infer<typeof AnnotationColor>;
 export type StickyNote = z.infer<typeof StickyNote>;

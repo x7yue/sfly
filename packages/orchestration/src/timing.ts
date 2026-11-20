@@ -1,4 +1,4 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { nodeNameWithId } from "./node-display.js";
 import { referencesIn } from "./references.js";
 
@@ -164,7 +164,7 @@ export interface TimingWarning {
 }
 
 /** 定时 / Sleep 节点的配置检查；含引用的 Sleep 时长到执行时才知道，这里不检查。 */
-export function timingWarnings(doc: Pick<OrchestrationDocument, "nodes">): TimingWarning[] {
+export function timingWarnings(doc: Pick<StoredOrchestrationDocument, "nodes">): TimingWarning[] {
 	const warnings: TimingWarning[] = [];
 	for (const node of doc.nodes) {
 		if (node.kind === "timer") {

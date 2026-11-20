@@ -1,4 +1,19 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import {
+	type OrchestrationDocument,
+	removedNodesIn,
+	removedNodesMessage,
+	type StoredOrchestrationDocument,
+} from "@sfly/schema";
+
+/**
+ * 可以保存的文档：没有已移除种类的节点（ADR 0028）。编辑器在有它们时不让保存（字段错误，validation.ts），
+ * 这里是最后一道防线：保存接口的请求类型不含它们。
+ */
+export function savableDocument(document: StoredOrchestrationDocument): OrchestrationDocument {
+	const removed = removedNodesIn(document);
+	if (removed.length > 0) throw new Error(removedNodesMessage(removed));
+	return document as OrchestrationDocument;
+}
 
 /**
  * 本地草稿：画布上未保存的编辑存在浏览器 localStorage 里（每个场景一份），刷新页面不丢失
@@ -9,8 +24,8 @@ export interface Draft {
 	base_version: number;
 	base_author: string | null;
 	/** 编辑起点的内容，用来判断是否还有未保存的修改。 */
-	base_document: OrchestrationDocument;
-	document: OrchestrationDocument;
+	base_document: StoredOrchestrationDocument;
+	document: StoredOrchestrationDocument;
 	/** 最后一次写入草稿的时间（ISO）。 */
 	updated_at: string;
 	/** 写入草稿的标签页（每次打开编辑页面随机生成），用来发现其他标签页改写了同一份草稿。 */

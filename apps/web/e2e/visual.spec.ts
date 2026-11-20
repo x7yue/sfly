@@ -265,17 +265,15 @@ test("飞书机器人：列表与测试结果", async ({ page, controlPlane, fei
 	);
 
 	// 投递：压测群的消息送达；告警群的消息遇到 HTTP 503，在等重试（积压 1 条）；日报群还没有投递。
-	const notifyScenario = (bot: string) => ({
-		nodes: [
-			{ id: "entry", kind: "entry", params: [] },
-			{ id: "notify", kind: "feishu_notify", bot, text: "压测开始" },
-		],
-		edges: [{ from: "entry", to: "notify", kind: "chain" }],
-		packages: {},
-	});
+	// 消息来源是运行通知：只有入口的场景，运行结束时（总是触发）向机器人发一张卡片。
 	feishu.replyTo("7d02c1b9-5e3a-4c88-b6f1-9e8d7c6b5a40", { status: 503 });
 	for (const bot of ["压测群", "告警群"]) {
-		const scenario = await createScenario(controlPlane, bot, notifyScenario(bot));
+		const scenario = await createScenario(controlPlane, bot, {
+			nodes: [{ id: "entry", kind: "entry", params: [] }],
+			edges: [],
+			packages: {},
+		});
+		await setRunNotification(controlPlane, scenario, { bot, trigger: "always" });
 		await triggerRun(controlPlane, scenario);
 	}
 

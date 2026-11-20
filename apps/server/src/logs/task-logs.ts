@@ -1,7 +1,11 @@
 import { appendFile, mkdir, open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
-import { isAlertLevel, type OrchestrationDocument, type TaskProgressView } from "@sfly/schema";
+import {
+	isAlertLevel,
+	type StoredOrchestrationDocument,
+	type TaskProgressView,
+} from "@sfly/schema";
 import { eq, inArray } from "drizzle-orm";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
@@ -306,8 +310,8 @@ export class TaskLogs {
 	}
 
 	/**
-	 * 控制面自己写一行日志（source `system`，控制面时间取当前时钟）：飞书通知节点的解析告警、ctx.notify 的告警和投递结果
-	 * （docs/SEMANTICS.md §1.3）。任何任务都可以写，包括没有 Agent 的内置节点；序号接在最后一行后面，不占用 Agent 序号。
+	 * 控制面自己写一行日志（source `system`，控制面时间取当前时钟）：ctx.notify 的告警和投递结果
+	 * （docs/SEMANTICS.md §4.2）。任何任务都可以写；序号接在最后一行后面，不占用 Agent 序号。
 	 * 与同一任务的其他写入串行执行；任务不存在、日志已被截断时什么也不写。
 	 */
 	appendSystem(taskId: string, level: LogLineView["level"], text: string): Promise<void> {
@@ -614,7 +618,7 @@ function formatBytes(n: number): string {
  */
 export async function runSecretValues(
 	db: Db | Tx,
-	items: ReadonlyArray<{ runId: string; document: OrchestrationDocument }>,
+	items: ReadonlyArray<{ runId: string; document: StoredOrchestrationDocument }>,
 ): Promise<Map<string, string[]>> {
 	const secrets = new Map<string, string[]>();
 	if (items.length === 0) return secrets;

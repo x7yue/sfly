@@ -1,5 +1,5 @@
 import { type NodeDisplayLookup, nodeOutsideCardText, subflowLabels } from "@sfly/orchestration";
-import type { ChainRunView, NodeRunView, OrchestrationDocument, RunView } from "@sfly/schema";
+import type { ChainRunView, NodeRunView, RunView, StoredOrchestrationDocument } from "@sfly/schema";
 import { cn } from "cn";
 import { ChevronRightIcon, CrosshairIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -107,7 +107,13 @@ const spanOf = (segments: Segment[]) =>
  * 起点画一条调度线。轨道上悬停显示竖线、拖选一段缩放；点节点（标签或区段）选中，底部面板切换到它。
  * 时间范围、悬停、标记与选中都在共享状态里（monitor-state.tsx），图表工作区（#42）同步使用。
  */
-export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocument | undefined }) {
+export function Timeline({
+	run,
+	doc,
+}: {
+	run: RunView;
+	doc: StoredOrchestrationDocument | undefined;
+}) {
 	const { range, extent, live, following, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
 	const { selected, attempt } = useScope(run);
