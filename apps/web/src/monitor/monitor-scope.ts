@@ -1,7 +1,7 @@
 import type { AttemptView, NodeRunView, RunView } from "@sfly/schema";
 import { type NodeRef, sameNode } from "./node-ref";
-import type { PanelTab } from "./run-link";
-import { findNode } from "./run-model";
+import type { MonitorSearch, PanelTab } from "./run-link";
+import { findNode, initialSelection } from "./run-model";
 
 /**
  * 运行监控详情里「看的范围」的状态机（不依赖 React）：选中哪个节点、看它的哪一次尝试、底部面板停在哪个页签、
@@ -17,6 +17,9 @@ import { findNode } from "./run-model";
  * - 定位日志：定位的时刻落在节点的哪一次尝试里就看哪一次（早于所有尝试时是最近一次）；之后手动切到别的尝试，
  *   那一刻不在它的日志里，不再定位，切回来再定位；同一个时刻再请求一次也重新定位（读者可能已经滚到别处）。
  *   定位的请求只对请求时的节点有效，选中别的节点时不定位。
+ * - 打开页面时只默认选中地址里的节点或第一个失败的节点（执行中的节点不默认选中）；地址里的页签、日志时刻照做。
+ *   页面打开之后地址变了再应用一次，地址没变不重复应用；页面里自己的操作（点节点、切页签）不写回地址，所以同一个地址
+ *   报告再多次也不会撤销它们。视图（概览、详情）不算地址里决定打开哪里的部分：切视图不重置选中的节点。
  * - 底部面板展开与否：用户没展开 / 收起过、也没切过页签时，日志页签没有内容就收起，内容到了再展开；用户选过之后听用户的。
  */
 
@@ -38,6 +41,8 @@ export interface ScopeState {
 	logsEmpty: boolean;
 	/** 最近一次定位日志的请求；`request` 每请求一次加一。它不随选中的节点清掉，只对 `node` 有效。 */
 	locate: (LogMoment & { node: NodeRef }) | null;
+	/** 最近一次应用的地址的键（{@link addressKey}）；还没应用过为 null。 */
+	applied: string | null;
 }
 
 export const EMPTY_SCOPE: ScopeState = {
@@ -47,10 +52,15 @@ export const EMPTY_SCOPE: ScopeState = {
 	open: null,
 	logsEmpty: false,
 	locate: null,
+	applied: null,
 };
 
 /** 范围里发生的事。 */
 export type ScopeEvent =
+	/** 地址来了：打开页面，或页面开着时地址变了。和上一次应用的地址（节点、页签、时刻）一样时不重复应用。 */
+	| { type: "address"; run: RunView; address: MonitorSearch }
+	/** 概览里点一项直达详情：按它的地址应用，和上一次应用的地址一样也照做（切回概览再点一次要重新定位）。 */
+	| { type: "overview"; run: RunView; address: MonitorSearch }
 	/** 点节点（时间线的节点行和区段）；`null` 是清除选中。 */
 	| { type: "select"; node: NodeRef | null }
 	/** 点合并日志里一行的来源节点名：选中这个节点，看那一行所在的尝试。 */
@@ -74,9 +84,49 @@ const select = (state: ScopeState, node: NodeRef | null): ScopeState =>
 const showTab = (state: ScopeState, tab: PanelTab): ScopeState =>
 	state.tab === tab && state.open === true ? state : { ...state, tab, open: true };
 
+const locate = (state: ScopeState, node: NodeRef, at: number): ScopeState => ({
+	...state,
+	selected: node,
+	attempt: null,
+	tab: "logs",
+	open: true,
+	locate: { node, at, request: (state.locate?.request ?? 0) + 1 },
+});
+
+/** 地址里决定打开哪里的部分（节点、页签、时刻）；视图不算。 */
+const addressKey = (address: MonitorSearch) =>
+	`${address.node ?? ""}\n${address.tab ?? ""}\n${address.at ?? ""}`;
+
+/**
+ * 把地址里的位置变成范围：选中节点（没给节点时是失败的节点）、切到页签；带了 `at` 又给了运行里有的节点时，
+ * 打开这个节点的日志并定位到那一刻，没给页签时就是日志页签。
+ */
+function applyAddress(state: ScopeState, run: RunView, address: MonitorSearch): ScopeState {
+	const selected = initialSelection(run, address.node);
+	const at = address.at === undefined ? Number.NaN : Date.parse(address.at);
+	const located =
+		selected && selected.nodeId === address.node && Number.isFinite(at)
+			? locate(state, selected, at)
+			: select(state, selected);
+	return {
+		...(address.tab ? showTab(located, address.tab) : located),
+		applied: addressKey(address),
+	};
+}
+
+/** 打开页面时的范围：页面第一次拿到运行视图，按地址决定选中的节点和页签。 */
+export const openedScope = (run: RunView, address: MonitorSearch): ScopeState =>
+	applyAddress(EMPTY_SCOPE, run, address);
+
 /** 范围的下一个状态；什么都没变时返回原来的对象。 */
 export function reduceScope(state: ScopeState, event: ScopeEvent): ScopeState {
 	switch (event.type) {
+		case "address":
+			return state.applied === addressKey(event.address)
+				? state
+				: applyAddress(state, event.run, event.address);
+		case "overview":
+			return applyAddress(state, event.run, event.address);
 		case "select":
 			return select(state, event.node);
 		case "origin":
@@ -84,14 +134,7 @@ export function reduceScope(state: ScopeState, event: ScopeEvent): ScopeState {
 		case "attempt":
 			return state.attempt === event.taskId ? state : { ...state, attempt: event.taskId };
 		case "locate":
-			return {
-				...state,
-				selected: event.node,
-				attempt: null,
-				tab: "logs",
-				open: true,
-				locate: { node: event.node, at: event.at, request: (state.locate?.request ?? 0) + 1 },
-			};
+			return locate(state, event.node, event.at);
 		case "failure":
 			return showTab(select(state, event.node), "attempts");
 		case "tab":

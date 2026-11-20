@@ -2,12 +2,14 @@ import type { AttemptView, ChainRunView, NodeRunView, RunView } from "@sfly/sche
 import { describe, expect, it } from "vitest";
 import {
 	EMPTY_SCOPE,
+	openedScope,
 	reduceScope,
 	resolveScope,
 	type ScopeEvent,
 	type ScopeState,
 } from "./monitor-scope";
 import type { NodeRef } from "./node-ref";
+import type { MonitorSearch } from "./run-link";
 
 /** 运行开始之后第 s 秒（控制面时间，毫秒）。 */
 const at = (s: number) => Date.UTC(2026, 0, 1, 0, 0, s);
@@ -96,7 +98,24 @@ const play = (events: ScopeEvent[], on: RunView = run) => {
 	const state = events.reduce(reduceScope, EMPTY_SCOPE);
 	return { state, scope: resolveScope(state, on) };
 };
+/** 在 fetch 之后 verify 最终失败的运行。 */
+const failedRun: RunView = {
+	...runOf([
+		node("fetch", "success", [attempt("fetch", 1, "success", 1)]),
+		node("verify", "failed", [
+			attempt("verify", 1, "failed", 6),
+			attempt("verify", 2, "failed", 9),
+		]),
+	]),
+	status: "failed",
+};
+
 const select = (nodeId: string): ScopeEvent => ({ type: "select", node: ref(nodeId) });
+const address = (a: MonitorSearch, on: RunView = run): ScopeEvent => ({
+	type: "address",
+	run: on,
+	address: a,
+});
 const attemptNumber = (events: ScopeEvent[], on: RunView = run) =>
 	play(events, on).scope.attempt?.attempt;
 
@@ -308,6 +327,108 @@ describe("范围：底部面板的页签与展开", () => {
 		const events: ScopeEvent[] = [{ type: "panel", open: true }, logsEmpty(true)];
 		expect(play(events).scope.open).toBe(true);
 		expect(play([...events, { type: "panel", open: null }]).scope.open).toBe(false);
+	});
+});
+
+describe("范围：地址", () => {
+	const opened = (a: MonitorSearch, on: RunView = run) => resolveScope(openedScope(on, a), on);
+
+	it("打开页面时默认选中第一个失败的节点；地址里给了节点时用地址里的", () => {
+		expect(opened({}, failedRun).selected).toEqual(ref("verify"));
+		expect(opened({ node: "fetch" }, failedRun).selected).toEqual(ref("fetch"));
+	});
+
+	it("没有失败的节点时不默认选中，执行中的节点也不默认选中", () => {
+		expect(opened({}).selected).toBeNull();
+		expect(opened({ node: "不存在的节点" }).selected).toBeNull();
+		expect(opened({ node: "不存在的节点" }, failedRun).selected).toEqual(ref("verify"));
+	});
+
+	it("地址里的页签：切过去并展开面板；没给页签时是日志页签、按内容自动展开", () => {
+		expect(opened({ node: "fetch", tab: "attempts" })).toMatchObject({
+			tab: "attempts",
+			open: true,
+		});
+		expect(opened({ node: "fetch" })).toMatchObject({ tab: "logs", auto: true });
+	});
+
+	it("带了时刻又给了运行里有的节点：选中它，打开日志页签，定位到那一刻", () => {
+		expect(opened({ node: "verify", at: iso(7) })).toMatchObject({
+			selected: ref("verify"),
+			tab: "logs",
+			open: true,
+			locate: { at: at(7) },
+			attempt: { attempt: 1 },
+		});
+	});
+
+	it("给了页签时页签优先于定位打开的日志页签，定位仍然有效", () => {
+		const scope = opened({ node: "verify", tab: "attempts", at: iso(7) });
+		expect(scope.tab).toBe("attempts");
+		expect(scope.locate).toMatchObject({ at: at(7) });
+	});
+
+	it("时刻不合法、没有节点、或节点不在运行里（回退到失败的节点）：不定位", () => {
+		expect(opened({ node: "verify", at: "昨天下午" }).locate).toBeNull();
+		expect(opened({ at: iso(7) }, failedRun).locate).toBeNull();
+		expect(opened({ node: "不存在的节点", at: iso(7) }, failedRun)).toMatchObject({
+			selected: ref("verify"),
+			locate: null,
+		});
+	});
+
+	it("页面打开之后地址变了：再应用一次，选中新的节点、定位到新的时刻", () => {
+		const { scope } = play([
+			address({ node: "fetch" }),
+			address({ node: "verify", tab: "logs", at: iso(7) }),
+		]);
+		expect(scope).toMatchObject({ selected: ref("verify"), locate: { at: at(7) } });
+		const { scope: later } = play([
+			address({ node: "verify", tab: "logs", at: iso(7) }),
+			address({ node: "verify", tab: "logs", at: iso(10) }),
+		]);
+		expect(later.locate).toMatchObject({ at: at(10) });
+		expect(later.attempt?.attempt).toBe(2);
+	});
+
+	it("页面里自己的操作不写回地址：同一个地址再报告也不撤销它们", () => {
+		const opening = address({ node: "fetch", tab: "io" });
+		const { scope } = play([
+			opening,
+			select("verify"),
+			{ type: "tab", tab: "logs" },
+			{ type: "panel", open: false },
+			opening,
+			opening,
+		]);
+		expect(scope).toMatchObject({ selected: ref("verify"), tab: "logs", open: false });
+		// 页面里清除了选中，同一个地址也不会再把失败的节点选回来。
+		const { scope: cleared } = play(
+			[address({}, failedRun), { type: "select", node: null }, address({}, failedRun)],
+			failedRun,
+		);
+		expect(cleared.selected).toBeNull();
+	});
+
+	it("视图（概览、详情）不算地址里决定打开哪里的部分：只有视图变了不重置选中的节点", () => {
+		const { scope } = play([
+			address({ view: "detail", node: "fetch" }),
+			select("verify"),
+			address({ view: "overview", node: "fetch" }),
+		]);
+		expect(scope.selected).toEqual(ref("verify"));
+	});
+
+	it("概览里点一项直达：地址和上一次一样也照做，切回概览再点一次要重新定位", () => {
+		const target: MonitorSearch = { view: "detail", node: "verify", tab: "logs", at: iso(7) };
+		const jump: ScopeEvent = { type: "overview", run, address: target };
+		const first = play([jump]).scope.locate;
+		const { scope } = play([jump, select("fetch"), jump]);
+		expect(scope.selected).toEqual(ref("verify"));
+		expect(scope.locate?.at).toBe(first?.at);
+		expect(scope.locate?.request).toBeGreaterThan(first?.request ?? 0);
+		// 直达之后路由带着同一个地址再来一次，不重复应用。
+		expect(play([jump, select("fetch"), address(target)]).scope.selected).toEqual(ref("fetch"));
 	});
 });
 

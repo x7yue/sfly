@@ -19,10 +19,10 @@ import { ChartWorkspace } from "./ChartWorkspace";
 import { chartsCompact } from "./chart-groups";
 import { useLiveRun } from "./live-run";
 import { MonitorTopBar } from "./MonitorTopBar";
+import { openedScope } from "./monitor-scope";
 import {
 	createMonitorStore,
 	MonitorProvider,
-	type MonitorStore,
 	type TimeAxis,
 	useMonitor,
 	useMonitorActions,
@@ -30,13 +30,7 @@ import {
 import { initialView, type MonitorView, readRememberedView, rememberView } from "./monitor-view";
 import { Overview, type OverviewTarget } from "./Overview";
 import { type MonitorSearch, runMonitorLink } from "./run-link";
-import {
-	failureSummary,
-	initialSelection,
-	nextFailure,
-	runDocumentTitle,
-	runFailure,
-} from "./run-model";
+import { failureSummary, nextFailure, runDocumentTitle, runFailure } from "./run-model";
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline-model";
 import { attemptsSignature, useMetricCatalog } from "./use-run-metrics";
@@ -47,98 +41,18 @@ import { VIEW_PANEL_ID, viewTabId } from "./ViewTabs";
  * （链路时间线、图表工作区（#42）、底部面板，原来的页面）。视图写在地址的 `view` 参数里，打开时按 monitor-view.ts 的
  * `initialView` 决定（失败和取消的运行先打开详情），用户在顶栏的标签页上切换时浏览器记住它。
  * 运行中通过运行事件流实时更新（live-run.ts：运行视图、进度、指标增量）。
- * 时间线、图表与底部面板共用一份时间轴状态（monitor-state.tsx）。
+ * 时间线、图表与底部面板共用一份共享状态（monitor-state.tsx）：时间轴，加上看的范围（monitor-scope.ts 的状态机）。
  * 浏览器标签页标题显示运行状态与场景名；在页面上看着运行成功或被取消时弹出一次结果通知，
  * 失败改用时间线上方的页内横幅（FailureBanner），收起后失败摘要回到顶栏。
  * 地址里的节点、页签与日志时刻（run-link.ts 的 MonitorSearch）在第一次拿到运行视图时应用，之后地址变了再应用一次：
- * 页面上自己的操作（点节点、切页签）不写回地址；视图不参与这个判断（切视图不该重置选中的节点）。
+ * 页面上自己的操作（点节点、切页签）不写回地址；视图不参与这个判断（切视图不该重置选中的节点）。规则在状态机里，
+ * 这里只在运行视图到了时用地址创建共享状态，之后把地址报告给它。
  */
 export function MonitorPage({ runId, address }: { runId: string; address: MonitorSearch }) {
 	const runQuery = useLiveRun(runId);
 	const run = runQuery.data;
-	const running = !run || run.status === "running";
-	const navigate = useNavigate();
-
-	// 打开时的视图只在第一次拿到运行视图时决定一次（之后运行失败了也不把正在看概览的人拉走），并写进地址（替换当前
-	// 这一条历史）：发给同事的链接、刷新都停在同一个视图。
-	const opening = useRef<MonitorView | null>(null);
-	if (run && opening.current === null) {
-		opening.current = initialView({ address, run, remembered: readRememberedView() });
-	}
-	const view = address.view ?? opening.current ?? "overview";
-	const known = run !== undefined;
-	useEffect(() => {
-		if (known && address.view === undefined) {
-			void navigate({ ...runMonitorLink(runId, { ...address, view }), replace: true });
-		}
-	}, [known, address, view, runId, navigate]);
-	const changeView = (next: MonitorView) => {
-		rememberView(next);
-		void navigate(runMonitorLink(runId, { ...address, view: next }));
-	};
-	/**
-	 * 点概览里的一项：进入详情，定位到它所在的节点，给了页签就切过去，给了时刻就在日志里定位到那一刻（「需要注意」的
-	 * 直达按钮）。节点有链实例时在这里直接应用新地址（`applyAddress`；节点 ID 在一次运行里只对应一个节点），并记为已应用：
-	 * 地址可能和上一次直达时完全一样（切回概览再点一次），那样地址没变，不会再应用一次。
-	 */
-	const openNode = (target: OverviewTarget) => {
-		const next: MonitorSearch = { view: "detail", node: target.nodeId };
-		if (target.tab) next.tab = target.tab;
-		if (target.at) next.at = target.at;
-		if (run && target.chainInstanceId !== null) {
-			applyAddress(store, run, next);
-			appliedAddress.current = addressKeyOf(next);
-		}
-		// 点的那一格随概览卸载：焦点先移到「详情」标签，不落在 body 上。
-		document.getElementById(viewTabId("detail"))?.focus();
-		void navigate(runMonitorLink(runId, next));
-	};
-	/** 顶栏的失败摘要在概览里点了以后切到详情（那里有它要打开的「尝试」页签）；不算用户选了视图，不记。 */
-	const showDetail = () => void navigate(runMonitorLink(runId, { ...address, view: "detail" }));
-
-	const orchestrationId = run?.orchestration_id;
-	const versionNumber = run?.orchestration_version;
-	const orchestration = useQuery({
-		...apiQuery(orchestrationsApi.get, { params: { id: orchestrationId ?? "" } }),
-		enabled: !!orchestrationId,
-	});
-	// 运行绑定的版本文档：节点的包与类型、always 标记、敏感参数。
-	const version = useQuery({
-		...versionQuery(orchestrationId ?? "", versionNumber ?? 0),
-		enabled: !!orchestrationId && !!versionNumber,
-	});
-
-	const [store] = useState(() => createMonitorStore());
-	// 第一次拿到运行视图时应用地址（选中节点的规则见 initialSelection），之后地址变了再应用一次。
-	// 第一次在渲染里应用而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
-	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）；之后的变化在 effect 里应用。
-	const addressKey = addressKeyOf(address);
-	const appliedAddress = useRef<string | null>(null);
-	const applyIfNew = () => {
-		if (!run || appliedAddress.current === addressKey) return;
-		appliedAddress.current = addressKey;
-		applyAddress(store, run, address);
-	};
-	if (appliedAddress.current === null) applyIfNew();
-	useEffect(applyIfNew);
-
-	const name = orchestration.data?.name;
-	useRunDocumentTitle(run, name);
-	useTerminalNotice(run, name);
-	// 收起了失败横幅的运行（换一个运行时横幅重新出现）。
-	const [bannerClosed, setBannerClosed] = useState<string | null>(null);
-	const failureBanner = run?.status === "failed" && bannerClosed !== run.id;
-
-	const now = useNow(running);
-	const zoom = useSyncExternalStore(store.subscribe, () => store.get().zoom);
-	const axis = useMemo<TimeAxis | null>(() => {
-		if (!run) return null;
-		const extent = runExtent(run, now);
-		const live = run.status === "running";
-		return { extent, range: visibleRange(extent, zoom), live, following: live && !zoom, now };
-	}, [run, now, zoom]);
-
-	if (runQuery.error && !run) {
+	if (run) return <LoadedMonitor run={run} address={address} />;
+	if (runQuery.error) {
 		return (
 			<div className="fixed inset-0 grid place-items-center bg-bg p-8">
 				<ErrorState
@@ -150,19 +64,85 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 			</div>
 		);
 	}
-	if (!run || !axis) {
-		return (
-			<output
-				aria-label={MESSAGE.loading}
-				aria-busy="true"
-				className="fixed inset-0 flex flex-col gap-3 bg-bg p-3"
-			>
-				<Skeleton className="h-10 w-full" />
-				<Skeleton className="h-40 w-full" />
-				<Skeleton className="w-full flex-1" />
-			</output>
-		);
-	}
+	return (
+		<output
+			aria-label={MESSAGE.loading}
+			aria-busy="true"
+			className="fixed inset-0 flex flex-col gap-3 bg-bg p-3"
+		>
+			<Skeleton className="h-10 w-full" />
+			<Skeleton className="h-40 w-full" />
+			<Skeleton className="w-full flex-1" />
+		</output>
+	);
+}
+
+/** 拿到运行视图之后的页面：共享状态在这里创建，第一次渲染就带着地址里的选中节点和页签。 */
+function LoadedMonitor({ run, address }: { run: RunView; address: MonitorSearch }) {
+	const runId = run.id;
+	const running = run.status === "running";
+	const navigate = useNavigate();
+
+	// 打开时的视图只在第一次拿到运行视图时决定一次（之后运行失败了也不把正在看概览的人拉走），并写进地址（替换当前
+	// 这一条历史）：发给同事的链接、刷新都停在同一个视图。
+	const [opening] = useState(() => initialView({ address, run, remembered: readRememberedView() }));
+	const view = address.view ?? opening;
+	useEffect(() => {
+		if (address.view === undefined) {
+			void navigate({ ...runMonitorLink(runId, { ...address, view }), replace: true });
+		}
+	}, [address, view, runId, navigate]);
+	const changeView = (next: MonitorView) => {
+		rememberView(next);
+		void navigate(runMonitorLink(runId, { ...address, view: next }));
+	};
+	// 第一次拿到运行视图时应用地址（选中节点的规则见 initialSelection）：创建共享状态时就带着，底部面板第一次渲染
+	// 就看到选中的节点，不会先挂上没选中节点时的合并日志、白发一次请求之后又卸载；之后地址变了再应用一次。
+	const [store] = useState(() => createMonitorStore({ scope: openedScope(run, address) }));
+	useEffect(() => {
+		store.report({ type: "address", run, address });
+	}, [store, run, address]);
+	/**
+	 * 点概览里的一项：进入详情，定位到它所在的节点，给了页签就切过去，给了时刻就在日志里定位到那一刻（「需要注意」的
+	 * 直达按钮）。节点有链实例时在这里直接报告 `overview`，不等地址变化：地址可能和上一次直达时完全一样
+	 * （切回概览再点一次），那样地址没变，不会再应用一次。
+	 */
+	const openNode = (target: OverviewTarget) => {
+		const next: MonitorSearch = { view: "detail", node: target.nodeId };
+		if (target.tab) next.tab = target.tab;
+		if (target.at) next.at = target.at;
+		if (target.chainInstanceId !== null) store.report({ type: "overview", run, address: next });
+		// 点的那一格随概览卸载：焦点先移到「详情」标签，不落在 body 上。
+		document.getElementById(viewTabId("detail"))?.focus();
+		void navigate(runMonitorLink(runId, next));
+	};
+	/** 顶栏的失败摘要在概览里点了以后切到详情（那里有它要打开的「尝试」页签）；不算用户选了视图，不记。 */
+	const showDetail = () => void navigate(runMonitorLink(runId, { ...address, view: "detail" }));
+
+	const orchestration = useQuery(
+		apiQuery(orchestrationsApi.get, { params: { id: run.orchestration_id } }),
+	);
+	// 运行绑定的版本文档：节点的包与类型、always 标记、敏感参数。
+	const version = useQuery({
+		...versionQuery(run.orchestration_id, run.orchestration_version),
+		enabled: !!run.orchestration_version,
+	});
+
+	const name = orchestration.data?.name;
+	useRunDocumentTitle(run, name);
+	useTerminalNotice(run, name);
+	// 收起了失败横幅的运行（换一个运行时横幅重新出现）。
+	const [bannerClosed, setBannerClosed] = useState<string | null>(null);
+	const failureBanner = run.status === "failed" && bannerClosed !== run.id;
+
+	const now = useNow(running);
+	const zoom = useSyncExternalStore(store.subscribe, () => store.get().zoom);
+	const axis = useMemo<TimeAxis>(() => {
+		const extent = runExtent(run, now);
+		const live = run.status === "running";
+		return { extent, range: visibleRange(extent, zoom), live, following: live && !zoom, now };
+	}, [run, now, zoom]);
+
 	const doc = version.data?.document;
 	return (
 		<MonitorProvider store={store} axis={axis}>
@@ -198,25 +178,6 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 			</div>
 		</MonitorProvider>
 	);
-}
-
-/** 地址里决定打开哪里的部分（节点、页签、时刻）；视图不算，切视图不重置选中的节点。 */
-const addressKeyOf = (address: MonitorSearch) =>
-	`${address.node ?? ""}\n${address.tab ?? ""}\n${address.at ?? ""}`;
-
-/**
- * 把地址里的位置变成页面状态：选中节点（没给节点时是失败的节点）、切到页签；带了 `at` 又给了运行里有的节点时，
- * 打开这个节点的日志并定位到那一刻，没给页签时就是日志页签。
- */
-function applyAddress(store: MonitorStore, run: RunView, address: MonitorSearch) {
-	const selected = initialSelection(run, address.node);
-	const at = address.at === undefined ? Number.NaN : Date.parse(address.at);
-	if (selected && selected.nodeId === address.node && Number.isFinite(at)) {
-		store.report({ type: "locate", node: selected, at });
-	} else {
-		store.report({ type: "select", node: selected });
-	}
-	if (address.tab) store.report({ type: "tab", tab: address.tab });
 }
 
 /**
@@ -312,16 +273,16 @@ function useEscapeClearsSelection() {
 }
 
 /** 浏览器标签页标题：「● 运行中 · 日终数据处理 · sfly」；离开页面时恢复原来的标题。 */
-function useRunDocumentTitle(run: RunView | undefined, name: string | undefined) {
+function useRunDocumentTitle(run: RunView, name: string | undefined) {
 	useEffect(() => {
 		const previous = document.title;
 		return () => {
 			document.title = previous;
 		};
 	}, []);
-	const title = run ? runDocumentTitle(run, name ?? shortId(run.id)) : null;
+	const title = runDocumentTitle(run, name ?? shortId(run.id));
 	useEffect(() => {
-		if (title) document.title = title;
+		document.title = title;
 	}, [title]);
 }
 
@@ -329,10 +290,9 @@ function useRunDocumentTitle(run: RunView | undefined, name: string | undefined)
  * 运行结束的通知：只在页面上看着运行从「运行中」变成结束时弹出一次；打开一个已经结束的运行不弹。
  * 成功、取消分别用 notify.success / info。失败不发通知：失败要留在原处，由页内横幅（FailureBanner）承担。
  */
-function useTerminalNotice(run: RunView | undefined, name: string | undefined) {
+function useTerminalNotice(run: RunView, name: string | undefined) {
 	const seen = useRef<RunView["status"] | null>(null);
 	useEffect(() => {
-		if (!run) return;
 		const before = seen.current;
 		seen.current = run.status;
 		if (before !== "running" || run.status === "running") return;
