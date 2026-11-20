@@ -80,6 +80,12 @@ describeWithAgent("验收 S3：故障", () => {
 		);
 		const runId = await api.triggerOk(id);
 		await eventually(async () => expect(await readFile(ready, "utf8")).toBe("1\n"), 30_000);
+		// 就绪文件由节点代码写出，控制面可能还没处理 TaskStarted（仍是 dispatched）：等它变成 running 再杀 Agent，
+		// 杀掉之后这条消息可能再也到不了。
+		await eventually(
+			async () => expect((await api.node(runId, "g")).status).toBe("running"),
+			30_000,
+		);
 
 		// Agent 进程被杀：控制面在租约（30 秒）过期前仍认为任务在运行。
 		await first.close();
@@ -157,16 +163,20 @@ describeWithAgent("验收 S3：故障", () => {
 		const tracked = await readPids(pidFile);
 		pids.push(...tracked);
 		expect(await readFile(report, "utf8")).toBe("cancelled");
+		// pid 文件由节点代码写出，控制面可能还没处理 cleanup 的 TaskStarted（仍是 dispatched），所以节点的状态也要等。
 		let run = await api.run(runId);
-		expect(run.status).toBe("running");
-		expect(run.cancel).toMatchObject({ requested_by: "tester", forced_at: null });
-		expect(statuses(chainOf(run, "entry"))).toEqual({
-			entry: "success",
-			work: "cancelled",
-			next: "cancelled",
-			cleanup: "running",
-			final: "pending",
-		});
+		await eventually(async () => {
+			run = await api.run(runId);
+			expect(run.status).toBe("running");
+			expect(run.cancel).toMatchObject({ requested_by: "tester", forced_at: null });
+			expect(statuses(chainOf(run, "entry"))).toEqual({
+				entry: "success",
+				work: "cancelled",
+				next: "cancelled",
+				cleanup: "running",
+				final: "pending",
+			});
+		}, 30_000);
 		expect(tracked.every(isAlive)).toBe(true);
 
 		// 再次取消 = 强制：always 节点的进程树立即被杀，后面的 always 节点也不再执行。
