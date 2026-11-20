@@ -49,6 +49,19 @@ describe("运行预设的编辑表单", () => {
 		expect(draftErrors(draft, [secret]).values).toEqual({ token: "必填" });
 	});
 
+	it("勾选敏感的布尔参数：没有可显示的值，是「没选」，要选 true 或 false；选了 false 也算选了", () => {
+		const flag: ParamDeclView = { name: "flag", type: "boolean", secret: true, default: "******" };
+		let draft = toggleParam({ ...emptyDraft(), name: "p" }, flag, true);
+		expect(draft.values).toEqual({ flag: "" });
+		expect(draftErrors(draft, [flag]).values).toEqual({ flag: "必填" });
+		draft = { ...draft, values: { flag: false } };
+		expect(draftErrors(draft, [flag]).values).toEqual({});
+		expect(toPresetBody(draft, [flag]).params).toEqual([{ name: "flag", value: false }]);
+		// 沿用原值的敏感布尔参数点「替换」后同样要选。
+		const replaced = replaceSecret({ ...draft, keptSecrets: ["flag"] }, "flag");
+		expect(draftErrors(replaced, [flag]).values).toEqual({ flag: "必填" });
+	});
+
 	it("名称必填且不超过 40 个字符，至少勾选一个参数，勾选的参数必须填值、格式正确", () => {
 		expect(draftErrors(emptyDraft(), decls)).toEqual({
 			name: "名称不能为空",

@@ -14,12 +14,13 @@ import { agents } from "../db/schema.js";
 import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
+import { maskSecrets } from "../logs/secrets.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 import { checkDevPackagesLoaded } from "./dev-package-loaded.js";
-import { knownParams, resolved } from "./known-params.js";
+import { knownParams, resolved, secretTexts } from "./known-params.js";
 import { type ParamOrigins, paramInputTypeProblems } from "./param-input-type.js";
 import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
 
@@ -190,6 +191,9 @@ export function createParamsCheck(): ParamsCheck {
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
 		const chains = knownParams(plan, params);
+		// 问题的说明里写出的机器人、Agent 名称取自 secret 参数时打码（调用方给的值同样）：报错不回显 secret 的值。
+		const secrets = secretTexts(chains);
+		const shownOf = (value: string) => maskSecrets(value, secrets);
 		for (const { chain, params: known, source } of chains) {
 			for (const node of chain.nodes) {
 				// 整值引用入口参数的才在这里按实际值查；其他写法的引用已经由静态检查（feishu_bot_reference_unsupported）阻断。
@@ -197,7 +201,13 @@ export function createParamsCheck(): ParamsCheck {
 					const bot =
 						notifyBotValue(node.bot).kind === "param" ? resolved(node.bot, known) : undefined;
 					if (typeof bot === "string" && bot !== "")
-						bots.push({ nodeId: node.id, node: nodeNameWithId(node), bot, source });
+						bots.push({
+							nodeId: node.id,
+							node: nodeNameWithId(node),
+							bot,
+							shown: shownOf(bot),
+							source,
+						});
 				}
 				if (node.kind !== "package") continue;
 				const metadata = locked.get(node.package);
@@ -217,6 +227,7 @@ export function createParamsCheck(): ParamsCheck {
 							node: nodeNameWithId(node),
 							input,
 							agent,
+							shown: shownOf(agent),
 							requirement,
 							source,
 						});
@@ -226,7 +237,14 @@ export function createParamsCheck(): ParamsCheck {
 					if (typeof value !== "string" || referencesIn(value).length === 0) continue;
 					const bot = resolved(value, known);
 					if (typeof bot === "string" && bot !== "")
-						bots.push({ nodeId: node.id, node: nodeNameWithId(node), input, bot, source });
+						bots.push({
+							nodeId: node.id,
+							node: nodeNameWithId(node),
+							input,
+							bot,
+							shown: shownOf(bot),
+							source,
+						});
 				}
 			}
 		}

@@ -4,9 +4,10 @@ import { EyeIcon, EyeOffIcon, LockIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { FieldValue } from "./trigger-form";
+import { type FieldValue, hasHiddenDefault } from "./trigger-form";
 
 /** 敏感参数临时显示的时长。 */
 const REVEAL_MS = 5000;
@@ -67,7 +68,11 @@ export function ParamField({
 	/** 沿用预设里原来的 secret 值（预设编辑表单）：控件显示「已填写」，点「替换」（`onReplace`）才重新输入。 */
 	kept?: boolean;
 	onReplace?: () => void;
-	/** 留空时由控制面按默认值填入（运行抽屉）：敏感参数的默认值读不回来，输入框里用占位文字说明已设置。 */
+	/**
+	 * 留空时由控制面按默认值填入（运行抽屉）：敏感参数的默认值读不回来，输入框里用占位文字说明已设置，
+	 * 布尔参数是三选一的下拉（使用默认值 / true / false），看得出「没动过」和「选了关」的区别。
+	 * 运行预设的编辑表单不是这样：预设固定一个值，敏感的布尔参数要选 true 或 false。
+	 */
 	blankUsesDefault?: boolean;
 }) {
 	const id = useId();
@@ -111,11 +116,15 @@ export function ParamField({
 	const hidden = param.secret && !revealed;
 	// 敏感参数的默认值读不回来（控制面给的是占位符），表单里留空：留空就由控制面按默认值填入。
 	const keptDefault =
-		blankUsesDefault && param.secret && param.default !== undefined && !locked
-			? "已设置默认值，留空使用"
-			: undefined;
+		blankUsesDefault && hasHiddenDefault(param) && !locked ? "已设置默认值，留空使用" : undefined;
 	// 锁定的 secret 参数拿到的已经是打码后的值，不论类型都显示成一个只读的密码框。
 	const masked = locked && param.secret;
+	// 敏感的布尔参数没有可显示的值：开关只有开和关，没有「没选」，所以用下拉（见 blankUsesDefault）。
+	const choice =
+		param.type === "boolean" &&
+		param.secret &&
+		!masked &&
+		(blankUsesDefault ? hasHiddenDefault(param) : true);
 	let control: React.ReactNode;
 	if (kept) {
 		control = (
@@ -135,6 +144,22 @@ export function ParamField({
 					替换
 				</Button>
 			</div>
+		);
+	} else if (choice) {
+		control = (
+			<NativeSelect
+				{...aria}
+				value={value === true ? "true" : value === false ? "false" : ""}
+				disabled={disabled}
+				onChange={(e) => change(e.target.value === "" ? "" : e.target.value === "true")}
+				onBlur={blur}
+			>
+				<NativeSelectOption value="">
+					{blankUsesDefault ? "使用默认值" : "请选择"}
+				</NativeSelectOption>
+				<NativeSelectOption value="true">true</NativeSelectOption>
+				<NativeSelectOption value="false">false</NativeSelectOption>
+			</NativeSelect>
 		);
 	} else if (param.type === "boolean" && !masked) {
 		control = (

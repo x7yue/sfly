@@ -332,8 +332,11 @@ export class OrchestrationStore {
 		return copied && this.#view(copied, this.deps.db);
 	}
 
-	/** 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。原始文档，只在控制面内部用，不能原样交给调用方。 */
-	async headDocuments(): Promise<OrchestrationDocument[]> {
+	/**
+	 * 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。**原始文档，secret 参数的默认值没有打码**（名字里的 raw）：
+	 * 只在控制面内部统计用，不能原样交给调用方（biome-plugins/raw-version-document.grit）。
+	 */
+	async rawHeadDocuments(): Promise<OrchestrationDocument[]> {
 		const rows = await this.deps.db
 			.select({ document: orchestrationVersions.document })
 			.from(orchestrations)

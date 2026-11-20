@@ -24,6 +24,11 @@ export interface AgentReference {
 	node?: string;
 	input: string;
 	agent: string;
+	/**
+	 * 问题的说明里这个 Agent 名称的写法，不给时写 `agent`。值取自 secret 参数时调用方传打了码的写法：
+	 * 触发时的错误不回显 secret 参数的值（docs/SEMANTICS.md §2.1）。
+	 */
+	shown?: string;
 	requirement: AgentRequirement;
 	/** 值从哪来（例如「取自入口参数」），写在问题的说明后面的括号里。 */
 	source?: string;
@@ -53,15 +58,23 @@ export async function checkReferencedAgents(
 		.where(inArray(agents.name, names));
 	const infos = new Map(rows.map((r) => [r.name, r.info]));
 	const problems = references.flatMap(
-		({ nodeId, node = nodeId, input, agent, requirement, source }): ReferencedAgentProblem[] => {
+		({
+			nodeId,
+			node = nodeId,
+			input,
+			agent,
+			shown = agent,
+			requirement,
+			source,
+		}): ReferencedAgentProblem[] => {
 			const from = source === undefined ? "" : `（${source}）`;
 			const info = infos.get(agent);
 			if (info === undefined) {
-				const message = `${agentNotRegistered(node, input, agent)}${from}`;
+				const message = `${agentNotRegistered(node, input, shown)}${from}`;
 				return [{ code: "agent_input_not_registered", message, node_id: nodeId }];
 			}
 			const outdated = referencedAgentProblem(requirement.metadata, requirement.pkg, input, {
-				name: agent,
+				name: shown,
 				version: info.agent_version,
 			});
 			if (outdated === undefined) return [];

@@ -1,9 +1,9 @@
-import type { OrchestrationDocument, ParamDeclaration } from "@sfly/schema";
+import { type OrchestrationDocument, type ParamDeclaration, SECRET_MASK } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import type { Tx } from "../db/database.js";
 import { orchestrations, orchestrationVersions } from "../db/schema.js";
 import { planRun, type RunPlan } from "../engine/chain.js";
-import { fillParams, withPresetValues } from "../engine/params.js";
+import { fillParams, placeholderParams, withPresetValues } from "../engine/params.js";
 import type { RunRow } from "../engine/step.js";
 import { findPreset, PRESET_NOT_FOUND } from "../presets/preset-store.js";
 import { describePresetProblems, presetProblems } from "../presets/preset-validity.js";
@@ -156,6 +156,15 @@ export function createTriggerAdmission(checks: {
 		const declarations = plan.main.entry.params;
 		const applied = await applyPreset(tx, orchestrationId, request, declarations);
 		if (!applied.ok) return applied;
+		// 请求里 secret 参数的值是读取接口打的码 ******：它不是值，不能当成值传给节点（预设固定的值不在 request.params 里）。
+		const placeholders = placeholderParams(declarations, request.params);
+		if (placeholders.length > 0) {
+			const errors = placeholders.map(
+				(name) =>
+					`参数 ${name} 的值是 ${SECRET_MASK}：这是读取时给 secret 参数打的码，不是值。不传这个参数就用默认值，要用别的值就传真正的值`,
+			);
+			return reject(400, "invalid_params", errors.join("; "), errors);
+		}
 		const filled = fillParams(declarations, applied.params);
 		if ("errors" in filled) {
 			return reject(400, "invalid_params", filled.errors.join("; "), filled.errors);

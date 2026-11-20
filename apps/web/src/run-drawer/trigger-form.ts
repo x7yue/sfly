@@ -29,10 +29,18 @@ export function lockedValue(p: ParamDeclView, value: unknown): FieldValue {
 }
 
 /**
- * 参数的默认值在表单里的值。敏感参数的默认值读不回来（控制面给的是占位符），表单里是空的：留空就由控制面按默认值填入，
- * 所以不能把占位符当成值预填，否则触发时会把它传给节点。
+ * 敏感参数有默认值：控制面不返回它，给的是占位符（SECRET_MASK），表单里读不到、也不预填。
+ * 没有动过这个字段（留空，布尔参数是「使用默认值」）时它不放进触发的参数，由控制面按默认值填入（{@link toParams}）。
+ */
+export const hasHiddenDefault = (p: ParamDeclView): boolean =>
+	p.secret === true && p.default !== undefined && p.default !== null;
+
+/**
+ * 参数的默认值在表单里的值。敏感参数的默认值读不回来，表单里是空的（{@link hasHiddenDefault}）：布尔参数是空串，
+ * 表示「没选」，和「选了关」（false）区分开，触发时前者用默认值、后者传 false。
  */
 export function defaultFieldValue(p: ParamDeclView): FieldValue {
+	if (p.type === "boolean" && hasHiddenDefault(p)) return "";
 	return fieldValue(p, p.secret ? undefined : p.default);
 }
 
@@ -59,11 +67,19 @@ const isJson = (text: string) => {
 	}
 };
 
-/** 一个参数的校验规则；`required` 时留空报「必填」（默认是必填且没有默认值的参数）。 */
+/**
+ * 一个参数的校验规则；`required` 时留空报「必填」（默认是必填且没有默认值的参数）。
+ * 敏感的布尔参数可以是「没选」（空串，{@link defaultFieldValue}）：`required`（运行预设固定的值，必须选一个）时报「必填」。
+ */
 export function fieldSchema(
 	p: ParamDeclView,
 	required = mustFill(p),
 ): z.ZodType<FieldValue, FieldValue> {
+	if (p.type === "boolean" && p.secret) {
+		return z.union([z.boolean(), z.literal("")]).superRefine((value, ctx) => {
+			if (value === "" && required) ctx.addIssue({ code: "custom", message: "必填" });
+		}) as z.ZodType<FieldValue, FieldValue>;
+	}
 	if (p.type === "boolean") return z.boolean();
 	return z.string().superRefine((raw, ctx) => {
 		const text = raw.trim();
@@ -94,7 +110,10 @@ export function toParamValue(p: ParamDeclView, value: FieldValue | undefined): u
 	return value;
 }
 
-/** 已通过校验的表单值 → 触发参数；留空的参数不传（控制面按默认值填充）。 */
+/**
+ * 已通过校验的表单值 → 触发参数；留空的参数不传（控制面按默认值填充）：没有动过的敏感参数（任何类型，
+ * 布尔参数是「使用默认值」）不放进触发的参数里，不会拿读不到的默认值（占位符）去覆盖它。
+ */
 export function toParams(decls: ParamDeclView[], values: FormValues): Record<string, unknown> {
 	const params: Record<string, unknown> = {};
 	for (const p of decls) {

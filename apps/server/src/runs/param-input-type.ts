@@ -8,7 +8,7 @@ import {
 import type { PackageMetadata } from "@sfly/schema";
 import type { ChainPlan } from "../engine/chain.js";
 import { SECRET_MASK } from "../logs/secrets.js";
-import { type KnownParams, resolved } from "./known-params.js";
+import { type KnownParams, resolved, secretTexts, textOf } from "./known-params.js";
 import type { PreflightProblem } from "./preflight.js";
 
 /**
@@ -27,25 +27,6 @@ function wholeParamReference(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const path = WHOLE_REFERENCE.exec(value)?.[1];
 	return path === undefined ? undefined : PARAM_PATH.exec(path)?.[1];
-}
-
-/** 值的文本形式（`secretValues` 按它匹配）：字符串原样，其他按 JSON。 */
-const textOf = (value: unknown): string =>
-	typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
-
-/**
- * 这次触发里 secret 参数的值（文本形式）：每条链的入口里声明为 secret 的参数。secret 属性按值传播（src/logs/secrets.ts），
- * 经参数映射传进子流程的值即使子流程里没有声明 secret，也是 secret 值，不写进说明里。
- */
-function secretTexts(chains: readonly KnownParams[]): Set<string> {
-	const texts = new Set<string>();
-	for (const { chain, params } of chains) {
-		for (const decl of chain.entry.params) {
-			const value = params[decl.name];
-			if (decl.secret && value !== undefined && value !== null) texts.add(textOf(value));
-		}
-	}
-	return texts;
 }
 
 /** 命令行触发时给这个参数的写法：整数输入写 `<整数>`，其他类型写 `<类型 类型的值>`。 */
@@ -118,7 +99,7 @@ export function paramInputTypeProblems(
 				if (found === undefined) continue;
 				const expected = describeSchema(io.properties[input] ?? {});
 				// secret 的值不出现在说明里：判断照旧，只是把「实际是 …」里的值换成掩码。
-				const problem = secrets.has(textOf(actual))
+				const problem = secrets.includes(textOf(actual))
 					? `输入 ${input} 应为 ${expected}，实际是 ${SECRET_MASK}`
 					: found;
 				const { where, next } = whereAndNext(known, main, name, expected, origins);

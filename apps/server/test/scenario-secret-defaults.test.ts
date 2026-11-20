@@ -13,9 +13,10 @@ import {
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";
+import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
-import { createPresetOk, presetScenario } from "./support/presets.js";
+import { createPresetOk, listPresets, presetScenario } from "./support/presets.js";
 import { SseClient } from "./support/sse-client.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -108,6 +109,12 @@ describe("场景版本里 secret 参数的默认值", () => {
 	};
 	const errorOf = async (res: Response): Promise<ErrorBody["error"]> =>
 		((await res.json()) as ErrorBody).error;
+	/** 响应文本里不能出现的原值：字符串、json 里的字符串、数字。 */
+	const RAW = [SECRET, SECRET_JSON, String(PIN), "test-secret-replaced"];
+	/** 断言一个响应的全部文本（成功的、失败的、message 和 details）里没有任何 secret 原值。 */
+	const expectNoRaw = (what: string, text: string) => {
+		for (const raw of RAW) expect(text, `${what}：不能出现 ${raw}`).not.toContain(raw);
+	};
 	const headVersionOf = async (id: string) =>
 		(await api.getJson<{ head_version: number }>(`/orchestrations/${id}`)).head_version;
 	/** 一个场景：入口参数 PARAMS。 */
@@ -226,8 +233,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 			for (const [what, res, { masked }] of responses) {
 				expect(res.status, what).toBeLessThan(300);
 				const text = await res.text();
-				expect(text, what).not.toContain(SECRET);
-				expect(text, what).not.toContain(SECRET_JSON);
+				expectNoRaw(what, text);
 				if (masked) expect(text, what).toContain(MASK);
 			}
 			// 非 secret 参数的默认值照常读出来。
@@ -246,11 +252,37 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const sse = await SseClient.open(cp, `/runs/${runId}/events`);
 			try {
 				const first = await sse.next("run");
-				expect(JSON.stringify(first.data)).not.toContain(SECRET);
+				expectNoRaw("运行的 SSE", JSON.stringify(first.data));
 				expect(JSON.stringify(first.data)).toContain(MASK);
 			} finally {
 				sse.close();
 			}
+		});
+
+		it("契约里的每个 SSE 接口：连上之后收到的消息里都没有原值", async () => {
+			const id = await scenario(RUN_PARAMS());
+			const agent = await connect();
+			const runId = await api.triggerOk(id);
+			const assign = await agent.nextAssign();
+			const ids = { scenario: id, run: runId, task: assign.taskId, preset: "x" };
+			const streams = httpContract.filter((def) => "events" in def);
+			expect(streams.length).toBeGreaterThanOrEqual(5);
+			let opened = 0;
+			for (const def of streams) {
+				const path = fill(def.path, ids);
+				// 路径随便填的接口返回 404（不是 SSE），这里只看连上的；404 的响应在「所有 GET 接口」里查过。
+				const sse = await SseClient.open(cp, path).catch(() => undefined);
+				if (!sse) continue;
+				opened += 1;
+				try {
+					// 每条流连上时先发一条控制面时间，运行和任务的流接着发当前状态。
+					await eventually(() => expect(sse.received.length).toBeGreaterThan(0));
+					expectNoRaw(`SSE ${path}`, JSON.stringify(sse.received));
+				} finally {
+					sse.close();
+				}
+			}
+			expect(opened).toBeGreaterThanOrEqual(3);
 		});
 
 		/** 路径参数填什么：看路径的前缀和参数名；没见过的组合直接报错，新接口要在这里补上取值。 */
@@ -302,13 +334,96 @@ describe("场景版本里 secret 参数的默认值", () => {
 			for (const def of reads) {
 				const path = fill(def.path, ids);
 				const res = await api.get(path);
-				const text = await res.text();
-				expect(text, `GET ${path}`).not.toContain(SECRET);
-				expect(text, `GET ${path}`).not.toContain(SECRET_JSON);
+				expectNoRaw(`GET ${path}`, await res.text());
 				if (res.status === 200) read += 1;
 			}
 			// 大部分接口读得到（读不到的是路径随便填的、只验证没有泄露）。
 			expect(read).toBeGreaterThan(20);
+		});
+	});
+
+	describe("写接口的成功和失败响应", () => {
+		controlPlanePerTest();
+
+		it("触发、保存、恢复、复制、预设、归档：成功的和失败的响应（message 和 details 都算）里都没有原值", async () => {
+			const id = await scenario(RUN_PARAMS());
+			const agent = await connect();
+			const responses: Array<[string, Response]> = [];
+			const record = async (what: string, res: Promise<Response>) => {
+				responses.push([what, await res]);
+			};
+
+			// 触发：成功；把占位符当成值传回来（400）；传了没有声明的参数（400）；类型不对（400）；场景不存在（404）。
+			await record("触发", api.trigger(id));
+			await agent.nextAssign();
+			await record("触发：占位符", api.trigger(id, { token: MASK }));
+			await record("触发：未声明的参数", api.trigger(id, { unknown_param: SECRET }));
+			await record("触发：类型不对", api.trigger(id, { pin: SECRET }));
+			await record("触发：场景不存在", api.trigger("00000000-0000-4000-8000-000000000000"));
+			// 保存：原样存回去（201）、编辑起点过期（409）、文档不合法（400）、占位符沿用不了（400）、缺 base_version（400）。
+			const { number, document } = await head(id);
+			await record("保存", saveOn(id, number, document));
+			await record("保存：冲突", saveOn(id, number, document));
+			await record("保存：文档不合法", saveOn(id, number + 1, { ...document, nodes: SECRET }));
+			const renamed = structuredClone(document);
+			paramAt(renamed, 0).name = "renamed_token";
+			await record("保存：占位符沿用不了", saveOn(id, number + 1, renamed));
+			await record(
+				"保存：缺 base_version",
+				api.post(`/orchestrations/${id}/versions`, { document }),
+			);
+			// 恢复、复制。
+			await record("恢复", api.postEmpty(`/orchestrations/${id}/versions/1/restore`));
+			await record("恢复：版本不存在", api.postEmpty(`/orchestrations/${id}/versions/99/restore`));
+			await record("复制", api.post(`/orchestrations/${id}/copy`, { name: "副本" }));
+			await record("复制：缺名称", api.post(`/orchestrations/${id}/copy`, {}));
+			// 预设：新建、重名、沿用不了、修改、复制、触发时给固定参数传值。
+			const body = { name: "预设", params: [{ name: "token", value: SECRET }] };
+			await record("预设：新建", api.post(`/orchestrations/${id}/presets`, body));
+			await record("预设：重名", api.post(`/orchestrations/${id}/presets`, body));
+			await record(
+				"预设：占位符",
+				api.post(`/orchestrations/${id}/presets`, {
+					name: "占位符",
+					params: [{ name: "token", value: MASK }],
+				}),
+			);
+			await record(
+				"预设：类型不对",
+				api.post(`/orchestrations/${id}/presets`, {
+					name: "类型",
+					params: [{ name: "pin", value: SECRET }],
+				}),
+			);
+			const [preset] = await listPresets(api, id);
+			await record(
+				"触发：预设参数不能传值",
+				api.post(`/orchestrations/${id}/runs`, { preset: preset?.id, params: { token: SECRET } }),
+			);
+			await record(
+				"预设：修改",
+				api.patch(`/orchestrations/${id}/presets/${preset?.id}`, {
+					params: [{ name: "pin", value: PIN }],
+				}),
+			);
+			// 归档、恢复归档、改场景设置。
+			await record("改场景设置", api.patch(`/orchestrations/${id}`, { description: "说明" }));
+			await record(
+				"触发：已归档",
+				(async () => {
+					await api.postEmpty(`/orchestrations/${id}/archive`);
+					return api.trigger(id);
+				})(),
+			);
+			await record("恢复归档", api.postEmpty(`/orchestrations/${id}/unarchive`));
+
+			const statuses = new Set<number>();
+			for (const [what, res] of responses) {
+				statuses.add(res.status);
+				expectNoRaw(what, await res.text());
+			}
+			// 成功、400、404、409 都出现过：测的确实是失败的响应。
+			for (const status of [200, 201, 400, 404, 409]) expect([...statuses]).toContain(status);
 		});
 	});
 

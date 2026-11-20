@@ -2,6 +2,8 @@ import type { ParamDeclView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	defaultFieldValue,
+	fieldSchema,
+	hasHiddenDefault,
 	initialValues,
 	lockedValue,
 	paramsSchema,
@@ -86,6 +88,44 @@ describe("入口参数表单", () => {
 				region: "cn-east",
 			});
 		});
+	});
+
+	describe("敏感的布尔参数：「使用默认值」和「选了关」是两回事", () => {
+		const flag: ParamDeclView = { name: "flag", type: "boolean", secret: true, default: "******" };
+		const noDefault: ParamDeclView = { name: "quiet", type: "boolean", secret: true };
+
+		it("有默认值时初始是「没选」（空串），不是关；没有默认值的敏感布尔参数还是关", () => {
+			expect(hasHiddenDefault(flag)).toBe(true);
+			expect(hasHiddenDefault({ ...flag, default: null })).toBe(false);
+			expect(hasHiddenDefault({ ...flag, secret: false })).toBe(false);
+			expect(defaultFieldValue(flag)).toBe("");
+			expect(initialValues([flag, noDefault])).toEqual({ flag: "", quiet: false });
+		});
+
+		it("没动过：不放进触发参数，控制面按默认值填入；选了开或关才传，false 也传", () => {
+			const decls = [flag, noDefault];
+			expect(toParams(decls, { flag: "", quiet: false })).toEqual({ quiet: false });
+			expect(toParams(decls, { flag: true, quiet: false })).toEqual({ flag: true, quiet: false });
+			expect(toParams(decls, { flag: false, quiet: false })).toEqual({ flag: false, quiet: false });
+		});
+
+		it("没选通过校验（触发时用默认值）；运行预设固定的值要选一个", () => {
+			expect(paramsSchema([flag]).safeParse({ flag: "" }).success).toBe(true);
+			expect(paramsSchema([flag]).safeParse({ flag: false }).success).toBe(true);
+			expect(fieldSchema(flag, true).safeParse("").error?.issues[0]?.message).toBe("必填");
+			expect(fieldSchema(flag, true).safeParse(false).success).toBe(true);
+		});
+	});
+
+	it("没动过的敏感参数不放进触发参数，不论类型：字符串、数字、json、布尔都由控制面按默认值填入", () => {
+		const secrets: ParamDeclView[] = [
+			{ name: "token", type: "string", secret: true, default: "******" },
+			{ name: "pin", type: "number", secret: true, default: "******" },
+			{ name: "opts", type: "json", secret: true, default: "******" },
+			{ name: "flag", type: "boolean", secret: true, default: "******" },
+			{ name: "region", type: "string", default: "cn-east" },
+		];
+		expect(toParams(secrets, initialValues(secrets))).toEqual({ region: "cn-east" });
 	});
 
 	it("预设锁定的参数：secret 参数显示接口返回的打码值，不按类型换算；其余按类型换算", () => {

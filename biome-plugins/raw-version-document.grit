@@ -1,10 +1,25 @@
 language js
 
 // 场景版本里 secret 参数的默认值（#467，docs/SEMANTICS.md §2.1）：库里是明文，场景文档离开存储层的那一处
-// （apps/server/src/orchestrations/orchestration-store.ts 的 toVersionView）统一打码。HTTP 路由不直接读
-// orchestration_versions 表：要场景文档就用 OrchestrationStore（head、getVersion），它给的是打码后的；
+// （apps/server/src/orchestrations/orchestration-store.ts 的 toVersionView）统一打码。HTTP 路由拿不到原始文档：
+// - 不直接读 orchestration_versions 表：要场景文档就用 OrchestrationStore（head、getVersion），它给的是打码后的；
+// - 不取 `readRuns` 读出来的 `<运行>.version.document`：那是运行绑定的版本的原始文档，路由要运行的什么就用 run-read.ts 里
+//   投影好的视图（getRunView 等），不要把文档交出去；
+// - `OrchestrationStore.rawHeadDocuments()` 的名字就写着它没有打码，路由里只能用来统计引用数。
 // 需要原值的地方（引擎、触发准入）在自己的事务里读，不在路由层。
-`orchestrationVersions` as $table where {
-	$filename <: r".*apps/server/src/http/.*",
-	register_diagnostic(span=$table, message="HTTP 路由不直接读 orchestration_versions：场景文档用 OrchestrationStore 的 head / getVersion（secret 参数的默认值已经打码，docs/SEMANTICS.md §2.1），不要在路由里绕过它，否则新增的出口会把 secret 默认值的原值交给调用方（#467）。")
+or {
+	`orchestrationVersions` as $table where {
+		$filename <: r".*apps/server/src/http/.*",
+		register_diagnostic(span=$table, message="HTTP 路由不直接读 orchestration_versions：场景文档用 OrchestrationStore 的 head / getVersion（secret 参数的默认值已经打码，docs/SEMANTICS.md §2.1），不要在路由里绕过它，否则新增的出口会把 secret 默认值的原值交给调用方（#467）。")
+	},
+	or {
+		`$run.version.document`,
+		`$run?.version.document`,
+		`$run.version?.document`,
+		`$run?.version?.document`,
+		`{ document } = $run.version`
+	} as $document where {
+		$filename <: r".*apps/server/src/http/.*",
+		register_diagnostic(span=$document, message="HTTP 路由不取运行绑定的版本的原始文档（readRuns 结果的 version.document，secret 参数的默认值没有打码，docs/SEMANTICS.md §2.1）：路由要什么就用投影好的视图（getRunView 等），不要把文档交出去（#467）。")
+	}
 }
