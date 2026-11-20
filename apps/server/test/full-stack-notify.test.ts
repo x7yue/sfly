@@ -2,7 +2,6 @@
 // 通知经事件管道、Agent 的 Notification 消息到达控制面，写进发送队列，由控制面投递给假飞书 Webhook 服务；
 // 投递结果写进这个任务的日志。机器人不是通过「飞书机器人」类型的参数传入的不发送，飞书不响应时节点照常成功。
 // 节点用 sfly.feishu.card 发的卡片、自己写的原始消息原样到达假飞书；不合格的原始消息不发送，任务日志里有原因。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";

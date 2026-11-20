@@ -1,6 +1,5 @@
 // 切入点 A：异步任务节点与子流程（docs/SEMANTICS.md §1.2、§2.3、§4、§6 第 4 条）。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, echo, orchestration, param, spawn, statuses } from "./support/chains.js";

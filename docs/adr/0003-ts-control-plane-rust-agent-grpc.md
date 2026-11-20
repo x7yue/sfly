@@ -13,3 +13,9 @@
 
 - 团队需要同时维护三种语言：TS、Rust、Python。
 - Python 执行器与 Agent 之间不使用 protobuf，而是用 JSON 文件和环境变量通信（见 ADR 0002）。
+
+有三处已被后来的 ADR 取代或修订，其余内容仍然有效：
+
+- 「和 TanStack Start 前端共用」：前端改为纯 SPA，不再使用 TanStack Start（ADR 0006；与前端共用 schema 的理由不受影响）。
+- 「机器上只需要 `uv`」：没有 uv 时由 Agent 自己安装，uv 和 Python 跟随镜像站的最新版本（ADR 0012）。
+- 「用 JSON 文件和环境变量通信（见 ADR 0002）」（Python 执行器与 Agent 之间）：只有任务事件这一部分被 ADR 0015 修订，改经命名管道 `events.fifo`（路径仍由环境变量 `SFLY_EVENTS` 给出）交给 Agent，不再写普通文件；任务的输入和输出仍然是环境变量给出路径的 JSON 文件。另外，ADR 0002 讲的是共享 venv，不是这条通信，原文的引用对不上。

@@ -5,7 +5,6 @@
 // - 引用的 Agent：比较它最近一次注册时上报的版本——常量在触发前检查，引用入口参数的在触发时按实际值检查，
 //   来自前面节点输出的在派发时检查（任务以 env_error 失败）。
 // 没有声明的节点包不检查（其余测试里的节点包都没有它）。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";

@@ -27,7 +27,7 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
-  # tag 与各处版本号一致、提交在 main 上且 CI 已通过，然后创建（或复用）草稿 Release。
+  # tag 与各处版本号一致、发版性能报告（docs/perf/X.Y.Z/report.json）已提交、提交在 main 上且 CI 已通过，然后创建（或复用）草稿 Release。
   prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -46,7 +46,7 @@ jobs:
           node-version-file: .node-version
           package-manager-cache: false # 这个 job 不装依赖：不要按 package.json 的 packageManager 自动缓存
       - id: version
-        name: Version matches tag
+        name: Version matches tag and the perf report is committed
         # 先赋值再写输出：`echo "version=$(…)"` 在检查失败时也成功，错误要到下一步用空版本号时才暴露（v0.1.2）。
         run: |
           version=$(bash scripts/release/version.sh check "$TAG")

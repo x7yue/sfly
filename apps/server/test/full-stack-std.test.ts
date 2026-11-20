@@ -1,7 +1,6 @@
 // 全栈：标准节点包 sfly-std（ADR 0017）像用户的节点包一样单独上传到真实的控制面，场景锁定它的版本，
 // 真实的 Agent 从控制面安装它（依赖从 PyPI 镜像桩安装，不访问外网）并执行标准节点。
 // 新增标准节点的全栈场景加在这个文件里（各自一个 it）。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { type AddressInfo, createServer } from "node:net";

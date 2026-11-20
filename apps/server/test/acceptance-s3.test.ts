@@ -2,7 +2,6 @@
 // Agent 断线后按重试配置重新派发；超时杀掉进程树；取消时 always 节点照常执行，再次取消则强制终止；
 // 依赖冲突以 env_error 失败且不重试（PyPI 镜像是本地桩）；控制面重启后定时器和运行继续推进。
 // 控制面用手动时钟（租约、Sleep 何时到期由测试决定）；超时与取消宽限由 Agent 按真实时间执行。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

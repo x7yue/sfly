@@ -2,7 +2,6 @@
 // PostgreSQL 的 text 和 jsonb 都不接受 NUL：控制面在网关入口把它换成 U+FFFD（src/gateway/storable.ts），
 // 一条消息写库失败也不能关掉这台 Agent 的流、拖住它上面的其他任务。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL；写库失败用测试库里的触发器制造。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { InstallState } from "@sfly/proto";
 import { actionsApi, agentsApi, logsApi, metricsApi, type RunMetricSummary } from "@sfly/schema";
 import pg from "pg";
