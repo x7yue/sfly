@@ -274,6 +274,19 @@ def actions(ctx: Context, unfinished: bool = False, release_file: str = "") -> N
                     time.sleep(0.05)
 
 
+@node(title="上报数值", outputs=[])
+def report_numbers(ctx: Context, current: str, total: str, price: str) -> None:
+    """数值经过 Agent 保持不变的测试用（#450）：把 current、total 读成浮点数交给 ctx.progress，
+    把 price 读成浮点数作为动作的字段（Python 把它写成字符串）。三个都用字符串传入：
+    只测事件管道，不经过 Agent 读输入的那一步。
+
+    ctx.action 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    ctx.progress(float(current), float(total), "数值")
+    with ctx.action("下单", 价格=float(price)):
+        pass
+
+
 @node(title="最长的动作摘要", outputs=[])
 def actions_max(ctx: Context) -> None:
     """动作摘要最长时的测试用（#356）：正在做的、最近结束的、最近失败的都列满，名称、字段、失败原因都取上限，

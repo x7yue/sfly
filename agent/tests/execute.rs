@@ -6,8 +6,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sfly_agent::proto::{ErrorKind, InstalledPackage, TaskStatus};
-use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task, stub_venv};
+use sfly_agent::proto::{ErrorKind, InstalledPackage, TaskStatus, action_event, agent_message};
+use support::{AgentOptions, FakeControlPlane, NUMBERS, spawn_agent, stub_task, stub_venv};
 
 fn outputs(result: &sfly_agent::proto::TaskResult) -> Value {
     serde_json::from_str(&result.outputs_json).expect("outputs_json is JSON")
@@ -262,25 +262,6 @@ async fn unacknowledged_result_is_reported_again_after_reconnecting() {
     .await;
 }
 
-/// 数值经过 Agent 保持不变（#450）：Agent 把控制面派来的输入写进 task.json、把执行器写的 output.json 交回控制面，
-/// 两处都是「解析再写出」，小数的最后一位不能变。前几个数用默认配置的 serde_json 解析会差一个单位
-/// （例如 7.038531e-26 读成 7.038530999999999e-26），后几个没有这个问题，一并放进来看没有被误伤。
-/// 期望值由 f64 直接写出（最短表示），不经过任何解析，所以解析错了就对不上。
-const NUMBERS: [f64; 12] = [
-    29491.727857142858,
-    7.038531e-26,
-    123456789.12345679,
-    60.157000000000004,
-    1.0715660391465826e-75,
-    -1.81996730402717e-179,
-    -1.603964615428183e143,
-    0.1,
-    60.157,
-    1e-7,
-    5e-324,
-    1.7976931348623157e308,
-];
-
 #[tokio::test]
 async fn numbers_pass_through_the_agent_unchanged_in_both_directions() {
     let cp = FakeControlPlane::start().await;
@@ -303,4 +284,62 @@ async fn numbers_pass_through_the_agent_unchanged_in_both_directions() {
     );
     // 执行器原样返回（Python 的 float 往返是精确的），交回控制面的输出和它写出的是同一批数。
     assert_eq!(result.outputs_json, inputs.to_string());
+}
+
+/// 进度的当前值、总数（双精度数）和动作的字段（字符串）也是这样：事件管道里的这些数 Agent 也用 serde_json 读，
+/// 数值和节点上报的是同一个。
+#[tokio::test]
+async fn numbers_in_progress_and_action_fields_reach_the_control_plane_unchanged() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-event-numbers"));
+    cp.hello(0).await;
+
+    // current、total 是读错就会差一个单位的两个数；price 作为动作的字段，Python 把它写成字符串。
+    let (current, total, price) = (NUMBERS[0], NUMBERS[1], NUMBERS[3]);
+    cp.assign(stub_task(
+        "task-event-numbers",
+        "report_numbers",
+        // 用字符串传入：只测事件管道，不经过 Agent 读输入的那一步（那一步在上面的测试里）。
+        json!({
+            "current": format!("{current:?}"),
+            "total": format!("{total:?}"),
+            "price": format!("{price:?}"),
+        }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-event-numbers").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+
+    let progress: Vec<_> = cp
+        .received()
+        .into_iter()
+        .filter_map(|m| match m.body {
+            Some(agent_message::Body::Progress(p)) if p.task_id == "task-event-numbers" => Some(p),
+            _ => None,
+        })
+        .collect();
+    let [report] = progress.as_slice() else {
+        panic!("应只有一次进度：{progress:?}");
+    };
+    assert_eq!(report.current, current);
+    assert_eq!(report.total, Some(total));
+
+    let fields: Vec<_> = cp
+        .received()
+        .into_iter()
+        .filter_map(|m| match m.body {
+            Some(agent_message::Body::Actions(batch)) if batch.task_id == "task-event-numbers" => {
+                Some(batch.events)
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|event| match event.kind {
+            Some(action_event::Kind::Start(start)) => Some(start.fields),
+            _ => None,
+        })
+        .flatten()
+        .map(|field| (field.key, field.value))
+        .collect();
+    assert_eq!(fields, [("价格".to_string(), format!("{price:?}"))]);
 }
