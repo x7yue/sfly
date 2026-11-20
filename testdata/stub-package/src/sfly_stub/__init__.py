@@ -274,6 +274,13 @@ def actions(ctx: Context, unfinished: bool = False, release_file: str = "") -> N
                     time.sleep(0.05)
 
 
+@node(title="返回不是数的值", outputs=["x"])
+def non_finite_output(ctx: Context, kind: str) -> dict[str, Any]:
+    """返回 NaN 或无穷（kind 是 `nan`、`inf`、`-inf`）：JSON 里没有这些值，
+    任务应该失败并写明原因（#481）。"""
+    return {"x": float(kind)}
+
+
 @node(title="最长的动作摘要", outputs=[])
 def actions_max(ctx: Context) -> None:
     """动作摘要最长时的测试用（#356）：正在做的、最近结束的、最近失败的都列满，名称、字段、失败原因都取上限，

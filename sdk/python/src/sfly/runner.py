@@ -31,7 +31,14 @@ import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from sfly.context import Cancelled, Context, on_sigterm
+from sfly.context import (
+    Cancelled,
+    Context,
+    describe_non_finite,
+    non_finite_name,
+    non_finite_places,
+    on_sigterm,
+)
 from sfly.nodes import NODE_ATTR, Metric, NodeDeclaration, is_context_param
 
 # 执行器每个任务启动一个进程（#76）：从解释器启动到开始导入节点模块的路径上只导入必需的模块，
@@ -119,11 +126,30 @@ def invoke(fn: Callable[..., Any], inputs: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _non_finite_message(outputs: dict[str, Any]) -> str | None:
+    """返回值里有 NaN 或无穷时的错误说明（哪个输出、怎么办）；没有时为 None（原因是别的）。"""
+    places = non_finite_places(outputs)
+    if not places:
+        return None
+    if len(places) == 1:
+        place, number = places[0]
+        what = f"输出 {place} 的值是 {non_finite_name(number)}"
+    else:
+        what = f"输出里有 {len(places)} 处 NaN 或无穷：{describe_non_finite(places)}"
+    advice = "换成 None（表示没有值），或者换成字符串（例如 str(值)）再返回"
+    return f"{what}。JSON 里没有 NaN 和无穷，{advice}"
+
+
 def _encode(outputs: dict[str, Any]) -> str:
     try:
-        text = json.dumps({"status": "success", "outputs": outputs}, ensure_ascii=False)
+        # allow_nan=False：NaN、无穷不写成 `NaN`、`Infinity`（不是合法的 JSON，Agent 读不了这份
+        # 输出，任务会以看不出原因的「执行器异常退出」失败），而是在这里失败，写明是哪个输出。
+        text = json.dumps(
+            {"status": "success", "outputs": outputs}, ensure_ascii=False, allow_nan=False
+        )
     except (TypeError, ValueError) as error:
-        raise NodeOutputError(f"节点返回值不能序列化为 JSON：{error}") from error
+        reason = _non_finite_message(outputs) if isinstance(error, ValueError) else None
+        raise NodeOutputError(f"节点返回值不能序列化为 JSON：{reason or error}") from error
     if len(text.encode("utf-8")) > MAX_OUTPUT_BYTES:
         raise NodeOutputError("节点返回值超过 1 MB 上限")
     return text

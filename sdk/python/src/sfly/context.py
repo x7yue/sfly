@@ -257,6 +257,61 @@ class ArtifactDownloadError(Exception):
     连不上控制面（重试之后仍然失败）。消息里写明是哪一种和产物引用。"""
 
 
+def non_finite_places(value: object) -> list[tuple[str, float]]:
+    """`value`（嵌套的 dict、list、tuple）里的 NaN 和无穷：（位置, 值），按出现的先后。
+    位置写成节点代码里取到它的写法：`ratio`、`stats["items"][2]`。JSON 里没有这些值，
+    返回值、`ctx.notify` 的原始消息里有它们时用来告诉节点作者是哪一个（#481）。"""
+    found: list[tuple[str, float]] = []
+    seen: set[int] = set()
+    # 栈里每一项是（位置，值）；孩子倒着压栈，弹出的顺序就是它们在容器里的先后。
+    stack: list[tuple[str, object]] = [("", value)]
+    while stack:
+        where, item = stack.pop()
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                found.append((where, item))
+        elif isinstance(item, (dict, list, tuple)):
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+            if isinstance(item, dict):
+                children = [
+                    (_place(where, key, top=not where), child) for key, child in item.items()
+                ]
+            else:
+                children = [(f"{where}[{i}]", child) for i, child in enumerate(item)]
+            stack.extend(reversed(children))
+    return found
+
+
+def _place(parent: str, key: object, *, top: bool) -> str:
+    if top and isinstance(key, str) and key.isidentifier():
+        return key
+    return f"{parent}[{json.dumps(key, ensure_ascii=False)}]"
+
+
+def non_finite_name(number: float) -> str:
+    """NaN、无穷在 Python 里的写法，用在错误信息里。"""
+    if math.isnan(number):
+        return "NaN"
+    return "Infinity" if number > 0 else "-Infinity"
+
+
+def describe_non_finite(places: list[tuple[str, float]]) -> str:
+    """`non_finite_places` 的结果写成一句话：`a（NaN）、b[0]（-Infinity）`，
+    超过 5 处时只列前 5 处，后面接「等」。"""
+    listed = "、".join(f"{place}（{non_finite_name(number)}）" for place, number in places[:5])
+    return listed + ("等" if len(places) > 5 else "")
+
+
+def _is_finite(value: object) -> bool:
+    """None 和不是数的值（不在这里管）算有限。"""
+    try:
+        return math.isfinite(value)  # type: ignore[arg-type]
+    except TypeError:
+        return True
+
+
 class _EventWriter:
     """把事件逐行追加写入事件文件；多线程同时写也保证每行完整。"""
 
@@ -657,6 +712,15 @@ class Context:
             if at_all:
                 raise TypeError("ctx.notify 发原始消息时不能用 at_all：要 @所有人，写在消息里")
             content: dict[str, Any] = {"message": message}
+            places = non_finite_places(message)
+            if places:
+                # JSON 里没有 NaN 和无穷：写进事件管道是非法的一行，Agent 读不了，
+                # 通知会悄悄丢掉。
+                self.log.warn(
+                    "ctx.notify 的消息没有发送：原始消息里有 NaN 或无穷（JSON 里没有这些值）：%s",
+                    describe_non_finite(places),
+                )
+                return
         else:
             if not isinstance(text, str):
                 raise TypeError(f"ctx.notify 的 text 必须是字符串，实际为 {text!r}")
@@ -709,7 +773,18 @@ class Context:
         return self._cancel is not None and os.path.exists(self._cancel)
 
     def progress(self, current: float, total: float | None = None, message: str = "") -> None:
-        """上报进度：当前值、总数（未知时省略）和说明。Agent 端合并，每秒最多上报一次。"""
+        """上报进度：当前值、总数（未知时省略）和说明。Agent 端合并，每秒最多上报一次。
+
+        `current`、`total` 是 NaN 或无穷时这一次上报被丢弃，并写一条警告日志（只写一次）：
+        JSON 里没有这些值。"""
+        if not (_is_finite(current) and _is_finite(total)):
+            self._warn_once(
+                "non-finite",
+                "progress",
+                f"ctx.progress 的 current、total 必须是有限数值，实际为 current={current!r}、"
+                f"total={total!r}，已丢弃",
+            )
+            return
         self._events.write(
             {
                 "type": "progress",
