@@ -328,7 +328,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		agent: "agent-a",
 		inputs: {},
 		outputs: null,
-		error: message ? { kind: "node_error", message } : null,
+		error: message ? { kind: "node_error", message, location: null } : null,
 		queued_at: "2026-01-01T00:00:00.000Z",
 		started_at: "2026-01-01T00:00:00.000Z",
 		ended_at,

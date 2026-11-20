@@ -2940,11 +2940,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -15560,11 +15567,18 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "location": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
                               "kind",
-                              "message"
+                              "message",
+                              "location"
                             ]
                           },
                           {
@@ -15643,11 +15657,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -16236,11 +16257,18 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "location": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
                               "kind",
-                              "message"
+                              "message",
+                              "location"
                             ]
                           },
                           {
@@ -16319,11 +16347,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -16912,11 +16947,18 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "location": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
                               "kind",
-                              "message"
+                              "message",
+                              "location"
                             ]
                           },
                           {
@@ -16995,11 +17037,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -17586,11 +17635,18 @@
                                 },
                                 "message": {
                                   "type": "string"
+                                },
+                                "location": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
                                 }
                               },
                               "required": [
                                 "kind",
-                                "message"
+                                "message",
+                                "location"
                               ]
                             },
                             {
@@ -17669,11 +17725,18 @@
                                       },
                                       "message": {
                                         "type": "string"
+                                      },
+                                      "location": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
                                       }
                                     },
                                     "required": [
                                       "kind",
-                                      "message"
+                                      "message",
+                                      "location"
                                     ]
                                   },
                                   {

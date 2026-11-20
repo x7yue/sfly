@@ -1024,7 +1024,11 @@ export class Engine implements AgentSessionHandler {
 		task: TaskRow,
 		kind: ErrorKind,
 		message: string,
-		{ cancelled = false, endOffset }: { cancelled?: boolean; endOffset?: ClockOffset } = {},
+		{
+			cancelled = false,
+			endOffset,
+			location,
+		}: { cancelled?: boolean; endOffset?: ClockOffset; location?: string } = {},
 	): Promise<void> {
 		const ended = { endedAt: step.now, ...endClockOffset(endOffset) };
 		const { run, chain, index, node } = await this.#locate(step.tx, task);
@@ -1048,7 +1052,13 @@ export class Engine implements AgentSessionHandler {
 		}
 		await step.tx
 			.update(tasks)
-			.set({ status: "failed", errorKind: kind, errorMessage: message, ...ended })
+			.set({
+				status: "failed",
+				errorKind: kind,
+				errorMessage: message,
+				errorLocation: location || null,
+				...ended,
+			})
 			.where(eq(tasks.id, task.id));
 		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（docs/SEMANTICS.md §4.1 第 4 条），后面的普通节点记为 stopped。
 		if (!stopped && task.agentName && shouldRetry(node, kind, task.attempt)) {
@@ -1092,6 +1102,7 @@ export class Engine implements AgentSessionHandler {
 			await this.#failTask(step, task, kind, result.error?.message ?? "", {
 				cancelled: result.status === ProtoTaskStatus.CANCELLED,
 				endOffset,
+				location: result.error?.location,
 			});
 			return;
 		}

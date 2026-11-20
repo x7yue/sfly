@@ -6,7 +6,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sfly_agent::proto::{ErrorKind, InstalledPackage, TaskStatus, action_event, agent_message};
+use sfly_agent::proto::{
+    ErrorKind, InstalledPackage, LogLevel, LogSource, TaskStatus, action_event, agent_message,
+};
 use support::{AgentOptions, FakeControlPlane, NUMBERS, spawn_agent, stub_task, stub_venv};
 
 fn outputs(result: &sfly_agent::proto::TaskResult) -> Value {
@@ -74,6 +76,36 @@ async fn node_exception_fails_the_task_with_node_error_and_message() {
         error.message
     );
     assert!(error.message.contains("Traceback"), "{}", error.message);
+
+    // 出错的位置（#471）：桩节点包装在共享 venv 的 site-packages 里，位置照样是节点代码里抛出的那一行；
+    // 堆栈从节点代码开始，没有执行器（sfly/runner.py）的帧。
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../testdata/stub-package/src/sfly_stub/__init__.py"
+    ))
+    .unwrap();
+    let raised = source
+        .lines()
+        .position(|line| line.contains("raise RuntimeError(message)"))
+        .unwrap()
+        + 1;
+    let place = format!("sfly_stub.fail 第 {raised} 行");
+    assert_eq!(error.location, place);
+    let first_frame = error
+        .message
+        .lines()
+        .find(|line| line.starts_with("  File "))
+        .unwrap();
+    assert!(first_frame.contains("sfly_stub"), "{first_frame}");
+    assert!(!error.message.contains("runner.py"), "{}", error.message);
+    // 日志里也有一行（ERROR 级，来源 sdk），`sfly run logs --failed` 只看日志也看得到。
+    let logs = cp.task_logs("task-fail");
+    assert!(
+        logs.iter().any(|line| line.source() == LogSource::Sdk
+            && line.level() == LogLevel::Error
+            && line.text == format!("出错位置：{place}")),
+        "{logs:?}"
+    );
 }
 
 #[tokio::test]

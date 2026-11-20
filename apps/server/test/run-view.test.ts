@@ -198,6 +198,7 @@ describe("运行视图", () => {
 			expect(ended.chains[0]?.nodes.find((n) => n.node_id === "b")?.error).toEqual({
 				kind: "node_error",
 				message: "boom",
+				location: null,
 			});
 			await sse.expectNone(100);
 		});

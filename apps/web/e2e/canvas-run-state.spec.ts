@@ -81,9 +81,19 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 	// 实时更新：verify 第 2 次失败后，卡片与检查器显示失败与错误摘要（不显示堆栈）。
 	await nodeCard(page, "verify").click();
 	await expect(panel.getByTestId("run-attempts")).toHaveText("2");
-	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 还是漏拦\n\nTraceback: stack");
+	await agent.fail(
+		tasks.verify as AssignedTask,
+		"AssertionError: 还是漏拦\n\nTraceback: stack",
+		undefined,
+		undefined,
+		"monitor_demo.verify 第 42 行",
+	);
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "failed");
 	await expect(panel.getByRole("alert")).toContainText("AssertionError: 还是漏拦");
+	// 失败原因下面写出错的位置（节点代码里的那一行，#471）。
+	await expect(panel.getByTestId("run-error-location")).toHaveText(
+		"出错位置：monitor_demo.verify 第 42 行",
+	);
 	await expect(panel).not.toContainText("Traceback");
 	await expect(edge(page, "spawn", "verify")).toHaveAttribute("data-run", "failed");
 

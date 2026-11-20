@@ -43,6 +43,7 @@ import {
 	attemptLabel,
 	DURATION_LABEL,
 	ELAPSED_LABEL,
+	ERROR_LOCATION_LABEL,
 	FOCUS,
 	MESSAGE,
 	MONITOR_DETAIL_LABEL,
@@ -513,6 +514,14 @@ function NodeRunInspector({
 							{view.error.kind}
 						</Badge>
 						<p className="m-0 mt-1.5 break-words text-xs">{errorHeadline(view.error.message)}</p>
+						{view.error.location && (
+							<p
+								data-testid="run-error-location"
+								className="m-0 mt-1 break-words font-mono text-xs text-fg-2"
+							>
+								{ERROR_LOCATION_LABEL}：{view.error.location}
+							</p>
+						)}
 					</div>
 				)}
 				{!view && (

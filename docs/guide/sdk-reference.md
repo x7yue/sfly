@@ -255,6 +255,9 @@ class CheckOutputs(TypedDict):
 
 节点抛出的任何异常都让任务以 `node_error` 失败：错误消息形如 `ValueError: steps 必须大于 0，收到 0`，并附带 traceback。`node_error` 按场景里配置的重试次数重试，每次重试是一个新任务。消息里写清原因和相关参数值。
 
+- **堆栈从节点代码开始**：执行器自己调用节点的那几帧（`sfly/runner.py`，导入节点模块时还有 Python 的导入机制）已经去掉，第一帧就是你的节点函数。只去开头连续的那几帧：异常是在 SDK 里抛出的（例如 `ctx.agent(...).files.download` 失败）时，节点代码之后的 SDK 帧保留，它们说明是哪一次调用失败；异常链（`raise ... from ...`、处理异常时又抛出的）的每一段都这样处理。
+- **出错位置**：失败的错误里（运行视图和接口的 `error.location`、`sfly run show`、运行结束时的摘要、`sfly debug`、`sfly.testing` 的 `error.location`）有一个 `location`，写成 `模块.函数 第 N 行`（和被终止时「执行到」那一行的写法一样），不用翻堆栈就知道改哪一行；日志里也先有一行 ERROR 级的 `出错位置：模块.函数 第 N 行`，`sfly run logs --failed` 看得到。位置是异常经过的栈里**最里面的一帧你自己的代码**（入口模块所在的包，和项目里的辅助模块）：异常从辅助模块里抛出，位置是辅助模块里那一行；异常从 SDK、Python 标准库或**第三方库**里抛出，位置是调用它的那一行节点代码（库里的位置你改不了，不是要找的地方；和被终止时不同，那里停在第三方库里写的是库里的位置）。导入节点模块时失败（语法错误、导入错误），位置是出错的文件和行（`broken.py 第 3 行`）。没有位置的：不是节点自己出错的失败（超时、Agent 失联、返回值不合格等）、取位置时出了错、旧版本的 Agent 或 SDK 上报的、升级之前的任务，`location` 是 `null`。
+
 ## `ctx.log`：日志
 
 ```python
@@ -912,7 +915,7 @@ def test_count_lines(tmp_path: Path) -> None:
 |---|---|
 | `status` | `success`、`failed` 或 `cancelled` |
 | `outputs` | 输出（仅成功时），否则 None |
-| `error` | `NodeError(kind, message, type, traceback)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled` |
+| `error` | `NodeError(kind, message, type, traceback, location)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled`；`location` 是出错的位置（`模块.函数 第 N 行`，见上文「失败」），没有时为 `None` |
 | `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr、sdk，或 system（平台写的提示，例如 `ctx.notify` 发给了不在名单里的机器人） |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |

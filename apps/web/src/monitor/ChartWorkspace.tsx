@@ -18,7 +18,14 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
-import { attemptLabel, DURATION_LABEL, MESSAGE, noDataLabel, PROGRESS_LABEL } from "#/lib/copy";
+import {
+	attemptLabel,
+	DURATION_LABEL,
+	ERROR_LOCATION_LABEL,
+	MESSAGE,
+	noDataLabel,
+	PROGRESS_LABEL,
+} from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { useElementWidth } from "#/lib/use-element-width";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -740,6 +747,15 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 						<Badge variant="danger">{node.error.kind}</Badge>
 						<span className="truncate text-danger-fg">{errorHeadline(node.error.message)}</span>
 					</div>
+					{node.error.location && (
+						<div
+							data-testid="node-error-location"
+							title={node.error.location}
+							className="mt-0.5 truncate font-mono text-xs text-fg-2"
+						>
+							{ERROR_LOCATION_LABEL}：{node.error.location}
+						</div>
+					)}
 				</div>
 			)}
 		</div>

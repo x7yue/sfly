@@ -309,7 +309,7 @@ describe("控制台统计", () => {
 				subflow: false,
 				node_id: "a",
 				attempt: 2,
-				error: { kind: "timeout", message: "等待响应超时" },
+				error: { kind: "timeout", message: "等待响应超时", location: null },
 			});
 		});
 
@@ -334,7 +334,7 @@ describe("控制台统计", () => {
 				subflow_name: "sub",
 				node_id: "s1",
 				attempt: 1,
-				error: { kind: "node_error", message: "校验失败" },
+				error: { kind: "node_error", message: "校验失败", location: null },
 			});
 		});
 
@@ -405,6 +405,7 @@ describe("控制台统计", () => {
 			expect(ended?.status === "failed" && ended.failure?.error).toEqual({
 				kind: "node_error",
 				message: "登录失败：token=******",
+				location: null,
 			});
 		});
 	});

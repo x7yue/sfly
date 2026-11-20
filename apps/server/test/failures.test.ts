@@ -68,7 +68,7 @@ describe("失败处理", () => {
 
 			const a = await api.node(runId, "a");
 			expect(a.status).toBe("failed");
-			expect(a.error).toEqual({ kind, message: "failure 3" });
+			expect(a.error).toEqual({ kind, message: "failure 3", location: null });
 			expect(
 				a.attempts.map((t) => [t.task_id, t.attempt, t.status, t.agent, t.error?.kind]),
 			).toEqual(seen.map((taskId, i) => [taskId, i + 1, "failed", "agent-a", kind]));
@@ -125,7 +125,7 @@ describe("失败处理", () => {
 
 			const a = await api.node(runId, "a");
 			expect(a.attempts).toHaveLength(1);
-			expect(a.error).toEqual({ kind, message: "no" });
+			expect(a.error).toEqual({ kind, message: "no", location: null });
 			expect(await statuses(runId)).toMatchObject({ a: "failed", b: "skipped" });
 			expect((await api.run(runId)).status).toBe("failed");
 		});
@@ -186,7 +186,11 @@ describe("失败处理", () => {
 			await agent.expectNoAssign();
 			const b = await api.node(runId, "b");
 			expect(b.status).toBe("failed");
-			expect(b.error).toEqual({ kind: "config_error", message: "输入 url 应为 string，实际是 42" });
+			expect(b.error).toEqual({
+				kind: "config_error",
+				message: "输入 url 应为 string，实际是 42",
+				location: null,
+			});
 			expect(b.attempts).toHaveLength(1);
 			// 输入已经解析出来：失败的尝试上记着它们，方便看是哪个值不对。
 			expect(b.attempts[0]?.inputs).toEqual({ url: 42 });

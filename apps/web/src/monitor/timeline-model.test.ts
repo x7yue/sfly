@@ -91,7 +91,7 @@ describe("节点的时间线区段", () => {
 					queued_at: at(0),
 					started_at: at(0),
 					ended_at: at(3),
-					error: { kind: "node_error", message: "boom" },
+					error: { kind: "node_error", message: "boom", location: null },
 				}),
 				attempt({
 					task_id: "a2",

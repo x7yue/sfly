@@ -313,7 +313,11 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 		inputs: mask.deep(row.inputs),
 		outputs: mask.deep(row.outputs),
 		error: row.errorKind
-			? { kind: row.errorKind, message: mask.text(row.errorMessage ?? "") }
+			? {
+					kind: row.errorKind,
+					message: mask.text(row.errorMessage ?? ""),
+					location: row.errorLocation === null ? null : mask.text(row.errorLocation),
+				}
 			: null,
 		errorMessage: row.errorMessage === null ? null : mask.text(row.errorMessage),
 		logIssues: row.logIssues,

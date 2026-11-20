@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from sfly.cli.error_headline import error_headline, split_error
+from sfly.cli.error_headline import error_headline, error_location, split_error, with_location
 
 CASES: list[dict[str, Any]] = json.loads(
     (Path(__file__).resolve().parents[3] / "testdata" / "error-headline-cases.json").read_text(
@@ -55,3 +55,50 @@ def test_without_folding_only_the_first_line_is_taken_and_the_rest_keeps_its_ind
 def test_an_empty_message_has_no_headline_and_nothing_left() -> None:
     assert split_error("") == ("", [])
     assert split_error("\n  \n") == ("", [])
+
+
+def test_the_place_goes_after_the_reason_lines_and_before_the_traceback() -> None:
+    lines = (
+        "ValueError: 坏了\n\nTraceback (most recent call last):\n  File x\nValueError: 坏了".split(
+            "\n"
+        )
+    )
+
+    assert with_location(lines, "demo.work 第 12 行") == [
+        "ValueError: 坏了",
+        "出错位置：demo.work 第 12 行",
+        "",
+        "Traceback (most recent call last):",
+        "  File x",
+        "ValueError: 坏了",
+    ]
+
+
+def test_a_message_without_a_traceback_gets_the_place_at_the_end() -> None:
+    assert with_location(["boom"], "demo.work 第 3 行") == ["boom", "出错位置：demo.work 第 3 行"]
+    assert with_location([], "demo.work 第 3 行") == ["出错位置：demo.work 第 3 行"]
+
+
+def test_without_a_place_the_lines_are_unchanged() -> None:
+    lines = ["boom", "", "Traceback (most recent call last):"]
+
+    assert with_location(lines, None) is lines
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            {"kind": "node_error", "message": "x", "location": "demo.work 第 1 行"},
+            "demo.work 第 1 行",
+        ),
+        ({"kind": "node_error", "message": "x", "location": None}, None),
+        ({"kind": "node_error", "message": "x", "location": ""}, None),
+        ({"kind": "node_error", "message": "x"}, None),
+    ],
+    ids=["has-place", "null", "empty", "older-control-plane"],
+)
+def test_the_place_in_an_error_is_none_when_there_is_none(
+    error: dict[str, Any], expected: str | None
+) -> None:
+    assert error_location(error) == expected

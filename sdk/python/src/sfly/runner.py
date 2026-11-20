@@ -25,6 +25,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import signal
 import sys
 import typing
@@ -205,6 +206,129 @@ def _terminated_at(error: BaseException) -> str | None:
     return f"{place} 第 {lineno} 行"
 
 
+def _in_site_packages(filename: str, dirs: tuple[list[str], list[str], list[str]]) -> bool:
+    """文件装在第三方库的目录里（site-packages、dist-packages）。"""
+    path = _normalized(filename)
+    return any(_under(path, d) for d in dirs[2]) or any(
+        part in ("site-packages", "dist-packages") for part in path.split(os.sep)
+    )
+
+
+def _node_packages(entry: str, package: str | None) -> set[str]:
+    """节点包自己的顶层模块名：入口模块的顶层名，加上节点包（task.json 的 `package`）这个发行版
+    装进来的所有顶层模块。节点包装在 Agent 共享 venv 的 site-packages 里，靠它分得出节点自己的代码
+    和第三方库。"""
+    names = {entry.partition(":")[0].partition(".")[0]}
+    if package:
+        try:
+            from importlib import metadata
+
+            def normalized(name: str) -> str:
+                return re.sub(r"[-_.]+", "-", name).lower()
+
+            wanted = normalized(package)
+            for top, dists in metadata.packages_distributions().items():
+                if any(normalized(d) == wanted for d in dists):
+                    names.add(top)
+        except Exception:  # noqa: BLE001 - 取不到发行版信息时只认入口模块的顶层名
+            pass
+    return names
+
+
+def _is_node_code(
+    filename: str,
+    module: str,
+    own: set[str],
+    dirs: tuple[list[str], list[str], list[str]],
+) -> bool:
+    """这一帧是节点项目自己的代码：不是 SDK 或标准库，也不是第三方库。
+
+    没有文件的帧（`<string>`）看不出来历，按节点代码算。装在 site-packages 里的帧，只有顶层模块是
+    节点包自己的才算（节点包装在 Agent 的共享 venv 里，和第三方库在同一个目录）；不在 site-packages
+    里的（本地调试从源码目录运行、`sfly dev` 的可编辑安装）都是节点自己的。
+    """
+    if _is_runtime_frame(filename, dirs):
+        return False
+    if not filename or filename.startswith("<") or not _in_site_packages(filename, dirs):
+        return True
+    return module.partition(".")[0] in own
+
+
+def _place(module: str, function: str, lineno: int | None) -> str:
+    place = module if function == "<module>" else f"{module}.{function}"
+    return f"{place} 第 {lineno} 行"
+
+
+def _failed_at(error: BaseException, entry: str, package: str | None = None) -> str | None:
+    """节点失败时出错的位置：节点代码里的那一行，写成「模块.函数 第 N 行」（和被终止时同一种写法）。
+
+    取异常经过的栈里最里面的一帧节点自己的代码（见 `_is_node_code`）。异常从 SDK、标准库里抛出时，
+    报的是调用它的那一行节点代码；**从第三方库里抛出时也是**：失败时人要改的是自己的代码，库里的位置
+    改不了，也不是要找的地方。这一点和被终止时（`_terminated_at`）不同：终止时停在哪就是哪，
+    停在第三方库里就报库里的位置。
+
+    导入节点模块时语法错误：栈里没有出错的那个文件（编译在导入机制里失败），位置取异常自己带的文件和行。
+    栈里没有节点代码、异常也没有位置时（执行器自己出的错）是 None。
+    """
+    import traceback
+
+    dirs = _runtime_dirs()
+    own = _node_packages(entry, package)
+    if isinstance(error, SyntaxError) and error.filename and error.lineno:
+        stem = os.path.basename(error.filename).partition(".")[0]
+        if _is_node_code(error.filename, stem, own, dirs):
+            return f"{os.path.basename(error.filename)} 第 {error.lineno} 行"
+    found = None
+    for frame, lineno in traceback.walk_tb(error.__traceback__):
+        code = frame.f_code
+        module = str(frame.f_globals.get("__name__") or "")
+        if _is_node_code(code.co_filename, module, own, dirs):
+            found = (module or os.path.basename(code.co_filename), code, lineno)
+    if found is None:
+        return None
+    module, code, lineno = found
+    return _place(module, getattr(code, "co_qualname", code.co_name), lineno)
+
+
+def _strip_leading_runtime_frames(
+    exc: Any, dirs: tuple[list[str], list[str], list[str]], *, importing: bool
+) -> None:
+    """去掉这一段异常的堆栈里开头连续的执行器帧（SDK、标准库）：堆栈从节点代码那一帧开始。
+
+    只去开头的：异常是在 SDK 里抛出的（`ctx.agent(...).files.download` 失败）时，节点代码之后的
+    SDK 帧保留，它们说明是哪一次调用失败。整段栈都是执行器的帧时不动（执行器自己出的错，
+    要看它在哪出的）；
+    只有导入节点模块时（`importing`）失败的例外：入口模块找不到、有语法错误时栈里全是导入机制的帧，
+    都去掉，异常信息本身（语法错误带着出错的文件和行）已经说明了原因。异常链（`raise ... from ...`、
+    处理异常时又抛出的）和异常组里的每一段各自处理。
+    """
+    seen: set[int] = set()
+    pending = [exc]
+    while pending:
+        part = pending.pop()
+        if part is None or id(part) in seen:
+            continue
+        seen.add(id(part))
+        stack = part.stack
+        leading = next(
+            (i for i, f in enumerate(stack) if not _is_runtime_frame(f.filename, dirs)),
+            len(stack) if importing else 0,
+        )
+        del stack[:leading]
+        pending.extend(
+            [part.__cause__, part.__context__, *(getattr(part, "exceptions", None) or [])]
+        )
+
+
+def _format_failure(error: BaseException, *, importing: bool = False) -> str:
+    """节点失败的堆栈：和 `traceback.format_exc()` 一样，只是开头连续的执行器帧去掉了。"""
+    import traceback
+
+    exc = traceback.TracebackException.from_exception(error)
+    _strip_leading_runtime_frames(exc, _runtime_dirs(), importing=importing)
+    return "".join(exc.format())
+
+
 def _termination_message(error: BaseException) -> str:
     """被终止时写进日志的那一行。找不到执行到哪时只写原因：这条路径在信号处理之后，不能再抛异常。"""
     text = str(error) or "任务被终止"
@@ -215,19 +339,25 @@ def _termination_message(error: BaseException) -> str:
     return f"{text}，执行到 {place}" if place else text
 
 
-def _info(message: str) -> None:
-    """往事件管道写一行 INFO 日志（和节点里的 `ctx.log.info` 一样，来源是 sdk）；没有事件管道、
+def _log(level: str, message: str) -> None:
+    """往事件管道写一行日志（和节点里的 `ctx.log` 一样，来源是 sdk）；没有事件管道、
     写不进去时丢弃：写日志失败不能让任务丢掉 output.json。"""
     try:
-        Context().log.info(message)
+        Context().log(message, level=level)
     except Exception:  # noqa: BLE001 - 同上
         pass
 
 
+def _info(message: str) -> None:
+    _log("info", message)
+
+
 def run(task: Mapping[str, Any]) -> tuple[int, str]:
     """执行任务，返回 (退出码, output.json 内容)。"""
+    importing = True  # 还在导入节点模块：失败的堆栈里全是导入机制的帧时一并去掉
     try:
         fn = load_entry(str(task["entry"]))
+        importing = False
         return 0, _encode(invoke(fn, task.get("inputs") or {}))
     except InputError as error:
         # 配置错误：不是节点出错，没有堆栈可看，错误信息就是原因，不往标准错误写（ERROR 级的日志）。
@@ -239,22 +369,33 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             raise
         import traceback
 
-        tb = traceback.format_exc()
+        place = None
         if isinstance(error, Cancelled):
             # 取消、超时、被停止子流程节点停止：正常终止，不是节点出错。标准错误来源的日志是
             # ERROR 级，不往那里写堆栈；只在事件管道里留一行 INFO，写明停在哪。被终止已经由任务状态
             # （已停止、已取消、超时）表达，这一行只是记录，不是需要处理的问题，所以不用 WARN。
+            tb = traceback.format_exc()
             _info(_termination_message(error))
         else:
+            # 堆栈从节点代码那一帧开始。出错的位置先于堆栈写进日志（一行 ERROR）：
+            # `sfly run logs --failed` 只看日志也看得到，不用翻堆栈。整理堆栈、取位置都不能让失败
+            # 丢掉原因：出了错就用完整的堆栈、不写位置。
+            try:
+                tb = _format_failure(error, importing=importing)
+                place = _failed_at(error, str(task.get("entry") or ""), task.get("package"))
+            except Exception:  # noqa: BLE001 - 位置只是附带的信息
+                tb, place = traceback.format_exc(), None
+            if place:
+                _log("error", f"出错位置：{place}")
             sys.stderr.write(tb)
-        failure = {
-            "status": "failed",
-            "error": {
-                "type": type(error).__name__,
-                "message": "".join(traceback.format_exception_only(type(error), error)).strip(),
-                "traceback": tb,
-            },
+        failure_error = {
+            "type": type(error).__name__,
+            "message": "".join(traceback.format_exception_only(type(error), error)).strip(),
+            "traceback": tb,
         }
+        if place:
+            failure_error["location"] = place
+        failure = {"status": "failed", "error": failure_error}
         return 1, json.dumps(failure, ensure_ascii=False)
 
 
