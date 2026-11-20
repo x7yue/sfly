@@ -37,10 +37,10 @@ def write(repo: Path, name: str, text: str = DECISION) -> None:
     (repo / "docs" / "adr" / name).write_text(text, encoding="utf-8")
 
 
-def check(repo: Path, base_ref: str | None = None) -> subprocess.CompletedProcess[str]:
+def check(repo: Path, base_ref: str | None = None, **env: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(repo / "scripts" / "check-adr-numbers.sh")],
-        env=ENV if base_ref is None else {**ENV, "ADR_BASE_REF": base_ref},
+        env={**ENV, **env} if base_ref is None else {**ENV, **env, "ADR_BASE_REF": base_ref},
         capture_output=True,
         text=True,
     )
@@ -238,3 +238,200 @@ def test_without_origin_main_clean_tree_passes_with_one_line_notice(work: Path) 
 
     assert result.returncode == 0
     assert result.stderr.count("\n") == 1
+
+
+# 第三条规则：新 ADR 写了取代、推翻、修订某份旧 ADR，旧 ADR 末尾要追加一行指向它。
+
+
+# Python 会把 C 语言环境改成 UTF-8 再传给子进程；明确设回 C：
+# macOS 的 grep 在 C 语言环境里按字节匹配汉字，正则写法不对就匹配不上（或多匹配）。
+C_LOCALE = {"LC_ALL": "C", "LC_CTYPE": "C", "LANG": "C"}
+
+
+def supersede(
+    work: Path, body: str, name: str = "0003-third.md", **env: str
+) -> subprocess.CompletedProcess[str]:
+    write(work, name, f"# 新的决定\n\n{body}\n")
+    commit(work, "new adr")
+    return check(work, **env)
+
+
+@pytest.mark.parametrize("verb", ["取代", "取代了", "推翻", "推翻了", "修订", "修订了"])
+def test_new_adr_that_replaces_an_old_one_without_a_pointer_fails(work: Path, verb: str) -> None:
+    result = supersede(work, f"本决定{verb} ADR 0001 中的做法。")
+
+    assert result.returncode == 1
+    # 位置：新 ADR 的文件和行号，旧 ADR 的文件；怎么改：在旧 ADR 末尾追加指向新编号的一行。
+    assert "docs/adr/0003-third.md:3" in result.stderr
+    assert "docs/adr/0001-first.md" in result.stderr
+    assert "ADR 0003" in result.stderr
+    assert "末尾追加一行" in result.stderr
+    assert "不加指针" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "sentence", ["本决定取代 ADR 0001。", "本决定取代了 ADR 0001 和 ADR 0002。"]
+)
+def test_the_sentence_is_found_whatever_the_locale(work: Path, sentence: str) -> None:
+    write(work, "0003-third.md", f"# 新的决定\n\n{sentence}\n")
+    commit(work, "new adr")
+
+    result = check(work, **C_LOCALE)
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+
+
+def test_pointer_appended_to_the_old_adr_makes_it_pass(work: Path) -> None:
+    write(work, "0001-first.md", DECISION + "\n已被 ADR 0003 取代。\n")
+
+    assert supersede(work, "本决定取代 ADR 0001 中的做法。").returncode == 0
+
+
+def test_pointer_may_say_which_part_is_replaced_and_sit_in_any_appended_line(work: Path) -> None:
+    write(work, "0001-first.md", DECISION + "\n## 修订\n\n- 其中第二段已被 ADR 0003 取代。\n")
+
+    assert supersede(work, "本决定修订了 ADR 0001 的第二段。").returncode == 0
+
+
+def test_pointer_to_a_different_adr_does_not_count(work: Path) -> None:
+    write(work, "0001-first.md", DECISION + "\n已被 ADR 0002 取代。\n")
+
+    result = supersede(work, "本决定取代 ADR 0001 中的做法。")
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["**ADR 0001**", "「ADR 0001」", "[ADR 0001](0001-first.md)", "**[ADR 0001](0001-first.md)**"],
+)
+def test_the_old_adr_may_be_written_with_markdown_around_it(work: Path, target: str) -> None:
+    result = supersede(work, f"本决定取代 {target} 中的做法。")
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "沿用 ADR 0001 的做法。",
+        "见 ADR 0001。",
+        "与 ADR 0001 一致，ADR 0002 里的理由不变。",
+        "ADR 0001 的结论不受影响，本决定不取代 ADR 0001。",
+        "并不推翻 ADR 0001，也没有修订 ADR 0002。",
+        "取代了旧的做法，见 ADR 0001。",
+    ],
+)
+def test_plain_references_and_negations_do_not_need_a_pointer(work: Path, body: str) -> None:
+    assert supersede(work, body).returncode == 0
+
+
+@pytest.mark.parametrize("env", [{}, C_LOCALE], ids=["utf8", "c-locale"])
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "本决定不会取代 ADR 0001。",
+        "本决定无意取代 ADR 0001。",
+        "本决定不是要推翻 ADR 0001。",
+        "本决定并非修订 ADR 0001。",
+        "本决定没有取代 ADR 0001。",
+        "本决定不打算修订 ADR 0001 的结论。",
+        "这里绝不推翻 ADR 0001。",
+    ],
+)
+def test_a_negation_a_few_words_before_the_verb_is_not_a_supersede(
+    work: Path, sentence: str, env: dict[str, str]
+) -> None:
+    assert supersede(work, sentence, **env).returncode == 0
+
+
+@pytest.mark.parametrize("env", [{}, C_LOCALE], ids=["utf8", "c-locale"])
+def test_a_negation_in_an_earlier_clause_does_not_excuse_the_sentence(
+    work: Path, env: dict[str, str]
+) -> None:
+    result = supersede(work, "ADR 0001 不够用了，本决定取代 ADR 0001 中的做法。", **env)
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+
+
+@pytest.mark.parametrize("separator", ["，", ","])
+def test_a_comma_ends_the_list_of_old_adrs(work: Path, separator: str) -> None:
+    result = supersede(work, f"本决定修订 ADR 0001{separator}ADR 0002 不受影响。")
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+    assert "docs/adr/0002-second.md" not in result.stderr
+
+
+def test_the_enumeration_comma_still_lists_several_old_adrs(work: Path) -> None:
+    result = supersede(work, "本决定取代 ADR 0001、ADR 0002 里的做法。")
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+    assert "docs/adr/0002-second.md" in result.stderr
+
+
+def test_a_pointer_already_at_the_end_of_the_old_adr_in_the_merge_base_counts(
+    origin: Path, work: Path
+) -> None:
+    # 指针在更早合入的提交里就加到了旧 ADR 末尾：合并基点之后没有追加行，也不能说「没有指针」。
+    write(origin, "0001-first.md", DECISION + "\n已被 ADR 0003 取代。\n")
+    commit(origin, "pointer first")
+    git(work, "fetch", "origin")
+    git(work, "merge", "-q", "origin/main")
+
+    assert supersede(work, "本决定取代 ADR 0001 中的做法。").returncode == 0
+
+
+def test_every_old_adr_named_in_one_sentence_needs_its_pointer(work: Path) -> None:
+    write(work, "0001-first.md", DECISION + "\n已被 ADR 0003 取代。\n")
+
+    result = supersede(work, "本决定取代 ADR 0001 和 ADR 0002 里的做法。")
+
+    assert result.returncode == 1
+    assert "docs/adr/0002-second.md" in result.stderr
+    assert "docs/adr/0001-first.md" not in result.stderr
+
+
+def test_new_adr_replacing_another_new_adr_of_the_same_branch_needs_no_pointer(work: Path) -> None:
+    write(work, "0003-third.md", "# 先写的决定\n\n第一段。\n")
+    commit(work, "first draft")
+
+    assert supersede(work, "本决定取代 ADR 0003 中的做法。", "0004-fourth.md").returncode == 0
+
+
+def test_a_reason_in_the_new_adr_lets_a_sentence_through(work: Path) -> None:
+    reason = "只取代其中一句措辞，旧决定本身仍然有效"
+    body = f"本决定取代 ADR 0001 中的做法。\n\n<!-- 不加指针 ADR 0001：{reason} -->"
+
+    assert supersede(work, body).returncode == 0
+
+
+@pytest.mark.parametrize("env", [{}, C_LOCALE], ids=["utf8", "c-locale"])
+def test_the_exception_needs_a_reason_and_names_the_adr(work: Path, env: dict[str, str]) -> None:
+    for marker in ("<!-- 不加指针 ADR 0001： -->", "<!-- 不加指针 ADR 0002：别的原因 -->"):
+        result = supersede(work, f"本决定取代 ADR 0001 中的做法。\n\n{marker}", **env)
+
+        assert result.returncode == 1, marker
+        git(work, "reset", "--hard", "HEAD~1")
+
+
+def test_adr_that_was_already_accepted_with_such_a_sentence_is_not_checked(
+    origin: Path, tmp_path: Path
+) -> None:
+    write(origin, "0003-old.md", "# 旧决定\n\n本决定取代 ADR 0001 中的做法。\n")
+    commit(origin, "accept")
+    clone = tmp_path / "work3"
+    subprocess.run(
+        ["git", "clone", str(origin), str(clone)], env=ENV, check=True, capture_output=True
+    )
+
+    assert check(clone).returncode == 0
+
+
+def test_sentence_naming_an_adr_that_does_not_exist_is_not_this_checks_business(work: Path) -> None:
+    assert supersede(work, "本决定取代 ADR 0099 中的做法。").returncode == 0

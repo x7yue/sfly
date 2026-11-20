@@ -3,7 +3,8 @@
 # 给 Agent 下发 SDK，见 apps/server/src/sdk/sdk-wheels.ts；API 客户端和控制面同版本，ADR 0022）。
 #
 #   version.sh show            列出各文件里的版本号
-#   version.sh check [vX.Y.Z]  各文件版本号一致（给出 tag 时还要与 tag 一致），否则失败
+#   version.sh check [vX.Y.Z]  各文件版本号一致（给出 tag 时还要与 tag 一致，并且发版性能报告
+#                              docs/perf/X.Y.Z/report.json 已提交、版本号与 tag 一致），否则失败
 #   version.sh set X.Y.Z       改写全部版本号，并刷新 Cargo.lock 和 uv.lock
 #
 # 只支持 X.Y.Z：预发布版本在 Cargo（0.2.0-rc.1）和 Python（0.2.0rc1）里的写法不同，
@@ -34,9 +35,35 @@ read_versions() {
 
 cmd_show() { read_versions; }
 
+# 发版前必跑性能测试（docs/agents/branching-and-release.md「发版」）：在 release/X.Y.Z 分支上 `pnpm perf --release`，
+# 通过后它把报告存进 docs/perf/X.Y.Z/。0.4.0 漏过一次，所以发版的 tag 检查要求这份报告已经提交、版本号对得上。
+check_perf_report() {
+	local version=$1 report=docs/perf/$1/report.json found
+	if [[ ! -f $report ]]; then
+		echo "$report 不存在：发版前必须跑性能测试。在 release/$version 分支上提交版本号之后运行 pnpm perf --release（约 10 分钟），" >&2
+		echo "把存进去的 docs/perf/$version/ 提交进发版 PR；不通过时先修复再重跑（docs/agents/branching-and-release.md「发版」）。" >&2
+		exit 1
+	fi
+	# shellcheck disable=SC2016 # 单引号里是 JS 代码
+	if ! found=$(node -e '
+		const report = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+		process.stdout.write(String(report?.version?.sfly ?? ""));
+	' "$report" 2>/dev/null); then
+		echo "$report 不是 JSON，读不出 version.sfly：它由 pnpm perf --release 写入，不要手动修改或从别处复制（docs/perf/README.md）。" >&2
+		exit 1
+	fi
+	if [[ $found != "$version" ]]; then
+		echo "$report 的 version.sfly 是 '$found'，应为 '$version'：这不是 $version 的发版性能报告。" >&2
+		echo "在 release/$version 分支上提交之后运行 pnpm perf --release，重新生成 docs/perf/$version/（不要手动修改或从别处复制）。" >&2
+		exit 1
+	fi
+}
+
 cmd_check() {
-	local expected=${1:-}
-	if [[ -n $expected ]]; then
+	# 给了参数（哪怕是空串）就按 tag 检查：空的 tag 要报错，不能退化成不带参数的日常检查。
+	local expected=${1:-} tagged=
+	if (($#)); then
+		tagged=1
 		expected=${expected#refs/tags/}
 		if [[ ! ${expected#v} =~ $SEMVER || $expected != v* ]]; then
 			echo "tag 必须是 vX.Y.Z：$expected" >&2
@@ -60,6 +87,7 @@ cmd_check() {
 		echo "版本号必须是 X.Y.Z：$expected" >&2
 		exit 1
 	fi
+	[[ -z $tagged ]] || check_perf_report "$expected"
 	echo "$expected"
 }
 
@@ -92,7 +120,7 @@ cmd_set() {
 
 case ${1:-} in
 show) cmd_show ;;
-check) cmd_check "${2:-}" ;;
+check) shift; cmd_check "$@" ;;
 set) cmd_set "${2:-}" ;;
 *)
 	echo "用法：version.sh show | check [vX.Y.Z] | set X.Y.Z" >&2

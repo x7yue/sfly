@@ -1,6 +1,5 @@
 // 验收场景 S1 数据流（docs/SEMANTICS.md §8）：真实的控制面、两个真实的 Rust Agent、真实的 SDK 执行器和桩节点包。
 // 入口参数传递；跨 Agent 引用上游输出；产物上传和引用；A 启动进程 → B 失败 → C（always）清理进程。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { chainOf, isAlive, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
 import { agentBinary } from "./support/agent-binary.js";

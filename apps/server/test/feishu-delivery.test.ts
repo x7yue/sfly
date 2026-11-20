@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：投递的可靠性（#230，ADR 0020）：退避重试、限速、积压、截断、重启续投、机器人删除后丢弃，
 // 以及管理页要显示的「最近一次投递」和「积压条数」。
 // HTTP API + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。

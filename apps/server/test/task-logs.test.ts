@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：任务日志与进度（#10）。假 Agent 经 gRPC 上报 LogBatch / Progress，
 // 通过 HTTP（运行视图）和 SSE（/tasks/:id/logs/events、/runs/:id/events）观察。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

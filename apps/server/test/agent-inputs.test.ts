@@ -3,7 +3,6 @@
 // （子流程里经异步任务节点传入的也一样）；
 // 已注册但不在线不阻断。派发时控制面把被引用的 Agent 的名称、地址、端口随任务下发，地址在派发时解析；
 // 节点收到的参数值仍是名称。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
