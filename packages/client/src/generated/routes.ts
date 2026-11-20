@@ -110,6 +110,7 @@ export interface Api {
 					id: string;
 				};
 				query?: {
+					/** 已经读到的修订号（明细分页响应里的 `rev`）：只推送它之后的写入。 */
 					after?: number;
 				};
 			},
@@ -145,10 +146,12 @@ export interface Api {
 		updateNow: Endpoint<
 			{
 				params: {
+					/** Agent 名称。 */
 					name: string;
 				};
 			},
 			{
+				/** 被终止的任务：它们以 agent_lost 失败，按重试配置重新排队。 */
 				terminated_tasks: RunningTaskView[];
 			}
 		>;
@@ -168,6 +171,7 @@ export interface Api {
 			{
 				task_id: string;
 				artifacts: ArtifactView[];
+				/** 已过保留期：数据已被清理。 */
 				expired: boolean;
 			}
 		>;
@@ -179,7 +183,9 @@ export interface Api {
 		download: Download<
 			{
 				params: {
+					/** 任务 id。 */
 					id: string;
+					/** 产物的名称（上传时的路径，可以带 `/` 分隔的目录）。 */
 					"*": string;
 				};
 			}
@@ -216,7 +222,9 @@ export interface Api {
 		create: Endpoint<
 			{
 				body: {
+					/** 机器人名称：全局唯一，创建后不能改。 */
 					name: FeishuBotName;
+					/** 飞书自定义机器人的 Webhook 地址（相当于一个凭据，响应里是打码的）。 */
 					webhook_url: FeishuWebhookUrl;
 				};
 			},
@@ -231,9 +239,11 @@ export interface Api {
 		replaceWebhook: Endpoint<
 			{
 				params: {
+					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
 				body: {
+					/** 新的 Webhook 地址（相当于一个凭据，响应里是打码的）。 */
 					webhook_url: FeishuWebhookUrl;
 				};
 			},
@@ -249,10 +259,12 @@ export interface Api {
 		references: Endpoint<
 			{
 				params: {
+					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
 			},
 			{
+				/** 引用这个机器人的场景（最新版本里的飞书通知节点、「飞书机器人」类型的输入，以及运行通知设置），按场景名排序。 */
 				scenarios: FeishuBotScenario[];
 			}
 		>;
@@ -264,6 +276,7 @@ export interface Api {
 		remove: Endpoint<
 			{
 				params: {
+					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
 			},
@@ -278,6 +291,7 @@ export interface Api {
 		test: Endpoint<
 			{
 				params: {
+					/** 机器人名称（登记时起的，创建后不能改）。 */
 					name: string;
 				};
 			},
@@ -311,6 +325,7 @@ export interface Api {
 					id: string;
 				};
 				query?: {
+					/** 已经读到的最大序号（分页响应的 `last_seq`）：只推送它之后写入的行。 */
 					after_seq?: string;
 				};
 			},
@@ -376,8 +391,11 @@ export interface Api {
 					id: string;
 				};
 				query?: {
+					/** 实时流的起点：最新一页的 `live_after`，断线重连时是上一个事件的 ID。 */
 					after?: string;
+					/** 只看这些节点的日志，写法 `链路实例 ID:节点 ID,节点 ID;…`；不给是全部节点，给空字符串是没有节点。 */
 					nodes?: RunLogNodesParam;
+					/** 只要这些级别的日志，逗号分隔（例如 `warn,error`）；不给是全部级别。 */
 					level?: string;
 				};
 			},
@@ -457,6 +475,7 @@ export interface Api {
 			},
 			{
 				orchestrations: OrchestrationSummary[];
+				/** 已归档场景的总数（不受其他筛选影响）。 */
 				archived_count: number;
 			}
 		>;
@@ -504,7 +523,9 @@ export interface Api {
 					id: string;
 				};
 				body: {
+					/** 场景文档：入口、节点、连线、锁定的节点包版本等（格式见 sfly-platform skill 和 orchestration-document 的 JSON Schema）。 */
 					document: OrchestrationDocumentInput;
+					/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 					base_version: number;
 				};
 			},
@@ -522,6 +543,7 @@ export interface Api {
 				};
 			},
 			{
+				/** 全部版本（不含文档），按版本号从新到旧。 */
 				versions: VersionSummaryView[];
 			}
 		>;
@@ -533,7 +555,9 @@ export interface Api {
 		version: Endpoint<
 			{
 				params: {
+					/** 场景 id。 */
 					id: string;
+					/** 版本号，从 1 开始。 */
 					number: string;
 				};
 			},
@@ -548,7 +572,9 @@ export interface Api {
 		restoreVersion: Endpoint<
 			{
 				params: {
+					/** 场景 id。 */
 					id: string;
+					/** 版本号，从 1 开始。 */
 					number: string;
 				};
 			},
@@ -562,7 +588,9 @@ export interface Api {
 		create: Endpoint<
 			{
 				body: {
+					/** 场景名称。 */
 					name: string;
+					/** 场景说明（可以是空的）。 */
 					description?: string;
 				};
 			},
@@ -591,9 +619,13 @@ export interface Api {
 					id: string;
 				};
 				body: {
+					/** 新名称。 */
 					name?: string;
+					/** 新说明。 */
 					description?: string;
+					/** 运行通知设置，只写要改的项。 */
 					run_notification?: RunNotificationChanges;
+					/** 关注项：整份替换（空数组即清空）。 */
 					focus_items?: FocusItemInput[];
 				};
 			},
@@ -664,6 +696,7 @@ export interface Api {
 		get: Endpoint<
 			{
 				params: {
+					/** 节点包名。 */
 					name: PackageName;
 				};
 			},
@@ -677,7 +710,9 @@ export interface Api {
 		version: Endpoint<
 			{
 				params: {
+					/** 节点包名。 */
 					name: PackageName;
+					/** 版本号。 */
 					version: string;
 				};
 			},
@@ -691,8 +726,11 @@ export interface Api {
 		nodeType: Endpoint<
 			{
 				params: {
+					/** 节点包名。 */
 					name: PackageName;
+					/** 版本号。 */
 					version: string;
+					/** 节点类型名。 */
 					node: NodeName;
 				};
 			},
@@ -753,7 +791,9 @@ export interface Api {
 		update: Endpoint<
 			{
 				params: {
+					/** 场景 id。 */
 					id: string;
+					/** 运行预设的 id。 */
 					presetId: string;
 				};
 				body: PresetChanges;
@@ -770,7 +810,9 @@ export interface Api {
 		copy: Endpoint<
 			{
 				params: {
+					/** 场景 id。 */
 					id: string;
+					/** 运行预设的 id。 */
 					presetId: string;
 				};
 				body: {
@@ -788,7 +830,9 @@ export interface Api {
 		remove: Endpoint<
 			{
 				params: {
+					/** 场景 id。 */
 					id: string;
+					/** 运行预设的 id。 */
 					presetId: string;
 				};
 			},
@@ -851,7 +895,9 @@ export interface Api {
 			{
 				/** 0 表示还没有版本。 */
 				version: number;
+				/** 入口参数的声明（名称、类型、默认值、是否必填），触发表单按它生成。 */
 				params: ParamDeclView[];
+				/** 不能触发的原因；空数组表示可以触发。 */
 				problems: PreflightProblem[];
 				/** 不阻断触发、但值得留意的配置（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到了它）；没有版本、已归档时为空。 */
 				warnings: PreflightProblem[];
@@ -958,8 +1004,11 @@ export interface Api {
 		health: Endpoint<
 			{},
 			{
+				/** 控制面整体：`ok` 或 `unavailable`（数据库不可用时返回 503，响应体形状相同）。 */
 				status: "ok" | "unavailable";
+				/** 数据库连得上吗。 */
 				database: "ok" | "unavailable";
+				/** 控制面的当前时间（控制面时间）。 */
 				time: Timestamp;
 			}
 		>;

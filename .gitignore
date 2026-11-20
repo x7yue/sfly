@@ -26,6 +26,8 @@ Thumbs.db
 *.log
 logs/
 !/apps/server/src/logs/
+# 评测集题目用的日志是题目的一部分（evals/assistant/tasks/<题>/fixtures/）。
+!/evals/assistant/tasks/*/fixtures/*.log
 tmp/
 # sfly debug / sfly.testing 的本地运行目录（例如 std/.sfly）
 .sfly/

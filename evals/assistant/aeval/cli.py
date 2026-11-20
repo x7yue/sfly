@@ -1,0 +1,401 @@
+"""命令行入口：`./aeval.sh <命令>`，见 README.md。"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import Counter
+from datetime import date, datetime
+from pathlib import Path
+
+from aeval import docker as d
+from aeval import probe, toolcheck, transcript
+from aeval.env import (
+    DATA_HOME,
+    DEFAULT_SERVER_IMAGE,
+    DEFAULT_WORKBENCH_IMAGE,
+    EVALS_DIR,
+    OPT,
+    Stack,
+)
+from aeval.models import Model, load_models
+from aeval.offline import pack
+from aeval.report import arm_of, load_records, render
+from aeval.session import EndpointDown, prepare_pi, run_session, versions
+from aeval.tasks import summarize
+from aeval.tasks.registry import TASKS
+
+
+def _stack(args: argparse.Namespace) -> Stack:
+    stack = Stack(
+        slot=args.slot,
+        server_image=getattr(args, "server_image", DEFAULT_SERVER_IMAGE),
+        workbench_image=getattr(args, "workbench_image", DEFAULT_WORKBENCH_IMAGE),
+        mirror_mode="serve" if getattr(args, "offline", False) else "record",
+        internal=getattr(args, "isolated", False),
+        fake_model=getattr(args, "fake_model", False),
+    )
+    if getattr(args, "cache", None):
+        stack.cache_dir = args.cache.resolve()
+    if getattr(args, "pypi_mirror", None):
+        stack.pypi_mirror = args.pypi_mirror
+    if getattr(args, "github_mirror", None):
+        stack.github_mirror = args.github_mirror
+    return stack
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="aeval.sh", description="sfly 助手评测集")
+    parser.add_argument("--slot", type=int, default=1, help="环境槽位，同时跑会话时用不同的槽位")
+    sub = parser.add_subparsers(dest="command", required=True)
+    up = sub.add_parser("up", help="起一套环境")
+    up.add_argument("--server-image", default=DEFAULT_SERVER_IMAGE)
+    up.add_argument("--workbench-image", default=DEFAULT_WORKBENCH_IMAGE)
+    up.add_argument("--offline", action="store_true", help="镜像站只用缓存，不向上游取（离线环境）")
+    up.add_argument(
+        "--isolated",
+        action="store_true",
+        help="容器网络不通外网和宿主机（验证离线包），同时起假的模型端点",
+    )
+    up.add_argument("--fake-model", action="store_true", help="起假的模型端点（只验证流程）")
+    up.add_argument(
+        "--cache", type=Path, help="镜像站的缓存目录，默认 ~/.local/share/sfly/evals/mirror-cache"
+    )
+    up.add_argument("--pypi-mirror", help="用已有的 PyPI 镜像（例如内网的），不用自带的镜像站")
+    up.add_argument("--github-mirror", help="用已有的 GitHub Release 镜像，不用自带的镜像站")
+    sub.add_parser("down", help="删掉这个槽位的全部容器、网络和卷")
+    sub.add_parser("reset", help="把环境恢复到刚起好的状态")
+    seed = sub.add_parser("seed", help="重置环境并准备一道题的初始状态")
+    seed.add_argument("task")
+    grade = sub.add_parser("grade", help="给环境里当前的状态判分")
+    grade.add_argument("task")
+    ref = sub.add_parser("reference", help="在当前状态上应用参考答案")
+    ref.add_argument("task")
+    check = sub.add_parser("selfcheck", help="判分自检：参考答案满分，什么都不做零分")
+    check.add_argument("tasks", nargs="*")
+    run = sub.add_parser("run", help="跑会话：每个模型、每道题各跑若干次，判分并保存记录")
+    run.add_argument("--task", action="append", required=True, help="题目 id，可以重复")
+    run.add_argument("--model", action="append", required=True, help="模型配置里的模型名，可以重复")
+    run.add_argument("--repeat", type=int, default=1)
+    run.add_argument(
+        "--arm",
+        action="append",
+        choices=["a", "b"],
+        help="对照实验的臂：a 工具在本地执行（默认），b 工具经能力端口在开发环境里执行；可以重复",
+    )
+    run.add_argument("--max-turns", type=int, default=40)
+    run.add_argument("--max-seconds", type=float, default=1200)
+    run.add_argument("--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>")
+    run.add_argument("--budget", type=int, default=40, help="这次最多跑多少次会话，超过就停")
+    run.add_argument(
+        "--fill",
+        action="store_true",
+        help="--repeat 是目标次数，结果目录里已有的有效会话算进去（中途停下后接着跑）",
+    )
+    run.add_argument(
+        "--cap",
+        action="append",
+        help="会话上限，按臂分开：`臂=N`（例如 a=37），或 `N` 给每个臂；结果目录里这一臂已有的会话"
+        "（作废的也算）到了 N 就不再跑这一臂",
+    )
+    camp = sub.add_parser(
+        "campaign",
+        help="一个新模型的全部会话：第一轮、过线补跑、对照实验的两臂；重跑同一条命令接着跑",
+    )
+    camp.add_argument("--model", required=True)
+    camp.add_argument(
+        "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-<模型>"
+    )
+    camp.add_argument("--budget", type=int, default=40, help="第一轮和臂 A 补跑的会话上限")
+    camp.add_argument("--budget-b", type=int, default=40, help="臂 B 的会话上限")
+    camp.add_argument("--max-turns", type=int, default=40)
+    camp.add_argument("--max-seconds", type=float, default=1200)
+    pack_cmd = sub.add_parser("pack", help="生成离线包（镜像、评测目录、镜像站缓存）")
+    pack_cmd.add_argument("out", type=Path, help="离线包放在哪个目录")
+    pack_cmd.add_argument("--server-image", default=DEFAULT_SERVER_IMAGE)
+    pack_cmd.add_argument("--workbench-image", default=DEFAULT_WORKBENCH_IMAGE)
+    pack_cmd.add_argument("--cache", type=Path, help="镜像站的缓存目录")
+    trans = sub.add_parser("transcript", help="把一次会话压成便于阅读的文字")
+    trans.add_argument("session", type=Path, help="会话目录")
+    trans.add_argument("--lines", type=int, default=8, help="每个工具结果显示几行")
+    tc = sub.add_parser(
+        "toolcheck", help="工具自检：假的模型端点照剧本调用四个工具，对比臂 A 和臂 B"
+    )
+    tc.add_argument(
+        "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-toolcheck"
+    )
+    pr = sub.add_parser(
+        "probe", help="「循环在工作台里」的配置下，模型能不能改 pi 的设置、会话文件，读到令牌"
+    )
+    pr.add_argument("--model", required=True)
+    pr.add_argument(
+        "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-probe"
+    )
+    mem = sub.add_parser("memory", help="量 pi 进程（RPC 模式）空闲和工作时的内存")
+    mem.add_argument("--model", required=True)
+    mem.add_argument("--repeat", type=int, default=3)
+    mem.add_argument(
+        "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-memory"
+    )
+    report = sub.add_parser("report", help="把结果目录汇总成 Markdown 表格")
+    report.add_argument("results", type=Path)
+    args = parser.parse_args(argv)
+    if args.command == "transcript":
+        print(transcript.render(args.session, args.lines))
+        return 0
+    if args.command == "report":
+        print(render(args.results))
+        return 0
+    stack = _stack(args)
+    if args.command == "pack":
+        args.out.mkdir(parents=True, exist_ok=True)
+        print(pack(stack, args.out.resolve()))
+        return 0
+    if args.command == "up":
+        stack.up()
+    elif args.command == "down":
+        stack.down()
+    elif args.command == "reset":
+        stack.reset()
+    elif args.command == "seed":
+        task = TASKS[args.task]
+        stack.reset()
+        task.seed(stack)
+    elif args.command == "reference":
+        TASKS[args.task].apply_reference(stack)
+    elif args.command == "grade":
+        result = summarize(TASKS[args.task].grade(stack))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["passed"] else 1
+    elif args.command == "run":
+        return run_many(stack, args)
+    elif args.command == "campaign":
+        return campaign(stack, args)
+    elif args.command == "toolcheck":
+        results = args.results or DATA_HOME / f"{date.today().isoformat()}-toolcheck"
+        results.mkdir(parents=True, exist_ok=True)
+        return toolcheck.run(stack, results, EVALS_DIR)
+    elif args.command == "probe":
+        results = args.results or DATA_HOME / f"{date.today().isoformat()}-probe"
+        # 假的模型端点照剧本把每件事都试一遍：看配置允许什么，不看模型愿不愿意做。
+        text = "AEVAL-PROBE：照剧本试一遍。" if args.model == "fake" else probe.prompt_text()
+        record = probe.run(stack, load_models()[args.model], results, text)
+        print(json.dumps(record, ensure_ascii=False, indent=2))
+    elif args.command == "memory":
+        results = args.results or DATA_HOME / f"{date.today().isoformat()}-memory"
+        print(
+            json.dumps(
+                memory(stack, load_models()[args.model], args.repeat, results), ensure_ascii=False
+            )
+        )
+    elif args.command == "selfcheck":
+        return selfcheck(stack, args.tasks or list(TASKS))
+    return 0
+
+
+def memory(stack: Stack, model: Model, repeat: int, results: Path) -> dict[str, object]:
+    """在开发环境容器里起 pi 的 RPC 进程，量空闲和一轮提示时的内存。
+
+    用题目「写」的初始状态（带两份 skill），和真实会话的启动条件一样。
+    """
+    stack.reset()
+    TASKS["write"].seed(stack)
+    prepare_pi(stack, model)
+    task = TASKS["write"]
+    samples = []
+    for _ in range(repeat):
+        out = d.sh(
+            stack.dev,
+            f"python3 {OPT}/pi_memory.py --cwd {task.workspace} "
+            f"--provider aeval --model {model.model_id}",
+            env={"PI_TELEMETRY": "0"},
+            timeout=600,
+        )
+        samples.append(json.loads(out.stdout.strip().splitlines()[-1]))
+    record: dict[str, object] = {"model": model.name, "samples": samples}
+    results.mkdir(parents=True, exist_ok=True)
+    (results / f"memory-{model.name}.json").write_text(
+        json.dumps(record, ensure_ascii=False, indent=2)
+    )
+    return record
+
+
+def selfcheck(stack: Stack, ids: list[str]) -> int:
+    """每道题：什么都不做判分应为 0 分，应用参考答案后判分应为满分，
+    参考答案之后再改坏一处原有内容应为 0 分（「不许破坏」的检查能判出来）。"""
+    failed = 0
+    for task_id in ids:
+        task = TASKS[task_id]
+        for label, apply, want in (
+            ("什么都不做", None, 0.0),
+            ("参考答案", task.apply_reference, 1.0),
+            ("破坏了原有内容", task.apply_breakage, 0.0),
+        ):
+            stack.reset()
+            task.seed(stack)
+            if apply is not None:
+                apply(stack)
+            result = summarize(task.grade(stack))
+            ok = result["score"] == want and result["passed"] == (want == 1.0)
+            failed += not ok
+            print(
+                f"{'通过' if ok else '不通过'}  {task_id}  {label}："
+                f"得分 {result['score']}（应为 {want}）",
+                flush=True,
+            )
+            if not ok:
+                for c in result["checks"]:
+                    print(
+                        f"    [{c['kind']}] {'✓' if c['passed'] else '✗'} {c['name']}  "
+                        f"{c['detail'][:300]}"
+                    )
+    return 1 if failed else 0
+
+
+def existing(results: Path) -> Counter[tuple[str, str, str]]:
+    """结果目录里已有的有效会话数，按（题目、模型、臂）计。"""
+    return Counter(
+        (r["task"], r["model"], arm_of(r)) for r in load_records(results) if not r.get("invalid")
+    )
+
+
+def plan_sessions(
+    tasks: list[str],
+    models: list[str],
+    arms: list[str],
+    repeat: int,
+    have: Counter[tuple[str, str, str]] | None = None,
+) -> list[tuple[str, str, int, str]]:
+    """要跑的会话：每个（题目、模型、臂）跑到 repeat 次；给了 have 时已有的有效会话也算进去。
+
+    两臂交替：同一道题的同一次重复，臂 A 和臂 B 挨着跑。上游的状态随时间变，先跑完一臂再跑另一臂
+    会把这种变化算到臂的头上。
+    """
+    plan = []
+    for i in range(repeat):
+        for model in models:
+            for task in tasks:
+                for arm in arms:
+                    if have is not None and i < have[(task, model, arm)]:
+                        continue
+                    plan.append((task, model, i, arm))
+    return plan
+
+
+def parse_caps(values: list[str] | None, arms: list[str]) -> dict[str, int]:
+    """--cap 的值：`N`（给每个臂）或 `臂=N`（例如 a=37），可以重复。"""
+    caps: dict[str, int] = {}
+    for value in values or []:
+        arm, _, number = value.rpartition("=")
+        for target in [arm] if arm else arms:
+            caps[target] = int(number)
+    return caps
+
+
+def run_many(stack: Stack, args: argparse.Namespace) -> int:
+    results: Path = args.results or DATA_HOME / date.today().isoformat()
+    have = existing(results) if args.fill else None
+    arms = args.arm or ["a"]
+    plan = plan_sessions(args.task, args.model, arms, args.repeat, have)
+    if not plan:
+        print("计划是空的：要的会话都已经有了", flush=True)
+        return 0
+    if len(plan) > args.budget:
+        print(f"计划 {len(plan)} 次会话，超过上限 {args.budget}，没有开始")
+        return 2
+    caps = parse_caps(args.cap, arms)
+    return run_plan(stack, plan, results, args.max_turns, args.max_seconds, caps)
+
+
+def run_plan(
+    stack: Stack,
+    plan: list[tuple[str, str, int, str]],
+    results: Path,
+    max_turns: int,
+    max_seconds: float,
+    caps: dict[str, int] | None = None,
+) -> int:
+    """依次跑计划里的会话。模型端点出故障时停下（返回 1），用 --fill 重跑会从停下的地方接着跑。
+
+    caps：每个臂的会话上限，按结果目录里这个臂已有的会话（作废的也算）数，每跑一次之前都查；
+    一个臂到了上限，它剩下的会话不跑，另一个臂照常；全部因为上限没跑完时返回 3。
+    """
+    capped = False
+    models = load_models()
+    results.mkdir(parents=True, exist_ok=True)
+    info = {
+        **versions(stack),
+        "server_image": stack.server_image,
+        "max_turns": max_turns,
+        "max_seconds": max_seconds,
+    }
+    (results / "run-info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2))
+    for task_id, model_name, i, arm in plan:
+        if caps and arm in caps:
+            used = sum(1 for r in load_records(results) if arm_of(r) == arm)
+            if used >= caps[arm]:
+                if not capped:
+                    print(
+                        f"臂 {arm} 到了会话上限 {caps[arm]}（已用 {used} 次），不再跑这一臂",
+                        flush=True,
+                    )
+                capped = True
+                continue
+        label = f"{model_name}-b" if arm == "b" else model_name
+        try:
+            record = run_session(
+                stack,
+                TASKS[task_id],
+                models[model_name],
+                results,
+                max_turns=max_turns,
+                max_seconds=max_seconds,
+                session_id=f"{task_id}-{label}-{i + 1}-{datetime.now().strftime('%H%M%S')}",
+                arm=arm,
+            )
+        except EndpointDown as error:
+            print(error, flush=True)
+            return 1
+        driver = record["driver"]
+        if record["invalid"]:
+            print(
+                f"{record['session']}：模型端点出了故障，这次会话作废，后面的会话不再跑", flush=True
+            )
+            return 1
+        verdict = (
+            "通过"
+            if record["grade"]["passed"]
+            else f"不通过（{(record['failure'] or {}).get('primary')}）"
+        )
+        print(
+            f"{record['session']}：{verdict}，得分 {record['grade']['score']}，"
+            f"{driver.get('turns')} 轮，{driver.get('wall_seconds')} 秒，"
+            f"内存峰值 {driver.get('pi_peak_rss_mib')} MiB",
+            flush=True,
+        )
+    return 3 if capped else 0
+
+
+ROUND_TASKS = ["write", "fix", "orchestrate", "cross"]
+
+
+def campaign(stack: Stack, args: argparse.Namespace) -> int:
+    """拿到一个新模型后要跑的全部会话，一条命令跑完；中途停下（模型端点故障）后重跑同一条命令接着跑。
+
+    1. 第一轮：每道题 3 次（臂 A）；
+    2. 对照实验：每道题臂 A、臂 B 各 5 次，两臂交替跑（臂 A 沿用第一轮的）。
+    过线检查（「写」「修」的 2/3 和 4/5）在 report 里给出。两份上限分开算：臂 A 算 --budget，
+    臂 B 算 --budget-b，都按结果目录里已有的会话（作废的也算）每跑一次之前检查。
+    """
+    results: Path = args.results or DATA_HOME / f"{date.today().isoformat()}-{args.model}"
+    model = args.model
+    caps = {"a": args.budget, "b": args.budget_b}
+    first = plan_sessions(ROUND_TASKS, [model], ["a"], 3, existing(results))
+    if first:
+        code = run_plan(stack, first, results, args.max_turns, args.max_seconds, caps)
+        if code:
+            return code
+    rest = plan_sessions(ROUND_TASKS, [model], ["a", "b"], 5, existing(results))
+    code = run_plan(stack, rest, results, args.max_turns, args.max_seconds, caps) if rest else 0
+    print(render(results))
+    return code

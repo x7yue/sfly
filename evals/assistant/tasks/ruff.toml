@@ -1,0 +1,7 @@
+# 题目里的节点包源码和看不到的断言属于各自的节点包（sfly init 生成的项目）：
+# 在那里 sfly 是第三方包，节点包自己的模块是第一方。按那边的规则排 import，复制进去以后不用再改。
+extend = "../../../pyproject.toml"
+
+[lint.isort]
+known-first-party = ["svc_logs", "svc_probe"]
+known-third-party = ["sfly"]

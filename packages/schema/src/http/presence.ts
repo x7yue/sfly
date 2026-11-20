@@ -15,23 +15,34 @@ export const OnlineEditorView = z.object({
 /** 在线编辑者名单（心跳的响应、SSE 的 `editors` 事件）。 */
 export const EditorsEvent = z.object({
 	orchestration_id: z.string(),
+	/** 当前在线的编辑者，每个打开着编辑页面的标签页一项。 */
 	editors: z.array(OnlineEditorView),
 });
 
+/** 场景 id。 */
 const IdParams = z.object({ id: z.string() });
 /** 每次打开编辑页面随机生成的会话 ID：同一昵称在多个标签页打开时互不覆盖。 */
-const SessionBody = z.object({ session_id: z.string().trim().min(1).max(200) });
+const SessionBody = z.object({
+	/** 这个标签页的会话 ID（浏览器每次打开编辑页面随机生成）。 */
+	session_id: z.string().trim().min(1).max(200),
+});
 
 export const presenceApi = {
 	/** 心跳（需要昵称请求头）；场景不存在时 404。返回当前名单。 */
 	heartbeat: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presence",
+		summary: "编辑页面的心跳：登记在线编辑者，返回当前名单",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: false,
 		key: ["presence", "heartbeat"],
 		params: IdParams,
 		body: SessionBody,
-		response: z.object({ editors: z.array(OnlineEditorView) }),
+		response: z.object({
+			/** 当前在线的编辑者，每个打开着编辑页面的标签页一项。 */
+			editors: z.array(OnlineEditorView),
+		}),
 	}),
 	/**
 	 * 主动离开（204，没有响应体）：浏览器关闭页面时用 keepalive 请求发出，不要求昵称
@@ -40,6 +51,9 @@ export const presenceApi = {
 	leave: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presence/leave",
+		summary: "编辑页面主动离开，移除这个在线编辑者",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: false,
 		key: ["presence", "leave"],
 		params: IdParams,
@@ -49,6 +63,9 @@ export const presenceApi = {
 	/** 名单的实时推送（SSE）：连上时先发一次，之后名单变化时再发（事件 `editors`）。 */
 	events: stream({
 		path: "/orchestrations/:id/presence/events",
+		summary: "实时推送一个场景的在线编辑者名单",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: false,
 		params: IdParams,
 		events: { editors: EditorsEvent },

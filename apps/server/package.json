@@ -33,6 +33,7 @@
 		"@sfly/client": "workspace:*",
 		"@types/node": "^26.0.0",
 		"@types/pg": "^8.23.1",
+		"ajv": "^8.20.0",
 		"drizzle-kit": "^0.31.11",
 		"esbuild": "0.28.2",
 		"typescript": "^6.0.2",
