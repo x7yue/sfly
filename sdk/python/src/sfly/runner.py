@@ -28,7 +28,7 @@ import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from sfly.context import Context, on_sigterm
+from sfly.context import Cancelled, Context, on_sigterm
 from sfly.nodes import NODE_ATTR, Metric, NodeDeclaration, is_context_param
 
 # 执行器每个任务启动一个进程（#76）：从解释器启动到开始导入节点模块的路径上只导入必需的模块，
@@ -96,6 +96,42 @@ def _encode(outputs: dict[str, Any]) -> str:
     return text
 
 
+def _terminated_at(error: BaseException) -> str:
+    """任务被终止时执行到哪：节点代码里被打断的那一行，写成「模块.函数 第 N 行」。
+
+    取异常经过的栈里最里面、不在 sfly 包里的一帧：停在 SDK 里（等待 Agent、下载产物）时报调用它的
+    节点代码；都在 sfly 包里时报最里面一帧。
+    """
+    import traceback
+
+    sdk_dir = os.path.dirname(os.path.abspath(__file__)) + os.sep
+    frames = list(traceback.walk_tb(error.__traceback__))
+    if not frames:
+        return "没有栈信息"
+    frame, lineno = next(
+        (
+            (f, n)
+            for f, n in reversed(frames)
+            if not os.path.abspath(f.f_code.co_filename).startswith(sdk_dir)
+        ),
+        frames[-1],
+    )
+    code = frame.f_code
+    module = frame.f_globals.get("__name__") or os.path.basename(code.co_filename)
+    function = getattr(code, "co_qualname", code.co_name)
+    place = module if function == "<module>" else f"{module}.{function}"
+    return f"{place} 第 {lineno} 行"
+
+
+def _warn(message: str) -> None:
+    """往事件管道写一行 WARN 日志（和节点里的 `ctx.log.warn` 一样，来源是 sdk）；没有事件管道、
+    写不进去时丢弃：写日志失败不能让任务丢掉 output.json。"""
+    try:
+        Context().log.warn(message)
+    except OSError:
+        pass
+
+
 def run(task: Mapping[str, Any]) -> tuple[int, str]:
     """执行任务，返回 (退出码, output.json 内容)。"""
     try:
@@ -107,7 +143,12 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
         import traceback
 
         tb = traceback.format_exc()
-        sys.stderr.write(tb)
+        if isinstance(error, Cancelled):
+            # 取消、超时、被停止子流程节点停止：正常终止，不是节点出错。标准错误来源的日志是
+            # ERROR 级，不往那里写堆栈；只在事件管道里留一行 WARN，写明停在哪。
+            _warn(f"{error or '任务被终止'}，执行到 {_terminated_at(error)}")
+        else:
+            sys.stderr.write(tb)
         failure = {
             "status": "failed",
             "error": {

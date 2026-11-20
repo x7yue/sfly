@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sfly_agent::proto::{CancelTask, TaskStatus, server_message};
-use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task};
+use support::{AgentOptions, FakeControlPlane, assert_quiet_termination, spawn_agent, stub_task};
 
 fn alive(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -86,6 +86,8 @@ async fn cancelled_task_sees_the_cancel_marker_and_terminates_gracefully() {
     assert_eq!(wait_for_file(&report).await, "cancelled");
     assert!(agent.work_dir.path().join("task-cancel/cancel").exists());
     assert_all_gone(&[pid]).await;
+    // 取消是正常终止：日志里没有 ERROR 级的堆栈，只有一行 WARN 写明被终止。
+    assert_quiet_termination(&cp.task_logs("task-cancel"));
 }
 
 #[tokio::test]

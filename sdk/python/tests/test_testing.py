@@ -340,6 +340,27 @@ def test_simulated_cancel_raises_cancelled_in_the_node_and_finally_runs(tmp_path
     assert report.read_text() == "cancelled"
 
 
+def test_a_cancelled_node_logs_one_warn_line_and_no_error_level_traceback(
+    tmp_path: Path,
+) -> None:
+    from sfly_stub import wait_cancel
+
+    ready = tmp_path / "ready"
+    result = run_node(
+        wait_cancel,
+        {"ready_file": str(ready), "report_file": str(tmp_path / "report")},
+        cancel_when=lambda partial: ready.exists(),
+    )
+
+    assert result.status == "cancelled"
+    # 标准错误来源的日志是 ERROR 级：被取消不是节点出错，不往那里写堆栈。
+    assert [line for line in result.logs if line.level == "error"] == []
+    assert not any("Traceback" in line.message for line in result.logs)
+    [terminated] = [line for line in result.logs if "被终止" in line.message]
+    assert (terminated.source, terminated.level) == ("sdk", "warn")
+    assert terminated.message.startswith("任务被终止（SIGTERM），执行到 sfly_stub.wait_cancel 第 ")
+
+
 def test_cancel_kills_a_node_that_ignores_sigterm_once_the_grace_period_ends(
     tmp_path: Path,
 ) -> None:

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sfly_agent::proto::{ErrorKind, TaskStatus};
-use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task};
+use support::{AgentOptions, FakeControlPlane, assert_quiet_termination, spawn_agent, stub_task};
 
 fn alive(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -61,6 +61,9 @@ async fn timed_out_task_has_its_process_tree_killed_and_fails_with_timeout() {
     let pids = pids(&pid_file);
     assert_eq!(pids.len(), 2);
     assert_all_gone(&pids).await;
+    // 超时是 Agent 发 SIGTERM 终止的，节点里收到 Cancelled：日志里没有 ERROR 级的堆栈，
+    // 只有一行 WARN 写明被终止。
+    assert_quiet_termination(&cp.task_logs("task-timeout"));
 }
 
 #[tokio::test]

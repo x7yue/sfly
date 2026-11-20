@@ -17,8 +17,9 @@ use std::time::Duration;
 
 use sfly_agent::proto::agent_gateway_server::{AgentGateway, AgentGatewayServer};
 use sfly_agent::proto::{
-    Ack, AgentMessage, AgentUpdate, AssignTask, Hello, InstallState, InstallStatus, ServerMessage,
-    TaskAction, TaskDisposition, TaskResult, Welcome, agent_message, server_message,
+    Ack, AgentMessage, AgentUpdate, AssignTask, Hello, InstallState, InstallStatus, LogLevel,
+    LogLine, ServerMessage, TaskAction, TaskDisposition, TaskResult, Welcome, agent_message,
+    server_message,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -62,6 +63,26 @@ pub async fn wait_until(what: &str, check: impl Fn() -> bool) {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// 任务被取消、超时或被停止子流程节点停止（节点里收到 `Cancelled`）时的日志：正常终止不是节点出错，
+/// 没有 ERROR 级的行、没有堆栈，只有一行不高于 WARN 的记录写明被终止。
+pub fn assert_quiet_termination(logs: &[LogLine]) {
+    let texts: Vec<_> = logs.iter().map(|l| (l.level(), l.text.as_str())).collect();
+    assert!(
+        logs.iter().all(|l| l.level() != LogLevel::Error),
+        "被终止的任务不写 ERROR 级的行：{texts:?}"
+    );
+    assert!(
+        logs.iter().all(|l| !l.text.contains("Traceback")),
+        "被终止的任务不写堆栈：{texts:?}"
+    );
+    let terminated: Vec<_> = logs
+        .iter()
+        .filter(|l| l.text.contains("被终止"))
+        .map(|l| l.level())
+        .collect();
+    assert_eq!(terminated, vec![LogLevel::Warn], "{texts:?}");
 }
 
 /// 收到的一条消息：第几个会话（从 0 开始）+ 消息本身。
@@ -159,6 +180,20 @@ impl FakeControlPlane {
 
     pub fn received_with_session(&self) -> Vec<Received> {
         self.state.received.lock().unwrap().clone()
+    }
+
+    /// 某个任务已收到的全部日志行（按到达顺序）。
+    pub fn task_logs(&self, task_id: &str) -> Vec<LogLine> {
+        self.received()
+            .into_iter()
+            .filter_map(|m| match m.body {
+                Some(agent_message::Body::Logs(batch)) if batch.task_id == task_id => {
+                    Some(batch.lines)
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect()
     }
 
     /// 等到 `pick` 在已收到的消息中找到结果。

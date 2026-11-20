@@ -302,8 +302,12 @@ def test_runs_until_cancelled_without_duration_and_keeps_the_samples(tmp_path: P
     assert time.monotonic() - started < 4  # 收到 SIGTERM 立即结束，不等宽限期
     assert len(values(result, "cpu_percent")) >= 3
     samples = len(values(result, "cpu_percent"))
-    assert [line.message for line in result.logs if line.source == "sdk"] == [
+    *logged, terminated = (line.message for line in result.logs if line.source == "sdk")
+    assert logged == [
         "开始监控：每 0.2 秒采样一次，空间使用率统计 / 所在的文件系统，网卡取合计，磁盘取合计；"
         "一直运行到被停止或取消",
         f"监控结束，共采样 {samples} 次",
     ]
+    # 被取消是正常终止：执行器不写堆栈，只留一行 WARN 写明停在哪。
+    assert terminated.startswith("任务被终止（SIGTERM），执行到 sfly_std.system_monitor.")
+    assert [line.level for line in result.logs if line.level == "error"] == []
