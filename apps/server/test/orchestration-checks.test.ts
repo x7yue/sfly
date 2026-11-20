@@ -1,5 +1,4 @@
 // 切入点 A：保存编排版本时的静态检查（包版本锁定、引用）与节点执行配置。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { strToU8 } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";

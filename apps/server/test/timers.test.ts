@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：定时节点与 Sleep 节点（docs/SEMANTICS.md §5）——持久化定时器、late、不占用 Agent、always、取消、重启。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL；时间只由手动时钟推进，不做真实等待。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

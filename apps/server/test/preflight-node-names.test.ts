@@ -1,6 +1,5 @@
 // 触发前检查（预检和触发时按入口参数的检查）的文案提到节点时写成「显示名称（节点 ID）」（#277）：
 // 节点包要求的 SDK 和 Agent 版本、节点派发到的 Agent、「Agent」类型的输入选的 Agent。飞书机器人见 feishu-bot-inputs.test.ts。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";

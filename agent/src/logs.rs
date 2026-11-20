@@ -1,4 +1,4 @@
-//! 任务日志与进度的转发（docs/ARCHITECTURE.md §5.3）。
+//! 任务日志与进度的转发（docs/ARCHITECTURE.md §5.4）。
 //!
 //! 执行器的标准输出、标准错误（包括继承了它们的子进程）和 SDK 写入的事件管道 `events.fifo`（[`EventsPipe`]，ADR 0015）
 //! 合并成同一条日志流：每行分配任务内递增的序号，批量（约每 100 毫秒一批）以 `LogBatch` 发往控制面。

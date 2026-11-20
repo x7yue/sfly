@@ -2,10 +2,10 @@
 // 异步任务节点触发子流程，主链不等待；子流程嵌套 2 层；子流程失败不影响主链；运行等待所有链结束；
 // 定时节点 late；Sleep 节点；停止子流程节点停止嵌套子流程（被停止的节点收到 Cancelled、finally 照常执行，
 // always 清理照常执行，运行记为成功）。控制面用手动时钟：等待节点什么时候到点由测试决定，不依赖真实等待。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { chainOf, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
 import { agentBinary } from "./support/agent-binary.js";
@@ -287,5 +287,19 @@ describeWithAgent("验收 S2：并行", () => {
 		// 停止子流程节点输出子流程的最终结果，后面的节点可以引用。
 		expect(nodeOf(main, "stop_mon").outputs).toEqual({ status: "success" });
 		expect(nodeOf(main, "report").outputs).toEqual({ text: "监控=success" });
+
+		// 被停止是正常终止，不是节点出错：被停止的监控类节点的日志里没有堆栈、没有 WARN 和 ERROR 级的行
+		// （概览的「其他警告与错误」不会因它出现），只有一行 INFO 写明被终止。
+		for (const node of [nodeOf(mon, "watch"), nodeOf(logs, "tail")]) {
+			const taskId = node.attempts[0]?.task_id ?? "";
+			const page = logsApi.page.response.parse(
+				await api.getJson(`/tasks/${encodeURIComponent(taskId)}/logs`),
+			);
+			expect(page.lines.filter((l) => l.level === "warn" || l.level === "error")).toEqual([]);
+			expect(page.lines.filter((l) => l.text.includes("Traceback"))).toEqual([]);
+			expect(page.lines.filter((l) => l.text.includes("被终止")).map((l) => l.level)).toEqual([
+				"info",
+			]);
+		}
 	}, 120_000);
 });

@@ -8,6 +8,8 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 - 没有任何人可以绕过，包括代理：代理用的是维护者自己的 GitHub 身份，给维护者留的绕过权限代理也能用。
   紧急情况下由维护者在仓库设置里临时停用规则集 `main`，处理完立即恢复。
 - 不要求 PR 基于最新的 `main`：合入后 `main` 上的 CI 仍会运行，发版前要求它通过。
+- 目标是 `main` 的 PR，只在维护者明确说了可以合之后才合入（由维护者自己合，或者他明确让代理合）。没有得到明确的话，
+  让 PR 保持打开，在报告里说明它在等维护者。
 
 ## `dev`（强制）
 
@@ -15,11 +17,18 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 
 - 规则与 `main` 相同（规则集 `dev`）：只能经 PR 以 squash 方式合入，必须通过 `check` 与 `e2e`，没有人可以绕过。
 - 路线图的 PR 都以 `dev` 为目标：`gh pr create --base dev`，从 `origin/dev` 开分支。分支命名不变。
+- 路线图的 PR 合入 `dev` 之前，要有审查者对着任务的验收标准审查通过。审查由负责协调的会话或维护者安排，实现者自己安排的不算：
+  审查者不能是实现者本人，也不能是实现者为这个 PR 起的子代理或别的会话。负责协调的会话是把任务分派给实现者的会话
+  （团队负责人，或 `sfly-implement-spec` 里起实现子代理的那个代理）；自己写这个 PR 的会话不是。
+  - 有负责协调的会话时：由它安排审查者（团队里的另一位成员，或它自己起的子代理，最好是不同的模型），审查结论发给它；
+    检查通过、审查也通过后由它合入，不用等维护者。
+  - 没有负责协调的会话时（单独工作的代理）：不自己安排审查，不自己合。让 PR 保持打开，在报告里向维护者说明它在等审查；
+    维护者安排的审查，结论写成 PR 的评论。
 - **`dev` 合入 `main` 只在维护者明确说了之后进行**，代理不开这个 PR，也不把路线图的分支指向 `main`。
   这期间 `main` 上只做维护者要求的修复，修完把同样的改动作为新的改动用一个 PR 带进 `dev`：两个分支都只允许 squash、要求线性历史，
   不能用合并提交把 `main` 合进 `dev`，squash 也不会让 `main` 上的提交成为 `dev` 的祖先。
 - 合入 `dev` 不会自动关闭 issue：GitHub 的 `Closes #N` 只在合入默认分支时生效。PR 合入 `dev` 后手动关闭对应的 issue，
-  评论里写明「已合入 `dev`（#PR 编号），随 `dev` 进 `main`」。
+  评论里写明「已合入 `dev`（#PR 编号），随 `dev` 进 `main`」，并加上标签 `merged-to-dev`（含义和何时摘掉见 [triage-labels.md](./triage-labels.md)）。
 
 ## 分支命名
 
@@ -34,6 +43,8 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 
 Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面的前缀：`git push -u origin HEAD:<前缀>/<描述>`。
 
+推送前的钩子（`.githooks/pre-push`）检查推送的目标分支名：不是上面表里的前缀（也不是 `main`、`dev`）就拒绝，报错里列出允许的前缀。钩子读这张表的第一列，所以表是唯一的定义：增删前缀改这张表，第一列写成单个 `` `前缀/…` ``（前缀是小写字母、数字和连字符，多余的空白不碍事；不要在一格里写两个前缀、不要给前缀加粗）。钩子读不懂的行会明确报出那一行并拒绝推送，不会悄悄丢掉；`scripts/tests/test_pre_push.py` 逐行核对钩子读到的前缀和表里写的一致。`--no-verify` 能跳过；要硬拦，得在规则集里加分支名规则。
+
 ## CI 什么时候运行
 
 - PR（草稿也算）的每次推送、`main` 和 `dev` 上的每个提交。其他分支上只推送、没有 PR 时不运行：要在合并前验证就开一个草稿 PR，
@@ -43,7 +54,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - `e2e` 在 PR 上先完整跑一遍，再把这个 PR 新增或改动的 `apps/web/e2e/**/*.spec.ts`（含 `visual.spec.ts`）重复运行 2–5 次
   （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 和 `dev` 上的 push 不跑重复这一步。
   这一步失败说明用例不稳定，处理见 CODING_STANDARDS「测试」。
-- 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
+- 推送前的钩子（`.githooks/pre-push`）检查分支名（见「分支命名」），再跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
 - `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。`e2e` 也是汇总：端到端测试分 4 片并行
   （`e2e (1/4)` 到 `e2e (4/4)`），全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
 - CI 失败时先用 `pnpm ci:failures <运行 ID>` 看失败的测试和断言差异，不用下载完整日志。
@@ -57,11 +68,11 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - 让 API 客户端生成的类型（`packages/client/src/generated/`）出现不兼容变化的 PR，另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改。Release 说明把带这个标签的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。
   - 不兼容的变化：删除或改名领域、方法、字段、事件；请求里新增必填的字段，或者可选的字段变成必填；字段的类型变了，或者响应里的枚举多了值（页面里穷举它的代码要跟着改）；响应里去掉字段，或者字段从总有值变成可能为空。只新增方法、可选的请求字段或响应字段不算。
   - 生成的类型提交在仓库里，看 PR 的 diff 里 `packages/client/src/generated/` 的变化来判断。
-- 用 `gh pr merge <编号> --auto --squash` 合入：CI 通过后自动合入并删除分支，不用守着 CI。
+- 用 `gh pr merge <编号> --auto --squash` 合入：先满足目标分支那一节（「`main`（强制）」或「`dev`（强制）」）的合入条件，再开自动合并；CI 通过后自动合入并删除分支，不用守着 CI。
 
 ### 关键路径的改动要贴 `pnpm perf` 结果
 
-性能测试不进 CI（ARCHITECTURE §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
+性能测试不进 CI（docs/ARCHITECTURE.md §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
 把报告的结论、总览和「与发版基线相比变化超过 20% 的数值」贴进 PR 描述。报告在本机结果目录
 （默认 `~/.local/share/sfly/perf/<时间>/report.md`，命令结束时打印路径），每份报告同时与两份基准对比：
 本机上一次（任何 worktree 里跑的都算），以及仓库里 `docs/perf/` 下最近一个版本的发版报告（发版基线）。
@@ -90,7 +101,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 - 完整报告贴在对应 issue 或 PR 的评论里：数值、测量方法、机器（CPU、内存、系统）、提交号、样本量（轮数、每轮次数、时长）。
 - 调研文档（`docs/research/`）只写结论与关键数值，链接到那条评论。
-- 以后还要用的测量脚本整理成 `pnpm perf` 的一项（`apps/server/perf/items/`，ARCHITECTURE §7.6）；一次性的脚本不进仓库，
+- 以后还要用的测量脚本整理成 `pnpm perf` 的一项（`apps/server/perf/items/`，docs/ARCHITECTURE.md §7.6）；一次性的脚本不进仓库，
   但报告里写清楚怎么测的（命令、参数、负载），别人照着能重做。
 - 测量的中间文件和结果不放 `/tmp`（小、重启即清，还会挤满）：放在本机的固定目录，例如 `pnpm perf` 的本机结果目录
   `~/.local/share/sfly/perf/` 旁边自建子目录；也不要只留在会被清理的 worktree 里。
@@ -99,13 +110,13 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 1. 从 `main` 新建 `release/X.Y.Z`，运行 `pnpm release:version set X.Y.Z`，提交并开 PR。
 2. 在这个分支上、提交好之后运行 `pnpm perf --release`（必跑，约 10 分钟：release 构建的 Agent、打包后的控制面与本机
-   PostgreSQL，ARCHITECTURE §7.6）。它与 `pnpm perf` 相同，只是通过后再把报告存进 `docs/perf/X.Y.Z/report.{json,md}`；
+   PostgreSQL，docs/ARCHITECTURE.md §7.6）。它与 `pnpm perf` 相同，只是通过后再把报告存进 `docs/perf/X.Y.Z/report.{json,md}`；
    有未提交的改动、被中断或结论不通过（硬性断言不满足或某项出错）时不存，命令以退出码 1 结束并说明原因。
    不通过时不发版，先修复后重跑。把 `docs/perf/X.Y.Z/` 提交进发版 PR；描述里只贴结论和变化（与发版基线——上一个版本的
    报告——相比变化超过 20% 的数值，变差的说明原因或确认是机器波动），不贴整份报告。确认后合入。
    维护者要求跑长时负载测试时，用 `pnpm perf:soak --release`，存为同一目录下的 `soak.{json,md}`。
 3. 等 `main` 上这个提交的 CI 通过，在它上面打 tag 并推送：`git tag vX.Y.Z <提交> && git push origin vX.Y.Z`。
-4. `.github/workflows/release.yml` 接手：校验版本号、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
+4. `.github/workflows/release.yml` 接手：校验版本号（各处与 tag 一致，`docs/perf/X.Y.Z/report.json` 已提交且版本号一致——没跑性能测试就发不出）、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
    Release 说明里的变更列表从上一个平台版本起算（见下文「变更列表的起点」）。
 
 - 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。

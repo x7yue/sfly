@@ -1,5 +1,4 @@
 // 切入点 A：触发前的预检、运行列表、运行状态的 SSE 推送（#9）。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { FakeAgent, type HelloInit } from "./support/fake-agent.js";

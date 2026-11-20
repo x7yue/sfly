@@ -1,6 +1,6 @@
 # 发版性能报告
 
-每个平台版本发版前跑的性能测试报告（ARCHITECTURE §7.6），随发版 PR 提交，之后的 `pnpm perf` 拿最近一个版本的报告作为「发版基线」对比。
+每个平台版本发版前跑的性能测试报告（docs/ARCHITECTURE.md §7.6），随发版 PR 提交，之后的 `pnpm perf` 拿最近一个版本的报告作为「发版基线」对比。
 
 - `<版本>/report.json`、`<版本>/report.md`：`pnpm perf --release` 的报告；
 - `<版本>/soak.json`、`<版本>/soak.md`：维护者要求跑长时负载测试时，`pnpm perf:soak --release` 的报告。

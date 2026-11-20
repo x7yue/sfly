@@ -87,7 +87,7 @@ export function seriesQuery(runId: string, query: SeriesQuery, finished: boolean
 
 type SeriesKeyVars = { params?: { id?: string }; query?: Partial<SeriesQuery> };
 
-/** 这个运行的序列查询（query key 按 `queryKey()` 的前缀匹配，DESIGN-SYSTEM §8），再按查询参数筛选。 */
+/** 这个运行的序列查询（query key 按 `queryKey()` 的前缀匹配，docs/DESIGN-SYSTEM.md §8），再按查询参数筛选。 */
 const seriesOf = (runId: string, match: (q: Partial<SeriesQuery>) => boolean) => ({
 	// 只给出 params 的 key 是前缀（TanStack Query 按对象部分匹配），不是一次完整的请求，所以不按请求类型检查。
 	queryKey: queryKey(metricsApi.series, { params: { id: runId } } as never),

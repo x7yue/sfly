@@ -2,7 +2,7 @@
 
 sfly 的前端：纯 SPA（TanStack Router + TanStack Query、shadcn/ui on Base UI、Tailwind v4、React Flow），构建产物由控制面在同一端口托管（ADR 0006）。
 
-- 架构与页面：`docs/ARCHITECTURE.md` §7
+- 架构与页面：`docs/ARCHITECTURE.md §7`
 - 设计体系（token、CSS layer、组件清单、状态样式、快捷键注册表、新页面检查清单）：`docs/DESIGN-SYSTEM.md`
 - HTTP 契约：`packages/schema/src/http/contract.ts` 文件头；客户端在 `src/lib/api.ts`、`src/lib/sse.ts`
 

@@ -1,7 +1,6 @@
 // 全栈（#197）：真实的控制面、两台 Rust Agent 和 SDK 执行器。节点用 sfly.AgentName 标注参数（testdata/agent-param-package），
 // 场景里引用入口参数选择另一台 Agent：节点收到的参数值是 Agent 名称，控制面在派发时把那台 Agent 的地址和端口随任务下发，
 // 节点所在的 Agent 用它们连过去（ctx.agent(名称)）；没有注册过的 Agent 在触发时就被拒绝。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { agentsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";

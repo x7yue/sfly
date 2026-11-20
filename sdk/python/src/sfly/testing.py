@@ -70,8 +70,8 @@ def run_node(
     """执行一个节点，等它结束并返回结果。
 
     - `node`：`@node` 声明的函数（必须定义在模块顶层），或入口字符串 `模块:函数`；
-    - `inputs`：节点的输入（JSON 对象），先按节点的类型注解校验，不通过时 `status` 为 failed、
-      `error.kind` 为 config_error，节点不会执行；
+    - `inputs`：节点的输入（JSON 对象），先按节点的类型注解校验，不通过、或有节点没有声明的名字时
+      `status` 为 failed、`error.kind` 为 config_error，节点不会执行；
     - `cancel_when`：执行期间定期以到目前为止的结果调用，返回 True 时取消；
       `cancel_after`：开始后这么多秒取消。取消与平台相同：写取消标记、发 SIGTERM，
       宽限期 `grace` 秒后强制杀掉；

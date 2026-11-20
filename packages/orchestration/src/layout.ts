@@ -18,7 +18,7 @@ import { chainMembers, subflowTree } from "./structure.js";
  * 节点卡片尺寸与子流程区域留白也在这里定义（画布的 geometry.ts 从这里取），保证排出来的区域不重叠。
  */
 
-/** 节点卡片尺寸：矮胶囊，左边一盏站点灯，两行字（DESIGN-SYSTEM §2.3）。 */
+/** 节点卡片尺寸：矮胶囊，左边一盏站点灯，两行字（docs/DESIGN-SYSTEM.md §2.3）。 */
 export const NODE_SIZE = { width: 256, height: 60 } as const;
 
 /** 子流程区域在成员节点外接框之外的留白；上方留出标题行。 */

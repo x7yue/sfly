@@ -1,6 +1,5 @@
 // 全栈冒烟：真实的控制面、真实的 Rust Agent、真实的 SDK 执行器，
 // 在装好桩节点包的共享 venv 中跑通一条两个节点的链，后一个节点引用前一个节点的输出。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -127,6 +126,35 @@ describeWithAgent("全栈冒烟：两个节点的链", () => {
 		expect(node.status).toBe("failed");
 		expect(node.error?.kind).toBe("node_error");
 		expect(node.error?.message).toMatch(/^RuntimeError: 桩节点失败/);
+	}, 60_000);
+
+	it("给节点传一个没有声明的输入：任务以 config_error 失败、不按 retries 重试，信息里有那个名字，没有堆栈", async () => {
+		const api = new ApiClient(cp);
+		const id = await api.orchestrationWith({
+			default_agent: "smoke-agent",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{
+					id: "typo",
+					kind: "package",
+					package: "sfly-stub",
+					node: "echo",
+					inputs: { text: "x", tex: "写错了的名字" },
+					retries: 2,
+				},
+			],
+			edges: [{ from: "entry", to: "typo", kind: "chain" }],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+
+		const runId = await api.triggerOk(id);
+
+		await eventually(async () => expect((await api.run(runId)).status).toBe("failed"), 30_000);
+		const node = await api.node(runId, "typo");
+		expect(node.attempts.map((a) => [a.attempt, a.status, a.error?.kind])).toEqual([
+			[1, "failed", "config_error"],
+		]);
+		expect(node.error?.message).toBe("节点 echo 没有声明输入 tex，它声明的输入有：text");
 	}, 60_000);
 
 	it("超时的任务以 timeout 失败并按 retries 重试；最终失败后普通节点跳过、always 节点照常执行", async () => {

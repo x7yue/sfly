@@ -213,7 +213,7 @@ jobs:
 
   # 前端端到端测试与视觉回归（apps/web/e2e）：在 Playwright 官方镜像中运行，与本机
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
-  # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致。
+  # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致（pnpm lint:node 检查）。
   # PR 上完整的一遍之后，再把这个 PR 新增或改动的 spec 重复运行几次（scripts/e2e-changed.sh）：
   # 不稳定的用例在合入前暴露，而不是之后在 CI 或 main 上随机失败。main 和 dev 上的 push 不跑这一步。
   #

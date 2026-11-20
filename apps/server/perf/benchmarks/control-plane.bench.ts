@@ -1,4 +1,4 @@
-// 基准测试（ARCHITECTURE §7.6）：控制面的指标分段写入与降采样查询耗时（vitest bench）。只在本地运行，不进 CI：
+// 基准测试（docs/ARCHITECTURE.md §7.6）：控制面的指标分段写入与降采样查询耗时（vitest bench）。只在本地运行，不进 CI：
 // `vitest run` 只选 test/**/*.test.ts，基准测试只在 `vitest bench` 下运行；`pnpm perf` 顺带运行并汇总进报告
 // （perf/items/09-bench-control-plane.ts）。需要本机 PostgreSQL（与控制面测试相同，DATABASE_URL）。
 //
@@ -257,7 +257,7 @@ test("带标签的降采样查询", async ({ bench }) => {
 
 test("一张图表的带标签降采样查询", async ({ bench }) => {
 	const one = await seriesQuery(labeledQueryTask, [300], LABELED_METRICS.slice(0, 1));
-	// §7.6「运行监控页的图表」的规模：CHART_SERIES 个序列，即这么多个带标签指标 × 50 个进程。
+	// docs/ARCHITECTURE.md §7.6「运行监控页的图表」的规模：CHART_SERIES 个序列，即这么多个带标签指标 × 50 个进程。
 	const two = await seriesQuery(
 		labeledQueryTask,
 		[300],

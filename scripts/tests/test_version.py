@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -100,3 +101,104 @@ def test_set_rewrites_the_api_client_version_too(repo: Path, rel: str) -> None:
     assert version_sh(repo, "check").returncode == 0
     assert '"name": "@sfly/client"' in (repo / "packages/client/package.json").read_text()
     assert "CLIENT_VERSION" in (repo / "packages/client/src/version.ts").read_text()
+
+
+# 带 tag 的发版检查（release.yml 的 prepare job）多一条：
+# 发版性能报告 docs/perf/X.Y.Z/report.json 已经提交，版本号与 tag 一致
+# （发版前必跑 pnpm perf --release，0.4.0 漏过一次）。不带参数的 check 不看它。
+
+
+def write_perf_report(repo: Path, directory: str, sfly_version: str | None) -> Path:
+    report = repo / "docs/perf" / directory / "report.json"
+    report.parent.mkdir(parents=True)
+    version = {} if sfly_version is None else {"sfly": sfly_version}
+    report.write_text(json.dumps({"schema": 2, "version": version, "ok": True}))
+    return report
+
+
+def test_check_without_a_tag_does_not_look_at_the_perf_report(repo: Path) -> None:
+    assert not (repo / "docs/perf").exists()
+
+    assert version_sh(repo, "check").returncode == 0
+
+
+def test_check_with_the_tag_passes_when_the_perf_report_is_committed(repo: Path) -> None:
+    current = versions(repo)["apps/server/package.json"]
+    write_perf_report(repo, current, current)
+
+    result = version_sh(repo, "check", f"v{current}")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == current
+
+
+def test_check_accepts_the_tag_as_a_full_ref(repo: Path) -> None:
+    current = versions(repo)["apps/server/package.json"]
+    write_perf_report(repo, current, current)
+
+    assert version_sh(repo, "check", f"refs/tags/v{current}").returncode == 0
+
+
+def test_check_with_the_tag_fails_when_the_perf_report_is_missing(repo: Path) -> None:
+    current = versions(repo)["apps/server/package.json"]
+
+    result = version_sh(repo, "check", f"v{current}")
+
+    assert result.returncode == 1
+    assert f"docs/perf/{current}/report.json 不存在" in result.stderr
+    assert "pnpm perf --release" in result.stderr
+    assert result.stdout == ""
+
+
+def test_check_with_the_tag_fails_when_the_report_is_for_another_version(repo: Path) -> None:
+    current = versions(repo)["apps/server/package.json"]
+    write_perf_report(repo, current, "9.9.9")
+
+    result = version_sh(repo, "check", f"v{current}")
+
+    assert result.returncode == 1
+    assert f"docs/perf/{current}/report.json" in result.stderr
+    assert "'9.9.9'" in result.stderr
+    assert f"'{current}'" in result.stderr
+
+
+def test_check_with_the_tag_fails_when_the_report_has_no_version(repo: Path) -> None:
+    current = versions(repo)["apps/server/package.json"]
+    write_perf_report(repo, current, None)
+
+    assert version_sh(repo, "check", f"v{current}").returncode == 1
+
+
+def test_check_with_the_tag_fails_when_the_report_is_not_json(repo: Path) -> None:
+    current = versions(repo)["apps/server/package.json"]
+    write_perf_report(repo, current, current).write_text("not json")
+
+    result = version_sh(repo, "check", f"v{current}")
+
+    assert result.returncode == 1
+    assert f"docs/perf/{current}/report.json" in result.stderr
+
+
+def test_a_perf_report_of_another_version_does_not_stand_in(repo: Path) -> None:
+    current = versions(repo)["apps/server/package.json"]
+    write_perf_report(repo, "0.0.1", "0.0.1")
+
+    result = version_sh(repo, "check", f"v{current}")
+
+    assert result.returncode == 1
+    assert f"docs/perf/{current}/report.json 不存在" in result.stderr
+
+
+def test_a_version_mismatch_is_reported_before_the_perf_report(repo: Path) -> None:
+    result = version_sh(repo, "check", "v9.9.9")
+
+    assert result.returncode == 1
+    assert "版本号是" in result.stderr
+    assert "perf" not in result.stderr
+
+
+def test_an_empty_tag_argument_is_an_error_not_the_plain_check(repo: Path) -> None:
+    result = version_sh(repo, "check", "")
+
+    assert result.returncode == 1
+    assert "tag 必须是 vX.Y.Z" in result.stderr

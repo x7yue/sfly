@@ -7,6 +7,8 @@
 
 - 参数校验：按节点类型的输入 schema 检查必填和类型（与控制面派发前的检查相同，
   packages/orchestration/src/inputs.ts），不通过时以 `config_error` 失败，不启动执行器；
+  输入里有节点没有声明的名字则由执行器在调用节点函数之前拒绝（`sfly.runner`，Agent 上也一样），
+  同样是 `config_error`；
 - 输出上限、指标声明检查、产物引用：由执行器和 `Context` 负责，与 Agent 上完全相同
   （本地没有产物下载地址，产物引用是本地文件路径）；
 - 日志：标准输出 → 来源 stdout、级别 info，标准错误 → 来源 stderr、级别 error，
@@ -187,7 +189,8 @@ class ActionSummary:
 @dataclass(frozen=True)
 class NodeError:
     """失败原因。`kind` 与平台的错误类型相同：`node_error`（节点抛出异常、执行器异常退出）、
-    `config_error`（参数校验失败）；`type` 是节点抛出的异常类名（只有 node_error 有）。"""
+    `config_error`（参数校验失败、输入里有节点没有声明的名字）；`type` 是节点抛出的异常类名
+    （只有 node_error 有）。"""
 
     kind: str
     message: str
@@ -892,8 +895,11 @@ def execute(
     elif isinstance(result, dict) and result.get("status") == "failed":
         failure = result.get("error") or {}
         execution.status = "failed"
+        # 执行器在调用节点之前就拒绝了输入（没有声明的名字）时写 kind: config_error；
+        # 没有 kind、或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
+        kind = "config_error" if failure.get("kind") == "config_error" else "node_error"
         execution.error = NodeError(
-            "node_error",
+            kind,
             str(failure.get("message", "")),
             failure.get("type"),
             str(failure.get("traceback", "")),

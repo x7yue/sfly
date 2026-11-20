@@ -34,9 +34,26 @@ export const runViewFailures = (chains: readonly ChainRunView[]) =>
 		return ended ? Date.parse(ended) : null;
 	});
 
+/** 行首的异常模块路径：小写字母、数字、下划线的名字加点，后面是首字母大写的异常类名，类名之后是冒号或行尾。 */
+const MODULE_PATH = /^(?:[a-z_][a-z0-9_]*\.)+(?=[A-Z][A-Za-z0-9_.]*(?::|$))/;
+/** 堆栈的开头：Python 的 `format_exc()` 在异常信息之后接它，不算异常信息的下一行。 */
+const TRACEBACK = "Traceback (most recent call last)";
+
 /**
- * 错误信息的第一行（之后是堆栈），去掉首尾空白；没有错误信息时是空串。只显示一句错误的地方都按它截：运行监控的页头、
- * 「需要注意」和图表工作区、关注项的失败原因、画布检查器（docs/DESIGN-SYSTEM.md 第 9 节）。
+ * 失败原因的一行：错误信息里第一行有内容的文字，去掉首尾空白和行首的异常模块路径（`sfly_std.assert_.AssertionFailed: x`
+ * 取 `AssertionFailed: x`）；这一行以冒号（半角或全角）结尾、下一行紧接着有内容（不是空行，也不是堆栈的开头）时把下一行接上
+ * （`…不通过：` + `第 1 条：…`），全角冒号后直接接，半角冒号后隔一个空格，只接一行。没有错误信息时是空串。
+ *
+ * 只显示一句错误的地方都按它取：运行监控的页头、「需要注意」和图表工作区、关注项的失败原因、画布检查器
+ * （docs/DESIGN-SYSTEM.md §9）。只管这一行摘要，完整的错误信息原样保留；命令行有一份同样的实现
+ * （`sdk/python/src/sfly/cli/error_headline.py`），两边共用用例表 `testdata/error-headline-cases.json`。
  */
-export const errorHeadline = (message: string | null | undefined): string =>
-	(message ?? "").trim().split("\n")[0]?.trim() ?? "";
+export const errorHeadline = (message: string | null | undefined): string => {
+	const lines = (message ?? "").split(/\r\n|\r|\n/).map((line) => line.trim());
+	const at = lines.findIndex((line) => line !== "");
+	if (at < 0) return "";
+	const first = (lines[at] as string).replace(MODULE_PATH, "");
+	const next = lines[at + 1] ?? "";
+	if (!/[:：]$/.test(first) || next === "" || next.startsWith(TRACEBACK)) return first;
+	return first.endsWith("：") ? `${first}${next}` : `${first} ${next}`;
+};

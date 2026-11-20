@@ -272,7 +272,7 @@ describe("子流程名称", () => {
 	});
 });
 
-describe("停止子流程节点的引用检查（SEMANTICS §4.1 第 1 条）", () => {
+describe("停止子流程节点的引用检查（docs/SEMANTICS.md §4.1 第 1 条）", () => {
 	/**
 	 * 主链 entry → spawnA → stopper → spawnB；spawnA 触发 a（a → spawnC，触发 c），spawnB 触发 b；
 	 * 另有子流程 a 上的停止子流程节点 inner。stopper 和 inner 要停止哪个子流程由参数给出。

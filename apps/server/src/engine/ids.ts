@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 /**
  * 由若干部分确定性地生成 UUID（sha256 截取 16 字节，按 UUIDv8 设置版本位）。
- * 链实例 ID、任务 ID 都这样生成，崩溃恢复后重放同一步骤不会产生重复记录（docs/SEMANTICS.md §4.6）。
+ * 链实例 ID、任务 ID 都这样生成，崩溃恢复后重放同一步骤不会产生重复记录（docs/SEMANTICS.md §4 第 6 条）。
  */
 export function deterministicId(...parts: Array<string | number>): string {
 	const hash = createHash("sha256");
