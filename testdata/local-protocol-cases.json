@@ -1,0 +1,1268 @@
+{
+	"$comment": [
+		"本地协议（docs/ARCHITECTURE.md §5.4）两个读取端共用的用例表，和实现无关：Agent（agent/src/local_protocol_tests.rs）和本地调试（sdk/python/tests/test_local_protocol.py）各有一份读取实现，都要通过这里的全部用例。",
+		"每个用例由假执行器（testdata/local-protocol-executor.sh）做一遍执行器该做的事：往事件管道写 events 里的各行（一次写完）、往标准输出 / 标准错误写 stdout / stderr、把 output 写成 output.json、以 exit_code 退出；读取端读出什么写在 expect 里。run 里没写的：output 缺省是 {\"status\":\"success\",\"outputs\":{}}，exit_code 缺省是 0；output 写 null 表示不写 output.json。",
+		"event_cases 比较 expect 里的全部分区（logs、progress、metrics、notifications、actions、action_summary），没写的分区必须是空的（action_summary 是 null），结果必须是成功；result_cases 只比较 expect（结果）。",
+		"分区里的每个条目是读取端能读出的事实，条目里写了的键才比较；ts 写 \"now\" 表示事件没带时间、读取端取读到它的时间，落在这次执行的前后之间（ts_s 同理，单位秒）。事件产生的条目有 type（事件类型），日志条目没有 type，来源由 source 区分。",
+		"两端读出的形状不同，约定两处：Agent 把通知和动作摘要的原文整行转发（比较前再解析一次，另外检查转发的原文与写进管道的那一行逐字相同），本地调试把它们解析成对象；Agent 合并进度和指标再转发，所以每个用例只写一条进度、一条指标。",
+		"not_shown 列出读取端读不出的键（写法：类型.键），比较前先从 expect 里去掉。",
+		"known_differences 是已知的、两端不一致的地方：每条分别写 agent 和 local 各自读出的，两端的测试各按自己的那份断言。某一端改了，对应的断言会红，要连同这一条一起改。",
+		"字符串可以写成 {\"$repeat\": 单元, \"times\": 次数, \"prefix\": 开头, \"suffix\": 末尾}（prefix、suffix 可省略）表示「开头 + 单元重复若干次 + 末尾」，用来写超长的字符串；读用例的一方先把它们展开成字符串。"
+	],
+	"rule": [
+		"事件管道：每行一个 JSON 对象，type 是 event_types 之一，读成对应的日志、进度、指标、通知、动作或动作摘要；其余内容（不是 JSON、不是对象、没有 type、类型不认识、字段缺少或类型不对）原样记成一行来源 sdk、级别 info 的日志，时间是读到它的时间。空行跳过。事件管道的一行不限长度。",
+		"标准输出 / 标准错误：每行一条日志，来源 stdout / stderr，级别 info / error；行尾的 \\r 去掉，最后一行没有换行也记下，空行也是一行。一行超过 max_line_bytes 时拆开；Agent 一端拆在哪里取决于一次读到多少字节，所以用例里不断言。",
+		"结果：output.json 是 success 且退出码是 0 时成功，输出取 outputs；output.json 是 failed 时失败（不看退出码），上报 error.message，有 traceback 时在后面空一行接上去掉末尾空白的 traceback；其余情况（没有 output.json、不是 JSON、不是对象、status 不认识、success 但退出码不是 0）是执行器异常退出，上报「执行器异常退出（<退出状态>），没有写出结果」，空一行后接标准错误最后 stderr_tail_bytes 字节（去掉末尾空白）。退出状态的写法两端不同（Agent 是 exit status: 3，本地调试是 退出码 3），用例不比较，只比较 abnormal_exit.stderr_tail。",
+		"同一批内的日志按读到的先后（单调时钟）排，不按事件里的 ts：系统时间往回跳时，跳变之后的行不会排到之前的行前面。",
+		"constants：max_line_bytes 是标准输出 / 标准错误一行的最大字节数；drain_timeout_ms 是执行器退出后等仍持有管道的后台子进程关闭管道的最长时间；stderr_tail_bytes 是失败时附带的标准错误尾部的最大字节数；terminate_grace_ms 是取消时从 SIGTERM 到强制杀掉进程树的默认宽限期。两端各抄了一份，值要一样。"
+	],
+	"constants": {
+		"max_line_bytes": 65536,
+		"drain_timeout_ms": 2000,
+		"stderr_tail_bytes": 8192,
+		"terminate_grace_ms": 10000
+	},
+	"event_types": [
+		"log",
+		"progress",
+		"metric",
+		"notify",
+		"action_start",
+		"action_end",
+		"mark",
+		"action_summary"
+	],
+	"not_shown": {
+		"agent": ["metric.kind"],
+		"local": ["action_start.late", "action_end.ts", "action_end.fields"]
+	},
+	"event_cases": [
+		{
+			"name": "log：四个级别各记成对应级别的 SDK 日志，按写的先后",
+			"events": [
+				"{\"type\":\"log\",\"ts\":1700000000001,\"level\":\"debug\",\"message\":\"d\"}",
+				"{\"type\":\"log\",\"ts\":1700000000002,\"level\":\"info\",\"message\":\"i\"}",
+				"{\"type\":\"log\",\"ts\":1700000000003,\"level\":\"warn\",\"message\":\"w\"}",
+				"{\"type\":\"log\",\"ts\":1700000000004,\"level\":\"error\",\"message\":\"e\"}"
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "debug",
+						"message": "d",
+						"ts": 1700000000001
+					},
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "i",
+						"ts": 1700000000002
+					},
+					{
+						"source": "sdk",
+						"level": "warn",
+						"message": "w",
+						"ts": 1700000000003
+					},
+					{
+						"source": "sdk",
+						"level": "error",
+						"message": "e",
+						"ts": 1700000000004
+					}
+				]
+			}
+		},
+		{
+			"name": "log：warning 是 warn 的别名",
+			"events": ["{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"warning\",\"message\":\"w\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "warn",
+						"message": "w",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：不认识的级别记成 info",
+			"events": ["{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"fatal\",\"message\":\"x\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "x",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：没有 level 时记成 info",
+			"events": ["{\"type\":\"log\",\"ts\":1700000000000,\"message\":\"x\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "x",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：没有 message 时是空串",
+			"events": ["{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：没有 ts 时取读到这一行的时间",
+			"events": ["{\"type\":\"log\",\"level\":\"info\",\"message\":\"x\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "x",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "log：消息里的换行、引号和中文原样保留",
+			"events": [
+				"{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\",\"message\":\"第一行\\n第二行 \\\"引号\\\" 🚀\"}"
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "第一行\n第二行 \"引号\" 🚀",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：不认识的字段忽略",
+			"events": [
+				"{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\",\"message\":\"x\",\"unlisted\":{\"a\":1}}"
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "x",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "log：事件管道的一行不受 max_line_bytes 限制",
+			"events": [
+				{
+					"$repeat": "x",
+					"times": 140000,
+					"prefix": "{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\",\"message\":\"",
+					"suffix": "\"}"
+				}
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": {
+							"$repeat": "x",
+							"times": 140000
+						},
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "progress：当前值、总数和说明",
+			"events": [
+				"{\"type\":\"progress\",\"ts\":1700000000000,\"current\":1,\"total\":3,\"message\":\"第一步\"}"
+			],
+			"expect": {
+				"progress": [
+					{
+						"type": "progress",
+						"current": 1,
+						"total": 3,
+						"message": "第一步",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "progress：总数是 null 表示未知",
+			"events": [
+				"{\"type\":\"progress\",\"ts\":1700000000000,\"current\":2.5,\"total\":null,\"message\":\"\"}"
+			],
+			"expect": {
+				"progress": [
+					{
+						"type": "progress",
+						"current": 2.5,
+						"total": null,
+						"message": "",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "progress：没有 total 时总数未知",
+			"events": ["{\"type\":\"progress\",\"ts\":1700000000000,\"current\":2,\"message\":\"x\"}"],
+			"expect": {
+				"progress": [
+					{
+						"type": "progress",
+						"current": 2,
+						"total": null,
+						"message": "x",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "progress：没有 message 时是空串",
+			"events": ["{\"type\":\"progress\",\"ts\":1700000000000,\"current\":1,\"total\":3}"],
+			"expect": {
+				"progress": [
+					{
+						"type": "progress",
+						"current": 1,
+						"total": 3,
+						"message": "",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "progress：没有 ts 时取读到这一行的时间",
+			"events": ["{\"type\":\"progress\",\"current\":1,\"total\":3,\"message\":\"x\"}"],
+			"expect": {
+				"progress": [
+					{
+						"type": "progress",
+						"current": 1,
+						"total": 3,
+						"message": "x",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "progress：缺少 current 时当作不认识的内容",
+			"events": ["{\"type\":\"progress\",\"ts\":1700000000000,\"total\":3,\"message\":\"x\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"type\":\"progress\",\"ts\":1700000000000,\"total\":3,\"message\":\"x\"}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：gauge",
+			"events": [
+				"{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"gauge\",\"value\":1.5}"
+			],
+			"expect": {
+				"metrics": [
+					{
+						"type": "metric",
+						"name": "tps",
+						"kind": "gauge",
+						"value": 1.5,
+						"labels": [],
+						"ts_s": 1700000000
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：counter",
+			"events": [
+				"{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"requests\",\"kind\":\"counter\",\"value\":7}"
+			],
+			"expect": {
+				"metrics": [
+					{
+						"type": "metric",
+						"name": "requests",
+						"kind": "counter",
+						"value": 7,
+						"labels": [],
+						"ts_s": 1700000000
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：没有 kind 时按 gauge",
+			"events": ["{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"value\":1.5}"],
+			"expect": {
+				"metrics": [
+					{
+						"type": "metric",
+						"name": "tps",
+						"kind": "gauge",
+						"value": 1.5,
+						"labels": [],
+						"ts_s": 1700000000
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：不认识的 kind 按 gauge",
+			"events": [
+				"{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"histogram\",\"value\":1.5}"
+			],
+			"expect": {
+				"metrics": [
+					{
+						"type": "metric",
+						"name": "tps",
+						"kind": "gauge",
+						"value": 1.5,
+						"labels": [],
+						"ts_s": 1700000000
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：标签按键排序",
+			"events": [
+				"{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"rss\",\"kind\":\"gauge\",\"value\":10,\"labels\":{\"pid\":\"1234\",\"host\":\"a\"}}"
+			],
+			"expect": {
+				"metrics": [
+					{
+						"type": "metric",
+						"name": "rss",
+						"kind": "gauge",
+						"value": 10,
+						"labels": [["host", "a"], ["pid", "1234"]],
+						"ts_s": 1700000000
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：没有 ts 时取读到这一行的时间",
+			"events": ["{\"type\":\"metric\",\"name\":\"tps\",\"kind\":\"gauge\",\"value\":1.5}"],
+			"expect": {
+				"metrics": [
+					{
+						"type": "metric",
+						"name": "tps",
+						"kind": "gauge",
+						"value": 1.5,
+						"labels": [],
+						"ts_s": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：缺少 value 时当作不认识的内容",
+			"events": ["{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"gauge\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"gauge\"}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "metric：缺少 name 时当作不认识的内容",
+			"events": ["{\"type\":\"metric\",\"ts\":1700000000000,\"kind\":\"gauge\",\"value\":1}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"type\":\"metric\",\"ts\":1700000000000,\"kind\":\"gauge\",\"value\":1}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "notify：文本通知",
+			"events": [
+				"{\"type\":\"notify\",\"ts\":1700000000000,\"bot\":\"ops\",\"text\":\"指标越界\",\"at_all\":true}"
+			],
+			"expect": {
+				"notifications": [
+					{
+						"type": "notify",
+						"bot": "ops",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "notify：原始消息",
+			"events": [
+				"{\"type\":\"notify\",\"ts\":1700000000000,\"bot\":\"ops\",\"message\":{\"msg_type\":\"text\",\"content\":{\"text\":\"hi\"}}}"
+			],
+			"expect": {
+				"notifications": [
+					{
+						"type": "notify",
+						"bot": "ops",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "action_start：动作开始",
+			"events": [
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "action_start",
+						"id": 1,
+						"parent": null,
+						"depth": 0,
+						"name": "下单",
+						"fields": [["订单", "1001"]],
+						"ts": 1700000000000,
+						"mono": 5000000,
+						"late": false
+					}
+				]
+			}
+		},
+		{
+			"name": "action_start：子动作带 parent 和 depth",
+			"events": [
+				"{\"type\":\"action_start\",\"ts\":1700000000001,\"mono\":5000001,\"id\":2,\"parent\":1,\"depth\":1,\"name\":\"校验\",\"fields\":{}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "action_start",
+						"id": 2,
+						"parent": 1,
+						"depth": 1,
+						"name": "校验",
+						"fields": [],
+						"ts": 1700000000001,
+						"mono": 5000001
+					}
+				]
+			}
+		},
+		{
+			"name": "action_start：字段按 SDK 写的先后",
+			"events": [
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"b\":\"1\",\"a\":\"2\"}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "action_start",
+						"id": 1,
+						"parent": null,
+						"depth": 0,
+						"name": "下单",
+						"fields": [["b", "1"], ["a", "2"]],
+						"ts": 1700000000000,
+						"mono": 5000000
+					}
+				]
+			}
+		},
+		{
+			"name": "action_start：补发的开始带 late",
+			"events": [
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{},\"late\":true}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "action_start",
+						"id": 1,
+						"parent": null,
+						"depth": 0,
+						"name": "下单",
+						"fields": [],
+						"ts": 1700000000000,
+						"mono": 5000000,
+						"late": true
+					}
+				]
+			}
+		},
+		{
+			"name": "action_end：动作成功结束",
+			"events": [
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"}}",
+				"{\"type\":\"action_end\",\"ts\":1700000000005,\"mono\":5000005,\"id\":1,\"result\":\"success\",\"reason\":null,\"fields\":{}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "action_start",
+						"id": 1,
+						"parent": null,
+						"depth": 0,
+						"name": "下单",
+						"fields": [["订单", "1001"]],
+						"ts": 1700000000000,
+						"mono": 5000000
+					},
+					{
+						"type": "action_end",
+						"id": 1,
+						"result": "success",
+						"reason": null,
+						"fields": [],
+						"ts": 1700000000005,
+						"mono": 5000005
+					}
+				]
+			}
+		},
+		{
+			"name": "action_end：失败带原因和 note 补充的字段",
+			"events": [
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"}}",
+				"{\"type\":\"action_end\",\"ts\":1700000000005,\"mono\":5000005,\"id\":1,\"result\":\"failed\",\"reason\":\"ValueError: 拒单\",\"fields\":{\"回报\":\"rejected\"}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "action_start",
+						"id": 1,
+						"parent": null,
+						"depth": 0,
+						"name": "下单",
+						"fields": [["订单", "1001"]],
+						"ts": 1700000000000,
+						"mono": 5000000
+					},
+					{
+						"type": "action_end",
+						"id": 1,
+						"result": "failed",
+						"reason": "ValueError: 拒单",
+						"fields": [["回报", "rejected"]],
+						"ts": 1700000000005,
+						"mono": 5000005
+					}
+				]
+			}
+		},
+		{
+			"name": "action_end：因取消离开 with 是 unfinished",
+			"events": [
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"}}",
+				"{\"type\":\"action_end\",\"ts\":1700000000005,\"mono\":5000005,\"id\":1,\"result\":\"unfinished\",\"reason\":null,\"fields\":{}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "action_start",
+						"id": 1,
+						"parent": null,
+						"depth": 0,
+						"name": "下单",
+						"fields": [["订单", "1001"]],
+						"ts": 1700000000000,
+						"mono": 5000000
+					},
+					{
+						"type": "action_end",
+						"id": 1,
+						"result": "unfinished",
+						"reason": null,
+						"fields": [],
+						"ts": 1700000000005,
+						"mono": 5000005
+					}
+				]
+			}
+		},
+		{
+			"name": "mark：一个标记",
+			"events": [
+				"{\"type\":\"mark\",\"ts\":1700000000000,\"mono\":5000000,\"id\":3,\"parent\":null,\"depth\":0,\"name\":\"收到第一笔成交\",\"fields\":{}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "mark",
+						"id": 3,
+						"parent": null,
+						"depth": 0,
+						"name": "收到第一笔成交",
+						"fields": [],
+						"ts": 1700000000000,
+						"mono": 5000000
+					}
+				]
+			}
+		},
+		{
+			"name": "mark：属于某个动作",
+			"events": [
+				"{\"type\":\"mark\",\"ts\":1700000000000,\"mono\":5000000,\"id\":3,\"parent\":1,\"depth\":1,\"name\":\"收到第一笔成交\",\"fields\":{\"笔数\":\"1\"}}"
+			],
+			"expect": {
+				"actions": [
+					{
+						"type": "mark",
+						"id": 3,
+						"parent": 1,
+						"depth": 1,
+						"name": "收到第一笔成交",
+						"fields": [["笔数", "1"]],
+						"ts": 1700000000000,
+						"mono": 5000000
+					}
+				]
+			}
+		},
+		{
+			"name": "action_summary：一份摘要",
+			"events": [
+				"{\"type\":\"action_summary\",\"ts\":1700000000009,\"mono\":5000009,\"total\":3,\"marks\":1,\"reported\":3,\"capped_ts\":null,\"capped_mono\":null,\"names\":[{\"name\":\"下单\",\"total\":2,\"failed\":1,\"reported\":2,\"capped_ts\":null,\"capped_mono\":null},{\"name\":\"收到第一笔成交\",\"total\":1,\"failed\":0,\"reported\":1,\"capped_ts\":null,\"capped_mono\":null}],\"running\":[{\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"},\"ts\":1700000000000,\"mono\":5000000}],\"recent\":[{\"id\":2,\"parent\":1,\"depth\":1,\"name\":\"校验\",\"fields\":{},\"ts\":1700000000001,\"mono\":5000001,\"end_ts\":1700000000005,\"end_mono\":5000005,\"result\":\"failed\",\"reason\":\"ValueError: 拒单\"}],\"recent_failed\":[{\"id\":2,\"parent\":1,\"depth\":1,\"name\":\"校验\",\"fields\":{},\"ts\":1700000000001,\"mono\":5000001,\"end_ts\":1700000000005,\"end_mono\":5000005,\"result\":\"failed\",\"reason\":\"ValueError: 拒单\"}]}"
+			],
+			"expect": {
+				"action_summary": {
+					"type": "action_summary",
+					"total": 3,
+					"marks": 1,
+					"reported": 3,
+					"ts": 1700000000009
+				}
+			}
+		},
+		{
+			"name": "不认识的类型原样记成一行 SDK 日志",
+			"events": ["{\"type\":\"banana\",\"x\":1}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"type\":\"banana\",\"x\":1}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "不是 JSON 的内容原样记成一行 SDK 日志",
+			"events": ["starting up…"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "starting up…",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "JSON 但不是对象时原样记成一行 SDK 日志",
+			"events": ["[1,2,3]"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "[1,2,3]",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "没有 type 时原样记成一行 SDK 日志",
+			"events": ["{\"message\":\"hi\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"message\":\"hi\"}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "type 区分大小写",
+			"events": ["{\"type\":\"LOG\",\"ts\":1700000000000,\"level\":\"info\",\"message\":\"x\"}"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"type\":\"LOG\",\"ts\":1700000000000,\"level\":\"info\",\"message\":\"x\"}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "原文里的空白原样保留",
+			"events": ["{ \"type\" : \"banana\" }"],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{ \"type\" : \"banana\" }",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "空行跳过",
+			"events": [
+				"",
+				"{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\",\"message\":\"x\"}",
+				""
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "x",
+						"ts": 1700000000000
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：每行一条 stdout 日志，级别 info",
+			"stdout": "a\nb\n",
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "a"
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "b"
+					}
+				]
+			}
+		},
+		{
+			"name": "标准错误：每行一条 stderr 日志，级别 error",
+			"stderr": "a\nb\n",
+			"expect": {
+				"logs": [
+					{
+						"source": "stderr",
+						"level": "error",
+						"message": "a"
+					},
+					{
+						"source": "stderr",
+						"level": "error",
+						"message": "b"
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：行尾的 \\r 去掉",
+			"stdout": "a\r\nb\r\n",
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "a"
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "b"
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：最后一行没有换行也记下",
+			"stdout": "a\nb",
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "a"
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "b"
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：空行也是一行日志",
+			"stdout": "a\n\nb\n",
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "a"
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": ""
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": "b"
+					}
+				]
+			}
+		}
+	],
+	"result_cases": [
+		{
+			"name": "success 且退出码是 0：成功，输出取 outputs",
+			"output": "{\"status\":\"success\",\"outputs\":{\"n\":1,\"名称\":\"甲\"}}",
+			"expect": {
+				"status": "success",
+				"outputs": {
+					"n": 1,
+					"名称": "甲"
+				}
+			}
+		},
+		{
+			"name": "success 但退出码不是 0：执行器异常退出",
+			"output": "{\"status\":\"success\",\"outputs\":{}}",
+			"exit_code": 3,
+			"stderr": "boom\n",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": "boom"
+				}
+			}
+		},
+		{
+			"name": "failed 只有 message：上报 message",
+			"output": "{\"status\":\"failed\",\"error\":{\"type\":\"ValueError\",\"message\":\"拒单\"}}",
+			"exit_code": 1,
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"report": "拒单"
+			}
+		},
+		{
+			"name": "failed 带 traceback：message 后空一行接去掉末尾空白的 traceback",
+			"output": "{\"status\":\"failed\",\"error\":{\"type\":\"ValueError\",\"message\":\"拒单\",\"traceback\":\"Traceback (most recent call last):\\n  File \\\"node.py\\\", line 3, in run\\nValueError: 拒单\\n\"}}",
+			"exit_code": 1,
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"report": "拒单\n\nTraceback (most recent call last):\n  File \"node.py\", line 3, in run\nValueError: 拒单"
+			}
+		},
+		{
+			"name": "failed 时退出码是 0 也是失败",
+			"output": "{\"status\":\"failed\",\"error\":{\"type\":\"ValueError\",\"message\":\"拒单\"}}",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"report": "拒单"
+			}
+		},
+		{
+			"name": "没有 output.json：执行器异常退出，附标准错误尾部",
+			"output": null,
+			"exit_code": 137,
+			"stderr": "Killed\n",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": "Killed"
+				}
+			}
+		},
+		{
+			"name": "output.json 不是 JSON：执行器异常退出",
+			"output": "{oops",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": ""
+				}
+			}
+		},
+		{
+			"name": "output.json 不是对象：执行器异常退出",
+			"output": "[]",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": ""
+				}
+			}
+		},
+		{
+			"name": "output.json 的 status 不认识：执行器异常退出",
+			"output": "{\"status\":\"cancelled\"}",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": ""
+				}
+			}
+		},
+		{
+			"name": "标准错误尾部去掉末尾空白",
+			"output": null,
+			"exit_code": 1,
+			"stderr": "a\n\n  \n",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": "a"
+				}
+			}
+		},
+		{
+			"name": "标准错误尾部只留最后 stderr_tail_bytes 字节",
+			"output": null,
+			"exit_code": 1,
+			"stderr": {
+				"$repeat": "e",
+				"times": 9000,
+				"suffix": "END"
+			},
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": {
+						"$repeat": "e",
+						"times": 8189,
+						"suffix": "END"
+					}
+				}
+			}
+		}
+	],
+	"known_differences": {
+		"event_cases": [
+			{
+				"name": "通知没有 bot",
+				"why": "Agent 不解析通知，整行转发（机器人在控制面校验）；本地调试要先取出 bot，取不出就当作不认识的内容。",
+				"events": ["{\"type\":\"notify\",\"ts\":1700000000000,\"text\":\"x\"}"],
+				"agent": {
+					"notifications": [
+						{
+							"type": "notify",
+							"bot": null,
+							"ts": 1700000000000
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "{\"type\":\"notify\",\"ts\":1700000000000,\"text\":\"x\"}",
+							"ts": "now"
+						}
+					]
+				}
+			},
+			{
+				"name": "metric 的 value 是字符串",
+				"why": "Agent 要求 value 是数字；本地调试用 float() 转，字符串能转时照收。",
+				"events": [
+					"{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"gauge\",\"value\":\"1.5\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"gauge\",\"value\":\"1.5\"}",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"metrics": [
+						{
+							"type": "metric",
+							"name": "tps",
+							"kind": "gauge",
+							"value": 1.5,
+							"labels": [],
+							"ts_s": 1700000000
+						}
+					]
+				}
+			},
+			{
+				"name": "progress 的 current 是字符串",
+				"why": "Agent 要求 current 是数字；本地调试用 float() 转，字符串能转时照收。",
+				"events": [
+					"{\"type\":\"progress\",\"ts\":1700000000000,\"current\":\"1\",\"total\":3,\"message\":\"x\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "{\"type\":\"progress\",\"ts\":1700000000000,\"current\":\"1\",\"total\":3,\"message\":\"x\"}",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"progress": [
+						{
+							"type": "progress",
+							"current": 1,
+							"total": 3,
+							"message": "x",
+							"ts": 1700000000000
+						}
+					]
+				}
+			},
+			{
+				"name": "log 的 message 不是字符串",
+				"why": "Agent 要求 message 是字符串；本地调试用 str() 转，数字记成它的写法。",
+				"events": ["{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\",\"message\":5}"],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "{\"type\":\"log\",\"ts\":1700000000000,\"level\":\"info\",\"message\":5}",
+							"ts": "now"
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "5",
+							"ts": 1700000000000
+						}
+					]
+				}
+			},
+			{
+				"name": "action_start 没有 mono",
+				"why": "Agent 没有 mono 时取读到这一行的单调时钟读数；本地调试必须有 mono，没有就当作不认识的内容。",
+				"events": [
+					"{\"type\":\"action_start\",\"ts\":1700000000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{}}"
+				],
+				"agent": {
+					"actions": [
+						{
+							"type": "action_start",
+							"id": 1,
+							"parent": null,
+							"depth": 0,
+							"name": "下单",
+							"fields": [],
+							"ts": 1700000000000
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "{\"type\":\"action_start\",\"ts\":1700000000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{}}",
+							"ts": "now"
+						}
+					]
+				}
+			},
+			{
+				"name": "action_end 之前没有对应的 action_start",
+				"why": "Agent 逐条转发（控制面按动作 ID 对应）；本地调试按动作 ID 找开始，找不到就忽略这条结束。",
+				"events": [
+					"{\"type\":\"action_end\",\"ts\":1700000000000,\"mono\":5000000,\"id\":9,\"result\":\"success\",\"reason\":null,\"fields\":{}}"
+				],
+				"agent": {
+					"actions": [
+						{
+							"type": "action_end",
+							"id": 9,
+							"result": "success",
+							"reason": null,
+							"fields": [],
+							"ts": 1700000000000,
+							"mono": 5000000
+						}
+					]
+				},
+				"local": {}
+			},
+			{
+				"name": "同一批里 ts 往回跳的日志",
+				"why": "Agent 按读到的先后（单调时钟）排；本地调试按事件里的 ts 排，ts 往回跳时顺序反过来。",
+				"events": [
+					"{\"type\":\"log\",\"ts\":1700000002000,\"level\":\"info\",\"message\":\"先读到\"}",
+					"{\"type\":\"log\",\"ts\":1700000001000,\"level\":\"info\",\"message\":\"后读到\"}"
+				],
+				"agent": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "先读到",
+							"ts": 1700000002000
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "后读到",
+							"ts": 1700000001000
+						}
+					]
+				},
+				"local": {
+					"logs": [
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "后读到",
+							"ts": 1700000001000
+						},
+						{
+							"source": "sdk",
+							"level": "info",
+							"message": "先读到",
+							"ts": 1700000002000
+						}
+					]
+				}
+			}
+		],
+		"result_cases": [
+			{
+				"name": "success 没有 outputs",
+				"why": "Agent 要求 success 带 outputs，缺了就当作没有写出结果；本地调试当作空输出。",
+				"output": "{\"status\":\"success\"}",
+				"agent": {
+					"status": "failed",
+					"kind": "node_error",
+					"abnormal_exit": {
+						"stderr_tail": ""
+					}
+				},
+				"local": {
+					"status": "success",
+					"outputs": {}
+				}
+			},
+			{
+				"name": "success 的 outputs 是 null",
+				"why": "Agent 原样上报 null；本地调试把 null 当作空输出。",
+				"output": "{\"status\":\"success\",\"outputs\":null}",
+				"agent": {
+					"status": "success",
+					"outputs": null
+				},
+				"local": {
+					"status": "success",
+					"outputs": {}
+				}
+			},
+			{
+				"name": "failed 没有 error",
+				"why": "Agent 要求 failed 带 error，缺了就当作没有写出结果；本地调试记一个 message 为空的失败。",
+				"output": "{\"status\":\"failed\"}",
+				"exit_code": 1,
+				"agent": {
+					"status": "failed",
+					"kind": "node_error",
+					"abnormal_exit": {
+						"stderr_tail": ""
+					}
+				},
+				"local": {
+					"status": "failed",
+					"kind": "node_error",
+					"report": ""
+				}
+			}
+		]
+	}
+}
