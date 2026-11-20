@@ -28,11 +28,18 @@ export function lockedValue(p: ParamDeclView, value: unknown): FieldValue {
 	return p.secret ? String(value) : fieldValue(p, value);
 }
 
+/**
+ * 参数的默认值在表单里的值。敏感参数的默认值读不回来（控制面给的是占位符），表单里是空的：留空就由控制面按默认值填入，
+ * 所以不能把占位符当成值预填，否则触发时会把它传给节点。
+ */
+export function defaultFieldValue(p: ParamDeclView): FieldValue {
+	return fieldValue(p, p.secret ? undefined : p.default);
+}
+
 function initialValue(p: ParamDeclView, initial?: Record<string, unknown>): FieldValue {
-	return fieldValue(
-		p,
-		initial && !p.secret && Object.hasOwn(initial, p.name) ? initial[p.name] : p.default,
-	);
+	return initial && !p.secret && Object.hasOwn(initial, p.name)
+		? fieldValue(p, initial[p.name])
+		: defaultFieldValue(p);
 }
 
 /** 初始值：给了 initial（再次运行时为上次运行的参数）时沿用它，敏感参数除外；否则用声明的默认值。 */

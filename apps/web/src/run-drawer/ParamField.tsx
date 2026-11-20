@@ -49,6 +49,7 @@ export function ParamField({
 	leading,
 	kept = false,
 	onReplace,
+	blankUsesDefault = false,
 }: {
 	param: ParamDeclView;
 	value: FieldValue | undefined;
@@ -66,6 +67,8 @@ export function ParamField({
 	/** 沿用预设里原来的 secret 值（预设编辑表单）：控件显示「已填写」，点「替换」（`onReplace`）才重新输入。 */
 	kept?: boolean;
 	onReplace?: () => void;
+	/** 留空时由控制面按默认值填入（运行抽屉）：敏感参数的默认值读不回来，输入框里用占位文字说明已设置。 */
+	blankUsesDefault?: boolean;
 }) {
 	const id = useId();
 	const labelId = `${id}-label`;
@@ -106,6 +109,11 @@ export function ParamField({
 	const change = (next: FieldValue) => onChange?.(next);
 	const blur = () => onBlur?.();
 	const hidden = param.secret && !revealed;
+	// 敏感参数的默认值读不回来（控制面给的是占位符），表单里留空：留空就由控制面按默认值填入。
+	const keptDefault =
+		blankUsesDefault && param.secret && param.default !== undefined && !locked
+			? "已设置默认值，留空使用"
+			: undefined;
 	// 锁定的 secret 参数拿到的已经是打码后的值，不论类型都显示成一个只读的密码框。
 	const masked = locked && param.secret;
 	let control: React.ReactNode;
@@ -150,6 +158,7 @@ export function ParamField({
 				rows={3}
 				spellCheck={false}
 				className={cn("font-mono text-xs", lockedLook)}
+				placeholder={keptDefault}
 				value={String(value ?? "")}
 				readOnly={locked}
 				disabled={disabled}
@@ -168,6 +177,7 @@ export function ParamField({
 					spellCheck={false}
 					className={cn((param.type === "number" || param.secret) && "font-mono", lockedLook)}
 					value={String(value ?? "")}
+					placeholder={keptDefault}
 					readOnly={locked}
 					disabled={disabled}
 					onChange={(e) => change(e.target.value)}

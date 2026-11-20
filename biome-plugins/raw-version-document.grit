@@ -1,0 +1,10 @@
+language js
+
+// 场景版本里 secret 参数的默认值（#467，docs/SEMANTICS.md §2.1）：库里是明文，场景文档离开存储层的那一处
+// （apps/server/src/orchestrations/orchestration-store.ts 的 toVersionView）统一打码。HTTP 路由不直接读
+// orchestration_versions 表：要场景文档就用 OrchestrationStore（head、getVersion），它给的是打码后的；
+// 需要原值的地方（引擎、触发准入）在自己的事务里读，不在路由层。
+`orchestrationVersions` as $table where {
+	$filename <: r".*apps/server/src/http/.*",
+	register_diagnostic(span=$table, message="HTTP 路由不直接读 orchestration_versions：场景文档用 OrchestrationStore 的 head / getVersion（secret 参数的默认值已经打码，docs/SEMANTICS.md §2.1），不要在路由里绕过它，否则新增的出口会把 secret 默认值的原值交给调用方（#467）。")
+}

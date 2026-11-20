@@ -6,6 +6,7 @@ import {
 	type PresetView,
 } from "@sfly/schema";
 import {
+	defaultFieldValue,
 	type FieldValue,
 	type FormValues,
 	fieldSchema,
@@ -89,7 +90,7 @@ export function toggleParam(draft: PresetDraft, p: ParamDeclView, checked: boole
 	const { [p.name]: _, ...rest } = draft.values;
 	return {
 		...draft,
-		values: checked ? { ...rest, [p.name]: fieldValue(p, p.default) } : rest,
+		values: checked ? { ...rest, [p.name]: defaultFieldValue(p) } : rest,
 		keptSecrets: draft.keptSecrets.filter((k) => k !== p.name),
 	};
 }

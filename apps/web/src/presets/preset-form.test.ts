@@ -37,6 +37,18 @@ describe("运行预设的编辑表单", () => {
 		expect(toggleParam(draft, param("steps"), false).values).not.toHaveProperty("steps");
 	});
 
+	it("勾选敏感参数：它的默认值读不回来，表单里是空的，要重新输入（不把占位符填进去）", () => {
+		const secret: ParamDeclView = {
+			name: "token",
+			type: "string",
+			secret: true,
+			default: "******",
+		};
+		const draft = toggleParam(emptyDraft(), secret, true);
+		expect(draft.values).toEqual({ token: "" });
+		expect(draftErrors(draft, [secret]).values).toEqual({ token: "必填" });
+	});
+
 	it("名称必填且不超过 40 个字符，至少勾选一个参数，勾选的参数必须填值、格式正确", () => {
 		expect(draftErrors(emptyDraft(), decls)).toEqual({
 			name: "名称不能为空",

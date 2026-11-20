@@ -97,7 +97,8 @@ test("在参数编辑器里写说明：撤销、重做；保存后触发表单�
 			name: "api_token",
 			type: "string",
 			secret: true,
-			default: "s3cr3t",
+			// 读出来是占位符；库里存的还是原值（保存时沿用）。
+			default: "******",
 			required: false,
 			description: "访问令牌，向运维申请",
 		},
