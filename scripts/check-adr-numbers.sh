@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ADR 的两条规则（CODING_STANDARDS.md「文档」），一个脚本检查：
-#   1. 编号只用一次。当前文件里重复，或者这个分支新加的 ADR 用了 origin/main 上已被别的文件占用的编号，都报错。
-#      PR 不必基于最新的 main，两个分支各自写出同一个编号都能通过 CI，所以还要和 origin/main 比。
-#   2. 已接受的 ADR 不改正文。合并基点（HEAD 与 origin/main 的共同祖先）上就有的 ADR，只允许在末尾追加行：
+#   1. 编号只用一次。当前文件里重复，或者这个分支新加的 ADR 用了基准分支上已被别的文件占用的编号，都报错。
+#      PR 不必基于最新的基准分支，两个分支各自写出同一个编号都能通过 CI，所以还要和基准分支比。
+#   2. 已接受的 ADR 不改正文。合并基点（HEAD 与基准分支的共同祖先）上就有的 ADR，只允许在末尾追加行：
 #      改动中间的内容、删除、改名都报错。
-# 没有 origin/main 或没有共同祖先（离线克隆、浅克隆）时，只检查当前文件里的编号重复。
+# 基准分支：环境变量 ADR_BASE_REF（CI 中为 PR 的目标分支），默认 origin/main。
+# 没有基准分支或没有共同祖先（离线克隆、浅克隆）时，只检查当前文件里的编号重复。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,13 +24,14 @@ for number in $dupes; do
 done
 next=$(sort -n <<<"$numbers" | tail -1)
 
-if ! git rev-parse --verify -q origin/main^{commit} >/dev/null 2>&1 ||
-	! base=$(git merge-base HEAD origin/main 2>/dev/null); then
-	echo "没有 origin/main 或与它的共同祖先（离线克隆或浅克隆）：只检查当前文件里的编号重复，不和 main 比较。" >&2
+base_ref=${ADR_BASE_REF:-origin/main}
+if ! git rev-parse --verify -q "$base_ref^{commit}" >/dev/null 2>&1 ||
+	! base=$(git merge-base HEAD "$base_ref" 2>/dev/null); then
+	echo "没有 ${base_ref} 或与它的共同祖先（离线克隆或浅克隆）：只检查当前文件里的编号重复，不和它比较。" >&2
 	exit "$status"
 fi
 
-main_files=$(git ls-tree -r --name-only origin/main -- docs/adr | grep -E '^docs/adr/[0-9]{4}-.*\.md$' || true)
+main_files=$(git ls-tree -r --name-only "$base_ref" -- docs/adr | grep -E '^docs/adr/[0-9]{4}-.*\.md$' || true)
 main_next=$(for f in $main_files; do number_of "$f"; done | sort -n | tail -1)
 ((10#${main_next:-0} > 10#$next)) && next=$main_next
 next=$((10#$next + 1))
@@ -61,8 +63,8 @@ for path in "${files[@]}"; do
 	number=$(number_of "$path")
 	for other in $(grep "^docs/adr/$number-" <<<"$main_files" || true); do
 		[[ $other == "$path" || -e $other ]] && continue
-		echo "ADR 编号 ${number} 在 origin/main 上已被 ${other} 使用，这个分支新增的 ${path} 撞了号。" >&2
-		printf '  把 %s 改成 %04d，并更新引用它的地方（先合入最新的 main 能看到全部已用的编号）。\n' "$path" "$next" >&2
+		echo "ADR 编号 ${number} 在 ${base_ref} 上已被 ${other} 使用，这个分支新增的 ${path} 撞了号。" >&2
+		printf '  把 %s 改成 %04d，并更新引用它的地方（先合入最新的 %s 能看到全部已用的编号）。\n' "$path" "$next" "$base_ref" >&2
 		next=$((next + 1))
 		status=1
 	done
