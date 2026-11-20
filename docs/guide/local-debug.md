@@ -37,7 +37,7 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 0}'
 |---|---|
 | 0 | 成功 |
 | 1 | 节点失败（抛出异常、输出不合法） |
-| 2 | 参数不合法或找不到节点，节点没有执行 |
+| 2 | 参数不合法（包括输入里有节点没有声明的名字）或找不到节点，节点没有执行 |
 | 130 | 按 Ctrl-C 取消 |
 
 ## 取消
@@ -48,6 +48,6 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 0}'
 uv run sfly debug countdown --params '{"name": "世界", "steps": 100, "interval": 1}'
 ```
 
-看到 `开始倒计时` 后按 Ctrl-C：日志里接着出现 `倒计时结束`（写在示例节点的 `finally` 里），最后打印 `已取消：`，退出码 130。
+看到 `开始倒计时` 后按 Ctrl-C：日志里接着出现 `倒计时结束`（写在示例节点的 `finally` 里）和一行 INFO `任务被终止（SIGTERM），执行到 … 第 N 行`，最后打印 `已取消：`，退出码 130。被取消不是节点出错，日志里没有 ERROR 级的堆栈；这和在 Agent 上被取消、超时、被停止子流程节点停止时一样。
 
 本地调试通过后，到本机 Agent 上 [联调](integration.md)。

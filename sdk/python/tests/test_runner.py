@@ -11,13 +11,17 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import textwrap
 import time
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from sfly import Cancelled, runner
 
 SDK_SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -45,29 +49,30 @@ def execute(
     code_dir: Path,
     entry: str,
     inputs: dict[str, Any] | None = None,
-    env: dict[str, str] | None = None,
+    env: dict[str, str | None] | None = None,
     task_fields: dict[str, Any] | None = None,
 ) -> Execution:
+    """`env` 里的变量覆盖默认的；值为 None 的变量不设置。"""
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
     task = work / "task.json"
     spec = {"task_id": "t-1", "attempt": 1, "entry": entry, "inputs": inputs or {}}
     task.write_text(json.dumps({**spec, **(task_fields or {})}), encoding="utf-8")
     output = work / "output.json"
-    env = {
+    merged: dict[str, str | None] = {
         **{k: v for k, v in os.environ.items() if not k.startswith("SFLY_")},
-        **(env or {}),
         "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir)]),
         "SFLY_TASK": str(task),
         "SFLY_OUTPUT": str(output),
         "SFLY_ARTIFACTS": str(work / "artifacts"),
         "SFLY_EVENTS": str(work / "events.jsonl"),
         "SFLY_CANCEL": str(work / "cancel"),
+        **(env or {}),
     }
     result = subprocess.run(
         [sys.executable, "-m", "sfly.runner"],
         cwd=work,
-        env=env,
+        env={k: v for k, v in merged.items() if v is not None},
         capture_output=True,
         text=True,
         timeout=60,
@@ -174,6 +179,8 @@ DEFERRED_MODULES = {
     "shutil",
     "threading",
     "traceback",
+    # 取被终止时执行到哪要用到标准库的目录，只在节点被终止时才导入。
+    "sysconfig",
     "urllib.parse",
     # 下载产物（sfly.download）只在节点调用 ctx.artifacts.download 时才导入。
     "urllib.request",
@@ -456,6 +463,624 @@ def test_sigterm_raises_cancelled_in_the_node_so_cleanup_runs(
     output = json.loads((work / "output.json").read_text())
     assert output["status"] == "failed"
     assert output["error"]["type"] == "Cancelled"
+
+
+# ---- 没有声明的输入：调用节点函数之前就失败，记为配置错误 ----
+#
+# 派发给节点的输入里有节点没有声明的名字（多半是写错了参数名）时，不让它跑进函数里再抛
+# `TypeError: f() got an unexpected keyword argument`（那会记成 node_error 并按重试次数重试）：
+# 执行器在调用前就以 config_error 失败，信息里写出多出来的名字和节点声明的输入。
+
+
+def test_inputs_the_node_does_not_declare_fail_as_config_error_before_the_node_runs(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    ran = tmp_path / "ran"
+    write_module(
+        code_dir,
+        "load",
+        f"""
+        from sfly import Context
+
+        def http_load(
+            ctx: Context, url: str, duration: float = 1.0, concurrency: int = 1
+        ) -> dict:
+            open({str(ran)!r}, "w").close()
+            return {{}}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "load:http_load", {"url": "http://x", "duraton": 2})
+
+    assert run.returncode == 1
+    assert not ran.exists()
+    # 配置错误没有异常类型和堆栈，标准错误里也不写：错误信息就是原因。
+    assert run.stderr == ""
+    assert run.output == {
+        "status": "failed",
+        "error": {
+            "kind": "config_error",
+            "message": (
+                "节点 http_load 没有声明输入 duraton，它声明的输入有：url、duration、concurrency"
+            ),
+        },
+    }
+
+
+def test_every_undeclared_input_is_named_and_the_context_parameter_is_not_an_input(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "two",
+        """
+        from sfly import Context
+
+        def work(ctx: Context, *, a: int, b: int = 0) -> dict:
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "two:work", {"a": 1, "x": 1, "ctx": 2, "y": 3})
+
+    assert run.output is not None
+    assert run.output["error"] == {
+        "kind": "config_error",
+        "message": "节点 work 没有声明输入 x、ctx、y，它声明的输入有：a、b",
+    }
+
+
+def test_a_node_without_inputs_says_it_takes_none(tmp_path: Path, code_dir: Path) -> None:
+    write_module(
+        code_dir,
+        "bare",
+        """
+        def ping() -> dict:
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "bare:ping", {"x": 1})
+
+    assert run.output is not None
+    assert run.output["error"] == {
+        "kind": "config_error",
+        "message": "节点 ping 没有声明输入 x，它不接收任何输入",
+    }
+
+
+def test_the_node_name_in_the_message_is_the_one_the_node_declares(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "named",
+        """
+        from sfly import node
+
+        @node(name="http-load", title="压测")
+        def run_load(url: str) -> dict:
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "named:run_load", {"url": "u", "urll": "u"})
+
+    assert run.output is not None
+    assert run.output["error"]["message"].startswith("节点 http-load 没有声明输入 urll，")
+
+
+def test_declared_inputs_missing_optional_ones_and_kwargs_nodes_are_not_affected(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "ok",
+        """
+        def work(a: int, b: int = 2) -> dict:
+            return {"sum": a + b}
+
+        def anything(**kwargs) -> dict:
+            return {"names": sorted(kwargs)}
+        """,
+    )
+
+    declared = execute(tmp_path, code_dir, "ok:work", {"a": 1})
+    kwargs = execute(tmp_path, code_dir, "ok:anything", {"x": 1, "y": 2})
+
+    assert declared.output == {"status": "success", "outputs": {"sum": 3}}
+    assert kwargs.output == {"status": "success", "outputs": {"names": ["x", "y"]}}
+
+
+def test_a_type_error_raised_inside_the_node_is_still_a_node_error(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 只拦调用之前的「没有声明的输入」：节点自己抛出的 TypeError 是节点出错，堆栈照旧。
+    write_module(
+        code_dir,
+        "typo",
+        """
+        def work(a: int) -> dict:
+            return {"x": a + "1"}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "typo:work", {"a": 1})
+
+    assert run.output is not None
+    assert run.output["error"]["type"] == "TypeError"
+    assert "kind" not in run.output["error"]
+    assert "Traceback" in run.stderr
+
+
+# ---- 被终止（取消、超时、被停止子流程节点停止）不写堆栈 ----
+#
+# 这三种情况 Agent 都是写取消标记再发 SIGTERM，执行器看到的都是节点里抛出的 `Cancelled`：
+# 它是正常终止，不是节点出错，日志里不写 ERROR 级的堆栈，只留一行 INFO 的「执行到哪」：
+# 被终止已经由任务状态表达，不是需要处理的问题，所以不是 WARN。
+
+
+def terminate(tmp_path: Path, code_dir: Path, entry: str, ready: Path) -> Execution:
+    """启动执行器，等节点写出 `ready` 后像 Agent 那样先写取消标记再发 SIGTERM，等它退出。"""
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    (work / "task.json").write_text(json.dumps({"entry": entry, "inputs": {}}))
+    env = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("SFLY_")},
+        "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir)]),
+        "SFLY_TASK": str(work / "task.json"),
+        "SFLY_OUTPUT": str(work / "output.json"),
+        "SFLY_EVENTS": str(work / "events.jsonl"),
+        "SFLY_CANCEL": str(work / "cancel"),
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "sfly.runner"],
+        cwd=work,
+        env=env,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    deadline = time.monotonic() + 30
+    while not ready.exists():
+        assert time.monotonic() < deadline, "node never started"
+        time.sleep(0.02)
+    (work / "cancel").write_text("")
+    proc.terminate()
+    _, stderr = proc.communicate(timeout=10)
+    output = work / "output.json"
+    parsed = json.loads(output.read_text(encoding="utf-8")) if output.exists() else None
+    return Execution(proc.returncode, parsed, stderr)
+
+
+def test_a_terminated_node_writes_one_info_line_saying_where_instead_of_a_traceback(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    ready = tmp_path / "ready"
+    write_module(
+        code_dir,
+        "monitor",
+        f"""
+        import time
+        from sfly import Context
+
+        def watch(ctx: Context) -> None:
+            open({str(ready)!r}, "w").close()
+            time.sleep(60)  # 被终止时停在这一行
+        """,
+    )
+    sleep_line = (code_dir / "monitor.py").read_text().splitlines().index(
+        "    time.sleep(60)  # 被终止时停在这一行"
+    ) + 1
+
+    run = terminate(tmp_path, code_dir, "monitor:watch", ready)
+
+    # 标准错误来源的日志是 ERROR 级：不写任何东西，更不写堆栈；事件管道里只有一行 INFO，不是 WARN。
+    assert run.stderr == ""
+    assert run.returncode == 1
+    [event] = events_of(tmp_path)
+    assert (event["type"], event["level"]) == ("log", "info")
+    assert event["message"] == f"任务被终止（SIGTERM），执行到 monitor.watch 第 {sleep_line} 行"
+    assert "\n" not in event["message"]
+    # 结果文件不变：读取端按取消、超时处理时不看它，节点自己被别的方式终止时它仍然说明原因。
+    assert run.output is not None
+    assert run.output["status"] == "failed"
+    assert run.output["error"]["type"] == "Cancelled"
+
+
+def test_the_place_a_terminated_node_stopped_at_is_the_node_code_not_the_sdk(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 停在 SDK 里（这里是 ctx.agent 的等待、下载产物之类的调用）时，报的是调用它的节点代码那一行。
+    ready = tmp_path / "ready"
+    write_module(
+        code_dir,
+        "helper",
+        f"""
+        import time
+
+        def nap() -> None:
+            open({str(ready)!r}, "w").close()
+            time.sleep(60)
+        """,
+    )
+    write_module(
+        code_dir,
+        "outer",
+        """
+        import helper
+
+        def run() -> None:
+            helper.nap()
+        """,
+    )
+
+    terminate(tmp_path, code_dir, "outer:run", ready)
+
+    [event] = events_of(tmp_path)
+    assert event["level"] == "info"
+    assert event["message"].startswith("任务被终止（SIGTERM），执行到 helper.nap 第 ")
+
+
+def test_a_cancelled_raised_by_the_node_itself_is_also_quiet(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "giveup",
+        """
+        from sfly import Cancelled
+
+        def stop() -> None:
+            raise Cancelled("下载被取消")
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "giveup:stop")
+
+    assert run.returncode == 1
+    assert run.stderr == ""
+    [event] = events_of(tmp_path)
+    assert (event["level"], event["message"]) == ("info", "下载被取消，执行到 giveup.stop 第 5 行")
+
+
+def test_cleanup_after_cancelled_and_the_nodes_own_logs_are_not_affected(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    ready = tmp_path / "ready"
+    write_module(
+        code_dir,
+        "tidy",
+        f"""
+        import time
+        from sfly import Cancelled, Context
+
+        def watch(ctx: Context) -> dict:
+            open({str(ready)!r}, "w").close()
+            try:
+                time.sleep(60)
+            except Cancelled:
+                ctx.log.info("收尾：关闭文件")
+                ctx.log.error("节点自己写的错误")
+                return {{"cleaned": True}}
+            return {{}}
+        """,
+    )
+
+    run = terminate(tmp_path, code_dir, "tidy:watch", ready)
+
+    # 节点自己接住了 Cancelled，正常收尾返回：成功，日志原样，执行器不再多写什么。
+    assert run.returncode == 0, run.stderr
+    assert run.output == {"status": "success", "outputs": {"cleaned": True}}
+    assert [(e["level"], e["message"]) for e in events_of(tmp_path)] == [
+        ("info", "收尾：关闭文件"),
+        ("error", "节点自己写的错误"),
+    ]
+
+
+#: 节点里被打断的那一行的标记：期望的行号从源码里按它找，不写死。
+STOPPED_HERE = "# 停在这一行"
+
+
+def marked_line(code_dir: Path, module: str) -> int:
+    lines = (code_dir / f"{module}.py").read_text(encoding="utf-8").splitlines()
+    return next(i for i, line in enumerate(lines, 1) if STOPPED_HERE in line)
+
+
+#: 节点停在标准库里的各种等待：每个写法都在同一行先写出 ready 文件再开始等待，被打断时无论
+#: 停在这一行的哪个位置，节点代码这一帧报的行号都相同。第二列是节点模块的导入和准备工作。
+STDLIB_WAITS = {
+    "Event.wait": ("import threading", "threading.Event().wait(60)"),
+    "subprocess.run": (
+        # 子进程不继承标准输入输出：被终止时恰好落在创建子进程的中途，它没有被杀掉，
+        # 仍持有管道的话测试要等到它结束才读得到执行器的退出。
+        "import subprocess, sys\n"
+        "null = subprocess.DEVNULL\n"
+        "QUIET = dict(stdin=null, stdout=null, stderr=null)",
+        'subprocess.run([sys.executable, "-c", "import time; time.sleep(10)"], **QUIET)',
+    ),
+    "Thread.join": (
+        "import threading, time\n"
+        "t = threading.Thread(target=time.sleep, args=(60,), daemon=True)\n"
+        "t.start()",
+        "t.join()",
+    ),
+    "asyncio.run": (
+        "import asyncio\n\n"
+        "async def main():\n"
+        "    # 事件循环在等待时才写出 ready：节点这一帧不在被打断的栈上\n"
+        "    loop = asyncio.get_running_loop()\n"
+        "    loop.call_later(0.1, lambda: open(READY, 'w').close())\n"
+        "    await asyncio.sleep(60)",
+        "asyncio.run(main())",
+    ),
+}
+
+
+@pytest.mark.parametrize("wait", STDLIB_WAITS, ids=list(STDLIB_WAITS))
+def test_stopped_inside_the_standard_library_reports_the_node_line_that_called_it(
+    tmp_path: Path, code_dir: Path, wait: str
+) -> None:
+    ready = tmp_path / "ready"
+    setup, statement = STDLIB_WAITS[wait]
+    # asyncio 的节点代码在协程里写 ready，其余在等待的同一行写。
+    touch = "" if wait == "asyncio.run" else "open(READY, 'w').close(); "
+    write_module(
+        code_dir,
+        "waiter",
+        f"READY = {str(ready)!r}\n{setup}\n\n\ndef watch() -> None:\n"
+        f"    {touch}{statement}  {STOPPED_HERE}\n",
+    )
+
+    run = terminate(tmp_path, code_dir, "waiter:watch", ready)
+
+    [event] = events_of(tmp_path)
+    assert event["level"] == "info"
+    assert event["message"] == (
+        f"任务被终止（SIGTERM），执行到 waiter.watch 第 {marked_line(code_dir, 'waiter')} 行"
+    )
+    assert run.stderr == ""
+
+
+def test_stopped_inside_a_third_party_library_reports_the_place_in_the_library(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 节点包自己可能装在 site-packages 里：那里的帧不跳过，停在第三方库里时写的是库里的位置。
+    # 这里用一个假的「第三方库」放在名为 site-packages 的目录里。
+    ready = tmp_path / "ready"
+    library = code_dir / "site-packages"
+    library.mkdir()
+    (library / "thirdparty.py").write_text(
+        f"import threading\n\n\ndef wait_for_it() -> None:\n"
+        f"    open({str(ready)!r}, 'w').close(); threading.Event().wait(60)  {STOPPED_HERE}\n",
+        encoding="utf-8",
+    )
+    write_module(
+        code_dir,
+        "usesit",
+        """
+        import sys
+        sys.path.insert(0, __file__.rsplit("/", 1)[0] + "/site-packages")
+        import thirdparty
+
+        def watch() -> None:
+            thirdparty.wait_for_it()
+        """,
+    )
+
+    terminate(tmp_path, code_dir, "usesit:watch", ready)
+
+    [event] = events_of(tmp_path)
+    line = marked_line(code_dir / "site-packages", "thirdparty")
+    assert event["message"] == f"任务被终止（SIGTERM），执行到 thirdparty.wait_for_it 第 {line} 行"
+
+
+# ---- 「执行到哪」的取法本身：用拼出来的栈直接测，不需要真的被终止 ----
+
+
+def frame_in(filename: str, function: str = "f") -> types.FrameType:
+    """一个代码文件名是 `filename` 的函数的栈帧（函数已经返回，帧对象还在）。"""
+    namespace: dict[str, Any] = {"__name__": "fake"}
+    exec(  # noqa: S102 - 测试里造一个带指定文件名的帧
+        compile(f"import sys\ndef {function}():\n    return sys._getframe()\n", filename, "exec"),
+        namespace,
+    )
+    frame: types.FrameType = namespace[function]()
+    return frame
+
+
+def cancelled_through(*frames: types.FrameType) -> Cancelled:
+    """栈是 `frames`（先外层后内层）的 `Cancelled`。"""
+    traceback = None
+    for frame in reversed(frames):
+        traceback = types.TracebackType(traceback, frame, 0, 3)
+    return Cancelled("任务被终止（SIGTERM）").with_traceback(traceback)
+
+
+STDLIB = sysconfig.get_paths()["stdlib"]
+NODE_FRAME = "/work/node.py"
+
+
+def test_sdk_and_standard_library_frames_are_skipped_the_innermost_node_frame_is_reported() -> None:
+    sdk = Path(runner.__file__).parent
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "watch"),
+        frame_in(str(sdk / "capabilities" / "base.py"), "call"),
+        frame_in(f"{STDLIB}/threading.py", "wait"),
+        frame_in("<frozen importlib._bootstrap>", "_find"),
+    )
+
+    assert runner._terminated_at(error) == "fake.watch 第 3 行"
+
+
+def test_a_frame_without_a_file_cannot_be_told_apart_so_it_counts_as_node_code() -> None:
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "watch"),
+        frame_in("<string>", "generated"),
+        frame_in(f"{STDLIB}/threading.py", "wait"),
+    )
+
+    assert runner._terminated_at(error) == "fake.generated 第 3 行"
+    assert runner._terminated_at(cancelled_through(frame_in("", "bare"))) == "fake.bare 第 3 行"
+
+
+def test_frames_in_site_packages_are_not_the_standard_library_even_when_it_contains_them() -> None:
+    # 有的 Python 把 site-packages 放在标准库目录里面：那里的文件不算标准库。
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "watch"),
+        frame_in(f"{STDLIB}/site-packages/requests/api.py", "get"),
+        frame_in(f"{STDLIB}/socket.py", "recv"),
+    )
+
+    assert runner._terminated_at(error) == "fake.get 第 3 行"
+
+
+def test_a_path_that_reaches_the_standard_library_through_a_symlink_still_counts(
+    tmp_path: Path,
+) -> None:
+    link = tmp_path / "lib"
+    link.symlink_to(STDLIB)
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "watch"), frame_in(f"{link}/threading.py", "wait")
+    )
+
+    assert runner._terminated_at(error) == "fake.watch 第 3 行"
+
+
+def test_on_a_case_insensitive_file_system_a_differently_cased_path_still_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(os.path, "normcase", str.lower)
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "watch"), frame_in(f"{STDLIB.upper()}/THREADING.PY", "wait")
+    )
+
+    assert runner._terminated_at(error) == "fake.watch 第 3 行"
+
+
+def test_when_every_frame_is_skipped_the_innermost_one_is_reported() -> None:
+    error = cancelled_through(
+        frame_in(f"{STDLIB}/runpy.py", "run"), frame_in(f"{STDLIB}/threading.py", "wait")
+    )
+
+    assert runner._terminated_at(error) == "fake.wait 第 3 行"
+
+
+def test_without_a_stack_there_is_no_place_and_the_message_only_gives_the_reason() -> None:
+    assert runner._terminated_at(Cancelled("x")) is None
+    assert runner._termination_message(Cancelled("下载被取消")) == "下载被取消"
+    assert runner._termination_message(Cancelled()) == "任务被终止"
+
+
+def test_failing_to_work_out_the_place_never_raises_on_the_termination_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken() -> None:
+        raise RuntimeError("sysconfig 坏了")
+
+    monkeypatch.setattr(runner, "_runtime_dirs", broken)
+    error = cancelled_through(frame_in(NODE_FRAME, "watch"))
+
+    assert runner._termination_message(error) == "任务被终止（SIGTERM）"
+
+
+@pytest.mark.parametrize(
+    "failure", [OSError("没有这个目录"), RuntimeError("写事件管道时出了别的错")]
+)
+def test_failing_to_write_the_log_line_does_not_lose_the_result(
+    monkeypatch: pytest.MonkeyPatch, code_dir: Path, failure: Exception
+) -> None:
+    write_module(
+        code_dir,
+        "giveup",
+        """
+        from sfly import Cancelled
+
+        def stop() -> None:
+            raise Cancelled("取消")
+        """,
+    )
+    monkeypatch.syspath_prepend(str(code_dir))
+
+    def broken() -> None:
+        raise failure
+
+    monkeypatch.setattr(runner, "Context", broken)
+
+    code, text = runner.run({"entry": "giveup:stop", "inputs": {}})
+
+    assert code == 1
+    assert json.loads(text)["error"]["type"] == "Cancelled"
+
+
+def test_an_exception_raised_while_cleaning_up_after_cancelled_keeps_its_full_traceback(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    ready = tmp_path / "ready"
+    write_module(
+        code_dir,
+        "broken",
+        f"""
+        import time
+        from sfly import Cancelled
+
+        def watch() -> None:
+            open({str(ready)!r}, "w").close()
+            try:
+                time.sleep(60)
+            except Cancelled:
+                raise RuntimeError("收尾时出错")
+        """,
+    )
+
+    run = terminate(tmp_path, code_dir, "broken:watch", ready)
+
+    assert "Traceback (most recent call last)" in run.stderr
+    assert "RuntimeError: 收尾时出错" in run.stderr
+    assert not (tmp_path / "work" / "events.jsonl").exists()
+    assert run.output is not None
+    assert run.output["error"]["type"] == "RuntimeError"
+
+
+def test_without_an_event_pipe_a_terminated_node_still_fails_quietly(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "giveup",
+        """
+        from sfly import Cancelled
+
+        def stop() -> None:
+            raise Cancelled()
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "giveup:stop", env={"SFLY_EVENTS": None})
+
+    assert run.returncode == 1
+    assert run.stderr == ""
+    assert run.output is not None
+    assert run.output["error"]["type"] == "Cancelled"
+
+
+def test_an_ordinary_exception_in_the_node_still_writes_its_full_traceback_to_stderr(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "boom",
+        """
+        def explode() -> None:
+            raise ValueError("坏了")
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "boom:explode")
+
+    assert run.stderr.startswith("Traceback (most recent call last):\n")
+    assert 'raise ValueError("坏了")' in run.stderr
+    assert run.stderr.rstrip().endswith("ValueError: 坏了")
+    assert not (tmp_path / "work" / "events.jsonl").exists()
 
 
 # ---- ctx.artifacts：保存到产物目录 SFLY_ARTIFACTS，返回产物引用（下载地址） ----
