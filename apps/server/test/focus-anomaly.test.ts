@@ -338,6 +338,22 @@ describe("关注项的异常", () => {
 		expect(await anomaly(runId)).toEqual(failed);
 	});
 
+	it("failed：原因去掉异常的模块路径，第一行以冒号结尾时接上下一行（断言失败的第 1 条）", async () => {
+		await start();
+		const runId = await trigger([{ node_id: "load", chart: "延迟" }]);
+		const task = await agent.nextAssign();
+		setClock(5000);
+		await agent.fail(
+			task,
+			"sfly_std.assert_.AssertionFailed: 1 条断言中 1 条不通过：\n第 1 条：$ 应 eq true，实际是 false\n\nTraceback (most recent call last):",
+		);
+		expect(await anomaly(runId)).toEqual({
+			kind: "failed",
+			at: iso(5000),
+			message: "AssertionFailed: 1 条断言中 1 条不通过：第 1 条：$ 应 eq true，实际是 false",
+		});
+	});
+
 	it("retry：最新一次尝试的号大于 1、10 分钟以内开始的算异常，原因是上一次的错误；还没开始执行时按排队的时间", async () => {
 		await start();
 		const document = benchDocument();

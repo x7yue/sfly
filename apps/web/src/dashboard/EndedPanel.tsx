@@ -1,4 +1,4 @@
-import type { DashboardEndedRun, DashboardRunFailure } from "@sfly/schema";
+import { type DashboardEndedRun, type DashboardRunFailure, errorHeadline } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { RotateCcwIcon } from "lucide-react";
@@ -20,7 +20,7 @@ import { PanelLink } from "./panel-link";
 
 /**
  * 左栏下半：最近 24 小时结束的运行（最多 10 个），按结束时间从新到旧。失败的带错误类型、最先失败的节点、所在链、
- * 尝试号和最多两行错误信息、关注项的最终值（场景现在的关注项，最多 4 项），以及「打开失败节点」「再次运行」；成功和取消的只占一行。
+ * 尝试号和失败原因（`errorHeadline`，最多两行）、关注项的最终值（场景现在的关注项，最多 4 项），以及「打开失败节点」「再次运行」；成功和取消的只占一行。
  * `generatedAt` 是控制台统计的时刻（读数里「多久前」的参照）。
  */
 export function EndedPanel({
@@ -111,7 +111,7 @@ function EndedRow({ run, generatedAt }: { run: DashboardEndedRun; generatedAt: s
 				</div>
 				{failure?.error?.message && (
 					<p className="m-0 mt-1.5 line-clamp-2 rounded-md bg-inset px-2.5 py-1.5 font-mono text-xs wrap-anywhere whitespace-pre-line text-fg-2">
-						{failure.error.message}
+						{errorHeadline(failure.error.message)}
 					</p>
 				)}
 				{run.focus.length > 0 && (
