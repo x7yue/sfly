@@ -34,6 +34,8 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 
 Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面的前缀：`git push -u origin HEAD:<前缀>/<描述>`。
 
+推送前的钩子（`.githooks/pre-push`）检查推送的目标分支名：不是上面表里的前缀（也不是 `main`、`dev`）就拒绝，报错里列出允许的前缀。钩子读这张表的第一列，所以表是唯一的定义：增删前缀改这张表，保持「每行第一列是 `` `前缀/…` ``」的格式（`scripts/tests/test_pre_push.py` 检查）。`--no-verify` 能跳过；要硬拦，得在规则集里加分支名规则。
+
 ## CI 什么时候运行
 
 - PR（草稿也算）的每次推送、`main` 和 `dev` 上的每个提交。其他分支上只推送、没有 PR 时不运行：要在合并前验证就开一个草稿 PR，
@@ -43,7 +45,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - `e2e` 在 PR 上先完整跑一遍，再把这个 PR 新增或改动的 `apps/web/e2e/**/*.spec.ts`（含 `visual.spec.ts`）重复运行 2–5 次
   （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 和 `dev` 上的 push 不跑重复这一步。
   这一步失败说明用例不稳定，处理见 CODING_STANDARDS「测试」。
-- 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
+- 推送前的钩子（`.githooks/pre-push`）检查分支名（见「分支命名」），再跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
 - `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。`e2e` 也是汇总：端到端测试分 4 片并行
   （`e2e (1/4)` 到 `e2e (4/4)`），全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
 - CI 失败时先用 `pnpm ci:failures <运行 ID>` 看失败的测试和断言差异，不用下载完整日志。

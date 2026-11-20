@@ -47,7 +47,7 @@ Tests create Unix sockets, and a socket path longer than 108 bytes fails with `A
 
 ## Pushing
 
-- A push from a worktree runs the pre-push hook: version, generated code, lint and typecheck. It does not run tests; CI does, on branches that have a PR (a draft counts).
+- A push from a worktree runs the pre-push hook: the target branch name must have an agreed prefix (`docs/agents/branching-and-release.md`, "分支命名"; push a `cindy/<name>` branch as `git push origin HEAD:<prefix>/<description>`), then version, generated code, lint and typecheck. It does not run tests; CI does, on branches that have a PR (a draft counts).
 - When the pre-push check already passed and only the network dropped, retry with `--no-verify`.
 
 ## CI and merging
