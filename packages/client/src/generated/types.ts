@@ -765,7 +765,7 @@ export interface FeishuNotifyNode {
 	kind: "feishu_notify";
 	always: boolean;
 	/**
-	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §1.3）。
+	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §4.2）。
 	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
 	 */
 	bot?: string;
@@ -804,7 +804,7 @@ export interface FeishuNotifyNodeInput {
 	kind: "feishu_notify";
 	always?: boolean;
 	/**
-	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §1.3）。
+	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §4.2）。
 	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
 	 */
 	bot?: string;
@@ -2260,7 +2260,7 @@ export interface StopSubflowNode {
 	always: boolean;
 	/**
 	 * 要停止的子流程：子流程入口的节点 ID（画布里按名称选择，改名不影响引用，docs/SEMANTICS.md §4.1）。
-	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（§1.2）。
+	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（docs/SEMANTICS.md §1.2）。
 	 */
 	subflow?: string;
 }
@@ -2279,7 +2279,7 @@ export interface StopSubflowNodeInput {
 	always?: boolean;
 	/**
 	 * 要停止的子流程：子流程入口的节点 ID（画布里按名称选择，改名不影响引用，docs/SEMANTICS.md §4.1）。
-	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（§1.2）。
+	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（docs/SEMANTICS.md §1.2）。
 	 */
 	subflow?: string;
 }
@@ -2296,7 +2296,7 @@ export interface SubflowEntryNode {
 	kind: "subflow_entry";
 	/**
 	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
-	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（§1.2）。
+	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（docs/SEMANTICS.md §1.2）。
 	 */
 	name?: string;
 	params: ParamDeclaration[];
@@ -2314,7 +2314,7 @@ export interface SubflowEntryNodeInput {
 	kind: "subflow_entry";
 	/**
 	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
-	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（§1.2）。
+	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（docs/SEMANTICS.md §1.2）。
 	 */
 	name?: string;
 	params?: ParamDeclarationInput[];
@@ -2354,7 +2354,7 @@ export interface TaskProgressView {
 /**
  * 任务（一次尝试）与节点的状态（docs/SEMANTICS.md §3.1）。节点另有 pending（还没有尝试）。
  * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
- * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（§4.1，不算失败）。
+ * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1，不算失败）。
  */
 export type TaskStatus = "queued" | "dispatched" | "running" | "waiting" | "success" | "failed" | "skipped" | "cancelled" | "stopped";
 

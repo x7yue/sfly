@@ -1,6 +1,5 @@
 // 运行预设（#328，ADR 0024）：运行列表（运行记录页的 GET /runs 与场景的 GET /orchestrations/:id/runs）里的 preset，
 // 显示的是触发时记下的预设；预设之后改名、删除都不变。HTTP API + 假 Agent + 真实 PostgreSQL。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { runListApi, runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";

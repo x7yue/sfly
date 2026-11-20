@@ -17,4 +17,4 @@
 
 > _与 ADR 0007（HTTP API 的契约用 zod 定义）矛盾，但值得重新讨论，因为……_
 
-推翻已接受的 ADR：写一份新的 ADR，在旧 ADR 末尾追加一行指向它（例如「已被 ADR 0021 取代」），不改旧 ADR 的正文（`CODING_STANDARDS.md`「文档」；`pnpm lint:docs` 会拒绝）。
+推翻已接受的 ADR：写一份新的 ADR，在旧 ADR 末尾追加一行指向它（例如「已被 ADR 0021 取代」），不改旧 ADR 的正文（`CODING_STANDARDS.md`「文档」；`pnpm lint:docs` 会拒绝）。新 ADR 写了「取代 / 推翻 / 修订 ADR 00NN」，而 ADR 00NN 里没有一行提到它时，`pnpm lint:docs` 也会报错。

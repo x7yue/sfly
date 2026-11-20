@@ -3,17 +3,79 @@
 # 测试、打包冒烟和镜像冒烟在 CI 里跑（合入 main 必须通过，跳不过）：每次推送都重跑一遍全部测试要等几分钟，
 # 几个 worktree 同时推送还会互相拖慢、造成偶发失败。推送前想自己跑：`pnpm test`，完整检查 `pnpm check`。
 # 由 `pnpm bootstrap` 启用（git config core.hooksPath .githooks）。只推送 tag 或删除远端分支时跳过。
+# 先检查分支名：推送的目标引用（remote_ref，不是本地分支名）要用约定的前缀。允许的前缀就是
+# docs/agents/branching-and-release.md「分支命名」表第一列的前缀（sfly-std 的 release/std-X.Y.Z 在 release/ 之下），
+# 另加 main 和 dev：表是唯一的定义，这里读它，不另写一份（scripts/tests/test_pre_push.py）。
+# `--no-verify` 能跳过；要硬拦，得在 GitHub 规则集里加分支名规则。
 set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+branch_doc=docs/agents/branching-and-release.md
+
+# 读「分支命名」表：第一列写成单个 `前缀/…`（前缀是小写字母、数字和连字符），表头和分隔行跳过，
+# 单元格里的多余空白、行首缩进都不碍事。读不懂的行（一格里两个前缀、给前缀加粗……）收集起来，推送时明确报错，不静默丢掉。
+prefixes=""
+unreadable=()
+header=1
+cell_re='^`([a-z][a-z0-9-]*/)[^`]*`$'
+while IFS= read -r row; do
+	[[ $row =~ ^[[:space:]]*\| ]] || continue
+	cell=${row#*|}
+	cell=${cell%%|*}
+	cell=${cell#"${cell%%[![:space:]]*}"}
+	cell=${cell%"${cell##*[![:space:]]}"}
+	if [[ $cell =~ $cell_re ]]; then
+		prefixes+="${BASH_REMATCH[1]} "
+	elif [[ $cell =~ ^:?-+:?$ ]] || { ((header)) && [[ $cell != *\`* ]]; }; then
+		: # 分隔行；表头（表的第一行，第一列没有反引号）
+	else
+		unreadable+=("$row")
+	fi
+	header=0
+done < <({ sed -n '/^## 分支命名/,/^## /p' "$root/$branch_doc" 2>/dev/null || true; })
+prefixes=${prefixes% }
+
+branch_name_allowed() {
+	local name=$1 prefix
+	[[ $name == main || $name == dev ]] && return 0
+	for prefix in $prefixes; do
+		[[ $name == "$prefix"?* ]] && return 0
+	done
+	return 1
+}
 
 zero=0000000000000000000000000000000000000000
 branches=0
+bad=()
 while read -r _local_ref local_sha remote_ref _remote_sha; do
 	[[ $local_sha == "$zero" || $remote_ref == refs/tags/* ]] && continue
 	branches=1
+	if [[ $remote_ref == refs/heads/* ]]; then
+		if ((${#unreadable[@]})); then
+			for row in "${unreadable[@]}"; do
+				echo "pre-push：读不懂 ${branch_doc}「分支命名」表的这一行：${row}" >&2
+			done
+			echo "  表的第一列要写成单个 \`前缀/…\`（前缀是小写字母、数字和连字符；不在一格里写两个前缀，不给前缀加粗），钩子按它读允许的前缀（跳过：git push --no-verify）" >&2
+			exit 1
+		fi
+		if [[ -z $prefixes ]]; then
+			echo "pre-push：读不出 ${branch_doc}「分支命名」表里的前缀，没法检查分支名：先把这张表改回「每行第一列是 \`前缀/…\`」的格式（跳过：git push --no-verify）" >&2
+			exit 1
+		fi
+		branch_name_allowed "${remote_ref#refs/heads/}" || bad+=("${remote_ref#refs/heads/}")
+	fi
 done
+if ((${#bad[@]})); then
+	for name in "${bad[@]}"; do
+		echo "pre-push：分支名 ${name} 不合约定的前缀。" >&2
+	done
+	echo "  允许的前缀：${prefixes}，另外 main 和 dev（${branch_doc}「分支命名」）。" >&2
+	echo "  Cindy worktree 的 cindy/<名字> 分支推送前要改名：git push -u origin HEAD:<前缀>/<描述>，例如 HEAD:chore/small-checks（跳过：git push --no-verify）" >&2
+	exit 1
+fi
 ((branches)) || exit 0
 
-cd "$(git rev-parse --show-toplevel)"
+cd "$root"
 # git 给钩子设置的 GIT_DIR 等变量会被测试启动的 git 子进程继承，让它们作用到这个仓库而不是测试的临时仓库：
 # 一次 `git -C <临时目录> init` 就会把共享配置改成 core.bare=true。检查只靠当前目录定位仓库，所以全部去掉。
 unset $(git rev-parse --local-env-vars)

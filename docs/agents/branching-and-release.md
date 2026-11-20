@@ -43,6 +43,8 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 
 Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面的前缀：`git push -u origin HEAD:<前缀>/<描述>`。
 
+推送前的钩子（`.githooks/pre-push`）检查推送的目标分支名：不是上面表里的前缀（也不是 `main`、`dev`）就拒绝，报错里列出允许的前缀。钩子读这张表的第一列，所以表是唯一的定义：增删前缀改这张表，第一列写成单个 `` `前缀/…` ``（前缀是小写字母、数字和连字符，多余的空白不碍事；不要在一格里写两个前缀、不要给前缀加粗）。钩子读不懂的行会明确报出那一行并拒绝推送，不会悄悄丢掉；`scripts/tests/test_pre_push.py` 逐行核对钩子读到的前缀和表里写的一致。`--no-verify` 能跳过；要硬拦，得在规则集里加分支名规则。
+
 ## CI 什么时候运行
 
 - PR（草稿也算）的每次推送、`main` 和 `dev` 上的每个提交。其他分支上只推送、没有 PR 时不运行：要在合并前验证就开一个草稿 PR，
@@ -52,7 +54,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - `e2e` 在 PR 上先完整跑一遍，再把这个 PR 新增或改动的 `apps/web/e2e/**/*.spec.ts`（含 `visual.spec.ts`）重复运行 2–5 次
   （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 和 `dev` 上的 push 不跑重复这一步。
   这一步失败说明用例不稳定，处理见 CODING_STANDARDS「测试」。
-- 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
+- 推送前的钩子（`.githooks/pre-push`）检查分支名（见「分支命名」），再跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
 - `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。`e2e` 也是汇总：端到端测试分 4 片并行
   （`e2e (1/4)` 到 `e2e (4/4)`），全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
 - CI 失败时先用 `pnpm ci:failures <运行 ID>` 看失败的测试和断言差异，不用下载完整日志。
@@ -70,7 +72,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 ### 关键路径的改动要贴 `pnpm perf` 结果
 
-性能测试不进 CI（ARCHITECTURE §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
+性能测试不进 CI（docs/ARCHITECTURE.md §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
 把报告的结论、总览和「与发版基线相比变化超过 20% 的数值」贴进 PR 描述。报告在本机结果目录
 （默认 `~/.local/share/sfly/perf/<时间>/report.md`，命令结束时打印路径），每份报告同时与两份基准对比：
 本机上一次（任何 worktree 里跑的都算），以及仓库里 `docs/perf/` 下最近一个版本的发版报告（发版基线）。
@@ -99,7 +101,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 - 完整报告贴在对应 issue 或 PR 的评论里：数值、测量方法、机器（CPU、内存、系统）、提交号、样本量（轮数、每轮次数、时长）。
 - 调研文档（`docs/research/`）只写结论与关键数值，链接到那条评论。
-- 以后还要用的测量脚本整理成 `pnpm perf` 的一项（`apps/server/perf/items/`，ARCHITECTURE §7.6）；一次性的脚本不进仓库，
+- 以后还要用的测量脚本整理成 `pnpm perf` 的一项（`apps/server/perf/items/`，docs/ARCHITECTURE.md §7.6）；一次性的脚本不进仓库，
   但报告里写清楚怎么测的（命令、参数、负载），别人照着能重做。
 - 测量的中间文件和结果不放 `/tmp`（小、重启即清，还会挤满）：放在本机的固定目录，例如 `pnpm perf` 的本机结果目录
   `~/.local/share/sfly/perf/` 旁边自建子目录；也不要只留在会被清理的 worktree 里。
@@ -108,13 +110,13 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 1. 从 `main` 新建 `release/X.Y.Z`，运行 `pnpm release:version set X.Y.Z`，提交并开 PR。
 2. 在这个分支上、提交好之后运行 `pnpm perf --release`（必跑，约 10 分钟：release 构建的 Agent、打包后的控制面与本机
-   PostgreSQL，ARCHITECTURE §7.6）。它与 `pnpm perf` 相同，只是通过后再把报告存进 `docs/perf/X.Y.Z/report.{json,md}`；
+   PostgreSQL，docs/ARCHITECTURE.md §7.6）。它与 `pnpm perf` 相同，只是通过后再把报告存进 `docs/perf/X.Y.Z/report.{json,md}`；
    有未提交的改动、被中断或结论不通过（硬性断言不满足或某项出错）时不存，命令以退出码 1 结束并说明原因。
    不通过时不发版，先修复后重跑。把 `docs/perf/X.Y.Z/` 提交进发版 PR；描述里只贴结论和变化（与发版基线——上一个版本的
    报告——相比变化超过 20% 的数值，变差的说明原因或确认是机器波动），不贴整份报告。确认后合入。
    维护者要求跑长时负载测试时，用 `pnpm perf:soak --release`，存为同一目录下的 `soak.{json,md}`。
 3. 等 `main` 上这个提交的 CI 通过，在它上面打 tag 并推送：`git tag vX.Y.Z <提交> && git push origin vX.Y.Z`。
-4. `.github/workflows/release.yml` 接手：校验版本号、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
+4. `.github/workflows/release.yml` 接手：校验版本号（各处与 tag 一致，`docs/perf/X.Y.Z/report.json` 已提交且版本号一致——没跑性能测试就发不出）、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
    Release 说明里的变更列表从上一个平台版本起算（见下文「变更列表的起点」）。
 
 - 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。

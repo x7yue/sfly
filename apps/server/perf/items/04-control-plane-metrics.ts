@@ -1,4 +1,4 @@
-// 负载：控制面持续每秒接收 1 万个指标点（ARCHITECTURE §7.6「控制面接收指标」）。负载、断言与记录的数值见
+// 负载：控制面持续每秒接收 1 万个指标点（docs/ARCHITECTURE.md §7.6「控制面接收指标」）。负载、断言与记录的数值见
 // perf/control-plane-load.ts；这一项只启动独立的数据库与打包后的控制面（假 Agent 代替真实 Agent）。
 // 持续时间默认 60 秒，可以用环境变量 SFLY_PERF_CONTROL_PLANE_SECONDS 改；长时负载测试（pnpm perf:soak）跑满时长。
 import { mkdtemp } from "node:fs/promises";

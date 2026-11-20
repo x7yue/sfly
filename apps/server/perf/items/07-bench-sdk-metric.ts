@@ -1,4 +1,4 @@
-// 基准测试：SDK 单次 ctx.metric() 和单次 ctx.action() 的开销（ARCHITECTURE §7.6；标准库 timeit，不给 SDK 加依赖，ADR 0002）。
+// 基准测试：SDK 单次 ctx.metric() 和单次 ctx.action() 的开销（docs/ARCHITECTURE.md §7.6；标准库 timeit，不给 SDK 加依赖，ADR 0002）。
 // 运行 sdk/python/benchmarks/metric.py --json（也可以单独运行，见该文件），只记录，不判定。
 import { readTimeit } from "../bench.js";
 import { runChecked } from "../command.js";

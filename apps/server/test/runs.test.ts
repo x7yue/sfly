@@ -1,5 +1,4 @@
 // 切入点 A：通过 HTTP API 保存编排、触发运行、查询状态；假 Agent 讲真实 gRPC；真实 PostgreSQL。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";

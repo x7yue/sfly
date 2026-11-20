@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import shellNode from "../../../testdata/std-shell-node.json" with { type: "json" };
 import { nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";

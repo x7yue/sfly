@@ -1,4 +1,4 @@
-// 三个基准测试（ARCHITECTURE §7.6）的输出读取：各自用自己的工具（timeit、criterion、vitest bench），
+// 三个基准测试（docs/ARCHITECTURE.md §7.6）的输出读取：各自用自己的工具（timeit、criterion、vitest bench），
 // 这里把它们的结果换算成统一的数值，由 perf/items/07–09 写进报告。单测见 test/perf-benchmarks.test.ts。
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";

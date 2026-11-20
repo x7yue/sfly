@@ -1,6 +1,5 @@
 // 切入点 A：失败处理（docs/SEMANTICS.md §3.2、§3.3）——错误分类与重试、跳过与 always、运行状态。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ErrorKind, FakeAgent } from "./support/fake-agent.js";

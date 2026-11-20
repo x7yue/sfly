@@ -46,7 +46,7 @@ export function displayPath(path: string, root: string, home: string): string {
 	return path;
 }
 
-/** 长时负载测试的默认时长：1 小时（ARCHITECTURE §7.6）。 */
+/** 长时负载测试的默认时长：1 小时（docs/ARCHITECTURE.md §7.6）。 */
 export const DEFAULT_SOAK_SECONDS = INGEST_SECONDS;
 
 /** 控制面接收指标这一项（control-plane-metrics）的持续时间（秒）。 */
@@ -66,7 +66,7 @@ export const USAGE = `用法：pnpm perf [--only <项>[,<项>...]] [--tmp-dir <�
               （pnpm perf 为 report.{json,md}，perf:soak 为 soak.{json,md}）；不能与 --only、--no-build 同用
 环境变量（秒数）：
   ${CONTROL_PLANE_SECONDS_ENV}  control-plane-metrics 的持续时间，默认 60（1 小时的目标由 perf:soak 覆盖）
-  ${DISCONNECT_SECONDS_ENV}     agent-disconnect 里控制面停掉的时长，默认 45、至少 30；300 即 §7.6 的断线 5 分钟
+  ${DISCONNECT_SECONDS_ENV}     agent-disconnect 里控制面停掉的时长，默认 45、至少 30；300 即 docs/ARCHITECTURE.md §7.6 的断线 5 分钟
 相对路径按仓库根目录解析。perf:soak 中途按 Ctrl-C 会停止负载，已采集的数据照常写进报告。`;
 
 /**

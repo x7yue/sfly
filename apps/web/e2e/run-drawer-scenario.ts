@@ -1,5 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-
 // 运行抽屉端到端测试与视觉回归共用的场景。
 
 /** 入口参数：host（必填）、steps（数字，默认 3）、dry_run（布尔）、api_token（敏感，必填）。 */

@@ -458,7 +458,7 @@ export function SubflowNameField({
 }
 
 /**
- * 停止子流程节点：按名称选择要停止的子流程（SEMANTICS §4.1）。只列出合法候选——本链在它之前触发的子流程及其下级子流程；
+ * 停止子流程节点：按名称选择要停止的子流程（docs/SEMANTICS.md §4.1）。只列出合法候选——本链在它之前触发的子流程及其下级子流程；
  * 已选的子流程不再合法（例如顺序变了）时仍显示在列表里，警告显示在字段下面。
  */
 export function StopSubflowField({

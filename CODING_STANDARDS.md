@@ -1,6 +1,7 @@
 # 编码规范
 
 代码审查逐条检查本文。这里只放需要判断的规则；能机械检查的写进 lint 或测试（biome、ruff、clippy、`biome-plugins/`）。
+`biome-plugins/` 的每个规则配一组「应该命中」和「不应命中」的样例（`biome-plugins/fixtures/`），由 `apps/server/test/biome-plugins.test.ts` 检查：规则匹配的写法改了名，测试会失败，而不是规则静默地不再拦任何东西。
 
 其他规范来源，审查时一并对照：
 
@@ -45,4 +46,6 @@
 ## 文档
 
 - **已接受的 ADR 是当时的决定记录，改名或换做法时不回头改它的正文。** 命令、接口、术语改名后，ADR 里的旧名照旧保留：读者要能看到当时决定的是什么。
-  决定被推翻时写一份新的 ADR，在旧 ADR 末尾加一行指向它（例如「已被 ADR 0021 取代」）。现行的说明写在 `docs/ARCHITECTURE.md`、`docs/guide/` 和 GLOSSARY 里，这些随改名一起改。
+  决定被推翻时写一份新的 ADR，在旧 ADR 末尾加一行指向它（例如「已被 ADR 0021 取代」；部分取代的写清是哪一部分）。新 ADR 写了「取代 / 推翻 / 修订 ADR 00NN」，而 ADR 00NN 末尾没有指向它的一行时，`pnpm lint:docs` 报错。现行的说明写在 `docs/ARCHITECTURE.md`、`docs/guide/` 和 GLOSSARY 里，这些随改名一起改。
+- **文档里的路径、章节号和链接有 `pnpm lint:docs` 守着**（`scripts/check_doc_references.py`，报错写明位置和改法；查什么、不查什么见脚本开头的说明）。动笔前要知道的是章节引用的写法：文档的仓库路径、空格、`§`、章节号，`docs/SEMANTICS.md §3.4`；一组沿用前面的文档（`docs/SEMANTICS.md §1.2、§2.4`），章节里的第几条写在后面（`docs/SEMANTICS.md §4 第 6 条`）；`docs/SEMANTICS.md`、`docs/ARCHITECTURE.md`、`docs/DESIGN-SYSTEM.md` 自己里面只写 `§` 加章节号。
+  检查做不了、要人判断的：它只确认章节有标题，指没指对要人核对，改动、合并、拆分章节时用 `git grep -n 'docs/SEMANTICS.md §'` 找出引用它的注释一起改；顶层目录整个改名后，旧名开头的路径查不出。

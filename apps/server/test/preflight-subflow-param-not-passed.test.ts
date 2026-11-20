@@ -1,7 +1,6 @@
 // 触发前预检：异步任务节点没有给子流程的参数传值，而子流程里有节点用到它时给警告（#421，docs/SEMANTICS.md §6）。
 // 警告不阻断触发：参数是非必填、没有默认值的，那些节点拿到的是空值（null）；子流程里没有任何地方引用它时不报。
 // 必填又没有默认值的参数没有传值，是保存时就有的 subflow_param_missing，阻断触发，这里不重复。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { echo, type Node, orchestration, param, spawn } from "./support/chains.js";
