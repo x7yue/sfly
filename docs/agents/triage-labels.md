@@ -22,4 +22,4 @@
 
 - `roadmap`：路线图的 issue。
 - `needs-decision`：要团队讨论、负责人决定后才能动手。决定写进这个 issue 的评论。
-- `merged-to-dev`：PR 已合入 `dev`、issue 已关闭，改动还没到 `main`。`dev` 合入 `main` 之后，由做那次合入的人把带这个标签的 issue 批量摘掉（issue 保持关闭）。
+- `merged-to-dev`：PR 已合入 `dev`、issue 已关闭，改动还没到 `main`。合入 `dev` 之后，关闭 issue 的人在关闭时加上它（命令见 [issue-tracker.md](./issue-tracker.md)「用 PR 关闭 issue」）；`dev` 合入 `main` 之后，由做那次合入的人把带这个标签的 issue 批量摘掉（issue 保持关闭）。

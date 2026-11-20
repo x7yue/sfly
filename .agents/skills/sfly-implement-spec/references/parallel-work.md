@@ -41,4 +41,4 @@ Stop every `Monitor` and background command you started before the final report.
 
 - Wait for a PR's checks with `gh pr checks <number> --watch`.
 - Read a failed CI run with `pnpm ci:failures <run id>`: it prints only the failing tests and their assertion diffs.
-- A branch started on top of another unmerged branch conflicts with `main` once the base is squash-merged. Confirm that `main` matches the base branch for those files, then keep this branch's side.
+- A branch started on top of another unmerged branch conflicts with the PR's target branch (`dev` or `main`) once the base is squash-merged. Confirm that the target branch matches the base branch for those files, then keep this branch's side.

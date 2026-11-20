@@ -46,7 +46,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch, with the base branch as the fixed point. Step 5 already reviewed each ticket's own diff against the standards, so this pass is for what one ticket's diff cannot show: duplicates across tickets, the Spec axis over the whole spec, and wording that differs between tickets. Fix all issues raised by the code review in a single fresh **implementer subagent**.
 
 8. Mark the draft PR ready for review once its checks pass, then act on its base branch:
-   - Base `dev`: merge once the checks pass and a reviewer other than the implementers, on a different model, has approved it; the maintainer need not be asked. The orchestrator merges when there is one, otherwise the agent that started the implementation. Afterwards close the spec and tickets by hand, as the `dev` section of `docs/agents/branching-and-release.md` describes: GitHub closes issues only for merges into the default branch.
-   - Base `main`: the maintainer merges. Merging `dev` into `main` also waits for the maintainer's explicit word (same document).
+   - Base `dev`: review, who merges and when are in the `dev` section of `docs/agents/branching-and-release.md`; after the merge close the spec and tickets by hand (`docs/agents/issue-tracker.md`).
+   - Base `main`: the maintainer merges.
 
 9. Clean up all **implementer subagent** worktrees.

@@ -12,13 +12,20 @@ issue 和规格在 `x7yue/sfly` 的 GitHub Issues 里，操作都用 `gh`（在�
 - **子 issue**：`gh issue create --parent <父编号> …`，或事后 `gh issue edit <父编号> --add-sub-issue <子编号>`。没有挂成子 issue 时，子 issue 正文第一行写 `Part of #<父编号>`。
 - **阻塞关系**：用 GitHub 原生的依赖：`gh issue create --blocked-by <编号>,<编号> …`，或 `gh issue edit <子编号> --add-blocked-by <阻塞者编号>`。阻塞者全部关闭，这张票才能开工。
 - **还有几个阻塞者没关**：`gh api repos/x7yue/sfly/issues/<编号> --jq .issue_dependencies_summary.blocked_by`，0 表示能开工。
-- **关闭**：先 `gh issue comment` 写明原因，再 `gh issue close <编号>`。
+- **关闭**：先 `gh issue comment` 写明原因，再 `gh issue close <编号>`。对已经关闭的 issue 用 `gh issue close --comment`，评论会丢，退出码仍是 0。
 - **编号**：issue 和 PR 共用一个编号空间，裸 `#42` 可能是任何一个：先 `gh pr view 42`，失败再 `gh issue view 42`。
+- **读 PR**：`gh pr view <编号> --json title,body,labels,comments`、`gh pr diff <编号>`。不在终端里时 `gh pr view --comments` 只打印评论、不打印正文，要正文用 `--json body`。
 
 ## 用 PR 关闭 issue
 
 - PR 合入 `main`：正文写 `Closes #<编号>`，合入后自动关闭。
-- PR 合入 `dev`（带 `roadmap` 标签的 issue）：正文第一行写 `Part of #<编号>`。`Closes` 只在合入默认分支时生效，所以合入后手动关闭 issue，评论的写法见 [branching-and-release.md](./branching-and-release.md)「`dev`（强制）」。
+- PR 合入 `dev`（带 `roadmap` 标签的 issue）：正文第一行写 `Part of #<编号>`。`Closes` 只在合入默认分支时生效，所以合入后手动关闭 issue，评论的写法见 [branching-and-release.md](./branching-and-release.md)「`dev`（强制）」。关闭时同时加标签 `merged-to-dev`：
+
+  ```sh
+  gh issue comment <编号> --body "已合入 \`dev\`（#<PR 编号>），随 \`dev\` 进 \`main\`"
+  gh issue edit <编号> --add-label merged-to-dev
+  gh issue close <编号>
+  ```
 
 ## Pull requests as a triage surface（PR 不进 triage）
 
