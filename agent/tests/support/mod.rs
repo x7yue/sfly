@@ -66,12 +66,14 @@ pub async fn wait_until(what: &str, check: impl Fn() -> bool) {
 }
 
 /// 任务被取消、超时或被停止子流程节点停止（节点里收到 `Cancelled`）时的日志：正常终止不是节点出错，
-/// 没有 ERROR 级的行、没有堆栈，只有一行不高于 WARN 的记录写明被终止。
+/// 没有 WARN 和 ERROR 级的行、没有堆栈，只有一行 INFO 记录写明被终止。
 pub fn assert_quiet_termination(logs: &[LogLine]) {
     let texts: Vec<_> = logs.iter().map(|l| (l.level(), l.text.as_str())).collect();
+    // 被终止已经由任务状态（已停止、已取消、超时）表达，日志里不留需要处理的问题：不是 WARN，更不是 ERROR。
     assert!(
-        logs.iter().all(|l| l.level() != LogLevel::Error),
-        "被终止的任务不写 ERROR 级的行：{texts:?}"
+        logs.iter()
+            .all(|l| !matches!(l.level(), LogLevel::Warn | LogLevel::Error)),
+        "被终止的任务不写 WARN 和 ERROR 级的行：{texts:?}"
     );
     assert!(
         logs.iter().all(|l| !l.text.contains("Traceback")),
@@ -82,7 +84,7 @@ pub fn assert_quiet_termination(logs: &[LogLine]) {
         .filter(|l| l.text.contains("被终止"))
         .map(|l| l.level())
         .collect();
-    assert_eq!(terminated, vec![LogLevel::Warn], "{texts:?}");
+    assert_eq!(terminated, vec![LogLevel::Info], "{texts:?}");
 }
 
 /// 收到的一条消息：第几个会话（从 0 开始）+ 消息本身。

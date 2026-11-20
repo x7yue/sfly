@@ -610,7 +610,8 @@ def test_a_type_error_raised_inside_the_node_is_still_a_node_error(
 # ---- 被终止（取消、超时、被停止子流程节点停止）不写堆栈 ----
 #
 # 这三种情况 Agent 都是写取消标记再发 SIGTERM，执行器看到的都是节点里抛出的 `Cancelled`：
-# 它是正常终止，不是节点出错，日志里不写 ERROR 级的堆栈，只留一行不高于 WARN 的「执行到哪」。
+# 它是正常终止，不是节点出错，日志里不写 ERROR 级的堆栈，只留一行 INFO 的「执行到哪」：
+# 被终止已经由任务状态表达，不是需要处理的问题，所以不是 WARN。
 
 
 def terminate(tmp_path: Path, code_dir: Path, entry: str, ready: Path) -> Execution:
@@ -645,7 +646,7 @@ def terminate(tmp_path: Path, code_dir: Path, entry: str, ready: Path) -> Execut
     return Execution(proc.returncode, parsed, stderr)
 
 
-def test_a_terminated_node_writes_one_warn_line_saying_where_instead_of_a_traceback(
+def test_a_terminated_node_writes_one_info_line_saying_where_instead_of_a_traceback(
     tmp_path: Path, code_dir: Path
 ) -> None:
     ready = tmp_path / "ready"
@@ -667,11 +668,11 @@ def test_a_terminated_node_writes_one_warn_line_saying_where_instead_of_a_traceb
 
     run = terminate(tmp_path, code_dir, "monitor:watch", ready)
 
-    # 标准错误来源的日志是 ERROR 级：不写任何东西，更不写堆栈。
+    # 标准错误来源的日志是 ERROR 级：不写任何东西，更不写堆栈；事件管道里只有一行 INFO，不是 WARN。
     assert run.stderr == ""
     assert run.returncode == 1
     [event] = events_of(tmp_path)
-    assert (event["type"], event["level"]) == ("log", "warn")
+    assert (event["type"], event["level"]) == ("log", "info")
     assert event["message"] == f"任务被终止（SIGTERM），执行到 monitor.watch 第 {sleep_line} 行"
     assert "\n" not in event["message"]
     # 结果文件不变：读取端按取消、超时处理时不看它，节点自己被别的方式终止时它仍然说明原因。
@@ -710,7 +711,7 @@ def test_the_place_a_terminated_node_stopped_at_is_the_node_code_not_the_sdk(
     terminate(tmp_path, code_dir, "outer:run", ready)
 
     [event] = events_of(tmp_path)
-    assert event["level"] == "warn"
+    assert event["level"] == "info"
     assert event["message"].startswith("任务被终止（SIGTERM），执行到 helper.nap 第 ")
 
 
@@ -733,7 +734,7 @@ def test_a_cancelled_raised_by_the_node_itself_is_also_quiet(
     assert run.returncode == 1
     assert run.stderr == ""
     [event] = events_of(tmp_path)
-    assert (event["level"], event["message"]) == ("warn", "下载被取消，执行到 giveup.stop 第 5 行")
+    assert (event["level"], event["message"]) == ("info", "下载被取消，执行到 giveup.stop 第 5 行")
 
 
 def test_cleanup_after_cancelled_and_the_nodes_own_logs_are_not_affected(

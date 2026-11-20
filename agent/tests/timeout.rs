@@ -62,7 +62,7 @@ async fn timed_out_task_has_its_process_tree_killed_and_fails_with_timeout() {
     assert_eq!(pids.len(), 2);
     assert_all_gone(&pids).await;
     // 超时是 Agent 发 SIGTERM 终止的，节点里收到 Cancelled：日志里没有 ERROR 级的堆栈，
-    // 只有一行 WARN 写明被终止。
+    // 只有一行 INFO 写明被终止。
     assert_quiet_termination(&cp.task_logs("task-timeout"));
 }
 

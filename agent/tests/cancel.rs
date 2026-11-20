@@ -86,7 +86,7 @@ async fn cancelled_task_sees_the_cancel_marker_and_terminates_gracefully() {
     assert_eq!(wait_for_file(&report).await, "cancelled");
     assert!(agent.work_dir.path().join("task-cancel/cancel").exists());
     assert_all_gone(&[pid]).await;
-    // 取消是正常终止：日志里没有 ERROR 级的堆栈，只有一行 WARN 写明被终止。
+    // 取消是正常终止：日志里没有 ERROR 级的堆栈，只有一行 INFO 写明被终止。
     assert_quiet_termination(&cp.task_logs("task-cancel"));
 }
 

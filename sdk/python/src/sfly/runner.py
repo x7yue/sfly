@@ -156,11 +156,11 @@ def _terminated_at(error: BaseException) -> str:
     return f"{place} 第 {lineno} 行"
 
 
-def _warn(message: str) -> None:
-    """往事件管道写一行 WARN 日志（和节点里的 `ctx.log.warn` 一样，来源是 sdk）；没有事件管道、
+def _info(message: str) -> None:
+    """往事件管道写一行 INFO 日志（和节点里的 `ctx.log.info` 一样，来源是 sdk）；没有事件管道、
     写不进去时丢弃：写日志失败不能让任务丢掉 output.json。"""
     try:
-        Context().log.warn(message)
+        Context().log.info(message)
     except OSError:
         pass
 
@@ -183,8 +183,9 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
         tb = traceback.format_exc()
         if isinstance(error, Cancelled):
             # 取消、超时、被停止子流程节点停止：正常终止，不是节点出错。标准错误来源的日志是
-            # ERROR 级，不往那里写堆栈；只在事件管道里留一行 WARN，写明停在哪。
-            _warn(f"{error or '任务被终止'}，执行到 {_terminated_at(error)}")
+            # ERROR 级，不往那里写堆栈；只在事件管道里留一行 INFO，写明停在哪。被终止已经由任务状态
+            # （已停止、已取消、超时）表达，这一行只是记录，不是需要处理的问题，所以不用 WARN。
+            _info(f"{error or '任务被终止'}，执行到 {_terminated_at(error)}")
         else:
             sys.stderr.write(tb)
         failure = {

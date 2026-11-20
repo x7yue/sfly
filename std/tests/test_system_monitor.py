@@ -308,6 +308,6 @@ def test_runs_until_cancelled_without_duration_and_keeps_the_samples(tmp_path: P
         "一直运行到被停止或取消",
         f"监控结束，共采样 {samples} 次",
     ]
-    # 被取消是正常终止：执行器不写堆栈，只留一行 WARN 写明停在哪。
+    # 被取消是正常终止：执行器不写堆栈，只留一行 INFO 写明停在哪。
     assert terminated.startswith("任务被终止（SIGTERM），执行到 sfly_std.system_monitor.")
-    assert [line.level for line in result.logs if line.level == "error"] == []
+    assert [line.level for line in result.logs if line.level in ("warn", "error")] == []
