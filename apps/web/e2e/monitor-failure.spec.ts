@@ -71,6 +71,18 @@ const overlaps = (row: Locator) =>
 		return pressed;
 	});
 
+/**
+ * 时间线名称列里「（节点 ID）」有没有显示出来：和名称一行放得下才跟在名称后面，放不下时换到被裁掉的第二行
+ * （它的底边落在这一格的下面）。
+ */
+const idShown = (row: Locator) =>
+	row.evaluate((button) => {
+		const cell = button.querySelector("[data-truncate-wrap]");
+		const id = cell?.lastElementChild;
+		if (!cell || !id) throw new Error("这一行没有名称和节点 ID");
+		return id.getBoundingClientRect().bottom <= cell.getBoundingClientRect().bottom + 0.5;
+	});
+
 const area = (page: Page) => page.getByRole("region", { name: "失败的节点" });
 const header = (page: Page) => page.getByRole("banner");
 const chainCard = (page: Page) => page.getByRole("list", { name: "各链进度" });
@@ -337,10 +349,10 @@ for (const viewport of VIEWPORTS) {
 				.locator('[data-node-row="verify"] > button');
 			// 行里从左到右的每一项（状态点、名称、节点类型、×2、耗时）互不重叠，也没有伸出这一行。
 			expect(await overlaps(row)).toEqual([]);
-			// 名称被截断（有省略号），「（节点 ID）」一个字也不剩；耗时和「×2」完整。
+			// 名称被截断（有省略号），「（节点 ID）」整个收起；耗时和「×2」完整。
 			const clips = row.locator("[data-truncate-clip]");
 			expect(await fits(clips.nth(0))).toBe(false);
-			expect(await clips.nth(1).evaluate((el) => el.clientWidth)).toBe(0);
+			expect(await idShown(row)).toBe(false);
 			await expect(row.getByText("×2")).toBeVisible();
 			await expect(row.getByText(/^\d+(\.\d+)?s$/)).toBeVisible();
 			await row.hover();
@@ -370,24 +382,20 @@ for (const viewport of VIEWPORTS) {
 				["cleanup", "清理压测环境"],
 			] as const) {
 				const row = timeline.locator(`[data-node-row="${id}"] button`);
-				const clips = row.locator("[data-truncate-clip]");
-				// 第一段是显示名称，第二段是「（节点 ID）」。
-				await expect(clips.nth(0)).toHaveText(name);
-				await expect(clips.nth(1)).toHaveText(`（${id}）`);
+				const nameClip = row.locator("[data-truncate-clip]").first();
+				await expect(nameClip).toHaveText(name);
+				await expect(row.locator("[data-truncate-wrap] > span:last-child")).toHaveText(`（${id}）`);
 				expect(await overlaps(row), `${name} 压在别的项上`).toEqual([]);
-				// 显示名称优先：它被截断时（只有带 always 标签、右边多占一块的那一行放不下），「（节点 ID）」已经一个字也不剩了。
-				const truncated = !(await fits(clips.nth(0)));
+				// 显示名称优先：名称和「（节点 ID）」一行放得下才一起显示，放不下时「（节点 ID）」整个收起，不留半截。
+				// 只有带 always 标签、右边多占一块的那一行，名称才可能放不下。
+				const truncated = !(await fits(nameClip));
 				if (id !== "cleanup") expect(truncated, `${name} 被截断了`).toBe(false);
-				if (truncated) {
-					expect(
-						await clips.nth(1).evaluate((el) => el.clientWidth),
-						`${name} 被截断时 ID 还在`,
-					).toBe(0);
-				}
+				if (truncated) expect(await idShown(row), `${name} 被截断时 ID 还在`).toBe(false);
 			}
-			// 「（节点 ID）」才是被截断的那个（这一行的 ID 最长）；悬停整行显示完整的名称。
+			// 这一行的 ID 最长，放不下，收起了；名称是完整的。名称完整、ID 收起时，悬停整行也显示完整的名称。
 			const longRow = timeline.locator(`[data-node-row="${FAILED_NODE}"] button`);
-			expect(await fits(longRow.locator("[data-truncate-clip]").nth(1))).toBe(false);
+			expect(await idShown(longRow)).toBe(false);
+			expect(await fits(longRow.locator("[data-truncate-clip]").first())).toBe(true);
 			await longRow.hover();
 			await expect(tooltips(page)).toContainText(NODE_LABEL);
 			// 读屏名称仍是完整的「名称（ID） 说明 状态」。

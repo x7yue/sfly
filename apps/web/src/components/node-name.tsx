@@ -17,8 +17,9 @@ export const runNodeName = (node: RunNodeName): string =>
  * 放不下时（在 flex 行里，或者比所在的块还宽）截断显示名称，括号里的节点 ID 总是完整的；截断时悬停或聚焦显示全文（`Truncate`）。
  * 放在按钮里时，由按钮用 `Truncate` 的 `render` 和 `label` 提示全文，这里只截断。
  *
- * `priority="name"`：宽度很紧的名称列（运行监控的时间线）反过来，先截断「（节点 ID）」（括号一起收起，不留空括号），
- * 显示名称尽量完整：读的人认的是显示名称，节点 ID 在悬停提示、读屏名称和别处都有全文。
+ * `priority="name"`：宽度很紧的名称列（运行监控的时间线）反过来，显示名称优先：名称和「（节点 ID）」一行放得下才一起显示，
+ * 放不下时「（节点 ID）」整个收起（不留半截 ID、不留空括号），名称占满整行、还放不下才截断在末尾。读的人认的是显示名称，
+ * 节点 ID 在悬停提示、读屏名称和别处都有全文。
  */
 export function NodeName({
 	node,
@@ -32,14 +33,18 @@ export function NodeName({
 	const name = nameBeforeId(node.node_id, node.display_name);
 	if (name === undefined) return <span className={cn("font-mono", className)}>{node.node_id}</span>;
 	if (priority === "name") {
+		// 一行高、超出的裁掉、允许换行：「（节点 ID）」放不下时换到看不见的第二行，名称独占第一行，不在名称后面截成半截。
+		// 外层的 `Truncate`（按钮）靠 `data-truncate-wrap` 知道有内容被收起了，悬停时给出全文。
 		return (
-			<span className={cn("inline-flex min-w-0 max-w-full", className)}>
-				{/*
-				 * 缩小的权重差很大：名称与 ID 一起放不下时，几乎全由 ID 让出，ID 一个字也不剩以后名称才接着缩。
-				 * 缩小系数不能小于 1：几个系数加起来不到 1 时，浏览器只让它们吸收一部分超出的宽度，名称缩不到位。
-				 */}
+			<span
+				data-truncate-wrap=""
+				className={cn(
+					"inline-flex h-[1lh] min-w-0 max-w-full flex-wrap overflow-hidden",
+					className,
+				)}
+			>
 				<Truncate>{name}</Truncate>
-				<span data-truncate-clip="" className="block min-w-0 shrink-[400] truncate">
+				<span className="flex-none whitespace-nowrap">
 					（<span className="font-mono">{node.node_id}</span>）
 				</span>
 			</span>
