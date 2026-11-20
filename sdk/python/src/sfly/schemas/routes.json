@@ -4027,22 +4027,6 @@
                         "properties": {
                           "kind": {
                             "type": "string",
-                            "const": "feishu_notify_node"
-                          },
-                          "node_id": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "node_id"
-                        ]
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "kind": {
-                            "type": "string",
                             "const": "feishu_bot_input"
                           },
                           "node_id": {
@@ -6238,8 +6222,8 @@
                               "timer",
                               "sleep",
                               "stop_subflow",
-                              "feishu_notify",
-                              "package"
+                              "package",
+                              "feishu_notify"
                             ]
                           }
                         },
@@ -6751,168 +6735,458 @@
               "nodes": {
                 "type": "array",
                 "items": {
-                  "oneOf": [
+                  "anyOf": [
                     {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
+                      "oneOf": [
+                        {
                           "type": "object",
                           "properties": {
-                            "x": {
-                              "type": "number"
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "entry"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "entry"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
-                            },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
                             }
                           },
                           "required": [
-                            "x",
-                            "y"
+                            "id",
+                            "kind",
+                            "params"
                           ],
                           "additionalProperties": false
                         },
-                        "note": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "subflow_entry"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "subflow_entry"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "async"
+                            },
+                            "params": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "timer"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "tz": {
+                              "default": "Asia/Shanghai",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "at",
+                            "tz"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "sleep"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "duration": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "duration"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "stop_subflow"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "subflow": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "package"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "package": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                            },
+                            "node": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            },
+                            "agent": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "inputs": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "retries": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "queue_timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "package",
+                            "node",
+                            "inputs"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     {
                       "type": "object",
@@ -6921,300 +7195,11 @@
                           "type": "string",
                           "minLength": 1
                         },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
                         "kind": {
-                          "type": "string",
-                          "const": "async"
-                        },
-                        "params": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "timer"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "at": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "tz": {
-                          "default": "Asia/Shanghai",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "at",
-                        "tz"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "sleep"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "duration": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "duration"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "stop_subflow"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "subflow": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "feishu_notify"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "bot": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "format": {
-                          "default": "text",
                           "type": "string",
                           "enum": [
-                            "text",
-                            "card",
-                            "raw"
+                            "feishu_notify"
                           ]
-                        },
-                        "text": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "at_all": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "title": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "color": {
-                          "default": "blue",
-                          "type": "string",
-                          "enum": [
-                            "blue",
-                            "green",
-                            "orange",
-                            "red",
-                            "grey"
-                          ]
-                        },
-                        "markdown": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "message": {}
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "format",
-                        "text",
-                        "at_all",
-                        "title",
-                        "color",
-                        "markdown"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
                         },
                         "position": {
                           "type": "object",
@@ -7237,60 +7222,12 @@
                         },
                         "display_name": {
                           "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "package"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "package": {
-                          "type": "string",
-                          "pattern": "^[a-z0-9][a-z0-9_-]*$"
-                        },
-                        "node": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                        },
-                        "agent": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "inputs": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "retries": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "queue_timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
                         }
                       },
                       "required": [
                         "id",
-                        "kind",
-                        "always",
-                        "package",
-                        "node",
-                        "inputs"
-                      ],
-                      "additionalProperties": false
+                        "kind"
+                      ]
                     }
                   ]
                 }
@@ -7469,8 +7406,7 @@
               "annotations",
               "sticky_notes"
             ],
-            "additionalProperties": false,
-            "title": "sfly 编排文档"
+            "additionalProperties": false
           }
         },
         "required": [
@@ -7936,94 +7872,6 @@
                         },
                         "kind": {
                           "type": "string",
-                          "const": "feishu_notify"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "bot": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "format": {
-                          "default": "text",
-                          "type": "string",
-                          "enum": [
-                            "text",
-                            "card",
-                            "raw"
-                          ]
-                        },
-                        "text": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "at_all": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "title": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "color": {
-                          "default": "blue",
-                          "type": "string",
-                          "enum": [
-                            "blue",
-                            "green",
-                            "orange",
-                            "red",
-                            "grey"
-                          ]
-                        },
-                        "markdown": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "message": {}
-                      },
-                      "required": [
-                        "id",
-                        "kind"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string",
-                          "maxLength": 2000
-                        },
-                        "display_name": {
-                          "type": "string",
-                          "maxLength": 40,
-                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
-                        },
-                        "kind": {
-                          "type": "string",
                           "const": "package"
                         },
                         "always": {
@@ -8306,168 +8154,458 @@
               "nodes": {
                 "type": "array",
                 "items": {
-                  "oneOf": [
+                  "anyOf": [
                     {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
+                      "oneOf": [
+                        {
                           "type": "object",
                           "properties": {
-                            "x": {
-                              "type": "number"
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "entry"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "entry"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
-                            },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
                             }
                           },
                           "required": [
-                            "x",
-                            "y"
+                            "id",
+                            "kind",
+                            "params"
                           ],
                           "additionalProperties": false
                         },
-                        "note": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "subflow_entry"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "subflow_entry"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "async"
+                            },
+                            "params": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "timer"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "tz": {
+                              "default": "Asia/Shanghai",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "at",
+                            "tz"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "sleep"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "duration": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "duration"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "stop_subflow"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "subflow": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "package"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "package": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                            },
+                            "node": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            },
+                            "agent": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "inputs": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "retries": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "queue_timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "package",
+                            "node",
+                            "inputs"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     {
                       "type": "object",
@@ -8476,300 +8614,11 @@
                           "type": "string",
                           "minLength": 1
                         },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
                         "kind": {
-                          "type": "string",
-                          "const": "async"
-                        },
-                        "params": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "timer"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "at": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "tz": {
-                          "default": "Asia/Shanghai",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "at",
-                        "tz"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "sleep"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "duration": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "duration"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "stop_subflow"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "subflow": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "feishu_notify"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "bot": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "format": {
-                          "default": "text",
                           "type": "string",
                           "enum": [
-                            "text",
-                            "card",
-                            "raw"
+                            "feishu_notify"
                           ]
-                        },
-                        "text": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "at_all": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "title": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "color": {
-                          "default": "blue",
-                          "type": "string",
-                          "enum": [
-                            "blue",
-                            "green",
-                            "orange",
-                            "red",
-                            "grey"
-                          ]
-                        },
-                        "markdown": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "message": {}
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "format",
-                        "text",
-                        "at_all",
-                        "title",
-                        "color",
-                        "markdown"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
                         },
                         "position": {
                           "type": "object",
@@ -8792,60 +8641,12 @@
                         },
                         "display_name": {
                           "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "package"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "package": {
-                          "type": "string",
-                          "pattern": "^[a-z0-9][a-z0-9_-]*$"
-                        },
-                        "node": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                        },
-                        "agent": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "inputs": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "retries": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "queue_timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
                         }
                       },
                       "required": [
                         "id",
-                        "kind",
-                        "always",
-                        "package",
-                        "node",
-                        "inputs"
-                      ],
-                      "additionalProperties": false
+                        "kind"
+                      ]
                     }
                   ]
                 }
@@ -9024,8 +8825,7 @@
               "annotations",
               "sticky_notes"
             ],
-            "additionalProperties": false,
-            "title": "sfly 编排文档"
+            "additionalProperties": false
           },
           "warnings": {
             "type": "array",
@@ -9261,168 +9061,458 @@
               "nodes": {
                 "type": "array",
                 "items": {
-                  "oneOf": [
+                  "anyOf": [
                     {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
+                      "oneOf": [
+                        {
                           "type": "object",
                           "properties": {
-                            "x": {
-                              "type": "number"
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "entry"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "entry"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
-                            },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
                             }
                           },
                           "required": [
-                            "x",
-                            "y"
+                            "id",
+                            "kind",
+                            "params"
                           ],
                           "additionalProperties": false
                         },
-                        "note": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "subflow_entry"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "subflow_entry"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "async"
+                            },
+                            "params": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "timer"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "tz": {
+                              "default": "Asia/Shanghai",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "at",
+                            "tz"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "sleep"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "duration": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "duration"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "stop_subflow"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "subflow": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "package"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "package": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                            },
+                            "node": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            },
+                            "agent": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "inputs": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "retries": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "queue_timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "package",
+                            "node",
+                            "inputs"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     {
                       "type": "object",
@@ -9431,300 +9521,11 @@
                           "type": "string",
                           "minLength": 1
                         },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
                         "kind": {
-                          "type": "string",
-                          "const": "async"
-                        },
-                        "params": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "timer"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "at": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "tz": {
-                          "default": "Asia/Shanghai",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "at",
-                        "tz"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "sleep"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "duration": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "duration"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "stop_subflow"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "subflow": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "feishu_notify"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "bot": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "format": {
-                          "default": "text",
                           "type": "string",
                           "enum": [
-                            "text",
-                            "card",
-                            "raw"
+                            "feishu_notify"
                           ]
-                        },
-                        "text": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "at_all": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "title": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "color": {
-                          "default": "blue",
-                          "type": "string",
-                          "enum": [
-                            "blue",
-                            "green",
-                            "orange",
-                            "red",
-                            "grey"
-                          ]
-                        },
-                        "markdown": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "message": {}
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "format",
-                        "text",
-                        "at_all",
-                        "title",
-                        "color",
-                        "markdown"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
                         },
                         "position": {
                           "type": "object",
@@ -9747,60 +9548,12 @@
                         },
                         "display_name": {
                           "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "package"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "package": {
-                          "type": "string",
-                          "pattern": "^[a-z0-9][a-z0-9_-]*$"
-                        },
-                        "node": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                        },
-                        "agent": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "inputs": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "retries": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "queue_timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
                         }
                       },
                       "required": [
                         "id",
-                        "kind",
-                        "always",
-                        "package",
-                        "node",
-                        "inputs"
-                      ],
-                      "additionalProperties": false
+                        "kind"
+                      ]
                     }
                   ]
                 }
@@ -9979,8 +9732,7 @@
               "annotations",
               "sticky_notes"
             ],
-            "additionalProperties": false,
-            "title": "sfly 编排文档"
+            "additionalProperties": false
           }
         },
         "required": [
@@ -10069,168 +9821,458 @@
               "nodes": {
                 "type": "array",
                 "items": {
-                  "oneOf": [
+                  "anyOf": [
                     {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
+                      "oneOf": [
+                        {
                           "type": "object",
                           "properties": {
-                            "x": {
-                              "type": "number"
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "entry"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "entry"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
-                            },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
                             }
                           },
                           "required": [
-                            "x",
-                            "y"
+                            "id",
+                            "kind",
+                            "params"
                           ],
                           "additionalProperties": false
                         },
-                        "note": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "subflow_entry"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "params": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
                               },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "string",
-                                  "number",
-                                  "boolean",
-                                  "json"
-                                ]
-                              },
-                              "default": {},
-                              "required": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "secret": {
-                                "default": false,
-                                "type": "boolean"
-                              },
-                              "description": {
-                                "type": "string"
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "subflow_entry"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean",
+                                      "json"
+                                    ]
+                                  },
+                                  "default": {},
+                                  "required": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "secret": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "type",
+                                  "required",
+                                  "secret"
+                                ],
+                                "additionalProperties": false
                               }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
                             },
-                            "required": [
-                              "name",
-                              "type",
-                              "required",
-                              "secret"
-                            ],
-                            "additionalProperties": false
-                          }
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "async"
+                            },
+                            "params": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "params"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "timer"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "tz": {
+                              "default": "Asia/Shanghai",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "at",
+                            "tz"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "sleep"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "duration": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "duration"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "stop_subflow"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "subflow": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "position": {
+                              "type": "object",
+                              "properties": {
+                                "x": {
+                                  "type": "number"
+                                },
+                                "y": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "x",
+                                "y"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "note": {
+                              "type": "string"
+                            },
+                            "display_name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "const": "package"
+                            },
+                            "always": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "package": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                            },
+                            "node": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                            },
+                            "agent": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "inputs": {
+                              "default": {},
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "retries": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "queue_timeout": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "always",
+                            "package",
+                            "node",
+                            "inputs"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     {
                       "type": "object",
@@ -10239,300 +10281,11 @@
                           "type": "string",
                           "minLength": 1
                         },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
                         "kind": {
-                          "type": "string",
-                          "const": "async"
-                        },
-                        "params": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "params"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "timer"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "at": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "tz": {
-                          "default": "Asia/Shanghai",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "at",
-                        "tz"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "sleep"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "duration": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "duration"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "stop_subflow"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "subflow": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string"
-                        },
-                        "display_name": {
-                          "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "feishu_notify"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "bot": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "format": {
-                          "default": "text",
                           "type": "string",
                           "enum": [
-                            "text",
-                            "card",
-                            "raw"
+                            "feishu_notify"
                           ]
-                        },
-                        "text": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "at_all": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "title": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "color": {
-                          "default": "blue",
-                          "type": "string",
-                          "enum": [
-                            "blue",
-                            "green",
-                            "orange",
-                            "red",
-                            "grey"
-                          ]
-                        },
-                        "markdown": {
-                          "default": "",
-                          "type": "string"
-                        },
-                        "message": {}
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "always",
-                        "format",
-                        "text",
-                        "at_all",
-                        "title",
-                        "color",
-                        "markdown"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
                         },
                         "position": {
                           "type": "object",
@@ -10555,60 +10308,12 @@
                         },
                         "display_name": {
                           "type": "string"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "package"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "package": {
-                          "type": "string",
-                          "pattern": "^[a-z0-9][a-z0-9_-]*$"
-                        },
-                        "node": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-                        },
-                        "agent": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "inputs": {
-                          "default": {},
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "retries": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "queue_timeout": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
                         }
                       },
                       "required": [
                         "id",
-                        "kind",
-                        "always",
-                        "package",
-                        "node",
-                        "inputs"
-                      ],
-                      "additionalProperties": false
+                        "kind"
+                      ]
                     }
                   ]
                 }
@@ -10787,8 +10492,7 @@
               "annotations",
               "sticky_notes"
             ],
-            "additionalProperties": false,
-            "title": "sfly 编排文档"
+            "additionalProperties": false
           },
           "warnings": {
             "type": "array",
@@ -15518,8 +15222,8 @@
                           "timer",
                           "sleep",
                           "stop_subflow",
-                          "feishu_notify",
-                          "package"
+                          "package",
+                          "feishu_notify"
                         ]
                       },
                       "status": {
@@ -16208,8 +15912,8 @@
                           "timer",
                           "sleep",
                           "stop_subflow",
-                          "feishu_notify",
-                          "package"
+                          "package",
+                          "feishu_notify"
                         ]
                       },
                       "status": {
@@ -16898,8 +16602,8 @@
                           "timer",
                           "sleep",
                           "stop_subflow",
-                          "feishu_notify",
-                          "package"
+                          "package",
+                          "feishu_notify"
                         ]
                       },
                       "status": {
@@ -17586,8 +17290,8 @@
                             "timer",
                             "sleep",
                             "stop_subflow",
-                            "feishu_notify",
-                            "package"
+                            "package",
+                            "feishu_notify"
                           ]
                         },
                         "status": {

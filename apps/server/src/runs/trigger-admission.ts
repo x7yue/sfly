@@ -1,4 +1,4 @@
-import type { OrchestrationDocument, ParamDeclaration } from "@sfly/schema";
+import type { ParamDeclaration, StoredOrchestrationDocument } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import type { Tx } from "../db/database.js";
 import { orchestrations, orchestrationVersions } from "../db/schema.js";
@@ -30,7 +30,7 @@ export interface TriggerRejection {
 export interface AdmittedTrigger {
 	ok: true;
 	/** 场景的最新版本。 */
-	version: { id: string; document: OrchestrationDocument };
+	version: { id: string; document: StoredOrchestrationDocument };
 	plan: RunPlan;
 	/** 套用预设、补上默认值之后的入口参数。 */
 	params: Record<string, unknown>;

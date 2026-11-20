@@ -1,4 +1,4 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 
 /**
  * secret 参数的值在日志和运行视图里替换成的掩码（docs/SEMANTICS.md §2.1：secret 参数在界面和日志中打码显示）。
@@ -14,7 +14,7 @@ export const SECRET_MASK = "******";
  * 非字符串的值按 JSON 文本匹配；空串不算。按长度从长到短排列，替换时先替换长的。
  */
 export function secretValues(
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 	chains: ReadonlyArray<{ chainId: string; params: Record<string, unknown> }>,
 ): string[] {
 	const values = new Set<string>();

@@ -1,7 +1,7 @@
 {
 	"$comment": [
 		"飞书 Markdown 卡片的组装规则与用例，和实现无关（docs/SEMANTICS.md §4.2、ADR 0020）。",
-		"控制面（apps/server/src/feishu/messages.ts 的 markdownCard）和 SDK（sfly.feishu.card）各有一份实现，都要通过这里的全部用例。",
+		"卡片只由 SDK（sfly.feishu.card）组装，要通过这里的全部用例；控制面把它当原始消息原样投递，apps/server/test/full-stack-notify.test.ts 用这里的用例验证。",
 		"input 是 title、markdown、color；expected 是 {body} 或 {error}：body 是完整的飞书请求体（JSON 相等，键的顺序不论），error 是 too_large。",
 		"字符串值可以写成 {\"$repeat\": 单元, \"times\": 次数, \"suffix\": 末尾} 表示「单元重复若干次再接上末尾」（suffix 可省略），用来写超长的字符串；读用例的一方先把它们展开成字符串。"
 	],
@@ -10,7 +10,7 @@
 		"color 是 blue、green、orange、red、grey 之一（用法上的约束，不属于用例）。标题和正文照原样放进去：不做 Markdown 转义，不处理引用，空字符串也照常组装。",
 		"请求体的大小：紧凑 JSON（没有多余空白，非 ASCII 字符不转义成 \\u 形式）按 UTF-8 编码的字节数。上限 20480 字节（20 KB）。",
 		"没超过上限：原样返回。超过上限：截断正文，留下最长的、能放得下的前缀（按 Unicode 字符数，不把一个字符切成两半），末尾接上「…（已截断）」，使整张请求体不超过上限。",
-		"标题太长，连空前缀加「…（已截断）」都放不下时无法组装，结果是 too_large，怎么处理由调用方决定（控制面不发送这条消息，在节点日志里写 warning）。"
+		"标题太长，连空前缀加「…（已截断）」都放不下时无法组装，结果是 too_large，怎么处理由调用方决定（SDK 的 sfly.feishu.card 抛出 ValueError）。"
 	],
 	"limit_bytes": 20480,
 	"truncated_suffix": "…（已截断）",

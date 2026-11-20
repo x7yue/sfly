@@ -3,7 +3,7 @@ import {
 	type FocusItemView,
 	focusKey,
 	focusName,
-	type OrchestrationDocument,
+	type StoredOrchestrationDocument,
 	sameFocusList,
 } from "@sfly/schema";
 import { cn } from "cn";
@@ -35,7 +35,7 @@ function invalidReason(item: FocusItemView, headVersion: number): string | null 
 }
 
 /** 节点在已保存版本里的显示名称；没有显示名称或节点不在里面时为 undefined。 */
-function displayNameOf(saved: Pick<OrchestrationDocument, "nodes">, nodeId: string) {
+function displayNameOf(saved: Pick<StoredOrchestrationDocument, "nodes">, nodeId: string) {
 	const node = saved.nodes.find((n) => n.id === nodeId);
 	return node && "display_name" in node ? node.display_name : undefined;
 }
@@ -68,7 +68,7 @@ export function FocusListPage({
 }: {
 	orchestrationId: string;
 	/** 已保存的场景版本：来源节点的显示名称从这里取（关注项只能引用已保存的节点）。 */
-	saved: Pick<OrchestrationDocument, "nodes">;
+	saved: Pick<StoredOrchestrationDocument, "nodes">;
 }) {
 	const focus = useFocusItems(orchestrationId);
 	const { items, edit } = focus;

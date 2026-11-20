@@ -6,10 +6,11 @@ import {
 	type AgentUpdateState,
 	type CurrentAction,
 	type FocusItemInput,
+	keepRemovedNodeConfig,
 	ON_AGENT_STATUSES,
-	OrchestrationDocument,
 	type PackageMetadata,
 	type RunNotificationTrigger,
+	StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
@@ -33,18 +34,24 @@ import {
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 
 /**
- * 场景文档（jsonb）：读出时按场景文档 schema 解析，和保存时一样补上默认值。场景版本不可修改，
+ * 场景文档（jsonb）：读出时按读到的场景文档 schema 解析，和保存时一样补上默认值。场景版本不可修改，
  * 升级前保存的版本没有后来新增的字段（例如注释框 `annotations`）；所有读文档的地方（接口返回的最新版本、
- * 历史版本、运行绑定的版本，复制、恢复，引擎）都经过这里，拿到的文档和 OrchestrationDocument 的类型一致。
- * 按更早的规则保存、现在已经解析不了的文档原样返回（历史版本照旧能看、能跑）。
+ * 历史版本、运行绑定的版本，复制、恢复，引擎）都经过这里，拿到的文档和 StoredOrchestrationDocument 的类型一致。
+ * 版本里已移除种类的节点（ADR 0028）认得、原样带着配置，不报错；按更早的规则保存、现在已经解析不了的文档
+ * 原样返回（历史版本照旧能看）。
  */
-const orchestrationDocument = customType<{ data: OrchestrationDocument; driverData: unknown }>({
+const orchestrationDocument = customType<{
+	data: StoredOrchestrationDocument;
+	driverData: unknown;
+}>({
 	dataType: () => "jsonb",
 	toDriver: (document) => JSON.stringify(document),
 	fromDriver: (value) => {
 		const stored: unknown = typeof value === "string" ? JSON.parse(value) : value;
-		const parsed = OrchestrationDocument.safeParse(stored);
-		return parsed.success ? parsed.data : (stored as OrchestrationDocument);
+		const parsed = StoredOrchestrationDocument.safeParse(stored);
+		return parsed.success
+			? keepRemovedNodeConfig(parsed.data, stored)
+			: (stored as StoredOrchestrationDocument);
 	},
 });
 
@@ -538,11 +545,15 @@ export const taskActionNames = pgTable(
 	(t) => [primaryKey({ columns: [t.taskId, t.name] })],
 );
 
-export type FeishuMessageSource = "node" | "notify" | "run_notification";
+/**
+ * 飞书消息的来源：`ctx.notify`、运行通知。历史记录里还有 `node`：已移除的飞书通知节点（ADR 0028）发的消息，
+ * 读的地方不分来源，所以不留在类型里。
+ */
+export type FeishuMessageSource = "notify" | "run_notification";
 export type FeishuMessageStatus = "queued" | "delivered" | "failed" | "discarded";
 
 /**
- * 飞书发送队列（ADR 0020）：消息先写进这里（飞书通知节点的消息和节点成功在同一个事务里），再由控制面投递
+ * 飞书发送队列（ADR 0020）：消息先写进这里，再由控制面投递
  * （src/feishu/feishu-delivery.ts）。同一个机器人的消息按 `seq`（入队顺序）串行投递；投递的结果只记在这里和任务日志里，
  * 从不改变节点、任务、链或运行的状态。`bot_name` 不是外键：机器人删除后，它没有投递的消息记为已丢弃。
  * 可重试的失败之后消息仍然排队：`attempts` 记已经尝试的次数，`next_attempt_at`（控制面时间）是最早的下一次尝试，
@@ -555,7 +566,7 @@ export const feishuMessages = pgTable(
 		seq: bigserial("seq", { mode: "number" }).primaryKey(),
 		botName: text("bot_name").notNull(),
 		source: text("source").$type<FeishuMessageSource>().notNull(),
-		/** 发起这条消息的运行和任务（飞书通知节点、`ctx.notify`、运行通知的运行）；投递结果写进这个任务的日志。 */
+		/** 发起这条消息的运行和任务（`ctx.notify`、运行通知的运行）；投递结果写进这个任务的日志。 */
 		runId: uuid("run_id").references(() => runs.id),
 		taskId: uuid("task_id").references(() => tasks.id),
 		/** 完整的飞书请求体。 */

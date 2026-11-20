@@ -262,8 +262,6 @@ export function ReplaceWebhookDialog({
 /** 一处引用的说明（场景里的哪个地方）。 */
 const referenceText = (reference: FeishuBotReference): string => {
 	switch (reference.kind) {
-		case "feishu_notify_node":
-			return `飞书通知节点 ${reference.node_id}`;
 		case "feishu_bot_input":
 			return `节点 ${reference.node_id} 的输入 ${reference.input}`;
 		case "run_notification":
@@ -295,8 +293,8 @@ function BotReferences({ bot, enabled }: { bot: FeishuBotView; enabled: boolean 
 		<div className="flex flex-col gap-1.5">
 			<p className="m-0 text-xs text-fg-2">
 				下面 {scenarios.length}{" "}
-				个场景的最新版本引用了这个机器人。删除后这些节点发不出消息（飞书通知节点只在日志里留下
-				warning，不影响节点和运行的结果），保存时会有警告，触发时会被拦下。
+				个场景的最新版本引用了这个机器人。删除后这些节点的输入选的机器人不存在，保存时会有警告，
+				触发时会被拦下。
 				{notified &&
 					"运行通知的设置不会被改动，运行结束时在运行抽屉里记为「未发送：机器人已删除」，运行不受影响。"}
 			</p>

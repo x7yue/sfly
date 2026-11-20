@@ -1,4 +1,4 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 
 /**
  * 画布上正在编辑的节点，在已保存的版本里是不是同一个节点类型、锁定同一个节点包版本。关注项只能引用这样的节点：
@@ -6,8 +6,8 @@ import type { OrchestrationDocument } from "@sfly/schema";
  * 新加的节点，或者改了节点类型、节点包版本的节点，要先保存成场景版本。
  */
 export function isSavedNodeType(
-	saved: OrchestrationDocument,
-	current: OrchestrationDocument,
+	saved: StoredOrchestrationDocument,
+	current: StoredOrchestrationDocument,
 	nodeId: string,
 ): boolean {
 	const was = saved.nodes.find((n) => n.id === nodeId);

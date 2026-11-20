@@ -13,7 +13,6 @@ const nodes = {
 	timer: { id: "n", kind: "timer", at: "09:30:00" },
 	sleep: { id: "n", kind: "sleep", duration: "30s" },
 	stop_subflow: { id: "n", kind: "stop_subflow" },
-	feishu_notify: { id: "n", kind: "feishu_notify" },
 	package: { id: "n", kind: "package", package: "std", node: "shell" },
 } as const;
 
@@ -87,7 +86,6 @@ describe("显示名称：导出的文档 JSON Schema 与 zod 判断一致", () =
 		["sleep", EMOJI.repeat(41), false],
 		["timer", "创".repeat(41), false],
 		["async", "第一行\n第二行", false],
-		["feishu_notify", "  ", true],
 	] as const)("%s 节点写 %j：%s", (kind, text, ok) => {
 		const document = withName(kind, text);
 		expect(validate(document)).toBe(ok);

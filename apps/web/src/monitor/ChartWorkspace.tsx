@@ -6,9 +6,9 @@ import {
 	MAX_SERIES,
 	type MetricDataLoss,
 	type MetricSeries,
-	type OrchestrationDocument,
 	type PlatformMetrics,
 	type RunView,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -90,7 +90,7 @@ export function ChartWorkspace({
 }: {
 	run: RunView;
 	/** 运行绑定的版本文档：节点的备注。 */
-	doc: OrchestrationDocument | undefined;
+	doc: StoredOrchestrationDocument | undefined;
 	catalog: ReturnType<typeof useMetricCatalog>;
 	compact: boolean;
 }) {

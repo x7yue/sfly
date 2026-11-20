@@ -1,14 +1,26 @@
 import { ensureLayout, type LayoutDocument, type Position } from "@sfly/orchestration";
-import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import {
+	isRemovedNodeKind,
+	type RemovedNodeKind,
+	type StoredNode,
+	type StoredOrchestrationDocument,
+} from "@sfly/schema";
 import type { Edge, Node } from "@xyflow/react";
 
-/** 画布节点上携带的场景节点（不含布局，布局在 React Flow 节点的 position 上）。 */
-export type DocNode = OrchestrationNode extends infer N
-	? N extends OrchestrationNode
+/**
+ * 画布节点上携带的场景节点（不含布局，布局在 React Flow 节点的 position 上）。
+ * 含已移除种类的节点（ADR 0028）：打开最新版本时历史版本里留着的节点也要画出来，删掉之后才能保存。
+ */
+export type DocNode = StoredNode extends infer N
+	? N extends StoredNode
 		? Omit<N, "position">
 		: never
 	: never;
-export type DocEdge = OrchestrationDocument["edges"][number];
+/** 已移除种类的节点（ADR 0028）：画布上画出来，不能保存。 */
+export type RemovedDocNode = Extract<DocNode, { kind: RemovedNodeKind }>;
+export const isRemovedDocNode = (node: DocNode): node is RemovedDocNode =>
+	isRemovedNodeKind(node.kind);
+export type DocEdge = StoredOrchestrationDocument["edges"][number];
 export type EdgeKind = DocEdge["kind"];
 
 export type SfNode = Node<{ node: DocNode }, DocNode["kind"]>;
@@ -16,7 +28,7 @@ export type SfEdge = Edge<{ kind: EdgeKind }>;
 
 /** 文档中场景级（非节点、非连线）的部分：默认 Agent、包版本锁定、注释框。 */
 export type DocMeta = Pick<
-	OrchestrationDocument,
+	StoredOrchestrationDocument,
 	"default_agent" | "packages" | "annotations" | "sticky_notes"
 >;
 
@@ -47,7 +59,7 @@ export function toFlowEdge(edge: DocEdge): SfEdge {
  * 场景文档 → 画布。缺少布局的文档（例如通过 API 创建）用整理布局算法得到初始布局
  * （@sfly/orchestration 的 ensureLayout，与画布的「整理布局」、新建场景相同）。
  */
-export function toFlow(doc: OrchestrationDocument): { nodes: SfNode[]; edges: SfEdge[] } {
+export function toFlow(doc: StoredOrchestrationDocument): { nodes: SfNode[]; edges: SfEdge[] } {
 	const nodes = ensureLayout(doc).nodes.map((n): SfNode => {
 		const { position, ...node } = n;
 		return toFlowNode(node, position ?? { x: 0, y: 0 });
@@ -71,7 +83,7 @@ export const toFlowNode = (node: DocNode, position: Position): SfNode => ({
 export function applyDocument(
 	nodes: SfNode[],
 	edges: SfEdge[],
-	doc: Pick<OrchestrationDocument, "nodes" | "edges">,
+	doc: Pick<StoredOrchestrationDocument, "nodes" | "edges">,
 ): { nodes: SfNode[]; edges: SfEdge[] } {
 	const shown = new Map(nodes.map((n) => [n.id, n]));
 	const drawn = new Map(edges.map((e) => [e.id, e]));
@@ -89,13 +101,17 @@ export function applyDocument(
 }
 
 /** 画布 → 场景文档。布局是版本内容的一部分；只保留仍被包节点使用的包版本锁定。 */
-export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): OrchestrationDocument {
+export function fromFlow(
+	nodes: SfNode[],
+	edges: SfEdge[],
+	meta: DocMeta,
+): StoredOrchestrationDocument {
 	const docNodes = nodes.map(
 		(n) =>
 			({
 				...n.data.node,
 				position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
-			}) as OrchestrationNode,
+			}) as StoredNode,
 	);
 	const used = new Set(docNodes.flatMap((n) => (n.kind === "package" ? [n.package] : [])));
 	const packages = Object.fromEntries(

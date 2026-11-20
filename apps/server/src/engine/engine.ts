@@ -16,9 +16,12 @@ import {
 } from "@sfly/proto";
 import {
 	ACTIVE_STATUSES,
-	type OrchestrationDocument,
-	type OrchestrationNode,
+	isRemovedNodeKind,
+	REMOVED_NODE_KINDS,
 	type RunningTaskView,
+	removedKindLabel,
+	type StoredNode,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Actor } from "../actor.js";
@@ -133,11 +136,11 @@ function rootMessage(error: unknown): string {
 const cancelling = (run: RunRow) => run.cancelRequestedAt !== null;
 const forced = (run: RunRow) => run.cancelForcedAt !== null;
 /** 运行取消后这个节点还能不能执行：普通取消时只有 always 节点照常执行。 */
-const cancelledFor = (run: RunRow, node: OrchestrationNode | undefined) =>
+const cancelledFor = (run: RunRow, node: StoredNode | undefined) =>
 	cancelling(run) && (forced(run) || !node || !isAlways(node));
 
 /** 链实例是否已被停止子流程节点停止（docs/SEMANTICS.md §4.1）；always 节点照常执行。 */
-const stoppedFor = (chain: ChainRow, node: OrchestrationNode | undefined) =>
+const stoppedFor = (chain: ChainRow, node: StoredNode | undefined) =>
 	chain.stopTaskId !== null && (!node || !isAlways(node));
 
 /**
@@ -185,7 +188,7 @@ function ancestry(chains: ChainRow[], chain: ChainRow): ChainRow[] {
  * 租约、排队超时与重启恢复在 leases.ts；辅助模块经 {@link ChainDriver} 回到引擎推进链，仍在同一把锁、同一个事务里。
  */
 export class Engine implements AgentSessionHandler {
-	#documents = new Map<string, OrchestrationDocument>();
+	#documents = new Map<string, StoredOrchestrationDocument>();
 	/** 场景版本 ID → 执行计划。 */
 	#plans = new Map<string, RunPlan>();
 
@@ -199,7 +202,7 @@ export class Engine implements AgentSessionHandler {
 			assignContent: AssignContentOf;
 			/** 触发准入：场景现在能不能触发、用什么参数触发（src/runs/trigger-admission.ts）。 */
 			admitTrigger: TriggerAdmission;
-			/** 飞书通知节点和运行通知：在 step 的事务里入队，提交后写日志、唤醒投递（src/feishu/engine-notifications.ts）。 */
+			/** 运行通知：在 step 的事务里入队，提交后唤醒投递（src/feishu/engine-notifications.ts）。 */
 			notifications: EngineNotifications;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
@@ -586,7 +589,7 @@ export class Engine implements AgentSessionHandler {
 		for (const runId of runIds) this.runChanges.publish(runId, runId);
 	}
 
-	async #document(tx: Tx, versionId: string): Promise<OrchestrationDocument> {
+	async #document(tx: Tx, versionId: string): Promise<StoredOrchestrationDocument> {
 		const cached = this.#documents.get(versionId);
 		if (cached) return cached;
 		const [version] = await tx
@@ -602,7 +605,11 @@ export class Engine implements AgentSessionHandler {
 	async #runPlan(tx: Tx, run: RunRow): Promise<RunPlan> {
 		const cached = this.#plans.get(run.orchestrationVersionId);
 		if (cached) return cached;
-		const plan = planRun(await this.#document(tx, run.orchestrationVersionId));
+		// 升级前开始、还没跑完的运行绑定的版本里可以有已移除种类的节点（ADR 0028）：照常排出计划，
+		// 走到它时在 #advance 里按配置错误失败；触发和预检不收这样的场景。
+		const plan = planRun(await this.#document(tx, run.orchestrationVersionId), {
+			allowRemoved: true,
+		});
 		if ("errors" in plan)
 			throw new Error(`run ${run.id}: invalid orchestration: ${plan.errors.join("; ")}`);
 		this.#plans.set(run.orchestrationVersionId, plan);
@@ -667,6 +674,24 @@ export class Engine implements AgentSessionHandler {
 					.onConflictDoNothing();
 				continue;
 			}
+			if (isRemovedNodeKind(node.kind)) {
+				// 引擎不再执行已移除种类的节点（ADR 0028）；只有升级前开始、还没跑完的运行会走到这里：
+				// 节点按配置错误失败（不重试），这条链后面的节点照常按失败的规则推进。
+				const [task] = await step.tx
+					.insert(tasks)
+					.values({ ...base, status: "running", startedAt: step.now })
+					.onConflictDoNothing()
+					.returning();
+				if (task) {
+					await this.#failTask(
+						step,
+						task,
+						"config_error",
+						`节点 ${node.id} 的类型（${removedKindLabel(node.kind)}）已移除，不能执行：${REMOVED_NODE_KINDS[node.kind].replacement}`,
+					);
+				}
+				return;
+			}
 			if (node.kind === "stop_subflow") {
 				// 子流程还没完全结束时停在这里，由 #settleStops 在它结束后继续。
 				if (!(await this.#stopSubflow(step, run, chain, node))) return;
@@ -675,11 +700,6 @@ export class Engine implements AgentSessionHandler {
 			if (node.kind === "async") {
 				// 失败时 #failTask 已经推进了这条链的剩余部分。
 				if (!(await this.#spawn(step, run, chain, plan, i, node))) return;
-				continue;
-			}
-			if (node.kind === "feishu_notify") {
-				const scope = await this.#scope(step.tx, chain, plan, i);
-				await this.deps.notifications.node(step, { run, chain, node, scope });
 				continue;
 			}
 			if (isWaitNode(node)) {
@@ -957,8 +977,7 @@ export class Engine implements AgentSessionHandler {
 			: [];
 		const earlierOutputs = new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
 		const node = plan.nodes[index];
-		// 飞书通知节点无论是否 always 都按 always 的规则解析（docs/SEMANTICS.md §4.2 第 3 条）：通知不会成为失败的原因。
-		const missingAsNull = node !== undefined && (isAlways(node) || node.kind === "feishu_notify");
+		const missingAsNull = node !== undefined && isAlways(node);
 		if (missingAsNull) {
 			for (const id of earlierIds) if (!earlierOutputs.has(id)) earlierOutputs.set(id, {});
 		}

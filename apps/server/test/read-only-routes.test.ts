@@ -505,7 +505,13 @@ const richDocument = (param: string) => ({
 			inputs: { url: "http://probe.test" },
 		},
 		{ id: "spawn", kind: "async", params: {} },
-		{ id: "notify", kind: "feishu_notify", bot: "运维群", text: "巡检完成" },
+		{
+			id: "notify",
+			kind: "package",
+			package: "probe",
+			node: "check",
+			inputs: { url: "http://probe.test/notify" },
+		},
 		{
 			id: "report",
 			kind: "subflow_entry",

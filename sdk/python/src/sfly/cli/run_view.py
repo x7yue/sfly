@@ -18,6 +18,7 @@ from typing import Any
 
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import CliError
+from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
 
 # ---------------------------------------------------------------- 状态
 
@@ -191,16 +192,19 @@ _BUILTIN_TYPES = {
     "timer": "定时",
     "sleep": "Sleep",
     "stop_subflow": "停止子流程",
-    "feishu_notify": "飞书通知",
 }
 
 
 def node_type_label(node: Mapping[str, Any]) -> str:
     """节点类型的名称：包节点是 `包名/节点名`，内置节点是中文名。`node` 是场景文档里的节点；
-    只知道 `kind` 时（读不到场景版本）包节点写 `package`。"""
+    只知道 `kind` 时（读不到场景版本）包节点写 `package`。已移除的种类（ADR 0028，历史版本和
+    历史运行里还留着这种节点）写成 `已移除的节点类型 <种类名>`，和控制面的 `removedKindLabel` 一致；
+    不认识的种类原样写种类名。"""
     kind = str(node["kind"])
-    if kind == "package" and "package" in node:
-        return f"{node['package']}/{node['node']}"
+    if kind == "package":
+        return f"{node['package']}/{node['node']}" if "package" in node else kind
+    if kind in REMOVED_NODE_KINDS:
+        return removed_kind_label(kind)
     return _BUILTIN_TYPES.get(kind, kind)
 
 

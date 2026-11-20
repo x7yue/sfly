@@ -1,5 +1,5 @@
 import { type PackageCatalog, packageKey } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	checkSummary,
@@ -8,7 +8,7 @@ import {
 	warningsSummary,
 } from "./validation";
 
-const base: OrchestrationDocument = {
+const base: StoredOrchestrationDocument = {
 	nodes: [
 		{
 			id: "entry",
@@ -29,7 +29,7 @@ describe("保存前的字段校验", () => {
 	});
 
 	it("显示名称超过 40 个字符或带换行时指出所在节点和字段；空白的显示名称不算错", () => {
-		const withName = (display_name: string): OrchestrationDocument => ({
+		const withName = (display_name: string): StoredOrchestrationDocument => ({
 			...base,
 			nodes: base.nodes.map((n) => (n.id === "wait" ? { ...n, display_name } : n)),
 		});
@@ -44,7 +44,7 @@ describe("保存前的字段校验", () => {
 	});
 
 	it("参数名不合法或重复时指出所在节点和字段", () => {
-		const doc: OrchestrationDocument = {
+		const doc: StoredOrchestrationDocument = {
 			...base,
 			nodes: [
 				{
@@ -56,7 +56,7 @@ describe("保存前的字段校验", () => {
 						{ name: "url", type: "number", required: false, secret: false },
 					],
 				},
-				base.nodes[1] as OrchestrationDocument["nodes"][number],
+				base.nodes[1] as StoredOrchestrationDocument["nodes"][number],
 			],
 		};
 		expect(documentFieldErrors(doc)).toEqual([
@@ -71,10 +71,10 @@ describe("保存前的字段校验", () => {
 	});
 
 	it("不符合场景文档格式的配置（例如空的 Sleep 时长）是字段错误", () => {
-		const doc: OrchestrationDocument = {
+		const doc: StoredOrchestrationDocument = {
 			...base,
 			nodes: [
-				base.nodes[0] as OrchestrationDocument["nodes"][number],
+				base.nodes[0] as StoredOrchestrationDocument["nodes"][number],
 				{ id: "wait", kind: "sleep", always: false, duration: "" },
 			],
 		};
@@ -84,7 +84,7 @@ describe("保存前的字段校验", () => {
 	});
 
 	it("别的字段的错误不是边输入边改的文本框：不等字段交互过，一出现就显示", () => {
-		const doc: OrchestrationDocument = {
+		const doc: StoredOrchestrationDocument = {
 			...base,
 			default_agent: "",
 		};
@@ -94,8 +94,51 @@ describe("保存前的字段校验", () => {
 	});
 });
 
+describe("已移除种类的节点（ADR 0028）", () => {
+	const removed = {
+		id: "notify",
+		kind: "feishu_notify",
+		bot: "ops",
+		text: "完成",
+	} as unknown as StoredOrchestrationDocument["nodes"][number];
+	const withRemoved: StoredOrchestrationDocument = {
+		...base,
+		nodes: [...base.nodes, removed],
+		edges: [...base.edges, { from: "wait", to: "notify", kind: "chain" }],
+	};
+
+	it("是字段错误：不能保存，错误指出节点和替换办法", () => {
+		expect(documentFieldErrors(withRemoved)).toEqual([
+			{
+				nodeId: "notify",
+				field: "kind",
+				message: "已不再支持，不能保存。替换办法：在节点代码里用 ctx.notify 发飞书消息",
+			},
+		]);
+	});
+
+	it("其余节点的错误照常指向对的节点（位置按去掉已移除节点之后算）", () => {
+		const doc: StoredOrchestrationDocument = {
+			...withRemoved,
+			nodes: [
+				base.nodes[0] as StoredOrchestrationDocument["nodes"][number],
+				removed,
+				{ id: "wait", kind: "sleep", always: false, duration: "" },
+			],
+		};
+		expect(documentFieldErrors(doc).map((e) => [e.nodeId, e.field])).toEqual([
+			["notify", "kind"],
+			["wait", "duration"],
+		]);
+	});
+
+	it("删掉它之后没有字段错误", () => {
+		expect(documentFieldErrors(base)).toEqual([]);
+	});
+});
+
 describe("提醒：节点类型没有声明的输入", () => {
-	const doc: OrchestrationDocument = {
+	const doc: StoredOrchestrationDocument = {
 		...base,
 		nodes: [
 			...base.nodes,
@@ -126,7 +169,7 @@ describe("提醒：节点类型没有声明的输入", () => {
 
 	it("提醒里的节点写成「显示名称（节点 ID）」", () => {
 		const loaded = new Map([[packageKey("demo", "1.0.0"), [type]]]) as unknown as PackageCatalog;
-		const named: OrchestrationDocument = {
+		const named: StoredOrchestrationDocument = {
 			...doc,
 			nodes: doc.nodes.map((n) => (n.id === "fetch" ? { ...n, display_name: "探测站点" } : n)),
 		};

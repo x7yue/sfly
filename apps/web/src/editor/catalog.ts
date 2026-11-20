@@ -82,7 +82,7 @@ export function useRegisteredAgents(agents: AgentView[] | undefined): Set<string
 	return useNameSet(agents?.map((a) => a.name));
 }
 
-/** 已登记的飞书机器人名称（飞书通知节点的静态检查用）；列表还没加载时为 undefined（只检查有没有选择）。 */
+/** 已登记的飞书机器人名称（「飞书机器人」类型的输入的静态检查用）；列表还没加载时为 undefined（不检查）。 */
 export function useRegisteredBots(bots: FeishuBotView[] | undefined): Set<string> | undefined {
 	return useNameSet(bots?.map((b) => b.name));
 }
