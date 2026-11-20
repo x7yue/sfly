@@ -717,7 +717,6 @@ _EVENT_HANDLERS: dict[str, Callable[[_Pump, int, int, Mapping[str, Any]], None]]
     "mark": _Pump._action_started,
     "action_summary": _Pump._summary,
 }
-EVENT_TYPES = frozenset(_EVENT_HANDLERS)
 
 
 def _signal_group(pgid: int, sig: int) -> None:

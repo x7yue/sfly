@@ -308,7 +308,7 @@ def test_known_result_differences_stay_as_the_case_file_pins_them(
 
 
 def test_the_event_types_this_end_reads_are_the_ones_in_the_case_file() -> None:
-    assert local.EVENT_TYPES == set(FILE["event_types"])
+    assert set(local._EVENT_HANDLERS) == set(FILE["event_types"])
 
 
 def test_every_event_type_has_a_case() -> None:
