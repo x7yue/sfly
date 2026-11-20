@@ -11,7 +11,8 @@
   （本地没有产物下载地址，产物引用是本地文件路径）；
 - 日志：标准输出 → 来源 stdout、级别 info，标准错误 → 来源 stderr、级别 error，
   事件管道里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
-  （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
+  （agent/src/logs.rs；读取规则与 Agent 共用用例表 testdata/local-protocol-cases.json）；
+  进度和指标保留每一次上报（Agent 上报前按秒合并）；
 - 任务信息与后台进程目录：task.json 里任务 ID 是 `local`、attempt 是 1，
   运行 ID 和节点 ID 由调用方给出；
   `SFLY_PROCS` 默认是工作目录下的 `procs/`
