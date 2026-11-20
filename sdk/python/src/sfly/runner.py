@@ -129,24 +129,73 @@ def _encode(outputs: dict[str, Any]) -> str:
     return text
 
 
-def _terminated_at(error: BaseException) -> str:
+def _normalized(path: str) -> str:
+    """比较路径用的写法：解开符号链接，大小写不敏感的文件系统上统一大小写。"""
+    return os.path.normcase(os.path.realpath(path))
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _runtime_dirs() -> tuple[list[str], list[str], list[str]]:
+    """（SDK 的目录，Python 标准库的目录，装第三方库的目录），都已规范化。
+
+    标准库的目录取 `sysconfig` 的 `stdlib`（在 venv 里指向基础解释器的标准库，Agent 上的共享
+    venv 也一样）、`platstdlib`（有的平台与 `stdlib` 不同；venv 里是 venv 自己的 lib 目录）和
+    `os` 模块所在的目录。第三方库的目录是 `purelib`、`platlib`：它们常在上面某个目录里面，
+    那里的文件不算标准库（节点包自己也可能装在那里）。
+    """
+    import sysconfig
+
+    paths = sysconfig.get_paths()
+    stdlib = [paths.get(key) for key in ("stdlib", "platstdlib")]
+    stdlib.append(os.path.dirname(getattr(os, "__file__", "") or ""))
+    third_party = [paths.get(key) for key in ("purelib", "platlib")]
+    sdk = os.path.dirname(os.path.abspath(__file__))
+    return (
+        [_normalized(sdk)],
+        [_normalized(d) for d in stdlib if d],
+        [_normalized(d) for d in third_party if d],
+    )
+
+
+def _is_runtime_frame(filename: str, dirs: tuple[list[str], list[str], list[str]]) -> bool:
+    """这一帧是 SDK 或 Python 标准库的代码，不是节点代码。
+
+    `<frozen importlib._bootstrap>` 这类冻结的标准库模块算标准库；其余没有文件的帧（`<string>`、
+    空的文件名）看不出来历，按节点代码算。第三方库（site-packages）里的帧不跳过：节点包自己可能
+    就装在那里，停在第三方库里时写的是库里的位置。
+    """
+    sdk, stdlib, third_party = dirs
+    if filename.startswith("<frozen "):
+        return True
+    if not filename or filename.startswith("<"):
+        return False
+    path = _normalized(filename)
+    if any(_under(path, d) for d in sdk):
+        return True
+    in_site = any(_under(path, d) for d in third_party) or any(
+        part in ("site-packages", "dist-packages") for part in path.split(os.sep)
+    )
+    return not in_site and any(_under(path, d) for d in stdlib)
+
+
+def _terminated_at(error: BaseException) -> str | None:
     """任务被终止时执行到哪：节点代码里被打断的那一行，写成「模块.函数 第 N 行」。
 
-    取异常经过的栈里最里面、不在 sfly 包里的一帧：停在 SDK 里（等待 Agent、下载产物）时报调用它的
-    节点代码；都在 sfly 包里时报最里面一帧。
+    取异常经过的栈里最里面、不是 SDK 也不是 Python 标准库的一帧：停在 SDK 里（等待 Agent、下载产物）
+    或标准库里（`Event.wait`、`subprocess.run`、`Thread.join`、`asyncio.run`）时报调用它的节点代码，
+    停在第三方库里时报库里的位置。整条栈都在 SDK 和标准库里时报最里面一帧；没有栈信息时是 None。
     """
     import traceback
 
-    sdk_dir = os.path.dirname(os.path.abspath(__file__)) + os.sep
     frames = list(traceback.walk_tb(error.__traceback__))
     if not frames:
-        return "没有栈信息"
+        return None
+    dirs = _runtime_dirs()
     frame, lineno = next(
-        (
-            (f, n)
-            for f, n in reversed(frames)
-            if not os.path.abspath(f.f_code.co_filename).startswith(sdk_dir)
-        ),
+        ((f, n) for f, n in reversed(frames) if not _is_runtime_frame(f.f_code.co_filename, dirs)),
         frames[-1],
     )
     code = frame.f_code
@@ -156,12 +205,22 @@ def _terminated_at(error: BaseException) -> str:
     return f"{place} 第 {lineno} 行"
 
 
+def _termination_message(error: BaseException) -> str:
+    """被终止时写进日志的那一行。找不到执行到哪时只写原因：这条路径在信号处理之后，不能再抛异常。"""
+    text = str(error) or "任务被终止"
+    try:
+        place = _terminated_at(error)
+    except Exception:  # noqa: BLE001 - 位置只是附带的信息，取不到不能影响结果
+        place = None
+    return f"{text}，执行到 {place}" if place else text
+
+
 def _info(message: str) -> None:
     """往事件管道写一行 INFO 日志（和节点里的 `ctx.log.info` 一样，来源是 sdk）；没有事件管道、
     写不进去时丢弃：写日志失败不能让任务丢掉 output.json。"""
     try:
         Context().log.info(message)
-    except OSError:
+    except Exception:  # noqa: BLE001 - 同上
         pass
 
 
@@ -185,7 +244,7 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             # 取消、超时、被停止子流程节点停止：正常终止，不是节点出错。标准错误来源的日志是
             # ERROR 级，不往那里写堆栈；只在事件管道里留一行 INFO，写明停在哪。被终止已经由任务状态
             # （已停止、已取消、超时）表达，这一行只是记录，不是需要处理的问题，所以不用 WARN。
-            _info(f"{error or '任务被终止'}，执行到 {_terminated_at(error)}")
+            _info(_termination_message(error))
         else:
             sys.stderr.write(tb)
         failure = {
