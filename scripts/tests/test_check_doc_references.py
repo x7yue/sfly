@@ -677,6 +677,82 @@ def test_pyproject_type_checks_the_script_and_only_collects_tests_from_directori
         assert (REPO_ROOT / entry).is_dir(), entry
 
 
+# —— 仓库自带的 skill：真实文件在 .agents/skills，.claude/skills 是指向它的软链 ——
+
+
+def add_skill(repo: Path, name: str, *, link: bool = True, skill_md: bool = True) -> None:
+    put(repo, {f".agents/skills/{name}/notes.md": "# 说明\n"})
+    if skill_md:
+        put(repo, {f".agents/skills/{name}/SKILL.md": "# skill\n"})
+    if link:
+        (repo / ".claude" / "skills").mkdir(parents=True, exist_ok=True)
+        os.symlink(f"../../.agents/skills/{name}", repo / ".claude" / "skills" / name)
+
+
+def test_skills_that_live_in_agents_and_are_linked_from_claude_pass(repo: Path) -> None:
+    add_skill(repo, "alpha")
+    add_skill(repo, "beta")
+
+    result = check(repo)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_real_directory_in_claude_skills_fails_and_says_how_to_move_it(repo: Path) -> None:
+    put(repo, {".claude/skills/gamma/SKILL.md": "# skill\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".claude/skills/gamma" in result.stderr
+    assert "ln -s ../../.agents/skills/gamma .claude/skills/gamma" in result.stderr
+    assert "git mv .claude/skills/gamma .agents/skills/gamma" in result.stderr
+
+
+def test_a_skill_without_a_link_in_claude_skills_fails_and_says_how_to_link_it(
+    repo: Path,
+) -> None:
+    add_skill(repo, "delta", link=False)
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".agents/skills/delta" in result.stderr
+    assert "ln -s ../../.agents/skills/delta .claude/skills/delta" in result.stderr
+
+
+def test_a_link_to_the_wrong_place_fails(repo: Path) -> None:
+    add_skill(repo, "epsilon", link=False)
+    (repo / ".claude" / "skills").mkdir(parents=True)
+    os.symlink("../../docs/epsilon", repo / ".claude" / "skills" / "epsilon")
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".claude/skills/epsilon" in result.stderr
+    assert "ln -s ../../.agents/skills/epsilon .claude/skills/epsilon" in result.stderr
+
+
+def test_a_skill_directory_without_skill_md_fails(repo: Path) -> None:
+    add_skill(repo, "zeta", skill_md=False)
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".agents/skills/zeta/SKILL.md" in result.stderr
+
+
+def test_a_skill_that_is_itself_a_link_in_agents_skills_fails(repo: Path) -> None:
+    put(repo, {".claude/skills/eta/SKILL.md": "# skill\n"})
+    (repo / ".agents" / "skills").mkdir(parents=True)
+    os.symlink("../../.claude/skills/eta", repo / ".agents" / "skills" / "eta")
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".agents/skills/eta" in result.stderr
+
+
 # —— 放行 ——
 
 

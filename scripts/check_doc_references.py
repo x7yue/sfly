@@ -10,6 +10,8 @@
    （`§4 第 6 条`）。SEMANTICS、ARCHITECTURE、DESIGN-SYSTEM 三份文档自己里面，裸的 `§4.1` 指本文档。
    源码注释里的也查。
 3. Markdown 相对链接指向的文件或标题（锚点）不存在。
+4. 仓库自带的 skill（AGENTS.md）：真实文件在 `.agents/skills/<名称>/`（要有 SKILL.md），
+   `.claude/skills/<名称>` 是指向它的软链接，两边一一对应。
 
 不查：`docs/adr`、`docs/research`（旧名照旧保留）、`docs/perf/<版本>/`（历史报告）、生成的代码、
 测试夹具；符号链接的 .md 只查链接指向的那份。没有可用的 git 时说明跳过了检查，退出码 0
@@ -529,6 +531,55 @@ def check_sections(repo: Repo) -> list[Finding]:
     return findings
 
 
+# —— 4：仓库自带的 skill ——
+
+
+def skill_names(repo: Repo, root: str) -> set[str]:
+    return {
+        path.split("/")[2] for path in repo.files if path.startswith(root) and path.count("/") >= 2
+    }
+
+
+def check_skills(repo: Repo) -> list[Finding]:
+    """真实文件在 .agents/skills/<名称>/（要有 SKILL.md），.claude/skills/<名称> 是它的软链接。"""
+    findings: list[Finding] = []
+
+    def add(path: str, message: str, name: str, hint: str = "") -> None:
+        fix = f"ln -s ../../.agents/skills/{name} .claude/skills/{name}"
+        findings.append(Finding(path, 1, name, message, [hint, fix] if hint else [fix]))
+
+    for name in sorted(skill_names(repo, ".claude/skills/")):
+        entry = f".claude/skills/{name}"
+        if entry not in repo.symlinks:
+            hint = (
+                f"真实文件挪到 .agents/skills：git mv {entry} .agents/skills/{name}，再建软链接："
+            )
+            add(
+                entry, f"{entry} 不是软链接：skill 的真实文件在 .agents/skills/{name}。", name, hint
+            )
+            continue
+        try:
+            target = posixpath.normpath(posixpath.join(".claude/skills", os.readlink(ROOT / entry)))
+        except OSError:
+            continue
+        if target != f".agents/skills/{name}":
+            add(entry, f"{entry} 指向 {target}，应该指向 .agents/skills/{name}。", name)
+    for name in sorted(skill_names(repo, ".agents/skills/")):
+        entry = f".agents/skills/{name}"
+        if entry in repo.symlinks:
+            findings.append(
+                Finding(entry, 1, name, f"{entry} 是软链接：skill 的真实文件要放在这里。")
+            )
+            continue
+        if f"{entry}/SKILL.md" not in repo.files:
+            findings.append(
+                Finding(entry, 1, name, f"{entry}/SKILL.md 不存在：skill 要有 SKILL.md。")
+            )
+        if f".claude/skills/{name}" not in repo.symlinks:
+            add(entry, f".claude/skills/{name} 没有指向 {entry} 的软链接。", name, "建软链接：")
+    return findings
+
+
 # —— 放行 ——
 
 
@@ -582,6 +633,7 @@ def main() -> int:
         if path.endswith(".md") and repo.is_source(path):
             findings.extend(check_markdown(repo, path))
     findings.extend(check_sections(repo))
+    findings.extend(check_skills(repo))
 
     allowed, problems = load_allow(repo)
     used: set[tuple[str, str]] = set()
