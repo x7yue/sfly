@@ -289,12 +289,38 @@ def test_section_that_has_no_heading_fails_and_names_the_neighbours(repo: Path) 
 
 
 def test_a_missing_section_inside_a_reference_list_is_reported(repo: Path) -> None:
-    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §1.1、§6.4。\n"})
+    put(repo, {"apps/server/src/engine/ids.ts": "// 第一行\n// docs/SEMANTICS.md §1.1、§6.4。\n"})
 
     result = check(repo)
 
     assert result.returncode == 1
-    assert "§6.4" in result.stderr
+    assert (
+        "apps/server/src/engine/ids.ts:2: docs/SEMANTICS.md §6.4 指向的章节不存在" in result.stderr
+    )
+    assert "§1.1 指向" not in result.stderr
+    assert "没有写明是哪份文档" not in result.stderr
+
+
+def test_a_reference_list_keeps_the_document_of_its_first_reference(repo: Path) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §1.1、§5.4。\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "docs/SEMANTICS.md §5.4 指向的章节不存在" in result.stderr
+
+
+def test_reference_lists_may_use_other_separators_and_deeper_numbers_are_not_cut_short(
+    repo: Path,
+) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §1.1，§4.1,§4.2、§5\n"})
+    assert check(repo).returncode == 0
+
+    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md §4.1.2\n"})
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "docs/SEMANTICS.md §4.1.2 指向的章节不存在" in result.stderr
 
 
 def test_section_reference_without_a_document_fails(repo: Path) -> None:
@@ -316,6 +342,9 @@ def test_section_reference_without_a_document_fails(repo: Path) -> None:
         "// docs/SEMANTICS §4.1",
         "// docs/SEMANTICS.md 第 4.1 节",
         "// `docs/SEMANTICS.md` §4.1",
+        "// docs/SEMANTICS.md 的 §4.1",
+        "// SEMANTICS 第 4.1 节",
+        "// SEMANTICS.md 的第 4.1 节",
     ],
 )
 def test_other_ways_of_writing_a_section_reference_fail_and_show_the_agreed_one(
@@ -326,7 +355,17 @@ def test_other_ways_of_writing_a_section_reference_fail_and_show_the_agreed_one(
     result = check(repo)
 
     assert result.returncode == 1
+    assert "写法不统一" in result.stderr
     assert "docs/SEMANTICS.md §4.1" in result.stderr
+
+
+def test_a_space_after_the_section_sign_does_not_hide_a_missing_section(repo: Path) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": "// docs/SEMANTICS.md § 4.9\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "docs/SEMANTICS.md §4.9 指向的章节不存在" in result.stderr
 
 
 def test_inside_the_numbered_documents_a_bare_section_refers_to_the_document_itself(
@@ -353,6 +392,20 @@ def test_the_numbered_documents_write_section_references_with_the_section_sign(
     assert result.returncode == 1
     assert "第 4.1 节" in result.stderr
     assert "§4.1" in result.stderr
+
+
+def test_perf_reports_and_documentation_fixtures_are_not_checked(repo: Path) -> None:
+    put(
+        repo,
+        {
+            "docs/perf/0.1.0/report.md": "目标 §7.6，`apps/server/gone.ts`，[x](gone.md)\n",
+            "apps/web/e2e/docs-fixture/page.md": (
+                "见 `apps/server/gone.ts`，docs/SEMANTICS.md §9.9\n"
+            ),
+        },
+    )
+
+    assert check(repo).returncode == 0
 
 
 def test_section_references_in_generated_code_are_not_checked(
@@ -414,6 +467,48 @@ def test_link_to_a_missing_anchor_in_the_same_file_fails(repo: Path) -> None:
     assert "#没有" in result.stderr
 
 
+def test_footnote_definitions_are_not_links(repo: Path) -> None:
+    put(repo, {"docs/guide/page.md": "# 页面\n\n正文[^1]\n\n[^1]: 脚注文字\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_duplicate_headings_get_numbered_anchors_and_a_longer_fence_hides_inner_fences(
+    repo: Path,
+) -> None:
+    put(
+        repo,
+        {
+            "docs/guide/page.md": (
+                "# 页面\n\n## 小节\n\n## 小节\n\n````md\n```\n# 里面的标题\n```\n````\n\n"
+                "[第二个](#小节-1)\n"
+            )
+        },
+    )
+    assert check(repo).returncode == 0
+
+    put(
+        repo,
+        {
+            "docs/guide/page.md": (
+                "# 页面\n\n````md\n```\n```\n# 里面的标题\n````\n\n[x](#里面的标题)\n"
+            )
+        },
+    )
+    assert check(repo).returncode == 1
+
+
+def test_a_link_that_leaves_the_repository_fails(repo: Path) -> None:
+    put(repo, {"docs/guide/page.md": "# 页面\n\n[外面](../../../outside.md)\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "指到了仓库外面" in result.stderr
+
+
 def test_links_inside_code_are_not_checked_and_headings_inside_code_do_not_count(
     repo: Path,
 ) -> None:
@@ -451,6 +546,22 @@ def test_links_in_a_file_that_a_symlink_points_to_also_resolve_from_the_symlink(
     result = check(repo)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_git_failing_is_an_error_not_a_pass(tmp_path: Path) -> None:
+    root = tmp_path / "not-a-repo"
+    (root / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPT, root / "scripts" / "check_doc_references.py")
+
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts" / "check_doc_references.py")],
+        env={**ENV, "GIT_CEILING_DIRECTORIES": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "git" in result.stderr
 
 
 # —— 放行 ——

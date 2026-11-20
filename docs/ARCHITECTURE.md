@@ -166,7 +166,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list` | 列出没有归档的场景（名称、id、最新版本号、默认 Agent），可用 `--search` 按名称、说明或引用的 Agent 名搜索、`--agent` 按 Agent 筛选 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注）、默认 Agent 和运行预设，最后是注释框（标题、成员、备注）和便签（标题、正文） |
+| `sfly scenario show <场景>` | 场景最新版本的默认 Agent 和运行预设，入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注），没有连进任何链的节点，最后是注释框（标题、成员、备注）和便签（标题、正文） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）写成 `{"scenario", "base_version", "document"}` 的 JSON 文件；`base_version` 总是最新版本号 |
 | `sfly scenario push <文件>` | 先按随 SDK 打包的场景文档 JSON Schema 在本地校验，再带 `base_version` 保存新版本（沿用场景版本的乐观锁，冲突退出码 2，没有强制覆盖）；控制面给没有坐标的节点补坐标；成功后把文件里的 `base_version` 和 `document` 更新为保存的结果 |
@@ -183,7 +183,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | `sfly package list` / `sfly package show <包>[@版本]` | 节点包的版本；节点类型的标题、输入（类型、默认值、是否必填）和输出 |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` | 直接调用上面没有覆盖的接口，发请求前按随 SDK 打包的路由清单校验；`--list` 列出路由清单 |
 
-`sfly run` 的退出码：0 成功，1 运行失败，3 运行被取消，124 等待超时，130 Ctrl-C，2 命令本身出错（其余命令只有 0 和 2，`sfly api` 按 Ctrl-C 停止时也是 130）。旧写法 `sfly run <节点>` 报错并提示改用 `sfly debug`（退出码 2）。
+`sfly run` 的退出码：0 成功，1 运行失败，3 运行被取消，124 等待超时，130 Ctrl-C，2 命令本身出错（操作平台的其余命令只有 0 和 2，`sfly api` 按 Ctrl-C 停止时也是 130）。旧写法 `sfly run <节点>` 报错并提示改用 `sfly debug`（退出码 2）。
 
 **给 AI 编程助手的 skill**：`sfly init` 把两份 skill 写进项目的 `.agents/skills/`（`.claude/skills/` 下是软链接）：节点开发 `sfly-node-dev`（`reference.md` 是 SDK 参考页），和操作平台 `sfly-platform`（联调闭环的步骤和操作规则，`reference.md` 是「用命令行操作平台」页）。两份的源文件都在 `docs/guide/`（ADR 0013），控制面经 `/docs/skills/<名称>/…` 提供原文并列在 `/llms.txt`，SDK 里 `sfly/cli/skills/` 下是指向源文件的软链接。`sfly skill update` 把两份换成当前 SDK 版本的内容，每份各自做哈希检查，改过的不覆盖（`--force` 才覆盖）。
 
@@ -302,7 +302,7 @@ flowchart TD
 | `SFLY_EVENTS` | 命名管道 `events.fifo` 的路径：SDK 以追加方式打开，逐行写入结构化日志、进度、指标、飞书通知以及动作和标记（JSONL）；Agent 在启动执行器前创建它并打开读端（ADR 0015） |
 | `SFLY_ARTIFACTS` | 产物目录，任务结束后由 Agent 上传 |
 | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀；`ctx.artifacts.save()` 返回的产物引用 = 前缀 + 按路径段编码的名称；`ctx.artifacts.download()` 按产物引用直接从控制面下载，不经过 Agent |
-| `SFLY_DOWNLOADS` | 只有本地调试（`sfly debug`、`sfly.testing`）设置：下载内容表 `downloads.json` 的路径（产物引用 → 本地文件路径）；`ctx.artifacts.download()` 遇到表里的引用时直接复制那个文件，不访问网络 |
+| `SFLY_DOWNLOADS` | 只有本地调试给了下载内容时设置（`sfly debug --download`、`sfly.testing` 的 `downloads`）：下载内容表 `downloads.json` 的路径（产物引用 → 本地文件路径）；`ctx.artifacts.download()` 遇到表里的引用时直接复制那个文件，不访问网络 |
 | `SFLY_CANCEL` | 取消标记文件；出现时 `ctx.cancelled()` 返回 true |
 | `SFLY_PROCS` | 这次运行的后台进程目录 `$SFLY_HOME/procs/<运行 ID>/`（`--procs-dir`，不预先创建），即 `ctx.procs_dir`；0.0.4 起设置，旧 Agent 不设置时 SDK 取同样的默认位置 |
 | `SFLY_AGENT_SOCKET` | Agent 的本地 socket（与 `sfly dev` 共用，`<work_dir>/agent.sock`）：节点调用 Agent 能力（`ctx.agent()`）时经它交给自己所在的 Agent（`agent/src/calls/`）。本地调试时不设置，改设 `SFLY_LOCAL_AGENTS`（「Agent」类型的输入引用的 Agent → 本地目录的映射表，没有映射的为 null） |

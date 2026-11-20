@@ -2,7 +2,7 @@
 export const MONITOR_TOPBAR_HEIGHT = 52;
 
 /**
- * 监控页顶栏的按钮在窗口窄于 1280 时只显示图标（docs/DESIGN-SYSTEM.md §1：监控页窄到 1024 仍可用）：
+ * 监控页顶栏的按钮在窗口窄于 1280 时只显示图标（docs/DESIGN-SYSTEM.md 开头的「定位」：监控页窄到 1024 仍可用）：
  * 按钮本身收成方形，文字留给读屏（按钮的名称不变）。
  */
 export const COLLAPSE_BUTTON = "max-xl:w-7.5 max-xl:px-0";

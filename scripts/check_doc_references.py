@@ -12,7 +12,8 @@
 3. Markdown 相对链接指向的文件或标题（锚点）不存在。
 
 不查：`docs/adr`、`docs/research`（旧名照旧保留）、`docs/perf/<版本>/`（历史报告）、生成的代码、
-测试夹具；符号链接的 .md 只查链接指向的那份。确实要写一个不存在的引用时，在
+测试夹具；符号链接的 .md 只查链接指向的那份。已知查不出的：章节号存在但指错了节；顶层目录整个改名后
+旧名开头的路径（顶层名取自现在的仓库）。确实要写一个不存在的引用时，在
 `scripts/doc-references.allow` 加一行 `文件 | 引用原文 | 原因`（原因必填；引用不再需要放行时，
 这一行也会报错，要删掉）。每处失效的引用报：文件和行、引用原文、能猜出来的正确写法。失败时退出码 1。
 """
@@ -51,10 +52,10 @@ EXCLUDED_PREFIXES = (
 EXCLUDED_PATTERNS = (re.compile(r"^docs/perf/[^/]+/"),)
 
 DOC_NAMES = "SEMANTICS|ARCHITECTURE|DESIGN-SYSTEM"
-SECTION_NUMBER = r"\d+(?:\.\d+)?"
-SECTION_SIGN = re.compile(rf"§({SECTION_NUMBER})")
+SECTION_NUMBER = r"\d+(?:\.\d+)*"
+SECTION_SIGN = re.compile(rf"§ ?({SECTION_NUMBER})")
 CANONICAL_BEFORE = re.compile(rf"(docs/(?:{DOC_NAMES})\.md) $")
-LOOSE_BEFORE = re.compile(rf"((?:docs/)?(?P<stem>{DOC_NAMES})(?:\.md)?`?\s*)$")
+LOOSE_BEFORE = re.compile(rf"((?:docs/)?(?P<stem>{DOC_NAMES})(?:\.md)?`?\s*(?:的\s*)?)$")
 LIST_SEPARATOR = re.compile(r"(?:「[^」]*」)?[、，,]\s?$")
 # `第 4.1 节`、`第 3.3、3.4 节`、`见 7.4 节`；「4.2 节点包格式」里的「节点」不算。
 SECTION_WORD = re.compile(
@@ -62,7 +63,7 @@ SECTION_WORD = re.compile(
     rf"|(?<![\w.])\d+\.\d+\s?节(?!点)"
 )
 SECTION_WORD_AFTER_DOC = re.compile(
-    rf"(docs/(?P<stem>{DOC_NAMES})\.md)\s?(?P<word>{SECTION_WORD.pattern})"
+    rf"(?:docs/)?(?P<stem>{DOC_NAMES})(?:\.md)?`?\s?(?:的\s?)?(?P<word>{SECTION_WORD.pattern})"
 )
 HEADING_NUMBER = re.compile(r"^#{2,6}\s+(\d+(?:\.\d+)*)\.?\s")
 HEADING = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$")
@@ -71,7 +72,7 @@ CODE_SPAN = re.compile(r"(`+)(.+?)(?<!`)\1(?!`)")
 INLINE_LINK = re.compile(
     r"!?\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)"
 )
-LINK_DEFINITION = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)")
+LINK_DEFINITION = re.compile(r"^\s{0,3}\[(?!\^)[^\]]+\]:\s*(<[^>]*>|\S+)")
 PATH_SPAN = re.compile(r"[A-Za-z0-9_.@+\-/]+(?::\d+(?:-\d+)*)*(?:#\S*)?")
 PLACEHOLDERS = ("...", "X.Y.Z")
 URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
@@ -86,10 +87,19 @@ class Finding:
     hints: list[str] = field(default_factory=list)
 
 
-def run_git(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(ROOT), *args], capture_output=True, text=True, encoding="utf-8"
+def run_git(*args: str, ok: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess[str]:
+    """运行 git；退出码不在 ok 里时直接报错退出，免得 git 出了问题却当成「没有任何引用」通过。"""
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "-c", "core.quotepath=false", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
+    if result.returncode not in ok:
+        detail = result.stderr.strip() or f"退出码 {result.returncode}"
+        sys.exit(f"check_doc_references：git {' '.join(args[:2])} 失败：{detail}")
+    return result
 
 
 class Repo:
@@ -120,9 +130,11 @@ class Repo:
         # 文件里的相对链接，从这些位置读也算数（随 SDK 发布的 skill 就是这样）。
         self.aliases: dict[str, list[str]] = {}
         for link in self.symlinks:
-            target = posixpath.normpath(
-                posixpath.join(posixpath.dirname(link), os.readlink(ROOT / link))
-            )
+            try:
+                destination = os.readlink(ROOT / link)
+            except OSError:  # 已经删掉、还没从索引里去掉，或者不是符号链接了
+                continue
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(link), destination))
             if target in self.files:
                 self.aliases.setdefault(target, []).append(link)
         self._headings: dict[str, set[str]] = {}
@@ -134,7 +146,9 @@ class Repo:
 
     def is_ignored(self, path: str) -> bool:
         """被 .gitignore 忽略（构建产物、本地目录）：不在仓库里是正常的。"""
-        result = run_git("check-ignore", "--no-index", "--", path, path.rstrip("/") + "/")
+        result = run_git(
+            "check-ignore", "--no-index", "--", path, path.rstrip("/") + "/", ok=(0, 1, 128)
+        )
         return result.returncode == 0
 
     def is_source(self, path: str) -> bool:
@@ -144,7 +158,7 @@ class Repo:
 
     def read_lines(self, path: str) -> list[str]:
         try:
-            return (ROOT / path).read_text(encoding="utf-8").splitlines()
+            return (ROOT / path).read_text(encoding="utf-8-sig").split("\n")
         except (OSError, UnicodeDecodeError):
             return []
 
@@ -152,11 +166,9 @@ class Repo:
         """文档里有标题的章节号（`## 4. …` → 4，`### 4.1 …` → 4.1）。"""
         if doc not in self._headings:
             numbers: set[str] = set()
-            in_fence = False
-            for line in self.read_lines(doc):
-                if FENCE.match(line):
-                    in_fence = not in_fence
-                elif not in_fence and (m := HEADING_NUMBER.match(line)):
+            lines = self.read_lines(doc)
+            for line, fenced in zip(lines, is_in_fence_state(lines), strict=True):
+                if not fenced and (m := HEADING_NUMBER.match(line)):
                     numbers.add(m.group(1))
             self._headings[doc] = numbers
         return self._headings[doc]
@@ -166,12 +178,9 @@ class Repo:
         if path not in self._slugs:
             slugs: list[str] = []
             seen: dict[str, int] = {}
-            in_fence = False
-            for line in self.read_lines(path):
-                if FENCE.match(line):
-                    in_fence = not in_fence
-                    continue
-                m = None if in_fence else HEADING.match(line)
+            lines = self.read_lines(path)
+            for line, fenced in zip(lines, is_in_fence_state(lines), strict=True):
+                m = None if fenced else HEADING.match(line)
                 if not m:
                     continue
                 slug = slugify(m.group(1))
@@ -185,7 +194,9 @@ class Repo:
         """历史里改名或删除过的路径：旧路径 → (R 或 D, 新路径, 提交)，取最近的一次。"""
         if self._history is None:
             self._history = {}
-            log = run_git("log", "--diff-filter=RD", "-M", "--name-status", "--format=%x00%h")
+            log = run_git(
+                "log", "--diff-filter=RD", "-M", "--name-status", "--format=%x00%h", ok=(0, 128)
+            )
             commit = ""
             for line in log.stdout.splitlines():
                 if line.startswith("\0"):
@@ -357,7 +368,10 @@ def section_hints(repo: Repo, doc: str, num: str) -> list[str]:
         if not chapters:
             return [f"{doc} 里没有带章节号的标题。"]
         return [f"{doc} 有 §{chapters[0]} 到 §{chapters[-1]} 章。"]
-    children = sorted((n for n in numbers if n.startswith(top + ".")), key=lambda n: float(n))
+    children = sorted(
+        (n for n in numbers if n.startswith(top + ".")),
+        key=lambda n: tuple(int(part) for part in n.split(".")),
+    )
     if not children:
         return [
             f"{doc} 的 §{top} 没有分小节。指里面的第几条时，"
@@ -459,9 +473,8 @@ def check_sections(repo: Repo) -> list[Finding]:
     excluded += [":(exclude,glob)docs/perf/*/**"]
     excluded += [f":(exclude){path}" for path in CHECKER_FILES]
     grep = run_git(
-        "-c",
-        "core.quotepath=false",
         "grep",
+        "--no-color",
         "--untracked",
         "-n",
         "-I",
@@ -475,9 +488,10 @@ def check_sections(repo: Repo) -> list[Finding]:
         "--",
         ".",
         *excluded,
+        ok=(0, 1),  # 1 是一处都没找到
     )
     findings: list[Finding] = []
-    for entry in grep.stdout.splitlines():
+    for entry in grep.stdout.split("\n"):
         path, _, rest = entry.partition(":")
         line, _, text = rest.partition(":")
         if path in repo.symlinks or not line.isdigit():

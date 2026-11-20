@@ -10,7 +10,7 @@ export type AddItem =
 	| { kind: "timer" | "sleep" | "stop_subflow" | "feishu_notify" }
 	/** 异步任务：勾选「同时新建子流程」时带上子流程名称，一并新建子流程入口和调度连线（#187）。 */
 	| { kind: "async"; subflow?: string }
-	/** 子流程入口：新建时必须填写名称（docs/SEMANTICS.md §1.2）。 */
+	/** 子流程入口：新建时必须填写名称（docs/SEMANTICS.md §1.1）。 */
 	| { kind: "subflow_entry"; name: string }
 	| {
 			kind: "package";
