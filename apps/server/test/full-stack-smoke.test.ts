@@ -324,8 +324,9 @@ describeWithAgent("全栈冒烟：开发模式 sfly dev", () => {
 		if (project) await rm(project, { recursive: true, force: true });
 	});
 
-	const runOn = async (api: ApiClient, agent: string) => {
-		const id = await api.orchestrationWith({
+	/** 一个只有 smoke-dev@dev 节点、派发到指定 Agent 的场景。 */
+	const devScenarioOn = (api: ApiClient, agent: string) =>
+		api.orchestrationWith({
 			default_agent: agent,
 			nodes: [
 				{ id: "entry", kind: "entry" },
@@ -334,6 +335,9 @@ describeWithAgent("全栈冒烟：开发模式 sfly dev", () => {
 			edges: [{ from: "entry", to: "a", kind: "chain" }],
 			packages: { "smoke-dev": "dev" },
 		});
+
+	/** 触发并等运行结束，返回节点 a。 */
+	const runScenario = async (api: ApiClient, id: string) => {
 		const runId = await api.triggerOk(id);
 		await eventually(
 			async () => expect(["success", "failed"]).toContain((await api.run(runId)).status),
@@ -342,7 +346,7 @@ describeWithAgent("全栈冒烟：开发模式 sfly dev", () => {
 		return api.node(runId, "a");
 	};
 
-	it("sfly dev 加载本地源码后可以在画布上选用 @dev 运行，修改源码后下一次运行生效；其他 Agent 以 env_error 失败", async () => {
+	it("sfly dev 加载本地源码后可以在画布上选用 @dev 运行，修改源码后下一次运行生效；在线但没有加载的 Agent 触发前被拦下，触发时不在线、上线后没有加载的以 env_error 失败", async () => {
 		const api = new ApiClient(cp);
 		const socket = join(devAgent.workDir, "tasks", "agent.sock");
 		const { stdout } = await promisify(execFile)(
@@ -360,17 +364,41 @@ describeWithAgent("全栈冒烟：开发模式 sfly dev", () => {
 			]);
 		});
 
-		expect(await runOn(api, "dev-agent")).toMatchObject({
+		const onDevAgent = await devScenarioOn(api, "dev-agent");
+		expect(await runScenario(api, onDevAgent)).toMatchObject({
 			status: "success",
 			outputs: { source: "v1" },
 		});
 		await writeNode("v2-edited");
-		expect(await runOn(api, "dev-agent")).toMatchObject({
+		expect(await runScenario(api, onDevAgent)).toMatchObject({
 			status: "success",
 			outputs: { source: "v2-edited" },
 		});
 
-		const other = await runOn(api, "other-agent");
+		// 在线、没有加载它的 Agent：预检写明是哪个节点、哪台 Agent，不产生运行。
+		const onOther = await devScenarioOn(api, "other-agent");
+		const refused = await api.trigger(onOther);
+		expect(refused.status).toBe(400);
+		const { error } = (await refused.json()) as { error: { details: Array<{ code: string }> } };
+		expect(error.details.map((d) => d.code)).toEqual(["dev_package_not_loaded"]);
+
+		// 触发时不在线的 Agent：预检不知道它加载了什么，不阻断；它重新连上、没有加载，Agent 执行时以 env_error 失败。
+		await otherAgent.close();
+		await eventually(async () => {
+			const { agents } = await api.getJson<{ agents: Array<{ name: string; status: string }> }>(
+				"/agents",
+			);
+			expect(agents.find((a) => a.name === "other-agent")?.status).toBe("offline");
+		});
+		const runId = await api.triggerOk(onOther);
+		otherAgent = await startRealAgent({
+			grpcUrl: cp.grpcUrl,
+			name: "other-agent",
+			args: ["--index-url", "http://127.0.0.1:9/simple/"],
+			bin: agentBinary(),
+		});
+		await eventually(async () => expect((await api.run(runId)).status).toBe("failed"), 60_000);
+		const other = await api.node(runId, "a");
 		expect(other.status).toBe("failed");
 		expect(other.error?.kind).toBe("env_error");
 		expect(other.error?.message).toContain("smoke-dev@dev");

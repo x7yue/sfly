@@ -837,7 +837,8 @@ export interface Api {
 		/**
 		 * `GET /orchestrations/:id/preflight`
 		 *
-		 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发），
+		 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、
+		 * 不阻断触发但值得留意的警告，
 		 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队），
 		 * 和场景的运行预设。
 		 */
@@ -852,6 +853,8 @@ export interface Api {
 				version: number;
 				params: ParamDeclView[];
 				problems: PreflightProblem[];
+				/** 不阻断触发、但值得留意的配置（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到了它）；没有版本、已归档时为空。 */
+				warnings: PreflightProblem[];
 				/** 最新版本锁定的节点包版本（包名 → 版本）；没有版本时为空。 */
 				packages: Record<string, string>;
 				/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */

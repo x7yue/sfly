@@ -160,7 +160,12 @@ export function createTriggerAdmission(checks: {
 		if ("errors" in filled) {
 			return reject(400, "invalid_params", filled.errors.join("; "), filled.errors);
 		}
-		const paramProblems = await checks.paramsCheck(tx, version.document, plan, filled.params);
+		const { presetName, presetParams } = applied.runPreset;
+		const paramProblems = await checks.paramsCheck(tx, version.document, plan, filled.params, {
+			preset:
+				presetName === null ? null : { name: presetName, params: new Set(presetParams ?? []) },
+			given: new Set(Object.keys(request.params)),
+		});
 		if (paramProblems.length > 0) {
 			return reject(
 				400,

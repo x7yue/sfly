@@ -23,7 +23,7 @@ import type { TaskRow } from "./step.js";
 const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
 
 /** 开发版本（docs/SEMANTICS.md §7）。 */
-const DEV_VERSION = "dev";
+export const DEV_VERSION = "dev";
 
 /** 这次尝试派给的 Agent：名称、版本，以及它以开发模式加载的节点包（开发版本的元信息由它上报）。 */
 export interface AssignTarget {
