@@ -191,7 +191,7 @@ export function createParamsCheck(): ParamsCheck {
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
 		const chains = knownParams(plan, params);
-		// 问题的说明里写出的机器人、Agent 名称取自 secret 参数时打码（调用方给的值同样）：报错不回显 secret 的值。
+		// 问题的说明里写出的值取自 secret 参数时打码（调用方给的值同样）：触发时的报错不回显 secret 的值。
 		const secrets = secretTexts(chains);
 		const shownOf = (value: string) => maskSecrets(value, secrets);
 		for (const { chain, params: known, source } of chains) {
