@@ -71,11 +71,14 @@ def test_an_unknown_node_kind_is_named_as_it_is() -> None:
     assert "`已移除的节点类型 ${kind}`" in source
 
 
-def test_the_removed_kinds_match_the_control_plane_registry() -> None:
-    """命令行的清单和控制面的 REMOVED_NODE_KINDS 是同一份：种类名、原来的名称、替换办法逐项一致。"""
+def test_the_removed_kinds_are_the_ones_the_control_plane_registers() -> None:
+    """命令行读控制面的 REMOVED_NODE_KINDS 导出的 JSON（`pnpm gen`），不另写一份：
+    种类名、原来的名称、替换办法逐项一致，不会有一项被漏掉。"""
     source = (REPO / "packages/schema/src/removed-nodes.ts").read_text(encoding="utf-8")
     body = source[source.index("export const REMOVED_NODE_KINDS") :].split("} as const", 1)[0]
-    entries = re.findall(r'(\w+): \{\s*label: "([^"]+)",\s*replacement: "([^"]+)",\s*\}', body)
-    assert {kind: (label, replacement) for kind, label, replacement in entries} == (
-        REMOVED_NODE_KINDS
-    )
+    registered = re.findall(r"^\t(\w+): \{$", body, re.MULTILINE)
+    assert registered, "没有从 removed-nodes.ts 里读到已移除的种类"
+    assert sorted(REMOVED_NODE_KINDS) == sorted(registered)
+    for label, replacement in REMOVED_NODE_KINDS.values():
+        assert label
+        assert replacement

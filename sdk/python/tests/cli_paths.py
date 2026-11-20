@@ -80,7 +80,15 @@ def _is_prefix(path: str, route: Route) -> bool:
     return False
 
 
-_PREFIX_ENTRY = {"method": "GET", "path": "/", "key": None, "kind": "endpoint"}
+_PREFIX_ENTRY = {
+    "method": "GET",
+    "path": "/",
+    "key": None,
+    "kind": "endpoint",
+    "summary": "",
+    "effect": "read",
+    "resource": {"kind": "system", "target": "global"},
+}
 
 
 class _Scanner:

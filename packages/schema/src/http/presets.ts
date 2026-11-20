@@ -83,6 +83,7 @@ export const PresetView = z.object({
 	problems: z.array(PresetProblemView),
 	/** 最后修改人的昵称。 */
 	updated_by: z.string(),
+	/** 最后修改时间（控制面时间）。 */
 	updated_at: Timestamp,
 });
 
@@ -92,13 +93,22 @@ export const PresetView = z.object({
  * 并且这个预设里已经有值的参数上（所以新建时不能用）。两项都没有给时 400 `invalid_preset`，指出缺的是 `value`。
  */
 export const PresetParamInput = z.strictObject({
+	/** 入口参数的名称。 */
 	name: z.string(),
+	/** 固定的值（预设参数取它保存的值，触发时不能改）。和 `keep` 二选一。 */
 	value: z.unknown().optional(),
+	/** 写 `true` 表示沿用这个预设里这个 secret 参数原来的值（接口不返回 secret 的原值）；只能用在已经有值的 secret 参数上。 */
 	keep: z.literal(true).optional(),
 });
 
+/** 场景 id。 */
 const IdParams = z.object({ id: z.string().min(1) });
-const PresetIdParams = z.object({ id: z.string().min(1), presetId: z.string().min(1) });
+const PresetIdParams = z.object({
+	/** 场景 id。 */
+	id: z.string().min(1),
+	/** 运行预设的 id。 */
+	presetId: z.string().min(1),
+});
 
 /**
  * 修改预设的请求体：只写要改的项，至少一项。没有 `params` 就不改预设参数（只改名称或说明，失效的预设也可以改名）；
@@ -106,8 +116,11 @@ const PresetIdParams = z.object({ id: z.string().min(1), presetId: z.string().mi
  */
 export const PresetChanges = z
 	.strictObject({
+		/** 新名称（场景内唯一）。 */
 		name: PresetName.optional(),
+		/** 新说明。 */
 		description: PresetDescription.optional(),
+		/** 预设参数的完整清单（整份替换）；不给就不改预设参数。 */
 		params: z.array(PresetParamInput).optional(),
 	})
 	.refine(
@@ -123,6 +136,9 @@ export const presetsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/presets",
+		summary: "列出一个场景的运行预设（固定的入口参数取值，含失效的）",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "list"],
 		params: IdParams,
@@ -139,6 +155,9 @@ export const presetsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presets",
+		summary: "给一个场景新建运行预设",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "create"],
 		params: IdParams,
@@ -162,6 +181,9 @@ export const presetsApi = {
 	update: endpoint({
 		method: "PATCH",
 		path: "/orchestrations/:id/presets/:presetId",
+		summary: "修改一个运行预设（一组固定的入口参数取值）",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "update"],
 		params: PresetIdParams,
@@ -177,6 +199,9 @@ export const presetsApi = {
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presets/:presetId/copy",
+		summary: "复制一个运行预设",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["presets", "copy"],
 		params: PresetIdParams,
@@ -191,6 +216,10 @@ export const presetsApi = {
 	remove: endpoint({
 		method: "DELETE",
 		path: "/orchestrations/:id/presets/:presetId",
+		summary: "删除一个运行预设",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
+		removes: true,
 		client: true,
 		key: ["presets", "remove"],
 		params: PresetIdParams,

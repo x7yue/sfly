@@ -143,6 +143,35 @@ def test_exception_in_node_becomes_failure_with_message_and_traceback(
     assert "ValueError: 坏了：磁盘满" in run.stderr
 
 
+def test_floats_are_read_from_task_json_and_written_to_output_json_as_the_same_double(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """数值经过执行器保持不变（#450）：输入里的小数读成写出者的那个双精度数，输出写成它的最短表示。
+    前几个数用只做近似解析的实现会差最后一位；比较 repr，负零和 0.0 也要区分。"""
+    values = [
+        29491.727857142858,
+        7.038531e-26,
+        123456789.12345679,
+        60.157000000000004,
+        60.157,
+        0.1,
+        1e-7,
+        5e-324,
+        1.7976931348623157e308,
+        -0.0,
+    ]
+    write_module(code_dir, "numbers", "def f(xs: list) -> dict:\n    return {'xs': xs}\n")
+
+    run = execute(tmp_path, code_dir, "numbers:f", {"xs": values})
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    assert [repr(x) for x in run.output["outputs"]["xs"]] == [repr(x) for x in values]
+    text = (tmp_path / "work" / "output.json").read_text(encoding="utf-8")
+    assert "60.157000000000004" in text
+    assert "29491.727857142858" in text
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [

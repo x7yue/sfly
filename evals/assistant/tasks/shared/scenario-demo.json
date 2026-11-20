@@ -1,0 +1,54 @@
+{
+	"document": {
+		"default_agent": "sut-01",
+		"nodes": [
+			{
+				"id": "entry",
+				"kind": "entry",
+				"display_name": "开始",
+				"params": [
+					{
+						"name": "base_url",
+						"type": "string",
+						"default": "http://sut:9000",
+						"required": false,
+						"secret": false,
+						"description": "被测服务的地址，不带末尾的 /"
+					}
+				]
+			},
+			{
+				"id": "wait_ready",
+				"kind": "package",
+				"package": "svc-probe",
+				"node": "wait_ready",
+				"display_name": "等服务就绪",
+				"note": "被测服务刚重启时要几秒才能响应，最多等 30 秒。",
+				"inputs": { "base_url": "${{ params.base_url }}", "timeout_s": 30 }
+			},
+			{
+				"id": "inspect_items",
+				"kind": "package",
+				"package": "svc-probe",
+				"node": "inspect_items",
+				"display_name": "检查商品列表",
+				"note": "商品列表至少要有 3 条：少于 3 条说明数据被清过，后面的检查没有意义。",
+				"inputs": { "base_url": "${{ params.base_url }}", "min_items": 3 }
+			}
+		],
+		"edges": [
+			{ "from": "entry", "to": "wait_ready", "kind": "chain" },
+			{ "from": "wait_ready", "to": "inspect_items", "kind": "chain" }
+		],
+		"packages": { "svc-probe": "0.1.0" },
+		"annotations": [
+			{
+				"id": "annotation_1",
+				"title": "探测 demo 服务",
+				"note": "先等服务就绪再检查接口。被测服务常驻在 sut-01 上，不在场景里启停。",
+				"nodes": ["wait_ready", "inspect_items"],
+				"subflows": []
+			}
+		]
+	}
+}

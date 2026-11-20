@@ -41,16 +41,16 @@ known-first-party = ["sfly", "sfly_std"]
 
 [tool.mypy]
 strict = true
-files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src", "std/tests", "scripts/tests", "scripts/check_doc_references.py"]
+files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src", "std/tests", "scripts/tests", "scripts/check_doc_references.py", "evals/assistant/aeval", "evals/assistant/container", "evals/assistant/tests"]
 # sdk/python/tests 里 sfly.testing 的测试直接导入桩节点包的节点函数。
 # sdk/python/tests 里的测试从 indexes.py 导入共用的桩，std/tests 里的从 named_sleep.py 导入。
-mypy_path = "testdata/stub-package/src:testdata/agent-files-package/src:sdk/python/tests:std/tests"
+mypy_path = "testdata/stub-package/src:testdata/agent-files-package/src:sdk/python/tests:std/tests:evals/assistant:evals/assistant/container"
 python_version = "3.10"
 # 节点在 Agent 上运行，Agent 只支持 Linux：按 Linux 检查（与 CI 一致），macOS 上没有的属性（fcntl.F_SETPIPE_SZ 等）不误报。
 platform = "linux"
 
 [tool.pytest.ini_options]
-testpaths = ["sdk/python/tests", "std/tests", "scripts/tests"]
+testpaths = ["sdk/python/tests", "std/tests", "scripts/tests", "evals/assistant/tests"]
 addopts = "--import-mode=importlib"
 # 测试共用的桩（sdk/python/tests/indexes.py、std/tests/named_sleep.py）。
-pythonpath = ["sdk/python/tests", "std/tests"]
+pythonpath = ["sdk/python/tests", "std/tests", "evals/assistant", "evals/assistant/container"]

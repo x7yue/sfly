@@ -16,7 +16,10 @@ clap = { version = "4", features = ["derive", "env"] }
 prost = "0.14"
 reqwest = { version = "0.13", default-features = false, features = ["stream"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip：解析小数时用足够的精度，读出的是写出者的那个双精度数。默认的快速路径遇到 16、17 位有效数字的小数
+# 会差最后一位（#450：29491.727857142858 读成 29491.727857142854），Agent 读执行器写的 output.json、读控制面派来的
+# inputs_json 都要「解析再写出」，节点输出经过平台后就变了。代价是解析小数慢一些，只有 Agent 自己读的这些文件和事件里的数受影响。
+serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.11"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1", features = ["net"] }

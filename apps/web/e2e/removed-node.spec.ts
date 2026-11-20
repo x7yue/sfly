@@ -19,11 +19,13 @@ test("最新版本里还有已移除的节点：画布提示哪些节点、怎�
 	await openEditor(page, IDS.scenario, "notify");
 
 	// 画布顶部的提示：哪些节点、每种怎么替换。
-	const banner = page.getByRole("status").filter({ hasText: "不能运行，也不能保存" });
+	const banner = page.getByRole("status").filter({ hasText: "不能运行，删掉之后才能保存" });
 	await expect(banner).toContainText("有 3 个节点的类型已不再支持（wait、at、notify）");
-	await expect(banner).toContainText(`Sleep节点：${SLEEP_REPLACEMENT}`);
-	await expect(banner).toContainText(`定时节点：${TIMER_REPLACEMENT}`);
-	await expect(banner).toContainText(`飞书通知节点：${NOTIFY_REPLACEMENT}`);
+	await expect(banner).toContainText(`Sleep节点改成${SLEEP_REPLACEMENT}`);
+	await expect(banner).toContainText(`定时节点改成${TIMER_REPLACEMENT}`);
+	await expect(banner).toContainText(`飞书通知节点改成${NOTIFY_REPLACEMENT}`);
+	// 定时、Sleep 节点原来有输出：引用过它们的节点，删掉之后也要改。
+	await expect(banner).toContainText("引用了它们输出的节点也要一起改");
 
 	// 节点卡片：显示名称是标题（没有时是种类名），种类名是「已移除的节点类型 <种类>」。
 	const wait = nodeCard(page, "wait");
@@ -44,11 +46,14 @@ test("最新版本里还有已移除的节点：画布提示哪些节点、怎�
 	await expect(panel).toContainText("当时的配置");
 	await expect(panel).toContainText('"bot": "ops"');
 	await expect(panel).toContainText("压测结束 ${{ params.env }}");
+	await expect(panel).not.toContainText("引用了它的输出");
 	await at.click();
 	await expect(panel).toContainText(TIMER_REPLACEMENT);
+	await expect(panel).toContainText("别的节点引用了它的输出（triggered_at、late）的，也要一起改");
 	await expect(panel).toContainText('"at": "09:30:00"');
 	await wait.click();
 	await expect(panel).toContainText(SLEEP_REPLACEMENT);
+	await expect(panel).toContainText("别的节点引用了它的输出（triggered_at）的，也要一起改");
 	await expect(panel).toContainText('"duration": "5s"');
 
 	// 保存被拦下：字段错误，没有新版本。
@@ -69,6 +74,8 @@ test("最新版本里还有已移除的节点：画布提示哪些节点、怎�
 		await inspector(page).getByRole("button", { name: "删除节点" }).click();
 		await expect(nodeCard(page, id)).toHaveCount(0);
 		if (left) await expect(banner).toContainText(left);
+		// 只剩没有输出的飞书通知节点时，不再提引用的事。
+		if (left) await expect(banner).not.toContainText("引用了它们输出的节点");
 	}
 	await expect(banner).toHaveCount(0);
 	await page.keyboard.press("Control+s");

@@ -2,7 +2,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildClientExport } from "../src/client-export.js";
+import { DECLARATION_RULES } from "../src/http/declarations.js";
 import * as contract from "../src/index.js";
+import { harvestRouteDocs } from "../src/route-docs.js";
 import { buildRouteManifest } from "../src/route-manifest.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -20,9 +22,22 @@ for (const [name, schema] of Object.entries(contract.exportedSchemas)) {
 		`${JSON.stringify(contract.toJsonSchema(schema), null, 2)}\n`,
 	);
 }
+// 已移除的节点种类（ADR 0028）：命令行读这一份，不再手写第二份清单。
+write(
+	join(sdkDir, "removed-node-kinds.json"),
+	`${JSON.stringify(contract.REMOVED_NODE_KINDS, null, 2)}\n`,
+);
 write(
 	join(sdkDir, "routes.json"),
-	`${JSON.stringify(buildRouteManifest(contract.httpContract), null, 2)}\n`,
+	`${JSON.stringify(
+		buildRouteManifest(
+			contract.httpContract,
+			DECLARATION_RULES,
+			harvestRouteDocs(contract.httpApis),
+		),
+		null,
+		2,
+	)}\n`,
 );
 
 const clientDir = join(here, "../../client");

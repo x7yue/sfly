@@ -21,6 +21,9 @@ from urllib.parse import unquote
 # 种类的显示名。
 KIND_LABELS = {"endpoint": "普通", "stream": "SSE", "download": "下载", "upload": "上传"}
 
+# 读写标记（清单里的 `effect`）的显示名。
+EFFECT_LABELS = {"read": "只读", "write": "有副作用"}
+
 _PARAM = re.compile(r":([A-Za-z_][A-Za-z0-9_]*)|\*$")
 _STAR = "*"
 
@@ -31,28 +34,56 @@ class Route:
     path: str
     key: tuple[str, ...] | None
     kind: str
+    # 一句话说明；只读（read）还是有副作用（write）；作用在哪类资源上（`kind`、`target`，
+    # 见契约的 ResourceRef）。
+    summary: str
+    effect: str
+    resource: dict[str, Any]
+    # 资源类别的中文名（清单顶层的 `resource_kinds`）。
+    resource_label: str
+    # 新建的是哪类资源（有它时 `resource` 定位到的资源只被读）及它的中文名；
+    # 是否让资源不再可用（删除、归档）。
+    creates: str | None
+    creates_label: str | None
+    removes: bool
     content_type: str | None
     params: dict[str, Any] | None
     query: dict[str, Any] | None
     body: dict[str, Any] | None
+    # 成功响应体的 JSON Schema（没有时接口没有 JSON 响应体）；SSE 是每个事件的 data 的 JSON Schema。
+    response: dict[str, Any] | None
+    events: dict[str, dict[str, Any]] | None
     notes: tuple[dict[str, str], ...]
     pattern: re.Pattern[str] = field(repr=False, compare=False)
     # 路径参数名，按出现顺序（末尾的 `*` 记作 `*`）。
     param_names: tuple[str, ...] = field(repr=False, compare=False)
 
     @classmethod
-    def from_json(cls, entry: Mapping[str, Any]) -> Route:
+    def from_json(
+        cls, entry: Mapping[str, Any], resource_kinds: Mapping[str, str] | None = None
+    ) -> Route:
         pattern, names = compile_template(entry["path"])
         key = entry.get("key")
+        resource = entry["resource"]
+        creates = entry.get("creates")
         return cls(
             method=entry["method"],
             path=entry["path"],
             key=tuple(key) if key else None,
             kind=entry["kind"],
+            summary=entry["summary"],
+            effect=entry["effect"],
+            resource=resource,
+            resource_label=(resource_kinds or {}).get(resource["kind"], resource["kind"]),
+            creates=creates,
+            creates_label=(resource_kinds or {}).get(creates, creates) if creates else None,
+            removes=bool(entry.get("removes", False)),
             content_type=entry.get("content_type"),
             params=entry.get("params"),
             query=entry.get("query"),
             body=entry.get("body"),
+            response=entry.get("response"),
+            events=entry.get("events"),
             notes=tuple(entry.get("notes", ())),
             pattern=pattern,
             param_names=names,
@@ -65,10 +96,17 @@ class Route:
             "path": self.path,
             "key": list(self.key) if self.key else None,
             "kind": self.kind,
+            "summary": self.summary,
+            "effect": self.effect,
+            "resource": self.resource,
         }
+        if self.creates:
+            entry["creates"] = self.creates
+        if self.removes:
+            entry["removes"] = True
         if self.content_type:
             entry["content_type"] = self.content_type
-        for name in ("params", "query", "body"):
+        for name in ("params", "query", "body", "response", "events"):
             if (schema := getattr(self, name)) is not None:
                 entry[name] = schema
         entry["notes"] = list(self.notes)
@@ -117,7 +155,8 @@ def load_routes() -> list[Route]:
 
 
 def routes_from_manifest(manifest: Mapping[str, Any]) -> list[Route]:
-    return [Route.from_json(entry) for entry in manifest["routes"]]
+    kinds = manifest.get("resource_kinds", {})
+    return [Route.from_json(entry, kinds) for entry in manifest["routes"]]
 
 
 @dataclass(frozen=True)

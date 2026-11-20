@@ -36,6 +36,7 @@ export interface ActionNameCount {
 	reported: number;
 	/** 从什么时候起只计数（控制面时间、Agent 时间）；没有超出上限时为 null。失败的动作超出后仍有明细。 */
 	capped_at: Timestamp | null;
+	/** 同 `capped_at`，用 Agent 时间表示。 */
 	agent_capped_at: Timestamp | null;
 }
 
@@ -67,6 +68,7 @@ export interface ActionPage {
 export interface ActionPageQuery {
 	/** 读这个游标之前（更早开始）的明细；不给时读最新的一页。 */
 	before?: string;
+	/** 一页最多多少条明细（默认 100）。 */
 	limit?: number;
 	/** 只要这个名称的。 */
 	name?: string;
@@ -127,6 +129,7 @@ export interface ActionSummaryView {
 	control_plane_capped: boolean;
 	/** 合计已满、开始丢弃明细的时刻；没有丢弃过时为 null。不是明细的终点：之后仍可能有补上的失败的动作。 */
 	capped_at: Timestamp | null;
+	/** 同 `capped_at`，用 Agent 时间表示。 */
 	agent_capped_at: Timestamp | null;
 	/** 每种名称一项，按第一次出现的先后。 */
 	names: ActionNameCount[];
@@ -482,6 +485,7 @@ export type DashboardEndedRun = {
 	orchestration_id: string;
 	orchestration_name: string;
 	orchestration_version: number;
+	/** 触发人的昵称。 */
 	triggered_by: string;
 	started_at: Timestamp;
 	ended_at: Timestamp;
@@ -498,6 +502,7 @@ export type DashboardEndedRun = {
 	orchestration_id: string;
 	orchestration_name: string;
 	orchestration_version: number;
+	/** 触发人的昵称。 */
 	triggered_by: string;
 	started_at: Timestamp;
 	ended_at: Timestamp;
@@ -547,6 +552,7 @@ export interface DashboardRunningRun {
 	orchestration_id: string;
 	orchestration_name: string;
 	orchestration_version: number;
+	/** 触发人的昵称。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
 	triggered_via: string | null;
@@ -607,6 +613,7 @@ export interface DashboardView {
 	recent_ended: DashboardEndedRun[];
 	/** Agent 的在线数与槽位合计；每台 Agent 的状态与正在执行的任务用 Agent 列表接口（agentsApi.list）。 */
 	agents: DashboardAgentStats;
+	/** 「开始使用」四步各自的完成情况；出现第一个运行之后控制台不再显示这个面板。 */
 	setup: DashboardSetup;
 }
 
@@ -742,6 +749,7 @@ export interface FeishuLastDelivery {
 
 /** 「发送测试消息」的结果；失败也是 200，结果在 `ok` 里。 */
 export interface FeishuTestResult {
+	/** 消息有没有送达。 */
 	ok: boolean;
 	/** 一句话说明结果：成功是「测试消息已送达」，失败是中文原因（Webhook 地址已打码）。 */
 	message: string;
@@ -802,8 +810,11 @@ export interface FocusEditView {
  * 以及场景作者起的名字：不写、或者去掉首尾空白后为空，都是没起名，显示时用图表标题。名字只能写一行。
  */
 export interface FocusItemInput {
+	/** 来源节点的 ID。 */
 	node_id: string;
+	/** 图表的标题（节点类型在元信息里声明的）。 */
 	chart: string;
+	/** 场景作者起的名字；不写即没起名，显示时用图表标题。 */
 	title?: string;
 }
 
@@ -926,6 +937,7 @@ export interface LastRun {
 	cancelling: boolean;
 	/** 运行绑定的场景版本号。 */
 	version: number;
+	/** 触发人的昵称。 */
 	triggered_by: string;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
@@ -1033,7 +1045,9 @@ export interface LogPageQuery {
 	before?: number;
 	/** 往后翻页：读这个字节偏移之后的行。不能与 before 同时给。 */
 	after?: number;
+	/** 一页最多多少行（默认 200）。 */
 	limit?: number;
+	/** 只要这些级别，逗号分隔。 */
 	level?: string;
 	/** 只要这些来源，逗号分隔。 */
 	source?: string;
@@ -1152,12 +1166,19 @@ export interface MetricSeries {
  * 目标点数（桶数上限）。
  */
 export interface MetricSeriesQuery {
+	/** 链实例 id（运行视图里 `chains[].id`）。 */
 	chain_instance_id: string;
+	/** 节点 ID。 */
 	node_id: string;
+	/** 第几次尝试，从 1 开始；不给是最新一次。 */
 	attempt?: number;
+	/** 只要这些指标，逗号分隔；不给是节点类型声明的全部指标。 */
 	metrics?: string;
+	/** 时间范围的起点（控制面时间，闭区间，按秒取整）；不给是数据的第一个点。 */
 	from?: Timestamp;
+	/** 时间范围的终点；不给是数据的最后一个点。 */
 	to?: Timestamp;
+	/** 目标点数（降采样的桶数上限，默认 300）。 */
 	points?: number;
 }
 
@@ -1241,6 +1262,7 @@ export interface OrchestrationDocument {
 export interface OrchestrationHeadView {
 	orchestration_id: string;
 	number: number;
+	/** 保存这个版本的人的昵称；还没有版本时为 null。 */
 	author: string | null;
 	/** 经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。 */
 	author_via: string | null;
@@ -1275,6 +1297,7 @@ export interface OrchestrationSummary {
 	created_at: Timestamp;
 	/** 归档时间；没有归档时为 null。 */
 	archived_at: Timestamp | null;
+	/** 运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。 */
 	run_notification: RunNotificationSettings;
 	/** 最近一次保存版本的时间；没有版本时为新建时间。 */
 	updated_at: Timestamp;
@@ -1295,6 +1318,7 @@ export interface OrchestrationVersionView {
 	id: string;
 	orchestration_id: string;
 	number: number;
+	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
 	created_at: Timestamp;
@@ -1310,6 +1334,7 @@ export interface OrchestrationView {
 	created_at: Timestamp;
 	/** 归档时间；没有归档时为 null。 */
 	archived_at: Timestamp | null;
+	/** 运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。 */
 	run_notification: RunNotificationSettings;
 	/** 关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。 */
 	focus_items: FocusItemView[];
@@ -1471,8 +1496,11 @@ export interface PlatformBucket {
  */
 export interface PlatformMetrics {
 	run_id: string;
+	/** 时间序列的起点：运行的开始时间（控制面时间）。 */
 	from: Timestamp;
+	/** 时间序列的终点：运行的结束时间，运行中是现在。 */
 	to: Timestamp;
+	/** 每个桶的跨度（秒）。 */
 	bucket_seconds: number;
 	/** 所有节点的重试次数之和。 */
 	retries: number;
@@ -1502,6 +1530,7 @@ export interface PlatformMetrics {
 
 /** 平台自带图表的查询参数。 */
 export interface PlatformMetricsQuery {
+	/** 目标点数（降采样的桶数上限，默认 120）。 */
 	points?: number;
 }
 
@@ -1527,8 +1556,11 @@ export interface PreflightProblem {
  * 给了 `params` 时它是预设参数的完整清单，和新建时按同样的规则检查。
  */
 export interface PresetChanges {
+	/** 新名称（场景内唯一）。 */
 	name?: PresetName;
+	/** 新说明。 */
 	description?: PresetDescription;
+	/** 预设参数的完整清单（整份替换）；不给就不改预设参数。 */
 	params?: PresetParamInput[];
 }
 
@@ -1544,8 +1576,11 @@ export type PresetName = string;
  * 并且这个预设里已经有值的参数上（所以新建时不能用）。两项都没有给时 400 `invalid_preset`，指出缺的是 `value`。
  */
 export interface PresetParamInput {
+	/** 入口参数的名称。 */
 	name: string;
+	/** 固定的值（预设参数取它保存的值，触发时不能改）。和 `keep` 二选一。 */
 	value?: unknown;
+	/** 写 `true` 表示沿用这个预设里这个 secret 参数原来的值（接口不返回 secret 的原值）；只能用在已经有值的 secret 参数上。 */
 	keep?: true;
 }
 
@@ -1592,6 +1627,7 @@ export interface PresetView {
 	problems: PresetProblemView[];
 	/** 最后修改人的昵称。 */
 	updated_by: string;
+	/** 最后修改时间（控制面时间）。 */
 	updated_at: Timestamp;
 }
 
@@ -1797,6 +1833,7 @@ export interface RunListItem {
 	status: "running" | "success" | "failed" | "cancelled";
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
+	/** 触发人的昵称。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
@@ -1829,6 +1866,7 @@ export interface RunListQuery {
 	orchestration_id?: string;
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q?: string;
+	/** 最多返回多少个运行（默认 200，最多 500），按开始时间从新到旧。 */
 	limit?: number;
 }
 
@@ -1915,8 +1953,11 @@ export interface RunLogPageQuery {
 	before?: string;
 	/** 往后接续：读这个游标之后的行。不能与 before 同时给。 */
 	after?: string;
+	/** 一页最多多少行（默认 200）。 */
 	limit?: number;
+	/** 只看这些节点的日志，写法 `链路实例 ID:节点 ID,节点 ID;…`；不给是全部节点，给空字符串是没有节点。 */
 	nodes?: RunLogNodesParam;
+	/** 只要这些级别的日志，逗号分隔（例如 `warn,error`）；不给是全部级别。 */
 	level?: string;
 }
 
@@ -1925,6 +1966,7 @@ export interface RunLogPageQuery {
  * 不给 `nodes` 是全部节点；给了空字符串是没有节点（写法与判断函数见 run-log-scope.ts）。
  */
 export interface RunLogScopeQuery {
+	/** 只看这些节点的日志，写法 `链路实例 ID:节点 ID,节点 ID;…`；不给是全部节点，给空字符串是没有节点。 */
 	nodes?: RunLogNodesParam;
 }
 
@@ -1952,9 +1994,13 @@ export interface RunMetricSummary {
 
 /** 更新运行通知设置的请求：只写要修改的项，其余保持不变。 */
 export interface RunNotificationChanges {
+	/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 	bot?: FeishuBotName | null;
+	/** 什么情况下发：仅失败、失败和取消、总是。 */
 	trigger?: RunNotificationTrigger;
+	/** 卡片标题；空字符串用场景名。 */
 	title?: string;
+	/** 附加说明（Markdown，可以 @ 人），放在卡片正文的最前面；空字符串即没有。 */
 	note?: string;
 }
 
@@ -2005,6 +2051,7 @@ export interface RunSummary {
 	orchestration_id: string;
 	orchestration_version: number;
 	status: RunStatus;
+	/** 触发人的昵称。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
@@ -2021,6 +2068,7 @@ export interface RunView {
 	orchestration_id: string;
 	orchestration_version: number;
 	status: RunStatus;
+	/** 触发人的昵称。 */
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
@@ -2097,10 +2145,12 @@ export interface SavedVersionView {
 	id: string;
 	orchestration_id: string;
 	number: number;
+	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
+	/** 保存时的静态检查警告：只提示，不阻止保存。 */
 	warnings: DocumentWarningView[];
 }
 
@@ -2171,8 +2221,9 @@ export interface StopSubflowNodeInput {
 export type StoredNode = OrchestrationNode | RemovedNode;
 
 /**
- * 读到的场景文档：和 `OrchestrationDocument` 一样，只是节点里可以有已移除种类的占位（`RemovedNode`）。
- * 场景版本不可变，历史版本里留着已移除的节点，读取时认得它们（接口的响应、控制面读库、画布打开最新版本）。
+ * 读到的场景文档（接口的响应、控制面读库、画布打开最新版本）：结构和保存用的 `OrchestrationDocument` 相同，
+ * 只是节点里可以有已移除种类的占位（`RemovedNode`）。场景版本不可变，历史版本里留着已移除的节点，读取时认得它们。
+ * 保存不接受这些占位：把读到的文档原样传回保存之前，先过滤掉 `RemovedNode`。
  */
 export interface StoredOrchestrationDocument {
 	default_agent?: string;
@@ -2263,6 +2314,7 @@ export type Timestamp = string;
 
 export interface VersionSummaryView {
 	number: number;
+	/** 保存这个版本的人的昵称。 */
 	author: string;
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: string | null;

@@ -2,23 +2,30 @@
  * 已移除的节点种类（ADR 0028）：平台不再支持，但历史版本和历史运行里还留着它们，只读显示：
  * 不执行、不能保存、触发被预检阻断，在画布上删掉之后才能保存。
  *
- * 移除一种节点：在场景文档 schema（orchestration-document.ts）里删掉它的定义，在这里登记它的名称和替换办法；
+ * 移除一种节点：在场景文档 schema（orchestration-document.ts）里删掉它的定义，在这里登记它的名称和替换办法
+ * （`outputs` 是原来的输出名，没有输出的写空数组：别的节点引用过它们的，要一起改）；
  * 读取、运行记录、预检、画布提示都从这一处取，不各写一份。
  */
 export const REMOVED_NODE_KINDS = {
 	feishu_notify: {
 		label: "飞书通知",
 		replacement: "在节点代码里用 ctx.notify 发飞书消息",
+		outputs: [],
 	},
 	timer: {
 		label: "定时",
 		replacement: "在节点代码里等到那个时刻，或把场景拆成两次运行",
+		outputs: ["triggered_at", "late"],
 	},
 	sleep: {
 		label: "Sleep",
 		replacement: "在节点代码里等待，或把场景拆成两次运行",
+		outputs: ["triggered_at"],
 	},
-} as const satisfies Record<string, { label: string; replacement: string }>;
+} as const satisfies Record<
+	string,
+	{ label: string; replacement: string; outputs: readonly string[] }
+>;
 
 export type RemovedNodeKind = keyof typeof REMOVED_NODE_KINDS;
 
@@ -27,6 +34,10 @@ export const REMOVED_NODE_KIND_NAMES = Object.keys(REMOVED_NODE_KINDS) as [
 	RemovedNodeKind,
 	...RemovedNodeKind[],
 ];
+
+/** 已移除的种类原来的输出名；没有输出的是空数组。 */
+export const removedKindOutputs = (kind: RemovedNodeKind): readonly string[] =>
+	REMOVED_NODE_KINDS[kind].outputs;
 
 export const isRemovedNodeKind = (kind: string): kind is RemovedNodeKind =>
 	Object.hasOwn(REMOVED_NODE_KINDS, kind);
@@ -53,8 +64,9 @@ export function removedNodesIn(doc: {
 }
 
 /**
- * 保存时遇到已移除的节点的说明：哪些节点、种类名、怎么替换。控制面拒绝保存的错误信息、命令行的本地检查、
- * 预检的阻断项和画布的提示共用这一句。
+ * 保存时遇到已移除的节点的说明：哪些节点、种类名、怎么替换。控制面拒绝保存的错误信息和画布保存时的拦截共用这一句；
+ * 预检的阻断项、画布顶部的提示、检查器的字段错误和命令行的本地检查各有自己的措辞，
+ * 种类名和替换办法都取自上面的清单（命令行读它导出的 JSON）。
  */
 export function removedNodesMessage(notices: readonly RemovedNodeNotice[]): string {
 	const kinds = [...new Set(notices.map((n) => n.kind))];

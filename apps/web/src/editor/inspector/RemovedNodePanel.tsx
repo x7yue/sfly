@@ -1,4 +1,4 @@
-import { REMOVED_NODE_KINDS, removedKindLabel } from "@sfly/schema";
+import { REMOVED_NODE_KINDS, removedKindLabel, removedKindOutputs } from "@sfly/schema";
 import type { RemovedDocNode } from "#/components/canvas/flow";
 import { SectionTitle } from "./fields";
 
@@ -19,12 +19,14 @@ function legacyConfig(node: RemovedDocNode): string | undefined {
  */
 export function RemovedNodePanel({ node }: { node: RemovedDocNode }) {
 	const config = legacyConfig(node);
+	const { label, replacement } = REMOVED_NODE_KINDS[node.kind];
+	const outputs = removedKindOutputs(node.kind);
+	const referenced =
+		outputs.length > 0 ? `别的节点引用了它的输出（${outputs.join("、")}）的，也要一起改。` : "";
 	return (
 		<>
 			<p className="m-0 text-xs text-fg-2">
-				这个节点的类型（{removedKindLabel(node.kind)}，原来的「{REMOVED_NODE_KINDS[node.kind].label}
-				」） 已不再支持，不能运行，也不能保存。替换办法：{REMOVED_NODE_KINDS[node.kind].replacement}
-				。 删掉这个节点之后才能保存，它前后的节点会自动接上；历史版本和历史运行里它照常显示。
+				{`这个节点的类型（${removedKindLabel(node.kind)}，原来的「${label}」）已不再支持，不能运行，也不能保存。替换办法：${replacement}。删掉这个节点之后才能保存，它前后的节点会自动接上；${referenced}历史版本和历史运行里它照常显示。`}
 			</p>
 			{config !== undefined && (
 				<>

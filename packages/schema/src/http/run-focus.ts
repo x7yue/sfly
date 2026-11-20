@@ -177,6 +177,9 @@ export const runFocusApi = {
 	focus: endpoint({
 		method: "GET",
 		path: "/runs/:id/focus",
+		summary: "读一次运行的关注项读数：最新值、最终值、曲线、有没有异常",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["runs", "focus"],
 		params: z.object({ id: z.string() }),
