@@ -13,7 +13,6 @@
 
 - 终端：在项目目录里运行 `uv run sfly publish`，或者 `uv run sfly publish <目录> --server <控制面地址>`。
 - 侧边栏「节点包管理」，也就是 `/packages`。
-- 控制台首页的「最近发布的节点包」表格。
 
 ## Driving it with agent-browser
 

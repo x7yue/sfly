@@ -6,9 +6,9 @@
 
 - `scn-create`：新建场景，自带一个 `entry` 入口节点，建好后进入画布。
 - `scn-add-node`：工具条「添加节点」菜单可以搜索，新节点接在主链链尾。
-- `scn-inspector`：检查器按输入 schema 生成表单，可以在常量和引用之间切换。
+- `scn-inspector`：检查器按输入 schema 生成表单，没有「常量 / 引用」切换，显示什么由值决定：字符串输入框里文字和引用混写；数字、布尔、枚举、JSON 旁的「插入引用」按钮选一个引用作为整个值，此时显示引用标签，点 × 回到类型控件。
 - `scn-default-agent`：「场景设置」里的「默认 Agent」，节点默认跟随它。
-- `scn-save`：字段校验通过后才能保存，状态变成「已保存」，版本号加一。
+- `scn-save`：有字段错误时保存被拦下（点「保存」不保存，焦点移到出错的字段）；校验通过后保存，状态变成「已保存」，版本号加一。
 
 ## How to get to it (user POV)
 
@@ -24,7 +24,7 @@ Preconditions:
 
 - 基线环境，`sfly-stub@0.1.0` 已发布，没有叫「验证回显」的场景。
 
-- **新建。** 打开 `$HTTP_URL/orchestrations`，先运行 `find role button click --name "新建场景"`，再用 `snapshot` 取 `@ref`：对话框里有 `textbox "名称"`、`textbox "说明"`，`新建` 按钮在填好名称之前是禁用的。名称填 `验证回显`，点 `新建`，URL 变成 `/orchestrations/<uuid>`，画布 `region "编排画布：验证回显"` 里只有 `entry` 一个节点。
+- **新建。** 打开 `$HTTP_URL/orchestrations`，先运行 `find role button click --name "新建场景"`，再用 `snapshot` 取 `@ref`：对话框里有 `textbox "名称"`、`textbox "说明"`，`新建` 按钮始终可点，名称为空时点它只会在名称框下提示「填写场景名称」并把焦点放回名称框。名称填 `验证回显`，点 `新建`，URL 变成 `/orchestrations/<uuid>`，画布 `region "编排画布：验证回显"` 里只有 `entry` 一个节点。
 - **默认 Agent。** 先 `snapshot -i -c` 找到 `combobox "默认 Agent" [ref=eN]`，再运行 `agent-browser $S select @eN "verify-agent"`（`find` 不支持 select），选中后选项文字是 `verify-agent · 在线 · 0/4 槽位`。
 - **添加节点。** 点 `button "添加节点"`，再运行 `find role combobox fill "回显" --name "搜索节点类型"`，点 `option "回显 echo"`。画布上出现 `echo_1`，和 entry 之间有一条链；顶部提示变成「1 条警告」，因为必填输入还没填。
 - **填参数。** 在 `textbox "输入 text"` 里填 `"你好 sfly"`，带 JSON 引号。警告消失，`combobox "节点 Agent"` 显示 `跟随默认（verify-agent）`。
@@ -33,7 +33,7 @@ Preconditions:
 
 ## Gotchas
 
-- `text` 这类没有类型注解的输入（`Any`）要填 JSON：直接填 `你好 sfly` 会提示「不是合法的 JSON」，保存按钮也是禁用的。`str` 类型的输入填普通文字就行。
-- 有字段错误时「保存」按钮是禁用的，点它 agent-browser 会报 `is disabled`。先看顶部的「N 处字段错误」或「N 条警告」。
+- `text` 这类没有类型注解的输入（`Any`）要填 JSON：直接填 `你好 sfly` 会提示「不是合法的 JSON」，这是字段错误，保存会被拦下。`str` 类型的输入填普通文字就行。
+- 有字段错误时「保存」按钮不禁用，点它也保存不了，只会把焦点移到出错的字段。先看顶部的「N 处字段错误」；「N 条警告」不拦保存。「保存」只在没有未保存的修改、且已经保存过版本时禁用。
 - 未保存的修改会作为本地草稿留在浏览器的 localStorage 里，刷新后还在。从干净状态开始验证时，用新的浏览器会话（换一套环境），或者先保存。
 - 没设默认 Agent 也没设节点 Agent 时，触发会被「触发前检查」拦下来。

@@ -14,7 +14,7 @@
 //! 控制面在 Welcome 里放弃的任务：还在执行的被强制取消，结束时结果直接丢弃，不再上报；结果还没 Ack 的直接删掉。
 //! 被放弃的任务结束时没有结果要发，手上却少了一个任务：[`Ledger::discarded`] 叫醒主循环，让它重新判断自更新的排空。
 //!
-//! 台账的操作和 `.claude/skills/verify-task-dispatch/model/TaskDispatch.tla` 里 Agent 一侧的动作一一对应：
+//! 台账的操作和 `.agents/skills/verify-task-dispatch/model/TaskDispatch.tla` 里 Agent 一侧的动作一一对应：
 //! [`Ledger::accept`] 是 `AgentRecv` 的 assign，[`Ledger::started`] 是 `AgentStart`，[`Ledger::finish`] 是 `AgentFinish`，
 //! [`Ledger::next_result`] 是 `AgentSendResult`，[`Ledger::ack`] 是 `AgentRecv` 的 ack，
 //! [`Ledger::hello`] 是 `AgentConnect`，[`Ledger::abandon`] 是 `AgentWelcome` 里的 ABANDON，

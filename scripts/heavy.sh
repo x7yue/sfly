@@ -6,7 +6,7 @@
 #   pnpm heavy pnpm test:e2e:stress e2e/run-drawer.spec.ts:119
 #   pnpm heavy --clean                                    # 删掉这个工作区的短目录，和没人在用的 PostgreSQL 容器
 #
-# 它替你做三件事（做法见 .agents/skills/sfly-implement-spec/references/parallel-work.md）：
+# 它替你做三件事：
 # - 在 flock 锁上排队：同一台机器上所有工作区共用一把锁，一次只跑一个重型命令。用 flock -o，锁不会被命令留下的子进程占着。
 #   CI（设置了 CI）上每个 job 独占机器，不加锁。macOS 的 flock 来自 Homebrew（brew install flock）。
 # - TMPDIR 指向短目录：Unix socket 的路径不能超过 108 字节，系统默认的临时目录太长。
