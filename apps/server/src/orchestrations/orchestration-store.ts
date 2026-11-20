@@ -15,6 +15,7 @@ import { orchestrations, orchestrationVersions, runs } from "../db/schema.js";
 import type { FocusRejection } from "../focus/focus-list.js";
 import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-settings.js";
 import { copyPresets } from "../presets/preset-store.js";
+import type { ProjectId } from "../projects/project-id.js";
 
 export type { OrchestrationView };
 
@@ -142,7 +143,11 @@ export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
 	document: row.document,
 });
 
-/** 编排与编排版本的存取。版本只追加、不修改。 */
+/**
+ * 编排与编排版本的存取。版本只追加、不修改。每个场景属于一个项目（ADR 0029）：新建要传项目，按项目取（`getInProject`）
+ * 和列最新版本文档（`headDocuments`）要传项目。按场景 ID 的其余方法不传项目：ID 全库唯一，项目从场景本身得出
+ * （契约路由的检查，#489），场景属于哪个项目由检查负责。
+ */
 export class OrchestrationStore {
 	constructor(private readonly deps: { db: Db; clock: Clock }) {}
 
@@ -154,10 +159,16 @@ export class OrchestrationStore {
 		return { ...toBase(row), ...(await focusFields(db, row)) };
 	}
 
-	async create(name: string, description = ""): Promise<OrchestrationView> {
+	async create(project: ProjectId, name: string, description = ""): Promise<OrchestrationView> {
 		const [row] = await this.deps.db
 			.insert(orchestrations)
-			.values({ id: randomUUID(), name, description, createdAt: this.deps.clock.now() })
+			.values({
+				id: randomUUID(),
+				projectId: project,
+				name,
+				description,
+				createdAt: this.deps.clock.now(),
+			})
 			.returning();
 		return this.#view(row as OrchestrationRow, this.deps.db);
 	}
@@ -295,6 +306,8 @@ export class OrchestrationStore {
 				.insert(orchestrations)
 				.values({
 					id,
+					// 副本和源场景在同一个项目里。
+					projectId: source.projectId,
 					name,
 					description: source.description,
 					headVersion: head ? 1 : 0,
@@ -324,8 +337,8 @@ export class OrchestrationStore {
 		return copied && this.#view(copied, this.deps.db);
 	}
 
-	/** 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
-	async headDocuments(): Promise<OrchestrationDocument[]> {
+	/** 这个项目里每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
+	async headDocuments(project: ProjectId): Promise<OrchestrationDocument[]> {
 		const rows = await this.deps.db
 			.select({ document: orchestrationVersions.document })
 			.from(orchestrations)
@@ -335,17 +348,32 @@ export class OrchestrationStore {
 					eq(orchestrationVersions.orchestrationId, orchestrations.id),
 					eq(orchestrationVersions.number, orchestrations.headVersion),
 				),
-			);
+			)
+			.where(eq(orchestrations.projectId, project));
 		return rows.map((r) => r.document);
 	}
 
-	async #row(id: string): Promise<OrchestrationRow | undefined> {
-		const [row] = await this.deps.db.select().from(orchestrations).where(eq(orchestrations.id, id));
+	async #row(id: string, project?: ProjectId): Promise<OrchestrationRow | undefined> {
+		const [row] = await this.deps.db
+			.select()
+			.from(orchestrations)
+			.where(
+				and(
+					eq(orchestrations.id, id),
+					...(project === undefined ? [] : [eq(orchestrations.projectId, project)]),
+				),
+			);
 		return row;
 	}
 
 	async get(id: string): Promise<OrchestrationView | undefined> {
 		const row = await this.#row(id);
+		return row && this.#view(row, this.deps.db);
+	}
+
+	/** 按 ID 取这个项目里的场景；不存在或属于别的项目时返回 undefined（和不存在一样）。 */
+	async getInProject(project: ProjectId, id: string): Promise<OrchestrationView | undefined> {
+		const row = await this.#row(id, project);
 		return row && this.#view(row, this.deps.db);
 	}
 

@@ -11,7 +11,7 @@ import type {
 	QueuedTaskView,
 	RunningTaskView,
 } from "@sfly/schema";
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -27,6 +27,7 @@ import {
 	tasks,
 } from "../db/schema.js";
 import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
+import type { ProjectId } from "../projects/project-id.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
 import {
@@ -225,9 +226,12 @@ export class AgentHub {
 	/**
 	 * 注册一个新连接：替换同名旧连接，记录为在线。`helloClock` 是 Hello 里的时钟读数（旧版本 Agent 没有），
 	 * `receivedAt` 是收到 Hello 的控制面时间：据此建立这次连接的折算关系并测一次时钟偏差；
-	 * 没有读数时时钟偏差记为未知。
+	 * 没有读数时时钟偏差记为未知。第一次连上时 Agent 登记在 `project` 里（ADR 0029）；之后重连只更新信息，
+	 * 不改它所属的项目：名字第一步仍然全局唯一，另一个项目已经登记了这个名字时，连接照旧接上、记录仍属于原来的项目
+	 * （项目来自凭据之后，由 #492、#502 处理）。
 	 */
 	attach(
+		project: ProjectId,
 		name: string,
 		info: AgentInfo,
 		outbox: AsyncQueue<ServerMessage>,
@@ -250,6 +254,7 @@ export class AgentHub {
 				.insert(agents)
 				.values({
 					name,
+					projectId: project,
 					info,
 					status: "online",
 					registeredAt: now,
@@ -348,11 +353,38 @@ export class AgentHub {
 		});
 	}
 
-	async list(): Promise<AgentView[]> {
-		const rows = await this.deps.db.select().from(agents).orderBy(asc(agents.name));
+	/** 这个项目里注册过的 Agent（不论是否在线）。 */
+	async list(project: ProjectId): Promise<AgentView[]> {
+		const rows = await this.deps.db
+			.select()
+			.from(agents)
+			.where(eq(agents.projectId, project))
+			.orderBy(asc(agents.name));
+		return this.#views(rows);
+	}
+
+	/** 这个项目里按名字找一台 Agent；不存在或属于别的项目时返回 undefined（和不存在一样，不透露别的项目里有它）。 */
+	async find(project: ProjectId, name: string): Promise<AgentView | undefined> {
+		const rows = await this.deps.db
+			.select()
+			.from(agents)
+			.where(and(eq(agents.projectId, project), eq(agents.name, name)));
+		const [view] = await this.#views(rows);
+		return view;
+	}
+
+	/** Agent 行加上它的任务，转成接口返回的视图；只读这些 Agent 的任务。 */
+	async #views(rows: (typeof agents.$inferSelect)[]): Promise<AgentView[]> {
+		if (rows.length === 0) return [];
 		const { running, queued } = await loadAgentTasks(
 			this.deps.db,
-			and(inArray(tasks.status, [...ON_AGENT, "queued"]), isNotNull(tasks.agentName)),
+			and(
+				inArray(tasks.status, [...ON_AGENT, "queued"]),
+				inArray(
+					tasks.agentName,
+					rows.map((row) => row.name),
+				),
+			),
 		);
 		return rows.map(
 			({

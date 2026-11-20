@@ -519,6 +519,23 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["tasks", "action_details", "integer DEFAULT 0 NOT NULL"],
 	["tasks", "action_rev", "bigint DEFAULT 0 NOT NULL"],
 	["tasks", "action_capped", "boolean DEFAULT false NOT NULL"],
+	// 0030（用户与项目，ADR 0029）：根资源的项目，和身份列旁的用户 ID、令牌。当前代码写根资源时都写 project_id。
+	["orchestrations", "project_id", "text DEFAULT 'default' NOT NULL"],
+	["agents", "project_id", "text DEFAULT 'default' NOT NULL"],
+	["agents", "disabled_at", "timestamp with time zone"],
+	["agents", "last_auth_kind", "text"],
+	["feishu_bots", "project_id", "text DEFAULT 'default' NOT NULL"],
+	["node_packages", "project_id", "text DEFAULT 'default' NOT NULL"],
+	["node_packages", "published_by", "text"],
+	["node_packages", "published_by_user_id", "uuid"],
+	["node_packages", "published_token", "text"],
+	["orchestration_versions", "author_user_id", "uuid"],
+	["orchestration_versions", "author_token", "text"],
+	["runs", "project_id", "text DEFAULT 'default' NOT NULL"],
+	["runs", "triggered_by_user_id", "uuid"],
+	["runs", "triggered_token", "text"],
+	["runs", "cancel_requested_by_user_id", "uuid"],
+	["runs", "cancel_requested_token", "text"],
 ];
 
 /**
@@ -553,6 +570,7 @@ describe("迁移前的指标数据", () => {
 		journal.entries = journal.entries.filter((e) => e.idx <= 11);
 		await writeFile(journalPath, JSON.stringify(journal));
 		const last = join(dir, `${journal.entries.at(-1)?.tag}.sql`);
+		// 先建表、再加列：LATER_COLUMNS 里有加在 LATER_TABLES 的表上的列（feishu_bots.project_id）。
 		const added = LATER_COLUMNS.map(
 			([table, column, type]) => `ALTER TABLE "${table}" ADD COLUMN "${column}" ${type};`,
 		);
@@ -566,7 +584,7 @@ describe("迁移前的指标数据", () => {
 		);
 		await writeFile(
 			last,
-			`${await readFile(last, "utf8")}${STATEMENT_BREAKPOINT}\n${[...added, ...created].join(`\n${STATEMENT_BREAKPOINT}\n`)}`,
+			`${await readFile(last, "utf8")}${STATEMENT_BREAKPOINT}\n${[...created, ...added].join(`\n${STATEMENT_BREAKPOINT}\n`)}`,
 		);
 		return dir;
 	};

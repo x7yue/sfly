@@ -2,11 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PackageMetadata } from "@sfly/schema";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
+import { type ProjectId, readableProjects } from "../projects/project-id.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
 
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */
@@ -128,11 +129,17 @@ export interface PackageRepositoryDeps {
 	dataDir: string;
 }
 
-/** 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。 */
+/**
+ * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
+ * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
+ * （{@link readableProjects}）。名字仍然全局唯一（第二步改成项目内唯一，#502），所以磁盘上的路径
+ * （`packages/<名>/<版本>.sflypkg`）暂时不分项目。「先找本项目、再找公共项目」的优先顺序（场景和 Agent 下载归档，#501）
+ * 不在这里：现在名字全局唯一，同一个名字不会同时出现在两个项目里。
+ */
 export function createPackageRepository({ db, clock, dataDir }: PackageRepositoryDeps) {
 	return {
-		/** 发布节点包；`包名@版本` 已存在时抛出 conflict，已发布的文件不会被覆盖。 */
-		async publish(archive: Uint8Array): Promise<PackageVersion> {
+		/** 发布节点包到这个项目；`包名@版本` 已存在（第一步：不论哪个项目里已有）时抛出 conflict，已发布的文件不会被覆盖。 */
+		async publish(project: ProjectId, archive: Uint8Array): Promise<PackageVersion> {
 			const metadata = readPackageArchive(archive);
 			const sha256 = createHash("sha256").update(archive).digest("hex");
 			// 版本格式由 schema 约束（不含路径分隔符），可以直接用作文件名。
@@ -144,6 +151,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 					.values({
 						name: metadata.name,
 						version: metadata.version,
+						projectId: project,
 						metadata,
 						filePath,
 						sha256,
@@ -173,10 +181,12 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			});
 		},
 
-		async list(): Promise<PackageSummary[]> {
+		/** 这个项目读得到的节点包：本项目发布的，加上公共项目里的。 */
+		async list(project: ProjectId): Promise<PackageSummary[]> {
 			const rows = await db
 				.select()
 				.from(nodePackages)
+				.where(inArray(nodePackages.projectId, [...readableProjects(project)]))
 				.orderBy(asc(nodePackages.name), desc(nodePackages.publishedAt));
 			const byName = new Map<string, PackageSummary>();
 			for (const row of rows) {
@@ -190,22 +200,38 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			return [...byName.values()];
 		},
 
-		async get(name: string): Promise<PackageSummary | undefined> {
+		/** 这个项目里按名字取节点包的各个版本（本项目的或公共项目的）；不存在或属于别的项目时返回 undefined。 */
+		async get(project: ProjectId, name: string): Promise<PackageSummary | undefined> {
 			const rows = await db
 				.select()
 				.from(nodePackages)
-				.where(eq(nodePackages.name, name))
+				.where(
+					and(
+						inArray(nodePackages.projectId, [...readableProjects(project)]),
+						eq(nodePackages.name, name),
+					),
+				)
 				.orderBy(desc(nodePackages.publishedAt));
 			return rows.length ? { name, versions: rows.map(toSummary) } : undefined;
 		},
 
-		async getVersion(name: string, version: string): Promise<PackageVersion | undefined> {
-			return findPackageVersion(db, name, version);
+		/** 这个项目读得到的一个节点包版本；不存在或属于别的项目时返回 undefined。 */
+		async getVersion(
+			project: ProjectId,
+			name: string,
+			version: string,
+		): Promise<PackageVersion | undefined> {
+			const row = await findRow(db, name, version, project);
+			return row && toVersion(row);
 		},
 
-		/** 归档文件在磁盘上的位置（供下载）。 */
-		async archive(name: string, version: string): Promise<StoredArchive | undefined> {
-			const row = await findRow(db, name, version);
+		/** 归档文件在磁盘上的位置（供下载）；不存在或属于别的项目时返回 undefined。 */
+		async archive(
+			project: ProjectId,
+			name: string,
+			version: string,
+		): Promise<StoredArchive | undefined> {
+			const row = await findRow(db, name, version, project);
 			return row && { path: join(dataDir, row.filePath), sha256: row.sha256, size: row.size };
 		},
 	};
@@ -213,7 +239,11 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 
 export type PackageRepository = ReturnType<typeof createPackageRepository>;
 
-/** 一个节点包版本。数据库由调用方传：在事务里读时传事务对象，不要另从连接池取连接。 */
+/**
+ * 一个节点包版本，不看它属于哪个项目：场景文档里按名字引用的包（保存时的静态检查、预检、派发）只带名字和版本，
+ * 名字现在全局唯一，按名字找就够；改成「本项目、再公共项目」的解析之后（#501、#502）这里要带项目。
+ * 数据库由调用方传：在事务里读时传事务对象，不要另从连接池取连接。
+ */
 export async function findPackageVersion(
 	db: Db | Tx,
 	name: string,
@@ -223,10 +253,23 @@ export async function findPackageVersion(
 	return row && toVersion(row);
 }
 
-async function findRow(db: Db | Tx, name: string, version: string): Promise<Row | undefined> {
+async function findRow(
+	db: Db | Tx,
+	name: string,
+	version: string,
+	project?: ProjectId,
+): Promise<Row | undefined> {
 	const [row] = await db
 		.select()
 		.from(nodePackages)
-		.where(and(eq(nodePackages.name, name), eq(nodePackages.version, version)));
+		.where(
+			and(
+				eq(nodePackages.name, name),
+				eq(nodePackages.version, version),
+				...(project === undefined
+					? []
+					: [inArray(nodePackages.projectId, [...readableProjects(project)])]),
+			),
+		);
 	return row;
 }

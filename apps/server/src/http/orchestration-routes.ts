@@ -5,6 +5,7 @@ import { checkDocument } from "../orchestrations/document-checks.js";
 import { listOrchestrationSummaries } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import { presetInvalidatedWarnings } from "../presets/preset-invalidation.js";
+import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
@@ -17,6 +18,7 @@ const notFound = (reply: FastifyReply) =>
 /**
  * 场景与场景版本：新建、改名称、说明、运行通知设置和关注项、归档与恢复、复制、场景列表（契约见 @sfly/schema 的
  * orchestrationsApi）；保存（追加）版本、查询版本。版本不可修改，场景不物理删除。
+ * 列表和新建的路径还不带项目（#488）：都在默认项目里。
  */
 export function registerOrchestrationRoutes(
 	app: FastifyInstance,
@@ -30,10 +32,14 @@ export function registerOrchestrationRoutes(
 
 	contractRoute(app, orchestrationsApi.create, async ({ body }, reply, raw) => {
 		if (!requireNickname(raw, reply)) return reply;
-		return reply.code(201).send(await orchestrations.create(body.name, body.description));
+		return reply
+			.code(201)
+			.send(await orchestrations.create(DEFAULT_PROJECT, body.name, body.description));
 	});
 
-	contractRoute(app, orchestrationsApi.list, ({ query }) => listOrchestrationSummaries(db, query));
+	contractRoute(app, orchestrationsApi.list, ({ query }) =>
+		listOrchestrationSummaries(db, DEFAULT_PROJECT, query),
+	);
 
 	contractRoute(app, orchestrationsApi.head, async ({ params }, reply) => {
 		const head = isUuid(params.id) ? await orchestrations.head(params.id) : undefined;
