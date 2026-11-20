@@ -19,7 +19,7 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
   这期间 `main` 上只做维护者要求的修复，修完把同样的改动作为新的改动用一个 PR 带进 `dev`：两个分支都只允许 squash、要求线性历史，
   不能用合并提交把 `main` 合进 `dev`，squash 也不会让 `main` 上的提交成为 `dev` 的祖先。
 - 合入 `dev` 不会自动关闭 issue：GitHub 的 `Closes #N` 只在合入默认分支时生效。PR 合入 `dev` 后手动关闭对应的 issue，
-  评论里写明「已合入 `dev`（#PR 编号），随 `dev` 进 `main`」。
+  评论里写明「已合入 `dev`（#PR 编号），随 `dev` 进 `main`」，并加上标签 `merged-to-dev`（含义和何时摘掉见 [triage-labels.md](./triage-labels.md)）。
 
 ## 分支命名
 
