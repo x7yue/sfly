@@ -2,7 +2,6 @@
 // 准入接在只有一个连接的连接池上：事务占着这个连接时，事务里再从连接池取连接会一直等下去（这里 1 秒后报错），
 // 同一个连接上并发的查询会排队（pg 会打弃用警告，pg@9 不再支持）。
 // 触发所需的数据（场景、节点包、Agent、运行预设）由另一个正常的控制面准备，准入直接连同一个数据库。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createParamsCheck, createPreflight } from "../src/runs/preflight.js";
 import { createTriggerAdmission, type TriggerRequest } from "../src/runs/trigger-admission.js";

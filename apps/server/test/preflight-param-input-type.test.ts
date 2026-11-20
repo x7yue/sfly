@@ -1,7 +1,6 @@
 // 触发前检查：入口参数的实际取值整个接到一个节点输入上（`${{ params.x }}`），值不符合输入的类型（#421，docs/SEMANTICS.md §6）：
 // 比如小数接到 integer 输入，派发到那个节点才会以 config_error 失败（「输入 x 应为 integer，实际是 8.5」），触发前就拒绝。
 // 取值有三个来源：触发时给的值、运行预设里的值、默认值；子流程里取自异步任务节点传入的值。判断和派发时是同一个（typeProblem）。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { inputProblems } from "@sfly/orchestration";
 import { NICKNAME_HEADER, type OrchestrationDocument } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

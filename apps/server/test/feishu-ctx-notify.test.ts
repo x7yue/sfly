@@ -5,7 +5,6 @@
 // 校验规则与飞书通知节点的原始消息相同，不合格的不发送、任务日志里有原因。
 // 控制面写进任务日志的行不占用 Agent 的日志序号，和 Agent 上报的行一样出现在按运行合并的日志里（#220）。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 假飞书 Webhook 服务（support/fake-feishu.ts）。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";

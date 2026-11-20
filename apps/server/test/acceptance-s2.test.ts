@@ -2,7 +2,6 @@
 // 异步任务节点触发子流程，主链不等待；子流程嵌套 2 层；子流程失败不影响主链；运行等待所有链结束；
 // 定时节点 late；Sleep 节点；停止子流程节点停止嵌套子流程（被停止的节点收到 Cancelled、finally 照常执行，
 // always 清理照常执行，运行记为成功）。控制面用手动时钟：等待节点什么时候到点由测试决定，不依赖真实等待。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

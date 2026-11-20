@@ -52,7 +52,6 @@ describeWithAgent("全栈：日志、进度与打码", () => {
 					kind: "package",
 					package: "sfly-stub",
 					node: "chatter",
-					// biome-ignore lint/suspicious/noTemplateCurlyInString: 编排引用语法
 					inputs: { steps: 3, interval: 0.05, secret: "${{ params.token }}" },
 				},
 			],

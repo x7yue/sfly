@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { type PresetView, presetsApi } from "@sfly/schema";
 import pg from "pg";
 import { expect } from "vitest";

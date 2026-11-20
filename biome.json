@@ -31,6 +31,12 @@
 			"recommended": true
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["**/test/**", "apps/web/e2e/**"],
+			"linter": { "rules": { "suspicious": { "noTemplateCurlyInString": "off" } } }
+		}
+	],
 	"css": {
 		"parser": { "tailwindDirectives": true }
 	},
