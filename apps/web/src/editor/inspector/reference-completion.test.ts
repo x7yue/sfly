@@ -1,6 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { type PackageCatalog, packageKey } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	completionGroups,
@@ -13,7 +13,7 @@ import {
 } from "./reference-completion";
 
 /** 主链 entry → fetch（http_check）→ wait（Sleep）→ ping；ping 可以引用入口参数与前面节点的输出。 */
-const doc: OrchestrationDocument = {
+const doc: StoredOrchestrationDocument = {
 	nodes: [
 		{
 			id: "entry",
@@ -42,7 +42,7 @@ const doc: OrchestrationDocument = {
 	packages: { demo: "1.0.0" },
 	annotations: [],
 	sticky_notes: [],
-} as OrchestrationDocument;
+} as StoredOrchestrationDocument;
 
 const io = (outputs: Record<string, { type: string }>) => ({
 	type: "object" as const,
@@ -79,7 +79,7 @@ describe("引用补全", () => {
 	});
 
 	it("前序节点有显示名称时，来源写成「显示名称（节点 ID）」；引用本身仍以节点 ID 为键", () => {
-		const named: OrchestrationDocument = {
+		const named: StoredOrchestrationDocument = {
 			...doc,
 			nodes: doc.nodes.map((n) =>
 				n.id === "fetch" || n.id === "wait" ? { ...n, display_name: "探测站点" } : n,

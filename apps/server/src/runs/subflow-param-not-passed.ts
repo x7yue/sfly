@@ -1,5 +1,5 @@
 import { nodeNameWithId, PARAM_PATH, referableValues, referencesIn } from "@sfly/orchestration";
-import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import type { StoredNode, StoredOrchestrationDocument } from "@sfly/schema";
 import { planRun } from "../engine/chain.js";
 import type { PreflightProblem } from "./preflight.js";
 
@@ -7,7 +7,7 @@ import type { PreflightProblem } from "./preflight.js";
 const LISTED_NODES = 3;
 
 /** 节点的输入里有没有引用本链的入口参数 `name`（`${{ params.name }}`，整值或夹在文字里都算）。 */
-function usesParam(node: OrchestrationNode, name: string): boolean {
+function usesParam(node: StoredNode, name: string): boolean {
 	return referableValues(node).some(([, value]) =>
 		referencesIn(value).some((path) => path !== null && PARAM_PATH.exec(path)?.[1] === name),
 	);
@@ -21,7 +21,9 @@ function usesParam(node: OrchestrationNode, name: string): boolean {
  * 子流程自己再触发的下一层子流程也一样检查（异步任务节点把它传给下一层，算用到了它）。
  * 文档的执行计划不成立时（结构问题已经阻断触发）不检查。
  */
-export function subflowParamNotPassedWarnings(doc: OrchestrationDocument): PreflightProblem[] {
+export function subflowParamNotPassedWarnings(
+	doc: StoredOrchestrationDocument,
+): PreflightProblem[] {
 	const plan = planRun(doc);
 	if ("errors" in plan) return [];
 	const warnings: PreflightProblem[] = [];

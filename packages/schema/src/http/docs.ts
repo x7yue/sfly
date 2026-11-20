@@ -21,16 +21,28 @@ export const docsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/docs",
+		summary: "列出用户文档的页面",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		key: ["docs", "list"],
-		response: z.object({ pages: z.array(DocPageView) }),
+		response: z.object({
+			/** 文档的每一页，按目录里登记的顺序。 */
+			pages: z.array(DocPageView),
+		}),
 	}),
 	/** 一页的 Markdown 原文（占位符已替换）；未知页 404。 */
 	page: download({
 		path: "/docs/:page.md",
+		summary: "读一页用户文档的 Markdown 原文",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
-		params: z.object({ page: z.string() }),
+		params: z.object({
+			/** 页面标识（`GET /docs` 列出的 slug），路径里写成 `<slug>.md`。 */
+			page: z.string(),
+		}),
 		contentType: "text/markdown; charset=utf-8",
 	}),
 	/**
@@ -40,14 +52,25 @@ export const docsApi = {
 	 */
 	skill: download({
 		path: "/docs/skills/:skill/:file",
+		summary: "读给 AI 编程助手的 skill 的一个文件",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
-		params: z.object({ skill: z.string(), file: z.string() }),
+		params: z.object({
+			/** skill 名称（`sfly-node-dev` 或 `sfly-platform`）。 */
+			skill: z.string(),
+			/** skill 里的文件名（`SKILL.md` 或 `reference.md`）。 */
+			file: z.string(),
+		}),
 		contentType: "text/markdown; charset=utf-8",
 	}),
 	/** llms.txt 索引：列出每一页原文的完整地址。 */
 	llms: download({
 		path: "/llms.txt",
+		summary: "给 AI 编程助手的文档索引（llms.txt）",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		raw: true,
 		contentType: "text/plain; charset=utf-8",
 		client: false,

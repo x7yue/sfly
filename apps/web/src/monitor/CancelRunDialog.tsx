@@ -1,12 +1,12 @@
 import {
 	dashboardApi,
 	domainKey,
-	type OrchestrationDocument,
 	orchestrationsApi,
 	queryKey,
 	type RunView,
 	runListApi,
 	runsApi,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleStopIcon } from "lucide-react";
@@ -49,7 +49,7 @@ export function CancelRunDialog({
 	onOpenChange,
 }: {
 	run: RunView;
-	doc: OrchestrationDocument | undefined;
+	doc: StoredOrchestrationDocument | undefined;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {

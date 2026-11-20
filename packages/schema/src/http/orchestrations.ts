@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { optionalLine } from "../display-text.js";
-import { OrchestrationDocument } from "../orchestration-document.js";
+import {
+	OrchestrationDocument,
+	STORED_NODE_KINDS,
+	StoredOrchestrationDocument,
+} from "../orchestration-document.js";
 import { ChartDeclaration } from "../package-metadata.js";
+import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
@@ -10,9 +15,34 @@ import { FeishuBotName } from "./feishu-bots.js";
  * 名称和说明不属于场景版本，可以随时修改；归档的场景不出现在默认列表、不能触发运行，可以恢复，不提供物理删除。
  * 场景版本不可修改：保存、恢复都是追加新版本。
  *
- * 响应里的 `document` 用 OrchestrationDocument：控制面保存时按它解析，读出时再解析一次（升级前保存的版本
- * 由此补上后来新增字段的默认值，例如注释框 `annotations`），满足「响应解析前后相同」的约定。
+ * 请求里的 `document` 用 OrchestrationDocument：节点都是现在支持的种类。响应里的 `document` 用 StoredOrchestrationDocument：
+ * 控制面保存时按前者解析，读出时按后者再解析一次（升级前保存的版本由此补上后来新增字段的默认值，例如注释框 `annotations`），
+ * 满足「响应解析前后相同」的约定；它多出的是已移除种类的节点（ADR 0028）：历史版本里留着它们，读取时认得，不能保存。
  */
+
+/** 保存的文档不合法时的说明：含已移除种类的节点时，写明是哪些、怎么替换（ADR 0028）。 */
+function invalidDocumentMessage(body: object): string {
+	const document = "document" in body ? body.document : undefined;
+	const nodes =
+		typeof document === "object" && document !== null && "nodes" in document
+			? document.nodes
+			: undefined;
+	const removed = removedNodesIn({
+		nodes: (Array.isArray(nodes) ? nodes : []).flatMap((n: unknown) =>
+			typeof n === "object" &&
+			n !== null &&
+			"id" in n &&
+			typeof n.id === "string" &&
+			"kind" in n &&
+			typeof n.kind === "string"
+				? [{ id: n.id, kind: n.kind }]
+				: [],
+		),
+	});
+	return removed.length > 0
+		? removedNodesMessage(removed)
+		: "document does not match the orchestration schema";
+}
 
 /**
  * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。
@@ -40,9 +70,13 @@ export const RunNotificationSettings = z.object({
 /** 更新运行通知设置的请求：只写要修改的项，其余保持不变。 */
 export const RunNotificationChanges = z
 	.strictObject({
+		/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 		bot: FeishuBotName.nullable().optional(),
+		/** 什么情况下发：仅失败、失败和取消、总是。 */
 		trigger: RunNotificationTrigger.optional(),
+		/** 卡片标题；空字符串用场景名。 */
 		title: z.string().trim().max(RUN_NOTIFICATION_TITLE_MAX).optional(),
+		/** 附加说明（Markdown，可以 @ 人），放在卡片正文的最前面；空字符串即没有。 */
 		note: z.string().trim().max(RUN_NOTIFICATION_NOTE_MAX).optional(),
 	})
 	.refine((c) => Object.values(c).some((v) => v !== undefined), "没有要修改的运行通知设置");
@@ -57,8 +91,11 @@ export const FOCUS_ITEM_TITLE_MAX = 40;
  * 以及场景作者起的名字：不写、或者去掉首尾空白后为空，都是没起名，显示时用图表标题。名字只能写一行。
  */
 export const FocusItemInput = z.strictObject({
+	/** 来源节点的 ID。 */
 	node_id: z.string().min(1),
+	/** 图表的标题（节点类型在元信息里声明的）。 */
 	chart: z.string().min(1),
+	/** 场景作者起的名字；不写即没起名，显示时用图表标题。 */
 	title: optionalLine(FOCUS_ITEM_TITLE_MAX),
 });
 
@@ -113,6 +150,7 @@ export const OrchestrationBase = z.object({
 	created_at: Timestamp,
 	/** 归档时间；没有归档时为 null。 */
 	archived_at: Timestamp.nullable(),
+	/** 运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。 */
 	run_notification: RunNotificationSettings,
 });
 
@@ -128,15 +166,17 @@ export const OrchestrationView = z.object({
 export const OrchestrationHeadView = z.object({
 	orchestration_id: z.string(),
 	number: z.number().int(),
+	/** 保存这个版本的人的昵称；还没有版本时为 null。 */
 	author: z.string().nullable(),
 	/** 经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。 */
 	author_via: z.string().nullable(),
 	created_at: Timestamp.nullable(),
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 });
 
 export const VersionSummaryView = z.object({
 	number: z.number().int(),
+	/** 保存这个版本的人的昵称。 */
 	author: z.string(),
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: z.string().nullable(),
@@ -148,10 +188,11 @@ export const OrchestrationVersionView = z.object({
 	id: z.string(),
 	orchestration_id: z.string(),
 	number: z.number().int(),
+	/** 保存这个版本的人的昵称。 */
 	author: z.string(),
 	author_via: z.string().nullable(),
 	created_at: Timestamp,
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 });
 
 /**
@@ -168,6 +209,7 @@ export const DocumentWarningView = z.object({
 
 export const SavedVersionView = z.object({
 	...OrchestrationVersionView.shape,
+	/** 保存时的静态检查警告：只提示，不阻止保存。 */
 	warnings: z.array(DocumentWarningView),
 });
 
@@ -198,16 +240,7 @@ export const OrchestrationStructure = z.object({
 	nodes: z.array(
 		z.object({
 			id: z.string(),
-			kind: z.enum([
-				"entry",
-				"subflow_entry",
-				"async",
-				"timer",
-				"sleep",
-				"stop_subflow",
-				"feishu_notify",
-				"package",
-			]),
+			kind: z.enum(STORED_NODE_KINDS),
 		}),
 	),
 	edges: z.array(
@@ -236,6 +269,7 @@ export const LastRun = z.object({
 	cancelling: z.boolean(),
 	/** 运行绑定的场景版本号。 */
 	version: z.number().int(),
+	/** 触发人的昵称。 */
 	triggered_by: z.string(),
 	started_at: Timestamp,
 	ended_at: Timestamp.nullable(),
@@ -263,9 +297,15 @@ export const OrchestrationSummary = z.object({
 	last_run: LastRun.nullable(),
 });
 
+/** 场景 id。 */
 const IdParams = z.object({ id: z.string().min(1) });
 /** 版本号不是整数时与版本不存在一样返回 404（不是 400），所以这里不做数字转换。 */
-const VersionParams = z.object({ id: z.string().min(1), number: z.string().min(1) });
+const VersionParams = z.object({
+	/** 场景 id。 */
+	id: z.string().min(1),
+	/** 版本号，从 1 开始。 */
+	number: z.string().min(1),
+});
 const Name = z.string().trim().min(1);
 
 export const ListOrchestrationsQuery = z.object({
@@ -284,11 +324,15 @@ export const orchestrationsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/orchestrations",
+		summary: "列出场景，可按名称、状态、Agent 筛选",
+		effect: "read",
+		resource: { kind: "scenario", target: "collection" },
 		client: true,
 		key: ["orchestrations", "list"],
 		query: ListOrchestrationsQuery,
 		response: z.object({
 			orchestrations: z.array(OrchestrationSummary),
+			/** 已归档场景的总数（不受其他筛选影响）。 */
 			archived_count: z.number().int(),
 		}),
 	}),
@@ -296,6 +340,9 @@ export const orchestrationsApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id",
+		summary: "读一个场景的设置：名称、说明、运行通知、关注项、最新版本号",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "detail"],
 		params: IdParams,
@@ -305,6 +352,9 @@ export const orchestrationsApi = {
 	head: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/head",
+		summary: "读一个场景的最新版本：节点、连线、入口参数（含完整文档）",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "head"],
 		params: IdParams,
@@ -314,7 +364,8 @@ export const orchestrationsApi = {
 	 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
 	 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 	 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
-	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
+	 * 错误信息写明哪些节点、怎么替换。
 	 *
 	 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
 	 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
@@ -323,19 +374,21 @@ export const orchestrationsApi = {
 	saveVersion: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/versions",
+		summary: "保存场景的新版本：提交修改后的节点、连线和入口参数（场景文档）",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "save-version"],
 		params: IdParams,
 		body: z.object({
+			/** 场景文档：入口、节点、连线、锁定的节点包版本等（格式见 sfly-platform skill 和 orchestration-document 的 JSON Schema）。 */
 			document: OrchestrationDocument,
+			/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 			base_version: z.number().int().nonnegative(),
 		}),
 		requestError: ({ body }) =>
 			typeof body === "object" && body !== null && Object.hasOwn(body, "base_version")
-				? {
-						code: "invalid_document",
-						message: "document does not match the orchestration schema",
-					}
+				? { code: "invalid_document", message: invalidDocumentMessage(body) }
 				: {
 						code: "base_version_required",
 						message: "base_version is required (use 0 for the first version)",
@@ -346,15 +399,24 @@ export const orchestrationsApi = {
 	versions: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/versions",
+		summary: "列出一个场景的全部版本（作者、保存时间）",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "versions"],
 		params: IdParams,
-		response: z.object({ versions: z.array(VersionSummaryView) }),
+		response: z.object({
+			/** 全部版本（不含文档），按版本号从新到旧。 */
+			versions: z.array(VersionSummaryView),
+		}),
 	}),
 	/** 某个版本的完整内容（版本不可变）。 */
 	version: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/versions/:number",
+		summary: "读一个场景的某个历史版本（含完整文档）",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "version"],
 		params: VersionParams,
@@ -367,6 +429,9 @@ export const orchestrationsApi = {
 	restoreVersion: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/versions/:number/restore",
+		summary: "用一个历史版本的内容保存出新版本",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "restore-version"],
 		params: VersionParams,
@@ -376,9 +441,17 @@ export const orchestrationsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/orchestrations",
+		summary: "新建一个场景",
+		effect: "write",
+		resource: { kind: "scenario", target: "collection" },
 		client: true,
 		key: ["orchestrations", "create"],
-		body: z.strictObject({ name: Name, description: z.string().default("") }),
+		body: z.strictObject({
+			/** 场景名称。 */
+			name: Name,
+			/** 场景说明（可以是空的）。 */
+			description: z.string().default(""),
+		}),
 		response: OrchestrationView,
 	}),
 	/**
@@ -399,14 +472,21 @@ export const orchestrationsApi = {
 	update: endpoint({
 		method: "PATCH",
 		path: "/orchestrations/:id",
+		summary: "修改场景的名称、说明、运行通知和关注项",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "update"],
 		params: IdParams,
 		body: z
 			.strictObject({
+				/** 新名称。 */
 				name: Name.optional(),
+				/** 新说明。 */
 				description: z.string().optional(),
+				/** 运行通知设置，只写要改的项。 */
 				run_notification: RunNotificationChanges.optional(),
+				/** 关注项：整份替换（空数组即清空）。 */
 				focus_items: z.array(FocusItemInput).optional(),
 			})
 			.refine((b) => Object.values(b).some((v) => v !== undefined), "没有要修改的字段"),
@@ -420,6 +500,10 @@ export const orchestrationsApi = {
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/copy",
+		summary: "复制一个场景",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
+		creates: "scenario",
 		client: true,
 		key: ["orchestrations", "copy"],
 		params: IdParams,
@@ -430,6 +514,10 @@ export const orchestrationsApi = {
 	archive: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/archive",
+		summary: "归档一个场景",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
+		removes: true,
 		client: true,
 		key: ["orchestrations", "archive"],
 		params: IdParams,
@@ -439,6 +527,9 @@ export const orchestrationsApi = {
 	unarchive: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/unarchive",
+		summary: "恢复一个已归档的场景",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
 		client: true,
 		key: ["orchestrations", "unarchive"],
 		params: IdParams,

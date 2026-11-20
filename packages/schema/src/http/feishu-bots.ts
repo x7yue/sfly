@@ -60,6 +60,7 @@ export const FeishuBotView = z.object({
 
 /** 「发送测试消息」的结果；失败也是 200，结果在 `ok` 里。 */
 export const FeishuTestResult = z.object({
+	/** 消息有没有送达。 */
 	ok: z.boolean(),
 	/** 一句话说明结果：成功是「测试消息已送达」，失败是中文原因（Webhook 地址已打码）。 */
 	message: z.string(),
@@ -72,12 +73,10 @@ export const FeishuTestResult = z.object({
 });
 
 /**
- * 一处引用飞书机器人的地方。`kind` 区分引用的种类：飞书通知节点（`feishu_notify_node`）、
- * 「飞书机器人」类型的输入的常量值（`feishu_bot_input`，指出节点和输入名）、
+ * 一处引用飞书机器人的地方。`kind` 区分引用的种类：「飞书机器人」类型的输入的常量值（`feishu_bot_input`，指出节点和输入名）、
  * 场景设置里的运行通知（`run_notification`，场景自己的设置，不在某个节点上）。
  */
 export const FeishuBotReference = z.discriminatedUnion("kind", [
-	z.object({ kind: z.literal("feishu_notify_node"), node_id: z.string() }),
 	z.object({ kind: z.literal("feishu_bot_input"), node_id: z.string(), input: z.string() }),
 	z.object({ kind: z.literal("run_notification") }),
 ]);
@@ -89,13 +88,19 @@ export const FeishuBotScenario = z.object({
 	references: z.array(FeishuBotReference).min(1),
 });
 
-const NameParams = z.object({ name: z.string().min(1) });
+const NameParams = z.object({
+	/** 机器人名称（登记时起的，创建后不能改）。 */
+	name: z.string().min(1),
+});
 
 export const feishuBotsApi = {
 	/** 全部飞书机器人，按名称排序。 */
 	list: endpoint({
 		method: "GET",
 		path: "/feishu-bots",
+		summary: "列出全部飞书机器人（Webhook 地址已打码）",
+		effect: "read",
+		resource: { kind: "feishu_bot", target: "collection" },
 		client: true,
 		key: ["feishu-bots", "list"],
 		response: z.object({ bots: z.array(FeishuBotView) }),
@@ -106,9 +111,17 @@ export const feishuBotsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/feishu-bots",
+		summary: "登记一个飞书机器人",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: "collection" },
 		client: true,
 		key: ["feishu-bots", "create"],
-		body: z.object({ name: FeishuBotName, webhook_url: FeishuWebhookUrl }),
+		body: z.object({
+			/** 机器人名称：全局唯一，创建后不能改。 */
+			name: FeishuBotName,
+			/** 飞书自定义机器人的 Webhook 地址（相当于一个凭据，响应里是打码的）。 */
+			webhook_url: FeishuWebhookUrl,
+		}),
 		response: FeishuBotView,
 	}),
 	/**
@@ -118,10 +131,16 @@ export const feishuBotsApi = {
 	replaceWebhook: endpoint({
 		method: "PATCH",
 		path: "/feishu-bots/:name",
+		summary: "替换一个飞书机器人的 Webhook 地址",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
 		client: true,
 		key: ["feishu-bots", "replace-webhook"],
 		params: NameParams,
-		body: z.strictObject({ webhook_url: FeishuWebhookUrl }),
+		body: z.strictObject({
+			/** 新的 Webhook 地址（相当于一个凭据，响应里是打码的）。 */
+			webhook_url: FeishuWebhookUrl,
+		}),
 		requestError: ({ body }) =>
 			typeof body === "object" && body !== null && "name" in body
 				? {
@@ -132,22 +151,32 @@ export const feishuBotsApi = {
 		response: FeishuBotView,
 	}),
 	/**
-	 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里的飞书通知节点、
-	 * 「飞书机器人」类型的输入的常量值，以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
+	 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里「飞书机器人」类型的输入的常量值，
+	 * 以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
 	 * 机器人不存在 404 `not_found`。
 	 */
 	references: endpoint({
 		method: "GET",
 		path: "/feishu-bots/:name/references",
+		summary: "列出引用一个飞书机器人的场景",
+		effect: "read",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
 		client: true,
 		key: ["feishu-bots", "references"],
 		params: NameParams,
-		response: z.object({ scenarios: z.array(FeishuBotScenario) }),
+		response: z.object({
+			/** 引用这个机器人的场景（最新版本里的飞书通知节点、「飞书机器人」类型的输入，以及运行通知设置），按场景名排序。 */
+			scenarios: z.array(FeishuBotScenario),
+		}),
 	}),
 	/** 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。 */
 	remove: endpoint({
 		method: "DELETE",
 		path: "/feishu-bots/:name",
+		summary: "删除一个飞书机器人",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
+		removes: true,
 		client: true,
 		key: ["feishu-bots", "remove"],
 		params: NameParams,
@@ -160,6 +189,9 @@ export const feishuBotsApi = {
 	test: endpoint({
 		method: "POST",
 		path: "/feishu-bots/:name/test",
+		summary: "向一个飞书机器人的群里同步发一条测试消息",
+		effect: "write",
+		resource: { kind: "feishu_bot", target: { params: "name" } },
 		client: true,
 		key: ["feishu-bots", "test"],
 		params: NameParams,

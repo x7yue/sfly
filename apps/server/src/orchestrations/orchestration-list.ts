@@ -1,8 +1,8 @@
 import type {
 	LastRun,
-	OrchestrationDocument,
 	OrchestrationSummary,
 	ReferencedAgent,
+	StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/database.js";
@@ -18,7 +18,9 @@ export interface OrchestrationFilter {
 }
 
 /** 场景引用的 Agent 名：默认 Agent 在前，其余（节点另选的）按名称排序。 */
-export function referencedAgents(doc: OrchestrationDocument): { name: string; default: boolean }[] {
+export function referencedAgents(
+	doc: StoredOrchestrationDocument,
+): { name: string; default: boolean }[] {
 	const others = new Set<string>();
 	for (const node of doc.nodes) {
 		if (node.kind === "package" && node.agent && node.agent !== doc.default_agent) {
@@ -34,7 +36,7 @@ export function referencedAgents(doc: OrchestrationDocument): { name: string; de
 /** 文档引用的 Agent 与在线状态（还没有注册过的为 unknown），顺序同 referencedAgents。 */
 export async function referencedAgentStatus(
 	db: Db,
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 ): Promise<ReferencedAgent[]> {
 	const refs = referencedAgents(doc);
 	if (refs.length === 0) return [];

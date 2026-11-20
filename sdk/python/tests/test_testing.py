@@ -531,7 +531,7 @@ def test_a_feishu_bot_input_that_is_not_a_string_is_a_config_error(
 
 
 def test_notifications_carry_the_bot_and_the_request_body_and_nothing_is_sent() -> None:
-    # ctx.notify（#234）：请求体与飞书通知节点的文本格式相同；本地没有控制面，不真的发送。
+    # ctx.notify（#234）：请求体与控制面按文本格式组装的相同；本地没有控制面，不真的发送。
     from sfly_stub import notify
 
     result = run_node(notify, {"bot": "ops", "text": "指标越界", "at_all": True})
@@ -652,7 +652,7 @@ CUSTOM_CARD = {
 )
 def test_a_raw_message_is_recorded_exactly_as_given(message: dict[str, object]) -> None:
     # ctx.notify(bot, message=...)：完整的飞书请求体，原样发出，不改写、不补字段
-    # （与飞书通知节点的原始消息相同）。
+    # （控制面发的原始消息也是这样）。
     from sfly_stub import notify_message
 
     result = run_node(notify_message, {"bot": "ops", "message": message})

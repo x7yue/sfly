@@ -4,7 +4,7 @@ import type { FieldControl } from "./fields";
 
 /**
  * 选择一个已登记的飞书机器人（ADR 0020）：值不是已登记的机器人时仍保留在列表里，标出「未登记」。
- * 用于飞书通知节点，以及「飞书机器人」类型的输入。
+ * 用于「飞书机器人」类型的输入。
  */
 export function FeishuBotSelect({
 	control,

@@ -1,4 +1,5 @@
 import { nodeCardText, nodeDefaultTitle, nodeDisplayName } from "@sfly/orchestration";
+import { REMOVED_NODE_KIND_NAMES, type RemovedNodeKind } from "@sfly/schema";
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import { type CSSProperties, useCallback, useId, useRef } from "react";
@@ -444,6 +445,10 @@ export const nodeTypes: Record<SfNode["data"]["node"]["kind"], typeof NodeCard> 
 	timer: NodeCard,
 	sleep: NodeCard,
 	stop_subflow: NodeCard,
-	feishu_notify: NodeCard,
 	package: NodeCard,
+	// 已移除种类的节点（ADR 0028）也用节点卡片画。
+	...(Object.fromEntries(REMOVED_NODE_KIND_NAMES.map((kind) => [kind, NodeCard])) as Record<
+		RemovedNodeKind,
+		typeof NodeCard
+	>),
 };

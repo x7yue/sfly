@@ -1,5 +1,5 @@
 import { isRetryable, NODE_DEFAULTS } from "@sfly/orchestration";
-import type { OrchestrationNode } from "@sfly/schema";
+import type { StoredNode } from "@sfly/schema";
 import type { ErrorKind, TaskStatus } from "../db/schema.js";
 
 /**
@@ -8,15 +8,15 @@ import type { ErrorKind, TaskStatus } from "../db/schema.js";
  */
 
 /** 节点配置的重试次数（只有包节点能配置）。 */
-export const retriesOf = (node: OrchestrationNode): number =>
+export const retriesOf = (node: StoredNode): number =>
 	node.kind === "package" ? (node.retries ?? NODE_DEFAULTS.retries) : 0;
 
 /** 第 attempt 次尝试以 kind 失败后，是否再派发一次（attempt + 1）。 */
-export const shouldRetry = (node: OrchestrationNode, kind: ErrorKind, attempt: number): boolean =>
+export const shouldRetry = (node: StoredNode, kind: ErrorKind, attempt: number): boolean =>
 	isRetryable(kind) && attempt <= retriesOf(node);
 
 /** 前面的节点失败后仍然执行的节点（包节点、定时节点、Sleep 节点、停止子流程节点可以设置）。 */
-export const isAlways = (node: OrchestrationNode): boolean => "always" in node && node.always;
+export const isAlways = (node: StoredNode): boolean => "always" in node && node.always;
 
 /**
  * 最终失败的节点：每个节点最近一次尝试的状态是 failed 的那一行（按链实例和节点分组，行里没有链实例时算同一条链）。

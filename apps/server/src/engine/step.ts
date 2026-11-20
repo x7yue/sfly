@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@sfly/proto";
-import type { OrchestrationNode } from "@sfly/schema";
+import type { StoredNode } from "@sfly/schema";
 import type { SQL } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Db, Tx } from "../db/database.js";
@@ -26,7 +26,7 @@ export interface Step {
 	cancels: CancelOrder[];
 	/** 提交后发给 Agent 的派发消息。 */
 	assigns: Array<{ conn: AgentConnection; message: ServerMessage }>;
-	/** 飞书通知在事务里留下的、提交后才能做的收尾（日志行、唤醒投递；src/feishu/engine-notifications.ts）。 */
+	/** 飞书通知在事务里留下的、提交后才能做的收尾（唤醒投递；src/feishu/engine-notifications.ts）。 */
 	notifications: PendingNotifications;
 }
 
@@ -44,7 +44,7 @@ export interface Located {
 	plan: ChainPlan;
 	/** 节点在链上的下标。 */
 	index: number;
-	node: OrchestrationNode;
+	node: StoredNode;
 }
 
 /**

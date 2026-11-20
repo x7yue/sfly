@@ -32,6 +32,7 @@ export const ACTION_LIMITS = {
 } as const;
 
 /** 路径里的任务 ID：不是 UUID 时控制面返回 404（与找不到相同），所以这里只要求是字符串。 */
+/** 任务 id。 */
 const IdParams = z.object({ id: z.string() });
 
 /** 动作的结果：成功、失败、未结束（任务结束时还没结束，或因为取消离开 `with`）。 */
@@ -76,6 +77,7 @@ export const ActionNameCount = z.object({
 	reported: z.number().int(),
 	/** 从什么时候起只计数（控制面时间、Agent 时间）；没有超出上限时为 null。失败的动作超出后仍有明细。 */
 	capped_at: Timestamp.nullable(),
+	/** 同 `capped_at`，用 Agent 时间表示。 */
 	agent_capped_at: Timestamp.nullable(),
 });
 
@@ -99,6 +101,7 @@ export const ActionSummaryView = z.object({
 	control_plane_capped: z.boolean(),
 	/** 合计已满、开始丢弃明细的时刻；没有丢弃过时为 null。不是明细的终点：之后仍可能有补上的失败的动作。 */
 	capped_at: Timestamp.nullable(),
+	/** 同 `capped_at`，用 Agent 时间表示。 */
 	agent_capped_at: Timestamp.nullable(),
 	/** 每种名称一项，按第一次出现的先后。 */
 	names: z.array(ActionNameCount),
@@ -199,6 +202,7 @@ export const MAX_ACTION_PAGE = 500;
 export const ActionPageQuery = z.object({
 	/** 读这个游标之前（更早开始）的明细；不给时读最新的一页。 */
 	before: blankAsMissing(ActionCursor),
+	/** 一页最多多少条明细（默认 100）。 */
 	limit: z.coerce.number().int().min(1).max(MAX_ACTION_PAGE).default(100),
 	/** 只要这个名称的。 */
 	name: blankAsMissing(z.string()),
@@ -241,6 +245,9 @@ export const actionsApi = {
 	summary: endpoint({
 		method: "GET",
 		path: "/tasks/:id/actions/summary",
+		summary: "读一个任务的动作摘要：正在做的、各名称的总数和失败数、最近的失败",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		key: ["actions", "summary"],
 		params: IdParams,
@@ -253,6 +260,9 @@ export const actionsApi = {
 	page: endpoint({
 		method: "GET",
 		path: "/tasks/:id/actions",
+		summary: "分页读一个任务的动作明细，可按名称、是否失败筛选",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		key: ["actions", "page"],
 		params: IdParams,
@@ -270,9 +280,15 @@ export const actionsApi = {
 	 */
 	events: stream({
 		path: "/tasks/:id/actions/events",
+		summary: "实时推送一个任务的动作变化",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
 		client: true,
 		params: IdParams,
-		query: z.object({ after: blankAsMissing(z.coerce.number().int().min(0)) }),
+		query: z.object({
+			/** 已经读到的修订号（明细分页响应里的 `rev`）：只推送它之后的写入。 */
+			after: blankAsMissing(z.coerce.number().int().min(0)),
+		}),
 		events: { summary: ActionSummaryView, actions: ActionChunk },
 	}),
 };

@@ -1,0 +1,7 @@
+# 数值往返的全栈测试（apps/server/test/full-stack-number-roundtrip.test.ts，#450）用的节点包：
+# 一个节点写出一组有代表性的数值，另一个节点把收到的数值用 repr 写回去，测试逐段比较。
+# 用 `sfly build testdata/number-package` 构建；没写 requires-sdk，取构建时 SDK 的版本作为下限。
+[project]
+name = "sfly-numbers"
+version = "0.1.0"
+dependencies = []

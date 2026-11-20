@@ -9,8 +9,8 @@ import {
 	type MetricIncrement,
 	type MetricPointView,
 	type MetricSummary,
-	type OrchestrationDocument,
 	type RunMetricSummary,
+	type StoredOrchestrationDocument,
 	seriesKey,
 	sortedLabels,
 } from "@sfly/schema";
@@ -693,7 +693,7 @@ export class TaskMetrics {
 
 	/** 任务的节点类型声明的指标：锁定的节点包版本；开发版本取任务所在 Agent 上报的元信息。 */
 	async #declared(
-		document: OrchestrationDocument,
+		document: StoredOrchestrationDocument,
 		nodeId: string,
 		agentName: string | null,
 	): Promise<MetricDeclaration[]> {

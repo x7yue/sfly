@@ -683,8 +683,8 @@ class Context:
         - `ctx.notify(bot, message=...)` 发原始消息：完整的飞书请求体，原样发出，富文本、自己设计的
           卡片、模板卡片都走这一种；Markdown 卡片用 `sfly.feishu.card(...)` 组装：
           `ctx.notify(bot, message=sfly.feishu.card("标题", "**正文**", "green"))`。
-          校验规则与飞书通知节点的原始消息格式相同：只检查它是一个对象、`msg_type` 是 text、post、
-          image、share_chat、interactive 之一、不超过 20 KB（不截断）；不合格的不发送，
+          校验规则（`testdata/feishu-raw-cases.json`）：只检查它是一个对象、`msg_type` 是 text、
+          post、image、share_chat、interactive 之一、不超过 20 KB（不截断）；不合格的不发送，
           任务日志里写一条警告说明原因，调用不抛异常；
         - `bot` 是飞书机器人的名称，要通过「飞书机器人」类型的参数（`sfly.FeishuBot`）传给节点：
           平台只发给任务的这种参数引用的机器人，其他名称不发送，任务日志里写一条警告。

@@ -19,9 +19,19 @@ export const systemApi = {
 	health: endpoint({
 		method: "GET",
 		path: "/health",
+		summary: "健康检查：控制面和数据库是否可用",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: true,
 		key: ["system", "health"],
-		response: z.object({ status: Health, database: Health, time: Timestamp }),
+		response: z.object({
+			/** 控制面整体：`ok` 或 `unavailable`（数据库不可用时返回 503，响应体形状相同）。 */
+			status: Health,
+			/** 数据库连得上吗。 */
+			database: Health,
+			/** 控制面的当前时间（控制面时间）。 */
+			time: Timestamp,
+		}),
 	}),
 };
 
@@ -30,15 +40,29 @@ export const sdkApi = {
 	wheels: endpoint({
 		method: "GET",
 		path: "/sdk/python",
+		summary: "列出控制面提供的 SDK 运行时 wheel",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		key: ["sdk", "wheels"],
-		response: z.object({ wheels: z.array(SdkWheelView) }),
+		response: z.object({
+			/** 控制面提供的 SDK 运行时 wheel，每个版本一个。 */
+			wheels: z.array(SdkWheelView),
+		}),
 	}),
 	/** 下载一个 wheel；版本或文件名不存在时 404。 */
 	wheel: download({
 		path: "/sdk/python/:version/:filename",
+		summary: "下载一个 SDK 运行时 wheel",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
-		params: z.object({ version: z.string(), filename: z.string() }),
+		params: z.object({
+			/** SDK 版本（`GET /sdk/python` 列出的）。 */
+			version: z.string(),
+			/** wheel 的文件名（`GET /sdk/python` 列出的）。 */
+			filename: z.string(),
+		}),
 		contentType: "application/octet-stream",
 	}),
 	/**
@@ -47,6 +71,9 @@ export const sdkApi = {
 	 */
 	index: download({
 		path: "/simple/",
+		summary: "sfly 简单索引（PEP 503）的根页面",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		raw: true,
 		contentType: "text/html; charset=utf-8",
 		client: false,
@@ -58,6 +85,9 @@ export const sdkApi = {
 	projectSettings: endpoint({
 		method: "GET",
 		path: "/sdk/project-settings",
+		summary: "sfly init 写进新项目的配置：控制面版本、sfly 索引和镜像",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		key: ["sdk", "project-settings"],
 		response: z.object({
@@ -73,9 +103,15 @@ export const sdkApi = {
 	/** 索引的项目页：与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`sfly` 以外的项目 404。 */
 	indexProject: download({
 		path: "/simple/:project/",
+		summary: "sfly 简单索引的项目页：SDK wheel 的下载链接",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
-		params: z.object({ project: z.string() }),
+		params: z.object({
+			/** 索引里的项目名；只有 `sfly`。 */
+			project: z.string(),
+		}),
 		contentType: "text/html; charset=utf-8",
 	}),
 };

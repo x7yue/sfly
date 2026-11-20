@@ -1,4 +1,4 @@
-import type { NodeTypeMetadata, OrchestrationDocument } from "@sfly/schema";
+import type { NodeTypeMetadata, StoredOrchestrationDocument } from "@sfly/schema";
 import { inputsOfType, isInputOfType, namesInInputs } from "./input-types.js";
 import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
@@ -56,7 +56,7 @@ export function agentNotRegistered(node: string, input: string, agent: string): 
  * 含引用的值在触发、派发时才知道；节点类型未知时跳过（包版本检查会指出）。
  */
 export function agentInputWarnings(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	catalog: PackageCatalog,
 	agents: ReadonlySet<string>,
 ): AgentInputWarning[] {

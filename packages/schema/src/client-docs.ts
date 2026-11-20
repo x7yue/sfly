@@ -12,6 +12,8 @@ const schemaDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 export interface DocRequest {
 	roots: ReadonlyMap<string, string>;
 	stopAt: ReadonlySet<string>;
+	/** 某个 root 最多读到第几层字段（路径长度）；不给就读到底。路由清单只要响应的顶层字段，不用把整份文档类型走一遍。 */
+	maxDepth?: (root: string) => number | undefined;
 }
 
 export interface Docs {
@@ -75,6 +77,8 @@ export function harvestDocs(request: DocRequest): Docs {
 	const fields = new Map<string, string>();
 	const walk = (root: string, type: ts.Type, path: readonly string[]): void => {
 		if (path.length > 24) return;
+		const limit = request.maxDepth?.(root);
+		if (limit !== undefined && path.length >= limit) return;
 		if (type.isUnion()) {
 			for (const member of type.types) walk(root, member, path);
 			return;
