@@ -584,59 +584,51 @@ class _Pump:
     def _event(self, raw: bytes, batch: list[LogLine]) -> None:
         try:
             event = json.loads(raw)
-            kind = event["type"]
-            ts = int(event.get("ts") or _now_ms())
-            if kind == "log":
-                level = _SDK_LEVELS.get(str(event.get("level", "")), "info")
-                batch.append(LogLine(ts, "sdk", level, str(event.get("message", ""))))
-                return
-            if kind == "progress":
-                total = event.get("total")
-                progress = Progress(
-                    ts,
-                    float(event["current"]),
-                    None if total is None else float(total),
-                    str(event.get("message", "")),
-                )
-                self._execution.progress.append(progress)
-                if self._on_progress is not None:
-                    self._on_progress(progress)
-                return
-            if kind == "metric":
-                metric_kind = "counter" if event.get("kind") == "counter" else "gauge"
-                labels = event.get("labels") or {}
-                point = MetricPoint(
-                    ts,
-                    str(event["name"]),
-                    metric_kind,
-                    float(event["value"]),
-                    {str(k): str(v) for k, v in labels.items()},
-                )
-                self._execution.metrics.append(point)
-                if self._on_metric is not None:
-                    self._on_metric(point)
-                return
-            if kind == "notify":
-                self._notify(ts, event, batch)
-                return
-            if kind in ("action_start", "mark"):
-                self._action_started(ts, event, "action" if kind == "action_start" else "mark")
-                return
-            if kind == "action_end":
-                self._action_ended(ts, event)
-                return
-            if kind == "action_summary":
-                self._execution.action_summary = _action_summary(ts, event)
+            handler = _EVENT_HANDLERS.get(event["type"])
+            if handler is not None:
+                handler(self, int(event.get("ts") or _now_ms()), event, batch)
                 return
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
         # 不认识的内容原样记成一行 SDK 日志。
         batch.append(LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace")))
 
-    def _action_started(
-        self, ts: int, event: Mapping[str, Any], kind: Literal["action", "mark"]
-    ) -> None:
-        record = _action_record(event, kind, ts)
+    def _log(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
+        level = _SDK_LEVELS.get(str(event.get("level", "")), "info")
+        batch.append(LogLine(ts, "sdk", level, str(event.get("message", ""))))
+
+    def _progress(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
+        total = event.get("total")
+        progress = Progress(
+            ts,
+            float(event["current"]),
+            None if total is None else float(total),
+            str(event.get("message", "")),
+        )
+        self._execution.progress.append(progress)
+        if self._on_progress is not None:
+            self._on_progress(progress)
+
+    def _metric(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
+        metric_kind = "counter" if event.get("kind") == "counter" else "gauge"
+        labels = event.get("labels") or {}
+        point = MetricPoint(
+            ts,
+            str(event["name"]),
+            metric_kind,
+            float(event["value"]),
+            {str(k): str(v) for k, v in labels.items()},
+        )
+        self._execution.metrics.append(point)
+        if self._on_metric is not None:
+            self._on_metric(point)
+
+    def _summary(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
+        self._execution.action_summary = _action_summary(ts, event)
+
+    def _action_started(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
+        """`action_start` 和 `mark` 各记一项（动作开始、标记发生）。"""
+        record = _action_record(event, "action" if event["type"] == "action_start" else "mark", ts)
         actions = self._execution.actions
         # 一般按 ID 递增到达；超过每种名称的上限、失败时补发的开始比后面的行早，插到该在的位置。
         if not actions or record.id > actions[-1].id:
@@ -645,7 +637,7 @@ class _Pump:
             actions.insert(_action_index(actions, record.id), record)
         self._action_changes.append((ts, record))
 
-    def _action_ended(self, ts: int, event: Mapping[str, Any]) -> None:
+    def _action_ended(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
         actions = self._execution.actions
         index = _action_index(actions, int(event["id"]))
         if index == len(actions) or actions[index].id != int(event["id"]):
@@ -704,6 +696,22 @@ class _Pump:
     @staticmethod
     def _not_sent(ts: int, batch: list[LogLine], reason: str) -> None:
         batch.append(LogLine(ts, "system", "warn", f"ctx.notify 的消息没有发送：{reason}"))
+
+
+#: 读取端认识的事件类型 → 处理函数（`_Pump` 的方法；参数是事件时间、解析后的事件、这一批的日志）。
+#: 事件类型的集合与 Agent 相同，两端对着 `testdata/local-protocol-cases.json` 核对：
+#: 只在一端加一种事件，两端的测试会红。
+_EVENT_HANDLERS: dict[str, Callable[[_Pump, int, Mapping[str, Any], list[LogLine]], None]] = {
+    "log": _Pump._log,
+    "progress": _Pump._progress,
+    "metric": _Pump._metric,
+    "notify": _Pump._notify,
+    "action_start": _Pump._action_started,
+    "action_end": _Pump._action_ended,
+    "mark": _Pump._action_started,
+    "action_summary": _Pump._summary,
+}
+EVENT_TYPES = frozenset(_EVENT_HANDLERS)
 
 
 def _signal_group(pgid: int, sig: int) -> None:
