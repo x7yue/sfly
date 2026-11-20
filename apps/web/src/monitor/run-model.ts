@@ -17,7 +17,7 @@ import { type RunNodeName, runNodeName } from "#/components/node-name";
 import { runStatusView, type StatusKind } from "#/components/status";
 import { attemptLabel, chainLabel as chainName } from "#/lib/copy";
 import { shortId } from "#/lib/format";
-import { type NodeRef, nodeKey, sameNode } from "./monitor-state";
+import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
 

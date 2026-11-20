@@ -24,14 +24,8 @@ import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionLegend, ActionTracks } from "./ActionTracks";
 import type { PreparedTracks, TrackView } from "./action-tracks";
-import {
-	type NodeRef,
-	nodeKey,
-	sameNode,
-	useMonitor,
-	useMonitorActions,
-	useTimeAxis,
-} from "./monitor-state";
+import { useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
+import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 import {
 	chainLabelParts,
 	chainRunStatus,

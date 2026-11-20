@@ -41,8 +41,9 @@ import {
 } from "./chart-groups";
 import { balancedColumns, chartLines, chartWindow } from "./charts";
 import { MetricChart } from "./MetricChart";
-import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
+import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
+import { nodeKey } from "./node-ref";
 import { chainLabel, documentNodes, findNode } from "./run-model";
 import type { TimeRange } from "./timeline-model";
 import {

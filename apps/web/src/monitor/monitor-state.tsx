@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useRef, useSyncExternalStore } from "react";
+import type { NodeRef } from "./node-ref";
 import type { PanelTab } from "./run-link";
 import type { TimeRange } from "./timeline-model";
 
@@ -25,12 +26,6 @@ import type { TimeRange } from "./timeline-model";
  * 时间都是毫秒时间戳。hoverAt 更新很频繁，状态放在一个外部 store 里，组件按 selector 订阅，
  * 只有用到的字段变化时才重新渲染；range / extent 每秒随「现在」变化，放在 context 里。
  */
-
-/** 时间线上的一个节点：同一个子流程可能有多个实例，所以要带链实例 ID。 */
-export interface NodeRef {
-	chainInstanceId: string;
-	nodeId: string;
-}
 
 export interface MonitorState {
 	/** 鼠标悬停的时刻；不在时间轴上时为 null。 */
@@ -199,10 +194,5 @@ export function useTimeAxis(): TimeAxis {
 	return axis;
 }
 
-export const sameNode = (a: NodeRef | null, b: NodeRef | null) =>
-	a?.chainInstanceId === b?.chainInstanceId && a?.nodeId === b?.nodeId;
-
-/** 节点在筛选集合里的键。 */
-export const nodeKey = (node: NodeRef) => `${node.chainInstanceId}:${node.nodeId}`;
 /** 筛选集合里代表平台自带图表的键。 */
 export const PLATFORM_KEY = "platform";

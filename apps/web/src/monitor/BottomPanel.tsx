@@ -44,15 +44,8 @@ import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
 import { LogList, type LogPaging, type LogReveal } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
-import {
-	type NodeRef,
-	nodeKey,
-	PLATFORM_KEY,
-	sameNode,
-	useMonitor,
-	useMonitorActions,
-	useTimeAxis,
-} from "./monitor-state";
+import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
+import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 import type { PanelTab } from "./run-link";
 import { runLineKey } from "./run-log-reader";
 import {
