@@ -1038,6 +1038,9 @@ async fn serve(
             result = runtime.ledger.next_result() => {
                 connection.outbound.send(result_message(result)).await?;
             }
+            // 被放弃的任务结束：没有结果要发，手上却少了一个任务。回到循环顶部重新判断排空，
+            // 不等下一次心跳（自更新在排空时等着手上的任务都结束）。
+            () = runtime.ledger.discarded() => {}
             Some(status) = installs.recv() => {
                 connection
                     .outbound

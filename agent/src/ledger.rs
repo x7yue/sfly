@@ -12,6 +12,7 @@
 //! （Ack 来得太快，任务还当成在执行，漏写结束标记，#117）。
 //!
 //! 控制面在 Welcome 里放弃的任务：还在执行的被强制取消，结束时结果直接丢弃，不再上报；结果还没 Ack 的直接删掉。
+//! 被放弃的任务结束时没有结果要发，手上却少了一个任务：[`Ledger::discarded`] 叫醒主循环，让它重新判断自更新的排空。
 //!
 //! 台账的操作和 `.claude/skills/verify-task-dispatch/model/TaskDispatch.tla` 里 Agent 一侧的动作一一对应：
 //! [`Ledger::accept`] 是 `AgentRecv` 的 assign，[`Ledger::started`] 是 `AgentStart`，[`Ledger::finish`] 是 `AgentFinish`，
@@ -37,6 +38,8 @@ pub(crate) struct Ledger {
     state: Mutex<State>,
     /// 有结果交出时叫醒 [`Ledger::next_result`]。
     handed: Notify,
+    /// 任务不交出结果就离开台账时（被放弃的任务结束）叫醒 [`Ledger::discarded`]。
+    discarded: Notify,
 }
 
 #[derive(Default)]
@@ -172,10 +175,11 @@ impl Ledger {
         }
     }
 
-    /// 任务结束：在一次持锁里把「执行中」换成「结果待发」。被放弃的任务的结果丢弃，任务也不再在手上。
+    /// 任务结束：在一次持锁里把「执行中」换成「结果待发」。被放弃的任务的结果丢弃，任务也不再在手上：
+    /// 没有结果要发，叫醒 [`Ledger::discarded`]。
     pub(crate) fn finish(&self, result: TaskResult) {
         let key = (result.task_id.clone(), result.attempt);
-        {
+        let wake = {
             let mut state = self.state.lock().unwrap();
             let previous = state.attempts.remove(&key);
             debug_assert!(
@@ -189,13 +193,22 @@ impl Ledger {
                     ..
                 }))
             ) {
-                return;
+                &self.discarded
+            } else {
+                let order = state.next_order;
+                state.next_order += 1;
+                state.attempts.insert(key, Stage::Handed { order, result });
+                &self.handed
             }
-            let order = state.next_order;
-            state.next_order += 1;
-            state.attempts.insert(key, Stage::Handed { order, result });
-        }
-        self.handed.notify_one();
+        };
+        wake.notify_one();
+    }
+
+    /// 等到有任务不交出结果就离开了台账（被放弃的任务结束）：手上的任务少了一个，调用方要重新判断依赖「手上还有
+    /// 几个」的事（自更新的排空，[`crate::update::Updater::poll`]）。[`Ledger::next_result`] 不会因此返回，
+    /// 所以主循环的 `select!` 需要这一个分支。叫醒不会丢：没人在等时留到下一次调用。可以放进 `select!`。
+    pub(crate) async fn discarded(&self) {
+        self.discarded.notified().await;
     }
 
     /// 等到下一个要发出的结果（先交出的先发），记为待 Ack 并返回；连接断开时发不出去的留在待 Ack 里，
@@ -553,6 +566,40 @@ mod tests {
         ledger.finish(result("a", 1));
         ledger.abandon("a", 1);
         assert_eq!(sent(&ledger).await, ("a".into(), 1));
+    }
+
+    /// 被放弃的任务结束时没有结果要发，但手上少了一个任务：叫醒等着的主循环，让它重新判断自更新的排空
+    /// （没有这个叫醒，要等到下一次心跳或别的消息才看得到手上已经没有任务）。
+    #[tokio::test]
+    async fn an_abandoned_task_that_ends_wakes_the_waiter() {
+        let ledger = Arc::new(Ledger::default());
+        start(&ledger, "a", 1, "run");
+        ledger.abandon("a", 1);
+        let waiting = tokio::spawn({
+            let ledger = ledger.clone();
+            async move { ledger.discarded().await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished(), "the task is still running");
+
+        ledger.finish(result("a", 1));
+        tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("nobody was woken")
+            .unwrap();
+        assert!(ledger.held().is_empty());
+    }
+
+    /// 被放弃的任务结束时主循环正忙着别的（没人在等）：叫醒留到下一次，不会丢。
+    #[tokio::test]
+    async fn the_wake_for_an_abandoned_task_is_kept_until_someone_waits() {
+        let ledger = Ledger::default();
+        start(&ledger, "a", 1, "run");
+        ledger.abandon("a", 1);
+        ledger.finish(result("a", 1));
+        tokio::time::timeout(Duration::from_secs(5), ledger.discarded())
+            .await
+            .expect("the wake was lost");
     }
 
     #[test]
