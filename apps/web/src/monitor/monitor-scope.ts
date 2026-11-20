@@ -20,7 +20,9 @@ import { findNode, initialSelection } from "./run-model";
  * - 打开页面时只默认选中地址里的节点或第一个失败的节点（执行中的节点不默认选中）；地址里的页签、日志时刻照做。
  *   页面打开之后地址变了再应用一次，地址没变不重复应用；页面里自己的操作（点节点、切页签）不写回地址，所以同一个地址
  *   报告再多次也不会撤销它们。视图（概览、详情）不算地址里决定打开哪里的部分：切视图不重置选中的节点。
- * - 底部面板展开与否：用户没展开 / 收起过、也没切过页签时，日志页签没有内容就收起，内容到了再展开；用户选过之后听用户的。
+ * - 底部面板展开与否（{@link panelOpen}）：用户没展开 / 收起过、也没切过页签时，日志页签没有内容（选中的节点还没开始，
+ *   或日志读完是空的）就收起，内容到了再展开；用户选过之后听用户的。日志有没有内容是读日志的人才知道的事实，
+ *   不记在状态里，调用方读到以后直接传给 {@link panelOpen}。
  */
 
 /** 要在日志里定位的时刻（控制面时间，毫秒）；`request` 变了就重新定位。 */
@@ -37,8 +39,6 @@ export interface ScopeState {
 	tab: PanelTab;
 	/** 用户展开 / 收起面板：true / false；null 表示还没选过，按内容自动决定。 */
 	open: boolean | null;
-	/** 日志页签加载完、没有任何日志（自动收起的依据，日志页签报告）。 */
-	logsEmpty: boolean;
 	/** 最近一次定位日志的请求；`request` 每请求一次加一。它不随选中的节点清掉，只对 `node` 有效。 */
 	locate: (LogMoment & { node: NodeRef }) | null;
 	/** 最近一次应用的地址的键（{@link addressKey}）；还没应用过为 null。 */
@@ -50,7 +50,6 @@ export const EMPTY_SCOPE: ScopeState = {
 	attempt: null,
 	tab: "logs",
 	open: null,
-	logsEmpty: false,
 	locate: null,
 	applied: null,
 };
@@ -74,9 +73,7 @@ export type ScopeEvent =
 	/** 切到底部面板的某个页签（用户选了页签，面板随之展开）。 */
 	| { type: "tab"; tab: PanelTab }
 	/** 用户展开 / 收起面板（拖动高度也算展开）；`null` 回到按内容自动决定。 */
-	| { type: "panel"; open: boolean | null }
-	/** 日志页签报告：加载完、没有任何日志（`true`），或有内容 / 不在看（`false`）。 */
-	| { type: "logsEmpty"; empty: boolean };
+	| { type: "panel"; open: boolean | null };
 
 const select = (state: ScopeState, node: NodeRef | null): ScopeState =>
 	sameNode(node, state.selected) ? state : { ...state, selected: node, attempt: null };
@@ -141,8 +138,6 @@ export function reduceScope(state: ScopeState, event: ScopeEvent): ScopeState {
 			return showTab(state, event.tab);
 		case "panel":
 			return state.open === event.open ? state : { ...state, open: event.open };
-		case "logsEmpty":
-			return state.logsEmpty === event.empty ? state : { ...state, logsEmpty: event.empty };
 	}
 }
 
@@ -156,11 +151,21 @@ export interface Scope {
 	tab: PanelTab;
 	/** 要在这次尝试的日志里定位的时刻；不定位时为 null（包括用户切到了别的尝试）。 */
 	locate: LogMoment | null;
-	/** 面板展开。 */
-	open: boolean;
-	/** 展开与否还是按内容自动决定的（用户没选过）：收起时日志页签也要挂着，日志到了才能自动展开。 */
-	auto: boolean;
+	/** 用户展开 / 收起过面板：true / false；null 是还没选过，按内容自动决定（{@link panelOpen}）。 */
+	panel: boolean | null;
+	/** 选中的节点还没有开始：没有日志可看。 */
+	noAttempt: boolean;
 }
+
+/**
+ * 面板展开与否：用户选过听用户的；没选过时，日志页签没有内容就收起，别的页签总是展开。
+ * `logsEmpty` 是日志页签读完了、没有任何日志（没读、还在读、筛选了级别时不算）。
+ */
+export const panelOpen = (scope: Scope, logsEmpty: boolean): boolean =>
+	scope.panel ?? !(scope.tab === "logs" && (scope.noAttempt || logsEmpty));
+
+/** 日志页签要读日志：在日志页签、用户没有收起面板。自动收起时也要读，日志到了才能自动展开。 */
+export const readsLogs = (scope: Scope): boolean => scope.tab === "logs" && scope.panel !== false;
 
 /**
  * 那一刻（控制面时间，毫秒）落在节点的哪一次尝试里：开始时间不晚于那一刻的最后一次。同一个节点的尝试一次只有一个在执行，
@@ -177,9 +182,6 @@ export function resolveScope(state: ScopeState, run: RunView): Scope {
 	const located = node && moment ? (attemptAt(node, moment.at) ?? node.attempts.at(-1)) : undefined;
 	const attempt =
 		node?.attempts.find((a) => a.task_id === state.attempt) ?? located ?? node?.attempts.at(-1);
-	// 选中的节点还没有开始：没有日志可看。其余情况由日志页签自己报告有没有内容。
-	const empty =
-		state.tab === "logs" && ((node !== undefined && attempt === undefined) || state.logsEmpty);
 	return {
 		selected: state.selected,
 		node,
@@ -189,7 +191,7 @@ export function resolveScope(state: ScopeState, run: RunView): Scope {
 			moment && attempt !== undefined && attempt === located
 				? { at: moment.at, request: moment.request }
 				: null,
-		open: state.open ?? !empty,
-		auto: state.open === null,
+		panel: state.open,
+		noAttempt: node !== undefined && attempt === undefined,
 	};
 }

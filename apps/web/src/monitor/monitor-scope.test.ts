@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
 	EMPTY_SCOPE,
 	openedScope,
+	panelOpen,
+	readsLogs,
 	reduceScope,
 	resolveScope,
 	type ScopeEvent,
@@ -199,7 +201,7 @@ describe("范围：定位日志", () => {
 		expect(scope).toMatchObject({
 			selected: ref("verify"),
 			tab: "logs",
-			open: true,
+			panel: true,
 			locate: { at: at(7) },
 		});
 	});
@@ -269,7 +271,7 @@ describe("范围：看失败的节点", () => {
 			{ type: "panel", open: false },
 			{ type: "failure", node: ref("verify") },
 		]);
-		expect(scope).toMatchObject({ selected: ref("verify"), tab: "attempts", open: true });
+		expect(scope).toMatchObject({ selected: ref("verify"), tab: "attempts", panel: true });
 	});
 
 	it("换了节点回到最近一次尝试", () => {
@@ -285,48 +287,57 @@ describe("范围：看失败的节点", () => {
 });
 
 describe("范围：底部面板的页签与展开", () => {
-	const logsEmpty = (empty: boolean): ScopeEvent => ({ type: "logsEmpty", empty });
+	/** 现在面板是否展开；`logsEmpty` 是日志页签读完了、没有任何日志。 */
+	const open = (events: ScopeEvent[], logsEmpty = false) => {
+		const { scope } = play(events);
+		return panelOpen(scope, logsEmpty);
+	};
 
-	it("用户没选过：日志页签没有内容就收起，内容到了再展开", () => {
-		expect(play([]).scope.open).toBe(true);
-		expect(play([logsEmpty(true)]).scope.open).toBe(false);
-		expect(play([logsEmpty(true), logsEmpty(false)]).scope.open).toBe(true);
+	it("用户没选过：日志页签读完是空的就收起，内容到了再展开", () => {
+		expect(open([])).toBe(true);
+		expect(open([], true)).toBe(false);
+		expect(open([], false)).toBe(true);
 	});
 
 	it("选中的节点还没有开始：没有日志可看，收起", () => {
-		expect(play([select("report")]).scope.open).toBe(false);
-		expect(play([select("report"), select("fetch")]).scope.open).toBe(true);
-	});
-
-	it("自动决定时内容也要挂着（日志到了才能自动展开）；用户选过之后不再自动", () => {
-		expect(play([logsEmpty(true)]).scope.auto).toBe(true);
-		expect(play([logsEmpty(true), { type: "panel", open: true }]).scope.auto).toBe(false);
-		expect(play([{ type: "panel", open: false }]).scope.auto).toBe(false);
+		expect(open([select("report")])).toBe(false);
+		expect(open([select("report"), select("fetch")])).toBe(true);
 	});
 
 	it("只有日志页签按内容自动收起：别的页签总是展开", () => {
-		const { scope } = play([logsEmpty(true), { type: "tab", tab: "io" }]);
-		expect(scope.open).toBe(true);
-		expect(
-			play([select("report"), { type: "panel", open: null }, { type: "tab", tab: "io" }]).scope
-				.open,
-		).toBe(true);
+		expect(open([{ type: "tab", tab: "io" }], true)).toBe(true);
+		expect(open([select("report"), { type: "tab", tab: "io" }])).toBe(true);
 	});
 
 	it("切页签是用户的选择：面板随之展开，之后不再按内容自动收起", () => {
-		const { scope } = play([logsEmpty(true), { type: "tab", tab: "logs" }]);
-		expect(scope).toMatchObject({ tab: "logs", open: true, auto: false });
+		const events: ScopeEvent[] = [select("report"), { type: "tab", tab: "logs" }];
+		expect(play(events).scope).toMatchObject({ tab: "logs", panel: true });
+		expect(open(events, true)).toBe(true);
 	});
 
 	it("用户展开了就不再因为没有日志收起；收起了就不再因为日志到了展开", () => {
-		expect(play([{ type: "panel", open: true }, logsEmpty(true)]).scope.open).toBe(true);
-		expect(play([{ type: "panel", open: false }, logsEmpty(false)]).scope.open).toBe(false);
+		expect(open([{ type: "panel", open: true }], true)).toBe(true);
+		expect(open([{ type: "panel", open: false }], false)).toBe(false);
 	});
 
 	it("恢复默认（open 为 null）：回到按内容自动决定", () => {
-		const events: ScopeEvent[] = [{ type: "panel", open: true }, logsEmpty(true)];
-		expect(play(events).scope.open).toBe(true);
-		expect(play([...events, { type: "panel", open: null }]).scope.open).toBe(false);
+		const events: ScopeEvent[] = [{ type: "panel", open: true }];
+		expect(open(events, true)).toBe(true);
+		expect(open([...events, { type: "panel", open: null }], true)).toBe(false);
+	});
+
+	it("日志页签要读日志：在日志页签、用户没有收起面板；自动收起时也要读，日志到了才能自动展开", () => {
+		const reads = (events: ScopeEvent[]) => readsLogs(play(events).scope);
+		expect(reads([])).toBe(true);
+		expect(reads([select("report")])).toBe(true);
+		expect(reads([{ type: "panel", open: false }])).toBe(false);
+		expect(
+			reads([
+				{ type: "panel", open: false },
+				{ type: "tab", tab: "logs" },
+			]),
+		).toBe(true);
+		expect(reads([{ type: "tab", tab: "io" }])).toBe(false);
 	});
 });
 
@@ -347,16 +358,16 @@ describe("范围：地址", () => {
 	it("地址里的页签：切过去并展开面板；没给页签时是日志页签、按内容自动展开", () => {
 		expect(opened({ node: "fetch", tab: "attempts" })).toMatchObject({
 			tab: "attempts",
-			open: true,
+			panel: true,
 		});
-		expect(opened({ node: "fetch" })).toMatchObject({ tab: "logs", auto: true });
+		expect(opened({ node: "fetch" })).toMatchObject({ tab: "logs", panel: null });
 	});
 
 	it("带了时刻又给了运行里有的节点：选中它，打开日志页签，定位到那一刻", () => {
 		expect(opened({ node: "verify", at: iso(7) })).toMatchObject({
 			selected: ref("verify"),
 			tab: "logs",
-			open: true,
+			panel: true,
 			locate: { at: at(7) },
 			attempt: { attempt: 1 },
 		});
@@ -401,7 +412,7 @@ describe("范围：地址", () => {
 			opening,
 			opening,
 		]);
-		expect(scope).toMatchObject({ selected: ref("verify"), tab: "logs", open: false });
+		expect(scope).toMatchObject({ selected: ref("verify"), tab: "logs", panel: false });
 		// 页面里清除了选中，同一个地址也不会再把失败的节点选回来。
 		const { scope: cleared } = play(
 			[address({}, failedRun), { type: "select", node: null }, address({}, failedRun)],
@@ -437,7 +448,6 @@ describe("没有变化时返回原来的状态", () => {
 		const events: ScopeEvent[] = [
 			select("verify"),
 			{ type: "attempt", taskId: "verify-task-1" },
-			{ type: "logsEmpty", empty: true },
 			{ type: "tab", tab: "attempts" },
 			{ type: "panel", open: true },
 		];

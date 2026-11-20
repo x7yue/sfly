@@ -44,7 +44,7 @@ import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
 import { LogList, type LogPaging, type LogReveal } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
-import type { LogMoment } from "./monitor-scope";
+import { type LogMoment, panelOpen, readsLogs } from "./monitor-scope";
 import {
 	PLATFORM_KEY,
 	useMonitor,
@@ -67,8 +67,8 @@ import {
 } from "./run-model";
 import type { LoadedLine } from "./task-log-reader";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
-import { runLogDownloadPath, useRunLogs } from "./use-run-logs";
-import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
+import { type RunLogs, runLogDownloadPath, useRunLogs } from "./use-run-logs";
+import { type TaskLogs, taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
 const TABS: [PanelTab, string][] = [
 	["logs", "日志"],
@@ -125,7 +125,6 @@ export function BottomPanel({
 	const filtered = filter ? [...filter].filter((k) => k !== PLATFORM_KEY).length : 0;
 	const scope = useScope(run);
 	const { selected, node, attempt, tab } = scope;
-	const collapsed = !scope.open;
 	const actions = useMonitorActions();
 	const [height, setHeight] = useState<number | null>(null);
 	const panel = useRef<HTMLElement>(null);
@@ -141,17 +140,21 @@ export function BottomPanel({
 			}),
 		[actions],
 	);
-	/** 日志页签报告加载完有没有内容（自动收起的依据）。 */
-	const reportEmpty = useCallback(
-		(empty: boolean) => actions.report({ type: "logsEmpty", empty }),
-		[actions],
-	);
+	const [minLevel, setMinLevel] = useState<MinLevel>("all");
+	const levels = levelsFrom(minLevel);
+	const levelFiltered = minLevel !== "all";
+	// 日志在这里读，不在日志页签的内容里：面板按内容自动收起要先知道日志有没有内容，收起时内容也就不必挂着。
+	// 选中节点时读它那一次尝试的日志，没有选中节点时读合并日志；不在日志页签、或用户收起了面板时不读。
+	const mergedScope = useMemo(() => logScope(run, filter), [run, filter]);
 	/** 没有选中节点时日志页签下载的合并日志：范围与合并视图相同。 */
 	const mergedDownload = useMemo(
-		() => runLogDownloadPath(run.id, logScope(run, filter)),
-		[run, filter],
+		() => runLogDownloadPath(run.id, mergedScope),
+		[run.id, mergedScope],
 	);
-	const [minLevel, setMinLevel] = useState<MinLevel>("all");
+	const reading = readsLogs(scope);
+	const taskLogs = useTaskLogs(reading && attempt ? attempt.task_id : null, levels, scope.locate);
+	const runLogs = useRunLogs(reading && !node ? run.id : null, mergedScope, levels);
+	const collapsed = !panelOpen(scope, hasNoLogs(attempt ? taskLogs : runLogs, levelFiltered));
 	/** E 切到只看 ERROR 之前的级别：再按一次恢复。 */
 	const levelBeforeErrors = useRef<MinLevel>("all");
 	useShortcut("monitor-errors-only", () => {
@@ -291,11 +294,9 @@ export function BottomPanel({
 						</Button>
 					</div>
 				</div>
-				{/* 自动收起时内容仍然挂着（隐藏）：日志到了能自动展开。 */}
-				{(!collapsed || scope.auto) && (
+				{!collapsed && (
 					<TabsContent
 						value={tab}
-						hidden={collapsed}
 						tabIndex={-1}
 						// 各页签的滚动区都预留滚动条的位置：切换页签、内容变长时宽度不跳。
 						className="overflow-hidden shadow-inset-top [&_.overflow-auto]:[scrollbar-gutter:stable]"
@@ -305,12 +306,11 @@ export function BottomPanel({
 								<TaskLogsTab
 									key={attempt.task_id}
 									attempt={attempt}
+									logs={taskLogs}
 									moment={scope.locate}
-									levels={levelsFrom(minLevel)}
-									filtered={minLevel !== "all"}
+									filtered={levelFiltered}
 									timeKind={logTimeKind}
 									day={run.started_at}
-									onEmpty={reportEmpty}
 								/>
 							) : node ? (
 								<Hint>{noAttempt(node)}</Hint>
@@ -319,11 +319,10 @@ export function BottomPanel({
 									key={run.id}
 									run={run}
 									filter={filter}
-									levels={levelsFrom(minLevel)}
-									filtered={minLevel !== "all"}
+									logs={runLogs}
+									filtered={levelFiltered}
 									timeKind={logTimeKind}
 									day={run.started_at}
-									onEmpty={reportEmpty}
 									onOrigin={showOrigin}
 								/>
 							))}
@@ -442,25 +441,26 @@ function Segmented({
 	);
 }
 
+/** 日志读完了、一行也没有：面板按内容自动收起的依据。筛选了级别时不算（筛掉的是用户自己要的）；没读、还在读也不算。 */
+const hasNoLogs = (logs: LogPaging & { lines: unknown[]; loaded: boolean }, filtered: boolean) =>
+	!filtered && logs.loaded && logs.lines.length === 0 && !logs.hasOlder && !logs.hasNewer;
+
 function TaskLogsTab({
 	attempt,
+	logs,
 	moment,
-	levels,
 	filtered,
 	timeKind,
 	day,
-	onEmpty,
 }: {
 	attempt: AttemptView;
+	logs: TaskLogs;
 	/** 要在这次尝试的日志里定位的时刻；不定位时为 null。 */
 	moment: LogMoment | null;
-	levels: LogLineView["level"][];
 	filtered: boolean;
 	timeKind: LogTimeKind;
 	day: string;
-	onEmpty: (empty: boolean) => void;
 }) {
-	const logs = useTaskLogs(attempt.task_id, levels, moment);
 	const reveal = useMemo<LogReveal<LoadedLine> | undefined>(() => {
 		if (!logs.located || !moment) return undefined;
 		const { at_offset, exact_seq } = logs.located;
@@ -481,7 +481,6 @@ function TaskLogsTab({
 			noOutput={attempt.ended_at !== null ? "这次尝试没有日志输出。" : MESSAGE.logOutputPending}
 			timeKind={timeKind}
 			day={day}
-			onEmpty={onEmpty}
 		/>
 	);
 }
@@ -495,25 +494,21 @@ const seqKey = (line: LogLineView) => String(line.seq);
 function RunLogsTab({
 	run,
 	filter,
-	levels,
+	logs,
 	filtered,
 	timeKind,
 	day,
-	onEmpty,
 	onOrigin,
 }: {
 	run: RunView;
 	/** 图表工作区的节点筛选；null 是全部节点。 */
 	filter: ReadonlySet<string> | null;
-	levels: LogLineView["level"][];
+	logs: RunLogs;
 	filtered: boolean;
 	timeKind: LogTimeKind;
 	day: string;
-	onEmpty: (empty: boolean) => void;
 	onOrigin: (line: RunLogLine) => void;
 }) {
-	const scope = useMemo(() => logScope(run, filter), [run, filter]);
-	const logs = useRunLogs(run.id, scope, levels);
 	const origin = useCallback((line: RunLogLine) => logOrigin(run, line), [run]);
 	const truncated = logs.truncatedTasks.map((t) => logOrigin(run, t)).join("、");
 	return (
@@ -528,7 +523,6 @@ function RunLogsTab({
 			noOutput={run.ended_at !== null ? "这次运行没有日志输出。" : MESSAGE.logOutputPending}
 			timeKind={timeKind}
 			day={day}
-			onEmpty={onEmpty}
 		/>
 	);
 }
@@ -546,7 +540,6 @@ function LogsView<L extends LogLineView>({
 	noOutput,
 	timeKind,
 	day,
-	onEmpty,
 }: {
 	logs: LogPaging & {
 		lines: L[];
@@ -573,13 +566,7 @@ function LogsView<L extends LogLineView>({
 	timeKind: LogTimeKind;
 	/** 运行开始的时刻：时间列要不要带日期按它那一天判断。 */
 	day: string;
-	/** 加载完、没有任何日志时为 true。 */
-	onEmpty: (empty: boolean) => void;
 }) {
-	const empty =
-		!filtered && logs.loaded && logs.lines.length === 0 && !logs.hasOlder && !logs.hasNewer;
-	useEffect(() => onEmpty(empty), [empty, onEmpty]);
-	useEffect(() => () => onEmpty(false), [onEmpty]);
 	const zoom = useMonitor((s) => s.zoom);
 	const marker = useMonitor((s) => s.marker);
 	const actions = useMonitorActions();
