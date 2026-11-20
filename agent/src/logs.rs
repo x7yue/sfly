@@ -1117,3 +1117,7 @@ impl Forwarder {
         self.telemetry.send(AgentMessage { body: Some(body) });
     }
 }
+
+#[cfg(test)]
+#[path = "local_protocol_tests.rs"]
+mod local_protocol_tests;
