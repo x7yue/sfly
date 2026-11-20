@@ -1,6 +1,6 @@
 import { type LogLineView, logsApi } from "@sfly/schema";
 import { apiUrl, callApi } from "#/lib/api";
-import { useReader } from "#/lib/reader";
+import { readerKey, useReader } from "#/lib/reader";
 import { openEventSource } from "#/lib/sse";
 import {
 	createTaskLogReader,
@@ -64,7 +64,7 @@ export function useTaskLogs(
 	const { state, reader } = useReader(
 		() => createTaskLogReader(taskLogPorts(taskId, levelKey), { at }),
 		// request 变了（同一时刻再次请求）也要重新定位
-		`${taskId}\n${levelKey}\n${at}\n${moment?.request}`,
+		readerKey(taskId, levelKey, at, moment?.request),
 		emptyTaskLogs,
 	);
 	return {

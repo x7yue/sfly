@@ -31,6 +31,14 @@ export function createStore<S extends object>(initial: S) {
 	};
 }
 
+/**
+ * 一组读取条件的 key：条件不同，key 一定不同。没给的条件（`undefined`、`null`）和内容正好是 "undefined" 的字符串
+ * 也分得开，所以不直接拼字符串。
+ */
+export const readerKey = (
+	...conditions: readonly (string | number | boolean | null | undefined)[]
+) => JSON.stringify(conditions.map((c) => c ?? null));
+
 const NEVER_CHANGES = () => () => {};
 
 /**

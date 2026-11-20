@@ -1,6 +1,6 @@
 import { encodeRunLogScope, type LogLineView, logsApi, type RunLogScope } from "@sfly/schema";
 import { apiUrl, callApi } from "#/lib/api";
-import { useReader } from "#/lib/reader";
+import { readerKey, useReader } from "#/lib/reader";
 import { openEventSource } from "#/lib/sse";
 import {
 	createRunLogReader,
@@ -58,7 +58,7 @@ export function useRunLogs(
 	const level = levels.join(",");
 	const { state, reader } = useReader(
 		() => createRunLogReader(runLogPorts(runId, nodes, level)),
-		`${runId}\n${nodes}\n${level}`,
+		readerKey(runId, nodes, level),
 		emptyRunLogs,
 	);
 	return { ...state, loadOlder: reader?.loadOlder ?? noop };

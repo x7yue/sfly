@@ -6,7 +6,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { apiQuery, callApi } from "#/lib/api";
-import { useReader } from "#/lib/reader";
+import { readerKey, useReader } from "#/lib/reader";
 import { openEventSource } from "#/lib/sse";
 import { useRefetchWhenPollingStops } from "#/lib/use-refetch-when-polling-stops";
 import { type ActionFilter, NO_FILTER } from "./action-details";
@@ -111,7 +111,7 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 				name,
 				failed,
 			}),
-		`${taskId}\n${name}\n${failed}`,
+		readerKey(taskId, name, failed),
 		emptyTaskActions,
 	);
 
