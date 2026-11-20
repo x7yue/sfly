@@ -381,7 +381,7 @@ impl Runtime {
         calls::serve(request, reader, writer, &self.host, task, &self.peers).await;
     }
 
-    /// 任务的结果被 Ack：同一任务没有其他尝试还在手上时，写结束标记或删除任务目录（[`retention::Tracker::task_acked`]）；
+    /// 任务的结果被 Ack：任务落定时（[`Ledger::ack`]），写结束标记或删除任务目录（[`retention::Tracker::task_acked`]）；
     /// 它所属的运行没有别的任务还在手上时，运行的后台进程目录开始算保留期（[`retention::Tracker::run_ended`]）。
     fn acked(&self, task_id: &str, attempt: u32) {
         let Some(settled) = self.ledger.ack(task_id, attempt) else {

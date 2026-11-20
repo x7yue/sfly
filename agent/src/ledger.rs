@@ -153,7 +153,7 @@ impl State {
     }
 }
 
-/// 任务落定（[`Ledger::ack`]）：最后一个还在手上的尝试的结果被 Ack 了。
+/// 任务落定（[`Ledger::ack`]）：这个任务 ID 下最后一个还在手上的（任务, 尝试）的结果被 Ack 了。
 pub(crate) struct Settled {
     /// 它所属的运行里没有别的任务还在手上时，这次运行的 ID：运行在这台 Agent 上结束了。
     pub(crate) run_ended: Option<String>,
@@ -237,8 +237,10 @@ impl Ledger {
         }
     }
 
-    /// 结果被 Ack。结果已发出（待 Ack）的才算；同一任务没有别的尝试还在手上时任务落定，
-    /// 并给出运行有没有结束（[`Settled`]）。
+    /// 结果被 Ack。结果已发出（待 Ack）的才算；这个任务 ID 下没有别的（任务, 尝试）还在手上时任务落定，
+    /// 并给出运行有没有结束（[`Settled`]）。控制面给每次重试一个新的任务 ID（`apps/server/src/engine/ids.ts`
+    /// 的 `taskId` 把尝试算进去），协议上一个任务 ID 只有一个尝试，到不了「同一个任务 ID 有两个尝试在手上」；
+    /// 这里仍按任务 ID 判断，是防着这种到不了的情况：任务目录按任务 ID 命名，别的尝试还在用它时不能写结束标记。
     pub(crate) fn ack(&self, task_id: &str, attempt: u32) -> Option<Settled> {
         let mut state = self.state.lock().unwrap();
         let key = (task_id.to_string(), attempt);
@@ -347,7 +349,7 @@ impl Ledger {
         }
     }
 
-    /// 这个任务现在有没有尝试在手上。
+    /// 这个任务 ID 现在有没有（任务, 尝试）在手上。
     pub(crate) fn holds_task(&self, task_id: &str) -> bool {
         self.state.lock().unwrap().holds_task(task_id)
     }
@@ -660,8 +662,10 @@ mod tests {
         assert!(ledger.held().is_empty());
     }
 
+    /// 协议上一个任务 ID 只有一个尝试（重试是新任务，有新的任务 ID），到不了「同一个任务 ID 有两个尝试在手上」；
+    /// 台账不依赖这一点：两个尝试各占一格，一个的结果被 Ack 时另一个还在手上，任务没有落定，不写结束标记。
     #[tokio::test]
-    async fn two_attempts_of_one_task_are_held_at_the_same_time() {
+    async fn attempts_that_share_a_task_id_are_held_apart() {
         let ledger = Ledger::default();
         start(&ledger, "t", 2, "run");
         ledger.accept(&assign("t", 1, "run")).unwrap();
@@ -671,7 +675,7 @@ mod tests {
             "listed by task and attempt"
         );
 
-        // 第一个尝试的结果被 Ack 时，第二个还在手上：任务没有落定，不写结束标记。
+        // 第一个尝试的结果被 Ack 时，同一个任务 ID 的第二个还在手上：没有落定，不写结束标记。
         ledger.started("t", 1);
         ledger.finish(result("t", 1));
         assert_eq!(sent(&ledger).await, ("t".into(), 1));
@@ -684,9 +688,9 @@ mod tests {
         assert!(ledger.held().is_empty());
     }
 
-    /// 同一任务的另一个尝试的结果已交出、还没发出，也算还在手上。
+    /// 同一个任务 ID 的另一个尝试的结果已交出、还没发出，也算还在手上（同样是协议到不了的情况）。
     #[tokio::test]
-    async fn an_attempt_whose_result_is_not_sent_yet_keeps_the_task_unsettled() {
+    async fn an_unsent_result_keeps_its_task_id_unsettled() {
         let ledger = Ledger::default();
         start(&ledger, "t", 1, "run");
         start(&ledger, "t", 2, "run");

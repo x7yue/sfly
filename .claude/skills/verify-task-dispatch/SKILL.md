@@ -15,7 +15,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 | 不变式 | 白话 |
 |---|---|
-| `NoUnstoppedDuplicate` | 较新的尝试已经启动执行器时，较早的尝试要么已结束，要么已被 `cancel_task` 告知停止 |
+| `NoUnstoppedDuplicate` | 较新的尝试已经启动执行器时，较早的尝试要么已结束，要么已被告知停止（`Ledger::cancel`；Welcome 放弃的是 `Ledger::abandon`） |
 | `SlotBound` | 没被告知停止的任务（安装中和执行中都算）不超过 Agent 的槽位 |
 | `AssignOnlyWhenReady` | 派发只发给已准备好环境、进入了收发循环的 Agent（#219）：任务的租约不会算进 Agent 准备环境的时间 |
 | `AtMostOneSuccess` | 一个节点最多一次尝试被记为 `success` |
