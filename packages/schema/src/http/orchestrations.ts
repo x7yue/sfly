@@ -6,6 +6,7 @@ import {
 	StoredOrchestrationDocument,
 } from "../orchestration-document.js";
 import { ChartDeclaration } from "../package-metadata.js";
+import { removedFieldsIn, removedFieldsMessage } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
@@ -24,11 +25,15 @@ import { FeishuBotName } from "./feishu-bots.js";
  * 和运行的参数、运行预设里的 secret 值是同一个掩码，原值任何接口都读不到。没有默认值（没写或 null）的不动，
  * 普通参数的默认值照常返回。读取方靠「`secret` 为 true 且 `default` 是 SECRET_MASK」认出占位符
  * （`isSecretDefaultPlaceholder`）。保存时占位符的处理见 `saveVersion`。
+ * 已移除的顶层字段（便签 `sticky_notes`）两边都没有：读出时认得并丢掉，保存时带着它被拒绝。
  */
 
-/** 保存的文档不合法时的说明：含已移除种类的节点时，写明是哪些、怎么替换（ADR 0028）。 */
+/**
+ * 保存的文档不合法时的说明：含已移除种类的节点或已移除的顶层字段（便签）时，写明是哪些、怎么办（ADR 0028）。
+ */
 function invalidDocumentMessage(body: object): string {
 	const document = "document" in body ? body.document : undefined;
+	const fields = removedFieldsIn(document);
 	const nodes =
 		typeof document === "object" && document !== null && "nodes" in document
 			? document.nodes
@@ -45,8 +50,12 @@ function invalidDocumentMessage(body: object): string {
 				: [],
 		),
 	});
-	return removed.length > 0
-		? removedNodesMessage(removed)
+	const messages = [
+		...(removed.length > 0 ? [removedNodesMessage(removed)] : []),
+		...(fields.length > 0 ? [removedFieldsMessage(fields)] : []),
+	];
+	return messages.length > 0
+		? messages.join("。")
 		: "document does not match the orchestration schema";
 }
 

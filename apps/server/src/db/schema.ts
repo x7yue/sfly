@@ -11,6 +11,7 @@ import {
 	type PackageMetadata,
 	type RunNotificationTrigger,
 	StoredOrchestrationDocument,
+	withoutRemovedFields,
 } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
@@ -37,8 +38,9 @@ const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode
  * 场景文档（jsonb）：读出时按读到的场景文档 schema 解析，和保存时一样补上默认值。场景版本不可修改，
  * 升级前保存的版本没有后来新增的字段（例如注释框 `annotations`）；所有读文档的地方（接口返回的最新版本、
  * 历史版本、运行绑定的版本，复制、恢复，引擎）都经过这里，拿到的文档和 StoredOrchestrationDocument 的类型一致。
- * 版本里已移除种类的节点（ADR 0028）认得、原样带着配置，不报错；按更早的规则保存、现在已经解析不了的文档
- * 原样返回（历史版本照旧能看）。
+ * 版本里已移除种类的节点（ADR 0028）认得、原样带着配置，不报错；已移除的顶层字段（便签 `sticky_notes`，
+ * 每个移除之前保存的版本都带着）先去掉再解析，读到的文档里没有它们，库里的版本不改；按更早的规则保存、
+ * 现在已经解析不了的文档原样返回（历史版本照旧能看），返回的也是去掉了已移除字段的那一份。
  */
 const orchestrationDocument = customType<{
 	data: StoredOrchestrationDocument;
@@ -47,7 +49,9 @@ const orchestrationDocument = customType<{
 	dataType: () => "jsonb",
 	toDriver: (document) => JSON.stringify(document),
 	fromDriver: (value) => {
-		const stored: unknown = typeof value === "string" ? JSON.parse(value) : value;
+		const stored: unknown = withoutRemovedFields(
+			typeof value === "string" ? JSON.parse(value) : value,
+		);
 		const parsed = StoredOrchestrationDocument.safeParse(stored);
 		return parsed.success
 			? keepRemovedNodeConfig(parsed.data, stored)

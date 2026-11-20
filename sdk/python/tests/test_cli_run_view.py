@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from sfly.cli.removed_document_fields import REMOVED_DOCUMENT_FIELDS, removed_fields_message
 from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
 from sfly.cli.run_view import (
     NODE_STATUS_LABEL,
@@ -82,3 +83,28 @@ def test_the_removed_kinds_are_the_ones_the_control_plane_registers() -> None:
     for label, replacement in REMOVED_NODE_KINDS.values():
         assert label
         assert replacement
+
+
+def test_the_removed_document_fields_are_the_ones_the_control_plane_registers() -> None:
+    """命令行读控制面的 REMOVED_DOCUMENT_FIELDS 导出的 JSON（`pnpm gen`），不另写一份：
+    字段名、名称、替换办法逐项和 removed-document-fields.ts 里登记的一致；
+    拒绝保存时的那一句话（removedFieldsMessage）和命令行本地检查的用同一个句式。"""
+    source = (REPO / "packages/schema/src/removed-document-fields.ts").read_text(encoding="utf-8")
+    body = source[source.index("export const REMOVED_DOCUMENT_FIELDS") :].split("} as const", 1)[0]
+    registered = {
+        field: (label, replacement)
+        for field, label, replacement in re.findall(
+            r'^\t(\w+): \{\n\t\tlabel: "([^"]+)",\n\t\treplacement: "([^"]+)",\n\t\},$',
+            body,
+            re.MULTILINE,
+        )
+    }
+    assert registered, "没有从 removed-document-fields.ts 里读到已移除的字段"
+    assert REMOVED_DOCUMENT_FIELDS == registered
+    assert (
+        "`场景文档里的 ${named}已不再支持，先把这一项删掉再保存。替换办法：${advice}`" in source
+    ), "removedFieldsMessage 的句式变了：命令行的 removed_fields_message 要跟着改"
+    assert removed_fields_message(["sticky_notes"]) == (
+        "场景文档里的 sticky_notes（便签）已不再支持，先把这一项删掉再保存。"
+        "替换办法：便签：要留的内容写进节点的备注或注释框的备注"
+    )

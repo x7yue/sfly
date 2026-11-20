@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import CliError
+from sfly.cli.removed_document_fields import removed_fields_in, removed_fields_message
 from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label, removed_outputs_advice
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -544,7 +545,8 @@ def _check_document(document: Any) -> None:
 
 def _document_problems(document: Any) -> list[str]:
     """场景文档没通过 JSON Schema 校验的地方，每处一行 `  位置: 原因`，按位置排序；通过时为空列表。
-    节点上的错误在位置后面标出节点 id。"""
+    节点上的错误在位置后面标出节点 id。顶层带着已移除的字段（便签 `sticky_notes`，ADR 0028）时
+    不报 JSON Schema 的「不允许的属性」，写明这一项已不再支持、怎么办（和控制面同一句）。"""
     from jsonschema import Draft202012Validator
 
     from sfly.schemas import load_schema
@@ -552,6 +554,11 @@ def _document_problems(document: Any) -> list[str]:
     validator = Draft202012Validator(load_schema("orchestration-document"))
     found: dict[tuple[tuple[bool, int | str], ...], set[str]] = {}
     where: dict[tuple[tuple[bool, int | str], ...], str] = {}
+    removed = removed_fields_in(document)
+    if removed:
+        found[()] = {removed_fields_message(removed)}
+        where[()] = "(根)"
+        document = {k: v for k, v in document.items() if k not in removed}
     for error in validator.iter_errors(document):
         for leaf in _leaves(error):
             key = tuple((isinstance(part, str), part) for part in leaf.absolute_path)

@@ -72,7 +72,6 @@ export function VersionCanvas({
 				nodes={flow.nodes}
 				edges={flow.edges}
 				annotations={document.annotations}
-				stickyNotes={document.sticky_notes ?? []}
 				info={info}
 				selection={selection}
 				onSelect={setSelection}

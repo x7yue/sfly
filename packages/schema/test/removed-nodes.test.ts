@@ -39,7 +39,6 @@ describe("读到的文档认得已移除的节点种类", () => {
 	it("原样带着当时的配置，补上后来新增的字段的默认值", () => {
 		const parsed = StoredOrchestrationDocument.parse(document);
 		expect(parsed.annotations).toEqual([]);
-		expect(parsed.sticky_notes).toEqual([]);
 		const stored = keepRemovedNodeConfig(parsed, document);
 		expect(stored.nodes[1]).toEqual(notify);
 		// 其余节点是解析后的（补了默认值）。

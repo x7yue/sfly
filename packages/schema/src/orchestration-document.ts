@@ -1,10 +1,5 @@
 import { z } from "zod";
-import {
-	optionalLine,
-	optionalMultiline,
-	requiredLine,
-	requiredMultiline,
-} from "./display-text.js";
+import { optionalLine, optionalMultiline, requiredLine } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 import { REMOVED_NODE_KIND_NAMES } from "./removed-nodes.js";
 
@@ -200,48 +195,6 @@ const Annotations = z.array(Annotation).superRefine((annotations, ctx) => {
 	}
 });
 
-/** 便签正文的长度上限（Unicode 字符数），和备注一样。 */
-export const STICKY_NOTE_TEXT_MAX = NODE_NOTE_MAX;
-/** 便签不写大小时的宽高，和能缩到的最小宽高（画布坐标）。 */
-export const STICKY_NOTE_SIZE = { width: 280, height: 168 } as const;
-export const STICKY_NOTE_MIN_SIZE = { width: 160, height: 96 } as const;
-/** 便签宽、高的上限（画布坐标）：拖动改大小时按它截住。 */
-export const STICKY_NOTE_MAX_SIDE = 4000;
-
-/**
- * 便签：画布上自由摆放的说明（检查清单、已知问题、待办），不挂在任何节点上。属于版本内容，只用于显示，
- * 不影响执行（docs/SEMANTICS.md §1.7，ADR 0026）。和注释框不同，它记下自己的位置和大小。
- */
-export const StickyNote = z.strictObject({
-	/** 便签之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `sticky_1`。 */
-	id: z.string().min(1),
-	/** 加粗显示的第一行。 */
-	title: optionalLine(ANNOTATION_TITLE_MAX),
-	/** 正文：以 `- ` 开头的行显示成列表的一项，其余是普通段落。 */
-	text: requiredMultiline(STICKY_NOTE_TEXT_MAX),
-	/** 颜色，和注释框同一套色板；不写就是黄色，画布选黄色时也去掉这一项。 */
-	color: AnnotationColor.optional(),
-	/** 左上角的画布坐标；不写时由整理布局摆放。 */
-	position: Position.optional(),
-	/** 宽高；不写是 STICKY_NOTE_SIZE。 */
-	size: z
-		.strictObject({
-			width: z.number().min(STICKY_NOTE_MIN_SIZE.width).max(STICKY_NOTE_MAX_SIDE),
-			height: z.number().min(STICKY_NOTE_MIN_SIZE.height).max(STICKY_NOTE_MAX_SIDE),
-		})
-		.optional(),
-});
-
-const StickyNotes = z.array(StickyNote).superRefine((notes, ctx) => {
-	const seen = new Set<string>();
-	for (const [i, { id }] of notes.entries()) {
-		if (seen.has(id)) {
-			ctx.addIssue({ code: "custom", path: [i, "id"], message: `便签 ID ${id} 重复` });
-		}
-		seen.add(id);
-	}
-});
-
 const documentOf = <N extends z.ZodType>(node: N) =>
 	z.strictObject({
 		default_agent: z.string().min(1).optional(),
@@ -250,7 +203,6 @@ const documentOf = <N extends z.ZodType>(node: N) =>
 		/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 		packages: z.record(PackageName, z.string().min(1)).default({}),
 		annotations: Annotations.default([]),
-		sticky_notes: StickyNotes.default([]),
 	});
 
 /** 可以保存的场景文档：节点都是现在支持的种类（保存、命令行的本地检查、导出给 Python 的 JSON Schema 用它）。 */
@@ -273,16 +225,10 @@ export type RemovedNode = z.infer<typeof RemovedNode>;
 export type StoredNode = z.infer<typeof StoredNode>;
 export type Annotation = z.infer<typeof Annotation>;
 export type AnnotationColor = z.infer<typeof AnnotationColor>;
-export type StickyNote = z.infer<typeof StickyNote>;
 
 /** 注释框不写颜色时是灰色（ADR 0025）：画布选回灰色时去掉 `color`，版本对比把两种写法当成同一种。 */
 export const ANNOTATION_DEFAULT_COLOR: AnnotationColor = "gray";
-/** 便签不写颜色时是黄色（ADR 0026），规则同上。 */
-export const STICKY_NOTE_DEFAULT_COLOR: AnnotationColor = "yellow";
 
 /** 注释框实际显示的颜色。 */
 export const annotationColor = (annotation: { color?: AnnotationColor | undefined }) =>
 	annotation.color ?? ANNOTATION_DEFAULT_COLOR;
-/** 便签实际显示的颜色。 */
-export const stickyNoteColor = (note: { color?: AnnotationColor | undefined }) =>
-	note.color ?? STICKY_NOTE_DEFAULT_COLOR;

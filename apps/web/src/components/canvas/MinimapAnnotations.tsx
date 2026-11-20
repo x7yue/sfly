@@ -1,11 +1,10 @@
-import { type AnnotationBox, stickyNoteSize } from "@sfly/orchestration";
-import { type Annotation, annotationColor, stickyNoteColor } from "@sfly/schema";
+import type { AnnotationBox } from "@sfly/orchestration";
+import { type Annotation, annotationColor } from "@sfly/schema";
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { PlacedStickyNote } from "./StickyNotes";
 
 /**
- * 小地图上的注释框和便签：按框的范围画一块注释框颜色的底，便签画成它颜色的一块，都排在节点下面（视口外的遮罩还盖在最上面）。
+ * 小地图上的注释框：按框的范围画一块注释框颜色的底，排在节点下面（视口外的遮罩还盖在最上面）。
  * 小地图的 svg 用的就是画布坐标，所以直接按画布上框的范围画。React Flow 的 MiniMap 不接受子元素，
  * 这里在它的 svg 最前面插一个 <g>，把色块渲染进去。
  */
@@ -13,14 +12,12 @@ export function MinimapAnnotations({
 	root,
 	shown,
 	boxes,
-	stickyNotes,
 }: {
 	/** 画布容器（在里面找小地图的 svg）。 */
 	root: RefObject<HTMLElement | null>;
 	/** 小地图是否显示。 */
 	shown: boolean;
 	boxes: readonly AnnotationBox<Annotation>[];
-	stickyNotes: readonly PlacedStickyNote[];
 }) {
 	const [layer, setLayer] = useState<SVGGElement | null>(null);
 	const current = useRef<SVGGElement | null>(null);
@@ -47,36 +44,18 @@ export function MinimapAnnotations({
 	useEffect(() => () => current.current?.remove(), []);
 	if (!layer) return null;
 	return createPortal(
-		[
-			...boxes.map(({ annotation, box }) => (
-				<rect
-					key={annotation.id}
-					data-annotation-color={annotationColor(annotation)}
-					x={box.x}
-					y={box.y}
-					width={box.w}
-					height={box.h}
-					rx={20}
-					style={{ fill: "var(--canvas-annotation-line)" }}
-				/>
-			)),
-			...stickyNotes.map((note) => {
-				const size = stickyNoteSize(note);
-				return (
-					<rect
-						key={`sticky:${note.id}`}
-						data-minimap-sticky={note.id}
-						data-annotation-color={stickyNoteColor(note)}
-						x={note.position.x}
-						y={note.position.y}
-						width={size.width}
-						height={size.height}
-						rx={12}
-						style={{ fill: "var(--canvas-sticky-line)" }}
-					/>
-				);
-			}),
-		],
+		boxes.map(({ annotation, box }) => (
+			<rect
+				key={annotation.id}
+				data-annotation-color={annotationColor(annotation)}
+				x={box.x}
+				y={box.y}
+				width={box.w}
+				height={box.h}
+				rx={20}
+				style={{ fill: "var(--canvas-annotation-line)" }}
+			/>
+		)),
 		layer,
 	);
 }
