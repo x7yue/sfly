@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
+import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage } from "./support";
+import { box, createScenario, publishPackage } from "./support";
 
 // 运行抽屉里的触发前检查显示预检补的三类配置错误（#421）：开发版本没有加载、子流程的参数没有传值、小数接到整数输入。
 // 文字要完整显示（不被截断、不丢）；界面的版面不变，复用已有的检查清单和触发失败的提示。
@@ -27,6 +28,17 @@ const devPackage = {
 		],
 	}),
 };
+
+/** 文字完整显示在检查清单里：折行后整段都在清单的框内（清单框 overflow-hidden，超出的会被裁掉），而且没有被省略号截断。 */
+async function expectNotClipped(text: Locator, list: Locator) {
+	const inner = await box(text);
+	const outer = await box(list);
+	expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+	expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width + 0.5);
+	expect(inner.y + inner.height).toBeLessThanOrEqual(outer.y + outer.height + 0.5);
+	await expect(text).not.toHaveCSS("text-overflow", "ellipsis");
+	expect(await text.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+}
 
 test("开发版本没有加载：检查清单的节点包版本一行写明节点、Agent 和 sfly dev，不能触发，「前往」选中节点", async ({
 	page,
@@ -59,6 +71,7 @@ test("开发版本没有加载：检查清单的节点包版本一行写明节�
 	await expect(checks).toContainText("节点包版本有 1 个问题");
 	const problem = checks.getByText(DEV_MESSAGE);
 	await expect(problem).toBeVisible();
+	await expectNotClipped(problem, checks);
 	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeDisabled();
 
 	await checks.getByRole("button", { name: "前往 d" }).click();
@@ -112,6 +125,7 @@ test("子流程的参数没有传值：检查清单末尾给提醒，写明节�
 			"在这个节点的参数映射里给 host 传值，或者在子流程入口节点给它设默认值",
 	);
 	await expect(warning.getByRole("button", { name: "前往 spawn" })).toBeVisible();
+	await expectNotClipped(warning.getByText(/没有给子流程 汇报（sub）/), checks);
 
 	const trigger = drawer.getByRole("button", { name: "触发运行" });
 	await expect(trigger).toBeEnabled();
