@@ -16,7 +16,8 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 - 规则与 `main` 相同（规则集 `dev`）：只能经 PR 以 squash 方式合入，必须通过 `check` 与 `e2e`，没有人可以绕过。
 - 路线图的 PR 都以 `dev` 为目标：`gh pr create --base dev`，从 `origin/dev` 开分支。分支命名不变。
 - **`dev` 合入 `main` 只在维护者明确说了之后进行**，代理不开这个 PR，也不把路线图的分支指向 `main`。
-  这期间 `main` 上只做维护者要求的修复，修完用一个 PR 把同样的改动带进 `dev`（`main` 的规则集要求线性历史，不能把 `main` 合进 `dev`）。
+  这期间 `main` 上只做维护者要求的修复，修完把同样的改动作为新的改动用一个 PR 带进 `dev`：两个分支都只允许 squash、要求线性历史，
+  不能用合并提交把 `main` 合进 `dev`，squash 也不会让 `main` 上的提交成为 `dev` 的祖先。
 - 合入 `dev` 不会自动关闭 issue：GitHub 的 `Closes #N` 只在合入默认分支时生效。PR 合入 `dev` 后手动关闭对应的 issue，
   评论里写明「已合入 `dev`（#PR 编号），随 `dev` 进 `main`」。
 
@@ -40,7 +41,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - PR 有新的推送时，上一次推送还没跑完的 CI 被取消；`main` 上每个提交的 CI 都跑完，连着合入几个 PR 也不会互相取消。
   `dev` 上连着合入几个 PR 时只保证最新的提交跑完：它不发版，验的是合在一起之后还通过。
 - `e2e` 在 PR 上先完整跑一遍，再把这个 PR 新增或改动的 `apps/web/e2e/**/*.spec.ts`（含 `visual.spec.ts`）重复运行 2–5 次
-  （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 上的 push 不跑重复这一步。
+  （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 和 `dev` 上的 push 不跑重复这一步。
   这一步失败说明用例不稳定，处理见 CODING_STANDARDS「测试」。
 - 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
 - `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。`e2e` 也是汇总：端到端测试分 4 片并行

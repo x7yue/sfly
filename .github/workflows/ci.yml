@@ -196,7 +196,7 @@ jobs:
       - name: Image smoke test
         run: pnpm test:image
 
-  # main 的规则集要求名为 check 与 e2e 的检查通过（docs/agents/branching-and-release.md）：
+  # main 与 dev 的规则集要求名为 check 与 e2e 的检查通过（docs/agents/branching-and-release.md）：
   # 上面四个 job 全部成功才算 check 通过，拆分或合并 job 时不用改规则集。
   check:
     if: ${{ always() }}
@@ -215,7 +215,7 @@ jobs:
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
   # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致。
   # PR 上完整的一遍之后，再把这个 PR 新增或改动的 spec 重复运行几次（scripts/e2e-changed.sh）：
-  # 不稳定的用例在合入前暴露，而不是之后在 CI 或 main 上随机失败。main 上的 push 不跑这一步。
+  # 不稳定的用例在合入前暴露，而不是之后在 CI 或 main 上随机失败。main 和 dev 上的 push 不跑这一步。
   #
   # 分 4 片并行（Playwright --shard，两步都按同一个分片）：每个用例都启动自己的控制面、数据库和浏览器页面，
   # 一台 runner 上 2 个 worker 是 CPU 的上限，墙钟时间约等于用例耗时之和的一半；不分片时完整一遍约 9 分钟，
@@ -277,7 +277,7 @@ jobs:
             apps/web/test-results
           retention-days: 7
 
-  # main 的规则集要求名为 e2e 的检查通过：4 个分片全部成功才算通过，改分片数时不用改规则集。
+  # main 与 dev 的规则集要求名为 e2e 的检查通过：4 个分片全部成功才算通过，改分片数时不用改规则集。
   e2e:
     if: ${{ always() }}
     needs: [e2e-shard]

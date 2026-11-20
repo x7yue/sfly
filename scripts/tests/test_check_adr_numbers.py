@@ -13,7 +13,7 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check-adr-numbers.sh"
 ENV = {
-    **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+    **{k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "ADR_BASE_REF"},
     "GIT_AUTHOR_NAME": "t",
     "GIT_AUTHOR_EMAIL": "t@example.com",
     "GIT_COMMITTER_NAME": "t",
