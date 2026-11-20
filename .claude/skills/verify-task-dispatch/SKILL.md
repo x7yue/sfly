@@ -34,9 +34,9 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 | 配置 | 时序假设 | 期望 |
 |---|---|---|
-| `Safe` | 心跳不迟到，投递及时 | 无违例，约 18.0 万个不同状态 |
-| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 283 万个不同状态 |
-| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 384 万个不同状态 |
+| `Safe` | 心跳不迟到，投递及时 | 无违例，约 32.8 万个不同状态 |
+| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 541 万个不同状态 |
+| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 660 万个不同状态 |
 
 两个时序假设的具体含义：
 - **心跳不迟到**（`LateHeartbeats = FALSE`）：连接正常时，心跳总能在 30 秒租约内被控制面处理，租约只在断线期间过期。Agent 准备环境期间不发心跳，所以这也假设了重连时手上有任务的 Agent 准备环境不超过租约（这时环境早已就绪，只做几项检查；见 #294「不专门处理的边界」）。
@@ -53,7 +53,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 ## 范围：验证了什么，没验证什么
 
-在上面的范围和时序假设内，三个配置各自穷举了所有消息交错、断线时机、执行结果（成功或失败）和租约到期时机。两个时序假设同时不成立（`LateHeartbeats = TRUE` 且 `PromptDelivery = FALSE`）时也在同步提交上穷举过一次，五条性质都成立（约 795 万个不同状态，约 30 秒），没有放进 `check.sh`。以下不在模型里，结论不覆盖：
+在上面的范围和时序假设内，三个配置各自穷举了所有消息交错、断线时机、执行结果（成功或失败）和租约到期时机。两个时序假设同时不成立（`LateHeartbeats = TRUE` 且 `PromptDelivery = FALSE`）时也在同步提交上穷举过一次，五条性质都成立（约 1320 万个不同状态，约 1 分钟），没有放进 `check.sh`。以下不在模型里，结论不覆盖：
 
 - 多个节点或多个运行共享槽位。只有一个节点时同一时刻最多一个尝试在排队，所以 **`#dispatch` 里按 `slots` 计数这一处没有被验证**，`SlotBound` 守护的是「Hello 要上报安装中的任务」和「放弃的任务要杀掉」。
 - 运行取消（`cancel`、`#cancelChain`、`#resendCancels`）、停止子流程（§4.1）、定时和 Sleep 节点、立即更新（UpdateNow）和自更新排空、版本不一致时不派发。`agent_lost` 时的强制取消在模型里，但取消只建模成「被告知停止」，不区分优雅取消和强制取消。
@@ -62,6 +62,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 - 「结果已交出、还没发出」的任务有没有被漏报（#132）：Hello 或心跳少列了这样一个任务，只会让控制面多一次 `agent_lost`、多重试一次（旧尝试已经结束），不会破坏上面五条性质，所以模型里没有对应的性质。漏报还在安装或执行中的任务不一样：`SlotBound` 会抓到（`mutants.sh` 的 `hello-omits-installing`）。这一条由 `agent/src/ledger.rs` 的单元测试守着（`hello_lists_a_task_that_finished_before_it_was_listed` 等）。
 - 动作摘要和明细（`ActionSummary`、`ActionBatch`，#345）：和日志一样走遥测通道，由 `apps/server/src/actions/task-actions.ts` 处理（`engine.ts` `onMessage` 不碰），不回 Ack、不续租约、不改任务状态，对派发协议没有影响。
 - TaskStarted 走遥测通道，可能晚于结果或丢失，模型里断线时丢失、连接时按顺序送达；心跳里的 `started` 补记保证了结论不依赖它。
+  心跳和 Hello 里的 `started` 按执行器子进程有没有启动过如实报，已经结束的任务也一样（`Finished::started`）：没启动就结束的任务（安装失败等）不会被补记成 running、写上开始时间。模型里 `HandStarted` 描述了这一点，但没有性质守着它（它只影响 `startedAt` 记得准不准，不影响上面五条），由 `agent/src/ledger.rs` 的单元测试守着（`a_finished_task_reports_whether_its_executor_ever_started` 等）。
 - 真实时间。租约多久过期、心跳多快，都用上面两个开关表达。
 
 ## 覆盖记录
@@ -81,11 +82,11 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 | `AgentWelcome` | `lib.rs` `run()` 里准备环境之后处理 `welcome.dispositions` 的 ABANDON（`Ledger::abandon`），`serve()` 开头重发待 Ack 的结果（`Ledger::unacked`）、立即发一次心跳（`Ledger::held`） |
 | `AgentRecv` | `lib.rs` `serve()` 的 Assign（`Ledger::accept`）、Cancel（`Ledger::cancel`）与 Ack（`Runtime::acked` → `Ledger::ack`）分支 |
 | `AgentStart` | `lib.rs` `Runtime::run_task` → `start_task` → `Ledger::started`；`agent/src/executor.rs` 发 `TaskStarted` |
-| `AgentFinish` | `lib.rs` `Runtime::run_task` 末尾 `Ledger::finish`（一次持锁把执行中换成结果待发，被放弃的任务的结果在这里丢弃）；`Ledger::cancel` |
+| `AgentFinish` | `lib.rs` `Runtime::run_task` 末尾 `Ledger::finish`（一次持锁把执行中换成结果待发并记下结束时执行器有没有启动过，被放弃的任务的结果在这里丢弃，`Ledger::discarded` 叫醒 `serve`，只影响自更新的排空）；`Ledger::cancel` |
 | `AgentSendResult` / `AgentHeartbeat` | `lib.rs` `serve()` 的 `ledger.next_result`（`Ledger::next_result`）与 `heartbeat.tick` 分支（`Ledger::held`） |
 | 消息定义 | `proto/sfly/agent/v1/agent.proto` 的 Hello、Welcome、TaskAction、AssignTask、CancelTask、TaskResult、Heartbeat、Ack |
 
-Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里的全部，不论阶段），模型里是 `Hand` 和 `HandStarted`；Hello 和每次心跳都按它列出。
+Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里的全部，不论阶段），模型里是 `Hand` 和 `HandStarted`；Hello 和每次心跳都按它列出，每个任务的 `started` 是真实的值：执行中的看执行器现在启动了没有，结果待发和待 Ack 的看结束时启动过没有。
 
 判断一次改动要不要重新检查：
 

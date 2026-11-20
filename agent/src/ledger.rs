@@ -57,9 +57,9 @@ enum Stage {
     /// 执行中：收下之后（含安装节点包的时间）、结束并交出结果之前。
     Running(Running),
     /// 结果已交出，还没发出。
-    Handed { order: u64, result: TaskResult },
+    Handed { order: u64, finished: Finished },
     /// 结果已发出（或新连接开始时收下、等着重发），还没收到 Ack。
-    Unacked(TaskResult),
+    Unacked(Finished),
 }
 
 struct Running {
@@ -70,6 +70,14 @@ struct Running {
     abandoned: bool,
     /// 任务通过「Agent」类型的输入引用的 Agent：节点只能调用它们和自己的能力（[`calls`]）。
     referenced_agents: Vec<ReferencedAgent>,
+}
+
+/// 已经结束的任务：要上报的结果，和它结束之前执行器子进程有没有启动过。
+#[derive(Default)]
+struct Finished {
+    result: TaskResult,
+    /// 结束时 [`Running::started`] 的值，之后不再变。没启动就结束的（安装失败、开发版本没有加载等）是 false。
+    started: bool,
 }
 
 impl Running {
@@ -85,25 +93,30 @@ impl Running {
 }
 
 impl Stage {
+    /// 执行器子进程启动过没有：执行中的看现在，已经结束的看结束时。
+    fn started(&self) -> bool {
+        match self {
+            Stage::Running(running) => running.started,
+            Stage::Handed { finished, .. } | Stage::Unacked(finished) => finished.started,
+        }
+    }
+
     /// 结果待发 → 待 Ack；其它阶段不动。
     fn mark_sent(&mut self) {
-        if let Stage::Handed { result, .. } = self {
-            *self = Stage::Unacked(std::mem::take(result));
+        if let Stage::Handed { finished, .. } = self {
+            *self = Stage::Unacked(std::mem::take(finished));
         }
     }
 }
 
 impl State {
-    /// 手上的任务（任务 ID、尝试、执行器是否已经启动）：台账里的每个阶段都算，已经交出结果的也算。
+    /// 手上的任务（任务 ID、尝试、执行器子进程启动过没有）：台账里的每个阶段都算，已经交出结果的也算；
+    /// 启动过没有按真实的值报，没启动就结束的任务（安装失败等）到结果被 Ack 之前都报没启动过。
     /// 这是「手上」唯一的定义，其余都从它来。
     fn on_hand(&self) -> impl Iterator<Item = (&Key, bool)> {
-        self.attempts.iter().map(|(key, stage)| {
-            let started = match stage {
-                Stage::Running(running) => running.started,
-                Stage::Handed { .. } | Stage::Unacked(_) => true,
-            };
-            (key, started)
-        })
+        self.attempts
+            .iter()
+            .map(|(key, stage)| (key, stage.started()))
     }
 
     fn held(&self) -> Vec<RunningTask> {
@@ -134,7 +147,7 @@ impl State {
         let stage = self.attempts.get_mut(&key)?;
         stage.mark_sent();
         match stage {
-            Stage::Unacked(result) => Some(result.clone()),
+            Stage::Unacked(finished) => Some(finished.result.clone()),
             _ => None,
         }
     }
@@ -175,8 +188,8 @@ impl Ledger {
         }
     }
 
-    /// 任务结束：在一次持锁里把「执行中」换成「结果待发」。被放弃的任务的结果丢弃，任务也不再在手上：
-    /// 没有结果要发，叫醒 [`Ledger::discarded`]。
+    /// 任务结束：在一次持锁里把「执行中」换成「结果待发」，带着结束时执行器有没有启动过（心跳和 Hello 据此报
+    /// `started`）。被放弃的任务的结果丢弃，任务也不再在手上：没有结果要发，叫醒 [`Ledger::discarded`]。
     pub(crate) fn finish(&self, result: TaskResult) {
         let key = (result.task_id.clone(), result.attempt);
         let wake = {
@@ -186,18 +199,19 @@ impl Ledger {
                 matches!(previous, Some(Stage::Running(_))),
                 "finished a task that was not running: {key:?}"
             );
-            if matches!(
-                previous,
-                Some(Stage::Running(Running {
-                    abandoned: true,
-                    ..
-                }))
-            ) {
+            let (abandoned, started) = match previous {
+                Some(Stage::Running(running)) => (running.abandoned, running.started),
+                _ => (false, false),
+            };
+            if abandoned {
                 &self.discarded
             } else {
                 let order = state.next_order;
                 state.next_order += 1;
-                state.attempts.insert(key, Stage::Handed { order, result });
+                let finished = Finished { result, started };
+                state
+                    .attempts
+                    .insert(key, Stage::Handed { order, finished });
                 &self.handed
             }
         };
@@ -250,6 +264,7 @@ impl Ledger {
 
     /// 新连接开始时清点手上的任务（Hello 的 running_tasks）：断线期间（或连接之间）交出的结果当作待 Ack，
     /// 随后重发；清点和换阶段在同一次持锁里，任务要么还在执行，要么结果已交出，不会漏报（#132）。
+    /// 每个任务的 `started` 是真实的值，已经结束的也一样。
     pub(crate) fn hello(&self) -> Vec<RunningTask> {
         let mut state = self.state.lock().unwrap();
         for stage in state.attempts.values_mut() {
@@ -259,7 +274,8 @@ impl Ledger {
     }
 
     /// 手上的任务（心跳的 running_tasks）：正在执行（含安装中）的，加上已经结束、结果还没收到 Ack 的，
-    /// 包括结果已交出、还没发出的。按（任务 ID, 尝试）排序。
+    /// 包括结果已交出、还没发出的。每个任务的 `started` 是真实的值：没启动就结束的任务报 false。
+    /// 按（任务 ID, 尝试）排序。
     pub(crate) fn held(&self) -> Vec<RunningTask> {
         self.state.lock().unwrap().held()
     }
@@ -271,7 +287,7 @@ impl Ledger {
             .attempts
             .values()
             .filter_map(|stage| match stage {
-                Stage::Unacked(result) => Some(result.clone()),
+                Stage::Unacked(finished) => Some(finished.result.clone()),
                 _ => None,
             })
             .collect()
@@ -386,13 +402,17 @@ mod tests {
         }
     }
 
-    /// 手上的任务，写成 (任务 ID, 尝试, 执行器是否已启动)。
-    fn held(ledger: &Ledger) -> Vec<(String, u32, bool)> {
-        ledger
-            .held()
+    /// 清点出的任务，写成 (任务 ID, 尝试, 执行器是否已启动)。
+    fn listed(tasks: Vec<RunningTask>) -> Vec<(String, u32, bool)> {
+        tasks
             .into_iter()
             .map(|t| (t.task_id, t.attempt, t.started))
             .collect()
+    }
+
+    /// 手上的任务（[`Ledger::held`]）。
+    fn held(ledger: &Ledger) -> Vec<(String, u32, bool)> {
+        listed(ledger.held())
     }
 
     fn entry(task_id: &str, attempt: u32, started: bool) -> (String, u32, bool) {
@@ -439,12 +459,22 @@ mod tests {
         ledger.accept(&assign("installing", 1, "run")).unwrap();
         ledger.finish(result("done", 1));
         assert_eq!(
-            ledger
-                .hello()
-                .into_iter()
-                .map(|t| (t.task_id, t.attempt, t.started))
-                .collect::<Vec<_>>(),
+            listed(ledger.hello()),
             [entry("done", 1, true), entry("installing", 1, false)]
+        );
+    }
+
+    /// 没启动就结束的任务在 Hello 里也报没启动过：断线期间交出的结果当作待 Ack，`started` 不因此变成 true。
+    #[test]
+    fn hello_reports_a_task_that_finished_without_starting_as_not_started() {
+        let ledger = Ledger::default();
+        ledger.accept(&assign("never-started", 1, "run")).unwrap();
+        ledger.finish(result("never-started", 1));
+        assert_eq!(listed(ledger.hello()), [entry("never-started", 1, false)]);
+        assert_eq!(
+            held(&ledger),
+            [entry("never-started", 1, false)],
+            "now waiting for its ack"
         );
     }
 
@@ -455,6 +485,27 @@ mod tests {
         start(&ledger, "a", 1, "run");
         ledger.finish(result("a", 1));
         assert_eq!(held(&ledger), [entry("a", 1, true)]);
+    }
+
+    /// 执行器没启动就结束的任务（安装失败、开发版本没有加载等）：结果待发、待 Ack 两个阶段都报没启动过。
+    /// 控制面把心跳里 `started` 的任务从派发阶段改成 running、写上开始时间，没启动过的任务不能这样记。
+    /// 启动过的任务两个阶段都报启动过。
+    #[tokio::test]
+    async fn a_finished_task_reports_whether_its_executor_ever_started() {
+        let ledger = Ledger::default();
+        ledger.accept(&assign("never-started", 1, "run")).unwrap();
+        start(&ledger, "started", 1, "run");
+        let expected = [entry("never-started", 1, false), entry("started", 1, true)];
+
+        ledger.finish(result("never-started", 1));
+        ledger.finish(result("started", 1));
+        assert_eq!(held(&ledger), expected, "results handed over, not sent");
+
+        assert_eq!(sent(&ledger).await, ("never-started".into(), 1));
+        assert_eq!(held(&ledger), expected, "first result sent, not acked");
+
+        assert_eq!(sent(&ledger).await, ("started".into(), 1));
+        assert_eq!(held(&ledger), expected, "both results sent, not acked");
     }
 
     /// #117：结果的 Ack 来得再快，任务也不会还当成在手上而漏写结束标记。

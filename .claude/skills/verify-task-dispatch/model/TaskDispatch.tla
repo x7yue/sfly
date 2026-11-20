@@ -27,7 +27,7 @@ VARIABLES
     ready,       \* 控制面这条连接已收到 Welcome 之后的第一次心跳（agent-hub.ts 连接阶段 ready）：只有这时才派发
     toCP,        \* Agent -> 控制面 的 gRPC 流（TaskStarted / TaskResult / Heartbeat）
     toAgent,     \* 控制面 -> Agent 的 gRPC 流（Assign / Cancel / Ack）
-    ag,          \* Agent 上每次尝试：none | held（台账里执行中，安装/准备中）| started（执行器已启动）| done（run_task 已结束）
+    ag,          \* Agent 上每次尝试：none | held（台账里执行中，安装/准备中）| started（执行器已启动）| done（run_task 已结束，执行器启动过）| doneUnstarted（run_task 已结束，执行器没启动过：安装失败等）
     stopSig,     \* Agent 已对它调用 Ledger::cancel（被告知停止）的尝试
     chan,        \* 台账里结果待发（已交出、还没发出）的结果 <<attempt, ok>>
     unacked,     \* 台账里待 Ack（已上报，或重连时收下等着重发）的结果 <<attempt, ok>>
@@ -45,7 +45,10 @@ StartedOnAgent == {b \in Attempts : ag[b] = "started"}
 \* agent/src/ledger.rs Ledger::held：手上的任务就是台账里的全部，不论在哪个阶段：执行中的（安装中的和执行器
 \* 已启动的）、结果已交出还没发出的（chan）、结果还没收到 Ack 的（unacked）。Hello 和每次心跳都按它列出。
 Hand == Holding \cup AttemptsOf(chan) \cup AttemptsOf(unacked)
-HandStarted == StartedOnAgent \cup AttemptsOf(chan) \cup AttemptsOf(unacked)
+\* 心跳和 Hello 里的 started：agent/src/ledger.rs State::on_hand 按真实的值报。执行中的看执行器现在启动了没有（Running::started），
+\* 已经结束、结果还在台账里的（chan、unacked）看结束时启动过没有（Finished::started）：没启动就结束的（done 变成 doneUnstarted）报 false。
+StartedHand(S) == StartedOnAgent \cup (S \cap {b \in Attempts : ag[b] = "done"})
+HandStarted == StartedHand(AttemptsOf(chan) \cup AttemptsOf(unacked))
 
 \* engine.ts #failTask：任务 failed；可重试时在同一个 Agent 上排队 attempt + 1。
 \* 所有失败（node_error / timeout / agent_lost）都按 retries 重试。
@@ -191,7 +194,7 @@ AgentWelcome ==
           /\ toCP' = toCP \o ResultMsgs(rest)
                      \o <<[type    |-> "hb",
                            held    |-> Holding \cup AttemptsOf(chan) \cup AttemptsOf(rest),
-                           started |-> StartedOnAgent \cup AttemptsOf(chan) \cup AttemptsOf(rest)]>>
+                           started |-> StartedHand(AttemptsOf(chan) \cup AttemptsOf(rest))]>>
     /\ conn' = "up"
     /\ UNCHANGED <<cp, suspects, ready, toAgent, ag, chan, hello, welcome, okFinished>>
 
@@ -221,12 +224,13 @@ AgentStart(a) ==
     /\ UNCHANGED <<cp, suspects, conn, ready, toAgent, stopSig, chan, unacked, abandoned,
                    hello, welcome, okFinished>>
 
-\* lib.rs run_task 结束：Ledger::finish 在一次持锁里把执行中换成结果待发；被放弃的尝试的结果直接丢弃，
-\* 它也不再在手上。成功只可能来自真正执行了、没有被取消的尝试；安装失败、节点失败、被杀都是失败。
+\* lib.rs run_task 结束：Ledger::finish 在一次持锁里把执行中换成结果待发，并带上结束时执行器启动过没有（Finished::started）；
+\* 被放弃的尝试的结果直接丢弃，它也不再在手上（Ledger::discarded 叫醒 serve，只影响自更新的排空，模型里没有）。
+\* 成功只可能来自真正执行了、没有被取消的尝试；安装失败（执行器没启动，start_task 返回 Err）、节点失败、被杀都是失败。
 AgentFinish(a, ok) ==
     /\ ag[a] \in {"held", "started"}
     /\ ok => (ag[a] = "started" /\ a \notin stopSig)
-    /\ ag' = [ag EXCEPT ![a] = "done"]
+    /\ ag' = [ag EXCEPT ![a] = IF ag[a] = "started" THEN "done" ELSE "doneUnstarted"]
     /\ chan' = IF a \in abandoned THEN chan ELSE chan \cup {<<a, ok>>}
     /\ abandoned' = abandoned \ {a}
     /\ okFinished' = IF ok THEN okFinished \cup {a} ELSE okFinished
@@ -268,7 +272,7 @@ InFlight == Len(toCP) <= MaxInFlight /\ Len(toAgent) <= MaxInFlight
 
 TypeOK ==
     /\ cp \in [Attempts -> {"none", "queued", "dispatched", "running", "success", "failed"}]
-    /\ ag \in [Attempts -> {"none", "held", "started", "done"}]
+    /\ ag \in [Attempts -> {"none", "held", "started", "done", "doneUnstarted"}]
     /\ conn \in {"down", "hello", "welcome", "up"}
     /\ ready \in BOOLEAN
     /\ suspects \subseteq Attempts
