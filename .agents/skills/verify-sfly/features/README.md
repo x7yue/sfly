@@ -4,7 +4,7 @@
 
 ## 基线前提
 
-- `$V/up.sh` 启动的环境，`$V/doctor.sh` 全部 ok（`V=.claude/skills/verify-sfly/scripts`）。
+- `$V/up.sh` 启动的环境，`$V/doctor.sh` 全部 ok（`V=.agents/skills/verify-sfly/scripts`）。
 - `source ~/.local/state/sfly-verify/current/state.env`，再设 `S="--session $BROWSER_SESSION"`。
 - 已运行 `$V/publish-stub.sh`，`sfly-stub@0.1.0` 已发布，`verify-agent` 在线、有 4 个槽位。
 - 浏览器视口是 1440×900，昵称已填（首次打开会弹「欢迎使用 sfly」）。

@@ -23,7 +23,7 @@
 | `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh` |
 | `pnpm heavy [--pg] <命令>` | 重型命令（完整测试、`pnpm test:e2e*`、`pnpm linux` 整套、`pnpm perf`）在本机同一把 flock 锁上排队、前台运行，并把 `TMPDIR`、`CARGO_TARGET_DIR` 指向按工作区区分的短目录（Unix socket 路径不能超过 108 字节）。多个工作区同时跑时用它。`--pg` 为这次运行单独起一个 PostgreSQL 容器并设置 `DATABASE_URL`，结束时删掉，避免共用的库超过连接上限；`pnpm heavy --clean` 删掉短目录和这个工作区没人在用的 PostgreSQL 容器（还有 heavy 在跑时保留短目录和它的容器）。同名、位置不同的两个检出会共用短目录和容器标签，目录名要不同。macOS 的 flock 用 `brew install flock` 安装，CI 上不加锁；锁文件和目录用 `SFLY_HEAVY_LOCK`、`SFLY_HEAVY_TMP_ROOT` 改，见 `scripts/heavy.sh` |
 | `pnpm proto:breaking` | buf breaking 检查 |
-| `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main`、PR（含草稿），以及手动触发；CI 里按语言拆成并行的 job） |
+| `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main` 和 `dev`、PR（含草稿），以及手动触发；CI 里按语言拆成并行的 job） |
 | `pnpm test:e2e` | 构建 API 客户端和前端并运行 Playwright 端到端测试与视觉回归（`apps/web/e2e`；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
 | `pnpm test:e2e:docker` | 在 Playwright 官方镜像中运行（与 CI 相同，视觉基线以它为准；加 `--update-snapshots` 更新基线） |
 | `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0；Linux 用 `taskset`，macOS 在 Playwright 镜像里用 `docker --cpus=2`。CI 上失败的用例用 `pnpm ci:failures` 查 |
@@ -113,5 +113,5 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 
 ## 约定
 
-- 主分支：`main`，受保护，只能经 PR 以 squash 方式合入；分支命名、PR 与发版规范见 [docs/agents/branching-and-release.md](./docs/agents/branching-and-release.md)
+- 主分支：`main`，受保护，只能经 PR 以 squash 方式合入；`dev` 是路线图的集成分支，规则相同，路线图的 PR 以它为目标；分支命名、PR、`dev` 与发版规范见 [docs/agents/branching-and-release.md](./docs/agents/branching-and-release.md)
 - 提交信息使用祈使句，简洁说明改动意图
