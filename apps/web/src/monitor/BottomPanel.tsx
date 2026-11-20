@@ -44,14 +44,19 @@ import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
 import { LogList, type LogPaging, type LogReveal } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
-import { PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
-import { type NodeRef, nodeKey, sameNode } from "./node-ref";
+import type { LogMoment } from "./monitor-scope";
+import {
+	PLATFORM_KEY,
+	useMonitor,
+	useMonitorActions,
+	useScope,
+	useTimeAxis,
+} from "./monitor-state";
+import { type NodeRef, nodeKey } from "./node-ref";
 import type { PanelTab } from "./run-link";
 import { runLineKey } from "./run-log-reader";
 import {
-	attemptAt,
 	documentNodes,
-	findNode,
 	logOrigin,
 	logScope,
 	MASK,
@@ -63,7 +68,7 @@ import {
 import type { LoadedLine } from "./task-log-reader";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
 import { runLogDownloadPath, useRunLogs } from "./use-run-logs";
-import { type LogMoment, taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
+import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
 const TABS: [PanelTab, string][] = [
 	["logs", "日志"],
@@ -101,7 +106,7 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 
 /**
  * 底部面板（原型 bpBody）：日志、动作、尝试、输入输出、产物五个页签，范围跟随时间线上选中的节点
- * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter），两者都没有时是全部节点：
+ * （共享状态 scope，规则在 monitor-scope.ts）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter），两者都没有时是全部节点：
  * 日志页签把范围内节点的日志合并显示（#222、#224），点来源节点名切到这个节点的单节点日志。
  * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
  * 页签与展开状态在共享状态里（顶栏的失败摘要会切到「尝试」页签）。用户还没有展开 / 收起、拖动或切换过页签时，
@@ -115,53 +120,32 @@ export function BottomPanel({
 	run: RunView;
 	doc: OrchestrationDocument | undefined;
 }) {
-	const selected = useMonitor((s) => s.selected);
-	const logMoment = useMonitor((s) => s.logMoment);
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
 	const filtered = filter ? [...filter].filter((k) => k !== PLATFORM_KEY).length : 0;
-	const tab = useMonitor((s) => s.panelTab);
-	const panelOpen = useMonitor((s) => s.panelOpen);
+	const scope = useScope(run);
+	const { selected, node, attempt, tab } = scope;
+	const collapsed = !scope.open;
 	const actions = useMonitorActions();
 	const [height, setHeight] = useState<number | null>(null);
-	/** 日志页签加载完、没有任何日志（自动收起的依据）。 */
-	const [logsEmpty, setLogsEmpty] = useState(false);
 	const panel = useRef<HTMLElement>(null);
-	const node = findNode(run, selected);
-	const [attemptId, setAttemptId] = useState<string | null>(null);
 	/** 「动作」页签的筛选条件，记在这里：切到日志再回来还在；换了尝试（任务）就回到不筛选。 */
 	const [actionFilterOf, setActionFilterOf] = useState<{ taskId: string; filter: ActionFilter }>();
 	const logTab = useRef<HTMLButtonElement>(null);
-	const refKey = selected ? `${selected.chainInstanceId}:${selected.nodeId}` : "";
-	/** 从合并视图点来源节点名选中节点时，要看的那一次尝试：换节点时默认是最近一次，这里例外。 */
-	const pendingAttempt = useRef<string | null>(null);
-	/** 定位日志的请求：只对它指定的节点有效。 */
-	const moment = logMoment && sameNode(logMoment.node, selected) ? logMoment : null;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 换节点、或有新的定位请求时，回到默认的那一次尝试
-	useEffect(() => {
-		setAttemptId(pendingAttempt.current);
-		pendingAttempt.current = null;
-	}, [refKey, moment?.request]);
 	const showOrigin = useCallback(
-		(line: RunLogLine) => {
-			pendingAttempt.current = line.task_id;
-			actions.select({ chainInstanceId: line.chain_instance_id, nodeId: line.node_id });
-		},
+		(line: RunLogLine) =>
+			actions.report({
+				type: "origin",
+				node: { chainInstanceId: line.chain_instance_id, nodeId: line.node_id },
+				taskId: line.task_id,
+			}),
 		[actions],
 	);
-	/** 定位的时刻落在的那一次尝试（它早于所有尝试时是最近一次）。 */
-	const momentAttempt =
-		node && moment ? (attemptAt(node, moment.at) ?? node.attempts.at(-1)) : undefined;
-	const attempt =
-		node?.attempts.find((a) => a.task_id === attemptId) ??
-		momentAttempt ??
-		node?.attempts.at(-1) ??
-		undefined;
-	// 范围里的那一次尝试写进共享状态：范围换了（换节点、切尝试），时间线滚到那个节点。
-	const scopeTask = node ? (attempt?.task_id ?? null) : null;
-	useEffect(() => {
-		actions.setScopeTask(scopeTask);
-	}, [actions, scopeTask]);
+	/** 日志页签报告加载完有没有内容（自动收起的依据）。 */
+	const reportEmpty = useCallback(
+		(empty: boolean) => actions.report({ type: "logsEmpty", empty }),
+		[actions],
+	);
 	/** 没有选中节点时日志页签下载的合并日志：范围与合并视图相同。 */
 	const mergedDownload = useMemo(
 		() => runLogDownloadPath(run.id, logScope(run, filter)),
@@ -177,13 +161,10 @@ export function BottomPanel({
 		}
 		if (minLevel !== "error") levelBeforeErrors.current = minLevel;
 		setMinLevel("error");
-		actions.showPanel("logs");
+		actions.report({ type: "tab", tab: "logs" });
 	});
 	const logTimeKind = useLogTimeKind();
 
-	/** 选中的节点还没有开始：没有日志可看。其余情况（单个尝试、合并视图）由日志页签自己报告有没有内容。 */
-	const empty = tab === "logs" && ((node !== undefined && !attempt) || logsEmpty);
-	const collapsed = panelOpen === null ? empty : !panelOpen;
 	// 收起时只剩标签行；默认占满图表工作区下面剩下的高度；拖动以后是拖到的高度。最高到图表工作区和底部面板共有的
 	// 高度减去图表的最小高度：窗口变矮、时间线调高时图表先让出高度，面板不会被挤出窗口。
 	const highest = `calc(100% - ${CHARTS_MIN_HEIGHT}px)`;
@@ -213,18 +194,18 @@ export function BottomPanel({
 				min={COLLAPSED_HEIGHT}
 				max={() => window.innerHeight * 0.7}
 				onResize={(h) => {
-					actions.setPanelOpen(true);
+					actions.report({ type: "panel", open: true });
 					setHeight(h);
 				}}
 				onReset={() => {
 					// 恢复默认：默认高度，展开与否回到按内容自动决定。
-					actions.setPanelOpen(null);
+					actions.report({ type: "panel", open: null });
 					setHeight(null);
 				}}
 			/>
 			<Tabs
 				value={tab}
-				onValueChange={(value) => actions.showPanel(value as PanelTab)}
+				onValueChange={(value) => actions.report({ type: "tab", tab: value as PanelTab })}
 				className="contents"
 			>
 				<div className="flex h-9 flex-none items-center border-b border-border-soft pl-1.5">
@@ -258,7 +239,7 @@ export function BottomPanel({
 									? `（${attemptLabel(attempt.attempt)}）`
 									: "") + (zoom && tab === "logs" ? " · 已按时间范围过滤" : "")
 							}
-							onClear={() => actions.select(null)}
+							onClear={() => actions.report({ type: "select", node: null })}
 						>
 							{filter ? `范围：跟随筛选（${filtered} 个节点）` : "范围：全部节点"}
 						</ScopeLabel>
@@ -267,7 +248,7 @@ export function BottomPanel({
 								label="尝试"
 								value={attempt?.task_id ?? ""}
 								options={node.attempts.map((a) => [a.task_id, attemptLabel(a.attempt)])}
-								onChange={setAttemptId}
+								onChange={(taskId) => actions.report({ type: "attempt", taskId })}
 							/>
 						)}
 						{tab === "logs" && (
@@ -301,13 +282,17 @@ export function BottomPanel({
 								)}
 							</>
 						)}
-						<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => actions.report({ type: "panel", open: collapsed })}
+						>
 							{collapsed ? ACTION.expand : ACTION.collapse}
 						</Button>
 					</div>
 				</div>
 				{/* 自动收起时内容仍然挂着（隐藏）：日志到了能自动展开。 */}
-				{(!collapsed || panelOpen === null) && (
+				{(!collapsed || scope.auto) && (
 					<TabsContent
 						value={tab}
 						hidden={collapsed}
@@ -320,13 +305,12 @@ export function BottomPanel({
 								<TaskLogsTab
 									key={attempt.task_id}
 									attempt={attempt}
-									// 用户切到了别的尝试时不定位：那一刻不在它的日志里。
-									moment={attempt === momentAttempt ? moment : null}
+									moment={scope.locate}
 									levels={levelsFrom(minLevel)}
 									filtered={minLevel !== "all"}
 									timeKind={logTimeKind}
 									day={run.started_at}
-									onEmpty={setLogsEmpty}
+									onEmpty={reportEmpty}
 								/>
 							) : node ? (
 								<Hint>{noAttempt(node)}</Hint>
@@ -339,7 +323,7 @@ export function BottomPanel({
 									filtered={minLevel !== "all"}
 									timeKind={logTimeKind}
 									day={run.started_at}
-									onEmpty={setLogsEmpty}
+									onEmpty={reportEmpty}
 									onOrigin={showOrigin}
 								/>
 							))}
@@ -356,7 +340,7 @@ export function BottomPanel({
 									onFilter={(filter) => setActionFilterOf({ taskId: attempt.task_id, filter })}
 									onLocate={(at) => {
 										if (!selected) return;
-										actions.locateLog(selected, at);
+										actions.report({ type: "locate", node: selected, at });
 										// 「动作」页签被日志换掉，焦点不留在已经消失的按钮上：交给日志页签。
 										logTab.current?.focus();
 									}}

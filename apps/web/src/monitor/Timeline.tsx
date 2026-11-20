@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionLegend, ActionTracks } from "./ActionTracks";
 import type { PreparedTracks, TrackView } from "./action-tracks";
-import { useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
+import { useMonitor, useMonitorActions, useScope, useTimeAxis } from "./monitor-state";
 import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 import {
 	chainLabelParts,
@@ -110,7 +110,7 @@ const spanOf = (segments: Segment[]) =>
 export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocument | undefined }) {
 	const { range, extent, live, following, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
-	const selected = useMonitor((s) => s.selected);
+	const { selected, attempt } = useScope(run);
 	const actions = useMonitorActions();
 	// 链或节点很多时默认汇总（打开页面时定一次，之后以用户的切换为准）。
 	const [mode, setMode] = useState(() =>
@@ -165,7 +165,14 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 	const trackView = useMemo(() => ({ range, now, width }), [range, now, width]);
 	const [hidden, setHidden] = useState(false);
 	const rows = useRef<HTMLDivElement>(null);
-	const reveal = useRevealScope({ body, rows, chains, isOpen });
+	const reveal = useRevealScope({
+		body,
+		rows,
+		chains,
+		isOpen,
+		selected,
+		scopeTask: attempt?.task_id ?? null,
+	});
 
 	const selectedNode = findNode(run, selected);
 	const selectedSegments = useMemo(
@@ -391,14 +398,17 @@ function useRevealScope({
 	rows,
 	chains,
 	isOpen,
+	selected,
+	scopeTask,
 }: {
 	body: React.RefObject<HTMLDivElement | null>;
 	rows: React.RefObject<HTMLDivElement | null>;
 	chains: readonly ChainRunView[];
 	isOpen: (chain: Pick<ChainRunView, "id">) => boolean;
+	/** 范围里的节点和看的那一次尝试的任务 ID（共享状态的 scope，见 monitor-scope.ts）。 */
+	selected: NodeRef | null;
+	scopeTask: string | null;
 }) {
-	const selected = useMonitor((s) => s.selected);
-	const scopeTask = useMonitor((s) => s.scopeTask);
 	const rowOf = (chainId: string, nodeId: string | null) =>
 		nodeId !== null && isOpen({ id: chainId })
 			? `[data-node-item="${CSS.escape(nodeKey({ chainInstanceId: chainId, nodeId }))}"]`
@@ -587,7 +597,10 @@ function Rows({
 					.find((el) => el instanceof HTMLElement && el.dataset.segment);
 				const ref = hit instanceof HTMLElement ? hit.dataset : undefined;
 				if (ref?.chain && ref.node)
-					actions.select({ chainInstanceId: ref.chain, nodeId: ref.node });
+					actions.report({
+						type: "select",
+						node: { chainInstanceId: ref.chain, nodeId: ref.node },
+					});
 			}}
 			onPointerCancel={() => setBrush(null)}
 		>
@@ -680,7 +693,7 @@ function ChainRows({
 	tracksOf: (nodeId: string) => PreparedTracks | undefined;
 	onToggle: () => void;
 }) {
-	const selected = useMonitor((s) => s.selected);
+	const selected = useMonitor((s) => s.scope.selected);
 	const status = chainRunStatus(chain, cancelling);
 	const segments = chain.nodes.map((n) => nodeSegments(n, now));
 	const end = chain.ended_at ? Date.parse(chain.ended_at) : now;
@@ -840,7 +853,7 @@ function NodeRow({
 									)
 									.join("；") || undefined
 							}
-							onClick={() => actions.select(selected ? null : ref)}
+							onClick={() => actions.report({ type: "select", node: selected ? null : ref })}
 							className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
 							style={{ paddingLeft: 30 + indent }}
 						/>

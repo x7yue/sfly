@@ -86,13 +86,6 @@ export function findNode(run: RunView, ref: NodeRef | null): NodeRunView | undef
 }
 
 /**
- * 那一刻（控制面时间，毫秒）落在节点的哪一次尝试里：开始时间不晚于那一刻的最后一次。同一个节点的尝试一次只有一个在执行，
- * 所以这次尝试要么正在执行，要么是下一次开始之前的最后一次；早于第一次尝试、或没有开始过的尝试时为 undefined。
- */
-export const attemptAt = (node: NodeRunView, at: number): AttemptView | undefined =>
-	node.attempts.filter((a) => a.started_at !== null && Date.parse(a.started_at) <= at).at(-1);
-
-/**
  * 合并日志里一行的来源节点（#220）：「子流程名 / 显示名称（节点 ID） #尝试序号」。主链省略子流程名；
  * 显示名称取自运行视图（日志行只带节点 ID）；节点只有一次尝试时省略尝试序号（运行视图里还没有新的尝试时，
  * 按这一行自己的序号判断）。

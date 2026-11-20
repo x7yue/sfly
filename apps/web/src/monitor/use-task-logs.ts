@@ -2,6 +2,7 @@ import { type LogLineView, logsApi } from "@sfly/schema";
 import { apiUrl, callApi } from "#/lib/api";
 import { readerKey, useReader } from "#/lib/reader";
 import { openEventSource } from "#/lib/sse";
+import type { LogMoment } from "./monitor-scope";
 import {
 	createTaskLogReader,
 	emptyTaskLogs,
@@ -36,12 +37,6 @@ function taskLogPorts(taskId: string, levelKey: string): TaskLogPorts {
 export interface TaskLogs extends TaskLogState {
 	loadOlder: () => void;
 	loadNewer: () => void;
-}
-
-/** 要在日志里定位的时刻（控制面时间，毫秒）；`request` 变了就重新定位（monitor-state.tsx 的 logMoment）。 */
-export interface LogMoment {
-	at: number;
-	request: number;
 }
 
 const noop = () => {};

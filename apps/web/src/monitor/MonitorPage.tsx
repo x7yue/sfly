@@ -212,11 +212,11 @@ function applyAddress(store: MonitorStore, run: RunView, address: MonitorSearch)
 	const selected = initialSelection(run, address.node);
 	const at = address.at === undefined ? Number.NaN : Date.parse(address.at);
 	if (selected && selected.nodeId === address.node && Number.isFinite(at)) {
-		store.locateLog(selected, at);
+		store.report({ type: "locate", node: selected, at });
 	} else {
-		store.select(selected);
+		store.report({ type: "select", node: selected });
 	}
-	if (address.tab) store.showPanel(address.tab);
+	if (address.tab) store.report({ type: "tab", tab: address.tab });
 }
 
 /**
@@ -266,8 +266,7 @@ function FailureBanner({ run, onClose }: { run: RunView; onClose: () => void }) 
 					<Button
 						size="sm"
 						onClick={() => {
-							actions.select(failure.ref);
-							actions.showPanel("attempts");
+							actions.report({ type: "failure", node: failure.ref });
 						}}
 					>
 						查看失败节点
@@ -281,14 +280,13 @@ function FailureBanner({ run, onClose }: { run: RunView; onClose: () => void }) 
 }
 
 function useNextFailureShortcut(run: RunView) {
-	const selected = useMonitor((s) => s.selected);
+	const selected = useMonitor((s) => s.scope.selected);
 	const actions = useMonitorActions();
 	const next = nextFailure(run, selected);
 	useShortcut(
 		"monitor-next-failure",
 		() => {
-			actions.select(next);
-			actions.showPanel("attempts");
+			if (next) actions.report({ type: "failure", node: next });
 		},
 		next !== null,
 	);
@@ -298,7 +296,7 @@ const OPEN_MENU = '[role="menu"][data-open]';
 
 /** 焦点在输入框里、有弹窗或菜单打开时 Esc 是它们的，不处理。 */
 function useEscapeClearsSelection() {
-	const selected = useMonitor((s) => s.selected);
+	const selected = useMonitor((s) => s.scope.selected);
 	const actions = useMonitorActions();
 	useEffect(() => {
 		if (!selected) return;
@@ -306,7 +304,7 @@ function useEscapeClearsSelection() {
 			if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
 			if (isEditable(event.target) || dialogOpen() || document.querySelector(OPEN_MENU)) return;
 			event.preventDefault();
-			actions.select(null);
+			actions.report({ type: "select", node: null });
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);

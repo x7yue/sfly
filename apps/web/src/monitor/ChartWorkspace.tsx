@@ -90,7 +90,7 @@ export function ChartWorkspace({
 	const { range, live, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
-	const selected = useMonitor((s) => s.selected);
+	const selected = useMonitor((s) => s.scope.selected);
 	const actions = useMonitorActions();
 	const signature = useMemo(() => attemptsSignature(run), [run]);
 	const platform = usePlatformMetrics(run.id, signature, live);
