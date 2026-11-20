@@ -329,6 +329,64 @@ def test_plain_references_and_negations_do_not_need_a_pointer(work: Path, body: 
     assert supersede(work, body).returncode == 0
 
 
+@pytest.mark.parametrize("env", [{}, C_LOCALE], ids=["utf8", "c-locale"])
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "本决定不会取代 ADR 0001。",
+        "本决定无意取代 ADR 0001。",
+        "本决定不是要推翻 ADR 0001。",
+        "本决定并非修订 ADR 0001。",
+        "本决定没有取代 ADR 0001。",
+        "本决定不打算修订 ADR 0001 的结论。",
+        "这里绝不推翻 ADR 0001。",
+    ],
+)
+def test_a_negation_a_few_words_before_the_verb_is_not_a_supersede(
+    work: Path, sentence: str, env: dict[str, str]
+) -> None:
+    assert supersede(work, sentence, **env).returncode == 0
+
+
+@pytest.mark.parametrize("env", [{}, C_LOCALE], ids=["utf8", "c-locale"])
+def test_a_negation_in_an_earlier_clause_does_not_excuse_the_sentence(
+    work: Path, env: dict[str, str]
+) -> None:
+    result = supersede(work, "ADR 0001 不够用了，本决定取代 ADR 0001 中的做法。", **env)
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+
+
+@pytest.mark.parametrize("separator", ["，", ","])
+def test_a_comma_ends_the_list_of_old_adrs(work: Path, separator: str) -> None:
+    result = supersede(work, f"本决定修订 ADR 0001{separator}ADR 0002 不受影响。")
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+    assert "docs/adr/0002-second.md" not in result.stderr
+
+
+def test_the_enumeration_comma_still_lists_several_old_adrs(work: Path) -> None:
+    result = supersede(work, "本决定取代 ADR 0001、ADR 0002 里的做法。")
+
+    assert result.returncode == 1
+    assert "docs/adr/0001-first.md" in result.stderr
+    assert "docs/adr/0002-second.md" in result.stderr
+
+
+def test_a_pointer_already_at_the_end_of_the_old_adr_in_the_merge_base_counts(
+    origin: Path, work: Path
+) -> None:
+    # 指针在更早合入的提交里就加到了旧 ADR 末尾：合并基点之后没有追加行，也不能说「没有指针」。
+    write(origin, "0001-first.md", DECISION + "\n已被 ADR 0003 取代。\n")
+    commit(origin, "pointer first")
+    git(work, "fetch", "origin")
+    git(work, "merge", "-q", "origin/main")
+
+    assert supersede(work, "本决定取代 ADR 0001 中的做法。").returncode == 0
+
+
 def test_every_old_adr_named_in_one_sentence_needs_its_pointer(work: Path) -> None:
     write(work, "0001-first.md", DECISION + "\n已被 ADR 0003 取代。\n")
 
