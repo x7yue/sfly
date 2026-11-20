@@ -79,6 +79,7 @@ describe("运行视图", () => {
 					{ name: "retries", type: "number", default: 3, required: false, secret: false },
 				],
 				problems: [],
+				warnings: [],
 				packages: { stub: "1.0.0" },
 				agents: [{ name: "agent-a", default: true, status: "online", preparing_since: null }],
 				presets: [],

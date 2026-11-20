@@ -5,6 +5,7 @@ const passed: Preflight = {
 	version: 3,
 	params: [],
 	problems: [],
+	warnings: [],
 	packages: { "demo-checks": "1.2.0", stub: "0.1.0" },
 	agents: [
 		{ name: "agent-a", default: true, status: "online", preparing_since: null },
@@ -170,6 +171,7 @@ describe("触发前检查清单", () => {
 			version: 0,
 			params: [],
 			problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
+			warnings: [],
 			packages: {},
 			agents: [],
 			presets: [],
@@ -195,5 +197,59 @@ describe("触发前检查清单", () => {
 			["packages", "ok", "没有用到节点包", undefined],
 			["agents", "ok", "没有引用 Agent", undefined],
 		]);
+	});
+
+	it("开发版本没有加载归到节点包版本一行（原来写「节点包版本已锁定」的那一行），不能触发", () => {
+		const message =
+			"节点 a 用的是开发版本 demo@dev，但它派发到的 Agent agent-b 没有加载：在 agent-b 所在的机器上运行 sfly dev 加载它，或者把这个节点的 Agent 改成已经加载它的 agent-a";
+		const p: Preflight = {
+			...passed,
+			packages: { demo: "dev" },
+			problems: [{ code: "dev_package_not_loaded", message, node_id: "a" }],
+		};
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows.map((r) => [r.key, r.state, r.title])).toEqual([
+			["structure", "ok", "结构与引用检查通过"],
+			["packages", "blocked", "节点包版本有 1 个问题"],
+			["agents", "ok", "引用的 Agent 都在线"],
+		]);
+		expect(checks.rows[1]?.problems).toEqual([
+			{ code: "dev_package_not_loaded", message, node_id: "a" },
+		]);
+	});
+
+	it("预检的警告列在最后一行，只提醒，不阻止触发；没有警告时没有这一行", () => {
+		const warning = {
+			code: "subflow_param_not_passed",
+			message:
+				"节点 spawn 没有给子流程 汇报（sub） 的参数 host 传值，子流程里的节点 clean 用到了它",
+			node_id: "spawn",
+		};
+		const p: Preflight = { ...passed, warnings: [warning] };
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(false);
+		expect(checks.rows.map((r) => [r.key, r.state])).toEqual([
+			["structure", "ok"],
+			["packages", "ok"],
+			["agents", "ok"],
+			["warnings", "warn"],
+		]);
+		expect(checks.rows.at(-1)).toMatchObject({
+			title: "有 1 处配置值得留意，不阻止触发",
+			problems: [warning],
+		});
+		expect(preflightChecks(passed).rows.some((r) => r.key === "warnings")).toBe(false);
+	});
+
+	it("警告和阻断项同时有时，警告仍列在最后，触发仍被阻断", () => {
+		const p: Preflight = {
+			...passed,
+			problems: [{ code: "orphan_node", message: "节点 lonely 不在任何链上", node_id: "lonely" }],
+			warnings: [{ code: "subflow_param_not_passed", message: "x", node_id: "spawn" }],
+		};
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows.map((r) => r.key)).toEqual(["structure", "packages", "agents", "warnings"]);
 	});
 });
