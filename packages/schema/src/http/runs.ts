@@ -239,7 +239,7 @@ export const ProgressEvent = z.object({
 	progress: TaskProgressView,
 });
 
-/** 不能触发的一个原因。 */
+/** 不能触发的一个原因；预检的警告（不阻断触发）也是这个结构。 */
 export const PreflightProblem = z.object({
 	code: z.string(),
 	message: z.string(),
@@ -248,7 +248,8 @@ export const PreflightProblem = z.object({
 
 export const runsApi = {
 	/**
-	 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发），
+	 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、
+	 * 不阻断触发但值得留意的警告，
 	 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队），
 	 * 和场景的运行预设。
 	 */
@@ -263,6 +264,8 @@ export const runsApi = {
 			version: z.number().int(),
 			params: z.array(ParamDeclView),
 			problems: z.array(PreflightProblem),
+			/** 不阻断触发、但值得留意的配置（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到了它）；没有版本、已归档时为空。 */
+			warnings: z.array(PreflightProblem),
 			/** 最新版本锁定的节点包版本（包名 → 版本）；没有版本时为空。 */
 			packages: z.record(z.string(), z.string()),
 			/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */

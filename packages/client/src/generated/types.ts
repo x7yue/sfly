@@ -1615,7 +1615,7 @@ export interface PreflightAgent {
 	preparing_since: Timestamp | null;
 }
 
-/** 不能触发的一个原因。 */
+/** 不能触发的一个原因；预检的警告（不阻断触发）也是这个结构。 */
 export interface PreflightProblem {
 	code: string;
 	message: string;

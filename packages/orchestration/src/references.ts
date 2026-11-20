@@ -168,8 +168,8 @@ export function referencesIn(value: unknown): (string | null)[] {
 	return [];
 }
 
-/** 节点里可以写引用的值：输入名 → 值。 */
-function referableValues(node: OrchestrationNode): [string, unknown][] {
+/** 节点里可以写引用的值：输入名 → 值（引用检查和判断一个入口参数有没有被用到都读它）。 */
+export function referableValues(node: OrchestrationNode): [string, unknown][] {
 	switch (node.kind) {
 		case "package":
 			return Object.entries(node.inputs);

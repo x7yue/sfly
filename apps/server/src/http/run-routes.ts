@@ -8,7 +8,7 @@ import { referencedAgentStatus } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PresetStore } from "../presets/preset-store.js";
 import { entryParams } from "../presets/preset-validity.js";
-import type { Preflight } from "../runs/preflight.js";
+import { type Preflight, preflightWarnings } from "../runs/preflight.js";
 import { listRuns } from "../runs/run-list.js";
 import { getRunView } from "../runs/run-read.js";
 import type { Sse } from "../sse/sse.js";
@@ -48,6 +48,7 @@ export function registerRunRoutes(
 				version: head.number,
 				params: [],
 				problems: [{ code: "archived", message: "场景已归档，恢复后才能运行" }],
+				warnings: [],
 				packages: {},
 				agents: [],
 				presets,
@@ -58,6 +59,7 @@ export function registerRunRoutes(
 				version: 0,
 				params: [],
 				problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
+				warnings: [],
 				packages: {},
 				agents: [],
 				presets,
@@ -67,6 +69,7 @@ export function registerRunRoutes(
 			version: head.number,
 			params: declarations,
 			problems: await deps.preflight(deps.db, head.document),
+			warnings: preflightWarnings(head.document),
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, head.document)).map((agent) => ({
 				...agent,

@@ -1,6 +1,7 @@
 // 切入点 A：开发模式（sfly dev）的控制面行为——Agent 上报以开发模式加载的节点包（Hello / InstallStatus），
 // Agent 列表里能看到它们（画布据此提供 dev 版本选项）；锁定 `包名@dev` 的编排可以保存、触发，
-// 任务派发给节点指定的 Agent，不带下载地址；没有加载它的 Agent 以 env_error 失败。
+// 任务派发给节点指定的 Agent，不带下载地址；在线的 Agent 没有加载它时触发前的预检阻断（preflight-dev-package-loaded.test.ts），
+// 触发时不在线、上线后才发现没有加载它的 Agent 以 env_error 失败。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -115,7 +116,7 @@ describe("开发模式", () => {
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
 	});
 
-	it("开发版本的任务派发到没有加载它的 Agent 时以 env_error 失败；同一编排里的已发布版本照常带下载地址", async () => {
+	it("开发版本的任务派发到没有加载它的 Agent 时以 env_error 失败（触发时 Agent 不在线，预检不知道它加载了什么）；同一编排里的已发布版本照常带下载地址", async () => {
 		expect((await cp.fetch("/packages", publishInit(packageArchive()))).status).toBe(201);
 		const id = await api.orchestrationWith({
 			default_agent: "agent-plain",
@@ -136,8 +137,10 @@ describe("开发模式", () => {
 			],
 			packages: { "demo-checks": "1.2.0", "demo-dev": "dev" },
 		});
-		const agent = await connect({ name: "agent-plain" });
+		// 注册之后断线：Agent 不在线时触发，预检不阻断，任务排队；它重新连上、没有加载开发版本，派发到那里才失败。
+		await (await connect({ name: "agent-plain" })).close();
 		const runId = await api.triggerOk(id);
+		const agent = await connect({ name: "agent-plain" });
 
 		const published = await agent.nextAssign();
 		expect(published.packageVersion).toBe("1.2.0");

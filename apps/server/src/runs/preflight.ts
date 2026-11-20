@@ -2,30 +2,34 @@ import {
 	agentInputs,
 	blocksTrigger,
 	feishuBotInputs,
-	InvalidReferenceError,
 	nodeNameWithId,
 	notifyBotValue,
 	referencedAgents,
 	referencesIn,
-	resolveInputs,
 } from "@sfly/orchestration";
 import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
-import { agentFor, type ChainPlan, planRun, type RunPlan } from "../engine/chain.js";
+import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
+import { checkDevPackagesLoaded } from "./dev-package-loaded.js";
+import { knownParams, resolved } from "./known-params.js";
+import { type ParamOrigins, paramInputTypeProblems } from "./param-input-type.js";
+import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
 
 /**
  * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
  * `agent_input_not_registered`，飞书通知节点和「飞书机器人」类型的输入选的机器人没有登记的
  * `feishu_bot_not_registered`，飞书通知节点的机器人写了不支持的引用的 `feishu_bot_reference_unsupported`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
- * `agent_version_unsatisfied`。
+ * `agent_version_unsatisfied`、开发版本没有在节点派发到的在线 Agent 上加载的 `dev_package_not_loaded`
+ * （dev-package-loaded.ts），以及触发时入口参数的值接到类型不符的输入的 `param_input_type_mismatch`（param-input-type.ts）。
+ * 预检的警告（不阻断触发，{@link preflightWarnings}）也是这个结构。
  */
 export interface PreflightProblem {
 	code: string;
@@ -56,6 +60,7 @@ async function lockedPackages(
  * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用、输入的静态检查全部通过
  * （「Agent」类型的输入的常量是已注册的 Agent，飞书通知节点和「飞书机器人」类型的输入的常量是已登记的机器人），
  * 包节点派发到的 Agent 都已注册（不要求在线），
+ * 锁定开发版本的节点派发到的在线 Agent 已经加载了它（{@link checkDevPackagesLoaded}，不在线的 Agent 不知道它加载了什么，不阻断），
  * 且控制面版本满足节点包需要的 SDK 版本（#79），节点所在的 Agent 和「Agent」类型的输入引用的 Agent 满足
  * 节点包需要的 Agent 版本（ADR 0019，见 requires-agent.ts）。
  * 返回全部不能触发的原因，空数组表示可以触发。未保存的草稿只存在于浏览器，由画布在触发前检查。
@@ -98,6 +103,7 @@ export function createPreflight(deps: { version: string }): Preflight {
 				node_id: nodeId,
 			});
 		}
+		problems.push(...(await checkDevPackagesLoaded(db, doc)));
 
 		const locked = await lockedPackages(db, doc);
 		// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。
@@ -151,27 +157,40 @@ export function createPreflight(deps: { version: string }): Preflight {
 	};
 }
 
+/**
+ * 触发前预检的警告（docs/SEMANTICS.md §6）：不阻断触发，但配置很可能不是作者想要的，要跑到那个节点才会失败。
+ * 和 {@link Preflight} 的问题同一个结构，只看文档，不读库；预检接口（`GET /orchestrations/:id/preflight`）的 `warnings`，
+ * 控制台的触发对话框和 `sfly run start` 都读它。
+ */
+export function preflightWarnings(doc: OrchestrationDocument): PreflightProblem[] {
+	return [...subflowParamNotPassedWarnings(doc)];
+}
+
 /** 触发时按入口参数的实际值做的检查（{@link createParamsCheck}）。 */
 export type ParamsCheck = (
 	db: Db | Tx,
 	doc: OrchestrationDocument,
 	plan: RunPlan,
 	params: Record<string, unknown>,
+	origins: ParamOrigins,
 ) => Promise<PreflightProblem[]>;
 
 /**
  * 触发时按入口参数的实际值检查：「Agent」类型的输入引用入口参数时，取到的 Agent 必须已注册（不要求在线），
  * 版本满足节点包需要的 Agent 版本（`requires_agent`，{@link checkReferencedAgents}）；
  * 飞书通知节点和「飞书机器人」类型的输入引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
+ * 整个引用入口参数的节点输入，值（触发时给的值、运行预设里的值、默认值，子流程里是异步任务节点传入的值）
+ * 的类型要符合输入的类型，判断和派发时是同一个（{@link paramInputTypeProblems}）。
  * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过
  * （飞书通知节点在执行时再看一次，机器人不存在时不发送、节点照常成功）。
  */
 export function createParamsCheck(): ParamsCheck {
-	return async (db, doc, plan, params) => {
+	return async (db, doc, plan, params, origins) => {
 		const locked = await lockedPackages(db, doc);
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
-		for (const { chain, params: known, source } of knownParams(plan, params)) {
+		const chains = knownParams(plan, params);
+		for (const { chain, params: known, source } of chains) {
 			for (const node of chain.nodes) {
 				// 整值引用入口参数的才在这里按实际值查；其他写法的引用已经由静态检查（feishu_bot_reference_unsupported）阻断。
 				if (node.kind === "feishu_notify" && node.bot !== undefined) {
@@ -214,59 +233,7 @@ export function createParamsCheck(): ParamsCheck {
 		return [
 			...(await checkReferencedAgents(db, wanted)).problems,
 			...(await checkFeishuBots(db, bots)),
+			...paramInputTypeProblems(plan.main, chains, locked, origins),
 		];
 	};
-}
-
-/** 一条链和触发时就能知道的它的入口参数。 */
-interface KnownParams {
-	chain: ChainPlan;
-	/** 知道值的参数（不知道的不在里面，引用它们的值解析不出来，跳过）。 */
-	params: Record<string, unknown>;
-	/** 这条链上的值取自哪里（写进问题的说明）。 */
-	source: string;
-}
-
-/**
- * 触发时就能知道入口参数的链：主链的入口参数是触发时给的；子流程的入口参数是调度它的异步任务节点按参数映射传入的，
- * 映射的值是常量或只引用了那条链的入口参数时就知道（没有映射的取默认值），引用了前面节点的输出的不知道。
- * 一个子流程被几个异步任务节点调度时各算一次；子流程（间接）调度自己时只算到第一次。
- */
-function knownParams(plan: RunPlan, params: Record<string, unknown>): KnownParams[] {
-	const found: KnownParams[] = [];
-	const visit = (known: KnownParams, path: ReadonlySet<string>) => {
-		found.push(known);
-		for (const node of known.chain.nodes) {
-			if (node.kind !== "async") continue;
-			const subflow = plan.chains.get(plan.dispatch.get(node.id) ?? "");
-			if (!subflow || path.has(subflow.entry.id)) continue;
-			const passed: Record<string, unknown> = {};
-			for (const decl of subflow.entry.params) {
-				const value = Object.hasOwn(node.params, decl.name)
-					? resolved(node.params[decl.name], known.params)
-					: (decl.default ?? null);
-				if (value !== undefined) passed[decl.name] = value;
-			}
-			visit(
-				{
-					chain: subflow,
-					params: passed,
-					source: `取自子流程的参数，由异步任务节点 ${nodeNameWithId(node)} 传入`,
-				},
-				new Set([...path, subflow.entry.id]),
-			);
-		}
-	};
-	visit({ chain: plan.main, params, source: "取自入口参数" }, new Set([plan.main.entry.id]));
-	return found;
-}
-
-/** 只用入口参数 `params` 解析一个值；引用了前面节点的输出、或不知道值的参数时为 undefined。 */
-function resolved(value: unknown, params: Record<string, unknown>): unknown {
-	try {
-		return resolveInputs({ value }, { params, earlierOutputs: new Map() }).value;
-	} catch (error) {
-		if (error instanceof InvalidReferenceError) return undefined;
-		throw error;
-	}
 }
