@@ -332,7 +332,7 @@ describe("sfly api → 控制面", () => {
 			const text = result.stdout;
 			expect(text.split("\n").slice(0, 6)).toEqual([
 				"GET /runs/:id",
-				"说明：读一次运行的状态：链、节点和任务",
+				"说明：读一次运行的状态：各链、各节点的状态、输出、失败原因和每次尝试",
 				"种类：普通",
 				"效果：只读",
 				"资源：运行，用路径参数 id 定位到具体的那一个",
@@ -372,7 +372,7 @@ describe("sfly api → 控制面", () => {
 			expect(result.stdout).toContain("效果：有副作用");
 			expect(result.stdout).toContain("资源：场景，列表或新建，没有具体的那一个");
 			expect(result.stdout).toContain(
-				"请求体（JSON，* 必填）\n  name*: string\n  description: string",
+				"请求体（JSON，* 必填）\n  name*: string — 场景名称。\n  description: string — 场景说明（可以是空的）。",
 			);
 		});
 

@@ -69,6 +69,17 @@ const FIXTURES = {
 } as const;
 type FixtureKey = keyof typeof FIXTURES;
 
+/** 一个要调用的只读接口：名字（报错里用）、契约里的定义、真实存在的请求地址。 */
+interface Case {
+	name: string;
+	def: RouteDef;
+	url: string;
+}
+
+/** 找「响应之后才写」的是哪个接口时，往回看最近几个用例；单独重跑一个用例时，响应之后等多久（毫秒）。 */
+const RECENT_CASES = 4;
+const LATE_PROBE_MS = 1500;
+
 /** 一组真实存在的 id。 */
 interface Fixture {
 	scenarioId: string;
@@ -195,18 +206,34 @@ describe("声明为只读的接口真的不写库", () => {
 	const readRoutes = httpContract.filter((def) => def.effect === "read");
 
 	/**
-	 * 上一个用例结束时留下的痕迹。响应之后才发生的写（延迟的写、后台的写）可能晚于「连着两次一样」，
-	 * 就会出现在下一个用例开始时取的那份里：每个用例开始时和上一个用例结束时的比较一次，
-	 * 不一样就说是上一个接口（或更早的）在响应之后还写了东西，不冤枉当前这个接口；
-	 * 全部跑完再取一次，和最后一个用例结束时的比较。
+	 * 响应之后才发生的写（延迟的写、后台的写）可能晚于「连着两次一样」，不能记到碰巧正在跑的那个接口头上：
+	 *
+	 * - 每个用例开始时取的那份，和上一个用例结束时取的那份比较一次，不一样就是之前某个接口在响应之后还写了东西；
+	 * - 一个用例自己的前后不一样时，同一个请求再来一遍：它自己写的话还会写，没有了就是之前某个接口的延迟写落在了这次调用的时间里；
+	 * - 是之前某个接口的延迟写时，把最近几个用例各自单独再跑一遍、响应之后多等一会儿，哪个又写了就是哪个，报错写出它的名字；
+	 * - 全部跑完之后多等一会儿再取一次，和最后一个用例结束时的比较。
 	 */
-	let previous: { name: string; after: Footprint } | undefined;
-	const lateWrites = (now: Footprint) => {
-		const changes = previous ? diffFootprints(previous.after, now) : [];
-		return {
-			changes,
-			message: `上一个用例「${previous?.name}」（或更早的）在响应之后还写了东西，不是当前这个接口：\n${changes.join("\n")}`,
-		};
+	const finished: Case[] = [];
+	let lastAfter: Footprint | undefined;
+
+	/** 单独把一个用例再跑一遍，响应之后多等一会儿，返回这期间的变化。 */
+	const probe = async (c: Case): Promise<string[]> => {
+		const before = await settled();
+		await call(c.def, c.url);
+		await new Promise((resolve) => setTimeout(resolve, LATE_PROBE_MS));
+		return diffFootprints(before, await settled());
+	};
+
+	/** 找出是最近哪个用例的接口在响应之后才写了东西；找不到时列出候选。 */
+	const explainLateWrite = async (changes: string[], candidates: Case[]): Promise<string> => {
+		for (const c of [...candidates].reverse()) {
+			const again = await probe(c);
+			if (again.length > 0) {
+				return `是「${c.name}」：它在响应之后才写了东西（单独再跑一遍、响应后等 ${LATE_PROBE_MS} 毫秒，又看到了）：\n${again.join("\n")}`;
+			}
+		}
+		const names = candidates.map((c) => `「${c.name}」`).join("、") || "（还没有）";
+		return `没有找到是哪个接口（最近的用例单独重跑都没有再看到）。候选：${names}\n本次看到的变化：\n${changes.join("\n")}`;
 	};
 
 	it("有足够多的只读接口被核对", () => {
@@ -218,21 +245,38 @@ describe("声明为只读的接口真的不写库", () => {
 		for (const key of fixtureKeys(def)) {
 			const name = `${def.method} ${def.path}${key ? ` · ${FIXTURES[key]}` : ""}`;
 			it(`${name}：响应与清单里的 schema 一致，没有写任何东西`, async () => {
-				const url = requestUrl(def, seeded, key ? seeded.fixtures[key] : undefined);
+				const c: Case = {
+					name,
+					def,
+					url: requestUrl(def, seeded, key ? seeded.fixtures[key] : undefined),
+				};
 				const before = await settled();
-				const late = lateWrites(before);
-				const current = { name, after: before };
-				previous = current;
-				expect(late.changes, late.message).toEqual([]);
-				const events = await call(def, url);
+				const early = lastAfter ? diffFootprints(lastAfter, before) : [];
+				if (early.length > 0) {
+					lastAfter = before;
+					throw new Error(
+						`之前某个只读接口在响应之后还写了东西（当前这个接口 ${name} 还没有调用）。${await explainLateWrite(early, finished.slice(-RECENT_CASES))}`,
+					);
+				}
+				const events = await call(def, c.url);
 				const after = await settled();
-				current.after = after;
+				const candidates = finished.slice(-RECENT_CASES);
+				finished.push(c);
+				lastAfter = after;
 
 				const changes = diffFootprints(before, after);
-				expect(
-					changes,
-					`${name} 声明为只读，调用后却留下了写入的痕迹：\n${changes.join("\n")}`,
-				).toEqual([]);
+				if (changes.length > 0) {
+					const again = await probe(c);
+					if (again.length > 0) {
+						throw new Error(
+							`${name} 声明为只读，调用后却留下了写入的痕迹：\n${changes.join("\n")}`,
+						);
+					}
+					throw new Error(
+						`${name} 第一次调用之后出现了写入，再调用一遍就没有了：要么是它第一次调用才写（例如缓存），` +
+							`要么是之前某个接口的延迟写落在了这次调用的时间里。${await explainLateWrite(changes, candidates)}`,
+					);
+				}
 				for (const event of events) {
 					const schema = manifestEntry(def)?.events?.[event.event];
 					expect(schema, `${def.path} 的事件 ${event.event} 不在清单里`).toBeDefined();
@@ -280,9 +324,15 @@ describe("声明为只读的接口真的不写库", () => {
 		).toEqual([]);
 	});
 
-	it("全部用例跑完之后，最后一个接口也没有在响应之后还写东西", async () => {
-		const late = lateWrites(await settled());
-		expect(late.changes, late.message).toEqual([]);
+	it("全部用例跑完之后，最后几个接口也没有在响应之后还写东西", async () => {
+		// 最后一个用例之后再等一会儿：延迟的写不会因为没有下一个用例而漏掉。
+		await new Promise((resolve) => setTimeout(resolve, LATE_PROBE_MS));
+		const now = await settled();
+		const late = lastAfter ? diffFootprints(lastAfter, now) : [];
+		expect(
+			late,
+			late.length > 0 ? await explainLateWrite(late, finished.slice(-RECENT_CASES)) : "",
+		).toEqual([]);
 	});
 
 	// ---- 调用
