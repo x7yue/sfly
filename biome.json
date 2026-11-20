@@ -15,7 +15,8 @@
 			"!packages/client/test/contract-parity.ts",
 			"!apps/server/drizzle",
 			"!docs/prototype",
-			"!docs/perf"
+			"!docs/perf",
+			"!biome-plugins/fixtures"
 		]
 	},
 	"formatter": {

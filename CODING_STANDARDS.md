@@ -1,6 +1,7 @@
 # 编码规范
 
 代码审查逐条检查本文。这里只放需要判断的规则；能机械检查的写进 lint 或测试（biome、ruff、clippy、`biome-plugins/`）。
+`biome-plugins/` 的每个规则配一组「应该命中」和「不应命中」的样例（`biome-plugins/fixtures/`），由 `apps/server/test/biome-plugins.test.ts` 检查：规则匹配的写法改了名，测试会失败，而不是规则静默地不再拦任何东西。
 
 其他规范来源，审查时一并对照：
 
