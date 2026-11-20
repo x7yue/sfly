@@ -138,7 +138,7 @@ test("运行预设的表单：勾选敏感的布尔参数要选 true 或 false�
 	const dialog = page.getByRole("dialog", { name: "运行预设" });
 	await dialog.getByRole("button", { name: "新建预设" }).click();
 	const form = page.getByRole("dialog", { name: "新建运行预设" });
-	await form.getByLabel("名称").fill("关闭开关");
+	await form.getByLabel("名称").fill("开关关掉");
 	await form.getByRole("checkbox", { name: "预设 flag" }).check();
 	const flag = form.getByRole("combobox", { name: /^flag / });
 	await expect(flag).toHaveValue("");
@@ -148,7 +148,7 @@ test("运行预设的表单：勾选敏感的布尔参数要选 true 或 false�
 	await flag.selectOption("false");
 	await form.getByRole("button", { name: "保存" }).click();
 	await expect(form).toBeHidden();
-	await dialog.getByRole("button", { name: "关闭" }).click();
+	await dialog.getByRole("button", { name: "关闭", exact: true }).click();
 
 	// 用预设触发：预设固定的 flag 是 false，其余敏感参数没动，用默认值。
 	await page
@@ -157,7 +157,7 @@ test("运行预设的表单：勾选敏感的布尔参数要选 true 或 false�
 		.click();
 	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
 	await expect(drawer.getByRole("list", { name: "触发前检查" })).toBeVisible();
-	await drawer.getByRole("combobox", { name: "运行预设" }).selectOption({ label: "关闭开关" });
+	await drawer.getByRole("combobox", { name: "运行预设" }).selectOption({ label: "开关关掉" });
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	expect((await agent.nextAssign()).inputs).toEqual({
 		token: SECRET,
