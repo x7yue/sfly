@@ -27,7 +27,9 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
         "start",
         parents=[common_options()],
         help="触发场景的最新版本，可以等它结束",
-        description="先预检场景：有问题时列出问题并退出，不触发。入口参数用 --param 名=值 或 "
+        description="先预检场景：有问题时列出问题并退出，不触发；预检的警告（不阻断触发，例如异步任务节点"
+        "没有给子流程的参数传值）写在触发之后的输出里，--json 时 stdout 的对象带 warnings。"
+        "入口参数用 --param 名=值 或 "
         "--params JSON 给出，值按入口节点声明的类型转换（string 原样，number 按数字，"
         "boolean 写 true 或 false，json 按 JSON）。总是触发场景的最新版本。"
         "--preset 按运行预设触发：预设参数取预设保存的值，不用再给；给了不同的值"
@@ -122,6 +124,7 @@ def _start(session: Session, args: argparse.Namespace) -> int:
             f"场景「{scenario['name']}」现在不能触发，有 {len(problems)} 个问题：\n{listed}",
             next=show,
         )
+    warning_lines = _warning_lines(preflight.get("warnings") or [])
     declared = preflight["params"]
     preset = (
         find_preset(scenario, preflight["presets"], args.preset)
@@ -154,13 +157,27 @@ def _start(session: Session, args: argparse.Namespace) -> int:
             "scenario_version": run["orchestration_version"],
             "url": url,
         }
+        # 没有警告时输出和以前一字不差。
+        if warning_lines:
+            started["warnings"] = preflight["warnings"]
         session.out.emit(
             started,
             f"已触发运行 {run_id}\n链接：{url}",
-            note=f"等它结束：sfly run wait {run_id}",
+            note="\n".join([*warning_lines, f"等它结束：sfly run wait {run_id}"]),
         )
         return 0
-    return _follow(session, run_id, args.timeout, announce=f"已触发运行 {run_id}，链接：{url}")
+    announce = "\n".join([f"已触发运行 {run_id}，链接：{url}", *warning_lines])
+    return _follow(session, run_id, args.timeout, announce=announce)
+
+
+def _warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
+    """预检的警告：不阻断触发，写在触发之后的输出里。没有警告时没有行。"""
+    if not warnings:
+        return []
+    return [
+        f"警告（{len(warnings)}）：不影响触发，运行已经触发",
+        *(f"  - {w['code']}：{w['message']}" for w in warnings),
+    ]
 
 
 def _wait(session: Session, args: argparse.Namespace) -> int:

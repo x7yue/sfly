@@ -3,6 +3,7 @@ import type { EndpointResponse, PreflightProblem, runsApi } from "@sfly/schema";
 /**
  * 运行抽屉的触发前检查清单（纯逻辑，有单测）：把预检结果（GET /orchestrations/:id/preflight）整理成
  * 「结构与引用」「包版本锁定」「Agent 是否在线」几行；有阻断项的行不能触发，Agent 不在线、在准备环境只提醒（任务会排队）。
+ * 预检的警告（`warnings`，不阻断触发）列在最后一行，只提醒。
  * 场景还没有版本、已归档时只列这一条原因；从画布打开时另外检查本地未保存的修改与画布版本是否最新。
  */
 
@@ -11,7 +12,7 @@ export type Preflight = EndpointResponse<typeof runsApi.preflight>;
 export type CheckState = "ok" | "warn" | "blocked";
 
 export interface CheckRow {
-	key: "version" | "structure" | "packages" | "agents";
+	key: "version" | "structure" | "packages" | "agents" | "warnings";
 	state: CheckState;
 	title: string;
 	detail?: string;
@@ -25,6 +26,8 @@ const PACKAGE_CODES = new Set([
 	"package_not_locked",
 	"package_version_missing",
 	"unknown_node_type",
+	// 锁定开发版本（包名@dev）的节点，派发到的 Agent 没有加载它。
+	"dev_package_not_loaded",
 ]);
 const AGENT_CODES = new Set([
 	"agent_not_registered",
@@ -139,6 +142,14 @@ export function preflightChecks(
 				preflight.agents.map((a) => a.name).join(" · ") || undefined,
 			),
 		);
+	}
+	if (preflight.warnings.length > 0) {
+		rows.push({
+			key: "warnings",
+			state: "warn",
+			title: `有 ${preflight.warnings.length} 处配置值得留意，不阻止触发`,
+			problems: preflight.warnings,
+		});
 	}
 	return { rows, blocked: rows.some((r) => r.state === "blocked") };
 }
