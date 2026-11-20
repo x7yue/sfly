@@ -261,3 +261,46 @@ async fn unacknowledged_result_is_reported_again_after_reconnecting() {
     })
     .await;
 }
+
+/// 数值经过 Agent 保持不变（#450）：Agent 把控制面派来的输入写进 task.json、把执行器写的 output.json 交回控制面，
+/// 两处都是「解析再写出」，小数的最后一位不能变。前几个数用默认配置的 serde_json 解析会差一个单位
+/// （例如 7.038531e-26 读成 7.038530999999999e-26），后几个没有这个问题，一并放进来看没有被误伤。
+/// 期望值由 f64 直接写出（最短表示），不经过任何解析，所以解析错了就对不上。
+const NUMBERS: [f64; 12] = [
+    29491.727857142858,
+    7.038531e-26,
+    123456789.12345679,
+    60.157000000000004,
+    1.0715660391465826e-75,
+    -1.81996730402717e-179,
+    -1.603964615428183e143,
+    0.1,
+    60.157,
+    1e-7,
+    5e-324,
+    1.7976931348623157e308,
+];
+
+#[tokio::test]
+async fn numbers_pass_through_the_agent_unchanged_in_both_directions() {
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-numbers"));
+    cp.hello(0).await;
+
+    let inputs = json!({ "text": NUMBERS });
+    cp.assign(stub_task("task-numbers", "echo", inputs.clone()))
+        .await;
+    let (result, _) = cp.result("task-numbers").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+
+    // 派发给执行器的输入：task.json 里 inputs 的原文就是控制面发来的数。
+    let task_json =
+        std::fs::read_to_string(agent.work_dir.path().join("task-numbers/task.json")).unwrap();
+    let expected_inputs = format!("\"inputs\":{inputs}");
+    assert!(
+        task_json.contains(&expected_inputs),
+        "task.json 里的输入变了：\n{task_json}\n应包含 {expected_inputs}"
+    );
+    // 执行器原样返回（Python 的 float 往返是精确的），交回控制面的输出和它写出的是同一批数。
+    assert_eq!(result.outputs_json, inputs.to_string());
+}
