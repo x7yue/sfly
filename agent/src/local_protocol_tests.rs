@@ -598,3 +598,41 @@ fn constants_shared_with_the_local_debugging_end_are_the_ones_in_the_case_file()
         file["constants"]
     );
 }
+
+/// 数值经过 Agent 保持不变（#450）：执行器写的 output.json 里的小数，Agent 交给控制面的是同一个双精度数。
+/// 前几个数用默认配置的 serde_json 解析会差最后一位（例如 29491.727857142858 读成 29491.727857142854），
+/// 后几个没有这个问题，放进来看没有被误伤。output.json 的原文由 f64 的最短表示写出，期望值也由 f64 直接写出，
+/// 都不经过 serde_json 的解析，所以解析错了就对不上。
+#[tokio::test(flavor = "multi_thread")]
+async fn numbers_in_output_json_reach_the_control_plane_unchanged() {
+    let numbers = [
+        29491.727857142858,
+        7.038531e-26,
+        123456789.12345679,
+        60.157000000000004,
+        1.0715660391465826e-75,
+        -1.81996730402717e-179,
+        -1.603964615428183e143,
+        0.1,
+        60.157,
+        1e-7,
+        5e-324,
+        1.7976931348623157e308,
+    ];
+    let text: Vec<String> = numbers.iter().map(|n| format!("{n:?}")).collect();
+    let output = format!(
+        r#"{{"status":"success","outputs":{{"x":[{}]}}}}"#,
+        text.join(",")
+    );
+    let observed = run(&json!({ "output": output })).await;
+    assert_eq!(
+        observed.result.status(),
+        TaskStatus::Success,
+        "{:?}",
+        observed.result
+    );
+    assert_eq!(
+        observed.result.outputs_json,
+        json!({ "x": numbers }).to_string()
+    );
+}
