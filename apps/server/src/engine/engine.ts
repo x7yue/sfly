@@ -39,7 +39,6 @@ import {
 	type ErrorKind,
 	nodePackages,
 	ON_AGENT,
-	orchestrations,
 	orchestrationVersions,
 	runs,
 	tasks,
@@ -55,11 +54,12 @@ import {
 } from "../gateway/agent-gateway.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
-import { findPreset, PRESET_NOT_FOUND } from "../presets/preset-store.js";
-import { describePresetProblems, presetProblems } from "../presets/preset-validity.js";
-import { type PresetRow, presetParamNames } from "../presets/preset-view.js";
 import type { Mirrors } from "../public-config.js";
-import type { ParamsCheck, Preflight } from "../runs/preflight.js";
+import type {
+	TriggerAdmission,
+	TriggerRejection,
+	TriggerRequest,
+} from "../runs/trigger-admission.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
@@ -82,7 +82,7 @@ import {
 	queueTimedOut,
 	renewHeld,
 } from "./leases.js";
-import { fillParams, withPresetValues } from "./params.js";
+import { fillParams } from "./params.js";
 import { resolveReferencedAgents } from "./referenced-agents.js";
 import {
 	type CancelOrder,
@@ -109,9 +109,7 @@ const DEV_VERSION = "dev";
 const queueTimeoutMs = (node: PackageNode) =>
 	(node.queue_timeout ?? NODE_DEFAULTS.queue_timeout) * 1000;
 
-export type TriggerOutcome =
-	| { ok: true; runId: string }
-	| { ok: false; status: 400 | 404 | 409; code: string; message: string; details?: unknown };
+export type TriggerOutcome = { ok: true; runId: string } | TriggerRejection;
 
 export type CancelOutcome =
 	| { ok: true; force: boolean }
@@ -232,10 +230,8 @@ export class Engine implements AgentSessionHandler {
 			packageArchiveUrl: (name: string, version: string) => string;
 			/** 任务产物的上传地址（#18，Agent 任务结束后通过 HTTP 上传）。 */
 			artifactUploadUrl: (taskId: string) => string;
-			/** 触发前的预检（src/runs/preflight.ts）。 */
-			preflight: Preflight;
-			/** 触发时按入口参数的实际值做的检查（src/runs/preflight.ts）。 */
-			paramsCheck: ParamsCheck;
+			/** 触发准入：场景现在能不能触发、用什么参数触发（src/runs/trigger-admission.ts）。 */
+			admitTrigger: TriggerAdmission;
 			/** 飞书通知节点和运行通知：在 step 的事务里入队，提交后写日志、唤醒投递（src/feishu/engine-notifications.ts）。 */
 			notifications: EngineNotifications;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
@@ -272,122 +268,14 @@ export class Engine implements AgentSessionHandler {
 	};
 
 	/**
-	 * 手动触发场景的最新版本。带上运行预设（`preset` 是它的 ID）时，在这个事务里读取预设，预设已失效就拒绝（409 `preset_invalid`），
-	 * 否则用它的值填入预设参数（docs/SEMANTICS.md §6「运行预设」），之后的参数检查和不用预设时相同；
-	 * 运行上记下预设的 ID、名称和预设参数的名单。
+	 * 手动触发场景的最新版本。能不能触发、用什么参数触发（含运行预设）由触发准入回答
+	 * （src/runs/trigger-admission.ts，在这个事务里读）；可以时在同一个事务里创建运行和主链实例并开始推进。
 	 */
-	trigger(
-		orchestrationId: string,
-		request: { params: Record<string, unknown>; preset?: string | undefined },
-		actor: Actor,
-	): Promise<TriggerOutcome> {
+	trigger(orchestrationId: string, request: TriggerRequest, actor: Actor): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
-			const [orchestration] = await step.tx
-				.select()
-				.from(orchestrations)
-				.where(eq(orchestrations.id, orchestrationId))
-				// 与归档（OrchestrationStore.archive 加排他锁后检查运行中的运行）互斥。
-				.for("share");
-			if (!orchestration) {
-				return { ok: false, status: 404, code: "not_found", message: "orchestration not found" };
-			}
-			if (orchestration.archivedAt) {
-				return {
-					ok: false,
-					status: 409,
-					code: "archived",
-					message: "orchestration is archived; restore it before triggering",
-				};
-			}
-			const [version] = await step.tx
-				.select()
-				.from(orchestrationVersions)
-				.where(
-					and(
-						eq(orchestrationVersions.orchestrationId, orchestrationId),
-						eq(orchestrationVersions.number, orchestration.headVersion),
-					),
-				);
-			if (!version) {
-				return {
-					ok: false,
-					status: 400,
-					code: "no_version",
-					message: "orchestration has no saved version",
-				};
-			}
-			const problems = await this.deps.preflight(step.tx, version.document);
-			const plan = planRun(version.document);
-			if (problems.length > 0 || "errors" in plan) {
-				const details =
-					problems.length > 0 || !("errors" in plan)
-						? problems
-						: plan.errors.map((message) => ({ code: "not_supported", message }));
-				return {
-					ok: false,
-					status: 400,
-					code: "invalid_orchestration",
-					message: details.map((p) => p.message).join("; "),
-					details,
-				};
-			}
-			let provided = request.params;
-			let preset: PresetRow | undefined;
-			if (request.preset !== undefined) {
-				preset = isUuid(request.preset)
-					? await findPreset(step.tx, orchestrationId, request.preset)
-					: undefined;
-				if (!preset) {
-					return { ok: false, ...PRESET_NOT_FOUND };
-				}
-				const invalid = presetProblems(preset.values, plan.main.entry.params);
-				if (invalid.length > 0) {
-					return {
-						ok: false,
-						status: 409,
-						code: "preset_invalid",
-						message: `运行预设「${preset.name}」已失效，不能用来触发：${describePresetProblems(invalid, plan.main.entry.params)}`,
-						details: invalid,
-					};
-				}
-				const fixed = withPresetValues(request.params, preset.values, plan.main.entry.params);
-				if ("locked" in fixed) {
-					return {
-						ok: false,
-						status: 400,
-						code: "preset_param_locked",
-						message: `参数 ${fixed.locked} 由运行预设「${preset.name}」固定，请求里不要给它传值`,
-						details: { param: fixed.locked, preset: preset.name },
-					};
-				}
-				provided = fixed.params;
-			}
-			const filled = fillParams(plan.main.entry.params, provided);
-			if ("errors" in filled) {
-				return {
-					ok: false,
-					status: 400,
-					code: "invalid_params",
-					message: filled.errors.join("; "),
-					details: filled.errors,
-				};
-			}
-			const paramProblems = await this.deps.paramsCheck(
-				step.tx,
-				version.document,
-				plan,
-				filled.params,
-			);
-			if (paramProblems.length > 0) {
-				return {
-					ok: false,
-					status: 400,
-					code: "invalid_params",
-					message: paramProblems.map((p) => p.message).join("; "),
-					details: paramProblems,
-				};
-			}
-
+			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
+			if (!admitted.ok) return admitted;
+			const { version, plan, params, runPreset } = admitted;
 			this.#documents.set(version.id, version.document);
 			this.#plans.set(version.id, plan);
 			const runId = randomUUID();
@@ -399,10 +287,8 @@ export class Engine implements AgentSessionHandler {
 					orchestrationVersionId: version.id,
 					triggeredBy: actor.nickname,
 					triggeredVia: actor.via,
-					params: filled.params,
-					presetId: preset?.id ?? null,
-					presetName: preset?.name ?? null,
-					presetParams: preset ? presetParamNames(preset.values, plan.main.entry.params) : null,
+					params,
+					...runPreset,
 					status: "running",
 					startedAt: step.now,
 				})
@@ -414,7 +300,7 @@ export class Engine implements AgentSessionHandler {
 					runId,
 					chainId: plan.main.entry.id,
 					depth: 0,
-					params: filled.params,
+					params,
 					status: "running",
 					startedAt: step.now,
 				})

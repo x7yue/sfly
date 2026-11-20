@@ -36,6 +36,7 @@ import { PresetStore } from "./presets/preset-store.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
+import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
@@ -239,8 +240,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		packageArchiveUrl: (name, version) =>
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
-		preflight,
-		paramsCheck: createParamsCheck(),
+		admitTrigger: createTriggerAdmission({ preflight, paramsCheck: createParamsCheck() }),
 		notifications: new EngineNotifications({
 			logs,
 			delivery: feishuDelivery,

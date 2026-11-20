@@ -35,7 +35,7 @@ export interface PreflightProblem {
 }
 
 /**
- * 预检读哪个数据库由调用方传：Engine.trigger 在事务里调用，传事务对象（#380：预检另从连接池取连接，会和等锁的写入互相等死）。
+ * 预检读哪个数据库由调用方传：触发准入（trigger-admission.ts）在事务里调用，传事务对象（#380：预检另从连接池取连接，会和等锁的写入互相等死）。
  * 预检和参数检查读库都是一条接一条地执行，不并发。
  */
 export type Preflight = (db: Db | Tx, doc: OrchestrationDocument) => Promise<PreflightProblem[]>;
