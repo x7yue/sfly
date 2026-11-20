@@ -105,7 +105,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
    报告——相比变化超过 20% 的数值，变差的说明原因或确认是机器波动），不贴整份报告。确认后合入。
    维护者要求跑长时负载测试时，用 `pnpm perf:soak --release`，存为同一目录下的 `soak.{json,md}`。
 3. 等 `main` 上这个提交的 CI 通过，在它上面打 tag 并推送：`git tag vX.Y.Z <提交> && git push origin vX.Y.Z`。
-4. `.github/workflows/release.yml` 接手：校验版本号、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
+4. `.github/workflows/release.yml` 接手：校验版本号（各处与 tag 一致，`docs/perf/X.Y.Z/report.json` 已提交且版本号一致——没跑性能测试就发不出）、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
    Release 说明里的变更列表从上一个平台版本起算（见下文「变更列表的起点」）。
 
 - 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。
