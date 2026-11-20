@@ -20,7 +20,7 @@ export const PUBLIC_PROJECT = "public" as ProjectId;
  * 升级时标准节点包（`sfly-std`）的已发布版本移进公共项目，接口和 Agent 下载归档仍然要找得到它们，所以按项目读节点包
  * 都按这个范围；「先找本项目、再找公共项目」的优先顺序和重名的规则在 #501、#502。
  */
-export const readableProjects = (project: ProjectId): readonly ProjectId[] =>
+export const readableProjects = (project: ProjectId): ProjectId[] =>
 	project === PUBLIC_PROJECT ? [PUBLIC_PROJECT] : [project, PUBLIC_PROJECT];
 
 /** 路径参数、请求体里的项目标识；写法不对时返回 undefined（当作不存在）。 */

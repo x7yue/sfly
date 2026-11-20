@@ -148,6 +148,12 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 			[copied?.id],
 		);
 		expect(rows).toEqual([{ project_id: OTHER }]);
+		// 这个用例建的副本不留给后面的用例（项目乙里只有场景b）。
+		const copy = copied?.id;
+		await database.pool.query("delete from orchestration_versions where orchestration_id = $1", [
+			copy,
+		]);
+		await database.pool.query("delete from orchestrations where id = $1", [copy]);
 	});
 
 	it("运行：列表和各状态的计数只有本项目的，按 ID 取别的项目的运行得到「不存在」", async () => {
@@ -271,7 +277,7 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 	});
 });
 
-describe("默认项目的接口看不到项目乙的任何东西", () => {
+describe("默认项目的列表和按名字定位的接口看不到项目乙的任何东西", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 

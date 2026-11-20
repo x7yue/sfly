@@ -20,11 +20,11 @@ export async function setupSummary(db: Db, project: ProjectId): Promise<Dashboar
 			db
 				.select({ n: countDistinct(nodePackages.name) })
 				.from(nodePackages)
-				.where(inArray(nodePackages.projectId, [...readableProjects(project)])),
+				.where(inArray(nodePackages.projectId, readableProjects(project))),
 			db
 				.select({ name: nodePackages.name, version: nodePackages.version })
 				.from(nodePackages)
-				.where(inArray(nodePackages.projectId, [...readableProjects(project)]))
+				.where(inArray(nodePackages.projectId, readableProjects(project)))
 				.orderBy(desc(nodePackages.publishedAt), asc(nodePackages.name), desc(nodePackages.version))
 				.limit(1),
 			db

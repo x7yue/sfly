@@ -65,7 +65,7 @@ export async function seedRemovedKindScenario(cp: TestControlPlane): Promise<typ
 	await client.connect();
 	try {
 		await client.query(
-			"insert into orchestrations (id, name, description, head_version, created_at) values ($1, '移除之前的场景', '', 1, $2)",
+			"insert into orchestrations (id, project_id, name, description, head_version, created_at) values ($1, 'default', '移除之前的场景', '', 1, $2)",
 			[IDS.scenario, AT],
 		);
 		await client.query(
@@ -74,8 +74,8 @@ export async function seedRemovedKindScenario(cp: TestControlPlane): Promise<typ
 			[IDS.version, IDS.scenario, JSON.stringify(LEGACY_DOCUMENT), AT],
 		);
 		await client.query(
-			`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at, ended_at)
-			values ($1, $2, $3, '旧人', '{"env":"A"}', 'success', $4, $4)`,
+			`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status, started_at, ended_at)
+			values ($1, $2, $3, 'default', '旧人', '{"env":"A"}', 'success', $4, $4)`,
 			[IDS.run, IDS.scenario, IDS.version, AT],
 		);
 		await client.query(

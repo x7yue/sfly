@@ -675,7 +675,7 @@ export const nodePackages = pgTable(
 		version: text("version").notNull(),
 		/**
 		 * 所属项目（ADR 0029）：发布到哪个项目就属于哪个；标准节点包（`sfly-std`）的已发布版本属于公共项目。
-		 * 名字仍然全局唯一（主键不变），第二步改成「项目 + 名字 + 版本」（#502）。
+		 * `名字@版本` 仍然全局唯一（主键不变），第二步改成「项目 + 名字 + 版本」（#502）；同一个名字的不同版本现在可以分属两个项目。
 		 */
 		projectId: text("project_id")
 			.$type<ProjectId>()

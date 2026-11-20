@@ -132,9 +132,10 @@ export interface PackageRepositoryDeps {
 /**
  * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
  * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
- * （{@link readableProjects}）。名字仍然全局唯一（第二步改成项目内唯一，#502），所以磁盘上的路径
- * （`packages/<名>/<版本>.sflypkg`）暂时不分项目。「先找本项目、再找公共项目」的优先顺序（场景和 Agent 下载归档，#501）
- * 不在这里：现在名字全局唯一，同一个名字不会同时出现在两个项目里。
+ * （{@link readableProjects}）。`名字@版本` 仍然全局唯一（主键不变，第二步改成项目内唯一，#502），所以磁盘上的路径
+ * （`packages/<名>/<版本>.sflypkg`）暂时不分项目。同一个名字的不同版本可以分属两个项目（例如升级前发布的 `sfly-std`
+ * 在公共项目里，之后经默认项目发布的新版本在默认项目里）：按名字取时各版本合在一起。「先找本项目、再找公共项目」的优先顺序
+ * （场景和 Agent 下载归档，#501）不在这里。
  */
 export function createPackageRepository({ db, clock, dataDir }: PackageRepositoryDeps) {
 	return {
@@ -186,7 +187,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			const rows = await db
 				.select()
 				.from(nodePackages)
-				.where(inArray(nodePackages.projectId, [...readableProjects(project)]))
+				.where(inArray(nodePackages.projectId, readableProjects(project)))
 				.orderBy(asc(nodePackages.name), desc(nodePackages.publishedAt));
 			const byName = new Map<string, PackageSummary>();
 			for (const row of rows) {
@@ -207,7 +208,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				.from(nodePackages)
 				.where(
 					and(
-						inArray(nodePackages.projectId, [...readableProjects(project)]),
+						inArray(nodePackages.projectId, readableProjects(project)),
 						eq(nodePackages.name, name),
 					),
 				)
@@ -268,7 +269,7 @@ async function findRow(
 				eq(nodePackages.version, version),
 				...(project === undefined
 					? []
-					: [inArray(nodePackages.projectId, [...readableProjects(project)])]),
+					: [inArray(nodePackages.projectId, readableProjects(project))]),
 			),
 		);
 	return row;

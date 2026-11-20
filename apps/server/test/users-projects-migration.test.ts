@@ -83,7 +83,7 @@ async function seedLegacyData(client: pg.Client) {
 
 describe("第一次迁移：用户与项目（0030，升级前已有数据的库）", () => {
 	let testDb: TestDatabase;
-	let client: pg.Client;
+	let client: pg.Client | undefined;
 	let before: string;
 	const dirs: string[] = [];
 
@@ -95,8 +95,13 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 			await database.close();
 		}
 	};
+	/** 当前用例的连接（beforeEach 里建好）。 */
+	const db = () => {
+		if (!client) throw new Error("beforeEach 还没有建好连接");
+		return client;
+	};
 	const rows = async <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) =>
-		(await client.query<T>(sql, params)).rows;
+		(await db().query<T>(sql, params)).rows;
 	const scalar = async (sql: string) => Object.values((await rows(sql))[0] ?? {})[0];
 
 	beforeEach(async () => {
@@ -109,7 +114,8 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 		await seedLegacyData(client);
 	});
 	afterEach(async () => {
-		await client.end();
+		await client?.end();
+		client = undefined;
 		await testDb.drop();
 		await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 	});
@@ -223,13 +229,13 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 			})),
 		);
 		await expect(
-			client.query(
+			db().query(
 				"insert into feishu_bots (name, webhook_url, created_at) values ('bot-2', 'https://x', $1)",
 				[AT],
 			),
 		).rejects.toThrow(/null value in column "project_id"/);
 		await expect(
-			client.query(
+			db().query(
 				"insert into feishu_bots (name, project_id, webhook_url, created_at) values ('bot-2', 'no-such-project', 'https://x', $1)",
 				[AT],
 			),
@@ -257,7 +263,7 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 			.map((statement) => statement.replace(/^(\s*--[^\n]*\n)+/, "").trim())
 			.filter((statement) => /^(INSERT|UPDATE)\b/.test(statement));
 		expect(dataStatements).toHaveLength(2);
-		for (const statement of dataStatements) await client.query(statement);
+		for (const statement of dataStatements) await db().query(statement);
 		expect(await snapshot()).toEqual(first);
 	});
 
@@ -288,13 +294,13 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 
 	it("空库（没有存量数据）上也能执行", async () => {
 		const empty = await createTestDatabase();
+		const database = openDatabase(empty.url, () => {}, defaultMigrationsDir);
 		try {
-			const database = openDatabase(empty.url, () => {}, defaultMigrationsDir);
 			await database.migrate();
 			const check = await database.pool.query("select id from projects order by id");
 			expect(check.rows.map((r) => r.id)).toEqual(["default", "public"]);
-			await database.close();
 		} finally {
+			await database.close();
 			await empty.drop();
 		}
 	});

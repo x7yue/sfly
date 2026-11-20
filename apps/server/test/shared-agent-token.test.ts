@@ -2,13 +2,13 @@
 // 没配则不登记；这一步还不改变任何接口的行为，Hello 和上传产物照旧比较环境变量里的值。
 import { createHash } from "node:crypto";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { registerSharedAgentToken } from "../src/agents/shared-agent-token.js";
 import { hashCredential } from "../src/auth/credential-hash.js";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
-import { startTestControlPlane } from "./support/test-control-plane.js";
+import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -30,6 +30,10 @@ describe("控制面启动时登记共享令牌", () => {
 		testDb = await createTestDatabase();
 		database = openDatabase(testDb.url, () => {});
 		await database.migrate();
+	});
+	// 每个用例从空表开始，不依赖前一个用例留下的数据。
+	beforeEach(async () => {
+		await database.pool.query("delete from agent_credentials");
 	});
 	afterAll(async () => {
 		await database.close();
@@ -72,27 +76,34 @@ describe("控制面启动时登记共享令牌", () => {
 	});
 
 	it("管理员吊销过的这一条不会因为重启又恢复有效", async () => {
+		await registerSharedAgentToken(database.db, clock, "shared-secret");
 		await database.pool.query("update agent_credentials set revoked_at = now()");
 		await registerSharedAgentToken(database.db, clock, "shared-secret");
 		expect((await credentials()).map((c) => c.revoked)).toEqual([true]);
-		await database.pool.query("update agent_credentials set revoked_at = null");
 	});
 
-	it("共享令牌换成新值：之前登记的那条随之吊销，新值登记为有效的", async () => {
+	it("共享令牌换成新值：之前登记的那条随之删除，新值登记为有效的；换回旧值又是有效的", async () => {
+		await registerSharedAgentToken(database.db, clock, "shared-secret");
 		await registerSharedAgentToken(database.db, clock, "rotated-secret");
-		const revoked = Object.fromEntries((await credentials()).map((c) => [c.token_hash, c.revoked]));
-		expect(revoked).toEqual({
-			[sha256("shared-secret")]: true,
-			[sha256("rotated-secret")]: false,
-		});
+		expect((await credentials()).map((c) => [c.token_hash, c.revoked])).toEqual([
+			[sha256("rotated-secret"), false],
+		]);
+
+		await registerSharedAgentToken(database.db, clock, "shared-secret");
+		expect((await credentials()).map((c) => [c.token_hash, c.revoked])).toEqual([
+			[sha256("shared-secret"), false],
+		]);
 	});
 });
 
 describe("经控制面启动登记", () => {
 	it("配了共享令牌的控制面启动后，库里有这一条；没有共享令牌时没有，Agent 照旧能连", async () => {
-		const withToken = await startTestControlPlane({ agentToken: "startup-secret" });
-		const without = await startTestControlPlane();
+		const started: TestControlPlane[] = [];
 		try {
+			const withToken = await startTestControlPlane({ agentToken: "startup-secret" });
+			started.push(withToken);
+			const without = await startTestControlPlane();
+			started.push(without);
 			const read = async (url: string) => {
 				const client = new pg.Client({ connectionString: url });
 				await client.connect();
@@ -120,8 +131,7 @@ describe("经控制面启动登记", () => {
 				FakeAgent.connect(withToken.grpcUrl, { name: "agent-b", token: "wrong" }),
 			).rejects.toThrow();
 		} finally {
-			await withToken.close();
-			await without.close();
+			await Promise.all(started.map((cp) => cp.close()));
 		}
 	});
 });
