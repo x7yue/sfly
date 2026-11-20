@@ -18,10 +18,15 @@ import {
  * 契约测试对 `httpContract` 运行它；路由清单导出时也运行它，有问题就不导出。
  */
 
-/** 一个路径前缀对应的资源类别，以及为什么。 */
+/** 一个路径前缀（`exact` 时是一条完整的路径）对应的资源类别，以及为什么。 */
 export interface PathKind {
 	kind: ResourceKind;
 	why: string;
+	/**
+	 * 只匹配和它完全相同的路径模板，不匹配它下面的路径。`system` 的每一项都要写它：新增一个 `system` 接口一定要在表里
+	 * 加一项（审查时看得见），不会因为路径正好落在已有的前缀下就悄悄成了公开的接口。
+	 */
+	exact?: true;
 }
 
 /**
@@ -30,7 +35,8 @@ export interface PathKind {
  *
  * - 每个接口的路径都要落在某一项上，声明的 `kind` 要和那一项一致：写错 `kind`（尤其是写成 `system`）、
  *   新增一个前缀都会报错，要改这张表，审查时看得见。
- * - `system` 项就是「平台自身」的名单：这类接口按鉴权的设想不带项目、不需要凭据，所以每一项都要写清楚为什么它是平台自身的。
+ * - `system` 项就是「平台自身」的名单：这类接口按鉴权的设想不带项目、不需要凭据，所以每一项都要写清楚为什么它是平台自身的，
+ *   并且一项只对应一条完整的路径（`exact`）：新增一个 `system` 接口一定要在这里加一项。
  * - 前缀下有例外时，为例外写一个更长的前缀并写明理由，不要为了过检查改声明。
  * - 加一个资源类别时，在这里写它的路径前缀；一个类别没有任何前缀、或者一项没有接口用，契约测试都会报错。
  */
@@ -57,29 +63,73 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "run",
 		why: "控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；以后按项目隔离时，它的运行部分要按项目过滤",
 	},
-	"/health": { kind: "system", why: "健康检查：控制面自己的状态，不属于任何项目" },
-	"/docs": {
+	"/health": { kind: "system", exact: true, why: "健康检查：控制面自己的状态，不属于任何项目" },
+	"/docs": { kind: "system", exact: true, why: "用户文档的目录：公开的说明文字，不属于任何项目" },
+	"/docs/:page.md": {
 		kind: "system",
-		why: "用户文档和给 AI 编程助手的 skill：公开的说明文字，不属于任何项目",
+		exact: true,
+		why: "一页用户文档的 Markdown 原文：给 curl 和 AI 编程助手读，公开的说明文字",
 	},
-	"/llms.txt": { kind: "system", why: "给 AI 编程助手的文档索引：公开的说明文字" },
-	"/sdk": {
+	"/docs/skills/:skill/:file": {
 		kind: "system",
-		why: "SDK 运行时 wheel 和 sfly init 的项目设置：装 sfly 用的，与具体场景无关",
+		exact: true,
+		why: "给 AI 编程助手的 skill 文件：公开的说明文字，与 sfly init 写进项目的是同一份",
 	},
-	"/simple": {
+	"/llms.txt": {
 		kind: "system",
-		why: "sfly 简单索引（PEP 503）：uv 从这里装 sfly，与具体场景无关",
+		exact: true,
+		why: "给 AI 编程助手的文档索引：公开的说明文字",
+	},
+	"/sdk/python": {
+		kind: "system",
+		exact: true,
+		why: "控制面提供的 SDK 运行时 wheel 的列表：装 sfly 用的，与具体场景无关",
+	},
+	"/sdk/python/:version/:filename": {
+		kind: "system",
+		exact: true,
+		why: "下载一个 SDK 运行时 wheel：Agent 和开发机装 sfly 用的，与具体场景无关",
+	},
+	"/sdk/project-settings": {
+		kind: "system",
+		exact: true,
+		why: "sfly init 写进新项目的配置（控制面版本、sfly 索引、镜像）：与具体场景无关",
+	},
+	"/simple/": {
+		kind: "system",
+		exact: true,
+		why: "sfly 简单索引（PEP 503）的根页面：uv 从这里装 sfly，与具体场景无关",
+	},
+	"/simple/:project/": {
+		kind: "system",
+		exact: true,
+		why: "sfly 简单索引的项目页：SDK wheel 的下载链接，与具体场景无关",
 	},
 	"/install.sh": {
 		kind: "system",
+		exact: true,
 		why: "Agent 的一键安装脚本：curl | sh 的时候还没有身份",
 	},
 	"/agent/binaries": {
 		kind: "system",
-		why: "Agent 二进制：是「装一个 Agent 用的软件」，不是某台 Agent",
+		exact: true,
+		why: "Agent 二进制的列表和安装脚本地址：是「装一个 Agent 用的软件」，不是某台 Agent",
 	},
-	"/client": { kind: "system", why: "API 客户端安装包：软件，与具体场景无关" },
+	"/agent/binaries/:version/:arch": {
+		kind: "system",
+		exact: true,
+		why: "下载一个 Agent 二进制：是「装一个 Agent 用的软件」，不是某台 Agent",
+	},
+	"/client": {
+		kind: "system",
+		exact: true,
+		why: "API 客户端安装包的列表：软件，与具体场景无关",
+	},
+	"/client/:version/:filename": {
+		kind: "system",
+		exact: true,
+		why: "下载一个 API 客户端安装包：软件，与具体场景无关",
+	},
 };
 
 /** 检查用到的两张表；测试可以换成自己的。 */
@@ -228,7 +278,8 @@ function pathKindFor(
 	let best: { prefix: string; entry: PathKind; length: number } | undefined;
 	for (const [prefix, entry] of Object.entries(pathKinds)) {
 		const parts = pathSegments(prefix);
-		const matches = parts.length <= own.length && parts.every((part, i) => part === own[i]);
+		const sameLength = entry.exact ? parts.length === own.length : parts.length <= own.length;
+		const matches = sameLength && parts.every((part, i) => part === own[i]);
 		if (matches && (best === undefined || parts.length > best.length)) {
 			best = { prefix, entry, length: parts.length };
 		}
@@ -242,9 +293,10 @@ function checkPathKind(def: RouteDef, kind: ResourceKind, rules: DeclarationRule
 	if (found === undefined) {
 		const [first = ""] = pathSegments(def.path);
 		return [
-			`路径 ${def.path} 不在 PATH_KINDS（http/declarations.ts）的任何前缀下：新增接口要在那张表里加一项` +
-				` "/${first}": { kind: …, why: "…" }，写明这个前缀下的接口作用在哪类资源上、为什么；` +
-				"声明成 system 的接口按鉴权的设想不带项目、不需要凭据，所以写 system 要格外说明为什么它是平台自身的",
+			`路径 ${def.path} 不在 PATH_KINDS（http/declarations.ts）里：新增接口要在那张表里加一项` +
+				` "/${first}": { kind: …, why: "…" }（写前缀，这个前缀下的接口都作用在同一类资源上）；` +
+				`system 的接口要把这条完整的路径写成一项 "${def.path}": { kind: "system", exact: true, why: "…" }：` +
+				"system 按鉴权的设想不带项目、不需要凭据，所以每一条都单独列出来，并写明为什么它是平台自身的",
 		];
 	}
 	const { prefix, entry } = found;
@@ -277,6 +329,11 @@ export function checkDeclarationTables(
 			problems.push(`PATH_KINDS 的 ${prefix}：kind 要写 ${RESOURCE_KINDS.join("、")} 之一`);
 		}
 		if (entry.why.trim() === "") problems.push(`PATH_KINDS 的 ${prefix}：要写明为什么`);
+		if (entry.kind === "system" && entry.exact !== true) {
+			problems.push(
+				`PATH_KINDS 的 ${prefix} 是 system，要写 exact: true：system 的每条路径都要单独列出来，新增一个 system 接口就要在这里加一项`,
+			);
+		}
 		if (!used.has(prefix)) {
 			problems.push(`PATH_KINDS 的 ${prefix} 没有接口在用：接口改名或删掉了，把这一项一起改掉`);
 		}

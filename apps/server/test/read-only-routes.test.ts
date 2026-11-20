@@ -13,7 +13,6 @@
 // 没有用「只有 SELECT 权限的数据库角色」：控制面启动时要迁移，运行时后台有周期扫描和清理，用只读角色它起不来、
 // 也没法区分是哪个请求出的错；请求前后比较的办法不改控制面，还看得见「写回同样的值」「取了序列号」和「写了文件」。
 // 覆盖范围和做不到的见 PR 说明。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

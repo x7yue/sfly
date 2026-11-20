@@ -101,13 +101,17 @@ describe("路由清单里每个接口的声明和响应", () => {
 });
 
 describe("导出响应的规则", () => {
-	/** 给这几个接口的路径前缀各登记它们声明的类别，不让路径前缀的检查挡着这里要测的东西。 */
+	/** 给这几个接口各登记它们声明的类别（system 写完整的路径），不让路径检查挡着这里要测的东西。 */
 	const lenient = (defs: Parameters<typeof buildRouteManifest>[0]) => ({
 		pathKinds: Object.fromEntries(
-			defs.map((def) => [
-				`/${def.path.split("/").filter(Boolean)[0]}`,
-				{ kind: def.resource.kind, why: "测试" },
-			]),
+			defs.map((def) =>
+				def.resource.kind === "system"
+					? [def.path, { kind: def.resource.kind, why: "测试", exact: true as const }]
+					: [
+							`/${def.path.split("/").filter(Boolean)[0]}`,
+							{ kind: def.resource.kind, why: "测试" },
+						],
+			),
 		),
 		readsWithTraces: {},
 	});

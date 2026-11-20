@@ -414,11 +414,46 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 			response: z.object({}),
 		});
 		const [problem] = problems(added);
-		expect(problem).toContain(
-			"路径 /accounts/:id 不在 PATH_KINDS（http/declarations.ts）的任何前缀下",
-		);
+		expect(problem).toContain("路径 /accounts/:id 不在 PATH_KINDS（http/declarations.ts）里");
 		expect(problem).toContain('"/accounts": { kind: …, why: "…" }');
-		expect(problem).toContain("写 system 要格外说明");
+		expect(problem).toContain('"/accounts/:id": { kind: "system", exact: true, why: "…" }');
+	});
+
+	it("system 的每条路径都要单独列出来：新增一个 system 接口一定要改表，落在已有 system 路径下面的也不行", () => {
+		const system = (path: string) =>
+			endpoint({
+				method: "GET",
+				path,
+				summary: "测试",
+				effect: "read",
+				resource: { kind: "system", target: "global" },
+				client: false,
+				key: ["x", "y"],
+				response: z.object({}),
+			});
+		// 现有的 system 接口各自在表里
+		expect(checkRouteDeclarations([system("/health")], DECLARATION_RULES)).toEqual([]);
+		expect(checkRouteDeclarations([system("/docs/:page.md")], DECLARATION_RULES)).toEqual([]);
+		// 新增的 system 接口：哪怕正好在 /docs 这样已有的路径下面，表里没有就报错
+		for (const path of [
+			"/docs/admin",
+			"/health/secret",
+			"/agent/binaries/:version/:arch/extra",
+			"/new-public",
+		]) {
+			const found = checkRouteDeclarations([system(path)], DECLARATION_RULES);
+			expect(found.join("\n"), path).toContain(`路径 ${path} 不在 PATH_KINDS`);
+		}
+		// 表里的 system 项忘了写 exact：表检查报错
+		const loose = checkDeclarationTables([system("/health")], {
+			pathKinds: { "/health": { kind: "system", why: "健康检查" } },
+			readsWithTraces: {},
+		});
+		expect(loose.join("\n")).toContain("PATH_KINDS 的 /health 是 system，要写 exact: true");
+		// 现有表里的 system 项都是 exact
+		for (const [prefix, entry] of Object.entries(PATH_KINDS)) {
+			if (entry.kind === "system") expect(entry.exact, prefix).toBe(true);
+		}
 	});
 
 	it("前缀按路径段匹配，取最长的一项；例外写成更长的前缀", () => {
