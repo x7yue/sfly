@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
 from sfly.cli.run_view import (
     NODE_STATUS_LABEL,
@@ -54,14 +56,19 @@ def test_node_types_are_named_by_kind_and_package() -> None:
     assert node_type_label({"kind": "package"}) == "package"
 
 
-def test_a_removed_node_kind_is_named_the_way_the_control_plane_names_it() -> None:
-    """已移除的种类（ADR 0028，例如 feishu_notify）在历史版本和历史运行里还留着：写成
-    「已移除的节点类型 <种类名>」，和控制面的 removedKindLabel 一致；不认识的种类原样写种类名。"""
-    assert node_type_label({"kind": "feishu_notify"}) == "已移除的节点类型 feishu_notify"
+@pytest.mark.parametrize("kind", ["feishu_notify", "timer", "sleep"])
+def test_a_removed_node_kind_is_named_the_way_the_control_plane_names_it(kind: str) -> None:
+    """已移除的种类（ADR 0028：feishu_notify、timer、sleep）在历史版本和历史运行里还留着：写成
+    「已移除的节点类型 <种类名>」，和控制面的 removedKindLabel 一致。"""
+    assert node_type_label({"kind": kind}) == f"已移除的节点类型 {kind}"
+    assert removed_kind_label(kind) == f"已移除的节点类型 {kind}"
+
+
+def test_an_unknown_node_kind_is_named_as_it_is() -> None:
+    """不认识的种类原样写种类名；已移除的种类的写法和控制面的 removedKindLabel 是同一个模板。"""
     assert node_type_label({"kind": "some_future_kind"}) == "some_future_kind"
     source = (REPO / "packages/schema/src/removed-nodes.ts").read_text(encoding="utf-8")
     assert "`已移除的节点类型 ${kind}`" in source
-    assert removed_kind_label("feishu_notify") == "已移除的节点类型 feishu_notify"
 
 
 def test_the_removed_kinds_match_the_control_plane_registry() -> None:

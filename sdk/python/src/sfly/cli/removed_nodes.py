@@ -10,6 +10,8 @@ from __future__ import annotations
 # 种类名 → (原来的名称, 替换办法)。
 REMOVED_NODE_KINDS: dict[str, tuple[str, str]] = {
     "feishu_notify": ("飞书通知", "在节点代码里用 ctx.notify 发飞书消息"),
+    "timer": ("定时", "在节点代码里等到那个时刻，或把场景拆成两次运行"),
+    "sleep": ("Sleep", "在节点代码里等待，或把场景拆成两次运行"),
 }
 
 

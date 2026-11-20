@@ -10,6 +10,14 @@ export const REMOVED_NODE_KINDS = {
 		label: "飞书通知",
 		replacement: "在节点代码里用 ctx.notify 发飞书消息",
 	},
+	timer: {
+		label: "定时",
+		replacement: "在节点代码里等到那个时刻，或把场景拆成两次运行",
+	},
+	sleep: {
+		label: "Sleep",
+		replacement: "在节点代码里等待，或把场景拆成两次运行",
+	},
 } as const satisfies Record<string, { label: string; replacement: string }>;
 
 export type RemovedNodeKind = keyof typeof REMOVED_NODE_KINDS;

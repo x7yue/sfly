@@ -176,22 +176,24 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 
 	menu = await openMenu(page, "fetch");
 	await menu.getByRole("menuitem", { name: /在后面添加节点/ }).click();
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeFocused();
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeFocused();
 	await expect
 		.poll(() => edges(page))
 		.toEqual(
 			[
 				"chain:dispatch->ping",
 				"chain:entry->fetch",
-				"chain:fetch->sleep_1",
-				"chain:sleep_1->dispatch",
+				"chain:fetch->stop_subflow_1",
+				"chain:stop_subflow_1->dispatch",
 				"chain:sub_entry->sub_ping",
 				"dispatch:dispatch->sub_entry",
 			].sort(),
 		);
 	// 新节点占了原来 dispatch 的位置，同一行后面的节点各后移一列；子流程那一行不动。
-	expect(await nodePosition(page, "sleep_1")).toEqual({ x: 600, y: 0 });
+	expect(await nodePosition(page, "stop_subflow_1")).toEqual({ x: 600, y: 0 });
 	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
 	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
 	expect(await nodePosition(page, "fetch")).toEqual({ x: 300, y: 0 });
@@ -199,13 +201,13 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 
 	// 一步撤销：节点、连线、位置都回去；重做再来。
 	await dock(page).getByRole("button", { name: "撤销" }).click();
-	await expect(nodeCard(page, "sleep_1")).toHaveCount(0);
+	await expect(nodeCard(page, "stop_subflow_1")).toHaveCount(0);
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
 	expect(await nodePosition(page, "dispatch")).toEqual({ x: 600, y: 0 });
 	expect(await nodePosition(page, "ping")).toEqual({ x: 900, y: 0 });
 	await expect(dock(page).getByRole("button", { name: "撤销" })).toBeDisabled();
 	await dock(page).getByRole("button", { name: "重做" }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
 
 	// 焦点在非链尾节点上按 Tab 也是插入。
@@ -218,7 +220,7 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 
 	// 链尾节点：追加。后移后的 ping 可能在检查器下面：用方向键沿链走过去（画布把它移进可见区域），键盘打开菜单。
 	await expect(nodeCard(page, "entry")).toBeFocused();
-	for (const next of ["fetch", "sleep_1", "dispatch", "ping"]) {
+	for (const next of ["fetch", "stop_subflow_1", "dispatch", "ping"]) {
 		await page.keyboard.press("ArrowRight");
 		await expect(nodeCard(page, next)).toBeFocused();
 	}
@@ -227,11 +229,13 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 	await expect(menu).toBeVisible();
 	await menu.getByRole("menuitem", { name: /在后面添加节点/ }).click();
 	await expect(addMenu(page).getByText("新节点接在 ping 之后")).toBeVisible();
-	await addMenu(page).getByRole("option", { name: /定时/ }).click();
-	await expect(page.locator('[data-edge="chain:ping->timer_1"]')).toHaveCount(1);
-	expect(await nodePosition(page, "timer_1")).toEqual({ x: 1500, y: 0 });
+	await addMenu(page)
+		.getByRole("option", { name: /HTTP 检查/ })
+		.click();
+	await expect(page.locator('[data-edge="chain:ping->http_check_1"]')).toHaveCount(1);
+	expect(await nodePosition(page, "http_check_1")).toEqual({ x: 1500, y: 0 });
 
-	// 保存下来的链是 entry → fetch → sleep_1 → dispatch → ping → timer_1。
+	// 保存下来的链是 entry → fetch → stop_subflow_1 → dispatch → ping → http_check_1。
 	await page.getByRole("button", { name: /保存/ }).click();
 	await expect(page.getByText("已保存为版本 2")).toBeVisible();
 	const saved = (await headOf(controlPlane, id)) as unknown as {
@@ -241,11 +245,11 @@ test("「在后面添加节点」：非链尾节点是插入，后面的节点�
 		saved.document.edges.filter((e) => e.kind === "chain").map((e) => `${e.from}>${e.to}`),
 	).toEqual([
 		"entry>fetch",
-		"fetch>sleep_1",
-		"sleep_1>dispatch",
+		"fetch>stop_subflow_1",
+		"stop_subflow_1>dispatch",
 		"dispatch>ping",
 		"sub_entry>sub_ping",
-		"ping>timer_1",
+		"ping>http_check_1",
 	]);
 });
 

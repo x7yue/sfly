@@ -168,7 +168,7 @@ test("Ctrl+C 后在另一个标签页的另一个场景 Ctrl+V：落在鼠标位
 		default_agent: "agent-linux",
 		nodes: [
 			{ id: "entry", kind: "entry", position: { x: 0, y: 0 }, params: [] },
-			{ id: "wait", kind: "sleep", position: { x: 1000, y: 0 }, duration: "5s" },
+			{ id: "wait", kind: "async", position: { x: 1000, y: 0 }, params: {} },
 		],
 		edges: [{ from: "entry", to: "wait", kind: "chain" }],
 		packages: {},
@@ -328,7 +328,7 @@ test("打开空白处菜单不读剪贴板，点「粘贴」才读：不是节�
 
 	for (const [i, text] of [
 		"hello",
-		JSON.stringify({ type: "sfly/node", node: { id: "x", kind: "sleep", duration: "" } }),
+		JSON.stringify({ type: "sfly/node", node: { id: "x", kind: "stop_subflow", subflow: "" } }),
 		JSON.stringify({
 			type: "sfly/node",
 			node: editorDocument.nodes.find((n) => n.id === "entry"),
@@ -428,7 +428,7 @@ test("焦点在输入框里时 Ctrl+C / Ctrl+V / Ctrl+D 仍是文本操作", asy
 	// 剪贴板里是节点也一样：输入框里粘贴的是文字。
 	await setClipboard(
 		page,
-		JSON.stringify({ type: "sfly/node", node: { id: "x", kind: "sleep", duration: "1s" } }),
+		JSON.stringify({ type: "sfly/node", node: { id: "x", kind: "async", params: {} } }),
 	);
 	await page.keyboard.press("ControlOrMeta+v");
 	await expect(url).toContainText('"type":"sfly/node"');

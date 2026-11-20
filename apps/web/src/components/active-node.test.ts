@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { formatClock } from "#/lib/format";
 import { type ActiveNode, activeDetail, activeOrder } from "./active-node";
 
 const NOW = Date.parse("2026-01-01T00:10:00.000Z");
@@ -8,7 +7,6 @@ const node = (patch: Partial<ActiveNode>): ActiveNode => ({
 	agent: "agent-a",
 	attempt: 2,
 	started_at: "2026-01-01T00:08:55.000Z",
-	wake_at: null,
 	...patch,
 });
 
@@ -29,10 +27,9 @@ describe("进行中的节点那一行", () => {
 		);
 	});
 
-	it("等待节点写唤醒时间", () => {
-		const wake = "2026-01-01T00:30:00.000Z";
-		expect(activeDetail(node({ status: "waiting", agent: null, wake_at: wake }), NOW)).toBe(
-			`等待中 · 唤醒 ${formatClock(wake)}`,
+	it("不在 Agent 上的节点（等待子流程停止的停止子流程节点）只写状态", () => {
+		expect(activeDetail(node({ status: "waiting", agent: null, started_at: null }), NOW)).toBe(
+			"等待中",
 		);
 	});
 

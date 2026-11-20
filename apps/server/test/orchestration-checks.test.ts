@@ -230,7 +230,7 @@ describe("节点执行配置", () => {
 		}
 	});
 
-	it("异步任务节点不能标记为 always；定时、Sleep 节点可以", async () => {
+	it("异步任务节点不能标记为 always；停止子流程节点、包节点可以", async () => {
 		const id = await api.createOrchestration("always");
 		const withNode = (n: Record<string, unknown>) => ({
 			nodes: [{ id: "entry", kind: "entry" }, n],
@@ -242,8 +242,8 @@ describe("节点执行配置", () => {
 		});
 		expect(asyncAlways.status).toBe(400);
 		for (const n of [
-			{ id: "t", kind: "timer", at: "09:00:00", always: true },
-			{ id: "s", kind: "sleep", duration: "1s", always: true },
+			{ id: "s", kind: "stop_subflow", always: true },
+			{ id: "p", kind: "package", package: "checks", node: "verify", always: true },
 		]) {
 			const res = await api.post(`/orchestrations/${id}/versions`, {
 				base_version: await api.headVersion(id),

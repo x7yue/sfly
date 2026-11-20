@@ -41,7 +41,7 @@ export type FieldError = FieldErrorAt &
 		| { nodeId?: undefined; annotationId?: undefined; stickyId?: undefined }
 	);
 
-const TYPED_FIELD = /^(params\.\d+\.name|at|duration)$/;
+const TYPED_FIELD = /^params\.\d+\.name$/;
 
 const PARAM_NAME_MESSAGE = "参数名只能包含字母、数字和下划线，不能以数字开头";
 

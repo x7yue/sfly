@@ -1,4 +1,4 @@
-// 已移除的节点种类（飞书通知节点，ADR 0028）留在历史数据里时怎么办：
+// 已移除的节点种类（飞书通知节点、定时节点、Sleep 节点，ADR 0028）留在历史数据里时怎么办：
 // 1. 历史运行照常能看：运行视图、版本、运行列表里已移除的节点显示成它当时的种类名，不报错；
 // 2. 最新版本里还含有已移除节点的场景：读出时认得，预检阻断触发并说明替换办法；
 // 3. 删掉这些节点之后可以正常保存；带着它们保存被拒绝，错误信息写明哪些节点、怎么替换。
@@ -13,7 +13,9 @@ import {
 	IDS,
 	LEGACY_DOCUMENT,
 	REMOVED_NODE,
+	REMOVED_NODES,
 	seedRemovedKindScenario,
+	seedWaitingSleepRun,
 } from "./support/removed-kind-scenario.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -31,6 +33,8 @@ interface Doc {
 }
 
 const REPLACEMENT = "在节点代码里用 ctx.notify 发飞书消息";
+const SLEEP_REPLACEMENT = "在节点代码里等待，或把场景拆成两次运行";
+const TIMER_REPLACEMENT = "在节点代码里等到那个时刻，或把场景拆成两次运行";
 
 describe("已移除的节点种类留在历史数据里", () => {
 	let cp: TestControlPlane;
@@ -61,8 +65,13 @@ describe("已移除的节点种类留在历史数据里", () => {
 			expect(chain?.nodes.map((n) => [n.node_id, n.kind, n.status])).toEqual([
 				["entry", "entry", "success"],
 				["wait", "sleep", "success"],
+				["at", "timer", "success"],
 				["notify", "feishu_notify", "success"],
 			]);
+			expect(chain?.nodes.find((n) => n.node_id === "at")?.outputs).toEqual({
+				triggered_at: "2026-01-01T00:00:00Z",
+				late: false,
+			});
 			const notify = chain?.nodes.find((n) => n.node_id === "notify");
 			expect((notify as { display_name?: string } | undefined)?.display_name).toBe("通知群");
 			expect(notify?.attempts[0]?.inputs).toEqual({
@@ -77,15 +86,35 @@ describe("已移除的节点种类留在历史数据里", () => {
 				`/runs?orchestration_id=${IDS.scenario}`,
 			);
 			expect(list.runs.map((r) => [r.id, r.status])).toEqual([[IDS.run, "success"]]);
-			const node = await api.node(IDS.run, "notify");
-			expect(node.kind).toBe("feishu_notify");
+			for (const [id, kind] of [
+				["wait", "sleep"],
+				["at", "timer"],
+				["notify", "feishu_notify"],
+			]) {
+				expect((await api.node(IDS.run, id as string)).kind).toBe(kind);
+			}
 		});
 
 		it("运行绑定的版本：文档里的已移除节点带着当时的配置原样读出", async () => {
 			const version = await api.getJson<{ document: Doc }>(
 				`/orchestrations/${IDS.scenario}/versions/1`,
 			);
-			expect(version.document.nodes.find((n) => n.id === "notify")).toMatchObject(REMOVED_NODE);
+			for (const node of REMOVED_NODES) {
+				expect(version.document.nodes.find((n) => n.id === node.id)).toMatchObject(node);
+			}
+		});
+
+		it("运行监控的平台指标：已移除节点的耗时照常算，响应里没有 wait_ms", async () => {
+			const metrics = await api.getJson<{ nodes: Array<Record<string, unknown>> }>(
+				`/runs/${IDS.run}/metrics/platform`,
+			);
+			expect(metrics.nodes.map((n) => [n.node_id, n.kind])).toEqual([
+				["entry", "entry"],
+				["wait", "sleep"],
+				["at", "timer"],
+				["notify", "feishu_notify"],
+			]);
+			for (const node of metrics.nodes) expect(node).not.toHaveProperty("wait_ms");
 		});
 	});
 
@@ -95,15 +124,28 @@ describe("已移除的节点种类留在历史数据里", () => {
 			expect(document.nodes.map((n) => [n.id, n.kind])).toEqual([
 				["entry", "entry"],
 				["wait", "sleep"],
+				["at", "timer"],
 				["notify", "feishu_notify"],
 			]);
-			expect(document.nodes[2]).toMatchObject({ bot: "ops", text: "压测结束 ${{ params.env }}" });
+			expect(document.nodes[1]).toMatchObject({ duration: "5s", display_name: "歇一会" });
+			expect(document.nodes[2]).toMatchObject({ at: "09:30:00", tz: "Asia/Shanghai" });
+			expect(document.nodes[3]).toMatchObject({ bot: "ops", text: "压测结束 ${{ params.env }}" });
 			expect(document.sticky_notes).toEqual([]);
 		});
 
 		it("预检阻断触发，指出节点、种类和替换办法；触发被拒绝，说明相同", async () => {
 			const problems = await preflightProblems();
 			expect(problems).toEqual([
+				{
+					code: "node_kind_removed",
+					message: `节点 歇一会（wait） 的类型（已移除的节点类型 sleep，原来的「Sleep」）已不再支持，不能运行。替换办法：${SLEEP_REPLACEMENT}`,
+					node_id: "wait",
+				},
+				{
+					code: "node_kind_removed",
+					message: `节点 at 的类型（已移除的节点类型 timer，原来的「定时」）已不再支持，不能运行。替换办法：${TIMER_REPLACEMENT}`,
+					node_id: "at",
+				},
 				{
 					code: "node_kind_removed",
 					message: `节点 通知群（notify） 的类型（已移除的节点类型 feishu_notify，原来的「飞书通知」）已不再支持，不能运行。替换办法：${REPLACEMENT}`,
@@ -128,8 +170,12 @@ describe("已移除的节点种类留在历史数据里", () => {
 				warnings: Problem[];
 			};
 			expect(body.number).toBe(2);
-			expect(body.document.nodes.find((n) => n.id === "notify")).toMatchObject(REMOVED_NODE);
+			for (const node of REMOVED_NODES) {
+				expect(body.document.nodes.find((n) => n.id === node.id)).toMatchObject(node);
+			}
 			expect(body.warnings.map((w) => [w.code, w.node_id])).toEqual([
+				["node_kind_removed", "wait"],
+				["node_kind_removed", "at"],
 				["node_kind_removed", "notify"],
 			]);
 
@@ -137,7 +183,9 @@ describe("已移除的节点种类留在历史数据里", () => {
 			expect(copied.status).toBe(201);
 			const { id } = (await copied.json()) as { id: string };
 			const copy = await api.getJson<{ document: Doc }>(`/orchestrations/${id}/head`);
-			expect(copy.document.nodes.find((n) => n.id === "notify")).toMatchObject(REMOVED_NODE);
+			for (const node of REMOVED_NODES) {
+				expect(copy.document.nodes.find((n) => n.id === node.id)).toMatchObject(node);
+			}
 		});
 	});
 
@@ -148,17 +196,17 @@ describe("已移除的节点种类留在历史数据里", () => {
 			const { error } = (await res.json()) as { error: { code: string; message: string } };
 			expect(error.code).toBe("invalid_document");
 			expect(error.message).toBe(
-				`场景里有 1 个已不再支持的节点（notify），先删掉再保存。替换办法：已移除的节点类型 feishu_notify：${REPLACEMENT}`,
+				`场景里有 3 个已不再支持的节点（wait、at、notify），先删掉再保存。替换办法：已移除的节点类型 sleep：${SLEEP_REPLACEMENT}；已移除的节点类型 timer：${TIMER_REPLACEMENT}；已移除的节点类型 feishu_notify：${REPLACEMENT}`,
 			);
 			expect((await head()).number).toBe(1);
 		});
 
-		it("删掉它（前后的节点接上）之后保存成功，没有已移除节点的警告，再触发不被预检阻断", async () => {
+		it("删掉它们之后保存成功，没有已移除节点的警告，再触发不被预检阻断", async () => {
 			const { document } = await head();
 			const without = {
 				...document,
-				nodes: document.nodes.filter((n) => n.kind !== "feishu_notify"),
-				edges: [{ from: "entry", to: "wait", kind: "chain" }],
+				nodes: document.nodes.filter((n) => n.id === "entry"),
+				edges: [],
 			};
 			const res = await save(without, 1);
 			expect(res.status, await res.clone().text()).toBe(201);
@@ -168,10 +216,27 @@ describe("已移除的节点种类留在历史数据里", () => {
 
 			expect(await preflightProblems()).toEqual([]);
 			const runId = await api.triggerOk(IDS.scenario, { env: "A" });
-			await api.cancelOk(runId);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
 			// 第 1 版没有被改动：已移除的节点还在里面。
 			const v1 = await api.getJson<{ document: Doc }>(`/orchestrations/${IDS.scenario}/versions/1`);
-			expect(v1.document.nodes.map((n) => n.id)).toEqual(["entry", "wait", "notify"]);
+			expect(v1.document.nodes.map((n) => n.id)).toEqual(["entry", "wait", "at", "notify"]);
+		});
+	});
+
+	describe("只删掉一部分已移除的节点", () => {
+		it("还留着的仍然拒绝保存，错误信息只写还留着的那些", async () => {
+			const { document } = await head();
+			const partly = {
+				...document,
+				nodes: document.nodes.filter((n) => n.id === "entry" || n.id === "at"),
+				edges: [{ from: "entry", to: "at", kind: "chain" }],
+			};
+			const res = await save(partly, 1);
+			expect(res.status).toBe(400);
+			const { error } = (await res.json()) as { error: { message: string } };
+			expect(error.message).toBe(
+				`场景里有 1 个已不再支持的节点（at），先删掉再保存。替换办法：已移除的节点类型 timer：${TIMER_REPLACEMENT}`,
+			);
 		});
 	});
 
@@ -245,6 +310,41 @@ describe("已移除的节点种类留在历史数据里", () => {
 			} finally {
 				await back.disconnect();
 			}
+		});
+	});
+
+	describe("升级时还停在等待节点上的运行", () => {
+		it("控制面启动时：定时、Sleep 节点的 waiting 任务按配置错误失败，后面的节点跳过，运行结束", async () => {
+			await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+			const waiting = await seedWaitingSleepRun(cp);
+			expect((await api.run(waiting.run)).status).toBe("running");
+
+			// 重启就是升级：启动时按节点种类找出没人会再唤醒的 waiting 任务。
+			await cp.restart();
+
+			await eventually(async () => expect((await api.run(waiting.run)).status).toBe("failed"));
+			const run = await api.run(waiting.run);
+			expect(
+				Object.fromEntries(run.chains[0]?.nodes.map((n) => [n.node_id, n.status]) ?? []),
+			).toEqual({ entry: "success", wait: "failed", after: "skipped" });
+			const wait = await api.node(waiting.run, "wait");
+			expect(wait.error?.kind).toBe("config_error");
+			expect(wait.error?.message).toBe(
+				`节点 wait 的类型（已移除的节点类型 sleep）已移除，不能执行：${SLEEP_REPLACEMENT}`,
+			);
+			expect(run.chains[0]?.status).toBe("failed");
+		});
+
+		it("历史运行里已经结束的等待节点不受影响：重启之后它们还是原来的状态", async () => {
+			await cp.restart();
+			const run = await api.run(IDS.run);
+			expect(run.status).toBe("success");
+			expect(run.chains[0]?.nodes.map((n) => [n.node_id, n.status])).toEqual([
+				["entry", "success"],
+				["wait", "success"],
+				["at", "success"],
+				["notify", "success"],
+			]);
 		});
 	});
 });

@@ -329,27 +329,6 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			expect((await api.run(runId)).status).toBe("success");
 		});
 
-		it("等待中的定时节点：重启后继续等待，到点触发", async () => {
-			await connect("agent-a");
-			// 时钟起点 2026-01-01T00:00:00Z = 上海 08:00。
-			const id = await api.orchestrationWith(
-				chain([{ id: "t", kind: "timer", at: "09:30:00" }, { id: "a" }]),
-			);
-			const runId = await api.triggerOk(id);
-			expect(await statusesOf(runId)).toMatchObject({ t: "waiting" });
-			await restart();
-			const back = await connect("agent-a");
-			clock.advance(90 * MINUTE - SECOND);
-			await back.expectNoAssign(150);
-			clock.advance(SECOND);
-			const a = await back.nextAssign();
-			expect(a.nodeId).toBe("a");
-			expect((await api.node(runId, "t")).outputs).toEqual({
-				triggered_at: "2026-01-01T01:30:00.000Z",
-				late: false,
-			});
-		});
-
 		it("子流程实例和任务不会因为重启而重复创建", async () => {
 			const agent = await connect("agent-a");
 			const id = await api.orchestrationWith(

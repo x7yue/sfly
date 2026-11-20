@@ -309,7 +309,7 @@ export interface AttemptView {
 	outputs: Record<string, unknown> | null;
 	error: ErrorView | null;
 	queued_at: Timestamp;
-	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、准备中为 null。 */
+	/** 执行器启动的时间；排队、准备中为 null。 */
 	started_at: Timestamp | null;
 	ended_at: Timestamp | null;
 	/**
@@ -319,8 +319,6 @@ export interface AttemptView {
 	 */
 	start_clock_offset: ClockOffsetView | null;
 	end_clock_offset: ClockOffsetView | null;
-	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
-	wake_at: Timestamp | null;
 	progress: TaskProgressView | null;
 	/** 执行中的尝试此刻在做的动作（见 CurrentAction）；没有时为 null，尝试结束后也为 null。 */
 	current_action: CurrentAction | null;
@@ -1193,7 +1191,7 @@ export interface NodeRunView {
 	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name?: string;
 	/** 运行绑定的版本是已移除的节点种类（ADR 0028）时，就是它当时的种类名：历史运行照常能看。 */
-	kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "package" | "feishu_notify";
+	kind: "entry" | "subflow_entry" | "async" | "stop_subflow" | "package" | "feishu_notify" | "timer" | "sleep";
 	/**
 	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
 	 * （这两种都没有尝试记录）。
@@ -1250,15 +1248,15 @@ export interface OrchestrationHeadView {
 	document: StoredOrchestrationDocument;
 }
 
-export type OrchestrationNode = EntryNode | SubflowEntryNode | AsyncTaskNode | TimerNode | SleepNode | StopSubflowNode | PackageNode;
+export type OrchestrationNode = EntryNode | SubflowEntryNode | AsyncTaskNode | StopSubflowNode | PackageNode;
 
-export type OrchestrationNodeInput = EntryNodeInput | SubflowEntryNodeInput | AsyncTaskNodeInput | TimerNodeInput | SleepNodeInput | StopSubflowNodeInput | PackageNodeInput;
+export type OrchestrationNodeInput = EntryNodeInput | SubflowEntryNodeInput | AsyncTaskNodeInput | StopSubflowNodeInput | PackageNodeInput;
 
 /** 缩略图用的结构：最新版本（没有版本时是只含入口节点的初始文档）的节点与连线，不含参数与布局。 */
 export interface OrchestrationStructure {
 	nodes: {
 		id: string;
-		kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "package" | "feishu_notify";
+		kind: "entry" | "subflow_entry" | "async" | "stop_subflow" | "package" | "feishu_notify" | "timer" | "sleep";
 	}[];
 	edges: {
 		from: string;
@@ -1486,12 +1484,10 @@ export interface PlatformMetrics {
 		attempts: number;
 		/** 尝试次数减 1。 */
 		retries: number;
-		/** 各次尝试从进入排队到结束的时长之和（含排队与等待）。 */
+		/** 各次尝试从进入排队到结束的时长之和（含排队）。 */
 		duration_ms: number;
 		/** 包节点：各次尝试从进入排队到开始执行（含派发、安装）的时长之和。 */
 		queue_ms: number;
-		/** 定时 / Sleep 节点：等待的时长之和。 */
-		wait_ms: number;
 	}[];
 	/** 本运行同时执行中的任务数（包节点从开始执行到结束）。 */
 	concurrency: PlatformBucket[];
@@ -1653,7 +1649,7 @@ export interface ReferencedAgent {
  */
 export interface RemovedNode {
 	id: string;
-	kind: "feishu_notify";
+	kind: "feishu_notify" | "timer" | "sleep";
 	position?: {
 		x: number;
 		y: number;
@@ -1747,12 +1743,10 @@ export interface RunListActiveNode {
 	status: string;
 	/** 最后一次尝试的尝试号（从 1 开始）。 */
 	attempt: number;
-	/** 任务所在的 Agent（排队中的任务是它在等的 Agent）；不在 Agent 上执行的节点（等待节点、停止子流程节点）为 null。 */
+	/** 任务所在的 Agent（排队中的任务是它在等的 Agent）；不在 Agent 上执行的节点（停止子流程节点）为 null。 */
 	agent: string | null;
-	/** 最后一次尝试开始的时间（等待节点是开始等待的时间）；还没开始执行（排队中、准备中）时为 null。 */
+	/** 最后一次尝试开始的时间；还没开始执行（排队中、准备中）时为 null。 */
 	started_at: Timestamp | null;
-	/** 等待节点（定时 / Sleep）的唤醒时间；其他节点为 null。 */
-	wake_at: Timestamp | null;
 	/** 最新进度；没有上报过时为 null。 */
 	progress: {
 		current: number;
@@ -2110,38 +2104,6 @@ export interface SavedVersionView {
 	warnings: DocumentWarningView[];
 }
 
-export interface SleepNode {
-	id: string;
-	/** 布局属于版本内容。 */
-	position?: {
-		x: number;
-		y: number;
-	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
-	note?: string;
-	display_name?: string;
-	kind: "sleep";
-	always: boolean;
-	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
-	duration: string;
-}
-
-export interface SleepNodeInput {
-	id: string;
-	/** 布局属于版本内容。 */
-	position?: {
-		x: number;
-		y: number;
-	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
-	note?: string;
-	display_name?: string;
-	kind: "sleep";
-	always?: boolean;
-	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
-	duration: string;
-}
-
 /**
  * 便签：画布上自由摆放的说明（检查清单、已知问题、待办），不挂在任何节点上。属于版本内容，只用于显示，
  * 不影响执行（docs/SEMANTICS.md §1.7，ADR 0026）。和注释框不同，它记下自己的位置和大小。
@@ -2291,44 +2253,10 @@ export interface TaskProgressView {
 
 /**
  * 任务（一次尝试）与节点的状态（docs/SEMANTICS.md §3.1）。节点另有 pending（还没有尝试）。
- * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
- * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1，不算失败）。
+ * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；
+ * waiting：停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1，不算失败）。
  */
 export type TaskStatus = "queued" | "dispatched" | "running" | "waiting" | "success" | "failed" | "skipped" | "cancelled" | "stopped";
-
-export interface TimerNode {
-	id: string;
-	/** 布局属于版本内容。 */
-	position?: {
-		x: number;
-		y: number;
-	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
-	note?: string;
-	display_name?: string;
-	kind: "timer";
-	always: boolean;
-	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
-	at: string;
-	tz: string;
-}
-
-export interface TimerNodeInput {
-	id: string;
-	/** 布局属于版本内容。 */
-	position?: {
-		x: number;
-		y: number;
-	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
-	note?: string;
-	display_name?: string;
-	kind: "timer";
-	always?: boolean;
-	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
-	at: string;
-	tz?: string;
-}
 
 /** 时间：ISO 8601 字符串（控制面用 `Date#toISOString()` 输出）。 */
 export type Timestamp = string;

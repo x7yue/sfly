@@ -43,14 +43,14 @@ const document = () =>
 				display_name: "创建测试用户",
 				inputs: { agent: "ghost", url: "${{ params.missing }}" },
 			},
-			{ id: "wait_1", kind: "sleep", duration: "abc", display_name: "等一等" },
+			{ id: "stop_1", kind: "stop_subflow", display_name: "停一停" },
 			{ id: "notify_1", kind: "feishu_notify", display_name: "通知群" },
-			{ id: "stray", kind: "timer", at: "9点", tz: "Asia/Shanghai", display_name: "游离的定时" },
+			{ id: "stray", kind: "async", display_name: "游离的异步任务" },
 		],
 		edges: [
 			{ from: "entry", to: "fetch_1", kind: "chain" },
-			{ from: "fetch_1", to: "wait_1", kind: "chain" },
-			{ from: "wait_1", to: "notify_1", kind: "chain" },
+			{ from: "fetch_1", to: "stop_1", kind: "chain" },
+			{ from: "stop_1", to: "notify_1", kind: "chain" },
 		],
 		packages: { demo: "1.0.0" },
 	});
@@ -62,7 +62,9 @@ const messages = (doc: StoredOrchestrationDocument, code?: string) =>
 
 describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 	it("结构：不在任何链上的节点", () => {
-		expect(messages(document(), "orphan_node")).toEqual(["节点 游离的定时（stray） 不在任何链上"]);
+		expect(messages(document(), "orphan_node")).toEqual([
+			"节点 游离的异步任务（stray） 不在任何链上",
+		]);
 	});
 
 	it("引用：输入里的引用不成立", () => {
@@ -86,32 +88,47 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 		]);
 	});
 
-	it("定时、Sleep 节点的配置", () => {
-		expect(messages(document(), "sleep_duration_invalid")).toEqual([
-			'Sleep 节点 等一等（wait_1） 的时长 "abc" 无效：例如 30s、10m、1h、1h30m',
+	it.each([
+		[
+			"feishu_notify",
+			{ bot: "ops", text: "完成" },
+			"飞书通知",
+			"在节点代码里用 ctx.notify 发飞书消息",
+		],
+		[
+			"timer",
+			{ at: "09:30:00", tz: "Asia/Shanghai" },
+			"定时",
+			"在节点代码里等到那个时刻，或把场景拆成两次运行",
+		],
+		["sleep", { duration: "30s" }, "Sleep", "在节点代码里等待，或把场景拆成两次运行"],
+	] as const)("已移除种类的节点 %s（ADR 0028）：写出节点、当时的种类和替换办法", (kind, config, label, replacement) => {
+		const doc = StoredOrchestrationDocument.parse({
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "old_1", kind, display_name: "老节点", ...config },
+			],
+			edges: [{ from: "entry", to: "old_1", kind: "chain" }],
+		});
+		expect(messages(doc, "node_kind_removed")).toEqual([
+			`节点 老节点（old_1） 的类型（已移除的节点类型 ${kind}，原来的「${label}」）已不再支持，不能运行。替换办法：${replacement}`,
 		]);
-		expect(messages(document(), "timer_at_invalid")[0]).toContain(
-			"定时节点 游离的定时（stray） 的时刻",
-		);
-	});
-
-	it("已移除种类的节点（ADR 0028）", () => {
-		expect(messages(document(), "node_kind_removed")).toEqual([
-			"节点 通知群（notify_1） 的类型（已移除的节点类型 feishu_notify，原来的「飞书通知」）已不再支持，不能运行。替换办法：在节点代码里用 ctx.notify 发飞书消息",
-		]);
+		expect(
+			documentWarnings(doc, catalog)
+				.filter((w) => w.code === "node_kind_removed")
+				.map((w) => w.node_id),
+		).toEqual(["old_1"]);
 	});
 
 	it("没有显示名称的节点只写节点 ID，和以前一样", () => {
 		const doc = OrchestrationDocument.parse({
 			nodes: [
 				{ id: "entry", kind: "entry" },
-				{ id: "wait_1", kind: "sleep", duration: "abc" },
+				{ id: "stop_1", kind: "stop_subflow" },
 			],
-			edges: [{ from: "entry", to: "wait_1", kind: "chain" }],
+			edges: [{ from: "entry", to: "stop_1", kind: "chain" }],
 		});
-		expect(messages(doc, "sleep_duration_invalid")).toEqual([
-			'Sleep 节点 wait_1 的时长 "abc" 无效：例如 30s、10m、1h、1h30m',
-		]);
+		expect(messages(doc, "stop_subflow_unset")).toEqual(["停止子流程节点 stop_1 没有选择子流程"]);
 	});
 
 	it("每条警告仍然指向节点 ID：node_id 不变", () => {
@@ -228,11 +245,11 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 
 		it("调度连线不合规：两端写出显示名称", () => {
 			const doc = subflowDocument(
-				[{ id: "wait", kind: "sleep", duration: "5s", display_name: "等一等" }],
-				[{ from: "wait", to: "sub", kind: "dispatch" }],
+				[{ id: "stop", kind: "stop_subflow", display_name: "收尾" }],
+				[{ from: "stop", to: "sub", kind: "dispatch" }],
 			);
 			expect(messages(doc, "invalid_dispatch")).toEqual([
-				"调度连线 等一等（wait） → 汇报（sub） 必须从异步任务节点连到子流程入口节点",
+				"调度连线 收尾（stop） → 汇报（sub） 必须从异步任务节点连到子流程入口节点",
 			]);
 		});
 	});
@@ -241,15 +258,15 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 		const doc = OrchestrationDocument.parse({
 			nodes: [
 				{ id: "entry", kind: "entry" },
-				{ id: "wait", kind: "sleep", duration: "5s", display_name: "等一等" },
+				{ id: "stop", kind: "stop_subflow", display_name: "收尾" },
 			],
 			edges: [
-				{ from: "entry", to: "wait", kind: "chain" },
-				{ from: "wait", to: "ghost", kind: "chain" },
+				{ from: "entry", to: "stop", kind: "chain" },
+				{ from: "stop", to: "ghost", kind: "chain" },
 			],
 		});
 		expect(messages(doc, "unknown_node")).toEqual([
-			"连线 等一等（wait） → ghost 指向不存在的节点 ghost",
+			"连线 收尾（stop） → ghost 指向不存在的节点 ghost",
 		]);
 	});
 

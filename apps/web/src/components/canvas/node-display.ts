@@ -1,12 +1,10 @@
 import { NODE_DEFAULTS, NODE_KIND_LABEL } from "@sfly/orchestration";
 import { REMOVED_NODE_KIND_NAMES, type RemovedNodeKind, removedKindLabel } from "@sfly/schema";
 import {
-	AlarmClockIcon,
 	BanIcon,
 	BoxIcon,
 	CircleStopIcon,
 	CornerDownRightIcon,
-	HourglassIcon,
 	type LucideIcon,
 	PlayIcon,
 	SplitIcon,
@@ -20,8 +18,6 @@ import type { DocNode } from "./flow";
 const KIND_ICONS = {
 	entry: PlayIcon,
 	package: BoxIcon,
-	timer: AlarmClockIcon,
-	sleep: HourglassIcon,
 	async: SplitIcon,
 	subflow_entry: CornerDownRightIcon,
 	stop_subflow: CircleStopIcon,
@@ -36,8 +32,6 @@ export const KIND_META: Record<DocNode["kind"], { label: string; icon: LucideIco
 	...REMOVED_KIND_META,
 	entry: { label: NODE_KIND_LABEL.entry, icon: KIND_ICONS.entry },
 	package: { label: NODE_KIND_LABEL.package, icon: KIND_ICONS.package },
-	timer: { label: NODE_KIND_LABEL.timer, icon: KIND_ICONS.timer },
-	sleep: { label: NODE_KIND_LABEL.sleep, icon: KIND_ICONS.sleep },
 	async: { label: NODE_KIND_LABEL.async, icon: KIND_ICONS.async },
 	subflow_entry: { label: NODE_KIND_LABEL.subflow_entry, icon: KIND_ICONS.subflow_entry },
 	stop_subflow: { label: NODE_KIND_LABEL.stop_subflow, icon: KIND_ICONS.stop_subflow },
@@ -68,10 +62,6 @@ export function nodeSlot(node: DocNode): { text: string; empty: boolean } {
 			const keys = Object.keys(node.params);
 			return keys.length === 0 ? empty("没有参数映射") : value(`映射 ${keys.join(" · ")}`);
 		}
-		case "timer":
-			return value(`${node.at} · ${node.tz}`);
-		case "sleep":
-			return value(node.duration);
 		case "stop_subflow":
 			return node.subflow ? value(`子流程入口 ${node.subflow}`) : empty("未选择子流程");
 		case "package": {

@@ -203,7 +203,6 @@ describe("跨场景的运行列表", () => {
 					attempt: 1,
 					agent: "agent-a",
 					started_at: "2026-01-01T00:00:00.000Z",
-					wake_at: null,
 					progress: { current: 3, total: 10 },
 				},
 			]);
@@ -265,11 +264,9 @@ describe("跨场景的运行列表", () => {
 		expect(ended.recent_ended.find((r) => r.id === runId)?.failure?.node_id).toBe("c");
 	});
 
-	it("进行中的节点带上尝试号、Agent、开始时间与唤醒时间：准备中没有开始时间，重试后是新一次尝试，等待节点没有 Agent", async () => {
+	it("进行中的节点带上尝试号、Agent 与开始时间：准备中没有开始时间，重试后是新一次尝试", async () => {
 		const scenario = await api.orchestrationWith(
-			orchestration([
-				[entry, { ...echo("a"), retries: 1 }, { id: "nap", kind: "sleep", duration: "10m" }],
-			]),
+			orchestration([[entry, { ...echo("a"), retries: 1 }]]),
 		);
 		const runId = await api.triggerOk(scenario);
 		const activeNode = async () => {
@@ -286,7 +283,6 @@ describe("跨场景的运行列表", () => {
 				attempt: 1,
 				agent: "agent-a",
 				started_at: null,
-				wake_at: null,
 			}),
 		);
 
@@ -322,21 +318,59 @@ describe("跨场景的运行列表", () => {
 			}),
 		);
 
-		clock.advance(2000);
-		const napStart = clock.now();
+		// 成功后不再是进行中的节点。
 		await agent.succeed(second);
-		await eventually(async () =>
-			expect(await activeNode()).toEqual({
+		await eventually(async () => {
+			const item = (await list()).runs.find((r) => r.id === runId);
+			expect(item?.status).toBe("success");
+			expect(item?.active_nodes).toEqual([]);
+		});
+	});
+
+	it("停止子流程节点等子流程结束时也是进行中的节点：状态 waiting，没有 Agent，开始时间是它开始等的时刻", async () => {
+		const scenario = await api.orchestrationWith(
+			orchestration(
+				[
+					[
+						entry,
+						{ id: "spawn", kind: "async", params: {} },
+						echo("load"),
+						{ id: "stop", kind: "stop_subflow", subflow: "mon" },
+					],
+					[{ id: "mon", kind: "subflow_entry", name: "监控", params: [] }, echo("watch")],
+				],
+				[["spawn", "mon"]],
+			),
+		);
+		const runId = await api.triggerOk(scenario);
+		const tasks: Record<string, AssignedTask> = {};
+		for (let i = 0; i < 2; i++) {
+			const task = await agent.nextAssign();
+			tasks[task.nodeId] = task;
+		}
+		clock.advance(3000);
+		const stopStart = clock.now();
+		await agent.succeed(tasks.load as AssignedTask);
+		// 停止子流程节点通知 Agent 终止 watch 后进入等待；watch 还没上报，仍在运行。
+		expect((await agent.nextCancel()).taskId).toBe(tasks.watch?.taskId);
+
+		await eventually(async () => {
+			const item = (await list()).runs.find((r) => r.id === runId);
+			expect(item?.active_nodes.map((n) => n.node_id).sort()).toEqual(["stop", "watch"]);
+			expect(item?.active_nodes.find((n) => n.node_id === "stop")).toEqual({
 				chain_instance_id: expect.any(String),
-				node_id: "nap",
+				node_id: "stop",
 				status: "waiting",
 				attempt: 1,
 				agent: null,
-				started_at: napStart.toISOString(),
-				wake_at: new Date(napStart.getTime() + 10 * 60_000).toISOString(),
+				started_at: stopStart.toISOString(),
 				progress: null,
-			}),
-		);
+			});
+			expect(item?.active_nodes.find((n) => n.node_id === "watch")).toMatchObject({
+				status: "running",
+				agent: "agent-a",
+			});
+		});
 	});
 
 	it("排队中的节点给出它在等的 Agent，没有开始时间", async () => {
@@ -362,7 +396,6 @@ describe("跨场景的运行列表", () => {
 						attempt: 1,
 						agent: "agent-busy",
 						started_at: null,
-						wake_at: null,
 					}),
 				]);
 			});

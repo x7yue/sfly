@@ -3,11 +3,10 @@ import type { AgentView, PackageSummary } from "@sfly/schema";
 import type { DocNode } from "#/components/canvas/flow";
 import { latestVersion } from "#/lib/package-versions";
 import { devNodes } from "./catalog";
-import { DEFAULT_TZ } from "./inspector/wait-nodes";
 
 /** 添加节点菜单里的一项：内置节点，或某个节点包版本里的节点类型。 */
 export type AddItem =
-	| { kind: "timer" | "sleep" | "stop_subflow" }
+	| { kind: "stop_subflow" }
 	/** 异步任务：勾选「同时新建子流程」时带上子流程名称，一并新建子流程入口和调度连线（#187）。 */
 	| { kind: "async"; subflow?: string }
 	/** 子流程入口：新建时必须填写名称（docs/SEMANTICS.md §1.1）。 */
@@ -27,8 +26,6 @@ export type PackageItem = Extract<AddItem, { kind: "package" }>;
 
 export const BUILTIN_ITEMS: { kind: BuiltinKind; hint: string }[] = [
 	{ kind: "async", hint: "派发一个子流程" },
-	{ kind: "timer", hint: "等到某个时刻" },
-	{ kind: "sleep", hint: "等待一段时长" },
 	{ kind: "stop_subflow", hint: "停止本链触发的子流程" },
 	{ kind: "subflow_entry", hint: "新建子流程区域" },
 ];
@@ -158,10 +155,6 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 			return { id, kind: "async", params: {} };
 		case "subflow_entry":
 			return { id, kind: "subflow_entry", name: item.name.trim(), params: [] };
-		case "timer":
-			return { id, kind: "timer", always: false, at: "09:30:00", tz: DEFAULT_TZ };
-		case "sleep":
-			return { id, kind: "sleep", always: false, duration: "30s" };
 		case "stop_subflow":
 			// 要停止的子流程在检查器里按名称选择（只列出合法候选）。
 			return { id, kind: "stop_subflow", always: false };

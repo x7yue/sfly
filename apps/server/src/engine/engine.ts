@@ -17,9 +17,7 @@ import {
 import {
 	ACTIVE_STATUSES,
 	isRemovedNodeKind,
-	REMOVED_NODE_KINDS,
 	type RunningTaskView,
-	removedKindLabel,
 	type StoredNode,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
@@ -78,6 +76,7 @@ import {
 	renewHeld,
 } from "./leases.js";
 import { fillParams } from "./params.js";
+import { failRemovedWaits, removedNodeFailure } from "./removed-nodes.js";
 import {
 	type CancelOrder,
 	type ChainDriver,
@@ -88,7 +87,6 @@ import {
 	type Step,
 	type TaskRow,
 } from "./step.js";
-import { isWaitNode, startWait, wakeTimers } from "./waits.js";
 
 export { DEFAULT_LEASE_MS } from "./leases.js";
 
@@ -184,7 +182,7 @@ function ancestry(chains: ChainRow[], chain: ChainRow): ChainRow[] {
  *
  * 每个事件（触发、任务结果、Agent 上线）在进程内互斥锁下处理，状态迁移在一个数据库事务里完成，
  * 提交后再向 Agent 推送派发消息。支持全部节点种类：入口节点、子流程入口节点、异步任务节点
- * （子流程实例在同一个事务里创建，#spawn）、定时 / Sleep 节点（持久化定时器，waits.ts）和包节点。
+ * （子流程实例在同一个事务里创建，#spawn）、停止子流程节点和包节点。已移除种类的节点（ADR 0028）不再执行。
  * 租约、排队超时与重启恢复在 leases.ts；辅助模块经 {@link ChainDriver} 回到引擎推进链，仍在同一把锁、同一个事务里。
  */
 export class Engine implements AgentSessionHandler {
@@ -225,7 +223,7 @@ export class Engine implements AgentSessionHandler {
 	/** 上一次心跳没有上报的任务（leases.ts 的 renewHeld）。 */
 	readonly #heartbeats = new MissedHeartbeats();
 
-	/** 给辅助模块（waits.ts、leases.ts）用的链推进操作。 */
+	/** 给辅助模块（leases.ts、removed-nodes.ts）用的链推进操作。 */
 	readonly #driver: ChainDriver = {
 		event: (handle) => this.#event(handle),
 		locate: (tx, task) => this.#locate(tx, task),
@@ -687,7 +685,7 @@ export class Engine implements AgentSessionHandler {
 						step,
 						task,
 						"config_error",
-						`节点 ${node.id} 的类型（${removedKindLabel(node.kind)}）已移除，不能执行：${REMOVED_NODE_KINDS[node.kind].replacement}`,
+						removedNodeFailure({ ...node, kind: node.kind }),
 					);
 				}
 				return;
@@ -700,12 +698,6 @@ export class Engine implements AgentSessionHandler {
 			if (node.kind === "async") {
 				// 失败时 #failTask 已经推进了这条链的剩余部分。
 				if (!(await this.#spawn(step, run, chain, plan, i, node))) return;
-				continue;
-			}
-			if (isWaitNode(node)) {
-				// 没到唤醒时间（或配置无效、已由 #failTask 推进）时停在这里。
-				const scope = await this.#scope(step.tx, chain, plan, i);
-				if (!(await startWait(this.#driver, step, run, chain, node, scope))) return;
 				continue;
 			}
 			if (node.kind === "package") {
@@ -957,7 +949,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 链上第 index 个节点解析引用时的作用域（包节点派发、异步任务节点、等待节点共用）：
+	 * 链上第 index 个节点解析引用时的作用域（包节点派发、异步任务节点共用）：
 	 * 本链的入口参数和前面已成功节点的输出。always 节点前面的节点可能失败或被跳过，
 	 * 引用缺失的输出得到 null（docs/SEMANTICS.md §2.4）。
 	 */
@@ -1309,15 +1301,14 @@ export class Engine implements AgentSessionHandler {
 		return create(ServerMessageSchema, { body: { case: "assign", value: content.assign } });
 	}
 
-	/** 周期扫描：唤醒到期的定时 / Sleep 节点（waits.ts），返回唤醒的任务数。 */
-	wakeTimers(): Promise<number> {
-		return wakeTimers(this.#driver, this.deps.db, this.deps.clock.now());
-	}
-
-	/** 控制面启动时顺延租约和排队超时，给 Agent 重连的时间（leases.ts）。 */
-	recover(): Promise<void> {
+	/**
+	 * 控制面启动时顺延租约和排队超时，给 Agent 重连的时间（leases.ts）；升级前正在等待、
+	 * 节点已被移除的任务按配置错误失败（removed-nodes.ts）。
+	 */
+	async recover(): Promise<void> {
 		const grace = this.#leaseFrom(this.deps.clock.now());
-		return this.deps.mutex.run(() => extendForRecovery(this.deps.db, grace));
+		await this.deps.mutex.run(() => extendForRecovery(this.deps.db, grace));
+		await failRemovedWaits(this.#driver, this.deps.db);
 	}
 
 	/** 周期扫描：租约过期（agent_lost）与排队超时（env_error），返回失败的任务数（leases.ts）。 */
