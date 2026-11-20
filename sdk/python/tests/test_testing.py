@@ -316,6 +316,29 @@ def test_invalid_inputs_are_a_config_error_and_the_node_does_not_run(tmp_path: P
     assert missing.error.message == "缺少必填输入 seconds"
 
 
+def test_an_input_the_node_does_not_declare_is_a_config_error_and_the_node_does_not_run(
+    tmp_path: Path,
+) -> None:
+    from sfly_stub import sleep
+
+    result = run_node(sleep, {"seconds": 30, "secnds": 1}, work_dir=tmp_path / "w")
+    by_entry = run_node("sfly_stub:echo", {"text": "x", "extra": 1})
+
+    # 本地调试和 Agent 上一样：在调用节点函数之前就失败，类型是 config_error（Agent 上不会重试）。
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.kind == "config_error"
+    assert result.error.message == "节点 sleep 没有声明输入 secnds，它声明的输入有：seconds"
+    assert result.error.type is None
+    assert result.error.traceback == ""
+    assert [line for line in result.logs if line.level == "error"] == []
+    assert by_entry.error is not None
+    assert (by_entry.error.kind, by_entry.error.message) == (
+        "config_error",
+        "节点 echo 没有声明输入 extra，它声明的输入有：text",
+    )
+
+
 def test_entry_string_runs_the_same_node() -> None:
 
     result = run_node("sfly_stub:echo", {"text": "x"})
@@ -338,6 +361,27 @@ def test_simulated_cancel_raises_cancelled_in_the_node_and_finally_runs(tmp_path
     assert result.error.message == "任务已取消，已终止进程树"
     # finally 里的清理执行了，并且看到了取消标记。
     assert report.read_text() == "cancelled"
+
+
+def test_a_cancelled_node_logs_one_info_line_and_no_error_level_traceback(
+    tmp_path: Path,
+) -> None:
+    from sfly_stub import wait_cancel
+
+    ready = tmp_path / "ready"
+    result = run_node(
+        wait_cancel,
+        {"ready_file": str(ready), "report_file": str(tmp_path / "report")},
+        cancel_when=lambda partial: ready.exists(),
+    )
+
+    assert result.status == "cancelled"
+    # 标准错误来源的日志是 ERROR 级：被取消不是节点出错，不往那里写堆栈，也不留 WARN。
+    assert [line for line in result.logs if line.level in ("warn", "error")] == []
+    assert not any("Traceback" in line.message for line in result.logs)
+    [terminated] = [line for line in result.logs if "被终止" in line.message]
+    assert (terminated.source, terminated.level) == ("sdk", "info")
+    assert terminated.message.startswith("任务被终止（SIGTERM），执行到 sfly_stub.wait_cancel 第 ")
 
 
 def test_cancel_kills_a_node_that_ignores_sigterm_once_the_grace_period_ends(

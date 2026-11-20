@@ -369,6 +369,19 @@ def test_node_failure_exits_1_with_the_error_and_traceback(project: Path) -> Non
     assert "输出：" not in run.stdout
 
 
+def test_an_input_the_node_does_not_declare_exits_2_like_other_config_errors(
+    project: Path,
+) -> None:
+    run = sfly_debug(project, "sleep", "--params", '{"seconds": 0, "secnds": 2}')
+
+    assert run.returncode == 2, run.stderr
+    assert "参数不合法：节点 sleep 没有声明输入 secnds，它声明的输入有：seconds" in run.stderr
+    assert "输出：" not in run.stdout
+    assert "Traceback" not in run.stderr
+    # 错误信息只出现一次：没有「节点失败：」再打一遍。
+    assert run.stderr.count("secnds") == 1
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [

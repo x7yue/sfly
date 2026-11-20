@@ -1,6 +1,6 @@
 ---
 name: verify-sfly
-description: 像用户一样驱动真实的 sfly 来证明改动有效。启动一套独立环境：独立 PostgreSQL 库、从源码运行并托管刚构建前端的控制面、一个真实 Rust Agent，再用 agent-browser 操作 Web 控制台（场景编排画布、运行抽屉、运行记录、Agent 管理、节点包管理、开发文档），用 sfly CLI 发布节点包。改了前端、控制面、Agent 或 SDK，需要在真实应用里拿到证据而不是只跑测试时使用。
+description: 像用户一样驱动真实的 sfly 来证明改动有效。启动一套独立环境：独立 PostgreSQL 库、从源码运行并托管刚构建前端的控制面、一个真实 Rust Agent，再用 agent-browser 操作 Web 控制台（场景编排画布、运行抽屉、运行记录、Agent 管理、节点包管理、开发文档），用 sfly CLI 发布节点包。改了前端、控制面、Agent 或 SDK，需要在真实应用里拿到证据而不是只跑测试时使用。只能在 Linux 上运行。
 ---
 
 # 验证 sfly
@@ -9,10 +9,12 @@ sfly 的主界面是浏览器里的 Web 控制台，由控制面在同一个 HTT
 
 e2e 测试（`apps/web/e2e`）用的是假 Agent 和手动时钟。这个 skill 走全真路径：全部是真实进程，用真实时间，节点包也真实安装。
 
-脚本在 `.claude/skills/verify-sfly/scripts/`，下文写成 `$V`：
+**只能在 Linux 上运行**：`up.sh` 要编译并启动真实的 Agent（Agent 只能在 Linux 上编译，见 README），脚本还用了 macOS 上没有的 `setsid` 和 `ss`。
+
+脚本在 `.agents/skills/verify-sfly/scripts/`，下文写成 `$V`：
 
 ```sh
-V=.claude/skills/verify-sfly/scripts   # 在仓库根目录
+V=.agents/skills/verify-sfly/scripts   # 在仓库根目录
 ```
 
 ## 启动
@@ -110,8 +112,6 @@ $V/down.sh [运行目录]
 | `$V/doctor.sh [运行目录]` | 只读体检，退出码 0 表示可以驱动 |
 | `$V/publish-stub.sh [运行目录] [项目目录]` | 用 `sfly publish` 发布节点包（默认 `testdata/stub-package`） |
 | `$V/down.sh [运行目录]` | 清理，保留证据 |
-
-本机注意：`/tmp` 是 3.6G 的 tmpfs，脚本把 `TMPDIR` 设为 `~/.t`。
 
 ## 功能地图
 

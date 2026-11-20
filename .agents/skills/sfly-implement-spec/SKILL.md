@@ -22,7 +22,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 2. (optional) Use an **exploration subagent** to conduct any exploration required by the tickets - relevant codebase files or external documentation. Ensure the exploration subagent can save files - it should save its markdown notes in a directory outside the repo, accessible by all future subagents. This lets **implementer subagents** focus on implementation rather than exploration.
 
-3. Create the integration branch (`spec/<issue>-<description>`, see `docs/agents/branching-and-release.md`). Open a draft PR after the first merge in step 5 (a branch with no commits ahead of main can't open one), marked as closing the spec and tickets.
+3. Create the integration branch (`spec/<issue>-<description>`) from the **base branch**: `origin/dev` when the spec carries the `roadmap` label, `origin/main` otherwise. Branch naming and the `dev` rules are in `docs/agents/branching-and-release.md`. Open a draft PR against the base branch after the first merge in step 5 (a branch with no commits ahead of its base can't open one), and mark the spec and tickets as the issue tracker closes them (`docs/agents/issue-tracker.md`).
 
 4. Use a fresh **implementer subagent** for each ticket, each in its own worktree on its own branch. Each implementer subagent:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
@@ -43,8 +43,10 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 6. If a passing merge changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. A ticket sent back unblocks nothing until its merge passes. This allows for maximum concurrency.
 
-7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch, with `main` as the fixed point. Step 5 already reviewed each ticket's own diff against the standards, so this pass is for what one ticket's diff cannot show: duplicates across tickets, the Spec axis over the whole spec, and wording that differs between tickets. Fix all issues raised by the code review in a single fresh **implementer subagent**.
+7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch, with the base branch as the fixed point. Step 5 already reviewed each ticket's own diff against the standards, so this pass is for what one ticket's diff cannot show: duplicates across tickets, the Spec axis over the whole spec, and wording that differs between tickets. Fix all issues raised by the code review in a single fresh **implementer subagent**.
 
-8. Mark the draft PR ready for review once its checks pass. Merging into `main` waits for the user.
+8. Mark the draft PR ready for review once its checks pass, then act on its base branch:
+   - Base `dev`: you are the coordinating session its `dev` section names, so you arrange the review and merge as it says (`docs/agents/branching-and-release.md`); after the merge close the spec and tickets by hand (`docs/agents/issue-tracker.md`).
+   - Base `main`: the `main` section of `docs/agents/branching-and-release.md` says when it may merge.
 
 9. Clean up all **implementer subagent** worktrees.

@@ -402,6 +402,26 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		expect(failureSummary({ ...failure, message: "" })).toBe("失败于 verify（第 2 次尝试）");
 	});
 
+	it("失败摘要里的原因：去掉异常的模块路径；第一行以冒号结尾时接上下一行（断言失败的第 1 条）", () => {
+		const assertion = [
+			"sfly_std.assert_.AssertionFailed: 1 条断言中 1 条不通过：",
+			"第 1 条：$ 应 eq true，实际是 false",
+			"",
+			"Traceback (most recent call last):",
+		].join("\n");
+		const run: RunView = {
+			...view("failed"),
+			chains: [chain("main", 0, [node("assert_1", "failed", [attempt(1, "failed", assertion)])])],
+		};
+		const failure = runFailure(run);
+		if (!failure) throw new Error("没有失败");
+		expect(failure.message).toBe(
+			"AssertionFailed: 1 条断言中 1 条不通过：第 1 条：$ 应 eq true，实际是 false",
+		);
+		// 完整的错误信息原样保留在尝试里。
+		expect(run.chains[0]?.nodes[0]?.attempts[0]?.error?.message).toBe(assertion);
+	});
+
 	it("没有失败的节点时为 null", () => {
 		expect(runFailure(view("success"))).toBeNull();
 	});
