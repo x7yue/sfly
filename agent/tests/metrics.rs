@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use sfly_agent::proto::{LogBatch, MetricBatch, MetricPoint, TaskStatus, agent_message};
-use support::{AgentOptions, FakeControlPlane, Received, spawn_agent, stub_task};
+use support::{AgentOptions, FakeControlPlane, NUMBERS, Received, spawn_agent, stub_task};
 
 fn batches_of(all: &[Received], task_id: &str) -> Vec<(usize, Received, MetricBatch)> {
     all.iter()
@@ -404,4 +404,43 @@ fn unix_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("时钟早于 1970 年")
         .as_secs() as i64
+}
+
+/// 指标的值也是 serde_json 从事件管道里读的（#450）：17 位有效数字的值读错一位，运行监控页上的数就和节点上报的不一样。
+/// 每个值一个序列（标签 host 不同），落在同一秒里互不合并；值、最小值、最大值都和节点上报的是同一个双精度数。
+/// 值用字符串传入、节点里再读成浮点数：只测事件管道，不经过 Agent 读输入的那一步。
+#[tokio::test]
+async fn metric_values_reach_the_control_plane_as_the_same_double() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-metric-numbers"));
+    cp.hello(0).await;
+
+    let steps: Vec<Value> = NUMBERS
+        .iter()
+        .enumerate()
+        .map(|(i, value)| json!(["conn", format!("{value:?}"), { "host": format!("h{i}"), "port": 1 }]))
+        .collect();
+    cp.assign(stub_task(
+        "task-metric-numbers",
+        "metrics",
+        json!({ "steps": steps }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-metric-numbers").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+
+    let batches = batches_of(&cp.received_with_session(), "task-metric-numbers");
+    let points = points_of(&batches, "conn");
+    let by_host: HashMap<String, (f64, f64, f64)> = points
+        .iter()
+        .map(|p| (p.labels["host"].clone(), (p.value, p.min, p.max)))
+        .collect();
+    assert_eq!(by_host.len(), NUMBERS.len(), "每个值一个序列：{points:?}");
+    for (i, expected) in NUMBERS.iter().enumerate() {
+        assert_eq!(
+            by_host[&format!("h{i}")],
+            (*expected, *expected, *expected),
+            "第 {i} 个值"
+        );
+    }
 }

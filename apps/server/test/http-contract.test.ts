@@ -71,6 +71,9 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 		const missing = endpoint({
 			method: "GET",
 			path: "/missing",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
 			client: false,
 			key: ["test", "missing"],
 			response: z.object({}),

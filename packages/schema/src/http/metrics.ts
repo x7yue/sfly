@@ -9,6 +9,7 @@ import { endpoint, Timestamp } from "./contract.js";
  */
 
 /** 路径里的运行 ID：不是 UUID 时控制面返回 404（与找不到相同），所以这里只要求是字符串。 */
+/** 运行 id。 */
 const IdParams = z.object({ id: z.string() });
 
 /**
@@ -126,16 +127,23 @@ export const MAX_SERIES_POINTS = 5000;
  */
 export const MetricSeriesQuery = z
 	.strictObject({
+		/** 链实例 id（运行视图里 `chains[].id`）。 */
 		chain_instance_id: z.uuid(),
+		/** 节点 ID。 */
 		node_id: z.string().min(1),
+		/** 第几次尝试，从 1 开始；不给是最新一次。 */
 		attempt: z.coerce.number().int().positive().optional(),
+		/** 只要这些指标，逗号分隔；不给是节点类型声明的全部指标。 */
 		metrics: z
 			.string()
 			.transform((s) => s.split(",").filter((m) => m !== ""))
 			.pipe(z.array(MetricName).max(50))
 			.optional(),
+		/** 时间范围的起点（控制面时间，闭区间，按秒取整）；不给是数据的第一个点。 */
 		from: Timestamp.optional(),
+		/** 时间范围的终点；不给是数据的最后一个点。 */
 		to: Timestamp.optional(),
+		/** 目标点数（降采样的桶数上限，默认 300）。 */
 		points: z.coerce.number().int().min(1).max(MAX_SERIES_POINTS).default(DEFAULT_SERIES_POINTS),
 	})
 	.refine(
@@ -245,8 +253,11 @@ export const PlatformBucket = z.object({
  */
 export const PlatformMetrics = z.object({
 	run_id: z.uuid(),
+	/** 时间序列的起点：运行的开始时间（控制面时间）。 */
 	from: Timestamp,
+	/** 时间序列的终点：运行的结束时间，运行中是现在。 */
 	to: Timestamp,
+	/** 每个桶的跨度（秒）。 */
 	bucket_seconds: z.number().int().positive(),
 	/** 所有节点的重试次数之和。 */
 	retries: z.number().int().nonnegative(),
@@ -282,6 +293,7 @@ export const PlatformMetrics = z.object({
 
 /** 平台自带图表的查询参数。 */
 export const PlatformMetricsQuery = z.strictObject({
+	/** 目标点数（降采样的桶数上限，默认 120）。 */
 	points: z.coerce.number().int().min(1).max(MAX_SERIES_POINTS).default(120),
 });
 
@@ -293,6 +305,9 @@ export const metricsApi = {
 	summary: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/summary",
+		summary: "读一次运行里各任务的指标摘要",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "summary"],
 		params: IdParams,
@@ -302,6 +317,9 @@ export const metricsApi = {
 	catalog: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics",
+		summary: "列出一次运行里各任务上报的指标和图表",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "catalog"],
 		params: IdParams,
@@ -314,6 +332,9 @@ export const metricsApi = {
 	series: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/series",
+		summary: "读一次运行里指标的时间序列（曲线的点）",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "series"],
 		params: IdParams,
@@ -324,6 +345,9 @@ export const metricsApi = {
 	platform: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/platform",
+		summary: "读一次运行里平台自带图表的数据",
+		effect: "read",
+		resource: { kind: "run", target: { params: "id" } },
 		client: true,
 		key: ["metrics", "platform"],
 		params: IdParams,

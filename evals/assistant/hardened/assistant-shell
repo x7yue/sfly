@@ -1,0 +1,5 @@
+#!/bin/sh
+# pi 的 shellPath：模型的每条命令（pi 以 `assistant-shell -c <命令>` 调用）以用户 assistant、
+# 清空的环境执行，看不到 pi 进程的环境变量。
+exec sudo -n -u assistant /usr/bin/env -i HOME=/home/assistant USER=assistant \
+	PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 /bin/bash "$@"
