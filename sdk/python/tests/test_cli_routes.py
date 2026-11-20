@@ -33,7 +33,15 @@ def test_every_path_the_cli_uses_is_in_the_manifest() -> None:
 
 SMALL_MANIFEST = {
     "routes": [
-        {"method": method, "path": path, "key": None, "kind": "endpoint"}
+        {
+            "method": method,
+            "path": path,
+            "key": None,
+            "kind": "endpoint",
+            "summary": "测试用的接口",
+            "effect": "read",
+            "resource": {"kind": "system", "target": "global"},
+        }
         for method, path in [
             ("GET", "/runs/:id"),
             ("POST", "/runs/:id/cancel"),
@@ -105,6 +113,13 @@ def test_every_schema_in_the_manifest_is_a_valid_json_schema() -> None:
     routes = load_routes()
     assert len(routes) > 50
     for route in routes:
-        for schema in (route.params, route.query, route.body):
+        schemas = [
+            route.params,
+            route.query,
+            route.body,
+            route.response,
+            *(route.events or {}).values(),
+        ]
+        for schema in schemas:
             if schema is not None:
                 Draft202012Validator.check_schema(schema)

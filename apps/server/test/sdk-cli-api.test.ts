@@ -16,7 +16,12 @@ interface ListedRoute {
 	path: string;
 	kind: string;
 	key: string[] | null;
+	summary: string;
+	effect: "read" | "write";
+	resource: { kind: string; target: unknown };
 	body?: { required?: string[] };
+	response?: Record<string, unknown>;
+	events?: Record<string, unknown>;
 }
 
 describe("sfly api → 控制面", () => {
@@ -225,22 +230,25 @@ describe("sfly api → 控制面", () => {
 	});
 
 	describe("--list", () => {
-		it("文本：每个接口一行，写明方法、路径、种类和参数", async () => {
+		it("文本：每个接口一行，写明方法、路径、种类、只读还是有副作用、一句话说明和参数", async () => {
 			const result = await cli("--list");
 			expect(result.code, result.stderr).toBe(0);
 			expect(result.stderr).toBe("");
 			const lines = result.stdout.split("\n");
-			expect(lines[0]).toMatch(/^方法\s+路径\s+种类\s+参数/);
+			expect(lines[0]).toMatch(/^方法\s+路径\s+种类\s+效果\s+说明\s+参数/);
 			const row = (method: string, path: string) =>
 				lines.find((line) => line.startsWith(method) && line.split(/\s+/)[1] === path);
-			expect(row("POST", "/orchestrations")).toMatch(/普通\s+body: name\*, description$/);
-			expect(row("GET", "/runs/:id/events")).toMatch(/SSE/);
-			expect(row("GET", "/llms.txt")).toMatch(/下载/);
-			expect(row("POST", "/packages")).toMatch(/上传/);
+			expect(row("POST", "/orchestrations")).toMatch(
+				/普通\s+有副作用\s+新建一个场景\s+body: name\*, description$/,
+			);
+			expect(row("GET", "/runs/:id/events")).toMatch(/SSE\s+只读\s+实时推送一次运行/);
+			expect(row("GET", "/llms.txt")).toMatch(/下载\s+只读/);
+			expect(row("POST", "/packages")).toMatch(/上传\s+有副作用/);
 			expect(row("GET", "/runs")).toMatch(/query: .*limit/);
+			expect(result.stdout).toContain("sfly api --describe <方法> <路径>");
 		});
 
-		it("--json：清单里全部接口，带 key、种类和 JSON Schema", async () => {
+		it("--json：清单里全部接口，带 key、种类、说明、读写、资源和 JSON Schema，与清单一致", async () => {
 			const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as { routes: ListedRoute[] };
 			const result = await cli("--list", "--json");
 			expect(result.code, result.stderr).toBe(0);
@@ -248,10 +256,19 @@ describe("sfly api → 控制面", () => {
 			expect(listed.map((r) => `${r.method} ${r.path}`)).toEqual(
 				manifest.routes.map((r) => `${r.method} ${r.path}`),
 			);
+			expect(listed).toEqual(manifest.routes);
 			const create = listed.find((r) => r.method === "POST" && r.path === "/orchestrations");
 			expect(create?.key).toEqual(["orchestrations", "create"]);
 			expect(create?.kind).toBe("endpoint");
 			expect(create?.body?.required).toEqual(["name"]);
+			expect(create).toMatchObject({
+				summary: "新建一个场景",
+				effect: "write",
+				resource: { kind: "scenario", target: "collection" },
+			});
+			expect(create?.response).toMatchObject({ type: "object" });
+			const events = listed.find((r) => r.path === "/runs/:id/events");
+			expect(Object.keys(events?.events ?? {})).toEqual(["run", "progress", "metrics"]);
 		});
 
 		it("后面的关键字筛选接口，没有匹配时报错", async () => {
@@ -266,6 +283,98 @@ describe("sfly api → 控制面", () => {
 			const none = await cli("--list", "没有这个接口");
 			expect(none.code).toBe(2);
 			expect(none.stderr).toContain("没有接口匹配 没有这个接口");
+		});
+
+		it("关键字也匹配一句话说明：按用途找接口", async () => {
+			const found = await cli("--list", "日志", "--json");
+			expect(found.code, found.stderr).toBe(0);
+			const paths = (JSON.parse(found.stdout) as ListedRoute[]).map((r) => r.path);
+			expect(paths).toEqual(
+				expect.arrayContaining(["/tasks/:id/logs", "/runs/:id/logs", "/runs/:id/logs/download"]),
+			);
+			expect(paths).not.toContain("/health");
+		});
+
+		it("--list 和 --describe 不能同时给", async () => {
+			const both = await cli("--list", "--describe", "GET", "/health");
+			expect(both.code).toBe(2);
+			expect(both.stderr).toContain("--list 和 --describe 只能给一个");
+		});
+	});
+
+	describe("--describe", () => {
+		it("文本：说明、种类、读写、资源、怎么调用，以及请求和响应的字段", async () => {
+			const result = await cli("--describe", "GET", "/runs/:id");
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stderr).toBe("");
+			const text = result.stdout;
+			expect(text.split("\n").slice(0, 6)).toEqual([
+				"GET /runs/:id",
+				"说明：读一次运行的状态：链、节点和任务",
+				"种类：普通",
+				"效果：只读",
+				"资源：运行，用路径参数 id 定位到具体的那一个",
+				"调用：sfly api GET /runs/<id>",
+			]);
+			expect(text).toContain("路径参数（* 必填）\n  id*: string");
+			expect(text).toContain("响应（JSON）\n");
+			expect(text).toContain('  status*: "running" | "success" | "failed" | "cancelled"');
+			expect(text).toContain("  chains*: object[]");
+		});
+
+		it("路径可以带实际的 id，也可以带占位符；方法不分大小写", async () => {
+			const template = await cli("--describe", "GET", "/runs/:id");
+			const actual = await cli("--describe", "get", `/runs/${UNKNOWN_ID}`);
+			expect(actual.code, actual.stderr).toBe(0);
+			expect(actual.stdout).toBe(template.stdout);
+		});
+
+		it("有副作用、请求体和资源在列表上的接口", async () => {
+			const result = await cli("--describe", "POST", "/orchestrations");
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain("效果：有副作用");
+			expect(result.stdout).toContain("资源：场景，列表或新建，没有具体的那一个");
+			expect(result.stdout).toContain(
+				"请求体（JSON，* 必填）\n  name*: string\n  description: string",
+			);
+		});
+
+		it("SSE 列出每个事件，下载写 content-type，上传说明不能直接调用，没有响应体的写 204", async () => {
+			const events = await cli("--describe", "GET", "/runs/:id/events");
+			expect(events.stdout).toContain("事件流（SSE）");
+			for (const name of ["run", "progress", "metrics"]) {
+				expect(events.stdout).toContain(`\n事件 ${name}\n`);
+			}
+			const download = await cli("--describe", "GET", "/llms.txt");
+			expect(download.stdout).toContain(
+				"响应：文件内容（content-type：text/plain; charset=utf-8）",
+			);
+			const upload = await cli("--describe", "POST", "/packages");
+			expect(upload.stdout).toContain("sfly api 不能直接调用");
+			const empty = await cli("--describe", "DELETE", "/feishu-bots/:name");
+			expect(empty.stdout).toContain("响应：没有响应体（204）");
+		});
+
+		it("--json：这个接口在清单里的一条，带完整的 JSON Schema", async () => {
+			const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as { routes: ListedRoute[] };
+			const result = await cli("--describe", "POST", "/orchestrations/:id/runs", "--json");
+			expect(result.code, result.stderr).toBe(0);
+			expect(JSON.parse(result.stdout)).toEqual(
+				manifest.routes.find((r) => r.method === "POST" && r.path === "/orchestrations/:id/runs"),
+			);
+		});
+
+		it("清单里没有的接口：列出最接近的；方法不对：写明支持的方法；参数个数不对", async () => {
+			const typo = await cli("--describe", "GET", "/runs/x/lgos");
+			expect(typo.code).toBe(2);
+			expect(typo.stderr).toContain("路由清单里没有 GET /runs/x/lgos");
+			expect(typo.stderr).toContain("GET /runs/:id/logs");
+			const method = await cli("--describe", "PUT", "/runs/:id");
+			expect(method.code).toBe(2);
+			expect(method.stderr).toContain("不支持 PUT，支持的方法：GET");
+			const usage = await cli("--describe", "GET");
+			expect(usage.code).toBe(2);
+			expect(usage.stderr).toContain("用法：sfly api --describe <METHOD> <路径>");
 		});
 	});
 });

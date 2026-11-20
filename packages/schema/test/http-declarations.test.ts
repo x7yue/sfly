@@ -48,6 +48,16 @@ describe("契约里全部接口的声明", () => {
 		expect(Object.keys(RESOURCE_KIND_LABELS).sort()).toEqual([...RESOURCE_KINDS].sort());
 	});
 
+	it("GET 都是只读：GET 却有副作用的接口要先在这里登记，并在 PR 里说明", () => {
+		// 鉴权按声明判断一个请求要什么范围：GET 当成只读放行是各处的默认假设（跨站的链接、预取、爬虫都会发 GET）。
+		// 有副作用的接口用别的方法。确实有必须是 GET 又会写东西的，加到这个表里，写明为什么。
+		const getWithSideEffects: Record<string, string> = {};
+		const found = httpContract
+			.filter((def) => def.method === "GET" && def.effect === "write")
+			.map((def) => `${def.method} ${def.path}`);
+		expect(found.sort()).toEqual(Object.keys(getWithSideEffects).sort());
+	});
+
 	it("同一个方法和路径只声明一次", () => {
 		const seen = httpContract.map((def) => `${def.method} ${def.path}`);
 		expect(seen.filter((key, i) => seen.indexOf(key) !== i)).toEqual([]);

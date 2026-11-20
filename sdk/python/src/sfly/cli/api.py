@@ -1,4 +1,5 @@
-"""`sfly api`：直接调用控制面的接口，补 `sfly` 里没有专门命令的操作；`--list` 列出全部接口。
+"""`sfly api`：直接调用控制面的接口，补 `sfly` 里没有专门命令的操作；`--list` 列出全部接口，
+`--describe` 说明一个接口（作用、只读还是有副作用、请求和响应的字段）。
 
 接口来自随 SDK 打包的路由清单（`routes.py`）：发请求前按清单校验方法、路径、查询参数和请求体，
 对不上就在命令行里报错（并列出最接近的路由），不用发出去才知道。
@@ -22,6 +23,7 @@ from urllib.parse import parse_qsl, urlsplit
 from sfly.cli.client import READ_CHUNK, ApiError
 from sfly.cli.errors import EXIT_INTERRUPTED, CliError
 from sfly.cli.output import dump_json, format_table
+from sfly.cli.route_describe import describe_route, effect_text
 from sfly.cli.routes import KIND_LABELS, Resolution, Route, closest, load_routes, resolve
 from sfly.cli.session import Session, command, common_options
 
@@ -35,23 +37,31 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser(
         "api",
         parents=[common_options()],
-        help="直接调用控制面的接口（按路由清单校验）；--list 列出全部接口",
+        help="直接调用控制面的接口（按路由清单校验）；--list 列出全部接口，--describe 说明一个接口",
         description="调用控制面的接口：sfly api <METHOD> <路径> [--query 名=值]… "
         "[--body JSON 或 @文件]。路径是带实际 id 的路径，不含 /api 前缀，例如 GET /runs/<运行 id>。"
         "发请求前按路由清单校验方法、路径、查询参数和请求体；对不上时报错并列出最接近的路由。"
         "响应原样写到 stdout（普通接口是 JSON，下载是文件内容，可以重定向到文件，"
         "SSE 读到 --timeout 秒或连接结束为止）。控制面返回错误时，错误码、说明和 details 写到"
         " stderr。"
-        "--list 列出全部接口，后面可以跟关键字筛选，加 --json 看每个接口完整的 JSON Schema。"
+        "--list 列出全部接口（方法、路径、种类、只读还是有副作用、一句话说明、参数），"
+        "后面可以跟关键字筛选（匹配方法、路径和说明），加 --json 看每个接口完整的 JSON Schema。"
+        "--describe <METHOD> <路径> 说明一个接口：作用、只读还是有副作用、作用在哪类资源上、"
+        "请求的参数和请求体、响应的字段（SSE 是每个事件的字段），加 --json 看完整的 JSON Schema。"
         "退出码：成功 0，命令出错或接口返回错误 2，按 Ctrl-C 停止 130。",
     )
     parser.add_argument(
         "target",
         nargs="*",
         metavar="METHOD 路径",
-        help="请求方法和路径；--list 时是筛选用的关键字（要同时出现在 `方法 路径模板` 里）",
+        help="请求方法和路径；--list 时是筛选用的关键字（要同时出现在 `方法 路径模板 说明` 里）",
     )
     parser.add_argument("--list", action="store_true", help="列出路由清单里的全部接口")
+    parser.add_argument(
+        "--describe",
+        action="store_true",
+        help="说明一个接口：sfly api --describe <METHOD> <路径>（路径可以带 :名称 占位符）",
+    )
     parser.add_argument(
         "--query",
         action="append",
@@ -76,8 +86,14 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
 
 def _api(session: Session, args: argparse.Namespace) -> int:
     routes = load_routes()
+    if args.list and args.describe:
+        raise CliError(
+            "invalid_arguments", "--list 和 --describe 只能给一个", next="sfly api --help"
+        )
     if args.list:
         return _list(session, routes, args.target)
+    if args.describe:
+        return _describe_route(session, routes, args.target)
     if len(args.target) != 2:
         raise CliError(
             "invalid_arguments",
@@ -108,7 +124,9 @@ def _list(session: Session, routes: Sequence[Route], words: Sequence[str]) -> in
     shown = [
         route
         for route in routes
-        if all(word.lower() in f"{route.method} {route.path}".lower() for word in words)
+        if all(
+            word.lower() in f"{route.method} {route.path} {route.summary}".lower() for word in words
+        )
     ]
     if not shown:
         raise CliError(
@@ -117,15 +135,39 @@ def _list(session: Session, routes: Sequence[Route], words: Sequence[str]) -> in
             next="sfly api --list",
         )
     rows = [
-        [route.method, route.path, KIND_LABELS.get(route.kind, route.kind), _fields(route)]
+        [
+            route.method,
+            route.path,
+            KIND_LABELS.get(route.kind, route.kind),
+            effect_text(route.effect),
+            route.summary,
+            _fields(route),
+        ]
         for route in shown
     ]
-    text = format_table(["方法", "路径", "种类", "参数（* 必填）"], rows)
+    text = format_table(["方法", "路径", "种类", "效果", "说明", "参数（* 必填）"], rows)
     note = (
         "路径里的 :名称 换成实际的值，末尾的 * 是剩余路径。"
+        "sfly api --describe <方法> <路径> 说明一个接口（作用、请求和响应的字段）；"
         "sfly api --list <关键字> --json 输出匹配接口完整的 JSON Schema。"
     )
     session.out.emit([route.to_json() for route in shown], f"{text}\n{note}")
+    return 0
+
+
+def _describe_route(session: Session, routes: Sequence[Route], target: Sequence[str]) -> int:
+    if len(target) != 2:
+        raise CliError(
+            "invalid_arguments",
+            "用法：sfly api --describe <METHOD> <路径>",
+            next="sfly api --list",
+        )
+    method, raw_path = target[0].upper(), target[1]
+    path, _ = _split_path(raw_path)
+    resolution = resolve(routes, method, path)
+    if resolution.route is None:
+        raise _not_in_manifest(routes, method, path, resolution)
+    session.out.emit(resolution.route.to_json(), describe_route(resolution.route))
     return 0
 
 
