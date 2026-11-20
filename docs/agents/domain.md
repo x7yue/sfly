@@ -50,4 +50,4 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 
 > _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
 
-To overturn an accepted ADR, write a new ADR and append one line to the old ADR pointing at it (for example `Superseded by ADR 0021`). Never edit the old body (`CODING_STANDARDS.md`「文档」); `pnpm lint:docs` rejects it.
+To overturn an accepted ADR, write a new ADR and append one line to the old ADR pointing at it (for example `Superseded by ADR 0021`). Never edit the old body (`CODING_STANDARDS.md`「文档」); `pnpm lint:docs` rejects it, and also rejects a new ADR that says it supersedes, overturns or revises ADR NNNN while ADR NNNN has no such pointer line at its end.
