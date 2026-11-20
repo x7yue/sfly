@@ -45,8 +45,9 @@ export function removedNodesIn(doc: {
 }
 
 /**
- * 保存时遇到已移除的节点的说明：哪些节点、种类名、怎么替换。控制面拒绝保存的错误信息、命令行的本地检查、
- * 预检的阻断项和画布的提示共用这一句。
+ * 保存时遇到已移除的节点的说明：哪些节点、种类名、怎么替换。控制面拒绝保存的错误信息和画布保存时的拦截共用这一句；
+ * 预检的阻断项、画布顶部的提示、检查器的字段错误和命令行的本地检查各有自己的措辞，
+ * 种类名和替换办法都取自上面的清单（命令行读它导出的 JSON）。
  */
 export function removedNodesMessage(notices: readonly RemovedNodeNotice[]): string {
 	const kinds = [...new Set(notices.map((n) => n.kind))];

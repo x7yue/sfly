@@ -1,16 +1,24 @@
 """已移除的节点种类（ADR 0028）：历史版本和历史运行里还留着它们，命令行只读显示，
 保存时说明怎么替换。
 
-和控制面的 `packages/schema/src/removed-nodes.ts` 是同一份清单：`tests/test_cli_run_view.py`
-逐项核对种类名、名称和替换办法，改一边不改另一边会失败。
+清单读 `sfly.schemas/removed-node-kinds.json`，由控制面的 `packages/schema/src/removed-nodes.ts`
+导出（`pnpm gen`，`pnpm gen:check` 守着），这里没有第二份。
 """
 
 from __future__ import annotations
 
+import json
+from importlib import resources
+
+
+def _load() -> dict[str, tuple[str, str]]:
+    text = resources.files("sfly.schemas").joinpath("removed-node-kinds.json").read_text("utf-8")
+    raw: dict[str, dict[str, str]] = json.loads(text)
+    return {kind: (entry["label"], entry["replacement"]) for kind, entry in raw.items()}
+
+
 # 种类名 → (原来的名称, 替换办法)。
-REMOVED_NODE_KINDS: dict[str, tuple[str, str]] = {
-    "feishu_notify": ("飞书通知", "在节点代码里用 ctx.notify 发飞书消息"),
-}
+REMOVED_NODE_KINDS: dict[str, tuple[str, str]] = _load()
 
 
 def removed_kind_label(kind: str) -> str:

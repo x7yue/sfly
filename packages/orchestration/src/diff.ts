@@ -1,5 +1,6 @@
 import {
 	ANNOTATION_DEFAULT_COLOR,
+	keepRemovedNodeConfig,
 	STICKY_NOTE_DEFAULT_COLOR,
 	StoredOrchestrationDocument,
 } from "@sfly/schema";
@@ -112,10 +113,13 @@ const withDefaultColor = (a: NormalAnnotation): NormalAnnotation =>
 const withDefaultStickyColor = (s: NormalStickyNote): NormalStickyNote =>
 	s.color === STICKY_NOTE_DEFAULT_COLOR ? { ...s, color: undefined } : s;
 
-/** 补齐默认值；文档不完全合法（例如编辑到一半的草稿）时按原样比较。 */
+/**
+ * 补齐默认值；文档不完全合法（例如编辑到一半的草稿）时按原样比较。已移除种类的节点（ADR 0028）解析时会丢掉
+ * 它们共有字段之外的配置，这里放回去：两个历史版本之间它们的配置差别照常能看到。
+ */
 function normalize(doc: DiffableDocument): NormalDoc {
 	const parsed = StoredOrchestrationDocument.safeParse(doc);
-	const d = (parsed.success ? parsed.data : doc) as Partial<NormalDoc>;
+	const d = (parsed.success ? keepRemovedNodeConfig(parsed.data, doc) : doc) as Partial<NormalDoc>;
 	return {
 		default_agent: d.default_agent,
 		nodes: (d.nodes ?? []).map(withSubflowName),

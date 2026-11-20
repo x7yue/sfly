@@ -2209,8 +2209,9 @@ export interface StopSubflowNodeInput {
 export type StoredNode = OrchestrationNode | RemovedNode;
 
 /**
- * 读到的场景文档：和 `OrchestrationDocument` 一样，只是节点里可以有已移除种类的占位（`RemovedNode`）。
- * 场景版本不可变，历史版本里留着已移除的节点，读取时认得它们（接口的响应、控制面读库、画布打开最新版本）。
+ * 读到的场景文档（接口的响应、控制面读库、画布打开最新版本）：结构和保存用的 `OrchestrationDocument` 相同，
+ * 只是节点里可以有已移除种类的占位（`RemovedNode`）。场景版本不可变，历史版本里留着已移除的节点，读取时认得它们。
+ * 保存不接受这些占位：把读到的文档原样传回保存之前，先过滤掉 `RemovedNode`。
  */
 export interface StoredOrchestrationDocument {
 	default_agent?: string;

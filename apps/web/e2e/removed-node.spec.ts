@@ -17,7 +17,7 @@ test("最新版本里还有已移除的节点：画布提示哪些节点、怎�
 	await openEditor(page, IDS.scenario, "notify");
 
 	// 画布顶部的提示：哪些节点、怎么替换。
-	const banner = page.getByRole("status").filter({ hasText: "不能运行，也不能保存" });
+	const banner = page.getByRole("status").filter({ hasText: "不能运行，删掉之后才能保存" });
 	await expect(banner).toContainText("有 1 个节点的类型已不再支持（notify）");
 	await expect(banner).toContainText(REPLACEMENT);
 

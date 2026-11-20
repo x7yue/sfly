@@ -22,15 +22,12 @@ export function RemovedNodesBanner({
 		<Banner>
 			<TriangleAlertIcon />
 			<span>
-				有 {removed.length} 个节点的类型已不再支持（{removed.map((r) => r.id).join("、")}
-				），不能运行，也不能保存，删掉之后才能保存。替换办法：
-				{kinds
+				{`有 ${removed.length} 个节点的类型已不再支持（${removed.map((r) => r.id).join("、")}），不能运行，删掉之后才能保存。替换办法：${kinds
 					.map(
 						(kind) =>
-							`${REMOVED_NODE_KINDS[kind].label}节点：${REMOVED_NODE_KINDS[kind].replacement}`,
+							`${REMOVED_NODE_KINDS[kind].label}节点改成${REMOVED_NODE_KINDS[kind].replacement}`,
 					)
-					.join("；")}
-				。
+					.join("；")}。`}
 			</span>
 			<Button size="sm" variant="ghost" onClick={() => onLocate(first.id)}>
 				前往

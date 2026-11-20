@@ -310,4 +310,34 @@ describe("编排文档差异", () => {
 		expect(isEmptyDiff(diffDocuments(yellow(), yellow("yellow")))).toBe(true);
 		expect(isEmptyDiff(diffDocuments(base, withNotes()))).toBe(true);
 	});
+
+	it("已移除种类的节点（ADR 0028）：配置的差别照常列出来，只差它们的配置也不是空差异", () => {
+		const withRemoved = (text: string) => ({
+			...base,
+			nodes: [
+				...base.nodes,
+				{
+					id: "bot",
+					kind: "feishu_notify",
+					display_name: "通知群",
+					bot: "ops",
+					text,
+					position: { x: 840, y: 0 },
+				},
+			],
+			edges: [...base.edges, { from: "notify", to: "bot", kind: "chain" }],
+		});
+		const diff = diffDocuments(withRemoved("压测开始"), withRemoved("压测结束"));
+		expect(diff.nodes.added).toEqual([]);
+		expect(diff.nodes.removed).toEqual([]);
+		expect(diff.nodes.changed).toEqual([
+			{
+				id: "bot",
+				kind: "feishu_notify",
+				changes: [{ path: "text", before: "压测开始", after: "压测结束" }],
+			},
+		]);
+		expect(isEmptyDiff(diff)).toBe(false);
+		expect(isEmptyDiff(diffDocuments(withRemoved("压测开始"), withRemoved("压测开始")))).toBe(true);
+	});
 });

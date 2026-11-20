@@ -110,7 +110,7 @@ docs/               架构、语义规范、ADR；docs/guide 是用户文档（A
 - 三份契约，各有唯一来源：
   - **线上协议**（Agent ↔ 控制面）：`proto/`，生成 TS（protobuf-es）和 Rust（prost/tonic）代码。
   - **文档格式**（场景文档、节点包元信息）：`packages/schema`，前端和控制面直接使用；Python CLI 使用导出的 JSON Schema。
-  - **HTTP 接口**（浏览器、CLI、Agent ↔ 控制面）：`packages/schema/src/http`（ADR 0007），见 §7。它同时导出一份路由清单（`sdk/python/src/sfly/schemas/routes.json`，随 SDK 打包，`pnpm gen:check` 保证最新），`sfly api` 用它列出和校验接口。API 客户端的类型和路由表是这份契约的又一份生成物（`packages/client/src/generated/`，见 §7.4）。
+  - **HTTP 接口**（浏览器、CLI、Agent ↔ 控制面）：`packages/schema/src/http`（ADR 0007），见 §7。它同时导出一份路由清单（`sdk/python/src/sfly/schemas/routes.json`，随 SDK 打包，`pnpm gen:check` 保证最新），`sfly api` 用它列出和校验接口。已移除的节点种类（ADR 0028）也导出一份给命令行读（`removed-node-kinds.json`，同样由 `pnpm gen` 生成），命令行里没有第二份清单。API 客户端的类型和路由表是这份契约的又一份生成物（`packages/client/src/generated/`，见 §7.4）。
 
 ---
 
