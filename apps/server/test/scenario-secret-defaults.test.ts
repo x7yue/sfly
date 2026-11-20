@@ -265,7 +265,9 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const runId = await api.triggerOk(id);
 			const assign = await agent.nextAssign();
 			const ids = { scenario: id, run: runId, task: assign.taskId, preset: "x" };
-			const streams = httpContract.filter((def) => "events" in def);
+			const streams = httpContract.filter(
+				(def) => def.effect === "read" && "kind" in def && def.kind === "stream",
+			);
 			expect(streams.length).toBeGreaterThanOrEqual(5);
 			let opened = 0;
 			for (const def of streams) {
@@ -317,7 +319,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 				return found;
 			});
 
-		it("契约里的每个 GET 接口（SSE 除外）：读一遍，响应里都没有原值——新增的出口默认也是打码的", async () => {
+		it("契约里每个声明为只读的 GET 接口（SSE 除外）：读一遍，响应里都没有原值——新增的出口默认也是打码的", async () => {
 			const id = await scenario(RUN_PARAMS());
 			const agent = await connect();
 			const runId = await api.triggerOk(id);
@@ -328,7 +330,13 @@ describe("场景版本里 secret 参数的默认值", () => {
 			});
 			const ids = { scenario: id, run: runId, task: assign.taskId, preset: preset.id };
 
-			const reads = httpContract.filter((def) => def.method === "GET" && !("events" in def));
+			// 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（在线编辑者的心跳）要请求体，不在这里。
+			const reads = httpContract.filter(
+				(def) =>
+					def.effect === "read" &&
+					def.method === "GET" &&
+					!("kind" in def && def.kind === "stream"),
+			);
 			expect(reads.length).toBeGreaterThan(30);
 			let read = 0;
 			for (const def of reads) {
@@ -345,52 +353,112 @@ describe("场景版本里 secret 参数的默认值", () => {
 	describe("写接口的成功和失败响应", () => {
 		controlPlanePerTest();
 
-		it("触发、保存、恢复、复制、预设、归档：成功的和失败的响应（message 和 details 都算）里都没有原值", async () => {
+		/**
+		 * 契约里声明为写的接口，这个测试不造请求的：和 secret 参数的默认值、值没有关系的，原因写在这里。
+		 * 其余的写接口必须在下面的用例里被请求过（成功的和失败的），新增的写接口两边都不在时测试失败。
+		 */
+		const NOT_EXERCISED: Record<string, string> = {
+			"POST /agents/:name/update-now": "只让 Agent 自更新，响应是被终止的任务数",
+			"PUT /tasks/:id/artifacts/*": "上传产物的字节，不带场景和参数",
+			"POST /feishu-bots": "登记 Webhook 地址（地址里的令牌另有打码，ADR 0020）",
+			"PATCH /feishu-bots/:name": "同上",
+			"DELETE /feishu-bots/:name": "同上",
+			"POST /feishu-bots/:name/test": "同上",
+			"POST /packages": "发布节点包，不带场景和参数",
+		};
+		/** 一个请求（方法 + 路径）对上契约里的哪个接口（路径模板）。 */
+		const templateOf = (method: string, path: string): string | undefined => {
+			const bare = path.split("?")[0] ?? path;
+			return httpContract
+				.filter((def) => def.method === method)
+				.find((def) =>
+					new RegExp(`^${def.path.replace(/:[A-Za-z]+/g, "[^/]+").replace(/\*$/, ".+")}$`).test(
+						bare,
+					),
+				)?.path;
+		};
+
+		it("触发、保存、恢复、复制、预设、归档、取消：成功的和失败的响应（message 和 details 都算）里都没有原值；每个写接口都被请求过", async () => {
 			const id = await scenario(RUN_PARAMS());
 			const agent = await connect();
+			const requested = new Set<string>();
+			// 记下这个测试发出的每个请求（方法 + 路径模板），最后和契约里的写接口对照。
+			const tracked = new ApiClient({
+				fetch: (path, init) => {
+					const template = templateOf(init?.method ?? "GET", path);
+					if (template) requested.add(`${init?.method ?? "GET"} ${template}`);
+					return cp.fetch(path, init);
+				},
+			});
 			const responses: Array<[string, Response]> = [];
 			const record = async (what: string, res: Promise<Response>) => {
 				responses.push([what, await res]);
 			};
 
+			// 新建场景：成功、名称缺失（400）。
+			await record("新建场景", tracked.post("/orchestrations", { name: "另一个" }));
+			await record("新建场景：缺名称", tracked.post("/orchestrations", {}));
 			// 触发：成功；把占位符当成值传回来（400）；传了没有声明的参数（400）；类型不对（400）；场景不存在（404）。
-			await record("触发", api.trigger(id));
+			const triggered = await tracked.trigger(id);
+			responses.push(["触发", triggered]);
+			const runId = ((await triggered.clone().json()) as { id: string }).id;
 			await agent.nextAssign();
-			await record("触发：占位符", api.trigger(id, { token: MASK }));
-			await record("触发：未声明的参数", api.trigger(id, { unknown_param: SECRET }));
-			await record("触发：类型不对", api.trigger(id, { pin: SECRET }));
-			await record("触发：场景不存在", api.trigger("00000000-0000-4000-8000-000000000000"));
+			await record("触发：占位符", tracked.trigger(id, { token: MASK }));
+			await record("触发：未声明的参数", tracked.trigger(id, { unknown_param: SECRET }));
+			await record("触发：类型不对", tracked.trigger(id, { pin: SECRET }));
+			await record("触发：场景不存在", tracked.trigger("00000000-0000-4000-8000-000000000000"));
 			// 保存：原样存回去（201）、编辑起点过期（409）、文档不合法（400）、占位符沿用不了（400）、缺 base_version（400）。
 			const { number, document } = await head(id);
-			await record("保存", saveOn(id, number, document));
-			await record("保存：冲突", saveOn(id, number, document));
-			await record("保存：文档不合法", saveOn(id, number + 1, { ...document, nodes: SECRET }));
+			await record(
+				"保存",
+				tracked.post(`/orchestrations/${id}/versions`, { base_version: number, document }),
+			);
+			await record(
+				"保存：冲突",
+				tracked.post(`/orchestrations/${id}/versions`, { base_version: number, document }),
+			);
+			await record(
+				"保存：文档不合法",
+				tracked.post(`/orchestrations/${id}/versions`, {
+					base_version: number + 1,
+					document: { ...document, nodes: SECRET },
+				}),
+			);
 			const renamed = structuredClone(document);
 			paramAt(renamed, 0).name = "renamed_token";
-			await record("保存：占位符沿用不了", saveOn(id, number + 1, renamed));
+			await record(
+				"保存：占位符沿用不了",
+				tracked.post(`/orchestrations/${id}/versions`, {
+					base_version: number + 1,
+					document: renamed,
+				}),
+			);
 			await record(
 				"保存：缺 base_version",
-				api.post(`/orchestrations/${id}/versions`, { document }),
+				tracked.post(`/orchestrations/${id}/versions`, { document }),
 			);
 			// 恢复、复制。
-			await record("恢复", api.postEmpty(`/orchestrations/${id}/versions/1/restore`));
-			await record("恢复：版本不存在", api.postEmpty(`/orchestrations/${id}/versions/99/restore`));
-			await record("复制", api.post(`/orchestrations/${id}/copy`, { name: "副本" }));
-			await record("复制：缺名称", api.post(`/orchestrations/${id}/copy`, {}));
-			// 预设：新建、重名、沿用不了、修改、复制、触发时给固定参数传值。
+			await record("恢复", tracked.postEmpty(`/orchestrations/${id}/versions/1/restore`));
+			await record(
+				"恢复：版本不存在",
+				tracked.postEmpty(`/orchestrations/${id}/versions/99/restore`),
+			);
+			await record("复制", tracked.post(`/orchestrations/${id}/copy`, { name: "副本" }));
+			await record("复制：缺名称", tracked.post(`/orchestrations/${id}/copy`, {}));
+			// 预设：新建、重名、占位符、类型不对、触发时给固定参数传值、修改、复制、删除。
 			const body = { name: "预设", params: [{ name: "token", value: SECRET }] };
-			await record("预设：新建", api.post(`/orchestrations/${id}/presets`, body));
-			await record("预设：重名", api.post(`/orchestrations/${id}/presets`, body));
+			await record("预设：新建", tracked.post(`/orchestrations/${id}/presets`, body));
+			await record("预设：重名", tracked.post(`/orchestrations/${id}/presets`, body));
 			await record(
 				"预设：占位符",
-				api.post(`/orchestrations/${id}/presets`, {
+				tracked.post(`/orchestrations/${id}/presets`, {
 					name: "占位符",
 					params: [{ name: "token", value: MASK }],
 				}),
 			);
 			await record(
 				"预设：类型不对",
-				api.post(`/orchestrations/${id}/presets`, {
+				tracked.post(`/orchestrations/${id}/presets`, {
 					name: "类型",
 					params: [{ name: "pin", value: SECRET }],
 				}),
@@ -398,24 +466,28 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const [preset] = await listPresets(api, id);
 			await record(
 				"触发：预设参数不能传值",
-				api.post(`/orchestrations/${id}/runs`, { preset: preset?.id, params: { token: SECRET } }),
+				tracked.post(`/orchestrations/${id}/runs`, {
+					preset: preset?.id,
+					params: { token: SECRET },
+				}),
 			);
 			await record(
 				"预设：修改",
-				api.patch(`/orchestrations/${id}/presets/${preset?.id}`, {
+				tracked.patch(`/orchestrations/${id}/presets/${preset?.id}`, {
 					params: [{ name: "pin", value: PIN }],
 				}),
 			);
-			// 归档、恢复归档、改场景设置。
-			await record("改场景设置", api.patch(`/orchestrations/${id}`, { description: "说明" }));
 			await record(
-				"触发：已归档",
-				(async () => {
-					await api.postEmpty(`/orchestrations/${id}/archive`);
-					return api.trigger(id);
-				})(),
+				"预设：复制",
+				tracked.post(`/orchestrations/${id}/presets/${preset?.id}/copy`, { name: "预设的副本" }),
 			);
-			await record("恢复归档", api.postEmpty(`/orchestrations/${id}/unarchive`));
+			await record("预设：删除", tracked.delete(`/orchestrations/${id}/presets/${preset?.id}`));
+			// 改场景设置、取消运行、归档、恢复归档。
+			await record("改场景设置", tracked.patch(`/orchestrations/${id}`, { description: "说明" }));
+			await record("取消运行", tracked.cancel(runId));
+			await record("归档", tracked.postEmpty(`/orchestrations/${id}/archive`));
+			await record("触发：已归档", tracked.trigger(id));
+			await record("恢复归档", tracked.postEmpty(`/orchestrations/${id}/unarchive`));
 
 			const statuses = new Set<number>();
 			for (const [what, res] of responses) {
@@ -424,6 +496,18 @@ describe("场景版本里 secret 参数的默认值", () => {
 			}
 			// 成功、400、404、409 都出现过：测的确实是失败的响应。
 			for (const status of [200, 201, 400, 404, 409]) expect([...statuses]).toContain(status);
+
+			// 契约里声明为写的接口：要么在上面被请求过，要么登记在 NOT_EXERCISED 里写明为什么不需要。
+			const writes = httpContract.filter((def) => def.effect === "write");
+			const key = (def: { method: string; path: string }) => `${def.method} ${def.path}`;
+			expect(
+				writes.map(key).filter((k) => !requested.has(k) && !(k in NOT_EXERCISED)),
+				"契约里有声明为写的接口，这个测试没有请求过它：在上面造它的成功和失败请求，或者登记到 NOT_EXERCISED 并写明为什么不需要",
+			).toEqual([]);
+			expect(
+				Object.keys(NOT_EXERCISED).filter((k) => requested.has(k) || !writes.map(key).includes(k)),
+				"NOT_EXERCISED 里有已经请求过的、或者契约里已经没有的接口：把它从清单里去掉",
+			).toEqual([]);
 		});
 	});
 
