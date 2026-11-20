@@ -32,7 +32,7 @@ export const CHAIN_NODES = 30;
 /** 短节点链路：sfly-std 的短节点每节点端到端 ≤ 120 ms。 */
 export const SHORT_NODE_MS = 120;
 
-/** 读出 §7.6 目标表：范围 → 目标原文。 */
+/** 读出 docs/ARCHITECTURE.md §7.6 目标表：范围 → 目标原文。 */
 export function parseTargets(architecture: string): Map<string, string> {
 	const targets = new Map<string, string>();
 	let inSection = false;

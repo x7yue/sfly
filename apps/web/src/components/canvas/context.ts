@@ -90,7 +90,7 @@ export interface NodeGround {
 export const CANVAS_GROUND: NodeGround = { color: "canvas", subflow: false };
 
 /**
- * 运行状态下连线的样子（线路图，DESIGN-SYSTEM §2.3）。链连线：`travelled` 走过的（两端都已完成，变亮变粗）、
+ * 运行状态下连线的样子（线路图，docs/DESIGN-SYSTEM.md §2.3）。链连线：`travelled` 走过的（两端都已完成，变亮变粗）、
  * `ahead` 还没走到的（暗灰）、`live` 进入执行中节点的（青）、`failed` 进入失败节点的（红）、`waiting` 进入等待中节点的
  * （琥珀）。调度连线：`live` 子流程还在运行（青色虚线）、`ended` 子流程已经结束或没有触发（灰色虚线）。
  */

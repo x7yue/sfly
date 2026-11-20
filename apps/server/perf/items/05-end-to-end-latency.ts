@@ -1,4 +1,4 @@
-// 负载：从节点调用 ctx.metric() 到运行页面收到 SSE 推送的端到端延迟（ARCHITECTURE §7.6「端到端延迟」）。
+// 负载：从节点调用 ctx.metric() 到运行页面收到 SSE 推送的端到端延迟（docs/ARCHITECTURE.md §7.6「端到端延迟」）。
 // 真实 SDK（桩节点 metric_clock 每秒 1 万次上报调用时刻）→ release Agent（按秒合并）→ 打包后的控制面 →
 // 运行事件流 `GET /runs/:id/events` 的 metrics 事件，与运行页面订阅的是同一条流。
 // 每秒一个点：min 是这一秒第一次调用的时刻，收到推送的时刻减去它就是用户最多要等多久（first）。

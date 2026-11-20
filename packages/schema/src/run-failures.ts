@@ -45,7 +45,7 @@ const TRACEBACK = "Traceback (most recent call last)";
  * （`…不通过：` + `第 1 条：…`），全角冒号后直接接，半角冒号后隔一个空格，只接一行。没有错误信息时是空串。
  *
  * 只显示一句错误的地方都按它取：运行监控的页头、「需要注意」和图表工作区、关注项的失败原因、画布检查器
- * （docs/DESIGN-SYSTEM.md 第 9 节）。只管这一行摘要，完整的错误信息原样保留；命令行有一份同样的实现
+ * （docs/DESIGN-SYSTEM.md §9）。只管这一行摘要，完整的错误信息原样保留；命令行有一份同样的实现
  * （`sdk/python/src/sfly/cli/error_headline.py`），两边共用用例表 `testdata/error-headline-cases.json`。
  */
 export const errorHeadline = (message: string | null | undefined): string => {

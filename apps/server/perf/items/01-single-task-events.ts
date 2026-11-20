@@ -1,4 +1,4 @@
-// 负载：单个任务以每秒 1 万次事件持续上报（ARCHITECTURE §7.6「单个任务 SDK → Agent」）。
+// 负载：单个任务以每秒 1 万次事件持续上报（docs/ARCHITECTURE.md §7.6「单个任务 SDK → Agent」）。
 // 桩节点 metric_rate 按定速上报 seq = 1, 2, …（ctx.metric 写 FIFO，ADR 0015），Agent 按秒合并后转发给控制面。
 // 硬性断言：事件按序号核对不丢不重、每秒一个点、Agent 没有丢弃点、数据没有被截断。
 // 只记录：实际速率与节点比计划落后的时间（节点是否被阻塞）、单次 ctx.metric() 最长耗时、Agent 内存与 CPU。

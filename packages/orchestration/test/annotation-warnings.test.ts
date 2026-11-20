@@ -9,7 +9,7 @@ import {
 	type OrchestrationWarning,
 } from "../src/index.js";
 
-// 注释框写错时的警告（SEMANTICS §1.6）：引用不存在的节点或子流程、没有成员、同一个成员写了两次。
+// 注释框写错时的警告（docs/SEMANTICS.md §1.6）：引用不存在的节点或子流程、没有成员、同一个成员写了两次。
 // 只提示，不阻断触发；画布和控制面用同一个函数，警告里带 annotation_id。
 
 const base = {

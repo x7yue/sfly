@@ -50,7 +50,7 @@ export interface StatusLook {
 	};
 	pulse: boolean;
 	/**
-	 * 画布上的样子（节点卡片与连线，DESIGN-SYSTEM §2.3「站点胶囊」）。
+	 * 画布上的样子（节点卡片与连线，docs/DESIGN-SYSTEM.md §2.3「站点胶囊」）。
 	 * - `lamp`：站点灯的三种样子，要盯的（`watch`，和满高的面积色块是同一组）是状态色淡底加描边，看全图时放大；
 	 *   走完了的（`passed`）贴着所在底色，看全图时缩成小点；还没轮到的（`ahead`）只有一圈描边。
 	 * - `line`：要盯的状态的细线，站点灯的灯圈和卡片底边的进度线用它（执行中是 `signal-line`，不是实心青色）。

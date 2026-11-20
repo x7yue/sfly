@@ -17,7 +17,7 @@ import { isTruncationMarker, MAX_LOADED_LINES } from "./task-log-reader";
  * 合并规则：行始终按合并日志的排序键（@sfly/schema 的 run-log-order.ts，与控制面同一个比较函数）排列：往前翻的页
  * 和实时推送的行都按排序键插到对应的位置，按「任务 + 序号」去重。断线后补发的行（晚到的行）可能比已有的别的任务的行更早，
  * 甚至比已加载的最早一行还早，同样插到它应在的位置；之后往前翻到的页再插到它前后。同一任务内永远按序号：
- * 个别任务的控制面时间有超过 2 秒的倒挂（§6.3），插入位置不早于这个任务序号更小的行、不晚于序号更大的行。
+ * 个别任务的控制面时间有超过 2 秒的倒挂（docs/ARCHITECTURE.md §6.3），插入位置不早于这个任务序号更小的行、不晚于序号更大的行。
  * 游标对前端不透明，所以只能整页丢掉：每一页记下读它之前的行用的游标和它加入的行，丢掉最早的几页之后，
  * 剩下最早那一页的游标正好能把丢掉的行重新读回来。实时推送的行不属于任何一页，往前翻页读不回它们，所以不丢；
  * 它们多到超过上限时，整个缓冲区从最新一页重新读（{@link needsReload}），推送过的行都在那一页或它之前。
@@ -271,7 +271,7 @@ function insertionPoint(lines: readonly RunLogLine[], line: RunLogLine): number 
 
 /**
  * 缓冲区里已有的 line 的下标。行都按排序键排列时，它就是「应插入的位置」的前一个，二分查找一次就找到；
- * 个别任务的控制面时间倒挂（§6.3）时行不在这里，再逐个找。
+ * 个别任务的控制面时间倒挂（docs/ARCHITECTURE.md §6.3）时行不在这里，再逐个找。
  */
 function indexOfLine(lines: readonly RunLogLine[], line: RunLogLine): number {
 	const guess = insertionPoint(lines, line) - 1;

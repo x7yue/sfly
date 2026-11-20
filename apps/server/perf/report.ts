@@ -1,4 +1,4 @@
-// 性能测试报告（ARCHITECTURE §7.6）：判定每个数值、与两份基准（本机上一次、仓库里最近一个版本的发版报告）对比、
+// 性能测试报告（docs/ARCHITECTURE.md §7.6）：判定每个数值、与两份基准（本机上一次、仓库里最近一个版本的发版报告）对比、
 // 生成 report.json 与 report.md。这里只有纯逻辑（单测见 test/perf-report.test.ts），选基准在 baseline.ts，
 // 运行负载、读写文件在 main.ts。
 //
@@ -40,9 +40,9 @@ export interface Series {
 export interface ItemOutcome {
 	id: string;
 	title: string;
-	/** ARCHITECTURE §7.6 目标表里的「范围」；基准测试等没有目标的项为 null。 */
+	/** docs/ARCHITECTURE.md §7.6 目标表里的「范围」；基准测试等没有目标的项为 null。 */
 	scope: string | null;
-	/** 从 ARCHITECTURE §7.6 读出的目标原文。 */
+	/** 从 docs/ARCHITECTURE.md §7.6 读出的目标原文。 */
 	target: string | null;
 	durationMs: number;
 	measurements: Measurement[];
@@ -372,7 +372,7 @@ export function renderMarkdown(report: PerfReport): string {
 		"",
 		"## 总览",
 		"",
-		"| 项 | 范围 | 目标（ARCHITECTURE §7.6） | 结论 |",
+		"| 项 | 范围 | 目标（docs/ARCHITECTURE.md §7.6） | 结论 |",
 		"|---|---|---|---|",
 	);
 	for (const item of report.items) {

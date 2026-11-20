@@ -1,4 +1,4 @@
-// 负载：30 个节点的单链，每个节点只做一点点事，看「一个任务一个进程」的固定开销（ARCHITECTURE §7.6「短节点链路」，#76）。
+// 负载：30 个节点的单链，每个节点只做一点点事，看「一个任务一个进程」的固定开销（docs/ARCHITECTURE.md §7.6「短节点链路」，#76）。
 // 三类节点各一条链（同样的编排，只换节点）：
 // - 空节点：sfly-short 的 empty（testdata/short-package），除了 SDK 什么都不导入，测出的是执行器进程本身的开销；
 // - sfly-std 的 http_request：请求本机的 HTTP 桩（不访问外网），sfly-std 的依赖从 PyPI 镜像桩安装；
@@ -35,7 +35,7 @@ interface NodeClass {
 	version: string;
 	node: string;
 	inputs: Record<string, unknown>;
-	/** 与 §7.6 的目标比较（只有 sfly-std 的短节点有目标）。 */
+	/** 与 docs/ARCHITECTURE.md §7.6 的目标比较（只有 sfly-std 的短节点有目标）。 */
 	target?: number;
 }
 

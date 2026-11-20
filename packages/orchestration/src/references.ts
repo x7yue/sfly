@@ -299,7 +299,7 @@ export function dispatchTarget(
 }
 
 /**
- * 参数映射检查（§4.2）：异步任务节点只能映射它触发的子流程入口声明的参数，
+ * 参数映射检查（docs/SEMANTICS.md §4 第 2 条）：异步任务节点只能映射它触发的子流程入口声明的参数，
  * 没有默认值的必填参数必须映射。没有连到子流程入口节点时不检查（结构警告会指出）。
  */
 export function subflowParamWarnings(doc: OrchestrationDocument): ReferenceWarning[] {

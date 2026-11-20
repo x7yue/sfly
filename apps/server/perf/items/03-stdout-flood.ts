@@ -1,4 +1,4 @@
-// 负载：节点每秒向标准输出写 10 MiB（ARCHITECTURE §7.6「节点大量输出 stdout」）。
+// 负载：节点每秒向标准输出写 10 MiB（docs/ARCHITECTURE.md §7.6「节点大量输出 stdout」）。
 // 本机上 Agent 的转发跟得上这个速率，#75（转发跟不上时无界通道积压）在这里不会出现：这一项区分不出 #75 修复前后，
 // 只是日志完整、副本有上限、内存有上限的回归检查；#75 的回归测试应在 Agent 单测里人为拖慢转发环节。
 // 桩节点 stdout_rate 定速写出带序号的行；Agent 把每行转发给控制面，原始内容同时写到工作目录的 stdout.log
@@ -27,7 +27,7 @@ import { AGENT_RSS_GROWTH_MB, STDOUT_LOG_MAX_MIB, STDOUT_MIB_PER_SECOND } from "
 const SECONDS = 15;
 const LINE_BYTES = 1024;
 const NODE_ID = "spew";
-/** Agent 每个流的日志副本：最多两个文件、每个 8 MiB（agent/src/logs.rs 的 LogCopy），合计即 §7.6 的 16 MiB。 */
+/** Agent 每个流的日志副本：最多两个文件、每个 8 MiB（agent/src/logs.rs 的 LogCopy），合计即 docs/ARCHITECTURE.md §7.6 的 16 MiB。 */
 const LOG_COPY_MAX_FILES = 2;
 const LOG_COPY_MAX_MIB = STDOUT_LOG_MAX_MIB / LOG_COPY_MAX_FILES;
 
@@ -71,7 +71,7 @@ export default definePerfItem({
 			agentUsage,
 			AGENT,
 			{ rssMb: 2, cpuPercent: 5 },
-			// §7.6 只要求「有上限」，借用单个 Agent 的 100 MB：断线时日志最多排队 64 MB（--log-queue-bytes），
+			// docs/ARCHITECTURE.md §7.6 只要求「有上限」，借用单个 Agent 的 100 MB：断线时日志最多排队 64 MB（--log-queue-bytes），
 			// 连着控制面时不该接近这个量。
 			hard("<=", AGENT_RSS_GROWTH_MB),
 		);
