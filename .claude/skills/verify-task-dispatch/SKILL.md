@@ -59,7 +59,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 - 运行取消（`cancel`、`#cancelChain`、`#resendCancels`）、停止子流程（§4.1）、定时和 Sleep 节点、立即更新（UpdateNow）和自更新排空、版本不一致时不派发。`agent_lost` 时的强制取消在模型里，但取消只建模成「被告知停止」，不区分优雅取消和强制取消。
 - 控制面重启（`extendForRecovery`）、多个控制面连接同一个 Agent、令牌。
 - 失败类型的区别：模型里所有失败都按 `retries` 重试；`env_error` 和 `config_error` 不重试，这一点没有建模。结果写不进数据库时按 `node_error` 失败（#207）也没有建模，模型里成功的结果总被记为成功。
-- Agent 手上的任务有没有被漏报：Hello 或心跳少列了一个任务（比如结果刚交出、还没发出的，#132），只会让控制面多一次 `agent_lost`、多重试一次，不会破坏上面五条性质，所以模型里没有对应的性质。这一条由 `agent/src/ledger.rs` 的单元测试守着（`hello_lists_a_task_that_finished_before_it_was_listed` 等）。
+- 「结果已交出、还没发出」的任务有没有被漏报（#132）：Hello 或心跳少列了这样一个任务，只会让控制面多一次 `agent_lost`、多重试一次（旧尝试已经结束），不会破坏上面五条性质，所以模型里没有对应的性质。漏报还在安装或执行中的任务不一样：`SlotBound` 会抓到（`mutants.sh` 的 `hello-omits-installing`）。这一条由 `agent/src/ledger.rs` 的单元测试守着（`hello_lists_a_task_that_finished_before_it_was_listed` 等）。
 - 动作摘要和明细（`ActionSummary`、`ActionBatch`，#345）：和日志一样走遥测通道，由 `apps/server/src/actions/task-actions.ts` 处理（`engine.ts` `onMessage` 不碰），不回 Ack、不续租约、不改任务状态，对派发协议没有影响。
 - TaskStarted 走遥测通道，可能晚于结果或丢失，模型里断线时丢失、连接时按顺序送达；心跳里的 `started` 补记保证了结论不依赖它。
 - 真实时间。租约多久过期、心跳多快，都用上面两个开关表达。
