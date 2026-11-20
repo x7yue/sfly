@@ -220,6 +220,31 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			expect(summary.failed[1]?.logs[0]).toMatchObject({ level: "info", text: "日志第 11 行" });
 		});
 
+		it("失败原因的一行：去掉异常的模块路径、第一行以冒号结尾时接上下一行；--json 里的 error.message 是完整的原文", async () => {
+			const id = await scenario("断言场景", [echo("a")]);
+			const waiting = start("run", "start", "断言场景", "--wait");
+			const message = [
+				"sfly_std.assert_.AssertionFailed: 1 条断言中 1 条不通过：",
+				"第 1 条：$ 应 eq true，实际是 false",
+				"",
+				"Traceback (most recent call last):",
+				'  File "assert_.py", line 40, in assert_',
+			].join("\n");
+			await agent.fail(await assign(), message);
+
+			const result = await waiting.exited;
+			expect(result.code, result.stderr).toBe(1);
+			// 并进第一行的那一行不再重复；没有并进的各行（堆栈）原样接在下面。
+			expect(result.stdout).toContain(
+				"    错误：node_error：AssertionFailed: 1 条断言中 1 条不通过：第 1 条：$ 应 eq true，实际是 false\n\n      Traceback (most recent call last):\n",
+			);
+			expect(result.stdout.match(/第 1 条/g)).toHaveLength(1);
+			const runId = await runOf(id);
+			const json = await cli("run", "wait", runId, "--json");
+			const summary = JSON.parse(json.stdout) as { failed: Array<{ error: { message: string } }> };
+			expect(summary.failed[0]?.error.message).toBe(message);
+		});
+
 		it("节点重试两次都失败：每次失败的尝试各列一项，按尝试顺序，各带自己的错误和日志", async () => {
 			const id = await scenario("重试场景", [echo("a", { retries: 2 })]);
 			const waiting = start("run", "start", "重试场景", "--wait");

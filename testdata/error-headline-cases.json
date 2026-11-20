@@ -1,0 +1,156 @@
+{
+	"$comment": [
+		"失败原因的一行（错误信息的摘要）怎么从错误信息里取：控制面和网页（packages/schema/src/run-failures.ts 的 errorHeadline）与命令行（sdk/python/src/sfly/cli/error_headline.py 的 error_headline）各有一份实现，都要通过这里的全部用例。",
+		"规则：取第一行有内容的文字（去掉首尾空白）；行首如果是异常的模块路径（小写字母、数字、下划线组成的名字加点，后面是首字母大写的异常类名，类名之后是冒号或行尾），去掉模块路径；第一行以冒号（半角 : 或全角 ：）结尾、下一行紧接着有内容（不是空行，也不是堆栈的开头）时，把下一行接上去，全角冒号后直接接，半角冒号后隔一个空格，只接一行。",
+		"只改这一行摘要的生成：完整的错误信息原样保留，页面和命令行在别处照旧显示它。",
+		"字段 why 只是给人看的说明，两份实现的测试不读它。"
+	],
+	"cases": [
+		{
+			"name": "单行：原样",
+			"message": "漏拦 3 笔",
+			"headline": "漏拦 3 笔"
+		},
+		{
+			"name": "首尾空白去掉",
+			"message": "  漏拦 3 笔  \n",
+			"headline": "漏拦 3 笔"
+		},
+		{
+			"name": "只取第一行，之后是堆栈",
+			"message": "漏拦 3 笔\nTraceback (most recent call last):\n  File \"a.py\", line 1\nValueError: x",
+			"headline": "漏拦 3 笔"
+		},
+		{
+			"name": "空一行之后是堆栈",
+			"message": "ValueError: boom\n\nTraceback (most recent call last):\n  ...",
+			"headline": "ValueError: boom"
+		},
+		{
+			"name": "第一行没有内容时取第一行有内容的",
+			"message": "\n\n  ValueError: boom\n第二行",
+			"headline": "ValueError: boom"
+		},
+		{
+			"name": "全是空白：空串",
+			"message": " \n\t\n",
+			"headline": ""
+		},
+		{
+			"name": "空字符串",
+			"message": "",
+			"headline": ""
+		},
+		{
+			"name": "去掉异常的模块路径前缀",
+			"message": "sfly_std.assert_.AssertionFailed: 断言不通过",
+			"headline": "AssertionFailed: 断言不通过"
+		},
+		{
+			"name": "去掉多级模块路径前缀（带下划线和数字的模块名）",
+			"message": "my_pkg.v2.io_utils.ReadTimeout: 超时",
+			"headline": "ReadTimeout: 超时"
+		},
+		{
+			"name": "没有消息的异常：只剩类名",
+			"message": "sfly.context.Cancelled",
+			"headline": "Cancelled"
+		},
+		{
+			"name": "内置异常没有模块路径：原样",
+			"message": "ValueError: boom",
+			"headline": "ValueError: boom"
+		},
+		{
+			"name": "嵌套的异常类：只去掉模块路径，类的限定名保留",
+			"message": "pkg.mod.Outer.Inner: 出错了",
+			"headline": "Outer.Inner: 出错了"
+		},
+		{
+			"name": "不是异常类名的点号不去掉：文件名、小写的名字",
+			"message": "config.yaml: 缺少字段 port",
+			"headline": "config.yaml: 缺少字段 port"
+		},
+		{
+			"name": "行首是「小写.大写:」但不是异常类路径时照样去掉（已知行为，实际不会出现）",
+			"why": "任务的错误信息都来自异常的格式化输出，第一行总是以异常类（带模块路径）开头，所以行首出现「小写.大写:」而又不是异常类路径的情况实际不会出现；用文件名、配置项当开头的信息不会走到这里。两份实现对它的结果一致，这条用例把它钉住。",
+			"message": "config.Yaml: 读取失败",
+			"headline": "Yaml: 读取失败"
+		},
+		{
+			"name": "路径、域名不去掉",
+			"message": "/usr/local/bin/tool: not found",
+			"headline": "/usr/local/bin/tool: not found"
+		},
+		{
+			"name": "只去掉行首的模块路径，正文里的不动",
+			"message": "ValueError: 见 sfly.context.Cancelled 的说明",
+			"headline": "ValueError: 见 sfly.context.Cancelled 的说明"
+		},
+		{
+			"name": "类名后面不是冒号也不是行尾：不是异常行，不去掉",
+			"message": "pkg.mod.Thing 出错了",
+			"headline": "pkg.mod.Thing 出错了"
+		},
+		{
+			"name": "第一行以全角冒号结尾：直接接上下一行",
+			"message": "sfly_std.assert_.AssertionFailed: 1 条断言中 1 条不通过：\n第 1 条：$ 应 eq true，实际是 false\n\nTraceback (most recent call last):\n  ...",
+			"headline": "AssertionFailed: 1 条断言中 1 条不通过：第 1 条：$ 应 eq true，实际是 false"
+		},
+		{
+			"name": "第一行以半角冒号结尾：隔一个空格接上下一行",
+			"message": "RuntimeError: 安装失败:\nno matching distribution",
+			"headline": "RuntimeError: 安装失败: no matching distribution"
+		},
+		{
+			"name": "接上的下一行去掉首尾空白",
+			"message": "RuntimeError: 失败原因：\n    磁盘已满  \n    第三行",
+			"headline": "RuntimeError: 失败原因：磁盘已满"
+		},
+		{
+			"name": "第一行以冒号结尾、下一行是空行：不接（空行之后是堆栈）",
+			"message": "RuntimeError: 失败原因：\n\nTraceback (most recent call last):\n  ...",
+			"headline": "RuntimeError: 失败原因："
+		},
+		{
+			"name": "第一行以冒号结尾、下一行就是堆栈的开头：不接",
+			"message": "RuntimeError: 失败原因：\nTraceback (most recent call last):\n  ...",
+			"headline": "RuntimeError: 失败原因："
+		},
+		{
+			"name": "第一行以冒号结尾、后面没有内容：原样",
+			"message": "RuntimeError: 失败原因：",
+			"headline": "RuntimeError: 失败原因："
+		},
+		{
+			"name": "只接一行：第二行也以冒号结尾时不再往下接",
+			"message": "AssertionFailed: 2 条不通过：\n第 1 条：\n$ 应 eq true",
+			"headline": "AssertionFailed: 2 条不通过：第 1 条："
+		},
+		{
+			"name": "冒号不在行尾：不接",
+			"message": "RuntimeError: a: b\n第二行",
+			"headline": "RuntimeError: a: b"
+		},
+		{
+			"name": "去掉模块路径之后冒号结尾的也接上",
+			"message": "pkg.mod.Boom:\n详情",
+			"headline": "Boom: 详情"
+		},
+		{
+			"name": "Windows 换行",
+			"message": "ValueError: 失败：\r\n原因\r\n\r\nTraceback",
+			"headline": "ValueError: 失败：原因"
+		},
+		{
+			"name": "开头的 BOM 和空白一起去掉",
+			"message": "﻿  漏拦 3 笔\nTraceback (most recent call last):",
+			"headline": "漏拦 3 笔"
+		},
+		{
+			"name": "只有 BOM 和空白的行不算有内容",
+			"message": "﻿ \n  ValueError: boom",
+			"headline": "ValueError: boom"
+		}
+	]
+}

@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { errorHeadline, failuresInOrder } from "../src/index.js";
+
+/** 失败原因一行的用例表：命令行（sdk/python/tests/test_error_headline.py）读同一份。 */
+const headlineCases: Array<{ name: string; message: string; headline: string }> = JSON.parse(
+	readFileSync(new URL("../../../testdata/error-headline-cases.json", import.meta.url), "utf8"),
+).cases;
 
 type Node = { id: string; status: string; at: number | null };
 const node = (id: string, status: string, at: number | null = null): Node => ({ id, status, at });
@@ -27,6 +33,17 @@ describe("第一个失败的节点", () => {
 
 	it("没有失败的节点时为空", () => {
 		expect(order([{ id: "main", nodes: [node("a", "success", 1)] }])).toEqual([]);
+	});
+});
+
+describe("失败原因的一行（共用用例表 testdata/error-headline-cases.json）", () => {
+	it.each(headlineCases)("$name", ({ message, headline }) => {
+		expect(errorHeadline(message)).toBe(headline);
+	});
+
+	it("没有错误信息时是空串", () => {
+		expect(errorHeadline(null)).toBe("");
+		expect(errorHeadline(undefined)).toBe("");
 	});
 });
 

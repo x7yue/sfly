@@ -46,6 +46,19 @@ struct RunnerError {
     message: String,
     #[serde(default)]
     traceback: String,
+    /// 执行器在调用节点之前就拒绝了输入（有节点没有声明的名字）时写 `config_error`；
+    /// 没有这个键或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+impl RunnerError {
+    fn error_kind(&self) -> ErrorKind {
+        match self.kind.as_deref() {
+            Some("config_error") => ErrorKind::ConfigError,
+            _ => ErrorKind::NodeError,
+        }
+    }
 }
 
 pub fn success(task: &AssignTask, outputs: &Value) -> TaskResult {
@@ -334,12 +347,13 @@ impl Running {
         match output {
             Some(Output::Success { outputs }) if status.success() => success(task, &outputs),
             Some(Output::Failed { error }) => {
+                let kind = error.error_kind();
                 let message = if error.traceback.is_empty() {
                     error.message
                 } else {
                     format!("{}\n\n{}", error.message, error.traceback.trim_end())
                 };
-                failure(task, ErrorKind::NodeError, message)
+                failure(task, kind, message)
             }
             _ => failure(
                 task,
