@@ -223,16 +223,23 @@ describe("声明为只读的接口真的不写库", () => {
 		return diffFootprints(before, await settled());
 	};
 
-	/** 找出是最近哪个用例的接口在响应之后才写了东西；找不到时列出候选。 */
+	/**
+	 * 找出是最近哪个用例的接口在响应之后才写了东西；找不到时列出候选。重跑用例本身会留下写入的痕迹，
+	 * 所以结束时以现在的样子为新的基线：一次失败不会让后面的用例跟着失败。
+	 */
 	const explainLateWrite = async (changes: string[], candidates: Case[]): Promise<string> => {
-		for (const c of [...candidates].reverse()) {
-			const again = await probe(c);
-			if (again.length > 0) {
-				return `是「${c.name}」：它在响应之后才写了东西（单独再跑一遍、响应后等 ${LATE_PROBE_MS} 毫秒，又看到了）：\n${again.join("\n")}`;
+		try {
+			for (const c of [...candidates].reverse()) {
+				const again = await probe(c);
+				if (again.length > 0) {
+					return `是「${c.name}」：它在响应之后才写了东西（单独再跑一遍、响应后等 ${LATE_PROBE_MS} 毫秒，又看到了）：\n${again.join("\n")}`;
+				}
 			}
+			const names = candidates.map((c) => `「${c.name}」`).join("、") || "（还没有）";
+			return `没有找到是哪个接口（最近的用例单独重跑都没有再看到）。候选：${names}\n本次看到的变化：\n${changes.join("\n")}`;
+		} finally {
+			lastAfter = await settled();
 		}
-		const names = candidates.map((c) => `「${c.name}」`).join("、") || "（还没有）";
-		return `没有找到是哪个接口（最近的用例单独重跑都没有再看到）。候选：${names}\n本次看到的变化：\n${changes.join("\n")}`;
 	};
 
 	it("有足够多的只读接口被核对", () => {
@@ -252,7 +259,6 @@ describe("声明为只读的接口真的不写库", () => {
 				const before = await settled();
 				const early = lastAfter ? diffFootprints(lastAfter, before) : [];
 				if (early.length > 0) {
-					lastAfter = before;
 					throw new Error(
 						`之前某个只读接口在响应之后还写了东西（当前这个接口 ${name} 还没有调用）。${await explainLateWrite(early, finished.slice(-RECENT_CASES))}`,
 					);
@@ -266,6 +272,7 @@ describe("声明为只读的接口真的不写库", () => {
 				const changes = diffFootprints(before, after);
 				if (changes.length > 0) {
 					const again = await probe(c);
+					lastAfter = await settled();
 					if (again.length > 0) {
 						throw new Error(
 							`${name} 声明为只读，调用后却留下了写入的痕迹：\n${changes.join("\n")}`,
