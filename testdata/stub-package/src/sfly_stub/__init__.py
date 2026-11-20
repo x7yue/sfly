@@ -34,6 +34,13 @@ def fail(ctx: Context, message: str = "stub failure") -> dict[str, Any]:
     raise RuntimeError(message)
 
 
+@node(title="返回不是数的值", outputs=["x"])
+def non_finite_output(ctx: Context, kind: str) -> dict[str, Any]:
+    """返回 NaN 或无穷（kind 是 `nan`、`inf`、`-inf`）：JSON 里没有这些值，
+    任务应该失败并写明原因（#481）。"""
+    return {"x": float(kind)}
+
+
 @node(title="按参数成功或失败", outputs=["ok"])
 def outcome(ctx: Context, succeed: bool = True, message: str = "stub failure") -> dict[str, Any]:
     """succeed 为 False 时抛出 RuntimeError(message)，否则成功。"""
@@ -272,13 +279,6 @@ def actions(ctx: Context, unfinished: bool = False, release_file: str = "") -> N
             with ctx.action("检查放行文件"):
                 while not os.path.exists(release_file):
                     time.sleep(0.05)
-
-
-@node(title="返回不是数的值", outputs=["x"])
-def non_finite_output(ctx: Context, kind: str) -> dict[str, Any]:
-    """返回 NaN 或无穷（kind 是 `nan`、`inf`、`-inf`）：JSON 里没有这些值，
-    任务应该失败并写明原因（#481）。"""
-    return {"x": float(kind)}
 
 
 @node(title="最长的动作摘要", outputs=[])
