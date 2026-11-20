@@ -39,14 +39,14 @@ open(sys.argv[2], "w").write(re.sub(r"INVARIANTS\n(    .*\n)+", "INVARIANTS\n   
 	fi
 }
 
-# lib.rs run()：Welcome 里 ABANDON 的任务不再被杀掉（删掉 cancel_task 与 abandoned.insert）。
+# ledger.rs Ledger::abandon：Welcome 里 ABANDON 的、还在执行的任务不再被杀掉（删掉 signal(true) 与 abandoned 标记）。
 mutant abandon-no-kill Safe NoUnstoppedDuplicate \
 	'           kill    == {b \in welcome : b \notin AttemptsOf(unacked) /\ b \in Holding}' \
 	'           kill    == {}'
-# lib.rs held_tasks / held_collecting：Hello 不再上报还在安装中（执行器没启动）的任务。
+# ledger.rs State::on_hand / Ledger::hello：Hello 不再上报还在安装中（执行器没启动）的任务。
 mutant hello-omits-installing Safe SlotBound \
-	'          /\ hello'"'"' = [held    |-> Holding \cup AttemptsOf(unacked2),' \
-	'          /\ hello'"'"' = [held    |-> StartedOnAgent \cup AttemptsOf(unacked2),'
+	'    /\ hello'"'"' = [held    |-> Hand,' \
+	'    /\ hello'"'"' = [held    |-> HandStarted,'
 # engine.ts #applyResult：不再检查任务是否还在 ON_AGENT（接受已放弃尝试的结果）。
 mutant result-accepts-stale Safe AtMostOneSuccess \
 	'                    /\ cp'"'"' = IF cp[m.a] \notin OnAgent THEN cp' \

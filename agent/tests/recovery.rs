@@ -154,7 +154,7 @@ async fn hello_lists_a_task_that_finishes_while_the_hello_is_being_prepared() {
     cp.end_session();
     wait_for_file_to_exist(&dir.path().join("refreshing")).await;
 
-    // 这时任务结束：等到 Agent 在标准错误里说结果已经交出（已进结果通道、已从正在执行移出），才让清点继续。
+    // 这时任务结束：等到 Agent 在标准错误里说结果已经交出（任务已从执行中换成结果待发），才让清点继续。
     std::fs::write(&release, "").unwrap();
     let finished = "task task-gate attempt 1 finished";
     loop {
