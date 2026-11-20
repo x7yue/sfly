@@ -105,6 +105,38 @@ async fn an_input_the_node_does_not_declare_fails_with_config_error_without_a_tr
     );
 }
 
+/// 节点返回 NaN 或无穷（#481）：JSON 里没有这些值，任务失败，错误信息写明是哪个输出、怎么办，
+/// 而不是写出一份 Agent 读不了的 output.json、以「执行器异常退出」失败。本地调试给出同样的错误（执行器是同一份代码）。
+#[tokio::test]
+async fn a_node_returning_nan_or_infinity_fails_naming_the_output() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-non-finite"));
+    cp.hello(0).await;
+
+    for (kind, shown) in [("nan", "NaN"), ("inf", "Infinity"), ("-inf", "-Infinity")] {
+        let task_id = format!("task-non-finite-{kind}");
+        cp.assign(stub_task(
+            &task_id,
+            "non_finite_output",
+            json!({ "kind": kind }),
+        ))
+        .await;
+        let (result, _) = cp.result(&task_id).await;
+        assert_eq!(result.status(), TaskStatus::Failed, "{kind}: {result:?}");
+        let error = result.error.expect("error");
+        assert_eq!(error.kind(), ErrorKind::NodeError, "{kind}");
+        let expected = format!(
+            "NodeOutputError: 节点返回值不能序列化为 JSON：输出 x 的值是 {shown}。\
+             JSON 里没有 NaN 和无穷，换成 None（表示没有值），或者换成字符串（例如 str(值)）再返回"
+        );
+        assert!(
+            error.message.starts_with(&expected),
+            "{kind}: {}",
+            error.message
+        );
+    }
+}
+
 #[tokio::test]
 async fn package_not_installed_in_shared_venv_fails_with_env_error() {
     let cp = FakeControlPlane::start().await;
@@ -260,36 +292,4 @@ async fn unacknowledged_result_is_reported_again_after_reconnecting() {
         }).map(|_| ())
     })
     .await;
-}
-
-/// 节点返回 NaN 或无穷（#481）：JSON 里没有这些值，任务失败，错误信息写明是哪个输出、怎么办，
-/// 而不是写出一份 Agent 读不了的 output.json、以「执行器异常退出」失败。本地调试给出同样的错误（执行器是同一份代码）。
-#[tokio::test]
-async fn a_node_returning_nan_or_infinity_fails_naming_the_output() {
-    let cp = FakeControlPlane::start().await;
-    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-non-finite"));
-    cp.hello(0).await;
-
-    for (kind, shown) in [("nan", "NaN"), ("inf", "Infinity"), ("-inf", "-Infinity")] {
-        let task_id = format!("task-non-finite-{kind}");
-        cp.assign(stub_task(
-            &task_id,
-            "non_finite_output",
-            json!({ "kind": kind }),
-        ))
-        .await;
-        let (result, _) = cp.result(&task_id).await;
-        assert_eq!(result.status(), TaskStatus::Failed, "{kind}: {result:?}");
-        let error = result.error.expect("error");
-        assert_eq!(error.kind(), ErrorKind::NodeError, "{kind}");
-        let expected = format!(
-            "NodeOutputError: 节点返回值不能序列化为 JSON：输出 x 的值是 {shown}。\
-             JSON 里没有 NaN 和无穷，换成 None（表示没有值），或者换成字符串（例如 str(值)）再返回"
-        );
-        assert!(
-            error.message.starts_with(&expected),
-            "{kind}: {}",
-            error.message
-        );
-    }
 }
