@@ -8,8 +8,6 @@ import {
 } from "@sfly/orchestration";
 import {
 	type AgentMessage,
-	AgentUpdateState,
-	InstallState,
 	ErrorKind as ProtoErrorKind,
 	TaskStatus as ProtoTaskStatus,
 	ServerMessageSchema,
@@ -25,12 +23,12 @@ import {
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { ClockOffset } from "../agents/agent-clock.js";
-import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
+import type { AgentEnvironmentFor } from "../agents/agent-environment.js";
+import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
 import { loadAgentTasks } from "../agents/agent-tasks.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
-	type AgentUpdateInfo,
 	agents,
 	chainInstances,
 	type ErrorKind,
@@ -48,7 +46,6 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
-import type { Mirrors } from "../public-config.js";
 import type {
 	TriggerAdmission,
 	TriggerRejection,
@@ -114,21 +111,6 @@ const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
 	[ProtoErrorKind.AGENT_LOST]: "agent_lost",
 	[ProtoErrorKind.ENV_ERROR]: "env_error",
 	[ProtoErrorKind.CONFIG_ERROR]: "config_error",
-};
-
-const INSTALL_STATES: Partial<Record<InstallState, "installing" | "installed" | "failed">> = {
-	[InstallState.INSTALLING]: "installing",
-	[InstallState.INSTALLED]: "installed",
-	[InstallState.FAILED]: "failed",
-};
-
-const UPDATE_STATES: Partial<Record<AgentUpdateState, AgentUpdateInfo["state"]>> = {
-	[AgentUpdateState.NONE]: "none",
-	[AgentUpdateState.DOWNLOADING]: "downloading",
-	[AgentUpdateState.WAITING_FOR_TASKS]: "waiting_for_tasks",
-	[AgentUpdateState.REPLACING]: "replacing",
-	[AgentUpdateState.FAILED]: "failed",
-	[AgentUpdateState.MANUAL_UPGRADE_REQUIRED]: "manual_upgrade_required",
 };
 
 /** 任务由 Agent 负责（派发阶段或执行阶段）。 */
@@ -222,12 +204,8 @@ export class Engine implements AgentSessionHandler {
 			notifications: EngineNotifications;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
-			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
-			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
-			/** 控制面配置的镜像，原样在 Welcome 里下发（ADR 0012）；未配置的为空。 */
-			mirrors?: Mirrors;
-			/** 目标版本（控制面版本）、给定架构的 Agent 二进制（Welcome 里告诉 Agent，ADR 0014）；没有时为 undefined。 */
-			agentBinary?: (arch: string) => Promise<{ url: string; sha256: string } | undefined>;
+			/** Welcome 里和调度无关的部分：目标版本、SDK wheel、镜像、Agent 二进制（src/agents/agent-environment.ts）。 */
+			agentEnvironment: AgentEnvironmentFor;
 		},
 	) {}
 
@@ -480,8 +458,7 @@ export class Engine implements AgentSessionHandler {
 				for (const t of held) if (t.started) await this.#started(step, conn.name, t);
 				return out;
 			});
-			const sdk = this.deps.sdkWheel?.(conn.info.agent_version);
-			const binary = await this.deps.agentBinary?.(conn.info.arch);
+			const environment = await this.deps.agentEnvironment(conn.info);
 			conn.welcome(
 				create(ServerMessageSchema, {
 					body: {
@@ -489,13 +466,7 @@ export class Engine implements AgentSessionHandler {
 						value: {
 							dispositions,
 							heartbeatIntervalMs: Math.min(Math.round(this.leaseMs / 3), 0xffff_ffff),
-							sdkWheelUrl: sdk?.url ?? "",
-							sdkWheelSha256: sdk?.sha256 ?? "",
-							pypiMirror: this.deps.mirrors?.pypi ?? "",
-							githubReleaseMirror: this.deps.mirrors?.githubRelease ?? "",
-							targetAgentVersion: this.deps.hub.version,
-							agentBinaryUrl: binary?.url ?? "",
-							agentBinarySha256: binary?.sha256 ?? "",
+							...environment,
 						},
 					},
 				}),
@@ -583,24 +554,7 @@ export class Engine implements AgentSessionHandler {
 				if (conn.heartbeat()) step.touchedAgents.add(conn.name);
 			});
 			// 不带更新状态的心跳（旧版本 Agent）不改变已保存的状态。
-			const state = update && UPDATE_STATES[update.state];
-			if (update && state) {
-				await this.deps.hub.recordUpdate(conn, {
-					state,
-					remaining_tasks: update.remainingTasks,
-					reason: update.reason,
-				});
-			}
-		} else if (message.body.case === "install") {
-			const status = message.body.value;
-			const state = INSTALL_STATES[status.state];
-			if (!state) return;
-			await this.deps.hub.recordInstall(
-				conn,
-				{ package: status.package, version: status.version, state, task_id: status.taskId },
-				status.installedPackages.map((p) => ({ name: p.name, version: p.version })),
-				status.devPackages.map(devPackageInfo),
-			);
+			if (update) await this.deps.hub.recordUpdate(conn, update);
 		}
 	}
 
