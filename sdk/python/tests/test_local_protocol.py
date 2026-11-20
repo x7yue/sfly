@@ -57,13 +57,6 @@ def ids(cases: list[dict[str, Any]]) -> list[str]:
     return [case["name"] for case in cases]
 
 
-@pytest.fixture(autouse=True)
-def only_the_events_that_were_written(monkeypatch: pytest.MonkeyPatch) -> None:
-    """执行器退出时还没结束的动作，本地调试（和控制面）记为 unfinished：那是读取端在事件之外加的，
-    Agent 不做，由 test_actions.py 覆盖；这里只看写进管道的事件被读成了什么。"""
-    monkeypatch.setattr(local._Pump, "_end_unfinished_actions", lambda self: None)
-
-
 # ---- 跑一个用例 ----
 
 

@@ -2,7 +2,7 @@
 	"$comment": [
 		"本地协议（docs/ARCHITECTURE.md §5.4）两个读取端共用的用例表，和实现无关：Agent（agent/src/local_protocol_tests.rs）和本地调试（sdk/python/tests/test_local_protocol.py）各有一份读取实现，都要通过这里的全部用例。",
 		"每个用例由假执行器（testdata/local-protocol-executor.sh）做一遍执行器该做的事：往事件管道写 events 里的各行（一次写完）、往标准输出 / 标准错误写 stdout / stderr、把 output 写成 output.json、以 exit_code 退出；读取端读出什么写在 expect 里。run 里没写的：output 缺省是 {\"status\":\"success\",\"outputs\":{}}，exit_code 缺省是 0；output 写 null 表示不写 output.json。",
-		"event_cases 比较 expect 里的全部分区（logs、progress、metrics、notifications、actions、action_summary），没写的分区必须是空的（action_summary 是 null），结果必须是成功；result_cases 只比较 expect（结果）。",
+		"event_cases 比较 expect 里的全部分区（logs、progress、metrics、notifications、actions、action_summary），没写的分区必须是空的（action_summary 是 null），结果必须是成功；result_cases 只比较 expect（结果）。event_cases 里的动作都要在 events 里写上结束：执行器退出时还开着的动作，两端读出的不同（见 known_differences）。",
 		"分区里的每个条目是读取端能读出的事实，条目里写了的键才比较；ts 写 \"now\" 表示事件没带时间、读取端取读到它的时间，落在这次执行的前后之间（ts_s 同理，单位秒）。事件产生的条目有 type（事件类型），日志条目没有 type，来源由 source 区分。",
 		"两端读出的形状不同，约定两处：Agent 把通知和动作摘要的原文整行转发（比较前再解析一次，另外检查转发的原文与写进管道的那一行逐字相同），本地调试把它们解析成对象；Agent 合并进度和指标再转发，所以每个用例只写一条进度、一条指标。",
 		"not_shown 列出读取端读不出的键（写法：类型.键），比较前先从 expect 里去掉。",
@@ -458,7 +458,8 @@
 		{
 			"name": "action_start：动作开始",
 			"events": [
-				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"}}"
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"}}",
+				"{\"type\":\"action_end\",\"ts\":1700000000005,\"mono\":5000005,\"id\":1,\"result\":\"success\",\"reason\":null,\"fields\":{}}"
 			],
 			"expect": {
 				"actions": [
@@ -472,6 +473,15 @@
 						"ts": 1700000000000,
 						"mono": 5000000,
 						"late": false
+					},
+					{
+						"type": "action_end",
+						"id": 1,
+						"result": "success",
+						"reason": null,
+						"fields": [],
+						"ts": 1700000000005,
+						"mono": 5000005
 					}
 				]
 			}
@@ -479,7 +489,8 @@
 		{
 			"name": "action_start：子动作带 parent 和 depth",
 			"events": [
-				"{\"type\":\"action_start\",\"ts\":1700000000001,\"mono\":5000001,\"id\":2,\"parent\":1,\"depth\":1,\"name\":\"校验\",\"fields\":{}}"
+				"{\"type\":\"action_start\",\"ts\":1700000000001,\"mono\":5000001,\"id\":2,\"parent\":1,\"depth\":1,\"name\":\"校验\",\"fields\":{}}",
+				"{\"type\":\"action_end\",\"ts\":1700000000006,\"mono\":5000006,\"id\":2,\"result\":\"success\",\"reason\":null,\"fields\":{}}"
 			],
 			"expect": {
 				"actions": [
@@ -492,6 +503,15 @@
 						"fields": [],
 						"ts": 1700000000001,
 						"mono": 5000001
+					},
+					{
+						"type": "action_end",
+						"id": 2,
+						"result": "success",
+						"reason": null,
+						"fields": [],
+						"ts": 1700000000006,
+						"mono": 5000006
 					}
 				]
 			}
@@ -499,7 +519,8 @@
 		{
 			"name": "action_start：字段按 SDK 写的先后",
 			"events": [
-				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"b\":\"1\",\"a\":\"2\"}}"
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"b\":\"1\",\"a\":\"2\"}}",
+				"{\"type\":\"action_end\",\"ts\":1700000000005,\"mono\":5000005,\"id\":1,\"result\":\"success\",\"reason\":null,\"fields\":{}}"
 			],
 			"expect": {
 				"actions": [
@@ -512,6 +533,15 @@
 						"fields": [["b", "1"], ["a", "2"]],
 						"ts": 1700000000000,
 						"mono": 5000000
+					},
+					{
+						"type": "action_end",
+						"id": 1,
+						"result": "success",
+						"reason": null,
+						"fields": [],
+						"ts": 1700000000005,
+						"mono": 5000005
 					}
 				]
 			}
@@ -519,7 +549,8 @@
 		{
 			"name": "action_start：补发的开始带 late",
 			"events": [
-				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{},\"late\":true}"
+				"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{},\"late\":true}",
+				"{\"type\":\"action_end\",\"ts\":1700000000005,\"mono\":5000005,\"id\":1,\"result\":\"success\",\"reason\":null,\"fields\":{}}"
 			],
 			"expect": {
 				"actions": [
@@ -533,6 +564,15 @@
 						"ts": 1700000000000,
 						"mono": 5000000,
 						"late": true
+					},
+					{
+						"type": "action_end",
+						"id": 1,
+						"result": "success",
+						"reason": null,
+						"fields": [],
+						"ts": 1700000000005,
+						"mono": 5000005
 					}
 				]
 			}
@@ -1196,6 +1236,47 @@
 					]
 				},
 				"local": {}
+			},
+			{
+				"name": "执行器退出时动作还没结束",
+				"why": "Agent 只转发管道里写了的事件，动作留在开着（控制面在任务结束时处理）；本地调试在读完后把还没结束的动作记为 unfinished，结束时间取读完时的单调时钟读数（用例不比较）。",
+				"events": [
+					"{\"type\":\"action_start\",\"ts\":1700000000000,\"mono\":5000000,\"id\":1,\"parent\":null,\"depth\":0,\"name\":\"下单\",\"fields\":{\"订单\":\"1001\"}}"
+				],
+				"agent": {
+					"actions": [
+						{
+							"type": "action_start",
+							"id": 1,
+							"parent": null,
+							"depth": 0,
+							"name": "下单",
+							"fields": [["订单", "1001"]],
+							"ts": 1700000000000,
+							"mono": 5000000
+						}
+					]
+				},
+				"local": {
+					"actions": [
+						{
+							"type": "action_start",
+							"id": 1,
+							"parent": null,
+							"depth": 0,
+							"name": "下单",
+							"fields": [["订单", "1001"]],
+							"ts": 1700000000000,
+							"mono": 5000000
+						},
+						{
+							"type": "action_end",
+							"id": 1,
+							"result": "unfinished",
+							"reason": null
+						}
+					]
+				}
 			}
 		],
 		"result_cases": [
