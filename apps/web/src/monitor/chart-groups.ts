@@ -11,7 +11,7 @@ import {
 } from "@sfly/schema";
 import { nodeStatusView, type StatusKind } from "#/components/status";
 import { chainLabel } from "#/lib/copy";
-import { type NodeRef, nodeKey } from "./monitor-state";
+import { type NodeRef, nodeKey } from "./node-ref";
 import { orderedChains } from "./run-model";
 
 /** 图表工作区里的一个节点分组：目录里的包节点 × 运行视图里的节点。 */

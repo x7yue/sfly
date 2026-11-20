@@ -21,13 +21,13 @@ import {
 	rareNames,
 	type TrackSource,
 } from "./action-tracks";
-import { nodeKey } from "./monitor-state";
+import { nodeKey } from "./node-ref";
 
 /** 少见的名称最多单独读几种（个数少的先读）；更多的只在最新一页里有。 */
 const RARE_PAGES = 10;
 
 interface Started {
-	/** 节点的键（monitor-state 的 nodeKey）。 */
+	/** 节点的键（node-ref.ts 的 nodeKey）。 */
 	node: string;
 	attempt: AttemptView & { started_at: string };
 }

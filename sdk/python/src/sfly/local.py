@@ -11,7 +11,8 @@
   （本地没有产物下载地址，产物引用是本地文件路径）；
 - 日志：标准输出 → 来源 stdout、级别 info，标准错误 → 来源 stderr、级别 error，
   事件管道里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
-  （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
+  （agent/src/logs.rs；读取规则与 Agent 共用用例表 testdata/local-protocol-cases.json）；
+  进度和指标保留每一次上报（Agent 上报前按秒合并）；
 - 任务信息与后台进程目录：task.json 里任务 ID 是 `local`、attempt 是 1，
   运行 ID 和节点 ID 由调用方给出；
   `SFLY_PROCS` 默认是工作目录下的 `procs/`
@@ -490,16 +491,18 @@ class _Pump:
     ) -> None:
         self._execution = execution
         self._events = events
-        self._lines: queue.Queue[LogLine] = queue.Queue()
-        self._event_lines: queue.Queue[bytes] = queue.Queue()
+        #: 读到的标准输出 / 标准错误的行和事件管道的行，各带读到它时的单调时钟读数（毫秒）。
+        self._lines: queue.Queue[tuple[int, LogLine]] = queue.Queue()
+        self._event_lines: queue.Queue[tuple[int, bytes]] = queue.Queue()
         self._readers: list[threading.Thread] = []
         self._on_log = on_log
         self._on_progress = on_progress
         self._on_metric = on_metric
         self._on_notify = on_notify
         self._on_action = on_action
-        #: 这一次 `poll` 里读到的动作和标记的变化：(事件时间, 记录)，按时间和日志交错着回调。
-        self._action_changes: list[tuple[int, ActionRecord]] = []
+        #: 这一次 `poll` 里读到的日志行、动作和标记的变化：(读到它时的单调时钟读数, 内容)，
+        #: 按读到的先后交错着回调。
+        self._changes: list[tuple[int, LogLine | ActionRecord]] = []
         #: 任务引用的飞书机器人；None 表示不知道输入的类型，不检查。
         self._feishu_bots = feishu_bots
         #: 标准错误最后的 `_STDERR_TAIL_BYTES` 字节（错误摘要用，不读 stderr.log）。
@@ -516,12 +519,13 @@ class _Pump:
         fd = self._events.read_fd
         try:
             while data := os.read(fd, 64 * 1024):
+                read_at = monotonic_ms()
                 complete, sep, partial = (partial + data).rpartition(b"\n")
                 if not sep:
                     continue
                 for line in complete.split(b"\n"):
                     if line:
-                        self._event_lines.put(line)
+                        self._event_lines.put((read_at, line))
         finally:
             os.close(fd)
 
@@ -542,29 +546,27 @@ class _Pump:
                     for start in range(0, max(len(line), 1), _MAX_LINE_BYTES):
                         chunk = line[start : start + _MAX_LINE_BYTES]
                         text = chunk.decode("utf-8", errors="replace")
-                        self._lines.put(LogLine(_now_ms(), source, level, text))
+                        self._lines.put((monotonic_ms(), LogLine(_now_ms(), source, level, text)))
 
         self._start(run)
 
     def poll(self) -> None:
-        """读出新增的事件和管道里的行；同一批内按时间排序（与 Agent 相同）。"""
-        batch: list[LogLine] = []
+        """读出新增的事件和管道里的行；同一批内按读到的先后（单调时钟）排，和 Agent 一样：
+        事件里的 `ts` 是 SDK 读的系统时钟，往回跳时不能拿它当先后。"""
         while True:
             try:
-                batch.append(self._lines.get_nowait())
+                self._changes.append(self._lines.get_nowait())
             except queue.Empty:
                 break
         while True:
             try:
-                raw = self._event_lines.get_nowait()
+                read_at, raw = self._event_lines.get_nowait()
             except queue.Empty:
                 break
-            self._event(raw, batch)
-        changes, self._action_changes = self._action_changes, []
-        # 日志和动作、标记的变化一起按时间排（同一时间保持读到的先后），打印时交错显示。
-        merged: list[tuple[int, LogLine | ActionRecord]] = [(line.ts, line) for line in batch]
-        merged.extend(changes)
-        for _, item in sorted(merged, key=lambda pair: pair[0]):
+            self._event(raw, read_at)
+        changes, self._changes = self._changes, []
+        # 日志和动作、标记的变化一起排（读到的时刻相同的保持读到的先后），打印时交错显示。
+        for _, item in sorted(changes, key=lambda pair: pair[0]):
             if isinstance(item, LogLine):
                 self._execution.logs.append(item)
                 if self._on_log is not None:
@@ -581,71 +583,66 @@ class _Pump:
         self.poll()
         self._end_unfinished_actions()
 
-    def _event(self, raw: bytes, batch: list[LogLine]) -> None:
+    def _event(self, raw: bytes, read_at: int) -> None:
+        """处理事件管道里的一行；`read_at` 是读到它时的单调时钟读数。"""
         try:
             event = json.loads(raw)
-            kind = event["type"]
-            ts = int(event.get("ts") or _now_ms())
-            if kind == "log":
-                level = _SDK_LEVELS.get(str(event.get("level", "")), "info")
-                batch.append(LogLine(ts, "sdk", level, str(event.get("message", ""))))
-                return
-            if kind == "progress":
-                total = event.get("total")
-                progress = Progress(
-                    ts,
-                    float(event["current"]),
-                    None if total is None else float(total),
-                    str(event.get("message", "")),
-                )
-                self._execution.progress.append(progress)
-                if self._on_progress is not None:
-                    self._on_progress(progress)
-                return
-            if kind == "metric":
-                metric_kind = "counter" if event.get("kind") == "counter" else "gauge"
-                labels = event.get("labels") or {}
-                point = MetricPoint(
-                    ts,
-                    str(event["name"]),
-                    metric_kind,
-                    float(event["value"]),
-                    {str(k): str(v) for k, v in labels.items()},
-                )
-                self._execution.metrics.append(point)
-                if self._on_metric is not None:
-                    self._on_metric(point)
-                return
-            if kind == "notify":
-                self._notify(ts, event, batch)
-                return
-            if kind in ("action_start", "mark"):
-                self._action_started(ts, event, "action" if kind == "action_start" else "mark")
-                return
-            if kind == "action_end":
-                self._action_ended(ts, event)
-                return
-            if kind == "action_summary":
-                self._execution.action_summary = _action_summary(ts, event)
+            handler = _EVENT_HANDLERS.get(event["type"])
+            if handler is not None:
+                handler(self, read_at, int(event.get("ts") or _now_ms()), event)
                 return
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
         # 不认识的内容原样记成一行 SDK 日志。
-        batch.append(LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace")))
+        line = LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace"))
+        self._changes.append((read_at, line))
 
-    def _action_started(
-        self, ts: int, event: Mapping[str, Any], kind: Literal["action", "mark"]
-    ) -> None:
-        record = _action_record(event, kind, ts)
+    def _log(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
+        level = _SDK_LEVELS.get(str(event.get("level", "")), "info")
+        line = LogLine(ts, "sdk", level, str(event.get("message", "")))
+        self._changes.append((read_at, line))
+
+    def _progress(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
+        total = event.get("total")
+        progress = Progress(
+            ts,
+            float(event["current"]),
+            None if total is None else float(total),
+            str(event.get("message", "")),
+        )
+        self._execution.progress.append(progress)
+        if self._on_progress is not None:
+            self._on_progress(progress)
+
+    def _metric(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
+        metric_kind = "counter" if event.get("kind") == "counter" else "gauge"
+        labels = event.get("labels") or {}
+        point = MetricPoint(
+            ts,
+            str(event["name"]),
+            metric_kind,
+            float(event["value"]),
+            {str(k): str(v) for k, v in labels.items()},
+        )
+        self._execution.metrics.append(point)
+        if self._on_metric is not None:
+            self._on_metric(point)
+
+    def _summary(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
+        self._execution.action_summary = _action_summary(ts, event)
+
+    def _action_started(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
+        """`action_start` 和 `mark` 各记一项（动作开始、标记发生）。"""
+        record = _action_record(event, "action" if event["type"] == "action_start" else "mark", ts)
         actions = self._execution.actions
         # 一般按 ID 递增到达；超过每种名称的上限、失败时补发的开始比后面的行早，插到该在的位置。
         if not actions or record.id > actions[-1].id:
             actions.append(record)
         else:
             actions.insert(_action_index(actions, record.id), record)
-        self._action_changes.append((ts, record))
+        self._changes.append((read_at, record))
 
-    def _action_ended(self, ts: int, event: Mapping[str, Any]) -> None:
+    def _action_ended(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
         actions = self._execution.actions
         index = _action_index(actions, int(event["id"]))
         if index == len(actions) or actions[index].id != int(event["id"]):
@@ -660,7 +657,7 @@ class _Pump:
             duration_ms=max(0, int(event["mono"]) - started.mono),
         )
         actions[index] = ended
-        self._action_changes.append((ts, ended))
+        self._changes.append((read_at, ended))
 
     def _end_unfinished_actions(self) -> None:
         """节点结束时还没结束的动作记为 `unfinished`，结束时间取现在；摘要里「正在做」清空。"""
@@ -678,21 +675,21 @@ class _Pump:
         if summary is not None:
             self._execution.action_summary = dataclasses.replace(summary, running=[])
 
-    def _notify(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
+    def _notify(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
         """一次 `ctx.notify`：与控制面相同，只认任务引用的机器人，原始消息要合格，
         不发送的写一行警告。"""
         bot = str(event["bot"])
         if self._feishu_bots is not None and bot not in self._feishu_bots:
             return self._not_sent(
+                read_at,
                 ts,
-                batch,
                 f"飞书机器人「{bot}」不是通过「飞书机器人」类型的参数传给这个节点的，"
                 "把它声明成 sfly.FeishuBot 类型的参数",
             )
         if "message" in event:
             problem = raw_message_problem(event["message"])
             if problem is not None:
-                return self._not_sent(ts, batch, problem)
+                return self._not_sent(read_at, ts, problem)
             body = event["message"]
         else:
             body = text_message(str(event["text"]), bool(event.get("at_all")))
@@ -701,9 +698,25 @@ class _Pump:
         if self._on_notify is not None:
             self._on_notify(notification)
 
-    @staticmethod
-    def _not_sent(ts: int, batch: list[LogLine], reason: str) -> None:
-        batch.append(LogLine(ts, "system", "warn", f"ctx.notify 的消息没有发送：{reason}"))
+    def _not_sent(self, read_at: int, ts: int, reason: str) -> None:
+        line = LogLine(ts, "system", "warn", f"ctx.notify 的消息没有发送：{reason}")
+        self._changes.append((read_at, line))
+
+
+#: 读取端认识的事件类型 → 处理函数（`_Pump` 的方法；参数是读到这一行时的单调时钟读数、事件时间、
+#: 解析后的事件）。
+#: 事件类型的集合与 Agent 相同，两端对着 `testdata/local-protocol-cases.json` 核对：
+#: 只在一端加一种事件，两端的测试会红。
+_EVENT_HANDLERS: dict[str, Callable[[_Pump, int, int, Mapping[str, Any]], None]] = {
+    "log": _Pump._log,
+    "progress": _Pump._progress,
+    "metric": _Pump._metric,
+    "notify": _Pump._notify,
+    "action_start": _Pump._action_started,
+    "action_end": _Pump._action_ended,
+    "mark": _Pump._action_started,
+    "action_summary": _Pump._summary,
+}
 
 
 def _signal_group(pgid: int, sig: int) -> None:

@@ -20,6 +20,7 @@ pub mod environment;
 pub mod executor;
 pub mod home;
 pub mod install;
+mod ledger;
 pub mod logs;
 pub mod metrics;
 pub mod peer;
@@ -31,7 +32,7 @@ pub mod time_jump;
 pub mod update;
 pub mod venv;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,11 +50,12 @@ pub mod proto {
 use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
 use environment::{Mirrors, Setup};
 use install::Installer;
+use ledger::Ledger;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat, Hello, InstallState,
-    InstallStatus, InstalledPackage, PeerEndpoint, RunningTask, ServerMessage, TaskAction,
-    TaskResult, Welcome, agent_message, server_message,
+    AgentMessage, AssignTask, DevPackage, ErrorKind, Heartbeat, Hello, InstallState, InstallStatus,
+    InstalledPackage, PeerEndpoint, RunningTask, ServerMessage, TaskAction, TaskResult, Welcome,
+    agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -327,15 +329,11 @@ struct Runtime {
     /// 安装与启动新任务互斥：启动任务（查找入口到子进程启动）持有读锁，安装持有写锁。
     /// 已经在运行的任务不持有锁，安装期间照常运行。
     gate: RwLock<()>,
-    results: mpsc::UnboundedSender<TaskResult>,
     installs: mpsc::UnboundedSender<InstallStatus>,
     /// 任务的日志与进度（[`logs`]）。
     telemetry: logs::Telemetry,
-    /// 手上的任务各属于哪次运行（任务 ID → 运行 ID）：收下任务时登记，扫描时去掉已经不在手上的。
-    /// 清理后台进程目录时据此跳过还有任务在手上的运行（[`retention::Tracker::sweep_procs`]）。
-    task_runs: std::sync::Mutex<HashMap<String, String>>,
-    /// 正在执行（含安装中）的任务，键为 (task_id, attempt)。
-    cancels: std::sync::Mutex<HashMap<(String, u32), HeldTask>>,
+    /// 手上的任务：每个（任务, 尝试）在派发协议里的阶段，和它们属于哪次运行（[`ledger`]）。
+    ledger: Ledger,
     /// 任务结束后上传产物（[`artifacts`]）。
     uploader: artifacts::Uploader,
     /// 下载 SDK 运行时用。
@@ -348,45 +346,12 @@ struct Runtime {
     peers: calls::Peers,
 }
 
-/// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
-type CancelSender = watch::Sender<Option<bool>>;
-
-/// Agent 手上一个正在执行（含安装中）的任务。
-struct HeldTask {
-    cancel: CancelSender,
-    /// 执行器子进程已经启动（已发出 TaskStarted）。
-    started: bool,
-    /// 任务通过「Agent」类型的输入引用的 Agent：节点只能调用它们和自己的能力（[`calls`]）。
-    referenced_agents: Vec<proto::ReferencedAgent>,
-}
-
 impl Runtime {
-    /// 收下派发的任务（在收到 AssignTask 时同步调用：之后的心跳一定带上它），返回它的取消信号。
-    fn accept(&self, task: &AssignTask) -> executor::CancelSignal {
-        let (cancel_tx, cancel) = watch::channel(None);
-        self.task_runs
-            .lock()
-            .unwrap()
-            .insert(task.task_id.clone(), task.run_id.clone());
-        self.cancels.lock().unwrap().insert(
-            (task.task_id.clone(), task.attempt),
-            HeldTask {
-                cancel: cancel_tx,
-                started: false,
-                referenced_agents: task.referenced_agents.clone(),
-            },
-        );
-        cancel
-    }
-
     async fn run_task(&self, task: AssignTask, cancel: executor::CancelSignal) {
-        let key = (task.task_id.clone(), task.attempt);
         let result = match self.start_task(&task).await {
             // 安装期间收到的取消在子进程启动后立即生效。
             Ok(running) => {
-                if let Some(held) = self.cancels.lock().unwrap().get_mut(&key) {
-                    held.started = true;
-                }
+                self.ledger.started(&task.task_id, task.attempt);
                 let dir = running.artifacts_dir();
                 let result = running.wait(cancel).await;
                 // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
@@ -396,18 +361,13 @@ impl Runtime {
         };
         // 任务到这里结束（产物也已上传）：打上这一刻的 Agent 时间与单调时钟读数。
         let result = executor::stamp_end(result);
-        // 持锁交出结果并移出：看手上任务的地方（[`Runtime::held`]、[`Runtime::running`]；
-        // 连同通道里的结果一起看时用 [`Runtime::held_collecting`]）要么看到它还在执行，
-        // 要么看到它已移出、结果已交出，没有中间状态。排空判断（[`update::Updater::poll`]）因此任何时刻都能看到这个任务；
-        // 结果的 Ack 来得再快，[`Runtime::acked`] 也不会把它当成还在执行而漏写结束标记。
         let status = result.status();
-        {
-            let mut cancels = self.cancels.lock().unwrap();
-            let _ = self.results.send(result);
-            cancels.remove(&key);
-        }
-        // 结果已经交出、任务已经移出之后才打这一行：测试据此等到这一刻（agent/tests/recovery.rs）。
-        eprintln!("task {} attempt {} finished: {status:?}", key.0, key.1);
+        self.ledger.finish(result);
+        // 结果已经交出、台账里的任务已经换了阶段之后才打这一行：测试据此等到这一刻（agent/tests/recovery.rs）。
+        eprintln!(
+            "task {} attempt {} finished: {status:?}",
+            task.task_id, task.attempt
+        );
     }
 
     /// 节点调用 Agent 能力（[`calls::serve`]）：按请求里的任务找到它的名单和取消信号；任务不在手上时拒绝。
@@ -417,111 +377,47 @@ impl Runtime {
         reader: impl tokio::io::AsyncRead + Unpin + Send,
         writer: impl tokio::io::AsyncWrite + Send + Sync + 'static,
     ) {
-        let task = self
-            .cancels
-            .lock()
-            .unwrap()
-            .get(&(request.task_id.clone(), request.attempt))
-            .map(|held| calls::TaskCalls {
-                referenced: held.referenced_agents.clone(),
-                cancel: held.cancel.subscribe(),
-            });
+        let task = self.ledger.calls_of(&request.task_id, request.attempt);
         calls::serve(request, reader, writer, &self.host, task, &self.peers).await;
     }
 
-    /// 正在执行（含安装中）的任务。
-    fn running(&self) -> Vec<(String, u32)> {
-        self.cancels.lock().unwrap().keys().cloned().collect()
-    }
-
-    /// 任务的结果被 Ack：同一任务没有其他尝试还在手上时，写结束标记或删除任务目录（[`retention::Tracker::task_acked`]）；
+    /// 任务的结果被 Ack：任务落定时（[`Ledger::ack`]），写结束标记或删除任务目录（[`retention::Tracker::task_acked`]）；
     /// 它所属的运行没有别的任务还在手上时，运行的后台进程目录开始算保留期（[`retention::Tracker::run_ended`]）。
-    fn acked(&self, task_id: &str, unacked: &BTreeMap<(String, u32), TaskResult>) {
-        let held: HashSet<String> = self.held(unacked).into_iter().map(|t| t.task_id).collect();
-        if held.contains(task_id) {
+    fn acked(&self, task_id: &str, attempt: u32) {
+        let Some(settled) = self.ledger.ack(task_id, attempt) else {
             return;
-        }
+        };
         self.dirs
             .task_acked(&self.work_dir, task_id, self.retention);
-        let task_runs = self.task_runs.lock().unwrap();
-        if let Some(run_id) = task_runs.get(task_id)
-            && !task_runs
-                .iter()
-                .any(|(other, run)| run == run_id && held.contains(other))
-        {
-            self.dirs.run_ended(run_id);
+        if let Some(run_id) = settled.run_ended {
+            self.dirs.run_ended(&run_id);
         }
     }
 
     /// 在后台扫描工作目录和后台进程目录，删除超过保留期的任务目录（[`retention::Tracker::sweep`]）和运行目录
-    /// （[`retention::Tracker::sweep_procs`]）：结果还没 Ack 的按现在的快照，正在执行的在删除前再查一次
-    /// （扫描期间可能收到新任务）。
-    fn sweep(self: &Arc<Self>, unacked: &BTreeMap<(String, u32), TaskResult>) {
-        let held: HashSet<String> = self.held(unacked).into_iter().map(|t| t.task_id).collect();
+    /// （[`retention::Tracker::sweep_procs`]）：手上的任务按现在的快照，删除前再查一次（扫描期间可能收到新任务）。
+    fn sweep(self: &Arc<Self>) {
+        let held: HashSet<String> = self.ledger.held().into_iter().map(|t| t.task_id).collect();
         // 不再在手上的任务：没有等到 Ack 的（被控制面放弃的）从现在开始算保留期。
-        self.task_runs.lock().unwrap().retain(|task_id, _| {
-            let on_hand = held.contains(task_id);
-            if !on_hand {
-                self.dirs.task_released(task_id);
-            }
-            on_hand
-        });
+        for task_id in self.ledger.forget_runs_except(&held) {
+            self.dirs.task_released(&task_id);
+        }
         let runtime = self.clone();
         tokio::task::spawn_blocking(move || {
-            let is_held = |task_id: &str| {
-                held.contains(task_id) || runtime.running().iter().any(|(id, _)| id == task_id)
-            };
+            let is_held =
+                |task_id: &str| held.contains(task_id) || runtime.ledger.holds_task(task_id);
             runtime
                 .dirs
                 .sweep(&runtime.work_dir, runtime.retention, is_held);
             runtime
                 .dirs
                 .sweep_procs(&runtime.procs_dir, runtime.retention, |run_id| {
-                    let task_runs = runtime.task_runs.lock().unwrap().clone();
-                    task_runs
+                    runtime
+                        .ledger
+                        .tasks_of_run(run_id)
                         .iter()
-                        .any(|(task_id, run)| run == run_id && is_held(task_id))
+                        .any(|task_id| is_held(task_id))
                 });
-        });
-    }
-
-    /// 手上的任务（Hello / Heartbeat 的 running_tasks）：正在执行（含安装中）的，
-    /// 加上已经结束、结果还没收到 Ack 的。
-    fn held(&self, unacked: &BTreeMap<(String, u32), TaskResult>) -> Vec<RunningTask> {
-        held_tasks(&self.cancels.lock().unwrap(), unacked)
-    }
-
-    /// 重连时 Hello 里手上的任务（#132）：先把已经交出的结果收进 `unacked`，再列出手上的任务，两步都持
-    /// `cancels` 的锁。[`Runtime::run_task`] 也持这把锁交出结果并移出，所以每个任务要么还在执行，要么结果已在
-    /// 通道里、这里收下；不会两边都看不到而在 Hello 里漏报（控制面会立即以 agent_lost 判它失败）。
-    fn held_collecting(
-        &self,
-        results: &mut mpsc::UnboundedReceiver<TaskResult>,
-        unacked: &mut BTreeMap<(String, u32), TaskResult>,
-        abandoned: &mut HashSet<(String, u32)>,
-    ) -> Vec<RunningTask> {
-        let cancels = self.cancels.lock().unwrap();
-        collect_results(results, unacked, abandoned);
-        held_tasks(&cancels, unacked)
-    }
-    /// 处理控制面的取消指令；任务不在这个 Agent 上执行（或已经结束）时忽略。
-    /// 优雅取消之后再收到强制取消会升级为立即杀掉。
-    fn cancel_task(&self, cancel: &CancelTask) {
-        let cancels = self.cancels.lock().unwrap();
-        let Some(HeldTask { cancel: tx, .. }) =
-            cancels.get(&(cancel.task_id.clone(), cancel.attempt))
-        else {
-            eprintln!(
-                "ignored cancel for task {} attempt {}: not running here",
-                cancel.task_id, cancel.attempt
-            );
-            return;
-        };
-        tx.send_if_modified(|current| {
-            let next = Some(current.unwrap_or(false) || cancel.force);
-            let changed = *current != next;
-            *current = next;
-            changed
         });
     }
 
@@ -748,43 +644,6 @@ impl Runtime {
     }
 }
 
-/// 手上的任务：`cancels` 里正在执行（含安装中）的，加上已经结束、结果还没收到 Ack 的。
-fn held_tasks(
-    cancels: &HashMap<(String, u32), HeldTask>,
-    unacked: &BTreeMap<(String, u32), TaskResult>,
-) -> Vec<RunningTask> {
-    let mut held: Vec<RunningTask> = cancels
-        .iter()
-        .map(|((task_id, attempt), task)| RunningTask {
-            task_id: task_id.clone(),
-            attempt: *attempt,
-            started: task.started,
-        })
-        .collect();
-    held.extend(unacked.keys().map(|(task_id, attempt)| RunningTask {
-        task_id: task_id.clone(),
-        attempt: *attempt,
-        started: true,
-    }));
-    held.sort_by(|a, b| (&a.task_id, a.attempt).cmp(&(&b.task_id, b.attempt)));
-    held.dedup_by(|a, b| a.task_id == b.task_id && a.attempt == b.attempt);
-    held
-}
-
-/// 断线期间（或连接之间）已经交出的结果收进 `unacked`；控制面放弃了的任务的结果丢弃。
-fn collect_results(
-    results: &mut mpsc::UnboundedReceiver<TaskResult>,
-    unacked: &mut BTreeMap<(String, u32), TaskResult>,
-    abandoned: &mut HashSet<(String, u32)>,
-) {
-    while let Ok(result) = results.try_recv() {
-        let key = (result.task_id.clone(), result.attempt);
-        if !abandoned.remove(&key) {
-            unacked.insert(key, result);
-        }
-    }
-}
-
 /// Agent 主循环：连接控制面并执行任务；连接失败或断开后按退避时间自动重连。
 /// 只有不可恢复的错误（例如令牌被拒绝、环境准备失败 [`environment::EnvironmentError`]）才会返回。
 ///
@@ -829,7 +688,6 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         terminate_grace: config.terminate_grace,
         watch_queue_events: config.watch_queue_events,
     };
-    let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) =
         logs::telemetry(config.telemetry_queue_bytes, config.metric_queue_points);
@@ -853,11 +711,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         dirs: retention::Tracker::new(),
         log_forward_rate: config.log_forward_rate,
         gate: RwLock::new(()),
-        results: results_tx,
         installs: installs_tx,
         telemetry: telemetry_tx,
-        task_runs: std::sync::Mutex::new(HashMap::new()),
-        cancels: std::sync::Mutex::new(HashMap::new()),
+        ledger: Ledger::default(),
         uploader: artifacts::Uploader {
             http: http.clone(),
             token: config.token.clone(),
@@ -875,9 +731,6 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     }
     // 端口监听不了时照常运行，只是能力不能被其它 Agent 调用（原因随 Hello 上报）。
     let endpoint = peer::serve(config.listen_port, config.public_address.clone(), host).await;
-    let mut unacked: BTreeMap<(String, u32), TaskResult> = BTreeMap::new();
-    // 控制面在 Welcome 中放弃的任务：之后结束时不再上报结果。
-    let mut abandoned: HashSet<(String, u32)> = HashSet::new();
     let mut delay = RECONNECT_MIN;
     // 启动时扫描一次工作目录，之后每隔 task_dir_sweep_interval 一次（断线重连期间也照常进行）。
     let mut sweep = Sweep {
@@ -902,17 +755,16 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     loop {
         // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
         while installs_rx.try_recv().is_ok() {}
-        collect_results(&mut results_rx, &mut unacked, &mut abandoned);
         if sweep.due() {
-            runtime.sweep(&unacked);
+            runtime.sweep();
         }
         let installed_packages = runtime.inventory.refresh().await;
         let hello = HelloContent {
             installed_packages,
             dev_packages: runtime.dev.list().iter().map(|e| e.to_proto()).collect(),
             // 手上的任务：正在执行的，加上已经结束、结果还没收到 Ack 的（断线期间结束的也算）。
-            // 清点已安装的包可能很慢，期间结束的任务也要算上（#132）。
-            running_tasks: runtime.held_collecting(&mut results_rx, &mut unacked, &mut abandoned),
+            // 清点已安装的包可能很慢，期间结束的任务也要算上（#132）：任务的清点排在它之后。
+            running_tasks: runtime.ledger.hello(),
             peer: Some(endpoint.clone()),
         };
         // 试用中的新版本每次连接计一次尝试；握手成功且环境准备完成才算健康（ADR 0014）。
@@ -950,36 +802,21 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                     if disposition.action() != TaskAction::Abandon {
                         continue;
                     }
-                    let key = (disposition.task_id.clone(), disposition.attempt);
-                    eprintln!("control plane abandoned task {} attempt {}", key.0, key.1);
-                    if unacked.remove(&key).is_none() && runtime.running().contains(&key) {
-                        // 还在执行：立即杀掉进程树，结果不再上报。
-                        runtime.cancel_task(&CancelTask {
-                            task_id: key.0.clone(),
-                            attempt: key.1,
-                            force: true,
-                        });
-                        abandoned.insert(key);
-                    }
+                    eprintln!(
+                        "control plane abandoned task {} attempt {}",
+                        disposition.task_id, disposition.attempt
+                    );
+                    runtime
+                        .ledger
+                        .abandon(&disposition.task_id, disposition.attempt);
                 }
                 // 版本与控制面不一致：控制面不再派新任务；能自更新时开始（或继续）更新，在心跳里上报更新状态（ADR 0014）。
                 updater.on_welcome(&connection.welcome);
                 let channels = Channels {
-                    results: &mut results_rx,
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
-                    abandoned: &mut abandoned,
                 };
-                match serve(
-                    connection,
-                    &runtime,
-                    channels,
-                    &mut unacked,
-                    &updater,
-                    &mut sweep,
-                )
-                .await
-                {
+                match serve(connection, &runtime, channels, &updater, &mut sweep).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
                     Err(error) => eprintln!("connection lost: {error:#}"),
                 }
@@ -1081,12 +918,9 @@ fn result_message(result: TaskResult) -> AgentMessage {
 
 /// 任务执行方发往控制面的消息。
 struct Channels<'a> {
-    results: &'a mut mpsc::UnboundedReceiver<TaskResult>,
     installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
     /// 日志、进度与指标；先于结果处理，任务的日志和指标总在它的结果之前发出。
     telemetry: &'a mut logs::TelemetryReceiver,
-    /// 控制面放弃的任务，结束时丢弃结果。
-    abandoned: &'a mut HashSet<(String, u32)>,
 }
 
 /// 在一条连接上收发消息，直到连接结束。
@@ -1094,15 +928,12 @@ async fn serve(
     mut connection: Connection,
     runtime: &Arc<Runtime>,
     channels: Channels<'_>,
-    unacked: &mut BTreeMap<(String, u32), TaskResult>,
     updater: &Arc<update::Updater>,
     sweep: &mut Sweep,
 ) -> anyhow::Result<()> {
     let Channels {
-        results,
         installs,
         telemetry,
-        abandoned,
     } = channels;
     let interval = match connection.welcome.heartbeat_interval_ms {
         0 => DEFAULT_HEARTBEAT_INTERVAL,
@@ -1123,22 +954,18 @@ async fn serve(
             })),
         }
     };
-    for result in unacked.values() {
-        connection
-            .outbound
-            .send(result_message(result.clone()))
-            .await?;
+    for result in runtime.ledger.unacked() {
+        connection.outbound.send(result_message(result)).await?;
     }
     // 准备好环境、开始接收任务：立即发一次心跳，不等第一个心跳周期。控制面把 Welcome 之后的第一次心跳当作
     // 已准备好，从这时起才派发（#219）；它同时为重连前手上的任务续约，需要更新时界面上也马上能看到更新状态。
     connection
         .outbound
-        .send(heartbeat_message(runtime.held(unacked), &mut status))
+        .send(heartbeat_message(runtime.ledger.held(), &mut status))
         .await?;
     loop {
-        // 排空：手上的任务（含还没交给这里的结果）都结束、结果都被 Ack 后替换并 execve（成功时不返回）。
-        let remaining = runtime.held(unacked).len() + results.len();
-        if updater.poll(remaining) == update::Drain::Replace {
+        // 排空：手上的任务都结束、结果都被 Ack 后替换并 execve（成功时不返回）。
+        if updater.poll(runtime.ledger.held().len()) == update::Drain::Replace {
             connection
                 .outbound
                 .send(heartbeat_message(Vec::new(), &mut status))
@@ -1157,30 +984,37 @@ async fn serve(
                             task.task_id, task.attempt
                         );
                     }
-                    Some(server_message::Body::Assign(task)) => {
-                        let cancel = runtime.accept(&task);
-                        let runtime = runtime.clone();
-                        tokio::spawn(async move { runtime.run_task(task, cancel).await });
+                    Some(server_message::Body::Assign(task)) => match runtime.ledger.accept(&task) {
+                        Some(cancel) => {
+                            let runtime = runtime.clone();
+                            tokio::spawn(async move { runtime.run_task(task, cancel).await });
+                        }
+                        None => eprintln!(
+                            "ignored task {} attempt {}: already held",
+                            task.task_id, task.attempt
+                        ),
+                    },
+                    Some(server_message::Body::Cancel(cancel)) => {
+                        if !runtime
+                            .ledger
+                            .cancel(&cancel.task_id, cancel.attempt, cancel.force)
+                        {
+                            eprintln!(
+                                "ignored cancel for task {} attempt {}: not running here",
+                                cancel.task_id, cancel.attempt
+                            );
+                        }
                     }
-                    Some(server_message::Body::Cancel(cancel)) => runtime.cancel_task(&cancel),
                     // 立即更新：控制面已让这些任务以 agent_lost 失败。按取消流程终止它们（取消标记、SIGTERM、宽限期），
                     // 结果照常上报、被 Ack 后 poll 看到 0 就替换。
                     Some(server_message::Body::UpdateNow(_)) => {
                         updater.update_now();
-                        let running = runtime.running();
+                        let terminated = runtime.ledger.cancel_all(false);
                         eprintln!(
-                            "control plane asked to update now: terminating {} task(s)",
-                            running.len()
+                            "control plane asked to update now: terminating {terminated} task(s)"
                         );
-                        for (task_id, attempt) in running {
-                            runtime.cancel_task(&CancelTask { task_id, attempt, force: false });
-                        }
                     }
-                    Some(server_message::Body::Ack(ack)) => {
-                        if unacked.remove(&(ack.task_id.clone(), ack.attempt)).is_some() {
-                            runtime.acked(&ack.task_id, unacked);
-                        }
-                    }
+                    Some(server_message::Body::Ack(ack)) => runtime.acked(&ack.task_id, ack.attempt),
                     other => eprintln!("ignored message from control plane: {other:?}"),
                 }
             }
@@ -1191,23 +1025,22 @@ async fn serve(
                 // 只为手上的任务续约；控制面据此发现 Agent 已经丢失的任务。
                 connection
                     .outbound
-                    .send(heartbeat_message(runtime.held(unacked), &mut status))
+                    .send(heartbeat_message(runtime.ledger.held(), &mut status))
                     .await?;
             }
             // 更新状态变化时立即上报。
             Ok(()) = status.changed() => {
                 connection
                     .outbound
-                    .send(heartbeat_message(runtime.held(unacked), &mut status))
+                    .send(heartbeat_message(runtime.ledger.held(), &mut status))
                     .await?;
             }
-            Some(result) = results.recv() => {
-                if abandoned.remove(&(result.task_id.clone(), result.attempt)) {
-                    continue;
-                }
-                unacked.insert((result.task_id.clone(), result.attempt), result.clone());
+            result = runtime.ledger.next_result() => {
                 connection.outbound.send(result_message(result)).await?;
             }
+            // 被放弃的任务结束：没有结果要发，手上却少了一个任务。回到循环顶部重新判断排空，
+            // 不等下一次心跳（自更新在排空时等着手上的任务都结束）。
+            () = runtime.ledger.discarded() => {}
             Some(status) = installs.recv() => {
                 connection
                     .outbound
@@ -1216,7 +1049,7 @@ async fn serve(
             }
             () = tokio::time::sleep_until(sweep.next) => {
                 if sweep.due() {
-                    runtime.sweep(unacked);
+                    runtime.sweep();
                 }
             }
         }

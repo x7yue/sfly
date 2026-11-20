@@ -4,7 +4,6 @@ import type { Db } from "../db/database.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { listOrchestrationSummaries } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
-import type { PackageRepository } from "../packages/package-repository.js";
 import { presetInvalidatedWarnings } from "../presets/preset-invalidation.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
@@ -21,15 +20,11 @@ const notFound = (reply: FastifyReply) =>
  */
 export function registerOrchestrationRoutes(
 	app: FastifyInstance,
-	{
-		db,
-		orchestrations,
-		packages,
-	}: { db: Db; orchestrations: OrchestrationStore; packages: PackageRepository },
+	{ db, orchestrations }: { db: Db; orchestrations: OrchestrationStore },
 ): void {
 	/** 保存或恢复出新版本时返回的警告：文档的静态检查，加上会让运行预设失效的改动。 */
 	const saveWarnings = async (saved: OrchestrationVersionView) => [
-		...(await checkDocument(saved.document, { db, packages })),
+		...(await checkDocument(db, saved.document)),
 		...(await presetInvalidatedWarnings(db, saved.orchestration_id, saved.number)),
 	];
 

@@ -9,12 +9,14 @@ import {
 	agentBinaryUrl,
 } from "./agent-binaries/agent-binaries.js";
 import { loadInstallScript } from "./agent-binaries/install-script.js";
+import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { loadClientTarballs } from "./downloads/client-tarballs.js";
+import { createAssignContent } from "./engine/assign-content.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
 import { EngineNotifications } from "./feishu/engine-notifications.js";
@@ -36,6 +38,7 @@ import { PresetStore } from "./presets/preset-store.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
+import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
@@ -189,7 +192,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
-	const preflight = createPreflight({ db: database.db, packages, version });
+	const preflight = createPreflight({ version });
 	const logs = new TaskLogs({
 		db: database.db,
 		clock,
@@ -236,11 +239,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		mutex,
 		hub,
-		packageArchiveUrl: (name, version) =>
-			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
-		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
-		preflight,
-		paramsCheck: createParamsCheck({ db: database.db, packages }),
+		assignContent: createAssignContent({
+			packageArchiveUrl: (name, version) =>
+				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
+			artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
+		}),
+		admitTrigger: createTriggerAdmission({ preflight, paramsCheck: createParamsCheck() }),
 		notifications: new EngineNotifications({
 			logs,
 			delivery: feishuDelivery,
@@ -254,15 +258,18 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			},
 		}),
 		leaseMs: options.leaseMs,
-		sdkWheel: (agentVersion) => {
-			const wheel = sdkWheels.find((w) => w.version === agentVersion);
-			return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
-		},
-		mirrors,
-		agentBinary: async (arch) => {
-			const binary = await agentBinaries.find(version, arch);
-			return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
-		},
+		agentEnvironment: createAgentEnvironment({
+			version,
+			sdkWheel: (agentVersion) => {
+				const wheel = sdkWheels.find((w) => w.version === agentVersion);
+				return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
+			},
+			mirrors,
+			agentBinary: async (arch) => {
+				const binary = await agentBinaries.find(version, arch);
+				return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
+			},
+		}),
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();
@@ -339,8 +346,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
-			// 日志、进度、指标、ctx.notify 的通知和动作摘要不改变运行状态，不经过引擎（src/logs/task-logs.ts、
-			// src/metrics/task-metrics.ts、src/feishu/task-notifications.ts、src/actions/task-actions.ts）。
+			// 日志、进度、指标、ctx.notify 的通知、动作摘要和安装状态不改变运行状态，不经过引擎（src/logs/task-logs.ts、
+			// src/metrics/task-metrics.ts、src/feishu/task-notifications.ts、src/actions/task-actions.ts、src/agents/agent-hub.ts）。
 			handler: {
 				onOnline: (conn, running) => engine.onOnline(conn, running),
 				async onMessage(conn, message) {
@@ -348,6 +355,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 					if (logs.handles(message)) return logs.onMessage(conn, message);
 					if (notifications.handles(message)) return notifications.onMessage(conn, message);
 					if (actions.handles(message)) return actions.onMessage(conn, message);
+					if (message.body.case === "install") return hub.recordInstall(conn, message.body.value);
 					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。写不进去时记下来、照常处理结果：
 					// 没写入的点留在内存里，由周期写入重试有限次（src/metrics/task-metrics.ts）。
 					if (message.body.case === "result") {

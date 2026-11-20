@@ -132,7 +132,7 @@ export function actionTable({
 	filter = NO_FILTER,
 }: {
 	summary: ActionSummaryView;
-	/** 分页和推送读到的明细，按开始时间从新到旧（`action-details.ts`）。 */
+	/** 分页和推送读到的明细，按开始时间从新到旧（`task-action-reader.ts`）。 */
 	details: readonly ActionDetailView[];
 	/** 分页读到的控制面兜底的只计数的段。 */
 	controlPlanePeriods: readonly CountOnlyPeriod[];

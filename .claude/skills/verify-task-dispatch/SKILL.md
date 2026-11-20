@@ -1,6 +1,6 @@
 ---
 name: verify-task-dispatch
-description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent 之间的任务派发协议（派发、TaskStarted、结果与 Ack、心跳续约、租约过期以 agent_lost 重试并强制取消旧尝试、断线重连时 Hello/Welcome 的继续或放弃）。改动 apps/server/src/engine/engine.ts 或 leases.ts 里的派发、结果、心跳、租约、重试逻辑，agent/src/lib.rs 里的 Hello/Welcome、serve 循环、run_task，或者 proto/sfly/agent/v1/agent.proto 的这些消息时使用：检查同一个节点的两次尝试会不会在 Agent 上同时执行、槽位会不会被超用、一个节点会不会接受两次成功。
+description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent 之间的任务派发协议（派发、TaskStarted、结果与 Ack、心跳续约、租约过期以 agent_lost 重试并强制取消旧尝试、断线重连时 Hello/Welcome 的继续或放弃）。改动 apps/server/src/engine/engine.ts 或 leases.ts 里的派发、结果、心跳、租约、重试逻辑，agent/src/lib.rs 里的 Hello/Welcome、serve 循环、run_task，agent/src/ledger.rs 的任务台账，或者 proto/sfly/agent/v1/agent.proto 的这些消息时使用：检查同一个节点的两次尝试会不会在 Agent 上同时执行、槽位会不会被超用、一个节点会不会接受两次成功。
 ---
 
 # 验证任务派发协议
@@ -15,7 +15,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 | 不变式 | 白话 |
 |---|---|
-| `NoUnstoppedDuplicate` | 较新的尝试已经启动执行器时，较早的尝试要么已结束，要么已被 `cancel_task` 告知停止 |
+| `NoUnstoppedDuplicate` | 较新的尝试已经启动执行器时，较早的尝试要么已结束，要么已被告知停止（`Ledger::cancel`；Welcome 放弃的是 `Ledger::abandon`） |
 | `SlotBound` | 没被告知停止的任务（安装中和执行中都算）不超过 Agent 的槽位 |
 | `AssignOnlyWhenReady` | 派发只发给已准备好环境、进入了收发循环的 Agent（#219）：任务的租约不会算进 Agent 准备环境的时间 |
 | `AtMostOneSuccess` | 一个节点最多一次尝试被记为 `success` |
@@ -34,13 +34,13 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 | 配置 | 时序假设 | 期望 |
 |---|---|---|
-| `Safe` | 心跳不迟到，投递及时 | 无违例，约 24.3 万个不同状态 |
-| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 252 万个不同状态 |
-| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 846 万个不同状态 |
+| `Safe` | 心跳不迟到，投递及时 | 无违例，约 32.8 万个不同状态 |
+| `LateHeartbeats` | 连接正常时租约也可能过期 | 无违例，约 541 万个不同状态 |
+| `SlowDelivery` | 消息可能晚于两个心跳周期才被处理 | 无违例，约 660 万个不同状态 |
 
 两个时序假设的具体含义：
 - **心跳不迟到**（`LateHeartbeats = FALSE`）：连接正常时，心跳总能在 30 秒租约内被控制面处理，租约只在断线期间过期。Agent 准备环境期间不发心跳，所以这也假设了重连时手上有任务的 Agent 准备环境不超过租约（这时环境早已就绪，只做几项检查；见 #294「不专门处理的边界」）。
-- **投递及时**（`PromptDelivery = TRUE`）：Agent 手上还有没处理的控制面消息、还有没交给 serve 循环的结果、或者上一次心跳控制面还没处理时，不会发下一次心跳。10 秒的心跳间隔远大于投递延迟。
+- **投递及时**（`PromptDelivery = TRUE`）：Agent 手上还有没处理的控制面消息、或者上一次心跳控制面还没处理时，不会发下一次心跳。10 秒的心跳间隔远大于投递延迟。结果已交出、还没发出的任务也在心跳里（台账里的全部任务都在，`Ledger::held`），不再需要「没有这样的结果才发心跳」这个假设。
 
 `check.sh` 的输出：
 - `ok`：和这里记录的一致。
@@ -53,42 +53,47 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 ## 范围：验证了什么，没验证什么
 
-在上面的范围和时序假设内，三个配置各自穷举了所有消息交错、断线时机、执行结果（成功或失败）和租约到期时机。两个时序假设同时不成立（`LateHeartbeats = TRUE` 且 `PromptDelivery = FALSE`）时也在同步提交上穷举过一次，五条性质都成立（约 1379 万个不同状态，约 1 分钟），太慢，没有放进 `check.sh`。以下不在模型里，结论不覆盖：
+在上面的范围和时序假设内，三个配置各自穷举了所有消息交错、断线时机、执行结果（成功或失败）和租约到期时机。两个时序假设同时不成立（`LateHeartbeats = TRUE` 且 `PromptDelivery = FALSE`）时也在同步提交上穷举过一次，五条性质都成立（约 1320 万个不同状态，约 1 分钟），没有放进 `check.sh`。以下不在模型里，结论不覆盖：
 
 - 多个节点或多个运行共享槽位。只有一个节点时同一时刻最多一个尝试在排队，所以 **`#dispatch` 里按 `slots` 计数这一处没有被验证**，`SlotBound` 守护的是「Hello 要上报安装中的任务」和「放弃的任务要杀掉」。
 - 运行取消（`cancel`、`#cancelChain`、`#resendCancels`）、停止子流程（§4.1）、定时和 Sleep 节点、立即更新（UpdateNow）和自更新排空、版本不一致时不派发。`agent_lost` 时的强制取消在模型里，但取消只建模成「被告知停止」，不区分优雅取消和强制取消。
 - 控制面重启（`extendForRecovery`）、多个控制面连接同一个 Agent、令牌。
 - 失败类型的区别：模型里所有失败都按 `retries` 重试；`env_error` 和 `config_error` 不重试，这一点没有建模。结果写不进数据库时按 `node_error` 失败（#207）也没有建模，模型里成功的结果总被记为成功。
+- 「结果已交出、还没发出」的任务有没有被漏报（#132）：Hello 或心跳少列了这样一个任务，只会让控制面多一次 `agent_lost`、多重试一次（旧尝试已经结束），不会破坏上面五条性质，所以模型里没有对应的性质。漏报还在安装或执行中的任务不一样：`SlotBound` 会抓到（`mutants.sh` 的 `hello-omits-installing`）。这一条由 `agent/src/ledger.rs` 的单元测试守着（`hello_lists_a_task_that_finished_before_it_was_listed` 等）。
+- 动作摘要和明细（`ActionSummary`、`ActionBatch`，#345）：和日志一样走遥测通道，由 `apps/server/src/actions/task-actions.ts` 处理（`engine.ts` `onMessage` 不碰），不回 Ack、不续租约、不改任务状态，对派发协议没有影响。
 - TaskStarted 走遥测通道，可能晚于结果或丢失，模型里断线时丢失、连接时按顺序送达；心跳里的 `started` 补记保证了结论不依赖它。
+  心跳和 Hello 里的 `started` 按执行器子进程有没有启动过如实报，已经结束的任务也一样（`Finished::started`）：没启动就结束的任务（安装失败等）不会被补记成 running、写上开始时间。模型里 `HandStarted` 描述了这一点，但没有性质守着它（它只影响 `startedAt` 记得准不准，不影响上面五条），由 `agent/src/ledger.rs` 的单元测试守着（`a_finished_task_reports_whether_its_executor_ever_started` 等）。
 - 真实时间。租约多久过期、心跳多快，都用上面两个开关表达。
 
 ## 覆盖记录
 
-**同步提交：`ab3f0482fec544cf5a320f25207570d21d51c374`**（在这个提交上确认过模型与下列代码一致）。
+**同步提交：`f44b09d802296f4f2b14954671995eb7828bf54a`**（在这个提交上确认过模型与下列代码一致）。
 
 | 模型里的动作 | 代码 |
 |---|---|
-| `Dispatch` | `apps/server/src/engine/engine.ts` `#dispatch`（只派给 `AgentConnection.ready` 的连接，即 `ready`）、`#prepareAssign`（派发即设租约） |
+| `Dispatch` | `apps/server/src/engine/engine.ts` `#dispatch`（只派给 `AgentConnection.ready` 的连接，即 `ready`）、`#prepareAssign`（派发即设租约；派什么由 `assign-content.ts` 回答，不在模型里） |
 | `CPRecv` 的 started / result / hb | `engine.ts` `onMessage`、`#started`、`#applyResult`、`#heartbeat`；`apps/server/src/engine/leases.ts` `renewHeld`、`MissedHeartbeats`、`agentLost`（hb 判丢的尝试记下强制取消）；hb 还经 `apps/server/src/agents/agent-hub.ts` `AgentConnection.heartbeat` 把连接记为已准备好（`ready`），第一次时 `#step` 提交后为这台 Agent 派发 |
 | `FailAll` | `engine.ts` `#failTask` 的重试分支；`apps/server/src/engine/failures.ts` `shouldRetry` |
 | `LeaseExpire` | `leases.ts` `expireTasks`、`agentLost`；`engine.ts` `#step`（提交后先发取消、再派发）、`#sendCancel`；`apps/server/src/agents/agent-hub.ts` `connection`（只返回已推送 Welcome 的连接，即 `CPConnected`） |
-| `CPOnline` | `engine.ts` `onOnline`（dispositions、`renewHeld` 不带 suspects、`#heartbeats.reset`；这时还没推送 Welcome，`agentLost` 记下的取消不发出；`AgentConnection.welcome` 之后连接在准备环境，不派发） |
+| `CPOnline` | `engine.ts` `onOnline`（dispositions、`renewHeld` 不带 suspects、`#heartbeats.reset`；Welcome 里和调度无关的部分来自 `apps/server/src/agents/agent-environment.ts`，不在模型里；这时还没推送 Welcome，`agentLost` 记下的取消不发出；`AgentConnection.welcome` 之后连接在准备环境，不派发） |
 | `Disconnect` | `agent-hub.ts` `detach`；重连是新的 `AgentConnection`，阶段从头开始（`ready` 清除） |
 | `OnAgent` | `packages/schema/src/http/runs.ts` `ON_AGENT_STATUSES` |
-| `AgentConnect` | `agent/src/lib.rs` `run()` 循环、`Runtime::held_collecting`、`held_tasks`、`collect_results` |
-| `AgentWelcome` | `lib.rs` `run()` 里准备环境之后处理 `welcome.dispositions` 的 ABANDON，`serve()` 开头重发 unacked、立即发一次心跳（`Runtime::held`） |
-| `AgentRecv` | `lib.rs` `serve()` 的 Assign（`Runtime::accept`）、Cancel（`Runtime::cancel_task`）与 Ack 分支 |
-| `AgentStart` | `lib.rs` `Runtime::run_task` → `start_task`；`agent/src/executor.rs` 发 `TaskStarted` |
-| `AgentFinish` | `lib.rs` `Runtime::run_task` 末尾持 `cancels` 锁交出结果；`Runtime::cancel_task` |
-| `AgentSendResult` / `AgentHeartbeat` | `lib.rs` `serve()` 的 `results.recv` 与 `heartbeat.tick` 分支（`Runtime::held`） |
+| `AgentConnect` | `agent/src/lib.rs` `run()` 循环、`agent/src/ledger.rs` `Ledger::hello`（持一次锁把结果待发的结果收为待 Ack、列出 `State::on_hand`） |
+| `AgentWelcome` | `lib.rs` `run()` 里准备环境之后处理 `welcome.dispositions` 的 ABANDON（`Ledger::abandon`），`serve()` 开头重发待 Ack 的结果（`Ledger::unacked`）、立即发一次心跳（`Ledger::held`） |
+| `AgentRecv` | `lib.rs` `serve()` 的 Assign（`Ledger::accept`）、Cancel（`Ledger::cancel`）与 Ack（`Runtime::acked` → `Ledger::ack`）分支 |
+| `AgentStart` | `lib.rs` `Runtime::run_task` → `start_task` → `Ledger::started`；`agent/src/executor.rs` 发 `TaskStarted` |
+| `AgentFinish` | `lib.rs` `Runtime::run_task` 末尾 `Ledger::finish`（一次持锁把执行中换成结果待发并记下结束时执行器有没有启动过，被放弃的任务的结果在这里丢弃，`Ledger::discarded` 叫醒 `serve`，只影响自更新的排空）；`Ledger::cancel` |
+| `AgentSendResult` / `AgentHeartbeat` | `lib.rs` `serve()` 的 `ledger.next_result`（`Ledger::next_result`）与 `heartbeat.tick` 分支（`Ledger::held`） |
 | 消息定义 | `proto/sfly/agent/v1/agent.proto` 的 Hello、Welcome、TaskAction、AssignTask、CancelTask、TaskResult、Heartbeat、Ack |
+
+Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里的全部，不论阶段），模型里是 `Hand` 和 `HandStarted`；Hello 和每次心跳都按它列出，每个任务的 `started` 是真实的值：执行中的看执行器现在启动了没有，结果待发和待 Ack 的看结束时启动过没有。
 
 判断一次改动要不要重新检查：
 
 ```sh
-git diff --stat ab3f0482fec544cf5a320f25207570d21d51c374 -- \
+git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
   apps/server/src/engine/engine.ts apps/server/src/engine/leases.ts apps/server/src/engine/failures.ts \
-  apps/server/src/agents/agent-hub.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/executor.rs \
+  apps/server/src/agents/agent-hub.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/ledger.rs agent/src/executor.rs \
   proto/sfly/agent/v1/agent.proto
 ```
 

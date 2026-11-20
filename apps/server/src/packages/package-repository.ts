@@ -5,7 +5,7 @@ import { PackageMetadata } from "@sfly/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
 
@@ -200,8 +200,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 		},
 
 		async getVersion(name: string, version: string): Promise<PackageVersion | undefined> {
-			const row = await findRow(db, name, version);
-			return row && toVersion(row);
+			return findPackageVersion(db, name, version);
 		},
 
 		/** 归档文件在磁盘上的位置（供下载）。 */
@@ -214,7 +213,17 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 
 export type PackageRepository = ReturnType<typeof createPackageRepository>;
 
-async function findRow(db: Db, name: string, version: string): Promise<Row | undefined> {
+/** 一个节点包版本。数据库由调用方传：在事务里读时传事务对象，不要另从连接池取连接。 */
+export async function findPackageVersion(
+	db: Db | Tx,
+	name: string,
+	version: string,
+): Promise<PackageVersion | undefined> {
+	const row = await findRow(db, name, version);
+	return row && toVersion(row);
+}
+
+async function findRow(db: Db | Tx, name: string, version: string): Promise<Row | undefined> {
 	const [row] = await db
 		.select()
 		.from(nodePackages)

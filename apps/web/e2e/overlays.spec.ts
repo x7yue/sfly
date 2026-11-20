@@ -59,7 +59,7 @@ test("弹窗内容变高时按钮行仍在弹窗里看得见；弹窗描边与�
 	await save.click({ trial: true });
 });
 
-test("归档之后焦点落到下一张卡片；带「撤销」的通知在右下角、不自动消失，Alt+T 跳过去用键盘撤销；最后一张也归档后焦点回到页面标题", async ({
+test("归档之后焦点落到下一张卡片；最后一张也归档后焦点回到页面标题", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -88,29 +88,60 @@ test("归档之后焦点落到下一张卡片；带「撤销」的通知在右�
 	const next = page.getByRole("article", { name: second }).locator("[data-list-primary]");
 	await expect(next).toBeFocused();
 
-	const toast = page.getByRole("region", { name: /通知/ }).locator("[data-sonner-toast]");
-	await expect(toast).toContainText(`已归档「${first}」`);
-	const at = await box(toast);
+	await archive(second ?? "");
+	await expect(page.getByRole("heading", { name: "场景编排", level: 1 })).toBeFocused();
+});
+
+test("带「撤销」的通知在右下角、不自动消失，Alt+T 跳过去用键盘撤销；撤销之后通知消失时焦点不会被抢回进去之前的元素", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "甲", scenarioUsing("agent-a"));
+	await createScenario(controlPlane, "乙", scenarioUsing("agent-a"));
+	await page.goto("/orchestrations");
+	await expect(page.locator("article[data-list-item]")).toHaveCount(2);
+	await page.getByRole("article", { name: "乙" }).getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: /归档/ }).click();
+	await page
+		.getByRole("dialog", { name: "归档「乙」？" })
+		.getByRole("button", { name: "归档", exact: true })
+		.click();
+
+	const toasts = page.getByRole("region", { name: /通知/ }).locator("[data-sonner-toast]");
+	const archived = toasts.filter({ hasText: "已归档「乙」" });
+	await expect(archived).toBeVisible();
+	const at = await box(archived);
 	const viewport = page.viewportSize() ?? { width: 0, height: 0 };
 	expect(at.x).toBeGreaterThan(viewport.width / 2);
 	expect(at.y).toBeGreaterThan(viewport.height / 2);
-	await expect(toast.getByRole("button", { name: "关闭通知" })).toBeVisible();
+	await expect(archived.getByRole("button", { name: "关闭通知" })).toBeVisible();
 	// biome-ignore lint/plugin/e2e-fixed-wait: 带「撤销」的通知不自动消失：断言的是等过普通通知（2.6 秒）与警告（5.2 秒）的时长它仍在，没有发生的事无从等起
 	await page.waitForTimeout(7_000);
-	await expect(toast).toBeVisible();
+	await expect(archived).toBeVisible();
 
+	// 归档之后焦点落到「甲」的链接；从它出发按 Alt+T 进入通知区域，通知容器（sonner）记下「甲」。
+	await expect(
+		page.getByRole("article", { name: "甲" }).locator("[data-list-primary]"),
+	).toBeFocused();
 	await page.keyboard.press("Alt+t");
-	const undo = toast.getByRole("button", { name: "撤销" });
+	const undo = archived.getByRole("button", { name: "撤销" });
 	for (let i = 0; i < 4 && !(await undo.evaluate((el) => el === document.activeElement)); i++) {
 		await page.keyboard.press("Tab");
 	}
 	await expect(undo).toBeFocused();
 	await page.keyboard.press("Enter");
-	await expect(page.getByRole("article", { name: first })).toBeVisible();
+	await expect(page.getByRole("article", { name: "乙" })).toBeVisible();
 
-	await archive(first ?? "");
-	await archive(second ?? "");
-	await expect(page.getByRole("heading", { name: "场景编排", level: 1 })).toBeFocused();
+	// 焦点所在的「撤销」通知被移走了，之后用户去了别处。
+	await expect(archived).toHaveCount(0);
+	const more = page.getByRole("article", { name: "乙" }).getByLabel("更多操作");
+	await more.focus();
+	// 「已恢复」也消失、通知区域卸载：焦点留在用户去的地方，不被拉回「甲」。
+	await expect(toasts).toHaveCount(0);
+	await expect(more).toBeFocused();
 });
 
 test("下拉菜单的禁用项不降整项透明度，原因读得清；菜单不是模态，打开时页面照常可滚动", async ({

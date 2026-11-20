@@ -11,13 +11,13 @@ import {
 } from "@sfly/orchestration";
 import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
 import { agentFor, type ChainPlan, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
-import type { PackageRepository } from "../packages/package-repository.js";
+import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 
@@ -33,21 +33,23 @@ export interface PreflightProblem {
 	node_id?: string;
 }
 
-export type Preflight = (doc: OrchestrationDocument) => Promise<PreflightProblem[]>;
+/**
+ * 预检读哪个数据库由调用方传：触发准入（trigger-admission.ts）在事务里调用，传事务对象（#380：预检另从连接池取连接，会和等锁的写入互相等死）。
+ * 预检和参数检查读库都是一条接一条地执行，不并发。
+ */
+export type Preflight = (db: Db | Tx, doc: OrchestrationDocument) => Promise<PreflightProblem[]>;
 
-/** 文档锁定的节点包版本的元信息（包名 → 元信息；控制面没有这个版本的不在里面）。每个包查一次。 */
+/** 文档锁定的节点包版本的元信息（包名 → 元信息；控制面没有这个版本的不在里面）。每个包查一次，一个一个地查。 */
 async function lockedPackages(
+	db: Db | Tx,
 	doc: OrchestrationDocument,
-	packages: PackageRepository,
 ): Promise<Map<string, PackageMetadata>> {
-	const found = await Promise.all(
-		Object.entries(doc.packages).map(
-			async ([name, version]) => [name, await packages.getVersion(name, version)] as const,
-		),
-	);
-	return new Map(
-		found.flatMap(([name, published]) => (published ? [[name, published.metadata] as const] : [])),
-	);
+	const locked = new Map<string, PackageMetadata>();
+	for (const [name, version] of Object.entries(doc.packages)) {
+		const published = await findPackageVersion(db, name, version);
+		if (published) locked.set(name, published.metadata);
+	}
+	return locked;
 }
 
 /**
@@ -61,14 +63,10 @@ async function lockedPackages(
  * 比较的是控制面版本 `version` 而不是 Agent 记录里的版本：只给与控制面版本一致的 Agent 派任务（ADR 0014），
  * 记录里版本不同的 Agent 会先自更新到这个版本，所以 Agent 执行任务时的 SDK 版本就是控制面版本；提示也如实这样写。
  */
-export function createPreflight(deps: {
-	db: Db;
-	packages: PackageRepository;
-	version: string;
-}): Preflight {
-	return async (doc) => {
+export function createPreflight(deps: { version: string }): Preflight {
+	return async (db, doc) => {
 		// 注释框的警告只提示，不阻断触发（docs/SEMANTICS.md §1.6）。
-		const problems: PreflightProblem[] = (await checkDocument(doc, deps))
+		const problems: PreflightProblem[] = (await checkDocument(db, doc))
 			.filter(blocksTrigger)
 			.map((w) => ({
 				code: w.code,
@@ -86,10 +84,7 @@ export function createPreflight(deps: {
 		const registered = new Set(
 			names.length
 				? (
-						await deps.db
-							.select({ name: agents.name })
-							.from(agents)
-							.where(inArray(agents.name, names))
+						await db.select({ name: agents.name }).from(agents).where(inArray(agents.name, names))
 					).map((r) => r.name)
 				: [],
 		);
@@ -104,7 +99,7 @@ export function createPreflight(deps: {
 			});
 		}
 
-		const locked = await lockedPackages(doc, deps.packages);
+		const locked = await lockedPackages(db, doc);
 		// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。
 		const constants: AgentReference[] = [];
 		for (const node of doc.nodes) {
@@ -142,7 +137,7 @@ export function createPreflight(deps: {
 			}
 		}
 		// 没有注册过的常量已经由静态检查（agent_input_not_registered）指出，这里只看版本。
-		const referenced = await checkReferencedAgents(deps.db, constants);
+		const referenced = await checkReferencedAgents(db, constants);
 		problems.push(...referenced.problems.filter((p) => p.code === "agent_version_unsatisfied"));
 
 		// 执行计划的检查（单链、节点种类受支持、调度目标等）。
@@ -158,6 +153,7 @@ export function createPreflight(deps: {
 
 /** 触发时按入口参数的实际值做的检查（{@link createParamsCheck}）。 */
 export type ParamsCheck = (
+	db: Db | Tx,
 	doc: OrchestrationDocument,
 	plan: RunPlan,
 	params: Record<string, unknown>,
@@ -170,9 +166,9 @@ export type ParamsCheck = (
  * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过
  * （飞书通知节点在执行时再看一次，机器人不存在时不发送、节点照常成功）。
  */
-export function createParamsCheck(deps: { db: Db; packages: PackageRepository }): ParamsCheck {
-	return async (doc, plan, params) => {
-		const locked = await lockedPackages(doc, deps.packages);
+export function createParamsCheck(): ParamsCheck {
+	return async (db, doc, plan, params) => {
+		const locked = await lockedPackages(db, doc);
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
 		for (const { chain, params: known, source } of knownParams(plan, params)) {
@@ -216,8 +212,8 @@ export function createParamsCheck(deps: { db: Db; packages: PackageRepository })
 			}
 		}
 		return [
-			...(await checkReferencedAgents(deps.db, wanted)).problems,
-			...(await checkFeishuBots(deps.db, bots)),
+			...(await checkReferencedAgents(db, wanted)).problems,
+			...(await checkFeishuBots(db, bots)),
 		];
 	};
 }

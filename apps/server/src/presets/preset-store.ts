@@ -9,7 +9,7 @@ import { checkPresetParams, type PresetIssue } from "./preset-input.js";
 import { entryParams } from "./preset-validity.js";
 import { type PresetRow, toPresetView } from "./preset-view.js";
 
-/** 404 `preset_not_found`：预设不存在，或者不属于这个场景。触发运行（Engine）和预设的接口共用同一条。 */
+/** 404 `preset_not_found`：预设不存在，或者不属于这个场景。触发准入（runs/trigger-admission.ts）和预设的接口共用同一条。 */
 export const PRESET_NOT_FOUND = {
 	status: 404,
 	code: "preset_not_found",

@@ -245,8 +245,7 @@ function FailureSummary({
 					aria-description="点击查看这个节点的尝试"
 					data-testid="run-failure"
 					onClick={() => {
-						actions.select(failure.ref);
-						actions.showPanel("attempts");
+						actions.report({ type: "failure", node: failure.ref });
 						onShowDetail?.();
 					}}
 					className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"

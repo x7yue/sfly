@@ -666,9 +666,12 @@ test("取消弹窗关闭的退场动画还没结束时再按 C：重新打开，
 }) => {
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
-	// 退场动画平时只有 100 毫秒；拉长到按键一定落在退场期间。
+	// 浮层的进出场是 CSS 过渡（POPUP_MOTION），不是关键帧动画，所以拉长的是过渡时长；退场平时只有 100 毫秒，
+	// 拉长到按键一定落在退场期间。只拉长退场：过渡中途反向时浏览器按已走完的进度缩短反向的时长，
+	// 进场没走完就按 Esc，退场就只剩几十毫秒。
 	await page.addStyleTag({
-		content: '[data-slot="dialog-content"] { animation-duration: 3s !important; }',
+		content:
+			'[data-slot="dialog-content"][data-ending-style] { transition-duration: 3s !important; }',
 	});
 
 	await page.keyboard.press("c");
@@ -676,6 +679,8 @@ test("取消弹窗关闭的退场动画还没结束时再按 C：重新打开，
 	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
 	await page.keyboard.press("Tab");
 	await expect(dialog.getByRole("button", { name: "取消运行" })).toBeFocused();
+	// 等进场的过渡走完再按 Esc，退场才是完整的 3 秒。
+	await expect.poll(() => dialog.evaluate((el) => el.getAnimations().length)).toBe(0);
 	await page.keyboard.press("Escape");
 	await expect(dialog).toHaveAttribute("data-closed", "");
 
