@@ -785,6 +785,29 @@
 			}
 		},
 		{
+			"name": "同一批里 ts 往回跳的日志，按读到的先后排，不按 ts",
+			"events": [
+				"{\"type\":\"log\",\"ts\":1700000002000,\"level\":\"info\",\"message\":\"先读到\"}",
+				"{\"type\":\"log\",\"ts\":1700000001000,\"level\":\"info\",\"message\":\"后读到\"}"
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "先读到",
+						"ts": 1700000002000
+					},
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "后读到",
+						"ts": 1700000001000
+					}
+				]
+			}
+		},
+		{
 			"name": "标准输出：每行一条 stdout 日志，级别 info",
 			"stdout": "a\nb\n",
 			"expect": {
@@ -1173,46 +1196,6 @@
 					]
 				},
 				"local": {}
-			},
-			{
-				"name": "同一批里 ts 往回跳的日志",
-				"why": "Agent 按读到的先后（单调时钟）排；本地调试按事件里的 ts 排，ts 往回跳时顺序反过来。",
-				"events": [
-					"{\"type\":\"log\",\"ts\":1700000002000,\"level\":\"info\",\"message\":\"先读到\"}",
-					"{\"type\":\"log\",\"ts\":1700000001000,\"level\":\"info\",\"message\":\"后读到\"}"
-				],
-				"agent": {
-					"logs": [
-						{
-							"source": "sdk",
-							"level": "info",
-							"message": "先读到",
-							"ts": 1700000002000
-						},
-						{
-							"source": "sdk",
-							"level": "info",
-							"message": "后读到",
-							"ts": 1700000001000
-						}
-					]
-				},
-				"local": {
-					"logs": [
-						{
-							"source": "sdk",
-							"level": "info",
-							"message": "后读到",
-							"ts": 1700000001000
-						},
-						{
-							"source": "sdk",
-							"level": "info",
-							"message": "先读到",
-							"ts": 1700000002000
-						}
-					]
-				}
 			}
 		],
 		"result_cases": [
