@@ -1,5 +1,5 @@
 import { reconnectEdge } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import type { Connection } from "@xyflow/react";
 import { type RefObject, useMemo, useRef } from "react";
 import { type DocEdge, docEdgeOf, type SfEdge } from "#/components/canvas/flow";
@@ -14,8 +14,8 @@ import { notify } from "#/components/feedback/notify";
  * 只提示拒绝原因，不弹添加节点菜单。
  */
 export function useReconnect(
-	docRef: RefObject<OrchestrationDocument>,
-	apply: (doc: OrchestrationDocument) => void,
+	docRef: RefObject<StoredOrchestrationDocument>,
+	apply: (doc: StoredOrchestrationDocument) => void,
 ) {
 	/** 正在改接的连线（从按下端点到松开）。 */
 	const active = useRef<DocEdge | null>(null);

@@ -5,7 +5,7 @@ import {
 	resolveInputs,
 	timerTarget,
 } from "@sfly/orchestration";
-import type { OrchestrationNode } from "@sfly/schema";
+import type { OrchestrationNode, StoredNode } from "@sfly/schema";
 import { and, asc, eq, lte } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { tasks } from "../db/schema.js";
@@ -28,7 +28,7 @@ import {
 
 export type WaitNode = Extract<OrchestrationNode, { kind: "timer" | "sleep" }>;
 
-export const isWaitNode = (node: OrchestrationNode): node is WaitNode =>
+export const isWaitNode = (node: StoredNode): node is WaitNode =>
 	node.kind === "timer" || node.kind === "sleep";
 
 export type WaitPlan =

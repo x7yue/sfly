@@ -403,7 +403,7 @@ console.log("API 客户端版本", CLIENT_VERSION, await checkedClient.system.he
 
 API 客户端只开放平台现有的接口，下面这些没有：
 
-- **没有事件推送和对外的 Webhook。** 只能订阅一次运行的事件流。要发现新的运行，定时查询 `runs.list`。要把运行结果发到飞书群，用场景的运行通知或飞书通知节点，见 [飞书通知](feishu-notify.md)。
+- **没有事件推送和对外的 Webhook。** 只能订阅一次运行的事件流。要发现新的运行，定时查询 `runs.list`。要把运行结果发到飞书群，用场景的运行通知，或在节点代码里用 `ctx.notify`，见 [飞书通知](feishu-notify.md)。
 - **不能跨运行查询指标。** 指标只能按一次运行查询（`metrics.summary`、`metrics.series`）。要看多次运行的趋势，逐次查询后自己汇总。
 - **运行列表不能按时间范围查询，也不能翻页。** `runs.list` 只返回最新的最多 500 条，`runs.listForOrchestration` 最多 200 条。
 - 入口参数没有说明和可选项。

@@ -1,0 +1,6 @@
+{
+  "feishu_notify": {
+    "label": "飞书通知",
+    "replacement": "在节点代码里用 ctx.notify 发飞书消息"
+  }
+}

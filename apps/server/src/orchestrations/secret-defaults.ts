@@ -1,9 +1,9 @@
 import {
-	type OrchestrationDocument,
 	type OrchestrationNode,
 	SECRET_MASK,
 	SECRET_PARAM_DEFAULT_WARNING,
 	type SecretDefaultProblem,
+	type StoredNode,
 } from "@sfly/schema";
 
 /*
@@ -18,7 +18,15 @@ import {
 type EntryNode = Extract<OrchestrationNode, { kind: "entry" | "subflow_entry" }>;
 type Param = EntryNode["params"][number];
 
-const isEntry = (node: OrchestrationNode): node is EntryNode =>
+/**
+ * 这里处理的文档：保存的（`OrchestrationDocument`）和读到的（`StoredOrchestrationDocument`，历史版本里可能有已移除种类的节点，
+ * ADR 0028）都是，只看入口节点和子流程入口节点，别的节点原样带着。
+ */
+interface Doc {
+	nodes: readonly StoredNode[];
+}
+
+const isEntry = (node: StoredNode): node is EntryNode =>
 	node.kind === "entry" || node.kind === "subflow_entry";
 
 /** 有没有默认值：没写（undefined）和 null 都是没有，和触发时补参数（`fillParams`）一致。 */
@@ -31,7 +39,7 @@ const hasSecretDefault = (param: Param): boolean => param.secret && hasValue(par
  * 给文档里 secret 参数的默认值打码：默认值整个换成 {@link SECRET_MASK}，不论类型（和运行预设的视图一样按整个值替换）。
  * 有没有默认值打码前后不变（没有默认值、默认值是 null 的不动），必填检查、预检看的是这一点。
  */
-export function maskSecretDefaults(document: OrchestrationDocument): OrchestrationDocument {
+export function maskSecretDefaults<D extends Doc>(document: D): D {
 	if (!document.nodes.some((n) => isEntry(n) && n.params.some(hasSecretDefault))) return document;
 	return {
 		...document,
@@ -45,13 +53,11 @@ export function maskSecretDefaults(document: OrchestrationDocument): Orchestrati
 					}
 				: node,
 		),
-	};
+	} as D;
 }
 
 /** 保存时发现占位符沿用不了：返回的问题清单，每项一个参数，写明是哪个入口节点的哪个参数、为什么。 */
-export type RestoreResult =
-	| { document: OrchestrationDocument }
-	| { problems: SecretDefaultProblem[] };
+export type RestoreResult<D extends Doc> = { document: D } | { problems: SecretDefaultProblem[] };
 
 /**
  * 保存时把占位符换回原值。`previous` 是编辑起点的版本（保存要求 base_version 就是最新版本，所以就是最新版本）的原始文档，
@@ -65,10 +71,10 @@ export type RestoreResult =
  *
  * 所以 secret 参数的默认值写不成 `******` 本身：它永远表示占位符。不改文档里别的东西。
  */
-export function restoreSecretDefaults(
-	previous: OrchestrationDocument | undefined,
-	incoming: OrchestrationDocument,
-): RestoreResult {
+export function restoreSecretDefaults<D extends Doc>(
+	previous: Doc | undefined,
+	incoming: D,
+): RestoreResult<D> {
 	const problems: SecretDefaultProblem[] = [];
 	const nodes = incoming.nodes.map((node) => {
 		if (!isEntry(node) || !node.params.some((p) => p.default === SECRET_MASK)) return node;
@@ -92,7 +98,7 @@ export function restoreSecretDefaults(
 		});
 		return { ...node, params };
 	});
-	return problems.length > 0 ? { problems } : { document: { ...incoming, nodes } };
+	return problems.length > 0 ? { problems } : { document: { ...incoming, nodes } as D };
 }
 
 /** 一个沿用不了的占位符，写成给人看的一句话（保存被拒绝时的错误信息）。 */
@@ -119,7 +125,7 @@ export function describeSecretDefaultProblem({
  * 判断的是有没有默认值，不看值，所以对打码后的文档也成立。
  */
 export function secretDefaultWarnings(
-	document: OrchestrationDocument,
+	document: Doc,
 ): Array<{ code: string; message: string; node_id: string }> {
 	return document.nodes.filter(isEntry).flatMap((node) =>
 		node.params.filter(hasSecretDefault).map((param) => ({

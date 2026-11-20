@@ -32,11 +32,11 @@ import {
 	agentsApi,
 	feishuBotsApi,
 	type OrchestrationHeadView,
-	type OrchestrationNode,
 	type OrchestrationView,
 	packagesApi,
 	STICKY_NOTE_SIZE,
 	type StickyNote,
+	type StoredNode,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -149,6 +149,7 @@ import { useInspectorWidth } from "./inspector/inspector-width";
 import { useNodeClipboard } from "./node-clipboard";
 import { OUTLINE_WIDTH, OutlinePanel } from "./OutlinePanel";
 import { canvasOutline } from "./outline";
+import { RemovedNodesBanner } from "./RemovedNodesBanner";
 import { useReconnect } from "./reconnect";
 import {
 	RunStateBadge,
@@ -801,7 +802,7 @@ function Editor({
 		let next: { nodes: SfNode[]; edges: SfEdge[] };
 		if (request.kind === "after") {
 			// 有来源：接在它后面；它不是链尾时插在它和下一个节点之间，后面的节点让出位置。
-			const fresh = { ...newDocNode(item, id), position: request.position } as OrchestrationNode;
+			const fresh = { ...newDocNode(item, id), position: request.position } as StoredNode;
 			const edit = request.before
 				? insertOnEdge(doc, { from: request.after, to: request.before }, fresh)
 				: insertAfter(doc, request.after, fresh);
@@ -1178,7 +1179,8 @@ function Editor({
 							onRun={() => setTriggering(true)}
 							onReload={onReload}
 						/>
-						<div className="absolute top-15.5 left-3 z-10 max-w-[560px]">
+						<div className="absolute top-15.5 left-3 z-10 flex max-w-[560px] flex-col gap-2">
+							<RemovedNodesBanner doc={doc} onLocate={locate} />
 							<DraftBanner
 								orchestration={orchestration}
 								doc={doc}
@@ -1231,8 +1233,8 @@ function Editor({
 							target={target}
 							outputsOf={(node) =>
 								running && readyRun?.doc
-									? declaredOutputs(readyRun.doc, node as OrchestrationNode, runCatalog)
-									: declaredOutputs(doc, node as OrchestrationNode, catalog)
+									? declaredOutputs(readyRun.doc, node as StoredNode, runCatalog)
+									: declaredOutputs(doc, node as StoredNode, catalog)
 							}
 							edit={
 								running

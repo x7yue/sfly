@@ -24,7 +24,7 @@ import type {
 	MetricSeriesQuery,
 	NodeName,
 	NodeTypeView,
-	OrchestrationDocumentInput,
+	OrchestrationDocument,
 	OrchestrationHeadView,
 	OrchestrationSummary,
 	OrchestrationVersionView,
@@ -252,8 +252,8 @@ export interface Api {
 		/**
 		 * `GET /feishu-bots/:name/references`
 		 *
-		 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里的飞书通知节点、
-		 * 「飞书机器人」类型的输入的常量值，以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
+		 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里「飞书机器人」类型的输入的常量值，
+		 * 以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
 		 * 机器人不存在 404 `not_found`。
 		 */
 		references: Endpoint<
@@ -511,7 +511,8 @@ export interface Api {
 		 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
 		 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 		 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
-		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
+		 * 错误信息写明哪些节点、怎么替换。
 		 *
 		 * **secret 参数的默认值是占位符 `******` 时**（读出来的文档原样存回去，命令行的 pull 再 push、画布保存都是这样），
 		 * 按「沿用上一个版本的值」处理：新版本里是 base_version（也就是当时的最新版本）里同名参数（按入口节点 ID 加参数名对应）
@@ -532,7 +533,7 @@ export interface Api {
 				};
 				body: {
 					/** 场景文档：入口、节点、连线、锁定的节点包版本等（格式见 sfly-platform skill 和 orchestration-document 的 JSON Schema）。 */
-					document: OrchestrationDocumentInput;
+					document: OrchestrationDocument;
 					/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 					base_version: number;
 				};

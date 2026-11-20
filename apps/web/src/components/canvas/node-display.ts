@@ -1,7 +1,8 @@
 import { NODE_DEFAULTS, NODE_KIND_LABEL } from "@sfly/orchestration";
+import { REMOVED_NODE_KIND_NAMES, type RemovedNodeKind, removedKindLabel } from "@sfly/schema";
 import {
 	AlarmClockIcon,
-	BellRingIcon,
+	BanIcon,
 	BoxIcon,
 	CircleStopIcon,
 	CornerDownRightIcon,
@@ -16,15 +17,30 @@ import type { DocNode } from "./flow";
  * 节点种类的名称与图标。图标出现在节点卡片头部（语义缩放时也保留，缩小后仍能分辨种类）和添加节点菜单里，
  * 取代原型里需要记忆的两字母代号。
  */
+const KIND_ICONS = {
+	entry: PlayIcon,
+	package: BoxIcon,
+	timer: AlarmClockIcon,
+	sleep: HourglassIcon,
+	async: SplitIcon,
+	subflow_entry: CornerDownRightIcon,
+	stop_subflow: CircleStopIcon,
+} as const;
+
+/** 已移除种类的节点（ADR 0028）：名称是「已移除的节点类型」加它当时的种类名，图标统一用禁止符号。 */
+const REMOVED_KIND_META = Object.fromEntries(
+	REMOVED_NODE_KIND_NAMES.map((kind) => [kind, { label: removedKindLabel(kind), icon: BanIcon }]),
+) as Record<RemovedNodeKind, { label: string; icon: LucideIcon }>;
+
 export const KIND_META: Record<DocNode["kind"], { label: string; icon: LucideIcon }> = {
-	entry: { label: NODE_KIND_LABEL.entry, icon: PlayIcon },
-	package: { label: NODE_KIND_LABEL.package, icon: BoxIcon },
-	timer: { label: NODE_KIND_LABEL.timer, icon: AlarmClockIcon },
-	sleep: { label: NODE_KIND_LABEL.sleep, icon: HourglassIcon },
-	async: { label: NODE_KIND_LABEL.async, icon: SplitIcon },
-	subflow_entry: { label: NODE_KIND_LABEL.subflow_entry, icon: CornerDownRightIcon },
-	stop_subflow: { label: NODE_KIND_LABEL.stop_subflow, icon: CircleStopIcon },
-	feishu_notify: { label: NODE_KIND_LABEL.feishu_notify, icon: BellRingIcon },
+	...REMOVED_KIND_META,
+	entry: { label: NODE_KIND_LABEL.entry, icon: KIND_ICONS.entry },
+	package: { label: NODE_KIND_LABEL.package, icon: KIND_ICONS.package },
+	timer: { label: NODE_KIND_LABEL.timer, icon: KIND_ICONS.timer },
+	sleep: { label: NODE_KIND_LABEL.sleep, icon: KIND_ICONS.sleep },
+	async: { label: NODE_KIND_LABEL.async, icon: KIND_ICONS.async },
+	subflow_entry: { label: NODE_KIND_LABEL.subflow_entry, icon: KIND_ICONS.subflow_entry },
+	stop_subflow: { label: NODE_KIND_LABEL.stop_subflow, icon: KIND_ICONS.stop_subflow },
 };
 
 const summarizeValue = (value: unknown): string => {
@@ -58,16 +74,15 @@ export function nodeSlot(node: DocNode): { text: string; empty: boolean } {
 			return value(node.duration);
 		case "stop_subflow":
 			return node.subflow ? value(`子流程入口 ${node.subflow}`) : empty("未选择子流程");
-		case "feishu_notify":
-			return node.bot === undefined
-				? empty("未选择飞书机器人")
-				: value(`机器人 ${summarizeValue(node.bot)}`);
 		case "package": {
 			const [first] = Object.entries(node.inputs);
 			return first
 				? value(`${first[0]} ${summarizeValue(first[1])}`)
 				: value(`${node.package}/${node.node}`);
 		}
+		default:
+			// 已移除种类的节点（ADR 0028）：不能运行，检查器里写着怎么替换。
+			return empty("不再支持，删除后才能保存");
 	}
 }
 

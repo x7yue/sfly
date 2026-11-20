@@ -707,14 +707,10 @@ export interface ErrorView {
 export type FeishuBotName = string;
 
 /**
- * 一处引用飞书机器人的地方。`kind` 区分引用的种类：飞书通知节点（`feishu_notify_node`）、
- * 「飞书机器人」类型的输入的常量值（`feishu_bot_input`，指出节点和输入名）、
+ * 一处引用飞书机器人的地方。`kind` 区分引用的种类：「飞书机器人」类型的输入的常量值（`feishu_bot_input`，指出节点和输入名）、
  * 场景设置里的运行通知（`run_notification`，场景自己的设置，不在某个节点上）。
  */
 export type FeishuBotReference = {
-	kind: "feishu_notify_node";
-	node_id: string;
-} | {
 	kind: "feishu_bot_input";
 	node_id: string;
 	input: string;
@@ -740,9 +736,6 @@ export interface FeishuBotView {
 	backlog: number;
 }
 
-/** Markdown 卡片的标题颜色（飞书卡片 header 的颜色模板）。 */
-export type FeishuCardColor = "blue" | "green" | "orange" | "red" | "grey";
-
 /**
  * 一个机器人最近一次投递（ADR 0020）：控制面每向飞书发一次请求记一次（重试也算，丢弃不算），所以一条消息正在重试时，
  * 这里已经是失败。
@@ -754,87 +747,6 @@ export interface FeishuLastDelivery {
 	ok: boolean;
 	/** 没送达时的中文原因和下一步（Webhook 地址已打码）；送达时为 null。 */
 	message: string | null;
-}
-
-/** 飞书通知节点的消息格式：文本、Markdown 卡片、原始消息（docs/SEMANTICS.md §4.2）。 */
-export type FeishuMessageFormat = "text" | "card" | "raw";
-
-export interface FeishuNotifyNode {
-	id: string;
-	/** 布局属于版本内容。 */
-	position?: {
-		x: number;
-		y: number;
-	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
-	note?: string;
-	display_name?: string;
-	kind: "feishu_notify";
-	always: boolean;
-	/**
-	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §4.2）。
-	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
-	 */
-	bot?: string;
-	/**
-	 * 消息格式，决定下面哪一组字段生效。切换格式时其他格式里填过的内容留在文档里，
-	 * 但不参与引用检查和解析，切回去还在。
-	 */
-	format: FeishuMessageFormat;
-	/** 文本格式：消息文本，支持内嵌引用。 */
-	text: string;
-	/** 文本格式：在正文末尾追加 `<at user_id="all">所有人</at>`。 */
-	at_all: boolean;
-	/** Markdown 卡片：标题，支持内嵌引用。 */
-	title: string;
-	/** Markdown 卡片：标题颜色。 */
-	color: FeishuCardColor;
-	/** Markdown 卡片：Markdown 正文，支持内嵌引用。 */
-	markdown: string;
-	/**
-	 * 原始消息：完整的飞书请求体（JSON 对象），字符串字段里的引用逐个字段解析；也可以整值引用入口参数。
-	 * 可选：还没有填写时消息不发送，节点日志里写一条 warning。
-	 */
-	message?: unknown;
-}
-
-export interface FeishuNotifyNodeInput {
-	id: string;
-	/** 布局属于版本内容。 */
-	position?: {
-		x: number;
-		y: number;
-	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
-	note?: string;
-	display_name?: string;
-	kind: "feishu_notify";
-	always?: boolean;
-	/**
-	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §4.2）。
-	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
-	 */
-	bot?: string;
-	/**
-	 * 消息格式，决定下面哪一组字段生效。切换格式时其他格式里填过的内容留在文档里，
-	 * 但不参与引用检查和解析，切回去还在。
-	 */
-	format?: FeishuMessageFormat;
-	/** 文本格式：消息文本，支持内嵌引用。 */
-	text?: string;
-	/** 文本格式：在正文末尾追加 `<at user_id="all">所有人</at>`。 */
-	at_all?: boolean;
-	/** Markdown 卡片：标题，支持内嵌引用。 */
-	title?: string;
-	/** Markdown 卡片：标题颜色。 */
-	color?: FeishuCardColor;
-	/** Markdown 卡片：Markdown 正文，支持内嵌引用。 */
-	markdown?: string;
-	/**
-	 * 原始消息：完整的飞书请求体（JSON 对象），字符串字段里的引用逐个字段解析；也可以整值引用入口参数。
-	 * 可选：还没有填写时消息不发送，节点日志里写一条 warning。
-	 */
-	message?: unknown;
 }
 
 /** 「发送测试消息」的结果；失败也是 200，结果在 `ok` 里。 */
@@ -1301,7 +1213,8 @@ export interface NodeRunView {
 	node_id: string;
 	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name?: string;
-	kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "feishu_notify" | "package";
+	/** 运行绑定的版本是已移除的节点种类（ADR 0028）时，就是它当时的种类名：历史运行照常能看。 */
+	kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "package" | "feishu_notify";
 	/**
 	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
 	 * （这两种都没有尝试记录）。
@@ -1336,17 +1249,8 @@ export interface NodeTypeView {
 	primary_metric?: MetricName;
 }
 
+/** 可以保存的场景文档：节点都是现在支持的种类（保存、命令行的本地检查、导出给 Python 的 JSON Schema 用它）。 */
 export interface OrchestrationDocument {
-	default_agent?: string;
-	nodes: OrchestrationNode[];
-	edges: Edge[];
-	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
-	packages: Record<PackageName, string>;
-	annotations: Annotation[];
-	sticky_notes: StickyNote[];
-}
-
-export interface OrchestrationDocumentInput {
 	default_agent?: string;
 	nodes: OrchestrationNodeInput[];
 	edges?: Edge[];
@@ -1365,18 +1269,18 @@ export interface OrchestrationHeadView {
 	/** 经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。 */
 	author_via: string | null;
 	created_at: Timestamp | null;
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 }
 
-export type OrchestrationNode = EntryNode | SubflowEntryNode | AsyncTaskNode | TimerNode | SleepNode | StopSubflowNode | FeishuNotifyNode | PackageNode;
+export type OrchestrationNode = EntryNode | SubflowEntryNode | AsyncTaskNode | TimerNode | SleepNode | StopSubflowNode | PackageNode;
 
-export type OrchestrationNodeInput = EntryNodeInput | SubflowEntryNodeInput | AsyncTaskNodeInput | TimerNodeInput | SleepNodeInput | StopSubflowNodeInput | FeishuNotifyNodeInput | PackageNodeInput;
+export type OrchestrationNodeInput = EntryNodeInput | SubflowEntryNodeInput | AsyncTaskNodeInput | TimerNodeInput | SleepNodeInput | StopSubflowNodeInput | PackageNodeInput;
 
 /** 缩略图用的结构：最新版本（没有版本时是只含入口节点的初始文档）的节点与连线，不含参数与布局。 */
 export interface OrchestrationStructure {
 	nodes: {
 		id: string;
-		kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "feishu_notify" | "package";
+		kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "package" | "feishu_notify";
 	}[];
 	edges: {
 		from: string;
@@ -1420,7 +1324,7 @@ export interface OrchestrationVersionView {
 	author: string;
 	author_via: string | null;
 	created_at: Timestamp;
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 }
 
 export interface OrchestrationView {
@@ -1775,6 +1679,23 @@ export interface ReferencedAgent {
 	/** 场景的默认 Agent。 */
 	default: boolean;
 	status: "online" | "offline" | "unknown";
+}
+
+/**
+ * 已移除种类的节点（ADR 0028，种类见 removed-nodes.ts）：读取历史版本时认得它，只读显示，不能保存。
+ * 只描述所有节点共有的字段；控制面读库时把它当时的其余配置原样带着（`keepRemovedNodeConfig`），
+ * 想把旧配置换成别的写法的人读得到。它不在可以保存的节点里（`OrchestrationNode`）：
+ * 保存带它的文档被拒绝，从画布上删掉之后才能保存。
+ */
+export interface RemovedNode {
+	id: string;
+	kind: "feishu_notify";
+	position?: {
+		x: number;
+		y: number;
+	};
+	note?: string;
+	display_name?: string;
 }
 
 /**
@@ -2234,7 +2155,7 @@ export interface SavedVersionView {
 	author: string;
 	author_via: string | null;
 	created_at: Timestamp;
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
 	warnings: DocumentWarningView[];
 }
@@ -2332,6 +2253,24 @@ export interface StopSubflowNodeInput {
 	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（docs/SEMANTICS.md §1.2）。
 	 */
 	subflow?: string;
+}
+
+/** 读到的节点：可以执行、可以保存的种类，加上已移除种类的占位。 */
+export type StoredNode = OrchestrationNode | RemovedNode;
+
+/**
+ * 读到的场景文档（接口的响应、控制面读库、画布打开最新版本）：结构和保存用的 `OrchestrationDocument` 相同，
+ * 只是节点里可以有已移除种类的占位（`RemovedNode`）。场景版本不可变，历史版本里留着已移除的节点，读取时认得它们。
+ * 保存不接受这些占位：把读到的文档原样传回保存之前，先过滤掉 `RemovedNode`。
+ */
+export interface StoredOrchestrationDocument {
+	default_agent?: string;
+	nodes: StoredNode[];
+	edges: Edge[];
+	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
+	packages: Record<PackageName, string>;
+	annotations: Annotation[];
+	sticky_notes: StickyNote[];
 }
 
 export interface SubflowEntryNode {

@@ -3,13 +3,13 @@ import { inArray } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { feishuBots } from "../db/schema.js";
 
-/** 节点选择的一个飞书机器人（触发时按实际值检查）。 */
+/** 节点的输入选择的一个飞书机器人（触发时按实际值检查）。 */
 export interface BotToCheck {
 	nodeId: string;
 	/** 问题的说明里节点的写法：「显示名称（节点 ID）」（`nodeNameWithId`）。 */
 	node: string;
-	/** 「飞书机器人」类型的输入名（#233）；飞书通知节点自己的机器人字段不写。 */
-	input?: string;
+	/** 「飞书机器人」类型的输入名（#233）。 */
+	input: string;
 	bot: string;
 	/**
 	 * 问题的说明里这个机器人名称的写法，不给时写 `bot`。值取自 secret 参数时调用方传打了码的写法：
@@ -20,7 +20,7 @@ export interface BotToCheck {
 	source?: string;
 }
 
-/** 这些名称里已登记的飞书机器人。触发时的检查、节点执行、`ctx.notify` 和运行通知都用它查，不各写一份。 */
+/** 这些名称里已登记的飞书机器人。触发时的检查、`ctx.notify` 和运行通知都用它查，不各写一份。 */
 export async function registeredBots(db: Db | Tx, names: readonly string[]): Promise<Set<string>> {
 	if (names.length === 0) return new Set();
 	const rows = await db
@@ -41,8 +41,8 @@ export interface FeishuBotProblem {
 
 /**
  * 被引用的飞书机器人必须已登记（ADR 0020）：触发时按实际值检查（引用入口参数的机器人），
- * 所有引用一次查库。飞书通知节点和「飞书机器人」类型的输入（#233）共用。
- * 常量在保存和触发前由静态检查（@sfly/orchestration 的 feishuBotWarnings）检查。
+ * 所有引用一次查库。「飞书机器人」类型的输入（#233）用它。
+ * 常量在保存和触发前由静态检查（@sfly/orchestration 的 feishuBotInputWarnings）检查。
  */
 export async function checkFeishuBots(
 	db: Db | Tx,

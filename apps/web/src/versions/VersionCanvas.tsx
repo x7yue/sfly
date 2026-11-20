@@ -1,5 +1,5 @@
 import { type DocumentDiff, subflowLabels } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useCallback, useMemo, useState } from "react";
 import type { CanvasInfo, NodeDecoration } from "#/components/canvas/context";
@@ -37,7 +37,7 @@ export function VersionCanvas({
 	marks,
 }: {
 	label: string;
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 	marks?: ReadonlyMap<string, NodeMark>;
 }) {
 	const titleOf = usePackageTitles();

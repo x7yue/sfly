@@ -1,11 +1,11 @@
 import { diffDocuments } from "@sfly/orchestration";
 import {
 	domainKey,
-	type OrchestrationDocument,
 	type OrchestrationHeadView,
 	type OrchestrationView,
 	orchestrationsApi,
 	queryKey,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { DocumentDiffView } from "./DocumentDiffView";
+import { savableDocument } from "./draft";
 import { countSecretPlaceholders, withoutSecretPlaceholders } from "./secret-defaults";
 import type { Versioning } from "./useVersionedDraft";
 
@@ -46,7 +47,7 @@ export function ConflictDialog({
 	open: boolean;
 	onOpenChange(open: boolean): void;
 	orchestration: OrchestrationView;
-	doc: OrchestrationDocument;
+	doc: StoredOrchestrationDocument;
 	head: ConflictHead | null;
 	versioning: Versioning;
 	/** 用最新版本重新开始编辑（放弃本地修改之后）。 */
@@ -89,7 +90,7 @@ export function ConflictDialog({
 			await callApi(orchestrationsApi.saveVersion, {
 				params: { id: created.id },
 				// 敏感默认值读不回来，带不到另一个场景：去掉，下面的提示说明。
-				body: { base_version: 0, document: withoutSecretPlaceholders(doc) },
+				body: { base_version: 0, document: withoutSecretPlaceholders(savableDocument(doc)) },
 			});
 			return created;
 		},

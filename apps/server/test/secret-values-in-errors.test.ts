@@ -161,25 +161,6 @@ describe("触发时的报错不回显 secret 参数的值", () => {
 		expect(error.message).toContain(`「ops-${MASK}」`);
 	});
 
-	it("飞书通知节点的机器人引用 secret 参数：报错里是掩码", async () => {
-		const id = await api.orchestrationWith({
-			default_agent: "runner",
-			nodes: [
-				{
-					id: "entry",
-					kind: "entry",
-					params: [{ name: "b", type: "string", secret: true, default: BOT }],
-				},
-				{ id: "n", kind: "feishu_notify", bot: "${{ params.b }}", text: "hi" },
-			],
-			edges: [{ from: "entry", to: "n", kind: "chain" }],
-			packages: {},
-		});
-		const { text, error } = await rejectedText(id);
-		expect(text).not.toContain(BOT);
-		expect(error.message).toBe(`节点 n 选择的飞书机器人「${MASK}」还没有登记（取自入口参数）`);
-	});
-
 	it("Agent 输入：没有注册过时报错里是掩码", async () => {
 		const id = await api.orchestrationWith(
 			scenario(

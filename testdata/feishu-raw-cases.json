@@ -2,7 +2,7 @@
 	"$comment": [
 		"飞书原始消息的校验规则与用例，和实现无关（docs/SEMANTICS.md §4.2、ADR 0020）。",
 		"控制面（apps/server/src/feishu/messages.ts 的 rawMessage）和 SDK（sdk/python/src/sfly/feishu.py 的 raw_message_problem，本地调试用）各有一份实现，都要通过这里的全部用例。",
-		"input.value 是 ctx.notify(message=...) 或飞书通知节点的原始消息（任意 JSON）；expected 是 {body} 或 {problem}：body 是原样发出的请求体（等于 input.value），problem 是不发送的原因，逐字相等。",
+		"input.value 是 ctx.notify(message=...) 的原始消息（任意 JSON）；expected 是 {body} 或 {problem}：body 是原样发出的请求体（等于 input.value），problem 是不发送的原因，逐字相等。",
 		"字符串值可以写成 {\"$repeat\": 单元, \"times\": 次数, \"suffix\": 末尾} 表示「单元重复若干次再接上末尾」（suffix 可省略），用来写超长的字符串；读用例的一方先把它们展开成字符串。"
 	],
 	"rule": [

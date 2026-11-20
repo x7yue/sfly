@@ -1,4 +1,4 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import pg from "pg";
 import type { TestControlPlane } from "./test-control-plane.js";
 
@@ -10,18 +10,18 @@ export async function storedDocument(
 	cp: TestControlPlane,
 	scenario: string,
 	number?: number,
-): Promise<OrchestrationDocument> {
+): Promise<StoredOrchestrationDocument> {
 	const client = new pg.Client({ connectionString: cp.database.url });
 	await client.connect();
 	try {
-		const { rows } = await client.query<{ document: OrchestrationDocument }>(
+		const { rows } = await client.query<{ document: StoredOrchestrationDocument }>(
 			`select v.document from orchestration_versions v
 			join orchestrations o on o.id = v.orchestration_id
 			where v.orchestration_id = $1 and v.number = coalesce($2::int, o.head_version)`,
 			[scenario, number ?? null],
 		);
 		if (rows.length !== 1) throw new Error(`场景 ${scenario} 没有版本 ${number ?? "（最新）"}`);
-		return (rows[0] as { document: OrchestrationDocument }).document;
+		return (rows[0] as { document: StoredOrchestrationDocument }).document;
 	} finally {
 		await client.end();
 	}
@@ -29,7 +29,7 @@ export async function storedDocument(
 
 /** 文档里某个入口节点（entry 或 subflow_entry）声明的参数。 */
 export function paramsOf(
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 	nodeId = "entry",
 ): Array<Record<string, unknown>> {
 	const node = document.nodes.find((n) => n.id === nodeId);

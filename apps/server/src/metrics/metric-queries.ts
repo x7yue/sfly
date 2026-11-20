@@ -7,10 +7,10 @@ import {
 	type MetricDeclaration,
 	type MetricSeries,
 	type MetricSeriesQuery,
-	type OrchestrationDocument,
 	type PlatformBucket,
 	type PlatformMetrics,
 	type RunMetricCatalog,
+	type StoredOrchestrationDocument,
 	seriesKey,
 	sortedLabels,
 } from "@sfly/schema";
@@ -652,7 +652,7 @@ export class MetricQueries {
 
 	async #run(
 		runId: string,
-	): Promise<{ document: OrchestrationDocument; run: typeof runs.$inferSelect } | undefined> {
+	): Promise<{ document: StoredOrchestrationDocument; run: typeof runs.$inferSelect } | undefined> {
 		if (!isUuid(runId)) return undefined;
 		const [row] = await this.deps.db
 			.select({ run: runs, document: orchestrationVersions.document })
