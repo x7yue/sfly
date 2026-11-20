@@ -120,9 +120,7 @@ function customMessage(check: { _zod: { def: { error?: unknown } } }): string | 
 	}
 }
 
-/**
- * 导出一个请求部分的 JSON Schema，同时收集没能带进去的约束。按输入方向。
- */
+/** 导出一个请求部分的 JSON Schema（输入方向），同时收集没能带进去的约束。 */
 function exportPart(
 	part: RoutePart,
 	schema: z.ZodType,
