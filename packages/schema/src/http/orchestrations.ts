@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { optionalLine } from "../display-text.js";
-import { OrchestrationDocument } from "../orchestration-document.js";
+import {
+	OrchestrationDocument,
+	STORED_NODE_KINDS,
+	StoredOrchestrationDocument,
+} from "../orchestration-document.js";
 import { ChartDeclaration } from "../package-metadata.js";
+import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
@@ -10,9 +15,34 @@ import { FeishuBotName } from "./feishu-bots.js";
  * 名称和说明不属于场景版本，可以随时修改；归档的场景不出现在默认列表、不能触发运行，可以恢复，不提供物理删除。
  * 场景版本不可修改：保存、恢复都是追加新版本。
  *
- * 响应里的 `document` 用 OrchestrationDocument：控制面保存时按它解析，读出时再解析一次（升级前保存的版本
- * 由此补上后来新增字段的默认值，例如注释框 `annotations`），满足「响应解析前后相同」的约定。
+ * 请求里的 `document` 用 OrchestrationDocument：节点都是现在支持的种类。响应里的 `document` 用 StoredOrchestrationDocument：
+ * 控制面保存时按前者解析，读出时按后者再解析一次（升级前保存的版本由此补上后来新增字段的默认值，例如注释框 `annotations`），
+ * 满足「响应解析前后相同」的约定；它多出的是已移除种类的节点（ADR 0028）：历史版本里留着它们，读取时认得，不能保存。
  */
+
+/** 保存的文档不合法时的说明：含已移除种类的节点时，写明是哪些、怎么替换（ADR 0028）。 */
+function invalidDocumentMessage(body: object): string {
+	const document = "document" in body ? body.document : undefined;
+	const nodes =
+		typeof document === "object" && document !== null && "nodes" in document
+			? document.nodes
+			: undefined;
+	const removed = removedNodesIn({
+		nodes: (Array.isArray(nodes) ? nodes : []).flatMap((n: unknown) =>
+			typeof n === "object" &&
+			n !== null &&
+			"id" in n &&
+			typeof n.id === "string" &&
+			"kind" in n &&
+			typeof n.kind === "string"
+				? [{ id: n.id, kind: n.kind }]
+				: [],
+		),
+	});
+	return removed.length > 0
+		? removedNodesMessage(removed)
+		: "document does not match the orchestration schema";
+}
 
 /**
  * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。
@@ -141,7 +171,7 @@ export const OrchestrationHeadView = z.object({
 	/** 经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。 */
 	author_via: z.string().nullable(),
 	created_at: Timestamp.nullable(),
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 });
 
 export const VersionSummaryView = z.object({
@@ -162,7 +192,7 @@ export const OrchestrationVersionView = z.object({
 	author: z.string(),
 	author_via: z.string().nullable(),
 	created_at: Timestamp,
-	document: OrchestrationDocument,
+	document: StoredOrchestrationDocument,
 });
 
 /**
@@ -210,16 +240,7 @@ export const OrchestrationStructure = z.object({
 	nodes: z.array(
 		z.object({
 			id: z.string(),
-			kind: z.enum([
-				"entry",
-				"subflow_entry",
-				"async",
-				"timer",
-				"sleep",
-				"stop_subflow",
-				"feishu_notify",
-				"package",
-			]),
+			kind: z.enum(STORED_NODE_KINDS),
 		}),
 	),
 	edges: z.array(
@@ -343,7 +364,8 @@ export const orchestrationsApi = {
 	 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
 	 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 	 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
-	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
+	 * 错误信息写明哪些节点、怎么替换。
 	 *
 	 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
 	 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
@@ -366,10 +388,7 @@ export const orchestrationsApi = {
 		}),
 		requestError: ({ body }) =>
 			typeof body === "object" && body !== null && Object.hasOwn(body, "base_version")
-				? {
-						code: "invalid_document",
-						message: "document does not match the orchestration schema",
-					}
+				? { code: "invalid_document", message: invalidDocumentMessage(body) }
 				: {
 						code: "base_version_required",
 						message: "base_version is required (use 0 for the first version)",

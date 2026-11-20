@@ -3,11 +3,10 @@ import {
 	blocksTrigger,
 	feishuBotInputs,
 	nodeNameWithId,
-	notifyBotValue,
 	referencedAgents,
 	referencesIn,
 } from "@sfly/orchestration";
-import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
+import type { PackageMetadata, StoredOrchestrationDocument } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
@@ -25,8 +24,8 @@ import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
 
 /**
  * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
- * `agent_input_not_registered`，飞书通知节点和「飞书机器人」类型的输入选的机器人没有登记的
- * `feishu_bot_not_registered`，飞书通知节点的机器人写了不支持的引用的 `feishu_bot_reference_unsupported`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
+ * `agent_input_not_registered`，「飞书机器人」类型的输入选的机器人没有登记的
+ * `feishu_bot_not_registered`，场景里还有已移除种类的节点的 `node_kind_removed`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
  * `agent_version_unsatisfied`、开发版本没有在节点派发到的在线 Agent 上加载的 `dev_package_not_loaded`
  * （dev-package-loaded.ts），以及触发时入口参数的值接到类型不符的输入的 `param_input_type_mismatch`（param-input-type.ts）。
  * 预检的警告（不阻断触发，{@link preflightWarnings}）也是这个结构。
@@ -41,12 +40,15 @@ export interface PreflightProblem {
  * 预检读哪个数据库由调用方传：触发准入（trigger-admission.ts）在事务里调用，传事务对象（#380：预检另从连接池取连接，会和等锁的写入互相等死）。
  * 预检和参数检查读库都是一条接一条地执行，不并发。
  */
-export type Preflight = (db: Db | Tx, doc: OrchestrationDocument) => Promise<PreflightProblem[]>;
+export type Preflight = (
+	db: Db | Tx,
+	doc: StoredOrchestrationDocument,
+) => Promise<PreflightProblem[]>;
 
 /** 文档锁定的节点包版本的元信息（包名 → 元信息；控制面没有这个版本的不在里面）。每个包查一次，一个一个地查。 */
 async function lockedPackages(
 	db: Db | Tx,
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 ): Promise<Map<string, PackageMetadata>> {
 	const locked = new Map<string, PackageMetadata>();
 	for (const [name, version] of Object.entries(doc.packages)) {
@@ -58,7 +60,7 @@ async function lockedPackages(
 
 /**
  * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用、输入的静态检查全部通过
- * （「Agent」类型的输入的常量是已注册的 Agent，飞书通知节点和「飞书机器人」类型的输入的常量是已登记的机器人），
+ * （「Agent」类型的输入的常量是已注册的 Agent，「飞书机器人」类型的输入的常量是已登记的机器人），
  * 包节点派发到的 Agent 都已注册（不要求在线），
  * 锁定开发版本的节点派发到的在线 Agent 已经加载了它（{@link checkDevPackagesLoaded}，不在线的 Agent 不知道它加载了什么，不阻断），
  * 且控制面版本满足节点包需要的 SDK 版本（#79），节点所在的 Agent 和「Agent」类型的输入引用的 Agent 满足
@@ -162,14 +164,14 @@ export function createPreflight(deps: { version: string }): Preflight {
  * 和 {@link Preflight} 的问题同一个结构，只看文档，不读库；预检接口（`GET /orchestrations/:id/preflight`）的 `warnings`，
  * 控制台的触发对话框和 `sfly run start` 都读它。
  */
-export function preflightWarnings(doc: OrchestrationDocument): PreflightProblem[] {
+export function preflightWarnings(doc: StoredOrchestrationDocument): PreflightProblem[] {
 	return [...subflowParamNotPassedWarnings(doc)];
 }
 
 /** 触发时按入口参数的实际值做的检查（{@link createParamsCheck}）。 */
 export type ParamsCheck = (
 	db: Db | Tx,
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	plan: RunPlan,
 	params: Record<string, unknown>,
 	origins: ParamOrigins,
@@ -178,11 +180,10 @@ export type ParamsCheck = (
 /**
  * 触发时按入口参数的实际值检查：「Agent」类型的输入引用入口参数时，取到的 Agent 必须已注册（不要求在线），
  * 版本满足节点包需要的 Agent 版本（`requires_agent`，{@link checkReferencedAgents}）；
- * 飞书通知节点和「飞书机器人」类型的输入引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
+ * 「飞书机器人」类型的输入引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
  * 整个引用入口参数的节点输入，值（触发时给的值、运行预设里的值、默认值，子流程里是异步任务节点传入的值）
  * 的类型要符合输入的类型，判断和派发时是同一个（{@link paramInputTypeProblems}）。
- * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过
- * （飞书通知节点在执行时再看一次，机器人不存在时不发送、节点照常成功）。
+ * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过。
  */
 export function createParamsCheck(): ParamsCheck {
 	return async (db, doc, plan, params, origins) => {
@@ -192,13 +193,6 @@ export function createParamsCheck(): ParamsCheck {
 		const chains = knownParams(plan, params);
 		for (const { chain, params: known, source } of chains) {
 			for (const node of chain.nodes) {
-				// 整值引用入口参数的才在这里按实际值查；其他写法的引用已经由静态检查（feishu_bot_reference_unsupported）阻断。
-				if (node.kind === "feishu_notify" && node.bot !== undefined) {
-					const bot =
-						notifyBotValue(node.bot).kind === "param" ? resolved(node.bot, known) : undefined;
-					if (typeof bot === "string" && bot !== "")
-						bots.push({ nodeId: node.id, node: nodeNameWithId(node), bot, source });
-				}
 				if (node.kind !== "package") continue;
 				const metadata = locked.get(node.package);
 				const type = metadata?.nodes.find((n) => n.name === node.node);

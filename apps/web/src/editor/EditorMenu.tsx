@@ -6,7 +6,7 @@ import {
 	nodeConnections,
 	type Position,
 } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { type CanvasMenuTarget, FitViewMenuItem } from "#/components/canvas/CanvasMenu";
 import type { DocNode } from "#/components/canvas/flow";
 import { ACTION, ARRANGE_LABEL } from "#/lib/copy";
@@ -22,12 +22,12 @@ import { PaneMenu } from "./PaneMenu";
 /** 编辑模式下修改场景的操作（运行状态模式下不给）。 */
 export interface EditorMenuActions {
 	/** 当前的场景文档（节点有几条入线、出线；断开连线作用的文档）。 */
-	doc: OrchestrationDocument;
+	doc: StoredOrchestrationDocument;
 	canUndo: boolean;
 	canRedo: boolean;
 	openAddMenu(request: AddRequest): void;
 	/** 把文档操作的结果写回画布（一步撤销）。 */
-	applyEdit(next: Pick<OrchestrationDocument, "nodes" | "edges">): void;
+	applyEdit(next: Pick<StoredOrchestrationDocument, "nodes" | "edges">): void;
 	deleteNodes(ids: readonly string[]): void;
 	/** 原地改显示名称（节点菜单的「重命名」）。 */
 	startRename(id: string): void;

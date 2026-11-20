@@ -7,7 +7,7 @@ import {
 	CLIENT_VERSION,
 	type ClientOptions,
 	createClient,
-	type OrchestrationDocumentInput,
+	type OrchestrationDocument,
 	type VersionMismatch,
 } from "@sfly/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -25,7 +25,7 @@ import type { TestControlPlane } from "./support/test-control-plane.js";
 const NICKNAME = "小明";
 const CLIENT_TAG = `sfly-client/${CLIENT_VERSION}`;
 
-const document = (env: string): OrchestrationDocumentInput => ({
+const document = (env: string): OrchestrationDocument => ({
 	nodes: [{ id: "entry", kind: "entry", params: [{ name: "env", type: "string", default: env }] }],
 });
 

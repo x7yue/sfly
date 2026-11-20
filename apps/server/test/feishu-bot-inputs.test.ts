@@ -296,26 +296,16 @@ describe("删除飞书机器人之前列出「飞书机器人」类型的输入�
 		};
 	};
 
-	it("列出最新场景版本里常量值是这个机器人的参数，指出节点和参数，和飞书通知节点一起按场景列", async () => {
+	it("列出最新场景版本里常量值是这个机器人的参数，指出节点和参数，按场景列", async () => {
 		await api.orchestrationWith(
-			flow([
-				alertNode("a1", { bot: "ops", backup: "dev" }),
-				alertNode("a2", { bot: "dev" }),
-				{ id: "n", kind: "feishu_notify", bot: "ops", text: "x" },
-			]),
+			flow([alertNode("a1", { bot: "ops", backup: "dev" }), alertNode("a2", { bot: "dev" })]),
 			"scenario-a",
 		);
 		await api.orchestrationWith(flow([alertNode("b1", { bot: "dev" })]), "scenario-b");
 
 		const ops = await references("ops");
 		expect(ops.map((s) => s.name)).toEqual(["scenario-a"]);
-		expect(ops[0]?.references).toEqual(
-			expect.arrayContaining([
-				{ kind: "feishu_bot_input", node_id: "a1", input: "bot" },
-				{ kind: "feishu_notify_node", node_id: "n" },
-			]),
-		);
-		expect(ops[0]?.references).toHaveLength(2);
+		expect(ops[0]?.references).toEqual([{ kind: "feishu_bot_input", node_id: "a1", input: "bot" }]);
 
 		const dev = await references("dev");
 		expect(dev.map((s) => s.name)).toEqual(["scenario-a", "scenario-b"]);

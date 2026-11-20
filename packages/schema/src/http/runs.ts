@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
+import { ParamType, STORED_NODE_KINDS } from "../orchestration-document.js";
 import { RunLogNodesParam } from "../run-log-scope.js";
 import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
@@ -17,17 +17,6 @@ import { PresetView } from "./presets.js";
 /** 路径里的 ID：不是 UUID 时控制面返回 404（与找不到相同），所以这里只要求是字符串。 */
 /** 运行 id（任务的日志、动作、产物接口里是任务 id）。 */
 const IdParams = z.object({ id: z.string() });
-
-const NODE_KINDS = [
-	"entry",
-	"subflow_entry",
-	"async",
-	"timer",
-	"sleep",
-	"stop_subflow",
-	"feishu_notify",
-	"package",
-] as const satisfies readonly OrchestrationNode["kind"][];
 
 export const RunStatus = z.enum(["running", "success", "failed", "cancelled"]);
 
@@ -115,7 +104,8 @@ export const NodeRunView = z.object({
 	node_id: z.string(),
 	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name: z.string().optional(),
-	kind: z.enum(NODE_KINDS),
+	/** 运行绑定的版本是已移除的节点种类（ADR 0028）时，就是它当时的种类名：历史运行照常能看。 */
+	kind: z.enum(STORED_NODE_KINDS),
 	/**
 	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
 	 * （这两种都没有尝试记录）。

@@ -2,11 +2,12 @@
 
 `sfly.feishu.card(标题, Markdown 正文, 颜色)` 组装 Markdown 卡片的请求体，用法是
 `ctx.notify(bot, message=sfly.feishu.card(...))`；
-规则与画布上飞书通知节点的「Markdown 卡片」格式相同。
+规则和用例在 `testdata/feishu-card-cases.json`。卡片只在这里组装：控制面把它当原始消息原样发出，
+不再组装一遍（运行通知的卡片是平台固定的结构，不走这里）。
 
-这个模块镜像控制面的 `apps/server/src/feishu/messages.ts`：卡片、文本消息的截断和原始消息的校验，
-规则和用例在 `testdata/feishu-card-cases.json`、`feishu-text-cases.json`、`feishu-raw-cases.json`，
-两边各有一份实现，跑同一组用例。文本消息的组装、原始消息的校验只在本地调试（`sfly.local`）里用：
+文本消息的截断和原始消息的校验镜像控制面的 `apps/server/src/feishu/messages.ts`，
+规则和用例在 `testdata/feishu-text-cases.json`、`feishu-raw-cases.json`，两边各有一份实现，
+跑同一组用例。文本消息的组装、原始消息的校验只在本地调试（`sfly.local`）里用：
 本地没有控制面，由它们按控制面的规则决定 `ctx.notify` 会发出什么。
 """
 

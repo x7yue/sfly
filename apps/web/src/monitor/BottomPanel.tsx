@@ -5,9 +5,9 @@ import {
 	LOG_LEVELS,
 	type LogLineView,
 	type NodeRunView,
-	type OrchestrationDocument,
 	type RunLogLine,
 	type RunView,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -118,7 +118,7 @@ export function BottomPanel({
 	doc,
 }: {
 	run: RunView;
-	doc: OrchestrationDocument | undefined;
+	doc: StoredOrchestrationDocument | undefined;
 }) {
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
@@ -831,7 +831,7 @@ function IoTab({
 }: {
 	node: NodeRunView | undefined;
 	attempt: AttemptView | undefined;
-	doc: OrchestrationDocument | undefined;
+	doc: StoredOrchestrationDocument | undefined;
 }) {
 	const secretKeys = useMemo(
 		() =>

@@ -7,7 +7,7 @@ import {
 	placeCopy,
 	readCopiedNode,
 } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { useEffect, useRef } from "react";
 import { type CanvasSelection, multipleNodes, soleNode } from "#/components/canvas/selection";
 import { writeClipboard } from "#/components/feedback/clipboard";
@@ -119,7 +119,7 @@ export function useNodeClipboard({
 	onPlace,
 }: {
 	enabled: boolean;
-	doc: OrchestrationDocument;
+	doc: StoredOrchestrationDocument;
 	/** 画布上的节点：新节点避开它们。 */
 	nodes: readonly { id: string; position: Position }[];
 	regions: readonly Box[];
@@ -129,9 +129,9 @@ export function useNodeClipboard({
 	viewportCenter(): Position;
 	/** 屏幕坐标换成画布坐标。 */
 	toFlowPosition(client: Position): Position;
-	onPlace(edit: { doc: OrchestrationDocument; id: string }): void;
+	onPlace(edit: { doc: StoredOrchestrationDocument; id: string }): void;
 }): NodeClipboard {
-	const place = (edit: DocumentEdit<OrchestrationDocument, { id: string }>) => {
+	const place = (edit: DocumentEdit<StoredOrchestrationDocument, { id: string }>) => {
 		if (edit.ok) onPlace(edit);
 		else notify.warning(edit.reason);
 	};
