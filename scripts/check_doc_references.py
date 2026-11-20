@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""文档里的引用有没有失效（`pnpm lint:docs` 的一部分，规则见 CODING_STANDARDS.md「文档」）。拦三类：
+"""文档里的引用有没有失效（`pnpm lint:docs` 的一部分，规则见 CODING_STANDARDS.md「文档」
+和 AGENTS.md「Agent skills」）。拦四类：
 
 1. Markdown 里反引号写的仓库路径不存在。只有以仓库顶层目录名或根目录文件名开头的才算仓库路径
    （`apps/web/src/lib/api.ts`、`README.md`）；`task.json`、`out/…`、`~/.sfly/…` 这类运行时才有的
@@ -11,7 +12,9 @@
    源码注释里的也查。
 3. Markdown 相对链接指向的文件或标题（锚点）不存在。
 4. 仓库自带的 skill（AGENTS.md）：真实文件在 `.agents/skills/<名称>/`（要有 SKILL.md），
-   `.claude/skills/<名称>` 是指向它的软链接，两边一一对应。
+   `.claude/skills/<名称>` 是指向它的软链接（`../../.agents/skills/<名称>`），两边一一对应：缺软链、
+   软链指错、断链（skill 删掉或改过名）、`.claude/skills` 里放了真实目录或普通文件，都报；报错里
+   以 `$ ` 开头的行是修复命令，可以照着执行。skill 的问题不能放行。
 
 不查：`docs/adr`、`docs/research`（旧名照旧保留）、`docs/perf/<版本>/`（历史报告）、生成的代码、
 测试夹具；符号链接的 .md 只查链接指向的那份。没有可用的 git 时说明跳过了检查，退出码 0
@@ -21,10 +24,13 @@
 （原因必填；引用不再需要放行时，这一行也会报错，要删掉）。每处失效的引用报：文件和行、引用原文、
 能猜出来的正确写法。失败时退出码 1。
 
-已知的盲点：章节号存在但指错了节；顶层目录整个改名后旧名开头的路径（顶层名取自现在的仓库）；
-顶层名大小写写错的路径；`./` 开头的路径；缩进 4 格以上的代码块；经目录软链接的路径；
-`§4.1、4.2` 里没有 `§` 的后一个号。已知的误报：碰巧以顶层目录名开头的运行时路径（写进放行名单）；
-三份文档里指别的文档的「第 N 节」也会被要求改成 `§N`。
+已知的盲点（查不出，不会报错）：章节号存在但指错了节；顶层目录整个改名后旧名开头的路径（顶层名取自
+现在的仓库）；顶层名大小写写错的路径；`./` 开头的路径；`§4.1、4.2` 里没有 `§` 的后一个号。
+已知的误报（会报错，要放行或改写）：碰巧以顶层目录名开头的运行时路径（写进放行名单）；三份文档里
+指别的文档的「第 N 节」也会被要求改成 `§N`；没有围栏的缩进代码块（缩进 4 格以上、前面是空行）里的
+链接和反引号路径会被当正文检查（改成带围栏的代码块，或写进放行名单）。
+已知的问题：`git rev-parse` 因别的原因失败（例如 safe.directory 拒绝）时，也说成「不是 git 工作区」
+并跳过检查。
 """
 
 from __future__ import annotations
@@ -68,7 +74,7 @@ LOOSE_BEFORE = re.compile(rf"((?:docs/)?(?P<stem>{DOC_NAMES})(?:\.md)?`?\s*(?:�
 # 两个 § 之间的空档：「、」「，」「,」，前面可以带「标题」或「第 N 条」。
 LIST_SEPARATOR = re.compile(r"(?:「[^」]*」|\s?第\s?\d+(?:\.\d+)?\s?条)?[、，,]\s?")
 # 别的规范的章节（RFC 9110 §15.5.20、ADR 0024 §2）不是这三份文档的。
-EXTERNAL_BEFORE = re.compile(r"\b(?:RFC|ADR)\s?-?\d+\s?$")
+EXTERNAL_BEFORE = re.compile(r"(?:\b(?:RFC|ADR)\s?-?\d+|docs/adr/[\w./-]+\.md)`?\s*(?:的\s*)?$")
 # `第 4.1 节`、`第 3.3、3.4 节`、`见 7.4 节`；「4.2 节点包格式」里的「节点」不算。
 SECTION_WORD = re.compile(
     rf"第\s?{SECTION_NUMBER}(?:[、,]\s?{SECTION_NUMBER})*\s?节(?!点)"
@@ -79,7 +85,7 @@ SECTION_WORD_AFTER_DOC = re.compile(
 )
 HEADING_NUMBER = re.compile(r"^#{2,6}\s+(\d+(?:\.\d+)*)\.?\s")
 HEADING = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$")
-FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CODE_SPAN = re.compile(r"(`+)(.+?)(?<!`)\1(?!`)")
 INLINE_LINK = re.compile(
     r"!?\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)"
@@ -96,7 +102,8 @@ class Finding:
     line: int
     ref: str  # 放行时写的引用原文
     message: str
-    hints: list[str] = field(default_factory=list)
+    hints: list[str] = field(default_factory=list)  # 以「$ 」开头的是可以照着执行的命令
+    kind: str = "ref"  # ref：文档引用；skill：skill 目录布局（不能放行，规则在 AGENTS.md）
 
 
 def run_git(*args: str, ok: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess[str]:
@@ -153,8 +160,23 @@ class Repo:
         self._slugs: dict[str, list[str]] = {}
         self._history: dict[str, tuple[str, str, str]] | None = None
 
-    def exists(self, path: str) -> bool:
-        return path in self.files or path in self.dirs
+    def exists(self, path: str, _depth: int = 0) -> bool:
+        if path in self.files or path in self.dirs:
+            return True
+        # 经目录软链接的路径（.claude/skills/<名称>/SKILL.md）：换成链接指向的位置再找。
+        parts = path.split("/")
+        for size in range(len(parts) - 1, 0, -1):
+            prefix = "/".join(parts[:size])
+            if prefix in self.symlinks and _depth < 8:
+                try:
+                    destination = os.readlink(ROOT / prefix)
+                except OSError:
+                    return False
+                resolved = posixpath.normpath(
+                    posixpath.join(posixpath.dirname(prefix), destination, *parts[size:])
+                )
+                return not resolved.startswith("..") and self.exists(resolved, _depth + 1)
+        return False
 
     def is_ignored(self, path: str) -> bool:
         """被 .gitignore 忽略（构建产物、本地目录）：不在仓库里是正常的。"""
@@ -535,6 +557,7 @@ def check_sections(repo: Repo) -> list[Finding]:
 
 
 def skill_names(repo: Repo, root: str) -> set[str]:
+    """root 下的第一级名字（目录里有文件的目录、软链接、直接放在 root 下的普通文件）。"""
     return {
         path.split("/")[2] for path in repo.files if path.startswith(root) and path.count("/") >= 2
     }
@@ -543,40 +566,84 @@ def skill_names(repo: Repo, root: str) -> set[str]:
 def check_skills(repo: Repo) -> list[Finding]:
     """真实文件在 .agents/skills/<名称>/（要有 SKILL.md），.claude/skills/<名称> 是它的软链接。"""
     findings: list[Finding] = []
+    agents = skill_names(repo, ".agents/skills/")
+    claude = skill_names(repo, ".claude/skills/")
 
-    def add(path: str, message: str, name: str, hint: str = "") -> None:
-        fix = f"ln -s ../../.agents/skills/{name} .claude/skills/{name}"
-        findings.append(Finding(path, 1, name, message, [hint, fix] if hint else [fix]))
+    def report(path: str, name: str, message: str, *hints: str) -> None:
+        findings.append(Finding(path, 1, name, message, list(hints), kind="skill"))
 
-    for name in sorted(skill_names(repo, ".claude/skills/")):
+    def link_command(name: str) -> str:
+        return f"$ ln -sfn ../../.agents/skills/{name} .claude/skills/{name}"
+
+    for name in sorted(claude):
         entry = f".claude/skills/{name}"
-        if entry not in repo.symlinks:
-            hint = (
-                f"真实文件挪到 .agents/skills：git mv {entry} .agents/skills/{name}，再建软链接："
+        if entry in repo.files and entry not in repo.symlinks:
+            report(
+                entry,
+                name,
+                f"{entry} 是普通文件：.claude/skills 里只能放指向 .agents/skills/<名称> 的软链接，"
+                "这个文件不是。",
+                "不需要它就删掉：",
+                f"$ git rm -f {entry}",
             )
-            add(
-                entry, f"{entry} 不是软链接：skill 的真实文件在 .agents/skills/{name}。", name, hint
-            )
-            continue
-        try:
-            target = posixpath.normpath(posixpath.join(".claude/skills", os.readlink(ROOT / entry)))
-        except OSError:
-            continue
-        if target != f".agents/skills/{name}":
-            add(entry, f"{entry} 指向 {target}，应该指向 .agents/skills/{name}。", name)
-    for name in sorted(skill_names(repo, ".agents/skills/")):
+        elif entry not in repo.symlinks:
+            if name in agents:
+                report(
+                    entry,
+                    name,
+                    f"{entry} 不是软链接，.agents/skills/{name} 也已经有了：真实文件只能有一份。",
+                    f"把 {entry} 里需要的内容合并到 .agents/skills/{name}，再去掉它、建软链接：",
+                    f"$ git rm -rf -q {entry}",
+                    link_command(name),
+                )
+            else:
+                report(
+                    entry,
+                    name,
+                    f"{entry} 不是软链接：skill 的真实文件在 .agents/skills/{name}。",
+                    "把真实文件挪到 .agents/skills，再建软链接：",
+                    f"$ git mv {entry} .agents/skills/{name}",
+                    link_command(name),
+                )
+        else:
+            try:
+                destination = os.readlink(ROOT / entry)
+            except OSError:
+                continue
+            target = posixpath.normpath(posixpath.join(".claude/skills", destination))
+            if target != f".agents/skills/{name}":
+                hints = [link_command(name)] if name in agents else [f"$ git rm -f {entry}"]
+                if name not in agents:
+                    hints.insert(0, f".agents/skills/{name} 不存在，没有可指向的 skill：")
+                report(
+                    entry,
+                    name,
+                    f"{entry} 指向 {destination}，应该指向 ../../.agents/skills/{name}。",
+                    *hints,
+                )
+            elif name not in agents:
+                report(
+                    entry,
+                    name,
+                    f"{entry} 指向的 .agents/skills/{name} 不存在（skill 删了或改了名）。",
+                    "skill 已经不在了就去掉这个链接；改过名的，新名字的链接另行建立：",
+                    f"$ git rm -f {entry}",
+                )
+    for name in sorted(agents):
         entry = f".agents/skills/{name}"
         if entry in repo.symlinks:
-            findings.append(
-                Finding(entry, 1, name, f"{entry} 是软链接：skill 的真实文件要放在这里。")
-            )
+            report(entry, name, f"{entry} 是软链接：skill 的真实文件要放在这里。")
             continue
         if f"{entry}/SKILL.md" not in repo.files:
-            findings.append(
-                Finding(entry, 1, name, f"{entry}/SKILL.md 不存在：skill 要有 SKILL.md。")
+            report(entry, name, f"{entry}/SKILL.md 不存在：skill 要有 SKILL.md。")
+        if name not in claude:  # 放了真实目录或文件的，上面已经报过
+            report(
+                entry,
+                name,
+                f".claude/skills/{name} 没有指向 {entry} 的软链接。",
+                "建软链接：",
+                link_command(name),
             )
-        if f".claude/skills/{name}" not in repo.symlinks:
-            add(entry, f".claude/skills/{name} 没有指向 {entry} 的软链接。", name, "建软链接：")
     return findings
 
 
@@ -663,16 +730,24 @@ def main() -> int:
         print(f"{finding.path}:{finding.line}: {finding.message}", file=sys.stderr)
         for hint in finding.hints:
             print(f"  {hint}", file=sys.stderr)
-    example = next((f for f in remaining if f.path != ALLOW_FILE), None)
-    print(f"\n共 {len(remaining)} 处文档引用有问题。", file=sys.stderr)
-    print(
-        "  改写法见 CODING_STANDARDS.md「文档」。确实要这样写（例如描述用户项目里的路径）时，",
-        file=sys.stderr,
-    )
-    entry = (
-        f"{example.path} | {example.ref} | <原因>" if example else "<文件> | <引用原文> | <原因>"
-    )
-    print(f"  在 {ALLOW_FILE} 加一行（原因必填）：{entry}", file=sys.stderr)
+    references = [f for f in remaining if f.kind == "ref"]
+    skills = [f for f in remaining if f.kind == "skill"]
+    if references:
+        print(f"\n共 {len(references)} 处文档引用有问题。", file=sys.stderr)
+        print(
+            "  改写法见 CODING_STANDARDS.md「文档」。确实要这样写（例如描述用户项目里的路径）时，",
+            file=sys.stderr,
+        )
+        example = next((f for f in references if f.path != ALLOW_FILE), None)
+        entry = (
+            f"{example.path} | {example.ref} | <原因>"
+            if example
+            else "<文件> | <引用原文> | <原因>"
+        )
+        print(f"  在 {ALLOW_FILE} 加一行（原因必填）：{entry}", file=sys.stderr)
+    if skills:
+        print(f"\n共 {len(skills)} 处 skill 目录布局不符。", file=sys.stderr)
+        print("  规则见 AGENTS.md「Agent skills」；这一项不能放行。", file=sys.stderr)
     return 1
 
 

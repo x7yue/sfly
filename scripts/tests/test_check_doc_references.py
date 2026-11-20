@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -705,8 +706,8 @@ def test_a_real_directory_in_claude_skills_fails_and_says_how_to_move_it(repo: P
 
     assert result.returncode == 1
     assert ".claude/skills/gamma" in result.stderr
-    assert "ln -s ../../.agents/skills/gamma .claude/skills/gamma" in result.stderr
-    assert "git mv .claude/skills/gamma .agents/skills/gamma" in result.stderr
+    assert "$ ln -sfn ../../.agents/skills/gamma .claude/skills/gamma" in result.stderr
+    assert "$ git mv .claude/skills/gamma .agents/skills/gamma" in result.stderr
 
 
 def test_a_skill_without_a_link_in_claude_skills_fails_and_says_how_to_link_it(
@@ -718,7 +719,7 @@ def test_a_skill_without_a_link_in_claude_skills_fails_and_says_how_to_link_it(
 
     assert result.returncode == 1
     assert ".agents/skills/delta" in result.stderr
-    assert "ln -s ../../.agents/skills/delta .claude/skills/delta" in result.stderr
+    assert "$ ln -sfn ../../.agents/skills/delta .claude/skills/delta" in result.stderr
 
 
 def test_a_link_to_the_wrong_place_fails(repo: Path) -> None:
@@ -730,7 +731,7 @@ def test_a_link_to_the_wrong_place_fails(repo: Path) -> None:
 
     assert result.returncode == 1
     assert ".claude/skills/epsilon" in result.stderr
-    assert "ln -s ../../.agents/skills/epsilon .claude/skills/epsilon" in result.stderr
+    assert "$ ln -sfn ../../.agents/skills/epsilon .claude/skills/epsilon" in result.stderr
 
 
 def test_a_skill_directory_without_skill_md_fails(repo: Path) -> None:
@@ -751,6 +752,194 @@ def test_a_skill_that_is_itself_a_link_in_agents_skills_fails(repo: Path) -> Non
 
     assert result.returncode == 1
     assert ".agents/skills/eta" in result.stderr
+
+
+def broken_real_directory(repo: Path) -> None:
+    (repo / ".agents" / "skills").mkdir(parents=True)
+    put(repo, {".claude/skills/gamma/SKILL.md": "# skill\n"})
+
+
+def broken_both_sides_have_a_real_directory(repo: Path) -> None:
+    add_skill(repo, "alpha")
+    add_skill(repo, "gamma", link=False)
+    put(repo, {".claude/skills/gamma/SKILL.md": "# skill\n"})
+
+
+def broken_no_link(repo: Path) -> None:
+    add_skill(repo, "alpha")
+    add_skill(repo, "gamma", link=False)
+
+
+def broken_link_points_elsewhere(repo: Path) -> None:
+    add_skill(repo, "gamma", link=False)
+    (repo / ".claude" / "skills").mkdir(parents=True)
+    os.symlink("../../docs/guide", repo / ".claude" / "skills" / "gamma")
+    (repo / "docs" / "guide").mkdir(parents=True, exist_ok=True)
+
+
+def broken_absolute_link(repo: Path) -> None:
+    add_skill(repo, "gamma", link=False)
+    (repo / ".claude" / "skills").mkdir(parents=True)
+    os.symlink(repo / ".agents" / "skills" / "gamma", repo / ".claude" / "skills" / "gamma")
+
+
+def broken_dangling_link_to_another_name(repo: Path) -> None:
+    add_skill(repo, "gamma", link=False)
+    (repo / ".claude" / "skills").mkdir(parents=True)
+    os.symlink("../../.agents/skills/nope", repo / ".claude" / "skills" / "gamma")
+
+
+def broken_skill_was_renamed(repo: Path) -> None:
+    add_skill(repo, "old")
+    (repo / ".agents" / "skills" / "old").rename(repo / ".agents" / "skills" / "new")
+
+
+def broken_link_without_a_skill(repo: Path) -> None:
+    (repo / ".claude" / "skills").mkdir(parents=True)
+    os.symlink("../../.agents/skills/ghost", repo / ".claude" / "skills" / "ghost")
+
+
+def broken_plain_file(repo: Path) -> None:
+    put(repo, {".claude/skills/README.md": "# 说明\n"})
+
+
+BROKEN_SKILL_LAYOUTS = [
+    broken_real_directory,
+    broken_both_sides_have_a_real_directory,
+    broken_no_link,
+    broken_link_points_elsewhere,
+    broken_absolute_link,
+    broken_dangling_link_to_another_name,
+    broken_skill_was_renamed,
+    broken_link_without_a_skill,
+    broken_plain_file,
+]
+
+
+@pytest.mark.parametrize("layout", BROKEN_SKILL_LAYOUTS, ids=lambda f: f.__name__)
+def test_running_the_commands_in_the_report_fixes_every_broken_skill_layout(
+    repo: Path, layout: Callable[[Path], None]
+) -> None:
+    layout(repo)
+    result = check(repo)
+    assert result.returncode == 1
+    commands = [
+        line.removeprefix("  $ ") for line in result.stderr.splitlines() if line.startswith("  $ ")
+    ]
+    assert commands, result.stderr
+
+    for command in commands:
+        subprocess.run(["bash", "-c", command], cwd=repo, env=ENV, check=True, capture_output=True)
+    fixed = check(repo)
+
+    assert fixed.returncode == 0, f"{commands}\n{fixed.stderr}"
+
+
+def test_a_link_whose_skill_directory_does_not_exist_fails(repo: Path) -> None:
+    broken_link_without_a_skill(repo)
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".claude/skills/ghost" in result.stderr
+    assert ".agents/skills/ghost 不存在" in result.stderr
+    assert "$ git rm -f .claude/skills/ghost" in result.stderr
+
+
+def test_renaming_a_skill_reports_both_the_stale_link_and_the_unlinked_new_name(
+    repo: Path,
+) -> None:
+    broken_skill_was_renamed(repo)
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".agents/skills/old 不存在" in result.stderr
+    assert ".claude/skills/new 没有指向 .agents/skills/new 的软链接" in result.stderr
+
+
+def test_a_plain_file_in_claude_skills_is_not_treated_as_a_skill(repo: Path) -> None:
+    broken_plain_file(repo)
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "只能放指向 .agents/skills/<名称> 的软链接" in result.stderr
+    assert "git mv" not in result.stderr
+    assert "SKILL.md" not in result.stderr
+
+
+def test_skill_problems_are_summed_up_apart_from_reference_problems(repo: Path) -> None:
+    add_skill(repo, "delta", link=False)
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "1 处 skill 目录布局不符" in result.stderr
+    assert "AGENTS.md「Agent skills」" in result.stderr
+    assert "文档引用有问题" not in result.stderr
+    assert "doc-references.allow" not in result.stderr
+    assert "CODING_STANDARDS.md" not in result.stderr
+
+
+def test_the_summary_for_a_mix_names_each_kind_and_only_offers_the_allow_list_for_references(
+    repo: Path,
+) -> None:
+    add_skill(repo, "delta", link=False)
+    put(repo, {"README.md": "见 `apps/server/src/engine/nope.ts`\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert "共 1 处文档引用有问题" in result.stderr
+    assert "1 处 skill 目录布局不符" in result.stderr
+    assert "README.md | apps/server/src/engine/nope.ts | <原因>" in result.stderr
+    assert ".agents/skills/delta | " not in result.stderr
+
+
+def test_a_path_that_goes_through_a_symlinked_directory_exists(repo: Path) -> None:
+    add_skill(repo, "alpha")
+    put(repo, {"README.md": "见 `.claude/skills/alpha/SKILL.md` 和 `.claude/skills/alpha/`。\n"})
+    assert check(repo).returncode == 0
+
+    put(repo, {"README.md": "见 `.claude/skills/alpha/missing.md`。\n"})
+    result = check(repo)
+
+    assert result.returncode == 1
+    assert ".claude/skills/alpha/missing.md" in result.stderr
+
+
+def test_a_fence_indented_four_spaces_or_more_inside_a_list_hides_its_content(repo: Path) -> None:
+    put(
+        repo,
+        {
+            "docs/guide/page.md": (
+                "# 页面\n\n- 步骤\n\n        ```sh\n"
+                "        见 [x](gone.md) 和 `apps/server/gone.ts`\n        ```\n"
+            )
+        },
+    )
+
+    result = check(repo)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "// 见 ADR 0021 的 §3",
+        "// 见 `ADR 0021` §3",
+        "// 见 docs/adr/0005-x.md §2",
+        "// 见 docs/adr/0005-x.md 的 §2",
+    ],
+)
+def test_other_ways_of_pointing_at_an_adr_section_are_not_ours(repo: Path, text: str) -> None:
+    put(repo, {"apps/server/src/engine/ids.ts": text + "\n"})
+
+    result = check(repo)
+
+    assert result.returncode == 0, result.stderr
 
 
 # —— 放行 ——
