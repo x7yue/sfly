@@ -9,7 +9,8 @@
 #     sfly init 建项目的版本（sdk/python/src/sfly/cli/init.py）与它一致。
 #   - PostgreSQL 镜像：CI 的服务容器、pnpm heavy --pg、pnpm linux 用同一个主版本。
 # 确实要不一样时，在那一行写 `sfly-version-ok: <原因>`（原因必填），这一处就不参与比较。
-# 检查在某个文件里找不到要比较的那一处时也失败：说明文件里的写法变了，检查没有跟上，要改的是这个脚本的正则。
+# 要比较的文件不存在（删了、改名了），或者文件在但找不到要比较的那一处，也失败：前一种要改这个脚本里的路径，
+# 后一种说明文件里的写法变了、检查没有跟上，要改的是这个脚本的正则。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,6 +36,11 @@ expect_same() {
 	while (($#)); do
 		file=$1 regex=$2
 		shift 2
+		if [[ ! -f $file ]]; then
+			echo "${name}：${file} 不存在（文件被删除或改名了？）：改 scripts/check-node-version.sh 里这一处的路径，指向它现在的位置。" >&2
+			failed=1
+			continue
+		fi
 		found=0
 		while IFS=$'\037' read -r where value excused; do
 			found=1

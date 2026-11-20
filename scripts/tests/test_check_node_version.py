@@ -269,7 +269,37 @@ def test_a_place_the_check_cannot_find_fails_instead_of_passing(
 
     assert result.returncode == 1
     assert f"在 {rel} 里找不到" in result.stderr
+    assert "写法变了" in result.stderr
+    assert "不存在" not in result.stderr
     assert name in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("rel", "name"),
+    [
+        ("apps/web/package.json", "Playwright"),
+        (".github/workflows/ci.yml", "Playwright"),
+        (".python-version", "Python"),
+        ("agent/src/environment.rs", "Python"),
+        ("sdk/python/src/sfly/cli/init.py", "Python"),
+        ("scripts/heavy.sh", "PostgreSQL"),
+        ("scripts/linux/run.sh", "PostgreSQL"),
+    ],
+)
+def test_a_file_that_is_gone_is_reported_as_a_path_not_a_pattern(
+    repo: Path, rel: str, name: str
+) -> None:
+    (repo / rel).unlink()
+
+    result = run(repo)
+
+    assert result.returncode == 1
+    assert f"{rel} 不存在" in result.stderr
+    assert "路径" in result.stderr
+    assert name in result.stderr
+    # 不是「写法变了、改正则」，也没有 grep 自己的 No such file 混进来。
+    assert "写法变了" not in result.stderr
+    assert "No such file" not in result.stderr
 
 
 @pytest.mark.parametrize("env", [{}, C_LOCALE], ids=["utf8", "c-locale"])
