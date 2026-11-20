@@ -1,8 +1,7 @@
 import type { ChartView, FocusItemView, OrchestrationDocument } from "@sfly/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { orchestrationVersions } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 import { declaredNodeType } from "../metrics/node-types.js";
 import type { FocusItem } from "./focus-list.js";
 

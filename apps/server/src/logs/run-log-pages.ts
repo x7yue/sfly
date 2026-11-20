@@ -12,7 +12,7 @@ import {
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { runs } from "../db/schema.js";
-import { getRunView } from "../engine/run-queries.js";
+import { getRunView } from "../runs/run-read.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
 import type { LogLineView, TaskLogInfo, TaskLogs } from "./task-logs.js";

@@ -6,7 +6,7 @@ import { eq, inArray } from "drizzle-orm";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import {
 	chainInstances,
 	orchestrationVersions,
@@ -15,7 +15,6 @@ import {
 	type TaskProgress,
 	tasks,
 } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 import { Topics } from "../sse/topics.js";
 import { clipChars } from "../util/text.js";
 import { readLogPage } from "./log-pages.js";

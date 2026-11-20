@@ -10,13 +10,14 @@ import {
 import type { AssignTaskSchema } from "@sfly/proto";
 import type { PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
+import type { Tx } from "../db/database.js";
 import { type AgentInfo, nodePackages } from "../db/schema.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
 import type { PackageNode } from "./chain.js";
 import { isAlways } from "./failures.js";
 import { resolveReferencedAgents } from "./referenced-agents.js";
-import type { TaskRow, Tx } from "./step.js";
+import type { TaskRow } from "./step.js";
 
 /** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
 const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;

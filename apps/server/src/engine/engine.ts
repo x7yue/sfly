@@ -27,7 +27,7 @@ import type { AgentEnvironmentFor } from "../agents/agent-environment.js";
 import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
 import { loadAgentTasks } from "../agents/agent-tasks.js";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import {
 	agents,
 	chainInstances,
@@ -84,7 +84,6 @@ import {
 	type RunRow,
 	type Step,
 	type TaskRow,
-	type Tx,
 } from "./step.js";
 import { isWaitNode, startWait, wakeTimers } from "./waits.js";
 
@@ -1010,11 +1009,7 @@ export class Engine implements AgentSessionHandler {
 			.returning({ id: runs.id });
 		if (!finished) return;
 		// 运行通知和运行的最终状态在同一个事务里（#232）。
-		await this.deps.notifications.runFinished(step, {
-			run,
-			status: runStatus,
-			document: await this.#document(step.tx, run.orchestrationVersionId),
-		});
+		await this.deps.notifications.runFinished(step, { run, status: runStatus });
 	}
 
 	/**

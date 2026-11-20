@@ -1,8 +1,7 @@
 import { feishuBotNotRegistered } from "@sfly/orchestration";
 import { inArray } from "drizzle-orm";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { feishuBots } from "../db/schema.js";
-import type { Tx } from "../engine/step.js";
 
 /** 节点选择的一个飞书机器人（触发时按实际值检查）。 */
 export interface BotToCheck {

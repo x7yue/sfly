@@ -223,6 +223,18 @@ describe("运行视图", () => {
 			expect(((await res.json()) as { error: { code: string } }).error.code).toBe("not_found");
 		});
 
+		it("运行编号写成大写时照样查得到（UUID 不分大小写）", async () => {
+			await (await connect({ name: "agent-a" })).disconnect();
+			const id = await api.orchestrationWith(chain([{ id: "a" }]));
+			const runId = await api.triggerOk(id);
+			const upper = runId.toUpperCase();
+
+			const view = await api.get(`/runs/${upper}`);
+			expect(view.status).toBe(200);
+			expect(((await view.json()) as RunView).id).toBe(runId);
+			expect((await api.get(`/runs/${upper}/focus`)).status).toBe(200);
+		});
+
 		it("节点详情里每次尝试都有输入、输出、所在 Agent 和排队 / 开始 / 结束时间", async () => {
 			const clock = cp.clock as ManualClock;
 			await (await connect({ name: "agent-a" })).disconnect();
