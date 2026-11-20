@@ -24,4 +24,4 @@ Single context: `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
 ### Branches, PRs and releases
 
-Read it before creating a branch, opening or merging a PR, or closing an issue: roadmap issues go through `dev` (its `dev` section also says who may merge), everything else through `main`. See `docs/agents/branching-and-release.md`.
+Read it before creating a branch, opening or merging a PR, or closing an issue: roadmap issues go through `dev`, everything else through `main`; each branch's section says when a PR may be merged and by whom. See `docs/agents/branching-and-release.md`.
