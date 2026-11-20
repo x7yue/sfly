@@ -2,10 +2,8 @@ import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import {
 	InvalidReferenceError,
-	inputProblems,
 	NODE_DEFAULTS,
 	type ResolveScope,
-	referencedFeishuBots,
 	resolveInputs,
 } from "@sfly/orchestration";
 import {
@@ -22,7 +20,6 @@ import {
 	ACTIVE_STATUSES,
 	type OrchestrationDocument,
 	type OrchestrationNode,
-	type PackageMetadata,
 	type RunningTaskView,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
@@ -37,7 +34,6 @@ import {
 	agents,
 	chainInstances,
 	type ErrorKind,
-	nodePackages,
 	ON_AGENT,
 	orchestrationVersions,
 	runs,
@@ -52,8 +48,6 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
-import { agentRequirementProblem } from "../packages/requires-agent.js";
-import { sdkRequirementProblem } from "../packages/requires-sdk.js";
 import type { Mirrors } from "../public-config.js";
 import type {
 	TriggerAdmission,
@@ -63,6 +57,7 @@ import type {
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
+import type { AssignContentOf } from "./assign-content.js";
 import {
 	type AsyncTaskNode,
 	agentFor,
@@ -83,7 +78,6 @@ import {
 	renewHeld,
 } from "./leases.js";
 import { fillParams } from "./params.js";
-import { resolveReferencedAgents } from "./referenced-agents.js";
 import {
 	type CancelOrder,
 	type ChainDriver,
@@ -97,13 +91,7 @@ import {
 } from "./step.js";
 import { isWaitNode, startWait, wakeTimers } from "./waits.js";
 
-/** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
-export const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
-
 export { DEFAULT_LEASE_MS } from "./leases.js";
-
-/** 开发版本（docs/SEMANTICS.md §7）。 */
-const DEV_VERSION = "dev";
 
 /** 节点进入 queued 后最多排队多久（§3.3 queue_timeout，默认 10 分钟）。 */
 const queueTimeoutMs = (node: PackageNode) =>
@@ -226,10 +214,8 @@ export class Engine implements AgentSessionHandler {
 			clock: Clock;
 			mutex: Mutex;
 			hub: AgentHub;
-			/** 节点包归档的下载地址（Agent 通过 HTTP 下载）。 */
-			packageArchiveUrl: (name: string, version: string) => string;
-			/** 任务产物的上传地址（#18，Agent 任务结束后通过 HTTP 上传）。 */
-			artifactUploadUrl: (taskId: string) => string;
+			/** 派发内容：这次尝试派什么（src/engine/assign-content.ts）。 */
+			assignContent: AssignContentOf;
 			/** 触发准入：场景现在能不能触发、用什么参数触发（src/runs/trigger-admission.ts）。 */
 			admitTrigger: TriggerAdmission;
 			/** 飞书通知节点和运行通知：在 step 的事务里入队，提交后写日志、唤醒投递（src/feishu/engine-notifications.ts）。 */
@@ -1319,107 +1305,40 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 解析输入、按节点类型的输入 schema 校验，并把任务标记为 dispatched；
-	 * 引用无效或输入校验失败时任务以 config_error 失败（不重试）并返回 undefined。
+	 * 把任务标记为 dispatched（派发即设租约）并返回要发给 Agent 的派发消息。派发什么由派发内容回答
+	 * （assign-content.ts）；它说不能派发时任务以 config_error 或 env_error 失败（不重试），返回 undefined。
 	 */
 	async #prepareAssign(step: Step, conn: AgentConnection, task: TaskRow) {
 		const { run, chain, plan, index, node } = await this.#locate(step.tx, task);
 		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
-
-		let inputs: Record<string, unknown>;
-		try {
-			inputs = resolveInputs(node.inputs, await this.#scope(step.tx, chain, plan, index));
-		} catch (error) {
-			if (!(error instanceof InvalidReferenceError)) throw error;
-			await this.#failTask(step, task, "config_error", error.message);
+		const content = await this.deps.assignContent(step.tx, {
+			task,
+			node,
+			packageVersion: document.packages[node.package] ?? "",
+			scope: await this.#scope(step.tx, chain, plan, index),
+			target: conn,
+		});
+		if (!content.ok) {
+			if (content.inputs) {
+				await step.tx.update(tasks).set({ inputs: content.inputs }).where(eq(tasks.id, task.id));
+			}
+			await this.#failTask(step, task, content.kind, content.message);
 			return undefined;
 		}
-
-		const packageVersion = document.packages[node.package] ?? "";
-		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
-		const [archive] = await step.tx
-			.select({ sha256: nodePackages.sha256, metadata: nodePackages.metadata })
-			.from(nodePackages)
-			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
-		// 开发版本的元信息由加载它的 Agent 上报；不知道节点类型时不校验（Agent 会以 env_error 失败）。
-		const metadata =
-			archive?.metadata ??
-			(packageVersion === DEV_VERSION
-				? (conn.info.dev_packages?.find((p) => p.name === node.package)?.metadata as
-						| PackageMetadata
-						| null
-						| undefined)
-				: undefined);
-		// 节点包需要的 SDK 比 Agent 上的新：在 Agent 上运行只会得到难以理解的错误（#79）。
-		const pkg = { name: node.package, version: packageVersion };
-		const self = { name: conn.name, version: conn.info.agent_version };
-		// 节点包需要的 Agent 版本（ADR 0019）：节点所在的 Agent 在这里查，引用的 Agent 在 resolveReferencedAgents 里查。
-		const versionProblem =
-			metadata &&
-			(sdkRequirementProblem(metadata, pkg, self) ?? agentRequirementProblem(metadata, pkg, self));
-		if (versionProblem) {
-			await this.#failTask(step, task, "env_error", versionProblem);
-			return undefined;
-		}
-		const type = metadata?.nodes?.find((n) => n.name === node.node);
-		const problems = type ? inputProblems(type.inputs, inputs, { allowNull: isAlways(node) }) : [];
-		if (problems.length > 0) {
-			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
-			await this.#failTask(step, task, "config_error", problems.join("; "));
-			return undefined;
-		}
-		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
-		const referenced = type
-			? await resolveReferencedAgents(step.tx, node.id, type.inputs, inputs, {
-					metadata: metadata ?? {},
-					pkg,
-				})
-			: { agents: [] };
-		if ("problems" in referenced) {
-			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
-			await this.#failTask(step, task, referenced.kind, referenced.problems.join("; "));
-			return undefined;
-		}
-
-		// 「飞书机器人」类型的输入引用的机器人名单随任务下发，也记在任务上：ctx.notify 只能发给其中的机器人（ADR 0020）。
-		// 不在这里检查是否已登记：值来自前面节点的输出时派发时才知道，而通知不能成为任务失败的原因，发送时再检查。
-		const referencedBots = type
-			? [...new Set(referencedFeishuBots(type.inputs, inputs).map((r) => r.bot))]
-			: [];
 
 		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
 			.update(tasks)
 			.set({
 				status: "dispatched",
-				inputs,
-				referencedFeishuBots: referencedBots,
+				inputs: content.inputs,
+				referencedFeishuBots: content.referencedFeishuBots,
 				leaseExpiresAt: this.#leaseFrom(step.now),
 			})
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
-		return create(ServerMessageSchema, {
-			body: {
-				case: "assign",
-				value: {
-					taskId: task.id,
-					attempt: task.attempt,
-					package: node.package,
-					packageVersion,
-					node: node.node,
-					inputsJson: JSON.stringify(inputs),
-					timeoutSeconds: node.timeout ?? DEFAULT_TIMEOUT_SECONDS,
-					runId: run.id,
-					nodeId: node.id,
-					packageSha256: archive?.sha256 ?? "",
-					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
-					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
-					referencedAgents: referenced.agents,
-					referencedFeishuBots: referencedBots,
-				},
-			},
-		});
+		return create(ServerMessageSchema, { body: { case: "assign", value: content.assign } });
 	}
 
 	/** 周期扫描：唤醒到期的定时 / Sleep 节点（waits.ts），返回唤醒的任务数。 */

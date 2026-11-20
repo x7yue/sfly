@@ -15,6 +15,7 @@ import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { loadClientTarballs } from "./downloads/client-tarballs.js";
+import { createAssignContent } from "./engine/assign-content.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
 import { EngineNotifications } from "./feishu/engine-notifications.js";
@@ -237,9 +238,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		mutex,
 		hub,
-		packageArchiveUrl: (name, version) =>
-			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
-		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
+		assignContent: createAssignContent({
+			packageArchiveUrl: (name, version) =>
+				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
+			artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
+		}),
 		admitTrigger: createTriggerAdmission({ preflight, paramsCheck: createParamsCheck() }),
 		notifications: new EngineNotifications({
 			logs,
