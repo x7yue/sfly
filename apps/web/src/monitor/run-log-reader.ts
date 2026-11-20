@@ -5,23 +5,180 @@ import {
 	type RunLogPage,
 	runLogKey,
 } from "@sfly/schema";
+import { createStore, type Reader } from "#/lib/reader";
 import { isTruncationMarker, MAX_LOADED_LINES } from "./task-log-reader";
 
 /**
- * 合并视图已加载的日志（纯逻辑，单测见 run-log-buffer.test.ts）：先读最新一页，再从它的 `live_after` 接上实时推送，
- * 向上滚动时用 before 游标往前翻页。
+ * 一次运行里范围内节点合并后的日志读取器（没选中节点时的日志视图；单测见 run-log-reader.test.ts）：
+ * 先读最新一页，再从它的 `live_after` 接上实时推送（#225），向上滚动时用 before 游标往前翻页（#223）。
+ * 合并规则和读取时序都在这里。范围和级别（#224）由适配器带进每一次读取和订阅，游标只对读它时的范围和级别有效：
+ * 范围或级别变了就换一个读取器、从最新一页重新读。
  *
- * 行始终按合并日志的排序键（@sfly/schema 的 run-log-order.ts，与控制面同一个比较函数）排列：往前翻的页和实时推送的行
- * 都按排序键插到对应的位置，按「任务 + 序号」去重。断线后补发的行（晚到的行）可能比已有的别的任务的行更早，
+ * 合并规则：行始终按合并日志的排序键（@sfly/schema 的 run-log-order.ts，与控制面同一个比较函数）排列：往前翻的页
+ * 和实时推送的行都按排序键插到对应的位置，按「任务 + 序号」去重。断线后补发的行（晚到的行）可能比已有的别的任务的行更早，
  * 甚至比已加载的最早一行还早，同样插到它应在的位置；之后往前翻到的页再插到它前后。同一任务内永远按序号：
  * 个别任务的控制面时间有超过 2 秒的倒挂（§6.3），插入位置不早于这个任务序号更小的行、不晚于序号更大的行。
- *
- * 范围或级别变了就换一个缓冲区、从最新一页重新读：游标只对读它时的范围和级别有效。
- *
  * 游标对前端不透明，所以只能整页丢掉：每一页记下读它之前的行用的游标和它加入的行，丢掉最早的几页之后，
  * 剩下最早那一页的游标正好能把丢掉的行重新读回来。实时推送的行不属于任何一页，往前翻页读不回它们，所以不丢；
  * 它们多到超过上限时，整个缓冲区从最新一页重新读（{@link needsReload}），推送过的行都在那一页或它之前。
+ *
+ * 读取时序：
+ * - 同一时刻只读一页：重新读最新一页期间不往前翻，旧缓冲区的游标不能用在新的上面；重新读最新一页时在途的读取作废，
+ *   换读取器（`dispose`）时也一样。
+ * - 筛选很少匹配时一页可以一行都没有，这时自动接着往前读，直到读到行或读到开头；读取失败就停下，由用户点击重试。
+ * - 实时推送的行太多（或断线太久、控制面让重新读）时，断开实时推送、重新读最新一页再接上，读到之前照常显示已有的行。
  */
+
+/** 读取器对外的状态。 */
+export interface RunLogState {
+	/** 按合并日志的顺序，从早到晚。 */
+	lines: RunLogLine[];
+	loaded: boolean;
+	/** 前面还有更早的行：`loadOlder()` 往前翻页。 */
+	hasOlder: boolean;
+	loadingOlder: boolean;
+	truncatedTasks: LogOrigin[];
+	expired: boolean;
+	/** 最近一次读取失败的原因；开始新的读取时清掉。 */
+	error: string | null;
+}
+
+export interface RunLogReader extends Reader<RunLogState> {
+	/** 用游标往前翻一页；已经读到开头、或有一页还在读时不读。 */
+	loadOlder(): void;
+}
+
+/** 读取器向下依赖的两个口：读一页、订阅实时。每页行数、范围、级别由适配器带上。 */
+export interface RunLogPorts {
+	/** 读一页：不给 `before` 是最新一页，给了是用游标往前翻的一页。 */
+	readPage(position: { before?: string }): Promise<RunLogPage>;
+	/**
+	 * 订阅实时推送，从最新一页的 `live_after` 接上；返回断开函数。`onLines` 是一批新写入的行，
+	 * `onReload`：补发的行太多不逐行补发，要从最新一页重新读。
+	 */
+	subscribeLive(
+		after: string,
+		handlers: { onLines: (lines: RunLogLine[]) => void; onReload: () => void },
+	): () => void;
+}
+
+export interface RunLogOptions {
+	maxLines?: number;
+}
+
+export const emptyRunLogs: RunLogState = {
+	lines: [],
+	loaded: false,
+	hasOlder: false,
+	loadingOlder: false,
+	truncatedTasks: [],
+	expired: false,
+	error: null,
+};
+
+/** 新建一个读取器，立刻开始读最新一页。 */
+export function createRunLogReader(
+	ports: RunLogPorts,
+	{ maxLines = MAX_LOADED_LINES }: RunLogOptions = {},
+): RunLogReader {
+	const store = createStore(emptyRunLogs);
+	let buffer = emptyRunBuffer;
+	/** 在读哪一页：最新一页，或往前翻的一页；null 是没有在读的。 */
+	let reading: "latest" | "older" | null = null;
+	/** 每次重新读最新一页加一：之前发出的读取作废，它们的结果对应的是上一个缓冲区。 */
+	let epoch = 0;
+	let closeLive: (() => void) | null = null;
+	let disposed = false;
+
+	/** 缓冲区变了：把它的当前内容连同 `patch` 写进状态。 */
+	const publish = (patch: Partial<RunLogState> = {}) =>
+		store.set({
+			lines: buffer.lines,
+			loaded: buffer.loaded,
+			hasOlder: olderCursor(buffer) !== null,
+			truncatedTasks: buffer.truncatedTasks,
+			expired: buffer.expired,
+			...patch,
+		});
+
+	/** 读到一页之后看缓冲区还缺什么：连着实时推送、行太多时重新读最新一页；页都是空的、前面还有内容时接着往前读。 */
+	const settle = () => {
+		if (closeLive !== null && needsReload(buffer, maxLines)) loadLatest();
+		else if (store.get().error === null && needsOlder(buffer)) loadOlder();
+	};
+
+	/** 读最新一页；读到之前照常显示已有的行（第一次读时还没有）。 */
+	const loadLatest = () => {
+		const mine = ++epoch;
+		reading = "latest";
+		closeLive?.();
+		closeLive = null;
+		publish({ loadingOlder: false, error: null });
+		ports.readPage({}).then(
+			(page) => {
+				if (mine !== epoch) return;
+				reading = null;
+				buffer = fromLatestPage(page);
+				publish();
+				if (!page.expired) {
+					closeLive = ports.subscribeLive(page.live_after, {
+						onLines(lines) {
+							const next = keepLatest(withLiveLines(buffer, lines), maxLines);
+							if (next === buffer) return;
+							buffer = next;
+							publish();
+							settle();
+						},
+						onReload: loadLatest,
+					});
+				}
+				settle();
+			},
+			(e: Error) => {
+				if (mine !== epoch) return;
+				reading = null;
+				if (!buffer.loaded) buffer = { ...emptyRunBuffer, loaded: true };
+				publish({ error: e.message });
+			},
+		);
+	};
+
+	const loadOlder = () => {
+		const before = olderCursor(buffer);
+		if (disposed || before === null || reading !== null) return;
+		const mine = epoch;
+		reading = "older";
+		publish({ loadingOlder: true, error: null });
+		ports.readPage({ before }).then(
+			(page) => {
+				if (mine !== epoch) return;
+				reading = null;
+				buffer = withOlderPage(buffer, page);
+				publish({ loadingOlder: false });
+				settle();
+			},
+			(e: Error) => {
+				if (mine !== epoch) return;
+				reading = null;
+				publish({ loadingOlder: false, error: e.message });
+			},
+		);
+	};
+
+	loadLatest();
+
+	return {
+		get: store.get,
+		subscribe: store.subscribe,
+		loadOlder,
+		dispose() {
+			disposed = true;
+			epoch++;
+			closeLive?.();
+			closeLive = null;
+		},
+	};
+}
 
 /** 已加载的一页：读它之前的行用的游标（null：之前没有了），和它加入的行（已有的行不算）。 */
 interface LoadedPage {
@@ -29,7 +186,7 @@ interface LoadedPage {
 	keys: ReadonlySet<string>;
 }
 
-export interface RunLogBuffer {
+interface RunLogBuffer {
 	/** 按合并日志的顺序，从早到晚。 */
 	lines: RunLogLine[];
 	/** 已加载的页，从早到晚；最早那一页的 before 是向上滚动时读更早的行用的游标。 */
@@ -39,7 +196,7 @@ export interface RunLogBuffer {
 	expired: boolean;
 }
 
-export const emptyRunBuffer: RunLogBuffer = {
+const emptyRunBuffer: RunLogBuffer = {
 	lines: [],
 	pages: [],
 	loaded: false,
@@ -51,13 +208,13 @@ export const runLineKey = (line: Pick<RunLogLine, "task_id" | "seq">) =>
 	`${line.task_id}:${line.seq}`;
 
 /** 往前翻页用的游标；null 表示已经读到运行的开头。 */
-export const olderCursor = (buffer: RunLogBuffer): string | null => buffer.pages[0]?.before ?? null;
+const olderCursor = (buffer: RunLogBuffer): string | null => buffer.pages[0]?.before ?? null;
 
 /**
  * 已加载的页都没有行、前面还有内容：筛选很少匹配时，一页（单次请求的扫描量用完）可以一行都没有，
  * 要接着往前读，直到读到行或读到开头，不能显示成没有日志。
  */
-export const needsOlder = (buffer: RunLogBuffer): boolean =>
+const needsOlder = (buffer: RunLogBuffer): boolean =>
 	buffer.loaded && buffer.lines.length === 0 && olderCursor(buffer) !== null;
 
 /**
@@ -127,7 +284,7 @@ const pageOf = (page: RunLogPage, keys: ReadonlySet<string>): LoadedPage => ({
 });
 
 /** 最新一页（第一次加载或重新读时），控制面已经按排序键排好。 */
-export function fromLatestPage(page: RunLogPage): RunLogBuffer {
+function fromLatestPage(page: RunLogPage): RunLogBuffer {
 	return {
 		lines: page.lines,
 		pages: [pageOf(page, new Set(page.lines.map(runLineKey)))],
@@ -138,7 +295,7 @@ export function fromLatestPage(page: RunLogPage): RunLogBuffer {
 }
 
 /** 往前翻的一页（`before = olderCursor(buffer)`）：按排序键插入，成为最早的一页。 */
-export function withOlderPage(buffer: RunLogBuffer, page: RunLogPage): RunLogBuffer {
+function withOlderPage(buffer: RunLogBuffer, page: RunLogPage): RunLogBuffer {
 	const { lines, added } = insert(buffer.lines, page.lines);
 	return {
 		...buffer,
@@ -150,7 +307,7 @@ export function withOlderPage(buffer: RunLogBuffer, page: RunLogPage): RunLogBuf
 }
 
 /** 实时推送的一批行：按排序键插入，不属于任何一页。截断标记（来源 system）到了时把这个任务记为已截断。 */
-export function withLiveLines(buffer: RunLogBuffer, fresh: RunLogLine[]): RunLogBuffer {
+function withLiveLines(buffer: RunLogBuffer, fresh: RunLogLine[]): RunLogBuffer {
 	const { lines, added } = insert(buffer.lines, fresh);
 	if (added.size === 0) return buffer;
 	const truncatedTasks = [...buffer.truncatedTasks];
@@ -166,7 +323,7 @@ export function withLiveLines(buffer: RunLogBuffer, fresh: RunLogLine[]): RunLog
  * 超过 maxLines 行时丢掉最早的几页（只丢这些页加入的行），最新一页总是保留；丢掉的行再次向上滚动时重新加载。
  * 实时推送的行不丢。与单节点视图一样，只在加入实时推送的行之后调用（往前翻页加载的行是用户刚要看的，不丢）。
  */
-export function keepLatest(buffer: RunLogBuffer, maxLines = MAX_LOADED_LINES): RunLogBuffer {
+function keepLatest(buffer: RunLogBuffer, maxLines: number): RunLogBuffer {
 	let count = buffer.lines.length;
 	let drop = 0;
 	while (count > maxLines && drop < buffer.pages.length - 1) {
@@ -186,5 +343,5 @@ export function keepLatest(buffer: RunLogBuffer, maxLines = MAX_LOADED_LINES): R
  * 丢掉更早的页之后仍超过 maxLines 行（实时推送的行太多）：要从最新一页重新读。推送过的行都已写进日志文件，
  * 在新的最新一页里，或者向上滚动时读得到。
  */
-export const needsReload = (buffer: RunLogBuffer, maxLines = MAX_LOADED_LINES): boolean =>
+const needsReload = (buffer: RunLogBuffer, maxLines: number): boolean =>
 	buffer.pages.length <= 1 && buffer.lines.length > maxLines;

@@ -12,6 +12,7 @@ export class FakePages<P, R> {
 	/** 为 true 时，之后的回答先扣住，`release()` 才送出：用来在结果回来之前换读取器、推新的行。 */
 	hold = false;
 	private readonly pending: (() => void)[] = [];
+	private readonly scripted: R[] = [];
 	private failure: Error | null = null;
 
 	/** `answerFor` 在收到请求的那一刻算出回答（就像控制面在那一刻读日志文件）。 */
@@ -21,13 +22,18 @@ export class FakePages<P, R> {
 		this.reads.push(position);
 		const failure = this.failure;
 		this.failure = null;
-		const page = failure ? undefined : this.answerFor(position);
+		const page = failure ? undefined : (this.scripted.shift() ?? this.answerFor(position));
 		const answer = () => (failure ? Promise.reject<R>(failure) : Promise.resolve(page as R));
 		if (!this.hold) return answer();
 		return new Promise<R>((resolve, reject) => {
 			this.pending.push(() => answer().then(resolve, reject));
 		});
 	};
+
+	/** 下一次读取原样回答这一页，不按 `answerFor` 算：构造读取器要应付的、控制面按规则不会给出的页。 */
+	replyNext(page: R) {
+		this.scripted.push(page);
+	}
 
 	/** 下一次读取失败。 */
 	failNext(message: string) {

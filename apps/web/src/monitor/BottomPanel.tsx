@@ -54,7 +54,7 @@ import {
 	useTimeAxis,
 } from "./monitor-state";
 import type { PanelTab } from "./run-link";
-import { runLineKey } from "./run-log-buffer";
+import { runLineKey } from "./run-log-reader";
 import {
 	attemptAt,
 	documentNodes,
