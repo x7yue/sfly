@@ -4,14 +4,16 @@ on:
   push:
     # 分支上的提交由 PR 触发（草稿 PR 也触发）；没有 PR 的分支要跑 CI 时手动触发。
     # 同一个提交不再因为 push 和 pull_request 各跑一遍。
-    branches: [main]
+    # dev 是集成分支（docs/agents/branching-and-release.md）：各 PR 单独通过，合在一起还要再验一遍。
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
 concurrency:
   # main 上每个提交都要跑完：发布前会检查 tag 指向的提交在 main 上的 CI 已通过（release.yml）。
   # 所以 main 上按提交分组：同一组里只留一个排队的运行，共用一组时，连着合入两个 PR，
-  # 前一个提交还在排队的运行会被后一个顶掉（取消）。PR 和其他分支的新推送取消旧的运行。
+  # 前一个提交还在排队的运行会被后一个顶掉（取消）。PR 和其他分支（含 dev）的新推送取消旧的运行：
+  # dev 不发版，只要最新的提交验过。
   group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
@@ -101,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # buf breaking 需要基线提交；lint:docs 要 origin/main 和合并基点（ADR 编号、已接受 ADR 的正文）
+          fetch-depth: 0 # buf breaking 需要基线提交；lint:docs 要基准分支和合并基点（ADR 编号、已接受 ADR 的正文）
 
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -124,6 +126,9 @@ jobs:
         run: pnpm gen:check
       - name: Lint
         run: pnpm lint:ts && pnpm lint:proto && pnpm lint:node && pnpm lint:docs && pnpm lint:actions
+        env:
+          # PR 和它的目标分支比：两个都合向 dev 的 PR 各拿了同一个 ADR 编号，和 main 比看不出来。
+          ADR_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'origin/main' }}
       - name: Typecheck
         run: pnpm typecheck:ts
       - name: Protobuf breaking check

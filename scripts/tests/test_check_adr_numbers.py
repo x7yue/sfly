@@ -37,10 +37,10 @@ def write(repo: Path, name: str, text: str = DECISION) -> None:
     (repo / "docs" / "adr" / name).write_text(text, encoding="utf-8")
 
 
-def check(repo: Path) -> subprocess.CompletedProcess[str]:
+def check(repo: Path, base_ref: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(repo / "scripts" / "check-adr-numbers.sh")],
-        env=ENV,
+        env=ENV if base_ref is None else {**ENV, "ADR_BASE_REF": base_ref},
         capture_output=True,
         text=True,
     )
@@ -95,6 +95,52 @@ def test_new_adr_whose_number_was_taken_on_main_meanwhile_fails(origin: Path, wo
     assert "docs/adr/0003-theirs.md" in result.stderr
     assert "docs/adr/0003-mine.md" in result.stderr
     assert "0005" in result.stderr
+
+
+def test_number_taken_on_the_integration_branch_is_caught_when_it_is_the_base(
+    origin: Path, work: Path
+) -> None:
+    git(origin, "checkout", "-b", "dev")
+    write(origin, "0003-theirs.md")
+    commit(origin, "add theirs on dev")
+    git(origin, "checkout", "main")
+    write(work, "0003-mine.md")
+    commit(work, "add mine")
+    git(work, "fetch", "origin")
+
+    assert check(work).returncode == 0
+    result = check(work, base_ref="origin/dev")
+
+    assert result.returncode == 1
+    assert "origin/dev" in result.stderr
+    assert "docs/adr/0003-theirs.md" in result.stderr
+    assert "docs/adr/0003-mine.md" in result.stderr
+
+
+def test_adr_accepted_on_the_integration_branch_keeps_its_body_when_it_is_the_base(
+    origin: Path, work: Path
+) -> None:
+    git(origin, "checkout", "-b", "dev")
+    write(origin, "0003-on-dev.md")
+    commit(origin, "accept on dev")
+    git(origin, "checkout", "main")
+    git(work, "fetch", "origin")
+    git(work, "checkout", "-b", "feature-on-dev", "origin/dev")
+    write(work, "0003-on-dev.md", "# 决定\n\n第一段改了。\n\n第二段。\n")
+    commit(work, "edit")
+
+    assert check(work).returncode == 0
+    result = check(work, base_ref="origin/dev")
+
+    assert result.returncode == 1
+    assert "docs/adr/0003-on-dev.md" in result.stderr
+
+
+def test_missing_base_ref_is_named_in_the_notice(work: Path) -> None:
+    result = check(work, base_ref="origin/nope")
+
+    assert result.returncode == 0
+    assert "没有 origin/nope" in result.stderr
 
 
 def test_merging_main_in_turns_the_collision_into_one_plain_duplicate_report(
