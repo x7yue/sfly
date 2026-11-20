@@ -5,7 +5,7 @@ import { openMonitor } from "./monitor-scenario";
 import { stoppingRun } from "./stop-subflow-scenario";
 import { createScenario, publishPackage } from "./support";
 
-// 停止子流程节点（#85，SEMANTICS §4.1）：添加节点、按名称选择子流程（只列出合法候选）、校验警告；
+// 停止子流程节点（#85，docs/SEMANTICS.md §4.1）：添加节点、按名称选择子流程（只列出合法候选）、校验警告；
 // 运行后运行监控页与画布运行状态显示「已停止」，并能看到停止子流程节点在等哪个子流程。
 
 const target = (page: Page) => inspector(page).getByRole("combobox", { name: "要停止的子流程" });

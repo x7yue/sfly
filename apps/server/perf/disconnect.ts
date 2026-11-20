@@ -35,7 +35,7 @@ export function replayDuration(
 	return done ? done.ms - reconnectAt : null;
 }
 
-/** pnpm perf 里默认的断线时长（秒）；ARCHITECTURE §7.6 的目标是 5 分钟（DISCONNECT_SECONDS），用环境变量跑满。 */
+/** pnpm perf 里默认的断线时长（秒）；docs/ARCHITECTURE.md §7.6 的目标是 5 分钟（DISCONNECT_SECONDS），用环境变量跑满。 */
 export const DEFAULT_DISCONNECT_SECONDS = 45;
 /** 断线时长下限：节点每秒 3 MiB stdout，约 21 秒排满 64 MiB 的日志队列，之后还要再断一会儿才能验证丢弃与计数。 */
 export const MIN_DISCONNECT_SECONDS = {

@@ -1,0 +1,8 @@
+# 文档引用检查（scripts/check_doc_references.py）的放行名单：一行一条，写法是「文件 | 引用原文 | 原因」。
+# 原因必填；引用不再需要放行（改了写法或删了）时，这一行也会报错，要删掉。
+# 能改正的引用直接改，这里只放确实要这样写的：描述用户项目里的路径、有意保留的旧名之类。
+
+# sfly init / sfly skill 写进用户项目的目录，不是本仓库的路径。
+docs/guide/sdk-reference.md | .agents/skills/sfly-node-dev/reference.md | 用户项目里 sfly skill 生成的文件，本仓库没有这个路径
+docs/guide/sdk-reference.md | .agents/skills/sfly-node-dev/ | 用户项目里 sfly skill 生成的目录，本仓库没有这个路径
+docs/guide/sdk-reference.md | .agents/skills/sfly-platform/ | 用户项目里 sfly skill 生成的目录，本仓库没有这个路径

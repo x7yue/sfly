@@ -1,6 +1,6 @@
-// 基准测试：控制面的指标分段写入与降采样查询耗时（ARCHITECTURE §7.6；vitest bench）。
+// 基准测试：控制面的指标分段写入与降采样查询耗时（docs/ARCHITECTURE.md §7.6；vitest bench）。
 // 运行 perf/benchmarks/control-plane.bench.ts（也可以单独运行，见该文件），需要本机 PostgreSQL。只记录；
-// 一张图表的查询对照 §7.6「运行监控页的图表」的目标（与其他目标一样，差一半以上才提示）。
+// 一张图表的查询对照 docs/ARCHITECTURE.md §7.6「运行监控页的图表」的目标（与其他目标一样，差一半以上才提示）。
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readVitestBench } from "../bench.js";
@@ -10,7 +10,7 @@ import type { Measurement } from "../report.js";
 import { CHART_QUERY_P95_MS } from "../targets.js";
 
 /**
- * 基准名 → 报告里的名称、平均值的正常波动（毫秒；p99 按两倍算），以及 p99 要对照的目标（§7.6「运行监控页的图表」
+ * 基准名 → 报告里的名称、平均值的正常波动（毫秒；p99 按两倍算），以及 p99 要对照的目标（docs/ARCHITECTURE.md §7.6「运行监控页的图表」
  * 的 p95 目标：vitest bench 只给出 p99，p99 达标时 p95 一定达标）。
  */
 const BENCHES: Record<string, { label: string; noise: number; p99Target?: number }> = {

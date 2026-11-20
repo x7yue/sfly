@@ -138,7 +138,7 @@ impl Bucket {
 /// 一个任务的指标合并器。
 ///
 /// 不带标签与带标签的序列分开放：合并键里哪怕多一个空的标签字段，不带标签时（最常见）的合并就慢约四成
-/// （基准 `merge_events`，ARCHITECTURE §7.6）。
+/// （基准 `merge_events`，docs/ARCHITECTURE.md §7.6）。
 #[derive(Default)]
 pub struct Merger {
     /// (指标名, 单调时钟秒) → 不带标签的序列这一秒合并后的值。

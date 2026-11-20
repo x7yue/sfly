@@ -9,7 +9,9 @@
 - [docs/SEMANTICS.md](./docs/SEMANTICS.md)：场景执行语义规范
 - [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SYSTEM.md)：前端设计体系（token、组件、状态样式、快捷键、HTTP 契约用法）
 - [docs/adr/](./docs/adr/)：架构决策记录
-- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：代码审查对照的规范（测试写法）
+- [PRODUCT.md](./PRODUCT.md)：产品定位（用户、目的、原则）
+- [DESIGN.md](./DESIGN.md)：界面的视觉设计系统（配色、字体、布局）
+- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：代码审查对照的规范（测试、数据库、文档）
 
 ## 开发
 
@@ -17,26 +19,26 @@
 
 | 命令 | 作用 |
 |---|---|
-| `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前运行 gen:check、lint、typecheck（跳过用 `git push --no-verify`）；测试在 CI 里跑 |
-| `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema |
+| `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前检查分支名前缀、Node 版本和依赖与锁文件是否一致，再运行版本号检查、gen:check、lint、typecheck（跳过用 `git push --no-verify`）；测试在 CI 里跑 |
+| `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema、路由清单和 API 客户端的类型（`pnpm gen:check` 检查这些生成物没有过期） |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint），以及手工抄在几处的版本号是否一致（`pnpm lint:node`：Node 主版本、CI 的 Playwright 镜像标签与 `@playwright/test`、Python 版本、PostgreSQL 镜像，不一致时报出是哪两处）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查；控制面里依赖真实 Agent 的测试文件在 macOS 上自动跳过（跑完时有提示），用 `pnpm linux pnpm --filter @sfly/server test` 运行 |
 | `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh` |
 | `pnpm heavy [--pg] <命令>` | 重型命令（完整测试、`pnpm test:e2e*`、`pnpm linux` 整套、`pnpm perf`）在本机同一把 flock 锁上排队、前台运行，并把 `TMPDIR`、`CARGO_TARGET_DIR` 指向按工作区区分的短目录（Unix socket 路径不能超过 108 字节）。多个工作区同时跑时用它。`--pg` 为这次运行单独起一个 PostgreSQL 容器并设置 `DATABASE_URL`，结束时删掉，避免共用的库超过连接上限；`pnpm heavy --clean` 删掉短目录和这个工作区没人在用的 PostgreSQL 容器（还有 heavy 在跑时保留短目录和它的容器）。同名、位置不同的两个检出会共用短目录和容器标签，目录名要不同。macOS 的 flock 用 `brew install flock` 安装，CI 上不加锁；锁文件和目录用 `SFLY_HEAVY_LOCK`、`SFLY_HEAVY_TMP_ROOT` 改，见 `scripts/heavy.sh` |
 | `pnpm proto:breaking` | buf breaking 检查 |
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main` 和 `dev`、PR（含草稿），以及手动触发；CI 里按语言拆成并行的 job） |
-| `pnpm test:e2e` | 构建 API 客户端和前端并运行 Playwright 端到端测试与视觉回归（`apps/web/e2e`；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
+| `pnpm test:e2e` | 构建 API 客户端和前端并运行 Playwright 端到端测试（`apps/web/e2e`；视觉回归只在设了 `SFLY_VISUAL=1` 时跑（`pnpm test:e2e:docker` 和 CI 的 e2e job 设了它），直接在本机运行时跳过；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
 | `pnpm test:e2e:docker` | 在 Playwright 官方镜像中运行（与 CI 相同，视觉基线以它为准；加 `--update-snapshots` 更新基线） |
 | `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0；Linux 用 `taskset`，macOS 在 Playwright 镜像里用 `docker --cpus=2`。CI 上失败的用例用 `pnpm ci:failures` 查 |
 | `pnpm test:e2e:changed [基准 [Playwright 参数…]]` | 把相比基准（默认 `origin/main`）新增或改动的 e2e spec 重复运行 2–5 次，基准后面的参数交给 Playwright（CI 分片时传 `--shard=i/4`）；CI 在 PR 上自动运行。`bash scripts/e2e-changed.sh --list` 只列出选中的 spec |
 | `pnpm test:stress [-n 次数] <命令>` | 复现其他测试的偶发失败：限制在 2 个 CPU 上把同一条测试命令重复运行（默认 30 次），失败那几次的输出留在临时目录。例如 `pnpm test:stress cargo test --locked -p sfly-agent --test retention` |
 | `pnpm ci:failures <运行 ID>` | 只看 CI 一次运行里失败的测试（vitest、Playwright、pytest、cargo test 的失败块和断言差异），不用翻完整日志。运行 ID 在 `gh pr checks <PR>` 给出的链接里（`.../actions/runs/<运行 ID>/job/...`） |
 | `pnpm --filter @sfly/server dev` / `pnpm --filter @sfly/web dev` | 启动控制面 / 前端开发服务器（端口 3000，`/api` 代理到控制面） |
-| `pnpm bundle:server` | 构建前端和 SDK wheel，把控制面打成单文件，连同 `out/agent/` 里两个架构的 Agent 组装到 `out/server/`（镜像的构建上下文，ADR 0010、0011；先 `pnpm pack:agents`） |
+| `pnpm bundle:server` | 构建前端、SDK wheel 和 API 客户端安装包，把控制面打成单文件，连同用户文档（`docs/guide`）和 `out/agent/` 里两个架构的 Agent 组装到 `out/server/`（镜像的构建上下文，ADR 0010、0011；先 `pnpm pack:agents`） |
 | `pnpm test:bundle` / `pnpm test:image` | 用打包后的控制面的 install.sh 安装 Agent 并跑通一条链，上一个 Release 的 Agent 在它上面跑完任务后自更新 / 构建镜像并检查健康检查、页面、API 和两个架构的 Agent（都需要先 `pnpm bundle:server`；后者需要 docker 和 psql） |
 | `pnpm fetch:previous-agent [--simulate [版本]]` | 从 GitHub Release 下载上一个发布版本的 Agent 到 `out/previous-agent/`，给 `test:bundle` 的跨版本自更新测试用（需要 `gh` 已登录）；`--simulate` 用当前打包的 Agent 扮演上一版本，本地验证自更新的全流程（见 `docs/agents/branching-and-release.md`） |
 | `pnpm pack:agent <target>` / `pnpm pack:agents` | 构建并打包 musl 静态链接的 Agent（`x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl`；在别的架构上用 rust-lld 交叉编译，不运行产物）到 `out/agent/`；后者打包两个架构 |
-| `pnpm perf [--only <项>]` / `pnpm perf:soak [--duration 1h]` | 本地性能测试（不进 CI，ARCHITECTURE §7.6）：构建 release Agent 与打包后的控制面，用本机 PostgreSQL 跑负载测试与基准测试（约 10 分钟），报告写到仓库之外的本机结果目录（默认 `~/.local/share/sfly/perf/<时间>/report.md`），并与本机上一次、仓库里最近一个版本的发版报告（`docs/perf/<版本>/`）对比。`pnpm perf:soak` 是长时负载测试（默认 1 小时，报告在结果目录的 `soak/` 下，中途 Ctrl-C 也会写报告）。加 `--release` 时通过后把报告存进 `docs/perf/<当前版本>/`。发版前与改动关键路径的 PR 必跑，见 `docs/agents/branching-and-release.md` |
-| `pnpm release:version show \| check \| set X.Y.Z` | 查看 / 校验 / 修改版本号（Agent、SDK、控制面共用一个版本号） |
+| `pnpm perf [--only <项>]` / `pnpm perf:soak [--duration 1h]` | 本地性能测试（不进 CI，docs/ARCHITECTURE.md §7.6）：构建 release Agent 与打包后的控制面，用本机 PostgreSQL 跑负载测试与基准测试（约 10 分钟），报告写到仓库之外的本机结果目录（默认 `~/.local/share/sfly/perf/<时间>/report.md`），并与本机上一次、仓库里最近一个版本的发版报告（`docs/perf/<版本>/`）对比。`pnpm perf:soak` 是长时负载测试（默认 1 小时，报告在结果目录的 `soak/` 下，中途 Ctrl-C 也会写报告）。加 `--release` 时通过后把报告存进 `docs/perf/<当前版本>/`。发版前与改动关键路径的 PR 必跑，见 `docs/agents/branching-and-release.md` |
+| `pnpm release:version show \| check \| set X.Y.Z` | 查看 / 校验 / 修改版本号（Agent、SDK、API 客户端、控制面共用一个版本号） |
 
 ## 发布
 
@@ -98,7 +100,7 @@ docker compose up -d
   }
   ```
 
-不用 Docker 时，在 `.node-version` 指定的 Node 上直接运行 `pnpm bundle:server` 的产物：`node --enable-source-maps out/server/main.mjs`（前端、SDK、迁移、Agent 目录自动取 `main.mjs` 旁边的 `web/`、`sdk/`、`drizzle/`、`agent/`）。
+不用 Docker 时，在 `.node-version` 指定的 Node 上直接运行 `pnpm bundle:server` 的产物：`node --enable-source-maps out/server/main.mjs`（前端、SDK、API 客户端、迁移、用户文档、Agent 目录和 install.sh 自动取 `main.mjs` 旁边的 `web/`、`sdk/`、`client/`、`drizzle/`、`docs/`、`agent/`、`install.sh`）。
 
 Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown-linux-musl.tar.gz`，静态链接，不依赖 glibc 版本（已在 CentOS 7 上验证）。机器上不需要预装 uv 或 Python。启动参数见 `sfly-agent --help`（`--server`、`--name`、`--token`、`--slots`、`--venv`、`--uv`、`--index-url`、`--github-release-mirror`、`--python-install-mirror`、`--user-agent`、`--python` 等，均可用 `SFLY_*` 环境变量设置）。
 

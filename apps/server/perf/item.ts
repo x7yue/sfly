@@ -37,7 +37,7 @@ export interface PerfItem {
 	id: string;
 	/** 报告里的标题。 */
 	title: string;
-	/** ARCHITECTURE §7.6 目标表里的「范围」，报告从那里读取目标原文；没有目标的项（基准测试）为 null。 */
+	/** docs/ARCHITECTURE.md §7.6 目标表里的「范围」，报告从那里读取目标原文；没有目标的项（基准测试）为 null。 */
 	scope: string | null;
 	/** 是否需要 release Agent 和打包后的控制面；所选的项都不需要时跳过构建。 */
 	needsArtifacts: boolean;

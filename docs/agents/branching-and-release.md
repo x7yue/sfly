@@ -72,7 +72,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 ### 关键路径的改动要贴 `pnpm perf` 结果
 
-性能测试不进 CI（ARCHITECTURE §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
+性能测试不进 CI（docs/ARCHITECTURE.md §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
 把报告的结论、总览和「与发版基线相比变化超过 20% 的数值」贴进 PR 描述。报告在本机结果目录
 （默认 `~/.local/share/sfly/perf/<时间>/report.md`，命令结束时打印路径），每份报告同时与两份基准对比：
 本机上一次（任何 worktree 里跑的都算），以及仓库里 `docs/perf/` 下最近一个版本的发版报告（发版基线）。
@@ -101,7 +101,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 - 完整报告贴在对应 issue 或 PR 的评论里：数值、测量方法、机器（CPU、内存、系统）、提交号、样本量（轮数、每轮次数、时长）。
 - 调研文档（`docs/research/`）只写结论与关键数值，链接到那条评论。
-- 以后还要用的测量脚本整理成 `pnpm perf` 的一项（`apps/server/perf/items/`，ARCHITECTURE §7.6）；一次性的脚本不进仓库，
+- 以后还要用的测量脚本整理成 `pnpm perf` 的一项（`apps/server/perf/items/`，docs/ARCHITECTURE.md §7.6）；一次性的脚本不进仓库，
   但报告里写清楚怎么测的（命令、参数、负载），别人照着能重做。
 - 测量的中间文件和结果不放 `/tmp`（小、重启即清，还会挤满）：放在本机的固定目录，例如 `pnpm perf` 的本机结果目录
   `~/.local/share/sfly/perf/` 旁边自建子目录；也不要只留在会被清理的 worktree 里。
@@ -110,7 +110,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 1. 从 `main` 新建 `release/X.Y.Z`，运行 `pnpm release:version set X.Y.Z`，提交并开 PR。
 2. 在这个分支上、提交好之后运行 `pnpm perf --release`（必跑，约 10 分钟：release 构建的 Agent、打包后的控制面与本机
-   PostgreSQL，ARCHITECTURE §7.6）。它与 `pnpm perf` 相同，只是通过后再把报告存进 `docs/perf/X.Y.Z/report.{json,md}`；
+   PostgreSQL，docs/ARCHITECTURE.md §7.6）。它与 `pnpm perf` 相同，只是通过后再把报告存进 `docs/perf/X.Y.Z/report.{json,md}`；
    有未提交的改动、被中断或结论不通过（硬性断言不满足或某项出错）时不存，命令以退出码 1 结束并说明原因。
    不通过时不发版，先修复后重跑。把 `docs/perf/X.Y.Z/` 提交进发版 PR；描述里只贴结论和变化（与发版基线——上一个版本的
    报告——相比变化超过 20% 的数值，变差的说明原因或确认是机器波动），不贴整份报告。确认后合入。

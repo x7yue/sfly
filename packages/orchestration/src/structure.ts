@@ -255,7 +255,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		}
 	}
 
-	// 子流程名称：非空、场景内唯一（停止子流程节点按名称选择子流程，SEMANTICS §4.1）。
+	// 子流程名称：非空、场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
 	const subflows = doc.nodes.filter((n) => n.kind === "subflow_entry");
 	const named = new Map<string, string[]>();
 	for (const node of subflows) {
@@ -280,7 +280,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		}
 	}
 
-	// 停止子流程节点的引用（SEMANTICS §4.1 第 1 条）：只能停止本链在它之前触发的子流程及其下级子流程。
+	// 停止子流程节点的引用（docs/SEMANTICS.md §4.1 第 1 条）：只能停止本链在它之前触发的子流程及其下级子流程。
 	const members = chainMembers(doc);
 	for (const node of doc.nodes) {
 		if (node.kind !== "stop_subflow") continue;
@@ -406,7 +406,7 @@ function candidatesOf(
 }
 
 /**
- * 停止子流程节点可以停止的子流程（SEMANTICS §4.1 第 1 条）：本链上排在它前面的异步任务节点直接触发的子流程，
+ * 停止子流程节点可以停止的子流程（docs/SEMANTICS.md §4.1 第 1 条）：本链上排在它前面的异步任务节点直接触发的子流程，
  * 以及这些子流程直接或间接触发的子流程；按触发的先后（广度优先）返回子流程入口的节点 ID。
  * 画布的子流程选择器只列出这些候选，结构检查对其余目标给出警告。
  */
@@ -416,7 +416,7 @@ export function stopCandidates(doc: StructureDocument, nodeId: string): string[]
 
 /**
  * 一个子流程和它直接或间接触发的下级子流程（链上的异步任务节点沿调度连线进入的子流程），按广度优先返回子流程入口的
- * 节点 ID，它自己在最前。注释框的子流程成员连同它下级的子流程（SEMANTICS §1.6）。不是子流程入口时为空。
+ * 节点 ID，它自己在最前。注释框的子流程成员连同它下级的子流程（docs/SEMANTICS.md §1.6）。不是子流程入口时为空。
  */
 export function subflowTree(
 	doc: StructureDocument,

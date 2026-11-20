@@ -1,4 +1,4 @@
-// 切入点 A：异步任务节点与子流程（docs/SEMANTICS.md §1.2、§2.3、§4、§6.4）。
+// 切入点 A：异步任务节点与子流程（docs/SEMANTICS.md §1.2、§2.3、§4、§6 第 4 条）。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";

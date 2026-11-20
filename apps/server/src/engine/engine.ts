@@ -92,7 +92,7 @@ import { isWaitNode, startWait, wakeTimers } from "./waits.js";
 
 export { DEFAULT_LEASE_MS } from "./leases.js";
 
-/** 节点进入 queued 后最多排队多久（§3.3 queue_timeout，默认 10 分钟）。 */
+/** 节点进入 queued 后最多排队多久（docs/SEMANTICS.md §3.3 queue_timeout，默认 10 分钟）。 */
 const queueTimeoutMs = (node: PackageNode) =>
 	(node.queue_timeout ?? NODE_DEFAULTS.queue_timeout) * 1000;
 
@@ -132,19 +132,19 @@ function rootMessage(error: unknown): string {
 	return cause instanceof Error ? cause.message : String(cause);
 }
 
-/** 运行是否已被取消；强制取消时 always 节点也不再执行（§3.4）。 */
+/** 运行是否已被取消；强制取消时 always 节点也不再执行（docs/SEMANTICS.md §3.4）。 */
 const cancelling = (run: RunRow) => run.cancelRequestedAt !== null;
 const forced = (run: RunRow) => run.cancelForcedAt !== null;
 /** 运行取消后这个节点还能不能执行：普通取消时只有 always 节点照常执行。 */
 const cancelledFor = (run: RunRow, node: StoredNode | undefined) =>
 	cancelling(run) && (forced(run) || !node || !isAlways(node));
 
-/** 链实例是否已被停止子流程节点停止（§4.1）；always 节点照常执行。 */
+/** 链实例是否已被停止子流程节点停止（docs/SEMANTICS.md §4.1）；always 节点照常执行。 */
 const stoppedFor = (chain: ChainRow, node: StoredNode | undefined) =>
 	chain.stopTaskId !== null && (!node || !isAlways(node));
 
 /**
- * 停止子流程节点的输出（§4.1 第 5 条）：子流程的最终结果 success | failed，未触发时为 null。
+ * 停止子流程节点的输出（docs/SEMANTICS.md §4.1 第 5 条）：子流程的最终结果 success | failed，未触发时为 null。
  * 运行被取消时子流程以 cancelled 结束，它没有成功完成，输出 failed。
  */
 const stopOutputs = (status: ChainRow["status"] | null) => ({
@@ -277,7 +277,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 取消整个运行（§3.4），作用于运行的所有链实例。第一次：正在运行的普通任务收到优雅取消、
+	 * 取消整个运行（docs/SEMANTICS.md §3.4），作用于运行的所有链实例。第一次：正在运行的普通任务收到优雅取消、
 	 * 等 Agent 上报结果；排队中的普通任务和未开始的普通节点立即 cancelled；always 节点照常执行。
 	 * 运行还没结束时再次取消即强制取消：所有任务（含 always）立即 cancelled 并通知 Agent 杀掉进程树。
 	 */
@@ -640,9 +640,9 @@ export class Engine implements AgentSessionHandler {
 
 	/**
 	 * 从链上第 index 个节点开始推进：内置节点立即完成，遇到包节点就排队等待派发。
-	 * 链上已有节点最终失败时，普通节点标记为 skipped，always 节点照常执行（§3.2）。
-	 * 链实例已被停止时，普通节点标记为 stopped（§4.1）。
-	 * 运行已被取消时，普通节点标记为 cancelled（强制取消时 always 节点也是），链以 cancelled 结束（§3.4）。
+	 * 链上已有节点最终失败时，普通节点标记为 skipped，always 节点照常执行（docs/SEMANTICS.md §3.2）。
+	 * 链实例已被停止时，普通节点标记为 stopped（docs/SEMANTICS.md §4.1）。
+	 * 运行已被取消时，普通节点标记为 cancelled（强制取消时 always 节点也是），链以 cancelled 结束（docs/SEMANTICS.md §3.4）。
 	 */
 	async #advance(step: Step, run: RunRow, chain: ChainRow, index: number): Promise<void> {
 		const plan = await this.#plan(step.tx, run, chain);
@@ -737,7 +737,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 异步任务节点（§4）：按参数映射创建一个子流程实例后立即成功，输出子流程实例 ID。
+	 * 异步任务节点（docs/SEMANTICS.md §4）：按参数映射创建一个子流程实例后立即成功，输出子流程实例 ID。
 	 * 子流程实例 ID 由运行、父链实例、异步任务节点确定性生成，重放不会重复创建。
 	 * 映射里的引用无效、或映射的值不符合子流程入口的参数声明时，以 config_error 失败并返回 false。
 	 */
@@ -806,7 +806,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 停止子流程节点（§4.1）：目标子流程实例（每次运行每个子流程最多一个实例，按子流程入口 ID 确定）
+	 * 停止子流程节点（docs/SEMANTICS.md §4.1）：目标子流程实例（每次运行每个子流程最多一个实例，按子流程入口 ID 确定）
 	 * 不存在、或它和它的各级下级实例都已结束时立即成功并返回 true；否则停止其中仍在进行的子流程实例
 	 * （chain_instances.stop_task_id 记下这个节点的任务，#stopChain 终止其中的任务），节点进入 waiting 并返回 false，
 	 * 等这些子流程完全结束后由 #settleStops 完成。已经被另一个停止子流程节点停止的实例不再重复停止，同样等它们结束；
@@ -831,7 +831,7 @@ export class Engine implements AgentSessionHandler {
 			.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt))
 			.for("update");
 		const target = chains.find((c) => c.chainId === node.subflow);
-		// 未触发、或目标和它的各级下级都已结束时立即成功（§4.1 第 2 条）；目标结束但下级还在运行时仍要停止下级。
+		// 未触发、或目标和它的各级下级都已结束时立即成功（docs/SEMANTICS.md §4.1 第 2 条）；目标结束但下级还在运行时仍要停止下级。
 		const ended = !target || subtree(chains, target).every((c) => c.status !== "running");
 		// 停止期间先记为 running：子流程在同一个事务里结束时 #settleStops 不会抢先推进这条链。
 		const [task] = await step.tx
@@ -844,7 +844,7 @@ export class Engine implements AgentSessionHandler {
 			return true;
 		}
 		if (!task) return false;
-		// 运行已被取消时不再停止（§4.1 第 6 条）：子流程按取消的规则结束，这里只等它们结束。
+		// 运行已被取消时不再停止（docs/SEMANTICS.md §4.1 第 6 条）：子流程按取消的规则结束，这里只等它们结束。
 		const pending = cancelling(run)
 			? []
 			: subtree(chains, target).filter((c) => c.status === "running" && c.stopTaskId === null);
@@ -875,7 +875,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 停止一个链实例（§4.1 第 3 条）：正在运行的普通任务按取消的方式通知 Agent（优雅取消），等 Agent 上报结果后记为 stopped
+	 * 停止一个链实例（docs/SEMANTICS.md §4.1 第 3 条）：正在运行的普通任务按取消的方式通知 Agent（优雅取消），等 Agent 上报结果后记为 stopped
 	 * （#failTask）；排队中、等待中的普通任务立即 stopped，从它后面继续推进（未开始的普通节点记为 stopped，always 节点照常执行）。
 	 */
 	async #stopChain(step: Step, run: RunRow, chain: ChainRow): Promise<void> {
@@ -959,7 +959,7 @@ export class Engine implements AgentSessionHandler {
 	/**
 	 * 链上第 index 个节点解析引用时的作用域（包节点派发、异步任务节点、等待节点共用）：
 	 * 本链的入口参数和前面已成功节点的输出。always 节点前面的节点可能失败或被跳过，
-	 * 引用缺失的输出得到 null（§2.4）。
+	 * 引用缺失的输出得到 null（docs/SEMANTICS.md §2.4）。
 	 */
 	async #scope(tx: Tx, chain: ChainRow, plan: ChainPlan, index: number): Promise<ResolveScope> {
 		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
@@ -994,7 +994,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 链结束；运行的所有链都结束后运行才结束：被取消的运行为 cancelled，否则任一条链失败则运行失败（§6.4）。
+	 * 链结束；运行的所有链都结束后运行才结束：被取消的运行为 cancelled，否则任一条链失败则运行失败（docs/SEMANTICS.md §6 第 4 条）。
 	 */
 	async #finishChain(
 		step: Step,
@@ -1034,9 +1034,9 @@ export class Engine implements AgentSessionHandler {
 	/**
 	 * 任务失败：可重试的错误且还有重试次数时，在同一个 Agent 上排队下一次尝试（attempt + 1）；
 	 * 否则节点最终失败，链继续往后推进（普通节点跳过、always 节点照常执行）。
-	 * 运行已被取消时（普通节点，或强制取消时的任何节点），任务记为 cancelled、不再重试（§3.4）。
+	 * 运行已被取消时（普通节点，或强制取消时的任何节点），任务记为 cancelled、不再重试（docs/SEMANTICS.md §3.4）。
 	 * 所在的链已被停止时，Agent 上报的取消结果（cancelled）和 Agent 失联（agent_lost，任务本来就要被终止）记为 stopped；
-	 * 节点自己报的失败（node_error、timeout……）仍是失败，但不再重试（§4.1）。
+	 * 节点自己报的失败（node_error、timeout……）仍是失败，但不再重试（docs/SEMANTICS.md §4.1）。
 	 */
 	async #failTask(
 		step: Step,
@@ -1069,7 +1069,7 @@ export class Engine implements AgentSessionHandler {
 			.update(tasks)
 			.set({ status: "failed", errorKind: kind, errorMessage: message, ...ended })
 			.where(eq(tasks.id, task.id));
-		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（§4.1 第 4 条），后面的普通节点记为 stopped。
+		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（docs/SEMANTICS.md §4.1 第 4 条），后面的普通节点记为 stopped。
 		if (!stopped && task.agentName && shouldRetry(node, kind, task.attempt)) {
 			const attempt = task.attempt + 1;
 			await step.tx

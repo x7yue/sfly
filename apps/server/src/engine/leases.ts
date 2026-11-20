@@ -162,7 +162,7 @@ const QUEUE_TIMEOUT_REASONS: Record<QueueTimeoutCause, string> = {
 	unavailable: "不在线或没有空闲槽位",
 };
 
-/** 排队超时：env_error，不重试（§3.3）；报错写明 Agent 没接的原因。 */
+/** 排队超时：env_error，不重试（docs/SEMANTICS.md §3.3）；报错写明 Agent 没接的原因。 */
 export async function queueTimedOut(
 	driver: ChainDriver,
 	step: Step,

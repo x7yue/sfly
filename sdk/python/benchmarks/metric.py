@@ -1,4 +1,4 @@
-"""基准测试（ARCHITECTURE §7.6）：SDK 单次 `ctx.metric()` 和单次 `ctx.action()` 的开销。
+"""基准测试（docs/ARCHITECTURE.md §7.6）：SDK 单次 `ctx.metric()` 和单次 `ctx.action()` 的开销。
 
 只用标准库 `timeit`，不给 SDK 增加依赖（ADR 0002）。只在本地运行，不进 CI：pytest 只收集
 sdk/python/tests；`pnpm perf` 顺带运行并汇总进报告

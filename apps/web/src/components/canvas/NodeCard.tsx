@@ -92,7 +92,7 @@ function Lamp({
 type SfKindIcon = (typeof KIND_META)[keyof typeof KIND_META]["icon"];
 
 /**
- * 节点卡片（DESIGN-SYSTEM §2.3「站点胶囊」）：一枚矮胶囊，左边一盏站点灯（编辑时是种类图标，运行时是状态标记），
+ * 节点卡片（docs/DESIGN-SYSTEM.md §2.3「站点胶囊」）：一枚矮胶囊，左边一盏站点灯（编辑时是种类图标，运行时是状态标记），
  * 第一行是标题和右侧的数字（运行时的进度、剩余时间、耗时；编辑时的警告），第二行是节点 ID（放不下时保留结尾）、
  * 原来的标题（有显示名称时）和配置摘要，运行时换成失败原因或主指标；执行中、等待中的底边有一条进度线。
  * 执行中的站第二行写此刻正在做的事（有主指标时另起一行）；有关注项时上边线外左侧是个数，开始执行后两行字下面列出前两项，
@@ -185,7 +185,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					"data-[run]:border-(--status-stroke) in-data-[lod-far=true]:data-[run]:border-[length:max(1px,calc(2px/var(--canvas-zoom)))]",
 				// 走完了的（成功、跳过、停止）只留轮廓：底色等于所在的底色（画布或注释框底板，在子流程区域里再叠上区域的淡紫，
 				// tokens.css 的 data-ground），一圈屏幕上 1px 的灰描边留住胶囊的形状；退后的状态都不用不透明度，跳过、停止的
-				// 标题换成次要文字色，文字对比度不降（DESIGN-SYSTEM §2.2）。注释框里的次要文字换成按底板色相算的那一档。
+				// 标题换成次要文字色，文字对比度不降（docs/DESIGN-SYSTEM.md §2.2）。注释框里的次要文字换成按底板色相算的那一档。
 				sunk &&
 					"data-[run]:border-canvas-run-done-border data-[run]:bg-canvas-run-done-bg data-[run]:bg-[image:linear-gradient(var(--node-ground-tint),var(--node-ground-tint))] data-[run]:border-[length:max(1px,calc(1px/var(--canvas-zoom)))]",
 				inAnnotation && sunk && "[--fg-2:var(--canvas-annotation-fg-2)]",

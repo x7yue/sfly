@@ -1,4 +1,4 @@
-// 基准测试：Agent 的指标合并与按行切分吞吐（ARCHITECTURE §7.6；criterion，只作开发依赖，不进 release 构建）。
+// 基准测试：Agent 的指标合并与按行切分吞吐（docs/ARCHITECTURE.md §7.6；criterion，只作开发依赖，不进 release 构建）。
 // 运行 `cargo bench -p sfly-agent --bench telemetry`（也可以单独运行，见 agent/benches/telemetry.rs），
 // 结果写到这一项的临时目录（CRITERION_HOME），不影响 target/criterion 里自己跑的结果。只记录，不判定。
 import { join } from "node:path";

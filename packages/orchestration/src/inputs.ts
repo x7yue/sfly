@@ -110,7 +110,7 @@ export function typeProblem(io: Io, name: string, value: unknown): string | unde
 
 /**
  * 已解析的输入是否符合节点类型的输入 schema；返回问题列表（空表示通过）。
- * allowNull：always 节点引用缺失的输出解析为 null（§2.4），null 不算类型不符。
+ * allowNull：always 节点引用缺失的输出解析为 null（docs/SEMANTICS.md §2.4），null 不算类型不符。
  * 没有在 schema 里声明的输入不在这里检查。
  */
 export function inputProblems(

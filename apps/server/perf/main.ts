@@ -1,4 +1,4 @@
-// 本地性能测试入口（ARCHITECTURE §7.6）：根目录 `pnpm perf` 与 `pnpm perf:soak`（--soak）。只在本地开发环境运行，不进 CI。
+// 本地性能测试入口（docs/ARCHITECTURE.md §7.6）：根目录 `pnpm perf` 与 `pnpm perf:soak`（--soak）。只在本地开发环境运行，不进 CI。
 //
 // 1. 构建 release Agent 与打包后的控制面（--no-build 跳过）；
 // 2. 依次运行 perf/items/ 下的各项（--only 只运行指定项；--soak 只运行 soak.ts 的长时负载测试），
