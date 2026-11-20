@@ -213,7 +213,7 @@ export class OrchestrationStore {
 	}
 
 	/**
-	 * 归档：有运行中的运行时拒绝。加行锁后检查，与触发（engine.trigger 对同一行加共享锁后检查归档）互斥，
+	 * 归档：有运行中的运行时拒绝。加行锁后检查，与触发（触发准入对同一行加共享锁后检查归档，runs/trigger-admission.ts）互斥，
 	 * 不会归档之后又多出一个运行中的运行。已归档的再次归档保持原来的归档时间。
 	 */
 	archive(id: string): Promise<ArchiveResult> {

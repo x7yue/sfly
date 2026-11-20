@@ -1,4 +1,10 @@
-import type { ServerMessage } from "@sfly/proto";
+import {
+	type AgentUpdate,
+	AgentUpdateState,
+	InstallState,
+	type InstallStatus,
+	type ServerMessage,
+} from "@sfly/proto";
 import type {
 	AgentEndpointView,
 	ClockOffsetView,
@@ -45,6 +51,23 @@ export function devPackageInfo(p: { name: string; source: string; metadataJson: 
 	}
 	return { name: p.name, source: p.source, metadata } satisfies DevPackageInfo;
 }
+
+/** proto 的安装状态转成存储形式；没有对应的（未指定）不记。 */
+const INSTALL_STATES: Partial<Record<InstallState, InstallProgress["state"]>> = {
+	[InstallState.INSTALLING]: "installing",
+	[InstallState.INSTALLED]: "installed",
+	[InstallState.FAILED]: "failed",
+};
+
+/** proto 的更新状态转成存储形式；没有对应的不记。 */
+const UPDATE_STATES: Partial<Record<AgentUpdateState, AgentUpdateInfo["state"]>> = {
+	[AgentUpdateState.NONE]: "none",
+	[AgentUpdateState.DOWNLOADING]: "downloading",
+	[AgentUpdateState.WAITING_FOR_TASKS]: "waiting_for_tasks",
+	[AgentUpdateState.REPLACING]: "replacing",
+	[AgentUpdateState.FAILED]: "failed",
+	[AgentUpdateState.MANUAL_UPGRADE_REQUIRED]: "manual_upgrade_required",
+};
 
 /** 每个 Agent 默认的并发槽位数（docs/SEMANTICS.md 默认值）。 */
 export const DEFAULT_SLOTS = 4;
@@ -256,20 +279,28 @@ export class AgentHub {
 		});
 	}
 
-	/** Agent 上报安装状态（InstallStatus）：更新安装进度和已安装的节点包列表。旧连接的上报忽略。 */
-	recordInstall(
-		conn: AgentConnection,
-		install: InstallProgress,
-		installed: InstalledPackage[],
-		devPackages: DevPackageInfo[],
-	): Promise<void> {
-		return this.deps.mutex.run(async () => {
+	/**
+	 * Agent 上报安装状态（InstallStatus）：更新安装进度和已安装的节点包列表。旧连接的上报忽略。
+	 * 只改 Agent 的注册信息，不改变任何运行的状态，不经过引擎。
+	 */
+	async recordInstall(conn: AgentConnection, status: InstallStatus): Promise<void> {
+		const state = INSTALL_STATES[status.state];
+		if (!state) return;
+		await this.deps.mutex.run(async () => {
 			if (this.#connections.get(conn.name) !== conn) return;
 			conn.info = {
 				...conn.info,
-				installed_packages: installed,
-				install,
-				dev_packages: devPackages,
+				installed_packages: status.installedPackages.map((p) => ({
+					name: p.name,
+					version: p.version,
+				})),
+				install: {
+					package: status.package,
+					version: status.version,
+					state,
+					task_id: status.taskId,
+				},
+				dev_packages: status.devPackages.map(devPackageInfo),
 			};
 			await this.deps.db
 				.update(agents)
@@ -279,8 +310,15 @@ export class AgentHub {
 	}
 
 	/** Agent 在 Heartbeat 中上报更新状态（ADR 0014）：只在变化时写库。旧连接的上报忽略。 */
-	recordUpdate(conn: AgentConnection, update: AgentUpdateInfo): Promise<void> {
-		return this.deps.mutex.run(async () => {
+	async recordUpdate(conn: AgentConnection, report: AgentUpdate): Promise<void> {
+		const state = UPDATE_STATES[report.state];
+		if (!state) return;
+		const update: AgentUpdateInfo = {
+			state,
+			remaining_tasks: report.remainingTasks,
+			reason: report.reason,
+		};
+		await this.deps.mutex.run(async () => {
 			if (this.#connections.get(conn.name) !== conn) return;
 			const old = conn.info.update ?? NO_UPDATE;
 			if (

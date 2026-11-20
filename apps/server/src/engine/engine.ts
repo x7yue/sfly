@@ -2,16 +2,12 @@ import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import {
 	InvalidReferenceError,
-	inputProblems,
 	NODE_DEFAULTS,
 	type ResolveScope,
-	referencedFeishuBots,
 	resolveInputs,
 } from "@sfly/orchestration";
 import {
 	type AgentMessage,
-	AgentUpdateState,
-	InstallState,
 	ErrorKind as ProtoErrorKind,
 	TaskStatus as ProtoTaskStatus,
 	ServerMessageSchema,
@@ -22,24 +18,21 @@ import {
 	ACTIVE_STATUSES,
 	type OrchestrationDocument,
 	type OrchestrationNode,
-	type PackageMetadata,
 	type RunningTaskView,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { ClockOffset } from "../agents/agent-clock.js";
-import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
+import type { AgentEnvironmentFor } from "../agents/agent-environment.js";
+import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
 import { loadAgentTasks } from "../agents/agent-tasks.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
-	type AgentUpdateInfo,
 	agents,
 	chainInstances,
 	type ErrorKind,
-	nodePackages,
 	ON_AGENT,
-	orchestrations,
 	orchestrationVersions,
 	runs,
 	tasks,
@@ -53,16 +46,15 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
-import { agentRequirementProblem } from "../packages/requires-agent.js";
-import { sdkRequirementProblem } from "../packages/requires-sdk.js";
-import { findPreset, PRESET_NOT_FOUND } from "../presets/preset-store.js";
-import { describePresetProblems, presetProblems } from "../presets/preset-validity.js";
-import { type PresetRow, presetParamNames } from "../presets/preset-view.js";
-import type { Mirrors } from "../public-config.js";
-import type { ParamsCheck, Preflight } from "../runs/preflight.js";
+import type {
+	TriggerAdmission,
+	TriggerRejection,
+	TriggerRequest,
+} from "../runs/trigger-admission.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
+import type { AssignContentOf } from "./assign-content.js";
 import {
 	type AsyncTaskNode,
 	agentFor,
@@ -82,8 +74,7 @@ import {
 	queueTimedOut,
 	renewHeld,
 } from "./leases.js";
-import { fillParams, withPresetValues } from "./params.js";
-import { resolveReferencedAgents } from "./referenced-agents.js";
+import { fillParams } from "./params.js";
 import {
 	type CancelOrder,
 	type ChainDriver,
@@ -97,21 +88,13 @@ import {
 } from "./step.js";
 import { isWaitNode, startWait, wakeTimers } from "./waits.js";
 
-/** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
-export const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
-
 export { DEFAULT_LEASE_MS } from "./leases.js";
-
-/** 开发版本（docs/SEMANTICS.md §7）。 */
-const DEV_VERSION = "dev";
 
 /** 节点进入 queued 后最多排队多久（§3.3 queue_timeout，默认 10 分钟）。 */
 const queueTimeoutMs = (node: PackageNode) =>
 	(node.queue_timeout ?? NODE_DEFAULTS.queue_timeout) * 1000;
 
-export type TriggerOutcome =
-	| { ok: true; runId: string }
-	| { ok: false; status: 400 | 404 | 409; code: string; message: string; details?: unknown };
+export type TriggerOutcome = { ok: true; runId: string } | TriggerRejection;
 
 export type CancelOutcome =
 	| { ok: true; force: boolean }
@@ -128,21 +111,6 @@ const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
 	[ProtoErrorKind.AGENT_LOST]: "agent_lost",
 	[ProtoErrorKind.ENV_ERROR]: "env_error",
 	[ProtoErrorKind.CONFIG_ERROR]: "config_error",
-};
-
-const INSTALL_STATES: Partial<Record<InstallState, "installing" | "installed" | "failed">> = {
-	[InstallState.INSTALLING]: "installing",
-	[InstallState.INSTALLED]: "installed",
-	[InstallState.FAILED]: "failed",
-};
-
-const UPDATE_STATES: Partial<Record<AgentUpdateState, AgentUpdateInfo["state"]>> = {
-	[AgentUpdateState.NONE]: "none",
-	[AgentUpdateState.DOWNLOADING]: "downloading",
-	[AgentUpdateState.WAITING_FOR_TASKS]: "waiting_for_tasks",
-	[AgentUpdateState.REPLACING]: "replacing",
-	[AgentUpdateState.FAILED]: "failed",
-	[AgentUpdateState.MANUAL_UPGRADE_REQUIRED]: "manual_upgrade_required",
 };
 
 /** 任务由 Agent 负责（派发阶段或执行阶段）。 */
@@ -228,24 +196,16 @@ export class Engine implements AgentSessionHandler {
 			clock: Clock;
 			mutex: Mutex;
 			hub: AgentHub;
-			/** 节点包归档的下载地址（Agent 通过 HTTP 下载）。 */
-			packageArchiveUrl: (name: string, version: string) => string;
-			/** 任务产物的上传地址（#18，Agent 任务结束后通过 HTTP 上传）。 */
-			artifactUploadUrl: (taskId: string) => string;
-			/** 触发前的预检（src/runs/preflight.ts）。 */
-			preflight: Preflight;
-			/** 触发时按入口参数的实际值做的检查（src/runs/preflight.ts）。 */
-			paramsCheck: ParamsCheck;
+			/** 派发内容：这次尝试派什么（src/engine/assign-content.ts）。 */
+			assignContent: AssignContentOf;
+			/** 触发准入：场景现在能不能触发、用什么参数触发（src/runs/trigger-admission.ts）。 */
+			admitTrigger: TriggerAdmission;
 			/** 飞书通知节点和运行通知：在 step 的事务里入队，提交后写日志、唤醒投递（src/feishu/engine-notifications.ts）。 */
 			notifications: EngineNotifications;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
-			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
-			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
-			/** 控制面配置的镜像，原样在 Welcome 里下发（ADR 0012）；未配置的为空。 */
-			mirrors?: Mirrors;
-			/** 目标版本（控制面版本）、给定架构的 Agent 二进制（Welcome 里告诉 Agent，ADR 0014）；没有时为 undefined。 */
-			agentBinary?: (arch: string) => Promise<{ url: string; sha256: string } | undefined>;
+			/** Welcome 里和调度无关的部分：目标版本、SDK wheel、镜像、Agent 二进制（src/agents/agent-environment.ts）。 */
+			agentEnvironment: AgentEnvironmentFor;
 		},
 	) {}
 
@@ -272,122 +232,14 @@ export class Engine implements AgentSessionHandler {
 	};
 
 	/**
-	 * 手动触发场景的最新版本。带上运行预设（`preset` 是它的 ID）时，在这个事务里读取预设，预设已失效就拒绝（409 `preset_invalid`），
-	 * 否则用它的值填入预设参数（docs/SEMANTICS.md §6「运行预设」），之后的参数检查和不用预设时相同；
-	 * 运行上记下预设的 ID、名称和预设参数的名单。
+	 * 手动触发场景的最新版本。能不能触发、用什么参数触发（含运行预设）由触发准入回答
+	 * （src/runs/trigger-admission.ts，在这个事务里读）；可以时在同一个事务里创建运行和主链实例并开始推进。
 	 */
-	trigger(
-		orchestrationId: string,
-		request: { params: Record<string, unknown>; preset?: string | undefined },
-		actor: Actor,
-	): Promise<TriggerOutcome> {
+	trigger(orchestrationId: string, request: TriggerRequest, actor: Actor): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
-			const [orchestration] = await step.tx
-				.select()
-				.from(orchestrations)
-				.where(eq(orchestrations.id, orchestrationId))
-				// 与归档（OrchestrationStore.archive 加排他锁后检查运行中的运行）互斥。
-				.for("share");
-			if (!orchestration) {
-				return { ok: false, status: 404, code: "not_found", message: "orchestration not found" };
-			}
-			if (orchestration.archivedAt) {
-				return {
-					ok: false,
-					status: 409,
-					code: "archived",
-					message: "orchestration is archived; restore it before triggering",
-				};
-			}
-			const [version] = await step.tx
-				.select()
-				.from(orchestrationVersions)
-				.where(
-					and(
-						eq(orchestrationVersions.orchestrationId, orchestrationId),
-						eq(orchestrationVersions.number, orchestration.headVersion),
-					),
-				);
-			if (!version) {
-				return {
-					ok: false,
-					status: 400,
-					code: "no_version",
-					message: "orchestration has no saved version",
-				};
-			}
-			const problems = await this.deps.preflight(step.tx, version.document);
-			const plan = planRun(version.document);
-			if (problems.length > 0 || "errors" in plan) {
-				const details =
-					problems.length > 0 || !("errors" in plan)
-						? problems
-						: plan.errors.map((message) => ({ code: "not_supported", message }));
-				return {
-					ok: false,
-					status: 400,
-					code: "invalid_orchestration",
-					message: details.map((p) => p.message).join("; "),
-					details,
-				};
-			}
-			let provided = request.params;
-			let preset: PresetRow | undefined;
-			if (request.preset !== undefined) {
-				preset = isUuid(request.preset)
-					? await findPreset(step.tx, orchestrationId, request.preset)
-					: undefined;
-				if (!preset) {
-					return { ok: false, ...PRESET_NOT_FOUND };
-				}
-				const invalid = presetProblems(preset.values, plan.main.entry.params);
-				if (invalid.length > 0) {
-					return {
-						ok: false,
-						status: 409,
-						code: "preset_invalid",
-						message: `运行预设「${preset.name}」已失效，不能用来触发：${describePresetProblems(invalid, plan.main.entry.params)}`,
-						details: invalid,
-					};
-				}
-				const fixed = withPresetValues(request.params, preset.values, plan.main.entry.params);
-				if ("locked" in fixed) {
-					return {
-						ok: false,
-						status: 400,
-						code: "preset_param_locked",
-						message: `参数 ${fixed.locked} 由运行预设「${preset.name}」固定，请求里不要给它传值`,
-						details: { param: fixed.locked, preset: preset.name },
-					};
-				}
-				provided = fixed.params;
-			}
-			const filled = fillParams(plan.main.entry.params, provided);
-			if ("errors" in filled) {
-				return {
-					ok: false,
-					status: 400,
-					code: "invalid_params",
-					message: filled.errors.join("; "),
-					details: filled.errors,
-				};
-			}
-			const paramProblems = await this.deps.paramsCheck(
-				step.tx,
-				version.document,
-				plan,
-				filled.params,
-			);
-			if (paramProblems.length > 0) {
-				return {
-					ok: false,
-					status: 400,
-					code: "invalid_params",
-					message: paramProblems.map((p) => p.message).join("; "),
-					details: paramProblems,
-				};
-			}
-
+			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
+			if (!admitted.ok) return admitted;
+			const { version, plan, params, runPreset } = admitted;
 			this.#documents.set(version.id, version.document);
 			this.#plans.set(version.id, plan);
 			const runId = randomUUID();
@@ -399,10 +251,8 @@ export class Engine implements AgentSessionHandler {
 					orchestrationVersionId: version.id,
 					triggeredBy: actor.nickname,
 					triggeredVia: actor.via,
-					params: filled.params,
-					presetId: preset?.id ?? null,
-					presetName: preset?.name ?? null,
-					presetParams: preset ? presetParamNames(preset.values, plan.main.entry.params) : null,
+					params,
+					...runPreset,
 					status: "running",
 					startedAt: step.now,
 				})
@@ -414,7 +264,7 @@ export class Engine implements AgentSessionHandler {
 					runId,
 					chainId: plan.main.entry.id,
 					depth: 0,
-					params: filled.params,
+					params,
 					status: "running",
 					startedAt: step.now,
 				})
@@ -608,8 +458,7 @@ export class Engine implements AgentSessionHandler {
 				for (const t of held) if (t.started) await this.#started(step, conn.name, t);
 				return out;
 			});
-			const sdk = this.deps.sdkWheel?.(conn.info.agent_version);
-			const binary = await this.deps.agentBinary?.(conn.info.arch);
+			const environment = await this.deps.agentEnvironment(conn.info);
 			conn.welcome(
 				create(ServerMessageSchema, {
 					body: {
@@ -617,13 +466,7 @@ export class Engine implements AgentSessionHandler {
 						value: {
 							dispositions,
 							heartbeatIntervalMs: Math.min(Math.round(this.leaseMs / 3), 0xffff_ffff),
-							sdkWheelUrl: sdk?.url ?? "",
-							sdkWheelSha256: sdk?.sha256 ?? "",
-							pypiMirror: this.deps.mirrors?.pypi ?? "",
-							githubReleaseMirror: this.deps.mirrors?.githubRelease ?? "",
-							targetAgentVersion: this.deps.hub.version,
-							agentBinaryUrl: binary?.url ?? "",
-							agentBinarySha256: binary?.sha256 ?? "",
+							...environment,
 						},
 					},
 				}),
@@ -711,24 +554,7 @@ export class Engine implements AgentSessionHandler {
 				if (conn.heartbeat()) step.touchedAgents.add(conn.name);
 			});
 			// 不带更新状态的心跳（旧版本 Agent）不改变已保存的状态。
-			const state = update && UPDATE_STATES[update.state];
-			if (update && state) {
-				await this.deps.hub.recordUpdate(conn, {
-					state,
-					remaining_tasks: update.remainingTasks,
-					reason: update.reason,
-				});
-			}
-		} else if (message.body.case === "install") {
-			const status = message.body.value;
-			const state = INSTALL_STATES[status.state];
-			if (!state) return;
-			await this.deps.hub.recordInstall(
-				conn,
-				{ package: status.package, version: status.version, state, task_id: status.taskId },
-				status.installedPackages.map((p) => ({ name: p.name, version: p.version })),
-				status.devPackages.map(devPackageInfo),
-			);
+			if (update) await this.deps.hub.recordUpdate(conn, update);
 		}
 	}
 
@@ -1433,107 +1259,40 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 解析输入、按节点类型的输入 schema 校验，并把任务标记为 dispatched；
-	 * 引用无效或输入校验失败时任务以 config_error 失败（不重试）并返回 undefined。
+	 * 把任务标记为 dispatched（派发即设租约）并返回要发给 Agent 的派发消息。派发什么由派发内容回答
+	 * （assign-content.ts）；它说不能派发时任务以 config_error 或 env_error 失败（不重试），返回 undefined。
 	 */
 	async #prepareAssign(step: Step, conn: AgentConnection, task: TaskRow) {
 		const { run, chain, plan, index, node } = await this.#locate(step.tx, task);
 		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
-
-		let inputs: Record<string, unknown>;
-		try {
-			inputs = resolveInputs(node.inputs, await this.#scope(step.tx, chain, plan, index));
-		} catch (error) {
-			if (!(error instanceof InvalidReferenceError)) throw error;
-			await this.#failTask(step, task, "config_error", error.message);
+		const content = await this.deps.assignContent(step.tx, {
+			task,
+			node,
+			packageVersion: document.packages[node.package] ?? "",
+			scope: await this.#scope(step.tx, chain, plan, index),
+			target: conn,
+		});
+		if (!content.ok) {
+			if (content.inputs) {
+				await step.tx.update(tasks).set({ inputs: content.inputs }).where(eq(tasks.id, task.id));
+			}
+			await this.#failTask(step, task, content.kind, content.message);
 			return undefined;
 		}
-
-		const packageVersion = document.packages[node.package] ?? "";
-		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
-		const [archive] = await step.tx
-			.select({ sha256: nodePackages.sha256, metadata: nodePackages.metadata })
-			.from(nodePackages)
-			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
-		// 开发版本的元信息由加载它的 Agent 上报；不知道节点类型时不校验（Agent 会以 env_error 失败）。
-		const metadata =
-			archive?.metadata ??
-			(packageVersion === DEV_VERSION
-				? (conn.info.dev_packages?.find((p) => p.name === node.package)?.metadata as
-						| PackageMetadata
-						| null
-						| undefined)
-				: undefined);
-		// 节点包需要的 SDK 比 Agent 上的新：在 Agent 上运行只会得到难以理解的错误（#79）。
-		const pkg = { name: node.package, version: packageVersion };
-		const self = { name: conn.name, version: conn.info.agent_version };
-		// 节点包需要的 Agent 版本（ADR 0019）：节点所在的 Agent 在这里查，引用的 Agent 在 resolveReferencedAgents 里查。
-		const versionProblem =
-			metadata &&
-			(sdkRequirementProblem(metadata, pkg, self) ?? agentRequirementProblem(metadata, pkg, self));
-		if (versionProblem) {
-			await this.#failTask(step, task, "env_error", versionProblem);
-			return undefined;
-		}
-		const type = metadata?.nodes?.find((n) => n.name === node.node);
-		const problems = type ? inputProblems(type.inputs, inputs, { allowNull: isAlways(node) }) : [];
-		if (problems.length > 0) {
-			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
-			await this.#failTask(step, task, "config_error", problems.join("; "));
-			return undefined;
-		}
-		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
-		const referenced = type
-			? await resolveReferencedAgents(step.tx, node.id, type.inputs, inputs, {
-					metadata: metadata ?? {},
-					pkg,
-				})
-			: { agents: [] };
-		if ("problems" in referenced) {
-			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
-			await this.#failTask(step, task, referenced.kind, referenced.problems.join("; "));
-			return undefined;
-		}
-
-		// 「飞书机器人」类型的输入引用的机器人名单随任务下发，也记在任务上：ctx.notify 只能发给其中的机器人（ADR 0020）。
-		// 不在这里检查是否已登记：值来自前面节点的输出时派发时才知道，而通知不能成为任务失败的原因，发送时再检查。
-		const referencedBots = type
-			? [...new Set(referencedFeishuBots(type.inputs, inputs).map((r) => r.bot))]
-			: [];
 
 		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
 			.update(tasks)
 			.set({
 				status: "dispatched",
-				inputs,
-				referencedFeishuBots: referencedBots,
+				inputs: content.inputs,
+				referencedFeishuBots: content.referencedFeishuBots,
 				leaseExpiresAt: this.#leaseFrom(step.now),
 			})
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
-		return create(ServerMessageSchema, {
-			body: {
-				case: "assign",
-				value: {
-					taskId: task.id,
-					attempt: task.attempt,
-					package: node.package,
-					packageVersion,
-					node: node.node,
-					inputsJson: JSON.stringify(inputs),
-					timeoutSeconds: node.timeout ?? DEFAULT_TIMEOUT_SECONDS,
-					runId: run.id,
-					nodeId: node.id,
-					packageSha256: archive?.sha256 ?? "",
-					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
-					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
-					referencedAgents: referenced.agents,
-					referencedFeishuBots: referencedBots,
-				},
-			},
-		});
+		return create(ServerMessageSchema, { body: { case: "assign", value: content.assign } });
 	}
 
 	/** 周期扫描：唤醒到期的定时 / Sleep 节点（waits.ts），返回唤醒的任务数。 */
