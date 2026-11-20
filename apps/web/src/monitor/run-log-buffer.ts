@@ -5,7 +5,7 @@ import {
 	type RunLogPage,
 	runLogKey,
 } from "@sfly/schema";
-import { isTruncationMarker, MAX_LOADED_LINES } from "./log-buffer";
+import { isTruncationMarker, MAX_LOADED_LINES } from "./task-log-reader";
 
 /**
  * 合并视图已加载的日志（纯逻辑，单测见 run-log-buffer.test.ts）：先读最新一页，再从它的 `live_after` 接上实时推送，

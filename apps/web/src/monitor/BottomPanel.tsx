@@ -43,7 +43,6 @@ import { attemptAgentTimes } from "./attempt-clock";
 import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
 import { LogList, type LogReveal } from "./LogList";
-import type { LoadedLine } from "./log-buffer";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
 import {
 	type NodeRef,
@@ -68,6 +67,7 @@ import {
 	secretParams,
 	stoppedSubflowLabel,
 } from "./run-model";
+import type { LoadedLine } from "./task-log-reader";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
 import { runLogDownloadPath, useRunLogs } from "./use-run-logs";
 import { type LogMoment, taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
