@@ -1,36 +1,39 @@
+import type { RunView } from "@sfly/schema";
 import { createContext, useContext, useMemo, useRef, useSyncExternalStore } from "react";
-import type { PanelTab } from "./run-link";
+import {
+	EMPTY_SCOPE,
+	reduceScope,
+	resolveScope,
+	type Scope,
+	type ScopeEvent,
+	type ScopeState,
+} from "./monitor-scope";
 import type { TimeRange } from "./timeline-model";
 
 /**
- * 运行监控页的共享时间轴状态。链路时间线、底部面板与中间的图表工作区（#42）都从这里读写，
- * 所以三者的悬停竖线、缩放范围、日志标记和选中节点始终一致。
+ * 运行监控页的共享状态。链路时间线、底部面板与中间的图表工作区（#42）都从这里读写，
+ * 所以三者的悬停竖线、缩放范围、日志标记和选中节点始终一致。分两部分：
+ *
+ * - 时间轴：悬停的时刻、缩放范围、日志标记，都是毫秒时间戳，直接读写。
+ * - 看的范围（选中哪个节点、看哪一次尝试、底部面板的页签与展开、日志定位到哪一刻）：规则在 monitor-scope.ts 的状态机里，
+ *   这里只持有它的状态；调用方报告发生了什么（`actions.report(event)`），读现在的范围用 `useScope(run)`。
  *
  * 图表工作区（#42）的接入方式：
  *
  *   const { range, extent, live, following } = useTimeAxis();   // 当前显示的时间范围（毫秒时间戳）
  *   const hoverAt = useMonitor((s) => s.hoverAt);                 // 悬停时刻：在图表上画竖线、读数
  *   const marker = useMonitor((s) => s.marker);                   // 日志标记：在图表上画标记线
- *   const selected = useMonitor((s) => s.selected);               // 选中的节点：高亮对应的图表分组
+ *   const selected = useMonitor((s) => s.scope.selected);         // 选中的节点：高亮对应的图表分组
  *   const actions = useMonitorActions();
  *   actions.hover(t)            // 鼠标在图表上移动时（离开时传 null），时间线上同步显示竖线
  *   actions.zoom({ start, end }) // 在图表上拖选缩放；actions.followLive() 回到实时
- *   actions.select({ chainInstanceId, nodeId })  // 点图表分组选中节点，底部面板随之切换
- *   actions.setScopeTask(taskId) // 底部面板换了看的那一次尝试（时间线随之滚到范围里的节点）
  *   actions.setFilter(keys)     // 图表工作区的节点筛选（nodeKey / PLATFORM_KEY 的集合，null 为全部）；
  *                               // 没有选中节点时，底部面板的范围跟随筛选
- *   actions.showPanel("attempts") // 打开底部面板的某个页签（顶栏的失败摘要用它跳到尝试页签）
- *   actions.locateLog(node, at) // 选中节点，打开日志页签并定位到那一刻（控制面时间，毫秒）：地址里的 node、tab=logs、at 就是这个
+ *   actions.report({ type: "select", node })  // 选中节点（null 清除），底部面板随之切换；其余事件见 monitor-scope.ts 的 ScopeEvent
  *
- * 时间都是毫秒时间戳。hoverAt 更新很频繁，状态放在一个外部 store 里，组件按 selector 订阅，
+ * hoverAt 更新很频繁，状态放在一个外部 store 里，组件按 selector 订阅，
  * 只有用到的字段变化时才重新渲染；range / extent 每秒随「现在」变化，放在 context 里。
  */
-
-/** 时间线上的一个节点：同一个子流程可能有多个实例，所以要带链实例 ID。 */
-export interface NodeRef {
-	chainInstanceId: string;
-	nodeId: string;
-}
 
 export interface MonitorState {
 	/** 鼠标悬停的时刻；不在时间轴上时为 null。 */
@@ -39,24 +42,10 @@ export interface MonitorState {
 	zoom: TimeRange | null;
 	/** 点日志行在时间轴上标出的时刻。 */
 	marker: number | null;
-	/** 选中的节点；底部面板的范围跟随它。 */
-	selected: NodeRef | null;
-	/**
-	 * 底部面板的范围里看的那一次尝试（任务 ID，底部面板写入）；没有选中节点或节点还没有尝试时为 null。
-	 * 范围（节点或尝试）换了，时间线就把那个节点滚到看得见的地方。
-	 */
-	scopeTask: string | null;
 	/** 图表工作区的节点筛选：{@link nodeKey} 与 {@link PLATFORM_KEY} 的集合；null 表示全部。 */
 	filter: ReadonlySet<string> | null;
-	/** 底部面板当前的页签。 */
-	panelTab: PanelTab;
-	/** 底部面板是否展开：用户展开 / 收起（或拖动高度、切换页签）后为 true / false；null 表示还没选过，按内容自动决定。 */
-	panelOpen: boolean | null;
-	/**
-	 * 要在这个节点的日志里定位的时刻（控制面时间，毫秒）。只对 `node` 有效，选中了别的节点时日志不定位；
-	 * `request` 每请求一次加一：同一个时刻再请求一次也重新定位（读者可能已经滚到别处）。
-	 */
-	logMoment: { node: NodeRef; at: number; request: number } | null;
+	/** 看的范围的状态（只由 {@link reduceScope} 改）。 */
+	scope: ScopeState;
 }
 
 export interface MonitorActions {
@@ -65,15 +54,9 @@ export interface MonitorActions {
 	/** 清除缩放：显示整个运行，运行中时回到实时跟随。 */
 	followLive: () => void;
 	mark: (at: number | null) => void;
-	select: (node: NodeRef | null) => void;
-	setScopeTask: (taskId: string | null) => void;
 	setFilter: (filter: ReadonlySet<string> | null) => void;
-	/** 切换到底部面板的某个页签并展开面板。 */
-	showPanel: (tab: PanelTab) => void;
-	/** 展开 / 收起底部面板；null 回到按内容自动决定。 */
-	setPanelOpen: (open: boolean | null) => void;
-	/** 选中节点，打开日志页签并展开面板，定位到那一刻（控制面时间，毫秒）。 */
-	locateLog: (node: NodeRef, at: number) => void;
+	/** 报告范围里发生的事。 */
+	report: (event: ScopeEvent) => void;
 }
 
 type Listener = () => void;
@@ -88,15 +71,10 @@ export function createMonitorStore(initial: Partial<MonitorState> = {}): Monitor
 		hoverAt: null,
 		zoom: null,
 		marker: null,
-		selected: null,
-		scopeTask: null,
 		filter: null,
-		panelTab: "logs",
-		panelOpen: null,
-		logMoment: null,
+		scope: EMPTY_SCOPE,
 		...initial,
 	};
-	let requests = 0;
 	const listeners = new Set<Listener>();
 	const set = (patch: Partial<MonitorState>) => {
 		state = { ...state, ...patch };
@@ -112,18 +90,11 @@ export function createMonitorStore(initial: Partial<MonitorState> = {}): Monitor
 		zoom: (zoom) => set({ zoom }),
 		followLive: () => set({ zoom: null }),
 		mark: (marker) => set({ marker }),
-		select: (selected) => set({ selected }),
-		setScopeTask: (scopeTask) => state.scopeTask !== scopeTask && set({ scopeTask }),
 		setFilter: (filter) => set({ filter }),
-		showPanel: (panelTab) => set({ panelTab, panelOpen: true }),
-		setPanelOpen: (panelOpen) => set({ panelOpen }),
-		locateLog: (node, at) =>
-			set({
-				selected: node,
-				panelTab: "logs",
-				panelOpen: true,
-				logMoment: { node, at, request: ++requests },
-			}),
+		report: (event) => {
+			const scope = reduceScope(state.scope, event);
+			if (scope !== state.scope) set({ scope });
+		},
 	};
 }
 
@@ -182,15 +153,17 @@ export function useMonitorActions(): MonitorActions {
 			zoom: store.zoom,
 			followLive: store.followLive,
 			mark: store.mark,
-			select: store.select,
-			setScopeTask: store.setScopeTask,
 			setFilter: store.setFilter,
-			showPanel: store.showPanel,
-			setPanelOpen: store.setPanelOpen,
-			locateLog: store.locateLog,
+			report: store.report,
 		}),
 		[store],
 	);
+}
+
+/** 现在的范围：看的是哪个节点的哪一次尝试、页签、日志定位、面板展开与否（规则见 monitor-scope.ts）。 */
+export function useScope(run: RunView): Scope {
+	const state = useMonitor((s) => s.scope);
+	return useMemo(() => resolveScope(state, run), [state, run]);
 }
 
 export function useTimeAxis(): TimeAxis {
@@ -199,10 +172,5 @@ export function useTimeAxis(): TimeAxis {
 	return axis;
 }
 
-export const sameNode = (a: NodeRef | null, b: NodeRef | null) =>
-	a?.chainInstanceId === b?.chainInstanceId && a?.nodeId === b?.nodeId;
-
-/** 节点在筛选集合里的键。 */
-export const nodeKey = (node: NodeRef) => `${node.chainInstanceId}:${node.nodeId}`;
 /** 筛选集合里代表平台自带图表的键。 */
 export const PLATFORM_KEY = "platform";

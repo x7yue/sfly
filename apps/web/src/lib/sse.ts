@@ -48,7 +48,7 @@ export function useEventSource<S extends StreamDef>(
 }
 
 /**
- * 打开一条 SSE 连接（不依赖组件，useEventSource 与跨组件共用的连接都用它）：按事件名分发已解析的 data
+ * 打开一条 SSE 连接（不依赖组件；useEventSource、跨组件共用的连接和读取器的实时订阅都用它）：按事件名分发已解析的 data
  * （开发环境下按契约校验，不符合时在控制台报错并丢弃）。返回关闭函数。
  */
 export function openEventSource<S extends StreamDef>(

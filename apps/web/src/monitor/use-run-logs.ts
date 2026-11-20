@@ -50,14 +50,14 @@ const noop = () => {};
  * 这里只在运行、范围或级别变化时换一个读取器，并把它的状态接到组件上。
  */
 export function useRunLogs(
-	runId: string,
+	runId: string | null,
 	scope: RunLogScope | undefined,
 	levels: readonly LogLineView["level"][],
 ): RunLogs {
 	const nodes = scope && encodeRunLogScope(scope);
 	const level = levels.join(",");
 	const { state, reader } = useReader(
-		() => createRunLogReader(runLogPorts(runId, nodes, level)),
+		() => (runId === null ? null : createRunLogReader(runLogPorts(runId, nodes, level))),
 		readerKey(runId, nodes, level),
 		emptyRunLogs,
 	);

@@ -2,6 +2,7 @@ import { type LogLineView, logsApi } from "@sfly/schema";
 import { apiUrl, callApi } from "#/lib/api";
 import { readerKey, useReader } from "#/lib/reader";
 import { openEventSource } from "#/lib/sse";
+import type { LogMoment } from "./monitor-scope";
 import {
 	createTaskLogReader,
 	emptyTaskLogs,
@@ -38,16 +39,10 @@ export interface TaskLogs extends TaskLogState {
 	loadNewer: () => void;
 }
 
-/** 要在日志里定位的时刻（控制面时间，毫秒）；`request` 变了就重新定位（monitor-state.tsx 的 logMoment）。 */
-export interface LogMoment {
-	at: number;
-	request: number;
-}
-
 const noop = () => {};
 
 /**
- * 一个任务的日志：先读最后一页历史（levels 为空表示不筛选，服务端筛选），再用 `after_seq` 接上实时流，
+ * 一个任务的日志（`taskId` 为 null 时不读，状态是空的）：先读最后一页历史（levels 为空表示不筛选，服务端筛选），再用 `after_seq` 接上实时流，
  * `loadOlder()` 往前翻页。合并规则和读取时序在 task-log-reader.ts（有单测）；这里只在任务、筛选条件或
  * 定位的时刻变化时换一个读取器，并把它的状态接到组件上。
  *
@@ -55,14 +50,14 @@ const noop = () => {};
  * `loadNewer()` 用 `after` 往后翻页，读到文件末尾后再接上实时流，之后与最后一页的情形相同。
  */
 export function useTaskLogs(
-	taskId: string,
+	taskId: string | null,
 	levels: readonly LogLineView["level"][],
 	moment: LogMoment | null = null,
 ): TaskLogs {
 	const levelKey = levels.join(",");
 	const at = moment === null ? null : new Date(moment.at).toISOString();
 	const { state, reader } = useReader(
-		() => createTaskLogReader(taskLogPorts(taskId, levelKey), { at }),
+		() => (taskId === null ? null : createTaskLogReader(taskLogPorts(taskId, levelKey), { at })),
 		// request 变了（同一时刻再次请求）也要重新定位
 		readerKey(taskId, levelKey, at, moment?.request),
 		emptyTaskLogs,

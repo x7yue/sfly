@@ -376,7 +376,7 @@ test("合并视图筛选了节点、筛选出的节点里没有日志时底部�
 	await expect(scope).toHaveText("范围：全部节点");
 	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
 
-	// 只看 verify：它还没有日志，别的节点有也不算，自动收起（没有展开过，说明文字留在隐藏的面板里）。
+	// 只看 verify：它还没有日志，别的节点有也不算，自动收起（没有展开过，收起时只剩标签行，没有内容）。
 	await workspace(page)
 		.getByRole("button", { name: /节点：全部节点/ })
 		.click();
@@ -385,9 +385,13 @@ test("合并视图筛选了节点、筛选出的节点里没有日志时底部�
 	await menu.getByRole("checkbox", { name: "verify" }).check();
 	await expect(scope).toHaveText("范围：跟随筛选（1 个节点）");
 	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
-	await expect(panel(page).getByRole("tabpanel", { includeHidden: true })).toHaveText(
-		"没有符合条件的日志。",
-	);
+	await expect(panel(page).getByRole("tabpanel")).toHaveCount(0);
+	// 展开看说明文字（用户展开以后就不再按内容自动决定），双击拖动条恢复默认：回到按内容自动，又自动收起。
+	await panel(page).getByRole("button", { name: "展开" }).click();
+	await expect(panel(page).getByRole("tabpanel")).toHaveText("没有符合条件的日志。");
+	await page.getByRole("separator", { name: "调整底部面板高度" }).dblclick();
+	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
+	await expect(panel(page).getByRole("tabpanel")).toHaveCount(0);
 
 	// verify 输出了日志：自动展开。
 	agent.logs(tasks.verify as AssignedTask, [logAt(agent, clock0)(1, 11_000, "verify 2 retrying")]);
@@ -416,9 +420,9 @@ test("打开监控页时链接里给了节点：不会先挂上合并视图、�
 
 	await openMonitor(page, clock, runId, "verify");
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次尝试）");
-	await expect(panel(page).getByRole("tabpanel", { includeHidden: true })).toHaveText(
-		"还没有日志输出。",
-	);
+	// 它还没有日志输出，面板自动收起；展开后说明还没有输出。
+	await panel(page).getByRole("button", { name: "展开" }).click();
+	await expect(panel(page).getByRole("tabpanel")).toHaveText("还没有日志输出。");
 	expect(requested).toEqual([]);
 
 	// 取消选中之后才读合并日志。

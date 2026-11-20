@@ -16,7 +16,7 @@ import {
 	type TrackTick,
 	type TrackView,
 } from "./action-tracks";
-import type { NodeRef } from "./monitor-state";
+import type { NodeRef } from "./node-ref";
 import { NODE_ROW_HEIGHT } from "./timeline-model";
 
 /** 轨道的名字（标签列）和图例。 */

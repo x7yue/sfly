@@ -1,34 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { createMonitorStore } from "./monitor-state";
 
-describe("定位日志（locateLog）", () => {
+describe("共享状态里范围的部分", () => {
 	const node = { chainInstanceId: "main", nodeId: "probe" };
-	const at = Date.parse("2026-01-01T00:00:06.250Z");
 
-	it("选中节点，切到日志页签并展开面板，记下要定位的时刻", () => {
-		const store = createMonitorStore({ panelTab: "attempts", panelOpen: false });
-		store.locateLog(node, at);
-		expect(store.get()).toMatchObject({
-			selected: node,
-			panelTab: "logs",
-			panelOpen: true,
-			logMoment: { node, at },
-		});
+	it("报告范围里发生的事，状态随之变化并通知订阅者；什么都没变时不通知", () => {
+		const store = createMonitorStore();
+		let notified = 0;
+		store.subscribe(() => notified++);
+		store.report({ type: "select", node });
+		expect(store.get().scope.selected).toEqual(node);
+		expect(notified).toBe(1);
+		store.report({ type: "select", node: { ...node } });
+		expect(notified).toBe(1);
 	});
 
-	it("同一个时刻再请求一次，请求号也变：读者可能已经滚到别处，要重新定位", () => {
+	it("时间轴的悬停、缩放、标记与范围互不影响", () => {
 		const store = createMonitorStore();
-		store.locateLog(node, at);
-		const first = store.get().logMoment?.request;
-		store.locateLog(node, at);
-		expect(store.get().logMoment?.request).not.toBe(first);
-	});
-
-	it("之后选中别的节点、切换页签，不会清掉请求：它只对请求时的节点有效", () => {
-		const store = createMonitorStore();
-		store.locateLog(node, at);
-		store.select({ chainInstanceId: "main", nodeId: "fetch" });
-		store.showPanel("attempts");
-		expect(store.get().logMoment?.node).toEqual(node);
+		store.report({ type: "select", node });
+		const scope = store.get().scope;
+		store.hover(1);
+		store.zoom({ start: 1, end: 2 });
+		store.mark(3);
+		expect(store.get()).toMatchObject({ hoverAt: 1, zoom: { start: 1, end: 2 }, marker: 3, scope });
+		store.followLive();
+		expect(store.get().zoom).toBeNull();
 	});
 });
