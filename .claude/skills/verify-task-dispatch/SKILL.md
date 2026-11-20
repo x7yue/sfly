@@ -67,15 +67,15 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 ## 覆盖记录
 
-**同步提交：`0455430e8fe58e197565e97151f8e02238e88ebb`**（在这个提交上确认过模型与下列代码一致）。
+**同步提交：`f44b09d802296f4f2b14954671995eb7828bf54a`**（在这个提交上确认过模型与下列代码一致）。
 
 | 模型里的动作 | 代码 |
 |---|---|
-| `Dispatch` | `apps/server/src/engine/engine.ts` `#dispatch`（只派给 `AgentConnection.ready` 的连接，即 `ready`）、`#prepareAssign`（派发即设租约） |
+| `Dispatch` | `apps/server/src/engine/engine.ts` `#dispatch`（只派给 `AgentConnection.ready` 的连接，即 `ready`）、`#prepareAssign`（派发即设租约；派什么由 `assign-content.ts` 回答，不在模型里） |
 | `CPRecv` 的 started / result / hb | `engine.ts` `onMessage`、`#started`、`#applyResult`、`#heartbeat`；`apps/server/src/engine/leases.ts` `renewHeld`、`MissedHeartbeats`、`agentLost`（hb 判丢的尝试记下强制取消）；hb 还经 `apps/server/src/agents/agent-hub.ts` `AgentConnection.heartbeat` 把连接记为已准备好（`ready`），第一次时 `#step` 提交后为这台 Agent 派发 |
 | `FailAll` | `engine.ts` `#failTask` 的重试分支；`apps/server/src/engine/failures.ts` `shouldRetry` |
 | `LeaseExpire` | `leases.ts` `expireTasks`、`agentLost`；`engine.ts` `#step`（提交后先发取消、再派发）、`#sendCancel`；`apps/server/src/agents/agent-hub.ts` `connection`（只返回已推送 Welcome 的连接，即 `CPConnected`） |
-| `CPOnline` | `engine.ts` `onOnline`（dispositions、`renewHeld` 不带 suspects、`#heartbeats.reset`；这时还没推送 Welcome，`agentLost` 记下的取消不发出；`AgentConnection.welcome` 之后连接在准备环境，不派发） |
+| `CPOnline` | `engine.ts` `onOnline`（dispositions、`renewHeld` 不带 suspects、`#heartbeats.reset`；Welcome 里和调度无关的部分来自 `apps/server/src/agents/agent-environment.ts`，不在模型里；这时还没推送 Welcome，`agentLost` 记下的取消不发出；`AgentConnection.welcome` 之后连接在准备环境，不派发） |
 | `Disconnect` | `agent-hub.ts` `detach`；重连是新的 `AgentConnection`，阶段从头开始（`ready` 清除） |
 | `OnAgent` | `packages/schema/src/http/runs.ts` `ON_AGENT_STATUSES` |
 | `AgentConnect` | `agent/src/lib.rs` `run()` 循环、`agent/src/ledger.rs` `Ledger::hello`（持一次锁把结果待发的结果收为待 Ack、列出 `State::on_hand`） |
@@ -91,7 +91,7 @@ Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里
 判断一次改动要不要重新检查：
 
 ```sh
-git diff --stat 0455430e8fe58e197565e97151f8e02238e88ebb -- \
+git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
   apps/server/src/engine/engine.ts apps/server/src/engine/leases.ts apps/server/src/engine/failures.ts \
   apps/server/src/agents/agent-hub.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/ledger.rs agent/src/executor.rs \
   proto/sfly/agent/v1/agent.proto
