@@ -6,6 +6,7 @@ import type {
 	OrchestrationDocument,
 	OrchestrationView,
 	RunNotificationChanges,
+	StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
 import type { Actor } from "../actor.js";
@@ -27,7 +28,7 @@ export interface OrchestrationVersionView {
 	/** 经哪个 AI 编程助手保存；浏览器里保存的为 null。 */
 	author_via: string | null;
 	created_at: string;
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 }
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0）。 */
@@ -37,7 +38,7 @@ export interface OrchestrationHeadView {
 	author: string | null;
 	author_via: string | null;
 	created_at: string | null;
-	document: OrchestrationDocument;
+	document: StoredOrchestrationDocument;
 }
 
 /** 版本历史列表里的一项（不含文档内容）。 */
@@ -338,7 +339,7 @@ export class OrchestrationStore {
 	}
 
 	/** 这个项目里每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
-	async headDocuments(project: ProjectId): Promise<OrchestrationDocument[]> {
+	async headDocuments(project: ProjectId): Promise<StoredOrchestrationDocument[]> {
 		const rows = await this.deps.db
 			.select({ document: orchestrationVersions.document })
 			.from(orchestrations)
@@ -448,7 +449,7 @@ export class OrchestrationStore {
 	async #append(
 		tx: Tx,
 		orchestration: OrchestrationRow,
-		document: OrchestrationDocument,
+		document: StoredOrchestrationDocument,
 		actor: Actor,
 	): Promise<OrchestrationVersionView> {
 		const number = orchestration.headVersion + 1;

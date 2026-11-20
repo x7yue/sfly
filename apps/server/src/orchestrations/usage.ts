@@ -1,4 +1,4 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 
 /**
  * 场景对 Agent 与节点包版本的使用情况，按各场景的最新版本统计（Agent 管理、节点包管理页面用）。
@@ -6,7 +6,9 @@ import type { OrchestrationDocument } from "@sfly/schema";
  */
 
 /** Agent 名 → 引用它的场景数（默认 Agent 或节点另选的 Agent；同一场景只算一次）。 */
-export function agentReferences(documents: readonly OrchestrationDocument[]): Map<string, number> {
+export function agentReferences(
+	documents: readonly StoredOrchestrationDocument[],
+): Map<string, number> {
 	const counts = new Map<string, number>();
 	for (const doc of documents) {
 		const names = new Set<string>();
@@ -20,7 +22,9 @@ export function agentReferences(documents: readonly OrchestrationDocument[]): Ma
 }
 
 /** `包名@版本` → 锁定这个版本的场景数。 */
-export function packageLocks(documents: readonly OrchestrationDocument[]): Map<string, number> {
+export function packageLocks(
+	documents: readonly StoredOrchestrationDocument[],
+): Map<string, number> {
 	const counts = new Map<string, number>();
 	for (const doc of documents) {
 		for (const [name, version] of Object.entries(doc.packages ?? {})) {

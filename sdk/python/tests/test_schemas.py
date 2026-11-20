@@ -133,6 +133,13 @@ def test_orchestration_document_rejects_unknown_node_kind() -> None:
     assert not validator("orchestration-document").is_valid(doc)
 
 
+def test_orchestration_document_rejects_removed_node_kind() -> None:
+    """已移除的种类（ADR 0028）不再被保存用的文档 schema 接受：历史版本里留着的这种节点只读，
+    保存新版本前要先从场景里删掉。"""
+    doc = {"nodes": [{"id": "notify", "kind": "feishu_notify"}]}
+    assert not validator("orchestration-document").is_valid(doc)
+
+
 def entry_document(kind: str, description: str) -> dict[str, Any]:
     node: dict[str, Any] = {
         "id": "entry",
@@ -179,7 +186,6 @@ NODES_OF_EVERY_KIND: list[dict[str, Any]] = [
     {"id": "at", "kind": "timer", "at": "10:00:00"},
     {"id": "pause", "kind": "sleep", "duration": "5s"},
     {"id": "stop", "kind": "stop_subflow", "subflow": "sub"},
-    {"id": "notify", "kind": "feishu_notify"},
     {"id": "work", "kind": "package", "package": "stub", "node": "echo"},
 ]
 

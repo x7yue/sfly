@@ -1,5 +1,5 @@
 import { nodeNameWithId } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
@@ -24,7 +24,7 @@ export type LoadedDevPackages = ReadonlyMap<string, ReadonlySet<string>>;
  * 每个没有加载的节点一条，并写明哪台在线的 Agent 已经加载了同一个包。
  */
 export function devPackageProblems(
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 	loaded: LoadedDevPackages,
 ): PreflightProblem[] {
 	const problems: PreflightProblem[] = [];
@@ -67,7 +67,7 @@ async function loadedDevPackages(db: Db | Tx): Promise<Map<string, Set<string>>>
 /** {@link devPackageProblems}：读在线 Agent 的开发版本。`db` 由调用方传，触发准入在事务里传事务对象。 */
 export async function checkDevPackagesLoaded(
 	db: Db | Tx,
-	doc: OrchestrationDocument,
+	doc: StoredOrchestrationDocument,
 ): Promise<PreflightProblem[]> {
 	if (!Object.values(doc.packages).includes(DEV_VERSION)) return [];
 	return devPackageProblems(doc, await loadedDevPackages(db));

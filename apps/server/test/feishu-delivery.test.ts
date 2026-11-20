@@ -1,6 +1,7 @@
 // 切入点 A：投递的可靠性（#230，ADR 0020）：退避重试、限速、积压、截断、重启续投、机器人删除后丢弃，
 // 以及管理页要显示的「最近一次投递」和「积压条数」。
-// HTTP API + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
+// HTTP API + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）；
+// 消息由 support/feishu-source.ts 直接放进真实的发送队列（和 ctx.notify 同一条入队路径），不需要 Agent。
 //
 // 退避、期限和限速都按控制面时间计算，测试用手动时钟推进，不睡眠：
 // - 假飞书服务给每个请求记下到达时的控制面时间（FeishuRequest.at），间隔按它断言；
@@ -11,10 +12,15 @@ import { type FeishuBotView, feishuBotsApi, NICKNAME_HEADER } from "@sfly/schema
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Clock } from "../src/clock.js";
-import { ApiClient, type NodeView } from "./support/api-client.js";
-import type { Node } from "./support/chains.js";
+import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type FakeFeishu, type FeishuReply, startFakeFeishu } from "./support/fake-feishu.js";
+import {
+	type FeishuSource,
+	type FeishuSourceRun,
+	startFeishuSource,
+	type TextOptions,
+} from "./support/feishu-source.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -37,23 +43,8 @@ const networkLag = (clock: ManualClock, ...lags: number[]): Clock => ({
 	},
 });
 
-const notify = (id: string, extra: Record<string, unknown> = {}): Node => ({
-	id,
-	kind: "feishu_notify",
-	bot: "ops",
-	text: id,
-	...extra,
-});
-
-/** 入口 + 单链；只有内置节点，不需要 Agent。 */
-function flow(nodes: Node[], params: Array<Record<string, unknown>> = []) {
-	const all: Node[] = [{ id: "entry", kind: "entry", params }, ...nodes];
-	return {
-		nodes: all,
-		edges: all.slice(1).map((n, i) => ({ from: all[i]?.id, to: n.id, kind: "chain" })),
-		packages: {},
-	};
-}
+/** m1、m2、…：一批互相区分得开的文本。 */
+const names = (count: number) => Array.from({ length: count }, (_, i) => `m${i + 1}`);
 
 interface LogLine {
 	level: string;
@@ -67,16 +58,19 @@ describe("投递的可靠性", () => {
 	let clock: ManualClock;
 	let api: ApiClient;
 	let feishu: FakeFeishu;
+	let source: FeishuSource;
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
 		clock = cp.clock as ManualClock;
 		api = new ApiClient(cp);
+		source = await startFeishuSource(cp, api);
 		feishu = await startFakeFeishu({ clock });
 		await api.createFeishuBot("ops", feishu.webhookUrl(TOKEN));
 	});
 	afterEach(async () => {
 		await feishu.close();
+		await source.close();
 		await cp.close();
 	});
 
@@ -92,14 +86,13 @@ describe("投递的可靠性", () => {
 			expect(at.filter((x) => x > t - MINUTE && x <= t).length).toBeLessThanOrEqual(100);
 		}
 	};
-	const taskOf = (node: NodeView) => (node.attempts[0] as { task_id: string }).task_id;
-	const logOf = async (node: NodeView): Promise<LogLine[]> =>
-		(await api.getJson<{ lines: LogLine[] }>(`/tasks/${taskOf(node)}/logs`)).lines;
-	/** 等节点日志里出现满足条件的行。 */
-	const logLine = async (node: NodeView, match: (l: LogLine) => boolean): Promise<LogLine> => {
+	const logOf = async (taskId: string): Promise<LogLine[]> =>
+		(await api.getJson<{ lines: LogLine[] }>(`/tasks/${taskId}/logs`)).lines;
+	/** 等任务日志里出现满足条件的行。 */
+	const logLine = async (taskId: string, match: (l: LogLine) => boolean): Promise<LogLine> => {
 		let found: LogLine | undefined;
 		await eventually(async () => {
-			found = (await logOf(node)).find(match);
+			found = (await logOf(taskId)).find(match);
 			expect(found).toBeDefined();
 		});
 		return found as LogLine;
@@ -126,12 +119,12 @@ describe("投递的可靠性", () => {
 			headers: { "content-type": "application/json", [NICKNAME_HEADER]: "tester" },
 			body: JSON.stringify({ webhook_url: webhookUrl }),
 		});
-	const run = async (nodes: Node[], params: Array<Record<string, unknown>> = [], args = {}) => {
-		const id = await api.orchestrationWith(flow(nodes, params));
-		return api.triggerOk(id, args);
+	/** 开一次新的运行，按顺序把这些文本消息放进发送队列；消息的投递结果写进这次运行的任务日志。 */
+	const send = async (texts: string[], options: TextOptions = {}): Promise<FeishuSourceRun> => {
+		const run = await source.run();
+		await run.texts(texts, options);
+		return run;
 	};
-	const messages = (count: number, extra: Record<string, unknown> = {}) =>
-		Array.from({ length: count }, (_, i) => notify(`m${i + 1}`, extra));
 
 	/**
 	 * 等第 n 次请求到达，并且控制面已经记下它的结果（管理页上「最近一次投递」的时间就是它到达的控制面时间；
@@ -165,18 +158,17 @@ describe("投递的可靠性", () => {
 		] satisfies Array<{
 			name: string;
 			reply: FeishuReply;
-		}>)("$name：1 秒后重试，送达后节点日志里是 info，没有 warning", async ({ reply }) => {
+		}>)("$name：1 秒后重试，送达后任务日志里是 info，没有 warning", async ({ reply }) => {
 			feishu.reply(reply);
-			const runId = await run([notify("n")]);
+			const { runId, taskId } = await send(["n"]);
 			const first = await recorded(1);
 			clock.advance(SECOND);
 
 			await eventually(() => expect(texts()).toEqual(["n", "n"]));
 			expect(arrivals()).toEqual([first, first + SECOND]);
-			const node = await api.node(runId, "n");
-			const line = await logLine(node, (l) => l.level === "info" && l.text.includes("已送达"));
+			const line = await logLine(taskId, (l) => l.level === "info" && l.text.includes("已送达"));
 			expect(line.text).toContain("第 2 次");
-			expect((await logOf(node)).filter((l) => l.level === "warn")).toEqual([]);
+			expect((await logOf(taskId)).filter((l) => l.level === "warn")).toEqual([]);
 			expect((await api.run(runId)).status).toBe("success");
 		});
 
@@ -185,7 +177,7 @@ describe("投递的可靠性", () => {
 			const deadUrl = dead.webhookUrl("dead-token");
 			await dead.close();
 			await api.createFeishuBot("dead", deadUrl);
-			const runId = await run([notify("n", { bot: "dead" })]);
+			const { taskId } = await send(["n"], { bot: "dead" });
 			await eventually(async () => {
 				const bot = await botView("dead");
 				expect(bot.last_delivery).toMatchObject({ ok: false });
@@ -198,13 +190,13 @@ describe("投递的可靠性", () => {
 
 			await eventually(() => expect(feishu.requests).toHaveLength(1));
 			expect(feishu.requests[0]?.path).toBe("/open-apis/bot/v2/hook/new-token");
-			await logLine(await api.node(runId, "n"), (l) => l.text.includes("已送达"));
+			await logLine(taskId, (l) => l.text.includes("已送达"));
 			await backlogReaches(0, "dead");
 		});
 
 		it("间隔从 1 秒起逐次翻倍，最长 60 秒；重试的一直是同一条消息", async () => {
 			feishu.replyAlways({ status: 503 });
-			await run([notify("n")]);
+			await send(["n"]);
 			const start = await recorded(1);
 			const delays = [1, 2, 4, 8, 16, 32, 60, 60].map((s) => s * SECOND);
 			for (const [i, delay] of delays.entries()) {
@@ -221,8 +213,8 @@ describe("投递的可靠性", () => {
 		it("重试期间同一个机器人后面的消息不会越过它；别的机器人不受影响", async () => {
 			await api.createFeishuBot("other", feishu.webhookUrl("other-token"));
 			feishu.replyTo(TOKEN, { status: 503 });
-			await run(messages(3));
-			await run([notify("free", { bot: "other" })]);
+			await send(names(3));
+			await send(["free"], { bot: "other" });
 
 			// ops 的第一条在等重试，other 的消息照常送达。
 			await eventually(() => expect(texts()).toContain("free"));
@@ -264,6 +256,11 @@ describe("投递的可靠性", () => {
 				reply: { code: 99999, msg: "oops" },
 				includes: ["99999", "oops"],
 			},
+			{
+				name: "未知的错误码，说明里带着完整的 Webhook 地址（地址打码）",
+				reply: { code: 99999, msg: `oops ${`http://127.0.0.1:1/open-apis/bot/v2/hook/${TOKEN}`}` },
+				includes: ["99999", "oops"],
+			},
 			{ name: "HTTP 404", reply: { status: 404, code: 0 }, includes: ["HTTP 404"] },
 		] satisfies Array<{
 			name: string;
@@ -271,24 +268,25 @@ describe("投递的可靠性", () => {
 			includes: string[];
 		}>)("$name：附上中文原因和下一步，后面的消息照常发出", async ({ reply, includes }) => {
 			feishu.reply(reply);
-			const runId = await run([notify("m1"), notify("m2")]);
+			const { runId, taskId } = await send(["m1", "m2"]);
 
 			// 同一个机器人串行投递：m2 到了，说明 m1 没有留在重试里（留着的话它会先重发，m2 要等到它之后）。
 			await advancing(MINUTE, () => expect(texts()).toEqual(["m1", "m2"]));
-			const node = await api.node(runId, "m1");
-			const line = await logLine(node, warnOf("投递失败"));
+			// 只有 m1 失败（应答只排了一个）：任务日志里的 warning 就是它的。
+			const line = await logLine(taskId, warnOf("投递失败"));
 			for (const text of [...includes, "下一步"]) expect(line.text).toContain(text);
 			expect(line.text).not.toContain(TOKEN);
+			expect(JSON.stringify(await logOf(taskId))).not.toContain(TOKEN);
 			expect((await api.run(runId)).status).toBe("success");
 			await backlogReaches(0);
 		});
 	});
 
 	describe("从入队算起超过 10 分钟还没送达就记为失败", () => {
-		it("按退避重试到期限为止，最后一次恰好在期限那一刻；失败写成 warning，节点和运行不受影响", async () => {
+		it("按退避重试到期限为止，最后一次恰好在期限那一刻；失败写成 warning，任务和运行不受影响", async () => {
 			feishu.replyAlways({ status: 503 });
 			const start = clock.now().getTime();
-			const runId = await run([notify("n")]);
+			const { runId, taskId } = await send(["n"]);
 			const schedule = [0, 1, 3, 7, 15, 31, 63, 123, 183, 243, 303, 363, 423, 483, 543, 600];
 			for (const [i, offset] of schedule.entries()) {
 				if (i > 0) clock.set(new Date(start + offset * SECOND));
@@ -296,20 +294,41 @@ describe("投递的可靠性", () => {
 			}
 
 			expect(arrivals().map((at) => (at - start) / SECOND)).toEqual(schedule);
-			const node = await api.node(runId, "n");
-			const line = await logLine(node, warnOf("投递失败"));
+			const line = await logLine(taskId, warnOf("投递失败"));
 			expect(line.time).toBe(new Date(start + 10 * MINUTE).toISOString());
 			for (const text of ["10 分钟", "16 次", "HTTP 503", "下一步"]) {
 				expect(line.text).toContain(text);
 			}
-			expect(node.status).toBe("success");
+			expect((await api.node(runId, "entry")).status).toBe("success");
 			expect((await api.run(runId)).status).toBe("success");
 			await backlogReaches(0);
 
 			// 失败的消息不再重试：之后的消息直接送达，前面没有它的重发。
 			feishu.replyAlways({});
-			await run([notify("after")]);
+			await send(["after"]);
 			await advancing(MINUTE, () => expect(texts().slice(schedule.length)).toEqual(["after"]));
+		});
+
+		it("一直连不上飞书：重试到期限（10 分钟）后日志里是 warning，写明无法连接，地址打码；任务和运行不受影响", async () => {
+			const dead = await startFakeFeishu();
+			const deadUrl = dead.webhookUrl(TOKEN);
+			await dead.close();
+			await api.createFeishuBot("dead", deadUrl);
+			const { runId, taskId } = await send(["n"], { bot: "dead" });
+
+			// 网络错误退避重试（#230）：推进控制面时间越过期限，才记为失败。
+			let line: LogLine | undefined;
+			await advancing(MINUTE, async () => {
+				line = (await logOf(taskId)).find(warnOf("投递失败"));
+				expect(line).toBeDefined();
+			});
+
+			expect(line?.text).toContain("无法连接");
+			expect(line?.text).toContain("10 分钟");
+			expect(JSON.stringify(await logOf(taskId))).not.toContain(TOKEN);
+			expect((await api.node(runId, "entry")).status).toBe("success");
+			expect((await api.run(runId)).status).toBe("success");
+			await backlogReaches(0, "dead");
 		});
 	});
 
@@ -318,8 +337,7 @@ describe("投递的可靠性", () => {
 			timeout: 90_000,
 		}, async () => {
 			const start = clock.now().getTime();
-			const runId = await run(messages(120));
-			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+			await send(names(120));
 
 			// 时间不动时，一秒的额度（5 条）马上发出，第 6 条要等。
 			await backlogReaches(115);
@@ -328,7 +346,7 @@ describe("投递的可靠性", () => {
 			await advancing(SECOND / 2, () => expect(feishu.requests).toHaveLength(120), 80_000);
 
 			expectWithinRateLimits(arrivals());
-			expect(texts()).toEqual(messages(120).map((n) => n.id));
+			expect(texts()).toEqual(names(120));
 			await backlogReaches(0);
 		});
 
@@ -337,8 +355,7 @@ describe("投递的可靠性", () => {
 			const slowStart = await startFakeFeishu({ clock: networkLag(clock, SECOND / 2) });
 			try {
 				await api.createFeishuBot("slow-start", slowStart.webhookUrl(TOKEN));
-				const runId = await run(messages(6, { bot: "slow-start" }));
-				await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+				await send(names(6), { bot: "slow-start" });
 
 				// 第 1 个请求发出时控制面时间是 start，飞书收到它时已经走到 start + 0.5 秒；后面 4 个紧跟着到达。
 				await backlogReaches(1, "slow-start");
@@ -357,8 +374,8 @@ describe("投递的可靠性", () => {
 
 		it("一个机器人被限速时，别的机器人照常发送", async () => {
 			await api.createFeishuBot("other", feishu.webhookUrl("other-token"));
-			await run(messages(8));
-			await run([notify("free", { bot: "other" })]);
+			await send(names(8));
+			await send(["free"], { bot: "other" });
 
 			await eventually(() =>
 				expect([...texts()].sort()).toEqual(["free", "m1", "m2", "m3", "m4", "m5"]),
@@ -383,7 +400,7 @@ describe("投递的可靠性", () => {
 		it("超出的部分按入队顺序从最旧的丢起，记为「已丢弃：积压过多」，写进发起它的任务的日志", async () => {
 			await api.createFeishuBot("slow", feishu.webhookUrl("slow-token"));
 			feishu.replyAlways({ status: 503 });
-			const runId = await run([notify("first", { bot: "slow" })]);
+			const { taskId } = await send(["first"], { bot: "slow" });
 			await eventually(async () =>
 				expect((await botView("slow")).last_delivery).toMatchObject({ ok: false }),
 			);
@@ -399,9 +416,9 @@ describe("投递的可靠性", () => {
 				),
 			);
 
-			// 1101 条排队，丢掉最旧的 101 条：第一条（来自节点）和 bulk-0 到 bulk-99。
+			// 1101 条排队，丢掉最旧的 101 条：第一条（来源放进去的）和 bulk-0 到 bulk-99。
 			await backlogReaches(1000, "slow");
-			const line = await logLine(await api.node(runId, "first"), warnOf("已丢弃：积压过多"));
+			const line = await logLine(taskId, warnOf("已丢弃：积压过多"));
 			expect(line.text).toContain("「slow」");
 			expect(line.text).toContain("1000");
 			const { discarded, oldestKept, newestKept } = await withDb(async (c) => {
@@ -424,9 +441,8 @@ describe("投递的可靠性", () => {
 
 	describe("文本超过 20 KB 时在入队时截断", () => {
 		const overhead = Buffer.byteLength(JSON.stringify({ msg_type: "text", content: { text: "" } }));
-		const params = [{ name: "big", type: "string" }];
-		const sendBig = async (text: string, extra: Record<string, unknown> = {}) => {
-			await run([notify("n", { text: "${{ params.big }}", ...extra })], params, { big: text });
+		const sendBig = async (text: string, options: TextOptions = {}) => {
+			await send([text], options);
 			await eventually(() => expect(feishu.requests).toHaveLength(1));
 			const request = feishu.requests[0] as { body: string; json: unknown };
 			return {
@@ -452,7 +468,7 @@ describe("投递的可靠性", () => {
 		});
 
 		it("打开「@所有人」时，截断的是正文，「@所有人」仍然在最后", async () => {
-			const { size, sent } = await sendBig("a".repeat(30_000), { at_all: true });
+			const { size, sent } = await sendBig("a".repeat(30_000), { atAll: true });
 
 			expect(size).toBeLessThanOrEqual(BODY_LIMIT);
 			expect(sent.endsWith(`${TRUNCATED}${AT_ALL}`)).toBe(true);
@@ -473,14 +489,14 @@ describe("投递的可靠性", () => {
 
 	describe("控制面重启后接着投递", () => {
 		it("排队的消息照常送达，已经送达的不会重发；重启之前排好的退避继续算", async () => {
-			await run([notify("done")]);
+			await send(["done"]);
 			await eventually(() => expect(texts()).toEqual(["done"]));
 			await backlogReaches(0);
 			// 之后的请求在另一个控制面时间发出，「最近一次投递」的时间才能说明它已经记下了。
 			clock.advance(10 * SECOND);
 
 			feishu.reply({ status: 503 });
-			const runId = await run(messages(3));
+			const { taskId } = await send(names(3));
 			const first = await recorded(2);
 			await backlogReaches(3);
 
@@ -490,15 +506,18 @@ describe("投递的可靠性", () => {
 			clock.advance(SECOND);
 			await eventually(() => expect(texts()).toEqual(["done", "m1", "m1", "m2", "m3"]));
 			expect(arrivals().slice(1)).toEqual([first, first + SECOND, first + SECOND, first + SECOND]);
-			const node = await api.node(runId, "m1");
-			await logLine(node, (l) => l.level === "info" && l.text.includes("已送达"));
-			expect((await logOf(node)).filter((l) => l.level === "warn")).toEqual([]);
+			await eventually(async () =>
+				expect(
+					(await logOf(taskId)).filter((l) => l.level === "info" && l.text.includes("已送达")),
+				).toHaveLength(3),
+			);
+			expect((await logOf(taskId)).filter((l) => l.level === "warn")).toEqual([]);
 			await backlogReaches(0);
 		});
 
 		it("停机期间已经过了退避时间的，重启后马上重试", async () => {
 			feishu.reply({ status: 503 });
-			await run([notify("m1")]);
+			await send(["m1"]);
 			const first = await recorded(1);
 
 			await cp.restart(() => clock.advance(5 * MINUTE));
@@ -511,7 +530,9 @@ describe("投递的可靠性", () => {
 	describe("删除机器人后丢弃它还没有投递的消息", () => {
 		it("记为「已丢弃：机器人已删除」，写进各自任务的日志；不会再发出", async () => {
 			feishu.reply({ status: 503 });
-			const runId = await run(messages(3));
+			// 三条消息来自三次运行：各有各的任务日志。
+			const runs: FeishuSourceRun[] = [];
+			for (const text of names(3)) runs.push(await send([text]));
 			await eventually(async () => {
 				const bot = await botView();
 				expect(bot.last_delivery).toMatchObject({ ok: false });
@@ -520,16 +541,16 @@ describe("投递的可靠性", () => {
 
 			expect((await removeBot("ops")).status).toBe(204);
 
-			for (const id of ["m1", "m2", "m3"]) {
-				const line = await logLine(await api.node(runId, id), warnOf("已丢弃：机器人已删除"));
+			for (const { taskId, runId } of runs) {
+				const line = await logLine(taskId, warnOf("已丢弃：机器人已删除"));
 				expect(line.text).toContain("「ops」");
+				expect((await api.run(runId)).status).toBe("success");
 			}
-			expect((await api.run(runId)).status).toBe("success");
 
 			// 同名重新登记：队列里要是还有那几条，它们会先被送出去，所以 fresh 到了就说明它们已经没有了。
 			await api.createFeishuBot("ops", feishu.webhookUrl(TOKEN));
 			expect(await botView()).toMatchObject({ backlog: 0, last_delivery: null });
-			await run([notify("fresh")]);
+			await send(["fresh"]);
 			await advancing(MINUTE, () => expect(texts()).toEqual(["m1", "fresh"]));
 		});
 
@@ -537,8 +558,8 @@ describe("投递的可靠性", () => {
 			await api.createFeishuBot("other", feishu.webhookUrl("other-token"));
 			feishu.replyTo(TOKEN, { status: 503 });
 			feishu.replyTo("other-token", { status: 503 });
-			await run([notify("a1")]);
-			await run([notify("b1", { bot: "other" })]);
+			await send(["a1"]);
+			await send(["b1"], { bot: "other" });
 			await eventually(async () => {
 				for (const name of ["ops", "other"]) {
 					const bot = await botView(name);
@@ -563,7 +584,7 @@ describe("投递的可靠性", () => {
 		it("送达后：最近一次投递成功，时间是控制面时间", async () => {
 			clock.advance(90 * SECOND);
 			const delivered = clock.now().toISOString();
-			await run([notify("n")]);
+			await send(["n"]);
 
 			await eventually(async () =>
 				expect(await botView()).toMatchObject({
@@ -575,7 +596,7 @@ describe("投递的可靠性", () => {
 
 		it("不可重试的失败：最近一次投递失败，写着中文原因和下一步", async () => {
 			feishu.reply({ code: 19024 });
-			await run([notify("n")]);
+			await send(["n"]);
 
 			await eventually(async () => {
 				const bot = await botView();
@@ -588,7 +609,7 @@ describe("投递的可靠性", () => {
 
 		it("可重试的失败：最近一次投递是失败，积压是还在排队的条数；送达之后恢复", async () => {
 			feishu.reply({ status: 503 });
-			await run(messages(2));
+			await send(names(2));
 
 			await eventually(async () => {
 				const bot = await botView();

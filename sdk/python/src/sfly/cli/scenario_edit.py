@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import CliError
+from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
 
@@ -478,6 +479,15 @@ def _leaves(error: ValidationError) -> list[ValidationError]:
             )
         )
         shown = instance.get("kind") if isinstance(instance, dict) else None
+        if isinstance(shown, str) and shown in REMOVED_NODE_KINDS:
+            # 已移除的节点种类（ADR 0028）：说明怎么替换，和控制面拒绝保存时的说法一致。
+            _, replacement = REMOVED_NODE_KINDS[shown]
+            return [
+                ValidationError(
+                    f"{removed_kind_label(shown)}：这种节点已不再支持，先删掉再保存。替换办法：{replacement}",
+                    path=[*error.absolute_path, "kind"],
+                )
+            ]
         return [
             ValidationError(
                 f"kind {shown!r} 不是已知的节点类型，可选：{'、'.join(kinds)}",

@@ -1,5 +1,12 @@
+import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { expect, test } from "./fixtures";
-import { createFeishuBot, createScenario, triggerRun } from "./support";
+import {
+	createFeishuBot,
+	createScenario,
+	publishPackage,
+	setRunNotification,
+	triggerRun,
+} from "./support";
 
 // 飞书机器人管理页（ADR 0020）：登记、Webhook 地址打码、替换、删除、发送测试消息。
 // 机器人的 Webhook 地址指向假的飞书服务（fixtures 的 feishu），它记录收到的请求、按测试指定的状态码和 code 应答。
@@ -271,18 +278,26 @@ test("删除前列出引用这个机器人的场景：每个场景可以点开�
 }) => {
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
 	await createFeishuBot(controlPlane, "告警群", feishu.webhookUrl("b"));
-	const notify = (id: string, bot: string) => ({ id, kind: "feishu_notify", bot, text: id });
+	await publishPackage(controlPlane, { name: "alerts", version: "1.0.0", nodes: alertNodes });
+	const alert = (id: string, bot: string) => ({
+		id,
+		kind: "package",
+		package: "alerts",
+		node: "alert",
+		inputs: { bot },
+	});
 	const scenario = await createScenario(controlPlane, "订单压测", {
+		default_agent: "runner",
 		nodes: [
 			{ id: "entry", kind: "entry", params: [] },
-			notify("start", "压测群"),
-			notify("end", "压测群"),
+			alert("start", "压测群"),
+			alert("end", "压测群"),
 		],
 		edges: [
 			{ from: "entry", to: "start", kind: "chain" },
 			{ from: "start", to: "end", kind: "chain" },
 		],
-		packages: {},
+		packages: { alerts: "1.0.0" },
 	});
 	await page.goto("/feishu-bots");
 
@@ -300,22 +315,38 @@ test("删除前列出引用这个机器人的场景：每个场景可以点开�
 		"href",
 		`/orchestrations/${scenario}`,
 	);
-	await expect(used).toContainText("飞书通知节点 start、飞书通知节点 end");
-	await expect(dialog).toContainText("删除后这些节点发不出消息");
+	await expect(used).toContainText("节点 start 的输入 bot、节点 end 的输入 bot");
+	await expect(dialog).toContainText("删除后这些节点的输入选的机器人不存在");
 
 	await dialog.getByRole("button", { name: "删除", exact: true }).click();
 	await expect(row(page, "压测群")).toHaveCount(0);
 });
 
-/** 一个入口 + 一个飞书通知节点的场景：运行时向这个机器人发一条消息。 */
-const notifyScenario = (bot: string) => ({
-	nodes: [
-		{ id: "entry", kind: "entry", params: [] },
-		{ id: "notify", kind: "feishu_notify", bot, text: "压测开始" },
-	],
-	edges: [{ from: "entry", to: "notify", kind: "chain" }],
-	packages: {},
-});
+/** alerts 的节点类型：alert 的 bot 是「飞书机器人」类型的输入（sfly build 的标记）。 */
+const alertNodes = [
+	{
+		name: "alert",
+		title: "告警",
+		entry: "alerts:alert",
+		inputs: {
+			type: "object",
+			properties: { bot: { type: "string", "x-sfly-type": "feishu_bot" } },
+			required: ["bot"],
+		},
+		outputs: { type: "object", properties: {} },
+	},
+];
+
+/** 一个只有入口的场景，运行结束时（运行通知，总是触发）向这个机器人发一张卡片：投递的消息来源。 */
+async function notifiedScenario(controlPlane: TestControlPlane, bot: string): Promise<string> {
+	const id = await createScenario(controlPlane, "通知", {
+		nodes: [{ id: "entry", kind: "entry", params: [] }],
+		edges: [],
+		packages: {},
+	});
+	await setRunNotification(controlPlane, id, { bot, trigger: "always" });
+	return id;
+}
 const POLL_WAIT = { timeout: 15_000 };
 
 test("最近投递和积压：登记之后尚无投递；消息送达后显示已送达和时间，积压为 0", async ({
@@ -329,7 +360,7 @@ test("最近投递和积压：登记之后尚无投递；消息送达后显示�
 	await expect(bot.getByRole("cell").nth(CELL.lastDelivery)).toHaveText("尚无投递");
 	await expect(bot.getByRole("cell").nth(CELL.backlog)).toHaveText("0");
 
-	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	const scenario = await notifiedScenario(controlPlane, "压测群");
 	await triggerRun(controlPlane, scenario);
 
 	const last = bot.getByRole("cell").nth(CELL.lastDelivery);
@@ -347,7 +378,7 @@ test("可重试的失败：最近投递是失败的原因，积压是还在排�
 }) => {
 	feishu.reply({ status: 503 });
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
-	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	const scenario = await notifiedScenario(controlPlane, "压测群");
 	await triggerRun(controlPlane, scenario);
 	await page.goto("/feishu-bots");
 	const bot = row(page, "压测群");
@@ -373,7 +404,7 @@ test("不可重试的失败：最近投递写着中文原因和下一步，不�
 }) => {
 	feishu.reply({ code: 19024, msg: `Key Words Not Found ${feishu.webhookUrl(SECRET)}` });
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl(SECRET));
-	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	const scenario = await notifiedScenario(controlPlane, "压测群");
 	await triggerRun(controlPlane, scenario);
 	await page.goto("/feishu-bots");
 	const bot = row(page, "压测群");
@@ -393,7 +424,7 @@ test("删除机器人：它还在排队的消息被丢弃，积压清零；同�
 }) => {
 	feishu.replyAlways({ status: 503 });
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
-	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	const scenario = await notifiedScenario(controlPlane, "压测群");
 	await triggerRun(controlPlane, scenario);
 	await page.goto("/feishu-bots");
 	await expect(row(page, "压测群").getByRole("cell").nth(CELL.backlog)).toHaveText(

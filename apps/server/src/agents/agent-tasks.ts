@@ -1,5 +1,5 @@
 import { nodeOutsideCardText } from "@sfly/orchestration";
-import type { OrchestrationDocument, QueuedTaskView, RunningTaskView } from "@sfly/schema";
+import type { QueuedTaskView, RunningTaskView, StoredOrchestrationDocument } from "@sfly/schema";
 import { asc, eq, inArray, type SQL } from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
 import type { Db, Tx } from "../db/database.js";
@@ -57,7 +57,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 		.where(where)
 		.orderBy(asc(tasks.seq));
 	const versionIds = [...new Set(rows.map((r) => r.versionId))];
-	const documents = new Map<string, OrchestrationDocument>(
+	const documents = new Map<string, StoredOrchestrationDocument>(
 		versionIds.length === 0
 			? []
 			: (

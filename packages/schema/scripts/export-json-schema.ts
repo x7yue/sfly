@@ -22,6 +22,11 @@ for (const [name, schema] of Object.entries(contract.exportedSchemas)) {
 		`${JSON.stringify(contract.toJsonSchema(schema), null, 2)}\n`,
 	);
 }
+// 已移除的节点种类（ADR 0028）：命令行读这一份，不再手写第二份清单。
+write(
+	join(sdkDir, "removed-node-kinds.json"),
+	`${JSON.stringify(contract.REMOVED_NODE_KINDS, null, 2)}\n`,
+);
 write(
 	join(sdkDir, "routes.json"),
 	`${JSON.stringify(

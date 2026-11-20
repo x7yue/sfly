@@ -1,11 +1,11 @@
 import { diffDocuments } from "@sfly/orchestration";
 import {
 	domainKey,
-	type OrchestrationDocument,
 	type OrchestrationHeadView,
 	type OrchestrationView,
 	orchestrationsApi,
 	queryKey,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { DocumentDiffView } from "./DocumentDiffView";
+import { savableDocument } from "./draft";
 import type { Versioning } from "./useVersionedDraft";
 
 /** 保存被拦截时对方保存的版本（409 的 details.head，或本地草稿过期时打开页面时的最新版本）。 */
@@ -45,7 +46,7 @@ export function ConflictDialog({
 	open: boolean;
 	onOpenChange(open: boolean): void;
 	orchestration: OrchestrationView;
-	doc: OrchestrationDocument;
+	doc: StoredOrchestrationDocument;
 	head: ConflictHead | null;
 	versioning: Versioning;
 	/** 用最新版本重新开始编辑（放弃本地修改之后）。 */
@@ -87,7 +88,7 @@ export function ConflictDialog({
 			const created = await callApi(orchestrationsApi.create, { body: { name } });
 			await callApi(orchestrationsApi.saveVersion, {
 				params: { id: created.id },
-				body: { base_version: 0, document: doc },
+				body: { base_version: 0, document: savableDocument(doc) },
 			});
 			return created;
 		},

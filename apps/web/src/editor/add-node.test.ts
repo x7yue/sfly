@@ -56,23 +56,9 @@ describe("新建停止子流程节点", () => {
 	});
 });
 
-describe("新建飞书通知节点", () => {
-	it("还没有选择机器人，格式是文本，文本为空，不@所有人，always 默认关闭；卡片的标题和正文为空、蓝色", () => {
-		expect(newDocNode({ kind: "feishu_notify" }, "feishu_notify_1")).toEqual({
-			id: "feishu_notify_1",
-			kind: "feishu_notify",
-			always: false,
-			format: "text",
-			text: "",
-			at_all: false,
-			title: "",
-			color: "blue",
-			markdown: "",
-		});
-	});
-
-	it("出现在添加节点菜单的内置节点里", () => {
-		expect(BUILTIN_ITEMS.map((item) => item.kind)).toContain("feishu_notify");
+describe("添加节点菜单的内置节点", () => {
+	it("已移除的节点种类（飞书通知）不再出现在菜单里", () => {
+		expect(BUILTIN_ITEMS.map((item) => item.kind)).not.toContain("feishu_notify");
 	});
 });
 

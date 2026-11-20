@@ -1,4 +1,4 @@
-import type { OrchestrationNode } from "@sfly/schema";
+import type { OrchestrationNode, StoredNode } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	type NodeDisplayLookup,
@@ -28,6 +28,10 @@ const lookup: NodeDisplayLookup = {
 
 const node = (n: Record<string, unknown> & { kind: OrchestrationNode["kind"] }) =>
 	({ id: "n1", ...n }) as OrchestrationNode;
+
+/** 已移除种类的节点（ADR 0028）：只有共有的字段和当时的配置。 */
+const removed = (n: Record<string, unknown> = {}) =>
+	({ id: "n1", kind: "feishu_notify", bot: "ops", text: "完成", ...n }) as StoredNode;
 
 describe("卡片上的标题和头部种类名", () => {
 	it("包节点：标题是节点类型的标题，头部不写种类名；节点包里没有这个节点类型时标题是节点类型名", () => {
@@ -96,11 +100,7 @@ describe("卡片上的标题和头部种类名", () => {
 		expect(nodeCardText(named, lookup).caption).toBeUndefined();
 	});
 
-	it("飞书通知节点、异步任务节点、入口节点：标题就是种类名，头部不重复", () => {
-		expect(nodeCardText(node({ kind: "feishu_notify" }), lookup)).toEqual({
-			title: "飞书通知",
-			caption: undefined,
-		});
+	it("异步任务节点、入口节点：标题就是种类名，头部不重复", () => {
 		expect(nodeCardText(node({ kind: "async" }), lookup)).toEqual({
 			title: "异步任务",
 			caption: undefined,
@@ -115,6 +115,28 @@ describe("卡片上的标题和头部种类名", () => {
 		expect(nodeCardText(node({ kind: "sleep", duration: "5m" }), {}).title).toBe("等待 5m");
 		expect(nodeCardText(node({ kind: "stop_subflow", subflow: "mon" }), {}).title).toBe(
 			"停止「mon」",
+		);
+	});
+});
+
+describe("已移除种类的节点（ADR 0028）", () => {
+	it("卡片上写「已移除的节点类型」加它当时的种类名，不报错；有显示名称时名称是标题", () => {
+		expect(nodeCardText(removed(), lookup)).toEqual({
+			title: "已移除的节点类型 feishu_notify",
+			caption: undefined,
+		});
+		expect(nodeCardText(removed({ display_name: "通知群" }), lookup)).toEqual({
+			title: "通知群",
+			caption: "已移除的节点类型 feishu_notify",
+		});
+	});
+
+	it("卡片以外：有声明时按种类写，场景里已经没有这个节点、只知道运行里的种类时同样写", () => {
+		expect(nodeOutsideCardText(removed(), "feishu_notify", lookup)).toBe(
+			"已移除的节点类型 feishu_notify",
+		);
+		expect(nodeOutsideCardText(undefined, "feishu_notify", lookup)).toBe(
+			"已移除的节点类型 feishu_notify",
 		);
 	});
 });
@@ -146,10 +168,6 @@ describe("有显示名称时卡片上的写法", () => {
 		expect(named({ kind: "stop_subflow" })).toEqual({
 			title: "创建测试用户",
 			caption: "停止子流程",
-		});
-		expect(named({ kind: "feishu_notify" })).toEqual({
-			title: "创建测试用户",
-			caption: "飞书通知",
 		});
 		expect(named({ kind: "async" })).toEqual({ title: "创建测试用户", caption: "异步任务" });
 		expect(named({ kind: "entry" })).toEqual({ title: "创建测试用户", caption: "入口" });
@@ -249,7 +267,6 @@ describe("卡片以外的写法", () => {
 		expect(outside(node({ kind: "sleep", duration: "30s" }))).toBe("Sleep");
 		expect(outside(node({ kind: "timer", at: "09:30:00" }))).toBe("定时");
 		expect(outside(node({ kind: "subflow_entry", id: "mon", name: "监控" }))).toBe("子流程入口");
-		expect(outside(node({ kind: "feishu_notify" }))).toBe("飞书通知");
 		expect(outside(node({ kind: "async" }))).toBe("异步任务");
 		expect(outside(node({ kind: "entry" }))).toBe("入口");
 	});

@@ -1,4 +1,4 @@
-import { type OrchestrationDocument, orchestrationsApi, type RunView } from "@sfly/schema";
+import { orchestrationsApi, type RunView, type StoredOrchestrationDocument } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -195,7 +195,7 @@ function DetailView({
 	onCloseBanner,
 }: {
 	run: RunView;
-	doc: OrchestrationDocument | undefined;
+	doc: StoredOrchestrationDocument | undefined;
 	failureBanner: boolean;
 	onCloseBanner: () => void;
 }) {

@@ -5,7 +5,11 @@ import {
 	referencedFeishuBots,
 	referencesIn,
 } from "@sfly/orchestration";
-import type { FeishuBotReference, FeishuBotScenario, OrchestrationDocument } from "@sfly/schema";
+import type {
+	FeishuBotReference,
+	FeishuBotScenario,
+	StoredOrchestrationDocument,
+} from "@sfly/schema";
 import { and, asc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { nodePackages, orchestrations, orchestrationVersions } from "../db/schema.js";
@@ -28,7 +32,7 @@ type BotReferenceSource = (
 async function headDocuments(
 	db: Db,
 	project: ProjectId,
-): Promise<{ orchestrationId: string; document: OrchestrationDocument }[]> {
+): Promise<{ orchestrationId: string; document: StoredOrchestrationDocument }[]> {
 	return db
 		.select({ orchestrationId: orchestrations.id, document: orchestrationVersions.document })
 		.from(orchestrations)
@@ -41,21 +45,6 @@ async function headDocuments(
 		)
 		.where(and(eq(orchestrations.projectId, project), isNull(orchestrations.archivedAt)));
 }
-
-/** 最新场景版本里的飞书通知节点。 */
-const notifyNodes: BotReferenceSource = async (db, project, bot) =>
-	(await headDocuments(db, project)).flatMap(({ orchestrationId, document }) =>
-		document.nodes.flatMap((node) =>
-			node.kind === "feishu_notify" && node.bot === bot
-				? [
-						{
-							orchestrationId,
-							reference: { kind: "feishu_notify_node" as const, node_id: node.id },
-						},
-					]
-				: [],
-		),
-	);
 
 /** 最新场景版本里「飞书机器人」类型的输入的常量值（要按文档锁定的节点包版本的元信息认出这种输入）。 */
 const botInputs: BotReferenceSource = async (db, project, bot) => {
@@ -121,11 +110,7 @@ const runNotifications: BotReferenceSource = async (db, project, bot) =>
 		reference: { kind: "run_notification" as const },
 	}));
 
-const BOT_REFERENCE_SOURCES: readonly BotReferenceSource[] = [
-	notifyNodes,
-	botInputs,
-	runNotifications,
-];
+const BOT_REFERENCE_SOURCES: readonly BotReferenceSource[] = [botInputs, runNotifications];
 
 /** 这个项目里引用这个机器人的场景（按场景名排序）和场景里引用它的地方；别的项目的场景不列。 */
 export async function scenariosReferencingBot(

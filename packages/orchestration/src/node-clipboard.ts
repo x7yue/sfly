@@ -1,4 +1,4 @@
-import { OrchestrationNode } from "@sfly/schema";
+import { isRemovedNodeKind, OrchestrationNode, type StoredNode } from "@sfly/schema";
 import { type DocumentEdit, type Rejected, rejected } from "./edit-result.js";
 import type { Position } from "./layout.js";
 import { uniqueNodeId } from "./node-id.js";
@@ -32,12 +32,13 @@ export interface CopiedNode {
 
 /** 复制、粘贴、创建副本作用的文档（只读取节点和包版本锁定；连线原样保留）。 */
 export interface CopyDocument {
-	nodes: readonly OrchestrationNode[];
+	nodes: readonly StoredNode[];
 	packages: Readonly<Record<string, string>>;
 }
 
 /** 这个节点能不能复制、创建副本；可以时返回 null。 */
-export function copyProblem(node: { kind: OrchestrationNode["kind"] }): string | null {
+export function copyProblem(node: { kind: StoredNode["kind"] }): string | null {
+	if (isRemovedNodeKind(node.kind)) return "已不再支持的节点不能复制或创建副本";
 	if (node.kind === "entry") return "入口节点不能复制或创建副本";
 	if (node.kind === "subflow_entry") return "子流程入口节点不能复制或创建副本";
 	return null;
@@ -109,7 +110,7 @@ export function placeCopy<D extends CopyDocument>(
 		copied.node.id.replace(/_\d+$/, ""),
 		doc.nodes.map((n) => n.id),
 	);
-	const node = { ...copied.node, id, position } as OrchestrationNode;
+	const node = { ...copied.node, id, position } as StoredNode;
 	const pkg = node.kind === "package" ? node.package : undefined;
 	const packages =
 		pkg && copied.packageVersion && doc.packages[pkg] === undefined
@@ -126,6 +127,9 @@ export function duplicateNode<D extends CopyDocument>(
 ): DocumentEdit<D, { id: string }> {
 	const found = doc.nodes.find((n) => n.id === id);
 	if (!found) return rejected(`节点 ${id} 不存在`);
+	const problem = copyProblem(found);
+	if (problem) return rejected(problem);
 	const { position: _, ...node } = found;
-	return placeCopy(doc, { node }, position);
+	// 能复制的节点都不是已移除种类的（copyProblem）。
+	return placeCopy(doc, { node: node as CopiedNode["node"] }, position);
 }
