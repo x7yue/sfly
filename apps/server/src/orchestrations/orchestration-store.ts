@@ -382,7 +382,9 @@ export class OrchestrationStore {
 					number: 1,
 					document: head.document,
 					author: actor.nickname,
+					authorUserId: actor.userId,
 					authorVia: actor.via,
+					authorToken: actor.token,
 					createdAt: now,
 				});
 			}
@@ -588,7 +590,9 @@ export class OrchestrationStore {
 				number,
 				document,
 				author: actor.nickname,
+				authorUserId: actor.userId,
 				authorVia: actor.via,
+				authorToken: actor.token,
 				createdAt: this.deps.clock.now(),
 			})
 			.returning();

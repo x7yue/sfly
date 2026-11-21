@@ -1,22 +1,41 @@
-import type {
-	DownloadDef,
-	EndpointDef,
-	EndpointRequest,
-	EndpointResponse,
-	RouteDef,
-	StreamDef,
-	StreamEvents,
+import {
+	checkRouteDeclarations,
+	DECLARATION_RULES,
+	type DeclarationRules,
+	type DownloadDef,
+	type EndpointDef,
+	type EndpointRequest,
+	type EndpointResponse,
+	type RouteDef,
+	type StreamDef,
+	type StreamEvents,
 } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
+import { checkAccessRules } from "../auth/access-rules.js";
 import type { Sse } from "../sse/sse.js";
+import { accessGuardOf } from "./access.js";
 import { sendError } from "./errors.js";
+
+declare module "fastify" {
+	interface FastifyContextConfig {
+		/**
+		 * 这条路由是经 `register`（`contractRoute`、`contractStream`、`contractDownload`）注册的：访问检查装在那里。
+		 * 启动守卫（`guardHttpContract`）要求每条路由都有它，手写的 `app.get(契约里的路径, …)` 会绕过访问检查，启动就失败。
+		 */
+		sflyContractRoute?: true;
+	}
+}
 
 /**
  * 按 @sfly/schema 的契约注册路由（ADR 0007，约定见 packages/schema/src/http/contract.ts）：
  * 先用契约校验路径参数、查询参数与请求体（失败返回 400，默认错误码 `invalid_request`，契约可以用
  * `requestError` 换成更具体的错误码；details 为 zod issues，path 以 params / query / body 开头），
  * handler 拿到解析后的值。
+ *
+ * 访问检查（ADR 0029「一处检查」）也在这里，在读请求体之前、校验请求之前、进处理函数之前：解析凭据、按接口的声明得出项目、查归属和范围
+ * （src/auth/access-guard.ts，事件流、下载、Fastify 为 GET 自动生成的 HEAD 路由都经过同一处）。拒绝时直接回复 401、403 或 404，
+ * 通过时把身份放在 `request.access`，处理函数用它记下是谁做的，不再自己读请求头。
  *
  * NUL（`\u0000`）存不进 PostgreSQL 的文本，数据库会直接报错，所以在进 handler 之前统一拦下：
  * 路径参数含 NUL，说明这个标识不指向任何东西，返回 404 `not_found`；查询参数与 JSON 请求体
@@ -126,9 +145,37 @@ function register<D extends RouteDef>(
 	def: D,
 	handler: (request: EndpointRequest<D>, reply: FastifyReply, raw: FastifyRequest) => unknown,
 ): void {
+	const guard = accessGuardOf(app);
 	app.route({
 		method: def.method,
 		url: def.path,
+		config: { sflyContractRoute: true },
+		// 访问检查在 onRequest：先于请求体的解析（发布节点包要把整个归档读进内存），先于校验和处理函数。
+		onRequest: async (req, reply) => {
+			const verdict = await guard.check({
+				route: def,
+				params: req.params as Record<string, string | undefined>,
+				authorization: req.headers.authorization,
+				cookie: req.headers.cookie,
+			});
+			if (!verdict.ok) {
+				// 请求体没有读：排空它，否则客户端还在发、连接挂着。
+				req.raw.resume();
+				return sendError(reply, verdict.status, verdict.code, verdict.message);
+			}
+			req.access = verdict.access;
+			return undefined;
+		},
+		// 平台管理员的写记录先于处理函数写下，响应发出之后回填状态码；回填失败只记日志（响应已经发出）。
+		onResponse: async (req, reply) => {
+			const id = req.access?.adminActionId;
+			if (id == null) return;
+			try {
+				await guard.finishAdminWrite(id, reply.statusCode);
+			} catch (error) {
+				req.log.error(error, "回填平台管理员写记录的状态码失败");
+			}
+		},
 		handler: async (req, reply) => {
 			if (hasNul(req.params)) {
 				return sendError(reply, 404, "not_found", "路径参数含 NUL 字符，没有对应的资源");
@@ -176,16 +223,42 @@ const routeKey = (method: string, path: string) => `${method} ${path}`;
  * 控制面注册的路由与契约一一对应（约定 7）：注册不在契约里的路由立即抛错；
  * 契约里有、却没有注册的接口在 `ready()`（listen 之前）时报错。必须在注册任何路由之前调用。
  * Fastify 为 GET 自动生成的 HEAD 路由不计入。
+ *
+ * 契约本身也在这里检查：每个接口的声明（`summary`、`effect`、`resource`…，`checkRouteDeclarations`）站得住，访问检查认得出
+ * 每个接口的项目从哪里得出（`checkAccessRules`）。缺声明、写错的接口让控制面起不来，不会悄悄成为没有检查的接口。
  */
-export function guardHttpContract(app: FastifyInstance, contract: readonly RouteDef[]): void {
+export function guardHttpContract(
+	app: FastifyInstance,
+	contract: readonly RouteDef[],
+	rules: DeclarationRules = DECLARATION_RULES,
+): void {
+	const problems = [...checkRouteDeclarations(contract, rules), ...checkAccessRules(contract)];
+	if (problems.length > 0) {
+		throw new Error(`HTTP 契约的声明有问题，控制面不启动：\n${problems.join("\n")}`);
+	}
 	const expected = new Set(contract.map((def) => routeKey(def.method, def.path)));
 	const registered = new Set<string>();
 	app.addHook("onRoute", (route) => {
 		for (const method of [route.method].flat()) {
-			if (method === "HEAD") continue;
+			// HEAD 也要求标记：Fastify 为 GET 自动生成的 HEAD 路由带着 GET 的配置（有标记）；手写的 HEAD 没有。
+			// 不能一律跳过：先于契约里的 GET 注册的手写 HEAD 会顶掉自动生成的那个，那样 HEAD 请求没有访问检查。
+			if (method === "HEAD") {
+				if (route.config?.sflyContractRoute !== true) {
+					throw new Error(
+						`路由 HEAD ${route.url} 不是经 contractRoute、contractStream 或 contractDownload 注册的：它没有访问检查（src/http/contract-route.ts）`,
+					);
+				}
+				continue;
+			}
 			const key = routeKey(method, route.url);
 			if (!expected.has(key)) {
 				throw new Error(`路由 ${key} 不在 HTTP 契约里（packages/schema/src/http）`);
+			}
+			// 契约里的路径也要经 register 注册：手写的路由没有访问检查，只有跨项目测试拦得住，启动不报错就是漏洞。
+			if (route.config?.sflyContractRoute !== true) {
+				throw new Error(
+					`路由 ${key} 不是经 contractRoute、contractStream 或 contractDownload 注册的：它没有访问检查（src/http/contract-route.ts）`,
+				);
 			}
 			registered.add(key);
 		}
