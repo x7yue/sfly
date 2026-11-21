@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { Readable, Transform, type TransformCallback } from "node:stream";
 import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
+import type { LogMask } from "../logs/log-mask.js";
 import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
 import {
 	decodeRunLogCursor,
@@ -142,17 +143,19 @@ export function registerLogRoutes(
 		const setOf = <T>(values: T[] | undefined) => (values ? new Set(values) : undefined);
 		const filter: LogFilter = { levels: setOf(query.level), sources: setOf(query.source) };
 		const { after, before, limit, at } = query;
+		// 读取时按这次运行此刻的 secret 值再打一遍码（早于子流程创建写下的行，log-mask.ts）。
+		const mask = await deps.logs.logMask(info.runId);
 		const located =
 			at === undefined
 				? undefined
-				: await readLogPageAt(info.file, { at: Date.parse(at), limit, filter });
+				: await readLogPageAt(info.file, { at: Date.parse(at), limit, filter, mask });
 		const page =
 			located ??
 			(await readLogPage(
 				info.file,
 				after !== undefined
-					? { direction: "forward", after, limit, filter }
-					: { direction: "backward", before, limit, filter },
+					? { direction: "forward", after, limit, filter, mask }
+					: { direction: "backward", before, limit, filter, mask },
 			));
 		return {
 			task_id: params.id,
@@ -184,8 +187,9 @@ export function registerLogRoutes(
 		if (size === undefined || size === 0) return reply.send("");
 		// 只发送此刻的内容（文件可能还在追加）。每行都带两种时间：升级之前写入的行在这里补齐，
 		// 所以长度事先不知道，不带 content-length。
+		const mask = await deps.logs.logMask(info.runId);
 		return reply.send(
-			createReadStream(info.file, { start: 0, end: size - 1 }).pipe(new LogRowNormalizer()),
+			createReadStream(info.file, { start: 0, end: size - 1 }).pipe(new LogRowNormalizer(mask)),
 		);
 	});
 
@@ -258,6 +262,10 @@ class LogRowNormalizer extends Transform {
 	/** 上一块末尾还没读到换行的半行。 */
 	#partial: Buffer = Buffer.alloc(0);
 
+	constructor(private readonly mask: LogMask) {
+		super();
+	}
+
 	override _transform(chunk: Buffer, _encoding: BufferEncoding, done: TransformCallback): void {
 		const bytes = this.#partial.length ? Buffer.concat([this.#partial, chunk]) : chunk;
 		const out: Buffer[] = [];
@@ -267,7 +275,8 @@ class LogRowNormalizer extends Transform {
 			const nl = bytes.indexOf(0x0a, from);
 			if (nl < 0) break;
 			const row = bytes.subarray(from, nl);
-			const normalized = normalizeLogRow(row);
+			// 升级之前的行补成两种时间都有的格式，再按此刻的 secret 值打码（行里没有 secret 值时原样通过）。
+			const normalized = this.mask.row(normalizeLogRow(row));
 			changed ||= normalized !== row;
 			out.push(normalized, NEWLINE);
 			from = nl + 1;

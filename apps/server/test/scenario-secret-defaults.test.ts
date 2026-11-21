@@ -4,6 +4,7 @@
 // 测试里的 secret 值都是明显的假值；断言「没有泄露」都是看响应的文本里没有它，不只看某个字段。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import {
+	ACTION_LIMITS,
 	httpContract,
 	type OrchestrationDocument,
 	orchestrationsApi,
@@ -11,10 +12,11 @@ import {
 	SECRET_MASK,
 } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { straddling, writeActions } from "./support/action-texts.js";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
-import { FakeAgent } from "./support/fake-agent.js";
+import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, listPresets, presetScenario } from "./support/presets.js";
 import { allForms, BEYOND_I64 } from "./support/secret-forms.js";
@@ -607,6 +609,126 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const stored = (await Promise.all(files.map((f) => readFile(f, "utf8")))).join("\n");
 			noLeaks("结束后")("日志文件", stored);
 		}, 90_000);
+
+		/**
+		 * 保密值要等后面的子流程创建时才带进来（#517）：user 不是 secret，x2 把它传给 subB 的 secret 参数 k，subB 创建之后它才是
+		 * secret 值。`write` 在子流程创建之前往 sa 里写东西（日志、动作），返回之后等子流程创建，再让 b 结束。
+		 */
+		const lateRun = async (
+			late: string,
+			write: (agent: FakeAgent, sa: AssignedTask) => Promise<void>,
+		) => {
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry", params: [{ name: "user", type: "string" }] },
+					{ id: "x1", kind: "async", params: {} },
+					{ id: "subA", kind: "subflow_entry", name: "A", params: [] },
+					{ id: "sa", kind: "package", package: "stub", node: "echo" },
+					{ id: "b", kind: "package", package: "stub", node: "echo" },
+					{ id: "x2", kind: "async", params: { k: "${{ params.user }}" } },
+					{
+						id: "subB",
+						kind: "subflow_entry",
+						name: "B",
+						params: [{ name: "k", type: "string", secret: true }],
+					},
+				],
+				edges: [
+					{ from: "entry", to: "x1", kind: "chain" },
+					{ from: "x1", to: "b", kind: "chain" },
+					{ from: "b", to: "x2", kind: "chain" },
+					{ from: "x1", to: "subA", kind: "dispatch" },
+					{ from: "subA", to: "sa", kind: "chain" },
+					{ from: "x2", to: "subB", kind: "dispatch" },
+				],
+				packages: { stub: "1.0.0" },
+			});
+			// 动作的时间折算要用时钟（FakeAgent.stamp）。
+			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
+			agents.push(agent);
+			const runId = await api.triggerOk(id, { user: late });
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
+			const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+			await write(agent, sa);
+			await agent.succeed(b);
+			await eventually(async () =>
+				expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+			);
+			return { agent, ids: { scenario: id, run: runId, task: sa.taskId, preset: "x" } };
+		};
+
+		/** 日志里已经写了 `count` 行（日志是异步写入的）。 */
+		const logsWritten = (taskId: string, count: number) =>
+			eventually(async () =>
+				expect(
+					(await api.getJson<{ lines: unknown[] }>(`/tasks/${taskId}/logs`)).lines,
+				).toHaveLength(count),
+			);
+
+		it("后来才成为 secret 的值（出现在早于子流程创建写下的日志行和动作里，#517）：每个只读的 GET 和 SSE 接口读出来都没有原值", async () => {
+			const LATE = "test-late-value";
+			const { ids } = await lateRun(LATE, async (agent, sa) => {
+				agent.logs(sa, [[1, `user ${LATE} logged in`]]);
+				await logsWritten(sa.taskId, 1);
+				// 动作的名称、字段（键和值）、失败原因、摘要里也有它。
+				await writeActions(agent, sa, {
+					name: `load ${LATE}`,
+					key: `k-${LATE}`,
+					value: `/x/${LATE}`,
+					reason: `bad ${LATE}`,
+				});
+			});
+
+			// 契约里每个只读的 GET 和 SSE 接口：读出来都没有原值；读日志的出口确实读到了这一行，只是已经是掩码。
+			let logsRead = 0;
+			let actionsRead = 0;
+			await sweepReads(ids, (what, text) => {
+				expect(text, `${what}：不能出现 ${LATE}`).not.toContain(LATE);
+				if (what.includes("/logs") && text.includes("logged in")) logsRead += 1;
+				if (what.includes("/actions") && text.includes("child")) actionsRead += 1;
+			});
+			// 按任务和按运行，分页和下载；动作的摘要和明细两个接口。
+			expect(logsRead).toBeGreaterThanOrEqual(4);
+			expect(actionsRead).toBeGreaterThanOrEqual(2);
+			await sweepStreams(
+				ids,
+				(what, text) => expect(text, `${what}：不能出现 ${LATE}`).not.toContain(LATE),
+				{
+					waitFor: (path) =>
+						path.includes("/logs/events")
+							? "logged in"
+							: path.includes("/actions/events")
+								? "child"
+								: undefined,
+				},
+			);
+		});
+
+		it("后来才成为 secret 的值正好跨在动作的名称、字段、失败原因的截断处（#517）：读出来也没有留下它的前几个字符", async () => {
+			const LATE = "zebra-late-value";
+			const PREFIX = LATE.slice(0, 4);
+			const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
+			// 值的前 8 个字符留在上限以内、后面的被截掉：写入时这个值还不是 secret，整个值打码认不出这半截。
+			const { ids } = await lateRun(LATE, async (agent, sa) => {
+				await writeActions(agent, sa, {
+					name: straddling("n", nameChars, LATE, 8),
+					key: straddling("k", nameChars, LATE, 8),
+					value: straddling("v", valueChars, LATE, 8),
+					// 失败原因超过上限时留前 reasonChars - 1 个字符、末尾加「…」。
+					reason: straddling("r", reasonChars - 1, LATE, 8),
+				});
+			});
+			await sweepReads(ids, (what, text) =>
+				expect(text, `${what}：不能留下 ${PREFIX}`).not.toContain(PREFIX),
+			);
+			await sweepStreams(
+				ids,
+				(what, text) => expect(text, `${what}：不能留下 ${PREFIX}`).not.toContain(PREFIX),
+				{ waitFor: (path) => (path.includes("/actions/events") ? "child" : undefined) },
+			);
+		});
 	});
 
 	describe("写接口的成功和失败响应", () => {

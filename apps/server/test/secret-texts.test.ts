@@ -2,10 +2,20 @@
 // 读取运行（运行视图、列表、事件流）、写日志和动作、触发时的报错用的都是这一份（logs/secrets.ts 的 SecretSet），
 // 对象和数组、JSON 转义的写法、短叶子的取舍只在那里处理，这里直接测它。规则的编号见 docs/SEMANTICS.md §2.1。
 // 值都是明显的假值。
+import { ACTION_LIMITS } from "@sfly/schema";
 import { describe, expect, it, vi } from "vitest";
+import {
+	actionField,
+	actionName,
+	actionReason,
+	maskedAction,
+	maskedSummary,
+} from "../src/actions/action-text.js";
 import {
 	canonicalJson,
 	compareUtf8,
+	MAX_CLIP_WORK,
+	MIN_CLIPPED_PREFIX_CHARS,
 	MIN_LEAF_CHARS,
 	maskParams,
 	maskRecord,
@@ -1047,4 +1057,237 @@ describe("值集合缓存的大小上限（按条数和文本总长）", () => {
 			`a ${MASK} b`,
 		);
 	}, 60_000);
+});
+
+describe("被截断的文字结尾留下的半截 secret 值（读取时的补救，#517）", () => {
+	const secret = "zebra-late-value";
+	const set = setOf(secret);
+	const LIMIT = 40;
+	/** 一段已经截到上限的文字：`filler` 填充，结尾留下 secret 值的前 `kept` 个码点。 */
+	const clipped = (kept: number, filler = "x") =>
+		filler.repeat(LIMIT - kept) + Array.from(secret).slice(0, kept).join("");
+
+	it("下限是一个有名字的常量：4", () => {
+		expect(MIN_CLIPPED_PREFIX_CHARS).toBe(4);
+	});
+
+	it("文字到了上限、结尾是 secret 值的前缀（不短于下限）：从前缀开头起换成一个掩码，前面的文字原样", () => {
+		for (const kept of [4, 5, 8, 15]) {
+			const text = clipped(kept);
+			expect(text.length, `kept=${kept}`).toBe(LIMIT);
+			expect(set.maskClippedTail(text, LIMIT), `kept=${kept}`).toBe(
+				`${"x".repeat(LIMIT - kept)}${MASK}`,
+			);
+		}
+	});
+
+	it("前缀短于下限：不盖（盖了会把正常的文字也换掉）", () => {
+		for (const kept of [1, 2, 3]) {
+			const text = clipped(kept);
+			expect(set.maskClippedTail(text, LIMIT), `kept=${kept}`).toBe(text);
+		}
+	});
+
+	it("文字没到上限（没被截断过）：不看结尾，原样", () => {
+		const text = `short ${secret.slice(0, 8)}`;
+		expect(set.maskClippedTail(text, LIMIT)).toBe(text);
+		// 差一个字符到上限
+		const almost = clipped(8).slice(1);
+		expect(almost.length).toBe(LIMIT - 1);
+		expect(set.maskClippedTail(almost, LIMIT)).toBe(almost);
+	});
+
+	it("结尾不是 secret 值的前缀：原样；整个值出现在结尾由 mask 换掉，不是这里的事", () => {
+		const text = `${"x".repeat(LIMIT - 8)}zebra-xx`;
+		expect(set.maskClippedTail(text, LIMIT)).toBe(text);
+		const whole = "x".repeat(LIMIT - secret.length) + secret;
+		expect(set.maskClippedTail(whole, LIMIT)).toBe(whole);
+		expect(set.maskClipped(whole, LIMIT)).toBe(`${"x".repeat(LIMIT - secret.length)}${MASK}`);
+	});
+
+	it("按码点算：上限是码点数，不是 UTF-16 码元数（emoji 占两个码元）", () => {
+		const emoji = "😀".repeat(LIMIT - 8);
+		const text = emoji + secret.slice(0, 8);
+		expect(Array.from(text).length).toBe(LIMIT);
+		expect(set.maskClippedTail(text, LIMIT)).toBe(`${emoji}${MASK}`);
+		// 码点数没到上限（只是码元数到了）：原样
+		const notClipped = "😀".repeat(LIMIT - 20) + secret.slice(0, 8);
+		expect(set.maskClippedTail(notClipped, LIMIT)).toBe(notClipped);
+	});
+
+	it("失败原因：截断时末尾补了「…」，判断时不算它，盖住时连它一起换掉", () => {
+		const text = `${clipped(8)
+			.slice(0, -8)
+			.slice(0, LIMIT - 9)}${secret.slice(0, 8)}…`;
+		expect(Array.from(text).length).toBe(LIMIT);
+		expect(set.maskClippedTail(text, LIMIT, { ellipsis: true })).toBe(
+			`${"x".repeat(LIMIT - 9)}${MASK}`,
+		);
+		// 不带 ellipsis 选项时，结尾的「…」让它不是前缀：原样
+		expect(set.maskClippedTail(text, LIMIT)).toBe(text);
+	});
+
+	it("有好几个 secret 值：任何一个的前缀都盖；最靠前的前缀开头起换", () => {
+		const two = setOf(secret, "another-secret-token");
+		expect(two.maskClippedTail(`${"y".repeat(LIMIT - 7)}another`, LIMIT)).toBe(
+			`${"y".repeat(LIMIT - 7)}${MASK}`,
+		);
+		expect(two.maskClippedTail(`${"y".repeat(LIMIT - 8)}zebra-la`, LIMIT)).toBe(
+			`${"y".repeat(LIMIT - 8)}${MASK}`,
+		);
+	});
+
+	it("没有 secret 值时原样；多行的 secret 值按行的前缀也算（每一行都是一个要打码的文本）", () => {
+		expect(setOf().maskClippedTail(clipped(8), LIMIT)).toBe(clipped(8));
+		const pem = setOf("-----BEGIN TEST KEY-----\nabcdef123456\n-----END TEST KEY-----");
+		expect(pem.maskClippedTail(`${"z".repeat(LIMIT - 9)}abcdef123`, LIMIT)).toBe(
+			`${"z".repeat(LIMIT - 9)}${MASK}`,
+		);
+	});
+
+	it("病态输入：几千个很长的值，文字的每个位置都以值的首字符开头、却永远对不上前缀：工作量有上限，很快返回，整段盖住，结果里没有值", () => {
+		// 位置数 × 文本数 × 文本长：没有上限时 4096 个字符的失败原因要 29–34 秒（3000 个各 3000 个 0 的值）
+		const values = Array.from({ length: 3000 }, (_, i) => `${"0".repeat(3000)}-${i}`);
+		const many = setOf(...values);
+		const reason = `${"0".repeat(4094)}1…`;
+		const started = performance.now();
+		const out = many.maskClippedTail(reason, 4096, { ellipsis: true });
+		expect(performance.now() - started).toBeLessThan(1000);
+		expect(out).toBe(MASK);
+		// 字段值的上限（256）：同样
+		expect(many.maskClippedTail(`${"0".repeat(255)}1`, 256)).toBe(MASK);
+		// 200 个各 1 万个 0 的值
+		const long = setOf(...Array.from({ length: 200 }, (_, i) => `${"0".repeat(10_000)}-${i}`));
+		const started2 = performance.now();
+		expect(long.maskClippedTail(reason, 4096, { ellipsis: true })).toBe(MASK);
+		expect(performance.now() - started2).toBeLessThan(1000);
+		expect(MAX_CLIP_WORK).toBeLessThanOrEqual(10_000_000);
+	});
+
+	it("工作量没超过上限的正常输入不受影响：几十个值、截断到上限的文字，该盖的盖、不该盖的不动", () => {
+		const values = Array.from({ length: 50 }, (_, i) => `test-secret-value-${i}-end`);
+		const many = setOf(...values);
+		// 结尾是 `test-secr`（9 个字符，是 `test-secret-value-N-end` 的前缀）
+		expect(many.maskClippedTail(`${"x".repeat(256 - 9)}test-secr`, 256)).toBe(
+			`${"x".repeat(256 - 9)}${MASK}`,
+		);
+		const plain = "x".repeat(256);
+		expect(many.maskClippedTail(plain, 256)).toBe(plain);
+		// 文字里到处是首字符 t 但对不上前缀：不盖
+		const noisy = "t".repeat(256);
+		expect(many.maskClippedTail(noisy, 256)).toBe(noisy);
+	});
+
+	it("随机的对比：和直接检查「结尾是不是某个文本的前缀」的参照实现一致", () => {
+		let seed = 99;
+		const random = (n: number): number => {
+			seed = (seed * 1664525 + 1013904223) % 4294967296;
+			return Math.floor((seed / 4294967296) * n);
+		};
+		const alphabet = ["a", "b", "c", "d"];
+		const word = (min: number, max: number) =>
+			Array.from(
+				{ length: min + random(max - min + 1) },
+				() => alphabet[random(alphabet.length)],
+			).join("");
+		for (let i = 0; i < 3000; i++) {
+			const secrets = [...new Set(Array.from({ length: 1 + random(3) }, () => word(5, 12)))];
+			const texts = setOf(...secrets);
+			const text = word(LIMIT, LIMIT + 2).slice(0, LIMIT) + "";
+			const body = text;
+			// 参照实现：最靠前的位置 i，使 body.slice(i) 是某个 secret 文本的真前缀且不短于下限
+			let expected = body;
+			for (let at = 0; at < body.length; at++) {
+				const tail = body.slice(at);
+				if (tail.length < MIN_CLIPPED_PREFIX_CHARS) break;
+				if (texts.texts.some((t) => t.length > tail.length && t.startsWith(tail))) {
+					expected = body.slice(0, at) + MASK;
+					break;
+				}
+			}
+			expect(texts.maskClippedTail(text, LIMIT), JSON.stringify([secrets, text])).toBe(expected);
+		}
+	});
+});
+
+describe("动作的文字：写入时和读取时的打码（action-text.ts）", () => {
+	const secret = "zebra-late-value";
+	const set = setOf(secret);
+	const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
+	/** SDK 已经截断过的文字：secret 值的前 8 个字符留在上限以内。 */
+	const straddle = (limit: number, filler: string) => filler.repeat(limit - 8) + secret.slice(0, 8);
+
+	it("写入时：secret 值已知，但 SDK 在值中间截断了（控制面只收到前半截）：名称、字段的键和值、失败原因都把半截盖住", () => {
+		expect(actionName(straddle(nameChars, "n"), set)).toBe(`${"n".repeat(nameChars - 8)}${MASK}`);
+		expect(actionField(straddle(nameChars, "k"), straddle(valueChars, "v"), set)).toEqual([
+			`${"k".repeat(nameChars - 8)}${MASK}`,
+			`${"v".repeat(valueChars - 8)}${MASK}`,
+		]);
+		// 失败原因：SDK 留前 reasonChars - 1 个字符、末尾加「…」
+		const reason = `${"r".repeat(reasonChars - 1 - 8)}${secret.slice(0, 8)}…`;
+		expect(actionReason(reason, set)).toBe(`${"r".repeat(reasonChars - 1 - 8)}${MASK}`);
+	});
+
+	it("没有被截断（没到上限）的文字、没有 secret 值：和以前一样", () => {
+		expect(actionName("short name", set)).toBe("short name");
+		expect(actionName(`load ${secret}`, set)).toBe(`load ${MASK}`);
+		expect(actionReason("plain", set)).toBe("plain");
+		expect(actionName(straddle(nameChars, "n"), setOf())).toBe(straddle(nameChars, "n"));
+	});
+
+	it("读取时：明细、摘要里的名称、字段（键和值）、失败原因再打一遍；没有 secret 值时是同一个对象", () => {
+		const running = {
+			id: 1,
+			parent: null,
+			depth: 0,
+			name: `load ${secret}`,
+			fields: { [`k-${secret}`]: `/x/${secret}` },
+			started_at: "2026-01-01T00:00:01.000Z",
+			agent_started_at: "2026-01-01T00:00:01.000Z",
+		};
+		const ended = {
+			...running,
+			id: 2,
+			ended_at: "2026-01-01T00:00:02.000Z",
+			agent_ended_at: "2026-01-01T00:00:02.000Z",
+			duration_ms: 1000,
+			result: "failed" as const,
+			reason: `bad ${secret}`,
+		};
+		const masked = maskedAction(ended, set);
+		expect(masked.name).toBe(`load ${MASK}`);
+		expect(masked.fields).toEqual({ [`k-${MASK}`]: `/x/${MASK}` });
+		expect(masked.reason).toBe(`bad ${MASK}`);
+		expect(masked.id).toBe(2);
+		expect(maskedAction(ended, setOf())).toBe(ended);
+		const summary = {
+			total: 2,
+			marks: 0,
+			reported: 2,
+			capped: false,
+			control_plane_capped: false,
+			capped_at: null,
+			agent_capped_at: null,
+			names: [
+				{
+					name: `load ${secret}`,
+					total: 1,
+					failed: 0,
+					reported: 1,
+					capped_at: null,
+					agent_capped_at: null,
+				},
+			],
+			running: [running],
+			running_complete: true,
+			recent: [ended],
+			recent_failed: [ended],
+		};
+		const out = maskedSummary(summary, set);
+		expect(JSON.stringify(out)).not.toContain(secret);
+		expect(out.names[0]?.name).toBe(`load ${MASK}`);
+		expect(out.running[0]?.fields).toEqual({ [`k-${MASK}`]: `/x/${MASK}` });
+		expect(out.recent_failed[0]?.reason).toBe(`bad ${MASK}`);
+		expect(maskedSummary(summary, setOf())).toBe(summary);
+	});
 });
