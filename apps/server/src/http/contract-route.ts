@@ -1,15 +1,20 @@
-import type {
-	DownloadDef,
-	EndpointDef,
-	EndpointRequest,
-	EndpointResponse,
-	RouteDef,
-	StreamDef,
-	StreamEvents,
+import {
+	checkRouteDeclarations,
+	DECLARATION_RULES,
+	type DeclarationRules,
+	type DownloadDef,
+	type EndpointDef,
+	type EndpointRequest,
+	type EndpointResponse,
+	type RouteDef,
+	type StreamDef,
+	type StreamEvents,
 } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
+import { checkAccessRules } from "../auth/access-rules.js";
 import type { Sse } from "../sse/sse.js";
+import { accessGuardOf } from "./access.js";
 import { sendError } from "./errors.js";
 
 /**
@@ -17,6 +22,10 @@ import { sendError } from "./errors.js";
  * 先用契约校验路径参数、查询参数与请求体（失败返回 400，默认错误码 `invalid_request`，契约可以用
  * `requestError` 换成更具体的错误码；details 为 zod issues，path 以 params / query / body 开头），
  * handler 拿到解析后的值。
+ *
+ * 访问检查（ADR 0029「一处检查」）也在这里，在校验请求之前、进处理函数之前：解析凭据、按接口的声明得出项目、查归属和范围
+ * （src/auth/access-guard.ts，事件流、下载、Fastify 为 GET 自动生成的 HEAD 路由都经过同一处）。拒绝时直接回复 401、403 或 404，
+ * 通过时把身份放在 `request.access`，处理函数用它记下是谁做的，不再自己读请求头。
  *
  * NUL（`\u0000`）存不进 PostgreSQL 的文本，数据库会直接报错，所以在进 handler 之前统一拦下：
  * 路径参数含 NUL，说明这个标识不指向任何东西，返回 404 `not_found`；查询参数与 JSON 请求体
@@ -126,6 +135,7 @@ function register<D extends RouteDef>(
 	def: D,
 	handler: (request: EndpointRequest<D>, reply: FastifyReply, raw: FastifyRequest) => unknown,
 ): void {
+	const guard = accessGuardOf(app);
 	app.route({
 		method: def.method,
 		url: def.path,
@@ -133,6 +143,18 @@ function register<D extends RouteDef>(
 			if (hasNul(req.params)) {
 				return sendError(reply, 404, "not_found", "路径参数含 NUL 字符，没有对应的资源");
 			}
+			const verdict = await guard.check({
+				route: def,
+				params: req.params as Record<string, string | undefined>,
+				authorization: req.headers.authorization,
+				cookie: req.headers.cookie,
+			});
+			if (!verdict.ok) {
+				// 上传的请求体按流读（artifacts 的上传作用域），拒绝时也要排空，否则客户端还在发、连接挂着。
+				req.raw.resume();
+				return sendError(reply, verdict.status, verdict.code, verdict.message);
+			}
+			req.access = verdict.access;
 			if (hasNul(req.query) || hasNul(req.body)) {
 				return sendError(reply, 400, "invalid_request", "请求里的字符串不能含 NUL 字符（\\u0000）");
 			}
@@ -176,8 +198,19 @@ const routeKey = (method: string, path: string) => `${method} ${path}`;
  * 控制面注册的路由与契约一一对应（约定 7）：注册不在契约里的路由立即抛错；
  * 契约里有、却没有注册的接口在 `ready()`（listen 之前）时报错。必须在注册任何路由之前调用。
  * Fastify 为 GET 自动生成的 HEAD 路由不计入。
+ *
+ * 契约本身也在这里检查：每个接口的声明（`summary`、`effect`、`resource`…，`checkRouteDeclarations`）站得住，访问检查认得出
+ * 每个接口的项目从哪里得出（`checkAccessRules`）。缺声明、写错的接口让控制面起不来，不会悄悄成为没有检查的接口。
  */
-export function guardHttpContract(app: FastifyInstance, contract: readonly RouteDef[]): void {
+export function guardHttpContract(
+	app: FastifyInstance,
+	contract: readonly RouteDef[],
+	rules: DeclarationRules = DECLARATION_RULES,
+): void {
+	const problems = [...checkRouteDeclarations(contract, rules), ...checkAccessRules(contract)];
+	if (problems.length > 0) {
+		throw new Error(`HTTP 契约的声明有问题，控制面不启动：\n${problems.join("\n")}`);
+	}
 	const expected = new Set(contract.map((def) => routeKey(def.method, def.path)));
 	const registered = new Set<string>();
 	app.addHook("onRoute", (route) => {

@@ -1,4 +1,4 @@
-import { endpoint, httpContract } from "@sfly/schema";
+import { DECLARATION_RULES, endpoint, httpContract } from "@sfly/schema";
 import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -78,7 +78,15 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 			key: ["test", "missing"],
 			response: z.object({}),
 		});
-		guardHttpContract(app, [missing]);
+		// 这个测试用的路径不在 PATH_KINDS 里：把它当成平台自身的接口登记，只检查「没有注册路由」这一条。
+		const rules = {
+			...DECLARATION_RULES,
+			pathKinds: {
+				...DECLARATION_RULES.pathKinds,
+				"/missing": { kind: "system", exact: true, why: "测试用" },
+			},
+		} as const;
+		guardHttpContract(app, [missing], rules);
 		await expect(app.ready()).rejects.toThrow(/GET \/missing/);
 		await app.close();
 	});

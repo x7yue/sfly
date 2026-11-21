@@ -48,6 +48,13 @@ export interface PackageSummary {
 	versions: PackageVersionSummary[];
 }
 
+/** 发布人（ADR 0029）：显示名、用户 ID、经哪个令牌（令牌的名称）；没有带凭据的发布没有（升级之前发布不要任何身份）。 */
+export interface Publisher {
+	name: string;
+	userId: string | null;
+	token: string | null;
+}
+
 export interface StoredArchive {
 	path: string;
 	sha256: string;
@@ -140,7 +147,11 @@ export interface PackageRepositoryDeps {
 export function createPackageRepository({ db, clock, dataDir }: PackageRepositoryDeps) {
 	return {
 		/** 发布节点包到这个项目；`包名@版本` 已存在（第一步：不论哪个项目里已有）时抛出 conflict，已发布的文件不会被覆盖。 */
-		async publish(project: ProjectId, archive: Uint8Array): Promise<PackageVersion> {
+		async publish(
+			project: ProjectId,
+			archive: Uint8Array,
+			publisher: Publisher | null,
+		): Promise<PackageVersion> {
 			const metadata = readPackageArchive(archive);
 			const sha256 = createHash("sha256").update(archive).digest("hex");
 			// 版本格式由 schema 约束（不含路径分隔符），可以直接用作文件名。
@@ -158,6 +169,9 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 						sha256,
 						size: archive.byteLength,
 						publishedAt: clock.now(),
+						publishedBy: publisher?.name ?? null,
+						publishedByUserId: publisher?.userId ?? null,
+						publishedToken: publisher?.token ?? null,
 					})
 					.onConflictDoNothing()
 					.returning();

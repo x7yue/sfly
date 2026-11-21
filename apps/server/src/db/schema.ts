@@ -952,3 +952,32 @@ export const agentCredentials = pgTable(
 		),
 	],
 );
+
+/**
+ * 平台管理员在自己不是成员的项目里做的写操作（ADR 0029「用户、项目与角色」）：谁、什么时候、调用了什么、作用在哪个资源上。
+ * 平台管理员在每个项目里都有项目管理员的权限，这是「另一个项目读不到」的例外，拦不住，所以对项目透明：项目的成员看得到
+ * （查看页在 #499）。记录由契约路由的访问检查一处写（src/auth/access-guard.ts），不靠各接口自己记；先于处理函数写下，
+ * 请求没做成（400、409…）也留着，响应的状态不记。只记写操作；他是成员的项目里的写操作、所有读操作都不记。
+ */
+export const platformAdminActions = pgTable(
+	"platform_admin_actions",
+	{
+		id: uuid("id").primaryKey(),
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		userId: uuid("user_id")
+			.notNull()
+			.references(() => users.id),
+		at: timestamptz("at").notNull(),
+		/** 契约里的方法和路径模板（`POST /orchestrations/:id/versions`），不是请求的实际地址。 */
+		route: text("route").notNull(),
+		/** 作用的资源类别（契约的 `creates`，没有则是 `resource.kind`）和定位它的值（路径参数、查询参数或请求体字段的值；列表和新建没有）。 */
+		resourceKind: text("resource_kind").notNull(),
+		resourceId: text("resource_id"),
+		/** 经哪个令牌（令牌的名称）；用登录 Cookie 的为空。 */
+		tokenName: text("token_name"),
+	},
+	(t) => [index("platform_admin_actions_project").on(t.projectId, t.at)],
+);
