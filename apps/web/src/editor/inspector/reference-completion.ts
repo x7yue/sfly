@@ -14,7 +14,7 @@ import type { StoredOrchestrationDocument } from "@sfly/schema";
 
 /**
  * 引用补全的纯逻辑（检查器的 ReferenceEditor、ReferencePicker 使用，单测覆盖）：可引用的值与来源说明、
- * 何时弹出补全、按「入口参数」「前序节点」分组与过滤、键盘选择。
+ * 何时弹出补全、按「入口参数」「运行状态」「前序节点」分组与过滤、键盘选择。
  */
 
 /** 一个引用补全项，带上来源说明（类型、所属节点）；输出还带节点包写的说明（`Doc`），没写就没有。 */
@@ -23,9 +23,14 @@ export interface ReferenceChoice extends ReferenceOption {
 	description?: string | undefined;
 }
 
+/** 运行状态（`${{ run.state }}`，ADR 0031）一项的来源说明与说明：值是一个对象，来自这次运行，只能整值引用。 */
+const RUN_STATE_DETAIL = "object · 这次运行";
+const RUN_STATE_DESCRIPTION =
+	"这次运行此刻的状态：各节点的状态、尝试次数、失败原因等。只能整值引用，不能夹在文字里。";
+
 /**
- * 节点 id 可以引用的值（本链的入口参数、前序节点的输出），带上来源说明：
- * 参数的类型（敏感参数标出），输出的类型与所属节点（写成「显示名称（节点 ID）」）。
+ * 节点 id 可以引用的值（本链的入口参数、运行状态、前序节点的输出），带上来源说明：
+ * 参数的类型（敏感参数标出），运行状态的类型与来源，输出的类型与所属节点（写成「显示名称（节点 ID）」）。
  */
 export function referenceChoices(
 	doc: StoredOrchestrationDocument,
@@ -34,23 +39,30 @@ export function referenceChoices(
 ): ReferenceChoice[] {
 	const scope = referenceScope(doc, id);
 	const params = new Map((scope.start?.params ?? []).map((p) => [p.name, p]));
-	return referenceOptions(doc, id, catalog).map((o): ReferenceChoice => {
-		if (o.kind === "param") {
-			const p = params.get(o.key);
-			return { ...o, detail: `${p?.type ?? ""}${p?.secret ? " · 敏感" : ""}` };
+	const choiceOf = (o: ReferenceOption): ReferenceChoice => {
+		switch (o.kind) {
+			case "param": {
+				const p = params.get(o.key);
+				return { ...o, detail: `${p?.type ?? ""}${p?.secret ? " · 敏感" : ""}` };
+			}
+			case "run_state":
+				return { ...o, detail: RUN_STATE_DETAIL, description: RUN_STATE_DESCRIPTION };
+			case "output": {
+				const source = doc.nodes.find((n) => n.id === o.node_id);
+				const schema =
+					source?.kind === "package"
+						? nodeTypeOf(doc, source, catalog)?.outputs.properties[o.key]
+						: undefined;
+				const type = typeof schema?.type === "string" ? `${schema.type} · ` : "";
+				return {
+					...o,
+					detail: `${type}${source ? nodeNameWithId(source) : o.node_id}`,
+					description: schemaDescription(schema),
+				};
+			}
 		}
-		const source = doc.nodes.find((n) => n.id === o.node_id);
-		const schema =
-			source?.kind === "package"
-				? nodeTypeOf(doc, source, catalog)?.outputs.properties[o.key]
-				: undefined;
-		const type = typeof schema?.type === "string" ? `${schema.type} · ` : "";
-		return {
-			...o,
-			detail: `${type}${source ? nodeNameWithId(source) : o.node_id}`,
-			description: schemaDescription(schema),
-		};
-	});
+	};
+	return referenceOptions(doc, id, catalog).map(choiceOf);
 }
 
 /** 补全的触发位置：start 是选中后要被替换的起点，query 是已经输入的表达式。 */
@@ -59,16 +71,24 @@ export interface CompletionTrigger {
 	query: string;
 }
 
-export const COMPLETION_GROUPS = ["入口参数", "前序节点"] as const;
+/**
+ * 补全的分组：每种引用一组，键的顺序就是显示和键盘选择的顺序（与 `referenceOptions` 里选项的顺序一致）。
+ * 类型是 `Record<kind, …>`：新增一种引用而这里没写，编译不过。
+ */
+export const COMPLETION_GROUPS: Record<ReferenceChoice["kind"], string> = {
+	param: "入口参数",
+	run_state: "运行状态",
+	output: "前序节点",
+};
 
-/** 按表达式子串（不区分大小写）过滤，分成「入口参数」「前序节点」两组；ordered 是键盘上下选择的顺序。 */
+/** 按表达式子串（不区分大小写）过滤，按 `COMPLETION_GROUPS` 分组；ordered 是键盘上下选择的顺序。 */
 export function completionGroups(choices: readonly ReferenceChoice[], query: string) {
 	const q = query.toLowerCase();
 	const matches = choices.filter((c) => c.expression.toLowerCase().includes(q));
-	const groups = [
-		{ title: COMPLETION_GROUPS[0], choices: matches.filter((c) => c.kind === "param") },
-		{ title: COMPLETION_GROUPS[1], choices: matches.filter((c) => c.kind === "output") },
-	];
+	const groups = Object.entries(COMPLETION_GROUPS).map(([kind, title]) => ({
+		title,
+		choices: matches.filter((c) => c.kind === kind),
+	}));
 	return { groups, ordered: groups.flatMap((g) => g.choices) };
 }
 

@@ -22,7 +22,7 @@ import {
 import { Topics } from "../sse/topics.js";
 import { clipChars } from "../util/text.js";
 import { readLogPage } from "./log-pages.js";
-import { maskSecrets, secretValues } from "./secrets.js";
+import { NO_SECRETS, type SecretSet, secretValues } from "./secrets.js";
 
 /**
  * 任务日志与进度（docs/ARCHITECTURE.md §6.3）。
@@ -107,13 +107,10 @@ export function normalizeLogRow(row: Buffer): Buffer {
  * 保存的进度 → 接口里的进度，说明按 `secrets`（运行此刻的全部 secret 值）打码。升级之前保存的只有一个 `time`
  * （Agent 时间）：控制面时间未记录。
  */
-export function taskProgressView(
-	stored: TaskProgress,
-	secrets: readonly string[],
-): TaskProgressView {
+export function taskProgressView(stored: TaskProgress, secrets: SecretSet): TaskProgressView {
 	const { current, total, time } = stored;
 	// 写入时已经按那一刻的 secret 打过码；读取时再打一遍，之后才创建的子流程带来的 secret 也算（运行视图和 Agent 列表口径一样）。
-	const message = maskSecrets(stored.message, secrets);
+	const message = secrets.mask(stored.message);
 	return "agent_time" in stored
 		? { current, total, message, time, agent_time: stored.agent_time ?? null }
 		: { current, total, message, time: null, agent_time: time };
@@ -181,7 +178,7 @@ interface TaskState {
 	truncated: boolean;
 	/** 已写入的 WARN / ERROR（`tasks.log_issues`）；还没有时为 null。 */
 	issues: TaskLogIssues | null;
-	secrets: string[];
+	secrets: SecretSet;
 }
 
 /**
@@ -369,7 +366,7 @@ export class TaskLogs {
 				seq,
 				time: new Date(timeMs).toISOString(),
 				...entry,
-				text: maskSecrets(entry.text, state.secrets),
+				text: state.secrets.mask(entry.text),
 			};
 			let row = `${JSON.stringify(view)}\n`;
 			if (bytes + Buffer.byteLength(row) > this.#limit) {
@@ -433,7 +430,7 @@ export class TaskLogs {
 			const value: TaskProgressView = {
 				current: progress.current,
 				total: progress.total ?? null,
-				message: maskSecrets(progress.message, state.secrets),
+				message: state.secrets.mask(progress.message),
 				time: controlPlaneTime(progress.monotonicMs).toISOString(),
 				agent_time: agentTime(progress.timeUnixMs),
 			};
@@ -531,15 +528,16 @@ export class TaskLogs {
 	}
 
 	/** 一次运行当前的全部 secret 值（{@link runSecretValues}）；动作摘要打码也用它。 */
-	async runSecrets(runId: string): Promise<string[]> {
+	async runSecrets(runId: string): Promise<SecretSet> {
 		const [row] = await this.deps.db
 			.select({ document: orchestrationVersions.document })
 			.from(runs)
 			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 			.where(eq(runs.id, runId));
-		if (!row) return [];
+		if (!row) return NO_SECRETS;
 		return (
-			(await runSecretValues(this.deps.db, [{ runId, document: row.document }])).get(runId) ?? []
+			(await runSecretValues(this.deps.db, [{ runId, document: row.document }])).get(runId) ??
+			NO_SECRETS
 		);
 	}
 
@@ -575,7 +573,7 @@ export class TaskLogs {
 			truncated: task.logTruncated || bytes >= this.#limit,
 			issues: task.logIssues,
 			// 占位：写入前总会先经 runSecrets 刷新。
-			secrets: [],
+			secrets: NO_SECRETS,
 		};
 	}
 }
@@ -619,8 +617,8 @@ function formatBytes(n: number): string {
 export async function runSecretValues(
 	db: Db | Tx,
 	items: ReadonlyArray<{ runId: string; document: StoredOrchestrationDocument }>,
-): Promise<Map<string, string[]>> {
-	const secrets = new Map<string, string[]>();
+): Promise<Map<string, SecretSet>> {
+	const secrets = new Map<string, SecretSet>();
 	if (items.length === 0) return secrets;
 	const chains = await db
 		.select({

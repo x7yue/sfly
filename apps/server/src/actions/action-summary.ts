@@ -10,7 +10,7 @@ import {
 import { z } from "zod";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { StoredActionSummary } from "../db/schema.js";
-import { maskSecrets } from "../logs/secrets.js";
+import type { SecretSet } from "../logs/secrets.js";
 import { actionField, actionName, actionReason, mergeFields } from "./action-text.js";
 
 /**
@@ -92,7 +92,7 @@ export function parseActionSummary(eventJson: string): ActionSummaryEvent | unde
 export function actionSummaryView(
 	event: ActionSummaryEvent,
 	controlPlaneTime: (monotonicMs: number) => Date,
-	secrets: readonly string[],
+	secrets: SecretSet,
 ): { summary: StoredActionSummary; current: CurrentAction | null } {
 	const at = (mono: number) => controlPlaneTime(mono).toISOString();
 	const agentAt = (ts: number) => new Date(recordableAgentTimeMs(ts)).toISOString();
@@ -198,9 +198,9 @@ export function summaryOfTask(
 export function currentActionOfTask(
 	status: TaskStatus,
 	stored: CurrentAction | null,
-	secrets: readonly string[],
+	secrets: SecretSet,
 ): CurrentAction | null {
-	return isDoing(status) && stored ? { ...stored, name: maskSecrets(stored.name, secrets) } : null;
+	return isDoing(status) && stored ? { ...stored, name: secrets.mask(stored.name) } : null;
 }
 
 /** 两个「此刻在做的动作」是不是同一个（名称和开始时间都相同）。 */
