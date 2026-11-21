@@ -71,7 +71,6 @@ describe("路由清单里每个接口的声明和响应", () => {
 		expect(noBody.map((e) => `${e.method} ${e.path}`).sort()).toEqual([
 			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
-			"POST /orchestrations/:id/presence/leave",
 		]);
 	});
 
@@ -85,7 +84,7 @@ describe("路由清单里每个接口的声明和响应", () => {
 				checked++;
 			}
 		}
-		expect(checked).toBeGreaterThan(60);
+		expect(checked).toBeGreaterThan(50);
 	});
 
 	it("导出的响应 schema 和 zod 对同一份数据的判断一致", () => {

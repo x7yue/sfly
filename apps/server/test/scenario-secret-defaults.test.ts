@@ -329,7 +329,8 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const streams = httpContract.filter(
 				(def) => def.effect === "read" && "kind" in def && def.kind === "stream",
 			);
-			expect(streams.length).toBeGreaterThanOrEqual(5);
+			// 下限只是防「按契约遍历」遍历到空：在线编辑者的 SSE 删掉之后契约里还有 4 条（运行的状态、运行和任务的日志、任务的动作）。
+			expect(streams.length).toBeGreaterThanOrEqual(4);
 			let opened = 0;
 			for (const def of streams) {
 				const path = fill(def.path, ids);
@@ -386,8 +387,8 @@ describe("场景版本里 secret 参数的默认值", () => {
 			});
 
 		/**
-		 * 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（在线编辑者的心跳）要请求体，
-		 * 不在这里。每个 GET 接口（SSE 除外）读一遍，响应交给 `check`（`what`、响应文本）。
+		 * 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（登记在 READS_WITH_TRACES）要请求体，
+		 * 不在这里（下面的写接口用例会要求请求过它们）。每个 GET 接口（SSE 除外）读一遍，响应交给 `check`（`what`、响应文本）。
 		 */
 		const sweepReads = async (
 			ids: { scenario: string; run: string; task: string; preset: string },
@@ -605,10 +606,6 @@ describe("场景版本里 secret 参数的默认值", () => {
 			"DELETE /feishu-bots/:name": "同上",
 			"POST /feishu-bots/:name/test": "同上",
 			"POST /packages": "发布节点包，不带场景和参数",
-			// 声明为只读、方法不是 GET 的接口（READS_WITH_TRACES）：上面按 GET 遍历的测试够不着，同样要请求过或写明原因。
-			"POST /orchestrations/:id/presence":
-				"在线编辑者的心跳：名单只在内存里，响应是编辑者的昵称，不含场景文档和默认值",
-			"POST /orchestrations/:id/presence/leave": "在线编辑者离开：响应没有内容",
 		};
 		/** 一个请求（方法 + 路径）对上契约里的哪个接口（路径模板）。 */
 		const templateOf = (method: string, path: string): string | undefined => {

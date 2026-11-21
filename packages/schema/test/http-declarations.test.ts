@@ -301,21 +301,38 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ method: "POST", effect: "read", path: "/things/:id/query" }))[0],
 		).toContain("READS_WITH_TRACES");
-		const [key] = Object.keys(READS_WITH_TRACES);
-		const [method, path] = (key as string).split(" ");
+		// 登记过的（这里用测试自己的一张表）就没有问题
+		const registered: DeclarationRules = {
+			...rulesFor(broken({})),
+			readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+		};
 		expect(
-			problems(
-				broken(
-					{
-						method,
-						path,
-						effect: "read",
-						resource: { kind: "scenario", target: { params: "id" } },
-					},
-					{ params: z.object({ id: z.string() }) },
-				),
+			checkRouteDeclarations(
+				[broken({ method: "POST", effect: "read", path: "/things/:id/query" })],
+				registered,
 			),
 		).toEqual([]);
+	});
+
+	it("表里没有登记的非 GET 只读接口被拦下，登记后才通过（和 READS_WITH_TRACES 里现在有什么无关）", () => {
+		const def = broken({ method: "POST", effect: "read", path: "/things/:id/query" });
+		const rules = { ...rulesFor(def), readsWithTraces: {} };
+		expect(checkRouteDeclarations([def], rules)).toEqual([
+			expect.stringContaining("方法不是 GET 的只读接口要登记在 READS_WITH_TRACES"),
+		]);
+		expect(
+			checkRouteDeclarations([def], {
+				...rules,
+				readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+			}),
+		).toEqual([]);
+		// 登记了、但契约里没有这个接口（接口删了、表里留着）：表检查也报错
+		expect(
+			checkDeclarationTables([], {
+				pathKinds: {},
+				readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+			}),
+		).toEqual(["READS_WITH_TRACES 的 POST /things/:id/query 不在契约里：接口改名或删掉了"]);
 	});
 
 	it("creates 要是资源类别、只能在写接口上；removes 只能写 true、只能在写接口上、不能和 creates 同时出现", () => {

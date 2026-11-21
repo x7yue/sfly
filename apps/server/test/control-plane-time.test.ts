@@ -1,6 +1,7 @@
 import { CONTROL_PLANE_TIME_EVENT, CONTROL_PLANE_TIME_HEADER } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { ManualClock } from "./support/manual-clock.js";
+import { createQueuedRun } from "./support/queued-run.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -34,14 +35,9 @@ describe("控制面把自己的当前时间告诉页面", () => {
 	it("SSE 连上时和每次心跳都推送控制面时间", async () => {
 		const clock = new ManualClock("2025-03-07T01:02:03.000Z");
 		cp = await startTestControlPlane({ clock, sseHeartbeatMs: 20 });
-		const res = await cp.fetch("/orchestrations", {
-			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
-			body: JSON.stringify({ name: "t" }),
-		});
-		const { id } = (await res.json()) as { id: string };
+		const runId = await createQueuedRun(cp);
 
-		const sse = await SseClient.open(cp, `/orchestrations/${id}/presence/events`);
+		const sse = await SseClient.open(cp, `/runs/${runId}/events`);
 		streams.push(sse);
 		expect((await sse.next(CONTROL_PLANE_TIME_EVENT)).data).toEqual({
 			time: "2025-03-07T01:02:03.000Z",

@@ -1,5 +1,6 @@
 import { CONTROL_PLANE_VERSION_HEADER } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
+import { createQueuedRun } from "./support/queued-run.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describe("控制面在响应上带自己的版本号", () => {
@@ -30,15 +31,10 @@ describe("控制面在响应上带自己的版本号", () => {
 
 	it("SSE 流的响应头也带版本号", async () => {
 		cp = await startTestControlPlane({ version: "7.8.9" });
-		const created = await cp.fetch("/orchestrations", {
-			method: "POST",
-			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
-			body: JSON.stringify({ name: "t" }),
-		});
-		const { id } = (await created.json()) as { id: string };
+		const runId = await createQueuedRun(cp);
 
 		const abort = new AbortController();
-		const stream = await cp.fetch(`/orchestrations/${id}/presence/events`, {
+		const stream = await cp.fetch(`/runs/${runId}/events`, {
 			headers: { accept: "text/event-stream" },
 			signal: abort.signal,
 		});

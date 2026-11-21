@@ -7,7 +7,7 @@
 // 每张表每一行连同 xmin、序列、数据目录里的文件），有任何差别就是写了。同时把响应拿去和随 SDK 打包的
 // 路由清单里的响应 JSON Schema 对照。
 //
-// 方法不是 GET 的只读接口（在线编辑者的心跳和离开，登记在 READS_WITH_TRACES）也在其中：它们只写内存里的名单，
+// 方法不是 GET 的只读接口（登记在 READS_WITH_TRACES）也在其中：它们只能写内存里的状态，
 // 所以库和数据目录同样要求没有变化。
 //
 // 没有用「只有 SELECT 权限的数据库角色」：控制面启动时要迁移，运行时后台有周期扫描和清理，用只读角色它起不来、
@@ -306,11 +306,7 @@ describe("声明为只读的接口真的不写库", () => {
 	});
 
 	it("事件流的事件都和清单里的 schema 对过一遍（不是空转）", () => {
-		for (const expected of [
-			"GET /runs/:id/events run",
-			"GET /tasks/:id/actions/events summary",
-			"GET /orchestrations/:id/presence/events editors",
-		]) {
+		for (const expected of ["GET /runs/:id/events run", "GET /tasks/:id/actions/events summary"]) {
 			expect(validatedEvents, expected).toContain(expected);
 		}
 	});
@@ -436,10 +432,9 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 	return value;
 }
 
-/** 有请求体的只读接口（心跳、离开）的请求体样本；认不出的报错，让新接口的作者补上。 */
+/** 有请求体的只读接口的请求体样本：没有样本就报错，让新接口的作者在这里补上。 */
 function sampleBody(def: RouteDef): unknown {
 	if (!("body" in def) || !def.body) return undefined;
-	if (`${def.method} ${def.path}` in READS_WITH_TRACES) return { session_id: "read-only-test" };
 	throw new Error(
 		`${def.method} ${def.path}：没有请求体的样本值，在 read-only-routes.test.ts 的 sampleBody 里补上`,
 	);
@@ -612,13 +607,6 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	).toBe(200);
 	// 第二个版本改掉入口参数：第一个版本上建的预设失效
 	await api.saveVersion(rich, richDocument("stage"));
-
-	// 在线编辑者：每个场景一个，在线编辑者名单推送的第一份里有人
-	for (const id of [checked, pressure, archived, empty, rich]) {
-		expect(
-			(await api.post(`/orchestrations/${id}/presence`, { session_id: `s-${id}` })).status,
-		).toBe(200);
-	}
 
 	// Agent：一个槽位（还在跑的运行占着它，下一次运行就排队）、有能力、装了节点包、加载了开发版本
 	const agent = await FakeAgent.connect(
