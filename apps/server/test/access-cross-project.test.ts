@@ -124,6 +124,10 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		const mallory = await accounts.user("mallory");
 		await accounts.member("alpha", mallory, "project_admin");
 		const cookie = await accounts.login(mallory);
+		// 同时是项目甲和项目乙的成员（项目乙的项目管理员），个人令牌限定在项目甲：只有「限定的项目」这一条挡得住。
+		const dual = await accounts.user("dual");
+		await accounts.member("alpha", dual, "project_admin");
+		await accounts.member("default", dual, "project_admin");
 		attackers = [
 			{ name: "登录 Cookie", headers: loginCookie(cookie), expected: () => 404 },
 			{
@@ -134,6 +138,11 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			{
 				name: "个人令牌（限定项目甲）",
 				headers: bearer(await accounts.personalToken(mallory, { project: "alpha" })),
+				expected: () => 404,
+			},
+			{
+				name: "个人令牌（限定项目甲，用户也是项目乙的项目管理员）",
+				headers: bearer(await accounts.personalToken(dual, { project: "alpha" })),
 				expected: () => 404,
 			},
 			{
@@ -262,6 +271,76 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		const finished = await send(upload, requestFor(upload, victim), own.agent);
 		expect(finished.status).toBe(409);
 		expect(await finished.json()).toMatchObject({ error: { code: "task_not_running" } });
+	});
+});
+
+describe("第二个 ID 指向别的项目", () => {
+	// 生成的测试每个接口只带项目乙的资源。路径里有第二个 ID（运行预设）的接口，项目甲的凭据拿自己的场景加项目乙的预设 ID：
+	// 访问检查只看第一个 ID（场景，在项目甲里，通过），预设要由处理函数按场景限定，不会碰项目乙的预设。
+	let cp: TestControlPlane;
+	let accounts: TestAccounts;
+	let alphaScenario: string;
+	let victimPreset: string;
+	let attacker: Record<string, string>;
+
+	beforeAll(async () => {
+		cp = await startTestControlPlane();
+		accounts = new TestAccounts(cp.database.url);
+		const api = new ApiClient(cp);
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		const victimScenario = await api.orchestrationWith(presetScenario(), "项目乙的场景");
+		victimPreset = (
+			await createPresetOk(api, victimScenario, {
+				name: "预设",
+				params: [{ name: "host", value: "h" }],
+			})
+		).id;
+		await accounts.project("alpha");
+		alphaScenario = "00000000-0000-4000-8000-0000000000c1";
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			await client.query(
+				`insert into orchestrations (id, project_id, name, head_version, created_at)
+				values ($1, 'alpha', '项目甲的场景', 0, now())`,
+				[alphaScenario],
+			);
+		} finally {
+			await client.end();
+		}
+		const mallory = await accounts.user("mallory");
+		await accounts.member("alpha", mallory, "project_admin");
+		attacker = bearer(await accounts.personalToken(mallory));
+	}, 60_000);
+	afterAll(async () => {
+		await accounts?.close();
+		await cp?.close();
+	});
+
+	it("项目甲的场景 + 项目乙的预设 ID：改、复制、删除都得到 404，项目乙的预设没有变", async () => {
+		const before = await settledFootprint(cp.database.url, cp.dataDir);
+		const base = `/orchestrations/${alphaScenario}/presets/${victimPreset}`;
+		const send = (method: string, path: string, body?: unknown) =>
+			cp.fetch(path, {
+				method,
+				headers: {
+					...attacker,
+					...(body === undefined ? {} : { "content-type": "application/json" }),
+				},
+				...(body === undefined ? {} : { body: JSON.stringify(body) }),
+			});
+		for (const res of [
+			await send("PATCH", base, { name: "被改名" }),
+			await send("POST", `${base}/copy`, { name: "副本" }),
+			await send("DELETE", base),
+		]) {
+			expect(res.status, await res.clone().text()).toBe(404);
+		}
+		// 对照：这个用户在自己的项目里的场景上，访问检查是通过的（场景没有版本，处理函数回答 404 说明没有这个预设）。
+		const own = await send("GET", `/orchestrations/${alphaScenario}`);
+		expect(own.status).toBe(200);
+		const after = await settledFootprint(cp.database.url, cp.dataDir);
+		expect(diffFootprints(before, after)).toEqual([]);
 	});
 });
 

@@ -52,7 +52,10 @@ const USERS = {
 	admin: user(4, { isPlatformAdmin: true }),
 	outsider: user(5),
 	stranger: user(6),
+	/** 平台管理员，同时是默认项目的成员：只读 / 编辑者 / 项目管理员。 */
 	adminMember: user(7, { isPlatformAdmin: true }),
+	adminEditor: user(8, { isPlatformAdmin: true }),
+	adminBoss: user(9, { isPlatformAdmin: true }),
 };
 
 describe("契约路由的访问检查", () => {
@@ -77,6 +80,8 @@ describe("契约路由的访问检查", () => {
 		store.setRole("default", USERS.boss, "project_admin");
 		store.setRole("alpha", USERS.outsider, "project_admin");
 		store.setRole("default", USERS.adminMember, "read_only");
+		store.setRole("default", USERS.adminEditor, "editor");
+		store.setRole("default", USERS.adminBoss, "project_admin");
 	});
 
 	/** 登记一个登录，返回请求头里的 Cookie。 */
@@ -233,6 +238,32 @@ describe("契约路由的访问检查", () => {
 				...login(USERS.editor),
 			});
 			expect(outcome(result)).toBe(401);
+		});
+
+		it("写了 Bearer 就是带了凭据：空的、缺令牌、换了空白字符的都是 401，不会退回到 Cookie 或放行", async () => {
+			const { cookie } = login(USERS.editor);
+			for (const authorization of [
+				"Bearer",
+				"Bearer ",
+				"Bearer\tunknown",
+				"bearer unknown",
+				"BEARER   ",
+			]) {
+				expect(outcome(await run(get, { authorization })), JSON.stringify(authorization)).toBe(401);
+				expect(
+					outcome(await run(get, { authorization, cookie })),
+					JSON.stringify(authorization),
+				).toBe(401);
+			}
+			// 空的登录 Cookie 同样是带了凭据：401。
+			expect(outcome(await run(get, { cookie: "sfly_login" }))).toBe(401);
+			expect(outcome(await run(get, { cookie: "sfly_login=" }))).toBe(401);
+			// 令牌前后的空白不影响（代理加的）。
+			const { authorization } = personal(USERS.editor);
+			expect(outcome(await run(get, { authorization: `  ${authorization}  ` }))).toBe("ok");
+			expect(
+				outcome(await run(get, { authorization: authorization.replace("Bearer ", "bearer\t") })),
+			).toBe("ok");
 		});
 
 		it("不是 Bearer 的 Authorization 写法不是 sfly 的凭据，不认；Cookie 里别的名字也不认", async () => {
@@ -540,8 +571,8 @@ describe("契约路由的访问检查", () => {
 					userId: USERS.admin.id,
 					at: new Date("2026-06-02T03:04:05.000Z"),
 					route: "POST /orchestrations/:id/runs",
-					// 触发运行新建的是运行：作用在哪类资源上取 creates。
-					resourceKind: "run",
+					// 和 resourceId 说的是同一个资源：请求定位到的场景（新建出来的运行不在这里）。
+					resourceKind: "scenario",
 					resourceId: RES.scenario.default,
 					tokenName: "运维令牌",
 				},
@@ -558,15 +589,30 @@ describe("契约路由的访问检查", () => {
 			]);
 		});
 
-		it("在自己是成员的项目里的写操作不记（不论成员的角色是什么）；被拒绝的请求不记", async () => {
-			const member = login(USERS.adminMember);
-			await run(route("POST /orchestrations/:id/versions"), member);
-			await run(route("POST /feishu-bots"), member);
+		it("是成员、角色本来就有这个范围的写不记；被拒绝的请求不记，别的用户（项目管理员）的写也不记", async () => {
+			const editor = login(USERS.adminEditor);
+			const boss = login(USERS.adminBoss);
+			await run(route("POST /orchestrations/:id/versions"), editor);
+			await run(route("POST /orchestrations/:id/runs"), editor);
+			await run(route("POST /feishu-bots"), boss);
+			await run(route("POST /packages"), boss);
 			expect(store.adminWrites).toEqual([]);
-			// 别的用户（项目管理员）的写、被拒绝的写，也不记。
 			await run(route("POST /feishu-bots"), login(USERS.boss));
 			await run(route("PUT /tasks/:id/artifacts/*"), login(USERS.admin), "alpha");
 			expect(store.adminWrites).toEqual([]);
+		});
+
+		it("是成员、但这次写要靠平台管理员的权限（角色没有这个范围）：照样留记录，读不记", async () => {
+			const readOnly = login(USERS.adminMember);
+			const editor = login(USERS.adminEditor);
+			await run(route("GET /orchestrations"), readOnly);
+			// 只读成员写场景、编辑者管理飞书机器人：都超出了他们作为成员的角色。
+			expect(outcome(await run(route("POST /orchestrations/:id/versions"), readOnly))).toBe("ok");
+			expect(outcome(await run(route("POST /feishu-bots"), editor))).toBe("ok");
+			expect(store.adminWrites.map((w) => [w.userId, w.route])).toEqual([
+				[USERS.adminMember.id, "POST /orchestrations/:id/versions"],
+				[USERS.adminEditor.id, "POST /feishu-bots"],
+			]);
 		});
 
 		it("项目不存在：404；管理员停用之后的凭据 401", async () => {
@@ -604,6 +650,16 @@ describe("契约路由的访问检查", () => {
 				const forTask = outcome(await run(def, taskCredential(DEFAULT)));
 				if (!agentOk) expect(forAgent, `Agent 凭据：${key}`).toBe(403);
 				if (!taskOk) expect(forTask, `任务凭据：${key}`).toBe(403);
+			}
+		});
+
+		it("清单之外的接口 403 不取决于资源存不存在、在哪个项目里：存在的、别的项目的、不存在的、ID 写得不对的，都是同一个 403", async () => {
+			const cancel = route("POST /runs/:id/cancel");
+			for (const c of [agent(DEFAULT, "agent-a"), agent(ALPHA, "agent-a"), taskCredential(ALPHA)]) {
+				for (const id of [RES.run.default, RES.run.alpha, id_(999), "not-a-uuid"]) {
+					const result = await guard.check({ ...request(cancel, c), params: { id } });
+					expect(result, `${id}`).toMatchObject({ ok: false, status: 403, code: "forbidden" });
+				}
 			}
 		});
 

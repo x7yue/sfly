@@ -96,14 +96,17 @@ const notFound = () => denied(404, "not_found", ACCESS_NOT_FOUND_MESSAGE);
 /** 请求里带的凭据原值，来自哪里。 */
 type Presented = { from: "bearer" | "cookie"; secret: string };
 
-/** `Authorization: Bearer <令牌>` 优先；没有时看登录 Cookie。其余的 Authorization 写法不是 sfly 的凭据，不认。 */
+/**
+ * `Authorization: Bearer <令牌>` 优先；没有时看登录 Cookie。写了 `Bearer`（或带了 `sfly_login` Cookie）就是带了凭据：
+ * 令牌是空的、格式不对也算，会因为库里没有它而 401，不会退回到别的凭据或不带凭据。
+ * 其余的 Authorization 写法（`Basic …`）不是 sfly 的凭据，不认。
+ */
 function presentedCredential(request: AccessRequest): Presented | undefined {
-	const bearer = /^Bearer (.+)$/i.exec(request.authorization ?? "");
-	if (bearer?.[1]) return { from: "bearer", secret: bearer[1].trim() };
+	const bearer = /^Bearer(?:\s+(.*))?$/is.exec((request.authorization ?? "").trim());
+	if (bearer) return { from: "bearer", secret: (bearer[1] ?? "").trim() };
 	for (const part of (request.cookie ?? "").split(";")) {
 		const [name, ...value] = part.trim().split("=");
-		if (name === LOGIN_COOKIE && value.length > 0)
-			return { from: "cookie", secret: value.join("=") };
+		if (name === LOGIN_COOKIE) return { from: "cookie", secret: value.join("=") };
 	}
 	return undefined;
 }
@@ -150,11 +153,12 @@ export class AccessGuard {
 			return denied(401, "unauthorized", "凭据无效、已过期或已吊销");
 		}
 		if (principal.kind === "shared") return { ok: true, access: null };
+		// Agent 凭据和任务凭据先看接口清单：403 只取决于接口，不取决于资源存不存在、在哪个项目里。
+		if (principal.kind === "agent" || principal.kind === "task") {
+			return this.#checkProgram(principal, request, locator);
+		}
 		const project = await this.#projectOf(locator, request.params);
 		if (project === undefined) return notFound();
-		if (principal.kind === "agent" || principal.kind === "task") {
-			return this.#checkProgram(principal, request, project);
-		}
 		return this.#checkScoped(principal, request, project);
 	}
 
@@ -198,7 +202,7 @@ export class AccessGuard {
 	async #checkProgram(
 		principal: Extract<Principal, { kind: "agent" | "task" }>,
 		request: AccessRequest,
-		project: ProjectId,
+		locator: Exclude<ProjectLocator, { from: "none" }>,
 	): Promise<AccessResult> {
 		const key = routeKey(request.route);
 		const routes: Readonly<Record<string, string>> =
@@ -213,6 +217,8 @@ export class AccessGuard {
 				`${principal.kind === "agent" ? "Agent 凭据" : "任务凭据"}不能调用这个接口`,
 			);
 		}
+		const project = await this.#projectOf(locator, request.params);
+		if (project === undefined) return notFound();
 		const access: Access = {
 			credential: principal.kind,
 			userId: null,
@@ -258,8 +264,11 @@ export class AccessGuard {
 
 		let role: ProjectRole | null = null;
 		let scopes: Scope[];
-		/** 平台管理员在不是成员的项目里：写操作要留记录。 */
-		let outsiderAdmin: string | null = null;
+		/**
+		 * 平台管理员的用户 ID，以及他作为成员本来就有的范围（不是成员时没有）：这次写要是靠平台管理员的权限才通过
+		 * （不是成员，或成员的角色没有这个范围），要留记录。
+		 */
+		let admin: { userId: string; memberScopes: Scope[] } | null = null;
 		if (principal.kind === "project") {
 			scopes = effectiveScopes(SCOPES, principal.granted);
 		} else {
@@ -268,7 +277,10 @@ export class AccessGuard {
 			if (user.isPlatformAdmin) {
 				// 平台管理员在每个项目里都有项目管理员的权限；项目要真的存在。
 				if (role === null && !(await this.deps.store.projectExists(project))) return notFound();
-				if (role === null) outsiderAdmin = user.id;
+				admin = {
+					userId: user.id,
+					memberScopes: role === null ? [] : effectiveScopes(ROLE_SCOPES[role], principal.granted),
+				};
 				scopes = effectiveScopes(PLATFORM_ADMIN_SCOPES, principal.granted);
 			} else if (role === null) {
 				if (!publicRead) return notFound();
@@ -311,14 +323,15 @@ export class AccessGuard {
 		if (principal.kind === "session" && route.effect === "write") {
 			return denied(403, "forbidden", "会话令牌的写入还没有开放");
 		}
-		if (outsiderAdmin !== null && route.effect === "write") {
+		if (admin !== null && route.effect === "write" && !admin.memberScopes.includes(needed)) {
 			const target = route.resource.target;
 			await this.deps.store.recordAdminWrite({
 				projectId: project,
-				userId: outsiderAdmin,
+				userId: admin.userId,
 				at: this.deps.clock.now(),
 				route: routeKey(route),
-				resourceKind: route.creates ?? route.resource.kind,
+				// 和 resourceId 说的是同一个资源：请求定位到的那个（触发运行记场景，不是新建出来的运行）。
+				resourceKind: route.resource.kind,
 				resourceId:
 					typeof target === "object" && "params" in target
 						? (request.params[target.params] ?? null)

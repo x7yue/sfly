@@ -8,8 +8,10 @@ import { ApiClient } from "./support/api-client.js";
 import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { benchDocument, publishBench } from "./support/focus-items.js";
+import type { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishPackage } from "./support/package-archive.js";
 import { presetScenario } from "./support/presets.js";
+import { seedTask } from "./support/seed-task.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const DOCUMENT = {
@@ -207,6 +209,15 @@ describe("带凭据的请求", () => {
 			).toEqual({ author: "自动化", author_user_id: null, author_token: "自动化" });
 		});
 
+		it("有过期时间、还没到期的令牌有效；到期之后 401", async () => {
+			const token = await accounts.personalToken(editor, {
+				expiresAt: new Date("2026-01-02T00:00:00Z"),
+			});
+			expect((await call(bearer(token), "GET", "/orchestrations")).status).toBe(200);
+			(cp.clock as ManualClock).advance(2 * 86_400_000);
+			expect((await call(bearer(token), "GET", "/orchestrations")).status).toBe(401);
+		});
+
 		it("不带凭据：昵称请求头照旧，用户 ID 和令牌的名称为空", async () => {
 			const api = new ApiClient(cp);
 			const scenario = await api.orchestrationWith(DOCUMENT);
@@ -257,6 +268,26 @@ describe("带凭据的请求", () => {
 			expect((await call({}, "GET", "/orchestrations")).status).toBe(200);
 			// 不属于项目的接口不看凭据。
 			expect((await call(bearer("sfly_pat_unknown"), "GET", "/health")).status).toBe(200);
+		});
+
+		it("检查先于读请求体：失效的凭据上传超过上限的请求体是 401，不是 413、415，也不会先读请求体", async () => {
+			const junk = new Uint8Array(2 * 1024 * 1024);
+			const post = (headers: Record<string, string>) =>
+				cp.fetch("/packages", { method: "POST", headers, body: junk });
+			expect(
+				(await post({ "content-type": "text/plain", ...bearer("sfly_pat_unknown") })).status,
+			).toBe(401);
+			expect(
+				(await post({ "content-type": "application/octet-stream", ...bearer("sfly_pat_unknown") }))
+					.status,
+			).toBe(401);
+			// 失效的 JSON 请求也一样：401 先于 400。
+			const bad = await call(bearer("sfly_pat_unknown"), "POST", "/orchestrations", { wrong: 1 });
+			expect(bad.status).toBe(401);
+			// 对照：有效的凭据，请求体不对才是 413（超过请求体上限）/ 400。
+			const token = await accounts.personalToken(editor);
+			expect((await post({ "content-type": "text/plain", ...bearer(token) })).status).toBe(413);
+			expect((await call(bearer(token), "POST", "/orchestrations", { wrong: 1 })).status).toBe(400);
 		});
 
 		it("没有这个范围 403，说明缺哪个范围；不是成员 404", async () => {
@@ -394,5 +425,27 @@ describe("共享令牌", () => {
 		expect(write.status).toBe(400);
 		expect(await write.json()).toMatchObject({ error: { code: "nickname_required" } });
 		expect(await api.createOrchestration("带昵称")).toBeTruthy();
+	});
+
+	it("配了共享令牌时，Agent 凭据上传产物照样通过：访问检查已经核对过凭据，处理函数不再拿共享令牌比；共享令牌和不带凭据的上传仍按共享令牌", async () => {
+		const accounts = new TestAccounts(cp.database.url);
+		try {
+			const { task } = await seedTask(cp, { agent: "agent-x", status: "running" });
+			const upload = (headers: Record<string, string>, name: string) =>
+				cp.fetch(`/tasks/${task}/artifacts/${name}`, {
+					method: "PUT",
+					headers: { "content-type": "application/octet-stream", ...headers },
+					body: "x",
+				});
+			const credential = await accounts.agentCredential("default", "agent-x");
+			expect((await upload(bearer(credential), "own.txt")).status).toBe(201);
+			expect((await upload(bearer("s3cret"), "shared.txt")).status).toBe(201);
+			expect((await upload({}, "anonymous.txt")).status).toBe(401);
+			// 别的 Agent 的凭据：访问检查拒绝（任务不是派给它的）。
+			const other = await accounts.agentCredential("default", "agent-y");
+			expect((await upload(bearer(other), "other.txt")).status).toBe(404);
+		} finally {
+			await accounts.close();
+		}
 	});
 });

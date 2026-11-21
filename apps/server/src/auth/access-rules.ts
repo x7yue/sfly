@@ -63,15 +63,23 @@ export const TASK_CREDENTIAL_ROUTES = {
 
 /** 访问检查要求的契约性质，启动时检查（`guardHttpContract`）：每个接口的项目都认得出来。返回问题列表，空表示没有问题。 */
 export function checkAccessRules(contract: readonly RouteDef[]): string[] {
-	return contract.flatMap((def) =>
+	return contract.flatMap((def) => {
 		// 没有写 resource 的接口由声明检查（checkRouteDeclarations）报，这里不重复。
-		def.resource !== undefined && locatorOf(def) === undefined
-			? [
-					`${routeKey(def)}：认不出项目从哪里得出（${def.resource.kind} × ${JSON.stringify(def.resource.target)}）：` +
-						"新的资源类别或定位方式要在 locatorOf（src/auth/access-rules.ts）里写明",
-				]
-			: [],
-	);
+		if (def.resource === undefined) return [];
+		const problems: string[] = [];
+		if (locatorOf(def) === undefined) {
+			problems.push(
+				`${routeKey(def)}：认不出项目从哪里得出（${def.resource.kind} × ${JSON.stringify(def.resource.target)}）：` +
+					"新的资源类别或定位方式要在 locatorOf（src/auth/access-rules.ts）里写明",
+			);
+		}
+		if (def.resource.kind === "system" && def.effect !== "read") {
+			problems.push(
+				`${routeKey(def)}：不属于项目的接口（system）不需要凭据，只能是只读的；有副作用的接口要作用在某类资源上，走范围表`,
+			);
+		}
+		return problems;
+	});
 }
 
 /** 两份凭据清单里的接口都在（完整的）契约里：接口改名或删掉了，清单要一起改。契约测试对 `httpContract` 运行它。 */

@@ -114,6 +114,19 @@ describe("契约和访问检查的规则对得上", () => {
 		expect(checkCredentialRoutes(httpContract)).toEqual([]);
 	});
 
+	it("不属于项目的接口（system，不需要凭据）只能是只读的：有副作用的 system 接口会让检查报错", () => {
+		const readOnly = httpContract.find(
+			(def) => def.resource.kind === "system",
+		) as (typeof httpContract)[number];
+		expect(checkAccessRules([readOnly])).toEqual([]);
+		const write = {
+			...readOnly,
+			method: "POST",
+			effect: "write",
+		} as unknown as (typeof httpContract)[number];
+		expect(checkAccessRules([write])).toEqual([expect.stringContaining("只能是只读的")]);
+	});
+
 	it("项目的四类：不属于项目、路径带项目、经场景、经运行或任务", () => {
 		const classes = new Map<string, string[]>();
 		for (const def of httpContract) {

@@ -23,7 +23,7 @@ import { sendError } from "./errors.js";
  * `requestError` 换成更具体的错误码；details 为 zod issues，path 以 params / query / body 开头），
  * handler 拿到解析后的值。
  *
- * 访问检查（ADR 0029「一处检查」）也在这里，在校验请求之前、进处理函数之前：解析凭据、按接口的声明得出项目、查归属和范围
+ * 访问检查（ADR 0029「一处检查」）也在这里，在读请求体之前、校验请求之前、进处理函数之前：解析凭据、按接口的声明得出项目、查归属和范围
  * （src/auth/access-guard.ts，事件流、下载、Fastify 为 GET 自动生成的 HEAD 路由都经过同一处）。拒绝时直接回复 401、403 或 404，
  * 通过时把身份放在 `request.access`，处理函数用它记下是谁做的，不再自己读请求头。
  *
@@ -139,10 +139,8 @@ function register<D extends RouteDef>(
 	app.route({
 		method: def.method,
 		url: def.path,
-		handler: async (req, reply) => {
-			if (hasNul(req.params)) {
-				return sendError(reply, 404, "not_found", "路径参数含 NUL 字符，没有对应的资源");
-			}
+		// 访问检查在 onRequest：先于请求体的解析（发布节点包要把整个归档读进内存），先于校验和处理函数。
+		onRequest: async (req, reply) => {
 			const verdict = await guard.check({
 				route: def,
 				params: req.params as Record<string, string | undefined>,
@@ -150,11 +148,17 @@ function register<D extends RouteDef>(
 				cookie: req.headers.cookie,
 			});
 			if (!verdict.ok) {
-				// 上传的请求体按流读（artifacts 的上传作用域），拒绝时也要排空，否则客户端还在发、连接挂着。
+				// 请求体没有读：排空它，否则客户端还在发、连接挂着。
 				req.raw.resume();
 				return sendError(reply, verdict.status, verdict.code, verdict.message);
 			}
 			req.access = verdict.access;
+			return undefined;
+		},
+		handler: async (req, reply) => {
+			if (hasNul(req.params)) {
+				return sendError(reply, 404, "not_found", "路径参数含 NUL 字符，没有对应的资源");
+			}
 			if (hasNul(req.query) || hasNul(req.body)) {
 				return sendError(reply, 400, "invalid_request", "请求里的字符串不能含 NUL 字符（\\u0000）");
 			}

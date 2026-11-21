@@ -398,6 +398,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | `api_tokens` | id, kind（personal / project / session / task：会话令牌和任务凭据的种类先留出来）, name, prefix（展示用的前缀）, token_hash（SHA-256，唯一，原值只在签发时显示一次）, user_id（个人令牌的所属用户、会话令牌的发起人）, project_id（项目令牌的所属项目；会话令牌、任务凭据、可选的个人令牌限定的项目）, session_id（会话由骨架建，先不加外键）, task_id（`tasks.id`：任务凭据属于一次尝试）, scopes（范围的名字数组，库里不约束）, created_at, expires_at, revoked_at, last_used_at；每种令牌用哪几列由约束保证；只吊销、不删除 |
 | `logins` | id, user_id, cookie_hash（唯一）, created_at, last_used_at, idle_expires_at（空闲期限）, revoked_at；控制台的登录 Cookie |
 | `agent_credentials` | id, kind（agent：按台签发 / shared：旧式共享令牌）, project_id, agent_name（按台签发的有，共享令牌为空）, prefix, token_hash（SHA-256，唯一）, user_id（开发 Agent 的凭据记在签发它的编辑者名下，项目管理员签发的为空）, created_at, revoked_at, last_used_at；控制面启动时配了 `SFLY_AGENT_TOKEN` 就登记它的哈希为默认项目的共享令牌（换了新值，旧的那条随之删除） |
+| `platform_admin_actions` | id, project_id, user_id, at, route（`方法 路径模板`）, resource_kind / resource_id（请求定位到的资源）, token_name；平台管理员在自己不是成员的项目里的写操作（以及靠管理员权限才通过的写）：访问检查先于处理函数写下，项目的成员看得到（查看页在 #499）；索引 `(project_id, at)` |
 
 场景、Agent、节点包、飞书机器人和运行都属于一个项目（`project_id`）。存储层的列表、按名字取和新建都要传项目（类型上必填，`apps/server/src/projects/project-id.ts` 的 `ProjectId`）：
 别的项目的资源和不存在一样；按场景或运行的 ID 取、再确认它在某个项目里用 `getInProject`、`getRunViewInProject`。节点包例外地多读公共项目：任何项目都读得到公共项目里的包（`readableProjects`），
@@ -460,15 +461,15 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 ### 6.6 访问检查（ADR 0029）
 
-每个契约路由在进处理函数之前先过同一处检查（`src/http/contract-route.ts` 的 `register`，事件流、下载和 Fastify 为 GET 自动生成的 HEAD 路由都经过它；没有安装检查时注册契约路由会抛错）。检查本身是 `src/auth/access-guard.ts` 的 `AccessGuard`，不依赖 Fastify：输入是凭据和接口在契约里的声明，输出是「谁、哪个项目、允许还是拒绝、拒绝的原因」，读数据走 `AccessStore`（`src/auth/access-store.ts`，数据库实现一次一条查询）。
+每个契约路由在进处理函数之前先过同一处检查（`src/http/contract-route.ts` 的 `register`，装在路由的 `onRequest` 钩子里：先于读请求体——发布节点包要把整个归档读进内存——也先于校验；事件流、下载和 Fastify 为 GET 自动生成的 HEAD 路由都经过它；没有安装检查时注册契约路由会抛错）。检查本身是 `src/auth/access-guard.ts` 的 `AccessGuard`，不依赖 Fastify：输入是凭据和接口在契约里的声明，输出是「谁、哪个项目、允许还是拒绝、拒绝的原因」，读数据走 `AccessStore`（`src/auth/access-store.ts`，数据库实现一次一条查询）。
 
 - **只对带了凭据的请求生效**（#494 才拒绝不带凭据的请求）：不带凭据的请求、带共享令牌（`SFLY_AGENT_TOKEN`，登记成默认项目的旧式 Agent 凭据，不对应任何一台 Agent）的请求照旧放行，没有身份。带了凭据就一定检查：库里没有的 Bearer、过期的、吊销的、用户停用的，一律 401，不会退回到「不带凭据」的放行。不属于项目的接口（`system`，不需要凭据）带什么都不看。
-- **凭据**：`Authorization: Bearer` 的令牌（个人、项目、会话令牌、任务凭据）和 Agent 凭据，库里只存 SHA-256 哈希（`apps/server/src/auth/credential-hash.ts`）；Bearer 优先，没有时看 `sfly_login` Cookie 里的登录。令牌的签发、登录和 Agent 凭据的签发在 #490–#492，这一步只认库里已有的。
+- **凭据**：`Authorization: Bearer` 的令牌（个人、项目、会话令牌、任务凭据）和 Agent 凭据，库里只存 SHA-256 哈希（`apps/server/src/auth/credential-hash.ts`）；Bearer 优先，没有时看 `sfly_login` Cookie 里的登录。写了 `Bearer`（令牌空的、缺的也算）或带了 `sfly_login` Cookie 就是带了凭据，库里没有就 401；`Basic …` 这类别的 Authorization 写法不是 sfly 的凭据，不认。令牌的签发、登录和 Agent 凭据的签发在 #490–#492，这一步只认库里已有的。
 - **项目从请求的哪里来**（`src/auth/access-rules.ts` 的 `locatorOf`，由契约里每个接口的声明得出）：不属于项目的（`system`）；路径带项目（列表和新建，以及按名字定位的 Agent、节点包、飞书机器人）取路径里的 `:project`——#488 把路径改成 `/projects/:project/…` 之前路径里没有项目，就是默认项目；经场景（`/orchestrations/:id/…`）、经运行或任务（`/runs/:id/…`、`/tasks/:id/…`，任务经它所属的运行）取那个资源所在的项目。资源不存在、ID 写得不对、属于别的项目、凭据限定的项目不是这个、不是项目的成员：一律 404（同一句话，`ACCESS_NOT_FOUND_MESSAGE`），不透露别的项目里有什么；403 只用于「在这个项目里，但没有这个范围」。公共项目任何凭据都能读它的节点包。
 - **范围**（`src/auth/scopes.ts`）：由「接口作用在哪类资源上 × 只读或写」查表得出：只读都是「读」；写取声明的 `creates`（有的话）否则取 `resource.kind`：场景写要「编辑」、运行写要「运行」、节点包写要「发布」、Agent 和飞书机器人写要「管理」，任务的写没有人和程序能调用。表是 `Record<ResourceKind, …>`，契约里加资源类别不加一行过不了类型检查。三种角色是固定的一组范围，平台管理员在每个项目里是项目管理员；有用户的凭据（登录、个人令牌、会话令牌）取令牌的范围和用户此刻在这个项目里的范围的交集，所以用户被降级、移出项目、停用后他的令牌立刻失去权限；项目令牌没有用户，只看自己的范围。
-- **Agent 凭据和任务凭据不走范围表**：各有一份显式的接口清单（`AGENT_CREDENTIAL_ROUTES`、`TASK_CREDENTIAL_ROUTES`），清单之外一律 403。Agent 凭据：下载节点包归档（本项目和公共项目的包）、上传产物（派给这台 Agent 的任务）；任务凭据：下载产物（本项目的任务），不能读日志和动作。
+- **Agent 凭据和任务凭据不走范围表**：各有一份显式的接口清单（`AGENT_CREDENTIAL_ROUTES`、`TASK_CREDENTIAL_ROUTES`），清单之外一律 403，先于得出项目：403 只取决于接口，不取决于资源存不存在、在哪个项目里。Agent 凭据：下载节点包归档（本项目和公共项目的包）、上传产物（派给这台 Agent 的任务）；任务凭据：下载产物（本项目的任务），不能读日志和动作。
 - **会话令牌**：读按范围，写在 #495 接进来之前一律 403。
-- **平台管理员**在自己不是成员的项目里的写操作，在这一处检查里写一条 `platform_admin_actions`（谁、什么时候、哪个接口、作用在哪个资源上、经哪个令牌），先于处理函数写下；他是成员的项目里的写、所有的读不记。查看页在 #499。
+- **平台管理员**在自己不是成员的项目里的写操作，在这一处检查里写一条 `platform_admin_actions`（谁、什么时候、哪个接口、作用在哪个资源上——定位到的那个，触发运行记的是场景、经哪个令牌），先于处理函数写下；他是成员的项目里，写操作本来就在他作为成员的角色里的不记，要靠平台管理员的权限才通过的（角色没有这个范围）照样记；所有的读不记。查看页在 #499。
 - **身份交给处理函数**：通过检查的凭据放在 `request.access`；写操作的 `Actor`（`src/actor.ts`）带用户 ID 和令牌的名称，记进 `author_user_id`/`author_token`、`triggered_by_user_id`/`triggered_token`、`cancel_requested_by_user_id`/`cancel_requested_token`、`run_presets.updated_by_user_id`、`focus_edit.by_user_id`、`node_packages.published_*`。带了凭据的请求，显示名（`author`、`triggered_by` 等）是用户的显示名（项目令牌是令牌的名称），不看昵称请求头，也不要求带它；`*_via` 仍是 `x-sfly-client` 里不经校验的助手名，令牌名是检查过的，两者分开记。
 - **启动检查**（`guardHttpContract`）：每个接口的声明站得住（`checkRouteDeclarations`），访问检查认得出每个接口的项目从哪里得出（`checkAccessRules`），缺声明的接口让控制面起不来。
 - **测试**：`test/access-scopes.test.ts`（范围表对着 ADR 的表，每一行一条）、`test/access-guard.test.ts`（鉴权模块，内存里的 `AccessStore`：每种角色对每个接口的结果、凭据、公共项目、平台管理员、Agent 凭据和任务凭据）、`test/access-http.test.ts`（经 HTTP：身份写进库、记录、HEAD 和事件流）、`test/access-cross-project.test.ts`（从路由清单生成：项目甲的每种凭据请求项目乙的资源，每个属于项目的接口一条；写接口前后控制面留下的痕迹没有任何变化）。造凭据的辅助在 `test/support/credentials.ts`。
