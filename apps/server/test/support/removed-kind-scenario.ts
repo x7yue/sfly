@@ -61,7 +61,7 @@ export const REMOVED_NODE = {
 /** 三个已移除的节点，按它们在链上的顺序。 */
 export const REMOVED_NODES = [REMOVED_WAIT, REMOVED_TIMER, REMOVED_NODE] as const;
 
-/** 移除之前保存的文档（没有 sticky_notes 之类后来才有的字段也没关系：读出时补齐）。 */
+/** 移除之前保存的文档：和那时每个版本一样带着空的 `sticky_notes`（便签，读出时去掉）。 */
 export const LEGACY_DOCUMENT = {
 	nodes: [
 		{

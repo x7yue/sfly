@@ -42,7 +42,6 @@ const source: OrchestrationDocument = {
 	],
 	packages: { "demo-checks": "1.2.0" },
 	annotations: [],
-	sticky_notes: [],
 };
 
 const target: OrchestrationDocument = {
@@ -50,7 +49,6 @@ const target: OrchestrationDocument = {
 	edges: [],
 	packages: {},
 	annotations: [],
-	sticky_notes: [],
 };
 
 function copied(doc: OrchestrationDocument, id: string): CopiedNode {

@@ -39,14 +39,16 @@ interface Base {
 	document: StoredOrchestrationDocument;
 }
 
-/** 按画布的方式规整文档（补齐布局、去掉没用到的包锁定），让“未修改”的判断不受这些差别影响。 */
+/**
+ * 按画布的方式规整文档（补齐布局、去掉没用到的包锁定），让“未修改”的判断不受这些差别影响。
+ * 画布状态只有现在支持的字段：升级前保存的版本里已移除的顶层字段（便签 `sticky_notes`）不会带进来。
+ */
 const asCanvasDocument = (doc: StoredOrchestrationDocument): StoredOrchestrationDocument => {
 	const { nodes, edges } = toFlow(doc);
 	return fromFlow(nodes, edges, {
 		default_agent: doc.default_agent,
 		packages: doc.packages,
 		annotations: doc.annotations,
-		sticky_notes: doc.sticky_notes ?? [],
 	});
 };
 
