@@ -134,8 +134,8 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 		expect(await scenarios.getInProject(OTHER, a.scenario)).toBeUndefined();
 
 		// 每个项目只统计自己场景的最新版本文档；已归档的场景计数也只算本项目。
-		expect(await scenarios.headDocuments(DEFAULT_PROJECT)).toHaveLength(1);
-		expect(await scenarios.headDocuments(OTHER)).toHaveLength(1);
+		expect(await scenarios.rawHeadDocuments(DEFAULT_PROJECT)).toHaveLength(1);
+		expect(await scenarios.rawHeadDocuments(OTHER)).toHaveLength(1);
 	});
 
 	it("场景：新建的场景属于传入的项目，复制出的副本和源场景在同一个项目里", async () => {
@@ -455,7 +455,7 @@ function omittedProjectDoesNotCompile(deps: {
 	// @ts-expect-error 漏传项目
 	void deps.scenarios.create("场景");
 	// @ts-expect-error 漏传项目
-	void deps.scenarios.headDocuments();
+	void deps.scenarios.rawHeadDocuments();
 	// @ts-expect-error 漏传项目
 	void deps.scenarios.getInProject("id");
 	// @ts-expect-error 漏传项目

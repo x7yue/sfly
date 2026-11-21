@@ -1,4 +1,4 @@
-import type { ParamDeclaration, PresetParamInput } from "@sfly/schema";
+import { type ParamDeclaration, type PresetParamInput, SECRET_MASK } from "@sfly/schema";
 import { presetProblems } from "./preset-validity.js";
 
 /**
@@ -65,6 +65,13 @@ export function checkPresetParams(
 			return;
 		}
 		const value = kept ? saved?.[name] : param.value;
+		if (!kept && decl.secret && value === SECRET_MASK) {
+			at(
+				[i, "value"],
+				`参数 ${name} 的值是 ${SECRET_MASK}：这是读取时给 secret 参数打的码，不是值。沿用预设里原来的值写 keep，要换就给真正的值`,
+			);
+			return;
+		}
 		const [problem] = presetProblems({ [name]: value }, declarations);
 		if (value === undefined || value === null) at([i, field], `参数 ${name} 要填一个值`);
 		else if (problem?.reason === "type_mismatch") {

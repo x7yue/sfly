@@ -4,6 +4,10 @@ import type { Db } from "../db/database.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { listOrchestrationSummaries } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
+import {
+	describeSecretDefaultProblem,
+	secretDefaultWarnings,
+} from "../orchestrations/secret-defaults.js";
 import { presetInvalidatedWarnings } from "../presets/preset-invalidation.js";
 import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
@@ -24,10 +28,14 @@ export function registerOrchestrationRoutes(
 	app: FastifyInstance,
 	{ db, orchestrations }: { db: Db; orchestrations: OrchestrationStore },
 ): void {
-	/** 保存或恢复出新版本时返回的警告：文档的静态检查，加上会让运行预设失效的改动。 */
+	/**
+	 * 保存或恢复出新版本时返回的警告：文档的静态检查，加上会让运行预设失效的改动，以及 secret 参数写了默认值的提醒
+	 * （只提醒，不阻止保存）。`saved.document` 是打码后的，这几项检查都不看 secret 默认值的内容。
+	 */
 	const saveWarnings = async (saved: OrchestrationVersionView) => [
 		...(await checkDocument(db, saved.document)),
 		...(await presetInvalidatedWarnings(db, saved.orchestration_id, saved.number)),
+		...secretDefaultWarnings(saved.document),
 	];
 
 	contractRoute(app, orchestrationsApi.create, async ({ body }, reply, raw) => {
@@ -116,6 +124,15 @@ export function registerOrchestrationRoutes(
 					? `version ${result.head.number} was saved by ${result.head.author} after version ${body.base_version}`
 					: `orchestration has no version ${body.base_version}`,
 				{ base_version: body.base_version, head: result.head },
+			);
+		}
+		if (result.kind === "secret_default_unresolved") {
+			return sendError(
+				reply,
+				400,
+				"secret_default_placeholder",
+				result.problems.map(describeSecretDefaultProblem).join("；"),
+				result.problems,
 			);
 		}
 		const saved = result.version;

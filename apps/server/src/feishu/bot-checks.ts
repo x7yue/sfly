@@ -11,6 +11,11 @@ export interface BotToCheck {
 	/** 「飞书机器人」类型的输入名（#233）。 */
 	input: string;
 	bot: string;
+	/**
+	 * 问题的说明里这个机器人名称的写法，不给时写 `bot`。值取自 secret 参数时调用方传打了码的写法：
+	 * 触发时的错误不回显 secret 参数的值（docs/SEMANTICS.md §2.1）。
+	 */
+	shown?: string;
 	/** 值从哪来（例如「取自入口参数」），写在问题的说明后面的括号里。 */
 	source?: string;
 }
@@ -46,9 +51,9 @@ export async function checkFeishuBots(
 	const registered = await registeredBots(db, [...new Set(references.map((r) => r.bot))]);
 	return references
 		.filter((r) => !registered.has(r.bot))
-		.map(({ nodeId, node, input, bot, source }) => ({
+		.map(({ nodeId, node, input, bot, shown = bot, source }) => ({
 			code: "feishu_bot_not_registered",
-			message: `${feishuBotNotRegistered(node, bot, input)}${source === undefined ? "" : `（${source}）`}`,
+			message: `${feishuBotNotRegistered(node, shown, input)}${source === undefined ? "" : `（${source}）`}`,
 			node_id: nodeId,
 		}));
 }

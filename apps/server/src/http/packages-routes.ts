@@ -63,7 +63,7 @@ export function registerPackageRoutes(
 
 	// 锁定数随各场景的最新版本变化，查询时现算。
 	const withLocks = async (summaries: PackageSummary[]) => {
-		const locks = packageLocks(await orchestrations.headDocuments(DEFAULT_PROJECT));
+		const locks = packageLocks(await orchestrations.rawHeadDocuments(DEFAULT_PROJECT));
 		return summaries.map((pkg) => ({
 			...pkg,
 			versions: pkg.versions.map((v) => ({
