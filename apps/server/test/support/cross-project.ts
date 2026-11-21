@@ -74,6 +74,14 @@ const JSON_BODIES: Record<string, unknown> = {
 	"POST /orchestrations/:id/check": {
 		document: { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },
 	},
+	// 局部编辑（#470）：保存和只检查
+	"POST /orchestrations/:id/edits": {
+		base_version: 1,
+		operations: [{ op: "set", node: "entry", field: "display_name", value: "开始" }],
+	},
+	"POST /orchestrations/:id/edits/check": {
+		operations: [{ op: "set", node: "entry", field: "display_name", value: "开始" }],
+	},
 	"POST /feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
 	"PATCH /feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },
