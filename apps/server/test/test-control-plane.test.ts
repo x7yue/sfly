@@ -34,4 +34,12 @@ describe("测试控制面", () => {
 			again.close();
 		}
 	}, 60_000);
+
+	// 辅助函数 createQueuedRun 的说明里写着「同一个控制面上可以重复调用」：第二次不能再发布同一个包版本而失败。
+	it("同一个控制面上可以造多个排队的运行", async () => {
+		const first = await createQueuedRun(cp);
+		const second = await createQueuedRun(cp);
+		expect(second).not.toBe(first);
+		for (const id of [first, second]) expect((await api.run(id)).status).toBe("running");
+	});
 });

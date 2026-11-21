@@ -7,7 +7,7 @@
 // 每张表每一行连同 xmin、序列、数据目录里的文件），有任何差别就是写了。同时把响应拿去和随 SDK 打包的
 // 路由清单里的响应 JSON Schema 对照。
 //
-// 方法不是 GET 的只读接口（登记在 READS_WITH_TRACES，现在没有）也在其中：它们只能写内存里的状态，
+// 方法不是 GET 的只读接口（登记在 READS_WITH_TRACES）也在其中：它们只能写内存里的状态，
 // 所以库和数据目录同样要求没有变化。
 //
 // 没有用「只有 SELECT 权限的数据库角色」：控制面启动时要迁移，运行时后台有周期扫描和清理，用只读角色它起不来、
@@ -432,7 +432,7 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 	return value;
 }
 
-/** 有请求体的只读接口的请求体样本：现在没有这样的接口（READS_WITH_TRACES 是空的）；出现了就报错，让新接口的作者补上。 */
+/** 有请求体的只读接口的请求体样本：没有样本就报错，让新接口的作者在这里补上。 */
 function sampleBody(def: RouteDef): unknown {
 	if (!("body" in def) || !def.body) return undefined;
 	throw new Error(

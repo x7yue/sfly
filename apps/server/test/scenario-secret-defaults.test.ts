@@ -331,7 +331,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 			});
 			const ids = { scenario: id, run: runId, task: assign.taskId, preset: preset.id };
 
-			// 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（READS_WITH_TRACES，现在没有登记）要请求体，不在这里；以后有了，下面的写接口用例会要求请求过它。
+			// 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（登记在 READS_WITH_TRACES）要请求体，不在这里；下面的写接口用例会要求请求过它们。
 			const reads = httpContract.filter(
 				(def) =>
 					def.effect === "read" &&

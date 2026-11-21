@@ -93,7 +93,7 @@
 
 第 3 步（便签）合入之后追加的一节：同一份决定的最后一个改动。在线编辑者是编辑页面右上的头像提示，显示同一个场景还有谁打开着编辑页面；它没有任何持久化的数据，所以没有存量数据要读。
 
-- **一起删**：三个接口——`POST /orchestrations/:id/presence`（编辑页面每 10 秒一次的心跳，带昵称和会话 ID）、`POST /orchestrations/:id/presence/leave`（关闭页面时主动离开）、`GET /orchestrations/:id/presence/events`（SSE，事件 `editors` 推送名单）——连同契约里的 `presenceApi`、`OnlineEditorView`、`EditorsEvent` 和它们的接口声明、`READS_WITH_TRACES` 里为心跳和离开做的登记（它们是这张表仅有的两项：表和对它的检查保留，现在是空表）；控制面里内存中的名单 `PresenceRegistry`（30 秒无心跳移除）和它的周期清理；编辑页面里的 `OnlineEditors` 头像、`useOtherEditors`（`lib/presence.ts`）和右上控件组里它的位置；设计规范和架构文档里关于它的说明；只读测试和 CORS 测试里借它造数据的部分。
+- **一起删**：三个接口——`POST /orchestrations/:id/presence`（编辑页面每 10 秒一次的心跳，带昵称和会话 ID）、`POST /orchestrations/:id/presence/leave`（关闭页面时主动离开）、`GET /orchestrations/:id/presence/events`（SSE，事件 `editors` 推送名单）——连同契约里的 `presenceApi`、`OnlineEditorView`、`EditorsEvent` 和它们的接口声明、`READS_WITH_TRACES` 里为心跳和离开做的登记（表和对它的检查保留：机制别处仍在用，以后再加非 GET 的只读接口还要登记）；控制面里内存中的名单 `PresenceRegistry`（30 秒无心跳移除）和它的周期清理；编辑页面里的 `OnlineEditors` 头像、`useOtherEditors`（`lib/presence.ts`）和右上控件组里它的位置；设计规范和架构文档里关于它的说明；只读测试和 CORS 测试里借它造数据的部分。
 - **不动**：保存时的乐观锁和冲突处理（版本冲突、`DraftBanner` 里「另一个标签页修改了本地草稿」）；昵称（版本作者、运行触发人）——ADR 0004 里「防止并发修改依靠编排版本的乐观锁和在线编辑者提示」这一条只剩乐观锁。
 - **不做替代品**：取代它的「谁正在改这个场景」不靠心跳、不认请求里给的任何标识，由平台自己知道的事实算出（ADR 0029），在多用户的任务（#495）里做，不在这一步。删掉的同时也去掉了 ADR 0029 记下的一个已知问题：任何有读权限的调用方都能用别人的会话标识让别人从「谁在编辑」里消失。
 - **升级时还开着的旧页面**：它们继续每 10 秒发一次心跳，收到 404，刷新页面之后就没有了；404 不影响页面别的功能（保存、运行状态、实时推送走别的路径）。

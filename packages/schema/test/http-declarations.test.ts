@@ -301,7 +301,7 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ method: "POST", effect: "read", path: "/things/:id/query" }))[0],
 		).toContain("READS_WITH_TRACES");
-		// 登记过的（这里用测试自己的一张表，真正的 READS_WITH_TRACES 现在是空的）就没有问题
+		// 登记过的（这里用测试自己的一张表）就没有问题
 		const registered: DeclarationRules = {
 			...rulesFor(broken({})),
 			readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
@@ -314,7 +314,7 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		).toEqual([]);
 	});
 
-	it("READS_WITH_TRACES 没有登记任何接口时机制仍然有效：非 GET 的只读接口被拦下，登记后才通过", () => {
+	it("表里没有登记的非 GET 只读接口被拦下，登记后才通过（和 READS_WITH_TRACES 里现在有什么无关）", () => {
 		const def = broken({ method: "POST", effect: "read", path: "/things/:id/query" });
 		const rules = { ...rulesFor(def), readsWithTraces: {} };
 		expect(checkRouteDeclarations([def], rules)).toEqual([
