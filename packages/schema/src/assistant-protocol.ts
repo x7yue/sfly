@@ -81,8 +81,8 @@ const EnvName = z
 	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "环境变量名只能有字母、数字、下划线，且不以数字开头");
 
 /**
- * 这一轮在哪个工作台上做：`name` 是工作台的 Agent 名，`address` 是它的能力端口的地址，`workdir` 是工作区在工作台
- * 上的路径。pi 的读、写、编辑、命令四个工具经远程工具扩展落到这个地址。
+ * 这一轮在哪个工作台上做：`name` 是工作台的 Agent 名，`address` 是它的能力端口的地址，写成 `主机:端口`（IPv6 地址写成
+ * `[地址]:端口`；主机和端口取 Agent 上报的，ADR 0019），`workdir` 是工作区在工作台上的路径。pi 的读、写、编辑、命令四个工具经远程工具扩展落到这个地址。
  */
 export const WorkbenchTarget = z.object({
 	name: z.string().min(1),

@@ -131,6 +131,9 @@ const controlPlane = await startControlPlane({
 	installScriptFile: defaults.installScriptFile,
 	publicGrpcUrl: env.SFLY_PUBLIC_GRPC_URL || undefined,
 	migrationsDir: env.SFLY_MIGRATIONS_DIR || defaults.migrationsDir,
+	assistantUrl: env.SFLY_ASSISTANT_URL || undefined,
+	assistantSecret: env.SFLY_ASSISTANT_SECRET || undefined,
+	workbenchAgent: env.SFLY_WORKBENCH_AGENT || undefined,
 });
 console.log(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,

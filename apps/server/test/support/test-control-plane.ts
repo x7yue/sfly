@@ -79,6 +79,11 @@ export async function startTestControlPlane(
 		| "githubReleaseMirror"
 		| "migrationsDir"
 		| "logger"
+		| "assistantUrl"
+		| "assistantSecret"
+		| "workbenchAgent"
+		| "assistantReconnectMs"
+		| "sessionSweepIntervalMs"
 	> = {},
 ): Promise<TestControlPlane> {
 	let migrationsDir = options.migrationsDir;
@@ -114,6 +119,13 @@ export async function startTestControlPlane(
 			githubReleaseMirror: options.githubReleaseMirror,
 			migrationsDir,
 			logger: options.logger,
+			assistantUrl: options.assistantUrl,
+			assistantSecret: options.assistantSecret,
+			workbenchAgent: options.workbenchAgent,
+			assistantReconnectMs: options.assistantReconnectMs,
+			// 兜底收拾「一直在做」的会话（超过 30 分钟没有持久事件）：测试里默认不扫（用例里手动推进时钟、直接写库造会话，
+			// 不该被它收拾掉），要测它的用例自己传间隔。
+			sessionSweepIntervalMs: options.sessionSweepIntervalMs ?? 3_600_000,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 飞书发送队列的周期扫描同样调快。
