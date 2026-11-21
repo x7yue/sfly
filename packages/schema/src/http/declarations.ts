@@ -341,8 +341,7 @@ export function checkDeclarationTables(
 	const known = new Map(contract.map((def) => [label(def), def]));
 	for (const [key, what] of Object.entries(rules.nonGetReads)) {
 		const def = known.get(key);
-		if (def === undefined)
-			problems.push(`NON_GET_READS 的 ${key} 不在契约里：接口改名或删掉了`);
+		if (def === undefined) problems.push(`NON_GET_READS 的 ${key} 不在契约里：接口改名或删掉了`);
 		else if (def.effect !== "read") problems.push(`NON_GET_READS 的 ${key} 没有声明为只读`);
 		if (what.trim() === "") problems.push(`NON_GET_READS 的 ${key}：要写明为什么只读、会留下什么`);
 	}

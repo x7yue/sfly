@@ -7738,6 +7738,10 @@
             "minimum": 0,
             "maximum": 9007199254740991,
             "description": "编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。"
+          },
+          "strict": {
+            "type": "boolean",
+            "description": "true：这次改动新带进来了警告（改动之前就有的不算，见 CheckedWarningView）时不保存，返回 400 `strict_warnings`，\ndetails 是 VersionCheckView（和检查的响应一样）。在保存的同一个事务里判断。不写时和以前一样，警告不阻止保存。"
           }
         },
         "required": [
@@ -8895,14 +8899,18 @@
                 },
                 "annotation_id": {
                   "type": "string"
+                },
+                "existing": {
+                  "type": "boolean"
                 }
               },
               "required": [
                 "code",
-                "message"
+                "message",
+                "existing"
               ]
             },
-            "description": "和保存时相同的警告：只提示，保存不会因为它们被拒绝。"
+            "description": "和保存时相同的警告，每条带 `existing`。"
           },
           "diff": {
             "type": "object",
@@ -9161,7 +9169,7 @@
               "moved",
               "annotations"
             ],
-            "description": "保存之后相对最新版本的差异。"
+            "description": "保存之后相对最新版本（还没有版本时是初始文档）的差异。"
           }
         },
         "required": [

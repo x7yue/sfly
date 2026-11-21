@@ -34,7 +34,9 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         description="和 push 走同一段校验，但不保存、不产生版本："
         "先在本地按场景文档的 JSON Schema 校验，再交给控制面检查，"
         "返回的错误和警告与 push 时完全一样，并列出保存之后相对最新版本的改动。"
-        f"退出码：没有问题 0；只有警告 {EXIT_WARNINGS}（push 照常保存，push --strict 不保存）；"
+        "警告分成这次改动带进来的和改动之前就有的（最新版本里已经有的），后者单独列出、不影响退出码。"
+        f"退出码：没有带进来警告 0；带进来了警告 {EXIT_WARNINGS}"
+        "（push 照常保存，push --strict 不保存）；"
         "有错误（文档不合法、文件基于的版本已经不是最新……）2。",
     )
     p_check.add_argument("file", metavar="文件", help="pull 写出的 JSON 文件")
@@ -67,7 +69,8 @@ def add_strict_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help=f"有警告时不保存，退出码 {EXIT_WARNINGS}（和 sfly scenario check 一样）",
+        help=f"这次改动带进来了警告时不保存，退出码 {EXIT_WARNINGS}"
+        "（改动之前就有的警告不算，和 sfly scenario check 一样）",
     )
 
 
@@ -75,7 +78,13 @@ def add_strict_option(parser: argparse.ArgumentParser) -> None:
 
 
 def _request_check(
-    client: Client, scenario_id: str, document: Any, base_version: int | None, target: str
+    client: Client,
+    scenario_id: str,
+    document: Any,
+    base_version: int | None,
+    target: str,
+    *,
+    for_strict: bool = False,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"document": document}
     if base_version is not None:
@@ -85,10 +94,38 @@ def _request_check(
             "POST", f"/orchestrations/{segment(scenario_id)}/check", body=body
         )
     except ApiError as error:
+        if _route_missing(error):
+            # 旧控制面没有检查接口，也不认得保存的 strict：不能当作检查通过去保存。
+            raise CliError(
+                "unsupported",
+                "这个控制面不支持 "
+                + ("--strict" if for_strict else "检查")
+                + "（没有检查接口，控制面比命令行旧），没有"
+                + ("保存" if for_strict else "检查")
+                + "：升级控制面，或者去掉 --strict 用 push 保存",
+            ) from None
         raise scenario_edit.explain_save_error(
             error, scenario_id, base_version or 0, target
         ) from None
     return checked
+
+
+def _route_missing(error: ApiError) -> bool:
+    """控制面没有这个接口（路由不存在），不是场景不存在。"""
+    return error.status == 404 and error.message.startswith("route ")
+
+
+def fresh(warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """这次改动新带进来的警告（退出码 4 和 --strict 只看它们）。"""
+    return [w for w in warnings if not w.get("existing")]
+
+
+def existing_lines(warnings: list[dict[str, Any]], note: str) -> list[str]:
+    """改动之前就有的警告：单独一段，不影响退出码。"""
+    old = [w for w in warnings if w.get("existing")]
+    if not old:
+        return []
+    return [f"改动之前就有的警告（{len(old)}{note}）：", *(f"  {w['message']}" for w in old)]
 
 
 def _check(session: Session, args: argparse.Namespace) -> int:
@@ -97,14 +134,18 @@ def _check(session: Session, args: argparse.Namespace) -> int:
     scenario_edit.check_document(document)
     checked = _request_check(session.client, scenario_id, document, base_version, target)
     warnings, diff = checked["warnings"], checked["diff"]
+    new = fresh(warnings)
     where = f"对照场景 {scenario_id} 的版本 {base_version}"
-    if warnings:
+    if new:
         lines = [
-            f"文档有 {len(warnings)} 条警告（{where}）：push 照常保存，push --strict 不保存。",
-            *(f"  {w['message']}" for w in warnings),
+            f"这次改动带进来 {len(new)} 条警告（{where}）：push 照常保存，push --strict 不保存。",
+            *(f"  {w['message']}" for w in new),
         ]
+    elif warnings:
+        lines = [f"这次改动没有带进来警告（{where}）。"]
     else:
         lines = [f"文档没有问题：没有警告（{where}）。"]
+    lines.extend(existing_lines(warnings, "，不是这次改动带进来的，不影响退出码"))
     diff_lines = render_diff(diff)
     if diff_lines:
         lines.append(f"保存之后相对版本 {base_version} 的改动：")
@@ -115,25 +156,38 @@ def _check(session: Session, args: argparse.Namespace) -> int:
         {
             "scenario": scenario_id,
             "base_version": base_version,
-            "ok": not warnings,
+            "ok": not new,
             "warnings": warnings,
             "diff": diff,
         },
         "\n".join(lines),
     )
-    return EXIT_WARNINGS if warnings else 0
+    return EXIT_WARNINGS if new else 0
 
 
-def refuse_on_warnings(
+def strict_precheck(
     session: Session, scenario_id: str, base_version: int, document: Any, target: str
 ) -> int | None:
-    """`push --strict`：先检查，有警告时输出警告、不保存，返回退出码；
-    没有警告时返回 None，照常保存。"""
-    warnings = _request_check(session.client, scenario_id, document, base_version, target)[
-        "warnings"
-    ]
-    if not warnings:
+    """`push --strict` 的第一步：检查（也用来认出不支持 strict 的旧控制面）。
+    这次改动带进来了警告时输出、不保存，返回退出码；没有时返回 None，
+    接着带 strict 保存（控制面在保存的事务里再判断一次）。"""
+    checked = _request_check(
+        session.client, scenario_id, document, base_version, target, for_strict=True
+    )
+    if not fresh(checked["warnings"]):
         return None
+    return refuse(session, scenario_id, base_version, checked["warnings"], target)
+
+
+def refuse(
+    session: Session,
+    scenario_id: str,
+    base_version: int,
+    warnings: list[dict[str, Any]],
+    target: str,
+) -> int:
+    """`push --strict` 不保存：列出这次改动带进来的警告和原来就有的，返回退出码。"""
+    new = fresh(warnings)
     session.out.emit(
         {
             "scenario": scenario_id,
@@ -144,10 +198,11 @@ def refuse_on_warnings(
         },
         "\n".join(
             [
-                f"没有保存：文档有 {len(warnings)} 条警告（--strict），"
+                f"没有保存：这次改动带进来 {len(new)} 条警告（--strict），"
                 f"场景 {scenario_id} 仍是版本 {base_version}。",
-                *(f"  {w['message']}" for w in warnings),
-                "改掉警告再 push；要带着警告保存，去掉 --strict。",
+                *(f"  {w['message']}" for w in new),
+                *existing_lines(warnings, "，不是这次改动带进来的"),
+                "改掉这些警告再 push；要带着警告保存，去掉 --strict。",
             ]
         ),
     )
@@ -165,18 +220,30 @@ def _diff(session: Session, args: argparse.Namespace) -> None:
             "--file 和版本号不能一起写：--file 是本地文件和最新版本比",
             next=f"sfly scenario diff {args.scenario} --file {args.file}",
         )
+    note = None
     if len(args.versions) > 2:
         raise CliError("invalid_args", f"最多写两个版本号，收到 {len(args.versions)} 个")
     scenario = find_scenario(client, args.scenario, command="sfly scenario diff")
     name, head = scenario["name"], scenario["head_version"]
     if args.file is not None:
         target = os.path.abspath(args.file)
-        document = scenario_edit.read_file(target)["document"]
+        content = scenario_edit.read_file(target)
+        document = content["document"]
         scenario_edit.check_document(document)
         diff = _request_check(client, scenario["id"], document, None, target)["diff"]
         heading = f"场景「{name}」最新版本 {head} → 文件 {target}"
         same = f"场景「{name}」最新版本 {head} 和文件 {target} 没有差异。"
         view = {"scenario": scenario["id"], "from": head, "file": target, "diff": diff}
+        based = content.get("base_version")
+        if isinstance(based, int) and not isinstance(based, bool):
+            view["file_base_version"] = based
+            if based != head:
+                note = (
+                    f"注意：文件基于版本 {based}，最新版本是 {head}：push 这个文件会报版本冲突；"
+                    "上面的差异是最新版本和文件比，"
+                    f"版本 {based} 之后别人的改动在这里会显示成被撤销。"
+                    f"先 sfly scenario diff {scenario['id']} {based} {head} 看别人改了什么"
+                )
     else:
         a, b = _versions(scenario, args.versions)
         diff = client.get(f"/orchestrations/{segment(scenario['id'])}/versions/{a}/diff/{b}")[
@@ -187,7 +254,7 @@ def _diff(session: Session, args: argparse.Namespace) -> None:
         view = {"scenario": scenario["id"], "from": a, "to": b, "diff": diff}
     lines = render_diff(diff)
     text = "\n".join([f"{heading}：", *(f"  {line}" for line in lines)]) if lines else same
-    session.out.emit(view, text)
+    session.out.emit(view, text, note=note)
 
 
 def _versions(scenario: dict[str, Any], versions: list[int]) -> tuple[int, int]:

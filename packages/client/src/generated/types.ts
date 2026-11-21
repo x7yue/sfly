@@ -401,6 +401,22 @@ export interface ChartView {
 }
 
 /**
+ * 检查时的一条警告（#424）：和保存时的一样，再加一个标记——改动之前（最新版本里）是不是就有。
+ * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`）判断，不看文字：
+ * 同一种警告指向另一个节点算新的；同一个对象上同一种警告有几条，最新版本里有几条就有几条算已有（按出现的顺序）。
+ * 会失效的运行预设（`preset_invalidated`）说的就是这次改动，总是新的；场景还没有版本时全部是新的。
+ */
+export interface CheckedWarningView {
+	code: string;
+	message: string;
+	node_id?: string;
+	input?: string;
+	annotation_id?: string;
+	/** true：改动之前就有，不是这次改动带进来的（`sfly scenario check` 的退出码和 `push --strict` 不看它）。 */
+	existing: boolean;
+}
+
+/**
  * 一次测得的时钟偏差（ADR 0018）：Agent 时间减去控制面时间，误差是一次单程网络延迟。
  * Agent 视图、任务和尝试视图（开始、结束时的偏差）共用这个形状。
  */
@@ -2605,6 +2621,14 @@ export type TaskStatus = "queued" | "dispatched" | "running" | "waiting" | "succ
 
 /** 时间：ISO 8601 字符串（控制面用 `Date#toISOString()` 输出）。 */
 export type Timestamp = string;
+
+/** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */
+export interface VersionCheckView {
+	/** 和保存时相同的警告，每条带 `existing`。 */
+	warnings: CheckedWarningView[];
+	/** 保存之后相对最新版本（还没有版本时是初始文档）的差异。 */
+	diff: DocumentDiffView;
+}
 
 export interface VersionSummaryView {
 	number: number;

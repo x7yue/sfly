@@ -223,6 +223,17 @@ export const DocumentWarningView = z.object({
 	annotation_id: z.string().optional(),
 });
 
+/**
+ * 检查时的一条警告（#424）：和保存时的一样，再加一个标记——改动之前（最新版本里）是不是就有。
+ * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`）判断，不看文字：
+ * 同一种警告指向另一个节点算新的；同一个对象上同一种警告有几条，最新版本里有几条就有几条算已有（按出现的顺序）。
+ * 会失效的运行预设（`preset_invalidated`）说的就是这次改动，总是新的；场景还没有版本时全部是新的。
+ */
+export const CheckedWarningView = DocumentWarningView.extend({
+	/** true：改动之前就有，不是这次改动带进来的（`sfly scenario check` 的退出码和 `push --strict` 不看它）。 */
+	existing: z.boolean(),
+});
+
 export const SavedVersionView = z.object({
 	...OrchestrationVersionView.shape,
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
@@ -271,6 +282,14 @@ export const DocumentDiffView = z.object({
 		removed: z.array(DiffAnnotationView),
 		changed: z.array(withChanges(DiffAnnotationView)),
 	}),
+});
+
+/** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */
+export const VersionCheckView = z.object({
+	/** 和保存时相同的警告，每条带 `existing`。 */
+	warnings: z.array(CheckedWarningView),
+	/** 保存之后相对最新版本（还没有版本时是初始文档）的差异。 */
+	diff: DocumentDiffView,
 });
 
 /**
@@ -473,6 +492,11 @@ export const orchestrationsApi = {
 			document: OrchestrationDocument,
 			/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 			base_version: z.number().int().nonnegative(),
+			/**
+			 * true：这次改动新带进来了警告（改动之前就有的不算，见 CheckedWarningView）时不保存，返回 400 `strict_warnings`，
+			 * details 是 VersionCheckView（和检查的响应一样）。在保存的同一个事务里判断。不写时和以前一样，警告不阻止保存。
+			 */
+			strict: z.boolean().optional(),
 		}),
 		requestError: ({ body }) =>
 			typeof body === "object" && body !== null && Object.hasOwn(body, "base_version")
@@ -489,7 +513,8 @@ export const orchestrationsApi = {
 	 *
 	 * - 错误和保存相同：文档不合法 400 `invalid_document`；secret 参数默认值的占位符沿用不了 400 `secret_default_placeholder`；
 	 *   给了 `base_version` 而它不是最新版本时 409 `version_conflict`。没有给 `base_version` 时对照最新版本检查，不报冲突。
-	 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值）。
+	 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值），
+	 *   每条多一个 `existing`：改动之前就有（见 CheckedWarningView）。
 	 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
 	 *
 	 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
@@ -516,12 +541,7 @@ export const orchestrationsApi = {
 					? invalidDocumentMessage(body)
 					: "document does not match the orchestration schema",
 		}),
-		response: z.object({
-			/** 和保存时相同的警告：只提示，保存不会因为它们被拒绝。 */
-			warnings: z.array(DocumentWarningView),
-			/** 保存之后相对最新版本的差异。 */
-			diff: DocumentDiffView,
-		}),
+		response: VersionCheckView,
 	}),
 	/**
 	 * 对比一个场景的两个版本（#424）：从版本 a 到版本 b 的差异，结构见 DocumentDiffView。a、b 可以相同（空差异），
@@ -704,6 +724,8 @@ export type LastRunNodeStatus = z.infer<typeof NodeRunStatus>;
 export type OrchestrationHeadView = z.infer<typeof OrchestrationHeadView>;
 export type VersionSummaryView = z.infer<typeof VersionSummaryView>;
 export type DocumentDiffView = z.infer<typeof DocumentDiffView>;
+export type CheckedWarningView = z.infer<typeof CheckedWarningView>;
+export type VersionCheckView = z.infer<typeof VersionCheckView>;
 export type DocumentWarningView = z.infer<typeof DocumentWarningView>;
 export type OrchestrationVersionView = z.infer<typeof OrchestrationVersionView>;
 export type SavedVersionView = z.infer<typeof SavedVersionView>;

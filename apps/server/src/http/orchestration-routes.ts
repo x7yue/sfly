@@ -5,6 +5,7 @@ import { listOrchestrationSummaries } from "../orchestrations/orchestration-list
 import type {
 	CheckVersionResult,
 	OrchestrationStore,
+	SaveVersionResult,
 } from "../orchestrations/orchestration-store.js";
 import { describeSecretDefaultProblem } from "../orchestrations/secret-defaults.js";
 import { versionDiff, versionWarnings } from "../orchestrations/version-check.js";
@@ -29,14 +30,24 @@ export function registerOrchestrationRoutes(
 ): void {
 	/**
 	 * 保存和检查共有的拒绝：编辑起点过期（409）、secret 参数默认值的占位符沿用不了（400）。检查和保存走同一段，
-	 * 同一份请求体得到同样的错误。
+	 * 同一份请求体得到同样的错误。带 `strict` 保存时新带进来了警告：400 `strict_warnings`，details 是检查的结果。
 	 */
 	const rejectVersion = (
 		reply: FastifyReply,
-		result: Exclude<CheckVersionResult, { kind: "checked" }>,
+		result: Exclude<SaveVersionResult | CheckVersionResult, { kind: "checked" | "saved" }>,
 		baseVersion: number | undefined,
 	): FastifyReply => {
 		if (result.kind === "not_found") return notFound(reply);
+		if (result.kind === "strict_rejected") {
+			const count = result.check.warnings.filter((w) => !w.existing).length;
+			return sendError(
+				reply,
+				400,
+				"strict_warnings",
+				`这次改动新带进来了 ${count} 条警告，strict 时不保存`,
+				result.check,
+			);
+		}
 		if (result.kind === "conflict") {
 			return sendError(
 				reply,
@@ -131,7 +142,9 @@ export function registerOrchestrationRoutes(
 		const actor = requireActor(raw, reply);
 		if (!actor) return reply;
 		const result = isUuid(params.id)
-			? await orchestrations.saveVersion(params.id, body.document, actor, body.base_version)
+			? await orchestrations.saveVersion(params.id, body.document, actor, body.base_version, {
+					strict: body.strict === true,
+				})
 			: ({ kind: "not_found" } as const);
 		if (result.kind !== "saved") return rejectVersion(reply, result, body.base_version);
 		const saved = result.version;
@@ -148,10 +161,7 @@ export function registerOrchestrationRoutes(
 			? await orchestrations.checkVersion(params.id, body.document, body.base_version)
 			: ({ kind: "not_found" } as const);
 		if (result.kind !== "checked") return rejectVersion(reply, result, body.base_version);
-		return {
-			warnings: await versionWarnings(db, params.id, result.document, result.previous),
-			diff: versionDiff(result.previous, result.document),
-		};
+		return result.check;
 	});
 
 	contractRoute(app, orchestrationsApi.versions, async ({ params }, reply) => {

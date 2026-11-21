@@ -1,11 +1,15 @@
 // sfly scenario check / push --strict / diff（#424）：真实的 sfly 进程检查、对比测试控制面里的场景。
 // 检查和保存走同一段校验（控制面的 POST /orchestrations/:id/check），对比用控制面的 diffDocuments。
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { publishPackage } from "./support/package-archive.js";
+import { createPresetOk } from "./support/presets.js";
+import { startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -137,7 +141,7 @@ describe("sfly scenario check / push --strict / diff → 控制面", () => {
 			expect(result.stderr).toBe("");
 			expect(result.stdout).toBe(
 				[
-					`文档有 1 条警告（对照场景 ${id} 的版本 1）：push 照常保存，push --strict 不保存。`,
+					`这次改动带进来 1 条警告（对照场景 ${id} 的版本 1）：push 照常保存，push --strict 不保存。`,
 					`  ${expected[0]}`,
 					"保存之后相对版本 1 的改动：",
 					"  设置：",
@@ -151,6 +155,7 @@ describe("sfly scenario check / push --strict / diff → 控制面", () => {
 			const body = JSON.parse(json.stdout);
 			expect(body).toMatchObject({ scenario: id, base_version: 1, ok: false });
 			expect(body.warnings.map((w: { message: string }) => w.message)).toEqual(expected);
+			expect(body.warnings.map((w: { existing: boolean }) => w.existing)).toEqual([false]);
 			expect(body.diff.settings).toEqual([
 				{ path: "packages.demo", before: "1.0.0", after: "9.9.9" },
 			]);
@@ -184,6 +189,142 @@ describe("sfly scenario check / push --strict / diff → 控制面", () => {
 		});
 	});
 
+	describe("改动之前就有的警告不挡住这次改动", () => {
+		/** 入口带一个写了默认值的保密参数：最新版本里就有一条 secret_param_default 警告。 */
+		const withSecretDefault = (): Doc => {
+			const doc = cleanDocument();
+			(doc.nodes[0] as { params?: unknown[] }).params = [
+				{ name: "token", type: "string", secret: true, default: "s3cr3t-default" },
+			];
+			return doc;
+		};
+		const rename = (doc: Doc) => {
+			doc.nodes[1] = { ...doc.nodes[1], display_name: "探测一下" } as Node;
+		};
+
+		it("只改显示名称：check 退出码 0，原来的警告单独列出、写明改动之前就有；push --strict 照常保存", async () => {
+			const id = await api.orchestrationWith(withSecretDefault(), "已有警告-改名");
+			const file = await pulled(id, rename);
+			const [existing] = await warningsOf(id, file);
+
+			const result = await cli("scenario", "check", file);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toBe(
+				[
+					`这次改动没有带进来警告（对照场景 ${id} 的版本 1）。`,
+					"改动之前就有的警告（1，不是这次改动带进来的，不影响退出码）：",
+					`  ${existing}`,
+					"保存之后相对版本 1 的改动：",
+					"  节点：",
+					"    ~ 探测一下（probe）",
+					'        display_name："探测接口" → "探测一下"',
+					"",
+				].join("\n"),
+			);
+			const json = JSON.parse((await cli("scenario", "check", file, "--json")).stdout);
+			expect(json.ok).toBe(true);
+			expect(json.warnings).toMatchObject([{ code: "secret_param_default", existing: true }]);
+
+			const strict = await cli("scenario", "push", file, "--strict");
+			expect(strict.code, strict.stderr).toBe(0);
+			expect(strict.stdout).toContain(`已保存场景 ${id} 的版本 2`);
+			expect(strict.stdout).toContain(`改动之前就有的警告（1）：\n  ${existing}`);
+			expect(await versionCount(id)).toBe(2);
+		});
+
+		it("再带进来一条：check 退出码 4、push --strict 不保存，新的和原来就有的各在各的段里", async () => {
+			const id = await api.orchestrationWith(withSecretDefault(), "已有警告-新加");
+			const file = await pulled(id, (doc) => {
+				rename(doc);
+				doc.packages = { demo: "9.9.9" };
+			});
+			const messages = await warningsOf(id, file);
+			const fresh = messages.find((m) => m.includes("9.9.9")) as string;
+			const existing = messages.find((m) => m !== fresh) as string;
+
+			const result = await cli("scenario", "check", file);
+			expect(result.code).toBe(EXIT_WARNINGS);
+			expect(result.stdout).toContain(
+				[
+					`这次改动带进来 1 条警告（对照场景 ${id} 的版本 1）：push 照常保存，push --strict 不保存。`,
+					`  ${fresh}`,
+					"改动之前就有的警告（1，不是这次改动带进来的，不影响退出码）：",
+					`  ${existing}`,
+				].join("\n"),
+			);
+
+			const strict = await cli("scenario", "push", file, "--strict");
+			expect(strict.code).toBe(EXIT_WARNINGS);
+			expect(strict.stdout).toBe(
+				[
+					`没有保存：这次改动带进来 1 条警告（--strict），场景 ${id} 仍是版本 1。`,
+					`  ${fresh}`,
+					"改动之前就有的警告（1，不是这次改动带进来的）：",
+					`  ${existing}`,
+					"改掉这些警告再 push；要带着警告保存，去掉 --strict。",
+					"",
+				].join("\n"),
+			);
+			expect(await versionCount(id)).toBe(1);
+		});
+
+		it("检查通过之后、保存之前带进来了新的警告：保存在控制面那一侧拒绝（strict 在同一个事务里判断），不保存", async () => {
+			const withEnv = cleanDocument();
+			(withEnv.nodes[0] as { params?: unknown[] }).params = [{ name: "env", type: "string" }];
+			const id = await api.orchestrationWith(withEnv, "严格保存-中途变化");
+			const file = await pulled(id, (doc) => {
+				// 改掉入口参数：这时还没有运行预设，检查没有警告
+				(doc.nodes[0] as { params?: unknown[] }).params = [{ name: "stage", type: "string" }];
+			});
+			const proxy = await startRecordingProxy(cp.httpUrl, async (request) => {
+				// 检查之后、保存之前：有人建了一个用旧参数的运行预设，保存会让它失效
+				if (request.method === "POST" && request.path.endsWith("/versions")) {
+					await createPresetOk(api, id, { name: "生产", params: [{ name: "env", value: "prod" }] });
+				}
+			});
+			try {
+				const result = await sfly(["scenario", "push", file, "--strict", "--server", proxy.url]);
+				expect(result.code).toBe(EXIT_WARNINGS);
+				expect(result.stdout).toContain("没有保存：这次改动带进来 1 条警告（--strict）");
+				expect(result.stdout).toContain("运行预设「生产」已失效");
+				expect(proxy.requests.map((r) => `${r.method} ${r.path.replace(id, ":id")}`)).toEqual([
+					"POST /orchestrations/:id/check",
+					"POST /orchestrations/:id/versions",
+				]);
+			} finally {
+				await proxy.close();
+			}
+			expect(await versionCount(id)).toBe(1);
+		});
+
+		it("连到不支持 --strict 的旧控制面（没有检查接口）：报错，不保存", async () => {
+			const id = await api.orchestrationWith(cleanDocument(), "严格保存-旧控制面");
+			const file = await pulled(id, addNotify);
+			const requests: string[] = [];
+			const old = createServer((req, res) => {
+				requests.push(`${req.method} ${req.url}`);
+				res.writeHead(404, { "content-type": "application/json" });
+				res.end(
+					JSON.stringify({
+						error: { code: "not_found", message: `route ${req.method} ${req.url} not found` },
+					}),
+				);
+			});
+			await new Promise<void>((resolve) => old.listen(0, "127.0.0.1", resolve));
+			const url = `http://127.0.0.1:${(old.address() as AddressInfo).port}`;
+			try {
+				const result = await sfly(["scenario", "push", file, "--strict", "--server", url]);
+				expect(result.code).toBe(2);
+				expect(result.stdout).toBe("");
+				expect(result.stderr).toContain("这个控制面不支持 --strict");
+				expect(requests).toEqual([`POST /orchestrations/${id}/check`]);
+			} finally {
+				await new Promise((resolve) => old.close(resolve));
+			}
+			expect(await versionCount(id)).toBe(1);
+		});
+	});
+
 	describe("push --strict", () => {
 		it("有警告时不保存：专门的退出码，列出警告；不加 --strict 照常保存", async () => {
 			const id = await api.orchestrationWith(cleanDocument(), "严格保存-有警告");
@@ -198,9 +339,9 @@ describe("sfly scenario check / push --strict / diff → 控制面", () => {
 			expect(strict.stderr).toBe("");
 			expect(strict.stdout).toBe(
 				[
-					`没有保存：文档有 1 条警告（--strict），场景 ${id} 仍是版本 1。`,
+					`没有保存：这次改动带进来 1 条警告（--strict），场景 ${id} 仍是版本 1。`,
 					`  ${expected[0]}`,
-					"改掉警告再 push；要带着警告保存，去掉 --strict。",
+					"改掉这些警告再 push；要带着警告保存，去掉 --strict。",
 					"",
 				].join("\n"),
 			);
@@ -314,6 +455,25 @@ describe("sfly scenario check / push --strict / diff → 控制面", () => {
 					"",
 				].join("\n"),
 			);
+		});
+
+		it("--file 的文件基于的不是最新版本：差异照常列出，另外提示 push 会冲突、差异里混着撤销别人改动的部分", async () => {
+			const scenarioId = await api.orchestrationWith(cleanDocument(), "对比-旧文件");
+			const file = await pulled(scenarioId, addNotify);
+			await api.saveVersion(scenarioId, cleanDocument(), "bob");
+			const result = await cli("scenario", "diff", scenarioId, "--file", file);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain(`场景「对比-旧文件」最新版本 2 → 文件 ${file}：`);
+			// 提示接在输出的最后（--json 时写到 stderr），和其他命令的提示一样
+			const note =
+				"注意：文件基于版本 1，最新版本是 2：push 这个文件会报版本冲突；" +
+				"上面的差异是最新版本和文件比，版本 1 之后别人的改动在这里会显示成被撤销。" +
+				`先 sfly scenario diff ${scenarioId} 1 2 看别人改了什么`;
+			expect(result.stdout.endsWith(`\n${note}\n`)).toBe(true);
+			const json = JSON.parse(
+				(await cli("scenario", "diff", scenarioId, "--file", file, "--json")).stdout,
+			);
+			expect(json).toMatchObject({ from: 2, file, file_base_version: 1 });
 		});
 
 		it("版本不存在、只有一个版本、--file 和版本号一起写：退出码 2", async () => {

@@ -8,6 +8,7 @@ import type {
 	RunNotificationChanges,
 	SecretDefaultProblem,
 	StoredOrchestrationDocument,
+	VersionCheckView,
 } from "@sfly/schema";
 import { withoutRemovedFields } from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
@@ -20,6 +21,7 @@ import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-sett
 import { copyPresets } from "../presets/preset-store.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { maskSecretDefaults, restoreSecretDefaults } from "./secret-defaults.js";
+import { newWarnings, versionCheck } from "./version-check.js";
 
 export type { OrchestrationView };
 
@@ -70,19 +72,23 @@ export type SaveVersionResult =
 	| { kind: "not_found" }
 	| { kind: "conflict"; head: VersionSummary | null }
 	/** 文档里 secret 参数的默认值是占位符，却没有可以沿用的上一个版本的值（见 {@link restoreSecretDefaults}）。 */
-	| { kind: "secret_default_unresolved"; problems: SecretDefaultProblem[] };
+	| { kind: "secret_default_unresolved"; problems: SecretDefaultProblem[] }
+	/** 带 `strict` 保存，这次改动新带进来了警告：没有保存，`check` 和检查的结果一样。 */
+	| { kind: "strict_rejected"; check: VersionCheckView };
 
 /**
  * 检查一份文档的结果（{@link OrchestrationStore.checkVersion}）：和保存的结果一一对应，只是不追加版本。
- * `checked` 时 `document` 是保存之后会存成的文档、`previous` 是对照的最新版本的文档（还没有版本时是初始文档），都打码。
+ * `checked` 时 `check` 是带标记的警告和差异（契约的 VersionCheckView），`document` 是保存之后会存成的文档，
+ * `previous` 是最新版本的文档（还没有版本时没有），都打码。
  */
 export type CheckVersionResult =
 	| {
 			kind: "checked";
+			check: VersionCheckView;
 			document: StoredOrchestrationDocument;
-			previous: StoredOrchestrationDocument;
+			previous: StoredOrchestrationDocument | undefined;
 	  }
-	| Exclude<SaveVersionResult, { kind: "saved" }>;
+	| Exclude<SaveVersionResult, { kind: "saved" | "strict_rejected" }>;
 
 /**
  * 保存之前对上传的文档做的处理，保存和检查共用：收下的已移除字段（空的 `sticky_notes`，ADR 0028）不存进新版本；
@@ -436,12 +442,14 @@ export class OrchestrationStore {
 	 * 没有位置的节点（命令行、API 上传的文档可以不写坐标）保存时用整理布局补上，已有位置的节点不动。
 	 * secret 参数的默认值是占位符（读出来的文档原样存回来）时沿用上一个版本里同名参数的值（{@link restoreSecretDefaults}）：
 	 * 上一个版本就是 base_version，在冲突检查通过之后、同一个行锁内读取。
+	 * `strict`：这次改动新带进来了警告时不保存（{@link versionCheck}，同一个事务里判断），返回 `strict_rejected`。
 	 */
 	saveVersion(
 		orchestrationId: string,
 		document: OrchestrationDocument,
 		actor: Actor,
 		baseVersion: number,
+		options: { strict?: boolean } = {},
 	): Promise<SaveVersionResult> {
 		return this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
 			const [orchestration] = await tx
@@ -461,17 +469,29 @@ export class OrchestrationStore {
 			if ("problems" in prepared) {
 				return { kind: "secret_default_unresolved", problems: prepared.problems };
 			}
+			const masked = previous && maskSecretDefaults(previous.document);
+			if (options.strict) {
+				// 在同一个事务（同一个行锁）里检查：检查和追加之间，别的请求改不了这次判断用到的东西。
+				const check = await versionCheck(
+					tx,
+					orchestrationId,
+					maskSecretDefaults(prepared.document),
+					masked,
+					masked ?? initialDocument(),
+				);
+				if (newWarnings(check).length > 0) return { kind: "strict_rejected", check };
+			}
 			return {
 				kind: "saved",
 				version: await this.#append(tx, orchestration, prepared.document, actor),
-				previous: previous && maskSecretDefaults(previous.document),
+				previous: masked,
 			};
 		});
 	}
 
 	/**
 	 * 检查一份文档，不保存：和 {@link saveVersion} 走同样的步骤（编辑起点的冲突检查、{@link prepareDocument}），
-	 * 只是不追加版本、不加锁。`baseVersion` 不给时对照最新版本，不报冲突。
+	 * 只是不追加版本、不加锁；返回带标记的警告和差异（{@link versionCheck}）。`baseVersion` 不给时对照最新版本，不报冲突。
 	 */
 	async checkVersion(
 		orchestrationId: string,
@@ -491,10 +511,19 @@ export class OrchestrationStore {
 		if ("problems" in prepared) {
 			return { kind: "secret_default_unresolved", problems: prepared.problems };
 		}
+		const checked = maskSecretDefaults(prepared.document);
+		const masked = previous && maskSecretDefaults(previous.document);
 		return {
 			kind: "checked",
-			document: maskSecretDefaults(prepared.document),
-			previous: maskSecretDefaults(previous?.document ?? initialDocument()),
+			check: await versionCheck(
+				this.deps.db,
+				orchestrationId,
+				checked,
+				masked,
+				masked ?? initialDocument(),
+			),
+			document: checked,
+			previous: masked,
 		};
 	}
 
