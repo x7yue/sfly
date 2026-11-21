@@ -7711,6 +7711,12 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "sticky_notes": {
+                "description": "已不再支持的字段（便签，ADR 0028）：只收空数组，保存时丢掉；有内容的被拒绝。",
+                "maxItems": 0,
+                "type": "array",
+                "items": {}
               }
             },
             "required": [

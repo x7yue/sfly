@@ -72,13 +72,20 @@
 - **存量数据**：ADR 0026 之后保存的每个版本都带着 `sticky_notes`（默认空数组，也可能有内容）。
   - 读取：认得并丢掉。读库、恢复浏览器里的本地草稿、比较两个文档时，先去掉文档顶层已移除的字段（`withoutRemovedFields`），再按现在的 schema 解析；历史版本、历史运行、版本对比、恢复、复制都不报错，读到的文档里没有它，也不显示。不像已移除的节点那样占位显示：便签不执行、没有连线，丢掉它不影响任何运行。
   - 不阻断触发：预检不因为便签报警告或阻断。
-  - 保存：文档 schema 里没有这个字段，所以带着 `sticky_notes` 保存被拒绝（400 `invalid_document`，说明写明删掉这一项和替换办法；命令行 `scenario push` 的本地检查写同一句）。画布从状态生成的文档、恢复历史版本、复制场景产生的新版本都不带它，所以「保存新版本时不再带上」。
-  - 已保存的版本一个字节都不动，不写迁移；旧版本里的便签内容还在那里，读不到。
-  - 登记在 `@sfly/schema` 的 `REMOVED_DOCUMENT_FIELDS`（和 `REMOVED_NODE_KINDS` 并列）：移除下一个顶层字段，在那里加一项、在文档 schema 里删掉定义，读取、保存的说明和命令行都跟着走。
+  - 保存分两种情况：
+    - 没有 `sticky_notes`，或者是空数组：接受并丢掉，不报错，新版本里没有它。几乎所有已保存的版本都带着 `sticky_notes: []`，「读出来改一处再存回去」是自建页面和命令行最常见的写法，不该因为一个空数组被拒绝。做法：请求里的文档 schema 只收这个字段的空数组（`maxItems: 0`，导出的 JSON Schema 里同样，命令行本地校验和控制面一致），控制面存库前去掉它。
+    - 数组里有内容：拒绝（400 `invalid_document`），错误信息写明有几条、怎么办（「场景文档里的 sticky_notes（便签）有 N 条内容，已不再支持，不能保存：先把要留的内容挪走，再把这一项删掉」）；命令行 `scenario push` 的本地检查写同一句。读取时丢掉的内容不能在保存时再不声不响地丢一次。
+  - 画布从状态生成的文档、恢复历史版本、复制场景产生的新版本都不带 `sticky_notes`。
+  - 已保存的版本一个字节都不动，不写迁移。
+  - **升级后有内容的便签读不到了**：版本里还在，但读取接口、命令行 `scenario pull`、画布都不再给出。要留的内容请在升级前导出，写进节点的备注或注释框的备注：
+    - 升级前，直接读旧版本的接口：`GET /orchestrations/<场景 id>/versions/<版本号>` 返回的文档里有 `sticky_notes`；命令行 `sfly scenario pull <场景> --version <版本号> -o 文件`，文件里的 `document.sticky_notes` 就是便签的内容（升级前的命令行才会写出它）。
+    - 升级后，直接查库：`select o.name, v.number, v.document -> 'sticky_notes' as sticky_notes from orchestration_versions v join orchestrations o on o.id = v.orchestration_id where jsonb_array_length(coalesce(v.document -> 'sticky_notes', '[]'::jsonb)) > 0 order by o.name, v.number;`（只列有内容的版本；每个场景的最新版本就是它现在的便签）。
+  - 登记在 `@sfly/schema` 的 `REMOVED_DOCUMENT_FIELDS`（和 `REMOVED_NODE_KINDS` 并列）：移除下一个顶层字段，在那里加一项、在文档 schema 里改成只收空数组的写法，读取、保存的说明和命令行都跟着走。
 - **升级时还没保存的本地草稿**：浏览器里按旧格式存着的草稿可能带着 `sticky_notes`，恢复时同样先丢掉这个字段，草稿里其余的修改照常恢复。
-- **对 API 客户端和使用方的影响**：`StickyNote` 类型和文档里的 `sticky_notes` 字段删除（请求和响应的文档类型里都没有了）；读到的文档里本来没有 `sticky_notes`，保存请求里带着它会被拒绝：自建页面或脚本里把读到的旧文档存起来再原样推送的，推送前要去掉这一项。`@sfly/orchestration` 的 `diffDocuments` 结果里没有 `stickyNotes` 了。
+- **对 API 客户端和使用方的影响**：`StickyNote` 类型删除，读到的文档（`StoredOrchestrationDocument`）里没有 `sticky_notes` 字段；保存请求的文档类型（`OrchestrationDocument`）里它是 `sticky_notes?: unknown[]`，只收空数组。读出来原样存回去照常可用（读到的文档里本来没有它）；自建页面或脚本里存着升级前的旧文档、里面的 `sticky_notes` 有内容的，推送前要先把内容挪走、去掉这一项。`@sfly/orchestration` 的 `diffDocuments` 结果里没有 `stickyNotes` 了。
 - **没有采纳的做法**：
-  - **保存时悄悄忽略 `sticky_notes`**：文件里有内容的便签会不声不响地丢掉，推送的人不知道；拒绝并写明怎么办，只多一次删掉这一项的动作（命令行 `scenario pull` 现在拉下来的文件里本来就没有它）。
-  - **像已移除的节点那样占位显示便签**：占位要有卡片、检查器、横幅和一条「删掉才能保存」的规则，而便签不执行、没有连线，读不到旧内容的代价（要留的内容在旧版本里还能经版本接口读到）远小于这些。
+  - **带着 `sticky_notes` 保存一律拒绝**：几乎所有旧文件和读出来再存回去的写法都带着一个空数组，会被无谓地拒绝；只拒绝有内容的，空数组不会丢掉任何东西。
+  - **保存时一律悄悄忽略 `sticky_notes`**：文件里有内容的便签会不声不响地丢掉，推送的人不知道。
+  - **像已移除的节点那样占位显示便签**：占位要有卡片、检查器、横幅和一条「删掉才能保存」的规则，而便签不执行、没有连线，读不到旧内容的代价（升级前或直接查库能导出）远小于这些。
   - **写迁移把便签搬进节点备注**：版本不可变；便签不挂在任何节点上，没有一种搬法是对的。
 

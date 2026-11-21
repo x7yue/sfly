@@ -9,6 +9,7 @@ import type {
 	SecretDefaultProblem,
 	StoredOrchestrationDocument,
 } from "@sfly/schema";
+import { withoutRemovedFields } from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
@@ -389,7 +390,8 @@ export class OrchestrationStore {
 				orchestration.headVersion > 0
 					? await versionRow(tx, orchestrationId, orchestration.headVersion)
 					: undefined;
-			const restored = restoreSecretDefaults(previous?.document, document);
+			// 收下的已移除字段（空的 `sticky_notes`，ADR 0028）不存进新版本。
+			const restored = restoreSecretDefaults(previous?.document, withoutRemovedFields(document));
 			if ("problems" in restored) {
 				return { kind: "secret_default_unresolved", problems: restored.problems };
 			}

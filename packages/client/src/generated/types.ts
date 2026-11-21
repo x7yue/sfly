@@ -1255,6 +1255,12 @@ export interface OrchestrationDocument {
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages?: Record<PackageName, string>;
 	annotations?: AnnotationInput[];
+	/**
+	 * 已不再支持的字段（便签，ADR 0028）：只收空数组，保存时丢掉，新版本里没有它；里面有内容的被拒绝
+	 * （400 `invalid_document`，写明有几条、怎么办）。读到的文档（`StoredOrchestrationDocument`）里没有这个字段，
+	 * 读出来原样存回去不用处理它。
+	 */
+	sticky_notes?: unknown[];
 }
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */

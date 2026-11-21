@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from sfly.cli.removed_document_fields import REMOVED_DOCUMENT_FIELDS, removed_fields_message
+from sfly.cli.removed_document_fields import (
+    REMOVED_DOCUMENT_FIELDS,
+    removed_fields_message,
+    removed_fields_with_content,
+)
 from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
 from sfly.cli.run_view import (
     NODE_STATUS_LABEL,
@@ -101,10 +105,33 @@ def test_the_removed_document_fields_are_the_ones_the_control_plane_registers() 
     }
     assert registered, "没有从 removed-document-fields.ts 里读到已移除的字段"
     assert REMOVED_DOCUMENT_FIELDS == registered
-    assert (
-        "`场景文档里的 ${named}已不再支持，先把这一项删掉再保存。替换办法：${advice}`" in source
-    ), "removedFieldsMessage 的句式变了：命令行的 removed_fields_message 要跟着改"
-    assert removed_fields_message(["sticky_notes"]) == (
-        "场景文档里的 sticky_notes（便签）已不再支持，先把这一项删掉再保存。"
+    template = (
+        "`场景文档里的 ${named}，已不再支持，不能保存：先把要留的内容挪走，再把这一项删掉。"
+        "替换办法：${advice}`"
+    )
+    assert template in source, (
+        "removedFieldsMessage 的句式变了：命令行的 removed_fields_message 要跟着改"
+    )
+    assert removed_fields_message([("sticky_notes", 2)]) == (
+        "场景文档里的 sticky_notes（便签）有 2 条内容，已不再支持，不能保存："
+        "先把要留的内容挪走，再把这一项删掉。"
         "替换办法：便签：要留的内容写进节点的备注或注释框的备注"
     )
+    assert "有 ${c.count} 条内容" in source, "句式里「有几条」的写法变了：命令行要跟着改"
+
+
+def test_removed_fields_with_content_follows_the_control_plane_rule() -> None:
+    """有内容才算：空数组、null、没有的不算；不是数组的值算 1 条
+    （和控制面的 removedFieldsWithContent 一致）。"""
+    assert removed_fields_with_content({"sticky_notes": [1, 2, 3]}) == [("sticky_notes", 3)]
+    assert removed_fields_with_content({"sticky_notes": "x"}) == [("sticky_notes", 1)]
+    documents: list[object] = [
+        {"sticky_notes": []},
+        {"sticky_notes": None},
+        {},
+        [],
+        None,
+        3,
+    ]
+    for document in documents:
+        assert removed_fields_with_content(document) == []

@@ -195,20 +195,42 @@ const Annotations = z.array(Annotation).superRefine((annotations, ctx) => {
 	}
 });
 
-const documentOf = <N extends z.ZodType>(node: N) =>
-	z.strictObject({
-		default_agent: z.string().min(1).optional(),
-		nodes: z.array(node),
-		edges: z.array(Edge).default([]),
-		/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
-		packages: z.record(PackageName, z.string().min(1)).default({}),
-		annotations: Annotations.default([]),
-	});
+const documentShape = <N extends z.ZodType>(node: N) => ({
+	default_agent: z.string().min(1).optional(),
+	nodes: z.array(node),
+	edges: z.array(Edge).default([]),
+	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
+	packages: z.record(PackageName, z.string().min(1)).default({}),
+	annotations: Annotations.default([]),
+});
+
+const documentOf = <N extends z.ZodType>(node: N) => z.strictObject(documentShape(node));
+
+/**
+ * 已移除的顶层字段（便签 `sticky_notes`，ADR 0028）在保存请求里的写法：只收空数组。升级前保存的版本都带着
+ * `sticky_notes: []`，「读出来改一处再存回去」是自建页面和命令行最常见的写法，不该因为一个空数组被拒绝；
+ * 收下之后控制面丢掉它（`withoutRemovedFields`），新版本里没有。有内容的数组不收：读取时丢掉的内容不能再悄悄丢一次，
+ * 保存被拒绝，错误信息写明有几条、怎么办（`removedFieldsMessage`）。和 `REMOVED_DOCUMENT_FIELDS` 登记的字段一一对应
+ * （`removed-document-fields.test.ts` 核对）。
+ */
+const EmptyRemovedField = z
+	.array(z.unknown())
+	.max(0)
+	.optional()
+	.describe("已不再支持的字段（便签，ADR 0028）：只收空数组，保存时丢掉；有内容的被拒绝。");
 
 /** 可以保存的场景文档：节点都是现在支持的种类（保存、命令行的本地检查、导出给 Python 的 JSON Schema 用它）。 */
-export const OrchestrationDocument = documentOf(OrchestrationNode).meta({
-	title: "sfly 编排文档",
-});
+export const OrchestrationDocument = z
+	.strictObject({
+		...documentShape(OrchestrationNode),
+		/**
+		 * 已不再支持的字段（便签，ADR 0028）：只收空数组，保存时丢掉，新版本里没有它；里面有内容的被拒绝
+		 * （400 `invalid_document`，写明有几条、怎么办）。读到的文档（`StoredOrchestrationDocument`）里没有这个字段，
+		 * 读出来原样存回去不用处理它。
+		 */
+		sticky_notes: EmptyRemovedField,
+	})
+	.meta({ title: "sfly 编排文档" });
 
 /**
  * 读到的场景文档（接口的响应、控制面读库、画布打开最新版本）：结构和保存用的 {@link OrchestrationDocument} 相同，

@@ -2,10 +2,15 @@
 // 存量数据怎么办：
 // 1. 历史运行、历史版本照常能读：版本接口、最新版本、运行视图、运行列表、版本对比、恢复、复制都不报错，读到的文档里没有便签；
 // 2. 最新版本里带着便签的场景：预检不阻断触发（便签只用于显示、不执行），触发照常运行，没有已移除节点的警告；
-// 3. 保存新版本时不再带上：读到的文档原样保存，恢复、复制产生的新版本同样没有；带着便签保存被拒绝，不产生新版本。
+// 3. 保存新版本时不再带上：读到的文档原样保存，恢复、复制产生的新版本同样没有；空的 sticky_notes 接受并丢掉，
+//    有内容的被拒绝（写明有几条、怎么办），不产生新版本，有内容的便签不会不声不响地丢掉。
 // 不改动已保存的场景版本：版本是不可变的记录，已保存的版本一个字节都不动（恢复和复制是追加新版本）。
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { removedFieldsMessage } from "@sfly/schema";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { addDocumentFields } from "./support/legacy-document.js";
@@ -25,8 +30,10 @@ const STICKY_NOTES = [
 	{ id: "sticky_2", text: "已知问题：夜里会超时", position: { x: 320, y: -300 } },
 ];
 
-/** 控制面拒绝保存的说明：和命令行本地检查（sfly scenario push）是同一句，写明是哪一项、怎么办。 */
-const REMOVED_MESSAGE = removedFieldsMessage(["sticky_notes"]);
+/** 控制面拒绝保存的说明：和命令行本地检查（sfly scenario push）是同一句，写明是哪一项、里面有几条、怎么办。 */
+const REMOVED_MESSAGE = removedFieldsMessage([
+	{ field: "sticky_notes", count: STICKY_NOTES.length },
+]);
 
 /** 只有入口节点和一个注释框的文档：不需要 Agent，能直接触发。 */
 const document = {
@@ -161,6 +168,36 @@ describe("便签留在历史数据里", () => {
 		});
 	});
 
+	describe("升级后导出有内容的便签", () => {
+		it("ADR 0028 第 3 步里给的查询能用：只列出有内容的版本，带着场景名、版本号和便签内容；读取接口读不到了", async () => {
+			const { id } = await seed("导出便签");
+			const adr = await readFile(
+				join(repoRoot, "docs/adr/0028-remove-unused-node-kinds-and-canvas-features.md"),
+				"utf8",
+			);
+			// 直接取 ADR 里的那条查询原文来跑，文档里的写法错了这里会失败。
+			const query = /`(select o\.name, v\.number,[^`]+;)`/.exec(adr)?.[1];
+			expect(query, "ADR 里没有找到导出便签的查询").toBeDefined();
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				const { rows } = await client.query<{
+					name: string;
+					number: number;
+					sticky_notes: unknown;
+				}>(query as string);
+				const mine = rows.filter((r) => r.name === "导出便签");
+				expect(mine.map((r) => r.number)).toEqual([2]);
+				expect(mine[0]?.sticky_notes).toEqual(STICKY_NOTES);
+				// 第 1 版带着空数组，不在结果里。
+				expect(rows.some((r) => r.name === "导出便签" && r.number === 1)).toBe(false);
+			} finally {
+				await client.end();
+			}
+			expect((await version(id, 2)).document).not.toHaveProperty("sticky_notes");
+		});
+	});
+
 	describe("保存新版本时不再带上便签", () => {
 		it("用读到的最新版本原样保存：新版本里没有便签（直接查库），已保存的版本一个字节都不动", async () => {
 			const { id } = await seed("原样保存");
@@ -213,24 +250,58 @@ describe("便签留在历史数据里", () => {
 			expect([await storedDocument(cp, id, 1), await storedDocument(cp, id, 2)]).toEqual(before);
 		});
 
-		it.each([
-			["有内容的便签", STICKY_NOTES],
-			["空的便签数组", []],
-		])("带着 sticky_notes 保存被拒绝（%s）：错误信息写明怎么办，不产生新版本", async (_, notes) => {
-			const { id } = await seed("带便签保存");
+		it("文档里带着空的 sticky_notes（读出来改一处再存回去的常见写法）：接受并丢掉，新版本里没有它，已保存的版本不动", async () => {
+			const { id } = await seed("空便签保存");
+			const before = [await storedDocument(cp, id, 1), await storedDocument(cp, id, 2)];
+
 			const res = await save(id, {
 				base_version: 2,
-				document: { ...document, sticky_notes: notes },
+				document: {
+					...document,
+					annotations: [{ ...document.annotations[0], note: "改了一处" }],
+					sticky_notes: [],
+				},
+			});
+			expect(res.status, await res.clone().text()).toBe(201);
+			const saved = (await res.json()) as { number: number; document: Doc };
+			expect(saved.number).toBe(3);
+			expect(saved.document).not.toHaveProperty("sticky_notes");
+			expect(await storedHasStickyNotes(id, 3)).toBe(false);
+			expect(await storedDocument(cp, id, 3)).toMatchObject({
+				annotations: [{ note: "改了一处" }],
+			});
+			expect([await storedDocument(cp, id, 1), await storedDocument(cp, id, 2)]).toEqual(before);
+		});
+
+		it("文档里带着有内容的 sticky_notes：保存被拒绝，错误信息写明有几条、怎么办，不产生新版本，有内容的便签不会悄悄丢掉", async () => {
+			const { id } = await seed("带内容的便签保存");
+			const res = await save(id, {
+				base_version: 2,
+				document: { ...document, sticky_notes: STICKY_NOTES },
 			});
 			expect(res.status).toBe(400);
 			const { error } = (await res.json()) as { error: { code: string; message: string } };
 			expect(error.code).toBe("invalid_document");
 			expect(error.message).toBe(REMOVED_MESSAGE);
-			expect(error.message).toContain("sticky_notes（便签）");
-			expect(error.message).toContain("先把这一项删掉再保存");
+			expect(error.message).toContain("sticky_notes（便签）有 2 条内容");
+			expect(error.message).toContain("先把要留的内容挪走，再把这一项删掉");
 			expect(error.message).toContain("替换办法：便签：要留的内容写进节点的备注或注释框的备注");
 			expect((await head(id)).number).toBe(2);
 			expect(await api.headVersion(id)).toBe(2);
+			// 被拒绝的内容还在库里的旧版本上：升级前后都能直接读到（见 ADR 0028 第 3 步里的导出办法）。
+			expect(await storedDocument(cp, id, 2)).toHaveProperty("sticky_notes", STICKY_NOTES);
+		});
+
+		it("空的 sticky_notes 和别的错误同时存在：错误信息只说别的错误，不提便签", async () => {
+			const { id } = await seed("空便签加别的错误");
+			const res = await save(id, {
+				base_version: 2,
+				document: { ...document, nodes: [{ id: "x", kind: "no_such_kind" }], sticky_notes: [] },
+			});
+			expect(res.status).toBe(400);
+			const { error } = (await res.json()) as { error: { message: string } };
+			expect(error.message).not.toContain("sticky_notes");
+			expect(error.message).not.toContain("便签");
 		});
 	});
 });
