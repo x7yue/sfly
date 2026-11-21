@@ -60,7 +60,7 @@ describe("节点类型声明的默认超时", () => {
 	const scenario = (
 		node: string,
 		version: string,
-		{ timeout, pkg = "limits" }: { timeout?: number; pkg?: string } = {},
+		{ timeout, pkg = "limits", retries }: { timeout?: number; pkg?: string; retries?: number } = {},
 	) => ({
 		default_agent: "agent-a",
 		nodes: [
@@ -72,6 +72,7 @@ describe("节点类型声明的默认超时", () => {
 				node,
 				inputs: {},
 				...(timeout === undefined ? {} : { timeout }),
+				...(retries === undefined ? {} : { retries }),
 			},
 		],
 		edges: [{ from: "entry", to: "a", kind: "chain" }],
@@ -290,7 +291,10 @@ describe("节点类型声明的默认超时", () => {
 		});
 
 		it("已经触发、还在排队的任务，版本里的超时是超限的值：派发时这个任务以配置错误失败（不重试），同一台 Agent 上排在它后面的任务照常派发", async () => {
-			const bad = await api.orchestrationWith(scenario("short", "2.0.0", { timeout: 120 }));
+			// 设了重试：配置错误不按重试配置重试（只有一次尝试），这条断言才有意义。
+			const bad = await api.orchestrationWith(
+				scenario("short", "2.0.0", { timeout: 120, retries: 2 }),
+			);
 			const good = await api.orchestrationWith(scenario("short", "2.0.0"));
 			// Agent 注册过但不在线：两个运行的任务都排队。
 			await (await connect()).disconnect();
