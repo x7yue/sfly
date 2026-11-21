@@ -3,14 +3,15 @@
 // 值都是明显的假值。
 import { readFileSync } from "node:fs";
 
+const NUMBER_TABLE = JSON.parse(
+	readFileSync(new URL("../../../../testdata/number-form-cases.json", import.meta.url), "utf8"),
+) as { cases: Array<{ sent: string; serde: string; python: string }> };
+
 /** 数字被节点（Python）打印出来的写法：取自 testdata/number-form-cases.json（真实的 serde_json 和 Python 产生的，三端共用）。 */
-const NUMBER_FORMS = new Map(
-	(
-		JSON.parse(
-			readFileSync(new URL("../../../../testdata/number-form-cases.json", import.meta.url), "utf8"),
-		) as { cases: Array<{ sent: string; python: string }> }
-	).cases.map((c) => [c.sent, c.python]),
-);
+const NUMBER_FORMS = new Map(NUMBER_TABLE.cases.map((c) => [c.sent, c.python]));
+
+/** 数字被 Agent（serde_json）写进 task.json 的写法：取自同一张表的 serde 一列。 */
+const SERDE_FORMS = new Map(NUMBER_TABLE.cases.map((c) => [c.sent, c.serde]));
 
 /**
  * 超出 64 位整数范围、又小于 1e21 的整数：控制面写成 `98765432109876540000`，Agent 的 serde_json 按浮点解析，节点（Python）打印成
@@ -31,6 +32,37 @@ export function pythonNumberText(n: number): string {
 	throw new Error(
 		`数字 ${text} 不在 testdata/number-form-cases.json 里：先把它加进表（三端各断言自己那一段）`,
 	);
+}
+
+/**
+ * Agent 把一个数字写进 task.json 的写法（serde_json）：表里有的取表里的；表里没有的，只认肯定和 JS 一样的，
+ * 其余报错，要求先把它加进表。
+ */
+export function serdeNumberText(n: number): string {
+	const text = JSON.stringify(n);
+	const found = SERDE_FORMS.get(text);
+	if (found !== undefined) return found;
+	if (/^-?\d{1,15}$/.test(text)) return text;
+	if (/^-?\d+\.\d+$/.test(text) && Math.abs(n) >= 1e-4 && Math.abs(n) < 1e15) return text;
+	throw new Error(
+		`数字 ${text} 不在 testdata/number-form-cases.json 里：先把它加进表（三端各断言自己那一段）`,
+	);
+}
+
+/**
+ * 节点原样打印它读到的 task.json 里的文本（读 `SFLY_TASK` 指向的文件再打印）：键按字节序、紧凑写法，数字是 serde 的写法
+ * （同一个值里的两类数字各按各的规则，写出来是两种写法混在一起），非 ASCII 字符不转义。
+ */
+export function taskFileJson(value: unknown): string {
+	const write = (v: unknown): string => {
+		if (Array.isArray(v)) return `[${v.map(write).join(",")}]`;
+		if (v !== null && typeof v === "object") {
+			const entries = Object.entries(sortKeysDeep(v));
+			return `{${entries.map(([k, item]) => `${JSON.stringify(k)}:${write(item)}`).join(",")}}`;
+		}
+		return typeof v === "number" ? serdeNumberText(v) : JSON.stringify(v);
+	};
+	return write(value);
 }
 
 /**
@@ -123,9 +155,11 @@ export function formsOf(value: unknown): string[] {
 		for (const line of value.split(/\r?\n/)) if (line.trim() !== "") add(line.trim());
 	} else if (typeof value === "number" || typeof value === "boolean") {
 		add(String(value), JSON.stringify(value), pythonRepr(value));
-		if (typeof value === "number") add(pythonNumberText(value));
+		if (typeof value === "number") add(pythonNumberText(value), serdeNumberText(value));
 	} else if (value !== null && typeof value === "object") {
 		add(
+			// 节点原样打印 task.json 里的文本
+			taskFileJson(value),
 			JSON.stringify(value),
 			pythonJson(value),
 			pythonJson(value, false),

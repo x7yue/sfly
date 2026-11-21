@@ -15,7 +15,9 @@ import {
 	pythonJson,
 	pythonNumberText,
 	pythonRepr,
+	serdeNumberText,
 	sortKeysDeep,
+	taskFileJson,
 } from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -856,6 +858,71 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			expect(run.chains[0]?.nodes[1]?.outputs).toEqual({ cfg: MASK, big: MASK, rate: MASK });
 			// 失败信息里同样的写法：和日志里同一个口径
 			expect(run.chains[0]?.nodes[2]?.error?.message).toBe(masked.join("; "));
+		});
+	}, 60_000);
+
+	it("节点原样打印任务文件（task.json）里的文本：小数在 serde 的写法下、两类数字混在一个对象里，整段和叶子都盖住，顶层数字不论多短都盖住", async () => {
+		await withPlane(async ({ api, agent }) => {
+			const id = await api.orchestrationWith(
+				chainScenario(
+					[
+						{ name: "tiny", type: "json", secret: true },
+						{ name: "mixed", type: "json", secret: true },
+						{ name: "list", type: "json", secret: true },
+						{ name: "rate", type: "number", secret: true },
+					],
+					["a", "b"],
+				),
+			);
+			const tiny = { pin: "12", rate: 0.000001, region: "a" };
+			const mixed = { id: BEYOND_I64, pin: "12", rate: 0.000025 };
+			const list = ["ab", 0.000025, 7, BEYOND_I64, "x"];
+			const runId = await api.triggerOk(id, { tiny, mixed, list, rate: 0.000001 });
+			const a = await agent.nextAssign();
+			// 节点读 SFLY_TASK 指向的 task.json 再打印它的文本：Agent 把输入解析再写出，数字是 serde 的写法。
+			const taskFile = taskFileJson({ inputs: a.inputs });
+			expect(taskFile).toContain('"rate":1e-6');
+			expect(taskFile).toContain('"id":9.876543210987654e+19');
+			expect(taskFile).toContain('["ab",0.000025,7,9.876543210987654e+19,"x"]');
+			const lines = [
+				taskFile,
+				`tiny=${taskFileJson(a.inputs.tiny)}`,
+				`mixed=${taskFileJson(a.inputs.mixed)}`,
+				`list=${taskFileJson(a.inputs.list)}`,
+				`rate=${serdeNumberText(a.inputs.rate as number)}`,
+			];
+			agent.logs(
+				a,
+				lines.map((text, i) => [i + 1, text]),
+			);
+			await agent.succeed(a, { file: taskFile, tiny: a.inputs.tiny });
+			const b = await agent.nextAssign();
+			await agent.fail(b, lines.join("; "));
+			const texts = await logTexts(api, a.taskId, lines.length);
+			expect(texts[1]).toBe(`tiny=${MASK}`);
+			expect(texts[2]).toBe(`mixed=${MASK}`);
+			expect(texts[3]).toBe(`list=${MASK}`);
+			expect(texts[4]).toBe(`rate=${MASK}`);
+			// 整个任务文件：里面每个保密值都盖住，没有留下任何一个值或短叶子的明文
+			const whole = texts[0] ?? "";
+			for (const leak of [
+				"1e-6",
+				"0.000025",
+				"9.876543210987654e+19",
+				'"ab"',
+				'"x"',
+				'"12"',
+				'"a"',
+			]) {
+				expect(whole, `任务文件的文本里不能留下 ${leak}`).not.toContain(leak);
+			}
+			await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
+			const run = await parsedRun(api, runId);
+			const text = JSON.stringify(run);
+			for (const leak of ["1e-6", "9.876543210987654e+19", "0.000025", "0.000001"]) {
+				expect(text, `运行视图里不能出现 ${leak}`).not.toContain(leak);
+			}
+			expect(run.params).toEqual({ tiny: MASK, mixed: MASK, list: MASK, rate: MASK });
 		});
 	}, 60_000);
 

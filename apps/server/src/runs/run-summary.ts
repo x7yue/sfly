@@ -7,7 +7,6 @@ import {
 	type RunReportAttentionItem,
 	type RunReportFailedAction,
 	type RunReportFailedTask,
-	type RunStateSource,
 } from "@sfly/schema";
 import { eq, sql } from "drizzle-orm";
 import { maskedAction } from "../actions/action-text.js";
@@ -17,6 +16,7 @@ import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { readLogPage } from "../logs/log-pages.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import { type RunReadFull, readRuns } from "./run-read.js";
+import { runStateSource } from "./run-state-source.js";
 
 /*
  * 运行摘要（`GET /runs/:id/summary`，契约见 @sfly/schema 的 `RunReport`）：运行状态（`RunState`）加上只有接口给得起的内容。
@@ -33,59 +33,8 @@ export interface RunReportDeps extends RunFocusDeps {
 	logs: Pick<TaskLogs, "describeRun" | "logMask">;
 }
 
-const iso = (date: Date | null): string | null => (date ? date.toISOString() : null);
-
 type ReadChain = RunReadFull["chains"][number];
 type ReadNode = ReadChain["nodes"][number];
-
-/** 读取结果里投影运行状态要用的部分（写成普通 JSON，见 `RunStateSource`）。 */
-export function runStateSource(read: RunReadFull): RunStateSource {
-	const { run, version, scenario } = read;
-	return {
-		run: {
-			id: run.id,
-			scenario: { id: run.orchestrationId, name: scenario.name, version: version.number },
-			status: run.status,
-			triggered_by: run.triggeredBy,
-			triggered_via: run.triggeredVia,
-			started_at: run.startedAt.toISOString(),
-			ended_at: iso(run.endedAt),
-			cancel: run.cancelRequestedAt
-				? {
-						requested_by: run.cancelRequestedBy ?? "",
-						requested_via: run.cancelRequestedVia,
-						requested_at: run.cancelRequestedAt.toISOString(),
-						forced_at: iso(run.cancelForcedAt),
-					}
-				: null,
-		},
-		chains: read.chains.map((chain) => ({
-			id: chain.id,
-			chain_id: chain.chain_id,
-			name: chain.subflow_name ?? null,
-			depth: chain.depth,
-			parent_chain_instance_id: chain.parent_chain_instance_id,
-			async_node_id: chain.async_node_id,
-			status: chain.status,
-			started_at: chain.startedAt.toISOString(),
-			ended_at: iso(chain.endedAt),
-			nodes: chain.nodes.map((node) => ({
-				node_id: node.node_id,
-				display_name: node.display_name ?? null,
-				kind: node.kind,
-				status: node.status,
-				placeholder: node.closedWhileQueued && { ended_at: iso(node.closedWhileQueued.endedAt) },
-				attempts: node.attempts.map((attempt) => ({
-					attempt: attempt.attempt,
-					started_at: iso(attempt.startedAt),
-					ended_at: iso(attempt.endedAt),
-					// 错误里带着出错的位置（`error.location`，存在任务上，#471）：原样交给投影。
-					error: attempt.error,
-				})),
-			})),
-		})),
-	};
-}
 
 /** 一次运行的摘要；运行不存在时为 undefined。 */
 export async function buildRunReport(

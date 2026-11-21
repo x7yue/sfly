@@ -1,27 +1,17 @@
 import type { NodeTypeMetadata } from "@sfly/schema";
+import { isInputOfType } from "./input-marker.js";
 import { orderedInputs } from "./inputs.js";
 
 /**
  * 扩展输入类型（`sfly build` 在输入 schema 里标记）：`{"type": "string", "x-sfly-type": "<类型>"}`，
- * 可选参数（`T | None`）是 anyOf 里的一项。值都是名称字符串：「Agent」类型（`agent`，ADR 0019）、
- * 「飞书机器人」类型（`feishu_bot`，ADR 0020）。与 sdk/python/src/sfly/cli/scan.py 一致。
+ * 可选参数（`T | None`）是 anyOf 里的一项。值是名称字符串的：「Agent」类型（`agent`，ADR 0019）、
+ * 「飞书机器人」类型（`feishu_bot`，ADR 0020）；值是整个运行的状态的：「运行状态」类型（`run_state`，ADR 0031，
+ * run-state-references.ts）。与 sdk/python/src/sfly/cli/scan.py 一致。
  */
 
 type Io = NodeTypeMetadata["inputs"];
-type JsonSchema = Record<string, unknown>;
 
-export const INPUT_TYPE_KEY = "x-sfly-type";
-
-const marked = (schema: unknown, type: string) =>
-	schema !== null && typeof schema === "object" && (schema as JsonSchema)[INPUT_TYPE_KEY] === type;
-
-/** 这个输入是不是某个扩展类型（`T`，或 `T | None`）。 */
-export function isInputOfType(schema: JsonSchema, type: string): boolean {
-	return (
-		marked(schema, type) ||
-		(Array.isArray(schema.anyOf) && schema.anyOf.some((s) => marked(s, type)))
-	);
-}
+export { INPUT_TYPE_KEY, isInputOfType } from "./input-marker.js";
 
 /** 节点类型里某个扩展类型的输入名（按参数顺序）。 */
 export function inputsOfType(io: Io, type: string): string[] {

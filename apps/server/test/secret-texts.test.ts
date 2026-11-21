@@ -2,7 +2,6 @@
 // 读取运行（运行视图、列表、事件流）、写日志和动作、触发时的报错用的都是这一份（logs/secrets.ts 的 SecretSet），
 // 对象和数组、JSON 转义的写法、短叶子的取舍只在那里处理，这里直接测它。规则的编号见 docs/SEMANTICS.md §2.1。
 // 值都是明显的假值。
-
 import { ACTION_LIMITS } from "@sfly/schema";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -715,7 +714,7 @@ describe("很长的值：不能让打码本身失败，也不能把值带进错�
 });
 
 describe("compareUtf8：键的排序不分配，和 UTF-8 字节序（Buffer.compare）一致", () => {
-	it("随机的字符串（ASCII、中文、BMP 里码点很高的字符、emoji、代理对相邻）：符号一致", () => {
+	it("良构的随机字符串（ASCII、中文、BMP 里码点很高的字符、emoji、代理对相邻）：符号和 Buffer.compare 一致", () => {
 		let seed = 424242;
 		const random = (n: number): number => {
 			seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -749,6 +748,15 @@ describe("compareUtf8：键的排序不分配，和 UTF-8 字节序（Buffer.com
 				sign(Buffer.compare(Buffer.from(a), Buffer.from(b))),
 			);
 		}
+	});
+
+	it("孤立的代理项（不是良构的字符串）：和 Buffer.compare 不同，这是已知的、不处理的情况（它们进不了 jsonb，也过不了 serde_json）", () => {
+		// Buffer.from 把孤立的高位代理项写成 U+FFFD 的三个字节，按字节排它和 U+FFFD 相等，在 U+FFFF 之前；
+		// compareUtf8 按码元比，孤立的高位代理项（U+D800）排在 BMP 里 U+E000 以上的字符之后。两者不同，这里钉住这个事实。
+		const lone = "\ud800";
+		const high = "\uffff";
+		expect(Math.sign(Buffer.compare(Buffer.from(lone), Buffer.from(high)))).toBe(-1);
+		expect(Math.sign(compareUtf8(lone, high))).toBe(1);
 	});
 
 	it("用例表里的顺序：ASCII < 中文 < ￥ < emoji；空串最前；前缀在前", () => {
@@ -848,6 +856,206 @@ describe("值集合的缓存：值相同是同一个对象，值变了是另一�
 		expect(b.mask("shared-secret-value y")).toBe(`${MASK} y`);
 		expect(() => secretSetOf([{ n: 10n }])).not.toThrow();
 	});
+});
+
+describe("两条匹配路径：一次 replace（不会部分重叠）和合并位置（会），结果逐字相同", () => {
+	/** 参照实现：每个文本的每个出现位置都记下来，重叠的合成一段，每段换一个掩码。 */
+	const mergedMask = (text: string, texts: readonly string[]): string => {
+		const spans: Array<[number, number]> = [];
+		for (const t of texts) {
+			for (let at = text.indexOf(t); at >= 0; at = text.indexOf(t, at + 1))
+				spans.push([at, at + t.length]);
+		}
+		spans.sort((x, y) => x[0] - y[0] || y[1] - x[1]);
+		let out = "";
+		let cursor = 0;
+		let current: [number, number] | undefined;
+		for (const span of spans) {
+			if (current && span[0] < current[1]) {
+				current[1] = Math.max(current[1], span[1]);
+				continue;
+			}
+			if (current) {
+				out += text.slice(cursor, current[0]) + MASK;
+				cursor = current[1];
+			}
+			current = [span[0], span[1]];
+		}
+		return current ? out + text.slice(cursor, current[0]) + MASK + text.slice(current[1]) : text;
+	};
+	/** 独立的判断：有没有两个文本（可以是同一个）X、Y 和 0 < k < min(长度)，使 X 的后 k 个字符等于 Y 的前 k 个字符。 */
+	const partiallyOverlap = (texts: readonly string[]): boolean =>
+		texts.some((x) =>
+			texts.some((y) => {
+				for (let k = 1; k < Math.min(x.length, y.length); k++) {
+					if (x.slice(x.length - k) === y.slice(0, k)) return true;
+				}
+				return false;
+			}),
+		);
+
+	it("随机的值集合（小字母表，长短不一，常有嵌套和重叠）和文字：plain 的判断和独立的判断一致，两条路径的结果都等于参照实现，两条路径都走到了", () => {
+		let seed = 31337;
+		const random = (n: number): number => {
+			seed = (seed * 1664525 + 1013904223) % 4294967296;
+			return Math.floor((seed / 4294967296) * n);
+		};
+		const alphabet = ["a", "b", "c", "d", "e"];
+		const word = (min: number, max: number) =>
+			Array.from(
+				{ length: min + random(max - min + 1) },
+				() => alphabet[random(alphabet.length)],
+			).join("");
+		let plainRuns = 0;
+		let mergedRuns = 0;
+		let nestedPlain = 0;
+		for (let round = 0; round < 4000; round++) {
+			const texts = [...new Set(Array.from({ length: 1 + random(5) }, () => word(2, 9)))];
+			const set = setOf(...texts);
+			const info = set.matching();
+			// 这些文本都进正则（不超过 1024），所以只看 plain 的判断
+			expect(info.plain, JSON.stringify(set.texts)).toBe(
+				info.regexes === 1 && info.literals === 0 && !partiallyOverlap(set.texts),
+			);
+			const pieces = [
+				...set.texts,
+				...set.texts.map((t) => t.slice(1)),
+				...set.texts.map((t) => t.slice(0, -1)),
+				"a",
+				"e",
+				"x",
+			];
+			for (let k = 0; k < 3; k++) {
+				const text = Array.from(
+					{ length: 1 + random(10) },
+					() => pieces[random(pieces.length)],
+				).join("");
+				const got = set.mask(text);
+				const where = `${JSON.stringify(set.texts)} / ${JSON.stringify(text)} / plain=${info.plain}`;
+				expect(got, where).toBe(mergedMask(text, set.texts));
+				for (const t of set.texts) expect(got, where).not.toContain(t);
+			}
+			if (info.plain) {
+				plainRuns += 1;
+				// 嵌套（一个文本是另一个的子串）的集合也走 plain：确认这种情况被测到
+				if (set.texts.some((x) => set.texts.some((y) => x !== y && y.includes(x))))
+					nestedPlain += 1;
+			} else mergedRuns += 1;
+		}
+		expect(plainRuns).toBeGreaterThan(300);
+		expect(mergedRuns).toBeGreaterThan(300);
+		expect(nestedPlain).toBeGreaterThan(30);
+	});
+
+	it("明确的几种：嵌套走 plain，部分重叠和自己的重叠（周期性的值）走合并，超过 1024 的值走合并", () => {
+		expect(setOf("abcd", "bc").matching().plain).toBe(true);
+		// abc 的结尾 c 是 cd 的开头：abc 和 cd 能在 abcd 里部分重叠，所以这一组不是 plain
+		expect(setOf("abcdef", "cd", "abc").matching().plain).toBe(false);
+		// 嵌套、没有部分重叠
+		expect(setOf("abcdef", "bcd", "xyz").matching().plain).toBe(true);
+		expect(setOf("abcd", "cdef").matching().plain).toBe(false);
+		expect(setOf("abab-xyz").matching().plain).toBe(true);
+		expect(setOf("abcabc").matching().plain).toBe(false);
+		expect(setOf("0".repeat(8)).matching().plain).toBe(false);
+		expect(setOf("x".repeat(1100)).matching().plain).toBe(false);
+		// 嵌套时 plain 路径和合并路径的结果相同
+		expect(setOf("abcd", "bc").mask("..abcd..bc..")).toBe(`..${MASK}..${MASK}..`);
+	});
+
+	it("一个短值加一个很长、不周期的值（又没有部分重叠）：只有一个正则、另有字面量，不能走一次 replace 的路径，长的值照样盖住", () => {
+		// 每个字符都不一样（取自不同的汉字），所以没有部分重叠，判断「会不会部分重叠」本身不会因为步数上限而放弃
+		const long = Array.from({ length: 2000 }, (_, i) =>
+			String.fromCharCode(0x4e00 + ((i * 7919) % 20000)),
+		).join("");
+		const set = setOf("short-secret-value", long);
+		const info = set.matching();
+		expect(info.regexes).toBe(1);
+		expect(info.literals).toBeGreaterThan(0);
+		expect(info.plain).toBe(false);
+		expect(set.mask(`a ${long} b short-secret-value c`)).toBe(`a ${MASK} b ${MASK} c`);
+	});
+
+	it("判断本身有步数上限：很大的、周期性很强的值集合按「会部分重叠」处理，走合并路径，结果照样对", () => {
+		const big = setOf(
+			...Array.from({ length: 3000 }, (_, i) => `${"a".repeat(600)}-${i}-${"b".repeat(600)}`),
+		);
+		expect(big.matching().plain).toBe(false);
+		expect(big.mask(`x ${"a".repeat(600)}-7-${"b".repeat(600)} y`)).toBe(`x ${MASK} y`);
+	});
+});
+
+describe("病态输入：周期性的值在周期性的文字里，打码的工作量有上限，超过就把整段文字盖住", () => {
+	/** 在这个时限内返回（很宽，只防「卡几秒」这个数量级）。 */
+	const FAST_MS = 1000;
+
+	it("1024 个 0 的值在 1 MB 的 0 里：很快返回，结果里没有值", () => {
+		const set = setOf("0".repeat(1024));
+		const text = "0".repeat(1_000_000);
+		const started = performance.now();
+		const out = set.mask(text);
+		expect(performance.now() - started).toBeLessThan(FAST_MS);
+		expect(out).not.toContain("0000");
+		expect(out).toBe(MASK);
+	});
+
+	it("20000 个 0 的值（走字面量查找）在 256 KB 的 0 里：很快返回，结果里没有值", () => {
+		const set = setOf("0".repeat(20_000));
+		const text = "0".repeat(262_144);
+		const started = performance.now();
+		const out = set.mask(text);
+		expect(performance.now() - started).toBeLessThan(FAST_MS);
+		expect(out).toBe(MASK);
+	});
+
+	it("超过上限时整段盖住，周围的文字也盖住（宁可多盖）；没超过时只盖值本身", () => {
+		const set = setOf("0".repeat(1024));
+		expect(set.mask(`before ${"0".repeat(1024)} after`)).toBe(`before ${MASK} after`);
+		expect(set.mask(`before ${"0".repeat(200_000)} after`)).toBe(MASK);
+	});
+
+	it("正常的输入不受上限影响：400 万字的输出里出现 100 次 4 万字的值，每次都盖住，周围的文字原样", () => {
+		const secret = `${"abcdefghij".repeat(4096)}-end`;
+		const set = setOf(secret);
+		const text = Array.from({ length: 100 }, (_, i) => `row ${i} ${secret} ok`).join("\n");
+		const out = set.mask(text);
+		expect(out.split(MASK).length - 1).toBe(100);
+		expect(out).toContain("row 99 ****** ok");
+		expect(out).not.toContain("abcdefghij");
+	});
+
+	it("值集合里有会部分重叠的几个值，文字里首尾相接地出现很多次：不超过上限时合并成一段", () => {
+		const set = setOf("abcd-xyz", "xyz-efgh");
+		const text = "abcd-xyz-efgh ".repeat(1000);
+		expect(set.mask(text)).toBe(`${MASK} `.repeat(1000));
+	});
+});
+
+describe("值集合缓存的大小上限（按条数和文本总长）", () => {
+	it("条数超过 64：最早的被丢掉，最新的一份总是留着；被丢掉的再问是重新算的另一个对象，结果一样", () => {
+		const first = secretSetOf([`cache-limit-value-${0}`]);
+		for (let i = 1; i <= 70; i++) secretSetOf([`cache-limit-value-${i}`]);
+		const last = secretSetOf(["cache-limit-value-70"]);
+		expect(secretSetOf(["cache-limit-value-70"])).toBe(last);
+		const again = secretSetOf(["cache-limit-value-0"]);
+		expect(again).not.toBe(first);
+		expect(again.mask("x cache-limit-value-0 y")).toBe(`x ${MASK} y`);
+	});
+
+	it("文本总长超过上限（8 M 个字符）：大的集合把最早的挤出去，最新的一份总是留着，哪怕它自己就超过上限", () => {
+		const small = secretSetOf(["small-cache-value-xyz"]);
+		const big = (tag: string) => `${tag}-${"q".repeat(3_000_000)}`;
+		const one = secretSetOf([big("one")]);
+		secretSetOf([big("two")]);
+		secretSetOf([big("three")]);
+		// 三份各 300 万个字符，合计超过 800 万：最早的两份（small 和 one）被挤出去
+		expect(secretSetOf(["small-cache-value-xyz"])).not.toBe(small);
+		expect(secretSetOf([big("one")])).not.toBe(one);
+		const huge = secretSetOf([`huge-${"h".repeat(9_000_000)}`]);
+		expect(secretSetOf([`huge-${"h".repeat(9_000_000)}`])).toBe(huge);
+		expect(secretSetOf(["small-cache-value-xyz"]).mask("a small-cache-value-xyz b")).toBe(
+			`a ${MASK} b`,
+		);
+	}, 60_000);
 });
 
 describe("被截断的文字结尾留下的半截 secret 值（读取时的补救，#517）", () => {

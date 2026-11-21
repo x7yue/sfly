@@ -306,13 +306,16 @@ test("检查器：字符串参数只有一个输入框，输入 $ 或点「插�
 	// 空的输入框显示占位文字。
 	await expect(host).toHaveText("必填");
 
-	// 输入 $ 弹出补全，按入口参数 / 前序节点分组。
+	// 输入 $ 弹出补全，按入口参数 / 运行状态 / 前序节点分组（包节点才有运行状态）。
 	await page.keyboard.type("$");
 	const list = panel.getByRole("listbox", { name: "可引用的值" });
-	await expect(list.getByRole("group")).toHaveText([/^入口参数/, /^前序节点/]);
+	await expect(list.getByRole("group")).toHaveText([/^入口参数/, /^运行状态/, /^前序节点/]);
 	await expect(list.getByRole("group", { name: "入口参数" }).getByRole("option")).toHaveText([
 		/params\.biz_date\s*string/,
 		/params\.api_token\s*string · 敏感/,
+	]);
+	await expect(list.getByRole("group", { name: "运行状态" }).getByRole("option")).toHaveText([
+		/run\.state\s*object · 这次运行/,
 	]);
 	await expect(list.getByRole("group", { name: "前序节点" }).getByRole("option")).toHaveText([
 		/nodes\.fetch\.outputs\.status\s*integer · fetch/,
@@ -349,8 +352,12 @@ test("检查器：字符串参数只有一个输入框，输入 $ 或点「插�
 	await url.fill("https://example.test/?d=");
 	await panel.getByRole("button", { name: "在 url 中插入引用" }).click();
 	await expect(url).toBeFocused();
-	// fetch 是链上第一个节点：只有入口参数可以引用。「插入引用」打开的补全预选第一项。
-	await expect(list.getByRole("option")).toHaveText([/params\.biz_date/, /params\.api_token/]);
+	// fetch 是链上第一个节点：只有入口参数和运行状态可以引用。「插入引用」打开的补全预选第一项。
+	await expect(list.getByRole("option")).toHaveText([
+		/params\.biz_date/,
+		/params\.api_token/,
+		/run\.state/,
+	]);
 	await expect(list.getByRole("option", { selected: true })).toHaveText(/params\.biz_date/);
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("ArrowUp");
@@ -424,7 +431,8 @@ test("检查器：$HOME 这样的写法匹配到候选时，Enter 和 Tab 不插
 	await url.fill("echo ");
 	await page.keyboard.type("$");
 	await page.keyboard.press("ArrowUp");
-	await expect(list.getByRole("option", { selected: true })).toHaveText(/params\.api_token/);
+	// 向上到最后一项：入口参数之后是运行状态。
+	await expect(list.getByRole("option", { selected: true })).toHaveText(/run\.state/);
 	await page.keyboard.type("b");
 	await expect(list.getByRole("option", { selected: true })).toHaveCount(0);
 	await page.keyboard.press("ArrowDown");
@@ -475,7 +483,7 @@ test("检查器：非字符串参数没有模式切换；「插入引用」选�
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
 	const insert = panel.getByRole("button", { name: "在 count 中插入引用" });
 	await insert.click();
-	await expect(list.getByRole("group")).toHaveText([/^入口参数/, /^前序节点/]);
+	await expect(list.getByRole("group")).toHaveText([/^入口参数/, /^运行状态/, /^前序节点/]);
 	await list.getByRole("option", { name: /params\.n/ }).click();
 	await expect(chip("count")).toHaveText("${{ params.n }}");
 	await expect(page.getByText("1 处字段错误")).toHaveCount(0);

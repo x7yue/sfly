@@ -100,8 +100,11 @@ const sortableUnit = (unit: number): number =>
 
 /**
  * 两个字符串按 UTF-8 字节序比较，也就是按码点序（UTF-8 保持码点的顺序）。JS 的 `<` 比的是 UTF-16 码元，BMP 之外的字符
- * （emoji）会排到 U+E000–U+FFFF 的字符前面；用 `Buffer.compare(Buffer.from(a), Buffer.from(b))` 能得到同样的结果，
- * 但排序时每次比较要分配两个 Buffer，这里在第一个不同的码元上比，不分配。和它的一致由 test/secret-texts.test.ts 随机对比。
+ * （emoji）会排到 U+E000–U+FFFF 的字符前面。在**良构**的字符串（没有孤立的代理项）上，它和
+ * `Buffer.compare(Buffer.from(a), Buffer.from(b))` 的符号一致，但排序时每次比较要分配两个 Buffer，这里在第一个不同的码元上比，
+ * 不分配；test/secret-texts.test.ts 在良构的随机字符串上和 `Buffer.compare` 对比。**孤立的代理项上两者不同**
+ * （`Buffer.from` 把它写成 U+FFFD 的三个字节，这里按码元比）：它们进不了 jsonb，也过不了 serde_json，对象的键里碰不到，
+ * 所以这里不处理。
  */
 export function compareUtf8(a: string, b: string): number {
 	const length = Math.min(a.length, b.length);
@@ -150,6 +153,29 @@ export function pythonNumber(n: number): string {
 		if (whole >= I64_MIN && whole <= U64_MAX) return text;
 	}
 	return pythonFloat(n);
+}
+
+/**
+ * Agent（`serde_json`）把一个数字写进 task.json 的写法：节点读 `SFLY_TASK` 指向的文件再原样打印它的文本时，看到的是这种写法。
+ * Agent 把控制面写的数字文本解析成 `serde_json::Value` 再写出：
+ * 64 位整数范围里的整数是整数，写法和控制面一样；超出范围的按浮点解析，写法和 Python 一样（{@link pythonNumber}）；
+ * 带小数的，serde 的科学计数法**不补零**，只在绝对值小于 1e-5 时才用（和 JS 一样 1e-7 写成 `1e-7`，但 JS 到 1e-7 才换科学计数法）：
+ * 绝对值在 [1e-6, 1e-5) 的数，控制面写 `0.000001`，serde 写 `1e-6`（Python 写 `1e-06`），是第三种写法；其余和控制面一样。
+ *
+ * **这条规则绑在 serde_json 的版本上**（用例表 `testdata/number-form-cases.json` 的 `serde` 列是真实 serde_json 的输出）：
+ * serde_json 升级后写法变了，Agent 一端的断言（`agent/tests/number_forms.rs`）先红，红了就要改这里并更新表里的 `serde` 列。
+ */
+export function serdeNumber(n: number): string {
+	const text = jsonText(n);
+	if (!Number.isFinite(n)) return text;
+	if (/^-?\d+$/.test(text)) {
+		const whole = BigInt(text);
+		if (whole >= I64_MIN && whole <= U64_MAX) return text;
+		return pythonNumber(n);
+	}
+	const abs = Math.abs(n);
+	if (abs >= 1e-6 && abs < 1e-5) return n.toExponential();
+	return text;
 }
 
 /** 把值写成 JSON 文本的一种写法。 */
@@ -233,7 +259,7 @@ export function secretPartsOf(value: unknown): SecretParts {
 	} else if (typeof value === "number" || typeof value === "boolean") {
 		texts.add(jsonText(value));
 		// 节点（Python）打印数字的写法和控制面写的不一样时，两种都认。
-		if (typeof value === "number") texts.add(pythonNumber(value));
+		if (typeof value === "number") texts.add(pythonNumber(value)).add(serdeNumber(value));
 		parts.scalars.push(jsonText(value));
 	} else {
 		const leaves: Leaf[] = [];
@@ -247,17 +273,21 @@ export function secretPartsOf(value: unknown): SecretParts {
 			} else if (typeof leaf === "number" && charCount(jsonText(leaf)) >= MIN_LEAF_CHARS) {
 				texts.add(jsonText(leaf));
 				texts.add(pythonNumber(leaf));
+				texts.add(serdeNumber(leaf));
 				parts.scalars.push(jsonText(leaf));
 			}
 		}
 		// 整个对象被原样写出的各种写法：紧凑和 Python 默认的分隔，键按节点收到的顺序（排好序）和参数里写的顺序，
 		// 各自带或不带 `\uXXXX` 转义。节点收到的对象，键是 Agent 排过序的，所以排序的那几份才是节点原样写出来的样子。
-		// 数字用控制面的写法和节点（Python）打印的写法各写一遍；没有哪个数字两种写法不同时只写一遍。
-		const numberWriters = leaves.some(
-			(l) => typeof l === "number" && pythonNumber(l) !== jsonText(l),
-		)
-			? [jsonText, pythonNumber]
-			: [jsonText];
+		// 数字用控制面的写法、节点（Python）打印的写法、Agent 写进 task.json 的写法各写一遍（整个值一起换一种写数字的规则；
+		// 同一个值里的两类数字在 task.json 里是两种写法混在一起的，那一份是「serde」那一遍）；
+		// 没有哪个数字的写法不同时，只有 JS 的那一遍，Set 去重。写法个数是常数（3），不随数字的个数增长。
+		const hasVaryingNumber = leaves.some(
+			(l) =>
+				typeof l === "number" &&
+				(pythonNumber(l) !== jsonText(l) || serdeNumber(l) !== jsonText(l)),
+		);
+		const numberWriters = hasVaryingNumber ? [jsonText, pythonNumber, serdeNumber] : [jsonText];
 		for (const separators of [COMPACT, PYTHON_DEFAULT]) {
 			for (const sorted of [true, false]) {
 				for (const ascii of [false, true]) {
@@ -293,6 +323,13 @@ const compileGlobal: Compile = (source) => new RegExp(source, "g");
 interface Matcher {
 	regexes: readonly RegExp[];
 	literals: readonly string[];
+	/**
+	 * 只有一个正则、没有字面量，并且任何两个要打码的文本都不可能「部分重叠」（一个的结尾是另一个的开头，包括自己和自己：
+	 * 周期性的值）。这时一次 `replace` 的结果和「所有出现位置合并重叠」逐字相同，不用找全部位置、不分配：
+	 * 部分重叠以外的重叠都是嵌套（一个文本是另一个的子串），正则按长的在前，在最靠前的出现位置上总是取到最长的那个，
+	 * 嵌套在里面的随它一起被换掉。构建值集合的匹配时算一次（{@link mayPartiallyOverlap}）。
+	 */
+	plain: boolean;
 }
 
 /** 一批文本分成若干块，每块转义之后的源码不超过 {@link MAX_REGEX_SOURCE_CHARS}（文本已按长度从长到短排好）。 */
@@ -353,11 +390,65 @@ function compileInline(inline: readonly string[], compile: Compile | undefined) 
 function buildMatcher(texts: readonly string[], compile: Compile | undefined): Matcher {
 	const inline = texts.filter((t) => t.length <= MAX_REGEX_TEXT_CHARS);
 	const { regexes, failed } = compileInline(inline, compile);
+	const literals = [...texts.filter((t) => t.length > MAX_REGEX_TEXT_CHARS), ...failed];
 	return {
 		regexes,
-		literals: [...texts.filter((t) => t.length > MAX_REGEX_TEXT_CHARS), ...failed],
+		literals,
+		plain: regexes.length === 1 && literals.length === 0 && !mayPartiallyOverlap(texts),
 	};
 }
+
+/** 判断「会不会部分重叠」最多做这么多步（字符比较）；超过时按「会」处理，走合并的路径，结果同样正确，只是慢一点。 */
+const OVERLAP_CHECK_STEPS = 2_000_000;
+
+/**
+ * 有没有两个文本（可以是同一个）的出现位置会部分重叠：某个文本 X 的一个真后缀等于某个文本 Y 的真前缀。
+ * 用所有文本建一棵前缀树，从 X 的每个后缀的开头往下走；走完整个后缀、而且停在还有下文的节点上，说明有更长的 Y 以它开头。
+ * 停在没有下文的节点上是 Y 恰好等于这个后缀：Y 嵌套在 X 里，不算。步数超过 {@link OVERLAP_CHECK_STEPS}（很大的值集合、
+ * 周期性很强的值）时放弃，按「会部分重叠」处理。
+ */
+function mayPartiallyOverlap(texts: readonly string[]): boolean {
+	interface Node {
+		next: Map<number, Node>;
+	}
+	const root: Node = { next: new Map() };
+	let steps = 0;
+	for (const text of texts) {
+		let node = root;
+		for (let i = 0; i < text.length; i++) {
+			const unit = text.charCodeAt(i);
+			let child = node.next.get(unit);
+			if (!child) {
+				child = { next: new Map() };
+				node.next.set(unit, child);
+			}
+			node = child;
+			if (++steps > OVERLAP_CHECK_STEPS) return true;
+		}
+	}
+	for (const text of texts) {
+		for (let from = 1; from < text.length; from++) {
+			let node: Node | undefined = root;
+			for (let i = from; i < text.length && node; i++) {
+				node = node.next.get(text.charCodeAt(i));
+				if (++steps > OVERLAP_CHECK_STEPS) return true;
+			}
+			// 走完了整个后缀（node 还在树里），并且有更长的文本以它开头
+			if (node && node !== root && node.next.size > 0) return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * 一次打码的工作量上限（字符比较的数量，每个出现位置按它的长度加 {@link MASK_WORK_PER_MATCH} 算）：超过就把这段文字整个盖住
+ * （宁可多盖，不能让同步的代码卡住控制面）。正常的输入远在它下面：一段 400 万字的输出里出现 100 次 4 万字的值，工作量是 400 万；
+ * 取 32 M，最坏情况下（周期性的值和文字）大约 10 毫秒（见 PR 里的数字）。
+ */
+const MAX_MASK_WORK = 32_000_000;
+
+/** 每个出现位置固定的一份工作量：它限制了 spans 最多有多少项（32 M / 64 = 50 万项）。 */
+const MASK_WORK_PER_MATCH = 64;
 
 /**
  * 打码：先找出每个正则和每个字面量在文字里的全部位置，重叠的合成一段，每段换成一个掩码（相邻但不重叠的各是一个掩码）。
@@ -365,8 +456,12 @@ function buildMatcher(texts: readonly string[], compile: Compile | undefined): M
  * 所以每找到一个匹配，下一次从它的开头的后一个字符再找。不论值是长是短、走正则还是字面量，重叠的结果都一样，
  * 不会留下一个值的尾巴。
  */
-function maskSpans(text: string, matcher: Matcher): string {
+function maskSpans(text: string, matcher: Matcher): string | undefined {
 	const spans: Array<[number, number]> = [];
+	// 工作量：每找到一个出现位置，记它的长度加上固定的一份（固定的一份限制 spans 占的内存）。周期性的值在周期性的文字里，
+	// 每个位置都是一个出现位置，一次打码的工作量是「文字长 × 值长」，值来自用户、文字来自节点，同步执行会让控制面卡住几秒：
+	// 超过 {@link MAX_MASK_WORK} 时放弃，返回 undefined，调用方把这段文字整个盖住。
+	let work = 0;
 	for (const regex of matcher.regexes) {
 		regex.lastIndex = 0;
 		for (let m = regex.exec(text); m; m = regex.exec(text)) {
@@ -375,6 +470,11 @@ function maskSpans(text: string, matcher: Matcher): string {
 			else {
 				spans.push([m.index, m.index + m[0].length]);
 				regex.lastIndex = m.index + 1;
+				work += m[0].length + MASK_WORK_PER_MATCH;
+				if (work > MAX_MASK_WORK) {
+					regex.lastIndex = 0;
+					return undefined;
+				}
 			}
 		}
 		regex.lastIndex = 0;
@@ -382,6 +482,8 @@ function maskSpans(text: string, matcher: Matcher): string {
 	for (const literal of matcher.literals) {
 		for (let at = text.indexOf(literal); at >= 0; at = text.indexOf(literal, at + 1)) {
 			spans.push([at, at + literal.length]);
+			work += literal.length + MASK_WORK_PER_MATCH;
+			if (work > MAX_MASK_WORK) return undefined;
 		}
 	}
 	if (spans.length === 0) return text;
@@ -475,6 +577,15 @@ export class SecretSet {
 	}
 
 	/**
+	 * 这份值集合是怎么匹配的（测试用：确认随机对比两条路径都走到了）：`plain` 是「一次 replace」的路径，否则是合并位置的路径。
+	 */
+	matching(): { regexes: number; literals: number; plain: boolean } {
+		this.#matcher ??= buildMatcher(this.texts, this.#compile);
+		const { regexes, literals, plain } = this.#matcher;
+		return { regexes: regexes.length, literals: literals.length, plain };
+	}
+
+	/**
 	 * 把文本中出现的 secret 值替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入（尤其是写日志）不能因为打码
 	 * 失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；错误本身不往外带，它的消息里可能有值。
 	 */
@@ -482,7 +593,10 @@ export class SecretSet {
 		if (this.texts.length === 0) return text;
 		try {
 			this.#matcher ??= buildMatcher(this.texts, this.#compile);
-			return maskSpans(text, this.#matcher);
+			const matcher = this.#matcher;
+			// 不会部分重叠、只有一个正则：一次 replace，结果和合并的路径逐字相同（{@link Matcher.plain}）。
+			if (matcher.plain) return text.replace(matcher.regexes[0] as RegExp, SECRET_MASK);
+			return maskSpans(text, matcher) ?? SECRET_MASK;
 		} catch {
 			return SECRET_MASK;
 		}
@@ -552,8 +666,17 @@ export const NO_SECRETS: SecretSet = new SecretSet();
  * 写日志的每一批、读取运行的每一次都要问「这次运行此刻的 secret 值」，值没变时不用把每个值的各种写法再写一遍
  * （保密对象有几千个键时，一批要多花十几毫秒），编译好的匹配也跟着复用。
  */
-const setCache = new Map<string, SecretSet>();
+const setCache = new Map<string, { set: SecretSet; chars: number }>();
+/** 最多缓存这么多份。 */
 const SET_CACHE_LIMIT = 64;
+/**
+ * 缓存里所有值集合的文本总长（字符数）的上限。一份集合的大小主要是它的文本的总长：保密对象有几千个键时一份约 0.3 M 个字符，
+ * 40 KB 的字符串约 4 万个；只按条数限制的话，64 份大集合会占到几十 MB。V8 的字符串每个字符 1–2 个字节，8 M 个字符
+ * 最多占 16 MB。这个数是按字符数推出来的（量堆内存受垃圾回收影响，数字不稳，没有当依据）；超过时从最早的开始丢（不做 LRU：
+ * 一次运行用到的集合很快就被新的运行替换，丢掉的只是重算一次），最新的这一份总是留着。
+ */
+const SET_CACHE_MAX_CHARS = 8_000_000;
+let setCacheChars = 0;
 
 /** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）；值相同的是同一个对象（不可变，可以共用）。 */
 export function secretSetOf(values: Iterable<unknown>): SecretSet {
@@ -565,16 +688,23 @@ export function secretSetOf(values: Iterable<unknown>): SecretSet {
 		key = undefined;
 	}
 	if (key === undefined) return new SecretSet(list.map(secretPartsOf));
-	let found = setCache.get(key);
-	if (!found) {
-		found = new SecretSet(list.map(secretPartsOf));
-		setCache.set(key, found);
-		if (setCache.size > SET_CACHE_LIMIT) {
-			const oldest = setCache.keys().next().value;
-			if (oldest !== undefined) setCache.delete(oldest);
-		}
+	const found = setCache.get(key);
+	if (found) return found.set;
+	const set = new SecretSet(list.map(secretPartsOf));
+	const chars = set.texts.reduce((n, t) => n + t.length, 0);
+	setCache.set(key, { set, chars });
+	setCacheChars += chars;
+	// 条数或总长超了，从最早的开始丢，最新的这一份留着。
+	while (
+		setCache.size > 1 &&
+		(setCache.size > SET_CACHE_LIMIT || setCacheChars > SET_CACHE_MAX_CHARS)
+	) {
+		const oldest = setCache.entries().next().value;
+		if (!oldest) break;
+		setCache.delete(oldest[0]);
+		setCacheChars -= oldest[1].chars;
 	}
-	return found;
+	return set;
 }
 
 /** 一个链实例起点声明为 secret 的参数的值（有值的）。 */

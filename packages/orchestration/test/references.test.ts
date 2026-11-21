@@ -79,6 +79,7 @@ describe("引用补全", () => {
 		expect(expressions(twoChains, "c")).toEqual([
 			"params.url",
 			"params.token",
+			"run.state",
 			"nodes.a.outputs.body",
 			"nodes.a.outputs.status",
 			"nodes.x.outputs.chain_instance_id",
@@ -88,11 +89,11 @@ describe("引用补全", () => {
 	});
 
 	it("不提供当前节点自己和后面节点的输出", () => {
-		expect(expressions(twoChains, "a")).toEqual(["params.url", "params.token"]);
+		expect(expressions(twoChains, "a")).toEqual(["params.url", "params.token", "run.state"]);
 	});
 
 	it("子流程只看到子流程入口的参数和子流程上前面的节点，看不到主链", () => {
-		expect(expressions(twoChains, "s1")).toEqual(["params.item"]);
+		expect(expressions(twoChains, "s1")).toEqual(["params.item", "run.state"]);
 	});
 
 	it("补全项带上可直接写进输入的引用文本", () => {
@@ -109,7 +110,8 @@ describe("引用补全", () => {
 			nodes: [{ id: "entry", kind: "entry" }, pkg("a"), pkg("b"), pkg("lost")],
 			edges: chain("entry", "a", "b"),
 		});
-		expect(referenceOptions(d, "b", new Map())).toEqual([]);
+		// 运行状态不依赖节点类型的元信息：包节点总是可以引用。
+		expect(referenceOptions(d, "b", new Map()).map((o) => o.expression)).toEqual(["run.state"]);
 		expect(referenceOptions(d, "lost", catalog)).toEqual([]);
 	});
 });

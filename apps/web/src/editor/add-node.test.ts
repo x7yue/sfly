@@ -1,6 +1,8 @@
-import type { PackageSummary } from "@sfly/schema";
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
+import type { AgentView, PackageSummary } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	type AddItem,
 	availableBuiltins,
 	BUILTIN_ITEMS,
 	builtinValue,
@@ -9,10 +11,12 @@ import {
 	newDocNode,
 	newSubflowNameProblem,
 	type PackageGroup,
+	type PackageItem,
 	packageGroups,
 	packageValue,
 	pushRecent,
 	recentItems,
+	withRunStateInputs,
 } from "./add-node";
 
 describe("新建子流程入口时填写的名称", () => {
@@ -151,5 +155,144 @@ describe("添加节点菜单的分组与「最近使用」", () => {
 		expect(recentItems(recent, availableBuiltins(true), []).map((i) => i.value)).toEqual([
 			"builtin:async",
 		]);
+	});
+});
+
+describe("新建包节点时预填「运行状态」类型的输入", () => {
+	const item = (extra: Partial<PackageItem> = {}): AddItem => ({
+		kind: "package",
+		package: "demo",
+		version: "1.0.0",
+		node: "summarize",
+		title: "汇总",
+		...extra,
+	});
+
+	it("节点类型里有「运行状态」类型的输入：新节点把它预填成 ${{ run.state }}", () => {
+		expect(newDocNode(item({ runStateInputs: ["run"] }), "summarize_1")).toEqual({
+			id: "summarize_1",
+			kind: "package",
+			package: "demo",
+			node: "summarize",
+			always: false,
+			inputs: { run: "${{ run.state }}" },
+		});
+	});
+
+	it("有几个这样的输入就预填几个，别的输入不动", () => {
+		const node = newDocNode(item({ runStateInputs: ["before", "after"] }), "summarize_1");
+		expect(node).toMatchObject({
+			inputs: { before: "${{ run.state }}", after: "${{ run.state }}" },
+		});
+	});
+
+	it("没有这样的输入（没带，或是空的）：和以前一样，inputs 是空对象", () => {
+		expect(newDocNode(item(), "summarize_1")).toMatchObject({ inputs: {} });
+		expect(newDocNode(item({ runStateInputs: [] }), "summarize_1")).toMatchObject({ inputs: {} });
+	});
+});
+
+describe("添加节点菜单里节点类型的「运行状态」类型的输入", () => {
+	const marked = { type: "object", "x-sfly-type": "run_state" };
+	const io = (properties: Record<string, Record<string, unknown>>) => ({
+		type: "object" as const,
+		properties,
+		order: Object.keys(properties),
+		required: [],
+	});
+	const dev = (nodes: unknown[]): AgentView =>
+		({
+			name: "dev-agent",
+			status: "online",
+			dev_packages: [{ name: "demo", source: "/src/demo", metadata: { nodes } }],
+		}) as unknown as AgentView;
+
+	it("dev 版本：取 Agent 上报的元信息，必填的、可选的（RunState | None）都算", () => {
+		const groups = packageGroups(
+			[],
+			[
+				dev([
+					{
+						name: "summarize",
+						inputs: io({ run: marked, title: { type: "string" } }),
+						outputs: io({}),
+					},
+					{
+						name: "maybe",
+						inputs: io({ run: { anyOf: [marked, { type: "null" }], default: null } }),
+						outputs: io({}),
+					},
+					{ name: "plain", inputs: io({ n: { type: "integer" } }), outputs: io({}) },
+				]),
+			],
+			{},
+		);
+		const items = groups.flatMap((g) => g.items);
+		expect(items.map((i) => [i.node, i.runStateInputs])).toEqual([
+			["summarize", ["run"]],
+			["maybe", ["run"]],
+			["plain", []],
+		]);
+		const [first] = items;
+		expect(newDocNode(first as PackageItem, "summarize_1")).toMatchObject({
+			inputs: { run: "${{ run.state }}" },
+		});
+	});
+
+	it("已发布版本的菜单摘要里没有输入 schema：选中时到版本的元信息里取", async () => {
+		const published: PackageItem = {
+			kind: "package",
+			package: "demo",
+			version: "1.0.0",
+			node: "summarize",
+			title: "汇总",
+		};
+		const calls: string[] = [];
+		const load = async (it: PackageItem) => {
+			calls.push(`${it.package}@${it.version}/${it.node}`);
+			return io({ run: marked, n: { type: "integer" } });
+		};
+		const resolved = await withRunStateInputs(published, load);
+		expect(calls).toEqual(["demo@1.0.0/summarize"]);
+		expect(resolved).toMatchObject({ kind: "package", runStateInputs: ["run"] });
+		expect(newDocNode(resolved as PackageItem, "summarize_1")).toMatchObject({
+			inputs: { run: "${{ run.state }}" },
+		});
+	});
+
+	it("没有这样的输入、读不到元信息、读取失败：节点照常添加，inputs 为空", async () => {
+		const published: PackageItem = {
+			kind: "package",
+			package: "demo",
+			version: "1.0.0",
+			node: "plain",
+			title: "p",
+		};
+		const none = await withRunStateInputs(published, async () => io({ n: { type: "integer" } }));
+		expect(none).toMatchObject({ runStateInputs: [] });
+		const missing = await withRunStateInputs(published, async () => undefined);
+		expect(missing).toEqual(published);
+		const failed = await withRunStateInputs(published, async () => {
+			throw new Error("network");
+		});
+		expect(failed).toEqual(published);
+		expect(newDocNode(failed as PackageItem, "plain_1")).toMatchObject({ inputs: {} });
+	});
+
+	it("已经知道的（dev 版本）不再去读；内置节点原样返回", async () => {
+		const known: PackageItem = {
+			kind: "package",
+			package: "demo",
+			version: "dev",
+			node: "summarize",
+			title: "汇总",
+			runStateInputs: ["run"],
+		};
+		const load = async () => {
+			throw new Error("不该被调用");
+		};
+		expect(await withRunStateInputs(known, load)).toBe(known);
+		const stop: AddItem = { kind: "stop_subflow" };
+		expect(await withRunStateInputs(stop, load)).toBe(stop);
 	});
 });
