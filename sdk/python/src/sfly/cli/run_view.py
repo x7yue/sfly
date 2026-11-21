@@ -201,8 +201,6 @@ _BUILTIN_TYPES = {
     "entry": "入口",
     "subflow_entry": "子流程入口",
     "async": "异步任务",
-    "timer": "定时",
-    "sleep": "Sleep",
     "stop_subflow": "停止子流程",
 }
 

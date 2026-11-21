@@ -152,8 +152,6 @@ export interface AttemptView {
 	/** 任务开始、结束时的时钟偏差（#175）；旧版本 Agent 或没有上报时为 null。 */
 	start_clock_offset: ClockOffsetView | null;
 	end_clock_offset: ClockOffsetView | null;
-	/** 定时 / Sleep 节点的唤醒时间（#14）；其他节点为 null。 */
-	wake_at: string | null;
 	progress: {
 		current: number;
 		total: number | null;

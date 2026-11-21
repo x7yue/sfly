@@ -52,7 +52,7 @@ test("页头一行：控制面时间、此刻与最近 24 小时的计数、运�
 	await expect(counts(page).getByRole("listitem")).toHaveText([
 		"运行中 2",
 		"执行中任务 1",
-		"排队 0",
+		"排队 1",
 		"最近 24 小时 成功 1 · 失败 1 · 取消 0",
 	]);
 	await expect(head.getByRole("button", { name: "运行场景" })).toBeVisible();
@@ -97,7 +97,7 @@ test("运行块：场景、版本、运行编号、触发人和开始时间，�
 	const { running } = await seedWall({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
 	const blocks = region(page, "正在运行").getByRole("heading", { level: 3 });
-	await expect(blocks).toHaveText(["撮合压测", "定时巡检"]);
+	await expect(blocks).toHaveText(["撮合压测", "夜间巡检"]);
 
 	const run = block(page, "撮合压测");
 	await expect(run).toContainText("运行中");
@@ -158,25 +158,25 @@ test("线路：每条链一行，节点是站，已完成数写在右边；子�
 	expect(await segment("entry")).not.toBe(signal);
 });
 
-test("进行中的节点那一行：节点、Agent、尝试号、已执行时长；等待节点写唤醒时间；运行监控概览的链路里写法一样", async ({
+test("进行中的节点那一行：节点、Agent、尝试号、已执行时长；排队中的节点写状态；运行监控概览的链路里写法一样", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
-	const { sleeping } = await seedWall({ page, controlPlane, connectAgent, clock });
+	const { queued } = await seedWall({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
 	await expect(
 		block(page, "撮合压测").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
 	).toHaveText(["probeagent-linux · 第 1 次尝试 · 15s"]);
 	await expect(
-		block(page, "定时巡检").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
-	).toHaveText(["nap等待中 · 唤醒 09:15:14"]);
+		block(page, "夜间巡检").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
+	).toHaveText(["pingagent-mac · 第 1 次尝试 · 排队中"]);
 
-	// 点进概览，停在 Sleep 上的运行仍写等待节点和唤醒时间，不会整行消失。
-	await page.goto(`/runs/${sleeping}?view=overview`);
+	// 点进概览，停在排队上的运行仍写排队中的节点，不会整行消失。
+	await page.goto(`/runs/${queued}?view=overview`);
 	await expect(page.getByRole("list", { name: "进行中的节点" }).getByRole("listitem")).toHaveText([
-		"nap 等待中 · 唤醒 09:15:14",
+		"ping agent-mac · 第 1 次尝试 · 排队中",
 	]);
 });
 
@@ -193,8 +193,8 @@ test("运行块的主指标：场景没设关注项时，读数区是执行中�
 	await expect(cells).toHaveCount(1);
 	await expect(cells.first()).toContainText("probe");
 	await expect(cells.first()).toContainText("level");
-	// 等待中的运行没有执行中的节点：标题行和「设置关注项」都在，写明原因。
-	const waiting = block(page, "定时巡检").getByRole("region", { name: "执行中节点的主指标" });
+	// 只有排队中节点的运行没有执行中的节点：标题行和「设置关注项」都在，写明原因。
+	const waiting = block(page, "夜间巡检").getByRole("region", { name: "执行中节点的主指标" });
 	await expect(waiting).toContainText("没有执行中的节点。");
 	await expect(waiting.getByRole("link", { name: "设置关注项" })).toBeVisible();
 
@@ -746,7 +746,7 @@ test("场景列：按最近一次运行的时间排序，写上次运行的结�
 	const rows = scenarios.getByRole("list").getByRole("link");
 	await expect(rows).toHaveText([
 		"撮合压测运行中",
-		"定时巡检运行中",
+		"夜间巡检运行中",
 		"订单链路失败01-01 08:05",
 		"巡检成功01-01 08:00",
 		"草稿从未运行",

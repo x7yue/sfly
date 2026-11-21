@@ -421,14 +421,16 @@ test("子流程成员：往子流程里加节点，框跟着变大；画在子�
 
 	await openMenu(page, "sub_ping");
 	await nodeMenu(page).getByRole("menuitem", { name: "在后面添加节点" }).click();
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 	// 新节点接在 sub_ping 右边，视图随后平移过去：在同一时刻量框、新节点和子流程区域。
 	const frame = annotationFrame(page, "annotation_1");
 	await expect
 		.poll(async () => {
 			const grown = await box(frame);
-			const added = await box(nodeCard(page, "sleep_1"));
+			const added = await box(nodeCard(page, "stop_subflow_1"));
 			const sub = await box(region);
 			return grown.width > first.width && frames(grown, added) && frames(grown, sub);
 		})

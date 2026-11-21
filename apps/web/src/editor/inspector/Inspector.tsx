@@ -56,11 +56,9 @@ import {
 	ExecutionSettings,
 	PackageParams,
 	PackageVersionField,
-	SleepForm,
 	StopSubflowField,
 	SubflowNameField,
 	SubflowTrigger,
-	TimerForm,
 } from "./node-forms";
 import { NoteField } from "./node-note";
 import { ParamsEditor } from "./ParamsEditor";
@@ -265,7 +263,6 @@ function NodeInspector({
 	const fieldInputs = new Set<string>([
 		...Object.keys(type?.inputs.properties ?? {}),
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
-		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
 		...(node.kind === "subflow_entry" ? ["name"] : node.kind === "stop_subflow" ? ["subflow"] : []),
 	]);
 	const general = warnings.filter(
@@ -273,11 +270,7 @@ function NodeInspector({
 	);
 	const change = (next: DocNode) => context.onChangeNode(id, next);
 	const displayNameError = fieldErrors.find((e) => e.field === "display_name")?.message;
-	const hasExec =
-		node.kind === "package" ||
-		node.kind === "timer" ||
-		node.kind === "sleep" ||
-		node.kind === "stop_subflow";
+	const hasExec = node.kind === "package" || node.kind === "stop_subflow";
 	const paramErrors = fieldErrors.length;
 	const version = node.kind === "package" ? doc.packages[node.package] : undefined;
 
@@ -402,12 +395,6 @@ function NodeInspector({
 							onLocate={context.onLocate}
 						/>
 					)}
-					{node.kind === "timer" && (
-						<TimerForm node={node} problemsOf={problemsOf} onChange={change} />
-					)}
-					{node.kind === "sleep" && (
-						<SleepForm node={node} choices={choices} problemsOf={problemsOf} onChange={change} />
-					)}
 					{node.kind === "stop_subflow" && (
 						<StopSubflowField
 							id={id}
@@ -455,8 +442,6 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 	entry: "主链的起点，声明触发运行时填写的入口参数。",
 	subflow_entry: "子流程的起点，由异步任务节点调度；只能看到映射传入的参数。",
 	async: "派发一个子流程后主链立即继续；子流程失败不影响主链。",
-	timer: "等到某个时刻再继续，由控制面执行，不占用 Agent。",
-	sleep: "等待一段时长再继续，由控制面执行，不占用 Agent。",
 	stop_subflow:
 		"停止本链触发的某个子流程，等它完全结束（包括其中的 always 节点）后再继续；由控制面执行，不占用 Agent。",
 	// 已移除种类的节点（ADR 0028）。

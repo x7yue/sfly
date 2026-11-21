@@ -53,26 +53,22 @@ describe("编排文档差异", () => {
 	it("列出新增、删除的节点和连线", () => {
 		const after = {
 			...base,
-			nodes: [
-				base.nodes[0],
-				base.nodes[1],
-				{ id: "sleep_1", kind: "sleep", always: false, duration: "30s" },
-			],
+			nodes: [base.nodes[0], base.nodes[1], { id: "stop_1", kind: "stop_subflow", always: false }],
 			edges: [
 				{ from: "entry", to: "check", kind: "chain" },
-				{ from: "check", to: "sleep_1", kind: "chain" },
+				{ from: "check", to: "stop_1", kind: "chain" },
 			],
 			packages: { http: "1.0.0" },
 		};
 		expect(diffDocuments(base, after)).toEqual({
 			settings: [{ path: "packages.im", before: "0.3.0", after: undefined }],
 			nodes: {
-				added: [{ id: "sleep_1", kind: "sleep" }],
+				added: [{ id: "stop_1", kind: "stop_subflow" }],
 				removed: [{ id: "notify", kind: "package" }],
 				changed: [],
 			},
 			edges: {
-				added: [{ from: "check", to: "sleep_1", kind: "chain" }],
+				added: [{ from: "check", to: "stop_1", kind: "chain" }],
 				removed: [{ from: "check", to: "notify", kind: "chain" }],
 			},
 			moved: [],

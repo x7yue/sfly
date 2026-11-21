@@ -90,8 +90,6 @@ export interface ControlPlaneOptions {
 	metricRetentionDays?: number;
 	/** 保留期清理（含指标分区维护）的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
 	retentionSweepIntervalMs?: number;
-	/** 定时 / Sleep 节点的定时器扫描间隔（#14），默认 1 秒；是否到期只按注入的时钟判断。 */
-	timerSweepIntervalMs?: number;
 	/** 飞书发送队列的周期扫描间隔（#229，兜底：消息入队时已经立即唤醒投递），默认 1 秒。 */
 	feishuSweepIntervalMs?: number;
 	/** SSE 心跳的间隔，默认 15 秒；每次心跳带上控制面时间。 */
@@ -270,8 +268,16 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			},
 		}),
 	});
-	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
-	await engine.recover();
+	// 重启恢复：状态都在 PG，给租约和排队超时留出 Agent 重连的时间（#15）；升级前停在已移除的等待节点上的任务
+	// 按配置错误失败（ADR 0028），某个历史运行出错时记日志、跳过，不挡住启动。
+	await engine.recover((error, task) => {
+		if (logger) {
+			console.error(
+				`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
+				error,
+			);
+		}
+	});
 	const actions = new TaskActions({
 		db: database.db,
 		clock,
@@ -402,8 +408,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		),
 		// 指标：写入攒了约 10 秒的当前段（#29）。
 		periodic(options.metricFlushIntervalMs ?? 1000, () => metrics.flushDue(), fail("metric flush")),
-		// 定时 / Sleep 节点（#14）：定时器的状态全在 PG（tasks.wake_at），扫描本身无状态。
-		periodic(options.timerSweepIntervalMs ?? 1000, () => engine.wakeTimers(), fail("timer sweep")),
 		// 飞书发送队列（ADR 0020）：消息入队时已经立即唤醒投递，这里兜底（控制面重启前入队的、投递循环出错退出的）。
 		periodic(
 			options.feishuSweepIntervalMs ?? 1000,

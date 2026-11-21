@@ -56,7 +56,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 在上面的范围和时序假设内，三个配置各自穷举了所有消息交错、断线时机、执行结果（成功或失败）和租约到期时机。两个时序假设同时不成立（`LateHeartbeats = TRUE` 且 `PromptDelivery = FALSE`）时也在同步提交上穷举过一次，五条性质都成立（约 1320 万个不同状态，约 1 分钟），没有放进 `check.sh`。以下不在模型里，结论不覆盖：
 
 - 多个节点或多个运行共享槽位。只有一个节点时同一时刻最多一个尝试在排队，所以 **`#dispatch` 里按 `slots` 计数这一处没有被验证**，`SlotBound` 守护的是「Hello 要上报安装中的任务」和「放弃的任务要杀掉」。
-- 运行取消（`cancel`、`#cancelChain`、`#resendCancels`）、停止子流程（docs/SEMANTICS.md §4.1）、定时和 Sleep 节点、立即更新（UpdateNow）和自更新排空、版本不一致时不派发。`agent_lost` 时的强制取消在模型里，但取消只建模成「被告知停止」，不区分优雅取消和强制取消。
+- 运行取消（`cancel`、`#cancelChain`、`#resendCancels`）、停止子流程节点（docs/SEMANTICS.md §4.1）、立即更新（UpdateNow）和自更新排空、版本不一致时不派发。`agent_lost` 时的强制取消在模型里，但取消只建模成「被告知停止」，不区分优雅取消和强制取消。
 - 控制面重启（`extendForRecovery`）、多个控制面连接同一个 Agent、令牌。
 - 失败类型的区别：模型里所有失败都按 `retries` 重试；`env_error` 和 `config_error` 不重试，这一点没有建模。结果写不进数据库时按 `node_error` 失败（#207）也没有建模，模型里成功的结果总被记为成功。
 - 「结果已交出、还没发出」的任务有没有被漏报（#132）：Hello 或心跳少列了这样一个任务，只会让控制面多一次 `agent_lost`、多重试一次（旧尝试已经结束），不会破坏上面五条性质，所以模型里没有对应的性质。漏报还在安装或执行中的任务不一样：`SlotBound` 会抓到（`mutants.sh` 的 `hello-omits-installing`）。这一条由 `agent/src/ledger.rs` 的单元测试守着（`hello_lists_a_task_that_finished_before_it_was_listed` 等）。

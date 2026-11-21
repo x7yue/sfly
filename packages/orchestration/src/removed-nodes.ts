@@ -1,4 +1,9 @@
-import { REMOVED_NODE_KINDS, removedKindLabel, removedNodesIn } from "@sfly/schema";
+import {
+	REMOVED_NODE_KINDS,
+	removedKindLabel,
+	removedNodesIn,
+	removedOutputsAdvice,
+} from "@sfly/schema";
 import { nodeNameWithId } from "./node-display.js";
 
 /** 文档里有已移除种类的节点（ADR 0028）：保存时警告，触发时阻断；从画布上删掉就没有了。 */
@@ -22,7 +27,7 @@ export function removedNodeWarnings(doc: {
 	const byId = new Map(doc.nodes.map((n) => [n.id, n]));
 	return removedNodesIn(doc).map(({ id, kind, replacement }) => ({
 		code: "node_kind_removed",
-		message: `节点 ${nodeNameWithId(byId.get(id) ?? { id, kind })} 的类型（${removedKindLabel(kind)}，原来的「${REMOVED_NODE_KINDS[kind].label}」）已不再支持，不能运行。替换办法：${replacement}`,
+		message: `节点 ${nodeNameWithId(byId.get(id) ?? { id, kind })} 的类型（${removedKindLabel(kind)}，原来的「${REMOVED_NODE_KINDS[kind].label}」）已不再支持，不能运行。替换办法：${replacement}${removedOutputsAdvice(kind) && `。${removedOutputsAdvice(kind)}`}`,
 		node_id: id,
 	}));
 }

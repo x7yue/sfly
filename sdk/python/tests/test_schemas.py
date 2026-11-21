@@ -117,7 +117,14 @@ def test_orchestration_document_with_defaults_omitted_passes() -> None:
                 "node": "http_check",
                 "inputs": {"url": "${{ params.url }}/health"},
             },
-            {"id": "cleanup", "kind": "sleep", "duration": "5s", "always": True},
+            {
+                "id": "cleanup",
+                "kind": "package",
+                "package": "demo-checks",
+                "node": "http_check",
+                "inputs": {"url": "${{ params.url }}/cleanup"},
+                "always": True,
+            },
         ],
         "edges": [
             {"from": "entry", "to": "check", "kind": "chain"},
@@ -133,11 +140,19 @@ def test_orchestration_document_rejects_unknown_node_kind() -> None:
     assert not validator("orchestration-document").is_valid(doc)
 
 
-def test_orchestration_document_rejects_removed_node_kind() -> None:
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"id": "notify", "kind": "feishu_notify"},
+        {"id": "at", "kind": "timer", "at": "10:00:00"},
+        {"id": "pause", "kind": "sleep", "duration": "5s"},
+    ],
+    ids=lambda node: node["kind"],
+)
+def test_orchestration_document_rejects_removed_node_kind(node: dict[str, Any]) -> None:
     """已移除的种类（ADR 0028）不再被保存用的文档 schema 接受：历史版本里留着的这种节点只读，
     保存新版本前要先从场景里删掉。"""
-    doc = {"nodes": [{"id": "notify", "kind": "feishu_notify"}]}
-    assert not validator("orchestration-document").is_valid(doc)
+    assert not validator("orchestration-document").is_valid({"nodes": [node]})
 
 
 def entry_document(kind: str, description: str) -> dict[str, Any]:
@@ -183,8 +198,6 @@ NODES_OF_EVERY_KIND: list[dict[str, Any]] = [
     {"id": "entry", "kind": "entry"},
     {"id": "sub", "kind": "subflow_entry", "name": "report"},
     {"id": "spawn", "kind": "async"},
-    {"id": "at", "kind": "timer", "at": "10:00:00"},
-    {"id": "pause", "kind": "sleep", "duration": "5s"},
     {"id": "stop", "kind": "stop_subflow", "subflow": "sub"},
     {"id": "work", "kind": "package", "package": "stub", "node": "echo"},
 ]

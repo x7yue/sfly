@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { idParts } from "./node-display";
+import { idParts, KIND_META, nodeSlot } from "./node-display";
 
 // 卡片上节点 ID 的两段（开头放不下时截断，结尾整段始终显示）：结尾按分隔符保留整段，不把单词切开。
 describe("节点 ID 保留结尾", () => {
@@ -35,5 +35,32 @@ describe("节点 ID 保留结尾", () => {
 		// 开头的分隔符不算分段。
 		expect(idParts("_hidden")).toEqual({ head: "", tail: "_hidden" });
 		expect(idParts("abc_monitor")).toEqual({ head: "abc", tail: "_monitor" });
+	});
+});
+
+// 历史版本里留着的、已移除种类的节点（ADR 0028）：卡片上只写它是什么，不拿当时的配置当摘要。
+describe.each(["feishu_notify", "timer", "sleep"] as const)("已移除种类的节点 %s", (kind) => {
+	it("卡片头部写「已移除的节点类型」加种类名", () => {
+		expect(KIND_META[kind].label).toBe(`已移除的节点类型 ${kind}`);
+	});
+
+	it("卡片摘要说明不再支持，不写当时的配置", () => {
+		expect(nodeSlot({ id: "old", kind })).toEqual({
+			text: "不再支持，删除后才能保存",
+			empty: true,
+		});
+	});
+});
+
+describe("停止子流程节点的卡片摘要", () => {
+	it("选了子流程写子流程入口的节点 ID，没选时写「未选择子流程」", () => {
+		expect(nodeSlot({ id: "stop", kind: "stop_subflow", always: false, subflow: "mon" })).toEqual({
+			text: "子流程入口 mon",
+			empty: false,
+		});
+		expect(nodeSlot({ id: "stop", kind: "stop_subflow", always: false })).toEqual({
+			text: "未选择子流程",
+			empty: true,
+		});
 	});
 });

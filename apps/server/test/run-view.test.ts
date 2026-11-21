@@ -288,7 +288,6 @@ describe("运行视图", () => {
 					// 不带时钟读数的 TaskStarted / TaskResult（旧版本 Agent）：没有偏差。
 					start_clock_offset: null,
 					end_clock_offset: null,
-					wake_at: null,
 					progress: null,
 					current_action: null,
 				},

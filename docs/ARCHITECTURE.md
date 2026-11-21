@@ -12,7 +12,7 @@ sfly 是内网测试用的自动化任务编排平台：用户在画布上把节
 **范围内**
 
 - 在编排画布上编排场景，场景版本管理，防止并发修改；场景可以写说明、归档与恢复
-- 手动触发运行，执行链和异步子流程，定时节点和 Sleep 节点
+- 手动触发运行，执行链和异步子流程
 - Python SDK 开发节点包，发布到平台，由 Agent 下载并安装
 - 实时日志、进度、节点指标与图表、产物
 - 开放现有的 HTTP API，提供 TypeScript 的 API 客户端 `@sfly/client`：用户用它开发自己托管的自建页面（看板、按参数触发场景的页面）和程序（ADR 0022）
@@ -42,7 +42,7 @@ flowchart LR
   subgraph CP["控制面（TypeScript · 单实例）"]
     API["HTTP API<br/>Fastify · zod 契约 · 托管前端构建产物"]
     SSE["SSE 推送<br/>运行状态 · 日志 · 在线编辑者"]
-    ENG["引擎<br/>链状态机 · 定时器 · 恢复"]
+    ENG["引擎<br/>链状态机 · 租约扫描 · 恢复"]
     GW["Agent 网关<br/>gRPC 双向流"]
     REPO["节点包仓库"]
   end
@@ -84,7 +84,7 @@ flowchart LR
 | SDK CLI | Python | 生成节点元信息、构建并发布节点包、本地开发模式、操作平台（场景等，#238） |
 | API 客户端 | TypeScript，ESM 与类型声明，没有运行时依赖 | 自建页面和用户程序调用 HTTP API：带类型的接口调用、断线自动重连的事件流订阅、下载地址的拼接、统一的错误类型；控制台的请求层也建立在它上面（ADR 0022） |
 
-前端只负责页面，不写业务逻辑；引擎需要常驻进程（Agent 长连接、定时器、故障恢复），所以控制面独立部署。
+前端只负责页面，不写业务逻辑；引擎需要常驻进程（Agent 长连接、租约扫描、故障恢复），所以控制面独立部署。
 
 ---
 
@@ -134,7 +134,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> dict:
 - 输出：函数的返回值（JSON 对象，上限 1 MB）；返回值的键在装饰器或返回类型注解中声明，用于画布补全和保存时的引用检查。输出 TypedDict 字段注解里的 `Annotated[T, Doc("…")]` 写成这个输出 schema 的 `description`（规则和输入一样，最长 500 个字符），检查器「说明与指标」页的输出表、引用补全、节点包管理页和 `sfly package show` 显示它。
 - 指标与图表：`@node(metrics=[Metric("tps", unit="笔/s"), Metric("rejected", kind="counter")], charts=[Chart("TPS", type="line", metrics=["tps"])], primary_metric="tps")`。`Metric` 可以声明标签键（`Metric("conn_tps", labels=["host"])`，#78），每组标签值是一个序列。`sfly build` 校验：每个节点类型最多 50 个指标、20 张图表，指标名不重复，每个指标最多 3 个标签键（命名规则同指标名、不重复），图表引用和主指标必须是已声明的指标；主指标不能带标签键，`stat`、`bar` 图表不能引用带标签的指标（`line`、`area` 可以混用），控制面发布时用 zod 镜像做同样的交叉校验。没被任何图表引用的指标由节点包查询 API 补上默认图表（`default: true`；带标签的指标和 gauge → 折线，不带标签的 counter → 数值卡）。
 - 失败：抛出异常。
-- `ctx`：日志、进度、指标（`ctx.metric(name, value, labels={...})`：未声明的指标名、非有限数值、标签键与声明不一致或标签值为空、超过 128 个字符的点被丢弃并写警告日志；每个任务最多 1000 个序列，超出后新序列的点被丢弃，每个指标警告一次）、产物、取消检查（`ctx.cancelled()`）。
+- `ctx`：日志、进度、指标（`ctx.metric(name, value, labels={...})`：未声明的指标名、非有限数值（NaN、无穷、大到转不成浮点数的整数）、标签键与声明不一致或标签值为空、超过 128 个字符的点被丢弃并写警告日志；每个任务最多 1000 个序列，超出后新序列的点被丢弃，每个指标警告一次）、产物、取消检查（`ctx.cancelled()`）。
 
 ### 4.2 节点包格式
 
@@ -321,7 +321,7 @@ flowchart TD
   - **一行的长度**：事件管道的一行不限长度，Agent 读到换行为止（标准输出 / 标准错误一行超过 64 KiB 才拆开）。摘要里正在做的、最近结束的、最近失败的都列满，名称、字段、失败原因都取上限时，这几个列表有几百 KiB，也整行转发（`agent/tests/action_summary.rs`）；每种名称的计数不限种类，随名称的种类变长（超过 100 种时 SDK 警告），同样整行转发。
 - 任务被终止（取消、超时、被停止子流程节点停止）：Agent 先写取消标记再向进程树发 SIGTERM，执行器（`sdk/python/src/sfly/runner.py`）把它变成节点里的 `Cancelled`。这是正常终止，不是节点出错：`Cancelled` 一直抛到执行器时不往标准错误写堆栈（它是 ERROR 级的日志），改为往事件管道写一行 INFO（和 `ctx.log.info` 一样，来源是 sdk），写明停在哪（`任务被终止（SIGTERM），执行到 模块.函数 第 N 行`，取栈里最里面、不是 `sfly` 包也不是 Python 标准库的一帧：停在 SDK 或标准库里时报调用它的节点代码那一行，停在第三方库（site-packages）里时报库里的位置，整条栈都被跳过时报最里面一帧；取位置出错时只写原因，这条路径上不再抛异常）；`output.json` 照常写 `failed`，Agent 和本地调试按取消、超时处理这些任务时不读它。节点自己抛出的其他异常（包括清理时抛出的）照常把完整堆栈写到标准错误。
 - 输入里有节点没有声明的名字：执行器在调用节点函数之前，按函数签名（任务上下文不算输入、有 `**kwargs` 的函数不检查）检查派发来的输入，有多出来的名字就不调用节点，写 `output.json`：`{"status": "failed", "error": {"kind": "config_error", "message": "节点 http_load 没有声明输入 duraton，它声明的输入有：url、duration、concurrency"}}`（没有 `type` 和 `traceback`，标准错误里也不写），退出码 1。`error.kind` 是可选的：两个读取端都把 `config_error` 记成配置错误（不按重试次数重试），没有这个键、或是别的值的失败记成 `node_error`，所以旧版 SDK 和旧版 Agent 搭配时只是退回 `node_error`。
-- 读取端的一致：事件管道和 `output.json` 有两个读取端，Agent（`agent/src/logs.rs`、`agent/src/executor.rs`）和本地调试（`sdk/python/src/sfly/local.py`），两边各有一份实现，跑同一份用例表 `testdata/local-protocol-cases.json`（Agent 一端是 `agent/src/local_protocol_tests.rs`，本地调试一端是 `sdk/python/tests/test_local_protocol.py`）：事件管道的一行读成什么、退出码和 `output.json` 怎么判成结果、两边各抄一份的常量（标准输出 / 标准错误一行最大 64 KiB、执行器退出后排空等 2 秒、失败时附带的标准错误尾部 8 KiB、终止的宽限期 10 秒）、两端认识的事件类型集合。已知两端不一致的地方在用例表的 `known_differences` 里逐条写明，哪一端改了它的断言就会红。新增一种事件要同时改 `context.py`（或 `actions.py`）、`logs.rs`、`local.py` 和这份用例表：只改一端，事件类型集合的测试会红。
+- 读取端的一致：事件管道和 `output.json` 有两个读取端，Agent（`agent/src/logs.rs`、`agent/src/executor.rs`）和本地调试（`sdk/python/src/sfly/local.py`），两边各有一份实现，跑同一份用例表 `testdata/local-protocol-cases.json`（Agent 一端是 `agent/src/local_protocol_tests.rs`，本地调试一端是 `sdk/python/tests/test_local_protocol.py`）：事件管道的一行读成什么、退出码和 `output.json` 怎么判成结果、两边各抄一份的常量（标准输出 / 标准错误一行最大 64 KiB、执行器退出后排空等 2 秒、失败时附带的标准错误尾部 8 KiB、终止的宽限期 10 秒）、两端认识的事件类型集合。`NaN`、`Infinity`、`-Infinity` 不是合法的 JSON，两端都当作不是 JSON：事件管道里含它们的一行记成一行 SDK 日志，`output.json` 里有它们按执行器异常退出判（Python 的 `json.loads` 默认接受它们，本地调试一端用 `parse_constant` 拒绝）；执行器自己不会写出它们：`ctx.progress` 丢弃、`ctx.notify` 的消息不发送、返回值里有它们任务失败，都写明原因。已知两端不一致的地方在用例表的 `known_differences` 里逐条写明，哪一端改了它的断言就会红。新增一种事件要同时改 `context.py`（或 `actions.py`）、`logs.rs`、`local.py` 和这份用例表：只改一端，事件类型集合的测试会红。
 - 标准输出 / 标准错误：Agent 读出、还没转发的内容也有上限（与事件管道一样最多排 16 块）；转发跟不上时 Agent 暂停读取，管道写满后节点写标准输出 / 标准错误阻塞等待，不丢日志，Agent 内存不随节点的输出量增长。
 - 工作目录 `work/<task_id>/` 里还有 `task.json`、`output.json`、`artifacts/`、取消标记，以及 Agent 写的标准输出 / 标准错误副本 `stdout.log` / `stderr.log`：每个文件 8 MiB，超过后改名为 `.1`（覆盖旧的 `.1`）再新建，每个流最多 16 MiB，写失败时忽略。执行器异常退出时，错误摘要附带的标准错误末尾（8 KiB）取自 Agent 内存，不读 `stderr.log`。
 - `task.json` 里有 `task_id`、`attempt`、`run_id`、`node_id`，SDK 据此提供 `ctx.task`；本地调试时任务 ID 是 `local`、attempt 是 1。任务通过「Agent」类型的输入引用的 Agent（`AssignTask.referenced_agents`：名称、地址、端口、不能调用的原因）不写进 `task.json`，记在 Agent 的任务台账里（`agent/src/ledger.rs`）。SDK 不读这份名单：节点用 `ctx.agent(名称)` 调用另一台 Agent 时，寻址和名单检查都在 Agent 里（ADR 0019）；本地调试时引用的 Agent 和它们映射到的本地目录在 `SFLY_LOCAL_AGENTS` 里。任务通过「飞书机器人」类型的输入引用的机器人名称随任务下发（`AssignTask.referenced_feishu_bots`，不重复，不检查是否已登记，ADR 0020），供节点发通知时检查。
@@ -348,13 +348,12 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 ### 6.1 引擎
 
 - **状态全部落库**，引擎是 PostgreSQL 之上的状态机；每次状态迁移在一个事务内完成。
-- 推进由事件驱动：任务结果、定时器到期、Agent 上下线、用户取消。
-- 定时器：等待中节点的到期时间存在库里，按秒扫描；控制面重启后从库中恢复。
+- 推进由事件驱动：任务结果、租约和排队超时到期、Agent 上下线、用户取消。
 - 派发阶段：任务推送给 Agent 后先处于 `dispatched`（Agent 在下载、安装节点包或启动执行器），Agent 上报 `TaskStarted` 后才是 `running`；超时和耗时都从 `running` 开始计算，与 Agent 的计时起点一致。
 - 租约：心跳携带 Agent 实际持有的任务（`Heartbeat.running_tasks`），控制面只续约这些；控制面认为在这个 Agent 上、但连续两次心跳都没上报的任务以 `agent_lost` 失败。租约过期同样视为 `agent_lost`，按节点的 `retries` 决定是否重新派发。Agent 准备好环境之前不派发，准备环境再久也不会让任务的租约过期。以 `agent_lost` 失败时 Agent 可能其实还连着、还在执行这次尝试（例如派发消息晚到）：控制面先发强制取消，再派发下一次尝试，同一个节点不会在 Agent 上同时跑两份；连接已断开时由重连时的 Welcome 放弃它。租约默认 30 秒，Welcome 告诉 Agent 每 10 秒（租约的三分之一，`Welcome.heartbeat_interval_ms`）心跳一次。
 - 重连：Agent 在 Hello 中上报手上的任务（正在执行的，以及结果还没收到 Ack 的；心跳里列的是同一份，由 Agent 的任务台账独占，`agent/src/ledger.rs`），控制面在 Welcome 中逐个答复继续或放弃（放弃的任务被立即杀掉、结果丢弃）；控制面认为在这个 Agent 上运行、但 Hello 里没有的任务立即以 `agent_lost` 失败。
 - 单条消息失败：Agent 上报的字符串里的 NUL 在网关入口换成 U+FFFD（数据库存不下，docs/SEMANTICS.md §2.5）。处理一条消息出错（例如写库失败）时记下错误、跳过这一条，不关闭这台 Agent 的流；任务结果写不进数据库时这次尝试以 `node_error` 结束并回 Ack，连这一步也失败（数据库不可用）才关闭流，由 Agent 重连后重发。指标写库连续失败 3 次后丢弃这个任务还没写入的点。
-- 重启：运行、链实例、任务、定时器都在库里，启动时不重放；只把已经（或即将）到期的租约和排队超时顺延到一个租约之后，给 Agent 重新连接的时间。
+- 重启：运行、链实例、任务都在库里，启动时不重放；只把已经（或即将）到期的租约和排队超时顺延到一个租约之后，给 Agent 重新连接的时间。升级前还在 `waiting` 的任务里，节点是已移除种类的（定时、Sleep 节点，ADR 0028，docs/SEMANTICS.md §5）再没有人会唤醒它，`Engine.recover` 调用 `src/engine/removed-nodes.ts` 的 `failRemovedWaits` 把它们按 `config_error` 失败、让链继续推进；停止子流程节点也是 `waiting`，不动。
 - 派发：任务 `queued` 后，目标 Agent 在线并已准备好环境、版本与控制面一致且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。版本不一致的 Agent 照常连接、续约、上报日志和结果，只是不派新任务（ADR 0014），Agents 页显示它的更新状态。
 - 触发准入：`Engine.trigger` 在自己的事务里调用注入的依赖 `admitTrigger`（`control-plane.ts` 用 `src/runs/trigger-admission.ts` 的 `createTriggerAdmission` 造出它），由它回答场景现在能不能触发、用什么参数触发：读场景（加共享锁，与归档互斥）和最新版本，依次过预检、运行预设、入口参数和按参数实际值做的检查，返回拒绝（HTTP 状态码、错误码、原因）或可以（版本、执行计划、入口参数、记在运行上的预设）。它只读不写：创建运行和主链实例并开始推进的仍是 `Engine.trigger`，所以版本和预设是在创建运行的同一个事务里读的（ADR 0024）。
 - 派发内容：`Engine.#prepareAssign` 为排队中的任务取出所在的链和作用域，交给注入的依赖 `assignContent`（`control-plane.ts` 用 `src/engine/assign-content.ts` 的 `createAssignContent` 造出它）回答这次尝试派什么：解析输入，检查节点包要求的 SDK 和 Agent 版本，按节点类型的输入 schema 校验，解析「Agent」类型的输入引用的 Agent，收集「飞书机器人」类型的输入引用的机器人。回答是 `AssignTask` 的内容（连同要记在任务上的输入和机器人名单），或失败的类型（`config_error`、`env_error`）和原因，输入已经解析出来时一并给出。它只读不写：把任务记为 `dispatched` 并设租约，失败时先记下输入再 `#failTask`，都在引擎的同一个事务里。
@@ -383,7 +382,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | `feishu_messages` | seq（主键，入队顺序）, bot_name, source, run_id, task_id, body（飞书请求体）, enqueued_at, status（queued / delivered / failed / discarded）, attempts, next_attempt_at（可重试的失败之后最早的下一次尝试）, last_error, finished_at；飞书发送队列，投递结果不改变任何节点、任务、链或运行的状态，记录跟随所属运行的保留期（ADR 0020） |
 | `runs` | id, orchestration_version_id, triggered_by, triggered_via（经哪个 AI 编程助手触发，可空）, cancel_requested_via（第一次取消经哪个 AI 编程助手，可空）, params, preset_id / preset_name / preset_params（触发时选用的运行预设：ID 不是外键，名称是触发时的，预设参数的名单；不用预设时为空）, status, started_at, ended_at, notification_bot / notification_not_sent（运行通知发给哪个机器人；没进队列时的原因；消息在 `feishu_messages`，source `run_notification`） |
 | `chain_instances` | id, run_id, chain_id, parent_chain_instance_id, async_node_id, depth, params, status |
-| `tasks` | id, chain_instance_id, node_id, attempt, agent_name, status, inputs, referenced_feishu_bots, outputs, error_kind, error_message, progress, lease_expires_at, wake_at, log_path, log_seq, log_agent_seq, log_issues（JSONB，可空：日志里 WARN / ERROR 的条数和最近一条）, started_at, ended_at, start_clock_offset_ms, start_clock_offset_measured_at, end_clock_offset_ms, end_clock_offset_measured_at, action_details（已存的动作明细条数）, action_rev（明细的修订号）, action_capped（控制面兜底丢弃过明细、警告已写） |
+| `tasks` | id, chain_instance_id, node_id, attempt, agent_name, status, inputs, referenced_feishu_bots, outputs, error_kind, error_message, progress, lease_expires_at, log_path, log_seq, log_agent_seq, log_issues（JSONB，可空：日志里 WARN / ERROR 的条数和最近一条）, started_at, ended_at, start_clock_offset_ms, start_clock_offset_measured_at, end_clock_offset_ms, end_clock_offset_measured_at, action_details（已存的动作明细条数）, action_rev（明细的修订号）, action_capped（控制面兜底丢弃过明细、警告已写） |
 | `task_action_summaries` | task_id（主键）, summary（JSON：最新一份动作摘要，时间已折算成两种、secret 值已打码；不用 JSONB，保留字段的先后）, current_action（JSONB，可空：从摘要里选出的最外层、开始得最早的正在做的动作）；和任务行分开存，读任务行时不读出它（规格 #345） |
 | `task_actions` | (task_id, id) 主键, kind（action / mark）, parent, depth, name, fields（JSON，保留写入的先后）, noted（JSON：结束时补充的字段，读取时覆盖到 fields 上）, started_at, agent_started_at, start_mono, ended_at, agent_ended_at, duration_ms, result（还在做时为空）, reason, rev（最后写入这一行的那一批的修订号）；索引：(task_id, started_at, id)、(task_id, name, started_at, id)、只含失败的 (task_id, started_at, id)、(task_id, rev, id)（实时推送补发）；没有指向任务的外键（写入路径上逐行检查，与 `metric_segments` 一样）（规格 #345） |
 | `task_action_names` | (task_id, name) 主键, stored（存下的明细个数，不含补发的失败动作）, dropped（控制面兜底丢弃的个数）, dropped_from / agent_dropped_from（被丢弃的明细里最早的开始） |
