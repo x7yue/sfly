@@ -116,7 +116,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 				},
 			});
 			const tooShort = await cli("run", "show", runId.slice(0, 3), "--json");
-			expect(JSON.parse(tooShort.stderr).error.code).toBe("run_not_found");
+			expect(JSON.parse(tooShort.stderr).error.code).toBe("run_prefix_too_short");
 
 			const cancel = await cli("run", "cancel", "latest", "--json");
 			expect(cancel.code).toBe(2);
@@ -327,7 +327,8 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			expect(text.stdout).toContain(
 				`${NOTE}用 sfly run show ${runId}、sfly run logs ${runId} --failed 看。`,
 			);
-			expect(text.stdout).not.toContain("失败的任务");
+			// 没有「失败的任务」这一段（提示里的那句话不算）。
+			expect(text.stdout).not.toMatch(/^失败的任务（/m);
 			expect(text.stderr).not.toContain("没有 id 是");
 
 			const json = await viaOld("run", "wait", runId, "--json");

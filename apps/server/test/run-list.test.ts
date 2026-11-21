@@ -372,7 +372,10 @@ describe("跨场景的运行列表", () => {
 	});
 
 	it("按触发人精确筛（triggered_by）、只按编号前缀筛（id_prefix）：q 把昵称里的文字也当关键字，这两个不会", async () => {
-		const checkout = await api.orchestrationWith(orchestration([[entry, echo("a")]]), "结账回归");
+		const checkout = await api.orchestrationWith(
+			orchestration([[entry, echo("a"), echo("b")]]),
+			"结账回归",
+		);
 		const ok = await runToEnd(checkout, "Alice");
 		const failed = await runToEnd(checkout, "bob", (t) => agent.fail(t));
 		const other = await runToEnd(checkout, "alice.w");
@@ -385,6 +388,7 @@ describe("跨场景的运行列表", () => {
 		expect((await list("?triggered_by=alice.w")).runs.map((r) => r.id)).toEqual([other]);
 		expect((await list("?triggered_by=alice")).runs).toEqual([]);
 		// 同一个人的运行从新到旧，limit=1 就是他最近的一次。
+		clock.advance(60_000);
 		const second = await runToEnd(checkout, "Alice");
 		expect((await list("?triggered_by=Alice&limit=1")).runs.map((r) => r.id)).toEqual([second]);
 

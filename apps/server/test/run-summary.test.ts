@@ -444,7 +444,7 @@ describe("运行摘要", () => {
 		});
 
 		it("重试之后成功的节点：失败的那次尝试的日志尾部，摘要里也是掩码", async () => {
-			const runId = await start(document(chainEcho("x", { retries: 1 })));
+			const runId = await start(document({ ...chainEcho("x"), retries: 1 }));
 			const { x, gate } = await assignsOf(2);
 			agent.logs(x as AssignedTask, [[1, `连接口令 ${LATER}`]]);
 			await logsWritten(x as AssignedTask, 1);
