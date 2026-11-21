@@ -49,6 +49,7 @@ import { registerPresetRoutes } from "./preset-routes.js";
 import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
+import { registerRunSummaryRoutes } from "./run-summary-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
 import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
 
@@ -206,6 +207,7 @@ export function buildHttpApi({
 	});
 	registerRunListRoutes(app, { db: database.db });
 	registerRunFocusRoutes(app, { db: database.db, clock, queries: metricQueries });
+	registerRunSummaryRoutes(app, { db: database.db, clock, queries: metricQueries, logs });
 	registerLogRoutes(app, {
 		logs,
 		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),

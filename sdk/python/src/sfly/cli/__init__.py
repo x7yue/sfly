@@ -13,7 +13,17 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from sfly import __version__
-from sfly.cli import agent, api, package, run_artifacts, run_exec, run_logs, run_query, scenario
+from sfly.cli import (
+    agent,
+    api,
+    package,
+    run_artifacts,
+    run_exec,
+    run_logs,
+    run_query,
+    run_results,
+    scenario,
+)
 from sfly.cli.home import DEFAULT_SERVER, control_plane_url, dev_socket
 
 
@@ -238,6 +248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_logs.register(run_sub)
     run_artifacts.register(run_sub)
     run_query.register(run_sub)
+    run_results.register(run_sub)
 
     p_skill = sub.add_parser(
         "skill", help="管理项目里给 AI 编程助手的 skill（sfly-node-dev、sfly-platform）"
