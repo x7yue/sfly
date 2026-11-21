@@ -25,7 +25,7 @@ export function registerAgentRoutes(
 		return { terminated_tasks: outcome.terminated };
 	});
 	contractRoute(app, agentsApi.list, async () => {
-		const [agents, documents] = await Promise.all([hub.list(), orchestrations.headDocuments()]);
+		const [agents, documents] = await Promise.all([hub.list(), orchestrations.rawHeadDocuments()]);
 		// 引用数随各场景的最新版本变化，查询时现算。
 		const references = agentReferences(documents);
 		return {

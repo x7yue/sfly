@@ -422,7 +422,7 @@ function PresetForm({
 							<ParamField
 								key={p.name}
 								param={p}
-								value={draft.values[p.name] ?? (p.type === "boolean" ? false : "")}
+								value={draft.values[p.name] ?? (p.type === "boolean" && !p.secret ? false : "")}
 								error={unrepaired.values[p.name] ?? errors.values[p.name]}
 								disabled={!checked}
 								kept={draft.keptSecrets.includes(p.name)}

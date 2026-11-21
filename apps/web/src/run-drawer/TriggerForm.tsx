@@ -260,6 +260,7 @@ function ParamsForm({
 									error={errorText(field.state.meta.errors)}
 									onChange={(v) => field.handleChange(v)}
 									onBlur={field.handleBlur}
+									blankUsesDefault
 								/>
 							)}
 						</form.Field>
