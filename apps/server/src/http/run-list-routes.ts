@@ -12,6 +12,8 @@ export function registerRunListRoutes(app: FastifyInstance, { db }: { db: Db }):
 			status: query.status,
 			orchestrationId: query.orchestration_id,
 			q: query.q,
+			triggeredBy: query.triggered_by,
+			idPrefix: query.id_prefix,
 			limit: query.limit,
 		}),
 	);

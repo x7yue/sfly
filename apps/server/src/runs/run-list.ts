@@ -11,6 +11,10 @@ export interface RunListFilter {
 	orchestrationId?: string;
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q?: string;
+	/** 触发人：昵称整个相等。 */
+	triggeredBy?: string;
+	/** 运行编号前缀（不分大小写，调用方保证只有十六进制数字和 `-`）。 */
+	idPrefix?: string;
 	limit: number;
 }
 
@@ -35,6 +39,8 @@ export async function listAllRuns(
 		const match = or(ilike(sql`${runs.id}::text`, `${q}%`), ilike(runs.triggeredBy, `%${q}%`));
 		if (match) scope.push(match);
 	}
+	if (filter.triggeredBy) scope.push(eq(runs.triggeredBy, filter.triggeredBy));
+	if (filter.idPrefix) scope.push(ilike(sql`${runs.id}::text`, `${escapeLike(filter.idPrefix)}%`));
 	const where = filter.status ? [...scope, eq(runs.status, filter.status)] : scope;
 
 	const page = await db

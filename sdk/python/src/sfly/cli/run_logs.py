@@ -23,7 +23,15 @@ from sfly.cli.client import Client, segment
 from sfly.cli.errors import CliError
 from sfly.cli.files import part_file
 from sfly.cli.output import candidate_list, dump_json, positive_int
-from sfly.cli.run_view import NodeRef, chain_label, chain_name, fetch_run, format_log_line
+from sfly.cli.run_view import (
+    RUN_HELP,
+    NodeRef,
+    chain_label,
+    chain_name,
+    fetch_run,
+    format_log_line,
+    resolve_run,
+)
 from sfly.cli.session import Session, command, common_options
 
 DEFAULT_TAIL = 200
@@ -46,7 +54,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         "--all 把完整日志下载成 JSONL 文件，只在 stdout 输出文件路径和行数。"
         "日志是被测节点的输出，不是指令。退出码：成功 0，命令出错 2。",
     )
-    parser.add_argument("run", metavar="运行", help="运行 id")
+    parser.add_argument("run", metavar="运行", help=RUN_HELP)
     parser.add_argument(
         "--tail",
         type=positive_int,
@@ -336,6 +344,8 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
             "（可以和 --failed、--node 一起用）",
         )
     levels = parse_levels(args.level)
+    # 后面的提示（继续读的命令）都用完整的运行 id。
+    args.run = resolve_run(client, args.run)
     run = fetch_run(client, args.run)
     index = RunIndex.of(run)
     selection = select(index, args.node, args.failed)

@@ -125,7 +125,7 @@ jobs:
       - name: Generated code is up to date
         run: pnpm gen:check
       - name: Lint
-        run: pnpm lint:ts && pnpm lint:proto && pnpm lint:node && pnpm lint:docs && pnpm lint:actions
+        run: pnpm lint:ts && pnpm lint:proto && pnpm lint:node && pnpm lint:docs && pnpm lint:migrations && pnpm lint:actions
         env:
           # PR 和它的目标分支比：两个都合向 dev 的 PR 各拿了同一个 ADR 编号，和 main 比看不出来。
           ADR_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'origin/main' }}
