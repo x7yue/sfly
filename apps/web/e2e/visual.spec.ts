@@ -26,6 +26,7 @@ import {
 	selectMetricsTab,
 	setFocusItems,
 } from "./focus-support";
+import { failedRun, openFailedOverview } from "./monitor-failure-scenario";
 import {
 	connPoint,
 	labeledRun,
@@ -794,6 +795,62 @@ test("运行监控：概览（有异常：「需要注意」、WARN 的读数、
 		mask: [...runIds(page), page.locator("[data-chain-id]")],
 	});
 });
+
+// 失败的运行（#458）：概览首屏最上面是失败区域；链路卡片的站名用上整行的宽度，被跳过的节点单独计数；
+// 顶栏里预设名和耗时不被挤掉；时间线的名称列显示名称优先。两个视口都截图。
+for (const viewport of [
+	{ width: 1440, height: 900 },
+	{ width: 1280, height: 800 },
+] as const) {
+	test(`运行监控：概览（失败的运行：首屏最上面是失败区域）${viewport.width}×${viewport.height}`, async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const { runId } = await failedRun(controlPlane, connectAgent, clock);
+		await page.setViewportSize(viewport);
+		await openFailedOverview(page, clock, runId);
+		await expect(page.getByTestId("failure-area")).toBeVisible();
+		await expect(page.getByTestId("focus-freshness")).toBeVisible();
+		await page.mouse.move(20, viewport.height - 20);
+		await expect(page).toHaveScreenshot(`monitor-overview-failed-${viewport.width}.png`, {
+			mask: runIds(page),
+		});
+	});
+
+	test(`运行监控：概览（运行还在进行、已有节点失败）${viewport.width}×${viewport.height}`, async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const { runId } = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: false });
+		await page.setViewportSize(viewport);
+		await openFailedOverview(page, clock, runId);
+		await expect(page.getByTestId("failure-area")).toBeVisible();
+		await page.mouse.move(20, viewport.height - 20);
+		await expect(page).toHaveScreenshot(`monitor-overview-failed-running-${viewport.width}.png`, {
+			mask: runIds(page),
+		});
+	});
+
+	test(`运行监控：详情的时间线名称列（显示名称优先，节点 ID 让位）${viewport.width}×${viewport.height}`, async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const { runId } = await failedRun(controlPlane, connectAgent, clock);
+		await page.setViewportSize(viewport);
+		await openMonitor(page, clock, runId);
+		await expect(page.getByRole("region", { name: "图表工作区" })).toBeVisible();
+		await page.mouse.move(20, viewport.height - 20);
+		await expect(page).toHaveScreenshot(`monitor-failure-timeline-${viewport.width}.png`, {
+			mask: runIds(page),
+		});
+	});
+}
 
 test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({
 	page,

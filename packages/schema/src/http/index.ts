@@ -9,7 +9,6 @@ import { feishuBotsApi } from "./feishu-bots.js";
 import { metricsApi } from "./metrics.js";
 import { orchestrationsApi } from "./orchestrations.js";
 import { packagesApi } from "./packages.js";
-import { presenceApi } from "./presence.js";
 import { presetsApi } from "./presets.js";
 import { runFocusApi } from "./run-focus.js";
 import { runListApi } from "./run-list.js";
@@ -30,7 +29,6 @@ export * from "./feishu-bots.js";
 export * from "./metrics.js";
 export * from "./orchestrations.js";
 export * from "./packages.js";
-export * from "./presence.js";
 export * from "./presets.js";
 export * from "./run-focus.js";
 export * from "./run-list.js";
@@ -51,7 +49,6 @@ export const httpApis = {
 	metrics: metricsApi,
 	orchestrations: orchestrationsApi,
 	packages: packagesApi,
-	presence: presenceApi,
 	presets: presetsApi,
 	runs: { ...runListApi, ...runFocusApi, ...runSummaryApi, ...runsApi },
 	sdk: sdkApi,

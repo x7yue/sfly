@@ -149,6 +149,20 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			expect((await api.node(runId, "a")).error?.kind).toBe("agent_lost");
 		});
 
+		/**
+		 * 断线之后推进到租约到期前一秒：任务还是 dispatched，没有被判失联。只靠「推进满一个租约之后
+		 * 失败了」分不出「断线就立即判」和「等满一个租约才判」；有这一步才分得出（#508）。
+		 * 扫描每 20 毫秒跑一次（test-control-plane.ts 的 sweepIntervalMs），等 150 毫秒它跑过好几次。
+		 */
+		const stillPreparingJustBeforeTheLeaseEnds = async (runId: string) => {
+			clock.advance(LEASE - SECOND);
+			await new Promise((r) => setTimeout(r, 150));
+			const a = await api.node(runId, "a");
+			expect(a.attempts.map((t) => [t.attempt, t.status, t.error?.kind])).toEqual([
+				[1, "dispatched", undefined],
+			]);
+		};
+
 		// 任务派发出去之后 Agent 还没报「任务已开始」（任务停在「准备中」，状态 dispatched）就断线：
 		// 租约扫描对「准备中」和「执行中」的任务一视同仁（leases.ts 的 ON_AGENT，模型里的 OnAgent），
 		// 一个租约内没回来就是 agent_lost（#508）。上面两个用例都是任务已经开始之后才断线。
@@ -160,7 +174,8 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			expect((await api.node(runId, "a")).attempts.map((t) => t.status)).toEqual(["dispatched"]);
 
 			await disconnect(agent);
-			clock.advance(LEASE);
+			await stillPreparingJustBeforeTheLeaseEnds(runId);
+			clock.advance(SECOND);
 			await eventually(async () => {
 				const a = await api.node(runId, "a");
 				expect(a.attempts.map((t) => [t.attempt, t.status, t.error?.kind])).toEqual([
@@ -187,7 +202,8 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			await agent.nextAssign({ start: false });
 			await disconnect(agent);
 
-			clock.advance(LEASE);
+			await stillPreparingJustBeforeTheLeaseEnds(runId);
+			clock.advance(SECOND);
 			await eventually(async () =>
 				expect(await statusesOf(runId)).toMatchObject({
 					a: "failed",

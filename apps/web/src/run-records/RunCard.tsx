@@ -1,6 +1,6 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChainBar, chainProgressText, listChainLabel } from "#/components/chain-progress";
+import { ChainBar, ChainProgressCount, listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { TriggeredAt } from "#/components/via-tag";
@@ -82,7 +82,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 								{listChainLabel(chain)}
 							</span>
 							<ChainBar label={listChainLabel(chain)} nodes={chain.nodes} />
-							<span className="font-mono text-2xs text-fg-3">{chainProgressText(chain.nodes)}</span>
+							<ChainProgressCount nodes={chain.nodes} />
 						</div>
 					))}
 			</div>

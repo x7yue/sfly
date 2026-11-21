@@ -26,7 +26,7 @@ const API_BASE = "/api";
  *   await callApi(packagesApi.version, { params: { name, version } });         // 直接调用
  *   queryClient.invalidateQueries({ queryKey: domainKey(packagesApi.list) });   // 按领域失效
  *   <a href={apiUrl(logsApi.download, { params: { id } })}>                     // 下载链接
- *   useEventSource(runsApi.events, { params: { id } }, { run: (view) => … });  // SSE（./sse.ts）
+ *   openEventSource(logsApi.runEvents, { params: { id } }, { logs: (chunk) => … }); // SSE（./sse.ts）
  *
  * 类型由契约推导，开发环境（vite dev）下响应会按契约解析，不符合时抛出 code 为
  * `contract_violation` 的 ApiError（页面上显示为错误状态，details 是 zod issues）。
