@@ -104,6 +104,20 @@ describe("sfly run show / run start --wait：排队中的节点在等什么", { 
 		expect(attempt?.queue_wait).toMatchObject({ agent: name, state: "offline" });
 	});
 
+	it("run show --json：不在排队的尝试不带 queue_wait 这个键（已有的输出不变）", async () => {
+		const name = `done-${++counter}`;
+		const agent = await connect(name);
+		const runId = await api.triggerOk(await api.orchestrationWith(scenario(name), `完成 ${name}`));
+		await agent.succeed(await agent.nextAssign());
+		const json = await cli("run", "show", runId, "--json");
+		const view = JSON.parse(json.stdout) as {
+			chains: Array<{ nodes: Array<{ attempts: Array<Record<string, unknown>> }> }>;
+		};
+		const attempts = (view.chains[0]?.nodes ?? []).flatMap((n) => n.attempts);
+		expect(attempts.length).toBeGreaterThan(0);
+		for (const attempt of attempts) expect(attempt).not.toHaveProperty("queue_wait");
+	});
+
 	it("run start --wait：进度写明在等谁；Agent 上线、节点派发之后接着写后面的状态", async () => {
 		const name = `waiting-${++counter}`;
 		const gone = await connect(name);
