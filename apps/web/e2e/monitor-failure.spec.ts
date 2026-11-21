@@ -7,6 +7,7 @@ import {
 	FAILURE_HEADLINE,
 	FAILURE_MESSAGE,
 	failedRun,
+	LONG_FAILURE_MESSAGE,
 	openFailedOverview,
 	PRESET_NAME,
 } from "./monitor-failure-scenario";
@@ -139,6 +140,10 @@ for (const viewport of VIEWPORTS) {
 			expect(await nothingClipped(failure)).toBe(0);
 			expect(await fits(failure.getByTestId("failure-reason"))).toBe(true);
 			expect(await fits(failure.getByTestId("failure-node"))).toBe(true);
+			// 正常长度的原因完整显示：没有被收起（4 行以内，一个字也没被省略）。
+			const reason = failure.getByTestId("failure-reason");
+			await expect(reason).not.toHaveAttribute("data-clamped");
+			expect(await reason.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
 
 			// 层级：节点名 `text-lg` 比各区块的标题（`text-base`）都大；区域是概览里唯一铺着彩色底的块（别的块的底色都是中性灰）。
 			const sizes = await page.evaluate(() => {
@@ -172,6 +177,54 @@ for (const viewport of VIEWPORTS) {
 			expect(sizes.colored).toEqual(["failure-area"]);
 		});
 
+		test("失败原因特别长（几千字的单行）：最多显示 4 行，不把链路挤出首屏，展开全文看得到全部", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+				cleanupDone: true,
+				message: LONG_FAILURE_MESSAGE,
+			});
+			await openFailedOverview(page, clock, runId);
+			const failure = area(page);
+			const reason = failure.getByTestId("failure-reason");
+
+			// 页面里（读屏、页内查找拿到的）仍是全文；看得见的只有 4 行，在末尾省略。
+			await expect(reason).toHaveText(LONG_FAILURE_MESSAGE);
+			await expect(reason).toHaveAttribute("data-clamped", "true");
+			const lines = await reason.evaluate((el) => {
+				const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight);
+				return {
+					shown: Math.round(el.clientHeight / lineHeight),
+					all: Math.round(el.scrollHeight / lineHeight),
+				};
+			});
+			expect(lines.shown).toBe(4);
+			expect(lines.all).toBeGreaterThan(4);
+
+			// 整个失败区域仍在首屏里，链路卡片没有被挤出首屏（它的标题和第一行线路看得见）。
+			await expect(failure).toBeInViewport({ ratio: 1 });
+			const [failureBox, chainBox] = await Promise.all([
+				failure.boundingBox(),
+				chainCard(page).boundingBox(),
+			]);
+			expect(chainBox?.y).toBeGreaterThan(failureBox?.y ?? Number.POSITIVE_INFINITY);
+			expect(chainBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(viewport.height - 120);
+
+			// 展开全文：被收起的部分看得到，原文一个字不少；再点一次收回去。
+			const toggle = failure.getByRole("button", { name: "展开全文" });
+			await expect(toggle).toHaveAttribute("aria-expanded", "false");
+			await toggle.click();
+			await expect(toggle).toHaveAttribute("aria-expanded", "true");
+			const full = failure.getByTestId("failure-full");
+			await expect(full).toBeVisible();
+			expect(await full.evaluate((el) => el.textContent)).toBe(LONG_FAILURE_MESSAGE);
+			await toggle.click();
+			await expect(failure.getByTestId("failure-full")).toHaveCount(0);
+		});
+
 		test("失败区域：一步去失败节点的尝试和日志；错误信息的全文（含堆栈）展开才看", async ({
 			page,
 			controlPlane,
@@ -183,7 +236,7 @@ for (const viewport of VIEWPORTS) {
 			const failure = area(page);
 
 			// 全文默认收着；展开后原样显示，包括堆栈，也包括第一行的异常模块路径。
-			const toggle = failure.getByRole("button", { name: "完整的错误信息" });
+			const toggle = failure.getByRole("button", { name: "展开全文" });
 			await expect(toggle).toHaveAttribute("aria-expanded", "false");
 			await expect(failure.getByTestId("failure-full")).toHaveCount(0);
 			await toggle.click();

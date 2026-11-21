@@ -1,6 +1,6 @@
 import type { RunView } from "@sfly/schema";
 import { ChevronRightIcon, OctagonXIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { NodeNameInline, runNodeName } from "#/components/node-name";
 import { StatusDot } from "#/components/status";
 import { attemptLabel, FAILURE_AREA, moreLabel } from "#/lib/copy";
@@ -41,8 +41,8 @@ function FullNodeName({
 /**
  * 概览首屏的失败区域（PRODUCT 第一条：为什么失败任何时候都要一眼可见）：运行里已有节点最终失败时（失败的运行，
  * 或者运行还在进行）出现在链路上面，写出第一个失败的节点（GLOSSARY「第一个失败的节点」）、第几次尝试、失败时间、
- * 失败原因的一行（`errorHeadline`，完整显示、不截断，放不下就折行）和一步直达它的尝试、日志的按钮；
- * 错误信息的全文（含堆栈）收在「完整的错误信息」里，展开才看。
+ * 失败原因的一行（`errorHeadline`，完整显示、放不下就折行，超过 4 行的收起：一行摘要几乎总是一行，一个几千字的单行不该把链路挤出首屏，全文在「展开全文」里）和一步直达它的尝试、日志的按钮；
+ * 错误信息的全文（含堆栈）、被收起的原因收在「展开全文」里，展开才看。
  *
  * 怎么成为首屏最突出的内容：位置在最上面；是概览里唯一铺着色底（`danger-soft`）和描边（`danger-line`）的块；
  * 节点名 `text-lg` 加粗，和关注项读数的最新值同属最大一档，比各区块的标题（`text-base`）都大，原因 `text-base`；形状（八边形、菱形）
@@ -60,6 +60,19 @@ export function FailureArea({
 	const fullId = useId();
 	const headingId = useId();
 	const [first, ...others] = allRunFailures(run);
+	const reasonRef = useRef<HTMLParagraphElement>(null);
+	const [clamped, setClamped] = useState(false);
+	const reason = first?.message ?? "";
+	// biome-ignore lint/correctness/useExhaustiveDependencies: ResizeObserver 只在尺寸变化时回调，文字变了要重新量
+	useLayoutEffect(() => {
+		const element = reasonRef.current;
+		if (!element) return;
+		const check = () => setClamped(element.scrollHeight > element.clientHeight + 1);
+		check();
+		const observer = new ResizeObserver(check);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [reason]);
 	if (!first) return null;
 	const title =
 		run.status === "failed"
@@ -69,6 +82,9 @@ export function FailureArea({
 				: FAILURE_AREA.title.ended;
 	const node = runNodeName(first.node);
 	const hasFull = first.detail !== "" && first.detail !== first.message;
+	// 展开看的全文：有堆栈等更多内容时是错误信息的全文，只是原因一行太长时就是这一行。
+	const expandable = hasFull || clamped;
+	const fullText = hasFull ? first.detail : first.message;
 	return (
 		<section
 			aria-labelledby={headingId}
@@ -101,8 +117,11 @@ export function FailureArea({
 			</p>
 			{first.message && (
 				<p
+					ref={reasonRef}
 					data-testid="failure-reason"
-					className="m-0 max-w-full text-base text-pretty wrap-anywhere text-fg-1"
+					data-clamped={clamped || undefined}
+					// 最多 4 行（见上）：更长的在末尾省略，全文在「展开全文」里。
+					className="m-0 line-clamp-4 max-w-full text-base text-pretty wrap-anywhere text-fg-1"
 				>
 					{first.message}
 				</p>
@@ -114,7 +133,7 @@ export function FailureArea({
 				<Button size="sm" onClick={() => onOpen(targetOf(first, "logs"))}>
 					{FAILURE_AREA.viewLogs(node)}
 				</Button>
-				{hasFull && (
+				{expandable && (
 					<Button
 						size="sm"
 						variant="ghost"
@@ -130,13 +149,13 @@ export function FailureArea({
 					</Button>
 				)}
 			</div>
-			{hasFull && expanded && (
+			{expandable && expanded && (
 				<pre
 					id={fullId}
 					data-testid="failure-full"
 					className="m-0 max-h-80 overflow-auto rounded-md border border-border-soft bg-inset p-3 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-1"
 				>
-					{first.detail}
+					{fullText}
 				</pre>
 			)}
 			{others.length > 0 && <OtherFailures failures={others} onOpen={onOpen} />}

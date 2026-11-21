@@ -180,7 +180,7 @@ export const FOCUS = {
 } as const;
 
 /**
- * 运行监控概览里的失败区域：第一个失败的节点、第几次尝试和失败原因（`errorHeadline`，完整显示），一步去它的尝试和日志；
+ * 运行监控概览里的失败区域：第一个失败的节点、第几次尝试和失败原因（`errorHeadline`，最多 4 行，更长的收起），一步去它的尝试和日志；
  * 运行还没结束、已有节点失败时也有。直达按钮的写法和「需要注意」里的相同（{@link FOCUS}）。
  */
 export const FAILURE_AREA = {
@@ -191,8 +191,8 @@ export const FAILURE_AREA = {
 		ended: `有${TERM.node}失败`,
 	},
 	failedAt: (clock: string) => `${clock} 失败`,
-	/** 展开错误信息全文（含堆栈）的按钮：状态由 `aria-expanded` 和箭头表示，文字不变。 */
-	fullMessage: "完整的错误信息",
+	/** 展开错误信息全文（含堆栈，失败原因那一行太长被收起时也是它）的按钮：状态由 `aria-expanded` 和箭头表示，文字不变。 */
+	fullMessage: "展开全文",
 	/** 另有几个节点也失败了：节点名在后面列出。 */
 	others: (count: number) => `另有 ${count} 个${TERM.node}也失败了`,
 	viewAttempts: (node: string) => FOCUS.viewNodeAttempts(node),

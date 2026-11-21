@@ -27,6 +27,12 @@ export const FAILURE_MESSAGE =
 export const FAILURE_HEADLINE =
 	"AssertionFailed: 1 条断言中 1 条不通过：第 1 条：成功率 97.2% 低于阈值 99%（共 12840 次请求，失败 359 次）";
 
+/**
+ * 病态的失败原因：几千字的单行（没有换行、没有堆栈、没有异常模块路径，所以失败原因一行就是它自己）。
+ * 失败区域里原因最多显示 4 行，更长的收起，全文在「展开全文」里。
+ */
+export const LONG_FAILURE_MESSAGE = "成功率持续低于阈值，已重试三轮仍未恢复；".repeat(200);
+
 export const PRESET_NAME = "压测 A 集群（北京机房，高并发）";
 
 const ping = (id: string, display_name: string, extra: Record<string, unknown> = {}) => ({
@@ -84,7 +90,7 @@ export async function failedRun(
 	controlPlane: TestControlPlane,
 	connectAgent: E2eFixtures["connectAgent"],
 	clock: ManualClock,
-	options: { cleanupDone: boolean; preset?: boolean } = { cleanupDone: true },
+	options: { cleanupDone: boolean; preset?: boolean; message?: string } = { cleanupDone: true },
 ): Promise<FailureRun> {
 	const agent = await connectAgent({
 		name: "agent-a",
@@ -119,7 +125,7 @@ export async function failedRun(
 	expect(failed.nodeId).toBe(FAILED_NODE);
 	agent.logs(failed, [logLine(clock, 1, "成功率 97.2% 低于阈值 99%", LogLevel.ERROR)]);
 	clock.advance(5000);
-	await agent.fail(failed, FAILURE_MESSAGE);
+	await agent.fail(failed, options.message ?? FAILURE_MESSAGE);
 	const cleanup = await agent.nextAssign();
 	if (options.cleanupDone) {
 		clock.advance(2000);
