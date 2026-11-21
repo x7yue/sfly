@@ -1,11 +1,5 @@
 import { uniqueNodeId } from "@sfly/orchestration";
-import {
-	ANNOTATION_DEFAULT_COLOR,
-	type Annotation,
-	type AnnotationColor,
-	STICKY_NOTE_DEFAULT_COLOR,
-	type StickyNote,
-} from "@sfly/schema";
+import { ANNOTATION_DEFAULT_COLOR, type Annotation, type AnnotationColor } from "@sfly/schema";
 import type { AnnotationDrop } from "#/components/canvas/annotation-drop";
 import { TERM } from "#/lib/copy";
 
@@ -67,12 +61,6 @@ export const leaveAnnotation = (
 export function withColor(annotation: Annotation, color: AnnotationColor): Annotation {
 	const { color: _, ...rest } = annotation;
 	return color === ANNOTATION_DEFAULT_COLOR ? rest : { ...rest, color };
-}
-
-/** 便签换颜色：黄色不写（不写就是黄色，ADR 0026），所以选黄色时去掉 `color`。 */
-export function withStickyColor(note: StickyNote, color: AnnotationColor): StickyNote {
-	const { color: _, ...rest } = note;
-	return color === STICKY_NOTE_DEFAULT_COLOR ? rest : { ...rest, color };
 }
 
 /** 把列表里 ID 是 `id` 的注释框换成 `update` 的结果。 */

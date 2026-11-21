@@ -155,7 +155,7 @@ describe("状态语法（components/status 的 STATUS）", () => {
 		expect(low).toEqual([]);
 	});
 
-	it("注释框的六种颜色（ADR 0025）：胶囊、注释框的备注和便签上的文字 ≥ 4.5:1，色块 ≥ 3:1；框里三层明暗是注释框的备注 > 底板 > 节点卡片", () => {
+	it("注释框的六种颜色（ADR 0025）：胶囊和注释框的备注上的文字 ≥ 4.5:1，色块 ≥ 3:1；框里三层明暗是注释框的备注 > 底板 > 节点卡片", () => {
 		const problems = ANNOTATION_COLORS.flatMap((color) => {
 			const c = (role: string) => annotationRgb(color, role);
 			const card = rgbOf("--canvas-node-bg");
@@ -178,9 +178,6 @@ describe("状态语法（components/status 的 STATUS）", () => {
 					1.15,
 				],
 				["card brighter than canvas", ratio(card, rgbOf("--canvas-bg")), 1.1],
-				["sticky-fg on sticky", ratio(c("sticky-fg"), c("sticky")), 4.5],
-				["sticky-fg-2 on sticky", ratio(c("sticky-fg-2"), c("sticky")), 4.5],
-				["sticky brighter than canvas", ratio(c("sticky"), rgbOf("--canvas-bg")), 1.2],
 				// 框里下沉的节点卡片、框里子流程区域的标题行用的次要文字：底板上，和底板叠上子流程区域的淡紫上。
 				["fg-2 on panel", ratio(c("fg-2"), panel), 4.5],
 				[

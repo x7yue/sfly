@@ -376,7 +376,7 @@ describe("整理布局：按注释框分段", () => {
 		});
 	});
 
-	it("下一行的注释框有备注时行距再多留便签的位置；框外的标题不压住上一行的框", () => {
+	it("下一行的注释框有备注时行距再多留注释框的备注的位置；框外的标题不压住上一行的框", () => {
 		const noted: TidyDocument = {
 			...phases,
 			annotations: phases.annotations?.map((a) =>
@@ -544,7 +544,7 @@ describe("整理布局：注释框框住整棵子流程树", () => {
 		const layout = tidyLayout(doc);
 		const laid = laidOut(doc, layout);
 		const [running, closing] = annotationBoxes(laid);
-		// 子流程下面那一行的注释框（连同框外的标题和框里的便签）不伸进上面的框。
+		// 子流程下面那一行的注释框（连同框外的标题和框里的备注）不伸进上面的框。
 		const runningBottom = (running?.box.y ?? 0) + (running?.box.h ?? 0);
 		expect((closing?.box.y ?? 0) - ANNOTATION_TITLE_SPACE).toBeGreaterThan(runningBottom);
 		expect(running?.members).toEqual([

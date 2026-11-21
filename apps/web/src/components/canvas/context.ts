@@ -152,20 +152,6 @@ export interface AnnotationEdit {
 	drop(drop: AnnotationDrop): void;
 }
 
-/**
- * 可编辑画布上便签的操作（FlowCanvas 的 `stickyEdit`，ADR 0026）。状态和对场景的修改都在使用方：
- * 一次拖动、一次改大小各是一步撤销（`dragging` 为 true 的第一次记下修改前的状态，松手时为 false）。
- */
-export interface StickyEdit {
-	select(id: string): void;
-	move(id: string, position: Position, dragging: boolean): void;
-	resize(id: string, size: { width: number; height: number }, dragging: boolean): void;
-	/** 双击：打开检查器改文字。 */
-	open(id: string): void;
-	setColor(id: string, color: AnnotationColor): void;
-	remove(id: string): void;
-}
-
 export interface CanvasContextValue {
 	info: CanvasInfo;
 	selection: CanvasSelection;
