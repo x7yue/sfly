@@ -7,6 +7,7 @@ import { join } from "node:path";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { ApiClient } from "./support/api-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -56,10 +57,10 @@ describe("升级：运行通知的触发条件「总是」改成「失败和取�
 	) => {
 		const id = ids(n);
 		await client.query(
-			`insert into orchestrations (id, name, description, head_version, created_at,
+			`insert into orchestrations (id, name, description, head_version, created_at, project_id,
 				run_notify_bot, run_notify_trigger, run_notify_title, run_notify_note)
-			values ($1, $2, '', 1, $3, $4, $5, '旧标题', '旧说明')`,
-			[id.scenario, name, AT, bot, trigger],
+			values ($1, $2, '', 1, $3, $6, $4, $5, '旧标题', '旧说明')`,
+			[id.scenario, name, AT, bot, trigger, DEFAULT_PROJECT],
 		);
 		await client.query(
 			`insert into orchestration_versions (id, orchestration_id, number, document, author, created_at)
@@ -77,9 +78,9 @@ describe("升级：运行通知的触发条件「总是」改成「失败和取�
 			],
 		);
 		await client.query(
-			`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at, ended_at)
-			values ($1, $2, $3, '旧人', '{}', 'success', $4, $4)`,
-			[id.run, id.scenario, id.version, AT],
+			`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at, ended_at, project_id)
+			values ($1, $2, $3, '旧人', '{}', 'success', $4, $4, $5)`,
+			[id.run, id.scenario, id.version, AT, DEFAULT_PROJECT],
 		);
 	};
 
