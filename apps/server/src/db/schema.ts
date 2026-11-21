@@ -952,3 +952,50 @@ export const agentCredentials = pgTable(
 		),
 	],
 );
+
+/**
+ * 平台管理员在自己不是成员的项目里做的写操作（ADR 0029「用户、项目与角色」）：谁、什么时候、调用了什么、作用在哪个资源上。
+ * 平台管理员在每个项目里都有项目管理员的权限，这是「另一个项目读不到」的例外，拦不住，所以对项目透明：项目的成员看得到
+ * （查看页在 #499）。记录由契约路由的访问检查一处写（src/auth/access-guard.ts），不靠各接口自己记；先于处理函数写下，
+ * 请求没做成（400、404、409…）也留着，靠 `status` 区分：请求结束时回填响应的状态码，进程在两者之间退出的留空，
+ * 表示结果未知。只记写操作：他不是成员的项目里的写，以及他是成员、但这次写要靠平台管理员的权限才通过（他的角色没有这个范围）
+ * 的写；角色本来就够的写、所有读操作都不记。`member_role` 区分这两种：不是成员为空，是成员记当时的角色
+ * （不记成员的写，管理员先给自己加一个只读成员，之后的写就不留痕迹了）。
+ */
+export const platformAdminActions = pgTable(
+	"platform_admin_actions",
+	{
+		id: uuid("id").primaryKey(),
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		userId: uuid("user_id")
+			.notNull()
+			.references(() => users.id),
+		at: timestamptz("at").notNull(),
+		/** 契约里的方法和路径模板（`POST /orchestrations/:id/versions`），不是请求的实际地址。 */
+		route: text("route").notNull(),
+		/** 请求定位到的资源的类别（契约的 `resource.kind`）和定位它的值（路径参数、查询参数或请求体字段的值；列表和新建没有）。 */
+		resourceKind: text("resource_kind").notNull(),
+		resourceId: text("resource_id"),
+		/** 经哪个令牌（令牌的名称）；用登录 Cookie 的为空。 */
+		tokenName: text("token_name"),
+		/** 他这时在这个项目里的角色；不是成员为空。 */
+		memberRole: text("member_role").$type<ProjectRole>(),
+		/**
+		 * 响应的状态码，请求结束时回填（先记、记不上整个请求就失败，所以不会漏记；这一列在处理函数之后才写）。
+		 * 只有 2xx、3xx、4xx 说明了结果；**空和 5xx 都按「结果未知」看待**：
+		 * - 空：请求还在处理；进程在写这一列之前退出了；客户端在响应发出之前断开了（`onResponse` 不触发）；回填本身失败了（只记日志）。
+		 * - 5xx：处理函数出错了，但出错之前可能已经做成了一部分，不等于没做成。
+		 */
+		status: integer("status"),
+	},
+	(t) => [
+		index("platform_admin_actions_project").on(t.projectId, t.at),
+		check(
+			"platform_admin_actions_member_role",
+			sql`${t.memberRole} in ('read_only', 'editor', 'project_admin')`,
+		),
+	],
+);

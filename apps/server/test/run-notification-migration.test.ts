@@ -11,7 +11,7 @@ import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { ApiClient } from "./support/api-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-const MIGRATION = "0033_run_notify_always_to_failed_or_cancelled";
+const MIGRATION = "0034_run_notify_always_to_failed_or_cancelled";
 const AT = "2026-01-01T00:00:00Z";
 
 const ids = (n: number) => ({
