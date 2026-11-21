@@ -954,7 +954,8 @@ test("失败的运行：默认选中失败的节点，页内横幅写失败摘�
 	await header.getByRole("button", { name: "再次运行" }).click();
 	const rerun = page.getByRole("dialog", { name: "再次运行 · 日终数据处理" });
 	await expect(rerun.getByRole("textbox", { name: /^region/ })).toHaveValue("cn-east");
-	await expect(rerun.getByRole("textbox", { name: /^token/ })).toHaveValue("s3cr3t-token");
+	// 敏感参数不沿用上次的值；它的默认值读不回来（占位符），表单里留空，留空由控制面按默认值填入。
+	await expect(rerun.getByRole("textbox", { name: /^token/ })).toHaveValue("");
 	await rerun.getByRole("button", { name: "触发运行" }).click();
 	await expect(page).not.toHaveURL(new RegExp(runId));
 	await expect(rerun).toHaveCount(0);

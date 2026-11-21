@@ -25,6 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { DocumentDiffView } from "./DocumentDiffView";
 import { savableDocument } from "./draft";
+import { countSecretPlaceholders, withoutSecretPlaceholders } from "./secret-defaults";
 import type { Versioning } from "./useVersionedDraft";
 
 /** 保存被拦截时对方保存的版本（409 的 details.head，或本地草稿过期时打开页面时的最新版本）。 */
@@ -88,7 +89,8 @@ export function ConflictDialog({
 			const created = await callApi(orchestrationsApi.create, { body: { name } });
 			await callApi(orchestrationsApi.saveVersion, {
 				params: { id: created.id },
-				body: { base_version: 0, document: savableDocument(doc) },
+				// 敏感默认值读不回来，带不到另一个场景：去掉，下面的提示说明。
+				body: { base_version: 0, document: withoutSecretPlaceholders(savableDocument(doc)) },
 			});
 			return created;
 		},
@@ -101,6 +103,7 @@ export function ConflictDialog({
 	});
 
 	const shown: ConflictHead | null = fresh ?? head;
+	const secretDefaults = countSecretPlaceholders(doc);
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="w-[640px]">
@@ -152,6 +155,12 @@ export function ConflictDialog({
 						{saveAsNew.isPending ? "另存中…" : "另存为新场景"}
 					</Button>
 				</form>
+				{secretDefaults > 0 && (
+					<p className="m-0 text-xs text-fg-3">
+						已设置的敏感默认值（{secretDefaults}{" "}
+						个）读不回来，另存为新场景时不会带过去，需要的话到新场景里重新填写。
+					</p>
+				)}
 				{saveAsNew.error && (
 					<p role="alert" className="m-0 text-sm text-danger-fg">
 						另存失败：{saveAsNew.error.message}

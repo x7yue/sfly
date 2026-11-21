@@ -1,6 +1,14 @@
 import type { ParamDeclView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { initialValues, lockedValue, paramsSchema, toParams } from "./trigger-form";
+import {
+	defaultFieldValue,
+	fieldSchema,
+	hasHiddenDefault,
+	initialValues,
+	lockedValue,
+	paramsSchema,
+	toParams,
+} from "./trigger-form";
 
 const decls: ParamDeclView[] = [
 	{ name: "biz_date", type: "string", required: true },
@@ -44,6 +52,80 @@ describe("入口参数表单", () => {
 			options: '{"mode":"fast"}',
 			api_token: "",
 		});
+	});
+
+	describe("敏感参数的默认值读不回来（控制面给的是占位符 ******）", () => {
+		const secrets: ParamDeclView[] = [
+			{ name: "token", type: "string", secret: true, default: "******" },
+			{ name: "pin", type: "number", secret: true, default: "******" },
+			{ name: "opts", type: "json", secret: true, default: "******" },
+			{ name: "region", type: "string", default: "cn-east" },
+		];
+
+		it("表单里留空，不把占位符预填成值；普通参数的默认值照常预填", () => {
+			expect(initialValues(secrets)).toEqual({ token: "", pin: "", opts: "", region: "cn-east" });
+			expect(defaultFieldValue(secrets[0] as ParamDeclView)).toBe("");
+			expect(defaultFieldValue(secrets[3] as ParamDeclView)).toBe("cn-east");
+		});
+
+		it("再次运行：敏感参数同样留空（上次运行的值是打码的，也不沿用）", () => {
+			expect(initialValues(secrets, { token: "******", pin: "******", region: "us-west" })).toEqual(
+				{
+					token: "",
+					pin: "",
+					opts: "",
+					region: "us-west",
+				},
+			);
+		});
+
+		it("留空的敏感参数不进触发参数，由控制面按默认值填入；有默认值时必填的也能留空", () => {
+			const required = secrets.map((p) => ({ ...p, required: true }));
+			expect(paramsSchema(required).safeParse(initialValues(required)).success).toBe(true);
+			expect(toParams(secrets, initialValues(secrets))).toEqual({ region: "cn-east" });
+			expect(toParams(secrets, { ...initialValues(secrets), token: "test-secret-typed" })).toEqual({
+				token: "test-secret-typed",
+				region: "cn-east",
+			});
+		});
+	});
+
+	describe("敏感的布尔参数：「使用默认值」和「选了关」是两回事", () => {
+		const flag: ParamDeclView = { name: "flag", type: "boolean", secret: true, default: "******" };
+		const noDefault: ParamDeclView = { name: "quiet", type: "boolean", secret: true };
+
+		it("有默认值时初始是「没选」（空串），不是关；没有默认值的敏感布尔参数还是关", () => {
+			expect(hasHiddenDefault(flag)).toBe(true);
+			expect(hasHiddenDefault({ ...flag, default: null })).toBe(false);
+			expect(hasHiddenDefault({ ...flag, secret: false })).toBe(false);
+			expect(defaultFieldValue(flag)).toBe("");
+			expect(initialValues([flag, noDefault])).toEqual({ flag: "", quiet: false });
+		});
+
+		it("没动过：不放进触发参数，控制面按默认值填入；选了开或关才传，false 也传", () => {
+			const decls = [flag, noDefault];
+			expect(toParams(decls, { flag: "", quiet: false })).toEqual({ quiet: false });
+			expect(toParams(decls, { flag: true, quiet: false })).toEqual({ flag: true, quiet: false });
+			expect(toParams(decls, { flag: false, quiet: false })).toEqual({ flag: false, quiet: false });
+		});
+
+		it("没选通过校验（触发时用默认值）；运行预设固定的值要选一个", () => {
+			expect(paramsSchema([flag]).safeParse({ flag: "" }).success).toBe(true);
+			expect(paramsSchema([flag]).safeParse({ flag: false }).success).toBe(true);
+			expect(fieldSchema(flag, true).safeParse("").error?.issues[0]?.message).toBe("必填");
+			expect(fieldSchema(flag, true).safeParse(false).success).toBe(true);
+		});
+	});
+
+	it("没动过的敏感参数不放进触发参数，不论类型：字符串、数字、json、布尔都由控制面按默认值填入", () => {
+		const secrets: ParamDeclView[] = [
+			{ name: "token", type: "string", secret: true, default: "******" },
+			{ name: "pin", type: "number", secret: true, default: "******" },
+			{ name: "opts", type: "json", secret: true, default: "******" },
+			{ name: "flag", type: "boolean", secret: true, default: "******" },
+			{ name: "region", type: "string", default: "cn-east" },
+		];
+		expect(toParams(secrets, initialValues(secrets))).toEqual({ region: "cn-east" });
 	});
 
 	it("预设锁定的参数：secret 参数显示接口返回的打码值，不按类型换算；其余按类型换算", () => {

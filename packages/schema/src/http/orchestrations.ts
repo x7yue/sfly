@@ -18,6 +18,12 @@ import { FeishuBotName } from "./feishu-bots.js";
  * 请求里的 `document` 用 OrchestrationDocument：节点都是现在支持的种类。响应里的 `document` 用 StoredOrchestrationDocument：
  * 控制面保存时按前者解析，读出时按后者再解析一次（升级前保存的版本由此补上后来新增字段的默认值，例如注释框 `annotations`），
  * 满足「响应解析前后相同」的约定；它多出的是已移除种类的节点（ADR 0028）：历史版本里留着它们，读取时认得，不能保存。
+ *
+ * **secret 参数的默认值读出来是占位符**：所有返回场景文档的响应（编辑起点、某个版本、保存和恢复版本的响应）里，
+ * 入口参数声明为 `secret: true` 且有默认值的，`default` 一律是 SECRET_MASK（`******`），不论参数的类型；
+ * 和运行的参数、运行预设里的 secret 值是同一个掩码，原值任何接口都读不到。没有默认值（没写或 null）的不动，
+ * 普通参数的默认值照常返回。读取方靠「`secret` 为 true 且 `default` 是 SECRET_MASK」认出占位符
+ * （`isSecretDefaultPlaceholder`）。保存时占位符的处理见 `saveVersion`。
  */
 
 /** 保存的文档不合法时的说明：含已移除种类的节点时，写明是哪些、怎么替换（ADR 0028）。 */
@@ -213,6 +219,26 @@ export const SavedVersionView = z.object({
 	warnings: z.array(DocumentWarningView),
 });
 
+/**
+ * 保存（和恢复）场景版本时，secret 参数写了默认值的提醒（`saveVersion` 的 `warnings` 里，每个这样的参数一条，
+ * `node_id` 是入口节点）：版本不可修改，默认值会一直留在这个版本里。只提醒，不阻止保存，也不影响触发运行。
+ */
+export const SECRET_PARAM_DEFAULT_WARNING = "secret_param_default";
+
+/**
+ * 400 `secret_default_placeholder` 的 details 里的一项：保存的文档里，这个入口参数（`node_id` 是入口节点或子流程入口节点的 ID）
+ * 的默认值是占位符 `******`（SECRET_MASK），却没有可以沿用的上一个版本的值。`reason`：
+ *
+ * - `no_previous_value`：场景还没有保存过版本、上一个版本里没有这个参数（新增的、改了名的），或者它没有默认值。
+ * - `type_changed`：参数的类型变了，上一个版本里的默认值不再适用。
+ * - `unsecured`：参数从 secret 改成了普通参数，占位符不能存成它的默认值，原来的 secret 默认值也不会带过去。
+ */
+export const SecretDefaultProblem = z.object({
+	node_id: z.string(),
+	param: z.string(),
+	reason: z.enum(["no_previous_value", "type_changed", "unsecured"]),
+});
+
 /** 409 `version_conflict` 的 details：别人在 base_version 之后先保存了新版本（还没有版本时 head 为 null）。 */
 export const VersionConflictDetails = z.object({
 	base_version: z.number().int(),
@@ -348,7 +374,7 @@ export const orchestrationsApi = {
 		params: IdParams,
 		response: OrchestrationView,
 	}),
-	/** 编辑起点：最新版本的内容。 */
+	/** 编辑起点：最新版本的内容（secret 参数的默认值是占位符，见文件开头）。 */
 	head: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/head",
@@ -367,9 +393,17 @@ export const orchestrationsApi = {
 	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
 	 * 错误信息写明哪些节点、怎么替换。
 	 *
+	 * **secret 参数的默认值是占位符 `******` 时**（读出来的文档原样存回去，命令行的 pull 再 push、画布保存都是这样），
+	 * 按「沿用上一个版本的值」处理：新版本里是 base_version（也就是当时的最新版本）里同名参数（按入口节点 ID 加参数名对应）
+	 * 的默认值，原值不会出现在响应里。沿用不了时返回 400 `secret_default_placeholder`，什么都不保存，
+	 * details 是 SecretDefaultProblem 的列表（新场景的第一个版本、参数改了名或新增的参数、类型变了、参数从 secret 改成了普通参数）。
+	 * 先检查 base_version：编辑起点过期时照常返回 409。想换默认值就给新的值，想去掉就删掉 `default`。
+	 * 所以 secret 参数的默认值写不成 `******` 本身；普通参数的默认值可以是任何字符串，包括 `******`。
+	 *
 	 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
 	 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
-	 * 原来就已失效的预设不重复警告。
+	 * 原来就已失效的预设不重复警告。另有 `secret_param_default`：secret 参数写了默认值（版本不可修改，默认值会一直留在这个版本里，
+	 * 建议改用运行预设或触发时再给出），`node_id` 是入口节点。
 	 */
 	saveVersion: endpoint({
 		method: "POST",
@@ -410,7 +444,7 @@ export const orchestrationsApi = {
 			versions: z.array(VersionSummaryView),
 		}),
 	}),
-	/** 某个版本的完整内容（版本不可变）。 */
+	/** 某个版本的完整内容（版本不可变；secret 参数的默认值是占位符，见文件开头）。 */
 	version: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/versions/:number",
@@ -557,3 +591,4 @@ export type DocumentWarningView = z.infer<typeof DocumentWarningView>;
 export type OrchestrationVersionView = z.infer<typeof OrchestrationVersionView>;
 export type SavedVersionView = z.infer<typeof SavedVersionView>;
 export type VersionConflictDetails = z.infer<typeof VersionConflictDetails>;
+export type SecretDefaultProblem = z.infer<typeof SecretDefaultProblem>;

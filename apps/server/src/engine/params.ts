@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { ParamDeclaration } from "@sfly/schema";
+import { type ParamDeclaration, SECRET_MASK } from "@sfly/schema";
 
 /**
  * 值是否符合参数声明的类型（docs/SEMANTICS.md §2.1）：不做类型转换，`json` 接受任何值。
@@ -35,6 +35,20 @@ export function withPresetValues(
 		if (secrets.has(name) || !isDeepStrictEqual(provided[name], value)) return { locked: name };
 	}
 	return { params: { ...provided, ...presetValues } };
+}
+
+/**
+ * 调用方给的 secret 参数里，值恰好是占位符 `******`（SECRET_MASK）的参数名。读取接口把 secret 的值打成 `******`，
+ * 把读到的占位符当成值传回来（自建页面、旧版本控制台的触发表单就是这样）会让节点悄悄拿着 `******` 去跑，所以触发时拒绝，
+ * 让调用方不传这个参数（用默认值）或给真正的值。普通参数没有打码，值可以是 `******`。
+ */
+export function placeholderParams(
+	declarations: readonly ParamDeclaration[],
+	provided: Record<string, unknown>,
+): string[] {
+	return declarations
+		.filter((d) => d.secret && Object.hasOwn(provided, d.name) && provided[d.name] === SECRET_MASK)
+		.map((d) => d.name);
 }
 
 /**

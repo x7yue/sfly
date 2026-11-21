@@ -1,13 +1,14 @@
-import type { StoredOrchestrationDocument } from "@sfly/schema";
+import { SECRET_MASK, type StoredOrchestrationDocument } from "@sfly/schema";
 
 /**
  * secret 参数的值在日志和运行视图里替换成的掩码（docs/SEMANTICS.md §2.1：secret 参数在界面和日志中打码显示）。
+ * 定义在 @sfly/schema：读取方（控制台、命令行）靠它认出占位符；运行预设的值、场景版本里的默认值用的是同一个。
  *
  * 打码按值匹配：一次运行里任何链实例（主链、子流程实例）起点声明为 secret 的参数值都是 secret 值。
  * secret 值经参数映射传进子流程时，子流程参数即使没有声明 secret，值仍是同一个字符串，照样被打码
  * （secret 属性按值传播）；子流程实例创建后，它声明的 secret 值也用于整个运行。
  */
-export const SECRET_MASK = "******";
+export { SECRET_MASK };
 
 /**
  * 一次运行中所有 secret 参数的值（文本形式）：每个链实例起点（入口 / 子流程入口节点）声明为 secret 的参数。
