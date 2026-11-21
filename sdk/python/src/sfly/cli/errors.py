@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 # 退出码：运行成功 0，运行失败 1，命令本身出错（参数不对、连不上控制面、接口返回错误……）2，
-# 运行被取消 3，等待超时 124，按 Ctrl-C 停止 130。
+# 运行被取消 3，场景文档只有警告（`scenario check`、`scenario push --strict`）4，
+# 等待超时 124，按 Ctrl-C 停止 130。
 EXIT_ERROR = 2
+EXIT_WARNINGS = 4
 EXIT_TIMEOUT = 124
 EXIT_INTERRUPTED = 130
 # 运行结束时的状态 → 退出码（`sfly run start --wait`、`sfly run wait`）。

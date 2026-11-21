@@ -355,6 +355,7 @@ describe("停止子流程节点的引用检查（docs/SEMANTICS.md §4.1 第 1 �
 				node_id: "stopper",
 				input: "subflow",
 				message: "停止子流程节点 stopper 要停止的子流程 gone 不存在",
+				target: "gone",
 			},
 		]);
 		expect(codes(scene("spawnB"))).toEqual([["stop_subflow_unknown", "stopper"]]);
@@ -367,6 +368,7 @@ describe("停止子流程节点的引用检查（docs/SEMANTICS.md §4.1 第 1 �
 				node_id: "stopper",
 				input: "subflow",
 				message: "停止子流程节点 stopper 在触发子流程「压测」的异步任务节点 spawnB 之前",
+				target: "b",
 			},
 		]);
 	});
@@ -378,6 +380,7 @@ describe("停止子流程节点的引用检查（docs/SEMANTICS.md §4.1 第 1 �
 				node_id: "inner",
 				input: "subflow",
 				message: "停止子流程节点 inner 只能停止本链触发的子流程，「监控」不是",
+				target: "a",
 			},
 		]);
 		expect(codes(scene("a", "b"))).toEqual([["stop_subflow_out_of_scope", "inner"]]);

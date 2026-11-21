@@ -21,7 +21,9 @@ uv run sfly api --list runs
 | `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
-| `sfly scenario push <文件>` | 本地校验后保存成新的场景版本 |
+| `sfly scenario check <文件>` | 检查改过的文件，不保存：列出 `push` 时会有的错误和警告（分成这次改动带进来的和改动之前就有的），以及保存之后相对最新版本的改动；这次改动带进来了警告时退出码 4 |
+| `sfly scenario push <文件> [--strict]` | 本地校验后保存成新的场景版本；`--strict` 这次改动带进来了警告时不保存（退出码 4） |
+| `sfly scenario diff <场景> [版本A] [版本B]` / `sfly scenario diff <场景> --file <文件>` | 对比两个版本（默认最新的两个，只写一个时和最新版本比），或者最新版本和本地文件：设置、新增和删除的节点（显示名称和节点 ID）、改动字段的前后值、连线、注释框 |
 | `sfly scenario create --name 名称 [--description 说明] [--from 文件]` | 新建场景；给了文件就用其中的场景文档保存第一个版本 |
 | `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版（secret 参数的默认值跟着复制，读副本仍打码） |
 | `sfly scenario rename <场景> [--name 名称] [--description 说明]` | 修改名称和说明；它们不属于场景版本，不产生新版本 |
@@ -86,6 +88,7 @@ uv run sfly api --list runs
 | 1 | 运行失败（`run start --wait`、`run wait`） |
 | 2 | 命令本身出错：参数不对、连不上控制面、场景或运行不存在、预检没通过、运行预设不存在或已失效、保存版本冲突…… |
 | 3 | 运行被取消（`run start --wait`、`run wait`） |
+| 4 | 这次改动带进来了警告、没有错误（`scenario check`、`scenario push --strict`）：`check` 照常输出结果，`push --strict` 没有保存。改动之前就有的警告不算；有错误时是 2 |
 | 124 | 等待超时（`--timeout`）：运行仍在继续，没有被取消 |
 | 130 | 等待时按了 Ctrl-C：运行仍在继续，没有被取消 |
 
@@ -196,17 +199,20 @@ sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集
 
 ## 编辑场景
 
-编辑场景是「pull 下载文件 → 改 → push 上传」：
+编辑场景是「pull 下载文件 → 改 → check 检查 → push 上传」：
 
 ```text
 sfly scenario pull 回归 -o 回归.json
 （编辑 回归.json 里的 document）
+sfly scenario check 回归.json
 sfly scenario push 回归.json
 ```
 
 - pull 写出的文件是 `{"scenario": <场景 id>, "base_version": <版本号>, "document": {…}}`：`document` 就是场景文档（`default_agent`、`nodes`、`edges`、`packages`、`annotations`），和控制面保存的内容相同；`base_version` 是 pull 时的最新版本号。`--version N` 拉取旧版本时 `base_version` 仍是最新版本号，push 就相当于以旧版本为起点再保存一次。
 - **secret 参数的默认值读不回来**：控制面给的是占位符 `******`（和运行预设里的 secret 值同一个掩码），`pull` 写出的文件里是它，`scenario show` 不显示它，`pull` 的输出里有一行提示。不改它直接 `push`，新版本沿用上一个版本里同名参数的默认值；改成别的值就保存新的值，删掉 `default` 就是去掉默认值。沿用不了时 `push` 报错（错误码 `secret_default_placeholder`，退出码 2），逐个写明是哪个节点的哪个参数：新增或改了名的参数、类型变了、参数从 secret 改成了普通参数（占位符不能存成默认值，原来的值也不会带到普通参数上），给新的默认值或删掉 `default` 再 `push`。`--version N` 拉旧版本时，占位符沿用的是最新版本的值，不是第 N 版的（`pull` 的输出里写明）。`scenario create --from` 的文件里不能有占位符（新场景没有上一个版本可以沿用，命令在新建场景之前就报错）：要连同 secret 的默认值复制一个场景，用 `scenario copy`。secret 参数的默认值写不成 `******` 本身。保存带 secret 默认值的版本时，`push` 的输出里有一条提醒（`secret_param_default`）：版本不能修改，默认值会一直留在这个版本里，建议去掉默认值，改用运行预设或触发时再给出。
 - push 先按场景文档的 JSON Schema 在本地校验，出错时列出出错的位置，不发请求。通过后带着 `base_version` 保存新版本，输出新版本号和控制面给出的警告（引用的 Agent 或节点包不存在、必填参数缺失、注释框引用了不存在的成员等）；`--json` 里每条警告是 `{code, message, node_id?, input?, annotation_id?}`，注释框的警告带 `annotation_id`；成功后文件里的 `base_version` 更新为新版本号、`document` 换成控制面实际保存的内容，可以接着改、接着 push。
+- **先 `check` 再 `push`**：`scenario check <文件>` 和 `push` 走同一段校验（本地按 JSON Schema 校验，再交给控制面），但不保存、不产生版本：警告和 `push` 时完全一样，分成两种：**这次改动带进来的**，和**改动之前就有的**（最新版本里已经有同一条：同一种警告、指向同一个节点、输入或注释框，不看文字；指向另一个节点就是新的；会失效的运行预设说的就是这次改动，总是新的；场景还没有版本时全部是新的）。退出码只看这次改动带进来的：没有时退出码 0，有时退出码 4（`push` 照常会保存）；改动之前就有的单独一段「改动之前就有的警告」，不影响退出码，也不是这次要改的东西。有错误时（文档不合法、secret 默认值的占位符沿用不了、文件基于的版本已经不是最新）和 `push` 一样报错，退出码 2。输出的最后是「保存之后相对版本 N 的改动」，写法和 `scenario diff` 一样，用来核对这次到底改了什么。`--json` 是 `{scenario, base_version, ok, warnings, diff}`，每条警告带 `existing`（`true` 是改动之前就有），`ok` 表示这次改动没有带进来警告。`push --strict` 先做同样的检查，这次改动带进来了警告时不保存、不改文件，两种警告分段列出，退出码 4（`--json` 是 `{scenario, saved: false, base_version, warnings, file}`）；没有时带着 `strict` 保存，控制面在保存的同一个事务里再判断一次（检查之后、保存之前有人改了节点包或运行预设、让这次改动带进来了警告，同样不保存、退出码 4），保存成功时剩下的警告写成「改动之前就有的警告」。控制面比命令行旧、不支持 `--strict`（没有检查接口）时报错，退出码 2，不保存。不加 `--strict` 时 `push` 的行为不变。
+- **对比版本**：`scenario diff <场景>` 对比最新的两个版本，`scenario diff <场景> 3 5` 对比第 3 版到第 5 版，只写一个版本时和最新版本比；`scenario diff <场景> --file <文件>` 对比最新版本和本地文件（保存这个文件之后会改变什么）。文件里的 `base_version` 不是最新版本时，输出的最后多一行提示：push 这个文件会报版本冲突，而且差异里混着「撤销别人在这之后的改动」的部分，先用 `scenario diff` 看别人改了什么（`--json` 时提示写在 stderr，对象里带 `file_base_version`）。输出分几节：「设置」（默认 Agent、锁定的节点包版本）；「节点」里 `+` 是新增、`-` 是删除，写「显示名称（节点 ID）」和节点类型，`~` 是改动，下面逐项写改动的字段和前后值（包节点的输入是 `inputs.<名>`，入口参数是 `params.<参数名>`，值是 JSON，不存在时写「（无）」）；「连线」写 `起点 → 终点（种类）`；「只改了位置的节点」；「注释框」。两边相同时写明没有差异。`--json` 的 `diff` 是控制面返回的结构（`GET /orchestrations/:id/versions/:a/diff/:b`，和控制台的版本对比是同一个算法）。secret 参数的默认值两边都是占位符，改了值也看不出来。
 - 入口节点和子流程入口节点的参数可以写 `description`：一行说明，最长 200 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存。触发表单、异步任务节点的参数映射表单和命令行的参数表（`scenario show`、`run start` 参数出错时）都会显示它；它不影响执行。超长或带换行时 push 的本地校验报出位置，例如 `nodes/0/params/1/description`（节点 entry）。
 - 除子流程入口节点外，每个节点都可以写 `display_name`：一行显示名称（例如「创建测试用户」），最长 40 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存，不要求唯一。控制台的节点卡片拿它当标题，`scenario show` 的节点表在「节点」后面有一列「显示名称」（没有写 `-`），`--json` 里节点的 `display_name` 就是它（没有时不出现这个字段）；入口节点不在节点表里，它的显示名称写在主链的标题上（`主链（入口 开始（entry））`，没有显示名称时标题还是 `主链`），`--json` 里是最外层的 `entry_display_name`（同时带上入口节点的 `entry`）；它不影响执行，引用和日志仍然以节点 ID 为准。子流程入口节点没有这个字段：子流程名称（`name`）就是它的显示名称。超长或带换行时 push 的本地校验报出位置，例如 `nodes/3/display_name`（节点 build）。
 - 每个节点（包括入口节点和子流程入口节点）都可以写 `note`：多行备注，说明这个节点在场景里做什么、为什么这样配置，最长 2000 个 Unicode 字符（一个 emoji 算一个，换行也算一个），去掉首尾空白后为空就不保存；它不影响执行。画布上节点卡片的头部有备注图标，版本对比和 `scenario show` 也会列出它。超长时 push 的本地校验报出位置，例如 `nodes/1/note`（节点 deploy）。
