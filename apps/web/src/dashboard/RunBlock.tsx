@@ -239,7 +239,7 @@ function ReadoutHeading({
 const RuleLine = () => <span aria-hidden className="h-px min-w-4 flex-1 bg-border-soft" />;
 
 /**
- * 进行中的节点那一行：节点、Agent、尝试号、已执行时长；准备中、排队中写状态，等待节点写唤醒时间。
+ * 进行中的节点那一行：节点、Agent、尝试号、已执行时长；准备中、排队中写状态。
  * 给了 `limit` 时只列前几个，其余写「还有 N 个」。
  */
 function ActiveNodes({

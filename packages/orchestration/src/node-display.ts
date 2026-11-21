@@ -22,8 +22,6 @@ export type StoredNodeKind = StoredNode["kind"];
 export const NODE_KIND_LABEL: Readonly<Record<NodeKind, string>> = {
 	entry: "入口",
 	package: "包节点",
-	timer: "定时",
-	sleep: "Sleep",
 	async: "异步任务",
 	subflow_entry: "子流程入口",
 	stop_subflow: "停止子流程",
@@ -55,7 +53,7 @@ export function subflowLabels(doc: {
 }
 
 /**
- * 不带显示名称时的卡片标题（节点类型标题、「等待 30s」、子流程名称……）：清掉显示名称后卡片上写的就是它，
+ * 不带显示名称时的卡片标题（节点类型标题、子流程名称……）：清掉显示名称后卡片上写的就是它，
  * 所以改名输入框和检查器的显示名称输入框拿它做占位提示。
  */
 export function nodeDefaultTitle(node: StoredNode, lookup: NodeDisplayLookup): string {
@@ -64,10 +62,6 @@ export function nodeDefaultTitle(node: StoredNode, lookup: NodeDisplayLookup): s
 			return subflowLabel(node);
 		case "package":
 			return lookup.titleOf?.(node.package, node.node) ?? node.node;
-		case "timer":
-			return `等到 ${node.at}`;
-		case "sleep":
-			return `等待 ${node.duration}`;
 		case "stop_subflow":
 			// 卡片标题显示要停止的子流程名称（故事 9）；目标不存在时显示节点 ID，由校验面板提示。
 			return node.subflow

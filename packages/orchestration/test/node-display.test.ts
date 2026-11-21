@@ -17,7 +17,7 @@ const doc = {
 		{ id: "mon", kind: "subflow_entry", name: "监控" },
 		{ id: "legacy", kind: "subflow_entry" },
 		{ id: "blank", kind: "subflow_entry", name: " " },
-		{ id: "sleep_1", kind: "sleep" },
+		{ id: "spawn_1", kind: "async" },
 	],
 };
 
@@ -30,8 +30,14 @@ const node = (n: Record<string, unknown> & { kind: OrchestrationNode["kind"] }) 
 	({ id: "n1", ...n }) as OrchestrationNode;
 
 /** 已移除种类的节点（ADR 0028）：只有共有的字段和当时的配置。 */
-const removed = (n: Record<string, unknown> = {}) =>
-	({ id: "n1", kind: "feishu_notify", bot: "ops", text: "完成", ...n }) as StoredNode;
+const REMOVED_KINDS = [
+	["feishu_notify", { bot: "ops", text: "完成" }],
+	["timer", { at: "09:30:00", tz: "Asia/Shanghai" }],
+	["sleep", { duration: "30s" }],
+] as const;
+
+const removed = (kind: string, config: object, n: Record<string, unknown> = {}) =>
+	({ id: "n1", kind, ...config, ...n }) as StoredNode;
 
 describe("卡片上的标题和头部种类名", () => {
 	it("包节点：标题是节点类型的标题，头部不写种类名；节点包里没有这个节点类型时标题是节点类型名", () => {
@@ -40,17 +46,6 @@ describe("卡片上的标题和头部种类名", () => {
 		const unknown = node({ kind: "package", package: "std", node: "gone" });
 		expect(nodeCardText(unknown, lookup)).toEqual({ title: "gone", caption: undefined });
 		expect(nodeCardText(unknown, {})).toEqual({ title: "gone", caption: undefined });
-	});
-
-	it("Sleep 节点、定时节点：标题写出等待时长和时间点，头部是种类名", () => {
-		expect(nodeCardText(node({ kind: "sleep", duration: "30s" }), lookup)).toEqual({
-			title: "等待 30s",
-			caption: "Sleep",
-		});
-		expect(nodeCardText(node({ kind: "timer", at: "09:30:00" }), lookup)).toEqual({
-			title: "等到 09:30:00",
-			caption: "定时",
-		});
 	});
 
 	it("停止子流程节点：标题写出要停止的子流程名称，头部是种类名", () => {
@@ -72,8 +67,8 @@ describe("卡片上的标题和头部种类名", () => {
 			title: "停止「removed」",
 			caption: "停止子流程",
 		});
-		expect(nodeCardText(node({ kind: "stop_subflow", subflow: "sleep_1" }), lookup).title).toBe(
-			"停止「sleep_1」",
+		expect(nodeCardText(node({ kind: "stop_subflow", subflow: "spawn_1" }), lookup).title).toBe(
+			"停止「spawn_1」",
 		);
 	});
 
@@ -112,32 +107,38 @@ describe("卡片上的标题和头部种类名", () => {
 	});
 
 	it("不给查找时子流程入口以外都照常显示；停止子流程节点的目标按节点 ID 写", () => {
-		expect(nodeCardText(node({ kind: "sleep", duration: "5m" }), {}).title).toBe("等待 5m");
+		expect(nodeCardText(node({ kind: "async" }), {}).title).toBe("异步任务");
 		expect(nodeCardText(node({ kind: "stop_subflow", subflow: "mon" }), {}).title).toBe(
 			"停止「mon」",
 		);
 	});
 });
 
-describe("已移除种类的节点（ADR 0028）", () => {
-	it("卡片上写「已移除的节点类型」加它当时的种类名，不报错；有显示名称时名称是标题", () => {
-		expect(nodeCardText(removed(), lookup)).toEqual({
-			title: "已移除的节点类型 feishu_notify",
+describe.each(REMOVED_KINDS)("已移除种类的节点 %s（ADR 0028）", (kind, config) => {
+	it("卡片上写「已移除的节点类型」加它当时的种类名，不报错，不把当时的配置写进标题；有显示名称时名称是标题", () => {
+		expect(nodeCardText(removed(kind, config), lookup)).toEqual({
+			title: `已移除的节点类型 ${kind}`,
 			caption: undefined,
 		});
-		expect(nodeCardText(removed({ display_name: "通知群" }), lookup)).toEqual({
-			title: "通知群",
-			caption: "已移除的节点类型 feishu_notify",
+		expect(nodeCardText(removed(kind, config, { display_name: "老节点" }), lookup)).toEqual({
+			title: "老节点",
+			caption: `已移除的节点类型 ${kind}`,
 		});
 	});
 
-	it("卡片以外：有声明时按种类写，场景里已经没有这个节点、只知道运行里的种类时同样写", () => {
-		expect(nodeOutsideCardText(removed(), "feishu_notify", lookup)).toBe(
-			"已移除的节点类型 feishu_notify",
+	it("不带显示名称时的标题、卡片以外的写法：有声明时按种类写，场景里已经没有这个节点、只知道运行里的种类时同样写", () => {
+		expect(nodeDefaultTitle(removed(kind, config, { display_name: "老节点" }), lookup)).toBe(
+			`已移除的节点类型 ${kind}`,
 		);
-		expect(nodeOutsideCardText(undefined, "feishu_notify", lookup)).toBe(
-			"已移除的节点类型 feishu_notify",
+		expect(nodeOutsideCardText(removed(kind, config), kind, lookup)).toBe(
+			`已移除的节点类型 ${kind}`,
 		);
+		expect(nodeOutsideCardText(undefined, kind, lookup)).toBe(`已移除的节点类型 ${kind}`);
+	});
+
+	it("名字：显示名称写在节点 ID 前面，没有显示名称时只写节点 ID", () => {
+		expect(nodeNameWithId(removed(kind, config, { display_name: "老节点" }))).toBe("老节点（n1）");
+		expect(nodeNameWithId(removed(kind, config))).toBe("n1");
 	});
 });
 
@@ -152,14 +153,6 @@ describe("有显示名称时卡片上的写法", () => {
 		expect(named({ kind: "package", package: "std", node: "gone" })).toEqual({
 			title: "创建测试用户",
 			caption: "gone",
-		});
-		expect(named({ kind: "sleep", duration: "30s" })).toEqual({
-			title: "创建测试用户",
-			caption: "等待 30s",
-		});
-		expect(named({ kind: "timer", at: "09:30:00" })).toEqual({
-			title: "创建测试用户",
-			caption: "等到 09:30:00",
 		});
 		expect(named({ kind: "stop_subflow", subflow: "mon" })).toEqual({
 			title: "创建测试用户",
@@ -197,8 +190,11 @@ describe("不带显示名称时的标题", () => {
 			"Shell 命令",
 		);
 		expect(
-			nodeDefaultTitle(node({ kind: "sleep", duration: "30s", display_name: "歇一会" }), lookup),
-		).toBe("等待 30s");
+			nodeDefaultTitle(
+				node({ kind: "stop_subflow", subflow: "mon", display_name: "收尾" }),
+				lookup,
+			),
+		).toBe("停止「监控」");
 		expect(nodeDefaultTitle(node({ kind: "async", display_name: "触发对账" }), lookup)).toBe(
 			"异步任务",
 		);
@@ -239,10 +235,10 @@ describe("「显示名称（节点 ID）」：卡片以外写节点的名字", (
 	});
 
 	it("写在节点 ID 前面的名字（控制面给运行里的节点补上的 display_name）", () => {
-		expect(nodeNameBeforeId(node({ kind: "sleep", id: "wait", display_name: " 等库 " }))).toBe(
-			"等库",
+		expect(nodeNameBeforeId(node({ kind: "async", id: "spawn", display_name: " 触发对账 " }))).toBe(
+			"触发对账",
 		);
-		expect(nodeNameBeforeId(node({ kind: "sleep", id: "wait" }))).toBeUndefined();
+		expect(nodeNameBeforeId(node({ kind: "async", id: "spawn" }))).toBeUndefined();
 		expect(nodeNameBeforeId(node({ kind: "subflow_entry", id: "mon", name: "监控" }))).toBe("监控");
 		expect(nodeNameBeforeId(node({ kind: "subflow_entry", id: "legacy" }))).toBeUndefined();
 	});
@@ -260,12 +256,10 @@ describe("卡片以外的写法", () => {
 		expect(outside(node({ kind: "stop_subflow", subflow: "mon" }))).toBe("停止子流程「监控」");
 		expect(outside(node({ kind: "stop_subflow" }))).toBe("停止子流程");
 		expect(outside(node({ kind: "stop_subflow", subflow: "removed" }))).toBe("停止子流程");
-		expect(outside(node({ kind: "stop_subflow", subflow: "sleep_1" }))).toBe("停止子流程");
+		expect(outside(node({ kind: "stop_subflow", subflow: "spawn_1" }))).toBe("停止子流程");
 	});
 
-	it("其余节点写种类名，不写等待时长、时间点和子流程名称", () => {
-		expect(outside(node({ kind: "sleep", duration: "30s" }))).toBe("Sleep");
-		expect(outside(node({ kind: "timer", at: "09:30:00" }))).toBe("定时");
+	it("其余节点写种类名，不写子流程名称", () => {
 		expect(outside(node({ kind: "subflow_entry", id: "mon", name: "监控" }))).toBe("子流程入口");
 		expect(outside(node({ kind: "async" }))).toBe("异步任务");
 		expect(outside(node({ kind: "entry" }))).toBe("入口");
@@ -274,7 +268,6 @@ describe("卡片以外的写法", () => {
 	it("场景里已经没有这个节点、只知道种类时写种类名", () => {
 		expect(nodeOutsideCardText(undefined, "package", lookup)).toBe("包节点");
 		expect(nodeOutsideCardText(undefined, "stop_subflow", lookup)).toBe("停止子流程");
-		expect(nodeOutsideCardText(undefined, "sleep", lookup)).toBe("Sleep");
 	});
 });
 

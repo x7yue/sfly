@@ -93,7 +93,7 @@ type SfKindIcon = (typeof KIND_META)[keyof typeof KIND_META]["icon"];
 
 /**
  * 节点卡片（docs/DESIGN-SYSTEM.md §2.3「站点胶囊」）：一枚矮胶囊，左边一盏站点灯（编辑时是种类图标，运行时是状态标记），
- * 第一行是标题和右侧的数字（运行时的进度、剩余时间、耗时；编辑时的警告），第二行是节点 ID（放不下时保留结尾）、
+ * 第一行是标题和右侧的数字（运行时的进度、耗时；编辑时的警告），第二行是节点 ID（放不下时保留结尾）、
  * 原来的标题（有显示名称时）和配置摘要，运行时换成失败原因或主指标；执行中、等待中的底边有一条进度线。
  * 执行中的站第二行写此刻正在做的事（有主指标时另起一行）；有关注项时上边线外左侧是个数，开始执行后两行字下面列出前两项，
  * 卡片按内容长高。上边线外右侧是标签（always、另选的 Agent、重试）。端口常显：左侧链入口，右侧链出口，
@@ -122,8 +122,8 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const tags = nodeTags(node);
 	const slot = nodeSlot(node);
 	const ids = idParts(id);
-	// 有显示名称时第二行写原来的标题（节点类型、「等待 30s」……），和显示名称相同时不写；
-	// 摘要已经写在里面时（等待 30s 的 30s）不再重复。
+	// 有显示名称时第二行写原来的标题（节点类型、「停止「监控」」……），和显示名称相同时不写；
+	// 摘要已经写在里面时不再重复。
 	const shownCaption = named && caption !== title ? caption : undefined;
 	const shownSlot = shownCaption?.includes(slot.text) ? undefined : slot;
 	const isStart = node.kind === "entry" || node.kind === "subflow_entry";
@@ -350,7 +350,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				{focusRows}
 			</div>
 			{decoration?.progress !== undefined && (
-				// 进度线（执行中有总数的进度、等待中已经等过的时间）：卡片底边一条 2px 的线，看全图时收起。
+				// 进度线（执行中有总数的进度）：卡片底边一条 2px 的线，看全图时收起。
 				<span
 					aria-hidden
 					data-node-progress
@@ -371,7 +371,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			)}
 
 			{decoration?.overview !== undefined && (
-				// 站外一行：缩小视图时卡片里只放得下灯和标题，执行中、失败、等待中的站在胶囊下方挂一行，写进度、剩余时间或
+				// 站外一行：缩小视图时卡片里只放得下灯和标题，执行中、失败、等待中的站在胶囊下方挂一行，写进度或
 				// 失败原因；看全图时胶囊里只剩两三个字，前面再写上标题。和胶囊共用底色和状态描边、没有上边线，看起来是站的
 				// 一部分（点它也是点这个站）；从标题的位置开始，最多 16.5 个字宽，可以伸到右边一站的下面（一条链上相邻的两站
 				// 不会同时要盯）。字号、留白按屏幕上的 12px 算（em）；圆角是画布上的 12px，缩小视图时屏幕上约 4–6px。
@@ -442,8 +442,6 @@ export const nodeTypes: Record<SfNode["data"]["node"]["kind"], typeof NodeCard> 
 	entry: NodeCard,
 	subflow_entry: NodeCard,
 	async: NodeCard,
-	timer: NodeCard,
-	sleep: NodeCard,
 	stop_subflow: NodeCard,
 	package: NodeCard,
 	// 已移除种类的节点（ADR 0028）也用节点卡片画。

@@ -9,16 +9,32 @@ from __future__ import annotations
 
 import json
 from importlib import resources
+from typing import Any
 
 
 def _load() -> dict[str, tuple[str, str]]:
     text = resources.files("sfly.schemas").joinpath("removed-node-kinds.json").read_text("utf-8")
-    raw: dict[str, dict[str, str]] = json.loads(text)
+    raw: dict[str, dict[str, Any]] = json.loads(text)
     return {kind: (entry["label"], entry["replacement"]) for kind, entry in raw.items()}
+
+
+def _load_outputs() -> dict[str, list[str]]:
+    text = resources.files("sfly.schemas").joinpath("removed-node-kinds.json").read_text("utf-8")
+    raw: dict[str, dict[str, Any]] = json.loads(text)
+    return {kind: list(entry.get("outputs", [])) for kind, entry in raw.items()}
 
 
 # 种类名 → (原来的名称, 替换办法)。
 REMOVED_NODE_KINDS: dict[str, tuple[str, str]] = _load()
+# 种类名 → 原来的输出名（没有输出的是空列表）：别的节点引用过它们的，删掉节点之后也要改。
+REMOVED_NODE_OUTPUTS: dict[str, list[str]] = _load_outputs()
+
+
+def removed_outputs_advice(kind: str) -> str:
+    """原来有输出的已移除种类：提醒引用过它的输出的节点也要改；没有输出时为空字符串。
+    和控制面的 removedOutputsAdvice 是同一句。"""
+    outputs = REMOVED_NODE_OUTPUTS.get(kind, [])
+    return f"别的节点引用了它的输出（{'、'.join(outputs)}）的，也要一起改。" if outputs else ""
 
 
 def removed_kind_label(kind: str) -> str:

@@ -22,6 +22,5 @@ export * from "./removed-nodes.js";
 export * from "./resolve.js";
 export * from "./sticky-notes.js";
 export * from "./structure.js";
-export * from "./timing.js";
 export * from "./warnings.js";
 export * from "./widen-layout.js";

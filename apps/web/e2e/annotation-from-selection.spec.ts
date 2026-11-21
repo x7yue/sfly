@@ -118,13 +118,17 @@ test("框选主链上的几个节点，再加选一个完整的子流程，从�
 	const first = await box(frame);
 	await nodeCard(page, "sub_ping").click({ button: "right" });
 	await nodeMenu(page).getByRole("menuitem", { name: "在后面添加节点" }).click();
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 	// 新节点接在 sub_ping 右边，视图随后平移过去：在同一时刻量框和新节点。
 	await expect
 		.poll(async () => {
 			const grown = await box(frame);
-			return grown.width > first.width && frames(grown, await box(nodeCard(page, "sleep_1")));
+			return (
+				grown.width > first.width && frames(grown, await box(nodeCard(page, "stop_subflow_1")))
+			);
 		})
 		.toBe(true);
 
@@ -184,15 +188,17 @@ test("只选中子流程的一部分节点：只记节点成员；往这个子�
 
 	await nodeCard(page, "sub_ping").click({ button: "right" });
 	await nodeMenu(page).getByRole("menuitem", { name: "在后面添加节点" }).click();
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 	// 框只按成员算，sub_ping 是节点成员：框的大小（以卡片为单位）不变，新节点不在框里。
 	const sizeOf = async (dimension: "width" | "height") =>
 		(await sizeInCards(page, "annotation_1", "sub_ping"))[dimension];
 	await expect.poll(() => sizeOf("width")).toBeCloseTo(first.width, 1);
 	await expect.poll(() => sizeOf("height")).toBeCloseTo(first.height, 1);
 	await expect
-		.poll(async () => frames(await box(frame), await box(nodeCard(page, "sleep_1"))))
+		.poll(async () => frames(await box(frame), await box(nodeCard(page, "stop_subflow_1"))))
 		.toBe(false);
 
 	await save(page, 2);

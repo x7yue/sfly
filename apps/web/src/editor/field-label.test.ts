@@ -55,17 +55,6 @@ describe("字段错误的位置说明", () => {
 	});
 
 	it("内置节点的字段", () => {
-		const sleep: OrchestrationNode = { id: "wait", kind: "sleep", always: false, duration: "" };
-		expect(fieldLabel(sleep, "duration")).toBe("等待时长");
-		const timer: OrchestrationNode = {
-			id: "at",
-			kind: "timer",
-			always: false,
-			at: "",
-			tz: "Asia/Shanghai",
-		};
-		expect(fieldLabel(timer, "at")).toBe("触发时刻");
-		expect(fieldLabel(timer, "tz")).toBe("时区");
 		const sub: OrchestrationNode = { id: "sub", kind: "subflow_entry", name: "", params: [] };
 		expect(fieldLabel(sub, "name")).toBe("子流程名称");
 		const stop: OrchestrationNode = { id: "stop", kind: "stop_subflow", always: false };

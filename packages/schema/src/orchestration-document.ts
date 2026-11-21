@@ -99,25 +99,6 @@ export const AsyncTaskNode = z.strictObject({
 	params: InputValues.default({}),
 });
 
-export const TimerNode = z.strictObject({
-	...nodeBase,
-	...displayName,
-	kind: z.literal("timer"),
-	always: z.boolean().default(false),
-	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
-	at: z.string().min(1),
-	tz: z.string().default("Asia/Shanghai"),
-});
-
-export const SleepNode = z.strictObject({
-	...nodeBase,
-	...displayName,
-	kind: z.literal("sleep"),
-	always: z.boolean().default(false),
-	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
-	duration: z.string().min(1),
-});
-
 export const StopSubflowNode = z.strictObject({
 	...nodeBase,
 	...displayName,
@@ -151,8 +132,6 @@ export const OrchestrationNode = z.discriminatedUnion("kind", [
 	EntryNode,
 	SubflowEntryNode,
 	AsyncTaskNode,
-	TimerNode,
-	SleepNode,
 	StopSubflowNode,
 	PackageNode,
 ]);
@@ -162,8 +141,6 @@ export const NODE_KINDS = [
 	"entry",
 	"subflow_entry",
 	"async",
-	"timer",
-	"sleep",
 	"stop_subflow",
 	"package",
 ] as const satisfies readonly OrchestrationNode["kind"][];
