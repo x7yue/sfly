@@ -42,6 +42,26 @@ PYTHON_VERSION = "3.13"
 #: 开发依赖：`sfly[cli]` 锁定为控制面版本（ADR 0010：SDK 与控制面同版本），其余只写下限。
 DEV_DEPENDENCIES = ("pytest>=8", "ruff>=0.6")
 
+#: 生成的项目里 ruff 的规则集（#472）：pyflakes（F）和 pycodestyle 里语句级、
+#: 运行时错误的那几组（E4、E7、E9），也就是 ruff 长期以来的默认规则，逐条写出确切的编号。
+#: 不写前缀：选了前缀，ruff 以后在这个前缀下转正的新规则会自动生效，同一份代码换个 ruff 版本
+#: 就多出新的报告；新版 ruff 的默认规则集也比这大得多。
+#: 这些编号在 ruff 0.6 以前就都有了，`ruff>=0.6` 的哪个版本都认得。
+#: docs/guide/init-project.md 里有同样的一段给已有项目抄（tests/test_init_ruff.py 核对两者一致）。
+RUFF_SELECT = (
+    "E401", "E402",
+    "E701", "E702", "E703", "E711", "E712", "E713", "E714", "E721", "E722", "E731",
+    "E741", "E742", "E743",
+    "E902",
+    "F401", "F402", "F403", "F404", "F405", "F406", "F407",
+    "F501", "F502", "F503", "F504", "F505", "F506", "F507", "F508", "F509",
+    "F521", "F522", "F523", "F524", "F525", "F541",
+    "F601", "F602", "F621", "F622", "F631", "F632", "F633", "F634",
+    "F701", "F702", "F704", "F706", "F707", "F722",
+    "F811", "F821", "F822", "F823", "F841", "F842",
+    "F901",
+)  # fmt: skip
+
 
 class InitError(Exception):
     """失败原因；`usage` 为 True 表示参数问题（包名、目录），退出码 2。"""
@@ -174,11 +194,26 @@ def configure_pyproject(project: NewProject) -> None:
         "[tool.ruff]",
         'extend-exclude = [".agents", ".claude"]',
         "",
+        "# 固定的规则集：ruff 出新版本时，同一份代码不会多出新的报告",
+        "# （ruff 的默认规则会随版本变）。",
+        "# 要更严的检查时在这里加规则编号。",
+        "[tool.ruff.lint]",
+        "select = [",
+        *_wrapped(RUFF_SELECT),
+        "]",
+        "",
     ]
     path = project.root / "pyproject.toml"
     text = path.read_text(encoding="utf-8").rstrip("\n") + "\n" + "\n".join(lines)
     tomllib.loads(text)  # uv 生成的内容变化导致表重复等问题时尽早失败。
     path.write_text(text, encoding="utf-8")
+
+
+def _wrapped(codes: tuple[str, ...], per_line: int = 10) -> list[str]:
+    return [
+        "    " + " ".join(f'"{c}",' for c in codes[i : i + per_line])
+        for i in range(0, len(codes), per_line)
+    ]
 
 
 def _template(name: str, project: NewProject) -> str:
