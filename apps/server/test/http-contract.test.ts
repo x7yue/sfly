@@ -87,6 +87,50 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 		await app.close();
 	});
 
+	it("手写的 HEAD 也不行：先于契约里的 GET 注册的 HEAD 会顶掉 Fastify 自动生成的那个，没有访问检查，启动要失败", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		installAccessGuard(
+			app,
+			new AccessGuard({ store: new FakeAccessStore(), clock: new ManualClock() }),
+		);
+		expect(() => app.head("/health", async () => ({}))).toThrow(/不是经 contractRoute/);
+		await app.close();
+	});
+
+	it("经 contractRoute 注册的 GET 自动生成的 HEAD 带着标记，照常通过", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		installAccessGuard(
+			app,
+			new AccessGuard({ store: new FakeAccessStore(), clock: new ManualClock() }),
+		);
+		contractRoute(app, health, async () => ({}));
+		await app.ready();
+		expect((await app.inject({ method: "HEAD", url: "/health" })).statusCode).toBe(200);
+		await app.close();
+	});
+
 	it("经 contractRoute、contractStream、contractDownload 注册的路由照常通过", async () => {
 		const app = Fastify();
 		const health = endpoint({

@@ -1,9 +1,11 @@
 // 访问检查经 HTTP（规格 #489）：真实控制面和数据库，凭据直接写库（签发在 #490–#492）。
 // 带凭据的请求：失效的凭据 401；通过检查的写请求把用户 ID 和令牌的名称记进 #487 加的列；
 // 平台管理员在自己不是成员的项目里的写操作留记录；HEAD、事件流走同一处检查；不带凭据的请求行为不变。
+import { httpContract } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
+import { locatorOf, routeKey } from "../src/auth/access-rules.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -449,19 +451,35 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 			member_role: string | null;
 		}[];
 
-	it("路径参数含 NUL、非法的 UTF-8、过长：不会是 500，和不带凭据一样，也不留记录", async () => {
-		for (const path of [
-			"/feishu-bots/%00x",
-			"/feishu-bots/a%00",
-			"/feishu-bots/%FF",
-			`/feishu-bots/${"n".repeat(300)}`,
-		]) {
+	it("路径参数含 NUL：和不带凭据一样是 404，不是 500，也不留记录（NUL 存不进 PostgreSQL 的文本）", async () => {
+		for (const path of ["/feishu-bots/%00x", "/feishu-bots/a%00", "/feishu-bots/%00"]) {
 			const withToken = await call("DELETE", path);
 			const anonymous = await cp.fetch(path, { method: "DELETE" });
-			expect(withToken.status, path).toBeLessThan(500);
+			expect(withToken.status, path).toBe(404);
 			expect(withToken.status, path).toBe(anonymous.status);
 		}
-		expect((await call("DELETE", "/feishu-bots/%00x")).status).toBe(404);
+		expect(await records()).toEqual([]);
+	});
+
+	it("别的怪值能走到访问检查：控制字符、emoji、换行、接近上限的长度都照常记下，不是 500", async () => {
+		// 路径参数的长度上限是 100 个字符（Fastify 的 maxParamLength），再长的在进访问检查之前就被 Fastify 拒绝。
+		const names = ["a\u0001b", "机器人😀", "line\nbreak", "n".repeat(100)];
+		for (const name of names) {
+			const res = await call("DELETE", `/feishu-bots/${encodeURIComponent(name)}`);
+			expect(res.status, JSON.stringify(name)).toBe(404);
+		}
+		await vi.waitFor(async () => {
+			// 手动时钟没动，记录的时间相同：不看顺序。
+			expect((await records()).map((r) => r.resource_id).sort()).toEqual([...names].sort());
+		});
+	});
+
+	it("非法的 UTF-8（%FF）和超长的参数在进访问检查之前就被 Fastify 拒绝（400、414）：这条守的是「不会是 500」，测到的是框架", async () => {
+		for (const path of ["/feishu-bots/%FF", `/feishu-bots/${"n".repeat(300)}`]) {
+			const res = await call("DELETE", path);
+			expect(res.status, path).toBeGreaterThanOrEqual(400);
+			expect(res.status, path).toBeLessThan(500);
+		}
 		expect(await records()).toEqual([]);
 	});
 
@@ -503,6 +521,128 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 				["POST /orchestrations", "read_only"],
 			]);
 		});
+	});
+});
+
+describe("路径里的 ID 不是 UUID：每种凭据都得到 404 或 403，不会是 500", () => {
+	// 访问检查里每一处拿路径参数去查 uuid 列的地方都要先判断格式：PostgreSQL 对不是 UUID 的字符串报
+	// `invalid input syntax for type uuid`，那会变成 500。用真库、对契约里每个按 ID 定位的接口、每种凭据都请求一遍。
+	let cp: TestControlPlane;
+	let credentials: { name: string; headers: Record<string, string> }[];
+
+	beforeAll(async () => {
+		cp = await startTestControlPlane({ agentToken: "s3cret" });
+		const accounts = new TestAccounts(cp.database.url);
+		try {
+			const editor = await accounts.user("editor1");
+			await accounts.member("default", editor, "editor");
+			const admin = await accounts.user("root", { admin: true });
+			credentials = [
+				{ name: "不带凭据", headers: {} },
+				{ name: "共享令牌", headers: bearer("s3cret") },
+				{ name: "个人令牌（编辑者）", headers: bearer(await accounts.personalToken(editor)) },
+				{ name: "个人令牌（平台管理员）", headers: bearer(await accounts.personalToken(admin)) },
+				{ name: "项目令牌", headers: bearer(await accounts.projectToken("default")) },
+				{
+					name: "会话令牌",
+					headers: bearer(await accounts.sessionToken(editor, "default")),
+				},
+				{
+					name: "登录 Cookie",
+					headers: loginCookie(await accounts.login(editor)),
+				},
+				{
+					name: "Agent 凭据",
+					headers: bearer(await accounts.agentCredential("default", "agent-a")),
+				},
+				{
+					name: "开发 Agent 的凭据",
+					headers: bearer(
+						await accounts.agentCredential("default", "dev-editor1-laptop", { userId: editor }),
+					),
+				},
+				{
+					name: "任务凭据",
+					headers: bearer(await accounts.taskCredential("default", crypto.randomUUID())),
+				},
+			];
+		} finally {
+			await accounts.close();
+		}
+	});
+	afterAll(async () => {
+		await cp.close();
+	});
+
+	const byId = httpContract.filter((def) => {
+		const locator = locatorOf(def);
+		return locator?.from === "scenario" || locator?.from === "run" || locator?.from === "task";
+	});
+
+	it("契约里有按 ID 定位（经场景、运行、任务）的接口可测", () => {
+		expect(byId.length).toBeGreaterThan(30);
+	});
+
+	for (const def of byId) {
+		it(`${routeKey(def)}：ID 写成 not-a-uuid、全 0 的 UUID、带 SQL 的字符串，每种凭据都不是 500`, async () => {
+			const locator = locatorOf(def);
+			const idParam = locator && "param" in locator ? locator.param : "id";
+			for (const id of [
+				"not-a-uuid",
+				"00000000-0000-0000-0000-000000000000",
+				"1' or '1'='1",
+				"12345",
+			]) {
+				const path = def.path.replace(/:([A-Za-z_][A-Za-z0-9_]*)|\*$/g, (_all, name?: string) =>
+					encodeURIComponent(name === idParam ? id : name === undefined ? "a.txt" : "x"),
+				);
+				for (const credential of credentials) {
+					const res = await cp.fetch(path, {
+						method: def.method,
+						headers: { ...credential.headers, "sec-fetch-site": "same-origin" },
+					});
+					expect(
+						res.status,
+						`${def.method} ${path}（${credential.name}）：${await res.clone().text()}`,
+					).toBeLessThan(500);
+				}
+			}
+		}, 30_000);
+	}
+});
+
+describe("开发 Agent 的凭据随用户停用失效（真库）", () => {
+	let cp: TestControlPlane;
+	let accounts: TestAccounts;
+	beforeAll(async () => {
+		cp = await startTestControlPlane();
+		accounts = new TestAccounts(cp.database.url);
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+	});
+	afterAll(async () => {
+		await accounts.close();
+		await cp.close();
+	});
+
+	const archive = (headers: Record<string, string>) =>
+		cp.fetch("/packages/stub/versions/1.0.0/archive", { headers });
+
+	it("所属用户启用时能下载节点包归档；停用之后 401；吊销过的、按台签发的（没有用户）各按各的", async () => {
+		const owner = await accounts.user("owner1");
+		await accounts.member("default", owner, "editor");
+		const dev = bearer(
+			await accounts.agentCredential("default", "dev-owner1-laptop", { userId: owner }),
+		);
+		const perAgent = bearer(await accounts.agentCredential("default", "agent-a"));
+		expect((await archive(dev)).status).toBe(200);
+		expect((await archive(perAgent)).status).toBe(200);
+
+		await accounts.disable(owner);
+		const stopped = await archive(dev);
+		expect(stopped.status).toBe(401);
+		expect(await stopped.json()).toMatchObject({ error: { code: "unauthorized" } });
+		// 按台签发的凭据没有用户，不受影响。
+		expect((await archive(perAgent)).status).toBe(200);
 	});
 });
 

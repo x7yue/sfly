@@ -240,7 +240,16 @@ export function guardHttpContract(
 	const registered = new Set<string>();
 	app.addHook("onRoute", (route) => {
 		for (const method of [route.method].flat()) {
-			if (method === "HEAD") continue;
+			// HEAD 也要求标记：Fastify 为 GET 自动生成的 HEAD 路由带着 GET 的配置（有标记）；手写的 HEAD 没有。
+			// 不能一律跳过：先于契约里的 GET 注册的手写 HEAD 会顶掉自动生成的那个，那样 HEAD 请求没有访问检查。
+			if (method === "HEAD") {
+				if (route.config?.sflyContractRoute !== true) {
+					throw new Error(
+						`路由 HEAD ${route.url} 不是经 contractRoute、contractStream 或 contractDownload 注册的：它没有访问检查（src/http/contract-route.ts）`,
+					);
+				}
+				continue;
+			}
 			const key = routeKey(method, route.url);
 			if (!expected.has(key)) {
 				throw new Error(`路由 ${key} 不在 HTTP 契约里（packages/schema/src/http）`);

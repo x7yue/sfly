@@ -163,22 +163,23 @@ export class TestAccounts {
 		return this.#token("task", "sfly_tsk_", { project, taskId }, options);
 	}
 
-	/** 按台签发的 Agent 凭据。 */
+	/** 按台签发的 Agent 凭据；开发 Agent 的凭据记在编辑者名下（`userId`）。 */
 	async agentCredential(
 		project: string,
 		agentName: string,
-		options: { revokedAt?: Date } = {},
+		options: { revokedAt?: Date; userId?: string } = {},
 	): Promise<string> {
 		const token = secret("sfly_agt_");
 		await this.#pool.query(
-			`insert into agent_credentials (id, kind, project_id, agent_name, prefix, token_hash, created_at, revoked_at)
-			values ($1, 'agent', $2, $3, $4, $5, $6, $7)`,
+			`insert into agent_credentials (id, kind, project_id, agent_name, prefix, token_hash, user_id, created_at, revoked_at)
+			values ($1, 'agent', $2, $3, $4, $5, $6, $7, $8)`,
 			[
 				randomUUID(),
 				project,
 				agentName,
 				token.slice(0, 13),
 				hashCredential(token),
+				options.userId ?? null,
 				AT,
 				options.revokedAt ?? null,
 			],

@@ -75,6 +75,20 @@ describe("平台管理员的写记录：响应的状态码", () => {
 		expect(store.adminWrites).toHaveLength(1);
 	});
 
+	it("回填状态码失败（库没了）：响应照常，记录留着、状态码为空（结果未知），应用没有挂", async () => {
+		behave = (reply) => reply.code(201).send({});
+		store.completeAdminWrite = async () => {
+			throw new Error("库没了");
+		};
+		const first = await post();
+		expect(first.statusCode).toBe(201);
+		// 响应已经发出，回填失败只记日志；之后的请求照常处理。
+		await expect.poll(() => store.adminWrites.length).toBe(1);
+		expect((await post()).statusCode).toBe(201);
+		await expect.poll(() => store.adminWrites.length).toBe(2);
+		expect(store.adminResults).toEqual([]);
+	});
+
 	it("记不上记录，整个请求就失败，处理函数不会被调用（不漏记）", async () => {
 		let called = false;
 		behave = (reply) => {

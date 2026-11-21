@@ -228,10 +228,11 @@ export class AccessGuard {
 			);
 		}
 		// 上传产物要看任务派给了哪台 Agent，任务所在的项目也在同一行里：一次查询，不查两遍。
+		// ID 不是 UUID 的和不存在一样（404）：不能拿去查 uuid 列，PostgreSQL 会报错，变成 500。
+		const taskId = rule === "assigned_task" ? requestTaskId(request) : undefined;
+		if (taskId !== undefined && !isUuid(taskId)) return notFound();
 		const assignment =
-			rule === "assigned_task"
-				? await this.deps.store.taskAssignment(requestTaskId(request))
-				: undefined;
+			taskId === undefined ? undefined : await this.deps.store.taskAssignment(taskId);
 		const project =
 			rule === "assigned_task"
 				? assignment?.projectId

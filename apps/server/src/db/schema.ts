@@ -985,7 +985,9 @@ export const platformAdminActions = pgTable(
 		memberRole: text("member_role").$type<ProjectRole>(),
 		/**
 		 * 响应的状态码，请求结束时回填（先记、记不上整个请求就失败，所以不会漏记；这一列在处理函数之后才写）。
-		 * 为空：请求还在处理，或者进程在写这一列之前退出了，结果未知。
+		 * 只有 2xx、3xx、4xx 说明了结果；**空和 5xx 都按「结果未知」看待**：
+		 * - 空：请求还在处理；进程在写这一列之前退出了；客户端在响应发出之前断开了（`onResponse` 不触发）；回填本身失败了（只记日志）。
+		 * - 5xx：处理函数出错了，但出错之前可能已经做成了一部分，不等于没做成。
 		 */
 		status: integer("status"),
 	},

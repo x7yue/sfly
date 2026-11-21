@@ -17,6 +17,7 @@ import {
 	users,
 } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { isUuid } from "../util/uuid.js";
 
 /** 凭据背后的用户；停用的用户的全部凭据立即无效。 */
 export interface StoredUser {
@@ -174,7 +175,10 @@ export class DbAccessStore implements AccessStore {
 		return rows.length > 0;
 	}
 
+	// 下面按 ID 查的几个方法自己也先判断格式（调用方已经判断过一次）：PostgreSQL 对不是 UUID 的字符串报错，
+	// 一处漏判就是 500，所以不指望每个调用方都记得。
 	async projectOfScenario(id: string): Promise<ProjectId | undefined> {
+		if (!isUuid(id)) return undefined;
 		const [row] = await this.db
 			.select({ projectId: orchestrations.projectId })
 			.from(orchestrations)
@@ -183,6 +187,7 @@ export class DbAccessStore implements AccessStore {
 	}
 
 	async projectOfRun(id: string): Promise<ProjectId | undefined> {
+		if (!isUuid(id)) return undefined;
 		const [row] = await this.db
 			.select({ projectId: runs.projectId })
 			.from(runs)
@@ -197,6 +202,7 @@ export class DbAccessStore implements AccessStore {
 	async taskAssignment(
 		id: string,
 	): Promise<{ projectId: ProjectId; agentName: string | null } | undefined> {
+		if (!isUuid(id)) return undefined;
 		const [row] = await this.db
 			.select({ projectId: runs.projectId, agentName: tasks.agentName })
 			.from(tasks)
