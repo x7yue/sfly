@@ -2,7 +2,7 @@
 // 读取运行（运行视图、列表、事件流）、写日志和动作、触发时的报错用的都是这一份（logs/secrets.ts 的 SecretSet），
 // 对象和数组、JSON 转义的写法、短叶子的取舍只在那里处理，这里直接测它。规则的编号见 docs/SEMANTICS.md §2.1。
 // 值都是明显的假值。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	MIN_LEAF_CHARS,
 	maskParams,
@@ -16,6 +16,7 @@ import {
 	secretSetOf,
 	shortLeafCount,
 } from "../src/logs/secrets.js";
+import { pythonJson, sortKeysDeep } from "./support/secret-forms.js";
 
 const MASK = SECRET_MASK;
 
@@ -334,14 +335,6 @@ describe("汇总：多个值合成一份，长的在前", () => {
 		expect(NO_SECRETS.isEmpty).toBe(true);
 		expect(NO_SECRETS.mask("anything")).toBe("anything");
 	});
-
-	it("appearsIn：文本里有没有 secret 值（反复问同一份集合，结果不受上一次影响）", () => {
-		const set = setOf("test-secret-value");
-		for (let i = 0; i < 3; i++) {
-			expect(set.appearsIn("has test-secret-value")).toBe(true);
-			expect(set.appearsIn("clean")).toBe(false);
-		}
-	});
 });
 
 describe("匹配是一个按值集合编译、缓存的正则（性能，#479 评审里的数字）", () => {
@@ -537,5 +530,135 @@ describe("规则 1：secret 参数本身读出来是掩码，不论类型（mask
 			a: MASK,
 			b: {},
 		});
+	});
+});
+
+describe("规则 3：整个对象被原样写出，节点收到的键顺序（Agent 把输入的键按字节序排好）和参数里写的顺序两种都盖住", () => {
+	const config = {
+		env: "prod",
+		user: "admin",
+		region: "a",
+		enabled: "1",
+		zh: "好",
+		nested: { z: "x", b: 1, a: [true, { y: "k", c: null }] },
+	};
+	const received = sortKeysDeep(config);
+
+	it("节点收到的是键排好序的对象：json.dumps 默认、紧凑、ensure_ascii=False、sort_keys 的整段都是一个掩码，短叶子不留明文", () => {
+		const set = setOf(config);
+		for (const text of [
+			pythonJson(received),
+			pythonJson(received, false),
+			JSON.stringify(received),
+			// sort_keys=True 之后写出的就是排好序的顺序，和收到的相同
+			pythonJson(sortKeysDeep(config), false),
+		]) {
+			expect(set.mask(`cfg=${text} ok`), text).toBe(`cfg=${MASK} ok`);
+		}
+		// 评审用的那份配置：读出来不能剩下 `1`、`a` 这样的明文
+		const review = { env: "prod", region: "a", user: "admin", enabled: "1" };
+		expect(
+			setOf(review).mask('{"enabled": "1", "env": "prod", "region": "a", "user": "admin"}'),
+		).toBe(MASK);
+	});
+
+	it("参数里写的顺序（库里 jsonb 的顺序）也盖住", () => {
+		const set = setOf(config);
+		expect(set.mask(`cfg=${JSON.stringify(config)}`)).toBe(`cfg=${MASK}`);
+		expect(set.mask(`cfg=${pythonJson(config)}`)).toBe(`cfg=${MASK}`);
+	});
+
+	it('整数样子的键：按字节序（"10" 在 "9" 之前），不是 JS 对象的数值序', () => {
+		const set = setOf({ "9": "y", "10": "x", a: "z" });
+		// 多了一个键就是另一个对象，叶子又都很短：不盖
+		expect(set.mask('{"10":"x","2":"w","9":"y","a":"z"}')).toBe(
+			'{"10":"x","2":"w","9":"y","a":"z"}',
+		);
+		// JS 对象的数值序（"9" 在 "10" 之前）不是节点收到的顺序，但参数里写的顺序就是 JS 给出的这个
+		expect(set.mask('{"9":"y","10":"x","a":"z"}')).toBe(MASK);
+		expect(set.mask('{"10": "x", "9": "y", "a": "z"}')).toBe(MASK);
+		expect(set.mask('{"10":"x","9":"y","a":"z"}')).toBe(MASK);
+	});
+
+	it("BMP 之外的字符和中文的键：字节序是 ASCII < 中文 < ￥ < emoji（UTF-16 码元序里 emoji 在 ￥ 之前）", () => {
+		const set = setOf({ "😀": "x", "￥": "y", 中文: "z", a: "w" });
+		expect(set.mask('{"a":"w","中文":"z","￥":"y","😀":"x"}')).toBe(MASK);
+		expect(set.mask('{"a": "w", "中文": "z", "￥": "y", "😀": "x"}')).toBe(MASK);
+		// ensure_ascii（默认）：非 ASCII 写成 \uXXXX，顺序不变
+		expect(set.mask(pythonJson({ a: "w", 中文: "z", "￥": "y", "😀": "x" }))).toBe(MASK);
+	});
+
+	it("作为节点整个等于它：键的顺序不同也算同一个对象", () => {
+		const set = setOf(config);
+		expect(maskValue(received, set)).toBe(MASK);
+		expect(maskValue(config, set)).toBe(MASK);
+		expect(maskValue({ ...received, extra: 1 }, set)).not.toBe(MASK);
+	});
+});
+
+describe("很长的值：不能让打码本身失败，也不能把值带进错误里", () => {
+	const longString = `${"abcdefghij".repeat(4096)}-tail-marker`; // 40 KB
+	const longObject = { blob: "k".repeat(40_000), n: { deep: "d".repeat(500) } };
+	const cjk = "口令".repeat(3000); // 6000 个汉字，\uXXXX 写法是 36000 个字符
+
+	it("40 KB 的字符串、40 KB 的对象、6000 个汉字的值：不抛错，值和它的各种写法都换成掩码，周围的文字不变", () => {
+		for (const [name, value, hits] of [
+			["字符串", longString, [longString]],
+			["对象", longObject, [JSON.stringify(longObject), "k".repeat(40_000)]],
+			["汉字", cjk, [cjk, pythonJson(cjk).slice(1, -1)]],
+		] as const) {
+			const set = setOf(value);
+			for (const hit of hits) {
+				expect(set.mask(`before ${hit} after`), name).toBe(`before ${MASK} after`);
+			}
+			// 值里的片段不够整个值，不是 secret 值本身；没有 secret 值的文字原样
+			expect(set.mask("nothing to see here"), name).toBe("nothing to see here");
+		}
+	});
+
+	it("长的值和短的值同时在：两类都盖住，互相重叠的部分只留一个掩码", () => {
+		const set = setOf(longString, "short-secret-value");
+		expect(set.mask(`a ${longString} b short-secret-value c`)).toBe(`a ${MASK} b ${MASK} c`);
+		expect(set.mask(`x short-secret-value${longString}y`)).toBe(`x ${MASK}${MASK}y`);
+	});
+
+	it("编译正则失败时（注入一个一定失败的编译器）：不抛错，值照样换成掩码，错误里没有值", () => {
+		const secret = "super-secret-token-value-123";
+		const attempts: string[] = [];
+		const failing = (source: string): RegExp => {
+			attempts.push(source);
+			// V8 的报错会把整个正则的源码带出来：这里模拟同样的行为。
+			throw new SyntaxError(
+				`Invalid regular expression: /${source}/: Regular expression too large`,
+			);
+		};
+		const set = new SecretSet([secretPartsOf(secret), secretPartsOf("another-secret-4567")], {
+			compile: failing,
+		});
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			let masked = "";
+			expect(() => {
+				masked = set.mask(`login ${secret} and another-secret-4567 ok`);
+			}).not.toThrow();
+			expect(masked).toBe(`login ${MASK} and ${MASK} ok`);
+			// 同一份集合反复用也一样；不放行原文，也不输出值
+			expect(set.mask(`${secret}`)).toBe(MASK);
+			expect(attempts.length).toBeGreaterThan(0);
+			expect(JSON.stringify(spy.mock.calls)).not.toContain(secret);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("一份值集合很大（几千个值）：按块编译，结果和只有几个值时一样", () => {
+		const values = Array.from({ length: 3000 }, (_, i) => `test-secret-value-${i}-end-padding`);
+		const set = setOf(...values);
+		expect(set.mask(`a ${values[0]} b ${values[2999]} c ${values[1500]}`)).toBe(
+			`a ${MASK} b ${MASK} c ${MASK}`,
+		);
+		expect(set.mask("test-secret-value-3000-end-padding")).toBe(
+			"test-secret-value-3000-end-padding",
+		);
 	});
 });

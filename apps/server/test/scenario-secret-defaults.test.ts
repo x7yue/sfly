@@ -62,11 +62,12 @@ const WRITE_VALUES = {
 		port: 8260413,
 		region: "a",
 		tls: true,
+		zhShort: "好",
 		nested: { list: ["test-leaf-deep", "x"], zh: "口令一二三" },
 	},
 	pem: "-----BEGIN TEST KEY-----\ntest-pem-line-one\n-----END TEST KEY-----",
 };
-/** 任何出口的文本里都不能出现的：字符串和数字叶子，PEM 的每一行，非 ASCII 叶子的 `\uXXXX` 写法。 */
+/** 任何出口的文本里都不能出现的：字符串和数字叶子，PEM 的每一行，非 ASCII 叶子的 `\uXXXX` 写法，整段打印时的短叶子。 */
 const WRITE_LEAKS = [
 	SECRET,
 	String(PIN),
@@ -79,6 +80,15 @@ const WRITE_LEAKS = [
 	"BEGIN TEST KEY",
 	"test-pem-line-one",
 	"END TEST KEY",
+	// 整个对象被原样打印时盖在整段里的短叶子：整段没盖住的话，这几处键值对会原样留在输出里（紧凑写法、json.dumps 默认写法、
+	// ensure_ascii 的写法）。
+	'"region": "a"',
+	'"region":"a"',
+	'"tls": true',
+	'"tls":true',
+	'"zhShort": "好"',
+	'"zhShort":"好"',
+	'"zhShort": "\\u597d"',
 ];
 
 interface VersionBody {
@@ -314,6 +324,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		const sweepStreams = async (
 			ids: { scenario: string; run: string; task: string; preset: string },
 			check: (what: string, text: string) => void,
+			options: { waitFor?: (path: string) => string | undefined } = {},
 		) => {
 			const streams = httpContract.filter(
 				(def) => def.effect === "read" && "kind" in def && def.kind === "stream",
@@ -328,6 +339,12 @@ describe("场景版本里 secret 参数的默认值", () => {
 				try {
 					// 每条流连上时先发一条控制面时间，运行和任务的流接着发当前状态。
 					await eventually(() => expect(sse.received.length).toBeGreaterThan(0));
+					// 带内容的事件（日志的行、动作、运行视图）在第一条之后才到：要检查这些内容时，等到流里出现 `waitFor` 给出的标记
+					// （节点写出的、已经打码的文字），不能只看到第一条消息就过。
+					const marker = options.waitFor?.(path);
+					if (marker) {
+						await eventually(() => expect(JSON.stringify(sse.received)).toContain(marker));
+					}
 					check(`SSE ${path}`, JSON.stringify(sse.received));
 				} finally {
 					sse.close();
@@ -510,11 +527,21 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const ids = { scenario: id, run: runId, task: a.taskId, preset: "x" };
 			const noLeaks = (when: string) => (what: string, text: string) => {
 				for (const leak of WRITE_LEAKS) {
-					expect(text, `${when}：${what} 里不能出现 ${leak}`).not.toContain(leak);
+					// 响应、事件、日志文件里的文字是 JSON 编码过的：带引号的片段在里面是 `\"` 的写法，两种都要查。
+					for (const variant of new Set([leak, JSON.stringify(leak).slice(1, -1)])) {
+						expect(text, `${when}：${what} 里不能出现 ${variant}`).not.toContain(variant);
+					}
 				}
 			};
 			await sweepReads(ids, noLeaks("运行中"));
-			await sweepStreams(ids, noLeaks("运行中"));
+			// 流里带内容的事件：任务日志和运行日志的行（`form: ******`）、动作（`act ******`）、运行视图（掩码）。
+			const waitFor = (path: string) => {
+				if (path.includes("/logs/events")) return `form: ${MASK}`;
+				if (path.includes("/actions/events")) return `act ${MASK}`;
+				if (/^\/runs\/[^/]+\/events/.test(path)) return MASK;
+				return undefined;
+			};
+			await sweepStreams(ids, noLeaks("运行中"), { waitFor });
 			// 读到的不是空的：运行视图里有掩码，日志里每一行都在（打码之后）。
 			const during = await (await api.get(`/runs/${runId}`)).text();
 			expect(during).toContain(MASK);
@@ -544,7 +571,8 @@ describe("场景版本里 secret 参数的默认值", () => {
 			await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
 			const after = { ...ids, task: b.taskId };
 			await sweepReads(after, noLeaks("结束后"));
-			await sweepStreams(after, noLeaks("结束后"));
+			// 流连上的是任务 a（动作和日志在它上面），结束后重放的内容同样已经打码。
+			await sweepStreams(ids, noLeaks("结束后"), { waitFor });
 			const finished = await (await api.get(`/runs/${runId}`)).text();
 			expect(finished).toContain(MASK);
 			runsApi.get.response.parse(JSON.parse(finished));
