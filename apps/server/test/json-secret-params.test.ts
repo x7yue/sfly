@@ -10,7 +10,13 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
-import { pythonJson, pythonRepr, sortKeysDeep } from "./support/secret-forms.js";
+import {
+	BEYOND_I64,
+	pythonJson,
+	pythonNumberText,
+	pythonRepr,
+	sortKeysDeep,
+} from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -791,6 +797,65 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			]) {
 				expect(text, `警告里不能出现 ${value}`).not.toContain(value);
 			}
+		});
+	}, 60_000);
+
+	it("数字的写法：节点（Python）打印的数字和控制面写的不一样时（小数、超出 64 位的整数），整段和叶子都盖住", async () => {
+		await withPlane(async ({ api, agent }) => {
+			const id = await api.orchestrationWith(
+				chainScenario(
+					[
+						{ name: "cfg", type: "json", secret: true },
+						{ name: "big", type: "json", secret: true },
+						{ name: "rate", type: "number", secret: true },
+					],
+					["a", "b"],
+				),
+			);
+			const small = { pin: "12", rate: 0.00001, region: "a" };
+			const large = { id: BEYOND_I64, pin: "12" };
+			const runId = await api.triggerOk(id, { cfg: small, big: large, rate: 0.00001 });
+			const a = await agent.nextAssign();
+			const cfg = a.inputs.cfg as typeof small;
+			const big = a.inputs.big as typeof large;
+			// 节点（Python）打印它收到的对象：json.dumps 默认、紧凑、ensure_ascii=False；数字是 Python 的写法。
+			const lines = [
+				`cfg=${pythonJson(cfg)}`,
+				`cfg=${pythonJson(cfg, false)}`,
+				`big=${pythonJson(big)}`,
+				`big=${pythonJson(big, false)}`,
+				`rate=${pythonNumberText(a.inputs.rate as number)} id=${pythonNumberText(big.id)}`,
+				`cfg=${pythonRepr(cfg)} big=${pythonRepr(big)}`,
+			];
+			expect(lines[0]).toBe('cfg={"pin": "12", "rate": 1e-05, "region": "a"}');
+			expect(lines[2]).toBe('big={"id": 9.876543210987654e+19, "pin": "12"}');
+			agent.logs(
+				a,
+				lines.map((text, i) => [i + 1, text]),
+			);
+			await agent.succeed(a, { cfg, big, rate: a.inputs.rate });
+			const b = await agent.nextAssign();
+			await agent.fail(b, lines.join("; "));
+			const masked = [
+				`cfg=${MASK}`,
+				`cfg=${MASK}`,
+				`big=${MASK}`,
+				`big=${MASK}`,
+				`rate=${MASK} id=${MASK}`,
+				// repr：单引号，整段对不上；不少于 4 个字符的叶子（数字）按值打码，短的叶子留着
+				`cfg={'pin': '12', 'rate': ${MASK}, 'region': 'a'} big={'id': ${MASK}, 'pin': '12'}`,
+			];
+			expect(await logTexts(api, a.taskId, lines.length)).toEqual(masked);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
+			const run = await parsedRun(api, runId);
+			expect(run.params).toEqual({ cfg: MASK, big: MASK, rate: MASK });
+			const text = JSON.stringify(run);
+			for (const leak of ["1e-05", "9.876543210987654e+19", "98765432109876540000", "0.00001"]) {
+				expect(text, `运行视图里不能出现 ${leak}`).not.toContain(leak);
+			}
+			expect(run.chains[0]?.nodes[1]?.outputs).toEqual({ cfg: MASK, big: MASK, rate: MASK });
+			// 失败信息里同样的写法：和日志里同一个口径
+			expect(run.chains[0]?.nodes[2]?.error?.message).toBe(masked.join("; "));
 		});
 	}, 60_000);
 

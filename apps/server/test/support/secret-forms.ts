@@ -1,6 +1,37 @@
 // 节点把一个 secret 值写出来时常见的写法（#479）：测试里让假节点把每个 secret 值用这些写法写进日志、进度、动作、输出和错误，
 // 看每个出口有没有认出来。故意不用控制面里的打码代码（apps/server/src/logs/secrets.ts）算这些写法，免得测试和实现一起错。
 // 值都是明显的假值。
+import { readFileSync } from "node:fs";
+
+/** 数字被节点（Python）打印出来的写法：取自 testdata/number-form-cases.json（真实的 serde_json 和 Python 产生的，三端共用）。 */
+const NUMBER_FORMS = new Map(
+	(
+		JSON.parse(
+			readFileSync(new URL("../../../../testdata/number-form-cases.json", import.meta.url), "utf8"),
+		) as { cases: Array<{ sent: string; python: string }> }
+	).cases.map((c) => [c.sent, c.python]),
+);
+
+/**
+ * 超出 64 位整数范围、又小于 1e21 的整数：控制面写成 `98765432109876540000`，Agent 的 serde_json 按浮点解析，节点（Python）打印成
+ * `9.876543210987654e+19`。用文本生成：写成数字字面量会让 lint 报「精度丢失」，而这个值本来就是要在运行时丢精度的。
+ */
+export const BEYOND_I64 = Number("98765432109876543210");
+
+/**
+ * 节点（Python）把一个数字打印出来的写法。表里有的取表里的；表里没有的，只认肯定和 JS 一样的（不太长的整数，指数不小的小数），
+ * 其余直接报错，要求先把它加进表。
+ */
+export function pythonNumberText(n: number): string {
+	const text = JSON.stringify(n);
+	const found = NUMBER_FORMS.get(text);
+	if (found !== undefined) return found;
+	if (/^-?\d{1,15}$/.test(text)) return text;
+	if (/^-?\d+\.\d+$/.test(text) && Math.abs(n) >= 1e-4 && Math.abs(n) < 1e15) return text;
+	throw new Error(
+		`数字 ${text} 不在 testdata/number-form-cases.json 里：先把它加进表（三端各断言自己那一段）`,
+	);
+}
 
 /**
  * 对象的键递归地按 UTF-8 字节序排好（数组本身的顺序不变）：真实的 Agent 就是这样把任务输入交给节点的（`serde_json` 的对象是
@@ -36,6 +67,7 @@ export function pythonJson(value: unknown, ensureAscii = true): string {
 				.map(([k, item]) => `${asAscii(JSON.stringify(k))}: ${write(item)}`)
 				.join(", ")}}`;
 		}
+		if (typeof v === "number") return pythonNumberText(v);
 		return typeof v === "string" ? asAscii(JSON.stringify(v)) : JSON.stringify(v);
 	};
 	return write(value);
@@ -53,7 +85,7 @@ export function pythonRepr(value: unknown, sortKeys = false): string {
 		if (typeof v === "string") return `'${v}'`;
 		if (v === null) return "None";
 		if (typeof v === "boolean") return v ? "True" : "False";
-		return String(v);
+		return typeof v === "number" ? pythonNumberText(v) : String(v);
 	};
 	return write(value);
 }
@@ -91,6 +123,7 @@ export function formsOf(value: unknown): string[] {
 		for (const line of value.split(/\r?\n/)) if (line.trim() !== "") add(line.trim());
 	} else if (typeof value === "number" || typeof value === "boolean") {
 		add(String(value), JSON.stringify(value), pythonRepr(value));
+		if (typeof value === "number") add(pythonNumberText(value));
 	} else if (value !== null && typeof value === "object") {
 		add(
 			JSON.stringify(value),

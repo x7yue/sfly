@@ -4,6 +4,8 @@
 // 值都是明显的假值。
 import { describe, expect, it, vi } from "vitest";
 import {
+	canonicalJson,
+	compareUtf8,
 	MIN_LEAF_CHARS,
 	maskParams,
 	maskRecord,
@@ -367,7 +369,32 @@ describe("匹配是一个按值集合编译、缓存的正则（性能，#479 �
 		expect(setOf("alpha-secret").mask("alpha-secret")).toBe(`${MASK}`);
 	});
 
-	it("和逐个 split/join 的参照实现对比：随机的值集合和文字，结果一样（没有两个值首尾相接地重叠的时候）", () => {
+	it("互相重叠的值：重叠的位置合成一段，只换一个掩码，不留下任何一个值的尾巴；相邻但不重叠的各是一个掩码（正则的路径和字面量的路径一样）", () => {
+		const cases: Array<[string[], string, string]> = [
+			// abcd 和 cdef 在 abcdef 里重叠：合成一段
+			[["abcd", "cdef"], "x abcdef y", `x ${MASK} y`],
+			[["cdef", "abcd"], "x abcdef y", `x ${MASK} y`],
+			// 三个连着重叠
+			[["aaab", "abbb", "bbbc"], "..aaabbbc..", `..${MASK}..`],
+			// 一个是另一个的一部分：只换一个
+			[["abcd", "abcdefgh"], "x abcdefgh y", `x ${MASK} y`],
+			// 相邻、不重叠：各是一个掩码
+			[["abcd", "efgh"], "abcdefgh", `${MASK}${MASK}`],
+			// 不相干的位置
+			[["abcd", "wxyz"], "abcd-wxyz abcd", `${MASK}-${MASK} ${MASK}`],
+		];
+		for (const [texts, text, expected] of cases) {
+			expect(setOf(...texts).mask(text), `${texts.join("+")} / ${text}`).toBe(expected);
+		}
+		// 超过 1024 个字符的值走字面量查找：和上面一样合并
+		const long1 = `L1-${"x".repeat(1100)}-end`;
+		const long2 = `${"x".repeat(1100)}-end-tail-${"y".repeat(10)}`;
+		expect(setOf(long1, long2).mask(`a ${long1}-tail-${"y".repeat(10)} b`)).toBe(`a ${MASK} b`);
+		// 一个长的、一个短的：字面量和正则两条路径之间的重叠同样合并
+		expect(setOf(long1, "end-zzzz").mask(`a ${long1}-zzzz b`)).toBe(`a ${MASK} b`);
+	});
+
+	it("随机的值集合和文字，和「所有出现的位置，重叠的合成一段，每段一个掩码」的参照实现对比：结果一样，不留下任何一个值", () => {
 		// 固定种子的伪随机，失败时可以复现。
 		let seed = 20261121;
 		const random = (n: number): number => {
@@ -399,44 +426,58 @@ describe("匹配是一个按值集合编译、缓存的正则（性能，#479 �
 				{ length: min + random(max - min + 1) },
 				() => alphabet[random(alphabet.length)],
 			).join("");
-		/** 有没有两个不同的文本，一个的结尾等于另一个的开头（而且不是整个）：这时从左到右一次匹配和逐个替换会盖住不同的部分。 */
-		const overlapping = (texts: string[]): boolean =>
-			texts.some((x) =>
-				texts.some((y) => {
-					if (x === y) return false;
-					for (let k = 1; k < Math.min(x.length, y.length); k++) {
-						if (x.endsWith(y.slice(0, k))) return true;
-					}
-					return false;
-				}),
-			);
+		/** 参照实现：每个文本的每个出现位置都记下来，重叠的合成一段，每段换一个掩码。 */
+		const mergedMask = (text: string, texts: readonly string[]): string => {
+			const spans: Array<[number, number]> = [];
+			for (const t of texts) {
+				for (let at = text.indexOf(t); at >= 0; at = text.indexOf(t, at + 1))
+					spans.push([at, at + t.length]);
+			}
+			spans.sort((x, y) => x[0] - y[0] || y[1] - x[1]);
+			let out = "";
+			let cursor = 0;
+			let current: [number, number] | undefined;
+			for (const span of spans) {
+				if (current && span[0] < current[1]) {
+					current[1] = Math.max(current[1], span[1]);
+					continue;
+				}
+				if (current) {
+					out += text.slice(cursor, current[0]) + MASK;
+					cursor = current[1];
+				}
+				current = [span[0], span[1]];
+			}
+			if (current) out += text.slice(cursor, current[0]) + MASK + text.slice(current[1]);
+			else out = text;
+			return out;
+		};
 
-		let compared = 0;
-		let skipped = 0;
-		for (let round = 0; round < 800; round++) {
+		let overlapped = 0;
+		for (let round = 0; round < 1500; round++) {
 			const texts = [...new Set(Array.from({ length: 1 + random(8) }, () => word(1, 8)))];
 			const set = setOf(...texts);
-			// 文字：值、值的片段、噪声随机拼起来。
-			const pieces = [...set.texts, ...set.texts.map((t) => t.slice(1)), "a", "b", " ", "xyz"];
+			// 文字：值、值的片段、噪声随机拼起来，一半的情况下让值之间首尾相接。
+			const pieces = [
+				...set.texts,
+				...set.texts.map((t) => t.slice(1)),
+				...set.texts.map((t) => t.slice(0, -1)),
+				"a",
+				"b",
+				" ",
+				"xyz",
+			];
 			const text = Array.from({ length: 1 + random(12) }, () => pieces[random(pieces.length)]).join(
 				"",
 			);
 			const got = set.mask(text);
-			// 不论哪种写法，打码之后文字里不能留下任何一个值。
-			for (const t of set.texts)
-				expect(got, `${JSON.stringify(set.texts)} / ${JSON.stringify(text)}`).not.toContain(t);
-			if (overlapping([...set.texts])) {
-				skipped += 1;
-				continue;
-			}
-			compared += 1;
-			expect(got, `${JSON.stringify(set.texts)} / ${JSON.stringify(text)}`).toBe(
-				sequentialMask(text, set.texts),
-			);
+			const where = `${JSON.stringify(set.texts)} / ${JSON.stringify(text)}`;
+			expect(got, where).toBe(mergedMask(text, set.texts));
+			for (const t of set.texts) expect(got, where).not.toContain(t);
+			if (got.split(MASK).length > 2 && got !== text) overlapped += 1;
 		}
-		// 确认对比真的做了（不是几乎都被跳过）。
-		expect(compared).toBeGreaterThan(200);
-		expect(skipped).toBeLessThan(800 - compared + 1);
+		// 确认随机的情形真的包含了有掩码的文字（不是几乎都没有匹配）。
+		expect(overlapped).toBeGreaterThan(100);
 	});
 
 	it("真实的值：对象、数组、多行、各种写法，和参照实现的结果一样", () => {
@@ -660,5 +701,141 @@ describe("很长的值：不能让打码本身失败，也不能把值带进错�
 		expect(set.mask("test-secret-value-3000-end-padding")).toBe(
 			"test-secret-value-3000-end-padding",
 		);
+	});
+});
+
+describe("compareUtf8：键的排序不分配，和 UTF-8 字节序（Buffer.compare）一致", () => {
+	it("随机的字符串（ASCII、中文、BMP 里码点很高的字符、emoji、代理对相邻）：符号一致", () => {
+		let seed = 424242;
+		const random = (n: number): number => {
+			seed = (seed * 1664525 + 1013904223) % 4294967296;
+			return Math.floor((seed / 4294967296) * n);
+		};
+		const alphabet = [
+			"a",
+			"B",
+			"z",
+			"0",
+			"9",
+			"",
+			"好",
+			"中",
+			"￥",
+			"\uffff",
+			"\ue000",
+			"\ud7ff",
+			"😀",
+			"𝒳",
+			"\u{10ffff}",
+			"é",
+		];
+		const word = () =>
+			Array.from({ length: random(6) }, () => alphabet[random(alphabet.length)]).join("");
+		const sign = (n: number) => (n < 0 ? -1 : n > 0 ? 1 : 0);
+		for (let i = 0; i < 20_000; i++) {
+			const a = word();
+			const b = word();
+			expect(sign(compareUtf8(a, b)), JSON.stringify([a, b])).toBe(
+				sign(Buffer.compare(Buffer.from(a), Buffer.from(b))),
+			);
+		}
+	});
+
+	it("用例表里的顺序：ASCII < 中文 < ￥ < emoji；空串最前；前缀在前", () => {
+		const keys = ["😀", "￥", "中文", "a", "", "ab", "B"];
+		expect([...keys].sort(compareUtf8)).toEqual(["", "B", "a", "ab", "中文", "￥", "😀"]);
+	});
+});
+
+describe("读取运行时对对象和数组的比较：先排除，再算标准写法", () => {
+	const secret = { env: "prod", user: "admin", nested: { b: 1, a: [true, "x"] } };
+
+	it("键的顺序不同也是同一个对象；多一个键、少一个元素、值不同都不是", () => {
+		const set = setOf(secret);
+		expect(maskValue({ nested: { a: [true, "x"], b: 1 }, user: "admin", env: "prod" }, set)).toBe(
+			MASK,
+		);
+		expect(maskValue({ ...secret, extra: 1 }, set)).not.toBe(MASK);
+		expect(maskValue({ env: "prod", user: "admin" }, set)).not.toBe(MASK);
+		expect(maskValue({ ...secret, nested: { b: 1, a: [true] } }, set)).not.toBe(MASK);
+		expect(maskValue({ ...secret, env: "dev" }, set)).not.toBe(MASK);
+	});
+
+	it("值是 undefined 的键不算键（标准写法不写它）", () => {
+		const set = setOf(secret);
+		expect(maskValue({ ...secret, ghost: undefined }, set)).toBe(MASK);
+	});
+
+	it("数组：元素个数和内容都要一样", () => {
+		const set = setOf(["alpha-secret", 1234, { k: "v" }]);
+		expect(maskValue(["alpha-secret", 1234, { k: "v" }], set)).toBe(MASK);
+		expect(maskValue(["alpha-secret", 1234], set)).not.toBe(MASK);
+		expect(maskValue(["alpha-secret", 1234, { k: "w" }], set)).not.toBe(MASK);
+	});
+
+	it("没有对象或数组的 secret 时，不做任何比较（返回 false，不读对象）", () => {
+		const set = setOf("alpha-secret");
+		expect(set.equalsContainer({ a: 1 })).toBe(false);
+		expect(set.equalsContainer([1])).toBe(false);
+	});
+
+	it("和不排除、直接比标准写法的结果一样（随机的对象，键序随机）", () => {
+		let seed = 777;
+		const random = (n: number): number => {
+			seed = (seed * 1664525 + 1013904223) % 4294967296;
+			return Math.floor((seed / 4294967296) * n);
+		};
+		const make = (depth: number): unknown => {
+			const kind = random(depth > 1 ? 3 : 5);
+			if (kind === 0) return `s${random(3)}`;
+			if (kind === 1) return random(3);
+			if (kind === 2) return random(2) === 0;
+			if (kind === 3) return Array.from({ length: random(3) }, () => make(depth + 1));
+			return Object.fromEntries(
+				Array.from({ length: random(3) }, () => [`k${random(3)}`, make(depth + 1)]),
+			);
+		};
+		const shuffle = (v: unknown): unknown => {
+			if (Array.isArray(v)) return v.map(shuffle);
+			if (v !== null && typeof v === "object") {
+				return Object.fromEntries(
+					Object.entries(v)
+						.sort(() => random(3) - 1)
+						.map(([k, x]) => [k, shuffle(x)]),
+				);
+			}
+			return v;
+		};
+		for (let i = 0; i < 2000; i++) {
+			const a = make(0);
+			const b = random(2) === 0 ? shuffle(a) : make(0);
+			if (a === null || typeof a !== "object" || b === null || typeof b !== "object") continue;
+			if (Array.isArray(a) ? a.length === 0 : Object.keys(a).length === 0) continue;
+			const set = setOf(a);
+			// 里面没有任何可打码内容的对象（只有空容器、空串、null）不是 secret 值：集合是空的，什么都不等于它。
+			const expected = !set.isEmpty && canonicalJson(a) === canonicalJson(b);
+			expect(set.equalsContainer(b as object), JSON.stringify([a, b])).toBe(expected);
+		}
+	});
+});
+
+describe("值集合的缓存：值相同是同一个对象，值变了是另一份", () => {
+	it("同样的值反复问是同一个集合（不重新写各种写法、不重新编译）；多一个值就是另一个", () => {
+		const one = secretSetOf(["test-secret-value", { a: "bbbb" }]);
+		expect(secretSetOf(["test-secret-value", { a: "bbbb" }])).toBe(one);
+		const two = secretSetOf(["test-secret-value", { a: "bbbb" }, "later-secret-value"]);
+		expect(two).not.toBe(one);
+		expect(one.mask("later-secret-value")).toBe("later-secret-value");
+		expect(two.mask("later-secret-value")).toBe(MASK);
+		// 值相同、顺序不同：另一份，结果一样
+		expect(secretSetOf([{ a: "bbbb" }, "test-secret-value"]).mask("test-secret-value")).toBe(MASK);
+	});
+
+	it("缓存里的集合不可变，共用不会互相影响；不能 JSON 化的值（BigInt）不进缓存，照样能用", () => {
+		const a = secretSetOf(["shared-secret-value"]);
+		const b = secretSetOf(["shared-secret-value"]);
+		expect(a.mask("x shared-secret-value")).toBe(`x ${MASK}`);
+		expect(b.mask("shared-secret-value y")).toBe(`${MASK} y`);
+		expect(() => secretSetOf([{ n: 10n }])).not.toThrow();
 	});
 });

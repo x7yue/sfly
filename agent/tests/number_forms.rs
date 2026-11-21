@@ -1,0 +1,29 @@
+//! 数字的写法：Agent 把任务输入解析成 `serde_json::Value`（`executor.rs`）再写成 `task.json`，数字经过它。
+//! 控制面认「节点把保密值里的数字打印出来」靠的是三端写数字的规则一致，用例表 `testdata/number-form-cases.json`
+//! 三端共用：这里断言真实的 `serde_json` 把控制面发来的数字（`sent`）解析再写出就是表里的 `serde`；
+//! 控制面一端（`apps/server/test/secret-number-forms.test.ts`）和 Python 一端（`sdk/python/tests/test_number_forms.py`）
+//! 各断言自己那一段。
+
+use serde_json::Value;
+
+#[test]
+fn serde_json_writes_numbers_like_the_shared_table() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../testdata/number-form-cases.json"
+    );
+    let table: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let cases = table["cases"].as_array().expect("cases 是数组");
+    assert!(cases.len() >= 30, "用例表被删空了");
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let sent = case["sent"].as_str().unwrap();
+        let serde = case["serde"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(sent).unwrap();
+        assert_eq!(
+            serde_json::to_string(&parsed).unwrap(),
+            serde,
+            "{name}：serde_json 写出的数字和用例表不一致（sent = {sent}）"
+        );
+    }
+}

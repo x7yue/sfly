@@ -15,7 +15,10 @@ export interface NodeStatusDisplay {
 	kind: StatusKind;
 	/** 编排画布运行状态：节点卡片、小地图与连线。 */
 	canvas: NodeRunState;
-	/** 在链路进度里算已完成（「主链 2/3」的分子）。 */
+	/**
+	 * 在链路进度里算已完成（「主链 2/3」的分子，线路里折成「已完成 N 个」）。已跳过的节点没有执行，不算：它们单独计数
+	 * （「跳过 2」，线路里折成「已跳过 N 个」）；已停止的是场景的正常流程，算。
+	 */
 	done: boolean;
 	/**
 	 * 时间线上处于这个状态的一次尝试的执行段。ok / run 是正常执行，停止子流程节点的正常执行画成等待段；
@@ -100,7 +103,7 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 		label: "已跳过",
 		kind: "skipped",
 		canvas: "skipped",
-		done: true,
+		done: false,
 		segment: "run",
 		notRun: "已跳过，没有执行。",
 		notRunDuration: "跳过",

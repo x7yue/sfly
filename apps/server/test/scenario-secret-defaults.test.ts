@@ -17,7 +17,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, listPresets, presetScenario } from "./support/presets.js";
-import { allForms } from "./support/secret-forms.js";
+import { allForms, BEYOND_I64 } from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -51,6 +51,7 @@ const WRITE_PARAMS = [
 	{ name: "token", type: "string", secret: true },
 	{ name: "pin", type: "number", secret: true },
 	{ name: "opts", type: "json", secret: true },
+	{ name: "numbers", type: "json", secret: true },
 	{ name: "pem", type: "string", secret: true },
 ];
 const WRITE_VALUES = {
@@ -65,6 +66,8 @@ const WRITE_VALUES = {
 		zhShort: "好",
 		nested: { list: ["test-leaf-deep", "x"], zh: "口令一二三" },
 	},
+	// 节点（Python）打印数字的写法和控制面写的不一样的两类：小数（0.00001 打印成 1e-05）和超出 64 位的整数。
+	numbers: { rateLeaf: 0.00001, idLeaf: BEYOND_I64, tag: "12" },
 	pem: "-----BEGIN TEST KEY-----\ntest-pem-line-one\n-----END TEST KEY-----",
 };
 /** 任何出口的文本里都不能出现的：字符串和数字叶子，PEM 的每一行，非 ASCII 叶子的 `\uXXXX` 写法，整段打印时的短叶子。 */
@@ -89,6 +92,13 @@ const WRITE_LEAKS = [
 	'"zhShort": "好"',
 	'"zhShort":"好"',
 	'"zhShort": "\\u597d"',
+	// 数字的两种写法（控制面写的和节点打印的），以及整段里的数字叶子和短叶子 "12"
+	"1e-05",
+	"9.876543210987654e+19",
+	"98765432109876540000",
+	'"rateLeaf": 1e-05',
+	'"idLeaf": 9.876543210987654e+19',
+	'"tag": "12"',
 ];
 
 interface VersionBody {

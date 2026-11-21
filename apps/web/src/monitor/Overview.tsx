@@ -31,6 +31,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
 import { Attention, OtherWarnings } from "./Attention";
+import { FailureAnnouncer, FailureArea } from "./FailureArea";
 import { useTimeAxis } from "./monitor-state";
 import type { PanelTab } from "./run-link";
 import { chainLabelParts, orderedChains } from "./run-model";
@@ -47,7 +48,7 @@ export interface OverviewTarget {
 }
 
 /**
- * 运行监控的「概览」：从上到下是链路（各链的进度和进行中的节点）、「需要注意」（只在有异常时出现）、关注项（数值类排成
+ * 运行监控的「概览」：从上到下是失败区域（运行里已有节点失败时才有，FailureArea.tsx）、链路（各链的进度和进行中的节点）、「需要注意」（只在有异常时出现）、关注项（数值类排成
  * 一条读数，图表类两列排开，有异常的排在前面）和其他警告与错误。点任何一项都进入「详情」并定位到来源节点
  * （`onOpenNode`），「需要注意」的直达按钮还定位到那一行日志或那个页签。数据是 `GET /runs/:id/focus`，运行中每 2 秒
  * 重新读取。场景没设关注项时显示执行中节点的主指标，并给出「设置关注项」的入口。
@@ -103,6 +104,8 @@ export function Overview({
 			className="min-h-0 flex-1 overflow-auto bg-bg"
 		>
 			<div ref={content} className="flex flex-col gap-5 p-4">
+				<FailureAnnouncer run={run} />
+				<FailureArea run={run} onOpen={onOpenNode} />
 				<ChainSection run={run} />
 				{focus.data && <Attention focus={focus.data} onOpen={onOpenNode} />}
 				<FocusSection run={run} focus={focus} onOpenNode={onOpenNode} located={located} />
