@@ -16,7 +16,6 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Truncate } from "@/components/ui/truncate";
-import { OnlineEditors } from "./OnlineEditors";
 import { checkSummary } from "./validation";
 
 /** 画布模式：编辑，或叠加一次运行的节点状态（只读，#41）。 */
@@ -112,7 +111,7 @@ export function EditorTopLeft({
 }
 
 /**
- * 右上控件组：在线编辑者、保存状态、版本历史、保存（Ctrl S）、运行。保存状态只有需要处理的才带点：
+ * 右上控件组：保存状态、版本历史、保存（Ctrl S）、运行。保存状态只有需要处理的才带点：
  * 保存被拦截（红）、没有保存的修改或还没有保存过版本（琥珀，此时白色主操作是保存）；已保存是纯文字。
  * 字段错误属于检查结果，显示在左上控件组；保存按钮不因字段错误禁用，点它会把焦点放到出错的字段（ScenarioEditor 的 save）。
  * 白色主操作只有一个：有未保存的修改时是保存，否则是运行。保存被拦截（409）时弹出冲突对话框。
@@ -121,7 +120,6 @@ export function EditorTopLeft({
  */
 export function EditorTopRight({
 	orchestration,
-	editors,
 	doc,
 	versioning,
 	renaming,
@@ -130,8 +128,6 @@ export function EditorTopRight({
 	onReload,
 }: {
 	orchestration: OrchestrationView;
-	/** 在线编辑者（useOtherEditors）。 */
-	editors: readonly string[];
 	doc: StoredOrchestrationDocument;
 	versioning: Versioning;
 	/** 正在原地改显示名称。 */
@@ -148,7 +144,6 @@ export function EditorTopRight({
 	}, [conflict]);
 	return (
 		<div className={cn(floatGroupClass, "top-3 right-3")}>
-			<OnlineEditors names={editors} />
 			{conflict ? (
 				<button type="button" className="cursor-pointer px-1" onClick={() => setShowConflict(true)}>
 					<StatusPill kind="failed">保存被拦截</StatusPill>

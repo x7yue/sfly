@@ -86,7 +86,6 @@ import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { dialogOpen } from "#/lib/focus";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
-import { useOtherEditors } from "#/lib/presence";
 import { useNow } from "#/lib/use-now";
 import {
 	notifyInvalidatedPresets,
@@ -158,7 +157,7 @@ const LOCATE_ZOOM = 0.75;
 
 /**
  * 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布铺满视口，控件悬浮——左上场景名 / 版本 / 检查状态 /
- * 模式切换，右上在线编辑者 / 未保存状态 / 版本历史 / 保存 / 运行，底部工具条，左下小地图，右侧检查器。
+ * 模式切换，右上未保存状态 / 版本历史 / 保存 / 运行，底部工具条，左下小地图，右侧检查器。
  * 本地草稿与显式保存版本沿用 useVersionedDraft（刷新不丢失；保存时以编辑起点为 base_version，冲突不自动合并）。
  * 「运行状态」模式（#41，`initialRun` 来自 `?run=`，否则取最近一次运行）：画布只读，显示运行绑定的版本并叠加
  * 节点状态，检查器换成运行摘要；编辑中的草稿保留不动，切回编辑模式即恢复。
@@ -281,8 +280,6 @@ function Editor({
 	);
 	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
-	// 在线编辑者：整个画布页一份在线状态，编辑 / 运行状态切换时不中断。
-	const editors = useOtherEditors(orchestration.id);
 	const warningsByNode = useMemo(() => {
 		const map = new Map<string, OrchestrationWarning[]>();
 		for (const w of warnings) {
@@ -1027,12 +1024,11 @@ function Editor({
 					runState={<RunStateBadge state={runState} />}
 				/>
 				{running ? (
-					<RunTopRight run={readyRun?.run} editors={editors} />
+					<RunTopRight run={readyRun?.run} />
 				) : (
 					<>
 						<EditorTopRight
 							orchestration={orchestration}
-							editors={editors}
 							doc={doc}
 							versioning={versioning}
 							renaming={renamingId !== null}

@@ -64,7 +64,6 @@ import { chainRunStatus, runStatus } from "#/monitor/run-model";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { InspectorWidthHandle, useInspectorWidth } from "../inspector/inspector-width";
-import { OnlineEditors } from "../OnlineEditors";
 import { NodeCharts } from "./NodeCharts";
 import {
 	type NodeRunSummary,
@@ -289,30 +288,20 @@ export function RunStateBadge({ state }: { state: CanvasRun }) {
 	);
 }
 
-/** 右上控件组（运行状态下替换保存 / 运行）：在线编辑者、打开运行监控（主操作）。 */
-export function RunTopRight({
-	run,
-	editors,
-}: {
-	run: RunView | undefined;
-	/** 在线编辑者（useOtherEditors）。 */
-	editors: readonly string[];
-}) {
-	if (!run && editors.length === 0) return null;
+/** 右上控件组（运行状态下替换保存 / 运行）：打开运行监控（主操作）；没有运行时不显示。 */
+export function RunTopRight({ run }: { run: RunView | undefined }) {
+	if (!run) return null;
 	return (
 		<div className={cn(floatGroupClass, "top-3 right-3")}>
-			<OnlineEditors names={editors} />
-			{run && (
-				<Link
-					to="/runs/$id"
-					params={{ id: run.id }}
-					viewTransition={runViewTransition("to-monitor")}
-					className={buttonVariants({ variant: "primary" })}
-				>
-					<ActivityIcon />
-					{ACTION.openRun}
-				</Link>
-			)}
+			<Link
+				to="/runs/$id"
+				params={{ id: run.id }}
+				viewTransition={runViewTransition("to-monitor")}
+				className={buttonVariants({ variant: "primary" })}
+			>
+				<ActivityIcon />
+				{ACTION.openRun}
+			</Link>
 		</div>
 	);
 }
