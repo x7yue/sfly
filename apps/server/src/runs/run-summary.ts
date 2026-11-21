@@ -155,8 +155,7 @@ async function taskLogTails(
 					until: info.bytes,
 				})
 			: undefined;
-		// 日志文件里的行只在写入时按「当时」已知的保密参数打码；读取时再按这次运行此刻的全部保密参数打一遍
-		// （和错误信息、失败的动作同一个口径）。
+		// 读取时再打一遍码（和错误信息、失败的动作同一个口径）。
 		const lines = (page?.lines ?? []).map(({ seq, time, agent_time, source, level, text }) => ({
 			seq,
 			time,
@@ -209,7 +208,7 @@ function failedTaskView(
 /**
  * 失败的动作：取每个任务动作摘要里最近失败的那几个（任务的动作摘要最多留 5 个），全运行一次查询，
  * 最近结束的在前，最多 `RUN_REPORT_LIMITS.failedActions` 个。名称、字段、原因按这次运行此刻的保密参数的值再打一遍码
- * （之后才创建的子流程带来的保密参数也算，和任务进度、正在做的动作同一个口径）。
+ * （和任务进度、正在做的动作同一个口径）。
  */
 async function failedActionsOf(db: Db | Tx, read: RunReadFull): Promise<RunReportFailedAction[]> {
 	const places = new Map<string, { chain: ReadChain; node: ReadNode; attempt: number }>();
@@ -273,7 +272,7 @@ async function attentionItemsOf(
 							unit,
 							source,
 							latest,
-							// 日志类异常的说明是写入时打码的最近一条 WARN / ERROR 的正文：读取时再打一遍。
+							// 日志类异常的说明读取时再打一遍码。
 							anomaly: { ...anomaly, message: read.maskText(anomaly.message) },
 						},
 					]
