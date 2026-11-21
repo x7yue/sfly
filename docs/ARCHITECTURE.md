@@ -20,7 +20,7 @@ sfly 是内网测试用的自动化任务编排平台：用户在画布上把节
 **范围外（明确不做）**
 
 - 连接生产环境；平台只用于测试
-- 用户登录和权限；只用浏览器昵称做标记
+- 反向代理头和 OIDC 登录（只保留外部身份列）；本地账号与登录见 6.7，项目里的权限见 6.6（在 #494 之前不登录也能照旧使用，只用浏览器昵称做标记）
 - "测试环境"这类概念；Agent 部署在哪里，任务就在哪里执行
 - 条件、循环、foreach、join、try/catch 等控制节点
 - Cron 触发、Webhook 触发、周期任务
@@ -444,7 +444,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 3. 发生冲突时可以：查看差异（节点、参数、连线）、放弃本地修改并载入最新版本、另存为新场景。不做自动合并。
 4. 布局属于版本内容；只有点击保存才生成新版本。命令行（`sfly scenario push`）和 API 上传的文档里，没有 `position` 的节点由控制面在保存时用「整理布局」同一套算法补上坐标，已有坐标的节点不动；补的位置压住已有节点时，用画布「添加节点」找空位的同一套逻辑挪到附近的空位（浏览器保存的节点都有坐标，不受影响）。`sfly scenario push` 成功后把控制面实际保存的文档（含补好的坐标）写回文件，再 push 同一个文件不会重新补坐标。校验错误不阻止保存，只显示警告；触发运行时必须全部通过。
 5. 历史版本只读，可以查看和对比；"恢复"会用旧内容生成一个新版本。
-6. 身份：首次打开页面时填写昵称，保存在浏览器中，每个请求通过请求头携带；只用于显示，不做鉴权。命令行（`sfly`）的请求另带 `x-sfly-client: sfly-cli/<版本> agent/<AI 编程助手名称>`，`agent/` 部分只在命令行检测到自己运行在 AI 编程助手里时才有。控制面把 `agent/` 后面的名称记在这个请求触发的运行（`runs.triggered_via`）、第一次取消请求（`runs.cancel_requested_via`）和保存的场景版本（`orchestration_versions.author_via`）上，只保存名称、不保存命令行版本号；接口返回 `triggered_via`、`cancel.requested_via`、`author_via`，界面在触发人、版本作者旁显示「经 Claude Code」（`claude-code` 显示为 Claude Code，`codex` 显示为 Codex，其他名称原样显示）。没有这个请求头、或没有 `agent/` 部分（浏览器的请求就是这样）时为空。**这只是标注，不是鉴权**：和昵称一样不做校验，任何人都能伪造请求头，它只帮人回溯一次操作经过了哪个 AI 编程助手，不能当作权限依据（ADR 0004 的昵称同理）。
+6. 身份：在 #494 之前不登录也能照旧使用——首次打开页面时填写昵称，保存在浏览器中，每个请求通过请求头携带；只用于显示，不做鉴权。登录之后（6.7）写操作的身份是登录的用户，页面不再弹昵称弹窗，也不看昵称请求头。命令行（`sfly`）的请求另带 `x-sfly-client: sfly-cli/<版本> agent/<AI 编程助手名称>`，`agent/` 部分只在命令行检测到自己运行在 AI 编程助手里时才有。控制面把 `agent/` 后面的名称记在这个请求触发的运行（`runs.triggered_via`）、第一次取消请求（`runs.cancel_requested_via`）和保存的场景版本（`orchestration_versions.author_via`）上，只保存名称、不保存命令行版本号；接口返回 `triggered_via`、`cancel.requested_via`、`author_via`，界面在触发人、版本作者旁显示「经 Claude Code」（`claude-code` 显示为 Claude Code，`codex` 显示为 Codex，其他名称原样显示）。没有这个请求头、或没有 `agent/` 部分（浏览器的请求就是这样）时为空。**这只是标注，不是鉴权**：和昵称一样不做校验，任何人都能伪造请求头，它只帮人回溯一次操作经过了哪个 AI 编程助手，不能当作权限依据（ADR 0004 的昵称同理）。
 
 ### 6.5 开放的 HTTP API 与 API 客户端（ADR 0022）
 
@@ -474,6 +474,32 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 - **身份交给处理函数**：通过检查的凭据放在 `request.access`；写操作的 `Actor`（`src/actor.ts`）带用户 ID 和令牌的名称，记进 `author_user_id`/`author_token`、`triggered_by_user_id`/`triggered_token`、`cancel_requested_by_user_id`/`cancel_requested_token`、`run_presets.updated_by_user_id`、`focus_edit.by_user_id`、`node_packages.published_*`。带了凭据的请求，显示名（`author`、`triggered_by` 等）是用户的显示名（项目令牌是令牌的名称），不看昵称请求头，也不要求带它；`*_via` 仍是 `x-sfly-client` 里不经校验的助手名，令牌名是检查过的，两者分开记。
 - **启动检查**（`guardHttpContract`）：每个接口的声明站得住（`checkRouteDeclarations`），访问检查认得出每个接口的项目从哪里得出（`checkAccessRules`），缺声明的接口让控制面起不来；每条路由都是经 `register`（`contractRoute`、`contractStream`、`contractDownload`）注册的：`register` 在路由的 config 上打了标记，`onRoute` 检查它，手写一条契约里有的路径会绕过访问检查，所以启动就失败；HEAD 也要求标记（Fastify 为 GET 自动生成的 HEAD 带着 GET 的标记；先于契约里的 GET 手写的 HEAD 会顶掉自动生成的那个，没有访问检查）。按 ID 查 uuid 列的地方（`AccessStore` 的各个方法和 Agent 上传产物前的任务查询）先判断格式，不是 UUID 的和不存在一样（404）：PostgreSQL 对不是 UUID 的字符串报错，会变成 500；有一条真库的测试对每个按 ID 定位的接口、每种凭据都请求一遍，保证不会是 500。
 - **测试**：`test/access-scopes.test.ts`（范围表对着 ADR 的表，每一行一条）、`test/access-guard.test.ts`（鉴权模块，内存里的 `AccessStore`：每种角色对每个接口的结果、凭据、公共项目、平台管理员、Agent 凭据和任务凭据）、`test/access-http.test.ts`（经 HTTP：身份写进库、记录、HEAD 和事件流）、`test/access-cross-project.test.ts`（从路由清单生成：项目甲的每种凭据请求项目乙的资源，每个属于项目的接口一条；写接口前后控制面留下的痕迹没有任何变化）。造凭据的辅助在 `test/support/credentials.ts`。
+
+### 6.7 本地账号与登录（ADR 0029，#490）
+
+账号类接口（契约里资源类别 `account`，`target: "self"` 或用户 ID，路径不带项目；契约在 `packages/schema/src/http/accounts.ts`，处理在 `src/http/account-routes.ts`，逻辑在 `src/auth/accounts.ts`）：
+
+| 接口 | 认哪种凭据 |
+|---|---|
+| `GET /auth/status`（还没有任何用户吗，控制面认的公开地址，控制面看到的 Host）、`POST /auth/setup`（用初始化码建第一个管理员并登录）、`POST /auth/login` | 不要凭据（带了什么都不看；过期的 Cookie 不该让登录页登录不了） |
+| `POST /auth/logout` | 什么凭据都不拒绝（`logout`）：登出是幂等的、总是 204、总是清掉浏览器上的 Cookie；认得出是同源的登录才注销库里的这一个登录。请求没被当作已登录（公开地址和浏览器打开的地址对不上、没带 Cookie、Cookie 已失效）时只清 Cookie，不然页面说「已登出」、Cookie 还在、刷新又是登录着 |
+| `GET /auth/me`、`POST /auth/logout-all`、`POST /auth/password` | 只认登录 Cookie（不带 401，带令牌 403）；改密码另要旧密码 |
+| `GET /users`、`POST /users`、`POST /users/:id/disable`、`/enable`、`/password` | 只认平台管理员的登录 Cookie |
+
+认哪种凭据写在 `ACCOUNT_ROUTES`（`src/auth/access-rules.ts`）：契约里的账号类接口不在表里启动就失败；这些是新接口，没有「不带凭据照旧放行」可言。个人令牌的签发、吊销、列出是 #491。
+
+- **第一个管理员**：启动时没有任何用户，就生成一次性的初始化码（5 组 4 个字符，去掉 0/O/1/I/L），打印在日志里，同时写进数据目录的 `setup-code` 文件（0600）；`/setup` 页用它建第一个平台管理员（同时是默认项目的项目管理员），建好就登录，码立即失效、文件删掉；重启后换新码，直到有了用户；已经有用户时启动会删掉遗留的码文件。并发的两次初始化靠 PostgreSQL 的建议锁串行，只有一次成功；码猜错按来源地址限速。环境变量 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`（可选 `SFLY_ADMIN_DISPLAY_NAME`）直接给出初始管理员，只在没有任何用户时生效（有用户时忽略并在日志里说明）；只设置一个或值不合规矩就启动失败。
+- **密码**：Node 自带的 `crypto.scrypt`（`src/auth/password.ts`），存储串 `scrypt$ln=16,r=8,p=2$<盐>$<哈希>`，参数和盐都在串里：默认 N=2^16、r=8、p=2（OWASP 备忘单给出的配置之一）；调高默认参数后旧哈希仍能验证，并在下一次登录成功时按新参数重新存；密码先规范成 NFC；长度 8–128 个字符，不做复杂度规则；存储串坏了或参数超过上限一律验证不过、不抛错。登录名不存在时也验证一次假的哈希，响应时间不泄露账号存不存在；停用的账号和密码不对一样返回 401（不说账号是否存在、是否停用）。
+- **登录限速**（`src/auth/login-throttle.ts`）：内存里，按「登录名 + 来源地址」连续失败 5 次之后每次失败等待翻倍（2 秒起，上限 15 分钟），同一个地址上失败 30 次之后整个地址也限速；成功清零，一小时没有失败就忘掉，记录数有上限；被限速是 429 `too_many_attempts` 带 `Retry-After`，限速期间对的密码也要等，**被限速的请求不去验证密码**。**先占位再验证**（`acquire`）：验证一次要算几百毫秒，失败等算完才记的话，并发的几十次请求都在「还没有一次失败」的时候通过了检查，限速形同虚设；所以检查和占位在同一步里做完，占了位的尝试就是一次失败，验证通过了（`confirm`）清零并把地址整体的计数还回这一份，没有去验证（算不过来被拒绝，`cancel`）就把位还回去、不算失败。改密码时旧密码猜错、初始化码猜错同样按这套限速。没有只按登录名（不看来源）的限速：那样任何人都能不停地输错，把某个账号（尤其是管理员）锁在外面；限速不是账号锁定，重启清零，被限速的只是这个来源要等一会儿。
+- **来源地址和 `SFLY_TRUST_PROXY`**（`src/http/trust-proxy.ts`）：默认取 TCP 连接的对端地址。反向代理把它看到的客户端地址**追加**在 `X-Forwarded-For` 的最后，客户端自己写的在前面，所以要取「可信代理之前的那一个」，不能取最左边的一段（它是客户端写的，每次换一个就绕过按地址的限速；Fastify 的 `trustProxy: true` 信任所有跳，取的正是最左边的）。写法：逗号分隔的代理地址段（`127.0.0.1,10.0.0.0/8`，也认 `loopback`、`linklocal`、`uniquelocal`）交给 Fastify：连接控制面的对端在段里才信它带来的 `X-Forwarded-For`，从右往左跳过段里的地址，第一个不在段里的就是客户端；或者代理的层数（`1`、`2`；旧的 `1`、`true` 是一层）：Fastify 5.12 起数字写法不再按层数用（它没法验证直接连上来的对端，直连的客户端能伪造），所以这里自己写成信任函数 `(address, hop) => hop < 层数`，用它时控制面的端口只能经代理访问。写错了启动失败。没有配置时 `X-Forwarded-For` 不作数。
+- **密码验证的并发闸**（`src/auth/password-gate.ts`）：scrypt 走 libuv 的线程池（默认 4 个线程），一次约 0.2 秒、占约 64 MiB，同一个线程池还做任务日志的追加写、产物、节点包下载的文件读写。没有上限时，一阵并发的登录（不用登录就能发）会把线程池占满，文件读写排在后面（实测：120 个并发登录期间，读 SDK wheel 的接口最慢 8.7 秒，没有风暴时 4 毫秒）。所以同时算的密码最多 2 个，再多的排队（最多 16 个），队列满了直接回 503 `server_busy` 带 `Retry-After`，不去算哈希，也不算失败的尝试（占的位还回去）。登录、初始化、改密码（验证旧密码和算新密码）、管理员建用户和重置密码都走同一个闸。参数（N=2^16、r=8、p=2）没有变。
+- **登录 Cookie**：`sfly_login`，值是 32 字节随机数（base64url），库里只存 SHA-256；`HttpOnly`、`SameSite=Lax`、`Path=/`，HTTPS 下加 `Secure`（公开地址是 https，或请求本身是 https，或反向代理带了 `X-Forwarded-Proto: https`；判断不准时偏向加 `Secure`）。空闲期限默认 12 小时（`SFLY_LOGIN_IDLE_HOURS`）：用着就顺延，每分钟最多写一次库（最后使用时间和新的期限），同时重新下发 Cookie 续期；Cookie 对应的登录失效时响应让浏览器删掉它。**登录的标识每次都是新的随机数**，不用用户 ID 和时间拼，同一个用户、同一个时刻登录两次得到两个不同的、都有效的登录。
+- **跨站检查**（`src/auth/cross-site.ts`）：只对带登录 Cookie 的请求，检查不过就当作没有登录（不是 403）。优先看 `Sec-Fetch-Site`：`same-origin`、`none` 放行；`cross-site`、`same-site`（同一个公司域名下的别的内网站点）和不认识的值，只有 GET、HEAD 的页面导航（`Sec-Fetch-Mode: navigate` 且 `Sec-Fetch-Dest: document`，从飞书卡片、别的站点点开日志或产物的链接）放行，其余（有副作用的方法、fetch、图片、iframe 里的导航）都不放行。没有 `Sec-Fetch-Site`（浏览器在 http 的内网地址上不发它）时看 `Origin`：等于 `SFLY_PUBLIC_URL` 的来源（加上开发时 `SFLY_DEV_ORIGINS` 里 vite 的地址）放行；没有配置 `SFLY_PUBLIC_URL` 时用请求的 `Host` 兜底（比较主机和端口，不比较协议）。两个头都缺：GET、HEAD 放行（curl、旧浏览器的导航），有副作用的方法当作跨站。CORS 永远不发 `Access-Control-Allow-Credentials`，允许的请求头加上了 `authorization`。
+- **停用、注销**：停用是可撤回的暂停，不是作废：他的登录、个人令牌、开发 Agent 的凭据在停用期间都拒绝（访问检查每次看用户有没有停用），打开的事件流关掉；启用之后它们都恢复可用；要永久作废就吊销凭据本身（登出、注销全部登录、吊销令牌），吊销了的不会因为启用而恢复。登出关掉这个登录打开的事件流，注销全部登录关掉他所有登录打开的事件流（令牌打开的流不受影响）。**打开着的事件流定期重新检查它的凭据**（`src/sse/stream-recheck.ts`，间隔 30 秒，`streamRecheckMs`）：把流用的登录和令牌按凭据去重，每种一次查询查一批，查不到有效记录（吊销了、过期了、空闲期限到了、用户停用了）的就关掉用它们的流，**最迟 30 秒之后流被关**。进程内的注销、停用、吊销有立即的通知（`src/auth/revocations.ts`），用来马上关；定期检查兜住通知够不着的：主机上的 `reset-password` 命令（另一个进程，直接改库）、直接改库停用或吊销、空闲期限到了。库一时连不上时不关任何流，下一轮再查。改密码之后别处的其他登录注销、当前保留；管理员重置密码之后他的全部登录注销（令牌不受影响）。不能停用自己，也不能用重置接口重置自己的密码（用改密码）。
+- **主机上的重置命令**：`node main.mjs reset-password <登录名>`（容器里 `docker exec -it <容器> node /app/main.mjs reset-password <登录名>`）在终端里输入两遍新密码（不回显），`--password-stdin` 从标准输入读一行；连 `DATABASE_URL` 指向的数据库，不需要控制面在运行；重置之后他的全部登录注销。
+- **控制台**：`/login`、`/setup`（全屏，不带侧边栏和顶栏）；登录之后顶栏是账号菜单（显示名、登录名、平台管理员标记，修改密码、登出）代替昵称按钮，昵称弹窗不再出现（写操作的昵称取登录用户的显示名，`apps/web/src/lib/nickname.ts`）；没有登录时昵称弹窗照旧，里面有「已有账号，去登录」。登录之后回到 `redirect` 指的本站路径，只认以 `/` 开头、不是 `//`、整个字符串里没有反斜杠和控制字符的本站路径（自己拒绝，不靠路由库兜底）。**浏览器打开的地址和控制面认的公开地址不一致时**（`GET /auth/status` 带出 `public_url` 和 `request_host`，页面比较 `location`，`apps/web/src/lib/origin.ts`），登录页、初始化页和控制台顶部提示「请用 <公开地址> 打开」；开发服务器上不提示。
+- **日志里的数据库报错不带查询的参数**（`src/util/safe-error.ts`）：drizzle 的查询出错时，错误的 message 里带着查询的参数（`params: …`），写 `users` 表出错时密码的 scrypt 哈希会进日志，别的表的参数里有令牌的哈希、保密参数的默认值、飞书 Webhook 的地址；pg 的错误还有 `detail`（`Key (…)=(…) already exists.`）。要保留的是 SQL（`$1` 这样的占位）和数据库给的原因（错误码、约束名、表名、列名）。Fastify 日志的入口统一过一遍：`hooks.logMethod` 在每次 `log.error(error)` 之前换成去掉参数的错误（pino 在没给说明文字时用错误**自己的** message 当 `msg`，只靠序列化器拦不住），`serializers.err` 再序列化一遍；`console.error` 的地方用 `safeError`。
+- **测试**：`password.test.ts`（存储串、参数升级、坏串）、`password-gate.test.ts`、`trust-proxy.test.ts`、`error-log.test.ts`、`accounts-throttle.test.ts`（被限速的请求不验证、并发的错密码、登录标识每次不同、并发闸）、`login-hardening-http.test.ts`（并发限速、来源地址、事件流定期检查、登录风暴、登出清 Cookie、登录状态里的公开地址）、`login-throttle.test.ts`、`cross-site.test.ts`、`bootstrap.test.ts`、`reset-password-cli.test.ts`、`accounts-http.test.ts`（初始化、登录登出、改密码、管理账号、停用与恢复、限速、事件流关闭）、`accounts-cross-site.test.ts`（跨站检查、CORS、跨项目）、`accounts-secrets.test.ts`（每个账号类接口的出口里没有密码、Cookie、初始化码、哈希）；前端 `e2e/accounts.spec.ts` 和视觉基线。
 
 ---
 

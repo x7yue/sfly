@@ -37,6 +37,17 @@ export const apiClient = createClient({
 	onControlPlaneTime: observeControlPlaneTime,
 });
 
+/**
+ * 账号类接口（登录、初始化、登出、改密码…，资源类别 `account`）用的客户端：它们的身份是登录或密码，不看昵称，
+ * 但 API 客户端对非 GET 的请求要求有昵称（还没登录、也没填过昵称的人要能登录）：这里没有昵称时给一个占位，
+ * 控制面不读它。
+ */
+const accountClient = createClient({
+	baseUrl: API_BASE,
+	nickname: () => getNickname() ?? "未登录",
+	onControlPlaneTime: observeControlPlaneTime,
+});
+
 const routeInput = (input: unknown) => input as RouteInput | undefined;
 
 /** 按契约调用接口（约定见 packages/schema/src/http/contract.ts）。 */
@@ -61,7 +72,8 @@ async function send<E extends EndpointDef>(
 	def: E,
 	input: EndpointInput<E> | undefined,
 ): Promise<EndpointResponse<E>> {
-	const data = await apiClient.request(def, routeInput(input));
+	const client = def.resource.kind === "account" ? accountClient : apiClient;
+	const data = await client.request(def, routeInput(input));
 	if (import.meta.env.DEV) {
 		const parsed = def.response.safeParse(data);
 		if (!parsed.success) {

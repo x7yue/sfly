@@ -16,6 +16,7 @@ import {
 } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import {
+	ACCOUNT_ROUTES,
 	AGENT_CREDENTIAL_ROUTES,
 	locatorOf,
 	type ProjectLocator,
@@ -30,6 +31,8 @@ import type {
 	StoredUser,
 } from "./access-store.js";
 import { hashCredential } from "./credential-hash.js";
+import { cookieAllowed, type OriginRules } from "./cross-site.js";
+import { clearLoginCookieHeader, loginCookieHeader } from "./login-cookie.js";
 import {
 	effectiveScopes,
 	PLATFORM_ADMIN_SCOPES,
@@ -55,23 +58,31 @@ export interface Access {
 	name: string;
 	/** 经哪个令牌（令牌的名称，ADR 0029「经 …」）；登录和 Agent 凭据没有。 */
 	tokenName: string | null;
+	/** 登录 Cookie 对应的登录（`logins.id`）；其余凭据没有。注销和停用时按它关掉打开的事件流。 */
+	loginId: string | null;
+	/** 令牌的 ID（`api_tokens.id`）；登录和 Agent 凭据没有。 */
+	tokenId: string | null;
 	/**
 	 * 这次请求在 `platform_admin_actions` 里的记录（平台管理员靠自己的权限做的写）；没有记录为 null。
 	 * 请求结束时用它回填响应的状态码（{@link AccessGuard.finishAdminWrite}）。
 	 */
 	adminActionId: string | null;
-	/** 请求作用在哪个项目里；不属于项目的接口没有（但这样的接口不会带出 Access）。 */
-	project: ProjectId;
+	/** 请求作用在哪个项目里；账号类接口不属于项目，没有。不属于项目的接口（system）不会带出 Access。 */
+	project: ProjectId | null;
 	/** 有用户的凭据：用户在这个项目里的角色（平台管理员不是成员时为 null）；其余为 null。 */
 	role: ProjectRole | null;
 	/** 这次请求有效的范围：令牌的范围和用户此刻的范围的交集。Agent 凭据、任务凭据不走范围表，是空的。 */
 	scopes: readonly Scope[];
 }
 
-/** 检查的结果：通过时带出身份（不带凭据、带共享令牌时为 null，照旧放行），拒绝时带 HTTP 状态和原因。 */
+/**
+ * 检查的结果：通过时带出身份（不带凭据、带共享令牌时为 null，照旧放行），拒绝时带 HTTP 状态和原因。
+ * `setCookie` 是要随响应下发的 `Set-Cookie`：登录用了一段时间之后续期（空闲期限顺延，浏览器上的 Cookie 也跟着续），
+ * 或者带来的登录 Cookie 已经失效时让浏览器删掉它（不然失效的 Cookie 会让每个请求都是 401）。
+ */
 export type AccessResult =
-	| { ok: true; access: Access | null }
-	| { ok: false; status: 401 | 403 | 404; code: string; message: string };
+	| { ok: true; access: Access | null; setCookie?: string }
+	| { ok: false; status: 401 | 403 | 404; code: string; message: string; setCookie?: string };
 
 /** 一个请求里和检查有关的部分。 */
 export interface AccessRequest {
@@ -82,7 +93,20 @@ export interface AccessRequest {
 	authorization?: string | undefined;
 	/** `Cookie` 请求头。 */
 	cookie?: string | undefined;
+	/** 来源检查要看的请求头（`Sec-Fetch-*`、`Origin`、`Host`），只对带 Cookie 的请求有用（./cross-site.ts）。 */
+	fetchSite?: string | undefined;
+	fetchMode?: string | undefined;
+	fetchDest?: string | undefined;
+	origin?: string | undefined;
+	host?: string | undefined;
+	/** 浏览器看到的是 HTTPS：下发 Cookie 时加 Secure。 */
+	secure?: boolean | undefined;
 }
+
+/** 登录用了之后，隔多久才把「最后使用时间」写一次库（并续期）：不要每个请求写一次库。 */
+export const LOGIN_TOUCH_INTERVAL_MS = 60_000;
+/** 登录的空闲期限，默认 12 小时（`SFLY_LOGIN_IDLE_HOURS`）。 */
+export const DEFAULT_LOGIN_IDLE_MS = 12 * 3_600_000;
 
 /**
  * 资源不存在、属于别的项目、凭据限定的项目不是这个：一律 404，说法也一样，不透露别的项目里有什么
@@ -121,16 +145,35 @@ type Principal =
 	| {
 			kind: "login" | "personal" | "session";
 			user: StoredUser;
+			/** 登录的 ID（`logins.id`）；令牌没有。 */
+			loginId: string | null;
+			/** 令牌的 ID；登录没有。 */
+			tokenId: string | null;
 			tokenName: string | null;
 			/** 令牌自己的范围（登录没有）。 */
 			granted: readonly string[] | undefined;
 			/** 令牌限定的项目（登录和没有限定的个人令牌没有）。 */
 			limit: ProjectId | null;
 	  }
-	| { kind: "project"; name: string; granted: readonly string[]; project: ProjectId }
+	| {
+			kind: "project";
+			tokenId: string;
+			name: string;
+			granted: readonly string[];
+			project: ProjectId;
+	  }
 	| { kind: "agent"; agentName: string; project: ProjectId }
-	| { kind: "task"; name: string; project: ProjectId }
+	| { kind: "task"; tokenId: string; name: string; project: ProjectId }
 	| { kind: "shared" };
+
+/** 解析出的凭据，以及要不要续期它的 Cookie。 */
+interface Resolved {
+	principal: Principal | undefined;
+	/** 刚把登录续了期：响应要重新下发 Cookie（值就是请求里带来的那个）。 */
+	renew?: string;
+	/** 是登录 Cookie 但失效了：响应让浏览器删掉它。 */
+	clear?: boolean;
+}
 
 export class AccessGuard {
 	constructor(
@@ -140,8 +183,16 @@ export class AccessGuard {
 			/** Agent 凭据、任务凭据的接口清单；默认是 access-rules.ts 里的（测试可以换成别的路径写法）。 */
 			agentRoutes?: Readonly<Record<string, string>>;
 			taskRoutes?: Readonly<Record<string, string>>;
+			/** 登录的空闲期限（毫秒），默认 12 小时。 */
+			loginIdleMs?: number;
+			/** 哪些来源算同源（./cross-site.ts）；默认没有配置公开地址，用请求的 Host 兜底。 */
+			origins?: OriginRules;
 		},
 	) {}
+
+	get #idleMs(): number {
+		return this.deps.loginIdleMs ?? DEFAULT_LOGIN_IDLE_MS;
+	}
 
 	/** 检查一个请求；返回拒绝的原因，或通过时的身份。 */
 	async check(request: AccessRequest): Promise<AccessResult> {
@@ -151,9 +202,21 @@ export class AccessGuard {
 		}
 		// 不属于项目的接口不需要凭据，带了也不看（过期的 Cookie 不该让健康检查和下载安装脚本失败）。
 		if (locator.from === "none") return { ok: true, access: null };
-		const presented = presentedCredential(request);
+		let presented = presentedCredential(request);
+		// 登录 Cookie 是浏览器自动带上的：跨站的请求（有副作用的，或者不是页面导航的）不认它，当作没有登录。
+		if (presented?.from === "cookie" && !this.#sameSite(request)) presented = undefined;
+		if (locator.from === "account") return this.#checkAccount(request, presented);
 		if (presented === undefined) return { ok: true, access: null };
-		const principal = await this.#resolve(presented);
+		const resolved = await this.#resolve(presented);
+		const result = await this.#decide(resolved, request, locator);
+		return withCookie(result, resolved, request, this.#idleMs);
+	}
+
+	async #decide(
+		{ principal }: Resolved,
+		request: AccessRequest,
+		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
+	): Promise<AccessResult> {
 		if (principal === undefined) {
 			return denied(401, "unauthorized", "凭据无效、已过期或已吊销");
 		}
@@ -172,26 +235,121 @@ export class AccessGuard {
 		return this.#checkScoped(principal, request, project);
 	}
 
+	#sameSite(request: AccessRequest): boolean {
+		return cookieAllowed(
+			{
+				method: request.route.method,
+				fetchSite: request.fetchSite,
+				fetchMode: request.fetchMode,
+				fetchDest: request.fetchDest,
+				origin: request.origin,
+				host: request.host,
+			},
+			this.deps.origins ?? { origins: [], hostFallback: true },
+		);
+	}
+
+	// ---- 账号类接口：不属于项目，不走范围表，认哪种凭据看 ACCOUNT_ROUTES ----
+
+	async #checkAccount(
+		request: AccessRequest,
+		presented: Presented | undefined,
+	): Promise<AccessResult> {
+		const key = routeKey(request.route);
+		const rule: string | undefined = (ACCOUNT_ROUTES as Record<string, string>)[key];
+		if (rule === undefined) {
+			throw new Error(`${key} 是账号类接口，却没有写在 ACCOUNT_ROUTES 里（启动时应该已经拒绝）`);
+		}
+		// 登录、初始化、状态不要凭据，带了什么都不看：过期的 Cookie 不该让登录页登录不了。
+		if (rule === "anonymous") return { ok: true, access: null };
+		if (rule === "logout") return this.#checkLogout(presented);
+		if (presented === undefined) return denied(401, "unauthorized", "需要登录");
+		const resolved = await this.#resolve(presented);
+		const { principal } = resolved;
+		const refused = (status: 401 | 403, code: string, message: string): AccessResult =>
+			withCookie(denied(status, code, message), resolved, request, this.#idleMs);
+		if (principal === undefined) return refused(401, "unauthorized", "凭据无效、已过期或已吊销");
+		if (principal.kind !== "login") {
+			return refused(403, "forbidden", "这个接口只认登录（Cookie），令牌和别的凭据不能用它");
+		}
+		if (rule === "platform_admin" && !principal.user.isPlatformAdmin) {
+			return refused(403, "forbidden", "只有平台管理员能这样做");
+		}
+		return withCookie(
+			{
+				ok: true,
+				access: {
+					credential: "login",
+					userId: principal.user.id,
+					name: principal.user.displayName,
+					tokenName: null,
+					loginId: principal.loginId,
+					tokenId: null,
+					adminActionId: null,
+					project: null,
+					role: null,
+					scopes: [],
+				},
+			},
+			resolved,
+			request,
+			this.#idleMs,
+		);
+	}
+
+	/**
+	 * 登出：总是放行。认得出是同源的、有效的登录时带出身份（处理函数据此注销这一个登录）；没带 Cookie、令牌、Cookie 失效、
+	 * 请求没有被当作已登录（跨站、公开地址对不上）都没有身份，处理函数只清浏览器上的 Cookie。
+	 */
+	async #checkLogout(presented: Presented | undefined): Promise<AccessResult> {
+		if (presented?.from !== "cookie") return { ok: true, access: null };
+		const { principal } = await this.#resolve(presented);
+		if (principal?.kind !== "login") return { ok: true, access: null };
+		return {
+			ok: true,
+			access: {
+				credential: "login",
+				userId: principal.user.id,
+				name: principal.user.displayName,
+				tokenName: null,
+				loginId: principal.loginId,
+				tokenId: null,
+				adminActionId: null,
+				project: null,
+				role: null,
+				scopes: [],
+			},
+		};
+	}
+
 	// ---- 解析凭据 ----
 
-	async #resolve(presented: Presented): Promise<Principal | undefined> {
+	async #resolve(presented: Presented): Promise<Resolved> {
 		const hash = hashCredential(presented.secret);
 		const now = this.deps.clock.now();
 		if (presented.from === "cookie") {
 			const login = await this.deps.store.loginByCookieHash(hash);
-			return login && loginPrincipal(login, now);
+			const principal = login && loginPrincipal(login, now);
+			if (login === undefined || principal === undefined)
+				return { principal: undefined, clear: true };
+			// 用了一段时间之后才写一次库：最后使用时间、空闲期限顺延，浏览器上的 Cookie 也跟着续。
+			if (now.getTime() - login.lastUsedAt.getTime() >= LOGIN_TOUCH_INTERVAL_MS) {
+				await this.deps.store.touchLogin(login.id, now, new Date(now.getTime() + this.#idleMs));
+				return { principal, renew: presented.secret };
+			}
+			return { principal };
 		}
 		const token = await this.deps.store.tokenByHash(hash);
-		if (token) return tokenPrincipal(token, now);
+		if (token) return { principal: tokenPrincipal(token, now) };
 		const credential = await this.deps.store.agentCredentialByHash(hash);
-		return credential && agentPrincipal(credential);
+		return { principal: credential && agentPrincipal(credential) };
 	}
 
 	// ---- 项目从请求的哪里来 ----
 
 	/** 请求作用在哪个项目里；资源不存在（或路径里的项目写得不对）时返回 undefined。 */
 	async #projectOf(
-		locator: Exclude<ProjectLocator, { from: "none" }>,
+		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
 		params: AccessRequest["params"],
 	): Promise<ProjectId | undefined> {
 		if (locator.from === "path") {
@@ -212,7 +370,7 @@ export class AccessGuard {
 	async #checkProgram(
 		principal: Extract<Principal, { kind: "agent" | "task" }>,
 		request: AccessRequest,
-		locator: Exclude<ProjectLocator, { from: "none" }>,
+		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
 	): Promise<AccessResult> {
 		const key = routeKey(request.route);
 		const routes: Readonly<Record<string, string>> =
@@ -243,6 +401,8 @@ export class AccessGuard {
 			userId: null,
 			name: principal.kind === "agent" ? principal.agentName : principal.name,
 			tokenName: null,
+			loginId: null,
+			tokenId: principal.kind === "task" ? principal.tokenId : null,
 			adminActionId: null,
 			project,
 			role: null,
@@ -320,6 +480,8 @@ export class AccessGuard {
 					: principal.kind === "project"
 						? principal.name
 						: principal.tokenName,
+			loginId: principal.kind === "login" ? principal.loginId : null,
+			tokenId: principal.kind === "login" ? null : principal.tokenId,
 			adminActionId: null,
 			project,
 			role,
@@ -381,7 +543,15 @@ function loginPrincipal(login: StoredLogin, now: Date): Principal | undefined {
 	if (login.revokedAt !== null || login.idleExpiresAt <= now || login.user.disabledAt !== null) {
 		return undefined;
 	}
-	return { kind: "login", user: login.user, tokenName: null, granted: undefined, limit: null };
+	return {
+		kind: "login",
+		user: login.user,
+		loginId: login.id,
+		tokenId: null,
+		tokenName: null,
+		granted: undefined,
+		limit: null,
+	};
 }
 
 function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
@@ -397,6 +567,8 @@ function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
 				: {
 						kind: token.kind,
 						user: token.user,
+						loginId: null,
+						tokenId: token.id,
 						tokenName: token.name,
 						granted: token.scopes,
 						limit: token.projectId,
@@ -404,11 +576,17 @@ function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
 		case "project":
 			return token.projectId === null
 				? undefined
-				: { kind: "project", name: token.name, granted: token.scopes, project: token.projectId };
+				: {
+						kind: "project",
+						tokenId: token.id,
+						name: token.name,
+						granted: token.scopes,
+						project: token.projectId,
+					};
 		case "task":
 			return token.projectId === null
 				? undefined
-				: { kind: "task", name: token.name, project: token.projectId };
+				: { kind: "task", tokenId: token.id, name: token.name, project: token.projectId };
 	}
 }
 
@@ -420,4 +598,21 @@ function agentPrincipal(credential: StoredAgentCredential): Principal | undefine
 	return credential.agentName === null
 		? undefined
 		: { kind: "agent", agentName: credential.agentName, project: credential.projectId };
+}
+
+/** 把续期、清除 Cookie 的 `Set-Cookie` 加到结果上（只在登录 Cookie 的请求上有）。 */
+function withCookie(
+	result: AccessResult,
+	resolved: Resolved,
+	request: AccessRequest,
+	idleMs: number,
+): AccessResult {
+	const secure = request.secure ?? false;
+	if (resolved.renew !== undefined && result.ok) {
+		return { ...result, setCookie: loginCookieHeader(resolved.renew, idleMs / 1000, { secure }) };
+	}
+	if (resolved.clear && !result.ok) {
+		return { ...result, setCookie: clearLoginCookieHeader({ secure }) };
+	}
+	return result;
 }

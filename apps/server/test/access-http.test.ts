@@ -390,11 +390,18 @@ describe("带凭据的请求", () => {
 			]);
 			expect(rows[0].at).toEqual(cp.clock.now());
 
-			// 记录里没有「当时的成员角色」（不是成员）；响应的状态码是请求结束时回填的。
-			expect(rows.map((r) => [r.member_role, r.status])).toEqual([
-				[null, 201],
-				[null, 201],
-			]);
+			// 记录里没有「当时的成员角色」（不是成员）；响应的状态码是响应发出之后才回填的，等一下。
+			await vi.waitFor(async () => {
+				const filled = (
+					await db.query(
+						"select member_role, status from platform_admin_actions order by at, route",
+					)
+				).rows;
+				expect(filled.map((r) => [r.member_role, r.status])).toEqual([
+					[null, 201],
+					[null, 201],
+				]);
+			});
 
 			// 成为成员之后，他在这个项目里的写不再记。
 			await accounts.member("default", admin, "editor");
