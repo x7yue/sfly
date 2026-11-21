@@ -39,8 +39,8 @@ export interface LineChain {
 }
 
 /**
- * 线路上的一站：一个节点，或折起来的一段。当前站之前的段是 `done`（都算已完成：成功、已跳过、已停止）或 `ended`
- * （一样状态、但不算完成的节点，例如取消的运行里已取消的节点），之后的是 `rest`。
+ * 线路上的一站：一个节点，或折起来的一段。当前站之前的段是 `done`（都算已完成：成功、已停止）或 `ended`
+ * （一样状态、但不算完成的节点：取消的运行里已取消的节点、失败之后被跳过的节点），之后的是 `rest`。
  * 折起来的一段画成它最后一个节点（挨着画出来的那一站）的状态。
  */
 export type Station =
@@ -59,7 +59,7 @@ export const LINE_MAX_STATIONS = 7;
 /**
  * 长链折叠（外壳页方案 4.2）：节点不超过 `max` 个时每个节点一站；超过时只画当前站（进行中的节点，没有时是第一个
  * 待执行的节点）前面最后一站、当前站和之后两站，其余折成「已完成 N 个」「还有 N 个」。失败的节点总是画出来，
- * 不折进「已完成」；不算完成的节点（已取消）也不折进「已完成」，连着的一样状态折成一段（「已取消 N 个」）。
+ * 不折进「已完成」；不算完成的节点（已取消、已跳过）也不折进「已完成」，连着的一样状态折成一段（「已取消 N 个」「已跳过 N 个」）。
  * 只折一个节点时直接画它（一站和一段折叠一样宽）。都结束了的链只画最后一站。
  */
 export function foldStations(nodes: readonly LineNode[], max = LINE_MAX_STATIONS): Station[] {
@@ -183,7 +183,7 @@ export function RunLines({
 			data-viz
 			style={{ "--line-columns": columns } as CSSProperties}
 			className={cn(
-				"m-0 grid list-none grid-cols-[max-content_repeat(var(--line-columns),minmax(4rem,14rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
+				"m-0 grid list-none grid-cols-[max-content_repeat(var(--line-columns),minmax(0,14rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
 				className,
 			)}
 		>

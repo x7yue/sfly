@@ -1,9 +1,9 @@
-import { nameBeforeId } from "@sfly/orchestration";
 import { type RunView, runsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
+import { NodeNameInline } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { TriggeredAt } from "#/components/via-tag";
@@ -232,21 +232,6 @@ export function MonitorTopBar({
 }
 
 /**
- * 节点名写成行内的文字：整句摘要放不下时从末尾截断（用 `NodeName` 的话它自己是一个 inline-flex，
- * 窗口窄时名称先缩没了，只剩「失败于 …」）。
- */
-function failureNodeName({ node }: RunFailure) {
-	const name = nameBeforeId(node.node_id, node.display_name);
-	return name === undefined ? (
-		<span className="font-mono">{node.node_id}</span>
-	) : (
-		<>
-			{name}（<span className="font-mono">{node.node_id}</span>）
-		</>
-	);
-}
-
-/**
  * 失败摘要：「失败于 verify（第 2 次尝试）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
  * 点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
  */
@@ -275,7 +260,10 @@ function FailureSummary({
 				/>
 			}
 		>
-			失败于 <span className="text-fg-1">{failureNodeName(failure)}</span>
+			失败于{" "}
+			<span className="text-fg-1">
+				<NodeNameInline node={failure.node} />
+			</span>
 			{failureAttempt(failure)}
 			{failure.message && (
 				<span className="text-danger-fg">

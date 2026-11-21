@@ -31,7 +31,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
 import { Attention, OtherWarnings } from "./Attention";
-import { FailureArea } from "./FailureArea";
+import { FailureAnnouncer, FailureArea } from "./FailureArea";
 import { useTimeAxis } from "./monitor-state";
 import type { PanelTab } from "./run-link";
 import { chainLabelParts, orderedChains } from "./run-model";
@@ -104,6 +104,7 @@ export function Overview({
 			className="min-h-0 flex-1 overflow-auto bg-bg"
 		>
 			<div ref={content} className="flex flex-col gap-5 p-4">
+				<FailureAnnouncer run={run} />
 				<FailureArea run={run} onOpen={onOpenNode} />
 				<ChainSection run={run} />
 				{focus.data && <Attention focus={focus.data} onOpen={onOpenNode} />}

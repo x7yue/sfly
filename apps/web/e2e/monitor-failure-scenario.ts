@@ -72,6 +72,8 @@ export interface FailureRun {
 	agent: FakeAgent;
 	/** 断言节点的任务（失败之后还握着它的引用，方便补日志）。 */
 	failed: AssignedTask;
+	/** 清理节点（always）的任务。 */
+	cleanup: AssignedTask;
 }
 
 /**
@@ -124,7 +126,7 @@ export async function failedRun(
 		await agent.succeed(cleanup);
 	}
 	clock.advance(1000);
-	return { runId, scenarioId, agent, failed };
+	return { runId, scenarioId, agent, failed, cleanup };
 }
 
 /** 打开运行监控的概览；浏览器时间固定在手动时钟的当前时刻。 */

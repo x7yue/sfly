@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import {
 	FAILED_NAME,
@@ -83,7 +84,22 @@ const idShown = (row: Locator) =>
 		return id.getBoundingClientRect().bottom <= cell.getBoundingClientRect().bottom + 0.5;
 	});
 
-const area = (page: Page) => page.getByRole("region", { name: "失败的节点" });
+/**
+ * 时间线名称列里节点类型（「ping」）要么整个显示，要么整个收起：不留半个字、几像素宽的残片
+ * （它在名称之后第二个 `data-truncate-wrap` 里，放不下时换到被裁掉的第二行）。
+ */
+const typeIsWholeOrHidden = (row: Locator) =>
+	row.evaluate((button) => {
+		const cell = button.querySelectorAll("[data-truncate-wrap]")[1];
+		const text = cell?.lastElementChild;
+		if (!cell || !text) throw new Error("这一行没有节点类型");
+		const box = cell.getBoundingClientRect();
+		const word = text.getBoundingClientRect();
+		const hidden = word.bottom > box.bottom + 0.5;
+		return hidden || word.right <= box.right + 0.5;
+	});
+
+const area = (page: Page) => page.getByTestId("failure-area");
 const header = (page: Page) => page.getByRole("banner");
 const chainCard = (page: Page) => page.getByRole("list", { name: "各链进度" });
 const tooltips = (page: Page) => page.locator('[data-slot="tooltip-content"]');
@@ -124,7 +140,7 @@ for (const viewport of VIEWPORTS) {
 			expect(await fits(failure.getByTestId("failure-reason"))).toBe(true);
 			expect(await fits(failure.getByTestId("failure-node"))).toBe(true);
 
-			// 层级：节点名是内容区里最大的字，比各区块的标题（`text-base`）还大；区域是第一个、也是唯一铺着色底的块。
+			// 层级：节点名 `text-lg` 比各区块的标题（`text-base`）都大；区域是概览里唯一铺着彩色底的块（别的块的底色都是中性灰）。
 			const sizes = await page.evaluate(() => {
 				const px = (el: Element) => Number.parseFloat(getComputedStyle(el).fontSize);
 				const content = document.querySelector('[role="tabpanel"]');
@@ -132,18 +148,28 @@ for (const viewport of VIEWPORTS) {
 					(h) => !h.closest('[data-testid="failure-area"]'),
 				);
 				const node = document.querySelector('[data-testid="failure-node"]');
-				const tinted = [...(content?.querySelectorAll("section") ?? [])].filter(
-					(el) => getComputedStyle(el).backgroundColor !== "rgba(0, 0, 0, 0)",
-				);
+				// 铺着底色的块里，不是中性灰（红、绿、蓝分量不相等）的。底色可能写成 rgb() 或 color(srgb …)。
+				const channels = (css: string): [number, number, number] | null => {
+					const rgb = /^rgba?\((\d+), (\d+), (\d+)/.exec(css);
+					if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+					const srgb = /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(css);
+					return srgb
+						? [Number(srgb[1]) * 255, Number(srgb[2]) * 255, Number(srgb[3]) * 255]
+						: null;
+				};
+				const colored = [...(content?.querySelectorAll("section") ?? [])].filter((el) => {
+					const c = channels(getComputedStyle(el).backgroundColor);
+					return c !== null && (Math.abs(c[0] - c[1]) > 4 || Math.abs(c[1] - c[2]) > 4);
+				});
 				return {
 					node: node ? px(node) : 0,
 					headings: headings.map(px),
-					firstTinted: tinted[0]?.getAttribute("data-testid"),
+					colored: colored.map((el) => el.getAttribute("data-testid")),
 				};
 			});
 			expect(sizes.headings.length).toBeGreaterThan(0);
 			expect(sizes.node).toBeGreaterThan(Math.max(...sizes.headings));
-			expect(sizes.firstTinted).toBe("failure-area");
+			expect(sizes.colored).toEqual(["failure-area"]);
 		});
 
 		test("失败区域：一步去失败节点的尝试和日志；错误信息的全文（含堆栈）展开才看", async ({
@@ -213,26 +239,41 @@ for (const viewport of VIEWPORTS) {
 			expect(await nothingClipped(failure)).toBe(0);
 		});
 
-		test("状态同时用颜色和形状表达：强制颜色模式下色底没有了，描边、形状和文字仍然分辨得出失败", async ({
+		test("状态同时用颜色和形状表达：强制颜色模式下色底和红色都没有了，描边、形状和文字仍然分辨得出失败", async ({
 			page,
 			controlPlane,
 			connectAgent,
 			clock,
 		}) => {
 			const { runId } = await failedRun(controlPlane, connectAgent, clock);
-			await page.emulateMedia({ forcedColors: "active" });
 			await openFailedOverview(page, clock, runId);
 			const failure = area(page);
+			const color = (locator: Locator) => locator.evaluate((el) => getComputedStyle(el).color);
+			/** 底色是不是中性灰（红、绿、蓝分量相等）：作者的红色底换成系统颜色之后是（带透明度的）黑或白。 */
+			const neutralBackground = (locator: Locator) =>
+				locator.evaluate((el) => {
+					const css = getComputedStyle(el).backgroundColor;
+					const m = /^rgba?\((\d+), (\d+), (\d+)/.exec(css);
+					return m ? m[1] === m[2] && m[2] === m[3] : false;
+				});
+			const diamond = failure.locator('[data-status-dot="failed"]');
+			const node = failure.getByTestId("failure-node");
 
-			// 形状：标题前的八边形、节点前的实心菱形（`StatusDot` 的 SVG 用 currentColor 画）。
-			const octagon = failure.locator("svg").first();
-			await expect(octagon).toBeVisible();
-			const diamond = failure.locator('[data-status-dot="failed"] svg');
-			await expect(diamond).toBeVisible();
-			// 描边还在（强制颜色换了色，不去掉边框），文字写着「失败」。
+			// 正常显示：失败区域有自己的红色底，菱形是红色，和文字的颜色不同。
+			expect(await neutralBackground(failure)).toBe(false);
+			expect(await color(diamond)).not.toBe(await color(node));
+
+			// 强制颜色：作者的颜色被系统颜色换掉，红色底没有了（只剩黑色的淡影），菱形和文字同色：不再靠红色分辨。
+			await page.emulateMedia({ forcedColors: "active" });
+			await expect.poll(() => neutralBackground(failure)).toBe(true);
+			expect(await color(diamond)).toBe(await color(node));
+
+			// 还能分辨：描边在，标题前的八边形和节点前的菱形（`StatusDot` 的 SVG 用 currentColor 画）、文字「运行失败」「失败」都在。
 			await expect(failure).toHaveCSS("border-top-style", "solid");
 			await expect(failure).toHaveCSS("border-top-width", "1px");
-			await expect(failure.getByTestId("failure-node")).toBeVisible();
+			await expect(failure.locator("svg").first()).toBeVisible();
+			await expect(diamond.locator("svg")).toBeVisible();
+			await expect(node).toBeVisible();
 			await expect(failure.getByText("08:00:11 失败")).toBeVisible();
 			await expect(failure.getByRole("heading", { name: "运行失败" })).toBeVisible();
 		});
@@ -316,9 +357,7 @@ for (const viewport of VIEWPORTS) {
 			const preset = bar.getByText(`预设：${PRESET_NAME}`);
 			expect(await preset.evaluate((el) => el.clientWidth)).toBeGreaterThanOrEqual(112);
 			if (viewport.width >= 1440) expect(await fits(preset)).toBe(true);
-			// 失败摘要最先让位：它被截断，顶栏本身没有被撑出屏幕。
-			const summary = bar.getByTestId("run-failure");
-			expect(await fits(summary)).toBe(false);
+			// 放不下时失败摘要先让位（它被截断也可以），顶栏本身没有被撑出屏幕。
 			expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 			// 视图标签页和右边的按钮都在视口里。
 			for (const control of [
@@ -384,8 +423,11 @@ for (const viewport of VIEWPORTS) {
 				const row = timeline.locator(`[data-node-row="${id}"] button`);
 				const nameClip = row.locator("[data-truncate-clip]").first();
 				await expect(nameClip).toHaveText(name);
-				await expect(row.locator("[data-truncate-wrap] > span:last-child")).toHaveText(`（${id}）`);
+				await expect(row.locator("[data-truncate-wrap] > span:last-child").first()).toHaveText(
+					`（${id}）`,
+				);
 				expect(await overlaps(row), `${name} 压在别的项上`).toEqual([]);
+				expect(await typeIsWholeOrHidden(row), `${name} 的节点类型被挤成残片`).toBe(true);
 				// 显示名称优先：名称和「（节点 ID）」一行放得下才一起显示，放不下时「（节点 ID）」整个收起，不留半截。
 				// 只有带 always 标签、右边多占一块的那一行，名称才可能放不下。
 				const truncated = !(await fits(nameClip));
@@ -402,6 +444,61 @@ for (const viewport of VIEWPORTS) {
 			await expect(longRow).toHaveAccessibleName(
 				new RegExp(`^${NODE_LABEL} demo-checks/ping 失败`),
 			);
+		});
+
+		test("别的节点也失败了：列出来，同一个节点在几个子流程实例里都失败时写明是哪个实例；点一下去它的尝试", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			// 主链的 verify 和子流程里的 probe 都失败（子流程先失败，它是第一个失败的节点）。
+			const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+			await agent.fail(tasks.probe as AssignedTask, "TimeoutError: 延迟超过阈值");
+			clock.advance(1000);
+			await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦");
+			await agent.succeed(await agent.nextAssign());
+			await openFailedOverview(page, clock, runId);
+
+			const failure = area(page);
+			await expect(failure.getByTestId("failure-node")).toContainText("probe");
+			await expect(failure).toContainText("另有 1 个节点也失败了");
+			// 别的失败节点写明所在的子流程实例；主链上的节点不写。
+			const others = failure.getByRole("listitem");
+			await expect(others).toHaveCount(1);
+			await expect(others.first()).toHaveText("verify");
+			await others.first().getByRole("button").click();
+			await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+			await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
+				"aria-selected",
+				"true",
+			);
+		});
+
+		test("运行被取消、取消之前已有节点失败：失败区域的标题是「有节点失败」", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const { runId, agent, cleanup } = await failedRun(controlPlane, connectAgent, clock, {
+				cleanupDone: false,
+			});
+			const cancel = await controlPlane.fetch(`/runs/${runId}/cancel`, {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+				body: "{}",
+			});
+			expect(cancel.ok).toBe(true);
+			// 清理节点（always）照常执行（docs/SEMANTICS.md §3.4），它结束后运行才以已取消结束。
+			await agent.succeed(cleanup as AssignedTask);
+			await openFailedOverview(page, clock, runId);
+
+			await expect(header(page).getByTestId("run-status")).toHaveText("已取消");
+			await expect(
+				area(page).getByRole("heading", { name: "有节点失败", exact: true }),
+			).toBeVisible();
+			await expect(area(page).getByTestId("failure-node")).toContainText(FAILED_NAME);
 		});
 	});
 }

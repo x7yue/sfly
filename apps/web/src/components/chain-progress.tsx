@@ -22,6 +22,26 @@ export function chainSkippedText(nodes: readonly { status: string }[]): string |
 	return skipped === 0 ? null : skippedCountLabel(skipped);
 }
 
+/**
+ * 一条链的计数：「1/3」，有被跳过的节点时后面接「· 跳过 2」（被跳过的不算已完成）。运行记录的卡片、运行抽屉的各链进度用它；
+ * 线路（`run-lines`）里计数和「跳过 N」叠成两行，另写。
+ */
+export function ChainProgressCount({
+	nodes,
+	className,
+}: {
+	nodes: readonly { status: string }[];
+	className?: string;
+}) {
+	const skipped = chainSkippedText(nodes);
+	return (
+		<span className={cn("text-2xs text-fg-3", className)}>
+			<span className="font-mono">{chainProgressText(nodes)}</span>
+			{skipped && <span data-skipped-count> · {skipped}</span>}
+		</span>
+	);
+}
+
 /** 一条链的进度条、线路缩略的读屏名称与提示：「主链 1/4」，有被跳过的节点时接上「，跳过 2」。 */
 export function chainProgressName(label: string, nodes: readonly { status: string }[]): string {
 	const skipped = chainSkippedText(nodes);

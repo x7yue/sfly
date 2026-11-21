@@ -13,6 +13,20 @@ export const runNodeName = (node: RunNodeName): string =>
 	nameWithId(node.node_id, node.display_name);
 
 /**
+ * 行内的「显示名称（节点 ID）」：节点 ID 等宽，名称和 ID 都在一段文字里，不单独截断（顶栏的失败摘要整句截断，
+ * 概览的失败区域整段折行）。没有显示名称时只写节点 ID。
+ */
+export function NodeNameInline({ node }: { node: RunNodeName }) {
+	const name = nameBeforeId(node.node_id, node.display_name);
+	if (name === undefined) return <span className="font-mono">{node.node_id}</span>;
+	return (
+		<>
+			{name}（<span className="font-mono">{node.node_id}</span>）
+		</>
+	);
+}
+
+/**
  * 页面上写运行里的节点：「显示名称（节点 ID）」，节点 ID 用等宽字体；没有显示名称时只写节点 ID。
  * 放不下时（在 flex 行里，或者比所在的块还宽）截断显示名称，括号里的节点 ID 总是完整的；截断时悬停或聚焦显示全文（`Truncate`）。
  * 放在按钮里时，由按钮用 `Truncate` 的 `render` 和 `label` 提示全文，这里只截断。

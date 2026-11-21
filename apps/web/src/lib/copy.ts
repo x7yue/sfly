@@ -179,8 +179,6 @@ export const FOCUS = {
  * 运行还没结束、已有节点失败时也有。直达按钮的写法和「需要注意」里的相同（{@link FOCUS}）。
  */
 export const FAILURE_AREA = {
-	/** 区域的可访问名称。 */
-	label: `失败的${TERM.node}`,
 	/** 标题按运行的状态：失败的运行；还在进行的运行里已有节点失败；取消的运行里也有节点失败。 */
 	title: {
 		failed: "运行失败",

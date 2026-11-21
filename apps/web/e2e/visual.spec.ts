@@ -812,7 +812,7 @@ for (const viewport of [
 		const { runId } = await failedRun(controlPlane, connectAgent, clock);
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
-		await expect(page.getByRole("region", { name: "失败的节点" })).toBeVisible();
+		await expect(page.getByTestId("failure-area")).toBeVisible();
 		await expect(page.getByTestId("focus-freshness")).toBeVisible();
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-${viewport.width}.png`, {
@@ -829,7 +829,7 @@ for (const viewport of [
 		const { runId } = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: false });
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
-		await expect(page.getByRole("region", { name: "失败的节点" })).toBeVisible();
+		await expect(page.getByTestId("failure-area")).toBeVisible();
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-running-${viewport.width}.png`, {
 			mask: runIds(page),
