@@ -31,12 +31,12 @@ export const removedNodeFailure = (
  *
  * - 一个运行里可以有几个这样的任务：处理前一个时，链往后推进可能已经把后一个停掉（总是执行的停止子流程节点
  *   停止它所在的子流程），所以每个任务失败之前重新读它的状态，不再是 waiting 就跳过，不能把「已停止」改写成失败。
- * - 排不出某个运行的计划（`driver.locate` 抛错）时跳过这个任务并交给 `onError`，不让一个历史运行挡住整个控制面启动。
+ * - 排不出某个运行的计划（`driver.locate` 抛错）时跳过这个任务并交给 `onError`（带上运行和任务的 ID，记日志用），不让一个历史运行挡住整个控制面启动。
  */
 export async function failRemovedWaits(
 	driver: ChainDriver,
 	db: Db,
-	onError: (error: unknown) => void = () => {},
+	onError: (error: unknown, task: { id: string; runId: string }) => void = () => {},
 ): Promise<number> {
 	const waiting = eq(tasks.status, "waiting");
 	if (!(await anyTask(db, waiting))) return 0;
@@ -65,7 +65,7 @@ export async function failRemovedWaits(
 				);
 				failed++;
 			} catch (error) {
-				onError(error);
+				onError(error, { id: task.id, runId: task.runId });
 			}
 		}
 		return failed;

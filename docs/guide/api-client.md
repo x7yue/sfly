@@ -81,6 +81,26 @@ for (const item of runs) {
 
 - `orchestrations.list` 列出没有归档的场景，按新建时间从新到旧。`q` 按名称、说明或引用的 Agent 搜索，`status` 按最近一次运行的状态筛选，`agent` 只看引用了这个 Agent 的场景。每一项带着最近一次运行和各节点的状态（`last_run`）、引用的 Agent 和它们是否在线（`agents`），看板画场景卡片只要这一次请求。
 - `orchestrations.head` 读最新版本（编辑起点），`orchestrations.version` 读某个版本，`orchestrations.saveVersion` 和 `orchestrations.restoreVersion` 的响应也带版本的 `document`：入口节点和子流程入口节点里，声明为 `secret` 的参数的默认值（`default`）读出来一律是占位符 `"******"`（和运行的参数、运行预设里的 secret 值是同一个掩码，不论参数的类型），原值任何接口都读不到；没有默认值的不动，普通参数的默认值照常返回。认占位符看 `secret` 为 `true` 且 `default` 是 `"******"`，TypeScript 里用 `@sfly/schema` 的 `SECRET_MASK` 和 `isSecretDefaultPlaceholder`。把读出来的文档原样 `saveVersion` 存回去时，占位符表示「沿用上一个版本里同名参数的默认值」（按入口节点 ID 和参数名对应，`base_version` 仍要是最新版本，不是时照常返回 409 `version_conflict`）；给新值就换成新值，删掉 `default` 就去掉默认值；沿用不了（新场景的第一个版本、新增或改了名的参数、类型变了、参数从 secret 改成了普通参数）时返回 400 `secret_default_placeholder`，`details` 是 `{ node_id, param, reason }` 的列表，什么都不保存。所以 secret 参数的默认值写不成 `******` 本身。`runs.trigger` 的 `params` 里 secret 参数的值是 `"******"` 时同样被拒绝（400 `invalid_params`，不产生运行）：这是读取时打的码，不是值，不传这个参数就用默认值；运行预设里 secret 参数的值写 `"******"` 也被拒绝（沿用原值写 `keep`）。触发被拒绝时的 `message` 和 `details` 不回显 secret 参数的值（写成 `******`）。保存时响应的 `warnings` 里，每个写了默认值的 secret 参数有一条 `secret_param_default`：版本不能修改，默认值会一直留在这个版本里，建议改用运行预设或触发时再给出。
+- **把读到的文档原样存回去前，先去掉已移除的节点。** 场景里可能还留着已移除种类的节点（飞书通知、定时、Sleep，ADR 0028）：读到的文档（`StoredOrchestrationDocument`）里它们是 `RemovedNode`，保存请求的文档（`OrchestrationDocument`）不收，直接传回去既编译不过，运行时也会被拒绝（400 `invalid_document`，写明是哪些节点、怎么替换）。要先按替换办法改写、再删掉它们；只是想存回其余的内容时，用显式的类型谓词过滤，不要按种类名的字面量过滤（TS 推不出类型谓词，编译不过）：
+
+  ```ts
+  import type { OrchestrationNode, StoredNode } from "@sfly/client";
+
+  const REMOVED_KINDS = new Set(["feishu_notify", "timer", "sleep"]);
+  const isCurrent = (n: StoredNode): n is OrchestrationNode => !REMOVED_KINDS.has(n.kind);
+
+  const id = "<场景 id>";
+  const head = await client.orchestrations.head({ params: { id } });
+  await client.orchestrations.saveVersion({
+    params: { id },
+    body: {
+      base_version: head.number,
+      document: { ...head.document, nodes: head.document.nodes.filter(isCurrent) },
+    },
+  });
+  ```
+
+  这样存回去会丢掉被过滤的节点；它们的配置读到的文档里原样带着（想改写成别的做法就照着写）。
 - `runs.list` 列出所有场景的运行，按开始时间从新到旧，最多 `limit` 条（默认 200，最多 500）。可以按 `status`、`orchestration_id` 筛选，`q` 按运行编号前缀或触发人搜索。`counts` 是各状态的运行数。
 - `runs.get` 读一次运行的完整视图：各条链、各个节点的状态，每次尝试的错误和输出。
 - 控制台统计用 `dashboard.get`（`setup` 是「开始使用」四步各自是否完成：有在线的 Agent、发布过节点包、有没归档的场景、有过运行；`recent_ended` 是最近 24 小时结束的运行，失败的带 `focus`：场景现在的关注项在这次运行结束时的值，最多 4 项，字段和 `GET /runs/:id/focus?points=0` 的 `items` 相同），Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。

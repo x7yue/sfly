@@ -270,8 +270,13 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 重启恢复：状态都在 PG，给租约和排队超时留出 Agent 重连的时间（#15）；升级前停在已移除的等待节点上的任务
 	// 按配置错误失败（ADR 0028），某个历史运行出错时记日志、跳过，不挡住启动。
-	await engine.recover((error) => {
-		if (logger) console.error("recover: failing a removed wait node failed:", error);
+	await engine.recover((error, task) => {
+		if (logger) {
+			console.error(
+				`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
+				error,
+			);
+		}
 	});
 	const actions = new TaskActions({
 		db: database.db,

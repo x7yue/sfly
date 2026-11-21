@@ -1305,7 +1305,9 @@ export class Engine implements AgentSessionHandler {
 	 * 控制面启动时顺延租约和排队超时，给 Agent 重连的时间（leases.ts）；升级前正在等待、
 	 * 节点已被移除的任务按配置错误失败（removed-nodes.ts）。
 	 */
-	async recover(onError?: (error: unknown) => void): Promise<void> {
+	async recover(
+		onError?: (error: unknown, task: { id: string; runId: string }) => void,
+	): Promise<void> {
 		const grace = this.#leaseFrom(this.deps.clock.now());
 		await this.deps.mutex.run(() => extendForRecovery(this.deps.db, grace));
 		await failRemovedWaits(this.#driver, this.deps.db, onError);
