@@ -217,16 +217,18 @@ const EmptyRemovedField = z
 	.array(z.unknown())
 	.max(0)
 	.optional()
-	.describe("已不再支持的字段（便签，ADR 0028）：只收空数组，保存时丢掉；有内容的被拒绝。");
+	.describe(
+		"已移除的字段（便签，ADR 0028）：只为兼容旧客户端和升级前导出的文件保留，新写的文档不要带它。读到的文档里没有它；保存时收到空数组会丢掉，有内容的被拒绝。",
+	);
 
 /** 可以保存的场景文档：节点都是现在支持的种类（保存、命令行的本地检查、导出给 Python 的 JSON Schema 用它）。 */
 export const OrchestrationDocument = z
 	.strictObject({
 		...documentShape(OrchestrationNode),
 		/**
-		 * 已不再支持的字段（便签，ADR 0028）：只收空数组，保存时丢掉，新版本里没有它；里面有内容的被拒绝
-		 * （400 `invalid_document`，写明有几条、怎么办）。读到的文档（`StoredOrchestrationDocument`）里没有这个字段，
-		 * 读出来原样存回去不用处理它。
+		 * 已移除的字段（便签，ADR 0028）：只为兼容旧客户端和升级前导出的文件保留，新写的文档不要带它。
+		 * 保存时收到空数组会丢掉（新版本里没有它），里面有内容的被拒绝（400 `invalid_document`，写明有几条、怎么办）。
+		 * 读到的文档（`StoredOrchestrationDocument`）里没有这个字段，读出来原样存回去不用处理它。
 		 */
 		sticky_notes: EmptyRemovedField,
 	})
