@@ -278,5 +278,14 @@ describeWithAgent("全栈：数值经过平台", () => {
 		const bad = await api.node(failedRun, "bad");
 		expect(bad.outputs).toBeNull();
 		expect(bad.error?.kind).toBe("node_error");
+		// 错误信息写明是哪个输出、怎么办（#481）：不是看不出原因的「执行器异常退出（exit status: 0）」。
+		const shown = { nan: "NaN", inf: "Infinity", "-inf": "-Infinity" }[kind];
+		expect(bad.error?.message).toMatch(
+			new RegExp(
+				`^NodeOutputError: 节点返回值不能序列化为 JSON：输出 x 的值是 ${shown}。` +
+					"JSON 里没有 NaN 和无穷，换成 None（表示没有值），或者换成字符串（例如 str\\(值\\)）再返回\n",
+			),
+		);
+		expect(bad.error?.message).not.toContain("执行器异常退出");
 	}, 120_000);
 });
