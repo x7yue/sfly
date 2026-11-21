@@ -533,7 +533,14 @@ describe("场景版本里 secret 参数的默认值", () => {
 				b,
 				forms.slice(0, 20).map((text, i) => [i + 1, text]),
 			);
-			await agent.fail(b, forms.join("; "));
+			// 出错位置（节点代码里的那一行）也是用户内容，可能带着值。
+			await agent.fail(
+				b,
+				forms.join("; "),
+				undefined,
+				undefined,
+				`load_config 第 3 行 ${forms.join(" ")}`,
+			);
 			await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
 			const after = { ...ids, task: b.taskId };
 			await sweepReads(after, noLeaks("结束后"));

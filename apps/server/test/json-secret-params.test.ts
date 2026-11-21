@@ -481,7 +481,13 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			await agent.succeed(c, {});
 			const d = await agent.nextAssign();
 			// 整个对象按收到的样子（库里的键顺序）原样写出：整段换成一个掩码。
-			await agent.fail(d, `bad test-leaf-one ${JSON.stringify(a.inputs.opts)} and {}`);
+			await agent.fail(
+				d,
+				`bad test-leaf-one ${JSON.stringify(a.inputs.opts)} and {}`,
+				undefined,
+				undefined,
+				"load_config 第 3 行 test-leaf-two",
+			);
 			await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
 			const failed = await check(runId, "failed");
 			const [, nodeA, nodeB, nodeC, nodeD] = failed.chains[0]?.nodes ?? [];
@@ -499,6 +505,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			});
 			expect(nodeC?.outputs).toEqual({});
 			expect(nodeD?.error?.message).toBe(`bad ${MASK} ${MASK} and {}`);
+			expect(nodeD?.error?.location).toBe(`load_config 第 3 行 ${MASK}`);
 
 			// 运行 2：全部成功。
 			const second = await api.triggerOk(id, triggerParams);
