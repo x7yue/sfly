@@ -74,7 +74,7 @@ describe("第一个管理员", () => {
 		// 只有属主可读写（0600）。
 		expect((await stat(codeFile(cp))).mode & 0o777).toBe(0o600);
 		const status = await cp.fetch("/auth/status");
-		expect(await status.json()).toEqual({ setup_required: true });
+		expect(await status.json()).toMatchObject({ setup_required: true });
 	});
 
 	it("用初始化码建出管理员并登录；码用过即失效，文件删掉，再用同一个码是 409", async () => {
@@ -96,7 +96,7 @@ describe("第一个管理员", () => {
 		// 码失效：文件没了，再用同一个码、再用任何码都是 409（已经有用户了）。
 		expect(existsSync(codeFile(cp))).toBe(false);
 		expect((await setup(cp, code, "second")).status).toBe(409);
-		expect(await (await cp.fetch("/auth/status")).json()).toEqual({ setup_required: false });
+		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: false });
 		// 他在默认项目里是项目管理员：他在默认项目里的写不算「管理员在不是成员的项目里的写」。
 		const db = new pg.Client({ connectionString: cp.database.url });
 		await db.connect();
@@ -115,7 +115,7 @@ describe("第一个管理员", () => {
 		const wrong = await setup(cp, "AAAA-BBBB-CCCC-DDDD-EEEE");
 		expect(wrong.status).toBe(403);
 		expect(await wrong.json()).toMatchObject({ error: { code: "invalid_setup_code" } });
-		expect(await (await cp.fetch("/auth/status")).json()).toEqual({ setup_required: true });
+		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: true });
 		let limited = 0;
 		for (let i = 0; i < 40; i++) {
 			if ((await setup(cp, `WRONG-${i}`)).status === 429) limited++;
@@ -133,7 +133,7 @@ describe("第一个管理员", () => {
 		expect((await setup(cp, second)).status).toBe(201);
 		await cp.restart();
 		expect(existsSync(codeFile(cp))).toBe(false);
-		expect(await (await cp.fetch("/auth/status")).json()).toEqual({ setup_required: false });
+		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: false });
 	});
 
 	it("并发的两次初始化只有一次成功，只建出一个用户", async () => {
@@ -153,7 +153,7 @@ describe("第一个管理员", () => {
 	it("环境变量给出初始管理员：没有用户时建出来（不生成初始化码），用它的账号密码能登录", async () => {
 		cp = await startTestControlPlane({ initialAdmin: ADMIN });
 		expect(existsSync(codeFile(cp))).toBe(false);
-		expect(await (await cp.fetch("/auth/status")).json()).toEqual({ setup_required: false });
+		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: false });
 		const { res, cookie } = await login(cp, ADMIN.loginName, ADMIN.password);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toMatchObject({
@@ -245,7 +245,7 @@ describe("登录、登出、改密码", () => {
 		expect((await api(cp, b.cookie)("GET", "/auth/me")).status).toBe(401);
 	});
 
-	it("当前用户、登出、改密码只认登录：不带凭据 401，带令牌 403", async () => {
+	it("当前用户、注销全部登录、改密码只认登录：不带凭据 401，带令牌 403；登出什么凭据都不拒绝（204）", async () => {
 		const accounts = new TestAccounts(cp.database.url);
 		try {
 			const db = new pg.Client({ connectionString: cp.database.url });
@@ -255,7 +255,6 @@ describe("登录、登出、改密码", () => {
 			const token = await accounts.personalToken(admin);
 			for (const [method, path] of [
 				["GET", "/auth/me"],
-				["POST", "/auth/logout"],
 				["POST", "/auth/logout-all"],
 				["POST", "/auth/password"],
 				["GET", "/users"],
@@ -641,6 +640,6 @@ describe("不登录也能照旧使用（在 #494 之前）", () => {
 			body: JSON.stringify({ name: "场景" }),
 		});
 		expect(withNickname.status).toBe(201);
-		expect(await (await cp.fetch("/auth/status")).json()).toEqual({ setup_required: true });
+		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: true });
 	});
 });

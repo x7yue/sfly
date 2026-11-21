@@ -67,6 +67,40 @@ export class LoginThrottle {
 		this.#entries.delete(this.#userKey(user, address));
 	}
 
+	/**
+	 * 开始一次验证之前先占位（检查和占位在同一步里做完，中间没有 await）：还在限速就返回要等多久，不占位，调用方不要去验证；
+	 * 否则把这次尝试当作一次失败记下，再去验证。验证是异步的，一次要算几百毫秒：失败等算完才记的话，并发的几十次请求
+	 * 都在「还没有一次失败」的时候通过了检查，限速形同虚设（审查实测：同一个登录名并发 40 次错密码，40 次都放行）。
+	 * 占了位的尝试之后三种结果：密码不对——什么也不用做，占位就是这次失败；对——{@link confirm}，清零；
+	 * 没有真的去验证（算不过来被拒绝了）——{@link cancel}，把占位还回去。
+	 */
+	acquire(user: string, address: string): { ok: true } | { ok: false; retryAfterMs: number } {
+		const wait = this.retryAfterMs(user, address);
+		if (wait > 0) return { ok: false, retryAfterMs: wait };
+		this.failure(user, address);
+		return { ok: true };
+	}
+
+	/** 占了位的尝试验证通过：这个（用户、地址）清零，地址整体的计数还回这次占的一份（它不是失败）。 */
+	confirm(user: string, address: string): void {
+		this.success(user, address);
+		this.#release(this.#addressKey(address));
+	}
+
+	/** 占了位的尝试没有去验证（没算哈希就被拒绝了）：不算失败，两处占的位都还回去。 */
+	cancel(user: string, address: string): void {
+		this.#release(this.#userKey(user, address));
+		this.#release(this.#addressKey(address));
+	}
+
+	/** 还回一份占位：次数减一，没有了就忘掉；最后一次失败的时间不变。 */
+	#release(key: string): void {
+		const entry = this.#entries.get(key);
+		if (entry === undefined) return;
+		if (entry.failures <= 1) this.#entries.delete(key);
+		else this.#entries.set(key, { ...entry, failures: entry.failures - 1 });
+	}
+
 	#userKey(user: string, address: string): string {
 		return `u|${address}|${user.toLowerCase()}`;
 	}

@@ -53,9 +53,21 @@ export const UserView = z.object({
 	created_at: Timestamp,
 });
 
-/** 登录页和初始化页用的状态：没有任何用户时要先初始化第一个管理员。不带凭据可读，只有这一个事实。 */
+/**
+ * 登录页和初始化页用的状态，不带凭据可读：
+ *
+ * - `setup_required`：没有任何用户时要先初始化第一个管理员；
+ * - `public_url`：控制面认的公开地址（`SFLY_PUBLIC_URL`，去掉末尾的斜杠），没有配置为 null；
+ * - `request_host`：控制面看到的这个请求的 `Host`。
+ *
+ * 后两个让页面发现「浏览器打开的地址和控制面认的不一致」：登录 Cookie 只认同源的请求（ADR 0029），内网用 http 访问时浏览器不发
+ * `Sec-Fetch-Site`，判断落到 `Origin` 对公开地址（没配公开地址时对 `Host`）上，对不上的写请求被当作没登录。
+ * 页面比较 `location` 和这两个值，不一致就提示「请用 <公开地址> 打开」，不让人在一个什么都改不了的页面上干等。
+ */
 export const AuthStatus = z.object({
 	setup_required: z.boolean(),
+	public_url: z.string().nullable(),
+	request_host: z.string(),
 });
 
 export const UserIdParams = z.object({ id: z.uuid() });

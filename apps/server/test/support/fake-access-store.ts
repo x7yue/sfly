@@ -37,6 +37,34 @@ export class FakeAccessStore implements AccessStore {
 		this.reads++;
 		return this.tokens.get(hash);
 	}
+	async liveCredentials(
+		ids: { loginIds: readonly string[]; tokenIds: readonly string[] },
+		now: Date,
+	) {
+		const loginIds = new Set<string>();
+		for (const login of this.logins.values()) {
+			if (
+				ids.loginIds.includes(login.id) &&
+				login.revokedAt === null &&
+				login.idleExpiresAt > now &&
+				login.user.disabledAt === null
+			) {
+				loginIds.add(login.id);
+			}
+		}
+		const tokenIds = new Set<string>();
+		for (const token of this.tokens.values()) {
+			if (
+				ids.tokenIds.includes(token.id) &&
+				token.revokedAt === null &&
+				(token.expiresAt === null || token.expiresAt > now) &&
+				(token.user === null || token.user.disabledAt === null)
+			) {
+				tokenIds.add(token.id);
+			}
+		}
+		return { loginIds, tokenIds };
+	}
 	async loginByCookieHash(hash: string) {
 		this.reads++;
 		return this.logins.get(hash);

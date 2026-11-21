@@ -262,6 +262,7 @@ export class AccessGuard {
 		}
 		// 登录、初始化、状态不要凭据，带了什么都不看：过期的 Cookie 不该让登录页登录不了。
 		if (rule === "anonymous") return { ok: true, access: null };
+		if (rule === "logout") return this.#checkLogout(presented);
 		if (presented === undefined) return denied(401, "unauthorized", "需要登录");
 		const resolved = await this.#resolve(presented);
 		const { principal } = resolved;
@@ -294,6 +295,31 @@ export class AccessGuard {
 			request,
 			this.#idleMs,
 		);
+	}
+
+	/**
+	 * 登出：总是放行。认得出是同源的、有效的登录时带出身份（处理函数据此注销这一个登录）；没带 Cookie、令牌、Cookie 失效、
+	 * 请求没有被当作已登录（跨站、公开地址对不上）都没有身份，处理函数只清浏览器上的 Cookie。
+	 */
+	async #checkLogout(presented: Presented | undefined): Promise<AccessResult> {
+		if (presented?.from !== "cookie") return { ok: true, access: null };
+		const { principal } = await this.#resolve(presented);
+		if (principal?.kind !== "login") return { ok: true, access: null };
+		return {
+			ok: true,
+			access: {
+				credential: "login",
+				userId: principal.user.id,
+				name: principal.user.displayName,
+				tokenName: null,
+				loginId: principal.loginId,
+				tokenId: null,
+				adminActionId: null,
+				project: null,
+				role: null,
+				scopes: [],
+			},
+		};
 	}
 
 	// ---- 解析凭据 ----

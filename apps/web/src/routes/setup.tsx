@@ -60,7 +60,8 @@ function SetupPage() {
 		displayName: displayName.trim() === "" ? "填写显示名" : undefined,
 		password:
 			password.length < PASSWORD_MIN_LENGTH ? `密码至少 ${PASSWORD_MIN_LENGTH} 个字符` : undefined,
-		again: again === password ? undefined : "两次输入的密码不一致",
+		again:
+			again === "" ? "再输入一遍密码" : again === password ? undefined : "两次输入的密码不一致",
 	};
 	const order = ["code", "loginName", "displayName", "password", "again"] as const;
 

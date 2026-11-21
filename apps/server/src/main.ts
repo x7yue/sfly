@@ -31,8 +31,10 @@
 //   SFLY_LOGIN_IDLE_HOURS 登录的空闲期限（小时，默认 12）：这么久没有用过的登录失效，用着就顺延
 //   SFLY_DEV_ORIGINS 开发时也算同源的来源，逗号分隔，例如 http://localhost:3000（vite 开发服务器）：登录 Cookie 的跨站检查用，
 //                    生产里不要设置（可选）。同源的判断见 src/auth/cross-site.ts：配置了 SFLY_PUBLIC_URL 时以它为准
-//   SFLY_TRUST_PROXY 设为 1 或 true：信任反向代理带来的 X-Forwarded-For，登录限速用它里面的来源地址（可选）。默认不信任：
-//                    它能被伪造；在反向代理后面又不开它时，所有人是同一个来源地址，同一个地址上失败太多次会连累别人
+//   SFLY_TRUST_PROXY 信任反向代理带来的 X-Forwarded-For，登录限速用它里面的来源地址（可选）。取的是可信代理之前的那个地址
+//                    （代理追加在最后的，不是客户端自己写在最左边的）。写法：代理的地址段 127.0.0.1,10.0.0.0/8（推荐：对端在段里
+//                    才信），或者代理的层数 1、2（旧的 1、true 都是一层；控制面的端口只能经代理访问）。默认不信任：在反向代理后面
+//                    又不设它时，所有人是同一个来源地址，同一个地址上失败太多次会连累别人。写错了启动失败（src/http/trust-proxy.ts）
 //   SFLY_CORS_ORIGINS 允许跨域调用 API 的来源，逗号分隔，例如 https://dash.example.com,http://localhost:5173（可选）。
 //                    自建页面托管在别的来源时，浏览器靠它才调得通控制面（ADR 0022）；设置后只有名单里的来源能调用，
 //                    没有设置（或写 *）时允许所有来源，不带凭据。控制台自己的页面同源，不受影响
@@ -57,6 +59,7 @@ import { runResetPassword } from "./auth/reset-password-cli.js";
 import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
+import { parseTrustProxy } from "./http/trust-proxy.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
 declare const SFLY_BUNDLED: boolean | undefined;
@@ -154,7 +157,7 @@ const controlPlane = await startControlPlane({
 	initialAdmin: parseInitialAdmin(env),
 	loginIdleMs: hours("SFLY_LOGIN_IDLE_HOURS"),
 	sameOrigins: parseCorsOrigins(env.SFLY_DEV_ORIGINS),
-	trustProxy: ["1", "true"].includes((env.SFLY_TRUST_PROXY ?? "").toLowerCase()),
+	trustProxy: parseTrustProxy(env.SFLY_TRUST_PROXY),
 	docsDir: env.SFLY_DOCS_DIR || defaults.docsDir,
 	agentBinaries: agentBinaries(env.SFLY_AGENT_DIR || defaults.agentDir),
 	installScriptFile: defaults.installScriptFile,

@@ -13,6 +13,8 @@ export interface AccountRoutesDeps {
 	accounts: AccountService;
 	/** 公开地址（`SFLY_PUBLIC_URL`）是 https：Cookie 加 Secure。 */
 	publicHttps: boolean;
+	/** 控制面认的公开地址（`SFLY_PUBLIC_URL`），没有配置为 undefined：登录状态里带给页面，页面据此提示「请用 … 打开」。 */
+	publicUrl?: string | undefined;
 }
 
 const currentUser = (user: UserRecord): CurrentUser => ({
@@ -36,7 +38,7 @@ function tooManyAttempts(reply: FastifyReply, retryAfterMs: number): FastifyRepl
 
 export function registerAccountRoutes(
 	app: Parameters<typeof contractRoute>[0],
-	{ accounts, publicHttps }: AccountRoutesDeps,
+	{ accounts, publicHttps, publicUrl }: AccountRoutesDeps,
 ): void {
 	const secure = (request: FastifyRequest) => isSecureRequest(request, publicHttps);
 	const startCookie = (
@@ -54,8 +56,10 @@ export function registerAccountRoutes(
 		return { userId: access.userId, loginId: access.loginId };
 	};
 
-	contractRoute(app, authApi.status, async () => ({
+	contractRoute(app, authApi.status, async (_request, _reply, raw) => ({
 		setup_required: await accounts.setupRequired(),
+		public_url: publicUrl ?? null,
+		request_host: raw.headers.host ?? "",
 	}));
 
 	contractRoute(app, authApi.setup, async ({ body }, reply, raw) => {
@@ -94,9 +98,13 @@ export function registerAccountRoutes(
 		return currentUser(result.login.user);
 	});
 
+	// 登出总是成功、总是清掉浏览器上的 Cookie：公开地址和浏览器实际打开的地址对不上时，同源检查过不了，请求不被当作已登录，
+	// 这时没有登录可以注销，但 Cookie 也要清掉，不然页面说「已登出」、Cookie 还在、刷新又是登录着。
 	contractRoute(app, authApi.logout, async (_request, reply, raw) => {
-		const { userId, loginId } = loggedIn(raw);
-		await accounts.logout(userId, loginId);
+		const access = raw.access;
+		if (access?.userId != null && access.loginId != null) {
+			await accounts.logout(access.userId, access.loginId);
+		}
 		reply.header("set-cookie", clearLoginCookieHeader({ secure: secure(raw) }));
 		return reply.code(204).send();
 	});

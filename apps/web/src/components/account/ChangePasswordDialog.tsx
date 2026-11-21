@@ -55,7 +55,12 @@ export function ChangePasswordDialog({
 			newPassword.length < PASSWORD_MIN_LENGTH
 				? `新密码至少 ${PASSWORD_MIN_LENGTH} 个字符`
 				: undefined,
-		again: again === newPassword ? undefined : "两次输入的新密码不一致",
+		again:
+			again === ""
+				? "再输入一遍新密码"
+				: again === newPassword
+					? undefined
+					: "两次输入的新密码不一致",
 	};
 	const message =
 		change.error instanceof ApiError && change.error.code === "wrong_password"

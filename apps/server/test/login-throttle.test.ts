@@ -89,3 +89,63 @@ describe("登录限速", () => {
 		expect(throttle.retryAfterMs("alice", "10.0.0.1")).toBe(2000);
 	});
 });
+
+describe("登录限速：先占位再验证（在途的尝试也算）", () => {
+	it("占位和检查是同一步：不等验证结果，并发的尝试一个接一个占位，超过限速的拿不到位", () => {
+		const throttle = new LoginThrottle(new ManualClock(), options);
+		// freeAttempts 是 3：前 3 次失败不限制，第 4 次越线之后要等。
+		const slots = Array.from({ length: 10 }, () => throttle.acquire("alice", "10.0.0.1"));
+		expect(slots.filter((slot) => slot.ok)).toHaveLength(4);
+		expect(slots.filter((slot) => !slot.ok)).toHaveLength(6);
+		const refused = slots.find((slot) => !slot.ok);
+		expect(refused).toMatchObject({ ok: false, retryAfterMs: 2000 });
+	});
+
+	it("占了位就是一次失败：密码不对时调用方什么也不用做，之后的检查看得到它", () => {
+		const clock = new ManualClock();
+		const throttle = new LoginThrottle(clock, options);
+		for (let i = 0; i < 4; i++) expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(true);
+		expect(throttle.retryAfterMs("alice", "10.0.0.1")).toBe(2000);
+		clock.advance(2000);
+		expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(true);
+		expect(throttle.retryAfterMs("alice", "10.0.0.1")).toBe(4000);
+	});
+
+	it("验证通过（confirm）：这个（用户、地址）清零，地址整体的计数还回这次占的一份", () => {
+		const throttle = new LoginThrottle(new ManualClock(), { ...options, addressFreeAttempts: 2 });
+		// 别的用户在同一个地址上失败了 1 次；alice 占位、验证通过。
+		throttle.failure("bob", "10.0.0.1");
+		expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(true);
+		throttle.confirm("alice", "10.0.0.1");
+		// alice 清零了；地址上只剩 bob 的 1 次：再失败 1 次还没超过免费的 2 次，再 1 次才超。
+		expect(throttle.retryAfterMs("alice", "10.0.0.1")).toBe(0);
+		throttle.failure("bob", "10.0.0.1");
+		expect(throttle.retryAfterMs("carol", "10.0.0.1")).toBe(0);
+		throttle.failure("bob", "10.0.0.1");
+		expect(throttle.retryAfterMs("carol", "10.0.0.1")).toBeGreaterThan(0);
+	});
+
+	it("没有去验证（cancel）：占的位全还回去，不算失败；占位的次数不会减成负数", () => {
+		const throttle = new LoginThrottle(new ManualClock(), options);
+		for (let i = 0; i < 3; i++) {
+			expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(true);
+			throttle.cancel("alice", "10.0.0.1");
+		}
+		expect(throttle.size).toBe(0);
+		// 多还一次也没有关系。
+		throttle.cancel("alice", "10.0.0.1");
+		for (let i = 0; i < 4; i++) expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(true);
+		expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(false);
+	});
+
+	it("被限速的 acquire 不占位：等够了再试，不会因为中间多按了几次而等得更久", () => {
+		const clock = new ManualClock();
+		const throttle = new LoginThrottle(clock, options);
+		for (let i = 0; i < 4; i++) throttle.acquire("alice", "10.0.0.1");
+		for (let i = 0; i < 20; i++) expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(false);
+		clock.advance(2000);
+		expect(throttle.acquire("alice", "10.0.0.1").ok).toBe(true);
+		// 刚占了第 5 个位，要等的是第 5 次失败对应的 4 秒，不是 20 次被拒之后的更久。
+		expect(throttle.retryAfterMs("alice", "10.0.0.1")).toBe(4000);
+	});
+});

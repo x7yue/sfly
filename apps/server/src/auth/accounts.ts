@@ -17,6 +17,7 @@ import {
 	type ScryptParams,
 	verifyPassword,
 } from "./password.js";
+import { PasswordGate, PasswordGateBusy } from "./password-gate.js";
 import type { SetupCode } from "./setup-code.js";
 
 /** 一个用户（不含密码哈希）。 */
@@ -55,6 +56,13 @@ export interface AccountServiceOptions {
 	/** 登录的空闲期限（毫秒），默认 12 小时。 */
 	loginIdleMs?: number;
 	throttle?: LoginThrottle;
+	/**
+	 * 密码哈希和验证的并发闸（./password-gate.ts）：所有 scrypt 都从这里过，同时算的有上限，队列满了抛 {@link PasswordGateBusy}。
+	 * 默认自己建一个。
+	 */
+	passwordGate?: PasswordGate;
+	/** 验证密码的函数，默认 {@link verifyPassword}；测试里换成数着次数的，确认被限速的请求没有去验证。 */
+	verify?: (password: string, stored: string) => Promise<boolean>;
 }
 
 /** 登录名重复。 */
@@ -89,6 +97,8 @@ export class AccountService {
 	readonly #idleMs: number;
 	readonly #throttle: LoginThrottle;
 	readonly #setupCode: SetupCode | undefined;
+	readonly #gate: PasswordGate;
+	readonly #verifyFn: (password: string, stored: string) => Promise<boolean>;
 	readonly #listeners = new Set<(revocation: Revocation) => void>();
 	#dummy: Promise<string> | undefined;
 
@@ -99,6 +109,13 @@ export class AccountService {
 		this.#idleMs = options.loginIdleMs ?? DEFAULT_LOGIN_IDLE_MS;
 		this.#throttle = options.throttle ?? new LoginThrottle(options.clock);
 		this.#setupCode = options.setupCode;
+		this.#gate = options.passwordGate ?? new PasswordGate();
+		this.#verifyFn = options.verify ?? verifyPassword;
+	}
+
+	/** 算一个密码的哈希：过并发闸，队列满了抛 {@link PasswordGateBusy}，不去算。 */
+	#hash(password: string): Promise<string> {
+		return this.#gate.run(() => hashPassword(password, this.#scrypt));
 	}
 
 	/** 登录的空闲期限（秒）：下发 Cookie 时的 Max-Age。 */
@@ -137,16 +154,14 @@ export class AccountService {
 		| { ok: false; reason: "throttled"; retryAfterMs: number }
 	> {
 		if (!(await this.setupRequired())) return { ok: false, reason: "setup_done" };
-		const wait = this.#throttle.retryAfterMs("setup", address);
-		if (wait > 0) return { ok: false, reason: "throttled", retryAfterMs: wait };
-		if (!this.#setupCode?.verify(input.code)) {
-			this.#throttle.failure("setup", address);
-			return { ok: false, reason: "bad_code" };
-		}
-		const passwordHash = await hashPassword(input.password, this.#scrypt);
+		// 先占位再验证（./login-throttle.ts 的 acquire）：码不对，占的位就是这次失败。
+		const slot = this.#throttle.acquire("setup", address);
+		if (!slot.ok) return { ok: false, reason: "throttled", retryAfterMs: slot.retryAfterMs };
+		if (!this.#setupCode?.verify(input.code)) return { ok: false, reason: "bad_code" };
+		this.#throttle.confirm("setup", address);
+		const passwordHash = await this.#hash(input.password);
 		const created = await this.#createFirstAdmin({ ...input, passwordHash });
 		if (created === undefined) return { ok: false, reason: "setup_done" };
-		this.#throttle.success("setup", address);
 		await this.#setupCode.discard();
 		return { ok: true, login: await this.#startLogin(created) };
 	}
@@ -190,7 +205,7 @@ export class AccountService {
 		displayName: string;
 		password: string;
 	}): Promise<boolean> {
-		const passwordHash = await hashPassword(input.password, this.#scrypt);
+		const passwordHash = await this.#hash(input.password);
 		return (await this.#createFirstAdmin({ ...input, passwordHash })) !== undefined;
 	}
 
@@ -198,14 +213,15 @@ export class AccountService {
 
 	/** 一个不存在的用户也要花同样的时间验证一次密码，响应时间不泄露「登录名有没有这个人」。 */
 	#dummyHash(): Promise<string> {
-		this.#dummy ??= hashPassword(randomBytes(16).toString("hex"), this.#scrypt);
+		this.#dummy ??= this.#hash(randomBytes(16).toString("hex"));
 		return this.#dummy;
 	}
 
 	/** 密码对不对；没有存储的密码（用户不存在、只靠外部身份登录）也要花同样的时间验证一次，响应时间不泄露这一点。 */
 	async #passwordMatches(password: string, stored: string | undefined): Promise<boolean> {
-		if (stored !== undefined) return verifyPassword(password, stored);
-		await verifyPassword(password, await this.#dummyHash());
+		if (stored !== undefined) return this.#gate.run(() => this.#verifyFn(password, stored));
+		const dummy = await this.#dummyHash();
+		await this.#gate.run(() => this.#verifyFn(password, dummy));
 		return false;
 	}
 
@@ -219,23 +235,36 @@ export class AccountService {
 		| { ok: false; reason: "throttled"; retryAfterMs: number }
 	> {
 		const name = loginName.trim().toLowerCase();
-		const wait = this.#throttle.retryAfterMs(name, address);
-		if (wait > 0) return { ok: false, reason: "throttled", retryAfterMs: wait };
-		const [row] = await this.#db.select().from(users).where(eq(users.loginName, name));
-		const stored = row?.passwordHash ?? undefined;
-		const correct = await this.#passwordMatches(password, stored);
-		// 停用的账号和密码不对一样：不告诉对方账号是否存在、是否停用。
+		// 先占位再验证：验证一次要算几百毫秒，并发的请求都在「还没有失败」的时候通过检查就等于没有限速。
+		const slot = this.#throttle.acquire(name, address);
+		if (!slot.ok) return { ok: false, reason: "throttled", retryAfterMs: slot.retryAfterMs };
+		let row: typeof users.$inferSelect | undefined;
+		let stored: string | undefined;
+		let correct: boolean;
+		try {
+			[row] = await this.#db.select().from(users).where(eq(users.loginName, name));
+			stored = row?.passwordHash ?? undefined;
+			correct = await this.#passwordMatches(password, stored);
+		} catch (error) {
+			// 没有验证成（算不过来被拒绝、读库出错）：不是这个人的失败，把占的位还回去。
+			this.#throttle.cancel(name, address);
+			throw error;
+		}
+		// 停用的账号和密码不对一样：不告诉对方账号是否存在、是否停用。占的位就是这次失败。
 		if (row === undefined || !correct || row.disabledAt !== null) {
-			this.#throttle.failure(name, address);
 			return { ok: false, reason: "invalid" };
 		}
-		this.#throttle.success(name, address);
-		// 参数调高之后，旧哈希在这次登录成功时按新参数重新存。
+		this.#throttle.confirm(name, address);
+		// 参数调高之后，旧哈希在这次登录成功时按新参数重新存（并发闸满了就下次再说）。
 		if (stored !== undefined && needsRehash(stored, this.#scrypt)) {
-			await this.#db
-				.update(users)
-				.set({ passwordHash: await hashPassword(password, this.#scrypt) })
-				.where(eq(users.id, row.id));
+			try {
+				await this.#db
+					.update(users)
+					.set({ passwordHash: await this.#hash(password) })
+					.where(eq(users.id, row.id));
+			} catch (error) {
+				if (!(error instanceof PasswordGateBusy)) throw error;
+			}
 		}
 		return { ok: true, login: await this.#startLogin(toRecord(row)) };
 	}
@@ -300,19 +329,22 @@ export class AccountService {
 		| { ok: false; reason: "throttled"; retryAfterMs: number }
 	> {
 		const key = `password:${userId}`;
-		const wait = this.#throttle.retryAfterMs(key, address);
-		if (wait > 0) return { ok: false, reason: "throttled", retryAfterMs: wait };
-		const [row] = await this.#db.select().from(users).where(eq(users.id, userId));
-		const stored = row?.passwordHash ?? undefined;
-		const correct = await this.#passwordMatches(oldPassword, stored);
-		if (!correct) {
-			this.#throttle.failure(key, address);
-			return { ok: false, reason: "wrong_password" };
+		const slot = this.#throttle.acquire(key, address);
+		if (!slot.ok) return { ok: false, reason: "throttled", retryAfterMs: slot.retryAfterMs };
+		let correct: boolean;
+		try {
+			const [row] = await this.#db.select().from(users).where(eq(users.id, userId));
+			correct = await this.#passwordMatches(oldPassword, row?.passwordHash ?? undefined);
+		} catch (error) {
+			this.#throttle.cancel(key, address);
+			throw error;
 		}
-		this.#throttle.success(key, address);
+		// 旧密码不对：占的位就是这次失败。
+		if (!correct) return { ok: false, reason: "wrong_password" };
+		this.#throttle.confirm(key, address);
 		await this.#db
 			.update(users)
-			.set({ passwordHash: await hashPassword(newPassword, this.#scrypt) })
+			.set({ passwordHash: await this.#hash(newPassword) })
 			.where(eq(users.id, userId));
 		await this.logoutAll(userId, currentLoginId);
 		return { ok: true };
@@ -348,7 +380,7 @@ export class AccountService {
 		password: string;
 		isPlatformAdmin: boolean;
 	}): Promise<UserRecord> {
-		const passwordHash = await hashPassword(input.password, this.#scrypt);
+		const passwordHash = await this.#hash(input.password);
 		try {
 			const [row] = await this.#db
 				.insert(users)
@@ -398,7 +430,7 @@ export class AccountService {
 	async resetPassword(id: string, password: string): Promise<boolean> {
 		const [row] = await this.#db
 			.update(users)
-			.set({ passwordHash: await hashPassword(password, this.#scrypt) })
+			.set({ passwordHash: await this.#hash(password) })
 			.where(eq(users.id, id))
 			.returning({ id: users.id });
 		if (row === undefined) return false;

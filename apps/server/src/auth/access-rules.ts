@@ -45,19 +45,22 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
  *
  * - `anonymous`：不要凭据（状态、登录、初始化第一个管理员；初始化要初始化码，登录要密码）：带了什么凭据都不看，
  *   过期的 Cookie 不该让登录页登录不了；
- * - `login`：只认登录 Cookie（当前用户、登出、改密码）；不带凭据是 401，带了别的凭据（个人令牌、项目令牌…）是 403；
+ * - `login`：只认登录 Cookie（当前用户、注销全部登录、改密码）；不带凭据是 401，带了别的凭据（个人令牌、项目令牌…）是 403；
+ * - `logout`：登出：什么凭据都不拒绝，登出是幂等的、总是成功，响应总是清掉浏览器上的 Cookie。认得出是同源的登录就把这一个登录
+ *   注销；没带 Cookie、Cookie 已经失效、请求没被当作已登录（公开地址和浏览器实际打开的地址不一致时，同源检查过不了），
+ *   就只清 Cookie：不然页面说「已登出」，Cookie 还在，刷新又是登录着；
  * - `platform_admin`：只认平台管理员的登录 Cookie（管理账号）；不是平台管理员是 403。
  *
  * 这些是新接口，不带凭据时的「照旧放行」（#494 才拒绝）不适用于它们：需要身份的接口没有身份就没法做。
  * 个人令牌的签发、吊销、列出（#491）在它们的接口加进契约时在这里写明。
  */
-export type AccountCredential = "anonymous" | "login" | "platform_admin";
+export type AccountCredential = "anonymous" | "login" | "platform_admin" | "logout";
 
 export const ACCOUNT_ROUTES = {
 	"GET /auth/status": "anonymous",
 	"POST /auth/setup": "anonymous",
 	"POST /auth/login": "anonymous",
-	"POST /auth/logout": "login",
+	"POST /auth/logout": "logout",
 	"POST /auth/logout-all": "login",
 	"GET /auth/me": "login",
 	"POST /auth/password": "login",

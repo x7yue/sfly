@@ -10,6 +10,7 @@ import {
 	SearchIcon,
 } from "lucide-react";
 import { AccountMenu } from "#/components/account/AccountMenu";
+import { OriginNotice } from "#/components/account/OriginNotice";
 import { Keys } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { useIdentity } from "#/lib/identity";
@@ -28,6 +29,7 @@ import { toggleSidebar, useSidebarCollapsed } from "./sidebar-state";
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
 	const collapsed = useSidebarCollapsed();
+	const identity = useIdentity();
 	return (
 		<div
 			className="fixed inset-0 grid"
@@ -38,6 +40,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 			<Sidebar collapsed={collapsed} />
 			<div className="flex min-w-0 flex-col overflow-hidden">
 				<Topbar />
+				{/* 只有登录着的人受影响（写请求靠登录 Cookie，地址对不上被当作没登录）；用昵称的不受影响，不提示。 */}
+				{identity.status === "user" && <OriginNotice className="mx-5 mt-3" />}
 				{/* 滚动条槽始终预留：页面之间有没有滚动条，内容宽度和右上角的按钮都不跳 */}
 				<main id="main" className="flex-1 overflow-auto [scrollbar-gutter:stable]">
 					{children}

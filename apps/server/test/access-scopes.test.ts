@@ -175,12 +175,12 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 		expect(accountRoutes.map(routeKey).sort()).toEqual(Object.keys(ACCOUNT_ROUTES).sort());
 	});
 
-	it("登录、初始化、状态不要凭据；当前用户、登出、改密码只认登录；管理账号只认平台管理员", () => {
+	it("登录、初始化、状态不要凭据；登出什么凭据都不拒绝；当前用户、注销全部登录、改密码只认登录；管理账号只认平台管理员", () => {
 		expect(ACCOUNT_ROUTES).toEqual({
 			"GET /auth/status": "anonymous",
 			"POST /auth/setup": "anonymous",
 			"POST /auth/login": "anonymous",
-			"POST /auth/logout": "login",
+			"POST /auth/logout": "logout",
 			"POST /auth/logout-all": "login",
 			"GET /auth/me": "login",
 			"POST /auth/password": "login",

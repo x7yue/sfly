@@ -146,15 +146,20 @@ describe("跨站检查：带 Cookie 的请求", () => {
 		expect((await cp.fetch("/auth/me", { headers: browser(cookie, sameOrigin) })).status).toBe(200);
 		expect((await cp.fetch("/auth/me", { headers: browser(cookie, crossSite) })).status).toBe(401);
 		expect((await cp.fetch("/auth/me", { headers: browser(cookie, sameSite) })).status).toBe(401);
-		// 有副作用的账号接口：登出、改密码、管理账号，跨站一样不是登录。
+		// 有副作用的账号接口：注销全部登录、管理账号，跨站一样不是登录。
 		for (const [method, path] of [
-			["POST", "/auth/logout"],
 			["POST", "/auth/logout-all"],
 			["POST", "/users"],
 		] as const) {
 			const res = await cp.fetch(path, { method, headers: browser(cookie, crossSite) });
 			expect(res.status, `${method} ${path}`).toBe(401);
 		}
+		// 登出不拒绝任何凭据：跨站的登出不被当作已登录，不会注销这个登录，只清掉浏览器上的 Cookie。
+		const logout = await cp.fetch("/auth/logout", {
+			method: "POST",
+			headers: browser(cookie, crossSite),
+		});
+		expect(logout.status).toBe(204);
 		// 以上都没有登出：Cookie 还在用。
 		expect((await cp.fetch("/auth/me", { headers: browser(cookie, sameOrigin) })).status).toBe(200);
 	});
@@ -180,8 +185,18 @@ describe("跨站检查：带 Cookie 的请求", () => {
 	});
 
 	it("有副作用的跨站请求就算是页面导航（表单提交）也不被当作已登录", async () => {
+		// 登出不拒绝任何凭据（204，清掉 Cookie），但没有被当作已登录：库里的登录没有被注销（下一条测试里 Cookie 还在用）。
 		const res = await rawRequest(cp, "/auth/logout", browser(cookie, crossNavigation), "POST");
-		expect(res.status).toBe(401);
+		expect(res.status).toBe(204);
+		expect((await cp.fetch("/auth/me", { headers: browser(cookie, sameOrigin) })).status).toBe(200);
+		// 其余有副作用的账号接口：401。
+		const logoutAll = await rawRequest(
+			cp,
+			"/auth/logout-all",
+			browser(cookie, crossNavigation),
+			"POST",
+		);
+		expect(logoutAll.status).toBe(401);
 	});
 
 	it("curl 之类不带 Sec-Fetch-Site 和 Origin 的 GET 带 Cookie 照常（只有有副作用的才当作跨站）", async () => {

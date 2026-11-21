@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
+import type { FastifyServerOptions } from "fastify";
 import packageJson from "../package.json" with { type: "json" };
 import { TaskActions } from "./actions/task-actions.js";
 import {
@@ -16,7 +17,9 @@ import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { AccountService } from "./auth/accounts.js";
 import { bootstrapFirstAdmin, type InitialAdmin } from "./auth/bootstrap.js";
+import { LoginThrottle, type LoginThrottleOptions } from "./auth/login-throttle.js";
 import type { ScryptParams } from "./auth/password.js";
+import { PasswordGate, type PasswordGateOptions } from "./auth/password-gate.js";
 import { SetupCode } from "./auth/setup-code.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
@@ -47,6 +50,7 @@ import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
+import { safeError } from "./util/safe-error.js";
 
 export interface ListenOptions {
 	host?: string;
@@ -61,7 +65,11 @@ export interface ControlPlaneOptions {
 	clock?: Clock;
 	http?: ListenOptions;
 	grpc?: ListenOptions;
-	logger?: boolean;
+	/**
+	 * 打开 Fastify 的日志和控制面自己的控制台输出；给 `{ stream }` 时 Fastify 的日志写进这个流（测试用它检查日志里
+	 * 没有哈希、令牌这类不该出现的内容），控制台输出照常。
+	 */
+	logger?: boolean | { stream: NodeJS.WritableStream };
 	/** Agent 共享注册令牌；未设置（或为空串）时不校验。 */
 	agentToken?: string;
 	/**
@@ -147,7 +155,13 @@ export interface ControlPlaneOptions {
 	 */
 	sameOrigins?: readonly string[];
 	/** 信任反向代理的 `X-Forwarded-For`（环境变量 `SFLY_TRUST_PROXY`）；默认不信任，见 {@link HttpApiDeps.trustProxy}。 */
-	trustProxy?: boolean;
+	trustProxy?: FastifyServerOptions["trustProxy"];
+	/** 登录限速的参数（src/auth/login-throttle.ts），默认见那里；测试里调。 */
+	loginThrottle?: LoginThrottleOptions;
+	/** 密码验证的并发上限（src/auth/password-gate.ts），默认见那里；测试里调。 */
+	passwordGate?: PasswordGateOptions;
+	/** 打开着的事件流多久重新检查一次它的凭据（毫秒，src/http/api.ts），默认 30 秒；测试里调小。 */
+	streamRecheckMs?: number;
 }
 
 export interface ControlPlane {
@@ -223,7 +237,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	// 控制面直接向飞书机器人的 Webhook 地址发请求（ADR 0020），不经代理。
 	const feishu = new FeishuClient();
 	const feishuError = (error: unknown) => {
-		if (logger) console.error("feishu delivery failed:", error);
+		if (logger) console.error("feishu delivery failed:", safeError(error));
 	};
 	const feishuBots = new FeishuBots({ db: database.db, clock, logs, onError: feishuError });
 	const feishuDelivery = new FeishuDelivery({
@@ -273,7 +287,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 				clock,
 				queries: metricQueries,
 				onError: (error) => {
-					if (logger) console.error("run notification: reading focus items failed:", error);
+					if (logger)
+						console.error("run notification: reading focus items failed:", safeError(error));
 				},
 			},
 		}),
@@ -297,7 +312,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		if (logger) {
 			console.error(
 				`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
-				error,
+				safeError(error),
 			);
 		}
 	});
@@ -327,6 +342,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		setupCode,
 		scrypt: options.scrypt,
 		loginIdleMs: options.loginIdleMs,
+		throttle: new LoginThrottle(clock, options.loginThrottle),
+		passwordGate: new PasswordGate(options.passwordGate),
 	});
 	try {
 		await mkdir(options.dataDir, { recursive: true });
@@ -389,7 +406,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			hostFallback: publicUrl === undefined,
 		},
 		publicHttps: publicUrl?.startsWith("https://") ?? false,
+		publicUrl,
 		trustProxy: options.trustProxy,
+		streamRecheckMs: options.streamRecheckMs,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
@@ -401,7 +420,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	).replace(/\/+$/, "");
 
 	const sessionError = (error: unknown) => {
-		if (logger) console.error("agent session error:", error);
+		if (logger) console.error("agent session error:", safeError(error));
 	};
 	let gateway: Awaited<ReturnType<typeof startAgentGateway>>;
 	try {
@@ -443,7 +462,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
 	const fail = (what: string) => (error: unknown) => {
-		if (logger) console.error(`${what} failed:`, error);
+		if (logger) console.error(`${what} failed:`, safeError(error));
 	};
 	const sweeps = [
 		// 任务租约过期与排队超时（#15）。

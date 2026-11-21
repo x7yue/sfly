@@ -30,8 +30,11 @@ export function AccountMenu({ user }: { user: CurrentUser }) {
 	const logout = async () => {
 		try {
 			await callApi(authApi.logout);
-		} catch {
-			// 登录已经失效（别处注销了）：当作登出了。
+		} catch (error) {
+			// 登出没有成功（连不上控制面、控制面出错）：照实说，人还是登录着，不装作已经登出。
+			// 别处已经注销了登录、公开地址对不上这些情况控制面都回 204 并清掉 Cookie，不会走到这里。
+			notify.error(`登出失败：${error instanceof Error ? error.message : String(error)}`);
+			return;
 		}
 		setCurrentUser(null);
 		queryClient.clear();

@@ -62,6 +62,8 @@ export interface Sse {
 	readonly size: number;
 	/** 关掉身份满足条件的流（登录被注销、用户被停用），返回关了几条。没有身份的流不会被关。 */
 	closeWhere(predicate: (identity: StreamIdentity) => boolean): number;
+	/** 现在打开着的、有身份的流的身份（不去重）：定期重新检查它们的凭据用。 */
+	identities(): StreamIdentity[];
 }
 
 export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
@@ -78,6 +80,9 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 	return {
 		get size() {
 			return open.size;
+		},
+		identities() {
+			return [...open.values()].filter((identity): identity is StreamIdentity => identity !== null);
 		},
 		closeWhere(predicate) {
 			let closed = 0;

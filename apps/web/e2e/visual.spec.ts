@@ -1730,6 +1730,22 @@ test.describe("账号与登录", () => {
 		await expect(page.getByRole("banner").getByRole("button", { name: /管理员/ })).toBeVisible();
 	};
 
+	/**
+	 * 这个文件里控制面的公开地址固定成 `http://sfly.example:8080`（页面上的安装命令不随端口变），浏览器实际打开的是
+	 * 127.0.0.1 加随机端口：对不上，页面会出现「请用 … 打开」的提示。这些基线要的是正常的样子，把提示藏起来；
+	 * 提示本身只有「公开地址对不上」那一张基线。
+	 */
+	const hideOriginNotice = async (page: Page) => {
+		await page.addInitScript(() => {
+			// 初始化脚本跑的时候文档还是空的（没有 <html>、<head>）：等解析完再加样式；之后渲染出来的提示照样被它盖住。
+			document.addEventListener("DOMContentLoaded", () => {
+				const style = document.createElement("style");
+				style.textContent = '[data-slot="origin-notice"] { display: none !important; }';
+				document.head.append(style);
+			});
+		});
+	};
+
 	test.describe("已经有用户", () => {
 		test.use({
 			controlPlaneOptions: {
@@ -1738,6 +1754,7 @@ test.describe("账号与登录", () => {
 				initialAdmin: ADMIN,
 			},
 		});
+		test.beforeEach(async ({ page }) => hideOriginNotice(page));
 
 		test("登录页", async ({ page }) => {
 			await page.goto("/login");
@@ -1778,7 +1795,27 @@ test.describe("账号与登录", () => {
 		});
 	});
 
+	test.describe("公开地址对不上", () => {
+		test.use({
+			controlPlaneOptions: {
+				publicHttpUrl: "http://sfly.example:8080",
+				version: "0.1.0",
+				initialAdmin: ADMIN,
+			},
+		});
+
+		test("登录页：提示请用公开地址打开", async ({ page }) => {
+			await page.goto("/login");
+			await expect(page.locator('[data-slot="origin-notice"]')).toContainText(
+				"请用 http://sfly.example:8080 打开",
+			);
+			await expect(page).toHaveScreenshot("login-origin-notice.png");
+		});
+	});
+
 	test.describe("还没有任何用户", () => {
+		test.beforeEach(async ({ page }) => hideOriginNotice(page));
+
 		test("初始化页：提交时每个必填字段写明原因", async ({ page }) => {
 			await page.goto("/setup");
 			await expect(page.getByRole("heading", { name: "创建第一个管理员" })).toBeVisible();

@@ -1,3 +1,5 @@
+import { safeError } from "../util/safe-error.js";
+
 /**
  * 进程内按主题（例如编排 ID、运行 ID）的发布/订阅，供 SSE 路由订阅。
  * 发布是同步的；监听器抛出的异常不影响其他监听器。
@@ -26,7 +28,7 @@ export class Topics<E> {
 			try {
 				listener(event);
 			} catch (error) {
-				console.error(`topic ${topic} listener failed:`, error);
+				console.error(`topic ${topic} listener failed:`, safeError(error));
 			}
 		}
 	}

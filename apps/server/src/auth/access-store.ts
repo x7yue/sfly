@@ -1,7 +1,7 @@
 // 访问检查读的数据（凭据、用户、成员、资源所在的项目）。接口和实现分开：鉴权模块（./access-guard.ts）只认接口，
 // 可以不连数据库单独测试；数据库实现在这个文件里。
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import {
 	agentCredentials,
@@ -81,6 +81,14 @@ export interface AccessStore {
 	/** 用了一次登录：记下最后使用的时间，并把空闲期限顺延。 */
 	touchLogin(id: string, lastUsedAt: Date, idleExpiresAt: Date): Promise<void>;
 	agentCredentialByHash(hash: string): Promise<StoredAgentCredential | undefined>;
+	/**
+	 * 这些登录和令牌里现在还有效的（没吊销、没过期、所属用户没停用）：打开着的事件流定期按它重新检查凭据，
+	 * 命令行重置密码、直接改库、空闲期限到了这些进程内收不到通知的失效，也能把打开的流关掉。每种一次查询，查一批。
+	 */
+	liveCredentials(
+		ids: { loginIds: readonly string[]; tokenIds: readonly string[] },
+		now: Date,
+	): Promise<{ loginIds: Set<string>; tokenIds: Set<string> }>;
 	/** 用户在项目里的角色；不是成员时为 undefined。 */
 	role(project: ProjectId, userId: string): Promise<ProjectRole | undefined>;
 	projectExists(project: ProjectId): Promise<boolean>;
@@ -170,6 +178,47 @@ export class DbAccessStore implements AccessStore {
 			.leftJoin(users, eq(users.id, agentCredentials.userId))
 			.where(eq(agentCredentials.tokenHash, hash));
 		return row;
+	}
+
+	async liveCredentials(
+		ids: { loginIds: readonly string[]; tokenIds: readonly string[] },
+		now: Date,
+	): Promise<{ loginIds: Set<string>; tokenIds: Set<string> }> {
+		const [liveLogins, liveTokens] = await Promise.all([
+			ids.loginIds.length === 0
+				? []
+				: this.db
+						.select({ id: logins.id })
+						.from(logins)
+						.innerJoin(users, eq(users.id, logins.userId))
+						.where(
+							and(
+								inArray(logins.id, [...ids.loginIds]),
+								isNull(logins.revokedAt),
+								gt(logins.idleExpiresAt, now),
+								isNull(users.disabledAt),
+							),
+						),
+			ids.tokenIds.length === 0
+				? []
+				: this.db
+						.select({ id: apiTokens.id })
+						.from(apiTokens)
+						.leftJoin(users, eq(users.id, apiTokens.userId))
+						.where(
+							and(
+								inArray(apiTokens.id, [...ids.tokenIds]),
+								isNull(apiTokens.revokedAt),
+								or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now)),
+								// 项目令牌没有用户（左连接出来是空）；有用户的，用户没停用。
+								isNull(users.disabledAt),
+							),
+						),
+		]);
+		return {
+			loginIds: new Set(liveLogins.map((row) => row.id)),
+			tokenIds: new Set(liveTokens.map((row) => row.id)),
+		};
 	}
 
 	async role(project: ProjectId, userId: string): Promise<ProjectRole | undefined> {

@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { OriginNotice } from "./OriginNotice";
 
 /**
  * 登录页和初始化页的外框（全屏，不带侧边栏和顶栏）：居中的一张卡片，上面是标志和标题。
@@ -27,6 +28,7 @@ export function AuthPage({
 						<span className="block text-xs text-fg-3">测试编排平台</span>
 					</div>
 				</div>
+				<OriginNotice />
 				<section
 					aria-labelledby="auth-title"
 					className="flex flex-col gap-4 rounded-xl border border-border-soft bg-surface p-5"

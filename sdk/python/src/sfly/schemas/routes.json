@@ -2517,10 +2517,21 @@
         "properties": {
           "setup_required": {
             "type": "boolean"
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_host": {
+            "type": "string"
           }
         },
         "required": [
-          "setup_required"
+          "setup_required",
+          "public_url",
+          "request_host"
         ]
       },
       "notes": []

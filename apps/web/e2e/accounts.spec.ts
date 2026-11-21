@@ -49,6 +49,10 @@ test.describe("初始化页（没有任何用户）", () => {
 		await page.getByRole("button", { name: "创建并登录" }).click();
 		await expect(page.getByLabel("初始化码")).toBeFocused();
 		await expect(page.getByLabel("初始化码")).toHaveAccessibleDescription("填写初始化码");
+		// 「再输入一遍」为空时和别的必填项一样给出提示。
+		await expect(page.getByLabel("再输入一遍密码")).toHaveAccessibleDescription("再输入一遍密码");
+		// 正常配置下（没有配公开地址、Host 一致）没有「请用 … 打开」的提示。
+		await expect(page.locator('[data-slot="origin-notice"]')).toBeHidden();
 
 		await page.getByLabel("初始化码").fill("AAAA-BBBB-CCCC-DDDD-EEEE");
 		await page.getByLabel("登录名").fill("Root-1");
@@ -156,6 +160,9 @@ test.describe("登录与账号菜单", () => {
 
 		await dialog.getByRole("button", { name: "修改密码" }).click();
 		await expect(dialog.getByLabel("旧密码")).toBeFocused();
+		await expect(dialog.getByLabel("再输入一遍新密码")).toHaveAccessibleDescription(
+			"再输入一遍新密码",
+		);
 		await dialog.getByLabel("旧密码").fill("不对的旧密码");
 		await dialog.getByLabel(/^新密码/).fill(NEW_PASSWORD);
 		await dialog.getByLabel("再输入一遍新密码").fill("不一样");
@@ -217,6 +224,40 @@ test.describe("登录与账号菜单", () => {
 		}
 	});
 
+	test("登出没有成功（控制面出错）：照实提示，人还是登录着，不装作已经登出；恢复之后登出成功", async ({
+		page,
+	}) => {
+		await page.goto("/login");
+		await login(page);
+		await expect(accountMenu(page)).toBeVisible();
+		await page.route("**/api/auth/logout", (route) =>
+			route.fulfill({
+				status: 500,
+				contentType: "application/json",
+				body: JSON.stringify({
+					error: { code: "internal_error", message: "internal server error" },
+				}),
+			}),
+		);
+		await accountMenu(page).click();
+		await page.getByRole("menuitem", { name: "登出" }).click();
+		await expect(page.getByText(/登出失败/)).toBeVisible();
+		await expect(page.getByText("已登出")).toBeHidden();
+		await expect(page).toHaveURL(/\/$/);
+		await expect(accountMenu(page)).toBeVisible();
+
+		await page.unroute("**/api/auth/logout");
+		await accountMenu(page).click();
+		await page.getByRole("menuitem", { name: "登出" }).click();
+		await expect(page.getByText("已登出")).toBeVisible();
+		await expect(page).toHaveURL(/\/login$/);
+		// 真的登出了：刷新之后还是登录页，账号接口 401。
+		await page.reload();
+		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+		const me = await page.request.get("/api/auth/me");
+		expect(me.status()).toBe(401);
+	});
+
 	test("没有登录也照旧能用：昵称弹窗仍在，里面有「已有账号，去登录」", async ({ page }) => {
 		await page.goto("/");
 		const dialog = page.getByRole("dialog", { name: "欢迎使用 sfly" });
@@ -225,5 +266,28 @@ test.describe("登录与账号菜单", () => {
 		await expect(page).toHaveURL(/\/login$/);
 		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
 		await expect(page.getByRole("dialog")).toBeHidden();
+	});
+});
+
+test.describe("公开地址和浏览器打开的地址不一致", () => {
+	test.use({
+		controlPlaneOptions: { initialAdmin: ADMIN, publicHttpUrl: "http://sfly.example.test:8080" },
+	});
+
+	test("登录页和登录之后的控制台顶部都提示「请用 <公开地址> 打开」（登录之后写请求会被当作没登录，登出也不生效）", async ({
+		page,
+	}) => {
+		await page.goto("/login");
+		const notice = page.locator('[data-slot="origin-notice"]');
+		await expect(notice).toBeVisible();
+		await expect(notice).toContainText("请用 http://sfly.example.test:8080 打开");
+		await expect(notice).toHaveAttribute("role", "alert");
+
+		// 浏览器自己发的同源请求带 Sec-Fetch-Site，登录照常；提示在控制台的顶部也在。
+		await login(page);
+		await expect(page).toHaveURL(/\/$/);
+		await expect(page.locator('[data-slot="origin-notice"]')).toContainText(
+			"请用 http://sfly.example.test:8080 打开",
+		);
 	});
 });
