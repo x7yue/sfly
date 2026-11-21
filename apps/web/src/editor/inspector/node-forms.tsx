@@ -6,6 +6,7 @@ import {
 	orderedInputs,
 	schemaDescription,
 	stopCandidates,
+	undeclaredInputs,
 } from "@sfly/orchestration";
 import type {
 	AgentView,
@@ -76,7 +77,7 @@ export function PackageParams({
 	};
 	const properties = type ? orderedInputs(type.inputs) : [];
 	const required = new Set(type?.inputs.required ?? []);
-	const undeclared = Object.keys(node.inputs).filter((k) => !type?.inputs.properties[k]);
+	const undeclared = type ? undeclaredInputs(type.inputs, node.inputs) : [];
 	return (
 		<>
 			{type === undefined && <p className="m-0 text-xs text-fg-3">{MESSAGE.loading}</p>}

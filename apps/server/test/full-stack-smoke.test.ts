@@ -128,33 +128,46 @@ describeWithAgent("全栈冒烟：两个节点的链", () => {
 		expect(node.error?.message).toMatch(/^RuntimeError: 桩节点失败/);
 	}, 60_000);
 
-	it("给节点传一个没有声明的输入：任务以 config_error 失败、不按 retries 重试，信息里有那个名字，没有堆栈", async () => {
+	it("给节点传一个没有声明的输入：保存时警告、触发前预检拦下，写明声明了哪些输入，不派发到 Agent", async () => {
+		// 没有声明的输入，执行器在运行时也会以 config_error 拒绝（agent/tests/execute.rs、sdk 的 test_runner.py 守着），
+		// 但真实的节点包元信息控制面都有，所以在更早的地方就拦下了，任务不会占一次派发（#444）。
 		const api = new ApiClient(cp);
-		const id = await api.orchestrationWith({
-			default_agent: "smoke-agent",
-			nodes: [
-				{ id: "entry", kind: "entry" },
-				{
-					id: "typo",
-					kind: "package",
-					package: "sfly-stub",
-					node: "echo",
-					inputs: { text: "x", tex: "写错了的名字" },
-					retries: 2,
-				},
-			],
-			edges: [{ from: "entry", to: "typo", kind: "chain" }],
-			packages: { "sfly-stub": "0.1.0" },
+		const id = await api.createOrchestration("写错输入名");
+		const saved = await api.post(`/orchestrations/${id}/versions`, {
+			base_version: 0,
+			document: {
+				default_agent: "smoke-agent",
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{
+						id: "typo",
+						kind: "package",
+						package: "sfly-stub",
+						node: "echo",
+						inputs: { text: "x", tex: "写错了的名字" },
+						retries: 2,
+					},
+				],
+				edges: [{ from: "entry", to: "typo", kind: "chain" }],
+				packages: { "sfly-stub": "0.1.0" },
+			},
 		});
-
-		const runId = await api.triggerOk(id);
-
-		await eventually(async () => expect((await api.run(runId)).status).toBe("failed"), 30_000);
-		const node = await api.node(runId, "typo");
-		expect(node.attempts.map((a) => [a.attempt, a.status, a.error?.kind])).toEqual([
-			[1, "failed", "config_error"],
+		expect(saved.status, await saved.clone().text()).toBe(201);
+		const message =
+			"节点 typo 的输入 tex 没有声明：节点类型 echo 声明的输入有 text；改成其中一个，或者删掉这个输入";
+		expect(((await saved.json()) as { warnings: unknown[] }).warnings).toEqual([
+			{ code: "input_not_declared", node_id: "typo", input: "tex", message },
 		]);
-		expect(node.error?.message).toBe("节点 echo 没有声明输入 tex，它声明的输入有：text");
+
+		const refused = await api.trigger(id);
+		expect(refused.status).toBe(400);
+		const { error } = (await refused.json()) as {
+			error: { code: string; details: { code: string; message: string }[] };
+		};
+		expect(error.code).toBe("invalid_orchestration");
+		expect(error.details).toMatchObject([{ code: "input_not_declared", message }]);
+		const { runs } = await api.getJson<{ runs: unknown[] }>(`/orchestrations/${id}/runs`);
+		expect(runs).toEqual([]);
 	}, 60_000);
 
 	it("超时的任务以 timeout 失败并按 retries 重试；最终失败后普通节点跳过、always 节点照常执行", async () => {
