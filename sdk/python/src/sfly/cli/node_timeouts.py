@@ -46,9 +46,14 @@ def effective_timeout(node: dict[str, Any], declared: int | None | str) -> dict[
 
 def timeout_text(timeout: dict[str, Any]) -> str:
     """表格里的写法：`43200（节点类型声明，秒）`；找不到节点类型时是 `未知（找不到节点类型）`。"""
-    if timeout["seconds"] is None:
+    seconds = timeout["seconds"]
+    if seconds is None:
         return UNKNOWN_TEXT
-    return f"{timeout['seconds']}（{SOURCE_LABELS[timeout['source']]}，秒）"
+    text = f"{seconds}（{SOURCE_LABELS[timeout['source']]}，秒）"
+    if timeout["source"] == "node" and not 0 < seconds <= MAX_TIMEOUT_SECONDS:
+        # 升级前保存的版本里可能有：派发时这个任务以配置错误失败。
+        text += f"，超出范围 1 到 {MAX_TIMEOUT_SECONDS}，派发时会以配置错误失败"
+    return text
 
 
 def declared_timeouts(client: Client, document: dict[str, Any]) -> dict[str, int | None | str]:

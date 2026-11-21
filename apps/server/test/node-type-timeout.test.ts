@@ -1,6 +1,7 @@
 // 节点类型声明自己的默认超时（#476）：派发给 Agent 的超时按「场景里这个节点写的 → 节点类型声明的 → 平台的 1 小时」取，
 // 超时失败的错误信息在用了平台默认时补一句怎么办。HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL。
 // 取值顺序的各个来源（含开发版本）看下发给 Agent 的 `timeoutSeconds`；错误信息看节点的 error.message。
+import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -225,6 +226,96 @@ describe("节点类型声明的默认超时", () => {
 			await eventually(async () =>
 				expect((await api.node(runId, "a")).error?.message).toBe("节点自己出错"),
 			);
+		});
+	});
+
+	describe("场景里节点的超时超过上限（派发给 Agent 的超时是 uint32）", () => {
+		const TOO_LARGE = 5_000_000_000;
+		const MESSAGE = (id: string) =>
+			`节点 ${id}：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 ${TOO_LARGE}`;
+
+		it("保存时被拒绝（400），错误信息写明是哪个节点、范围、实际是多少", async () => {
+			const id = await api.createOrchestration("超限");
+			const res = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: 0,
+				document: scenario("short", "2.0.0", { timeout: TOO_LARGE }),
+			});
+
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as { error: { code: string; message: string } };
+			expect(body.error.message).toContain(MESSAGE("a"));
+		});
+
+		/** 绕过保存校验把已保存的版本里节点 a 的超时改成超限的值：模拟升级前保存的版本。 */
+		const tamper = async (databaseUrl: string, orchestrationId: string) => {
+			const client = new pg.Client({ connectionString: databaseUrl });
+			await client.connect();
+			try {
+				const { rows } = await client.query<{
+					id: string;
+					document: { nodes: Array<{ id: string }> };
+				}>("select id, document from orchestration_versions where orchestration_id = $1", [
+					orchestrationId,
+				]);
+				for (const row of rows) {
+					const node = row.document.nodes.find((n) => n.id === "a") as { timeout?: number };
+					node.timeout = TOO_LARGE;
+					await client.query("update orchestration_versions set document = $1 where id = $2", [
+						JSON.stringify(row.document),
+						row.id,
+					]);
+				}
+			} finally {
+				await client.end();
+			}
+		};
+
+		it("升级前保存的版本里已经有超限的值：触发前的预检阻断，指到这个节点", async () => {
+			const id = await api.orchestrationWith(scenario("short", "2.0.0", { timeout: 120 }));
+			await connect(); // 触发要求 Agent 注册过
+			await tamper(cp.database.url, id);
+			await cp.restart(); // 版本文档在控制面里缓存过：重启后重新读
+
+			const { problems } = await api.getJson<{
+				problems: Array<{ code: string; node_id?: string; message: string }>;
+			}>(`/orchestrations/${id}/preflight`);
+			expect(problems).toContainEqual(
+				expect.objectContaining({
+					code: "timeout_out_of_range",
+					node_id: "a",
+					message: MESSAGE("a"),
+				}),
+			);
+			expect((await api.trigger(id)).status).toBe(400);
+		});
+
+		it("已经触发、还在排队的任务，版本里的超时是超限的值：派发时这个任务以配置错误失败（不重试），同一台 Agent 上排在它后面的任务照常派发", async () => {
+			const bad = await api.orchestrationWith(scenario("short", "2.0.0", { timeout: 120 }));
+			const good = await api.orchestrationWith(scenario("short", "2.0.0"));
+			// Agent 注册过但不在线：两个运行的任务都排队。
+			await (await connect()).disconnect();
+			agents.length = 0;
+			const badRun = await api.triggerOk(bad);
+			const goodRun = await api.triggerOk(good);
+			await tamper(cp.database.url, bad);
+			await cp.restart();
+
+			const agent = await connect();
+			const task = await agent.nextAssign();
+
+			// 收到的是另一个运行的任务；超限的那个没有发给 Agent。
+			expect(task).toMatchObject({ nodeId: "a" });
+			expect(task.timeoutSeconds).toBe(PLATFORM_SECONDS);
+			await eventually(async () => {
+				const node = await api.node(badRun, "a");
+				expect(node.status).toBe("failed");
+				expect(node.error).toEqual({ kind: "config_error", message: MESSAGE("a"), location: null });
+			});
+			await agent.succeed(task, { v: 1 });
+			await eventually(async () => expect((await api.run(goodRun)).status).toBe("success"));
+			// 配置错误不重试：只有一次尝试。
+			await agent.expectNoAssign();
+			expect((await api.node(badRun, "a")).attempts).toHaveLength(1);
 		});
 	});
 });

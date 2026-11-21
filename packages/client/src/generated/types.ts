@@ -1374,7 +1374,7 @@ export interface PackageNode {
 	/** 未设置时使用编排的默认 Agent。 */
 	agent?: string;
 	inputs: Record<string, unknown>;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
 	/** 秒。 */
@@ -1398,7 +1398,7 @@ export interface PackageNodeInput {
 	/** 未设置时使用编排的默认 Agent。 */
 	agent?: string;
 	inputs?: Record<string, unknown>;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
 	/** 秒。 */

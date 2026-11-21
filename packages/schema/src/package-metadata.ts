@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { optionalMultiline } from "./display-text.js";
+import { NODE_TIMEOUT_MAX_SECONDS } from "./node-timeout.js";
 
 /** 节点包名：小写字母、数字、`-`、`_`，以字母或数字开头。 */
 export const PackageName = z
@@ -62,9 +63,6 @@ export const ChartDeclaration = z.strictObject({
 
 /** 节点类型说明的长度上限（Unicode 字符数）；`sfly build` 按同一个上限检查。 */
 export const NODE_DESCRIPTION_MAX = 4000;
-
-/** 节点类型声明的超时的上限（秒）：派发给 Agent 时是 32 位无符号整数（agent.proto 的 `timeout_seconds`）；`sfly build` 按同一个上限检查。 */
-export const NODE_TIMEOUT_MAX_SECONDS = 4_294_967_295;
 
 export const NodeTypeMetadata = z
 	.strictObject({

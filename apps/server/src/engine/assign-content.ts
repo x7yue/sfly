@@ -3,6 +3,8 @@ import {
 	effectiveTimeout,
 	InvalidReferenceError,
 	inputProblems,
+	nodeNameWithId,
+	nodeTimeoutProblem,
 	type ResolveScope,
 	referencedFeishuBots,
 	resolveInputs,
@@ -105,6 +107,10 @@ export function createAssignContent(urls: {
 		if (problems.length > 0) {
 			return { ok: false, kind: "config_error", message: problems.join("; "), inputs };
 		}
+		// 场景里这个节点写的超时超过 uint32（升级前保存的版本里可能有，保存时已经拦了）：下发会序列化失败、
+		// 拆掉这台 Agent 的连接，这个任务以配置错误失败（不重试），同一台 Agent 上的其他任务照常派发。
+		const timeoutProblem = nodeTimeoutProblem(nodeNameWithId(node), node.timeout);
+		if (timeoutProblem) return { ok: false, kind: "config_error", message: timeoutProblem, inputs };
 		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
 		const referenced = type
 			? await resolveReferencedAgents(tx, node.id, type.inputs, inputs, {

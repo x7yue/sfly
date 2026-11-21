@@ -7,11 +7,12 @@ import {
 	schemaDescription,
 	stopCandidates,
 } from "@sfly/orchestration";
-import type {
-	AgentView,
-	FeishuBotView,
-	PackageSummary,
-	StoredOrchestrationDocument,
+import {
+	type AgentView,
+	type FeishuBotView,
+	NODE_TIMEOUT_MAX_SECONDS,
+	type PackageSummary,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
@@ -144,6 +145,7 @@ const SETTINGS = [
 		key: "timeout",
 		label: "超时",
 		min: 1,
+		max: NODE_TIMEOUT_MAX_SECONDS,
 		placeholder: `${NODE_DEFAULTS.timeout}（默认，秒）`,
 		help: "从任务开始运行时计时",
 	},
@@ -227,7 +229,7 @@ function SettingField({
 	onChange,
 }: {
 	fieldKey: string;
-	setting: { label: string; min: number; placeholder: string; help: string };
+	setting: { label: string; min: number; max?: number; placeholder: string; help: string };
 	value: number | undefined;
 	onChange(value: number | undefined): void;
 }) {
@@ -240,6 +242,9 @@ function SettingField({
 			const n = Number(raw);
 			if (!Number.isInteger(n) || n < setting.min) {
 				return { error: setting.min > 0 ? "需要正整数" : "需要非负整数" };
+			}
+			if (setting.max !== undefined && n > setting.max) {
+				return { error: `不能超过 ${setting.max}（秒）` };
 			}
 			return { value: n };
 		},
