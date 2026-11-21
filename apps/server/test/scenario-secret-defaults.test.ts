@@ -17,6 +17,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, listPresets, presetScenario } from "./support/presets.js";
+import { allForms } from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -40,6 +41,44 @@ const MASKED = [
 	{ name: "region", type: "string", required: false, secret: false, default: "cn-east" },
 	{ name: "pin", type: "number", required: false, secret: true, default: MASK },
 	{ name: "opts", type: "json", required: false, secret: true, default: MASK },
+];
+
+/**
+ * 「节点把 secret 值写成各种写法」的测试用的：四种 secret 参数（字符串、数字、对象——有短叶子、布尔叶子、嵌套、非 ASCII，
+ * 多行的字符串）。叶子的挑选：不会碰巧出现在时间戳、ID、固定文案里。
+ */
+const WRITE_PARAMS = [
+	{ name: "token", type: "string", secret: true },
+	{ name: "pin", type: "number", secret: true },
+	{ name: "opts", type: "json", secret: true },
+	{ name: "pem", type: "string", secret: true },
+];
+const WRITE_VALUES = {
+	token: SECRET,
+	pin: PIN,
+	opts: {
+		env: "test-env-leaf",
+		user: SECRET_JSON,
+		port: 8260413,
+		region: "a",
+		tls: true,
+		nested: { list: ["test-leaf-deep", "x"], zh: "口令一二三" },
+	},
+	pem: "-----BEGIN TEST KEY-----\ntest-pem-line-one\n-----END TEST KEY-----",
+};
+/** 任何出口的文本里都不能出现的：字符串和数字叶子，PEM 的每一行，非 ASCII 叶子的 `\uXXXX` 写法。 */
+const WRITE_LEAKS = [
+	SECRET,
+	String(PIN),
+	SECRET_JSON,
+	"test-env-leaf",
+	"8260413",
+	"test-leaf-deep",
+	"口令一二三",
+	"\\u53e3\\u4ee4\\u4e00\\u4e8c\\u4e09",
+	"BEGIN TEST KEY",
+	"test-pem-line-one",
+	"END TEST KEY",
 ];
 
 interface VersionBody {
@@ -262,7 +301,20 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const agent = await connect();
 			const runId = await api.triggerOk(id);
 			const assign = await agent.nextAssign();
-			const ids = { scenario: id, run: runId, task: assign.taskId, preset: "x" };
+			await sweepStreams(
+				{ scenario: id, run: runId, task: assign.taskId, preset: "x" },
+				expectNoRaw,
+			);
+		});
+
+		/**
+		 * 契约里的每个 SSE 接口各连一次：连上之后收到的消息交给 `check`（`what`、消息的全部文本）。
+		 * 路径随便填的接口返回 404（不是 SSE），这里只看连上的；404 的响应在「所有 GET 接口」里查过。
+		 */
+		const sweepStreams = async (
+			ids: { scenario: string; run: string; task: string; preset: string },
+			check: (what: string, text: string) => void,
+		) => {
 			const streams = httpContract.filter(
 				(def) => def.effect === "read" && "kind" in def && def.kind === "stream",
 			);
@@ -270,20 +322,19 @@ describe("场景版本里 secret 参数的默认值", () => {
 			let opened = 0;
 			for (const def of streams) {
 				const path = fill(def.path, ids);
-				// 路径随便填的接口返回 404（不是 SSE），这里只看连上的；404 的响应在「所有 GET 接口」里查过。
 				const sse = await SseClient.open(cp, path).catch(() => undefined);
 				if (!sse) continue;
 				opened += 1;
 				try {
 					// 每条流连上时先发一条控制面时间，运行和任务的流接着发当前状态。
 					await eventually(() => expect(sse.received.length).toBeGreaterThan(0));
-					expectNoRaw(`SSE ${path}`, JSON.stringify(sse.received));
+					check(`SSE ${path}`, JSON.stringify(sse.received));
 				} finally {
 					sse.close();
 				}
 			}
 			expect(opened).toBeGreaterThanOrEqual(3);
-		});
+		};
 
 		/** 路径参数填什么：看路径的前缀和参数名；没见过的组合直接报错，新接口要在这里补上取值。 */
 		const fill = (
@@ -317,18 +368,14 @@ describe("场景版本里 secret 参数的默认值", () => {
 				return found;
 			});
 
-		it("契约里每个声明为只读的 GET 接口（SSE 除外）：读一遍，响应里都没有原值——新增的出口默认也是打码的", async () => {
-			const id = await scenario();
-			const agent = await connect();
-			const runId = await api.triggerOk(id);
-			const assign = await agent.nextAssign();
-			const preset = await createPresetOk(api, id, {
-				name: "预设",
-				params: [{ name: "token", value: SECRET }],
-			});
-			const ids = { scenario: id, run: runId, task: assign.taskId, preset: preset.id };
-
-			// 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（在线编辑者的心跳）要请求体，不在这里。
+		/**
+		 * 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（在线编辑者的心跳）要请求体，
+		 * 不在这里。每个 GET 接口（SSE 除外）读一遍，响应交给 `check`（`what`、响应文本）。
+		 */
+		const sweepReads = async (
+			ids: { scenario: string; run: string; task: string; preset: string },
+			check: (what: string, text: string) => void,
+		) => {
 			const reads = httpContract.filter(
 				(def) =>
 					def.effect === "read" &&
@@ -340,12 +387,172 @@ describe("场景版本里 secret 参数的默认值", () => {
 			for (const def of reads) {
 				const path = fill(def.path, ids);
 				const res = await api.get(path);
-				expectNoRaw(`GET ${path}`, await res.text());
+				check(`GET ${path}`, await res.text());
 				if (res.status === 200) read += 1;
 			}
 			// 大部分接口读得到（读不到的是路径随便填的、只验证没有泄露）。
 			expect(read).toBeGreaterThan(20);
+		};
+
+		it("契约里每个声明为只读的 GET 接口（SSE 除外）：读一遍，响应里都没有原值——新增的出口默认也是打码的", async () => {
+			const id = await scenario();
+			const agent = await connect();
+			const runId = await api.triggerOk(id);
+			const assign = await agent.nextAssign();
+			const preset = await createPresetOk(api, id, {
+				name: "预设",
+				params: [{ name: "token", value: SECRET }],
+			});
+			await sweepReads(
+				{ scenario: id, run: runId, task: assign.taskId, preset: preset.id },
+				expectNoRaw,
+			);
 		});
+
+		it("节点把 secret 值用各种写法写进日志、进度、动作、输出和错误：契约里每个 GET 和 SSE 接口读到的都已打码（运行中、结束后各读一遍）", async () => {
+			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
+			agents.push(agent);
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry", params: WRITE_PARAMS },
+					...["a", "b"].map((nodeId) => ({
+						id: nodeId,
+						kind: "package",
+						package: "stub",
+						node: "echo",
+						inputs: Object.fromEntries(
+							WRITE_PARAMS.map((p) => [p.name, `\${{ params.${p.name} }}`]),
+						),
+					})),
+				],
+				edges: [
+					{ from: "entry", to: "a", kind: "chain" },
+					{ from: "a", to: "b", kind: "chain" },
+				],
+				packages: { stub: "1.0.0" },
+			});
+			const runId = await api.triggerOk(id, WRITE_VALUES);
+			const a = await agent.nextAssign();
+			expect(a.inputs).toMatchObject(WRITE_VALUES);
+
+			// 节点能写出来的各种写法（用节点收到的值：键的顺序是库里的）。
+			const forms = allForms(a.inputs);
+			const everyForm = forms.join("\n");
+			for (const leak of WRITE_LEAKS) {
+				expect(everyForm, `测试要写出 ${leak}，写法清单里得有它`).toContain(leak);
+			}
+			const logLines = [...new Set(forms.flatMap((form) => form.split("\n")))];
+			const T0 = Date.parse("2026-01-01T00:00:00.000Z");
+
+			// 运行中：日志、进度、动作、动作摘要。
+			agent.logs(
+				a,
+				logLines.map((text, i) => [i + 1, `form: ${text}`]),
+			);
+			agent.progress(a, 1, 2, `progress ${forms.slice(0, 12).join(" | ")}`);
+			const actionEvents = [];
+			for (let at = 0; at * 8 < Math.min(forms.length, 24); at++) {
+				const chunk = forms.slice(at * 8, at * 8 + 8);
+				const fields = Object.fromEntries(chunk.map((form, i) => [`k${i}`, form]));
+				actionEvents.push(
+					agent.actionStart(at + 1, `act ${chunk[0]}`, T0 + (at + 1) * 1_000, { fields }),
+				);
+			}
+			actionEvents.push(
+				agent.actionEnd(3, "failed", T0 + 5_000, {
+					reason: forms.join("; "),
+					fields: { note: forms[0] ?? "" },
+				}),
+			);
+			agent.actions(a, actionEvents);
+			const running = {
+				id: 1,
+				parent: null,
+				depth: 0,
+				name: `act ${forms[0]}`,
+				fields: { k0: forms[1] ?? "" },
+				...agent.stamp(T0 + 1_000),
+			};
+			const end = agent.stamp(T0 + 5_000);
+			const failed = {
+				...running,
+				id: 3,
+				name: `act ${forms[2]}`,
+				end_ts: end.ts,
+				end_mono: end.mono,
+				result: "failed" as const,
+				reason: forms.join("; "),
+			};
+			agent.actionSummary(a, {
+				total: 3,
+				reported: 3,
+				names: [
+					{
+						name: running.name,
+						total: 1,
+						failed: 0,
+						reported: 1,
+						capped_ts: null,
+						capped_mono: null,
+					},
+				],
+				running: [running],
+				recent: [failed],
+				recent_failed: [failed],
+			});
+			await agent.sync();
+			await eventually(async () => {
+				const page = await api.getJson<{ last_seq: number }>(`/tasks/${a.taskId}/logs`);
+				expect(page.last_seq).toBe(logLines.length);
+			});
+
+			const ids = { scenario: id, run: runId, task: a.taskId, preset: "x" };
+			const noLeaks = (when: string) => (what: string, text: string) => {
+				for (const leak of WRITE_LEAKS) {
+					expect(text, `${when}：${what} 里不能出现 ${leak}`).not.toContain(leak);
+				}
+			};
+			await sweepReads(ids, noLeaks("运行中"));
+			await sweepStreams(ids, noLeaks("运行中"));
+			// 读到的不是空的：运行视图里有掩码，日志里每一行都在（打码之后）。
+			const during = await (await api.get(`/runs/${runId}`)).text();
+			expect(during).toContain(MASK);
+			expect(await (await api.get(`/tasks/${a.taskId}/logs`)).text()).toContain(`form: ${MASK}`);
+
+			// 结束后：整个输出（原样的值、整段文字）、错误。
+			await agent.succeed(a, {
+				forms,
+				whole: a.inputs,
+				text: forms.join("\n"),
+				pin: a.inputs.pin,
+				flag: a.inputs.flag,
+			});
+			const b = await agent.nextAssign();
+			agent.logs(
+				b,
+				forms.slice(0, 20).map((text, i) => [i + 1, text]),
+			);
+			await agent.fail(b, forms.join("; "));
+			await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
+			const after = { ...ids, task: b.taskId };
+			await sweepReads(after, noLeaks("结束后"));
+			await sweepStreams(after, noLeaks("结束后"));
+			const finished = await (await api.get(`/runs/${runId}`)).text();
+			expect(finished).toContain(MASK);
+			runsApi.get.response.parse(JSON.parse(finished));
+
+			// 日志文件里也不保存明文。
+			const { readdir, readFile } = await import("node:fs/promises");
+			const { join } = await import("node:path");
+			const entries = await readdir(join(cp.dataDir, "logs"), {
+				recursive: true,
+				withFileTypes: true,
+			});
+			const files = entries.filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name));
+			const stored = (await Promise.all(files.map((f) => readFile(f, "utf8")))).join("\n");
+			noLeaks("结束后")("日志文件", stored);
+		}, 90_000);
 	});
 
 	describe("写接口的成功和失败响应", () => {
