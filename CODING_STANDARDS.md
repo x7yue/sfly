@@ -45,9 +45,13 @@
 
 - **迁移日志按编号严格递增。** drizzle 按 `apps/server/drizzle/meta/_journal.json` 里每条的 `when` 决定要不要执行一个迁移（只执行比库里
   最后一个已执行迁移新的），比的不是编号。几个 PR 同时加迁移、后合入的一方重新排号时，除了改编号和文件名，还要把 `when` 改得比前一条大：
-  否则这个迁移在已经执行过前一条的库上被静默跳过，CI 从空库开始抓不到。重新生成迁移（`pnpm --filter @sfly/server db:generate`）时
-  `when` 取当前时间，合并 `dev` 之后重新生成就行。`scripts/check_migrations.py`（`pnpm lint:migrations`，推送前钩子和 CI 都跑）检查
-  `when` 严格递增、编号连续、每一条有 SQL 文件和快照、没有多余的文件，报错写明哪两条不对、怎么改；
+  否则这个迁移在已经执行过前一条的库上被静默跳过，CI 从空库开始抓不到；快照还要接在前一条快照的后面（`prevId`），否则下一次
+  `db:generate` 拿错的基准算差异。后合入的一方合并 `dev` 之后重新排号：删掉自己的迁移（SQL 文件、快照和日志里那一条），运行
+  `pnpm --filter @sfly/server db:generate --name <描述>` 重新生成，编号、`when`（当前时间）和快照的衔接就都是新的。
+  **迁移里有手写的语句时**（种子数据、回填、带默认值加列再去掉默认值等），重新生成只会得到按表结构推出来的语句：把新生成的 SQL 换回原来
+  手写的那份，日志和快照用新生成的。改完再运行一次 `db:generate`，应当提示没有变化（No schema changes），然后运行 `pnpm lint:migrations`。
+  `scripts/check_migrations.py`（`pnpm lint:migrations`，推送前钩子和 CI 都跑）检查条目按编号排、`when` 严格递增、编号连续、每一条有
+  SQL 文件和快照、没有多余的文件、快照的 `prevId` 接成一条链，报错写明哪两条不对、怎么改；
   `apps/server/test/migration-upgrade.test.ts` 先迁到倒数第二个、再执行全部，确认最后一个被执行了。
 
 ## 文档

@@ -38,12 +38,38 @@ def make(
         ],
     }
     (directory / "meta" / "_journal.json").write_text(json.dumps(journal), encoding="utf-8")
-    for idx, tag, _ in entries:
+    for _, tag, _ in entries:
         if f"{tag}.sql" not in skip:
             (directory / f"{tag}.sql").write_text("select 1;", encoding="utf-8")
+    previous = ZERO_ID
+    for idx, _, _ in entries:
+        # drizzle-kit 写的快照：自己的 id，和接在谁后面（prevId）；这里按日志的先后接成一条链。
+        snapshot = {"id": snapshot_id(idx), "prevId": previous}
+        previous = snapshot_id(idx)
         if f"meta/{idx:04d}_snapshot.json" not in skip:
-            (directory / "meta" / f"{idx:04d}_snapshot.json").write_text("{}", encoding="utf-8")
+            (directory / "meta" / f"{idx:04d}_snapshot.json").write_text(
+                json.dumps(snapshot), encoding="utf-8"
+            )
     return directory
+
+
+ZERO_ID = "00000000-0000-0000-0000-000000000000"
+
+
+def snapshot_id(idx: int) -> str:
+    return f"{idx + 1:08d}-1111-1111-1111-111111111111"
+
+
+def set_snapshot(directory: Path, idx: int, **fields: Any) -> None:
+    """改一条快照里的字段（值是 None 的字段删掉）。"""
+    path = directory / "meta" / f"{idx:04d}_snapshot.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    for key, value in fields.items():
+        if value is None:
+            snapshot.pop(key, None)
+        else:
+            snapshot[key] = value
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
 
 
 GOOD = [(0, "0000_a", 1000), (1, "0001_b", 2000), (2, "0002_c", 3000)]
@@ -81,14 +107,18 @@ def test_the_suggested_when_is_larger_than_every_earlier_one(tmp_path: Path) -> 
     assert f"例如 {far_future + 1}" in problem
 
 
-def test_entries_are_compared_in_number_order_not_in_file_order(tmp_path: Path) -> None:
+def test_entries_that_are_not_in_number_order_in_the_file_are_caught(tmp_path: Path) -> None:
+    # drizzle 按日志里的先后顺序执行迁移：编号不是从小到大排的，迁移会按错的顺序执行。
     directory = make(tmp_path, GOOD)
     journal_path = directory / "meta" / "_journal.json"
     journal = json.loads(journal_path.read_text())
     journal["entries"].reverse()
     journal_path.write_text(json.dumps(journal))
 
-    assert check_migrations.check(directory) == []
+    [problem] = check_migrations.check(directory)
+
+    assert "条目没有按编号从小到大排" in problem
+    assert "drizzle 按日志里的先后顺序执行" in problem
 
 
 def test_a_gap_in_the_numbers_is_caught(tmp_path: Path) -> None:
@@ -163,6 +193,70 @@ def test_a_snapshot_without_an_entry_is_caught(tmp_path: Path) -> None:
     [problem] = check_migrations.check(directory)
 
     assert "0003_snapshot.json 没有对应的日志条目" in problem
+
+
+def test_a_snapshot_that_does_not_follow_the_previous_one_is_caught(tmp_path: Path) -> None:
+    # 重新排号时 when 改对了，快照还接在旧的父快照上：下一次 db:generate 拿错的基准算差异。
+    directory = make(tmp_path, GOOD)
+    set_snapshot(directory, 2, prevId=snapshot_id(0))
+
+    [problem] = check_migrations.check(directory)
+
+    assert "meta/0002_snapshot.json" in problem
+    assert (
+        f"prevId（{snapshot_id(0)}）不是前一条快照 0001_snapshot.json 的 id（{snapshot_id(1)}）"
+        in problem
+    )
+    assert "基准算差异" in problem
+    assert f"改成 {snapshot_id(1)}" in problem
+
+
+def test_the_first_snapshot_must_follow_the_all_zero_id(tmp_path: Path) -> None:
+    directory = make(tmp_path, GOOD)
+    set_snapshot(directory, 0, prevId=snapshot_id(7))
+
+    [problem] = check_migrations.check(directory)
+
+    assert "meta/0000_snapshot.json" in problem
+    assert "第一条快照的 prevId 应该是全零的 UUID" in problem
+
+
+def test_a_snapshot_without_an_id_or_a_prev_id_is_caught(tmp_path: Path) -> None:
+    directory = make(tmp_path, GOOD)
+    set_snapshot(directory, 1, id=None)
+    set_snapshot(directory, 2, prevId=None)
+
+    problems = check_migrations.check(directory)
+
+    assert any("meta/0001_snapshot.json" in p and "没有 id" in p for p in problems)
+    assert any("meta/0002_snapshot.json" in p and "没有 prevId" in p for p in problems)
+
+
+def test_an_unreadable_snapshot_is_reported_instead_of_crashing(tmp_path: Path) -> None:
+    directory = make(tmp_path, GOOD)
+    (directory / "meta" / "0001_snapshot.json").write_text("{oops", encoding="utf-8")
+
+    problems = check_migrations.check(directory)
+
+    assert any("meta/0001_snapshot.json" in p and "读不了快照" in p for p in problems)
+
+
+def test_a_missing_snapshot_is_reported_once_and_does_not_break_the_chain_after_it(
+    tmp_path: Path,
+) -> None:
+    # 缺的那条已经报了；它后面一条接在它后面，没有它没法比较，不再多报一条。
+    [problem] = check_migrations.check(make(tmp_path, GOOD, skip=("meta/0001_snapshot.json",)))
+
+    assert "日志里有 0001_b，但没有" in problem
+
+
+def test_the_chain_continues_across_the_historical_gap(tmp_path: Path) -> None:
+    # 0027 没有合入过：0028 的快照接在 0026 的后面（按日志的先后，不按编号相邻）。
+    numbers = [*range(27), *range(28, 30)]
+    entries = [(n, f"{n:04d}_m", 1000 + n) for n in numbers]
+    directory = make(tmp_path, entries)
+
+    assert check_migrations.check(directory) == []
 
 
 def test_an_unreadable_journal_is_reported_instead_of_crashing(tmp_path: Path) -> None:

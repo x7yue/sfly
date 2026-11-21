@@ -10,7 +10,11 @@ drizzle 按 `apps/server/drizzle/meta/_journal.json` 里每条的 `when` 决定�
 1. 条目按编号从小到大排列时，`when` 严格递增；
 2. 编号连续，文件名的前四位和条目的编号一致（`KNOWN_MISSING` 里是历史上没有合入过的编号）；
 3. 每一条都有对应的 SQL 文件（`<tag>.sql`）和快照（`meta/<编号>_snapshot.json`），目录里没有
-   多余的 SQL 文件和快照。
+   多余的 SQL 文件和快照；
+4. 日志里的条目按编号从小到大排（drizzle 按日志里的先后执行迁移）；
+5. 快照接成一条链：按日志的先后，第一条快照的 `prevId` 是全零的 UUID，之后每一条的 `prevId`
+   是前一条快照的 `id`。重新排号时 `when` 改对了、快照还接在旧的父快照上，下一次 `db:generate`
+   会拿错的基准算差异，生成出重做或撤销前面迁移的语句。
 
 每处不对的地方都报：哪一条（或哪两条）、哪里不对、怎么改。失败时退出码 1。「先迁到倒数第二个，
 再执行全部」的测试在 `apps/server/test/migration-upgrade.test.ts`：它连数据库，抓的是同一个
@@ -32,6 +36,9 @@ DEFAULT_DIR = ROOT / "apps" / "server" / "drizzle"
 #: 历史上没有合入过的编号（0027 在合入前被换成了别的编号）：已经执行过的库里没有它，编号检查放过它。
 #: 以后不能再有新的缺口；这里的编号真的有了迁移时要从这里删掉，检查会提醒。
 KNOWN_MISSING = frozenset({27})
+
+#: drizzle-kit 写的第一条快照的 prevId。
+ZERO_ID = "00000000-0000-0000-0000-000000000000"
 
 TAG = re.compile(r"^(\d{4})_[a-z0-9_]+$")
 SNAPSHOT = re.compile(r"^(\d{4})_snapshot\.json$")
@@ -55,7 +62,8 @@ def check(directory: Path) -> list[str]:
     folder = shown(directory)
     try:
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
-        entries: list[dict[str, int | str]] = sorted(journal["entries"], key=lambda e: e["idx"])
+        in_file: list[dict[str, int | str]] = journal["entries"]
+        entries: list[dict[str, int | str]] = sorted(in_file, key=lambda e: e["idx"])
     except (OSError, ValueError, KeyError, TypeError) as error:
         return [
             f"{where}：读不了迁移日志（{error}）：它是 drizzle-kit 生成的，不要手写；"
@@ -63,6 +71,14 @@ def check(directory: Path) -> list[str]:
         ]
 
     problems: list[str] = []
+
+    # 条目按编号从小到大排：drizzle 按日志里的先后顺序执行迁移。
+    if [e["idx"] for e in in_file] != [e["idx"] for e in entries]:
+        problems.append(
+            f"{where}：条目没有按编号从小到大排。drizzle 按日志里的先后顺序执行迁移，"
+            "顺序错了迁移会按错的顺序执行：把条目按编号排好（日志是 drizzle-kit 生成的，"
+            "排不好就删掉重新生成）"
+        )
 
     # 编号：不重复、文件名和条目一致、连续。
     seen: dict[int, str] = {}
@@ -136,6 +152,55 @@ def check(directory: Path) -> list[str]:
             problems.append(
                 f"{folder}/meta/{name} 没有对应的日志条目：多余的快照，删掉（或者补上对应的迁移）"
             )
+    problems += snapshot_chain_problems(directory, entries)
+    return problems
+
+
+def snapshot_chain_problems(directory: Path, entries: list[dict[str, int | str]]) -> list[str]:
+    """快照的 prevId 链（规则 5）：按日志的先后，每条接在前一条的后面。读不了的、缺的快照在这里
+    或上面已经报了，它后面一条没法和它比较，跳过那一次比较。"""
+    problems: list[str] = []
+    folder = shown(directory)
+    previous: tuple[str, str] | None = None  # （前一条快照的文件名, 它的 id）
+    for at, entry in enumerate(entries):
+        name = f"{int(entry['idx']):04d}_snapshot.json"
+        path = directory / "meta" / name
+        where = f"{folder}/meta/{name}"
+        if not path.exists():  # 缺快照上面已经报了
+            previous = None
+            continue
+        try:
+            snapshot = json.loads(path.read_text(encoding="utf-8"))
+            own, parent = snapshot.get("id"), snapshot.get("prevId")
+        except (OSError, ValueError, AttributeError) as error:
+            problems.append(
+                f"{where}：读不了快照（{error}）：它是 drizzle-kit 生成的，不要手写；"
+                "用 pnpm --filter @sfly/server db:generate 重新生成"
+            )
+            previous = None
+            continue
+        if not isinstance(own, str) or not isinstance(parent, str):
+            missing = "id" if not isinstance(own, str) else "prevId"
+            problems.append(
+                f"{where}：快照里没有 {missing}：它是 drizzle-kit 生成的，不要手写；"
+                "用 pnpm --filter @sfly/server db:generate 重新生成"
+            )
+            previous = (name, own) if isinstance(own, str) else None
+            continue
+        if at == 0:
+            if parent != ZERO_ID:
+                problems.append(
+                    f"{where}：第一条快照的 prevId 应该是全零的 UUID（{ZERO_ID}），实际是 {parent}"
+                )
+        elif previous is not None and parent != previous[1]:
+            problems.append(
+                f"{where}：prevId（{parent}）不是前一条快照 {previous[0]} 的 id（{previous[1]}）。"
+                "快照没有接上：下一次 db:generate 会拿错的基准算差异，"
+                "生成出重做或撤销前面迁移的语句。"
+                "重新排号时快照要用 db:generate 重新生成，不要只改文件名；确实是手工整理过的，"
+                f"把它的 prevId 改成 {previous[1]}"
+            )
+        previous = (name, own)
     return problems
 
 
