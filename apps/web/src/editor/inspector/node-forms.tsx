@@ -32,6 +32,7 @@ import {
 	type ReferenceEditorHandle,
 } from "./ReferenceEditor";
 import type { ReferenceChoice } from "./reference-completion";
+import { timeoutHelp, timeoutPlaceholder } from "./timeout-note";
 import { Problems, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { ReferenceActions } from "./ZoomEditor";
@@ -166,10 +167,13 @@ const SETTINGS = [
 export function ExecutionSettings({
 	id,
 	node,
+	type,
 	onChange,
 }: {
 	id: string;
 	node: AlwaysNode;
+	/** 包节点的节点类型（超时没填时写它声明的）；null：找不到；undefined：还在加载。 */
+	type?: NodeTypeIo | null | undefined;
 	onChange(node: AlwaysNode): void;
 }) {
 	return (
@@ -179,7 +183,11 @@ export function ExecutionSettings({
 					<SettingField
 						key={s.key}
 						fieldKey={draftKey(id, s.key)}
-						setting={s}
+						setting={
+							s.key === "timeout"
+								? { ...s, placeholder: timeoutPlaceholder(type), help: timeoutHelp(node, type) }
+								: s
+						}
 						value={node[s.key]}
 						onChange={(value) => {
 							const { [s.key]: _old, ...rest } = node;
@@ -219,7 +227,7 @@ function SettingField({
 	onChange,
 }: {
 	fieldKey: string;
-	setting: (typeof SETTINGS)[number];
+	setting: { label: string; min: number; placeholder: string; help: string };
 	value: number | undefined;
 	onChange(value: number | undefined): void;
 }) {

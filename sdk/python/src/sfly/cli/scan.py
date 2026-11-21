@@ -398,6 +398,28 @@ def node_description(fn: Any, label: str) -> str | None:
     return description or None
 
 
+#: 节点类型声明的超时的上限（秒）：任务派发给 Agent 时超时是 32 位无符号整数
+#: （agent.proto 的 `timeout_seconds`）。
+MAX_TIMEOUT_SECONDS = 4_294_967_295
+
+
+def node_timeout(decl: NodeDeclaration, label: str) -> int | None:
+    """`@node(timeout=...)`：没声明时返回 None；声明了就必须是正整数（秒，和场景里的超时一样）。"""
+    value = decl.timeout
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 < value <= MAX_TIMEOUT_SECONDS
+    ):
+        raise ScanError(
+            f"{label}：timeout 必须是 1 到 {MAX_TIMEOUT_SECONDS} 之间的正整数（秒），"
+            f"实际是 {value!r}"
+        )
+    return value
+
+
 def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     qualname: str = fn.__qualname__
     label = f"节点 {fn.__module__}.{qualname}"
@@ -409,10 +431,12 @@ def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     except ScanError as error:
         raise ScanError(f"{label}：{error}") from None
     description = node_description(fn, label)
+    timeout = node_timeout(decl, label)
     return {
         "name": name,
         "title": decl.title or name,
         **({"description": description} if description else {}),
+        **({"timeout": timeout} if timeout is not None else {}),
         "entry": f"{fn.__module__}:{qualname}",
         "inputs": input_schema(fn, label),
         "outputs": output_schema(fn, decl, label),

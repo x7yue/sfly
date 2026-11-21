@@ -1,7 +1,9 @@
 // sfly scenario list / show：真实的 sfly 进程查询测试控制面里的场景。
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { publishPackage } from "./support/package-archive.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -66,6 +68,9 @@ const simpleDocument = {
 	packages: { stub: "1.0.0" },
 };
 
+/** 生效的超时：没有声明、也没有在节点上写时是平台默认的 1 小时。 */
+const PLATFORM_TIMEOUT = { seconds: 3600, source: "platform" };
+
 interface ListedScenario {
 	id: string;
 	name: string;
@@ -96,6 +101,12 @@ describe("sfly scenario list / show → 控制面", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ clock });
 		api = new ApiClient(cp);
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		// 节点类型声明的默认超时（#476）：long 声明了 12 小时，short 没有。
+		await publishPackage(cp, "limits", "1.0.0", {
+			long: { outputs: ["v"], timeout: 43_200 },
+			short: ["v"],
+		});
 		ids.payment = await createScenario("支付回归", paymentDocument, "支付链路的回归场景");
 		ids.empty = await createScenario("空场景");
 		ids.twinA = await createScenario("重名", simpleDocument);
@@ -213,23 +224,23 @@ describe("sfly scenario list / show → 控制面", () => {
 				"    retries  number  默认 3",
 				"    token    string  访问令牌，secret",
 				"  节点：",
-				"    节点    显示名称    节点类型                  包版本  Agent",
-				"    deploy  部署服务    stub/echo                 1.0.0   agent-b",
-				"    spawn   -           异步任务 → 子流程 report  -       -",
-				"    pause   等缓存刷新  stub/echo                 1.0.0   agent-a",
-				"    stop    -           停止子流程 report         -       -",
+				"    节点    显示名称    节点类型                  包版本  Agent    超时",
+				"    deploy  部署服务    stub/echo                 1.0.0   agent-b  3600（平台默认，秒）",
+				"    spawn   -           异步任务 → 子流程 report  -       -        -",
+				"    pause   等缓存刷新  stub/echo                 1.0.0   agent-a  3600（平台默认，秒）",
+				"    stop    -           停止子流程 report         -       -        -",
 				"",
 				"子流程 report（入口 sub，由 spawn 触发）",
 				"  入口参数：",
 				"    参数  类型    说明",
 				"    run   string  上游运行 ID，必填",
 				"  节点：",
-				"    节点  显示名称  节点类型   包版本  Agent",
-				"    send  发送报告  stub/echo  1.0.0   agent-a",
+				"    节点  显示名称  节点类型   包版本  Agent    超时",
+				"    send  发送报告  stub/echo  1.0.0   agent-a  3600（平台默认，秒）",
 				"",
 				"没有连进任何链的节点：",
-				"  节点   显示名称  节点类型   包版本  Agent",
-				"  loose  夜间检查  stub/echo  1.0.0   agent-a",
+				"  节点   显示名称  节点类型   包版本  Agent    超时",
+				"  loose  夜间检查  stub/echo  1.0.0   agent-a  3600（平台默认，秒）",
 			].join("\n");
 
 		it("文本输出：入口参数、主链和子流程上的节点（类型、锁定的包版本、Agent）、默认 Agent", async () => {
@@ -278,6 +289,7 @@ describe("sfly scenario list / show → 控制面", () => {
 						node: "echo",
 						package_version: "1.0.0",
 						agent: "agent-b",
+						timeout: PLATFORM_TIMEOUT,
 						display_name: "部署服务",
 					},
 					{ id: "spawn", kind: "async", always: false, subflow: "report" },
@@ -289,6 +301,7 @@ describe("sfly scenario list / show → 控制面", () => {
 						node: "echo",
 						package_version: "1.0.0",
 						agent: "agent-a",
+						timeout: PLATFORM_TIMEOUT,
 						display_name: "等缓存刷新",
 					},
 					{ id: "stop", kind: "stop_subflow", always: false, subflow: "report" },
@@ -316,6 +329,7 @@ describe("sfly scenario list / show → 控制面", () => {
 								node: "echo",
 								package_version: "1.0.0",
 								agent: "agent-a",
+								timeout: PLATFORM_TIMEOUT,
 								display_name: "发送报告",
 							},
 						],
@@ -330,10 +344,121 @@ describe("sfly scenario list / show → 控制面", () => {
 						node: "echo",
 						package_version: "1.0.0",
 						agent: "agent-a",
+						timeout: PLATFORM_TIMEOUT,
 						display_name: "夜间检查",
 					},
 				],
 				annotations: [],
+			});
+		});
+
+		describe("超时：生效的值和它从哪来（#476）", () => {
+			const limitsDocument = (extra: Record<string, unknown> = {}) => ({
+				default_agent: "agent-c",
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "keep", kind: "package", package: "limits", node: "long" },
+					{ id: "quick", kind: "package", package: "limits", node: "short" },
+					{ id: "pinned", kind: "package", package: "limits", node: "long", timeout: 120 },
+					{ id: "gone", kind: "package", package: "ghost", node: "x" },
+				],
+				edges: [
+					{ from: "entry", to: "keep", kind: "chain" },
+					{ from: "keep", to: "quick", kind: "chain" },
+					{ from: "quick", to: "pinned", kind: "chain" },
+					{ from: "pinned", to: "gone", kind: "chain" },
+				],
+				packages: { limits: "1.0.0", ghost: "1.0.0" },
+				...extra,
+			});
+
+			it("文本：每个包节点一列，写生效的值和来源；找不到节点类型的写未知，不猜", async () => {
+				const id = await createScenario("超时来源", limitsDocument());
+				const result = await cli("scenario", "show", id);
+				expect(result.code, result.stderr).toBe(0);
+				const rows = result.stdout
+					.split("\n")
+					.filter((l) => /^ {4}(keep|quick|pinned|gone) /.test(l));
+				const cell = (row: string) => row.slice(row.indexOf("agent-c") + "agent-c".length).trim();
+				expect(rows.map(cell)).toEqual([
+					"43200（节点类型声明，秒）",
+					"3600（平台默认，秒）",
+					"120（节点上设置，秒）",
+					"未知（找不到节点类型）",
+				]);
+			});
+
+			it("--json：timeout 的 seconds 和 source（node、type、platform、unknown）", async () => {
+				const id = await createScenario("超时来源 json", limitsDocument());
+				const json = JSON.parse((await cli("scenario", "show", id, "--json")).stdout);
+				expect(
+					Object.fromEntries(
+						json.nodes.map((n: { id: string; timeout: unknown }) => [n.id, n.timeout]),
+					),
+				).toEqual({
+					keep: { seconds: 43_200, source: "type" },
+					quick: { seconds: 3600, source: "platform" },
+					pinned: { seconds: 120, source: "node" },
+					gone: { seconds: null, source: "unknown" },
+				});
+			});
+
+			it("场景锁定的是没有声明超时的旧版本时，写平台默认；升级到声明了的版本后跟着新声明走", async () => {
+				await publishPackage(cp, "limits", "0.9.0", { long: ["v"], short: ["v"] });
+				const old = await createScenario(
+					"超时旧版本",
+					limitsDocument({ packages: { limits: "0.9.0", ghost: "1.0.0" } }),
+				);
+				const json = JSON.parse((await cli("scenario", "show", old, "--json")).stdout);
+				expect(json.nodes.find((n: { id: string }) => n.id === "keep").timeout).toEqual({
+					seconds: 3600,
+					source: "platform",
+				});
+			});
+
+			it("开发版本：取节点所在 Agent 上报的元信息里声明的超时；没有 Agent 加载它时写未知", async () => {
+				const id = await createScenario("超时开发版本", {
+					default_agent: "agent-dev",
+					nodes: [
+						{ id: "entry", kind: "entry" },
+						{ id: "job", kind: "package", package: "devpkg", node: "job" },
+					],
+					edges: [{ from: "entry", to: "job", kind: "chain" }],
+					packages: { devpkg: "dev" },
+				});
+				const before = JSON.parse((await cli("scenario", "show", id, "--json")).stdout);
+				expect(before.nodes[0].timeout).toEqual({ seconds: null, source: "unknown" });
+
+				const agent = await FakeAgent.connect(cp.grpcUrl, {
+					name: "agent-dev",
+					devPackages: [
+						{
+							name: "devpkg",
+							source: "/src/devpkg",
+							metadataJson: JSON.stringify({
+								name: "devpkg",
+								version: "dev",
+								requires_python: ">=3.10",
+								nodes: [
+									{
+										name: "job",
+										title: "job",
+										entry: "devpkg:job",
+										timeout: 900,
+										inputs: { type: "object", properties: {}, required: [] },
+										outputs: { type: "object", properties: {} },
+									},
+								],
+							}),
+						},
+					],
+				});
+				try {
+					const after = JSON.parse((await cli("scenario", "show", id, "--json")).stdout);
+					expect(after.nodes[0].timeout).toEqual({ seconds: 900, source: "type" });
+				} finally {
+					await agent.disconnect();
+				}
 			});
 		});
 

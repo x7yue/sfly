@@ -88,6 +88,7 @@ import {
 	type Step,
 	type TaskRow,
 } from "./step.js";
+import { platformTimeoutHint } from "./timeout-hint.js";
 
 export { DEFAULT_LEASE_MS } from "./leases.js";
 
@@ -1113,11 +1114,18 @@ export class Engine implements AgentSessionHandler {
 
 		if (result.status !== ProtoTaskStatus.SUCCESS) {
 			const kind = ERROR_KINDS[result.error?.kind ?? ProtoErrorKind.UNSPECIFIED] ?? "node_error";
-			await this.#failTask(step, task, kind, result.error?.message ?? "", {
-				cancelled: result.status === ProtoTaskStatus.CANCELLED,
-				endOffset,
-				location: result.error?.location,
-			});
+			const message = result.error?.message ?? "";
+			await this.#failTask(
+				step,
+				task,
+				kind,
+				kind === "timeout" ? await this.#withTimeoutHint(step, task, message) : message,
+				{
+					cancelled: result.status === ProtoTaskStatus.CANCELLED,
+					endOffset,
+					location: result.error?.location,
+				},
+			);
 			return;
 		}
 		let outputs: unknown;
@@ -1143,6 +1151,15 @@ export class Engine implements AgentSessionHandler {
 			.where(eq(tasks.id, task.id));
 		const { run, chain, index } = await this.#locate(step.tx, task);
 		await this.#advance(step, run, chain, index + 1);
+	}
+
+	/** 超时失败的错误信息：用的是平台默认的超时时，Agent 报的原文后面另起一行补一句怎么办（timeout-hint.ts）。 */
+	async #withTimeoutHint(step: Step, task: TaskRow, message: string): Promise<string> {
+		const { run, node } = await this.#locate(step.tx, task);
+		if (node.kind !== "package") return message;
+		const document = await this.#document(step.tx, run.orchestrationVersionId);
+		const hint = await platformTimeoutHint(step.tx, document, node.id, task.agentName);
+		return hint ? `${message}\n${hint}` : message;
 	}
 
 	/**

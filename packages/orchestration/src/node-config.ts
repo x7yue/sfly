@@ -1,4 +1,4 @@
-import type { OrchestrationNode } from "@sfly/schema";
+import { NODE_TIMEOUT_MAX_SECONDS, type OrchestrationNode } from "@sfly/schema";
 
 /**
  * 包节点执行配置的默认值（docs/SEMANTICS.md §3.3），单位：秒 / 次。
@@ -9,6 +9,31 @@ export const NODE_DEFAULTS = {
 	retries: 0,
 	queue_timeout: 10 * 60,
 } as const;
+
+/** 生效的超时从哪来：场景里这个节点写的、节点类型声明的，还是平台默认的（#476）。 */
+export type TimeoutSource = "node" | "type" | "platform";
+
+/**
+ * 包节点生效的超时（秒）和它从哪来（docs/SEMANTICS.md §3.3）：场景里这个节点写的 → 节点类型声明的 → 平台默认的 1 小时。
+ * `type` 是节点类型的元信息；开发版本的元信息是 Agent 上报的、没经过发布校验，所以声明的超时不是 1 到 32 位无符号整数上限之间的
+ * 整数时当作没声明。控制面派发（assign-content.ts）、超时失败的错误信息和画布的检查器都用它。
+ */
+export function effectiveTimeout(
+	node: { timeout?: number },
+	type: { timeout?: unknown } | undefined,
+): { seconds: number; source: TimeoutSource } {
+	if (node.timeout !== undefined) return { seconds: node.timeout, source: "node" };
+	const declared = type?.timeout;
+	if (
+		typeof declared === "number" &&
+		Number.isInteger(declared) &&
+		declared > 0 &&
+		declared <= NODE_TIMEOUT_MAX_SECONDS
+	) {
+		return { seconds: declared, source: "type" };
+	}
+	return { seconds: NODE_DEFAULTS.timeout, source: "platform" };
+}
 
 /** 任务失败的错误类型（docs/SEMANTICS.md §3.3）。 */
 export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
