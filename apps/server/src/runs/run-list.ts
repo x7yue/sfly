@@ -3,6 +3,7 @@ import { and, count, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
 import { runListPreset } from "../presets/run-preset.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { type RunChain, type RunNode, type RunRead, readRuns } from "./run-read.js";
 
 export interface RunListFilter {
@@ -10,6 +11,10 @@ export interface RunListFilter {
 	orchestrationId?: string;
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q?: string;
+	/** 触发人：昵称整个相等。 */
+	triggeredBy?: string;
+	/** 运行编号前缀（不分大小写，调用方保证只有十六进制数字和 `-`）。 */
+	idPrefix?: string;
 	limit: number;
 }
 
@@ -19,19 +24,23 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 /**
  * 跨场景的运行列表（契约见 @sfly/schema 的 runListApi）：按开始时间从新到旧，
  * 每项带各链的节点状态、进行中的节点与失败的链。链与任务按整页批量读取
- * （src/runs/run-read.ts，节点状态的取法与运行视图相同）。
+ * （src/runs/run-read.ts，节点状态的取法与运行视图相同）。只列这个项目里的运行，各状态的计数也只算这个项目的
+ * （ADR 0029，读 `runs.project_id`）。
  */
 export async function listAllRuns(
 	db: Db,
+	project: ProjectId,
 	filter: RunListFilter,
 ): Promise<{ runs: RunListItem[]; counts: Record<RunStatus, number> }> {
-	const scope: SQL[] = [];
+	const scope: SQL[] = [eq(runs.projectId, project)];
 	if (filter.orchestrationId) scope.push(eq(runs.orchestrationId, filter.orchestrationId));
 	if (filter.q) {
 		const q = escapeLike(filter.q);
 		const match = or(ilike(sql`${runs.id}::text`, `${q}%`), ilike(runs.triggeredBy, `%${q}%`));
 		if (match) scope.push(match);
 	}
+	if (filter.triggeredBy) scope.push(eq(runs.triggeredBy, filter.triggeredBy));
+	if (filter.idPrefix) scope.push(ilike(sql`${runs.id}::text`, `${escapeLike(filter.idPrefix)}%`));
 	const where = filter.status ? [...scope, eq(runs.status, filter.status)] : scope;
 
 	const page = await db

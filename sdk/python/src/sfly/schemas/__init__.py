@@ -9,7 +9,7 @@ import json
 from importlib import resources
 from typing import Any, Literal
 
-SchemaName = Literal["orchestration-document", "package-metadata"]
+SchemaName = Literal["orchestration-document", "package-metadata", "run-state"]
 
 
 def load_schema(name: SchemaName) -> dict[str, Any]:

@@ -25,6 +25,7 @@ import {
 	devPackageInfo,
 } from "../agents/agent-hub.js";
 import { agentTokenMatches } from "../agents/agent-token.js";
+import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { AsyncQueue } from "../util/async-queue.js";
 import { storable } from "./storable.js";
 
@@ -104,7 +105,9 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			}
 
 			const outbox = new AsyncQueue<ServerMessage>();
+			// 项目还不从凭据得出（#492）：所有 Agent 都登记在默认项目里。
 			const conn = await options.hub.attach(
+				DEFAULT_PROJECT,
 				hello.name,
 				{
 					agent_version: hello.agentVersion,

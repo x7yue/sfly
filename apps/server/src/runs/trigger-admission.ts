@@ -8,6 +8,7 @@ import type { RunRow } from "../engine/step.js";
 import { findPreset, PRESET_NOT_FOUND } from "../presets/preset-store.js";
 import { describePresetProblems, presetProblems } from "../presets/preset-validity.js";
 import { presetParamNames } from "../presets/preset-view.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import type { ParamsCheck, Preflight } from "./preflight.js";
 
@@ -29,6 +30,8 @@ export interface TriggerRejection {
 /** 可以触发：运行用什么版本、什么计划、什么入口参数，以及运行上记下的预设。 */
 export interface AdmittedTrigger {
 	ok: true;
+	/** 场景所在的项目：运行属于它（`runs.project_id` 冗余存这一份）。 */
+	projectId: ProjectId;
 	/** 场景的最新版本。 */
 	version: { id: string; document: StoredOrchestrationDocument };
 	plan: RunPlan;
@@ -185,6 +188,7 @@ export function createTriggerAdmission(checks: {
 		}
 		return {
 			ok: true,
+			projectId: orchestration.projectId,
 			version: { id: version.id, document: version.document },
 			plan,
 			params: filled.params,
