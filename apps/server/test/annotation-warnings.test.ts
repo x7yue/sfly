@@ -42,17 +42,20 @@ const EXPECTED = [
 		code: "annotation_duplicate_member",
 		message: "注释框「造测试数据」（annotation_1）把节点 等灰度（pause） 写了 2 次",
 		annotation_id: "annotation_1",
+		target: "nodes/pause",
 	},
 	{
 		code: "annotation_unknown_node",
 		message: "注释框「造测试数据」（annotation_1）引用了不存在的节点 http_request_9",
 		annotation_id: "annotation_1",
+		target: "nodes/http_request_9",
 	},
 	{
 		code: "annotation_unknown_subflow",
 		message:
 			"注释框「造测试数据」（annotation_1）引用了不存在的子流程 nowhere（子流程成员写子流程入口节点的节点 ID，不是子流程名称）",
 		annotation_id: "annotation_1",
+		target: "subflows/nowhere",
 	},
 	{
 		code: "annotation_no_members",

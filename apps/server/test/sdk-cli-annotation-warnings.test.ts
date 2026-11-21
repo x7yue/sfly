@@ -104,9 +104,20 @@ describe("sfly scenario push：注释框的警告 → 控制面", () => {
 				code: "annotation_duplicate_member",
 				message: MESSAGES[0],
 				annotation_id: "annotation_1",
+				target: "nodes/pause",
 			},
-			{ code: "annotation_unknown_node", message: MESSAGES[1], annotation_id: "annotation_1" },
-			{ code: "annotation_unknown_subflow", message: MESSAGES[2], annotation_id: "annotation_1" },
+			{
+				code: "annotation_unknown_node",
+				message: MESSAGES[1],
+				annotation_id: "annotation_1",
+				target: "nodes/http_request_9",
+			},
+			{
+				code: "annotation_unknown_subflow",
+				message: MESSAGES[2],
+				annotation_id: "annotation_1",
+				target: "subflows/nowhere",
+			},
 			{ code: "annotation_no_members", message: MESSAGES[3], annotation_id: "annotation_2" },
 		]);
 	});

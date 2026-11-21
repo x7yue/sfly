@@ -110,18 +110,21 @@ describe("保存时的静态检查", () => {
 				code: "reference_unknown_output",
 				node_id: "verify",
 				input: "value",
+				target: "nodes.fetch.outputs.bdoy",
 				message: "节点 verify 的输入 value 引用的输出键 bdoy 没有在节点 fetch 的节点类型中声明",
 			},
 			{
 				code: "reference_unknown_node",
 				node_id: "verify",
 				input: "value",
+				target: "nodes.ghost.outputs.x",
 				message: "节点 verify 的输入 value 引用了不存在的节点 ghost",
 			},
 			{
 				code: "reference_not_earlier",
 				node_id: "verify",
 				input: "value",
+				target: "nodes.verify.outputs.x",
 				message: "节点 verify 的输入 value 引用的节点 verify 不在本链上它的前面",
 			},
 		]);

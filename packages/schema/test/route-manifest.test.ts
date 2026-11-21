@@ -112,7 +112,7 @@ describe("导出响应的规则", () => {
 						],
 			),
 		),
-		readsWithTraces: {},
+		nonGetReads: {},
 	});
 	const build = (...defs: Parameters<typeof buildRouteManifest>[0]) =>
 		buildRouteManifest(defs, lenient(defs)).routes;
