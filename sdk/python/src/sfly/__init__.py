@@ -18,6 +18,15 @@ from sfly.capabilities import (
 )
 from sfly.context import ArtifactDownloadError, Cancelled, Context, TaskInfo
 from sfly.nodes import AgentName, Chart, Doc, FeishuBot, Metric, node
+from sfly.run_state import (
+    RunState,
+    RunStateCancel,
+    RunStateChain,
+    RunStateError,
+    RunStateNode,
+    RunStateScenario,
+    RunStateSelf,
+)
 
 __version__ = "0.5.0"
 
@@ -42,6 +51,13 @@ __all__ = [
     "FileId",
     "FileInfo",
     "Metric",
+    "RunState",
+    "RunStateCancel",
+    "RunStateChain",
+    "RunStateError",
+    "RunStateNode",
+    "RunStateScenario",
+    "RunStateSelf",
     "TaskInfo",
     "WatchSnapshot",
     "__version__",

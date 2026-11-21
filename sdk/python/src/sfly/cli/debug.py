@@ -6,6 +6,11 @@
 stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。运行目录名同时作为运行 ID
 （`ctx.task.run_id`），后台进程目录（`ctx.procs_dir`）是 `.sfly/procs/<运行目录名>/`。
 
+`--params` 是节点的输入（JSON 对象）：直接写 JSON 文本，或写 `@文件` 从文件读，`@-` 从标准输入读
+（和 `sfly api --body @文件` 一致；文件路径相对当前目录）。节点要读整个运行状态（`sfly.RunState`）
+时，把一次真实运行的状态存成文件（`sfly run show <运行> --state > state.json`），放进输入对象的
+对应键里，再用 `--params @文件` 给节点。
+
 `--download <产物引用> <文件>` 给 `ctx.artifacts.download` 提供本地内容：节点下载这个引用时得到
 这个文件的内容，不访问网络（本地没有控制面）。
 
@@ -36,6 +41,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from sfly.cli.input_source import STDIN, read_source
 from sfly.cli.run_view import format_duration
 from sfly.context import ActionResult
 from sfly.local import (
@@ -194,13 +200,38 @@ def _new_run_dir(project: Path, node: str) -> Path:
     raise DebugError(f"无法在 {root} 下创建运行目录")
 
 
-def _parse_params(text: str) -> dict[str, Any]:
+def _read_params(source: str) -> str:
+    """`--params @<source>` 指的内容：文件，或标准输入（`-`，和 `sfly api --body @-` 一致）。
+    读法和 `sfly api --body` 共用（`read_source`）；读不了时抛出 DebugError。"""
+    try:
+        return read_source(source)
+    except FileNotFoundError:
+        raise DebugError(f"参数不合法：--params 指定的文件不存在：{source}") from None
+    except IsADirectoryError:
+        raise DebugError(f"参数不合法：--params 指定的 {source} 是目录，不是文件") from None
+    except (OSError, UnicodeDecodeError) as error:
+        what = "标准输入" if source == STDIN else f"文件 {source}"
+        raise DebugError(f"参数不合法：读不了 --params 的{what}：{error}") from None
+
+
+def _parse_params(option: str) -> dict[str, Any]:
+    """`--params` 的值：JSON 文本，或 `@文件`（`@-` 是标准输入）。必须是 JSON 对象。"""
+    if option.startswith("@"):
+        source = option[1:]
+        text = _read_params(source)
+        # 报错里指明是哪个来源：「--params 的文件 p.json 不是…」「--params 的标准输入不是…」。
+        subject = "--params 的标准输入" if source == STDIN else f"--params 的文件 {source} "
+        hint = ""
+    else:
+        text = option
+        subject = "--params "
+        hint = "（读文件用 --params @文件）"
     try:
         params = json.loads(text)
     except ValueError as error:
-        raise DebugError(f"参数不合法：--params 不是合法的 JSON（{error}）") from None
+        raise DebugError(f"参数不合法：{subject}不是合法的 JSON（{error}）{hint}") from None
     if not isinstance(params, dict):
-        raise DebugError("参数不合法：--params 必须是 JSON 对象")
+        raise DebugError(f"参数不合法：{subject}必须是 JSON 对象")
     return params
 
 
@@ -215,6 +246,7 @@ def debug(
 ) -> int:
     """执行节点并打印结果，返回退出码。
 
+    `params_text`（`--params`）：输入的 JSON 文本，或 `@文件`（`@-` 是标准输入）。
     `downloads`（`--download`）：产物引用 → 本地文件，节点下载这些引用时得到文件的内容。
     `agents`（`--agent`）：Agent 名称 → 本地目录。
     """

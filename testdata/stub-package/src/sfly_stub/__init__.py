@@ -16,11 +16,13 @@ import sfly
 from sfly import Context, Metric, node
 
 if TYPE_CHECKING:
-    from sfly import FeishuBot
+    from sfly import FeishuBot, RunState
 else:
-    # 「飞书机器人」类型从 SDK 0.3.0 起才有：bundle-self-update 用上一个 Release 的 SDK 加载本包，
-    # 那里用普通字符串代替，本包的其余节点照常可用。
+    # 「飞书机器人」类型从 SDK 0.3.0 起才有、「运行状态」类型（RunState）从 0.6.0 起才有：
+    # bundle-self-update 用上一个 Release 的 SDK 加载本包，那里用普通类型代替，
+    # 本包的其余节点照常可用。
     FeishuBot = getattr(sfly, "FeishuBot", str)
+    RunState = getattr(sfly, "RunState", dict)
 
 
 @node(title="回显", outputs=["text"])
@@ -252,6 +254,36 @@ def notify_card(
     sfly.feishu 从 SDK 0.3.0 起才有，在函数里才访问它：上一个 Release 的 SDK 仍然能导入本包。
     """
     ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))
+
+
+#: 运行汇总的卡片：到此刻为止的结果 → （标题里的说法，卡片颜色）。
+_RESULT: dict[str, tuple[str, Literal["green", "red", "grey"]]] = {
+    "success": ("全部成功", "green"),
+    "failed": ("有节点失败", "red"),
+    "cancelled": ("已取消", "grey"),
+}
+
+
+@node(title="运行汇总", outputs=[])
+def run_summary(ctx: Context, bot: FeishuBot, run: RunState) -> None:
+    """运行汇总示例（#452，docs/guide/sdk-reference.md「运行汇总」）：放在链末尾、总是执行，
+    按这次运行此刻的状态（`${{ run.state }}`）给 bot 发一张卡片：失败的节点和失败原因一行，
+    被取消时写取消的人。
+
+    `RunState` 从 SDK 0.6.0 起才有；`sfly.feishu` 在函数里才访问：
+    上一个 Release 的 SDK 仍然能导入本包。
+    """
+    nodes = {n["node_id"]: n for chain in run["chains"] for n in chain["nodes"]}
+    lines = []
+    for node_id in run["failures"]:
+        failed = nodes[node_id]
+        reason = failed["error"]["headline"] if failed["error"] else "没有错误信息"
+        lines.append(f"- 失败：{failed['display_name'] or node_id}：{reason}")
+    if run["cancel"]:
+        lines.append(f"- 由 {run['cancel']['requested_by']} 取消")
+    words, color = _RESULT[run["result_so_far"]]
+    title = f"{run['scenario']['name']}：{words}"
+    ctx.notify(bot, message=sfly.feishu.card(title, "\n".join(lines) or "没有失败的节点", color))
 
 
 @node(title="动作和标记", outputs=[])

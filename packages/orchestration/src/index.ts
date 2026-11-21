@@ -20,6 +20,7 @@ export * from "./references.js";
 export * from "./remove-nodes.js";
 export * from "./removed-nodes.js";
 export * from "./resolve.js";
+export * from "./run-state-references.js";
 export * from "./structure.js";
 export * from "./warnings.js";
 export * from "./widen-layout.js";
