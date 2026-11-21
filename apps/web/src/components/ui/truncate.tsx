@@ -21,7 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
  *
  * 按钮、链接里除了文字还有图标、徽标，或者有好几段文字都可能被截断时，传 `render` 和 `label`（提示里的全文）：
  * 按钮本身是提示的触发器，里面嵌套的 `Truncate` 只负责截断，不再自己弹提示、不多一个可聚焦的元素。
- * 按钮自己被 CSS 截断（`truncate`）也算。提示在悬停或聚焦、真要打开的那一刻才量有没有被截断。
+ * 按钮自己被 CSS 截断（`truncate`）也算；里面一行高的元素标 `data-truncate-wrap`，放不下的内容换到被裁掉的第二行时同样算被截断。提示在悬停或聚焦、真要打开的那一刻才量有没有被截断。
  *
  *   <Truncate render={<button … className="flex min-w-0 …" />} label={`${name} · ${title}`}>
  *     <StatusDot />
@@ -162,8 +162,16 @@ function ControlTruncate({
 	const clipped = () => {
 		const element = trigger.current;
 		if (!element) return false;
-		const parts = [element, ...element.querySelectorAll<HTMLElement>("[data-truncate-clip]")];
-		return parts.some((part) => part.scrollWidth > part.clientWidth);
+		const parts = [
+			element,
+			...element.querySelectorAll<HTMLElement>("[data-truncate-clip], [data-truncate-wrap]"),
+		];
+		return parts.some(
+			(part) =>
+				part.scrollWidth > part.clientWidth ||
+				// 一行高、放不下的内容换到被裁掉的第二行（`NodeName` 的 `priority="name"`）。
+				(part.hasAttribute("data-truncate-wrap") && part.scrollHeight > part.clientHeight),
+		);
 	};
 	return (
 		<Tooltip open={open} onOpenChange={(next) => setOpen(next && clipped())}>

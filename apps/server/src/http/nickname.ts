@@ -17,9 +17,10 @@ export function nicknameOf(request: FastifyRequest): string | undefined {
 
 /**
  * 写操作的昵称守卫：返回昵称；没有昵称时已回复 400 `nickname_required`，返回 undefined，
- * 路由应直接 `return reply`。
+ * 路由应直接 `return reply`。带了凭据的请求不看昵称请求头：身份是访问检查得出的（用户的显示名，项目令牌的名称）。
  */
 export function requireNickname(request: FastifyRequest, reply: FastifyReply): string | undefined {
+	if (request.access) return request.access.name;
 	const nickname = nicknameOf(request);
 	if (!nickname)
 		sendError(reply, 400, "nickname_required", `${NICKNAME_HEADER} header is required`);
