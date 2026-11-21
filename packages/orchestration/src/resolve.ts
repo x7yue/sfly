@@ -1,10 +1,17 @@
-import { OUTPUT_PATH, PARAM_PATH, REFERENCE, WHOLE_REFERENCE } from "./reference-syntax.js";
+import {
+	OUTPUT_PATH,
+	PARAM_PATH,
+	REFERENCE,
+	RUN_STATE_PATH,
+	WHOLE_REFERENCE,
+} from "./reference-syntax.js";
 
 /**
  * 引用解析（docs/SEMANTICS.md §2）：派发前把节点输入里的 `${{ ... }}` 替换成实际值（控制面引擎调用）。
  *
  * - `${{ params.<name> }}`：本链的入口参数；
  * - `${{ nodes.<id>.outputs.<key> }}`：本链上排在前面的节点的输出；
+ * - `${{ run.state }}`：这次运行此刻的状态（ADR 0031），只在包节点的输入里有；
  * - 整值引用（输入值恰好是一个引用）保持原类型；
  * - 内嵌引用只允许标量（字符串、数字、布尔、null），按字符串拼接；
  * - 对象和数组里的字符串同样解析。
@@ -20,6 +27,11 @@ export interface ResolveScope {
 	 * 前面的节点都要放进 earlierOutputs（没有输出的放空对象）。
 	 */
 	missingAsNull?: boolean;
+	/**
+	 * 这次运行此刻的状态（`RunState`，包节点的输入引用 `run.state` 时由引擎在派发的事务里读出）。
+	 * 没有时（异步任务节点的参数映射、等待节点，或节点的输入里没有 run.state）引用它是错误。
+	 */
+	runState?: unknown;
 }
 
 export class InvalidReferenceError extends Error {}
@@ -34,6 +46,14 @@ function lookup(path: string, scope: ResolveScope): unknown {
 			);
 		}
 		return scope.params[name];
+	}
+	if (RUN_STATE_PATH.test(path)) {
+		if (scope.runState === undefined) {
+			throw new InvalidReferenceError(
+				`\${{ ${path} }}: run.state can only be used in the inputs of a package node`,
+			);
+		}
+		return scope.runState;
 	}
 	const output = OUTPUT_PATH.exec(path);
 	if (output) {
@@ -53,7 +73,7 @@ function lookup(path: string, scope: ResolveScope): unknown {
 		return outputs[key];
 	}
 	throw new InvalidReferenceError(
-		`\${{ ${path} }}: invalid reference, expected params.<name> or nodes.<id>.outputs.<key>`,
+		`\${{ ${path} }}: invalid reference, expected params.<name>, nodes.<id>.outputs.<key> or run.state`,
 	);
 }
 

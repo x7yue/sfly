@@ -212,7 +212,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "退出码：成功 0，节点失败 1，参数不合法 2，取消 130。",
     )
     p_debug.add_argument("node", help="节点名（@node 的 name，默认为函数名）")
-    p_debug.add_argument("--params", default="{}", help="节点的输入，JSON 对象（默认 {}）")
+    p_debug.add_argument(
+        "--params",
+        default="{}",
+        metavar="JSON 或 @文件",
+        help="节点的输入，JSON 对象（默认 {}）：JSON 文本，或 @文件 从文件读（@- 从标准输入读）",
+    )
     p_debug.add_argument("--project", default=".", help="项目目录（默认当前目录）")
     p_debug.add_argument(
         "--download",

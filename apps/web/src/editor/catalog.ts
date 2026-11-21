@@ -1,6 +1,6 @@
 import { type NodeTypeIo, type PackageCatalog, packageKey } from "@sfly/orchestration";
 import { type AgentView, type FeishuBotView, packagesApi } from "@sfly/schema";
-import { useQueries } from "@tanstack/react-query";
+import { type QueryClient, useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { ApiError, apiQuery } from "#/lib/api";
 
@@ -72,6 +72,20 @@ export function usePackageCatalog(
 		}
 		return catalog;
 	}, [key]);
+}
+
+/**
+ * 已发布版本里某个节点类型的输入 schema：「添加节点」菜单的摘要里没有输入，选中节点时读。
+ * 与 `usePackageCatalog` 是同一个查询（同一份缓存），场景接着就要锁定这个版本，不会多一次请求。
+ */
+export async function publishedNodeInputs(
+	queryClient: QueryClient,
+	item: { package: string; version: string; node: string },
+): Promise<NodeTypeIo["inputs"] | undefined> {
+	const found = await queryClient.ensureQueryData(
+		apiQuery(packagesApi.version, { params: { name: item.package, version: item.version } }),
+	);
+	return found.metadata.nodes.find((n) => n.name === item.node)?.inputs;
 }
 
 /**

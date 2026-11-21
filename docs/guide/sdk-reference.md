@@ -218,6 +218,43 @@ def stress(
 - 删除机器人之前，「飞书机器人」页列出引用它的场景，包含这种参数的常量值。
 - 本地调试（`sfly debug`、`sfly.testing.run_node`）照常接受这种参数，值就是机器人名称，不检查它是否登记过。
 
+### 「运行状态」类型的输入：`RunState`
+
+汇总节点要知道前面的节点各自是成功、失败、被取消还是被跳过，失败的原因是什么：把输入参数标成 `RunState`，在场景里把它接到 `${{ run.state }}`，节点收到的就是这次运行**此刻**的状态，一个普通的字典。
+
+```python
+from sfly import Context, FeishuBot, RunState, feishu, node
+
+RESULT = {"success": ("全部成功", "green"), "failed": ("有节点失败", "red"), "cancelled": ("已取消", "grey")}
+
+
+@node(title="运行汇总")
+def run_summary(ctx: Context, bot: FeishuBot, run: RunState) -> None:
+    """按这次运行的结果给飞书群发一张卡片：失败的节点和失败原因，被取消时写取消的人。"""
+    nodes = {n["node_id"]: n for chain in run["chains"] for n in chain["nodes"]}
+    lines = [f"- 失败：{nodes[i]['display_name'] or i}：{nodes[i]['error']['headline']}" for i in run["failures"]]
+    if run["cancel"]:
+        lines.append(f"- 由 {run['cancel']['requested_by']} 取消")
+    words, color = RESULT[run["result_so_far"]]
+    ctx.notify(bot, message=feishu.card(f"{run['scenario']['name']}：{words}", "\n".join(lines) or "没有失败的节点", color))
+```
+
+场景里的写法（汇总节点放在链尾、总是执行，输入接 `${{ run.state }}`）：
+
+```json
+{ "id": "summary", "kind": "package", "package": "my-pkg", "node": "run_summary", "always": true,
+  "inputs": { "bot": "${{ params.bot }}", "run": "${{ run.state }}" } }
+```
+
+`RunState` 是 `TypedDict`（类型检查器和编辑器认得每个键），运行时就是 `dict`，执行器不为它做任何转换。可以写成 `RunState | None`（可选参数）；不能用在列表、字典或输出里，`sfly build` 会报错。这个类型从 SDK 0.6.0 起可用，用到它的节点包把 `requires-sdk` 调到 `>=0.6.0`（没写时是构建时 SDK 的版本）。
+
+- **引用写法**：只能整值引用 `${{ run.state }}`，只能写在包节点的输入里；夹在文字里、写在异步任务节点的参数映射里都不行（参数映射在子流程创建时解析并按值复制，子流程里的节点拿到的会是一份过时的状态）。`sfly build` 在输入 schema 里标记 `RunState` 类型的输入（`{"type": "object", "x-sfly-type": "run_state"}`），用它检查：这种输入必填却没接、或写了别的值（字面值、别的引用）时，保存给出警告、触发前的预检阻断，警告里直接写出该填 `${{ run.state }}`；画布加这种节点时已经替你填好。接到不带标记的普通输入（例如 `json` 类型）上也允许。
+- **什么时候的状态**：任务派发的那一刻，和解析别的引用在同一个事务里；重试时每次尝试各解析一次。节点执行期间它不变，解析出的值和别的输入一样记在这次尝试上，运行视图里看得到汇总节点当时拿到了什么。
+- **内容**：每个链实例（主链，和已被触发的子流程实例）的状态，以及它那条链上每个节点的 `status`、`attempts`（尝试次数）、`started_at`、`ended_at`、`error`（`kind` 错误类型、`headline` 失败原因一行、`message` 异常信息不含堆栈、`message_truncated`、`location` 节点代码里出错的位置，没有时为 `None`）；运行级的 `status`（汇总节点自己还没结束，所以总是 `running`，不能用它判断结果）、`result_so_far`（到此刻为止的结果：已请求取消是 `cancelled`，否则有节点最终失败是 `failed`，否则 `success`）、`cancel`（取消请求：谁、什么时候）、`failures`（最终失败的节点的 ID，按失败的先后，第一项是第一个失败的节点）、`self`（汇总节点自己）。所有键总是存在，没有值时是 `None` 或空列表。不含节点的输入、输出、日志、动作和堆栈；要全文打开运行的链接或用 `sfly run show <运行>`、`sfly run logs <运行> --failed`。错误信息里保密参数的值已打码。每个节点的状态怎么给（排在它前面的一定已结束，它自己是 `dispatched`，后面的是 `pending`，被跳过、被取消、被停止、超时各是什么）见 `docs/SEMANTICS.md §2.7`。
+- **不改变调度**：引用它不让节点等任何东西。主链不等待的子流程，在汇总节点派发时可能还在进行，它之后的失败不在这份状态里；要让汇总看到某个子流程的最终结果，把汇总节点放在停止这个子流程的节点之后。
+- **兜底**：汇总节点有执行不到的时候：强制取消、它自己失败或它的 Agent 掉线、主链结束之后才失败的子流程。这几种情况用场景的「运行通知」兜底（见 [飞书通知](feishu-notify.md)）。
+- **单元测试和本地调试**：`sfly.testing.run_state(...)` 用简写造一份合法的状态（见下文「`sfly.testing`」）；一次真实运行的状态用 `sfly run show <运行> --state` 取下来，存成文件，放进输入里用 `sfly debug --params @文件` 喂给节点（见「`sfly debug`」）。本地调试照常接受这种参数，值就是你给的字典，不检查它是不是一次真实运行的状态。
+
 ## 输出
 
 - 用 TypedDict 返回类型声明输出键和类型；或用 `@node(outputs=...)` 声明。
@@ -949,6 +986,32 @@ def test_stress_alerts_the_bot_with_a_red_card(tmp_path: Path) -> None:
     assert notification.body == sfly.feishu.card("压测告警", "**p99** 612 ms，超过 500 ms", "red")
 ```
 
+### 造一份运行状态：`run_state`
+
+测汇总节点（输入是 `RunState`）时，用 `sfly.testing.run_state` 造一份合法的运行状态，不用手写整个字典：
+
+```python
+from sfly.testing import run_node, run_state
+
+from demo.summary import run_summary
+
+
+def test_summary_names_the_failed_node() -> None:
+    state = run_state(
+        nodes={"fetch": "success", "pay": ("failed", "ValueError: 余额不足"), "tail": "skipped"},
+        scenario="巡检",
+        self_node="report",
+    )
+    result = run_node(run_summary, {"bot": "ops", "run": state})
+
+    assert result.status == "success", result.error
+    assert "付款" not in result.notifications[0].body  # 断言通知的内容
+```
+
+- `nodes` 是「节点 ID → 状态」的映射，顺序就是主链上的顺序；失败的节点写成 `("failed", "错误信息")`，错误类型默认 `node_error`，要指定写 `("failed", "任务超时", "timeout")`。状态取 `success`、`failed`、`skipped`、`cancelled`、`stopped`、`pending`、`running`、`dispatched`。
+- `status`（运行的状态，默认 `running`）、`cancel`（取消人的名字，给了就带上取消请求）、`scenario`（场景名称）、`self_node`（引用状态的节点的 ID，它的状态是 `dispatched`，`self` 也填上）、`subflows`（子流程的名称 → 节点映射，生成带上级链实例、触发它的异步任务节点的链实例）。
+- `failures`、`result_so_far`、错误的 `headline` 和 `message`（错误信息里第一个「空行 + `Traceback (most recent call last):`」之后是堆栈，不算异常信息）都按真实的规则算好；造出的值通过导出的 JSON Schema（`sfly/schemas/run-state.schema.json`）。自相矛盾的参数（运行已结束却还有进行中的节点、`status="success"` 却有失败的节点……）抛 `ValueError`。
+
 ## 命令行 `sfly`
 
 在项目里用 `uv run sfly <命令>` 运行；每个命令的完整参数见 `uv run sfly <命令> --help`。需要控制面地址的命令按 `--server` > 环境变量 `SFLY_SERVER` > `~/.sfly/agent.env`（`SFLY_HOME`）里的 `SFLY_CONTROL_PLANE_URL` 取值，`install.sh --dev` 安装的开发机不用传 `--server`。
@@ -968,6 +1031,8 @@ def test_stress_alerts_the_bot_with_a_red_card(tmp_path: Path) -> None:
 ```sh
 uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 ```
+
+- `--params` 是节点的输入（JSON 对象）：直接写 JSON 文本，或写 `@文件` 从文件读，`@-` 从标准输入读（和 `sfly api --body @文件` 一致，文件路径相对当前目录）。输入大（例如一份运行状态）时用文件：`sfly run show <运行> --state` 取到一次真实运行的状态，放进输入文件的对应键里，`uv run sfly debug run_summary --params @input.json`。文件不存在、读不了、不是合法的 JSON、不是 JSON 对象时以 2 退出，写明文件路径。
 
 - 日志实时打印到标准错误；结束后在标准输出打印输出值（`输出：` 后的 JSON）、指标汇总表和运行目录。指标汇总表每个序列一行，带标签的指标在指标名后面跟标签值，例如 `conn_latency_ms{host=db-1,port=5432}`。
 - 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`（目录名也是 `ctx.task.run_id`；`ctx.procs_dir` 是 `.sfly/procs/<目录名>/`），里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。

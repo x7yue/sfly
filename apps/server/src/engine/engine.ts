@@ -4,6 +4,7 @@ import {
 	InvalidReferenceError,
 	NODE_DEFAULTS,
 	type ResolveScope,
+	referencesRunState,
 	resolveInputs,
 } from "@sfly/orchestration";
 import {
@@ -48,6 +49,7 @@ import {
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { runStateForDispatch } from "../runs/run-state-source.js";
 import type {
 	TriggerAdmission,
 	TriggerRejection,
@@ -1286,11 +1288,20 @@ export class Engine implements AgentSessionHandler {
 		const { run, chain, plan, index, node } = await this.#locate(step.tx, task);
 		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
+		const scope = await this.#scope(step.tx, chain, plan, index);
+		// `${{ run.state }}`（ADR 0031）：只在这个节点的输入里引用它时才读运行状态，读取和把这次尝试记为「准备中」
+		// 在同一个事务里（下面的 update），所以没有引用它的节点的派发和以前一样，没有多出任何查询。
+		if (referencesRunState(node.inputs)) {
+			scope.runState = await runStateForDispatch(step.tx, run.id, {
+				chain_instance_id: chain.id,
+				node_id: node.id,
+			});
+		}
 		const content = await this.deps.assignContent(step.tx, {
 			task,
 			node,
 			packageVersion: document.packages[node.package] ?? "",
-			scope: await this.#scope(step.tx, chain, plan, index),
+			scope,
 			target: conn,
 		});
 		if (!content.ok) {
