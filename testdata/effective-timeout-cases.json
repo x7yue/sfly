@@ -11,37 +11,144 @@
 		{ "name": "什么都没写：平台默认", "expect": { "seconds": 3600, "source": "platform" } },
 		{ "name": "节点类型声明了", "type": 43200, "expect": { "seconds": 43200, "source": "type" } },
 		{ "name": "场景里这个节点写了", "node": 120, "expect": { "seconds": 120, "source": "node" } },
-		{ "name": "场景里写了，节点类型也声明了：场景里的盖过", "node": 120, "type": 43200, "expect": { "seconds": 120, "source": "node" } },
-		{ "name": "写成和平台默认一样的数：来源仍是它写的地方（节点）", "node": 3600, "expect": { "seconds": 3600, "source": "node" } },
-		{ "name": "写成和平台默认一样的数：来源仍是它写的地方（节点类型）", "type": 3600, "expect": { "seconds": 3600, "source": "type" } },
+		{
+			"name": "场景里写了，节点类型也声明了：场景里的盖过",
+			"node": 120,
+			"type": 43200,
+			"expect": { "seconds": 120, "source": "node" }
+		},
+		{
+			"name": "写成和平台默认一样的数：来源仍是它写的地方（节点）",
+			"node": 3600,
+			"expect": { "seconds": 3600, "source": "node" }
+		},
+		{
+			"name": "写成和平台默认一样的数：来源仍是它写的地方（节点类型）",
+			"type": 3600,
+			"expect": { "seconds": 3600, "source": "type" }
+		},
 		{ "name": "最小的值 1 秒", "node": 1, "expect": { "seconds": 1, "source": "node" } },
-		{ "name": "上限本身可以（节点）", "node": 4294967295, "expect": { "seconds": 4294967295, "source": "node" } },
-		{ "name": "上限本身可以（节点类型）", "type": 4294967295, "expect": { "seconds": 4294967295, "source": "type" } },
-		{ "name": "节点写的超过上限：当作没写，用节点类型声明的", "node": 4294967296, "type": 43200, "expect": { "seconds": 43200, "source": "type" } },
-		{ "name": "节点写的超过上限，节点类型也没有：平台默认", "node": 5000000000, "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点类型声明的超过上限：当作没声明", "type": 4294967296, "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点写的是 0", "node": 0, "type": 43200, "expect": { "seconds": 43200, "source": "type" } },
-		{ "name": "节点类型声明的是 0", "type": 0, "expect": { "seconds": 3600, "source": "platform" } },
+		{
+			"name": "上限本身可以（节点）",
+			"node": 4294967295,
+			"expect": { "seconds": 4294967295, "source": "node" }
+		},
+		{
+			"name": "上限本身可以（节点类型）",
+			"type": 4294967295,
+			"expect": { "seconds": 4294967295, "source": "type" }
+		},
+		{
+			"name": "节点写的超过上限：当作没写，用节点类型声明的",
+			"node": 4294967296,
+			"type": 43200,
+			"expect": { "seconds": 43200, "source": "type" }
+		},
+		{
+			"name": "节点写的超过上限，节点类型也没有：平台默认",
+			"node": 5000000000,
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
+		{
+			"name": "节点类型声明的超过上限：当作没声明",
+			"type": 4294967296,
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
+		{
+			"name": "节点写的是 0",
+			"node": 0,
+			"type": 43200,
+			"expect": { "seconds": 43200, "source": "type" }
+		},
+		{
+			"name": "节点类型声明的是 0",
+			"type": 0,
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
 		{ "name": "节点写的是负数", "node": -5, "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点类型声明的是负数", "type": -5, "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点写的是小数", "node": 1.5, "type": 43200, "expect": { "seconds": 43200, "source": "type" } },
-		{ "name": "节点类型声明的是小数", "type": 1.5, "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点写的是字符串", "node": "900", "type": 43200, "expect": { "seconds": 43200, "source": "type" } },
-		{ "name": "节点类型声明的是字符串", "type": "900", "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点写的是布尔值", "node": true, "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点类型声明的是布尔值", "type": true, "expect": { "seconds": 3600, "source": "platform" } },
-		{ "name": "节点写的是 null", "node": null, "type": 43200, "expect": { "seconds": 43200, "source": "type" } },
-		{ "name": "节点类型声明的是 null", "type": null, "expect": { "seconds": 3600, "source": "platform" } }
+		{
+			"name": "节点类型声明的是负数",
+			"type": -5,
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
+		{
+			"name": "节点写的是小数",
+			"node": 1.5,
+			"type": 43200,
+			"expect": { "seconds": 43200, "source": "type" }
+		},
+		{
+			"name": "节点类型声明的是小数",
+			"type": 1.5,
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
+		{
+			"name": "节点写的是字符串",
+			"node": "900",
+			"type": 43200,
+			"expect": { "seconds": 43200, "source": "type" }
+		},
+		{
+			"name": "节点类型声明的是字符串",
+			"type": "900",
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
+		{
+			"name": "节点写的是布尔值",
+			"node": true,
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
+		{
+			"name": "节点类型声明的是布尔值",
+			"type": true,
+			"expect": { "seconds": 3600, "source": "platform" }
+		},
+		{
+			"name": "节点写的是 null",
+			"node": null,
+			"type": 43200,
+			"expect": { "seconds": 43200, "source": "type" }
+		},
+		{
+			"name": "节点类型声明的是 null",
+			"type": null,
+			"expect": { "seconds": 3600, "source": "platform" }
+		}
 	],
 	"problem_cases": [
 		{ "name": "没写", "label": "slow", "problem": null },
 		{ "name": "合格", "label": "slow", "written": 120, "problem": null },
 		{ "name": "最小的值", "label": "slow", "written": 1, "problem": null },
 		{ "name": "上限本身", "label": "slow", "written": 4294967295, "problem": null },
-		{ "name": "超过上限 1", "label": "slow", "written": 4294967296, "problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 4294967296" },
-		{ "name": "超过上限很多", "label": "部署（deploy）", "written": 5000000000, "problem": "节点 部署（deploy）：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 5000000000" },
-		{ "name": "0", "label": "slow", "written": 0, "problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 0" },
-		{ "name": "负数", "label": "slow", "written": -5, "problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 -5" },
-		{ "name": "小数", "label": "slow", "written": 1.5, "problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 1.5" }
+		{
+			"name": "超过上限 1",
+			"label": "slow",
+			"written": 4294967296,
+			"problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 4294967296"
+		},
+		{
+			"name": "超过上限很多",
+			"label": "部署（deploy）",
+			"written": 5000000000,
+			"problem": "节点 部署（deploy）：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 5000000000"
+		},
+		{
+			"name": "0",
+			"label": "slow",
+			"written": 0,
+			"problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 0"
+		},
+		{
+			"name": "负数",
+			"label": "slow",
+			"written": -5,
+			"problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 -5"
+		},
+		{
+			"name": "小数",
+			"label": "slow",
+			"written": 1.5,
+			"problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 1.5"
+		}
 	]
 }
