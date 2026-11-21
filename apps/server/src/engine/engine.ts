@@ -253,7 +253,9 @@ export class Engine implements AgentSessionHandler {
 					// 运行的项目和它的场景一致（触发准入读场景时一起取出，ADR 0029）。
 					projectId,
 					triggeredBy: actor.nickname,
+					triggeredByUserId: actor.userId,
 					triggeredVia: actor.via,
+					triggeredToken: actor.token,
 					params,
 					...runPreset,
 					status: "running",
@@ -303,7 +305,9 @@ export class Engine implements AgentSessionHandler {
 						: {
 								cancelRequestedAt: step.now,
 								cancelRequestedBy: actor.nickname,
+								cancelRequestedByUserId: actor.userId,
 								cancelRequestedVia: actor.via,
+								cancelRequestedToken: actor.token,
 							},
 				)
 				.where(eq(runs.id, runId))

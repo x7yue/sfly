@@ -31,7 +31,7 @@ import { createTestDatabase, type TestDatabase } from "./support/test-database.j
 
 /** 项目乙：测试里直接写库建（建项目的接口在 #499）。 */
 const OTHER = "other-team" as ProjectId;
-const ACTOR = { nickname: "测试", via: null };
+const ACTOR = { nickname: "测试", via: null, userId: null, token: null };
 const AT = "2026-01-01T00:00:00Z";
 const DOCUMENT = {
 	default_agent: "agent-a",
@@ -81,6 +81,7 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 		await packages.publish(
 			project,
 			packageArchive(packageMetadata({ name: pkg, version: "1.0.0" })),
+			null,
 		);
 		const bot = `bot-${tag}`;
 		await bots.create(project, bot, `https://open.feishu.cn/hook/${tag}`);
@@ -114,6 +115,7 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 		await packages.publish(
 			PUBLIC_PROJECT,
 			packageArchive(packageMetadata({ name: "sfly-std", version: "0.1.0" })),
+			null,
 		);
 	});
 	afterAll(async () => {
@@ -288,7 +290,11 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 			kind: "name_taken",
 		});
 		await expect(
-			packages.publish(OTHER, packageArchive(packageMetadata({ name: "pkg-a", version: "1.0.0" }))),
+			packages.publish(
+				OTHER,
+				packageArchive(packageMetadata({ name: "pkg-a", version: "1.0.0" })),
+				null,
+			),
 		).rejects.toBeInstanceOf(PackageError);
 	});
 
