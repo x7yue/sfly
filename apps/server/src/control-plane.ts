@@ -40,6 +40,8 @@ import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
+import { assistantReadiness } from "./sessions/readiness.js";
+import { SessionStore } from "./sessions/session-store.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
 
@@ -132,6 +134,8 @@ export interface ControlPlaneOptions {
 export interface ControlPlane {
 	readonly httpUrl: string;
 	readonly grpcUrl: string;
+	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
+	readonly sessions: SessionStore;
 	close(): Promise<void>;
 }
 
@@ -298,6 +302,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 	});
+	const sessions = new SessionStore({ db: database.db, clock });
 	const api = buildHttpApi({
 		database,
 		clock,
@@ -310,6 +315,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		preflight,
 		logs,
 		actions,
+		sessions,
+		assistantReadiness,
 		metrics,
 		metricQueries,
 		retention,
@@ -414,6 +421,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
+		sessions,
 		async close() {
 			await Promise.all(sweeps.map((s) => s.stop()));
 			await retention.idle();

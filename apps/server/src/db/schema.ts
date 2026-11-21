@@ -10,6 +10,7 @@ import {
 	ON_AGENT_STATUSES,
 	type PackageMetadata,
 	type RunNotificationTrigger,
+	type SessionStatus,
 	StoredOrchestrationDocument,
 	withoutRemovedFields,
 } from "@sfly/schema";
@@ -835,6 +836,63 @@ export const projectMembers = pgTable(
 );
 
 /**
+ * 助手会话（GLOSSARY「会话」，ADR 0027）：用户和助手围绕一件事的一次对话，属于一个项目（竖切里都是 `default`）。
+ * `status` 一次写全（`idle` 空闲、`running` 在做、`queued` 排队中、`ended` 已结束），骨架的竖切只用前两个；
+ * 同一个项目同一时刻只跑一轮：每个项目至多一个 `running` 的会话（`sessions_one_running_per_project`），
+ * 并发的两个「开始一轮」只有一个能写成功。`title` 是第一句话的前 60 个字；`created_by` 是发起人的昵称，
+ * `created_by_user_id` 是发起人的用户（#494 之前的请求可能没有用户，#547 起建会话要有用户）。
+ * `last_activity_at` 是最近一次活动（新建、发话、事件落库）。
+ */
+export const sessions = pgTable(
+	"sessions",
+	{
+		id: uuid("id").primaryKey(),
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		title: text("title").notNull(),
+		status: text("status").$type<SessionStatus>().notNull(),
+		createdBy: text("created_by").notNull(),
+		createdByUserId: uuid("created_by_user_id").references(() => users.id),
+		createdAt: timestamptz("created_at").notNull(),
+		lastActivityAt: timestamptz("last_activity_at").notNull(),
+	},
+	(t) => [
+		// 一个项目的会话列表，最近活动在前。
+		index("sessions_project_activity").on(t.projectId, t.lastActivityAt),
+		uniqueIndex("sessions_one_running_per_project")
+			.on(t.projectId)
+			.where(sql`${t.status} = 'running'`),
+		check("sessions_status", sql`${t.status} in ('idle', 'running', 'queued', 'ended')`),
+	],
+);
+
+/**
+ * 会话的持久事件（ADR 0027，类型在 `@sfly/schema` 的 `sessions.ts`）：只存持久的那几类，文字增量、工具的输出、
+ * 思考、排队状态、快照只推不存。`seq` 是会话内序号，从 1 起，严格递增、不重复（控制面在同一个事务里锁住会话那一行
+ * 再取下一个，src/sessions/session-store.ts）；`payload` 是事件里除 `type` 以外的字段；`created_at` 是事件产生的时间
+ * （助手服务产生的由它盖时间，控制面自己产生的用控制面的时钟，#538），不是落库的时间。
+ * 会话删除时事件一起删。
+ */
+export const sessionEvents = pgTable(
+	"session_events",
+	{
+		sessionId: uuid("session_id")
+			.notNull()
+			.references(() => sessions.id, { onDelete: "cascade" }),
+		seq: integer("seq").notNull(),
+		type: text("type").notNull(),
+		payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.sessionId, t.seq] }),
+		check("session_events_seq", sql`${t.seq} >= 1`),
+	],
+);
+
+/**
  * 令牌的种类（ADR 0029「凭据」）：个人令牌属于用户，项目令牌属于项目，会话令牌属于一个会话（#495），
  * 任务凭据属于一次任务尝试（#492）。会话令牌和任务凭据的种类先留出来，签发它们的任务再加。
  * Agent 凭据不在这里：它有自己的表（`agent_credentials`）。
@@ -847,7 +905,7 @@ export type ApiTokenKind = "personal" | "project" | "session" | "task";
  * 各种类用到的列由 `api_tokens_shape` 约束：
  * - 个人令牌：`user_id` 是所属用户，`project_id` 可选，限定在一个项目里；
  * - 项目令牌：`project_id` 是所属项目（服务账号），没有用户；
- * - 会话令牌：代发起人（`user_id`）、限一个项目（`project_id`）、属于一个会话（`session_id`，会话表由骨架建，先不加外键）；
+ * - 会话令牌：代发起人（`user_id`）、限一个项目（`project_id`）、属于一个会话（`session_id`，外键到 `sessions`）；
  * - 任务凭据：限本项目（`project_id`），属于一次任务尝试（`task_id` 是 `tasks.id`），没有用户。
  * `scopes` 是范围的名字（读、运行、编辑、会话构建、发布、管理，由鉴权模块定，库里不约束：加范围不用迁移）。
  * 令牌只吊销（`revoked_at`），不物理删除：「经 …」按令牌的名称记在运行和场景版本上。
@@ -864,7 +922,7 @@ export const apiTokens = pgTable(
 		projectId: text("project_id")
 			.$type<ProjectId>()
 			.references(() => projects.id),
-		sessionId: uuid("session_id"),
+		sessionId: uuid("session_id").references(() => sessions.id),
 		taskId: uuid("task_id"),
 		scopes: text("scopes").array().notNull(),
 		createdAt: timestamptz("created_at").notNull(),

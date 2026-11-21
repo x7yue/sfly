@@ -232,6 +232,13 @@
       "when": 1795239416130,
       "tag": "0033_platform_admin_actions",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795261916407,
+      "tag": "0034_sessions",
+      "breakpoints": true
     }
   ]
 }
