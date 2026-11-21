@@ -234,6 +234,12 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 					expect(res.status, insider.name).toBe(403);
 					continue;
 				}
+				// 项目令牌不能带「管理」：管理范围的接口对它是 403（缺少范围），不是 404；别的接口走到了处理函数。
+				if (insider.name.includes("项目令牌") && requiredScope(def) === "manage") {
+					expect(res.status, insider.name).toBe(403);
+					expect(await isAccessNotFound(res), insider.name).toBe(false);
+					continue;
+				}
 				expect([401, 403], `${insider.name}：${await res.clone().text()}`).not.toContain(
 					res.status,
 				);

@@ -2,7 +2,11 @@ import { DECLARATION_RULES, endpoint, httpContract } from "@sfly/schema";
 import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { guardHttpContract } from "../src/http/contract-route.js";
+import { AccessGuard } from "../src/auth/access-guard.js";
+import { installAccessGuard } from "../src/http/access.js";
+import { contractRoute, guardHttpContract } from "../src/http/contract-route.js";
+import { FakeAccessStore } from "./support/fake-access-store.js";
+import { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 每个路径参数都填 x（`*` 也是），用来确认路由存在，不关心业务结果。 */
@@ -63,6 +67,45 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 		const app = Fastify();
 		guardHttpContract(app, []);
 		expect(() => app.get("/not-in-contract", async () => ({}))).toThrow(/不在 HTTP 契约里/);
+		await app.close();
+	});
+
+	it("手写一个契约里有的路径（没经 contractRoute）时启动失败：它没有访问检查，不能靠测试才发现", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		expect(() => app.get("/health", async () => ({}))).toThrow(/不是经 contractRoute/);
+		await app.close();
+	});
+
+	it("经 contractRoute、contractStream、contractDownload 注册的路由照常通过", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		installAccessGuard(
+			app,
+			new AccessGuard({ store: new FakeAccessStore(), clock: new ManualClock() }),
+		);
+		expect(() => contractRoute(app, health, async () => ({}))).not.toThrow();
+		await app.ready();
 		await app.close();
 	});
 

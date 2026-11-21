@@ -6,7 +6,10 @@ CREATE TABLE "platform_admin_actions" (
 	"route" text NOT NULL,
 	"resource_kind" text NOT NULL,
 	"resource_id" text,
-	"token_name" text
+	"token_name" text,
+	"member_role" text,
+	"status" integer,
+	CONSTRAINT "platform_admin_actions_member_role" CHECK ("platform_admin_actions"."member_role" in ('read_only', 'editor', 'project_admin'))
 );
 --> statement-breakpoint
 ALTER TABLE "platform_admin_actions" ADD CONSTRAINT "platform_admin_actions_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

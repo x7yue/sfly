@@ -51,6 +51,8 @@ export interface StoredAgentCredential {
 	kind: "agent" | "shared";
 	projectId: ProjectId;
 	agentName: string | null;
+	/** 开发 Agent 的凭据记在编辑者名下：用户被停用时它随之失效；按台签发的和共享令牌没有用户。 */
+	user: StoredUser | null;
 	revokedAt: Date | null;
 }
 
@@ -63,6 +65,8 @@ export interface AdminWrite {
 	resourceKind: string;
 	resourceId: string | null;
 	tokenName: string | null;
+	/** 他这时在这个项目里的角色；不是成员为 null。 */
+	memberRole: ProjectRole | null;
 }
 
 export interface AccessStore {
@@ -82,7 +86,10 @@ export interface AccessStore {
 	taskAssignment(
 		id: string,
 	): Promise<{ projectId: ProjectId; agentName: string | null } | undefined>;
-	recordAdminWrite(write: AdminWrite): Promise<void>;
+	/** 记一次平台管理员的写，返回记录的 ID（请求结束时用它回填响应的状态码）。 */
+	recordAdminWrite(write: AdminWrite): Promise<string>;
+	/** 回填响应的状态码。 */
+	completeAdminWrite(id: string, status: number): Promise<void>;
 }
 
 const userColumns = {
@@ -143,8 +150,10 @@ export class DbAccessStore implements AccessStore {
 				projectId: agentCredentials.projectId,
 				agentName: agentCredentials.agentName,
 				revokedAt: agentCredentials.revokedAt,
+				user: userColumns,
 			})
 			.from(agentCredentials)
+			.leftJoin(users, eq(users.id, agentCredentials.userId))
 			.where(eq(agentCredentials.tokenHash, hash));
 		return row;
 	}
@@ -196,7 +205,16 @@ export class DbAccessStore implements AccessStore {
 		return row;
 	}
 
-	async recordAdminWrite(write: AdminWrite): Promise<void> {
-		await this.db.insert(platformAdminActions).values({ id: randomUUID(), ...write });
+	async recordAdminWrite(write: AdminWrite): Promise<string> {
+		const id = randomUUID();
+		await this.db.insert(platformAdminActions).values({ id, ...write });
+		return id;
+	}
+
+	async completeAdminWrite(id: string, status: number): Promise<void> {
+		await this.db
+			.update(platformAdminActions)
+			.set({ status })
+			.where(eq(platformAdminActions.id, id));
 	}
 }

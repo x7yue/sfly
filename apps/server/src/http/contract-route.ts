@@ -17,6 +17,16 @@ import type { Sse } from "../sse/sse.js";
 import { accessGuardOf } from "./access.js";
 import { sendError } from "./errors.js";
 
+declare module "fastify" {
+	interface FastifyContextConfig {
+		/**
+		 * 这条路由是经 `register`（`contractRoute`、`contractStream`、`contractDownload`）注册的：访问检查装在那里。
+		 * 启动守卫（`guardHttpContract`）要求每条路由都有它，手写的 `app.get(契约里的路径, …)` 会绕过访问检查，启动就失败。
+		 */
+		sflyContractRoute?: true;
+	}
+}
+
 /**
  * 按 @sfly/schema 的契约注册路由（ADR 0007，约定见 packages/schema/src/http/contract.ts）：
  * 先用契约校验路径参数、查询参数与请求体（失败返回 400，默认错误码 `invalid_request`，契约可以用
@@ -139,6 +149,7 @@ function register<D extends RouteDef>(
 	app.route({
 		method: def.method,
 		url: def.path,
+		config: { sflyContractRoute: true },
 		// 访问检查在 onRequest：先于请求体的解析（发布节点包要把整个归档读进内存），先于校验和处理函数。
 		onRequest: async (req, reply) => {
 			const verdict = await guard.check({
@@ -154,6 +165,16 @@ function register<D extends RouteDef>(
 			}
 			req.access = verdict.access;
 			return undefined;
+		},
+		// 平台管理员的写记录先于处理函数写下，响应发出之后回填状态码；回填失败只记日志（响应已经发出）。
+		onResponse: async (req, reply) => {
+			const id = req.access?.adminActionId;
+			if (id == null) return;
+			try {
+				await guard.finishAdminWrite(id, reply.statusCode);
+			} catch (error) {
+				req.log.error(error, "回填平台管理员写记录的状态码失败");
+			}
 		},
 		handler: async (req, reply) => {
 			if (hasNul(req.params)) {
@@ -223,6 +244,12 @@ export function guardHttpContract(
 			const key = routeKey(method, route.url);
 			if (!expected.has(key)) {
 				throw new Error(`路由 ${key} 不在 HTTP 契约里（packages/schema/src/http）`);
+			}
+			// 契约里的路径也要经 register 注册：手写的路由没有访问检查，只有跨项目测试拦得住，启动不报错就是漏洞。
+			if (route.config?.sflyContractRoute !== true) {
+				throw new Error(
+					`路由 ${key} 不是经 contractRoute、contractStream 或 contractDownload 注册的：它没有访问检查（src/http/contract-route.ts）`,
+				);
 			}
 			registered.add(key);
 		}

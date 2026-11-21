@@ -2,7 +2,7 @@
 // 带凭据的请求：失效的凭据 401；通过检查的写请求把用户 ID 和令牌的名称记进 #487 加的列；
 // 平台管理员在自己不是成员的项目里的写操作留记录；HEAD、事件流走同一处检查；不带凭据的请求行为不变。
 import pg from "pg";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
@@ -388,6 +388,12 @@ describe("带凭据的请求", () => {
 			]);
 			expect(rows[0].at).toEqual(cp.clock.now());
 
+			// 记录里没有「当时的成员角色」（不是成员）；响应的状态码是请求结束时回填的。
+			expect(rows.map((r) => [r.member_role, r.status])).toEqual([
+				[null, 201],
+				[null, 201],
+			]);
+
 			// 成为成员之后，他在这个项目里的写不再记。
 			await accounts.member("default", admin, "editor");
 			await call(bearer(token), "POST", "/orchestrations", { name: "又一个" });
@@ -397,6 +403,105 @@ describe("带凭据的请求", () => {
 				name: "x",
 			});
 			expect((await db.query("select 1 from platform_admin_actions")).rowCount).toBe(2);
+		});
+	});
+});
+
+describe("平台管理员的写记录：结果、成员角色和请求里的怪值", () => {
+	let cp: TestControlPlane;
+	let accounts: TestAccounts;
+	let db: pg.Client;
+	let token: string;
+	let admin: string;
+
+	beforeEach(async () => {
+		cp = await startTestControlPlane();
+		accounts = new TestAccounts(cp.database.url);
+		db = new pg.Client({ connectionString: cp.database.url });
+		await db.connect();
+		admin = await accounts.user("root", { admin: true });
+		token = await accounts.personalToken(admin, { name: "运维" });
+	});
+	afterEach(async () => {
+		await db.end();
+		await accounts.close();
+		await cp.close();
+	});
+
+	const call = (method: string, path: string, body?: unknown) =>
+		cp.fetch(path, {
+			method,
+			headers: {
+				...bearer(token),
+				...(body === undefined ? {} : { "content-type": "application/json" }),
+			},
+			...(body === undefined ? {} : { body: JSON.stringify(body) }),
+		});
+	const records = async () =>
+		(
+			await db.query(
+				"select route, resource_id, status, member_role from platform_admin_actions order by at, id",
+			)
+		).rows as {
+			route: string;
+			resource_id: string | null;
+			status: number | null;
+			member_role: string | null;
+		}[];
+
+	it("路径参数含 NUL、非法的 UTF-8、过长：不会是 500，和不带凭据一样，也不留记录", async () => {
+		for (const path of [
+			"/feishu-bots/%00x",
+			"/feishu-bots/a%00",
+			"/feishu-bots/%FF",
+			`/feishu-bots/${"n".repeat(300)}`,
+		]) {
+			const withToken = await call("DELETE", path);
+			const anonymous = await cp.fetch(path, { method: "DELETE" });
+			expect(withToken.status, path).toBeLessThan(500);
+			expect(withToken.status, path).toBe(anonymous.status);
+		}
+		expect((await call("DELETE", "/feishu-bots/%00x")).status).toBe(404);
+		expect(await records()).toEqual([]);
+	});
+
+	it("记录带着响应的状态码：成功的、请求不合格的（400）、找不到的（404）各一条，先记后回填", async () => {
+		const ok = await call("POST", "/feishu-bots", {
+			name: "机器人",
+			webhook_url: "https://open.feishu.cn/hook/abc",
+		});
+		expect(ok.status).toBe(201);
+		// 记录按时间排序：每个请求之间推进一下手动时钟。
+		(cp.clock as ManualClock).advance(1000);
+		const invalid = await call("POST", "/feishu-bots", { name: "", webhook_url: "不是地址" });
+		expect(invalid.status).toBe(400);
+		(cp.clock as ManualClock).advance(1000);
+		const missing = await call("DELETE", "/feishu-bots/不存在");
+		expect(missing.status).toBe(404);
+		// onResponse 在响应发出之后才回填，等一下。
+		await vi.waitFor(async () => {
+			expect((await records()).map((r) => r.status)).toEqual([201, 400, 404]);
+		});
+		expect((await records()).map((r) => [r.route, r.resource_id])).toEqual([
+			["POST /feishu-bots", null],
+			["POST /feishu-bots", null],
+			["DELETE /feishu-bots/:name", "不存在"],
+		]);
+	});
+
+	it("他是成员、但这次写靠的是管理员的权限：记录里有他当时的角色；不是成员为空", async () => {
+		await call("POST", "/feishu-bots", {
+			name: "甲",
+			webhook_url: "https://open.feishu.cn/hook/a",
+		});
+		(cp.clock as ManualClock).advance(1000);
+		await accounts.member("default", admin, "read_only");
+		await call("POST", "/orchestrations", { name: "场景" });
+		await vi.waitFor(async () => {
+			expect((await records()).map((r) => [r.route, r.member_role])).toEqual([
+				["POST /feishu-bots", null],
+				["POST /orchestrations", "read_only"],
+			]);
 		});
 	});
 });

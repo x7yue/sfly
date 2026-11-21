@@ -1,5 +1,5 @@
 {
-  "id": "32293e4b-8e7c-4cfc-b389-6c57a65bad72",
+  "id": "140f444c-2b03-4b16-a645-413c52689175",
   "prevId": "4fdcb394-2790-415b-b2a7-902bf6f3bb43",
   "version": "7",
   "dialect": "postgresql",
@@ -1488,6 +1488,18 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "member_role": {
+          "name": "member_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1544,7 +1556,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "platform_admin_actions_member_role": {
+          "name": "platform_admin_actions_member_role",
+          "value": "\"platform_admin_actions\".\"member_role\" in ('read_only', 'editor', 'project_admin')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_members": {

@@ -161,6 +161,7 @@ describe("契约路由的访问检查", () => {
 				kind: "shared",
 				projectId: DEFAULT,
 				agentName: null,
+				user: null,
 				revokedAt: null,
 			});
 			for (const def of OUTSIDE_PROJECT) {
@@ -174,6 +175,7 @@ describe("契约路由的访问检查", () => {
 				kind: "shared",
 				projectId: DEFAULT,
 				agentName: null,
+				user: null,
 				revokedAt: BEFORE,
 			});
 			expect(
@@ -333,6 +335,7 @@ describe("契约路由的访问检查", () => {
 					userId: USERS.editor.id,
 					name: "用户2",
 					tokenName: "我的令牌",
+					adminActionId: null,
 					project: DEFAULT,
 					role: "editor",
 					// 令牌的范围和编辑者此刻的范围取交集：「管理」没了。
@@ -386,6 +389,21 @@ describe("契约路由的访问检查", () => {
 				access: { credential: "project", userId: null, name: "CI", tokenName: "CI", role: null },
 			});
 			expect(outcome(await run(route("POST /packages"), runner))).toBe(403);
+		});
+
+		it("项目令牌不能带「管理」：成员、角色、Agent 和飞书机器人的管理只能由人做，库里写了 manage 也不认", async () => {
+			const everything = token({ kind: "project", projectId: DEFAULT, scopes: [...SCOPES] });
+			const manager = token({ kind: "project", projectId: DEFAULT, scopes: ["read", "manage"] });
+			for (const c of [everything, manager]) {
+				expect(outcome(await run(route("POST /feishu-bots"), c))).toBe(403);
+				expect(outcome(await run(route("POST /agents/:name/update-now"), c))).toBe(403);
+				expect(outcome(await run(route("GET /feishu-bots"), c))).toBe("ok");
+			}
+			// 别的范围照常：带了全部范围的项目令牌能运行、编辑、发布。
+			expect(outcome(await run(route("POST /orchestrations/:id/runs"), everything))).toBe("ok");
+			expect(outcome(await run(route("POST /packages"), everything))).toBe("ok");
+			// 人的凭据不受影响：项目管理员照样管理。
+			expect(outcome(await run(route("POST /feishu-bots"), personal(USERS.boss)))).toBe("ok");
 		});
 
 		it("没有人和程序能调用的接口（任务的写：上传产物只给 Agent 凭据）：403，管理员也不行", async () => {
@@ -565,6 +583,7 @@ describe("契约路由的访问检查", () => {
 					resourceKind: "scenario",
 					resourceId: RES.scenario.alpha,
 					tokenName: null,
+					memberRole: null,
 				},
 				{
 					projectId: DEFAULT,
@@ -575,6 +594,7 @@ describe("契约路由的访问检查", () => {
 					resourceKind: "scenario",
 					resourceId: RES.scenario.default,
 					tokenName: "运维令牌",
+					memberRole: null,
 				},
 				expect.objectContaining({
 					route: "POST /feishu-bots",
@@ -613,6 +633,8 @@ describe("契约路由的访问检查", () => {
 				[USERS.adminMember.id, "POST /orchestrations/:id/versions"],
 				[USERS.adminEditor.id, "POST /feishu-bots"],
 			]);
+			// 记着他当时作为成员的角色：和「不是成员」（空）区分开。
+			expect(store.adminWrites.map((w) => w.memberRole)).toEqual(["read_only", "editor"]);
 		});
 
 		it("项目不存在：404；管理员停用之后的凭据 401", async () => {
@@ -631,6 +653,7 @@ describe("契约路由的访问检查", () => {
 				kind: "agent",
 				projectId: project,
 				agentName: name,
+				user: null,
 				revokedAt: null,
 			});
 			return { authorization: `Bearer ${secret}` };
@@ -732,24 +755,68 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await run(upload, cred))).toBe(403);
 		});
 
+		it("开发 Agent 的凭据记在编辑者名下：所属用户被停用，它立即失效（401）；按台签发的没有用户，不受影响", async () => {
+			const devAgent = (user: StoredUser, name = "dev-xiaoming-laptop") => {
+				const secret = `sfly_agt_${++counter}`;
+				store.agentCredentials.set(hashCredential(secret), {
+					kind: "agent",
+					projectId: DEFAULT,
+					agentName: name,
+					user,
+					revokedAt: null,
+				});
+				return { authorization: `Bearer ${secret}` };
+			};
+			const active = devAgent(USERS.editor);
+			expect(outcome(await run(archive, active))).toBe("ok");
+			const disabled = devAgent({ ...USERS.editor, disabledAt: BEFORE });
+			expect(outcome(await run(archive, disabled))).toBe(401);
+			expect(outcome(await run(download, disabled))).toBe(401);
+			// 没有用户的（管理员签发的、按台的）不看用户。
+			expect(outcome(await run(archive, agent(DEFAULT, "agent-a")))).toBe("ok");
+		});
+
 		it("吊销了的 Agent 凭据是 401", async () => {
 			store.agentCredentials.set(hashCredential("revoked-agent"), {
 				kind: "agent",
 				projectId: DEFAULT,
 				agentName: "agent-a",
+				user: null,
 				revokedAt: BEFORE,
 			});
 			expect(outcome(await run(archive, { authorization: "Bearer revoked-agent" }))).toBe(401);
 		});
 	});
 
-	it("处理一个请求读库的次数不多：凭据一次，成员一次，项目最多一次", async () => {
+	it("处理一个请求读库的次数固定，不随请求变多：登录一次、令牌先查令牌表再查 Agent 凭据表（最多两次），成员一次，项目最多一次", async () => {
+		// 令牌：查令牌表命中一次，成员一次，场景所在的项目一次。
 		store.reads = 0;
 		await run(route("GET /orchestrations/:id"), personal(USERS.editor));
 		expect(store.reads).toBe(3);
+		// 登录 Cookie：只查登录表（不查令牌表），成员一次。
 		store.reads = 0;
 		await run(route("GET /orchestrations"), login(USERS.editor));
 		expect(store.reads).toBe(2);
+		// 库里没有的 Bearer、共享令牌、Agent 凭据：令牌表没有，再查 Agent 凭据表，一共两次凭据查询。
+		store.reads = 0;
+		await run(route("GET /orchestrations"), { authorization: "Bearer nobody" });
+		expect(store.reads).toBe(2);
+		// Agent 上传产物：两次凭据查询，加任务的归属一次（任务所在的项目和派给了哪台 Agent 是同一行，不查两遍）。
+		const secret = "sfly_agt_reads";
+		store.agentCredentials.set(hashCredential(secret), {
+			kind: "agent",
+			projectId: DEFAULT,
+			agentName: "agent-a",
+			user: null,
+			revokedAt: null,
+		});
+		store.reads = 0;
+		const upload = await guard.check({
+			...request(route("PUT /tasks/:id/artifacts/*"), { authorization: `Bearer ${secret}` }),
+			params: { id: RES.task.mine, "*": "a.txt" },
+		});
+		expect(outcome(upload)).toBe("ok");
+		expect(store.reads).toBe(3);
 	});
 });
 

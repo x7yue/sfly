@@ -33,10 +33,10 @@ import { hashCredential } from "./credential-hash.js";
 import {
 	effectiveScopes,
 	PLATFORM_ADMIN_SCOPES,
+	PROJECT_TOKEN_SCOPES,
 	ROLE_SCOPES,
 	requiredScope,
 	SCOPE_LABELS,
-	SCOPES,
 	type Scope,
 } from "./scopes.js";
 
@@ -55,6 +55,11 @@ export interface Access {
 	name: string;
 	/** 经哪个令牌（令牌的名称，ADR 0029「经 …」）；登录和 Agent 凭据没有。 */
 	tokenName: string | null;
+	/**
+	 * 这次请求在 `platform_admin_actions` 里的记录（平台管理员靠自己的权限做的写）；没有记录为 null。
+	 * 请求结束时用它回填响应的状态码（{@link AccessGuard.finishAdminWrite}）。
+	 */
+	adminActionId: string | null;
 	/** 请求作用在哪个项目里；不属于项目的接口没有（但这样的接口不会带出 Access）。 */
 	project: ProjectId;
 	/** 有用户的凭据：用户在这个项目里的角色（平台管理员不是成员时为 null）；其余为 null。 */
@@ -153,6 +158,11 @@ export class AccessGuard {
 			return denied(401, "unauthorized", "凭据无效、已过期或已吊销");
 		}
 		if (principal.kind === "shared") return { ok: true, access: null };
+		// 路径参数含 NUL：它不指向任何东西，和不带凭据时一样是 404（契约路由的约定，#212）；
+		// 不能往下走：管理员的写记录要把路径参数写进库，NUL 存不进 PostgreSQL 的文本。
+		if (Object.values(request.params).some((value) => value?.includes("\u0000"))) {
+			return denied(404, "not_found", "路径参数含 NUL 字符，没有对应的资源");
+		}
 		// Agent 凭据和任务凭据先看接口清单：403 只取决于接口，不取决于资源存不存在、在哪个项目里。
 		if (principal.kind === "agent" || principal.kind === "task") {
 			return this.#checkProgram(principal, request, locator);
@@ -217,13 +227,22 @@ export class AccessGuard {
 				`${principal.kind === "agent" ? "Agent 凭据" : "任务凭据"}不能调用这个接口`,
 			);
 		}
-		const project = await this.#projectOf(locator, request.params);
+		// 上传产物要看任务派给了哪台 Agent，任务所在的项目也在同一行里：一次查询，不查两遍。
+		const assignment =
+			rule === "assigned_task"
+				? await this.deps.store.taskAssignment(requestTaskId(request))
+				: undefined;
+		const project =
+			rule === "assigned_task"
+				? assignment?.projectId
+				: await this.#projectOf(locator, request.params);
 		if (project === undefined) return notFound();
 		const access: Access = {
 			credential: principal.kind,
 			userId: null,
 			name: principal.kind === "agent" ? principal.agentName : principal.name,
 			tokenName: null,
+			adminActionId: null,
 			project,
 			role: null,
 			scopes: [],
@@ -238,12 +257,11 @@ export class AccessGuard {
 			return project === principal.project ? { ok: true, access } : notFound();
 		}
 		// assigned_task：任务是派给这台 Agent 的。
-		const task = await this.deps.store.taskAssignment(requestTaskId(request));
 		const mine =
-			task !== undefined &&
-			task.projectId === principal.project &&
+			assignment !== undefined &&
+			assignment.projectId === principal.project &&
 			principal.kind === "agent" &&
-			task.agentName === principal.agentName;
+			assignment.agentName === principal.agentName;
 		return mine ? { ok: true, access } : notFound();
 	}
 
@@ -270,7 +288,8 @@ export class AccessGuard {
 		 */
 		let admin: { userId: string; memberScopes: Scope[] } | null = null;
 		if (principal.kind === "project") {
-			scopes = effectiveScopes(SCOPES, principal.granted);
+			// 项目令牌不能带「管理」：成员、角色、Agent 和它的凭据、飞书机器人的管理只能由人做（库里写了也不认）。
+			scopes = effectiveScopes(PROJECT_TOKEN_SCOPES, principal.granted);
 		} else {
 			const { user } = principal;
 			role = (await this.deps.store.role(project, user.id)) ?? null;
@@ -300,6 +319,7 @@ export class AccessGuard {
 					: principal.kind === "project"
 						? principal.name
 						: principal.tokenName,
+			adminActionId: null,
 			project,
 			role,
 			scopes,
@@ -325,7 +345,8 @@ export class AccessGuard {
 		}
 		if (admin !== null && route.effect === "write" && !admin.memberScopes.includes(needed)) {
 			const target = route.resource.target;
-			await this.deps.store.recordAdminWrite({
+			// 先记、记不上整个请求就失败（不会漏记）；响应的状态码在请求结束时回填（finishAdminWrite）。
+			access.adminActionId = await this.deps.store.recordAdminWrite({
 				projectId: project,
 				userId: admin.userId,
 				at: this.deps.clock.now(),
@@ -337,9 +358,15 @@ export class AccessGuard {
 						? (request.params[target.params] ?? null)
 						: null,
 				tokenName: access.tokenName,
+				memberRole: role,
 			});
 		}
 		return { ok: true, access };
+	}
+
+	/** 平台管理员的写请求结束了：回填响应的状态码。进程在此之前退出的留空，表示结果未知。 */
+	async finishAdminWrite(id: string, status: number): Promise<void> {
+		await this.deps.store.completeAdminWrite(id, status);
 	}
 }
 
@@ -386,6 +413,8 @@ function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
 
 function agentPrincipal(credential: StoredAgentCredential): Principal | undefined {
 	if (credential.revokedAt !== null) return undefined;
+	// 开发 Agent 的凭据记在编辑者名下：用户被停用，它随之失效（ADR 0029「用户、项目与角色」：停用时他的全部凭据立即失效）。
+	if (credential.user !== null && credential.user.disabledAt !== null) return undefined;
 	if (credential.kind === "shared") return { kind: "shared" };
 	return credential.agentName === null
 		? undefined

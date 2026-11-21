@@ -23,6 +23,12 @@ export const ROLE_SCOPES = {
 	project_admin: ["read", "run", "edit", "session_build", "publish", "manage"],
 } as const satisfies Record<ProjectRole, readonly Scope[]>;
 
+/**
+ * 项目令牌能带的范围：没有「管理」。成员和角色的管理、Agent 和它的凭据、飞书机器人的管理只能由人做；
+ * 令牌行里写了 `manage` 也不认（签发令牌的接口在 #491，它不该签出带管理的项目令牌，这里是第二道防线）。
+ */
+export const PROJECT_TOKEN_SCOPES: readonly Scope[] = SCOPES.filter((scope) => scope !== "manage");
+
 /** 平台管理员在每个项目里都有项目管理员的权限。 */
 export const PLATFORM_ADMIN_SCOPES: readonly Scope[] = ROLE_SCOPES.project_admin;
 

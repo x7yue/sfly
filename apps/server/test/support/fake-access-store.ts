@@ -20,6 +20,8 @@ export class FakeAccessStore implements AccessStore {
 	readonly runs = new Map<string, ProjectId>();
 	readonly tasks = new Map<string, { projectId: ProjectId; agentName: string | null }>();
 	readonly adminWrites: AdminWrite[] = [];
+	/** 回填的响应状态码（`completeAdminWrite`）。 */
+	readonly adminResults: { id: string; status: number }[] = [];
 	/** 每个方法被调用的次数：不需要凭据的请求不该读库。 */
 	reads = 0;
 
@@ -67,5 +69,9 @@ export class FakeAccessStore implements AccessStore {
 	}
 	async recordAdminWrite(write: AdminWrite) {
 		this.adminWrites.push(write);
+		return `admin-write-${this.adminWrites.length}`;
+	}
+	async completeAdminWrite(id: string, status: number) {
+		this.adminResults.push({ id, status });
 	}
 }
