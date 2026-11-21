@@ -70,6 +70,10 @@ const JSON_BODIES: Record<string, unknown> = {
 	"PATCH /orchestrations/:id/presets/:presetId": { name: "预设改名" },
 	"POST /orchestrations/:id/presets/:presetId/copy": { name: "预设副本" },
 	"POST /orchestrations/:id/runs": { params: { host: "h" } },
+	// 检查场景文档（#424）：方法不是 GET 的只读接口，同样要求项目乙的资源对项目甲不可见
+	"POST /orchestrations/:id/check": {
+		document: { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },
+	},
 	"POST /feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
 	"PATCH /feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },

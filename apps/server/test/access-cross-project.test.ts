@@ -394,7 +394,7 @@ describe("新加接口自动覆盖", () => {
 		pathKinds: {
 			"/fake-things": { kind: "scenario", why: "演示" },
 		},
-		readsWithTraces: {},
+		nonGetReads: {},
 	} as const;
 
 	it("没写声明的接口让启动守卫报错", () => {
