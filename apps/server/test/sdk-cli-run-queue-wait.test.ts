@@ -142,13 +142,16 @@ describe("sfly run show / run start --wait：排队中的节点在等什么", { 
 		const name = `busy-${++counter}`;
 		const agent = await connect(name, 1);
 		const id = await api.orchestrationWith(scenario(name), `占满 ${name}`);
-		await api.triggerOk(id);
+		const holderRun = await api.triggerOk(id);
 		await agent.nextAssign({ timeoutMs: 30_000 });
 		const waitingRun = await api.triggerOk(id);
 
 		const text = await cli("run", "show", waitingRun);
 		expect(text.code, text.stderr).toBe(0);
 		expect(text.stdout).toContain(`等 ${name}（槽位占满，1 / 1）· 排队 `);
-		expect(text.stdout).toContain(`占着槽位的任务：占满 ${name} 的 main:a「准备环境」`);
+		// 占着槽位的任务写明是哪次运行（运行编号的前 8 位，和界面一致）。
+		expect(text.stdout).toContain(
+			`占着槽位的任务：占满 ${name}（运行 ${holderRun.slice(0, 8)}）的 main:a「准备环境」`,
+		);
 	});
 });

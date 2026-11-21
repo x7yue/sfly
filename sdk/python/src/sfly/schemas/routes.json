@@ -15511,6 +15511,11 @@
                                           "started_at"
                                         ]
                                       }
+                                    },
+                                    "other_project_holders": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
                                     }
                                   },
                                   "required": [
@@ -15520,7 +15525,8 @@
                                     "since",
                                     "expires_at",
                                     "slots",
-                                    "holders"
+                                    "holders",
+                                    "other_project_holders"
                                   ]
                                 },
                                 {
@@ -16327,6 +16333,11 @@
                                           "started_at"
                                         ]
                                       }
+                                    },
+                                    "other_project_holders": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
                                     }
                                   },
                                   "required": [
@@ -16336,7 +16347,8 @@
                                     "since",
                                     "expires_at",
                                     "slots",
-                                    "holders"
+                                    "holders",
+                                    "other_project_holders"
                                   ]
                                 },
                                 {
@@ -17143,6 +17155,11 @@
                                           "started_at"
                                         ]
                                       }
+                                    },
+                                    "other_project_holders": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
                                     }
                                   },
                                   "required": [
@@ -17152,7 +17169,8 @@
                                     "since",
                                     "expires_at",
                                     "slots",
-                                    "holders"
+                                    "holders",
+                                    "other_project_holders"
                                   ]
                                 },
                                 {
@@ -17957,6 +17975,11 @@
                                             "started_at"
                                           ]
                                         }
+                                      },
+                                      "other_project_holders": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
                                       }
                                     },
                                     "required": [
@@ -17966,7 +17989,8 @@
                                       "since",
                                       "expires_at",
                                       "slots",
-                                      "holders"
+                                      "holders",
+                                      "other_project_holders"
                                     ]
                                   },
                                   {

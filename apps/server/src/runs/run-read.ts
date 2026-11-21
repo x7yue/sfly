@@ -32,6 +32,7 @@ import { agentFor, chainsForReading } from "../engine/chain.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 
 /*
@@ -246,7 +247,10 @@ async function readByIds(
  * 一批 Agent 此刻的等待状态（`agents/queue-wait.ts` 的 `agentWaits`，按 Agent 名称作键）：排队中的尝试在等什么。
  * Agent 的在线、准备环境和槽位占用不在数据库里，运行读取不依赖它；由调用方（有 Agent 注册表的 HTTP 路由）传入。
  */
-export type QueueWaitResolver = (agents: string[]) => Promise<Map<string, AgentWait>>;
+export type QueueWaitResolver = (
+	agents: string[],
+	projectId: ProjectId,
+) => Promise<Map<string, AgentWait>>;
 
 /**
  * 一个运行的运行视图（契约见 @sfly/schema 的 runsApi）；运行不存在时为 undefined。
@@ -264,7 +268,8 @@ export async function getRunView(
 			node.attempts.flatMap((a) => (a.status === "queued" && a.agent ? [a.agent] : [])),
 		),
 	);
-	const waits = queueWaits && waiting.length > 0 ? await queueWaits(waiting) : new Map();
+	const waits =
+		queueWaits && waiting.length > 0 ? await queueWaits(waiting, read.run.projectId) : new Map();
 	return runView(read, waits);
 }
 

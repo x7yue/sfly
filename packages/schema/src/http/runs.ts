@@ -121,8 +121,10 @@ export const QueueWaitView = z.object({
 	expires_at: Timestamp.nullable(),
 	/** Agent 的槽位总数；Agent 不在线时为 null。 */
 	slots: z.number().int().nullable(),
-	/** slots_full：占着槽位的任务，按派发顺序；其余状态为空数组。 */
+	/** slots_full：占着槽位的任务，按派发顺序；其余状态为空数组。只列读这个运行的人所在项目里的任务。 */
 	holders: z.array(SlotHolderView),
+	/** slots_full：同一台 Agent 上别的项目的任务占着多少个槽位（只有个数，不给场景、运行和节点）；其余状态为 0。 */
+	other_project_holders: z.number().int(),
 });
 
 export const AttemptView = z.object({

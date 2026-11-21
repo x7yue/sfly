@@ -38,7 +38,7 @@ export function registerRunRoutes(
 ): void {
 	/** 输出给客户端的运行视图：排队中的尝试带上它在等什么（Agent 此刻的状态来自注册表）。 */
 	const viewOf = (runId: string) =>
-		getRunView(deps.db, runId, (names) => agentWaits(deps.db, deps.hub, names));
+		getRunView(deps.db, runId, (names, project) => agentWaits(deps.db, deps.hub, names, project));
 
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent，
 	// 以及场景的运行预设（对照这次检查用的最新版本）。

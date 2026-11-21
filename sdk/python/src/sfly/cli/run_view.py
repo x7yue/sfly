@@ -185,9 +185,11 @@ _MAX_SLOT_HOLDERS = 3
 
 
 def _holder_label(holder: Mapping[str, Any]) -> str:
+    """占着槽位的任务：`撮合压测（运行 5e2d1c7a）的 main:soak「浸泡」`。
+    写明是哪次运行：同一场景触发两次互相抢槽位时分得开。"""
     ref = NodeRef(chain_name(holder["chain_name"]), holder["node_id"]).label
     named = with_display_name(ref, holder.get("display_name"))
-    return f"{holder['orchestration_name']} 的 {named}"
+    return f"{holder['orchestration_name']}（运行 {holder['run_id'][:8]}）的 {named}"
 
 
 def queue_wait_text(wait: Mapping[str, Any], queued_at: str) -> str:
@@ -222,10 +224,15 @@ def queue_wait_text(wait: Mapping[str, Any], queued_at: str) -> str:
     # 全角括号后面的分隔不再加空格（和界面一致）。
     text = f"等 {wait['agent']}（{situation}）· " + " · ".join(timing)
     holders = wait["holders"]
-    if holders:
+    elsewhere = wait.get("other_project_holders", 0)
+    if holders or elsewhere:
         shown = "、".join(_holder_label(h) for h in holders[:_MAX_SLOT_HOLDERS])
         more = len(holders) - _MAX_SLOT_HOLDERS
-        text += f"；占着槽位的任务：{shown}" + (f"，还有 {more} 个" if more > 0 else "")
+        rest = [f"还有 {more} 个"] if more > 0 else []
+        # 同一台 Agent 上别的项目的任务只有个数，看不到它们的场景和运行（和界面一致）。
+        if elsewhere:
+            rest.append(f"{'另有' if shown else ''}别的项目的任务 {elsewhere} 个")
+        text += "；占着槽位的任务：" + shown + ("，" if shown and rest else "") + "，".join(rest)
     return text
 
 

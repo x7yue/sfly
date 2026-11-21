@@ -19,6 +19,7 @@ def _wait(state: str = "offline", holders: list[dict[str, Any]] | None = None) -
         "expires_at": "2026-01-01T00:09:55.000Z",
         "slots": None if state == "offline" else 1,
         "holders": holders or [],
+        "other_project_holders": 0,
     }
 
 
@@ -67,7 +68,7 @@ def test_a_queued_node_is_written_with_what_it_waits_for_and_only_again_when_tha
 
     # Agent 上线了、槽位被占满：等的情况变了，再写一行。
     holder = {
-        "run_id": "r1",
+        "run_id": "5e2d1c7a-0000-4000-8000-000000000001",
         "orchestration_id": "o1",
         "orchestration_name": "压测",
         "node_id": "soak",
@@ -80,7 +81,7 @@ def test_a_queued_node_is_written_with_what_it_waits_for_and_only_again_when_tha
     progress.update(_run("queued", _wait("slots_full", [holder])))
     assert len(lines) == 2
     assert "等 agent-a（槽位占满，1 / 1）" in lines[1]
-    assert "占着槽位的任务：压测 的 main:soak" in lines[1]
+    assert "占着槽位的任务：压测（运行 5e2d1c7a）的 main:soak" in lines[1]
 
     # 派发之后不再排队。
     progress.update(_run("dispatched", None))

@@ -890,7 +890,8 @@ test("运行监控：概览（节点在排队，Agent 在线但槽位占满，�
 	await expect(page.getByTestId("queue-wait-holders").first()).toBeVisible();
 	await page.mouse.move(20, 880);
 	await expect(page).toHaveScreenshot("monitor-overview-queued-slots.png", {
-		mask: runIds(page),
+		// 占着槽位的任务写着运行编号（随机的）：和别处的运行编号一样遮住。
+		mask: [...runIds(page), page.getByTestId("queue-wait-holders").getByRole("link")],
 	});
 });
 

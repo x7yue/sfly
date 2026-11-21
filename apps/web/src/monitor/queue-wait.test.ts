@@ -13,11 +13,12 @@ const wait = (over: Partial<QueueWaitView>): QueueWaitView => ({
 	expires_at: null,
 	slots: null,
 	holders: [],
+	other_project_holders: 0,
 	...over,
 });
 
 const holder = (node: string, over: Partial<SlotHolderView> = {}): SlotHolderView => ({
-	run_id: "r1",
+	run_id: "5e2d1c7a-0000-4000-8000-000000000001",
 	orchestration_id: "o1",
 	orchestration_name: "撮合压测",
 	node_id: node,
@@ -80,9 +81,36 @@ describe("排队中的节点在等什么", () => {
 			QUEUED_AT,
 			NOW,
 		);
+		// 每个占用者写明是哪次运行：同一场景触发两次互相抢槽位时分得开。
 		expect(text).toBe(
 			"等 agent-a（槽位占满，5 / 5）· 排队 3m 05s；占着槽位的任务：" +
-				"撮合压测 的 浸泡（soak）、撮合压测 的 监控 / probe、撮合压测 的 report，还有 2 个",
+				"撮合压测（运行 5e2d1c7a）的 浸泡（soak）、撮合压测（运行 5e2d1c7a）的 监控 / probe、" +
+				"撮合压测（运行 5e2d1c7a）的 report，还有 2 个",
+		);
+	});
+
+	it("槽位被别的项目的任务占着：只写个数，不写它们的场景和运行", () => {
+		const own = queueWaitText(
+			wait({
+				state: "slots_full",
+				slots: 3,
+				holders: [holder("soak", { display_name: "浸泡" })],
+				other_project_holders: 2,
+			}),
+			QUEUED_AT,
+			NOW,
+		);
+		expect(own).toBe(
+			"等 agent-a（槽位占满，3 / 3）· 排队 3m 05s；占着槽位的任务：" +
+				"撮合压测（运行 5e2d1c7a）的 浸泡（soak），另有别的项目的任务 2 个",
+		);
+		const onlyOthers = queueWaitText(
+			wait({ state: "slots_full", slots: 2, other_project_holders: 2 }),
+			QUEUED_AT,
+			NOW,
+		);
+		expect(onlyOthers).toBe(
+			"等 agent-a（槽位占满，2 / 2）· 排队 3m 05s；占着槽位的任务：别的项目的任务 2 个",
 		);
 	});
 });

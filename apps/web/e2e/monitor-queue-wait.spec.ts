@@ -27,15 +27,14 @@ test("Agent 不在线：概览写明等谁、离线多久、排了多久、多�
 
 	// 「进行中」：这个节点排队中，写明等的 Agent、离线多久、排了多久、多久后排队超时。
 	const note = waitNote(page);
-	await expect(note).toHaveCount(2); // 「进行中」一行和主指标一栏各写一遍
-	await expect(note.first()).toHaveAttribute("data-state", "offline");
-	await expect(note.first()).toHaveText(
-		"等 agent-a（不在线，已离线 2m 05s）· 排队 5s · 4m 55s 后超时",
-	);
-	// 主指标一栏：写它们在等什么，不写「没有执行中的节点」。
+	// 同一屏上同一句说明只写一遍：在「进行中」那一行；主指标一栏只写节点都在排队，不重复原因。
+	await expect(note).toHaveCount(1);
+	await expect(note).toHaveAttribute("data-state", "offline");
+	await expect(note).toHaveText("等 agent-a（不在线，已离线 2m 05s）· 排队 5s · 4m 55s 后超时");
 	const waiting = page.getByTestId("waiting-nodes");
-	await expect(waiting).toContainText("节点都在排队，还没有开始执行：");
-	await expect(waiting).toContainText("准备环境（a）");
+	await expect(waiting).toHaveText("节点都在排队，还没有开始执行：准备环境（a）");
+	await expect(waiting.getByTestId("queue-wait")).toHaveCount(0);
+	await expect(waiting).not.toContainText("agent-a");
 	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
 
 	// 详情：选中这个节点，「尝试」页签的卡片写同样的话。
@@ -47,7 +46,7 @@ test("Agent 不在线：概览写明等谁、离线多久、排了多久、多�
 
 	// 点 Agent 名称：去 Agent 管理页，落在那台 Agent 上。
 	await page.goto(`/runs/${runId}?view=overview`);
-	await waitNote(page).first().getByRole("link", { name: "agent-a" }).click();
+	await waitNote(page).getByRole("link", { name: "agent-a" }).click();
 	await expect(page).toHaveURL(/\/agents#agent-agent-a$/);
 	await expect(page.getByRole("region", { name: "agent-a" })).toBeInViewport({ ratio: 1 });
 });
@@ -86,15 +85,24 @@ test("Agent 在线、槽位占满：写明占着槽位的任务", async ({
 	connectAgent,
 	clock,
 }) => {
-	const { runId: waitingRun } = await queuedSlotsFull(controlPlane, connectAgent, clock);
+	const { runId: waitingRun, holderRunId } = await queuedSlotsFull(
+		controlPlane,
+		connectAgent,
+		clock,
+	);
 	await openFailedOverview(page, clock, waitingRun);
 
-	const note = waitNote(page).first();
+	const note = waitNote(page);
+	await expect(note).toHaveCount(1);
 	await expect(note).toHaveAttribute("data-state", "slots_full");
 	await expect(note).toContainText("等 agent-a（槽位占满，1 / 1）· 排队 10s · 4m 50s 后超时");
+	// 占着槽位的任务写明是哪次运行（场景和节点和排队的这个一字不差，只靠运行编号分得开），运行编号链到那次运行。
+	const short = holderRunId.slice(0, 8);
 	await expect(note.getByTestId("queue-wait-holders")).toHaveText(
-		"；占着槽位的任务：准备环境场景 的 准备环境（a）",
+		`；占着槽位的任务：准备环境场景（运行 ${short}）的 准备环境（a）`,
 	);
+	await note.getByRole("link", { name: `运行 ${short}` }).click();
+	await expect(page).toHaveURL(new RegExp(`/runs/${holderRunId}`));
 });
 
 test("运行还没结束、已有节点失败：概览里是失败区域，顶栏不重复；看不到失败区域的详情里顶栏就显示失败的节点和原因", async ({

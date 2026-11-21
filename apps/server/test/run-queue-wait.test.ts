@@ -7,6 +7,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
+import { seedForeignTask } from "./support/seed-foreign-task.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -87,6 +88,7 @@ describe("排队中的尝试在等什么", () => {
 			expires_at: new Date(queuedAt.getTime() + 5 * MINUTE).toISOString(),
 			slots: null,
 			holders: [],
+			other_project_holders: 0,
 		});
 	});
 
@@ -149,6 +151,7 @@ describe("排队中的尝试在等什么", () => {
 				started_at: expect.any(String),
 			},
 		]);
+		expect(waiting?.queue_wait?.other_project_holders).toBe(0);
 		// 占着槽位的那个尝试不是排队中的，没有 queue_wait。
 		expect((await attemptOf(holderRun))?.queue_wait).toBeNull();
 
@@ -161,6 +164,31 @@ describe("排队中的尝试在等什么", () => {
 			expect(after?.status).toBe("running");
 			expect(after?.queue_wait).toBeNull();
 		});
+	});
+
+	it("槽位被别的项目的任务占着：只给个数，不给那个项目的场景名、运行编号和节点名", async () => {
+		const agent = await connect({ name: "agent-a", slots: 2 });
+		const id = await api.orchestrationWith(scenario("agent-a"));
+		const mine = await api.triggerOk(id);
+		await agent.nextAssign();
+		// 另一个项目的任务占着第二个槽位（直接写库：Agent 归属项目之前，同一台 Agent 上本来不会有别的项目的任务）。
+		const foreign = await seedForeignTask(cp, {
+			project: "jia",
+			agent: "agent-a",
+			scenarioName: "甲的秘密场景",
+		});
+		clock.advance(10 * SECOND);
+		const waitingRun = await api.triggerOk(id);
+
+		const wait = (await attemptOf(waitingRun))?.queue_wait;
+		expect(wait).toMatchObject({ state: "slots_full", slots: 2, other_project_holders: 1 });
+		// 读者的项目里占着槽位的只有自己的那一个。
+		expect(wait?.holders.map((h) => h.run_id)).toEqual([mine]);
+		// 别的项目的场景名、运行编号、节点名一个字都不在响应里。
+		const body = JSON.stringify(await (await cp.fetch(`/runs/${waitingRun}`)).json());
+		expect(body).not.toContain("甲的秘密场景");
+		expect(body).not.toContain(foreign.run);
+		expect(body).not.toContain("别人的节点");
 	});
 
 	it("运行视图的推送（SSE）也带 queue_wait", async () => {

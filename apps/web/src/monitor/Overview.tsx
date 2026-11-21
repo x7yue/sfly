@@ -159,29 +159,26 @@ const queuedNodes = (run: RunView): QueuedNode[] =>
 	);
 
 /**
- * 没设关注项、没有节点在 Agent 上执行、排队的节点还在等：主指标这一栏写它们在等什么（和「进行中」同一份说明）。
- * 一个节点一行，最多列 3 个，其余写「还有 N 个」。
+ * 没设关注项、没有节点在 Agent 上执行、排队的节点还在等：主指标这一栏写它们都在排队，不写「没有执行中的节点」。
+ * 在等什么上面「进行中」那一行已经写了，这里只列节点，不再写一遍原因。最多列 3 个，其余写「还有 N 个」。
  */
 function WaitingNodes({ nodes }: { nodes: QueuedNode[] }) {
-	const { now } = useTimeAxis();
 	const shown = nodes.slice(0, MAX_WAITING_NODES);
 	return (
 		<div
 			data-testid="waiting-nodes"
 			className="rounded-lg border border-dashed border-border-soft px-4 py-4 text-sm text-fg-3"
 		>
-			<p className="m-0">{QUEUE_WAIT.allQueued}</p>
-			<ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0 text-fg-2">
-				{shown.map(({ node, attempt }) => (
-					<li key={node.node_id}>
-						<NodeName node={node} className="text-fg-1" /> ·{" "}
-						<QueueWaitNote wait={attempt.queue_wait} queuedAt={attempt.queued_at} now={now} />
-					</li>
+			<p className="m-0">
+				{QUEUE_WAIT.allQueued}
+				{shown.map(({ node }, i) => (
+					<span key={node.node_id}>
+						{i > 0 && "、"}
+						<NodeName node={node} className="text-fg-1" />
+					</span>
 				))}
-			</ul>
-			{nodes.length > shown.length && (
-				<p className="m-0 mt-1.5">{moreLabel(nodes.length - shown.length)}</p>
-			)}
+				{nodes.length > shown.length && `，${moreLabel(nodes.length - shown.length)}`}
+			</p>
 		</div>
 	);
 }

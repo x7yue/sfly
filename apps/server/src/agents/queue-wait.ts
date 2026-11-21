@@ -2,7 +2,9 @@ import type { QueueWaitView } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
+import type { ProjectId } from "../projects/project-id.js";
 import type { AgentConnection } from "./agent-hub.js";
+import { connectionBlock, dispatchBlock } from "./dispatch-gate.js";
 import { slotHolders } from "./slot-holders.js";
 
 /**
@@ -29,6 +31,8 @@ export async function agentWaits(
 	db: Db | Tx,
 	hub: QueueWaitHub,
 	names: readonly string[],
+	/** 读运行的人所在的项目：占着槽位的任务只写这个项目的，别的项目的只给个数（`slotHolders`）。 */
+	projectId: ProjectId,
 ): Promise<Map<string, AgentWait>> {
 	const unique = [...new Set(names)];
 	const offline = unique.filter((name) => !hub.connection(name));
@@ -47,36 +51,32 @@ export async function agentWaits(
 	for (const agent of unique) {
 		const conn = hub.connection(agent);
 		const wait = (
-			partial: Omit<AgentWait, "agent" | "now" | "holders"> & { holders?: AgentWait["holders"] },
-		) => waits.set(agent, { agent, now, holders: [], ...partial });
-		if (!conn) {
+			partial: Omit<AgentWait, "agent" | "now" | "holders" | "other_project_holders"> & {
+				holders?: AgentWait["holders"];
+				other_project_holders?: number;
+			},
+		) => waits.set(agent, { agent, now, holders: [], other_project_holders: 0, ...partial });
+		// 派发的闸门（dispatch-gate.ts）先看只靠连接的三条；连接都满足了才去数占着槽位的任务。
+		const block = connectionBlock(conn, conn ? hub.versionMismatch(conn.info) : false);
+		if (block === "offline" || !conn) {
 			wait({ state: "offline", since: lastSeen.get(agent) ?? null, slots: null });
-		} else if (!conn.ready) {
+		} else if (block === "preparing") {
 			wait({
 				state: "preparing",
 				since: hub.preparingSince(agent)?.toISOString() ?? null,
 				slots: conn.info.slots,
 			});
-		} else if (hub.versionMismatch(conn.info)) {
+		} else if (block === "version_mismatch") {
 			wait({ state: "version_mismatch", since: null, slots: conn.info.slots });
 		} else {
-			const holders = await slotHolders(db, agent);
-			if (holders.length >= conn.info.slots) {
+			const { holders, elsewhere, occupied } = await slotHolders(db, agent, projectId);
+			if (dispatchBlock(conn, false, occupied) === "slots_full") {
 				wait({
 					state: "slots_full",
 					since: null,
 					slots: conn.info.slots,
-					holders: holders.map((task) => ({
-						run_id: task.run_id,
-						orchestration_id: task.orchestration_id,
-						orchestration_name: task.orchestration_name,
-						node_id: task.node_id,
-						...(task.display_name === undefined ? {} : { display_name: task.display_name }),
-						chain_name: task.chain_name,
-						attempt: task.attempt,
-						status: task.status,
-						started_at: task.started_at,
-					})),
+					holders,
+					other_project_holders: elsewhere,
 				});
 			} else {
 				wait({ state: "dispatching", since: null, slots: conn.info.slots });

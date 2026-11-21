@@ -398,7 +398,15 @@ export const QUEUE_WAIT = {
 	slotsFull: (slots: number) => `槽位占满，${slots} / ${slots}`,
 	dispatching: "正在派发",
 	holders: "占着槽位的任务",
-	/** 没设关注项、没有节点在 Agent 上执行、排队的节点还在等：概览的主指标一栏不写「没有执行中的节点」，写它们在等什么。 */
+	/** 占着槽位的任务写明是哪次运行：「准备环境场景（运行 5e2d1c7a）的 准备环境（a）」，同一场景触发两次互相抢槽位时分得开。 */
+	holderRun: (shortId: string) => `运行 ${shortId}`,
+	/** 同一台 Agent 上别的项目的任务占着槽位：只有个数，看不到别的项目的场景和运行。 */
+	otherProjects: (count: number, afterOwn: boolean) =>
+		`${afterOwn ? "另有" : ""}别的项目的任务 ${count} 个`,
+	/**
+	 * 没设关注项、没有节点在 Agent 上执行、排队的节点还在等：概览的主指标一栏不写「没有执行中的节点」，写它们都在排队。
+	 * 在等什么上面「进行中」那一行已经写了，这里不再写一遍（同一屏上同一件事只说一次）。
+	 */
 	allQueued: "节点都在排队，还没有开始执行：",
 } as const;
 

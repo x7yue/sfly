@@ -70,19 +70,19 @@ export async function queuedOffline(
 }
 
 /**
- * agent-a 只有 1 个槽位，被另一次运行的节点 a 占着（执行中）；这次运行的节点 a 在排队，10 秒前进的队。
+ * agent-a 只有 1 个槽位，被另一次运行（`holderRunId`）的节点 a 占着（执行中）；这次运行的节点 a 在排队，10 秒前进的队。
  */
 export async function queuedSlotsFull(
 	controlPlane: TestControlPlane,
 	connectAgent: E2eFixtures["connectAgent"],
 	clock: ManualClock,
-): Promise<{ runId: string }> {
+): Promise<{ runId: string; holderRunId: string }> {
 	await publishPackage(controlPlane);
 	const agent = await connectAgent({ name: "agent-a", slots: 1, installedPackages: INSTALLED });
 	const scenarioId = await createScenario(controlPlane, "准备环境场景", queueScenario("agent-a"));
-	await triggerRun(controlPlane, scenarioId);
+	const holderRunId = await triggerRun(controlPlane, scenarioId);
 	await agent.nextAssign();
 	const runId = await triggerRun(controlPlane, scenarioId);
 	clock.advance(10 * SECOND);
-	return { runId };
+	return { runId, holderRunId };
 }

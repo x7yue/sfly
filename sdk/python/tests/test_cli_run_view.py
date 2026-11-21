@@ -105,6 +105,7 @@ def _wait(**fields: object) -> dict[str, object]:
         "expires_at": None,
         "slots": None,
         "holders": [],
+        "other_project_holders": 0,
         **fields,
     }
 
@@ -141,7 +142,7 @@ def _holder(
     node: str, chain_name: str | None = None, display_name: str | None = None
 ) -> dict[str, object]:
     return {
-        "run_id": "00000000-0000-4000-8000-000000000001",
+        "run_id": "5e2d1c7a-0000-4000-8000-000000000001",
         "orchestration_id": "00000000-0000-4000-8000-0000000000f1",
         "orchestration_name": "撮合压测",
         "node_id": node,
@@ -164,8 +165,23 @@ def test_full_slots_name_the_tasks_holding_them_at_most_three() -> None:
     wait = _wait(state="slots_full", slots=5, holders=holders)
     assert queue_wait_text(wait, QUEUED_AT) == (
         "等 agent-a（槽位占满，5 / 5）· 排队 3m05s；占着槽位的任务："
-        "撮合压测 的 main:soak「浸泡」、撮合压测 的 监控:probe、撮合压测 的 main:report，还有 2 个"
+        "撮合压测（运行 5e2d1c7a）的 main:soak「浸泡」、撮合压测（运行 5e2d1c7a）的 监控:probe、"
+        "撮合压测（运行 5e2d1c7a）的 main:report，还有 2 个"
     )
+
+
+def test_slots_held_by_other_projects_are_only_a_count() -> None:
+    own = _wait(
+        state="slots_full",
+        slots=3,
+        holders=[_holder("soak", display_name="浸泡")],
+        other_project_holders=2,
+    )
+    assert queue_wait_text(own, QUEUED_AT).endswith(
+        "；占着槽位的任务：撮合压测（运行 5e2d1c7a）的 main:soak「浸泡」，另有别的项目的任务 2 个"
+    )
+    only_others = _wait(state="slots_full", slots=2, other_project_holders=2)
+    assert queue_wait_text(only_others, QUEUED_AT).endswith("；占着槽位的任务：别的项目的任务 2 个")
 
 
 def test_waiting_words_are_the_ones_the_console_shows() -> None:

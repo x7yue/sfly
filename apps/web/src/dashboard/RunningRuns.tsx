@@ -12,11 +12,14 @@ import { wallLayout } from "./wall-rules";
 export function RunningRuns({ runs }: { runs: readonly DashboardRunningRun[] }) {
 	const headingId = useId();
 	const layout = wallLayout(runs.length);
-	// 上下排着的运行块，线路的链名列用同一个宽度（按这些块里最长的链名），线路才从同一个横坐标开始。
-	const labelWidth = labelColumnWidth(
-		runs.flatMap((run) => lineChains(run.chains).map((chain) => chain.label)),
-	);
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+	// 上下排着的运行块，线路的链名列用同一个宽度（按这些块里最长的链名），线路才从同一个横坐标开始。
+	// 收起成一行的运行（看不到线路）不算：它的长子流程名不该让展开的块多出空白。
+	const labelWidth = labelColumnWidth(
+		runs
+			.filter((run) => !layout.compact || expanded.has(run.id))
+			.flatMap((run) => lineChains(run.chains).map((chain) => chain.label)),
+	);
 	// 展开、收起时整块被换掉：焦点放到换上来的那个元素上，不掉到页面上。
 	const [toggled, setToggled] = useState<string | null>(null);
 	const toggle = (id: string, open: boolean) => {
