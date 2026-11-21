@@ -96,20 +96,31 @@ export type WorkbenchTarget = z.infer<typeof WorkbenchTarget>;
  * 准备好工作台上的 skill，把 `text` 作为 pi 的 `prompt` 发出。
  *
  * - `turn`：会话里第几轮（从 1 起），由控制面给，事件流里这一轮的事件都带它；
- * - `env`：这一轮在工作台上执行命令时要加的环境变量，由控制面的一个函数生成，每一轮可以不同：竖切里是
- *   `SFLY_NICKNAME`（发起这句话的人的昵称）和 `AI_AGENT=pi`，#547 起加 `SFLY_API_TOKEN`（会话令牌）。
- *   它里面有令牌，不出现在任何事件和日志里。
+ * - `message_id`：这句话的 ID（`user_message.message_id`，控制面收到时分配）；
+ * - `session`：会话的标题和发起人（昵称）：助手服务不存业务状态，每一轮的提交说明（会话标题、会话 ID、第几轮）和提交的
+ *   作者（发起人）要用，#546；
+ * - `env`：这一轮在工作台上执行命令时要加的**普通**环境变量，由控制面的一个函数生成，每一轮可以不同：竖切里是
+ *   `SFLY_NICKNAME`（发起这句话的人的昵称）和 `AI_AGENT=pi`；
+ * - `secret_env`：要加的**保密**环境变量，#547 起里面有 `SFLY_API_TOKEN`（会话令牌）。工作台上的命令读得到它，模型一执行
+ *   列环境变量的命令，它就会进工具的输出和持久的 `tool_result`，所以单独成一份：**它不进任何事件、不进助手服务的日志；
+ *   助手服务在发出事件之前，要把事件里出现的这些值按值打码**（#540 的要求）。
  */
 export const PromptCommandBody = z.object({
 	turn: z.int().min(1),
+	message_id: z.uuid(),
 	text: SessionMessageText,
+	session: z.object({ title: z.string(), created_by: z.string() }),
 	workbench: WorkbenchTarget,
 	env: z.record(EnvName, z.string()),
+	secret_env: z.record(EnvName, z.string()),
 });
 export type PromptCommandBody = z.infer<typeof PromptCommandBody>;
 
-/** `POST /sessions/:id/steer`：插话，助手服务发 pi 的 `steer`。 */
-export const SteerCommandBody = z.object({ text: SessionMessageText });
+/**
+ * `POST /sessions/:id/steer`：插话，助手服务发 pi 的 `steer`。`message_id` 是这句话的 ID（`user_message.message_id`）：
+ * 助手服务在 `steer_queue` 里原样带回它，页面不靠文字对应。
+ */
+export const SteerCommandBody = z.object({ message_id: z.uuid(), text: SessionMessageText });
 export type SteerCommandBody = z.infer<typeof SteerCommandBody>;
 
 /**
@@ -161,7 +172,8 @@ export type AssistantStreamHello = z.infer<typeof AssistantStreamHello>;
 /**
  * 事件流里的一条事件记录（NDJSON 的一行）：`seq` 是助手服务内递增的序号，**只有持久的事件有**
  * （{@link PERSISTED_SESSION_EVENT_TYPES}：持久的必须有，不持久的不能有；它不是会话内序号，会话内序号由控制面
- * 落库时给）；`turn` 是这个事件属于哪一轮。
+ * 落库时给）；`turn` 是这个事件属于哪一轮；`at` 是助手服务产生这个事件的时间：控制面原样存成持久事件的 `at`
+ * （不是落库的时间，所以控制面重启后补收的事件时间也对）。两个容器通常在同一台主机上，时钟的偏差接受。
  */
 export const AssistantStreamRecord = z
 	.object({
@@ -169,6 +181,7 @@ export const AssistantStreamRecord = z
 		seq: z.int().min(1).optional(),
 		session_id: SessionId,
 		turn: z.int().min(1),
+		at: Timestamp,
 		event: AssistantEvent,
 	})
 	.superRefine((record, ctx) => {
@@ -197,11 +210,13 @@ export type AssistantVersions = z.infer<typeof AssistantVersions>;
 
 /**
  * 助手服务看到的模型：配没配（`configured`）、连不连得上（`reachable`，没有配或还没检查过时为 null）、
- * 上次检查的时间和原因（`reason` 是一句话，`error_class` 是它按什么分；没有检查过或没有问题时都为 null）。
- * 模型的检查和这些字段的取值由 #548 做。
+ * 上次检查的时间和原因（`reason` 是一句话，`error_class` 是它按什么分；没有检查过或没有问题时都为 null），
+ * 连的是哪个端点（`endpoint`：主机和端口，没有配时为 null；**只给主机和端口，不给路径和密钥**，就绪状态里
+ * 显示连的是哪）。模型的检查和这些字段的取值由 #548 做。
  */
 export const AssistantModelHealth = z.object({
 	configured: z.boolean(),
+	endpoint: z.object({ host: z.string().min(1), port: z.int().min(1).max(65535) }).nullable(),
 	reachable: z.boolean().nullable(),
 	checked_at: Timestamp.nullable(),
 	reason: z.string().nullable(),

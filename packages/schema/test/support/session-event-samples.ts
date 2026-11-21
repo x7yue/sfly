@@ -1,5 +1,8 @@
 import { PERSISTED_SESSION_EVENT_TYPES, type SessionEventBody } from "../../src/index.js";
 
+/** 用户每一句话的 ID（控制面收到时分配）。 */
+export const messageId = (n: number) => `5d1c0a7e-3b2f-4c68-9a41-00000000000${n}`;
+
 /** 一次模型调用或一轮合计的 token。 */
 export const usage = { input: 1200, output: 80, cache_read: 900, cache_write: 0 };
 
@@ -27,6 +30,7 @@ const retryNotice = {
 	message: "模型限流，正在重试",
 	attempt: 1,
 	max_attempts: 3,
+	retry_delay_ms: 2_000,
 	error_class: "rate_limit",
 } as const;
 
@@ -36,6 +40,7 @@ export const eventSamples: readonly EventSample[] = [
 		name: "user_message",
 		body: {
 			type: "user_message",
+			message_id: messageId(1),
 			text: "给 http_check 加一个超时参数",
 			steer: false,
 			author: "alice",
@@ -48,6 +53,7 @@ export const eventSamples: readonly EventSample[] = [
 		name: "user_message（插话，有用户 ID）",
 		body: {
 			type: "user_message",
+			message_id: messageId(2),
 			text: "先别改测试",
 			steer: true,
 			author: "alice",
@@ -67,7 +73,11 @@ export const eventSamples: readonly EventSample[] = [
 		body: {
 			type: "turn_queued",
 			position: 1,
-			waiting_for: { session_id: "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21", title: "修复登录页" },
+			waiting_for: {
+				session_id: "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21",
+				title: "修复登录页",
+				created_by: "bob",
+			},
 		},
 		optional: [],
 		inAssistantStream: false,
@@ -92,7 +102,7 @@ export const eventSamples: readonly EventSample[] = [
 	},
 	{
 		name: "tool_call",
-		body: { type: "tool_call", call_id: "call_1", tool: "bash", title: "sfly package list" },
+		body: { type: "tool_call", call_id: "call_1", tool: "command", title: "sfly package list" },
 		optional: [],
 		inAssistantStream: true,
 	},
@@ -132,44 +142,52 @@ export const eventSamples: readonly EventSample[] = [
 	},
 	{
 		name: "steer_queue",
-		body: { type: "steer_queue", texts: ["先别改测试", "再加一条日志"] },
+		body: {
+			type: "steer_queue",
+			messages: [
+				{ message_id: messageId(2), text: "先别改测试" },
+				// 连发两句相同的话：靠 message_id 分得清。
+				{ message_id: messageId(3), text: "再加一条日志" },
+				{ message_id: messageId(4), text: "再加一条日志" },
+			],
+		},
 		optional: [],
 		inAssistantStream: true,
 	},
 	{
 		name: "notice：retry",
 		body: retryNotice,
-		optional: ["attempt", "max_attempts", "error_class"],
+		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: true,
 	},
 	{
 		name: "notice：retry_end",
 		body: { type: "notice", kind: "retry_end", message: "重试成功" },
-		optional: ["attempt", "max_attempts", "error_class"],
+		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: true,
 	},
 	{
 		name: "notice：compaction",
 		body: { type: "notice", kind: "compaction", message: "上下文太长，已经压缩" },
-		optional: ["attempt", "max_attempts", "error_class"],
+		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: true,
 	},
 	{
 		name: "notice：steer_dropped",
 		body: { type: "notice", kind: "steer_dropped", message: "停止时有 1 条插话没有送到" },
-		optional: ["attempt", "max_attempts", "error_class"],
+		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: true,
 	},
 	{
 		name: "notice：context_reset",
 		body: { type: "notice", kind: "context_reset", message: "接不上之前的上下文，换成了一段摘要" },
-		optional: ["attempt", "max_attempts", "error_class"],
+		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: true,
 	},
 	{
 		name: "notice：queue_cancelled（控制面产生）",
 		body: { type: "notice", kind: "queue_cancelled", message: "停止时排队中的话没有交给助手" },
-		optional: ["attempt", "max_attempts", "error_class"],
+		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: false,
 	},
 	{
@@ -179,7 +197,7 @@ export const eventSamples: readonly EventSample[] = [
 			kind: "events_lost",
 			message: "和助手服务断开太久，这一段过程没有记下",
 		},
-		optional: ["attempt", "max_attempts", "error_class"],
+		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: false,
 	},
 	{
@@ -194,7 +212,7 @@ export const eventSamples: readonly EventSample[] = [
 			duration_ms: 84_000,
 			usage,
 		},
-		optional: ["steps", "model_calls", "usage", "error_class"],
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
 		inAssistantStream: true,
 	},
 	{
@@ -209,7 +227,7 @@ export const eventSamples: readonly EventSample[] = [
 			duration_ms: 9_000,
 			usage,
 		},
-		optional: ["steps", "model_calls", "usage", "error_class"],
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
 		inAssistantStream: true,
 	},
 	{
@@ -218,13 +236,30 @@ export const eventSamples: readonly EventSample[] = [
 			type: "turn_end",
 			turn: 3,
 			outcome: "limit",
-			reason: "一轮最多 40 次工具调用",
+			reason: "一轮最多 40 次模型调用",
 			steps: 40,
-			model_calls: 41,
+			model_calls: 40,
 			duration_ms: 300_000,
 			usage,
+			limit_kind: "model_calls",
 		},
-		optional: ["steps", "model_calls", "usage", "error_class"],
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
+		inAssistantStream: true,
+	},
+	{
+		name: "turn_end：limit（用时）",
+		body: {
+			type: "turn_end",
+			turn: 3,
+			outcome: "limit",
+			reason: "一轮最多 20 分钟",
+			steps: 25,
+			model_calls: 26,
+			duration_ms: 1_200_000,
+			usage,
+			limit_kind: "duration",
+		},
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
 		inAssistantStream: true,
 	},
 	{
@@ -240,7 +275,7 @@ export const eventSamples: readonly EventSample[] = [
 			usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
 			error_class: "auth",
 		},
-		optional: ["steps", "model_calls", "usage", "error_class"],
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
 		inAssistantStream: true,
 	},
 	{
@@ -255,7 +290,7 @@ export const eventSamples: readonly EventSample[] = [
 			duration_ms: 31_000,
 			usage,
 		},
-		optional: ["steps", "model_calls", "usage", "error_class"],
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
 		inAssistantStream: true,
 	},
 	{
@@ -267,7 +302,7 @@ export const eventSamples: readonly EventSample[] = [
 			reason: "助手服务重启了",
 			duration_ms: 31_000,
 		},
-		optional: ["steps", "model_calls", "usage", "error_class"],
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
 		inAssistantStream: true,
 	},
 	{
@@ -282,7 +317,7 @@ export const eventSamples: readonly EventSample[] = [
 			duration_ms: 20_000,
 			usage,
 		},
-		optional: ["steps", "model_calls", "usage", "error_class"],
+		optional: ["steps", "model_calls", "usage", "limit_kind", "error_class"],
 		inAssistantStream: true,
 	},
 	{
@@ -290,6 +325,7 @@ export const eventSamples: readonly EventSample[] = [
 		body: {
 			type: "platform",
 			kind: "commit",
+			turn: 2,
 			hash: "3f1c2ab9d0e4",
 			files: [
 				{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
@@ -306,6 +342,7 @@ export const eventSamples: readonly EventSample[] = [
 		body: {
 			type: "platform",
 			kind: "scenario_version",
+			turn: 2,
 			scenario_id: "6a1e4f3c-9b7d-4e58-a2c1-5d0f8e7b3a96",
 			name: "接口巡检",
 			version: 3,
@@ -318,6 +355,7 @@ export const eventSamples: readonly EventSample[] = [
 		body: {
 			type: "platform",
 			kind: "run",
+			turn: 2,
 			run_id: "e5b8a0d2-4c36-4f19-8b7a-1d2c3e4f5a6b",
 			scenario_name: "接口巡检",
 		},
@@ -338,11 +376,12 @@ export const eventSamples: readonly EventSample[] = [
 			partial_text: "我先看一下",
 			running_tool: {
 				call_id: "call_3",
-				tool: "bash",
+				tool: "command",
 				title: "sfly run start 接口巡检",
 				output: "…\n",
 			},
-			steer_queue: ["先别改测试"],
+			steer_queue: [{ message_id: messageId(2), text: "先别改测试" }],
+			waiting_for: null,
 		},
 		optional: [],
 		inAssistantStream: false,
@@ -355,6 +394,24 @@ export const eventSamples: readonly EventSample[] = [
 			partial_text: "",
 			running_tool: null,
 			steer_queue: [],
+			waiting_for: null,
+		},
+		optional: [],
+		inAssistantStream: false,
+	},
+	{
+		name: "snapshot（排队中，在等谁）",
+		body: {
+			type: "snapshot",
+			status: "queued",
+			partial_text: "",
+			running_tool: null,
+			steer_queue: [],
+			waiting_for: {
+				session_id: "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21",
+				title: "修复登录页",
+				created_by: "bob",
+			},
 		},
 		optional: [],
 		inAssistantStream: false,

@@ -18,3 +18,11 @@ type Wrapped = import(
 	"@earendil-works/pi-coding-agent"
 ).AgentSession;
 export type { PiModule, Wrapped };
+
+import { createRequire } from "node:module";
+const viaCreateRequire = createRequire(import.meta.url)("@earendil-works/pi-coding-agent");
+const resolved = require.resolve("@earendil-works/pi-ai");
+const viaModule = module.require("@earendil-works/pi-ai");
+const metaResolved = import.meta.resolve("@earendil-works/pi-ai");
+import legacy = require("@earendil-works/pi-ai");
+console.log(viaCreateRequire, resolved, viaModule, metaResolved, legacy);

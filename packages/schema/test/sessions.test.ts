@@ -23,6 +23,7 @@ import {
 	SessionTool,
 	SessionView,
 	sessionEventSchemas,
+	TurnLimit,
 	TurnOutcome,
 	toJsonSchema,
 } from "../src/index.js";
@@ -47,7 +48,7 @@ function typesOf(union: { options: readonly unknown[] }): string[] {
 }
 
 const sessionId = "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21";
-const readyNow = { ready: true, problems: [] };
+const readyNow = { ready: true, problems: [], workbench: "workbench-default" };
 const listItem = {
 	id: sessionId,
 	title: "给 http_check 加超时",
@@ -213,7 +214,8 @@ describe("会话事件", () => {
 			"context_overflow",
 			"other",
 		]);
-		expect(SessionTool.options).toEqual(["read", "write", "edit", "bash"]);
+		expect(SessionTool.options).toEqual(["read", "write", "edit", "command"]);
+		expect(TurnLimit.options).toEqual(["model_calls", "duration"]);
 	});
 
 	it("样例覆盖每个 outcome、notice kind、platform kind，error_class 和工具各取值都能过 schema", () => {
@@ -322,11 +324,12 @@ describe("会话接口的类型", () => {
 			"project_busy",
 			"session_queued",
 			"session_ended",
+			"session_predates_login",
 		]);
 	});
 
 	it("会话视图：列表项加项目和就绪状态；状态、排队位置、上一轮的结局", () => {
-		const view = { ...listItem, project: "default", readiness: readyNow };
+		const view = { ...listItem, project: "default", readiness: readyNow, waiting_for: null };
 		expect(SessionView.parse(view)).toEqual(view);
 		for (const status of SessionStatus.options) {
 			expect(SessionView.safeParse({ ...view, status }).success).toBe(true);
@@ -347,20 +350,69 @@ describe("会话接口的类型", () => {
 		expect(SessionView.safeParse(withoutReadiness).success).toBe(false);
 	});
 
+	it("排队中在等谁：会话、标题、发起人；不在排队时是 null，不能缺", () => {
+		const view = { ...listItem, project: "default", readiness: readyNow, waiting_for: null };
+		const waiting = {
+			session_id: "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e22",
+			title: "修复登录页",
+			created_by: "bob",
+		};
+		const queued = { ...view, status: "queued", queue_position: 2, waiting_for: waiting };
+		expect(SessionView.parse(queued)).toEqual(queued);
+		for (const key of Object.keys(waiting)) {
+			const broken: Record<string, unknown> = { ...waiting };
+			delete broken[key];
+			expect(SessionView.safeParse({ ...queued, waiting_for: broken }).success, key).toBe(false);
+		}
+		expect(
+			SessionView.safeParse({ ...queued, waiting_for: { ...waiting, session_id: "x" } }).success,
+		).toBe(false);
+		const { waiting_for: _waitingFor, ...withoutWaiting } = view;
+		expect(SessionView.safeParse(withoutWaiting).success).toBe(false);
+	});
+
+	it("用户的每一句话有自己的 ID（UUID）：user_message 和插话队列里的条目都带它", () => {
+		const message = eventSamples.find((s) => s.name === "user_message")?.body;
+		const steerQueue = eventSamples.find((s) => s.body.type === "steer_queue")?.body;
+		expect(SessionEventBody.safeParse({ ...message, message_id: "m1" }).success).toBe(false);
+		expect(
+			SessionEventBody.safeParse({ ...steerQueue, messages: [{ text: "只有文字" }] }).success,
+		).toBe(false);
+		expect(
+			SessionEventBody.safeParse({ ...steerQueue, messages: [{ message_id: "m1", text: "x" }] })
+				.success,
+		).toBe(false);
+	});
+
+	it("turn_end 到了上限时说明是哪一种上限；notice 的重试带多久之后", () => {
+		const limits = eventSamples.flatMap((s) =>
+			s.body.type === "turn_end" && s.body.outcome === "limit" ? [s.body.limit_kind] : [],
+		);
+		expect(new Set(limits)).toEqual(new Set(TurnLimit.options));
+		const turnEnd = eventSamples.find((s) => s.name === "turn_end：limit（用时）")?.body;
+		expect(SessionEventBody.safeParse({ ...turnEnd, limit_kind: "tokens" }).success).toBe(false);
+		const retry = eventSamples.find((s) => s.name === "notice：retry")?.body;
+		expect(SessionEventBody.safeParse({ ...retry, retry_delay_ms: -1 }).success).toBe(false);
+	});
+
 	it("就绪状态：每种问题都能表达，问题要写一句话", () => {
 		for (const kind of ReadinessProblemKind.options) {
-			const readiness = { ready: false, problems: [{ kind, message: "…" }] };
+			const readiness = { ready: false, problems: [{ kind, message: "…" }], workbench: null };
 			expect(SessionListResponse.safeParse({ readiness, sessions: [] }).success).toBe(true);
 		}
 		expect(
 			SessionListResponse.safeParse({
-				readiness: { ready: false, problems: [{ kind: "workbench_offline" }] },
+				readiness: { ready: false, problems: [{ kind: "workbench_offline" }], workbench: "w" },
 				sessions: [],
 			}).success,
 		).toBe(false);
 		expect(
 			SessionListResponse.safeParse({
-				readiness: { ready: false, problems: [{ kind: "disk_full", message: "…" }] },
+				readiness: {
+					ready: false,
+					problems: [{ kind: "disk_full", message: "…" }],
+					workbench: null,
+				},
 				sessions: [],
 			}).success,
 		).toBe(false);
@@ -374,10 +426,12 @@ describe("会话接口的类型", () => {
 		const problem = { kind: "workbench_offline", message: "工作台不在线" };
 		const check = (readiness: unknown) =>
 			SessionListResponse.safeParse({ readiness, sessions: [] }).success;
-		expect(check({ ready: true, problems: [] })).toBe(true);
-		expect(check({ ready: false, problems: [problem] })).toBe(true);
-		expect(check({ ready: true, problems: [problem] })).toBe(false);
-		expect(check({ ready: false, problems: [] })).toBe(false);
+		expect(check({ ready: true, problems: [], workbench: "w" })).toBe(true);
+		expect(check({ ready: false, problems: [problem], workbench: null })).toBe(true);
+		expect(check({ ready: true, problems: [problem], workbench: "w" })).toBe(false);
+		expect(check({ ready: false, problems: [], workbench: null })).toBe(false);
+		// 工作台的名字必须给（没有设置时是 null），不能缺。
+		expect(check({ ready: true, problems: [] })).toBe(false);
 	});
 
 	it("新建会话和发话：只有 text，非空、不能只有空白、有长度上限", () => {
@@ -395,7 +449,7 @@ describe("会话接口的类型", () => {
 	});
 
 	it("会话详情：最多一页持久事件，不存的事件放不进去", () => {
-		const view = { ...listItem, project: "default", readiness: readyNow };
+		const view = { ...listItem, project: "default", readiness: readyNow, waiting_for: null };
 		const event = { ...eventSamples[0]?.body, ...persistedStamp };
 		expect(
 			SessionDetailResponse.safeParse({ ...view, events: [event], has_more: false }).success,

@@ -42,19 +42,24 @@ export const SESSION_HISTORY_PAGE = 200;
 // 枚举
 // ---------------------------------------------------------------------------
 
-/** 助手能用的工具：读、写、编辑文件，执行命令。文件和命令都落在工作台上。 */
-export const SessionTool = z.enum(["read", "write", "edit", "bash"]);
+/**
+ * 助手能用的工具：读、写、编辑文件，执行命令（`command`）。文件和命令都落在工作台上。取值是平台的叫法，不是 pi 的工具名：
+ * 换 pi 或换嵌入方式时它不跟着变（助手服务把 pi 的工具名翻成它们）。
+ */
+export const SessionTool = z.enum(["read", "write", "edit", "command"]);
 export type SessionTool = z.infer<typeof SessionTool>;
 
 /**
  * 一轮（GLOSSARY「一轮」）的结局，`turn_end.outcome` 和会话的 `last_turn_outcome`：
  * - `completed` 完成：pi 报告 `agent_settled`；
  * - `stopped` 已停止：用户停止；
- * - `limit` 到了上限：一轮的工具调用或模型调用次数用完；
- * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`；
+ * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，{@link TurnLimit}；默认 40 次模型调用、
+ *   20 分钟，#540）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
  * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
  * - `failed` 其他错误。
- * 产生：#540 起（控制面补的 `interrupted` 是 #545，`model_unavailable` 的 `error_class` 是 #548）。
+ * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
+ * （助手服务同时在做的会话太多，进程数满了，#545）。
  */
 export const TurnOutcome = z.enum([
 	"completed",
@@ -66,9 +71,14 @@ export const TurnOutcome = z.enum([
 ]);
 export type TurnOutcome = z.infer<typeof TurnOutcome>;
 
+/** 一轮到了哪一种上限（`turn_end.limit_kind`，`outcome` 为 `limit` 时给出）：`model_calls` 模型调用次数，`duration` 用时。#540 起。 */
+export const TurnLimit = z.enum(["model_calls", "duration"]);
+export type TurnLimit = z.infer<typeof TurnLimit>;
+
 /**
  * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
- * `evals/assistant/aeval/classify.py` 的 `_INFRA`，由 #548 产生：
+ * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
+ * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
  * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
  * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
  */
@@ -151,7 +161,8 @@ export type ReadinessProblemKind = z.infer<typeof ReadinessProblemKind>;
  * - 503 `model_unavailable`：模型没有配置或连不上，新的一轮在开始之前被拒绝（#548）；
  * - 409 `turn_running`：这个会话有一轮在做时发话，409 `project_busy`：同一个项目另一个会话在做（竖切里有，
  *   #544 改成插话和排队，这两个码随之不再出现）；
- * - 409 `session_queued`：排队中再发话（#544）；409 `session_ended`：会话已结束。
+ * - 409 `session_queued`：排队中再发话（#544）；409 `session_ended`：会话已结束；
+ * - 409 `session_predates_login`：这个会话建于登录之前（没有发起人的用户），签发不了会话令牌，要新建一个会话（#547）。
  */
 export const SessionErrorCode = z.enum([
 	"assistant_not_configured",
@@ -161,6 +172,7 @@ export const SessionErrorCode = z.enum([
 	"project_busy",
 	"session_queued",
 	"session_ended",
+	"session_predates_login",
 ]);
 export type SessionErrorCode = z.infer<typeof SessionErrorCode>;
 
@@ -170,8 +182,10 @@ export type SessionErrorCode = z.infer<typeof SessionErrorCode>;
 
 /**
  * 会话事件的类型（`type`）。顺序按一轮里出现的先后。事件分两类：
- * - **持久**的，{@link PERSISTED_SESSION_EVENT_TYPES}：控制面落库时给一个会话内序号 `seq`（从 1 起）和时间 `at`，
- *   SSE 用 `seq` 作事件 ID，页面刷新后从库里读回；
+ * - **持久**的，{@link PERSISTED_SESSION_EVENT_TYPES}：控制面落库时给一个会话内序号 `seq`（从 1 起），另有时间 `at`：
+ *   **`at` 是事件产生的时间，不是落库的时间**——助手服务产生的事件由它盖时间（`AssistantStreamRecord.at`），控制面原样存；
+ *   控制面自己产生的（用户的话、平台记录、它补的 `turn_end`）用控制面的时钟。控制面重启后补收的事件，时间才不会整体偏后，
+ *   时间线上的先后和耗时才对。两个容器通常在同一台主机上，时钟的偏差接受。SSE 用 `seq` 作事件 ID，页面刷新后从库里读回；
  * - 其余只推不存：没有 `seq`，浏览器断线重连后用 `snapshot` 补上当时的状态。
  */
 export const SESSION_EVENT_TYPES = [
@@ -217,12 +231,14 @@ export const TokenUsage = z.object({
 export type TokenUsage = z.infer<typeof TokenUsage>;
 
 /**
- * 用户说了一句话。控制面收到这句话时产生。`steer` 为 true 是插话（助手正在做时发的，#544）。
+ * 用户说了一句话。控制面收到这句话时产生。`message_id` 是这句话自己的 ID（控制面收到时分配）：插话队列
+ * （{@link SteerQueueEvent}）和插话命令都带它，连发两句相同的话也分得清。`steer` 为 true 是插话（助手正在做时发的，#544）。
  * `author` 是说这句话的人的昵称，`author_user_id` 是他的用户 ID（#547 起有值，在那之前为 null）。
  * 持久。#541 起。
  */
 export const UserMessageEvent = z.object({
 	type: z.literal("user_message"),
+	message_id: z.uuid(),
 	text: z.string(),
 	steer: z.boolean(),
 	author: z.string(),
@@ -235,14 +251,23 @@ export const TurnStartedEvent = z.object({
 	turn: z.int().min(1),
 });
 
+/** 排队的会话在等谁：正在做的那个会话，它的标题和发起人（昵称）。 */
+export const WaitingFor = z.object({
+	session_id: SessionId,
+	title: z.string(),
+	created_by: z.string(),
+});
+export type WaitingFor = z.infer<typeof WaitingFor>;
+
 /**
  * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
- * `waiting_for` 是正在做的那个会话。不存（排队的状态记在会话的 `status` 和 `queue_position` 上）。#544 起。
+ * `waiting_for` 是正在做的那个会话。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
+ * （{@link SessionView}）和快照（{@link SnapshotEvent}）里，刷新页面后拿得回来。#544 起。
  */
 export const TurnQueuedEvent = z.object({
 	type: z.literal("turn_queued"),
 	position: z.int().min(1),
-	waiting_for: z.object({ session_id: SessionId, title: z.string() }),
+	waiting_for: WaitingFor,
 });
 
 /** 模型在思考（不带思考的内容）。助手服务产生，对应 pi 的 `thinking_start`、`thinking_delta`。不存。#540 起。 */
@@ -302,16 +327,26 @@ export const ToolResultEvent = z.object({
 	duration_ms: z.int().min(0),
 });
 
+/** 插话队列里的一条：用户这句话的 ID（`user_message.message_id`）和文字。 */
+export const SteerEntry = z.object({
+	message_id: z.uuid(),
+	text: z.string(),
+});
+export type SteerEntry = z.infer<typeof SteerEntry>;
+
 /**
- * 还没送到模型的插话，完整列表（每次变化都发一条，取代上一条）。助手服务产生，对应 pi 的 `queue_update` 的
- * `steering`。不存。#544 起。
+ * 还没送到模型的插话，完整列表（每次变化都发一条，取代上一条）：每条带自己的 `message_id`，不靠文字对应。
+ * 助手服务产生，对应 pi 的 `queue_update` 的 `steering`。不存。#544 起。
  */
 export const SteerQueueEvent = z.object({
 	type: z.literal("steer_queue"),
-	texts: z.array(z.string()),
+	messages: z.array(SteerEntry),
 });
 
-/** 提示给人看的一句话的公共部分，见 {@link NoticeKind}：重试才有 `attempt`、`max_attempts`、`error_class`。 */
+/**
+ * 提示给人看的一句话的公共部分，见 {@link NoticeKind}：重试才有 `attempt`、`max_attempts`、`retry_delay_ms`、
+ * `error_class`。
+ */
 const noticeFields = {
 	type: z.literal("notice"),
 	/** 给人看的一句话。 */
@@ -320,6 +355,8 @@ const noticeFields = {
 	attempt: z.int().min(1).optional(),
 	/** 最多重试几次；只有 `retry`。 */
 	max_attempts: z.int().min(1).optional(),
+	/** 多久（毫秒）之后重试；只有 `retry`。 */
+	retry_delay_ms: z.int().min(0).optional(),
 	/** 重试的原因按什么分；#548 起有值。 */
 	error_class: ErrorClass.optional(),
 };
@@ -337,7 +374,9 @@ export const AssistantNoticeEvent = z.object({ kind: AssistantNoticeKind, ...not
  * 一轮结束（对应 pi 的 `agent_settled`、pi 进程退出、到了上限、模型错误），结局见 {@link TurnOutcome}。
  * `reason` 是一句话；`steps` 是工具调用次数，`model_calls` 是模型调用次数，`usage` 是这一轮合计：
  * 控制面补的 `interrupted`（助手服务重启了，#545）拿不到这三项，不给。`duration_ms` 是这一轮用的时间。
- * `error_class` 在模型不可用时给出（#548）。助手服务产生，持久。#540 起。
+ * `limit_kind` 在 `outcome` 为 `limit` 时给出，是哪一种上限（{@link TurnLimit}），不靠 `reason` 的文字；
+ * `error_class` 在模型不可用时给出（#540 起，先写 `other`，#548 分细）。助手服务产生（控制面也会写 `interrupted`、
+ * `failed` 的，#545），持久。#540 起。
  */
 export const TurnEndEvent = z.object({
 	type: z.literal("turn_end"),
@@ -348,6 +387,7 @@ export const TurnEndEvent = z.object({
 	model_calls: z.int().min(0).optional(),
 	duration_ms: z.int().min(0),
 	usage: TokenUsage.optional(),
+	limit_kind: TurnLimit.optional(),
 	error_class: ErrorClass.optional(),
 });
 
@@ -361,30 +401,34 @@ export type CommitFile = z.infer<typeof CommitFile>;
 
 /**
  * 一轮结束时工作区的提交：提交号 `hash`、改了哪些文件、差异（超过 {@link SESSION_EVENT_LIMITS} 的
- * `commitDiffBytes` 只留头部，`truncated` 标出）。助手服务提交后发出。持久。#546 起。
+ * `commitDiffBytes` 只留头部，`truncated` 标出）。`turn` 是这个提交属于第几轮（被打断那一轮的补提交在下一轮的事件流里
+ * 发出，靠时间线上的位置推不准）。助手服务提交后发出。持久。#546 起。
  */
 export const PlatformCommitEvent = z.object({
 	type: z.literal("platform"),
 	kind: z.literal("commit"),
+	turn: z.int().min(1),
 	hash: z.string().min(1),
 	files: z.array(CommitFile),
 	diff: z.string(),
 	truncated: z.boolean(),
 });
 
-/** 助手保存了场景的一个版本。控制面在记下那条记录的同一个事务里写。持久。#547 起。 */
+/** 助手保存了场景的一个版本，`turn` 是第几轮。控制面在记下那条记录的同一个事务里写。持久。#547 起。 */
 export const PlatformScenarioVersionEvent = z.object({
 	type: z.literal("platform"),
 	kind: z.literal("scenario_version"),
+	turn: z.int().min(1),
 	scenario_id: z.uuid(),
 	name: z.string(),
 	version: z.int().min(1),
 });
 
-/** 助手触发了一次运行。控制面在记下那条记录的同一个事务里写。持久。#547 起。 */
+/** 助手触发了一次运行，`turn` 是第几轮。控制面在记下那条记录的同一个事务里写。持久。#547 起。 */
 export const PlatformRunEvent = z.object({
 	type: z.literal("platform"),
 	kind: z.literal("run"),
+	turn: z.int().min(1),
 	run_id: z.uuid(),
 	scenario_name: z.string(),
 });
@@ -414,14 +458,15 @@ export type RunningTool = z.infer<typeof RunningTool>;
 /**
  * 会话此刻的状态：控制面在浏览器刚连上事件流时，只发给这一条连接，让断线期间错过的增量不用补发
  * （`partial_text` 是正在输出的那条助手消息已有的文字，没有时为空字符串；`running_tool` 没有在跑的工具时为 null；
- * `steer_queue` 是还没送到模型的插话）。不存。#545 起。
+ * `steer_queue` 是还没送到模型的插话；`waiting_for` 是排队中在等谁，不在排队时为 null）。不存。#545 起（`waiting_for` #544）。
  */
 export const SnapshotEvent = z.object({
 	type: z.literal("snapshot"),
 	status: SessionStatus,
 	partial_text: z.string(),
 	running_tool: RunningTool.nullable(),
-	steer_queue: z.array(z.string()),
+	steer_queue: z.array(SteerEntry),
+	waiting_for: WaitingFor.nullable(),
 });
 
 /**
@@ -550,11 +595,15 @@ export const ReadinessProblem = z.object({
 });
 export type ReadinessProblem = z.infer<typeof ReadinessProblem>;
 
-/** 助手此刻能不能用：`ready` 为 true 时 `problems` 为空，否则列出全部原因。 */
+/**
+ * 助手此刻能不能用：`ready` 为 true 当且仅当 `problems` 为空，否则列出全部原因。`workbench` 是配置的工作台（Agent 的名字），
+ * 没有设置时为 null：页面据此写「可以用 · 工作台 X 在线」，工作台不在线时也能写出是哪一台。
+ */
 export const Readiness = z
 	.object({
 		ready: z.boolean(),
 		problems: z.array(ReadinessProblem),
+		workbench: z.string().nullable(),
 	})
 	.refine((r) => r.ready === (r.problems.length === 0), "ready 为 true 当且仅当没有 problems");
 export type Readiness = z.infer<typeof Readiness>;
@@ -576,14 +625,21 @@ export const SessionListItem = z.object({
 });
 export type SessionListItem = z.infer<typeof SessionListItem>;
 
-/** 一个会话：列表项的字段，加它所在的项目（标识）和此刻的就绪状态。 */
+/**
+ * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；
+ * `turn_queued` 不持久，刷新页面后靠它拿回在等谁，#544）。
+ */
 export const SessionView = SessionListItem.extend({
 	project: z.string(),
 	readiness: Readiness,
+	waiting_for: WaitingFor.nullable(),
 });
 export type SessionView = z.infer<typeof SessionView>;
 
-/** `GET /projects/:project/sessions`：助手此刻能不能用，和项目里的会话（最近活动在前）。 */
+/**
+ * `GET /projects/:project/sessions`：助手此刻能不能用，和项目里的会话：在做和排队中的在前，其余按最近活动倒序
+ * （#551 的写法；#544 之前没有排队，在做的至多一个）。
+ */
 export const SessionListResponse = z.object({
 	readiness: Readiness,
 	sessions: z.array(SessionListItem),

@@ -2,18 +2,33 @@ language js
 
 // pi（`@earendil-works/*`）只能被助手服务（apps/assistant）依赖（ADR 0027）：控制面、契约、页面只认平台自己的
 // 会话事件和助手服务协议（`@sfly/schema` 的 sessions.ts、assistant-protocol.ts），以后换 pi 的版本、换嵌入方式，
-// 只动 apps/assistant。拦的是各种引入写法：`import`（含 `import type`、副作用引入）、`export … from`、
-// 动态 `import()`、`require()`、类型里的 `import("…")`（含 `typeof import("…")`、跨行的写法）。
-// 例外只有一处：evals/assistant/remote-tools/（评测集臂 B 的原型扩展，它要装进 pi 里，只能引用 pi）；
-// 删除臂 B 时（#552）一起删掉这条例外。
+// 只动 apps/assistant。拦的是各种引入写法：`import`（含 `import type`、副作用引入、`import x = require()`）、
+// `export … from`、动态 `import()`、`require()`、`require.resolve()`、`module.require()`、`import.meta.resolve()`、
+// `createRequire(…)("…")`、类型里的 `import("…")`（含 `typeof import("…")`、跨行的写法）。
+//
+// 拦不住的（规则只看源码里写出来的模块名）：拼出来的包名（`require("@earendil-" + "works/…")`）、先把 `createRequire(…)`
+// 存进变量再调用、三斜线指令（`/// <reference types="…" />`，注释不在语法树里）、`package.json` 里的依赖。后两样由
+// apps/server/test/pi-boundary.test.ts 检查。
+//
+// 例外：apps/assistant/，以及 evals/assistant/remote-tools/（评测集臂 B 的原型扩展，它要装进 pi 里，只能引用 pi；
+// 删除臂 B 时，#552，一起删掉这条例外）。`$filename` 是绝对路径，规则不知道仓库根在哪，所以例外不能直接锚在仓库根上：
+// 先按目录名认，再把「落在另一个工作区里面的同名目录」（apps/server/src/apps/assistant/…、packages/x/…/apps/assistant/…）
+// 排除掉，那些不是例外。
 or {
 	JsModuleSource() as $span where { $span <: r"[\"'`]@earendil-works/.*" },
 	`import($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
 	`require($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
+	`require.resolve($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
+	`module.require($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
+	`import.meta.resolve($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
+	`createRequire($_)($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
 	TsImportType() as $span where {
 		$span <: r"(?s)(?:typeof\s+)?import\(\s*[\"'`]@earendil-works/.*"
 	}
 } where {
-	$filename <: not r"(?:.*/)?(?:apps/assistant|evals/assistant/remote-tools)/.*",
+	or {
+		$filename <: not r"(?:.*/)?(?:apps/assistant|evals/assistant/remote-tools)/.*",
+		$filename <: r".*/(?:apps/(?:server|web)|packages/[^/]+|evals/assistant/[^/]+)/(?:.*/)?(?:apps/assistant|evals/assistant/remote-tools)/.*"
+	},
 	register_diagnostic(span=$span, message="pi（@earendil-works/*）只能在 apps/assistant 里引入（ADR 0027）：控制面、契约、页面只认平台自己的会话事件和助手服务协议（@sfly/schema 的 sessions.ts、assistant-protocol.ts），不引用 pi 的任何类型或函数，这样换 pi 的版本或嵌入方式只动 apps/assistant。需要 pi 的东西，放进助手服务，再翻成平台的事件。")
 }

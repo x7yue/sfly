@@ -18,21 +18,26 @@ import {
 import { eventSamples } from "./support/session-event-samples.js";
 
 const sessionId = "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21";
+const AT = "2026-11-21T08:00:05.000Z";
 const prompt = {
 	turn: 1,
+	message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000001",
 	text: "给 http_check 加一个超时参数",
+	session: { title: "给 http_check 加超时", created_by: "alice" },
 	workbench: {
 		name: "workbench-default",
 		address: "http://workbench:7000",
 		workdir: "/work/default",
 	},
 	env: { SFLY_NICKNAME: "alice", AI_AGENT: "pi" },
+	secret_env: { SFLY_API_TOKEN: "sfly_ses_0123456789abcdef" },
 };
 const health = {
 	epoch: "k3v9x2",
 	versions: { assistant: "0.7.0", pi: "0.74.0" },
 	model: {
 		configured: true,
+		endpoint: { host: "models.internal", port: 8443 },
 		reachable: true,
 		checked_at: "2026-11-21T08:00:00.000Z",
 		reason: null,
@@ -94,9 +99,9 @@ describe("助手服务产生的事件（AssistantEvent）", () => {
 });
 
 describe("命令", () => {
-	it("开始一轮：第几轮、话、工作台、环境变量", () => {
+	it("开始一轮：第几轮、这句话的 ID、话、会话的标题和发起人、工作台、普通和保密的环境变量", () => {
 		expect(PromptCommandBody.parse(prompt)).toEqual(prompt);
-		expect(PromptCommandBody.safeParse({ ...prompt, env: {} }).success).toBe(true);
+		expect(PromptCommandBody.safeParse({ ...prompt, env: {}, secret_env: {} }).success).toBe(true);
 	});
 
 	it("开始一轮：缺字段、轮次不对、话为空或太长、工作台缺字段、环境变量名不合法都被拒绝", () => {
@@ -119,14 +124,32 @@ describe("命令", () => {
 				`工作台缺了 ${key}`,
 			).toBe(false);
 		}
-		expect(PromptCommandBody.safeParse({ ...prompt, env: { "1BAD": "x" } }).success).toBe(false);
-		expect(PromptCommandBody.safeParse({ ...prompt, env: { "A B": "x" } }).success).toBe(false);
-		expect(PromptCommandBody.safeParse({ ...prompt, env: { A: 1 } }).success).toBe(false);
+		expect(PromptCommandBody.safeParse({ ...prompt, message_id: "m1" }).success).toBe(false);
+		for (const key of Object.keys(prompt.session)) {
+			const session: Record<string, unknown> = { ...prompt.session };
+			delete session[key];
+			expect(PromptCommandBody.safeParse({ ...prompt, session }).success, `会话缺了 ${key}`).toBe(
+				false,
+			);
+		}
+		// 普通的和保密的环境变量都按环境变量名和字符串值检查。
+		for (const field of ["env", "secret_env"]) {
+			expect(PromptCommandBody.safeParse({ ...prompt, [field]: { "1BAD": "x" } }).success).toBe(
+				false,
+			);
+			expect(PromptCommandBody.safeParse({ ...prompt, [field]: { "A B": "x" } }).success).toBe(
+				false,
+			);
+			expect(PromptCommandBody.safeParse({ ...prompt, [field]: { A: 1 } }).success).toBe(false);
+		}
 	});
 
-	it("插话：只有 text，非空", () => {
-		expect(SteerCommandBody.parse({ text: "先别改测试" })).toEqual({ text: "先别改测试" });
-		expect(SteerCommandBody.safeParse({ text: "" }).success).toBe(false);
+	it("插话：这句话的 ID 和文字，文字非空", () => {
+		const steer = { message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000002", text: "先别改测试" };
+		expect(SteerCommandBody.parse(steer)).toEqual(steer);
+		expect(SteerCommandBody.safeParse({ ...steer, text: "" }).success).toBe(false);
+		expect(SteerCommandBody.safeParse({ text: "先别改测试" }).success).toBe(false);
+		expect(SteerCommandBody.safeParse({ ...steer, message_id: "m2" }).success).toBe(false);
 		expect(SteerCommandBody.safeParse({}).success).toBe(false);
 	});
 
@@ -163,7 +186,8 @@ describe("事件流", () => {
 		seq: 12,
 		session_id: sessionId,
 		turn: 2,
-		event: { type: "tool_call", call_id: "call_1", tool: "bash", title: "ls" },
+		at: AT,
+		event: { type: "tool_call", call_id: "call_1", tool: "command", title: "ls" },
 	};
 
 	it("第一行是 hello，之后是事件记录；两种都能认出来", () => {
@@ -181,20 +205,29 @@ describe("事件流", () => {
 	});
 
 	it("事件记录：缺字段、轮次不对、会话 ID 不是 UUID、事件是控制面才有的类型都被拒绝", () => {
-		for (const key of ["epoch", "session_id", "turn", "event"]) {
+		for (const key of ["epoch", "session_id", "turn", "at", "event"]) {
 			const without: Record<string, unknown> = { ...record };
 			delete without[key];
 			expect(AssistantStreamRecord.safeParse(without).success, `缺了 ${key}`).toBe(false);
 		}
 		expect(AssistantStreamRecord.safeParse({ ...record, turn: 0 }).success).toBe(false);
 		expect(AssistantStreamRecord.safeParse({ ...record, seq: 0 }).success).toBe(false);
+		// at 是产生事件的时间（控制面原样存成持久事件的 at）：要是时间。
+		expect(AssistantStreamRecord.safeParse({ ...record, at: "昨天" }).success).toBe(false);
 		expect(AssistantStreamRecord.safeParse({ ...record, session_id: "../../etc" }).success).toBe(
 			false,
 		);
 		expect(
 			AssistantStreamRecord.safeParse({
 				...record,
-				event: { type: "user_message", text: "x", steer: false, author: "a", author_user_id: null },
+				event: {
+					type: "user_message",
+					message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000001",
+					text: "x",
+					steer: false,
+					author: "a",
+					author_user_id: null,
+				},
 			}).success,
 		).toBe(false);
 		expect(AssistantStreamLine.safeParse({ type: "hello", epoch: "k3v9x2" }).success).toBe(false);
@@ -204,7 +237,7 @@ describe("事件流", () => {
 	});
 
 	it("seq 只有持久的事件有：持久的必须带，不持久的不能带", () => {
-		const base = { epoch: "k3v9x2", session_id: sessionId, turn: 2 };
+		const base = { epoch: "k3v9x2", session_id: sessionId, turn: 2, at: AT };
 		for (const sample of eventSamples.filter((s) => s.inAssistantStream)) {
 			const persisted = (PERSISTED_SESSION_EVENT_TYPES as readonly string[]).includes(
 				sample.body.type,
@@ -247,6 +280,7 @@ describe("健康检查", () => {
 				...health,
 				model: {
 					configured: false,
+					endpoint: null,
 					reachable: null,
 					checked_at: null,
 					reason: null,
