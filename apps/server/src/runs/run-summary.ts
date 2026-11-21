@@ -78,7 +78,7 @@ export function runStateSource(read: RunReadFull): RunStateSource {
 					attempt: attempt.attempt,
 					started_at: iso(attempt.startedAt),
 					ended_at: iso(attempt.endedAt),
-					// 出错的位置在任务上（#471）：读取结果里有它之后，把它也交给投影（`location`）。
+					// 错误里带着出错的位置（`error.location`，存在任务上，#471）：原样交给投影。
 					error: attempt.error,
 				})),
 			})),
@@ -197,8 +197,7 @@ function failedTaskView(
 					kind: error.kind,
 					headline: errorHeadline(error.message),
 					detail: error.message,
-					// 出错的位置在任务上（#471）：读取结果里有它之后改成读真实的值。
-					location: null,
+					location: error.location,
 				}
 			: null,
 		logs: (attempt && tails.get(attempt.taskId)) || null,

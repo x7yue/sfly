@@ -42,7 +42,7 @@ export const RunStateError = z.object({
 	message_truncated: z.boolean(),
 	/**
 	 * 节点代码里出错的位置（一行文字，格式和任务被终止时的那一行相同：`模块.函数 第 N 行`）；没有时为 null。
-	 * 位置由执行器算出、存在任务上（#471）；那一项合入之前读取结果里没有它，总是 null。
+	 * 位置由执行器算出、存在任务上（#471）；超时、Agent 失联、旧版本上报的和升级之前的任务没有位置，为 null。
 	 */
 	location: z.string().nullable(),
 });

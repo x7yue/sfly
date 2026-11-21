@@ -19,7 +19,7 @@ export interface RunStateSourceAttempt {
 	ended_at: string | null;
 	/**
 	 * 这次尝试的错误（错误类型和错误信息原文：异常信息加堆栈，已打码）；没有时为 null。`location` 是节点代码里出错的位置
-	 * （任务上的，#471）：读取结果里还没有它时不给。
+	 * （存在任务上的，#471）：没有位置时为 null，也可以不给。
 	 */
 	error: { kind: string; message: string; location?: string | null } | null;
 }

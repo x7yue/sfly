@@ -176,6 +176,8 @@ describe("运行摘要", () => {
 				kind: "node_error",
 				headline: "ValueError: 余额不足",
 				detail: `ValueError: 余额不足\n\n${STACK}`,
+				// 没有出错位置（执行器没报）：null，不是缺这个键。
+				location: null,
 			},
 			logs: { earlier: false, expired: false },
 		});
@@ -183,6 +185,50 @@ describe("运行摘要", () => {
 			[1, "info", "开始检查"],
 			[2, "info", "余额 0"],
 		]);
+	});
+
+	it("节点失败带出错位置：节点的 error 和失败的任务的 error 里都是任务上的真实值，每次尝试各是各的", async () => {
+		const runId = await start(flow([echo("a", { retries: 1 })]));
+		const first = await agent.nextAssign();
+		await agent.fail(
+			first,
+			`ValueError: 余额不足\n\n${STACK}`,
+			ErrorKind.NODE_ERROR,
+			undefined,
+			"shop.orders.place 第 42 行",
+		);
+		const second = await agent.nextAssign();
+		await agent.fail(second, "第二次：Agent 失联", ErrorKind.AGENT_LOST);
+
+		const report = await summary(runId);
+		expect(report.failed_tasks.map((t) => [t.attempt, t.error?.kind, t.error?.location])).toEqual([
+			[1, "node_error", "shop.orders.place 第 42 行"],
+			[2, "agent_lost", null],
+		]);
+		// 节点上的错误是最近一次失败的尝试的：这次没有位置。
+		expect(node(report, "a")).toMatchObject({ error: { kind: "agent_lost", location: null } });
+	});
+
+	it("最后一次尝试带出错位置时，节点的 error.location 就是它；原样出现在 JSON 里（不是缺键）", async () => {
+		const runId = await start(flow([echo("a")]));
+		await agent.fail(
+			await agent.nextAssign(),
+			`ValueError: 余额不足\n\n${STACK}`,
+			ErrorKind.NODE_ERROR,
+			undefined,
+			"shop.orders.place 第 42 行",
+		);
+
+		const report = runSummaryApi.summary.response.parse(
+			JSON.parse(await (await summaryRes(runId)).text()),
+		);
+		expect(node(report, "a")).toMatchObject({
+			error: { headline: "ValueError: 余额不足", location: "shop.orders.place 第 42 行" },
+		});
+		expect(report.failed_tasks[0]?.error).toMatchObject({
+			headline: "ValueError: 余额不足",
+			location: "shop.orders.place 第 42 行",
+		});
 	});
 
 	it("重试之后成功的节点：失败的那几次也列在失败的任务里，运行结果是成功", async () => {

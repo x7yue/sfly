@@ -236,6 +236,7 @@ def test_the_summary_keeps_the_keys_the_json_output_always_had() -> None:
             "error": {
                 "kind": "node_error",
                 "message": "ValueError: 库存不足\n\nTraceback (most recent call last):\n  x",
+                "location": None,
             },
             "logs": [
                 {
@@ -290,8 +291,11 @@ def test_the_error_location_is_written_under_the_reason_when_there_is_one() -> N
         "    错误：node_error：ValueError: 库存不足\n    出错位置：shop.orders.place 第 42 行\n"
         in text
     )
-    without = summary_of(CLIENT, report())["failed"][0]["error"]
-    assert "location" not in without
+    # `--json` 里 `error.location` 总是在：有位置是字符串，没有是 null（和运行视图的 error 一样）。
+    assert summary_of(CLIENT, report(failed_tasks=[task]))["failed"][0]["error"]["location"] == (
+        "shop.orders.place 第 42 行"
+    )
+    assert summary_of(CLIENT, report())["failed"][0]["error"]["location"] is None
 
 
 def test_more_failed_tasks_than_listed_say_how_many_and_how_to_read_them() -> None:

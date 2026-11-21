@@ -184,7 +184,7 @@ def _failed_task(run_id: str, task: Mapping[str, Any]) -> dict[str, Any]:
             else {
                 "kind": error["kind"],
                 "message": error["detail"],
-                **({"location": error["location"]} if error["location"] else {}),
+                "location": error["location"],
             }
         ),
     }
