@@ -236,6 +236,13 @@ test("执行页的超时：写出生效的值和它从哪来（节点类型声�
 	await timeout.fill("120");
 	await expect(panel).toContainText("生效 120 秒：节点上设置，盖过节点类型声明的 43200 秒");
 
+	// 超过上限（派发给 Agent 的超时是 uint32）：字段报错，不能保存。
+	await timeout.fill("5000000000");
+	await timeout.blur();
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toBeVisible();
+	await timeout.fill("120");
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toHaveCount(0);
+
 	// 没声明的节点类型：平台默认。
 	await nodeCard(page, "ping").click();
 	await panel.getByRole("tab", { name: "执行" }).click();
