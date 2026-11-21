@@ -132,36 +132,41 @@ export interface InstalledPackage {
 export type AgentStatus = "online" | "offline";
 
 /**
- * Agent 连接时出示的凭据（`agents.last_auth_kind`）：`none` 不带凭据，`shared` 共享令牌，`credential` 按台签发的 Agent 凭据（#492）。
+ * Agent 连接时出示的凭据（`agents.last_auth_kind`）：`none` 不带凭据，`shared` 共享令牌，`agent` 按台签发的 Agent 凭据（#492）。
+ * 后两个和 `agent_credentials.kind` 的取值一致；库里有 CHECK（`agents_last_auth_kind`）。
  */
-export type AgentAuthKind = "none" | "shared" | "credential";
+export type AgentAuthKind = "none" | "shared" | "agent";
 
 /**
  * Agent：按名称唯一；第一次 Hello 时注册，之后每次连接更新信息。属于一个项目（ADR 0029）；
  * 第一步名字仍然全局唯一（主键不变），第二步改成「项目 + 名字」（#502）。
  */
-export const agents = pgTable("agents", {
-	name: text("name").primaryKey(),
-	projectId: text("project_id")
-		.$type<ProjectId>()
-		.notNull()
-		.references(() => projects.id),
-	info: jsonb("info").$type<AgentInfo>().notNull(),
-	status: text("status").$type<AgentStatus>().notNull(),
-	registeredAt: timestamptz("registered_at").notNull(),
-	lastSeenAt: timestamptz("last_seen_at").notNull(),
-	/** 最近一次 Hello 或 Heartbeat 测得的时钟偏差（Agent 时间 − 控制面时间，毫秒，#172）；未知时为空。 */
-	clockOffsetMs: bigint("clock_offset_ms", { mode: "number" }),
-	/** 测得 clock_offset_ms 的控制面时间。 */
-	clockOffsetMeasuredAt: timestamptz("clock_offset_measured_at"),
-	/** 停用这台 Agent 的时间（ADR 0029，#492）：停用的 Agent 不能连接、不参与派发；恢复时清空。 */
-	disabledAt: timestamptz("disabled_at"),
-	/**
-	 * 最近一次连接用的凭据（#492）：「登记工作台之前，没有停用的 Agent 都必须已经换成 Agent 凭据」按它判断，
-	 * 只签发过、没用它连上过的不算。记下之前连接的 Agent 为空。
-	 */
-	lastAuthKind: text("last_auth_kind").$type<AgentAuthKind>(),
-});
+export const agents = pgTable(
+	"agents",
+	{
+		name: text("name").primaryKey(),
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		info: jsonb("info").$type<AgentInfo>().notNull(),
+		status: text("status").$type<AgentStatus>().notNull(),
+		registeredAt: timestamptz("registered_at").notNull(),
+		lastSeenAt: timestamptz("last_seen_at").notNull(),
+		/** 最近一次 Hello 或 Heartbeat 测得的时钟偏差（Agent 时间 − 控制面时间，毫秒，#172）；未知时为空。 */
+		clockOffsetMs: bigint("clock_offset_ms", { mode: "number" }),
+		/** 测得 clock_offset_ms 的控制面时间。 */
+		clockOffsetMeasuredAt: timestamptz("clock_offset_measured_at"),
+		/** 停用这台 Agent 的时间（ADR 0029，#492）：停用的 Agent 不能连接、不参与派发；恢复时清空。 */
+		disabledAt: timestamptz("disabled_at"),
+		/**
+		 * 最近一次连接用的凭据（#492）：「登记工作台之前，没有停用的 Agent 都必须已经换成 Agent 凭据」按它判断，
+		 * 只签发过、没用它连上过的不算。记下之前连接的 Agent 为空。
+		 */
+		lastAuthKind: text("last_auth_kind").$type<AgentAuthKind>(),
+	},
+	(t) => [check("agents_last_auth_kind", sql`${t.lastAuthKind} in ('none', 'shared', 'agent')`)],
+);
 
 /**
  * 飞书机器人（ADR 0020）：按名称唯一，创建后不能改名。webhook_url 明文保存（相当于一个凭据，和 secret 参数一样），

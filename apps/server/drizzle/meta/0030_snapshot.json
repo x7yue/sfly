@@ -227,7 +227,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "agents_last_auth_kind": {
+          "name": "agents_last_auth_kind",
+          "value": "\"agents\".\"last_auth_kind\" in ('none', 'shared', 'agent')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.api_tokens": {

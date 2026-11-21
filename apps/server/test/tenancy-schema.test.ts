@@ -289,3 +289,30 @@ describe("Agent 凭据", () => {
 		);
 	});
 });
+
+describe("Agent 最近一次连接用的凭据", () => {
+	const addAgent = (name: string, kind: string | null) =>
+		client.query(
+			`insert into agents (name, project_id, info, status, registered_at, last_seen_at, last_auth_kind)
+			values ($1, 'default', '{}', 'online', $2, $2, $3)`,
+			[name, AT, kind],
+		);
+
+	it("只能是没带凭据（none）、共享令牌（shared）、按台签发的 Agent 凭据（agent），或者空（记下之前连接的 Agent）", async () => {
+		for (const kind of ["none", "shared", "agent", null]) {
+			await expect(addAgent(`auth-${kind}`, kind), String(kind)).resolves.toBeDefined();
+		}
+		for (const kind of ["", "credential", "Agent", "token", "none "]) {
+			await expect(addAgent(`bad-${kind}`, kind), JSON.stringify(kind)).rejects.toThrow(
+				/agents_last_auth_kind/,
+			);
+		}
+	});
+
+	it("取值和 agent_credentials.kind 一致：两张表里的「agent」「shared」是同一个意思", async () => {
+		const { rows } = await client.query(
+			`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'agent_credentials_kind'`,
+		);
+		expect(rows[0].def).toMatch(/'agent'.*'shared'|'shared'.*'agent'/);
+	});
+});

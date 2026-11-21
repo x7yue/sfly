@@ -126,6 +126,9 @@ CREATE INDEX "logins_user" ON "logins" USING btree ("user_id");--> statement-bre
 CREATE INDEX "project_members_user" ON "project_members" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "users_external_identity" ON "users" USING btree ("external_identity") WHERE "users"."external_identity" is not null;--> statement-breakpoint
 ALTER TABLE "agents" ADD CONSTRAINT "agents_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+-- last_auth_kind 的取值：none 不带凭据、shared 共享令牌、agent 按台签发的 Agent 凭据（后两个和 agent_credentials.kind 一致）；
+-- 空表示记下之前连接的 Agent，CHECK 对空值放行。
+ALTER TABLE "agents" ADD CONSTRAINT "agents_last_auth_kind" CHECK ("agents"."last_auth_kind" in ('none', 'shared', 'agent'));--> statement-breakpoint
 ALTER TABLE "feishu_bots" ADD CONSTRAINT "feishu_bots_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "node_packages" ADD CONSTRAINT "node_packages_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "node_packages" ADD CONSTRAINT "node_packages_published_by_user_id_users_id_fk" FOREIGN KEY ("published_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
