@@ -11,6 +11,7 @@ import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, agentClock, FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import type { ManualClock } from "./support/manual-clock.js";
+import { appendStartupStubs, dropStartupStubs } from "./support/migrations.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -586,6 +587,8 @@ describe("迁移前的指标数据", () => {
 			last,
 			`${await readFile(last, "utf8")}${STATEMENT_BREAKPOINT}\n${[...created, ...added].join(`\n${STATEMENT_BREAKPOINT}\n`)}`,
 		);
+		// 当前代码启动时读写的 agent_credentials：旧迁移里没有，补一个占位，升级前删掉。
+		await appendStartupStubs(dir);
 		return dir;
 	};
 	const dropLaterColumns = async () => {
@@ -599,6 +602,7 @@ describe("迁移前的指标数据", () => {
 		} finally {
 			await client.end();
 		}
+		await dropStartupStubs(cp.database.url);
 	};
 
 	beforeEach(async () => {
