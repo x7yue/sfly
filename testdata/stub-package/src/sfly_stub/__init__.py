@@ -34,6 +34,13 @@ def fail(ctx: Context, message: str = "stub failure") -> dict[str, Any]:
     raise RuntimeError(message)
 
 
+@node(title="返回不是数的值", outputs=["x"])
+def non_finite_output(ctx: Context, kind: str) -> dict[str, Any]:
+    """返回 NaN 或无穷（kind 是 `nan`、`inf`、`-inf`）：JSON 里没有这些值，
+    任务应该失败并写明原因（#481）。"""
+    return {"x": float(kind)}
+
+
 @node(title="按参数成功或失败", outputs=["ok"])
 def outcome(ctx: Context, succeed: bool = True, message: str = "stub failure") -> dict[str, Any]:
     """succeed 为 False 时抛出 RuntimeError(message)，否则成功。"""

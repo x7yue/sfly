@@ -152,7 +152,7 @@
 | 超过 2^64 - 1 的整数（负数小于 -2^63） | 同上；下游节点收到的是浮点数（Python 的 `float`），不是整数 |
 | `-0.0` | `0`：符号丢掉，下游收到的是整数 `0`（和 `3.0` 一样，类型变了） |
 | 整数值的小数（`3.0`） | `3`：JSON 里是同一个数，下游收到整数 |
-| `NaN`、`Infinity` | JSON 里没有这些值：任务以 `node_error` 失败，没有输出 |
+| `NaN`、`Infinity` | JSON 里没有这些值：任务以 `node_error` 失败，没有输出；错误信息写明是哪个输出、怎么办（`输出 x 的值是 NaN。JSON 里没有 NaN 和无穷，换成 None（表示没有值），或者换成字符串（例如 str(值)）再返回`），嵌套的写成 `stats["items"][2]` |
 
 内嵌在字符串里的引用，数按 JavaScript 的写法拼进去：最短表示，整数不带小数点，绝对值小于 1e-6 或不小于 1e21 时用指数（`1e-7`、`1e+21`），`-0` 写成 `0`；Python 的 `float()` 读回来是同一个数。测试：`apps/server/test/number-roundtrip.test.ts`（控制面）、`agent/tests/execute.rs`（Agent）、`apps/server/test/full-stack-number-roundtrip.test.ts`（整条链路）。
 

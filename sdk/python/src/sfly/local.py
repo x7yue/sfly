@@ -196,6 +196,8 @@ class NodeError:
     message: str
     type: str | None = None
     traceback: str = ""
+    #: 出错的位置：节点代码里的那一行，「模块.函数 第 N 行」（node_error 才有，取不到是 None）。
+    location: str | None = None
 
 
 @dataclass
@@ -478,6 +480,17 @@ def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
     )
 
 
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"{name} 不是合法的 JSON")
+
+
+def _loads_strict(data: str | bytes) -> Any:
+    """按 JSON 的规定读：`NaN`、`Infinity`、`-Infinity` 不是合法的 JSON（Python 的 `json.loads`
+    默认接受），读取端当作不是 JSON，和 Agent 一样
+    （共用用例表 testdata/local-protocol-cases.json）。"""
+    return json.loads(data, parse_constant=_reject_constant)
+
+
 class _Pump:
     """读取执行器的标准输出 / 标准错误和事件管道，转成日志、进度、指标。"""
 
@@ -589,7 +602,7 @@ class _Pump:
     def _event(self, raw: bytes, read_at: int) -> None:
         """处理事件管道里的一行；`read_at` 是读到它时的单调时钟读数。"""
         try:
-            event = json.loads(raw)
+            event = _loads_strict(raw)
             handler = _EVENT_HANDLERS.get(event["type"])
             if handler is not None:
                 handler(self, read_at, int(event.get("ts") or _now_ms()), event)
@@ -886,7 +899,7 @@ def execute(
 
     pump.drain()
     try:
-        result = json.loads(output.read_text(encoding="utf-8"))
+        result = _loads_strict(output.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         result = None
     if isinstance(result, dict) and result.get("status") == "success" and proc.returncode == 0:
@@ -898,11 +911,14 @@ def execute(
         # 执行器在调用节点之前就拒绝了输入（没有声明的名字）时写 kind: config_error；
         # 没有 kind、或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
         kind = "config_error" if failure.get("kind") == "config_error" else "node_error"
+        location = failure.get("location")
         execution.error = NodeError(
             kind,
             str(failure.get("message", "")),
             failure.get("type"),
             str(failure.get("traceback", "")),
+            # 位置不是字符串（或是空串）当作没有，和 Agent 一样。
+            location if isinstance(location, str) and location else None,
         )
     else:
         fail(

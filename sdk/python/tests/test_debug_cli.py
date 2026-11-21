@@ -367,6 +367,12 @@ def test_node_failure_exits_1_with_the_error_and_traceback(project: Path) -> Non
     assert "节点失败：RuntimeError: 磁盘满了" in run.stderr
     assert "Traceback" in run.stderr
     assert "输出：" not in run.stdout
+    # 出错位置在失败原因后面、堆栈前面，不用翻堆栈（#471）；堆栈从节点代码开始。
+    reason, place, _blank, header = run.stderr.partition("节点失败：")[2].splitlines()[:4]
+    assert reason == "RuntimeError: 磁盘满了"
+    assert re.fullmatch(r"出错位置：\S+\.fail 第 \d+ 行", place), place
+    assert header == "Traceback (most recent call last):"
+    assert "runner.py" not in run.stderr
 
 
 def test_an_input_the_node_does_not_declare_exits_2_like_other_config_errors(
