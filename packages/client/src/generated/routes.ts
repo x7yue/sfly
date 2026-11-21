@@ -57,6 +57,7 @@ import type {
 	RunMetricCatalog,
 	RunMetricSummary,
 	RunNotificationChanges,
+	RunReport,
 	RunSummary,
 	RunView,
 	RunningTaskView,
@@ -943,6 +944,22 @@ export interface Api {
 			RunFocus
 		>;
 		/**
+		 * `GET /runs/:id/summary`
+		 *
+		 * 一次运行的摘要：状态、耗时、最终失败的节点、每个失败的任务的错误（类型、失败原因一行、完整信息）和日志尾部、
+		 * 失败的动作、有异常的关注项。判断一次运行「成功且结果对」先读它。读取走运行的统一读取（`readRuns`），
+		 * 错误信息、参数里保密参数的值都已打码。运行不存在时 404。
+		 */
+		summary: Endpoint<
+			{
+				params: {
+					/** 运行 id。 */
+					id: string;
+				};
+			},
+			RunReport
+		>;
+		/**
 		 * `GET /orchestrations/:id/preflight`
 		 *
 		 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、
@@ -1150,6 +1167,7 @@ export const routes = {
 	runs: {
 		list: { method: "GET", path: "/runs", kind: "endpoint" },
 		focus: { method: "GET", path: "/runs/:id/focus", kind: "endpoint" },
+		summary: { method: "GET", path: "/runs/:id/summary", kind: "endpoint" },
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },
 		listForOrchestration: { method: "GET", path: "/orchestrations/:id/runs", kind: "endpoint" },
 		trigger: { method: "POST", path: "/orchestrations/:id/runs", kind: "endpoint" },

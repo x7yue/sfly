@@ -3,7 +3,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
+import { type AssignedTask, ErrorKind, FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
@@ -243,6 +243,49 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			const json = await cli("run", "wait", runId, "--json");
 			const summary = JSON.parse(json.stdout) as { failed: Array<{ error: { message: string } }> };
 			expect(summary.failed[0]?.error.message).toBe(message);
+		});
+
+		it("节点失败带出错位置：摘要里「错误：」下面紧跟「出错位置」（堆栈之前），--json 里是 error.location", async () => {
+			const id = await scenario("位置场景", [echo("a")]);
+			const waiting = start("run", "start", "位置场景", "--wait");
+			const message =
+				'ValueError: 余额不足\n\nTraceback (most recent call last):\n  File "x.py", line 3';
+			await agent.fail(await assign(), message, undefined, undefined, "shop.orders.place 第 42 行");
+
+			const result = await waiting.exited;
+			expect(result.code, result.stderr).toBe(1);
+			expect(result.stdout).toContain(
+				"    错误：node_error：ValueError: 余额不足\n    出错位置：shop.orders.place 第 42 行\n\n      Traceback (most recent call last):\n",
+			);
+			expect(result.stdout.match(/出错位置/g)).toHaveLength(1);
+
+			const runId = await runOf(id);
+			const json = await cli("run", "wait", runId, "--json");
+			const summary = JSON.parse(json.stdout) as {
+				failed: Array<{ error: { kind: string; message: string; location: string | null } }>;
+			};
+			expect(summary.failed[0]?.error).toEqual({
+				kind: "node_error",
+				message,
+				location: "shop.orders.place 第 42 行",
+			});
+		});
+
+		it("节点失败没有出错位置（执行器没报）：文本里没有这一行，--json 里 error.location 是 null", async () => {
+			const id = await scenario("无位置场景", [echo("a")]);
+			const waiting = start("run", "start", "无位置场景", "--wait");
+			await agent.fail(await assign(), "节点超过 30 秒没有结束", ErrorKind.TIMEOUT);
+
+			const result = await waiting.exited;
+			expect(result.code, result.stderr).toBe(1);
+			expect(result.stdout).toContain("    错误：timeout：节点超过 30 秒没有结束");
+			expect(result.stdout).not.toContain("出错位置");
+
+			const json = await cli("run", "wait", await runOf(id), "--json");
+			const summary = JSON.parse(json.stdout) as {
+				failed: Array<{ error: { location: string | null } }>;
+			};
+			expect(summary.failed[0]?.error.location).toBeNull();
 		});
 
 		it("节点重试两次都失败：每次失败的尝试各列一项，按尝试顺序，各带自己的错误和日志", async () => {

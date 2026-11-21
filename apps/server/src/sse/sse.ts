@@ -38,7 +38,7 @@ export interface SseOptions {
 }
 
 /**
- * 控制面的 SSE 推送（运行状态、日志、在线编辑者共用）。
+ * 控制面的 SSE 推送（运行状态、日志共用）。
  *
  * 用 `registerSse(app, { clock, version })` 创建，路由里 `sse.open(request, reply, setup)` 把请求变成 SSE 流。
  * 每条流在连上时和每次心跳都发一条控制面时间事件（@sfly/schema 的 CONTROL_PLANE_TIME_EVENT）。

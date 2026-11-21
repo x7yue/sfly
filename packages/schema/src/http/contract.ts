@@ -37,7 +37,7 @@ import { z } from "zod";
  *    它们进入路由清单（`sfly api --list` / `--describe` 读的就是它），
  *    以后的鉴权也在契约路由一处按它们判断一个请求要什么、作用在什么上，不靠各个接口自己记。
  *    `checkRouteDeclarations`（./declarations.ts）检查声明本身站得住，契约测试对每个接口运行它：
- *    GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口要在 `READS_WITH_TRACES` 登记，`{ params }` 用的是路径里的第一个参数，
+ *    GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口要在 `NON_GET_READS` 登记，`{ params }` 用的是路径里的第一个参数，
  *    接口的路径前缀和 `resource.kind` 要对上 `PATH_KINDS`（`system` 就是那张表里的 `system` 项，每条路径单独列出：不带项目、不需要凭据，写错一个就是悄悄多一个公开的接口；
  *    新接口的路径前缀不在表里、或加一个资源类别，都要改那张表，审查时看得见）；
  *    声明为 `read` 的接口真的不写库，由控制面的测试用真实的请求核对（apps/server/test/read-only-routes.test.ts）。
@@ -62,7 +62,7 @@ export interface RawRequest {
 /**
  * 接口作用在哪一类资源上（GLOSSARY 的词）；一个接口只有一个主要的资源：它的 id、名称就是请求用来定位的那个。
  *
- * - `scenario` 场景（场景版本、运行预设、在线编辑者都属于场景：定位用场景的 id）。
+ * - `scenario` 场景（场景版本、运行预设都属于场景：定位用场景的 id）。
  * - `run` 运行。
  * - `task` 任务：任务的日志、动作和产物用任务 id 定位，它属于某次运行。
  * - `package` 节点包（版本、节点类型、归档都属于节点包：定位用包名）。
@@ -122,8 +122,8 @@ export interface ResourceRef {
  * 接口对平台的影响：
  *
  * - `read` 只读：不改变平台里任何资源的内容，也不在平台之外产生副作用。打开 SSE 流时登记的订阅随连接结束，不算；
- *   只写访问日志、心跳、最后访问时间这类不影响任何资源内容的痕迹，也算只读，但要在 `READS_WITH_TRACES`
- *   （./declarations.ts）登记写了什么。
+ *   只写访问日志、最后访问时间这类不影响任何资源内容的痕迹，也算只读。方法不是 GET 的只读接口要在 `NON_GET_READS`
+ *   （./declarations.ts）登记为什么只读、会留下什么。
  * - `write` 有副作用：改变平台里的状态，或者在平台之外产生副作用（给飞书发消息、让 Agent 执行东西）。
  *
  * 声明与 HTTP 方法无关，要看接口实际做了什么；但 GET 一定是只读（`checkRouteDeclarations` 检查）。
