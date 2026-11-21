@@ -314,6 +314,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		const sweepStreams = async (
 			ids: { scenario: string; run: string; task: string; preset: string },
 			check: (what: string, text: string) => void,
+			options: { waitForLogLines?: boolean } = {},
 		) => {
 			const streams = httpContract.filter(
 				(def) => def.effect === "read" && "kind" in def && def.kind === "stream",
@@ -328,6 +329,10 @@ describe("场景版本里 secret 参数的默认值", () => {
 				try {
 					// 每条流连上时先发一条控制面时间，运行和任务的流接着发当前状态。
 					await eventually(() => expect(sse.received.length).toBeGreaterThan(0));
+					// 日志的流连上之后才补发已经写下的行：要看这些行时等到它们到了。
+					if (options.waitForLogLines && path.includes("/logs/events")) {
+						await eventually(() => expect(sse.received.some((e) => e.event === "logs")).toBe(true));
+					}
 					check(`SSE ${path}`, JSON.stringify(sse.received));
 				} finally {
 					sse.close();
@@ -560,6 +565,67 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const stored = (await Promise.all(files.map((f) => readFile(f, "utf8")))).join("\n");
 			noLeaks("结束后")("日志文件", stored);
 		}, 90_000);
+
+		it("后来才成为 secret 的值（出现在早于子流程创建写下的日志行里，#517）：每个只读的 GET 和 SSE 接口读出来都没有原值", async () => {
+			const LATE = "test-late-value";
+			// user 不是 secret；x2 把它传给 subB 的 secret 参数 k，subB 创建之后它才是 secret 值。
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry", params: [{ name: "user", type: "string" }] },
+					{ id: "x1", kind: "async", params: {} },
+					{ id: "subA", kind: "subflow_entry", name: "A", params: [] },
+					{ id: "sa", kind: "package", package: "stub", node: "echo" },
+					{ id: "b", kind: "package", package: "stub", node: "echo" },
+					{ id: "x2", kind: "async", params: { k: "${{ params.user }}" } },
+					{
+						id: "subB",
+						kind: "subflow_entry",
+						name: "B",
+						params: [{ name: "k", type: "string", secret: true }],
+					},
+				],
+				edges: [
+					{ from: "entry", to: "x1", kind: "chain" },
+					{ from: "x1", to: "b", kind: "chain" },
+					{ from: "b", to: "x2", kind: "chain" },
+					{ from: "x1", to: "subA", kind: "dispatch" },
+					{ from: "subA", to: "sa", kind: "chain" },
+					{ from: "x2", to: "subB", kind: "dispatch" },
+				],
+				packages: { stub: "1.0.0" },
+			});
+			const agent = await connect();
+			const runId = await api.triggerOk(id, { user: LATE });
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
+			const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+			agent.logs(sa, [[1, `user ${LATE} logged in`]]);
+			await eventually(async () =>
+				expect(
+					(await api.getJson<{ lines: unknown[] }>(`/tasks/${sa.taskId}/logs`)).lines,
+				).toHaveLength(1),
+			);
+			await agent.succeed(b);
+			await eventually(async () =>
+				expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+			);
+			const ids = { scenario: id, run: runId, task: sa.taskId, preset: "x" };
+
+			// 契约里每个只读的 GET 和 SSE 接口：读出来都没有原值；读日志的出口确实读到了这一行，只是已经是掩码。
+			let logsRead = 0;
+			await sweepReads(ids, (what, text) => {
+				expect(text, `${what}：不能出现 ${LATE}`).not.toContain(LATE);
+				if (what.includes("/logs") && text.includes("logged in")) logsRead += 1;
+			});
+			// 按任务和按运行，分页和下载。
+			expect(logsRead).toBeGreaterThanOrEqual(4);
+			await sweepStreams(
+				ids,
+				(what, text) => expect(text, `${what}：不能出现 ${LATE}`).not.toContain(LATE),
+				{ waitForLogLines: true },
+			);
+		});
 	});
 
 	describe("写接口的成功和失败响应", () => {

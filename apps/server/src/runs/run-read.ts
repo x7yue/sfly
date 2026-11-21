@@ -337,7 +337,8 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 				}
 			: null,
 		errorMessage: row.errorMessage === null ? null : mask.text(row.errorMessage),
-		logIssues: row.logIssues,
+		// 最近一条 WARN / ERROR 的正文写入时按那一刻的 secret 值打过码；读取时再按此刻的打一遍（后来才成为 secret 的值，#517）。
+		logIssues: row.logIssues && { ...row.logIssues, text: mask.text(row.logIssues.text) },
 		startClockOffset: clockOffsetView(row.startClockOffsetMs, row.startClockOffsetMeasuredAt),
 		endClockOffset: clockOffsetView(row.endClockOffsetMs, row.endClockOffsetMeasuredAt),
 		currentAction: currentActionOfTask(row.status, row.currentAction, mask.secrets),
