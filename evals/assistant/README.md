@@ -13,7 +13,8 @@
   - 控制面：默认 `ghcr.io/x7yue/sfly-server:0.5.0`。从 GitHub Release 下载 `sfly-server-<版本>-linux-<架构>.tar.gz` 后 `docker load -i`；
     要测当前源码，先 `pnpm bundle:server && pnpm pack:agents`，再
     `docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-server:dev out/server`，
-    之后每条命令加 `--server-image sfly-server:dev`。
+    再 `./aeval.sh up --server-image sfly-server:dev`；之后这个槽位的命令（`run`、`seed`、`reset`……）重建控制面时沿用 `up` 时的镜像，
+    不用再写（工作台的 `--workbench-image` 一样）。`down` 之后再 `up` 不写就回到默认镜像。
   - PostgreSQL：`postgres:18`。
   - 工作台：`sfly-aeval-workbench:pi-1.6.0`，`up` 发现没有时按 `workbench/Dockerfile` 自动构建
     （国内网络先设 `AEVAL_DEBIAN_MIRROR=http://mirrors.ustc.edu.cn AEVAL_NPM_REGISTRY=https://registry.npmmirror.com`）。

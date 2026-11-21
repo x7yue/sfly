@@ -27,10 +27,15 @@ from aeval.tasks.registry import TASKS
 
 
 def _stack(args: argparse.Namespace) -> Stack:
+    # 只有 up（和 pack）指定镜像；之后的命令（run、seed、reset……）重建控制面和工作台时
+    # 沿用这个槽位起好的容器用的镜像，没有起过时用默认镜像。
+    slot = Stack(slot=args.slot)
+    server_image = getattr(args, "server_image", None) or image_in_use(slot.name("cp"))
+    workbench_image = getattr(args, "workbench_image", None) or image_in_use(slot.name("dev"))
     stack = Stack(
         slot=args.slot,
-        server_image=getattr(args, "server_image", DEFAULT_SERVER_IMAGE),
-        workbench_image=getattr(args, "workbench_image", DEFAULT_WORKBENCH_IMAGE),
+        server_image=server_image or DEFAULT_SERVER_IMAGE,
+        workbench_image=workbench_image or DEFAULT_WORKBENCH_IMAGE,
         mirror_mode="serve" if getattr(args, "offline", False) else "record",
         internal=getattr(args, "isolated", False),
         fake_model=getattr(args, "fake_model", False),
@@ -42,6 +47,14 @@ def _stack(args: argparse.Namespace) -> Stack:
     if getattr(args, "github_mirror", None):
         stack.github_mirror = args.github_mirror
     return stack
+
+
+def image_in_use(container: str) -> str | None:
+    """容器用的镜像；容器不存在时 None。"""
+    found = d.docker("inspect", "-f", "{{.Config.Image}}", container, check=False)
+    if found.returncode != 0:
+        return None
+    return found.stdout.strip() or None
 
 
 def main(argv: list[str] | None = None) -> int:

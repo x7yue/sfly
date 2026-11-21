@@ -1,4 +1,4 @@
-import { type StructureDocument, subflowName } from "@sfly/orchestration";
+import { newPackageNode, type StructureDocument, subflowName } from "@sfly/orchestration";
 import type { AgentView, PackageSummary } from "@sfly/schema";
 import type { DocNode } from "#/components/canvas/flow";
 import { latestVersion } from "#/lib/package-versions";
@@ -143,14 +143,8 @@ export const idStem = (item: AddItem) =>
 export function newDocNode(item: AddItem, id: string): DocNode {
 	switch (item.kind) {
 		case "package":
-			return {
-				id,
-				kind: "package",
-				package: item.package,
-				node: item.node,
-				always: false,
-				inputs: {},
-			};
+			// 和控制面的局部编辑（加节点）同一份内容。
+			return newPackageNode(item.package, item.node, id);
 		case "async":
 			return { id, kind: "async", params: {} };
 		case "subflow_entry":

@@ -303,6 +303,8 @@ describe("场景版本里 secret 参数的默认值", () => {
 				const others: Record<string, string> = {
 					presetId: ids.preset,
 					number: "1",
+					a: "1",
+					b: "1",
 					version: "1.0.0",
 					name: "stub",
 					node: "echo",
@@ -331,7 +333,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 			});
 			const ids = { scenario: id, run: runId, task: assign.taskId, preset: preset.id };
 
-			// 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（登记在 READS_WITH_TRACES）要请求体，不在这里；下面的写接口用例会要求请求过它们。
+			// 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（登记在 NON_GET_READS）要请求体，不在这里；下面的写接口用例会要求请求过它们。
 			const reads = httpContract.filter(
 				(def) =>
 					def.effect === "read" &&
@@ -437,6 +439,50 @@ describe("场景版本里 secret 参数的默认值", () => {
 			await record(
 				"保存：缺 base_version",
 				tracked.post(`/orchestrations/${id}/versions`, { document }),
+			);
+			// 检查（不保存，#424）：和保存同样的成功与失败；新的默认值写的是原值（含 SECRET），响应里的差异也是打码的。
+			const changed = structuredClone(document);
+			paramAt(changed, 0).default = `${SECRET}-new`;
+			await record("检查", tracked.post(`/orchestrations/${id}/check`, { document: changed }));
+			await record(
+				"检查：冲突",
+				tracked.post(`/orchestrations/${id}/check`, { base_version: number, document }),
+			);
+			await record(
+				"检查：文档不合法",
+				tracked.post(`/orchestrations/${id}/check`, { document: { ...document, nodes: SECRET } }),
+			);
+			await record(
+				"检查：占位符沿用不了",
+				tracked.post(`/orchestrations/${id}/check`, { document: renamed }),
+			);
+			// 局部编辑（#470）：保存、检查各自的成功和失败（不合法的操作、编辑起点过期）；改的是引用 secret 参数的输入。
+			const edits = [{ op: "set", node: "a", field: "inputs.token", value: "${{ params.token }}" }];
+			await record(
+				"局部编辑：检查",
+				tracked.post(`/orchestrations/${id}/edits/check`, { operations: edits }),
+			);
+			await record(
+				"局部编辑：检查不合法的操作",
+				tracked.post(`/orchestrations/${id}/edits/check`, {
+					operations: [{ op: "set", node: "entry", field: "params", value: SECRET }],
+				}),
+			);
+			const editBase = await headVersionOf(id);
+			await record(
+				"局部编辑",
+				tracked.post(`/orchestrations/${id}/edits`, { base_version: editBase, operations: edits }),
+			);
+			await record(
+				"局部编辑：冲突",
+				tracked.post(`/orchestrations/${id}/edits`, { base_version: editBase, operations: edits }),
+			);
+			await record(
+				"局部编辑：不合法的操作",
+				tracked.post(`/orchestrations/${id}/edits`, {
+					base_version: editBase + 1,
+					operations: [{ op: "remove_node", node: "entry" }],
+				}),
 			);
 			// 恢复、复制。
 			await record("恢复", tracked.postEmpty(`/orchestrations/${id}/versions/1/restore`));
@@ -600,6 +646,21 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const v2 = await storedDocument(cp, id, 2);
 			expect(v2.default_agent).toBe("agent-b");
 			expect(paramsOf(v2)[0]).toMatchObject({ default: SECRET, description: "访问令牌" });
+		});
+
+		it("局部编辑（#470）存出的新版本：secret 默认值沿用原值（逐项相同），不因为占位符被拒绝", async () => {
+			const id = await scenario();
+			const res = await api.post(`/orchestrations/${id}/edits`, {
+				base_version: 1,
+				operations: [
+					{ op: "set", node: "entry", field: "display_name", value: "开始" },
+					{ op: "set", node: "a", field: "inputs.token", value: "${{ params.token }}" },
+				],
+			});
+			expect(res.status, await res.clone().text()).toBe(201);
+			const [v1, v2] = [await storedDocument(cp, id, 1), await storedDocument(cp, id, 2)];
+			expect(paramsOf(v2)).toEqual(paramsOf(v1));
+			expect(paramsOf(v2)[0]?.default).toBe(SECRET);
 		});
 
 		it("改成新的值再保存：存的是新值；读出来仍是占位符", async () => {

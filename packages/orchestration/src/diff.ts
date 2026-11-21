@@ -34,6 +34,8 @@ export interface FieldChange {
 export interface NodeRef {
 	id: string;
 	kind: string;
+	/** 显示名称（去掉首尾空白）；子流程入口节点是子流程名称。没有、只有空白或就是节点 ID 时不写这个字段。 */
+	display_name?: string;
 }
 
 export interface NodeChange extends NodeRef {
@@ -191,7 +193,15 @@ function diffAnnotations(before: NormalAnnotation[], after: NormalAnnotation[]) 
 }
 
 const edgeKey = (e: DiffEdge) => `${e.kind}:${e.from}->${e.to}`;
-const nodeRef = (n: Node): NodeRef => ({ id: n.id, kind: n.kind });
+/** 节点的写法：ID、种类，有显示名称时带上（新增、删除、改动的节点都要让人认得出是哪一个）。 */
+const nodeRef = (n: Node): NodeRef => {
+	// 草稿编辑到一半时字段可能不是字符串。
+	const raw = n.kind === "subflow_entry" ? n.name : n.display_name;
+	const name = typeof raw === "string" ? raw.trim() : "";
+	return name === "" || name === n.id
+		? { id: n.id, kind: n.kind }
+		: { id: n.id, kind: n.kind, display_name: name };
+};
 
 export function diffDocuments(before: DiffableDocument, after: DiffableDocument): DocumentDiff {
 	const b = normalize(before);
@@ -212,7 +222,7 @@ export function diffDocuments(before: DiffableDocument, after: DiffableDocument)
 		const other = afterNodes.get(node.id);
 		if (!other) continue;
 		const changes = nodeChanges(node, other);
-		if (changes.length > 0) changed.push({ id: node.id, kind: other.kind, changes });
+		if (changes.length > 0) changed.push({ ...nodeRef(other), changes });
 		if (!equal(node.position, other.position)) moved.push(node.id);
 	}
 

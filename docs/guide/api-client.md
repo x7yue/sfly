@@ -46,7 +46,7 @@ const client = createClient({
 
 | 领域 | 方法 |
 |---|---|
-| `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`create`、`update`、`copy`、`archive`、`unarchive` |
+| `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`check`、`versionDiff`、`edit`、`checkEdits`、`create`、`update`、`copy`、`archive`、`unarchive` |
 | `presets`（运行预设） | `list`、`create`、`update`、`copy`、`remove` |
 | `runs`（运行） | `list`、`listForOrchestration`、`focus`、`summary`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
@@ -81,6 +81,8 @@ for (const item of runs) {
 
 - `orchestrations.list` 列出没有归档的场景，按新建时间从新到旧。`q` 按名称、说明或引用的 Agent 搜索，`status` 按最近一次运行的状态筛选，`agent` 只看引用了这个 Agent 的场景。每一项带着最近一次运行和各节点的状态（`last_run`）、引用的 Agent 和它们是否在线（`agents`），看板画场景卡片只要这一次请求。
 - `orchestrations.head` 读最新版本（编辑起点），`orchestrations.version` 读某个版本，`orchestrations.saveVersion` 和 `orchestrations.restoreVersion` 的响应也带版本的 `document`：入口节点和子流程入口节点里，声明为 `secret` 的参数的默认值（`default`）读出来一律是占位符 `"******"`（和运行的参数、运行预设里的 secret 值是同一个掩码，不论参数的类型），原值任何接口都读不到；没有默认值的不动，普通参数的默认值照常返回。认占位符看 `secret` 为 `true` 且 `default` 是 `"******"`，TypeScript 里用 `@sfly/schema` 的 `SECRET_MASK` 和 `isSecretDefaultPlaceholder`。把读出来的文档原样 `saveVersion` 存回去时，占位符表示「沿用上一个版本里同名参数的默认值」（按入口节点 ID 和参数名对应，`base_version` 仍要是最新版本，不是时照常返回 409 `version_conflict`）；给新值就换成新值，删掉 `default` 就去掉默认值；沿用不了（新场景的第一个版本、新增或改了名的参数、类型变了、参数从 secret 改成了普通参数）时返回 400 `secret_default_placeholder`，`details` 是 `{ node_id, param, reason }` 的列表，什么都不保存。所以 secret 参数的默认值写不成 `******` 本身。`runs.trigger` 的 `params` 里 secret 参数的值是 `"******"` 时同样被拒绝（400 `invalid_params`，不产生运行）：这是读取时打的码，不是值，不传这个参数就用默认值；运行预设里 secret 参数的值写 `"******"` 也被拒绝（沿用原值写 `keep`）。触发被拒绝时的 `message` 和 `details` 不回显 secret 参数的值（写成 `******`）。保存时响应的 `warnings` 里，每个写了默认值的 secret 参数有一条 `secret_param_default`：版本不能修改，默认值会一直留在这个版本里，建议改用运行预设或触发时再给出。
+- `orchestrations.check` 检查一份场景文档，不保存：请求体和 `saveVersion` 一样（`base_version` 可以不给，不给时对照最新版本），返回的错误（400 `invalid_document`、400 `secret_default_placeholder`、409 `version_conflict`）和 `warnings` 与用同样的请求体保存时完全一样，每条警告多一个 `existing`（改动之前、最新版本里就有同一条：按种类和它指向的节点、输入、注释框判断，不看文字），另有 `diff`：保存之后相对最新版本的差异。`saveVersion` 带 `strict: true` 时，这次改动新带进来了警告（`existing` 为 false 的）就不保存，返回 400 `strict_warnings`，`details` 和 `check` 的响应一样；在保存的同一个事务里判断。`orchestrations.versionDiff` 对比两个版本（`params` 是 `{ id, a, b }`，从版本 `a` 到版本 `b`），返回 `{ diff }`。差异列出新增、删除、改动的节点（带 `display_name`，有显示名称时）和连线、改动字段的前后值（`path` 例如 `inputs.url`、`params.env`、`packages.http`）、注释框的变化；没有差异时每个列表都是空的。
+- `orchestrations.edit` 对场景做一组局部编辑（`operations`：加节点、删节点、连线、断开、改一个节点的字段，格式见 `EditOperation`），带 `base_version`，全部生效存成一个新版本（201，和 `saveVersion` 相同的响应，另有这组操作造成的 `diff`）或都不生效：有一个操作不合法时 400 `invalid_operation`，`details` 写明第几个、为什么（相近的节点 ID `similar`、缺的必填输入 `missing`、连线两端的节点 `from` / `to`、可选的 `choices`）；`base_version` 不是最新版本时 409 `version_conflict`。`orchestrations.checkEdits` 只检查不保存，返回 `{ warnings, diff }`，错误和 `edit` 相同。操作由控制面用画布的编辑函数执行，和在画布上做同样的事得到同样的文档。
 - **把读到的文档原样存回去前，先去掉已移除的节点。** 场景里可能还留着已移除种类的节点（飞书通知、定时、Sleep，ADR 0028）：读到的文档（`StoredOrchestrationDocument`）里它们是 `RemovedNode`，保存请求的文档（`OrchestrationDocument`）不收，直接传回去既编译不过，运行时也会被拒绝（400 `invalid_document`，写明是哪些节点、怎么替换）。要先按替换办法改写、再删掉它们；只是想存回其余的内容时，用显式的类型谓词过滤，不要按种类名的字面量过滤（TS 推不出类型谓词，编译不过）：
 
   ```ts

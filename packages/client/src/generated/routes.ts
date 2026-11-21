@@ -8,7 +8,10 @@ import type {
 	ActionSummaryView,
 	AgentView,
 	ArtifactView,
+	CheckedWarningView,
 	DashboardView,
+	DocumentDiffView,
+	EditOperations,
 	FeishuBotName,
 	FeishuBotScenario,
 	FeishuBotView,
@@ -60,7 +63,9 @@ import type {
 	RunView,
 	RunningTaskView,
 	SavedVersionView,
+	StoredOrchestrationDocument,
 	Timestamp,
+	VersionCheckView,
 	VersionSummaryView,
 } from "./types.js";
 
@@ -537,9 +542,117 @@ export interface Api {
 					document: OrchestrationDocument;
 					/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 					base_version: number;
+					/**
+					 * true：这次改动新带进来了警告（改动之前就有的不算，见 CheckedWarningView）时不保存，返回 400 `strict_warnings`，
+					 * details 是 VersionCheckView（和检查的响应一样）。在保存的同一个事务里判断。不写时和以前一样，警告不阻止保存。
+					 */
+					strict?: boolean;
 				};
 			},
 			SavedVersionView
+		>;
+		/**
+		 * `POST /orchestrations/:id/check`
+		 *
+		 * 检查一份场景文档，不保存（#424）：返回的错误和警告与用同样的请求体保存时完全一样（同一段校验），
+		 * 外加保存之后相对最新版本会改变什么（`diff`）。不产生版本，什么都不写。
+		 *
+		 * - 错误和保存相同：文档不合法 400 `invalid_document`；secret 参数默认值的占位符沿用不了 400 `secret_default_placeholder`；
+		 *   给了 `base_version` 而它不是最新版本时 409 `version_conflict`。没有给 `base_version` 时对照最新版本检查，不报冲突。
+		 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值），
+		 *   每条多一个 `existing`：改动之前就有（见 CheckedWarningView）。
+		 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
+		 *
+		 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
+		 */
+		check: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					/** 要检查的场景文档，和保存时一样。 */
+					document: OrchestrationDocument;
+					/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+					base_version?: number;
+				};
+			},
+			VersionCheckView
+		>;
+		/**
+		 * `GET /orchestrations/:id/versions/:a/diff/:b`
+		 *
+		 * 对比一个场景的两个版本（#424）：从版本 a 到版本 b 的差异，结构见 DocumentDiffView。a、b 可以相同（空差异），
+		 * 也可以 a 比 b 新（差异反过来）。版本不存在或不是整数时 404。
+		 */
+		versionDiff: Endpoint<
+			{
+				params: {
+					/** 场景 id。 */
+					id: string;
+					/** 对比的起点版本号。 */
+					a: string;
+					/** 对比的终点版本号。 */
+					b: string;
+				};
+			},
+			{
+				diff: DocumentDiffView;
+			}
+		>;
+		/**
+		 * `POST /orchestrations/:id/edits`
+		 *
+		 * 对场景做一组局部编辑（#470），存成一个新版本，返回 201：和保存相同的响应，再加上这组操作造成的差异（`diff`，相对 base_version）。
+		 * 需要昵称请求头。操作见
+		 */
+		edit: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					/** 编辑起点的版本号；不是最新版本时 409 `version_conflict`。 */
+					base_version: number;
+					/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+					operations: EditOperations;
+				};
+			},
+			{
+				id: string;
+				orchestration_id: string;
+				number: number;
+				/** 保存这个版本的人的昵称。 */
+				author: string;
+				author_via: string | null;
+				created_at: Timestamp;
+				document: StoredOrchestrationDocument;
+				/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
+				warnings: CheckedWarningView[];
+				/** 这组操作造成的差异：从 base_version 到新版本。 */
+				diff: DocumentDiffView;
+			}
+		>;
+		/**
+		 * `POST /orchestrations/:id/edits/check`
+		 *
+		 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
+		 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+		 * 没有给 base_version 时对照最新版本，不报冲突。
+		 */
+		checkEdits: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+					base_version?: number;
+					/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+					operations: EditOperations;
+				};
+			},
+			VersionCheckView
 		>;
 		/**
 		 * `GET /orchestrations/:id/versions`
@@ -1085,6 +1198,10 @@ export const routes = {
 		get: { method: "GET", path: "/orchestrations/:id", kind: "endpoint" },
 		head: { method: "GET", path: "/orchestrations/:id/head", kind: "endpoint" },
 		saveVersion: { method: "POST", path: "/orchestrations/:id/versions", kind: "endpoint" },
+		check: { method: "POST", path: "/orchestrations/:id/check", kind: "endpoint" },
+		versionDiff: { method: "GET", path: "/orchestrations/:id/versions/:a/diff/:b", kind: "endpoint" },
+		edit: { method: "POST", path: "/orchestrations/:id/edits", kind: "endpoint" },
+		checkEdits: { method: "POST", path: "/orchestrations/:id/edits/check", kind: "endpoint" },
 		versions: { method: "GET", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		version: { method: "GET", path: "/orchestrations/:id/versions/:number", kind: "endpoint" },
 		restoreVersion: { method: "POST", path: "/orchestrations/:id/versions/:number/restore", kind: "endpoint" },

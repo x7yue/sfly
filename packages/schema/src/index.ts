@@ -17,6 +17,7 @@ export * from "./run-failures.js";
 export * from "./run-log-order.js";
 export * from "./run-log-scope.js";
 export * from "./run-state.js";
+export * from "./scenario-edits.js";
 export * from "./secret-mask.js";
 export * from "./series.js";
 

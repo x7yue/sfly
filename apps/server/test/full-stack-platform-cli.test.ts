@@ -1,7 +1,7 @@
 // 全栈（#248，规格 #238 的验收）：AI 编程助手只用 sfly 命令行走完联调闭环。
 // 真实的控制面、真实的 Rust Agent 和真实的 sfly 进程（环境里带着 AI 编程助手的标记），按 sfly-platform skill 的步骤：
 // sfly dev 把节点包装到本机 Agent → scenario copy 复制场景 → scenario pull，改成开发版本和本机 Agent →
-// scenario push → run start --wait。节点先故意失败：退出码 1，摘要里有失败节点的错误和日志尾部；
+// scenario check → scenario push --strict → run start --wait。节点先故意失败：退出码 1，摘要里有失败节点的错误和日志尾部；
 // 改好代码再运行（沿用同一份副本、不用重新 sfly dev）：退出码 0。
 // 节点包是测试里现写的小项目（loop-demo），原场景锁定它已发布的版本、跑在另一台 Agent 上。
 import { execFile } from "node:child_process";
@@ -201,7 +201,7 @@ describeWithAgent("全栈：AI 编程助手只用 sfly 命令行走完联调闭�
 		expect(await api.headVersion(originalId)).toBe(originalVersions);
 	});
 
-	it("scenario pull，改成开发版本和本机 Agent，push：新版本经 Claude Code 保存，原场景不变", async () => {
+	it("scenario pull，改成开发版本和本机 Agent，check 再 push --strict：新版本经 Claude Code 保存，原场景不变", async () => {
 		await ok(["scenario", "pull", COPY, "-o", file]);
 		const content = JSON.parse(await readFile(file, "utf8")) as {
 			scenario: string;
@@ -217,7 +217,12 @@ describeWithAgent("全栈：AI 编程助手只用 sfly 命令行走完联调闭�
 		content.document.default_agent = LOCAL_AGENT;
 		await writeFile(file, JSON.stringify(content, null, 2));
 
-		const pushed = await ok(["scenario", "push", file]);
+		// skill 的步骤：先 check（没有警告、列出的改动就是这两处），再 push --strict
+		const checked = await ok(["scenario", "check", file]);
+		expect(checked.stdout).toContain("文档没有问题：没有警告");
+		expect(checked.stdout).toContain(`节点包 ${PACKAGE}："0.1.0" → "dev"`);
+		expect(await api.headVersion(copyId)).toBe(1);
+		const pushed = await ok(["scenario", "push", "--strict", file]);
 		expect(pushed.stdout).toContain("版本 2");
 
 		const versions = await ok(["scenario", "versions", COPY]);

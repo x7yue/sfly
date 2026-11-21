@@ -8,6 +8,7 @@ import {
 import { ChartDeclaration } from "../package-metadata.js";
 import { removedFieldsMessage, removedFieldsWithContent } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
+import { EditOperations } from "../scenario-edits.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
@@ -223,10 +224,73 @@ export const DocumentWarningView = z.object({
 	annotation_id: z.string().optional(),
 });
 
+/**
+ * 检查时的一条警告（#424）：和保存时的一样，再加一个标记——改动之前（最新版本里）是不是就有。
+ * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`）判断，不看文字：
+ * 同一种警告指向另一个节点算新的；同一个对象上同一种警告有几条，最新版本里有几条就有几条算已有（按出现的顺序）。
+ * 会失效的运行预设（`preset_invalidated`）说的就是这次改动，总是新的；场景还没有版本时全部是新的。
+ */
+export const CheckedWarningView = DocumentWarningView.extend({
+	/** true：改动之前就有，不是这次改动带进来的（`sfly scenario check` 的退出码和 `push --strict` 不看它）。 */
+	existing: z.boolean(),
+});
+
 export const SavedVersionView = z.object({
 	...OrchestrationVersionView.shape,
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
 	warnings: z.array(DocumentWarningView),
+});
+
+/** 一项字段的变化：`path` 例如 `default_agent`、`packages.http`、`inputs.url`、`params.env`；前后值不存在时没有这个字段。 */
+export const FieldChangeView = z.object({
+	path: z.string(),
+	/** 改之前的值；之前没有这一项（新加的输入、参数、包）时没有这个字段。 */
+	before: z.unknown().optional(),
+	/** 改之后的值；之后没有这一项（删掉的输入、参数、包）时没有这个字段。 */
+	after: z.unknown().optional(),
+});
+
+/** 差异里的一个节点：ID、种类，有显示名称时带上（子流程入口节点是子流程名称）。 */
+export const DiffNodeView = z.object({
+	id: z.string(),
+	kind: z.string(),
+	display_name: z.string().optional(),
+});
+
+const DiffEdgeView = z.object({ from: z.string(), to: z.string(), kind: z.string() });
+const DiffAnnotationView = z.object({ id: z.string(), title: z.string() });
+const withChanges = <T extends z.ZodRawShape>(ref: z.ZodObject<T>) =>
+	ref.extend({ changes: z.array(FieldChangeView) });
+
+/**
+ * 两份场景文档的差异（@sfly/orchestration 的 diffDocuments，前端的版本对比用的是同一个函数）：只列出差异，不做合并。
+ * 节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。`moved` 是两边都有、只是位置变了的节点。
+ * secret 参数的默认值两边都是占位符，它的值变了看不出来。
+ */
+export const DocumentDiffView = z.object({
+	/** 场景级设置：默认 Agent（`default_agent`）、锁定的节点包版本（`packages.<包名>`）。 */
+	settings: z.array(FieldChangeView),
+	/** 改动的节点逐项列出字段：包节点的输入是 `inputs.<名>`，入口和子流程入口的参数是 `params.<参数名>`。 */
+	nodes: z.object({
+		added: z.array(DiffNodeView),
+		removed: z.array(DiffNodeView),
+		changed: z.array(withChanges(DiffNodeView)),
+	}),
+	edges: z.object({ added: z.array(DiffEdgeView), removed: z.array(DiffEdgeView) }),
+	moved: z.array(z.string()),
+	annotations: z.object({
+		added: z.array(DiffAnnotationView),
+		removed: z.array(DiffAnnotationView),
+		changed: z.array(withChanges(DiffAnnotationView)),
+	}),
+});
+
+/** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */
+export const VersionCheckView = z.object({
+	/** 和保存时相同的警告，每条带 `existing`。 */
+	warnings: z.array(CheckedWarningView),
+	/** 保存之后相对最新版本（还没有版本时是初始文档）的差异。 */
+	diff: DocumentDiffView,
 });
 
 /**
@@ -429,6 +493,11 @@ export const orchestrationsApi = {
 			document: OrchestrationDocument,
 			/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 			base_version: z.number().int().nonnegative(),
+			/**
+			 * true：这次改动新带进来了警告（改动之前就有的不算，见 CheckedWarningView）时不保存，返回 400 `strict_warnings`，
+			 * details 是 VersionCheckView（和检查的响应一样）。在保存的同一个事务里判断。不写时和以前一样，警告不阻止保存。
+			 */
+			strict: z.boolean().optional(),
 		}),
 		requestError: ({ body }) =>
 			typeof body === "object" && body !== null && Object.hasOwn(body, "base_version")
@@ -438,6 +507,132 @@ export const orchestrationsApi = {
 						message: "base_version is required (use 0 for the first version)",
 					},
 		response: SavedVersionView,
+	}),
+	/**
+	 * 检查一份场景文档，不保存（#424）：返回的错误和警告与用同样的请求体保存时完全一样（同一段校验），
+	 * 外加保存之后相对最新版本会改变什么（`diff`）。不产生版本，什么都不写。
+	 *
+	 * - 错误和保存相同：文档不合法 400 `invalid_document`；secret 参数默认值的占位符沿用不了 400 `secret_default_placeholder`；
+	 *   给了 `base_version` 而它不是最新版本时 409 `version_conflict`。没有给 `base_version` 时对照最新版本检查，不报冲突。
+	 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值），
+	 *   每条多一个 `existing`：改动之前就有（见 CheckedWarningView）。
+	 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
+	 *
+	 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
+	 */
+	check: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/check",
+		summary: "检查一份场景文档：返回保存时会有的错误和警告、和最新版本的差异，不保存",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "check"],
+		params: IdParams,
+		body: z.object({
+			/** 要检查的场景文档，和保存时一样。 */
+			document: OrchestrationDocument,
+			/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+			base_version: z.number().int().nonnegative().optional(),
+		}),
+		requestError: ({ body }) => ({
+			code: "invalid_document",
+			message:
+				typeof body === "object" && body !== null
+					? invalidDocumentMessage(body)
+					: "document does not match the orchestration schema",
+		}),
+		response: VersionCheckView,
+	}),
+	/**
+	 * 对比一个场景的两个版本（#424）：从版本 a 到版本 b 的差异，结构见 DocumentDiffView。a、b 可以相同（空差异），
+	 * 也可以 a 比 b 新（差异反过来）。版本不存在或不是整数时 404。
+	 */
+	versionDiff: endpoint({
+		method: "GET",
+		path: "/orchestrations/:id/versions/:a/diff/:b",
+		summary: "对比一个场景的两个版本：新增、删除、改动的节点和连线，改动字段的前后值",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "version-diff"],
+		params: z.object({
+			/** 场景 id。 */
+			id: z.string().min(1),
+			/** 对比的起点版本号。 */
+			a: z.string().min(1),
+			/** 对比的终点版本号。 */
+			b: z.string().min(1),
+		}),
+		response: z.object({ diff: DocumentDiffView }),
+	}),
+	/**
+	 * 对场景做一组局部编辑（#470），存成一个新版本，返回 201：和保存相同的响应，再加上这组操作造成的差异（`diff`，相对 base_version）。
+	 * 需要昵称请求头。操作见 @sfly/schema 的 EditOperation：加节点、删节点、连线、断开、改一个节点的字段，
+	 * 由控制面按顺序作用在最新版本上，用的是画布的编辑函数（@sfly/orchestration 的 applyEditOperations）。
+	 *
+	 * 要么全部生效，要么都不生效：
+	 * - 有一个操作不合法时 400 `invalid_operation`，details 是 EditOperationProblem（第几个、为什么，以及相近的节点 ID、
+	 *   缺的必填输入和类型、连线两端的节点这些线索）；
+	 * - base_version 不是最新版本时 409 `version_conflict`（和保存一样，details 见 VersionConflictDetails）；
+	 *   缺 base_version 时 400 `base_version_required`；
+	 * - 编辑之后的文档不合法时 400 `invalid_document`（例如最新版本里还有已移除种类的节点），
+	 *   secret 参数默认值的占位符沿用不了时 400 `secret_default_placeholder`，和保存一样。
+	 *
+	 * 之后的检查和保存完全一样：`warnings` 和保存时相同，每条带 `existing`（改动之前就有，见 CheckedWarningView），
+	 * 新节点没有坐标时按整理布局补上（接在节点后面的放在它右侧一列，和画布一样）。
+	 * 只检查不保存用 checkEdits。
+	 */
+	edit: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/edits",
+		summary: "对场景做一组局部编辑（增删节点和连线、改节点的字段），保存成新版本",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "edit"],
+		params: IdParams,
+		body: z.object({
+			/** 编辑起点的版本号；不是最新版本时 409 `version_conflict`。 */
+			base_version: z.number().int().nonnegative(),
+			/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+			operations: EditOperations,
+		}),
+		requestError: ({ body }) =>
+			typeof body === "object" && body !== null && !Object.hasOwn(body, "base_version")
+				? {
+						code: "base_version_required",
+						message: "base_version is required (use 0 for the first version)",
+					}
+				: undefined,
+		response: SavedVersionView.extend({
+			/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
+			warnings: z.array(CheckedWarningView),
+			/** 这组操作造成的差异：从 base_version 到新版本。 */
+			diff: DocumentDiffView,
+		}),
+	}),
+	/**
+	 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
+	 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+	 * 没有给 base_version 时对照最新版本，不报冲突。
+	 */
+	checkEdits: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/edits/check",
+		summary: "检查一组局部编辑：返回保存时会有的错误、警告和这组操作造成的差异，不保存",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "check-edits"],
+		params: IdParams,
+		body: z.object({
+			/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+			base_version: z.number().int().nonnegative().optional(),
+			/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+			operations: EditOperations,
+		}),
+		response: VersionCheckView,
 	}),
 	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */
 	versions: endpoint({
@@ -597,6 +792,9 @@ export type LastRun = z.infer<typeof LastRun>;
 export type LastRunNodeStatus = z.infer<typeof NodeRunStatus>;
 export type OrchestrationHeadView = z.infer<typeof OrchestrationHeadView>;
 export type VersionSummaryView = z.infer<typeof VersionSummaryView>;
+export type DocumentDiffView = z.infer<typeof DocumentDiffView>;
+export type CheckedWarningView = z.infer<typeof CheckedWarningView>;
+export type VersionCheckView = z.infer<typeof VersionCheckView>;
 export type DocumentWarningView = z.infer<typeof DocumentWarningView>;
 export type OrchestrationVersionView = z.infer<typeof OrchestrationVersionView>;
 export type SavedVersionView = z.infer<typeof SavedVersionView>;
