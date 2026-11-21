@@ -242,6 +242,17 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 		).rejects.toThrow(/feishu_bots_project_id_projects_id_fk/);
 	});
 
+	it("runs 的索引：runs_orchestration 带上开始时间和 ID（运行记录按场景筛选，见 run-list-plan.test.ts），runs_project_started 在", async () => {
+		await migrate(defaultMigrationsDir);
+
+		const defs = await rows<{ indexname: string; indexdef: string }>(
+			"select indexname, indexdef from pg_indexes where tablename = 'runs' order by indexname",
+		);
+		const byName = Object.fromEntries(defs.map((d) => [d.indexname, d.indexdef]));
+		expect(byName.runs_orchestration).toContain("(orchestration_id, started_at, id)");
+		expect(byName.runs_project_started).toContain("(project_id, started_at, id)");
+	});
+
 	it("迁移可以重复执行：再执行一次什么都不变，迁移里的种子和回填语句本身也可以重复执行", async () => {
 		await migrate(defaultMigrationsDir);
 		const snapshot = async () => ({

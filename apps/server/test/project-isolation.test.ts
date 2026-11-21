@@ -9,8 +9,10 @@ import { agentsApi } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AgentHub } from "../src/agents/agent-hub.js";
+import { dashboardView } from "../src/dashboard/dashboard-stats.js";
 import { setupSummary } from "../src/dashboard/setup-summary.js";
 import { type Database, openDatabase } from "../src/db/database.js";
+import type { Engine } from "../src/engine/engine.js";
 import { scenariosReferencingBot } from "../src/feishu/bot-references.js";
 import { FeishuBots } from "../src/feishu/feishu-bots.js";
 import { listOrchestrationSummaries } from "../src/orchestrations/orchestration-list.js";
@@ -450,6 +452,7 @@ function omittedProjectDoesNotCompile(deps: {
 	hub: AgentHub;
 	packages: ReturnType<typeof createPackageRepository>;
 	bots: FeishuBots;
+	engine: Engine;
 	db: Database["db"];
 }) {
 	// @ts-expect-error 漏传项目
@@ -484,6 +487,18 @@ function omittedProjectDoesNotCompile(deps: {
 	void deps.bots.create("bot", "https://example.com");
 	// @ts-expect-error 漏传项目
 	void deps.bots.remove("bot");
+	// @ts-expect-error 漏传项目
+	void deps.packages.publish(new Uint8Array(), null);
+	// @ts-expect-error 漏传项目
+	void deps.hub.attach("agent-a", {} as never, {} as never);
+	// @ts-expect-error 漏传项目
+	void deps.bots.replaceWebhookUrl("bot", "https://example.com");
+	// @ts-expect-error 漏传项目
+	void deps.engine.updateNow("agent-a");
+	// @ts-expect-error 漏传项目
+	void dashboardView({} as never);
+	// @ts-expect-error 漏传项目
+	void scenariosReferencingBot(deps.db, "bot");
 	// @ts-expect-error 项目不是任意字符串：要用 DEFAULT_PROJECT 或解析过的项目标识
 	void deps.bots.list("default");
 }

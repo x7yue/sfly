@@ -135,4 +135,8 @@ ALTER TABLE "run_presets" ADD CONSTRAINT "run_presets_updated_by_user_id_users_i
 ALTER TABLE "runs" ADD CONSTRAINT "runs_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runs" ADD CONSTRAINT "runs_triggered_by_user_id_users_id_fk" FOREIGN KEY ("triggered_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runs" ADD CONSTRAINT "runs_cancel_requested_by_user_id_users_id_fk" FOREIGN KEY ("cancel_requested_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "runs_project_started" ON "runs" USING btree ("project_id","started_at","id");
+CREATE INDEX "runs_project_started" ON "runs" USING btree ("project_id","started_at","id");--> statement-breakpoint
+-- 一个场景的运行按开始时间倒序：runs_orchestration 加上 started_at 和 id。运行记录总带着项目条件，没有它规划器会倒着扫
+-- runs_project_started、一行行过滤场景（场景的运行少又都是最早的时候要扫过整个项目），见 test/run-list-plan.test.ts。
+DROP INDEX "runs_orchestration";--> statement-breakpoint
+CREATE INDEX "runs_orchestration" ON "runs" USING btree ("orchestration_id","started_at","id");

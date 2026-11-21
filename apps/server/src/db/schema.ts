@@ -397,7 +397,10 @@ export const runs = pgTable(
 		notificationNotSent: text("notification_not_sent"),
 	},
 	(t) => [
-		index("runs_orchestration").on(t.orchestrationId),
+		// 一个场景的运行：按场景取，又按开始时间倒序（场景的运行列表、运行记录按场景筛选、每个场景最近一次运行）。
+		// 带 started_at 和 id：运行记录总带着项目条件（`runs_project_started`），规划器否则会倒着扫项目的索引、
+		// 一行行过滤场景，场景的运行少又都是最早的时候要扫过整个项目的运行（test/run-list-plan.test.ts）。
+		index("runs_orchestration").on(t.orchestrationId, t.startedAt, t.id),
 		index("runs_ended_at").on(t.endedAt),
 		// 按项目的运行列表：项目内按开始时间从新到旧（倒序扫描这条索引）。
 		index("runs_project_started").on(t.projectId, t.startedAt, t.id),

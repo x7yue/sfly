@@ -54,6 +54,24 @@ describe("控制面启动时登记共享令牌", () => {
 		expect(await credentials()).toEqual([]);
 	});
 
+	it("去掉 SFLY_AGENT_TOKEN 之后，库里那条共享令牌随之删除，旧值不再被认出；按台签发的 Agent 凭据不受影响", async () => {
+		await registerSharedAgentToken(database.db, clock, "shared-secret");
+		await database.pool.query(
+			`insert into agent_credentials (id, kind, project_id, agent_name, prefix, token_hash, created_at)
+			values (gen_random_uuid(), 'agent', 'default', 'agent-a', 'sfly_agt_ab12', $1, now())`,
+			[sha256("agent-secret")],
+		);
+		expect((await credentials()).map((c) => c.kind).sort()).toEqual(["agent", "shared"]);
+
+		await registerSharedAgentToken(database.db, clock, undefined);
+		expect((await credentials()).map((c) => [c.kind, c.token_hash])).toEqual([
+			["agent", sha256("agent-secret")],
+		]);
+		// 再配回去：当作新登记一条。
+		await registerSharedAgentToken(database.db, clock, "shared-secret");
+		expect((await credentials()).map((c) => c.kind).sort()).toEqual(["agent", "shared"]);
+	});
+
 	it("配了就登记它的哈希：默认项目、旧式、不限名字；重复启动只有一条，原值不在库里", async () => {
 		await registerSharedAgentToken(database.db, clock, "shared-secret");
 		await registerSharedAgentToken(database.db, clock, "shared-secret");
