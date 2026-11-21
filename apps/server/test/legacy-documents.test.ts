@@ -3,6 +3,7 @@
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { echo } from "./support/chains.js";
 import { dropDocumentFields } from "./support/legacy-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -10,9 +11,10 @@ const document = {
 	default_agent: "agent-a",
 	nodes: [
 		{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } },
-		{ id: "wait", kind: "sleep", duration: "5s", position: { x: 252, y: 0 } },
+		{ ...echo("wait"), position: { x: 252, y: 0 } },
 	],
 	edges: [{ from: "entry", to: "wait", kind: "chain" }],
+	packages: { stub: "1.0.0" },
 };
 
 interface WithDocument {
@@ -40,9 +42,9 @@ describe("升级前保存的场景版本：库里的文档没有 annotations", (
 			const run = "00000000-0000-4000-8000-0000000000aa";
 			const at = "2026-01-01T00:00:00Z";
 			await client.query(
-				`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status,
+				`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status,
 					started_at, ended_at)
-				select $1, $2, id, '旧人', '{}', 'success', $3, $3
+				select $1, $2, id, 'default', '旧人', '{}', 'success', $3, $3
 				from orchestration_versions where orchestration_id = $2 and number = 1`,
 				[run, scenario, at],
 			);

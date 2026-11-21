@@ -35,8 +35,6 @@ const SUPPORTED_KINDS = new Set<StoredNode["kind"]>([
 	"subflow_entry",
 	"async",
 	"package",
-	"timer",
-	"sleep",
 	"stop_subflow",
 ]);
 

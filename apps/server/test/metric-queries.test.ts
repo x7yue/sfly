@@ -444,7 +444,7 @@ describe("指标查询", () => {
 		const occupancy = (buckets: PlatformBucket[]) =>
 			buckets.map((b) => [(Date.parse(b.time) - Date.UTC(2026, 0, 1)) / 1000, b.max, b.avg]);
 
-		it("节点耗时、重试次数、排队与等待时长由任务记录计算，并发任务数与 Agent 槽位占用由执行区间推导", async () => {
+		it("节点耗时、重试次数、排队时长由任务记录计算，并发任务数与 Agent 槽位占用由执行区间推导", async () => {
 			const clock = cp.clock as ManualClock;
 			const agent = await FakeAgent.connect(
 				cp.grpcUrl,
@@ -452,14 +452,12 @@ describe("指标查询", () => {
 				{ clock: cp.clock },
 			);
 			agents.push(agent);
-			const document = orchestration({ retries: 1 });
-			document.nodes.push({ id: "pause", kind: "sleep", duration: "10s" } as never);
-			document.edges.push({ from: "load", to: "pause", kind: "chain" });
-			const runId = await api.triggerOk(await api.orchestrationWith(document));
+			const runId = await api.triggerOk(await api.orchestrationWith(orchestration({ retries: 1 })));
 			const other = await api.orchestrationWith(orchestration());
 
-			// 第 0 秒排队，第 2 秒开始执行，第 5 秒失败；重试第 5 秒排队，第 6 秒开始执行，第 10 秒成功；
-			// 之后 Sleep 节点等待 10 秒。另一个运行的任务在同一个 Agent 上从第 7 秒执行到第 12 秒。
+			// 第 0 秒排队，第 2 秒开始执行，第 5 秒失败；重试第 5 秒排队，第 6 秒开始执行，第 10 秒成功，运行结束。
+			// 另一个运行的任务在同一个 Agent 上从第 7 秒执行到第 12 秒：它在本运行结束之后才结束，
+			// 槽位占用只算到本运行结束（第 10 秒）为止。
 			const first = await agent.nextAssign({ start: false });
 			clock.advance(2000);
 			await agent.started(first);
@@ -475,7 +473,6 @@ describe("指标查询", () => {
 			await agent.succeed(retry);
 			clock.advance(2000);
 			await agent.succeed(parallel);
-			clock.advance(8000);
 			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
 
 			const platform = metricsApi.platform.response.parse(
@@ -484,8 +481,8 @@ describe("指标查询", () => {
 			expect(platform).toMatchObject({
 				run_id: runId,
 				from: iso(0),
-				to: iso(20),
-				bucket_seconds: 2,
+				to: iso(10),
+				bucket_seconds: 1,
 				retries: 1,
 			});
 			const chain = await mainChain(runId);
@@ -498,7 +495,6 @@ describe("指标查询", () => {
 					retries: 0,
 					duration_ms: 0,
 					queue_ms: 0,
-					wait_ms: 0,
 				},
 				{
 					chain_instance_id: chain,
@@ -508,30 +504,19 @@ describe("指标查询", () => {
 					retries: 1,
 					duration_ms: 10_000,
 					queue_ms: 3000,
-					wait_ms: 0,
-				},
-				{
-					chain_instance_id: chain,
-					node_id: "pause",
-					kind: "sleep",
-					attempts: 1,
-					retries: 0,
-					duration_ms: 10_000,
-					queue_ms: 0,
-					wait_ms: 10_000,
 				},
 			]);
 			expect(occupancy(platform.concurrency)).toEqual([
 				[0, 0, 0],
+				[1, 0, 0],
 				[2, 1, 1],
-				[4, 1, 0.5],
+				[3, 1, 1],
+				[4, 1, 1],
+				[5, 0, 0],
 				[6, 1, 1],
+				[7, 1, 1],
 				[8, 1, 1],
-				[10, 0, 0],
-				[12, 0, 0],
-				[14, 0, 0],
-				[16, 0, 0],
-				[18, 0, 0],
+				[9, 1, 1],
 			]);
 			expect(platform.agents.map((a) => [a.name, a.slots, occupancy(a.occupancy)])).toEqual([
 				[
@@ -539,15 +524,15 @@ describe("指标查询", () => {
 					4,
 					[
 						[0, 0, 0],
+						[1, 0, 0],
 						[2, 1, 1],
-						[4, 1, 0.5],
-						[6, 2, 1.5],
+						[3, 1, 1],
+						[4, 1, 1],
+						[5, 0, 0],
+						[6, 1, 1],
+						[7, 2, 2],
 						[8, 2, 2],
-						[10, 1, 1],
-						[12, 0, 0],
-						[14, 0, 0],
-						[16, 0, 0],
-						[18, 0, 0],
+						[9, 2, 2],
 					],
 				],
 			]);
@@ -678,7 +663,8 @@ describe("指标查询", () => {
 				nodes: [
 					{ id: "entry", kind: "entry" },
 					{ id: "spawn", kind: "async", params: {} },
-					{ id: "nap", kind: "sleep", duration: "1m" },
+					// 主链停在这里：agent-c 已注册但不在线，任务一直排队，等测试让它上线。
+					{ id: "hold", kind: "package", package: "bench", node: "load", agent: "agent-c" },
 					{ id: "stop", kind: "stop_subflow", subflow: "mon" },
 					{ id: "mon", kind: "subflow_entry", name: "mon", params: [] },
 					{
@@ -692,17 +678,18 @@ describe("指标查询", () => {
 				],
 				edges: [
 					{ from: "entry", to: "spawn", kind: "chain" },
-					{ from: "spawn", to: "nap", kind: "chain" },
-					{ from: "nap", to: "stop", kind: "chain" },
+					{ from: "spawn", to: "hold", kind: "chain" },
+					{ from: "hold", to: "stop", kind: "chain" },
 					{ from: "mon", to: "load", kind: "chain" },
 					{ from: "spawn", to: "mon", kind: "dispatch" },
 				],
 				packages: { bench: "1.0.0" },
 			};
 			await connect("agent-a");
+			await (await connect("agent-c")).disconnect();
 			const remote = await connect("agent-b");
 			const { runId, task } = await start(remote, document);
-			// agent-b 断线，租约过期后第 1 次尝试以 agent_lost 失败，第 2 次排队等 agent-b；之后 nap 到点，停止 mon。
+			// agent-b 断线，租约过期后第 1 次尝试以 agent_lost 失败，第 2 次排队等 agent-b；之后 hold 完成，停止 mon。
 			await remote.disconnect();
 			(cp.clock as ManualClock).advance(30_000);
 			const loadOf = async () =>
@@ -710,12 +697,13 @@ describe("指标查询", () => {
 			await eventually(async () =>
 				expect((await loadOf())?.attempts.map((a) => a.status)).toEqual(["failed", "queued"]),
 			);
-			(cp.clock as ManualClock).advance(30_000);
+			const holder = await connect("agent-c");
+			await holder.succeed(await holder.nextAssign());
 			await eventually(async () => expect((await loadOf())?.status).toBe("stopped"));
 
 			const load = await loadOf();
 			expect(load?.attempts.map((a) => a.task_id)).toEqual([task.taskId]);
-			const [node] = (await catalog(runId)).nodes;
+			const node = (await catalog(runId)).nodes.find((n) => n.node_id === "load");
 			expect(node?.attempts.map((a) => [a.task_id, a.attempt])).toEqual([[task.taskId, 1]]);
 		});
 

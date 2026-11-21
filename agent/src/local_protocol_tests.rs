@@ -322,7 +322,13 @@ fn result_value(result: &TaskResult) -> Value {
         Some((_, tail)) => {
             json!({ "status": "failed", "kind": kind, "abnormal_exit": { "stderr_tail": tail } })
         }
-        None => json!({ "status": "failed", "kind": kind, "report": error.message }),
+        None => json!({
+            "status": "failed",
+            "kind": kind,
+            "report": error.message,
+            // 空串表示没有位置，和本地调试的 None 对应。
+            "location": (!error.location.is_empty()).then_some(&error.location),
+        }),
     }
 }
 

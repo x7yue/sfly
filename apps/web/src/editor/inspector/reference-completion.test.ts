@@ -12,7 +12,7 @@ import {
 	wholeReference,
 } from "./reference-completion";
 
-/** 主链 entry → fetch（http_check）→ wait（Sleep）→ ping；ping 可以引用入口参数与前面节点的输出。 */
+/** 主链 entry → fetch（http_check）→ stop（停止子流程）→ ping；ping 可以引用入口参数与前面节点的输出。 */
 const doc: StoredOrchestrationDocument = {
 	nodes: [
 		{
@@ -31,17 +31,16 @@ const doc: StoredOrchestrationDocument = {
 			inputs: {},
 			always: false,
 		},
-		{ id: "wait", kind: "sleep", always: false, duration: "5s" },
+		{ id: "stop", kind: "stop_subflow", always: false },
 		{ id: "ping", kind: "package", package: "demo", node: "ping", inputs: {}, always: false },
 	],
 	edges: [
 		{ from: "entry", to: "fetch", kind: "chain" },
-		{ from: "fetch", to: "wait", kind: "chain" },
-		{ from: "wait", to: "ping", kind: "chain" },
+		{ from: "fetch", to: "stop", kind: "chain" },
+		{ from: "stop", to: "ping", kind: "chain" },
 	],
 	packages: { demo: "1.0.0" },
 	annotations: [],
-	sticky_notes: [],
 } as StoredOrchestrationDocument;
 
 const io = (outputs: Record<string, { type: string }>) => ({
@@ -71,7 +70,7 @@ describe("引用补全", () => {
 			["params.token", "param", "string · 敏感"],
 			["nodes.fetch.outputs.status", "output", "integer · fetch"],
 			["nodes.fetch.outputs.body", "output", "string · fetch"],
-			["nodes.wait.outputs.triggered_at", "output", "wait"],
+			["nodes.stop.outputs.status", "output", "stop"],
 		]);
 		expect(choices[0]?.text).toBe("${{ params.url }}");
 		// 链上第一个节点只能引用入口参数。
@@ -82,7 +81,7 @@ describe("引用补全", () => {
 		const named: StoredOrchestrationDocument = {
 			...doc,
 			nodes: doc.nodes.map((n) =>
-				n.id === "fetch" || n.id === "wait" ? { ...n, display_name: "探测站点" } : n,
+				n.id === "fetch" || n.id === "stop" ? { ...n, display_name: "探测站点" } : n,
 			),
 		};
 		expect(referenceChoices(named, "ping", catalog).map((c) => [c.expression, c.detail])).toEqual([
@@ -90,7 +89,7 @@ describe("引用补全", () => {
 			["params.token", "string · 敏感"],
 			["nodes.fetch.outputs.status", "integer · 探测站点（fetch）"],
 			["nodes.fetch.outputs.body", "string · 探测站点（fetch）"],
-			["nodes.wait.outputs.triggered_at", "探测站点（wait）"],
+			["nodes.stop.outputs.status", "探测站点（stop）"],
 		]);
 		expect(referenceChoices(named, "ping", catalog)[2]?.text).toBe(
 			"${{ nodes.fetch.outputs.status }}",
@@ -108,7 +107,7 @@ describe("引用补全", () => {
 		const filtered = completionGroups(choices, "STAT");
 		expect(filtered.groups.map((g) => g.choices.map((c) => c.expression))).toEqual([
 			[],
-			["nodes.fetch.outputs.status"],
+			["nodes.fetch.outputs.status", "nodes.stop.outputs.status"],
 		]);
 		expect(completionGroups(choices, "nope").ordered).toEqual([]);
 	});

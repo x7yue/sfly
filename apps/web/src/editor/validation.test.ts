@@ -15,12 +15,11 @@ const base: StoredOrchestrationDocument = {
 			kind: "entry",
 			params: [{ name: "url", type: "string", required: true, secret: false }],
 		},
-		{ id: "wait", kind: "sleep", always: false, duration: "5s" },
+		{ id: "stop", kind: "stop_subflow", always: false },
 	],
-	edges: [{ from: "entry", to: "wait", kind: "chain" }],
+	edges: [{ from: "entry", to: "stop", kind: "chain" }],
 	packages: {},
 	annotations: [],
-	sticky_notes: [],
 };
 
 describe("保存前的字段校验", () => {
@@ -31,15 +30,15 @@ describe("保存前的字段校验", () => {
 	it("显示名称超过 40 个字符或带换行时指出所在节点和字段；空白的显示名称不算错", () => {
 		const withName = (display_name: string): StoredOrchestrationDocument => ({
 			...base,
-			nodes: base.nodes.map((n) => (n.id === "wait" ? { ...n, display_name } : n)),
+			nodes: base.nodes.map((n) => (n.id === "stop" ? { ...n, display_name } : n)),
 		});
 		expect(documentFieldErrors(withName("😀".repeat(40)))).toEqual([]);
 		expect(documentFieldErrors(withName("   "))).toEqual([]);
 		expect(documentFieldErrors(withName("😀".repeat(41)))).toEqual([
-			{ nodeId: "wait", field: "display_name", message: "最多 40 个字符", typed: false },
+			{ nodeId: "stop", field: "display_name", message: "最多 40 个字符", typed: false },
 		]);
 		expect(documentFieldErrors(withName("第一行\n第二行"))).toEqual([
-			{ nodeId: "wait", field: "display_name", message: "只能写一行", typed: false },
+			{ nodeId: "stop", field: "display_name", message: "只能写一行", typed: false },
 		]);
 	});
 
@@ -70,16 +69,16 @@ describe("保存前的字段校验", () => {
 		]);
 	});
 
-	it("不符合场景文档格式的配置（例如空的 Sleep 时长）是字段错误", () => {
+	it("不符合场景文档格式的配置（例如空的要停止的子流程）是字段错误", () => {
 		const doc: StoredOrchestrationDocument = {
 			...base,
 			nodes: [
 				base.nodes[0] as StoredOrchestrationDocument["nodes"][number],
-				{ id: "wait", kind: "sleep", always: false, duration: "" },
+				{ id: "stop", kind: "stop_subflow", always: false, subflow: "" },
 			],
 		};
 		expect(documentFieldErrors(doc)).toEqual([
-			{ nodeId: "wait", field: "duration", message: "不能为空", typed: true },
+			{ nodeId: "stop", field: "subflow", message: "不能为空", typed: false },
 		]);
 	});
 
@@ -95,40 +94,49 @@ describe("保存前的字段校验", () => {
 });
 
 describe("已移除种类的节点（ADR 0028）", () => {
-	const removed = {
-		id: "notify",
-		kind: "feishu_notify",
-		bot: "ops",
-		text: "完成",
-	} as unknown as StoredOrchestrationDocument["nodes"][number];
-	const withRemoved: StoredOrchestrationDocument = {
+	const REMOVED = [
+		["feishu_notify", { bot: "ops", text: "完成" }, "在节点代码里用 ctx.notify 发飞书消息"],
+		[
+			"timer",
+			{ at: "09:30:00", tz: "Asia/Shanghai" },
+			"在节点代码里等到那个时刻，或把场景拆成两次运行",
+		],
+		["sleep", { duration: "30s" }, "在节点代码里等待，或把场景拆成两次运行"],
+	] as const;
+	const removedNode = (kind: string, config: object) =>
+		({ id: "old", kind, ...config }) as unknown as StoredOrchestrationDocument["nodes"][number];
+	const withRemoved = (node: StoredOrchestrationDocument["nodes"][number]) => ({
 		...base,
-		nodes: [...base.nodes, removed],
-		edges: [...base.edges, { from: "wait", to: "notify", kind: "chain" }],
-	};
+		nodes: [...base.nodes, node],
+		edges: [...base.edges, { from: "stop", to: node.id, kind: "chain" as const }],
+	});
 
-	it("是字段错误：不能保存，错误指出节点和替换办法", () => {
-		expect(documentFieldErrors(withRemoved)).toEqual([
+	it.each(
+		REMOVED,
+	)("%s 是字段错误：不能保存，错误指出节点和替换办法", (kind, config, replacement) => {
+		expect(documentFieldErrors(withRemoved(removedNode(kind, config)))).toEqual([
 			{
-				nodeId: "notify",
+				nodeId: "old",
 				field: "kind",
-				message: "已不再支持，不能保存。替换办法：在节点代码里用 ctx.notify 发飞书消息",
+				message: `已不再支持，不能保存。替换办法：${replacement}`,
 			},
 		]);
 	});
 
-	it("其余节点的错误照常指向对的节点（位置按去掉已移除节点之后算）", () => {
+	it.each(
+		REMOVED,
+	)("%s：其余节点的错误照常指向对的节点（位置按去掉已移除节点之后算）", (kind, config) => {
 		const doc: StoredOrchestrationDocument = {
-			...withRemoved,
+			...withRemoved(removedNode(kind, config)),
 			nodes: [
 				base.nodes[0] as StoredOrchestrationDocument["nodes"][number],
-				removed,
-				{ id: "wait", kind: "sleep", always: false, duration: "" },
+				removedNode(kind, config),
+				{ id: "stop", kind: "stop_subflow", always: false, subflow: "" },
 			],
 		};
 		expect(documentFieldErrors(doc).map((e) => [e.nodeId, e.field])).toEqual([
-			["notify", "kind"],
-			["wait", "duration"],
+			["old", "kind"],
+			["stop", "subflow"],
 		]);
 	});
 

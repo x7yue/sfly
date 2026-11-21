@@ -55,10 +55,12 @@ test("没有来源的新节点不盖住子流程区域：落在区域标题栏�
 	await paneMenu(page)
 		.getByRole("menuitem", { name: /添加节点/ })
 		.click();
-	await addMenu(page).getByRole("option", { name: /定时/ }).click();
-	await expect(nodeCard(page, "timer_1")).toBeVisible();
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 
-	const added = await box(nodeCard(page, "timer_1"));
+	const added = await box(nodeCard(page, "stop_subflow_1"));
 	expect(overlap(added, await box(region))).toBe(false);
 	for (const other of ["entry", "fetch", "dispatch", "ping", "sub_entry", "sub_ping"]) {
 		expect(overlap(added, await box(nodeCard(page, other))), other).toBe(false);

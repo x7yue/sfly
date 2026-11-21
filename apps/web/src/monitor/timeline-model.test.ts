@@ -33,7 +33,6 @@ function attempt(overrides: Partial<AttemptView>): AttemptView {
 		ended_at: null,
 		start_clock_offset: null,
 		end_clock_offset: null,
-		wake_at: null,
 		progress: null,
 		current_action: null,
 		...overrides,
@@ -91,7 +90,7 @@ describe("节点的时间线区段", () => {
 					queued_at: at(0),
 					started_at: at(0),
 					ended_at: at(3),
-					error: { kind: "node_error", message: "boom" },
+					error: { kind: "node_error", message: "boom", location: null },
 				}),
 				attempt({
 					task_id: "a2",
@@ -108,31 +107,6 @@ describe("节点的时间线区段", () => {
 			["fail", 1, "a1"],
 			["ok", 2, "a2"],
 		]);
-	});
-
-	it("定时 / Sleep 节点的等待画成等待段", () => {
-		const waiting = nodeSegments(
-			node("sleep", [
-				attempt({
-					status: "waiting",
-					agent: null,
-					queued_at: at(2),
-					started_at: at(2),
-					wake_at: at(12),
-				}),
-			]),
-			s(5),
-		);
-		expect(waiting.map((g) => [g.kind, g.start, g.end, g.live])).toEqual([
-			["wait", s(2), s(5), true],
-		]);
-		const woke = nodeSegments(
-			node("timer", [
-				attempt({ status: "success", queued_at: at(2), started_at: at(2), ended_at: at(12) }),
-			]),
-			s(30),
-		);
-		expect(woke.map((g) => g.kind)).toEqual(["wait"]);
 	});
 
 	it("执行中被取消的尝试画成已取消段", () => {
@@ -167,14 +141,30 @@ describe("节点的时间线区段", () => {
 		expect(kinds("success", at(6))).toEqual(["wait"]);
 	});
 
-	it("定时 / Sleep 节点失败或被取消的尝试仍画成失败段、已取消段", () => {
+	it("停止子流程节点失败或被取消的尝试仍画成失败段、已取消段", () => {
 		const kinds = (status: AttemptView["status"]) =>
 			nodeSegments(
-				node("timer", [attempt({ status, queued_at: at(1), started_at: at(1), ended_at: at(6) })]),
+				node("stop_subflow", [
+					attempt({ status, queued_at: at(1), started_at: at(1), ended_at: at(6) }),
+				]),
 				s(20),
 			).map((g) => g.kind);
 		expect(kinds("failed")).toEqual(["fail"]);
 		expect(kinds("cancelled")).toEqual(["cancel"]);
+	});
+
+	it.each([
+		"timer",
+		"sleep",
+		"feishu_notify",
+	] as const)("历史运行里已移除种类的节点 %s 按普通执行画：成功是完成段、失败是失败段，不画等待段（ADR 0028）", (kind) => {
+		const kinds = (status: AttemptView["status"]) =>
+			nodeSegments(
+				node(kind, [attempt({ status, queued_at: at(2), started_at: at(2), ended_at: at(12) })]),
+				s(30),
+			).map((g) => [g.kind, g.start, g.end]);
+		expect(kinds("success")).toEqual([["ok", s(2), s(12)]]);
+		expect(kinds("failed")).toEqual([["fail", s(2), s(12)]]);
 	});
 
 	it("没有尝试（待执行、跳过、没开始就取消）就没有区段", () => {

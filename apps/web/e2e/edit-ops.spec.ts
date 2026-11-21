@@ -60,24 +60,33 @@ test("工具条「＋」：可搜索的菜单，新节点落在视口中心、�
 	// 再加一个：落点被上一个占了，往右下错开。
 	const first = await nodePosition(page, "http_check_1");
 	await page.keyboard.press("/");
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
-	const second = await nodePosition(page, "sleep_1");
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
+	const second = await nodePosition(page, "stop_subflow_1");
 	if (!first || !second) throw new Error("没有节点位置");
 	expect(second.x).toBeGreaterThan(first.x);
 	expect(second.y).toBeGreaterThan(first.y);
-	const [a, b] = [await box(nodeCard(page, "http_check_1")), await box(nodeCard(page, "sleep_1"))];
+	const [a, b] = [
+		await box(nodeCard(page, "http_check_1")),
+		await box(nodeCard(page, "stop_subflow_1")),
+	];
 	expect(overlap(a, b)).toBe(false);
 	await expect(page.locator("[data-edge]")).toHaveCount(5);
 
 	// 游离节点只产生警告，不阻止保存。
-	await expect(nodeCard(page, "sleep_1")).toContainText("1 警告");
+	await expect(nodeCard(page, "stop_subflow_1")).toContainText("2 警告");
 	await page.getByRole("button", { name: /保存/ }).click();
 	await expect(page.getByText("已保存为版本 2")).toBeVisible();
 	const saved = (await headOf(controlPlane, id)) as unknown as {
 		document: { nodes: { id: string }[]; edges: { from: string; to: string }[] };
 	};
-	expect(saved.document.nodes.map((n) => n.id)).toEqual([...existing, "http_check_1", "sleep_1"]);
+	expect(saved.document.nodes.map((n) => n.id)).toEqual([
+		...existing,
+		"http_check_1",
+		"stop_subflow_1",
+	]);
 	expect(saved.document.edges).toHaveLength(5);
 });
 
@@ -97,12 +106,12 @@ test("添加节点菜单：最近使用在第一组，最新在前，输入搜�
 	await expect(recent).toHaveCount(0);
 	// 本场景锁定了 demo-checks：它排在按名称靠前的 alpha-tools 前面。
 	expect(await headings()).toEqual(["内置", "demo-checks @1.2.0", "alpha-tools @0.1.0"]);
-	await menu.getByRole("option", { name: /Sleep/ }).click();
+	await menu.getByRole("option", { name: /停止子流程/ }).click();
 	await expect(menu).toHaveCount(0);
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 
 	await page.keyboard.press("/");
-	await expect(recent.getByRole("option")).toHaveText([/^Sleep/]);
+	await expect(recent.getByRole("option")).toHaveText([/^停止子流程/]);
 	await menu
 		.getByRole("group", { name: "demo-checks @1.2.0" })
 		.getByRole("option", { name: /HTTP 检查/ })
@@ -121,7 +130,7 @@ test("添加节点菜单：最近使用在第一组，最新在前，输入搜�
 	]);
 	await expect(recent.getByRole("option")).toHaveText([
 		/^HTTP 检查demo-checks\/http_check$/,
-		/^Sleep/,
+		/^停止子流程/,
 	]);
 	await expect(recent.getByRole("option").first()).toHaveAttribute("aria-selected", "true");
 
@@ -132,12 +141,12 @@ test("添加节点菜单：最近使用在第一组，最新在前，输入搜�
 	await search.fill("");
 	await expect(recent.getByRole("option")).toHaveCount(2);
 
-	await recent.getByRole("option", { name: /^Sleep/ }).click();
+	await recent.getByRole("option", { name: /^停止子流程/ }).click();
 	await expect(menu).toHaveCount(0);
-	await expect(nodeCard(page, "sleep_2")).toBeVisible();
+	await expect(nodeCard(page, "stop_subflow_2")).toBeVisible();
 	await page.keyboard.press("/");
-	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
-	await search.fill("定时");
+	await expect(recent.getByRole("option")).toHaveText([/^停止子流程/, /^HTTP 检查/]);
+	await search.fill("停止");
 	await page.keyboard.press("Escape");
 	await expect(menu).toHaveCount(0);
 	await page.keyboard.press("/");
@@ -148,15 +157,15 @@ test("添加节点菜单：最近使用在第一组，最新在前，输入搜�
 	await page.reload();
 	await expect(nodeCard(page, "sub_ping")).toBeVisible();
 	await page.keyboard.press("/");
-	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await expect(recent.getByRole("option")).toHaveText([/^停止子流程/, /^HTTP 检查/]);
 	await page.keyboard.press("Escape");
 	const other = await createScenario(controlPlane, "另一个场景", editorDocument);
 	await openEditor(page, other);
 	await page.keyboard.press("/");
-	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await expect(recent.getByRole("option")).toHaveText([/^停止子流程/, /^HTTP 检查/]);
 	await page.keyboard.press("Enter");
 	await expect(addMenu(page)).toHaveCount(0);
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 });
 
 test("最近使用里只留还能添加的项：存的内容不对时当作没有；包里已经没有的节点丢掉", async ({
@@ -175,10 +184,18 @@ test("最近使用里只留还能添加的项：存的内容不对时当作没�
 	await expect(addMenu(page).getByRole("group", { name: "内置" })).toBeVisible();
 	await expect(recent()).toHaveCount(0);
 
-	await store(JSON.stringify(["package:demo-checks/removed", "builtin:timer", "package:gone/x"]));
+	// builtin:timer 是已经删除的内置节点（ADR 0028），旧版本记下的这一项也丢掉。
+	await store(
+		JSON.stringify([
+			"package:demo-checks/removed",
+			"builtin:timer",
+			"builtin:stop_subflow",
+			"package:gone/x",
+		]),
+	);
 	await openEditor(page, id);
 	await page.keyboard.press("/");
-	await expect(recent().getByRole("option")).toHaveText([/^定时/]);
+	await expect(recent().getByRole("option")).toHaveText([/^停止子流程/]);
 });
 
 /** 画布空白处（主链下方、子流程区域左侧）。 */
@@ -196,7 +213,6 @@ test("空白处右键菜单：各项带注册表里的快捷键；「添加节�
 	await expect(menu).toBeVisible();
 	await expect(menu.getByRole("menuitem")).toHaveText([
 		"添加节点/",
-		"添加便签",
 		// 打开菜单时不读剪贴板，点了才读（另见 node-clipboard.spec.ts）。
 		"粘贴CtrlV",
 		"整理布局AltShiftF",
@@ -220,23 +236,23 @@ test("空白处右键菜单：各项带注册表里的快捷键；「添加节�
 	await expect(add.getByText(/^新节点不连线/)).toBeVisible();
 	const addBox = await box(add);
 	expect(Math.abs(addBox.x - BLANK.x)).toBeLessThan(12);
-	await add.getByRole("option", { name: /定时/ }).click();
+	await add.getByRole("option", { name: /停止子流程/ }).click();
 
-	await expect(nodeCard(page, "timer_1")).toBeFocused();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeFocused();
 	await expect(page.locator("[data-edge]")).toHaveCount(5);
 	// 卡片中心就在右键的位置。
-	const card = await box(nodeCard(page, "timer_1"));
+	const card = await box(nodeCard(page, "stop_subflow_1"));
 	expect(Math.abs(card.x + card.width / 2 - BLANK.x)).toBeLessThan(3);
 	expect(Math.abs(card.y + card.height / 2 - BLANK.y)).toBeLessThan(3);
 
 	// 菜单里撤销、重做。
 	await page.mouse.click(BLANK.x + 300, BLANK.y + 100, { button: "right" });
 	await paneMenu(page).getByRole("menuitem", { name: /撤销/ }).click();
-	await expect(nodeCard(page, "timer_1")).toHaveCount(0);
+	await expect(nodeCard(page, "stop_subflow_1")).toHaveCount(0);
 	await page.mouse.click(BLANK.x + 300, BLANK.y + 100, { button: "right" });
 	await expect(paneMenu(page).getByRole("menuitem", { name: /撤销/ })).toBeDisabled();
 	await paneMenu(page).getByRole("menuitem", { name: /重做/ }).click();
-	await expect(nodeCard(page, "timer_1")).toBeVisible();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 
 	// 整理布局。
 	const original = await nodePosition(page, "sub_entry");
@@ -264,11 +280,9 @@ test("空白处右键菜单可用键盘操作：方向键移动、Enter 执行�
 	await expect(highlighted).toContainText("添加节点");
 	// 禁用的项（粘贴）也能走到（读得到原因），但 Enter 不执行。
 	await page.keyboard.press("ArrowDown");
-	await expect(highlighted).toContainText("添加便签");
-	await page.keyboard.press("ArrowDown");
+	await expect(highlighted).toContainText("粘贴");
 	await page.keyboard.press("ArrowDown");
 	await expect(highlighted).toContainText("整理布局");
-	await page.keyboard.press("ArrowUp");
 	await page.keyboard.press("ArrowUp");
 	await page.keyboard.press("ArrowUp");
 	await expect(highlighted).toContainText("添加节点");
@@ -370,19 +384,21 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	await expect(nodeCard(page, "ping")).toBeFocused();
 	await page.keyboard.press("Tab");
 	await expect(addMenu(page)).toBeVisible();
-	await page.keyboard.type("定时");
+	await page.keyboard.type("停止");
 	await page.keyboard.press("Enter");
 	await expect(addMenu(page)).toHaveCount(0);
-	await expect(edge(page, "chain:ping->timer_1")).toHaveCount(1);
-	await expect(nodeCard(page, "timer_1")).toBeFocused();
-	expect(await nodePosition(page, "timer_1")).toEqual({ x: 1200, y: 0 });
+	await expect(edge(page, "chain:ping->stop_subflow_1")).toHaveCount(1);
+	await expect(nodeCard(page, "stop_subflow_1")).toBeFocused();
+	expect(await nodePosition(page, "stop_subflow_1")).toEqual({ x: 1200, y: 0 });
 
 	// 子流程的链尾同理。
 	await nodeCard(page, "sub_ping").click();
 	await page.keyboard.press("Tab");
 	await expect(addMenu(page).getByText("新节点接在 sub_ping 之后")).toBeVisible();
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(edge(page, "chain:sub_ping->sleep_1")).toHaveCount(1);
+	await addMenu(page)
+		.getByRole("option", { name: /HTTP 检查/ })
+		.click();
+	await expect(edge(page, "chain:sub_ping->http_check_1")).toHaveCount(1);
 	await expect(page.getByText("有未保存的修改", { exact: true })).toBeVisible();
 });
 
@@ -403,10 +419,10 @@ test("按 / 后立即输入并回车：渲染帧来得晚时输入也不丢，�
 	await nodeCard(page, "fetch").click();
 	await expect(nodeCard(page, "fetch")).toBeFocused();
 	await page.keyboard.press("/");
-	await page.keyboard.type("定时");
+	await page.keyboard.type("停止");
 	await page.keyboard.press("Enter");
 	await expect(addMenu(page)).toHaveCount(0);
-	await expect(nodeCard(page, "timer_1")).toBeVisible();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 	await expect(nodeCard(page, "async_1")).toHaveCount(0);
 });
 

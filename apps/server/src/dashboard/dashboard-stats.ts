@@ -17,6 +17,7 @@ import {
 	type TaskStatus,
 } from "../db/schema.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { type RunRead, type RunReadFull, readRuns } from "../runs/run-read.js";
 import { setupSummary } from "./setup-summary.js";
 
@@ -35,9 +36,12 @@ const isOutcome = (status: string): status is Outcome => (OUTCOMES as string[]).
 
 /**
  * 控制台统计（契约见 @sfly/schema 的 dashboardApi）。「现在」取注入的时钟，
- * 窗口是 [now − 24h, now]，运行按结束时间归入窗口。
+ * 窗口是 [now − 24h, now]，运行按结束时间归入窗口。只统计这个项目里的运行、Agent、节点包和场景（ADR 0029）。
  */
-export async function dashboardView(deps: DashboardDeps): Promise<DashboardView> {
+export async function dashboardView(
+	deps: DashboardDeps,
+	project: ProjectId,
+): Promise<DashboardView> {
 	const { db, clock, hub } = deps;
 	const now = clock.now();
 	const windowStart = new Date(now.getTime() - WINDOW_MS);
@@ -45,16 +49,23 @@ export async function dashboardView(deps: DashboardDeps): Promise<DashboardView>
 	const ended = await db
 		.select({ status: runs.status })
 		.from(runs)
-		.where(and(isNotNull(runs.endedAt), gte(runs.endedAt, windowStart), lte(runs.endedAt, now)));
+		.where(
+			and(
+				eq(runs.projectId, project),
+				isNotNull(runs.endedAt),
+				gte(runs.endedAt, windowStart),
+				lte(runs.endedAt, now),
+			),
+		);
 	const current = { success: 0, failed: 0, cancelled: 0 };
 	for (const run of ended) {
 		if (isOutcome(run.status)) current[run.status] += 1;
 	}
 
-	const running = await runningRuns(db);
-	const recentEnded = await recentEndedRuns(deps, windowStart, now);
-	const failedSubflows = await failedSubflowCount(db, windowStart, now);
-	const agents = await hub.list();
+	const running = await runningRuns(db, project);
+	const recentEnded = await recentEndedRuns(deps, project, windowStart, now);
+	const failedSubflows = await failedSubflowCount(db, project, windowStart, now);
+	const agents = await hub.list(project);
 	const online = agents.filter((a) => a.status === "online");
 	const chains = running.flatMap((r) => r.chains);
 	const nodes = chains.flatMap((c) => c.nodes);
@@ -101,7 +112,7 @@ export async function dashboardView(deps: DashboardDeps): Promise<DashboardView>
 			slots: online.reduce((sum, a) => sum + a.info.slots, 0),
 			used_slots: online.reduce((sum, a) => sum + a.running_tasks.length, 0),
 		},
-		setup: await setupSummary(db),
+		setup: await setupSummary(db, project),
 	};
 }
 
@@ -109,11 +120,11 @@ export async function dashboardView(deps: DashboardDeps): Promise<DashboardView>
  * 正在运行的运行（按开始时间从新到旧）及其场景名称、各链节点状态；整批读取（src/runs/run-read.ts），
  * 查询次数与运行数无关。
  */
-async function runningRuns(db: Db): Promise<RunRead[]> {
+async function runningRuns(db: Db, project: ProjectId): Promise<RunRead[]> {
 	const rows = await db
 		.select({ id: runs.id })
 		.from(runs)
-		.where(eq(runs.status, "running"))
+		.where(and(eq(runs.projectId, project), eq(runs.status, "running")))
 		.orderBy(desc(runs.startedAt), desc(runs.id));
 	const reads = await readRuns(
 		db,
@@ -123,12 +134,19 @@ async function runningRuns(db: Db): Promise<RunRead[]> {
 }
 
 /** 窗口内失败的子流程实例数（按链实例的结束时间，不论所在运行是否已结束）。 */
-async function failedSubflowCount(db: Db, from: Date, to: Date): Promise<number> {
+async function failedSubflowCount(
+	db: Db,
+	project: ProjectId,
+	from: Date,
+	to: Date,
+): Promise<number> {
 	const [row] = await db
 		.select({ n: count() })
 		.from(chainInstances)
+		.innerJoin(runs, eq(runs.id, chainInstances.runId))
 		.where(
 			and(
+				eq(runs.projectId, project),
 				eq(chainInstances.status, "failed"),
 				gt(chainInstances.depth, 0),
 				isNotNull(chainInstances.endedAt),
@@ -174,6 +192,7 @@ async function endedFocus(deps: RunFocusDeps, read: RunReadFull): Promise<RunFoc
 /** 窗口内结束的运行（按结束时间从新到旧，最多 RECENT_ENDED 个）；失败的带上最先出问题的节点和关注项的最终值。 */
 async function recentEndedRuns(
 	deps: RunFocusDeps,
+	project: ProjectId,
 	from: Date,
 	to: Date,
 ): Promise<DashboardEndedRun[]> {
@@ -187,7 +206,14 @@ async function recentEndedRuns(
 		.from(runs)
 		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
 		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
-		.where(and(isNotNull(runs.endedAt), gte(runs.endedAt, from), lte(runs.endedAt, to)))
+		.where(
+			and(
+				eq(runs.projectId, project),
+				isNotNull(runs.endedAt),
+				gte(runs.endedAt, from),
+				lte(runs.endedAt, to),
+			),
+		)
 		.orderBy(desc(runs.endedAt), desc(runs.id))
 		.limit(RECENT_ENDED);
 	// 失败的运行（最多 RECENT_ENDED 个）整批读一次，再逐个读关注项的序列：不并发占用连接池，也不放进事务。

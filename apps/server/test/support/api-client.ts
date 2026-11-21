@@ -145,15 +145,13 @@ export interface AttemptView {
 	agent: string | null;
 	inputs: Record<string, unknown> | null;
 	outputs: Record<string, unknown> | null;
-	error: { kind: string; message: string } | null;
+	error: { kind: string; message: string; location: string | null } | null;
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
 	/** 任务开始、结束时的时钟偏差（#175）；旧版本 Agent 或没有上报时为 null。 */
 	start_clock_offset: ClockOffsetView | null;
 	end_clock_offset: ClockOffsetView | null;
-	/** 定时 / Sleep 节点的唤醒时间（#14）；其他节点为 null。 */
-	wake_at: string | null;
 	progress: {
 		current: number;
 		total: number | null;
@@ -172,7 +170,7 @@ export interface NodeView {
 	status: string;
 	agent: string | null;
 	outputs: Record<string, unknown> | null;
-	error: { kind: string; message: string } | null;
+	error: { kind: string; message: string; location: string | null } | null;
 	attempts: AttemptView[];
 }
 

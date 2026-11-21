@@ -20,12 +20,11 @@ const document = (): OrchestrationDocument => ({
 			kind: "subflow_entry",
 			params: [{ name: "key", type: "number", required: false, secret: true, default: "******" }],
 		},
-		{ id: "wait", kind: "sleep", always: false, duration: "5s" },
+		{ id: "wait", kind: "package", package: "demo", node: "echo", always: false, inputs: {} },
 	],
 	edges: [],
 	packages: {},
 	annotations: [],
-	sticky_notes: [],
 });
 
 describe("文档里「已设置」的敏感默认值（读取接口给的占位符）", () => {

@@ -7,6 +7,7 @@ import type {
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { agents, orchestrations, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { initialDocument, toBase } from "./orchestration-store.js";
 
 /** 场景列表的筛选（GET /orchestrations 的查询参数）。 */
@@ -58,10 +59,12 @@ export async function referencedAgentStatus(
 
 /**
  * 场景列表（卡片与表格的数据）：最新版本的结构与引用的 Agent（带在线状态）、最近一次运行与各节点状态。
- * 默认只列出没有归档的场景；archived 为 true 时只列出已归档的。按新建时间从新到旧。
+ * 默认只列出没有归档的场景；archived 为 true 时只列出已归档的。按新建时间从新到旧。只列这个项目里的场景
+ * （ADR 0029）；引用的 Agent 的在线状态也只看这个项目里的 Agent。
  */
 export async function listOrchestrationSummaries(
 	db: Db,
+	project: ProjectId,
 	filter: OrchestrationFilter,
 ): Promise<{ orchestrations: OrchestrationSummary[]; archived_count: number }> {
 	const rows = await db
@@ -79,13 +82,16 @@ export async function listOrchestrationSummaries(
 			),
 		)
 		.where(
-			filter.archived ? isNotNull(orchestrations.archivedAt) : isNull(orchestrations.archivedAt),
+			and(
+				eq(orchestrations.projectId, project),
+				filter.archived ? isNotNull(orchestrations.archivedAt) : isNull(orchestrations.archivedAt),
+			),
 		)
 		.orderBy(desc(orchestrations.createdAt), asc(orchestrations.name));
 	const [archived] = await db
 		.select({ n: count() })
 		.from(orchestrations)
-		.where(isNotNull(orchestrations.archivedAt));
+		.where(and(eq(orchestrations.projectId, project), isNotNull(orchestrations.archivedAt)));
 
 	const ids = rows.map((r) => r.orchestration.id);
 	const lastRuns =
@@ -135,10 +141,12 @@ export async function listOrchestrationSummaries(
 		]),
 	);
 	const agentStatus = new Map(
-		(await db.select({ name: agents.name, status: agents.status }).from(agents)).map((a) => [
-			a.name,
-			a.status,
-		]),
+		(
+			await db
+				.select({ name: agents.name, status: agents.status })
+				.from(agents)
+				.where(eq(agents.projectId, project))
+		).map((a) => [a.name, a.status]),
 	);
 
 	const summaries = rows.map(({ orchestration, document, savedAt }): OrchestrationSummary => {

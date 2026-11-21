@@ -92,15 +92,15 @@ describe("检查器的动作属于哪一次尝试", () => {
 		}
 	});
 
-	it("不在 Agent 上执行的内置节点没有，等待中的定时和 Sleep 节点也是", () => {
+	it("不在 Agent 上执行的内置节点没有，历史运行里已移除种类的节点也是", () => {
 		for (const kind of [
-			"timer",
-			"sleep",
 			"async",
 			"stop_subflow",
+			"entry",
 			// 历史运行里已移除种类的节点（ADR 0028）也不在 Agent 上执行。
 			"feishu_notify",
-			"entry",
+			"timer",
+			"sleep",
 		] as const) {
 			expect(actionAttempt(node(kind, [attempt(1, "waiting", true)]))).toBeUndefined();
 		}

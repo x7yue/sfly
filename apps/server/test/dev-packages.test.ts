@@ -154,7 +154,7 @@ describe("开发模式", () => {
 		await eventually(async () => {
 			const node = await api.node(runId, "a");
 			expect(node.status).toBe("failed");
-			expect(node.error).toEqual({ kind: "env_error", message });
+			expect(node.error).toEqual({ kind: "env_error", message, location: null });
 		});
 		expect((await api.run(runId)).status).toBe("failed");
 		expect((await api.node(runId, "p")).status).toBe("success");

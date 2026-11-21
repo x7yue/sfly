@@ -198,7 +198,8 @@ describe("sfly 只读命令 → 控制面", () => {
 		const retry = await a.nextAssign();
 		expect(retry.attempt).toBe(2);
 		clock.advance(4000);
-		await a.fail(retry, TRACEBACK);
+		// 第二次失败带出错的位置（#471）；第一次没有。
+		await a.fail(retry, TRACEBACK, undefined, undefined, "demo.z 第 3 行");
 		expect(clock.now().getTime() - start1).toBe(7000);
 
 		// R2：冒烟，浏览器触发，成功，耗时 1 分 5 秒。
@@ -474,6 +475,57 @@ describe("sfly 只读命令 → 控制面", () => {
 			expect(result.code).toBe(2);
 			expect(result.stderr).toBe("错误：没有节点包 nope\n下一步：sfly package list\n");
 		});
+
+		// #472：开发版本（sfly dev 加载在 Agent 上的）的节点定义，来自 Agent 上报给控制面的元信息。
+		describe("@dev：Agent 上加载的开发版本", () => {
+			it("加载在一台 Agent 上：显示那台 Agent 上的节点定义，标明是开发版本、哪台 Agent、源码目录", async () => {
+				const result = await cli("package", "show", "demo-dev@dev");
+				expect(result.code, result.stderr).toBe(0);
+				expect(lines(result.stdout)).toEqual([
+					"节点包 demo-dev@dev（开发版本，用 sfly dev 加载在 Agent agent-a 上，源码目录 /src/demo-dev）",
+					...expectedLatest.slice(1),
+				]);
+
+				const json = await cli("package", "show", "demo-dev@dev", "--json");
+				expect(json.code, json.stderr).toBe(0);
+				const view = JSON.parse(json.stdout);
+				expect(view).toMatchObject({
+					name: "demo-dev",
+					version: "dev",
+					agent: "agent-a",
+					source: "/src/demo-dev",
+				});
+				expect(view.nodes.map((n: { name: string }) => n.name)).toEqual(["probe", "noop"]);
+				expect(view.nodes[0].inputs[0]).toEqual({
+					name: "host",
+					type: "string",
+					required: true,
+					description: "目标主机",
+				});
+			});
+
+			it("没有加载在任何 Agent 上：报错写明开发版本不在节点包列表里，给出 sfly dev 和 sfly agent list", async () => {
+				const result = await cli("package", "show", "rich@dev");
+				expect(result.code).toBe(2);
+				expect(result.stdout).toBe("");
+				expect(result.stderr).toBe(
+					[
+						"错误：节点包 rich 的开发版本没有加载在任何在线的 Agent 上。开发版本由 sfly dev 加载到 Agent 上，不在已发布的节点包列表里",
+						"下一步：在节点包源码目录里运行 sfly dev，再用 sfly agent list 看各台 Agent 加载了哪些开发包",
+						"",
+					].join("\n"),
+				);
+				const json = await cli("package", "show", "rich@dev", "--json");
+				expect(json.code).toBe(2);
+				expect(JSON.parse(json.stderr).error).toMatchObject({ code: "dev_package_not_loaded" });
+			});
+
+			it("--agent 只用于 @dev", async () => {
+				const result = await cli("package", "show", "rich@1.0.0", "--agent", "agent-a");
+				expect(result.code).toBe(2);
+				expect(result.stderr).toContain("--agent 只用于开发版本");
+			});
+		});
 	});
 
 	describe("run list", () => {
@@ -592,6 +644,8 @@ describe("sfly 只读命令 → 控制面", () => {
 				"      node_error：boom 1",
 				`    #2 失败  agent-a  ${iso(T0 + 1_003_000)}  4.0s`,
 				"      node_error：boom 2",
+				// 出错位置紧跟在失败原因后面、堆栈之前，不用翻堆栈。
+				"      出错位置：demo.z 第 3 行",
 				"",
 				"      Traceback (most recent call last):",
 				'        File "z.py", line 3, in z',
@@ -629,12 +683,12 @@ describe("sfly 只读命令 → 控制面", () => {
 					started_at: iso(T0 + 1_000_000),
 					ended_at: iso(T0 + 1_003_000),
 					duration_ms: 3000,
-					error: { kind: "node_error", message: "boom 1" },
+					error: { kind: "node_error", message: "boom 1", location: null },
 				},
 				expect.objectContaining({
 					attempt: 2,
 					duration_ms: 4000,
-					error: { kind: "node_error", message: TRACEBACK },
+					error: { kind: "node_error", message: TRACEBACK, location: "demo.z 第 3 行" },
 				}),
 			]);
 			expect(z).not.toHaveProperty("outputs");

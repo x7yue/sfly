@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import { FakeAgent, type HelloInit } from "./support/fake-agent.js";
+import { ErrorKind, FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -267,7 +267,40 @@ describe("单链运行", () => {
 			expect((await api.node(runId, "a")).error).toEqual({
 				kind: "node_error",
 				message: "assertion failed",
+				location: null,
 			});
+		});
+
+		it("节点失败时 Agent 上报的出错位置跟着错误一起保存，运行视图的节点和每次尝试里都查得到（#471）", async () => {
+			const agent = await connect({ name: "agent-a" });
+			const id = await api.orchestrationWith(chain([{ id: "a", retries: 1 }]));
+			const runId = await api.triggerOk(id);
+			const first = await agent.nextAssign();
+			await agent.fail(first, "ValueError: 坏了", undefined, undefined, "demo.work 第 12 行");
+			// 重试的这一次没有位置（例如别的错误类型）：位置跟着各自的尝试，不串。
+			const second = await agent.nextAssign();
+			await agent.fail(second, "再失败一次", ErrorKind.ENV_ERROR);
+
+			const node = await api.node(runId, "a");
+			expect(node.attempts.map((a) => a.error)).toEqual([
+				{ kind: "node_error", message: "ValueError: 坏了", location: "demo.work 第 12 行" },
+				{ kind: "env_error", message: "再失败一次", location: null },
+			]);
+			expect(node.error).toEqual({ kind: "env_error", message: "再失败一次", location: null });
+		});
+
+		it("出错位置里的 NUL 同样换成 U+FFFD，数据库存得下", async () => {
+			const agent = await connect({ name: "agent-a" });
+			const runId = await api.triggerOk(await api.orchestrationWith(chain([{ id: "a" }])));
+			await agent.fail(
+				await agent.nextAssign(),
+				"boom",
+				undefined,
+				undefined,
+				"d\u0000emo.work 第 3 行",
+			);
+
+			expect((await api.node(runId, "a")).error?.location).toBe("d\uFFFDemo.work 第 3 行");
 		});
 
 		it("运行不存在时返回 404", async () => {

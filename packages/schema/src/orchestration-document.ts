@@ -1,10 +1,5 @@
 import { z } from "zod";
-import {
-	optionalLine,
-	optionalMultiline,
-	requiredLine,
-	requiredMultiline,
-} from "./display-text.js";
+import { optionalLine, optionalMultiline, requiredLine } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 import { REMOVED_NODE_KIND_NAMES } from "./removed-nodes.js";
 
@@ -99,25 +94,6 @@ export const AsyncTaskNode = z.strictObject({
 	params: InputValues.default({}),
 });
 
-export const TimerNode = z.strictObject({
-	...nodeBase,
-	...displayName,
-	kind: z.literal("timer"),
-	always: z.boolean().default(false),
-	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
-	at: z.string().min(1),
-	tz: z.string().default("Asia/Shanghai"),
-});
-
-export const SleepNode = z.strictObject({
-	...nodeBase,
-	...displayName,
-	kind: z.literal("sleep"),
-	always: z.boolean().default(false),
-	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
-	duration: z.string().min(1),
-});
-
 export const StopSubflowNode = z.strictObject({
 	...nodeBase,
 	...displayName,
@@ -151,8 +127,6 @@ export const OrchestrationNode = z.discriminatedUnion("kind", [
 	EntryNode,
 	SubflowEntryNode,
 	AsyncTaskNode,
-	TimerNode,
-	SleepNode,
 	StopSubflowNode,
 	PackageNode,
 ]);
@@ -162,8 +136,6 @@ export const NODE_KINDS = [
 	"entry",
 	"subflow_entry",
 	"async",
-	"timer",
-	"sleep",
 	"stop_subflow",
 	"package",
 ] as const satisfies readonly OrchestrationNode["kind"][];
@@ -223,63 +195,44 @@ const Annotations = z.array(Annotation).superRefine((annotations, ctx) => {
 	}
 });
 
-/** 便签正文的长度上限（Unicode 字符数），和备注一样。 */
-export const STICKY_NOTE_TEXT_MAX = NODE_NOTE_MAX;
-/** 便签不写大小时的宽高，和能缩到的最小宽高（画布坐标）。 */
-export const STICKY_NOTE_SIZE = { width: 280, height: 168 } as const;
-export const STICKY_NOTE_MIN_SIZE = { width: 160, height: 96 } as const;
-/** 便签宽、高的上限（画布坐标）：拖动改大小时按它截住。 */
-export const STICKY_NOTE_MAX_SIDE = 4000;
+const documentShape = <N extends z.ZodType>(node: N) => ({
+	default_agent: z.string().min(1).optional(),
+	nodes: z.array(node),
+	edges: z.array(Edge).default([]),
+	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
+	packages: z.record(PackageName, z.string().min(1)).default({}),
+	annotations: Annotations.default([]),
+});
+
+const documentOf = <N extends z.ZodType>(node: N) => z.strictObject(documentShape(node));
 
 /**
- * 便签：画布上自由摆放的说明（检查清单、已知问题、待办），不挂在任何节点上。属于版本内容，只用于显示，
- * 不影响执行（docs/SEMANTICS.md §1.7，ADR 0026）。和注释框不同，它记下自己的位置和大小。
+ * 已移除的顶层字段（便签 `sticky_notes`，ADR 0028）在保存请求里的写法：只收空数组。升级前保存的版本都带着
+ * `sticky_notes: []`，「读出来改一处再存回去」是自建页面和命令行最常见的写法，不该因为一个空数组被拒绝；
+ * 收下之后控制面丢掉它（`withoutRemovedFields`），新版本里没有。有内容的数组不收：读取时丢掉的内容不能再悄悄丢一次，
+ * 保存被拒绝，错误信息写明有几条、怎么办（`removedFieldsMessage`）。和 `REMOVED_DOCUMENT_FIELDS` 登记的字段一一对应
+ * （`removed-document-fields.test.ts` 核对）。
  */
-export const StickyNote = z.strictObject({
-	/** 便签之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `sticky_1`。 */
-	id: z.string().min(1),
-	/** 加粗显示的第一行。 */
-	title: optionalLine(ANNOTATION_TITLE_MAX),
-	/** 正文：以 `- ` 开头的行显示成列表的一项，其余是普通段落。 */
-	text: requiredMultiline(STICKY_NOTE_TEXT_MAX),
-	/** 颜色，和注释框同一套色板；不写就是黄色，画布选黄色时也去掉这一项。 */
-	color: AnnotationColor.optional(),
-	/** 左上角的画布坐标；不写时由整理布局摆放。 */
-	position: Position.optional(),
-	/** 宽高；不写是 STICKY_NOTE_SIZE。 */
-	size: z
-		.strictObject({
-			width: z.number().min(STICKY_NOTE_MIN_SIZE.width).max(STICKY_NOTE_MAX_SIDE),
-			height: z.number().min(STICKY_NOTE_MIN_SIZE.height).max(STICKY_NOTE_MAX_SIDE),
-		})
-		.optional(),
-});
-
-const StickyNotes = z.array(StickyNote).superRefine((notes, ctx) => {
-	const seen = new Set<string>();
-	for (const [i, { id }] of notes.entries()) {
-		if (seen.has(id)) {
-			ctx.addIssue({ code: "custom", path: [i, "id"], message: `便签 ID ${id} 重复` });
-		}
-		seen.add(id);
-	}
-});
-
-const documentOf = <N extends z.ZodType>(node: N) =>
-	z.strictObject({
-		default_agent: z.string().min(1).optional(),
-		nodes: z.array(node),
-		edges: z.array(Edge).default([]),
-		/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
-		packages: z.record(PackageName, z.string().min(1)).default({}),
-		annotations: Annotations.default([]),
-		sticky_notes: StickyNotes.default([]),
-	});
+const EmptyRemovedField = z
+	.array(z.unknown())
+	.max(0)
+	.optional()
+	.describe(
+		"已移除的字段（便签，ADR 0028）：只为兼容旧客户端和升级前导出的文件保留，新写的文档不要带它。读到的文档里没有它；保存时收到空数组会丢掉，有内容的被拒绝。",
+	);
 
 /** 可以保存的场景文档：节点都是现在支持的种类（保存、命令行的本地检查、导出给 Python 的 JSON Schema 用它）。 */
-export const OrchestrationDocument = documentOf(OrchestrationNode).meta({
-	title: "sfly 编排文档",
-});
+export const OrchestrationDocument = z
+	.strictObject({
+		...documentShape(OrchestrationNode),
+		/**
+		 * 已移除的字段（便签，ADR 0028）：只为兼容旧客户端和升级前导出的文件保留，新写的文档不要带它。
+		 * 保存时收到空数组会丢掉（新版本里没有它），里面有内容的被拒绝（400 `invalid_document`，写明有几条、怎么办）。
+		 * 读到的文档（`StoredOrchestrationDocument`）里没有这个字段，读出来原样存回去不用处理它。
+		 */
+		sticky_notes: EmptyRemovedField,
+	})
+	.meta({ title: "sfly 编排文档" });
 
 /**
  * 读到的场景文档（接口的响应、控制面读库、画布打开最新版本）：结构和保存用的 {@link OrchestrationDocument} 相同，
@@ -296,16 +249,10 @@ export type RemovedNode = z.infer<typeof RemovedNode>;
 export type StoredNode = z.infer<typeof StoredNode>;
 export type Annotation = z.infer<typeof Annotation>;
 export type AnnotationColor = z.infer<typeof AnnotationColor>;
-export type StickyNote = z.infer<typeof StickyNote>;
 
 /** 注释框不写颜色时是灰色（ADR 0025）：画布选回灰色时去掉 `color`，版本对比把两种写法当成同一种。 */
 export const ANNOTATION_DEFAULT_COLOR: AnnotationColor = "gray";
-/** 便签不写颜色时是黄色（ADR 0026），规则同上。 */
-export const STICKY_NOTE_DEFAULT_COLOR: AnnotationColor = "yellow";
 
 /** 注释框实际显示的颜色。 */
 export const annotationColor = (annotation: { color?: AnnotationColor | undefined }) =>
 	annotation.color ?? ANNOTATION_DEFAULT_COLOR;
-/** 便签实际显示的颜色。 */
-export const stickyNoteColor = (note: { color?: AnnotationColor | undefined }) =>
-	note.color ?? STICKY_NOTE_DEFAULT_COLOR;

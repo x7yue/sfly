@@ -3,7 +3,6 @@ import {
 	createEditorScenario,
 	dock,
 	draftNode,
-	editorDocument,
 	headOf,
 	inspector,
 	nodeCard,
@@ -548,22 +547,13 @@ test("检查器：非字符串参数没有模式切换；「插入引用」选�
 	});
 });
 
-test("异步任务参数映射、Sleep 时长、入口参数默认值用同一种输入框；敏感参数的默认值仍是密码框", async ({
+test("异步任务参数映射、入口参数默认值用同一种输入框；敏感参数的默认值仍是密码框", async ({
 	page,
 	controlPlane,
 }) => {
-	// 在子流程末尾加一个 Sleep 节点 wait。
-	await publishPackage(controlPlane);
-	const id = await createScenario(controlPlane, "日终数据处理", {
-		...editorDocument,
-		nodes: [
-			...editorDocument.nodes,
-			{ id: "wait", kind: "sleep", duration: "5s", position: { x: 1240, y: 180 } },
-		],
-		edges: [...editorDocument.edges, { from: "sub_ping", to: "wait", kind: "chain" }],
-	});
+	const id = await createEditorScenario(controlPlane);
 	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "wait")).toBeVisible();
+	await expect(nodeCard(page, "dispatch")).toBeVisible();
 	const panel = inspector(page);
 	const list = panel.getByRole("listbox", { name: "可引用的值" });
 
@@ -613,23 +603,6 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 	await bizDate.getByLabel("参数类型").selectOption("string");
 	await bizDate.getByRole("combobox", { name: "默认值" }).fill("2026-01-02");
 
-	// Sleep 节点的等待时长：输入框旁有「插入引用」，常用时长照常可用。
-	await nodeCard(page, "wait").click();
-	const duration = panel.getByRole("combobox", { name: "等待时长" });
-	await expect(duration).toHaveText("5s");
-	await duration.fill("");
-	await panel.getByRole("button", { name: "在 等待时长 中插入引用" }).click();
-	await expect(list.getByRole("option")).toHaveText([
-		/params\.date/,
-		/nodes\.sub_ping\.outputs\.alive/,
-	]);
-	await page.keyboard.press("Enter");
-	await expect(duration).toHaveText("${{ params.date }}");
-	await expect(panel.getByText("执行时解析引用")).toBeVisible();
-	await panel.getByRole("group", { name: "常用时长" }).getByRole("button", { name: "10m" }).click();
-	await expect(duration).toHaveText("10m");
-	await duration.fill("${{ params.date }}");
-
 	await page.keyboard.press("Control+s");
 	await expect(page.getByText("已保存为版本 2")).toBeVisible();
 	const nodes = (await headOf(controlPlane, id)).document.nodes as unknown as Record<
@@ -643,7 +616,6 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 		{ name: "biz_date", type: "string", default: "2026-01-02" },
 		{ name: "api_token", default: "******", secret: true },
 	]);
-	expect(nodes.find((n) => n.id === "wait")).toMatchObject({ duration: "${{ params.date }}" });
 });
 
 test("放大编辑：等宽的大弹窗里有补全和高亮，锁定焦点，Esc 先关补全再关弹窗；修改进入撤销历史和本地草稿", async ({

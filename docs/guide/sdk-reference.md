@@ -224,7 +224,7 @@ def stress(
 - 返回值必须是 dict，序列化为 JSON 后不超过 1 MB；返回 `None` 视为空对象。不满足时任务失败。
 - 后续节点可以引用输出里的值；大块数据存成产物，输出里放产物引用。
 - 输出里的 NUL 字符（`\x00`）保存时换成 U+FFFD（�），后续节点引用到的是替换后的值；错误信息、进度说明和指标标签也是这样（docs/SEMANTICS.md §2.5）。二进制内容存成产物。
-- 输出里的数值按双精度数处理：节点写出什么数，下游节点引用到的、接口和命令行读到的就是同一个数，最后一位不会变，不需要为了对比先保留若干位小数。几种例外（docs/SEMANTICS.md §2.6）：绝对值超过 2^53 的整数按最接近的双精度数保存（`9007199254740993` 变成 `9007199254740992`），要精确的大整数输出字符串；超过 2^64 - 1 的整数，下游节点收到的是浮点数；`-0.0` 保存成 `0`，下游收到整数 `0`；整数值的小数（`3.0`）下游收到整数 `3`；`NaN`、`Infinity` 不是 JSON，任务以 `node_error` 失败。
+- 输出里的数值按双精度数处理：节点写出什么数，下游节点引用到的、接口和命令行读到的就是同一个数，最后一位不会变，不需要为了对比先保留若干位小数。几种例外（docs/SEMANTICS.md §2.6）：绝对值超过 2^53 的整数按最接近的双精度数保存（`9007199254740993` 变成 `9007199254740992`），要精确的大整数输出字符串；超过 2^64 - 1 的整数，下游节点收到的是浮点数；`-0.0` 保存成 `0`，下游收到整数 `0`；整数值的小数（`3.0`）下游收到整数 `3`；`NaN`、`Infinity` 不是 JSON，任务以 `node_error` 失败，错误信息写明是哪个输出（嵌套的写成 `stats["items"][2]`）和怎么办：换成 `None`，或者换成字符串（`ctx.progress`、`ctx.notify` 的原始消息里有它们时，这一次上报被丢弃、通知不发送，各写一条 warn 日志）。
 
 ### 输出的说明：`Doc`
 
@@ -255,6 +255,9 @@ class CheckOutputs(TypedDict):
 
 节点抛出的任何异常都让任务以 `node_error` 失败：错误消息形如 `ValueError: steps 必须大于 0，收到 0`，并附带 traceback。`node_error` 按场景里配置的重试次数重试，每次重试是一个新任务。消息里写清原因和相关参数值。
 
+- **堆栈从节点代码开始**：执行器自己调用节点的那几帧（`sfly/runner.py`，导入节点模块时还有 Python 的导入机制）已经去掉，第一帧就是你的节点函数。只去开头连续的那几帧：异常是在 SDK 里抛出的（例如 `ctx.agent(...).files.download` 失败）时，节点代码之后的 SDK 帧保留，它们说明是哪一次调用失败；异常链（`raise ... from ...`、处理异常时又抛出的）的每一段都这样处理。
+- **出错位置**：失败的错误里（运行视图和接口的 `error.location`、`sfly run show`、运行结束时的摘要、`sfly debug`、`sfly.testing` 的 `error.location`）有一个 `location`，写成 `模块.函数 第 N 行`（和被终止时「执行到」那一行的写法一样），不用翻堆栈就知道改哪一行；日志里也先有一行 ERROR 级的 `出错位置：模块.函数 第 N 行`，`sfly run logs --failed` 看得到。位置是异常经过的栈里**最里面的一帧你自己的代码**（入口模块所在的包，和项目里的辅助模块）：异常从辅助模块里抛出，位置是辅助模块里那一行；异常从 SDK、Python 标准库或**第三方库**里抛出，位置是调用它的那一行节点代码（库里的位置你改不了，不是要找的地方；和被终止时不同，那里停在第三方库里写的是库里的位置）。有的帧没有文件（`exec` 出来的函数、冻结的 dataclass 被赋值时生成的方法），位置是调用它们的那一行节点代码；`asyncio.TaskGroup` 里的子任务抛出的异常组，位置是第一个子任务里出错的那一行（不是 `async with` 那一行）。导入节点模块时失败：导入错误，位置是写了那条 `import` 的一行；语法错误，位置是出错的模块和行（`mypkg.nodes 第 3 行`，包的 `__init__.py` 写成包名 `mypkg`），节点包装在 site-packages 里（Agent 上）和从源码目录运行（本地调试）一样。没有位置的：不是节点自己出错的失败（超时、Agent 失联、返回值不合格等）、取位置时出了错、旧版本的 Agent 或 SDK 上报的、升级之前的任务，`location` 是 `null`。
+
 ## `ctx.log`：日志
 
 ```python
@@ -282,6 +285,8 @@ ctx.progress(3, 10, "第 3 批")
 
 `current` 是当前值，`total` 是总数（未知时省略），`message` 是说明。可以频繁调用，Agent 按秒合并后上报。
 
+`current`、`total` 是 NaN、无穷（JSON 里没有这些值），或者大到转不成浮点数的整数（`10**400`）时，这一次上报被丢弃，任务日志里写一条 warn 日志（只写一次），和 `ctx.metric` 遇到非有限数值一样。
+
 ## `ctx.notify`：飞书通知
 
 ```python
@@ -302,7 +307,7 @@ def stress(
     alert_bot: Annotated[FeishuBot, Doc("压测不达标时通知的飞书机器人")],
 ) -> StressOutputs:
     """压测一个接口，不达标时通知飞书群。"""
-    ...
+    p99 = 612.0  # 压测得到的延迟 99 分位（毫秒）；压测本身这里省略
     if p99 > 500:
         ctx.notify(alert_bot, f"p99 {p99} ms，超过 500 ms", at_all=True)
         ctx.notify(
@@ -329,6 +334,7 @@ sfly.feishu.card(title, markdown, color="blue")   # Markdown 卡片的请求体
 - **投递失败永远不会抛出异常**：消息由控制面发出（ADR 0020），`ctx.notify` 只把它交给 Agent，不访问网络、不等结果。飞书不可达、返回错误、机器人已被删除时，节点照常执行，不会因为通知失败或变慢。只有调用的写法不对时抛出 `TypeError`：`bot` 不是字符串，`text` 和 `message` 同时给或都不给，`text` 不是字符串，`at_all` 不是布尔值，发原始消息时还给了 `at_all`（它只对文本有意义，要 @所有人就写在消息里）。
 - `bot` 必须是通过「飞书机器人」类型的参数（`sfly.FeishuBot`，见上文）传给节点的机器人名称。其他名称（写死在代码里的、普通字符串参数传进来的）不发送，任务日志里写一条 warning，提示把它声明成 `FeishuBot` 参数；机器人没有登记时同样。
 - **原始消息的校验**：只检查它是一个对象（JSON 对象，写成 `dict`）、`msg_type` 是 `text`、`post`、`image`、`share_chat`、`interactive` 之一、整个请求体不超过 20 KB（紧凑 JSON 按 UTF-8 编码的字节数）。不合格的**不发送、不截断**（截断会弄坏结构），任务日志里写一条 warning 说明原因（来源是 system，例如「ctx.notify 的消息没有发送：原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一」），`ctx.notify` 不抛异常。图片消息只能用自己已有的 `image_key`，平台不上传图片。
+- 原始消息里有 NaN 或无穷（JSON 里没有这些值）时同样不发送：任务日志里写一条 warn 日志，写明在消息里的哪个位置（例如 `content["n"]`）。换成 `None` 或字符串再发。这一条是 SDK 在节点里检查的（带着它们的消息写不成事件管道里的一行，到不了控制面），所以日志的来源是 sdk，不是上一条那些校验的 system。
 - **`sfly.feishu.card(title, markdown, color="blue")`** 返回 Markdown 卡片的请求体（`msg_type: interactive`，卡片 JSON 2.0：header 是标题加颜色，正文是一个 Markdown 元素），拿去给 `message=` 就能发。`color` 是 `blue`（默认）、`green`、`orange`、`red`、`grey` 之一。标题和正文照原样放进去，不做 Markdown 转义，空字符串也照常组装；请求体超过 20 KB 时截断 Markdown 正文，末尾加上「…（已截断）」。控制面把组装好的卡片当原始消息原样发出，不改写。`title`、`markdown` 不是字符串抛出 `TypeError`，`color` 不是上面五种之一、或者标题长到连截断后的正文都放不下时抛出 `ValueError`：这些是写法上的错误，开发时就会看到。
 - 投递结果写进这个任务的日志，来源是 system：送达是 info，失败（写明原因和下一步）或被丢弃是 warning。同一个机器人的消息按调用的先后串行发出、限速（ADR 0020）。
 - Agent 和控制面断开期间，通知和日志一样在 Agent 上排队，重连后发出。
@@ -356,7 +362,7 @@ ctx.metric("conn_latency_ms", 8.2, labels={"host": "db-1", "port": 5432})
 - 在运行监控页上点图例项可以显示或隐藏对应的线；序列超过 10 个时，默认只显示当前时间范围内平均值最高的 10 个，其余在图例里置灰。悬停时提示列出每条显示中的线在那一刻的值，以及这个点的控制面时间和 Agent 时间（图表的横轴是控制面时间；Agent 时间是节点所在机器当时的时间，机器的时间被改过时两者不同）。
 - 声明了标签键的指标，每个点都要给全这些键；没声明标签键的指标不能带标签。标签值是不超过 128 个字符的非空字符串，数字自动转成字符串。
 - `ctx.metric` 可以随意频繁调用：Agent 按「序列 × 秒」合并，每秒最多上报一次（`gauge` 取这一秒最后一个值并带最小、最大值，`counter` 取这一秒结束时的值）。
-- 以下点被丢弃，并写一条 warn 日志（每个指标名、每种原因只写一次）：未声明的指标名、非有限数值（NaN、无穷大）、缺少声明过的标签键、带了未声明的标签键、给没声明标签键的指标带标签、标签值为空或超过 128 个字符。
+- 以下点被丢弃，并写一条 warn 日志（每个指标名、每种原因只写一次）：未声明的指标名、非有限数值（NaN、无穷大，大到转不成浮点数的整数如 `10**400` 同样算）、缺少声明过的标签键、带了未声明的标签键、给没声明标签键的指标带标签、标签值为空或超过 128 个字符。
 - **序列上限**：每个任务所有指标合计最多 1000 个序列，不带标签的指标各算 1 个（预先占好名额，总是能上报）。这个数固定，不能配置。超出后不再建立新序列：新序列的点被丢弃，每个指标写一条 warn 日志；已经有的序列照常上报。控制面也按同一上限兜底，被拒的点计入任务的丢弃数，运行监控页显示「序列超限」。本地调试（`sfly debug`、`sfly.testing`）的行为相同。标签值用来区分少量对象（进程、网卡、连接），不要用请求 ID、时间戳这类取值很多的值。序列上限和单任务约 50 MB 的点数上限互不影响。
 
 ## `ctx.action` 与 `ctx.mark`：动作和标记
@@ -475,7 +481,6 @@ return {"report": ref}
 ### 下载产物
 
 ```python
-from pathlib import Path
 from typing import Annotated, TypedDict
 
 from sfly import Context, Doc, node
@@ -912,7 +917,7 @@ def test_count_lines(tmp_path: Path) -> None:
 |---|---|
 | `status` | `success`、`failed` 或 `cancelled` |
 | `outputs` | 输出（仅成功时），否则 None |
-| `error` | `NodeError(kind, message, type, traceback)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled` |
+| `error` | `NodeError(kind, message, type, traceback, location)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled`；`location` 是出错的位置（`模块.函数 第 N 行`，见上文「失败」），没有时为 `None` |
 | `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr、sdk，或 system（平台写的提示，例如 `ctx.notify` 发给了不在名单里的机器人） |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
@@ -927,6 +932,8 @@ def test_count_lines(tmp_path: Path) -> None:
 断言节点要发的通知：`notifications` 里每一项是机器人名称和完整的请求体，不用起任何服务。
 
 ```python
+from pathlib import Path
+
 import sfly
 from sfly.testing import run_node
 

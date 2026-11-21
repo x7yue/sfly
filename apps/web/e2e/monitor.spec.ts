@@ -167,6 +167,36 @@ test("拖选缩放：缩放后暂停实时跟随并显示「回到实时」，�
 	await expect(tl.getByTestId("zoom-range")).toHaveCount(0);
 });
 
+test("节点失败带出错位置：图表工作区的节点摘要和尝试页签都写在失败原因下面，没有位置的失败不多出一行（#471）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	// verify 第 1 次失败（没有位置），第 2 次失败带位置。
+	await agent.fail(
+		tasks.verify as AssignedTask,
+		"AssertionError: 还是漏拦",
+		undefined,
+		undefined,
+		"monitor_demo.verify 第 42 行",
+	);
+	await agent.sync();
+
+	await openMonitor(page, clock, runId, "verify", "attempts");
+
+	const location = "出错位置：monitor_demo.verify 第 42 行";
+	await expect(page.getByTestId("node-summary").getByTestId("node-error-location")).toHaveText(
+		location,
+	);
+	const first = panel(page).getByRole("article", { name: "verify 第 1 次尝试" });
+	const second = panel(page).getByRole("article", { name: "verify 第 2 次尝试" });
+	await expect(second.getByTestId("attempt-error-location")).toHaveText(location);
+	await expect(first).toContainText("节点错误");
+	await expect(first.getByTestId("attempt-error-location")).toHaveCount(0);
+});
+
 test("点选节点：时间线行高亮，底部面板切换到该节点；尝试页签显示错误类型与堆栈", async ({
 	page,
 	controlPlane,

@@ -34,7 +34,7 @@ const paymentDocument = {
 			display_name: "部署服务",
 		},
 		{ id: "spawn", kind: "async" },
-		{ id: "pause", kind: "sleep", duration: "5s", display_name: "等缓存刷新" },
+		{ id: "pause", kind: "package", package: "stub", node: "echo", display_name: "等缓存刷新" },
 		{ id: "stop", kind: "stop_subflow", subflow: "sub" },
 		{
 			id: "sub",
@@ -43,7 +43,7 @@ const paymentDocument = {
 			params: [{ name: "run", type: "string", required: true, description: "上游运行 ID" }],
 		},
 		{ id: "send", kind: "package", package: "stub", node: "echo", display_name: "发送报告" },
-		{ id: "loose", kind: "timer", at: "10:00:00", display_name: "夜间触发" },
+		{ id: "loose", kind: "package", package: "stub", node: "echo", display_name: "夜间检查" },
 	],
 	edges: [
 		{ from: "entry", to: "deploy", kind: "chain" },
@@ -216,7 +216,7 @@ describe("sfly scenario list / show → 控制面", () => {
 				"    节点    显示名称    节点类型                  包版本  Agent",
 				"    deploy  部署服务    stub/echo                 1.0.0   agent-b",
 				"    spawn   -           异步任务 → 子流程 report  -       -",
-				"    pause   等缓存刷新  Sleep                     -       -",
+				"    pause   等缓存刷新  stub/echo                 1.0.0   agent-a",
 				"    stop    -           停止子流程 report         -       -",
 				"",
 				"子流程 report（入口 sub，由 spawn 触发）",
@@ -228,8 +228,8 @@ describe("sfly scenario list / show → 控制面", () => {
 				"    send  发送报告  stub/echo  1.0.0   agent-a",
 				"",
 				"没有连进任何链的节点：",
-				"  节点   显示名称  节点类型  包版本  Agent",
-				"  loose  夜间触发  定时      -       -",
+				"  节点   显示名称  节点类型   包版本  Agent",
+				"  loose  夜间检查  stub/echo  1.0.0   agent-a",
 			].join("\n");
 
 		it("文本输出：入口参数、主链和子流程上的节点（类型、锁定的包版本、Agent）、默认 Agent", async () => {
@@ -281,7 +281,16 @@ describe("sfly scenario list / show → 控制面", () => {
 						display_name: "部署服务",
 					},
 					{ id: "spawn", kind: "async", always: false, subflow: "report" },
-					{ id: "pause", kind: "sleep", always: false, display_name: "等缓存刷新" },
+					{
+						id: "pause",
+						kind: "package",
+						always: false,
+						package: "stub",
+						node: "echo",
+						package_version: "1.0.0",
+						agent: "agent-a",
+						display_name: "等缓存刷新",
+					},
 					{ id: "stop", kind: "stop_subflow", always: false, subflow: "report" },
 				],
 				subflows: [
@@ -312,9 +321,19 @@ describe("sfly scenario list / show → 控制面", () => {
 						],
 					},
 				],
-				unlinked: [{ id: "loose", kind: "timer", always: false, display_name: "夜间触发" }],
+				unlinked: [
+					{
+						id: "loose",
+						kind: "package",
+						always: false,
+						package: "stub",
+						node: "echo",
+						package_version: "1.0.0",
+						agent: "agent-a",
+						display_name: "夜间检查",
+					},
+				],
 				annotations: [],
-				sticky_notes: [],
 			});
 		});
 

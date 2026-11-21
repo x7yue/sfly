@@ -46,38 +46,32 @@ describe("编排文档差异", () => {
 			edges: { added: [], removed: [] },
 			moved: [],
 			annotations: { added: [], removed: [], changed: [] },
-			stickyNotes: { added: [], removed: [], changed: [], moved: [] },
 		});
 	});
 
 	it("列出新增、删除的节点和连线", () => {
 		const after = {
 			...base,
-			nodes: [
-				base.nodes[0],
-				base.nodes[1],
-				{ id: "sleep_1", kind: "sleep", always: false, duration: "30s" },
-			],
+			nodes: [base.nodes[0], base.nodes[1], { id: "stop_1", kind: "stop_subflow", always: false }],
 			edges: [
 				{ from: "entry", to: "check", kind: "chain" },
-				{ from: "check", to: "sleep_1", kind: "chain" },
+				{ from: "check", to: "stop_1", kind: "chain" },
 			],
 			packages: { http: "1.0.0" },
 		};
 		expect(diffDocuments(base, after)).toEqual({
 			settings: [{ path: "packages.im", before: "0.3.0", after: undefined }],
 			nodes: {
-				added: [{ id: "sleep_1", kind: "sleep" }],
+				added: [{ id: "stop_1", kind: "stop_subflow" }],
 				removed: [{ id: "notify", kind: "package" }],
 				changed: [],
 			},
 			edges: {
-				added: [{ from: "check", to: "sleep_1", kind: "chain" }],
+				added: [{ from: "check", to: "stop_1", kind: "chain" }],
 				removed: [{ from: "check", to: "notify", kind: "chain" }],
 			},
 			moved: [],
 			annotations: { added: [], removed: [], changed: [] },
-			stickyNotes: { added: [], removed: [], changed: [], moved: [] },
 		});
 	});
 
@@ -142,7 +136,6 @@ describe("编排文档差异", () => {
 			edges: { added: [], removed: [] },
 			moved: [],
 			annotations: { added: [], removed: [], changed: [] },
-			stickyNotes: { added: [], removed: [], changed: [], moved: [] },
 		});
 	});
 
@@ -254,61 +247,27 @@ describe("编排文档差异", () => {
 		expect(isEmptyDiff(diffDocuments(colored("gray"), colored()))).toBe(true);
 	});
 
-	it("便签：新增、删除、改了标题 / 正文 / 颜色各自列出；只挪了位置、改了大小算布局；不写颜色和写 yellow 都是黄色", () => {
+	it("升级前保存的文档带着已移除的顶层字段 sticky_notes（ADR 0028）：不参与比较，只差它的两份文档没有差异", () => {
 		const withNotes = (...sticky_notes: ({ id: string } & Record<string, unknown>)[]) => ({
 			...base,
 			sticky_notes,
 		});
-		const before = withNotes(
-			{ id: "s1", title: "跑之前", text: "- 一\n- 二", position: { x: 0, y: -200 } },
-			{ id: "s2", text: "已知问题", position: { x: 300, y: -200 } },
-		);
-		const after = withNotes(
-			{
-				id: "s1",
-				title: "跑之前确认",
-				text: "- 一\n- 二",
-				color: "blue",
-				position: { x: 0, y: -200 },
-			},
-			{ id: "s3", text: "待办：补监控\n第二行", position: { x: 600, y: -200 } },
-		);
+		const before = withNotes({
+			id: "s1",
+			title: "跑之前",
+			text: "- 一\n- 二",
+			position: { x: 0, y: -200 },
+		});
+		const after = withNotes({ id: "s2", text: "已知问题", color: "blue" });
 		const diff = diffDocuments(before, after);
-		expect(diff.stickyNotes.added).toEqual([{ id: "s3", label: "待办：补监控" }]);
-		expect(diff.stickyNotes.removed).toEqual([{ id: "s2", label: "已知问题" }]);
-		expect(diff.stickyNotes.changed).toEqual([
-			{
-				id: "s1",
-				label: "跑之前确认",
-				changes: [
-					{ path: "title", before: "跑之前", after: "跑之前确认" },
-					{ path: "color", before: undefined, after: "blue" },
-				],
-			},
+		expect(diff).not.toHaveProperty("stickyNotes");
+		expect(isEmptyDiff(diff)).toBe(true);
+		expect(isEmptyDiff(diffDocuments(before, base))).toBe(true);
+		// 别的差别照常列出来。
+		const renamed = { ...after, default_agent: "agent-b" };
+		expect(diffDocuments(before, renamed).settings).toEqual([
+			{ path: "default_agent", before: "agent-a", after: "agent-b" },
 		]);
-		expect(diff.stickyNotes.moved).toEqual([]);
-
-		const moved = diffDocuments(
-			before,
-			withNotes(
-				{ id: "s1", title: "跑之前", text: "- 一\n- 二", position: { x: 40, y: -200 } },
-				{
-					id: "s2",
-					text: "已知问题",
-					position: { x: 300, y: -200 },
-					size: { width: 300, height: 200 },
-				},
-			),
-		);
-		expect(moved.stickyNotes.changed).toEqual([]);
-		expect(moved.stickyNotes.moved).toEqual(["s1", "s2"]);
-		expect(isEmptyDiff(moved)).toBe(false);
-		expect(isEmptyDiff(moved, { ignoreLayout: true })).toBe(true);
-
-		const yellow = (color?: string) =>
-			withNotes({ id: "s1", text: "x", ...(color ? { color } : {}) });
-		expect(isEmptyDiff(diffDocuments(yellow(), yellow("yellow")))).toBe(true);
-		expect(isEmptyDiff(diffDocuments(base, withNotes()))).toBe(true);
 	});
 
 	it("已移除种类的节点（ADR 0028）：配置的差别照常列出来，只差它们的配置也不是空差异", () => {

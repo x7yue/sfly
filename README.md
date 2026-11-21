@@ -23,7 +23,7 @@
 | `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema、路由清单和 API 客户端的类型（`pnpm gen:check` 检查这些生成物没有过期） |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint），以及手工抄在几处的版本号是否一致（`pnpm lint:node`：Node 主版本、CI 的 Playwright 镜像标签与 `@playwright/test`、Python 版本、PostgreSQL 镜像，不一致时报出是哪两处）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查；控制面里依赖真实 Agent 的测试文件在 macOS 上自动跳过（跑完时有提示），用 `pnpm linux pnpm --filter @sfly/server test` 运行 |
 | `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh` |
-| `pnpm heavy [--pg] <命令>` | 重型命令（完整测试、`pnpm test:e2e*`、`pnpm linux` 整套、`pnpm perf`）在本机同一把 flock 锁上排队、前台运行，并把 `TMPDIR`、`CARGO_TARGET_DIR` 指向按工作区区分的短目录（Unix socket 路径不能超过 108 字节）。多个工作区同时跑时用它。`--pg` 为这次运行单独起一个 PostgreSQL 容器并设置 `DATABASE_URL`，结束时删掉，避免共用的库超过连接上限；`pnpm heavy --clean` 删掉短目录和这个工作区没人在用的 PostgreSQL 容器（还有 heavy 在跑时保留短目录和它的容器）。同名、位置不同的两个检出会共用短目录和容器标签，目录名要不同。macOS 的 flock 用 `brew install flock` 安装，CI 上不加锁；锁文件和目录用 `SFLY_HEAVY_LOCK`、`SFLY_HEAVY_TMP_ROOT` 改，见 `scripts/heavy.sh` |
+| `pnpm heavy [--pg] <命令>` | 重型命令（完整测试、`pnpm test:e2e*`、`pnpm linux` 整套、`pnpm perf`）在本机同一把 flock 锁上排队、前台运行，并把 `TMPDIR`、`CARGO_TARGET_DIR` 指向按工作区区分的短目录（Unix socket 路径不能超过 108 字节）。多个工作区同时跑时用它。`--pg` 为这次运行单独起一个 PostgreSQL 容器并设置 `DATABASE_URL`，结束时删掉，避免共用的库超过连接上限；`pnpm heavy --clean` 删掉短目录和这个工作区没人在用的 PostgreSQL 容器（还有 heavy 在跑时保留短目录和它的容器）。同名、位置不同的两个检出会共用短目录和容器标签，目录名要不同。macOS 的 flock 用 `brew install flock` 安装，CI 上不加锁；锁文件和目录用 `SFLY_HEAVY_LOCK`、`SFLY_HEAVY_TMP_ROOT` 改，见 `scripts/heavy.sh`。`--pg` 的容器连它的匿名数据卷一起删（`docker rm -f -v`）；#525 修好之前的版本每跑一次留下一个没有容器引用的卷（50 到 80 MB），升级后清一次：先 `docker volume ls -qf dangling=true` 看一眼，再 `docker volume prune`（Docker 23 及以上只删匿名卷；更老的版本还会删没有容器在用的命名卷，例如 `pnpm linux` 的 `sfly-linux`，那时改用 `docker volume ls -qf dangling=true \| grep -E '^[0-9a-f]{64}$' \| xargs docker volume rm`）。没有容器引用的匿名卷里也包括本机别的项目留下的，不需要的再删 |
 | `pnpm proto:breaking` | buf breaking 检查 |
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main` 和 `dev`、PR（含草稿），以及手动触发；CI 里按语言拆成并行的 job） |
 | `pnpm test:e2e` | 构建 API 客户端和前端并运行 Playwright 端到端测试（`apps/web/e2e`；视觉回归只在设了 `SFLY_VISUAL=1` 时跑（`pnpm test:e2e:docker` 和 CI 的 e2e job 设了它），直接在本机运行时跳过；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
@@ -69,6 +69,7 @@ docker compose up -d
 - 镜像里是打成单文件的控制面、前端产物、数据库迁移、同版本的 SDK 运行时 wheel 和 API 客户端安装包；以 `node` 用户运行，数据（节点包、日志、产物）在卷 `/data`，启动时自动执行迁移，健康检查请求 `/api/health`。
 - 无法访问 ghcr.io 时，用 Release 附件里的离线镜像：`gunzip -c sfly-server-X.Y.Z-linux-amd64.tar.gz | docker load`。
 - 控制面是单进程设计，**同一个数据库只能运行一个实例**；控制面与 Agent 要升级到同一版本（镜像只带同版本的 SDK wheel）。
+- **升级时先停掉旧版控制面，再启动新版**，不要让两个版本同时连着同一个数据库：新版的迁移给场景、运行、Agent、节点包和飞书机器人加上了所属的项目（非空的列），迁移完成之后，旧版代码再插入运行或场景会因为缺这一列而失败。
 - 镜像（ADR 0012）：控制面统一配置 PyPI 镜像 `SFLY_PYPI_MIRROR` 和 GitHub Release 镜像 `SFLY_GITHUB_RELEASE_MIRROR`，在握手时下发给所有 Agent：Agent 从 GitHub Release 镜像安装 uv、下载 Python，从 PyPI 镜像安装节点包依赖。两项都没有默认值，不配置时 Agent 用 uv 的官方来源。内网用中科大镜像时：
 
   ```sh

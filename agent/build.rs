@@ -10,9 +10,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     files.retain(|path| path.extension().is_some_and(|ext| ext == "proto"));
     files.sort();
     println!("cargo:rerun-if-changed={}", proto_root.display());
+    // TaskResult 作为 Err 在函数间传递（`Result<_, TaskResult>`）：加上出错位置之后它超过了 clippy 的
+    // `result_large_err` 门槛（128 字节），所以把 error 放进 Box，TaskResult 回到几十字节。
+    let mut config = tonic_prost_build::Config::new();
+    config.boxed("TaskResult.error");
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
-        .compile_protos(&files, &[proto_root])?;
+        .compile_with_config(config, &files, &[proto_root])?;
     Ok(())
 }

@@ -130,10 +130,6 @@
 	--color-canvas-annotation-note-fg: var(--canvas-annotation-note-fg);
 	--color-canvas-annotation-fg-2: var(--canvas-annotation-fg-2);
 	--color-canvas-annotation-swatch: var(--canvas-annotation-swatch);
-	--color-canvas-sticky: var(--canvas-sticky);
-	--color-canvas-sticky-line: var(--canvas-sticky-line);
-	--color-canvas-sticky-fg: var(--canvas-sticky-fg);
-	--color-canvas-sticky-fg-2: var(--canvas-sticky-fg-2);
 	--color-canvas-run-done-bg: var(--canvas-run-done-bg);
 	--color-canvas-run-done-border: var(--canvas-run-done-border);
 

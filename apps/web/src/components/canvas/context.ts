@@ -42,15 +42,15 @@ export interface NodeDecoration {
 	 * 替换「N 警告」。
 	 */
 	status?: StatusView;
-	/** 第一行右侧的实时数字：进度（282/600）、剩余时间、耗时。 */
+	/** 第一行右侧的实时数字：进度（282/600）、耗时。 */
 	figure?: ReactNode;
 	/** 第二行节点 ID 后面的内容（失败原因、主指标），替换配置摘要。 */
 	detail?: ReactNode;
-	/** 0–1：执行中有总数的进度、等待中已经等过的时间，画成卡片底边的进度线。 */
+	/** 0–1：执行中有总数的进度，画成卡片底边的进度线。 */
 	progress?: number;
 	/**
 	 * 站外一行：缩小视图时卡片里只放得下灯和标题，执行中、失败、等待中的站在胶囊下方挂一行，写进度、
-	 * 已运行时长、剩余时间或失败原因（看全图时卡片在前面加上标题）。只给这三种要盯的状态。
+	 * 已运行时长或失败原因（看全图时卡片在前面加上标题）。只给这三种要盯的状态。
 	 */
 	overview?: ReactNode;
 	/**
@@ -150,20 +150,6 @@ export interface AnnotationEdit {
 	arrange(ids: readonly string[], mode: ArrangeMode): void;
 	/** 拖动节点松手时加入、移出注释框。 */
 	drop(drop: AnnotationDrop): void;
-}
-
-/**
- * 可编辑画布上便签的操作（FlowCanvas 的 `stickyEdit`，ADR 0026）。状态和对场景的修改都在使用方：
- * 一次拖动、一次改大小各是一步撤销（`dragging` 为 true 的第一次记下修改前的状态，松手时为 false）。
- */
-export interface StickyEdit {
-	select(id: string): void;
-	move(id: string, position: Position, dragging: boolean): void;
-	resize(id: string, size: { width: number; height: number }, dragging: boolean): void;
-	/** 双击：打开检查器改文字。 */
-	open(id: string): void;
-	setColor(id: string, color: AnnotationColor): void;
-	remove(id: string): void;
 }
 
 export interface CanvasContextValue {
