@@ -267,6 +267,24 @@ describe("场景的检查接口和版本对比接口", () => {
 			);
 		});
 
+		it("原来那条改好了、同一种警告出现在另一个节点上：算新的（按指向的节点认，不是按种类数条数）", async () => {
+			const id = await api.orchestrationWith(withExisting(), "已有警告-换节点");
+			const doc = await head(id);
+			doc.nodes = doc.nodes.map((n) => (n.id === "probe_a" ? { ...n, inputs: { host: "h" } } : n));
+			doc.nodes.push({
+				id: "probe_b",
+				kind: "package",
+				package: "http",
+				node: "probe",
+				inputs: {},
+			});
+			doc.edges.push({ from: "probe_a", to: "probe_b", kind: "chain" });
+			const body = await check(id, doc);
+			expect(flags(body.warnings)).toEqual(
+				["已有 secret_param_default entry", "新的 input_required probe_b"].sort(),
+			);
+		});
+
 		it("改掉入口参数让预设失效：预设失效的警告总是新的（它说的就是这次改动）", async () => {
 			const id = await api.orchestrationWith(withExisting(), "已有警告-预设");
 			await createPresetOk(api, id, { name: "生产", params: [{ name: "env", value: "prod" }] });
