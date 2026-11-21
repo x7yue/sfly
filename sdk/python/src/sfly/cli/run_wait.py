@@ -162,7 +162,7 @@ class _Progress:
                     continue
                 key = (chain["id"], node["node_id"])
                 attempt = last_attempt(node)
-                wait = attempt["queue_wait"] if attempt and node["status"] == "queued" else None
+                wait = attempt.get("queue_wait") if attempt and node["status"] == "queued" else None
                 self.queued = self.queued or wait is not None
                 # 等的情况：Agent 的状态和占着槽位的任务；排了多久、多久后超时每次都在变，不算。
                 situation = "" if wait is None else _situation(wait)

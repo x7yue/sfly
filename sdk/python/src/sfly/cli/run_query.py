@@ -232,7 +232,8 @@ def _scenario_name(session: Session, scenario_id: str) -> str | None:
 
 
 def _attempt_view(attempt: Mapping[str, Any]) -> dict[str, Any]:
-    """一次尝试在 `--json` 里的样子；排队中的尝试多一个 `queue_wait`，其余不带这个键。"""
+    """一次尝试在 `--json` 里的样子；排队中的尝试多一个 `queue_wait`，其余不带这个键。
+    旧控制面的运行视图里没有这个字段：和「不在排队」一样处理，不报错。"""
     return {
         "task_id": attempt["task_id"],
         "attempt": attempt["attempt"],
@@ -243,7 +244,7 @@ def _attempt_view(attempt: Mapping[str, Any]) -> dict[str, Any]:
         "ended_at": attempt["ended_at"],
         "duration_ms": duration_ms(attempt["started_at"], attempt["ended_at"]),
         "error": attempt["error"],
-        **({"queue_wait": attempt["queue_wait"]} if attempt["queue_wait"] else {}),
+        **({"queue_wait": attempt["queue_wait"]} if attempt.get("queue_wait") else {}),
     }
 
 
@@ -363,7 +364,7 @@ def render(view: Mapping[str, Any]) -> str:
         )
         for n in chain["nodes"]:
             last = n["attempts"][-1] if n["attempts"] else None
-            if n["status"] == "queued" and last and last["queue_wait"]:
+            if n["status"] == "queued" and last and last.get("queue_wait"):
                 label = with_display_name(
                     NodeRef(chain["chain"], n["id"]).label, n.get("display_name")
                 )
