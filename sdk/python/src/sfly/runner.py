@@ -140,6 +140,15 @@ def _non_finite_message(outputs: dict[str, Any]) -> str | None:
     return f"{what}。JSON 里没有 NaN 和无穷，{advice}"
 
 
+def _non_finite_reason(outputs: dict[str, Any]) -> str | None:
+    """`_non_finite_message`，但找位置自己出错时当作没找到：位置只是附带的信息，
+    不能让它的异常盖住原来的错误。"""
+    try:
+        return _non_finite_message(outputs)
+    except Exception:
+        return None
+
+
 def _encode(outputs: dict[str, Any]) -> str:
     try:
         # allow_nan=False：NaN、无穷不写成 `NaN`、`Infinity`（不是合法的 JSON，Agent 读不了这份
@@ -148,7 +157,7 @@ def _encode(outputs: dict[str, Any]) -> str:
             {"status": "success", "outputs": outputs}, ensure_ascii=False, allow_nan=False
         )
     except (TypeError, ValueError) as error:
-        reason = _non_finite_message(outputs) if isinstance(error, ValueError) else None
+        reason = _non_finite_reason(outputs) if isinstance(error, ValueError) else None
         raise NodeOutputError(f"节点返回值不能序列化为 JSON：{reason or error}") from error
     if len(text.encode("utf-8")) > MAX_OUTPUT_BYTES:
         raise NodeOutputError("节点返回值超过 1 MB 上限")

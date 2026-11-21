@@ -287,7 +287,12 @@ def non_finite_places(value: object) -> list[tuple[str, float]]:
 def _place(parent: str, key: object, *, top: bool) -> str:
     if top and isinstance(key, str) and key.isidentifier():
         return key
-    return f"{parent}[{json.dumps(key, ensure_ascii=False)}]"
+    try:
+        written = json.dumps(key, ensure_ascii=False)
+    except (TypeError, ValueError):
+        # bytes、object() 这类 JSON 写不了的键：位置只是附带的信息，写成 repr，不能自己抛异常。
+        written = repr(key)
+    return f"{parent}[{written}]"
 
 
 def non_finite_name(number: float) -> str:
@@ -305,11 +310,23 @@ def describe_non_finite(places: list[tuple[str, float]]) -> str:
 
 
 def _is_finite(value: object) -> bool:
-    """None 和不是数的值（不在这里管）算有限。"""
+    """None 和不是数的值（不在这里管）算有限；大到转不成浮点数的整数（`10**400`）算非有限：
+    它写进 JSON 以后 Agent 按双精度数读，读出来是无穷。"""
     try:
         return math.isfinite(value)  # type: ignore[arg-type]
+    except OverflowError:
+        return False
     except TypeError:
         return True
+
+
+def _shown(value: object) -> str:
+    """错误信息里引用的值：很长的（`10**400`）截短，位数超过解释器限制转不成文字的也不抛异常。"""
+    try:
+        text = repr(value)
+    except ValueError:
+        return f"<{type(value).__name__}，位数太多>"
+    return text if len(text) <= 60 else text[:57] + "..."
 
 
 class _EventWriter:
@@ -778,11 +795,12 @@ class Context:
         `current`、`total` 是 NaN 或无穷时这一次上报被丢弃，并写一条警告日志（只写一次）：
         JSON 里没有这些值。"""
         if not (_is_finite(current) and _is_finite(total)):
+            # 原因名和指标的 "non-finite" 不同：名叫 progress 的指标的警告不会被它盖住。
             self._warn_once(
-                "non-finite",
+                "progress-non-finite",
                 "progress",
-                f"ctx.progress 的 current、total 必须是有限数值，实际为 current={current!r}、"
-                f"total={total!r}，已丢弃",
+                f"ctx.progress 的 current、total 必须是有限数值，实际为 current={_shown(current)}、"
+                f"total={_shown(total)}，已丢弃",
             )
             return
         self._events.write(
@@ -827,11 +845,13 @@ class Context:
             kind, keys = declared
         try:
             number = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             number = math.nan
         if not math.isfinite(number):
             self._warn_once(
-                "non-finite", name, f"指标 {name!r} 的值必须是有限数值，实际为 {value!r}，已丢弃"
+                "non-finite",
+                name,
+                f"指标 {name!r} 的值必须是有限数值，实际为 {_shown(value)}，已丢弃",
             )
             return
         # 不带标签、也没声明标签键（最常见，节点可能每秒调用上万次）：直接写，不经过标签检查。

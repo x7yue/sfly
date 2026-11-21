@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sfly import Context, FeishuBot, node
+from sfly import Context, FeishuBot, Metric, node
 
 
 @node(outputs=["ratio"])
@@ -40,4 +40,38 @@ def non_finite_progress(ctx: Context) -> dict[str, Any]:
 @node(outputs=[])
 def notify_non_finite(ctx: Context, bot: FeishuBot) -> dict[str, Any]:
     ctx.notify(bot, message={"msg_type": "text", "content": {"text": "x", "n": float("nan")}})
+    return {}
+
+
+@node(outputs=["a", "b"])
+def nan_beside_a_key_json_cannot_write(ctx: Context) -> dict[str, Any]:
+    outputs: dict[Any, Any] = {"a": float("nan"), b"k": 1}  # 键是 bytes：JSON 写不了
+    return outputs
+
+
+@node(outputs=["n", "x"])
+def nan_under_a_key_json_cannot_write(ctx: Context) -> dict[str, Any]:
+    outputs: dict[Any, Any] = {"n": float("nan"), "x": {b"k": float("inf")}}
+    return outputs
+
+
+@node(outputs=[])
+def huge_integer_progress(ctx: Context) -> dict[str, Any]:
+    ctx.progress(10**400, 10, "current 超出浮点数范围")
+    ctx.progress(1, 10**400, "total 超出浮点数范围")
+    ctx.progress(2, 10, "正常")
+    return {}
+
+
+@node(outputs=[], metrics=[Metric("tps")])
+def huge_integer_metric(ctx: Context) -> dict[str, Any]:
+    ctx.metric("tps", 10**400)
+    ctx.metric("tps", 1.5)
+    return {}
+
+
+@node(outputs=[], metrics=[Metric("progress")])
+def non_finite_progress_and_a_metric_named_progress(ctx: Context) -> dict[str, Any]:
+    ctx.progress(float("nan"))
+    ctx.metric("progress", float("nan"))
     return {}

@@ -887,6 +887,8 @@ def test_a_raw_message_with_nan_is_not_sent_and_a_warning_names_the_place() -> N
     assert result.status == "success", result.error
     assert result.notifications == []
     [warning] = [line for line in result.logs if line.level == "warn"]
+    # 来源是 sdk（SDK 在节点里检查的），不是 system（控制面的校验）；sdk-reference 写明了。
+    assert warning.source == "sdk"
     assert warning.message == (
         "ctx.notify 的消息没有发送：原始消息里有 NaN 或无穷（JSON 里没有这些值）："
         'content["n"]（NaN）'
