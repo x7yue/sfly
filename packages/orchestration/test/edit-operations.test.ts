@@ -392,6 +392,27 @@ describe("场景的局部编辑：操作", () => {
 	});
 });
 
+describe("审查补的几处", () => {
+	it("add_node 写的节点 ID 要能出现在引用里：只能用字母、数字、下划线和连字符", () => {
+		for (const id of ["a b", "a.b", "中文"]) {
+			expect(problemOf([{ op: "add_node", id, package: "svc", node: "scan" }]).message).toBe(
+				`第 1 个操作（add_node）：节点 ID ${JSON.stringify(id)} 不能用：只能用字母、数字、下划线和连字符（输出的引用里要写它：\${{ nodes.<节点 ID>.outputs.<输出> }}）`,
+			);
+		}
+		expect(
+			nodeOf(okDoc([{ op: "add_node", id: "scan-2_b", package: "svc", node: "scan" }]), "scan-2_b"),
+		).toBeDefined();
+	});
+
+	it("set 写 null 就是 null（输入可以是 null），不写 value 才是去掉", () => {
+		const result = okDoc([{ op: "set", node: "report", field: "inputs.url", value: null }]);
+		expect(nodeOf(result, "report")?.inputs).toEqual({ url: null });
+		expect(
+			problemOf([{ op: "set", node: "report", field: "timeout", value: null }]).message,
+		).toMatch(/^第 1 个操作（set）：字段 timeout 的值不合法：/);
+	});
+});
+
 describe("相近的节点 ID", () => {
 	const ids = ["entry", "fetch_data", "fetch_meta", "report", "check_1", "check_2"];
 	it("大小写、分隔符、少一两个字、是其中一段：按相近程度排", () => {
@@ -399,5 +420,9 @@ describe("相近的节点 ID", () => {
 		expect(similarNodeIds("fetch-data", ids)).toEqual(["fetch_data", "fetch_meta"]);
 		expect(similarNodeIds("check", ids)).toEqual(["check_1", "check_2"]);
 		expect(similarNodeIds("zzzzzz", ids)).toEqual([]);
+		// 短 ID 不因为是长 ID 里的一段就算相近：entry 不是 entry_point_check 的近似
+		expect(similarNodeIds("entry_point_check", ["entry", "a1", "entry_point_chek"])).toEqual([
+			"entry_point_chek",
+		]);
 	});
 });

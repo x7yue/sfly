@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { publishPackage } from "./support/package-archive.js";
+import { startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -239,6 +240,37 @@ describe("sfly scenario edit → 控制面", () => {
 			expect(saved.diff).toEqual(dryJson.diff);
 		});
 
+		it("场景原来就有的警告：单独一段、写明改动之前就有，不影响退出码", async () => {
+			const doc = baseDocument();
+			(doc.nodes[2] as { inputs: Record<string, unknown> }).inputs = {};
+			const id = await api.orchestrationWith(doc, "编辑-只检查-已有警告");
+			const result = await cli(
+				"scenario",
+				"edit",
+				id,
+				"set",
+				"fetch_data",
+				"display_name",
+				"取一下数据",
+				"--dry-run",
+			);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain(
+				"改动之前就有的警告（1，不是这次改动带进来的，不影响退出码）：\n  节点 report 的必填输入 url 没有填写",
+			);
+			const saved = await cli(
+				"scenario",
+				"edit",
+				id,
+				"set",
+				"fetch_data",
+				"display_name",
+				"取一下数据",
+			);
+			expect(saved.code, saved.stderr).toBe(0);
+			expect(saved.stdout).toContain("改动之前就有的警告（1，不是这次改动带进来的）：");
+		});
+
 		it("没有警告时退出码 0", async () => {
 			const id = await scenario("编辑-只检查-没有警告");
 			const result = await cli("scenario", "edit", id, "remove", "report", "--dry-run");
@@ -254,9 +286,38 @@ describe("sfly scenario edit → 控制面", () => {
 		expect(result.code).toBe(2);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toMatch(
-			/^错误：场景已有更新的版本：版本 2 由 bob 保存于 \S+，你的编辑基于版本 1。/,
+			/^错误：场景已有更新的版本：版本 2 由 bob 保存于 \S+，这次编辑基于版本 1。/,
 		);
 		expect(result.stderr).toContain(`下一步：sfly scenario diff ${id} 1 2`);
+		expect(await versionCount(id)).toBe(2);
+	});
+
+	it("没写 --base-version、读到最新版本之后有人保存了：报冲突，提示重新执行（不提 --base-version）", async () => {
+		const id = await scenario("编辑-中途冲突");
+		const proxy = await startRecordingProxy(cp.httpUrl, async (request) => {
+			if (request.method === "POST" && request.path.endsWith("/edits")) {
+				await api.saveVersion(id, baseDocument(), "bob");
+			}
+		});
+		try {
+			const result = await sfly([
+				"scenario",
+				"edit",
+				id,
+				"remove",
+				"report",
+				"--server",
+				proxy.url,
+			]);
+			expect(result.code).toBe(2);
+			expect(result.stderr).toMatch(
+				/^错误：场景已有更新的版本：版本 2 由 bob 保存于 \S+，这次编辑基于版本 1。/,
+			);
+			expect(result.stderr).toContain("确认这次编辑仍然要做之后再执行一次同样的命令");
+			expect(result.stderr).not.toContain("--base-version");
+		} finally {
+			await proxy.close();
+		}
 		expect(await versionCount(id)).toBe(2);
 	});
 
@@ -268,6 +329,13 @@ describe("sfly scenario edit → 控制面", () => {
 			expect(result.stderr).toBe(
 				"错误：没有保存，这组操作都不生效：第 1 个操作（remove_node）：节点 fetch-data 不存在，相近的节点：fetch_data\n",
 			);
+			// --json 时线索是结构化的：控制面给的 details 原样带上
+			const json = await cli("scenario", "edit", id, "remove", "fetch-data", "--json");
+			expect(json.code).toBe(2);
+			expect(JSON.parse(json.stderr).error).toMatchObject({
+				code: "invalid_operation",
+				details: { index: 0, op: "remove_node", similar: ["fetch_data"] },
+			});
 		});
 
 		it("包节点缺必填输入：列出缺哪几个和各自的类型", async () => {

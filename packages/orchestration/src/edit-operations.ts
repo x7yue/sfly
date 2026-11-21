@@ -126,7 +126,9 @@ export function similarNodeIds(id: string, ids: Iterable<string>): string[] {
 		const other = loose(candidate);
 		const d = distance(wanted, other);
 		const close = d <= Math.max(2, Math.floor(wanted.length / 3));
-		const part = wanted.length >= 3 && (other.includes(wanted) || wanted.includes(other));
+		// 只写了其中一段：短的那个至少 3 个字、占长的一半以上（entry 不算 entry_point_check 的近似）。
+		const [short, long] = wanted.length <= other.length ? [wanted, other] : [other, wanted];
+		const part = short.length >= 3 && short.length * 2 >= long.length && long.includes(short);
 		return close || part ? [{ candidate, d }] : [];
 	});
 	return scored
@@ -221,6 +223,9 @@ const isStep = (value: object): value is Step => "ok" in value;
 
 // —— 操作 ——
 
+/** 新节点的 ID：引用输出时写在 `nodes.<ID>.outputs.<输出>` 里，不能有点和空白；画布生成的 ID 也是这些字符。 */
+const NODE_ID = /^[A-Za-z0-9_-]+$/;
+
 const ADD_NODE_FIELDS = [
 	"display_name",
 	"note",
@@ -237,6 +242,11 @@ function addNode(
 	context: EditContext,
 ): Step {
 	const { package: pkg, node: nodeName } = operation;
+	if (operation.id !== undefined && !NODE_ID.test(operation.id)) {
+		return fail(
+			`节点 ID ${JSON.stringify(operation.id)} 不能用：只能用字母、数字、下划线和连字符（输出的引用里要写它：\${{ nodes.<节点 ID>.outputs.<输出> }}）`,
+		);
+	}
 	if (operation.id !== undefined && findNode(doc, operation.id)) {
 		return fail(`节点 ID ${operation.id} 已存在`);
 	}
@@ -350,7 +360,8 @@ function setField(
 		);
 	}
 	const { field } = operation;
-	const value = operation.value ?? undefined;
+	// 不写 value 是去掉这个字段；写 null 就是 null（输入可以是 null，别的字段写 null 按值不合法报错）。
+	const { value } = operation;
 	const input = node.kind === "package" && field.startsWith(INPUT_PREFIX);
 	const allowed = settableFields(node.kind);
 	if (!input && !allowed.includes(field)) {

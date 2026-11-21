@@ -151,6 +151,7 @@ export interface ActionSummaryView {
  */
 export interface AddNodeOperation {
 	op: "add_node";
+	/** 只能用字母、数字、下划线和连字符（输出的引用里要写它）。 */
 	id?: string;
 	package: PackageName;
 	node: NodeName;
@@ -2541,8 +2542,8 @@ export interface SavedVersionView {
 }
 
 /**
- * 改一个节点的一个字段：`field` 是 SETTABLE_NODE_FIELDS 之一或 `inputs.<输入名>`；`value` 不写（或写 null）就是去掉这个字段，
- * 去掉的字段按没有写处理（`always` 为 false、Agent 用场景的默认 Agent）。
+ * 改一个节点的一个字段：`field` 是 SETTABLE_NODE_FIELDS 之一或 `inputs.<输入名>`；`value` 不写就是去掉这个字段，
+ * 去掉的字段按没有写处理（`always` 为 false、Agent 用场景的默认 Agent）；写 null 就是 null（输入可以是 null）。
  */
 export interface SetFieldOperation {
 	op: "set";

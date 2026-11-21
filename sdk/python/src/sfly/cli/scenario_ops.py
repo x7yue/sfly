@@ -228,7 +228,9 @@ def _edit(session: Session, args: argparse.Namespace) -> int:
             else client.request("POST", f"/orchestrations/{segment(scenario_id)}/edits", body=body)
         )
     except ApiError as error:
-        raise _explain(error, scenario_id, base) from None
+        raise _explain(
+            error, scenario_id, base, explicit_base=args.base_version is not None
+        ) from None
     warnings, diff = result["warnings"], result["diff"]
     changes = scenario_check.render_diff(diff)
     if args.dry_run:
@@ -246,34 +248,44 @@ def _edit(session: Session, args: argparse.Namespace) -> int:
             "created_at": result["created_at"],
         }
     lines.extend(f"  {line}" for line in changes or ["没有改动。"])
-    if warnings:
-        lines.append(f"警告（{len(warnings)}）：")
-        lines.extend(f"  {w['message']}" for w in warnings)
+    new = scenario_check.fresh(warnings)
+    if new:
+        lines.append(f"这次改动带进来的警告（{len(new)}）：")
+        lines.extend(f"  {w['message']}" for w in new)
+    note = "，不是这次改动带进来的" + ("，不影响退出码" if args.dry_run else "")
+    lines.extend(scenario_check.existing_lines(warnings, note))
     session.out.emit({**view, "warnings": warnings, "diff": diff}, "\n".join(lines))
-    return EXIT_WARNINGS if args.dry_run and warnings else 0
+    return EXIT_WARNINGS if args.dry_run and new else 0
 
 
-def _explain(error: ApiError, scenario_id: str, base: int) -> CliError:
+def _explain(error: ApiError, scenario_id: str, base: int, *, explicit_base: bool) -> CliError:
     if error.status == 404:
         return CliError(
             "scenario_not_found", f"没有 id 是 {scenario_id} 的场景", next="sfly scenario list"
         )
     if error.code == "invalid_operation":
-        return CliError(error.code, f"没有保存，这组操作都不生效：{error.message}")
+        return CliError(
+            error.code, f"没有保存，这组操作都不生效：{error.message}", hints=error.details
+        )
     if error.code == "version_conflict":
         details = error.details if isinstance(error.details, dict) else {}
         latest = details.get("head")
+        retry = (
+            "去掉 --base-version 再执行一次"
+            if explicit_base
+            else "再执行一次同样的命令（会在最新版本上做）"
+        )
         if isinstance(latest, dict):
             message = (
                 f"场景已有更新的版本：版本 {latest['number']} 由 {latest['author']} "
-                f"保存于 {latest['created_at']}，你的编辑基于版本 {base}。"
-                "看过最新版本的改动、确认这次编辑仍然要做之后，去掉 --base-version 再执行一次"
+                f"保存于 {latest['created_at']}，这次编辑基于版本 {base}。"
+                f"看过最新版本的改动、确认这次编辑仍然要做之后{retry}"
             )
             next_command = (
                 f"sfly scenario diff {shlex.quote(scenario_id)} {base} {latest['number']}"
             )
         else:
-            message = f"场景还没有保存过版本，你的编辑基于版本 {base}"
+            message = f"场景还没有保存过版本，这次编辑基于版本 {base}"
             next_command = f"sfly scenario show {shlex.quote(scenario_id)}"
         return CliError("version_conflict", message, next=next_command)
     return error

@@ -379,11 +379,39 @@ describe("场景的局部编辑", () => {
 			expect(checked.status, text).toBe(200);
 			const body = orchestrationsApi.checkEdits.response.parse(JSON.parse(text));
 			expect(await versionCount(id)).toBe(1);
-			expect(body.warnings.map((w) => w.code)).toEqual(["input_type_mismatch"]);
+			expect(body.warnings.map((w) => [w.code, w.existing])).toEqual([
+				["input_type_mismatch", false],
+			]);
 
 			const saved = await editOk(id, operations);
 			expect(body.warnings).toEqual(saved.warnings);
 			expect(body.diff).toEqual(saved.diff);
+		});
+
+		it("警告带标记：场景原来就有的标成已有，这组操作带进来的标成新的；保存的响应里也一样", async () => {
+			const doc = baseDocument();
+			// 原来就有：report 的必填输入 url 没写
+			doc.nodes[2] = { ...doc.nodes[2], inputs: {} } as (typeof doc.nodes)[number];
+			const id = await api.orchestrationWith(doc, "检查编辑-已有警告");
+			const operations = [
+				{ op: "set", node: "fetch_data", field: "display_name", value: "取一下数据" },
+				{
+					op: "add_node",
+					id: "p",
+					package: "http",
+					node: "probe",
+					inputs: { host: "h", count: "三" },
+				},
+			];
+			const checked = await api.post(`/orchestrations/${id}/edits/check`, { operations });
+			const body = orchestrationsApi.checkEdits.response.parse(await checked.json());
+			const flags = (ws: Array<{ code: string; node_id?: string; existing: boolean }>) =>
+				ws.map((w) => `${w.existing ? "已有" : "新的"} ${w.code} ${w.node_id}`).sort();
+			expect(flags(body.warnings)).toEqual(
+				["已有 input_required report", "新的 input_type_mismatch p", "新的 orphan_node p"].sort(),
+			);
+			const saved = await editOk(id, operations);
+			expect(flags(saved.warnings)).toEqual(flags(body.warnings));
 		});
 
 		it("不合法的操作和保存时一样报错", async () => {

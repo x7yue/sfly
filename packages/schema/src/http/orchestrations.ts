@@ -579,7 +579,8 @@ export const orchestrationsApi = {
 	 * - 编辑之后的文档不合法时 400 `invalid_document`（例如最新版本里还有已移除种类的节点），
 	 *   secret 参数默认值的占位符沿用不了时 400 `secret_default_placeholder`，和保存一样。
 	 *
-	 * 之后的检查和保存完全一样：`warnings` 和保存时相同，新节点没有坐标时按整理布局补上（接在节点后面的放在它右侧一列，和画布一样）。
+	 * 之后的检查和保存完全一样：`warnings` 和保存时相同，每条带 `existing`（改动之前就有，见 CheckedWarningView），
+	 * 新节点没有坐标时按整理布局补上（接在节点后面的放在它右侧一列，和画布一样）。
 	 * 只检查不保存用 checkEdits。
 	 */
 	edit: endpoint({
@@ -605,13 +606,15 @@ export const orchestrationsApi = {
 					}
 				: undefined,
 		response: SavedVersionView.extend({
+			/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
+			warnings: z.array(CheckedWarningView),
 			/** 这组操作造成的差异：从 base_version 到新版本。 */
 			diff: DocumentDiffView,
 		}),
 	}),
 	/**
-	 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时 `warnings` 和真正保存时一样，
-	 * `diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+	 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
+	 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
 	 * 没有给 base_version 时对照最新版本，不报冲突。
 	 */
 	checkEdits: endpoint({
@@ -629,12 +632,7 @@ export const orchestrationsApi = {
 			/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
 			operations: EditOperations,
 		}),
-		response: z.object({
-			/** 和真正保存时相同的警告。 */
-			warnings: z.array(DocumentWarningView),
-			/** 这组操作会造成的差异。 */
-			diff: DocumentDiffView,
-		}),
+		response: VersionCheckView,
 	}),
 	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */
 	versions: endpoint({

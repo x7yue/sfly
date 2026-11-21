@@ -9571,7 +9571,8 @@
                     },
                     "id": {
                       "type": "string",
-                      "minLength": 1
+                      "minLength": 1,
+                      "description": "只能用字母、数字、下划线和连字符（输出的引用里要写它）。"
                     },
                     "package": {
                       "type": "string",
@@ -10306,14 +10307,18 @@
                 },
                 "annotation_id": {
                   "type": "string"
+                },
+                "existing": {
+                  "type": "boolean"
                 }
               },
               "required": [
                 "code",
-                "message"
+                "message",
+                "existing"
               ]
             },
-            "description": "保存时的静态检查警告：只提示，不阻止保存。"
+            "description": "和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。"
           },
           "diff": {
             "type": "object",
@@ -10652,7 +10657,8 @@
                     },
                     "id": {
                       "type": "string",
-                      "minLength": 1
+                      "minLength": 1,
+                      "description": "只能用字母、数字、下划线和连字符（输出的引用里要写它）。"
                     },
                     "package": {
                       "type": "string",
@@ -10852,14 +10858,18 @@
                 },
                 "annotation_id": {
                   "type": "string"
+                },
+                "existing": {
+                  "type": "boolean"
                 }
               },
               "required": [
                 "code",
-                "message"
+                "message",
+                "existing"
               ]
             },
-            "description": "和真正保存时相同的警告。"
+            "description": "和保存时相同的警告，每条带 `existing`。"
           },
           "diff": {
             "type": "object",
@@ -11118,7 +11128,7 @@
               "moved",
               "annotations"
             ],
-            "description": "这组操作会造成的差异。"
+            "description": "保存之后相对最新版本（还没有版本时是初始文档）的差异。"
           }
         },
         "required": [

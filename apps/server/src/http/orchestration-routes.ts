@@ -9,7 +9,7 @@ import type {
 } from "../orchestrations/orchestration-store.js";
 import { type PreparedEdits, prepareEdits } from "../orchestrations/scenario-edits.js";
 import { describeSecretDefaultProblem } from "../orchestrations/secret-defaults.js";
-import { versionDiff, versionWarnings } from "../orchestrations/version-check.js";
+import { versionCheck, versionDiff, versionWarnings } from "../orchestrations/version-check.js";
 import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
@@ -205,8 +205,14 @@ export function registerOrchestrationRoutes(
 		if (result.kind !== "saved") return rejectVersion(reply, result, prepared.base);
 		const saved = result.version;
 		reply.code(201);
-		const warnings = await versionWarnings(db, params.id, saved.document, result.previous);
-		return { ...saved, warnings, diff: versionDiff(prepared.before, saved.document) };
+		const check = await versionCheck(
+			db,
+			params.id,
+			saved.document,
+			result.previous,
+			prepared.before,
+		);
+		return { ...saved, ...check };
 	});
 
 	contractRoute(app, orchestrationsApi.checkEdits, async ({ params, body }, reply) => {
@@ -214,10 +220,7 @@ export function registerOrchestrationRoutes(
 		if (prepared.kind !== "edited") return rejectEdits(reply, prepared, body.base_version);
 		const result = await orchestrations.checkVersion(params.id, prepared.document, prepared.base);
 		if (result.kind !== "checked") return rejectVersion(reply, result, prepared.base);
-		return {
-			warnings: await versionWarnings(db, params.id, result.document, result.previous),
-			diff: versionDiff(prepared.before, result.document),
-		};
+		return result.check;
 	});
 
 	contractRoute(app, orchestrationsApi.versions, async ({ params }, reply) => {

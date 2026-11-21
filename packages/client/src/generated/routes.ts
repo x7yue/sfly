@@ -8,9 +8,9 @@ import type {
 	ActionSummaryView,
 	AgentView,
 	ArtifactView,
+	CheckedWarningView,
 	DashboardView,
 	DocumentDiffView,
-	DocumentWarningView,
 	EditOperations,
 	FeishuBotName,
 	FeishuBotScenario,
@@ -627,8 +627,8 @@ export interface Api {
 				author_via: string | null;
 				created_at: Timestamp;
 				document: StoredOrchestrationDocument;
-				/** 保存时的静态检查警告：只提示，不阻止保存。 */
-				warnings: DocumentWarningView[];
+				/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
+				warnings: CheckedWarningView[];
 				/** 这组操作造成的差异：从 base_version 到新版本。 */
 				diff: DocumentDiffView;
 			}
@@ -636,8 +636,8 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/edits/check`
 		 *
-		 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时 `warnings` 和真正保存时一样，
-		 * `diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+		 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
+		 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
 		 * 没有给 base_version 时对照最新版本，不报冲突。
 		 */
 		checkEdits: Endpoint<
@@ -652,12 +652,7 @@ export interface Api {
 					operations: EditOperations;
 				};
 			},
-			{
-				/** 和真正保存时相同的警告。 */
-				warnings: DocumentWarningView[];
-				/** 这组操作会造成的差异。 */
-				diff: DocumentDiffView;
-			}
+			VersionCheckView
 		>;
 		/**
 		 * `GET /orchestrations/:id/versions`
