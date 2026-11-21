@@ -2007,7 +2007,7 @@ export interface RunMetricSummary {
 export interface RunNotificationChanges {
 	/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 	bot?: FeishuBotName | null;
-	/** 什么情况下发：仅失败、失败和取消、总是。 */
+	/** 什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。 */
 	trigger?: RunNotificationTrigger;
 	/** 卡片标题；空字符串用场景名。 */
 	title?: string;
@@ -2041,8 +2041,12 @@ export interface RunNotificationState {
 	reason: string | null;
 }
 
-/** 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。 */
-export type RunNotificationTrigger = "failed" | "failed_or_cancelled" | "always";
+/**
+ * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消。运行通知是兜底，成功的运行不发；不想发就把机器人设成
+ * null。曾经有的「总是」（`always`，成功、失败、取消都发）已经去掉（#446）：升级时存量的「总是」改成了失败和取消，
+ * 保存设置时再写它会被拒绝（`runNotificationTriggerRemovedMessage`）。
+ */
+export type RunNotificationTrigger = "failed" | "failed_or_cancelled";
 
 /** 运行用的运行预设，记的是触发时的情况：预设之后改名、删除都不影响。 */
 export interface RunPresetView {
