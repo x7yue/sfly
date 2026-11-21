@@ -8,6 +8,11 @@
 控制面上已经有更新的版本时返回 409 `version_conflict`，命令提示重新 pull、合并后再 push，
 不提供强制覆盖。没有 `position` 的节点不用写坐标：控制面保存时按画布的「整理布局」补上，
 压住已有节点时挪到附近的空位；push 成功后文件里的 `document` 换成控制面实际保存的内容。
+
+secret 参数的默认值，控制面读出来是占位符 `******`，pull 下来的文件里也是它：
+不改它直接 push，新版本沿用上一个版本里同名参数的值；
+写成别的值才会替换，删掉 `default` 就是去掉默认值。
+占位符沿用不了时（新场景、参数改了名……）控制面拒绝保存。
 """
 
 from __future__ import annotations
@@ -29,6 +34,10 @@ from sfly.cli.session import Session, command, common_options
 if TYPE_CHECKING:
     from jsonschema.exceptions import ValidationError
 
+# 读取接口给 secret 参数的默认值打的码：packages/schema 的 SECRET_MASK，
+# 和日志、运行视图、运行预设里的是同一个。
+SECRET_MASK = "******"
+
 _UNSAFE_FILE_NAME = re.compile(r'[\\/:*?"<>|\s]+')
 _NODE_PATH = re.compile(r"^nodes/(\d+)(?:/|$)")
 
@@ -43,7 +52,9 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         '{"scenario": 场景 id, "base_version": 版本号, "document": 场景文档}。'
         "base_version 总是最新版本号：用 --version 拉旧版本时，"
         "push 就相当于以旧版本的内容为起点再保存一次。"
-        "文件已存在时覆盖。",
+        "文件已存在时覆盖。secret 参数的默认值在文件里是占位符 ******（读不到原值）："
+        "不改它直接 push，新版本沿用最新版本里同名参数的默认值"
+        "（拉旧版本时也是最新版本的，不是旧版本的）。",
     )
     p_pull.add_argument("scenario", metavar="场景", help="场景 id 或准确名称")
     p_pull.add_argument(
@@ -67,7 +78,10 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         "（包括补好的坐标），方便接着改、接着 push。"
         "控制面上已经有更新的版本时报冲突（退出码 2）：重新 pull，把改动合并进去再 push，"
         "不提供强制覆盖。没有 position 的节点由控制面按整理布局补上坐标"
-        "（压住已有节点时挪到附近的空位），已有坐标的节点不动。",
+        "（压住已有节点时挪到附近的空位），已有坐标的节点不动。"
+        "secret 参数的默认值是占位符 ******（pull 写出来的）时沿用上一个版本里同名参数的默认值；"
+        "沿用不了（参数改了名、类型变了、不再是 secret 参数……）时拒绝保存，"
+        "给新的默认值或删掉 default。写成新的值就保存新的值。",
     )
     p_push.add_argument("file", metavar="文件", help="pull 写出的 JSON 文件")
     p_push.set_defaults(func=command(_push))
@@ -77,7 +91,10 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         parents=[common_options()],
         help="新建场景，可以用文件里的场景文档保存第一个版本",
         description="新建场景。给了 --from 文件时同时保存第一个版本"
-        "（文件里需要有 document，scenario 和 base_version 不需要；文档本地校验没通过时不新建）。",
+        "（文件里需要有 document，scenario 和 base_version 不需要；文档本地校验没通过时不新建）。"
+        "文件里 secret 参数的默认值不能是占位符 ******"
+        "（新场景没有上一个版本可以沿用，报错、不新建）："
+        "要连同 secret 的默认值复制一个场景，用 copy。",
     )
     p_create.add_argument("--name", required=True, help="场景名称")
     p_create.add_argument("--description", default="", help="场景说明")
@@ -90,8 +107,9 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         "copy",
         parents=[common_options()],
         help="复制场景（联调时改副本，不影响原场景）",
-        description="复制场景并取新名字：说明和运行通知设置一起复制，"
-        "源场景最新版本的内容作为第 1 版。",
+        description="复制场景并取新名字：说明、运行通知设置和运行预设一起复制，"
+        "源场景最新版本的内容作为第 1 版"
+        "（secret 参数的默认值和预设里的 secret 值一样跟着复制，读出来仍打码）。",
     )
     p_copy.add_argument("scenario", metavar="场景", help="源场景的 id 或准确名称")
     p_copy.add_argument("--name", required=True, help="新场景的名称")
@@ -167,6 +185,7 @@ def _pull(session: Session, args: argparse.Namespace) -> None:
             "base_version": latest,
         },
         text,
+        note=_placeholder_note(document, version, latest),
     )
 
 
@@ -274,6 +293,18 @@ def _explain_push_error(
                 "重新 pull，把你的改动合并进去再 push"
             )
         return CliError("version_conflict", message, next=pull)
+    if error.code == "secret_default_placeholder" and isinstance(error.details, list):
+        lines = [
+            f"  节点 {p.get('node_id')} 的参数 {p.get('param')}："
+            f"{_PLACEHOLDER_REASONS.get(p.get('reason'), '')}"
+            for p in error.details
+        ]
+        return CliError(
+            error.code,
+            f"文件里有 secret 参数的默认值是占位符 {SECRET_MASK}，没有可以沿用的原值，没有保存：\n"
+            + "\n".join(lines)
+            + "\n给这些参数写上新的默认值，或者删掉它们的 default，再 push。",
+        )
     if error.code == "invalid_document" and isinstance(error.details, list):
         lines = [f"  {_issue_path(issue)}: {issue.get('message')}" for issue in error.details]
         return CliError(error.code, "控制面认为场景文档不合法：\n" + "\n".join(lines))
@@ -292,6 +323,74 @@ def _warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
     return [f"警告（{len(warnings)}）：", *(f"  {w['message']}" for w in warnings)]
 
 
+# —— secret 参数的默认值：占位符 ——
+
+_PLACEHOLDER_REASONS = {
+    "no_previous_value": "上一个版本里没有这个参数的默认值可以沿用"
+    "（新增的参数、改了名，或者场景还没有保存过版本）",
+    "type_changed": "参数的类型变了，上一个版本里的默认值不能沿用",
+    "unsecured": "参数不再是 secret 参数：占位符不能存成默认值，原来的默认值也不会带到普通参数上",
+}
+
+
+def _masked_defaults(document: Any) -> list[tuple[str, str]]:
+    """文档里默认值是占位符的 secret 参数：（入口节点 id，参数名）。"""
+    found: list[tuple[str, str]] = []
+    nodes = document.get("nodes") if isinstance(document, dict) else None
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict) or node.get("kind") not in ("entry", "subflow_entry"):
+            continue
+        for param in node.get("params") or []:
+            if (
+                isinstance(param, dict)
+                and param.get("secret") is True
+                and param.get("default") == SECRET_MASK
+            ):
+                found.append((str(node.get("id")), str(param.get("name"))))
+    return found
+
+
+def _placeholder_note(document: Any, version: int, latest: int) -> str | None:
+    """pull 的提示：文件里 secret 参数的默认值是占位符，原样 push 沿用原值，写成别的值才替换。
+    拉的是旧版本时，沿用的是最新版本的值，不是这个旧版本的。"""
+    masked = _masked_defaults(document)
+    if not masked:
+        return None
+    lines = [
+        f"文件里有 {len(masked)} 个 secret 参数的默认值是占位符 {SECRET_MASK}（读不到原值）："
+        "不改它直接 push，新版本沿用上一个版本里同名参数的默认值；"
+        "写成别的值才会替换，删掉 default 就是去掉默认值。"
+    ]
+    if version != latest:
+        lines.append(
+            f"这个文件是版本 {version} 的内容，但占位符沿用的是最新版本 {latest} 里的值，"
+            f"不是版本 {version} 的。"
+        )
+    return "".join(lines)
+
+
+def _check_no_placeholders(document: Any, source: Any) -> None:
+    """新建场景没有上一个版本可以沿用：文档里 secret 参数的默认值是占位符时在新建之前就报错。"""
+    masked = _masked_defaults(document)
+    if not masked:
+        return
+    lines = [f"  节点 {node} 的参数 {param}" for node, param in masked]
+    copy = (
+        f"sfly scenario copy {shlex.quote(source)} --name <新名称>"
+        if isinstance(source, str) and source
+        else None
+    )
+    raise CliError(
+        "secret_default_placeholder",
+        f"文件里有 secret 参数的默认值是占位符 {SECRET_MASK}，"
+        "新场景没有上一个版本可以沿用，没有新建场景：\n"
+        + "\n".join(lines)
+        + "\n给这些参数写上默认值，或者删掉它们的 default；"
+        "要连同 secret 的默认值一起复制一个场景，用 sfly scenario copy。",
+        next=copy,
+    )
+
+
 # —— create / copy / rename ——
 
 
@@ -300,8 +399,10 @@ def _create(session: Session, args: argparse.Namespace) -> None:
     name = _checked_name(args.name)
     document = None
     if args.source:
-        document = _read_file(os.path.abspath(args.source))["document"]
+        content = _read_file(os.path.abspath(args.source))
+        document = content["document"]
         _check_document(document)
+        _check_no_placeholders(document, content.get("scenario"))
     created = client.request(
         "POST", "/orchestrations", body={"name": name, "description": args.description}
     )
