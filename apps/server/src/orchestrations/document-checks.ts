@@ -8,12 +8,14 @@ import {
 import type { StoredOrchestrationDocument } from "@sfly/schema";
 import type { Db, Tx } from "../db/database.js";
 import { agents, feishuBots } from "../db/schema.js";
+import { DEV_VERSION } from "../engine/assign-content.js";
 import { findPackageVersion } from "../packages/package-repository.js";
+import { devNodeTypes } from "./dev-node-types.js";
 
-/** 开发版本只在本地开发模式的 Agent 上存在，控制面不知道它的元信息，跳过相关检查。 */
-const DEV_VERSION = "dev";
-
-/** 文档锁定的节点包版本的元信息（不存在的版本为 null）。一个版本一个版本地读：`db` 可能是事务对象。 */
+/**
+ * 文档锁定的节点包版本的元信息（不存在的版本为 null）。一个版本一个版本地读：`db` 可能是事务对象。
+ * 开发版本取在线 Agent 上报的元信息（{@link devNodeTypes}）；不知道它的节点类型时没有这一项，相关检查跳过。
+ */
 export async function packageCatalogFor(
 	db: Db | Tx,
 	doc: StoredOrchestrationDocument,
@@ -23,6 +25,9 @@ export async function packageCatalogFor(
 		if (version === DEV_VERSION) continue;
 		const found = await findPackageVersion(db, name, version);
 		catalog.set(packageKey(name, version), found ? found.metadata.nodes : null);
+	}
+	for (const [name, nodes] of await devNodeTypes(db, doc)) {
+		catalog.set(packageKey(name, DEV_VERSION), nodes);
 	}
 	return catalog;
 }

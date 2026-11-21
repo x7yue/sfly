@@ -13,6 +13,7 @@ import { agents } from "../db/schema.js";
 import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
+import { devNodeTypes } from "../orchestrations/dev-node-types.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
@@ -56,6 +57,19 @@ async function lockedPackages(
 		if (published) locked.set(name, published.metadata);
 	}
 	return locked;
+}
+
+/** 文档锁定的节点包版本的元信息，再加上锁定开发版本的包的节点类型（在线 Agent 上报的，不知道的不在里面）。 */
+async function withDevNodeTypes(
+	db: Db | Tx,
+	doc: StoredOrchestrationDocument,
+	locked: ReadonlyMap<string, PackageMetadata>,
+): Promise<ReadonlyMap<string, Pick<PackageMetadata, "nodes">>> {
+	const merged = new Map<string, Pick<PackageMetadata, "nodes">>(locked);
+	for (const [name, nodes] of await devNodeTypes(db, doc)) {
+		merged.set(name, { nodes: nodes as PackageMetadata["nodes"] });
+	}
+	return merged;
 }
 
 /**
@@ -182,7 +196,8 @@ export type ParamsCheck = (
  * 版本满足节点包需要的 Agent 版本（`requires_agent`，{@link checkReferencedAgents}）；
  * 「飞书机器人」类型的输入引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
  * 整个引用入口参数的节点输入，值（触发时给的值、运行预设里的值、默认值，子流程里是异步任务节点传入的值）
- * 的类型要符合输入的类型，判断和派发时是同一个（{@link paramInputTypeProblems}）。
+ * 的类型要符合输入的类型，判断和派发时是同一个（{@link paramInputTypeProblems}）；
+ * 锁定开发版本的节点按在线 Agent 上报的元信息检查（{@link devNodeTypes}，不知道时跳过）。
  * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过。
  */
 export function createParamsCheck(): ParamsCheck {
@@ -238,7 +253,12 @@ export function createParamsCheck(): ParamsCheck {
 		return [
 			...(await checkReferencedAgents(db, wanted)).problems,
 			...(await checkFeishuBots(db, bots)),
-			...paramInputTypeProblems(plan.main, chains, locked, origins),
+			...paramInputTypeProblems(
+				plan.main,
+				chains,
+				await withDevNodeTypes(db, doc, locked),
+				origins,
+			),
 		];
 	};
 }

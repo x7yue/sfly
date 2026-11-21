@@ -153,12 +153,7 @@ import {
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { useRunMotion } from "./run-state/use-run-motion";
-import {
-	documentFieldErrors,
-	type FieldError,
-	undeclaredInputNotes,
-	warningsSummary,
-} from "./validation";
+import { documentFieldErrors, type FieldError, warningsSummary } from "./validation";
 
 /** 检查器右边距。 */
 
@@ -290,7 +285,6 @@ function Editor({
 		() => documentWarnings(doc, catalog, { agents: registered, feishuBots: registeredBots }),
 		[doc, catalog, registered, registeredBots],
 	);
-	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	const warningsByNode = useMemo(() => {
 		const map = new Map<string, OrchestrationWarning[]>();
@@ -993,7 +987,6 @@ function Editor({
 		agents: agentList,
 		bots: botList,
 		warnings,
-		notes,
 		shownFieldErrors: shownErrors,
 		focusRequest,
 		onChangeNode: updateNode,
@@ -1050,7 +1043,6 @@ function Editor({
 					}
 					fieldErrors={shownErrors.length}
 					warnings={warnings.length}
-					notes={notes.length}
 					onShowChecks={() => {
 						setSelection(NO_SELECTION);
 						setInspectorOpen(true);

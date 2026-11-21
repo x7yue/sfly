@@ -41,7 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
-import { checkSummary, type FieldError, type InputNote } from "../validation";
+import { checkSummary, type FieldError } from "../validation";
 import { AgentSelect } from "./AgentSelect";
 import { AnnotationInspector } from "./AnnotationInspector";
 import { DisplayNameField, isNamedNode } from "./DisplayNameField";
@@ -87,8 +87,6 @@ export interface InspectorContext {
 	/** 已登记的飞书机器人（「飞书机器人」类型的输入的下拉框）。 */
 	bots: FeishuBotView[];
 	warnings: OrchestrationWarning[];
-	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
-	notes: readonly InputNote[];
 	shownFieldErrors: FieldError[];
 	focusRequest: FocusRequest | null;
 	onChangeNode(id: string, node: DocNode): void;
@@ -596,8 +594,8 @@ function ScenarioInspector({
 
 /** 场景设置的「概况」页：默认 Agent、节点包版本和检查结果。必须放在 `FIELD_LIST_CLASS` 的容器里。 */
 function ScenarioOverview({ context }: { context: InspectorContext }) {
-	const { doc, warnings, notes, shownFieldErrors: fieldErrors } = context;
-	const summary = checkSummary(fieldErrors.length, warnings.length, notes.length);
+	const { doc, warnings, shownFieldErrors: fieldErrors } = context;
+	const summary = checkSummary(fieldErrors.length, warnings.length);
 	const used = [
 		...new Set(doc.nodes.flatMap((n) => (n.kind === "package" ? [n.package] : []))),
 	].sort();
@@ -681,11 +679,10 @@ function ScenarioOverview({ context }: { context: InspectorContext }) {
 			) : (
 				<p className="m-0 mb-3 text-xs text-ok">结构、包版本和引用检查都通过了。</p>
 			)}
-			{notes.length > 0 && <WarningList warnings={notes} onLocate={context.onLocate} />}
 			<p className="m-0 text-xs text-fg-3">
 				警告不阻止保存，触发运行时必须全部通过
 				{warnings.some(isAnnotationWarning) && "（注释框的警告除外，它不影响运行）"}
-				；提醒不影响运行；字段错误（红色）改正后才能保存。
+				；字段错误（红色）改正后才能保存。
 			</p>
 		</>
 	);

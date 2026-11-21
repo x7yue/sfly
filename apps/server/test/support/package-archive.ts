@@ -62,6 +62,10 @@ export function publishInit(archive: Uint8Array): RequestInit {
 export type InputsSchema = {
 	properties: Record<string, Record<string, unknown>>;
 	required?: string[];
+	/** 函数参数顺序（`sfly build` 生成）；数据库里的 JSONB 会打乱 `properties` 的键顺序。 */
+	order?: string[];
+	/** 接收没有声明的输入（JSON Schema 的写法）；`sfly build` 不生成它，测试里用来表示「输入不限」。 */
+	additionalProperties?: boolean;
 };
 
 /** 节点类型声明的指标（#27）。 */
@@ -105,7 +109,11 @@ export async function publishPackage(
 			version,
 			nodes: Object.entries(nodes).map(([node, spec]) => {
 				const outputs = "outputs" in spec ? spec.outputs : spec;
-				const inputs = ("inputs" in spec ? spec.inputs : undefined) ?? { properties: {} };
+				// 没写 inputs：输入不限（输入名的静态检查不拦），不是「不接收任何输入」。
+				const inputs = ("inputs" in spec ? spec.inputs : undefined) ?? {
+					properties: {},
+					additionalProperties: true,
+				};
 				const declared = "outputs" in spec ? spec : undefined;
 				return {
 					name: node,

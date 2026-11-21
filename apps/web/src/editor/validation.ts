@@ -1,10 +1,4 @@
-import {
-	blocksTrigger,
-	nodeNameWithId,
-	nodeTypeOf,
-	type PackageCatalog,
-	type WarningShape,
-} from "@sfly/orchestration";
+import { blocksTrigger, type WarningShape } from "@sfly/orchestration";
 import {
 	isRemovedNodeKind,
 	OrchestrationDocument,
@@ -100,51 +94,16 @@ export function documentFieldErrors(doc: StoredOrchestrationDocument): FieldErro
 	return errors;
 }
 
-/** 一条提醒：节点、输入名与显示的文字（检查器「检查」一节逐条列出，可以「前往」节点）。 */
-export interface InputNote {
-	node_id: string;
-	input: string;
-	message: string;
-}
-
 /**
- * 提醒：包节点上填了、但节点类型没有声明的输入（通常是节点包升级后删掉了这个输入）。
- * 不阻止保存与触发，节点类型还没加载完时不算。检查器的「参数」页可以逐个移除。
- */
-export function undeclaredInputNotes(
-	doc: StoredOrchestrationDocument,
-	catalog: PackageCatalog,
-): InputNote[] {
-	const notes: InputNote[] = [];
-	for (const node of doc.nodes) {
-		if (node.kind !== "package") continue;
-		const type = nodeTypeOf(doc, node, catalog);
-		if (!type) continue;
-		for (const input of Object.keys(node.inputs)) {
-			if (!type.inputs.properties[input]) {
-				notes.push({
-					node_id: node.id,
-					input,
-					message: `${nodeNameWithId(node)} 的输入 ${input} 没有在节点类型中声明`,
-				});
-			}
-		}
-	}
-	return notes;
-}
-
-/**
- * 编辑器顶栏与检查器「检查」标题旁的检查结果，唯一的判断来源：字段错误（不能保存）最先，
- * 然后是警告，没有警告时带上提醒条数。
+ * 编辑器顶栏与检查器「检查」标题旁的检查结果，唯一的判断来源：字段错误（不能保存）最先，然后是警告。
  */
 export function checkSummary(
 	fieldErrors: number,
 	warnings: number,
-	notes: number,
 ): { kind: "failed" | "warn" | "ok"; label: string } {
 	if (fieldErrors > 0) return { kind: "failed", label: `${fieldErrors} 处字段错误` };
 	if (warnings > 0) return { kind: "warn", label: `${warnings} 条警告` };
-	return { kind: "ok", label: notes > 0 ? `检查通过 · ${notes} 条提醒` : "检查通过" };
+	return { kind: "ok", label: "检查通过" };
 }
 
 /** 保存成功后提示里对警告的说明：注释框的警告不影响触发运行（blocksTrigger），其余要在触发运行前处理。 */
