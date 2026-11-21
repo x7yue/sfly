@@ -46,9 +46,12 @@ def test_wheel_ships_skill_identical_to_user_docs(sfly_wheel: Path, skill: str) 
 
 @pytest.mark.parametrize("skill", SKILLS)
 def test_skill_files_have_no_doc_placeholders(skill: str) -> None:
-    # wheel 里的内容原样写进项目，控制面的占位符（{{SFLY_URL}} 等）不会被替换。
+    # wheel 里的内容原样写进项目，控制面的占位符（{{SFLY_URL}} 等）不会被替换。占位符的写法同
+    # apps/server/src/placeholders.ts：名称只有字母、数字、下划线；场景里的引用（`${{ params.x }}`、
+    # `${{ run.state }}`）名称里有点，不是占位符，文档里可以照写。
     for name, source in SKILLS[skill].items():
-        assert "{{" not in source.read_text(encoding="utf-8"), name
+        found = re.findall(r"\{\{\s*[A-Za-z0-9_]+\s*\}\}", source.read_text(encoding="utf-8"))
+        assert not found, f"{name}：{found}"
 
 
 def frontmatter(text: str) -> dict[str, str]:

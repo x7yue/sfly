@@ -26,6 +26,7 @@ from sfly.nodes import (
     AGENT_MARKER,
     FEISHU_BOT_MARKER,
     NODE_ATTR,
+    RUN_STATE_MARKER,
     Chart,
     Doc,
     Metric,
@@ -54,11 +55,17 @@ def _is_typeddict(tp: Any) -> bool:
     return isinstance(tp, type) and issubclass(tp, dict) and hasattr(tp, "__required_keys__")
 
 
-#: 扩展输入类型的标记 → 输入 schema 里 `x-sfly-type` 的值：`sfly.AgentName` 是
+#: 扩展输入类型的标记 → （输入 schema 里 `x-sfly-type` 的值，值的 JSON 类型）：`sfly.AgentName` 是
 #: `{"type": "string", "x-sfly-type": "agent"}`，`sfly.FeishuBot` 是
-#: `{"type": "string", "x-sfly-type": "feishu_bot"}`。
-#: 控制面、画布和本地调试按它识别（packages/orchestration/src/agent-inputs.ts、feishu-bots.ts）。
-_INPUT_TYPES = ((AGENT_MARKER, "agent"), (FEISHU_BOT_MARKER, "feishu_bot"))
+#: `{"type": "string", "x-sfly-type": "feishu_bot"}`，`sfly.RunState` 是
+#: `{"type": "object", "x-sfly-type": "run_state"}`。
+#: 控制面、画布和本地调试按它识别（packages/orchestration/src/agent-inputs.ts、feishu-bots.ts、
+#: run-state-references.ts）。
+_INPUT_TYPES = (
+    (AGENT_MARKER, "agent", "string"),
+    (FEISHU_BOT_MARKER, "feishu_bot", "string"),
+    (RUN_STATE_MARKER, "run_state", "object"),
+)
 
 
 #: 输入（和输出字段）的说明最多这么多个 Unicode 字符；Python 的 `len` 数的就是 Unicode 字符。
@@ -110,8 +117,9 @@ def split_doc(hint: Any) -> tuple[Any, str | None]:
 def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     """把类型注解转换为 JSON Schema；不支持的注解抛出 ScanError。
 
-    `param`：是不是节点参数本身的类型。`sfly.AgentName`、`sfly.FeishuBot` 只能直接用作节点参数的类型
-    （或 `AgentName | None`），用在别处（列表的元素、字典的值、输出）时报错。
+    `param`：是不是节点参数本身的类型。`sfly.AgentName`、`sfly.FeishuBot`、`sfly.RunState`
+    只能直接用作节点参数的类型（或 `AgentName | None`），用在别处（列表的元素、字典的值、
+    输出）时报错。
     """
     if tp is Any or tp is inspect.Parameter.empty or tp is object:
         return {}
@@ -129,13 +137,13 @@ def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
                 "Doc 只能写在注解的最外层，不能写在 list[...]、| 等的里面；"
                 '例如 Annotated[str | None, Doc("…")]'
             )
-        for marker, name in _INPUT_TYPES:
+        for marker, name, json_type in _INPUT_TYPES:
             if any(meta is marker for meta in tp.__metadata__):
                 if not param:
                     raise ScanError(
                         f"{marker.name} 只能直接用作节点参数的类型（可以写成 {marker.name} | None）"
                     )
-                return {"type": "string", "x-sfly-type": name}
+                return {"type": json_type, "x-sfly-type": name}
         return type_schema(args[0])
     if origin is typing.Union or origin is types.UnionType:
         optional = len(args) == 2 and type(None) in args
