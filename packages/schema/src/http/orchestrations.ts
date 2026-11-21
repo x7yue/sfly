@@ -229,6 +229,50 @@ export const SavedVersionView = z.object({
 	warnings: z.array(DocumentWarningView),
 });
 
+/** 一项字段的变化：`path` 例如 `default_agent`、`packages.http`、`inputs.url`、`params.env`；前后值不存在时没有这个字段。 */
+export const FieldChangeView = z.object({
+	path: z.string(),
+	/** 改之前的值；之前没有这一项（新加的输入、参数、包）时没有这个字段。 */
+	before: z.unknown().optional(),
+	/** 改之后的值；之后没有这一项（删掉的输入、参数、包）时没有这个字段。 */
+	after: z.unknown().optional(),
+});
+
+/** 差异里的一个节点：ID、种类，有显示名称时带上（子流程入口节点是子流程名称）。 */
+export const DiffNodeView = z.object({
+	id: z.string(),
+	kind: z.string(),
+	display_name: z.string().optional(),
+});
+
+const DiffEdgeView = z.object({ from: z.string(), to: z.string(), kind: z.string() });
+const DiffAnnotationView = z.object({ id: z.string(), title: z.string() });
+const withChanges = <T extends z.ZodRawShape>(ref: z.ZodObject<T>) =>
+	ref.extend({ changes: z.array(FieldChangeView) });
+
+/**
+ * 两份场景文档的差异（@sfly/orchestration 的 diffDocuments，前端的版本对比用的是同一个函数）：只列出差异，不做合并。
+ * 节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。`moved` 是两边都有、只是位置变了的节点。
+ * secret 参数的默认值两边都是占位符，它的值变了看不出来。
+ */
+export const DocumentDiffView = z.object({
+	/** 场景级设置：默认 Agent（`default_agent`）、锁定的节点包版本（`packages.<包名>`）。 */
+	settings: z.array(FieldChangeView),
+	/** 改动的节点逐项列出字段：包节点的输入是 `inputs.<名>`，入口和子流程入口的参数是 `params.<参数名>`。 */
+	nodes: z.object({
+		added: z.array(DiffNodeView),
+		removed: z.array(DiffNodeView),
+		changed: z.array(withChanges(DiffNodeView)),
+	}),
+	edges: z.object({ added: z.array(DiffEdgeView), removed: z.array(DiffEdgeView) }),
+	moved: z.array(z.string()),
+	annotations: z.object({
+		added: z.array(DiffAnnotationView),
+		removed: z.array(DiffAnnotationView),
+		changed: z.array(withChanges(DiffAnnotationView)),
+	}),
+});
+
 /**
  * 保存（和恢复）场景版本时，secret 参数写了默认值的提醒（`saveVersion` 的 `warnings` 里，每个这样的参数一条，
  * `node_id` 是入口节点）：版本不可修改，默认值会一直留在这个版本里。只提醒，不阻止保存，也不影响触发运行。
@@ -439,6 +483,68 @@ export const orchestrationsApi = {
 					},
 		response: SavedVersionView,
 	}),
+	/**
+	 * 检查一份场景文档，不保存（#424）：返回的错误和警告与用同样的请求体保存时完全一样（同一段校验），
+	 * 外加保存之后相对最新版本会改变什么（`diff`）。不产生版本，什么都不写。
+	 *
+	 * - 错误和保存相同：文档不合法 400 `invalid_document`；secret 参数默认值的占位符沿用不了 400 `secret_default_placeholder`；
+	 *   给了 `base_version` 而它不是最新版本时 409 `version_conflict`。没有给 `base_version` 时对照最新版本检查，不报冲突。
+	 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值）。
+	 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
+	 *
+	 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
+	 */
+	check: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/check",
+		summary: "检查一份场景文档：返回保存时会有的错误和警告、和最新版本的差异，不保存",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "check"],
+		params: IdParams,
+		body: z.object({
+			/** 要检查的场景文档，和保存时一样。 */
+			document: OrchestrationDocument,
+			/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+			base_version: z.number().int().nonnegative().optional(),
+		}),
+		requestError: ({ body }) => ({
+			code: "invalid_document",
+			message:
+				typeof body === "object" && body !== null
+					? invalidDocumentMessage(body)
+					: "document does not match the orchestration schema",
+		}),
+		response: z.object({
+			/** 和保存时相同的警告：只提示，保存不会因为它们被拒绝。 */
+			warnings: z.array(DocumentWarningView),
+			/** 保存之后相对最新版本的差异。 */
+			diff: DocumentDiffView,
+		}),
+	}),
+	/**
+	 * 对比一个场景的两个版本（#424）：从版本 a 到版本 b 的差异，结构见 DocumentDiffView。a、b 可以相同（空差异），
+	 * 也可以 a 比 b 新（差异反过来）。版本不存在或不是整数时 404。
+	 */
+	versionDiff: endpoint({
+		method: "GET",
+		path: "/orchestrations/:id/versions/:a/diff/:b",
+		summary: "对比一个场景的两个版本：新增、删除、改动的节点和连线，改动字段的前后值",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "version-diff"],
+		params: z.object({
+			/** 场景 id。 */
+			id: z.string().min(1),
+			/** 对比的起点版本号。 */
+			a: z.string().min(1),
+			/** 对比的终点版本号。 */
+			b: z.string().min(1),
+		}),
+		response: z.object({ diff: DocumentDiffView }),
+	}),
 	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */
 	versions: endpoint({
 		method: "GET",
@@ -597,6 +703,7 @@ export type LastRun = z.infer<typeof LastRun>;
 export type LastRunNodeStatus = z.infer<typeof NodeRunStatus>;
 export type OrchestrationHeadView = z.infer<typeof OrchestrationHeadView>;
 export type VersionSummaryView = z.infer<typeof VersionSummaryView>;
+export type DocumentDiffView = z.infer<typeof DocumentDiffView>;
 export type DocumentWarningView = z.infer<typeof DocumentWarningView>;
 export type OrchestrationVersionView = z.infer<typeof OrchestrationVersionView>;
 export type SavedVersionView = z.infer<typeof SavedVersionView>;

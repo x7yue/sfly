@@ -60,11 +60,42 @@ export interface VersionSummary {
  * head 是当前最新版本（还没有版本时为 null）。
  */
 export type SaveVersionResult =
-	| { kind: "saved"; version: OrchestrationVersionView }
+	/** `previous` 是新版本的上一个版本的文档（打码的；第一个版本没有），算会失效的运行预设要用。 */
+	| {
+			kind: "saved";
+			version: OrchestrationVersionView;
+			previous: StoredOrchestrationDocument | undefined;
+	  }
 	| { kind: "not_found" }
 	| { kind: "conflict"; head: VersionSummary | null }
 	/** 文档里 secret 参数的默认值是占位符，却没有可以沿用的上一个版本的值（见 {@link restoreSecretDefaults}）。 */
 	| { kind: "secret_default_unresolved"; problems: SecretDefaultProblem[] };
+
+/**
+ * 检查一份文档的结果（{@link OrchestrationStore.checkVersion}）：和保存的结果一一对应，只是不追加版本。
+ * `checked` 时 `document` 是保存之后会存成的文档、`previous` 是对照的最新版本的文档（还没有版本时是初始文档），都打码。
+ */
+export type CheckVersionResult =
+	| {
+			kind: "checked";
+			document: StoredOrchestrationDocument;
+			previous: StoredOrchestrationDocument;
+	  }
+	| Exclude<SaveVersionResult, { kind: "saved" }>;
+
+/**
+ * 保存之前对上传的文档做的处理，保存和检查共用：收下的已移除字段（空的 `sticky_notes`，ADR 0028）不存进新版本；
+ * secret 参数默认值的占位符换回 `previous`（编辑起点，也就是最新版本的原始文档）里的原值（{@link restoreSecretDefaults}，
+ * 沿用不了时返回问题清单）；没有坐标的节点按整理布局补上（命令行和 API 上传的节点可以不写坐标）。
+ */
+export function prepareDocument(
+	previous: StoredOrchestrationDocument | undefined,
+	document: OrchestrationDocument,
+): { document: OrchestrationDocument } | { problems: SecretDefaultProblem[] } {
+	const restored = restoreSecretDefaults(previous, withoutRemovedFields(document));
+	if ("problems" in restored) return restored;
+	return { document: fillMissingPositions(restored.document) };
+}
 
 /** 归档的结果。`running`：还有 count 个运行中的运行，不能归档。 */
 export type ArchiveResult =
@@ -106,6 +137,15 @@ async function versionRow(
 			),
 		);
 	return row;
+}
+
+/** 编辑起点不是最新版本：返回最新版本（还没有版本时为 null）。 */
+async function conflict(
+	db: Tx | Db,
+	orchestration: OrchestrationRow,
+): Promise<{ kind: "conflict"; head: VersionSummary | null }> {
+	const head = await versionRow(db, orchestration.id, orchestration.headVersion);
+	return { kind: "conflict", head: head ? toSummary(head) : null };
 }
 
 /** 场景的基本信息（场景列表用）；场景视图在它之上加了对照最新版本才能得出的关注项，见 {@link OrchestrationStore}。 */
@@ -383,21 +423,51 @@ export class OrchestrationStore {
 				.for("update");
 			if (!orchestration) return { kind: "not_found" };
 			if (baseVersion !== orchestration.headVersion) {
-				const head = await versionRow(tx, orchestrationId, orchestration.headVersion);
-				return { kind: "conflict", head: head ? toSummary(head) : null };
+				return conflict(tx, orchestration);
 			}
 			const previous =
 				orchestration.headVersion > 0
 					? await versionRow(tx, orchestrationId, orchestration.headVersion)
 					: undefined;
-			// 收下的已移除字段（空的 `sticky_notes`，ADR 0028）不存进新版本。
-			const restored = restoreSecretDefaults(previous?.document, withoutRemovedFields(document));
-			if ("problems" in restored) {
-				return { kind: "secret_default_unresolved", problems: restored.problems };
+			const prepared = prepareDocument(previous?.document, document);
+			if ("problems" in prepared) {
+				return { kind: "secret_default_unresolved", problems: prepared.problems };
 			}
-			const laidOut = fillMissingPositions(restored.document);
-			return { kind: "saved", version: await this.#append(tx, orchestration, laidOut, actor) };
+			return {
+				kind: "saved",
+				version: await this.#append(tx, orchestration, prepared.document, actor),
+				previous: previous && maskSecretDefaults(previous.document),
+			};
 		});
+	}
+
+	/**
+	 * 检查一份文档，不保存：和 {@link saveVersion} 走同样的步骤（编辑起点的冲突检查、{@link prepareDocument}），
+	 * 只是不追加版本、不加锁。`baseVersion` 不给时对照最新版本，不报冲突。
+	 */
+	async checkVersion(
+		orchestrationId: string,
+		document: OrchestrationDocument,
+		baseVersion: number | undefined,
+	): Promise<CheckVersionResult> {
+		const orchestration = await this.#row(orchestrationId);
+		if (!orchestration) return { kind: "not_found" };
+		if (baseVersion !== undefined && baseVersion !== orchestration.headVersion) {
+			return conflict(this.deps.db, orchestration);
+		}
+		const previous =
+			orchestration.headVersion > 0
+				? await versionRow(this.deps.db, orchestrationId, orchestration.headVersion)
+				: undefined;
+		const prepared = prepareDocument(previous?.document, document);
+		if ("problems" in prepared) {
+			return { kind: "secret_default_unresolved", problems: prepared.problems };
+		}
+		return {
+			kind: "checked",
+			document: maskSecretDefaults(prepared.document),
+			previous: maskSecretDefaults(previous?.document ?? initialDocument()),
+		};
 	}
 
 	/** 版本历史（不含文档内容），按版本号从新到旧。编排不存在时返回 undefined。 */
@@ -424,7 +494,10 @@ export class OrchestrationStore {
 		orchestrationId: string,
 		number: number,
 		actor: Actor,
-	): Promise<OrchestrationVersionView | undefined> {
+	): Promise<
+		| { version: OrchestrationVersionView; previous: StoredOrchestrationDocument | undefined }
+		| undefined
+	> {
 		return this.deps.db.transaction(async (tx) => {
 			const [orchestration] = await tx
 				.select()
@@ -434,7 +507,11 @@ export class OrchestrationStore {
 			if (!orchestration) return undefined;
 			const source = await versionRow(tx, orchestrationId, number);
 			if (!source) return undefined;
-			return this.#append(tx, orchestration, source.document, actor);
+			const previous = await versionRow(tx, orchestrationId, orchestration.headVersion);
+			return {
+				version: await this.#append(tx, orchestration, source.document, actor),
+				previous: previous && maskSecretDefaults(previous.document),
+			};
 		});
 	}
 

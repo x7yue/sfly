@@ -149,6 +149,8 @@ export const READS_WITH_TRACES: Readonly<Record<string, string>> = {
 	"POST /orchestrations/:id/presence":
 		"心跳：只改内存里的在线编辑者名单（不落库），不影响场景的内容",
 	"POST /orchestrations/:id/presence/leave": "离开：只从内存里的在线编辑者名单里去掉这个会话",
+	"POST /orchestrations/:id/check":
+		"检查一份场景文档：什么都不写（不产生版本，不改库、数据目录和内存）；用 POST 只是因为请求体是一整份文档",
 };
 
 export const DECLARATION_RULES: DeclarationRules = {

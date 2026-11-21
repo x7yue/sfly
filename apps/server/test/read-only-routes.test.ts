@@ -65,6 +65,7 @@ const FIXTURES = {
 	empty: "没有版本的场景",
 	archived: "已归档的场景",
 	rich: "有子流程、说明和失效预设的场景",
+	diffed: "两个版本之间节点、连线、注释框都有增删改的场景",
 } as const;
 type FixtureKey = keyof typeof FIXTURES;
 
@@ -82,6 +83,8 @@ const LATE_PROBE_MS = 1500;
 /** 一组真实存在的 id。 */
 interface Fixture {
 	scenarioId: string;
+	/** 最新版本号：对比两个版本时和第 1 版比。 */
+	latestVersion: number;
 	runId?: string;
 	taskId?: string;
 	chainInstanceId?: string;
@@ -114,9 +117,9 @@ function fixtureKeys(def: RouteDef): Array<FixtureKey | undefined> {
 	if (typeof target === "string") return [undefined];
 	// 没有版本的场景没有第 1 版：读版本只在有版本的场景上走得到成功的路径。
 	if (kind === "scenario") {
-		return def.path.includes(":number")
-			? ["done", "live", "archived", "rich"]
-			: ["done", "live", "empty", "archived", "rich"];
+		return def.path.includes("/versions/:")
+			? ["done", "live", "archived", "rich", "diffed"]
+			: ["done", "live", "empty", "archived", "rich", "diffed"];
 	}
 	if (kind === "run" || kind === "task") return ["done", "failed", "live"];
 	return [undefined];
@@ -416,6 +419,8 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		],
 		presetId: s.presetId,
 		number: "1",
+		a: "1",
+		b: String(fixture?.latestVersion ?? 1),
 		node: "check",
 		"*": ARTIFACT,
 		name: { package: "probe", feishu_bot: s.botName, agent: "agent-a" }[kind as string],
@@ -436,9 +441,21 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 	return value;
 }
 
-/** 有请求体的只读接口（心跳、离开）的请求体样本；认不出的报错，让新接口的作者补上。 */
+/** 有请求体的只读接口（检查、心跳、离开）的请求体样本；认不出的报错，让新接口的作者补上。 */
 function sampleBody(def: RouteDef): unknown {
 	if (!("body" in def) || !def.body) return undefined;
+	// 检查：第 1 版的「增删改」文档，再加一个没有这种节点类型的节点（有警告）；和各个场景的最新版本比都有差异
+	if (def.path === "/orchestrations/:id/check") {
+		const document = diffedDocument(1);
+		document.nodes.push({
+			id: "ghost",
+			kind: "package",
+			package: "probe",
+			node: "nope",
+			inputs: {},
+		});
+		return { document };
+	}
 	if (`${def.method} ${def.path}` in READS_WITH_TRACES) return { session_id: "read-only-test" };
 	throw new Error(
 		`${def.method} ${def.path}：没有请求体的样本值，在 read-only-routes.test.ts 的 sampleBody 里补上`,
@@ -545,6 +562,52 @@ const richDocument = (param: string) => ({
 	],
 });
 
+/**
+ * 两个版本之间什么都改了的场景（对比两个版本的响应里每个数组都有内容）：第 2 版删掉 notify、加上 extra，改了 check 的输入和位置，
+ * 换了连线，注释框有增、删、改，多锁定了一个开发版本的包。
+ */
+function diffedDocument(version: 1 | 2) {
+	const doc = richDocument("env") as ReturnType<typeof richDocument> & {
+		nodes: Array<Record<string, unknown>>;
+		packages: Record<string, string>;
+	};
+	if (version === 1) {
+		doc.annotations.push({
+			id: "annotation_gone",
+			title: "要删的",
+			note: "",
+			nodes: ["check"],
+			subflows: [],
+		});
+		return doc;
+	}
+	doc.nodes = doc.nodes.filter((n) => n.id !== "notify");
+	doc.nodes.push({
+		id: "extra",
+		kind: "package",
+		package: "probe",
+		node: "check",
+		display_name: "额外的检查",
+		inputs: { url: "http://probe.test/extra" },
+	});
+	const check = doc.nodes.find((n) => n.id === "check") as Record<string, unknown>;
+	check.inputs = { url: "http://probe.test/v2" };
+	check.position = { x: 900, y: 900 };
+	doc.edges = doc.edges.map((e) => (e.to === "notify" ? { ...e, to: "extra" } : e));
+	doc.packages = { ...doc.packages, "dev-probe": "dev" };
+	doc.annotations = [
+		{
+			id: "annotation_1",
+			title: "汇报（改过）",
+			note: "跑完后异步汇报",
+			nodes: ["extra"],
+			subflows: ["report"],
+		},
+		{ id: "annotation_2", title: "新的", note: "", nodes: ["check"], subflows: [] },
+	];
+	return doc;
+}
+
 /** 节点包 `probe`：入口和出口有必填与顺序，指标有带标签的，图表引用它们（让包的、运行的响应里的数组都有内容）。 */
 async function publishProbe(cp: TestControlPlane): Promise<void> {
 	const archive = packageArchive(
@@ -612,9 +675,11 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	).toBe(200);
 	// 第二个版本改掉入口参数：第一个版本上建的预设失效
 	await api.saveVersion(rich, richDocument("stage"));
+	const diffed = await api.orchestrationWith(diffedDocument(1), "增删改");
+	await api.saveVersion(diffed, diffedDocument(2));
 
 	// 在线编辑者：每个场景一个，在线编辑者名单推送的第一份里有人
-	for (const id of [checked, pressure, archived, empty, rich]) {
+	for (const id of [checked, pressure, archived, empty, rich, diffed]) {
 		expect(
 			(await api.post(`/orchestrations/${id}/presence`, { session_id: `s-${id}` })).status,
 		).toBe(200);
@@ -774,6 +839,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 		run?: { runId: string; task: AssignedTask },
 	): Promise<Fixture> => ({
 		scenarioId,
+		latestVersion: await api.headVersion(scenarioId),
 		...(run && {
 			runId: run.runId,
 			taskId: run.task.taskId,
@@ -790,6 +856,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 				empty: await fixture(empty),
 				archived: await fixture(archived),
 				rich: await fixture(rich),
+				diffed: await fixture(diffed),
 			},
 			presetId: preset.id,
 			botName: bot.name,

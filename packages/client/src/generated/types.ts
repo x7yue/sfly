@@ -621,6 +621,62 @@ export interface DevPackageView {
 	metadata: Record<string, unknown> | null;
 }
 
+/** 差异里的一个节点：ID、种类，有显示名称时带上（子流程入口节点是子流程名称）。 */
+export interface DiffNodeView {
+	id: string;
+	kind: string;
+	display_name?: string;
+}
+
+/**
+ * 两份场景文档的差异（@sfly/orchestration 的 diffDocuments，前端的版本对比用的是同一个函数）：只列出差异，不做合并。
+ * 节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。`moved` 是两边都有、只是位置变了的节点。
+ * secret 参数的默认值两边都是占位符，它的值变了看不出来。
+ */
+export interface DocumentDiffView {
+	/** 场景级设置：默认 Agent（`default_agent`）、锁定的节点包版本（`packages.<包名>`）。 */
+	settings: FieldChangeView[];
+	/** 改动的节点逐项列出字段：包节点的输入是 `inputs.<名>`，入口和子流程入口的参数是 `params.<参数名>`。 */
+	nodes: {
+		added: DiffNodeView[];
+		removed: DiffNodeView[];
+		changed: {
+			id: string;
+			kind: string;
+			display_name?: string;
+			changes: FieldChangeView[];
+		}[];
+	};
+	edges: {
+		added: {
+			from: string;
+			to: string;
+			kind: string;
+		}[];
+		removed: {
+			from: string;
+			to: string;
+			kind: string;
+		}[];
+	};
+	moved: string[];
+	annotations: {
+		added: {
+			id: string;
+			title: string;
+		}[];
+		removed: {
+			id: string;
+			title: string;
+		}[];
+		changed: {
+			id: string;
+			title: string;
+			changes: FieldChangeView[];
+		}[];
+	};
+}
+
 /**
  * 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。
  * 注释框的警告带 `annotation_id`，指出是哪个注释框；它们也不阻断触发。
@@ -765,6 +821,15 @@ export interface FeishuTestResult {
 
 /** Webhook 地址：必须是 http 或 https 地址，不含空白字符。 */
 export type FeishuWebhookUrl = string;
+
+/** 一项字段的变化：`path` 例如 `default_agent`、`packages.http`、`inputs.url`、`params.env`；前后值不存在时没有这个字段。 */
+export interface FieldChangeView {
+	path: string;
+	/** 改之前的值；之前没有这一项（新加的输入、参数、包）时没有这个字段。 */
+	before?: unknown;
+	/** 改之后的值；之后没有这一项（删掉的输入、参数、包）时没有这个字段。 */
+	after?: unknown;
+}
 
 /** 一项的异常；没有异常为 null。 */
 export interface FocusAnomaly {

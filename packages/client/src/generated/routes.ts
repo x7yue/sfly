@@ -9,6 +9,8 @@ import type {
 	AgentView,
 	ArtifactView,
 	DashboardView,
+	DocumentDiffView,
+	DocumentWarningView,
 	FeishuBotName,
 	FeishuBotScenario,
 	FeishuBotView,
@@ -541,6 +543,59 @@ export interface Api {
 			SavedVersionView
 		>;
 		/**
+		 * `POST /orchestrations/:id/check`
+		 *
+		 * 检查一份场景文档，不保存（#424）：返回的错误和警告与用同样的请求体保存时完全一样（同一段校验），
+		 * 外加保存之后相对最新版本会改变什么（`diff`）。不产生版本，什么都不写。
+		 *
+		 * - 错误和保存相同：文档不合法 400 `invalid_document`；secret 参数默认值的占位符沿用不了 400 `secret_default_placeholder`；
+		 *   给了 `base_version` 而它不是最新版本时 409 `version_conflict`。没有给 `base_version` 时对照最新版本检查，不报冲突。
+		 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值）。
+		 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
+		 *
+		 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
+		 */
+		check: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					/** 要检查的场景文档，和保存时一样。 */
+					document: OrchestrationDocument;
+					/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+					base_version?: number;
+				};
+			},
+			{
+				/** 和保存时相同的警告：只提示，保存不会因为它们被拒绝。 */
+				warnings: DocumentWarningView[];
+				/** 保存之后相对最新版本的差异。 */
+				diff: DocumentDiffView;
+			}
+		>;
+		/**
+		 * `GET /orchestrations/:id/versions/:a/diff/:b`
+		 *
+		 * 对比一个场景的两个版本（#424）：从版本 a 到版本 b 的差异，结构见 DocumentDiffView。a、b 可以相同（空差异），
+		 * 也可以 a 比 b 新（差异反过来）。版本不存在或不是整数时 404。
+		 */
+		versionDiff: Endpoint<
+			{
+				params: {
+					/** 场景 id。 */
+					id: string;
+					/** 对比的起点版本号。 */
+					a: string;
+					/** 对比的终点版本号。 */
+					b: string;
+				};
+			},
+			{
+				diff: DocumentDiffView;
+			}
+		>;
+		/**
 		 * `GET /orchestrations/:id/versions`
 		 *
 		 * 版本历史：按版本号从新到旧列出版本号、作者和时间。
@@ -1068,6 +1123,8 @@ export const routes = {
 		get: { method: "GET", path: "/orchestrations/:id", kind: "endpoint" },
 		head: { method: "GET", path: "/orchestrations/:id/head", kind: "endpoint" },
 		saveVersion: { method: "POST", path: "/orchestrations/:id/versions", kind: "endpoint" },
+		check: { method: "POST", path: "/orchestrations/:id/check", kind: "endpoint" },
+		versionDiff: { method: "GET", path: "/orchestrations/:id/versions/:a/diff/:b", kind: "endpoint" },
 		versions: { method: "GET", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		version: { method: "GET", path: "/orchestrations/:id/versions/:number", kind: "endpoint" },
 		restoreVersion: { method: "POST", path: "/orchestrations/:id/versions/:number/restore", kind: "endpoint" },

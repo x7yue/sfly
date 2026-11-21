@@ -197,6 +197,7 @@ describe("编排文档差异", () => {
 			{
 				id: "sub",
 				kind: "subflow_entry",
+				display_name: "压测监控",
 				changes: [{ path: "name", before: "监控", after: "压测监控" }],
 			},
 		]);
@@ -204,6 +205,7 @@ describe("编排文档差异", () => {
 			{
 				id: "sub",
 				kind: "subflow_entry",
+				display_name: "监控",
 				changes: [{ path: "name", before: "sub", after: "监控" }],
 			},
 		]);
@@ -221,6 +223,7 @@ describe("编排文档差异", () => {
 			{
 				id: "check",
 				kind: "package",
+				display_name: "查询测试用户",
 				changes: [{ path: "display_name", before: "创建测试用户", after: "查询测试用户" }],
 			},
 		]);
@@ -293,10 +296,57 @@ describe("编排文档差异", () => {
 			{
 				id: "bot",
 				kind: "feishu_notify",
+				display_name: "通知群",
 				changes: [{ path: "text", before: "压测开始", after: "压测结束" }],
 			},
 		]);
 		expect(isEmptyDiff(diff)).toBe(false);
 		expect(isEmptyDiff(diffDocuments(withRemoved("压测开始"), withRemoved("压测开始")))).toBe(true);
+	});
+
+	it("节点带着显示名称（新增、删除、改动的都带，改动的取修改后的）；没有显示名称、只有空白或就是节点 ID 时不带", () => {
+		const doc = (nodes: Array<{ id: string; kind: string } & Record<string, unknown>>) => ({
+			...base,
+			nodes: [...base.nodes, ...nodes],
+		});
+		const pkg = (id: string, display_name?: string) => ({
+			id,
+			kind: "package",
+			package: "http",
+			node: "check",
+			inputs: { url: "x" },
+			...(display_name === undefined ? {} : { display_name }),
+		});
+		const before = doc([
+			pkg("gone", " 清理数据 "),
+			pkg("plain"),
+			pkg("blank", "  "),
+			pkg("same", "same"),
+		]);
+		const after = doc([
+			pkg("plain", "改了名字"),
+			pkg("blank", "  "),
+			pkg("same", "same"),
+			pkg("fresh", "创建测试用户"),
+			{ id: "spawn", kind: "async", params: {} },
+			{ id: "sub", kind: "subflow_entry", name: "监控", params: [] },
+			{ id: "old", kind: "subflow_entry", params: [] },
+		]);
+		const diff = diffDocuments(before, after);
+		expect(diff.nodes.added).toEqual([
+			{ id: "fresh", kind: "package", display_name: "创建测试用户" },
+			{ id: "spawn", kind: "async" },
+			{ id: "sub", kind: "subflow_entry", display_name: "监控" },
+			{ id: "old", kind: "subflow_entry" },
+		]);
+		expect(diff.nodes.removed).toEqual([{ id: "gone", kind: "package", display_name: "清理数据" }]);
+		expect(diff.nodes.changed).toEqual([
+			{
+				id: "plain",
+				kind: "package",
+				display_name: "改了名字",
+				changes: [{ path: "display_name", before: undefined, after: "改了名字" }],
+			},
+		]);
 	});
 });

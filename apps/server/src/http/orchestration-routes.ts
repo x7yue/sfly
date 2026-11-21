@@ -1,14 +1,13 @@
-import { type OrchestrationVersionView, orchestrationsApi } from "@sfly/schema";
+import { orchestrationsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Db } from "../db/database.js";
-import { checkDocument } from "../orchestrations/document-checks.js";
 import { listOrchestrationSummaries } from "../orchestrations/orchestration-list.js";
-import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
-import {
-	describeSecretDefaultProblem,
-	secretDefaultWarnings,
-} from "../orchestrations/secret-defaults.js";
-import { presetInvalidatedWarnings } from "../presets/preset-invalidation.js";
+import type {
+	CheckVersionResult,
+	OrchestrationStore,
+} from "../orchestrations/orchestration-store.js";
+import { describeSecretDefaultProblem } from "../orchestrations/secret-defaults.js";
+import { versionDiff, versionWarnings } from "../orchestrations/version-check.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
@@ -27,14 +26,34 @@ export function registerOrchestrationRoutes(
 	{ db, orchestrations }: { db: Db; orchestrations: OrchestrationStore },
 ): void {
 	/**
-	 * 保存或恢复出新版本时返回的警告：文档的静态检查，加上会让运行预设失效的改动，以及 secret 参数写了默认值的提醒
-	 * （只提醒，不阻止保存）。`saved.document` 是打码后的，这几项检查都不看 secret 默认值的内容。
+	 * 保存和检查共有的拒绝：编辑起点过期（409）、secret 参数默认值的占位符沿用不了（400）。检查和保存走同一段，
+	 * 同一份请求体得到同样的错误。
 	 */
-	const saveWarnings = async (saved: OrchestrationVersionView) => [
-		...(await checkDocument(db, saved.document)),
-		...(await presetInvalidatedWarnings(db, saved.orchestration_id, saved.number)),
-		...secretDefaultWarnings(saved.document),
-	];
+	const rejectVersion = (
+		reply: FastifyReply,
+		result: Exclude<CheckVersionResult, { kind: "checked" }>,
+		baseVersion: number | undefined,
+	): FastifyReply => {
+		if (result.kind === "not_found") return notFound(reply);
+		if (result.kind === "conflict") {
+			return sendError(
+				reply,
+				409,
+				"version_conflict",
+				result.head
+					? `version ${result.head.number} was saved by ${result.head.author} after version ${baseVersion}`
+					: `orchestration has no version ${baseVersion}`,
+				{ base_version: baseVersion, head: result.head },
+			);
+		}
+		return sendError(
+			reply,
+			400,
+			"secret_default_placeholder",
+			result.problems.map(describeSecretDefaultProblem).join("；"),
+			result.problems,
+		);
+	};
 
 	contractRoute(app, orchestrationsApi.create, async ({ body }, reply, raw) => {
 		if (!requireNickname(raw, reply)) return reply;
@@ -108,32 +127,25 @@ export function registerOrchestrationRoutes(
 		const result = isUuid(params.id)
 			? await orchestrations.saveVersion(params.id, body.document, actor, body.base_version)
 			: ({ kind: "not_found" } as const);
-		if (result.kind === "not_found") return notFound(reply);
-		if (result.kind === "conflict") {
-			return sendError(
-				reply,
-				409,
-				"version_conflict",
-				result.head
-					? `version ${result.head.number} was saved by ${result.head.author} after version ${body.base_version}`
-					: `orchestration has no version ${body.base_version}`,
-				{ base_version: body.base_version, head: result.head },
-			);
-		}
-		if (result.kind === "secret_default_unresolved") {
-			return sendError(
-				reply,
-				400,
-				"secret_default_placeholder",
-				result.problems.map(describeSecretDefaultProblem).join("；"),
-				result.problems,
-			);
-		}
+		if (result.kind !== "saved") return rejectVersion(reply, result, body.base_version);
 		const saved = result.version;
 		// 结构、包版本锁定和引用的问题，以及会让运行预设失效的改动，只产生警告，不阻止保存
 		// （docs/SEMANTICS.md §1.2、§2.4、§6）。先设状态码再返回响应：响应在类型上受契约约束。
 		reply.code(201);
-		return { ...saved, warnings: await saveWarnings(saved) };
+		const warnings = await versionWarnings(db, params.id, saved.document, result.previous);
+		return { ...saved, warnings };
+	});
+
+	// 检查 = 保存的同一段校验，不追加版本（#424）。错误码与保存相同，见契约的 check。
+	contractRoute(app, orchestrationsApi.check, async ({ params, body }, reply) => {
+		const result = isUuid(params.id)
+			? await orchestrations.checkVersion(params.id, body.document, body.base_version)
+			: ({ kind: "not_found" } as const);
+		if (result.kind !== "checked") return rejectVersion(reply, result, body.base_version);
+		return {
+			warnings: await versionWarnings(db, params.id, result.document, result.previous),
+			diff: versionDiff(result.previous, result.document),
+		};
 	});
 
 	contractRoute(app, orchestrationsApi.versions, async ({ params }, reply) => {
@@ -154,7 +166,9 @@ export function registerOrchestrationRoutes(
 				? await orchestrations.restoreVersion(params.id, number, actor)
 				: undefined;
 		if (!restored) return versionNotFound(reply);
-		return reply.code(201).send({ ...restored, warnings: await saveWarnings(restored) });
+		const { version, previous } = restored;
+		const warnings = await versionWarnings(db, params.id, version.document, previous);
+		return reply.code(201).send({ ...version, warnings });
 	});
 
 	contractRoute(app, orchestrationsApi.version, async ({ params }, reply) => {
@@ -164,5 +178,17 @@ export function registerOrchestrationRoutes(
 				? await orchestrations.getVersion(params.id, number)
 				: undefined;
 		return found ?? versionNotFound(reply);
+	});
+
+	// 对比两个版本（#424）：a、b 都要是存在的版本，否则 404（和读一个版本一样，不是整数也是 404）。
+	contractRoute(app, orchestrationsApi.versionDiff, async ({ params }, reply) => {
+		const [a, b] = [Number(params.a), Number(params.b)];
+		if (!isUuid(params.id) || !Number.isInteger(a) || !Number.isInteger(b)) {
+			return versionNotFound(reply);
+		}
+		const before = await orchestrations.getVersion(params.id, a);
+		const after = before && (await orchestrations.getVersion(params.id, b));
+		if (!before || !after) return versionNotFound(reply);
+		return { diff: versionDiff(before.document, after.document) };
 	});
 }

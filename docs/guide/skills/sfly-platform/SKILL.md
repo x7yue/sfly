@@ -33,8 +33,8 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
    ```
 
    完成：联调副本存在，`uv run sfly scenario show <联调副本>` 列出了要联调的节点，「说明：」第一行是「联调 <包名>，由 <昵称> 的 AI 编程助手创建」。
-4. **读说明，改成开发版本和本机 Agent**（复制来的副本）：先 `uv run sfly scenario show <副本>`，读显示名称、备注和注释框，弄清每一步的意图；要做的改动和它们矛盾时，先问用户。再 `uv run sfly scenario pull <副本> -o <文件>`，在文件的 `document` 里把 `packages["<包名>"]` 改成 `"dev"`，`default_agent` 和节点上单独写了的 `agent` 改成本机 Agent；新增节点照文件里已有的节点写，不用写坐标，说明按「给场景留下说明」写。再 `uv run sfly scenario push <文件>`。
-   完成：push 输出新版本号且没有警告，注释框的警告也要改掉；有警告就按警告改完再 push。新增和改动的节点都有显示名称。
+4. **读说明，改成开发版本和本机 Agent**（复制来的副本）：先 `uv run sfly scenario show <副本>`，读显示名称、备注和注释框，弄清每一步的意图；要做的改动和它们矛盾时，先问用户。再 `uv run sfly scenario pull <副本> -o <文件>`，在文件的 `document` 里把 `packages["<包名>"]` 改成 `"dev"`，`default_agent` 和节点上单独写了的 `agent` 改成本机 Agent；新增节点照文件里已有的节点写，不用写坐标，说明按「给场景留下说明」写。先 `uv run sfly scenario check <文件>`，再 `uv run sfly scenario push --strict <文件>`。
+   完成：check 退出码 0（没有警告，注释框的警告也要改掉；退出码 4 是有警告，按警告改完再 check），列出的改动就是你要做的；push 输出新版本号。新增和改动的节点都有显示名称。
 5. **运行**：`uv run sfly run start <联调副本> --wait --timeout 90s`，入口参数用 `--param 名=值`；场景有运行预设时（`uv run sfly scenario show <联调副本>` 列出），`--preset 名称` 选用用户维护好的运行预设，预设参数不用再给。进度写在 stderr，运行结束后 stdout 是摘要。`--timeout` 取比你的命令工具的超时更短的值。
    完成：命令退出，按下表处理退出码。
 6. **按退出码决定下一步**：
@@ -73,9 +73,11 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
 
    - 节点：`id` 在场景里不重复；`package` 和 `node` 是节点包名和节点名，`document.packages` 里要有这个包（联调副本里是 `"dev"`）；`inputs` 的值可以是常量；要引用入口参数或同一条链上前面节点的输出，照文件里已有节点的 `inputs` 的写法写。节点有哪些输入用 `uv run sfly package show <包>@<版本>` 看（开发版本写 `<包>@dev`；它加载在不止一台在线的 Agent 上时加 `--agent <Agent>` 指定看哪一台的）。
    - 连线：`from` 是前一个节点的 `id`，`to` 是新节点的 `id`。接在链的中间时，把原来从前一个节点连出去的那条线的 `from` 改成新节点。
-3. **保存**：`uv run sfly scenario push <文件>`；push 先在本地按场景文档的 schema 校验，出错会列出位置。push 报版本冲突说明有人在你 pull 之后保存了新版本：重新 pull，把改动合并进去再 push，没有强制覆盖。
+3. **检查**：`uv run sfly scenario check <文件>`：和 push 同样的校验，但不保存、不产生版本。退出码 0 是没有问题，4 是只有警告（按警告改完再 check），2 是有错误（按错误信息改；版本冲突见下一步）。输出最后的「保存之后相对版本 N 的改动」要和你打算做的改动一致，多出来的改动先弄清楚再保存。
+   完成：check 退出码 0，列出的改动就是这次要做的。
+4. **保存**：`uv run sfly scenario push --strict <文件>`（有警告时不保存，退出码 4）；push 先在本地按场景文档的 schema 校验，出错会列出位置。push 报版本冲突说明有人在你 pull 之后保存了新版本：重新 pull，把改动合并进去再 push，没有强制覆盖。
    文件里 secret 参数的 `default` 是占位符 `******`（控制面不返回原值）：不要改它、也不要自己填一个值，原样 push 就沿用原来的值；push 报 `secret_default_placeholder` 时按提示处理，不要把真实的密钥写进文件。
-   完成：push 输出新版本号，没有关于注释框的警告；新增和改动的节点都有显示名称；给用户的总结按「给场景留下说明」列出补上和改动的说明。
+   完成：push 输出新版本号；新增和改动的节点都有显示名称；给用户的总结按「给场景留下说明」列出补上和改动的说明。
 
 ## 规则
 
