@@ -17,7 +17,7 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, listPresets, presetScenario } from "./support/presets.js";
-import { allForms } from "./support/secret-forms.js";
+import { allForms, BEYOND_I64 } from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -67,7 +67,7 @@ const WRITE_VALUES = {
 		nested: { list: ["test-leaf-deep", "x"], zh: "口令一二三" },
 	},
 	// 节点（Python）打印数字的写法和控制面写的不一样的两类：小数（0.00001 打印成 1e-05）和超出 64 位的整数。
-	numbers: { rateLeaf: 0.00001, idLeaf: 98765432109876543210, tag: "12" },
+	numbers: { rateLeaf: 0.00001, idLeaf: BEYOND_I64, tag: "12" },
 	pem: "-----BEGIN TEST KEY-----\ntest-pem-line-one\n-----END TEST KEY-----",
 };
 /** 任何出口的文本里都不能出现的：字符串和数字叶子，PEM 的每一行，非 ASCII 叶子的 `\uXXXX` 写法，整段打印时的短叶子。 */

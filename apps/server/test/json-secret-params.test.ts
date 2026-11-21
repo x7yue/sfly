@@ -10,7 +10,13 @@ import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
-import { pythonJson, pythonNumberText, pythonRepr, sortKeysDeep } from "./support/secret-forms.js";
+import {
+	BEYOND_I64,
+	pythonJson,
+	pythonNumberText,
+	pythonRepr,
+	sortKeysDeep,
+} from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -807,7 +813,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 				),
 			);
 			const small = { pin: "12", rate: 0.00001, region: "a" };
-			const large = { id: 98765432109876543210, pin: "12" };
+			const large = { id: BEYOND_I64, pin: "12" };
 			const runId = await api.triggerOk(id, { cfg: small, big: large, rate: 0.00001 });
 			const a = await agent.nextAssign();
 			const cfg = a.inputs.cfg as typeof small;
