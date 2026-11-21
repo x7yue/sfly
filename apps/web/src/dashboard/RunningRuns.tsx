@@ -1,7 +1,8 @@
 import type { DashboardRunningRun } from "@sfly/schema";
 import { cn } from "cn";
 import { useId, useState } from "react";
-import { CompactRunRow, RunBlock } from "./RunBlock";
+import { labelColumnWidth } from "#/components/run-lines";
+import { CompactRunRow, lineChains, RunBlock } from "./RunBlock";
 import { wallLayout } from "./wall-rules";
 
 /**
@@ -11,6 +12,10 @@ import { wallLayout } from "./wall-rules";
 export function RunningRuns({ runs }: { runs: readonly DashboardRunningRun[] }) {
 	const headingId = useId();
 	const layout = wallLayout(runs.length);
+	// 上下排着的运行块，线路的链名列用同一个宽度（按这些块里最长的链名），线路才从同一个横坐标开始。
+	const labelWidth = labelColumnWidth(
+		runs.flatMap((run) => lineChains(run.chains).map((chain) => chain.label)),
+	);
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 	// 展开、收起时整块被换掉：焦点放到换上来的那个元素上，不掉到页面上。
 	const [toggled, setToggled] = useState<string | null>(null);
@@ -48,6 +53,7 @@ export function RunningRuns({ runs }: { runs: readonly DashboardRunningRun[] }) 
 								<RunBlock
 									run={run}
 									activeLimit={layout.activeLimit}
+									labelWidth={labelWidth}
 									onCollapse={layout.compact ? () => toggle(run.id, false) : undefined}
 									focusCollapse={toggled === run.id}
 								/>

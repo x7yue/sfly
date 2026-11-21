@@ -421,7 +421,7 @@ test("场景没设关注项：显示执行中节点的主指标，并给出「�
 	await expect(inspector(page).getByText("本场景的关注项已用 0 / 8")).toBeVisible();
 });
 
-test("场景没设关注项，执行中的节点都没声明主指标：写明这个原因，节点都结束后才写没有执行中的节点", async ({
+test("场景没设关注项，执行中的节点都没声明主指标：写明这个原因；节点都结束、运行结束后不画写着没有执行中的节点的空框", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -439,9 +439,14 @@ test("场景没设关注项，执行中的节点都没声明主指标：写明�
 	await expect(page.getByText("执行中的节点都没有声明主指标。")).toBeVisible();
 	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
 
+	// 运行结束了：主指标是执行中节点的，不会再有读数，说明的空框不画（标题行和「设置关注项」还在）。
 	await agent.succeed(task);
-	await expect(page.getByText("没有执行中的节点。")).toBeVisible();
+	await expect(page.getByTestId("run-status")).toHaveText("成功");
+	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
 	await expect(page.getByText("执行中的节点都没有声明主指标。")).toHaveCount(0);
+	const section = page.getByRole("region", { name: "执行中节点的主指标" });
+	await expect(section.getByRole("link", { name: "设置关注项" })).toBeVisible();
+	expect((await section.boundingBox())?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(40);
 });
 
 test("场景没设关注项，节点还在准备中（安装节点包）：显示它的主指标读数，写明还没有开始执行，不说没声明主指标", async ({
@@ -735,7 +740,7 @@ test("这次运行的节点包版本里没有这张图表：读数写明原因�
 	await expect(readouts(page).getByRole("button", { name: /^errors 1 次/ })).toBeVisible();
 });
 
-test("概览里点顶栏的失败摘要：切到详情并打开失败节点的「尝试」页签，不改记住的视图", async ({
+test("概览里点失败区域的按钮：切到详情并打开失败节点的「尝试」页签，不改记住的视图；顶栏不重复失败摘要", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -749,10 +754,12 @@ test("概览里点顶栏的失败摘要：切到详情并打开失败节点的�
 	await agent.succeed(cleanup);
 	await openOverview(page, clock, runId);
 
-	// 概览没有失败横幅（横幅是详情里时间线上方的），失败区域在最上面，失败摘要在顶栏。
+	// 概览没有失败横幅（横幅是详情里时间线上方的），失败区域在最上面；失败区域已经写着失败，顶栏不再写一遍。
 	await expect(page.locator('[data-slot="banner"]')).toHaveCount(0);
-	await expect(page.getByTestId("failure-area")).toBeVisible();
-	await page.getByRole("banner").getByTestId("run-failure").click();
+	const area = page.getByTestId("failure-area");
+	await expect(area).toBeVisible();
+	await expect(page.getByRole("banner").getByTestId("run-failure")).toHaveCount(0);
+	await area.getByRole("button", { name: "在详情里查看 verify 的尝试" }).click();
 	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
 	await expect(
 		page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }),

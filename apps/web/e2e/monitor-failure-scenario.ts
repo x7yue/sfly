@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import {
 	type AssignedTask,
+	ErrorKind,
 	type FakeAgent,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
@@ -32,6 +33,9 @@ export const FAILURE_HEADLINE =
  * 失败区域里原因最多显示 4 行，更长的收起，全文在「展开全文」里。
  */
 export const LONG_FAILURE_MESSAGE = "成功率持续低于阈值，已重试三轮仍未恢复；".repeat(200);
+
+/** 失败的节点出错的位置（节点代码里的那一行，`error.location`）。 */
+export const FAILURE_LOCATION = "sfly_std.assert_.check_rate 第 42 行";
 
 export const PRESET_NAME = "压测 A 集群（北京机房，高并发）";
 
@@ -90,7 +94,9 @@ export async function failedRun(
 	controlPlane: TestControlPlane,
 	connectAgent: E2eFixtures["connectAgent"],
 	clock: ManualClock,
-	options: { cleanupDone: boolean; preset?: boolean; message?: string } = { cleanupDone: true },
+	options: { cleanupDone: boolean; preset?: boolean; message?: string; location?: string } = {
+		cleanupDone: true,
+	},
 ): Promise<FailureRun> {
 	const agent = await connectAgent({
 		name: "agent-a",
@@ -125,7 +131,13 @@ export async function failedRun(
 	expect(failed.nodeId).toBe(FAILED_NODE);
 	agent.logs(failed, [logLine(clock, 1, "成功率 97.2% 低于阈值 99%", LogLevel.ERROR)]);
 	clock.advance(5000);
-	await agent.fail(failed, options.message ?? FAILURE_MESSAGE);
+	await agent.fail(
+		failed,
+		options.message ?? FAILURE_MESSAGE,
+		ErrorKind.NODE_ERROR,
+		undefined,
+		options.location,
+	);
 	const cleanup = await agent.nextAssign();
 	if (options.cleanupDone) {
 		clock.advance(2000);

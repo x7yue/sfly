@@ -27,6 +27,7 @@ import {
 	setFocusItems,
 } from "./focus-support";
 import { failedRun, openFailedOverview } from "./monitor-failure-scenario";
+import { queuedOffline, queuedSlotsFull } from "./monitor-queue-scenario";
 import {
 	connPoint,
 	labeledRun,
@@ -813,7 +814,9 @@ for (const viewport of [
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
 		await expect(page.getByTestId("failure-area")).toBeVisible();
-		await expect(page.getByTestId("focus-freshness")).toBeVisible();
+		// 运行已经结束：读数不再刷新，顶栏不写「数据更新于」；失败区域已经写着失败，顶栏也不重复摘要。
+		await expect(page.getByTestId("focus-freshness")).toHaveCount(0);
+		await expect(page.getByRole("banner").getByTestId("run-failure")).toHaveCount(0);
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-${viewport.width}.png`, {
 			mask: runIds(page),
@@ -830,6 +833,7 @@ for (const viewport of [
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
 		await expect(page.getByTestId("failure-area")).toBeVisible();
+		await expect(page.getByTestId("focus-freshness")).toBeVisible();
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-running-${viewport.width}.png`, {
 			mask: runIds(page),
@@ -852,6 +856,57 @@ for (const viewport of [
 		});
 	});
 }
+
+// 排队中的节点写明在等谁（#457）：Agent 不在线、槽位占满；详情的尝试卡片写同样的话。
+for (const viewport of [
+	{ width: 1440, height: 900 },
+	{ width: 1280, height: 800 },
+] as const) {
+	test(`运行监控：概览（节点在排队，等的 Agent 不在线）${viewport.width}×${viewport.height}`, async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const { runId } = await queuedOffline(controlPlane, connectAgent, clock);
+		await page.setViewportSize(viewport);
+		await openFailedOverview(page, clock, runId);
+		await expect(page.getByTestId("waiting-nodes")).toBeVisible();
+		await page.mouse.move(20, viewport.height - 20);
+		await expect(page).toHaveScreenshot(`monitor-overview-queued-offline-${viewport.width}.png`, {
+			mask: runIds(page),
+		});
+	});
+}
+
+test("运行监控：概览（节点在排队，Agent 在线但槽位占满，写明占着槽位的任务）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await queuedSlotsFull(controlPlane, connectAgent, clock);
+	await openFailedOverview(page, clock, runId);
+	await expect(page.getByTestId("queue-wait-holders").first()).toBeVisible();
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview-queued-slots.png", {
+		mask: runIds(page),
+	});
+});
+
+test("运行监控：详情（选中排队中的节点，尝试卡片写明在等谁）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await queuedOffline(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId, "a", "attempts");
+	await expect(page.getByRole("article", { name: "准备环境（a） 第 1 次尝试" })).toBeVisible();
+	await expect(page.getByRole("region", { name: "图表工作区" })).toBeVisible();
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-queued-attempt.png", { mask: runIds(page) });
+});
 
 test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({
 	page,

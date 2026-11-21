@@ -1,6 +1,9 @@
 import {
+	type AttemptView,
 	isActiveStatus,
 	isOnAgentStatus,
+	type NodeRunView,
+	type QueueWaitView,
 	type RunFocus,
 	type RunFocusItem,
 	type RunView,
@@ -20,11 +23,14 @@ import { emptyReadingsNote } from "#/focus/focus-format";
 import { useRunFocus } from "#/focus/use-run-focus";
 import {
 	ACTIVE_LABEL,
+	attemptLabel,
 	chainCountLabel,
 	FOCUS,
 	LIST_LABEL,
 	MESSAGE,
+	moreLabel,
 	NODE_ACTIONS,
+	QUEUE_WAIT,
 	RUNNING_PRIMARY_LABEL,
 	TERM,
 } from "#/lib/copy";
@@ -33,6 +39,7 @@ import { Truncate } from "@/components/ui/truncate";
 import { Attention, OtherWarnings } from "./Attention";
 import { FailureAnnouncer, FailureArea } from "./FailureArea";
 import { useTimeAxis } from "./monitor-state";
+import { QueueWaitNote } from "./QueueWaitNote";
 import type { PanelTab } from "./run-link";
 import { chainLabelParts, orderedChains } from "./run-model";
 
@@ -138,6 +145,50 @@ const activeNodes = (run: RunView) =>
 		)
 		.sort((a, b) => activeOrder(a.node) - activeOrder(b.node));
 
+/** 排队中、写着在等什么的节点和它最新一次尝试（排队的尝试）。 */
+interface QueuedNode {
+	node: NodeRunView;
+	attempt: AttemptView & { queue_wait: QueueWaitView };
+}
+
+const queuedNodes = (run: RunView): QueuedNode[] =>
+	activeNodes(run).flatMap(({ node, attempt }) =>
+		node.status === "queued" && attempt.queue_wait
+			? [{ node, attempt: { ...attempt, queue_wait: attempt.queue_wait } }]
+			: [],
+	);
+
+/**
+ * 没设关注项、没有节点在 Agent 上执行、排队的节点还在等：主指标这一栏写它们在等什么（和「进行中」同一份说明）。
+ * 一个节点一行，最多列 3 个，其余写「还有 N 个」。
+ */
+function WaitingNodes({ nodes }: { nodes: QueuedNode[] }) {
+	const { now } = useTimeAxis();
+	const shown = nodes.slice(0, MAX_WAITING_NODES);
+	return (
+		<div
+			data-testid="waiting-nodes"
+			className="rounded-lg border border-dashed border-border-soft px-4 py-4 text-sm text-fg-3"
+		>
+			<p className="m-0">{QUEUE_WAIT.allQueued}</p>
+			<ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0 text-fg-2">
+				{shown.map(({ node, attempt }) => (
+					<li key={node.node_id}>
+						<NodeName node={node} className="text-fg-1" /> ·{" "}
+						<QueueWaitNote wait={attempt.queue_wait} queuedAt={attempt.queued_at} now={now} />
+					</li>
+				))}
+			</ul>
+			{nodes.length > shown.length && (
+				<p className="m-0 mt-1.5">{moreLabel(nodes.length - shown.length)}</p>
+			)}
+		</div>
+	);
+}
+
+/** 主指标一栏最多列出几个排队的节点。 */
+const MAX_WAITING_NODES = 3;
+
 /**
  * 链路：各链的线路（components/run-lines），下面一行写进行中的节点，写法和控制台运行块相同（`activeDetail`）：
  * 所在 Agent、尝试号和已执行时长，还没开始执行的写状态；执行中的节点再接上此刻在做什么。
@@ -178,16 +229,32 @@ function ChainSection({ run }: { run: RunView }) {
 						aria-label={LIST_LABEL.activeNodes}
 						className="m-0 flex list-none flex-wrap gap-x-5 gap-y-1.5 p-0"
 					>
-						{active.map(({ chain, node, attempt }) => (
-							<li key={`${chain.id}/${node.node_id}`} className="flex items-center gap-1.5">
-								<StatusDot kind={nodeStatusView(node.status).kind} />
-								<NodeName node={node} className="text-fg-1" />{" "}
-								<span className="whitespace-nowrap text-fg-3">
-									{activeDetail({ ...attempt, status: node.status }, now)}
-								</span>
-								<ExecutingActivity activity={currentActivity(attempt)} />
-							</li>
-						))}
+						{active.map(({ chain, node, attempt }) => {
+							const waiting = node.status === "queued" ? attempt.queue_wait : null;
+							return (
+								<li
+									key={`${chain.id}/${node.node_id}`}
+									// 排队中的节点写着在等谁，一句话比较长：单独占一行。
+									className={
+										waiting ? "flex basis-full items-baseline gap-1.5" : "flex items-center gap-1.5"
+									}
+								>
+									<StatusDot kind={nodeStatusView(node.status).kind} className="self-center" />
+									<NodeName node={node} className="flex-none text-fg-1" />{" "}
+									{waiting ? (
+										<span className="min-w-0 text-fg-3">
+											{attemptLabel(attempt.attempt)} · {nodeStatusView(node.status).label} ·{" "}
+											<QueueWaitNote wait={waiting} queuedAt={attempt.queued_at} now={now} />
+										</span>
+									) : (
+										<span className="whitespace-nowrap text-fg-3">
+											{activeDetail({ ...attempt, status: node.status }, now)}
+										</span>
+									)}
+									<ExecutingActivity activity={currentActivity(attempt)} />
+								</li>
+							);
+						})}
 					</ul>
 				</div>
 			)}
@@ -263,6 +330,7 @@ function FocusSection({
 					data={data}
 					runEnded={run.status !== "running"}
 					executing={hasExecutingNodes(run)}
+					waiting={queuedNodes(run)}
 					onOpen={open}
 					located={located}
 				/>
@@ -275,6 +343,7 @@ function FocusBody({
 	data,
 	runEnded,
 	executing,
+	waiting,
 	onOpen,
 	located,
 }: {
@@ -282,10 +351,17 @@ function FocusBody({
 	runEnded: boolean;
 	/** 链路里列着执行中的节点：没设关注项时没有读数，原因就不是「没有执行中的节点」。 */
 	executing: boolean;
+	/** 排队中、写着在等什么的节点：没有节点执行时，说明里写它们在等什么，不写「没有执行中的节点」。 */
+	waiting: QueuedNode[];
 	onOpen: (item: RunFocusItem) => void;
 	/** 要标出位置的节点（地址里的 `node`）。 */
 	located?: string;
 }) {
+	if (data.items.length === 0 && data.mode === "primary" && !executing && waiting.length > 0) {
+		return <WaitingNodes nodes={waiting} />;
+	}
+	// 运行已经结束、没设关注项：主指标是执行中节点的，不会再有读数；不画一个只写「没有执行中的节点」的空框。
+	if (data.items.length === 0 && data.mode === "primary" && runEnded) return null;
 	if (data.items.length === 0) {
 		return (
 			<p className="m-0 rounded-lg border border-dashed border-border-soft px-4 py-6 text-center text-sm text-fg-3">
