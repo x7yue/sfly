@@ -8,7 +8,8 @@ import { removedFieldsMessage } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import { addDocumentFields, storedDocument } from "./support/legacy-document.js";
+import { addDocumentFields } from "./support/legacy-document.js";
+import { storedDocument } from "./support/stored-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 有内容的便签：移除之前保存的样子（颜色、位置、大小都写着）。 */

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
-import { addDocumentFields, storedDocument } from "./support/legacy-document.js";
+import { addDocumentFields } from "./support/legacy-document.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";

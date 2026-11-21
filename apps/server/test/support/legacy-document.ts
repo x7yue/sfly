@@ -51,23 +51,3 @@ export async function addDocumentFields(
 		await client.end();
 	}
 }
-
-/** 库里某个版本存着的原始文档（不经过控制面读取时的解析）；版本不存在时抛错。 */
-export async function storedDocument(
-	cp: TestControlPlane,
-	scenario: string,
-	number: number,
-): Promise<Record<string, unknown>> {
-	const client = new pg.Client({ connectionString: cp.database.url });
-	await client.connect();
-	try {
-		const { rows } = await client.query(
-			"select document from orchestration_versions where orchestration_id = $1 and number = $2",
-			[scenario, number],
-		);
-		if (rows.length === 0) throw new Error(`场景 ${scenario} 没有版本 ${number}`);
-		return rows[0].document as Record<string, unknown>;
-	} finally {
-		await client.end();
-	}
-}
