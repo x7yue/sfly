@@ -84,7 +84,7 @@ describe("长链折叠", () => {
 		expect(shape(foldStations(nodes))).toEqual(["已完成 11", "n12"]);
 	});
 
-	it("失败的节点不折进「已完成」，总是画出来", () => {
+	it("失败的节点不折进「已完成」，总是画出来；被跳过的节点单独折成「已跳过 N 个」，不算进「已完成」", () => {
 		const nodes = chain([
 			...repeat("success", 3),
 			"failed",
@@ -95,13 +95,20 @@ describe("长链折叠", () => {
 		expect(shape(foldStations(nodes))).toEqual([
 			"已完成 3",
 			"n4",
-			"已完成 9",
+			"已跳过 9",
 			"n14",
 			"n15",
 			"n16",
 			"n17",
 			"还有 3",
 		]);
+	});
+
+	it("失败的运行：前面成功的、失败的、被跳过的各是一段，清理节点（always）成功后接在后面", () => {
+		const nodes = chain([...repeat("success", 6), "failed", ...repeat("skipped", 6), "success"]);
+		expect(shape(foldStations(nodes))).toEqual(["已完成 6", "n7", "已跳过 6", "n14"]);
+		const station = foldStations(nodes)[2] as Extract<Station, { kind: "fold" }>;
+		expect(foldLabel(station)).toBe("已跳过 6 个");
 	});
 
 	it("取消的运行：已取消的节点不算进「已完成」，单独折成「已取消 N 个」", () => {

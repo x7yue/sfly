@@ -13,7 +13,7 @@ export function RunPresetInfo({ preset }: { preset: RunPresetView }) {
 			<PopoverTrigger
 				openOnHover
 				delay={150}
-				className="h-6.5 min-w-16 shrink-[3] cursor-pointer truncate rounded-md px-1.5 text-xs text-fg-2 hover:bg-raised hover:text-fg-1"
+				className="h-6.5 min-w-28 shrink-[2] cursor-pointer truncate rounded-md px-1.5 text-xs text-fg-2 hover:bg-raised hover:text-fg-1"
 			>
 				{presetLabel(preset.name)}
 			</PopoverTrigger>

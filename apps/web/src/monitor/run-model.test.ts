@@ -7,6 +7,7 @@ import type {
 } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	allRunFailures,
 	applyProgress,
 	chainLabel,
 	chainLabelParts,
@@ -387,7 +388,22 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 			node: { node_id: "verify" },
 			attempt: 2,
 			message: "AssertionError: 仍然漏拦",
+			// 全文原样保留（含堆栈），失败的区域里「展开」看它。
+			detail: "AssertionError: 仍然漏拦\n\nTraceback (most recent call last):",
+			endedAt: "2026-01-01T00:00:02.000Z",
+			chain: null,
 		});
+	});
+
+	it("所有失败的节点按失败的先后：第一项就是第一个失败的节点，子流程里的写明是哪个子流程实例", () => {
+		const all = allRunFailures(failed);
+		expect(all.map((f) => f.ref.nodeId)).toEqual(["verify", "probe"]);
+		expect(all[0]).toEqual(runFailure(failed));
+		expect(all[1]).toMatchObject({
+			message: "boom",
+			chain: expect.stringMatching(/^子流程 sub · /),
+		});
+		expect(allRunFailures(view("success"))).toEqual([]);
 	});
 
 	it("失败摘要：节点、第几次尝试、错误信息的第一行；没有尝试记录或错误信息时省略", () => {

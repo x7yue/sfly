@@ -7,7 +7,7 @@ import {
 } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
-import { ChainBar, chainProgressText } from "#/components/chain-progress";
+import { ChainBar, ChainProgressCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
@@ -189,7 +189,7 @@ function ChainRow({ chain }: { chain: ChainRunView }) {
 				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name })}
 				nodes={chain.nodes}
 			/>
-			<span className="ml-auto font-mono text-2xs text-fg-3">{chainProgressText(chain.nodes)}</span>
+			<ChainProgressCount nodes={chain.nodes} className="ml-auto" />
 		</li>
 	);
 }
