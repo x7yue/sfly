@@ -1,6 +1,7 @@
 import { type MetricIncrement, runsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import type { AgentHub } from "../agents/agent-hub.js";
+import { agentWaits } from "../agents/queue-wait.js";
 import type { Db } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import type { ProgressEvent } from "../logs/task-logs.js";
@@ -35,6 +36,10 @@ export function registerRunRoutes(
 		metrics: Topics<MetricIncrement>;
 	},
 ): void {
+	/** 输出给客户端的运行视图：排队中的尝试带上它在等什么（Agent 此刻的状态来自注册表）。 */
+	const viewOf = (runId: string) =>
+		getRunView(deps.db, runId, (names) => agentWaits(deps.db, deps.hub, names));
+
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent，
 	// 以及场景的运行预设（对照这次检查用的最新版本）。
 	contractRoute(app, runsApi.preflight, async ({ params }, reply) => {
@@ -93,7 +98,7 @@ export function registerRunRoutes(
 		if (!outcome.ok) {
 			return sendError(reply, outcome.status, outcome.code, outcome.message, outcome.details);
 		}
-		const run = await getRunView(deps.db, outcome.runId);
+		const run = await viewOf(outcome.runId);
 		return reply.code(201).send(run);
 	});
 
@@ -103,7 +108,7 @@ export function registerRunRoutes(
 	// 用序列查询（GET /runs/:id/metrics/series）补齐。
 	contractStream(app, deps.sse, runsApi.events, async ({ params }, open, reply, request) => {
 		const runId = params.id;
-		if (!isUuid(runId) || !(await getRunView(deps.db, runId))) {
+		if (!isUuid(runId) || !(await viewOf(runId))) {
 			return sendError(reply, 404, "not_found", "run not found");
 		}
 		open((stream) => {
@@ -119,7 +124,7 @@ export function registerRunRoutes(
 				try {
 					do {
 						again = false;
-						const view = await getRunView(deps.db, runId);
+						const view = await viewOf(runId);
 						if (view) stream.send("run", view);
 					} while (again && !stream.closed);
 				} catch (error) {
@@ -152,13 +157,11 @@ export function registerRunRoutes(
 		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "run not found");
 		const outcome = await deps.engine.cancel(params.id, actor);
 		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);
-		return (
-			(await getRunView(deps.db, params.id)) ?? sendError(reply, 404, "not_found", "run not found")
-		);
+		return (await viewOf(params.id)) ?? sendError(reply, 404, "not_found", "run not found");
 	});
 
 	contractRoute(app, runsApi.get, async ({ params }, reply) => {
-		const run = isUuid(params.id) ? await getRunView(deps.db, params.id) : undefined;
+		const run = isUuid(params.id) ? await viewOf(params.id) : undefined;
 		return run ?? sendError(reply, 404, "not_found", "run not found");
 	});
 }

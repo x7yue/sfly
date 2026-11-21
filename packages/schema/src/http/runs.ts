@@ -81,6 +81,50 @@ export const TaskProgressView = z.object({
 	agent_time: Timestamp.nullable(),
 });
 
+/** 占着槽位的任务：哪个场景的哪个运行里哪个节点的第几次尝试（排队的尝试在等的槽位被它们占着）。 */
+export const SlotHolderView = z.object({
+	run_id: z.string(),
+	orchestration_id: z.string(),
+	/** 场景现在的名称（名称不跟版本走）。 */
+	orchestration_name: z.string(),
+	node_id: z.string(),
+	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
+	display_name: z.string().optional(),
+	/** 子流程名称（没有名称的旧版本为子流程入口的节点 ID，名称为空时为空字符串）；任务在主链上为 null。 */
+	chain_name: z.string().nullable(),
+	attempt: z.number().int(),
+	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
+	status: z.enum(["dispatched", "running"]),
+	/** 执行器启动的时间；准备中为 null。 */
+	started_at: Timestamp.nullable(),
+});
+
+/**
+ * 排队中的尝试在等什么：等的那台 Agent 现在为什么没接它。控制面在读取的这一刻按派发的条件判断（在线、准备好环境、
+ * 版本与控制面一致、有空闲槽位），不是尝试自己存下来的状态：Agent 上下线、槽位被占或释放不改变运行本身，
+ * 所以运行视图没有变化的推送也会过时，页面和命令行在尝试排队期间定时重新读取。
+ */
+export const QueueWaitView = z.object({
+	/** 等的是哪台 Agent（和尝试的 `agent` 相同）。 */
+	agent: z.string(),
+	/** 读取这一刻的控制面时间：排了多久、离线了多久、多久后排队超时都按它算（命令行不用自己的时钟）。 */
+	now: Timestamp,
+	/**
+	 * offline：Agent 不在线（从没连上过，或已经断开）；preparing：在线，还在准备环境，不接任务；
+	 * version_mismatch：版本与控制面不一致，不派新任务；slots_full：在线、已准备好，槽位都被占着（`holders`）；
+	 * dispatching：在线、有空闲槽位，正在派发，马上会开始。
+	 */
+	state: z.enum(["offline", "preparing", "version_mismatch", "slots_full", "dispatching"]),
+	/** offline：Agent 最后在线的时间（从没连上过时为 null）；preparing：开始准备环境的时间；其余状态为 null。 */
+	since: Timestamp.nullable(),
+	/** 排队超时的时间（超过它仍没有派发，任务以 env_error 失败）；没有设置排队超时时为 null。 */
+	expires_at: Timestamp.nullable(),
+	/** Agent 的槽位总数；Agent 不在线时为 null。 */
+	slots: z.number().int().nullable(),
+	/** slots_full：占着槽位的任务，按派发顺序；其余状态为空数组。 */
+	holders: z.array(SlotHolderView),
+});
+
 export const AttemptView = z.object({
 	task_id: z.string(),
 	attempt: z.number().int(),
@@ -104,6 +148,8 @@ export const AttemptView = z.object({
 	progress: TaskProgressView.nullable(),
 	/** 执行中的尝试此刻在做的动作（见 CurrentAction）；没有时为 null，尝试结束后也为 null。 */
 	current_action: CurrentAction.nullable(),
+	/** 排队中（`status` 为 queued）的尝试在等什么；其余状态为 null。 */
+	queue_wait: QueueWaitView.nullable(),
 });
 
 export const NodeRunView = z.object({
@@ -763,6 +809,8 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 export type NodeStatus = z.infer<typeof NodeStatus>;
 export type ErrorView = z.infer<typeof ErrorView>;
 export type TaskProgressView = z.infer<typeof TaskProgressView>;
+export type SlotHolderView = z.infer<typeof SlotHolderView>;
+export type QueueWaitView = z.infer<typeof QueueWaitView>;
 export type AttemptView = z.infer<typeof AttemptView>;
 export type NodeRunView = z.infer<typeof NodeRunView>;
 export type ChainRunView = z.infer<typeof ChainRunView>;

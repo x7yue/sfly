@@ -43,6 +43,7 @@ from sfly.cli.run_view import (
     fetch_run,
     format_duration,
     node_status_label,
+    queue_wait_text,
     resolve_run,
     run_status_label,
     with_display_name,
@@ -241,6 +242,7 @@ def _attempt_view(attempt: Mapping[str, Any]) -> dict[str, Any]:
         "ended_at": attempt["ended_at"],
         "duration_ms": duration_ms(attempt["started_at"], attempt["ended_at"]),
         "error": attempt["error"],
+        "queue_wait": attempt["queue_wait"],
     }
 
 
@@ -330,6 +332,7 @@ def render(view: Mapping[str, Any]) -> str:
         lines.append(f"参数 {params}")
 
     attention: list[tuple[str, Mapping[str, Any]]] = []
+    waiting: list[tuple[str, str]] = []
     for chain in view["chains"]:
         state = run_status_label(chain["status"], cancelling=cancelling, forced=forced)
         lines.extend(["", f"链 {chain['chain']}  {state}"])
@@ -357,6 +360,17 @@ def render(view: Mapping[str, Any]) -> str:
             for n in chain["nodes"]
             if n["status"] == "failed" or len(n["attempts"]) > 1
         )
+        for n in chain["nodes"]:
+            last = n["attempts"][-1] if n["attempts"] else None
+            if n["status"] == "queued" and last and last["queue_wait"]:
+                label = with_display_name(
+                    NodeRef(chain["chain"], n["id"]).label, n.get("display_name")
+                )
+                waiting.append((label, queue_wait_text(last["queue_wait"], last["queued_at"])))
+
+    if waiting:
+        lines.extend(["", "排队中的节点："])
+        lines.extend(f"  {label}  {text}" for label, text in waiting)
 
     if attention:
         lines.extend(["", "失败或重试过的节点："])
