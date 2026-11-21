@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
+import { appendStartupStubs, dropStartupStubs } from "./support/migrations.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -207,6 +208,8 @@ describe("升级前已有的运行和版本", () => {
 		};
 		journal.entries = journal.entries.filter((e) => e.idx < next);
 		await writeFile(journalPath, JSON.stringify(journal));
+		// 当前代码启动时读写的 agent_credentials：旧迁移里没有，补一个占位，升级前删掉。
+		await appendStartupStubs(dir);
 		return dir;
 	};
 
@@ -258,7 +261,9 @@ describe("升级前已有的运行和版本", () => {
 			await client.end();
 		}
 
-		await cp.restart(undefined, { migrationsDir: defaultMigrationsDir });
+		await cp.restart(() => dropStartupStubs(cp.database.url), {
+			migrationsDir: defaultMigrationsDir,
+		});
 
 		const api = new ApiClient(cp);
 		expect(await api.run(ids.run)).toMatchObject({

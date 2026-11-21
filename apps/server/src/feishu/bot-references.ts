@@ -13,22 +13,25 @@ import type {
 import { and, asc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { nodePackages, orchestrations, orchestrationVersions } from "../db/schema.js";
+import type { ProjectId } from "../projects/project-id.js";
 
 /**
  * 引用某个飞书机器人的场景（删除机器人之前列出，ADR 0020）：场景自己的设置（运行通知）和最新场景版本里引用它的地方。
  * 已归档的场景不列（不能触发，恢复之后保存和触发的检查会指出）。
  *
- * 每种引用是一个来源（{@link BOT_REFERENCE_SOURCES} 里的一项）：给定机器人名称，返回引用它的地方，按场景。
+ * 每种引用是一个来源（{@link BOT_REFERENCE_SOURCES} 里的一项）：给定项目和机器人名称，返回这个项目里引用它的地方，按场景。
  * 加一种引用就是加一个来源和契约里的一个 `kind`。
  */
 type BotReferenceSource = (
 	db: Db,
+	project: ProjectId,
 	bot: string,
 ) => Promise<ReadonlyArray<{ orchestrationId: string; reference: FeishuBotReference }>>;
 
-/** 没有归档的场景的最新版本文档。 */
+/** 这个项目里没有归档的场景的最新版本文档。 */
 async function headDocuments(
 	db: Db,
+	project: ProjectId,
 ): Promise<{ orchestrationId: string; document: StoredOrchestrationDocument }[]> {
 	return db
 		.select({ orchestrationId: orchestrations.id, document: orchestrationVersions.document })
@@ -40,12 +43,12 @@ async function headDocuments(
 				eq(orchestrationVersions.number, orchestrations.headVersion),
 			),
 		)
-		.where(isNull(orchestrations.archivedAt));
+		.where(and(eq(orchestrations.projectId, project), isNull(orchestrations.archivedAt)));
 }
 
 /** 最新场景版本里「飞书机器人」类型的输入的常量值（要按文档锁定的节点包版本的元信息认出这种输入）。 */
-const botInputs: BotReferenceSource = async (db, bot) => {
-	const heads = await headDocuments(db);
+const botInputs: BotReferenceSource = async (db, project, bot) => {
+	const heads = await headDocuments(db, project);
 	const locked = new Map<string, { name: string; version: string }>();
 	for (const { document } of heads) {
 		if (!document.nodes.some((n) => n.kind === "package")) continue;
@@ -90,12 +93,18 @@ const botInputs: BotReferenceSource = async (db, bot) => {
 };
 
 /** 场景设置里的运行通知选了这个机器人（场景自己的设置，没有保存过版本的场景也在）。 */
-const runNotifications: BotReferenceSource = async (db, bot) =>
+const runNotifications: BotReferenceSource = async (db, project, bot) =>
 	(
 		await db
 			.select({ orchestrationId: orchestrations.id })
 			.from(orchestrations)
-			.where(and(eq(orchestrations.runNotifyBot, bot), isNull(orchestrations.archivedAt)))
+			.where(
+				and(
+					eq(orchestrations.projectId, project),
+					eq(orchestrations.runNotifyBot, bot),
+					isNull(orchestrations.archivedAt),
+				),
+			)
 	).map(({ orchestrationId }) => ({
 		orchestrationId,
 		reference: { kind: "run_notification" as const },
@@ -103,13 +112,20 @@ const runNotifications: BotReferenceSource = async (db, bot) =>
 
 const BOT_REFERENCE_SOURCES: readonly BotReferenceSource[] = [botInputs, runNotifications];
 
-/** 引用这个机器人的场景（按场景名排序）和场景里引用它的地方。 */
-export async function scenariosReferencingBot(db: Db, bot: string): Promise<FeishuBotScenario[]> {
-	const found = (await Promise.all(BOT_REFERENCE_SOURCES.map((source) => source(db, bot)))).flat();
+/** 这个项目里引用这个机器人的场景（按场景名排序）和场景里引用它的地方；别的项目的场景不列。 */
+export async function scenariosReferencingBot(
+	db: Db,
+	project: ProjectId,
+	bot: string,
+): Promise<FeishuBotScenario[]> {
+	const found = (
+		await Promise.all(BOT_REFERENCE_SOURCES.map((source) => source(db, project, bot)))
+	).flat();
 	if (found.length === 0) return [];
 	const names = await db
 		.select({ id: orchestrations.id, name: orchestrations.name })
 		.from(orchestrations)
+		.where(eq(orchestrations.projectId, project))
 		.orderBy(asc(orchestrations.name), asc(orchestrations.id));
 	return names.flatMap(({ id, name }) => {
 		const references = found.filter((f) => f.orchestrationId === id).map((f) => f.reference);
