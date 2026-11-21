@@ -1,8 +1,16 @@
 /**
- * 发起写操作的人：昵称，以及这次操作经哪个 AI 编程助手（没有时为 null）。
- * 两者都只是标注，不做校验、不做鉴权（ADR 0004）。
+ * 发起写操作的人。
+ *
+ * - `nickname`：显示用的名字。带了凭据的请求（ADR 0029）是检查过的：用户的显示名，项目令牌是令牌的名称；不带凭据的请求是
+ *   请求头里的昵称，只是标注，不做校验（ADR 0004，#494 起不再有）。
+ * - `via`：这次操作经哪个 AI 编程助手（没有时为 null），来自请求头 `x-sfly-client`，只是标注，不做校验。
+ * - `userId`：用户的 ID；凭据没有用户（项目令牌）或没有带凭据时为 null。
+ * - `token`：经哪个令牌（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 或没有带凭据时为 null。它是检查过的，
+ *   和不经校验的 `via` 分开记。
  */
 export interface Actor {
 	nickname: string;
 	via: string | null;
+	userId: string | null;
+	token: string | null;
 }
