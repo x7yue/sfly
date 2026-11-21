@@ -236,7 +236,8 @@ RUN_HELP = (
     "运行 id，可以只写前缀（至少 4 个字符，不产生歧义时），或写 latest：自己触发的最近一次运行"
 )
 RUN_HELP_NO_LATEST = "运行 id，可以只写前缀（至少 4 个字符，不产生歧义时）；取消不接受 latest"
-# 找前缀、最近一次运行时最多向控制面要多少个运行（`GET /runs` 的上限）。
+# 控制面还不认按触发人、按编号前缀筛的参数（比命令行旧）时，退回到取最近的一批运行再在这里筛：
+# 最多要这么多个。
 _RUN_LOOKUP_LIMIT = 500
 # 前缀有歧义时最多列出多少个候选。
 _MAX_AMBIGUOUS = 10
@@ -263,9 +264,18 @@ def resolve_run(client: Client, ref: str, *, allow_latest: bool = True) -> str:
                 next="sfly run list",
             )
         return _latest_run(client)
-    if not _RUN_PREFIX.fullmatch(text) or len(text) < MIN_RUN_PREFIX:
+    if not _RUN_PREFIX.fullmatch(text):
         raise run_not_found(ref)
-    listing = client.get("/runs", {"q": text, "limit": _RUN_LOOKUP_LIMIT})
+    if len(text) < MIN_RUN_PREFIX:
+        raise CliError(
+            "run_prefix_too_short",
+            f"运行编号的前缀至少写 {MIN_RUN_PREFIX} 个字符，收到 {text!r}：\n"
+            "多写几位，或用完整的 id",
+            next="sfly run list",
+        )
+    # 控制面按编号前缀筛（`id_prefix`）；比命令行旧的控制面不认它、返回最近的一批，
+    # 所以这里仍然再筛一遍。
+    listing = client.get("/runs", {"id_prefix": text, "limit": _RUN_LOOKUP_LIMIT})
     found = [r for r in listing["runs"] if str(r["id"]).lower().startswith(text.lower())]
     if not found:
         raise run_not_found(ref)
@@ -287,9 +297,16 @@ def resolve_run(client: Client, ref: str, *, allow_latest: bool = True) -> str:
 
 
 def _latest_run(client: Client) -> str:
-    listing = client.get("/runs", {"q": client.nickname, "limit": _RUN_LOOKUP_LIMIT})
-    # `q` 是包含匹配（昵称是别人昵称的一部分时也会返回），只要触发人就是自己的。
+    # 「自己」现在按昵称认：昵称不校验，谁都能写别人的昵称。控制面开始校验身份
+    # （强制鉴权，#489、#494）之后，要改成按凭据里的用户，这里的 `triggered_by` 换成它。
+    listing = client.get("/runs", {"triggered_by": client.nickname, "limit": 1})
     mine = [r for r in listing["runs"] if r["triggered_by"] == client.nickname]
+    if listing["runs"] and not mine:
+        # 控制面不认 `triggered_by`（比命令行旧），返回的是别人的最近一次：
+        # 退回到按关键字取一批再筛。
+        # `q` 是包含匹配（昵称是别人昵称的一部分时也会返回），只要触发人就是自己的。
+        listing = client.get("/runs", {"q": client.nickname, "limit": _RUN_LOOKUP_LIMIT})
+        mine = [r for r in listing["runs"] if r["triggered_by"] == client.nickname]
     if not mine:
         raise CliError(
             "no_recent_run",

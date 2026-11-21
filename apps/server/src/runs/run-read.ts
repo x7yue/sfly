@@ -89,6 +89,12 @@ export interface RunNode<A extends RunAttempt = RunAttempt> {
 	status: NodeStatus;
 	/** 真正的尝试，按 attempt 升序。 */
 	attempts: A[];
+	/**
+	 * 节点状态取的最后一行是没开始就被取消或停止的占位（节点的第一次尝试，或重试在排队时被取消、被停止）时，那一行的结束时间；
+	 * 不是时为 null。这时状态和起止时间要取同一行：没开始（起点为空），结束是取消或停止的时间，不是上一次真正执行过的尝试的。
+	 * 被跳过的占位不算。
+	 */
+	closedWhileQueued: { endedAt: Date | null } | null;
 }
 
 export interface RunChain<A extends RunAttempt = RunAttempt> {
@@ -275,6 +281,7 @@ interface TaskRowBase {
 	nodeId: string;
 	status: TaskStatus;
 	startedAt: Date | null;
+	endedAt: Date | null;
 }
 type BoardTaskRow = TaskRowBase & {
 	id: string;
@@ -373,15 +380,20 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				endedAt: chain.endedAt,
 				nodes: nodesOf(chain.chainId).map((node) => {
 					const rowsOfNode = tasksOf.get(`${chain.id}/${node.id}`) ?? [];
+					const last = rowsOfNode.at(-1);
 					return {
 						node_id: node.id,
 						display_name: nodeNameBeforeId(node),
 						kind: node.kind,
 						agent: node.kind === "package" ? agentFor(document, node) : null,
-						status: rowsOfNode.at(-1)?.status ?? "pending",
+						status: last?.status ?? "pending",
 						attempts: rowsOfNode
 							.filter((row) => !isPlaceholderAttempt(row))
 							.map((row) => toAttempt(row, mask)),
+						closedWhileQueued:
+							last && last.status !== "skipped" && isPlaceholderAttempt(last)
+								? { endedAt: last.endedAt }
+								: null,
 					};
 				}),
 			}),

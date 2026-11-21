@@ -15,7 +15,14 @@ from sfly.cli.client import ApiError, segment
 from sfly.cli.errors import EXIT_BY_STATUS, EXIT_INTERRUPTED, EXIT_TIMEOUT, CliError
 from sfly.cli.presets import find_preset, with_next_step
 from sfly.cli.run_params import build_params, describe_declared
-from sfly.cli.run_summary import fetch_summary, render_summary, run_url
+from sfly.cli.run_summary import (
+    SummaryUnavailable,
+    fetch_summary,
+    minimal_summary,
+    render_summary,
+    run_url,
+    summary_unavailable_note,
+)
 from sfly.cli.run_view import (
     RUN_HELP,
     RUN_HELP_NO_LATEST,
@@ -259,8 +266,15 @@ def _follow(
 
 
 def _finish(session: Session, run: dict[str, Any]) -> int:
-    summary = fetch_summary(session.client, run["id"])
-    session.out.emit(summary, render_summary(summary))
+    """输出摘要，退出码按运行的结果给。控制面没有摘要接口（比命令行旧）时输出只有状态的最小摘要，
+    并写明为什么没有失败的任务：运行已经跑完了，不能让退出码不再表示运行的结果。"""
+    try:
+        summary = fetch_summary(session.client, run["id"])
+    except SummaryUnavailable:
+        summary = minimal_summary(session.client, run)
+        session.out.emit(summary, render_summary(summary), note=summary_unavailable_note(run["id"]))
+    else:
+        session.out.emit(summary, render_summary(summary))
     return EXIT_BY_STATUS[summary["status"]]
 
 

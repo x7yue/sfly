@@ -6,8 +6,10 @@ import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { type OldControlPlane, startOldControlPlane } from "./support/old-control-plane.js";
 import { publishPackage } from "./support/package-archive.js";
 import { sfly } from "./support/sfly-cli.js";
+import { spawnSfly } from "./support/sfly-process.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
@@ -299,6 +301,89 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 		});
 	});
 
+	describe("连到比命令行旧的控制面（没有运行摘要接口）", () => {
+		let old: OldControlPlane;
+		beforeAll(async () => {
+			old = await startOldControlPlane(cp.httpUrl);
+		});
+		afterAll(async () => {
+			await old?.close();
+		});
+		const viaOld = (...args: string[]) =>
+			sfly([...args, "--server", old.url, "--nickname", "alice"]);
+		const NOTE = "提示：控制面没有运行摘要接口（它比这个命令行旧），摘要只有状态，没有失败的任务；";
+
+		it("run wait 一次已经失败的运行：摘要退回到只有状态，退出码仍然是运行的结果，不是「运行不存在」", async () => {
+			const runId = await trigger(await scenario("旧控制面失败", [echo("a")]));
+			await agent.fail(await assign(), "boom");
+
+			const text = await viaOld("run", "wait", runId);
+			expect(text.code, text.stderr).toBe(1);
+			expect(text.stdout.split("\n").slice(0, 3)).toEqual([
+				`运行 ${runId}：失败`,
+				"耗时：0ms",
+				`链接：${old.url}/runs/${runId}`,
+			]);
+			expect(text.stdout).toContain(
+				`${NOTE}用 sfly run show ${runId}、sfly run logs ${runId} --failed 看。`,
+			);
+			expect(text.stdout).not.toContain("失败的任务");
+			expect(text.stderr).not.toContain("没有 id 是");
+
+			const json = await viaOld("run", "wait", runId, "--json");
+			expect(json.code).toBe(1);
+			expect(JSON.parse(json.stdout)).toMatchObject({ id: runId, status: "failed", failed: [] });
+			expect(json.stderr).toContain(NOTE);
+			expect(old.summaryRequests).toContain(`/runs/${runId}/summary`);
+		});
+
+		it("run start --wait：等到运行结束，退出码按运行的结果给（失败 1），不是等完了才报错退出 2", async () => {
+			await scenario("旧控制面等待", [echo("a")]);
+			const waiting = spawnSfly([
+				"run",
+				"start",
+				"旧控制面等待",
+				"--wait",
+				"--server",
+				old.url,
+				"--nickname",
+				"alice",
+			]);
+			try {
+				await agent.fail(await assign(), "boom");
+				const result = await waiting.exited;
+				expect(result.code, result.stderr).toBe(1);
+				expect(result.stdout).toContain("：失败");
+				expect(result.stdout).toContain(NOTE);
+			} finally {
+				waiting.kill();
+			}
+		});
+
+		it("run show：状态和每次尝试照旧，少两段，写明为什么；--state 要这个接口，报旧控制面；运行不存在时仍然是运行不存在", async () => {
+			const runId = await trigger(await scenario("旧控制面查看", [echo("a")]));
+			await agent.fail(await assign(), "boom");
+
+			const show = await viaOld("run", "show", runId);
+			expect(show.code, show.stderr).toBe(0);
+			expect(show.stdout).toContain("失败或重试过的节点：");
+			expect(show.stdout).not.toContain("失败的动作");
+			expect(show.stdout).toContain(NOTE);
+
+			const state = await viaOld("run", "show", runId, "--state", "--json");
+			expect(state.code).toBe(2);
+			expect(JSON.parse(state.stderr).error).toMatchObject({
+				code: "summary_unavailable",
+				message:
+					"控制面没有运行摘要接口（它比这个命令行旧）：升级控制面，或用和控制面同版本的命令行",
+			});
+
+			const missing = await viaOld("run", "show", "00000000-0000-4000-8000-000000000000", "--json");
+			expect(missing.code).toBe(2);
+			expect(JSON.parse(missing.stderr).error.code).toBe("run_not_found");
+		});
+	});
+
 	describe("run actions", () => {
 		/** 一个任务：下单（5 个，1 个失败）、付款；失败的节点。 */
 		const actionsRun = async () => {
@@ -573,7 +658,7 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			]);
 			expect(lines.slice(at)).toEqual([
 				"失败的动作（1 个，最近结束的在前）：",
-				`  load#1  压测（耗时 400ms，${iso(T0 + 900)} 结束）`,
+				`  main:load（第 1 次尝试）  压测（耗时 400ms，${iso(T0 + 900)} 结束）`,
 				"    订单=1001",
 				"    原因：压测机掉线",
 				"",

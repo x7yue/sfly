@@ -1,11 +1,21 @@
 // 切入点 A：运行摘要 GET /runs/:id/summary（#423）。真实控制面 + 讲真实 gRPC 的假 Agent + 手动时钟 + 独立的
 // PostgreSQL，通过 HTTP 接口观察：成功、节点失败、重试后成功、取消、还在执行的运行，保密参数打码，日志尾部、失败的动作、
 // 有异常的关注项，数量上限。
+
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { type RunReport, runSummaryApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { echo as chainEcho, orchestration, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
-import { type AssignedTask, ErrorKind, FakeAgent } from "./support/fake-agent.js";
+import {
+	type AssignedTask,
+	ErrorKind,
+	FakeAgent,
+	LogLevel,
+	LogSource,
+} from "./support/fake-agent.js";
 import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
@@ -230,6 +240,40 @@ describe("运行摘要", () => {
 		expect(node(report, "b")).toMatchObject({ status: "cancelled", attempts: 0, error: null });
 	});
 
+	it("重试在排队时被取消：节点的状态和起止时间取同一行（没开始、结束是取消的时间），不是上一次尝试的时间", async () => {
+		// 只有 1 个槽位的 Agent：第二个运行的任务先排在槽位后面，第一个运行的重试只能接着排队。
+		const solo = await FakeAgent.connect(
+			cp.grpcUrl,
+			{ name: "agent-solo", slots: 1 },
+			{ clock: cp.clock },
+		);
+		try {
+			const onSolo = (nodes: Node[]) => ({ ...flow(nodes), default_agent: "agent-solo" });
+			const first = await start(onSolo([echo("a", { retries: 1 })]));
+			const attempt1 = await solo.nextAssign();
+			const second = await start(onSolo([echo("a")]));
+			await eventually(async () => expect((await api.node(second, "a")).status).toBe("queued"));
+			await solo.fail(attempt1, "第一次失败");
+			// 槽位给了先排队的第二个运行；第一个运行的重试排队。
+			expect((await solo.nextAssign()).runId).toBe(second);
+			await eventually(async () => expect((await api.node(first, "a")).status).toBe("queued"));
+			clock().advance(4_000);
+			await api.cancelOk(first);
+
+			const report = await summary(first);
+			expect(node(report, "a")).toMatchObject({
+				status: "cancelled",
+				attempts: 1,
+				started_at: null,
+				ended_at: iso(T0 + 4_000),
+				error: null,
+			});
+			expect(report.failures).toEqual([]);
+		} finally {
+			await solo.disconnect();
+		}
+	});
+
 	it("还在执行的运行：没有结束时间和耗时，没开始的节点是 pending，已经成功的节点有结果", async () => {
 		const runId = await start(flow([echo("a"), echo("b"), echo("c")]));
 		await agent.succeed(await agent.nextAssign());
@@ -252,6 +296,40 @@ describe("运行摘要", () => {
 			started_at: null,
 			ended_at: null,
 			error: null,
+		});
+	});
+
+	describe("日志读不到时的标记 missing", () => {
+		it("运行没过保留期、日志文件却不在了：lines 为空、missing 为 true；任务没写过日志时 missing 为 false", async () => {
+			const runId = await start(flow([echo("a"), echo("b", { always: true })]));
+			const a = await agent.nextAssign();
+			agent.logs(a, [
+				[1, "开始"],
+				[2, "出错前"],
+			]);
+			await logsWritten(a, 2);
+			await agent.fail(a, "boom");
+			const b = await agent.nextAssign();
+			await agent.fail(b, "没写过日志就失败");
+			const file = join(cp.dataDir, "logs", runId, `${a.taskId}.jsonl`);
+			await rm(file);
+
+			const report = await summary(runId);
+			const tail = (nodeId: string) => report.failed_tasks.find((t) => t.node_id === nodeId)?.logs;
+			expect(tail("a")).toEqual({ lines: [], earlier: false, expired: false, missing: true });
+			expect(tail("b")).toEqual({ lines: [], earlier: false, expired: false, missing: false });
+		});
+
+		it("日志文件在时 missing 为 false", async () => {
+			const runId = await start(flow([echo("a")]));
+			const a = await agent.nextAssign();
+			agent.logs(a, [[1, "有日志"]]);
+			await logsWritten(a, 1);
+			await agent.fail(a, "boom");
+			expect((await summary(runId)).failed_tasks[0]?.logs).toMatchObject({
+				expired: false,
+				missing: false,
+			});
 		});
 	});
 
@@ -298,6 +376,124 @@ describe("运行摘要", () => {
 			name: "登录 ******",
 			fields: { 口令: "******" },
 			reason: "认证失败：******",
+		});
+	});
+
+	describe("保密参数声明在后来才创建的子流程上", () => {
+		// 日志只在写入时按「当时」已知的保密参数打码；运行读取时按这次运行此刻的全部保密参数打码。
+		// 摘要里来自日志的内容（失败任务的日志尾部、关注项里日志类异常的说明）读取时也要再打一遍。
+		const LATER = "later-pw-3f9d2a71";
+
+		/** 主链 entry → spawn0 → gate → spawn1；子流程「前」里有 x，子流程「后」声明保密参数 pw（值由 spawn1 传入）。 */
+		const document = (x: Node) => {
+			const doc = orchestration(
+				[
+					[
+						{ id: "entry", kind: "entry", params: [] },
+						spawn("spawn0"),
+						chainEcho("gate"),
+						spawn("spawn1", { pw: LATER }),
+					],
+					[{ id: "sub0", kind: "subflow_entry", name: "前", params: [] }, x],
+					[
+						{
+							id: "sub1",
+							kind: "subflow_entry",
+							name: "后",
+							params: [{ name: "pw", type: "string", secret: true }],
+						},
+						chainEcho("y"),
+					],
+				],
+				[
+					["spawn0", "sub0"],
+					["spawn1", "sub1"],
+				],
+			);
+			return { ...doc, packages: { ...doc.packages, bench: "1.0.0" } };
+		};
+		/** 让保密参数的子流程创建出来：gate 成功，spawn1 触发子流程「后」。 */
+		const createLaterSubflow = async (runId: string, gate: AssignedTask) => {
+			await agent.succeed(gate);
+			await eventually(async () => expect((await api.run(runId)).chains).toHaveLength(3));
+		};
+		const assignsOf = async (n: number) => {
+			const found: Record<string, AssignedTask> = {};
+			for (let i = 0; i < n; i++) {
+				const task = await agent.nextAssign();
+				found[task.nodeId] = task;
+			}
+			return found;
+		};
+
+		it("失败的任务的日志尾部：子流程创建之前写下的行，摘要里也是掩码", async () => {
+			const runId = await start(document(chainEcho("x")));
+			const { x, gate } = await assignsOf(2);
+			agent.logs(x as AssignedTask, [[1, `连接口令 ${LATER}`]]);
+			await logsWritten(x as AssignedTask, 1);
+			await agent.fail(x as AssignedTask, "boom");
+			await createLaterSubflow(runId, gate as AssignedTask);
+
+			const res = await summaryRes(runId);
+			const body = await res.text();
+			expect(res.status).toBe(200);
+			expect(body).not.toContain(LATER);
+			const report = runSummaryApi.summary.response.parse(JSON.parse(body));
+			expect(report.failed_tasks.map((t) => t.node_id)).toEqual(["x"]);
+			expect(report.failed_tasks[0]?.logs?.lines.map((l) => l.text)).toEqual(["连接口令 ******"]);
+		});
+
+		it("重试之后成功的节点：失败的那次尝试的日志尾部，摘要里也是掩码", async () => {
+			const runId = await start(document(chainEcho("x", { retries: 1 })));
+			const { x, gate } = await assignsOf(2);
+			agent.logs(x as AssignedTask, [[1, `连接口令 ${LATER}`]]);
+			await logsWritten(x as AssignedTask, 1);
+			await agent.fail(x as AssignedTask, "第一次失败");
+			const retry = await agent.nextAssign();
+			expect(retry).toMatchObject({ nodeId: "x", attempt: 2 });
+			await agent.succeed(retry, { text: LATER });
+			await createLaterSubflow(runId, gate as AssignedTask);
+
+			const body = await (await summaryRes(runId)).text();
+			expect(body).not.toContain(LATER);
+			const report = runSummaryApi.summary.response.parse(JSON.parse(body));
+			expect(report.failed_tasks.map((t) => [t.node_id, t.attempt])).toEqual([["x", 1]]);
+			expect(report.failed_tasks[0]?.logs?.lines.map((l) => l.text)).toEqual(["连接口令 ******"]);
+		});
+
+		it("有异常的关注项：日志类异常的说明（最近一条 WARN / ERROR 的正文），摘要里也是掩码", async () => {
+			const bench: Node = {
+				id: "x",
+				kind: "package",
+				package: "bench",
+				node: "probe",
+				inputs: {},
+			};
+			const id = await api.orchestrationWith(document(bench));
+			await putFocusItemsOk(api, id, [{ node_id: "x", chart: "level" }]);
+			const runId = await api.triggerOk(id);
+			const { x, gate } = await assignsOf(2);
+			agent.logs(x as AssignedTask, [
+				{
+					seq: 1n,
+					timeUnixMs: BigInt(T0),
+					source: LogSource.STDOUT,
+					level: LogLevel.ERROR,
+					text: `认证失败：${LATER}`,
+				},
+			]);
+			await agent.sync();
+			await createLaterSubflow(runId, gate as AssignedTask);
+
+			const body = await (await summaryRes(runId)).text();
+			expect(body).not.toContain(LATER);
+			const report = runSummaryApi.summary.response.parse(JSON.parse(body));
+			expect(report.attention_items).toHaveLength(1);
+			expect(report.attention_items[0]?.anomaly).toMatchObject({
+				kind: "log",
+				level: "error",
+				message: "认证失败：******",
+			});
 		});
 	});
 

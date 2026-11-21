@@ -13753,6 +13753,16 @@
             "maxLength": 200,
             "description": "运行编号前缀或触发人（包含，不区分大小写）。"
           },
+          "triggered_by": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "只要这个触发人的运行：昵称整个相等（区分大小写）。`q` 会把昵称里的文字也当关键字，要精确找一个人的运行用它。"
+          },
+          "id_prefix": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F-]{1,36}$",
+            "description": "只要运行编号以它开头的运行（不分大小写，只能写十六进制数字和 `-`）。`q` 还会按触发人匹配，只想按编号找时用它。"
+          },
           "limit": {
             "default": 200,
             "type": "integer",
@@ -14080,6 +14090,16 @@
         ]
       },
       "notes": [
+        {
+          "part": "query",
+          "path": "id_prefix",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "triggered_by",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
         {
           "part": "query",
           "path": "q",
@@ -15059,12 +15079,16 @@
                         },
                         "expired": {
                           "type": "boolean"
+                        },
+                        "missing": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
                         "lines",
                         "earlier",
-                        "expired"
+                        "expired",
+                        "missing"
                       ]
                     },
                     {

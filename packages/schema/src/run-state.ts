@@ -32,6 +32,12 @@ export interface RunStateSourceNode {
 	status: RunStateNode["status"];
 	/** 真正的尝试（不含被跳过、没开始就被取消或停止的占位），按序号升序。 */
 	attempts: readonly RunStateSourceAttempt[];
+	/**
+	 * 最后一行任务是没开始就被取消或停止的占位（节点的第一次尝试，或重试在排队时）时，那一行的结束时间；不是占位时不给。
+	 * 节点的状态取最后一行，起止时间也要取同一行：这时 `started_at` 为空（没开始），`ended_at` 是取消或停止的时间，
+	 * 不能还是上一次真正执行过的尝试的时间（那会让读的人以为它是执行中被取消的）。被跳过的节点不算（没有时间）。
+	 */
+	placeholder?: { ended_at: string | null } | null;
 }
 
 export interface RunStateSourceChain {
@@ -88,23 +94,28 @@ export interface ProjectRunStateOptions {
 	limits?: RunStateLimits;
 }
 
-/** 错误信息里堆栈的开头：Python 的 `format_exc()` 写出的第一行。 */
-const TRACEBACK = "Traceback (most recent call last):";
+/**
+ * 错误信息里堆栈的开头：独占一行、顶格的 `Traceback (most recent call last):`（Python 的 `format_exc()` 写出的第一行），
+ * 或异常组（`asyncio.TaskGroup` 一类）的堆栈开头 `  + Exception Group Traceback (most recent call last):`。
+ */
+const STACK_START =
+	/^(?:Traceback \(most recent call last\):| {2}\+ Exception Group Traceback \(most recent call last\):)/m;
 
 /**
  * 把存下的错误信息拆成异常信息本身和堆栈。执行器的失败结果里它们是分开的字段，Agent 上报时拼成
- * 「异常信息 + 空行 + 堆栈」存下（agent/src/executor.rs），所以从第一个「空行 + `Traceback (most recent call last):`」
- * 处拆开：之前是异常信息，之后（含这一行）是堆栈。没有堆栈（配置错误、超时、Agent 掉线等控制面自己写的错误）时整段是异常信息，
- * `stack` 为空串。
+ * 「异常信息 + 空行 + 堆栈」存下（agent/src/executor.rs），所以从第一个堆栈开头的那一行（{@link STACK_START}）拆开：
+ * 之前是异常信息（去掉末尾的空白），之后（含这一行）是堆栈。没有堆栈（配置错误、超时、Agent 掉线等控制面自己写的错误）时整段是
+ * 异常信息，`stack` 为空串。
  *
- * 异常信息本身带着这个标记（例如它转述了子进程的堆栈）时，在那里就拆开了：之后的部分算进堆栈，不会因此多给出堆栈，
- * 只是异常信息短了一截，失败原因一行（第一行）不受影响。
+ * 执行器异常退出、没有写出结果时，Agent 写的是「执行器异常退出（状态），没有写出结果」加标准错误的尾部
+ * （agent/src/executor.rs）：标准错误里堆栈前面的行（例如一行警告）留在异常信息里，堆栈从它自己的那一行起算；
+ * 标准错误里没有堆栈（被信号杀掉、段错误）时，标准错误整段都在异常信息里。异常信息本身带着堆栈开头的那一行
+ * （例如它转述了子进程的堆栈）时，在那里就拆开了：之后的部分算进堆栈，失败原因一行（第一行）不受影响。
  */
 export function splitErrorText(text: string): { message: string; stack: string } {
-	if (text.startsWith(TRACEBACK)) return { message: "", stack: text };
-	const at = text.indexOf(`\n\n${TRACEBACK}`);
-	if (at < 0) return { message: text, stack: "" };
-	return { message: text.slice(0, at), stack: text.slice(at + 2) };
+	const found = STACK_START.exec(text);
+	if (!found) return { message: text.trimEnd(), stack: "" };
+	return { message: text.slice(0, found.index).trimEnd(), stack: text.slice(found.index) };
 }
 
 /** 截到最多 `limit` 个字符（码点）：超过时截成 `limit` 个，最后一个是「…」。 */
@@ -133,14 +144,15 @@ function nodeOf(source: RunStateSourceNode, limits: RunStateLimits): RunStateNod
 			location: stored?.location ?? null,
 		};
 	}
+	const closed = source.placeholder ?? null;
 	return {
 		node_id: source.node_id,
 		display_name: source.display_name,
 		kind: source.kind,
 		status: source.status,
 		attempts: source.attempts.length,
-		started_at: last?.started_at ?? null,
-		ended_at: last?.ended_at ?? null,
+		started_at: closed ? null : (last?.started_at ?? null),
+		ended_at: closed ? closed.ended_at : (last?.ended_at ?? null),
 		error,
 	};
 }

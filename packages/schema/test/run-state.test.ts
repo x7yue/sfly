@@ -89,6 +89,45 @@ describe("错误信息拆成异常信息和堆栈", () => {
 		expect(splitErrorText(text).message).toBe("RuntimeError: 子进程失败");
 	});
 
+	it("异常组（asyncio.TaskGroup 一类）的堆栈以「+ Exception Group Traceback」开头，同样拆开", () => {
+		const group = [
+			"  + Exception Group Traceback (most recent call last):",
+			'  |   File "/task/pkg/run.py", line 12, in main',
+			"  |     async with asyncio.TaskGroup() as tg:",
+			"  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)",
+			"  +-+---------------- 1 ----------------",
+			"    | Traceback (most recent call last):",
+			'    |   File "/task/pkg/run.py", line 9, in fetch',
+			"    | ValueError: 余额不足",
+			"    +------------------------------------",
+		].join("\n");
+		const message = "ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)";
+		expect(splitErrorText(`${message}\n\n${group}`)).toEqual({ message, stack: group });
+	});
+
+	it("堆栈前面还有别的行（执行器异常退出时的标准错误）：堆栈从它自己的那一行开始，前面的行留在异常信息里", () => {
+		const head = "执行器异常退出（exit status: 1），没有写出结果";
+		expect(splitErrorText(`${head}\n\nUserWarning: 磁盘快满了\n${stack}`)).toEqual({
+			message: `${head}\n\nUserWarning: 磁盘快满了`,
+			stack,
+		});
+	});
+
+	it("没有堆栈、末尾有多余的空行（标准错误是空的）：异常信息去掉末尾的空白", () => {
+		expect(splitErrorText("执行器异常退出（signal: 9 (SIGKILL)），没有写出结果\n\n")).toEqual({
+			message: "执行器异常退出（signal: 9 (SIGKILL)），没有写出结果",
+			stack: "",
+		});
+		expect(splitErrorText("  \n")).toEqual({ message: "", stack: "" });
+	});
+
+	it("不是在行首的「Traceback」不拆（引用别处的文字）", () => {
+		expect(splitErrorText("见 Traceback (most recent call last): 之后的内容").stack).toBe("");
+		expect(splitErrorText("错误\n  Traceback (most recent call last): 缩进的不是堆栈").stack).toBe(
+			"",
+		);
+	});
+
 	it("不是空行隔开的「Traceback」不拆（引用别处的文字）", () => {
 		expect(splitErrorText("见 Traceback (most recent call last): 之后的内容")).toEqual({
 			message: "见 Traceback (most recent call last): 之后的内容",

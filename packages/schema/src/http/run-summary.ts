@@ -64,7 +64,10 @@ export const RunStateNode = z.object({
 	status: NodeStatus,
 	/** 尝试次数，口径和运行视图相同（不含被跳过、没开始就被取消或停止的占位）。 */
 	attempts: z.number().int().nonnegative(),
-	/** 最近一次尝试开始执行、结束的时间（控制面时间）；还没开始、还没结束时为 null。 */
+	/**
+	 * 最近一次尝试开始执行、结束的时间（控制面时间）；还没开始、还没结束时为 null。没开始就被取消或停止的节点（含重试在排队时被
+	 * 取消或停止的）：`started_at` 为 null，`ended_at` 是取消或停止的时间，不是上一次尝试的时间。
+	 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
 	/** 只在 `status` 是 `failed` 时有：最近一次尝试的错误。被取消、被停止、被跳过的节点没有；超时的节点是 `failed`、`kind` 是 `timeout`。 */
@@ -155,6 +158,11 @@ export const RunReportLogTail = z.object({
 	earlier: z.boolean(),
 	/** 运行已超过保留期，日志已被清理（此时 `lines` 为空）。 */
 	expired: z.boolean(),
+	/**
+	 * 日志读不到：控制面记着这个任务写过日志，日志文件里却读不出行（文件不在了、被移走了，运行还没过保留期）。
+	 * 此时 `lines` 为空，但不是这个任务没有日志（没写过日志的任务 `lines` 也为空，`missing` 为 false）。
+	 */
+	missing: z.boolean(),
 });
 
 /**

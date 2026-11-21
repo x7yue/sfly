@@ -2780,6 +2780,1344 @@
 					}
 				]
 			}
+		},
+		{
+			"name": "错误信息里保密参数的值：读取时已经打码，投影原样给出",
+			"comment": "保密参数的值在读取运行时按这次运行的保密参数统一打码（含只传给子流程的）；投影不再打码，也不会把打码的内容改回去：headline 和 message 里都是「******」。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "failed",
+					"ended_at": "2026-01-01T00:00:09.000Z",
+					"cancel": null
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:09.000Z",
+										"error": {
+											"kind": "node_error",
+											"message": "PermissionError: ****** 无效\n\nTraceback (most recent call last):\n  File \"/task/pkg/checks.py\", line 42, in verify\n    raise ValueError(\"余额不对\")\nValueError: 余额不对"
+										}
+									}
+								]
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "failed",
+				"result_so_far": "failed",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": "2026-01-01T00:00:09.000Z",
+				"cancel": null,
+				"failures": ["a"],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:09.000Z",
+								"error": {
+									"kind": "node_error",
+									"headline": "PermissionError: ****** 无效",
+									"message": "PermissionError: ****** 无效",
+									"message_truncated": false,
+									"location": null
+								}
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "重试在排队时被取消：状态和起止时间取同一行",
+			"comment": "节点第 1 次尝试失败、重试排队时运行被取消：节点状态取最后一行（被取消的排队），起止时间也取那一行：started_at 为空（还没开始就被取消），ended_at 是取消的时间，不是第 1 次尝试的时间；error 为空，attempts 仍是真正的尝试数 1。没有任何尝试就被取消的节点同样：started_at 为空，ended_at 是取消的时间。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "running",
+					"ended_at": null,
+					"cancel": {
+						"requested_by": "小红",
+						"requested_via": "claude-code",
+						"requested_at": "2026-01-01T00:00:20.000Z",
+						"forced_at": null
+					}
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:01.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:02.000Z",
+										"ended_at": "2026-01-01T00:00:05.000Z",
+										"error": {
+											"kind": "node_error",
+											"message": "ValueError: 网络抖动\n\nTraceback (most recent call last):\n  File \"/task/pkg/checks.py\", line 42, in verify\n    raise ValueError(\"余额不对\")\nValueError: 余额不对"
+										}
+									}
+								],
+								"placeholder": {
+									"ended_at": "2026-01-01T00:00:21.000Z"
+								}
+							},
+							{
+								"node_id": "b",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": [],
+								"placeholder": {
+									"ended_at": "2026-01-01T00:00:21.000Z"
+								}
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "running",
+				"result_so_far": "cancelled",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": null,
+				"cancel": {
+					"requested_by": "小红",
+					"requested_via": "claude-code",
+					"requested_at": "2026-01-01T00:00:20.000Z",
+					"forced_at": null
+				},
+				"failures": [],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:01.000Z",
+								"error": null
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": 1,
+								"started_at": null,
+								"ended_at": "2026-01-01T00:00:21.000Z",
+								"error": null
+							},
+							{
+								"node_id": "b",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": 0,
+								"started_at": null,
+								"ended_at": "2026-01-01T00:00:21.000Z",
+								"error": null
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "子流程被停止时还在排队的重试：状态和起止时间取同一行",
+			"comment": "被停止的子流程里，节点第 1 次尝试失败、重试还在排队时子流程被停止：节点是 stopped，started_at 为空，ended_at 是停止的时间；没有 error，不算失败。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "running",
+					"ended_at": null,
+					"cancel": null
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:01.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "x",
+								"display_name": null,
+								"kind": "async",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:02.000Z",
+										"ended_at": "2026-01-01T00:00:03.000Z",
+										"error": null
+									}
+								]
+							}
+						]
+					},
+					{
+						"id": "c2",
+						"chain_id": "sub",
+						"name": "监控",
+						"depth": 1,
+						"parent_chain_instance_id": "c1",
+						"async_node_id": "x",
+						"status": "success",
+						"started_at": "2026-01-01T00:00:03.000Z",
+						"ended_at": "2026-01-01T00:00:30.000Z",
+						"nodes": [
+							{
+								"node_id": "probe",
+								"display_name": null,
+								"kind": "package",
+								"status": "stopped",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:04.000Z",
+										"ended_at": "2026-01-01T00:00:07.000Z",
+										"error": {
+											"kind": "node_error",
+											"message": "ValueError: 网络抖动\n\nTraceback (most recent call last):\n  File \"/task/pkg/checks.py\", line 42, in verify\n    raise ValueError(\"余额不对\")\nValueError: 余额不对"
+										}
+									}
+								],
+								"placeholder": {
+									"ended_at": "2026-01-01T00:00:30.000Z"
+								}
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "running",
+				"result_so_far": "success",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": null,
+				"cancel": null,
+				"failures": [],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:01.000Z",
+								"error": null
+							},
+							{
+								"node_id": "x",
+								"display_name": null,
+								"kind": "async",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:02.000Z",
+								"ended_at": "2026-01-01T00:00:03.000Z",
+								"error": null
+							}
+						]
+					},
+					{
+						"id": "c2",
+						"chain_id": "sub",
+						"name": "监控",
+						"depth": 1,
+						"parent_chain_instance_id": "c1",
+						"async_node_id": "x",
+						"status": "success",
+						"started_at": "2026-01-01T00:00:03.000Z",
+						"ended_at": "2026-01-01T00:00:30.000Z",
+						"nodes": [
+							{
+								"node_id": "probe",
+								"display_name": null,
+								"kind": "package",
+								"status": "stopped",
+								"attempts": 1,
+								"started_at": null,
+								"ended_at": "2026-01-01T00:00:30.000Z",
+								"error": null
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "取消和失败同时存在：到此刻为止的结果是 cancelled",
+			"comment": "已请求取消优先：a 先失败，之后运行被取消、b 没开始就被取消。status 还是 running，result_so_far 是 cancelled，failures 里仍有 a。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "running",
+					"ended_at": null,
+					"cancel": {
+						"requested_by": "小红",
+						"requested_via": "claude-code",
+						"requested_at": "2026-01-01T00:00:20.000Z",
+						"forced_at": null
+					}
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:01.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:02.000Z",
+										"ended_at": "2026-01-01T00:00:06.000Z",
+										"error": {
+											"kind": "node_error",
+											"message": "ValueError: 网络抖动\n\nTraceback (most recent call last):\n  File \"/task/pkg/checks.py\", line 42, in verify\n    raise ValueError(\"余额不对\")\nValueError: 余额不对"
+										}
+									}
+								]
+							},
+							{
+								"node_id": "b",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": [],
+								"placeholder": {
+									"ended_at": "2026-01-01T00:00:21.000Z"
+								}
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "running",
+				"result_so_far": "cancelled",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": null,
+				"cancel": {
+					"requested_by": "小红",
+					"requested_via": "claude-code",
+					"requested_at": "2026-01-01T00:00:20.000Z",
+					"forced_at": null
+				},
+				"failures": ["a"],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:01.000Z",
+								"error": null
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:02.000Z",
+								"ended_at": "2026-01-01T00:00:06.000Z",
+								"error": {
+									"kind": "node_error",
+									"headline": "ValueError: 网络抖动",
+									"message": "ValueError: 网络抖动",
+									"message_truncated": false,
+									"location": null
+								}
+							},
+							{
+								"node_id": "b",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": 0,
+								"started_at": null,
+								"ended_at": "2026-01-01T00:00:21.000Z",
+								"error": null
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "强制取消：forced_at 在 cancel 里",
+			"comment": "清理期间再次取消（强制取消）：cancel.forced_at 是强制取消的时间；执行中被强制终止的节点是 cancelled，有 started_at 和 ended_at，没有 error。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "running",
+					"ended_at": null,
+					"cancel": {
+						"requested_by": "小红",
+						"requested_via": "claude-code",
+						"requested_at": "2026-01-01T00:00:20.000Z",
+						"forced_at": "2026-01-01T00:00:30.000Z"
+					}
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:01.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:02.000Z",
+										"ended_at": "2026-01-01T00:00:31.000Z",
+										"error": null
+									}
+								]
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "running",
+				"result_so_far": "cancelled",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": null,
+				"cancel": {
+					"requested_by": "小红",
+					"requested_via": "claude-code",
+					"requested_at": "2026-01-01T00:00:20.000Z",
+					"forced_at": "2026-01-01T00:00:30.000Z"
+				},
+				"failures": [],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:01.000Z",
+								"error": null
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:02.000Z",
+								"ended_at": "2026-01-01T00:00:31.000Z",
+								"error": null
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "执行中被取消的节点：有 started_at，没有 error；运行已结束",
+			"comment": "运行已结束、被取消：status 和 result_so_far 都是 cancelled。执行中被取消的节点（a）有开始时间、没有错误；没开始就被取消的节点（b）started_at 为空。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "cancelled",
+					"ended_at": "2026-01-01T00:00:25.000Z",
+					"cancel": {
+						"requested_by": "小红",
+						"requested_via": "claude-code",
+						"requested_at": "2026-01-01T00:00:20.000Z",
+						"forced_at": null
+					}
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "cancelled",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:25.000Z",
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:01.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:02.000Z",
+										"ended_at": "2026-01-01T00:00:25.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "b",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": [],
+								"placeholder": {
+									"ended_at": "2026-01-01T00:00:25.000Z"
+								}
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "cancelled",
+				"result_so_far": "cancelled",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": "2026-01-01T00:00:25.000Z",
+				"cancel": {
+					"requested_by": "小红",
+					"requested_via": "claude-code",
+					"requested_at": "2026-01-01T00:00:20.000Z",
+					"forced_at": null
+				},
+				"failures": [],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "cancelled",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:25.000Z",
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:01.000Z",
+								"error": null
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:02.000Z",
+								"ended_at": "2026-01-01T00:00:25.000Z",
+								"error": null
+							},
+							{
+								"node_id": "b",
+								"display_name": null,
+								"kind": "package",
+								"status": "cancelled",
+								"attempts": 0,
+								"started_at": null,
+								"ended_at": "2026-01-01T00:00:25.000Z",
+								"error": null
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "引用者所在链上排在它后面的节点是 pending",
+			"comment": "同一条链上，排在引用者前面的节点已经结束，引用者自己是 dispatched，排在后面的节点是 pending（没有尝试、没有起止时间）。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "running",
+					"ended_at": null,
+					"cancel": null
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:01.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "success",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:02.000Z",
+										"ended_at": "2026-01-01T00:00:05.000Z",
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "ref",
+								"display_name": null,
+								"kind": "package",
+								"status": "dispatched",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": null,
+										"ended_at": null,
+										"error": null
+									}
+								]
+							},
+							{
+								"node_id": "c",
+								"display_name": null,
+								"kind": "package",
+								"status": "pending",
+								"attempts": []
+							},
+							{
+								"node_id": "d",
+								"display_name": null,
+								"kind": "package",
+								"status": "pending",
+								"attempts": []
+							}
+						]
+					}
+				]
+			},
+			"options": {
+				"self": {
+					"chain_instance_id": "c1",
+					"node_id": "ref"
+				}
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "running",
+				"result_so_far": "success",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": null,
+				"cancel": null,
+				"failures": [],
+				"self": {
+					"chain_instance_id": "c1",
+					"node_id": "ref"
+				},
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "entry",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "running",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": null,
+						"nodes": [
+							{
+								"node_id": "entry",
+								"display_name": null,
+								"kind": "entry",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:01.000Z",
+								"error": null
+							},
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "success",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:02.000Z",
+								"ended_at": "2026-01-01T00:00:05.000Z",
+								"error": null
+							},
+							{
+								"node_id": "ref",
+								"display_name": null,
+								"kind": "package",
+								"status": "dispatched",
+								"attempts": 1,
+								"started_at": null,
+								"ended_at": null,
+								"error": null
+							},
+							{
+								"node_id": "c",
+								"display_name": null,
+								"kind": "package",
+								"status": "pending",
+								"attempts": 0,
+								"started_at": null,
+								"ended_at": null,
+								"error": null
+							},
+							{
+								"node_id": "d",
+								"display_name": null,
+								"kind": "package",
+								"status": "pending",
+								"attempts": 0,
+								"started_at": null,
+								"ended_at": null,
+								"error": null
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "异常组的堆栈：以「+ Exception Group Traceback」开头，拆进堆栈",
+			"comment": "asyncio.TaskGroup 一类抛出的异常组，堆栈的第一行不是 Traceback 而是「  + Exception Group Traceback (most recent call last):」：从那一行起都是堆栈，message 只是异常组自己的一行。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "failed",
+					"ended_at": "2026-01-01T00:00:09.000Z",
+					"cancel": null
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:09.000Z",
+										"error": {
+											"kind": "node_error",
+											"message": "ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)\n\n  + Exception Group Traceback (most recent call last):\n  |   File \"/task/pkg/run.py\", line 12, in main\n  |     async with asyncio.TaskGroup() as tg:\n  |   File \"/usr/lib/python3.13/asyncio/taskgroups.py\", line 71, in __aexit__\n  |     raise me from None\n  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)\n  +-+---------------- 1 ----------------\n    | Traceback (most recent call last):\n    |   File \"/task/pkg/run.py\", line 9, in fetch\n    |     raise ValueError(\"余额不足\")\n    | ValueError: 余额不足\n    +------------------------------------"
+										}
+									}
+								]
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "failed",
+				"result_so_far": "failed",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": "2026-01-01T00:00:09.000Z",
+				"cancel": null,
+				"failures": ["a"],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:09.000Z",
+								"error": {
+									"kind": "node_error",
+									"headline": "ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)",
+									"message": "ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)",
+									"message_truncated": false,
+									"location": null
+								}
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "执行器异常退出，标准错误里堆栈前面还有别的行：那些行留在 message 里",
+			"comment": "Agent 在执行器异常退出、没有写出结果时写「执行器异常退出（状态），没有写出结果」加标准错误的尾部。堆栈从它自己的那一行起算；它前面的行（这里是一行警告）留在 message 里；headline 是第一行。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "failed",
+					"ended_at": "2026-01-01T00:00:09.000Z",
+					"cancel": null
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:09.000Z",
+										"error": {
+											"kind": "node_error",
+											"message": "执行器异常退出（exit status: 1），没有写出结果\n\nUserWarning: 磁盘快满了\nTraceback (most recent call last):\n  File \"/task/pkg/checks.py\", line 42, in verify\n    raise ValueError(\"余额不对\")\nValueError: 余额不对"
+										}
+									}
+								]
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "failed",
+				"result_so_far": "failed",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": "2026-01-01T00:00:09.000Z",
+				"cancel": null,
+				"failures": ["a"],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:09.000Z",
+								"error": {
+									"kind": "node_error",
+									"headline": "执行器异常退出（exit status: 1），没有写出结果",
+									"message": "执行器异常退出（exit status: 1），没有写出结果\n\nUserWarning: 磁盘快满了",
+									"message_truncated": false,
+									"location": null
+								}
+							}
+						]
+					}
+				]
+			}
+		},
+		{
+			"name": "执行器异常退出，标准错误是空的：message 末尾没有多余的空行",
+			"comment": "标准错误是空的（例如被信号杀掉）时存下的错误信息末尾有两个换行；message 去掉末尾的空白。",
+			"source": {
+				"run": {
+					"id": "11111111-1111-4111-8111-111111111111",
+					"scenario": {
+						"id": "22222222-2222-4222-8222-222222222222",
+						"name": "巡检",
+						"version": 3
+					},
+					"triggered_by": "小明",
+					"triggered_via": null,
+					"started_at": "2026-01-01T00:00:00.000Z",
+					"status": "failed",
+					"ended_at": "2026-01-01T00:00:09.000Z",
+					"cancel": null
+				},
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": [
+									{
+										"attempt": 1,
+										"started_at": "2026-01-01T00:00:01.000Z",
+										"ended_at": "2026-01-01T00:00:09.000Z",
+										"error": {
+											"kind": "node_error",
+											"message": "执行器异常退出（signal: 9 (SIGKILL)），没有写出结果\n\n"
+										}
+									}
+								]
+							}
+						]
+					}
+				]
+			},
+			"expected": {
+				"run_id": "11111111-1111-4111-8111-111111111111",
+				"scenario": {
+					"id": "22222222-2222-4222-8222-222222222222",
+					"name": "巡检",
+					"version": 3
+				},
+				"status": "failed",
+				"result_so_far": "failed",
+				"triggered_by": "小明",
+				"triggered_via": null,
+				"started_at": "2026-01-01T00:00:00.000Z",
+				"ended_at": "2026-01-01T00:00:09.000Z",
+				"cancel": null,
+				"failures": ["a"],
+				"self": null,
+				"truncated": false,
+				"chains": [
+					{
+						"id": "c1",
+						"chain_id": "a",
+						"name": null,
+						"depth": 0,
+						"parent_chain_instance_id": null,
+						"async_node_id": null,
+						"status": "failed",
+						"started_at": "2026-01-01T00:00:00.000Z",
+						"ended_at": "2026-01-01T00:00:09.000Z",
+						"nodes": [
+							{
+								"node_id": "a",
+								"display_name": null,
+								"kind": "package",
+								"status": "failed",
+								"attempts": 1,
+								"started_at": "2026-01-01T00:00:01.000Z",
+								"ended_at": "2026-01-01T00:00:09.000Z",
+								"error": {
+									"kind": "node_error",
+									"headline": "执行器异常退出（signal: 9 (SIGKILL)），没有写出结果",
+									"message": "执行器异常退出（signal: 9 (SIGKILL)），没有写出结果",
+									"message_truncated": false,
+									"location": null
+								}
+							}
+						]
+					}
+				]
+			}
 		}
 	]
 }

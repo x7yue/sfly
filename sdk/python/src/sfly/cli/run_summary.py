@@ -8,6 +8,11 @@
 
 `sfly run start --wait` 和 `sfly run wait` 在 stdout 输出它，`sfly run show` 在末尾带上新增的两段；
 时间都是控制面时间。
+
+命令行连到比它旧的控制面（没有摘要接口）时：`run start --wait`、`run wait` 退回到只有状态的最小摘要
+（`minimal_summary`，失败的任务用 `sfly run show`、`sfly run logs --failed` 看），
+退出码仍然按运行的结果给；
+`run show` 少那两段，`run show --state` 报错（它要这个接口）。
 """
 
 from __future__ import annotations
@@ -17,15 +22,17 @@ from typing import Any
 
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.error_headline import split_error
+from sfly.cli.errors import CliError
 from sfly.cli.run_view import (
     NodeRef,
     chain_name,
+    duration_ms,
+    fetch_run,
     format_duration,
     format_log_line,
     format_number,
     line_time,
     node_type_label,
-    run_not_found,
     run_status_label,
     with_display_name,
 )
@@ -39,14 +46,27 @@ def run_url(client: Client, run_id: str) -> str:
     return f"{client.server}/runs/{segment(run_id)}"
 
 
+class SummaryUnavailable(CliError):
+    """控制面没有运行摘要接口：它比这个命令行旧。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "summary_unavailable",
+            "控制面没有运行摘要接口（它比这个命令行旧）：升级控制面，或用和控制面同版本的命令行",
+        )
+
+
 def fetch_report(client: Client, run_id: str) -> dict[str, Any]:
-    """控制面的运行摘要（`RunReport`，原样）；运行不存在时抛 `run_not_found`。"""
+    """控制面的运行摘要（`RunReport`，原样）。运行不存在时抛 `run_not_found`；运行存在、
+    控制面却没有这个接口（比命令行旧）时抛 `SummaryUnavailable`。"""
     try:
         report: dict[str, Any] = client.get(f"/runs/{segment(run_id)}/summary")
     except ApiError as error:
         if error.status != 404:
             raise
-        raise run_not_found(run_id) from None
+        # 404 有两种：运行不存在，或者控制面不认这个路径。再读一次运行，分辨是哪一种。
+        fetch_run(client, run_id)
+        raise SummaryUnavailable() from None
     return report
 
 
@@ -55,19 +75,27 @@ def fetch_summary(client: Client, run_id: str) -> dict[str, Any]:
     return summary_of(client, fetch_report(client, run_id))
 
 
-def summary_of(client: Client, report: Mapping[str, Any]) -> dict[str, Any]:
-    """把摘要接口的返回（`RunReport`）换成命令行摘要的样子。"""
-    run_id: str = report["run_id"]
-    cancel = report["cancel"]
-    elapsed = report["duration_ms"]
+def _base_summary(
+    client: Client,
+    *,
+    run_id: str,
+    status: str,
+    scenario_id: str,
+    scenario_version: int,
+    started_at: str,
+    ended_at: str | None,
+    elapsed_ms: int | None,
+    cancel: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """摘要里不依赖失败内容的那部分键（状态、耗时、链接、谁取消的）；失败的部分是空的。"""
     return {
         "id": run_id,
-        "status": report["status"],
-        "scenario_id": report["scenario"]["id"],
-        "scenario_version": report["scenario"]["version"],
-        "started_at": report["started_at"],
-        "ended_at": report["ended_at"],
-        "duration_seconds": None if elapsed is None else elapsed / 1000,
+        "status": status,
+        "scenario_id": scenario_id,
+        "scenario_version": scenario_version,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "duration_seconds": None if elapsed_ms is None else elapsed_ms / 1000,
         "url": run_url(client, run_id),
         "cancelled_by": (
             {
@@ -75,14 +103,68 @@ def summary_of(client: Client, report: Mapping[str, Any]) -> dict[str, Any]:
                 "at": cancel["requested_at"],
                 "forced": cancel["forced_at"] is not None,
             }
-            if cancel and report["status"] == "cancelled"
+            if cancel and status == "cancelled"
             else None
+        ),
+        "failed": [],
+        "failed_total": 0,
+        "failed_actions": [],
+        "attention_items": [],
+    }
+
+
+def summary_of(client: Client, report: Mapping[str, Any]) -> dict[str, Any]:
+    """把摘要接口的返回（`RunReport`）换成命令行摘要的样子。"""
+    run_id: str = report["run_id"]
+    labels = chain_labels(report)
+    return {
+        **_base_summary(
+            client,
+            run_id=run_id,
+            status=report["status"],
+            scenario_id=report["scenario"]["id"],
+            scenario_version=report["scenario"]["version"],
+            started_at=report["started_at"],
+            ended_at=report["ended_at"],
+            elapsed_ms=report["duration_ms"],
+            cancel=report["cancel"],
         ),
         "failed": [_failed_task(run_id, task) for task in report["failed_tasks"]],
         "failed_total": report["failed_tasks_total"],
-        "failed_actions": [failed_action_entry(action) for action in report["failed_actions"]],
+        "failed_actions": [
+            failed_action_entry(action, labels) for action in report["failed_actions"]
+        ],
         "attention_items": [attention_entry(item) for item in report["attention_items"]],
     }
+
+
+def minimal_summary(client: Client, run: Mapping[str, Any]) -> dict[str, Any]:
+    """控制面没有摘要接口时的摘要：只有运行视图里有的——状态、耗时、链接、谁取消的，没有失败的任务。"""
+    return _base_summary(
+        client,
+        run_id=run["id"],
+        status=run["status"],
+        scenario_id=run["orchestration_id"],
+        scenario_version=run["orchestration_version"],
+        started_at=run["started_at"],
+        ended_at=run["ended_at"],
+        elapsed_ms=duration_ms(run["started_at"], run["ended_at"]),
+        cancel=run["cancel"],
+    )
+
+
+def summary_unavailable_note(run_id: str) -> str:
+    """最小摘要后面的一行提示：为什么没有失败的任务，怎么看它们。"""
+    return (
+        "提示：控制面没有运行摘要接口（它比这个命令行旧），摘要只有状态，没有失败的任务；"
+        f"用 sfly run show {run_id}、sfly run logs {run_id} --failed 看。"
+        "升级控制面，或用和控制面同版本的命令行"
+    )
+
+
+def chain_labels(report: Mapping[str, Any]) -> dict[str, str]:
+    """摘要里每个链实例 id → 链在命令行里的名字（主链 `main`，子流程是它的名称）。"""
+    return {chain["id"]: chain_name(chain["name"]) for chain in report["chains"]}
 
 
 def _failed_task(run_id: str, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -112,6 +194,11 @@ def _failed_task(run_id: str, task: Mapping[str, Any]) -> dict[str, Any]:
         note = None
         if logs["expired"]:
             note = "日志已过保留期，已被清理"
+        elif logs.get("missing"):
+            note = (
+                "没有读到日志：控制面记着这个任务写过日志，"
+                "日志文件里却读不出来（可能被移走或清理了）"
+            )
         elif logs["earlier"]:
             note = f"前面还有更早的日志，用 {more} 查看"
         entry["logs"] = [
@@ -127,8 +214,11 @@ def _failed_task(run_id: str, task: Mapping[str, Any]) -> dict[str, Any]:
     return entry
 
 
-def failed_action_entry(action: Mapping[str, Any]) -> dict[str, Any]:
+def failed_action_entry(action: Mapping[str, Any], labels: Mapping[str, str]) -> dict[str, Any]:
+    """`--json` 里的一个失败的动作。`labels` 是链实例 id → 链名（{@link chain_labels}）：
+    `chain` 和 `node` 合起来就是 `--node` 要的 `链:节点`。"""
     return {
+        "chain": labels.get(action["chain_instance_id"], action["chain_instance_id"]),
         "node": action["node_id"],
         **({"display_name": action["display_name"]} if action["display_name"] else {}),
         "chain_instance": action["chain_instance_id"],
@@ -223,7 +313,7 @@ def _render_failed(item: Mapping[str, Any]) -> list[str]:
         headline, rest = split_error(error["message"])
         lines.append(f"    错误：{error['kind']}：{headline}")
         if error.get("location"):
-            lines.append(f"    位置：{error['location']}")
+            lines.append(f"    出错位置：{error['location']}")
         lines.extend(f"      {line}".rstrip() for line in rest)
     else:
         lines.append("    错误：没有错误信息")
@@ -239,12 +329,11 @@ def _render_failed(item: Mapping[str, Any]) -> list[str]:
 
 
 def _render_action(action: Mapping[str, Any]) -> list[str]:
-    attempt = action["attempt"]
-    # 动作是哪个节点的哪一次尝试：命令行里的写法 `链:节点#尝试`，链名用链实例 id 对不上人读的名字，
-    # 所以只写节点和尝试。
-    place = with_display_name(f"{action['node']}#{attempt}", action.get("display_name"))
+    # 动作是哪个节点的哪一次尝试：节点写成 `链:节点`，和 `--node` 要的写法一样，可以直接拿去用
+    # （`sfly run actions <运行> --node main:b`）；第几次尝试写在后面。
+    node = with_display_name(f"{action['chain']}:{action['node']}", action.get("display_name"))
     lines = [
-        f"  {place}  {action['name']}"
+        f"  {node}（第 {action['attempt']} 次尝试）  {action['name']}"
         f"（耗时 {format_duration(action['duration_ms'])}，{action['ended_at']} 结束）"
     ]
     fields = action["fields"]

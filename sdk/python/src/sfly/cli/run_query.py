@@ -25,10 +25,13 @@ from sfly.cli.output import (
 )
 from sfly.cli.run_results import show_outputs
 from sfly.cli.run_summary import (
+    SummaryUnavailable,
     attention_entry,
+    chain_labels,
     failed_action_entry,
     fetch_report,
     render_extra_sections,
+    summary_unavailable_note,
 )
 from sfly.cli.run_view import (
     RUN_HELP,
@@ -196,8 +199,15 @@ def _show(session: Session, args: argparse.Namespace) -> None:
         return
     run = fetch_run(client, run_id)
     view = describe(run, _scenario_name(session, run["orchestration_id"]))
-    report = fetch_report(client, run_id)
-    view["failed_actions"] = [failed_action_entry(a) for a in report["failed_actions"]]
+    try:
+        report = fetch_report(client, run_id)
+    except SummaryUnavailable:
+        # 控制面比命令行旧、没有摘要接口：照旧显示状态和每次尝试，
+        # 少「失败的动作」「有异常的关注项」两段。
+        session.out.emit(view, render(view), note=summary_unavailable_note(run_id))
+        return
+    labels = chain_labels(report)
+    view["failed_actions"] = [failed_action_entry(a, labels) for a in report["failed_actions"]]
     view["attention_items"] = [attention_entry(i) for i in report["attention_items"]]
     text = "\n".join([render(view), *render_extra_sections(view)])
     session.out.emit(view, text)

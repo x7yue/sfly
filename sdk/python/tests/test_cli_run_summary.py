@@ -4,9 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from sfly.cli.client import Client
+import pytest
+
+from sfly.cli.client import ApiError, Client
+from sfly.cli.errors import CliError
 from sfly.cli.run_query import run_state
-from sfly.cli.run_summary import render_summary, summary_of
+from sfly.cli.run_summary import (
+    SummaryUnavailable,
+    fetch_report,
+    minimal_summary,
+    render_summary,
+    summary_of,
+    summary_unavailable_note,
+)
 
 ASSERTION = (
     "sfly_std.assert_.AssertionFailed: 1 条断言中 1 条不通过：\n"
@@ -87,7 +97,10 @@ def report(**overrides: Any) -> dict[str, Any]:
         "failures": ["a"],
         "self": None,
         "truncated": False,
-        "chains": [],
+        "chains": [
+            {"id": "c-1", "chain_id": "entry", "name": None},
+            {"id": "c-2", "chain_id": "sub", "name": "回放"},
+        ],
         "duration_ms": 3000,
         "failed_tasks": [
             {
@@ -119,6 +132,7 @@ def report(**overrides: Any) -> dict[str, Any]:
                     ],
                     "earlier": True,
                     "expired": False,
+                    "missing": False,
                 },
             }
         ],
@@ -244,7 +258,7 @@ def test_the_text_gains_only_the_two_new_sections_after_the_failed_tasks() -> No
     assert with_sections[len(bare) :] == [
         "",
         "失败的动作（1 个，最近结束的在前）：",
-        "  a#1「下单」  扣库存（耗时 1.2s，2026-01-01T00:00:02.250Z 结束）",
+        "  main:a「下单」（第 1 次尝试）  扣库存（耗时 1.2s，2026-01-01T00:00:02.250Z 结束）",
         "    订单=1002，数量=3",
         "    原因：库存不足",
         "      剩余 0",
@@ -270,7 +284,8 @@ def test_the_error_location_is_written_under_the_reason_when_there_is_one() -> N
     text = render_summary(summary_of(CLIENT, report(failed_tasks=[task])))
 
     assert (
-        "    错误：node_error：ValueError: 库存不足\n    位置：shop.orders.place 第 42 行\n" in text
+        "    错误：node_error：ValueError: 库存不足\n    出错位置：shop.orders.place 第 42 行\n"
+        in text
     )
     without = summary_of(CLIENT, report())["failed"][0]["error"]
     assert "location" not in without
@@ -323,3 +338,136 @@ def test_the_run_state_is_the_part_of_the_report_the_schema_names() -> None:
     ]
     assert "failed_tasks" not in state
     assert "duration_ms" not in state
+
+
+def test_logs_the_control_plane_could_not_read_are_said_so_not_written_as_no_logs() -> None:
+    task = report()["failed_tasks"][0]
+    task["logs"] = {"lines": [], "earlier": False, "expired": False, "missing": True}
+    summary = summary_of(CLIENT, report(failed_tasks=[task]))
+    text = render_summary(summary)
+
+    assert summary["failed"][0]["logs"] == []
+    assert summary["failed"][0]["logs_note"] == (
+        "没有读到日志：控制面记着这个任务写过日志，日志文件里却读不出来（可能被移走或清理了）"
+    )
+    assert "    （没有读到日志：控制面记着这个任务写过日志，日志文件里却读不出来" in text
+    assert "    没有日志" not in text
+
+
+def test_a_task_that_wrote_no_logs_is_still_written_as_no_logs() -> None:
+    task = report()["failed_tasks"][0]
+    task["logs"] = {"lines": [], "earlier": False, "expired": False, "missing": False}
+    text = render_summary(summary_of(CLIENT, report(failed_tasks=[task])))
+
+    assert "    没有日志" in text
+    assert "没有读到日志" not in text
+
+
+def test_a_failed_action_is_written_with_the_chain_so_the_node_can_be_passed_to_node() -> None:
+    action = report()["failed_actions"][0]
+    other = {**action, "chain_instance_id": "c-2", "node_id": "probe", "display_name": None}
+    summary = summary_of(CLIENT, report(failed_actions=[action, other]))
+    lines = render_summary(summary).split("\n")
+
+    assert [(a["chain"], a["node"], a["attempt"]) for a in summary["failed_actions"]] == [
+        ("main", "a", 1),
+        ("回放", "probe", 1),
+    ]
+    # `链:节点` 和 `--node` 要的写法一样：sfly run actions <运行> --node main:a
+    assert (
+        "  main:a「下单」（第 1 次尝试）  扣库存（耗时 1.2s，2026-01-01T00:00:02.250Z 结束）"
+        in lines
+    )
+    assert (
+        "  回放:probe（第 1 次尝试）  扣库存（耗时 1.2s，2026-01-01T00:00:02.250Z 结束）" in lines
+    )
+
+
+class OldControlPlane:
+    """比命令行旧的控制面：没有 `GET /runs/:id/summary`（404），运行本身读得到（或读不到）。"""
+
+    def __init__(self, run: dict[str, Any] | None) -> None:
+        self.run = run
+        self.server = "http://cp"
+        self.requests: list[str] = []
+
+    def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
+        self.requests.append(path)
+        if path.endswith("/summary") or self.run is None:
+            raise ApiError(404, "not_found", f"route GET {path} not found")
+        return self.run
+
+
+RUN_VIEW: dict[str, Any] = {
+    "id": "run-1",
+    "status": "failed",
+    "orchestration_id": "s-1",
+    "orchestration_version": 3,
+    "started_at": "2026-01-01T00:00:00.000Z",
+    "ended_at": "2026-01-01T00:00:03.000Z",
+    "cancel": None,
+}
+
+
+def test_a_404_for_the_summary_of_an_existing_run_says_the_control_plane_is_too_old() -> None:
+    old = OldControlPlane(RUN_VIEW)
+
+    with pytest.raises(SummaryUnavailable) as caught:
+        fetch_report(old, "run-1")  # type: ignore[arg-type]
+
+    error = caught.value
+    assert error.code == "summary_unavailable"
+    assert error.message == (
+        "控制面没有运行摘要接口（它比这个命令行旧）：升级控制面，或用和控制面同版本的命令行"
+    )
+    assert "不存在" not in error.message
+    assert old.requests == ["/runs/run-1/summary", "/runs/run-1"]
+
+
+def test_a_404_for_a_run_that_does_not_exist_is_still_run_not_found() -> None:
+    with pytest.raises(CliError) as caught:
+        fetch_report(OldControlPlane(None), "run-9")  # type: ignore[arg-type]
+
+    assert caught.value.code == "run_not_found"
+    assert not isinstance(caught.value, SummaryUnavailable)
+
+
+def test_the_minimal_summary_has_the_status_the_time_and_who_cancelled_but_no_failed_tasks() -> (
+    None
+):
+    cancel = {
+        "requested_by": "bob",
+        "requested_via": None,
+        "requested_at": "2026-01-01T00:00:02.000Z",
+        "forced_at": None,
+    }
+    cancelled = minimal_summary(CLIENT, {**RUN_VIEW, "status": "cancelled", "cancel": cancel})
+
+    assert minimal_summary(CLIENT, RUN_VIEW) == {
+        "id": "run-1",
+        "status": "failed",
+        "scenario_id": "s-1",
+        "scenario_version": 3,
+        "started_at": "2026-01-01T00:00:00.000Z",
+        "ended_at": "2026-01-01T00:00:03.000Z",
+        "duration_seconds": 3.0,
+        "url": "http://cp/runs/run-1",
+        "cancelled_by": None,
+        "failed": [],
+        "failed_total": 0,
+        "failed_actions": [],
+        "attention_items": [],
+    }
+    assert cancelled["cancelled_by"] == {
+        "nickname": "bob",
+        "at": "2026-01-01T00:00:02.000Z",
+        "forced": False,
+    }
+    assert render_summary(minimal_summary(CLIENT, RUN_VIEW)).split("\n") == [
+        "运行 run-1：失败",
+        "耗时：3.0s",
+        "链接：http://cp/runs/run-1",
+    ]
+    note = summary_unavailable_note("run-1")
+    assert "sfly run show run-1" in note and "sfly run logs run-1 --failed" in note
+    assert "比这个命令行旧" in note

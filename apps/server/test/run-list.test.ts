@@ -371,8 +371,50 @@ describe("跨场景的运行列表", () => {
 		}
 	});
 
+	it("按触发人精确筛（triggered_by）、只按编号前缀筛（id_prefix）：q 把昵称里的文字也当关键字，这两个不会", async () => {
+		const checkout = await api.orchestrationWith(orchestration([[entry, echo("a")]]), "结账回归");
+		const ok = await runToEnd(checkout, "Alice");
+		const failed = await runToEnd(checkout, "bob", (t) => agent.fail(t));
+		const other = await runToEnd(checkout, "alice.w");
+		// 昵称恰好就是另一个运行的编号前缀。
+		const prefix = failed.slice(0, 8);
+		const lookalike = await runToEnd(checkout, prefix);
+
+		// 触发人：昵称整个相等，区分大小写；`alice` 不是 `Alice`，也不是 `alice.w`。
+		expect((await list("?triggered_by=Alice")).runs.map((r) => r.id)).toEqual([ok]);
+		expect((await list("?triggered_by=alice.w")).runs.map((r) => r.id)).toEqual([other]);
+		expect((await list("?triggered_by=alice")).runs).toEqual([]);
+		// 同一个人的运行从新到旧，limit=1 就是他最近的一次。
+		const second = await runToEnd(checkout, "Alice");
+		expect((await list("?triggered_by=Alice&limit=1")).runs.map((r) => r.id)).toEqual([second]);
+
+		// 编号前缀：只看编号，不看昵称；不分大小写。
+		expect((await list(`?id_prefix=${prefix}`)).runs.map((r) => r.id)).toEqual([failed]);
+		expect((await list(`?id_prefix=${prefix.toUpperCase()}`)).runs.map((r) => r.id)).toEqual([
+			failed,
+		]);
+		expect((await list(`?id_prefix=${failed}`)).runs.map((r) => r.id)).toEqual([failed]);
+		expect((await list(`?q=${prefix}`)).runs.map((r) => r.id).sort()).toEqual(
+			[failed, lookalike].sort(),
+		);
+		expect((await list(`?triggered_by=${prefix}`)).runs.map((r) => r.id)).toEqual([lookalike]);
+
+		// 和别的筛选、计数：计数也只算筛选之后的运行。
+		const mine = await list(`?triggered_by=bob&orchestration_id=${checkout}`);
+		expect(mine.runs.map((r) => r.id)).toEqual([failed]);
+		expect(mine.counts).toEqual({ running: 0, success: 0, failed: 1, cancelled: 0 });
+		// 空参数等于没给。
+		expect((await list("?triggered_by=&id_prefix=")).runs).toHaveLength(5);
+	});
+
 	it("查询参数不符合契约时返回 400", async () => {
-		for (const query of ["?status=done", "?orchestration_id=nope", "?limit=0"]) {
+		for (const query of [
+			"?status=done",
+			"?orchestration_id=nope",
+			"?limit=0",
+			"?id_prefix=xyz",
+			"?id_prefix=%25",
+		]) {
 			const res = await api.get(`/runs${query}`);
 			expect(res.status, query).toBe(400);
 			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(

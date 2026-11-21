@@ -73,6 +73,7 @@ export function runStateSource(read: RunReadFull): RunStateSource {
 				display_name: node.display_name ?? null,
 				kind: node.kind,
 				status: node.status,
+				placeholder: node.closedWhileQueued && { ended_at: iso(node.closedWhileQueued.endedAt) },
 				attempts: node.attempts.map((attempt) => ({
 					attempt: attempt.attempt,
 					started_at: iso(attempt.startedAt),
@@ -140,7 +141,7 @@ async function taskLogTails(
 	// 清理之后文件已经不在；判断用读取时的运行行，不再另查。
 	if (read.run.purgedAt !== null) {
 		for (const { taskId } of attempts)
-			tails.set(taskId, { lines: [], earlier: false, expired: true });
+			tails.set(taskId, { lines: [], earlier: false, expired: true, missing: false });
 		return tails;
 	}
 	const infos = await deps.logs.describeRun(read.run.id);
@@ -154,17 +155,22 @@ async function taskLogTails(
 					until: info.bytes,
 				})
 			: undefined;
+		// 日志文件里的行只在写入时按「当时」已知的保密参数打码；读取时再按这次运行此刻的全部保密参数打一遍
+		// （和错误信息、失败的动作同一个口径）。
+		const lines = (page?.lines ?? []).map(({ seq, time, agent_time, source, level, text }) => ({
+			seq,
+			time,
+			agent_time,
+			source,
+			level,
+			text: read.maskText(text),
+		}));
 		tails.set(taskId, {
-			lines: (page?.lines ?? []).map(({ seq, time, agent_time, source, level, text }) => ({
-				seq,
-				time,
-				agent_time,
-				source,
-				level,
-				text,
-			})),
+			lines,
 			earlier: page !== undefined && page.start > 0,
 			expired: false,
+			// 库里记着写过行，文件里却读不出行：文件不在了、被移走了，不是这个任务没有日志。
+			missing: info !== undefined && info.seq > 0 && lines.length === 0,
 		});
 	}
 	return tails;
@@ -257,7 +263,20 @@ async function attentionItemsOf(
 	return focus.items.flatMap(
 		({ anomaly, position, node_id, display_name, chart, title, unit, source, latest }) =>
 			anomaly
-				? [{ position, node_id, display_name, chart, title, unit, source, latest, anomaly }]
+				? [
+						{
+							position,
+							node_id,
+							display_name,
+							chart,
+							title,
+							unit,
+							source,
+							latest,
+							// 日志类异常的说明是写入时打码的最近一条 WARN / ERROR 的正文：读取时再打一遍。
+							anomaly: { ...anomaly, message: read.maskText(anomaly.message) },
+						},
+					]
 				: [],
 	);
 }

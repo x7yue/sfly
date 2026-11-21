@@ -1872,6 +1872,10 @@ export interface RunListQuery {
 	orchestration_id?: string;
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q?: string;
+	/** 只要这个触发人的运行：昵称整个相等（区分大小写）。`q` 会把昵称里的文字也当关键字，要精确找一个人的运行用它。 */
+	triggered_by?: string;
+	/** 只要运行编号以它开头的运行（不分大小写，只能写十六进制数字和 `-`）。`q` 还会按触发人匹配，只想按编号找时用它。 */
+	id_prefix?: string;
 	/** 最多返回多少个运行（默认 200，最多 500），按开始时间从新到旧。 */
 	limit?: number;
 }
@@ -2216,6 +2220,11 @@ export interface RunReportLogTail {
 	earlier: boolean;
 	/** 运行已超过保留期，日志已被清理（此时 `lines` 为空）。 */
 	expired: boolean;
+	/**
+	 * 日志读不到：控制面记着这个任务写过日志，日志文件里却读不出行（文件不在了、被移走了，运行还没过保留期）。
+	 * 此时 `lines` 为空，但不是这个任务没有日志（没写过日志的任务 `lines` 也为空，`missing` 为 false）。
+	 */
+	missing: boolean;
 }
 
 /** 一个链实例：主链，或由异步任务节点触发的子流程实例。 */
@@ -2278,7 +2287,10 @@ export interface RunStateNode {
 	status: NodeStatus;
 	/** 尝试次数，口径和运行视图相同（不含被跳过、没开始就被取消或停止的占位）。 */
 	attempts: number;
-	/** 最近一次尝试开始执行、结束的时间（控制面时间）；还没开始、还没结束时为 null。 */
+	/**
+	 * 最近一次尝试开始执行、结束的时间（控制面时间）；还没开始、还没结束时为 null。没开始就被取消或停止的节点（含重试在排队时被
+	 * 取消或停止的）：`started_at` 为 null，`ended_at` 是取消或停止的时间，不是上一次尝试的时间。
+	 */
 	started_at: Timestamp | null;
 	ended_at: Timestamp | null;
 	/** 只在 `status` 是 `failed` 时有：最近一次尝试的错误。被取消、被停止、被跳过的节点没有；超时的节点是 `failed`、`kind` 是 `timeout`。 */
