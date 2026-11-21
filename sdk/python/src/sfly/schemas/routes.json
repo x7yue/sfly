@@ -2798,18 +2798,6 @@
                           }
                         ]
                       },
-                      "wake_at": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "format": "date-time",
-                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
                       "progress": {
                         "anyOf": [
                           {
@@ -2843,7 +2831,6 @@
                       "attempt",
                       "agent",
                       "started_at",
-                      "wake_at",
                       "progress"
                     ]
                   }
@@ -2940,11 +2927,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -5950,11 +5944,6 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 9007199254740991
-                },
-                "wait_ms": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
                 }
               },
               "required": [
@@ -5964,8 +5953,7 @@
                 "attempts",
                 "retries",
                 "duration_ms",
-                "queue_ms",
-                "wait_ms"
+                "queue_ms"
               ]
             },
             "description": "开始过的节点（链实例 × 节点），按任务创建顺序。时长单位毫秒，运行中的尝试算到现在。"
@@ -6212,11 +6200,11 @@
                               "entry",
                               "subflow_entry",
                               "async",
-                              "timer",
-                              "sleep",
                               "stop_subflow",
                               "package",
-                              "feishu_notify"
+                              "feishu_notify",
+                              "timer",
+                              "sleep"
                             ]
                           }
                         },
@@ -6973,111 +6961,6 @@
                             },
                             "kind": {
                               "type": "string",
-                              "const": "timer"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "at": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "tz": {
-                              "default": "Asia/Shanghai",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "at",
-                            "tz"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
-                              "const": "sleep"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "duration": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "duration"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
                               "const": "stop_subflow"
                             },
                             "always": {
@@ -7191,7 +7074,9 @@
                         "kind": {
                           "type": "string",
                           "enum": [
-                            "feishu_notify"
+                            "feishu_notify",
+                            "timer",
+                            "sleep"
                           ]
                         },
                         "position": {
@@ -7319,85 +7204,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           }
@@ -7706,114 +7519,6 @@
                         },
                         "kind": {
                           "type": "string",
-                          "const": "timer"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "at": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "tz": {
-                          "default": "Asia/Shanghai",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "at"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string",
-                          "maxLength": 2000
-                        },
-                        "display_name": {
-                          "type": "string",
-                          "maxLength": 40,
-                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "const": "sleep"
-                        },
-                        "always": {
-                          "default": false,
-                          "type": "boolean"
-                        },
-                        "duration": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "kind",
-                        "duration"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "position": {
-                          "type": "object",
-                          "properties": {
-                            "x": {
-                              "type": "number"
-                            },
-                            "y": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "x",
-                            "y"
-                          ],
-                          "additionalProperties": false
-                        },
-                        "note": {
-                          "type": "string",
-                          "maxLength": 2000
-                        },
-                        "display_name": {
-                          "type": "string",
-                          "maxLength": 40,
-                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
-                        },
-                        "kind": {
-                          "type": "string",
                           "const": "stop_subflow"
                         },
                         "always": {
@@ -8015,78 +7720,10 @@
                 }
               },
               "sticky_notes": {
+                "description": "已移除的字段（便签，ADR 0028）：只为兼容旧客户端和升级前导出的文件保留，新写的文档不要带它。读到的文档里没有它；保存时收到空数组会丢掉，有内容的被拒绝。",
+                "maxItems": 0,
                 "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string",
-                      "maxLength": 40,
-                      "pattern": "^[^\\r\\n]*(?![\\s\\S])"
-                    },
-                    "text": {
-                      "type": "string",
-                      "maxLength": 2000,
-                      "pattern": "^(?=[\\s\\S]*[^\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
+                "items": {}
               }
             },
             "required": [
@@ -8392,111 +8029,6 @@
                             },
                             "kind": {
                               "type": "string",
-                              "const": "timer"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "at": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "tz": {
-                              "default": "Asia/Shanghai",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "at",
-                            "tz"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
-                              "const": "sleep"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "duration": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "duration"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
                               "const": "stop_subflow"
                             },
                             "always": {
@@ -8610,7 +8142,9 @@
                         "kind": {
                           "type": "string",
                           "enum": [
-                            "feishu_notify"
+                            "feishu_notify",
+                            "timer",
+                            "sleep"
                           ]
                         },
                         "position": {
@@ -8738,85 +8272,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           },
@@ -8861,21 +8323,6 @@
         ]
       },
       "notes": [
-        {
-          "part": "body",
-          "path": "document.sticky_notes[].text",
-          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
-        },
-        {
-          "part": "body",
-          "path": "document.sticky_notes[].title",
-          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
-        },
-        {
-          "part": "body",
-          "path": "document.sticky_notes",
-          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验"
-        },
         {
           "part": "body",
           "path": "document.annotations[].note",
@@ -9299,111 +8746,6 @@
                             },
                             "kind": {
                               "type": "string",
-                              "const": "timer"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "at": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "tz": {
-                              "default": "Asia/Shanghai",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "at",
-                            "tz"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
-                              "const": "sleep"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "duration": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "duration"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
                               "const": "stop_subflow"
                             },
                             "always": {
@@ -9517,7 +8859,9 @@
                         "kind": {
                           "type": "string",
                           "enum": [
-                            "feishu_notify"
+                            "feishu_notify",
+                            "timer",
+                            "sleep"
                           ]
                         },
                         "position": {
@@ -9645,85 +8989,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           }
@@ -10059,111 +9331,6 @@
                             },
                             "kind": {
                               "type": "string",
-                              "const": "timer"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "at": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "tz": {
-                              "default": "Asia/Shanghai",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "at",
-                            "tz"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
-                              "const": "sleep"
-                            },
-                            "always": {
-                              "default": false,
-                              "type": "boolean"
-                            },
-                            "duration": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "required": [
-                            "id",
-                            "kind",
-                            "always",
-                            "duration"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "position": {
-                              "type": "object",
-                              "properties": {
-                                "x": {
-                                  "type": "number"
-                                },
-                                "y": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "x",
-                                "y"
-                              ],
-                              "additionalProperties": false
-                            },
-                            "note": {
-                              "type": "string"
-                            },
-                            "display_name": {
-                              "type": "string"
-                            },
-                            "kind": {
-                              "type": "string",
                               "const": "stop_subflow"
                             },
                             "always": {
@@ -10277,7 +9444,9 @@
                         "kind": {
                           "type": "string",
                           "enum": [
-                            "feishu_notify"
+                            "feishu_notify",
+                            "timer",
+                            "sleep"
                           ]
                         },
                         "position": {
@@ -10405,85 +9574,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           },
@@ -13938,18 +13035,6 @@
                           }
                         ]
                       },
-                      "wake_at": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "format": "date-time",
-                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
                       "progress": {
                         "anyOf": [
                           {
@@ -13983,7 +13068,6 @@
                       "attempt",
                       "agent",
                       "started_at",
-                      "wake_at",
                       "progress"
                     ]
                   }
@@ -15212,11 +14296,11 @@
                           "entry",
                           "subflow_entry",
                           "async",
-                          "timer",
-                          "sleep",
                           "stop_subflow",
                           "package",
-                          "feishu_notify"
+                          "feishu_notify",
+                          "timer",
+                          "sleep"
                         ]
                       },
                       "status": {
@@ -15264,11 +14348,18 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "location": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
                               "kind",
-                              "message"
+                              "message",
+                              "location"
                             ]
                           },
                           {
@@ -15347,11 +14438,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -15442,18 +14540,6 @@
                                     "measured_at",
                                     "exceeds_threshold"
                                   ]
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "wake_at": {
-                              "anyOf": [
-                                {
-                                  "type": "string",
-                                  "format": "date-time",
-                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                                 },
                                 {
                                   "type": "null"
@@ -15553,7 +14639,6 @@
                             "ended_at",
                             "start_clock_offset",
                             "end_clock_offset",
-                            "wake_at",
                             "progress",
                             "current_action"
                           ]
@@ -15888,11 +14973,11 @@
                           "entry",
                           "subflow_entry",
                           "async",
-                          "timer",
-                          "sleep",
                           "stop_subflow",
                           "package",
-                          "feishu_notify"
+                          "feishu_notify",
+                          "timer",
+                          "sleep"
                         ]
                       },
                       "status": {
@@ -15940,11 +15025,18 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "location": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
                               "kind",
-                              "message"
+                              "message",
+                              "location"
                             ]
                           },
                           {
@@ -16023,11 +15115,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -16118,18 +15217,6 @@
                                     "measured_at",
                                     "exceeds_threshold"
                                   ]
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "wake_at": {
-                              "anyOf": [
-                                {
-                                  "type": "string",
-                                  "format": "date-time",
-                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                                 },
                                 {
                                   "type": "null"
@@ -16229,7 +15316,6 @@
                             "ended_at",
                             "start_clock_offset",
                             "end_clock_offset",
-                            "wake_at",
                             "progress",
                             "current_action"
                           ]
@@ -16564,11 +15650,11 @@
                           "entry",
                           "subflow_entry",
                           "async",
-                          "timer",
-                          "sleep",
                           "stop_subflow",
                           "package",
-                          "feishu_notify"
+                          "feishu_notify",
+                          "timer",
+                          "sleep"
                         ]
                       },
                       "status": {
@@ -16616,11 +15702,18 @@
                               },
                               "message": {
                                 "type": "string"
+                              },
+                              "location": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
                               "kind",
-                              "message"
+                              "message",
+                              "location"
                             ]
                           },
                           {
@@ -16699,11 +15792,18 @@
                                     },
                                     "message": {
                                       "type": "string"
+                                    },
+                                    "location": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "kind",
-                                    "message"
+                                    "message",
+                                    "location"
                                   ]
                                 },
                                 {
@@ -16794,18 +15894,6 @@
                                     "measured_at",
                                     "exceeds_threshold"
                                   ]
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "wake_at": {
-                              "anyOf": [
-                                {
-                                  "type": "string",
-                                  "format": "date-time",
-                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                                 },
                                 {
                                   "type": "null"
@@ -16905,7 +15993,6 @@
                             "ended_at",
                             "start_clock_offset",
                             "end_clock_offset",
-                            "wake_at",
                             "progress",
                             "current_action"
                           ]
@@ -17238,11 +16325,11 @@
                             "entry",
                             "subflow_entry",
                             "async",
-                            "timer",
-                            "sleep",
                             "stop_subflow",
                             "package",
-                            "feishu_notify"
+                            "feishu_notify",
+                            "timer",
+                            "sleep"
                           ]
                         },
                         "status": {
@@ -17290,11 +16377,18 @@
                                 },
                                 "message": {
                                   "type": "string"
+                                },
+                                "location": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
                                 }
                               },
                               "required": [
                                 "kind",
-                                "message"
+                                "message",
+                                "location"
                               ]
                             },
                             {
@@ -17373,11 +16467,18 @@
                                       },
                                       "message": {
                                         "type": "string"
+                                      },
+                                      "location": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
                                       }
                                     },
                                     "required": [
                                       "kind",
-                                      "message"
+                                      "message",
+                                      "location"
                                     ]
                                   },
                                   {
@@ -17468,18 +16569,6 @@
                                       "measured_at",
                                       "exceeds_threshold"
                                     ]
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
-                              "wake_at": {
-                                "anyOf": [
-                                  {
-                                    "type": "string",
-                                    "format": "date-time",
-                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                                   },
                                   {
                                     "type": "null"
@@ -17579,7 +16668,6 @@
                               "ended_at",
                               "start_clock_offset",
                               "end_clock_offset",
-                              "wake_at",
                               "progress",
                               "current_action"
                             ]

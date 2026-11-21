@@ -1136,7 +1136,7 @@ test.describe("编排画布", () => {
 				"sfly.addNode.recent",
 				JSON.stringify([
 					"package:demo-checks/http_check",
-					"builtin:sleep",
+					"builtin:stop_subflow",
 					"package:demo-checks/ping",
 				]),
 			),
@@ -1358,34 +1358,6 @@ test.describe("编排画布：注释框", () => {
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-annotations-zoomed-out.png");
 	});
-});
-
-test("编排画布：便签（选中一张，浮出工具条）", async ({ page, controlPlane, connectAgent }) => {
-	await twoAgents(connectAgent);
-	await publishPackage(controlPlane);
-	const id = await createScenario(controlPlane, "带便签的场景", {
-		...annotated([{ id: "annotation_1", title: "拉取快照", nodes: ["entry", "fetch"] }]),
-		sticky_notes: [
-			{
-				id: "sticky_1",
-				title: "跑之前确认",
-				text: "- Agent 都在线\n- 升级包已放到共享目录",
-				position: { x: 0, y: -260 },
-			},
-			{
-				id: "sticky_2",
-				text: "已知问题：重启偶尔超过 5 分钟",
-				color: "pink",
-				position: { x: 320, y: -260 },
-			},
-		],
-	});
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-	await page.locator('[data-sticky-note="sticky_1"] > div').last().click();
-	await expect(page.getByRole("toolbar", { name: "便签的工具条" })).toBeVisible();
-	await page.mouse.move(700, 760);
-	await expect(page).toHaveScreenshot("editor-sticky-notes.png");
 });
 
 test.describe("编排画布：注释框的成员", () => {

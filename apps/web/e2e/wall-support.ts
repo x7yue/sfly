@@ -45,25 +45,13 @@ export function mainChain(
 	};
 }
 
-/** entry → nap（Sleep 10 分钟）→ ping：等待节点不占 Agent 槽位，进行中的节点那一行写唤醒时间。 */
-const withSleep = (agent: string) => ({
-	default_agent: agent,
-	nodes: [
-		{ id: "entry", kind: "entry" },
-		{ id: "nap", kind: "sleep", duration: "10m" },
-		ping("ping"),
-	],
-	edges: [
-		{ from: "entry", to: "nap", kind: "chain" },
-		{ from: "nap", to: "ping", kind: "chain" },
-	],
-	packages: { "demo-checks": "1.2.0" },
-});
+/** entry → ping，Agent 是离线的 agent-mac：ping 一直排队，运行在进行中但没有执行中的节点。 */
+const queuedOnOffline = () => mainChain("agent-mac", ["ping"]);
 
 /**
  * 固定的一组数据（手动时钟从 2026-01-01T00:00Z，即浏览器里的 08:00 开始；节点包带主指标）：
  * - 巡检成功一次（耗时 2.3s）；一分钟后订单链路的 ping 第 1 次失败、重试的第 2 次上报了指标后超时失败（耗时 4m 12s）；
- * - 一小时后定时巡检停在 Sleep 节点 nap 上，撮合压测开始运行：子流程的 verify 失败，主链的 probe 执行中并上报主指标；
+ * - 一小时后夜间巡检的 ping 在离线的 agent-mac 上排队，撮合压测开始运行：子流程的 verify 失败，主链的 probe 执行中并上报主指标；
  * - 草稿从没运行过；agent-mac 离线。
  * 返回各运行与场景的 ID，和 agent-linux 以及它上面执行中的 probe 任务。
  */
@@ -89,7 +77,7 @@ export async function seedWall({
 		"订单链路",
 		mainChain("agent-linux", ["submit"], [{ retries: 1 }]),
 	);
-	const timed = await createScenario(controlPlane, "定时巡检", withSleep("agent-linux"));
+	const nightly = await createScenario(controlPlane, "夜间巡检", queuedOnOffline());
 	const stress = await createScenario(controlPlane, "撮合压测", withSubflow("agent-linux"));
 	await createScenario(controlPlane, "草稿");
 
@@ -113,7 +101,7 @@ export async function seedWall({
 	);
 
 	clock.advance(3_600_000);
-	const sleeping = await triggerRun(controlPlane, timed);
+	const queued = await triggerRun(controlPlane, nightly);
 	clock.advance(5_000);
 	const running = await triggerRun(controlPlane, stress);
 	const tasks = [await linux.nextAssign(), await linux.nextAssign()];
@@ -126,7 +114,7 @@ export async function seedWall({
 	// 不超过任务租约（30 秒），probe 保持执行中。
 	clock.advance(15_000);
 	await page.clock.setFixedTime(clock.now());
-	return { linux, probe, running, sleeping, failed, succeeded, stress, orders, inspect };
+	return { linux, probe, running, queued, failed, succeeded, stress, orders, inspect };
 }
 
 /**

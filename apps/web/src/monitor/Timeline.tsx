@@ -85,7 +85,7 @@ const SEGMENT_LABEL: Record<SegmentKind, string> = {
 	cancel: "已取消",
 	stop: "已停止",
 	queue: "排队等待 Agent",
-	wait: "等待节点",
+	wait: "等待子流程结束",
 };
 
 const LEGEND: SegmentKind[] = ["ok", "run", "fail", "wait", "queue", "cancel", "stop"];

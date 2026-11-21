@@ -161,6 +161,7 @@ describe("触发前检查：入口参数的值接到类型不符的输入", () =
 				expect(node.error).toEqual({
 					kind: "config_error",
 					message: "输入 n 应为 integer，实际是 null",
+					location: null,
 				});
 			});
 		});

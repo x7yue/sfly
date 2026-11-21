@@ -3,15 +3,19 @@
 import { orchestrationsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { echo } from "./support/chains.js";
+import { FakeAgent } from "./support/fake-agent.js";
+import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const baseDocument = {
+	default_agent: "agent-a",
 	nodes: [
 		{ id: "entry", kind: "entry", params: [] },
-		{ id: "pause", kind: "sleep", duration: "5m", display_name: "等灰度" },
+		{ ...echo("pause"), display_name: "等灰度" },
 		{ id: "spawn", kind: "async" },
 		{ id: "sub", kind: "subflow_entry", name: "report", params: [] },
-		{ id: "wait", kind: "sleep", duration: "5m" },
+		echo("wait"),
 	],
 	edges: [
 		{ from: "entry", to: "pause", kind: "chain" },
@@ -19,7 +23,7 @@ const baseDocument = {
 		{ from: "spawn", to: "sub", kind: "dispatch" },
 		{ from: "sub", to: "wait", kind: "chain" },
 	],
-	packages: {},
+	packages: { stub: "1.0.0" },
 };
 
 const annotations = [
@@ -63,6 +67,9 @@ describe("注释框的警告", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
+		// 触发前的预检要求节点包已发布、Agent 已注册（不必在线）。
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		await (await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" })).disconnect();
 	}, 120_000);
 	afterAll(async () => {
 		await cp?.close();
@@ -103,7 +110,7 @@ describe("注释框的警告", () => {
 	});
 
 	it("同时有真正阻断触发的问题时，触发被拒绝，原因里只有那一个，没有注释框的警告", async () => {
-		const stray = { id: "stray", kind: "sleep", duration: "5m" };
+		const stray = echo("stray");
 		const { id } = await save({
 			...baseDocument,
 			nodes: [...baseDocument.nodes, stray],

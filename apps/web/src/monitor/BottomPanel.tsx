@@ -21,7 +21,14 @@ import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { ACTION, attemptLabel, LOG_LEVEL_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import {
+	ACTION,
+	attemptLabel,
+	ERROR_LOCATION_LABEL,
+	LOG_LEVEL_LABEL,
+	MESSAGE,
+	TERM,
+} from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -734,12 +741,6 @@ function AttemptsTab({
 									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.start)}）</span>
 								)}
 							</dd>
-							{a.wake_at && (
-								<>
-									<dt>唤醒</dt>
-									<dd className="m-0">{formatClock(a.wake_at)}</dd>
-								</>
-							)}
 							{n.kind === "stop_subflow" && typeof a.inputs?.subflow === "string" && (
 								<>
 									<dt>停止</dt>
@@ -763,6 +764,14 @@ function AttemptsTab({
 									</Badge>
 								</div>
 								<p className="m-0 mt-1 text-danger-fg">{error.message || "（没有错误信息）"}</p>
+								{a.error.location && (
+									<p
+										data-testid="attempt-error-location"
+										className="m-0 mt-1 font-mono text-xs text-fg-2"
+									>
+										{ERROR_LOCATION_LABEL}：{a.error.location}
+									</p>
+								)}
 								{error.stack && (
 									<pre className="m-0 mt-1.5 max-h-80 overflow-auto rounded-md bg-sunk p-2 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-2">
 										{error.stack}

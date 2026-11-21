@@ -11,6 +11,7 @@ import {
 	type PackageMetadata,
 	type RunNotificationTrigger,
 	StoredOrchestrationDocument,
+	withoutRemovedFields,
 } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
@@ -37,8 +38,9 @@ const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode
  * 场景文档（jsonb）：读出时按读到的场景文档 schema 解析，和保存时一样补上默认值。场景版本不可修改，
  * 升级前保存的版本没有后来新增的字段（例如注释框 `annotations`）；所有读文档的地方（接口返回的最新版本、
  * 历史版本、运行绑定的版本，复制、恢复，引擎）都经过这里，拿到的文档和 StoredOrchestrationDocument 的类型一致。
- * 版本里已移除种类的节点（ADR 0028）认得、原样带着配置，不报错；按更早的规则保存、现在已经解析不了的文档
- * 原样返回（历史版本照旧能看）。
+ * 版本里已移除种类的节点（ADR 0028）认得、原样带着配置，不报错；已移除的顶层字段（便签 `sticky_notes`，
+ * 每个移除之前保存的版本都带着）先去掉再解析，读到的文档里没有它们，库里的版本不改；按更早的规则保存、
+ * 现在已经解析不了的文档原样返回（历史版本照旧能看），返回的也是去掉了已移除字段的那一份。
  */
 const orchestrationDocument = customType<{
 	data: StoredOrchestrationDocument;
@@ -47,7 +49,9 @@ const orchestrationDocument = customType<{
 	dataType: () => "jsonb",
 	toDriver: (document) => JSON.stringify(document),
 	fromDriver: (value) => {
-		const stored: unknown = typeof value === "string" ? JSON.parse(value) : value;
+		const stored: unknown = withoutRemovedFields(
+			typeof value === "string" ? JSON.parse(value) : value,
+		);
 		const parsed = StoredOrchestrationDocument.safeParse(stored);
 		return parsed.success
 			? keepRemovedNodeConfig(parsed.data, stored)
@@ -248,7 +252,7 @@ export type ChainStatus = RunStatus;
  * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
  * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
  */
-/** waiting：定时 / Sleep 节点正在等待唤醒时间（#14），或停止子流程节点在等被停止的子流程结束，不占用 Agent。 */
+/** waiting：停止子流程节点在等被停止的子流程结束，不占用 Agent。 */
 /** stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1）；没有开始执行的行是占位，不算一次尝试。 */
 /**
  * dispatched：已派发给 Agent，Agent 还在下载、安装节点包或启动执行器；Agent 上报 TaskStarted 后才是 running，
@@ -396,6 +400,11 @@ export const tasks = pgTable(
 		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
 		errorKind: text("error_kind").$type<ErrorKind>(),
 		errorMessage: text("error_message"),
+		/**
+		 * 节点失败时出错的位置（TaskError.location）：节点代码里的那一行，「模块.函数 第 N 行」。
+		 * 不是节点出错、取不到位置、旧版本 Agent 或 SDK 上报的、升级之前的任务为空。
+		 */
+		errorLocation: text("error_location"),
 		/** 进入 queued 的时间，派发按它排序。 */
 		queuedAt: timestamptz("queued_at").notNull(),
 		/** 用于同一时刻排队的任务保持创建顺序。 */
@@ -426,11 +435,6 @@ export const tasks = pgTable(
 		/** 日志里的 WARN / ERROR（{@link TaskLogIssues}）；还没有写过时为空。 */
 		logIssues: jsonb("log_issues").$type<TaskLogIssues>(),
 		/**
-		 * 定时 / Sleep 节点的唤醒时间（#14）：waiting 期间由控制面周期扫描，到期后节点成功。
-		 * 定时器的全部状态都在这一行里（status + wake_at），控制面重启后照常扫描。
-		 */
-		wakeAt: timestamptz("wake_at"),
-		/**
 		 * 运行中任务的租约到期时间（#15）：派发时设置，Agent 心跳续约；过期后任务以 agent_lost 失败。
 		 */
 		leaseExpiresAt: timestamptz("lease_expires_at"),
@@ -455,7 +459,6 @@ export const tasks = pgTable(
 		actionCapped: boolean("action_capped").notNull().default(false),
 	},
 	(t) => [
-		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
 		index("tasks_lease").on(t.leaseExpiresAt).where(sql`${t.status} = 'running'`),
 		index("tasks_queue_timeout").on(t.queueExpiresAt).where(sql`${t.status} = 'queued'`),
 		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),

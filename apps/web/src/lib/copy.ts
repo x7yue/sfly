@@ -47,7 +47,6 @@ export const TERM = {
 	displayName: "显示名称",
 	note: "备注",
 	annotation: "注释框",
-	stickyNote: "便签",
 	lastEdited: "最后修改",
 	action: "动作",
 	mark: "标记",
@@ -77,6 +76,12 @@ export const CHART_TYPE_LABEL = {
 
 /** 节点用 `ctx.progress` 上报的进度：监控的图表工作区、时间线、运行抽屉、画布检查器共用（运行记录表里「进度」是各链进度，不是它）。 */
 export const PROGRESS_LABEL = "进度";
+
+/**
+ * 节点失败时出错的位置（`error.location`，「模块.函数 第 N 行」）的标签：画布检查器和运行监控的节点信息里，
+ * 写在失败原因下面。一行摘要的地方（页头、「需要注意」、关注项、控制台「最近结束」）不写。
+ */
+export const ERROR_LOCATION_LABEL = "出错位置";
 
 /** 「第 2 次尝试」：节点重试时指明是哪一次（运行监控的尝试页签、画布检查器的动作区共用）。 */
 export const attemptLabel = (attempt: number) => `第 ${attempt} 次${TERM.attempt}`;
@@ -203,14 +208,7 @@ export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
 	subflows: "成员子流程",
 };
 
-/** 便签各字段的名称：版本对比用（检查器的字段名写在表单上）。 */
-export const STICKY_FIELD_LABEL: Readonly<Record<string, string>> = {
-	title: "标题",
-	text: "正文",
-	color: "颜色",
-};
-
-/** 注释框与便签颜色的名称：颜色选择器色块下面的字、版本对比里的写法（ADR 0025）。 */
+/** 注释框颜色的名称：颜色选择器色块下面的字、版本对比里的写法（ADR 0025）。 */
 export const ANNOTATION_COLOR_LABEL: Record<AnnotationColor, string> = {
 	gray: "灰",
 	blue: "蓝",

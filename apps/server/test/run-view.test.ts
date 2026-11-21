@@ -198,6 +198,7 @@ describe("运行视图", () => {
 			expect(ended.chains[0]?.nodes.find((n) => n.node_id === "b")?.error).toEqual({
 				kind: "node_error",
 				message: "boom",
+				location: null,
 			});
 			await sse.expectNone(100);
 		});
@@ -268,7 +269,6 @@ describe("运行视图", () => {
 					// 不带时钟读数的 TaskStarted / TaskResult（旧版本 Agent）：没有偏差。
 					start_clock_offset: null,
 					end_clock_offset: null,
-					wake_at: null,
 					progress: null,
 					current_action: null,
 				},

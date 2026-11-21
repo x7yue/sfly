@@ -27,7 +27,7 @@ const ESCAPED_NUL = "\\u0000";
  * |---|---|---|
  * | Hello | name、agent_version、os、arch、已安装节点包、开发版节点包、能力名、对外地址与监听失败的原因 | agents.name、agents.info |
  * | Heartbeat | 更新状态的 reason | agents.info |
- * | TaskResult | outputs_json（键和值）、错误信息 | tasks.outputs、tasks.error_message |
+ * | TaskResult | outputs_json（键和值）、错误信息、出错位置 | tasks.outputs、tasks.error_message、tasks.error_location |
  * | Progress | 进度说明 | tasks.progress |
  * | InstallStatus | 节点包名、版本、已安装节点包、开发版节点包 | agents.info |
  * | MetricBatch | 指标名、标签键、标签值 | metric_series、metric_segments |
@@ -65,9 +65,18 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 			const result = body.value;
 			const outputsJson = json(result.outputsJson);
 			const message = result.error && text(result.error.message);
-			if (outputsJson === result.outputsJson && message === result.error?.message) return body;
+			const location = result.error && text(result.error.location);
+			if (
+				outputsJson === result.outputsJson &&
+				message === result.error?.message &&
+				location === result.error?.location
+			) {
+				return body;
+			}
 			const error =
-				result.error && message !== undefined ? { ...result.error, message } : undefined;
+				result.error && message !== undefined && location !== undefined
+					? { ...result.error, message, location }
+					: undefined;
 			return { ...body, value: { ...result, outputsJson, error } };
 		}
 		case "progress": {

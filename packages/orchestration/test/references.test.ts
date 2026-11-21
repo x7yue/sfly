@@ -59,13 +59,13 @@ const twoChains = doc({
 		pkg("a"),
 		{ id: "x", kind: "async" },
 		pkg("b", "check"),
-		{ id: "t", kind: "timer", at: "09:00:00" },
+		{ id: "stop", kind: "stop_subflow", subflow: "sub" },
 		pkg("c"),
 		{ id: "sub", kind: "subflow_entry", params: [{ name: "item", type: "json" }] },
 		pkg("s1"),
 	],
 	edges: [
-		...chain("entry", "a", "x", "b", "t", "c"),
+		...chain("entry", "a", "x", "b", "stop", "c"),
 		{ from: "x", to: "sub", kind: "dispatch" },
 		...chain("sub", "s1"),
 	],
@@ -83,8 +83,7 @@ describe("引用补全", () => {
 			"nodes.a.outputs.status",
 			"nodes.x.outputs.chain_instance_id",
 			"nodes.b.outputs.ok",
-			"nodes.t.outputs.triggered_at",
-			"nodes.t.outputs.late",
+			"nodes.stop.outputs.status",
 		]);
 	});
 
@@ -200,19 +199,15 @@ describe("引用检查", () => {
 		expect(referenceWarnings(d, new Map())).toEqual([]);
 	});
 
-	it("异步任务节点的参数映射和 Sleep 节点的时长也检查引用", () => {
+	it("异步任务节点的参数映射也检查引用", () => {
 		const d = doc({
 			nodes: [
-				{ id: "entry", kind: "entry", params: [{ name: "wait", type: "string" }] },
+				{ id: "entry", kind: "entry" },
 				{ id: "x", kind: "async", params: { item: "${{ nodes.nope.outputs.v }}" } },
-				{ id: "z", kind: "sleep", duration: "${{ params.wiat }}" },
 			],
-			edges: chain("entry", "x", "z"),
+			edges: chain("entry", "x"),
 		});
-		expect(refCodes(d)).toEqual([
-			["reference_unknown_node", "x", "item"],
-			["reference_unknown_param", "z", "duration"],
-		]);
+		expect(refCodes(d)).toEqual([["reference_unknown_node", "x", "item"]]);
 	});
 });
 

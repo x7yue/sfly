@@ -2,6 +2,7 @@ import { z } from "zod";
 import { endpoint, Timestamp } from "./contract.js";
 import { RunFocusItem } from "./run-focus.js";
 import { RunListActiveNode } from "./run-list.js";
+import { ErrorView } from "./runs.js";
 
 /**
  * 控制台统计接口的契约（约定见 ./contract.ts）。统计窗口是「最近 24 小时」：
@@ -89,8 +90,8 @@ export const DashboardRunFailure = z.object({
 	display_name: z.string().optional(),
 	/** 失败节点最后一次尝试的尝试号。 */
 	attempt: z.number().int(),
-	/** 这次尝试的错误，其中的 secret 值已打码。 */
-	error: z.object({ kind: z.string(), message: z.string() }).nullable(),
+	/** 这次尝试的错误（含出错位置，见 `ErrorView`），其中的 secret 值已打码。 */
+	error: ErrorView.nullable(),
 });
 
 const EndedRunFields = {

@@ -7,7 +7,6 @@ import {
 	checkConnection,
 	declaredOutputs,
 	documentWarnings,
-	ensureLayout,
 	hasOverlappingCards,
 	insertAfter,
 	insertOnEdge,
@@ -16,16 +15,12 @@ import {
 	nodeDisplayName,
 	type OrchestrationWarning,
 	outgoingProblem,
-	type Position,
 	removeNodes,
-	stickyNoteRow,
-	stickyNoteSize,
 	subflowLabels,
 	subflowRegions,
 	tidyLayout,
 	uniqueNodeId,
 	widenedPosition,
-	withStickyNotePositions,
 } from "@sfly/orchestration";
 import {
 	type Annotation,
@@ -34,8 +29,6 @@ import {
 	type OrchestrationHeadView,
 	type OrchestrationView,
 	packagesApi,
-	STICKY_NOTE_SIZE,
-	type StickyNote,
 	type StoredNode,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
@@ -51,12 +44,7 @@ import {
 import { Redo2Icon, Undo2Icon, Wand2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolButton } from "#/components/canvas/CanvasDock";
-import type {
-	AnnotationEdit,
-	CanvasInfo,
-	NodeRename,
-	StickyEdit,
-} from "#/components/canvas/context";
+import type { AnnotationEdit, CanvasInfo, NodeRename } from "#/components/canvas/context";
 import { FlowCanvas, isPointerFocusedCanvas } from "#/components/canvas/FlowCanvas";
 import {
 	applyDocument,
@@ -85,20 +73,17 @@ import {
 	type CanvasSelection,
 	keepAnnotation,
 	keepNodes,
-	keepSticky,
 	latestNode,
 	NO_SELECTION,
 	selectAnnotation,
 	selectedAnnotation,
-	selectedSticky,
 	selectNode,
-	selectSticky,
 	soleNode,
 } from "#/components/canvas/selection";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
-import { ACTION, TERM } from "#/lib/copy";
+import { ACTION } from "#/lib/copy";
 import { dialogOpen } from "#/lib/focus";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
@@ -123,7 +108,6 @@ import {
 	updateAnnotation,
 	withColor,
 	withNode,
-	withStickyColor,
 } from "./annotations";
 import { usePackageCatalog, useRegisteredAgents, useRegisteredBots } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
@@ -133,7 +117,6 @@ import {
 	annotationFieldKey,
 	FieldDraftsProvider,
 	fieldErrorKey,
-	stickyFieldKey,
 	useFieldDraftStore,
 } from "./field-drafts";
 import { freeCardSpot } from "./free-spot";
@@ -168,9 +151,9 @@ import {
 
 /** 检查器右边距。 */
 
-/** 定位节点、便签、注释框时四周至少留出的空白（屏幕像素）。 */
+/** 定位节点、注释框时四周至少留出的空白（屏幕像素）。 */
 const LOCATE_MARGIN = 48;
-/** 定位到节点、便签、注释框时缩放至少到这里（看得清第二行），已经更大时不缩小。 */
+/** 定位到节点、注释框时缩放至少到这里（看得清第二行），已经更大时不缩小。 */
 const LOCATE_ZOOM = 0.75;
 
 /**
@@ -251,12 +234,8 @@ function Editor({
 	const [meta, setMeta] = useState<DocMeta>({
 		default_agent: start.document.default_agent,
 		packages: start.document.packages,
-		// 加入注释框、便签之前存下的本地草稿里没有这两个字段。没写位置的便签放进内容上方的那一行（ADR 0026）。
+		// 加入注释框之前存下的本地草稿里没有这个字段。
 		annotations: start.document.annotations ?? [],
-		sticky_notes: withStickyNotePositions({
-			...ensureLayout(start.document),
-			sticky_notes: start.document.sticky_notes ?? [],
-		}).sticky_notes,
 	});
 	const [selection, setSelection] = useState<CanvasSelection>(() =>
 		initialNode ? selectNode(initialNode) : NO_SELECTION,
@@ -374,22 +353,17 @@ function Editor({
 	const shownEdges = running && runFlow ? runFlow.edges : edges;
 	const shownAnnotations =
 		running && runFlow && readyRun?.doc ? readyRun.doc.annotations : meta.annotations;
-	const shownStickies =
-		running && runFlow && readyRun?.doc ? (readyRun.doc.sticky_notes ?? []) : meta.sticky_notes;
-	// 选中的节点、注释框或便签可能不在画布上：撤销了添加、运行绑定的版本里没有它。
-	const visibleSelection = keepSticky(
-		keepAnnotation(
-			keepNodes(selection, (id) => shownNodes.some((n) => n.id === id)),
-			(id) => shownAnnotations.some((a) => a.id === id),
-		),
-		(id) => shownStickies.some((s) => s.id === id),
+	// 选中的节点或注释框可能不在画布上：撤销了添加、运行绑定的版本里没有它。
+	const visibleSelection = keepAnnotation(
+		keepNodes(selection, (id) => shownNodes.some((n) => n.id === id)),
+		(id) => shownAnnotations.some((a) => a.id === id),
 	);
-	// 运行状态下画布只读、不能多选也不能选中注释框和便签：编辑时选中的一组节点只显示最近选中的那个，
+	// 运行状态下画布只读、不能多选也不能选中注释框：编辑时选中的一组节点只显示最近选中的那个，
 	// 切回编辑模式还是原来那组。
 	const shownSelection = useMemo(
 		() =>
 			running
-				? visibleSelection.kind === "annotation" || visibleSelection.kind === "sticky"
+				? visibleSelection.kind === "annotation"
 					? NO_SELECTION
 					: latestNode(visibleSelection)
 				: visibleSelection,
@@ -480,7 +454,7 @@ function Editor({
 	);
 
 	/**
-	 * 把画布上的一块（节点卡片、便签、注释框连同框外上方 `above` 高的标题）放到没被检查器和大纲占住的那部分画布的中间：
+	 * 把画布上的一块（节点卡片、注释框连同框外上方 `above` 高的标题）放到没被检查器和大纲占住的那部分画布的中间：
 	 * 缩放至少到 LOCATE_ZOOM，放不下时缩小到放得下（不小于 MIN_ZOOM）。
 	 */
 	const centerOn = useCallback(
@@ -620,26 +594,14 @@ function Editor({
 	const outline = useMemo(() => {
 		const byId = new Map(shownNodes.map((n) => [n.id, n.data.node]));
 		return canvasOutline(
-			{
-				...layoutOf(shownNodes, shownEdges),
-				annotations: shownAnnotations,
-				sticky_notes: shownStickies,
-			},
+			{ ...layoutOf(shownNodes, shownEdges), annotations: shownAnnotations },
 			(id) => {
 				const node = byId.get(id);
 				return node ? nodeCardText(node, shownInfo).title : id;
 			},
 			outlineQuery,
 		);
-	}, [shownNodes, shownEdges, shownAnnotations, shownStickies, shownInfo, outlineQuery]);
-	/** 定位到便签：放在没被检查器和大纲占住的那部分画布的中间；编辑模式下同时选中它。 */
-	const locateSticky = (id: string) => {
-		const note = shownStickies.find((s) => s.id === id);
-		if (!note?.position) return;
-		if (!running) setSelection(selectSticky(id));
-		const size = stickyNoteSize(note);
-		centerOn({ ...note.position, w: size.width, h: size.height });
-	};
+	}, [shownNodes, shownEdges, shownAnnotations, shownInfo, outlineQuery]);
 	/**
 	 * 定位到注释框：框放在没被检查器和大纲占住的那部分画布的中间，放不下时缩小到放得下；编辑模式下同时选中它
 	 * （运行状态下不能选中注释框）。
@@ -653,76 +615,6 @@ function Editor({
 		if (!found) return;
 		centerOn(found.box, ANNOTATION_TITLE_SPACE);
 	};
-
-	// —— 便签（ADR 0026）：空白处菜单新建，拖动、改大小、颜色、删除（FlowCanvas 的 stickyEdit），文字在检查器里改 ——
-	/** 改便签，算一步撤销；`key` 相同的连续修改（同一张便签的正文输入）合成一步。 */
-	const changeStickies = (update: (notes: readonly StickyNote[]) => StickyNote[], key?: string) => {
-		history.checkpoint(key);
-		setMeta((m) => ({ ...m, sticky_notes: update(m.sticky_notes) }));
-	};
-	/** 新建便签（默认在视口中间），选中它，正文输入框拿到焦点（默认文字整段选中）。 */
-	const addSticky = (at?: Position) => {
-		const id = uniqueNodeId(
-			"sticky",
-			meta.sticky_notes.map((s) => s.id),
-		);
-		const center = viewportCenter();
-		const position = at ?? {
-			x: center.x - STICKY_NOTE_SIZE.width / 2,
-			y: center.y - STICKY_NOTE_SIZE.height / 2,
-		};
-		const created: StickyNote = {
-			id,
-			text: `${TERM.stickyNote} ${id.slice("sticky_".length)}`,
-			position,
-		};
-		changeStickies((list) => [...list, created]);
-		setSelection(selectSticky(id));
-		setInspectorOpen(true);
-		focusField(stickyFieldKey(id, "text"), { select: true });
-	};
-	// 拖动、改大小：第一次（dragging 为 true）记下修改前的状态，之后的移动和松手都算这一步。
-	const stickyGesture = useRef(false);
-	const placeSticky = (id: string, patch: Partial<StickyNote>, dragging: boolean) => {
-		if (dragging && !stickyGesture.current) {
-			stickyGesture.current = true;
-			history.checkpoint();
-		}
-		if (!dragging) stickyGesture.current = false;
-		setMeta((m) => ({
-			...m,
-			sticky_notes: m.sticky_notes.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-		}));
-	};
-	const stickyActions: StickyEdit = {
-		select: (id) => setSelection(selectSticky(id)),
-		move: (id, position, dragging) => placeSticky(id, { position }, dragging),
-		resize: (id, size, dragging) => placeSticky(id, { size }, dragging),
-		open: (id) => {
-			setSelection(selectSticky(id));
-			setInspectorOpen(true);
-			focusField(stickyFieldKey(id, "text"));
-		},
-		setColor: (id, color) =>
-			changeStickies((list) => list.map((s) => (s.id === id ? withStickyColor(s, color) : s))),
-		remove: (id) => {
-			changeStickies((list) => list.filter((s) => s.id !== id));
-			setSelection(NO_SELECTION);
-		},
-	};
-	const stickyHandlers = useRef(stickyActions);
-	stickyHandlers.current = stickyActions;
-	const stickyEdit = useMemo<StickyEdit>(
-		() => ({
-			select: (id) => stickyHandlers.current.select(id),
-			move: (id, position, dragging) => stickyHandlers.current.move(id, position, dragging),
-			resize: (id, size, dragging) => stickyHandlers.current.resize(id, size, dragging),
-			open: (id) => stickyHandlers.current.open(id),
-			setColor: (id, color) => stickyHandlers.current.setColor(id, color),
-			remove: (id) => stickyHandlers.current.remove(id),
-		}),
-		[],
-	);
 
 	// —— 注释框：原地改标题（双击标题、F2）、浮动工具条、把节点拖进拖出（FlowCanvas 的 annotationEdit）——
 	const [renamingAnnotation, setRenamingAnnotation] = useState<string | null>(null);
@@ -929,22 +821,8 @@ function Editor({
 	const tidyNotice = useRef<{ id: string | number; version: number | null } | null>(null);
 	const tidy = () => {
 		const layout = tidyLayout(doc);
-		// 便签排在整理后的内容上方那一行（ADR 0026），和节点一起算一步撤销。
-		const stickies = stickyNoteRow({
-			...doc,
-			nodes: doc.nodes.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })),
-		});
 		history.checkpoint();
 		setNodes((ns) => ns.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })));
-		if (stickies.size > 0) {
-			setMeta((m) => ({
-				...m,
-				sticky_notes: m.sticky_notes.map((s) => ({
-					...s,
-					position: stickies.get(s.id) ?? s.position,
-				})),
-			}));
-		}
 		setTidied((n) => n + 1);
 		if (tidyNotice.current) notify.dismiss(tidyNotice.current.id);
 		const id = notify.success("已整理布局", {
@@ -974,12 +852,6 @@ function Editor({
 	const widen = () => {
 		history.checkpoint();
 		setNodes((ns) => ns.map((n) => ({ ...n, position: widenedPosition(n.position) })));
-		setMeta((m) => ({
-			...m,
-			sticky_notes: m.sticky_notes.map((s) =>
-				s.position ? { ...s, position: widenedPosition(s.position) } : s,
-			),
-		}));
 	};
 	useEffect(() => {
 		const notice = widenNotice.current;
@@ -1027,11 +899,6 @@ function Editor({
 			setInspectorOpen(true);
 			if (first.annotationId !== undefined) {
 				setSelection(selectAnnotation(first.annotationId));
-				focusField(fieldErrorKey(first));
-				return;
-			}
-			if (first.stickyId !== undefined) {
-				setSelection(selectSticky(first.stickyId));
 				focusField(fieldErrorKey(first));
 				return;
 			}
@@ -1115,12 +982,6 @@ function Editor({
 			),
 		onDeleteAnnotation: deleteAnnotation,
 		onLocateAnnotation: locateAnnotation,
-		onChangeSticky: (next, field) =>
-			changeStickies(
-				(list) => list.map((s) => (s.id === next.id ? next : s)),
-				field && `sticky:${next.id}:${field}`,
-			),
-		onDeleteSticky: (id) => stickyActions.remove(id),
 	};
 
 	/**
@@ -1197,7 +1058,6 @@ function Editor({
 					nodes={shownNodes}
 					edges={shownEdges}
 					annotations={shownAnnotations}
-					stickyNotes={shownStickies}
 					info={running ? runInfo : info}
 					{...(running ? decorations : {})}
 					{...(running ? runMotion : {})}
@@ -1226,7 +1086,6 @@ function Editor({
 					}
 					rename={running ? undefined : rename}
 					annotationEdit={running ? undefined : annotationEdit}
-					stickyEdit={running ? undefined : stickyEdit}
 					reconnect={running ? undefined : reconnect.handlers}
 					menu={(target) => (
 						<EditorMenu
@@ -1253,7 +1112,6 @@ function Editor({
 											redo: history.redo,
 											addAnnotationAround,
 											arrange,
-											addSticky,
 											annotations: (nodeId) => ({
 												annotations: meta.annotations,
 												onAdd: () => addAnnotationAround([nodeId]),
@@ -1313,11 +1171,9 @@ function Editor({
 							selected={{
 								nodes: shownSelection.kind === "nodes" ? shownSelection.ids : [],
 								annotation: selectedAnnotation(shownSelection),
-								sticky: selectedSticky(shownSelection),
 							}}
 							onLocateNode={locate}
 							onLocateAnnotation={locateAnnotationBox}
-							onLocateSticky={locateSticky}
 							onCollapse={() => setOutlineOpen(false)}
 						/>
 					)}

@@ -1,7 +1,7 @@
 // 验收场景 S3 故障（docs/SEMANTICS.md §8）：真实的控制面、真实的 Rust Agent、真实的 SDK 执行器和桩节点包。
 // Agent 断线后按重试配置重新派发；超时杀掉进程树；取消时 always 节点照常执行，再次取消则强制终止；
-// 依赖冲突以 env_error 失败且不重试（PyPI 镜像是本地桩）；控制面重启后定时器和运行继续推进。
-// 控制面用手动时钟（租约、Sleep 何时到期由测试决定）；超时与取消宽限由 Agent 按真实时间执行。
+// 依赖冲突以 env_error 失败且不重试（PyPI 镜像是本地桩）；控制面重启后运行继续推进。
+// 控制面用手动时钟（租约何时到期由测试决定）；超时与取消宽限由 Agent 按真实时间执行。
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -260,16 +260,18 @@ describeWithAgent("验收 S3：故障", () => {
 		expect(pypi.requests).toContain("/files/sfly_dep-1.0-py3-none-any.whl");
 	}, 180_000);
 
-	it("控制面重启：运行中的任务在停机期间完成后结果照常上报，等待中的 Sleep 在重启后到点继续推进", async () => {
+	it("控制面重启：运行中的任务在停机期间完成后结果照常上报，停机再久、仍在运行的任务重启后照常继续，链继续推进", async () => {
 		const ready = join(dir, "restart-ready");
 		const release = join(dir, "restart-release");
+		const holdReady = join(dir, "restart-hold-ready");
+		const holdRelease = join(dir, "restart-hold-release");
 		const id = await api.orchestrationWith(
 			orchestration("s3-agent", [
 				[
 					{ id: "entry", kind: "entry" },
 					stub("g", "gate", { ready_file: ready, release_file: release }),
-					{ id: "nap", kind: "sleep", duration: "5m" },
-					stub("done", "echo", { text: "${{ nodes.nap.outputs.triggered_at }}" }),
+					stub("hold", "gate", { ready_file: holdReady, release_file: holdRelease }),
+					stub("done", "echo", { text: "${{ nodes.hold.outputs.attempt }}" }),
 				],
 			]),
 		);
@@ -279,7 +281,7 @@ describeWithAgent("验收 S3：故障", () => {
 		const welcomes = () => agent.events.filter((e) => e.event === "welcome").length;
 		const before = welcomes();
 
-		// 第一次重启：停机期间任务完成（执行器写出结果），Agent 重连后 Hello 列出它、补报结果。
+		// 第一次重启：停机期间任务完成（执行器写出结果），Agent 重连后 Hello 列出它、补报结果，链推进到 hold。
 		await cp.restart(async () => {
 			await writeFile(release, "");
 			await eventually(() => access(join(agent.workDir, "tasks", taskId, "output.json")), 30_000);
@@ -288,24 +290,29 @@ describeWithAgent("验收 S3：故障", () => {
 		await eventually(async () => {
 			expect(welcomes()).toBeGreaterThan(before);
 			const attempts = JSON.stringify((await api.node(runId, "g")).attempts);
-			expect((await api.node(runId, "nap")).status, `g 的尝试：${attempts}`).toBe("waiting");
+			expect((await api.node(runId, "hold")).status, `g 的尝试：${attempts}`).toBe("running");
+			expect(await readFile(holdReady, "utf8")).toBe("1\n");
 		}, 30_000);
 		const g = await api.node(runId, "g");
 		expect(g.attempts.map((a) => [a.attempt, a.status])).toEqual([[1, "success"]]);
 		expect(g.outputs).toEqual({ attempt: 1 });
-		const wakeAt = (await api.node(runId, "nap")).attempts[0]?.wake_at as string;
 
-		// 第二次重启：停机期间时钟越过唤醒时间，重启后定时器扫描照常唤醒，后续节点派发到重连的 Agent。
+		// 第二次重启：停机期间时钟走过了租约（30 秒），hold 仍在 Agent 上运行；重启后给 Agent 一个租约的时间重连，
+		// 它带着任务回来，不算 agent_lost、不重新执行。
 		await cp.restart(() => clock.advance(6 * 60_000));
+		await eventually(async () => expect(welcomes()).toBeGreaterThanOrEqual(before + 2), 30_000);
+		const hold = await api.node(runId, "hold");
+		expect(hold.attempts.map((a) => [a.attempt, a.status])).toEqual([[1, "running"]]);
+
+		// 放行后结果照常上报，后续节点派发到重连的 Agent。
+		await writeFile(holdRelease, "");
 		await eventually(async () => {
 			const run = await api.run(runId);
 			expect(run.status, JSON.stringify(statuses(chainOf(run, "entry")))).toBe("success");
 		}, 30_000);
-		expect(welcomes()).toBeGreaterThanOrEqual(before + 2);
-		const nap = await api.node(runId, "nap");
-		const triggeredAt = nap.outputs?.triggered_at as string;
-		expect(Date.parse(triggeredAt)).toBeGreaterThanOrEqual(Date.parse(wakeAt));
-		expect((await api.node(runId, "done")).outputs).toEqual({ text: triggeredAt });
+		expect((await api.node(runId, "hold")).outputs).toEqual({ attempt: 1 });
+		expect((await api.node(runId, "done")).outputs).toEqual({ text: 1 });
 		expect(await readFile(ready, "utf8")).toBe("1\n");
+		expect(await readFile(holdReady, "utf8")).toBe("1\n");
 	}, 120_000);
 });

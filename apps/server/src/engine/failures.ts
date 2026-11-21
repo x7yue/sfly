@@ -15,7 +15,7 @@ export const retriesOf = (node: StoredNode): number =>
 export const shouldRetry = (node: StoredNode, kind: ErrorKind, attempt: number): boolean =>
 	isRetryable(kind) && attempt <= retriesOf(node);
 
-/** 前面的节点失败后仍然执行的节点（包节点、定时节点、Sleep 节点、停止子流程节点可以设置）。 */
+/** 前面的节点失败后仍然执行的节点（包节点、停止子流程节点可以设置）。 */
 export const isAlways = (node: StoredNode): boolean => "always" in node && node.always;
 
 /**

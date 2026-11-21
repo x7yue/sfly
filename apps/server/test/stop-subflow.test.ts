@@ -114,33 +114,20 @@ describe("停止子流程节点", () => {
 		expect(run.status).toBe("success");
 	});
 
-	it("停止等待中的 Sleep 节点、排队中的任务和未开始的节点：立即记为已停止，没有 always 节点时停止子流程节点立即成功", async () => {
+	it("停止排队中的任务和未开始的节点：立即记为已停止，没有 always 节点时停止子流程节点立即成功", async () => {
 		// agent-b 已注册但不在线：派发给它的任务一直排队。
 		await (await FakeAgent.connect(cp.grpcUrl, { name: "agent-b" })).disconnect();
 		const id = await api.orchestrationWith(
 			orchestration(
 				[
-					[
-						entry(),
-						spawn("spawn1"),
-						spawn("spawn2"),
-						echo("load"),
-						stop("stop1", "waiting"),
-						stop("stop2", "queued"),
-						echo("cleanup"),
-					],
-					[subflowEntry("waiting"), { id: "nap", kind: "sleep", duration: "1h" }, echo("after1")],
-					[subflowEntry("queued"), { ...echo("remote"), agent: "agent-b" }, echo("after2")],
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "queued"), echo("cleanup")],
+					[subflowEntry("queued"), { ...echo("remote"), agent: "agent-b" }, echo("after")],
 				],
-				[
-					["spawn1", "waiting"],
-					["spawn2", "queued"],
-				],
+				[["spawn", "queued"]],
 			),
 		);
 		const runId = await api.triggerOk(id);
 		let run = await api.run(runId);
-		expect(statuses(chainOf(run, "waiting"))).toMatchObject({ nap: "waiting" });
 		expect(statuses(chainOf(run, "queued"))).toMatchObject({ remote: "queued" });
 
 		await agent.succeed(await agent.nextAssign());
@@ -148,24 +135,16 @@ describe("停止子流程节点", () => {
 		expect(cleanup.nodeId).toBe("cleanup");
 		await agent.expectNoCancel();
 		run = await api.run(runId);
-		expect(statuses(chainOf(run, "waiting"))).toEqual({
-			waiting: "success",
-			nap: "stopped",
-			after1: "stopped",
-		});
 		expect(statuses(chainOf(run, "queued"))).toEqual({
 			queued: "success",
 			remote: "stopped",
-			after2: "stopped",
+			after: "stopped",
 		});
-		expect(chainOf(run, "waiting").status).toBe("success");
 		expect(chainOf(run, "queued").status).toBe("success");
-		for (const nodeId of ["stop1", "stop2"]) {
-			expect(chainOf(run, "entry").nodes.find((n) => n.node_id === nodeId)).toMatchObject({
-				status: "success",
-				outputs: { status: "success" },
-			});
-		}
+		expect(chainOf(run, "entry").nodes.find((n) => n.node_id === "stop")).toMatchObject({
+			status: "success",
+			outputs: { status: "success" },
+		});
 
 		await agent.succeed(cleanup);
 		run = await api.run(runId);
@@ -646,11 +625,7 @@ describe("停止子流程节点的边界情况", () => {
 						echo("watch"),
 						{ ...echo("flush"), always: true },
 					],
-					[
-						subflowEntry("deep"),
-						{ id: "nap", kind: "sleep", duration: "1h" },
-						{ ...echo("flush_deep"), always: true },
-					],
+					[subflowEntry("deep"), echo("nap"), { ...echo("flush_deep"), always: true }],
 				],
 				[
 					["spawn", "mon"],
@@ -659,9 +634,10 @@ describe("停止子流程节点的边界情况", () => {
 			),
 		);
 		const runId = await api.triggerOk(id);
-		const first = await assigns(2);
+		const first = await assigns(3);
 		await agent.succeed(first.load as AssignedTask);
-		expect(await agent.nextCancel()).toMatchObject({ taskId: first.watch?.taskId, force: false });
+		expect(await cancels(2)).toEqual([first.watch?.taskId, first.nap?.taskId].sort());
+		await agent.cancelled(first.nap as AssignedTask);
 		const flushDeep = await agent.nextAssign();
 		expect(flushDeep.nodeId).toBe("flush_deep");
 		let run = await api.run(runId);
@@ -679,6 +655,8 @@ describe("停止子流程节点的边界情况", () => {
 			final: "running",
 		});
 		expect(statuses(chainOf(run, "deep"))).toMatchObject({ nap: "stopped", flush_deep: "running" });
+		// 被取消的等待算一次尝试（已经开始等待）。
+		expect(stopNode(run)?.attempts.map((a) => a.status)).toEqual(["cancelled"]);
 
 		// 再次取消：所有任务（含 always）立即取消；已经记为已停止的保持不变。
 		await api.cancelOk(runId);
@@ -807,6 +785,79 @@ describe("停止子流程节点的边界情况", () => {
 		});
 		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "success" } });
 		expect(run.status).toBe("success");
+	});
+
+	it("运行被取消时已经在等待的 always 停止子流程节点：普通取消照常等待，再次取消（强制）时立即取消", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[
+						entry(),
+						spawn("spawn"),
+						echo("load"),
+						stop("stop", "mon", { always: true }),
+						echo("cleanup"),
+					],
+					[subflowEntry("mon"), echo("watch")],
+				],
+				[["spawn", "mon"]],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+		await agent.succeed(first.load as AssignedTask);
+		// 停止子流程节点通知 Agent 终止 watch，自己进入等待；watch 还没上报。
+		expect(await agent.nextCancel()).toMatchObject({ taskId: first.watch?.taskId, force: false });
+		expect(statuses(chainOf(await api.run(runId), "entry"))).toMatchObject({ stop: "waiting" });
+
+		// 普通取消：always 节点照常进行，停止子流程节点继续等待，运行仍在进行。
+		await api.cancelOk(runId);
+		expect(await agent.nextCancel()).toMatchObject({ taskId: first.watch?.taskId, force: false });
+		let run = await api.run(runId);
+		expect(run.status).toBe("running");
+		expect(statuses(chainOf(run, "entry"))).toMatchObject({ stop: "waiting" });
+
+		// 再次取消（强制）：等待中的停止子流程节点也立即取消，后面的普通节点取消，运行立即结束。
+		await api.cancelOk(runId);
+		expect(await agent.nextCancel()).toMatchObject({ taskId: first.watch?.taskId, force: true });
+		run = await api.run(runId);
+		expect(run.status).toBe("cancelled");
+		expect(statuses(chainOf(run, "entry"))).toMatchObject({
+			stop: "cancelled",
+			cleanup: "cancelled",
+		});
+		expect(statuses(chainOf(run, "mon"))).toMatchObject({ watch: "cancelled" });
+	});
+
+	it("等待中的停止子流程节点不占用 Agent 槽位", async () => {
+		// agent-s 只有 2 个槽位：被停止的 watch 占 1 个，等它结束的停止子流程节点不占，另一个运行的任务照常派发。
+		const small = await FakeAgent.connect(cp.grpcUrl, { name: "agent-s", slots: 2 });
+		try {
+			const id = await api.orchestrationWith(
+				orchestration(
+					[
+						[entry(), spawn("spawn"), echo("load"), stop("stop", "mon")],
+						[subflowEntry("mon"), { ...echo("watch"), agent: "agent-s" }],
+					],
+					[["spawn", "mon"]],
+				),
+			);
+			const runId = await api.triggerOk(id);
+			const watch = await small.nextAssign();
+			expect(watch.nodeId).toBe("watch");
+			await agent.succeed(await agent.nextAssign());
+			expect((await small.nextCancel()).taskId).toBe(watch.taskId);
+			expect(statuses(chainOf(await api.run(runId), "entry"))).toMatchObject({ stop: "waiting" });
+
+			const other = await api.orchestrationWith(
+				orchestration([[entry(), { ...echo("b"), agent: "agent-s" }]], []),
+				"other",
+			);
+			await api.triggerOk(other);
+			expect((await small.nextAssign()).nodeId).toBe("b");
+		} finally {
+			await small.disconnect();
+		}
 	});
 });
 

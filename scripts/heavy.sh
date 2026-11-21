@@ -21,6 +21,12 @@
 # 需要 docker；`pnpm linux` 用的是它自己的 sfly-linux-pg，不受影响。
 # 容器名里带这次运行的 PID（sfly-heavy-pg-<工作区名>-<PID>），--clean 只删 PID 已经不在的容器。
 #
+# 删容器一律带 -v：postgres 镜像声明了数据目录的卷，容器启动时 Docker 为它建一个匿名卷。`--rm` 的容器自己退出时会连卷一起删，
+# 但 `docker rm -f` 不带 -v 强制删除时卷留下（#525：每跑一次留一个，每个 50 到 80 MB，两天攒了 412 个、33 GB，磁盘写满）。
+# 没有改成 --tmpfs（数据放内存、根本不建卷）：测试库的总量随命令不同（pnpm perf、整套 e2e），没有量过内存占用；
+# 而 -v 一个参数就不留卷，被 SIGKILL 杀掉、收尾没有跑到的容器也由 --clean 带 -v 删掉。守这一点的测试：scripts/tests/test_heavy_pg_volumes.py。
+# 升级前留下的卷：见 README 里 `pnpm heavy` 一行（先 docker volume ls -qf dangling=true 看一眼，再删）。
+#
 # 环境变量（都有默认值）：
 #   SFLY_HEAVY_LOCK      锁文件，默认 ~/.t/sfly-heavy.lock（固定位置，不跟着 SFLY_HEAVY_TMP_ROOT 变：
 #                        所有工作区必须在同一把锁上排队）；设为 none 不加锁
@@ -71,8 +77,9 @@ while [[ ${1:-} == --* ]]; do
 					stale="$stale $container"
 				fi
 			done
+			# -v：连容器的匿名卷一起删（#525），不带的话每个容器留下一个卷。
 			# shellcheck disable=SC2086
-			[[ -z $stale ]] || docker rm -f $stale >/dev/null 2>&1 || true
+			[[ -z $stale ]] || docker rm -f -v $stale >/dev/null 2>&1 || true
 			[[ -z $stale ]] || echo "pnpm heavy：已删除没人用的 PostgreSQL 容器：$stale" >&2
 		fi
 		exit 0
@@ -111,7 +118,8 @@ cleanup() {
 		# docker run 还在跑（Ctrl-C 落在这期间）：等它跑完，容器建出来之后才删得掉。唯一的后台作业就是它，没有时 wait 立即返回。
 		# 不按 PID 等：Ctrl-C 可能落在 `&` 和记下 $! 之间，那时还没有 PID。
 		wait 2>/dev/null || true
-		docker rm -f "$container" >/dev/null 2>&1 || true
+		# -v：连容器的匿名卷一起删（#525）。
+		docker rm -f -v "$container" >/dev/null 2>&1 || true
 	fi
 	if [[ -n $pid_file ]]; then rm -f "$pid_file"; fi
 }

@@ -13,12 +13,14 @@ import {
 // 只提示，不阻断触发；画布和控制面用同一个函数，警告里带 annotation_id。
 
 const base = {
+	default_agent: "linux",
+	packages: { std: "1.0.0" },
 	nodes: [
 		{ id: "entry", kind: "entry" },
-		{ id: "fetch_1", kind: "sleep", duration: "5s", display_name: "创建测试用户" },
+		{ id: "fetch_1", kind: "package", package: "std", node: "shell", display_name: "创建测试用户" },
 		{ id: "spawn", kind: "async" },
 		{ id: "mon", kind: "subflow_entry", name: "监控" },
-		{ id: "check", kind: "sleep", duration: "5s" },
+		{ id: "check", kind: "package", package: "std", node: "shell" },
 	],
 	edges: [
 		{ from: "entry", to: "fetch_1", kind: "chain" },
@@ -158,7 +160,7 @@ describe("documentWarnings 带上注释框的警告，不阻断触发", () => {
 		const unset = documentWarnings(
 			OrchestrationDocument.parse({
 				...doc,
-				nodes: [...doc.nodes, { id: "stray", kind: "sleep", duration: "5s" }],
+				nodes: [...doc.nodes, { id: "stray", kind: "package", package: "std", node: "shell" }],
 			}),
 			new Map(),
 		);
@@ -174,7 +176,7 @@ describe("documentWarnings 带上注释框的警告，不阻断触发", () => {
 		const mixed: OrchestrationWarning[] = documentWarnings(
 			OrchestrationDocument.parse({
 				...doc,
-				nodes: [...doc.nodes, { id: "stray", kind: "sleep", duration: "5s" }],
+				nodes: [...doc.nodes, { id: "stray", kind: "package", package: "std", node: "shell" }],
 			}),
 			new Map(),
 		);

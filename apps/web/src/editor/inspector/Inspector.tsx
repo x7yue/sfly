@@ -16,7 +16,6 @@ import {
 	type PackageSummary,
 	REMOVED_NODE_KIND_NAMES,
 	type RemovedNodeKind,
-	type StickyNote,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { cn } from "cn";
@@ -29,7 +28,6 @@ import {
 	type CanvasSelection,
 	multipleNodes,
 	selectedAnnotation,
-	selectedSticky,
 	soleNode,
 } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
@@ -56,17 +54,14 @@ import {
 	ExecutionSettings,
 	PackageParams,
 	PackageVersionField,
-	SleepForm,
 	StopSubflowField,
 	SubflowNameField,
 	SubflowTrigger,
-	TimerForm,
 } from "./node-forms";
 import { NoteField } from "./node-note";
 import { ParamsEditor } from "./ParamsEditor";
 import { RemovedNodePanel } from "./RemovedNodePanel";
 import { referenceChoices } from "./reference-completion";
-import { StickyInspector } from "./StickyInspector";
 
 /** 把焦点放到某个字段：`key` 是字段的草稿键（field-drafts.tsx），每次请求的 `nonce` 不同。 */
 export interface FocusRequest {
@@ -111,9 +106,6 @@ export interface InspectorContext {
 	onDeleteAnnotation(id: string): void;
 	/** 选中注释框（检查结果里的「前往」）。 */
 	onLocateAnnotation(id: string): void;
-	/** 改便签；同一个字段（`field`）的连续修改合成一步撤销。 */
-	onChangeSticky(note: StickyNote, field?: string): void;
-	onDeleteSticky(id: string): void;
 }
 
 /**
@@ -146,8 +138,6 @@ export const Inspector = forwardRef<
 	const group = multipleNodes(selection);
 	const annotationId = selectedAnnotation(selection);
 	const annotation = context.doc.annotations.find((a) => a.id === annotationId);
-	const stickyId = selectedSticky(selection);
-	const sticky = context.doc.sticky_notes.find((s) => s.id === stickyId);
 	// 场景设置停在哪一页：选中节点再回来时还是原来的那一页。
 	const [scenarioTab, setScenarioTab] = useState<ScenarioTab>(initialScenarioTab);
 	return (
@@ -164,9 +154,7 @@ export const Inspector = forwardRef<
 			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface shadow-float"
 			style={{ width }}
 		>
-			{sticky ? (
-				<StickyInspector key={sticky.id} note={sticky} context={context} onCollapse={onCollapse} />
-			) : annotation ? (
+			{annotation ? (
 				<AnnotationInspector
 					key={annotation.id}
 					annotation={annotation}
@@ -265,7 +253,6 @@ function NodeInspector({
 	const fieldInputs = new Set<string>([
 		...Object.keys(type?.inputs.properties ?? {}),
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
-		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
 		...(node.kind === "subflow_entry" ? ["name"] : node.kind === "stop_subflow" ? ["subflow"] : []),
 	]);
 	const general = warnings.filter(
@@ -273,11 +260,7 @@ function NodeInspector({
 	);
 	const change = (next: DocNode) => context.onChangeNode(id, next);
 	const displayNameError = fieldErrors.find((e) => e.field === "display_name")?.message;
-	const hasExec =
-		node.kind === "package" ||
-		node.kind === "timer" ||
-		node.kind === "sleep" ||
-		node.kind === "stop_subflow";
+	const hasExec = node.kind === "package" || node.kind === "stop_subflow";
 	const paramErrors = fieldErrors.length;
 	const version = node.kind === "package" ? doc.packages[node.package] : undefined;
 
@@ -402,12 +385,6 @@ function NodeInspector({
 							onLocate={context.onLocate}
 						/>
 					)}
-					{node.kind === "timer" && (
-						<TimerForm node={node} problemsOf={problemsOf} onChange={change} />
-					)}
-					{node.kind === "sleep" && (
-						<SleepForm node={node} choices={choices} problemsOf={problemsOf} onChange={change} />
-					)}
 					{node.kind === "stop_subflow" && (
 						<StopSubflowField
 							id={id}
@@ -455,8 +432,6 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 	entry: "主链的起点，声明触发运行时填写的入口参数。",
 	subflow_entry: "子流程的起点，由异步任务节点调度；只能看到映射传入的参数。",
 	async: "派发一个子流程后主链立即继续；子流程失败不影响主链。",
-	timer: "等到某个时刻再继续，由控制面执行，不占用 Agent。",
-	sleep: "等待一段时长再继续，由控制面执行，不占用 Agent。",
 	stop_subflow:
 		"停止本链触发的某个子流程，等它完全结束（包括其中的 always 节点）后再继续；由控制面执行，不占用 Agent。",
 	// 已移除种类的节点（ADR 0028）。

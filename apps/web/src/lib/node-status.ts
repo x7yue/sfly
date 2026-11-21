@@ -21,7 +21,7 @@ export interface NodeStatusDisplay {
 	 */
 	done: boolean;
 	/**
-	 * 时间线上处于这个状态的一次尝试的执行段。ok / run 是正常执行，定时 / Sleep 节点的正常执行画成等待段；
+	 * 时间线上处于这个状态的一次尝试的执行段。ok / run 是正常执行，停止子流程节点的正常执行画成等待段；
 	 * 其余种类不论节点类型都照画。没有开始执行的尝试只有排队段，用不到这一列。
 	 */
 	segment: SegmentKind;

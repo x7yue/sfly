@@ -329,50 +329,50 @@ async fn points_queued_while_disconnected_are_capped_by_dropping_the_oldest() {
     );
 }
 
-#[tokio::test]
-async fn labels_survive_queueing_while_disconnected() {
+/// 控制面下线多久（秒，按墙上时钟的整秒）再恢复。下面断言的窗口是 `(down_at, up_at - 3]` 里的整数秒，宽 `这个值 - 3`
+/// 秒：点按「每秒最后一次上报」合并，相邻两个点的 `time_unix_s` 最多差到上报间隔向上取整再加一（0.25 秒一次时差 2，
+/// 2 秒一次时差 3），两点之间空着的整数秒比差值少一，所以窗口至少要和相邻两点的最大差值一样宽才一定有点。
+/// 原来写的是 4（窗口只有一个整数秒），某一秒恰好没有点时偶发失败（#519）。
+const DOWNTIME_S: i64 = 7;
+
+/// 下线期间发出、排队、恢复后补发的点带着各自的标签。节点每 `interval` 秒给两个序列各上报一次，共 `reports` 次，
+/// 要在控制面下线的这 `DOWNTIME_S` 秒里还在上报。
+async fn labels_survive_queueing(name: &str, interval: f64, reports: usize) {
     let cp = FakeControlPlane::start().await;
     let port = cp.port;
-    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-metric-labels-queue"));
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, name));
     cp.hello(0).await;
-    // 约 7 秒，每 0.25 秒给两个序列各上报一次。
-    let steps: Vec<Value> = (0..28)
+    let task = format!("task-{name}");
+    let steps: Vec<Value> = (0..reports)
         .flat_map(|i| {
             [
                 json!(["conn", i, { "host": "a", "port": 1 }]),
                 json!(["conn", i, { "host": "b", "port": 1 }]),
-                json!(0.25),
+                json!(interval),
             ]
         })
         .collect();
-    cp.assign(stub_task(
-        "task-labels-queue",
-        "metrics",
-        json!({ "steps": steps }),
-    ))
-    .await;
+    cp.assign(stub_task(&task, "metrics", json!({ "steps": steps })))
+        .await;
     cp.wait_for("first metric batch", |all| {
-        (!batches_of(all, "task-labels-queue").is_empty()).then_some(())
+        (!batches_of(all, &task).is_empty()).then_some(())
     })
     .await;
     // 控制面下线：这期间的点在 Agent 内存里排队，恢复后补发。一秒（按单调时钟）的点在这一秒过完、再过 1 秒宽限时发出，
     // 也就是这一秒里最后一次上报之后的 2 秒以内。所以 Agent 时间晚于第 down_at 秒（下线之后才上报）、
     // 不晚于第 up_at - 3 秒（恢复之前已经发出）的点都是下线期间发出、排队后补发的；
-    // 至少等到 down_at + 4 再恢复，这一段才不为空（任务约 7 秒，这时还在上报）。
+    // 等到 down_at + DOWNTIME_S 再恢复，这一段有 DOWNTIME_S - 3 个整数秒宽，一定有点。
     drop(cp);
     let down_at = unix_now();
-    while unix_now() < down_at + 4 {
+    while unix_now() < down_at + DOWNTIME_S {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let up_at = unix_now();
     let cp = FakeControlPlane::start_on(port).await;
 
-    let (result, _) = cp.result("task-labels-queue").await;
+    let (result, _) = cp.result(&task).await;
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
-    let conn = points_of(
-        &batches_of(&cp.received_with_session(), "task-labels-queue"),
-        "conn",
-    );
+    let conn = points_of(&batches_of(&cp.received_with_session(), &task), "conn");
     let a = labels(&[("host", "a"), ("port", "1")]);
     let b = labels(&[("host", "b"), ("port", "1")]);
     assert!(
@@ -392,10 +392,23 @@ async fn labels_survive_queueing_while_disconnected() {
         );
         assert_eq!(
             points.last().map(|&(_, v)| v),
-            Some(27.0),
+            Some((reports - 1) as f64),
             "{series:?}: {points:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn labels_survive_queueing_while_disconnected() {
+    // 约 7 秒，每 0.25 秒给两个序列各上报一次。
+    labels_survive_queueing("agent-metric-labels-queue", 0.25, 28).await;
+}
+
+/// 节点每 2 秒才上报一次：相邻两个点的 `time_unix_s` 相差 2、偶尔 3，只隔一个整数秒的窗口有一半的概率没有点，
+/// 原来的断言在这里必然偶发失败（#519 的故障注入：把下线时长改回 4 秒，这条测试约一半的运行失败）。
+#[tokio::test]
+async fn labels_survive_queueing_while_disconnected_when_the_node_reports_every_other_second() {
+    labels_survive_queueing("agent-metric-labels-sparse", 2.0, 6).await;
 }
 
 /// 墙上时钟的 Unix 秒（与 SDK 上报的时间戳同一个时钟）。

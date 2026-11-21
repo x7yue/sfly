@@ -82,6 +82,15 @@ test("运行后显示「已停止」：监控页看到子流程名称和停止�
 	clock,
 }) => {
 	const { runId, scenarioId, finish } = await stoppingRun(controlPlane, connectAgent, clock);
+	// 概览的链路里，停止子流程节点不在 Agent 上：进行中的节点那一行只写状态，不写 Agent、尝试号和时长。
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/runs/${runId}?view=overview`);
+	await expect(
+		page
+			.getByRole("list", { name: "进行中的节点" })
+			.getByRole("listitem")
+			.filter({ hasText: "stop" }),
+	).toHaveText("stop 等待中");
 	await openMonitor(page, clock, runId, "stop");
 	const tl = timeline(page);
 	await expect(tl.getByRole("button", { name: /子流程 监控 · / })).toBeVisible();

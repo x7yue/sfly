@@ -158,7 +158,7 @@ describe("节点包安装", () => {
 		await eventually(async () => {
 			const node = await api.node(runId, "a");
 			expect(node.status).toBe("failed");
-			expect(node.error).toEqual({ kind: "env_error", message: uvOutput });
+			expect(node.error).toEqual({ kind: "env_error", message: uvOutput, location: null });
 		});
 		expect((await api.run(runId)).status).toBe("failed");
 		await agent.expectNoAssign(300);

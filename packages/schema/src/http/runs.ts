@@ -22,8 +22,8 @@ export const RunStatus = z.enum(["running", "success", "failed", "cancelled"]);
 
 /**
  * 任务（一次尝试）与节点的状态（docs/SEMANTICS.md §3.1）。节点另有 pending（还没有尝试）。
- * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
- * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1，不算失败）。
+ * dispatched（界面写「准备中」）：已派发给 Agent，还在下载、安装节点包或启动执行器；
+ * waiting：停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1，不算失败）。
  */
 export const TaskStatus = z.enum([
 	"queued",
@@ -58,8 +58,16 @@ export const isOnAgentStatus = (status: string): status is OnAgentStatus =>
 export const isActiveStatus = (status: string): status is ActiveStatus =>
 	(ACTIVE_STATUSES as readonly string[]).includes(status);
 
-/** 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。 */
-export const ErrorView = z.object({ kind: z.string(), message: z.string() });
+/**
+ * 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。
+ * location 是节点失败时出错的位置：节点代码里的那一行，写成「模块.函数 第 N 行」（SDK 的执行器取，堆栈不带执行器自己的帧）；
+ * 不是节点自己出错、取不到位置、旧版本 Agent 或 SDK 上报的、升级之前的任务为 null。
+ */
+export const ErrorView = z.object({
+	kind: z.string(),
+	message: z.string(),
+	location: z.string().nullable(),
+});
 
 /** 最新进度（ctx.progress），带两种时间（ADR 0018）。 */
 export const TaskProgressView = z.object({
@@ -83,7 +91,7 @@ export const AttemptView = z.object({
 	outputs: z.record(z.string(), z.unknown()).nullable(),
 	error: ErrorView.nullable(),
 	queued_at: Timestamp,
-	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、准备中为 null。 */
+	/** 执行器启动的时间；排队、准备中为 null。 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
 	/**
@@ -93,8 +101,6 @@ export const AttemptView = z.object({
 	 */
 	start_clock_offset: ClockOffsetView.nullable(),
 	end_clock_offset: ClockOffsetView.nullable(),
-	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
-	wake_at: Timestamp.nullable(),
 	progress: TaskProgressView.nullable(),
 	/** 执行中的尝试此刻在做的动作（见 CurrentAction）；没有时为 null，尝试结束后也为 null。 */
 	current_action: CurrentAction.nullable(),

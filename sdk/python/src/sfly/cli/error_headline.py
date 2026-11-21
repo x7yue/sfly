@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Any
 
 #: 行首的异常模块路径：小写字母、数字、下划线的名字加点，后面是首字母大写的异常类名，
 #: 类名之后是冒号或行尾。
@@ -47,3 +49,34 @@ def split_error(message: str) -> tuple[str, list[str]]:
 def error_headline(message: str) -> str:
     """失败原因的一行。"""
     return split_error(message)[0]
+
+
+def error_location(error: Mapping[str, Any]) -> str | None:
+    """错误里节点失败时出错的位置（`error.location`，「模块.函数 第 N 行」）。
+
+    旧版本的控制面没有这个键，升级之前的任务、不是节点自己出错的失败是 null：都是 None。
+    """
+    location = error.get("location")
+    return location if isinstance(location, str) and location else None
+
+
+def location_line(location: str) -> str:
+    """出错位置写在文本里的样子。"""
+    return f"出错位置：{location}"
+
+
+def with_location(message_lines: list[str], location: str | None) -> list[str]:
+    """错误信息的各行里加上出错位置：放在失败原因的各行之后、堆栈之前（没有堆栈时放在末尾）。
+
+    `sfly run show` 这样的地方整段错误信息都打出来，位置不能埋在堆栈后面。
+    """
+    if location is None:
+        return message_lines
+    at = next(
+        (i for i, line in enumerate(message_lines) if _trim(line).startswith(_TRACEBACK)),
+        len(message_lines),
+    )
+    # 失败原因和堆栈之间的空行留在位置的后面，位置紧接着失败原因。
+    while at > 0 and not _trim(message_lines[at - 1]):
+        at -= 1
+    return [*message_lines[:at], location_line(location), *message_lines[at:]]

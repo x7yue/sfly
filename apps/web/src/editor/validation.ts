@@ -30,18 +30,17 @@ interface FieldErrorAt {
 }
 
 /**
- * 字段错误出在哪个对象上，四选一：节点（`nodeId`）、注释框（`annotationId`，标题、备注）、
- * 便签（`stickyId`，标题、正文），或者都没有（场景级字段）。三个 ID 至多一个不是 undefined。
+ * 字段错误出在哪个对象上，三选一：节点（`nodeId`）、注释框（`annotationId`，标题、备注），
+ * 或者都没有（场景级字段）。两个 ID 至多一个不是 undefined。
  */
 export type FieldError = FieldErrorAt &
 	(
-		| { nodeId: string; annotationId?: undefined; stickyId?: undefined }
-		| { annotationId: string; nodeId?: undefined; stickyId?: undefined }
-		| { stickyId: string; nodeId?: undefined; annotationId?: undefined }
-		| { nodeId?: undefined; annotationId?: undefined; stickyId?: undefined }
+		| { nodeId: string; annotationId?: undefined }
+		| { annotationId: string; nodeId?: undefined }
+		| { nodeId?: undefined; annotationId?: undefined }
 	);
 
-const TYPED_FIELD = /^(params\.\d+\.name|at|duration)$/;
+const TYPED_FIELD = /^params\.\d+\.name$/;
 
 const PARAM_NAME_MESSAGE = "参数名只能包含字母、数字和下划线，不能以数字开头";
 
@@ -72,8 +71,7 @@ export function documentFieldErrors(doc: StoredOrchestrationDocument): FieldErro
 			const at = typeof index === "number" ? index : -1;
 			const node = head === "nodes" ? kept[at] : undefined;
 			const annotation = head === "annotations" ? doc.annotations[at] : undefined;
-			const sticky = head === "sticky_notes" ? doc.sticky_notes[at] : undefined;
-			const field = (node || annotation || sticky ? rest : issue.path).map(String).join(".");
+			const field = (node || annotation ? rest : issue.path).map(String).join(".");
 			const error = {
 				field,
 				message: messageOf(issue.path, issue.code, issue.message),
@@ -81,7 +79,6 @@ export function documentFieldErrors(doc: StoredOrchestrationDocument): FieldErro
 			};
 			if (node) errors.push({ ...error, nodeId: node.id });
 			else if (annotation) errors.push({ ...error, annotationId: annotation.id });
-			else if (sticky) errors.push({ ...error, stickyId: sticky.id });
 			else errors.push(error);
 		}
 	}

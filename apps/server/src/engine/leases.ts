@@ -17,7 +17,7 @@ import { anyTask, type ChainDriver, type Step, type TaskRow } from "./step.js";
 export const DEFAULT_LEASE_MS = 30_000;
 
 /**
- * 控制面启动时：运行、链实例、任务和定时器的状态都在 PG 里，不需要重放；
+ * 控制面启动时：运行、链实例和任务的状态都在 PG 里，不需要重放；
  * 只是停机期间 Agent 无法心跳、也无法被派发，所以把已经（或即将）到期的租约和排队超时
  * 顺延到 grace（至少一个租约之后），给 Agent 重新连接、在 Hello 里上报手上任务的时间。
  */

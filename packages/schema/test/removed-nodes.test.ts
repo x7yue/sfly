@@ -5,6 +5,7 @@ import {
 	keepRemovedNodeConfig,
 	OrchestrationDocument,
 	REMOVED_NODE_KINDS,
+	removedKindOutputs,
 	removedNodesIn,
 	removedNodesMessage,
 	StoredOrchestrationDocument,
@@ -38,7 +39,6 @@ describe("读到的文档认得已移除的节点种类", () => {
 	it("原样带着当时的配置，补上后来新增的字段的默认值", () => {
 		const parsed = StoredOrchestrationDocument.parse(document);
 		expect(parsed.annotations).toEqual([]);
-		expect(parsed.sticky_notes).toEqual([]);
 		const stored = keepRemovedNodeConfig(parsed, document);
 		expect(stored.nodes[1]).toEqual(notify);
 		// 其余节点是解析后的（补了默认值）。
@@ -75,5 +75,11 @@ describe("已移除节点的清单与说明", () => {
 		expect(removedNodesMessage(removedNodesIn(document))).toBe(
 			"场景里有 1 个已不再支持的节点（notify），先删掉再保存。替换办法：已移除的节点类型 feishu_notify：在节点代码里用 ctx.notify 发飞书消息",
 		);
+	});
+
+	it("原来有输出的种类登记了输出名，别的节点引用过它们的要一起改；没有输出的是空数组", () => {
+		expect(removedKindOutputs("timer")).toEqual(["triggered_at", "late"]);
+		expect(removedKindOutputs("sleep")).toEqual(["triggered_at"]);
+		expect(removedKindOutputs("feishu_notify")).toEqual([]);
 	});
 });

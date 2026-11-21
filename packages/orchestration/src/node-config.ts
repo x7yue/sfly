@@ -22,8 +22,6 @@ export const isRetryable = (kind: string): boolean =>
 /** 可以标记为 always 的节点种类（docs/SEMANTICS.md §3.2、§4.1）；异步任务节点不行。 */
 export const ALWAYS_KINDS = [
 	"package",
-	"timer",
-	"sleep",
 	"stop_subflow",
 ] as const satisfies readonly OrchestrationNode["kind"][];
 

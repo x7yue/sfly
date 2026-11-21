@@ -145,7 +145,7 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	await expect(frame).toBeVisible();
 	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(true);
 
-	// 点标题选中注释框，写备注：框里最上方出现便签，直接显示备注；框上没有备注图标（备注图标只在节点卡片上）。
+	// 点标题选中注释框，写备注：框里最上方出现注释框的备注卡片，直接显示备注；框上没有备注图标（备注图标只在节点卡片上）。
 	await nodeCard(page, "entry").click();
 	await annotationBand(page, "造测试数据").click();
 	await expect(annotationBand(page, "造测试数据")).toHaveAttribute("aria-pressed", "true");
@@ -421,14 +421,16 @@ test("子流程成员：往子流程里加节点，框跟着变大；画在子�
 
 	await openMenu(page, "sub_ping");
 	await nodeMenu(page).getByRole("menuitem", { name: "在后面添加节点" }).click();
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeVisible();
 	// 新节点接在 sub_ping 右边，视图随后平移过去：在同一时刻量框、新节点和子流程区域。
 	const frame = annotationFrame(page, "annotation_1");
 	await expect
 		.poll(async () => {
 			const grown = await box(frame);
-			const added = await box(nodeCard(page, "sleep_1"));
+			const added = await box(nodeCard(page, "stop_subflow_1"));
 			const sub = await box(region);
 			return grown.width > first.width && frames(grown, added) && frames(grown, sub);
 		})

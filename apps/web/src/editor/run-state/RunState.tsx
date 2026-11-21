@@ -43,6 +43,7 @@ import {
 	attemptLabel,
 	DURATION_LABEL,
 	ELAPSED_LABEL,
+	ERROR_LOCATION_LABEL,
 	FOCUS,
 	MESSAGE,
 	MONITOR_DETAIL_LABEL,
@@ -124,9 +125,9 @@ function primaryAnomaly(focus: RunFocus | undefined, id: string) {
 
 /**
  * 节点卡片、连线与子流程区域的运行状态叠加。卡片上（docs/DESIGN-SYSTEM.md §2.3）：站点灯换成状态标记，第一行右侧是这次
- * 运行里最要紧的那个数——执行中有总数的进度（282/600）、等待中的剩余时间、其余状态的耗时；第二行换成失败原因、
+ * 运行里最要紧的那个数——执行中有总数的进度（282/600）、其余状态的耗时；第二行换成失败原因、
  * 主指标的最新值与迷你趋势（#43）或第几次尝试，没有时沿用配置摘要；执行中、等待中的底边画进度线。
- * `now` 是控制面时间（运行中每秒更新），剩余时间和耗时按它算。
+ * `now` 是控制面时间（运行中每秒更新），耗时按它算。
  * 执行中的节点第二行写此刻在做什么（#356）：最外层、开始得最早的动作，没有动作时是进度的说明。
  * 有关注项的节点（#353）卡片上边线外写个数，开始执行过以后两行字下面列出前两项。
  */
@@ -179,18 +180,7 @@ export function useRunDecorations(
 							</>
 						);
 				}
-				if (summary.state === "waiting" && last?.wake_at && last.started_at) {
-					const start = Date.parse(last.started_at);
-					const wake = Date.parse(last.wake_at);
-					const left = formatSpan(wake - now, true);
-					decoration.figure = `剩 ${left}`;
-					decoration.overview = (
-						<>
-							剩 <span className="font-mono">{left}</span>
-						</>
-					);
-					if (wake > start) decoration.progress = (now - start) / (wake - start);
-				} else if (summary.state === "running" && last?.progress?.total) {
+				if (summary.state === "running" && last?.progress?.total) {
 					const done = `${last.progress.current}/${last.progress.total}`;
 					decoration.figure = done;
 					decoration.overview = <span className="font-mono">{done}</span>;
@@ -513,6 +503,14 @@ function NodeRunInspector({
 							{view.error.kind}
 						</Badge>
 						<p className="m-0 mt-1.5 break-words text-xs">{errorHeadline(view.error.message)}</p>
+						{view.error.location && (
+							<p
+								data-testid="run-error-location"
+								className="m-0 mt-1 break-words font-mono text-xs text-fg-2"
+							>
+								{ERROR_LOCATION_LABEL}：{view.error.location}
+							</p>
+						)}
 					</div>
 				)}
 				{!view && (

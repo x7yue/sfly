@@ -140,7 +140,7 @@ const activeNodes = (run: RunView) =>
 
 /**
  * 链路：各链的线路（components/run-lines），下面一行写进行中的节点，写法和控制台运行块相同（`activeDetail`）：
- * 所在 Agent、尝试号和已执行时长，还没开始执行的写状态，等待节点写唤醒时间；执行中的节点再接上此刻在做什么。
+ * 所在 Agent、尝试号和已执行时长，还没开始执行的写状态；执行中的节点再接上此刻在做什么。
  */
 function ChainSection({ run }: { run: RunView }) {
 	const { now } = useTimeAxis();
