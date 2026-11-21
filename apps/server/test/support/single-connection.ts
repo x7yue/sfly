@@ -10,6 +10,8 @@ import * as schema from "../../src/db/schema.js";
 export interface SingleConnection {
 	db: Db;
 	mostPending(): number;
+	/** 到目前为止在这个连接上发出的查询总数（事务的 BEGIN、COMMIT 也算）。 */
+	queryCount(): number;
 	end(): Promise<void>;
 }
 
@@ -17,10 +19,12 @@ export function singleConnection(url: string): SingleConnection {
 	const pool = new pg.Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 1000 });
 	let pending = 0;
 	let most = 0;
+	let total = 0;
 	pool.on("connect", (client) => {
 		const query = client.query.bind(client) as (...args: unknown[]) => Promise<unknown> | undefined;
 		client.query = ((...args: unknown[]) => {
 			pending += 1;
+			total += 1;
 			most = Math.max(most, pending);
 			const done = () => {
 				pending -= 1;
@@ -40,6 +44,7 @@ export function singleConnection(url: string): SingleConnection {
 	return {
 		db: drizzle(pool, { schema }),
 		mostPending: () => most,
+		queryCount: () => total,
 		end: () => pool.end(),
 	};
 }

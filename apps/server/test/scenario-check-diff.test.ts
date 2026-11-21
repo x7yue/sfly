@@ -31,6 +31,10 @@ const baseDocument = (): Doc => ({
 	packages: { http: "1.0.0" },
 });
 
+/** 检查的警告去掉 `existing` 标记，和保存的警告比较。 */
+const withoutFlag = (warnings: unknown) =>
+	(warnings as Array<Record<string, unknown>>).map(({ existing: _, ...rest }) => rest);
+
 const EMPTY_DIFF = {
 	settings: [],
 	nodes: { added: [], removed: [], changed: [] },
@@ -46,8 +50,13 @@ describe("场景的检查接口和版本对比接口", () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
 		const check = { outputs: [], inputs: { properties: { url: { type: "string" } } } };
-		await publishPackage(cp, "http", "1.0.0", { check });
-		await publishPackage(cp, "http", "1.1.0", { check });
+		// probe 有必填输入 host：缺了它保存时有 input_required 警告
+		const probe = {
+			outputs: [],
+			inputs: { properties: { host: { type: "string" } }, required: ["host"] },
+		};
+		await publishPackage(cp, "http", "1.0.0", { check, probe });
+		await publishPackage(cp, "http", "1.1.0", { check, probe });
 	});
 	afterAll(async () => {
 		await cp.close();
@@ -124,7 +133,8 @@ describe("场景的检查接口和版本对比接口", () => {
 				const savedBody = (await saved.json()) as Record<string, unknown>;
 				if (saved.status === 201) {
 					expect(checked.status, name).toBe(200);
-					expect(checkedBody.warnings, name).toEqual(savedBody.warnings);
+					// 检查的警告多一个标记：改动之前（最新版本里）是否就有
+					expect(withoutFlag(checkedBody.warnings), name).toEqual(savedBody.warnings);
 					if (name === "没有问题") expect(savedBody.warnings).toEqual([]);
 					for (const w of savedBody.warnings as Array<{ code: string }>) seen.add(w.code);
 				} else {
@@ -194,6 +204,147 @@ describe("场景的检查接口和版本对比接口", () => {
 			expect(await res.json()).toEqual({
 				error: { code: "not_found", message: "orchestration not found" },
 			});
+		});
+	});
+
+	describe("警告分成这次改动新带进来的和改动之前就有的", () => {
+		/** 入口带一个写了默认值的保密参数，probe 节点缺必填输入 host：最新版本里就有两条警告。 */
+		const withExisting = (): Doc => {
+			const doc = baseDocument();
+			(doc.nodes[0] as { params: unknown[] }).params.push({
+				name: "token",
+				type: "string",
+				secret: true,
+				default: "s3cr3t-default",
+			});
+			doc.nodes.push({
+				id: "probe_a",
+				kind: "package",
+				package: "http",
+				node: "probe",
+				inputs: {},
+			});
+			doc.edges.push({ from: "check", to: "probe_a", kind: "chain" });
+			return doc;
+		};
+		const check = async (id: string, document: unknown, extra: Record<string, unknown> = {}) => {
+			const res = await api.post(`/orchestrations/${id}/check`, { document, ...extra });
+			const text = await res.text();
+			expect(res.status, text).toBe(200);
+			return orchestrationsApi.check.response.parse(JSON.parse(text));
+		};
+		const flags = (warnings: Array<{ code: string; node_id?: string; existing: boolean }>) =>
+			warnings.map((w) => `${w.existing ? "已有" : "新的"} ${w.code} ${w.node_id ?? ""}`).sort();
+
+		it("只改显示名称：原来就有的警告都标成已有", async () => {
+			const id = await api.orchestrationWith(withExisting(), "已有警告-改名");
+			const doc = await head(id);
+			doc.nodes[1] = { ...doc.nodes[1], display_name: "探测一下" };
+			const body = await check(id, doc);
+			expect(flags(body.warnings)).toEqual(
+				["已有 input_required probe_a", "已有 secret_param_default entry"].sort(),
+			);
+		});
+
+		it("再带进来一条：新的那条标成新的；同一种警告指向另一个节点也算新的", async () => {
+			const id = await api.orchestrationWith(withExisting(), "已有警告-新加");
+			const doc = await head(id);
+			doc.nodes.push({
+				id: "probe_b",
+				kind: "package",
+				package: "http",
+				node: "probe",
+				inputs: {},
+			});
+			doc.edges.push({ from: "probe_a", to: "probe_b", kind: "chain" });
+			const body = await check(id, doc);
+			expect(flags(body.warnings)).toEqual(
+				[
+					"已有 input_required probe_a",
+					"已有 secret_param_default entry",
+					"新的 input_required probe_b",
+				].sort(),
+			);
+		});
+
+		it("原来那条改好了、同一种警告出现在另一个节点上：算新的（按指向的节点认，不是按种类数条数）", async () => {
+			const id = await api.orchestrationWith(withExisting(), "已有警告-换节点");
+			const doc = await head(id);
+			doc.nodes = doc.nodes.map((n) => (n.id === "probe_a" ? { ...n, inputs: { host: "h" } } : n));
+			doc.nodes.push({
+				id: "probe_b",
+				kind: "package",
+				package: "http",
+				node: "probe",
+				inputs: {},
+			});
+			doc.edges.push({ from: "probe_a", to: "probe_b", kind: "chain" });
+			const body = await check(id, doc);
+			expect(flags(body.warnings)).toEqual(
+				["已有 secret_param_default entry", "新的 input_required probe_b"].sort(),
+			);
+		});
+
+		it("改掉入口参数让预设失效：预设失效的警告总是新的（它说的就是这次改动）", async () => {
+			const id = await api.orchestrationWith(withExisting(), "已有警告-预设");
+			await createPresetOk(api, id, { name: "生产", params: [{ name: "env", value: "prod" }] });
+			const doc = await head(id);
+			const params = (doc.nodes[0] as { params: Array<{ name: string }> }).params;
+			params[0] = { ...params[0], name: "stage" };
+			const body = await check(id, doc);
+			expect(body.warnings.find((w) => w.code === "preset_invalidated")?.existing).toBe(false);
+		});
+
+		it("场景还没有版本：全部算新带进来的", async () => {
+			const id = await api.createOrchestration("已有警告-第一个版本");
+			const body = await check(id, withExisting());
+			expect(body.warnings.length).toBeGreaterThan(0);
+			expect(body.warnings.every((w) => w.existing === false)).toBe(true);
+		});
+	});
+
+	describe("保存的 strict：有这次改动新带进来的警告就不保存，在同一个事务里判断", () => {
+		const strictSave = async (id: string, document: unknown) =>
+			api.post(`/orchestrations/${id}/versions`, {
+				document,
+				base_version: await api.headVersion(id),
+				strict: true,
+			});
+
+		it("新带进来警告：400 strict_warnings，details 和检查的结构一样（带标记的警告和差异），不产生版本", async () => {
+			const id = await api.orchestrationWith(baseDocument(), "严格保存-新警告");
+			const doc = await head(id);
+			doc.packages = { http: "9.9.9" };
+			const res = await strictSave(id, doc);
+			const text = await res.text();
+			expect(res.status, text).toBe(400);
+			const error = JSON.parse(text).error;
+			expect(error.code).toBe("strict_warnings");
+			const details = orchestrationsApi.check.response.parse(error.details);
+			expect(details.warnings.map((w) => [w.code, w.existing])).toEqual([
+				["package_version_missing", false],
+			]);
+			expect(details.diff.settings).toEqual([
+				{ path: "packages.http", before: "1.0.0", after: "9.9.9" },
+			]);
+			expect(await versionCount(id)).toBe(1);
+		});
+
+		it("只有改动之前就有的警告：照常保存", async () => {
+			const id = await api.orchestrationWith(baseDocument(), "严格保存-已有警告");
+			const withSecret = await head(id);
+			(withSecret.nodes[0] as { params: unknown[] }).params.push({
+				name: "token",
+				type: "string",
+				secret: true,
+				default: "s3cr3t-default",
+			});
+			await api.saveVersion(id, withSecret);
+			const doc = await head(id);
+			doc.nodes[1] = { ...doc.nodes[1], display_name: "改个名" };
+			const res = await strictSave(id, doc);
+			expect(res.status, await res.clone().text()).toBe(201);
+			expect(await versionCount(id)).toBe(3);
 		});
 	});
 

@@ -1,4 +1,4 @@
-import { agentsApi, type EditorsEvent, presenceApi } from "@sfly/schema";
+import { agentsApi, type LogChunk, logsApi } from "@sfly/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, callApi } from "./api";
 import { openEventSource } from "./sse";
@@ -34,12 +34,12 @@ describe("开发环境下按契约校验响应", () => {
 	});
 
 	it("事件不符合契约时在控制台报错并丢弃，符合的照常分发", async () => {
-		const valid: EditorsEvent = { orchestration_id: "o1", editors: [] };
+		const valid: LogChunk = { task_id: "t1", lines: [], offset: 0 };
 		const stream = new ReadableStream<Uint8Array>({
 			start(controller) {
 				const text = [
-					`event: editors\ndata: ${JSON.stringify({ orchestration_id: 1 })}\n\n`,
-					`event: editors\ndata: ${JSON.stringify(valid)}\n\n`,
+					`event: logs\ndata: ${JSON.stringify({ task_id: 1 })}\n\n`,
+					`event: logs\ndata: ${JSON.stringify(valid)}\n\n`,
 				].join("");
 				controller.enqueue(new TextEncoder().encode(text));
 			},
@@ -49,12 +49,12 @@ describe("开发环境下按契约校验响应", () => {
 			async () => new Response(stream, { headers: { "content-type": "text/event-stream" } }),
 		);
 		const reported = vi.spyOn(console, "error").mockImplementation(() => {});
-		const received: EditorsEvent[] = [];
+		const received: LogChunk[] = [];
 
 		const close = openEventSource(
-			presenceApi.events,
-			{ params: { id: "o1" } },
-			{ editors: (event) => received.push(event) },
+			logsApi.events,
+			{ params: { id: "t1" }, query: {} },
+			{ logs: (event) => received.push(event) },
 		);
 		await vi.waitFor(() => expect(received).toEqual([valid]));
 		close();

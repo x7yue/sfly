@@ -85,7 +85,7 @@ export interface RouteManifest {
 const DESCRIPTION =
 	"sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。" +
 	"summary 是一句话说明；effect 是 read（只读：不改变平台里任何资源的内容，也不在平台之外产生副作用；" +
-	"只写心跳这类不影响资源内容的痕迹也算）或 write（有副作用）；" +
+	"只写访问日志这类不影响资源内容的痕迹也算）或 write（有副作用）；" +
 	"resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：" +
 	"{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；" +
 	"upload 是具体的那一个在上传的内容里；global 是平台自身）；" +

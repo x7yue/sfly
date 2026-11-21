@@ -11,6 +11,8 @@ chain-label.ts）。命令行里的 `链:节点` 都由这里写出、也由这�
 
 from __future__ import annotations
 
+import re
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -129,6 +131,16 @@ def last_attempt(node: Mapping[str, Any]) -> dict[str, Any] | None:
     return max(attempts, key=lambda a: a["attempt"]) if attempts else None
 
 
+# ---------------------------------------------------------------- 数字
+
+
+def format_number(value: float) -> str:
+    """指标和输出里的数：整数不带小数点也不用科学计数法，其余最多 6 位有效数字。"""
+    if value == int(value) and abs(value) < 1e15:
+        return str(int(value))
+    return f"{value:.6g}"
+
+
 # ---------------------------------------------------------------- 时间和时长
 
 
@@ -211,6 +223,104 @@ def node_type_label(node: Mapping[str, Any]) -> str:
 
 def run_not_found(run_id: str) -> CliError:
     return CliError("run_not_found", f"没有 id 是 {run_id} 的运行", next="sfly run list")
+
+
+# 「最近一次运行」的写法：自己（昵称）触发的、开始得最晚的那一次。
+LATEST_RUN = ("latest", "最近")
+# 运行编号的前缀至少写几个字符：太短会匹配上太多运行。
+MIN_RUN_PREFIX = 4
+# 命令行里 `运行` 参数的说明（取消不接受 latest）。
+RUN_HELP = (
+    "运行 id，可以只写前缀（至少 4 个字符，不产生歧义时），或写 latest：自己触发的最近一次运行"
+)
+RUN_HELP_NO_LATEST = "运行 id，可以只写前缀（至少 4 个字符，不产生歧义时）；取消不接受 latest"
+# 控制面还不认按触发人、按编号前缀筛的参数（比命令行旧）时，退回到取最近的一批运行再在这里筛：
+# 最多要这么多个。
+_RUN_LOOKUP_LIMIT = 500
+# 前缀有歧义时最多列出多少个候选。
+_MAX_AMBIGUOUS = 10
+_RUN_PREFIX = re.compile(r"[0-9a-fA-F][0-9a-fA-F-]*")
+
+
+def resolve_run(client: Client, ref: str, *, allow_latest: bool = True) -> str:
+    """命令行里写的运行：完整的运行 id（原样返回）、运行 id 的前缀（至少 4 个字符，
+    匹配到唯一一个运行时），或 `latest`（`最近`）：自己触发的、开始得最晚的一次
+    （`allow_latest` 为 False 的命令不接受，例如取消）。返回完整的运行 id，之后的命令都用它，
+    不用抄整段 UUID。
+
+    找不到时抛 `run_not_found`；前缀匹配到几个运行时抛 `run_ambiguous`，列出每个候选的 id、场景、
+    状态和开始时间；`latest` 一个也找不到时抛 `no_recent_run`。
+    """
+    text = ref.strip()
+    if _is_uuid(text):
+        return text
+    if text.lower() in LATEST_RUN:
+        if not allow_latest:
+            raise CliError(
+                "invalid_arguments",
+                f"这条命令不接受 {text}：取消运行要写明是哪一次，用运行 id 或它的前缀",
+                next="sfly run list",
+            )
+        return _latest_run(client)
+    if not _RUN_PREFIX.fullmatch(text):
+        raise run_not_found(ref)
+    if len(text) < MIN_RUN_PREFIX:
+        raise CliError(
+            "run_prefix_too_short",
+            f"运行编号的前缀至少写 {MIN_RUN_PREFIX} 个字符，收到 {text!r}：\n"
+            "多写几位，或用完整的 id",
+            next="sfly run list",
+        )
+    # 控制面按编号前缀筛（`id_prefix`）；比命令行旧的控制面不认它、返回最近的一批，
+    # 所以这里仍然再筛一遍。
+    listing = client.get("/runs", {"id_prefix": text, "limit": _RUN_LOOKUP_LIMIT})
+    found = [r for r in listing["runs"] if str(r["id"]).lower().startswith(text.lower())]
+    if not found:
+        raise run_not_found(ref)
+    if len(found) > 1:
+        shown = [
+            f"  {r['id']}  {r['orchestration_name']}  "
+            f"{run_status_label(r['status'])}  {r['started_at']}"
+            for r in found[:_MAX_AMBIGUOUS]
+        ]
+        if len(found) > _MAX_AMBIGUOUS:
+            shown.append(f"  ……还有 {len(found) - _MAX_AMBIGUOUS} 个")
+        raise CliError(
+            "run_ambiguous",
+            f"运行编号前缀 {text} 对应 {len(found)} 个运行，多写几位，或用完整的 id：\n"
+            + "\n".join(shown),
+            next="sfly run list",
+        )
+    return str(found[0]["id"])
+
+
+def _latest_run(client: Client) -> str:
+    # 「自己」现在按昵称认：昵称不校验，谁都能写别人的昵称。控制面开始校验身份
+    # （强制鉴权，#489、#494）之后，要改成按凭据里的用户，这里的 `triggered_by` 换成它。
+    listing = client.get("/runs", {"triggered_by": client.nickname, "limit": 1})
+    mine = [r for r in listing["runs"] if r["triggered_by"] == client.nickname]
+    if listing["runs"] and not mine:
+        # 控制面不认 `triggered_by`（比命令行旧），返回的是别人的最近一次：
+        # 退回到按关键字取一批再筛。
+        # `q` 是包含匹配（昵称是别人昵称的一部分时也会返回），只要触发人就是自己的。
+        listing = client.get("/runs", {"q": client.nickname, "limit": _RUN_LOOKUP_LIMIT})
+        mine = [r for r in listing["runs"] if r["triggered_by"] == client.nickname]
+    if not mine:
+        raise CliError(
+            "no_recent_run",
+            f"没有找到 {client.nickname} 触发过的运行（latest 指自己触发的最近一次，"
+            "昵称用 --nickname 或 SFLY_NICKNAME 指定）",
+            next="sfly run list",
+        )
+    return str(mine[0]["id"])
+
+
+def _is_uuid(text: str) -> bool:
+    try:
+        uuid.UUID(text)
+    except ValueError:
+        return False
+    return len(text) == 36
 
 
 def fetch_run(client: Client, run_id: str) -> dict[str, Any]:

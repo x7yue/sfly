@@ -226,15 +226,20 @@ def _push(session: Session, args: argparse.Namespace) -> int | None:
     content, scenario_id, base_version, document = load_push_file(target)
     check_document(document)
     if args.strict:
-        refused = scenario_check.refuse_on_warnings(
+        refused = scenario_check.strict_precheck(
             session, scenario_id, base_version, document, target
         )
         if refused is not None:
             return refused
 
     try:
-        saved = _save_version(client, scenario_id, base_version, document)
+        saved = _save_version(client, scenario_id, base_version, document, strict=args.strict)
     except ApiError as error:
+        if error.code == "strict_warnings" and isinstance(error.details, dict):
+            # 检查之后、保存之前带进来了新的警告：控制面在保存的事务里拒绝了，没有保存。
+            warnings = error.details.get("warnings")
+            if isinstance(warnings, list):
+                return scenario_check.refuse(session, scenario_id, base_version, warnings, target)
         raise explain_save_error(error, scenario_id, base_version, target) from None
 
     note = None
@@ -246,7 +251,11 @@ def _push(session: Session, args: argparse.Namespace) -> int | None:
         note = f"新版本已保存，但没能更新文件里的 base_version 和 document：{error.message}"
     warnings = saved["warnings"]
     lines = [f"已保存场景 {scenario_id} 的版本 {saved['number']}（文件基于版本 {base_version}）。"]
-    lines.extend(_warning_lines(warnings))
+    if args.strict:
+        # strict 保存成功：剩下的警告都是改动之前就有的。
+        lines.extend(scenario_check.existing_lines([{**w, "existing": True} for w in warnings], ""))
+    else:
+        lines.extend(_warning_lines(warnings))
     if note is None:
         lines.append(
             f"文件 {target} 的 base_version 已更新为 {saved['number']}，"
@@ -270,12 +279,13 @@ def _push(session: Session, args: argparse.Namespace) -> int | None:
 
 
 def _save_version(
-    client: Client, scenario_id: str, base_version: int, document: Any
+    client: Client, scenario_id: str, base_version: int, document: Any, *, strict: bool = False
 ) -> dict[str, Any]:
+    body: dict[str, Any] = {"document": document, "base_version": base_version}
+    if strict:
+        body["strict"] = True
     saved: dict[str, Any] = client.request(
-        "POST",
-        f"/orchestrations/{segment(scenario_id)}/versions",
-        body={"document": document, "base_version": base_version},
+        "POST", f"/orchestrations/{segment(scenario_id)}/versions", body=body
     )
     return saved
 

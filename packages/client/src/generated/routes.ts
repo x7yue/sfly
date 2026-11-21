@@ -58,12 +58,14 @@ import type {
 	RunMetricCatalog,
 	RunMetricSummary,
 	RunNotificationChanges,
+	RunReport,
 	RunSummary,
 	RunView,
 	RunningTaskView,
 	SavedVersionView,
 	StoredOrchestrationDocument,
 	Timestamp,
+	VersionCheckView,
 	VersionSummaryView,
 } from "./types.js";
 
@@ -540,6 +542,11 @@ export interface Api {
 					document: OrchestrationDocument;
 					/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 					base_version: number;
+					/**
+					 * true：这次改动新带进来了警告（改动之前就有的不算，见 CheckedWarningView）时不保存，返回 400 `strict_warnings`，
+					 * details 是 VersionCheckView（和检查的响应一样）。在保存的同一个事务里判断。不写时和以前一样，警告不阻止保存。
+					 */
+					strict?: boolean;
 				};
 			},
 			SavedVersionView
@@ -552,7 +559,8 @@ export interface Api {
 		 *
 		 * - 错误和保存相同：文档不合法 400 `invalid_document`；secret 参数默认值的占位符沿用不了 400 `secret_default_placeholder`；
 		 *   给了 `base_version` 而它不是最新版本时 409 `version_conflict`。没有给 `base_version` 时对照最新版本检查，不报冲突。
-		 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值）。
+		 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值），
+		 *   每条多一个 `existing`：改动之前就有（见 CheckedWarningView）。
 		 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
 		 *
 		 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
@@ -569,12 +577,7 @@ export interface Api {
 					base_version?: number;
 				};
 			},
-			{
-				/** 和保存时相同的警告：只提示，保存不会因为它们被拒绝。 */
-				warnings: DocumentWarningView[];
-				/** 保存之后相对最新版本的差异。 */
-				diff: DocumentDiffView;
-			}
+			VersionCheckView
 		>;
 		/**
 		 * `GET /orchestrations/:id/versions/:a/diff/:b`
@@ -1004,6 +1007,22 @@ export interface Api {
 			RunFocus
 		>;
 		/**
+		 * `GET /runs/:id/summary`
+		 *
+		 * 一次运行的摘要：状态、耗时、最终失败的节点、每个失败的任务的错误（类型、失败原因一行、完整信息）和日志尾部、
+		 * 失败的动作、有异常的关注项。判断一次运行「成功且结果对」先读它。读取走运行的统一读取（`readRuns`），
+		 * 错误信息、参数里保密参数的值都已打码。运行不存在时 404。
+		 */
+		summary: Endpoint<
+			{
+				params: {
+					/** 运行 id。 */
+					id: string;
+				};
+			},
+			RunReport
+		>;
+		/**
 		 * `GET /orchestrations/:id/preflight`
 		 *
 		 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、
@@ -1213,6 +1232,7 @@ export const routes = {
 	runs: {
 		list: { method: "GET", path: "/runs", kind: "endpoint" },
 		focus: { method: "GET", path: "/runs/:id/focus", kind: "endpoint" },
+		summary: { method: "GET", path: "/runs/:id/summary", kind: "endpoint" },
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },
 		listForOrchestration: { method: "GET", path: "/orchestrations/:id/runs", kind: "endpoint" },
 		trigger: { method: "POST", path: "/orchestrations/:id/runs", kind: "endpoint" },

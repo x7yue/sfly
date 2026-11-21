@@ -1,5 +1,5 @@
 {
-  "description": "sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。summary 是一句话说明；effect 是 read（只读：不改变平台里任何资源的内容，也不在平台之外产生副作用；只写心跳这类不影响资源内容的痕迹也算）或 write（有副作用）；resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；upload 是具体的那一个在上传的内容里；global 是平台自身）；有 creates 的接口新建一个这类资源，这时 resource 定位到的资源只被读、写落在新建出来的资源上；有 removes 的接口让 resource 定位到的资源（或它的一部分）不再可用（删除、归档）。params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。response 是成功响应体的 JSON Schema（按输出方向导出，控制面以后可以加字段，所以对象不是封闭的），events 是 SSE 每个事件的 data 的 JSON Schema，没有这两个字段的接口没有 JSON 响应体。notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。",
+  "description": "sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。summary 是一句话说明；effect 是 read（只读：不改变平台里任何资源的内容，也不在平台之外产生副作用；只写访问日志这类不影响资源内容的痕迹也算）或 write（有副作用）；resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；upload 是具体的那一个在上传的内容里；global 是平台自身）；有 creates 的接口新建一个这类资源，这时 resource 定位到的资源只被读、写落在新建出来的资源上；有 removes 的接口让 resource 定位到的资源（或它的一部分）不再可用（删除、归档）。params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。response 是成功响应体的 JSON Schema（按输出方向导出，控制面以后可以加字段，所以对象不是封闭的），events 是 SSE 每个事件的 data 的 JSON Schema，没有这两个字段的接口没有 JSON 响应体。notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。",
   "resource_kinds": {
     "scenario": "场景",
     "run": "运行",
@@ -7738,6 +7738,10 @@
             "minimum": 0,
             "maximum": 9007199254740991,
             "description": "编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。"
+          },
+          "strict": {
+            "type": "boolean",
+            "description": "true：这次改动新带进来了警告（改动之前就有的不算，见 CheckedWarningView）时不保存，返回 400 `strict_warnings`，\ndetails 是 VersionCheckView（和检查的响应一样）。在保存的同一个事务里判断。不写时和以前一样，警告不阻止保存。"
           }
         },
         "required": [
@@ -8895,14 +8899,18 @@
                 },
                 "annotation_id": {
                   "type": "string"
+                },
+                "existing": {
+                  "type": "boolean"
                 }
               },
               "required": [
                 "code",
-                "message"
+                "message",
+                "existing"
               ]
             },
-            "description": "和保存时相同的警告：只提示，保存不会因为它们被拒绝。"
+            "description": "和保存时相同的警告，每条带 `existing`。"
           },
           "diff": {
             "type": "object",
@@ -9161,7 +9169,7 @@
               "moved",
               "annotations"
             ],
-            "description": "保存之后相对最新版本的差异。"
+            "description": "保存之后相对最新版本（还没有版本时是初始文档）的差异。"
           }
         },
         "required": [
@@ -14751,178 +14759,6 @@
       "notes": []
     },
     {
-      "method": "POST",
-      "path": "/orchestrations/:id/presence",
-      "key": [
-        "presence",
-        "heartbeat"
-      ],
-      "kind": "endpoint",
-      "summary": "编辑页面的心跳：登记在线编辑者，返回当前名单",
-      "effect": "read",
-      "resource": {
-        "kind": "scenario",
-        "target": {
-          "params": "id"
-        }
-      },
-      "params": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "body": {
-        "type": "object",
-        "properties": {
-          "session_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "这个标签页的会话 ID（浏览器每次打开编辑页面随机生成）。"
-          }
-        },
-        "required": [
-          "session_id"
-        ]
-      },
-      "response": {
-        "type": "object",
-        "properties": {
-          "editors": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "session_id": {
-                  "type": "string"
-                },
-                "nickname": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "session_id",
-                "nickname"
-              ]
-            },
-            "description": "当前在线的编辑者，每个打开着编辑页面的标签页一项。"
-          }
-        },
-        "required": [
-          "editors"
-        ]
-      },
-      "notes": []
-    },
-    {
-      "method": "POST",
-      "path": "/orchestrations/:id/presence/leave",
-      "key": [
-        "presence",
-        "leave"
-      ],
-      "kind": "endpoint",
-      "summary": "编辑页面主动离开，移除这个在线编辑者",
-      "effect": "read",
-      "resource": {
-        "kind": "scenario",
-        "target": {
-          "params": "id"
-        }
-      },
-      "params": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "body": {
-        "type": "object",
-        "properties": {
-          "session_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "description": "这个标签页的会话 ID（浏览器每次打开编辑页面随机生成）。"
-          }
-        },
-        "required": [
-          "session_id"
-        ]
-      },
-      "notes": []
-    },
-    {
-      "method": "GET",
-      "path": "/orchestrations/:id/presence/events",
-      "key": null,
-      "kind": "stream",
-      "summary": "实时推送一个场景的在线编辑者名单",
-      "effect": "read",
-      "resource": {
-        "kind": "scenario",
-        "target": {
-          "params": "id"
-        }
-      },
-      "params": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "events": {
-        "editors": {
-          "type": "object",
-          "properties": {
-            "orchestration_id": {
-              "type": "string"
-            },
-            "editors": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "session_id": {
-                    "type": "string"
-                  },
-                  "nickname": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "session_id",
-                  "nickname"
-                ]
-              },
-              "description": "当前在线的编辑者，每个打开着编辑页面的标签页一项。"
-            }
-          },
-          "required": [
-            "orchestration_id",
-            "editors"
-          ]
-        }
-      },
-      "notes": []
-    },
-    {
       "method": "GET",
       "path": "/orchestrations/:id/presets",
       "key": [
@@ -15626,6 +15462,16 @@
             "maxLength": 200,
             "description": "运行编号前缀或触发人（包含，不区分大小写）。"
           },
+          "triggered_by": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "只要这个触发人的运行：昵称整个相等（区分大小写）。`q` 会把昵称里的文字也当关键字，要精确找一个人的运行用它。"
+          },
+          "id_prefix": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F-]{1,36}$",
+            "description": "只要运行编号以它开头的运行（不分大小写，只能写十六进制数字和 `-`）。`q` 还会按触发人匹配，只想按编号找时用它。"
+          },
           "limit": {
             "default": 200,
             "type": "integer",
@@ -15940,6 +15786,16 @@
         ]
       },
       "notes": [
+        {
+          "part": "query",
+          "path": "id_prefix",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "triggered_by",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
         {
           "part": "query",
           "path": "q",
@@ -16369,6 +16225,923 @@
           "mode",
           "expired",
           "items"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/summary",
+      "key": [
+        "runs",
+        "summary"
+      ],
+      "kind": "endpoint",
+      "summary": "读一次运行的摘要：状态、耗时、失败的节点和原因、日志尾部、失败的动作、有异常的关注项",
+      "effect": "read",
+      "resource": {
+        "kind": "run",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "运行 id。"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "scenario": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "version"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "success",
+              "failed",
+              "cancelled"
+            ],
+            "description": "运行此刻的状态。运行还没结束时是 `running`：引用它的节点自己还没结束，所以节点里看到的总是 `running`，\n不能用它判断结果，看 `result_so_far`。"
+          },
+          "result_so_far": {
+            "type": "string",
+            "enum": [
+              "success",
+              "failed",
+              "cancelled"
+            ],
+            "description": "按运行结果的规则对「到此刻为止」算出的结果：已请求取消是 `cancelled`，否则有节点（或链）最终失败是 `failed`，\n否则是 `success`；运行结束时的最终状态只会比它更坏（运行已经结束时它就是 `status`）。"
+          },
+          "triggered_by": {
+            "type": "string",
+            "description": "触发人的昵称。"
+          },
+          "triggered_via": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "经哪个 AI 编程助手触发；没有时为 null。"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancel": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "requested_by": {
+                    "type": "string"
+                  },
+                  "requested_via": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "requested_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  "forced_at": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "requested_by",
+                  "requested_via",
+                  "requested_at",
+                  "forced_at"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "取消请求；没有被请求取消时为 null。`forced_at`：清理期间再次取消（强制取消）的时间。"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "最终失败的节点的 ID，按失败的先后（和控制台、运行记录、运行通知同一份顺序，GLOSSARY「第一个失败的节点」）：\n第一项就是第一个失败的节点。一次运行里节点 ID 不重复，用它去链实例的 `nodes` 里找。"
+          },
+          "self": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "chain_instance_id": {
+                    "type": "string"
+                  },
+                  "node_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chain_instance_id",
+                  "node_id"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "节点拿到这份状态时，引用它的那个节点；运行摘要接口里为 null。"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "整份状态超过大小上限时，从 `failures` 的末尾开始去掉 `error.message`（那几个节点的 `message_truncated` 为 true），\n直到放得下；去掉过时为 true。"
+          },
+          "chains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "chain_id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "depth": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "parent_chain_instance_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "async_node_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "running",
+                    "success",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "started_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "ended_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "nodes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "node_id": {
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "queued",
+                          "dispatched",
+                          "running",
+                          "waiting",
+                          "success",
+                          "failed",
+                          "skipped",
+                          "cancelled",
+                          "stopped",
+                          "pending"
+                        ]
+                      },
+                      "attempts": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "started_at": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "ended_at": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "error": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "headline": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "message_truncated": {
+                                "type": "boolean"
+                              },
+                              "location": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "headline",
+                              "message",
+                              "message_truncated",
+                              "location"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "node_id",
+                      "display_name",
+                      "kind",
+                      "status",
+                      "attempts",
+                      "started_at",
+                      "ended_at",
+                      "error"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "chain_id",
+                "name",
+                "depth",
+                "parent_chain_instance_id",
+                "async_node_id",
+                "status",
+                "started_at",
+                "ended_at",
+                "nodes"
+              ]
+            },
+            "description": "运行里已经创建的全部链实例，按层数、开始时间排序；还没被触发的子流程不在里面，看触发它的异步任务节点的状态。"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "耗时（毫秒，控制面时间）；运行还没结束时为 null。"
+          },
+          "failed_tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "chain_instance_id": {
+                  "type": "string"
+                },
+                "chain": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "node_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "attempt": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempts": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "task_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "headline": {
+                          "type": "string"
+                        },
+                        "detail": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "headline",
+                        "detail",
+                        "location"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "logs": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "lines": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "seq": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "time": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "agent_time": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "stdout",
+                                  "stderr",
+                                  "sdk",
+                                  "agent",
+                                  "system"
+                                ]
+                              },
+                              "level": {
+                                "type": "string",
+                                "enum": [
+                                  "debug",
+                                  "info",
+                                  "warn",
+                                  "error"
+                                ]
+                              },
+                              "text": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "seq",
+                              "time",
+                              "agent_time",
+                              "source",
+                              "level",
+                              "text"
+                            ]
+                          }
+                        },
+                        "earlier": {
+                          "type": "boolean"
+                        },
+                        "expired": {
+                          "type": "boolean"
+                        },
+                        "missing": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "lines",
+                        "earlier",
+                        "expired",
+                        "missing"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "chain_instance_id",
+                "chain",
+                "node_id",
+                "display_name",
+                "kind",
+                "node_type",
+                "attempt",
+                "attempts",
+                "task_id",
+                "error",
+                "logs"
+              ]
+            },
+            "description": "失败的任务（节点最终失败的，和重试之后成功的节点上失败的那几次），按链实例的顺序、节点在链上的顺序、尝试的序号，\n最多 `RUN_REPORT_LIMITS.failedTasks` 个；完整的错误信息和日志尾部在这里，`chains` 里的节点只有最近一次尝试的错误。\n最终失败的节点按失败的先后看 `failures`。"
+          },
+          "failed_tasks_total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "失败的任务的总数（超过上限时比 `failed_tasks` 的个数大，其余的看 `sfly run show`、`sfly run logs --failed`）。"
+          },
+          "failed_actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "parent": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "depth": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "name": {
+                  "type": "string"
+                },
+                "fields": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "started_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "agent_started_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "ended_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "agent_ended_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "duration_ms": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "result": {
+                  "type": "string",
+                  "enum": [
+                    "success",
+                    "failed",
+                    "unfinished"
+                  ]
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "chain_instance_id": {
+                  "type": "string"
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "task_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "parent",
+                "depth",
+                "name",
+                "fields",
+                "started_at",
+                "agent_started_at",
+                "ended_at",
+                "agent_ended_at",
+                "duration_ms",
+                "result",
+                "reason",
+                "chain_instance_id",
+                "node_id",
+                "display_name",
+                "attempt",
+                "task_id"
+              ]
+            },
+            "description": "失败的动作，最近结束的在前，最多 `RUN_REPORT_LIMITS.failedActions` 个：取每个任务动作摘要里最近失败的那几个\n（任务的动作摘要最多留 5 个），所以一个任务失败得很多时只看到最近的。"
+          },
+          "attention_items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "position": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "chart": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "dispatched",
+                        "running",
+                        "waiting",
+                        "success",
+                        "failed",
+                        "skipped",
+                        "cancelled",
+                        "stopped",
+                        "pending"
+                      ]
+                    },
+                    "attempt": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "task_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "chain_instance_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "started_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ended_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "attempt",
+                    "task_id",
+                    "chain_instance_id",
+                    "started_at",
+                    "ended_at"
+                  ]
+                },
+                "latest": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "number"
+                        },
+                        "metric": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        },
+                        "labels": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "metric",
+                        "labels",
+                        "at"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "anomaly": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "log",
+                        "stale",
+                        "failed",
+                        "retry"
+                      ]
+                    },
+                    "level": {
+                      "type": "string",
+                      "enum": [
+                        "warn",
+                        "error"
+                      ]
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "at",
+                    "message"
+                  ]
+                }
+              },
+              "required": [
+                "position",
+                "node_id",
+                "chart",
+                "title",
+                "unit",
+                "source",
+                "latest",
+                "anomaly"
+              ]
+            },
+            "description": "有异常的关注项（场景设了关注项时才有；没设时为空，不用执行中节点的主指标代替），按作者设定的顺序。\n摘要只给最新值，要曲线用 `GET /runs/:id/focus`。"
+          }
+        },
+        "required": [
+          "run_id",
+          "scenario",
+          "status",
+          "result_so_far",
+          "triggered_by",
+          "triggered_via",
+          "started_at",
+          "ended_at",
+          "cancel",
+          "failures",
+          "self",
+          "truncated",
+          "chains",
+          "duration_ms",
+          "failed_tasks",
+          "failed_tasks_total",
+          "failed_actions",
+          "attention_items"
         ]
       },
       "notes": []

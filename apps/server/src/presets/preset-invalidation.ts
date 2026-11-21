@@ -4,7 +4,7 @@ import {
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { asc, eq } from "drizzle-orm";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { runPresets } from "../db/schema.js";
 import { describePresetProblems, entryParams, presetProblems } from "./preset-validity.js";
 
@@ -16,7 +16,7 @@ import { describePresetProblems, entryParams, presetProblems } from "./preset-va
  * 判断用的是 {@link presetProblems}，和预设视图、触发时的检查是同一个函数。
  */
 export async function presetInvalidatedWarnings(
-	db: Db,
+	db: Db | Tx,
 	orchestrationId: string,
 	before: StoredOrchestrationDocument | undefined,
 	after: StoredOrchestrationDocument,

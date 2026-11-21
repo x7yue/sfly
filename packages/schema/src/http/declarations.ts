@@ -12,7 +12,7 @@ import {
  * 类型已经保证每个接口写了必填的三项，这里检查写出来的值站得住：说明不是空的，资源类别在枚举里，
  * 定位的字段真的在请求里，`creates` 和 `removes` 只出现在写接口上、互不同时出现；
  * 再加守着下游的前提：GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口一定登记在
- * {@link READS_WITH_TRACES}；`{ params }` 定位用的一定是路径里的第一个参数；
+ * {@link NON_GET_READS}；`{ params }` 定位用的一定是路径里的第一个参数；
  * 接口的路径前缀和资源类别一定对得上 {@link PATH_KINDS}（`system` 的接口就是这张表里的 `system` 项：
  * 按鉴权的设想它们不带项目、不需要凭据，所以写错一个就是悄悄多了一个公开的接口，必须过这张表）。
  * 契约测试对 `httpContract` 运行它；路由清单导出时也运行它，有问题就不导出。
@@ -43,7 +43,7 @@ export interface PathKind {
 export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/orchestrations": {
 		kind: "scenario",
-		why: "场景，以及场景的版本、运行预设、预检、在线编辑者、场景的运行：路径里的 :id 都是场景 id",
+		why: "场景，以及场景的版本、运行预设、预检、场景的运行：路径里的 :id 都是场景 id",
 	},
 	"/runs": {
 		kind: "run",
@@ -135,29 +135,27 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 /** 检查用到的两张表；测试可以换成自己的。 */
 export interface DeclarationRules {
 	pathKinds: Readonly<Record<string, PathKind>>;
-	readsWithTraces: Readonly<Record<string, string>>;
+	nonGetReads: Readonly<Record<string, string>>;
 }
 
 /**
- * 声明为只读、但调用后会留下点什么的接口：只写不影响任何资源内容的东西（心跳、访问日志、最后访问时间），
- * 算只读，要在这里登记，写明写了什么。方法不是 GET 的只读接口（不是一眼看得出只读的）也一定在这里。
- * 键是 `方法 路径`（路径模板）。契约测试检查表里的接口都存在、都声明为只读；
+ * 方法不是 GET、声明为只读的接口：一眼看不出它只读，所以每一个都要在这里登记，写明为什么只读、调用后会留下什么
+ * （只能是不影响任何资源内容的东西：访问日志、最后访问时间、内存里的临时状态；什么都不留下就写什么都不留下）。
+ * 键是 `方法 路径`（路径模板）。契约测试检查表里的接口都存在、都声明为只读，非 GET 的只读接口都在表里；
  * 控制面的测试（read-only-routes.test.ts）对这里的接口同样要求库里和数据目录里没有变化，
  * 所以只写内存的才能登记；写库的（访问日志）要先在那个测试里单独说明。
+ * GET 一定是只读，不用登记。
  */
-export const READS_WITH_TRACES: Readonly<Record<string, string>> = {
-	"POST /orchestrations/:id/presence":
-		"心跳：只改内存里的在线编辑者名单（不落库），不影响场景的内容",
-	"POST /orchestrations/:id/presence/leave": "离开：只从内存里的在线编辑者名单里去掉这个会话",
+export const NON_GET_READS: Readonly<Record<string, string>> = {
 	"POST /orchestrations/:id/edits/check":
-		"检查一组局部编辑：什么都不写（不产生版本，不改库、数据目录和内存）；用 POST 只是因为请求体是一组操作",
+		"检查一组局部编辑：用 POST 只是因为请求体是一组操作；不改库、数据目录和内存，什么都不留下",
 	"POST /orchestrations/:id/check":
-		"检查一份场景文档：什么都不写（不产生版本，不改库、数据目录和内存）；用 POST 只是因为请求体是一整份文档",
+		"检查一份场景文档：用 POST 只是因为请求体是一整份文档；不改库、数据目录和内存，什么都不留下",
 };
 
 export const DECLARATION_RULES: DeclarationRules = {
 	pathKinds: PATH_KINDS,
-	readsWithTraces: READS_WITH_TRACES,
+	nonGetReads: NON_GET_READS,
 };
 
 /** 说明的长度上限：它是一句话，在 `sfly api --list` 的一行里显示。 */
@@ -245,9 +243,9 @@ function checkEffect(def: RouteDef, rules: DeclarationRules): string[] {
 			"GET 要声明为只读（effect: read）：有副作用的接口用别的方法，下游按「所有 GET 都没有副作用」判断",
 		);
 	}
-	if (def.method !== "GET" && def.effect === "read" && !(key in rules.readsWithTraces)) {
+	if (def.method !== "GET" && def.effect === "read" && !(key in rules.nonGetReads)) {
 		problems.push(
-			"方法不是 GET 的只读接口要登记在 READS_WITH_TRACES（./declarations.ts），写明它为什么是只读；没有登记的写接口应声明 effect: write",
+			"方法不是 GET 的只读接口要登记在 NON_GET_READS（./declarations.ts），写明为什么只读、会留下什么；没有登记的写接口应声明 effect: write",
 		);
 	}
 	if (creates !== undefined) {
@@ -318,7 +316,7 @@ function checkPathKind(def: RouteDef, kind: ResourceKind, rules: DeclarationRule
 }
 
 /**
- * 检查那两张表（{@link PATH_KINDS}、{@link READS_WITH_TRACES}）和契约对得上：类别合法、写了理由、
+ * 检查那两张表（{@link PATH_KINDS}、{@link NON_GET_READS}）和契约对得上：类别合法、写了理由、
  * 每一项都有接口在用（改名或删了接口，表里的残留会报错），登记的只读接口都存在、都声明为只读。
  */
 export function checkDeclarationTables(
@@ -343,12 +341,11 @@ export function checkDeclarationTables(
 		}
 	}
 	const known = new Map(contract.map((def) => [label(def), def]));
-	for (const [key, what] of Object.entries(rules.readsWithTraces)) {
+	for (const [key, what] of Object.entries(rules.nonGetReads)) {
 		const def = known.get(key);
-		if (def === undefined)
-			problems.push(`READS_WITH_TRACES 的 ${key} 不在契约里：接口改名或删掉了`);
-		else if (def.effect !== "read") problems.push(`READS_WITH_TRACES 的 ${key} 没有声明为只读`);
-		if (what.trim() === "") problems.push(`READS_WITH_TRACES 的 ${key}：要写明写了什么`);
+		if (def === undefined) problems.push(`NON_GET_READS 的 ${key} 不在契约里：接口改名或删掉了`);
+		else if (def.effect !== "read") problems.push(`NON_GET_READS 的 ${key} 没有声明为只读`);
+		if (what.trim() === "") problems.push(`NON_GET_READS 的 ${key}：要写明为什么只读、会留下什么`);
 	}
 	return problems;
 }
