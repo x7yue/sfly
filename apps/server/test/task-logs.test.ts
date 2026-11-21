@@ -306,7 +306,11 @@ describe("任务日志与进度", () => {
 			expect(run.params).toEqual({ token: MASK });
 			const [a, b] = run.chains[0]?.nodes.slice(1) ?? [];
 			expect(a?.outputs).toEqual({ text: `got ${MASK}`, nested: [MASK] });
-			expect(b?.error).toEqual({ kind: "node_error", message: `auth failed for ${MASK}` });
+			expect(b?.error).toEqual({
+				kind: "node_error",
+				message: `auth failed for ${MASK}`,
+				location: null,
+			});
 		});
 
 		it("secret 值经参数映射传进子流程（子流程参数没有声明 secret）时，子流程一侧同样打码", async () => {

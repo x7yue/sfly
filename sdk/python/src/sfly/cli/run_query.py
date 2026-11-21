@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sfly.cli.client import ApiError, segment
+from sfly.cli.error_headline import error_location, with_location
 from sfly.cli.errors import CliError
 from sfly.cli.output import (
     DEFAULT_LIMIT,
@@ -376,6 +377,7 @@ def _render_attention(label: str, node: Mapping[str, Any]) -> list[str]:
         error = attempt["error"]
         if error:
             body = f"{error['kind']}：{error['message']}".splitlines() or [error["kind"]]
+            body = with_location(body, error_location(error))
             if len(body) > _MAX_ERROR_LINES:
                 body = [
                     *body[:_MAX_ERROR_LINES],

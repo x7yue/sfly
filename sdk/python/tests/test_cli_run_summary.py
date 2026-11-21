@@ -28,7 +28,7 @@ ASSERTION = (
 )
 
 
-def summary(message: str | None) -> dict[str, Any]:
+def summary(message: str | None, location: str | None = None) -> dict[str, Any]:
     return {
         "id": "run-1",
         "status": "failed",
@@ -44,7 +44,10 @@ def summary(message: str | None) -> dict[str, Any]:
                 "display_name": None,
                 "type": "sfly-std/assert",
                 "task": "t-1",
-                "error": None if message is None else {"kind": "node_error", "message": message},
+                "error": None
+                if message is None
+                else {"kind": "node_error", "message": message}
+                | ({} if location is None else {"location": location}),
                 "logs": [],
                 "logs_note": None,
             }
@@ -471,3 +474,28 @@ def test_the_minimal_summary_has_the_status_the_time_and_who_cancelled_but_no_fa
     note = summary_unavailable_note("run-1")
     assert "sfly run show run-1" in note and "sfly run logs run-1 --failed" in note
     assert "比这个命令行旧" in note
+
+
+def test_the_place_the_node_failed_follows_the_reason_line_before_the_traceback() -> None:
+    text = render_summary(
+        summary(
+            "RuntimeError: 桩节点失败\n\nTraceback (most recent call last):\n  x",
+            "demo.work 第 12 行",
+        )
+    )
+
+    assert (
+        "    错误：node_error：RuntimeError: 桩节点失败\n"
+        "    出错位置：demo.work 第 12 行\n"
+        "\n      Traceback (most recent call last):"
+    ) in text
+
+
+def test_an_error_from_an_older_control_plane_has_no_location_and_looks_as_before() -> None:
+    # 旧版本的控制面的错误里没有 location 这个键；新版本里没有位置时是 null：都不多出一行。
+    older = render_summary(summary("RuntimeError: 桩节点失败"))
+    null = summary("RuntimeError: 桩节点失败")
+    null["failed"][0]["error"]["location"] = None
+
+    assert "出错位置" not in older
+    assert render_summary(null) == older

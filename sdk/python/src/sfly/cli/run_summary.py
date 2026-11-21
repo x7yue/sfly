@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from sfly.cli.client import ApiError, Client, segment
-from sfly.cli.error_headline import split_error
+from sfly.cli.error_headline import error_location, location_line, split_error
 from sfly.cli.errors import CliError
 from sfly.cli.run_view import (
     NodeRef,
@@ -312,8 +312,10 @@ def _render_failed(item: Mapping[str, Any]) -> list[str]:
         # 和网页一致），没有并进它的各行原样接在下面；`--json` 里的 error.message 是完整的原文。
         headline, rest = split_error(error["message"])
         lines.append(f"    错误：{error['kind']}：{headline}")
-        if error.get("location"):
-            lines.append(f"    出错位置：{error['location']}")
+        # 出错位置紧跟在失败原因后面，堆栈之前：不用翻堆栈（旧版本的控制面没有这个键）。
+        location = error_location(error)
+        if location:
+            lines.append(f"    {location_line(location)}")
         lines.extend(f"      {line}".rstrip() for line in rest)
     else:
         lines.append("    错误：没有错误信息")

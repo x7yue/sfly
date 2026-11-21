@@ -519,6 +519,7 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["tasks", "action_details", "integer DEFAULT 0 NOT NULL"],
 	["tasks", "action_rev", "bigint DEFAULT 0 NOT NULL"],
 	["tasks", "action_capped", "boolean DEFAULT false NOT NULL"],
+	["tasks", "error_location", "text"],
 ];
 
 /**

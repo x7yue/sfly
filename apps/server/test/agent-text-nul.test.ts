@@ -117,6 +117,7 @@ describe("Agent 上报的字符串里含 NUL", () => {
 		expect((await api.node(runId, "a")).error).toEqual({
 			kind: "timeout",
 			message: `bad${REPLACEMENT}byte`,
+			location: null,
 		});
 		expect((await api.run(runId)).status).toBe("failed");
 		expect(agent.ended).toBe(false);
