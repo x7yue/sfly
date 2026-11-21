@@ -402,7 +402,7 @@ export interface ChartView {
 
 /**
  * 检查时的一条警告（#424）：和保存时的一样，再加一个标记——改动之前（最新版本里）是不是就有。
- * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`）判断，不看文字：
+ * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`、`target`）判断，不看文字：
  * 同一种警告指向另一个节点算新的；同一个对象上同一种警告有几条，最新版本里有几条就有几条算已有（按出现的顺序）。
  * 会失效的运行预设（`preset_invalidated`）说的就是这次改动，总是新的；场景还没有版本时全部是新的。
  */
@@ -410,8 +410,15 @@ export interface CheckedWarningView {
 	code: string;
 	message: string;
 	node_id?: string;
+	/** 警告所指的字段：包节点的输入、子流程参数、入口参数（`secret_param_default` 是参数名）、节点配置的字段。 */
 	input?: string;
 	annotation_id?: string;
+	/**
+	 * 同一个节点（或注释框）上可能有两条同种警告时，具体是哪一个：引用的警告是引用的路径，注释框指向成员的警告是
+	 * `nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`，连线的警告是 `起点->终点:种类`，停止子流程节点的警告是它要停的子流程入口 ID，
+	 * 会失效的运行预设是预设的名称。用来认出「同一条警告」（见 CheckedWarningView），界面上不显示。
+	 */
+	target?: string;
 	/** true：改动之前就有，不是这次改动带进来的（`sfly scenario check` 的退出码和 `push --strict` 不看它）。 */
 	existing: boolean;
 }
@@ -701,8 +708,15 @@ export interface DocumentWarningView {
 	code: string;
 	message: string;
 	node_id?: string;
+	/** 警告所指的字段：包节点的输入、子流程参数、入口参数（`secret_param_default` 是参数名）、节点配置的字段。 */
 	input?: string;
 	annotation_id?: string;
+	/**
+	 * 同一个节点（或注释框）上可能有两条同种警告时，具体是哪一个：引用的警告是引用的路径，注释框指向成员的警告是
+	 * `nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`，连线的警告是 `起点->终点:种类`，停止子流程节点的警告是它要停的子流程入口 ID，
+	 * 会失效的运行预设是预设的名称。用来认出「同一条警告」（见 CheckedWarningView），界面上不显示。
+	 */
+	target?: string;
 }
 
 export interface Edge {

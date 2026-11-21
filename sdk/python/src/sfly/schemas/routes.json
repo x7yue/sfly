@@ -8305,6 +8305,9 @@
                 },
                 "annotation_id": {
                   "type": "string"
+                },
+                "target": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -8898,6 +8901,9 @@
                   "type": "string"
                 },
                 "annotation_id": {
+                  "type": "string"
+                },
+                "target": {
                   "type": "string"
                 },
                 "existing": {
@@ -10766,6 +10772,9 @@
                   "type": "string"
                 },
                 "annotation_id": {
+                  "type": "string"
+                },
+                "target": {
                   "type": "string"
                 }
               },

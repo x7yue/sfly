@@ -1,4 +1,4 @@
-import { diffDocuments } from "@sfly/orchestration";
+import { diffDocuments, warningIdentity as warningKey } from "@sfly/orchestration";
 import {
 	type CheckedWarningView,
 	type DocumentDiffView,
@@ -41,10 +41,6 @@ export function versionDiff(
 ): DocumentDiffView {
 	return diffDocuments(before, after);
 }
-
-/** 「同一条警告」：种类加它指向的对象，不看文字（契约的 CheckedWarningView）。 */
-const warningKey = (w: DocumentWarningView) =>
-	JSON.stringify([w.code, w.node_id ?? null, w.input ?? null, w.annotation_id ?? null]);
 
 /**
  * 给新文档的警告加上 `existing`：最新版本（`previous`）里有没有同一条。最新版本的警告对着它自己跑同样的静态检查和

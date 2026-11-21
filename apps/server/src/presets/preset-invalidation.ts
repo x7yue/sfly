@@ -37,6 +37,7 @@ export async function presetInvalidatedWarnings(
 			{
 				code: PRESET_INVALIDATED_WARNING,
 				message: `运行预设「${preset.name}」已失效：${describePresetProblems(problems, nowDeclared)}`,
+				target: preset.name,
 			},
 		];
 	});

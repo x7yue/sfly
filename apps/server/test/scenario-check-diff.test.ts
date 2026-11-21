@@ -2,8 +2,10 @@
 // 检查走和保存同一段校验：同一份文档，检查和保存返回的错误、警告完全一样，检查不产生版本。
 // 对比用 @sfly/orchestration 的 diffDocuments（前端的版本对比用的也是它）。
 import { orchestrationsApi } from "@sfly/schema";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { eventually } from "./support/eventually.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -233,8 +235,24 @@ describe("场景的检查接口和版本对比接口", () => {
 			expect(res.status, text).toBe(200);
 			return orchestrationsApi.check.response.parse(JSON.parse(text));
 		};
-		const flags = (warnings: Array<{ code: string; node_id?: string; existing: boolean }>) =>
-			warnings.map((w) => `${w.existing ? "已有" : "新的"} ${w.code} ${w.node_id ?? ""}`).sort();
+		/** 每条警告写成「已有/新的 种类 节点 字段 具体对象」（没有的部分不写）。 */
+		const flags = (
+			warnings: Array<{
+				code: string;
+				node_id?: string;
+				input?: string;
+				annotation_id?: string;
+				target?: string;
+				existing: boolean;
+			}>,
+		) =>
+			warnings
+				.map((w) =>
+					[w.existing ? "已有" : "新的", w.code, w.node_id ?? w.annotation_id, w.input, w.target]
+						.filter((part) => part !== undefined)
+						.join(" "),
+				)
+				.sort();
 
 		it("只改显示名称：原来就有的警告都标成已有", async () => {
 			const id = await api.orchestrationWith(withExisting(), "已有警告-改名");
@@ -242,7 +260,7 @@ describe("场景的检查接口和版本对比接口", () => {
 			doc.nodes[1] = { ...doc.nodes[1], display_name: "探测一下" };
 			const body = await check(id, doc);
 			expect(flags(body.warnings)).toEqual(
-				["已有 input_required probe_a", "已有 secret_param_default entry"].sort(),
+				["已有 input_required probe_a host", "已有 secret_param_default entry token"].sort(),
 			);
 		});
 
@@ -260,9 +278,9 @@ describe("场景的检查接口和版本对比接口", () => {
 			const body = await check(id, doc);
 			expect(flags(body.warnings)).toEqual(
 				[
-					"已有 input_required probe_a",
-					"已有 secret_param_default entry",
-					"新的 input_required probe_b",
+					"已有 input_required probe_a host",
+					"已有 secret_param_default entry token",
+					"新的 input_required probe_b host",
 				].sort(),
 			);
 		});
@@ -281,8 +299,51 @@ describe("场景的检查接口和版本对比接口", () => {
 			doc.edges.push({ from: "probe_a", to: "probe_b", kind: "chain" });
 			const body = await check(id, doc);
 			expect(flags(body.warnings)).toEqual(
-				["已有 secret_param_default entry", "新的 input_required probe_b"].sort(),
+				["已有 secret_param_default entry token", "新的 input_required probe_b host"].sort(),
 			);
+		});
+
+		/** 入口上两个保密参数：A 写了默认值（最新版本里有一条 secret_param_default），B 没有。 */
+		const twoSecrets = (): Doc => {
+			const doc = baseDocument();
+			(doc.nodes[0] as { params: unknown[] }).params = [
+				{ name: "A", type: "string", secret: true, default: "s3cr3t-a" },
+				{ name: "B", type: "string", secret: true },
+			];
+			return doc;
+		};
+		const paramsOf = (doc: Doc) =>
+			(doc.nodes[0] as { params: Array<Record<string, unknown>> }).params;
+
+		it("去掉 A 的默认值、给 B 写上默认值：B 那条是新的（同一个入口节点上的不同参数是不同的对象）", async () => {
+			const id = await api.orchestrationWith(twoSecrets(), "已有警告-换参数");
+			const doc = await head(id);
+			const [a, b] = paramsOf(doc);
+			const { default: _, ...withoutDefault } = a as Record<string, unknown>;
+			paramsOf(doc).splice(0, 2, withoutDefault, { ...b, default: "s3cr3t-b" });
+			expect(flags((await check(id, doc)).warnings)).toEqual(["新的 secret_param_default entry B"]);
+		});
+
+		it("在 A 前面新加一个带默认值的 B：B 是新的，A 仍是原来就有的", async () => {
+			const id = await api.orchestrationWith(twoSecrets(), "已有警告-前面加参数");
+			const doc = await head(id);
+			paramsOf(doc).splice(1, 1);
+			paramsOf(doc).unshift({ name: "B", type: "string", secret: true, default: "s3cr3t-b" });
+			expect(flags((await check(id, doc)).warnings)).toEqual(
+				["已有 secret_param_default entry A", "新的 secret_param_default entry B"].sort(),
+			);
+		});
+
+		it("注释框把重复写的成员从 check 换成 probe_a：算新的（注释框里的不同成员是不同的对象）", async () => {
+			const before = withExisting();
+			before.annotations = [{ id: "ann", title: "一组", nodes: ["check", "check"] }];
+			const id = await api.orchestrationWith(before, "已有警告-换成员");
+			const doc = await head(id);
+			doc.annotations = [{ id: "ann", title: "一组", nodes: ["probe_a", "probe_a"] }];
+			const body = await check(id, doc);
+			expect(flags(body.warnings.filter((w) => w.annotation_id === "ann"))).toEqual([
+				"新的 annotation_duplicate_member ann nodes/probe_a",
+			]);
 		});
 
 		it("改掉入口参数让预设失效：预设失效的警告总是新的（它说的就是这次改动）", async () => {
@@ -327,6 +388,48 @@ describe("场景的检查接口和版本对比接口", () => {
 			expect(details.diff.settings).toEqual([
 				{ path: "packages.http", before: "1.0.0", after: "9.9.9" },
 			]);
+			expect(await versionCount(id)).toBe(1);
+		});
+
+		it("判断在保存的事务里（拿到场景的行锁之后）：等锁期间别人建了会失效的预设，保存照样拒绝", async () => {
+			const id = await api.orchestrationWith(baseDocument(), "严格保存-等锁");
+			const doc = await head(id);
+			// 改掉入口参数 env：这时还没有运行预设，事务外先判断的话没有警告
+			(doc.nodes[0] as { params: unknown[] }).params = [{ name: "stage", type: "string" }];
+			const locker = new pg.Client({ connectionString: cp.database.url });
+			const watcher = new pg.Client({ connectionString: cp.database.url });
+			await locker.connect();
+			await watcher.connect();
+			try {
+				// 另一个连接先拿住场景的行锁，并在同一个事务里建一个用 env 的预设（提交之前保存看不到它）
+				await locker.query("BEGIN");
+				await locker.query("SELECT 1 FROM orchestrations WHERE id = $1 FOR UPDATE", [id]);
+				await locker.query(
+					`INSERT INTO run_presets (id, orchestration_id, name, values, created_at, updated_at, updated_by)
+					 VALUES (gen_random_uuid(), $1, '生产', '{"env": "prod"}', now(), now(), 'tester')`,
+					[id],
+				);
+				const saving = strictSave(id, doc);
+				// 等到保存的事务卡在这把行锁上，再提交：保存拿到锁之后才看得到这个预设
+				await eventually(async () => {
+					const { rows } = await watcher.query(
+						"SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
+					);
+					expect(rows[0].n).toBeGreaterThan(0);
+				}, 10_000);
+				await locker.query("COMMIT");
+				const res = await saving;
+				const text = await res.text();
+				expect(res.status, text).toBe(400);
+				const error = JSON.parse(text).error;
+				expect(error.code).toBe("strict_warnings");
+				expect(error.details.warnings).toMatchObject([
+					{ code: "preset_invalidated", target: "生产", existing: false },
+				]);
+			} finally {
+				await locker.end();
+				await watcher.end();
+			}
 			expect(await versionCount(id)).toBe(1);
 		});
 

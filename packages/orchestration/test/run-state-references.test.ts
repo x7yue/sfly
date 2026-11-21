@@ -146,6 +146,7 @@ describe("静态检查：run.state 的位置", () => {
 				node_id: "f",
 				input: "data",
 				message: `节点 f 的输入 data 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名>、nodes.<节点>.outputs.<输出键> 或 run.state；运行状态只能整个引用，字段在节点里读`,
+				target: path,
 			},
 		]);
 	});
