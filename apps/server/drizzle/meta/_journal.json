@@ -225,6 +225,13 @@
       "when": 1795226146744,
       "tag": "0032_users_and_projects",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795235467973,
+      "tag": "0033_platform_admin_actions",
+      "breakpoints": true
     }
   ]
 }
