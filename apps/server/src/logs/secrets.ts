@@ -18,6 +18,14 @@ export { SECRET_MASK };
  */
 export const MIN_LEAF_CHARS = 4;
 
+/**
+ * 被截断的文字（日志类异常的说明、动作的名称、字段、失败原因）结尾留下的半截 secret 值，按它的前缀盖住时，前缀最短多少个字符（码点）。
+ * 太短的前缀（`a`、`te`）在别的文字里太常见，盖了会把正常的文字也换掉：不盖。真正的密钥、口令、令牌的前 4 个字符不会碰巧和
+ * 一段普通文字的结尾一样，所以这里取和 {@link MIN_LEAF_CHARS} 一样的 4。这是读取这一侧的补救（根本的办法是写入时打码、
+ * 原样另存，属于 #505），短于它的前缀盖不住，docs/SEMANTICS.md §2.1 的「没有覆盖的写法」里写明。
+ */
+export const MIN_CLIPPED_PREFIX_CHARS = 4;
+
 /** 值的 JSON 文本（`JSON.stringify` 返回不了文本的值，例如 undefined，退回 `String`）。 */
 export const jsonText = (value: unknown): string => JSON.stringify(value) ?? String(value);
 
@@ -478,6 +486,52 @@ export class SecretSet {
 		} catch {
 			return SECRET_MASK;
 		}
+	}
+
+	/** 每个要打码的文本的第一个码元：找结尾的半截时，只看从这些码元开始的位置。 */
+	#firstUnits: ReadonlySet<number> | undefined;
+
+	/**
+	 * 一段已经截到 `limit` 个字符（码点）的文字，按 {@link MIN_CLIPPED_PREFIX_CHARS} 把结尾留下的半截 secret 值盖住：
+	 * 文字长度到了上限（说明被截断过），结尾又是某个要打码的文本的前缀（不短于下限，又不是整个文本；整个文本由 {@link mask} 换掉）时，
+	 * 从这个前缀开头起换成一个掩码。`ellipsis`：截断时末尾补了「…」（失败原因，SDK 和控制面都这样截），判断时不算它，
+	 * 盖住时连它一起换掉。长度没到上限的文字原样返回；任何意外同 {@link mask}：整段盖住。
+	 */
+	maskClippedTail(text: string, limit: number, options: { ellipsis?: boolean } = {}): string {
+		if (this.texts.length === 0) return text;
+		try {
+			// UTF-16 长度不小于码点数：长度不够上限的一定没被截断，不用数码点。
+			if (text.length < limit || charCount(text) < limit) return text;
+			const body = options.ellipsis && text.endsWith("…") ? text.slice(0, -1) : text;
+			const at = this.#clippedTailStart(body);
+			return at < 0 ? text : body.slice(0, at) + SECRET_MASK;
+		} catch {
+			return SECRET_MASK;
+		}
+	}
+
+	/**
+	 * 读取时的打码，用于存下来时被截断过的文字：先 {@link mask}，再 {@link maskClippedTail}。读取运行、读取动作、运行摘要、
+	 * 关注项的说明都用这一个。
+	 */
+	maskClipped(text: string, limit: number, options: { ellipsis?: boolean } = {}): string {
+		return this.maskClippedTail(this.mask(text), limit, options);
+	}
+
+	/** `body` 的结尾是某个要打码的文本（不是整个）的前缀时，这个前缀开始的位置（最靠前的）；没有时 -1。 */
+	#clippedTailStart(body: string): number {
+		this.#firstUnits ??= new Set(this.texts.map((t) => t.charCodeAt(0)));
+		const first = this.#firstUnits;
+		const longest = this.texts[0]?.length ?? 0;
+		for (let i = Math.max(0, body.length - longest + 1); i < body.length; i++) {
+			if (!first.has(body.charCodeAt(i))) continue;
+			const tail = body.slice(i);
+			if (charCount(tail) < MIN_CLIPPED_PREFIX_CHARS) return -1;
+			for (const text of this.texts) {
+				if (text.length > tail.length && text.startsWith(tail)) return i;
+			}
+		}
+		return -1;
 	}
 }
 

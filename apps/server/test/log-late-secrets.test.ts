@@ -237,6 +237,45 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		});
 	});
 
+	it("日志类异常的说明正好跨在截断处（500 个字符）：关注项、运行摘要、运行视图里都没有留下它的前几个字符", async () => {
+		const prefix = LATE.slice(0, 4);
+		const id = await api.orchestrationWith(LATE_SECRET);
+		await putFocusItemsOk(api, id, [{ node_id: "sa", chart: "TPS" }]);
+		const runId = await api.triggerOk(id, { user: LATE });
+		const first = await agent.nextAssign();
+		const second = await agent.nextAssign();
+		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+		// 这一行 ERROR 的正文：值的前 8 个字符留在 500 个字符以内，后面的被控制面截掉（写入时它还不是 secret 值）。
+		agent.logs(sa, [line(1, `${"e".repeat(500 - 8)}${LATE}`, LogLevel.ERROR)]);
+		await eventually(async () => {
+			const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs`);
+			expect(page.lines).toHaveLength(1);
+		});
+		await agent.succeed(b);
+		await eventually(async () =>
+			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+		);
+
+		for (const path of [`/runs/${runId}/focus`, `/runs/${runId}/summary`, `/runs/${runId}`]) {
+			const body = await (await cp.fetch(path)).text();
+			expect(body, `${path}：不能留下 ${prefix}`).not.toContain(prefix);
+			expect(body, path).toContain(MASK);
+		}
+		// 关注项里取的就是这一条 ERROR 的说明：结尾是掩码，前面的文字原样。
+		const focus: RunFocus = runFocusApi.focus.response.parse(
+			await (await cp.fetch(`/runs/${runId}/focus`)).json(),
+		);
+		expect(focus.items[0]?.anomaly).toMatchObject({
+			kind: "log",
+			message: `${"e".repeat(500 - 8)}${MASK}`,
+		});
+		// 运行摘要里的关注项是同一条说明。
+		const report = runSummaryApi.summary.response.parse(
+			await (await cp.fetch(`/runs/${runId}/summary`)).json(),
+		);
+		expect(report.attention_items[0]?.anomaly.message).toBe(`${"e".repeat(500 - 8)}${MASK}`);
+	});
+
 	it("没有 secret 参数的运行：读出来的日志和文件里逐字相同（下载是文件的原样，分页是同样的行）", async () => {
 		const { runId, sa, b } = await startRun(NO_SECRET);
 		await agent.succeed(b);

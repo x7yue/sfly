@@ -36,7 +36,7 @@ import {
 	secretParamNames,
 	secretValues,
 } from "../logs/secrets.js";
-import { taskProgressView } from "../logs/task-logs.js";
+import { LOG_ISSUE_TEXT_CHARS, taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
 import { isUuid } from "../util/uuid.js";
 
@@ -133,6 +133,8 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	 * 和读取结果里的用户内容用同一个口径。
 	 */
 	maskText: (text: string) => string;
+	/** 这次运行此刻的全部 secret 值：读取时对被截断过的文字（动作的名称、字段、失败原因）再打码用，和 `maskText` 是同一个集合。 */
+	secrets: SecretSet;
 	chains: RunChain<A>[];
 	/** 进行中的节点（排队、准备中、执行中、等待），按链与链上的顺序。 */
 	activeNodes: RunListActiveNode[];
@@ -350,7 +352,10 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 			: null,
 		errorMessage: row.errorMessage === null ? null : mask.text(row.errorMessage),
 		// 最近一条 WARN / ERROR 的正文写入时按那一刻的 secret 值打过码；读取时再按此刻的打一遍（后来才成为 secret 的值，#517）。
-		logIssues: row.logIssues && { ...row.logIssues, text: mask.text(row.logIssues.text) },
+		logIssues: row.logIssues && {
+			...row.logIssues,
+			text: mask.secrets.maskClipped(row.logIssues.text, LOG_ISSUE_TEXT_CHARS),
+		},
 		startClockOffset: clockOffsetView(row.startClockOffsetMs, row.startClockOffsetMeasuredAt),
 		endClockOffset: clockOffsetView(row.endClockOffsetMs, row.endClockOffsetMeasuredAt),
 		currentAction: currentActionOfTask(row.status, row.currentAction, mask.secrets),
@@ -423,6 +428,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				version,
 				scenario,
 				maskText: mask.text,
+				secrets: mask.secrets,
 				chains,
 				activeNodes: activeNodesOf(chains),
 				failures: failuresInOrder(

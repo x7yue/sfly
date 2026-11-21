@@ -10,6 +10,7 @@ import {
 	type RunStateSource,
 } from "@sfly/schema";
 import { eq, sql } from "drizzle-orm";
+import { maskedAction } from "../actions/action-text.js";
 import type { Db, Tx } from "../db/database.js";
 import { taskActionSummaries, tasks } from "../db/schema.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
@@ -235,15 +236,8 @@ async function failedActionsOf(db: Db | Tx, read: RunReadFull): Promise<RunRepor
 	// 稳定排序：同一时刻结束的保持任务在运行里的先后。
 	found.sort((a, b) => endedAt(b) - endedAt(a));
 	return found.slice(0, RUN_REPORT_LIMITS.failedActions).map(({ taskId, place, action }) => ({
-		...action,
-		name: read.maskText(action.name),
-		fields: Object.fromEntries(
-			Object.entries(action.fields).map(([key, value]) => [
-				read.maskText(key),
-				read.maskText(value),
-			]),
-		),
-		reason: action.reason === null ? null : read.maskText(action.reason),
+		// 名称、字段、失败原因和动作的读取接口是同一个口径（含截断处留下的半截，action-text.ts 的 `maskedAction`）。
+		...maskedAction(action, read.secrets),
 		chain_instance_id: place.chain.id,
 		node_id: place.node.node_id,
 		display_name: place.node.display_name ?? null,
