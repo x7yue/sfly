@@ -396,6 +396,11 @@ export const tasks = pgTable(
 		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
 		errorKind: text("error_kind").$type<ErrorKind>(),
 		errorMessage: text("error_message"),
+		/**
+		 * 节点失败时出错的位置（TaskError.location）：节点代码里的那一行，「模块.函数 第 N 行」。
+		 * 不是节点出错、取不到位置、旧版本 Agent 或 SDK 上报的、升级之前的任务为空。
+		 */
+		errorLocation: text("error_location"),
 		/** 进入 queued 的时间，派发按它排序。 */
 		queuedAt: timestamptz("queued_at").notNull(),
 		/** 用于同一时刻排队的任务保持创建顺序。 */

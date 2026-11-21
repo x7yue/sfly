@@ -293,6 +293,37 @@ def test_exception_in_node_is_a_node_error_with_traceback() -> None:
     assert "Traceback" in result.error.traceback
 
 
+def test_a_failed_node_has_the_place_it_failed_and_a_traceback_without_executor_frames() -> None:
+    # 和 Agent 上执行的结果一致（同一个执行器；Agent 一端在 agent/tests/execute.rs）：
+    # 位置是节点代码里抛出的那一行，堆栈从节点代码开始。
+    import inspect
+
+    from sfly_stub import fail
+
+    result = run_node(fail, {"message": "磁盘满了"})
+
+    assert result.error is not None
+    source, first = inspect.getsourcelines(fail)
+    raised = first + next(i for i, line in enumerate(source) if "raise RuntimeError" in line)
+    assert result.error.location == f"sfly_stub.fail 第 {raised} 行"
+    assert "runner.py" not in result.error.traceback
+    assert result.error.traceback.startswith("Traceback (most recent call last):\n  File ")
+    assert "sfly_stub" in result.error.traceback.splitlines()[1]
+    # 日志里先有一行出错位置（ERROR 级），再是堆栈（标准错误）。
+    [place, *_] = [line for line in result.logs if line.message.startswith("出错位置：")]
+    assert (place.source, place.level) == ("sdk", "error")
+    assert place.message == f"出错位置：sfly_stub.fail 第 {raised} 行"
+
+
+def test_a_failure_that_is_not_the_nodes_has_no_place() -> None:
+    from sfly_stub import big
+
+    result = run_node(big, {"size": 1024 * 1024})
+
+    assert result.error is not None
+    assert result.error.location is None
+
+
 def test_output_over_1_mb_is_a_node_error() -> None:
     from sfly_stub import big
 

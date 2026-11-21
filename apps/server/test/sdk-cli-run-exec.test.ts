@@ -289,7 +289,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 				tasks.map((t, i) => [i + 1, 3, t.taskId]),
 			);
 			expect(summary.failed.map((f) => f.error)).toEqual(
-				[1, 2, 3].map((n) => ({ kind: "node_error", message: `第 ${n} 次失败` })),
+				[1, 2, 3].map((n) => ({ kind: "node_error", message: `第 ${n} 次失败`, location: null })),
 			);
 			expect(summary.failed.map((f) => f.logs.map((line) => line.text))).toEqual(
 				[1, 2, 3].map((n) => [`第 ${n} 次的日志`]),
