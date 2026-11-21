@@ -115,6 +115,8 @@ export type ContractParity = [
 	Expect<Within<NonNullable<Api["runs"]["focus"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["focus"]["params"]>>>>,
 	Expect<Within<NonNullable<Api["runs"]["focus"]["input"]["query"]>, NonNullable<z.input<Apis["runs"]["focus"]["query"]>>>>,
 	Expect<Equal<Api["runs"]["focus"]["output"], z.output<Apis["runs"]["focus"]["response"]>>>,
+	Expect<Within<NonNullable<Api["runs"]["summary"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["summary"]["params"]>>>>,
+	Expect<Equal<Api["runs"]["summary"]["output"], z.output<Apis["runs"]["summary"]["response"]>>>,
 	Expect<Within<NonNullable<Api["runs"]["preflight"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["preflight"]["params"]>>>>,
 	Expect<Equal<Api["runs"]["preflight"]["output"], z.output<Apis["runs"]["preflight"]["response"]>>>,
 	Expect<Within<NonNullable<Api["runs"]["listForOrchestration"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["listForOrchestration"]["params"]>>>>,

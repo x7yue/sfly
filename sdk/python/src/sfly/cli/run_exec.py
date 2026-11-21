@@ -15,8 +15,22 @@ from sfly.cli.client import ApiError, segment
 from sfly.cli.errors import EXIT_BY_STATUS, EXIT_INTERRUPTED, EXIT_TIMEOUT, CliError
 from sfly.cli.presets import find_preset, with_next_step
 from sfly.cli.run_params import build_params, describe_declared
-from sfly.cli.run_summary import build_summary, render_summary, run_url
-from sfly.cli.run_view import fetch_run, format_duration, run_not_found
+from sfly.cli.run_summary import (
+    SummaryUnavailable,
+    fetch_summary,
+    minimal_summary,
+    render_summary,
+    run_url,
+    summary_unavailable_note,
+)
+from sfly.cli.run_view import (
+    RUN_HELP,
+    RUN_HELP_NO_LATEST,
+    fetch_run,
+    format_duration,
+    resolve_run,
+    run_not_found,
+)
 from sfly.cli.run_wait import WaitTimeout, wait_for_run
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -36,7 +50,8 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
         "（secret 预设参数给任何值）控制面拒绝，名称不存在或预设已失效时也报错，都不触发。"
         "不加 --wait 时输出运行 id 和控制台里的运行链接；加 --wait 时一直等到运行结束，"
         "节点状态每变化一次往 stderr 写一行进度，结束后在 stdout 输出摘要"
-        "（状态、耗时、每个失败的任务及其错误和最后 50 行日志）。"
+        "（状态、耗时、每个失败的任务及其错误和最后 50 行日志，"
+        "有失败的动作、有异常的关注项时再各列一段）。"
         "退出码：成功 0，运行失败 1，命令出错 2，运行被取消 3，等待超时 124，Ctrl-C 130。"
         "等待超时和 Ctrl-C 只停止等待，不取消运行。",
     )
@@ -66,12 +81,13 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
         help="等一次运行结束，输出摘要",
         description="订阅运行的实时更新，断线后自动重连。节点状态每变化一次往 stderr 写一行进度，"
         "运行结束后在 stdout 输出摘要"
-        "（状态、耗时、每个失败的任务及其错误和最后 50 行日志）。"
+        "（状态、耗时、每个失败的任务及其错误和最后 50 行日志，"
+        "有失败的动作、有异常的关注项时再各列一段）。"
         "运行已经结束时直接输出摘要。"
         "退出码：成功 0，运行失败 1，命令出错 2，运行被取消 3，等待超时 124，Ctrl-C 130。"
         "等待超时和 Ctrl-C 只停止等待，不取消运行。",
     )
-    p_wait.add_argument("run", metavar="运行", help="运行 id")
+    p_wait.add_argument("run", metavar="运行", help=RUN_HELP)
     _add_timeout_option(p_wait)
     p_wait.set_defaults(func=command(_wait))
 
@@ -83,7 +99,7 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
         "运行还没结束时再次取消即强制取消（立即杀掉任务进程）。"
         "运行已经结束时报 run_not_running。",
     )
-    p_cancel.add_argument("run", metavar="运行", help="运行 id")
+    p_cancel.add_argument("run", metavar="运行", help=RUN_HELP_NO_LATEST)
     p_cancel.set_defaults(func=command(_cancel))
 
 
@@ -181,17 +197,20 @@ def _warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
 
 
 def _wait(session: Session, args: argparse.Namespace) -> int:
-    run = fetch_run(session.client, args.run)
+    run_id = resolve_run(session.client, args.run)
+    run = fetch_run(session.client, run_id)
     if run["status"] != "running":
         return _finish(session, run)
-    return _follow(session, args.run, args.timeout)
+    return _follow(session, run_id, args.timeout)
 
 
 def _cancel(session: Session, args: argparse.Namespace) -> None:
+    # 取消要写明是哪一次：不接受 latest，免得取消了不想取消的运行。
+    run_id = resolve_run(session.client, args.run, allow_latest=False)
     try:
-        run = session.client.request("POST", f"/runs/{segment(args.run)}/cancel")
+        run = session.client.request("POST", f"/runs/{segment(run_id)}/cancel")
     except ApiError as error:
-        raise _run_error(error, args.run) from None
+        raise _run_error(error, run_id) from None
     cancel = run["cancel"] or {}
     forced = cancel.get("forced_at") is not None
     cancelling = run["status"] == "running"
@@ -247,9 +266,16 @@ def _follow(
 
 
 def _finish(session: Session, run: dict[str, Any]) -> int:
-    summary = build_summary(session.client, run)
-    session.out.emit(summary, render_summary(summary))
-    return EXIT_BY_STATUS[run["status"]]
+    """输出摘要，退出码按运行的结果给。控制面没有摘要接口（比命令行旧）时输出只有状态的最小摘要，
+    并写明为什么没有失败的任务：运行已经跑完了，不能让退出码不再表示运行的结果。"""
+    try:
+        summary = fetch_summary(session.client, run["id"])
+    except SummaryUnavailable:
+        summary = minimal_summary(session.client, run)
+        session.out.emit(summary, render_summary(summary), note=summary_unavailable_note(run["id"]))
+    else:
+        session.out.emit(summary, render_summary(summary))
+    return EXIT_BY_STATUS[summary["status"]]
 
 
 def _progress(session: Session, line: str) -> None:

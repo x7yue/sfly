@@ -18,7 +18,7 @@ from sfly.cli.errors import CliError
 from sfly.cli.files import part_file
 from sfly.cli.output import candidate_list, format_table
 from sfly.cli.run_logs import RunIndex, RunNode
-from sfly.cli.run_view import NodeRef, fetch_run, with_display_name
+from sfly.cli.run_view import RUN_HELP, NodeRef, fetch_run, resolve_run, with_display_name
 from sfly.cli.session import Session, command, common_options
 
 # 还没开始、不会有产物的任务不用请求。
@@ -34,7 +34,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         "下载到 <目录>/<任务 id>/<产物名称>，并按 sha256 校验。"
         "退出码：成功 0，命令出错（运行不存在、下载失败、校验不一致……）2。",
     )
-    parser.add_argument("run", metavar="运行", help="运行 id")
+    parser.add_argument("run", metavar="运行", help=RUN_HELP)
     parser.add_argument(
         "--task",
         action="append",
@@ -87,7 +87,7 @@ def _select(tasks: Sequence[_Task], refs: Sequence[str] | None) -> list[_Task]:
 
 def _artifacts(session: Session, args: argparse.Namespace) -> None:
     client, out = session.client, session.out
-    run = fetch_run(client, args.run)
+    run = fetch_run(client, resolve_run(client, args.run))
     tasks = _select(_tasks(RunIndex.of(run)), args.task)
 
     rows: list[dict[str, Any]] = []
