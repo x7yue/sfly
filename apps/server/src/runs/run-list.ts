@@ -3,6 +3,7 @@ import { and, count, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
 import { runListPreset } from "../presets/run-preset.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { type RunChain, type RunNode, type RunRead, readRuns } from "./run-read.js";
 
 export interface RunListFilter {
@@ -19,13 +20,15 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 /**
  * 跨场景的运行列表（契约见 @sfly/schema 的 runListApi）：按开始时间从新到旧，
  * 每项带各链的节点状态、进行中的节点与失败的链。链与任务按整页批量读取
- * （src/runs/run-read.ts，节点状态的取法与运行视图相同）。
+ * （src/runs/run-read.ts，节点状态的取法与运行视图相同）。只列这个项目里的运行，各状态的计数也只算这个项目的
+ * （ADR 0029，读 `runs.project_id`）。
  */
 export async function listAllRuns(
 	db: Db,
+	project: ProjectId,
 	filter: RunListFilter,
 ): Promise<{ runs: RunListItem[]; counts: Record<RunStatus, number> }> {
-	const scope: SQL[] = [];
+	const scope: SQL[] = [eq(runs.projectId, project)];
 	if (filter.orchestrationId) scope.push(eq(runs.orchestrationId, filter.orchestrationId));
 	if (filter.q) {
 		const q = escapeLike(filter.q);
