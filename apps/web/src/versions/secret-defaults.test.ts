@@ -25,7 +25,6 @@ const document = (): OrchestrationDocument => ({
 	edges: [],
 	packages: {},
 	annotations: [],
-	sticky_notes: [],
 });
 
 describe("文档里「已设置」的敏感默认值（读取接口给的占位符）", () => {

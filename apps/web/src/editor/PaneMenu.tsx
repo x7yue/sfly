@@ -8,7 +8,6 @@ export function PaneMenu({
 	canUndo,
 	canRedo,
 	onAdd,
-	onAddSticky,
 	onPaste,
 	onTidy,
 	onUndo,
@@ -17,8 +16,6 @@ export function PaneMenu({
 	canUndo: boolean;
 	canRedo: boolean;
 	onAdd(): void;
-	/** 在右键的位置新建便签。 */
-	onAddSticky(): void;
 	/** 粘贴剪贴板里的节点（落在右键的位置）。 */
 	onPaste(copied: CopiedNode): void;
 	onTidy(): void;
@@ -30,7 +27,6 @@ export function PaneMenu({
 			<ContextMenuItem shortcut="canvas-add" onClick={onAdd}>
 				添加节点
 			</ContextMenuItem>
-			<ContextMenuItem onClick={onAddSticky}>添加便签</ContextMenuItem>
 			<PasteMenuItem onPaste={onPaste} />
 			<ContextMenuSeparator />
 			<ContextMenuItem shortcut="canvas-tidy" onClick={onTidy} />

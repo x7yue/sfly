@@ -1,12 +1,6 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import type { ArrangeMode } from "@sfly/orchestration";
-import {
-	type Annotation,
-	type AnnotationColor,
-	annotationColor,
-	type StickyNote,
-	stickyNoteColor,
-} from "@sfly/schema";
+import { type Annotation, type AnnotationColor, annotationColor } from "@sfly/schema";
 import { cn } from "cn";
 import {
 	ChevronDownIcon,
@@ -22,7 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AnnotationColorPicker } from "./AnnotationColorPicker";
 import { GroupDivider, ToolButton } from "./CanvasDock";
-import type { AnnotationEdit, StickyEdit } from "./context";
+import type { AnnotationEdit } from "./context";
 
 /**
  * 画布上的浮动工具条：贴着选中的注释框或一组节点，放在画布坐标里（跟着平移缩放走），
@@ -153,22 +147,6 @@ export function AnnotationToolbar({
 				shortcut="canvas-annotation-delete"
 				onClick={() => edit.remove(annotation.id)}
 			>
-				<Trash2Icon />
-			</ToolButton>
-		</FloatingToolbar>
-	);
-}
-
-/** 选中便签时，贴在它左上方的工具条：颜色（不写是黄色）、删除便签。 */
-export function StickyToolbar({ note, edit }: { note: StickyNote; edit: StickyEdit }) {
-	return (
-		<FloatingToolbar label="便签的工具条" origin="bottom-left">
-			<ColorButton
-				color={stickyNoteColor(note)}
-				onChange={(color) => edit.setColor(note.id, color)}
-			/>
-			<GroupDivider />
-			<ToolButton label="删除便签" shortcut="canvas-delete" onClick={() => edit.remove(note.id)}>
 				<Trash2Icon />
 			</ToolButton>
 		</FloatingToolbar>

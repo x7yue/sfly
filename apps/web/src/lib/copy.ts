@@ -47,7 +47,6 @@ export const TERM = {
 	displayName: "显示名称",
 	note: "备注",
 	annotation: "注释框",
-	stickyNote: "便签",
 	lastEdited: "最后修改",
 	action: "动作",
 	mark: "标记",
@@ -189,14 +188,7 @@ export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
 	subflows: "成员子流程",
 };
 
-/** 便签各字段的名称：版本对比用（检查器的字段名写在表单上）。 */
-export const STICKY_FIELD_LABEL: Readonly<Record<string, string>> = {
-	title: "标题",
-	text: "正文",
-	color: "颜色",
-};
-
-/** 注释框与便签颜色的名称：颜色选择器色块下面的字、版本对比里的写法（ADR 0025）。 */
+/** 注释框颜色的名称：颜色选择器色块下面的字、版本对比里的写法（ADR 0025）。 */
 export const ANNOTATION_COLOR_LABEL: Record<AnnotationColor, string> = {
 	gray: "灰",
 	blue: "蓝",

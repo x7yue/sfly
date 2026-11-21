@@ -30,7 +30,6 @@ interface Doc {
 	nodes: Array<Record<string, unknown> & { id: string; kind: string }>;
 	edges: Array<{ from: string; to: string; kind: string }>;
 	annotations: unknown[];
-	sticky_notes: unknown[];
 }
 
 const REPLACEMENT = "在节点代码里用 ctx.notify 发飞书消息";
@@ -120,7 +119,7 @@ describe("已移除的节点种类留在历史数据里", () => {
 	});
 
 	describe("最新版本里还含有已移除的节点", () => {
-		it("读出的最新版本认得它：配置原样带着，后来新增的字段补上默认值", async () => {
+		it("读出的最新版本认得它：配置原样带着，移除之前保存时带上的便签（sticky_notes）不带出", async () => {
 			const { document } = await head();
 			expect(document.nodes.map((n) => [n.id, n.kind])).toEqual([
 				["entry", "entry"],
@@ -131,7 +130,7 @@ describe("已移除的节点种类留在历史数据里", () => {
 			expect(document.nodes[1]).toMatchObject({ duration: "5s", display_name: "歇一会" });
 			expect(document.nodes[2]).toMatchObject({ at: "09:30:00", tz: "Asia/Shanghai" });
 			expect(document.nodes[3]).toMatchObject({ bot: "ops", text: "压测结束 ${{ params.env }}" });
-			expect(document.sticky_notes).toEqual([]);
+			expect(document).not.toHaveProperty("sticky_notes");
 		});
 
 		it("预检阻断触发，指出节点、种类和替换办法；触发被拒绝，说明相同", async () => {
@@ -192,7 +191,7 @@ describe("已移除的节点种类留在历史数据里", () => {
 
 	describe("删掉已移除的节点后可以正常保存", () => {
 		it("带着它保存被拒绝：错误信息写明哪些节点、怎么替换，不产生新版本", async () => {
-			const res = await save(LEGACY_DOCUMENT, 1);
+			const res = await save((await head()).document, 1);
 			expect(res.status).toBe(400);
 			const { error } = (await res.json()) as { error: { code: string; message: string } };
 			expect(error.code).toBe("invalid_document");
@@ -200,6 +199,33 @@ describe("已移除的节点种类留在历史数据里", () => {
 				`场景里有 3 个已不再支持的节点（wait、at、notify），先删掉再保存。替换办法：已移除的节点类型 sleep：${SLEEP_REPLACEMENT}；已移除的节点类型 timer：${TIMER_REPLACEMENT}；已移除的节点类型 feishu_notify：${REPLACEMENT}。引用了它们输出的节点也要一起改`,
 			);
 			expect((await head()).number).toBe(1);
+		});
+
+		it("旧文件里已移除的节点和有内容的便签（sticky_notes）一起保存被拒绝：错误信息两样都写明，不产生新版本", async () => {
+			// 移除之前 pull 下来的文件：文档里除了已移除的节点，还带着有内容的 sticky_notes。
+			const res = await save(
+				{ ...LEGACY_DOCUMENT, sticky_notes: [{ id: "sticky_1", text: "跑之前确认" }] },
+				1,
+			);
+			expect(res.status).toBe(400);
+			const { error } = (await res.json()) as { error: { code: string; message: string } };
+			expect(error.code).toBe("invalid_document");
+			expect(error.message).toContain(
+				"场景里有 3 个已不再支持的节点（wait、at、notify），先删掉再保存",
+			);
+			expect(error.message).toContain("场景文档里的 sticky_notes（便签）有 1 条内容");
+			expect(error.message).toContain("替换办法：便签：要留的内容写进节点的备注或注释框的备注");
+			expect((await head()).number).toBe(1);
+		});
+
+		it("旧文件里已移除的节点带着空的 sticky_notes（每个旧版本都有）：错误信息只说已移除的节点，不提便签", async () => {
+			expect(LEGACY_DOCUMENT).toHaveProperty("sticky_notes", []);
+			const res = await save(LEGACY_DOCUMENT, 1);
+			expect(res.status).toBe(400);
+			const { error } = (await res.json()) as { error: { message: string } };
+			expect(error.message).toContain("场景里有 3 个已不再支持的节点");
+			expect(error.message).not.toContain("便签");
+			expect(error.message).not.toContain("sticky_notes");
 		});
 
 		it("删掉它们之后保存成功，没有已移除节点的警告，再触发不被预检阻断", async () => {

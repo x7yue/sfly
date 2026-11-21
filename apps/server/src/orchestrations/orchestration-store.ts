@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ensureLayout, fillMissingPositions, withStickyNotePositions } from "@sfly/orchestration";
+import { ensureLayout, fillMissingPositions } from "@sfly/orchestration";
 import type {
 	FocusItemInput,
 	OrchestrationBase,
@@ -9,6 +9,7 @@ import type {
 	SecretDefaultProblem,
 	StoredOrchestrationDocument,
 } from "@sfly/schema";
+import { withoutRemovedFields } from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
@@ -85,7 +86,6 @@ export const initialDocument = (): OrchestrationDocument =>
 		edges: [],
 		packages: {},
 		annotations: [],
-		sticky_notes: [],
 	});
 
 type OrchestrationRow = typeof orchestrations.$inferSelect;
@@ -418,12 +418,12 @@ export class OrchestrationStore {
 				orchestration.headVersion > 0
 					? await versionRow(tx, orchestrationId, orchestration.headVersion)
 					: undefined;
-			const restored = restoreSecretDefaults(previous?.document, document);
+			// 收下的已移除字段（空的 `sticky_notes`，ADR 0028）不存进新版本。
+			const restored = restoreSecretDefaults(previous?.document, withoutRemovedFields(document));
 			if ("problems" in restored) {
 				return { kind: "secret_default_unresolved", problems: restored.problems };
 			}
-			// 命令行和 API 上传的节点、便签可以不写坐标：节点按整理布局补上，便签放进内容上方的那一行（ADR 0026）。
-			const laidOut = withStickyNotePositions(fillMissingPositions(restored.document));
+			const laidOut = fillMissingPositions(restored.document);
 			return { kind: "saved", version: await this.#append(tx, orchestration, laidOut, actor) };
 		});
 	}

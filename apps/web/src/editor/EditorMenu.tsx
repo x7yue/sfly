@@ -4,7 +4,6 @@ import {
 	disconnectEdge,
 	disconnectNode,
 	nodeConnections,
-	type Position,
 } from "@sfly/orchestration";
 import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { type CanvasMenuTarget, FitViewMenuItem } from "#/components/canvas/CanvasMenu";
@@ -41,8 +40,6 @@ export interface EditorMenuActions {
 	addAnnotationAround(ids: readonly string[]): void;
 	/** 排列选中的一组节点（宫格 / 横向 / 纵向），一步撤销。 */
 	arrange(ids: readonly string[], mode: ArrangeMode): void;
-	/** 在空白处菜单打开的位置新建便签（ADR 0026）。 */
-	addSticky(at: Position): void;
 }
 
 /** 多选的节点菜单里的排列（和多选工具条上的同一组）。 */
@@ -115,7 +112,6 @@ export function EditorMenu({
 			}
 			onPaste={(copied) => edit.clipboard.paste(copied, target.position)}
 			onTidy={edit.tidy}
-			onAddSticky={() => edit.addSticky(target.position)}
 			onUndo={edit.undo}
 			onRedo={edit.redo}
 		/>

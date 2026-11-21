@@ -7204,85 +7204,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           }
@@ -7792,78 +7720,10 @@
                 }
               },
               "sticky_notes": {
+                "description": "已移除的字段（便签，ADR 0028）：只为兼容旧客户端和升级前导出的文件保留，新写的文档不要带它。读到的文档里没有它；保存时收到空数组会丢掉，有内容的被拒绝。",
+                "maxItems": 0,
                 "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string",
-                      "maxLength": 40,
-                      "pattern": "^[^\\r\\n]*(?![\\s\\S])"
-                    },
-                    "text": {
-                      "type": "string",
-                      "maxLength": 2000,
-                      "pattern": "^(?=[\\s\\S]*[^\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
+                "items": {}
               }
             },
             "required": [
@@ -8412,85 +8272,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           },
@@ -8535,21 +8323,6 @@
         ]
       },
       "notes": [
-        {
-          "part": "body",
-          "path": "document.sticky_notes[].text",
-          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
-        },
-        {
-          "part": "body",
-          "path": "document.sticky_notes[].title",
-          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
-        },
-        {
-          "part": "body",
-          "path": "document.sticky_notes",
-          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验"
-        },
         {
           "part": "body",
           "path": "document.annotations[].note",
@@ -9216,85 +8989,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           }
@@ -9873,85 +9574,13 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "sticky_notes": {
-                "default": [],
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "color": {
-                      "type": "string",
-                      "enum": [
-                        "gray",
-                        "blue",
-                        "green",
-                        "yellow",
-                        "orange",
-                        "pink"
-                      ]
-                    },
-                    "position": {
-                      "type": "object",
-                      "properties": {
-                        "x": {
-                          "type": "number"
-                        },
-                        "y": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "size": {
-                      "type": "object",
-                      "properties": {
-                        "width": {
-                          "type": "number",
-                          "minimum": 160,
-                          "maximum": 4000
-                        },
-                        "height": {
-                          "type": "number",
-                          "minimum": 96,
-                          "maximum": 4000
-                        }
-                      },
-                      "required": [
-                        "width",
-                        "height"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "text"
-                  ],
-                  "additionalProperties": false
-                }
               }
             },
             "required": [
               "nodes",
               "edges",
               "packages",
-              "annotations",
-              "sticky_notes"
+              "annotations"
             ],
             "additionalProperties": false
           },
