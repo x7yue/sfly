@@ -24,36 +24,63 @@ UNKNOWN_TEXT = "未知（找不到节点类型）"
 UNKNOWN = "unknown"
 
 
-def effective_timeout(node: dict[str, Any], declared: int | None | str) -> dict[str, Any]:
-    """`{"seconds": 秒, "source": "node" | "type" | "platform" | "unknown"}`。
+def _is_timeout(value: Any) -> bool:
+    """是不是合格的超时：1 到 `MAX_TIMEOUT_SECONDS` 之间的整数（布尔值不算）；和控制面的
+    `isNodeTimeout` 一致。"""
+    return (
+        isinstance(value, int) and not isinstance(value, bool) and 0 < value <= MAX_TIMEOUT_SECONDS
+    )
+
+
+def node_timeout_problem(label: str, written: Any) -> str | None:
+    """场景里这个节点写的超时不合格时的说明（和控制面派发、保存、预检的 `nodeTimeoutProblem`
+    同一句话），没写或合格时是 None。`label` 是节点（`显示名称（节点 ID）`、节点 ID）。"""
+    if written is None or _is_timeout(written):
+        return None
+    return (
+        f"节点 {label}：timeout 必须是 1 到 {MAX_TIMEOUT_SECONDS} 之间的正整数（秒），"
+        f"实际是 {written}"
+    )
+
+
+def effective_timeout(node: dict[str, Any], declared: Any) -> dict[str, Any]:
+    """`{"seconds": 秒, "source": "node" | "type" | "platform" | "unknown"}`，规则和控制面派发时
+    的取法（packages/orchestration/src/node-config.ts 的 `effectiveTimeout`）一致，两端共用
+    一张用例表。
 
     `declared` 是节点类型声明的超时（没声明是 None）；找不到节点类型时是 `UNKNOWN`：这时
-    场景里没写超时的节点说不出生效的值（`seconds` 是 None），不猜它是平台默认。
+    场景里没写超时的节点说不出生效的值（`seconds` 是 None），不猜它是平台默认（Python 独有，
+    表里不比较）。
+    不合格的值（不是 1 到上限之间的整数）当作没写，哪一种来源都一样。
     """
     written = node.get("timeout")
-    if isinstance(written, int) and not isinstance(written, bool):
+    if _is_timeout(written):
         return {"seconds": written, "source": "node"}
     if declared == UNKNOWN:
         return {"seconds": None, "source": "unknown"}
-    if (
-        isinstance(declared, int)
-        and not isinstance(declared, bool)
-        and 0 < declared <= MAX_TIMEOUT_SECONDS
-    ):
+    if _is_timeout(declared):
         return {"seconds": declared, "source": "type"}
     return {"seconds": PLATFORM_TIMEOUT_SECONDS, "source": "platform"}
 
 
+def timeout_view(node: dict[str, Any], label: str, declared: Any) -> dict[str, Any]:
+    """`sfly scenario show` 里包节点的 `timeout`：生效的值和来源；场景里写的值派发时会被拒绝
+    （升级前保存的版本里可能有）时，`source` 是 `invalid`，带着说明（`problem`）。"""
+    problem = node_timeout_problem(label, node.get("timeout"))
+    if problem is not None:
+        return {"seconds": None, "source": "invalid", "problem": problem}
+    return effective_timeout(node, declared)
+
+
 def timeout_text(timeout: dict[str, Any]) -> str:
-    """表格里的写法：`43200（节点类型声明，秒）`；找不到节点类型时是 `未知（找不到节点类型）`。"""
+    """表格里的写法：`43200（节点类型声明，秒）`；找不到节点类型时是 `未知（找不到节点类型）`；
+    场景里写的值派发时会被拒绝时写明原因。"""
+    if timeout["source"] == "invalid":
+        return f"无效：{timeout['problem']}（派发时这个任务会以配置错误失败）"
     seconds = timeout["seconds"]
     if seconds is None:
         return UNKNOWN_TEXT
-    text = f"{seconds}（{SOURCE_LABELS[timeout['source']]}，秒）"
-    if timeout["source"] == "node" and not 0 < seconds <= MAX_TIMEOUT_SECONDS:
-        # 升级前保存的版本里可能有：派发时这个任务以配置错误失败。
-        text += f"，超出范围 1 到 {MAX_TIMEOUT_SECONDS}，派发时会以配置错误失败"
-    return text
+    return f"{seconds}（{SOURCE_LABELS[timeout['source']]}，秒）"
 
 
 def declared_timeouts(client: Client, document: dict[str, Any]) -> dict[str, int | None | str]:

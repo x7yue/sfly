@@ -1,4 +1,5 @@
 // sfly scenario list / show：真实的 sfly 进程查询测试控制面里的场景。
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -400,6 +401,41 @@ describe("sfly scenario list / show → 控制面", () => {
 					quick: { seconds: 3600, source: "platform" },
 					pinned: { seconds: 120, source: "node" },
 					gone: { seconds: null, source: "unknown" },
+				});
+			});
+
+			it("升级前保存的版本里节点写的超时超过上限（保存时现在会拒绝）：写成无效和原因，--json 带 problem，不当成生效的值", async () => {
+				const id = await createScenario(
+					"超时超限",
+					limitsDocument({
+						nodes: [
+							{ id: "entry", kind: "entry" },
+							{ id: "slow", kind: "package", package: "limits", node: "long", timeout: 120 },
+						],
+						edges: [{ from: "entry", to: "slow", kind: "chain" }],
+					}),
+				);
+				const client = new pg.Client({ connectionString: cp.database.url });
+				await client.connect();
+				try {
+					await client.query(
+						"update orchestration_versions set document = jsonb_set(document, '{nodes,1,timeout}', '5000000000') where orchestration_id = $1",
+						[id],
+					);
+				} finally {
+					await client.end();
+				}
+				const message =
+					"节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 5000000000";
+
+				const text = await cli("scenario", "show", id);
+				const json = JSON.parse((await cli("scenario", "show", id, "--json")).stdout);
+
+				expect(text.stdout).toContain(`无效：${message}（派发时这个任务会以配置错误失败）`);
+				expect(json.nodes[0].timeout).toEqual({
+					seconds: null,
+					source: "invalid",
+					problem: message,
 				});
 			});
 

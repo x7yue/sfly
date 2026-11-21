@@ -10,7 +10,7 @@ from typing import Any
 
 from sfly.cli import scenario_edit, scenario_versions
 from sfly.cli.client import segment
-from sfly.cli.node_timeouts import declared_timeouts, effective_timeout, timeout_text
+from sfly.cli.node_timeouts import declared_timeouts, timeout_text, timeout_view
 from sfly.cli.output import (
     add_limit_option,
     apply_limit,
@@ -159,7 +159,11 @@ def describe(
             view["node"] = node["node"]
             view["package_version"] = locked.get(node["package"])
             view["agent"] = node.get("agent") or default_agent
-            view["timeout"] = effective_timeout(node, (declared or {}).get(node["id"], "unknown"))
+            view["timeout"] = timeout_view(
+                node,
+                name_with_id(node["id"], node.get("display_name")),
+                (declared or {}).get(node["id"], "unknown"),
+            )
         elif node["kind"] == "async":
             view["subflow"] = subflow_name(triggers.get(node["id"]))
         elif node["kind"] == "stop_subflow":

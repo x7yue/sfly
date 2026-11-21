@@ -219,6 +219,32 @@ describe("节点类型声明的默认超时", () => {
 			);
 		});
 
+		it("锁定的节点包版本被删掉、找不到节点类型：不知道它有没有声明超时，不补（只会少说，不说错）", async () => {
+			const agent = await connect();
+			const id = await api.orchestrationWith(scenario("short", "2.0.0"));
+			const runId = await api.triggerOk(id);
+			const task = await agent.nextAssign();
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				await client.query("delete from node_packages where name = 'limits' and version = '2.0.0'");
+			} finally {
+				await client.end();
+			}
+
+			await agent.fail(task, AGENT_TIMEOUT_MESSAGE, ErrorKind.TIMEOUT);
+
+			await eventually(async () => {
+				const node = await api.node(runId, "a");
+				expect(node.status).toBe("failed");
+				expect(node.error).toEqual({
+					kind: "timeout",
+					message: AGENT_TIMEOUT_MESSAGE,
+					location: null,
+				});
+			});
+		});
+
 		it("不是超时的失败：不补", async () => {
 			const agent = await connect();
 			const id = await api.orchestrationWith(scenario("short", "2.0.0"));
@@ -290,36 +316,47 @@ describe("节点类型声明的默认超时", () => {
 			expect((await api.trigger(id)).status).toBe(400);
 		});
 
-		it("已经触发、还在排队的任务，版本里的超时是超限的值：派发时这个任务以配置错误失败（不重试），同一台 Agent 上排在它后面的任务照常派发", async () => {
+		it("已经触发、还在排队的任务，版本里的超时是超限的值：这个任务在被标成已派发之前以配置错误失败（不重试），同一批派发里排在它前面和后面的任务都照常收到", async () => {
 			// 设了重试：配置错误不按重试配置重试（只有一次尝试），这条断言才有意义。
 			const bad = await api.orchestrationWith(
 				scenario("short", "2.0.0", { timeout: 120, retries: 2 }),
 			);
-			const good = await api.orchestrationWith(scenario("short", "2.0.0"));
-			// Agent 注册过但不在线：两个运行的任务都排队。
+			const before = await api.orchestrationWith(scenario("short", "2.0.0", { timeout: 60 }));
+			const after = await api.orchestrationWith(scenario("short", "2.0.0", { timeout: 90 }));
+			// Agent 注册过但不在线：三个运行的任务按触发的先后排队（前、超限的、后），Agent 连上时在同一批里派发。
 			await (await connect()).disconnect();
 			agents.length = 0;
+			const beforeRun = await api.triggerOk(before);
 			const badRun = await api.triggerOk(bad);
-			const goodRun = await api.triggerOk(good);
+			const afterRun = await api.triggerOk(after);
 			await tamper(cp.database.url, bad);
 			await cp.restart();
 
 			const agent = await connect();
-			const task = await agent.nextAssign();
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
 
-			// 收到的是另一个运行的任务；超限的那个没有发给 Agent。
-			expect(task).toMatchObject({ nodeId: "a" });
-			expect(task.timeoutSeconds).toBe(PLATFORM_SECONDS);
+			// 收到的是前后两个运行的任务（同一批）；超限的那个没有发给 Agent，连接也没有被拆掉。
+			expect([first.timeoutSeconds, second.timeoutSeconds]).toEqual([60, 90]);
 			await eventually(async () => {
 				const node = await api.node(badRun, "a");
 				expect(node.status).toBe("failed");
 				expect(node.error).toEqual({ kind: "config_error", message: MESSAGE("a"), location: null });
 			});
-			await agent.succeed(task, { v: 1 });
-			await eventually(async () => expect((await api.run(goodRun)).status).toBe("success"));
-			// 配置错误不重试：只有一次尝试。
+			await agent.succeed(first, { v: 1 });
+			await agent.succeed(second, { v: 1 });
+			await eventually(async () => {
+				expect((await api.run(beforeRun)).status).toBe("success");
+				expect((await api.run(afterRun)).status).toBe("success");
+			});
+			// 配置错误不重试：只有一次尝试，也没有再派发。
 			await agent.expectNoAssign();
-			expect((await api.node(badRun, "a")).attempts).toHaveLength(1);
+			const attempts = (await api.node(badRun, "a")).attempts;
+			expect(attempts.map((a) => [a.attempt, a.status, a.error?.kind])).toEqual([
+				[1, "failed", "config_error"],
+			]);
+			// 超限的任务没有被标成已派发：它没有开始时间。
+			expect((await api.node(badRun, "a")).attempts[0]?.started_at ?? null).toBeNull();
 		});
 	});
 });
