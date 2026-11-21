@@ -94,15 +94,23 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 			{ bot: "ops", text: "完成" },
 			"飞书通知",
 			"在节点代码里用 ctx.notify 发飞书消息",
+			"",
 		],
 		[
 			"timer",
 			{ at: "09:30:00", tz: "Asia/Shanghai" },
 			"定时",
 			"在节点代码里等到那个时刻，或把场景拆成两次运行",
+			"。别的节点引用了它的输出（triggered_at、late）的，也要一起改。",
 		],
-		["sleep", { duration: "30s" }, "Sleep", "在节点代码里等待，或把场景拆成两次运行"],
-	] as const)("已移除种类的节点 %s（ADR 0028）：写出节点、当时的种类和替换办法", (kind, config, label, replacement) => {
+		[
+			"sleep",
+			{ duration: "30s" },
+			"Sleep",
+			"在节点代码里等待，或把场景拆成两次运行",
+			"。别的节点引用了它的输出（triggered_at）的，也要一起改。",
+		],
+	] as const)("已移除种类的节点 %s（ADR 0028）：写出节点、当时的种类和替换办法；原来有输出的提醒引用它输出的节点也要改", (kind, config, label, replacement, referenced) => {
 		const doc = StoredOrchestrationDocument.parse({
 			nodes: [
 				{ id: "entry", kind: "entry" },
@@ -111,7 +119,7 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 			edges: [{ from: "entry", to: "old_1", kind: "chain" }],
 		});
 		expect(messages(doc, "node_kind_removed")).toEqual([
-			`节点 老节点（old_1） 的类型（已移除的节点类型 ${kind}，原来的「${label}」）已不再支持，不能运行。替换办法：${replacement}`,
+			`节点 老节点（old_1） 的类型（已移除的节点类型 ${kind}，原来的「${label}」）已不再支持，不能运行。替换办法：${replacement}${referenced}`,
 		]);
 		expect(
 			documentWarnings(doc, catalog)

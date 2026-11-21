@@ -33,6 +33,34 @@ def test_a_removed_node_kind_is_reported_with_the_replacement(
     assert f"替换办法：{replacement}" in problems[0]
 
 
+@pytest.mark.parametrize(
+    ("node", "advice"),
+    [
+        (
+            {"id": "at", "kind": "timer", "at": "10:00:00"},
+            "别的节点引用了它的输出（triggered_at、late）的，也要一起改。",
+        ),
+        (
+            {"id": "pause", "kind": "sleep", "duration": "5s"},
+            "别的节点引用了它的输出（triggered_at）的，也要一起改。",
+        ),
+        ({"id": "notify", "kind": "feishu_notify"}, None),
+    ],
+    ids=["timer", "sleep", "feishu_notify"],
+)
+def test_a_removed_kind_that_had_outputs_says_the_nodes_using_them_must_change_too(
+    node: dict[str, str], advice: str | None
+) -> None:
+    """原来有输出的已移除种类（定时、Sleep）：下游引用过它们的输出的节点删掉节点之后也要改，
+    和控制面预检里的说明是同一句；没有输出的种类（飞书通知）不加这一句。"""
+    problems = _document_problems({"nodes": [{"id": "entry", "kind": "entry"}, node]})
+    assert len(problems) == 1
+    if advice is None:
+        assert "引用了它的输出" not in problems[0]
+    else:
+        assert advice in problems[0]
+
+
 def test_another_unknown_node_kind_still_lists_the_known_kinds() -> None:
     problems = _document_problems({"nodes": [{"id": "ghost", "kind": "teleport"}]})
     assert len(problems) == 1

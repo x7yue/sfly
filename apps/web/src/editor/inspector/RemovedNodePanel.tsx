@@ -1,4 +1,4 @@
-import { REMOVED_NODE_KINDS, removedKindLabel, removedKindOutputs } from "@sfly/schema";
+import { REMOVED_NODE_KINDS, removedKindLabel, removedOutputsAdvice } from "@sfly/schema";
 import type { RemovedDocNode } from "#/components/canvas/flow";
 import { SectionTitle } from "./fields";
 
@@ -20,9 +20,7 @@ function legacyConfig(node: RemovedDocNode): string | undefined {
 export function RemovedNodePanel({ node }: { node: RemovedDocNode }) {
 	const config = legacyConfig(node);
 	const { label, replacement } = REMOVED_NODE_KINDS[node.kind];
-	const outputs = removedKindOutputs(node.kind);
-	const referenced =
-		outputs.length > 0 ? `别的节点引用了它的输出（${outputs.join("、")}）的，也要一起改。` : "";
+	const referenced = removedOutputsAdvice(node.kind);
 	return (
 		<>
 			<p className="m-0 text-xs text-fg-2">

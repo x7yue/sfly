@@ -21,7 +21,7 @@ test("最新版本里还有已移除的节点：画布提示哪些节点、怎�
 	// 画布顶部的提示：哪些节点、每种怎么替换。
 	const banner = page.getByRole("status").filter({ hasText: "不能运行，删掉之后才能保存" });
 	await expect(banner).toContainText("有 3 个节点的类型已不再支持（wait、at、notify）");
-	await expect(banner).toContainText(`Sleep节点改成${SLEEP_REPLACEMENT}`);
+	await expect(banner).toContainText(`Sleep 节点改成${SLEEP_REPLACEMENT}`);
 	await expect(banner).toContainText(`定时节点改成${TIMER_REPLACEMENT}`);
 	await expect(banner).toContainText(`飞书通知节点改成${NOTIFY_REPLACEMENT}`);
 	// 定时、Sleep 节点原来有输出：引用过它们的节点，删掉之后也要改。

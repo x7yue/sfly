@@ -39,6 +39,17 @@ export const REMOVED_NODE_KIND_NAMES = Object.keys(REMOVED_NODE_KINDS) as [
 export const removedKindOutputs = (kind: RemovedNodeKind): readonly string[] =>
 	REMOVED_NODE_KINDS[kind].outputs;
 
+/**
+ * 原来有输出的已移除种类：别的节点引用过它们的输出的，删掉节点之后那些引用也要改（下游报「引用了不存在的节点」）。
+ * 预检、保存被拒绝、画布提示、检查器和命令行都在说明里加这一句；没有输出的种类返回空字符串。
+ */
+export const removedOutputsAdvice = (kind: RemovedNodeKind): string => {
+	const outputs = removedKindOutputs(kind);
+	return outputs.length > 0
+		? `别的节点引用了它的输出（${outputs.join("、")}）的，也要一起改。`
+		: "";
+};
+
 export const isRemovedNodeKind = (kind: string): kind is RemovedNodeKind =>
 	Object.hasOwn(REMOVED_NODE_KINDS, kind);
 
@@ -73,7 +84,10 @@ export function removedNodesMessage(notices: readonly RemovedNodeNotice[]): stri
 	const replacements = kinds.map(
 		(k) => `${removedKindLabel(k)}：${REMOVED_NODE_KINDS[k].replacement}`,
 	);
-	return `场景里有 ${notices.length} 个已不再支持的节点（${notices.map((n) => `${n.id}`).join("、")}），先删掉再保存。替换办法：${replacements.join("；")}`;
+	const referenced = kinds.some((k) => removedKindOutputs(k).length > 0)
+		? "。引用了它们输出的节点也要一起改"
+		: "";
+	return `场景里有 ${notices.length} 个已不再支持的节点（${notices.map((n) => `${n.id}`).join("、")}），先删掉再保存。替换办法：${replacements.join("；")}${referenced}`;
 }
 
 /**

@@ -205,3 +205,111 @@ export async function seedWaitingSleepRun(cp: TestControlPlane): Promise<typeof 
 		await client.end();
 	}
 }
+
+/** 升级时同一个运行里有两个停在已移除节点上的运行：主链上的 Sleep 和子流程里的定时节点（子流程里的更晚写入）。 */
+export const RACE = {
+	scenario: "00000000-0000-4000-8000-0000000000e1",
+	version: "00000000-0000-4000-8000-0000000000e2",
+	run: "00000000-0000-4000-8000-0000000000e3",
+	main: "00000000-0000-4000-8000-0000000000e4",
+	sub: "00000000-0000-4000-8000-0000000000e5",
+	tasks: {
+		entry: "00000000-0000-4000-8000-0000000000f1",
+		spawn: "00000000-0000-4000-8000-0000000000f2",
+		wait: "00000000-0000-4000-8000-0000000000f3",
+		subEntry: "00000000-0000-4000-8000-0000000000f4",
+		nap: "00000000-0000-4000-8000-0000000000f5",
+	},
+} as const;
+
+/**
+ * 写入这样的运行：主链 入口 → 异步任务 `spawn` → Sleep `wait`（`waiting`）→ 总是执行的停止子流程节点 `stop`（停止
+ * 子流程 `sub`，还没开始）；子流程 `sub` 里入口 → 定时节点 `nap`（`waiting`，任务序号比 `wait` 大）。
+ * 重启后先处理 `wait`：它失败，总是执行的 `stop` 把子流程停掉，`nap` 因此应当是「已停止」，不是「失败」。
+ */
+export async function seedWaitingRaceRun(cp: TestControlPlane): Promise<typeof RACE> {
+	const document = {
+		nodes: [
+			{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } },
+			{ id: "spawn", kind: "async", params: {}, position: { x: 252, y: 0 } },
+			{ ...REMOVED_WAIT, position: { x: 504, y: 0 } },
+			{
+				id: "stop",
+				kind: "stop_subflow",
+				subflow: "sub",
+				always: true,
+				position: { x: 756, y: 0 },
+			},
+			{ id: "sub", kind: "subflow_entry", name: "sub", params: [], position: { x: 252, y: 200 } },
+			{
+				id: "nap",
+				kind: "timer",
+				at: "09:30:00",
+				tz: "Asia/Shanghai",
+				position: { x: 504, y: 200 },
+			},
+		],
+		edges: [
+			{ from: "entry", to: "spawn", kind: "chain" },
+			{ from: "spawn", to: "wait", kind: "chain" },
+			{ from: "wait", to: "stop", kind: "chain" },
+			{ from: "spawn", to: "sub", kind: "dispatch" },
+			{ from: "sub", to: "nap", kind: "chain" },
+		],
+		packages: {},
+		annotations: [],
+		sticky_notes: [],
+	};
+	const client = new pg.Client({ connectionString: cp.database.url });
+	await client.connect();
+	try {
+		await client.query(
+			"insert into orchestrations (id, name, description, head_version, created_at) values ($1, '两个停在已移除节点上的场景', '', 1, $2)",
+			[RACE.scenario, AT],
+		);
+		await client.query(
+			`insert into orchestration_versions (id, orchestration_id, number, document, author, created_at)
+			values ($1, $2, 1, $3, '旧人', $4)`,
+			[RACE.version, RACE.scenario, JSON.stringify(document), AT],
+		);
+		await client.query(
+			`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at)
+			values ($1, $2, $3, '旧人', '{}', 'running', $4)`,
+			[RACE.run, RACE.scenario, RACE.version, AT],
+		);
+		await client.query(
+			`insert into chain_instances (id, run_id, chain_id, depth, params, status, started_at)
+			values ($1, $2, 'entry', 0, '{}', 'running', $3)`,
+			[RACE.main, RACE.run, AT],
+		);
+		await client.query(
+			`insert into chain_instances (id, run_id, chain_id, parent_chain_instance_id, async_node_id, depth, params, status, started_at)
+			values ($1, $2, 'sub', $3, 'spawn', 1, '{}', 'running', $4)`,
+			[RACE.sub, RACE.run, RACE.main, AT],
+		);
+		const task = (id: string, chain: string, node: string, status: string, inputs: unknown) =>
+			client.query(
+				`insert into tasks (id, run_id, chain_instance_id, node_id, attempt, status, inputs, outputs, queued_at, started_at, ended_at)
+				values ($1, $2, $3, $4, 1, $5, $6, $7, $8, $8, $9)`,
+				[
+					id,
+					RACE.run,
+					chain,
+					node,
+					status,
+					inputs === null ? null : JSON.stringify(inputs),
+					status === "success" ? "{}" : null,
+					AT,
+					status === "success" ? AT : null,
+				],
+			);
+		await task(RACE.tasks.entry, RACE.main, "entry", "success", null);
+		await task(RACE.tasks.spawn, RACE.main, "spawn", "success", {});
+		await task(RACE.tasks.wait, RACE.main, "wait", "waiting", { duration: "5s" });
+		await task(RACE.tasks.subEntry, RACE.sub, "sub", "success", null);
+		await task(RACE.tasks.nap, RACE.sub, "nap", "waiting", { at: "09:30:00", tz: "Asia/Shanghai" });
+		return RACE;
+	} finally {
+		await client.end();
+	}
+}

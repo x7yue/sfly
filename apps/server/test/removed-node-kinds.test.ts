@@ -15,6 +15,7 @@ import {
 	REMOVED_NODE,
 	REMOVED_NODES,
 	seedRemovedKindScenario,
+	seedWaitingRaceRun,
 	seedWaitingSleepRun,
 } from "./support/removed-kind-scenario.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -138,12 +139,12 @@ describe("已移除的节点种类留在历史数据里", () => {
 			expect(problems).toEqual([
 				{
 					code: "node_kind_removed",
-					message: `节点 歇一会（wait） 的类型（已移除的节点类型 sleep，原来的「Sleep」）已不再支持，不能运行。替换办法：${SLEEP_REPLACEMENT}`,
+					message: `节点 歇一会（wait） 的类型（已移除的节点类型 sleep，原来的「Sleep」）已不再支持，不能运行。替换办法：${SLEEP_REPLACEMENT}。别的节点引用了它的输出（triggered_at）的，也要一起改。`,
 					node_id: "wait",
 				},
 				{
 					code: "node_kind_removed",
-					message: `节点 at 的类型（已移除的节点类型 timer，原来的「定时」）已不再支持，不能运行。替换办法：${TIMER_REPLACEMENT}`,
+					message: `节点 at 的类型（已移除的节点类型 timer，原来的「定时」）已不再支持，不能运行。替换办法：${TIMER_REPLACEMENT}。别的节点引用了它的输出（triggered_at、late）的，也要一起改。`,
 					node_id: "at",
 				},
 				{
@@ -196,7 +197,7 @@ describe("已移除的节点种类留在历史数据里", () => {
 			const { error } = (await res.json()) as { error: { code: string; message: string } };
 			expect(error.code).toBe("invalid_document");
 			expect(error.message).toBe(
-				`场景里有 3 个已不再支持的节点（wait、at、notify），先删掉再保存。替换办法：已移除的节点类型 sleep：${SLEEP_REPLACEMENT}；已移除的节点类型 timer：${TIMER_REPLACEMENT}；已移除的节点类型 feishu_notify：${REPLACEMENT}`,
+				`场景里有 3 个已不再支持的节点（wait、at、notify），先删掉再保存。替换办法：已移除的节点类型 sleep：${SLEEP_REPLACEMENT}；已移除的节点类型 timer：${TIMER_REPLACEMENT}；已移除的节点类型 feishu_notify：${REPLACEMENT}。引用了它们输出的节点也要一起改`,
 			);
 			expect((await head()).number).toBe(1);
 		});
@@ -235,7 +236,7 @@ describe("已移除的节点种类留在历史数据里", () => {
 			expect(res.status).toBe(400);
 			const { error } = (await res.json()) as { error: { message: string } };
 			expect(error.message).toBe(
-				`场景里有 1 个已不再支持的节点（at），先删掉再保存。替换办法：已移除的节点类型 timer：${TIMER_REPLACEMENT}`,
+				`场景里有 1 个已不再支持的节点（at），先删掉再保存。替换办法：已移除的节点类型 timer：${TIMER_REPLACEMENT}。引用了它们输出的节点也要一起改`,
 			);
 		});
 	});
@@ -330,9 +331,69 @@ describe("已移除的节点种类留在历史数据里", () => {
 			const wait = await api.node(waiting.run, "wait");
 			expect(wait.error?.kind).toBe("config_error");
 			expect(wait.error?.message).toBe(
-				`节点 wait 的类型（已移除的节点类型 sleep）已移除，不能执行：${SLEEP_REPLACEMENT}`,
+				`节点 歇一会（wait） 的类型（已移除的节点类型 sleep）已移除，不能执行（控制面升级时它正在等待，没有人会再唤醒它）：${SLEEP_REPLACEMENT}`,
 			);
 			expect(run.chains[0]?.status).toBe("failed");
+		});
+
+		it("某个历史运行排不出计划（节点在版本里查不到）：跳过它，不挡住控制面启动，别的运行照常处理", async () => {
+			await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+			const waiting = await seedWaitingSleepRun(cp);
+			const broken = {
+				run: "00000000-0000-4000-8000-0000000000a1",
+				chain: "00000000-0000-4000-8000-0000000000a2",
+				task: "00000000-0000-4000-8000-0000000000a3",
+			};
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				// 比 Sleep 任务更早写入：先处理它，它出错不能让后面的运行也被丢下。
+				await client.query(
+					`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at)
+					values ($1, $2, $3, '旧人', '{}', 'running', now())`,
+					[broken.run, waiting.scenario, waiting.version],
+				);
+				await client.query(
+					`insert into chain_instances (id, run_id, chain_id, depth, params, status, started_at)
+					values ($1, $2, 'entry', 0, '{}', 'running', now())`,
+					[broken.chain, broken.run],
+				);
+				await client.query(
+					`insert into tasks (id, run_id, chain_instance_id, node_id, attempt, status, inputs, queued_at, started_at, seq)
+					values ($1, $2, $3, 'ghost', 1, 'waiting', '{}', now(), now(), 0)`,
+					[broken.task, broken.run, broken.chain],
+				);
+			} finally {
+				await client.end();
+			}
+
+			await cp.restart();
+
+			await eventually(async () => expect((await api.run(waiting.run)).status).toBe("failed"));
+			expect((await api.run(broken.run)).status).toBe("running");
+		});
+
+		it("同一个运行里有两个停在已移除节点上：先失败的让总是执行的停止子流程节点把子流程停掉，后一个记为已停止，不被改写成失败", async () => {
+			const race = await seedWaitingRaceRun(cp);
+			await cp.restart();
+
+			await eventually(async () => expect((await api.run(race.run)).status).toBe("failed"));
+			const run = await api.run(race.run);
+			const chain = (id: string) => run.chains.find((c) => c.chain_id === id);
+			const statuses = (id: string) =>
+				Object.fromEntries(chain(id)?.nodes.map((n) => [n.node_id, n.status]) ?? []);
+			expect(statuses("entry")).toEqual({
+				entry: "success",
+				spawn: "success",
+				wait: "failed",
+				stop: "success",
+			});
+			// 子流程里的定时节点是被停止的（docs/SEMANTICS.md §4.1），整条子流程成功结束。
+			expect(statuses("sub")).toEqual({ sub: "success", nap: "stopped" });
+			expect(chain("sub")?.status).toBe("success");
+			const stop = chain("entry")?.nodes.find((n) => n.node_id === "stop");
+			expect(stop?.outputs).toEqual({ status: "success" });
+			expect((await api.node(race.run, "wait")).error?.kind).toBe("config_error");
 		});
 
 		it("历史运行里已经结束的等待节点不受影响：重启之后它们还是原来的状态", async () => {

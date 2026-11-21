@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import CliError
-from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label
+from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label, removed_outputs_advice
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
 
@@ -484,7 +484,8 @@ def _leaves(error: ValidationError) -> list[ValidationError]:
             _, replacement = REMOVED_NODE_KINDS[shown]
             return [
                 ValidationError(
-                    f"{removed_kind_label(shown)}：这种节点已不再支持，先删掉再保存。替换办法：{replacement}",
+                    f"{removed_kind_label(shown)}：这种节点已不再支持，先删掉再保存。替换办法：{replacement}"
+                    + (f"。{advice}" if (advice := removed_outputs_advice(shown)) else ""),
                     path=[*error.absolute_path, "kind"],
                 )
             ]
