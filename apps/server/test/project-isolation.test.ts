@@ -180,6 +180,28 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 		).toEqual([]);
 	});
 
+	it("运行：库里不让运行的项目和它的场景的项目不一致（直接插入被组合外键拒绝），按项目的查询不会读到错位的运行", async () => {
+		const insert = (scenario: string, project: ProjectId) =>
+			database.pool.query(
+				`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status, started_at)
+				values ($1, $2, (select id from orchestration_versions where orchestration_id = $2), $3, '测试', '{}', 'success', $4)`,
+				[crypto.randomUUID(), scenario, project, AT],
+			);
+		// 项目甲的场景、项目乙的运行，反过来也一样。
+		await expect(insert(a.scenario, OTHER)).rejects.toThrow(/runs_orchestration_project_fk/);
+		await expect(insert(b.scenario, DEFAULT_PROJECT)).rejects.toThrow(
+			/runs_orchestration_project_fk/,
+		);
+		// 两边各自的运行数没变（拒绝之后没有留下半条）。
+		const count = async (project: ProjectId) =>
+			Number(
+				(await database.pool.query("select count(*) from runs where project_id = $1", [project]))
+					.rows[0].count,
+			);
+		expect(await count(DEFAULT_PROJECT)).toBe(1);
+		expect(await count(OTHER)).toBe(1);
+	});
+
 	it("Agent：列表只有本项目的，按名字取别的项目的 Agent 得到「不存在」", async () => {
 		const names = async (project: ProjectId) => (await hub.list(project)).map((x) => x.name);
 		expect(await names(DEFAULT_PROJECT)).toEqual(["agent-a"]);

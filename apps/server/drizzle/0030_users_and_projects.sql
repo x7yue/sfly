@@ -134,8 +134,13 @@ ALTER TABLE "node_packages" ADD CONSTRAINT "node_packages_project_id_projects_id
 ALTER TABLE "node_packages" ADD CONSTRAINT "node_packages_published_by_user_id_users_id_fk" FOREIGN KEY ("published_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orchestration_versions" ADD CONSTRAINT "orchestration_versions_author_user_id_users_id_fk" FOREIGN KEY ("author_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orchestrations" ADD CONSTRAINT "orchestrations_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+-- 给 runs 的组合外键当目标（id 已经是主键，这条唯一约束只是让「场景 + 项目」这一对可以被引用）。
+ALTER TABLE "orchestrations" ADD CONSTRAINT "orchestrations_id_project" UNIQUE("id","project_id");--> statement-breakpoint
 ALTER TABLE "run_presets" ADD CONSTRAINT "run_presets_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "runs" ADD CONSTRAINT "runs_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+-- 运行的项目恒等于它的场景的项目：用 (场景, 项目) 的组合外键代替原来只管场景的外键；项目存在由 orchestrations.project_id 的外键间接保证，
+-- 所以 runs.project_id 上不再有单独的外键。场景的项目改了，运行跟着改（ON UPDATE CASCADE）；场景不物理删除，删除不级联。
+ALTER TABLE "runs" DROP CONSTRAINT "runs_orchestration_id_orchestrations_id_fk";--> statement-breakpoint
+ALTER TABLE "runs" ADD CONSTRAINT "runs_orchestration_project_fk" FOREIGN KEY ("orchestration_id","project_id") REFERENCES "public"."orchestrations"("id","project_id") ON DELETE no action ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "runs" ADD CONSTRAINT "runs_triggered_by_user_id_users_id_fk" FOREIGN KEY ("triggered_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runs" ADD CONSTRAINT "runs_cancel_requested_by_user_id_users_id_fk" FOREIGN KEY ("cancel_requested_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "runs_project_started" ON "runs" USING btree ("project_id","started_at","id");--> statement-breakpoint

@@ -1423,7 +1423,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "orchestrations_id_project": {
+          "name": "orchestrations_id_project",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "project_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1888,38 +1897,12 @@
         }
       },
       "foreignKeys": {
-        "runs_orchestration_id_orchestrations_id_fk": {
-          "name": "runs_orchestration_id_orchestrations_id_fk",
-          "tableFrom": "runs",
-          "tableTo": "orchestrations",
-          "columnsFrom": [
-            "orchestration_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "runs_orchestration_version_id_orchestration_versions_id_fk": {
           "name": "runs_orchestration_version_id_orchestration_versions_id_fk",
           "tableFrom": "runs",
           "tableTo": "orchestration_versions",
           "columnsFrom": [
             "orchestration_version_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "runs_project_id_projects_id_fk": {
-          "name": "runs_project_id_projects_id_fk",
-          "tableFrom": "runs",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
           ],
           "columnsTo": [
             "id"
@@ -1952,6 +1935,21 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "runs_orchestration_project_fk": {
+          "name": "runs_orchestration_project_fk",
+          "tableFrom": "runs",
+          "tableTo": "orchestrations",
+          "columnsFrom": [
+            "orchestration_id",
+            "project_id"
+          ],
+          "columnsTo": [
+            "id",
+            "project_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "cascade"
         }
       },
       "compositePrimaryKeys": {},

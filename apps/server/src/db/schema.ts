@@ -20,6 +20,7 @@ import {
 	check,
 	customType,
 	doublePrecision,
+	foreignKey,
 	index,
 	integer,
 	json,
@@ -205,40 +206,49 @@ export interface StoredFocusEdit {
  * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */
-export const orchestrations = pgTable("orchestrations", {
-	id: uuid("id").primaryKey(),
-	/** 所属项目（ADR 0029）；创建后不变。名字没有唯一约束，也不加。 */
-	projectId: text("project_id")
-		.$type<ProjectId>()
-		.notNull()
-		.references(() => projects.id),
-	name: text("name").notNull(),
-	description: text("description").notNull().default(""),
-	headVersion: integer("head_version").notNull().default(0),
-	createdAt: timestamptz("created_at").notNull(),
-	archivedAt: timestamptz("archived_at"),
-	/**
-	 * 运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样不属于版本，运行结束时读取当前值。
-	 * bot 为空即关闭；bot 不是外键，机器人被删除后设置原样保留（运行结束时记为「未发送」）。
-	 */
-	runNotifyBot: text("run_notify_bot"),
-	runNotifyTrigger: text("run_notify_trigger")
-		.$type<RunNotificationTrigger>()
-		.notNull()
-		.default("failed"),
-	/** 卡片标题；空字符串时用场景名。 */
-	runNotifyTitle: text("run_notify_title").notNull().default(""),
-	/** 附加说明（Markdown）；空字符串即没有。 */
-	runNotifyNote: text("run_notify_note").notNull().default(""),
-	/**
-	 * 关注项（GLOSSARY「关注项」）：场景挑出来、运行中重点展示的图表，按作者设定的顺序，最多 FOCUS_ITEMS_MAX 项
-	 * （包括已经失效的）。和运行通知一样不属于版本，改了立即生效。节点 ID 跨版本稳定，图表按标题引用；
-	 * 节点在最新版本里的状态每次读的时候对照得出，不存。
-	 */
-	focusItems: jsonb("focus_items").$type<FocusItemInput[]>().notNull().default([]),
-	/** 关注项最后一次修改；从没改过时为空。 */
-	focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
-});
+export const orchestrations = pgTable(
+	"orchestrations",
+	{
+		id: uuid("id").primaryKey(),
+		/**
+		 * 所属项目（ADR 0029）；名字没有唯一约束，也不加。ADR 里没有把场景搬到别的项目的流程；要有的话，一条
+		 * `update orchestrations set project_id = …` 就够：运行上冗余的项目列（`runs.project_id`）靠下面的组合外键
+		 * `ON UPDATE CASCADE` 跟着走，库里不会出现运行和它的场景不在同一个项目里。
+		 */
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		name: text("name").notNull(),
+		description: text("description").notNull().default(""),
+		headVersion: integer("head_version").notNull().default(0),
+		createdAt: timestamptz("created_at").notNull(),
+		archivedAt: timestamptz("archived_at"),
+		/**
+		 * 运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样不属于版本，运行结束时读取当前值。
+		 * bot 为空即关闭；bot 不是外键，机器人被删除后设置原样保留（运行结束时记为「未发送」）。
+		 */
+		runNotifyBot: text("run_notify_bot"),
+		runNotifyTrigger: text("run_notify_trigger")
+			.$type<RunNotificationTrigger>()
+			.notNull()
+			.default("failed"),
+		/** 卡片标题；空字符串时用场景名。 */
+		runNotifyTitle: text("run_notify_title").notNull().default(""),
+		/** 附加说明（Markdown）；空字符串即没有。 */
+		runNotifyNote: text("run_notify_note").notNull().default(""),
+		/**
+		 * 关注项（GLOSSARY「关注项」）：场景挑出来、运行中重点展示的图表，按作者设定的顺序，最多 FOCUS_ITEMS_MAX 项
+		 * （包括已经失效的）。和运行通知一样不属于版本，改了立即生效。节点 ID 跨版本稳定，图表按标题引用；
+		 * 节点在最新版本里的状态每次读的时候对照得出，不存。
+		 */
+		focusItems: jsonb("focus_items").$type<FocusItemInput[]>().notNull().default([]),
+		/** 关注项最后一次修改；从没改过时为空。 */
+		focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
+	},
+	// 给 `runs` 的组合外键（运行的项目恒等于它的场景的项目）当目标；`id` 已经是主键，这条约束只为了让外键有可引用的唯一组合。
+	(t) => [unique("orchestrations_id_project").on(t.id, t.projectId)],
+);
 
 /**
  * 运行预设（GLOSSARY「运行预设」，ADR 0024）：场景的设置，不属于版本。values 是「参数名 → 值」，
@@ -345,20 +355,16 @@ export const runs = pgTable(
 	"runs",
 	{
 		id: uuid("id").primaryKey(),
-		orchestrationId: uuid("orchestration_id")
-			.notNull()
-			.references(() => orchestrations.id),
+		orchestrationId: uuid("orchestration_id").notNull(),
 		orchestrationVersionId: uuid("orchestration_version_id")
 			.notNull()
 			.references(() => orchestrationVersions.id),
 		/**
 		 * 所属项目：冗余一列，和场景的项目一致（创建时从场景取）；按项目的运行列表、控制台统计和「经运行定位项目」都读它，
-		 * 不用每次联表（ADR 0029）。
+		 * 不用每次联表（ADR 0029）。「和场景一致」由库里的组合外键 `runs_orchestration_project_fk` 保证：
+		 * `(orchestration_id, project_id)` 必须是 `orchestrations (id, project_id)` 里存在的一对。
 		 */
-		projectId: text("project_id")
-			.$type<ProjectId>()
-			.notNull()
-			.references(() => projects.id),
+		projectId: text("project_id").$type<ProjectId>().notNull(),
 		triggeredBy: text("triggered_by").notNull(),
 		/** 触发人的用户 ID（ADR 0029）；升级之前的运行为空，昵称列照旧保留。 */
 		triggeredByUserId: uuid("triggered_by_user_id").references(() => users.id),
@@ -402,6 +408,14 @@ export const runs = pgTable(
 		notificationNotSent: text("notification_not_sent"),
 	},
 	(t) => [
+		// 运行的项目恒等于它的场景的项目：场景的项目改了（ADR 0029 里没有这个流程，要有的话是一条 update），运行跟着改
+		// （ON UPDATE CASCADE）；场景不物理删除，所以删除不级联（NO ACTION）。同时代替了原来 `project_id` 上单独的
+		// 外键（项目存在由 `orchestrations.project_id` 的外键间接保证）。
+		foreignKey({
+			name: "runs_orchestration_project_fk",
+			columns: [t.orchestrationId, t.projectId],
+			foreignColumns: [orchestrations.id, orchestrations.projectId],
+		}).onUpdate("cascade"),
 		// 一个场景的运行：按场景取，又按开始时间倒序（场景的运行列表、运行记录按场景筛选、每个场景最近一次运行）。
 		// 带 started_at 和 id：运行记录总带着项目条件（`runs_project_started`），规划器否则会倒着扫项目的索引、
 		// 一行行过滤场景，场景的运行少又都是最早的时候要扫过整个项目的运行（test/run-list-plan.test.ts）。

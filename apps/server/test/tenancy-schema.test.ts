@@ -290,6 +290,93 @@ describe("Agent 凭据", () => {
 	});
 });
 
+describe("运行的项目恒等于它的场景的项目", () => {
+	const addProject = (id: string) =>
+		client.query("insert into projects (id, display_name, created_at) values ($1, $1, $2)", [
+			id,
+			AT,
+		]);
+
+	/** 在 `project` 里直接插入一个场景和它的第一个版本，返回两者的 ID。 */
+	async function addScenario(project: string): Promise<{ scenario: string; version: string }> {
+		const scenario = randomUUID();
+		const version = randomUUID();
+		await client.query(
+			"insert into orchestrations (id, project_id, name, head_version, created_at) values ($1, $2, '场景', 1, $3)",
+			[scenario, project, AT],
+		);
+		await client.query(
+			"insert into orchestration_versions (id, orchestration_id, number, document, author, created_at) values ($1, $2, 1, '{}', '测试', $3)",
+			[version, scenario, AT],
+		);
+		return { scenario, version };
+	}
+
+	const addRun = (scenario: string, version: string, project: string) => {
+		const id = randomUUID();
+		return client
+			.query(
+				`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status, started_at)
+				values ($1, $2, $3, $4, '测试', '{}', 'success', $5)`,
+				[id, scenario, version, project, AT],
+			)
+			.then(() => id);
+	};
+
+	const projectOfRun = async (id: string) =>
+		(await client.query("select project_id from runs where id = $1", [id])).rows[0]?.project_id;
+
+	it("运行的项目和场景的项目一致才写得进去；不一致被组合外键拒绝，项目不存在也一样", async () => {
+		await addProject("fk-a");
+		await addProject("fk-b");
+		const { scenario, version } = await addScenario("fk-a");
+		await expect(addRun(scenario, version, "fk-a")).resolves.toBeTypeOf("string");
+		await expect(addRun(scenario, version, "fk-b")).rejects.toThrow(
+			/runs_orchestration_project_fk/,
+		);
+		await expect(addRun(scenario, version, "default")).rejects.toThrow(
+			/runs_orchestration_project_fk/,
+		);
+		await expect(addRun(scenario, version, "no-such-project")).rejects.toThrow(
+			/runs_orchestration_project_fk/,
+		);
+		await expect(addRun(randomUUID(), version, "fk-a")).rejects.toThrow(
+			/runs_orchestration_project_fk/,
+		);
+	});
+
+	it("场景的项目改了，它的运行跟着改（ON UPDATE CASCADE），别的场景的运行不动", async () => {
+		await addProject("move-from");
+		await addProject("move-to");
+		const moved = await addScenario("move-from");
+		const stays = await addScenario("move-from");
+		const runs = [
+			await addRun(moved.scenario, moved.version, "move-from"),
+			await addRun(moved.scenario, moved.version, "move-from"),
+		];
+		const other = await addRun(stays.scenario, stays.version, "move-from");
+
+		await client.query("update orchestrations set project_id = 'move-to' where id = $1", [
+			moved.scenario,
+		]);
+
+		for (const run of runs) expect(await projectOfRun(run)).toBe("move-to");
+		expect(await projectOfRun(other)).toBe("move-from");
+	});
+
+	it("不再有只管场景或只管项目的单独外键（项目存在由场景的外键间接保证）", async () => {
+		const { rows } = await client.query(
+			`select conname from pg_constraint where conrelid = 'runs'::regclass and contype = 'f' order by conname`,
+		);
+		expect(rows.map((r) => r.conname)).toEqual([
+			"runs_cancel_requested_by_user_id_users_id_fk",
+			"runs_orchestration_project_fk",
+			"runs_orchestration_version_id_orchestration_versions_id_fk",
+			"runs_triggered_by_user_id_users_id_fk",
+		]);
+	});
+});
+
 describe("Agent 最近一次连接用的凭据", () => {
 	const addAgent = (name: string, kind: string | null) =>
 		client.query(
