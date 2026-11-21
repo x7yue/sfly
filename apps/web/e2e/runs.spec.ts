@@ -73,7 +73,8 @@ test("历史运行显示为表格：编号、场景、状态与失败节点、�
 	).toHaveText([ok.slice(0, 8), "撮合压测", "成功", "", "v1", "tester", "01-01 08:00", "1m 30s"]);
 	const failedRow = table.getByRole("row", { name: new RegExp(failed.slice(0, 8)) });
 	await expect(failedRow.getByRole("cell").nth(2)).toHaveText("失败 · check");
-	await expect(failedRow.getByRole("img", { name: "主链 2/3" })).toBeVisible();
+	// 入口成功、check 失败、最后一个节点被跳过：被跳过的不算已完成，单独计数。
+	await expect(failedRow.getByRole("img", { name: "主链 1/3，跳过 1" })).toBeVisible();
 	// 从新到旧。
 	await expect(table.getByRole("row").nth(1)).toContainText(failed.slice(0, 8));
 

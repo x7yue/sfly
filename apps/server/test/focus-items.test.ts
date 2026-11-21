@@ -471,7 +471,7 @@ describe("关注项的设置", () => {
 	});
 
 	describe("在事务里读关注项的状态", () => {
-		const ACTOR = { nickname: "测试", via: null };
+		const ACTOR = { nickname: "测试", via: null, userId: null, token: null };
 		let single: SingleConnection;
 		beforeEach(() => {
 			single = singleConnection(cp.database.url);
