@@ -27,6 +27,12 @@ export interface ShortcutDef {
 	inDialogs?: boolean;
 	/** 只在面板里展示，由组件自身处理（例如 Esc 关闭浮层）。 */
 	displayOnly?: boolean;
+	/**
+	 * 只在焦点在画布上（卡片、空白处）或页面上没有焦点时触发：焦点在检查器、大纲、工具条等不属于画布的地方不触发
+	 * （`lib/focus` 的 `onCanvasFocus`，和画布自己的方向键、Enter、Esc 是同一个判断）。删东西的键用它：
+	 * 在检查器里点一下不是输入框的地方，Backspace 不该删掉画布上选中的节点（#461）。
+	 */
+	canvasOnly?: boolean;
 	/** 绑定了处理函数时，同时作为命令出现在命令面板的「当前页面」分组里。 */
 	palette?: true;
 }
@@ -78,13 +84,22 @@ export const SHORTCUTS = [
 		keys: "Tab",
 		displayOnly: true,
 	},
-	// 选中的是节点时删除节点（editor/ScenarioEditor.tsx 的 deleteNodes，多选时是整组），是连线时断开连线。
+	// 选中的是节点时删除节点（editor/ScenarioEditor.tsx 的 deleteNodes，多选时是整组），是连线时断开连线
+	// （components/canvas/FlowCanvas.tsx 绑定）：Delete 和 Backspace 各登记一行，只在焦点在画布上时生效（canvasOnly）；
+	// 删除节点之后有带「撤销」的通知。
 	{
 		id: "canvas-delete",
 		group: "编排画布",
 		label: "删除节点 / 断开连线",
 		keys: "Delete",
-		displayOnly: true,
+		canvasOnly: true,
+	},
+	{
+		id: "canvas-delete-backspace",
+		group: "编排画布",
+		label: "删除节点 / 断开连线",
+		keys: "Backspace",
+		canvasOnly: true,
 	},
 	// 复制、粘贴、创建副本（editor/node-clipboard.tsx）：焦点在输入框里时仍是文本操作。复制、粘贴不拦按键，
 	// 由浏览器的复制、粘贴事件处理（页面上选中的文字照常复制，剪贴板里不是节点时照常粘贴）。
@@ -103,6 +118,7 @@ export const SHORTCUTS = [
 		group: "编排画布",
 		label: "删除选中的注释框",
 		keys: "Ctrl+Shift+G",
+		canvasOnly: true,
 	},
 	// 节点菜单（components/canvas/FlowCanvas.tsx）：焦点在节点卡片上时打开，菜单键同样可以。
 	{
@@ -213,6 +229,8 @@ export interface KeyInput {
 	editable: boolean;
 	/** 有模态弹窗打开。 */
 	inDialog?: boolean;
+	/** 焦点在画布以外的地方（检查器、大纲、工具条……）：登记了 `canvasOnly` 的键不触发。 */
+	offCanvas?: boolean;
 }
 
 interface Chord {
@@ -318,6 +336,7 @@ export class ShortcutMatcher<Id extends string = string> {
 					chords.length >= sequence.length &&
 					(!input.editable || def.inInputs) &&
 					(!input.inDialog || def.inDialogs) &&
+					(!input.offCanvas || !def.canvasOnly) &&
 					sequence.every((k, i) => chordMatches(chords[i] as Chord, k)),
 			);
 			const done = usable.find((d) => d.chords.length === sequence.length);

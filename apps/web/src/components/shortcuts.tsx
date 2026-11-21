@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { dialogOpen, isEditable } from "#/lib/focus";
+import { dialogOpen, isEditable, onCanvasFocus } from "#/lib/focus";
 import {
 	type PaletteShortcut,
 	SHORTCUTS,
@@ -83,6 +83,7 @@ export function ShortcutListener() {
 					shiftKey: event.shiftKey,
 					editable: isEditable(event.target),
 					inDialog: dialogOpen(),
+					offCanvas: !onCanvasFocus(event.target),
 				},
 				performance.now(),
 				isBound,
