@@ -1,0 +1,353 @@
+import { PERSISTED_SESSION_EVENT_TYPES, type SessionEventBody } from "../../src/index.js";
+
+/** 一次模型调用或一轮合计的 token。 */
+export const usage = { input: 1200, output: 80, cache_read: 900, cache_write: 0 };
+
+/** 持久的事件落库后多出来的两个字段。 */
+export const persistedStamp = { seq: 7, at: "2026-11-21T08:00:00.000Z" };
+
+export interface EventSample {
+	/** 样例的名字（同一个 `type` 可以有几个：`notice` 的各种 `kind`、`platform` 的三种）。 */
+	name: string;
+	/** 事件的内容（产生事件的一方写的形状）。 */
+	body: SessionEventBody;
+	/** 这个样例里可以没有的字段：缺了它们仍然合法，其余字段缺了都不合法。 */
+	optional: readonly string[];
+	/** 是不是助手服务产生的（事件流里出现的）：控制面产生的不是。 */
+	fromAssistantService: boolean;
+}
+
+const retryNotice = {
+	type: "notice",
+	kind: "retry",
+	message: "模型限流，正在重试",
+	attempt: 1,
+	max_attempts: 3,
+	error_class: "rate_limit",
+} as const;
+
+/** 每种事件至少一个合法样例；`notice` 的每种 `kind`、`platform` 的每种 `kind`、`turn_end` 的每种 `outcome` 各有一个。 */
+export const eventSamples: readonly EventSample[] = [
+	{
+		name: "user_message",
+		body: {
+			type: "user_message",
+			text: "给 http_check 加一个超时参数",
+			steer: false,
+			author: "alice",
+			author_user_id: null,
+		},
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "user_message（插话，有用户 ID）",
+		body: {
+			type: "user_message",
+			text: "先别改测试",
+			steer: true,
+			author: "alice",
+			author_user_id: "9b2d5c1e-6a47-4f0e-8d3a-0c1f2b3a4d5e",
+		},
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "turn_started",
+		body: { type: "turn_started", turn: 1 },
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "turn_queued",
+		body: {
+			type: "turn_queued",
+			position: 1,
+			waiting_for: { session_id: "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21", title: "修复登录页" },
+		},
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "thinking",
+		body: { type: "thinking" },
+		optional: [],
+		fromAssistantService: true,
+	},
+	{
+		name: "assistant_delta",
+		body: { type: "assistant_delta", text: "我先看一下" },
+		optional: [],
+		fromAssistantService: true,
+	},
+	{
+		name: "assistant_message",
+		body: { type: "assistant_message", text: "我先看一下现有的节点。", usage },
+		optional: [],
+		fromAssistantService: true,
+	},
+	{
+		name: "tool_call",
+		body: { type: "tool_call", call_id: "call_1", tool: "bash", title: "sfly package list" },
+		optional: [],
+		fromAssistantService: true,
+	},
+	{
+		name: "tool_output",
+		body: { type: "tool_output", call_id: "call_1", text: "http_check 0.3.0\n" },
+		optional: [],
+		fromAssistantService: true,
+	},
+	{
+		name: "tool_result（命令）",
+		body: {
+			type: "tool_result",
+			call_id: "call_1",
+			is_error: false,
+			text: "http_check 0.3.0\n",
+			truncated: false,
+			exit_code: 0,
+			duration_ms: 420,
+		},
+		optional: ["exit_code", "diff"],
+		fromAssistantService: true,
+	},
+	{
+		name: "tool_result（编辑，有差异，被截断）",
+		body: {
+			type: "tool_result",
+			call_id: "call_2",
+			is_error: false,
+			text: "Successfully replaced 1 block(s) in nodes/http_check.py.",
+			truncated: true,
+			diff: "--- a/nodes/http_check.py\n+++ b/nodes/http_check.py\n@@ -1 +1 @@\n-a\n+b\n",
+			duration_ms: 12,
+		},
+		optional: ["exit_code", "diff"],
+		fromAssistantService: true,
+	},
+	{
+		name: "steer_queue",
+		body: { type: "steer_queue", texts: ["先别改测试", "再加一条日志"] },
+		optional: [],
+		fromAssistantService: true,
+	},
+	{
+		name: "notice：retry",
+		body: retryNotice,
+		optional: ["attempt", "max_attempts", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "notice：retry_end",
+		body: { type: "notice", kind: "retry_end", message: "重试成功" },
+		optional: ["attempt", "max_attempts", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "notice：compaction",
+		body: { type: "notice", kind: "compaction", message: "上下文太长，已经压缩" },
+		optional: ["attempt", "max_attempts", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "notice：steer_dropped",
+		body: { type: "notice", kind: "steer_dropped", message: "停止时有 1 条插话没有送到" },
+		optional: ["attempt", "max_attempts", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "notice：context_reset",
+		body: { type: "notice", kind: "context_reset", message: "接不上之前的上下文，换成了一段摘要" },
+		optional: ["attempt", "max_attempts", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "notice：queue_cancelled（控制面产生）",
+		body: { type: "notice", kind: "queue_cancelled", message: "停止时排队中的话没有交给助手" },
+		optional: ["attempt", "max_attempts", "error_class"],
+		fromAssistantService: false,
+	},
+	{
+		name: "notice：events_lost（控制面产生）",
+		body: {
+			type: "notice",
+			kind: "events_lost",
+			message: "和助手服务断开太久，这一段过程没有记下",
+		},
+		optional: ["attempt", "max_attempts", "error_class"],
+		fromAssistantService: false,
+	},
+	{
+		name: "turn_end：completed",
+		body: {
+			type: "turn_end",
+			turn: 1,
+			outcome: "completed",
+			reason: "助手已完成",
+			steps: 12,
+			model_calls: 9,
+			duration_ms: 84_000,
+			usage,
+		},
+		optional: ["steps", "model_calls", "usage", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "turn_end：stopped",
+		body: {
+			type: "turn_end",
+			turn: 2,
+			outcome: "stopped",
+			reason: "用户停止",
+			steps: 3,
+			model_calls: 3,
+			duration_ms: 9_000,
+			usage,
+		},
+		optional: ["steps", "model_calls", "usage", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "turn_end：limit",
+		body: {
+			type: "turn_end",
+			turn: 3,
+			outcome: "limit",
+			reason: "一轮最多 40 次工具调用",
+			steps: 40,
+			model_calls: 41,
+			duration_ms: 300_000,
+			usage,
+		},
+		optional: ["steps", "model_calls", "usage", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "turn_end：model_unavailable",
+		body: {
+			type: "turn_end",
+			turn: 4,
+			outcome: "model_unavailable",
+			reason: "模型的密钥被拒绝",
+			steps: 0,
+			model_calls: 1,
+			duration_ms: 800,
+			usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+			error_class: "auth",
+		},
+		optional: ["steps", "model_calls", "usage", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "turn_end：interrupted（助手服务重启了，控制面补）",
+		body: {
+			type: "turn_end",
+			turn: 5,
+			outcome: "interrupted",
+			reason: "助手服务重启了",
+			duration_ms: 31_000,
+		},
+		optional: ["steps", "model_calls", "usage", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "turn_end：failed",
+		body: {
+			type: "turn_end",
+			turn: 6,
+			outcome: "failed",
+			reason: "pi 进程异常退出",
+			steps: 7,
+			model_calls: 6,
+			duration_ms: 20_000,
+			usage,
+		},
+		optional: ["steps", "model_calls", "usage", "error_class"],
+		fromAssistantService: true,
+	},
+	{
+		name: "platform：commit",
+		body: {
+			type: "platform",
+			kind: "commit",
+			hash: "3f1c2ab9d0e4",
+			files: [
+				{ path: "nodes/http_check.py", additions: 12, deletions: 3 },
+				{ path: "assets/logo.png", additions: null, deletions: null },
+			],
+			diff: "diff --git a/nodes/http_check.py b/nodes/http_check.py\n",
+			truncated: false,
+		},
+		optional: [],
+		fromAssistantService: true,
+	},
+	{
+		name: "platform：scenario_version",
+		body: {
+			type: "platform",
+			kind: "scenario_version",
+			scenario_id: "6a1e4f3c-9b7d-4e58-a2c1-5d0f8e7b3a96",
+			name: "接口巡检",
+			version: 3,
+		},
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "platform：run",
+		body: {
+			type: "platform",
+			kind: "run",
+			run_id: "e5b8a0d2-4c36-4f19-8b7a-1d2c3e4f5a6b",
+			scenario_name: "接口巡检",
+		},
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "session_ended",
+		body: { type: "session_ended", by: "alice" },
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "snapshot",
+		body: {
+			type: "snapshot",
+			status: "running",
+			partial_text: "我先看一下",
+			running_tool: {
+				call_id: "call_3",
+				tool: "bash",
+				title: "sfly run start 接口巡检",
+				output: "…\n",
+			},
+			steer_queue: ["先别改测试"],
+		},
+		optional: [],
+		fromAssistantService: false,
+	},
+	{
+		name: "snapshot（没有在跑的工具）",
+		body: {
+			type: "snapshot",
+			status: "idle",
+			partial_text: "",
+			running_tool: null,
+			steer_queue: [],
+		},
+		optional: [],
+		fromAssistantService: false,
+	},
+];
+
+const persisted = new Set<string>(PERSISTED_SESSION_EVENT_TYPES);
+
+/** 这个事件是不是持久的（落库时带 `seq`、`at`）。 */
+export const isPersistedBody = (body: SessionEventBody): boolean => persisted.has(body.type);
+
+/** 读事件的一方看到的形状：持久的多 `seq`、`at`。 */
+export function asReaderEvent(body: SessionEventBody): Record<string, unknown> {
+	return isPersistedBody(body) ? { ...body, ...persistedStamp } : { ...body };
+}

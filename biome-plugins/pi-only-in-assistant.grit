@@ -1,0 +1,17 @@
+language js
+
+// pi（`@earendil-works/*`）只能被助手服务（apps/assistant）依赖（ADR 0027）：控制面、契约、页面只认平台自己的
+// 会话事件和助手服务协议（`@sfly/schema` 的 sessions.ts、assistant-protocol.ts），以后换 pi 的版本、换嵌入方式，
+// 只动 apps/assistant。拦的是各种引入写法：`import`（含 `import type`、副作用引入）、`export … from`、
+// 动态 `import()`、`require()`、类型里的 `import("…")`。
+// 例外只有一处：evals/assistant/remote-tools/（评测集臂 B 的原型扩展，它要装进 pi 里，只能引用 pi）；
+// 删除臂 B 时（#552）一起删掉这条例外。
+or {
+	JsModuleSource() as $span where { $span <: r"[\"'`]@earendil-works/.*" },
+	`import($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
+	`require($source)` as $span where { $source <: r"[\"'`]@earendil-works/.*" },
+	TsImportType() as $span where { $span <: r"import\([\"'`]@earendil-works/.*" }
+} where {
+	$filename <: not r".*(?:apps/assistant|evals/assistant/remote-tools)/.*",
+	register_diagnostic(span=$span, message="pi（@earendil-works/*）只能在 apps/assistant 里引入（ADR 0027）：控制面、契约、页面只认平台自己的会话事件和助手服务协议（@sfly/schema 的 sessions.ts、assistant-protocol.ts），不引用 pi 的任何类型或函数，这样换 pi 的版本或嵌入方式只动 apps/assistant。需要 pi 的东西，放进助手服务，再翻成平台的事件。")
+}
