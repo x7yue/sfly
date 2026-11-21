@@ -26,6 +26,12 @@ export const MIN_LEAF_CHARS = 4;
  */
 export const MIN_CLIPPED_PREFIX_CHARS = 4;
 
+/**
+ * 找截断处留下的半截 secret 值时，比较的工作量上限（比较的字符数，每个候选文本另加一份）：超过就把这段文字整个盖住。
+ * 正常的输入（几个、几十个值）远在它下面，一次几十到几百；病态的（几千个很长的值、周期性的文字）在 400 万处放弃，约几毫秒。
+ */
+export const MAX_CLIP_WORK = 4_000_000;
+
 /** 值的 JSON 文本（`JSON.stringify` 返回不了文本的值，例如 undefined，退回 `String`）。 */
 export const jsonText = (value: unknown): string => JSON.stringify(value) ?? String(value);
 
@@ -602,9 +608,6 @@ export class SecretSet {
 		}
 	}
 
-	/** 每个要打码的文本的第一个码元：找结尾的半截时，只看从这些码元开始的位置。 */
-	#firstUnits: ReadonlySet<number> | undefined;
-
 	/**
 	 * 一段已经截到 `limit` 个字符（码点）的文字，按 {@link MIN_CLIPPED_PREFIX_CHARS} 把结尾留下的半截 secret 值盖住：
 	 * 文字长度到了上限（说明被截断过），结尾又是某个要打码的文本的前缀（不短于下限，又不是整个文本；整个文本由 {@link mask} 换掉）时，
@@ -618,6 +621,8 @@ export class SecretSet {
 			if (text.length < limit || charCount(text) < limit) return text;
 			const body = options.ellipsis && text.endsWith("…") ? text.slice(0, -1) : text;
 			const at = this.#clippedTailStart(body);
+			// 工作量超过上限（{@link MAX_CLIP_WORK}）：把这段文字整个盖住，宁可多盖。
+			if (at === undefined) return SECRET_MASK;
 			return at < 0 ? text : body.slice(0, at) + SECRET_MASK;
 		} catch {
 			return SECRET_MASK;
@@ -632,18 +637,52 @@ export class SecretSet {
 		return this.maskClippedTail(this.mask(text), limit, options);
 	}
 
-	/** `body` 的结尾是某个要打码的文本（不是整个）的前缀时，这个前缀开始的位置（最靠前的）；没有时 -1。 */
-	#clippedTailStart(body: string): number {
-		this.#firstUnits ??= new Set(this.texts.map((t) => t.charCodeAt(0)));
-		const first = this.#firstUnits;
-		const longest = this.texts[0]?.length ?? 0;
-		for (let i = Math.max(0, body.length - longest + 1); i < body.length; i++) {
-			if (!first.has(body.charCodeAt(i))) continue;
-			const tail = body.slice(i);
-			if (charCount(tail) < MIN_CLIPPED_PREFIX_CHARS) return -1;
+	/** 每个要打码的文本，按它的第一个码元分组：找结尾的半截时，每个位置只和同一个码元开头的文本比。 */
+	#byFirstUnit: ReadonlyMap<number, readonly string[]> | undefined;
+
+	/**
+	 * `body` 的结尾是某个要打码的文本（不是整个）的前缀时，这个前缀开始的位置（最靠前的）；没有时 -1；
+	 * 比较的工作量超过 {@link MAX_CLIP_WORK} 时是 undefined（调用方把整段盖住）。
+	 *
+	 * 最坏的情形是每个位置都以某个文本的首字符开头、却永远对不上前缀，文本又长又多（值来自用户，文字来自节点）：
+	 * 位置数 × 文本数 × 文本长，量过：3000 个各 3000 个字符的值、4096 个字符的文字，29–34 秒。所以按比较的字符数记工作量，
+	 * 每看一个候选文本也记一份。
+	 */
+	#clippedTailStart(body: string): number | undefined {
+		if (!this.#byFirstUnit) {
+			const byFirst = new Map<number, string[]>();
 			for (const text of this.texts) {
-				if (text.length > tail.length && text.startsWith(tail)) return i;
+				const unit = text.charCodeAt(0);
+				const list = byFirst.get(unit);
+				if (list) list.push(text);
+				else byFirst.set(unit, [text]);
 			}
+			this.#byFirstUnit = byFirst;
+		}
+		const longest = this.texts[0]?.length ?? 0;
+		let work = 0;
+		for (let i = Math.max(0, body.length - longest + 1); i < body.length; i++) {
+			const candidates = this.#byFirstUnit.get(body.charCodeAt(i));
+			if (!candidates) continue;
+			const tailLength = body.length - i;
+			// 结尾不到 {@link MIN_CLIPPED_PREFIX_CHARS} 个字符（码点）时更靠后的位置也不够：不盖。不少于 8 个码元一定不少于 4 个码点。
+			if (
+				tailLength < MIN_CLIPPED_PREFIX_CHARS * 2 &&
+				charCount(body.slice(i)) < MIN_CLIPPED_PREFIX_CHARS
+			) {
+				return -1;
+			}
+			for (const text of candidates) {
+				work += 1;
+				if (text.length <= tailLength) continue;
+				let k = 1;
+				// 第一个码元已经相同；逐个比较，不分配
+				while (k < tailLength && text.charCodeAt(k) === body.charCodeAt(i + k)) k += 1;
+				work += k;
+				if (k === tailLength) return i;
+				if (work > MAX_CLIP_WORK) return undefined;
+			}
+			if (work > MAX_CLIP_WORK) return undefined;
 		}
 		return -1;
 	}

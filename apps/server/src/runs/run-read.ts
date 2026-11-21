@@ -137,11 +137,10 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	/** 场景此刻的名称和关注项（不属于场景版本）。 */
 	scenario: Pick<typeof orchestrations.$inferSelect, "name" | "focusItems">;
 	/**
-	 * 按这次运行此刻的 secret 值给一段文字打码：读取方在读取结果之外拿到用户内容（任务动作摘要里的失败的动作等）时，
-	 * 和读取结果里的用户内容用同一个口径。
+	 * 这次运行此刻的全部 secret 值：读取方在读取结果之外拿到用户内容（任务动作摘要里的失败的动作等）时，用它打码，
+	 * 和读取结果里的用户内容是同一个口径、同一个集合（`secrets.mask` 打一般的文字，`secrets.maskClipped` 打存下来时被截断过的文字，
+	 * 动作用 `actions/action-text.ts` 的 `maskedAction`）。
 	 */
-	maskText: (text: string) => string;
-	/** 这次运行此刻的全部 secret 值：读取时对被截断过的文字（动作的名称、字段、失败原因）再打码用，和 `maskText` 是同一个集合。 */
 	secrets: SecretSet;
 	chains: RunChain<A>[];
 	/** 进行中的节点（排队、准备中、执行中、等待），按链与链上的顺序。 */
@@ -462,7 +461,6 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				run: { ...run, params: mask.params(entryIdOf(document), run.params) },
 				version,
 				scenario,
-				maskText: mask.text,
 				secrets: mask.secrets,
 				chains,
 				activeNodes: activeNodesOf(chains),

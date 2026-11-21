@@ -217,8 +217,9 @@ async function attentionItemsOf(
 							unit,
 							source,
 							latest,
-							// 日志类异常的说明读取时再打一遍码。
-							anomaly: { ...anomaly, message: read.maskText(anomaly.message) },
+							// 说明取自读取结果（日志类异常的 `logIssues`、失败和重试的错误信息），读取运行时已经按此刻的 secret 值
+							// 打过码（`readRuns`，含截断处留下的半截），和关注项接口是同一份，这里不再另打一遍。
+							anomaly,
 						},
 					]
 				: [],

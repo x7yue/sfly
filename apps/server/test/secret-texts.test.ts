@@ -14,6 +14,7 @@ import {
 import {
 	canonicalJson,
 	compareUtf8,
+	MAX_CLIP_WORK,
 	MIN_CLIPPED_PREFIX_CHARS,
 	MIN_LEAF_CHARS,
 	maskParams,
@@ -1142,6 +1143,39 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 		expect(pem.maskClippedTail(`${"z".repeat(LIMIT - 9)}abcdef123`, LIMIT)).toBe(
 			`${"z".repeat(LIMIT - 9)}${MASK}`,
 		);
+	});
+
+	it("病态输入：几千个很长的值，文字的每个位置都以值的首字符开头、却永远对不上前缀：工作量有上限，很快返回，整段盖住，结果里没有值", () => {
+		// 位置数 × 文本数 × 文本长：没有上限时 4096 个字符的失败原因要 29–34 秒（3000 个各 3000 个 0 的值）
+		const values = Array.from({ length: 3000 }, (_, i) => `${"0".repeat(3000)}-${i}`);
+		const many = setOf(...values);
+		const reason = `${"0".repeat(4094)}1…`;
+		const started = performance.now();
+		const out = many.maskClippedTail(reason, 4096, { ellipsis: true });
+		expect(performance.now() - started).toBeLessThan(1000);
+		expect(out).toBe(MASK);
+		// 字段值的上限（256）：同样
+		expect(many.maskClippedTail(`${"0".repeat(255)}1`, 256)).toBe(MASK);
+		// 200 个各 1 万个 0 的值
+		const long = setOf(...Array.from({ length: 200 }, (_, i) => `${"0".repeat(10_000)}-${i}`));
+		const started2 = performance.now();
+		expect(long.maskClippedTail(reason, 4096, { ellipsis: true })).toBe(MASK);
+		expect(performance.now() - started2).toBeLessThan(1000);
+		expect(MAX_CLIP_WORK).toBeLessThanOrEqual(10_000_000);
+	});
+
+	it("工作量没超过上限的正常输入不受影响：几十个值、截断到上限的文字，该盖的盖、不该盖的不动", () => {
+		const values = Array.from({ length: 50 }, (_, i) => `test-secret-value-${i}-end`);
+		const many = setOf(...values);
+		// 结尾是 `test-secr`（9 个字符，是 `test-secret-value-N-end` 的前缀）
+		expect(many.maskClippedTail(`${"x".repeat(256 - 9)}test-secr`, 256)).toBe(
+			`${"x".repeat(256 - 9)}${MASK}`,
+		);
+		const plain = "x".repeat(256);
+		expect(many.maskClippedTail(plain, 256)).toBe(plain);
+		// 文字里到处是首字符 t 但对不上前缀：不盖
+		const noisy = "t".repeat(256);
+		expect(many.maskClippedTail(noisy, 256)).toBe(noisy);
 	});
 
 	it("随机的对比：和直接检查「结尾是不是某个文本的前缀」的参照实现一致", () => {
