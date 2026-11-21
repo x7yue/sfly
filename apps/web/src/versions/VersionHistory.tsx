@@ -12,7 +12,11 @@ import { ViaTag } from "#/components/via-tag";
 import { apiQuery, callApi } from "#/lib/api";
 import { MESSAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
-import { notifyInvalidatedPresets, splitPresetWarnings } from "#/presets/invalidated-toast";
+import {
+	notifyInvalidatedPresets,
+	notifySecretDefaults,
+	splitPresetWarnings,
+} from "#/presets/invalidated-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -335,7 +339,9 @@ function RestoreDialog({
 			});
 			void queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.get) });
 			onRestored(from, saved.number);
-			notifyInvalidatedPresets(splitPresetWarnings(saved.warnings).presets);
+			const { presets, secretDefaults } = splitPresetWarnings(saved.warnings);
+			notifyInvalidatedPresets(presets);
+			notifySecretDefaults(secretDefaults);
 		},
 	});
 	return (

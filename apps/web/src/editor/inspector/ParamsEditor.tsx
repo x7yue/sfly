@@ -1,4 +1,4 @@
-import type { OrchestrationNode } from "@sfly/schema";
+import { isSecretDefaultPlaceholder, type OrchestrationNode, SECRET_MASK } from "@sfly/schema";
 import { EyeIcon, EyeOffIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,8 @@ export const REVEAL_MS = 5000;
  * 入口节点 / 子流程入口节点的参数声明：名称、类型、说明、默认值、必填、敏感。
  * 说明是一行文字，触发表单、子流程参数映射表单和命令行的参数表里显示；不影响执行。
  * 敏感参数的默认值默认隐藏，可以临时显示 5 秒；取消「敏感」需要二次确认。
+ * 已保存的敏感默认值读不回来：控制面给的是占位符（SECRET_MASK），这里显示成「已设置」，可以整个替换，和运行预设里的敏感值一致；
+ * 不动它保存，新版本沿用原来的值。
  * 名称不合法、重复（errors）与默认值解析失败（字段草稿）都会阻止保存。
  */
 export function ParamsEditor({
@@ -169,6 +171,9 @@ export function ParamsEditor({
 						<DialogTitle>取消参数 {pending?.name} 的「敏感」标记？</DialogTitle>
 						<DialogDescription>
 							取消后，它的默认值和每次运行传入的值会在编辑器、触发表单、运行监控和日志里明文显示。
+							{pending &&
+								isSecretDefaultPlaceholder(pending) &&
+								"已设置的默认值读不回来，取消后会被清空，需要的话重新填写。"}
 						</DialogDescription>
 					</DialogHeader>
 					<DialogFooter>
@@ -178,7 +183,15 @@ export function ParamsEditor({
 						<Button
 							variant="danger"
 							onClick={() => {
-								if (confirming !== null) update(confirming, { secret: false });
+								// 已设置的默认值读不回来，不能带到普通参数上（占位符不是一个值）：清空，需要的话重新填写。
+								if (confirming !== null) {
+									update(confirming, {
+										secret: false,
+										...(pending && isSecretDefaultPlaceholder(pending)
+											? { default: undefined }
+											: {}),
+									});
+								}
 								setConfirming(null);
 							}}
 						>
@@ -202,20 +215,29 @@ const formatDefault = (type: ParamType) => (value: unknown) =>
 	value === undefined ? "" : type === "string" ? String(value) : JSON.stringify(value);
 
 const parseDefault =
-	(type: ParamType) =>
+	(type: ParamType, secret: boolean) =>
 	(raw: string): { value: unknown } | { error: string } => {
-		if (raw === "") return { value: undefined };
-		if (type === "string") return { value: raw };
-		if (type === "number") {
-			const n = Number(raw);
-			return raw.trim() === "" || Number.isNaN(n) ? { error: "需要数字" } : { value: n };
+		const parsed = parseDefaultText(type, raw);
+		// 敏感参数的默认值写成 ****** 本身：它是「已设置」的占位符，保存时会被当成沿用原值。
+		if (secret && "value" in parsed && parsed.value === SECRET_MASK) {
+			return { error: `不能是 ${SECRET_MASK}：它表示已设置的默认值` };
 		}
-		try {
-			return { value: JSON.parse(raw) };
-		} catch {
-			return { error: "不是合法的 JSON" };
-		}
+		return parsed;
 	};
+
+const parseDefaultText = (type: ParamType, raw: string): { value: unknown } | { error: string } => {
+	if (raw === "") return { value: undefined };
+	if (type === "string") return { value: raw };
+	if (type === "number") {
+		const n = Number(raw);
+		return raw.trim() === "" || Number.isNaN(n) ? { error: "需要数字" } : { value: n };
+	}
+	try {
+		return { value: JSON.parse(raw) };
+	} catch {
+		return { error: "不是合法的 JSON" };
+	}
+};
 
 /**
  * 默认值：留空表示没有默认值。和参数输入用同一个输入框（ReferenceEditor），但默认值是字面量、不能写引用，
@@ -242,10 +264,31 @@ function DefaultValue({
 		key: fieldKey,
 		value: param.default,
 		format: formatDefault(param.type),
-		parse: parseDefault(param.type),
+		parse: parseDefault(param.type, param.secret),
 		onChange,
 	});
 
+	// 已保存的敏感默认值：读不回来，只显示「已设置」，点「替换」才重新输入（清空后输入新值，留空就是去掉默认值）。
+	if (isSecretDefaultPlaceholder(param)) {
+		return (
+			<div className="flex gap-1.5">
+				<Input
+					aria-label="默认值"
+					value="已设置"
+					readOnly
+					className="border-border-soft bg-transparent text-fg-2"
+				/>
+				<Button
+					variant="ghost"
+					size="sm"
+					aria-label={`替换 ${param.name} 的默认值`}
+					onClick={() => onChange(undefined)}
+				>
+					替换
+				</Button>
+			</div>
+		);
+	}
 	if (param.type === "boolean") {
 		return (
 			<NativeSelect

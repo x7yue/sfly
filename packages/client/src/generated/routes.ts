@@ -496,7 +496,7 @@ export interface Api {
 		/**
 		 * `GET /orchestrations/:id/head`
 		 *
-		 * 编辑起点：最新版本的内容。
+		 * 编辑起点：最新版本的内容（secret 参数的默认值是占位符，见文件开头）。
 		 */
 		head: Endpoint<
 			{
@@ -515,9 +515,17 @@ export interface Api {
 		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`；文档里有已移除种类的节点（ADR 0028）时，
 		 * 错误信息写明哪些节点、怎么替换。
 		 *
+		 * **secret 参数的默认值是占位符 `******` 时**（读出来的文档原样存回去，命令行的 pull 再 push、画布保存都是这样），
+		 * 按「沿用上一个版本的值」处理：新版本里是 base_version（也就是当时的最新版本）里同名参数（按入口节点 ID 加参数名对应）
+		 * 的默认值，原值不会出现在响应里。沿用不了时返回 400 `secret_default_placeholder`，什么都不保存，
+		 * details 是 SecretDefaultProblem 的列表（新场景的第一个版本、参数改了名或新增的参数、类型变了、参数从 secret 改成了普通参数）。
+		 * 先检查 base_version：编辑起点过期时照常返回 409。想换默认值就给新的值，想去掉就删掉 `default`。
+		 * 所以 secret 参数的默认值写不成 `******` 本身；普通参数的默认值可以是任何字符串，包括 `******`。
+		 *
 		 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
 		 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
-		 * 原来就已失效的预设不重复警告。
+		 * 原来就已失效的预设不重复警告。另有 `secret_param_default`：secret 参数写了默认值（版本不可修改，默认值会一直留在这个版本里，
+		 * 建议改用运行预设或触发时再给出），`node_id` 是入口节点。
 		 */
 		saveVersion: Endpoint<
 			{
@@ -552,7 +560,7 @@ export interface Api {
 		/**
 		 * `GET /orchestrations/:id/versions/:number`
 		 *
-		 * 某个版本的完整内容（版本不可变）。
+		 * 某个版本的完整内容（版本不可变；secret 参数的默认值是占位符，见文件开头）。
 		 */
 		version: Endpoint<
 			{

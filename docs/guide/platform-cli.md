@@ -20,10 +20,10 @@ uv run sfly api --list runs
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
 | `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），再下面是注释框（标题、成员、备注），最后是便签（标题、正文） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
-| `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存 |
+| `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
 | `sfly scenario push <文件>` | 本地校验后保存成新的场景版本 |
 | `sfly scenario create --name 名称 [--description 说明] [--from 文件]` | 新建场景；给了文件就用其中的场景文档保存第一个版本 |
-| `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版 |
+| `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版（secret 参数的默认值跟着复制，读副本仍打码） |
 | `sfly scenario rename <场景> [--name 名称] [--description 说明]` | 修改名称和说明；它们不属于场景版本，不产生新版本 |
 | `sfly run start <场景> [--preset 名称] [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--preset` 按运行预设触发；`--wait` 等到运行结束并输出摘要 |
 | `sfly run wait <运行> [--timeout 时长]` | 等一次已经触发的运行结束，输出摘要；`运行` 可以只写 id 的前缀，或写 `latest`（见下文「运行的写法」） |
@@ -202,6 +202,7 @@ sfly scenario push 回归.json
 ```
 
 - pull 写出的文件是 `{"scenario": <场景 id>, "base_version": <版本号>, "document": {…}}`：`document` 就是场景文档（`default_agent`、`nodes`、`edges`、`packages`、`annotations`），和控制面保存的内容相同；`base_version` 是 pull 时的最新版本号。`--version N` 拉取旧版本时 `base_version` 仍是最新版本号，push 就相当于以旧版本为起点再保存一次。
+- **secret 参数的默认值读不回来**：控制面给的是占位符 `******`（和运行预设里的 secret 值同一个掩码），`pull` 写出的文件里是它，`scenario show` 不显示它，`pull` 的输出里有一行提示。不改它直接 `push`，新版本沿用上一个版本里同名参数的默认值；改成别的值就保存新的值，删掉 `default` 就是去掉默认值。沿用不了时 `push` 报错（错误码 `secret_default_placeholder`，退出码 2），逐个写明是哪个节点的哪个参数：新增或改了名的参数、类型变了、参数从 secret 改成了普通参数（占位符不能存成默认值，原来的值也不会带到普通参数上），给新的默认值或删掉 `default` 再 `push`。`--version N` 拉旧版本时，占位符沿用的是最新版本的值，不是第 N 版的（`pull` 的输出里写明）。`scenario create --from` 的文件里不能有占位符（新场景没有上一个版本可以沿用，命令在新建场景之前就报错）：要连同 secret 的默认值复制一个场景，用 `scenario copy`。secret 参数的默认值写不成 `******` 本身。保存带 secret 默认值的版本时，`push` 的输出里有一条提醒（`secret_param_default`）：版本不能修改，默认值会一直留在这个版本里，建议去掉默认值，改用运行预设或触发时再给出。
 - push 先按场景文档的 JSON Schema 在本地校验，出错时列出出错的位置，不发请求。通过后带着 `base_version` 保存新版本，输出新版本号和控制面给出的警告（引用的 Agent 或节点包不存在、必填参数缺失、注释框引用了不存在的成员等）；`--json` 里每条警告是 `{code, message, node_id?, input?, annotation_id?}`，注释框的警告带 `annotation_id`；成功后文件里的 `base_version` 更新为新版本号、`document` 换成控制面实际保存的内容，可以接着改、接着 push。
 - 入口节点和子流程入口节点的参数可以写 `description`：一行说明，最长 200 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存。触发表单、异步任务节点的参数映射表单和命令行的参数表（`scenario show`、`run start` 参数出错时）都会显示它；它不影响执行。超长或带换行时 push 的本地校验报出位置，例如 `nodes/0/params/1/description`（节点 entry）。
 - 除子流程入口节点外，每个节点都可以写 `display_name`：一行显示名称（例如「创建测试用户」），最长 40 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存，不要求唯一。控制台的节点卡片拿它当标题，`scenario show` 的节点表在「节点」后面有一列「显示名称」（没有写 `-`），`--json` 里节点的 `display_name` 就是它（没有时不出现这个字段）；入口节点不在节点表里，它的显示名称写在主链的标题上（`主链（入口 开始（entry））`，没有显示名称时标题还是 `主链`），`--json` 里是最外层的 `entry_display_name`（同时带上入口节点的 `entry`）；它不影响执行，引用和日志仍然以节点 ID 为准。子流程入口节点没有这个字段：子流程名称（`name`）就是它的显示名称。超长或带换行时 push 的本地校验报出位置，例如 `nodes/3/display_name`（节点 build）。

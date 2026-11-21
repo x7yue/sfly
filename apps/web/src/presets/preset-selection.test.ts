@@ -21,6 +21,15 @@ describe("切换运行预设时的字段", () => {
 	};
 	const none = new Set<string>();
 
+	it("原来锁定的敏感参数回到默认值时留空：默认值读不回来（占位符），不预填", () => {
+		const withDefault: ParamDeclView[] = [
+			{ name: "api_token", type: "string", secret: true, default: "******" },
+		];
+		expect(switchPreset(withDefault, { api_token: "x" }, new Set(["api_token"]), none)).toEqual({
+			api_token: "",
+		});
+	});
+
 	it("不使用预设改选预设：预设参数以外的字段保留已经填的值", () => {
 		const next = switchPreset(decls, typed, none, new Set(["steps"]));
 		expect(next).toMatchObject({

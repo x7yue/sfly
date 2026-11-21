@@ -58,6 +58,7 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
 1. **读**：`uv run sfly scenario show <场景>`，读显示名称、备注和注释框，弄清每一步的意图。要做的改动和它们矛盾时，先问用户。
 2. **改**：`uv run sfly scenario pull <场景> -o <文件>`，改文件里的 `document`（`scenario` 和 `base_version` 保持原样）；说明按「给场景留下说明」写。
 3. **保存**：`uv run sfly scenario push <文件>`；push 先在本地按场景文档的 schema 校验，出错会列出位置。push 报版本冲突说明有人在你 pull 之后保存了新版本：重新 pull，把改动合并进去再 push，没有强制覆盖。
+   文件里 secret 参数的 `default` 是占位符 `******`（控制面不返回原值）：不要改它、也不要自己填一个值，原样 push 就沿用原来的值；push 报 `secret_default_placeholder` 时按提示处理，不要把真实的密钥写进文件。
    完成：push 输出新版本号，没有关于注释框的警告；新增和改动的节点都有显示名称；给用户的总结按「给场景留下说明」列出补上和改动的说明。
 
 ## 规则
