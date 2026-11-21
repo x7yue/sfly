@@ -83,9 +83,66 @@ export function shortLeafCount(value: unknown): number {
 	}).length;
 }
 
-/** 两个字符串按 UTF-8 字节序比较（和码点序相同；JS 的 `<` 比的是 UTF-16 码元，BMP 之外的字符会排到错的位置）。 */
-const compareUtf8 = (a: string, b: string): number =>
-	Buffer.compare(Buffer.from(a), Buffer.from(b));
+/**
+ * UTF-16 码元换成能按码点排序的数：BMP 之外的字符是一对代理（U+D800–U+DFFF），它们的码点比 BMP 里的 U+E000–U+FFFF 大，
+ * 把代理排到 U+E000–U+FFFF 之后就和码点序一致。
+ */
+const sortableUnit = (unit: number): number =>
+	unit >= 0xe000 ? unit - 0x800 : unit >= 0xd800 ? unit + 0x2000 : unit;
+
+/**
+ * 两个字符串按 UTF-8 字节序比较，也就是按码点序（UTF-8 保持码点的顺序）。JS 的 `<` 比的是 UTF-16 码元，BMP 之外的字符
+ * （emoji）会排到 U+E000–U+FFFF 的字符前面；用 `Buffer.compare(Buffer.from(a), Buffer.from(b))` 能得到同样的结果，
+ * 但排序时每次比较要分配两个 Buffer，这里在第一个不同的码元上比，不分配。和它的一致由 test/secret-texts.test.ts 随机对比。
+ */
+export function compareUtf8(a: string, b: string): number {
+	const length = Math.min(a.length, b.length);
+	for (let i = 0; i < length; i++) {
+		const x = a.charCodeAt(i);
+		const y = b.charCodeAt(i);
+		if (x !== y) return sortableUnit(x) - sortableUnit(y);
+	}
+	return a.length - b.length;
+}
+
+/** 64 位整数的范围：Agent 的 serde_json 把控制面写出的整数文本落在这个范围里的当整数，超出的当浮点。 */
+const I64_MIN = -(2n ** 63n);
+const U64_MAX = 2n ** 64n - 1n;
+
+/** Python `repr(float)` 的写法（`json.dumps` 写浮点用它）：十进制小数点在第 `point` 位数字之后，`point` 不大于 -4 或大于 16 时用科学计数法。 */
+function pythonFloat(n: number): string {
+	const sign = n < 0 ? "-" : "";
+	// toExponential() 不给位数时是能还原这个数的最短的位数，和 Python repr 的位数一样，只是写法不同。
+	const [mantissa = "", exponentText = "0"] = Math.abs(n).toExponential().split("e");
+	const digits = mantissa.replace(".", "");
+	const exponent = Number(exponentText);
+	const point = exponent + 1;
+	if (point <= -4 || point > 16) {
+		const head = digits.length === 1 ? digits : `${digits[0]}.${digits.slice(1)}`;
+		const abs = Math.abs(exponent);
+		return `${sign}${head}e${exponent < 0 ? "-" : "+"}${abs < 10 ? `0${abs}` : abs}`;
+	}
+	if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
+	if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}.0`;
+	return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
+/**
+ * 一个数字被节点（Python）打印出来的写法（`json.dumps`、`repr`、`print`）。控制面写给 Agent 的是 JS 的 `JSON.stringify`，
+ * Agent 的 serde_json 解析再写成 task.json，Python 的 SDK 用 `json.loads` 读进来，所以：
+ * 控制面写出的整数文本落在 64 位整数范围里的，是整数，Python 打印的和控制面写的一样；超出范围的（小于 1e21 时控制面写成
+ * 一长串数字）serde_json 按浮点解析，Python 写成科学计数法（`9.876543210987654e+19`）；带小数的，Python 用 `repr(float)`，
+ * 绝对值在 1e-9 到 1e-4 之间时和 JS 不同（`0.00001` 写成 `1e-05`）。三端的用例表是 `testdata/number-form-cases.json`。
+ */
+export function pythonNumber(n: number): string {
+	const text = jsonText(n);
+	if (!Number.isFinite(n)) return text;
+	if (/^-?\d+$/.test(text)) {
+		const whole = BigInt(text);
+		if (whole >= I64_MIN && whole <= U64_MAX) return text;
+	}
+	return pythonFloat(n);
+}
 
 /** 把值写成 JSON 文本的一种写法。 */
 interface JsonStyle {
@@ -97,6 +154,8 @@ interface JsonStyle {
 	sorted: boolean;
 	/** 非 ASCII 字符和 DEL 写成 `\uXXXX`（Python 的 `ensure_ascii`）。 */
 	ascii: boolean;
+	/** 写数字的函数：{@link jsonText}（JS 的写法）或 {@link pythonNumber}（节点打印的写法）。 */
+	number: (n: number) => string;
 }
 
 const COMPACT = { item: ",", pair: ":" } as const;
@@ -115,7 +174,7 @@ function renderJson(value: unknown, style: JsonStyle): string {
 			const pairs = entries.map(([k, item]) => `${JSON.stringify(k)}${style.pair}${text(item)}`);
 			return `{${pairs.join(style.item)}}`;
 		}
-		return jsonText(v);
+		return typeof v === "number" ? style.number(v) : jsonText(v);
 	};
 	const written = text(value);
 	return style.ascii ? asciiEscaped(written) : written;
@@ -126,7 +185,7 @@ function renderJson(value: unknown, style: JsonStyle): string {
  * 键的顺序不同也算同一个对象；也是 `testdata/key-order-cases.json` 里两端共用的排序结果。
  */
 export const canonicalJson = (value: unknown): string =>
-	renderJson(value, { ...COMPACT, sorted: true, ascii: false });
+	renderJson(value, { ...COMPACT, sorted: true, ascii: false, number: jsonText });
 
 /** 一个 secret 参数的值拆成的几类要打码的东西，见 {@link secretPartsOf}。 */
 export interface SecretParts {
@@ -165,6 +224,8 @@ export function secretPartsOf(value: unknown): SecretParts {
 		for (const line of longLines(value)) writtenForms(line, texts);
 	} else if (typeof value === "number" || typeof value === "boolean") {
 		texts.add(jsonText(value));
+		// 节点（Python）打印数字的写法和控制面写的不一样时，两种都认。
+		if (typeof value === "number") texts.add(pythonNumber(value));
 		parts.scalars.push(jsonText(value));
 	} else {
 		const leaves: Leaf[] = [];
@@ -177,15 +238,25 @@ export function secretPartsOf(value: unknown): SecretParts {
 				}
 			} else if (typeof leaf === "number" && charCount(jsonText(leaf)) >= MIN_LEAF_CHARS) {
 				texts.add(jsonText(leaf));
+				texts.add(pythonNumber(leaf));
 				parts.scalars.push(jsonText(leaf));
 			}
 		}
 		// 整个对象被原样写出的各种写法：紧凑和 Python 默认的分隔，键按节点收到的顺序（排好序）和参数里写的顺序，
 		// 各自带或不带 `\uXXXX` 转义。节点收到的对象，键是 Agent 排过序的，所以排序的那几份才是节点原样写出来的样子。
+		// 数字用控制面的写法和节点（Python）打印的写法各写一遍；没有哪个数字两种写法不同时只写一遍。
+		const numberWriters = leaves.some(
+			(l) => typeof l === "number" && pythonNumber(l) !== jsonText(l),
+		)
+			? [jsonText, pythonNumber]
+			: [jsonText];
 		for (const separators of [COMPACT, PYTHON_DEFAULT]) {
 			for (const sorted of [true, false]) {
-				for (const ascii of [false, true])
-					texts.add(renderJson(value, { ...separators, sorted, ascii }));
+				for (const ascii of [false, true]) {
+					for (const number of numberWriters) {
+						texts.add(renderJson(value, { ...separators, sorted, ascii, number }));
+					}
+				}
 			}
 		}
 		parts.containers.push(canonicalJson(value));
@@ -281,8 +352,10 @@ function buildMatcher(texts: readonly string[], compile: Compile | undefined): M
 }
 
 /**
- * 有字面量要查、或者值集合分成了几个正则时的打码：先找出每个正则和每个字面量在文字里的全部位置，重叠的合成一段，
- * 每段换成一个掩码（相邻但不重叠的各是一个掩码）。
+ * 打码：先找出每个正则和每个字面量在文字里的全部位置，重叠的合成一段，每段换成一个掩码（相邻但不重叠的各是一个掩码）。
+ * 一个正则一次匹配就把匹配到的文字用掉了，从它后面接着找，会漏掉和它重叠的另一个值（`abcd` 和 `cdef` 在 `abcdef` 里重叠）：
+ * 所以每找到一个匹配，下一次从它的开头的后一个字符再找。不论值是长是短、走正则还是字面量，重叠的结果都一样，
+ * 不会留下一个值的尾巴。
  */
 function maskSpans(text: string, matcher: Matcher): string {
 	const spans: Array<[number, number]> = [];
@@ -291,7 +364,10 @@ function maskSpans(text: string, matcher: Matcher): string {
 		for (let m = regex.exec(text); m; m = regex.exec(text)) {
 			// 要打码的文本都不是空的，所以不会有空匹配；以防万一，往前走一格，不让它死循环。
 			if (m[0].length === 0) regex.lastIndex += 1;
-			else spans.push([m.index, m.index + m[0].length]);
+			else {
+				spans.push([m.index, m.index + m[0].length]);
+				regex.lastIndex = m.index + 1;
+			}
 		}
 		regex.lastIndex = 0;
 	}
@@ -335,6 +411,11 @@ export class SecretSet {
 	readonly containers: ReadonlySet<string>;
 	readonly #compile: Compile | undefined;
 	#matcher: Matcher | undefined;
+	/** 保密对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
+	readonly #arraySizes = new Set<number>();
+	readonly #objectSizes = new Set<number>();
+	readonly #containerLengths = new Set<number>();
+	#shapesKnown = true;
 
 	/** `options.compile` 只给测试用：换掉编译正则的函数，验证它失败时打码照样完成、不抛错。 */
 	constructor(parts: Iterable<SecretParts> = [], options: { compile?: Compile } = {}) {
@@ -350,6 +431,34 @@ export class SecretSet {
 		this.scalars = scalars;
 		this.containers = containers;
 		this.#compile = options.compile;
+		for (const text of containers) {
+			this.#containerLengths.add(text.length);
+			try {
+				const parsed: unknown = JSON.parse(text);
+				if (Array.isArray(parsed)) this.#arraySizes.add(parsed.length);
+				else if (parsed !== null && typeof parsed === "object") {
+					this.#objectSizes.add(definedKeys(parsed));
+				}
+			} catch {
+				// 标准写法一定是合法的 JSON；万一不是，不用形状排除，每个对象都算标准写法再比。
+				this.#shapesKnown = false;
+			}
+		}
+	}
+
+	/**
+	 * 这个对象或数组是不是整个等于某个 secret 对象或数组（标准写法相同，键的顺序不同也算相同）。
+	 * 算标准写法要排序、写出全部文本，读取运行时每个对象和数组都问一遍，所以先用便宜的办法排除：元素或键的个数，
+	 * 再是紧凑写法的长度（排序不改变长度），都对得上才算标准写法再比。
+	 */
+	equalsContainer(value: object): boolean {
+		if (this.containers.size === 0) return false;
+		if (this.#shapesKnown) {
+			const size = Array.isArray(value) ? value.length : definedKeys(value);
+			if (!(Array.isArray(value) ? this.#arraySizes : this.#objectSizes).has(size)) return false;
+			if (!this.#containerLengths.has(JSON.stringify(value).length)) return false;
+		}
+		return this.containers.has(canonicalJson(value));
 	}
 
 	/** 没有任何要打码的东西：读取和写入都可以跳过打码。 */
@@ -365,10 +474,6 @@ export class SecretSet {
 		if (this.texts.length === 0) return text;
 		try {
 			this.#matcher ??= buildMatcher(this.texts, this.#compile);
-			const { regexes, literals } = this.#matcher;
-			if (literals.length === 0 && regexes.length === 1) {
-				return text.replace(regexes[0] as RegExp, SECRET_MASK);
-			}
 			return maskSpans(text, this.#matcher);
 		} catch {
 			return SECRET_MASK;
@@ -376,12 +481,46 @@ export class SecretSet {
 	}
 }
 
+/** 对象里值不是 undefined 的键的个数（标准写法不写 undefined 的键）。 */
+function definedKeys(value: object): number {
+	let count = 0;
+	for (const key of Object.keys(value)) {
+		if ((value as Record<string, unknown>)[key] !== undefined) count += 1;
+	}
+	return count;
+}
+
 /** 没有 secret 值。 */
 export const NO_SECRETS: SecretSet = new SecretSet();
 
-/** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）。 */
+/**
+ * 值集合的缓存：键是这些值本身（JSON），所以运行里多了一个子流程实例带来的 secret 值，键就变了，另算一份；值一样就是同一份。
+ * 写日志的每一批、读取运行的每一次都要问「这次运行此刻的 secret 值」，值没变时不用把每个值的各种写法再写一遍
+ * （保密对象有几千个键时，一批要多花十几毫秒），编译好的匹配也跟着复用。
+ */
+const setCache = new Map<string, SecretSet>();
+const SET_CACHE_LIMIT = 64;
+
+/** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）；值相同的是同一个对象（不可变，可以共用）。 */
 export function secretSetOf(values: Iterable<unknown>): SecretSet {
-	return new SecretSet([...values].map(secretPartsOf));
+	const list = [...values];
+	let key: string | undefined;
+	try {
+		key = JSON.stringify(list);
+	} catch {
+		key = undefined;
+	}
+	if (key === undefined) return new SecretSet(list.map(secretPartsOf));
+	let found = setCache.get(key);
+	if (!found) {
+		found = new SecretSet(list.map(secretPartsOf));
+		setCache.set(key, found);
+		if (setCache.size > SET_CACHE_LIMIT) {
+			const oldest = setCache.keys().next().value;
+			if (oldest !== undefined) setCache.delete(oldest);
+		}
+	}
+	return found;
 }
 
 /** 一个链实例起点声明为 secret 的参数的值（有值的）。 */
@@ -488,9 +627,7 @@ function mask(value: unknown, secrets: SecretSet): unknown {
 		return secrets.scalars.has(jsonText(value)) ? SECRET_MASK : value;
 	}
 	if (value !== null && typeof value === "object") {
-		if (secrets.containers.size > 0 && secrets.containers.has(canonicalJson(value))) {
-			return SECRET_MASK;
-		}
+		if (secrets.equalsContainer(value)) return SECRET_MASK;
 		if (Array.isArray(value)) return value.map((item) => mask(item, secrets));
 		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, mask(v, secrets)]));
 	}
