@@ -145,7 +145,7 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	await expect(frame).toBeVisible();
 	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(true);
 
-	// 点标题选中注释框，写备注：框里最上方出现便签，直接显示备注；框上没有备注图标（备注图标只在节点卡片上）。
+	// 点标题选中注释框，写备注：框里最上方出现注释框的备注卡片，直接显示备注；框上没有备注图标（备注图标只在节点卡片上）。
 	await nodeCard(page, "entry").click();
 	await annotationBand(page, "造测试数据").click();
 	await expect(annotationBand(page, "造测试数据")).toHaveAttribute("aria-pressed", "true");

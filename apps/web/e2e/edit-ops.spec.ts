@@ -213,7 +213,6 @@ test("空白处右键菜单：各项带注册表里的快捷键；「添加节�
 	await expect(menu).toBeVisible();
 	await expect(menu.getByRole("menuitem")).toHaveText([
 		"添加节点/",
-		"添加便签",
 		// 打开菜单时不读剪贴板，点了才读（另见 node-clipboard.spec.ts）。
 		"粘贴CtrlV",
 		"整理布局AltShiftF",
@@ -281,11 +280,9 @@ test("空白处右键菜单可用键盘操作：方向键移动、Enter 执行�
 	await expect(highlighted).toContainText("添加节点");
 	// 禁用的项（粘贴）也能走到（读得到原因），但 Enter 不执行。
 	await page.keyboard.press("ArrowDown");
-	await expect(highlighted).toContainText("添加便签");
-	await page.keyboard.press("ArrowDown");
+	await expect(highlighted).toContainText("粘贴");
 	await page.keyboard.press("ArrowDown");
 	await expect(highlighted).toContainText("整理布局");
-	await page.keyboard.press("ArrowUp");
 	await page.keyboard.press("ArrowUp");
 	await page.keyboard.press("ArrowUp");
 	await expect(highlighted).toContainText("添加节点");

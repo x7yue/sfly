@@ -7,8 +7,7 @@ import { MIRRORED_IN_JSON_SCHEMA } from "./route-manifest.js";
  *
  * - {@link optionalLine}：可选的一行，例如显示名称、参数说明；
  * - {@link optionalMultiline}：可选的多行，例如备注；
- * - {@link requiredLine}：必填的一行，例如注释框标题；
- * - {@link requiredMultiline}：必填的多行，例如便签的正文。
+ * - {@link requiredLine}：必填的一行，例如注释框标题。
  *
  * 共同的规则：
  *
@@ -70,16 +69,6 @@ export const optionalMultiline = (max: number) =>
 			encode: (text) => text ?? "",
 		})
 		.optional();
-
-/** 必填的多行文字，去掉首尾空白后 1 到 `max` 个字符（换行也算一个）。 */
-export const requiredMultiline = (max: number) =>
-	z.codec(
-		limited(max)
-			.refine((text) => hasContent.test(text), rule("不能为空"))
-			.meta({ maxLength: max, pattern: `^${HAS_CONTENT}` }),
-		z.string(),
-		{ decode: (text) => text.trim(), encode: (text) => text },
-	);
 
 /** 必填的一行文字，去掉首尾空白后 1 到 `max` 个字符。 */
 export const requiredLine = (max: number) =>

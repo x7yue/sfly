@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { addDocumentFields } from "./support/legacy-document.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
@@ -1013,6 +1014,79 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				expect(result.code, result.stderr).toBe(0);
 				expect(result.stdout + result.stderr, args.join(" ")).not.toContain(SECRET);
 			}
+		});
+	});
+
+	describe("移除之前保存的场景：版本里带着便签（sticky_notes，ADR 0028）", () => {
+		const stickyNotes = [{ id: "sticky_1", title: "跑之前确认", text: "- Agent 都在线" }];
+		const removedMessage =
+			"场景文档里的 sticky_notes（便签）有 1 条内容，已不再支持，不能保存：先把要留的内容挪走，再把这一项删掉。替换办法：便签：要留的内容写进节点的备注或注释框的备注";
+
+		it("pull 写出的文档里没有 sticky_notes，show 不列便签；原样 push 保存的新版本里也没有，旧版本不动", async () => {
+			const id = await createScenario("legacy-pull", echoDocument());
+			await addDocumentFields(cp, id, { sticky_notes: stickyNotes }, 1);
+
+			const file = await pull(id);
+			expect((await readScenarioFile(file)).document).not.toHaveProperty("sticky_notes");
+
+			const text = await cli("scenario", "show", id);
+			expect(text.code, text.stderr).toBe(0);
+			expect(text.stdout).not.toContain("便签");
+			expect(text.stdout).not.toContain("跑之前确认");
+			const json = JSON.parse((await cli("scenario", "show", id, "--json")).stdout);
+			expect(json).not.toHaveProperty("sticky_notes");
+
+			const pushed = await cli("scenario", "push", file);
+			expect(pushed.code, pushed.stderr).toBe(0);
+			expect(await storedDocument(cp, id, 2)).not.toHaveProperty("sticky_notes");
+			expect(await storedDocument(cp, id, 1)).toHaveProperty("sticky_notes", stickyNotes);
+		});
+
+		it("push 一个仍带着有内容的 sticky_notes 的旧文件：本地校验写明有几条、怎么办，不发请求；删掉这一项后保存成功", async () => {
+			const id = await createScenario("legacy-push", echoDocument());
+			const file = await pull(id);
+			const old = await readScenarioFile(file);
+			await writeScenarioFile(file, {
+				...old,
+				document: { ...old.document, sticky_notes: stickyNotes },
+			});
+
+			const seen = await startRecordingProxy(cp.httpUrl);
+			proxies.push(seen);
+			const rejected = await sfly(["scenario", "push", file, "--server", seen.url]);
+			expect(rejected.code).toBe(2);
+			expect(rejected.stdout).toBe("");
+			expect(rejected.stderr).toContain("没有通过校验");
+			expect(rejected.stderr).toContain(removedMessage);
+			expect(rejected.stderr).not.toContain("Additional properties");
+			expect(seen.requests).toEqual([]);
+			expect((await detail(id)).head_version).toBe(1);
+
+			const json = await sfly(["scenario", "push", file, "--json", "--server", seen.url]);
+			expect(json.code).toBe(2);
+			expect(JSON.parse(json.stderr).error.code).toBe("invalid_document");
+			expect(JSON.parse(json.stderr).error.message).toContain(removedMessage);
+			expect(seen.requests).toEqual([]);
+
+			await writeScenarioFile(file, old);
+			const fixed = await cli("scenario", "push", file);
+			expect(fixed.code, fixed.stderr).toBe(0);
+			expect((await detail(id)).head_version).toBe(2);
+		});
+
+		it("push 一个带着空 sticky_notes 的旧文件（每个旧版本都有）：本地校验不报，控制面接受并丢掉，新版本里没有它", async () => {
+			const id = await createScenario("legacy-push-empty", echoDocument());
+			const file = await pull(id);
+			const old = await readScenarioFile(file);
+			await writeScenarioFile(file, {
+				...old,
+				document: { ...old.document, sticky_notes: [] },
+			});
+
+			const pushed = await cli("scenario", "push", file);
+			expect(pushed.code, pushed.stderr).toBe(0);
+			expect((await detail(id)).head_version).toBe(2);
+			expect(await storedDocument(cp, id, 2)).not.toHaveProperty("sticky_notes");
 		});
 	});
 });

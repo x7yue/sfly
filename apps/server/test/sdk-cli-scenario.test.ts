@@ -334,7 +334,6 @@ describe("sfly scenario list / show → 控制面", () => {
 					},
 				],
 				annotations: [],
-				sticky_notes: [],
 			});
 		});
 

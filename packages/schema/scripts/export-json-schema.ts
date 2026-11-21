@@ -27,6 +27,11 @@ write(
 	join(sdkDir, "removed-node-kinds.json"),
 	`${JSON.stringify(contract.REMOVED_NODE_KINDS, null, 2)}\n`,
 );
+// 已移除的场景文档顶层字段（便签 sticky_notes，ADR 0028）：命令行本地检查读这一份，不再手写第二份。
+write(
+	join(sdkDir, "removed-document-fields.json"),
+	`${JSON.stringify(contract.REMOVED_DOCUMENT_FIELDS, null, 2)}\n`,
+);
 write(
 	join(sdkDir, "routes.json"),
 	`${JSON.stringify(
