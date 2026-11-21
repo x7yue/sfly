@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, StoredOrchestrationDocument } from "@sfly/schema";
+import { isInputOfType } from "./input-marker.js";
 import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 
@@ -226,7 +227,12 @@ export function inputWarnings(
 		if (node.kind !== "package") continue;
 		const type = nodeTypeOf(doc, node, catalog);
 		if (!type) continue;
-		for (const input of missingInputs(type.inputs, node.inputs)) {
+		// 「运行状态」类型的输入由 run-state-references.ts 检查，说明里直接写出该填什么。
+		const owned = (name: string) => {
+			const schema = type.inputs.properties[name];
+			return schema !== undefined && isInputOfType(schema, "run_state");
+		};
+		for (const input of missingInputs(type.inputs, node.inputs).filter((name) => !owned(name))) {
 			warnings.push({
 				code: "input_required",
 				message: `节点 ${nodeNameWithId(node)} 的必填输入 ${input} 没有填写`,
@@ -245,7 +251,7 @@ export function inputWarnings(
 				});
 				continue;
 			}
-			if (referencesIn(value).length > 0) continue;
+			if (referencesIn(value).length > 0 || owned(input)) continue;
 			const problem = typeProblem(type.inputs, input, value);
 			if (!problem) continue;
 			warnings.push({

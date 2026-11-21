@@ -16,12 +16,14 @@ import {
 	subflowParamWarnings,
 } from "./references.js";
 import { type RemovedNodeWarning, removedNodeWarnings } from "./removed-nodes.js";
+import { type RunStateWarning, runStateWarnings } from "./run-state-references.js";
 import { type StructureWarning, structureWarnings } from "./structure.js";
 
 /** 指着节点或整个场景的警告：没有 `annotation_id`，和注释框的警告（`AnnotationWarning`）区分开。 */
 type NodeWarning = (
 	| StructureWarning
 	| ReferenceWarning
+	| RunStateWarning
 	| InputWarning
 	| AgentInputWarning
 	| FeishuBotWarning
@@ -34,7 +36,8 @@ export type OrchestrationWarning = NodeWarning | AnnotationWarning;
 export const blocksTrigger = (warning: WarningShape): boolean => !isAnnotationWarning(warning);
 
 /**
- * 编排文档的全部静态检查（docs/SEMANTICS.md §1.2、§1.3、§2.4、§7）：结构、包版本锁定、引用、包节点输入（必填、常量类型、
+ * 编排文档的全部静态检查（docs/SEMANTICS.md §1.2、§1.3、§2.4、§2.7、§7）：结构、包版本锁定、引用、`run.state` 的位置和
+ * 「运行状态」类型的输入、包节点输入（必填、常量类型、
  * 「Agent」类型的常量是已注册的 Agent）、「飞书机器人」类型的常量选了已登记的飞书机器人、
  * 子流程参数映射、已移除种类的节点（ADR 0028）、注释框的成员（注释框的警告只提示，不阻断触发，见 `blocksTrigger`）。
  * 保存时作为警告返回；触发时必须全部通过。控制面和画布都调用这个函数。
@@ -50,6 +53,7 @@ export function documentWarnings(
 		...structureWarnings(doc),
 		...packageWarnings(doc, catalog),
 		...referenceWarnings(doc, catalog),
+		...runStateWarnings(doc, catalog),
 		...inputWarnings(doc, catalog),
 		...(options.agents ? agentInputWarnings(doc, catalog, options.agents) : []),
 		...(options.feishuBots ? feishuBotInputWarnings(doc, catalog, options.feishuBots) : []),

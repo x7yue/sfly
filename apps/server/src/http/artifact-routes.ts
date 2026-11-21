@@ -52,7 +52,8 @@ export function registerArtifactRoutes(
 	app.register(async (scope) => {
 		scope.addContentTypeParser("*", (_request, payload, done) => done(null, payload));
 		contractRoute(scope, artifactsApi.upload, async ({ params }, reply, request) => {
-			if (!authorized(request.headers.authorization)) {
+			// 带了凭据的请求（Agent 凭据）已经过了访问检查；共享令牌和不带凭据的请求照旧核对共享令牌（#494 之前）。
+			if (!request.access && !authorized(request.headers.authorization)) {
 				request.raw.resume();
 				return sendError(reply, 401, "unauthorized", "invalid agent token");
 			}

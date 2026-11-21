@@ -40,6 +40,13 @@ export function registerPackageRoutes(
 		);
 
 		contractRoute(scope, packagesApi.publish, async (_request, reply, req) => {
+			// 带了凭据的发布记下发布人；不带凭据的（#494 之前照旧放行）没有。
+			const { access } = req;
+			const publisher = access && {
+				name: access.name,
+				userId: access.userId,
+				token: access.tokenName,
+			};
 			if (!(req.body instanceof Buffer)) {
 				return sendError(
 					reply,
@@ -49,7 +56,11 @@ export function registerPackageRoutes(
 				);
 			}
 			try {
-				const published = await packages.publish(DEFAULT_PROJECT, new Uint8Array(req.body));
+				const published = await packages.publish(
+					DEFAULT_PROJECT,
+					new Uint8Array(req.body),
+					publisher ?? null,
+				);
 				reply.code(201);
 				return published;
 			} catch (error) {

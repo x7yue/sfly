@@ -12,16 +12,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections.abc import Mapping, Sequence
 from http.client import HTTPException
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 from sfly.cli.client import READ_CHUNK, ApiError
 from sfly.cli.errors import EXIT_INTERRUPTED, CliError
+from sfly.cli.input_source import read_source
 from sfly.cli.output import dump_json, format_table
 from sfly.cli.route_describe import describe_route, effect_brief
 from sfly.cli.routes import KIND_LABELS, Resolution, Route, closest, load_routes, resolve
@@ -29,7 +28,6 @@ from sfly.cli.session import Session, command, common_options
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 _MAX_PROBLEMS = 10
-_STDIN = "-"
 _ACCEPT = {"stream": "text/event-stream", "download": "*/*"}
 
 
@@ -335,11 +333,7 @@ def _parse_body(option: str) -> Any:
     if option.startswith("@"):
         source = option[1:]
         try:
-            text = (
-                sys.stdin.read()
-                if source == _STDIN
-                else Path(source).expanduser().read_text(encoding="utf-8")
-            )
+            text = read_source(source)
         except (OSError, UnicodeDecodeError) as error:
             raise CliError("invalid_body", f"读不了 --body 的文件 {source}：{error}") from None
     else:

@@ -25,6 +25,7 @@ import {
 import type { ActionResult } from "@sfly/schema";
 import packageJson from "../../package.json" with { type: "json" };
 import type { ActionSummaryEvent } from "../../src/actions/action-summary.js";
+import { sortKeysDeep } from "./secret-forms.js";
 
 /**
  * 假 Agent 默认上报的版本：控制面的默认版本（package.json）。版本与控制面不一致的 Agent 不会被派任务（ADR 0014），
@@ -97,7 +98,7 @@ export interface ActionPlace {
 	fields?: Record<string, string>;
 }
 export { LogLevel, LogSource };
-/** 派发的任务；`inputs` 是解析后的 inputs_json。 */
+/** 派发的任务；`inputs` 是解析后的 inputs_json（键的顺序和真实的 Agent 一样，见 {@link FakeAgent.nextAssign}）。 */
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
 export { AgentUpdateState, ErrorKind, TaskStatus };
 
@@ -394,7 +395,9 @@ export class FakeAgent {
 		const assign = message.body.value as AssignTask;
 		this.#held.set(keyOf(assign), { taskId: assign.taskId, attempt: assign.attempt });
 		if (options.start ?? true) await this.started(assign, options.clock);
-		return { ...assign, inputs: JSON.parse(assign.inputsJson) as Record<string, unknown> };
+		// 输入的键递归地按字节序排好，和真实的 Agent 一样（agent/src/executor.rs 把输入解析成 serde_json::Value，对象是 BTreeMap）。
+		const inputs = sortKeysDeep(JSON.parse(assign.inputsJson) as Record<string, unknown>);
+		return { ...assign, inputs };
 	}
 
 	/** 断言在一段时间内没有收到新的任务派发。 */
