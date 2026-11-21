@@ -13,3 +13,7 @@ export const PARAM_PATH = /^params\.([A-Za-z_][A-Za-z0-9_]*)$/;
 export const OUTPUT_PATH = /^nodes\.([^.\s]+)\.outputs\.([^.\s]+)$/;
 /** `run.state`：这次运行此刻的状态（ADR 0031），只能整值引用、只能写在包节点的输入里。 */
 export const RUN_STATE_PATH = /^run\.state$/;
+/** 想引用运行状态的字段（`run.state.status`、`run.state.chains[0]`）：不支持，字段在节点里读。 */
+export const RUN_STATE_FIELD_PATH = /^run\.state[.[]/;
+/** 引用运行状态的字段时补在「格式不对」后面的一句，保存校验、预检和派发时的报错共用。 */
+export const RUN_STATE_FIELD_HINT = "运行状态只能整个引用，字段在节点里读";

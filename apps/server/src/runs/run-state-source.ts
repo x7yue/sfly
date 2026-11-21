@@ -2,7 +2,9 @@ import {
 	projectRunState,
 	RUN_STATE_LIMITS,
 	type RunState,
+	type RunStateLimits,
 	type RunStateSource,
+	runStateBytes,
 } from "@sfly/schema";
 import type { Db, Tx } from "../db/database.js";
 import { type RunAttemptState, type RunRead, readRuns } from "./run-read.js";
@@ -80,16 +82,36 @@ export function runStateSource(read: RunRead<RunAttemptState>, self?: SelfNode):
 }
 
 /**
+ * 这个任务拿不到合法的运行状态（读取出错，或整份太大）：引擎让这个任务以 config_error 失败、不派发（engine.ts 的
+ * `#assignContent`），不让一个节点的问题卡住这台 Agent 上别的任务。`message` 写进任务的错误信息。
+ */
+export class RunStateError extends Error {}
+
+const kb = (bytes: number): string => (bytes / 1024).toFixed(1);
+
+/**
  * 派发包节点的任务时，节点输入里 `${{ run.state }}` 的值：这次运行此刻的状态，`self` 是引用它的节点；
- * 错误信息有长度限制，整份有大小限制（{@link RUN_STATE_LIMITS}）。在派发的事务里读（`tx`），一条接一条地执行；
+ * 错误信息有长度限制，整份有大小限制（{@link RUN_STATE_LIMITS}）：太大时从 `failures` 的末尾起去掉错误信息，
+ * 去掉全部之后仍然超过上限的，抛出 {@link RunStateError}（任务以 config_error 失败，写明有多大、上限多少、有多少个节点），
+ * 不再做第二层裁剪：那会让汇总节点悄悄拿到不全的数据。在派发的事务里读（`tx`），一条接一条地执行；
  * 只多读状态和错误（`readRuns` 的 `state`），不读输入、输出，查询次数与运行里的节点数无关。
+ * `limits` 只给测试用。
  */
 export async function runStateForDispatch(
 	tx: Db | Tx,
 	runId: string,
 	self: SelfNode,
+	limits: RunStateLimits = RUN_STATE_LIMITS,
 ): Promise<RunState> {
 	const read = (await readRuns(tx, [runId], "state")).get(runId);
 	if (!read) throw new Error(`run ${runId} not found while resolving run.state`);
-	return projectRunState(runStateSource(read, self), { self, limits: RUN_STATE_LIMITS });
+	const state = projectRunState(runStateSource(read, self), { self, limits });
+	const bytes = runStateBytes(state);
+	if (limits.bytes !== undefined && bytes > limits.bytes) {
+		const nodes = state.chains.reduce((total, chain) => total + chain.nodes.length, 0);
+		throw new RunStateError(
+			`解析 \${{ run.state }} 失败：运行状态有 ${kb(bytes)} KB（${nodes} 个节点、${state.chains.length} 个链实例），去掉全部错误信息之后仍然超过上限 ${kb(limits.bytes)} KB。运行里的节点太多了：把场景拆小，或者这个节点不用 \${{ run.state }}`,
+		);
+	}
+	return state;
 }

@@ -131,6 +131,40 @@ describe("静态检查：run.state 的位置", () => {
 		expect(warningsOf(document)).toEqual([]);
 	});
 
+	it.each([
+		"${{ run.state.status }}",
+		"${{ run.state.chains[0] }}",
+		"${{ run.state. }}",
+	])("引用运行状态的字段 %s：格式不对，补一句运行状态只能整个引用、字段在节点里读", (value) => {
+		const document = doc([fetch("f", { data: value })], [["entry", "f"]]);
+		const path = value.slice(4, -3).trim();
+		expect(
+			documentWarnings(document, catalog).filter((w) => w.code === "reference_invalid"),
+		).toEqual([
+			{
+				code: "reference_invalid",
+				node_id: "f",
+				input: "data",
+				message: `节点 f 的输入 data 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名>、nodes.<节点>.outputs.<输出键> 或 run.state；运行状态只能整个引用，字段在节点里读`,
+			},
+		]);
+	});
+
+	it("别的写错的引用不带这句话；派发时解析同样写明", () => {
+		const document = doc([fetch("f", { data: "${{ env.HOME }}" })], [["entry", "f"]]);
+		const [warning] = documentWarnings(document, catalog).filter(
+			(w) => w.code === "reference_invalid",
+		);
+		expect(warning?.message).not.toContain("字段在节点里读");
+		const scope = { params: {}, earlierOutputs: new Map(), runState: {} };
+		expect(() => resolveInputs({ run: "${{ run.state.status }}" }, scope)).toThrow(
+			/expected params.<name>, nodes.<id>.outputs.<key> or run.state；运行状态只能整个引用，字段在节点里读/,
+		);
+		expect(() => resolveInputs({ run: "${{ env.HOME }}" }, scope)).toThrow(
+			/expected params.<name>, nodes.<id>.outputs.<key> or run.state$/,
+		);
+	});
+
 	it("夹在文字里：警告，写明只能整值引用", () => {
 		const document = doc([fetch("f", { url: "状态 ${{ run.state }}" })], [["entry", "f"]]);
 		expect(warningsOf(document)).toEqual([

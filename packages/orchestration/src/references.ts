@@ -6,7 +6,14 @@ import {
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { nodeNameWithId } from "./node-display.js";
-import { OUTPUT_PATH, PARAM_PATH, REFERENCE, RUN_STATE_PATH } from "./reference-syntax.js";
+import {
+	OUTPUT_PATH,
+	PARAM_PATH,
+	REFERENCE,
+	RUN_STATE_FIELD_HINT,
+	RUN_STATE_FIELD_PATH,
+	RUN_STATE_PATH,
+} from "./reference-syntax.js";
 
 /**
  * 引用（docs/SEMANTICS.md §2）：`${{ params.<name> }}`、`${{ nodes.<id>.outputs.<key> }}` 和 `${{ run.state }}`。
@@ -231,7 +238,9 @@ export function referenceWarnings(
 				if (!output) {
 					warn(
 						"reference_invalid",
-						`${where} 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名>、nodes.<节点>.outputs.<输出键> 或 run.state`,
+						`${where} 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名>、nodes.<节点>.outputs.<输出键> 或 run.state${
+							RUN_STATE_FIELD_PATH.test(path) ? `；${RUN_STATE_FIELD_HINT}` : ""
+						}`,
 					);
 					continue;
 				}

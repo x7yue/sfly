@@ -2,6 +2,8 @@ import {
 	OUTPUT_PATH,
 	PARAM_PATH,
 	REFERENCE,
+	RUN_STATE_FIELD_HINT,
+	RUN_STATE_FIELD_PATH,
 	RUN_STATE_PATH,
 	WHOLE_REFERENCE,
 } from "./reference-syntax.js";
@@ -73,7 +75,9 @@ function lookup(path: string, scope: ResolveScope): unknown {
 		return outputs[key];
 	}
 	throw new InvalidReferenceError(
-		`\${{ ${path} }}: invalid reference, expected params.<name>, nodes.<id>.outputs.<key> or run.state`,
+		`\${{ ${path} }}: invalid reference, expected params.<name>, nodes.<id>.outputs.<key> or run.state${
+			RUN_STATE_FIELD_PATH.test(path) ? `；${RUN_STATE_FIELD_HINT}` : ""
+		}`,
 	);
 }
 

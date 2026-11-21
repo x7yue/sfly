@@ -169,7 +169,7 @@ function resultSoFar(source: RunStateSource, failed: boolean): RunState["result_
  * JSON 序列化之后的 UTF-8 字节数。不用 `TextEncoder`：这个包在没有 DOM 和 Node 类型的环境里也要能编译
  * （场景编排的包引用了它）；落单的代理项编码成 U+FFFD，和 `TextEncoder` 一样占 3 个字节。
  */
-function byteLength(value: unknown): number {
+export function runStateBytes(value: unknown): number {
 	let bytes = 0;
 	for (const char of JSON.stringify(value)) {
 		const code = char.codePointAt(0) ?? 0;
@@ -178,15 +178,18 @@ function byteLength(value: unknown): number {
 	return bytes;
 }
 
-/** 整份状态超过大小上限时，从 `failures` 的末尾开始去掉 `error.message`，直到放得下。就地修改。 */
+/**
+ * 整份状态超过大小上限时，从 `failures` 的末尾开始去掉 `error.message`，直到放得下。就地修改。
+ * 去掉全部之后仍然放不下的，这里不再裁剪（那会让节点悄悄拿到不全的数据）：由调用方判断（节点的输入见 `runStateForDispatch`）。
+ */
 function fitBytes(state: RunState, maxBytes: number): void {
-	if (byteLength(state) <= maxBytes) return;
+	if (runStateBytes(state) <= maxBytes) return;
 	const nodes = new Map(
 		state.chains.flatMap((chain) => chain.nodes.map((node) => [node.node_id, node] as const)),
 	);
 	state.truncated = true;
 	for (const id of [...state.failures].reverse()) {
-		if (byteLength(state) <= maxBytes) return;
+		if (runStateBytes(state) <= maxBytes) return;
 		const error = nodes.get(id)?.error;
 		if (!error || error.message === "") continue;
 		error.message = "";
