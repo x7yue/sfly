@@ -52,6 +52,7 @@ const WRITE_PARAMS = [
 	{ name: "pin", type: "number", secret: true },
 	{ name: "opts", type: "json", secret: true },
 	{ name: "numbers", type: "json", secret: true },
+	{ name: "tiny", type: "json", secret: true },
 	{ name: "pem", type: "string", secret: true },
 ];
 const WRITE_VALUES = {
@@ -68,6 +69,8 @@ const WRITE_VALUES = {
 	},
 	// 节点（Python）打印数字的写法和控制面写的不一样的两类：小数（0.00001 打印成 1e-05）和超出 64 位的整数。
 	numbers: { rateLeaf: 0.00001, idLeaf: BEYOND_I64, tag: "12" },
+	// 区间 [1e-6, 1e-5) 的小数：控制面写 0.000001，Python 写 1e-06，Agent 写进 task.json 的是 1e-6
+	tiny: { rate: 0.000001, pin: "12", region: "a" },
 	pem: "-----BEGIN TEST KEY-----\ntest-pem-line-one\n-----END TEST KEY-----",
 };
 /** 任何出口的文本里都不能出现的：字符串和数字叶子，PEM 的每一行，非 ASCII 叶子的 `\uXXXX` 写法，整段打印时的短叶子。 */
@@ -99,6 +102,11 @@ const WRITE_LEAKS = [
 	'"rateLeaf": 1e-05',
 	'"idLeaf": 9.876543210987654e+19',
 	'"tag": "12"',
+	// 节点原样打印 task.json 里的文本（serde 的写法：同一个对象里小数在 serde 里的写法和控制面相同，整数是科学计数法）
+	'"idLeaf":9.876543210987654e+19',
+	'"rateLeaf":0.00001',
+	'"tag":"12"',
+	'"rate":1e-6',
 ];
 
 interface VersionBody {

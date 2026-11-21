@@ -12,11 +12,14 @@ from pathlib import Path
 import pytest
 
 _TABLE_FILE = Path(__file__).resolve().parents[3] / "testdata" / "number-form-cases.json"
-_TABLE = json.loads(_TABLE_FILE.read_text(encoding="utf-8"))["cases"]
+_DATA = json.loads(_TABLE_FILE.read_text(encoding="utf-8"))
+_TABLE = _DATA["cases"]
+_WHOLE = _DATA["whole"]
 
 
 def test_table_is_not_empty() -> None:
-    assert len(_TABLE) >= 30
+    assert len(_TABLE) >= 38
+    assert len(_WHOLE) >= 4
 
 
 @pytest.mark.parametrize("case", _TABLE, ids=[c["sent"] for c in _TABLE])
@@ -26,3 +29,10 @@ def test_python_prints_numbers_like_the_shared_table(case: dict[str, str]) -> No
     # 打印整个对象和单个值用的是同一套规则（repr）
     assert json.dumps({"k": value}) == '{"k": ' + case["python"] + "}", case["name"]
     assert repr(value) == case["python"], case["name"]
+
+
+@pytest.mark.parametrize("case", _WHOLE, ids=[c["name"][:30] for c in _WHOLE])
+def test_python_prints_whole_values_like_the_shared_table(case: dict[str, str]) -> None:
+    # 整个值：节点读 task.json（serde 写的）再 json.dumps 打印
+    value = json.loads(case["serde"])
+    assert json.dumps(value) == case["python"], case["name"]
