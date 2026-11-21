@@ -292,6 +292,33 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		).toContain("system 没有具体的那一个");
 	});
 
+	it("路径带项目（/projects/:project/…）的列表和新建用 collection：:project 只限定项目，不算在定位资源", () => {
+		const project = z.object({ project: z.string() });
+		const scoped = { path: "/projects/:project/things", params: project };
+		const collection = { kind: "scenario", target: "collection" };
+		expect(problems(broken({ resource: collection, ...scoped }))).toEqual([]);
+		// 项目之外还有别的路径参数，就是在定位某个资源，仍然不能写 collection。
+		expect(
+			problems(
+				broken({
+					resource: collection,
+					path: "/projects/:project/things/:id",
+					params: project.extend({ id: z.string() }),
+				}),
+			)[0],
+		).toContain("路径里有参数");
+		// 不是 /projects/:project/ 下面的 :project 参数（例如 PEP 503 索引里指包的 /simple/:project/）不是项目。
+		expect(
+			problems(broken({ resource: collection, path: "/things/:project", params: project }))[0],
+		).toContain("路径里有参数");
+		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）照旧可以。
+		expect(
+			problems(
+				broken({ resource: { kind: "scenario", target: { params: "project" } }, ...scoped }),
+			),
+		).toEqual([]);
+	});
+
 	it("GET 必须只读，DELETE 必须声明 removes，非 GET 的只读接口必须登记", () => {
 		expect(problems(broken({ effect: "write" }))[0]).toContain("GET 要声明为只读");
 		expect(problems(broken({ method: "DELETE", effect: "write" }))[0]).toContain(

@@ -202,9 +202,16 @@ export class AccessGuard {
 		const id = params[locator.param];
 		if (id === undefined || !isUuid(id)) return undefined;
 		const { store } = this.deps;
-		if (locator.from === "scenario") return store.projectOfScenario(id);
-		if (locator.from === "run") return store.projectOfRun(id);
-		return store.projectOfTask(id);
+		switch (locator.from) {
+			case "scenario":
+				return store.projectOfScenario(id);
+			case "run":
+				return store.projectOfRun(id);
+			case "task":
+				return store.projectOfTask(id);
+			case "session":
+				return store.projectOfSession(id);
+		}
 	}
 
 	// ---- Agent 凭据和任务凭据：显式的接口清单 ----

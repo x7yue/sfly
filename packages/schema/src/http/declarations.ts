@@ -63,6 +63,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "run",
 		why: "控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；以后按项目隔离时，它的运行部分要按项目过滤",
 	},
+	"/projects/:project/sessions": {
+		kind: "session",
+		why: "项目里的会话：列出和新建，路径里的 :project 是项目标识（会话的集合属于项目）",
+	},
+	"/sessions": {
+		kind: "session",
+		why: "一个会话和它的事件、发话、停止：路径里的 :id 是会话 id，项目从会话得出",
+	},
 	"/health": { kind: "system", exact: true, why: "健康检查：控制面自己的状态，不属于任何项目" },
 	"/docs": { kind: "system", exact: true, why: "用户文档的目录：公开的说明文字，不属于任何项目" },
 	"/docs/:page.md": {
@@ -160,9 +168,23 @@ export const SUMMARY_MAX_LENGTH = 80;
 
 const PATH_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g;
 
+/** 路径里用来写项目的参数名（ADR 0029：`/projects/:project/…`）。 */
+export const PROJECT_PARAM = "project";
+
 /** 路径模板里的参数名（不含末尾的 `*`）。 */
 export function pathParamNames(path: string): string[] {
 	return [...path.matchAll(PATH_PARAM)].map((found) => found[1] as string);
+}
+
+/**
+ * 判断 `collection`（路径里不带任何定位资源的参数）时看的参数名：`/projects/:project/…` 开头的路径，第一个参数
+ * `:project` 只是限定项目（ADR 0029「项目从请求的哪里来」：列表和新建的路径带项目），不是在定位某个已有的资源，
+ * 所以不算在内；其余路径和 {@link pathParamNames} 一样。用 `{ params: "project" }` 定位项目本身（资源类别 `project`）
+ * 不受这条影响。
+ */
+function paramsBesidesProject(path: string): string[] {
+	const names = pathParamNames(path);
+	return path.startsWith(`/projects/:${PROJECT_PARAM}/`) ? names.slice(1) : names;
 }
 
 /** 对象 schema 的字段名；不是对象（或套了一层包装也认不出对象）时返回 undefined。 */
@@ -180,7 +202,7 @@ const label = (def: Pick<RouteDef, "method" | "path">) => `${def.method} ${def.p
 
 function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget): string[] {
 	const problems: string[] = [];
-	const hasPathParams = pathParamNames(def.path).length > 0 || def.path.endsWith("*");
+	const hasPathParams = paramsBesidesProject(def.path).length > 0 || def.path.endsWith("*");
 	if (typeof target === "string") {
 		if (target === "collection" && hasPathParams) {
 			problems.push(
