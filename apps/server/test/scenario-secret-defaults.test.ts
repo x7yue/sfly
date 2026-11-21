@@ -34,12 +34,6 @@ const PARAMS = () => [
 	{ name: "opts", type: "json", secret: true, default: { key: SECRET_JSON } },
 ];
 
-/**
- * 要触发运行的测试用的参数：去掉 json 类型。json 类型的 secret 参数的值是对象时，运行视图里不打码（#479），
- * 那是运行参数的打码的问题，不是场景版本默认值的；这里不把它带进运行里，#479 修好后可以加回来。
- */
-const RUN_PARAMS = () => PARAMS().filter((p) => p.type !== "json");
-
 /** 读出来应该是这样：secret 参数的默认值换成占位符，其余原样（补上了 schema 的默认值）。 */
 const MASKED = [
 	{ name: "token", type: "string", required: false, secret: true, default: MASK },
@@ -196,7 +190,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		controlPlanePerTest();
 
 		it("读场景、版本、保存和恢复的响应、版本列表、预检、复制、运行：响应的文本里都没有原值", async () => {
-			const id = await scenario(RUN_PARAMS());
+			const id = await scenario();
 			const agent = await connect();
 			const runId = await api.triggerOk(id);
 			await agent.nextAssign();
@@ -241,11 +235,15 @@ describe("场景版本里 secret 参数的默认值", () => {
 				await api.getJson(`/orchestrations/${id}/preflight`),
 			);
 			expect(preflight.params.find((p) => p.name === "region")?.default).toBe("cn-east");
-			expect(preflight.params.filter((p) => p.secret).map((p) => p.default)).toEqual([MASK, MASK]);
+			expect(preflight.params.filter((p) => p.secret).map((p) => p.default)).toEqual([
+				MASK,
+				MASK,
+				MASK,
+			]);
 		});
 
 		it("运行的 SSE：第一条运行视图里没有原值", async () => {
-			const id = await scenario(RUN_PARAMS());
+			const id = await scenario();
 			const agent = await connect();
 			const runId = await api.triggerOk(id);
 			await agent.nextAssign();
@@ -260,7 +258,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		});
 
 		it("契约里的每个 SSE 接口：连上之后收到的消息里都没有原值", async () => {
-			const id = await scenario(RUN_PARAMS());
+			const id = await scenario();
 			const agent = await connect();
 			const runId = await api.triggerOk(id);
 			const assign = await agent.nextAssign();
@@ -320,7 +318,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 			});
 
 		it("契约里每个声明为只读的 GET 接口（SSE 除外）：读一遍，响应里都没有原值——新增的出口默认也是打码的", async () => {
-			const id = await scenario(RUN_PARAMS());
+			const id = await scenario();
 			const agent = await connect();
 			const runId = await api.triggerOk(id);
 			const assign = await agent.nextAssign();
@@ -383,7 +381,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		};
 
 		it("触发、保存、恢复、复制、预设、归档、取消：成功的和失败的响应（message 和 details 都算）里都没有原值；每个写接口都被请求过", async () => {
-			const id = await scenario(RUN_PARAMS());
+			const id = await scenario();
 			const agent = await connect();
 			const requested = new Set<string>();
 			// 记下这个测试发出的每个请求（方法 + 路径模板），最后和契约里的写接口对照。
