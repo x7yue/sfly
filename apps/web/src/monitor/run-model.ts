@@ -166,21 +166,23 @@ export function progressLabel(node: NodeRunView): string | null {
 	return progress.total === null ? `${progress.current}` : `${progress.current}/${progress.total}`;
 }
 
-/** 失败运行的摘要：第一个失败的节点（{@link runFailures}）、它的第几次尝试与错误信息的第一行。 */
+/** 一个最终失败的节点：它的第几次尝试、失败原因的一行和错误信息的全文。 */
 export interface RunFailure {
 	ref: NodeRef;
 	node: RunNodeName;
 	/** 失败的那次尝试的序号；节点没有尝试记录时为 null。 */
 	attempt: number | null;
-	/** 错误信息的第一行（不含堆栈）；没有错误信息时为空字符串。 */
+	/** 失败原因的一行（`errorHeadline`，不含堆栈）；没有错误信息时为空字符串。 */
 	message: string;
+	/** 错误信息的全文（含堆栈）；没有错误信息时为空字符串。 */
+	detail: string;
+	/** 失败的那次尝试结束的时间（控制面时间）；没有时为 null。 */
+	endedAt: string | null;
+	/** 节点所在的子流程实例（「子流程 压测监控 · 5e2d」）；主链上的节点为 null。 */
+	chain: string | null;
 }
 
-/** 第一个失败的节点；没有失败的节点时为 null（运行中也可能已有失败的节点）。 */
-export function runFailure(run: RunView): RunFailure | null {
-	const [first] = runFailures(run);
-	if (!first) return null;
-	const { chain, node } = first;
+function failureOf({ chain, node }: { chain: ChainRunView; node: NodeRunView }): RunFailure {
 	const attempt = [...node.attempts].reverse().find((a) => a.error) ?? node.attempts.at(-1);
 	const error = node.error ?? attempt?.error ?? null;
 	return {
@@ -188,8 +190,20 @@ export function runFailure(run: RunView): RunFailure | null {
 		node: { node_id: node.node_id, display_name: node.display_name },
 		attempt: attempt?.attempt ?? null,
 		message: errorHeadline(error?.message),
+		detail: error?.message.trim() ?? "",
+		endedAt: attempt?.ended_at ?? null,
+		chain: chain.depth > 0 ? chainLabel(chain) : null,
 	};
 }
+
+/** 第一个失败的节点；没有失败的节点时为 null（运行中也可能已有失败的节点）。 */
+export function runFailure(run: RunView): RunFailure | null {
+	const [first] = runFailures(run);
+	return first ? failureOf(first) : null;
+}
+
+/** 所有最终失败的节点，按失败的先后；第一项是 {@link runFailure}。 */
+export const allRunFailures = (run: RunView): RunFailure[] => runFailures(run).map(failureOf);
 
 /**
  * 下一个失败的节点（F）：失败的节点按失败的先后（与 {@link runFailure} 一致）排成一圈，选中的是其中一个时

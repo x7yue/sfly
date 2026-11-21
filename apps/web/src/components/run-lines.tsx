@@ -1,7 +1,11 @@
 import { isActiveStatus } from "@sfly/schema";
 import { cn } from "cn";
 import type { CSSProperties } from "react";
-import { chainProgressText } from "#/components/chain-progress";
+import {
+	chainProgressName,
+	chainProgressText,
+	chainSkippedText,
+} from "#/components/chain-progress";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOLDED_LABEL, LIST_LABEL, moreLabel } from "#/lib/copy";
@@ -35,8 +39,8 @@ export interface LineChain {
 }
 
 /**
- * 线路上的一站：一个节点，或折起来的一段。当前站之前的段是 `done`（都算已完成：成功、已跳过、已停止）或 `ended`
- * （一样状态、但不算完成的节点，例如取消的运行里已取消的节点），之后的是 `rest`。
+ * 线路上的一站：一个节点，或折起来的一段。当前站之前的段是 `done`（都算已完成：成功、已停止）或 `ended`
+ * （一样状态、但不算完成的节点：取消的运行里已取消的节点、失败之后被跳过的节点），之后的是 `rest`。
  * 折起来的一段画成它最后一个节点（挨着画出来的那一站）的状态。
  */
 export type Station =
@@ -55,7 +59,7 @@ export const LINE_MAX_STATIONS = 7;
 /**
  * 长链折叠（外壳页方案 4.2）：节点不超过 `max` 个时每个节点一站；超过时只画当前站（进行中的节点，没有时是第一个
  * 待执行的节点）前面最后一站、当前站和之后两站，其余折成「已完成 N 个」「还有 N 个」。失败的节点总是画出来，
- * 不折进「已完成」；不算完成的节点（已取消）也不折进「已完成」，连着的一样状态折成一段（「已取消 N 个」）。
+ * 不折进「已完成」；不算完成的节点（已取消、已跳过）也不折进「已完成」，连着的一样状态折成一段（「已取消 N 个」「已跳过 N 个」）。
  * 只折一个节点时直接画它（一站和一段折叠一样宽）。都结束了的链只画最后一站。
  */
 export function foldStations(nodes: readonly LineNode[], max = LINE_MAX_STATIONS): Station[] {
@@ -179,13 +183,14 @@ export function RunLines({
 			data-viz
 			style={{ "--line-columns": columns } as CSSProperties}
 			className={cn(
-				"m-0 grid list-none grid-cols-[fit-content(10rem)_repeat(var(--line-columns),minmax(0,5.5rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
+				"m-0 grid list-none grid-cols-[max-content_repeat(var(--line-columns),minmax(0,14rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
 				className,
 			)}
 		>
 			{rows.map((row, r) => (
 				<li key={row.chain.id} className="col-span-full grid grid-cols-subgrid">
-					<span className="flex min-w-0 pr-3 text-xs text-fg-3">
+					{/* 第一列取链名的全宽（最宽 10rem）：站名那几列分余量时不和它抢。 */}
+					<span className="flex min-w-0 max-w-40 pr-3 text-xs text-fg-3">
 						<Truncate>{row.chain.label}</Truncate>
 						{row.chain.instance && (
 							<span data-chain-id className="ml-1.5 flex-none font-mono">
@@ -204,12 +209,24 @@ export function RunLines({
 							/>
 						))}
 					</ol>
-					<span className="pl-2 text-right font-mono text-xs text-fg-3">
-						{chainProgressText(row.chain.nodes)}
-					</span>
+					<ChainCount nodes={row.chain.nodes} />
 				</li>
 			))}
 		</ul>
+	);
+}
+
+/**
+ * 一条链的计数：「已完成数 / 节点数」，有被跳过的节点时下面一行单独写「跳过 2」（被跳过的不算已完成）。
+ * 放在最后一列（auto）：站名那几列把余量用完时，计数照样有位置；两行叠着，不占更宽的列。
+ */
+function ChainCount({ nodes }: { nodes: readonly LineNode[] }) {
+	const skipped = chainSkippedText(nodes);
+	return (
+		<span className="col-[-2/-1] flex flex-col items-end pl-2 text-xs whitespace-nowrap text-fg-3">
+			<span className="font-mono">{chainProgressText(nodes)}</span>
+			{skipped && <span data-skipped-count>{skipped}</span>}
+		</span>
 	);
 }
 
@@ -259,7 +276,7 @@ function StationCell({
 			</span>
 			<span
 				className={cn(
-					"flex min-w-0 pr-2 pl-2.5 text-xs",
+					"flex min-w-0 pr-1 pl-2.5 text-xs",
 					station.kind === "fold"
 						? "text-fg-3"
 						: kind === "running"
@@ -284,7 +301,7 @@ function StationCell({
  */
 export function RunLineThumb({ chain }: { chain: LineChain }) {
 	const stations = foldStations(chain.nodes);
-	const text = `${chain.label} ${chainProgressText(chain.nodes)}`;
+	const text = chainProgressName(chain.label, chain.nodes);
 	return (
 		<span
 			role="img"

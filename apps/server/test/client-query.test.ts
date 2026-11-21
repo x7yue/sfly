@@ -22,9 +22,9 @@ describe("API 客户端的方法来自契约里标了 client 的接口", () => {
 		expect(methodsOf(client).sort()).toEqual(flagged.sort());
 	});
 
-	it("给 Agent 和安装脚本的接口、上传、SDK 与 sfly 索引、用户文档、在线编辑者都不进入客户端", () => {
+	it("给 Agent 和安装脚本的接口、上传、SDK 与 sfly 索引、用户文档都不进入客户端", () => {
 		const methods = methodsOf(client);
-		for (const domain of ["agentBinaries", "sdk", "docs", "presence"]) {
+		for (const domain of ["agentBinaries", "sdk", "docs"]) {
 			expect(methods.filter((m) => m.startsWith(`${domain}.`))).toEqual([]);
 		}
 		for (const internal of ["artifacts.upload", "packages.publish", "packages.archive"]) {

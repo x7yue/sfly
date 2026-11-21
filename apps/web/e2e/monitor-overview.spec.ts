@@ -749,8 +749,9 @@ test("概览里点顶栏的失败摘要：切到详情并打开失败节点的�
 	await agent.succeed(cleanup);
 	await openOverview(page, clock, runId);
 
-	// 概览没有失败横幅，失败摘要在顶栏。
-	await expect(page.getByRole("region", { name: "运行失败" })).toHaveCount(0);
+	// 概览没有失败横幅（横幅是详情里时间线上方的），失败区域在最上面，失败摘要在顶栏。
+	await expect(page.locator('[data-slot="banner"]')).toHaveCount(0);
+	await expect(page.getByTestId("failure-area")).toBeVisible();
 	await page.getByRole("banner").getByTestId("run-failure").click();
 	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
 	await expect(
