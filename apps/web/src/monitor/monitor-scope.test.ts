@@ -29,7 +29,7 @@ const attempt = (
 	agent: "agent-a",
 	inputs: {},
 	outputs: null,
-	error: status === "failed" ? { kind: "node_error", message: "boom" } : null,
+	error: status === "failed" ? { kind: "node_error", message: "boom", location: null } : null,
 	queued_at: iso(0),
 	started_at: startedAt === null ? null : iso(startedAt),
 	ended_at: status === "running" ? null : iso((startedAt ?? 0) + 2),

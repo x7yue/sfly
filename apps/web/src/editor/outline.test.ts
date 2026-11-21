@@ -75,20 +75,4 @@ describe("canvasOutline", () => {
 		]);
 		expect(outline.loose).toEqual([]);
 	});
-
-	it("便签另成最后一组：写标题，没有标题时写正文的第一行；搜索按标题和正文", () => {
-		const notes = {
-			...doc([]),
-			sticky_notes: [
-				{ id: "s1", title: "跑之前确认", text: "- Agent 都在线" },
-				{ id: "s2", text: "- 已知问题：重启慢\n第二行" },
-			],
-		};
-		expect(canvasOutline(notes, titleOf).stickies).toEqual([
-			{ id: "s1", label: "跑之前确认" },
-			{ id: "s2", label: "已知问题：重启慢" },
-		]);
-		expect(canvasOutline(notes, titleOf, "agent").stickies.map((s) => s.id)).toEqual(["s1"]);
-		expect(canvasOutline(notes, titleOf, "第二行").stickies.map((s) => s.id)).toEqual(["s2"]);
-	});
 });

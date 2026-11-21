@@ -214,7 +214,7 @@
  * 六种颜色只换色相，亮度相同，换颜色时卡片和底板的对比不变；没有青（执行中）、红（失败）、紫（子流程区域）。
  * 各部分在 OKLCH 里按注释框元素上的色相 --annotation-hue 和色度系数 --annotation-chroma（灰色为 0）算出，
  * 所以写在 [data-annotation-color] 上：注释框和颜色选择器的色块都带这个属性；节点卡片用 [data-ground] 取它所在注释框的底板色。
- * 文字对比度：胶囊上 ≥ 6.9:1，便签上 ≥ 8:1；色块对 raised ≥ 5:1。
+ * 文字对比度：胶囊上 ≥ 6.9:1，注释框的备注上 ≥ 8:1；色块对 raised ≥ 5:1。
  */
 [data-annotation-color],
 [data-ground] {
@@ -257,11 +257,6 @@
 	--canvas-annotation-swatch: oklch(
 		0.72 calc(0.115 * var(--annotation-chroma)) var(--annotation-hue)
 	);
-	/* 便签（ADR 0026）：比注释框的底板亮一点的整块纸，正文两级文字 */
-	--canvas-sticky: oklch(0.335 calc(0.05 * var(--annotation-chroma)) var(--annotation-hue));
-	--canvas-sticky-line: oklch(0.42 calc(0.06 * var(--annotation-chroma)) var(--annotation-hue));
-	--canvas-sticky-fg: oklch(0.94 calc(0.03 * var(--annotation-chroma)) var(--annotation-hue));
-	--canvas-sticky-fg-2: oklch(0.84 calc(0.035 * var(--annotation-chroma)) var(--annotation-hue));
 }
 [data-annotation-color="gray"],
 [data-ground="gray"] {

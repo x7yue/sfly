@@ -11,14 +11,17 @@ import {
 	type PackageMetadata,
 	type RunNotificationTrigger,
 	StoredOrchestrationDocument,
+	withoutRemovedFields,
 } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
 	bigint,
 	bigserial,
 	boolean,
+	check,
 	customType,
 	doublePrecision,
+	foreignKey,
 	index,
 	integer,
 	json,
@@ -28,8 +31,10 @@ import {
 	text,
 	timestamp,
 	unique,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+import type { ProjectId } from "../projects/project-id.js";
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 
@@ -37,8 +42,9 @@ const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode
  * 场景文档（jsonb）：读出时按读到的场景文档 schema 解析，和保存时一样补上默认值。场景版本不可修改，
  * 升级前保存的版本没有后来新增的字段（例如注释框 `annotations`）；所有读文档的地方（接口返回的最新版本、
  * 历史版本、运行绑定的版本，复制、恢复，引擎）都经过这里，拿到的文档和 StoredOrchestrationDocument 的类型一致。
- * 版本里已移除种类的节点（ADR 0028）认得、原样带着配置，不报错；按更早的规则保存、现在已经解析不了的文档
- * 原样返回（历史版本照旧能看）。
+ * 版本里已移除种类的节点（ADR 0028）认得、原样带着配置，不报错；已移除的顶层字段（便签 `sticky_notes`，
+ * 每个移除之前保存的版本都带着）先去掉再解析，读到的文档里没有它们，库里的版本不改；按更早的规则保存、
+ * 现在已经解析不了的文档原样返回（历史版本照旧能看），返回的也是去掉了已移除字段的那一份。
  */
 const orchestrationDocument = customType<{
 	data: StoredOrchestrationDocument;
@@ -47,7 +53,9 @@ const orchestrationDocument = customType<{
 	dataType: () => "jsonb",
 	toDriver: (document) => JSON.stringify(document),
 	fromDriver: (value) => {
-		const stored: unknown = typeof value === "string" ? JSON.parse(value) : value;
+		const stored: unknown = withoutRemovedFields(
+			typeof value === "string" ? JSON.parse(value) : value,
+		);
 		const parsed = StoredOrchestrationDocument.safeParse(stored);
 		return parsed.success
 			? keepRemovedNodeConfig(parsed.data, stored)
@@ -128,18 +136,42 @@ export interface InstalledPackage {
 
 export type AgentStatus = "online" | "offline";
 
-/** Agent：按名称唯一；第一次 Hello 时注册，之后每次连接更新信息。 */
-export const agents = pgTable("agents", {
-	name: text("name").primaryKey(),
-	info: jsonb("info").$type<AgentInfo>().notNull(),
-	status: text("status").$type<AgentStatus>().notNull(),
-	registeredAt: timestamptz("registered_at").notNull(),
-	lastSeenAt: timestamptz("last_seen_at").notNull(),
-	/** 最近一次 Hello 或 Heartbeat 测得的时钟偏差（Agent 时间 − 控制面时间，毫秒，#172）；未知时为空。 */
-	clockOffsetMs: bigint("clock_offset_ms", { mode: "number" }),
-	/** 测得 clock_offset_ms 的控制面时间。 */
-	clockOffsetMeasuredAt: timestamptz("clock_offset_measured_at"),
-});
+/**
+ * Agent 连接时出示的凭据（`agents.last_auth_kind`）：`none` 不带凭据，`shared` 共享令牌，`agent` 按台签发的 Agent 凭据（#492）。
+ * 后两个和 `agent_credentials.kind` 的取值一致；库里有 CHECK（`agents_last_auth_kind`）。
+ */
+export type AgentAuthKind = "none" | "shared" | "agent";
+
+/**
+ * Agent：按名称唯一；第一次 Hello 时注册，之后每次连接更新信息。属于一个项目（ADR 0029）；
+ * 第一步名字仍然全局唯一（主键不变），第二步改成「项目 + 名字」（#502）。
+ */
+export const agents = pgTable(
+	"agents",
+	{
+		name: text("name").primaryKey(),
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		info: jsonb("info").$type<AgentInfo>().notNull(),
+		status: text("status").$type<AgentStatus>().notNull(),
+		registeredAt: timestamptz("registered_at").notNull(),
+		lastSeenAt: timestamptz("last_seen_at").notNull(),
+		/** 最近一次 Hello 或 Heartbeat 测得的时钟偏差（Agent 时间 − 控制面时间，毫秒，#172）；未知时为空。 */
+		clockOffsetMs: bigint("clock_offset_ms", { mode: "number" }),
+		/** 测得 clock_offset_ms 的控制面时间。 */
+		clockOffsetMeasuredAt: timestamptz("clock_offset_measured_at"),
+		/** 停用这台 Agent 的时间（ADR 0029，#492）：停用的 Agent 不能连接、不参与派发；恢复时清空。 */
+		disabledAt: timestamptz("disabled_at"),
+		/**
+		 * 最近一次连接用的凭据（#492）：「登记工作台之前，没有停用的 Agent 都必须已经换成 Agent 凭据」按它判断，
+		 * 只签发过、没用它连上过的不算。记下之前连接的 Agent 为空。
+		 */
+		lastAuthKind: text("last_auth_kind").$type<AgentAuthKind>(),
+	},
+	(t) => [check("agents_last_auth_kind", sql`${t.lastAuthKind} in ('none', 'shared', 'agent')`)],
+);
 
 /**
  * 飞书机器人（ADR 0020）：按名称唯一，创建后不能改名。webhook_url 明文保存（相当于一个凭据，和 secret 参数一样），
@@ -149,6 +181,11 @@ export const agents = pgTable("agents", {
  */
 export const feishuBots = pgTable("feishu_bots", {
 	name: text("name").primaryKey(),
+	/** 所属项目（ADR 0029）；名字仍然全局唯一，第二步改成项目内唯一（#502）。 */
+	projectId: text("project_id")
+		.$type<ProjectId>()
+		.notNull()
+		.references(() => projects.id),
 	webhookUrl: text("webhook_url").notNull(),
 	createdAt: timestamptz("created_at").notNull(),
 	lastDeliveryAt: timestamptz("last_delivery_at"),
@@ -162,6 +199,8 @@ export const feishuBots = pgTable("feishu_bots", {
  */
 export interface StoredFocusEdit {
 	by: string;
+	/** 修改人的用户 ID（ADR 0029）；升级之前记下的、以及没有登录身份的修改为空（旧记录没有这个键）。 */
+	by_user_id?: string | null;
 	at: string;
 	summary: string;
 	before: FocusItemInput[] | null;
@@ -171,35 +210,50 @@ export interface StoredFocusEdit {
  * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */
-export const orchestrations = pgTable("orchestrations", {
-	id: uuid("id").primaryKey(),
-	name: text("name").notNull(),
-	description: text("description").notNull().default(""),
-	headVersion: integer("head_version").notNull().default(0),
-	createdAt: timestamptz("created_at").notNull(),
-	archivedAt: timestamptz("archived_at"),
-	/**
-	 * 运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样不属于版本，运行结束时读取当前值。
-	 * bot 为空即关闭；bot 不是外键，机器人被删除后设置原样保留（运行结束时记为「未发送」）。
-	 */
-	runNotifyBot: text("run_notify_bot"),
-	runNotifyTrigger: text("run_notify_trigger")
-		.$type<RunNotificationTrigger>()
-		.notNull()
-		.default("failed"),
-	/** 卡片标题；空字符串时用场景名。 */
-	runNotifyTitle: text("run_notify_title").notNull().default(""),
-	/** 附加说明（Markdown）；空字符串即没有。 */
-	runNotifyNote: text("run_notify_note").notNull().default(""),
-	/**
-	 * 关注项（GLOSSARY「关注项」）：场景挑出来、运行中重点展示的图表，按作者设定的顺序，最多 FOCUS_ITEMS_MAX 项
-	 * （包括已经失效的）。和运行通知一样不属于版本，改了立即生效。节点 ID 跨版本稳定，图表按标题引用；
-	 * 节点在最新版本里的状态每次读的时候对照得出，不存。
-	 */
-	focusItems: jsonb("focus_items").$type<FocusItemInput[]>().notNull().default([]),
-	/** 关注项最后一次修改；从没改过时为空。 */
-	focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
-});
+export const orchestrations = pgTable(
+	"orchestrations",
+	{
+		id: uuid("id").primaryKey(),
+		/**
+		 * 所属项目（ADR 0029）；名字没有唯一约束，也不加。场景不能换项目：有运行的场景改 `project_id` 会被
+		 * `runs` 上的组合外键（`runs_orchestration_project_fk`，NO ACTION）拒绝。ADR 里没有「把场景搬到别的项目」
+		 * 的功能；以后要做时另行设计（在同一个事务里显式地改场景和运行，并处理任务凭据、项目密钥这些带着自己
+		 * `project_id` 的相关行）。
+		 */
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		name: text("name").notNull(),
+		description: text("description").notNull().default(""),
+		headVersion: integer("head_version").notNull().default(0),
+		createdAt: timestamptz("created_at").notNull(),
+		archivedAt: timestamptz("archived_at"),
+		/**
+		 * 运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样不属于版本，运行结束时读取当前值。
+		 * bot 为空即关闭；bot 不是外键，机器人被删除后设置原样保留（运行结束时记为「未发送」）。
+		 */
+		runNotifyBot: text("run_notify_bot"),
+		runNotifyTrigger: text("run_notify_trigger")
+			.$type<RunNotificationTrigger>()
+			.notNull()
+			.default("failed"),
+		/** 卡片标题；空字符串时用场景名。 */
+		runNotifyTitle: text("run_notify_title").notNull().default(""),
+		/** 附加说明（Markdown）；空字符串即没有。 */
+		runNotifyNote: text("run_notify_note").notNull().default(""),
+		/**
+		 * 关注项（GLOSSARY「关注项」）：场景挑出来、运行中重点展示的图表，按作者设定的顺序，最多 FOCUS_ITEMS_MAX 项
+		 * （包括已经失效的）。和运行通知一样不属于版本，改了立即生效。节点 ID 跨版本稳定，图表按标题引用；
+		 * 节点在最新版本里的状态每次读的时候对照得出，不存。
+		 */
+		focusItems: jsonb("focus_items").$type<FocusItemInput[]>().notNull().default([]),
+		/** 关注项最后一次修改；从没改过时为空。 */
+		focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
+	},
+	// 给 `runs` 的组合外键（运行的项目恒等于它的场景的项目）当目标；`id` 已经是主键，这条约束只为了让外键有可引用的唯一组合。
+	(t) => [unique("orchestrations_id_project").on(t.id, t.projectId)],
+);
 
 /**
  * 运行预设（GLOSSARY「运行预设」，ADR 0024）：场景的设置，不属于版本。values 是「参数名 → 值」，
@@ -219,6 +273,8 @@ export const runPresets = pgTable(
 		updatedAt: timestamptz("updated_at").notNull(),
 		/** 最后修改人的昵称。 */
 		updatedBy: text("updated_by").notNull(),
+		/** 最后修改人的用户 ID（ADR 0029）；升级之前的记录为空，昵称列照旧保留。 */
+		updatedByUserId: uuid("updated_by_user_id").references(() => users.id),
 	},
 	(t) => [unique("run_presets_name").on(t.orchestrationId, t.name)],
 );
@@ -234,8 +290,12 @@ export const orchestrationVersions = pgTable(
 		number: integer("number").notNull(),
 		document: orchestrationDocument("document").notNull(),
 		author: text("author").notNull(),
+		/** 保存人的用户 ID（ADR 0029）；升级之前的版本为空，昵称列照旧保留。 */
+		authorUserId: uuid("author_user_id").references(() => users.id),
 		/** 经哪个 AI 编程助手保存（请求头 x-sfly-client 里的 agent/<名称>）；只是标注，浏览器里保存的为空。 */
 		authorVia: text("author_via"),
+		/** 经哪个令牌保存（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 保存的为空。是可信的，和上面不经校验的标注分开记。 */
+		authorToken: text("author_token"),
 		createdAt: timestamptz("created_at").notNull(),
 	},
 	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
@@ -300,15 +360,23 @@ export const runs = pgTable(
 	"runs",
 	{
 		id: uuid("id").primaryKey(),
-		orchestrationId: uuid("orchestration_id")
-			.notNull()
-			.references(() => orchestrations.id),
+		orchestrationId: uuid("orchestration_id").notNull(),
 		orchestrationVersionId: uuid("orchestration_version_id")
 			.notNull()
 			.references(() => orchestrationVersions.id),
+		/**
+		 * 所属项目：冗余一列，和场景的项目一致（创建时从场景取）；按项目的运行列表、控制台统计和「经运行定位项目」都读它，
+		 * 不用每次联表（ADR 0029）。「和场景一致」由库里的组合外键 `runs_orchestration_project_fk` 保证：
+		 * `(orchestration_id, project_id)` 必须是 `orchestrations (id, project_id)` 里存在的一对。
+		 */
+		projectId: text("project_id").$type<ProjectId>().notNull(),
 		triggeredBy: text("triggered_by").notNull(),
+		/** 触发人的用户 ID（ADR 0029）；升级之前的运行为空，昵称列照旧保留。 */
+		triggeredByUserId: uuid("triggered_by_user_id").references(() => users.id),
 		/** 经哪个 AI 编程助手触发；只是标注，浏览器里触发的为空。 */
 		triggeredVia: text("triggered_via"),
+		/** 经哪个令牌触发（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 触发的为空。 */
+		triggeredToken: text("triggered_token"),
 		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
 		/**
 		 * 触发时选用的运行预设：ID（不是外键，预设删除后仍保留）、触发时的名称、预设参数的名单。
@@ -323,8 +391,12 @@ export const runs = pgTable(
 		/** 第一次取消（#12）的时间和昵称；之后运行在所有链结束时标记为 cancelled。 */
 		cancelRequestedAt: timestamptz("cancel_requested_at"),
 		cancelRequestedBy: text("cancel_requested_by"),
+		/** 第一次取消的人的用户 ID（ADR 0029）；升级之前的取消为空。 */
+		cancelRequestedByUserId: uuid("cancel_requested_by_user_id").references(() => users.id),
 		/** 第一次取消经哪个 AI 编程助手发起；浏览器里取消的为空。 */
 		cancelRequestedVia: text("cancel_requested_via"),
+		/** 第一次取消经哪个令牌发起（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 取消的为空。 */
+		cancelRequestedToken: text("cancel_requested_token"),
 		/** 清理期间再次取消（强制取消）的时间：always 节点也立即终止。 */
 		cancelForcedAt: timestamptz("cancel_forced_at"),
 		/** 日志和产物超过保留期被清理的时间（#18，src/retention/retention.ts）；未清理时为空。 */
@@ -340,7 +412,24 @@ export const runs = pgTable(
 		/** 运行结束时没有把消息写进队列的原因（机器人已不存在，或卡片超过 20 KB）；写进队列了为空。 */
 		notificationNotSent: text("notification_not_sent"),
 	},
-	(t) => [index("runs_orchestration").on(t.orchestrationId), index("runs_ended_at").on(t.endedAt)],
+	(t) => [
+		// 运行的项目恒等于它的场景的项目，由这条组合外键保证；更新和删除都不级联（NO ACTION）：有运行的场景改项目
+		// 被拒绝（不让一条 update 悄悄把运行搬到别的项目），场景不物理删除。同时代替了原来 `project_id` 上单独的
+		// 外键（项目存在由 `orchestrations.project_id` 的外键间接保证）。以后要做「搬场景」时，把这条约束改成
+		// DEFERRABLE（改属性不用重扫 `runs`），在同一个事务里显式地改场景和运行。
+		foreignKey({
+			name: "runs_orchestration_project_fk",
+			columns: [t.orchestrationId, t.projectId],
+			foreignColumns: [orchestrations.id, orchestrations.projectId],
+		}),
+		// 一个场景的运行：按场景取，又按开始时间倒序（场景的运行列表、运行记录按场景筛选、每个场景最近一次运行）。
+		// 带 started_at 和 id：运行记录总带着项目条件（`runs_project_started`），规划器否则会倒着扫项目的索引、
+		// 一行行过滤场景，场景的运行少又都是最早的时候要扫过整个项目的运行（test/run-list-plan.test.ts）。
+		index("runs_orchestration").on(t.orchestrationId, t.startedAt, t.id),
+		index("runs_ended_at").on(t.endedAt),
+		// 按项目的运行列表：项目内按开始时间从新到旧（倒序扫描这条索引）。
+		index("runs_project_started").on(t.projectId, t.startedAt, t.id),
+	],
 );
 
 /** 链实例：主链（depth 0）或子流程实例；ID 由运行、父链实例、异步任务节点确定性生成。 */
@@ -396,6 +485,11 @@ export const tasks = pgTable(
 		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
 		errorKind: text("error_kind").$type<ErrorKind>(),
 		errorMessage: text("error_message"),
+		/**
+		 * 节点失败时出错的位置（TaskError.location）：节点代码里的那一行，「模块.函数 第 N 行」。
+		 * 不是节点出错、取不到位置、旧版本 Agent 或 SDK 上报的、升级之前的任务为空。
+		 */
+		errorLocation: text("error_location"),
 		/** 进入 queued 的时间，派发按它排序。 */
 		queuedAt: timestamptz("queued_at").notNull(),
 		/** 用于同一时刻排队的任务保持创建顺序。 */
@@ -606,12 +700,24 @@ export const nodePackages = pgTable(
 	{
 		name: text("name").notNull(),
 		version: text("version").notNull(),
+		/**
+		 * 所属项目（ADR 0029）：发布到哪个项目就属于哪个；标准节点包（`sfly-std`）的已发布版本属于公共项目。
+		 * `名字@版本` 仍然全局唯一（主键不变），第二步改成「项目 + 名字 + 版本」（#502）；同一个名字的不同版本现在可以分属两个项目。
+		 */
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
 		metadata: jsonb("metadata").$type<PackageMetadata>().notNull(),
 		/** 相对控制面数据目录的路径。 */
 		filePath: text("file_path").notNull(),
 		sha256: text("sha256").notNull(),
 		size: bigint("size", { mode: "number" }).notNull(),
 		publishedAt: timestamptz("published_at").notNull(),
+		/** 发布人（#501）：显示名、用户 ID，以及经哪个令牌发布（令牌的名称）。升级之前发布的版本都为空：当时发布不要任何身份。 */
+		publishedBy: text("published_by"),
+		publishedByUserId: uuid("published_by_user_id").references(() => users.id),
+		publishedToken: text("published_token"),
 	},
 	(t) => [primaryKey({ columns: [t.name, t.version] })],
 );
@@ -648,5 +754,201 @@ export const metricSeries = pgTable(
 	(t) => [
 		primaryKey({ columns: [t.taskId, t.metric, t.labels] }),
 		index("metric_series_run").on(t.runId),
+	],
+);
+
+// ---------------------------------------------------------------------------------------------------------------
+// 用户与项目（ADR 0029）。第一次迁移只建表和回填，不改变任何接口的行为：登录、令牌、鉴权在后面的任务里加上
+// （#489–#492），这里的列按各任务要用的形状一次留够，后面的任务只往里加数据。
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * 用户：平台本地的账号。登录名的字符集不含连字符（开发 Agent 的名字 `dev-<登录名>-<主机>` 靠这一点没有歧义）：
+ * 小写字母、数字、下划线，长度 1–32，由库里的约束保证。显示名不受限制。
+ * 密码哈希是 `crypto.scrypt` 的存储串（盐和参数写在串里，#490）；只靠外部身份登录的用户没有密码，但两者至少有一个。
+ * 外部身份留给以后接反向代理头或 OIDC（不用再迁移）。停用的用户登录、令牌和他发起的会话全部立即失效。
+ */
+export const users = pgTable(
+	"users",
+	{
+		id: uuid("id").primaryKey(),
+		loginName: text("login_name").notNull(),
+		displayName: text("display_name").notNull(),
+		passwordHash: text("password_hash"),
+		/** 停用的时间；没有停用为空。 */
+		disabledAt: timestamptz("disabled_at"),
+		/** 平台管理员：建项目、管理账号、维护公共项目，并在每个项目里拥有项目管理员的权限。 */
+		isPlatformAdmin: boolean("is_platform_admin").notNull().default(false),
+		externalIdentity: text("external_identity"),
+		createdAt: timestamptz("created_at").notNull(),
+	},
+	(t) => [
+		unique("users_login_name").on(t.loginName),
+		uniqueIndex("users_external_identity")
+			.on(t.externalIdentity)
+			.where(sql`${t.externalIdentity} is not null`),
+		check("users_login_name_format", sql`${t.loginName} ~ '^[a-z0-9_]{1,32}$'`),
+		check(
+			"users_can_authenticate",
+			sql`${t.passwordHash} is not null or ${t.externalIdentity} is not null`,
+		),
+	],
+);
+
+/**
+ * 项目：平台的顶层租户（ADR 0029）。标识不可修改（小写字母、数字、连字符，出现在路径里），所以它就是主键，
+ * 其余表的 `project_id` 直接存它；显示名可以修改。迁移时建两个：默认项目 `default` 和公共项目 `public`。
+ */
+export const projects = pgTable(
+	"projects",
+	{
+		id: text("id").$type<ProjectId>().primaryKey(),
+		displayName: text("display_name").notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+	},
+	(t) => [check("projects_id_format", sql`${t.id} ~ '^[a-z0-9][a-z0-9-]{0,62}$'`)],
+);
+
+/** 成员的角色：每种角色是固定的一组范围（ADR 0029 的范围表），检查只看范围，不看角色名。 */
+export type ProjectRole = "read_only" | "editor" | "project_admin";
+
+/** 成员：一个用户在一个项目里的身份，带一种角色。 */
+export const projectMembers = pgTable(
+	"project_members",
+	{
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		userId: uuid("user_id")
+			.notNull()
+			.references(() => users.id),
+		role: text("role").$type<ProjectRole>().notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.projectId, t.userId] }),
+		// 一个用户在哪些项目里。
+		index("project_members_user").on(t.userId),
+		check("project_members_role", sql`${t.role} in ('read_only', 'editor', 'project_admin')`),
+	],
+);
+
+/**
+ * 令牌的种类（ADR 0029「凭据」）：个人令牌属于用户，项目令牌属于项目，会话令牌属于一个会话（#495），
+ * 任务凭据属于一次任务尝试（#492）。会话令牌和任务凭据的种类先留出来，签发它们的任务再加。
+ * Agent 凭据不在这里：它有自己的表（`agent_credentials`）。
+ */
+export type ApiTokenKind = "personal" | "project" | "session" | "task";
+
+/**
+ * 令牌：命令行、API 客户端、自动化、助手会话和任务里的 SDK 调用平台用的凭据。库里只存 SHA-256 哈希，
+ * 原值只在签发时显示一次；`prefix` 是展示用的前缀（种类前缀加原值开头的几个字符），日志和列表里据此认出是哪一个。
+ * 各种类用到的列由 `api_tokens_shape` 约束：
+ * - 个人令牌：`user_id` 是所属用户，`project_id` 可选，限定在一个项目里；
+ * - 项目令牌：`project_id` 是所属项目（服务账号），没有用户；
+ * - 会话令牌：代发起人（`user_id`）、限一个项目（`project_id`）、属于一个会话（`session_id`，会话表由骨架建，先不加外键）；
+ * - 任务凭据：限本项目（`project_id`），属于一次任务尝试（`task_id` 是 `tasks.id`），没有用户。
+ * `scopes` 是范围的名字（读、运行、编辑、会话构建、发布、管理，由鉴权模块定，库里不约束：加范围不用迁移）。
+ * 令牌只吊销（`revoked_at`），不物理删除：「经 …」按令牌的名称记在运行和场景版本上。
+ */
+export const apiTokens = pgTable(
+	"api_tokens",
+	{
+		id: uuid("id").primaryKey(),
+		kind: text("kind").$type<ApiTokenKind>().notNull(),
+		name: text("name").notNull(),
+		prefix: text("prefix").notNull(),
+		tokenHash: text("token_hash").notNull(),
+		userId: uuid("user_id").references(() => users.id),
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.references(() => projects.id),
+		sessionId: uuid("session_id"),
+		taskId: uuid("task_id"),
+		scopes: text("scopes").array().notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+		expiresAt: timestamptz("expires_at"),
+		revokedAt: timestamptz("revoked_at"),
+		lastUsedAt: timestamptz("last_used_at"),
+	},
+	(t) => [
+		unique("api_tokens_hash").on(t.tokenHash),
+		// 列出一个用户自己的令牌、一个项目的项目令牌。
+		index("api_tokens_user").on(t.userId),
+		index("api_tokens_project").on(t.projectId),
+		// 任务结束时吊销它的凭据。
+		index("api_tokens_task").on(t.taskId).where(sql`${t.taskId} is not null`),
+		check("api_tokens_kind", sql`${t.kind} in ('personal', 'project', 'session', 'task')`),
+		check(
+			"api_tokens_shape",
+			sql`(${t.kind} = 'personal' and ${t.userId} is not null and ${t.sessionId} is null and ${t.taskId} is null)
+				or (${t.kind} = 'project' and ${t.projectId} is not null and ${t.userId} is null and ${t.sessionId} is null and ${t.taskId} is null)
+				or (${t.kind} = 'session' and ${t.userId} is not null and ${t.projectId} is not null and ${t.sessionId} is not null and ${t.taskId} is null)
+				or (${t.kind} = 'task' and ${t.projectId} is not null and ${t.taskId} is not null and ${t.userId} is null and ${t.sessionId} is null)`,
+		),
+	],
+);
+
+/**
+ * 登录：控制台登录后发的 Cookie（#490）。库里只存 Cookie 的哈希；空闲超过 `idle_expires_at` 失效，
+ * 每次使用往后顺延（写得多频繁由 #490 定，`last_used_at` 供节流）。注销（含「注销自己全部的登录」）记 `revoked_at`。
+ * 「登录」这个词只指这个；助手的对话叫「会话」。
+ */
+export const logins = pgTable(
+	"logins",
+	{
+		id: uuid("id").primaryKey(),
+		userId: uuid("user_id")
+			.notNull()
+			.references(() => users.id),
+		cookieHash: text("cookie_hash").notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+		lastUsedAt: timestamptz("last_used_at").notNull(),
+		idleExpiresAt: timestamptz("idle_expires_at").notNull(),
+		revokedAt: timestamptz("revoked_at"),
+	},
+	(t) => [unique("logins_cookie_hash").on(t.cookieHash), index("logins_user").on(t.userId)],
+);
+
+/**
+ * Agent 凭据的种类：`agent` 按台签发（项目 + Agent 名字固定，#492）；`shared` 是旧式的共享令牌
+ * （`SFLY_AGENT_TOKEN`），登记成默认项目的凭据，不限名字。
+ */
+export type AgentCredentialKind = "agent" | "shared";
+
+/**
+ * Agent 凭据（ADR 0029）：Agent 连接（`Hello.token`）和请求 HTTP 时（`Bearer`）出示的凭据，只存 SHA-256 哈希。
+ * - 按台签发的（`agent`）：属于一个项目和一个 Agent 名字（Agent 第一次连上之前还没有 `agents` 的行，所以名字不是外键）；
+ *   项目管理员签发的 `user_id` 为空，开发 Agent 的凭据记在签发它的编辑者名下（只有他自己和项目管理员能吊销）。
+ *   同一个名字可以有几个有效的凭据（轮换期间新旧并存）。
+ * - 共享令牌（`shared`）：控制面启动时配了 `SFLY_AGENT_TOKEN` 就登记一条（默认项目、不限名字、没有展示前缀）。
+ */
+export const agentCredentials = pgTable(
+	"agent_credentials",
+	{
+		id: uuid("id").primaryKey(),
+		kind: text("kind").$type<AgentCredentialKind>().notNull(),
+		projectId: text("project_id")
+			.$type<ProjectId>()
+			.notNull()
+			.references(() => projects.id),
+		agentName: text("agent_name"),
+		prefix: text("prefix"),
+		tokenHash: text("token_hash").notNull(),
+		userId: uuid("user_id").references(() => users.id),
+		createdAt: timestamptz("created_at").notNull(),
+		revokedAt: timestamptz("revoked_at"),
+		lastUsedAt: timestamptz("last_used_at"),
+	},
+	(t) => [
+		unique("agent_credentials_hash").on(t.tokenHash),
+		index("agent_credentials_agent").on(t.projectId, t.agentName),
+		check("agent_credentials_kind", sql`${t.kind} in ('agent', 'shared')`),
+		check(
+			"agent_credentials_shape",
+			sql`(${t.kind} = 'agent' and ${t.agentName} is not null and ${t.prefix} is not null)
+				or (${t.kind} = 'shared' and ${t.agentName} is null and ${t.userId} is null)`,
+		),
 	],
 );

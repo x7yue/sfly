@@ -5,10 +5,9 @@ import {
 	NODE_SIZE,
 	nonMembersInside,
 	type Position,
-	stickyNoteSize,
 	subflowRegions,
 } from "@sfly/orchestration";
-import { type Annotation, annotationColor, type StickyNote } from "@sfly/schema";
+import { type Annotation, annotationColor } from "@sfly/schema";
 import {
 	Background,
 	BackgroundVariant,
@@ -66,7 +65,6 @@ import {
 	type NodeGround,
 	type NodeRename,
 	type PortState,
-	type StickyEdit,
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
 import { type DocEdge, docEdgeOf, edgeId, layoutOf, type SfEdge, type SfNode } from "./flow";
@@ -90,7 +88,6 @@ import { MinimapAnnotations } from "./MinimapAnnotations";
 import { VIEWPORT_MS, viewportDuration } from "./motion";
 import { nodeTypes } from "./NodeCard";
 import { isNavigationKey, navigateChain } from "./navigation";
-import { type PlacedStickyNote, StickyNotes } from "./StickyNotes";
 import { SubflowRegions } from "./SubflowRegions";
 import {
 	type CanvasSelection,
@@ -100,7 +97,6 @@ import {
 	NO_SELECTION,
 	selectAnnotation,
 	selectedAnnotation,
-	selectedSticky,
 	selectNode,
 	selectNodes,
 	soleNode,
@@ -165,8 +161,6 @@ export interface FlowCanvasProps {
 	edges: SfEdge[];
 	/** 场景文档里的注释框（范围由成员算出）。 */
 	annotations?: readonly Annotation[];
-	/** 场景文档里的便签（没有位置的不画；画布打开时已经补齐）。 */
-	stickyNotes?: readonly StickyNote[];
 	info: CanvasInfo;
 	/** 选中了什么（只含画布上有的节点）。 */
 	selection: CanvasSelection;
@@ -217,8 +211,6 @@ export interface FlowCanvasProps {
 	rename?: NodeRename;
 	/** 注释框和多选的操作（见上面的扩展点说明）；不给时没有工具条，拖动节点也不改注释框。 */
 	annotationEdit?: AnnotationEdit;
-	/** 便签的操作：拖动、改大小、双击打开、工具条、Delete 删除（只在 `editable` 时生效）。 */
-	stickyEdit?: StickyEdit;
 	/** 拖动连线的端点改接（React Flow 的重连手势）。 */
 	reconnect?: Pick<
 		ReactFlowProps<SfNode, SfEdge>,
@@ -231,7 +223,6 @@ export interface FlowCanvasProps {
 }
 
 const NO_ANNOTATIONS: readonly Annotation[] = [];
-const NO_STICKY_NOTES: readonly StickyNote[] = [];
 
 /** 正在拖动的一组节点：抓着的是哪个，是否按住 Alt（从原来的注释框里拖出）。 */
 interface NodeDrag {
@@ -262,7 +253,6 @@ export function FlowCanvas({
 	nodes,
 	edges,
 	annotations = NO_ANNOTATIONS,
-	stickyNotes = NO_STICKY_NOTES,
 	info,
 	selection,
 	onSelect,
@@ -289,7 +279,6 @@ export function FlowCanvas({
 	onInsertOnEdge,
 	rename,
 	annotationEdit,
-	stickyEdit,
 	reconnect,
 	dockStart,
 	dockTools,
@@ -424,17 +413,12 @@ export function FlowCanvas({
 	// 适配视图把节点和注释框的范围一起放进视口：框的范围由成员算出，比节点的外接框大（子流程成员的框更大），
 	// 只按节点算的话，节点贴着适配的边距时，框的外沿会伸到视口或检查器、工具条下面去。
 	// 范围按布局里的位置算，不等 React Flow 量出节点尺寸：卡片按布局里量出来的高度（运行状态下会长高），
-	// 打开画布时还没量，按原高度；便签按它的大小。
-	const placedNotes = useMemo(
-		() => stickyNotes.filter((s): s is PlacedStickyNote => s.position !== undefined),
-		[stickyNotes],
-	);
-	const extent = useRef({ layout, boxes, placedNotes });
-	extent.current = { layout, boxes, placedNotes };
+	// 打开画布时还没量，按原高度。
+	const extent = useRef({ layout, boxes });
+	extent.current = { layout, boxes };
 	const contentBounds = useCallback(() => {
-		const { layout: current, boxes: framed, placedNotes: notes } = extent.current;
+		const { layout: current, boxes: framed } = extent.current;
 		const rects = [
-			...notes.map((s) => ({ ...s.position, ...stickyNoteSize(s) })),
 			...current.nodes.flatMap(({ position: p, height }) =>
 				p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: height ?? NODE_HEIGHT }] : [],
 			),
@@ -553,19 +537,6 @@ export function FlowCanvas({
 		[onSelect],
 	);
 	const pickAnnotation = useCallback((id: string) => onSelect(selectAnnotation(id)), [onSelect]);
-
-	// 点便签选中它时把焦点放回画布区域：之后按 Delete 删掉它、按 Esc 取消选中（和点空白处一样）。
-	const stickyEditWithFocus = useMemo<StickyEdit | undefined>(
-		() =>
-			stickyEdit && {
-				...stickyEdit,
-				select: (id) => {
-					stickyEdit.select(id);
-					wrapper.current?.focus({ preventScroll: true });
-				},
-			},
-		[stickyEdit],
-	);
 
 	// —— 拖动节点进出注释框：拖动中算出松手会怎样（高亮要加入的框、卡片下面写着结果），松手时交给使用方 ——
 	const dropEdit = canEdit ? annotationEdit : undefined;
@@ -802,7 +773,6 @@ export function FlowCanvas({
 		onEnter,
 		reveal,
 		openNodeMenu,
-		removeSticky: editable ? stickyEdit?.remove : undefined,
 		stopFollowing,
 	});
 	latest.current = {
@@ -813,7 +783,6 @@ export function FlowCanvas({
 		onEnter,
 		reveal,
 		openNodeMenu,
-		removeSticky: editable ? stickyEdit?.remove : undefined,
 		stopFollowing,
 	};
 	useEffect(() => {
@@ -836,17 +805,8 @@ export function FlowCanvas({
 				target?.closest("[data-node-id]") !== null ||
 				target?.classList.contains("react-flow__pane");
 			if (!onCanvas || !(target === document.body || root.contains(target))) return;
-			const {
-				nodes,
-				edges,
-				selection,
-				onSelect,
-				onEnter,
-				reveal,
-				openNodeMenu,
-				removeSticky,
-				stopFollowing,
-			} = latest.current;
+			const { nodes, edges, selection, onSelect, onEnter, reveal, openNodeMenu, stopFollowing } =
+				latest.current;
 			const cardId = target?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
 			if (cardId && (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey))) {
 				// 拦下默认行为：浏览器自己的右键菜单不再弹出。
@@ -876,15 +836,6 @@ export function FlowCanvas({
 			} else if (event.key === "Enter" && selection.kind !== "none") {
 				event.preventDefault();
 				onEnter?.();
-			} else if (
-				(event.key === "Delete" || event.key === "Backspace") &&
-				selection.kind === "sticky" &&
-				removeSticky
-			) {
-				// 选中的是便签：React Flow 的删除只管节点和连线，这里删掉便签。
-				event.preventDefault();
-				removeSticky(selection.id);
-				root.focus({ preventScroll: true });
 			} else if (event.key === "Escape" && selection.kind !== "none") {
 				event.preventDefault();
 				onSelect(NO_SELECTION);
@@ -1065,12 +1016,6 @@ export function FlowCanvas({
 							</output>
 						</ViewportPortal>
 					)}
-					<StickyNotes
-						notes={placedNotes}
-						selected={selectedSticky(selection)}
-						edit={editable ? stickyEditWithFocus : undefined}
-						toolbar={!drag}
-					/>
 					<SubflowRegions
 						layout={layout}
 						nodes={shownNodes}
@@ -1105,12 +1050,7 @@ export function FlowCanvas({
 							nodeStrokeWidth={8}
 						/>
 					)}
-					<MinimapAnnotations
-						root={wrapper}
-						shown={minimap}
-						boxes={boxes}
-						stickyNotes={placedNotes}
-					/>
+					<MinimapAnnotations root={wrapper} shown={minimap} boxes={boxes} />
 				</ReactFlow>
 				<CanvasDock
 					tool={tool}

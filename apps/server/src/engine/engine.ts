@@ -47,6 +47,7 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
+import type { ProjectId } from "../projects/project-id.js";
 import type {
 	TriggerAdmission,
 	TriggerRejection,
@@ -239,7 +240,7 @@ export class Engine implements AgentSessionHandler {
 		return this.#event(async (step) => {
 			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
 			if (!admitted.ok) return admitted;
-			const { version, plan, params, runPreset } = admitted;
+			const { projectId, version, plan, params, runPreset } = admitted;
 			this.#documents.set(version.id, version.document);
 			this.#plans.set(version.id, plan);
 			const runId = randomUUID();
@@ -249,6 +250,8 @@ export class Engine implements AgentSessionHandler {
 					id: runId,
 					orchestrationId,
 					orchestrationVersionId: version.id,
+					// 运行的项目和它的场景一致（触发准入读场景时一起取出，ADR 0029）。
+					projectId,
 					triggeredBy: actor.nickname,
 					triggeredVia: actor.via,
 					params,
@@ -321,22 +324,22 @@ export class Engine implements AgentSessionHandler {
 	 * 等它以一致的版本重新连上再派发），事务提交后通知 Agent（UpdateNow）。Agent 按取消流程终止这些任务后照常上报结果，
 	 * 控制面已不再等这些尝试，只回 Ack。
 	 */
-	updateNow(agentName: string): Promise<UpdateNowOutcome> {
+	updateNow(project: ProjectId, agentName: string): Promise<UpdateNowOutcome> {
 		return this.#event(async (step) => {
+			// 先确认 Agent 在这个项目里：别的项目的 Agent 和不存在一样（ADR 0029），不论它在不在线。
+			const [known] = await step.tx
+				.select({ name: agents.name })
+				.from(agents)
+				.where(and(eq(agents.projectId, project), eq(agents.name, agentName)));
+			if (!known) return { ok: false, status: 404, code: "not_found", message: "agent not found" };
 			const conn = this.deps.hub.connection(agentName);
 			if (!conn) {
-				const [known] = await step.tx
-					.select({ name: agents.name })
-					.from(agents)
-					.where(eq(agents.name, agentName));
-				return known
-					? {
-							ok: false,
-							status: 409,
-							code: "agent_offline",
-							message: `agent ${agentName} is offline`,
-						}
-					: { ok: false, status: 404, code: "not_found", message: "agent not found" };
+				return {
+					ok: false,
+					status: 409,
+					code: "agent_offline",
+					message: `agent ${agentName} is offline`,
+				};
 			}
 			if (!this.deps.hub.versionMismatch(conn.info)) {
 				return {
@@ -1035,7 +1038,11 @@ export class Engine implements AgentSessionHandler {
 		task: TaskRow,
 		kind: ErrorKind,
 		message: string,
-		{ cancelled = false, endOffset }: { cancelled?: boolean; endOffset?: ClockOffset } = {},
+		{
+			cancelled = false,
+			endOffset,
+			location,
+		}: { cancelled?: boolean; endOffset?: ClockOffset; location?: string } = {},
 	): Promise<void> {
 		const ended = { endedAt: step.now, ...endClockOffset(endOffset) };
 		const { run, chain, index, node } = await this.#locate(step.tx, task);
@@ -1059,7 +1066,13 @@ export class Engine implements AgentSessionHandler {
 		}
 		await step.tx
 			.update(tasks)
-			.set({ status: "failed", errorKind: kind, errorMessage: message, ...ended })
+			.set({
+				status: "failed",
+				errorKind: kind,
+				errorMessage: message,
+				errorLocation: location || null,
+				...ended,
+			})
 			.where(eq(tasks.id, task.id));
 		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（docs/SEMANTICS.md §4.1 第 4 条），后面的普通节点记为 stopped。
 		if (!stopped && task.agentName && shouldRetry(node, kind, task.attempt)) {
@@ -1103,6 +1116,7 @@ export class Engine implements AgentSessionHandler {
 			await this.#failTask(step, task, kind, result.error?.message ?? "", {
 				cancelled: result.status === ProtoTaskStatus.CANCELLED,
 				endOffset,
+				location: result.error?.location,
 			});
 			return;
 		}

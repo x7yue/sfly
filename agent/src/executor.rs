@@ -46,10 +46,23 @@ struct RunnerError {
     message: String,
     #[serde(default)]
     traceback: String,
+    /// 节点失败时出错的位置（「模块.函数 第 N 行」）；没有这个键、不是字符串（共用用例表 testdata/local-protocol-cases.json）
+    /// 都当作没有：位置只是附带的信息，写错了不能让整份 output.json 读不出来。
+    #[serde(default, deserialize_with = "string_or_none")]
+    location: Option<String>,
     /// 执行器在调用节点之前就拒绝了输入（有节点没有声明的名字）时写 `config_error`；
     /// 没有这个键或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
     #[serde(default)]
     kind: Option<String>,
+}
+
+fn string_or_none<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(match Value::deserialize(deserializer)? {
+        Value::String(text) => Some(text),
+        _ => None,
+    })
 }
 
 impl RunnerError {
@@ -74,15 +87,26 @@ pub fn success(task: &AssignTask, outputs: &Value) -> TaskResult {
 }
 
 pub fn failure(task: &AssignTask, kind: ErrorKind, message: impl Into<String>) -> TaskResult {
+    failure_at(task, kind, message, String::new())
+}
+
+/// 带出错位置的失败（节点代码里出错的那一行）；`location` 为空串表示没有。
+pub fn failure_at(
+    task: &AssignTask,
+    kind: ErrorKind,
+    message: impl Into<String>,
+    location: String,
+) -> TaskResult {
     TaskResult {
         task_id: task.task_id.clone(),
         attempt: task.attempt,
         status: TaskStatus::Failed.into(),
         outputs_json: String::new(),
-        error: Some(TaskError {
+        error: Some(Box::new(TaskError {
             kind: kind.into(),
             message: message.into(),
-        }),
+            location,
+        })),
         ..Default::default()
     }
 }
@@ -348,12 +372,13 @@ impl Running {
             Some(Output::Success { outputs }) if status.success() => success(task, &outputs),
             Some(Output::Failed { error }) => {
                 let kind = error.error_kind();
+                let location = error.location.clone().unwrap_or_default();
                 let message = if error.traceback.is_empty() {
                     error.message
                 } else {
                     format!("{}\n\n{}", error.message, error.traceback.trim_end())
                 };
-                failure(task, kind, message)
+                failure_at(task, kind, message, location)
             }
             _ => failure(
                 task,
@@ -417,10 +442,11 @@ impl Running {
             attempt: self.task.attempt,
             status: TaskStatus::Cancelled.into(),
             outputs_json: String::new(),
-            error: Some(TaskError {
+            error: Some(Box::new(TaskError {
                 kind: ErrorKind::Unspecified.into(),
                 message: format!("任务已取消，{how}"),
-            }),
+                ..Default::default()
+            })),
             ..Default::default()
         }
     }

@@ -61,7 +61,7 @@ export const REMOVED_NODE = {
 /** 三个已移除的节点，按它们在链上的顺序。 */
 export const REMOVED_NODES = [REMOVED_WAIT, REMOVED_TIMER, REMOVED_NODE] as const;
 
-/** 移除之前保存的文档（没有 sticky_notes 之类后来才有的字段也没关系：读出时补齐）。 */
+/** 移除之前保存的文档：和那时每个版本一样带着空的 `sticky_notes`（便签，读出时去掉）。 */
 export const LEGACY_DOCUMENT = {
 	nodes: [
 		{
@@ -90,7 +90,7 @@ export async function seedRemovedKindScenario(cp: TestControlPlane): Promise<typ
 	await client.connect();
 	try {
 		await client.query(
-			"insert into orchestrations (id, name, description, head_version, created_at) values ($1, '移除之前的场景', '', 1, $2)",
+			"insert into orchestrations (id, project_id, name, description, head_version, created_at) values ($1, 'default', '移除之前的场景', '', 1, $2)",
 			[IDS.scenario, AT],
 		);
 		await client.query(
@@ -99,8 +99,8 @@ export async function seedRemovedKindScenario(cp: TestControlPlane): Promise<typ
 			[IDS.version, IDS.scenario, JSON.stringify(LEGACY_DOCUMENT), AT],
 		);
 		await client.query(
-			`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at, ended_at)
-			values ($1, $2, $3, '旧人', '{"env":"A"}', 'success', $4, $4)`,
+			`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status, started_at, ended_at)
+			values ($1, $2, $3, 'default', '旧人', '{"env":"A"}', 'success', $4, $4)`,
 			[IDS.run, IDS.scenario, IDS.version, AT],
 		);
 		await client.query(
@@ -172,7 +172,7 @@ export async function seedWaitingSleepRun(cp: TestControlPlane): Promise<typeof 
 	await client.connect();
 	try {
 		await client.query(
-			"insert into orchestrations (id, name, description, head_version, created_at) values ($1, '停在等待节点上的场景', '', 1, $2)",
+			"insert into orchestrations (id, project_id, name, description, head_version, created_at) values ($1, 'default', '停在等待节点上的场景', '', 1, $2)",
 			[WAITING.scenario, AT],
 		);
 		await client.query(
@@ -181,8 +181,8 @@ export async function seedWaitingSleepRun(cp: TestControlPlane): Promise<typeof 
 			[WAITING.version, WAITING.scenario, JSON.stringify(document), AT],
 		);
 		await client.query(
-			`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at)
-			values ($1, $2, $3, '旧人', '{}', 'running', $4)`,
+			`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status, started_at)
+			values ($1, $2, $3, 'default', '旧人', '{}', 'running', $4)`,
 			[WAITING.run, WAITING.scenario, WAITING.version, AT],
 		);
 		await client.query(
@@ -264,7 +264,7 @@ export async function seedWaitingRaceRun(cp: TestControlPlane): Promise<typeof R
 	await client.connect();
 	try {
 		await client.query(
-			"insert into orchestrations (id, name, description, head_version, created_at) values ($1, '两个停在已移除节点上的场景', '', 1, $2)",
+			"insert into orchestrations (id, project_id, name, description, head_version, created_at) values ($1, 'default', '两个停在已移除节点上的场景', '', 1, $2)",
 			[RACE.scenario, AT],
 		);
 		await client.query(
@@ -273,8 +273,8 @@ export async function seedWaitingRaceRun(cp: TestControlPlane): Promise<typeof R
 			[RACE.version, RACE.scenario, JSON.stringify(document), AT],
 		);
 		await client.query(
-			`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at)
-			values ($1, $2, $3, '旧人', '{}', 'running', $4)`,
+			`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status, started_at)
+			values ($1, $2, $3, 'default', '旧人', '{}', 'running', $4)`,
 			[RACE.run, RACE.scenario, RACE.version, AT],
 		);
 		await client.query(

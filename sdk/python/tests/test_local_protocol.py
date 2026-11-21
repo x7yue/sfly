@@ -130,7 +130,12 @@ class Observed:
                 "kind": e.error.kind,
                 "abnormal_exit": {"stderr_tail": tail},
             }
-        return {"status": "failed", "kind": e.error.kind, "report": report}
+        return {
+            "status": "failed",
+            "kind": e.error.kind,
+            "report": report,
+            "location": e.error.location,
+        }
 
 
 def action_item(record: ActionRecord) -> dict[str, Any]:
@@ -266,7 +271,11 @@ def assert_events(case: dict[str, Any], expect: dict[str, Any], tmp_path: Path) 
 
 def assert_result(case: dict[str, Any], expect: dict[str, Any], tmp_path: Path) -> None:
     observed, _ = run(case, tmp_path)
-    assert observed.result() == expect
+    result = observed.result()
+    # 条目里写了的键才比较（用例表的说明；Agent 一端也是这样）：没写 location 的用例不比较它。
+    if "location" not in expect:
+        result.pop("location", None)
+    assert result == expect
 
 
 # ---- 用例 ----

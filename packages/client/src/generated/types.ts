@@ -524,11 +524,8 @@ export interface DashboardRunFailure {
 	display_name?: string;
 	/** 失败节点最后一次尝试的尝试号。 */
 	attempt: number;
-	/** 这次尝试的错误，其中的 secret 值已打码。 */
-	error: {
-		kind: string;
-		message: string;
-	} | null;
+	/** 这次尝试的错误（含出错位置，见 `ErrorView`），其中的 secret 值已打码。 */
+	error: ErrorView | null;
 }
 
 export interface DashboardRunStats {
@@ -695,10 +692,15 @@ export interface EntryNodeInput {
 	params?: ParamDeclarationInput[];
 }
 
-/** 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。 */
+/**
+ * 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。
+ * location 是节点失败时出错的位置：节点代码里的那一行，写成「模块.函数 第 N 行」（SDK 的执行器取，堆栈不带执行器自己的帧）；
+ * 不是节点自己出错、取不到位置、旧版本 Agent 或 SDK 上报的、升级之前的任务为 null。
+ */
 export interface ErrorView {
 	kind: string;
 	message: string;
+	location: string | null;
 }
 
 /** 机器人名称：去掉首尾空白后 1 到 `FEISHU_BOT_NAME_MAX` 个字符。 */
@@ -1255,7 +1257,12 @@ export interface OrchestrationDocument {
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages?: Record<PackageName, string>;
 	annotations?: AnnotationInput[];
-	sticky_notes?: StickyNote[];
+	/**
+	 * 已移除的字段（便签，ADR 0028）：只为兼容旧客户端和升级前导出的文件保留，新写的文档不要带它。
+	 * 保存时收到空数组会丢掉（新版本里没有它），里面有内容的被拒绝（400 `invalid_document`，写明有几条、怎么办）。
+	 * 读到的文档（`StoredOrchestrationDocument`）里没有这个字段，读出来原样存回去不用处理它。
+	 */
+	sticky_notes?: unknown[];
 }
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
@@ -2154,31 +2161,6 @@ export interface SavedVersionView {
 	warnings: DocumentWarningView[];
 }
 
-/**
- * 便签：画布上自由摆放的说明（检查清单、已知问题、待办），不挂在任何节点上。属于版本内容，只用于显示，
- * 不影响执行（docs/SEMANTICS.md §1.7，ADR 0026）。和注释框不同，它记下自己的位置和大小。
- */
-export interface StickyNote {
-	/** 便签之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `sticky_1`。 */
-	id: string;
-	/** 加粗显示的第一行。 */
-	title?: string;
-	/** 正文：以 `- ` 开头的行显示成列表的一项，其余是普通段落。 */
-	text: string;
-	/** 颜色，和注释框同一套色板；不写就是黄色，画布选黄色时也去掉这一项。 */
-	color?: AnnotationColor;
-	/** 左上角的画布坐标；不写时由整理布局摆放。 */
-	position?: {
-		x: number;
-		y: number;
-	};
-	/** 宽高；不写是 STICKY_NOTE_SIZE。 */
-	size?: {
-		width: number;
-		height: number;
-	};
-}
-
 export interface StopSubflowNode {
 	id: string;
 	/** 布局属于版本内容。 */
@@ -2232,7 +2214,6 @@ export interface StoredOrchestrationDocument {
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages: Record<PackageName, string>;
 	annotations: Annotation[];
-	sticky_notes: StickyNote[];
 }
 
 export interface SubflowEntryNode {

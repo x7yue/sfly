@@ -41,7 +41,6 @@ const doc: StoredOrchestrationDocument = {
 	],
 	packages: { demo: "1.0.0" },
 	annotations: [],
-	sticky_notes: [],
 } as StoredOrchestrationDocument;
 
 const io = (outputs: Record<string, { type: string }>) => ({

@@ -196,6 +196,8 @@ class NodeError:
     message: str
     type: str | None = None
     traceback: str = ""
+    #: 出错的位置：节点代码里的那一行，「模块.函数 第 N 行」（node_error 才有，取不到是 None）。
+    location: str | None = None
 
 
 @dataclass
@@ -909,11 +911,14 @@ def execute(
         # 执行器在调用节点之前就拒绝了输入（没有声明的名字）时写 kind: config_error；
         # 没有 kind、或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
         kind = "config_error" if failure.get("kind") == "config_error" else "node_error"
+        location = failure.get("location")
         execution.error = NodeError(
             kind,
             str(failure.get("message", "")),
             failure.get("type"),
             str(failure.get("traceback", "")),
+            # 位置不是字符串（或是空串）当作没有，和 Agent 一样。
+            location if isinstance(location, str) and location else None,
         )
     else:
         fail(

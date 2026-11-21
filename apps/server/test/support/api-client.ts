@@ -145,7 +145,7 @@ export interface AttemptView {
 	agent: string | null;
 	inputs: Record<string, unknown> | null;
 	outputs: Record<string, unknown> | null;
-	error: { kind: string; message: string } | null;
+	error: { kind: string; message: string; location: string | null } | null;
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
@@ -170,7 +170,7 @@ export interface NodeView {
 	status: string;
 	agent: string | null;
 	outputs: Record<string, unknown> | null;
-	error: { kind: string; message: string } | null;
+	error: { kind: string; message: string; location: string | null } | null;
 	attempts: AttemptView[];
 }
 

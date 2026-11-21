@@ -58,8 +58,16 @@ export const isOnAgentStatus = (status: string): status is OnAgentStatus =>
 export const isActiveStatus = (status: string): status is ActiveStatus =>
 	(ACTIVE_STATUSES as readonly string[]).includes(status);
 
-/** 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。 */
-export const ErrorView = z.object({ kind: z.string(), message: z.string() });
+/**
+ * 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。
+ * location 是节点失败时出错的位置：节点代码里的那一行，写成「模块.函数 第 N 行」（SDK 的执行器取，堆栈不带执行器自己的帧）；
+ * 不是节点自己出错、取不到位置、旧版本 Agent 或 SDK 上报的、升级之前的任务为 null。
+ */
+export const ErrorView = z.object({
+	kind: z.string(),
+	message: z.string(),
+	location: z.string().nullable(),
+});
 
 /** 最新进度（ctx.progress），带两种时间（ADR 0018）。 */
 export const TaskProgressView = z.object({
