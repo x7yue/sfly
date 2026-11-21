@@ -20,7 +20,7 @@ const document = (): OrchestrationDocument => ({
 			kind: "subflow_entry",
 			params: [{ name: "key", type: "number", required: false, secret: true, default: "******" }],
 		},
-		{ id: "wait", kind: "sleep", always: false, duration: "5s" },
+		{ id: "wait", kind: "package", package: "demo", node: "echo", always: false, inputs: {} },
 	],
 	edges: [],
 	packages: {},

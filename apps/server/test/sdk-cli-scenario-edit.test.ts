@@ -876,7 +876,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		const MASK = "******";
 		/** 入口有一个 secret 参数（带默认值）和一个普通参数的文档。 */
 		const withSecret = (secret: unknown = SECRET) => ({
-			...sleepDocument(),
+			...echoDocument(),
 			nodes: [
 				{
 					...entry,
@@ -885,7 +885,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 						{ name: "region", type: "string", default: "cn-east" },
 					],
 				},
-				...sleepDocument().nodes.slice(1),
+				...echoDocument().nodes.slice(1),
 			],
 		});
 
@@ -904,7 +904,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				{ name: "region", secret: false, default: "cn-east" },
 			]);
 			// 不含 secret 的场景没有这条提示。
-			const plain = await createScenario("保密-拉取-没有", sleepDocument());
+			const plain = await createScenario("保密-拉取-没有", echoDocument());
 			expect((await cli("scenario", "pull", plain, "-o", newFile())).stdout).not.toContain(
 				"占位符",
 			);
