@@ -1,11 +1,11 @@
-import type { Browser, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
-import { createEditorScenario, headOf, inspector, nodeCard, switchMode } from "./editor-support";
+import { createEditorScenario, headOf, inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { box } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
 
-// 版本历史与对比、恢复、保存冲突（409）、在线编辑者（#40）。
+// 版本历史与对比、恢复、保存冲突（409）。
 
 const versionList = (page: Page) => page.getByRole("list", { name: "版本" });
 const versionRow = (page: Page, n: number) =>
@@ -208,68 +208,4 @@ test("保存冲突：把本地修改另存为新场景，原场景不受影响",
 	const original = await headOf(controlPlane, id);
 	expect(original.number).toBe(2);
 	expect(original.document.nodes.map((n) => n.id)).toContain("report");
-});
-
-async function openAs(browser: Browser, baseURL: string, nickname: string, path: string) {
-	const context = await browser.newContext({ baseURL, viewport: { width: 1440, height: 900 } });
-	await context.addInitScript((name) => {
-		window.localStorage.setItem("sfly.nickname", name);
-	}, nickname);
-	const page = await context.newPage();
-	await page.goto(path);
-	await expect(nodeCard(page, "entry")).toBeVisible();
-	return { context, page };
-}
-
-test("在线编辑者：别人打开同一场景时显示在画布右上，离开后消失；自己的其他标签页标为「你（其他标签页）」", async ({
-	page,
-	browser,
-	controlPlane,
-	connectAgent,
-}) => {
-	await connectAgent({
-		name: "agent-linux",
-		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
-	});
-	const id = await createEditorScenario(controlPlane);
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "entry")).toBeVisible();
-	const editors = page.getByRole("status").filter({ hasText: "正在编辑" });
-	await expect(editors).toHaveCount(0);
-
-	const other = await openAs(browser, controlPlane.httpUrl, "小李", `/orchestrations/${id}`);
-	await expect(editors).toHaveText(/小李 正在编辑/);
-	const at = await box(editors);
-	expect(at.x).toBeGreaterThan(720);
-	expect(at.y).toBeLessThan(54);
-	// 对方也能看到自己。
-	await expect(other.page.getByRole("status").filter({ hasText: "tester 正在编辑" })).toBeVisible();
-
-	// 运行状态下右上控件组也显示在线编辑者，切换模式时在线状态不中断。
-	const triggered = await controlPlane.fetch(`/orchestrations/${id}/runs`, {
-		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
-		body: JSON.stringify({ params: { biz_date: "2026-01-01" } }),
-	});
-	expect(triggered.status).toBe(201);
-	await switchMode(page, "run");
-	await expect(page.getByRole("link", { name: "打开运行监控" })).toBeVisible();
-	await expect(editors).toHaveText(/小李 正在编辑/);
-	await switchMode(page, "edit");
-	await expect(page.getByRole("button", { name: /保存/ })).toBeVisible();
-	await expect(other.page.getByRole("status").filter({ hasText: "tester 正在编辑" })).toBeVisible();
-	await expect(editors).toHaveText(/小李 正在编辑/);
-
-	// 离开画布页（回到场景列表）后立即消失。
-	await other.page.getByRole("link", { name: "返回场景编排" }).click();
-	await expect(other.page).toHaveURL(/\/orchestrations$/);
-	await expect(editors).toHaveCount(0);
-	await other.context.close();
-
-	const secondTab = await page.context().newPage();
-	await secondTab.goto(`/orchestrations/${id}`);
-	await expect(editors).toHaveText(/你（其他标签页） 正在编辑/);
-	// 关闭标签页（pagehide）后也立即消失。
-	await secondTab.close({ runBeforeUnload: true });
-	await expect(editors).toHaveCount(0);
 });

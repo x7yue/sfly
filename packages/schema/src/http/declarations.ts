@@ -43,7 +43,7 @@ export interface PathKind {
 export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/orchestrations": {
 		kind: "scenario",
-		why: "场景，以及场景的版本、运行预设、预检、在线编辑者、场景的运行：路径里的 :id 都是场景 id",
+		why: "场景，以及场景的版本、运行预设、预检、场景的运行：路径里的 :id 都是场景 id",
 	},
 	"/runs": {
 		kind: "run",
@@ -139,17 +139,16 @@ export interface DeclarationRules {
 }
 
 /**
- * 声明为只读、但调用后会留下点什么的接口：只写不影响任何资源内容的东西（心跳、访问日志、最后访问时间），
+ * 声明为只读、但调用后会留下点什么的接口：只写不影响任何资源内容的东西（访问日志、最后访问时间、内存里的临时状态），
  * 算只读，要在这里登记，写明写了什么。方法不是 GET 的只读接口（不是一眼看得出只读的）也一定在这里。
  * 键是 `方法 路径`（路径模板）。契约测试检查表里的接口都存在、都声明为只读；
  * 控制面的测试（read-only-routes.test.ts）对这里的接口同样要求库里和数据目录里没有变化，
  * 所以只写内存的才能登记；写库的（访问日志）要先在那个测试里单独说明。
+ *
+ * 现在没有这样的接口，表是空的（原来只有在线编辑者的心跳和离开，随功能删除）；
+ * 机制保留：非 GET 的接口声明为只读时仍然要来这里登记，没登记就报错。
  */
-export const READS_WITH_TRACES: Readonly<Record<string, string>> = {
-	"POST /orchestrations/:id/presence":
-		"心跳：只改内存里的在线编辑者名单（不落库），不影响场景的内容",
-	"POST /orchestrations/:id/presence/leave": "离开：只从内存里的在线编辑者名单里去掉这个会话",
-};
+export const READS_WITH_TRACES: Readonly<Record<string, string>> = {};
 
 export const DECLARATION_RULES: DeclarationRules = {
 	pathKinds: PATH_KINDS,

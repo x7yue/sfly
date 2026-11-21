@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { createQueuedRun } from "./support/queued-run.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import { repoRoot, sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -142,7 +143,7 @@ describe("sfly api → 控制面", () => {
 		it("SSE 原样输出事件，读到 --timeout 秒就停止并正常退出", async () => {
 			const result = await cli(
 				"GET",
-				`/orchestrations/${alphaId}/presence/events`,
+				`/runs/${await createQueuedRun(cp)}/events`,
 				"--timeout",
 				"1",
 			);
