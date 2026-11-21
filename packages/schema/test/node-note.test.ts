@@ -11,8 +11,6 @@ const KINDS = [
 	{ id: "entry", kind: "entry" },
 	{ id: "sub", kind: "subflow_entry", name: "report" },
 	{ id: "spawn", kind: "async" },
-	{ id: "at", kind: "timer", at: "10:00:00" },
-	{ id: "pause", kind: "sleep", duration: "5s" },
 	{ id: "stop", kind: "stop_subflow", subflow: "sub" },
 	{ id: "work", kind: "package", package: "stub", node: "echo" },
 ] as const;

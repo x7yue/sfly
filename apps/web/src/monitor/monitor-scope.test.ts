@@ -35,7 +35,6 @@ const attempt = (
 	ended_at: status === "running" ? null : iso((startedAt ?? 0) + 2),
 	start_clock_offset: null,
 	end_clock_offset: null,
-	wake_at: null,
 	progress: null,
 	current_action: null,
 });

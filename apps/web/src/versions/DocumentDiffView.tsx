@@ -260,9 +260,6 @@ const FIELD_LABEL: Record<string, string> = {
 	timeout: "超时（秒）",
 	retries: "重试次数",
 	queue_timeout: "排队超时（秒）",
-	at: "定时",
-	tz: "时区",
-	duration: "时长",
 	subflow: "要停止的子流程",
 	note: TERM.note,
 };

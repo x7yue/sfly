@@ -6,6 +6,7 @@ import type {
 	OrchestrationDocument,
 	OrchestrationView,
 	RunNotificationChanges,
+	SecretDefaultProblem,
 	StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
@@ -16,9 +17,14 @@ import { orchestrations, orchestrationVersions, runs } from "../db/schema.js";
 import type { FocusRejection } from "../focus/focus-list.js";
 import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-settings.js";
 import { copyPresets } from "../presets/preset-store.js";
+import { maskSecretDefaults, restoreSecretDefaults } from "./secret-defaults.js";
 
 export type { OrchestrationView };
 
+/**
+ * 一个场景版本的视图：场景文档离开存储层的唯一一处（{@link toVersionView}），secret 参数的默认值在这里打码
+ * （secret-defaults.ts），所以经它的接口默认就是打码的；需要原值的地方（引擎、触发准入、预检的实际值检查）在自己的事务里读库。
+ */
 export interface OrchestrationVersionView {
 	id: string;
 	orchestration_id: string;
@@ -55,7 +61,9 @@ export interface VersionSummary {
 export type SaveVersionResult =
 	| { kind: "saved"; version: OrchestrationVersionView }
 	| { kind: "not_found" }
-	| { kind: "conflict"; head: VersionSummary | null };
+	| { kind: "conflict"; head: VersionSummary | null }
+	/** 文档里 secret 参数的默认值是占位符，却没有可以沿用的上一个版本的值（见 {@link restoreSecretDefaults}）。 */
+	| { kind: "secret_default_unresolved"; problems: SecretDefaultProblem[] };
 
 /** 归档的结果。`running`：还有 count 个运行中的运行，不能归档。 */
 export type ArchiveResult =
@@ -140,7 +148,7 @@ export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
 	author: row.author,
 	author_via: row.authorVia,
 	created_at: row.createdAt.toISOString(),
-	document: row.document,
+	document: maskSecretDefaults(row.document),
 });
 
 /** 编排与编排版本的存取。版本只追加、不修改。 */
@@ -325,8 +333,11 @@ export class OrchestrationStore {
 		return copied && this.#view(copied, this.deps.db);
 	}
 
-	/** 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
-	async headDocuments(): Promise<StoredOrchestrationDocument[]> {
+	/**
+	 * 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。**原始文档，secret 参数的默认值没有打码**（名字里的 raw）：
+	 * 只在控制面内部统计用，不能原样交给调用方（biome-plugins/raw-version-document.grit）。
+	 */
+	async rawHeadDocuments(): Promise<StoredOrchestrationDocument[]> {
 		const rows = await this.deps.db
 			.select({ document: orchestrationVersions.document })
 			.from(orchestrations)
@@ -355,6 +366,8 @@ export class OrchestrationStore {
 	 * baseVersion 是编辑起点的版本号（新编排的第一个版本为 0），它必须等于当前最新版本号，
 	 * 否则不保存并返回 conflict（docs/ARCHITECTURE.md §6.4）。检查与追加在同一个行锁内完成。
 	 * 没有位置的节点（命令行、API 上传的文档可以不写坐标）保存时用整理布局补上，已有位置的节点不动。
+	 * secret 参数的默认值是占位符（读出来的文档原样存回来）时沿用上一个版本里同名参数的值（{@link restoreSecretDefaults}）：
+	 * 上一个版本就是 base_version，在冲突检查通过之后、同一个行锁内读取。
 	 */
 	saveVersion(
 		orchestrationId: string,
@@ -373,8 +386,16 @@ export class OrchestrationStore {
 				const head = await versionRow(tx, orchestrationId, orchestration.headVersion);
 				return { kind: "conflict", head: head ? toSummary(head) : null };
 			}
+			const previous =
+				orchestration.headVersion > 0
+					? await versionRow(tx, orchestrationId, orchestration.headVersion)
+					: undefined;
+			const restored = restoreSecretDefaults(previous?.document, document);
+			if ("problems" in restored) {
+				return { kind: "secret_default_unresolved", problems: restored.problems };
+			}
 			// 命令行和 API 上传的节点、便签可以不写坐标：节点按整理布局补上，便签放进内容上方的那一行（ADR 0026）。
-			const laidOut = withStickyNotePositions(fillMissingPositions(document));
+			const laidOut = withStickyNotePositions(fillMissingPositions(restored.document));
 			return { kind: "saved", version: await this.#append(tx, orchestration, laidOut, actor) };
 		});
 	}

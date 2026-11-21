@@ -1,5 +1,5 @@
 import type { ParamDeclView, PresetView, RunView } from "@sfly/schema";
-import { type FormValues, fieldValue } from "#/run-drawer/trigger-form";
+import { defaultFieldValue, type FormValues } from "#/run-drawer/trigger-form";
 
 /**
  * 运行抽屉里运行预设的选用（纯逻辑，有单测）：能不能选（{@link usablePreset}）、打开抽屉时默认选哪个
@@ -50,8 +50,8 @@ export function switchPreset(
 		decls.map((p) => [
 			p.name,
 			from.has(p.name) || to.has(p.name)
-				? fieldValue(p, p.default)
-				: (values[p.name] ?? fieldValue(p, undefined)),
+				? defaultFieldValue(p)
+				: (values[p.name] ?? defaultFieldValue(p)),
 		]),
 	);
 }

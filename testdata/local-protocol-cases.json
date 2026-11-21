@@ -10,9 +10,9 @@
 		"字符串可以写成 {\"$repeat\": 单元, \"times\": 次数, \"prefix\": 开头, \"suffix\": 末尾}（prefix、suffix 可省略）表示「开头 + 单元重复若干次 + 末尾」，用来写超长的字符串；读用例的一方先把它们展开成字符串。"
 	],
 	"rule": [
-		"事件管道：每行一个 JSON 对象，type 是 event_types 之一，读成对应的日志、进度、指标、通知、动作或动作摘要；其余内容（不是 JSON、不是对象、没有 type、类型不认识、字段缺少或类型不对）原样记成一行来源 sdk、级别 info 的日志，时间是读到它的时间。空行跳过。事件管道的一行不限长度。",
+		"事件管道：每行一个 JSON 对象，type 是 event_types 之一，读成对应的日志、进度、指标、通知、动作或动作摘要；其余内容（不是 JSON、不是对象、没有 type、类型不认识、字段缺少或类型不对）原样记成一行来源 sdk、级别 info 的日志，时间是读到它的时间。空行跳过。事件管道的一行不限长度。`NaN`、`Infinity`、`-Infinity` 不是合法的 JSON（Python 的 `json.loads` 默认接受，读取端要拒绝）：含它们的一行当作不是 JSON。",
 		"标准输出 / 标准错误：每行一条日志，来源 stdout / stderr，级别 info / error；行尾的 \\r 去掉，最后一行没有换行也记下，空行也是一行。一行超过 max_line_bytes 时拆开；Agent 一端拆在哪里取决于一次读到多少字节，所以用例里不断言。",
-		"结果：output.json 是 success 且退出码是 0 时成功，输出取 outputs；output.json 是 failed 时失败（不看退出码），上报 error.message，有 traceback 时在后面空一行接上去掉末尾空白的 traceback；失败的位置取 error.location（节点代码里出错的那一行，「模块.函数 第 N 行」）：不是字符串、是空串、没有这个键都是没有位置，失败照常上报；失败的类型取 error.kind：是 config_error 时是配置错误（执行器在调用节点前就拒绝了输入），没有或是别的值时是节点出错 node_error；其余情况（没有 output.json、不是 JSON、不是对象、status 不认识、success 但退出码不是 0）是执行器异常退出，上报「执行器异常退出（<退出状态>），没有写出结果」，空一行后接标准错误最后 stderr_tail_bytes 字节（去掉末尾空白）。退出状态的写法两端不同（Agent 是 exit status: 3，本地调试是 退出码 3），用例不比较，只比较 abnormal_exit.stderr_tail。",
+		"结果：output.json 是 success 且退出码是 0 时成功，输出取 outputs；output.json 是 failed 时失败（不看退出码），上报 error.message，有 traceback 时在后面空一行接上去掉末尾空白的 traceback；失败的位置取 error.location（节点代码里出错的那一行，「模块.函数 第 N 行」）：不是字符串、是空串、没有这个键都是没有位置，失败照常上报；失败的类型取 error.kind：是 config_error 时是配置错误（执行器在调用节点前就拒绝了输入），没有或是别的值时是节点出错 node_error；其余情况（没有 output.json、不是 JSON（含 `NaN`、`Infinity`）、不是对象、status 不认识、success 但退出码不是 0）是执行器异常退出，上报「执行器异常退出（<退出状态>），没有写出结果」，空一行后接标准错误最后 stderr_tail_bytes 字节（去掉末尾空白）。退出状态的写法两端不同（Agent 是 exit status: 3，本地调试是 退出码 3），用例不比较，只比较 abnormal_exit.stderr_tail。",
 		"同一批内的日志按读到的先后（单调时钟）排，不按事件里的 ts：系统时间往回跳时，跳变之后的行不会排到之前的行前面。",
 		"constants：max_line_bytes 是标准输出 / 标准错误一行的最大字节数；drain_timeout_ms 是执行器退出后等仍持有管道的后台子进程关闭管道的最长时间；stderr_tail_bytes 是失败时附带的标准错误尾部的最大字节数；terminate_grace_ms 是取消时从 SIGTERM 到强制杀掉进程树的默认宽限期。两端各抄了一份，值要一样。"
 	],
@@ -751,6 +751,38 @@
 			}
 		},
 		{
+			"name": "NaN 不是合法的 JSON：整行原样记成一行 SDK 日志，不当作进度",
+			"events": [
+				"{\"type\":\"progress\",\"ts\":1700000000000,\"current\":NaN,\"total\":10,\"message\":\"x\"}"
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"type\":\"progress\",\"ts\":1700000000000,\"current\":NaN,\"total\":10,\"message\":\"x\"}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
+			"name": "Infinity、-Infinity 同样不是合法的 JSON：整行原样记成一行 SDK 日志，不当作指标",
+			"events": [
+				"{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"gauge\",\"value\":-Infinity}"
+			],
+			"expect": {
+				"logs": [
+					{
+						"source": "sdk",
+						"level": "info",
+						"message": "{\"type\":\"metric\",\"ts\":1700000000000,\"name\":\"tps\",\"kind\":\"gauge\",\"value\":-Infinity}",
+						"ts": "now"
+					}
+				]
+			}
+		},
+		{
 			"name": "JSON 但不是对象时原样记成一行 SDK 日志",
 			"events": ["[1,2,3]"],
 			"expect": {
@@ -1067,6 +1099,17 @@
 		{
 			"name": "output.json 不是 JSON：执行器异常退出",
 			"output": "{oops",
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"abnormal_exit": {
+					"stderr_tail": ""
+				}
+			}
+		},
+		{
+			"name": "output.json 里有 NaN 或无穷：不是合法的 JSON，执行器异常退出",
+			"output": "{\"status\":\"success\",\"outputs\":{\"ratio\":NaN,\"limit\":Infinity}}",
 			"expect": {
 				"status": "failed",
 				"kind": "node_error",

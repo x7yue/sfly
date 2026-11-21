@@ -102,22 +102,24 @@ test("链上的连线右键有「在此插入节点」「断开连线」，调�
 	await menu.getByRole("menuitem", { name: "在此插入节点" }).click();
 	await expect(addMenu(page).getByText("新节点插在 fetch 和 dispatch 之间")).toBeVisible();
 	await expect(addMenu(page).getByRole("option", { name: /子流程入口/ })).toHaveCount(0);
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(nodeCard(page, "sleep_1")).toBeFocused();
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(nodeCard(page, "stop_subflow_1")).toBeFocused();
 	await expect
 		.poll(() => edges(page))
 		.toEqual(
 			[
 				"chain:dispatch->ping",
 				"chain:entry->fetch",
-				"chain:fetch->sleep_1",
-				"chain:sleep_1->dispatch",
+				"chain:fetch->stop_subflow_1",
+				"chain:stop_subflow_1->dispatch",
 				"chain:sub_entry->sub_ping",
 				"dispatch:dispatch->sub_entry",
 			].sort(),
 		);
 	// 新节点放在 fetch 右侧一列，同一行后面的节点各后移一列；子流程那一行不动。
-	expect(await nodePosition(page, "sleep_1")).toEqual({ x: 600, y: 0 });
+	expect(await nodePosition(page, "stop_subflow_1")).toEqual({ x: 600, y: 0 });
 	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
 	expect(await nodePosition(page, "ping")).toEqual({ x: 1200, y: 0 });
 	expect(await nodePosition(page, "sub_entry")).toEqual({ x: 780, y: 180 });
@@ -125,7 +127,7 @@ test("链上的连线右键有「在此插入节点」「断开连线」，调�
 	// 一步撤销。
 	const undo = dock(page).getByRole("button", { name: "撤销" });
 	await undo.click();
-	await expect(nodeCard(page, "sleep_1")).toHaveCount(0);
+	await expect(nodeCard(page, "stop_subflow_1")).toHaveCount(0);
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
 	expect(await nodePosition(page, "dispatch")).toEqual({ x: 600, y: 0 });
 	await expect(undo).toBeDisabled();
@@ -161,9 +163,11 @@ test("悬停链上的连线时中点出现「＋」，点它与「在此插入�
 	await page.mouse.move(mid.x, mid.y, { steps: 5 });
 	await insertButton(page).click();
 	await expect(addMenu(page).getByText("新节点插在 fetch 和 dispatch 之间")).toBeVisible();
-	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
-	await expect(page.locator('[data-edge="chain:fetch->sleep_1"]')).toHaveCount(1);
-	await expect(page.locator('[data-edge="chain:sleep_1->dispatch"]')).toHaveCount(1);
+	await addMenu(page)
+		.getByRole("option", { name: /停止子流程/ })
+		.click();
+	await expect(page.locator('[data-edge="chain:fetch->stop_subflow_1"]')).toHaveCount(1);
+	await expect(page.locator('[data-edge="chain:stop_subflow_1->dispatch"]')).toHaveCount(1);
 	expect(await nodePosition(page, "dispatch")).toEqual({ x: 900, y: 0 });
 
 	await page.keyboard.press("Control+z");

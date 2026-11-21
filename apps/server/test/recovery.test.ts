@@ -149,6 +149,65 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			expect((await api.node(runId, "a")).error?.kind).toBe("agent_lost");
 		});
 
+		// 任务派发出去之后 Agent 还没报「任务已开始」（任务停在「准备中」，状态 dispatched）就断线：
+		// 租约扫描对「准备中」和「执行中」的任务一视同仁（leases.ts 的 ON_AGENT，模型里的 OnAgent），
+		// 一个租约内没回来就是 agent_lost（#508）。上面两个用例都是任务已经开始之后才断线。
+		it("任务停在「准备中」时 Agent 断线，一个租约内没回来：agent_lost，按重试配置派回同一个 Agent", async () => {
+			const agent = await connect("agent-a");
+			const id = await api.orchestrationWith(chain([{ id: "a", retries: 1 }, { id: "b" }]));
+			const runId = await api.triggerOk(id);
+			const first = await agent.nextAssign({ start: false });
+			expect((await api.node(runId, "a")).attempts.map((t) => t.status)).toEqual(["dispatched"]);
+
+			await disconnect(agent);
+			clock.advance(LEASE);
+			await eventually(async () => {
+				const a = await api.node(runId, "a");
+				expect(a.attempts.map((t) => [t.attempt, t.status, t.error?.kind])).toEqual([
+					[1, "failed", "agent_lost"],
+					[2, "queued", undefined],
+				]);
+				expect(a.attempts[1]?.agent).toBe("agent-a");
+			});
+
+			const back = await connect("agent-a");
+			const retry = await back.nextAssign();
+			expect(retry).toMatchObject({ nodeId: "a", attempt: 2 });
+			expect(retry.taskId).not.toBe(first.taskId);
+			await back.succeed(retry);
+			expect((await back.nextAssign()).nodeId).toBe("b");
+		});
+
+		it("任务停在「准备中」时 Agent 断线，重试用尽：agent_lost 是最终失败，普通节点跳过，always 节点照常执行", async () => {
+			const agent = await connect("agent-a");
+			const id = await api.orchestrationWith(
+				chain([{ id: "a" }, { id: "b" }, { id: "c", always: true }]),
+			);
+			const runId = await api.triggerOk(id);
+			await agent.nextAssign({ start: false });
+			await disconnect(agent);
+
+			clock.advance(LEASE);
+			await eventually(async () =>
+				expect(await statusesOf(runId)).toMatchObject({
+					a: "failed",
+					b: "skipped",
+					c: "queued",
+				}),
+			);
+			const a = await api.node(runId, "a");
+			expect(a.attempts.map((t) => [t.attempt, t.status, t.error?.kind])).toEqual([
+				[1, "failed", "agent_lost"],
+			]);
+			expect(a.error?.kind).toBe("agent_lost");
+
+			const back = await connect("agent-a");
+			const c = await back.nextAssign();
+			expect(c.nodeId).toBe("c");
+			await back.succeed(c);
+			expect((await api.run(runId)).status).toBe("failed");
+		});
+
 		it("Agent 离线时优雅取消的任务在租约过期后记为 cancelled，always 节点继续执行", async () => {
 			const agent = await connect("agent-a");
 			const id = await api.orchestrationWith(
@@ -327,27 +386,6 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			expect(a.nodeId).toBe("a");
 			await b.succeed(a);
 			expect((await api.run(runId)).status).toBe("success");
-		});
-
-		it("等待中的定时节点：重启后继续等待，到点触发", async () => {
-			await connect("agent-a");
-			// 时钟起点 2026-01-01T00:00:00Z = 上海 08:00。
-			const id = await api.orchestrationWith(
-				chain([{ id: "t", kind: "timer", at: "09:30:00" }, { id: "a" }]),
-			);
-			const runId = await api.triggerOk(id);
-			expect(await statusesOf(runId)).toMatchObject({ t: "waiting" });
-			await restart();
-			const back = await connect("agent-a");
-			clock.advance(90 * MINUTE - SECOND);
-			await back.expectNoAssign(150);
-			clock.advance(SECOND);
-			const a = await back.nextAssign();
-			expect(a.nodeId).toBe("a");
-			expect((await api.node(runId, "t")).outputs).toEqual({
-				triggered_at: "2026-01-01T01:30:00.000Z",
-				late: false,
-			});
 		});
 
 		it("子流程实例和任务不会因为重启而重复创建", async () => {

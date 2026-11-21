@@ -3,7 +3,6 @@ import {
 	createEditorScenario,
 	dock,
 	draftNode,
-	editorDocument,
 	headOf,
 	inspector,
 	nodeCard,
@@ -548,22 +547,13 @@ test("检查器：非字符串参数没有模式切换；「插入引用」选�
 	});
 });
 
-test("异步任务参数映射、Sleep 时长、入口参数默认值用同一种输入框；敏感参数的默认值仍是密码框", async ({
+test("异步任务参数映射、入口参数默认值用同一种输入框；敏感参数的默认值仍是密码框", async ({
 	page,
 	controlPlane,
 }) => {
-	// 在子流程末尾加一个 Sleep 节点 wait。
-	await publishPackage(controlPlane);
-	const id = await createScenario(controlPlane, "日终数据处理", {
-		...editorDocument,
-		nodes: [
-			...editorDocument.nodes,
-			{ id: "wait", kind: "sleep", duration: "5s", position: { x: 1240, y: 180 } },
-		],
-		edges: [...editorDocument.edges, { from: "sub_ping", to: "wait", kind: "chain" }],
-	});
+	const id = await createEditorScenario(controlPlane);
 	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "wait")).toBeVisible();
+	await expect(nodeCard(page, "dispatch")).toBeVisible();
 	const panel = inspector(page);
 	const list = panel.getByRole("listbox", { name: "可引用的值" });
 
@@ -597,7 +587,9 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 	await expect(fallback.locator(".cm-line")).toHaveCount(2);
 	await expect(bizDate.getByRole("button", { name: "放大编辑 biz_date" })).toBeVisible();
 	const token = panel.getByRole("group", { name: "参数 api_token" });
-	await expect(token.getByLabel("默认值", { exact: true })).toHaveAttribute("type", "password");
+	// 已设置的敏感默认值读不回来，显示成「已设置」；换成新的值时才是密码框（下一个用例）。
+	await expect(token.getByLabel("默认值", { exact: true })).toHaveValue("已设置");
+	await expect(token.getByRole("button", { name: "替换 api_token 的默认值" })).toBeVisible();
 	await expect(token.locator('[data-slot="reference-editor"]')).toHaveCount(0);
 	await expect(token.getByRole("button", { name: /放大编辑/ })).toHaveCount(0);
 	// 数字和 JSON 默认值照常解析：不合法时阻止保存。
@@ -611,23 +603,6 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 	await bizDate.getByLabel("参数类型").selectOption("string");
 	await bizDate.getByRole("combobox", { name: "默认值" }).fill("2026-01-02");
 
-	// Sleep 节点的等待时长：输入框旁有「插入引用」，常用时长照常可用。
-	await nodeCard(page, "wait").click();
-	const duration = panel.getByRole("combobox", { name: "等待时长" });
-	await expect(duration).toHaveText("5s");
-	await duration.fill("");
-	await panel.getByRole("button", { name: "在 等待时长 中插入引用" }).click();
-	await expect(list.getByRole("option")).toHaveText([
-		/params\.date/,
-		/nodes\.sub_ping\.outputs\.alive/,
-	]);
-	await page.keyboard.press("Enter");
-	await expect(duration).toHaveText("${{ params.date }}");
-	await expect(panel.getByText("执行时解析引用")).toBeVisible();
-	await panel.getByRole("group", { name: "常用时长" }).getByRole("button", { name: "10m" }).click();
-	await expect(duration).toHaveText("10m");
-	await duration.fill("${{ params.date }}");
-
 	await page.keyboard.press("Control+s");
 	await expect(page.getByText("已保存为版本 2")).toBeVisible();
 	const nodes = (await headOf(controlPlane, id)).document.nodes as unknown as Record<
@@ -639,9 +614,8 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 	});
 	expect(nodes.find((n) => n.id === "entry")?.params).toMatchObject([
 		{ name: "biz_date", type: "string", default: "2026-01-02" },
-		{ name: "api_token", default: "s3cr3t", secret: true },
+		{ name: "api_token", default: "******", secret: true },
 	]);
-	expect(nodes.find((n) => n.id === "wait")).toMatchObject({ duration: "${{ params.date }}" });
 });
 
 test("放大编辑：等宽的大弹窗里有补全和高亮，锁定焦点，Esc 先关补全再关弹窗；修改进入撤销历史和本地草稿", async ({
@@ -924,7 +898,7 @@ test("撤销到已保存的状态：字段、顶栏和节点卡片说的是同�
 	await expect(panel.getByText("需要整数")).toBeVisible();
 });
 
-test("敏感参数的默认值隐藏显示，可以临时显示；取消「敏感」需要二次确认", async ({
+test("敏感参数的默认值读不回来：显示「已设置」，替换成新的值后隐藏显示、可以临时显示；取消「敏感」需要二次确认", async ({
 	page,
 	controlPlane,
 }) => {
@@ -933,8 +907,13 @@ test("敏感参数的默认值隐藏显示，可以临时显示；取消「敏�
 	await nodeCard(page, "entry").click();
 	const token = inspector(page).getByRole("group", { name: "参数 api_token" });
 	const value = token.getByLabel("默认值", { exact: true });
+	await expect(value).toHaveValue("已设置");
+	await expect(token.getByRole("button", { name: "临时显示默认值" })).toHaveCount(0);
+	// 替换：清空后输入新的值，新的值是密码框，默认隐藏，可以临时显示。
+	await token.getByRole("button", { name: "替换 api_token 的默认值" }).click();
+	await expect(value).toHaveValue("");
+	await value.fill("test-secret-new");
 	await expect(value).toHaveAttribute("type", "password");
-	await expect(value).toHaveValue("s3cr3t");
 	await token.getByRole("button", { name: "临时显示默认值" }).click();
 	await expect(value).toHaveAttribute("type", "text");
 	// 5 秒后自动隐藏。
@@ -952,7 +931,7 @@ test("敏感参数的默认值隐藏显示，可以临时显示；取消「敏�
 	await confirm.getByRole("button", { name: "取消敏感标记" }).click();
 	await expect(secret).not.toBeChecked();
 	// 不再敏感：换成普通的输入框，明文显示。
-	await expect(token.getByRole("combobox", { name: "默认值" })).toHaveText("s3cr3t");
+	await expect(token.getByRole("combobox", { name: "默认值" })).toHaveText("test-secret-new");
 	await expect(token.locator('input[type="password"]')).toHaveCount(0);
 	await expect(token.getByRole("button", { name: "临时显示默认值" })).toHaveCount(0);
 });

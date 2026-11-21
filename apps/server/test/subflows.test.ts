@@ -5,7 +5,6 @@ import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, echo, orchestration, param, spawn, statuses } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
-import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -154,54 +153,38 @@ describe("异步任务节点与子流程", () => {
 		expect(ids[0]).not.toBe(ids[1]);
 	});
 
-	it("子流程里的 Sleep 节点：时长引用子流程参数，只让子流程等待，到点后子流程继续，运行在子流程结束后才结束", async () => {
-		const clock = cp.clock as ManualClock;
-		const start = clock.now().getTime();
+	it("子流程里的节点还在执行：只让子流程停在那里，主链不受影响，运行在子流程结束后才结束", async () => {
 		const id = await api.orchestrationWith(
 			orchestration(
 				[
-					[{ id: "entry", kind: "entry", params: [] }, spawn("spawn", { wait: "10m" }), echo("b")],
-					[
-						{ id: "sub", kind: "subflow_entry", params: [param("wait", { required: true })] },
-						{ id: "s", kind: "sleep", always: false, duration: "${{ params.wait }}" },
-						echo("c"),
-					],
+					[{ id: "entry", kind: "entry", params: [] }, spawn("spawn"), echo("b")],
+					[{ id: "sub", kind: "subflow_entry", params: [] }, echo("slow"), echo("c")],
 				],
 				[["spawn", "sub"]],
 			),
 		);
 		const runId = await api.triggerOk(id);
 
-		// 主链不受子流程里的等待影响。
-		const b = await agent.nextAssign();
-		expect(b.nodeId).toBe("b");
-		await agent.succeed(b);
+		// 主链不受子流程里的节点影响。
+		const first = await assigns(2);
+		await agent.succeed(first.b as AssignedTask);
 
 		let run = await api.run(runId);
 		expect(chainOf(run, "entry").status).toBe("success");
 		const sub = chainOf(run, "sub");
 		expect(sub.status).toBe("running");
-		expect(statuses(sub)).toEqual({ sub: "success", s: "waiting", c: "pending" });
-		expect(sub.nodes.find((n) => n.node_id === "s")?.attempts[0]).toMatchObject({
-			status: "waiting",
-			agent: null,
-			wake_at: new Date(start + 10 * 60_000).toISOString(),
-		});
+		expect(statuses(sub)).toEqual({ sub: "success", slow: "running", c: "pending" });
 		expect(run.status).toBe("running");
 
-		clock.advance(10 * 60_000 - 1000);
-		await agent.expectNoAssign(150);
-		clock.advance(1000);
+		await agent.succeed(first.slow as AssignedTask);
 		const c = await agent.nextAssign();
 		expect(c.nodeId).toBe("c");
-		run = await api.run(runId);
-		expect(chainOf(run, "sub").nodes.find((n) => n.node_id === "s")).toMatchObject({
-			status: "success",
-			outputs: { triggered_at: new Date(start + 10 * 60_000).toISOString() },
-		});
+		expect(chainOf(await api.run(runId), "sub").status).toBe("running");
 		await agent.succeed(c);
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
-		expect(chainOf(await api.run(runId), "sub").status).toBe("success");
+		run = await api.run(runId);
+		expect(chainOf(run, "sub").status).toBe("success");
+		expect(chainOf(run, "entry").status).toBe("success");
 	});
 
 	it("子流程失败不影响主链；所有链结束后运行为 failed", async () => {

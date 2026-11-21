@@ -53,3 +53,28 @@ export function resolved(value: unknown, params: Record<string, unknown>): unkno
 		throw error;
 	}
 }
+
+/** 值的文本形式（`secretValues` 按它匹配）：字符串原样，其他按 JSON。 */
+export const textOf = (value: unknown): string =>
+	typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+
+/**
+ * 这次触发里 secret 参数的值（文本形式，空串不算，从长到短排列）：每条链的入口里声明为 secret 的参数，
+ * 包括触发请求里调用方自己给的值。secret 属性按值传播（src/logs/secrets.ts），经参数映射传进子流程的值即使子流程里没有声明 secret，
+ * 也是 secret 值。触发时问题的说明里要写出值的地方都经它打码（`maskSecrets`，preflight.ts、param-input-type.ts）：
+ * 读取接口（场景、预检、运行、预设）和报错一样，任何接口都不回显 secret 的值。值是引用解析出来的，可能夹在别的文字里
+ * （`前缀-${{ params.x }}`），所以按子串打码，不只比较整个值。
+ */
+export function secretTexts(chains: readonly KnownParams[]): string[] {
+	const texts = new Set<string>();
+	for (const { chain, params } of chains) {
+		for (const decl of chain.entry.params) {
+			const value = params[decl.name];
+			if (decl.secret && value !== undefined && value !== null) {
+				const text = textOf(value);
+				if (text !== "") texts.add(text);
+			}
+		}
+	}
+	return [...texts].sort((a, b) => b.length - a.length);
+}

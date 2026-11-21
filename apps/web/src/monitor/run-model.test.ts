@@ -281,7 +281,6 @@ describe("运行视图与进度推送的合并（#110）", () => {
 								ended_at: null,
 								start_clock_offset: null,
 								end_clock_offset: null,
-								wake_at: null,
 								progress: attemptProgress,
 								current_action: null,
 							},
@@ -334,7 +333,6 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		ended_at,
 		start_clock_offset: null,
 		end_clock_offset: null,
-		wake_at: null,
 		progress: null,
 		current_action: null,
 	});

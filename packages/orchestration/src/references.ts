@@ -24,13 +24,11 @@ export type PackageCatalog = ReadonlyMap<string, readonly NodeTypeIo[] | null>;
 
 export const packageKey = (name: string, version: string) => `${name}@${version}`;
 
-/** 内置节点的输出键（docs/SEMANTICS.md §4、§5）。 */
+/** 内置节点的输出键（docs/SEMANTICS.md §4）。 */
 export const BUILTIN_OUTPUTS: Record<Exclude<OrchestrationNode["kind"], "package">, string[]> = {
 	entry: [],
 	subflow_entry: [],
 	async: ["chain_instance_id"],
-	timer: ["triggered_at", "late"],
-	sleep: ["triggered_at"],
 	stop_subflow: ["status"],
 };
 
@@ -157,7 +155,7 @@ export interface ReferenceWarning {
 	code: PackageWarningCode | ReferenceWarningCode | SubflowParamWarningCode;
 	message: string;
 	node_id: string;
-	/** 引用所在的输入名（包节点的输入、异步任务节点的子流程参数、Sleep 节点的 duration）。 */
+	/** 引用所在的输入名（包节点的输入、异步任务节点的子流程参数）。 */
 	input?: string;
 }
 
@@ -181,8 +179,6 @@ export function referableValues(node: StoredNode): [string, unknown][] {
 			return Object.entries(node.inputs);
 		case "async":
 			return Object.entries(node.params);
-		case "sleep":
-			return [["duration", node.duration]];
 		default:
 			return [];
 	}

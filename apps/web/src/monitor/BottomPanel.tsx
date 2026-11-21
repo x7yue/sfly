@@ -741,12 +741,6 @@ function AttemptsTab({
 									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.start)}）</span>
 								)}
 							</dd>
-							{a.wake_at && (
-								<>
-									<dt>唤醒</dt>
-									<dd className="m-0">{formatClock(a.wake_at)}</dd>
-								</>
-							)}
 							{n.kind === "stop_subflow" && typeof a.inputs?.subflow === "string" && (
 								<>
 									<dt>停止</dt>

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -191,6 +192,168 @@ def test_invalid_return_value_is_a_failure(
     assert run.output is not None
     assert run.output["status"] == "failed"
     assert message in run.output["error"]["message"]
+
+
+NON_FINITE_OUTPUTS = [
+    ("ratio_is_nan", "输出 ratio 的值是 NaN"),
+    ("nested_infinity", '输出 stats["items"][2] 的值是 Infinity'),
+    ("several", '输出里有 3 处 NaN 或无穷：a（NaN）、b[0]（-Infinity）、c["d"]（NaN）'),
+]
+
+
+@pytest.mark.parametrize(("node_name", "where"), NON_FINITE_OUTPUTS)
+def test_a_return_value_with_nan_or_infinity_fails_and_says_which_output_and_what_to_do(
+    tmp_path: Path, code_dir: Path, node_name: str, where: str
+) -> None:
+    """JSON 里没有 NaN 和无穷（#481）：任务失败，错误信息写明是哪个输出、怎么办，
+    而不是写出一份 Agent 读不了的 output.json，让任务以「执行器异常退出」失败。"""
+    shutil.copy(Path(__file__).with_name("number_nodes.py"), code_dir)
+
+    run = execute(tmp_path, code_dir, f"number_nodes:{node_name}")
+
+    assert run.returncode == 1
+    assert run.output is not None
+    assert run.output["status"] == "failed"
+    message = run.output["error"]["message"]
+    assert message.startswith("NodeOutputError: 节点返回值不能序列化为 JSON：")
+    assert where in message
+    assert "换成 None" in message
+    assert "字符串" in message
+
+
+def test_other_unserializable_values_keep_the_standard_message(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    shutil.copy(Path(__file__).with_name("number_nodes.py"), code_dir)
+
+    run = execute(tmp_path, code_dir, "number_nodes:not_serializable")
+
+    assert run.output is not None
+    assert run.output["error"]["message"] == (
+        "NodeOutputError: 节点返回值不能序列化为 JSON："
+        "Object of type object is not JSON serializable"
+    )
+
+
+def test_ctx_progress_drops_non_finite_numbers_with_one_warning(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """NaN 和无穷写进事件管道是非法的 JSON，Agent 读不了，只会留下一行看不懂的日志（#481）：
+    和 `ctx.metric` 一样，在 SDK 里丢掉，写一条警告日志。"""
+    shutil.copy(Path(__file__).with_name("number_nodes.py"), code_dir)
+
+    run = execute(tmp_path, code_dir, "number_nodes:non_finite_progress")
+
+    assert run.returncode == 0, run.stderr
+    events = events_of(tmp_path)
+    assert [
+        (e["type"], e["current"], e["total"], e["message"])
+        for e in events
+        if e["type"] == "progress"
+    ] == [
+        ("progress", 2, 10, "正常"),
+    ]
+    warnings = [e["message"] for e in events if e["type"] == "log" and e["level"] == "warn"]
+    assert len(warnings) == 1
+    assert "ctx.progress" in warnings[0]
+    assert "有限数值" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    ("node_name", "where"),
+    [
+        ("nan_beside_a_key_json_cannot_write", "输出 a 的值是 NaN"),
+        (
+            "nan_under_a_key_json_cannot_write",
+            "输出里有 2 处 NaN 或无穷：n（NaN）、x[b'k']（Infinity）",
+        ),
+    ],
+)
+def test_finding_the_place_of_a_nan_does_not_trip_over_a_key_json_cannot_write(
+    tmp_path: Path, code_dir: Path, node_name: str, where: str
+) -> None:
+    """字典的键是 bytes 这类 JSON 写不了的东西时，找位置的遍历不能自己抛异常：
+    那样任务的错误会变成 `TypeError`，堆栈落在执行器里，盖住 NaN 这个真正的原因。"""
+    shutil.copy(Path(__file__).with_name("number_nodes.py"), code_dir)
+
+    run = execute(tmp_path, code_dir, f"number_nodes:{node_name}")
+
+    assert run.output is not None
+    message = run.output["error"]["message"]
+    assert message.startswith("NodeOutputError: 节点返回值不能序列化为 JSON：")
+    assert where in message
+
+
+def test_when_finding_the_place_fails_the_original_error_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """位置只是附带的信息：取不到时报原来的错误，不让取位置的异常盖住它。"""
+
+    def broken(value: object) -> list[tuple[str, float]]:
+        raise RuntimeError("取位置时出的错")
+
+    monkeypatch.setattr(runner, "non_finite_places", broken)
+
+    with pytest.raises(runner.NodeOutputError) as raised:
+        runner._encode({"a": float("nan")})
+
+    message = str(raised.value)
+    assert message.startswith(
+        "节点返回值不能序列化为 JSON：Out of range float values are not JSON compliant"
+    )
+    assert "输出" not in message
+
+
+def test_ctx_progress_drops_integers_too_big_for_a_float_with_one_warning(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """`math.isfinite(10**400)` 抛 `OverflowError`：不能让节点因此失败（#481）。"""
+    shutil.copy(Path(__file__).with_name("number_nodes.py"), code_dir)
+
+    run = execute(tmp_path, code_dir, "number_nodes:huge_integer_progress")
+
+    assert run.returncode == 0, run.stderr
+    events = events_of(tmp_path)
+    assert [(e["current"], e["total"]) for e in events if e["type"] == "progress"] == [(2, 10)]
+    warnings = [e["message"] for e in events if e["type"] == "log" and e["level"] == "warn"]
+    assert len(warnings) == 1
+    assert "ctx.progress" in warnings[0]
+    assert len(warnings[0]) < 300
+
+
+def test_ctx_metric_drops_integers_too_big_for_a_float_like_progress(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    shutil.copy(Path(__file__).with_name("number_nodes.py"), code_dir)
+
+    run = execute(tmp_path, code_dir, "number_nodes:huge_integer_metric")
+
+    assert run.returncode == 0, run.stderr
+    events = events_of(tmp_path)
+    assert [e["value"] for e in events if e["type"] == "metric"] == [1.5]
+    warnings = [e["message"] for e in events if e["type"] == "log" and e["level"] == "warn"]
+    assert len(warnings) == 1
+    assert "指标 'tps'" in warnings[0]
+    assert len(warnings[0]) < 300
+
+
+def test_the_progress_warning_does_not_hide_a_metric_named_progress(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """两种警告各写一次：`ctx.progress` 先警告过，名叫 `progress` 的指标的警告也照常写。"""
+    shutil.copy(Path(__file__).with_name("number_nodes.py"), code_dir)
+
+    run = execute(
+        tmp_path, code_dir, "number_nodes:non_finite_progress_and_a_metric_named_progress"
+    )
+
+    assert run.returncode == 0, run.stderr
+    warnings = [
+        e["message"] for e in events_of(tmp_path) if e["type"] == "log" and e["level"] == "warn"
+    ]
+    assert len(warnings) == 2
+    assert "ctx.progress" in warnings[0]
+    assert "指标 'progress'" in warnings[1]
 
 
 def test_missing_entry_is_a_failure(tmp_path: Path, code_dir: Path) -> None:

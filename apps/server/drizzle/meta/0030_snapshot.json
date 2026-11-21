@@ -1,5 +1,5 @@
 {
-  "id": "6c126309-3fbb-4bbf-a506-81c590adcab0",
+  "id": "e8abd679-4493-4790-939e-78576231e372",
   "prevId": "2cd4e44f-396a-4ba5-b67b-fa8e2254bb66",
   "version": "7",
   "dialect": "postgresql",
@@ -1565,12 +1565,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "error_location": {
-          "name": "error_location",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "queued_at": {
           "name": "queued_at",
           "type": "timestamp with time zone",
@@ -1665,12 +1659,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "wake_at": {
-          "name": "wake_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "lease_expires_at": {
           "name": "lease_expires_at",
           "type": "timestamp with time zone",
@@ -1734,22 +1722,6 @@
         }
       },
       "indexes": {
-        "tasks_waiting": {
-          "name": "tasks_waiting",
-          "columns": [
-            {
-              "expression": "wake_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"tasks\".\"status\" = 'waiting'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "tasks_lease": {
           "name": "tasks_lease",
           "columns": [

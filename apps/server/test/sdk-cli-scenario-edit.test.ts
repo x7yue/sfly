@@ -5,8 +5,10 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
+import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const SAVED_AT = "2026-03-04T05:06:07.000Z";
@@ -14,12 +16,21 @@ const repoRoot = resolve(import.meta.dirname, "../../..");
 
 const entry = { id: "entry", kind: "entry", params: [], position: { x: 40, y: 40 } };
 
-/** 只有入口、Sleep 节点的文档：没有任何保存警告。 */
-const sleepDocument = (agent = "agent-a") => ({
+/** 一个 demo/echo 包节点（节点包 demo 在 beforeAll 里发布）。 */
+const demoNode = (id: string, extra: Record<string, unknown> = {}) => ({
+	id,
+	kind: "package",
+	package: "demo",
+	node: "echo",
+	...extra,
+});
+
+/** 只有入口、一个包节点的文档：没有任何保存警告。 */
+const echoDocument = (agent = "agent-a") => ({
 	default_agent: agent,
-	nodes: [entry, { id: "pause", kind: "sleep", duration: "5s", position: { x: 300, y: 90 } }],
+	nodes: [entry, demoNode("pause", { position: { x: 300, y: 90 } })],
 	edges: [{ from: "entry", to: "pause", kind: "chain" }],
-	packages: {},
+	packages: { demo: "1.0.0" },
 });
 
 interface ScenarioFile {
@@ -33,7 +44,7 @@ interface ScenarioFile {
 }
 
 type EntryParams = { params: Record<string, unknown>[] };
-/** 文档的入口节点（sleepDocument 里的第一个节点）。 */
+/** 文档的入口节点（echoDocument 里的第一个节点）。 */
 const entryOf = (document: ScenarioFile["document"]) => document.nodes[0] as unknown as EntryParams;
 
 describe("sfly scenario pull / push / create / copy / rename → 控制面", () => {
@@ -86,6 +97,8 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ clock, version: cliVersion });
 		api = new ApiClient(cp);
+		// 文档里的包节点锁定的版本已发布：保存时没有警告。
+		await publishPackage(cp, "demo", "1.0.0", { echo: ["v"] });
 		dir = await mkdtemp(join(tmpdir(), "sfly-scenario-edit-"));
 	}, 120_000);
 
@@ -97,8 +110,8 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 	describe("pull", () => {
 		it("写出场景 id、最新版本号和场景文档；用 id 或名称指定都行", async () => {
-			const id = await createScenario("拉取-基本", sleepDocument("old-agent"));
-			await api.saveVersion(id, sleepDocument("agent-a"));
+			const id = await createScenario("拉取-基本", echoDocument("old-agent"));
+			await api.saveVersion(id, echoDocument("agent-a"));
 
 			const file = newFile();
 			const result = await cli("scenario", "pull", "拉取-基本", "-o", file);
@@ -119,8 +132,8 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("--version 拉旧版本：文档是旧版本的，base_version 仍是最新版本号", async () => {
-			const id = await createScenario("拉取-旧版本", sleepDocument("old-agent"));
-			await api.saveVersion(id, sleepDocument("agent-a"));
+			const id = await createScenario("拉取-旧版本", echoDocument("old-agent"));
+			await api.saveVersion(id, echoDocument("agent-a"));
 
 			const file = newFile();
 			const result = await cli("scenario", "pull", id, "-o", file, "--version", "1");
@@ -133,7 +146,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("--version 指定的版本不存在时报错，不写文件", async () => {
-			const id = await createScenario("拉取-没有这个版本", sleepDocument());
+			const id = await createScenario("拉取-没有这个版本", echoDocument());
 			const file = newFile();
 			const result = await cli("scenario", "pull", id, "-o", file, "--version", "9");
 			expect(result.code).toBe(2);
@@ -155,7 +168,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("不给 -o 时写到当前目录的「场景名.scenario.json」", async () => {
-			await createScenario("拉取/默认 文件名", sleepDocument());
+			await createScenario("拉取/默认 文件名", echoDocument());
 			const result = await sfly(["scenario", "pull", "拉取/默认 文件名", "--server", cp.httpUrl], {
 				cwd: dir,
 				env: { UV_PROJECT: repoRoot },
@@ -167,7 +180,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("--json：stdout 是一个对象，写明文件和版本", async () => {
-			const id = await createScenario("拉取-json", sleepDocument());
+			const id = await createScenario("拉取-json", echoDocument());
 			const file = newFile();
 			const result = await cli("scenario", "pull", id, "-o", file, "--json");
 			expect(result.code, result.stderr).toBe(0);
@@ -189,7 +202,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 	describe("push", () => {
 		it("pull → 改 → push：保存成新版本，作者是昵称，文件里的 base_version 更新后可以接着 push", async () => {
-			const id = await createScenario("推送-基本", sleepDocument());
+			const id = await createScenario("推送-基本", echoDocument());
 			const file = await pull(id);
 
 			const edited = await readScenarioFile(file);
@@ -226,7 +239,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("保存版本的请求带着昵称和 x-sfly-client（在 AI 编程助手里时带上它的名称）", async () => {
-			const id = await createScenario("推送-请求头", sleepDocument());
+			const id = await createScenario("推送-请求头", echoDocument());
 			const file = await pull(id);
 			const seen = await startRecordingProxy(cp.httpUrl);
 			proxies.push(seen);
@@ -249,7 +262,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("保存警告：文本里逐条列出，--json 时在 warnings 里", async () => {
-			const id = await createScenario("推送-警告", sleepDocument());
+			const id = await createScenario("推送-警告", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			edited.document.nodes.push({
@@ -279,10 +292,13 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("本地校验没通过：列出出错的位置，不发任何请求，不产生版本", async () => {
-			const id = await createScenario("推送-校验失败", sleepDocument());
+			const id = await createScenario("推送-校验失败", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
-			edited.document.nodes.push({ id: "ghost", kind: "teleport" }, { id: "wait", kind: "sleep" });
+			edited.document.nodes.push(
+				{ id: "ghost", kind: "teleport" },
+				{ id: "wait", kind: "package" },
+			);
 			(edited.document.edges[0] as { kind: string }).kind = "fly";
 			await writeScenarioFile(file, edited);
 
@@ -296,7 +312,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect(result.stderr).toContain("nodes/2/kind");
 			expect(result.stderr).toContain("ghost");
 			expect(result.stderr).toContain("nodes/3");
-			expect(result.stderr).toContain("'duration' is a required property");
+			expect(result.stderr).toContain("'package' is a required property");
 			expect(seen.requests).toEqual([]);
 			expect((await detail(id)).head_version).toBe(1);
 
@@ -307,7 +323,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("带参数说明的文档能 push：说明去掉首尾空白后保存，空说明不保存", async () => {
-			const id = await createScenario("推送-参数说明", sleepDocument());
+			const id = await createScenario("推送-参数说明", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			entryOf(edited.document).params = [
@@ -336,7 +352,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 		it("参数说明最长 200 个字符：200 个 emoji 能 push，201 个本地校验报出位置，控制面的判断相同", async () => {
 			const emoji = "😀";
-			const id = await createScenario("推送-说明长度", sleepDocument());
+			const id = await createScenario("推送-说明长度", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			entryOf(edited.document).params = [
@@ -371,7 +387,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("参数说明只能写一行：带换行的说明本地校验报出位置，控制面同样拒绝", async () => {
-			const id = await createScenario("推送-说明换行", sleepDocument());
+			const id = await createScenario("推送-说明换行", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			entryOf(edited.document).params = [
@@ -394,7 +410,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("带显示名称的文档能 push：名称去掉首尾空白后保存，空白的名称不保存，pull 回来的文件一致", async () => {
-			const id = await createScenario("推送-显示名称", sleepDocument());
+			const id = await createScenario("推送-显示名称", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			edited.document.nodes = [
@@ -414,7 +430,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 		it("显示名称最长 40 个字符：40 个 emoji 能 push，41 个本地校验报出位置，控制面的判断相同", async () => {
 			const emoji = "😀";
-			const id = await createScenario("推送-名称长度", sleepDocument());
+			const id = await createScenario("推送-名称长度", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			const pause = edited.document.nodes[1] as Record<string, unknown>;
@@ -447,7 +463,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("显示名称只能写一行：带换行的名称本地校验报出位置，控制面同样拒绝", async () => {
-			const id = await createScenario("推送-名称换行", sleepDocument());
+			const id = await createScenario("推送-名称换行", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			(edited.document.nodes[1] as Record<string, unknown>).display_name = "第一行\n第二行";
@@ -468,7 +484,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("子流程入口节点没有显示名称这个字段：写了本地校验报出位置，控制面同样拒绝", async () => {
-			const id = await createScenario("推送-子流程入口名称", sleepDocument());
+			const id = await createScenario("推送-子流程入口名称", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			edited.document.nodes.push({
@@ -496,13 +512,13 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("别人在 pull 之后保存了新版本：报冲突，写明最新版本、作者和时间，不保存，文件不变", async () => {
-			const id = await createScenario("推送-冲突", sleepDocument());
+			const id = await createScenario("推送-冲突", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			edited.document.default_agent = "mine";
 			await writeScenarioFile(file, edited);
 			clock.advance(5000);
-			await api.saveVersion(id, sleepDocument("theirs"), "bob");
+			await api.saveVersion(id, echoDocument("theirs"), "bob");
 			const saved = (await api.getJson<{ created_at: string }>(`/orchestrations/${id}/versions/2`))
 				.created_at;
 			const before = await readFile(file, "utf8");
@@ -543,7 +559,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect(a.stderr).toContain(`${notJson} 不是合法的 JSON`);
 
 			const noBase = newFile();
-			await writeScenarioFile(noBase, { scenario: "x", document: sleepDocument() });
+			await writeScenarioFile(noBase, { scenario: "x", document: echoDocument() });
 			const b = await cli("scenario", "push", noBase);
 			expect(b.code).toBe(2);
 			expect(b.stderr).toContain("base_version");
@@ -566,7 +582,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			await writeScenarioFile(file, {
 				scenario: unknown,
 				base_version: 0,
-				document: sleepDocument(),
+				document: echoDocument(),
 			});
 			const result = await cli("scenario", "push", file);
 			expect(result.code).toBe(2);
@@ -574,13 +590,13 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("没有坐标的节点由控制面补上（和整理布局一致），原有节点的坐标不变", async () => {
-			const id = await createScenario("推送-补坐标", sleepDocument());
+			const id = await createScenario("推送-补坐标", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
 			// 把 pause 挪到整理布局给 tail 的位置 (600, 0) 附近，让这个位置被压住。
 			const pause = edited.document.nodes.find((n) => n.id === "pause");
 			if (pause) pause.position = { x: 640, y: 30 };
-			edited.document.nodes.push({ id: "tail", kind: "sleep", duration: "1s" } as never);
+			edited.document.nodes.push(demoNode("tail") as never);
 			edited.document.edges.push({ from: "pause", to: "tail", kind: "chain" });
 			await writeScenarioFile(file, edited);
 			expect((await cli("scenario", "push", file)).code).toBe(0);
@@ -596,10 +612,10 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("push 成功后文件里写回控制面实际保存的文档（含补好的坐标），再 push 同一个文件坐标不变", async () => {
-			const id = await createScenario("推送-写回坐标", sleepDocument());
+			const id = await createScenario("推送-写回坐标", echoDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
-			edited.document.nodes.push({ id: "tail", kind: "sleep", duration: "1s" } as never);
+			edited.document.nodes.push(demoNode("tail") as never);
 			edited.document.edges.push({ from: "pause", to: "tail", kind: "chain" });
 			await writeScenarioFile(file, edited);
 
@@ -626,15 +642,13 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				scenario: id,
 				base_version: 0,
 				document: {
-					nodes: [
-						{ id: "entry", kind: "entry" },
-						{ id: "a", kind: "sleep", duration: "1s" },
-						{ id: "b", kind: "sleep", duration: "1s" },
-					],
+					default_agent: "agent-a",
+					nodes: [{ id: "entry", kind: "entry" }, demoNode("a"), demoNode("b")],
 					edges: [
 						{ from: "entry", to: "a", kind: "chain" },
 						{ from: "a", to: "b", kind: "chain" },
 					],
+					packages: { demo: "1.0.0" },
 				},
 			});
 			expect((await cli("scenario", "push", file)).code).toBe(0);
@@ -645,10 +659,10 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			]);
 
 			const moved = {
-				...sleepDocument(),
+				...echoDocument(),
 				nodes: [
 					{ ...entry, position: { x: -120.5, y: 33 } },
-					{ id: "pause", kind: "sleep", duration: "5s", position: { x: 999, y: -7 } },
+					demoNode("pause", { position: { x: 999, y: -7 } }),
 				],
 			};
 			await api.saveVersion(id, moved);
@@ -689,7 +703,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("--from 文件：同时保存第一个版本，作者是昵称，保存警告一并输出", async () => {
-			const source = await createScenario("新建-来源", sleepDocument("from-agent"));
+			const source = await createScenario("新建-来源", echoDocument("from-agent"));
 			const file = await pull(source);
 			const edited = await readScenarioFile(file);
 			edited.document.nodes.push({
@@ -730,7 +744,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 		it("经 AI 编程助手创建并保存第一个版本时，版本上记着检测到的名称", async () => {
 			const file = newFile();
-			await writeScenarioFile(file, { document: sleepDocument() });
+			await writeScenarioFile(file, { document: echoDocument() });
 			const result = await sfly(
 				["scenario", "create", "--name", "新建-经助手", "--from", file, "--server", cp.httpUrl],
 				{ env: { CODEX_SANDBOX: "seatbelt", SFLY_NICKNAME: "小林" } },
@@ -746,7 +760,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 		it("--from 的文件可以只有 document（不需要 scenario 和 base_version）", async () => {
 			const file = newFile();
-			await writeScenarioFile(file, { document: sleepDocument("only-doc") });
+			await writeScenarioFile(file, { document: echoDocument("only-doc") });
 			const result = await cli("scenario", "create", "--name", "新建-只有文档", "--from", file);
 			expect(result.code, result.stderr).toBe(0);
 			const id = /（([0-9a-f-]{36})）/.exec(result.stdout)?.[1] as string;
@@ -776,8 +790,8 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 	describe("copy", () => {
 		it("复制场景：新场景的第 1 版是源场景最新版本的内容，源场景不变", async () => {
-			const source = await createScenario("复制-来源", sleepDocument("old-agent"));
-			await api.saveVersion(source, sleepDocument("latest-agent"));
+			const source = await createScenario("复制-来源", echoDocument("old-agent"));
+			await api.saveVersion(source, echoDocument("latest-agent"));
 
 			const result = await cli("scenario", "copy", "复制-来源", "--name", "复制-副本");
 			expect(result.code, result.stderr).toBe(0);
@@ -806,7 +820,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 
 	describe("rename", () => {
 		it("修改名称和说明，不产生新版本", async () => {
-			const id = await createScenario("改名-原名", sleepDocument());
+			const id = await createScenario("改名-原名", echoDocument());
 			const before = await versions(id);
 
 			const name = await cli("scenario", "rename", id, "--name", "改名-新名");
@@ -842,7 +856,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("没有给 --name 也没有给 --description 时报错", async () => {
-			const id = await createScenario("改名-没改什么", sleepDocument());
+			const id = await createScenario("改名-没改什么", echoDocument());
 			const result = await cli("scenario", "rename", id);
 			expect(result.code).toBe(2);
 			expect(result.stderr).toContain("--name");
@@ -851,10 +865,154 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		});
 
 		it("名称是空白时报错，场景不变", async () => {
-			const id = await createScenario("改名-空名称", sleepDocument());
+			const id = await createScenario("改名-空名称", echoDocument());
 			const result = await cli("scenario", "rename", id, "--name", "   ");
 			expect(result.code).toBe(2);
 			expect((await detail(id)).name).toBe("改名-空名称");
+		});
+	});
+	describe("secret 参数的默认值（#467）", () => {
+		const SECRET = "test-secret-value";
+		const MASK = "******";
+		/** 入口有一个 secret 参数（带默认值）和一个普通参数的文档。 */
+		const withSecret = (secret: unknown = SECRET) => ({
+			...echoDocument(),
+			nodes: [
+				{
+					...entry,
+					params: [
+						{ name: "token", type: "string", secret: true, default: secret },
+						{ name: "region", type: "string", default: "cn-east" },
+					],
+				},
+				...echoDocument().nodes.slice(1),
+			],
+		});
+
+		it("pull 得到的文件里 secret 默认值是占位符，普通参数的默认值照旧，并提示怎么处理", async () => {
+			const id = await createScenario("保密-拉取", withSecret());
+			const file = newFile();
+			const result = await cli("scenario", "pull", id, "-o", file);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain("占位符 ******");
+			expect(result.stdout).toContain("沿用");
+			const text = await readFile(file, "utf8");
+			expect(text).not.toContain(SECRET);
+			const content = await readScenarioFile(file);
+			expect(entryOf(content.document).params).toMatchObject([
+				{ name: "token", secret: true, default: MASK },
+				{ name: "region", secret: false, default: "cn-east" },
+			]);
+			// 不含 secret 的场景没有这条提示。
+			const plain = await createScenario("保密-拉取-没有", echoDocument());
+			expect((await cli("scenario", "pull", plain, "-o", newFile())).stdout).not.toContain(
+				"占位符",
+			);
+		});
+
+		it("pull 之后不改动直接 push：新版本里的默认值仍是原值，文件里写回的还是占位符", async () => {
+			const id = await createScenario("保密-原样推送", withSecret());
+			const file = await pull(id);
+			const result = await cli("scenario", "push", file);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).not.toContain(SECRET);
+			// secret 参数写了默认值：保存时提醒（默认值会留在这个版本里）。
+			expect(result.stdout).toContain("警告");
+			expect(result.stdout).toContain("token");
+			expect(paramsOf(await storedDocument(cp, id, 2))[0]?.default).toBe(SECRET);
+			expect(await readFile(file, "utf8")).not.toContain(SECRET);
+			expect((await readScenarioFile(file)).base_version).toBe(2);
+			// 接着改别的字段再 push：仍然沿用。
+			const edited = await readScenarioFile(file);
+			edited.document.default_agent = "another";
+			await writeScenarioFile(file, edited);
+			expect((await cli("scenario", "push", file)).code).toBe(0);
+			expect(paramsOf(await storedDocument(cp, id, 3))[0]?.default).toBe(SECRET);
+		});
+
+		it("改成新的值再 push：存的是新值，文件里写回的是占位符", async () => {
+			const id = await createScenario("保密-新值", withSecret());
+			const file = await pull(id);
+			const edited = await readScenarioFile(file);
+			const [token] = entryOf(edited.document).params;
+			if (token) token.default = "test-secret-replaced";
+			await writeScenarioFile(file, edited);
+			const result = await cli("scenario", "push", file);
+			expect(result.code, result.stderr).toBe(0);
+			expect(paramsOf(await storedDocument(cp, id, 2))[0]?.default).toBe("test-secret-replaced");
+			const after = await readFile(file, "utf8");
+			expect(after).not.toContain("test-secret-replaced");
+			expect(after).toContain(MASK);
+		});
+
+		it("--version 拉旧版本再 push：占位符沿用的是最新版本的值，pull 时写明", async () => {
+			const id = await createScenario("保密-旧版本", withSecret("test-secret-old"));
+			await api.saveVersion(id, withSecret("test-secret-latest"));
+			const file = newFile();
+			const pulled = await cli("scenario", "pull", id, "-o", file, "--version", "1");
+			expect(pulled.code, pulled.stderr).toBe(0);
+			expect(pulled.stdout).toContain("最新版本 2");
+			expect((await cli("scenario", "push", file)).code).toBe(0);
+			expect(paramsOf(await storedDocument(cp, id, 3))[0]?.default).toBe("test-secret-latest");
+		});
+
+		it("参数改了名、占位符还在：控制面拒绝，写明哪个参数，没有产生版本，文件不变", async () => {
+			const id = await createScenario("保密-改名", withSecret());
+			const file = await pull(id);
+			const edited = await readScenarioFile(file);
+			const [token] = entryOf(edited.document).params;
+			if (token) token.name = "access_token";
+			await writeScenarioFile(file, edited);
+			const before = await readFile(file, "utf8");
+			const result = await cli("scenario", "push", file);
+			expect(result.code).toBe(2);
+			expect(result.stderr).toContain("没有保存");
+			expect(result.stderr).toContain("节点 entry 的参数 access_token");
+			expect(result.stderr).not.toContain(SECRET);
+			expect(await readFile(file, "utf8")).toBe(before);
+			expect((await detail(id)).head_version).toBe(1);
+			const json = await cli("scenario", "push", file, "--json");
+			expect(JSON.parse(json.stderr).error.code).toBe("secret_default_placeholder");
+		});
+
+		it("create --from 带着占位符的文件：新场景没有上一个版本可以沿用，报错，不新建场景", async () => {
+			const source = await createScenario("保密-新建来源", withSecret());
+			const file = await pull(source);
+			const result = await cli("scenario", "create", "--name", "保密-新建副本", "--from", file);
+			expect(result.code).toBe(2);
+			expect(result.stderr).toContain("没有新建场景");
+			expect(result.stderr).toContain("节点 entry 的参数 token");
+			expect(result.stderr).toContain(`sfly scenario copy ${source} --name <新名称>`);
+			const listing = await cli("scenario", "list", "--json", "--search", "保密-新建副本");
+			expect(JSON.parse(listing.stdout)).toEqual([]);
+			// 写上默认值（或删掉 default）就能新建。
+			const edited = await readScenarioFile(file);
+			const [token] = entryOf(edited.document).params;
+			if (token) token.default = "test-secret-fresh";
+			await writeScenarioFile(file, edited);
+			const created = await cli("scenario", "create", "--name", "保密-新建副本", "--from", file);
+			expect(created.code, created.stderr).toBe(0);
+		});
+
+		it("copy：secret 默认值跟着复制，读副本仍是占位符；show 和 versions 的输出里没有原值", async () => {
+			const source = await createScenario("保密-复制来源", withSecret());
+			const copied = await cli("scenario", "copy", source, "--name", "保密-复制副本", "--json");
+			expect(copied.code, copied.stderr).toBe(0);
+			const { id } = JSON.parse(copied.stdout) as { id: string };
+			expect(paramsOf(await storedDocument(cp, id, 1))[0]?.default).toBe(SECRET);
+			const copyFile = await pull(id);
+			expect(await readFile(copyFile, "utf8")).not.toContain(SECRET);
+
+			for (const args of [
+				["scenario", "show", source],
+				["scenario", "show", source, "--json"],
+				["scenario", "versions", source],
+				["scenario", "list"],
+			]) {
+				const result = await cli(...args);
+				expect(result.code, result.stderr).toBe(0);
+				expect(result.stdout + result.stderr, args.join(" ")).not.toContain(SECRET);
+			}
 		});
 	});
 });

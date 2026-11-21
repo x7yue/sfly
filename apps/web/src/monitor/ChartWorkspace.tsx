@@ -921,7 +921,6 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 							STATUS[isOnAgentStatus(status) ? "running" : status === "failed" ? "failed" : "ok"]
 								.area;
 						const queued = STATUS.queued.area;
-						const waiting = STATUS.warn.area;
 						return (
 							<li key={`${n.chain_instance_id}:${n.node_id}`} className="contents">
 								<NodeName node={platformNode(run, n)} className="truncate text-fg-2" />
@@ -938,15 +937,6 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 										<i
 											className={cn("absolute inset-y-0.75 left-0 rounded-[2px]", queued.box)}
 											style={{ width: `${(n.queue_ms / max) * 100}%` }}
-										/>
-									)}
-									{n.wait_ms > 0 && (
-										<i
-											className={cn("absolute inset-y-0 rounded-[2px]", waiting.box)}
-											style={{
-												left: `${(n.queue_ms / max) * 100}%`,
-												width: `${(n.wait_ms / max) * 100}%`,
-											}}
 										/>
 									)}
 								</span>

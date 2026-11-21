@@ -58,7 +58,6 @@ export interface RunAttempt {
 	queuedAt: Date;
 	startedAt: Date | null;
 	endedAt: Date | null;
-	wakeAt: Date | null;
 	/** 最新进度，消息已打码。 */
 	progress: TaskProgress | null;
 }
@@ -117,7 +116,7 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	/** 场景此刻的名称和关注项（不属于场景版本）。 */
 	scenario: Pick<typeof orchestrations.$inferSelect, "name" | "focusItems">;
 	chains: RunChain<A>[];
-	/** 进行中的节点（排队、准备中、执行中、等待唤醒），按链与链上的顺序。 */
+	/** 进行中的节点（排队、准备中、执行中、等待），按链与链上的顺序。 */
 	activeNodes: RunListActiveNode[];
 	/**
 	 * 最终失败的节点，按失败的先后（@sfly/schema 的 `failuresInOrder`，结束时间取节点最后一次尝试的结束时间）：
@@ -203,7 +202,6 @@ async function readByIds(
 				queuedAt: tasks.queuedAt,
 				startedAt: tasks.startedAt,
 				endedAt: tasks.endedAt,
-				wakeAt: tasks.wakeAt,
 				progress: tasks.progress,
 			})
 			.from(tasks)
@@ -277,7 +275,6 @@ type BoardTaskRow = TaskRowBase & {
 	agentName: string | null;
 	queuedAt: Date;
 	endedAt: Date | null;
-	wakeAt: Date | null;
 	progress: TaskProgress | null;
 };
 type FullTaskRow = typeof tasks.$inferSelect & { currentAction: CurrentAction | null };
@@ -306,7 +303,6 @@ function attemptOf(row: BoardTaskRow, mask: Masker): RunAttempt {
 		queuedAt: row.queuedAt,
 		startedAt: row.startedAt,
 		endedAt: row.endedAt,
-		wakeAt: row.wakeAt,
 		progress: row.progress && { ...row.progress, message: mask.text(row.progress.message) },
 	};
 }
@@ -428,7 +424,6 @@ function activeNodesOf(chains: readonly RunChain[]): RunListActiveNode[] {
 				attempt: last.attempt,
 				agent: last.agent,
 				started_at: last.startedAt?.toISOString() ?? null,
-				wake_at: last.wakeAt?.toISOString() ?? null,
 				progress: last.progress
 					? { current: last.progress.current, total: last.progress.total }
 					: null,
@@ -551,7 +546,6 @@ function attemptView(a: RunAttemptDetail): AttemptView {
 		ended_at: iso(a.endedAt),
 		start_clock_offset: a.startClockOffset,
 		end_clock_offset: a.endClockOffset,
-		wake_at: iso(a.wakeAt),
 		// 进度消息在读取时已打码。
 		progress: a.progress ? taskProgressView(a.progress, []) : null,
 		current_action: a.currentAction,
