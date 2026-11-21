@@ -232,3 +232,42 @@ export async function focusWallRun(
 	if (fail) await agent.fail(fetch2, "下单接口返回 503");
 	return { runId, scenarioId };
 }
+
+/**
+ * 子流程从主链靠后的列分出的运行（控制台线路的溢出回归）：主链 entry → m1…m3 → 异步任务 spawn → m4 → m5（7 站，没有折叠），
+ * spawn 在第 5 列分出子流程「压测监控」sub → s1…s6（7 站），所以线路有 11 列。主链停在 m4、子流程停在 s1（执行中）。
+ * Agent 要有 2 个以上槽位。
+ */
+export async function lateSubflowRun(
+	controlPlane: TestControlPlane,
+	agent: FakeAgent,
+): Promise<string> {
+	const main = [
+		{ id: "entry", kind: "entry" },
+		ping("m1"),
+		ping("m2"),
+		ping("m3"),
+		{ id: "spawn", kind: "async", params: {} },
+		ping("m4"),
+		ping("m5"),
+	];
+	const sub = [
+		{ id: "sub", kind: "subflow_entry", name: "压测监控" },
+		...["s1", "s2", "s3", "s4", "s5", "s6"].map((id) => ping(id)),
+	];
+	const chain = (list: { id: string }[]) =>
+		list.slice(1).map((n, i) => ({ from: list[i]?.id, to: n.id, kind: "chain" }));
+	const scenario = await createScenario(controlPlane, "晚分出的子流程", {
+		default_agent: agent.name,
+		nodes: [...main, ...sub],
+		edges: [...chain(main), ...chain(sub), { from: "spawn", to: "sub", kind: "dispatch" }],
+		packages: { "demo-checks": "1.2.0" },
+	});
+	const run = await triggerRun(controlPlane, scenario);
+	const holding = new Set(["m4", "s1"]);
+	while (holding.size > 0) {
+		const task = await agent.nextAssign();
+		if (!holding.delete(task.nodeId)) await agent.succeed(task);
+	}
+	return run;
+}

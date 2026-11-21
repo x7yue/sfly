@@ -12,7 +12,8 @@ import { DEFAULT_PROJECT } from "../projects/project-id.js";
  * 环境变量是共享令牌的唯一来源：换了新的值、或者去掉了环境变量，库里之前登记的共享令牌随之删除（没有别的表引用它），
  * 旧值不会留在库里继续有效；之后又换回旧值，当作新登记一条。管理员吊销过的这一条（#492）不会因为重启又恢复有效：
  * 已经有这条记录就不再改它。只删 `kind = 'shared'` 的记录，按台签发的 Agent 凭据不受影响。
- * 目前没有任何检查读这张表：Hello 和上传产物照旧比较环境变量里的值（`agent-token.ts`）。
+ * 访问检查（src/auth/access-guard.ts）读这张表认出共享令牌：带共享令牌的 HTTP 请求和不带凭据的走同一套（照旧放行）；
+ * Hello 和上传产物仍然比较环境变量里的值（`agent-token.ts`）。
  */
 export async function registerSharedAgentToken(
 	db: Db,

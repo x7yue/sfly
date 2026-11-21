@@ -866,10 +866,23 @@ function NodeRow({
 					}
 				>
 					<StatusDot kind={status.kind} />
-					<NodeName node={node} />
-					<Truncate className={cn("flex-1 text-xs text-fg-3", packageNode && "font-mono")}>
-						{shortTitle}
-					</Truncate>
+					{/* 名称列很窄：显示名称优先，放不下时先截断节点 ID；后面的节点类型只用名称之后剩下的宽度。 */}
+					<NodeName node={node} priority="name" />
+					{/*
+					 * 节点类型：名称和 ID 之后剩下的宽度放得下才整个显示，放不下就整个收起（和「（节点 ID）」一样换到被裁掉的第二行），
+					 * 不留半个字、几像素的竖线残片。
+					 */}
+					<span
+						data-truncate-wrap=""
+						className={cn(
+							"flex h-[1lh] min-w-0 flex-1 flex-wrap overflow-hidden text-xs text-fg-3",
+							packageNode && "font-mono",
+						)}
+					>
+						{/* 弹性布局里只有一项时不会换行：先放一个零宽、一行高的占位，节点类型放不下才会换到被裁掉的第二行。 */}
+						<span aria-hidden className="h-[1lh] w-0 flex-none" />
+						<span className="flex-none whitespace-nowrap">{shortTitle}</span>
+					</span>
 					{node.attempts.length > 1 && <Badge className="h-4 px-1">×{node.attempts.length}</Badge>}
 					{isAlways(decl) && (
 						<Badge variant="warn" className="h-4 px-1">

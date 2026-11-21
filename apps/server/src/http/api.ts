@@ -9,6 +9,8 @@ import type { TaskActions } from "../actions/task-actions.js";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
+import { AccessGuard } from "../auth/access-guard.js";
+import { DbAccessStore } from "../auth/access-store.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
@@ -28,6 +30,7 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { installAccessGuard } from "./access.js";
 import { registerActionRoutes } from "./action-routes.js";
 import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
@@ -149,6 +152,8 @@ export function buildHttpApi({
 	});
 	// 所有路由都按 @sfly/schema 的 HTTP 契约注册（ADR 0007）：不在契约里的路由、没注册的接口都让启动失败。
 	guardHttpContract(app, httpContract);
+	// 每个契约路由在进处理函数之前先过访问检查（ADR 0029「一处检查」）；装在注册任何契约路由之前。
+	installAccessGuard(app, new AccessGuard({ store: new DbAccessStore(database.db), clock }));
 	// 每个响应都带控制面时间，页面据此修正浏览器时间（ADR 0018）；SSE 另有心跳事件。
 	// 在发出响应时取时间（不是收到请求时），处理耗时不算进页面的误差里。
 	app.addHook("onSend", async (_request, reply) => {

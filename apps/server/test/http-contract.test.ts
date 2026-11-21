@@ -1,8 +1,12 @@
-import { endpoint, httpContract } from "@sfly/schema";
+import { DECLARATION_RULES, endpoint, httpContract } from "@sfly/schema";
 import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { guardHttpContract } from "../src/http/contract-route.js";
+import { AccessGuard } from "../src/auth/access-guard.js";
+import { installAccessGuard } from "../src/http/access.js";
+import { contractRoute, guardHttpContract } from "../src/http/contract-route.js";
+import { FakeAccessStore } from "./support/fake-access-store.js";
+import { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 每个路径参数都填 x（`*` 也是），用来确认路由存在，不关心业务结果。 */
@@ -66,6 +70,89 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 		await app.close();
 	});
 
+	it("手写一个契约里有的路径（没经 contractRoute）时启动失败：它没有访问检查，不能靠测试才发现", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		expect(() => app.get("/health", async () => ({}))).toThrow(/不是经 contractRoute/);
+		await app.close();
+	});
+
+	it("手写的 HEAD 也不行：先于契约里的 GET 注册的 HEAD 会顶掉 Fastify 自动生成的那个，没有访问检查，启动要失败", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		installAccessGuard(
+			app,
+			new AccessGuard({ store: new FakeAccessStore(), clock: new ManualClock() }),
+		);
+		expect(() => app.head("/health", async () => ({}))).toThrow(/不是经 contractRoute/);
+		await app.close();
+	});
+
+	it("经 contractRoute 注册的 GET 自动生成的 HEAD 带着标记，照常通过", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		installAccessGuard(
+			app,
+			new AccessGuard({ store: new FakeAccessStore(), clock: new ManualClock() }),
+		);
+		contractRoute(app, health, async () => ({}));
+		await app.ready();
+		expect((await app.inject({ method: "HEAD", url: "/health" })).statusCode).toBe(200);
+		await app.close();
+	});
+
+	it("经 contractRoute、contractStream、contractDownload 注册的路由照常通过", async () => {
+		const app = Fastify();
+		const health = endpoint({
+			method: "GET",
+			path: "/health",
+			summary: "测试用的接口",
+			effect: "read",
+			resource: { kind: "system", target: "global" },
+			client: false,
+			key: ["test", "health"],
+			response: z.object({}),
+		});
+		guardHttpContract(app, [health]);
+		installAccessGuard(
+			app,
+			new AccessGuard({ store: new FakeAccessStore(), clock: new ManualClock() }),
+		);
+		expect(() => contractRoute(app, health, async () => ({}))).not.toThrow();
+		await app.ready();
+		await app.close();
+	});
+
 	it("契约里有、控制面没有注册的接口在启动时报错", async () => {
 		const app = Fastify();
 		const missing = endpoint({
@@ -78,7 +165,15 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 			key: ["test", "missing"],
 			response: z.object({}),
 		});
-		guardHttpContract(app, [missing]);
+		// 这个测试用的路径不在 PATH_KINDS 里：把它当成平台自身的接口登记，只检查「没有注册路由」这一条。
+		const rules = {
+			...DECLARATION_RULES,
+			pathKinds: {
+				...DECLARATION_RULES.pathKinds,
+				"/missing": { kind: "system", exact: true, why: "测试用" },
+			},
+		} as const;
+		guardHttpContract(app, [missing], rules);
 		await expect(app.ready()).rejects.toThrow(/GET \/missing/);
 		await app.close();
 	});
