@@ -165,14 +165,6 @@ describe("静态检查：run.state 的位置", () => {
 				"需要运行状态的节点（子流程里的也一样）在自己的输入里引用它",
 		);
 	});
-
-	it("写在 Sleep 节点的 duration 里：同样警告", () => {
-		const document = doc(
-			[{ id: "s", kind: "sleep", duration: "${{ run.state }}" }],
-			[["entry", "s"]],
-		);
-		expect(warningsOf(document, "reference_run_state_misplaced")).toHaveLength(1);
-	});
 });
 
 describe("静态检查：用 RunState 类型声明的输入必须接运行状态", () => {
@@ -231,7 +223,7 @@ describe("静态检查：用 RunState 类型声明的输入必须接运行状态
 
 describe("引用补全：包节点可以引用 run.state", () => {
 	const document = doc(
-		[fetch("f", {}), { id: "w", kind: "sleep", duration: "1s" }],
+		[fetch("f", {}), { id: "w", kind: "stop_subflow", always: false }],
 		[
 			["entry", "f"],
 			["f", "w"],

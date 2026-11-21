@@ -250,7 +250,7 @@ def run_summary(ctx: Context, bot: FeishuBot, run: RunState) -> None:
 
 - **引用写法**：只能整值引用 `${{ run.state }}`，只能写在包节点的输入里；夹在文字里、写在异步任务节点的参数映射里都不行（参数映射在子流程创建时解析并按值复制，子流程里的节点拿到的会是一份过时的状态）。`sfly build` 在输入 schema 里标记 `RunState` 类型的输入（`{"type": "object", "x-sfly-type": "run_state"}`），用它检查：这种输入必填却没接、或写了别的值（字面值、别的引用）时，保存给出警告、触发前的预检阻断，警告里直接写出该填 `${{ run.state }}`；画布加这种节点时已经替你填好。接到不带标记的普通输入（例如 `json` 类型）上也允许。
 - **什么时候的状态**：任务派发的那一刻，和解析别的引用在同一个事务里；重试时每次尝试各解析一次。节点执行期间它不变，解析出的值和别的输入一样记在这次尝试上，运行视图里看得到汇总节点当时拿到了什么。
-- **内容**：每个链实例（主链，和已被触发的子流程实例）的状态，以及它那条链上每个节点的 `status`、`attempts`（尝试次数）、`started_at`、`ended_at`、`error`（`kind` 错误类型、`headline` 失败原因一行、`message` 异常信息不含堆栈、`message_truncated`、`location` 节点代码里出错的位置，没有时为 `None`）；运行级的 `status`（汇总节点自己还没结束，所以总是 `running`，不能用它判断结果）、`result_so_far`（到此刻为止的结果：已请求取消是 `cancelled`，否则有节点最终失败是 `failed`，否则 `success`）、`cancel`（取消请求：谁、什么时候）、`failures`（最终失败的节点的 ID，按失败的先后，第一项是第一个失败的节点）、`self`（汇总节点自己）。所有键总是存在，没有值时是 `None` 或空列表。不含节点的输入、输出、日志、动作和堆栈；要全文打开运行的链接或用 `sfly run show <运行>`、`sfly run logs <运行> --failed`。错误信息里保密参数的值已打码。每个节点的状态怎么给（排在它前面的一定已结束，它自己是 `dispatched`，后面的是 `pending`，被跳过、被取消、被停止、超时各是什么）见 `docs/SEMANTICS.md §2.7`。
+- **内容**：每个链实例（主链，和已被触发的子流程实例）的状态，以及它那条链上每个节点的 `status`、`attempts`（尝试次数）、`started_at`、`ended_at`、`error`（`kind` 错误类型、`headline` 失败原因一行、`message` 异常信息不含堆栈、`message_truncated`、`location` 出错位置（`模块.函数 第 N 行`，见「出错位置」），没有时为 `None`）；运行级的 `status`（汇总节点自己还没结束，所以总是 `running`，不能用它判断结果）、`result_so_far`（到此刻为止的结果：已请求取消是 `cancelled`，否则有节点最终失败是 `failed`，否则 `success`）、`cancel`（取消请求：谁、什么时候）、`failures`（最终失败的节点的 ID，按失败的先后，第一项是第一个失败的节点）、`self`（汇总节点自己）。所有键总是存在，没有值时是 `None` 或空列表。不含节点的输入、输出、日志、动作和堆栈；要全文打开运行的链接或用 `sfly run show <运行>`、`sfly run logs <运行> --failed`。错误信息里保密参数的值已打码。每个节点的状态怎么给（排在它前面的一定已结束，它自己是 `dispatched`，后面的是 `pending`，被跳过、被取消、被停止、超时各是什么）见 `docs/SEMANTICS.md §2.7`。
 - **不改变调度**：引用它不让节点等任何东西。主链不等待的子流程，在汇总节点派发时可能还在进行，它之后的失败不在这份状态里；要让汇总看到某个子流程的最终结果，把汇总节点放在停止这个子流程的节点之后。
 - **兜底**：汇总节点有执行不到的时候：强制取消、它自己失败或它的 Agent 掉线、主链结束之后才失败的子流程。这几种情况用场景的「运行通知」兜底（见 [飞书通知](feishu-notify.md)）。
 - **单元测试和本地调试**：`sfly.testing.run_state(...)` 用简写造一份合法的状态（见下文「`sfly.testing`」）；一次真实运行的状态用 `sfly run show <运行> --state` 取下来，存成文件，放进输入里用 `sfly debug --params @文件` 喂给节点（见「`sfly debug`」）。本地调试照常接受这种参数，值就是你给的字典，不检查它是不是一次真实运行的状态。
@@ -293,7 +293,7 @@ class CheckOutputs(TypedDict):
 节点抛出的任何异常都让任务以 `node_error` 失败：错误消息形如 `ValueError: steps 必须大于 0，收到 0`，并附带 traceback。`node_error` 按场景里配置的重试次数重试，每次重试是一个新任务。消息里写清原因和相关参数值。
 
 - **堆栈从节点代码开始**：执行器自己调用节点的那几帧（`sfly/runner.py`，导入节点模块时还有 Python 的导入机制）已经去掉，第一帧就是你的节点函数。只去开头连续的那几帧：异常是在 SDK 里抛出的（例如 `ctx.agent(...).files.download` 失败）时，节点代码之后的 SDK 帧保留，它们说明是哪一次调用失败；异常链（`raise ... from ...`、处理异常时又抛出的）的每一段都这样处理。
-- **出错位置**：失败的错误里（运行视图和接口的 `error.location`、`sfly run show`、运行结束时的摘要、`sfly debug`、`sfly.testing` 的 `error.location`）有一个 `location`，写成 `模块.函数 第 N 行`（和被终止时「执行到」那一行的写法一样），不用翻堆栈就知道改哪一行；日志里也先有一行 ERROR 级的 `出错位置：模块.函数 第 N 行`，`sfly run logs --failed` 看得到。位置是异常经过的栈里**最里面的一帧你自己的代码**（入口模块所在的包，和项目里的辅助模块）：异常从辅助模块里抛出，位置是辅助模块里那一行；异常从 SDK、Python 标准库或**第三方库**里抛出，位置是调用它的那一行节点代码（库里的位置你改不了，不是要找的地方；和被终止时不同，那里停在第三方库里写的是库里的位置）。有的帧没有文件（`exec` 出来的函数、冻结的 dataclass 被赋值时生成的方法），位置是调用它们的那一行节点代码；`asyncio.TaskGroup` 里的子任务抛出的异常组，位置是第一个子任务里出错的那一行（不是 `async with` 那一行）。导入节点模块时失败：导入错误，位置是写了那条 `import` 的一行；语法错误，位置是出错的模块和行（`mypkg.nodes 第 3 行`，包的 `__init__.py` 写成包名 `mypkg`），节点包装在 site-packages 里（Agent 上）和从源码目录运行（本地调试）一样。没有位置的：不是节点自己出错的失败（超时、Agent 失联、返回值不合格等）、取位置时出了错、旧版本的 Agent 或 SDK 上报的、升级之前的任务，`location` 是 `null`。
+- **出错位置**：失败的错误里（运行视图和接口的 `error.location`、`sfly run show`、运行结束时的摘要、`sfly debug`、`sfly.testing` 的 `error.location`、节点收到的 `RunState` 里失败节点的 `error["location"]`）有一个 `location`，写成 `模块.函数 第 N 行`（和被终止时「执行到」那一行的写法一样），不用翻堆栈就知道改哪一行；日志里也先有一行 ERROR 级的 `出错位置：模块.函数 第 N 行`，`sfly run logs --failed` 看得到。位置是异常经过的栈里**最里面的一帧你自己的代码**（入口模块所在的包，和项目里的辅助模块）：异常从辅助模块里抛出，位置是辅助模块里那一行；异常从 SDK、Python 标准库或**第三方库**里抛出，位置是调用它的那一行节点代码（库里的位置你改不了，不是要找的地方；和被终止时不同，那里停在第三方库里写的是库里的位置）。有的帧没有文件（`exec` 出来的函数、冻结的 dataclass 被赋值时生成的方法），位置是调用它们的那一行节点代码；`asyncio.TaskGroup` 里的子任务抛出的异常组，位置是第一个子任务里出错的那一行（不是 `async with` 那一行）。导入节点模块时失败：导入错误，位置是写了那条 `import` 的一行；语法错误，位置是出错的模块和行（`mypkg.nodes 第 3 行`，包的 `__init__.py` 写成包名 `mypkg`），节点包装在 site-packages 里（Agent 上）和从源码目录运行（本地调试）一样。没有位置的：不是节点自己出错的失败（超时、Agent 失联、返回值不合格等）、取位置时出了错、旧版本的 Agent 或 SDK 上报的、升级之前的任务，`location` 是 `null`。
 
 ## `ctx.log`：日志
 
@@ -1010,7 +1010,7 @@ def test_summary_names_the_failed_node() -> None:
 
 - `nodes` 是「节点 ID → 状态」的映射，顺序就是主链上的顺序；失败的节点写成 `("failed", "错误信息")`，错误类型默认 `node_error`，要指定写 `("failed", "任务超时", "timeout")`。状态取 `success`、`failed`、`skipped`、`cancelled`、`stopped`、`pending`、`running`、`dispatched`。
 - `status`（运行的状态，默认 `running`）、`cancel`（取消人的名字，给了就带上取消请求）、`scenario`（场景名称）、`self_node`（引用状态的节点的 ID，它的状态是 `dispatched`，`self` 也填上）、`subflows`（子流程的名称 → 节点映射，生成带上级链实例、触发它的异步任务节点的链实例）。
-- `failures`、`result_so_far`、错误的 `headline` 和 `message`（错误信息里第一个「空行 + `Traceback (most recent call last):`」之后是堆栈，不算异常信息）都按真实的规则算好；造出的值通过导出的 JSON Schema（`sfly/schemas/run-state.schema.json`）。自相矛盾的参数（运行已结束却还有进行中的节点、`status="success"` 却有失败的节点……）抛 `ValueError`。
+- `failures`、`result_so_far`、错误的 `headline` 和 `message`（错误信息里从第一个独占一行的 `Traceback (most recent call last):`（或异常组的 `  + Exception Group Traceback …`）起是堆栈，不算异常信息，和控制面同一条规则）都按真实的规则算好；造出的值通过导出的 JSON Schema（`sfly/schemas/run-state.schema.json`）。自相矛盾的参数（运行已结束却还有进行中的节点、`status="success"` 却有失败的节点……）抛 `ValueError`。
 
 ## 命令行 `sfly`
 

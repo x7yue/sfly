@@ -41,6 +41,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from sfly.cli.input_source import STDIN, read_source
 from sfly.cli.run_view import format_duration
 from sfly.context import ActionResult
 from sfly.local import (
@@ -199,25 +200,18 @@ def _new_run_dir(project: Path, node: str) -> Path:
     raise DebugError(f"无法在 {root} 下创建运行目录")
 
 
-#: `--params @-`：从标准输入读（和 `sfly api --body @-` 一致）。
-_STDIN = "-"
-
-
 def _read_params(source: str) -> str:
-    """`--params @<source>` 指的内容：文件，或标准输入（`-`）。读不了时抛出 DebugError。"""
-    if source == _STDIN:
-        try:
-            return sys.stdin.read()
-        except (OSError, UnicodeDecodeError) as error:
-            raise DebugError(f"参数不合法：读不了 --params 的标准输入：{error}") from None
+    """`--params @<source>` 指的内容：文件，或标准输入（`-`，和 `sfly api --body @-` 一致）。
+    读法和 `sfly api --body` 共用（`read_source`）；读不了时抛出 DebugError。"""
     try:
-        return Path(source).expanduser().read_text(encoding="utf-8")
+        return read_source(source)
     except FileNotFoundError:
         raise DebugError(f"参数不合法：--params 指定的文件不存在：{source}") from None
     except IsADirectoryError:
         raise DebugError(f"参数不合法：--params 指定的 {source} 是目录，不是文件") from None
     except (OSError, UnicodeDecodeError) as error:
-        raise DebugError(f"参数不合法：读不了 --params 的文件 {source}：{error}") from None
+        what = "标准输入" if source == STDIN else f"文件 {source}"
+        raise DebugError(f"参数不合法：读不了 --params 的{what}：{error}") from None
 
 
 def _parse_params(option: str) -> dict[str, Any]:
@@ -226,7 +220,7 @@ def _parse_params(option: str) -> dict[str, Any]:
         source = option[1:]
         text = _read_params(source)
         # 报错里指明是哪个来源：「--params 的文件 p.json 不是…」「--params 的标准输入不是…」。
-        subject = "--params 的标准输入" if source == _STDIN else f"--params 的文件 {source} "
+        subject = "--params 的标准输入" if source == STDIN else f"--params 的文件 {source} "
         hint = ""
     else:
         text = option

@@ -28,8 +28,8 @@ from sfly.nodes import RUN_STATE_MARKER
 RunStatus = Literal["running", "success", "failed", "cancelled"]
 
 #: 节点最近一次尝试的状态：`pending` 还没有尝试，`queued` 排队中，`dispatched` 已派发给 Agent
-#: 还在准备（界面写「准备中」），`running` 执行中，`waiting` 定时 / Sleep 节点在等唤醒时间或
-#: 停止子流程节点在等被停止的子流程结束，`success`、`failed`、`skipped`（被跳过）、
+#: 还在准备（界面写「准备中」），`running` 执行中，`waiting` 停止子流程节点在等被停止的子流程结束，
+#: `success`、`failed`、`skipped`（被跳过）、
 #: `cancelled`（没开始就被取消）、`stopped`（所在子流程被停止，不算失败）。
 NodeStatus = Literal[
     "queued",
@@ -58,7 +58,8 @@ class RunStateError(TypedDict):
     message: str
     #: `message` 被截断了（超过长度上限，或整份状态超过大小上限被去掉）。
     message_truncated: bool
-    #: 节点代码里出错的位置（一行文字：`模块.函数 第 N 行`）；没有时为 `None`。
+    #: 出错位置（一行文字：`模块.函数 第 N 行`，节点代码里抛出的那一行）；节点自己没有出错
+    #: （超时、Agent 掉线等）时为 `None`。
     location: str | None
 
 

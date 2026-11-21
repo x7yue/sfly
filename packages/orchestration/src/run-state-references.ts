@@ -11,8 +11,7 @@ import { nodeTypeOf, type PackageCatalog, referableValues } from "./references.j
  * （`@sfly/schema` 的 `RunState`），接到包节点的一个普通输入上。规则：
  *
  * - 只能整值引用（夹在文字里时运行状态是对象，拼不进字符串），只能写在包节点的输入里；
- *   写在异步任务节点的参数映射里（参数映射在子流程创建时解析并按值复制，子流程里的节点拿到的会是一份过时的状态）、
- *   Sleep 节点的 duration 里都不行；
+ *   写在异步任务节点的参数映射里也不行（参数映射在子流程创建时解析并按值复制，子流程里的节点拿到的会是一份过时的状态）；
  * - 节点类型里用 `sfly.RunState` 声明的输入（`sfly build` 在输入 schema 里标记 `x-sfly-type: run_state`，可选参数
  *   `RunState | None` 是 anyOf 里的一项）必须接它：必填的没接、或写了别的值（字面值、别的引用）时警告；
  *   接到不带标记的普通输入（例如 json）上也允许。
@@ -70,7 +69,7 @@ export interface RunStateWarning {
 		| "input_run_state_value";
 	message: string;
 	node_id: string;
-	/** 警告所指的字段（包节点的输入、异步任务节点的参数、Sleep 节点的 duration）。 */
+	/** 警告所指的字段（包节点的输入、异步任务节点的参数）。 */
 	input: string;
 }
 
@@ -118,12 +117,11 @@ export function runStateWarnings(
 			const uses = runStateUses(value);
 			if (uses.length === 0) continue;
 			if (node.kind !== "package") {
-				const where =
-					node.kind === "async" ? `节点 ${name} 的参数 ${input}` : `节点 ${name} 的 ${input}`;
+				// `referableValues` 只给出包节点的输入和异步任务节点的参数，这里是异步任务节点的参数映射。
 				warnings.push({
 					code: "reference_run_state_misplaced",
 					message:
-						`${where} 里不能引用 ${RUN_STATE_REFERENCE}：参数映射在子流程创建时解析并按值复制，子流程里的节点拿到的会是一份过时的状态；` +
+						`节点 ${name} 的参数 ${input} 里不能引用 ${RUN_STATE_REFERENCE}：参数映射在子流程创建时解析并按值复制，子流程里的节点拿到的会是一份过时的状态；` +
 						"需要运行状态的节点（子流程里的也一样）在自己的输入里引用它",
 					node_id: node.id,
 					input,

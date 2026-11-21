@@ -91,10 +91,10 @@ describe("引用补全", () => {
 		expect(choices.find((c) => c.kind === "param")?.description).toBeUndefined();
 	});
 
-	it("只有包节点能引用运行状态：异步任务、Sleep 等内置节点的补全里没有它", () => {
+	it("只有包节点能引用运行状态：停止子流程等内置节点的补全里没有它", () => {
 		const builtin: StoredOrchestrationDocument = {
 			...doc,
-			nodes: [...doc.nodes, { id: "later", kind: "sleep", always: false, duration: "1s" }],
+			nodes: [...doc.nodes, { id: "later", kind: "stop_subflow", always: false }],
 			edges: [...doc.edges, { from: "ping", to: "later", kind: "chain" }],
 		} as StoredOrchestrationDocument;
 		expect(referenceChoices(builtin, "later", catalog).map((c) => c.kind)).not.toContain(
@@ -151,8 +151,8 @@ describe("引用补全", () => {
 			"output",
 		]);
 		// ordered 只含有匹配的项，没有匹配项的组不占位置。
-		expect(completionGroups(choices, "wait").ordered.map((c) => c.expression)).toEqual([
-			"nodes.wait.outputs.triggered_at",
+		expect(completionGroups(choices, "stop").ordered.map((c) => c.expression)).toEqual([
+			"nodes.stop.outputs.status",
 		]);
 	});
 

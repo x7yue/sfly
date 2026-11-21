@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import re
 import sys
 import tempfile
 import time
@@ -161,12 +162,22 @@ _RUN_STATUSES: tuple[str, ...] = typing.get_args(RunStatus)
 _IN_PROGRESS = frozenset({"queued", "dispatched", "running", "waiting", "pending"})
 #: 有尝试、已经开始：`running`、`waiting` 还没结束，`success`、`failed` 结束了。
 _STARTED = frozenset({"running", "waiting", "success", "failed"})
-_ENDED = frozenset({"success", "failed"})
+#: 有结束时间：结束的尝试，和没开始就被取消、被停止的占位（结束时间是取消或停止的那一刻）。
+_ENDED = frozenset({"success", "failed", "cancelled", "stopped"})
 #: 没有尝试的占位：还没有尝试，被跳过，没开始就被取消，所在子流程被停止。
 _NO_ATTEMPT = frozenset({"pending", "skipped", "cancelled", "stopped"})
 
 _START = datetime(2026, 1, 1, tzinfo=timezone.utc)
-_TRACEBACK = "Traceback (most recent call last):"
+#: 堆栈开头的那一行：独占一行、顶格的 `Traceback (most recent call last):`，或异常组的
+#: `  + Exception Group Traceback (most recent call last):`。和控制面的 `splitErrorText`
+#: （packages/schema/src/run-state.ts）是同一条规则。
+_STACK_START = re.compile(
+    r"^(?:Traceback \(most recent call last\):"
+    r"| {2}\+ Exception Group Traceback \(most recent call last\):)",
+    re.MULTILINE,
+)
+#: 去掉末尾的空白（和 JS 的 `trimEnd()` 一致，BOM 也算）。
+_TRIM_END = re.compile(r"[\s\ufeff]+$")
 
 #: 链上的一个节点：（节点 ID，种类，状态，错误）。
 _Entry = tuple[str, str, str, "RunStateError | None"]
@@ -179,12 +190,10 @@ def _at(ms: int) -> str:
 
 
 def _exception_message(text: str) -> str:
-    """错误信息里的异常信息（不含堆栈）：和控制面一样，第一个「空行 + `Traceback ...`」（堆栈的
-    开头）之后是堆栈；整段就是堆栈时异常信息是空串。"""
-    if text.startswith(_TRACEBACK):
-        return ""
-    at = text.find(f"\n\n{_TRACEBACK}")
-    return text if at < 0 else text[:at]
+    """错误信息里的异常信息（不含堆栈）：和控制面一样，从第一个堆栈开头的那一行（`_STACK_START`）
+    拆开，之前的是异常信息（去掉末尾的空白）；没有堆栈时整段是异常信息；整段就是堆栈时是空串。"""
+    found = _STACK_START.search(text)
+    return _TRIM_END.sub("", text if found is None else text[: found.start()])
 
 
 def _error(text: str, kind: str) -> RunStateError:
@@ -288,8 +297,8 @@ def run_state(
     其余字段按规则算出或给固定值：`failures` 是失败的节点（`failed`，按主链、子流程、链上的顺序），
     `result_so_far` 已请求取消是 `cancelled`、否则有节点失败是 `failed`、否则 `success`，
     运行已结束时就是 `status`；时间从 2026-01-01T00:00:00.000Z 起按节点的顺序递增；
-    链实例的状态由节点算出（还有节点在进行是 `running`）。`cancelled`、`stopped` 当作没开始的占位，
-    没有尝试、没有起止时间。
+    链实例的状态由节点算出（还有节点在进行是 `running`）。`cancelled`、`stopped` 当作没开始的占位：
+    没有尝试、没有开始时间，结束时间是取消或停止的那一刻（和真实运行里没开始就被取消的节点一样）。
 
     参数自相矛盾时抛出 `ValueError`：不认识的状态、写法不对的节点、节点 ID 重复、已经结束的运行里
     还有进行中的节点、`success` 的运行里有失败的节点或取消。

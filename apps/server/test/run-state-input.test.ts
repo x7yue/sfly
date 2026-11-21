@@ -133,6 +133,79 @@ describe("节点输入里的运行状态 ${{ run.state }}", () => {
 		expect(JSON.stringify(recorded)).not.toContain(TOKEN);
 	});
 
+	describe("保密参数的值打码：和运行摘要同一个口径（readRuns 的读取时打码）", () => {
+		const LATER = "later-pw-3f9d2a71";
+
+		/**
+		 * 主链 entry → spawn0（子流程「前」，里面有 x）→ gate → spawn1（子流程「后」，保密参数 pw 的值 LATER 由它传入）→ sum。
+		 * 子流程「前」的 x 失败时，LATER 还不是这次运行的保密参数的值：错误信息存进库时没有打码，
+		 * 子流程「后」创建出来之后，读取时按这次运行此刻的保密参数的值再打码。
+		 */
+		const document = () => {
+			const doc = orchestration(
+				[
+					[
+						{ id: "entry", kind: "entry", params: [] },
+						spawn("spawn0"),
+						echo("gate"),
+						spawn("spawn1", { pw: LATER }),
+						summary("sum"),
+					],
+					[{ id: "sub0", kind: "subflow_entry", name: "前", params: [] }, echo("x")],
+					[
+						{
+							id: "sub1",
+							kind: "subflow_entry",
+							name: "后",
+							params: [{ name: "pw", type: "string", secret: true }],
+						},
+						echo("y"),
+					],
+				],
+				[
+					["spawn0", "sub0"],
+					["spawn1", "sub1"],
+				],
+			);
+			return { ...doc, packages: { ...doc.packages, report: "1.0.0" } };
+		};
+
+		it("子流程创建之前失败的节点：错误信息、失败原因、出错位置里的值，汇总节点收到的是掩码，记在任务上的输入里也搜不到原值", async () => {
+			const runId = await start(document());
+			// spawn0 成功之后子流程「前」的 x 和主链的 gate 同时派发。
+			const first = [await agent.nextAssign(), await agent.nextAssign()];
+			const x = first.find((t) => t.nodeId === "x") as AssignedTask;
+			const gate = first.find((t) => t.nodeId === "gate") as AssignedTask;
+			await agent.fail(
+				x,
+				`连接口令 ${LATER} 无效\n\n${STACK}`,
+				ErrorKind.NODE_ERROR,
+				undefined,
+				`probe.connect 第 7 行（${LATER}）`,
+			);
+			// gate 成功之后 spawn1 把 LATER 传给子流程「后」，子流程「后」的第一个节点 y 和汇总节点同时派发。
+			await agent.succeed(gate);
+			const second = [await agent.nextAssign(), await agent.nextAssign()];
+			const sum = second.find((t) => t.nodeId === "sum") as AssignedTask;
+
+			const state = stateOf(sum);
+			// 两个子流程同一时刻创建（手动时钟），先后只由 ID 决定，这里不看顺序。
+			expect(state.chains.map((c) => c.name).sort()).toEqual([null, "前", "后"].sort());
+			expect(state.failures).toEqual(["x"]);
+			expect(nodeOf(state, "x")?.error).toEqual({
+				kind: "node_error",
+				headline: "连接口令 ****** 无效",
+				message: "连接口令 ****** 无效",
+				message_truncated: false,
+				location: "probe.connect 第 7 行（******）",
+			});
+			expect(JSON.stringify(sum.inputs)).not.toContain(LATER);
+			const recorded = (await api.node(runId, "sum")).attempts[0]?.inputs;
+			expect(recorded).toEqual(sum.inputs);
+			expect(JSON.stringify(recorded)).not.toContain(LATER);
+		});
+	});
+
 	it("没有引用 run.state 的输入原样不变；引用只对写了它的节点解析", async () => {
 		await start(flow([echo("a", { v: "x" }), summary("sum")]));
 		const a = await agent.nextAssign();

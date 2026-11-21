@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 import typing
 from pathlib import Path
@@ -111,10 +112,16 @@ def test_the_message_has_no_stack_and_the_headline_is_the_first_line_with_conten
     assert error["message_truncated"] is False
 
 
-def test_the_stack_starts_at_the_first_blank_line_followed_by_a_traceback() -> None:
+def test_the_stack_starts_at_the_first_traceback_line_like_the_control_plane() -> None:
     text = f"RuntimeError: 子进程失败\n\n{STACK}\n\n{STACK}"
     just_the_stack = STACK
     quoted = "见 Traceback (most recent call last): 之后的内容"
+    # 执行器异常退出：标准错误里堆栈前面的一行警告留在异常信息里，堆栈从它自己的那一行起算。
+    crashed = f"执行器异常退出（退出码 1），没有写出结果\n警告：内存不足\n{STACK}"
+    group = (
+        "ExceptionGroup: 两个任务失败\n\n"
+        '  + Exception Group Traceback (most recent call last):\n  |  File "a.py", line 3'
+    )
 
     state = checked(
         run_state(
@@ -122,6 +129,8 @@ def test_the_stack_starts_at_the_first_blank_line_followed_by_a_traceback() -> N
                 "a": ("failed", text),
                 "b": ("failed", just_the_stack),
                 "c": ("failed", quoted),
+                "d": ("failed", crashed),
+                "e": ("failed", group),
             }
         )
     )
@@ -131,6 +140,47 @@ def test_the_stack_starts_at_the_first_blank_line_followed_by_a_traceback() -> N
     assert nodes["b"]["error"]["message"] == ""
     assert nodes["b"]["error"]["headline"] == ""
     assert nodes["c"]["error"]["message"] == quoted
+    assert nodes["d"]["error"]["message"] == (
+        "执行器异常退出（退出码 1），没有写出结果\n警告：内存不足"
+    )
+    assert nodes["e"]["error"]["message"] == "ExceptionGroup: 两个任务失败"
+
+
+CASES = json.loads(
+    (Path(__file__).resolve().parents[3] / "testdata/run-state-cases.json").read_text("utf-8")
+)["cases"]
+
+
+def stored_errors(case: dict[str, Any]) -> dict[str, tuple[str, str, dict[str, Any]]]:
+    """用例里每个失败节点：节点 ID → （最近一次尝试存下的错误信息、错误类型、期望的 `error`）。"""
+    expected = {n["node_id"]: n for chain in case["expected"]["chains"] for n in chain["nodes"]}
+    found: dict[str, tuple[str, str, dict[str, Any]]] = {}
+    for chain in case["source"]["chains"]:
+        for node in chain["nodes"]:
+            error = node["attempts"][-1]["error"] if node["attempts"] else None
+            want = expected[node["node_id"]]["error"]
+            if node["status"] == "failed" and error and want:
+                found[node["node_id"]] = (error["message"], error["kind"], want)
+    return found
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
+def test_the_error_made_from_a_stored_text_is_what_the_control_plane_projects(
+    case: dict[str, Any],
+) -> None:
+    """共用用例表（testdata/run-state-cases.json）里的错误信息交给 `run_state`，造出的 `error` 的
+    类型、失败原因一行、异常信息和控制面投影出的一样（长度限制、出错位置不在这里比）。"""
+    stored = stored_errors(case)
+    limits = case.get("options", {}).get("limits")
+    for node_id, (text, kind, want) in stored.items():
+        if limits or want["message_truncated"]:
+            continue
+        error = nodes_of(run_state(nodes={node_id: ("failed", text, kind)}))[node_id]["error"]
+        assert (error["kind"], error["headline"], error["message"]) == (
+            want["kind"],
+            want["headline"],
+            want["message"],
+        ), node_id
 
 
 def test_the_headline_drops_the_exception_module_path_like_the_real_one() -> None:
@@ -254,8 +304,9 @@ def test_the_node_status_decides_attempts_and_times() -> None:
         "queued": (1, False, False),
         "pending": (0, False, False),
         "skipped": (0, False, False),
-        "cancelled": (0, False, False),
-        "stopped": (0, False, False),
+        # 没开始就被取消、被停止的占位：没有尝试、没有开始时间，结束时间是取消或停止的那一刻。
+        "cancelled": (0, False, True),
+        "stopped": (0, False, True),
     }
 
 
