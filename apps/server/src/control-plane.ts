@@ -11,6 +11,7 @@ import {
 import { loadInstallScript } from "./agent-binaries/install-script.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
+import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
@@ -33,7 +34,6 @@ import { MetricRetention } from "./metrics/metric-retention.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
-import { PresenceRegistry } from "./presence/presence-registry.js";
 import { PresetStore } from "./presets/preset-store.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
@@ -70,7 +70,7 @@ export interface ControlPlaneOptions {
 	 */
 	publicGrpcUrl?: string;
 	/**
-	 * 周期扫描（在线编辑者超时、任务租约过期、排队超时）的间隔，默认 250 毫秒；
+	 * 周期扫描（任务租约过期、排队超时）的间隔，默认 250 毫秒；
 	 * 测试里调小，配合手动时钟推进。
 	 */
 	sweepIntervalMs?: number;
@@ -149,6 +149,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 
 	try {
 		await database.migrate();
+		// 共享令牌登记成默认项目的旧式 Agent 凭据（ADR 0029）。
+		await registerSharedAgentToken(database.db, clock, options.agentToken);
 	} catch (error) {
 		await database.close();
 		throw error;
@@ -296,7 +298,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 	});
-	const presence = new PresenceRegistry({ clock });
 	const api = buildHttpApi({
 		database,
 		clock,
@@ -306,7 +307,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		presets: new PresetStore({ db: database.db, clock }),
 		engine,
 		packages,
-		presence,
 		preflight,
 		logs,
 		actions,
@@ -388,15 +388,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		if (logger) console.error(`${what} failed:`, error);
 	};
 	const sweeps = [
-		// 在线编辑者超时（#17）、任务租约过期与排队超时（#15）。
-		periodic(
-			options.sweepIntervalMs ?? 250,
-			async () => {
-				presence.sweep();
-				await engine.expireTasks();
-			},
-			fail("sweep"),
-		),
+		// 任务租约过期与排队超时（#15）。
+		periodic(options.sweepIntervalMs ?? 250, () => engine.expireTasks(), fail("sweep")),
 		// 日志和产物的保留期清理（#18）；指标分区的提前创建与到期删除（#32）。
 		periodic(
 			options.retentionSweepIntervalMs ?? 60_000,

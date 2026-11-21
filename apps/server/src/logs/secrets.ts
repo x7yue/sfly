@@ -83,20 +83,50 @@ export function shortLeafCount(value: unknown): number {
 	}).length;
 }
 
-/** Python `json.dumps` 默认的写法：`", "` 和 `": "` 分隔，`ensure_ascii` 时非 ASCII 写成 `\uXXXX`。 */
-function pythonJson(value: unknown, ensureAscii: boolean): string {
+/** 两个字符串按 UTF-8 字节序比较（和码点序相同；JS 的 `<` 比的是 UTF-16 码元，BMP 之外的字符会排到错的位置）。 */
+const compareUtf8 = (a: string, b: string): number =>
+	Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/** 把值写成 JSON 文本的一种写法。 */
+interface JsonStyle {
+	/** 数组的元素之间、对象的键值对之间的分隔：`","`（紧凑）或 `", "`（Python `json.dumps` 默认）。 */
+	item: string;
+	/** 键和值之间的分隔：`":"` 或 `": "`。 */
+	pair: string;
+	/** 对象的键按 UTF-8 字节序排：Agent 交给节点的顺序，也是 `sort_keys=True` 的结果；false 时保持值里的顺序（参数里写的顺序）。 */
+	sorted: boolean;
+	/** 非 ASCII 字符和 DEL 写成 `\uXXXX`（Python 的 `ensure_ascii`）。 */
+	ascii: boolean;
+}
+
+const COMPACT = { item: ",", pair: ":" } as const;
+const PYTHON_DEFAULT = { item: ", ", pair: ": " } as const;
+
+/**
+ * 按 {@link JsonStyle} 写出 JSON 文本。键的顺序自己排，不靠 JS 对象的键顺序：JS 的对象会把 `"10"`、`"9"` 这样整数样子的键
+ * 按数值提前，`Object.fromEntries` 排好序也会被它改回去，而 Agent 交给节点的顺序（`serde_json` 的 BTreeMap）是字节序。
+ */
+function renderJson(value: unknown, style: JsonStyle): string {
 	const text = (v: unknown): string => {
-		if (Array.isArray(v)) return `[${v.map(text).join(", ")}]`;
+		if (Array.isArray(v)) return `[${v.map(text).join(style.item)}]`;
 		if (v !== null && typeof v === "object") {
-			return `{${Object.entries(v)
-				.map(([k, item]) => `${JSON.stringify(k)}: ${text(item)}`)
-				.join(", ")}}`;
+			const entries = Object.entries(v).filter(([, item]) => item !== undefined);
+			if (style.sorted) entries.sort(([a], [b]) => compareUtf8(a, b));
+			const pairs = entries.map(([k, item]) => `${JSON.stringify(k)}${style.pair}${text(item)}`);
+			return `{${pairs.join(style.item)}}`;
 		}
 		return jsonText(v);
 	};
 	const written = text(value);
-	return ensureAscii ? asciiEscaped(written) : written;
+	return style.ascii ? asciiEscaped(written) : written;
 }
+
+/**
+ * 值的标准写法：紧凑、键按字节序排好。节点整个等于一个 secret 对象（{@link SecretParts.containers}）时用它比较，
+ * 键的顺序不同也算同一个对象；也是 `testdata/key-order-cases.json` 里两端共用的排序结果。
+ */
+export const canonicalJson = (value: unknown): string =>
+	renderJson(value, { ...COMPACT, sorted: true, ascii: false });
 
 /** 一个 secret 参数的值拆成的几类要打码的东西，见 {@link secretPartsOf}。 */
 export interface SecretParts {
@@ -104,7 +134,7 @@ export interface SecretParts {
 	texts: string[];
 	/** 值是数字、布尔时，作为节点（不是文字）整个等于它就换成掩码：这些值的 JSON 文本。 */
 	scalars: string[];
-	/** 值是对象、数组时，作为节点整个等于它就换成掩码：这个值的 JSON 文本（紧凑写法）。 */
+	/** 值是对象、数组时，作为节点整个等于它就换成掩码：这个值的标准写法（{@link canonicalJson}，键的顺序不同也算相等）。 */
 	containers: string[];
 }
 
@@ -118,8 +148,9 @@ export interface SecretParts {
  * - 对象、数组：
  *   - 里面的字符串叶子和数字叶子，写出来不少于 {@link MIN_LEAF_CHARS} 个字符的，按值打码（字符串带转义写法，
  *     多行的字符串按行）；数字叶子作为节点整个等于它时也换成掩码（{@link SecretParts.scalars}）。键不算。
- *   - 更短的叶子、布尔、空值不单独打码；整个对象被原样写出时随整段一起盖住：整段的几种写法都算，控制面的紧凑写法，
- *     Python `json.dumps` 默认的写法（`", "`、`": "` 分隔），各自带或不带 `\uXXXX` 转义（`ensure_ascii`）。
+ *   - 更短的叶子、布尔、空值不单独打码；整个对象被原样写出时随整段一起盖住：整段的几种写法都算，紧凑写法和
+ *     Python `json.dumps` 默认的写法（`", "`、`": "` 分隔），键按节点收到的顺序（Agent 排好的，也是 `sort_keys=True` 的结果）
+ *     和按参数里写的顺序，各自带或不带 `\uXXXX` 转义（`ensure_ascii`）。
  *   - 没有任何内容（`{}`、`[]`、`[[]]`、`{"k": ""}`、`{"n": null}`）时什么都不算。
  *   - 作为节点整个等于它时换成掩码（{@link SecretParts.containers}）。
  * - null、undefined：没有。
@@ -149,55 +180,164 @@ export function secretPartsOf(value: unknown): SecretParts {
 				parts.scalars.push(jsonText(leaf));
 			}
 		}
-		for (const ensureAscii of [false, true]) {
-			texts.add(asciiIf(JSON.stringify(value), ensureAscii));
-			texts.add(pythonJson(value, ensureAscii));
+		// 整个对象被原样写出的各种写法：紧凑和 Python 默认的分隔，键按节点收到的顺序（排好序）和参数里写的顺序，
+		// 各自带或不带 `\uXXXX` 转义。节点收到的对象，键是 Agent 排过序的，所以排序的那几份才是节点原样写出来的样子。
+		for (const separators of [COMPACT, PYTHON_DEFAULT]) {
+			for (const sorted of [true, false]) {
+				for (const ascii of [false, true])
+					texts.add(renderJson(value, { ...separators, sorted, ascii }));
+			}
 		}
-		parts.containers.push(JSON.stringify(value));
+		parts.containers.push(canonicalJson(value));
 	}
 	parts.texts = [...texts];
 	return parts;
 }
 
-const asciiIf = (text: string, ensureAscii: boolean): string =>
-	ensureAscii ? asciiEscaped(text) : text;
-
 /**
- * 编译好的匹配：一个 secret 值集合（长的在前）拼成的一个正则，按值集合缓存；值集合变了就是另一个键，重新编译。
- * 读取运行每次都算一份新的 {@link SecretSet}，同样的值集合不重复编译。
+ * 单个要打码的文本超过这么长（UTF-16 码元）就不放进正则，改成字面量查找。V8 编译一个太大的正则会抛
+ * `Regular expression too large`（单个模式在 32 K 码元上下），报错信息里还带着整个正则的源码，也就是 secret 值本身。
+ * 能到这个长度的有长的字符串值（证书链）、对象的整段 JSON、几千个汉字的值（`\uXXXX` 写法是原长的 6 倍）。
  */
-const compiled = new Map<string, RegExp>();
-const COMPILED_LIMIT = 64;
+const MAX_REGEX_TEXT_CHARS = 1024;
+
+/** 一个正则的源码（转义之后）最长这么长，远低于 V8 的上限；值集合更大时分成几个正则。 */
+const MAX_REGEX_SOURCE_CHARS = 8192;
+
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 
-function regexFor(texts: readonly string[]): RegExp {
-	const key = texts.join("\u0000");
-	let regex = compiled.get(key);
-	if (!regex) {
-		regex = new RegExp(texts.map(escapeRegExp).join("|"), "g");
-		compiled.set(key, regex);
+/** 把一段源码编译成全局正则；测试里可以换成别的（让它失败），见 {@link SecretSet} 的 `compile` 选项。 */
+type Compile = (source: string) => RegExp;
+const compileGlobal: Compile = (source) => new RegExp(source, "g");
+
+/** 一份值集合的匹配：几个正则（每个是一批文本的候选），加上不进正则、直接做字面量查找的文本。 */
+interface Matcher {
+	regexes: readonly RegExp[];
+	literals: readonly string[];
+}
+
+/** 一批文本分成若干块，每块转义之后的源码不超过 {@link MAX_REGEX_SOURCE_CHARS}（文本已按长度从长到短排好）。 */
+function chunksOf(texts: readonly string[]): string[][] {
+	const chunks: string[][] = [];
+	let current: string[] = [];
+	let size = 0;
+	for (const text of texts) {
+		const escaped = escapeRegExp(text).length + 1;
+		if (current.length > 0 && size + escaped > MAX_REGEX_SOURCE_CHARS) {
+			chunks.push(current);
+			current = [];
+			size = 0;
+		}
+		current.push(text);
+		size += escaped;
+	}
+	if (current.length > 0) chunks.push(current);
+	return chunks;
+}
+
+/**
+ * 能进正则的文本编译好的结果，按这批文本缓存；值集合变了就是另一个键，重新编译。读取运行每次都算一份新的 {@link SecretSet}，
+ * 同样的值集合不重复编译。编译失败的块的文本（`failed`）退回字面量查找，失败的错误不往外抛、不记录：它的消息里带着正则源码，
+ * 也就是 secret 值。
+ */
+const compiled = new Map<string, { regexes: RegExp[]; failed: string[] }>();
+const COMPILED_LIMIT = 64;
+
+function compileInline(inline: readonly string[], compile: Compile | undefined) {
+	const build = () => {
+		const regexes: RegExp[] = [];
+		const failed: string[] = [];
+		for (const chunk of chunksOf(inline)) {
+			try {
+				regexes.push((compile ?? compileGlobal)(chunk.map(escapeRegExp).join("|")));
+			} catch {
+				failed.push(...chunk);
+			}
+		}
+		return { regexes, failed };
+	};
+	// 注入的编译器只用于测试，不进共享的缓存。
+	if (compile) return build();
+	const key = JSON.stringify(inline);
+	let found = compiled.get(key);
+	if (!found) {
+		found = build();
+		compiled.set(key, found);
 		if (compiled.size > COMPILED_LIMIT) {
 			const oldest = compiled.keys().next().value;
 			if (oldest !== undefined) compiled.delete(oldest);
 		}
 	}
-	return regex;
+	return found;
+}
+
+function buildMatcher(texts: readonly string[], compile: Compile | undefined): Matcher {
+	const inline = texts.filter((t) => t.length <= MAX_REGEX_TEXT_CHARS);
+	const { regexes, failed } = compileInline(inline, compile);
+	return {
+		regexes,
+		literals: [...texts.filter((t) => t.length > MAX_REGEX_TEXT_CHARS), ...failed],
+	};
+}
+
+/**
+ * 有字面量要查、或者值集合分成了几个正则时的打码：先找出每个正则和每个字面量在文字里的全部位置，重叠的合成一段，
+ * 每段换成一个掩码（相邻但不重叠的各是一个掩码）。
+ */
+function maskSpans(text: string, matcher: Matcher): string {
+	const spans: Array<[number, number]> = [];
+	for (const regex of matcher.regexes) {
+		regex.lastIndex = 0;
+		for (let m = regex.exec(text); m; m = regex.exec(text)) {
+			// 要打码的文本都不是空的，所以不会有空匹配；以防万一，往前走一格，不让它死循环。
+			if (m[0].length === 0) regex.lastIndex += 1;
+			else spans.push([m.index, m.index + m[0].length]);
+		}
+		regex.lastIndex = 0;
+	}
+	for (const literal of matcher.literals) {
+		for (let at = text.indexOf(literal); at >= 0; at = text.indexOf(literal, at + 1)) {
+			spans.push([at, at + literal.length]);
+		}
+	}
+	if (spans.length === 0) return text;
+	spans.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+	let out = "";
+	let cursor = 0;
+	let [from, to] = spans[0] as [number, number];
+	const flush = () => {
+		out += text.slice(cursor, from) + SECRET_MASK;
+		cursor = to;
+	};
+	for (const [start, end] of spans.slice(1)) {
+		if (start < to) {
+			to = Math.max(to, end);
+			continue;
+		}
+		flush();
+		[from, to] = [start, end];
+	}
+	flush();
+	return out + text.slice(cursor);
 }
 
 /**
  * 一次运行此刻的全部 secret 值要打码的东西（{@link secretPartsOf} 汇总）。不可变：运行里有了新的 secret 值（子流程实例创建）
  * 就是另一个值集合，匹配用的正则按值集合编译、缓存：一批日志、动作经过它时，每一段文字只是一次正则替换，不是每个值各扫一遍
- * （值多的时候逐个扫一遍的代价和值的个数成正比，日志每行都要付）。
+ * （值多的时候逐个扫一遍的代价和值的个数成正比，日志每行都要付）。很长的文本不进正则（{@link MAX_REGEX_TEXT_CHARS}）。
  */
 export class SecretSet {
 	/** 在文字里按子串换成掩码的文本，长的在前（整段的 JSON 先于它里面的叶子）。 */
 	readonly texts: readonly string[];
 	/** 作为节点整个等于它就换成掩码的数字、布尔和数字叶子：JSON 文本。 */
 	readonly scalars: ReadonlySet<string>;
-	/** 作为节点整个等于它就换成掩码的对象和数组：JSON 文本。 */
+	/** 作为节点整个等于它就换成掩码的对象和数组：标准写法（{@link canonicalJson}）。 */
 	readonly containers: ReadonlySet<string>;
+	readonly #compile: Compile | undefined;
+	#matcher: Matcher | undefined;
 
-	constructor(parts: Iterable<SecretParts> = []) {
+	/** `options.compile` 只给测试用：换掉编译正则的函数，验证它失败时打码照样完成、不抛错。 */
+	constructor(parts: Iterable<SecretParts> = [], options: { compile?: Compile } = {}) {
 		const texts = new Set<string>();
 		const scalars = new Set<string>();
 		const containers = new Set<string>();
@@ -209,6 +349,7 @@ export class SecretSet {
 		this.texts = [...texts].sort((a, b) => b.length - a.length);
 		this.scalars = scalars;
 		this.containers = containers;
+		this.#compile = options.compile;
 	}
 
 	/** 没有任何要打码的东西：读取和写入都可以跳过打码。 */
@@ -216,26 +357,22 @@ export class SecretSet {
 		return this.texts.length === 0 && this.scalars.size === 0 && this.containers.size === 0;
 	}
 
-	/** 编译好的匹配，第一次用到时取（{@link regexFor}）：每次打码只是一次正则替换，不再按值集合查缓存。 */
-	#regex: RegExp | undefined;
-
-	#matcher(): RegExp {
-		this.#regex ??= regexFor(this.texts);
-		return this.#regex;
-	}
-
-	/** 把文本中出现的 secret 值替换成掩码；里面没有时返回同一个字符串。 */
+	/**
+	 * 把文本中出现的 secret 值替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入（尤其是写日志）不能因为打码
+	 * 失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；错误本身不往外带，它的消息里可能有值。
+	 */
 	mask(text: string): string {
 		if (this.texts.length === 0) return text;
-		return text.replace(this.#matcher(), SECRET_MASK);
-	}
-
-	/** 文本里有没有 secret 值。 */
-	appearsIn(text: string): boolean {
-		if (this.texts.length === 0) return false;
-		const regex = this.#matcher();
-		regex.lastIndex = 0;
-		return regex.test(text);
+		try {
+			this.#matcher ??= buildMatcher(this.texts, this.#compile);
+			const { regexes, literals } = this.#matcher;
+			if (literals.length === 0 && regexes.length === 1) {
+				return text.replace(regexes[0] as RegExp, SECRET_MASK);
+			}
+			return maskSpans(text, this.#matcher);
+		} catch {
+			return SECRET_MASK;
+		}
 	}
 }
 
@@ -351,7 +488,7 @@ function mask(value: unknown, secrets: SecretSet): unknown {
 		return secrets.scalars.has(jsonText(value)) ? SECRET_MASK : value;
 	}
 	if (value !== null && typeof value === "object") {
-		if (secrets.containers.size > 0 && secrets.containers.has(JSON.stringify(value))) {
+		if (secrets.containers.size > 0 && secrets.containers.has(canonicalJson(value))) {
 			return SECRET_MASK;
 		}
 		if (Array.isArray(value)) return value.map((item) => mask(item, secrets));

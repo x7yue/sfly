@@ -151,7 +151,7 @@ export class FeishuDelivery {
 
 	/** 投递队首的消息；返回 false 表示现在还不能发（在等退避或限速），投递循环先结束。 */
 	async #deliver(message: MessageRow): Promise<boolean> {
-		const bot = await this.deps.bots.get(message.botName);
+		const bot = await this.deps.bots.getForDelivery(message.botName);
 		if (!bot) {
 			await this.#discard(message.botName, "bot_removed");
 			return true;

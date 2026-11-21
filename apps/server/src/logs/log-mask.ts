@@ -39,8 +39,10 @@ export function logMask(secrets: SecretSet): LogMask {
 		},
 		row: (row) => {
 			// 行是 JSON，值里的引号、反斜杠、换行在文件里是转义的：整行按文本查，原文的写法和转义的写法（SecretSet 里都有）都认得出。
-			if (!secrets.appearsIn(row.toString("utf8"))) return row;
-			const parsed = JSON.parse(row.toString("utf8")) as { text?: unknown };
+			// 没有 secret 值时 `mask` 返回的是同一个字符串（没有分配），就原样返回这一行，不解析。
+			const raw = row.toString("utf8");
+			if (secrets.mask(raw) === raw) return row;
+			const parsed = JSON.parse(raw) as { text?: unknown };
 			if (typeof parsed.text !== "string") return row;
 			const text = secrets.mask(parsed.text);
 			return text === parsed.text ? row : Buffer.from(JSON.stringify({ ...parsed, text }));

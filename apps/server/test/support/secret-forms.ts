@@ -2,6 +2,24 @@
 // 看每个出口有没有认出来。故意不用控制面里的打码代码（apps/server/src/logs/secrets.ts）算这些写法，免得测试和实现一起错。
 // 值都是明显的假值。
 
+/**
+ * 对象的键递归地按 UTF-8 字节序排好（数组本身的顺序不变）：真实的 Agent 就是这样把任务输入交给节点的（`serde_json` 的对象是
+ * BTreeMap），假 Agent 交给节点的输入也这样，节点原样写出它收到的对象时才和真实的一样。
+ * 注意：JS 的对象会把整数样子的键（`"10"`、`"9"`）按数值提前，这里排不出字节序的结果；用例里别用这样的键，
+ * 要验整数样子的键走 testdata/key-order-cases.json（比较的是写出来的文本）。
+ */
+export function sortKeysDeep<T>(value: T): T {
+	if (Array.isArray(value)) return value.map(sortKeysDeep) as T;
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+				.map(([k, v]) => [k, sortKeysDeep(v)]),
+		) as T;
+	}
+	return value;
+}
+
 /** Python 的 `json.dumps` 默认写法：`", "`、`": "` 分隔；`ensureAscii` 时非 ASCII 和 DEL 写成小写的 `\uXXXX`。 */
 export function pythonJson(value: unknown, ensureAscii = true): string {
 	const asAscii = (text: string) =>
@@ -51,7 +69,9 @@ export function leavesOf(value: unknown): string[] {
 
 /**
  * 一个 secret 值在节点里可能的写法（每项是一段文字，可能带换行）：原样、`str()`/`print`、JSON 的几种写法、
- * Python `json.dumps` 默认（ASCII 转义和不转义）、缩进、排序、`repr`、`pprint`；对象和数组再加上每个叶子单独的写法。
+ * Python `json.dumps` 默认（ASCII 转义和不转义）、排序、`repr`；对象和数组再加上每个叶子单独的写法。
+ * 缩进（`indent=2`）的写法不在这里：整段分成一行一个叶子，短的叶子没法单独打码（docs/SEMANTICS.md §2.1 写明），
+ * 不少于 4 个字符的叶子在那种写法下的打码由 json-secret-params.test.ts 里的用例单独验。
  */
 export function formsOf(value: unknown): string[] {
 	const forms = new Set<string>();
@@ -76,7 +96,6 @@ export function formsOf(value: unknown): string[] {
 			JSON.stringify(value),
 			pythonJson(value),
 			pythonJson(value, false),
-			JSON.stringify(value, null, 2),
 			JSON.stringify(sorted(value)),
 			pythonRepr(value),
 			pythonRepr(value, true),

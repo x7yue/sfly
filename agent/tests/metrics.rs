@@ -333,6 +333,10 @@ async fn points_queued_while_disconnected_are_capped_by_dropping_the_oldest() {
 /// 秒：点按「每秒最后一次上报」合并，相邻两个点的 `time_unix_s` 最多差到上报间隔向上取整再加一（0.25 秒一次时差 2，
 /// 2 秒一次时差 3），两点之间空着的整数秒比差值少一，所以窗口至少要和相邻两点的最大差值一样宽才一定有点。
 /// 原来写的是 4（窗口只有一个整数秒），某一秒恰好没有点时偶发失败（#519）。
+///
+/// 这个值不能随便加大：Agent 重连的间隔逐次翻倍（0.5、1、2、4、8 秒……，`agent/src/lib.rs` 的
+/// `RECONNECT_MIN`、`RECONNECT_MAX`），从断开起算约 0.5、1.5、3.5、7.5、15.5 秒各试一次。7 秒的下线时长
+/// 让它在约 7.5 秒那次连上；超过 7.5 秒就要等到约 15.5 秒那次，每条用例多等 8 秒。
 const DOWNTIME_S: i64 = 7;
 
 /// 下线期间发出、排队、恢复后补发的点带着各自的标签。节点每 `interval` 秒给两个序列各上报一次，共 `reports` 次，
@@ -361,7 +365,8 @@ async fn labels_survive_queueing(name: &str, interval: f64, reports: usize) {
     // 控制面下线：这期间的点在 Agent 内存里排队，恢复后补发。一秒（按单调时钟）的点在这一秒过完、再过 1 秒宽限时发出，
     // 也就是这一秒里最后一次上报之后的 2 秒以内。所以 Agent 时间晚于第 down_at 秒（下线之后才上报）、
     // 不晚于第 up_at - 3 秒（恢复之前已经发出）的点都是下线期间发出、排队后补发的；
-    // 等到 down_at + DOWNTIME_S 再恢复，这一段有 DOWNTIME_S - 3 个整数秒宽，一定有点。
+    // 等到 down_at + DOWNTIME_S 再恢复，这一段是 down_at + 1 到 down_at + 4，4 个整数秒宽；节点要一直上报到
+    // 这一段的末尾之后，每个整数秒才一定有点（`reports` 要给够，见下面的用例）。
     drop(cp);
     let down_at = unix_now();
     while unix_now() < down_at + DOWNTIME_S {
@@ -400,8 +405,11 @@ async fn labels_survive_queueing(name: &str, interval: f64, reports: usize) {
 
 #[tokio::test]
 async fn labels_survive_queueing_while_disconnected() {
-    // 约 7 秒，每 0.25 秒给两个序列各上报一次。
-    labels_survive_queueing("agent-metric-labels-queue", 0.25, 28).await;
+    // 每 0.25 秒给两个序列各上报一次，40 次约 10 秒。down_at 是第一个批次到控制面的时候，那时已经过了 1 到 2 秒，
+    // 节点之后还要上报约 8 秒，最后一个点在 down_at + 8 左右；断言的窗口到 down_at + 4，窗口里每个整数秒都有点，
+    // 末尾之后还有 4 秒的余量，第一个批次来得晚（机器忙）也不会让窗口的末尾没有点。
+    // 原来是 28 次（7 秒）：最后一个点在 down_at + 5，只比窗口的末尾晚 1 秒，余量太小；多的 12 次让用例多跑约 1 秒。
+    labels_survive_queueing("agent-metric-labels-queue", 0.25, 40).await;
 }
 
 /// 节点每 2 秒才上报一次：相邻两个点的 `time_unix_s` 相差 2、偶尔 3，只隔一个整数秒的窗口有一半的概率没有点，

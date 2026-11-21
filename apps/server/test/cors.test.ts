@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { parseCorsOrigins } from "../src/http/cors.js";
+import { createQueuedRun } from "./support/queued-run.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PAGE = "https://dash.example.com";
 const OTHER_PAGE = "https://evil.example.net";
 const REQUEST_HEADERS = "content-type, x-sfly-nickname, x-sfly-client";
 const NAVIGATE = { accept: "text/html,application/xhtml+xml,*/*;q=0.8" };
-const JSON_HEADERS = { "content-type": "application/json", "x-sfly-nickname": "tester" };
 
 const tokens = (res: Response, name: string) =>
 	(res.headers.get(name) ?? "")
@@ -35,15 +35,11 @@ function preflight(
 	});
 }
 
-async function openPresenceStream(cp: TestControlPlane, origin: string) {
-	const created = await cp.fetch("/orchestrations", {
-		method: "POST",
-		headers: JSON_HEADERS,
-		body: JSON.stringify({ name: "t" }),
-	});
-	const { id } = (await created.json()) as { id: string };
+/** 打开一条运行状态的 SSE 流（`GET /runs/:id/events`），读到响应头就断开，返回响应。 */
+async function openRunStream(cp: TestControlPlane, origin: string) {
+	const runId = await createQueuedRun(cp);
 	const abort = new AbortController();
-	const stream = await cp.fetch(`/orchestrations/${id}/presence/events`, {
+	const stream = await cp.fetch(`/runs/${runId}/events`, {
 		headers: { accept: "text/event-stream", origin },
 		signal: abort.signal,
 	});
@@ -123,7 +119,7 @@ describe("跨域：默认允许所有来源", () => {
 	it("事件流（SSE）的响应头也带允许来源和暴露的响应头", async () => {
 		cp = await startTestControlPlane();
 
-		const stream = await openPresenceStream(cp, PAGE);
+		const stream = await openRunStream(cp, PAGE);
 
 		expect(stream.headers.get("content-type")).toMatch(/^text\/event-stream/);
 		expect(stream.headers.get("access-control-allow-origin")).toBe("*");
@@ -183,7 +179,7 @@ describe("跨域：来源名单", () => {
 
 		const answered = await preflight(cp, "/api/orchestrations/any/runs");
 		const agents = await cp.fetch("/agents", { headers: { origin: "http://localhost:5173" } });
-		const stream = await openPresenceStream(cp, PAGE);
+		const stream = await openRunStream(cp, PAGE);
 
 		expect(answered.status).toBe(204);
 		expect(answered.headers.get("access-control-allow-origin")).toBe(PAGE);
@@ -206,7 +202,7 @@ describe("跨域：来源名单", () => {
 
 		const refused = await preflight(cp, "/orchestrations/any/runs", { origin: OTHER_PAGE });
 		const agents = await cp.fetch("/agents", { headers: { origin: OTHER_PAGE } });
-		const stream = await openPresenceStream(cp, OTHER_PAGE);
+		const stream = await openRunStream(cp, OTHER_PAGE);
 
 		expect(agents.status).toBe(200);
 		for (const res of [refused, agents, stream]) {

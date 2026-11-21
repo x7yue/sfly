@@ -4,6 +4,7 @@ import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { feishuBots, feishuMessages } from "../db/schema.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { discardNote, logDiscards } from "./discards.js";
 import type { FeishuSendResult } from "./feishu-client.js";
 import { maskWebhookUrl } from "./webhook-url.js";
@@ -70,7 +71,10 @@ const toBot = (row: FeishuBotRow): FeishuBot => ({
 			: { at: row.lastDeliveryAt, ok: row.lastDeliveryOk, message: row.lastDeliveryError },
 });
 
-/** 飞书机器人的存取。名称是主键：全局唯一，不能修改。 */
+/**
+ * 飞书机器人的存取。名称是主键：全局唯一，不能修改（第二步改成项目内唯一，#502）。每个机器人属于一个项目（ADR 0029）：
+ * 列表和按名字取、新建、改、删都要传项目，别的项目的机器人和不存在一样。
+ */
 export class FeishuBots {
 	constructor(
 		private readonly deps: {
@@ -83,12 +87,30 @@ export class FeishuBots {
 		},
 	) {}
 
-	async list(): Promise<FeishuBot[]> {
-		const rows = await this.deps.db.select().from(feishuBots).orderBy(asc(feishuBots.name));
+	/** 这个项目里登记的机器人，按名称排序。 */
+	async list(project: ProjectId): Promise<FeishuBot[]> {
+		const rows = await this.deps.db
+			.select()
+			.from(feishuBots)
+			.where(eq(feishuBots.projectId, project))
+			.orderBy(asc(feishuBots.name));
 		return rows.map(toBot);
 	}
 
-	async get(name: string): Promise<FeishuBot | undefined> {
+	/** 这个项目里按名字取机器人；不存在或属于别的项目时返回 undefined。 */
+	async get(project: ProjectId, name: string): Promise<FeishuBot | undefined> {
+		const [row] = await this.deps.db
+			.select()
+			.from(feishuBots)
+			.where(and(eq(feishuBots.projectId, project), eq(feishuBots.name, name)));
+		return row && toBot(row);
+	}
+
+	/**
+	 * 投递用：发送队列里的消息只记机器人的名字，没有项目，所以按名字取（第一步名字全局唯一）。
+	 * 发送队列改成「项目 + 机器人名字」之后（#502）去掉它。
+	 */
+	async getForDelivery(name: string): Promise<FeishuBot | undefined> {
 		const [row] = await this.deps.db.select().from(feishuBots).where(eq(feishuBots.name, name));
 		return row && toBot(row);
 	}
@@ -108,34 +130,43 @@ export class FeishuBots {
 		return (await this.backlogs()).get(name) ?? 0;
 	}
 
-	async create(name: string, webhookUrl: string): Promise<CreateFeishuBotResult> {
+	/** 在这个项目里登记机器人；名字已被占用（第一步：不论哪个项目里占用的）时返回 name_taken。 */
+	async create(
+		project: ProjectId,
+		name: string,
+		webhookUrl: string,
+	): Promise<CreateFeishuBotResult> {
 		const [row] = await this.deps.db
 			.insert(feishuBots)
-			.values({ name, webhookUrl, createdAt: this.deps.clock.now() })
+			.values({ name, projectId: project, webhookUrl, createdAt: this.deps.clock.now() })
 			.onConflictDoNothing()
 			.returning();
 		return row ? { kind: "created", bot: toBot(row) } : { kind: "name_taken" };
 	}
 
-	/** 整个替换 Webhook 地址；机器人不存在时返回 undefined。 */
-	async replaceWebhookUrl(name: string, webhookUrl: string): Promise<FeishuBot | undefined> {
+	/** 整个替换 Webhook 地址；机器人不存在或属于别的项目时返回 undefined。 */
+	async replaceWebhookUrl(
+		project: ProjectId,
+		name: string,
+		webhookUrl: string,
+	): Promise<FeishuBot | undefined> {
 		const [row] = await this.deps.db
 			.update(feishuBots)
 			.set({ webhookUrl })
-			.where(eq(feishuBots.name, name))
+			.where(and(eq(feishuBots.projectId, project), eq(feishuBots.name, name)))
 			.returning();
 		return row && toBot(row);
 	}
 
 	/**
-	 * 删除；机器人不存在时返回 false。它还没有投递的消息在同一个事务里记为「已丢弃：机器人已删除」，
+	 * 删除；机器人不存在或属于别的项目时返回 false。它还没有投递的消息在同一个事务里记为「已丢弃：机器人已删除」，
 	 * 提交之后把结果写进发起它们的任务的日志。
 	 */
-	async remove(name: string): Promise<boolean> {
+	async remove(project: ProjectId, name: string): Promise<boolean> {
 		const discarded = await this.deps.db.transaction(async (tx) => {
 			const removed = await tx
 				.delete(feishuBots)
-				.where(eq(feishuBots.name, name))
+				.where(and(eq(feishuBots.projectId, project), eq(feishuBots.name, name)))
 				.returning({ name: feishuBots.name });
 			if (removed.length === 0) return undefined;
 			return tx

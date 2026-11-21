@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { AgentHub } from "../src/agents/agent-hub.js";
 import { openDatabase } from "../src/db/database.js";
 import { type AgentGatewayServer, startAgentGateway } from "../src/gateway/agent-gateway.js";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { Mutex } from "../src/util/mutex.js";
 import { eventually } from "./support/eventually.js";
 import { agentClock, FakeAgent, type HelloInit } from "./support/fake-agent.js";
@@ -190,7 +191,7 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 		clock.advance(13_000);
 		agent.send({ case: "heartbeat", value: agentClock(START_MS + 613 * DAY, 60_000) });
 		await eventually(async () => {
-			const view = (await hub.list()).find((a) => a.name === "agent-a");
+			const view = (await hub.list(DEFAULT_PROJECT)).find((a) => a.name === "agent-a");
 			expect(view?.clock_offset?.measured_at).toBe("2025-03-07T00:00:13.000Z");
 		});
 

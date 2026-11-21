@@ -5,7 +5,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type LogLineView, type RunFocus, runFocusApi } from "@sfly/schema";
+import { type LogLineView, type RunFocus, runFocusApi, runSummaryApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -204,6 +204,21 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		expect(collect(byTask).at(-1)?.text).toBe(`live ${MASK}`);
 		expect(collect(byRun).at(-1)?.text).toBe(`live ${MASK}`);
 		expect(JSON.stringify([byTask.received, byRun.received])).not.toContain(LATE);
+	});
+
+	it("运行摘要里失败的任务的日志尾部（#510）：早于子流程创建写下的行也是掩码，和其他读日志的出口同一个口径", async () => {
+		const { runId, sa, b } = await startRun(LATE_SECRET);
+		await createLateSubflow(runId, sa, b);
+		await agent.fail(sa, `boom ${LATE}`);
+		await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
+
+		const body = await (await cp.fetch(`/runs/${runId}/summary`)).text();
+		expect(body).not.toContain(LATE);
+		const report = runSummaryApi.summary.response.parse(JSON.parse(body));
+		const failed = report.failed_tasks.find((task) => task.node_id === "sa");
+		expect(failed?.error?.detail).toBe(`boom ${MASK}`);
+		// 日志尾部读的是文件：早于子流程创建写下的两行也已经是掩码，和下面按任务读的结果一样。
+		expect(texts(failed?.logs?.lines ?? [])).toEqual(expectedTexts);
 	});
 
 	it("关注项里「日志」类异常的说明文字：取自最近一条 ERROR，读取时按此刻的 secret 值打码", async () => {

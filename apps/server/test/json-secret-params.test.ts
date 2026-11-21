@@ -4,13 +4,13 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // HTTP API + SSE + 假 Agent + 真实 PostgreSQL。值都是明显的假值。
 import { runsApi } from "@sfly/schema";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
-import { pythonJson, pythonRepr } from "./support/secret-forms.js";
+import { pythonJson, pythonRepr, sortKeysDeep } from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -68,8 +68,11 @@ interface Plane {
 }
 
 /** 起一个控制面和一个假 Agent（`clock`：动作的时间用），发布 stub 包，跑完之后清理。 */
-async function withPlane(fn: (plane: Plane) => Promise<void>): Promise<void> {
-	const cp = await startTestControlPlane();
+async function withPlane(
+	fn: (plane: Plane) => Promise<void>,
+	options: { logger?: boolean } = {},
+): Promise<void> {
+	const cp = await startTestControlPlane(options);
 	const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
 	try {
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
@@ -147,13 +150,13 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 
 			// 日志、进度里出现整段 JSON、叶子（包括转义后的写法）。
 			agent.logs(a, [
-				// 节点收到的对象（键的顺序是库里 jsonb 的顺序）原样写出来：整段换成一个掩码。
+				// 节点收到的对象（键按字节序排好，和真实的 Agent 一样）原样写出来：整段换成一个掩码。
 				[1, `opts=${JSON.stringify(a.inputs.opts)}`],
 				[2, "leaf test-leaf-two and test-leaf-three"],
 				[3, `array ${JSON.stringify(ARRAY)}`],
 				[4, `escaped ${JSON.stringify("test-leaf-one")}`],
-				// 键的顺序不一样的写法（整段对不上）：字符串叶子照样换掉，不少于 4 个字符的数字叶子也按值打码。
-				[5, `reordered ${JSON.stringify(OPTS)}`],
+				// 键的顺序既不是节点收到的（排好序的），也不是参数里写的（整段对不上）：字符串叶子照样换掉，不少于 4 个字符的数字叶子也按值打码。
+				[5, `reordered ${JSON.stringify({ port: OPTS.port, nested: OPTS.nested, key: OPTS.key })}`],
 			]);
 			agent.progress(a, 1, 2, "using test-leaf-one");
 			await agent.succeed(a, {
@@ -202,7 +205,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 				`leaf ${MASK} and ${MASK}`,
 				`array ${MASK}`,
 				`escaped "${MASK}"`,
-				`reordered {"key":"${MASK}","nested":{"deep":"${MASK}","list":["${MASK}"]},"port":${MASK}}`,
+				`reordered {"port":${MASK},"nested":{"deep":"${MASK}","list":["${MASK}"]},"key":"${MASK}"}`,
 			]);
 
 			// 每一个会返回这次运行内容的出口：响应的全部文本里没有任何叶子。
@@ -324,7 +327,14 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 		});
 	}, 60_000);
 
-	const CONFIG = { env: "prod", region: "a", user: "admin", enabled: "1" };
+	const CONFIG = {
+		env: "prod",
+		region: "a",
+		user: "admin",
+		enabled: "1",
+		zh: "好",
+		opts: { on: true, k: "x" },
+	};
 
 	it("规则 3：短叶子不单独打码，整个对象被原样写出时整段盖住（评审用的那份配置，日志读出来仍然读得懂）", async () => {
 		await withPlane(async ({ api, agent }) => {
@@ -333,13 +343,17 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			);
 			const runId = await api.triggerOk(id, { cfg: CONFIG });
 			const a = await agent.nextAssign();
-			// 节点收到的是库里的样子（键的顺序是 jsonb 的顺序）：它原样写出来的就是这个顺序。
+			// 节点收到的对象键是排好序的（和真实的 Agent 一样，agent/src/executor.rs 的 serde_json 对象是 BTreeMap）：它原样写出来的就是这个顺序。
 			const received = a.inputs.cfg as typeof CONFIG;
 			expect(received).toEqual(CONFIG);
 			const lines = [
 				"loading env=prod region=a user=admin enabled=1",
+				// json.dumps(cfg)（默认）、ensure_ascii=False、紧凑的 separators、sort_keys=True：整段都要盖住，
+				// 里面短的叶子（`1`、`a`、`好`、`x`）一个都不能留下明文。
 				`cfg=${pythonJson(received)}`,
+				`cfg=${pythonJson(received, false)}`,
 				`cfg=${JSON.stringify(received)}`,
+				`cfg=${pythonJson(sortKeysDeep(CONFIG), false)}`,
 				`cfg=${pythonRepr(received)}`,
 				"region is a and enabled is 1; took 1 s, 1 retry",
 			];
@@ -356,6 +370,8 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			});
 			expect(await logTexts(api, a.taskId, lines.length)).toEqual([
 				`loading env=${MASK} region=a user=${MASK} enabled=1`,
+				`cfg=${MASK}`,
+				`cfg=${MASK}`,
 				`cfg=${MASK}`,
 				`cfg=${MASK}`,
 				// print(dict)：整段对不上，不少于 4 个字符的叶子各自打码，短的原样。
@@ -385,17 +401,18 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			});
 			const a = await agent.nextAssign();
 			const received = a.inputs.nums as Record<string, unknown>;
-			const sortedKeys = Object.fromEntries(
-				Object.entries(received).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
-			);
+			// 键倒过来：既不是节点收到的顺序（排好序的），也不是参数里写的顺序，整段对不上。
+			const reversedKeys = Object.fromEntries(Object.entries(received).reverse());
 			const indented = JSON.stringify(received, null, 2).split("\n");
 			const lines = [
 				`pin=${NUMBER_LEAF} port=80 ratio=1.5`,
 				// json.dumps 默认（", "、": " 分隔）：整段盖住
 				`nums=${pythonJson(received)}`,
-				// pprint / sort_keys：键的顺序变了，整段对不上，叶子各自打码
-				`nums=${pythonRepr(sortedKeys)}`,
-				`nums=${JSON.stringify(sortedKeys)}`,
+				// 键的顺序变了，整段对不上，叶子各自打码（短的叶子留着）
+				`nums=${pythonRepr(reversedKeys)}`,
+				`nums=${JSON.stringify(reversedKeys)}`,
+				// sort_keys=True：就是节点收到的顺序，整段盖住
+				`nums=${pythonJson(sortKeysDeep(received), false)}`,
 				// indent=2：一行一个叶子
 				...indented,
 			];
@@ -415,8 +432,9 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			expect(await logTexts(api, a.taskId, lines.length)).toEqual([
 				`pin=${MASK} port=80 ratio=1.5`,
 				`nums=${MASK}`,
-				leafwise(`nums=${pythonRepr(sortedKeys)}`),
-				leafwise(`nums=${JSON.stringify(sortedKeys)}`),
+				leafwise(`nums=${pythonRepr(reversedKeys)}`),
+				leafwise(`nums=${JSON.stringify(reversedKeys)}`),
+				`nums=${MASK}`,
 				...indented.map(leafwise),
 			]);
 			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
@@ -480,7 +498,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			const c = await agent.nextAssign();
 			await agent.succeed(c, {});
 			const d = await agent.nextAssign();
-			// 整个对象按收到的样子（库里的键顺序）原样写出：整段换成一个掩码。
+			// 整个对象按收到的样子（键按字节序排好）原样写出：整段换成一个掩码。
 			await agent.fail(
 				d,
 				`bad test-leaf-one ${JSON.stringify(a.inputs.opts)} and {}`,
@@ -702,22 +720,48 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 		});
 	}, 60_000);
 
-	it("规则 5：触发和预检时，保密的对象里有短于 4 个字符的字符串或数字叶子：给一条警告，写明是哪个参数、有几个，不写出值", async () => {
+	it("规则 5：预检时，保密的对象里有短于 4 个字符的字符串或数字叶子：给一条警告，写明是哪个参数（入口节点还是子流程入口节点）、有几个，不写出值", async () => {
 		await withPlane(async ({ api }) => {
-			const id = await api.orchestrationWith(
-				chainScenario([
+			const main = chainScenario([
+				{
+					name: "cfg",
+					type: "json",
+					secret: true,
+					default: { env: "test-env-value", region: "a", n: 1, big: 123456, off: false },
+				},
+				{ name: "fine", type: "json", secret: true, default: { env: "test-env-value" } },
+				// 不是对象的保密参数，再短也按值打码，没有警告；没有声明保密的对象参数也没有。
+				{ name: "token", type: "string", secret: true, default: "ab" },
+				{ name: "plain", type: "json", default: { a: "x" } },
+			]);
+			// 子流程入口节点上的保密参数同样检查，警告里写「子流程入口节点」，不写成「入口节点」。
+			const id = await api.orchestrationWith({
+				...main,
+				nodes: [
+					...main.nodes,
+					{ id: "x", kind: "async", params: {} },
 					{
-						name: "cfg",
-						type: "json",
-						secret: true,
-						default: { env: "test-env-value", region: "a", n: 1, big: 123456, off: false },
+						id: "sub",
+						kind: "subflow_entry",
+						name: "inner",
+						params: [
+							{
+								name: "deep",
+								type: "json",
+								secret: true,
+								default: { k: "v", w: "test-wide-value" },
+							},
+						],
 					},
-					{ name: "fine", type: "json", secret: true, default: { env: "test-env-value" } },
-					// 不是对象的保密参数，再短也按值打码，没有警告；没有声明保密的对象参数也没有。
-					{ name: "token", type: "string", secret: true, default: "ab" },
-					{ name: "plain", type: "json", default: { a: "x" } },
-				]),
-			);
+					{ id: "s1", kind: "package", package: "stub", node: "echo" },
+				],
+				edges: [
+					...main.edges,
+					{ from: "a", to: "x", kind: "chain" },
+					{ from: "x", to: "sub", kind: "dispatch" },
+					{ from: "sub", to: "s1", kind: "chain" },
+				],
+			});
 			await createPresetOk(api, id, {
 				name: "预设一",
 				params: [
@@ -731,14 +775,101 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			const short = preflight.warnings.filter((w) => w.code === "secret_short_leaf");
 			expect(short.map((w) => w.message)).toEqual([
 				"参数 cfg（入口节点 entry）是保密的对象，默认值里有 2 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要保密的短值请单独做成一个保密参数",
+				"参数 deep（子流程入口节点 sub）是保密的对象，默认值里有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要保密的短值请单独做成一个保密参数",
 				"运行预设「预设一」里保密参数 cfg 的值有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要保密的短值请单独做成一个保密参数",
 			]);
-			expect(short[0]?.node_id).toBe("entry");
+			expect(short.map((w) => w.node_id)).toEqual(["entry", "sub", undefined]);
 			// 警告里没有值：不论是长的叶子、短的叶子还是整个对象。
 			const text = JSON.stringify(preflight.warnings);
-			for (const value of ["test-env-value", "test-leaf-one", "123456", '"a"', '"y"']) {
+			for (const value of [
+				"test-env-value",
+				"test-leaf-one",
+				"test-wide-value",
+				"123456",
+				'"a"',
+				'"y"',
+			]) {
 				expect(text, `警告里不能出现 ${value}`).not.toContain(value);
 			}
 		});
 	}, 60_000);
+
+	it("很长的 secret 值（40 KB 的字符串、40 KB 的对象、6000 个汉字）：触发成功，日志存下且已打码，运行视图读得出，控制面的错误输出里没有值", async () => {
+		const cases: Array<{ name: string; type: "string" | "json"; value: unknown; text: string }> = [
+			{
+				name: "40 KB 的字符串",
+				type: "string",
+				value: `${"abcdefghij".repeat(4096)}-end`,
+				text: "",
+			},
+			{
+				name: "40 KB 的对象",
+				type: "json",
+				value: { blob: "k".repeat(40_000), note: "short-note-value" },
+				text: "",
+			},
+			{ name: "6000 个汉字", type: "string", value: "口令".repeat(3000), text: "" },
+		];
+		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			for (const { name, type, value } of cases) {
+				await withPlane(
+					async ({ api, agent }) => {
+						const id = await api.orchestrationWith(
+							chainScenario([{ name: "big", type, secret: true }], ["a", "b"]),
+						);
+						const runId = await api.triggerOk(id, { big: value });
+						const a = await agent.nextAssign();
+						expect(a.inputs.big, name).toEqual(value);
+						const printed = typeof value === "string" ? value : JSON.stringify(value);
+						agent.logs(a, [
+							[1, `got ${printed} done`],
+							[2, "an ordinary line"],
+						]);
+						await agent.succeed(a, { echoed: value, text: `x ${printed} y` });
+						const b = await agent.nextAssign();
+						await agent.fail(b, `bad ${printed}`, undefined, undefined, `load 第 3 行 ${printed}`);
+
+						// 日志存下了两行（不能因为打码出错丢日志），第一行已打码。
+						expect(await logTexts(api, a.taskId, 2), name).toEqual([
+							`got ${MASK} done`,
+							"an ordinary line",
+						]);
+						await eventually(async () => expect((await api.run(runId)).status).toBe("failed"));
+						// 运行视图读得出（200，契约解析通过），里面没有值。
+						const run = await parsedRun(api, runId);
+						const text = JSON.stringify(run);
+						expect(run.params, name).toEqual({ big: MASK });
+						const probe = typeof value === "string" ? value.slice(0, 200) : "kkkkkkkkkkkkkkkkkkkk";
+						expect(text, name).not.toContain(probe);
+						expect(run.chains[0]?.nodes[1]?.outputs, name).toEqual({
+							echoed: MASK,
+							text: `x ${MASK} y`,
+						});
+						expect(run.chains[0]?.nodes[2]?.error?.message, name).toBe(`bad ${MASK}`);
+						// 其余出口：任务日志、运行日志、下载。
+						for (const path of [
+							`/tasks/${a.taskId}/logs`,
+							`/tasks/${a.taskId}/logs/download`,
+							`/runs/${runId}/logs`,
+							`/runs/${runId}/logs/download`,
+						]) {
+							const res = await api.get(path);
+							expect(res.status, `${name} ${path}`).toBe(200);
+							expect(await res.text(), `${name} ${path}`).not.toContain(probe);
+						}
+					},
+					{ logger: true },
+				);
+			}
+			// 控制面自己的错误输出（agent session error 之类）里没有任何一个值，打码也没有出过错。
+			const output = JSON.stringify(errors.mock.calls);
+			expect(output).not.toContain("abcdefghij");
+			expect(output).not.toContain("kkkkkkkkkk");
+			expect(output).not.toContain("口令口令");
+			expect(output).not.toContain("Invalid regular expression");
+		} finally {
+			errors.mockRestore();
+		}
+	}, 180_000);
 });

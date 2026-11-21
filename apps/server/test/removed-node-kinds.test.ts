@@ -375,8 +375,8 @@ describe("已移除的节点种类留在历史数据里", () => {
 			try {
 				// 比 Sleep 任务更早写入：先处理它，它出错不能让后面的运行也被丢下。
 				await client.query(
-					`insert into runs (id, orchestration_id, orchestration_version_id, triggered_by, params, status, started_at)
-					values ($1, $2, $3, '旧人', '{}', 'running', now())`,
+					`insert into runs (id, orchestration_id, orchestration_version_id, project_id, triggered_by, params, status, started_at)
+					values ($1, $2, $3, 'default', '旧人', '{}', 'running', now())`,
 					[broken.run, waiting.scenario, waiting.version],
 				);
 				await client.query(

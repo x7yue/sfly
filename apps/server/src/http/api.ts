@@ -22,7 +22,6 @@ import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
-import type { PresenceRegistry } from "../presence/presence-registry.js";
 import type { PresetStore } from "../presets/preset-store.js";
 import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
@@ -44,11 +43,11 @@ import { registerLogRoutes } from "./log-routes.js";
 import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
-import { registerPresenceRoutes } from "./presence-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
 import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
+import { registerRunSummaryRoutes } from "./run-summary-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
 import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
 
@@ -62,7 +61,6 @@ export interface HttpApiDeps {
 	presets: PresetStore;
 	engine: Engine;
 	packages: PackageRepository;
-	presence: PresenceRegistry;
 	preflight: Preflight;
 	logs: TaskLogs;
 	/** 任务的动作（src/actions/）。 */
@@ -114,7 +112,6 @@ export function buildHttpApi({
 	presets,
 	engine,
 	packages,
-	presence,
 	preflight,
 	logs,
 	actions,
@@ -160,7 +157,7 @@ export function buildHttpApi({
 	});
 	if (webApp) registerWebApp(app, webApp);
 	registerCors(app, { origins: corsOrigins });
-	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
+	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志），用法见 src/sse/sse.ts。
 	const sse = registerSse(app, {
 		clock,
 		version: publicConfig.version,
@@ -206,6 +203,7 @@ export function buildHttpApi({
 	});
 	registerRunListRoutes(app, { db: database.db });
 	registerRunFocusRoutes(app, { db: database.db, clock, queries: metricQueries });
+	registerRunSummaryRoutes(app, { db: database.db, clock, queries: metricQueries, logs });
 	registerLogRoutes(app, {
 		logs,
 		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),
@@ -216,7 +214,6 @@ export function buildHttpApi({
 	registerActionRoutes(app, { actions, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
-	registerPresenceRoutes(app, { orchestrations, presence, sse });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });
 	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });
 	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });
