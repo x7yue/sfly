@@ -33,7 +33,7 @@ uv run sfly api --list runs
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level 级别] [--tail N] [--before 游标] [--after 游标] [--all 文件]` | 运行的日志，按控制面时间合并各节点、各次尝试 |
 | `sfly run artifacts <运行> [--task 任务] [--download 目录]` | 列出各任务的产物，可以下载 |
 | `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
-| `sfly package list` / `sfly package show <包>[@版本]` | 节点包和它们的版本；一个版本里每个节点类型的标题、输入（类型、默认值、是否必填）和输出 |
+| `sfly package list` / `sfly package show <包>[@版本] [--agent Agent]` | 节点包和它们的版本；一个版本里每个节点类型的标题、输入（类型、默认值、是否必填）和输出。`<包>@dev` 看用 `sfly dev` 加载在 Agent 上的开发版本的节点定义（它不在已发布的节点包列表里）；只算在线的 Agent（和触发运行时的检查一致，离线的 Agent 上次上报的定义不算）；同一个开发包加载在不止一台在线的 Agent 上时用 `--agent` 指定看哪一台的，没有加载在任何在线的 Agent 上时报错并提示 `sfly dev` |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` / `sfly api --describe <METHOD> <路径>` | 直接调用上面没有覆盖的接口；`--list` 列出全部接口；`--describe` 说明一个接口：它做什么、会不会改东西、请求和响应的字段 |
 
 本地调试是 `sfly debug <节点>`（见 [本地调试](local-debug.md)）。原来的写法 `sfly run <节点>` 已经失效：它报错并提示改用 `sfly debug`，退出码 2。
@@ -190,6 +190,9 @@ sfly scenario push 回归.json
 - 顶层的 `sticky_notes`（便签）已不再支持：说明一个节点写进节点的 `note`，说明一组节点写进注释框的 `note`。升级前 pull 的文件里带着空的 `sticky_notes: []`（几乎所有旧版本都有）时可以直接 push，控制面接受并丢掉它，新版本里没有；里面有内容的，push 的本地校验和控制面都会拒绝，错误信息写明有几条、怎么办：先把要留的内容写进备注，再把这一项删掉。升级前保存的版本里带着的便签读取时丢掉，`scenario show`、`scenario pull` 和画布都不显示它，那些版本本身不改。
 - `scenario show` 的最后一段「注释框」列出每个注释框：第一行是 `<标题>（<ID>）`，下一行是成员（节点写「显示名称（节点 ID）」，没有显示名称时只写节点 ID；子流程写名称，例如 `节点：创建测试用户（create_user_1）、pause；子流程：report`，没有成员时写 `成员：无`），再下面是备注，多行备注的后面几行缩进到第一行备注文字的位置；成员 ID 在场景里不存在时原样写出。没有注释框的场景没有这一段。`--json` 里 `annotations` 一直在（没有时是空数组），每项是文档里的 `id`、`title`、`note`（没有备注时不出现）、`color`（没写颜色时不出现）、`nodes`、`subflows`。
 - 新加的节点不用写 `position`：控制面保存时按画布「整理布局」的算法给没有坐标的节点排好位置（压住已有节点时挪到附近的空位），已经有坐标的节点不动。
+- 节点的 `agent` 指定执行它的 Agent，不写就用场景的 `default_agent`（例如分析放在别的机器上、只有某台机器上有被测系统时单独写）。
+- 新加一个节点并接在已有节点后面：往 `nodes` 里加一项（`id`、`kind: "package"`、`package`、`node`、`display_name`、`inputs`），往 `edges` 里加一条 `{"from": <前一个节点的 id>, "to": <新节点的 id>, "kind": "chain"}`；`packages` 里要有这个节点包锁定的版本。接在链的中间时，把原来从前一个节点连出去的那条线的 `from` 改成新节点。
+- 新加的节点另起一个注释框或者不放进注释框；已有注释框的标题和备注是场景作者写的，不因为加了节点就改，除非这次改动让它说的不对了。
 - 别人在你 pull 之后保存了新版本时，push 报版本冲突（退出码 2），写明最新版本号、作者和保存时间，提示重新 pull、把你的改动合并进去再 push。没有强制覆盖的选项。命令行不会成为在线编辑者：浏览器里正在编辑同一个场景的人保存时，会收到界面已有的冲突提示。
 - `scenario copy` 复制场景（说明、运行通知设置和关注项一并复制）。联调副本的说明要改成讲联调：`scenario rename <副本> --description …`，第一行写「联调 <包名>，由 <昵称> 的 AI 编程助手创建」，后面接原场景的说明；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。
 

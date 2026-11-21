@@ -17,6 +17,7 @@ import pytest
 from indexes import FakeControlPlane, StaticServer, uv_env
 from jsonschema import Draft202012Validator
 
+from sfly.cli.init import RUFF_SELECT
 from sfly.schemas import load_schema
 
 if sys.version_info >= (3, 11):
@@ -287,6 +288,8 @@ def test_generated_project_syncs_tests_lints_runs_and_builds(
     for command in (["pytest"], ["ruff", "check"], ["ruff", "format", "--check"]):
         result = run_in(project, *command)
         assert result.returncode == 0, result.stdout + result.stderr
+    # 规则集写在项目里（#472）：换了 ruff 的版本，生成的项目也不会多出新的报告。
+    assert pyproject(project)["tool"]["ruff"]["lint"]["select"] == list(RUFF_SELECT)
 
     run = run_in(project, "sfly", "debug", "countdown", "--params", '{"name": "世界"}')
     assert run.returncode == 0, run.stderr
