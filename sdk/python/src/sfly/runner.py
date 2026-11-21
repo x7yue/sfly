@@ -259,6 +259,30 @@ def _place(module: str, function: str, lineno: int | None) -> str:
     return f"{place} 第 {lineno} 行"
 
 
+def _module_of(filename: str, dirs: tuple[list[str], list[str], list[str]]) -> str:
+    """源文件对应的模块名：相对 `sys.path` 里（或 site-packages 目录）最深的那个目录，`pkg/sub.py`
+    是 `pkg.sub`，包的 `__init__.py` 是包名 `pkg`。不在其中任何一个目录里时是文件名去掉扩展名。"""
+    path = _normalized(filename)
+    roots = [*dirs[2], *(_normalized(entry or os.curdir) for entry in sys.path)]
+    parts = path.split(os.sep)
+    roots += [
+        os.sep.join(parts[: i + 1])
+        for i, part in enumerate(parts)
+        if part in ("site-packages", "dist-packages")
+    ]
+    root = max((r for r in roots if r != path and _under(path, r)), key=len, default=None)
+    relative = os.path.relpath(path, root) if root else os.path.basename(path)
+    names = os.path.splitext(relative)[0].split(os.sep)
+    if len(names) > 1 and names[-1] == "__init__":
+        names.pop()
+    return ".".join(names)
+
+
+def _is_unreal_file(filename: str) -> bool:
+    """没有文件的帧：`<string>`（`exec`、dataclass 生成的方法）这类，文件里没有它的那一行。"""
+    return not filename or filename.startswith("<")
+
+
 def _failed_at(error: BaseException, entry: str, package: str | None = None) -> str | None:
     """节点失败时出错的位置：节点代码里的那一行，写成「模块.函数 第 N 行」（和被终止时同一种写法）。
 
@@ -267,23 +291,39 @@ def _failed_at(error: BaseException, entry: str, package: str | None = None) -> 
     改不了，也不是要找的地方。这一点和被终止时（`_terminated_at`）不同：终止时停在哪就是哪，
     停在第三方库里就报库里的位置。
 
-    导入节点模块时语法错误：栈里没有出错的那个文件（编译在导入机制里失败），位置取异常自己带的文件和行。
+    有真实文件的帧优先：`exec` 出来的函数、dataclass 生成的方法这类没有文件的帧（`<string>`），
+    文件里没有它们的那一行，先找有文件的节点代码帧（调用它们的那一行）；整条栈都没有文件时才用它们。
+
+    异常组（`asyncio.TaskGroup` 里的子任务抛出的）自己的栈停在 `async with` 那一行，取第一个子异常
+    （嵌套的一直往下）里出错的那一行。
+
+    导入节点模块时语法错误：栈里没有出错的那个文件（编译在导入机制里失败），位置取异常自己带的文件和行，
+    文件写成模块名（`mypkg.nodes 第 2 行`；包的 `__init__.py` 是包名）。
     栈里没有节点代码、异常也没有位置时（执行器自己出的错）是 None。
     """
+    import builtins
     import traceback
 
     dirs = _runtime_dirs()
     own = _node_packages(entry, package)
+    group = getattr(builtins, "BaseExceptionGroup", ())
+    while isinstance(error, group) and error.exceptions:
+        error = error.exceptions[0]
     if isinstance(error, SyntaxError) and error.filename and error.lineno:
-        stem = os.path.basename(error.filename).partition(".")[0]
-        if _is_node_code(error.filename, stem, own, dirs):
-            return f"{os.path.basename(error.filename)} 第 {error.lineno} 行"
-    found = None
+        module = _module_of(error.filename, dirs)
+        if _is_node_code(error.filename, module, own, dirs):
+            return _place(module, "<module>", error.lineno)
+    found = fallback = None
     for frame, lineno in traceback.walk_tb(error.__traceback__):
         code = frame.f_code
         module = str(frame.f_globals.get("__name__") or "")
         if _is_node_code(code.co_filename, module, own, dirs):
-            found = (module or os.path.basename(code.co_filename), code, lineno)
+            at = (module or os.path.basename(code.co_filename), code, lineno)
+            if _is_unreal_file(code.co_filename):
+                fallback = at
+            else:
+                found = at
+    found = found or fallback
     if found is None:
         return None
     module, code, lineno = found
@@ -380,11 +420,16 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             # 堆栈从节点代码那一帧开始。出错的位置先于堆栈写进日志（一行 ERROR）：
             # `sfly run logs --failed` 只看日志也看得到，不用翻堆栈。整理堆栈、取位置都不能让失败
             # 丢掉原因：出了错就用完整的堆栈、不写位置。
+            # 两件事各自兜底：整理不了堆栈就用节点的异常完整的堆栈，取不到位置就不写位置。
+            # 兜底时不能用 `format_exc()`：在这个 `except` 里它格式化的是刚接住的内部错误。
             try:
                 tb = _format_failure(error, importing=importing)
+            except Exception:  # noqa: BLE001 - 整理堆栈只是为了好读
+                tb = "".join(traceback.format_exception(error))
+            try:
                 place = _failed_at(error, str(task.get("entry") or ""), task.get("package"))
             except Exception:  # noqa: BLE001 - 位置只是附带的信息
-                tb, place = traceback.format_exc(), None
+                place = None
             if place:
                 _log("error", f"出错位置：{place}")
             sys.stderr.write(tb)

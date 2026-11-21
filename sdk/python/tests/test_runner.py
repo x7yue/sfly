@@ -1121,7 +1121,7 @@ def test_a_syntax_error_in_the_node_module_reports_the_file_and_line_and_no_exec
 
     _, error = failed(tmp_path, code_dir, "broken:work")
 
-    assert error["location"] == "broken.py 第 2 行"
+    assert error["location"] == "broken 第 2 行"
     assert error["type"] == "SyntaxError"
     assert "runner.py" not in error["traceback"]
     assert error["traceback"].rstrip().endswith("SyntaxError: '(' was never closed")
@@ -1137,7 +1137,83 @@ def test_a_syntax_error_in_a_helper_imported_by_the_node_module_reports_the_help
 
     _, error = failed(tmp_path, code_dir, "needshelper:work")
 
-    assert error["location"] == "badhelper.py 第 1 行"
+    assert error["location"] == "badhelper 第 1 行"
+
+
+@pytest.fixture
+def broken_packages(tmp_path: Path) -> Path:
+    """site-packages 里的节点包（语法错误在包的 `__init__.py`、在子模块里）和一个第三方库。"""
+    site = tmp_path / "venv" / "site-packages"
+    for name in ("syntaxinit", "syntaxsub"):
+        (site / name).mkdir(parents=True)
+    (site / "syntaxinit" / "__init__.py").write_text("def work():\n    return (1 +\n", "utf-8")
+    (site / "syntaxsub" / "__init__.py").write_text("", encoding="utf-8")
+    (site / "syntaxsub" / "broken.py").write_text("x = 1\ny = =\n", encoding="utf-8")
+    (site / "syntaxsub" / "nodes.py").write_text(
+        "from syntaxsub import broken\n\n\ndef work() -> dict:\n    return {}\n", encoding="utf-8"
+    )
+    (site / "badlib.py").write_text("z = =\n", encoding="utf-8")
+    return site
+
+
+def test_a_syntax_error_in_a_node_package_in_site_packages_reports_the_module_and_line(
+    tmp_path: Path, code_dir: Path, broken_packages: Path
+) -> None:
+    """节点包装在 Agent 的共享 venv 里时，导入时的语法错误也取得到位置（#471）：文件名去掉扩展名
+    不是顶层包名，要按路径判断；包里的子模块写模块名，分得清是哪个 `__init__.py`。"""
+    env: dict[str, str | None] = {
+        "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(broken_packages)])
+    }
+    for index, (entry, place) in enumerate(
+        [
+            ("syntaxinit:work", "syntaxinit 第 2 行"),
+            ("syntaxsub.nodes:work", "syntaxsub.broken 第 2 行"),
+        ]
+    ):
+        (tmp_path / str(index)).mkdir()
+
+        _, error = failed(tmp_path / str(index), code_dir, entry, env)
+
+        assert error["type"] == "SyntaxError"
+        assert error["location"] == place
+
+
+def test_a_syntax_error_in_a_library_beside_the_node_package_reports_the_import_line(
+    tmp_path: Path, code_dir: Path, broken_packages: Path
+) -> None:
+    write_module(
+        code_dir,
+        "usebadlib",
+        f"""
+        import badlib  {RAISED_HERE}
+
+        def work() -> dict:
+            return {{}}
+        """,
+    )
+    env: dict[str, str | None] = {
+        "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir), str(broken_packages)])
+    }
+
+    _, error = failed(tmp_path, code_dir, "usebadlib:work", env)
+
+    # 第三方库里的语法错误不是节点代码：位置是节点里导入它的那一行。
+    assert error["location"] == f"usebadlib 第 {raised_line(code_dir, 'usebadlib')} 行"
+
+
+def test_a_syntax_error_in_a_package_in_the_source_directory_reports_the_module_and_line(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    (code_dir / "srcpkg").mkdir()
+    (code_dir / "srcpkg" / "__init__.py").write_text("", encoding="utf-8")
+    (code_dir / "srcpkg" / "broken.py").write_text("y = =\n", encoding="utf-8")
+    write_module(
+        code_dir, "usesrcpkg", "from srcpkg import broken\n\n\ndef work() -> dict:\n    return {}\n"
+    )
+
+    _, error = failed(tmp_path, code_dir, "usesrcpkg:work")
+
+    assert error["location"] == "srcpkg.broken 第 1 行"
 
 
 def test_an_import_error_in_the_node_module_reports_the_import_line(
@@ -1253,6 +1329,101 @@ def test_an_error_raised_while_handling_another_one_is_also_cut_from_the_node(
     assert error["location"] == f"handling.work 第 {raised_line(code_dir, 'handling')} 行"
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="TaskGroup 和异常组从 Python 3.11 起有")
+@pytest.mark.parametrize("nested", [False, True], ids=["one group", "nested groups"])
+def test_a_failure_in_a_task_group_reports_the_line_in_the_child_task(
+    tmp_path: Path, code_dir: Path, nested: bool
+) -> None:
+    # `async with asyncio.TaskGroup()` 里的子任务抛出，外面收到的是异常组，它自己的栈停在
+    # `async with` 那一行；位置要取第一个子异常里出错的那一行（嵌套的异常组一直往下取）。
+    wrapper = (
+        "    async with asyncio.TaskGroup() as outer:\n        outer.create_task(inner())\n"
+        if nested
+        else "    await inner()\n"
+    )
+    write_module(
+        code_dir,
+        "groupnode",
+        "import asyncio\n\n\n"
+        f"async def child() -> None:\n    raise ValueError('子任务出错')  {RAISED_HERE}\n\n\n"
+        "async def inner() -> None:\n"
+        "    async with asyncio.TaskGroup() as group:\n        group.create_task(child())\n\n\n"
+        f"async def main() -> None:\n{wrapper}\n\n"
+        "def work() -> dict:\n    asyncio.run(main())\n    return {}\n",
+    )
+
+    _, error = failed(tmp_path, code_dir, "groupnode:work")
+
+    assert error["type"] in ("ExceptionGroup", "BaseExceptionGroup")
+    assert error["location"] == f"groupnode.child 第 {raised_line(code_dir, 'groupnode')} 行"
+
+
+def test_a_generated_frame_without_a_file_does_not_hide_the_node_line_that_called_it(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 冻结的 dataclass 被赋值时，抛出的是 dataclass 生成的 `__setattr__`（文件名是 `<string>`），
+    # 没有任何文件里有那一行：位置是调用它的节点代码那一行。
+    write_module(
+        code_dir,
+        "frozennode",
+        f"""
+        import dataclasses
+
+        @dataclasses.dataclass(frozen=True)
+        class Point:
+            x: int
+
+        def work() -> dict:
+            point = Point(1)
+            point.x = 2  {RAISED_HERE}
+            return {{}}
+        """,
+    )
+
+    _, error = failed(tmp_path, code_dir, "frozennode:work")
+
+    assert error["type"] == "FrozenInstanceError"
+    assert error["location"] == f"frozennode.work 第 {raised_line(code_dir, 'frozennode')} 行"
+
+
+def test_a_function_built_with_exec_reports_the_node_line_that_called_it(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "execnode",
+        f"""
+        namespace: dict = {{}}
+        exec("def f():\\n    raise ValueError('x')\\n", namespace)
+
+        def work() -> dict:
+            namespace["f"]()  {RAISED_HERE}
+            return {{}}
+        """,
+    )
+
+    _, error = failed(tmp_path, code_dir, "execnode:work")
+
+    assert error["location"] == f"execnode.work 第 {raised_line(code_dir, 'execnode')} 行"
+
+
+def test_when_every_node_frame_has_no_file_the_innermost_one_is_reported(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 入口函数本身就是 exec 出来的：栈里只有没有文件名的节点帧，退回到它。
+    write_module(
+        code_dir,
+        "allexec",
+        """
+        exec("def work():\\n    raise ValueError('x')\\n")
+        """,
+    )
+
+    _, error = failed(tmp_path, code_dir, "allexec:work")
+
+    assert error["location"] == "allexec.work 第 2 行"
+
+
 def test_an_error_the_executor_itself_raises_keeps_the_whole_traceback_and_has_no_location(
     tmp_path: Path, code_dir: Path
 ) -> None:
@@ -1284,8 +1455,37 @@ def test_failing_to_work_out_the_location_does_not_lose_the_failure(
     assert code == 1
     assert error["message"] == "ValueError: 坏了"
     assert "location" not in error
-    # 位置取不到时用完整的堆栈，失败的原因还在。
+    # 位置取不到时堆栈仍是节点的，不是取位置时出的那个错：失败的原因还在，
+    # 堆栈里没有取位置出的错，也没有「During handling」那一段。
     assert "ValueError: 坏了" in error["traceback"]
+    assert error["traceback"].rstrip().endswith("ValueError: 坏了")
+    assert "取位置时出错" not in error["traceback"]
+    assert "During handling" not in error["traceback"]
+    assert frame_files(error["traceback"]) == [str(code_dir / "plainfail.py")]
+
+
+def test_failing_to_trim_the_traceback_reports_the_full_traceback_of_the_nodes_error(
+    tmp_path: Path, code_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_module(code_dir, "plainfail2", "def work() -> dict:\n    raise ValueError('坏了')\n")
+
+    def broken(*args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("整理堆栈时出错")
+
+    monkeypatch.setattr(runner, "_format_failure", broken)
+    monkeypatch.syspath_prepend(str(code_dir))
+
+    code, text = runner.run({"entry": "plainfail2:work", "inputs": {}})
+
+    error = json.loads(text)["error"]
+    assert code == 1
+    assert error["message"] == "ValueError: 坏了"
+    # 整理不了就用节点的异常完整的堆栈（执行器的帧也在），不是整理时出的那个错。
+    assert error["traceback"].rstrip().endswith("ValueError: 坏了")
+    assert "整理堆栈时出错" not in error["traceback"]
+    assert "During handling" not in error["traceback"]
+    # 位置不依赖堆栈的整理，照常写。
+    assert error["location"] == "plainfail2.work 第 2 行"
 
 
 # ---- 「执行到哪」的取法本身：用拼出来的栈直接测，不需要真的被终止 ----
