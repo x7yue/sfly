@@ -2,8 +2,11 @@
 // 运行失败或被取消时由控制面发一张卡片，写明哪个节点为什么失败；成功的运行从不发。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
 import { errorHeadline, runsApi, runViewFailures } from "@sfly/schema";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sql } from "drizzle-orm";
+import pg from "pg";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { resolveRunFocus } from "../src/focus/run-focus.js";
+import { readNodeError } from "../src/runs/run-read.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
@@ -19,6 +22,13 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 vi.mock("../src/focus/run-focus.js", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../src/focus/run-focus.js")>();
 	return { ...actual, resolveRunFocus: vi.fn(actual.resolveRunFocus) };
+});
+
+// 读第一个失败节点的失败原因出错时，运行照常结束（#533 审查）：把 readNodeError 换成对真实实现包一层的 vi.fn，
+// 个别用例让它抛错。控制面里读运行的其他地方不用它。
+vi.mock("../src/runs/run-read.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/runs/run-read.js")>();
+	return { ...actual, readNodeError: vi.fn(actual.readNodeError) };
 });
 
 const TOKEN = "tok-6c1f0d52-90a7-4e3b-8f44-2d7a1b9c0e35";
@@ -649,6 +659,111 @@ describe("运行通知", () => {
 			const read = await api.get(`/runs/${runId}/focus`);
 			expect(read.status, await read.clone().text()).toBe(200);
 			expect(runFocus).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	// 通知是运行结束事务里的一部分（#232：运行的最终状态和「要发这张卡片」一起提交），但从不拦住运行结束：
+	// 为通知做的任何一步出错（不认识的触发条件、读失败原因、拼卡片），结果都是「这次不发，记一条日志」，运行照常结束。
+	describe("为通知做的事出错不拦住运行结束", () => {
+		let errors: MockInstance<typeof console.error>;
+
+		// 控制面的日志默认关着：这一组要看到「记了一条日志」，所以换一个开着日志的控制面。
+		beforeEach(async () => {
+			await agent.disconnect();
+			await feishu.close();
+			await cp.close();
+			await start({ publicHttpUrl: PUBLIC_URL, logger: true });
+			errors = vi.spyOn(console, "error").mockImplementation(() => {});
+		});
+		afterEach(async () => {
+			errors.mockRestore();
+			// 换回真实的实现（用例里换成了会出错的）。
+			const actual =
+				await vi.importActual<typeof import("../src/runs/run-read.js")>("../src/runs/run-read.js");
+			vi.mocked(readNodeError).mockReset().mockImplementation(actual.readNodeError);
+		});
+
+		/** 运行结束后：运行是失败、Agent 还连着能接新任务、没有发卡片、运行详情里没有运行通知；控制面日志里有这条错误。 */
+		async function expectRunEndedAndNothingSent(runId: string, reason: RegExp) {
+			expect((await api.run(runId)).run_notification).toBeNull();
+			expect(agent.ended).toBe(false);
+			const online = await api.get("/agents");
+			expect(await online.text()).toContain('"status":"online"');
+			expect(feishu.requests).toHaveLength(0);
+			const logged = errors.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+			expect(logged).toMatch(/run notification/);
+			expect(logged).toMatch(reason);
+		}
+
+		/** 库里直接写进一个接口写不进去的触发条件（先去掉约束；迁移加的约束让数据库自己也拒绝，见迁移测试）。 */
+		async function writeTrigger(scenarioId: string, trigger: string) {
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				await client.query(
+					"alter table orchestrations drop constraint if exists orchestrations_run_notify_trigger",
+				);
+				await client.query("update orchestrations set run_notify_trigger = $1 where id = $2", [
+					trigger,
+					scenarioId,
+				]);
+			} finally {
+				await client.end();
+			}
+		}
+
+		it("库里是不认识的触发条件：运行照常以失败结束，Agent 没有被断开，不发通知，控制面记一条错误", async () => {
+			const id = await scenario(single());
+			await writeTrigger(id, "always");
+
+			const runId = await runEnding(id, "failed");
+
+			await expectRunEndedAndNothingSent(runId, /always/);
+			// 之后的运行照常：改回认识的值，通知又能发出去。
+			await notification(id, { trigger: "failed" });
+			const next = await runEnding(id, "failed");
+			expect(feishu.requests).toHaveLength(1);
+			expect((await api.run(next)).run_notification).toMatchObject({ bot: "ops" });
+		});
+
+		it("读第一个失败的节点时数据库报错（会让整个事务作废的那种）：运行照常以失败结束，不发通知，下一次通知照常", async () => {
+			const id = await scenario(single());
+			// 持续出错（不是只错一次）：运行结束的事务如果被这个错误作废，会被重做，只错一次就看不出来了。
+			vi.mocked(readNodeError).mockImplementation(async (db) => {
+				await db.execute(sql`select 1 / 0`);
+				throw new Error("不会到这里");
+			});
+
+			const runId = await runEnding(id, "failed");
+
+			await expectRunEndedAndNothingSent(runId, /Failed query: select 1 \/ 0/);
+			// 出错之后事务还能继续用：同一个运行结束的事务里，运行的最终状态已经提交（上面断言了），
+			// 之后读到真实实现时，下一次运行的通知照常发出。
+			const actual =
+				await vi.importActual<typeof import("../src/runs/run-read.js")>("../src/runs/run-read.js");
+			vi.mocked(readNodeError).mockImplementation(actual.readNodeError);
+			const next = await runEnding(id, "failed");
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe("**失败的节点**：主链：a\n**失败原因**：boom");
+			expect((await api.run(next)).run_notification).toMatchObject({ bot: "ops" });
+		});
+
+		it("读第一个失败的节点时抛出普通的错误：同样不发、运行照常结束", async () => {
+			const id = await scenario(single());
+			vi.mocked(readNodeError).mockRejectedValue(new Error("读不出来"));
+
+			const runId = await runEnding(id, "failed");
+
+			await expectRunEndedAndNothingSent(runId, /读不出来/);
+		});
+
+		it("取消的运行同样：通知出错不影响运行记为已取消", async () => {
+			const id = await scenario(single(), { trigger: "failed_or_cancelled" });
+			await writeTrigger(id, "always");
+
+			const runId = await runEnding(id, "cancelled");
+
+			await expectRunEndedAndNothingSent(runId, /always/);
 		});
 	});
 

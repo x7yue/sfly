@@ -221,7 +221,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		delivery: feishuDelivery,
 	});
-	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的值，和运行监控读指标用同一个读取。
+	// 指标要在引擎之前建好：任务上报指标要先于引擎处理（运行监控、关注项读数、控制台都读它）。
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -248,6 +248,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		notifications: new EngineNotifications({
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
+			onError: (error, runId) => {
+				if (logger) console.error(`run notification: not sent for run ${runId}:`, error);
+			},
 		}),
 		leaseMs: options.leaseMs,
 		agentEnvironment: createAgentEnvironment({

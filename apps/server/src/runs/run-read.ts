@@ -267,9 +267,10 @@ async function readByIds(
 }
 
 /**
- * 一个节点最后一次有错误的尝试的错误（打码后，同运行视图里尝试的 `error`）；没有时为 null。只读这个节点的任务行，
+ * 一个节点最后一次有错误的尝试的错误（打码后，同运行视图里尝试的 `error`）；没有时为 null。只查这个节点的任务行（一条查询），
  * 不读整个运行的输入和输出：运行通知在运行结束的事务里取第一个失败的节点的失败原因，要的只是这一条。
- * 打码用的密值和 {@link readRuns} 是同一份（运行绑定的版本里声明为 secret 的参数在各链里的值）。
+ * 打码用调用方手里同一次读取的 `maskText`（{@link RunRead.maskText}，运行绑定的版本里声明为 secret 的参数在各链里的值），
+ * 和运行视图里尝试的 `error` 同一个口径，不另查一遍链实例。
  */
 export async function readNodeError(
 	db: Db | Tx,
@@ -277,14 +278,9 @@ export async function readNodeError(
 		runId: string;
 		chainInstanceId: string;
 		nodeId: string;
-		document: StoredOrchestrationDocument;
+		maskText: (text: string) => string;
 	},
 ): Promise<AttemptView["error"]> {
-	const chainRows = await db
-		.select()
-		.from(chainInstances)
-		.where(eq(chainInstances.runId, input.runId));
-	const mask = masker(secretValues(input.document, chainRows));
 	const [row] = await db
 		.select({
 			kind: tasks.errorKind,
@@ -304,8 +300,8 @@ export async function readNodeError(
 	if (!row?.kind) return null;
 	return {
 		kind: row.kind,
-		message: mask.text(row.message ?? ""),
-		location: row.location === null ? null : mask.text(row.location),
+		message: input.maskText(row.message ?? ""),
+		location: row.location === null ? null : input.maskText(row.location),
 	};
 }
 

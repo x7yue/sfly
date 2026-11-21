@@ -118,8 +118,9 @@ function runNotificationCard(facts: RunNotificationFacts) {
 
 /**
  * 运行里第一个失败的节点（和控制台、运行监控、运行记录的「第一个失败的节点」相同：运行读取的 `failures` 的第一项），
- * 连同它的失败原因和出错位置。在写入运行最终状态的事务里读（`step.tx`）：运行读取用轻量的那一种，
- * 失败原因只读这个节点的任务行（{@link readNodeError}），不读整个运行的输入和输出。
+ * 连同它的失败原因和出错位置。在写入运行最终状态的事务里读（`step.tx`）：运行读取用轻量的那一种（`board`），
+ * 失败原因再用一条查询读这个节点的任务行（{@link readNodeError}，打码用同一次读取的 `maskText`），
+ * 不读整个运行的输入和输出。
  */
 async function firstFailure(step: Step, run: RunRow): Promise<FirstFailure | undefined> {
 	const read = (await readRuns(step.tx, [run.id])).get(run.id);
@@ -130,7 +131,7 @@ async function firstFailure(step: Step, run: RunRow): Promise<FirstFailure | und
 		runId: run.id,
 		chainInstanceId: chain.id,
 		nodeId: node.node_id,
-		document: read.version.document,
+		maskText: read.maskText,
 	});
 	return {
 		chain: chainLabel(
@@ -147,6 +148,8 @@ async function firstFailure(step: Step, run: RunRow): Promise<FirstFailure | und
  * 运行刚结束（在写入最终状态的事务里调用）：读场景当前的运行通知设置，选了机器人而且满足触发条件的（失败，或者
  * 失败和取消），把卡片写进发送队列并在运行上记下发给哪个机器人（提交后由调用方唤醒投递）。成功的运行不发。
  * 机器人已经不存在（或卡片超过 20 KB）时不入队，在运行上记下「未发送」的原因：通知不会拦住运行。
+ * 这里的任何一步出错（不认识的触发条件、读失败原因、拼卡片）都会抛出：调用方（{@link EngineNotifications.runFinished}）
+ * 在保存点里调用它，接住错误、记一条日志，这次不发，运行照常结束。
  */
 export async function enqueueRunNotification(
 	step: Step,
@@ -162,7 +165,15 @@ export async function enqueueRunNotification(
 		.from(orchestrations)
 		.where(eq(orchestrations.id, run.orchestrationId));
 	const bot = scenario?.runNotifyBot;
-	if (!scenario || bot == null || !SENDS_ON[scenario.runNotifyTrigger].includes(status)) return;
+	if (!scenario || bot == null) return;
+	const sendsOn = SENDS_ON[scenario.runNotifyTrigger];
+	if (sendsOn === undefined) {
+		// 列上有约束，正常写不进别的值；真遇到了（约束被拿掉、旧版本写进来的）也不能让运行结束失败：由调用方记一条日志。
+		throw new Error(
+			`场景 ${scenario.id} 的运行通知触发条件 ${JSON.stringify(scenario.runNotifyTrigger)} 不认识，这次不发`,
+		);
+	}
+	if (!sendsOn.includes(status)) return;
 	// SENDS_ON 里没有成功：走到这里的只有失败和取消。
 	if (status === "success") return;
 

@@ -14,7 +14,7 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { notify } from "#/components/feedback/notify";
 import { FeishuBotSelect } from "#/editor/inspector/FeishuBotSelect";
 import { apiQuery, callApi } from "#/lib/api";
-import { PAGE, TERM } from "#/lib/copy";
+import { DOC_PAGE, PAGE, TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -96,7 +96,7 @@ export function RunNotificationDialog({
 					<DialogHeader>
 						<DialogTitle>{TERM.runNotification}</DialogTitle>
 						<DialogDescription>
-							运行失败（或取消）时往选中的{TERM.feishuBot}
+							运行出问题时往选中的{TERM.feishuBot}
 							发一张卡片，写明第一个失败的节点和原因，不用在链上加节点。这些设置不属于场景版本，
 							修改后不会生成新版本，立即生效；复制场景时一并复制。
 						</DialogDescription>
@@ -130,11 +130,10 @@ export function RunNotificationDialog({
 							label="触发条件"
 							help={
 								<>
-									运行通知是兜底，只在失败（或失败和取消）时发，成功的运行不发运行通知；一条都不想发，就把
-									{TERM.feishuBot}
-									设成「（不发送运行通知）」。日常的结果由场景里的节点用{" "}
+									按上面选的发：只在失败时发，或者失败和被取消时发。成功的运行不发运行通知，日常的结果由场景里的节点用{" "}
 									<code className="font-mono">ctx.notify</code> 发，见
-									<DocPageLink page="feishu-notify" />。
+									<DocPageLink page="feishu-notify">「{DOC_PAGE["feishu-notify"]}」</DocPageLink>
+									。不想发运行通知，就把{TERM.feishuBot}设成「（不发送运行通知）」。
 								</>
 							}
 						>

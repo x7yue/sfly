@@ -160,4 +160,30 @@ describe("升级：运行通知的触发条件「总是」改成「失败和取�
 		);
 		expect(copy.run_notification).toMatchObject({ trigger: "failed_or_cancelled", bot: "运维群" });
 	});
+
+	it("升级之后库里不能再写「总是」或别的不认识的触发条件：数据库的约束拒绝（运行结束时不会遇到不认识的值）", async () => {
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			await seed(client, 1, "仅失败", "failed", "运维群");
+			await cp.restart(undefined, { migrationsDir: defaultMigrationsDir });
+
+			for (const trigger of ["always", "", "Failed", "success"]) {
+				await expect(
+					client.query("update orchestrations set run_notify_trigger = $1", [trigger]),
+					JSON.stringify(trigger),
+				).rejects.toThrow(/orchestrations_run_notify_trigger/);
+				await expect(
+					seed(client, 2, "新场景", trigger, null),
+					`insert ${JSON.stringify(trigger)}`,
+				).rejects.toThrow(/orchestrations_run_notify_trigger/);
+			}
+			// 认识的两个值照常能写。
+			for (const trigger of ["failed", "failed_or_cancelled"]) {
+				await client.query("update orchestrations set run_notify_trigger = $1", [trigger]);
+			}
+		} finally {
+			await client.end();
+		}
+	});
 });

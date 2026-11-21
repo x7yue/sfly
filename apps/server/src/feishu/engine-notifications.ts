@@ -28,18 +28,33 @@ export class EngineNotifications {
 			delivery: Pick<FeishuDelivery, "wake">;
 			/** 运行通知卡片里「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时返回 undefined（卡片没有按钮）。 */
 			runUrl: (runId: string) => string | undefined;
+			/** 为这次运行准备通知时出了错，这次不发：只报告（记日志），运行照常结束。 */
+			onError: (error: unknown, runId: string) => void;
 		},
 	) {}
 
 	/**
 	 * 运行刚结束（在写入运行最终状态的事务里调用）：读场景当前的运行通知设置，满足条件就写进发送队列（#232）。
 	 * 调用方保证只有第一次把运行记为结束的事务调用，同一个运行不会发两张卡片。
+	 *
+	 * **通知不能拦住运行结束**（规格：飞书投递失败不影响运行状态）。投递本身在事务之外（入队之后由 {@link FeishuDelivery} 发），
+	 * 但入队之前为通知做的几步查询（场景设置、第一个失败的节点、机器人是否登记）和拼卡片在这个事务里：
+	 * 任何一步出错（不认识的触发条件、读取出错、卡片拼不出来）都会让整个事务回滚，运行和节点就卡在「执行中」。
+	 * 所以放进保存点：出错时回到保存点（这个事务里别的写入，包括运行的最终状态，原样保留，事务还能继续用），
+	 * 报告错误，这次不发。没有选择「提交之后再读再发」：那样运行已经结束了，读到的场景设置和失败原因可能已经变了，
+	 * 也要另开事务写发送队列，运行结束和入队不再是一个整体（#232 定下的：同一个事务里，重启时不会漏发也不会重复发）。
 	 */
 	async runFinished(step: Step, finished: FinishedRun): Promise<void> {
-		await enqueueRunNotification(step, {
-			...finished,
-			runUrl: this.deps.runUrl(finished.run.id),
-		});
+		try {
+			await step.tx.transaction(async (savepoint) => {
+				await enqueueRunNotification(
+					{ ...step, tx: savepoint },
+					{ ...finished, runUrl: this.deps.runUrl(finished.run.id) },
+				);
+			});
+		} catch (error) {
+			this.deps.onError(error, finished.run.id);
+		}
 	}
 
 	/** step 的事务提交之后：唤醒投递。 */

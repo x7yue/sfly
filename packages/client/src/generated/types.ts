@@ -2007,7 +2007,7 @@ export interface RunMetricSummary {
 export interface RunNotificationChanges {
 	/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 	bot?: FeishuBotName | null;
-	/** 什么情况下发：仅失败、失败和取消（没有「总是」，成功的运行不发运行通知）。 */
+	/** 什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。 */
 	trigger?: RunNotificationTrigger;
 	/** 卡片标题；空字符串用场景名。 */
 	title?: string;
