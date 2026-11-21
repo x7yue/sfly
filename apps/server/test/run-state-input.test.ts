@@ -349,7 +349,9 @@ describe("节点输入里的运行状态 ${{ run.state }}", () => {
 					(await res.json()) as {
 						warnings: Array<{ code: string; node_id?: string; input?: string }>;
 					}
-				).warnings.map((w) => [w.code, w.node_id, w.input]);
+				).warnings // 只看 run.state 的警告：场景里别的警告（例如保密参数写了默认值）和这里无关。
+					.filter((w) => /^(reference|input)_run_state_/.test(w.code))
+					.map((w) => [w.code, w.node_id, w.input]);
 			};
 			expect(
 				await warningsOf(flow([echo("e", { v: "状态 ${{ run.state }}" }), summary("sum")])),
