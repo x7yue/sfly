@@ -7,7 +7,7 @@ import {
 } from "@sfly/orchestration";
 import type { PackageMetadata } from "@sfly/schema";
 import type { ChainPlan } from "../engine/chain.js";
-import { jsonText, maskSecrets, SECRET_MASK } from "../logs/secrets.js";
+import { maskValue, SECRET_MASK } from "../logs/secrets.js";
 import { type KnownParams, resolved, secretTexts } from "./known-params.js";
 import type { PreflightProblem } from "./preflight.js";
 
@@ -100,9 +100,10 @@ export function paramInputTypeProblems(
 				const expected = describeSchema(io.properties[input] ?? {});
 				// secret 的值不出现在说明里：判断照旧，只是把「实际是 …」里的值换成掩码。整个值就是 secret 值时写成 ******；
 				// secret 值夹在文字里、放在对象里经参数映射传进来时，值只是一部分，按子串打码（和机器人、Agent 名称的说明一致）。
-				const problem = secrets.includes(jsonText(actual))
-					? `输入 ${input} 应为 ${expected}，实际是 ${SECRET_MASK}`
-					: maskSecrets(found, secrets);
+				const problem =
+					maskValue(actual, secrets) === SECRET_MASK
+						? `输入 ${input} 应为 ${expected}，实际是 ${SECRET_MASK}`
+						: secrets.mask(found);
 				const { where, next } = whereAndNext(known, main, name, expected, origins);
 				problems.push({
 					code: "param_input_type_mismatch",

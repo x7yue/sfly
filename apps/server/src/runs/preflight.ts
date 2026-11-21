@@ -13,7 +13,6 @@ import { agents } from "../db/schema.js";
 import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
-import { maskSecrets } from "../logs/secrets.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
@@ -194,7 +193,7 @@ export function createParamsCheck(): ParamsCheck {
 		const chains = knownParams(plan, params);
 		// 问题的说明里写出的值取自 secret 参数时打码（调用方给的值同样）：触发时的报错不回显 secret 的值。
 		const secrets = secretTexts(chains);
-		const shownOf = (value: string) => maskSecrets(value, secrets);
+		const shownOf = (value: string) => secrets.mask(value);
 		for (const { chain, params: known, source } of chains) {
 			for (const node of chain.nodes) {
 				if (node.kind !== "package") continue;

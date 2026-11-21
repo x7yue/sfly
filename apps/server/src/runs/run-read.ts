@@ -28,7 +28,14 @@ import {
 	tasks,
 } from "../db/schema.js";
 import { agentFor, chainsForReading } from "../engine/chain.js";
-import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
+import {
+	maskParams,
+	maskRecord,
+	NO_SECRETS,
+	type SecretSet,
+	secretParamNames,
+	secretValues,
+} from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
 import { isUuid } from "../util/uuid.js";
@@ -279,17 +286,27 @@ type BoardTaskRow = TaskRowBase & {
 };
 type FullTaskRow = typeof tasks.$inferSelect & { currentAction: CurrentAction | null };
 
-/** 打码：只打用户内容。 */
+/**
+ * 打码：只打用户内容。`record` 打码一个「名字到值」的映射（参数、输入、输出）：映射本身不会被换成掩码，
+ * 哪怕它整个等于某个 secret 对象，契约要求这几处是映射（`maskRecord`）。
+ */
 interface Masker {
 	text(value: string): string;
-	deep<T>(value: T): T;
-	secrets: readonly string[];
+	record<T extends Record<string, unknown> | null | undefined>(value: T): T;
+	/** 一个链实例（起点节点 ID）的参数：声明为 secret 的参数整个读成掩码，其余按 `record` 处理。 */
+	params(chainId: string, value: Record<string, unknown>): Record<string, unknown>;
+	secrets: SecretSet;
 }
 
-function masker(secrets: readonly string[]): Masker {
+/** 主链入口节点的 ID：运行的参数就是它的参数。 */
+const entryIdOf = (document: StoredOrchestrationDocument): string =>
+	document.nodes.find((n) => n.kind === "entry")?.id ?? "";
+
+function masker(document: StoredOrchestrationDocument, secrets: SecretSet): Masker {
 	return {
-		text: (value) => maskSecrets(value, secrets),
-		deep: (value) => maskDeep(value, secrets),
+		text: (value) => secrets.mask(value),
+		record: (value) => maskRecord(value, secrets),
+		params: (chainId, value) => maskParams(value, secretParamNames(document, chainId), secrets),
 		secrets,
 	};
 }
@@ -310,8 +327,8 @@ function attemptOf(row: BoardTaskRow, mask: Masker): RunAttempt {
 function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 	return {
 		...attemptOf(row, mask),
-		inputs: mask.deep(row.inputs),
-		outputs: mask.deep(row.outputs),
+		inputs: mask.record(row.inputs),
+		outputs: mask.record(row.outputs),
 		error: row.errorKind
 			? { kind: row.errorKind, message: mask.text(row.errorMessage ?? "") }
 			: null,
@@ -348,7 +365,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 	for (const { run, version, scenario } of rows) {
 		const { document } = version;
 		const runChains = chainsOf.get(run.id) ?? [];
-		const mask = masker(secretValues(document, runChains));
+		const mask = masker(document, secretValues(document, runChains));
 		const nodesOf = planOf(version);
 		const chains = runChains.map(
 			(chain): RunChain<A> => ({
@@ -359,7 +376,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				async_node_id: chain.asyncNodeId,
 				depth: chain.depth,
 				status: chain.status,
-				params: mask.deep(chain.params),
+				params: mask.params(chain.chainId, chain.params),
 				startedAt: chain.startedAt,
 				endedAt: chain.endedAt,
 				nodes: nodesOf(chain.chainId).map((node) => {
@@ -380,7 +397,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 		reads.set(
 			run.id,
 			finish({
-				run: { ...run, params: mask.deep(run.params) },
+				run: { ...run, params: mask.params(entryIdOf(document), run.params) },
 				version,
 				scenario,
 				chains,
@@ -543,7 +560,7 @@ function attemptView(a: RunAttemptDetail): AttemptView {
 		start_clock_offset: a.startClockOffset,
 		end_clock_offset: a.endClockOffset,
 		// 进度消息在读取时已打码。
-		progress: a.progress ? taskProgressView(a.progress, []) : null,
+		progress: a.progress ? taskProgressView(a.progress, NO_SECRETS) : null,
 		current_action: a.currentAction,
 	};
 }
