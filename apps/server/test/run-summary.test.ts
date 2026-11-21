@@ -642,7 +642,8 @@ describe("运行摘要", () => {
 			report.chains[0]?.nodes.map((n) => [n.node_id, n.kind, n.display_name, n.status]),
 		).toEqual([
 			["entry", "entry", null, "success"],
-			["wait", "sleep", null, "success"],
+			["wait", "sleep", "歇一会", "success"],
+			["at", "timer", null, "success"],
 			["notify", "feishu_notify", "通知群", "success"],
 		]);
 	});
