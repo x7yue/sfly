@@ -9,6 +9,7 @@ import {
 	AssistantHealth,
 	AssistantStreamLine,
 	AssistantStreamRecord,
+	PERSISTED_SESSION_EVENT_TYPES,
 	PromptCommandBody,
 	SESSION_MESSAGE_MAX_CHARS,
 	SessionEventBody,
@@ -41,31 +42,53 @@ const health = {
 };
 
 describe("助手服务产生的事件（AssistantEvent）", () => {
-	it("助手服务产生的样例都能过，控制面产生的都不能", () => {
+	it("事件流里能出现的样例都能过，只有控制面产生的类型和种类都不能", () => {
 		for (const sample of eventSamples) {
 			expect(
 				AssistantEvent.safeParse(sample.body).success,
-				`${sample.name}：${sample.fromAssistantService ? "助手服务产生的应该通过" : "控制面产生的不应该出现在助手服务的事件流里"}`,
-			).toBe(sample.fromAssistantService);
+				`${sample.name}：${sample.inAssistantStream ? "事件流里能出现的应该通过" : "不是助手服务产生的不应该出现在事件流里"}`,
+			).toBe(sample.inAssistantStream);
 		}
 	});
 
 	it("它是 SessionEventBody 的子集：每个通过的事件内容也通过 SessionEventBody", () => {
-		for (const sample of eventSamples.filter((s) => s.fromAssistantService)) {
+		for (const sample of eventSamples.filter((s) => s.inAssistantStream)) {
 			expect(SessionEventBody.safeParse(AssistantEvent.parse(sample.body)).success).toBe(true);
 		}
 	});
 
-	it("控制面才有的类型：用户的话、一轮开始、排队、会话结束、快照", () => {
-		for (const type of [
+	it("控制面才有的类型都有样例，而且都被拒绝：用户的话、一轮开始、排队、会话结束、快照", () => {
+		const controlPlaneOnly = [
 			"user_message",
 			"turn_started",
 			"turn_queued",
 			"session_ended",
 			"snapshot",
-		]) {
-			const sample = eventSamples.find((s) => s.body.type === type);
-			expect(AssistantEvent.safeParse(sample?.body).success, type).toBe(false);
+		];
+		for (const type of controlPlaneOnly) {
+			const samples = eventSamples.filter((s) => s.body.type === type);
+			expect(samples.length, `${type} 没有样例`).toBeGreaterThan(0);
+			for (const sample of samples) {
+				expect(AssistantEvent.safeParse(sample.body).success, sample.name).toBe(false);
+			}
+		}
+	});
+
+	it("控制面才有的提示（queue_cancelled、events_lost）和平台记录（scenario_version、run）被拒绝，助手服务的提示和提交通过", () => {
+		const notice = (kind: string) => ({ type: "notice", kind, message: "x" });
+		for (const kind of ["queue_cancelled", "events_lost"]) {
+			expect(AssistantEvent.safeParse(notice(kind)).success, kind).toBe(false);
+		}
+		for (const kind of ["retry", "retry_end", "compaction", "steer_dropped", "context_reset"]) {
+			expect(AssistantEvent.safeParse(notice(kind)).success, kind).toBe(true);
+		}
+		const kinds = ["commit", "scenario_version", "run"];
+		for (const kind of kinds) {
+			const samples = eventSamples.filter(
+				(s) => s.body.type === "platform" && s.body.kind === kind,
+			);
+			expect(samples.length, kind).toBe(1);
+			expect(AssistantEvent.safeParse(samples[0]?.body).success, kind).toBe(kind === "commit");
 		}
 	});
 });
@@ -178,6 +201,23 @@ describe("事件流", () => {
 		expect(
 			AssistantStreamLine.safeParse({ type: "bye", epoch: "k3v9x2", gap: false }).success,
 		).toBe(false);
+	});
+
+	it("seq 只有持久的事件有：持久的必须带，不持久的不能带", () => {
+		const base = { epoch: "k3v9x2", session_id: sessionId, turn: 2 };
+		for (const sample of eventSamples.filter((s) => s.inAssistantStream)) {
+			const persisted = (PERSISTED_SESSION_EVENT_TYPES as readonly string[]).includes(
+				sample.body.type,
+			);
+			const withSeq = { ...base, seq: 3, event: sample.body };
+			const withoutSeq = { ...base, event: sample.body };
+			expect(AssistantStreamRecord.safeParse(withSeq).success, `${sample.name} 带 seq`).toBe(
+				persisted,
+			);
+			expect(AssistantStreamRecord.safeParse(withoutSeq).success, `${sample.name} 不带 seq`).toBe(
+				!persisted,
+			);
+		}
 	});
 
 	it("续传的位置：<纪元>:<序号>", () => {

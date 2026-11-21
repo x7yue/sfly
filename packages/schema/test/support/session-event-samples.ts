@@ -13,8 +13,12 @@ export interface EventSample {
 	body: SessionEventBody;
 	/** 这个样例里可以没有的字段：缺了它们仍然合法，其余字段缺了都不合法。 */
 	optional: readonly string[];
-	/** 是不是助手服务产生的（事件流里出现的）：控制面产生的不是。 */
-	fromAssistantService: boolean;
+	/**
+	 * 助手服务的事件流里能不能出现（`AssistantEvent` 接不接受）：助手服务产生的能；用户的话、一轮开始、排队、
+	 * 会话结束、快照，以及控制面才有的 `notice`、`platform` 的种类不能。控制面补的 `interrupted` 和助手服务发的形状相同，
+	 * schema 分不出来，也算能。
+	 */
+	inAssistantStream: boolean;
 }
 
 const retryNotice = {
@@ -38,7 +42,7 @@ export const eventSamples: readonly EventSample[] = [
 			author_user_id: null,
 		},
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "user_message（插话，有用户 ID）",
@@ -50,13 +54,13 @@ export const eventSamples: readonly EventSample[] = [
 			author_user_id: "9b2d5c1e-6a47-4f0e-8d3a-0c1f2b3a4d5e",
 		},
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "turn_started",
 		body: { type: "turn_started", turn: 1 },
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "turn_queued",
@@ -66,37 +70,37 @@ export const eventSamples: readonly EventSample[] = [
 			waiting_for: { session_id: "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21", title: "修复登录页" },
 		},
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "thinking",
 		body: { type: "thinking" },
 		optional: [],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "assistant_delta",
 		body: { type: "assistant_delta", text: "我先看一下" },
 		optional: [],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "assistant_message",
 		body: { type: "assistant_message", text: "我先看一下现有的节点。", usage },
 		optional: [],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "tool_call",
 		body: { type: "tool_call", call_id: "call_1", tool: "bash", title: "sfly package list" },
 		optional: [],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "tool_output",
 		body: { type: "tool_output", call_id: "call_1", text: "http_check 0.3.0\n" },
 		optional: [],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "tool_result（命令）",
@@ -110,7 +114,7 @@ export const eventSamples: readonly EventSample[] = [
 			duration_ms: 420,
 		},
 		optional: ["exit_code", "diff"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "tool_result（编辑，有差异，被截断）",
@@ -124,49 +128,49 @@ export const eventSamples: readonly EventSample[] = [
 			duration_ms: 12,
 		},
 		optional: ["exit_code", "diff"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "steer_queue",
 		body: { type: "steer_queue", texts: ["先别改测试", "再加一条日志"] },
 		optional: [],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "notice：retry",
 		body: retryNotice,
 		optional: ["attempt", "max_attempts", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "notice：retry_end",
 		body: { type: "notice", kind: "retry_end", message: "重试成功" },
 		optional: ["attempt", "max_attempts", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "notice：compaction",
 		body: { type: "notice", kind: "compaction", message: "上下文太长，已经压缩" },
 		optional: ["attempt", "max_attempts", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "notice：steer_dropped",
 		body: { type: "notice", kind: "steer_dropped", message: "停止时有 1 条插话没有送到" },
 		optional: ["attempt", "max_attempts", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "notice：context_reset",
 		body: { type: "notice", kind: "context_reset", message: "接不上之前的上下文，换成了一段摘要" },
 		optional: ["attempt", "max_attempts", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "notice：queue_cancelled（控制面产生）",
 		body: { type: "notice", kind: "queue_cancelled", message: "停止时排队中的话没有交给助手" },
 		optional: ["attempt", "max_attempts", "error_class"],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "notice：events_lost（控制面产生）",
@@ -176,7 +180,7 @@ export const eventSamples: readonly EventSample[] = [
 			message: "和助手服务断开太久，这一段过程没有记下",
 		},
 		optional: ["attempt", "max_attempts", "error_class"],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "turn_end：completed",
@@ -191,7 +195,7 @@ export const eventSamples: readonly EventSample[] = [
 			usage,
 		},
 		optional: ["steps", "model_calls", "usage", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "turn_end：stopped",
@@ -206,7 +210,7 @@ export const eventSamples: readonly EventSample[] = [
 			usage,
 		},
 		optional: ["steps", "model_calls", "usage", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "turn_end：limit",
@@ -221,7 +225,7 @@ export const eventSamples: readonly EventSample[] = [
 			usage,
 		},
 		optional: ["steps", "model_calls", "usage", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "turn_end：model_unavailable",
@@ -237,10 +241,25 @@ export const eventSamples: readonly EventSample[] = [
 			error_class: "auth",
 		},
 		optional: ["steps", "model_calls", "usage", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
-		name: "turn_end：interrupted（助手服务重启了，控制面补）",
+		name: "turn_end：interrupted（助手服务发的：pi 进程在这一轮里退出了）",
+		body: {
+			type: "turn_end",
+			turn: 5,
+			outcome: "interrupted",
+			reason: "pi 进程在这一轮里退出了",
+			steps: 4,
+			model_calls: 4,
+			duration_ms: 31_000,
+			usage,
+		},
+		optional: ["steps", "model_calls", "usage", "error_class"],
+		inAssistantStream: true,
+	},
+	{
+		name: "turn_end：interrupted（控制面补的：助手服务重启了，没有 steps、model_calls、usage）",
 		body: {
 			type: "turn_end",
 			turn: 5,
@@ -249,7 +268,7 @@ export const eventSamples: readonly EventSample[] = [
 			duration_ms: 31_000,
 		},
 		optional: ["steps", "model_calls", "usage", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "turn_end：failed",
@@ -257,14 +276,14 @@ export const eventSamples: readonly EventSample[] = [
 			type: "turn_end",
 			turn: 6,
 			outcome: "failed",
-			reason: "pi 进程异常退出",
+			reason: "助手服务内部错误",
 			steps: 7,
 			model_calls: 6,
 			duration_ms: 20_000,
 			usage,
 		},
 		optional: ["steps", "model_calls", "usage", "error_class"],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "platform：commit",
@@ -280,7 +299,7 @@ export const eventSamples: readonly EventSample[] = [
 			truncated: false,
 		},
 		optional: [],
-		fromAssistantService: true,
+		inAssistantStream: true,
 	},
 	{
 		name: "platform：scenario_version",
@@ -292,7 +311,7 @@ export const eventSamples: readonly EventSample[] = [
 			version: 3,
 		},
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "platform：run",
@@ -303,13 +322,13 @@ export const eventSamples: readonly EventSample[] = [
 			scenario_name: "接口巡检",
 		},
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "session_ended",
 		body: { type: "session_ended", by: "alice" },
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "snapshot",
@@ -326,7 +345,7 @@ export const eventSamples: readonly EventSample[] = [
 			steer_queue: ["先别改测试"],
 		},
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 	{
 		name: "snapshot（没有在跑的工具）",
@@ -338,7 +357,7 @@ export const eventSamples: readonly EventSample[] = [
 			steer_queue: [],
 		},
 		optional: [],
-		fromAssistantService: false,
+		inAssistantStream: false,
 	},
 ];
 

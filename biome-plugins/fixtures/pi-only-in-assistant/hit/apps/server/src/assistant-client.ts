@@ -32,6 +32,21 @@ const legacy = require("@earendil-works/pi-coding-agent");
 const quoted = require('@earendil-works/pi-coding-agent');
 // @hit
 type Session = import("@earendil-works/pi-coding-agent").AgentSession;
+// @hit
+type PiModule = typeof import("@earendil-works/pi-coding-agent");
+// @hit
+type PiEntry = typeof import("@earendil-works/pi-coding-agent").createAgentSession;
+// 类型里的 import() 跨行写也要报：命中的行是 `import(` 所在的那一行。
+// @hit
+type Wrapped = import(
+	"@earendil-works/pi-coding-agent"
+).AgentSession;
+// @hit
+type WrappedGeneric = import(
+	"@earendil-works/pi-ai"
+).Message<
+	string
+>;
 
 console.log(createAgentSession, pi, defaultPi, registerTool, lazy, legacy, quoted);
-export type { ExtensionAPI, Session };
+export type { ExtensionAPI, PiEntry, PiModule, Session, Wrapped, WrappedGeneric };

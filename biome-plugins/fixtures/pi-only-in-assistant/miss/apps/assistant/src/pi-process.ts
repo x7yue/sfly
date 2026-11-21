@@ -12,3 +12,9 @@ type Session = import("@earendil-works/pi-coding-agent").AgentSession;
 
 console.log(pi, createAgentSession, lazy, legacy);
 export type { AgentEvent, Session };
+
+type PiModule = typeof import("@earendil-works/pi-coding-agent");
+type Wrapped = import(
+	"@earendil-works/pi-coding-agent"
+).AgentSession;
+export type { PiModule, Wrapped };

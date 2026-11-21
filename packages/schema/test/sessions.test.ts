@@ -22,6 +22,7 @@ import {
 	SessionStatus,
 	SessionTool,
 	SessionView,
+	sessionEventSchemas,
 	TurnOutcome,
 	toJsonSchema,
 } from "../src/index.js";
@@ -31,6 +32,19 @@ import {
 	isPersistedBody,
 	persistedStamp,
 } from "./support/session-event-samples.js";
+
+/** 一个按 `type` 区分的联合（里面的 `platform` 是按 `kind` 区分的联合）里，所有成员的 `type` 取值。 */
+/** 去掉重复（`platform` 的三种 `kind` 各有一个成员）并排序。 */
+const unique = (values: string[]): string[] => [...new Set(values)].sort();
+
+function typesOf(union: { options: readonly unknown[] }): string[] {
+	return union.options.flatMap((option) => {
+		const member = option as { options?: readonly unknown[]; shape?: { type: { value: string } } };
+		return member.options
+			? typesOf({ options: member.options })
+			: [member.shape?.type.value as string];
+	});
+}
 
 const sessionId = "0c9d6b0a-2f4e-4a53-9e6b-7d1f3a5c8e21";
 const readyNow = { ready: true, problems: [] };
@@ -70,14 +84,16 @@ describe("会话事件", () => {
 			}
 		});
 
-		it("字段的类型不对就被拒绝", () => {
+		it("字段的类型不对就被拒绝：每个字段换成另一种 JSON 类型", () => {
 			const event = asReaderEvent(sample.body);
-			for (const key of Object.keys(event).filter((key) => key !== "type")) {
-				// 数字、布尔、字符串、数组、对象各换一个不会是它们的值。
-				const wrong = { ...event, [key]: Symbol.for("not-json") };
-				expect(SessionEvent.safeParse(wrong).success, `${sample.name} 的 ${key} 换成别的类型`).toBe(
-					false,
-				);
+			for (const [key, value] of Object.entries(event).filter(([key]) => key !== "type")) {
+				// 字符串换成数字，数字、布尔、数组、对象、null 换成字符串 "x"（字符串字段本来就收字符串，所以单独处理）；
+				// 可以为 null 的字符串字段（author_user_id）换成数字。
+				const wrong = typeof value === "string" || value === null ? 123 : "x";
+				expect(
+					SessionEvent.safeParse({ ...event, [key]: wrong }).success,
+					`${sample.name} 的 ${key} 换成 ${JSON.stringify(wrong)}`,
+				).toBe(false);
 			}
 		});
 
@@ -101,7 +117,7 @@ describe("会话事件", () => {
 		);
 	});
 
-	it("类型、持久的类型和 schema 里的完全一致：后面的任务不需要再加类型", () => {
+	it("类型的列表、持久的类型和 schema 里的完全一致：后面的任务不需要再加类型", () => {
 		expect([...SESSION_EVENT_TYPES]).toEqual([
 			"user_message",
 			"turn_started",
@@ -130,11 +146,23 @@ describe("会话事件", () => {
 			"platform",
 			"session_ended",
 		]);
-		for (const type of SESSION_EVENT_TYPES) {
-			const sample = eventSamples.find((s) => s.body.type === type);
-			expect(sample, `${type} 没有样例`).toBeDefined();
-			expect(isPersistedBody(sample?.body as never)).toBe(
-				(PERSISTED_SESSION_EVENT_TYPES as readonly string[]).includes(type),
+		// 从 schema 自己取出判别值来比：schema 里多一个、少一个类型，常量没跟着改，这里就会失败。
+		expect(unique(typesOf(SessionEvent))).toEqual([...SESSION_EVENT_TYPES].sort());
+		expect(unique(typesOf(SessionEventBody))).toEqual([...SESSION_EVENT_TYPES].sort());
+		expect(unique(typesOf(PersistedSessionEvent))).toEqual(
+			[...PERSISTED_SESSION_EVENT_TYPES].sort(),
+		);
+		expect(Object.keys(sessionEventSchemas).sort()).toEqual([...SESSION_EVENT_TYPES].sort());
+		expect([...new Set(SESSION_EVENT_TYPES)].length).toBe(SESSION_EVENT_TYPES.length);
+	});
+
+	it("sessionEventSchemas：每种事件一个 schema，样例能过，持久的要 seq 和 at（接口定义的 stream 用它）", () => {
+		for (const sample of eventSamples) {
+			const schema = sessionEventSchemas[sample.body.type];
+			const event = asReaderEvent(sample.body);
+			expect(schema.safeParse(event).success, sample.name).toBe(true);
+			expect(schema.safeParse(sample.body).success, `${sample.name} 不带 seq、at`).toBe(
+				!isPersistedBody(sample.body),
 			);
 		}
 	});
@@ -226,6 +254,15 @@ describe("会话事件", () => {
 			SessionEventBody.safeParse({ type: "tool_call", call_id: "c", tool: "grep", title: "t" })
 				.success,
 		).toBe(false);
+	});
+
+	it("platform 记录里的场景和运行用 UUID", () => {
+		const scenario = eventSamples.find((s) => s.name === "platform：scenario_version")?.body;
+		const run = eventSamples.find((s) => s.name === "platform：run")?.body;
+		expect(scenario).toBeDefined();
+		expect(run).toBeDefined();
+		expect(SessionEventBody.safeParse({ ...scenario, scenario_id: "42" }).success).toBe(false);
+		expect(SessionEventBody.safeParse({ ...run, run_id: "42" }).success).toBe(false);
 	});
 
 	it("数值字段的范围：轮次从 1 起，用量、时长、行数不为负", () => {
@@ -333,6 +370,16 @@ describe("会话接口的类型", () => {
 		expect(SessionListResponse.safeParse({ sessions: [listItem] }).success).toBe(false);
 	});
 
+	it("就绪状态：ready 当且仅当没有 problems", () => {
+		const problem = { kind: "workbench_offline", message: "工作台不在线" };
+		const check = (readiness: unknown) =>
+			SessionListResponse.safeParse({ readiness, sessions: [] }).success;
+		expect(check({ ready: true, problems: [] })).toBe(true);
+		expect(check({ ready: false, problems: [problem] })).toBe(true);
+		expect(check({ ready: true, problems: [problem] })).toBe(false);
+		expect(check({ ready: false, problems: [] })).toBe(false);
+	});
+
 	it("新建会话和发话：只有 text，非空、不能只有空白、有长度上限", () => {
 		for (const schema of [CreateSessionBody, SendMessageBody]) {
 			expect(schema.parse({ text: "你好" })).toEqual({ text: "你好" });
@@ -384,5 +431,8 @@ describe("会话接口的类型", () => {
 		expect(SessionDetailQuery.safeParse({ before: "abc" }).success).toBe(false);
 		expect(SessionEventsQuery.parse({ after: "0" })).toEqual({ after: 0 });
 		expect(SessionEventsQuery.safeParse({ after: "-1" }).success).toBe(false);
+		// 空字符串等于没给（和 http/actions.ts、http/run-list.ts 的查询参数一致）。
+		expect(SessionDetailQuery.parse({ before: "" })).toEqual({});
+		expect(SessionEventsQuery.parse({ after: "" })).toEqual({});
 	});
 });

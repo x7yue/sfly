@@ -5,6 +5,7 @@ import {
 	AssistantMessageEvent,
 	AssistantNoticeEvent,
 	ErrorClass,
+	PERSISTED_SESSION_EVENT_TYPES,
 	PlatformCommitEvent,
 	SessionId,
 	SessionMessageText,
@@ -158,16 +159,29 @@ export const AssistantStreamHello = z.object({
 export type AssistantStreamHello = z.infer<typeof AssistantStreamHello>;
 
 /**
- * 事件流里的一条事件记录（NDJSON 的一行）：`seq` 是助手服务内递增的序号，只有持久的事件有（不是会话内序号，
- * 会话内序号由控制面落库时给）；`turn` 是这个事件属于哪一轮。
+ * 事件流里的一条事件记录（NDJSON 的一行）：`seq` 是助手服务内递增的序号，**只有持久的事件有**
+ * （{@link PERSISTED_SESSION_EVENT_TYPES}：持久的必须有，不持久的不能有；它不是会话内序号，会话内序号由控制面
+ * 落库时给）；`turn` 是这个事件属于哪一轮。
  */
-export const AssistantStreamRecord = z.object({
-	epoch: AssistantEpoch,
-	seq: z.int().min(1).optional(),
-	session_id: SessionId,
-	turn: z.int().min(1),
-	event: AssistantEvent,
-});
+export const AssistantStreamRecord = z
+	.object({
+		epoch: AssistantEpoch,
+		seq: z.int().min(1).optional(),
+		session_id: SessionId,
+		turn: z.int().min(1),
+		event: AssistantEvent,
+	})
+	.superRefine((record, ctx) => {
+		const persisted = (PERSISTED_SESSION_EVENT_TYPES as readonly string[]).includes(
+			record.event.type,
+		);
+		if (persisted && record.seq === undefined) {
+			ctx.addIssue({ code: "custom", path: ["seq"], message: "持久的事件要带 seq" });
+		}
+		if (!persisted && record.seq !== undefined) {
+			ctx.addIssue({ code: "custom", path: ["seq"], message: "不持久的事件不带 seq" });
+		}
+	});
 export type AssistantStreamRecord = z.infer<typeof AssistantStreamRecord>;
 
 /** 事件流的一行：第一行是 {@link AssistantStreamHello}，之后是 {@link AssistantStreamRecord}。 */

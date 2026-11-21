@@ -376,7 +376,7 @@ export const PlatformCommitEvent = z.object({
 export const PlatformScenarioVersionEvent = z.object({
 	type: z.literal("platform"),
 	kind: z.literal("scenario_version"),
-	scenario_id: z.string().min(1),
+	scenario_id: z.uuid(),
 	name: z.string(),
 	version: z.int().min(1),
 });
@@ -385,7 +385,7 @@ export const PlatformScenarioVersionEvent = z.object({
 export const PlatformRunEvent = z.object({
 	type: z.literal("platform"),
 	kind: z.literal("run"),
-	run_id: z.string().min(1),
+	run_id: z.uuid(),
 	scenario_name: z.string(),
 });
 
@@ -453,21 +453,47 @@ const persisted = {
 	at: Timestamp,
 };
 
-/** 一个持久的会话事件：{@link PERSISTED_SESSION_EVENT_TYPES} 里的类型，带 `seq` 和 `at`（页面读历史、SSE 推送用）。 */
+/** `platform` 事件读的一方看到的形状：按 `kind` 区分，三种都是持久的，带 `seq` 和 `at`。 */
+const PlatformEventItem = z.discriminatedUnion("kind", [
+	PlatformCommitEvent.extend(persisted),
+	PlatformScenarioVersionEvent.extend(persisted),
+	PlatformRunEvent.extend(persisted),
+]);
+
+/**
+ * 每种会话事件读的一方看到的形状，以 `type` 为键：持久的（{@link PERSISTED_SESSION_EVENT_TYPES}）带 `seq` 和 `at`，
+ * 其余和 {@link SessionEventBody} 里的一样。SSE 的事件名是 `type`，所以接口定义（`stream()` 的 `events`，#541）
+ * 直接用这张表：键是事件名，值是这个事件的数据。{@link SessionEvent}、{@link PersistedSessionEvent} 都由它组成。
+ */
+export const sessionEventSchemas = {
+	user_message: UserMessageEvent.extend(persisted),
+	turn_started: TurnStartedEvent.extend(persisted),
+	turn_queued: TurnQueuedEvent,
+	thinking: ThinkingEvent,
+	assistant_delta: AssistantDeltaEvent,
+	assistant_message: AssistantMessageEvent.extend(persisted),
+	tool_call: ToolCallEvent.extend(persisted),
+	tool_output: ToolOutputEvent,
+	tool_result: ToolResultEvent.extend(persisted),
+	steer_queue: SteerQueueEvent,
+	notice: NoticeEvent.extend(persisted),
+	turn_end: TurnEndEvent.extend(persisted),
+	platform: PlatformEventItem,
+	session_ended: SessionEndedEvent.extend(persisted),
+	snapshot: SnapshotEvent,
+} as const satisfies Record<SessionEventType, z.ZodType>;
+
+/** 一个持久的会话事件：{@link PERSISTED_SESSION_EVENT_TYPES} 里的类型，带 `seq` 和 `at`（历史接口返回它）。 */
 export const PersistedSessionEvent = z.discriminatedUnion("type", [
-	UserMessageEvent.extend(persisted),
-	TurnStartedEvent.extend(persisted),
-	AssistantMessageEvent.extend(persisted),
-	ToolCallEvent.extend(persisted),
-	ToolResultEvent.extend(persisted),
-	NoticeEvent.extend(persisted),
-	TurnEndEvent.extend(persisted),
-	z.discriminatedUnion("kind", [
-		PlatformCommitEvent.extend(persisted),
-		PlatformScenarioVersionEvent.extend(persisted),
-		PlatformRunEvent.extend(persisted),
-	]),
-	SessionEndedEvent.extend(persisted),
+	sessionEventSchemas.user_message,
+	sessionEventSchemas.turn_started,
+	sessionEventSchemas.assistant_message,
+	sessionEventSchemas.tool_call,
+	sessionEventSchemas.tool_result,
+	sessionEventSchemas.notice,
+	sessionEventSchemas.turn_end,
+	sessionEventSchemas.platform,
+	sessionEventSchemas.session_ended,
 ]);
 export type PersistedSessionEvent = z.infer<typeof PersistedSessionEvent>;
 
@@ -476,25 +502,21 @@ export type PersistedSessionEvent = z.infer<typeof PersistedSessionEvent>;
  * `seq` 和 `at`，不存的没有。SSE 的事件名是 `type`，持久的以 `seq` 作事件 ID。
  */
 export const SessionEvent = z.discriminatedUnion("type", [
-	UserMessageEvent.extend(persisted),
-	TurnStartedEvent.extend(persisted),
-	TurnQueuedEvent,
-	ThinkingEvent,
-	AssistantDeltaEvent,
-	AssistantMessageEvent.extend(persisted),
-	ToolCallEvent.extend(persisted),
-	ToolOutputEvent,
-	ToolResultEvent.extend(persisted),
-	SteerQueueEvent,
-	NoticeEvent.extend(persisted),
-	TurnEndEvent.extend(persisted),
-	z.discriminatedUnion("kind", [
-		PlatformCommitEvent.extend(persisted),
-		PlatformScenarioVersionEvent.extend(persisted),
-		PlatformRunEvent.extend(persisted),
-	]),
-	SessionEndedEvent.extend(persisted),
-	SnapshotEvent,
+	sessionEventSchemas.user_message,
+	sessionEventSchemas.turn_started,
+	sessionEventSchemas.turn_queued,
+	sessionEventSchemas.thinking,
+	sessionEventSchemas.assistant_delta,
+	sessionEventSchemas.assistant_message,
+	sessionEventSchemas.tool_call,
+	sessionEventSchemas.tool_output,
+	sessionEventSchemas.tool_result,
+	sessionEventSchemas.steer_queue,
+	sessionEventSchemas.notice,
+	sessionEventSchemas.turn_end,
+	sessionEventSchemas.platform,
+	sessionEventSchemas.session_ended,
+	sessionEventSchemas.snapshot,
 ]);
 export type SessionEvent = z.infer<typeof SessionEvent>;
 
@@ -529,10 +551,12 @@ export const ReadinessProblem = z.object({
 export type ReadinessProblem = z.infer<typeof ReadinessProblem>;
 
 /** 助手此刻能不能用：`ready` 为 true 时 `problems` 为空，否则列出全部原因。 */
-export const Readiness = z.object({
-	ready: z.boolean(),
-	problems: z.array(ReadinessProblem),
-});
+export const Readiness = z
+	.object({
+		ready: z.boolean(),
+		problems: z.array(ReadinessProblem),
+	})
+	.refine((r) => r.ready === (r.problems.length === 0), "ready 为 true 当且仅当没有 problems");
 export type Readiness = z.infer<typeof Readiness>;
 
 /**
@@ -566,9 +590,13 @@ export const SessionListResponse = z.object({
 });
 export type SessionListResponse = z.infer<typeof SessionListResponse>;
 
+/** 查询参数：空字符串等于没给（和 http/actions.ts、http/run-list.ts 里的同名函数一样）。 */
+const blankAsMissing = <S extends z.ZodType>(schema: S) =>
+	z.preprocess((v) => (v === "" ? undefined : v), schema.optional());
+
 /** `GET /sessions/:id` 的 query：`before` 是序号，取比它小的事件（往前翻页）。 */
 export const SessionDetailQuery = z.object({
-	before: z.coerce.number().int().min(1).optional(),
+	before: blankAsMissing(z.coerce.number().int().min(1)),
 });
 export type SessionDetailQuery = z.infer<typeof SessionDetailQuery>;
 
@@ -584,6 +612,6 @@ export type SessionDetailResponse = z.infer<typeof SessionDetailResponse>;
 
 /** `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`）。 */
 export const SessionEventsQuery = z.object({
-	after: z.coerce.number().int().min(0).optional(),
+	after: blankAsMissing(z.coerce.number().int().min(0)),
 });
 export type SessionEventsQuery = z.infer<typeof SessionEventsQuery>;
