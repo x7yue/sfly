@@ -53,6 +53,22 @@ function toEvent(row: EventRow): PersistedSessionEvent {
 	} as PersistedSessionEvent;
 }
 
+/** 同一个项目里已经有一个在做（`running`）的会话：同一时刻只跑一轮（`sessions_one_running_per_project`）。 */
+export class ProjectBusyError extends Error {
+	constructor(readonly project: string) {
+		super(`项目 ${project} 里已经有一个会话在做`);
+	}
+}
+
+/** 违反了一个唯一约束（沿着 `cause` 找：drizzle 把数据库错误包了一层）。 */
+function violates(error: unknown, constraint: string): boolean {
+	for (let e: unknown = error; e instanceof Error; e = e.cause) {
+		const fields = e as { code?: unknown; constraint?: unknown };
+		if (fields.code === "23505" && fields.constraint === constraint) return true;
+	}
+	return false;
+}
+
 /** 写事件时会话不存在。 */
 export class SessionNotFoundError extends Error {
 	constructor(readonly sessionId: string) {
@@ -112,6 +128,23 @@ export class SessionStore {
 			.limit(SESSION_LIST_LIMIT);
 		const outcomes = await this.#lastOutcomes(rows.map((row) => row.id));
 		return rows.map((row) => toListItem(row, outcomes.get(row.id) ?? null));
+	}
+
+	/** 在做（`running`）、但最近一次活动早于 `before` 的会话。 */
+	async staleRunning(before: Date): Promise<SessionRow[]> {
+		return this.deps.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.status, "running"), lt(sessions.lastActivityAt, before)));
+	}
+
+	/** 一个会话已经开始过几轮（`turn_started` 的条数）。 */
+	async turnCount(sessionId: string): Promise<number> {
+		const [row] = await this.deps.db
+			.select({ n: sql<number>`count(*)::int` })
+			.from(sessionEvents)
+			.where(and(eq(sessionEvents.sessionId, sessionId), eq(sessionEvents.type, "turn_started")));
+		return row?.n ?? 0;
 	}
 
 	/** 一个会话上一轮的结局（最近一条 `turn_end`）；没有结束过的一轮时为 null。 */
@@ -176,8 +209,8 @@ export class SessionStore {
 
 	/**
 	 * 新建一个会话（`created_by_user_id` 是发起人的用户，#494 之前的请求没有用户）。同一个项目已经有一个 `running`
-	 * 的会话时，建一个 `running` 的会拿到数据库的唯一约束错误（`sessions_one_running_per_project`），由调用方
-	 * 先查一遍、再把冲突的情况翻译成 409。
+	 * 的会话时，建一个 `running` 的会话抛 {@link ProjectBusyError}（数据库的唯一约束
+	 * `sessions_one_running_per_project`，并发的两个请求只有一个写得成）。
 	 */
 	async create(input: {
 		project: ProjectId;
@@ -187,20 +220,66 @@ export class SessionStore {
 		createdByUserId: string | null;
 	}): Promise<SessionRow> {
 		const now = this.deps.clock.now();
+		try {
+			const [row] = await this.deps.db
+				.insert(sessions)
+				.values({
+					id: randomUUID(),
+					projectId: input.project,
+					title: input.title,
+					status: input.status,
+					createdBy: input.createdBy,
+					createdByUserId: input.createdByUserId,
+					createdAt: now,
+					lastActivityAt: now,
+				})
+				.returning();
+			return row as SessionRow;
+		} catch (error) {
+			if (violates(error, "sessions_one_running_per_project")) {
+				throw new ProjectBusyError(input.project);
+			}
+			throw error;
+		}
+	}
+
+	/** 项目里在做（`running`）的会话；没有时为 undefined（至多一个）。 */
+	async running(project: ProjectId): Promise<SessionRow | undefined> {
 		const [row] = await this.deps.db
-			.insert(sessions)
-			.values({
-				id: randomUUID(),
-				projectId: input.project,
-				title: input.title,
-				status: input.status,
-				createdBy: input.createdBy,
-				createdByUserId: input.createdByUserId,
-				createdAt: now,
-				lastActivityAt: now,
-			})
-			.returning();
-		return row as SessionRow;
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.projectId, project), eq(sessions.status, "running")));
+		return row;
+	}
+
+	/**
+	 * 一个空闲的会话开始新的一轮（`idle` → `running`），返回是不是成功：已经在做（`running`）、排队（`queued`）或已结束
+	 * （`ended`）时返回当时的状态，什么也没有改。项目里已经有别的会话在做时抛 {@link ProjectBusyError}。
+	 * 两个并发的请求对同一个会话只有一个成功。
+	 */
+	async beginTurn(
+		sessionId: string,
+		project: ProjectId,
+	): Promise<{ started: true } | { started: false; status: SessionStatus }> {
+		try {
+			const [row] = await this.deps.db
+				.update(sessions)
+				.set({ status: "running", lastActivityAt: this.deps.clock.now() })
+				.where(and(eq(sessions.id, sessionId), eq(sessions.status, "idle")))
+				.returning({ id: sessions.id });
+			if (row) return { started: true };
+		} catch (error) {
+			if (violates(error, "sessions_one_running_per_project")) throw new ProjectBusyError(project);
+			throw error;
+		}
+		const current = await this.find(sessionId);
+		if (!current) throw new SessionNotFoundError(sessionId);
+		return { started: false, status: current.status };
+	}
+
+	/** 删除一个会话和它的事件（建会话时助手服务没接住第一轮：不留下会话）。 */
+	async delete(sessionId: string): Promise<void> {
+		await this.deps.db.delete(sessions).where(eq(sessions.id, sessionId));
 	}
 
 	/**
@@ -209,6 +288,8 @@ export class SessionStore {
 	 * `last_activity_at`。发布在事务提交之后：订阅的一方收到时，库里一定读得到它。
 	 * `at` 是事件**产生**的时间，不是落库的时间：助手服务产生的事件传它盖的时间（`AssistantStreamRecord.at`），
 	 * 控制面自己产生的不传，用控制面的时钟（#538 的约定）。
+	 * 一轮结束（`turn_end`）时会话回到空闲（`running` → `idle`），和这条事件在同一个事务里：页面看到一轮结束时，
+	 * 接着发的话一定能开始新的一轮。
 	 * 事件的内容要过 `@sfly/schema` 的 `SessionEventBody`；不持久的类型不能用它记（用 {@link publish}）。
 	 */
 	async append(
@@ -247,6 +328,9 @@ export class SessionStore {
 				.update(sessions)
 				.set({
 					lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${at.toISOString()}::timestamptz)`,
+					...(type === "turn_end" && {
+						status: sql`case when ${sessions.status} = 'running' then 'idle' else ${sessions.status} end`,
+					}),
 				})
 				.where(eq(sessions.id, sessionId));
 			return toEvent(row as EventRow);

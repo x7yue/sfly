@@ -265,14 +265,17 @@ describe("读：一页事件、列表、上一轮的结局", () => {
 		});
 	});
 
-	it("列表的就绪状态：助手没有配置，写明原因；没有会话时是空数组", async () => {
+	it("列表的就绪状态：助手没有配置，写明原因；工作台没有设置也列出来；没有会话时是空数组", async () => {
 		await using_project("empty-project", async (project) => {
 			const list = await json<SessionListResponse>(await api.get(`/projects/${project}/sessions`));
 			expect(list.sessions).toEqual([]);
 			expect(list.readiness).toEqual({
 				ready: false,
 				workbench: null,
-				problems: [expect.objectContaining({ kind: "assistant_not_configured" })],
+				problems: [
+					expect.objectContaining({ kind: "assistant_not_configured" }),
+					expect.objectContaining({ kind: "workbench_not_set" }),
+				],
 			});
 			expect(list.readiness.problems[0]?.message).toContain("SFLY_ASSISTANT_URL");
 		});
