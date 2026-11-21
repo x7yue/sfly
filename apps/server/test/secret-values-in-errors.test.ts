@@ -254,6 +254,65 @@ describe("触发时的报错不回显 secret 参数的值", () => {
 		expect(error.message).toContain(MASK);
 	});
 
+	/** 主链入口参数 b（secret，默认值 `value`）经异步任务节点的映射 `mapped` 传进子流程参数 who，子流程里整值引用 who 接到整数输入。 */
+	const subflowToInteger = (mapped: unknown, whoType: string, value: string = BOT) =>
+		api.orchestrationWith({
+			default_agent: "runner",
+			nodes: [
+				{
+					id: "entry",
+					kind: "entry",
+					params: [{ name: "b", type: "string", secret: true, default: value }],
+				},
+				{ id: "s", kind: "async", params: { who: mapped } },
+				{
+					id: "sub",
+					kind: "subflow_entry",
+					name: "inner",
+					params: [{ name: "who", type: whoType }],
+				},
+				node("c", "count", { n: "${{ params.who }}" }),
+			],
+			edges: [
+				{ from: "entry", to: "s", kind: "chain" },
+				{ from: "s", to: "sub", kind: "dispatch" },
+				{ from: "sub", to: "c", kind: "chain" },
+			],
+			packages: { mix: "1.0.0" },
+		});
+
+	it("类型不符：secret 值夹在文字里经参数映射传进子流程再接到整数输入，说明里的值也打码（默认值和调用方传的）", async () => {
+		const id = await subflowToInteger("x-${{ params.b }}", "string");
+		const byDefault = await rejectedText(id);
+		expect(byDefault.error.code).toBe("invalid_params");
+		expect(byDefault.text).not.toContain(BOT);
+		expect(byDefault.error.message).toContain(`实际是 "x-${MASK}"`);
+		expect(byDefault.error.message).toContain("输入 n 应为 integer");
+		const byCaller = await rejectedText(id, { b: AGENT });
+		expect(byCaller.text).not.toContain(AGENT);
+		expect(byCaller.error.message).toContain(`实际是 "x-${MASK}"`);
+	});
+
+	it("类型不符：secret 值放在映射的对象里传进子流程再接到整数输入，说明里的值也打码", async () => {
+		const id = await subflowToInteger({ k: "${{ params.b }}" }, "json");
+		const byDefault = await rejectedText(id);
+		expect(byDefault.error.message).toContain("输入 n 应为 integer");
+		expect(byDefault.text).not.toContain(BOT);
+		expect(byDefault.error.message).toContain(`{"k":"${MASK}"}`);
+		const byCaller = await rejectedText(id, { b: AGENT });
+		expect(byCaller.text).not.toContain(AGENT);
+	});
+
+	it("类型不符：secret 值里有引号、反斜杠、换行时（说明里是 JSON 转义后的写法）同样打码", async () => {
+		const tricky = 'test-"quoted"\\-line\nend';
+		const id = await subflowToInteger("x-${{ params.b }}", "string", tricky);
+		const { text, error } = await rejectedText(id);
+		expect(error.message).toContain("输入 n 应为 integer");
+		expect(text).not.toContain("quoted");
+		expect(text).not.toContain("line");
+		expect(error.message).toContain(MASK);
+	});
+
 	it("预检（GET）的问题和警告里没有 secret 默认值", async () => {
 		const id = await api.orchestrationWith(
 			scenario(

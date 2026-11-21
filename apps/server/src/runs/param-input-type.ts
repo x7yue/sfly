@@ -7,7 +7,7 @@ import {
 } from "@sfly/orchestration";
 import type { PackageMetadata } from "@sfly/schema";
 import type { ChainPlan } from "../engine/chain.js";
-import { SECRET_MASK } from "../logs/secrets.js";
+import { maskSecrets, SECRET_MASK } from "../logs/secrets.js";
 import { type KnownParams, resolved, secretTexts, textOf } from "./known-params.js";
 import type { PreflightProblem } from "./preflight.js";
 
@@ -28,6 +28,15 @@ function wholeParamReference(value: unknown): string | undefined {
 	const path = WHOLE_REFERENCE.exec(value)?.[1];
 	return path === undefined ? undefined : PARAM_PATH.exec(path)?.[1];
 }
+
+/**
+ * 说明里的「实际是 …」是值的 JSON 写法：secret 值里有引号、反斜杠、换行时写出来是转义后的样子，原文匹配不到。
+ * 在 secret 值之外再加上它们的 JSON 转义写法（去掉两头的引号），长的在前，打码时先换长的。
+ */
+const withJsonForms = (secrets: readonly string[]): string[] =>
+	[...new Set(secrets.flatMap((text) => [text, JSON.stringify(text).slice(1, -1)]))].sort(
+		(a, b) => b.length - a.length,
+	);
 
 /** 命令行触发时给这个参数的写法：整数输入写 `<整数>`，其他类型写 `<类型 类型的值>`。 */
 const commandHint = (name: string, expected: string): string =>
@@ -98,10 +107,11 @@ export function paramInputTypeProblems(
 				const found = typeProblem(io, input, actual);
 				if (found === undefined) continue;
 				const expected = describeSchema(io.properties[input] ?? {});
-				// secret 的值不出现在说明里：判断照旧，只是把「实际是 …」里的值换成掩码。
+				// secret 的值不出现在说明里：判断照旧，只是把「实际是 …」里的值换成掩码。整个值就是 secret 值时写成 ******；
+				// secret 值夹在文字里、放在对象里经参数映射传进来时，值只是一部分，按子串打码（和机器人、Agent 名称的说明一致）。
 				const problem = secrets.includes(textOf(actual))
 					? `输入 ${input} 应为 ${expected}，实际是 ${SECRET_MASK}`
-					: found;
+					: maskSecrets(found, withJsonForms(secrets));
 				const { where, next } = whereAndNext(known, main, name, expected, origins);
 				problems.push({
 					code: "param_input_type_mismatch",

@@ -365,6 +365,10 @@ describe("场景版本里 secret 参数的默认值", () => {
 			"DELETE /feishu-bots/:name": "同上",
 			"POST /feishu-bots/:name/test": "同上",
 			"POST /packages": "发布节点包，不带场景和参数",
+			// 声明为只读、方法不是 GET 的接口（READS_WITH_TRACES）：上面按 GET 遍历的测试够不着，同样要请求过或写明原因。
+			"POST /orchestrations/:id/presence":
+				"在线编辑者的心跳：名单只在内存里，响应是编辑者的昵称，不含场景文档和默认值",
+			"POST /orchestrations/:id/presence/leave": "在线编辑者离开：响应没有内容",
 		};
 		/** 一个请求（方法 + 路径）对上契约里的哪个接口（路径模板）。 */
 		const templateOf = (method: string, path: string): string | undefined => {
@@ -497,12 +501,15 @@ describe("场景版本里 secret 参数的默认值", () => {
 			// 成功、400、404、409 都出现过：测的确实是失败的响应。
 			for (const status of [200, 201, 400, 404, 409]) expect([...statuses]).toContain(status);
 
-			// 契约里声明为写的接口：要么在上面被请求过，要么登记在 NOT_EXERCISED 里写明为什么不需要。
-			const writes = httpContract.filter((def) => def.effect === "write");
+			// 契约里声明为写的接口，以及声明为只读而方法不是 GET 的接口（按 GET 遍历的测试够不着它们）：
+			// 要么在上面被请求过，要么登记在 NOT_EXERCISED 里写明为什么不需要。
+			const writes = httpContract.filter(
+				(def) => def.effect === "write" || (def.effect === "read" && def.method !== "GET"),
+			);
 			const key = (def: { method: string; path: string }) => `${def.method} ${def.path}`;
 			expect(
 				writes.map(key).filter((k) => !requested.has(k) && !(k in NOT_EXERCISED)),
-				"契约里有声明为写的接口，这个测试没有请求过它：在上面造它的成功和失败请求，或者登记到 NOT_EXERCISED 并写明为什么不需要",
+				"契约里有声明为写的接口（或声明为只读而方法不是 GET 的接口），这个测试没有请求过它：在上面造它的成功和失败请求，或者登记到 NOT_EXERCISED 并写明为什么不需要",
 			).toEqual([]);
 			expect(
 				Object.keys(NOT_EXERCISED).filter((k) => requested.has(k) || !writes.map(key).includes(k)),
