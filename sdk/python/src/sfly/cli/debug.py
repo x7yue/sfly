@@ -302,6 +302,8 @@ def _report(result: Execution) -> int:
             print(f"参数不合法：{error.message}", file=sys.stderr)
             return EXIT_INVALID
         detail = f"\n\n{error.traceback.rstrip()}" if error.traceback else ""
-        print(f"节点失败：{error.message}{detail}", file=sys.stderr)
+        # 出错位置在失败原因后面、堆栈前面：不用翻堆栈就知道改哪一行。
+        place = f"\n出错位置：{error.location}" if error.location else ""
+        print(f"节点失败：{error.message}{place}{detail}", file=sys.stderr)
         return EXIT_FAILED
     return 0

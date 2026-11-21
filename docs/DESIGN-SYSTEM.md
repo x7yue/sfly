@@ -363,7 +363,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 「打开 X」是去另一个页面（「打开运行监控」「打开失败节点」：控制台的失败行进入运行监控并选中失败节点；「在画布中打开」「打开运行记录」），「查看 X」是在当前页面里展开或切换（运行监控页横幅的「查看失败节点」，概览里「在详情里查看…」）；同一个意思不换着说。
 - 时长、数量与 Agent 状态：`ELAPSED_LABEL`（已运行）、`DURATION_LABEL`（耗时）、`moreLabel()`（「还有 N 个」：列表或线路只画出一部分时）、`AGENT_STATUS_LABEL`（在线、离线；Agent 的完整状态用 `#/agents/agent-status` 的 `agentStatusView`）、`slotUsageLabel()`、`queuedLabel()`（「2 / 8 占用」「排队 1」；`QUEUED_LABEL` 是「排队」这个词，控制台页头的计数和排队任务的一行时间说明也用它）、`RUNNING_PRIMARY_LABEL`（「执行中节点的主指标」）。
 - `DOC_PAGE`：界面里引用的开发文档页，slug → 页名（与 `docs/guide/pages.json` 的标题一致，有单测检查）；链接用 `DocPageLink`。
-- 只写一句错误的地方（运行监控的页头、「需要注意」和图表工作区的节点信息、关注项的失败原因、画布检查器、控制台「最近结束」里失败的运行）取失败原因的一行：`@sfly/schema` 的 `errorHeadline()`，之后的行是堆栈，不显示。它取错误信息里第一行有内容的文字，去掉行首的异常模块路径（`sfly_std.assert_.AssertionFailed: x` 取 `AssertionFailed: x`）；第一行以冒号结尾、下一行紧接着有内容时把下一行接上（断言失败的「1 条断言中 1 条不通过：」后面接「第 1 条：…」）。完整的错误信息原样保留，在尝试页签里显示。命令行摘要有同样规则的一份实现（`sdk/python/src/sfly/cli/error_headline.py`），两边共用用例表 `testdata/error-headline-cases.json`：改规则要同时改两份实现和这份用例表。
+- 只写一句错误的地方（运行监控的页头、「需要注意」和图表工作区的节点信息、关注项的失败原因、画布检查器、控制台「最近结束」里失败的运行）取失败原因的一行：`@sfly/schema` 的 `errorHeadline()`，之后的行是堆栈，不显示。它取错误信息里第一行有内容的文字，去掉行首的异常模块路径（`sfly_std.assert_.AssertionFailed: x` 取 `AssertionFailed: x`）；第一行以冒号结尾、下一行紧接着有内容时把下一行接上（断言失败的「1 条断言中 1 条不通过：」后面接「第 1 条：…」）。完整的错误信息原样保留，在尝试页签里显示。节点自己出错时，错误里的 `location`（节点代码里出错的那一行，「模块.函数 第 N 行」）写在失败原因下面一行，标签用 `copy.ts` 的 `ERROR_LOCATION_LABEL`（「出错位置」）：只在看一个节点的详细处写——画布检查器的错误框、运行监控图表工作区的节点摘要和尝试页签；上面那些只写一句的地方不写，没有位置时（`null`）不多出一行。命令行摘要有同样规则的一份实现（`sdk/python/src/sfly/cli/error_headline.py`），两边共用用例表 `testdata/error-headline-cases.json`：改规则要同时改两份实现和这份用例表。
 
 规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。
 

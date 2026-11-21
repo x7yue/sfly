@@ -224,7 +224,9 @@ def test_an_empty_or_non_string_name_fails_the_call_immediately(
     assert result.status == "failed"
     assert result.error is not None and result.error.type == error
     assert result.actions == []
-    assert [line.message for line in result.logs if line.source == "sdk"] == ["调用之前"]
+    # 节点自己的日志只有调用之前的那一行；执行器在失败时另写的一行出错位置（#471）不算。
+    own = [line.message for line in result.logs if line.source == "sdk"]
+    assert [m for m in own if not m.startswith("出错位置：")] == ["调用之前"]
 
 
 def test_a_parent_that_is_not_an_action_is_a_type_error() -> None:
