@@ -20,8 +20,11 @@ import {
  * 这里是静态的部分（补全、保存时的检查），控制面和画布共用；派发时的解析在 resolve.ts。
  */
 
-/** 节点类型中用到的元信息：输入 schema 生成参数表单，输出键用于补全和引用检查。 */
-export type NodeTypeIo = Pick<NodeTypeMetadata, "name" | "inputs" | "outputs" | "description">;
+/** 节点类型中用到的元信息：输入 schema 生成参数表单，输出键用于补全和引用检查，声明的超时写在检查器的执行页。 */
+export type NodeTypeIo = Pick<
+	NodeTypeMetadata,
+	"name" | "inputs" | "outputs" | "description" | "timeout"
+>;
 
 /**
  * 节点包目录：`packageKey(包名, 版本)` → 该版本的节点类型。

@@ -40,6 +40,11 @@
             "type": "string",
             "maxLength": 4000
           },
+          "timeout": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 4294967295
+          },
           "entry": {
             "type": "string",
             "pattern": "^[A-Za-z_][\\w.]*:[A-Za-z_]\\w*$"

@@ -131,6 +131,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> dict:
 
 - 输入：从函数参数的类型注解生成元信息。
 - 节点类型的说明：函数的文档字符串去掉缩进后整段写进元信息里节点类型的可选字段 `description`（最长 4000 个 Unicode 字符，超过时 `sfly build` 报错；没有文档字符串就不写）。「添加节点」菜单和节点包管理页显示第一段，检查器的「说明与指标」页显示全文；节点包列表接口里的节点摘要也带 `description`。节点类型这一层是严格对象，带说明的包发布到旧版本的控制面会被拒绝，所以要先升级控制面；Agent 把元信息当 JSON 原样转发，不受影响。
+- 节点类型的默认超时：`@node(timeout=秒)`（1 到 4294967295 之间的整数，`sfly build` 遇到别的值报错并指出是哪个节点）写进元信息里节点类型的可选字段 `timeout`；控制面派发时按「场景里这个节点写的 → 节点类型声明的 → 平台默认的 1 小时」取（`@sfly/orchestration` 的 `effectiveTimeout`，docs/SEMANTICS.md §3.3），检查器的「执行」页和 `sfly scenario show` 写出生效的值和它从哪来。节点类型这一层是严格对象，声明了超时的包发布到旧版本的控制面会被拒绝，没声明的元信息不变。
 - 输出：函数的返回值（JSON 对象，上限 1 MB）；返回值的键在装饰器或返回类型注解中声明，用于画布补全和保存时的引用检查。输出 TypedDict 字段注解里的 `Annotated[T, Doc("…")]` 写成这个输出 schema 的 `description`（规则和输入一样，最长 500 个字符），检查器「说明与指标」页的输出表、引用补全、节点包管理页和 `sfly package show` 显示它。
 - 指标与图表：`@node(metrics=[Metric("tps", unit="笔/s"), Metric("rejected", kind="counter")], charts=[Chart("TPS", type="line", metrics=["tps"])], primary_metric="tps")`。`Metric` 可以声明标签键（`Metric("conn_tps", labels=["host"])`，#78），每组标签值是一个序列。`sfly build` 校验：每个节点类型最多 50 个指标、20 张图表，指标名不重复，每个指标最多 3 个标签键（命名规则同指标名、不重复），图表引用和主指标必须是已声明的指标；主指标不能带标签键，`stat`、`bar` 图表不能引用带标签的指标（`line`、`area` 可以混用），控制面发布时用 zod 镜像做同样的交叉校验。没被任何图表引用的指标由节点包查询 API 补上默认图表（`default: true`；带标签的指标和 gauge → 折线，不带标签的 counter → 数值卡）。
 - 失败：抛出异常。

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { publishPackage } from "./support/package-archive.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -102,6 +103,7 @@ describe("sfly scenario show / push：注释框 → 控制面", () => {
 		cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ clock, version: cliVersion });
 		api = new ApiClient(cp);
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 		dir = await mkdtemp(join(tmpdir(), "sfly-annotations-"));
 	}, 120_000);
 
@@ -165,16 +167,16 @@ describe("sfly scenario show / push：注释框 → 控制面", () => {
 					"主链（入口 开始（entry））",
 					"  入口参数：无",
 					"  节点：",
-					"    节点    显示名称  节点类型                  包版本  Agent",
-					"    deploy  部署服务  stub/echo                 1.0.0   agent-b",
-					"    spawn   -         异步任务 → 子流程 report  -       -",
-					"    pause   -         stub/echo                 1.0.0   agent-a",
+					"    节点    显示名称  节点类型                  包版本  Agent    超时",
+					"    deploy  部署服务  stub/echo                 1.0.0   agent-b  3600（平台默认，秒）",
+					"    spawn   -         异步任务 → 子流程 report  -       -        -",
+					"    pause   -         stub/echo                 1.0.0   agent-a  3600（平台默认，秒）",
 					"",
 					"子流程 report（入口 sub，由 spawn 触发）",
 					"  入口参数：无",
 					"  节点：",
-					"    节点  显示名称  节点类型   包版本  Agent",
-					"    send  -         stub/echo  1.0.0   agent-a",
+					"    节点  显示名称  节点类型   包版本  Agent    超时",
+					"    send  -         stub/echo  1.0.0   agent-a  3600（平台默认，秒）",
 					"",
 					"注释框：",
 					"  发布与灰度（annotation_1）",
