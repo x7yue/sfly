@@ -31,7 +31,7 @@ import {
 	packagesApi,
 	type StoredNode,
 } from "@sfly/schema";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	type Connection,
 	type Edge,
@@ -98,7 +98,14 @@ import { hasDraft } from "#/versions/draft";
 import { versionConflictOf } from "#/versions/queries";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
-import { type AddItem, idStem, newDocNode, newSubflowNameProblem, packageGroups } from "./add-node";
+import {
+	type AddItem,
+	idStem,
+	newDocNode,
+	newSubflowNameProblem,
+	packageGroups,
+	withRunStateInputs,
+} from "./add-node";
 import { companionSubflow } from "./add-subflow";
 import {
 	applyAnnotationDrop,
@@ -108,7 +115,12 @@ import {
 	withColor,
 	withNode,
 } from "./annotations";
-import { usePackageCatalog, useRegisteredAgents, useRegisteredBots } from "./catalog";
+import {
+	publishedNodeInputs,
+	usePackageCatalog,
+	useRegisteredAgents,
+	useRegisteredBots,
+} from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
@@ -745,6 +757,30 @@ function Editor({
 	};
 	if (running && adding) setAdding(null);
 	/**
+	 * 菜单里选中一个节点。已发布版本的菜单摘要里没有输入 schema：先读版本的元信息，
+	 * 把「运行状态」类型的输入预填成 ${{ run.state }}（缓存里有时同一个微任务就好）；读不到就照常添加。
+	 * 内置节点和 dev 版本的节点（Agent 上报的元信息里已经算好）同步添加，不经过这里的等待。
+	 * 等待期间菜单关了或换了位置，就不再添加；用最新的 addNode，不让期间对画布的修改被旧的节点列表盖掉。
+	 */
+	const queryClient = useQueryClient();
+	const addingRef = useRef(adding);
+	addingRef.current = adding;
+	const addNodeRef = useRef(addNode);
+	addNodeRef.current = addNode;
+	const pickNode = (item: AddItem) => {
+		if (item.kind !== "package" || item.runStateInputs !== undefined) {
+			addNode(item);
+			return;
+		}
+		const request = adding;
+		void withRunStateInputs(item, (it) => publishedNodeInputs(queryClient, it)).then((picked) => {
+			if (addingRef.current !== request) return;
+			// 同一个菜单只添加一次（等待期间连点两下）。
+			addingRef.current = null;
+			addNodeRef.current(picked);
+		});
+	};
+	/**
 	 * 打开添加节点菜单；`after` 是来源节点，它不是链尾时新节点插在它和下一个节点之间。
 	 * 在连线上插入（连线菜单、连线中点的「＋」）时直接给出 `before`。
 	 */
@@ -1129,7 +1165,7 @@ function Editor({
 								groups={groups}
 								subflowNameProblem={(name) => newSubflowNameProblem(name, doc)}
 								onOpenChange={(open) => setAdding(open ? { kind: "free" } : null)}
-								onPick={addNode}
+								onPick={pickNode}
 							/>
 						)
 					}

@@ -64,17 +64,42 @@ const catalog: PackageCatalog = new Map([
 describe("引用补全", () => {
 	const choices = referenceChoices(doc, "ping", catalog);
 
-	it("列出本链的入口参数与前序节点的输出，带上类型与来源（敏感参数标出）", () => {
+	it("列出本链的入口参数、运行状态与前序节点的输出，带上类型与来源（敏感参数标出）", () => {
 		expect(choices.map((c) => [c.expression, c.kind, c.detail])).toEqual([
 			["params.url", "param", "string"],
 			["params.token", "param", "string · 敏感"],
+			["run.state", "run_state", "object · 这次运行"],
 			["nodes.fetch.outputs.status", "output", "integer · fetch"],
 			["nodes.fetch.outputs.body", "output", "string · fetch"],
 			["nodes.stop.outputs.status", "output", "stop"],
 		]);
 		expect(choices[0]?.text).toBe("${{ params.url }}");
-		// 链上第一个节点只能引用入口参数。
-		expect(referenceChoices(doc, "fetch", catalog).map((c) => c.kind)).toEqual(["param", "param"]);
+		// 链上第一个节点只能引用入口参数（和运行状态）。
+		expect(referenceChoices(doc, "fetch", catalog).map((c) => c.kind)).toEqual([
+			"param",
+			"param",
+			"run_state",
+		]);
+	});
+
+	it("运行状态一项写明是什么、只能整值引用；写进输入的是 ${{ run.state }}", () => {
+		const state = choices.find((c) => c.kind === "run_state");
+		expect(state?.text).toBe("${{ run.state }}");
+		expect(state?.description).toContain("这次运行此刻的状态");
+		expect(state?.description).toContain("只能整值引用");
+		// 入口参数没有说明；输出的说明来自节点包，没写就没有。
+		expect(choices.find((c) => c.kind === "param")?.description).toBeUndefined();
+	});
+
+	it("只有包节点能引用运行状态：停止子流程等内置节点的补全里没有它", () => {
+		const builtin: StoredOrchestrationDocument = {
+			...doc,
+			nodes: [...doc.nodes, { id: "later", kind: "stop_subflow", always: false }],
+			edges: [...doc.edges, { from: "ping", to: "later", kind: "chain" }],
+		} as StoredOrchestrationDocument;
+		expect(referenceChoices(builtin, "later", catalog).map((c) => c.kind)).not.toContain(
+			"run_state",
+		);
 	});
 
 	it("前序节点有显示名称时，来源写成「显示名称（节点 ID）」；引用本身仍以节点 ID 为键", () => {
@@ -87,29 +112,54 @@ describe("引用补全", () => {
 		expect(referenceChoices(named, "ping", catalog).map((c) => [c.expression, c.detail])).toEqual([
 			["params.url", "string"],
 			["params.token", "string · 敏感"],
+			["run.state", "object · 这次运行"],
 			["nodes.fetch.outputs.status", "integer · 探测站点（fetch）"],
 			["nodes.fetch.outputs.body", "string · 探测站点（fetch）"],
 			["nodes.stop.outputs.status", "探测站点（stop）"],
 		]);
-		expect(referenceChoices(named, "ping", catalog)[2]?.text).toBe(
+		expect(referenceChoices(named, "ping", catalog)[3]?.text).toBe(
 			"${{ nodes.fetch.outputs.status }}",
 		);
 	});
 
-	it("按「入口参数」「前序节点」分组，按表达式子串过滤（不区分大小写）", () => {
+	it("按「入口参数」「运行状态」「前序节点」分组，按表达式子串过滤（不区分大小写）", () => {
 		const all = completionGroups(choices, "");
 		expect(all.groups.map((g) => [g.title, g.choices.length])).toEqual([
 			["入口参数", 2],
+			["运行状态", 1],
 			["前序节点", 3],
 		]);
 		expect(all.ordered.map((c) => c.expression)[0]).toBe("params.url");
 
-		const filtered = completionGroups(choices, "STAT");
-		expect(filtered.groups.map((g) => g.choices.map((c) => c.expression))).toEqual([
-			[],
-			["nodes.fetch.outputs.status", "nodes.stop.outputs.status"],
-		]);
+		// 输入 run 能匹配到运行状态；STAT 同时匹配运行状态（run.state）和输出 status。
+		expect(
+			completionGroups(choices, "run").groups.map((g) => g.choices.map((c) => c.expression)),
+		).toEqual([[], ["run.state"], []]);
+		expect(
+			completionGroups(choices, "STAT").groups.map((g) => g.choices.map((c) => c.expression)),
+		).toEqual([[], ["run.state"], ["nodes.fetch.outputs.status", "nodes.stop.outputs.status"]]);
 		expect(completionGroups(choices, "nope").ordered).toEqual([]);
+	});
+
+	it("键盘上下选择的顺序与分组一致：入口参数、运行状态、前序节点", () => {
+		expect(completionGroups(choices, "").ordered.map((c) => c.kind)).toEqual([
+			"param",
+			"param",
+			"run_state",
+			"output",
+			"output",
+			"output",
+		]);
+		// ordered 只含有匹配的项，没有匹配项的组不占位置。
+		expect(completionGroups(choices, "stop").ordered.map((c) => c.expression)).toEqual([
+			"nodes.stop.outputs.status",
+		]);
+	});
+
+	it("每个引用补全项都落在某一组里：分组之外没有漏掉的 kind", () => {
+		const all = completionGroups(choices, "");
+		expect(all.ordered).toHaveLength(choices.length);
+		expect(new Set(all.ordered)).toEqual(new Set(choices));
 	});
 
 	it("合并后的输入框：输入 $ 就弹出补全，$、${、${{ 后面已经输入的部分是查询", () => {

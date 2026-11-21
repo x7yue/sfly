@@ -1,5 +1,8 @@
 // sfly run show --outputs / --state、run actions、run metrics，运行编号写前缀或 latest，摘要里的「失败的动作」
 // 「有异常的关注项」两段（#423）。真实的 sfly 进程对着测试控制面，运行的成功、失败、动作、指标由假 Agent 产生。
+import { cp as copy, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { RunState } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -8,7 +11,7 @@ import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-it
 import { ManualClock } from "./support/manual-clock.js";
 import { type OldControlPlane, startOldControlPlane } from "./support/old-control-plane.js";
 import { publishPackage } from "./support/package-archive.js";
-import { sfly } from "./support/sfly-cli.js";
+import { repoRoot, sfly } from "./support/sfly-cli.js";
 import { spawnSfly } from "./support/sfly-process.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -382,6 +385,44 @@ describe("sfly run show --outputs / --state、run actions、run metrics → 控�
 			const missing = await viaOld("run", "show", "00000000-0000-4000-8000-000000000000", "--json");
 			expect(missing.code).toBe(2);
 			expect(JSON.parse(missing.stderr).error.code).toBe("run_not_found");
+		});
+	});
+
+	describe("run show --state 的输出喂给本地调试", () => {
+		it("从一次真实运行取到的运行状态，原样放进 sfly debug --params @文件，汇总节点按它写出卡片", async () => {
+			const runId = await trigger(await scenario("喂调试场景", [echo("a"), echo("b")]));
+			await agent.succeed(await assign());
+			clock.advance(1_000);
+			await agent.fail(
+				await assign(),
+				"ValueError: 余额不足\n\nTraceback (most recent call last):\n  x",
+			);
+
+			const state = JSON.parse((await cli("run", "show", runId, "--state")).stdout) as unknown;
+			const dir = await mkdtemp(join(tmpdir(), "sfly-state-debug-"));
+			try {
+				// 桩节点包复制到临时目录：本地调试在项目下写运行目录，不碰仓库里的。
+				const project = join(dir, "stub");
+				await copy(join(repoRoot, "testdata/stub-package"), project, { recursive: true });
+				const file = join(dir, "state.json");
+				await writeFile(file, JSON.stringify({ bot: "ops", run: state }));
+
+				const result = await sfly([
+					"debug",
+					"run_summary",
+					"--project",
+					project,
+					"--params",
+					`@${file}`,
+				]);
+				expect(result.code, result.stderr).toBe(0);
+				// 通知的内容写在 stderr（本地调试不发送）。
+				expect(result.stderr).toContain("本地调试不发送");
+				expect(result.stderr).toContain("喂调试场景：有节点失败");
+				expect(result.stderr).toContain("- 失败：b：ValueError: 余额不足");
+			} finally {
+				await rm(dir, { recursive: true, force: true });
+			}
 		});
 	});
 
