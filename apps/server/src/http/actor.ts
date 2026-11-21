@@ -20,5 +20,13 @@ export function viaOf(request: FastifyRequest): string | null {
 /** 写操作的发起人守卫：没有昵称时已回复 400 `nickname_required`，返回 undefined，路由应直接 `return reply`。 */
 export function requireActor(request: FastifyRequest, reply: FastifyReply): Actor | undefined {
 	const nickname = requireNickname(request, reply);
-	return nickname === undefined ? undefined : { nickname, via: viaOf(request) };
+	if (nickname === undefined) return undefined;
+	// 带了凭据的请求，身份是访问检查得出的（用户 ID、令牌的名称），昵称请求头不作数。
+	const { access } = request;
+	return {
+		nickname,
+		via: viaOf(request),
+		userId: access?.userId ?? null,
+		token: access?.tokenName ?? null,
+	};
 }
