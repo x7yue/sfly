@@ -215,9 +215,10 @@ export const orchestrations = pgTable(
 	{
 		id: uuid("id").primaryKey(),
 		/**
-		 * 所属项目（ADR 0029）；名字没有唯一约束，也不加。ADR 里没有把场景搬到别的项目的流程；要有的话，一条
-		 * `update orchestrations set project_id = …` 就够：运行上冗余的项目列（`runs.project_id`）靠下面的组合外键
-		 * `ON UPDATE CASCADE` 跟着走，库里不会出现运行和它的场景不在同一个项目里。
+		 * 所属项目（ADR 0029）；名字没有唯一约束，也不加。场景不能换项目：有运行的场景改 `project_id` 会被
+		 * `runs` 上的组合外键（`runs_orchestration_project_fk`，NO ACTION）拒绝。ADR 里没有「把场景搬到别的项目」
+		 * 的功能；以后要做时另行设计（在同一个事务里显式地改场景和运行，并处理任务凭据、项目密钥这些带着自己
+		 * `project_id` 的相关行）。
 		 */
 		projectId: text("project_id")
 			.$type<ProjectId>()
@@ -412,14 +413,15 @@ export const runs = pgTable(
 		notificationNotSent: text("notification_not_sent"),
 	},
 	(t) => [
-		// 运行的项目恒等于它的场景的项目：场景的项目改了（ADR 0029 里没有这个流程，要有的话是一条 update），运行跟着改
-		// （ON UPDATE CASCADE）；场景不物理删除，所以删除不级联（NO ACTION）。同时代替了原来 `project_id` 上单独的
-		// 外键（项目存在由 `orchestrations.project_id` 的外键间接保证）。
+		// 运行的项目恒等于它的场景的项目，由这条组合外键保证；更新和删除都不级联（NO ACTION）：有运行的场景改项目
+		// 被拒绝（不让一条 update 悄悄把运行搬到别的项目），场景不物理删除。同时代替了原来 `project_id` 上单独的
+		// 外键（项目存在由 `orchestrations.project_id` 的外键间接保证）。以后要做「搬场景」时，把这条约束改成
+		// DEFERRABLE（改属性不用重扫 `runs`），在同一个事务里显式地改场景和运行。
 		foreignKey({
 			name: "runs_orchestration_project_fk",
 			columns: [t.orchestrationId, t.projectId],
 			foreignColumns: [orchestrations.id, orchestrations.projectId],
-		}).onUpdate("cascade"),
+		}),
 		// 一个场景的运行：按场景取，又按开始时间倒序（场景的运行列表、运行记录按场景筛选、每个场景最近一次运行）。
 		// 带 started_at 和 id：运行记录总带着项目条件（`runs_project_started`），规划器否则会倒着扫项目的索引、
 		// 一行行过滤场景，场景的运行少又都是最早的时候要扫过整个项目的运行（test/run-list-plan.test.ts）。

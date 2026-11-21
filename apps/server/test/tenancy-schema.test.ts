@@ -345,23 +345,45 @@ describe("运行的项目恒等于它的场景的项目", () => {
 		);
 	});
 
-	it("场景的项目改了，它的运行跟着改（ON UPDATE CASCADE），别的场景的运行不动", async () => {
+	it("有运行的场景不能改项目：一条 update 不会悄悄把运行搬到别的项目（NO ACTION），场景和运行都留在原来的项目", async () => {
 		await addProject("move-from");
 		await addProject("move-to");
-		const moved = await addScenario("move-from");
-		const stays = await addScenario("move-from");
-		const runs = [
-			await addRun(moved.scenario, moved.version, "move-from"),
-			await addRun(moved.scenario, moved.version, "move-from"),
-		];
-		const other = await addRun(stays.scenario, stays.version, "move-from");
+		const scenario = await addScenario("move-from");
+		const run = await addRun(scenario.scenario, scenario.version, "move-from");
 
-		await client.query("update orchestrations set project_id = 'move-to' where id = $1", [
-			moved.scenario,
+		await expect(
+			client.query("update orchestrations set project_id = 'move-to' where id = $1", [
+				scenario.scenario,
+			]),
+		).rejects.toThrow(/runs_orchestration_project_fk/);
+
+		expect(await projectOfRun(run)).toBe("move-from");
+		const { rows } = await client.query("select project_id from orchestrations where id = $1", [
+			scenario.scenario,
+		]);
+		expect(rows[0].project_id).toBe("move-from");
+	});
+
+	it("没有运行的场景可以改项目：约束拦的只是运行和场景不一致，不是改项目本身", async () => {
+		await addProject("free-from");
+		await addProject("free-to");
+		const scenario = await addScenario("free-from");
+
+		await client.query("update orchestrations set project_id = 'free-to' where id = $1", [
+			scenario.scenario,
 		]);
 
-		for (const run of runs) expect(await projectOfRun(run)).toBe("move-to");
-		expect(await projectOfRun(other)).toBe("move-from");
+		const { rows } = await client.query("select project_id from orchestrations where id = $1", [
+			scenario.scenario,
+		]);
+		expect(rows[0].project_id).toBe("free-to");
+		// 搬过去之后，运行只能写成新项目。
+		await expect(addRun(scenario.scenario, scenario.version, "free-from")).rejects.toThrow(
+			/runs_orchestration_project_fk/,
+		);
+		await expect(addRun(scenario.scenario, scenario.version, "free-to")).resolves.toBeTypeOf(
+			"string",
+		);
 	});
 
 	it("不再有只管场景或只管项目的单独外键（项目存在由场景的外键间接保证）", async () => {
