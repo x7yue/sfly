@@ -1,6 +1,6 @@
 import type { RunRow, Step } from "../engine/step.js";
 import type { FeishuDelivery } from "./feishu-delivery.js";
-import { enqueueRunNotification, type FocusAtRunEndDeps } from "./run-notification.js";
+import { enqueueRunNotification } from "./run-notification.js";
 
 /** 一个 step 在事务里留下的、要等提交之后才能做的飞书通知收尾。 */
 export interface PendingNotifications {
@@ -10,14 +10,14 @@ export interface PendingNotifications {
 
 export const noPendingNotifications = (): PendingNotifications => ({ queued: false });
 
-/** 运行结束了：运行和它的最终状态（「查看运行」链接、失败的节点、关注项都按这个运行读）。 */
+/** 运行结束了：运行和它的最终状态（「查看运行」链接、第一个失败的节点和失败原因都按这个运行读）。 */
 export interface FinishedRun {
 	run: RunRow;
 	status: "success" | "failed" | "cancelled";
 }
 
 /**
- * 引擎推进时的飞书通知副作用（ADR 0020）：运行结束时在 step 的事务里把运行通知写进发送队列；
+ * 引擎推进时的飞书通知副作用（ADR 0020）：运行失败或被取消时在 step 的事务里把运行通知写进发送队列（成功的运行不发）；
  * 事务提交之后唤醒投递。引擎只通过这里和飞书发送队列、投递打交道，调度的核心不跟着通知的规则一起变。
  * 通知从不改变节点、任务、链和运行的状态，也不让它们失败。
  */
@@ -28,8 +28,6 @@ export class EngineNotifications {
 			delivery: Pick<FeishuDelivery, "wake">;
 			/** 运行通知卡片里「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时返回 undefined（卡片没有按钮）。 */
 			runUrl: (runId: string) => string | undefined;
-			/** 运行通知卡片里「关注项」一段的值：和 `GET /runs/:id/focus` 同一份解析，读不出来时只报告。 */
-			focusDeps: FocusAtRunEndDeps;
 		},
 	) {}
 
@@ -41,7 +39,6 @@ export class EngineNotifications {
 		await enqueueRunNotification(step, {
 			...finished,
 			runUrl: this.deps.runUrl(finished.run.id),
-			focusDeps: this.deps.focusDeps,
 		});
 	}
 

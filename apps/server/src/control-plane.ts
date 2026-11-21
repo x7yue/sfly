@@ -249,13 +249,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		notifications: new EngineNotifications({
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
-			focusDeps: {
-				clock,
-				queries: metricQueries,
-				onError: (error) => {
-					if (logger) console.error("run notification: reading focus items failed:", error);
-				},
-			},
 		}),
 		leaseMs: options.leaseMs,
 		agentEnvironment: createAgentEnvironment({

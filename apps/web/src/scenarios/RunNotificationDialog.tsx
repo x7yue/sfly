@@ -10,6 +10,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { DocPageLink } from "#/components/doc-page-link";
 import { notify } from "#/components/feedback/notify";
 import { FeishuBotSelect } from "#/editor/inspector/FeishuBotSelect";
 import { apiQuery, callApi } from "#/lib/api";
@@ -34,14 +35,14 @@ import { useInvalidateScenarios } from "./dialogs";
 const TRIGGERS: ReadonlyArray<{ value: RunNotificationTrigger; label: string }> = [
 	{ value: "failed", label: "仅失败" },
 	{ value: "failed_or_cancelled", label: "失败和取消" },
-	{ value: "always", label: "总是（成功、失败、取消都发）" },
 ];
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * 运行通知：场景运行结束时，由控制面往选中的飞书机器人发一张卡片。这些设置和名称、说明一样不属于场景版本，
- * 修改后立即生效、不产生新版本。机器人为空即关闭；选中的机器人已被删除时给出提示，运行不受影响。
+ * 运行通知是兜底：场景运行失败（或取消）时，由控制面往选中的飞书机器人发一张卡片，成功的运行不发；
+ * 日常的结果由场景里的节点用 `ctx.notify` 发。这些设置和名称、说明一样不属于场景版本，修改后立即生效、不产生新版本。
+ * 机器人为空即关闭；选中的机器人已被删除时给出提示，运行不受影响。
  */
 export function RunNotificationDialog({
 	scenario,
@@ -95,8 +96,8 @@ export function RunNotificationDialog({
 					<DialogHeader>
 						<DialogTitle>{TERM.runNotification}</DialogTitle>
 						<DialogDescription>
-							运行结束时往选中的{TERM.feishuBot}
-							发一张卡片，不用在链上加节点。这些设置不属于场景版本，
+							运行失败（或取消）时往选中的{TERM.feishuBot}
+							发一张卡片，写明第一个失败的节点和原因，不用在链上加节点。这些设置不属于场景版本，
 							修改后不会生成新版本，立即生效；复制场景时一并复制。
 						</DialogDescription>
 					</DialogHeader>
@@ -117,7 +118,7 @@ export function RunNotificationDialog({
 						{missing && (
 							<p role="alert" className="m-0 text-xs text-danger-fg">
 								{TERM.feishuBot}「{settings.bot}
-								」已被删除，运行结束时不会发送通知，运行抽屉里记为「未发送」。
+								」已被删除，满足触发条件的运行不会发送通知，运行抽屉里记为「未发送」。
 								可以换一个机器人，或者到
 								<Link to="/feishu-bots" className="underline underline-offset-2">
 									{PAGE.feishuBots}
@@ -125,7 +126,18 @@ export function RunNotificationDialog({
 								重新登记同名的机器人。
 							</p>
 						)}
-						<FormField label="触发条件">
+						<FormField
+							label="触发条件"
+							help={
+								<>
+									运行通知是兜底，只在失败（或失败和取消）时发，成功的运行不发运行通知；一条都不想发，就把
+									{TERM.feishuBot}
+									设成「（不发送运行通知）」。日常的结果由场景里的节点用{" "}
+									<code className="font-mono">ctx.notify</code> 发，见
+									<DocPageLink page="feishu-notify" />。
+								</>
+							}
+						>
 							{(control) => (
 								<NativeSelect
 									{...control}
