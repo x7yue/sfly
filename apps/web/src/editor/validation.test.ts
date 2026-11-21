@@ -20,7 +20,6 @@ const base: StoredOrchestrationDocument = {
 	edges: [{ from: "entry", to: "stop", kind: "chain" }],
 	packages: {},
 	annotations: [],
-	sticky_notes: [],
 };
 
 describe("保存前的字段校验", () => {

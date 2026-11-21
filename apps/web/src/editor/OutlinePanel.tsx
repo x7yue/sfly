@@ -1,6 +1,6 @@
 import { type Annotation, annotationColor } from "@sfly/schema";
 import { cn } from "cn";
-import { ChevronRightIcon, NotepadTextIcon, PanelLeftCloseIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, PanelLeftCloseIcon, SearchIcon } from "lucide-react";
 import { useState } from "react";
 import { idParts, KIND_META } from "#/components/canvas/node-display";
 import { MESSAGE, TERM } from "#/lib/copy";
@@ -25,17 +25,15 @@ export function OutlinePanel({
 	selected,
 	onLocateNode,
 	onLocateAnnotation,
-	onLocateSticky,
 	onCollapse,
 }: {
 	outline: CanvasOutline;
 	query: string;
 	onQuery(query: string): void;
-	/** 选中的节点、注释框和便签（高亮对应的行）。 */
-	selected: { nodes: readonly string[]; annotation: string | null; sticky: string | null };
+	/** 选中的节点和注释框（高亮对应的行）。 */
+	selected: { nodes: readonly string[]; annotation: string | null };
 	onLocateNode(id: string): void;
 	onLocateAnnotation(id: string): void;
-	onLocateSticky(id: string): void;
 	onCollapse(): void;
 }) {
 	const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -45,8 +43,7 @@ export function OutlinePanel({
 			if (!next.delete(id)) next.add(id);
 			return next;
 		});
-	const empty =
-		outline.loose.length === 0 && outline.groups.length === 0 && outline.stickies.length === 0;
+	const empty = outline.loose.length === 0 && outline.groups.length === 0;
 	return (
 		<aside
 			aria-label="大纲"
@@ -103,32 +100,6 @@ export function OutlinePanel({
 								<NodeList nodes={nodes} selected={selected.nodes} onLocate={onLocateNode} />
 							</Group>
 						))}
-						{outline.stickies.length > 0 && (
-							<section aria-label="便签" className="mt-1">
-								<h3 className="m-0 px-2 pt-2 pb-1 text-xs font-normal text-fg-3">便签</h3>
-								<ul className="m-0 list-none p-0">
-									{outline.stickies.map((s) => {
-										const isSelected = selected.sticky === s.id;
-										return (
-											<li key={s.id}>
-												<button
-													type="button"
-													onClick={() => onLocateSticky(s.id)}
-													aria-current={isSelected || undefined}
-													className={cn(
-														"flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm text-fg-2 hover:bg-raised hover:text-fg-1",
-														isSelected && "selected-row text-fg-1 hover:bg-selected-bg",
-													)}
-												>
-													<NotepadTextIcon aria-hidden className="size-3.5 flex-none text-fg-3" />
-													<Truncate className="flex-1">{s.label}</Truncate>
-												</button>
-											</li>
-										);
-									})}
-								</ul>
-							</section>
-						)}
 					</>
 				)}
 			</div>

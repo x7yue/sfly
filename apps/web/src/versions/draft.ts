@@ -3,6 +3,7 @@ import {
 	removedNodesIn,
 	removedNodesMessage,
 	type StoredOrchestrationDocument,
+	withoutRemovedFields,
 } from "@sfly/schema";
 
 /**
@@ -47,7 +48,13 @@ export function loadDraft(orchestrationId: string): Draft | null {
 		) {
 			return null;
 		}
-		return draft;
+		// 升级前存下的草稿还带着已移除的顶层字段（便签 `sticky_notes`，ADR 0028）：恢复时先丢掉，
+		// 之后画布、对比、保存都只会看到现在支持的字段。
+		return {
+			...draft,
+			document: withoutRemovedFields(draft.document),
+			base_document: withoutRemovedFields(draft.base_document),
+		};
 	} catch {
 		return null;
 	}

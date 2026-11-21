@@ -1,7 +1,7 @@
 import { cn } from "cn";
 import { StickyNoteIcon } from "lucide-react";
 
-/** 备注的图标：节点卡片和页面上的备注图标、注释框的备注卡片共用（便签是另一个图标，ADR 0026）。 */
+/** 备注的图标：节点卡片和页面上的备注图标、注释框的备注卡片共用（lucide 里这个图标叫 StickyNote）。 */
 export const NoteGlyph = StickyNoteIcon;
 
 import { useEffect, useId, useRef, useState } from "react";

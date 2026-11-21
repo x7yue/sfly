@@ -490,7 +490,7 @@ const documentFor = () => ({
 });
 
 /**
- * 有子流程（入口声明了参数、异步任务节点没传而子流程里用到了它：预检警告）、注释框、便签、飞书通知节点的场景。
+ * 有子流程（入口声明了参数、异步任务节点没传而子流程里用到了它：预检警告）、注释框、飞书通知节点的场景。
  * 入口参数用 `param` 命名：第二个版本改掉它，让第一个版本上建的运行预设失效。
  */
 const richDocument = (param: string) => ({
@@ -542,9 +542,6 @@ const richDocument = (param: string) => ({
 			nodes: ["notify"],
 			subflows: ["report"],
 		},
-	],
-	sticky_notes: [
-		{ id: "sticky_1", title: "跑之前确认", text: "Agent 都在线", position: { x: 0, y: -300 } },
 	],
 });
 
