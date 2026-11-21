@@ -12,6 +12,7 @@ import { entryParams } from "../presets/preset-validity.js";
 import { type Preflight, preflightWarnings } from "../runs/preflight.js";
 import { listRuns } from "../runs/run-list.js";
 import { getRunView } from "../runs/run-read.js";
+import { secretLeafWarnings } from "../runs/secret-leaf-warnings.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
@@ -74,7 +75,10 @@ export function registerRunRoutes(
 			version: head.number,
 			params: declarations,
 			problems: await deps.preflight(deps.db, head.document),
-			warnings: preflightWarnings(head.document),
+			warnings: [
+				...preflightWarnings(head.document),
+				...(await secretLeafWarnings(deps.db, params.id)),
+			],
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, head.document)).map((agent) => ({
 				...agent,

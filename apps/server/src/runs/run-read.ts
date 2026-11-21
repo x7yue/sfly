@@ -29,7 +29,14 @@ import {
 	tasks,
 } from "../db/schema.js";
 import { agentFor, chainsForReading } from "../engine/chain.js";
-import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
+import {
+	maskParams,
+	maskRecord,
+	NO_SECRETS,
+	type SecretSet,
+	secretParamNames,
+	secretValues,
+} from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
 import type { ProjectId } from "../projects/project-id.js";
@@ -47,8 +54,12 @@ import { isUuid } from "../util/uuid.js";
  *   打码（src/logs/secrets.ts），读取方拿不到原文。ID、状态、时间等字段原样返回。
  */
 
-/** `board` 只读状态和时间（运行列表、控制台、运行通知）；`full` 还读输入、输出、错误信息和运行通知的状态（运行视图、关注项读数）。 */
-export type RunReadDetail = "board" | "full";
+/**
+ * `board` 只读状态和时间（运行列表、控制台、运行通知）；`state` 在它之上多读每次尝试的错误，不读输入和输出
+ * （运行状态 `RunState` 的投影：派发时节点输入里的 `run.state`、`GET /runs/:id/state` 一类只要状态和失败原因的读取）；
+ * `full` 还读输入、输出、错误信息和运行通知的状态（运行视图、关注项读数、运行摘要）。
+ */
+export type RunReadDetail = "board" | "state" | "full";
 
 /** 节点的一次尝试（一个任务，不是占位）。 */
 export interface RunAttempt {
@@ -64,12 +75,16 @@ export interface RunAttempt {
 	progress: TaskProgress | null;
 }
 
-/** `full` 读出的一次尝试：多了输入、输出、错误信息和日志里的 WARN / ERROR 等。 */
-export interface RunAttemptDetail extends RunAttempt {
-	inputs: Record<string, unknown> | null;
-	outputs: Record<string, unknown> | null;
+/** `state` 读出的一次尝试：多了错误。 */
+export interface RunAttemptState extends RunAttempt {
 	/** 错误（错误类型和打码后的错误信息），同运行视图里尝试的 `error`；没有错误类型时为 null。 */
 	error: AttemptView["error"];
+}
+
+/** `full` 读出的一次尝试：多了输入、输出、错误信息和日志里的 WARN / ERROR 等。 */
+export interface RunAttemptDetail extends RunAttemptState {
+	inputs: Record<string, unknown> | null;
+	outputs: Record<string, unknown> | null;
 	/** 打码后的错误信息（关注项按它判断失败和重试的原因）。 */
 	errorMessage: string | null;
 	logIssues: TaskLogIssues | null;
@@ -157,13 +172,18 @@ export async function readRuns(
 export async function readRuns(
 	db: Db | Tx,
 	runIds: readonly string[],
+	detail: "state",
+): Promise<Map<string, RunRead<RunAttemptState>>>;
+export async function readRuns(
+	db: Db | Tx,
+	runIds: readonly string[],
 	detail: "full",
 ): Promise<Map<string, RunReadFull>>;
 export async function readRuns(
 	db: Db | Tx,
 	runIds: readonly string[],
 	detail: RunReadDetail = "board",
-): Promise<Map<string, RunRead | RunReadFull>> {
+): Promise<Map<string, RunRead | RunRead<RunAttemptState> | RunReadFull>> {
 	const asked = runIds.filter(isUuid);
 	// 数据库里的 UUID 是小写：按小写读，再按传入的写法作键，调用方用原来的 ID 就取得到。
 	const reads = await readByIds(db, [...new Set(asked.map((id) => id.toLowerCase()))], detail);
@@ -180,7 +200,7 @@ async function readByIds(
 	db: Db | Tx,
 	ids: readonly string[],
 	detail: RunReadDetail,
-): Promise<Map<string, RunRead | RunReadFull>> {
+): Promise<Map<string, RunRead | RunRead<RunAttemptState> | RunReadFull>> {
 	if (ids.length === 0) return new Map();
 	const rows = await db
 		.select({
@@ -204,25 +224,39 @@ async function readByIds(
 		.where(inArray(chainInstances.runId, found))
 		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt), asc(chainInstances.id));
 
-	if (detail === "board") {
+	if (detail === "board" || detail === "state") {
+		const board = {
+			id: tasks.id,
+			runId: tasks.runId,
+			chainInstanceId: tasks.chainInstanceId,
+			nodeId: tasks.nodeId,
+			attempt: tasks.attempt,
+			agentName: tasks.agentName,
+			status: tasks.status,
+			queuedAt: tasks.queuedAt,
+			startedAt: tasks.startedAt,
+			endedAt: tasks.endedAt,
+			progress: tasks.progress,
+		};
+		if (detail === "board") {
+			const taskRows = await db
+				.select(board)
+				.from(tasks)
+				.where(inArray(tasks.runId, found))
+				.orderBy(asc(tasks.attempt));
+			return assemble(rows, chains, taskRows, attemptOf, (read) => read);
+		}
 		const taskRows = await db
 			.select({
-				id: tasks.id,
-				runId: tasks.runId,
-				chainInstanceId: tasks.chainInstanceId,
-				nodeId: tasks.nodeId,
-				attempt: tasks.attempt,
-				agentName: tasks.agentName,
-				status: tasks.status,
-				queuedAt: tasks.queuedAt,
-				startedAt: tasks.startedAt,
-				endedAt: tasks.endedAt,
-				progress: tasks.progress,
+				...board,
+				errorKind: tasks.errorKind,
+				errorMessage: tasks.errorMessage,
+				errorLocation: tasks.errorLocation,
 			})
 			.from(tasks)
 			.where(inArray(tasks.runId, found))
 			.orderBy(asc(tasks.attempt));
-		return assemble(rows, chains, taskRows, attemptOf, (read) => read);
+		return assemble(rows, chains, taskRows, attemptStateOf, (read) => read);
 	}
 
 	const taskRows = (
@@ -317,19 +351,31 @@ type BoardTaskRow = TaskRowBase & {
 	endedAt: Date | null;
 	progress: TaskProgress | null;
 };
+type StateTaskRow = BoardTaskRow &
+	Pick<typeof tasks.$inferSelect, "errorKind" | "errorMessage" | "errorLocation">;
 type FullTaskRow = typeof tasks.$inferSelect & { currentAction: CurrentAction | null };
 
-/** 打码：只打用户内容。 */
+/**
+ * 打码：只打用户内容。`record` 打码一个「名字到值」的映射（参数、输入、输出）：映射本身不会被换成掩码，
+ * 哪怕它整个等于某个 secret 对象，契约要求这几处是映射（`maskRecord`）。
+ */
 interface Masker {
 	text(value: string): string;
-	deep<T>(value: T): T;
-	secrets: readonly string[];
+	record<T extends Record<string, unknown> | null | undefined>(value: T): T;
+	/** 一个链实例（起点节点 ID）的参数：声明为 secret 的参数整个读成掩码，其余按 `record` 处理。 */
+	params(chainId: string, value: Record<string, unknown>): Record<string, unknown>;
+	secrets: SecretSet;
 }
 
-function masker(secrets: readonly string[]): Masker {
+/** 主链入口节点的 ID：运行的参数就是它的参数。 */
+const entryIdOf = (document: StoredOrchestrationDocument): string =>
+	document.nodes.find((n) => n.kind === "entry")?.id ?? "";
+
+function masker(document: StoredOrchestrationDocument, secrets: SecretSet): Masker {
 	return {
-		text: (value) => maskSecrets(value, secrets),
-		deep: (value) => maskDeep(value, secrets),
+		text: (value) => secrets.mask(value),
+		record: (value) => maskRecord(value, secrets),
+		params: (chainId, value) => maskParams(value, secretParamNames(document, chainId), secrets),
 		secrets,
 	};
 }
@@ -347,11 +393,9 @@ function attemptOf(row: BoardTaskRow, mask: Masker): RunAttempt {
 	};
 }
 
-function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
+function attemptStateOf(row: StateTaskRow, mask: Masker): RunAttemptState {
 	return {
 		...attemptOf(row, mask),
-		inputs: mask.deep(row.inputs),
-		outputs: mask.deep(row.outputs),
 		error: row.errorKind
 			? {
 					kind: row.errorKind,
@@ -359,6 +403,14 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 					location: row.errorLocation === null ? null : mask.text(row.errorLocation),
 				}
 			: null,
+	};
+}
+
+function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
+	return {
+		...attemptStateOf(row, mask),
+		inputs: mask.record(row.inputs),
+		outputs: mask.record(row.outputs),
 		errorMessage: row.errorMessage === null ? null : mask.text(row.errorMessage),
 		logIssues: row.logIssues,
 		startClockOffset: clockOffsetView(row.startClockOffsetMs, row.startClockOffsetMeasuredAt),
@@ -393,7 +445,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 	for (const { run, version, scenario } of rows) {
 		const { document } = version;
 		const runChains = chainsOf.get(run.id) ?? [];
-		const mask = masker(secretValues(document, runChains));
+		const mask = masker(document, secretValues(document, runChains));
 		const nodesOf = planOf(version);
 		const chains = runChains.map(
 			(chain): RunChain<A> => ({
@@ -404,7 +456,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				async_node_id: chain.asyncNodeId,
 				depth: chain.depth,
 				status: chain.status,
-				params: mask.deep(chain.params),
+				params: mask.params(chain.chainId, chain.params),
 				startedAt: chain.startedAt,
 				endedAt: chain.endedAt,
 				nodes: nodesOf(chain.chainId).map((node) => {
@@ -430,7 +482,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 		reads.set(
 			run.id,
 			finish({
-				run: { ...run, params: mask.deep(run.params) },
+				run: { ...run, params: mask.params(entryIdOf(document), run.params) },
 				version,
 				scenario,
 				maskText: mask.text,
@@ -595,7 +647,7 @@ function attemptView(a: RunAttemptDetail, waits: ReadonlyMap<string, AgentWait>)
 		start_clock_offset: a.startClockOffset,
 		end_clock_offset: a.endClockOffset,
 		// 进度消息在读取时已打码。
-		progress: a.progress ? taskProgressView(a.progress, []) : null,
+		progress: a.progress ? taskProgressView(a.progress, NO_SECRETS) : null,
 		current_action: a.currentAction,
 		queue_wait: wait ? { ...wait, expires_at: iso(a.queueExpiresAt) } : null,
 	};

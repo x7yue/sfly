@@ -1,4 +1,11 @@
-import { type StructureDocument, subflowName } from "@sfly/orchestration";
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
+import {
+	type NodeTypeIo,
+	RUN_STATE_REFERENCE,
+	runStateInputs,
+	type StructureDocument,
+	subflowName,
+} from "@sfly/orchestration";
 import type { AgentView, PackageSummary } from "@sfly/schema";
 import type { DocNode } from "#/components/canvas/flow";
 import { latestVersion } from "#/lib/package-versions";
@@ -19,6 +26,12 @@ export type AddItem =
 			title: string;
 			/** 节点类型的说明（完整的）；菜单里显示第一段。 */
 			description?: string;
+			/**
+			 * 节点类型里「运行状态」类型（`RunState`、`RunState | None`）的输入名：新节点把它们预填成
+			 * `${{ run.state }}`（ADR 0031）。dev 版本由 Agent 上报的元信息算好；已发布版本的菜单摘要里没有输入 schema，
+			 * 选中时由 `withRunStateInputs` 补上。没有算过时不带这一项（和 `[]` 一样不预填）。
+			 */
+			runStateInputs?: string[];
 	  };
 
 export type BuiltinKind = Exclude<AddItem["kind"], "package">;
@@ -74,6 +87,31 @@ export function recentItems(
 	});
 }
 
+/** 输入 schema 里「运行状态」类型的输入名；Agent 上报的元信息不可信，schema 格式不对时按没有处理。 */
+const runStateInputsOf = (inputs: NodeTypeIo["inputs"]): string[] =>
+	typeof inputs.properties === "object" && inputs.properties !== null ? runStateInputs(inputs) : [];
+
+/** dev 版本的节点类型（Agent 上报的元信息）：菜单项用的名称、说明，以及「运行状态」类型的输入。 */
+const devItems = (agents: AgentView[], name: string) =>
+	(devNodes(agents, name) ?? []).map((n) => ({
+		...n,
+		runStateInputs: runStateInputsOf(n.inputs),
+	}));
+
+/** 读已发布版本里一个节点类型的输入 schema；版本或节点不存在时是 undefined。 */
+export type NodeInputsLoader = (item: PackageItem) => Promise<NodeTypeIo["inputs"] | undefined>;
+
+/**
+ * 补上包节点的 `runStateInputs`：已发布版本的菜单摘要（`PackageSummary`）里只有节点的名称和说明，没有输入 schema，
+ * 选中节点时才去读版本的元信息（`load`）。已经知道的（dev 版本）和内置节点原样返回；读不到、读取失败时也原样返回，
+ * 节点照常添加，只是不预填（缺的输入由静态检查警告）。
+ */
+export async function withRunStateInputs(item: AddItem, load: NodeInputsLoader): Promise<AddItem> {
+	if (item.kind !== "package" || item.runStateInputs !== undefined) return item;
+	const inputs = await load(item).catch(() => undefined);
+	return inputs ? { ...item, runStateInputs: runStateInputsOf(inputs) } : item;
+}
+
 /**
  * 可以添加的包节点：已锁定的包用锁定的版本（dev 用 Agent 上报的元信息），其他包用最新版本（按版本号）；
  * 另外列出只有 dev 版本（从未发布、某个 Agent 以开发模式加载）的包。本场景已锁定的包排在前面，其余保持原顺序。
@@ -87,7 +125,7 @@ export function packageGroups(
 	const group = (
 		name: string,
 		version: string,
-		nodes: { name: string; title?: string; description?: string }[],
+		nodes: { name: string; title?: string; description?: string; runStateInputs?: string[] }[],
 	) => {
 		if (nodes.length === 0) return;
 		groups.push({
@@ -100,6 +138,7 @@ export function packageGroups(
 				node: n.name,
 				title: n.title ?? n.name,
 				...(n.description !== undefined && { description: n.description }),
+				...(n.runStateInputs !== undefined && { runStateInputs: n.runStateInputs }),
 			})),
 		});
 	};
@@ -107,7 +146,7 @@ export function packageGroups(
 	for (const pkg of packages ?? []) {
 		published.add(pkg.name);
 		const version = locked[pkg.name] ?? latestVersion(packages, pkg.name);
-		if (version === "dev") group(pkg.name, "dev", devNodes(agents, pkg.name) ?? []);
+		if (version === "dev") group(pkg.name, "dev", devItems(agents, pkg.name));
 		else {
 			const found = pkg.versions.find((v) => v.version === version);
 			if (found) group(pkg.name, found.version, found.nodes);
@@ -115,7 +154,7 @@ export function packageGroups(
 	}
 	const devOnly = new Set(agents.flatMap((a) => a.dev_packages?.map((d) => d.name) ?? []));
 	for (const name of [...devOnly].filter((n) => !published.has(n)).sort()) {
-		group(name, "dev", devNodes(agents, name) ?? []);
+		group(name, "dev", devItems(agents, name));
 	}
 	const isLocked = (g: PackageGroup) => Object.hasOwn(locked, g.name);
 	return groups.sort((a, b) => Number(isLocked(b)) - Number(isLocked(a)));
@@ -149,7 +188,10 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 				package: item.package,
 				node: item.node,
 				always: false,
-				inputs: {},
+				// 「运行状态」类型的输入必须接 ${{ run.state }}（它只有这一种合法的值），新节点直接填好。
+				inputs: Object.fromEntries(
+					(item.runStateInputs ?? []).map((input) => [input, RUN_STATE_REFERENCE]),
+				),
 			};
 		case "async":
 			return { id, kind: "async", params: {} };
