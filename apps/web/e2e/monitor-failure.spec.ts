@@ -5,16 +5,17 @@ import {
 	FAILED_NAME,
 	FAILED_NODE,
 	FAILURE_HEADLINE,
+	FAILURE_LOCATION,
 	FAILURE_MESSAGE,
 	failedRun,
 	LONG_FAILURE_MESSAGE,
 	openFailedOverview,
 	PRESET_NAME,
 } from "./monitor-failure-scenario";
-import { openMonitor, runningScenario } from "./monitor-scenario";
+import { metricPackage, openMonitor, runningScenario } from "./monitor-scenario";
 import { viewTab } from "./overview-support";
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
-import { triggerRun } from "./support";
+import { createScenario, publishPackage, triggerRun } from "./support";
 
 // 失败的运行（#458）：概览首屏的失败区域、链路卡片、顶栏和时间线名称列在两个视口下都完整可读。
 // 文字有没有被截断读元素的实际宽度（`scrollWidth` 和 `clientWidth`），不比屏幕像素。
@@ -177,6 +178,92 @@ for (const viewport of VIEWPORTS) {
 			expect(sizes.colored).toEqual(["failure-area"]);
 		});
 
+		test("失败原因下面一行写出错位置，没有位置时不多出一行", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const { runId } = await failedRun(controlPlane, connectAgent, clock);
+			await openFailedOverview(page, clock, runId);
+			const failure = area(page);
+			const location = failure.getByTestId("failure-location");
+			await expect(location).toHaveText(`出错位置：${FAILURE_LOCATION}`);
+			// 在失败原因的下面、按钮的上面；完整显示，不截断。
+			const [reason, where, buttons] = await Promise.all([
+				failure.getByTestId("failure-reason").boundingBox(),
+				location.boundingBox(),
+				failure.getByRole("button", { name: `在详情里查看 ${NODE_LABEL} 的尝试` }).boundingBox(),
+			]);
+			expect(where?.y ?? 0).toBeGreaterThanOrEqual((reason?.y ?? 0) + (reason?.height ?? 0));
+			expect(where?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(buttons?.y ?? 0);
+			expect(await nothingClipped(failure)).toBe(0);
+		});
+
+		test("没有出错位置（error.location 为空）：失败区域里没有这一行", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+				cleanupDone: true,
+				location: "",
+			});
+			await openFailedOverview(page, clock, runId);
+			await expect(area(page)).toBeVisible();
+			await expect(area(page).getByTestId("failure-location")).toHaveCount(0);
+			await expect(area(page)).not.toContainText("出错位置");
+		});
+
+		test("同一屏上同一件事只说一次：概览有失败区域时顶栏不写失败摘要；详情里有横幅时也不写，收起横幅后才写", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const { runId } = await failedRun(controlPlane, connectAgent, clock);
+			await openFailedOverview(page, clock, runId);
+			await expect(area(page)).toBeVisible();
+			await expect(header(page).getByTestId("run-failure")).toHaveCount(0);
+
+			await viewTab(page, "详情").click();
+			const banner = page.getByRole("region", { name: "运行失败" });
+			await expect(banner).toBeVisible();
+			await expect(header(page).getByTestId("run-failure")).toHaveCount(0);
+			await banner.getByRole("button", { name: "收起" }).click();
+			await expect(header(page).getByTestId("run-failure")).toBeVisible();
+		});
+
+		test("概览的主指标一栏：运行已经结束时不画写着「没有执行中的节点」的空框；顶栏的「数据更新于」只在运行还在进行时写", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const { runId } = await failedRun(controlPlane, connectAgent, clock);
+			await openFailedOverview(page, clock, runId);
+			await expect(header(page).getByTestId("run-status")).toHaveText("失败");
+			await expect(header(page).getByTestId("focus-freshness")).toHaveCount(0);
+			await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
+			// 标题行和「设置关注项」还在，下面没有框。
+			const focus = page.getByRole("region", { name: "执行中节点的主指标" });
+			await expect(focus.getByRole("link", { name: "设置关注项" })).toBeVisible();
+			expect((await focus.boundingBox())?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(40);
+		});
+
+		test("运行还在进行：顶栏写「数据更新于」", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const { runId } = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: false });
+			await openFailedOverview(page, clock, runId);
+			await expect(header(page).getByTestId("run-status")).toHaveText("运行中");
+			await expect(header(page).getByTestId("focus-freshness")).toBeVisible();
+		});
+
 		test("失败原因特别长（几千字的单行）：最多显示 4 行，不把链路挤出首屏，展开全文看得到全部", async ({
 			page,
 			controlPlane,
@@ -214,14 +301,17 @@ for (const viewport of VIEWPORTS) {
 			expect(chainBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(viewport.height - 120);
 
 			// 展开全文：被收起的部分看得到，原文一个字不少；再点一次收回去。
-			const toggle = failure.getByRole("button", { name: "展开全文" });
+			const toggle = failure.getByRole("button", { name: /^(展开|收起)全文$/ });
+			await expect(toggle).toHaveText("展开全文");
 			await expect(toggle).toHaveAttribute("aria-expanded", "false");
 			await toggle.click();
+			await expect(toggle).toHaveText("收起全文");
 			await expect(toggle).toHaveAttribute("aria-expanded", "true");
 			const full = failure.getByTestId("failure-full");
 			await expect(full).toBeVisible();
 			expect(await full.evaluate((el) => el.textContent)).toBe(LONG_FAILURE_MESSAGE);
 			await toggle.click();
+			await expect(toggle).toHaveText("展开全文");
 			await expect(failure.getByTestId("failure-full")).toHaveCount(0);
 		});
 
@@ -236,15 +326,19 @@ for (const viewport of VIEWPORTS) {
 			const failure = area(page);
 
 			// 全文默认收着；展开后原样显示，包括堆栈，也包括第一行的异常模块路径。
-			const toggle = failure.getByRole("button", { name: "展开全文" });
+			const toggle = failure.getByRole("button", { name: /^(展开|收起)全文$/ });
+			await expect(toggle).toHaveText("展开全文");
 			await expect(toggle).toHaveAttribute("aria-expanded", "false");
 			await expect(failure.getByTestId("failure-full")).toHaveCount(0);
 			await toggle.click();
+			// 展开后写「收起全文」，读屏不读成「展开全文，已展开」。
+			await expect(toggle).toHaveText("收起全文");
 			await expect(toggle).toHaveAttribute("aria-expanded", "true");
 			const full = failure.getByTestId("failure-full");
 			await expect(full).toBeVisible();
 			expect(await full.evaluate((el) => el.textContent)).toBe(FAILURE_MESSAGE.trim());
 			await toggle.click();
+			await expect(toggle).toHaveText("展开全文");
 			await expect(failure.getByTestId("failure-full")).toHaveCount(0);
 
 			// 到这个节点的尝试：切到详情、选中它、打开「尝试」页签。
@@ -499,7 +593,7 @@ for (const viewport of VIEWPORTS) {
 			);
 		});
 
-		test("别的节点也失败了：列出来，同一个节点在几个子流程实例里都失败时写明是哪个实例；点一下去它的尝试", async ({
+		test("别的节点也失败了：列出来，主链上的节点不写子流程实例；点一下去它的尝试", async ({
 			page,
 			controlPlane,
 			connectAgent,
@@ -525,6 +619,86 @@ for (const viewport of VIEWPORTS) {
 			await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
 				"aria-selected",
 				"true",
+			);
+		});
+
+		test("别的节点也失败了：子流程里的节点前面写子流程实例；超过 3 个时只列前 3 个，其余写「还有 N 个」", async ({
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}) => {
+			const agent = await connectAgent({
+				name: "agent-a",
+				slots: 8,
+				installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+			});
+			await publishPackage(controlPlane, metricPackage());
+			const ping = (id: string) => ({
+				id,
+				kind: "package",
+				package: "demo-checks",
+				node: "ping",
+				inputs: { host: id },
+			});
+			// 主链 entry → spawn1 → … → spawn4 → main：每个异步任务节点派发一个子流程，子流程里一个检查节点。
+			// 5 个节点（main 和 4 个检查节点）一起派发，都失败。
+			const subflows = ["s1", "s2", "s3", "s4"];
+			const scenarioId = await createScenario(controlPlane, "多处失败", {
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry", params: [] },
+					...subflows.map((id) => ({ id: `spawn_${id}`, kind: "async", params: {} })),
+					ping("main"),
+					...subflows.flatMap((id) => [
+						{ id, kind: "subflow_entry", name: id, params: [] },
+						ping(`${id}_check`),
+					]),
+				],
+				edges: [
+					{ from: "entry", to: "spawn_s1", kind: "chain" },
+					...subflows.slice(1).map((id, i) => ({
+						from: `spawn_${subflows[i]}`,
+						to: `spawn_${id}`,
+						kind: "chain",
+					})),
+					{ from: "spawn_s4", to: "main", kind: "chain" },
+					...subflows.flatMap((id) => [
+						{ from: id, to: `${id}_check`, kind: "chain" },
+						{ from: `spawn_${id}`, to: id, kind: "dispatch" },
+					]),
+				],
+				packages: { "demo-checks": "1.2.0" },
+			});
+			const runId = await triggerRun(controlPlane, scenarioId);
+			const assigned = new Map<string, AssignedTask>();
+			for (let i = 0; i < 5; i++) {
+				const task = await agent.nextAssign();
+				assigned.set(task.nodeId, task);
+			}
+			// 失败的先后：主链的 main 最先，再是 s1、s2、s3、s4 的检查节点。
+			for (const node of ["main", "s1_check", "s2_check", "s3_check", "s4_check"]) {
+				clock.advance(1000);
+				await agent.fail(assigned.get(node) as AssignedTask, `${node} 失败`);
+			}
+			await openFailedOverview(page, clock, runId);
+
+			const failure = area(page);
+			// 第一个失败的节点是主链上的 main：不写子流程实例。
+			await expect(failure.getByTestId("failure-node")).toContainText("main");
+			await expect(failure).toContainText("另有 4 个节点也失败了");
+			// 列出前 3 个，子流程里的节点前面写所在的子流程实例；其余写「还有 1 个」。
+			const others = failure.getByRole("listitem");
+			await expect(others).toHaveCount(3);
+			await expect(others).toHaveText([
+				/^子流程 s1 · \w{8} \/ s1_check$/,
+				/^子流程 s2 · \w{8} \/ s2_check$/,
+				/^子流程 s3 · \w{8} \/ s3_check$/,
+			]);
+			await expect(failure).toContainText("还有 1 个");
+			// 按钮的读屏名称带着实例：同一个节点在几个子流程实例里都失败时分得开。
+			await expect(others.first().getByRole("button")).toHaveAccessibleName(
+				/^在详情里查看 子流程 s1 · \w{8} \/ s1_check 的尝试$/,
 			);
 		});
 

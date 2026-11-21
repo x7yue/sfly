@@ -29,6 +29,7 @@ import type { ClockOffset } from "../agents/agent-clock.js";
 import type { AgentEnvironmentFor } from "../agents/agent-environment.js";
 import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
 import { loadAgentTasks } from "../agents/agent-tasks.js";
+import { connectionBlock, freeSlots } from "../agents/dispatch-gate.js";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import {
@@ -1266,13 +1267,14 @@ export class Engine implements AgentSessionHandler {
 	 */
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
-		if (!conn?.ready || this.deps.hub.versionMismatch(conn.info)) return;
+		// 能不能派发由 agents/dispatch-gate.ts 判断（页面上「排队中的任务在等什么」用的是同一段判断）。
+		if (!conn || connectionBlock(conn, this.deps.hub.versionMismatch(conn.info)) !== null) return;
 		await this.#step(async (step) => {
 			const [running] = await step.tx
 				.select({ n: count() })
 				.from(tasks)
 				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)));
-			let free = conn.info.slots - (running?.n ?? 0);
+			let free = freeSlots(conn.info.slots, running?.n ?? 0);
 			if (free <= 0) return;
 			const queued = await step.tx
 				.select()
