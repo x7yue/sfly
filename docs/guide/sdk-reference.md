@@ -307,7 +307,7 @@ def stress(
     alert_bot: Annotated[FeishuBot, Doc("压测不达标时通知的飞书机器人")],
 ) -> StressOutputs:
     """压测一个接口，不达标时通知飞书群。"""
-    p99: float = ...  # 压测，得到延迟的 99 分位（毫秒）；这里省略
+    p99 = 612.0  # 压测得到的延迟 99 分位（毫秒）；压测本身这里省略
     if p99 > 500:
         ctx.notify(alert_bot, f"p99 {p99} ms，超过 500 ms", at_all=True)
         ctx.notify(

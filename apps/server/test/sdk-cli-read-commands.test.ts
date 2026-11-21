@@ -510,7 +510,7 @@ describe("sfly 只读命令 → 控制面", () => {
 				expect(result.stdout).toBe("");
 				expect(result.stderr).toBe(
 					[
-						"错误：节点包 rich 的开发版本没有加载在任何 Agent 上。开发版本由 sfly dev 加载到 Agent 上，不在已发布的节点包列表里",
+						"错误：节点包 rich 的开发版本没有加载在任何在线的 Agent 上。开发版本由 sfly dev 加载到 Agent 上，不在已发布的节点包列表里",
 						"下一步：在节点包源码目录里运行 sfly dev，再用 sfly agent list 看各台 Agent 加载了哪些开发包",
 						"",
 					].join("\n"),

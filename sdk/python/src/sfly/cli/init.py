@@ -42,25 +42,32 @@ PYTHON_VERSION = "3.13"
 #: 开发依赖：`sfly[cli]` 锁定为控制面版本（ADR 0010：SDK 与控制面同版本），其余只写下限。
 DEV_DEPENDENCIES = ("pytest>=8", "ruff>=0.6")
 
-#: 生成的项目里 ruff 的规则集（#472）：pyflakes（F）和 pycodestyle 里语句级、
-#: 运行时错误的那几组（E4、E7、E9），也就是 ruff 长期以来的默认规则，逐条写出确切的编号。
+#: 生成的项目里 ruff 的规则集（#472），按族分组（族名、写在这组前面的注释、编号）。
+#: pyflakes（F）和 pycodestyle 里语句级、运行时错误的那几组（E4、E7、E9），
+#: 也就是 ruff 长期以来的默认规则，逐条写出确切的编号。
 #: 不写前缀：选了前缀，ruff 以后在这个前缀下转正的新规则会自动生效，同一份代码换个 ruff 版本
 #: 就多出新的报告；新版 ruff 的默认规则集也比这大得多。
 #: 这些编号在 ruff 0.6 以前就都有了，`ruff>=0.6` 的哪个版本都认得。
 #: docs/guide/init-project.md 里有同样的一段给已有项目抄（tests/test_init_ruff.py 核对两者一致）。
-RUFF_SELECT = (
-    "E401", "E402",
-    "E701", "E702", "E703", "E711", "E712", "E713", "E714", "E721", "E722", "E731",
-    "E741", "E742", "E743",
-    "E902",
-    "F401", "F402", "F403", "F404", "F405", "F406", "F407",
-    "F501", "F502", "F503", "F504", "F505", "F506", "F507", "F508", "F509",
-    "F521", "F522", "F523", "F524", "F525", "F541",
-    "F601", "F602", "F621", "F622", "F631", "F632", "F633", "F634",
-    "F701", "F702", "F704", "F706", "F707", "F722",
-    "F811", "F821", "F822", "F823", "F841", "F842",
-    "F901",
+RUFF_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("F", "pyflakes（F）：没用到的 import 和变量、未定义的名字、格式字符串写错……", (
+        "F401", "F402", "F403", "F404", "F405", "F406", "F407",
+        "F501", "F502", "F503", "F504", "F505", "F506", "F507", "F508", "F509",
+        "F521", "F522", "F523", "F524", "F525", "F541",
+        "F601", "F602", "F621", "F622", "F631", "F632", "F633", "F634",
+        "F701", "F702", "F704", "F706", "F707", "F722",
+        "F811", "F821", "F822", "F823", "F841", "F842",
+        "F901",
+    )),
+    ("E4", "pycodestyle（E4）：import 写在一行里、不在文件开头", ("E401", "E402")),
+    ("E7", "pycodestyle（E7）：一行几条语句、和 None/True 用 == 比较、裸 except、含糊的名字……", (
+        "E701", "E702", "E703", "E711", "E712", "E713", "E714", "E721", "E722", "E731",
+        "E741", "E742", "E743",
+    )),
+    ("E9", "pycodestyle（E9）：读不了源文件", ("E902",)),
 )  # fmt: skip
+#: 上面各组的编号连起来，就是 select 的全部规则。
+RUFF_SELECT = tuple(code for _, _, codes in RUFF_GROUPS for code in codes)
 
 
 class InitError(Exception):
@@ -195,12 +202,10 @@ def configure_pyproject(project: NewProject) -> None:
         'extend-exclude = [".agents", ".claude"]',
         "",
         "# 固定的规则集：ruff 出新版本时，同一份代码不会多出新的报告",
-        "# （ruff 的默认规则会随版本变）。",
+        "# （ruff 的默认规则会随版本变）。写的是确切的规则编号，不是前缀（F、E4……）：",
+        "# 前缀会把 ruff 以后在这些族里新转正的规则也带进来。",
         "# 要更严的检查时在这里加规则编号。",
-        "[tool.ruff.lint]",
-        "select = [",
-        *_wrapped(RUFF_SELECT),
-        "]",
+        *ruff_select_lines(),
         "",
     ]
     path = project.root / "pyproject.toml"
@@ -209,11 +214,16 @@ def configure_pyproject(project: NewProject) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _wrapped(codes: tuple[str, ...], per_line: int = 10) -> list[str]:
-    return [
-        "    " + " ".join(f'"{c}",' for c in codes[i : i + per_line])
-        for i in range(0, len(codes), per_line)
-    ]
+def ruff_select_lines(per_line: int = 10) -> list[str]:
+    """`[tool.ruff.lint]` 的 select：一族一组，组前一行注释，编号每行最多 per_line 个。"""
+    lines = ["[tool.ruff.lint]", "select = ["]
+    for _, comment, codes in RUFF_GROUPS:
+        lines.append(f"    # {comment}")
+        lines += [
+            "    " + " ".join(f'"{c}",' for c in codes[i : i + per_line])
+            for i in range(0, len(codes), per_line)
+        ]
+    return [*lines, "]"]
 
 
 def _template(name: str, project: NewProject) -> str:

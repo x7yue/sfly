@@ -147,22 +147,37 @@ def _show(session: Session, args: argparse.Namespace) -> None:
 
 def _show_dev(session: Session, name: str, agent: str | None) -> None:
     """开发版本的节点定义：sfly dev 把扫描出的元信息交给 Agent，Agent 连上控制面时上报，
-    控制面在 GET /agents 的 dev_packages 里给出。它不在已发布的节点包列表里。"""
-    loaded = [
-        (a["name"], d)
+    控制面在 GET /agents 的 dev_packages 里给出。它不在已发布的节点包列表里。
+
+    只算在线的 Agent：Agent 断线后 GET /agents 仍带着它上次上报的 dev_packages，
+    运行准入不算它（apps/server/src/runs/dev-package-loaded.ts），这里和准入一致。"""
+    loaders = [
+        (a["name"], a["status"] == "online", d)
         for a in session.client.get("/agents")["agents"]
         for d in a["dev_packages"]
         if d["name"] == name
     ]
+    loaded = [(n, d) for n, online, d in loaders if online]
+    offline = [n for n, online, _ in loaders if not online]
     where = "、".join(n for n, _ in loaded)
-    first = f"sfly package show {name}@dev --agent {loaded[0][0]}" if loaded else ""
+    first = f"sfly package show {name}@dev --agent {loaded[0][0]}" if loaded else None
+    load_hint = (
+        "在节点包源码目录里运行 sfly dev，再用 sfly agent list 看各台 Agent 加载了哪些开发包"
+    )
+    if agent is not None and agent in offline:
+        raise CliError(
+            "agent_offline",
+            f"Agent {agent} 离线：它上次上报的开发包定义可能已经过时，运行也不会派发给它"
+            + (f"；在线且加载了 {name} 的 Agent：{where}" if loaded else ""),
+            next=first or load_hint,
+        )
     if not loaded:
+        seen = f"（离线的 Agent {'、'.join(offline)} 上次加载过它）" if offline else ""
         raise CliError(
             "dev_package_not_loaded",
-            f"节点包 {name} 的开发版本没有加载在任何 Agent 上。"
+            f"节点包 {name} 的开发版本没有加载在任何在线的 Agent 上{seen}。"
             "开发版本由 sfly dev 加载到 Agent 上，不在已发布的节点包列表里",
-            next="在节点包源码目录里运行 sfly dev，"
-            "再用 sfly agent list 看各台 Agent 加载了哪些开发包",
+            next=load_hint,
         )
     if agent is not None:
         loaded = [(n, d) for n, d in loaded if n == agent]
@@ -180,19 +195,21 @@ def _show_dev(session: Session, name: str, agent: str | None) -> None:
             next=first,
         )
     agent_name, dev = loaded[0]
-    metadata = dev["metadata"]
-    if not isinstance(metadata, dict) or not isinstance(metadata.get("nodes"), list):
+    try:
+        nodes = _nodes(dev["metadata"])
+    except (KeyError, TypeError, AttributeError):
+        # 开发包的元信息没有经过发布时的校验，节点项可能缺字段或类型不对。
         raise CliError(
             "dev_package_metadata_invalid",
             f"Agent {agent_name} 上报的开发包 {name} 的元信息读不出节点定义",
             next="在节点包源码目录里重新运行 sfly dev",
-        )
+        ) from None
     view = {
         "name": name,
         "version": DEV_VERSION,
         "agent": agent_name,
         "source": dev["source"],
-        "nodes": _nodes(metadata),
+        "nodes": nodes,
     }
     heading = (
         f"节点包 {name}@{DEV_VERSION}（开发版本，用 sfly dev 加载在 Agent {agent_name} 上，"

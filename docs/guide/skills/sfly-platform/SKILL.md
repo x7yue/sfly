@@ -71,7 +71,7 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
    }
    ```
 
-   - 节点：`id` 在场景里不重复；`package` 和 `node` 是节点包名和节点名，`document.packages` 里要有这个包（联调副本里是 `"dev"`）；`inputs` 的值可以是常量；要引用入口参数或同一条链上前面节点的输出，照文件里已有节点的 `inputs` 的写法写。节点有哪些输入用 `uv run sfly package show <包>@<版本>` 看（开发版本写 `<包>@dev`）。
+   - 节点：`id` 在场景里不重复；`package` 和 `node` 是节点包名和节点名，`document.packages` 里要有这个包（联调副本里是 `"dev"`）；`inputs` 的值可以是常量；要引用入口参数或同一条链上前面节点的输出，照文件里已有节点的 `inputs` 的写法写。节点有哪些输入用 `uv run sfly package show <包>@<版本>` 看（开发版本写 `<包>@dev`；它加载在不止一台在线的 Agent 上时加 `--agent <Agent>` 指定看哪一台的）。
    - 连线：`from` 是前一个节点的 `id`，`to` 是新节点的 `id`。接在链的中间时，把原来从前一个节点连出去的那条线的 `from` 改成新节点。
 3. **保存**：`uv run sfly scenario push <文件>`；push 先在本地按场景文档的 schema 校验，出错会列出位置。push 报版本冲突说明有人在你 pull 之后保存了新版本：重新 pull，把改动合并进去再 push，没有强制覆盖。
    文件里 secret 参数的 `default` 是占位符 `******`（控制面不返回原值）：不要改它、也不要自己填一个值，原样 push 就沿用原来的值；push 报 `secret_default_placeholder` 时按提示处理，不要把真实的密钥写进文件。

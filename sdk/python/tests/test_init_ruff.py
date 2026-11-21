@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from sfly.cli.init import RUFF_SELECT
+from sfly.cli.init import RUFF_GROUPS, RUFF_SELECT, NewProject, ProjectSettings, configure_pyproject
 
 GUIDE = Path(__file__).resolve().parents[3] / "docs" / "guide"
 RUFF = str(Path(sys.executable).parent / "ruff")
@@ -67,8 +67,51 @@ def test_complete_examples_in_guide_pass_the_template_rules(
     assert result.returncode == 0, f"{where}\n{result.stdout}{result.stderr}"
 
 
+_SELECT_BLOCK = re.compile(r"\[tool\.ruff\.lint\]\nselect = \[\n.*?\n\]\n", re.S)
+
+
 def test_guide_shows_the_same_select_for_existing_projects() -> None:
     text = (GUIDE / "init-project.md").read_text(encoding="utf-8")
     block = re.search(r"```toml\n\[tool\.ruff\.lint\]\nselect = \[\n(.*?)\]\n```", text, re.S)
     assert block, "init-project.md 里要有给已有项目抄的 [tool.ruff.lint] select"
     assert tuple(re.findall(r'"([A-Z]+[0-9]+)"', block.group(1))) == RUFF_SELECT
+
+
+def generated_select(tmp_path: Path) -> str:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n', encoding="utf-8")
+    settings = ProjectSettings("1.0.0", "http://cp.test/simple/", None, None)
+    configure_pyproject(NewProject(tmp_path, "demo", "demo", settings))
+    found = _SELECT_BLOCK.search((tmp_path / "pyproject.toml").read_text(encoding="utf-8"))
+    assert found
+    return found.group(0)
+
+
+def test_select_is_grouped_by_rule_family_with_a_comment_per_group(tmp_path: Path) -> None:
+    """生成的 select 按族分行：每组前一行注释说明这组查什么，后面是这组的编号。"""
+    assert [family for family, _, _ in RUFF_GROUPS] == ["F", "E4", "E7", "E9"]
+    assert tuple(code for _, _, codes in RUFF_GROUPS for code in codes) == RUFF_SELECT
+    lines = generated_select(tmp_path).splitlines()[2:-1]
+    groups: list[tuple[str, list[str]]] = []
+    for line in lines:
+        if line.strip().startswith("#"):
+            groups.append((line.strip(), []))
+        else:
+            assert groups, f"第一行要是注释：{line}"
+            groups[-1][1].extend(re.findall(r'"([A-Z]+[0-9]+)"', line))
+    assert [codes for _, codes in groups] == [list(codes) for _, _, codes in RUFF_GROUPS]
+    for (comment, _), (family, _, _) in zip(groups, RUFF_GROUPS, strict=True):
+        assert f"（{family}）" in comment, comment
+
+
+def test_generated_select_explains_why_exact_codes_not_prefixes(tmp_path: Path) -> None:
+    generated_select(tmp_path)
+    before = (tmp_path / "pyproject.toml").read_text(encoding="utf-8").split("[tool.ruff.lint]")[0]
+    comment = before.rstrip("\n").rsplit("\n\n", 1)[-1]
+    assert "前缀" in comment, comment
+
+
+def test_guide_block_is_exactly_what_sfly_init_writes(tmp_path: Path) -> None:
+    text = (GUIDE / "init-project.md").read_text(encoding="utf-8")
+    block = re.search(r"```toml\n(\[tool\.ruff\.lint\]\nselect = \[\n.*?\n\]\n)```", text, re.S)
+    assert block
+    assert block.group(1) == generated_select(tmp_path)
