@@ -79,6 +79,9 @@ export async function startTestControlPlane(
 		| "githubReleaseMirror"
 		| "migrationsDir"
 		| "logger"
+		| "initialAdmin"
+		| "loginIdleMs"
+		| "sameOrigins"
 	> = {},
 ): Promise<TestControlPlane> {
 	let migrationsDir = options.migrationsDir;
@@ -114,6 +117,11 @@ export async function startTestControlPlane(
 			githubReleaseMirror: options.githubReleaseMirror,
 			migrationsDir,
 			logger: options.logger,
+			initialAdmin: options.initialAdmin,
+			loginIdleMs: options.loginIdleMs,
+			sameOrigins: options.sameOrigins,
+			// 密码哈希用小参数：测试里每次登录都要算，默认参数一次约 0.2 秒、占 64 MiB。
+			scrypt: { logN: 10, r: 8, p: 1 },
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 飞书发送队列的周期扫描同样调快。

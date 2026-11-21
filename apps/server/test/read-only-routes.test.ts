@@ -126,6 +126,7 @@ describe("声明为只读的接口真的不写库", () => {
 	let cp: TestControlPlane;
 	let dir: string;
 	let seeded: Seeded;
+	let adminCookie = "";
 	let agent: FakeAgent;
 	/** 验证过的 SSE 事件（`方法 路径 事件名`）：证明对照响应 schema 不是空转。 */
 	const validatedEvents = new Set<string>();
@@ -145,8 +146,17 @@ describe("声明为只读的接口真的不写库", () => {
 			clientPackageDir: dir,
 			docsDir: join(repoRoot, "docs/guide"),
 			agentBinaries: { x86_64: join(dir, "agent-x86"), aarch64: join(dir, "agent-arm") },
+			// 账号类的只读接口（当前用户、用户列表）要登录：种数据之后登录一次，下面调它们时带上 Cookie。
+			initialAdmin: { loginName: "root", password: "admin-password-1" },
 		});
 		({ seeded, agent } = await seed(cp));
+		const login = await cp.fetch("/auth/login", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ login_name: "root", password: "admin-password-1" }),
+		});
+		expect(login.status).toBe(200);
+		adminCookie = /sfly_login=([^;]+)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
 	}, 120_000);
 
 	afterAll(async () => {
@@ -365,8 +375,14 @@ describe("声明为只读的接口真的不写库", () => {
 			}
 		}
 		const body = sampleBody(def);
+		// 账号类的只读接口只认登录 Cookie（同源的请求）。
+		const credentials =
+			def.resource.kind === "account"
+				? { cookie: `sfly_login=${adminCookie}`, "sec-fetch-site": "same-origin" }
+				: undefined;
 		const res = await cp.fetch(url, {
 			method: def.method,
+			...(credentials && { headers: credentials }),
 			...(body !== undefined && {
 				headers: {
 					"content-type": "application/json",

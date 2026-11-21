@@ -6,6 +6,7 @@ import { pathParamNames, type RouteDef } from "@sfly/schema";
  * 一个接口的项目怎么得出（ADR 0029 把现有接口分成四类）：
  *
  * - `none`：不属于项目（`system`：健康检查、文档、SDK 与 Agent 二进制、安装脚本、API 客户端安装包、Python 索引），不需要凭据；
+ * - `account`：账号类接口（登录、登出、当前用户、改密码、管理账号），不属于项目，不走范围表：认哪种凭据看 {@link ACCOUNT_ROUTES}；
  * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人）：取路径里的 `:project`。
  *   #488 把这些接口的路径改成 `/projects/:project/…` 之前，路径里没有项目，`param` 是 null，项目就是默认项目；
  * - `scenario`、`run`、`task`：经场景、运行或任务（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
@@ -13,6 +14,7 @@ import { pathParamNames, type RouteDef } from "@sfly/schema";
  */
 export type ProjectLocator =
 	| { from: "none" }
+	| { from: "account" }
 	| { from: "path"; param: string | null }
 	| { from: "scenario" | "run" | "task"; param: string };
 
@@ -23,6 +25,7 @@ export const PROJECT_PARAM = "project";
 export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLocator | undefined {
 	const { kind, target } = def.resource;
 	if (kind === "system") return { from: "none" };
+	if (kind === "account") return { from: "account" };
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
 		return { from: "path", param: PROJECT_PARAM };
 	if (target === "collection" || target === "upload") return { from: "path", param: null };
@@ -36,6 +39,34 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 	}
 	return undefined;
 }
+
+/**
+ * 账号类接口各认哪种凭据（ADR 0029「凭据」的表；没列的凭据一律不认）：
+ *
+ * - `anonymous`：不要凭据（状态、登录、初始化第一个管理员；初始化要初始化码，登录要密码）：带了什么凭据都不看，
+ *   过期的 Cookie 不该让登录页登录不了；
+ * - `login`：只认登录 Cookie（当前用户、登出、改密码）；不带凭据是 401，带了别的凭据（个人令牌、项目令牌…）是 403；
+ * - `platform_admin`：只认平台管理员的登录 Cookie（管理账号）；不是平台管理员是 403。
+ *
+ * 这些是新接口，不带凭据时的「照旧放行」（#494 才拒绝）不适用于它们：需要身份的接口没有身份就没法做。
+ * 个人令牌的签发、吊销、列出（#491）在它们的接口加进契约时在这里写明。
+ */
+export type AccountCredential = "anonymous" | "login" | "platform_admin";
+
+export const ACCOUNT_ROUTES = {
+	"GET /auth/status": "anonymous",
+	"POST /auth/setup": "anonymous",
+	"POST /auth/login": "anonymous",
+	"POST /auth/logout": "login",
+	"POST /auth/logout-all": "login",
+	"GET /auth/me": "login",
+	"POST /auth/password": "login",
+	"GET /users": "platform_admin",
+	"POST /users": "platform_admin",
+	"POST /users/:id/disable": "platform_admin",
+	"POST /users/:id/enable": "platform_admin",
+	"POST /users/:id/password": "platform_admin",
+} as const satisfies Record<string, AccountCredential>;
 
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
@@ -73,6 +104,11 @@ export function checkAccessRules(contract: readonly RouteDef[]): string[] {
 					"新的资源类别或定位方式要在 locatorOf（src/auth/access-rules.ts）里写明",
 			);
 		}
+		if (def.resource.kind === "account" && !(routeKey(def) in ACCOUNT_ROUTES)) {
+			problems.push(
+				`${routeKey(def)}：账号类接口要在 ACCOUNT_ROUTES（src/auth/access-rules.ts）里写明认哪种凭据：没有写明的账号类接口不能上线`,
+			);
+		}
 		if (def.resource.kind === "system" && def.effect !== "read") {
 			problems.push(
 				`${routeKey(def)}：不属于项目的接口（system）不需要凭据，只能是只读的；有副作用的接口要作用在某类资源上，走范围表`,
@@ -88,6 +124,7 @@ export function checkCredentialRoutes(contract: readonly RouteDef[]): string[] {
 	return [
 		["AGENT_CREDENTIAL_ROUTES", AGENT_CREDENTIAL_ROUTES],
 		["TASK_CREDENTIAL_ROUTES", TASK_CREDENTIAL_ROUTES],
+		["ACCOUNT_ROUTES", ACCOUNT_ROUTES],
 	].flatMap(([name, list]) =>
 		Object.keys(list as object)
 			.filter((key) => !known.has(key))

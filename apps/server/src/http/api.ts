@@ -11,6 +11,8 @@ import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import { AccessGuard } from "../auth/access-guard.js";
 import { DbAccessStore } from "../auth/access-store.js";
+import type { AccountService } from "../auth/accounts.js";
+import type { OriginRules } from "../auth/cross-site.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
@@ -31,6 +33,7 @@ import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
 import { installAccessGuard } from "./access.js";
+import { registerAccountRoutes } from "./account-routes.js";
 import { registerActionRoutes } from "./action-routes.js";
 import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
@@ -91,6 +94,19 @@ export interface HttpApiDeps {
 	webApp?: WebApp;
 	/** 允许跨域调用的来源名单（src/http/cors.ts）；不设置时允许所有来源。 */
 	corsOrigins?: readonly string[];
+	/** 本地账号与登录（src/auth/accounts.ts）。 */
+	accounts: AccountService;
+	/** 登录的空闲期限（毫秒）；默认 12 小时，要和 `accounts` 里的一致（下发和续期 Cookie 用它）。 */
+	loginIdleMs?: number;
+	/** 哪些来源算同源（登录 Cookie 的跨站检查，src/auth/cross-site.ts）。 */
+	origins: OriginRules;
+	/** 公开地址（`SFLY_PUBLIC_URL`）是 https：登录 Cookie 加 Secure。 */
+	publicHttps: boolean;
+	/**
+	 * 信任反向代理带来的 `X-Forwarded-For`（`SFLY_TRUST_PROXY`）：登录限速的「来源地址」取它的第一段。默认不信任：
+	 * 它能被伪造，直连时随便写一个就能绕过按地址的限速；反向代理后面不开的话所有人是同一个来源地址。
+	 */
+	trustProxy?: boolean;
 	/** SSE 心跳的间隔（src/sse/sse.ts）。 */
 	sseHeartbeatMs?: number;
 	/** 按运行合并读取日志时一次请求最多扫描的字节数（src/logs/run-log-pages.ts）。 */
@@ -133,11 +149,20 @@ export function buildHttpApi({
 	feishu,
 	webApp,
 	corsOrigins,
+	accounts,
+	loginIdleMs,
+	origins,
+	publicHttps,
+	trustProxy,
 	sseHeartbeatMs,
 	logScanBytes,
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
-	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
+	const app = Fastify({
+		logger,
+		rewriteUrl: (req) => stripApiPrefix(req.url ?? "/"),
+		trustProxy: trustProxy ?? false,
+	});
 	// app.close() 只在开始时关掉当时空闲的 keep-alive 连接。当时还没发完的响应（例如产物下载）发完后，连接留在
 	// keep-alive 里，要等客户端或服务端的 keep-alive 超时（约 70 秒）才断开，app.close() 一直等它。
 	// 关闭开始之后发完的响应随即关掉连接，和 Connection: close 的响应一样。
@@ -153,7 +178,11 @@ export function buildHttpApi({
 	// 所有路由都按 @sfly/schema 的 HTTP 契约注册（ADR 0007）：不在契约里的路由、没注册的接口都让启动失败。
 	guardHttpContract(app, httpContract);
 	// 每个契约路由在进处理函数之前先过访问检查（ADR 0029「一处检查」）；装在注册任何契约路由之前。
-	installAccessGuard(app, new AccessGuard({ store: new DbAccessStore(database.db), clock }));
+	installAccessGuard(
+		app,
+		new AccessGuard({ store: new DbAccessStore(database.db), clock, loginIdleMs, origins }),
+		{ publicHttps },
+	);
 	// 每个响应都带控制面时间，页面据此修正浏览器时间（ADR 0018）；SSE 另有心跳事件。
 	// 在发出响应时取时间（不是收到请求时），处理耗时不算进页面的误差里。
 	app.addHook("onSend", async (_request, reply) => {
@@ -167,6 +196,21 @@ export function buildHttpApi({
 		clock,
 		version: publicConfig.version,
 		heartbeatMs: sseHeartbeatMs,
+	});
+
+	// 登录被注销、用户被停用时，关掉受影响的事件流（ADR 0029「SSE」）。
+	const stopWatching = accounts.onRevoked((revocation) => {
+		sse.closeWhere((stream) => {
+			if (stream.userId !== revocation.userId) return false;
+			if (revocation.type === "user") return true;
+			if (stream.loginId === null) return false;
+			if (revocation.only !== undefined) return stream.loginId === revocation.only;
+			return revocation.except === undefined || stream.loginId !== revocation.except;
+		});
+	});
+	app.addHook("preClose", (done) => {
+		stopWatching();
+		done();
 	});
 
 	// Fastify 自身产生的错误（未知路由、请求体过大、JSON 解析失败等）也用统一的错误格式。
@@ -190,6 +234,7 @@ export function buildHttpApi({
 			.send({ status: health, database: health, time: clock.now().toISOString() });
 	});
 
+	registerAccountRoutes(app, { accounts, publicHttps });
 	registerAgentRoutes(app, { hub, engine, orchestrations });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });

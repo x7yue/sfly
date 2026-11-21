@@ -3,6 +3,7 @@
 import { httpContract, RESOURCE_KINDS } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	ACCOUNT_ROUTES,
 	checkAccessRules,
 	checkCredentialRoutes,
 	locatorOf,
@@ -59,6 +60,8 @@ describe("范围表：接口 × 范围", () => {
 		const seen = new Set<string>();
 		for (const def of httpContract) {
 			const key = routeKey(def);
+			// 账号类接口不属于项目，不走范围表：见下面「账号类接口」。
+			if (def.resource.kind === "account") continue;
 			if (def.effect === "read") {
 				expect(requiredScope(def), key).toBe("read");
 				continue;
@@ -127,14 +130,21 @@ describe("契约和访问检查的规则对得上", () => {
 		expect(checkAccessRules([write])).toEqual([expect.stringContaining("只能是只读的")]);
 	});
 
-	it("项目的四类：不属于项目、路径带项目、经场景、经运行或任务", () => {
+	it("项目的四类加账号类：不属于项目、路径带项目、经场景、经运行或任务、账号（不属于项目，不走范围表）", () => {
 		const classes = new Map<string, string[]>();
 		for (const def of httpContract) {
 			const locator = locatorOf(def);
 			const label = locator?.from === "path" ? "path" : (locator?.from ?? "undefined");
 			classes.set(label, [...(classes.get(label) ?? []), routeKey(def)]);
 		}
-		expect([...classes.keys()].sort()).toEqual(["none", "path", "run", "scenario", "task"]);
+		expect([...classes.keys()].sort()).toEqual([
+			"account",
+			"none",
+			"path",
+			"run",
+			"scenario",
+			"task",
+		]);
 		// 列表与新建（场景、运行、Agent、节点包、飞书机器人、控制台统计）和按名字定位的 Agent、节点包、飞书机器人。
 		expect(classes.get("path")).toEqual(
 			expect.arrayContaining([
@@ -155,5 +165,45 @@ describe("契约和访问检查的规则对得上", () => {
 		expect(classes.get("run")).toContain("POST /runs/:id/cancel");
 		expect(classes.get("task")).toContain("PUT /tasks/:id/artifacts/*");
 		expect(classes.get("none")).toEqual(expect.arrayContaining(["GET /health", "GET /install.sh"]));
+	});
+});
+
+describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不走范围表）", () => {
+	const accountRoutes = httpContract.filter((def) => def.resource.kind === "account");
+
+	it("每个账号类接口都在 ACCOUNT_ROUTES 里写明认哪种凭据，表里没有多余的行", () => {
+		expect(accountRoutes.map(routeKey).sort()).toEqual(Object.keys(ACCOUNT_ROUTES).sort());
+	});
+
+	it("登录、初始化、状态不要凭据；当前用户、登出、改密码只认登录；管理账号只认平台管理员", () => {
+		expect(ACCOUNT_ROUTES).toEqual({
+			"GET /auth/status": "anonymous",
+			"POST /auth/setup": "anonymous",
+			"POST /auth/login": "anonymous",
+			"POST /auth/logout": "login",
+			"POST /auth/logout-all": "login",
+			"GET /auth/me": "login",
+			"POST /auth/password": "login",
+			"GET /users": "platform_admin",
+			"POST /users": "platform_admin",
+			"POST /users/:id/disable": "platform_admin",
+			"POST /users/:id/enable": "platform_admin",
+			"POST /users/:id/password": "platform_admin",
+		});
+	});
+
+	it("账号类接口定位在当前用户自己（self）或用户 ID，路径里没有项目", () => {
+		for (const def of accountRoutes) {
+			expect(def.path, routeKey(def)).not.toContain(":project");
+			expect(locatorOf(def), routeKey(def)).toEqual({ from: "account" });
+		}
+	});
+
+	it("契约里加了账号类接口却没有写进 ACCOUNT_ROUTES，启动检查报错", () => {
+		const extra = {
+			...(accountRoutes[0] as (typeof httpContract)[number]),
+			path: "/auth/new-thing",
+		};
+		expect(checkAccessRules([extra])).toEqual([expect.stringContaining("ACCOUNT_ROUTES")]);
 	});
 });

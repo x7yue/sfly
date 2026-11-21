@@ -29,6 +29,7 @@ export interface StoredUser {
 
 /** 库里的令牌（个人、项目、会话、任务凭据）。 */
 export interface StoredToken {
+	id: string;
 	kind: "personal" | "project" | "session" | "task";
 	name: string;
 	/** 令牌的所属用户（个人令牌）或发起人（会话令牌）；项目令牌和任务凭据没有。 */
@@ -42,7 +43,9 @@ export interface StoredToken {
 
 /** 库里的登录（控制台的 Cookie）。 */
 export interface StoredLogin {
+	id: string;
 	user: StoredUser;
+	lastUsedAt: Date;
 	idleExpiresAt: Date;
 	revokedAt: Date | null;
 }
@@ -75,6 +78,8 @@ export interface AccessStore {
 	tokenByHash(hash: string): Promise<StoredToken | undefined>;
 	/** 按 Cookie 的哈希找登录。 */
 	loginByCookieHash(hash: string): Promise<StoredLogin | undefined>;
+	/** 用了一次登录：记下最后使用的时间，并把空闲期限顺延。 */
+	touchLogin(id: string, lastUsedAt: Date, idleExpiresAt: Date): Promise<void>;
 	agentCredentialByHash(hash: string): Promise<StoredAgentCredential | undefined>;
 	/** 用户在项目里的角色；不是成员时为 undefined。 */
 	role(project: ProjectId, userId: string): Promise<ProjectRole | undefined>;
@@ -107,6 +112,7 @@ export class DbAccessStore implements AccessStore {
 	async tokenByHash(hash: string): Promise<StoredToken | undefined> {
 		const [row] = await this.db
 			.select({
+				id: apiTokens.id,
 				kind: apiTokens.kind,
 				name: apiTokens.name,
 				projectId: apiTokens.projectId,
@@ -120,6 +126,7 @@ export class DbAccessStore implements AccessStore {
 			.where(eq(apiTokens.tokenHash, hash));
 		return (
 			row && {
+				id: row.id,
 				kind: row.kind,
 				name: row.name,
 				user: row.user,
@@ -134,6 +141,8 @@ export class DbAccessStore implements AccessStore {
 	async loginByCookieHash(hash: string): Promise<StoredLogin | undefined> {
 		const [row] = await this.db
 			.select({
+				id: logins.id,
+				lastUsedAt: logins.lastUsedAt,
 				idleExpiresAt: logins.idleExpiresAt,
 				revokedAt: logins.revokedAt,
 				user: userColumns,
@@ -141,7 +150,11 @@ export class DbAccessStore implements AccessStore {
 			.from(logins)
 			.innerJoin(users, eq(users.id, logins.userId))
 			.where(eq(logins.cookieHash, hash));
-		return row && { idleExpiresAt: row.idleExpiresAt, revokedAt: row.revokedAt, user: row.user };
+		return row;
+	}
+
+	async touchLogin(id: string, lastUsedAt: Date, idleExpiresAt: Date): Promise<void> {
+		await this.db.update(logins).set({ lastUsedAt, idleExpiresAt }).where(eq(logins.id, id));
 	}
 
 	async agentCredentialByHash(hash: string): Promise<StoredAgentCredential | undefined> {

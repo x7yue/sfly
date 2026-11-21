@@ -70,6 +70,9 @@ export interface RawRequest {
  * - `feishu_bot` 飞书机器人。
  * - `system` 平台自身：与具体的场景、运行都无关的东西（健康检查、用户文档、SDK 与 Agent 的安装包和安装脚本、
  *   API 客户端安装包、项目设置）。
+ * - `account` 账号：登录、登出、当前用户、改自己的密码，以及平台管理员管理账号（建用户、停用、重置密码）。
+ *   账号不属于任何项目，路径不带项目，不走项目的范围表：各接口认哪种凭据由访问检查里的一张表规定
+ *   （apps/server/src/auth/access-rules.ts 的 `ACCOUNT_ROUTES`）。ADR 0029「凭据」。
  */
 export const RESOURCE_KINDS = [
 	"scenario",
@@ -79,6 +82,7 @@ export const RESOURCE_KINDS = [
 	"agent",
 	"feishu_bot",
 	"system",
+	"account",
 ] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 
@@ -91,6 +95,7 @@ export const RESOURCE_KIND_LABELS = {
 	agent: "Agent",
 	feishu_bot: "飞书机器人",
 	system: "系统",
+	account: "账号",
 } as const satisfies Record<ResourceKind, string>;
 
 /**
@@ -103,6 +108,8 @@ export const RESOURCE_KIND_LABELS = {
  *   新建在别的资源名下的子资源（场景的运行预设、运行）时，定位的是那个上级资源。
  * - `"upload"`：具体的那一个在上传的内容里（发布节点包：包名与版本在归档的元信息里），请求的字段里没有。
  * - `"global"`：只用于 `system`，平台自身，没有「具体的那一个」。
+ * - `"self"`：只用于 `account`，定位在发起请求的用户自己（登录、登出、当前用户、改自己的密码），请求里没有指向任何资源的字段，
+ *   路径里也不能有参数。管理别人的账号用 `{ params }`（路径里的用户 ID）或 `"collection"`。
  */
 export type ResourceTarget =
 	| { params: string }
@@ -110,7 +117,8 @@ export type ResourceTarget =
 	| { body: string }
 	| "collection"
 	| "upload"
-	| "global";
+	| "global"
+	| "self";
 
 /** 接口作用在哪类资源上，以及怎么定位到具体的那一个。 */
 export interface ResourceRef {

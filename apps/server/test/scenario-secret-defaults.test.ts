@@ -366,6 +366,17 @@ describe("场景版本里 secret 参数的默认值", () => {
 			"DELETE /feishu-bots/:name": "同上",
 			"POST /feishu-bots/:name/test": "同上",
 			"POST /packages": "发布节点包，不带场景和参数",
+			// 账号类接口（登录、初始化、改密码、管理账号）：和场景的默认值无关，但处理的是密码，另有专门的测试
+			// 遍历它们的每个出口（accounts-secrets.test.ts：每个账号类接口成功的和失败的响应里没有密码、Cookie、初始化码、哈希）。
+			"POST /auth/setup": "账号类接口，密码另见 accounts-secrets.test.ts",
+			"POST /auth/login": "同上",
+			"POST /auth/logout": "同上",
+			"POST /auth/logout-all": "同上",
+			"POST /auth/password": "同上",
+			"POST /users": "同上",
+			"POST /users/:id/disable": "同上",
+			"POST /users/:id/enable": "同上",
+			"POST /users/:id/password": "同上",
 		};
 		/** 一个请求（方法 + 路径）对上契约里的哪个接口（路径模板）。 */
 		const templateOf = (method: string, path: string): string | undefined => {

@@ -4,6 +4,7 @@ import { LucideProvider } from "lucide-react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { alignPulses } from "#/components/status";
+import { refreshIdentity } from "#/lib/identity";
 import { initMotionPause } from "#/lib/motion-pause";
 import { createRouter } from "./router";
 import "./styles/app.css";
@@ -14,6 +15,8 @@ const root = document.getElementById("app");
 if (!root) throw new Error("missing #app");
 alignPulses(document);
 initMotionPause();
+// 问控制面现在是不是登录着（登录 Cookie 页面脚本读不到）：顶栏的账号菜单、昵称弹窗要用。
+void refreshIdentity();
 
 createRoot(root).render(
 	<StrictMode>

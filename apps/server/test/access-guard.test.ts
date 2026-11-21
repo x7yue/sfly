@@ -10,6 +10,7 @@ import {
 	type AccessResult,
 } from "../src/auth/access-guard.js";
 import {
+	ACCOUNT_ROUTES,
 	AGENT_CREDENTIAL_ROUTES,
 	locatorOf,
 	routeKey,
@@ -91,6 +92,8 @@ describe("契约路由的访问检查", () => {
 	) => {
 		const cookie = `cookie-${++counter}`;
 		store.logins.set(hashCredential(cookie), {
+			id: `login-${counter}`,
+			lastUsedAt: clock.now(),
 			user: who,
 			idleExpiresAt: extra.idleExpiresAt ?? AFTER,
 			revokedAt: extra.revokedAt ?? null,
@@ -100,6 +103,7 @@ describe("契约路由的访问检查", () => {
 	const token = (fields: Partial<StoredToken> & Pick<StoredToken, "kind">) => {
 		const secret = `sfly_x_${++counter}`;
 		store.tokens.set(hashCredential(secret), {
+			id: `token-${counter}`,
 			name: `令牌${counter}`,
 			user: null,
 			projectId: null,
@@ -133,13 +137,22 @@ describe("契约路由的访问检查", () => {
 			if (kind === "run") filled[target.params] = RES.run[project];
 			if (kind === "task") filled[target.params] = RES.task[project];
 		}
-		return { route, params: { ...filled, ...params }, ...credentials };
+		// 登录 Cookie 要同源的请求才认（./cross-site.ts）：这些测试默认是控制台自己发的请求。
+		return {
+			route,
+			params: { ...filled, ...params },
+			fetchSite: "same-origin",
+			...credentials,
+		};
 	};
 	const run = (route: RouteDef, credentials: Credentials, project?: "default" | "alpha") =>
 		guard.check(request(route, credentials, project));
 
 	const outcome = (result: AccessResult) => (result.ok ? "ok" : result.status);
-	const OUTSIDE_PROJECT = httpContract.filter((def) => locatorOf(def)?.from !== "none");
+	const OUTSIDE_PROJECT = httpContract.filter((def) => {
+		const from = locatorOf(def)?.from;
+		return from !== "none" && from !== "account";
+	});
 	const SYSTEM = httpContract.filter((def) => locatorOf(def)?.from === "none");
 	const route = (key: string): RouteDef => {
 		const found = httpContract.find((def) => routeKey(def) === key);
@@ -148,10 +161,23 @@ describe("契约路由的访问检查", () => {
 	};
 
 	describe("不带凭据、带共享令牌：照旧放行（到 #494 才拒绝）", () => {
-		it("不带凭据的请求每个接口都放行，不读库，没有身份", async () => {
+		it("不带凭据的请求每个接口都放行，不读库，没有身份（账号类接口除外：它们需要登录，见 accounts-http.test.ts）", async () => {
 			for (const def of httpContract) {
+				// 登录、初始化、状态本来就不要凭据，其余账号类接口不带登录是 401：这是新接口，没有「照旧」可言。
+				if (locatorOf(def)?.from === "account") continue;
 				const result = await run(def, {});
 				expect(result, routeKey(def)).toEqual({ ok: true, access: null });
+			}
+			expect(store.reads).toBe(0);
+		});
+
+		it("账号类接口：登录、初始化、状态不要凭据（带什么都不看）；其余需要登录，不带凭据是 401，不读库", async () => {
+			for (const def of httpContract) {
+				if (locatorOf(def)?.from !== "account") continue;
+				const rule = ACCOUNT_ROUTES[routeKey(def) as keyof typeof ACCOUNT_ROUTES];
+				const result = await run(def, {});
+				if (rule === "anonymous") expect(result, routeKey(def)).toEqual({ ok: true, access: null });
+				else expect(outcome(result), routeKey(def)).toBe(401);
 			}
 			expect(store.reads).toBe(0);
 		});
@@ -335,6 +361,8 @@ describe("契约路由的访问检查", () => {
 					userId: USERS.editor.id,
 					name: "用户2",
 					tokenName: "我的令牌",
+					loginId: null,
+					tokenId: expect.stringMatching(/^token-\d+$/),
 					adminActionId: null,
 					project: DEFAULT,
 					role: "editor",

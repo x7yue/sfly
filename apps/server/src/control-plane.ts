@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,10 @@ import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
+import { AccountService } from "./auth/accounts.js";
+import { bootstrapFirstAdmin, type InitialAdmin } from "./auth/bootstrap.js";
+import type { ScryptParams } from "./auth/password.js";
+import { SetupCode } from "./auth/setup-code.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
@@ -127,6 +132,22 @@ export interface ControlPlaneOptions {
 	corsOrigins?: readonly string[];
 	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
 	migrationsDir?: string;
+	/**
+	 * 初始管理员（环境变量 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`，src/auth/bootstrap.ts 的 parseInitialAdmin）：
+	 * 只在没有任何用户时生效；不给时没有任何用户就生成一次性的初始化码（打印在日志里，写进数据目录的 setup-code 文件）。
+	 */
+	initialAdmin?: InitialAdmin;
+	/** 登录的空闲期限（毫秒），默认 12 小时（环境变量 `SFLY_LOGIN_IDLE_HOURS`）。 */
+	loginIdleMs?: number;
+	/** 密码哈希的 scrypt 参数，默认 N=2^16、r=8、p=2；测试里调小。 */
+	scrypt?: ScryptParams;
+	/**
+	 * 除了公开地址（`publicHttpUrl`）以外还算同源的来源，登录 Cookie 的跨站检查用（src/auth/cross-site.ts）：
+	 * 开发时 vite 开发服务器的地址（`http://localhost:3000`）。生产里不用设置。
+	 */
+	sameOrigins?: readonly string[];
+	/** 信任反向代理的 `X-Forwarded-For`（环境变量 `SFLY_TRUST_PROXY`）；默认不信任，见 {@link HttpApiDeps.trustProxy}。 */
+	trustProxy?: boolean;
 }
 
 export interface ControlPlane {
@@ -298,6 +319,30 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 	});
+	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
+	const setupCode = new SetupCode(options.dataDir);
+	const accounts = new AccountService({
+		db: database.db,
+		clock,
+		setupCode,
+		scrypt: options.scrypt,
+		loginIdleMs: options.loginIdleMs,
+	});
+	try {
+		await mkdir(options.dataDir, { recursive: true });
+		await bootstrapFirstAdmin({
+			accounts,
+			setupCode,
+			initialAdmin: options.initialAdmin,
+			log: (message) => {
+				if (logger) console.log(message);
+			},
+		});
+	} catch (error) {
+		await database.close();
+		throw error;
+	}
+	const publicUrl = options.publicHttpUrl?.replace(/\/+$/, "");
 	const api = buildHttpApi({
 		database,
 		clock,
@@ -332,6 +377,19 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logScanBytes: options.logScanBytes,
 		webApp,
 		corsOrigins: options.corsOrigins,
+		accounts,
+		loginIdleMs: options.loginIdleMs,
+		// 登录 Cookie 的跨站检查：配置的公开地址（反向代理后面是浏览器看到的地址），加上开发时 vite 的地址；
+		// 没有配置公开地址时用请求的 Host 兜底。
+		origins: {
+			origins: [
+				...(publicUrl && URL.canParse(publicUrl) ? [new URL(publicUrl).origin] : []),
+				...(options.sameOrigins ?? []),
+			],
+			hostFallback: publicUrl === undefined,
+		},
+		publicHttps: publicUrl?.startsWith("https://") ?? false,
+		trustProxy: options.trustProxy,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });

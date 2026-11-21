@@ -63,6 +63,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "run",
 		why: "控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；以后按项目隔离时，它的运行部分要按项目过滤",
 	},
+	"/auth": {
+		kind: "account",
+		why: "账号类接口：登录、登出、当前用户、改自己的密码、初始化第一个管理员；定位在发起请求的用户自己，路径不带项目（ADR 0029「凭据」）",
+	},
+	"/users": {
+		kind: "account",
+		why: "平台管理员管理账号：列出、建用户、停用和恢复、重置密码；不属于任何项目，只认平台管理员的登录",
+	},
 	"/health": { kind: "system", exact: true, why: "健康检查：控制面自己的状态，不属于任何项目" },
 	"/docs": { kind: "system", exact: true, why: "用户文档的目录：公开的说明文字，不属于任何项目" },
 	"/docs/:page.md": {
@@ -192,6 +200,14 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 		}
 		if (target === "global" && kind !== "system") {
 			problems.push("resource.target 的 global 只用于 system");
+		}
+		if (target === "self" && kind !== "account") {
+			problems.push("resource.target 的 self 只用于 account（发起请求的用户自己）");
+		}
+		if (target === "self" && hasPathParams) {
+			problems.push(
+				"resource.target 写了 self，但路径里有参数：self 是发起请求的用户自己，管理别人的账号写 { params: 参数名 }",
+			);
 		}
 		if (kind === "system" && target !== "global") {
 			problems.push("system 没有具体的那一个，resource.target 写 global");

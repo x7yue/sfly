@@ -45,6 +45,8 @@ export const SCOPE_TABLE = {
 	agent: { write: "manage" },
 	feishu_bot: { write: "manage" },
 	system: { write: null },
+	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
+	account: { write: null },
 } as const satisfies Record<ResourceKind, { write: Scope | null }>;
 
 /**

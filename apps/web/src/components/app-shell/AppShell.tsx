@@ -9,8 +9,10 @@ import {
 	PanelLeftOpenIcon,
 	SearchIcon,
 } from "lucide-react";
+import { AccountMenu } from "#/components/account/AccountMenu";
 import { Keys } from "#/components/page";
 import { apiQuery } from "#/lib/api";
+import { useIdentity } from "#/lib/identity";
 import { useNickname } from "#/lib/nickname";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -19,7 +21,7 @@ import { useOverlays } from "./overlays";
 import { toggleSidebar, useSidebarCollapsed } from "./sidebar-state";
 
 /**
- * 中后台外壳（原型 shell()）：左侧可折叠的侧边栏 + 顶栏（面包屑、全局搜索入口、昵称）+ 可滚动的内容区。
+ * 中后台外壳（原型 shell()）：左侧可折叠的侧边栏 + 顶栏（面包屑、全局搜索入口、昵称或账号菜单）+ 可滚动的内容区。
  * 导航项右侧平时显示计数（Agent 在线数），悬停或键盘聚焦时换成跳转快捷键（占同一个位置，不挤宽）。
  * 由 routes/_shell.tsx 使用；全屏页（编排画布、运行监控）不放在 _shell 下面，不带外壳。
  * 面包屑来自各路由的 `staticData.crumb`。
@@ -158,6 +160,7 @@ function SidebarItem({
 function Topbar() {
 	const { open } = useOverlays();
 	const nickname = useNickname();
+	const identity = useIdentity();
 	const crumbs = useMatches().flatMap((m) => m.staticData.crumb ?? []);
 
 	return (
@@ -189,7 +192,9 @@ function Topbar() {
 				搜索页面、场景、命令…
 				<Keys shortcut="command-palette" className="ml-auto" />
 			</button>
-			{nickname && (
+			{/* 登录之后是账号菜单（显示名、修改密码、登出）；没有登录（#494 之前仍然可以）还是昵称按钮。 */}
+			{identity.status === "user" && <AccountMenu user={identity.user} />}
+			{identity.status !== "user" && nickname && (
 				<button
 					type="button"
 					title="修改昵称"
