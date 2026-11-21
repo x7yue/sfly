@@ -1,4 +1,4 @@
-// 用户与项目的第一次迁移（0030，ADR 0029，规格 #487）：在一份带有存量数据的库（升级前的 0000–0029）上执行，
+// 用户与项目的第一次迁移（0032，ADR 0029，规格 #487）：在一份带有存量数据的库（升级前的 0000–0031）上执行，
 // 现有数据全部落在默认项目里，已发布的标准节点包版本落在公共项目里，运行的项目和它的场景一致；迁移要能重复执行。
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { migrationsCopy, STATEMENT_BREAKPOINT } from "./support/migrations.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 /** 第一次迁移之前的最后一个迁移。 */
-const LAST_BEFORE = 29;
+const LAST_BEFORE = 31;
 const AT = "2026-01-01T00:00:00Z";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -81,7 +81,7 @@ async function seedLegacyData(client: pg.Client) {
 	);
 }
 
-describe("第一次迁移：用户与项目（0030，升级前已有数据的库）", () => {
+describe("第一次迁移：用户与项目（0032，升级前已有数据的库）", () => {
 	let testDb: TestDatabase;
 	let client: pg.Client | undefined;
 	let before: string;
@@ -268,7 +268,7 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 		expect(await snapshot()).toEqual(first);
 
 		// 迁移文件里写数据的语句（建项目、回填公共项目）再执行一遍：不报错，结果不变。
-		const sql = await readFile(join(defaultMigrationsDir, "0030_users_and_projects.sql"), "utf8");
+		const sql = await readFile(join(defaultMigrationsDir, "0032_users_and_projects.sql"), "utf8");
 		const dataStatements = sql
 			.split(STATEMENT_BREAKPOINT)
 			.map((statement) => statement.replace(/^(\s*--[^\n]*\n)+/, "").trim())
@@ -281,7 +281,7 @@ describe("第一次迁移：用户与项目（0030，升级前已有数据的库
 	it("迁移中途出错整个回滚，库里没有留下一半：修好之后重新执行成功", async () => {
 		const broken = await migrationsCopy({
 			edit: {
-				"0030_users_and_projects.sql": (sql) => `${sql}${STATEMENT_BREAKPOINT}\nSELECT 1/0;`,
+				"0032_users_and_projects.sql": (sql) => `${sql}${STATEMENT_BREAKPOINT}\nSELECT 1/0;`,
 			},
 		});
 		dirs.push(broken);

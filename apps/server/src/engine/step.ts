@@ -48,7 +48,7 @@ export interface Located {
 }
 
 /**
- * 引擎提供给辅助模块（等待节点 waits.ts、租约 leases.ts）的链推进操作。
+ * 引擎提供给辅助模块（租约 leases.ts、已移除节点 removed-nodes.ts）的链推进操作。
  * 调用方都已持有引擎的互斥锁，并在同一个 Step（事务）里完成迁移。
  */
 export interface ChainDriver {

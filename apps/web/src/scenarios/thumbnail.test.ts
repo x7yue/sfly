@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { layoutThumbnail, THUMB_WIDTH } from "./thumbnail";
 
-type Kind = "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "package";
+type Kind = "entry" | "subflow_entry" | "async" | "stop_subflow" | "package";
 
 /** 由若干条链组成的结构：每条链按顺序列出节点 ID，第一条是主链（以 entry 开头）。 */
 function structure(

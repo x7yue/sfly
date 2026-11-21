@@ -1,7 +1,7 @@
 // 验收场景 S2 并行（docs/SEMANTICS.md §8）：真实的控制面、真实的 Rust Agent、真实的 SDK 执行器和桩节点包。
 // 异步任务节点触发子流程，主链不等待；子流程嵌套 2 层；子流程失败不影响主链；运行等待所有链结束；
-// 定时节点 late；Sleep 节点；停止子流程节点停止嵌套子流程（被停止的节点收到 Cancelled、finally 照常执行，
-// always 清理照常执行，运行记为成功）。控制面用手动时钟：等待节点什么时候到点由测试决定，不依赖真实等待。
+// 停止子流程节点停止嵌套子流程（被停止的节点收到 Cancelled、finally 照常执行，always 清理照常执行，运行记为成功）。
+// 「让子流程停在某处」靠桩节点包的闸门节点：测试写放行文件才让它结束，不依赖真实等待。
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,6 @@ import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
-import type { ManualClock } from "./support/manual-clock.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -38,10 +37,10 @@ describeWithAgent("验收 S2：并行", () => {
 		if (dir) await rm(dir, { recursive: true, force: true });
 	});
 
-	it("主链触发两层子流程后不等待；孙子流程失败不影响主链和子流程；定时节点 late、Sleep 到点后运行才结束", async () => {
+	it("主链触发两层子流程后不等待；孙子流程失败不影响主链和子流程；子流程的闸门放行后运行才结束", async () => {
 		const api = new ApiClient(cp);
-		const clock = cp.clock as ManualClock;
-		const start = clock.now().getTime();
+		const file = (name: string) => join(dir, name);
+		const read = (name: string) => readFile(file(name), "utf8").catch(() => "");
 		const id = await api.orchestrationWith(
 			orchestration(
 				"s2-agent",
@@ -54,9 +53,7 @@ describeWithAgent("验收 S2：并行", () => {
 						},
 						stub("mark", "echo", { text: "main-${{ params.tag }}" }),
 						{ id: "spawn1", kind: "async", params: { x: "${{ nodes.mark.outputs.text }}" } },
-						// 手动时钟起点是上海时间 08:00，07:00 已经过去。
-						{ id: "late", kind: "timer", at: "07:00:00" },
-						stub("after_late", "echo", { text: "late=${{ nodes.late.outputs.late }}" }),
+						stub("after_spawn", "echo", { text: "after-${{ params.tag }}" }),
 					],
 					[
 						{
@@ -66,8 +63,12 @@ describeWithAgent("验收 S2：并行", () => {
 						},
 						stub("s1", "echo", { text: "${{ params.x }}/1" }),
 						{ id: "spawn2", kind: "async", params: { y: "${{ nodes.s1.outputs.text }}" } },
-						{ id: "nap", kind: "sleep", duration: "10m" },
-						stub("s1_done", "echo", { text: "woke ${{ nodes.nap.outputs.triggered_at }}" }),
+						// 子流程停在这里，等测试放行。
+						stub("hold", "gate", {
+							ready_file: file("hold-ready"),
+							release_file: file("hold-release"),
+						}),
+						stub("s1_done", "echo", { text: "released ${{ nodes.hold.outputs.attempt }}" }),
 					],
 					[
 						{
@@ -88,12 +89,14 @@ describeWithAgent("验收 S2：并行", () => {
 		);
 		const runId = await api.triggerOk(id, { tag: "T" });
 
-		// 主链结束、孙子流程失败、子流程停在 Sleep 上：运行仍在进行。
+		// 主链结束、孙子流程失败、子流程停在闸门上：运行仍在进行。
 		await eventually(async () => {
 			const run = await api.run(runId);
 			expect(chainOf(run, "entry").status).toBe("success");
 			expect(chainOf(run, "sub2").status).toBe("failed");
-			expect(nodeOf(chainOf(run, "sub1"), "nap").status).toBe("waiting");
+			// hold-ready 由节点代码写出，控制面可能还没处理 TaskStarted（仍是 dispatched），所以也要等。
+			expect(await read("hold-ready")).not.toBe("");
+			expect(nodeOf(chainOf(run, "sub1"), "hold").status).toBe("running");
 		}, 60_000);
 		let run = await api.run(runId);
 		expect(run.status).toBe("running");
@@ -102,20 +105,15 @@ describeWithAgent("验收 S2：并行", () => {
 		const sub1 = chainOf(run, "sub1");
 		const sub2 = chainOf(run, "sub2");
 
-		// 主链：异步任务节点立即成功并输出子流程实例 ID；定时节点已过点 → late。
+		// 主链：异步任务节点立即成功并输出子流程实例 ID，后面的节点不等子流程。
 		expect(statuses(main)).toEqual({
 			entry: "success",
 			mark: "success",
 			spawn1: "success",
-			late: "success",
-			after_late: "success",
+			after_spawn: "success",
 		});
 		expect(nodeOf(main, "spawn1").outputs).toEqual({ chain_instance_id: sub1.id });
-		expect(nodeOf(main, "late").outputs).toEqual({
-			triggered_at: new Date(start).toISOString(),
-			late: true,
-		});
-		expect(nodeOf(main, "after_late").outputs).toEqual({ text: "late=true" });
+		expect(nodeOf(main, "after_spawn").outputs).toEqual({ text: "after-T" });
 
 		// 两层嵌套，参数按值传入。
 		expect(sub1).toMatchObject({
@@ -137,10 +135,9 @@ describeWithAgent("验收 S2：并行", () => {
 			sub1: "success",
 			s1: "success",
 			spawn2: "success",
-			nap: "waiting",
+			hold: "running",
 			s1_done: "pending",
 		});
-		expect(nodeOf(sub1, "nap").attempts[0]?.wake_at).toBe(new Date(start + 600_000).toISOString());
 		expect(statuses(sub2)).toEqual({
 			sub2: "success",
 			s2: "success",
@@ -150,22 +147,16 @@ describeWithAgent("验收 S2：并行", () => {
 		expect(nodeOf(sub2, "s2").outputs).toEqual({ text: "main-T/1/2" });
 		expect(nodeOf(sub2, "s2_fail").error?.kind).toBe("node_error");
 
-		// Sleep 到点前不会醒。
-		clock.advance(599_000);
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		expect(nodeOf(chainOf(await api.run(runId), "sub1"), "nap").status).toBe("waiting");
-
-		// 到点：子流程继续，最后一条链结束后运行才结束；孙子流程失败 → 运行 failed，主链仍是 success。
-		clock.advance(1_000);
+		// 放行闸门：子流程继续，最后一条链结束后运行才结束；孙子流程失败 → 运行 failed，主链仍是 success。
+		await writeFile(file("hold-release"), "");
 		await eventually(async () => expect((await api.run(runId)).status).toBe("failed"), 60_000);
 		run = await api.run(runId);
 		expect(run.ended_at).not.toBeNull();
 		expect(chainOf(run, "entry").status).toBe("success");
 		const done = chainOf(run, "sub1");
 		expect(done.status).toBe("success");
-		const wokeAt = new Date(start + 600_000).toISOString();
-		expect(nodeOf(done, "nap").outputs).toEqual({ triggered_at: wokeAt });
-		expect(nodeOf(done, "s1_done").outputs).toEqual({ text: `woke ${wokeAt}` });
+		expect(nodeOf(done, "hold").outputs).toEqual({ attempt: 1 });
+		expect(nodeOf(done, "s1_done").outputs).toEqual({ text: "released 1" });
 	}, 120_000);
 
 	it("压测结束后停止监控：嵌套的两层子流程一起停止，节点里收到 Cancelled、finally 清理执行，always 清理照常执行，运行成功", async () => {

@@ -303,7 +303,7 @@ export type ChainStatus = RunStatus;
  * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
  * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
  */
-/** waiting：定时 / Sleep 节点正在等待唤醒时间（#14），或停止子流程节点在等被停止的子流程结束，不占用 Agent。 */
+/** waiting：停止子流程节点在等被停止的子流程结束，不占用 Agent。 */
 /** stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1）；没有开始执行的行是占位，不算一次尝试。 */
 /**
  * dispatched：已派发给 Agent，Agent 还在下载、安装节点包或启动执行器；Agent 上报 TaskStarted 后才是 running，
@@ -479,6 +479,11 @@ export const tasks = pgTable(
 		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
 		errorKind: text("error_kind").$type<ErrorKind>(),
 		errorMessage: text("error_message"),
+		/**
+		 * 节点失败时出错的位置（TaskError.location）：节点代码里的那一行，「模块.函数 第 N 行」。
+		 * 不是节点出错、取不到位置、旧版本 Agent 或 SDK 上报的、升级之前的任务为空。
+		 */
+		errorLocation: text("error_location"),
 		/** 进入 queued 的时间，派发按它排序。 */
 		queuedAt: timestamptz("queued_at").notNull(),
 		/** 用于同一时刻排队的任务保持创建顺序。 */
@@ -509,11 +514,6 @@ export const tasks = pgTable(
 		/** 日志里的 WARN / ERROR（{@link TaskLogIssues}）；还没有写过时为空。 */
 		logIssues: jsonb("log_issues").$type<TaskLogIssues>(),
 		/**
-		 * 定时 / Sleep 节点的唤醒时间（#14）：waiting 期间由控制面周期扫描，到期后节点成功。
-		 * 定时器的全部状态都在这一行里（status + wake_at），控制面重启后照常扫描。
-		 */
-		wakeAt: timestamptz("wake_at"),
-		/**
 		 * 运行中任务的租约到期时间（#15）：派发时设置，Agent 心跳续约；过期后任务以 agent_lost 失败。
 		 */
 		leaseExpiresAt: timestamptz("lease_expires_at"),
@@ -538,7 +538,6 @@ export const tasks = pgTable(
 		actionCapped: boolean("action_capped").notNull().default(false),
 	},
 	(t) => [
-		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
 		index("tasks_lease").on(t.leaseExpiresAt).where(sql`${t.status} = 'running'`),
 		index("tasks_queue_timeout").on(t.queueExpiresAt).where(sql`${t.status} = 'queued'`),
 		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),

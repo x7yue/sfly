@@ -16,11 +16,13 @@ import pytest
 from sfly.testing import run_node
 
 STUB_SRC = Path(__file__).resolve().parents[3] / "testdata" / "stub-package" / "src"
+TESTS = Path(__file__).resolve().parent
 
 
 @pytest.fixture(autouse=True)
 def stub_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.syspath_prepend(str(STUB_SRC))
+    monkeypatch.syspath_prepend(str(TESTS))
 
 
 def test_success_returns_outputs() -> None:
@@ -289,6 +291,37 @@ def test_exception_in_node_is_a_node_error_with_traceback() -> None:
     assert result.error.type == "RuntimeError"
     assert result.error.message == "RuntimeError: 磁盘满了"
     assert "Traceback" in result.error.traceback
+
+
+def test_a_failed_node_has_the_place_it_failed_and_a_traceback_without_executor_frames() -> None:
+    # 和 Agent 上执行的结果一致（同一个执行器；Agent 一端在 agent/tests/execute.rs）：
+    # 位置是节点代码里抛出的那一行，堆栈从节点代码开始。
+    import inspect
+
+    from sfly_stub import fail
+
+    result = run_node(fail, {"message": "磁盘满了"})
+
+    assert result.error is not None
+    source, first = inspect.getsourcelines(fail)
+    raised = first + next(i for i, line in enumerate(source) if "raise RuntimeError" in line)
+    assert result.error.location == f"sfly_stub.fail 第 {raised} 行"
+    assert "runner.py" not in result.error.traceback
+    assert result.error.traceback.startswith("Traceback (most recent call last):\n  File ")
+    assert "sfly_stub" in result.error.traceback.splitlines()[1]
+    # 日志里先有一行出错位置（ERROR 级），再是堆栈（标准错误）。
+    [place, *_] = [line for line in result.logs if line.message.startswith("出错位置：")]
+    assert (place.source, place.level) == ("sdk", "error")
+    assert place.message == f"出错位置：sfly_stub.fail 第 {raised} 行"
+
+
+def test_a_failure_that_is_not_the_nodes_has_no_place() -> None:
+    from sfly_stub import big
+
+    result = run_node(big, {"size": 1024 * 1024})
+
+    assert result.error is not None
+    assert result.error.location is None
 
 
 def test_output_over_1_mb_is_a_node_error() -> None:
@@ -829,3 +862,65 @@ def test_actions_and_marks_are_returned_and_do_not_show_up_in_the_logs() -> None
     ]
     # 事件管道里的动作、标记和摘要不会当成不认识的内容记进日志。
     assert [line.message for line in result.logs] == ["动作前", "动作后"]
+
+
+# ---- NaN 和无穷（#481）：JSON 里没有这些值，本地调试和 Agent 上给出一样的结果 ----
+
+
+@pytest.mark.parametrize(
+    ("node_name", "message"),
+    [
+        (
+            "ratio_is_nan",
+            "输出 ratio 的值是 NaN。JSON 里没有 NaN 和无穷，换成 None（表示没有值），"
+            "或者换成字符串（例如 str(值)）再返回",
+        ),
+        (
+            "nested_infinity",
+            '输出 stats["items"][2] 的值是 Infinity。'
+            "JSON 里没有 NaN 和无穷，换成 None（表示没有值），或者换成字符串（例如 str(值)）再返回",
+        ),
+    ],
+)
+def test_a_node_returning_nan_or_infinity_fails_with_the_message_the_agent_reports(
+    node_name: str, message: str
+) -> None:
+    # 执行器是同一份代码：Agent 上执行和本地调试读到同一份失败的 output.json。
+    import number_nodes
+
+    result = run_node(getattr(number_nodes, node_name))
+
+    assert result.status == "failed"
+    assert result.outputs is None
+    assert result.error is not None
+    assert result.error.kind == "node_error"
+    assert result.error.message == f"NodeOutputError: 节点返回值不能序列化为 JSON：{message}"
+
+
+def test_progress_with_nan_or_infinity_is_dropped_with_one_warning_like_a_metric() -> None:
+    import number_nodes
+
+    result = run_node(number_nodes.non_finite_progress)
+
+    assert result.status == "success", result.error
+    assert [(p.current, p.total, p.message) for p in result.progress] == [(2, 10, "正常")]
+    [warning] = [line for line in result.logs if line.level == "warn"]
+    assert warning.source == "sdk"
+    assert "ctx.progress" in warning.message
+    assert "有限数值" in warning.message
+
+
+def test_a_raw_message_with_nan_is_not_sent_and_a_warning_names_the_place() -> None:
+    import number_nodes
+
+    result = run_node(number_nodes.notify_non_finite, {"bot": "ops"})
+
+    assert result.status == "success", result.error
+    assert result.notifications == []
+    [warning] = [line for line in result.logs if line.level == "warn"]
+    # 来源是 sdk（SDK 在节点里检查的），不是 system（控制面的校验）；sdk-reference 写明了。
+    assert warning.source == "sdk"
+    assert warning.message == (
+        "ctx.notify 的消息没有发送：原始消息里有 NaN 或无穷（JSON 里没有这些值）："
+        'content["n"]（NaN）'
+    )

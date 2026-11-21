@@ -1,15 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import {
 	dispatchTarget,
-	isTimeZone,
 	NODE_DEFAULTS,
 	type NodeTypeIo,
 	orderedInputs,
-	parseDuration,
-	referencesIn,
 	schemaDescription,
 	stopCandidates,
-	timerTarget,
 } from "@sfly/orchestration";
 import type {
 	AgentView,
@@ -17,9 +13,8 @@ import type {
 	PackageSummary,
 	StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { useId, useRef } from "react";
+import { useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
-import { controlPlaneNow } from "#/lib/control-plane-time";
 import { MESSAGE, subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +27,6 @@ import { draftKey, useFieldErrors, useParsedField } from "../field-drafts";
 import { AgentSelect } from "./AgentSelect";
 import { Field, SectionTitle } from "./fields";
 import {
-	InsertReferenceButton,
 	InsertReferenceGlyph,
 	ReferenceEditor,
 	type ReferenceEditorHandle,
@@ -40,15 +34,12 @@ import {
 import type { ReferenceChoice } from "./reference-completion";
 import { Problems, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
-import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
 import { ReferenceActions } from "./ZoomEditor";
 
 type PackageNode = Extract<DocNode, { kind: "package" }>;
 type AsyncNode = Extract<DocNode, { kind: "async" }>;
-type TimerNode = Extract<DocNode, { kind: "timer" }>;
-type SleepNode = Extract<DocNode, { kind: "sleep" }>;
 type StopSubflowNode = Extract<DocNode, { kind: "stop_subflow" }>;
-type AlwaysNode = PackageNode | TimerNode | SleepNode | StopSubflowNode;
+type AlwaysNode = PackageNode | StopSubflowNode;
 
 /** 某个字段的静态检查警告（不阻止保存）。 */
 export type ProblemsOf = (input: string) => string[];
@@ -171,7 +162,7 @@ const SETTINGS = [
 	},
 ] as const;
 
-/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、定时、Sleep、停止子流程）。 */
+/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、停止子流程）。 */
 export function ExecutionSettings({
 	id,
 	node,
@@ -556,159 +547,6 @@ export function SubflowTrigger({
 							</span>
 						))}
 			</div>
-		</Field>
-	);
-}
-
-const TIME_PRESETS = ["09:00:00", "09:30:00", "12:00:00", "15:00:00", "18:00:00"];
-const DURATION_PRESETS = ["5s", "30s", "1m", "5m", "10m", "1h"];
-const COMMON_TZ = ["Asia/Shanghai", "Asia/Hong_Kong", "Asia/Tokyo", "Europe/London", "UTC"];
-
-function Presets({
-	label,
-	values,
-	onPick,
-}: {
-	label: string;
-	values: string[];
-	onPick(v: string): void;
-}) {
-	return (
-		<fieldset aria-label={label} className="m-0 flex flex-wrap gap-1 border-0 p-0">
-			{values.map((v) => (
-				<Button key={v} size="sm" className="font-mono" onClick={() => onPick(v)}>
-					{v}
-				</Button>
-			))}
-		</fieldset>
-	);
-}
-
-/** 定时节点：触发时刻（HH:MM:SS 或日期时间）与时区。 */
-export function TimerForm({
-	node,
-	problemsOf,
-	onChange,
-}: {
-	node: TimerNode;
-	problemsOf: ProblemsOf;
-	onChange(node: TimerNode): void;
-}) {
-	const tzList = useId();
-	const atProblems = problemsOf("at");
-	const tzProblems = problemsOf("tz");
-	const tzValid = isTimeZone(node.tz);
-	const target = tzValid ? timerTarget(node.at, node.tz, new Date(controlPlaneNow())) : null;
-	const timeOfDay = /^\d{2}:\d{2}:\d{2}$/.test(node.at.trim());
-	return (
-		<>
-			<Field
-				label="触发时刻"
-				fieldKey={draftKey(node.id, "at")}
-				error={atProblems.length > 0 ? atProblems.join("；") : undefined}
-				help={
-					target
-						? timeOfDay
-							? "节点开始执行当天的该时刻；已过则立即成功并输出 late = true"
-							: "到这个时刻触发；已过则立即成功并输出 late = true"
-						: "HH:MM:SS，或 2026-01-02T09:30:00 这样的日期时间"
-				}
-			>
-				{(control) => (
-					<div className="flex flex-col gap-1.5">
-						<Input
-							{...control}
-							aria-invalid={control["aria-invalid"] || target === null || undefined}
-							className="h-9 font-mono text-base"
-							value={node.at}
-							spellCheck={false}
-							onChange={(e) => onChange({ ...node, at: e.target.value })}
-						/>
-						<Presets
-							label="常用时刻"
-							values={TIME_PRESETS}
-							onPick={(at) => onChange({ ...node, at })}
-						/>
-					</div>
-				)}
-			</Field>
-			<Field
-				label="时区"
-				error={tzProblems.length > 0 ? tzProblems.join("；") : undefined}
-				help={`IANA 时区名，默认 ${DEFAULT_TZ}`}
-			>
-				{(control) => (
-					<>
-						<Input
-							{...control}
-							list={tzList}
-							aria-invalid={control["aria-invalid"] || !tzValid || undefined}
-							className="font-mono text-xs"
-							value={node.tz}
-							spellCheck={false}
-							onChange={(e) => onChange({ ...node, tz: e.target.value })}
-						/>
-						<datalist id={tzList}>
-							{COMMON_TZ.map((tz) => (
-								<option key={tz} value={tz} />
-							))}
-						</datalist>
-					</>
-				)}
-			</Field>
-		</>
-	);
-}
-
-/** Sleep 节点：等待时长（可以引用参数或前序节点的输出）。 */
-export function SleepForm({
-	node,
-	choices,
-	problemsOf,
-	onChange,
-}: {
-	node: SleepNode;
-	choices: ReferenceChoice[];
-	problemsOf: ProblemsOf;
-	onChange(node: SleepNode): void;
-}) {
-	const editor = useRef<ReferenceEditorHandle>(null);
-	const problems = problemsOf("duration");
-	const hasReference = referencesIn(node.duration).length > 0;
-	const ms = hasReference ? null : parseDuration(node.duration);
-	return (
-		<Field
-			label="等待时长"
-			fieldKey={draftKey(node.id, "duration")}
-			aside={<InsertReferenceButton name="等待时长" editor={editor} />}
-			error={problems.length > 0 ? problems.join("；") : undefined}
-			help={
-				hasReference
-					? "执行时解析引用：得到 30s、10m 这样的时长，或按秒计的数字"
-					: ms !== null
-						? `等待 ${describeDuration(ms)}后继续`
-						: "单位：ms、s、m、h、d，可以组合，如 1h30m"
-			}
-		>
-			{(control) => (
-				<div className="flex flex-col gap-1.5">
-					<ReferenceEditor
-						ref={editor}
-						control={control}
-						label="等待时长"
-						value={node.duration}
-						choices={choices}
-						placeholder="30s、10m 或 ${{ params.<名称> }}"
-						invalid={!hasReference && ms === null}
-						onChange={(duration) => onChange({ ...node, duration })}
-					/>
-					<Presets
-						label="常用时长"
-						values={DURATION_PRESETS}
-						onPick={(duration) => onChange({ ...node, duration })}
-					/>
-				</div>
-			)}
 		</Field>
 	);
 }

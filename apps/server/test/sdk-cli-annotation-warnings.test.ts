@@ -5,16 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { echo } from "./support/chains.js";
+import { FakeAgent } from "./support/fake-agent.js";
+import { publishPackage } from "./support/package-archive.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const baseDocument = {
+	default_agent: "agent-a",
 	nodes: [
 		{ id: "entry", kind: "entry", params: [] },
-		{ id: "pause", kind: "sleep", duration: "5m", display_name: "等灰度" },
+		{ ...echo("pause"), display_name: "等灰度" },
 		{ id: "spawn", kind: "async" },
 		{ id: "sub", kind: "subflow_entry", name: "report", params: [] },
-		{ id: "wait", kind: "sleep", duration: "5m" },
+		echo("wait"),
 	],
 	edges: [
 		{ from: "entry", to: "pause", kind: "chain" },
@@ -22,7 +26,7 @@ const baseDocument = {
 		{ from: "spawn", to: "sub", kind: "dispatch" },
 		{ from: "sub", to: "wait", kind: "chain" },
 	],
-	packages: {},
+	packages: { stub: "1.0.0" },
 };
 
 const annotations = [
@@ -70,6 +74,9 @@ describe("sfly scenario push：注释框的警告 → 控制面", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
+		// 触发前的预检要求节点包已发布、Agent 已注册（不必在线）。
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		await (await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" })).disconnect();
 		dir = await mkdtemp(join(tmpdir(), "sfly-annotation-warnings-"));
 	}, 120_000);
 

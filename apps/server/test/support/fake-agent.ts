@@ -449,19 +449,20 @@ export class FakeAgent {
 		});
 	}
 
-	/** 上报任务失败，等待 Ack。 */
+	/** 上报任务失败，等待 Ack。`location` 是出错的位置（节点代码里的那一行），不给表示没有。 */
 	fail(
 		task: TaskRef,
 		message = "boom",
 		kind: ErrorKind = ErrorKind.NODE_ERROR,
 		clock?: AgentClockInit,
+		location = "",
 	): Promise<Ack> {
 		return this.report({
 			...clock,
 			taskId: task.taskId,
 			attempt: task.attempt,
 			status: TaskStatus.FAILED,
-			error: { kind, message },
+			error: { kind, message, location },
 		});
 	}
 

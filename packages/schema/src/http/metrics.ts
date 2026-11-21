@@ -270,12 +270,10 @@ export const PlatformMetrics = z.object({
 			attempts: z.number().int().positive(),
 			/** 尝试次数减 1。 */
 			retries: z.number().int().nonnegative(),
-			/** 各次尝试从进入排队到结束的时长之和（含排队与等待）。 */
+			/** 各次尝试从进入排队到结束的时长之和（含排队）。 */
 			duration_ms: z.number().int().nonnegative(),
 			/** 包节点：各次尝试从进入排队到开始执行（含派发、安装）的时长之和。 */
 			queue_ms: z.number().int().nonnegative(),
-			/** 定时 / Sleep 节点：等待的时长之和。 */
-			wait_ms: z.number().int().nonnegative(),
 		}),
 	),
 	/** 本运行同时执行中的任务数（包节点从开始执行到结束）。 */

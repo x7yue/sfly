@@ -441,7 +441,7 @@ describe("标准节点包升级后在公共项目里：默认项目的接口照�
 		const before = await (await api.get("/packages/sfly-std/versions/0.1.0/archive")).arrayBuffer();
 		expect(before.byteLength).toBeGreaterThan(0);
 
-		// 升级：迁移把 sfly-std 的已发布版本放进公共项目（0030）。
+		// 升级：迁移把 sfly-std 的已发布版本放进公共项目（0032）。
 		const client = new pg.Client({ connectionString: cp.database.url });
 		await client.connect();
 		try {

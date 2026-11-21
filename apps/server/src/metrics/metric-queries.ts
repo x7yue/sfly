@@ -565,7 +565,7 @@ export class MetricQueries {
 	}
 
 	/**
-	 * 平台自带图表（不新增存储）：节点耗时、重试次数、排队与等待时长由任务记录计算；并发任务数与 Agent 槽位占用
+	 * 平台自带图表（不新增存储）：节点耗时、重试次数、排队时长由任务记录计算；并发任务数与 Agent 槽位占用
 	 * 由任务的执行区间（started_at 到 ended_at，执行中的到现在）推导，按目标点数分桶。
 	 */
 	async platform(runId: string, points: number): Promise<PlatformMetrics | undefined> {
@@ -582,14 +582,10 @@ export class MetricQueries {
 			const kind = kinds.get(first.nodeId) ?? "unknown";
 			let duration = 0;
 			let queue = 0;
-			let wait = 0;
 			for (const t of attempts) {
 				const queued = t.queuedAt.getTime();
 				duration += end(t) - queued;
 				if (kind === "package") queue += (t.startedAt?.getTime() ?? end(t)) - queued;
-				if (kind === "timer" || kind === "sleep") {
-					wait += end(t) - (t.startedAt?.getTime() ?? queued);
-				}
 			}
 			return {
 				chain_instance_id: first.chainInstanceId,
@@ -599,7 +595,6 @@ export class MetricQueries {
 				retries: attempts.length - 1,
 				duration_ms: Math.max(0, Math.round(duration)),
 				queue_ms: Math.max(0, Math.round(queue)),
-				wait_ms: Math.max(0, Math.round(wait)),
 			};
 		});
 

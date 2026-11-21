@@ -3,6 +3,7 @@
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { echo } from "./support/chains.js";
 import { dropDocumentFields } from "./support/legacy-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -10,9 +11,10 @@ const document = {
 	default_agent: "agent-a",
 	nodes: [
 		{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } },
-		{ id: "wait", kind: "sleep", duration: "5s", position: { x: 252, y: 0 } },
+		{ ...echo("wait"), position: { x: 252, y: 0 } },
 	],
 	edges: [{ from: "entry", to: "wait", kind: "chain" }],
+	packages: { stub: "1.0.0" },
 };
 
 interface WithDocument {

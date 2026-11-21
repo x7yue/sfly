@@ -1079,7 +1079,7 @@ test.describe("编排画布", () => {
 				"sfly.addNode.recent",
 				JSON.stringify([
 					"package:demo-checks/http_check",
-					"builtin:sleep",
+					"builtin:stop_subflow",
 					"package:demo-checks/ping",
 				]),
 			),

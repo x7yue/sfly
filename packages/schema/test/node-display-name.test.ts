@@ -10,8 +10,6 @@ const EMOJI = "😀";
 const nodes = {
 	entry: { id: "n", kind: "entry" },
 	async: { id: "n", kind: "async" },
-	timer: { id: "n", kind: "timer", at: "09:30:00" },
-	sleep: { id: "n", kind: "sleep", duration: "30s" },
 	stop_subflow: { id: "n", kind: "stop_subflow" },
 	package: { id: "n", kind: "package", package: "std", node: "shell" },
 } as const;
@@ -61,7 +59,7 @@ describe("节点的显示名称 display_name", () => {
 	});
 
 	it("只能写一行", () => {
-		const result = OrchestrationDocument.safeParse(withName("sleep", "第一行\n第二行"));
+		const result = OrchestrationDocument.safeParse(withName("stop_subflow", "第一行\n第二行"));
 		expect(result.success).toBe(false);
 		expect(result.error?.issues.map((i) => i.message)).toEqual(["只能写一行"]);
 	});
@@ -82,9 +80,9 @@ describe("显示名称：导出的文档 JSON Schema 与 zod 判断一致", () =
 
 	it.each([
 		["package", "创建测试用户", true],
-		["sleep", EMOJI.repeat(40), true],
-		["sleep", EMOJI.repeat(41), false],
-		["timer", "创".repeat(41), false],
+		["stop_subflow", EMOJI.repeat(40), true],
+		["stop_subflow", EMOJI.repeat(41), false],
+		["async", "创".repeat(41), false],
 		["async", "第一行\n第二行", false],
 	] as const)("%s 节点写 %j：%s", (kind, text, ok) => {
 		const document = withName(kind, text);

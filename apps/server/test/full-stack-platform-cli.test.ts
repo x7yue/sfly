@@ -66,6 +66,13 @@ const FAILING_BODY = `    ctx.log.warning("%s 的后端池是空的", host)
     raise RuntimeError(f"{host} 返回 503")
 `;
 
+/** 节点故意失败时抛出的那一行（源文件是 MODULE_HEAD + FAILING_BODY）：命令行给出的出错位置要指到这里。 */
+const RAISED_LINE =
+	`${MODULE_HEAD}${FAILING_BODY}`
+		.split("\n")
+		.findIndex((line) => line.includes("raise RuntimeError")) + 1;
+const RAISED_AT = `${PACKAGE.replaceAll("-", "_")}.${NODE} 第 ${RAISED_LINE} 行`;
+
 const FIXED_BODY = `    ctx.metric("latency", 12)
     ctx.log.info("%s 返回 200", host)
     return {"status": 200, "latency_ms": 12}
@@ -236,6 +243,8 @@ describeWithAgent("全栈：AI 编程助手只用 sfly 命令行走完联调闭�
 			"api.test 返回 503",
 			"开始探测 api.test",
 			"api.test 的后端池是空的",
+			// 出错位置紧跟在失败原因后面（#471）：不用翻堆栈就知道改节点代码的哪一行。
+			`错误：node_error：RuntimeError: api.test 返回 503\n    出错位置：${RAISED_AT}\n`,
 		]) {
 			expect(failed.stdout).toContain(text);
 		}
@@ -249,11 +258,19 @@ describeWithAgent("全栈：AI 编程助手只用 sfly 命令行走完联调闭�
 		const node = await api.node(failedRun, NODE);
 		expect(node.status).toBe("failed");
 		expect(node.agent).toBe(LOCAL_AGENT);
+		// Agent 上报的位置经控制面存下来，节点和每次尝试的错误里都有；堆栈从节点代码开始，没有执行器的帧。
+		expect(node.error?.location).toBe(RAISED_AT);
+		expect(node.attempts[0]?.error?.location).toBe(RAISED_AT);
+		expect(node.error?.message).not.toContain("runner.py");
+		const shown = await ok(["run", "show", failedRun]);
+		expect(shown.stdout).toContain(`出错位置：${RAISED_AT}`);
 
 		// 需要更多日志时按失败任务读。
 		const logs = await ok(["run", "logs", failedRun, "--failed"]);
 		expect(logs.stdout).toContain("main:probe");
 		expect(logs.stdout).toContain("api.test 返回 503");
+		// 只看日志也看得到出错的位置。
+		expect(logs.stdout).toContain(`出错位置：${RAISED_AT}`);
 	}, 180_000);
 
 	it("改好代码再运行（沿用同一份副本，不用重新 sfly dev）：退出码 0，输出、日志、指标符合预期", async () => {

@@ -520,7 +520,8 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["tasks", "action_details", "integer DEFAULT 0 NOT NULL"],
 	["tasks", "action_rev", "bigint DEFAULT 0 NOT NULL"],
 	["tasks", "action_capped", "boolean DEFAULT false NOT NULL"],
-	// 0030（用户与项目，ADR 0029）：根资源的项目，和身份列旁的用户 ID、令牌。当前代码写根资源时都写 project_id。
+	["tasks", "error_location", "text"],
+	// 0032（用户与项目，ADR 0029）：根资源的项目，和身份列旁的用户 ID、令牌。当前代码写根资源时都写 project_id。
 	["orchestrations", "project_id", "text DEFAULT 'default' NOT NULL"],
 	["agents", "project_id", "text DEFAULT 'default' NOT NULL"],
 	["agents", "disabled_at", "timestamp with time zone"],
