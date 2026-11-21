@@ -5,15 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { echo } from "./support/chains.js";
+import { publishPackage } from "./support/package-archive.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const baseDocument = {
+	default_agent: "agent-a",
 	nodes: [
 		{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } },
-		{ id: "pause", kind: "sleep", duration: "5s", position: { x: 252, y: 0 } },
+		{ ...echo("pause"), position: { x: 252, y: 0 } },
 	],
 	edges: [{ from: "entry", to: "pause", kind: "chain" }],
+	packages: { stub: "1.0.0" },
 };
 
 interface StickyNote {
@@ -57,6 +61,8 @@ describe("sfly scenario show / push：便签 → 控制面", () => {
 		const cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ version: cliVersion });
 		api = new ApiClient(cp);
+		// 保存时不带「节点包没有发布」的警告（push 的输出里不该有警告）。
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 		dir = await mkdtemp(join(tmpdir(), "sfly-sticky-notes-"));
 	}, 120_000);
 

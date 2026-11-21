@@ -7,7 +7,6 @@ import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
-import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -336,7 +335,8 @@ describe("动作摘要", () => {
 						[
 							{ id: "entry", kind: "entry", params: [param("token", { required: true })] },
 							spawn("spawn1"),
-							{ id: "nap", kind: "sleep", duration: "20s" },
+							// 主链停在这里：测试放行后才创建 login 子流程。
+							echo("hold"),
 							spawn("spawn2", { key: "${{ params.token }}" }),
 						],
 						[{ id: "watch", kind: "subflow_entry", params: [] }, echo("a")],
@@ -358,7 +358,9 @@ describe("动作摘要", () => {
 			{ token: "s3cr3t" },
 		);
 		// a 在 secret 出现之前写下进度和正在做的动作：写入时还不知道 s3cr3t 是 secret。
-		const a = await agent.nextAssign();
+		const first = [await agent.nextAssign(), await agent.nextAssign()];
+		const a = first.find((t) => t.nodeId === "a") as AssignedTask;
+		const hold = first.find((t) => t.nodeId === "hold") as AssignedTask;
 		agent.progress(a, 1, 3, "用 s3cr3t 登录");
 		agent.actionSummary(a, {
 			total: 1,
@@ -366,9 +368,9 @@ describe("动作摘要", () => {
 			running: [doing(agent, 1, "登录 s3cr3t", T0 + 1_000)],
 		});
 		await agent.sync();
-		// nap 到点后 spawn2 创建 login 子流程，它的 secret 参数 key 就是 s3cr3t（不到 a 的租约期限，a 还在执行）。
-		(cp.clock as ManualClock).advance(20_000);
-		await agent.nextAssign();
+		// hold 成功后 spawn2 创建 login 子流程，它的 secret 参数 key 就是 s3cr3t（a 还在执行）。
+		await agent.succeed(hold);
+		expect((await agent.nextAssign()).nodeId).toBe("b");
 
 		const attempt = async () =>
 			(await api.run(runId)).chains

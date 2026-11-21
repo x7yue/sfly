@@ -57,8 +57,8 @@ describe("新建停止子流程节点", () => {
 });
 
 describe("添加节点菜单的内置节点", () => {
-	it("已移除的节点种类（飞书通知）不再出现在菜单里", () => {
-		expect(BUILTIN_ITEMS.map((item) => item.kind)).not.toContain("feishu_notify");
+	it.each(["feishu_notify", "timer", "sleep"])("已移除的节点种类 %s 不再出现在菜单里", (kind) => {
+		expect(BUILTIN_ITEMS.map((item) => item.kind)).not.toContain(kind);
 	});
 });
 
@@ -95,9 +95,9 @@ describe("添加节点菜单的分组与「最近使用」", () => {
 	});
 
 	it("最近使用：新的在最前，重复的移到最前不重复出现，最多保留 5 项", () => {
-		expect(pushRecent(["builtin:sleep", "builtin:timer"], "builtin:timer")).toEqual([
-			"builtin:timer",
-			"builtin:sleep",
+		expect(pushRecent(["builtin:async", "builtin:stop_subflow"], "builtin:stop_subflow")).toEqual([
+			"builtin:stop_subflow",
+			"builtin:async",
 		]);
 		const many = ["a", "b", "c", "d", "e"].reduce<string[]>((list, v) => pushRecent(list, v), []);
 		expect(many).toEqual(["e", "d", "c", "b", "a"]);
@@ -106,7 +106,7 @@ describe("添加节点菜单的分组与「最近使用」", () => {
 	});
 
 	it("身份只记内置种类或包名与节点名，不记版本", () => {
-		expect(itemValue({ kind: "sleep" })).toBe("builtin:sleep");
+		expect(itemValue({ kind: "stop_subflow" })).toBe("builtin:stop_subflow");
 		expect(
 			itemValue({
 				kind: "package",
@@ -122,18 +122,25 @@ describe("添加节点菜单的分组与「最近使用」", () => {
 		const groups: PackageGroup[] = packageGroups(packages, [], {});
 		const recent = [
 			packageValue({ package: "demo-checks", node: "ping" }),
-			builtinValue("sleep"),
+			builtinValue("stop_subflow"),
 			packageValue({ package: "gone", node: "x" }),
 			packageValue({ package: "demo-checks", node: "removed_in_this_version" }),
 		];
 		const items = recentItems(recent, availableBuiltins(false), groups);
-		expect(items.map((i) => i.value)).toEqual(["package:demo-checks/ping", "builtin:sleep"]);
+		expect(items.map((i) => i.value)).toEqual(["package:demo-checks/ping", "builtin:stop_subflow"]);
 		expect(items[0]?.entry).toMatchObject({
 			kind: "package",
 			package: "demo-checks",
 			node: "ping",
 		});
-		expect(items[1]?.entry.kind).toBe("sleep");
+		expect(items[1]?.entry.kind).toBe("stop_subflow");
+	});
+
+	it("最近使用里存着已移除节点（定时、Sleep、飞书通知）的旧项时丢掉，不报错", () => {
+		const recent = ["builtin:timer", "builtin:async", "builtin:sleep", "builtin:feishu_notify"];
+		expect(recentItems(recent, availableBuiltins(false), []).map((i) => i.value)).toEqual([
+			"builtin:async",
+		]);
 	});
 
 	it("有来源节点时不列子流程入口，最近使用里的子流程入口也随之丢掉", () => {

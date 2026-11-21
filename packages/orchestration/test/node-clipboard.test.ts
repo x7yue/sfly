@@ -1,4 +1,4 @@
-import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import type { OrchestrationDocument, OrchestrationNode, StoredNode } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	type CopiedNode,
@@ -28,11 +28,17 @@ const source: OrchestrationDocument = {
 		{ id: "entry", kind: "entry", position: { x: 0, y: 0 }, params: [] },
 		fetch,
 		{ id: "sub", kind: "subflow_entry", name: "子流程", position: { x: 0, y: 300 }, params: [] },
-		{ id: "sleep_1", kind: "sleep", always: false, duration: "30s", position: { x: 504, y: 0 } },
+		{
+			id: "stop_1",
+			kind: "stop_subflow",
+			always: false,
+			subflow: "sub",
+			position: { x: 504, y: 0 },
+		},
 	],
 	edges: [
 		{ from: "entry", to: "fetch", kind: "chain" },
-		{ from: "fetch", to: "sleep_1", kind: "chain" },
+		{ from: "fetch", to: "stop_1", kind: "chain" },
 	],
 	packages: { "demo-checks": "1.2.0" },
 	annotations: [],
@@ -75,11 +81,11 @@ describe("复制到剪贴板的内容", () => {
 	});
 
 	it("内置节点没有包版本", () => {
-		const text = copiedNodeText(source, "sleep_1");
+		const text = copiedNodeText(source, "stop_1");
 		if (!text.ok) throw new Error(text.reason);
 		expect(JSON.parse(text.text)).toEqual({
 			type: "sfly/node",
-			node: { id: "sleep_1", kind: "sleep", always: false, duration: "30s" },
+			node: { id: "stop_1", kind: "stop_subflow", always: false, subflow: "sub" },
 		});
 	});
 
@@ -99,6 +105,18 @@ describe("复制到剪贴板的内容", () => {
 	});
 });
 
+describe("已移除种类的节点（ADR 0028）", () => {
+	const reason = "已不再支持的节点不能复制或创建副本";
+
+	it.each(["feishu_notify", "timer", "sleep"] as const)("%s：不能复制，也不能创建副本", (kind) => {
+		const gone: StoredNode = { id: "gone", kind, position: { x: 0, y: 0 } };
+		const doc = { nodes: [gone], packages: {} };
+		expect(copyProblem({ kind })).toBe(reason);
+		expect(copiedNodeText(doc, "gone")).toEqual({ ok: false, reason });
+		expect(duplicateNode(doc, "gone", { x: 0, y: 200 })).toEqual({ ok: false, reason });
+	});
+});
+
 describe("读剪贴板里的节点", () => {
 	it("读回复制的节点和包版本", () => {
 		const read = copied(source, "fetch");
@@ -107,7 +125,7 @@ describe("读剪贴板里的节点", () => {
 	});
 
 	it("不是节点、类型标记不对、结构不合法时得到 null", () => {
-		const node = { id: "x", kind: "sleep", duration: "1s" };
+		const node = { id: "x", kind: "stop_subflow", subflow: "sub" };
 		for (const text of [
 			"",
 			"hello",
@@ -117,11 +135,14 @@ describe("读剪贴板里的节点", () => {
 			JSON.stringify({ node }),
 			JSON.stringify({ type: "other", node }),
 			JSON.stringify({ type: "sfly/node" }),
-			JSON.stringify({ type: "sfly/node", node: { ...node, duration: "" } }),
+			JSON.stringify({ type: "sfly/node", node: { ...node, subflow: "" } }),
 			JSON.stringify({ type: "sfly/node", node: { ...node, kind: "nope" } }),
 			JSON.stringify({ type: "sfly/node", node: { ...node, extra: 1 } }),
 			// 入口节点不能粘贴。
 			JSON.stringify({ type: "sfly/node", node: { id: "e", kind: "entry", params: [] } }),
+			// 已移除种类的节点不能粘贴（ADR 0028）。
+			JSON.stringify({ type: "sfly/node", node: { id: "t", kind: "timer", at: "09:30:00" } }),
+			JSON.stringify({ type: "sfly/node", node: { id: "s", kind: "sleep", duration: "1s" } }),
 			// 包版本必须与节点的包一致。
 			JSON.stringify({
 				type: "sfly/node",
@@ -155,7 +176,7 @@ describe("粘贴", () => {
 	});
 
 	it("新 ID 去掉原 ID 末尾的序号再编号，不与已有节点重复", () => {
-		expect(placed(placeCopy(source, copied(source, "sleep_1"), { x: 0, y: 0 })).id).toBe("sleep_2");
+		expect(placed(placeCopy(source, copied(source, "stop_1"), { x: 0, y: 0 })).id).toBe("stop_2");
 		const twice = placed(placeCopy(source, copied(source, "fetch"), { x: 0, y: 0 })).doc;
 		expect(placed(placeCopy(twice, copied(source, "fetch"), { x: 0, y: 0 })).id).toBe("fetch_2");
 	});
@@ -178,7 +199,7 @@ describe("粘贴", () => {
 	});
 
 	it("内置节点不改包版本锁定；入口节点不能粘贴", () => {
-		const edit = placed(placeCopy(target, copied(source, "sleep_1"), { x: 0, y: 0 }));
+		const edit = placed(placeCopy(target, copied(source, "stop_1"), { x: 0, y: 0 }));
 		expect(edit.doc.packages).toEqual({});
 		const entry: CopiedNode = { node: { id: "e", kind: "entry", params: [] } };
 		expect(placeCopy(target, entry, { x: 0, y: 0 })).toEqual({
