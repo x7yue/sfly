@@ -10,6 +10,7 @@ import {
 } from "@sfly/schema";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { taskActions } from "../db/schema.js";
+import type { SecretSet } from "../logs/secrets.js";
 import { isDoing } from "./action-summary.js";
 import { actionField, actionName, actionReason, mergeFields } from "./action-text.js";
 
@@ -63,7 +64,7 @@ export type PreparedEvent =
 export function prepareEvents(
 	events: readonly ActionEvent[],
 	controlPlaneTime: (monotonicMs: bigint) => Date,
-	secrets: readonly string[],
+	secrets: SecretSet,
 ): PreparedEvent[] {
 	const prepared: PreparedEvent[] = [];
 	for (const e of events) {
@@ -103,10 +104,7 @@ export function prepareEvents(
 }
 
 /** 字段按写的先后，键和值打码、值截断（{@link actionField}）；超过 8 个时丢弃多出的（被改过的 SDK）。 */
-function fieldsOf(
-	fields: readonly ActionField[],
-	secrets: readonly string[],
-): Record<string, string> {
+function fieldsOf(fields: readonly ActionField[], secrets: SecretSet): Record<string, string> {
 	return mergeFields(
 		{},
 		fields.map((f) => actionField(f.key, f.value, secrets)),

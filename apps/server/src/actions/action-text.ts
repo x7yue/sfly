@@ -1,5 +1,5 @@
 import { ACTION_LIMITS } from "@sfly/schema";
-import { maskSecrets } from "../logs/secrets.js";
+import type { SecretSet } from "../logs/secrets.js";
 import { clipChars } from "../util/text.js";
 
 /**
@@ -12,25 +12,21 @@ import { clipChars } from "../util/text.js";
 const { nameChars, valueChars, reasonChars, fields: maxFields } = ACTION_LIMITS;
 
 /** 动作或标记的名称。 */
-export const actionName = (name: string, secrets: readonly string[]): string =>
-	clipChars(maskSecrets(name, secrets), nameChars);
+export const actionName = (name: string, secrets: SecretSet): string =>
+	clipChars(secrets.mask(name), nameChars);
 
 /** 失败原因：超过上限时和 SDK 一样留前 `reasonChars - 1` 个字符、末尾加「…」。 */
-export function actionReason(reason: string, secrets: readonly string[]): string {
-	const chars = Array.from(maskSecrets(reason, secrets));
+export function actionReason(reason: string, secrets: SecretSet): string {
+	const chars = Array.from(secrets.mask(reason));
 	return chars.length > reasonChars
 		? `${chars.slice(0, reasonChars - 1).join("")}…`
 		: chars.join("");
 }
 
 /** 一个字段：键和值里的 secret 值都打码，键截到名称的上限、值截到字段值的上限。 */
-export const actionField = (
-	key: string,
-	value: string,
-	secrets: readonly string[],
-): [string, string] => [
-	clipChars(maskSecrets(key, secrets), nameChars),
-	clipChars(maskSecrets(value, secrets), valueChars),
+export const actionField = (key: string, value: string, secrets: SecretSet): [string, string] => [
+	clipChars(secrets.mask(key), nameChars),
+	clipChars(secrets.mask(value), valueChars),
 ];
 
 /** 补充的字段覆盖同名的、新的接在后面，合计不超过 `ACTION_LIMITS.fields` 个，多出的丢弃。 */

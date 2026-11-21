@@ -1,0 +1,191 @@
+// 节点把一个 secret 值写出来时常见的写法（#479）：测试里让假节点把每个 secret 值用这些写法写进日志、进度、动作、输出和错误，
+// 看每个出口有没有认出来。故意不用控制面里的打码代码（apps/server/src/logs/secrets.ts）算这些写法，免得测试和实现一起错。
+// 值都是明显的假值。
+import { readFileSync } from "node:fs";
+
+const NUMBER_TABLE = JSON.parse(
+	readFileSync(new URL("../../../../testdata/number-form-cases.json", import.meta.url), "utf8"),
+) as { cases: Array<{ sent: string; serde: string; python: string }> };
+
+/** 数字被节点（Python）打印出来的写法：取自 testdata/number-form-cases.json（真实的 serde_json 和 Python 产生的，三端共用）。 */
+const NUMBER_FORMS = new Map(NUMBER_TABLE.cases.map((c) => [c.sent, c.python]));
+
+/** 数字被 Agent（serde_json）写进 task.json 的写法：取自同一张表的 serde 一列。 */
+const SERDE_FORMS = new Map(NUMBER_TABLE.cases.map((c) => [c.sent, c.serde]));
+
+/**
+ * 超出 64 位整数范围、又小于 1e21 的整数：控制面写成 `98765432109876540000`，Agent 的 serde_json 按浮点解析，节点（Python）打印成
+ * `9.876543210987654e+19`。用文本生成：写成数字字面量会让 lint 报「精度丢失」，而这个值本来就是要在运行时丢精度的。
+ */
+export const BEYOND_I64 = Number("98765432109876543210");
+
+/**
+ * 节点（Python）把一个数字打印出来的写法。表里有的取表里的；表里没有的，只认肯定和 JS 一样的（不太长的整数，指数不小的小数），
+ * 其余直接报错，要求先把它加进表。
+ */
+export function pythonNumberText(n: number): string {
+	const text = JSON.stringify(n);
+	const found = NUMBER_FORMS.get(text);
+	if (found !== undefined) return found;
+	if (/^-?\d{1,15}$/.test(text)) return text;
+	if (/^-?\d+\.\d+$/.test(text) && Math.abs(n) >= 1e-4 && Math.abs(n) < 1e15) return text;
+	throw new Error(
+		`数字 ${text} 不在 testdata/number-form-cases.json 里：先把它加进表（三端各断言自己那一段）`,
+	);
+}
+
+/**
+ * Agent 把一个数字写进 task.json 的写法（serde_json）：表里有的取表里的；表里没有的，只认肯定和 JS 一样的，
+ * 其余报错，要求先把它加进表。
+ */
+export function serdeNumberText(n: number): string {
+	const text = JSON.stringify(n);
+	const found = SERDE_FORMS.get(text);
+	if (found !== undefined) return found;
+	if (/^-?\d{1,15}$/.test(text)) return text;
+	if (/^-?\d+\.\d+$/.test(text) && Math.abs(n) >= 1e-4 && Math.abs(n) < 1e15) return text;
+	throw new Error(
+		`数字 ${text} 不在 testdata/number-form-cases.json 里：先把它加进表（三端各断言自己那一段）`,
+	);
+}
+
+/**
+ * 节点原样打印它读到的 task.json 里的文本（读 `SFLY_TASK` 指向的文件再打印）：键按字节序、紧凑写法，数字是 serde 的写法
+ * （同一个值里的两类数字各按各的规则，写出来是两种写法混在一起），非 ASCII 字符不转义。
+ */
+export function taskFileJson(value: unknown): string {
+	const write = (v: unknown): string => {
+		if (Array.isArray(v)) return `[${v.map(write).join(",")}]`;
+		if (v !== null && typeof v === "object") {
+			const entries = Object.entries(sortKeysDeep(v));
+			return `{${entries.map(([k, item]) => `${JSON.stringify(k)}:${write(item)}`).join(",")}}`;
+		}
+		return typeof v === "number" ? serdeNumberText(v) : JSON.stringify(v);
+	};
+	return write(value);
+}
+
+/**
+ * 对象的键递归地按 UTF-8 字节序排好（数组本身的顺序不变）：真实的 Agent 就是这样把任务输入交给节点的（`serde_json` 的对象是
+ * BTreeMap），假 Agent 交给节点的输入也这样，节点原样写出它收到的对象时才和真实的一样。
+ * 注意：JS 的对象会把整数样子的键（`"10"`、`"9"`）按数值提前，这里排不出字节序的结果；用例里别用这样的键，
+ * 要验整数样子的键走 testdata/key-order-cases.json（比较的是写出来的文本）。
+ */
+export function sortKeysDeep<T>(value: T): T {
+	if (Array.isArray(value)) return value.map(sortKeysDeep) as T;
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+				.map(([k, v]) => [k, sortKeysDeep(v)]),
+		) as T;
+	}
+	return value;
+}
+
+/** Python 的 `json.dumps` 默认写法：`", "`、`": "` 分隔；`ensureAscii` 时非 ASCII 和 DEL 写成小写的 `\uXXXX`。 */
+export function pythonJson(value: unknown, ensureAscii = true): string {
+	const asAscii = (text: string) =>
+		ensureAscii
+			? text.replace(
+					/[\u007f-\uffff]/g,
+					(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+				)
+			: text;
+	const write = (v: unknown): string => {
+		if (Array.isArray(v)) return `[${v.map(write).join(", ")}]`;
+		if (v !== null && typeof v === "object") {
+			return `{${Object.entries(v)
+				.map(([k, item]) => `${asAscii(JSON.stringify(k))}: ${write(item)}`)
+				.join(", ")}}`;
+		}
+		if (typeof v === "number") return pythonNumberText(v);
+		return typeof v === "string" ? asAscii(JSON.stringify(v)) : JSON.stringify(v);
+	};
+	return write(value);
+}
+
+/** Python 的 `repr` / `str` / `print`：单引号，`True`、`False`、`None`。 */
+export function pythonRepr(value: unknown, sortKeys = false): string {
+	const write = (v: unknown): string => {
+		if (Array.isArray(v)) return `[${v.map(write).join(", ")}]`;
+		if (v !== null && typeof v === "object") {
+			const entries = Object.entries(v);
+			if (sortKeys) entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+			return `{${entries.map(([k, item]) => `'${k}': ${write(item)}`).join(", ")}}`;
+		}
+		if (typeof v === "string") return `'${v}'`;
+		if (v === null) return "None";
+		if (typeof v === "boolean") return v ? "True" : "False";
+		return typeof v === "number" ? pythonNumberText(v) : String(v);
+	};
+	return write(value);
+}
+
+/** 值里的字符串叶子和数字叶子（数字写成文字）。 */
+export function leavesOf(value: unknown): string[] {
+	if (typeof value === "string") return value === "" ? [] : [value];
+	if (typeof value === "number") return [String(value)];
+	if (Array.isArray(value)) return value.flatMap(leavesOf);
+	if (value !== null && typeof value === "object") return Object.values(value).flatMap(leavesOf);
+	return [];
+}
+
+/**
+ * 一个 secret 值在节点里可能的写法（每项是一段文字，可能带换行）：原样、`str()`/`print`、JSON 的几种写法、
+ * Python `json.dumps` 默认（ASCII 转义和不转义）、排序、`repr`；对象和数组再加上每个叶子单独的写法。
+ * 缩进（`indent=2`）的写法不在这里：整段分成一行一个叶子，短的叶子没法单独打码（docs/SEMANTICS.md §2.1 写明），
+ * 不少于 4 个字符的叶子在那种写法下的打码由 json-secret-params.test.ts 里的用例单独验。
+ */
+export function formsOf(value: unknown): string[] {
+	const forms = new Set<string>();
+	const add = (...texts: string[]) => {
+		for (const text of texts) forms.add(text);
+	};
+	if (typeof value === "string") {
+		add(
+			value,
+			JSON.stringify(value),
+			JSON.stringify(value).slice(1, -1),
+			pythonJson(value),
+			pythonJson(value, false),
+			pythonRepr(value),
+		);
+		// 多行的值日志是按行写的。
+		for (const line of value.split(/\r?\n/)) if (line.trim() !== "") add(line.trim());
+	} else if (typeof value === "number" || typeof value === "boolean") {
+		add(String(value), JSON.stringify(value), pythonRepr(value));
+		if (typeof value === "number") add(pythonNumberText(value), serdeNumberText(value));
+	} else if (value !== null && typeof value === "object") {
+		add(
+			// 节点原样打印 task.json 里的文本
+			taskFileJson(value),
+			JSON.stringify(value),
+			pythonJson(value),
+			pythonJson(value, false),
+			JSON.stringify(sorted(value)),
+			pythonRepr(value),
+			pythonRepr(value, true),
+			pythonJson(sorted(value)),
+		);
+		for (const leaf of leavesOf(value)) add(...formsOf(leaf));
+	}
+	return [...forms];
+}
+
+function sorted(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(sorted);
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+				.map(([k, v]) => [k, sorted(v)]),
+		);
+	}
+	return value;
+}
+
+/** 一组 secret 值的全部写法（去重）。 */
+export function allForms(values: Record<string, unknown>): string[] {
+	return [...new Set(Object.values(values).flatMap(formsOf))];
+}
