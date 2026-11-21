@@ -184,10 +184,7 @@ for (const viewport of VIEWPORTS) {
 			connectAgent,
 			clock,
 		}) => {
-			const { runId } = await failedRun(controlPlane, connectAgent, clock, {
-				cleanupDone: true,
-				location: FAILURE_LOCATION,
-			});
+			const { runId } = await failedRun(controlPlane, connectAgent, clock);
 			await openFailedOverview(page, clock, runId);
 			const failure = area(page);
 			const location = failure.getByTestId("failure-location");
@@ -209,7 +206,10 @@ for (const viewport of VIEWPORTS) {
 			connectAgent,
 			clock,
 		}) => {
-			const { runId } = await failedRun(controlPlane, connectAgent, clock);
+			const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+				cleanupDone: true,
+				location: "",
+			});
 			await openFailedOverview(page, clock, runId);
 			await expect(area(page)).toBeVisible();
 			await expect(area(page).getByTestId("failure-location")).toHaveCount(0);

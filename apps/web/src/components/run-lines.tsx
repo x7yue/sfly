@@ -168,9 +168,9 @@ export function foldLabel(station: Extract<Station, { kind: "fold" }>): string {
 /** 链名那一列最宽 10rem（再长的链名截断，悬停看全名）。 */
 const LABEL_COLUMN_MAX = "10rem";
 
-/** 链名在 `text-xs`（0.75rem）里大概有多宽（rem）：全角字一个字宽，其余按 0.55 个字宽估。 */
+/** 链名在 `text-xs`（0.75rem）里大概有多宽（rem）：全角字一个字宽，其余按 0.6 个字宽估。 */
 const labelRem = (text: string) =>
-	[...text].reduce((width, ch) => width + (ch.charCodeAt(0) > 0x2e7f ? 0.75 : 0.75 * 0.55), 0);
+	[...text].reduce((width, ch) => width + (ch.charCodeAt(0) > 0x2e7f ? 0.75 : 0.75 * 0.6), 0);
 
 /**
  * 几块线路共用的链名列宽（控制台里上下排着的运行块）：按这些块里最长的链名估一个宽度，给每块的 {@link RunLines}
@@ -179,8 +179,8 @@ const labelRem = (text: string) =>
  */
 export function labelColumnWidth(labels: readonly string[]): string {
 	const widest = Math.max(0, ...labels.map(labelRem));
-	// 加上名称右边的 0.75rem 间距和 0.5rem 余量。
-	return `min(${LABEL_COLUMN_MAX}, ${(widest + 1.25).toFixed(2)}rem)`;
+	// 加上名称右边的 0.75rem 间距和 0.375rem 余量。
+	return `min(${LABEL_COLUMN_MAX}, ${(widest + 1.125).toFixed(3)}rem)`;
 }
 
 /**

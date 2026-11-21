@@ -34,7 +34,7 @@ export const FAILURE_HEADLINE =
  */
 export const LONG_FAILURE_MESSAGE = "成功率持续低于阈值，已重试三轮仍未恢复；".repeat(200);
 
-/** 失败的节点出错的位置（节点代码里的那一行，`error.location`）。 */
+/** 失败的节点出错的位置（节点代码里的那一行，`error.location`）：`failedRun` 默认带着它，给空串表示没有。 */
 export const FAILURE_LOCATION = "sfly_std.assert_.check_rate 第 42 行";
 
 export const PRESET_NAME = "压测 A 集群（北京机房，高并发）";
@@ -136,7 +136,7 @@ export async function failedRun(
 		options.message ?? FAILURE_MESSAGE,
 		ErrorKind.NODE_ERROR,
 		undefined,
-		options.location,
+		options.location ?? FAILURE_LOCATION,
 	);
 	const cleanup = await agent.nextAssign();
 	if (options.cleanupDone) {
