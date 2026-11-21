@@ -1,8 +1,10 @@
 {
 	"$comment": [
 		"运行状态（RunState）怎么从运行的读取结果投影出来：控制面的 projectRunState（packages/schema/src/run-state.ts）对着这张表测。",
-		"SDK 的 RunState 类型和 sfly.testing.run_state 以后也对着它测（#452）。每个用例：source 是读取结果里投影要用的部分（时间是 ISO 字符串），",
-		"options 是 self（引用者）和 limits（headline、message 的字符数上限，bytes 的字节数上限），expected 是投影出的完整的 RunState。"
+		"SDK 的 RunState 类型（sdk/python/tests/test_run_state_type.py）和 sfly.testing.run_state 的错误拆分（test_run_state_testing.py）也对着它测。",
+		"每个用例：source 是读取结果里投影要用的部分（时间是 ISO 字符串），",
+		"options 是 self（引用者）和 limits（headline、message 的字符数上限，bytes 的字节数上限），expected 是投影出的完整的 RunState。",
+		"这张表是手工维护的，没有生成它的脚本：改投影的规则时直接改这里的用例和期望值，不要去找生成器。"
 	],
 	"cases": [
 		{

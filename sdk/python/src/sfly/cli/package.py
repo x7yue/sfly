@@ -13,7 +13,7 @@ from sfly.cli.session import Session, command, common_options
 # 列表里每个包最多写出几个版本，其余折叠成「……共 N 个」。
 _VERSIONS_SHOWN = 5
 
-_EXTENDED_TYPES = {"agent": "Agent 名称", "feishu_bot": "飞书机器人"}
+_EXTENDED_TYPES = {"agent": "Agent 名称", "feishu_bot": "飞书机器人", "run_state": "运行状态"}
 
 # sfly dev 加载的开发版本的版本号（Agent 上登记为 包名@dev）。
 DEV_VERSION = "dev"

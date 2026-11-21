@@ -4,6 +4,7 @@ import {
 	InvalidReferenceError,
 	NODE_DEFAULTS,
 	type ResolveScope,
+	referencesRunState,
 	resolveInputs,
 } from "@sfly/orchestration";
 import {
@@ -18,6 +19,7 @@ import {
 	ACTIVE_STATUSES,
 	isRemovedNodeKind,
 	type RunningTaskView,
+	type RunState,
 	type StoredNode,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
@@ -48,6 +50,7 @@ import {
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { RunStateError, runStateForDispatch, type SelfNode } from "../runs/run-state-source.js";
 import type {
 	TriggerAdmission,
 	TriggerRejection,
@@ -56,7 +59,7 @@ import type {
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
-import type { AssignContentOf } from "./assign-content.js";
+import type { AssignContent, AssignContentOf } from "./assign-content.js";
 import {
 	type AsyncTaskNode,
 	agentFor,
@@ -130,6 +133,17 @@ function rootMessage(error: unknown): string {
 	let cause = error;
 	while (cause instanceof Error && cause.cause !== undefined) cause = cause.cause;
 	return cause instanceof Error ? cause.message : String(cause);
+}
+
+/**
+ * 是不是数据库报的错（pg 的 DatabaseError，drizzle 会再包一层，原因在 `cause` 里）：带 5 位的 SQLSTATE `code`。
+ * 事务里的语句出了这种错，整个事务就中止了，再写什么都会失败。
+ */
+function isDatabaseError(error: unknown): boolean {
+	for (let e: unknown = error; e instanceof Error; e = e.cause) {
+		if (/^[0-9A-Z]{5}$/.test(String((e as { code?: unknown }).code ?? ""))) return true;
+	}
+	return false;
 }
 
 /** 运行是否已被取消；强制取消时 always 节点也不再执行（docs/SEMANTICS.md §3.4）。 */
@@ -1301,18 +1315,20 @@ export class Engine implements AgentSessionHandler {
 
 	/**
 	 * 把任务标记为 dispatched（派发即设租约）并返回要发给 Agent 的派发消息。派发什么由派发内容回答
-	 * （assign-content.ts）；它说不能派发时任务以 config_error 或 env_error 失败（不重试），返回 undefined。
+	 * （assign-content.ts）；它说不能派发、或者准备它的过程中出错时，任务以 config_error 或 env_error 失败（不重试），
+	 * 返回 undefined：一个任务准备不好不能卡住这台 Agent 上排在它后面的任务（见 {@link Engine.#assignContent}）。
 	 */
 	async #prepareAssign(step: Step, conn: AgentConnection, task: TaskRow) {
 		const { run, chain, plan, index, node } = await this.#locate(step.tx, task);
 		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
-		const content = await this.deps.assignContent(step.tx, {
-			task,
+		const content = await this.#assignContent(step, conn, task, {
+			run,
+			chain,
+			plan,
+			index,
 			node,
 			packageVersion: document.packages[node.package] ?? "",
-			scope: await this.#scope(step.tx, chain, plan, index),
-			target: conn,
 		});
 		if (!content.ok) {
 			if (content.inputs) {
@@ -1334,6 +1350,69 @@ export class Engine implements AgentSessionHandler {
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
 		return create(ServerMessageSchema, { body: { case: "assign", value: content.assign } });
+	}
+
+	/**
+	 * 回答这个任务的派发内容：本链的作用域、`${{ run.state }}`（ADR 0031：只在这个节点的输入里引用它时才读运行状态，
+	 * 读取和把这次尝试记为「准备中」在同一个事务里，没有引用它的节点的派发没有多出任何查询）、派发内容（assign-content.ts）。
+	 *
+	 * 准备这个任务的内容时出错，不能让整个派发的事务回滚：回滚之后这台 Agent 上排在它后面的任务全部派发不出去，
+	 * 每次扫描又从它开始重来。所以出错就让这个任务以 config_error 失败（不重试），错误信息写明原因，同一个事务里别的任务照常派发：
+	 * - 读运行状态：在保存点里读，数据库报错也只回滚到这里（事务不会中止），转成 {@link RunStateError}；
+	 * - 其余的 JS 错误（解析、序列化、元信息不合法……）：按「准备派发内容时出错：原因」失败；
+	 * - 没有保存点保护时数据库报错（事务已经中止，再写什么都会失败）原样抛出，不是这个任务的问题，和以前一样。
+	 */
+	async #assignContent(
+		step: Step,
+		conn: AgentConnection,
+		task: TaskRow,
+		at: {
+			run: RunRow;
+			chain: ChainRow;
+			plan: ChainPlan;
+			index: number;
+			node: PackageNode;
+			packageVersion: string;
+		},
+	): Promise<AssignContent> {
+		try {
+			const scope = await this.#scope(step.tx, at.chain, at.plan, at.index);
+			if (referencesRunState(at.node.inputs)) {
+				scope.runState = await this.#runState(step.tx, at.run.id, {
+					chain_instance_id: at.chain.id,
+					node_id: at.node.id,
+				});
+			}
+			return await this.deps.assignContent(step.tx, {
+				task,
+				node: at.node,
+				packageVersion: at.packageVersion,
+				scope,
+				target: conn,
+			});
+		} catch (error) {
+			if (error instanceof RunStateError) {
+				return { ok: false, kind: "config_error", message: error.message };
+			}
+			if (isDatabaseError(error)) throw error;
+			return {
+				ok: false,
+				kind: "config_error",
+				message: `准备派发内容时出错：${rootMessage(error)}`,
+			};
+		}
+	}
+
+	/** 读这次运行此刻的状态：在保存点里读，出错（含数据库报错）时只回滚到保存点，转成 {@link RunStateError}。 */
+	async #runState(tx: Tx, runId: string, self: SelfNode): Promise<RunState> {
+		try {
+			return await tx.transaction((savepoint) => runStateForDispatch(savepoint, runId, self));
+		} catch (error) {
+			if (error instanceof RunStateError) throw error;
+			throw new RunStateError(
+				`解析 \${{ run.state }} 失败：读取这次运行的状态时出错：${rootMessage(error)}`,
+			);
+		}
 	}
 
 	/**

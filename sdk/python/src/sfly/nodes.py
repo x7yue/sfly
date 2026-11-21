@@ -28,6 +28,8 @@ class _InputTypeMarker:
 
 AGENT_MARKER = _InputTypeMarker("AgentName")
 FEISHU_BOT_MARKER = _InputTypeMarker("FeishuBot")
+#: `sfly.RunState` 的标记：值是整个运行此刻的状态（一个普通的字典），类型定义在 `sfly.run_state`。
+RUN_STATE_MARKER = _InputTypeMarker("RunState")
 
 #: 「Agent」类型的输入：值是 Agent 名称（运行时就是 `str`），表示节点会访问这台 Agent（ADR 0019）。
 #: 检查器里显示成 Agent 下拉框；触发前检查它是已注册的 Agent；派发时控制面把它的地址和端口随任务下发

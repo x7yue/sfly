@@ -6,10 +6,17 @@ import {
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { nodeNameWithId } from "./node-display.js";
-import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
+import {
+	OUTPUT_PATH,
+	PARAM_PATH,
+	REFERENCE,
+	RUN_STATE_FIELD_HINT,
+	RUN_STATE_FIELD_PATH,
+	RUN_STATE_PATH,
+} from "./reference-syntax.js";
 
 /**
- * 引用（docs/SEMANTICS.md §2）：`${{ params.<name> }}` 和 `${{ nodes.<id>.outputs.<key> }}`。
+ * 引用（docs/SEMANTICS.md §2）：`${{ params.<name> }}`、`${{ nodes.<id>.outputs.<key> }}` 和 `${{ run.state }}`。
  * 这里是静态的部分（补全、保存时的检查），控制面和画布共用；派发时的解析在 resolve.ts。
  */
 
@@ -100,7 +107,7 @@ export interface ReferenceOption {
 	expression: string;
 	/** 写进输入里的文本：`${{ <expression> }}`。 */
 	text: string;
-	kind: "param" | "output";
+	kind: "param" | "output" | "run_state";
 	/** 输出引用所属的节点。 */
 	node_id?: string;
 	/** 参数名或输出键。 */
@@ -109,7 +116,10 @@ export interface ReferenceOption {
 
 export const referenceText = (expression: string) => `\${{ ${expression} }}`;
 
-/** 引用补全：本链的入口参数，以及本链上前面节点已声明的输出键。 */
+/**
+ * 引用补全：本链的入口参数，以及本链上前面节点已声明的输出键；包节点还可以引用这次运行的状态（`run.state`，
+ * 只能整值引用，run-state-references.ts）。
+ */
 export function referenceOptions(
 	doc: StoredOrchestrationDocument,
 	nodeId: string,
@@ -123,6 +133,14 @@ export function referenceOptions(
 		kind: "param",
 		key: p.name,
 	}));
+	if (doc.nodes.find((n) => n.id === nodeId)?.kind === "package") {
+		options.push({
+			expression: "run.state",
+			text: referenceText("run.state"),
+			kind: "run_state",
+			key: "state",
+		});
+	}
 	for (const node of earlier) {
 		for (const key of declaredOutputs(doc, node, catalog) ?? []) {
 			const expression = `nodes.${node.id}.outputs.${key}`;
@@ -209,6 +227,8 @@ export function referenceWarnings(
 					warn("reference_invalid", `${where} 中有没有闭合的引用 \${{`);
 					continue;
 				}
+				// run.state 的位置和类型由 run-state-references.ts 检查。
+				if (RUN_STATE_PATH.test(path)) continue;
 				const param = PARAM_PATH.exec(path);
 				if (param) {
 					const name = param[1] as string;
@@ -221,7 +241,9 @@ export function referenceWarnings(
 				if (!output) {
 					warn(
 						"reference_invalid",
-						`${where} 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名> 或 nodes.<节点>.outputs.<输出键>`,
+						`${where} 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名>、nodes.<节点>.outputs.<输出键> 或 run.state${
+							RUN_STATE_FIELD_PATH.test(path) ? `；${RUN_STATE_FIELD_HINT}` : ""
+						}`,
 					);
 					continue;
 				}

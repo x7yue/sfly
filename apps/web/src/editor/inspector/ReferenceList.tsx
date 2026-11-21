@@ -2,7 +2,7 @@ import { cn } from "cn";
 import type { completionGroups, ReferenceChoice } from "./reference-completion";
 
 /**
- * 引用补全列表：按「入口参数」「前序节点」分组，鼠标点选；键盘的上下与确认由输入框处理（active 是当前项）。
+ * 引用补全列表：按「入口参数」「运行状态」「前序节点」分组（`COMPLETION_GROUPS`），鼠标点选；键盘的上下与确认由输入框处理（active 是当前项）。
  * 绝对定位在最近的 relative 祖先里，左右撑满；纵向位置由 className 给出。
  * 它是输入框下方的普通元素，不是模态浮层：打开时画布照常缩放、拖动，不锁定滚动。
  */

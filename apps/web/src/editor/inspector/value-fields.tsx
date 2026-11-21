@@ -1,5 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import { describeSchema, isAgentInput, isFeishuBotInput } from "@sfly/orchestration";
+import { describeSchema, isWholeRunState, RUN_STATE_REFERENCE } from "@sfly/orchestration";
 import type { AgentView, FeishuBotView } from "@sfly/schema";
 import { useEffect, useId, useRef } from "react";
 import { Input } from "@/components/ui/input";
@@ -10,47 +10,24 @@ import { FeishuBotSelect } from "./FeishuBotSelect";
 import { Field, type FieldControl } from "./fields";
 import { ReferenceEditor, type ReferenceEditorHandle } from "./ReferenceEditor";
 import { ReferenceChip, ReferencePicker } from "./ReferencePicker";
+import { RunStateConnect } from "./RunStateConnect";
 import { type ReferenceChoice, wholeReference } from "./reference-completion";
+import { choicesFor, runStateShown, TYPE_NAMES, type ValueKind, valueKind } from "./value-kind";
 import { formatJson, parseJson, parseNumber } from "./value-text";
 import { ReferenceActions } from "./ZoomEditor";
 
 type JsonSchema = Record<string, unknown>;
-type ValueKind =
-	| "string"
-	| "number"
-	| "integer"
-	| "boolean"
-	| "enum"
-	| "agent"
-	| "feishu_bot"
-	| "json";
-
-/** 扩展输入类型（值是名称）：字段上显示的类型名。 */
-const NAME_TYPES: Partial<Record<ValueKind, string>> = { agent: "Agent", feishu_bot: "飞书机器人" };
-
-/** 由输入 schema 决定的控件种类。 */
-export function valueKind(schema: JsonSchema): ValueKind {
-	if (isAgentInput(schema)) return "agent";
-	if (isFeishuBotInput(schema)) return "feishu_bot";
-	if (Array.isArray(schema.enum)) return "enum";
-	switch (schema.type) {
-		case "string":
-		case "number":
-		case "integer":
-		case "boolean":
-			return schema.type;
-		default:
-			return "json";
-	}
-}
 
 /**
  * 一个可以写常量或引用的值（包节点的输入）。没有「模式」：显示什么完全由值决定。
  * - 字符串：一个输入框（ReferenceEditor），文字和引用混写；整个值恰好是一个引用就是整值引用。
- * - 数字、布尔、枚举、Agent、飞书机器人、JSON：值是整值引用时显示引用标签（点 × 回到类型控件），否则显示类型控件；
+ * - 数字、布尔、枚举、Agent、飞书机器人、运行状态、JSON：值是整值引用时显示引用标签（点 × 回到类型控件），否则显示类型控件；
  *   旁边的「插入引用」选一个引用作为整个值。JSON 用同一个编辑器内核（多行、等宽），字符串值里可以内嵌引用。
  * - Agent（`sfly.AgentName`）：已注册的 Agent 下拉框（带在线状态），引用只能选入口参数。
  * - 飞书机器人（`sfly.FeishuBot`）：已登记的飞书机器人下拉框，引用只能选入口参数。
+ * - 运行状态（`sfly.RunState`，可选的 `RunState | None`）：值是一个对象，不能手写，只能接 `${{ run.state }}`。
+ *   没接入时是「接入运行状态」按钮（点一下填上），接入后是引用标签。新加的节点已经预填好（add-node.ts）。
+ *   文档里已有的别的值（别处写进去的常量）退回 JSON 编辑框，让人看见并改掉。
  * - 字符串和 JSON 字段有「放大编辑」。
  * 不合法的常量（abc 填进整数）只记为字段草稿，不写进文档，并阻止保存（field-drafts.tsx）。
  */
@@ -104,9 +81,8 @@ export function ValueField({
 		label: fieldLabel,
 		placeholder,
 		errors,
-		// 「Agent」「飞书机器人」类型的参数插入引用时只列入口参数（#197、#233「也可以改为引用入口参数」）：
-		// 这样的值在触发前就能检查是已注册的 Agent、已登记的机器人。手写的上游输出引用也允许，到派发时才检查（sdk-reference）。
-		choices: NAME_TYPES[kind] ? choices.filter((c) => c.kind === "param") : choices,
+		// 「Agent」「飞书机器人」类型只列入口参数、「运行状态」类型只列 run.state（value-kind.ts 的 choicesFor）。
+		choices: choicesFor(kind, choices),
 		onChange,
 	};
 	const field = (control: (c: FieldControl) => React.ReactNode, aside?: React.ReactNode) => (
@@ -116,7 +92,7 @@ export function ValueField({
 			label={heading ?? name}
 			mono={heading === undefined}
 			required={required}
-			type={NAME_TYPES[kind] ?? describeSchema(schema)}
+			type={TYPE_NAMES[kind] ?? describeSchema(schema)}
 			error={errors.length > 0 ? <Problems problems={errors} /> : undefined}
 			help={help}
 			aside={aside}
@@ -195,7 +171,7 @@ function StringValue({
 	);
 }
 
-/** 数字、布尔、枚举、Agent、飞书机器人、JSON：整值引用显示为引用标签，否则是类型控件。 */
+/** 数字、布尔、枚举、Agent、飞书机器人、运行状态、JSON：整值引用显示为引用标签，否则是类型控件。 */
 function TypedValue({
 	id,
 	fieldKey,
@@ -229,17 +205,19 @@ function TypedValue({
 		if (referenced) chip.current?.focus();
 		else document.getElementById(id)?.focus();
 	}, [referenced, id]);
-	const picker = (
-		<ReferencePicker
-			name={name}
-			choices={choices}
-			onPick={(choice) => {
-				// 没生效的输入（如整数框里的 abc）被引用整个换掉。
-				dropDraft(fieldKey);
-				onChange(choice.text);
-			}}
-		/>
-	);
+	// 「运行状态」类型的输入只有 ${{ run.state }} 一个合法的值：已经是它时不用再选。
+	const picker =
+		kind === "run_state" && isWholeRunState(value) ? undefined : (
+			<ReferencePicker
+				name={name}
+				choices={choices}
+				onPick={(choice) => {
+					// 没生效的输入（如整数框里的 abc）被引用整个换掉。
+					dropDraft(fieldKey);
+					onChange(choice.text);
+				}}
+			/>
+		);
 	if (referenced) {
 		return render(
 			(control) => (
@@ -255,7 +233,17 @@ function TypedValue({
 			picker,
 		);
 	}
-	if (kind === "json") {
+	// 运行状态是一个对象，不能手写：没接入时只给一个按钮（别的值才退回 JSON 编辑框，见下）。
+	if (kind === "run_state" && runStateShown(value) === "empty") {
+		return render((control) => (
+			<RunStateConnect
+				control={control}
+				name={name}
+				onConnect={() => onChange(RUN_STATE_REFERENCE)}
+			/>
+		));
+	}
+	if (kind === "json" || kind === "run_state") {
 		return (
 			<JsonValue
 				id={id}
