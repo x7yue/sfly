@@ -62,8 +62,21 @@ pub struct HttpFixture {
     requests: Requests,
 }
 
+/// 控制面的包索引在成功的响应上带的标记头（apps/server/src/http/sdk-routes.ts 的 `PACKAGE_INDEX_HEADER`）。
+pub const PACKAGE_INDEX_MARKER: &str = "x-sfly-package-index";
+
 impl HttpFixture {
     pub async fn start() -> Self {
+        Self::start_with_marker(None).await
+    }
+
+    /// 扮演控制面的包索引：每个 200 响应都带标记头 `x-sfly-package-index`（值是版本）。
+    pub async fn start_control_plane() -> Self {
+        Self::start_with_marker(Some("0.0.0-test")).await
+    }
+
+    /// 200 响应带标记头 `x-sfly-package-index: <marker>`（`Some("")` 是带了但值为空）；`None` 不带。
+    pub async fn start_with_marker(marker: Option<&'static str>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let files = Arc::new(Mutex::new(Files::default()));
@@ -76,7 +89,7 @@ impl HttpFixture {
                 };
                 let (f, r) = (f.clone(), r.clone());
                 tokio::spawn(async move {
-                    let _ = serve(stream, f, r).await;
+                    let _ = serve(stream, f, r, marker).await;
                 });
             }
         });
@@ -203,6 +216,7 @@ async fn serve(
     mut stream: tokio::net::TcpStream,
     files: Arc<Mutex<Files>>,
     requests: Requests,
+    marker: Option<&'static str>,
 ) -> std::io::Result<()> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -273,8 +287,11 @@ async fn serve(
     match file {
         Some(file) => {
             tokio::time::sleep(file.delay).await;
+            let marker = marker
+                .map(|value| format!("{PACKAGE_INDEX_MARKER}: {value}\r\n"))
+                .unwrap_or_default();
             let header = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\ncontent-type: {}\r\ncontent-length: {}\r\n{marker}connection: close\r\n\r\n",
                 file.content_type,
                 file.body.len()
             );

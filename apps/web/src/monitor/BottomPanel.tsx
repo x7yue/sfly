@@ -60,6 +60,7 @@ import {
 	useTimeAxis,
 } from "./monitor-state";
 import { type NodeRef, nodeKey } from "./node-ref";
+import { QueueWaitNote } from "./QueueWaitNote";
 import type { PanelTab } from "./run-link";
 import { runLineKey } from "./run-log-reader";
 import {
@@ -719,6 +720,11 @@ function AttemptsTab({
 								{a.started_at ? formatDuration(end - Date.parse(a.started_at)) : "—"}
 							</span>
 						</header>
+						{a.queue_wait && (
+							<p className="m-0 mt-1.5 text-xs text-fg-2">
+								<QueueWaitNote wait={a.queue_wait} queuedAt={a.queued_at} now={now} />
+							</p>
+						)}
 						{agentTimes && (
 							// 每一头的说明不在中间断开：换行只落在标点后面，不会剩下一个「天」字。
 							<p className="m-0 mt-1.5 text-xs text-warn-fg">

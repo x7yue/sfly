@@ -63,6 +63,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "run",
 		why: "控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；以后按项目隔离时，它的运行部分要按项目过滤",
 	},
+	"/projects/:project/sessions": {
+		kind: "session",
+		why: "项目里的会话：列出和新建，路径里的 :project 是项目标识（会话的集合属于项目）",
+	},
+	"/sessions": {
+		kind: "session",
+		why: "一个会话和它的事件、发话、停止：路径里的 :id 是会话 id，项目从会话得出",
+	},
 	"/health": { kind: "system", exact: true, why: "健康检查：控制面自己的状态，不属于任何项目" },
 	"/docs": { kind: "system", exact: true, why: "用户文档的目录：公开的说明文字，不属于任何项目" },
 	"/docs/:page.md": {
@@ -166,10 +174,34 @@ export const SUMMARY_MAX_LENGTH = 80;
 
 const PATH_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g;
 
+/** 路径里用来写项目的参数名（ADR 0029：`/projects/:project/…`）。 */
+export const PROJECT_PARAM = "project";
+
 /** 路径模板里的参数名（不含末尾的 `*`）。 */
 export function pathParamNames(path: string): string[] {
 	return [...path.matchAll(PATH_PARAM)].map((found) => found[1] as string);
 }
+
+/**
+ * 判断 `collection`（路径里不带任何定位资源的参数）时看的参数名：`/projects/:project/…` 开头的路径，第一个参数
+ * `:project` 只是限定项目（ADR 0029「项目从请求的哪里来」：列表和新建的路径带项目），不是在定位某个已有的资源，
+ * 所以不算在内；其余路径和 {@link pathParamNames} 一样。用 `{ params: "project" }` 定位项目本身（资源类别 `project`）
+ * 不受这条影响。
+ */
+function paramsBesidesProject(path: string): string[] {
+	const names = pathParamNames(path);
+	return isProjectScoped(path) ? names.slice(1) : names;
+}
+
+/** 路径是不是 `/projects/:project/…`（项目写在路径里：列表、新建，以及按名字定位的资源）。 */
+const isProjectScoped = (path: string): boolean => path.startsWith(`/projects/:${PROJECT_PARAM}/`);
+
+/**
+ * 用 ID 定位的资源类别（ADR 0029「项目从请求的哪里来」）：项目从那个资源所在的项目得出，路径里不带 `:project`——
+ * ID 已经确定了项目，再带一份就多出「两者不一致」这种情况，访问检查也不会核对 ID 属于路径里的那个项目。
+ * 和访问检查（`apps/server/src/auth/access-rules.ts` 的 `locatorOf`）认的是同一批。
+ */
+export const ID_LOCATED_KINDS: readonly ResourceKind[] = ["scenario", "run", "task", "session"];
 
 /** 对象 schema 的字段名；不是对象（或套了一层包装也认不出对象）时返回 undefined。 */
 function fieldNames(schema: z.ZodType | undefined): string[] | undefined {
@@ -191,7 +223,7 @@ const label = (def: Pick<RouteDef, "method" | "path">) => `${def.method} ${def.p
 
 function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget): string[] {
 	const problems: string[] = [];
-	const hasPathParams = pathParamNames(def.path).length > 0 || def.path.endsWith("*");
+	const hasPathParams = paramsBesidesProject(def.path).length > 0 || def.path.endsWith("*");
 	if (typeof target === "string") {
 		if (target === "collection" && hasPathParams) {
 			problems.push(
@@ -214,6 +246,29 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 		const names = pathParamNames(def.path);
 		if (!names.includes(target.params)) {
 			problems.push(`resource.target 的路径参数 ${target.params} 不在路径 ${def.path} 里`);
+			return problems;
+		}
+		// `/projects/:project/…` 的路径里 :project 只限定项目，定位用的是它之后的第一个参数。
+		const located = paramsBesidesProject(def.path);
+		if (isProjectScoped(def.path) && located.length > 0) {
+			if (ID_LOCATED_KINDS.includes(kind)) {
+				problems.push(
+					`${kind} 用 ID 定位，路径里不带 :${PROJECT_PARAM}（ADR 0029「项目从请求的哪里来」）：项目从那个资源所在的项目得出，` +
+						`访问检查只核对路径里的项目、不会核对 :${located[0]} 属于它，再带一份还多出「两者不一致」。` +
+						`把路径改成不带 /projects/:${PROJECT_PARAM} 的写法（例如 /sessions/:id/…），定位写 { params: "${located[0]}" }；` +
+						`只有列表和新建（collection）的路径带项目`,
+				);
+			} else if (target.params === PROJECT_PARAM) {
+				problems.push(
+					`resource.target 写了 { params: "${PROJECT_PARAM}" }，但路径里还有 :${located[0]}：它定位的是项目下的那一个资源，不是项目本身；` +
+						`改成 { params: "${located[0]}" }。（资源类别 project 加进来之后，定位项目本身的路径再在这里放宽）`,
+				);
+			} else if (located[0] !== target.params) {
+				problems.push(
+					`resource.target 的路径参数 ${target.params} 不是 :${PROJECT_PARAM} 之后的第一个参数 :${located[0]}：定位用的是它（${located[0]} 之后的参数是它名下的子项）。` +
+						`改成 { params: "${located[0]}" }；确有例外时在 checkTarget（http/declarations.ts）里放宽这条规则并写明理由`,
+				);
+			}
 		} else if (names[0] !== target.params) {
 			problems.push(
 				`resource.target 的路径参数 ${target.params} 不是路径里的第一个参数 :${names[0]}：定位用的是路径里的第一个参数（它标识路径的主体资源，${names[0]} 之后的参数是它名下的子项）。` +

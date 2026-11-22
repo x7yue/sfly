@@ -60,7 +60,7 @@ async fn sfly_std_comes_from_the_control_plane_index_and_everything_else_from_py
     let pypi = HttpFixture::start().await;
     let (dep_name, dep) = dependency_wheel("sfly-dep", "1.0");
     pypi.add_to_index("sfly-dep", &dep_name, dep, Duration::ZERO);
-    let plane = HttpFixture::start().await;
+    let plane = HttpFixture::start_control_plane().await;
     let std_file = add_std(&plane, PLANE_VERSION);
     let demo = publish(
         &plane,
@@ -96,7 +96,7 @@ async fn sfly_std_comes_from_the_control_plane_index_and_everything_else_from_py
 async fn a_same_named_higher_version_on_pypi_is_never_installed() {
     let pypi = HttpFixture::start().await;
     let fake = add_std(&pypi, PYPI_VERSION);
-    let plane = HttpFixture::start().await;
+    let plane = HttpFixture::start_control_plane().await;
     add_std(&plane, PLANE_VERSION);
     let demo = publish(&plane, "sfly-demo", "1.0.0", &["sfly-std>=0.3.0"]);
     let cp = FakeControlPlane::start().await;
@@ -137,7 +137,7 @@ async fn without_a_published_version_the_name_is_still_not_taken_from_pypi() {
     let pypi = HttpFixture::start().await;
     let fake = add_std(&pypi, PYPI_VERSION);
     // 控制面还没有发布 sfly-std：索引仍然回答这个名字（一个没有任何版本的页面），而不是 404。
-    let plane = HttpFixture::start().await;
+    let plane = HttpFixture::start_control_plane().await;
     plane.put_with(
         "/simple/sfly-std/",
         b"<!DOCTYPE html><html><body></body></html>".to_vec(),
@@ -177,7 +177,7 @@ async fn without_a_published_version_the_name_is_still_not_taken_from_pypi() {
 async fn a_package_index_that_does_not_answer_sfly_std_directly_stops_the_install() {
     let pypi = HttpFixture::start().await;
     let fake = add_std(&pypi, PYPI_VERSION);
-    let plane = HttpFixture::start().await;
+    let plane = HttpFixture::start_control_plane().await;
     let demo = publish(&plane, "sfly-demo", "1.0.0", &["sfly-std>=0.3.0"]);
     let cp = FakeControlPlane::start().await;
     cp.set_package_index(&plane.index_url());
@@ -237,11 +237,74 @@ async fn a_package_index_that_does_not_answer_sfly_std_directly_stops_the_instal
     );
 }
 
+/// 只看状态码拦不住最要紧的那种配错：对外地址指到了一个 PyPI 风格的索引（镜像），那里**有**同名的更高版本，回 200。
+/// uv 会装上它。所以 Agent 还要求控制面的标记头 `x-sfly-package-index`（值非空）：没有就不装，任务以 env_error 失败，
+/// 写明「这个地址回了 200 但不是 sfly 控制面的包索引」。（标记头防的是配错，不是有意伪造。）
+#[tokio::test]
+async fn a_200_without_the_control_planes_marker_stops_the_install() {
+    let pypi = HttpFixture::start().await;
+    // 没有标记头，和值为空：都不算。
+    for (i, marker) in [None, Some("")].into_iter().enumerate() {
+        // 对外地址上是一个 PyPI 风格的索引，同一路径上有同名的更高版本，回 200。
+        let imposter = HttpFixture::start_with_marker(marker).await;
+        let fake = add_std(&imposter, PYPI_VERSION);
+        let plane = HttpFixture::start_control_plane().await;
+        let demo = publish(&plane, "sfly-demo", "1.0.0", &["sfly-std>=0.3.0"]);
+        let venv = fresh_venv(true);
+        let cp = FakeControlPlane::start().await;
+        cp.set_package_index(&imposter.index_url());
+        let _agent = agent(&cp, &format!("agent-imposter-{i}"), &venv, &pypi, &[]);
+        cp.hello(0).await;
+
+        cp.assign(package_task(
+            "task-1",
+            "sfly-demo",
+            "1.0.0",
+            "about",
+            json!({}),
+            demo.archive(),
+        ))
+        .await;
+
+        let (result, _) = cp.result("task-1").await;
+        assert_eq!(
+            result.status(),
+            TaskStatus::Failed,
+            "{marker:?}：{result:?}"
+        );
+        let error = result.error.expect("error");
+        assert_eq!(error.kind(), ErrorKind::EnvError, "{marker:?}");
+        for expected in [
+            format!("GET {}/simple/sfly-std/ 返回 200", imposter.url),
+            "x-sfly-package-index".to_string(),
+            "这个地址回了 200 但不是 sfly 控制面的包索引".to_string(),
+            "SFLY_PUBLIC_URL".to_string(),
+        ] {
+            assert!(
+                error.message.contains(&expected),
+                "{marker:?}：{expected}：{}",
+                error.message
+            );
+        }
+        assert_eq!(
+            installed_std(&venv),
+            None,
+            "{marker:?}：没有装上任何 sfly-std"
+        );
+        assert_eq!(imposter.count(&fake), 0, "{marker:?}：假包一次也没有下载");
+        assert_eq!(
+            imposter.count("/simple/sfly-std/"),
+            1,
+            "{marker:?}：只有检查问过一次，没有交给 uv"
+        );
+    }
+}
+
 /// 每次装依赖都先问，不只在节点包的要求里直接写了 `sfly-std` 时：它多半是传递依赖，装之前看不出来。
 #[tokio::test]
 async fn every_install_checks_the_index_even_for_a_package_that_does_not_mention_sfly_std() {
     let pypi = HttpFixture::start().await;
-    let plane = HttpFixture::start().await;
+    let plane = HttpFixture::start_control_plane().await;
     let plain = publish(&plane, "sfly-plain", "1.0.0", &[]);
     let venv = fresh_venv(true);
     let cp = FakeControlPlane::start().await;
@@ -277,7 +340,7 @@ async fn every_install_checks_the_index_even_for_a_package_that_does_not_mention
 #[tokio::test]
 async fn contradicting_sfly_std_requirements_name_both_packages_and_what_each_requires() {
     let pypi = HttpFixture::start().await;
-    let plane = HttpFixture::start().await;
+    let plane = HttpFixture::start_control_plane().await;
     add_std(&plane, "0.3.0");
     add_std(&plane, PLANE_VERSION);
     let old = publish(&plane, "sfly-old", "1.0.0", &["sfly-std<0.4"]);
@@ -339,7 +402,7 @@ async fn contradicting_sfly_std_requirements_name_both_packages_and_what_each_re
 /// 和以前一样：PyPI 镜像上有 sfly-std 就装它，没有就是 uv 的「找不到」，任务以 env_error 失败。
 #[tokio::test]
 async fn welcome_without_a_package_index_behaves_as_before() {
-    let plane = HttpFixture::start().await;
+    let plane = HttpFixture::start_control_plane().await;
     let demo = publish(&plane, "sfly-demo", "1.0.0", &["sfly-std>=0.3.0"]);
     let cp = FakeControlPlane::start().await;
     cp.set_package_index("");

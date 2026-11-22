@@ -23,9 +23,11 @@ def publish(archive: Path, server: str, project: str | None = None) -> dict[str,
     不写发布到默认项目；写别的值时控制面返回 400，信息写明现在只能写 public。
     这是过渡的查询参数，路径带项目（#488）之后改成路径里的项目。
     """
-    query = f"?{urllib.parse.urlencode({'project': project})}" if project is not None else ""
+    url = f"{server.rstrip('/')}/packages"
+    if project is not None:
+        url += "?" + urllib.parse.urlencode({"project": project})
     request = urllib.request.Request(
-        f"{server.rstrip('/')}/packages{query}",
+        url,
         data=archive.read_bytes(),
         method="POST",
         headers={"Content-Type": "application/octet-stream", "Accept": "application/json"},

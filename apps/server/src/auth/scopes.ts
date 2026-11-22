@@ -44,6 +44,8 @@ export const SCOPE_TABLE = {
 	package: { write: "publish" },
 	agent: { write: "manage" },
 	feishu_bot: { write: "manage" },
+	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）。
+	session: { write: "edit" },
 	system: { write: null },
 } as const satisfies Record<ResourceKind, { write: Scope | null }>;
 

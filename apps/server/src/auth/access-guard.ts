@@ -230,9 +230,16 @@ export class AccessGuard {
 		const id = params[locator.param];
 		if (id === undefined || !isUuid(id)) return undefined;
 		const { store } = this.deps;
-		if (locator.from === "scenario") return store.projectOfScenario(id);
-		if (locator.from === "run") return store.projectOfRun(id);
-		return store.projectOfTask(id);
+		switch (locator.from) {
+			case "scenario":
+				return store.projectOfScenario(id);
+			case "run":
+				return store.projectOfRun(id);
+			case "task":
+				return store.projectOfTask(id);
+			case "session":
+				return store.projectOfSession(id);
+		}
 	}
 
 	// ---- Agent 凭据和任务凭据：显式的接口清单 ----
@@ -374,6 +381,16 @@ export class AccessGuard {
 				"forbidden",
 				`缺少「${SCOPE_LABELS[needed]}」范围：${routeKey(route)} 需要它`,
 			);
+		}
+		// ADR 0027「凭据」：会话令牌对会话这一类只有读——它是助手在会话里干活用的凭据，不能用来建会话、替人发话、
+		// 停掉会话。这一条写死在这里，和下面「会话令牌的写入还没有开放」的临时总闸分开：#495 拿掉总闸、让会话令牌的
+		// 「编辑」范围去改场景之后，它仍然不能写会话。
+		if (
+			principal.kind === "session" &&
+			route.resource.kind === "session" &&
+			route.effect === "write"
+		) {
+			return denied(403, "forbidden", "会话令牌对会话只有读：不能建会话、发话和停止");
 		}
 		// 会话令牌的勾选（可以改的场景、可以用的 Agent、可以发消息的机器人）和待批准的操作在 #495、#496 接进来；
 		// 在那之前会话令牌只读，不放任何写。

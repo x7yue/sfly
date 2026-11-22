@@ -75,6 +75,8 @@ export interface ContractStream<S extends StreamDef> {
 	readonly closed: boolean;
 	/** 浏览器重连时带上的最后一条消息 ID（`Last-Event-ID` 请求头）。 */
 	readonly lastEventId: string | undefined;
+	/** 写出去的数据还没被对端读走时，等它读走（见 `SseStream.drained`）。 */
+	drained(): Promise<void>;
 }
 
 /**
@@ -106,6 +108,7 @@ export function contractStream<S extends StreamDef>(
 						get lastEventId() {
 							return stream.lastEventId;
 						},
+						drained: () => stream.drained(),
 					}),
 				),
 			reply,
