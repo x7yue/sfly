@@ -48,7 +48,7 @@
 		{
 			"slug": "standard-nodes",
 			"title": "标准节点",
-			"description": "平台维护的标准节点包 sfly-std：从 Release 下载并上传到控制面、安全说明、压测期间配合子流程与停止子流程节点的监控，以及全部 17 个标准节点（shell、start_process、system_monitor、pull_files、watch_files、http_request、assert……）的参数、输出、指标与用法"
+			"description": "平台维护的标准节点包 sfly-std：节点代码里可以直接调用的辅助函数（命令、后台进程、资源采样、日志、等待、拉文件）和一个完整的示例，shell、start_process、stop_process 三个节点的参数、输出与用法，从 Release 下载并发布到控制面、安全说明、压测期间配合子流程与停止子流程节点的监控，以及从 0.3.0 升级时被删的 14 个节点怎么替换"
 		},
 		{
 			"slug": "cross-agent-files",

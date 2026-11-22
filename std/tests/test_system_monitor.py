@@ -12,10 +12,10 @@ from pathlib import Path
 
 import psutil
 import pytest
+from helper_nodes import system_monitor
 
 from sfly.local import Execution
 from sfly.testing import run_node
-from sfly_std.system_monitor import system_monitor
 
 METRICS = {
     "cpu_percent",

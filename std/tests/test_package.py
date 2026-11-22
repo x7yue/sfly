@@ -73,8 +73,9 @@ def test_declares_the_minimum_sdk_version_explicitly(metadata: dict[str, Any]) -
 
 
 def test_declares_the_minimum_agent_version_explicitly(metadata: dict[str, Any]) -> None:
-    # pull_files 用 Agent 能力访问另一台 Agent（ADR 0019）：requires-agent 同时约束节点所在的 Agent
-    # 和「Agent」类型的参数选的 Agent，不满足时触发前预检就阻断，不会运行到一半才失败。
+    # 辅助函数 pull_files_from_agent、watch_agent_files 用 Agent 能力访问另一台 Agent（ADR 0019）：
+    # requires-agent 同时约束节点所在的 Agent 和「Agent」类型的参数选的 Agent，
+    # 不满足时触发前预检就阻断，不会运行到一半才失败。
     pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
     declared = pyproject.get("tool", {}).get("sfly", {}).get("requires-agent")
 
@@ -83,8 +84,9 @@ def test_declares_the_minimum_agent_version_explicitly(metadata: dict[str, Any])
 
 
 def test_requires_an_agent_with_the_file_capabilities() -> None:
-    # pull_files 列出、下载、删除另一台 Agent 上的文件：两台 Agent 都要有能力 files、files.read、
-    # files.write。和 requires-sdk 一样，这些能力还没随平台版本发布时只能声明当前版本能满足的范围
+    # pull_files_from_agent 列出、下载、删除另一台 Agent 上的文件：两台 Agent 都要有能力
+    # files、files.read、files.write。和 requires-sdk 一样，
+    # 这些能力还没随平台版本发布时只能声明当前版本能满足的范围
     # （否则同版本的控制面在预检时阻断全部标准节点）；仓库版本号一旦越过
     # LAST_AGENT_WITHOUT_FILE_CAPABILITIES，requires-agent 必须同步排除它。
     pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
@@ -100,7 +102,7 @@ def test_requires_an_agent_with_the_file_capabilities() -> None:
 
 
 def test_requires_an_sdk_that_supports_metric_labels() -> None:
-    # system_monitor、process_monitor 按网卡、磁盘、进程上报带标签的指标：
+    # monitor_system、monitor_processes 按网卡、磁盘、进程上报带标签的指标：
     # 不支持标签的旧 Agent 会丢掉标签，把各个对象的点混进同一个序列。
     # 标签还没随平台版本发布时只能声明当前版本（否则同版本的控制面拒绝全部标准节点）；
     # 仓库版本号一旦越过 LAST_SDK_WITHOUT_LABELS，requires-sdk 必须同步排除它。
@@ -116,9 +118,9 @@ def test_requires_an_sdk_that_supports_metric_labels() -> None:
 
 
 def test_requires_an_sdk_that_can_download_artifacts() -> None:
-    # 0.3.0 起 shell 的 stdout_file / stderr_file、http_request 的 body_file 是给后续节点用
+    # 0.3.0 起 shell 的 stdout_file / stderr_file 是给后续节点用
     # ctx.artifacts.download 下载的（#181）：声明的最低 SDK 版本是第一个带下载接口的平台版本。
-    # pull_files 用到的 ctx.agent()（#198）也从同一个版本起才有。
+    # pull_files_from_agent 用到的 ctx.agent()（#198）也从同一个版本起才有。
     # 和指标标签一样，下载接口还没随平台版本发布时只能声明当前版本能满足的范围；
     # 仓库版本号一旦越过 LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD，requires-sdk 必须同步排除它，
     # sfly-std 0.3.0 在那个平台版本发布之后再发布（docs/agents/branching-and-release.md）。
@@ -168,7 +170,7 @@ def test_dependencies_only_have_lower_bounds(archive: Path) -> None:
         meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
         requires = Parser().parsestr(zf.read(meta_name).decode()).get_all("Requires-Dist") or []
 
-    assert requires, "sfly-std 至少依赖 psutil 和 httpx"
+    assert requires, "sfly-std 至少依赖 psutil"
     for requirement in requires:
         assert re.fullmatch(r"[A-Za-z0-9._-]+>=[0-9][0-9.]*", requirement.replace(" ", "")), (
             f"依赖只写宽松的下限（name>=X.Y），实际为 {requirement!r}"
@@ -339,29 +341,3 @@ def test_the_shell_node_fixture_for_the_web_e2e_tests_matches_the_built_package(
         f"{SHELL_NODE_FIXTURE.relative_to(REPO)} 与构建出的 shell 节点不一致，"
         "用 SFLY_UPDATE_FIXTURES=1 重新生成，再 pnpm exec biome format --write 这个文件"
     )
-
-
-def test_system_monitor_declares_its_metrics_charts_and_primary_metric(
-    metadata: dict[str, Any],
-) -> None:
-    node = next(n for n in metadata["nodes"] if n["name"] == "system_monitor")
-
-    assert node["primary_metric"] == "cpu_percent"
-    assert {m["name"] for m in node["metrics"]} == {
-        "cpu_percent",
-        "mem_used_percent",
-        "mem_used_bytes",
-        "load1",
-        "disk_used_percent",
-        "disk_read_bytes_per_s",
-        "disk_write_bytes_per_s",
-        "net_rx_bytes_per_s",
-        "net_tx_bytes_per_s",
-        "net_rx_bytes_per_s_by_nic",
-        "net_tx_bytes_per_s_by_nic",
-        "disk_read_bytes_per_s_by_disk",
-        "disk_write_bytes_per_s_by_disk",
-    }
-    # 每个指标都画在声明的图表里，不靠平台生成的默认图表。
-    charted = {name for chart in node["charts"] for name in chart["metrics"]}
-    assert charted == {m["name"] for m in node["metrics"]}

@@ -9,9 +9,9 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from helper_nodes import follow_log
 
 from sfly.testing import Execution, run_node
-from sfly_std.follow_log import follow_log
 
 Script = Callable[[], object]
 
@@ -96,7 +96,7 @@ def test_fails_when_a_line_matches_fail_on(
     assert result.status == "failed"
     assert result.error is not None
     assert result.error.message == (
-        f"sfly_std.follow_log.FailOnMatched: 日志 {log} 出现匹配 fail_on ERROR\\b 的行"
+        f"sfly_std.logs.FailOnMatched: 日志 {log} 出现匹配 fail_on ERROR\\b 的行"
         "（共 2 行匹配）：ERROR 磁盘已满"
     )
     # 同一批读到的行都已转发，失败的那一行之后的也在。

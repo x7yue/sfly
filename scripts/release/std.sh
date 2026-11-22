@@ -50,13 +50,15 @@ cmd_pack() {
 		exit 1
 	}
 	(cd "$out" && sha256sum "$archive" >SHA256SUMS)
-	uv run --locked --quiet python - "$out/$archive" "$version" >"$out/notes.md" <<'EOF'
+	# std/release-notes/<版本>.md（有的话）原样附在发布说明里：这个版本相对上一个版本不兼容的变化（例如删掉的节点怎么替换）。
+	uv run --locked --quiet python - "$out/$archive" "$version" "std/release-notes/$version.md" >"$out/notes.md" <<'EOF'
 import json
+import pathlib
 import re
 import sys
 import zipfile
 
-archive, version = sys.argv[1:]
+archive, version, changes_path = sys.argv[1:]
 with zipfile.ZipFile(archive) as zf:
     meta = json.loads(zf.read("sfly-package.json"))
 requires = meta["requires_sdk"]
@@ -97,6 +99,10 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @{name} <控
 ## 节点
 
 {nodes}""")
+changes = pathlib.Path(changes_path)
+if changes.is_file():
+    print()
+    print(changes.read_text(encoding="utf-8").rstrip("\n"))
 EOF
 	echo "$out/$archive"
 }

@@ -15,10 +15,10 @@ from pathlib import Path
 
 import psutil
 import pytest
+from helper_nodes import process_monitor
 from named_sleep import NamedSleep, named_sleep_fixture  # noqa: F401 -- fixture
 
 from sfly.testing import Execution, run_node
-from sfly_std.process_monitor import process_monitor
 from sfly_std.start_process import start_process
 
 #: processes.csv 的列（与「标准节点」页一致）。
@@ -259,7 +259,7 @@ def test_fails_when_a_target_does_not_appear_within_wait_for_process(
     assert result.status == "failed"
     assert result.error is not None
     assert result.error.message == (
-        "sfly_std.process_monitor.ProcessNotFound: 等待 0.5 秒后仍没有找到目标进程："
+        "sfly_std.resources.ProcessNotFound: 等待 0.5 秒后仍没有找到目标进程："
         f'name "{missing}"、match "^no such command$"'
     ), result.error.message
 
@@ -275,7 +275,7 @@ def test_fails_when_a_target_exits_by_default(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert result.error is not None
     assert result.error.message.startswith(
-        f"sfly_std.process_monitor.ProcessExited: 目标进程已退出：pid {pid}（退出码 3）"
+        f"sfly_std.resources.ProcessExited: 目标进程已退出：pid {pid}（退出码 3）"
     ), result.error.message
     assert str(pid) in {row["pid"] for row in rows(result)}  # 另有子进程 sleep
 
