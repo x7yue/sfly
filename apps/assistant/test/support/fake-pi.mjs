@@ -87,6 +87,8 @@ function handle(command) {
 	} else if (text.startsWith("ignore-term")) {
 		stubborn = true;
 		process.on("SIGTERM", () => out({ type: "fake_ignored_sigterm" }));
+		// stdin 关了之后事件循环里就没有别的了，不留一个定时器进程会自己退出（Linux 上比 SIGTERM 先到）。
+		setInterval(() => {}, 60_000);
 	} else if (text.startsWith("exit")) {
 		setTimeout(() => process.exit(7), 20);
 	} else if (text.startsWith("error")) {
