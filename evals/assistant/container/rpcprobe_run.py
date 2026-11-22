@@ -597,6 +597,27 @@ def tail_lines(path: Path | None, count: int = 3) -> list[str]:
     return [line[:300] for line in path.read_text().splitlines()[-count:]]
 
 
+def tool_result_in_session(path: Path | None) -> str | None:
+    """会话文件里最后一条工具结果是什么（解析整行，不截短）：「aborted」（Command aborted）、
+    「slept」（命令照常跑完）、别的文字原样，没有工具结果时 None。"""
+    if path is None or not path.exists():
+        return None
+    found: str | None = None
+    for line in path.read_text().splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get("message") if isinstance(entry, dict) else None
+        if not isinstance(message, dict) or message.get("role") != "toolResult":
+            continue
+        text = _text(message.get("content"))
+        found = (
+            "aborted" if "Command aborted" in text else "slept" if "slept" in text else text[:80]
+        )
+    return found
+
+
 def last_line_is_json(path: Path | None) -> bool:
     """会话文件的最后一行能不能解析成 JSON（被结束时没有留下写了一半的一行）。"""
     if path is None or not path.exists():
@@ -868,6 +889,7 @@ def q8() -> Record:
                 pi, mark, ("tool_execution_end", "turn_end", "agent_end", "agent_settled")
             ),
             "session_tail": tail_lines(session_file(session), 2),
+            "session_tool_result": tool_result_in_session(session_file(session)),
             "session_last_line_json": last_line_is_json(session_file(session)),
         }
     return result

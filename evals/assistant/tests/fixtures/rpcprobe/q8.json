@@ -1,49 +1,52 @@
 {
 	"ok": true,
-	"idle": { "exit_seconds": 0.046, "exit_code": 0 },
+	"idle": { "exit_seconds": 0.017, "exit_code": 0 },
 	"mid_turn": {
-		"closed_at": 1795359494.439732,
-		"exit_seconds": 0.067,
+		"closed_at": 1795366644.379263,
+		"exit_seconds": 0.035,
 		"exit_code": 0,
 		"tool_end_seconds": null,
 		"tool_result": "",
 		"settled": false,
 		"events_after_close": [],
 		"session_tail": [
-			"{\"type\":\"message\",\"id\":\"cfc113df\",\"parentId\":\"3ba3f207\",\"timestamp\":\"2026-11-22T14:58:14.459Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1008,\"timestamp\":1795359494459}}",
-			"{\"type\":\"message\",\"id\":\"ec45e6d7\",\"parentId\":\"cfc113df\",\"timestamp\":\"2026-11-22T14:58:14.466Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+			"{\"type\":\"message\",\"id\":\"3eb4866a\",\"parentId\":\"49d7dcb8\",\"timestamp\":\"2026-11-22T16:57:24.382Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1002,\"timestamp\":1795366644382}}",
+			"{\"type\":\"message\",\"id\":\"01328147\",\"parentId\":\"3eb4866a\",\"timestamp\":\"2026-11-22T16:57:24.384Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
 		],
+		"session_tool_result": "aborted",
 		"session_last_line_json": true,
-		"workbench": { "seen": true, "gone_seconds": 0.21 }
+		"workbench": { "seen": true, "after": true, "gone_seconds": 0.2 }
 	},
 	"mid_turn_sigterm": {
-		"closed_at": 1795359497.420476,
-		"exit_seconds": 0.071,
+		"closed_at": 1795366645.8049858,
+		"exit_seconds": 0.034,
 		"exit_code": 0,
 		"tool_end_seconds": null,
 		"tool_result": "",
 		"settled": false,
 		"events_after_close": [],
 		"session_tail": [
-			"{\"type\":\"message\",\"id\":\"8147b6ba\",\"parentId\":\"6bcb554b\",\"timestamp\":\"2026-11-22T14:58:17.443Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1011,\"timestamp\":1795359497443}}",
-			"{\"type\":\"message\",\"id\":\"fb638020\",\"parentId\":\"8147b6ba\",\"timestamp\":\"2026-11-22T14:58:17.456Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+			"{\"type\":\"message\",\"id\":\"47b11c97\",\"parentId\":\"cfe90d4c\",\"timestamp\":\"2026-11-22T16:57:25.808Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1012,\"timestamp\":1795366645807}}",
+			"{\"type\":\"message\",\"id\":\"ea86f6c0\",\"parentId\":\"47b11c97\",\"timestamp\":\"2026-11-22T16:57:25.810Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
 		],
+		"session_tool_result": "aborted",
 		"session_last_line_json": true,
-		"workbench": { "seen": true, "gone_seconds": 0.22 }
+		"workbench": { "seen": true, "after": true, "gone_seconds": 0.05 }
 	},
 	"sigterm_only": {
-		"closed_at": 1795359499.9830108,
-		"exit_seconds": 0.119,
+		"closed_at": 1795366647.2218916,
+		"exit_seconds": 0.035,
 		"exit_code": 143,
 		"tool_end_seconds": null,
 		"tool_result": "",
 		"settled": false,
 		"events_after_close": [],
 		"session_tail": [
-			"{\"type\":\"message\",\"id\":\"10a21fd0\",\"parentId\":\"c3c398da\",\"timestamp\":\"2026-11-22T14:58:19.997Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1003,\"timestamp\":1795359499997}}",
-			"{\"type\":\"message\",\"id\":\"5129b794\",\"parentId\":\"10a21fd0\",\"timestamp\":\"2026-11-22T14:58:20.010Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+			"{\"type\":\"message\",\"id\":\"1f0677cc\",\"parentId\":\"541d89b8\",\"timestamp\":\"2026-11-22T16:57:27.225Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1009,\"timestamp\":1795366647225}}",
+			"{\"type\":\"message\",\"id\":\"73d66462\",\"parentId\":\"1f0677cc\",\"timestamp\":\"2026-11-22T16:57:27.228Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
 		],
+		"session_tool_result": "aborted",
 		"session_last_line_json": true,
-		"workbench": { "seen": true, "gone_seconds": 0.29 }
+		"workbench": { "seen": true, "after": true, "gone_seconds": 0.08 }
 	}
 }

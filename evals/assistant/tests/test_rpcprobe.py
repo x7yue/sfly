@@ -372,9 +372,54 @@ def test_q8_expects_the_running_command_to_be_aborted() -> None:
     raw = fixture("q8")
     raw["mid_turn"]["tool_result"] = "slept"
     raw["mid_turn"]["session_tail"] = ['{"type":"message","message":{"content":"slept"}}']
+    raw["mid_turn"]["session_tool_result"] = "slept"
     verdict = judge("q8", raw)
     assert verdict.numbers["mid_turn_outcome"] == "等做完"
     assert verdict.verdict == FAILS
+
+
+def test_q6_is_partly_when_the_next_request_carries_the_empty_assistant_message() -> None:
+    raw = fixture("q6")
+    request = raw["next_turn"]["request"]
+    request.insert(len(request) - 1, {"role": "assistant", "text": ""})
+    verdict = judge("q6", raw)
+    assert verdict.verdict == PARTLY
+    assert verdict.numbers["after_abort_empty_assistant"] == 1
+
+
+def test_q8_judges_the_whole_session_line_not_the_truncated_tail() -> None:
+    raw = fixture("q8")
+    for variant, _ in rpcprobe.Q8_VARIANTS:
+        # 截短的那几行里看不到结果，容器里对整行判断的结果为准。
+        raw[variant]["tool_result"] = ""
+        raw[variant]["session_tail"] = ['{"type":"message"' + "x" * 300]
+        raw[variant]["session_tool_result"] = "aborted"
+    assert {rpcprobe.q8_outcome(raw[v]) for v, _ in rpcprobe.Q8_VARIANTS} == {"中止"}
+    raw["mid_turn"]["session_tool_result"] = "slept"
+    assert judge("q8", raw).verdict == FAILS
+
+
+def test_tool_result_in_session_reads_whole_lines(tmp_path: Path) -> None:
+    path = tmp_path / "s.jsonl"
+    call = {
+        "type": "message",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "toolCall", "arguments": {"command": "sleep 6; echo slept"}}],
+        },
+    }
+    result = {
+        "type": "message",
+        "message": {
+            "role": "toolResult",
+            "content": [{"type": "text", "text": "x" * 400 + "Command aborted"}],
+        },
+    }
+    path.write_text(json.dumps(call) + "\n")
+    assert run.tool_result_in_session(path) is None  # 命令原文里的 slept 不算
+    path.write_text(json.dumps(call) + "\n" + json.dumps(result) + "\n")
+    assert run.tool_result_in_session(path) == "aborted"
+    assert run.tool_result_in_session(tmp_path / "missing.jsonl") is None
 
 
 def test_q8_checks_the_session_file_ends_with_a_whole_line() -> None:
@@ -417,15 +462,32 @@ def test_gone_after_takes_the_first_sample_without_the_command() -> None:
 def test_gone_after_does_not_count_a_command_that_was_never_sampled() -> None:
     # 从头到尾没采到这条命令（模式写错、命令名变了）：不是「0.1 秒内消失」。
     samples = rpcprobe.parse_watch("10.0 \n10.2 \n10.4 \n")
-    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == {"seen": False, "gone_seconds": None}
+    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == {
+        "seen": False,
+        "after": True,
+        "gone_seconds": None,
+    }
     # 只在 since 之后才采到的也不算：结束之前它得在跑。
     samples = rpcprobe.parse_watch("10.0 \n10.2 sleep 601|\n10.4 \n")
     assert rpcprobe.gone_after(samples, "sleep 601", 10.1)["seen"] is False
 
 
+def test_gone_after_without_samples_after_the_end_is_unfinished() -> None:
+    samples = rpcprobe.parse_watch("10.0 sleep 601|\n10.1 sleep 601|\n")
+    gone = rpcprobe.gone_after(samples, "sleep 601", 10.15)
+    assert gone == {"seen": True, "after": False, "gone_seconds": None}
+    raw = fixture("q6")
+    raw["workbench"] = gone
+    assert judge("q6", raw).verdict == UNFINISHED
+
+
 def test_gone_after_reports_a_command_that_stays() -> None:
     samples = rpcprobe.parse_watch("10.0 sleep 601|\n10.2 sleep 601|\n")
-    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == {"seen": True, "gone_seconds": None}
+    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == {
+        "seen": True,
+        "after": True,
+        "gone_seconds": None,
+    }
 
 
 def test_rpcprobe_rejects_an_unknown_question_before_touching_the_environment(

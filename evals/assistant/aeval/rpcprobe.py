@@ -191,7 +191,7 @@ def judge_q2(raw: dict[str, Any]) -> Verdict:
             v.facts.append(
                 "设置目录归 root、只读，pi 以别的用户运行：不能用（"
                 + _lock_reason(ro["error"])
-                + "），pi 要在设置目录里建锁、写凭据和模型缓存"
+                + "），pi 要写设置目录"
             )
     return v
 
@@ -337,7 +337,8 @@ def judge_q4(raw: dict[str, Any]) -> Verdict:
         and sent == ["第一句", "第二句", "第三句"]
     ):
         v.facts.append(
-            f"第二次起来时 get_messages 是第一次的 {len(turns)} 条消息，同一个会话文件；"
+            f"第二次起来时 get_messages 里的 user、assistant 是第一次的 {len(turns)} 条"
+            "（role=system 的另算，见下），同一个会话文件；"
             "接着说的第三句和回复追加在后面，发给模型的请求里依次是三句话"
         )
     elif sent:
@@ -399,14 +400,16 @@ def gone_after(samples: list[tuple[float, str]], marker: str, since: float) -> d
     只有 `since` 之前采到过它（命令确实在跑），之后第一个不含它的采样才算「消失」：
     `{"seen": True, "gone_seconds": 秒数}`；一直在时 `gone_seconds` 是 None。
     `since` 之前一次都没采到（模式写错、命令名变了、采样没起来）时是 `{"seen": False}`：
-    分不清「已经消失」和「没采到」，不给秒数。"""
+    分不清「已经消失」和「没采到」，不给秒数。`since` 之后一个采样都没有时 `after` 是 False：
+    看不出它有没有消失，也不算「一直在」。"""
     seen = any(stamp <= since and marker in running for stamp, running in samples)
+    after = any(stamp >= since for stamp, _ in samples)
     if not seen:
-        return {"seen": False, "gone_seconds": None}
+        return {"seen": False, "after": after, "gone_seconds": None}
     for stamp, running in samples:
         if stamp >= since and marker not in running:
-            return {"seen": True, "gone_seconds": round(stamp - since, 2)}
-    return {"seen": True, "gone_seconds": None}
+            return {"seen": True, "after": True, "gone_seconds": round(stamp - since, 2)}
+    return {"seen": True, "after": after, "gone_seconds": None}
 
 
 def _workbench_fact(v: Verdict, label: str, watch: dict[str, Any] | None) -> None:
@@ -414,6 +417,9 @@ def _workbench_fact(v: Verdict, label: str, watch: dict[str, Any] | None) -> Non
     if not watch or not watch.get("seen"):
         v.worsen(UNFINISHED)
         v.facts.append(f"{label}：结束之前没采到工作台上的命令，看不出它有没有消失")
+    elif watch.get("gone_seconds") is None and watch.get("after") is False:
+        v.worsen(UNFINISHED)
+        v.facts.append(f"{label}：结束之后一个采样都没有，看不出工作台上的命令有没有消失")
     elif watch.get("gone_seconds") is None:
         v.worsen(FAILS)
         v.facts.append(f"{label}：工作台上的命令结束之前在跑，之后一直没消失（看到采样结束）")
@@ -516,6 +522,9 @@ def _judge_after_abort(v: Verdict, nxt: dict[str, Any] | None) -> None:
         v.facts.append(f"abort 之后再发一轮没有做完：{nxt.get('error') or nxt.get('prompt_error')}")
     else:
         v.facts.append("abort 之后同一个进程再发一轮：照常做完")
+    if empty:
+        # 有的模型端点拒收内容为空的 assistant 消息：发出去了就不能说「abort 之后能照常接着用」。
+        v.worsen(PARTLY)
     v.facts.append(
         f"这一轮发给模型的请求里依次是 {roles}；"
         + (
@@ -609,6 +618,13 @@ def q8_outcome(x: dict[str, Any]) -> str:
     """一轮进行中被结束时 pi 怎么收场：「中止」（正在跑的命令被中止）、
     「等做完」（命令照常跑完才退出）、
     「看不出来」（会话文件和事件里都没有这次命令的结果）。"""
+    # 容器里对会话文件的整行判断（session_tail 截到 300 个字符，长一点就找不到了）；
+    # 旧的记录没有这一项时退回看截短的那几行。
+    whole = x.get("session_tool_result")
+    if whole == "aborted":
+        return "中止"
+    if whole == "slept":
+        return "等做完"
     texts = [x.get("tool_result", ""), *x.get("session_tail", [])]
     if any("Command aborted" in t for t in texts):
         return "中止"
