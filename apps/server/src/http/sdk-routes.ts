@@ -22,7 +22,7 @@ import { sendError } from "./errors.js";
  * | GET | `/sdk/project-settings` | `sfly init` 写进新项目的版本、sfly 索引与镜像 |
  *
  * 索引只提供平台自己的两个包：不需要凭据（和 SDK wheel 的下载一样，ADR 0029 的「不属于项目」一类；理由见
- * docs/ARCHITECTURE.md §4.4「包索引」），经契约路由注册，启动守卫保证不会有绕过契约的入口。
+ * docs/ARCHITECTURE.md §4.3「包索引」），经契约路由注册，启动守卫保证不会有绕过契约的入口。
  */
 export function registerSdkRoutes(
 	app: FastifyInstance,

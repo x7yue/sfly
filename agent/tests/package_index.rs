@@ -170,6 +170,108 @@ async fn without_a_published_version_the_name_is_still_not_taken_from_pypi() {
     assert_eq!(pypi.count(&fake), 0, "PyPI 镜像上的同名包一次也没有下载");
 }
 
+/// 控制面的包索引对 `sfly-std` 的项目页回 404 或重定向到别处（`SFLY_PUBLIC_URL` 指到了别的 HTTP 服务、反向代理漏转了
+/// `/simple/`）：uv 的 first-index 会转去 PyPI 镜像，装上那里的同名包，安装照样成功。Agent 装依赖之前先确认这个地址直接回
+/// 200，不是就不装，任务以 env_error 失败，写明地址、得到的状态码（或重定向到哪）和该查什么。
+#[tokio::test]
+async fn a_package_index_that_does_not_answer_sfly_std_directly_stops_the_install() {
+    let pypi = HttpFixture::start().await;
+    let fake = add_std(&pypi, PYPI_VERSION);
+    let plane = HttpFixture::start().await;
+    let demo = publish(&plane, "sfly-demo", "1.0.0", &["sfly-std>=0.3.0"]);
+    let cp = FakeControlPlane::start().await;
+    cp.set_package_index(&plane.index_url());
+    let std_page = format!("{}/simple/sfly-std/", plane.url);
+
+    // 第一轮：这个地址上没有 sfly-std 的项目页（404）；第二轮：重定向到 PyPI 镜像的同名项目页。
+    for (i, (what, expect)) in [
+        ("404", format!("GET {std_page} 返回 404")),
+        (
+            "重定向",
+            format!(
+                "GET {std_page} 返回 302 Found，重定向到 {}/simple/sfly-std/",
+                pypi.url
+            ),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if i == 1 {
+            plane.redirect(
+                "/simple/sfly-std/",
+                &format!("{}/simple/sfly-std/", pypi.url),
+            );
+        }
+        let venv = fresh_venv(true);
+        let _agent = agent(&cp, &format!("agent-check-{i}"), &venv, &pypi, &[]);
+        cp.hello(i).await;
+        let task = format!("task-{i}");
+        cp.assign(package_task(
+            &task,
+            "sfly-demo",
+            "1.0.0",
+            "about",
+            json!({}),
+            demo.archive(),
+        ))
+        .await;
+
+        let (result, _) = cp.result(&task).await;
+        assert_eq!(result.status(), TaskStatus::Failed, "{what}：{result:?}");
+        let error = result.error.expect("error");
+        assert_eq!(error.kind(), ErrorKind::EnvError, "{what}");
+        assert!(error.message.contains(&expect), "{what}：{}", error.message);
+        assert!(
+            error.message.contains("SFLY_PUBLIC_URL") && error.message.contains("/simple/"),
+            "{what}：说明要查什么：{}",
+            error.message
+        );
+        assert_eq!(installed_std(&venv), None, "{what}：没有装上任何 sfly-std");
+    }
+    assert_eq!(pypi.count(&fake), 0, "PyPI 镜像上的同名包一次也没有下载");
+    assert_eq!(
+        pypi.count("/simple/sfly-std/"),
+        0,
+        "PyPI 镜像的项目页一次也没有被问到：没有跟随重定向，也没有交给 uv"
+    );
+}
+
+/// 每次装依赖都先问，不只在节点包的要求里直接写了 `sfly-std` 时：它多半是传递依赖，装之前看不出来。
+#[tokio::test]
+async fn every_install_checks_the_index_even_for_a_package_that_does_not_mention_sfly_std() {
+    let pypi = HttpFixture::start().await;
+    let plane = HttpFixture::start().await;
+    let plain = publish(&plane, "sfly-plain", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    cp.set_package_index(&plane.index_url());
+    let _agent = agent(&cp, "agent-check-plain", &venv, &pypi, &[]);
+    cp.hello(0).await;
+
+    cp.assign(package_task(
+        "task-1",
+        "sfly-plain",
+        "1.0.0",
+        "about",
+        json!({}),
+        plain.archive(),
+    ))
+    .await;
+
+    let (result, _) = cp.result("task-1").await;
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    let error = result.error.expect("error");
+    assert_eq!(error.kind(), ErrorKind::EnvError);
+    assert!(
+        error
+            .message
+            .contains(&format!("GET {}/simple/sfly-std/ 返回 404", plane.url)),
+        "{}",
+        error.message
+    );
+}
+
 /// 一台 Agent 的共享 venv 里只有一个 sfly-std：两个节点包要求的版本互相矛盾时，装第二个失败，任务错误里除了 uv 的输出，
 /// 还写明是哪两个包、各要什么版本（uv 只说「你要求 sfly-std<0.4」，不说是哪个包要求的）。
 #[tokio::test]

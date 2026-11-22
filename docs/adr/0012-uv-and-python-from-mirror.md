@@ -20,4 +20,4 @@ Agent 机器上的 uv 和 Python 解释器不随 sfly 打包，也不固定版�
 
 单台机器可以在本机覆盖下发的镜像（#72）：Agent 的 `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`（命令行 > 环境变量 > `agent.env` > 控制面下发），install.sh 写进 `agent.env`、`sfly init` 读取同样的来源；控制面仍只配置两项，Python 下载镜像只能在本机单独覆盖（默认从 GitHub Release 镜像推导）。原因：uv 把发行版名写进 User-Agent 且不能修改，中科大会拒绝个别发行版（如 Omarchy）的请求，这类机器要绕开，其他机器不受影响。
 
-平台自己的包不走镜像（#556）：节点包可以依赖标准节点包 `sfly-std`，它不在 PyPI 上，由控制面的包索引（`/simple/`，和 `sfly` 一样）提供；Agent 装节点包依赖时把控制面的包索引排在 PyPI 镜像前面，并在命令行上写明 `--index-strategy first-index`，所以 `sfly-std` 只来自控制面，镜像或 PyPI 上同名的包不会被装上。其余依赖仍来自本 ADR 的 PyPI 镜像。见 docs/ARCHITECTURE.md §4.4。
+平台自己的包不走镜像（#556）：节点包可以依赖标准节点包 `sfly-std`，它不在 PyPI 上，由控制面的包索引（`/simple/`，和 `sfly` 一样）提供；Agent 装节点包依赖时把控制面的包索引排在 PyPI 镜像前面，并在命令行上写明 `--index-strategy first-index`，所以 `sfly-std` 只来自控制面，镜像或 PyPI 上同名的包不会被装上——前提是控制面的包索引对 `sfly-std` 的项目页直接回答了（uv 对 404 或重定向会转去下一个索引），所以 Agent 每次装依赖之前先确认这一点，不满足就不装、任务以 `env_error` 失败。其余依赖仍来自本 ADR 的 PyPI 镜像。见 docs/ARCHITECTURE.md §4.3、§4.4。

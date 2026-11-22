@@ -1,6 +1,7 @@
 //! 节点包安装（docs/ARCHITECTURE.md §4.4、ADR 0002）：从控制面下载 `.sflypkg` 归档、校验 sha256，
 //! 取出其中的 wheel，用 `uv pip install` 装进共享 venv（同名的其他版本被就地替换），
-//! 依赖从配置的 PyPI 镜像安装；平台自己的包（标准节点包 `sfly-std`）只从控制面的包索引取（[`index_args`]）。
+//! 依赖从配置的 PyPI 镜像安装；平台自己的包（标准节点包 `sfly-std`）只从控制面的包索引取（[`index_args`]），
+//! 装之前先确认控制面的包索引直接回答了 `sfly-std`（[`Installer::check_package_index`]）。
 //!
 //! 共享 venv 里其他节点包声明的依赖（Requires-Dist）会和新 wheel 一起交给 uv 解析：
 //! 新包的依赖与它们冲突时 uv 解析失败、venv 保持原样，任务以 `env_error` 失败并带上完整的 uv 输出。
@@ -168,13 +169,16 @@ impl Installer {
             .await
             .map_err(|e| InstallError::new(format!("写入 {} 失败：{e}", dir.display())))?;
 
+        let pypi = self.index_url.lock().unwrap().clone();
+        let package_index = self.package_index.lock().unwrap().clone();
+        if let Some(index) = &package_index {
+            self.check_package_index(index, label).await?;
+        }
         let mut command = tokio::process::Command::new(&self.uv);
         command
             .args(["pip", "install", "--no-progress", "--color", "never"])
             .arg("--python")
             .arg(self.venv.python());
-        let pypi = self.index_url.lock().unwrap().clone();
-        let package_index = self.package_index.lock().unwrap().clone();
         command.args(index_args(pypi.as_deref(), package_index.as_deref()));
         if reinstall {
             command
@@ -213,6 +217,83 @@ impl Installer {
             })
         }
     }
+}
+
+impl Installer {
+    /// 装依赖之前确认：控制面的包索引对 `sfly-std` 的项目页**直接**回答 200（不跟随重定向），否则不装，任务以
+    /// `env_error` 失败（#556）。
+    ///
+    /// 「`sfly-std` 只会来自控制面」靠的是 uv 的 `first-index`：一个名字只看第一个有回应的索引，404 才会转去下一个
+    /// 索引（PyPI 镜像）。控制面自己的代码对这个名字永远有回应（还没发布时是没有版本的 200 页面），但这个地址上
+    /// 回答的不一定是控制面：对外地址（`SFLY_PUBLIC_URL`）指到了别的 HTTP 服务、反向代理漏转了 `/simple/`，
+    /// 404 或重定向到别处时 uv 会悄悄装上 PyPI 镜像上的同名包，安装照样成功。节点包的归档走另一个路径，
+    /// 照样下载得到，别处不会先暴露问题。所以每次装依赖都先问一次（一次小请求；依赖 `sfly-std` 多半是传递依赖，
+    /// 装之前看不出来，只在要求里直接写了它时才问挡不住）。
+    async fn check_package_index(&self, index: &str, label: &str) -> Result<(), InstallError> {
+        let url = std_project_url(index);
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(INDEX_CHECK_TIMEOUT)
+            .build()
+            .map_err(|e| InstallError::new(format!("安装节点包 {label} 失败：{e}")))?;
+        let outcome = match client.get(&url).send().await {
+            Ok(response) if response.status() == reqwest::StatusCode::OK => return Ok(()),
+            Ok(response) if response.status().is_redirection() => IndexAnswer::Redirect {
+                status: response.status(),
+                location: response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string),
+            },
+            Ok(response) => IndexAnswer::Status(response.status()),
+            Err(error) => IndexAnswer::Unreachable(error.to_string()),
+        };
+        Err(InstallError::new(index_check_failure(
+            label, &url, &outcome,
+        )))
+    }
+}
+
+/// 控制面的包索引里 `sfly-std` 的项目页地址；`index` 是 Welcome 里的 `package_index_url`（`<对外地址>/simple/`）。
+fn std_project_url(index: &str) -> String {
+    format!("{}/sfly-std/", index.trim_end_matches('/'))
+}
+
+/// 问包索引时等多久（秒）。
+const INDEX_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 控制面的包索引对 `sfly-std` 的项目页没有直接回答 200。
+#[derive(Debug)]
+enum IndexAnswer {
+    Status(reqwest::StatusCode),
+    Redirect {
+        status: reqwest::StatusCode,
+        location: Option<String>,
+    },
+    Unreachable(String),
+}
+
+/// 检查没通过时给任务详情看的说明：请求的地址、得到了什么（状态码，或重定向到了哪）、该查什么。
+fn index_check_failure(label: &str, url: &str, answer: &IndexAnswer) -> String {
+    let got = match answer {
+        IndexAnswer::Status(status) => format!("返回 {status}"),
+        IndexAnswer::Redirect {
+            status,
+            location: Some(location),
+        } => format!("返回 {status}，重定向到 {location}"),
+        IndexAnswer::Redirect {
+            status,
+            location: None,
+        } => format!("返回 {status}（重定向，没有写明去哪）"),
+        IndexAnswer::Unreachable(error) => format!("请求失败：{error}"),
+    };
+    format!(
+        "安装节点包 {label} 失败：控制面的包索引没有直接回答 sfly-std：GET {url} {got}（需要直接返回 200）。\n\n\
+         平台自己的包 sfly-std 只能来自控制面的包索引：这个地址不是 200 时，uv 会转去 PyPI 镜像，装上那里的同名包，\n\
+         所以没有安装。请检查控制面的对外地址（SFLY_PUBLIC_URL）是否指向这个控制面，反向代理有没有把 /simple/ \n\
+         转发给控制面（地址、路径前缀和状态码都要对得上）。"
+    )
 }
 
 /// `uv pip install` 的索引参数（#556）。节点包可以依赖平台自己的包（标准节点包 `sfly-std`，它不在 PyPI 上）：
@@ -381,7 +462,10 @@ fn extract_wheel(archive: Vec<u8>) -> Result<(String, Vec<u8>), String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{conflict_note, index_args, requirement_name};
+    use super::{
+        IndexAnswer, conflict_note, index_args, index_check_failure, requirement_name,
+        std_project_url,
+    };
 
     fn args(pypi: Option<&str>, package_index: Option<&str>) -> Vec<String> {
         index_args(pypi, package_index)
@@ -534,5 +618,57 @@ mod tests {
         )
         .expect("note");
         assert!(note.contains("不要照 uv 的提示"), "{note}");
+    }
+
+    #[test]
+    fn the_std_project_page_is_under_the_package_index() {
+        assert_eq!(
+            std_project_url("http://plane:8080/prefix/simple/"),
+            "http://plane:8080/prefix/simple/sfly-std/"
+        );
+        // 没有末尾的 `/` 也一样。
+        assert_eq!(
+            std_project_url("http://plane/simple"),
+            "http://plane/simple/sfly-std/"
+        );
+    }
+
+    #[test]
+    fn the_failure_names_the_address_what_came_back_and_what_to_check() {
+        let url = "http://plane/simple/sfly-std/";
+        let not_found = index_check_failure(
+            "sfly-demo@1.0.0",
+            url,
+            &IndexAnswer::Status(reqwest::StatusCode::NOT_FOUND),
+        );
+        assert!(not_found.contains("sfly-demo@1.0.0"), "{not_found}");
+        assert!(
+            not_found.contains("GET http://plane/simple/sfly-std/ 返回 404 Not Found"),
+            "{not_found}"
+        );
+        assert!(
+            not_found.contains("SFLY_PUBLIC_URL") && not_found.contains("/simple/"),
+            "{not_found}"
+        );
+
+        let moved = index_check_failure(
+            "sfly-demo@1.0.0",
+            url,
+            &IndexAnswer::Redirect {
+                status: reqwest::StatusCode::FOUND,
+                location: Some("https://pypi.example/simple/sfly-std/".into()),
+            },
+        );
+        assert!(
+            moved.contains("返回 302 Found，重定向到 https://pypi.example/simple/sfly-std/"),
+            "{moved}"
+        );
+
+        let down = index_check_failure(
+            "sfly-demo@1.0.0",
+            url,
+            &IndexAnswer::Unreachable("connection refused".into()),
+        );
+        assert!(down.contains("请求失败：connection refused"), "{down}");
     }
 }

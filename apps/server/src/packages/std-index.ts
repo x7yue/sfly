@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import { unzipSync } from "fflate";
 import { PUBLIC_PROJECT } from "../projects/project-id.js";
 import type { PackageRepository } from "./package-repository.js";
+import { sameVersion } from "./pep440.js";
 
 /**
- * 标准节点包 sfly-std 在控制面的包索引里（#556，docs/ARCHITECTURE.md §4.4）。
+ * 标准节点包 sfly-std 在控制面的包索引里（#556，docs/ARCHITECTURE.md §4.3）。
  *
  * 一个节点包可以依赖平台自己的包 sfly-std（它不在 PyPI 上）：Agent 装节点包的依赖时把控制面的 `/simple/` 作为优先于
  * PyPI 镜像的索引（Welcome 的 `package_index_url`），开发机的 `sfly init` 项目也把 `sfly-std` 指向它。索引里的 sfly-std
@@ -17,6 +18,9 @@ import type { PackageRepository } from "./package-repository.js";
  * - **这个名字一直有回应**：公共项目里还没有 sfly-std 时，项目页是 200 和一个没有任何版本的页面，不是 404。uv 对一个名字只看
  *   第一个有回应的索引（first-index），404 才会转去下一个索引（PyPI）；所以没发布时依赖它的节点包装不上（uv 报「没有这个包的版本」），
  *   不会装上 PyPI 上有人放的同名包。
+ * - **wheel 要和归档对得上**：wheel 文件名里的名字是 `sfly_std`、版本和归档登记的版本是同一个版本（PEP 440 的写法差异
+ *   不算），对不上的不列并报告；同一个文件名只列一次。索引里唯一由上传的内容决定的就是 wheel（uv 从文件名读版本），
+ *   不核对的话 `0.6.0` 的归档里放一个 `7.0.0` 的 wheel，页上就列 7.0.0，Agent 也装上 7.0.0。
  * - 归档和 wheel 都不可变（`名字@版本` 不能覆盖），所以每个归档的 wheel 摘要算一次、按归档的 sha256 缓存。
  */
 export const STD_PACKAGE = "sfly-std";
@@ -32,6 +36,18 @@ export interface StdWheel {
 
 /** wheel 的文件名（PEP 427）里的发行版名：`sfly_std`。 */
 const DISTRIBUTION = "sfly_std";
+
+/**
+ * wheel 文件名 `{发行版}-{版本}(-{构建})?-{python}-{abi}-{平台}.whl`（PEP 427）里的发行版名和版本；发行版名里的 `-` 都已经
+ * 转成 `_`，所以按 `-` 分就行。不是这个格式时返回 undefined。
+ */
+function parseWheelName(filename: string): { distribution: string; version: string } | undefined {
+	if (!filename.endsWith(".whl")) return undefined;
+	const parts = filename.slice(0, -".whl".length).split("-");
+	const [distribution, version] = parts;
+	if (parts.length < 5 || parts.length > 6 || !distribution || !version) return undefined;
+	return { distribution: distribution.toLowerCase().replace(/[-_.]+/g, "_"), version };
+}
 
 interface Cached {
 	filename: string;
@@ -63,11 +79,23 @@ export function createStdIndex({
 		for (const archive of await packages.archivesIn(PUBLIC_PROJECT, STD_PACKAGE)) {
 			try {
 				const wheel = await wheelOf(archive);
-				if (!wheel?.filename.startsWith(`${DISTRIBUTION}-`)) {
+				const parsed = wheel && parseWheelName(wheel.filename);
+				if (!wheel || parsed?.distribution !== DISTRIBUTION) {
 					onSkipped(
 						archive.version,
 						`归档里的 wheel 不是 ${DISTRIBUTION} 的：${wheel?.filename ?? "没有 wheel"}`,
 					);
+					continue;
+				}
+				if (!sameVersion(parsed.version, archive.version)) {
+					onSkipped(
+						archive.version,
+						`归档里的 wheel 的版本和归档登记的版本不一致：${wheel.filename}（归档登记的是 ${archive.version}）`,
+					);
+					continue;
+				}
+				if (found.some((e) => e.wheel.filename === wheel.filename)) {
+					onSkipped(archive.version, `wheel ${wheel.filename} 已经由前面的版本列出，不重复列`);
 					continue;
 				}
 				found.push({

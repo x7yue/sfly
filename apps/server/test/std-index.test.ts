@@ -3,6 +3,7 @@
 // 版本的页面而不是 404，所以 uv 不会转去 PyPI 取一个同名的包（agent/tests/package_index.rs）。
 import { createHash } from "node:crypto";
 import { strToU8 } from "fflate";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { publishIntoPublicProject } from "./support/std-package.js";
@@ -10,9 +11,17 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 const sha256 = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex");
 
-/** 一个节点包归档，里面的 wheel 内容是 `wheel <名> <版本>`（控制面只看文件名，不必是真的 wheel）。 */
-function archiveOf(name: string, version: string, wheelName = name.replace(/-/g, "_")) {
-	const filename = `${wheelName}-${version}-py3-none-any.whl`;
+/**
+ * 一个节点包归档，里面的 wheel 内容是 `wheel <名> <版本>`（控制面只看文件名，不必是真的 wheel）。
+ * `wheelVersion` 是 wheel 文件名里的版本，默认和归档登记的版本一样。
+ */
+function archiveOf(
+	name: string,
+	version: string,
+	wheelName = name.replace(/-/g, "_"),
+	wheelVersion = version,
+) {
+	const filename = `${wheelName}-${wheelVersion}-py3-none-any.whl`;
 	return {
 		filename,
 		wheel: `wheel ${name} ${version}`,
@@ -131,5 +140,98 @@ describe("sfly-std 在控制面的包索引里", () => {
 			expect(links(html)).toHaveLength(2);
 			expect((await cp.fetch(`/simple/sfly-std/files/${odd.filename}`)).status).toBe(404);
 		});
+	});
+});
+
+describe("wheel 要和归档登记的名字、版本对得上", () => {
+	let cp: TestControlPlane;
+
+	beforeAll(async () => {
+		cp = await startTestControlPlane({ version: "1.2.3" });
+	});
+	afterAll(async () => {
+		await cp?.close();
+	});
+
+	const names = async () =>
+		[...(await (await cp.fetch("/simple/sfly-std/")).text()).matchAll(/>([^<]*\.whl)</g)].map(
+			(m) => m[1],
+		);
+
+	it("归档登记 0.6.0、wheel 却是 7.0.0 的：不列，下载它的文件名得到 404（uv 从文件名读版本，列了就会装上 7.0.0）", async () => {
+		const good = archiveOf("sfly-std", "0.5.0");
+		const lying = archiveOf("sfly-std", "0.6.0", "sfly_std", "7.0.0");
+		await publishIntoPublicProject(cp, good.archive, { name: "sfly-std", version: "0.5.0" });
+		await publishIntoPublicProject(cp, lying.archive, { name: "sfly-std", version: "0.6.0" });
+
+		expect(await names()).toEqual([good.filename]);
+		expect((await cp.fetch(`/simple/sfly-std/files/${lying.filename}`)).status).toBe(404);
+	});
+
+	it("版本的写法不同但是同一个版本（0.7.0-beta.1 和 0.7.0b1）照样列出", async () => {
+		const spelled = archiveOf("sfly-std", "0.7.0-beta.1", "sfly_std", "0.7.0b1");
+		await publishIntoPublicProject(cp, spelled.archive, {
+			name: "sfly-std",
+			version: "0.7.0-beta.1",
+		});
+
+		expect(await names()).toContain(spelled.filename);
+		expect((await cp.fetch(`/simple/sfly-std/files/${spelled.filename}`)).status).toBe(200);
+	});
+
+	it("两个归档里是同名的 wheel（版本写法不同的 0.8 和 0.8.0）：只列第一个，页上没有两条同名的链接", async () => {
+		const first = archiveOf("sfly-std", "0.8", "sfly_std", "0.8.0");
+		const second = archiveOf("sfly-std", "0.8.0");
+		// 内容不同：第二个归档的 wheel 内容不是第一个的。
+		const different = {
+			...second,
+			archive: packageArchive(
+				packageMetadata({ name: "sfly-std", version: "0.8.0", requires_python: ">=3.10" }),
+				{ [second.filename]: strToU8("另一份内容") },
+			),
+		};
+		await publishIntoPublicProject(cp, first.archive, { name: "sfly-std", version: "0.8" });
+		await publishIntoPublicProject(cp, different.archive, { name: "sfly-std", version: "0.8.0" });
+
+		const listed = (await names()).filter((n) => n === first.filename);
+		expect(listed).toHaveLength(1);
+		const download = await cp.fetch(`/simple/sfly-std/files/${first.filename}`);
+		expect(await download.text()).toBe(first.wheel);
+	});
+});
+
+describe("读索引出错不能变成 404", () => {
+	// 出错时回 404，uv 会把它当成「控制面没有这个包」转去 PyPI 取同名的包（first-index），所以必须是 5xx：uv 重试后失败。
+	let cp: TestControlPlane;
+
+	beforeAll(async () => {
+		cp = await startTestControlPlane({ version: "1.2.3" });
+		const std = archiveOf("sfly-std", "0.3.0");
+		await publishIntoPublicProject(cp, std.archive, { name: "sfly-std", version: "0.3.0" });
+	});
+	afterAll(async () => {
+		await cp?.close();
+	});
+
+	it("数据库查询失败时，项目页和 wheel 下载都是 500，恢复后照常", async () => {
+		const wheel = "sfly_std-0.3.0-py3-none-any.whl";
+		const db = new pg.Client({ connectionString: cp.database.url });
+		await db.connect();
+		try {
+			await db.query("alter table node_packages rename to node_packages_hidden");
+			try {
+				for (const path of ["/simple/sfly-std/", `/simple/sfly-std/files/${wheel}`]) {
+					const res = await cp.fetch(path);
+					expect(res.status, path).toBe(500);
+					expect(await res.text(), path).not.toContain(wheel);
+				}
+			} finally {
+				await db.query("alter table node_packages_hidden rename to node_packages");
+			}
+		} finally {
+			await db.end();
+		}
+		expect((await cp.fetch("/simple/sfly-std/")).status).toBe(200);
+		expect((await cp.fetch(`/simple/sfly-std/files/${wheel}`)).status).toBe(200);
 	});
 });
