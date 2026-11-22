@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from sfly.cli import scenario_edit, scenario_versions
+from sfly.cli import scenario_check, scenario_edit, scenario_versions
 from sfly.cli.client import segment
 from sfly.cli.output import (
     add_limit_option,
@@ -28,10 +28,11 @@ from sfly.cli.session import Session, command, common_options
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser(
         "scenario",
-        help="查看和编辑平台上的场景：列表、入口参数、链路上的节点、pull / push 保存新版本",
+        help="查看和编辑平台上的场景：列表、节点、pull / check / push 保存新版本、对比版本",
         description="查看和编辑控制面上的场景。场景用 id 或准确名称指定，"
         "名称对应多个场景时报错并列出候选。默认输出精简文本，--json 输出 JSON。"
-        "退出码：成功 0，命令出错（参数不对、连不上控制面、场景不存在……）2。",
+        "退出码：成功 0，命令出错（参数不对、连不上控制面、场景不存在……）2，"
+        "场景文档只有警告（check、push --strict）4。",
     )
     group = parser.add_subparsers(dest="scenario_command", required=True)
 
@@ -63,6 +64,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
 
     scenario_edit.register(group)
     scenario_versions.register(group)
+    scenario_check.register(group)
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:

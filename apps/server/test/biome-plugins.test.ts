@@ -80,7 +80,10 @@ function lint(plugin: string, dir: string): { diagnostics: Diagnostic[]; files: 
 	const result = spawnSync(
 		biomeBin,
 		["lint", `--config-path=${configDir}`, "--reporter=json", dir],
-		{ cwd: repoRoot, encoding: "utf8" },
+		// 在样例目录里跑：biome 会先扫描工作目录里的全部文件，工作目录只有样例时扫描的范围小得多。CI 里出现过一次
+		// `internalError/fs: The file does not exist in the workspace`（本地和 Linux 容器里都没有复现，原因没有查明，
+		// 怀疑是整个仓库的扫描碰上了同时在仓库里建、删文件的其他测试）。诊断里的路径相对于工作目录。
+		{ cwd: dir, encoding: "utf8" },
 	);
 	let report: { summary: { changed: number; unchanged: number }; diagnostics: Diagnostic[] };
 	try {
@@ -94,12 +97,12 @@ function lint(plugin: string, dir: string): { diagnostics: Diagnostic[]; files: 
 	};
 }
 
-/** 把诊断换成「相对 fixtures 的路径:行号」。 */
-function placesOf(diagnostics: Diagnostic[]): string[] {
+/** 把诊断换成「相对 fixtures 的路径:行号」；诊断里的路径相对于 `dir`（biome 的工作目录）。 */
+function placesOf(diagnostics: Diagnostic[], dir: string): string[] {
 	return diagnostics
 		.map(
 			(d) =>
-				`${relative(fixturesDir, resolve(repoRoot, d.location?.path ?? "?"))}:${d.location?.start.line}`,
+				`${relative(fixturesDir, resolve(dir, d.location?.path ?? "?"))}:${d.location?.start.line}`,
 		)
 		.sort();
 }
@@ -163,7 +166,7 @@ describe("自定义 lint 规则（biome-plugins/）", () => {
 				"biome 没有检查全部样例文件（扩展名不认识，或被 biome.json 的忽略规则跳过）。",
 			).toBe(hitFiles.length);
 			expect(
-				placesOf(diagnostics),
+				placesOf(diagnostics, hitDir),
 				`biome-plugins/${plugin}.grit 报出的位置和样例里 // @hit 标出的不一致：规则匹配的写法改了、匹配条件写坏了，或样例没跟上规则；多报的位置说明规则拦了不该拦的写法。`,
 			).toEqual(expected);
 		});
@@ -188,7 +191,7 @@ describe("自定义 lint 规则（biome-plugins/）", () => {
 				"biome 没有检查全部样例文件（扩展名不认识，或被 biome.json 的忽略规则跳过）。",
 			).toBe(missFiles.length);
 			expect(
-				placesOf(diagnostics),
+				placesOf(diagnostics, missDir),
 				`biome-plugins/${plugin}.grit 拦了不该拦的写法：收窄规则的匹配条件，或确认这写法本来就该拦、把样例挪到 hit/。`,
 			).toEqual([]);
 		});
