@@ -227,19 +227,31 @@ for (const viewport of VIEWPORTS) {
 		}) => {
 			const id = await createEditorScenario(controlPlane);
 			await openEditor(page, id);
-			// 空白处：工具条左边一点、离窗口底部 130px（菜单有 6 项约 190px 高，往下展开放不下，会贴着窗口底边，
-			// 右边缘伸到工具条的最左端上面）。
 			const dockBox = await rectOf(dock(page));
-			// 点的地方要真的是画布空白处（不是节点卡片、子流程区域）：在工具条左边一点的几处里取第一个。
-			const candidates = [150, 120, 180, 90, 210].flatMap((dx) =>
-				[130, 100, 160, 70].map((dy) => ({ x: dockBox.x - dx, y: viewport.height - dy })),
+			/** 这几个点里第一个真的是画布空白处（不是节点卡片、子流程区域）的。 */
+			const blankAmong = (points: { x: number; y: number }[]) =>
+				page.evaluate(
+					(candidates) =>
+						candidates.find(({ x, y }) =>
+							document.elementFromPoint(x, y)?.classList.contains("react-flow__pane"),
+						),
+					points,
+				);
+			const left = [150, 120, 180].map((dx) => dockBox.x - dx);
+			// 先在高处打开一次，量出菜单有多高（6 项）。
+			const high = await blankAmong(
+				left.flatMap((x) => [100, 140, 180, 220].map((y) => ({ x, y }))),
 			);
-			const blank = await page.evaluate(
-				(points) =>
-					points.find(({ x, y }) =>
-						document.elementFromPoint(x, y)?.classList.contains("react-flow__pane"),
-					),
-				candidates,
+			if (!high) throw new Error(`${size}：高处找不到画布空白处`);
+			await page.mouse.click(high.x, high.y, { button: "right" });
+			await expect(paneMenu(page)).toBeVisible();
+			const tall = (await rectOf(paneMenu(page))).height;
+			await page.keyboard.press("Escape");
+			await expect(paneMenu(page)).toBeHidden();
+			// 再点在工具条左边一点、菜单的底边落在工具条那一条高度里的地方：往下展开放得下窗口，但右边缘伸到工具条的最左端上面。
+			const top = dockBox.y + 20 - tall;
+			const blank = await blankAmong(
+				left.flatMap((x) => [0, -10, 10, -20, 5].map((dy) => ({ x, y: top + dy }))),
 			);
 			if (!blank) throw new Error(`${size}：工具条左边找不到画布空白处`);
 			await page.mouse.click(blank.x, blank.y, { button: "right" });
