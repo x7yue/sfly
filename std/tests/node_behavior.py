@@ -7,8 +7,9 @@
 逻辑搬进辅助函数模块后位置本来就会变，这是用户改不了的内部细节。
 
 生成期望值：`python std/tests/node_behavior.py <含 sfly_std 的 src 目录> <输出 json>`
-（对 `git archive origin/dev std/src` 解出来的目录运行；写之前先确认两份实现在 Linux 上的差别
-只有位置）。临时目录名、数字（耗时、进程号）都抹成占位符再比较。
+（对 `git archive origin/dev std/src` 解出来的目录运行，最好在 Linux 上：只有 Linux 上有监听文件的
+用例；写完用 `pnpm exec biome format --write std/tests/node_behavior.json` 按仓库的格式整理，
+比对的是内容，不是文本）。临时目录名、数字（耗时、进程号）、本机的网卡磁盘列表都抹成占位符再比较。
 """
 
 from __future__ import annotations
