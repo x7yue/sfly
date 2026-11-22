@@ -302,18 +302,21 @@ def test_booleans_for_seconds_and_unknown_choices_are_rejected_before_anything_r
     tmp_path: Path,
 ) -> None:
     # `refind_within=True`（以前叫 refind）不报错，被当成 1 秒；`on_exit="Fail"` 被当成 succeed。
+    # 目标是不存在的进程、`appear_within` 很短、给了 `duration`：没有校验时也很快失败，不会卡住。
     run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
+    tag = f"no-such-{uuid.uuid4().hex}"
+    short = {"match": tag, "appear_within": 0.2, "duration": 1}
 
     with pytest.raises(ValueError, match="refind_within 是秒数，不能是布尔值"):
-        monitor_processes(run.ctx, match="x", refind_within=True)
+        monitor_processes(run.ctx, refind_within=True, **short)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="appear_within 是秒数，不能是布尔值"):
-        monitor_processes(run.ctx, match="x", appear_within=True)
+        monitor_processes(run.ctx, match=tag, appear_within=True, duration=1)
     with pytest.raises(ValueError, match="duration 是秒数，不能是布尔值"):
-        monitor_processes(run.ctx, match="x", duration=True)
+        monitor_processes(run.ctx, match=tag, appear_within=0.2, duration=True)
     with pytest.raises(ValueError, match='on_exit 只能是 "fail" 或 "succeed"，实际为 \'Fail\''):
-        monitor_processes(run.ctx, match="x", on_exit="Fail")  # type: ignore[arg-type]
+        monitor_processes(run.ctx, on_exit="Fail", **short)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="interval 是秒数，不能是布尔值"):
-        monitor_system(run.ctx, interval=True)
+        monitor_system(run.ctx, interval=True, duration=1)
 
 
 def test_a_bad_csv_artifact_name_fails_at_once_not_after_waiting_for_the_targets(
