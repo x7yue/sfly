@@ -20,6 +20,11 @@ export interface AnnotationWarning {
 	message: string;
 	/** 警告所指的注释框；校验面板的「前往」选中它。 */
 	annotation_id: string;
+	/**
+	 * 指向成员的警告（引用了不存在的成员、成员写了两次）：是哪个成员，`nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`；
+	 * 一个注释框里可能有几个。没有成员的警告不写。
+	 */
+	target?: string;
 	/** 没有：问题出在注释框上，不在某个节点上（节点卡片上不显示警告标记）。 */
 	node_id?: undefined;
 	input?: undefined;
@@ -59,8 +64,13 @@ export function annotationWarnings(doc: AnnotationWarningDocument): AnnotationWa
 	for (const annotation of doc.annotations ?? []) {
 		const title = annotation.title.trim();
 		const label = title ? `注释框「${title}」（${annotation.id}）` : `注释框 ${annotation.id} `;
-		const warn = (code: AnnotationWarningCode, message: string) =>
-			warnings.push({ code, message: `${label}${message}`, annotation_id: annotation.id });
+		const warn = (code: AnnotationWarningCode, message: string, target?: string) =>
+			warnings.push({
+				code,
+				message: `${label}${message}`,
+				annotation_id: annotation.id,
+				...(target === undefined ? {} : { target }),
+			});
 
 		if (annotation.nodes.length + annotation.subflows.length === 0) {
 			warn("annotation_no_members", "没有成员");
@@ -68,11 +78,12 @@ export function annotationWarnings(doc: AnnotationWarningDocument): AnnotationWa
 		}
 		for (const [id, count] of counted(annotation.nodes)) {
 			const node = byId.get(id);
-			if (!node) warn("annotation_unknown_node", `引用了不存在的节点 ${id}`);
+			if (!node) warn("annotation_unknown_node", `引用了不存在的节点 ${id}`, `nodes/${id}`);
 			if (count > 1) {
 				warn(
 					"annotation_duplicate_member",
 					`把节点 ${node ? nodeNameWithId(node) : id} 写了 ${count} 次`,
+					`nodes/${id}`,
 				);
 			}
 		}
@@ -82,12 +93,14 @@ export function annotationWarnings(doc: AnnotationWarningDocument): AnnotationWa
 				warn(
 					"annotation_unknown_subflow",
 					`引用了不存在的子流程 ${id}（子流程成员写子流程入口节点的节点 ID，不是子流程名称）`,
+					`subflows/${id}`,
 				);
 			}
 			if (count > 1) {
 				warn(
 					"annotation_duplicate_member",
 					`把子流程 ${entry ? nodeNameWithId(entry) : id} 写了 ${count} 次`,
+					`subflows/${id}`,
 				);
 			}
 		}

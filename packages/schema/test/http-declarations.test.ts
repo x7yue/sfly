@@ -11,8 +11,8 @@ import {
 	endpoint,
 	feishuBotsApi,
 	httpContract,
+	NON_GET_READS,
 	PATH_KINDS,
-	READS_WITH_TRACES,
 	RESOURCE_KIND_LABELS,
 	RESOURCE_KINDS,
 	type RouteDef,
@@ -68,12 +68,12 @@ describe("契约里全部接口的声明", () => {
 		const nonGetReads = httpContract
 			.filter((def) => def.method !== "GET" && def.effect === "read")
 			.map((def) => `${def.method} ${def.path}`);
-		expect(nonGetReads.sort()).toEqual(Object.keys(READS_WITH_TRACES).sort());
+		expect(nonGetReads.sort()).toEqual(Object.keys(NON_GET_READS).sort());
 	});
 
-	it("READS_WITH_TRACES 里的接口都在契约里、都声明为只读，都写明了写什么", () => {
+	it("NON_GET_READS 里的接口都在契约里、都声明为只读，都写明了为什么只读、会留下什么", () => {
 		const known = new Map(httpContract.map((def) => [`${def.method} ${def.path}`, def]));
-		for (const [key, what] of Object.entries(READS_WITH_TRACES)) {
+		for (const [key, what] of Object.entries(NON_GET_READS)) {
 			expect(known.get(key)?.effect, key).toBe("read");
 			expect(what.trim(), key).not.toBe("");
 		}
@@ -166,7 +166,7 @@ const rulesFor = (def: RouteDef): DeclarationRules => {
 	const kind = def.resource?.kind;
 	return {
 		pathKinds: kind ? { [`/${first}`]: { kind, why: "测试" } } : {},
-		readsWithTraces: READS_WITH_TRACES,
+		nonGetReads: NON_GET_READS,
 	};
 };
 
@@ -300,11 +300,11 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(problems(broken({ method: "DELETE", effect: "write", removes: true }))).toEqual([]);
 		expect(
 			problems(broken({ method: "POST", effect: "read", path: "/things/:id/query" }))[0],
-		).toContain("READS_WITH_TRACES");
+		).toContain("NON_GET_READS");
 		// 登记过的（这里用测试自己的一张表）就没有问题
 		const registered: DeclarationRules = {
 			...rulesFor(broken({})),
-			readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+			nonGetReads: { "POST /things/:id/query": "测试：只写内存里的状态" },
 		};
 		expect(
 			checkRouteDeclarations(
@@ -314,25 +314,25 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		).toEqual([]);
 	});
 
-	it("表里没有登记的非 GET 只读接口被拦下，登记后才通过（和 READS_WITH_TRACES 里现在有什么无关）", () => {
+	it("表里没有登记的非 GET 只读接口被拦下，登记后才通过（和 NON_GET_READS 里现在有什么无关）", () => {
 		const def = broken({ method: "POST", effect: "read", path: "/things/:id/query" });
-		const rules = { ...rulesFor(def), readsWithTraces: {} };
+		const rules = { ...rulesFor(def), nonGetReads: {} };
 		expect(checkRouteDeclarations([def], rules)).toEqual([
-			expect.stringContaining("方法不是 GET 的只读接口要登记在 READS_WITH_TRACES"),
+			expect.stringContaining("方法不是 GET 的只读接口要登记在 NON_GET_READS"),
 		]);
 		expect(
 			checkRouteDeclarations([def], {
 				...rules,
-				readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+				nonGetReads: { "POST /things/:id/query": "测试：只写内存里的状态" },
 			}),
 		).toEqual([]);
 		// 登记了、但契约里没有这个接口（接口删了、表里留着）：表检查也报错
 		expect(
 			checkDeclarationTables([], {
 				pathKinds: {},
-				readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+				nonGetReads: { "POST /things/:id/query": "测试：只写内存里的状态" },
 			}),
-		).toEqual(["READS_WITH_TRACES 的 POST /things/:id/query 不在契约里：接口改名或删掉了"]);
+		).toEqual(["NON_GET_READS 的 POST /things/:id/query 不在契约里：接口改名或删掉了"]);
 	});
 
 	it("creates 要是资源类别、只能在写接口上；removes 只能写 true、只能在写接口上、不能和 creates 同时出现", () => {
@@ -367,7 +367,7 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 				"/things": { kind: "scenario", why: "测试" },
 				"/other": { kind: "scenario", why: "测试" },
 			},
-			readsWithTraces: {},
+			nonGetReads: {},
 		});
 		expect(list).toHaveLength(2);
 		expect(list[0]).toMatch(/^GET \/things\/:id：/);
@@ -464,7 +464,7 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		// 表里的 system 项忘了写 exact：表检查报错
 		const loose = checkDeclarationTables([system("/health")], {
 			pathKinds: { "/health": { kind: "system", why: "健康检查" } },
-			readsWithTraces: {},
+			nonGetReads: {},
 		});
 		expect(loose.join("\n")).toContain("PATH_KINDS 的 /health 是 system，要写 exact: true");
 		// 现有表里的 system 项都是 exact
@@ -479,7 +479,7 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 				"/runs": { kind: "run", why: "运行" },
 				"/runs/:id/special": { kind: "system", why: "例外" },
 			},
-			readsWithTraces: {},
+			nonGetReads: {},
 		};
 		const make = (path: string, kind: "run" | "system") =>
 			endpoint({
@@ -512,27 +512,27 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		const own = Object.fromEntries(
 			Object.entries(PATH_KINDS).filter(([prefix]) => ["/health", "/runs"].includes(prefix)),
 		);
-		expect(tables({ pathKinds: own, readsWithTraces: {} })).toEqual([]);
-		const cover = checkPathKindsCover({ pathKinds: own, readsWithTraces: {} }).join("\n");
+		expect(tables({ pathKinds: own, nonGetReads: {} })).toEqual([]);
+		const cover = checkPathKindsCover({ pathKinds: own, nonGetReads: {} }).join("\n");
 		expect(cover).toContain("资源类别 scenario 在 PATH_KINDS 里没有任何路径前缀");
 		expect(cover).not.toContain("资源类别 run ");
 
 		const stale = tables({
 			pathKinds: { ...own, "/old": { kind: "run", why: "旧的" } },
-			readsWithTraces: { "POST /gone": "没有这个接口", "GET /runs/:id": "不是写" },
+			nonGetReads: { "POST /gone": "没有这个接口", "GET /runs/:id": "不是写" },
 		}).join("\n");
 		expect(stale).toContain("PATH_KINDS 的 /old 没有接口在用");
-		expect(stale).toContain("READS_WITH_TRACES 的 POST /gone 不在契约里");
+		expect(stale).toContain("NON_GET_READS 的 POST /gone 不在契约里");
 		expect(stale).not.toContain("没有声明为只读");
 
 		const notRead = tables({
 			pathKinds: own,
-			readsWithTraces: { "GET /runs/:id": "" },
+			nonGetReads: { "GET /runs/:id": "" },
 		}).join("\n");
-		expect(notRead).toContain("READS_WITH_TRACES 的 GET /runs/:id：要写明写了什么");
+		expect(notRead).toContain("NON_GET_READS 的 GET /runs/:id：要写明为什么只读、会留下什么");
 		const bad = tables({
 			pathKinds: { "no-slash": { kind: "run", why: "" } },
-			readsWithTraces: {},
+			nonGetReads: {},
 		}).join("\n");
 		expect(bad).toContain("PATH_KINDS 的键 no-slash 要以 / 开头");
 		expect(bad).toContain("PATH_KINDS 的 no-slash：要写明为什么");
