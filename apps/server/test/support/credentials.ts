@@ -150,13 +150,15 @@ export class TestAccounts {
 		return this.#token("project", "sfly_prj_", { project }, options);
 	}
 
-	sessionToken(userId: string, project: string, options: TokenOptions = {}): Promise<string> {
-		return this.#token(
-			"session",
-			"sfly_ses_",
-			{ userId, project, sessionId: randomUUID() },
-			options,
+	/** 会话令牌属于一个会话（`api_tokens.session_id` 外键到 `sessions`）：先在项目里建一个会话。 */
+	async sessionToken(userId: string, project: string, options: TokenOptions = {}): Promise<string> {
+		const sessionId = randomUUID();
+		await this.#pool.query(
+			`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at)
+			values ($1, $2, '会话令牌用的会话', 'idle', '测试', $3, $4, $4)`,
+			[sessionId, project, userId, AT],
 		);
+		return this.#token("session", "sfly_ses_", { userId, project, sessionId }, options);
 	}
 
 	taskCredential(project: string, taskId: string, options: TokenOptions = {}): Promise<string> {

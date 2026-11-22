@@ -13,6 +13,7 @@ import {
 	projectMembers,
 	projects,
 	runs,
+	sessions,
 	tasks,
 	users,
 } from "../db/schema.js";
@@ -83,6 +84,8 @@ export interface AccessStore {
 	projectOfScenario(id: string): Promise<ProjectId | undefined>;
 	projectOfRun(id: string): Promise<ProjectId | undefined>;
 	projectOfTask(id: string): Promise<ProjectId | undefined>;
+	/** 会话所在的项目；不存在时为 undefined。 */
+	projectOfSession(id: string): Promise<ProjectId | undefined>;
 	/** 任务所在的项目，以及派给了哪台 Agent（排队中、内置节点的任务没有）。 */
 	taskAssignment(
 		id: string,
@@ -197,6 +200,15 @@ export class DbAccessStore implements AccessStore {
 
 	async projectOfTask(id: string): Promise<ProjectId | undefined> {
 		return (await this.taskAssignment(id))?.projectId;
+	}
+
+	async projectOfSession(id: string): Promise<ProjectId | undefined> {
+		if (!isUuid(id)) return undefined;
+		const [row] = await this.db
+			.select({ projectId: sessions.projectId })
+			.from(sessions)
+			.where(eq(sessions.id, id));
+		return row?.projectId;
 	}
 
 	async taskAssignment(
