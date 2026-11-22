@@ -293,6 +293,16 @@ def judge_q4(raw: dict[str, Any]) -> Verdict:
             f"第一次 {len(turns)} 条，再起时 {len(resumed)} 条；会话文件 {files['after_second']}；"
             f"第三句发给模型的请求里的用户消息 {sent}"
         )
+    context = second.get("context_after_restart")
+    v.numbers["context_after_restart"] = context
+    changed = "两次启动之间换了 --append-system-prompt 的文件："
+    v.facts.append(
+        {
+            "second": changed + "恢复后发给模型的系统提示用的是新文件"
+            "（系统提示每次启动重新拼，不用会话文件里存的那份）",
+            "first": changed + "恢复后发给模型的仍是第一次的内容（用的是会话文件里存的系统提示）",
+        }.get(str(context), f"恢复后的系统提示里两份 context.md 都没有（{context}）")
+    )
     v.facts.append(
         "第一次起时 stderr 有一行「No project session found with id …; creating a new session」"
         "的提示，不影响 RPC"

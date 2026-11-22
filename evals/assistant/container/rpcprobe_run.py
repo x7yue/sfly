@@ -494,6 +494,8 @@ def q4() -> Record:
     messages1 = _messages(first)
     exit1 = first.close()
     files_after_first = sorted(p.name for p in (SESSIONS / session).rglob("*.jsonl"))
+    # 两次启动之间换掉 --append-system-prompt 的文件：恢复后发给模型的系统提示用新的还是会话里存的。
+    (ROOT / "context.md").write_text("MARK-GIVEN-CONTEXT-SECOND\n")
     second = RpcPi(cmd)
     state2 = second.call({"type": "get_state"}).get("data") or {}
     messages2 = _messages(second)
@@ -510,6 +512,7 @@ def q4() -> Record:
         if sent
         else []
     )
+    resumed_prompt = system_prompt(sent[-1]) if sent else ""
     exit2 = second.close()
     files_after_second = sorted(p.name for p in (SESSIONS / session).rglob("*.jsonl"))
     keep = ("sessionId", "sessionFile", "messageCount")
@@ -524,6 +527,13 @@ def q4() -> Record:
             "messages_on_start": messages2,
             "messages_after_third": messages3,
             "last_request_users": last_request_users,
+            "context_after_restart": (
+                "second"
+                if "MARK-GIVEN-CONTEXT-SECOND" in resumed_prompt
+                else "first"
+                if "MARK-GIVEN-CONTEXT" in resumed_prompt
+                else "none"
+            ),
             "exit_seconds": exit2,
         },
         "files": {"after_first": files_after_first, "after_second": files_after_second},

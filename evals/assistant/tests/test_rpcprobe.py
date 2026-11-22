@@ -210,3 +210,11 @@ def test_fixture_copies_are_independent() -> None:
     a, b = fixture("q3"), fixture("q3")
     a["probe"]["system_prompt"] = ""
     assert b["probe"]["system_prompt"] and copy.deepcopy(b) == b
+
+
+def test_q4_reports_which_context_the_resumed_session_sends() -> None:
+    verdict = judge("q4", fixture("q4"))
+    assert verdict.numbers["context_after_restart"] == "second"
+    raw = fixture("q4")
+    raw["second"]["context_after_restart"] = "first"
+    assert any("会话文件里存的系统提示" in fact for fact in judge("q4", raw).facts)
