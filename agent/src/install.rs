@@ -220,8 +220,8 @@ impl Installer {
 }
 
 impl Installer {
-    /// 装依赖之前确认：控制面的包索引对 `sfly-std` 的项目页**直接**回答 200（不跟随重定向），否则不装，任务以
-    /// `env_error` 失败（#556）。
+    /// 装依赖之前确认：控制面的包索引对 `sfly-std` 的项目页**直接**回答 200（不跟随重定向）**并且带标记头**
+    /// [`PACKAGE_INDEX_MARKER`]（值是控制面的版本），否则不装，任务以 `env_error` 失败（#556）。
     ///
     /// 「`sfly-std` 只会来自控制面」靠的是 uv 的 `first-index`：一个名字只看第一个有回应的索引，404 才会转去下一个
     /// 索引（PyPI 镜像）。控制面自己的代码对这个名字永远有回应（还没发布时是没有版本的 200 页面），但这个地址上
@@ -229,6 +229,11 @@ impl Installer {
     /// 404 或重定向到别处时 uv 会悄悄装上 PyPI 镜像上的同名包，安装照样成功。节点包的归档走另一个路径，
     /// 照样下载得到，别处不会先暴露问题。所以每次装依赖都先问一次（一次小请求；依赖 `sfly-std` 多半是传递依赖，
     /// 装之前看不出来，只在要求里直接写了它时才问挡不住）。
+    ///
+    /// 只看状态码拦不住最要紧的那种配错：对外地址指到了一个 PyPI 风格的索引（镜像），那里**有**同名包时回 200，
+    /// uv 就会装上它。所以还要求控制面的标记头：别的索引服务不会带。它防的是配错，不是有意伪造（能控制这个地址的人本来
+    /// 就能直接给出假包）。控制面发 `package_index_url` 的同时一定带这个头（两者在同一个 PR 里加，索引的路由总是注册），
+    /// 所以不存在「有地址、没有标记」的合法组合。
     async fn check_package_index(&self, index: &str, label: &str) -> Result<(), InstallError> {
         let url = std_project_url(index);
         let client = reqwest::Client::builder()
@@ -237,7 +242,16 @@ impl Installer {
             .build()
             .map_err(|e| InstallError::new(format!("安装节点包 {label} 失败：{e}")))?;
         let outcome = match client.get(&url).send().await {
-            Ok(response) if response.status() == reqwest::StatusCode::OK => return Ok(()),
+            Ok(response) if response.status() == reqwest::StatusCode::OK => {
+                if response
+                    .headers()
+                    .get(PACKAGE_INDEX_MARKER)
+                    .is_some_and(|value| !value.as_bytes().is_empty())
+                {
+                    return Ok(());
+                }
+                IndexAnswer::NoMarker
+            }
             Ok(response) if response.status().is_redirection() => IndexAnswer::Redirect {
                 status: response.status(),
                 location: response
@@ -260,12 +274,18 @@ fn std_project_url(index: &str) -> String {
     format!("{}/sfly-std/", index.trim_end_matches('/'))
 }
 
+/// 控制面的包索引在每个成功的响应上带的标记头（值是控制面的版本，`apps/server/src/http/sdk-routes.ts` 的
+/// `PACKAGE_INDEX_HEADER`）。
+const PACKAGE_INDEX_MARKER: &str = "x-sfly-package-index";
+
 /// 问包索引时等多久（秒）。
 const INDEX_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// 控制面的包索引对 `sfly-std` 的项目页没有直接回答 200。
+/// 控制面的包索引对 `sfly-std` 的项目页没有直接回答 200、或者回答的不是控制面。
 #[derive(Debug)]
 enum IndexAnswer {
+    /// 回了 200，但没有控制面的标记头：这个地址上不是 sfly 控制面的包索引。
+    NoMarker,
     Status(reqwest::StatusCode),
     Redirect {
         status: reqwest::StatusCode,
@@ -277,6 +297,9 @@ enum IndexAnswer {
 /// 检查没通过时给任务详情看的说明：请求的地址、得到了什么（状态码，或重定向到了哪）、该查什么。
 fn index_check_failure(label: &str, url: &str, answer: &IndexAnswer) -> String {
     let got = match answer {
+        IndexAnswer::NoMarker => format!(
+            "返回 200，但响应里没有 {PACKAGE_INDEX_MARKER} 头：这个地址回了 200 但不是 sfly 控制面的包索引"
+        ),
         IndexAnswer::Status(status) => format!("返回 {status}"),
         IndexAnswer::Redirect {
             status,
@@ -289,10 +312,11 @@ fn index_check_failure(label: &str, url: &str, answer: &IndexAnswer) -> String {
         IndexAnswer::Unreachable(error) => format!("请求失败：{error}"),
     };
     format!(
-        "安装节点包 {label} 失败：控制面的包索引没有直接回答 sfly-std：GET {url} {got}（需要直接返回 200）。\n\n\
-         平台自己的包 sfly-std 只能来自控制面的包索引：这个地址不是 200 时，uv 会转去 PyPI 镜像，装上那里的同名包，\n\
-         所以没有安装。请检查控制面的对外地址（SFLY_PUBLIC_URL）是否指向这个控制面，反向代理有没有把 /simple/ \n\
-         转发给控制面（地址、路径前缀和状态码都要对得上）。"
+        "安装节点包 {label} 失败：控制面的包索引没有直接回答 sfly-std：GET {url} {got}\
+         （需要直接返回 200，并带 {PACKAGE_INDEX_MARKER} 头）。\n\n\
+         平台自己的包 sfly-std 只能来自控制面的包索引：这个地址回答的不是控制面时（404、重定向，或者别的索引服务回了 200），\n\
+         uv 会转去 PyPI 镜像或装上别处的同名包，所以没有安装。请检查控制面的对外地址（SFLY_PUBLIC_URL）是否指向这个控制面，\n\
+         反向代理有没有把 /simple/ 转发给控制面（地址、路径前缀、状态码和响应头都要对得上）。"
     )
 }
 
@@ -663,6 +687,19 @@ mod tests {
             moved.contains("返回 302 Found，重定向到 https://pypi.example/simple/sfly-std/"),
             "{moved}"
         );
+
+        let imposter = index_check_failure("sfly-demo@1.0.0", url, &IndexAnswer::NoMarker);
+        assert!(
+            imposter.contains(
+                "GET http://plane/simple/sfly-std/ 返回 200，但响应里没有 x-sfly-package-index 头"
+            ),
+            "{imposter}"
+        );
+        assert!(
+            imposter.contains("这个地址回了 200 但不是 sfly 控制面的包索引"),
+            "{imposter}"
+        );
+        assert!(imposter.contains("SFLY_PUBLIC_URL"), "{imposter}");
 
         let down = index_check_failure(
             "sfly-demo@1.0.0",

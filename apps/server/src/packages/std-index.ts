@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { unzipSync } from "fflate";
 import { PUBLIC_PROJECT } from "../projects/project-id.js";
 import type { PackageRepository } from "./package-repository.js";
-import { sameVersion } from "./pep440.js";
+import { canonicalVersion, sameVersion } from "./pep440.js";
 
 /**
  * 标准节点包 sfly-std 在控制面的包索引里（#556，docs/ARCHITECTURE.md §4.3）。
@@ -19,8 +19,11 @@ import { sameVersion } from "./pep440.js";
  *   第一个有回应的索引（first-index），404 才会转去下一个索引（PyPI）；所以没发布时依赖它的节点包装不上（uv 报「没有这个包的版本」），
  *   不会装上 PyPI 上有人放的同名包。
  * - **wheel 要和归档对得上**：wheel 文件名里的名字是 `sfly_std`、版本和归档登记的版本是同一个版本（PEP 440 的写法差异
- *   不算），对不上的不列并报告；同一个文件名只列一次。索引里唯一由上传的内容决定的就是 wheel（uv 从文件名读版本），
- *   不核对的话 `0.6.0` 的归档里放一个 `7.0.0` 的 wheel，页上就列 7.0.0，Agent 也装上 7.0.0。
+ *   不算），对不上的不列并报告。索引里唯一由上传的内容决定的就是 wheel（uv 从文件名读版本），不核对的话 `0.6.0` 的
+ *   归档里放一个 `7.0.0` 的 wheel，页上就列 7.0.0，Agent 也装上 7.0.0。
+ * - **同一个版本只列一次**：按规范化后的版本去重（`0.8.0`、`0.8`、`0.8.0.0` 是同一个版本，PEP 440），只列最早发布的那个
+ *   归档里的 wheel，后面的不列并报告。归档按「名字@版本」的写法区分，写法不同的同一个版本能各发布一次；不去重的话后发布的
+ *   归档里的 wheel 会和先发布的一起出现在页上，uv 装 `==0.8.0` 时可能选中后者的内容，绕过「已发布的版本不能覆盖」。
  * - 归档和 wheel 都不可变（`名字@版本` 不能覆盖），所以每个归档的 wheel 摘要算一次、按归档的 sha256 缓存。
  */
 export const STD_PACKAGE = "sfly-std";
@@ -94,8 +97,14 @@ export function createStdIndex({
 					);
 					continue;
 				}
-				if (found.some((e) => e.wheel.filename === wheel.filename)) {
-					onSkipped(archive.version, `wheel ${wheel.filename} 已经由前面的版本列出，不重复列`);
+				// 同一个版本（规范化之后）只列最早发布的那个；`sameVersion` 已经通过，所以一定有规范化的写法。
+				const canonical = canonicalVersion(archive.version);
+				const earlier = found.find((e) => canonicalVersion(e.wheel.version) === canonical);
+				if (earlier) {
+					onSkipped(
+						archive.version,
+						`和更早发布的 ${earlier.wheel.version} 是同一个版本（${canonical}），不重复列：${wheel.filename}`,
+					);
 					continue;
 				}
 				found.push({
