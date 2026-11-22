@@ -36,9 +36,8 @@ import {
 	type SecretSet,
 	secretParamNames,
 	secretValues,
-	WorkBudget,
 } from "../logs/secrets.js";
-import { LOG_ISSUE_TEXT_CHARS, taskProgressView } from "../logs/task-logs.js";
+import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
@@ -143,7 +142,7 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	scenario: Pick<typeof orchestrations.$inferSelect, "name" | "focusItems">;
 	/**
 	 * 这次运行此刻的全部 secret 值：读取方在读取结果之外拿到用户内容（任务动作摘要里的失败的动作等）时，用它打码，
-	 * 和读取结果里的用户内容是同一个口径、同一个集合（`secrets.mask` 打一般的文字，`secrets.maskClipped` 打存下来时被截断过的文字，
+	 * 和读取结果里的用户内容是同一个口径、同一个集合（`secrets.mask`，
 	 * 动作用 `actions/action-text.ts` 的 `maskedAction`）。
 	 */
 	secrets: SecretSet;
@@ -457,7 +456,7 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 		// 最近一条 WARN / ERROR 的正文写入时按那一刻的 secret 值打过码；读取时再按此刻的打一遍（后来才成为 secret 的值，#517）。
 		logIssues: row.logIssues && {
 			...row.logIssues,
-			text: mask.secrets.maskClipped(row.logIssues.text, LOG_ISSUE_TEXT_CHARS),
+			text: mask.secrets.mask(row.logIssues.text),
 		},
 		startClockOffset: clockOffsetView(row.startClockOffsetMs, row.startClockOffsetMeasuredAt),
 		endClockOffset: clockOffsetView(row.endClockOffsetMs, row.endClockOffsetMeasuredAt),
@@ -488,12 +487,11 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 	};
 
 	const reads = new Map<string, R>();
-	const budget = new WorkBudget();
 	for (const { run, version, scenario } of rows) {
 		const { document } = version;
 		const runChains = chainsOf.get(run.id) ?? [];
-		// 这一次读取（几个运行共用）的打码共用一份工作量预算（{@link SecretSet.withBudget}）。
-		const mask = masker(document, secretValues(document, runChains).withBudget(budget));
+		// 每个运行一份工作量预算（{@link SecretSet.withBudget}）：一个运行的值集合再病态，也只盖住它自己的内容，不牵连同一次读取里别的运行。
+		const mask = masker(document, secretValues(document, runChains).withBudget());
 		const nodesOf = planOf(version);
 		const chains = runChains.map(
 			(chain): RunChain<A> => ({

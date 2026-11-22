@@ -55,7 +55,8 @@ export function logMask(secrets: SecretSet, budget?: WorkBudget): LogMask {
 			try {
 				parsed = JSON.parse(raw) as { text?: unknown };
 			} catch {
-				// 不是 JSON（不应该有）：不放行，按文本打码。
+				// 不是合法的 JSON（只会出现在控制面写到一半崩溃、留下的半行接上了下一行的时候）：不放行，只按文件里的文本认
+				// （原文和转义一层的写法），两层转义的写法认不出来（docs/SEMANTICS.md §2.1）。
 				const masked = view.mask(raw);
 				return masked === raw ? row : Buffer.from(masked);
 			}

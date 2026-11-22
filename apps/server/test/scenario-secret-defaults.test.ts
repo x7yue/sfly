@@ -12,7 +12,7 @@ import {
 	SECRET_MASK,
 } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { fullThenClipped, straddling, writeActions } from "./support/action-texts.js";
+import { writeActions } from "./support/action-texts.js";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
@@ -728,62 +728,29 @@ describe("场景版本里 secret 参数的默认值", () => {
 			);
 		});
 
-		it("后来才成为 secret 的值正好跨在动作的名称、字段、失败原因的截断处（#517）：读出来也没有留下它的前几个字符", async () => {
+		it("部分匹配不影响输出（#517）：后来才成为 secret 的值，文字只是以它的前缀结尾、或者到了上限，读出来原样；完整出现的照常打码", async () => {
 			const LATE = "zebra-late-value";
-			const PREFIX = LATE.slice(0, 4);
-			const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
-			// 值的前 8 个字符留在上限以内、后面的被截掉：写入时这个值还不是 secret，整个值打码认不出这半截。
+			const { nameChars } = ACTION_LIMITS;
+			// 这些文字里没有完整的值：结尾恰好是值的前缀、正好到上限
+			const partial = `${"n".repeat(nameChars - 8)}${LATE.slice(0, 8)}`;
 			const { ids } = await lateRun(LATE, async (agent, sa) => {
 				await writeActions(agent, sa, {
-					name: straddling("n", nameChars, LATE, 8),
-					key: straddling("k", nameChars, LATE, 8),
-					value: straddling("v", valueChars, LATE, 8),
-					// 失败原因超过上限时留前 reasonChars - 1 个字符、末尾加「…」。
-					reason: straddling("r", reasonChars - 1, LATE, 8),
+					name: partial,
+					key: `k ${LATE.slice(0, 5)}`,
+					value: `v ${LATE.slice(0, 12)}`,
+					reason: `bad ${LATE}`,
 				});
 			});
-			await sweepReads(ids, (what, text) =>
-				expect(text, `${what}：不能留下 ${PREFIX}`).not.toContain(PREFIX),
-			);
-			await sweepStreams(
-				ids,
-				(what, text) => expect(text, `${what}：不能留下 ${PREFIX}`).not.toContain(PREFIX),
-				{ waitFor: (path) => (path.includes("/actions/events") ? "child" : undefined) },
-			);
-		});
-
-		it("后来才成为 secret 的值：前面完整出现过一次、结尾又被截在值中间（#517）：读出来前面的完整出现和结尾的半截都盖住，没有留下它的前几个字符", async () => {
-			const LATE = "zebra-late-value";
-			const PREFIX = LATE.slice(0, 4);
-			const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
-			// 前面完整的一次换成掩码后文字变短、到不了上限：按打码之后的长度判断就会放过结尾那半截。
-			const { ids } = await lateRun(LATE, async (agent, sa) => {
-				await writeActions(agent, sa, {
-					name: fullThenClipped("n", nameChars, LATE, 8),
-					key: fullThenClipped("k", nameChars, LATE, 8),
-					value: fullThenClipped("v", valueChars, LATE, 8),
-					// SDK 截断失败原因：留前 reasonChars - 1 个字符，末尾加「…」。
-					reason: `${fullThenClipped("r", reasonChars - 1, LATE, 8)}…`,
-				});
+			const summary = await api.getJson<{
+				running: Array<{ name: string; fields: Record<string, string> }>;
+				recent_failed: Array<{ reason: string }>;
+			}>(`/tasks/${ids.task}/actions/summary`);
+			// 部分匹配不盖，完整的出现盖住
+			expect(summary.running[0]?.name).toBe(partial);
+			expect(summary.running[0]?.fields).toEqual({
+				[`k ${LATE.slice(0, 5)}`]: `v ${LATE.slice(0, 12)}`,
 			});
-			let actionsRead = 0;
-			await sweepReads(ids, (what, text) => {
-				expect(text, `${what}：不能留下 ${PREFIX}`).not.toContain(PREFIX);
-				if (what.includes("/actions") && text.includes("child")) actionsRead += 1;
-			});
-			expect(actionsRead).toBeGreaterThanOrEqual(2);
-			await sweepStreams(
-				ids,
-				(what, text) => expect(text, `${what}：不能留下 ${PREFIX}`).not.toContain(PREFIX),
-				{ waitFor: (path) => (path.includes("/actions/events") ? "child" : undefined) },
-			);
-			// 名称：前面的完整出现和结尾的半截各是一个掩码，中间的填充原样
-			const summary = await api.getJson<{ running: Array<{ name: string }> }>(
-				`/tasks/${ids.task}/actions/summary`,
-			);
-			expect(summary.running[0]?.name).toBe(
-				`n${MASK}${"n".repeat(nameChars - 1 - LATE.length - 8)}${MASK}`,
-			);
+			expect(summary.recent_failed[0]?.reason).toBe(`bad ${MASK}`);
 		});
 	});
 

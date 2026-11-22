@@ -156,11 +156,10 @@ export class TaskActions {
 		// 这里先看一眼省掉打码，写入前在事务里再确认一次。
 		if (!task || task.agentName !== agentName || task.purgedAt !== null || !isDoing(task.status))
 			return;
-		// 这一次写入共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
 		const { summary, current } = actionSummaryView(
 			event,
 			controlPlaneTime,
-			(await this.deps.logs.runSecrets(task.runId)).withBudget(),
+			await this.deps.logs.runSecrets(task.runId),
 		);
 		// 和明细一样在事务里锁住任务行再确认还在执行：和结束任务的写入互斥，任务结束之后不会再写进一份。
 		const stored = await this.deps.db.transaction(async (tx) => {
@@ -211,11 +210,10 @@ export class TaskActions {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(eq(tasks.id, taskId));
 		if (!task || task.agentName !== agentName || task.purgedAt !== null) return;
-		// 这一批共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
 		const prepared = prepareEvents(
 			events,
 			controlPlaneTime,
-			(await this.deps.logs.runSecrets(task.runId)).withBudget(),
+			await this.deps.logs.runSecrets(task.runId),
 		);
 		const names = startedNames(prepared);
 		const stored =

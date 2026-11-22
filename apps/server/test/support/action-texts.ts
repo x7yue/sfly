@@ -66,19 +66,3 @@ export async function writeActions(
 	});
 	await agent.sync();
 }
-
-/** 把一个 secret 值切成「前 `kept` 个字符留在截断处」的样子：`pad` 个填充字符加上整个值，之后由控制面按上限截断。 */
-export const straddling = (filler: string, limit: number, value: string, kept: number): string =>
-	filler.repeat(limit - kept) + value;
-
-/**
- * 前面完整出现一次 secret 值、结尾又被截在值中间（留下前 `kept` 个字符），整段正好 `limit` 个字符。
- * 写入时这个值还不是 secret：前面的完整出现读取时换成掩码，文字变短、到不了上限，结尾那半截也要盖住。
- */
-export const fullThenClipped = (
-	filler: string,
-	limit: number,
-	value: string,
-	kept: number,
-): string =>
-	`${filler}${value}${filler.repeat(limit - filler.length - value.length - kept)}${value.slice(0, kept)}`;

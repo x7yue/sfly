@@ -11,7 +11,7 @@ import {
 	taskActionSummaries,
 	tasks,
 } from "../db/schema.js";
-import { NO_SECRETS, type SecretSet, WorkBudget } from "../logs/secrets.js";
+import { NO_SECRETS, type SecretSet } from "../logs/secrets.js";
 import { runSecretValues, taskProgressView } from "../logs/task-logs.js";
 import { nodeNameIn, subflowNameOf } from "../runs/run-read.js";
 
@@ -77,13 +77,13 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 		db,
 		[...occupied].flatMap(([runId, document]) => (document ? [{ runId, document }] : [])),
 	);
-	// 这一次读取（所有运行）的打码共用一份工作量预算（{@link SecretSet.withBudget}），每个运行一个视图。
-	const budget = new WorkBudget();
+	// 每个运行一份工作量预算（{@link SecretSet.withBudget}）：一个运行的值集合再病态，也只盖住它自己的内容，不牵连别的运行
+	// （Agent 列表里可能是别的项目的运行）。
 	const views = new Map<string, SecretSet>();
 	const secretsOf = (runId: string): SecretSet => {
 		let view = views.get(runId);
 		if (!view) {
-			view = (secrets.get(runId) ?? NO_SECRETS).withBudget(budget);
+			view = (secrets.get(runId) ?? NO_SECRETS).withBudget();
 			views.set(runId, view);
 		}
 		return view;

@@ -1,7 +1,8 @@
-// 一次读取、一次写入的打码工作量预算（#517）：保密值由运行自己提供，值集合可以被凑成让单次调用接近上限的样子（很多很长、
-// 首字符都一样的值）。一页有几百条动作，每条动作又有名称、字段、失败原因十几处文字：单次调用的上限只管一次调用，几百条加起来
-// 要几秒到几十秒，控制面期间不响应。所以一次读取（一页、一份摘要）、一次写入（一批动作明细）共用一份预算，用完之后剩下的文字
-// 整段盖住。这里用真实的控制面和假 Agent 量：写入一批 200 条动作、读一页、读摘要，每一步的耗时都有上限。
+// 一次读取的打码工作量预算（#517）：保密值由运行自己提供，值集合可以被凑成让单次调用接近上限的样子（很多很长、开头都一样的值）。
+// 一页有几百条动作、上千行日志，每条动作又有名称、字段、失败原因十几处文字：单次调用的上限只管一次调用，几百条加起来
+// 要几秒到几十秒，控制面期间不响应。所以一次读取（一页、一份摘要）共用一份预算（扫描和找到的出现位置都计入），用完之后剩下的文字
+// 整段盖住；一次调用里读的几个运行各一份（一个运行再病态，也不牵连同一次读取里别的运行）。
+// 这里用真实的控制面和假 Agent 量：读一页动作、读摘要，每一步的耗时都有上限；病态的运行和正常的运行同时读，正常的一个字不少。
 // 值都是明显的假值。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { ACTION_LIMITS, SECRET_MASK as MASK } from "@sfly/schema";
@@ -21,7 +22,7 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
 		await publishBench(cp);
-		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 8 }, { clock: cp.clock });
 	});
 	afterEach(async () => {
 		await agent.disconnect();
@@ -40,6 +41,34 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 	/** 开头都是同样的一长串 a、最后几位不同的 1000 个值：和文字比较时要比到最后才对不上。 */
 	const pathologicalValues = () =>
 		Array.from({ length: 1000 }, (_, i) => `${"a".repeat(280)}${word(16)}${i % 10}`);
+
+	/** 保密值后来才知道的场景：cfg 不是 secret，经参数映射传给子流程 subB 的 secret 参数 k 之后，它的值才是 secret 值。 */
+	const lateDoc = () => ({
+		default_agent: "agent-a",
+		nodes: [
+			{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json" }] },
+			{ id: "x1", kind: "async", params: {} },
+			{ id: "subA", kind: "subflow_entry", name: "A", params: [] },
+			{ id: "sa", kind: "package", package: "bench", node: "load" },
+			{ id: "b", kind: "package", package: "bench", node: "probe" },
+			{ id: "x2", kind: "async", params: { k: "${{ params.cfg }}" } },
+			{
+				id: "subB",
+				kind: "subflow_entry",
+				name: "B",
+				params: [{ name: "k", type: "json", secret: true }],
+			},
+		],
+		edges: [
+			{ from: "entry", to: "x1", kind: "chain" },
+			{ from: "x1", to: "b", kind: "chain" },
+			{ from: "b", to: "x2", kind: "chain" },
+			{ from: "x1", to: "subA", kind: "dispatch" },
+			{ from: "subA", to: "sa", kind: "chain" },
+			{ from: "x2", to: "subB", kind: "dispatch" },
+		],
+		packages: { bench: "1.0.0" },
+	});
 
 	/** 200 条动作，每条的名称、8 个字段（键和值）、失败原因都是到了上限、前面全是 a、最后一个字符是 b 的文字：每一处都要花满单次的上限。 */
 	const actionEvents = () => {
@@ -131,33 +160,7 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 	}, 120_000);
 
 	it("保密值后来才知道（子流程创建之后）：动作已经原样写下，读一页、读摘要，每一步都很快", async () => {
-		// cfg 不是 secret，经参数映射传给子流程 subB 的 secret 参数 k 之后，它的值才是 secret 值
-		const id = await api.orchestrationWith({
-			default_agent: "agent-a",
-			nodes: [
-				{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json" }] },
-				{ id: "x1", kind: "async", params: {} },
-				{ id: "subA", kind: "subflow_entry", name: "A", params: [] },
-				{ id: "sa", kind: "package", package: "bench", node: "load" },
-				{ id: "b", kind: "package", package: "bench", node: "probe" },
-				{ id: "x2", kind: "async", params: { k: "${{ params.cfg }}" } },
-				{
-					id: "subB",
-					kind: "subflow_entry",
-					name: "B",
-					params: [{ name: "k", type: "json", secret: true }],
-				},
-			],
-			edges: [
-				{ from: "entry", to: "x1", kind: "chain" },
-				{ from: "x1", to: "b", kind: "chain" },
-				{ from: "b", to: "x2", kind: "chain" },
-				{ from: "x1", to: "subA", kind: "dispatch" },
-				{ from: "subA", to: "sa", kind: "chain" },
-				{ from: "x2", to: "subB", kind: "dispatch" },
-			],
-			packages: { bench: "1.0.0" },
-		});
+		const id = await api.orchestrationWith(lateDoc());
 		const runId = await api.triggerOk(id, { cfg: pathologicalValues() });
 		const first = await agent.nextAssign();
 		const second = await agent.nextAssign();
@@ -171,5 +174,103 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
 		);
 		await expectFastReads(sa.taskId);
+	}, 120_000);
+
+	/** 保密值开头都是同样的一长串 a 的病态运行：触发之后，sa 在跑，b 结束，子流程 subB 创建，值才成为 secret 值。 */
+	const startPathologicalRun = async () => {
+		const id = await api.orchestrationWith(lateDoc());
+		const runId = await api.triggerOk(id, {
+			cfg: Array.from({ length: 500 }, (_, i) => `${"a".repeat(980)}${word(16)}${i % 10}${i}`),
+		});
+		const first = await agent.nextAssign();
+		const second = await agent.nextAssign();
+		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+		return { runId, sa, b };
+	};
+	const subflowCreated = (runId: string) =>
+		eventually(async () =>
+			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+		);
+
+	/** 正常的运行：一个 secret 参数，一个节点（返回它的任务）。 */
+	const startNormalRun = async (token: string) => {
+		const id = await api.orchestrationWith({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry", params: [{ name: "token", type: "string", secret: true }] },
+				{ id: "n", kind: "package", package: "bench", node: "load" },
+			],
+			edges: [{ from: "entry", to: "n", kind: "chain" }],
+			packages: { bench: "1.0.0" },
+		});
+		const runId = await api.triggerOk(id, { token });
+		return { runId, task: await agent.nextAssign() };
+	};
+
+	it("同一次读取里几个运行（控制台的最近失败）：一个运行的保密值再病态，也只盖住它自己的内容，别的运行一个字不少", async () => {
+		const normal = [] as Array<{ runId: string; token: string }>;
+		const failNormal = async (token: string) => {
+			const { runId, task } = await startNormalRun(token);
+			await agent.fail(task, `boom ${token} end`);
+			normal.push({ runId, token });
+		};
+		await failNormal("test-normal-value-1");
+		await failNormal("test-normal-value-2");
+		const pathological = await startPathologicalRun();
+		await agent.succeed(pathological.b);
+		await subflowCreated(pathological.runId);
+		// 病态的运行里一条 30 万个字符的失败信息：写入时那些值还不是 secret 值，原样存下，读的时候一条就用光这个运行的预算
+		await agent.fail(pathological.sa, "a".repeat(300_000));
+		await failNormal("test-normal-value-3");
+		await failNormal("test-normal-value-4");
+		await eventually(async () => expect((await api.run(pathological.runId)).status).toBe("failed"));
+
+		const started = performance.now();
+		const res = await cp.fetch("/dashboard");
+		const dashboard = (await res.json()) as {
+			recent_ended: Array<{ id: string; failure: { error: { message: string } | null } | null }>;
+		};
+		expect(performance.now() - started, "读控制台").toBeLessThan(3000);
+		const messageOf = (runId: string) =>
+			dashboard.recent_ended.find((r) => r.id === runId)?.failure?.error?.message;
+		// 病态的运行：用光了自己的预算，整段盖住
+		expect(messageOf(pathological.runId)).toBe(MASK);
+		// 同一次读取里别的运行：只有它们自己的保密值被盖住，周围的文字都在
+		for (const { runId } of normal) expect(messageOf(runId), runId).toBe(`boom ${MASK} end`);
+	}, 120_000);
+
+	it("Agent 列表里几个运行占着槽位：病态的运行用光自己的预算，别的运行的进度说明一个字不少", async () => {
+		const pathological = await startPathologicalRun();
+		agent.progress(pathological.sa, 1, 2, "a".repeat(300_000));
+		await agent.succeed(pathological.b);
+		await subflowCreated(pathological.runId);
+		const normal = [] as string[];
+		for (const token of ["test-normal-value-1", "test-normal-value-2"]) {
+			const { runId, task } = await startNormalRun(token);
+			agent.progress(task, 1, 2, `step ${token}`);
+			normal.push(runId);
+		}
+		const read = async () => {
+			const res = await cp.fetch("/agents");
+			const body = (await res.json()) as {
+				agents: Array<{
+					running_tasks: Array<{ run_id: string; progress: { message: string } | null }>;
+				}>;
+			};
+			return body.agents.flatMap((a) => a.running_tasks);
+		};
+		const progressOf = (tasks: Awaited<ReturnType<typeof read>>, runId: string) =>
+			tasks.find((t) => t.run_id === runId)?.progress?.message;
+		await eventually(async () => {
+			const tasks = await read();
+			expect(progressOf(tasks, normal[0] as string)).toBeDefined();
+			expect(progressOf(tasks, normal[1] as string)).toBeDefined();
+			expect(progressOf(tasks, pathological.runId)).toBeDefined();
+		});
+		const started = performance.now();
+		const tasks = await read();
+		expect(performance.now() - started, "读 Agent 列表").toBeLessThan(3000);
+		expect(progressOf(tasks, pathological.runId)).toBe(MASK);
+		for (const runId of normal) expect(progressOf(tasks, runId), runId).toBe(`step ${MASK}`);
 	}, 120_000);
 });
