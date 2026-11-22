@@ -1,9 +1,8 @@
 import { nodeNameWithId } from "@sfly/orchestration";
-import type { StoredOrchestrationDocument } from "@sfly/schema";
+import { DEV_VERSION, type StoredOrchestrationDocument } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
-import { DEV_VERSION } from "../engine/assign-content.js";
 import { agentFor } from "../engine/chain.js";
 import type { PreflightProblem } from "./preflight.js";
 

@@ -29,6 +29,7 @@ import {
 import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
+import { FakeAgent } from "./support/fake-agent.js";
 import { publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -206,7 +207,8 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 		expect(await lines()).toContain("调用被取消");
 	}, 180_000);
 
-	it("联调：sfly dev 装到 fs-runner 的开发版本也能访问 fs-source", async () => {
+	/** 把 testdata/agent-files-package 换个包名（`-dev`），用 `sfly dev` 装到 fs-runner 上，等控制面看到它，再跑 `body`。 */
+	const withDevPackage = async (body: () => Promise<void>) => {
 		// 开发版本用另一个包名，不和已发布的 sfly-agent-files 在共享 venv 里互相替换。
 		const project = await mkdtemp(join(tmpdir(), "sfly-agent-files-dev-"));
 		try {
@@ -245,7 +247,14 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 					{ name: `${PACKAGE}-dev` },
 				]);
 			});
+			await body();
+		} finally {
+			await rm(project, { recursive: true, force: true });
+		}
+	};
 
+	it("联调：sfly dev 装到 fs-runner 的开发版本也能访问 fs-source", async () => {
+		await withDevPackage(async () => {
 			const { node } = await runNode(
 				"stat_file",
 				{ source: "fs-source", path: join(logs, "notes.txt") },
@@ -253,9 +262,64 @@ describeWithAgent("全栈：Agent 能力 files", () => {
 			);
 			expect(node.status, JSON.stringify(node.error)).toBe("success");
 			expect(node.outputs).toEqual({ file: await expected(join(logs, "notes.txt")) });
-		} finally {
-			await rm(project, { recursive: true, force: true });
-		}
+		});
+	}, 180_000);
+
+	it("开发版本的声明查不到（用到它的另一个节点派发到离线的 Agent）：预检不拦，没有声明的输入在运行时以 config_error 失败、不按 retries 重试（#444 的运行时兜底）", async () => {
+		// 离线但注册过的 Agent：控制面不知道它现在加载了什么，开发版本的输入名检查跳过（dev-node-types.ts）。
+		const away = await FakeAgent.connect(cp.grpcUrl, { name: "fs-away" });
+		await away.disconnect();
+		await eventually(async () => {
+			const { agents } = await api.getJson<{ agents: Array<{ name: string; status: string }> }>(
+				"/agents",
+			);
+			expect(agents.find((a) => a.name === "fs-away")?.status).toBe("offline");
+		});
+		await withDevPackage(async () => {
+			const path = join(logs, "notes.txt");
+			const id = await api.createOrchestration("开发版本写错输入名");
+			const saved = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: 0,
+				document: {
+					default_agent: "fs-runner",
+					nodes: [
+						{ id: "entry", kind: "entry", params: [] },
+						{
+							id: "typo",
+							kind: "package",
+							package: `${PACKAGE}-dev`,
+							node: "stat_file",
+							inputs: { path, tpyo: "写错了的名字" },
+							retries: 2,
+						},
+						{
+							id: "later",
+							kind: "package",
+							package: `${PACKAGE}-dev`,
+							node: "stat_file",
+							agent: "fs-away",
+							inputs: { path },
+						},
+					],
+					edges: [
+						{ from: "entry", to: "typo", kind: "chain" },
+						{ from: "typo", to: "later", kind: "chain" },
+					],
+					packages: { [`${PACKAGE}-dev`]: "dev" },
+				},
+			});
+			expect(saved.status, await saved.clone().text()).toBe(201);
+			// 没有输入名的警告：声明查不到所以没有查（查得到时这里有 input_not_declared）。
+			expect(((await saved.json()) as { warnings: unknown[] }).warnings).toEqual([]);
+
+			const runId = await api.triggerOk(id);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("failed"), 60_000);
+			const node = await api.node(runId, "typo");
+			expect(node.attempts.map((a) => [a.attempt, a.status, a.error?.kind])).toEqual([
+				[1, "failed", "config_error"],
+			]);
+			expect(node.error?.message).toContain("没有声明输入 tpyo");
+		});
 	}, 180_000);
 
 	it("节点包声明的最低 Agent 版本：预检对节点所在的 Agent 和引用的 Agent 都检查，写明是哪台、需要哪个版本", async () => {
