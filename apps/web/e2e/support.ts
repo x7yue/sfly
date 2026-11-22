@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import type { RunNotificationTrigger } from "@sfly/schema";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import {
@@ -59,6 +60,34 @@ export async function triggerRun(cp: TestControlPlane, scenarioId: string): Prom
 	return ((await res.json()) as { id: string }).id;
 }
 
+/**
+ * 造一个失败的运行并等它结束，返回运行 ID。运行通知是兜底，只在失败（或取消）时发（#446），成功的运行不发；
+ * 要看到「运行结束时发的卡片」就用它：触发场景的最新版本，让 `agent` 把派发来的第一个任务以 `message` 失败
+ * （`location` 是出错位置，不给表示没有），等运行的状态变成「失败」。场景的节点要派发给这个 Agent
+ * （例如 `scenarioUsing(agent.name)`，节点包要先发布），第一个任务所在的节点不配置重试。
+ */
+export async function failRun(
+	cp: TestControlPlane,
+	agent: FakeAgent,
+	scenarioId: string,
+	options: { message?: string; location?: string } = {},
+): Promise<string> {
+	const runId = await triggerRun(cp, scenarioId);
+	await agent.fail(
+		await agent.nextAssign(),
+		options.message,
+		undefined,
+		undefined,
+		options.location,
+	);
+	await expect
+		.poll(
+			async () => ((await (await cp.fetch(`/runs/${runId}`)).json()) as { status: string }).status,
+		)
+		.toBe("failed");
+	return runId;
+}
+
 /** 登记一个飞书机器人（Webhook 地址一般是 `feishu.webhookUrl()`，指向假的飞书服务）。 */
 export async function createFeishuBot(
 	cp: TestControlPlane,
@@ -79,7 +108,12 @@ export async function createFeishuBot(
 export async function setRunNotification(
 	cp: TestControlPlane,
 	scenarioId: string,
-	settings: { bot?: string | null; trigger?: string; title?: string; note?: string },
+	settings: {
+		bot?: string | null;
+		trigger?: RunNotificationTrigger;
+		title?: string;
+		note?: string;
+	},
 ): Promise<void> {
 	await ok(
 		await cp.fetch(`/orchestrations/${scenarioId}`, {

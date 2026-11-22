@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
+import { storeOverLimit } from "./stored-over-limit-support";
 import { box, createScenario, publishPackage } from "./support";
 
 // 检查器里的字段：长参数名、校验的时机、保存被拦下时的焦点、开关旁的文字。
@@ -197,4 +198,94 @@ test("检查器的标题最多两行、不截成一行；工具条里的场景�
 	await expect(page.getByRole("heading", { level: 1 })).toHaveText(scenarioName);
 	await name.hover();
 	await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(scenarioName);
+});
+
+// 节点类型声明的默认超时（#476）：检查器的执行页写出生效的超时和它从哪来。
+test("执行页的超时：写出生效的值和它从哪来（节点类型声明、平台默认、这个节点上设置的）", async ({
+	page,
+	controlPlane,
+}) => {
+	const nodes = [
+		{ ...uploadNodes[0], name: "keep", title: "保持", timeout: 43_200 },
+		{ ...uploadNodes[0], name: "ping", title: "探活" },
+	];
+	await publishPackage(controlPlane, { nodes });
+	const document = {
+		...uploadDocument,
+		nodes: [
+			uploadDocument.nodes[0],
+			{ ...uploadDocument.nodes[1], id: "keep", node: "keep" },
+			{ ...uploadDocument.nodes[1], id: "ping", node: "ping", position: { x: 600, y: 0 } },
+		],
+		edges: [
+			{ from: "entry", to: "keep", kind: "chain" },
+			{ from: "keep", to: "ping", kind: "chain" },
+		],
+	};
+	const id = await createScenario(controlPlane, "保持十二小时", document);
+	await openEditor(page, id, "keep");
+	const panel = inspector(page);
+	const timeout = panel.getByLabel("超时", { exact: true });
+
+	// 节点类型声明了：没填时占位是它声明的值，说明里写来源。
+	await nodeCard(page, "keep").click();
+	await panel.getByRole("tab", { name: "执行" }).click();
+	await expect(timeout).toHaveAttribute("placeholder", "43200（节点类型声明，秒）");
+	await expect(panel).toContainText("生效 43200 秒：节点类型声明");
+
+	// 这个节点上填了：说明里写盖过了节点类型声明的哪个值。
+	await timeout.fill("120");
+	await expect(panel).toContainText("生效 120 秒：节点上设置，盖过节点类型声明的 43200 秒");
+
+	// 超过上限（派发给 Agent 的超时是 uint32）：字段报错，不能保存。
+	await timeout.fill("5000000000");
+	await timeout.blur();
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toBeVisible();
+	await timeout.fill("120");
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toHaveCount(0);
+
+	// 没声明的节点类型：平台默认。
+	await nodeCard(page, "ping").click();
+	await panel.getByRole("tab", { name: "执行" }).click();
+	await expect(timeout).toHaveAttribute("placeholder", "3600（平台默认，秒）");
+	await expect(panel).toContainText("生效 3600 秒：平台默认");
+});
+
+// 排队超时有上限（#559）：排队截止时间要是有效的时间。输入超过上限时字段报错；版本里已经存下来的超限值
+// （升级前保存的）在字段下面显示同一句警告。
+test("执行页的排队超时：超过上限字段报错；库里已有的超限值在字段下面显示同一句话", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { nodes: uploadNodes });
+	const id = await createScenario(controlPlane, "排队超时上限", uploadDocument);
+	await openEditor(page, id, "upload");
+	await nodeCard(page, "upload").click();
+	const panel = inspector(page);
+	await panel.getByRole("tab", { name: "执行" }).click();
+	const queueTimeout = panel.getByLabel("排队超时", { exact: true });
+
+	// 超过上限：字段报错（和超时同一个上限），改回合格的值错误消失。
+	await queueTimeout.fill("9000000000000");
+	await queueTimeout.blur();
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toBeVisible();
+	await expect(queueTimeout).toHaveAttribute("aria-invalid", "true");
+	await queueTimeout.fill("4294967295");
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toHaveCount(0);
+	await queueTimeout.fill("120");
+	await expect(queueTimeout).not.toHaveAttribute("aria-invalid");
+
+	// 库里已经存着超限的值（升级前保存的）：字段下面是和保存、预检同一句话的警告。
+	const stored = await createScenario(controlPlane, "已存的超限排队超时", uploadDocument);
+	await storeOverLimit(controlPlane, stored, "upload", "queue_timeout", 9_000_000_000_000);
+	await openEditor(page, stored, "upload");
+	await nodeCard(page, "upload").click();
+	await panel.getByRole("tab", { name: "执行" }).click();
+	await expect(queueTimeout).toHaveValue("9000000000000");
+	await expect(queueTimeout).toHaveAttribute("aria-invalid", "true");
+	await expect(
+		panel.getByText(
+			"节点 upload：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 9000000000000",
+		),
+	).toBeVisible();
 });

@@ -284,6 +284,7 @@ describe("运行视图与进度推送的合并（#110）", () => {
 								end_clock_offset: null,
 								progress: attemptProgress,
 								current_action: null,
+								queue_wait: null,
 							},
 						],
 					},
@@ -336,6 +337,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		end_clock_offset: null,
 		progress: null,
 		current_action: null,
+		queue_wait: null,
 	});
 	const node = (id: string, status: NodeRunView["status"], attempts: AttemptView[] = []) =>
 		({
@@ -390,9 +392,26 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 			message: "AssertionError: 仍然漏拦",
 			// 全文原样保留（含堆栈），失败的区域里「展开」看它。
 			detail: "AssertionError: 仍然漏拦\n\nTraceback (most recent call last):",
+			location: null,
 			endedAt: "2026-01-01T00:00:02.000Z",
 			chain: null,
 		});
+	});
+
+	it("出错的位置取节点错误里的 location，没有时是 null", () => {
+		const located = {
+			...failed,
+			chains: failed.chains.map((c) => ({
+				...c,
+				nodes: c.nodes.map((n) =>
+					n.node_id === "verify" && n.error
+						? { ...n, error: { ...n.error, location: "checks.verify 第 42 行" } }
+						: n,
+				),
+			})),
+		};
+		expect(runFailure(located)?.location).toBe("checks.verify 第 42 行");
+		expect(runFailure(failed)?.location).toBeNull();
 	});
 
 	it("所有失败的节点按失败的先后：第一项就是第一个失败的节点，子流程里的写明是哪个子流程实例", () => {

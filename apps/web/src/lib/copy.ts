@@ -78,10 +78,10 @@ export const CHART_TYPE_LABEL = {
 export const PROGRESS_LABEL = "进度";
 
 /**
- * 节点失败时出错的位置（`error.location`，「模块.函数 第 N 行」）的标签：画布检查器和运行监控的节点信息里，
- * 写在失败原因下面。一行摘要的地方（页头、「需要注意」、关注项、控制台「最近结束」）不写。
+ * 节点失败时出错的位置（`error.location`，「模块.函数 第 N 行」）的标签，定义在 `@sfly/schema`（运行通知的卡片也用它）：
+ * 画布检查器、运行监控的节点信息和概览的失败区域里，写在失败原因下面。一行摘要的地方（页头、「需要注意」、关注项、控制台「最近结束」）不写。
  */
-export const ERROR_LOCATION_LABEL = "出错位置";
+export { ERROR_LOCATION_LABEL } from "@sfly/schema";
 
 /** 「第 2 次尝试」：节点重试时指明是哪一次（运行监控的尝试页签、画布检查器的动作区共用）。 */
 export const attemptLabel = (attempt: number) => `第 ${attempt} 次${TERM.attempt}`;
@@ -191,8 +191,8 @@ export const FAILURE_AREA = {
 		ended: `有${TERM.node}失败`,
 	},
 	failedAt: (clock: string) => `${clock} 失败`,
-	/** 展开错误信息全文（含堆栈，失败原因那一行太长被收起时也是它）的按钮：状态由 `aria-expanded` 和箭头表示，文字不变。 */
-	fullMessage: "展开全文",
+	/** 展开错误信息全文（含堆栈，失败原因那一行太长被收起时也是它）的按钮：展开后写「收起全文」（和时间线的开关一样，读屏不读成「展开全文，已展开」）。 */
+	fullMessage: (expanded: boolean) => `${expanded ? ACTION.collapse : ACTION.expand}全文`,
 	/** 另有几个节点也失败了：节点名在后面列出。 */
 	others: (count: number) => `另有 ${count} 个${TERM.node}也失败了`,
 	viewAttempts: (node: string) => FOCUS.viewNodeAttempts(node),
@@ -246,6 +246,7 @@ export const DOC_PAGE = {
 	"install-agent": "安装 Agent",
 	publish: "发布",
 	"sdk-reference": "开发节点（SDK 参考）",
+	"feishu-notify": "飞书通知",
 } as const;
 export type DocPage = keyof typeof DOC_PAGE;
 
@@ -383,6 +384,32 @@ export const DURATION_LABEL = "耗时";
 export const slotUsageLabel = (used: number, slots: number) => `${used} / ${slots} 占用`;
 export const QUEUED_LABEL = "排队";
 export const queuedLabel = (count: number) => `${QUEUED_LABEL} ${count}`;
+
+/**
+ * 排队中的节点在等什么（运行视图里排队中的尝试的 `queue_wait`）：「等 agent-a（不在线，已离线 2m 10s）· 排队 3m 05s · 6m 55s 后超时」。
+ * 括号里是这台 Agent 现在的情况；槽位占满时再列出占着槽位的任务。后面的「排队 …」「… 后超时」「即将超时」是
+ * Agent 管理页排队行的写法（`agents/queue-timing.ts`）。命令行写同样的话（`sfly run show`、`sfly run start --wait`，
+ * 用词由 `sdk/python/tests/test_cli_run_view.py` 检查）。
+ */
+export const QUEUE_WAIT = {
+	waitingFor: "等",
+	offline: (since: string | null) => (since === null ? "不在线" : `不在线，已离线 ${since}`),
+	preparing: (since: string | null) => (since === null ? "准备环境中" : `准备环境中 ${since}`),
+	versionMismatch: "版本与控制面不一致，不派新任务",
+	slotsFull: (slots: number) => `槽位占满，${slots} / ${slots}`,
+	dispatching: "正在派发",
+	holders: "占着槽位的任务",
+	/** 占着槽位的任务写明是哪次运行：「准备环境场景（运行 5e2d1c7a）的 准备环境（a）」，同一场景触发两次互相抢槽位时分得开。 */
+	holderRun: (shortId: string) => `运行 ${shortId}`,
+	/** 同一台 Agent 上别的项目的任务占着槽位：只有个数，看不到别的项目的场景和运行。 */
+	otherProjects: (count: number, afterOwn: boolean) =>
+		`${afterOwn ? "另有" : ""}别的项目的任务 ${count} 个`,
+	/**
+	 * 没设关注项、没有节点在 Agent 上执行、排队的节点还在等：概览的主指标一栏不写「没有执行中的节点」，写它们都在排队。
+	 * 在等什么上面「进行中」那一行已经写了，这里不再写一遍（同一屏上同一件事只说一次）。
+	 */
+	allQueued: "节点都在排队，还没有开始执行：",
+} as const;
 
 /**
  * 线路里当前站之前折起来的一段：都算完成的写「已完成 3 个」，不算完成的（取消的运行里已取消的节点、失败之后被跳过的节点）

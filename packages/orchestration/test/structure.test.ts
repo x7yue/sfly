@@ -13,7 +13,13 @@ type Node = StructureDocument["nodes"][number];
 type Edge = StructureDocument["edges"][number];
 
 const entry = (id = "entry"): Node => ({ id, kind: "entry" });
-const pkg = (id: string, agent?: string): Node => ({ id, kind: "package", agent });
+const pkg = (id: string, agent?: string, timeout?: number, queueTimeout?: number): Node => ({
+	id,
+	kind: "package",
+	agent,
+	timeout,
+	queue_timeout: queueTimeout,
+});
 const asyncNode = (id: string): Node => ({ id, kind: "async" });
 const subflow = (id: string, name?: string): Node =>
 	name === undefined ? { id, kind: "subflow_entry" } : { id, kind: "subflow_entry", name };
@@ -146,6 +152,69 @@ describe("结构警告", () => {
 				node_id: "a",
 				message: "节点 a 没有选择 Agent，场景也没有默认 Agent",
 			},
+		]);
+	});
+
+	it("包节点的超时不是上限以内的正整数（升级前保存的版本里可能有）：警告指到这个节点，说明和派发时的一句话一样", () => {
+		const d = doc(
+			[
+				entry(),
+				pkg("ok", "agent-a", 4_294_967_295),
+				pkg("big", "agent-a", 5_000_000_000),
+				pkg("none", "agent-a"),
+			],
+			[chain("entry", "ok"), chain("ok", "big"), chain("big", "none")],
+		);
+
+		expect(structureWarnings(d)).toEqual([
+			{
+				code: "timeout_out_of_range",
+				node_id: "big",
+				input: "timeout",
+				message: "节点 big：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 5000000000",
+			},
+		]);
+	});
+
+	it("包节点的排队超时不是上限以内的正整数（升级前保存的版本里可能有）：警告指到这个节点的 queue_timeout，说明和排队时的一句话一样", () => {
+		const d = doc(
+			[
+				entry(),
+				pkg("ok", "agent-a", undefined, 4_294_967_295),
+				pkg("big", "agent-a", undefined, 9_000_000_000_000),
+				pkg("none", "agent-a"),
+				{ ...pkg("named", "agent-a", undefined, 5_000_000_000), display_name: "等槽位" },
+			],
+			[chain("entry", "ok"), chain("ok", "big"), chain("big", "none"), chain("none", "named")],
+		);
+
+		expect(structureWarnings(d)).toEqual([
+			{
+				code: "queue_timeout_out_of_range",
+				node_id: "big",
+				input: "queue_timeout",
+				message:
+					"节点 big：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 9000000000000",
+			},
+			{
+				code: "queue_timeout_out_of_range",
+				node_id: "named",
+				input: "queue_timeout",
+				message:
+					"节点 等槽位（named）：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 5000000000",
+			},
+		]);
+	});
+
+	it("同一个节点的超时和排队超时都超限：各一条警告，指到各自的字段", () => {
+		const d = doc(
+			[entry(), pkg("both", "agent-a", 5_000_000_000, 6_000_000_000)],
+			[chain("entry", "both")],
+		);
+
+		expect(structureWarnings(d).map((w) => [w.code, w.node_id, w.input])).toEqual([
+			["timeout_out_of_range", "both", "timeout"],
+			["queue_timeout_out_of_range", "both", "queue_timeout"],
 		]);
 	});
 

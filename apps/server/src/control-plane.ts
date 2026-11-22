@@ -40,6 +40,8 @@ import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
+import { assistantReadiness } from "./sessions/readiness.js";
+import { SessionStore } from "./sessions/session-store.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
 
@@ -132,6 +134,8 @@ export interface ControlPlaneOptions {
 export interface ControlPlane {
 	readonly httpUrl: string;
 	readonly grpcUrl: string;
+	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
+	readonly sessions: SessionStore;
 	close(): Promise<void>;
 }
 
@@ -221,7 +225,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		delivery: feishuDelivery,
 	});
-	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的值，和运行监控读指标用同一个读取。
+	// 指标要在引擎之前建好：任务上报指标要先于引擎处理（运行监控、关注项读数、控制台都读它）。
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -248,12 +252,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		notifications: new EngineNotifications({
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
-			focusDeps: {
-				clock,
-				queries: metricQueries,
-				onError: (error) => {
-					if (logger) console.error("run notification: reading focus items failed:", error);
-				},
+			onError: (error, runId) => {
+				if (logger) console.error(`run notification: not sent for run ${runId}:`, error);
 			},
 		}),
 		leaseMs: options.leaseMs,
@@ -298,6 +298,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 	});
+	const sessions = new SessionStore({ db: database.db, clock });
 	const api = buildHttpApi({
 		database,
 		clock,
@@ -310,6 +311,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		preflight,
 		logs,
 		actions,
+		sessions,
+		assistantReadiness,
 		metrics,
 		metricQueries,
 		retention,
@@ -414,6 +417,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
+		sessions,
 		async close() {
 			await Promise.all(sweeps.map((s) => s.stop()));
 			await retention.idle();

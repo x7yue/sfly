@@ -18,7 +18,7 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注） |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
 | `sfly scenario check <文件>` | 检查改过的文件，不保存：列出 `push` 时会有的错误和警告（分成这次改动带进来的和改动之前就有的），以及保存之后相对最新版本的改动；这次改动带进来了警告时退出码 4 |
@@ -27,17 +27,17 @@ uv run sfly api --list runs
 | `sfly scenario create --name 名称 [--description 说明] [--from 文件]` | 新建场景；给了文件就用其中的场景文档保存第一个版本 |
 | `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版（secret 参数的默认值跟着复制，读副本仍打码） |
 | `sfly scenario rename <场景> [--name 名称] [--description 说明]` | 修改名称和说明；它们不属于场景版本，不产生新版本 |
-| `sfly run start <场景> [--preset 名称] [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--preset` 按运行预设触发；`--wait` 等到运行结束并输出摘要 |
+| `sfly run start <场景> [--preset 名称] [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--preset` 按运行预设触发；`--wait` 等到运行结束并输出摘要；节点排队时进度行写明在等什么（同 `run show`），等的情况变了再写一行 |
 | `sfly run wait <运行> [--timeout 时长]` | 等一次已经触发的运行结束，输出摘要；`运行` 可以只写 id 的前缀，或写 `latest`（见下文「运行的写法」） |
 | `sfly run cancel <运行>` | 取消运行；运行还没结束时再取消一次就是强制取消 |
 | `sfly run list [--scenario 场景] [--status 状态]` | 最近的运行，开始得晚的在前 |
-| `sfly run show <运行> [--outputs [--node 链:节点]… [--limit N]] [--state]` | 各条链、各个节点的状态（节点有显示名称时，写在节点 ID 后面）；失败或重试过的节点写出每次尝试的错误；有失败的动作、有异常的关注项时再各写一段；用了运行预设的运行写明预设的名称。`--outputs` 改为输出各节点的输出，`--state` 输出这次运行的运行状态（JSON），见下文「读结果」 |
+| `sfly run show <运行> [--outputs [--node 链:节点]… [--limit N]] [--state]` | 各条链、各个节点的状态（节点有显示名称时，写在节点 ID 后面）；排队中的节点写明在等什么：等哪台 Agent、它现在在线还是离线（离线了多久）、已经排了多久、多久后排队超时，槽位占满时写明占着槽位的任务（`--json` 里排队中的尝试多一个 `queue_wait`，其余尝试不带这个键）；失败或重试过的节点写出每次尝试的错误；有失败的动作、有异常的关注项时再各写一段；用了运行预设的运行写明预设的名称。`--outputs` 改为输出各节点的输出，`--state` 输出这次运行的运行状态（JSON），见下文「读结果」 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level 级别] [--tail N] [--before 游标] [--after 游标] [--all 文件]` | 运行的日志，按控制面时间合并各节点、各次尝试 |
 | `sfly run artifacts <运行> [--task 任务] [--download 目录]` | 列出各任务的产物，可以下载 |
 | `sfly run actions <运行> [--failed] [--node 链:节点]… [--limit N]` | 各任务的动作摘要：各名称的个数和失败数、最近结束的和失败的动作；节点是业务阶段时，失败点在动作里 |
 | `sfly run metrics <运行> [--node 链:节点]… [--limit N]` | 各任务的指标摘要：每个指标的最后值、最大、最小、平均和点数 |
 | `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
-| `sfly package list` / `sfly package show <包>[@版本] [--agent Agent]` | 节点包和它们的版本；一个版本里每个节点类型的标题、输入（类型、默认值、是否必填）和输出。`<包>@dev` 看用 `sfly dev` 加载在 Agent 上的开发版本的节点定义（它不在已发布的节点包列表里）；只算在线的 Agent（和触发运行时的检查一致，离线的 Agent 上次上报的定义不算）；同一个开发包加载在不止一台在线的 Agent 上时用 `--agent` 指定看哪一台的，没有加载在任何在线的 Agent 上时报错并提示 `sfly dev` |
+| `sfly package list` / `sfly package show <包>[@版本] [--agent Agent]` | 节点包和它们的版本；一个版本里每个节点类型的标题、声明了默认超时的写出默认超时、输入（类型、默认值、是否必填）和输出。`<包>@dev` 看用 `sfly dev` 加载在 Agent 上的开发版本的节点定义（它不在已发布的节点包列表里）；只算在线的 Agent（和触发运行时的检查一致，离线的 Agent 上次上报的定义不算）；同一个开发包加载在不止一台在线的 Agent 上时用 `--agent` 指定看哪一台的，没有加载在任何在线的 Agent 上时报错并提示 `sfly dev` |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` / `sfly api --describe <METHOD> <路径>` | 直接调用上面没有覆盖的接口；`--list` 列出全部接口；`--describe` 说明一个接口：它做什么、会不会改东西、请求和响应的字段 |
 
 本地调试是 `sfly debug <节点>`（见 [本地调试](local-debug.md)）。原来的写法 `sfly run <节点>` 已经失效：它报错并提示改用 `sfly debug`，退出码 2。
@@ -100,7 +100,7 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 
 - 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、Agent 的版本不满足节点包的要求、节点用的开发版本（`包名@dev`）没有在它派发到的在线 Agent 上加载（下一步：在那台 Agent 所在的机器上、节点包源码目录下运行 `sfly dev`）这类问题会全部列出，退出码 2，不触发运行。预检的警告不阻断触发（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到它）：运行照常触发，警告写在触发之后的输出里；`--json` 时 stdout 的对象带 `warnings`（每项 `{code, message, node_id}`），警告和下一步提示也写到 stderr；`--wait` 时写在 stderr 里「已触发运行」那一行之后。没有警告时输出不变。
 - 入口参数整个接到某个节点的输入、值的类型不对时（例如 `--param concurrency=8.5` 接到 `integer` 输入），报「入口参数不对」，写明是哪个参数、接到哪个节点的哪个输入、值从哪来，下一步写出可以直接执行的命令（例如 `sfly run start <场景> --param concurrency=<整数>`；值来自运行预设或默认值时写去哪里改），退出码 2，不触发运行。8 和 8.0 都是整数。
-- Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
+- Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟，可以写 1 到 4294967295 秒；写得更大的保存和 `scenario check` 都会被拒绝，错误信息写明是哪个节点）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
 - 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数（参数表的「说明」列最前面是搭场景的人写的参数说明），退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
 - 场景保存了运行预设时，用 `--preset 名称` 按预设触发，见下面的「运行预设」。
 - 总是触发场景的最新版本，不支持指定场景版本。

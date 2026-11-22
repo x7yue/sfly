@@ -10,9 +10,10 @@ import {
 	type StoredNode,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
 import { clockOffsetView } from "../agents/agent-clock.js";
+import type { AgentWait } from "../agents/queue-wait.js";
 import type { Db, Tx } from "../db/database.js";
 import {
 	type ChainStatus,
@@ -38,6 +39,7 @@ import {
 } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 
 /*
@@ -90,6 +92,8 @@ export interface RunAttemptDetail extends RunAttemptState {
 	endClockOffset: AttemptView["end_clock_offset"];
 	/** 此刻正在做的动作（任务还在执行时），名称已打码。 */
 	currentAction: CurrentAction | null;
+	/** 排队超时的时间（排队中时）；没有设置排队超时的任务为 null。 */
+	queueExpiresAt: Date | null;
 }
 
 export interface RunNode<A extends RunAttempt = RunAttempt> {
@@ -273,10 +277,73 @@ async function readByIds(
 	}));
 }
 
-/** 一个运行的运行视图（契约见 @sfly/schema 的 runsApi）；运行不存在时为 undefined。 */
-export async function getRunView(db: Db | Tx, runId: string): Promise<RunView | undefined> {
+/**
+ * 一个节点最后一次有错误的尝试的错误（打码后，同运行视图里尝试的 `error`）；没有时为 null。只查这个节点的任务行（一条查询），
+ * 不读整个运行的输入和输出：运行通知在运行结束的事务里取第一个失败的节点的失败原因，要的只是这一条。
+ * 打码用调用方手里同一次读取的 `maskText`（{@link RunRead.maskText}，运行绑定的版本里声明为 secret 的参数在各链里的值），
+ * 和运行视图里尝试的 `error` 同一个口径，不另查一遍链实例。
+ */
+export async function readNodeError(
+	db: Db | Tx,
+	input: {
+		runId: string;
+		chainInstanceId: string;
+		nodeId: string;
+		maskText: (text: string) => string;
+	},
+): Promise<AttemptView["error"]> {
+	const [row] = await db
+		.select({
+			kind: tasks.errorKind,
+			message: tasks.errorMessage,
+			location: tasks.errorLocation,
+		})
+		.from(tasks)
+		.where(
+			and(
+				eq(tasks.chainInstanceId, input.chainInstanceId),
+				eq(tasks.nodeId, input.nodeId),
+				isNotNull(tasks.errorKind),
+			),
+		)
+		.orderBy(desc(tasks.attempt))
+		.limit(1);
+	if (!row?.kind) return null;
+	return {
+		kind: row.kind,
+		message: input.maskText(row.message ?? ""),
+		location: row.location === null ? null : input.maskText(row.location),
+	};
+}
+
+/**
+ * 一批 Agent 此刻的等待状态（`agents/queue-wait.ts` 的 `agentWaits`，按 Agent 名称作键）：排队中的尝试在等什么。
+ * Agent 的在线、准备环境和槽位占用不在数据库里，运行读取不依赖它；由调用方（有 Agent 注册表的 HTTP 路由）传入。
+ */
+export type QueueWaitResolver = (
+	agents: string[],
+	projectId: ProjectId,
+) => Promise<Map<string, AgentWait>>;
+
+/**
+ * 一个运行的运行视图（契约见 @sfly/schema 的 runsApi）；运行不存在时为 undefined。
+ * 排队中的尝试的 `queue_wait` 要靠 `queueWaits` 填：不给时（不输出给客户端的内部读取）一律是 null。
+ */
+export async function getRunView(
+	db: Db | Tx,
+	runId: string,
+	queueWaits?: QueueWaitResolver,
+): Promise<RunView | undefined> {
 	const read = (await readRuns(db, [runId], "full")).get(runId);
-	return read && runView(read);
+	if (!read) return undefined;
+	const waiting = read.chains.flatMap((chain) =>
+		chain.nodes.flatMap((node) =>
+			node.attempts.flatMap((a) => (a.status === "queued" && a.agent ? [a.agent] : [])),
+		),
+	);
+	const waits =
+		queueWaits && waiting.length > 0 ? await queueWaits(waiting, read.run.projectId) : new Map();
+	return runView(read, waits);
 }
 
 /**
@@ -388,6 +455,7 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 		startClockOffset: clockOffsetView(row.startClockOffsetMs, row.startClockOffsetMeasuredAt),
 		endClockOffset: clockOffsetView(row.endClockOffsetMs, row.endClockOffsetMeasuredAt),
 		currentAction: currentActionOfTask(row.status, row.currentAction, mask.secrets),
+		queueExpiresAt: row.queueExpiresAt,
 	};
 }
 
@@ -550,8 +618,8 @@ async function runNotificationStates(
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
-/** 运行视图：`full` 读取的投影。 */
-function runView(read: RunReadFull): RunView {
+/** 运行视图：`full` 读取的投影；`waits` 是排队中的尝试等的那些 Agent 此刻的状态。 */
+function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunView {
 	const { run, version } = read;
 	return {
 		id: run.id,
@@ -585,7 +653,7 @@ function runView(read: RunReadFull): RunView {
 			started_at: chain.startedAt.toISOString(),
 			ended_at: iso(chain.endedAt),
 			nodes: chain.nodes.map((node) => {
-				const attempts = node.attempts.map(attemptView);
+				const attempts = node.attempts.map((a) => attemptView(a, waits));
 				const last = attempts.at(-1);
 				return {
 					node_id: node.node_id,
@@ -602,7 +670,8 @@ function runView(read: RunReadFull): RunView {
 	};
 }
 
-function attemptView(a: RunAttemptDetail): AttemptView {
+function attemptView(a: RunAttemptDetail, waits: ReadonlyMap<string, AgentWait>): AttemptView {
+	const wait = a.status === "queued" && a.agent ? waits.get(a.agent) : undefined;
 	return {
 		task_id: a.taskId,
 		attempt: a.attempt,
@@ -619,5 +688,6 @@ function attemptView(a: RunAttemptDetail): AttemptView {
 		// 进度消息在读取时已打码。
 		progress: a.progress ? taskProgressView(a.progress, NO_SECRETS) : null,
 		current_action: a.currentAction,
+		queue_wait: wait ? { ...wait, expires_at: iso(a.queueExpiresAt) } : null,
 	};
 }

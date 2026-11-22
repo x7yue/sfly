@@ -1,9 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：节点输入里的运行状态 `${{ run.state }}`（docs/SEMANTICS.md §2.7，ADR 0031）。
 // HTTP API + 讲真实 gRPC 的假 Agent + 手动时钟 + 独立的 PostgreSQL；通过派发给 Agent 的输入和运行视图观察。
+
 import { RUN_STATE_LIMITS, RunState } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PLATFORM_TIMEOUT_HINT } from "../src/engine/timeout-hint.js";
 import { runStateForDispatch } from "../src/runs/run-state-source.js";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, spawn } from "./support/chains.js";
@@ -220,9 +222,14 @@ describe("节点输入里的运行状态 ${{ run.state }}", () => {
 		const a = await agent.nextAssign();
 		await agent.fail(a, "任务超时", ErrorKind.TIMEOUT);
 		const timedOut = stateOf(await agent.nextAssign());
+		// 超时失败、节点和节点类型都没设超时：错误信息后面补一句怎么办（#476），摘要（第一行）不变。
 		expect(nodeOf(timedOut, "a")).toMatchObject({
 			status: "failed",
-			error: { kind: "timeout", headline: "任务超时", message: "任务超时" },
+			error: {
+				kind: "timeout",
+				headline: "任务超时",
+				message: `任务超时\n${PLATFORM_TIMEOUT_HINT}`,
+			},
 		});
 		expect(timedOut).toMatchObject({ result_so_far: "failed", failures: ["a"] });
 		expect(runId).toBeTruthy();

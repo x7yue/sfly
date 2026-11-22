@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { optionalLine } from "../display-text.js";
+import { NODE_TIMEOUT_MAX_SECONDS, nodeTimeoutMessage } from "../node-timeout.js";
 import {
 	OrchestrationDocument,
 	STORED_NODE_KINDS,
 	StoredOrchestrationDocument,
 } from "../orchestration-document.js";
 import { ChartDeclaration } from "../package-metadata.js";
+import { QUEUE_TIMEOUT_MAX_SECONDS, queueTimeoutMessage } from "../queue-timeout.js";
 import { removedFieldsMessage, removedFieldsWithContent } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
 import { endpoint, Timestamp } from "./contract.js";
@@ -30,7 +32,32 @@ import { FeishuBotName } from "./feishu-bots.js";
  */
 
 /**
- * 保存的文档不合法时的说明：含已移除种类的节点，或已移除的顶层字段（便签）里有内容时，写明是哪些、怎么办（ADR 0028）。
+ * 保存的文档里节点写的超时、排队超时超过上限的说明（每个这样的节点和字段一句，写明是哪个节点、范围、实际是多少，
+ * #476、#559）。
+ */
+function timeoutMessages(nodes: unknown): string[] {
+	if (!Array.isArray(nodes)) return [];
+	return nodes.flatMap((n: unknown) => {
+		if (typeof n !== "object" || n === null || !("kind" in n) || n.kind !== "package") return [];
+		const id = "id" in n && typeof n.id === "string" ? n.id : "?";
+		const name = "display_name" in n && typeof n.display_name === "string" ? n.display_name : "";
+		const label = name ? `${name}（${id}）` : id;
+		const timeout = "timeout" in n ? n.timeout : undefined;
+		const queueTimeout = "queue_timeout" in n ? n.queue_timeout : undefined;
+		return [
+			...(typeof timeout === "number" && timeout > NODE_TIMEOUT_MAX_SECONDS
+				? [nodeTimeoutMessage(label, timeout)]
+				: []),
+			...(typeof queueTimeout === "number" && queueTimeout > QUEUE_TIMEOUT_MAX_SECONDS
+				? [queueTimeoutMessage(label, queueTimeout)]
+				: []),
+		];
+	});
+}
+
+/**
+ * 保存的文档不合法时的说明：含已移除种类的节点，或已移除的顶层字段（便签）里有内容时，写明是哪些、怎么办（ADR 0028）；
+ * 节点写的超时、排队超时超过上限时写明是哪个节点、上限多少（#476、#559）。
  */
 function invalidDocumentMessage(body: object): string {
 	const document = "document" in body ? body.document : undefined;
@@ -54,6 +81,7 @@ function invalidDocumentMessage(body: object): string {
 	const messages = [
 		...(removed.length > 0 ? [removedNodesMessage(removed)] : []),
 		...(fields.length > 0 ? [removedFieldsMessage(fields)] : []),
+		...timeoutMessages(nodes),
 	];
 	return messages.length > 0
 		? messages.join("。")
@@ -61,9 +89,15 @@ function invalidDocumentMessage(body: object): string {
 }
 
 /**
- * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。
+ * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消。运行通知是兜底，成功的运行不发；不想发就把机器人设成
+ * null。曾经有的「总是」（`always`，成功、失败、取消都发）已经去掉（#446）：升级时存量的「总是」改成了失败和取消，
+ * 保存设置时再写它会被拒绝（{@link runNotificationTriggerRemovedMessage}）。
  */
-export const RunNotificationTrigger = z.enum(["failed", "failed_or_cancelled", "always"]);
+export const RunNotificationTrigger = z.enum(["failed", "failed_or_cancelled"]);
+
+/** 保存运行通知设置时还写着已经去掉的触发条件 `always`：写明它没了、现在可以填什么。 */
+export const runNotificationTriggerRemovedMessage =
+	"运行通知的触发条件 always（总是）已经去掉：运行通知只在失败或取消时发。现在可以填 failed（仅失败）或 failed_or_cancelled（失败和取消）；不想发就把 bot 设成 null。";
 
 /** 卡片标题和附加说明的长度上限（字符数）。 */
 export const RUN_NOTIFICATION_TITLE_MAX = 200;
@@ -88,7 +122,7 @@ export const RunNotificationChanges = z
 	.strictObject({
 		/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 		bot: FeishuBotName.nullable().optional(),
-		/** 什么情况下发：仅失败、失败和取消、总是。 */
+		/** 什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。 */
 		trigger: RunNotificationTrigger.optional(),
 		/** 卡片标题；空字符串用场景名。 */
 		title: z.string().trim().max(RUN_NOTIFICATION_TITLE_MAX).optional(),
@@ -667,6 +701,19 @@ export const orchestrationsApi = {
 				focus_items: z.array(FocusItemInput).optional(),
 			})
 			.refine((b) => Object.values(b).some((v) => v !== undefined), "没有要修改的字段"),
+		// 手里留着旧 JSON 的人还会写已经去掉的 trigger: "always"：写明它没了、现在可以填什么（仍是 400 `invalid_request`）。
+		requestError: ({ body }) => {
+			const settings =
+				typeof body === "object" && body !== null && "run_notification" in body
+					? body.run_notification
+					: undefined;
+			return typeof settings === "object" &&
+				settings !== null &&
+				"trigger" in settings &&
+				settings.trigger === "always"
+				? { code: "invalid_request", message: runNotificationTriggerRemovedMessage }
+				: undefined;
+		},
 		response: OrchestrationView,
 	}),
 	/**
