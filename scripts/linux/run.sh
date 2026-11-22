@@ -20,6 +20,8 @@
 #   SFLY_LINUX_UV_CACHE_LIMIT_MB（默认 1024）让 uv 清掉不再被引用的部分（entry.sh）。
 # - cargo 的调试信息只留行号表（CARGO_PROFILE_DEV_DEBUG、CARGO_PROFILE_TEST_DEBUG 默认 line-tables-only，#587，见
 #   cargo-env.sh）：编译结果小一半多；宿主上设了这两个变量就用设的（想要完整的调试信息设成 true）。只在这里，CI 不动。
+# - 同步只写内容变了的文件，写过的文件修改时间是现在、没变的不动（sync-copy.sh，#589）：cargo 按修改时间判断要不要重编，
+#   不能让同步把修改时间改回更早的值，不然在容器里改过源码（变异）还原之后，测试跑的还是改过的那份二进制。
 # - SFLY_LINUX_VOLUME 改卷的名字（测试用）。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)

@@ -15,7 +15,8 @@ bash /src/scripts/linux/trim-target.sh "$base/target" || true
 if [[ -f $base/files ]]; then
 	comm -z -23 <(sort -z "$base/files") <(sort -z /sync/files) | (cd "$work" && xargs -0 -r rm -f --)
 fi
-rsync -a --files-from=/sync/files --from0 /src/ "$work/"
+# 内容变了的文件修改时间变成现在，没变的不动：cargo 按修改时间判断要不要重编（见 sync-copy.sh，#589）。
+bash /src/scripts/linux/sync-copy.sh /src /sync/files "$work"
 cp /sync/files "$base/files"
 cd "$work"
 
