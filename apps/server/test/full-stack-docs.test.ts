@@ -302,7 +302,7 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 			try {
 				const admin = await accounts.user("root", { displayName: "平台管理员", admin: true });
 				const token = await accounts.personalToken(admin, { name: "发布 sfly-std" });
-				await shell.check(`export SFLY_ADMIN_TOKEN=${token}`);
+				await shell.run(`export SFLY_ADMIN_TOKEN=${token}`);
 			} finally {
 				await accounts.close();
 			}
