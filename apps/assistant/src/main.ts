@@ -56,6 +56,7 @@ function main(): void {
 		sessions,
 		versions: { assistant: version, pi: pi.version },
 		modelsFile: config.modelsFile,
+		log,
 	});
 	server.listen(ASSISTANT_PORT, () => log(`助手服务在 :${ASSISTANT_PORT}（pi ${pi.version}）`));
 	const stop = () => {

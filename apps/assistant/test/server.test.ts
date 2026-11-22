@@ -52,6 +52,14 @@ describe("请求", () => {
 		const text = await res.text();
 		expect(JSON.parse(text)).toMatchObject({ code: "invalid_request" });
 		expect(text).not.toContain("do-not-echo-me");
+		// 不是 JSON 时，解析器的报错会引用请求体的一段：回应里不带它。
+		const broken = await fetch(`${h.url}/sessions/${crypto.randomUUID()}/prompt`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${SECRET}` },
+			body: '{"secret_env": {"T": "do-not-echo-me"',
+		});
+		expect(broken.status).toBe(400);
+		expect(await broken.text()).not.toContain("do-not-echo-me");
 	});
 
 	it("没有在做的一轮时停止：202，什么都不做", async () => {

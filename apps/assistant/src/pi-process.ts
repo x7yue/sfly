@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { LineSplitter } from "./jsonl.js";
 
 /**
@@ -30,6 +31,10 @@ export interface PiProcessOptions {
 	onExit: (code: number | null, signal: NodeJS.Signals | null) => void;
 	/** 结束时等 SIGTERM 生效的时间，默认 {@link KILL_GRACE_MS}（测试里改短）。 */
 	killGraceMs?: number;
+	/** 标准错误写下之前过一遍（打码）；`flush` 在进程退出时调用。 */
+	filterStderr?: { push: (text: string) => string; flush: () => string };
+	/** 写标准错误的文件出错（磁盘满）：不让它变成未处理的异常。 */
+	onStderrError?: (error: Error) => void;
 }
 
 export class PiProcess {
@@ -44,6 +49,7 @@ export class PiProcess {
 	constructor(options: PiProcessOptions) {
 		this.#grace = options.killGraceMs ?? KILL_GRACE_MS;
 		this.#stderr = createWriteStream(options.stderrPath, { flags: "a", mode: 0o600 });
+		this.#stderr.on("error", (error) => options.onStderrError?.(error));
 		const [command, ...args] = options.argv;
 		if (!command) throw new Error("没有要执行的命令");
 		this.#child = spawn(command, args, {
@@ -70,7 +76,12 @@ export class PiProcess {
 		this.#child.stdout?.on("data", (chunk: Buffer) => {
 			for (const line of splitter.push(chunk)) handle(line);
 		});
-		this.#child.stderr?.pipe(this.#stderr);
+		const filter = options.filterStderr;
+		// 按 UTF-8 解码时不把一个字符切成两半（打码按字符比较）。
+		const decoder = new StringDecoder("utf8");
+		this.#child.stderr?.on("data", (chunk: Buffer) => {
+			this.#stderr.write(filter ? filter.push(decoder.write(chunk)) : chunk);
+		});
 		// stdin 在 pi 退出后写不进去：错误由等待的调用方处理，这里不让它变成未处理的异常。
 		this.#child.stdin?.on("error", () => {});
 		this.#exited = new Promise((resolve) => {
@@ -85,7 +96,7 @@ export class PiProcess {
 					resolveWaiting({ type: "response", success: false, error: "pi 进程已退出" });
 				}
 				this.#waiting.clear();
-				this.#stderr.end();
+				this.#stderr.end(filter ? filter.push(decoder.end()) + filter.flush() : "");
 				options.onExit(code, signal);
 				resolve();
 			});
@@ -125,10 +136,17 @@ export class PiProcess {
 		return response;
 	}
 
-	/** 关 stdin，等 pi 有序退出。**只在空闲时调用**（见类的说明）。 */
-	async close(): Promise<void> {
+	/**
+	 * 关 stdin，等 pi 有序退出。**只在空闲时调用**（见类的说明）。`graceMs` 之后还没退出就 {@link terminate}。
+	 */
+	async close(graceMs = this.#grace): Promise<void> {
 		this.#child.stdin?.end();
-		await this.#exited;
+		const timer = setTimeout(() => void this.terminate(), graceMs);
+		try {
+			await this.#exited;
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	/** 先 SIGTERM，宽限期之后还没退出就 SIGKILL；等它退出。 */

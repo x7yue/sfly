@@ -116,6 +116,8 @@ export function prepareLaunch(options: {
 		[TURN_CONFIG_ENV]: paths.turnConfig,
 	};
 	for (const name of modelEnvNames(readFileSync(options.modelsFile, "utf8"))) {
+		// 模型文件引用了助手服务自己的配置（共享密钥等）也不给：它们不是模型的密钥。
+		if (name.startsWith("SFLY_ASSISTANT_")) continue;
 		const value = hostEnv[name];
 		if (value !== undefined) env[name] = value;
 	}

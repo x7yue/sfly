@@ -1,4 +1,4 @@
-import { createWriteStream, mkdirSync, rmSync, type WriteStream, writeFileSync } from "node:fs";
+import { createWriteStream, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
 	AssistantErrorCode,
@@ -11,7 +11,7 @@ import type {
 import type { AgentClient } from "./agent.js";
 import type { EventBus } from "./bus.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
-import { PiProcess } from "./pi-process.js";
+import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
 import { Redactor } from "./redact.js";
 import { workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
 import { TurnTranslator } from "./translate.js";
@@ -81,7 +81,8 @@ interface Session {
 	process: PiProcess | undefined;
 	/** 这个进程是按哪个工作台、哪个工作区起的：换了就重起。 */
 	startedFor: { workbench: string; workdir: string } | undefined;
-	raw: WriteStream | undefined;
+	/** 被关掉的进程退出之前：新进程等它。 */
+	closing: Promise<void> | undefined;
 	turn: Turn | undefined;
 	lastActive: number;
 }
@@ -94,6 +95,8 @@ export class SessionManager {
 	readonly #sessions = new Map<string, Session>();
 	readonly #limits: { modelCalls: number; durationMs: number };
 	readonly #maxProcesses: number;
+	/** 正在关的 pi 进程（关 stdin 之后、退出之前）。 */
+	readonly #closing = new Set<PiProcess>();
 
 	constructor(private readonly options: SessionManagerOptions) {
 		this.#limits = options.limits ?? TURN_LIMITS;
@@ -107,8 +110,16 @@ export class SessionManager {
 		return join(this.options.dataDir, "cwd");
 	}
 
+	/**
+	 * 算进上限的 pi 进程：活着的、正在关的（被关掉的空闲进程退出之前），以及一轮已经开始、进程还在起的（占一个位置，
+	 * 并发的几句话不会一起越过上限）。
+	 */
 	get activeProcesses(): number {
-		return [...this.#sessions.values()].filter((s) => s.process && !s.process.exited).length;
+		let count = this.#closing.size;
+		for (const s of this.#sessions.values()) {
+			if (s.process ? !s.process.exited : s.turn && !s.turn.ended && !s.turn.ending) count += 1;
+		}
+		return count;
 	}
 
 	get maxProcesses(): number {
@@ -132,6 +143,16 @@ export class SessionManager {
 			}
 		}
 		session.redactor.add(Object.values(body.secret_env));
+		try {
+			this.#writeTurnConfig(session, body);
+		} catch (error) {
+			return {
+				ok: false,
+				status: 503,
+				code: "start_failed",
+				message: `写不了这一轮的配置：${error instanceof Error ? error.message : String(error)}`,
+			};
+		}
 		const turn: Turn = {
 			number: body.turn,
 			startedAt: Date.now(),
@@ -142,7 +163,6 @@ export class SessionManager {
 		};
 		session.turn = turn;
 		session.lastActive = Date.now();
-		this.#writeTurnConfig(session, body);
 		turn.timer = setTimeout(
 			() =>
 				this.#stop(session, turn, {
@@ -164,16 +184,17 @@ export class SessionManager {
 		this.#stop(session, turn, { outcome: "stopped", reason: "用户停止了这一轮" });
 	}
 
-	/** 助手服务退出：结束全部 pi 进程。 */
+	/** 助手服务退出：结束全部一轮和 pi 进程。 */
 	async shutdown(): Promise<void> {
-		await Promise.all(
-			[...this.#sessions.values()].map(async (session) => {
-				if (session.turn) {
-					session.turn.ending = { outcome: "interrupted", reason: "助手服务停止了" };
-				}
-				await session.process?.terminate();
-			}),
-		);
+		for (const session of this.#sessions.values()) {
+			if (session.turn) {
+				this.#stop(session, session.turn, { outcome: "interrupted", reason: "助手服务停止了" });
+			}
+		}
+		await Promise.all([
+			...[...this.#sessions.values()].map((session) => session.process?.terminate()),
+			...[...this.#closing].map((process) => process.terminate()),
+		]);
 	}
 
 	#session(id: string): Session {
@@ -187,7 +208,7 @@ export class SessionManager {
 				redactor: new Redactor(),
 				process: undefined,
 				startedFor: undefined,
-				raw: undefined,
+				closing: undefined,
 				turn: undefined,
 				lastActive: Date.now(),
 			};
@@ -235,20 +256,22 @@ export class SessionManager {
 					session.startedFor?.workdir !== wanted.workdir)
 			) {
 				// 换了工作台或工作区：工具和系统提示里的路径是启动时定的，空闲的进程关掉重起。
-				await session.process.close();
+				this.#close(session);
 			}
+			// 被关掉的进程退出之前不起新的：两个 pi 不同时写同一个会话文件。
+			await session.closing;
 			if (!session.process || session.process.exited) {
 				await writeSkillsToWorkbench(
 					this.options.connect(body.workbench.address),
 					this.options.skillsDir,
 					body.workbench.workdir,
 				);
-				if (turn.ended) return;
+				if (turn.ended || turn.ending) return;
 				this.#spawn(session, wanted);
 				spawned = true;
 			}
 			const process = session.process;
-			if (!process || turn.ended) return;
+			if (!process || turn.ended || turn.ending) return;
 			const response = await process.request({ type: "prompt", message: body.text });
 			if (spawned) {
 				// 冷启动：从收到这句话到新起的 pi 接受它（写 skill、起进程、加载扩展、恢复会话）。
@@ -288,18 +311,27 @@ export class SessionManager {
 			hostEnv: this.options.hostEnv,
 		});
 		session.startedFor = startedFor;
-		session.raw ??= createWriteStream(join(session.dir, "events.jsonl"), {
-			flags: "a",
-			mode: 0o600,
-		});
+		const raw = createWriteStream(join(session.dir, "events.jsonl"), { flags: "a", mode: 0o600 });
+		raw.on("error", (error) =>
+			this.options.log(`会话 ${session.id}：写 events.jsonl 失败：${error.message}`),
+		);
+		const stderr = session.redactor.stream();
 		const process = new PiProcess({
 			argv: launch.argv,
 			cwd: launch.cwd,
 			env: launch.env,
 			stderrPath: join(session.dir, "pi-stderr.log"),
+			// pi 的标准错误也是日志：写下之前打码。
+			filterStderr: { push: (text) => stderr.push(text), flush: () => stderr.flush() },
+			onStderrError: (error) =>
+				this.options.log(`会话 ${session.id}：写 pi-stderr.log 失败：${error.message}`),
 			killGraceMs: this.options.killGraceMs,
-			onRecord: (record, line) => this.#onRecord(session, process, record, line),
+			onRecord: (record, line) => {
+				raw.write(`${session.redactor.redact(line)}\n`);
+				this.#onRecord(session, process, record);
+			},
 			onExit: (code, signal) => {
+				raw.end();
 				// 这次启动新建的设置目录用完就删（不和别的进程、别的会话共用）。
 				rmSync(launch.agentDir, { recursive: true, force: true });
 				this.#onExit(session, process, code, signal);
@@ -312,9 +344,7 @@ export class SessionManager {
 		session: Session,
 		process: PiProcess,
 		record: Record<string, unknown> | undefined,
-		line: string,
 	): void {
-		session.raw?.write(`${session.redactor.redact(line)}\n`);
 		const turn = session.turn;
 		// 决定结束这一轮之后（停止、上限）pi 还在吐的事件不再外传：一轮的事件到此为止。
 		if (!record || !turn || turn.ended || turn.ending || session.process !== process) return;
@@ -352,7 +382,10 @@ export class SessionManager {
 		code: number | null,
 		signal: NodeJS.Signals | null,
 	): void {
-		if (session.process === process) session.process = undefined;
+		this.#closing.delete(process);
+		// 被关掉的进程（空闲、换了工作区）退出：和这个会话现在的一轮无关。
+		if (session.process !== process) return;
+		session.process = undefined;
 		const turn = session.turn;
 		if (!turn || turn.ended) return;
 		if (turn.ending) {
@@ -416,9 +449,22 @@ export class SessionManager {
 			.filter((s) => s.process && !s.process.exited && !s.turn)
 			.sort((a, b) => a.lastActive - b.lastActive)[0];
 		if (!idle?.process) return false;
-		const process = idle.process;
-		idle.process = undefined;
-		void process.close();
+		this.#close(idle);
 		return true;
+	}
+
+	/**
+	 * 关掉这个会话的 pi 进程：**只用于空闲的进程**（关 stdin，#539 第 8 题）；它不再是这个会话的进程，
+	 * 退出之前算进上限；不肯退出的在宽限期之后结束（SIGTERM，再 SIGKILL）。
+	 */
+	#close(session: Session): void {
+		const process = session.process;
+		if (!process) return;
+		session.process = undefined;
+		this.#closing.add(process);
+		const closed = process.close(this.options.killGraceMs ?? KILL_GRACE_MS);
+		session.closing = closed.finally(() => {
+			if (session.closing === closed) session.closing = undefined;
+		});
 	}
 }

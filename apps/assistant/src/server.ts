@@ -26,6 +26,7 @@ export interface ServerDeps {
 	sessions: SessionManager;
 	versions: { assistant: string; pi: string };
 	modelsFile: string;
+	log: (message: string) => void;
 }
 
 export function createAssistantServer(deps: ServerDeps): Server {
@@ -34,11 +35,12 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		timingSafeEqual(digest(req.headers.authorization ?? ""), expected);
 	const server = createServer((req, res) => {
 		void handle(req, res).catch((error: unknown) => {
-			if (!res.headersSent) {
-				sendError(res, 500, "start_failed", error instanceof Error ? error.message : String(error));
-			} else {
-				res.destroy();
-			}
+			// 回应里不带原因（可能引用请求的内容），原因写日志。
+			deps.log(
+				`处理 ${req.method} ${req.url} 出错：${error instanceof Error ? error.message : String(error)}`,
+			);
+			if (!res.headersSent) sendError(res, 500, "start_failed", "助手服务内部出错，原因见它的日志");
+			else res.destroy();
 		});
 	});
 
@@ -59,13 +61,9 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		let json: unknown;
 		try {
 			json = JSON.parse(await readBody(req));
-		} catch (error) {
-			return sendError(
-				res,
-				400,
-				"invalid_request",
-				error instanceof Error ? error.message : "不是 JSON",
-			);
+		} catch {
+			// 不带解析器的报错：它会引用请求体的一段（里面可能有保密的环境变量）。
+			return sendError(res, 400, "invalid_request", "请求体不是 JSON（或太大）");
 		}
 		const body = PromptCommandBody.safeParse(json);
 		if (!body.success) {

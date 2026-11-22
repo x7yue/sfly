@@ -97,6 +97,7 @@ export class Harness {
 			sessions,
 			versions: { assistant: "0.0.0-test", pi: piPackage().version },
 			modelsFile,
+			log: (message) => logs.push(message),
 		});
 		await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
 		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
