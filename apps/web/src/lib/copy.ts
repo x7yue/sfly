@@ -270,6 +270,8 @@ export const SESSION = {
 		author: "发起人",
 		status: "状态",
 		activity: "最近活动",
+		/** 会话多于接口一次给的个数（`truncated`）时，列表下面的一句提示。 */
+		truncated: (limit: number) => `只显示了最近活动的 ${limit} 个会话`,
 	},
 	status: {
 		idle: "空闲",

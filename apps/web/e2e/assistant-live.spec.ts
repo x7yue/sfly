@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { SessionView } from "@sfly/schema";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { FakeAssistant } from "../../server/test/support/fake-assistant.js";
+import { seedSession } from "../../server/test/support/sessions.js";
 import { eventAt } from "./assistant-support";
 import { test as base, expect } from "./fixtures";
 
@@ -225,6 +226,33 @@ test("project_busy：同一个项目另一个会话在做时，留住写好的�
 	await link.click();
 	await expect(page).toHaveURL(new RegExp(`/sessions/${running}$`));
 	await expect(timeline(page).getByTestId("user-message")).toHaveText("tester：第一个会话");
+});
+
+test("接着说遇到 project_busy：同一个项目另一个会话在做时，留住写好的话，给出正在做的那个会话的链接", async ({
+	page,
+	assistant,
+	controlPlane,
+	workbench,
+}) => {
+	void workbench;
+	const running = await startSession(page, "正在做的这个");
+	const idle = await seedSession(controlPlane.database.url, {
+		title: "空闲的这个",
+		status: "idle",
+		events: [],
+	});
+	await page.goto(`/sessions/${idle}`);
+	await page.getByRole("textbox", { name: "接着说" }).fill("再加一个重试次数");
+	await page.getByRole("button", { name: "发送" }).click();
+	const alert = page.getByRole("alert").filter({ hasText: "另一个会话正在做" });
+	await expect(alert).toBeVisible();
+	await expect(page.getByRole("textbox", { name: "接着说" })).toHaveValue("再加一个重试次数");
+	await expect(alert.getByRole("link", { name: "打开正在做的会话" })).toHaveAttribute(
+		"href",
+		`/sessions/${running}`,
+	);
+	// 助手服务只收到了第一个会话的那一句：被拒绝的话没有交给它。
+	expect(assistant.prompts).toHaveLength(1);
 });
 
 test("接着说：一轮结束后发一句，助手服务收到第 2 轮；会话页和列表都更新", async ({

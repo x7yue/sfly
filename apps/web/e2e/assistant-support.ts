@@ -24,6 +24,7 @@ export async function stubSessionList(
 	readiness: Readiness,
 	sessions: unknown[] = [],
 	create?: (route: Route, body: { text: string }) => Promise<void> | void,
+	truncated = false,
 ) {
 	await page.route("**/api/projects/*/sessions", async (route) => {
 		const request = route.request();
@@ -31,7 +32,7 @@ export async function stubSessionList(
 			await create(route, request.postDataJSON() as { text: string });
 			return;
 		}
-		await json(route, 200, { readiness, sessions });
+		await json(route, 200, { readiness, sessions, truncated });
 	});
 }
 

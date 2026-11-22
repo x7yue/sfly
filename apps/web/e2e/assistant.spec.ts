@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Page } from "@playwright/test";
-import type { SessionEvent, SessionEventBody } from "@sfly/schema";
+import { SESSION_LIST_LIMIT, type SessionEvent, type SessionEventBody } from "@sfly/schema";
 import { seedSession } from "../../server/test/support/sessions.js";
 import {
 	apiError,
@@ -133,10 +133,42 @@ test("会话列表：本项目的会话，在做的在前、其余最近活动�
 	await expect(rows.nth(3)).toContainText("空闲");
 	await expect(rows.nth(3)).toContainText("01-01 08:00");
 
+	// 会话没有超过接口一次给的个数：没有「只显示了…」的提示。
+	await expect(page.getByTestId("list-truncated")).toHaveCount(0);
+
 	await page.getByRole("link", { name: "给 http_check 加超时" }).click();
 	await expect(page).toHaveURL(new RegExp(`/sessions/${idle}$`));
 	await expect(page.getByRole("heading", { level: 1, name: "给 http_check 加超时" })).toBeVisible();
 	expect([running, ended]).toHaveLength(2);
+});
+
+test("会话多于接口一次给的个数：只列最近活动的 200 个，列表下面写一句（真的控制面）", async ({
+	page,
+	controlPlane,
+}) => {
+	const db = controlPlane.database.url;
+	const total = SESSION_LIST_LIMIT + 1;
+	const base = Date.UTC(2026, 0, 1);
+	for (let first = 0; first < total; first += 25) {
+		await Promise.all(
+			Array.from({ length: Math.min(25, total - first) }, (_, k) =>
+				seedSession(db, {
+					title: `会话 ${first + k}`,
+					status: "ended",
+					lastActivityAt: new Date(base + (first + k) * 60_000),
+				}),
+			),
+		);
+	}
+	await page.goto("/sessions");
+	const rows = page.getByRole("table", { name: "会话列表" }).getByRole("row");
+	await expect(rows).toHaveCount(SESSION_LIST_LIMIT + 1); // 加表头一行
+	await expect(page.getByTestId("list-truncated")).toHaveText(
+		`只显示了最近活动的 ${SESSION_LIST_LIMIT} 个会话`,
+	);
+	// 最近活动的在前，最早的那一个没有列出来。
+	await expect(rows.nth(1)).toContainText(`会话 ${SESSION_LIST_LIMIT}`);
+	await expect(page.getByRole("link", { name: "会话 0", exact: true })).toHaveCount(0);
 });
 
 test("开始：成功后跳到会话页；请求里是写好的话", async ({ page, controlPlane }) => {
@@ -231,15 +263,30 @@ test("开始失败（503）：留住写好的话，写明原因；就绪状态�
 // ---------------------------------------------------------------- 会话页：历史
 
 test("一轮的六种结局：各一行；到了上限按 limit_kind 写是哪一种", async ({ page, controlPlane }) => {
-	const base = { turn: 1, reason: "原因", duration_ms: 84_000 } as const;
+	// 每一轮只有一个结局：七个结局是七轮（同一轮的第二个结局页面不画）。
+	const base = { reason: "原因", duration_ms: 84_000 } as const;
 	const events: SessionEventBody[] = [
-		{ type: "turn_end", ...base, outcome: "completed", steps: 12, model_calls: 9 },
-		{ type: "turn_end", ...base, outcome: "stopped", reason: "用户停止" },
-		{ type: "turn_end", ...base, outcome: "limit", limit_kind: "model_calls", model_calls: 40 },
-		{ type: "turn_end", ...base, outcome: "limit", limit_kind: "duration", duration_ms: 1_200_000 },
-		{ type: "turn_end", ...base, outcome: "interrupted", reason: "助手服务重启了" },
-		{ type: "turn_end", ...base, outcome: "model_unavailable", reason: "模型连不上" },
-		{ type: "turn_end", ...base, outcome: "failed", reason: "出了点问题" },
+		{ type: "turn_end", ...base, turn: 1, outcome: "completed", steps: 12, model_calls: 9 },
+		{ type: "turn_end", ...base, turn: 2, outcome: "stopped", reason: "用户停止" },
+		{
+			type: "turn_end",
+			...base,
+			turn: 3,
+			outcome: "limit",
+			limit_kind: "model_calls",
+			model_calls: 40,
+		},
+		{
+			type: "turn_end",
+			...base,
+			turn: 4,
+			outcome: "limit",
+			limit_kind: "duration",
+			duration_ms: 1_200_000,
+		},
+		{ type: "turn_end", ...base, turn: 5, outcome: "interrupted", reason: "助手服务重启了" },
+		{ type: "turn_end", ...base, turn: 6, outcome: "model_unavailable", reason: "模型连不上" },
+		{ type: "turn_end", ...base, turn: 7, outcome: "failed", reason: "出了点问题" },
 	];
 	const id = await seedSession(controlPlane.database.url, { events });
 	await page.goto(`/sessions/${id}`);
@@ -581,5 +628,45 @@ test("接着说失败：留住写好的话，写明原因", async ({ page, contr
 	await expect(
 		page.getByRole("alert").filter({ hasText: "助手正在做这一轮；要改方向先停止" }),
 	).toBeVisible();
+	await expect(composer(page)).toHaveValue("再加一个重试次数");
+});
+
+test("接着说遇到 project_busy：留住写好的话，写明原因，给出正在做的那个会话的链接", async ({
+	page,
+	controlPlane,
+}) => {
+	const db = controlPlane.database.url;
+	const idle = await seedSession(db, { title: "空闲的这个", status: "idle", events: [] });
+	const running = await seedSession(db, { title: "正在做的那个", status: "running", events: [] });
+	await page.route(/\/api\/sessions\/[^/]+\/messages$/, (route) =>
+		apiError(route, 409, "project_busy", "这个项目里的会话「正在做的那个」正在做"),
+	);
+	await page.goto(`/sessions/${idle}`);
+	await composer(page).fill("再加一个重试次数");
+	await page.getByRole("button", { name: "发送" }).click();
+	const alert = page.getByRole("alert").filter({ hasText: "另一个会话正在做" });
+	await expect(alert).toBeVisible();
+	await expect(composer(page)).toHaveValue("再加一个重试次数");
+	const link = alert.getByRole("link", { name: "打开正在做的会话" });
+	await expect(link).toHaveAttribute("href", `/sessions/${running}`);
+	await link.click();
+	await expect(page).toHaveURL(new RegExp(`/sessions/${running}$`));
+});
+
+test("没有配置助手时接着说：控制面真的返回 503，留住写好的话，写明原因", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await seedSession(controlPlane.database.url, { status: "idle", events: [] });
+	await page.goto(`/sessions/${id}`);
+	await composer(page).fill("再加一个重试次数");
+	const response = page.waitForResponse(
+		(r) => r.url().endsWith(`/api/sessions/${id}/messages`) && r.request().method() === "POST",
+	);
+	await page.getByRole("button", { name: "发送" }).click();
+	expect((await response).status()).toBe(503);
+	await expect(page.getByRole("alert").filter({ hasText: "助手没有开启" })).toContainText(
+		"无法发送",
+	);
 	await expect(composer(page)).toHaveValue("再加一个重试次数");
 });

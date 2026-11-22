@@ -331,6 +331,11 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				],
 			};
 		case "turn_end": {
+			// 同一轮只有一个结局（控制面只记第一条，后到的不记、不发布）：这一轮的结局已经画过，后来的（旧版本留下的、
+			// 重复的）不再画一行；下一轮在做时，上一轮迟到的重复结局也不能把会话改回空闲。
+			if (state.items.some((item) => item.kind === "turn_end" && item.turn === event.turn)) {
+				return state;
+			}
 			const settled = finishStreaming(state);
 			return {
 				...state,

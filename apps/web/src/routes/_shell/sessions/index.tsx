@@ -46,7 +46,7 @@ function AssistantPage() {
 							<SectionHeading level={2} id="session-list-heading">
 								{SESSION.list.heading}
 							</SectionHeading>
-							<SessionList sessions={data.sessions} />
+							<SessionList sessions={data.sessions} truncated={data.truncated} />
 						</section>
 					</div>
 				)}

@@ -220,6 +220,31 @@ describe("会话时间线：由事件序列算出", () => {
 		}
 	});
 
+	it("同一轮只有一个结局：第二个 turn_end 不再画一行，下一轮在做时也不把会话改回空闲", () => {
+		const twice = run([started(1), end(2, "completed"), end(3, "failed", { reason: "重复的" })]);
+		expect(twice.items.filter((i) => i.kind === "turn_end")).toHaveLength(1);
+		expect(twice.items.find((i) => i.kind === "turn_end")).toMatchObject({
+			outcome: "completed",
+			seq: 2,
+		});
+		// 序号照常推进（下次补发不会再处理它）。
+		expect(twice.lastSeq).toBe(3);
+
+		// 第 2 轮开始之后，第 1 轮迟到的重复结局不动此刻在做的这一轮；第 2 轮自己的结局照常画。
+		const secondRunning = run([
+			started(1),
+			end(2, "completed"),
+			user(3, "再来一次"),
+			started(4, 2),
+			end(5, "stopped", { turn: 1 }),
+		]);
+		expect(secondRunning.status).toBe("running");
+		expect(secondRunning.items.filter((i) => i.kind === "turn_end")).toHaveLength(1);
+		const finished = applyEvent(secondRunning, end(6, "completed", { turn: 2 }));
+		expect(finished.status).toBe("idle");
+		expect(finished.items.filter((i) => i.kind === "turn_end")).toHaveLength(2);
+	});
+
 	it("turn_end 把还在逐字出现的话定稿", () => {
 		const state = run([delta("写到一半"), end(1, "stopped")]);
 		expect(state.items[0]).toMatchObject({ kind: "assistant", text: "写到一半", streaming: false });

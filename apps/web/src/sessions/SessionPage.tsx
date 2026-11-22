@@ -6,6 +6,7 @@ import {
 	sessionsApi,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
@@ -18,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { SESSION_PROJECT } from "./project";
 import { SessionTimeline } from "./SessionTimeline";
 import { SESSION_STATUS, turnEndText } from "./session-text";
 import { useSessionTimeline } from "./use-session-timeline";
@@ -163,11 +165,45 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 			</div>
 			{send.isError && (
 				<FormAlert>
-					{send.error instanceof ApiError && send.error.code === "turn_running"
-						? SESSION.page.turnRunning
-						: `${SESSION.page.sendFailed}：${errorText(send.error)}`}
+					<SendError error={send.error} sessionId={id} />
 				</FormAlert>
 			)}
 		</form>
+	);
+}
+
+/**
+ * 「接着说」失败的原因：这个会话有一轮在做（`turn_running`）；同一个项目另一个会话在做（`project_busy`，给出那个会话的链接）；
+ * 其余（包括助手没有开启、连不上的 503）写接口给的那句话。
+ */
+function SendError({ error, sessionId }: { error: Error; sessionId: string }) {
+	if (!(error instanceof ApiError)) return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
+	if (error.code === "turn_running") return <>{SESSION.page.turnRunning}</>;
+	if (error.code === "project_busy") return <ProjectBusy sessionId={sessionId} />;
+	return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
+}
+
+/** 同一个项目另一个会话在做：写明原因，找得到是哪一个时给出它的链接（列表只在这时才读）。 */
+function ProjectBusy({ sessionId }: { sessionId: string }) {
+	const list = useQuery(apiQuery(sessionsApi.list, { params: { project: SESSION_PROJECT } }));
+	const busy = list.data?.sessions.find(
+		(session) => session.status === "running" && session.id !== sessionId,
+	);
+	return (
+		<>
+			{SESSION.busy}
+			{busy && (
+				<>
+					{"："}
+					<Link
+						to="/sessions/$id"
+						params={{ id: busy.id }}
+						className="text-fg-1 underline underline-offset-2"
+					>
+						{SESSION.busyLink}
+					</Link>
+				</>
+			)}
+		</>
 	);
 }
