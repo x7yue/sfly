@@ -1,74 +1,74 @@
 {
- "ok": true,
- "probe": {
-  "system_prompt": "MARK-AGENT-DIR-SYSTEM\n\n\n<addendum>\nMARK-GIVEN-CONTEXT\n\n</addendum>\n\n<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path=\"/work/tc/AGENTS.md\">\n# 项目约定\n\n只在开发环境里的上下文文件（AGENTS-MARKER）。\n\n</project_instructions>\n</project_context>\n\n<skills>\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nResolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.\n\n<available_skills>\n  <skill>\n    <name>demo</name>\n    <description>工具自检用的 skill，确认 skill 来自开发环境。</description>\n    <location>/work/tc/.agents/skills/demo/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>given-skill</name>\n    <description>MARK-SKILL-GIVEN 探针放的 skill。</description>\n    <location>/work/tc/.agents/skills/given-skill/SKILL.md</location>\n  </skill>\n</available_skills>\n</skills>\n\n<cwd>\n/work/tc\n</cwd>",
-  "commands": [
-   {
-    "name": "skill:demo",
-    "source": "skill",
-    "description": "工具自检用的 skill，确认 skill 来自开发环境。"
-   },
-   {
-    "name": "skill:given-skill",
-    "source": "skill",
-    "description": "MARK-SKILL-GIVEN 探针放的 skill。"
-   }
-  ]
- },
- "control": {
-  "system_prompt": "MARK-PROJECT-SYSTEM\n\n\n<addendum>\nMARK-GIVEN-CONTEXT\n\n</addendum>\n\n<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path=\"/root/rpcprobe/agent/AGENTS.md\">\nMARK-AGENT-DIR-AGENTS\n\n</project_instructions>\n\n<project_instructions path=\"/work/CLAUDE.md\">\nMARK-LOCAL-PARENT-CLAUDE\n\n</project_instructions>\n\n<project_instructions path=\"/work/tc/AGENTS.md\">\nMARK-LOCAL-WS-AGENTS\n\n</project_instructions>\n</project_context>\n\n<skills>\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nResolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.\n\n<available_skills>\n  <skill>\n    <name>extra-project</name>\n    <description>MARK-SKILL-PROJECT-PI 探针放的 skill。</description>\n    <location>/work/tc/.pi/skills/extra-project/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>demo</name>\n    <description>工具自检用的 skill，确认 skill 来自开发环境。</description>\n    <location>/work/tc/.agents/skills/demo/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>given-skill</name>\n    <description>MARK-SKILL-GIVEN 探针放的 skill。</description>\n    <location>/work/tc/.agents/skills/given-skill/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-parent</name>\n    <description>MARK-SKILL-PARENT-AGENTS 探针放的 skill。</description>\n    <location>/work/.agents/skills/extra-parent/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-settings</name>\n    <description>MARK-SKILL-SETTINGS 探针放的 skill。</description>\n    <location>/root/rpcprobe/q3-configured/skills/extra-settings/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-agent-dir</name>\n    <description>MARK-SKILL-AGENT-DIR 探针放的 skill。</description>\n    <location>/root/rpcprobe/agent/skills/extra-agent-dir/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-home</name>\n    <description>MARK-SKILL-HOME-AGENTS 探针放的 skill。</description>\n    <location>/root/.agents/skills/extra-home/SKILL.md</location>\n  </skill>\n</available_skills>\n</skills>\n\n<cwd>\n/work/tc\n</cwd>",
-  "commands": [
-   {
-    "name": "tpl-project",
-    "source": "prompt",
-    "description": "MARK-TPL-PROJECT"
-   },
-   {
-    "name": "tpl-settings",
-    "source": "prompt",
-    "description": "MARK-TPL-SETTINGS"
-   },
-   {
-    "name": "tpl-agent-dir",
-    "source": "prompt",
-    "description": "MARK-TPL-AGENT-DIR"
-   },
-   {
-    "name": "skill:extra-project",
-    "source": "skill",
-    "description": "MARK-SKILL-PROJECT-PI 探针放的 skill。"
-   },
-   {
-    "name": "skill:demo",
-    "source": "skill",
-    "description": "工具自检用的 skill，确认 skill 来自开发环境。"
-   },
-   {
-    "name": "skill:given-skill",
-    "source": "skill",
-    "description": "MARK-SKILL-GIVEN 探针放的 skill。"
-   },
-   {
-    "name": "skill:extra-parent",
-    "source": "skill",
-    "description": "MARK-SKILL-PARENT-AGENTS 探针放的 skill。"
-   },
-   {
-    "name": "skill:extra-settings",
-    "source": "skill",
-    "description": "MARK-SKILL-SETTINGS 探针放的 skill。"
-   },
-   {
-    "name": "skill:extra-agent-dir",
-    "source": "skill",
-    "description": "MARK-SKILL-AGENT-DIR 探针放的 skill。"
-   },
-   {
-    "name": "skill:extra-home",
-    "source": "skill",
-    "description": "MARK-SKILL-HOME-AGENTS 探针放的 skill。"
-   }
-  ]
- },
- "seconds": 2.9
+	"ok": true,
+	"probe": {
+		"system_prompt": "MARK-AGENT-DIR-SYSTEM\n\n\n<addendum>\nMARK-GIVEN-CONTEXT\n\n</addendum>\n\n<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path=\"/work/tc/AGENTS.md\">\n# 项目约定\n\n只在开发环境里的上下文文件（AGENTS-MARKER）。\n\n</project_instructions>\n</project_context>\n\n<skills>\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nResolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.\n\n<available_skills>\n  <skill>\n    <name>demo</name>\n    <description>工具自检用的 skill，确认 skill 来自开发环境。</description>\n    <location>/work/tc/.agents/skills/demo/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>given-skill</name>\n    <description>MARK-SKILL-GIVEN 探针放的 skill。</description>\n    <location>/work/tc/.agents/skills/given-skill/SKILL.md</location>\n  </skill>\n</available_skills>\n</skills>\n\n<cwd>\n/work/tc\n</cwd>",
+		"commands": [
+			{
+				"name": "skill:demo",
+				"source": "skill",
+				"description": "工具自检用的 skill，确认 skill 来自开发环境。"
+			},
+			{
+				"name": "skill:given-skill",
+				"source": "skill",
+				"description": "MARK-SKILL-GIVEN 探针放的 skill。"
+			}
+		]
+	},
+	"control": {
+		"system_prompt": "MARK-PROJECT-SYSTEM\n\n\n<addendum>\nMARK-GIVEN-CONTEXT\n\n</addendum>\n\n<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path=\"/root/rpcprobe/agent/AGENTS.md\">\nMARK-AGENT-DIR-AGENTS\n\n</project_instructions>\n\n<project_instructions path=\"/work/CLAUDE.md\">\nMARK-LOCAL-PARENT-CLAUDE\n\n</project_instructions>\n\n<project_instructions path=\"/work/tc/AGENTS.md\">\nMARK-LOCAL-WS-AGENTS\n\n</project_instructions>\n</project_context>\n\n<skills>\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nResolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.\n\n<available_skills>\n  <skill>\n    <name>extra-project</name>\n    <description>MARK-SKILL-PROJECT-PI 探针放的 skill。</description>\n    <location>/work/tc/.pi/skills/extra-project/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>demo</name>\n    <description>工具自检用的 skill，确认 skill 来自开发环境。</description>\n    <location>/work/tc/.agents/skills/demo/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>given-skill</name>\n    <description>MARK-SKILL-GIVEN 探针放的 skill。</description>\n    <location>/work/tc/.agents/skills/given-skill/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-parent</name>\n    <description>MARK-SKILL-PARENT-AGENTS 探针放的 skill。</description>\n    <location>/work/.agents/skills/extra-parent/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-settings</name>\n    <description>MARK-SKILL-SETTINGS 探针放的 skill。</description>\n    <location>/root/rpcprobe/q3-configured/skills/extra-settings/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-agent-dir</name>\n    <description>MARK-SKILL-AGENT-DIR 探针放的 skill。</description>\n    <location>/root/rpcprobe/agent/skills/extra-agent-dir/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>extra-home</name>\n    <description>MARK-SKILL-HOME-AGENTS 探针放的 skill。</description>\n    <location>/root/.agents/skills/extra-home/SKILL.md</location>\n  </skill>\n</available_skills>\n</skills>\n\n<cwd>\n/work/tc\n</cwd>",
+		"commands": [
+			{
+				"name": "tpl-project",
+				"source": "prompt",
+				"description": "MARK-TPL-PROJECT"
+			},
+			{
+				"name": "tpl-settings",
+				"source": "prompt",
+				"description": "MARK-TPL-SETTINGS"
+			},
+			{
+				"name": "tpl-agent-dir",
+				"source": "prompt",
+				"description": "MARK-TPL-AGENT-DIR"
+			},
+			{
+				"name": "skill:extra-project",
+				"source": "skill",
+				"description": "MARK-SKILL-PROJECT-PI 探针放的 skill。"
+			},
+			{
+				"name": "skill:demo",
+				"source": "skill",
+				"description": "工具自检用的 skill，确认 skill 来自开发环境。"
+			},
+			{
+				"name": "skill:given-skill",
+				"source": "skill",
+				"description": "MARK-SKILL-GIVEN 探针放的 skill。"
+			},
+			{
+				"name": "skill:extra-parent",
+				"source": "skill",
+				"description": "MARK-SKILL-PARENT-AGENTS 探针放的 skill。"
+			},
+			{
+				"name": "skill:extra-settings",
+				"source": "skill",
+				"description": "MARK-SKILL-SETTINGS 探针放的 skill。"
+			},
+			{
+				"name": "skill:extra-agent-dir",
+				"source": "skill",
+				"description": "MARK-SKILL-AGENT-DIR 探针放的 skill。"
+			},
+			{
+				"name": "skill:extra-home",
+				"source": "skill",
+				"description": "MARK-SKILL-HOME-AGENTS 探针放的 skill。"
+			}
+		]
+	},
+	"seconds": 2.9
 }

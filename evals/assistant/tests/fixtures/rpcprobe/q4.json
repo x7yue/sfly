@@ -1,107 +1,99 @@
 {
- "ok": true,
- "first": {
-  "state": {
-   "sessionId": "q4-session",
-   "sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T05-17-47-420Z_q4-session.jsonl",
-   "messageCount": 5
-  },
-  "messages": [
-   {
-    "role": "system",
-    "text": ""
-   },
-   {
-    "role": "user",
-    "text": "第一句"
-   },
-   {
-    "role": "assistant",
-    "text": "认不出这道题，什么都没做。"
-   },
-   {
-    "role": "user",
-    "text": "第二句"
-   },
-   {
-    "role": "assistant",
-    "text": "认不出这道题，什么都没做。"
-   }
-  ],
-  "exit_seconds": 0.07
- },
- "second": {
-  "state": {
-   "sessionId": "q4-session",
-   "sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T05-17-47-420Z_q4-session.jsonl",
-   "messageCount": 5
-  },
-  "messages_on_start": [
-   {
-    "role": "system",
-    "text": ""
-   },
-   {
-    "role": "user",
-    "text": "第一句"
-   },
-   {
-    "role": "assistant",
-    "text": "认不出这道题，什么都没做。"
-   },
-   {
-    "role": "user",
-    "text": "第二句"
-   },
-   {
-    "role": "assistant",
-    "text": "认不出这道题，什么都没做。"
-   }
-  ],
-  "messages_after_third": [
-   {
-    "role": "system",
-    "text": ""
-   },
-   {
-    "role": "user",
-    "text": "第一句"
-   },
-   {
-    "role": "assistant",
-    "text": "认不出这道题，什么都没做。"
-   },
-   {
-    "role": "user",
-    "text": "第二句"
-   },
-   {
-    "role": "assistant",
-    "text": "认不出这道题，什么都没做。"
-   },
-   {
-    "role": "user",
-    "text": "第三句"
-   },
-   {
-    "role": "assistant",
-    "text": "认不出这道题，什么都没做。"
-   }
-  ],
-  "last_request_users": [
-   "第一句",
-   "第二句",
-   "第三句"
-  ],
-  "exit_seconds": 0.066
- },
- "files": {
-  "after_first": [
-   "2026-11-22T05-17-47-420Z_q4-session.jsonl"
-  ],
-  "after_second": [
-   "2026-11-22T05-17-47-420Z_q4-session.jsonl"
-  ]
- },
- "seconds": 1.7
+	"ok": true,
+	"first": {
+		"state": {
+			"sessionId": "q4-session",
+			"sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T05-17-47-420Z_q4-session.jsonl",
+			"messageCount": 5
+		},
+		"messages": [
+			{
+				"role": "system",
+				"text": ""
+			},
+			{
+				"role": "user",
+				"text": "第一句"
+			},
+			{
+				"role": "assistant",
+				"text": "认不出这道题，什么都没做。"
+			},
+			{
+				"role": "user",
+				"text": "第二句"
+			},
+			{
+				"role": "assistant",
+				"text": "认不出这道题，什么都没做。"
+			}
+		],
+		"exit_seconds": 0.07
+	},
+	"second": {
+		"state": {
+			"sessionId": "q4-session",
+			"sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T05-17-47-420Z_q4-session.jsonl",
+			"messageCount": 5
+		},
+		"messages_on_start": [
+			{
+				"role": "system",
+				"text": ""
+			},
+			{
+				"role": "user",
+				"text": "第一句"
+			},
+			{
+				"role": "assistant",
+				"text": "认不出这道题，什么都没做。"
+			},
+			{
+				"role": "user",
+				"text": "第二句"
+			},
+			{
+				"role": "assistant",
+				"text": "认不出这道题，什么都没做。"
+			}
+		],
+		"messages_after_third": [
+			{
+				"role": "system",
+				"text": ""
+			},
+			{
+				"role": "user",
+				"text": "第一句"
+			},
+			{
+				"role": "assistant",
+				"text": "认不出这道题，什么都没做。"
+			},
+			{
+				"role": "user",
+				"text": "第二句"
+			},
+			{
+				"role": "assistant",
+				"text": "认不出这道题，什么都没做。"
+			},
+			{
+				"role": "user",
+				"text": "第三句"
+			},
+			{
+				"role": "assistant",
+				"text": "认不出这道题，什么都没做。"
+			}
+		],
+		"last_request_users": ["第一句", "第二句", "第三句"],
+		"exit_seconds": 0.066
+	},
+	"files": {
+		"after_first": ["2026-11-22T05-17-47-420Z_q4-session.jsonl"],
+		"after_second": ["2026-11-22T05-17-47-420Z_q4-session.jsonl"]
+	},
+	"seconds": 1.7
 }

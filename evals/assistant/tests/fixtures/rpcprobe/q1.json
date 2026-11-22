@@ -1,510 +1,505 @@
 {
- "ok": true,
- "json": [
-  {
-   "type": "tool_execution_end",
-   "toolName": "write",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "Successfully wrote to new/dir/a.txt"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "hello\nworld\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "edit",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "Successfully replaced 1 block(s) in new/dir/a.txt."
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "edit",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "Could not find the exact text in new/dir/a.txt. The old text must match exactly including all whitespace and newlines."
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "hello\nremote\n/work/tc\nagent=pi nick=eval\n/root/.local/bin/sfly\n/root/.local/bin/uv\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "to-stderr\n\n\nCommand exited with code 3"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n\n\nCommand timed out after 1 seconds"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "no-timeout-given\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n3031\n3032\n3033\n3034\n3035\n3036\n3037\n3038\n3039\n3040\n\n…\n57\n4958\n4959\n4960\n4961\n4962\n4963\n4964\n4965\n4966\n4967\n4968\n4969\n4970\n4971\n4972\n4973\n4974\n4975\n4976\n4977\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-fc877010da18a8f8.log]"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "ENOENT: no such file or directory, access '/work/tc/missing.txt'"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "000dead\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "000dead\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "200"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "done\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "---\nname: demo\ndescription: 工具自检用的 skill，确认 skill 来自开发环境。\n---\n\n# demo\n\n这份 skill 只在开发环境里。\n"
-     }
-    ]
-   }
-  }
- ],
- "rpc": [
-  {
-   "type": "tool_execution_end",
-   "toolName": "write",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "Successfully wrote to new/dir/a.txt"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "hello\nworld\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "edit",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "Successfully replaced 1 block(s) in new/dir/a.txt."
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "edit",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "Could not find the exact text in new/dir/a.txt. The old text must match exactly including all whitespace and newlines."
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "hello\nremote\n/work/tc\nagent=pi nick=eval\n/root/.local/bin/sfly\n/root/.local/bin/uv\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "to-stderr\n\n\nCommand exited with code 3"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n\n\nCommand timed out after 1 seconds"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "no-timeout-given\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n3031\n3032\n3033\n3034\n3035\n3036\n3037\n3038\n3039\n3040\n\n…\n57\n4958\n4959\n4960\n4961\n4962\n4963\n4964\n4965\n4966\n4967\n4968\n4969\n4970\n4971\n4972\n4973\n4974\n4975\n4976\n4977\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-d01a5f801905ca00.log]"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": true,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "ENOENT: no such file or directory, access '/work/tc/missing.txt'"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "000dead\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "000dead\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "started\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "200"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "bash",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "done\n"
-     }
-    ]
-   }
-  },
-  {
-   "type": "tool_execution_end",
-   "toolName": "read",
-   "isError": false,
-   "result": {
-    "content": [
-     {
-      "type": "text",
-      "text": "---\nname: demo\ndescription: 工具自检用的 skill，确认 skill 来自开发环境。\n---\n\n# demo\n\n这份 skill 只在开发环境里。\n"
-     }
-    ]
-   }
-  }
- ],
- "rpc_exit_seconds": 0.017,
- "declared_tools": [
-  "read",
-  "bash",
-  "edit",
-  "write"
- ],
- "system_prompt": "<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>",
- "written_locally": false
+	"ok": true,
+	"json": [
+		{
+			"type": "tool_execution_end",
+			"toolName": "write",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Successfully wrote to new/dir/a.txt"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello\nworld\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "edit",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Successfully replaced 1 block(s) in new/dir/a.txt."
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "edit",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Could not find the exact text in new/dir/a.txt. The old text must match exactly including all whitespace and newlines."
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello\nremote\n/work/tc\nagent=pi nick=eval\n/root/.local/bin/sfly\n/root/.local/bin/uv\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "to-stderr\n\n\nCommand exited with code 3"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n\n\nCommand timed out after 1 seconds"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "no-timeout-given\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n3031\n3032\n3033\n3034\n3035\n3036\n3037\n3038\n3039\n3040\n\n…\n57\n4958\n4959\n4960\n4961\n4962\n4963\n4964\n4965\n4966\n4967\n4968\n4969\n4970\n4971\n4972\n4973\n4974\n4975\n4976\n4977\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-fc877010da18a8f8.log]"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "ENOENT: no such file or directory, access '/work/tc/missing.txt'"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "000dead\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "000dead\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "200"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "done\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "---\nname: demo\ndescription: 工具自检用的 skill，确认 skill 来自开发环境。\n---\n\n# demo\n\n这份 skill 只在开发环境里。\n"
+					}
+				]
+			}
+		}
+	],
+	"rpc": [
+		{
+			"type": "tool_execution_end",
+			"toolName": "write",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Successfully wrote to new/dir/a.txt"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello\nworld\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "edit",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Successfully replaced 1 block(s) in new/dir/a.txt."
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "edit",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "Could not find the exact text in new/dir/a.txt. The old text must match exactly including all whitespace and newlines."
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "hello\nremote\n/work/tc\nagent=pi nick=eval\n/root/.local/bin/sfly\n/root/.local/bin/uv\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "to-stderr\n\n\nCommand exited with code 3"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n\n\nCommand timed out after 1 seconds"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "no-timeout-given\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "3001\n3002\n3003\n3004\n3005\n3006\n3007\n3008\n3009\n3010\n3011\n3012\n3013\n3014\n3015\n3016\n3017\n3018\n3019\n3020\n3021\n3022\n3023\n3024\n3025\n3026\n3027\n3028\n3029\n3030\n3031\n3032\n3033\n3034\n3035\n3036\n3037\n3038\n3039\n3040\n\n…\n57\n4958\n4959\n4960\n4961\n4962\n4963\n4964\n4965\n4966\n4967\n4968\n4969\n4970\n4971\n4972\n4973\n4974\n4975\n4976\n4977\n4978\n4979\n4980\n4981\n4982\n4983\n4984\n4985\n4986\n4987\n4988\n4989\n4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n\n[Showing lines 3001-5000 of 5000. Full output: /tmp/pi-bash-d01a5f801905ca00.log]"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "4990\n4991\n4992\n4993\n4994\n4995\n4996\n4997\n4998\n4999\n5000\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": true,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "ENOENT: no such file or directory, access '/work/tc/missing.txt'"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "000dead\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "000dead\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "started\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "200"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "bash",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "done\n"
+					}
+				]
+			}
+		},
+		{
+			"type": "tool_execution_end",
+			"toolName": "read",
+			"isError": false,
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "---\nname: demo\ndescription: 工具自检用的 skill，确认 skill 来自开发环境。\n---\n\n# demo\n\n这份 skill 只在开发环境里。\n"
+					}
+				]
+			}
+		}
+	],
+	"rpc_exit_seconds": 0.017,
+	"declared_tools": ["read", "bash", "edit", "write"],
+	"system_prompt": "<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>",
+	"written_locally": false
 }
