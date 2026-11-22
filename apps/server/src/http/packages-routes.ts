@@ -26,7 +26,8 @@ const notFound = (reply: FastifyReply, message: string) =>
  *   GET  /packages/:name/versions/:version                 版本详情（含完整元信息）
  *   GET  /packages/:name/versions/:version/nodes/:node     节点类型元信息
  *   GET  /packages/:name/versions/:version/archive         下载归档（x-sfly-sha256 头）
- * 路径还不带项目（#488）：都在默认项目里。
+ * 路径还不带项目（#488）：读和管理都在默认项目里；发布可以用过渡的查询参数 `project=public` 发布到公共项目
+ * （只有平台管理员能这样做，#565，访问检查里校验）。
  */
 export function registerPackageRoutes(
 	app: FastifyInstance,
@@ -56,8 +57,10 @@ export function registerPackageRoutes(
 				);
 			}
 			try {
+				// 发布到哪个项目由访问检查得出（查询参数 `project=public` 只有平台管理员能写，其余校验也在那里）；
+				// 没有身份（不带凭据、共享令牌）时一定是默认项目：公共项目已经被拒绝了。
 				const published = await packages.publish(
-					DEFAULT_PROJECT,
+					access?.project ?? DEFAULT_PROJECT,
 					new Uint8Array(req.body),
 					publisher ?? null,
 				);

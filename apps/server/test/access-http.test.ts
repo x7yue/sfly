@@ -2,6 +2,7 @@
 // 带凭据的请求：失效的凭据 401；通过检查的写请求把用户 ID 和令牌的名称记进 #487 加的列；
 // 平台管理员在自己不是成员的项目里的写操作留记录；HEAD、事件流走同一处检查；不带凭据的请求行为不变。
 import { httpContract } from "@sfly/schema";
+import { strToU8 } from "fflate";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
@@ -258,6 +259,114 @@ describe("带凭据的请求", () => {
 					"select published_by, published_by_user_id, published_token from node_packages where name = 'anonymous'",
 				),
 			).toEqual({ published_by: null, published_by_user_id: null, published_token: null });
+		});
+	});
+
+	describe("发布到公共项目：POST /packages?project=public（#565）", () => {
+		const archive = (name: string, version = "1.0.0") =>
+			packageArchive(packageMetadata({ name, version }), {
+				[`${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`]: strToU8(`wheel ${name}`),
+			}) as Uint8Array<ArrayBuffer>;
+		const publish = (headers: Record<string, string>, name: string, query = "") =>
+			cp.fetch(`/packages${query}`, {
+				method: "POST",
+				headers: { "content-type": "application/octet-stream", ...headers },
+				body: archive(name),
+			});
+		const projectOf = async (name: string) =>
+			(await db.query("select project_id from node_packages where name = $1", [name])).rows.map(
+				(r) => r.project_id,
+			);
+		const error = async (res: Response) =>
+			((await res.json()) as { error: { code: string; message: string } }).error;
+
+		it("平台管理员发布到公共项目：201，版本在公共项目里，记下发布人，留平台管理员的写记录并回填状态码；sfly-std 出现在包索引里", async () => {
+			const admin = await accounts.user("root", { displayName: "管理员", admin: true });
+			const token = await accounts.personalToken(admin, { name: "发布令牌" });
+
+			const res = await publish(bearer(token), "sfly-std", "?project=public");
+
+			expect(res.status, await res.clone().text()).toBe(201);
+			expect(await projectOf("sfly-std")).toEqual(["public"]);
+			expect(
+				await one(
+					"select published_by, published_by_user_id, published_token from node_packages where name = 'sfly-std'",
+				),
+			).toEqual({
+				published_by: "管理员",
+				published_by_user_id: admin,
+				published_token: "发布令牌",
+			});
+			await vi.waitFor(async () => {
+				expect(
+					await one(
+						"select route, resource_kind, resource_id, project_id, user_id, token_name, status from platform_admin_actions",
+					),
+				).toEqual({
+					route: "POST /packages",
+					resource_kind: "package",
+					resource_id: null,
+					project_id: "public",
+					user_id: admin,
+					token_name: "发布令牌",
+					status: 201,
+				});
+			});
+			// 公共项目里的 sfly-std 在包索引里。
+			const index = await (await cp.fetch("/simple/sfly-std/")).text();
+			expect(index).toContain("sfly_std-1.0.0-py3-none-any.whl");
+		});
+
+		it("平台管理员不指明 project：照旧发布到默认项目（也留平台管理员的记录，和以前一样）", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = await accounts.personalToken(admin);
+
+			expect((await publish(bearer(token), "in-default")).status).toBe(201);
+
+			expect(await projectOf("in-default")).toEqual(["default"]);
+			expect((await db.query("select project_id from platform_admin_actions")).rows).toEqual([
+				{ project_id: "default" },
+			]);
+		});
+
+		it("别的凭据指明 public 被拒绝：项目管理员、编辑者、项目令牌、不是平台管理员的令牌 403，不带凭据 401，信息写明原因；什么也没有发布", async () => {
+			const boss = await accounts.user("boss");
+			await accounts.member("default", boss, "project_admin");
+			const projectToken = await accounts.projectToken("default", { name: "项目令牌" });
+			const cases: [string, Record<string, string>, number][] = [
+				["项目管理员", bearer(await accounts.personalToken(boss)), 403],
+				["编辑者", bearer(await accounts.personalToken(editor)), 403],
+				["项目令牌", bearer(projectToken), 403],
+				["不带凭据", {}, 401],
+			];
+			for (const [name, headers, status] of cases) {
+				const res = await publish(headers, "rejected", "?project=public");
+				expect(res.status, name).toBe(status);
+				expect((await error(res)).message, name).toContain("公共项目只有平台管理员能写");
+			}
+			expect(await projectOf("rejected")).toEqual([]);
+			expect((await db.query("select 1 from platform_admin_actions")).rowCount).toBe(0);
+		});
+
+		it("指明 public 以外的项目：400，写明现在只能写 public；不指明时照旧", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = await accounts.personalToken(admin);
+			for (const query of [
+				"?project=default",
+				"?project=alpha",
+				"?project=",
+				"?project=public&project=public",
+			]) {
+				for (const headers of [{}, bearer(token)]) {
+					const res = await publish(headers, "rejected", query);
+					expect(res.status, query).toBe(400);
+					expect(await error(res), query).toMatchObject({
+						code: "invalid_request",
+						message: expect.stringContaining("现在只能写 public"),
+					});
+				}
+			}
+			expect(await projectOf("rejected")).toEqual([]);
 		});
 	});
 

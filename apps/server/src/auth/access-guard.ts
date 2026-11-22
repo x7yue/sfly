@@ -71,13 +71,15 @@ export interface Access {
 /** 检查的结果：通过时带出身份（不带凭据、带共享令牌时为 null，照旧放行），拒绝时带 HTTP 状态和原因。 */
 export type AccessResult =
 	| { ok: true; access: Access | null }
-	| { ok: false; status: 401 | 403 | 404; code: string; message: string };
+	| { ok: false; status: 400 | 401 | 403 | 404; code: string; message: string };
 
 /** 一个请求里和检查有关的部分。 */
 export interface AccessRequest {
 	route: Pick<RouteDef, "method" | "path" | "effect" | "resource" | "creates">;
 	/** 路径参数（解析前的字符串）。 */
 	params: Record<string, string | undefined>;
+	/** 查询参数（解析前）：项目写在查询参数里的接口（过渡，#565）要看它。 */
+	query?: Record<string, unknown> | undefined;
 	/** `Authorization` 请求头。 */
 	authorization?: string | undefined;
 	/** `Cookie` 请求头。 */
@@ -90,13 +92,24 @@ export interface AccessRequest {
  */
 export const ACCESS_NOT_FOUND_MESSAGE = "资源不存在，或不在这个凭据能访问的项目里";
 
-const denied = (status: 401 | 403 | 404, code: string, message: string): AccessResult => ({
+const denied = (status: 400 | 401 | 403 | 404, code: string, message: string): AccessResult => ({
 	ok: false,
 	status,
 	code,
 	message,
 });
 const notFound = () => denied(404, "not_found", ACCESS_NOT_FOUND_MESSAGE);
+
+/**
+ * 公共项目只有平台管理员能写（ADR 0029：平台维护的节点包放在公共项目）。项目管理员、项目令牌、会话令牌、Agent 凭据、
+ * 共享令牌、不带凭据都不行，限定了别的项目的个人令牌也不行。说清楚原因，不用「资源不存在」的 404：公共项目的存在
+ * 不是秘密，被拒绝的人需要知道为什么。
+ */
+const PUBLIC_WRITE_DENIED =
+	"公共项目只有平台管理员能写（发布节点包）：需要平台管理员的登录或个人令牌，" +
+	"项目管理员、项目令牌、会话令牌、限定了别的项目的令牌和不带凭据的请求都不行";
+const writesPublicProject = (project: ProjectId | undefined, route: { effect: string }) =>
+	project === PUBLIC_PROJECT && route.effect === "write";
 
 /** 请求里带的凭据原值，来自哪里。 */
 type Presented = { from: "bearer" | "cookie"; secret: string };
@@ -151,13 +164,26 @@ export class AccessGuard {
 		}
 		// 不属于项目的接口不需要凭据，带了也不看（过期的 Cookie 不该让健康检查和下载安装脚本失败）。
 		if (locator.from === "none") return { ok: true, access: null };
+		// 项目写在查询参数里（过渡，#565）：写错了的先拒绝，不管有没有凭据。
+		const queried = locator.from === "query" ? queriedProject(locator.param, request) : undefined;
+		if (queried !== undefined && "denied" in queried) return queried.denied;
+		const publicWrite = writesPublicProject(queried?.project, request.route);
 		const presented = presentedCredential(request);
-		if (presented === undefined) return { ok: true, access: null };
+		if (presented === undefined) {
+			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
+			return publicWrite
+				? denied(401, "unauthorized", PUBLIC_WRITE_DENIED)
+				: { ok: true, access: null };
+		}
 		const principal = await this.#resolve(presented);
 		if (principal === undefined) {
 			return denied(401, "unauthorized", "凭据无效、已过期或已吊销");
 		}
-		if (principal.kind === "shared") return { ok: true, access: null };
+		if (principal.kind === "shared") {
+			return publicWrite
+				? denied(403, "forbidden", PUBLIC_WRITE_DENIED)
+				: { ok: true, access: null };
+		}
 		// 路径参数含 NUL：它不指向任何东西，和不带凭据时一样是 404（契约路由的约定，#212）；
 		// 不能往下走：管理员的写记录要把路径参数写进库，NUL 存不进 PostgreSQL 的文本。
 		if (Object.values(request.params).some((value) => value?.includes("\u0000"))) {
@@ -167,7 +193,7 @@ export class AccessGuard {
 		if (principal.kind === "agent" || principal.kind === "task") {
 			return this.#checkProgram(principal, request, locator);
 		}
-		const project = await this.#projectOf(locator, request.params);
+		const project = queried?.project ?? (await this.#projectOf(locator, request.params));
 		if (project === undefined) return notFound();
 		return this.#checkScoped(principal, request, project);
 	}
@@ -194,6 +220,8 @@ export class AccessGuard {
 		locator: Exclude<ProjectLocator, { from: "none" }>,
 		params: AccessRequest["params"],
 	): Promise<ProjectId | undefined> {
+		// 查询参数里的项目在 check() 里先得出（写错了要拒绝，不是「找不到」）。
+		if (locator.from === "query") return DEFAULT_PROJECT;
 		if (locator.from === "path") {
 			if (locator.param === null) return DEFAULT_PROJECT;
 			const value = params[locator.param];
@@ -279,6 +307,14 @@ export class AccessGuard {
 		const publicRead =
 			project === PUBLIC_PROJECT && route.effect === "read" && route.resource.kind === "package";
 		const limit = principal.kind === "project" ? principal.project : principal.limit;
+		if (writesPublicProject(project, route)) {
+			// 平台管理员本人的登录或个人令牌（令牌没有限定别的项目）才能写公共项目。
+			const platformAdmin =
+				(principal.kind === "login" || principal.kind === "personal") &&
+				principal.user.isPlatformAdmin &&
+				(limit === null || limit === PUBLIC_PROJECT);
+			if (!platformAdmin) return denied(403, "forbidden", PUBLIC_WRITE_DENIED);
+		}
 		if (!publicRead && limit !== null && limit !== project) return notFound();
 
 		let role: ProjectRole | null = null;
@@ -369,6 +405,27 @@ export class AccessGuard {
 	async finishAdminWrite(id: string, status: number): Promise<void> {
 		await this.deps.store.completeAdminWrite(id, status);
 	}
+}
+
+/**
+ * 项目写在查询参数里的接口（过渡，#565）：不写是默认项目，写了只认 `public`；别的值（别的项目名、写了几次、不是字符串）
+ * 拒绝 400，说明现在只能写 public。
+ */
+function queriedProject(
+	param: string,
+	request: AccessRequest,
+): { project: ProjectId } | { denied: AccessResult } {
+	const value = request.query?.[param];
+	if (value === undefined) return { project: DEFAULT_PROJECT };
+	if (value === PUBLIC_PROJECT) return { project: PUBLIC_PROJECT };
+	return {
+		denied: denied(
+			400,
+			"invalid_request",
+			`查询参数 ${param} 现在只能写 ${PUBLIC_PROJECT}（发布到公共项目，只有平台管理员能这样做）；` +
+				"不写时发布到默认项目",
+		),
+	};
 }
 
 const requestTaskId = (request: AccessRequest): string => {

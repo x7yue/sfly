@@ -63,14 +63,15 @@ def _publish(args: argparse.Namespace) -> int:
     path = Path(args.path).resolve()
     try:
         archive = build(path) if path.is_dir() else path
-        result = publish(archive, control_plane_url(args.server, DEFAULT_SERVER))
+        result = publish(archive, control_plane_url(args.server, DEFAULT_SERVER), args.project)
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1
     except (PublishError, OSError) as error:
         print(f"发布失败：{error}", file=sys.stderr)
         return 1
-    print(f"已发布 {result['name']}@{result['version']}（sha256 {result['sha256']}）")
+    where = f" 到项目 {args.project}" if args.project else ""
+    print(f"已发布 {result['name']}@{result['version']}{where}（sha256 {result['sha256']}）")
     return 0
 
 
@@ -188,6 +189,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--server",
         help="控制面 HTTP 地址（默认 $SFLY_SERVER，其次 $SFLY_HOME/agent.env 的 "
         f"SFLY_CONTROL_PLANE_URL，都没有时 {DEFAULT_SERVER}）",
+    )
+    p_publish.add_argument(
+        "--project",
+        help="发布到哪个项目：现在只能写 public（公共项目，标准节点包放在这里，"
+        "只有平台管理员能发布）；不写发布到默认项目",
     )
     p_publish.set_defaults(func=_publish)
 
