@@ -57,3 +57,9 @@ export const errorHeadline = (message: string | null | undefined): string => {
 	if (!/[:：]$/.test(first) || next === "" || next.startsWith(TRACEBACK)) return first;
 	return first.endsWith("：") ? `${first}${next}` : `${first} ${next}`;
 };
+
+/**
+ * 节点失败时出错的位置（`error.location`，「模块.函数 第 N 行」）的标签：画布检查器和运行监控的节点信息里写在失败原因下面，
+ * 运行通知的卡片里同样，一行摘要的地方（页头、「需要注意」、关注项、控制台「最近结束」）不写。
+ */
+export const ERROR_LOCATION_LABEL = "出错位置";

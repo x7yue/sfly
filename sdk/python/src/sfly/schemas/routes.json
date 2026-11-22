@@ -6150,8 +6150,7 @@
                       "type": "string",
                       "enum": [
                         "failed",
-                        "failed_or_cancelled",
-                        "always"
+                        "failed_or_cancelled"
                       ]
                     },
                     "title": {
@@ -6478,8 +6477,7 @@
                 "type": "string",
                 "enum": [
                   "failed",
-                  "failed_or_cancelled",
-                  "always"
+                  "failed_or_cancelled"
                 ]
               },
               "title": {
@@ -10881,8 +10879,7 @@
                 "type": "string",
                 "enum": [
                   "failed",
-                  "failed_or_cancelled",
-                  "always"
+                  "failed_or_cancelled"
                 ]
               },
               "title": {
@@ -11104,10 +11101,9 @@
                 "type": "string",
                 "enum": [
                   "failed",
-                  "failed_or_cancelled",
-                  "always"
+                  "failed_or_cancelled"
                 ],
-                "description": "什么情况下发：仅失败、失败和取消、总是。"
+                "description": "什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。"
               },
               "title": {
                 "type": "string",
@@ -11205,8 +11201,7 @@
                 "type": "string",
                 "enum": [
                   "failed",
-                  "failed_or_cancelled",
-                  "always"
+                  "failed_or_cancelled"
                 ]
               },
               "title": {
@@ -11475,8 +11470,7 @@
                 "type": "string",
                 "enum": [
                   "failed",
-                  "failed_or_cancelled",
-                  "always"
+                  "failed_or_cancelled"
                 ]
               },
               "title": {
@@ -11716,8 +11710,7 @@
                 "type": "string",
                 "enum": [
                   "failed",
-                  "failed_or_cancelled",
-                  "always"
+                  "failed_or_cancelled"
                 ]
               },
               "title": {
@@ -11956,8 +11949,7 @@
                 "type": "string",
                 "enum": [
                   "failed",
-                  "failed_or_cancelled",
-                  "always"
+                  "failed_or_cancelled"
                 ]
               },
               "title": {
