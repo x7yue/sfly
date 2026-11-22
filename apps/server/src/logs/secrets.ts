@@ -32,11 +32,44 @@ export const MIN_CLIPPED_PREFIX_CHARS = 4;
  */
 export const MAX_CLIP_WORK = 4_000_000;
 
+/**
+ * 一次读取（一页、一个下载块、流上的一批、一次运行的读取）里所有打码共用的工作量预算（{@link SecretSet.withBudget}；单位同
+ * {@link MAX_MASK_WORK} 和 {@link MAX_CLIP_WORK}：找出现位置的字符比较和找半截的字符比较）。单次调用的上限只管一次调用，
+ * 一页有几百条动作、上千行日志，每条都用满单次的上限，同步执行的时间就是它们的总和，控制面期间不响应：
+ * 所以一次读取共用一个预算，用完之后这次读取里剩下的、还要花工作量才能打码的文字整段盖住（宁可多盖，不漏）。
+ * 取 800 万：最坏情况下（周期性的值和文字）大约 25 毫秒（见 PR 里的数字）；正常的读取（几十个值、每行出现几次）一次只用几万。
+ */
+export const READ_WORK_BUDGET = 8_000_000;
+
+/** 一份工作量预算：剩多少。一次读取里打码用到的每个视图共用同一份。 */
+export class WorkBudget {
+	remaining: number;
+	constructor(total: number = READ_WORK_BUDGET) {
+		this.remaining = total;
+	}
+}
+
 /** 值的 JSON 文本（`JSON.stringify` 返回不了文本的值，例如 undefined，退回 `String`）。 */
 export const jsonText = (value: unknown): string => JSON.stringify(value) ?? String(value);
 
-/** 一个字符串的字符数（按码点，一个 emoji 算一个）。 */
-const charCount = (text: string): number => Array.from(text).length;
+/**
+ * 一个字符串的字符数（Unicode 码点，一个 emoji 算一个）：和 `Array.from(text).length`、Python 的 `len` 一致，孤立的代理项各算一个；
+ * 不分配数组（读取时每段到了上限的文字都要数一遍）。
+ */
+export function charCount(text: string): number {
+	let count = text.length;
+	for (let i = 0; i + 1 < text.length; i++) {
+		const unit = text.charCodeAt(i);
+		if (unit >= 0xd800 && unit <= 0xdbff) {
+			const next = text.charCodeAt(i + 1);
+			if (next >= 0xdc00 && next <= 0xdfff) {
+				count -= 1;
+				i += 1;
+			}
+		}
+	}
+	return count;
+}
 
 /**
  * 非 ASCII 字符和 DEL 写成 `\uXXXX`（小写十六进制，码元为单位，非 BMP 字符是一对代理）：Python 的 `json.dumps` 默认
@@ -451,7 +484,7 @@ function mayPartiallyOverlap(texts: readonly string[]): boolean {
  * （宁可多盖，不能让同步的代码卡住控制面）。正常的输入远在它下面：一段 400 万字的输出里出现 100 次 4 万字的值，工作量是 400 万；
  * 取 32 M，最坏情况下（周期性的值和文字）大约 10 毫秒（见 PR 里的数字）。
  */
-const MAX_MASK_WORK = 32_000_000;
+export const MAX_MASK_WORK = 32_000_000;
 
 /** 每个出现位置固定的一份工作量：它限制了 spans 最多有多少项（32 M / 64 = 50 万项）。 */
 const MASK_WORK_PER_MATCH = 64;
@@ -462,12 +495,26 @@ const MASK_WORK_PER_MATCH = 64;
  * 所以每找到一个匹配，下一次从它的开头的后一个字符再找。不论值是长是短、走正则还是字面量，重叠的结果都一样，
  * 不会留下一个值的尾巴。
  */
-function maskSpans(text: string, matcher: Matcher): string | undefined {
+function maskSpans(
+	text: string,
+	matcher: Matcher,
+	tailFrom?: number,
+	budget?: WorkBudget,
+): string | undefined {
+	// 预算已经用完：这一段不再花工作量，调用方整段盖住。
+	if (budget && budget.remaining <= 0) return undefined;
+	// 单次的上限；给了预算时不超过预算剩下的（预算不大于单次的上限，所以超限就是预算用完）。
+	const cap = budget ? Math.min(MAX_MASK_WORK, budget.remaining) : MAX_MASK_WORK;
 	const spans: Array<[number, number]> = [];
 	// 工作量：每找到一个出现位置，记它的长度加上固定的一份（固定的一份限制 spans 占的内存）。周期性的值在周期性的文字里，
 	// 每个位置都是一个出现位置，一次打码的工作量是「文字长 × 值长」，值来自用户、文字来自节点，同步执行会让控制面卡住几秒：
-	// 超过 {@link MAX_MASK_WORK} 时放弃，返回 undefined，调用方把这段文字整个盖住。
+	// 超过上限时放弃，返回 undefined，调用方把这段文字整个盖住。
 	let work = 0;
+	const spend = (): boolean => {
+		if (!budget) return false;
+		budget.remaining = work > cap ? 0 : Math.max(0, budget.remaining - work);
+		return true;
+	};
 	for (const regex of matcher.regexes) {
 		regex.lastIndex = 0;
 		for (let m = regex.exec(text); m; m = regex.exec(text)) {
@@ -477,8 +524,9 @@ function maskSpans(text: string, matcher: Matcher): string | undefined {
 				spans.push([m.index, m.index + m[0].length]);
 				regex.lastIndex = m.index + 1;
 				work += m[0].length + MASK_WORK_PER_MATCH;
-				if (work > MAX_MASK_WORK) {
+				if (work > cap) {
 					regex.lastIndex = 0;
+					spend();
 					return undefined;
 				}
 			}
@@ -489,9 +537,15 @@ function maskSpans(text: string, matcher: Matcher): string | undefined {
 		for (let at = text.indexOf(literal); at >= 0; at = text.indexOf(literal, at + 1)) {
 			spans.push([at, at + literal.length]);
 			work += literal.length + MASK_WORK_PER_MATCH;
-			if (work > MAX_MASK_WORK) return undefined;
+			if (work > cap) {
+				spend();
+				return undefined;
+			}
 		}
 	}
+	spend();
+	// 截断处留下的半截 secret 值也是一个要盖住的位置（到结尾），和找到的完整出现位置一起合并。
+	if (tailFrom !== undefined) spans.push([tailFrom, text.length]);
 	if (spans.length === 0) return text;
 	spans.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
 	let out = "";
@@ -526,15 +580,37 @@ export class SecretSet {
 	/** 作为节点整个等于它就换成掩码的对象和数组：标准写法（{@link canonicalJson}）。 */
 	readonly containers: ReadonlySet<string>;
 	readonly #compile: Compile | undefined;
-	#matcher: Matcher | undefined;
+	/** 延迟建好的匹配和按首字符的索引：同一份值集合的各个视图（{@link withBudget}）共用。 */
+	readonly #lazy: Lazy;
+	/** 这个视图的工作量预算；没有时只受单次调用的上限约束（写入、测试）。 */
+	readonly #budget: WorkBudget | undefined;
 	/** 保密对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
-	readonly #arraySizes = new Set<number>();
-	readonly #objectSizes = new Set<number>();
-	readonly #containerLengths = new Set<number>();
-	#shapesKnown = true;
+	readonly #arraySizes: Set<number>;
+	readonly #objectSizes: Set<number>;
+	readonly #containerLengths: Set<number>;
+	#shapesKnown: boolean;
 
-	/** `options.compile` 只给测试用：换掉编译正则的函数，验证它失败时打码照样完成、不抛错。 */
-	constructor(parts: Iterable<SecretParts> = [], options: { compile?: Compile } = {}) {
+	/**
+	 * `options.compile` 只给测试用：换掉编译正则的函数，验证它失败时打码照样完成、不抛错。
+	 * `parts` 是另一份 {@link SecretSet} 时是它的另一个视图（带 `options.budget`），见 {@link withBudget}。
+	 */
+	constructor(
+		parts: Iterable<SecretParts> | SecretSet = [],
+		options: { compile?: Compile; budget?: WorkBudget } = {},
+	) {
+		this.#budget = options.budget;
+		if (parts instanceof SecretSet) {
+			this.texts = parts.texts;
+			this.scalars = parts.scalars;
+			this.containers = parts.containers;
+			this.#compile = parts.#compile;
+			this.#lazy = parts.#lazy;
+			this.#arraySizes = parts.#arraySizes;
+			this.#objectSizes = parts.#objectSizes;
+			this.#containerLengths = parts.#containerLengths;
+			this.#shapesKnown = parts.#shapesKnown;
+			return;
+		}
 		const texts = new Set<string>();
 		const scalars = new Set<string>();
 		const containers = new Set<string>();
@@ -547,6 +623,11 @@ export class SecretSet {
 		this.scalars = scalars;
 		this.containers = containers;
 		this.#compile = options.compile;
+		this.#lazy = {};
+		this.#arraySizes = new Set();
+		this.#objectSizes = new Set();
+		this.#containerLengths = new Set();
+		this.#shapesKnown = true;
 		for (const text of containers) {
 			this.#containerLengths.add(text.length);
 			try {
@@ -560,6 +641,16 @@ export class SecretSet {
 				this.#shapesKnown = false;
 			}
 		}
+	}
+
+	/**
+	 * 同一份值集合的一个带工作量预算的视图（{@link WorkBudget}）：一次读取（一页、一个下载块、流上的一批、一次运行的读取）
+	 * 开始时取一个，这次读取里的所有打码经过它，共用一份预算；用完之后还要花工作量才能打码的文字整段盖住。
+	 * 值集合本身不可变、可以按值缓存和共用（{@link secretSetOf}），预算是每次读取自己的，所以放在视图上，不放在缓存的集合上。
+	 * `budget` 给了就用它（一次读取涉及几个运行的值集合时，几个视图共用一份）。没有要打码的东西时返回自己。
+	 */
+	withBudget(budget: WorkBudget = new WorkBudget()): SecretSet {
+		return this.isEmpty ? this : new SecretSet(this, { budget });
 	}
 
 	/**
@@ -582,12 +673,16 @@ export class SecretSet {
 		return this.texts.length === 0 && this.scalars.size === 0 && this.containers.size === 0;
 	}
 
+	#matcher(): Matcher {
+		this.#lazy.matcher ??= buildMatcher(this.texts, this.#compile);
+		return this.#lazy.matcher;
+	}
+
 	/**
 	 * 这份值集合是怎么匹配的（测试用：确认随机对比两条路径都走到了）：`plain` 是「一次 replace」的路径，否则是合并位置的路径。
 	 */
 	matching(): { regexes: number; literals: number; plain: boolean } {
-		this.#matcher ??= buildMatcher(this.texts, this.#compile);
-		const { regexes, literals, plain } = this.#matcher;
+		const { regexes, literals, plain } = this.#matcher();
 		return { regexes: regexes.length, literals: literals.length, plain };
 	}
 
@@ -598,58 +693,57 @@ export class SecretSet {
 	mask(text: string): string {
 		if (this.texts.length === 0) return text;
 		try {
-			this.#matcher ??= buildMatcher(this.texts, this.#compile);
-			const matcher = this.#matcher;
+			const matcher = this.#matcher();
 			// 不会部分重叠、只有一个正则：一次 replace，结果和合并的路径逐字相同（{@link Matcher.plain}）。
 			if (matcher.plain) return text.replace(matcher.regexes[0] as RegExp, SECRET_MASK);
-			return maskSpans(text, matcher) ?? SECRET_MASK;
+			return maskSpans(text, matcher, undefined, this.#budget) ?? SECRET_MASK;
 		} catch {
 			return SECRET_MASK;
 		}
 	}
 
 	/**
-	 * 一段已经截到 `limit` 个字符（码点）的文字，按 {@link MIN_CLIPPED_PREFIX_CHARS} 把结尾留下的半截 secret 值盖住：
-	 * 文字长度到了上限（说明被截断过），结尾又是某个要打码的文本的前缀（不短于下限，又不是整个文本；整个文本由 {@link mask} 换掉）时，
-	 * 从这个前缀开头起换成一个掩码。`ellipsis`：截断时末尾补了「…」（失败原因，SDK 和控制面都这样截），判断时不算它，
-	 * 盖住时连它一起换掉。长度没到上限的文字原样返回；任何意外同 {@link mask}：整段盖住。
+	 * 打码一段存下来时可能被截断过的文字（日志类异常的说明、动作的名称、字段、失败原因，上限 `limit` 个字符（码点））：
+	 * 先看这段文字有没有可能被截断过，有的话，结尾是某个要打码的文本的前缀（不短于 {@link MIN_CLIPPED_PREFIX_CHARS}，又不是整个文本；
+	 * 整个文本是完整的出现，和其余的完整出现一样换掉）时，从这个前缀开头起到结尾也换成掩码，前面的部分照常打码。
+	 *
+	 * 「可能被截断过」和结尾的前缀都按**这段文字本身**（打码之前）判断：长度到了上限；或者里面已经有掩码（写入时打过码的文字比原文短，
+	 * 看长度认不出它被截断过，后来才成为 secret 的另一个值的半截可能就在结尾）。按打码之后的长度判断是错的：同一段文字前面完整出现过
+	 * 一次 secret 值，换成掩码后变短了，到不了上限，结尾那半截就没人管了。
+	 *
+	 * `ellipsis`：截断时末尾补了「…」（失败原因，SDK 和控制面都这样截），判断时不算它，盖住时连它一起换掉。长度没到上限的文字就是
+	 * {@link mask}。任何意外同 {@link mask}：整段盖住。工作量超过 {@link MAX_CLIP_WORK}（或这个视图的预算）时也整段盖住，宁可多盖。
 	 */
-	maskClippedTail(text: string, limit: number, options: { ellipsis?: boolean } = {}): string {
+	maskClipped(text: string, limit: number, options: { ellipsis?: boolean } = {}): string {
 		if (this.texts.length === 0) return text;
 		try {
 			// UTF-16 长度不小于码点数：长度不够上限的一定没被截断，不用数码点。
-			if (text.length < limit || charCount(text) < limit) return text;
+			const atLimit = text.length >= limit && charCount(text) >= limit;
+			if (!atLimit && !text.includes(SECRET_MASK)) return this.mask(text);
 			const body = options.ellipsis && text.endsWith("…") ? text.slice(0, -1) : text;
 			const at = this.#clippedTailStart(body);
-			// 工作量超过上限（{@link MAX_CLIP_WORK}）：把这段文字整个盖住，宁可多盖。
+			// 工作量超过上限：把这段文字整个盖住，宁可多盖。
 			if (at === undefined) return SECRET_MASK;
-			return at < 0 ? text : body.slice(0, at) + SECRET_MASK;
+			if (at < 0) return this.mask(text);
+			return maskSpans(body, this.#matcher(), at, this.#budget) ?? SECRET_MASK;
 		} catch {
 			return SECRET_MASK;
 		}
 	}
 
 	/**
-	 * 读取时的打码，用于存下来时被截断过的文字：先 {@link mask}，再 {@link maskClippedTail}。读取运行、读取动作、运行摘要、
-	 * 关注项的说明都用这一个。
-	 */
-	maskClipped(text: string, limit: number, options: { ellipsis?: boolean } = {}): string {
-		return this.maskClippedTail(this.mask(text), limit, options);
-	}
-
-	/** 每个要打码的文本，按它的第一个码元分组：找结尾的半截时，每个位置只和同一个码元开头的文本比。 */
-	#byFirstUnit: ReadonlyMap<number, readonly string[]> | undefined;
-
-	/**
 	 * `body` 的结尾是某个要打码的文本（不是整个）的前缀时，这个前缀开始的位置（最靠前的）；没有时 -1；
-	 * 比较的工作量超过 {@link MAX_CLIP_WORK} 时是 undefined（调用方把整段盖住）。
+	 * 比较的工作量超过 {@link MAX_CLIP_WORK}（或这个视图的预算）时是 undefined（调用方把整段盖住）。
 	 *
 	 * 最坏的情形是每个位置都以某个文本的首字符开头、却永远对不上前缀，文本又长又多（值来自用户，文字来自节点）：
 	 * 位置数 × 文本数 × 文本长，量过：3000 个各 3000 个字符的值、4096 个字符的文字，29–34 秒。所以按比较的字符数记工作量，
 	 * 每看一个候选文本也记一份。
 	 */
 	#clippedTailStart(body: string): number | undefined {
-		if (!this.#byFirstUnit) {
+		const budget = this.#budget;
+		if (budget && budget.remaining <= 0) return undefined;
+		const cap = budget ? Math.min(MAX_CLIP_WORK, budget.remaining) : MAX_CLIP_WORK;
+		if (!this.#lazy.byFirstUnit) {
 			const byFirst = new Map<number, string[]>();
 			for (const text of this.texts) {
 				const unit = text.charCodeAt(0);
@@ -657,12 +751,18 @@ export class SecretSet {
 				if (list) list.push(text);
 				else byFirst.set(unit, [text]);
 			}
-			this.#byFirstUnit = byFirst;
+			this.#lazy.byFirstUnit = byFirst;
 		}
+		const byFirstUnit = this.#lazy.byFirstUnit;
 		const longest = this.texts[0]?.length ?? 0;
 		let work = 0;
+		const done = (result: number | undefined): number | undefined => {
+			if (budget)
+				budget.remaining = result === undefined ? 0 : Math.max(0, budget.remaining - work);
+			return result;
+		};
 		for (let i = Math.max(0, body.length - longest + 1); i < body.length; i++) {
-			const candidates = this.#byFirstUnit.get(body.charCodeAt(i));
+			const candidates = byFirstUnit.get(body.charCodeAt(i));
 			if (!candidates) continue;
 			const tailLength = body.length - i;
 			// 结尾不到 {@link MIN_CLIPPED_PREFIX_CHARS} 个字符（码点）时更靠后的位置也不够：不盖。不少于 8 个码元一定不少于 4 个码点。
@@ -670,7 +770,7 @@ export class SecretSet {
 				tailLength < MIN_CLIPPED_PREFIX_CHARS * 2 &&
 				charCount(body.slice(i)) < MIN_CLIPPED_PREFIX_CHARS
 			) {
-				return -1;
+				return done(-1);
 			}
 			for (const text of candidates) {
 				work += 1;
@@ -679,13 +779,20 @@ export class SecretSet {
 				// 第一个码元已经相同；逐个比较，不分配
 				while (k < tailLength && text.charCodeAt(k) === body.charCodeAt(i + k)) k += 1;
 				work += k;
-				if (k === tailLength) return i;
-				if (work > MAX_CLIP_WORK) return undefined;
+				if (k === tailLength) return done(i);
+				if (work > cap) return done(undefined);
 			}
-			if (work > MAX_CLIP_WORK) return undefined;
+			if (work > cap) return done(undefined);
 		}
-		return -1;
+		return done(-1);
 	}
+}
+
+/** 一份值集合延迟建好的东西（匹配、按首字符的索引）。 */
+interface Lazy {
+	matcher?: Matcher;
+	/** 每个要打码的文本，按它的第一个码元分组：找结尾的半截时，每个位置只和同一个码元开头的文本比。 */
+	byFirstUnit?: ReadonlyMap<number, readonly string[]>;
 }
 
 /** 对象里值不是 undefined 的键的个数（标准写法不写 undefined 的键）。 */

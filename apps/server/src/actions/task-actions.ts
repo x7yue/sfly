@@ -156,10 +156,11 @@ export class TaskActions {
 		// 这里先看一眼省掉打码，写入前在事务里再确认一次。
 		if (!task || task.agentName !== agentName || task.purgedAt !== null || !isDoing(task.status))
 			return;
+		// 这一次写入共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
 		const { summary, current } = actionSummaryView(
 			event,
 			controlPlaneTime,
-			await this.deps.logs.runSecrets(task.runId),
+			(await this.deps.logs.runSecrets(task.runId)).withBudget(),
 		);
 		// 和明细一样在事务里锁住任务行再确认还在执行：和结束任务的写入互斥，任务结束之后不会再写进一份。
 		const stored = await this.deps.db.transaction(async (tx) => {
@@ -210,10 +211,11 @@ export class TaskActions {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(eq(tasks.id, taskId));
 		if (!task || task.agentName !== agentName || task.purgedAt !== null) return;
+		// 这一批共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
 		const prepared = prepareEvents(
 			events,
 			controlPlaneTime,
-			await this.deps.logs.runSecrets(task.runId),
+			(await this.deps.logs.runSecrets(task.runId)).withBudget(),
 		);
 		const names = startedNames(prepared);
 		const stored =
@@ -287,9 +289,10 @@ export class TaskActions {
 			.where(eq(tasks.id, taskId));
 		if (!row) return undefined;
 		// 存下的摘要是写入时按那一刻已知的 secret 值打过码的；读取时再按此刻的打一遍（之后才创建的子流程带来的 secret 值也算）。
+		// 这一次读取共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
 		return maskedSummary(
 			summaryOfTask(row, row.summary),
-			await this.deps.logs.runSecrets(row.runId),
+			(await this.deps.logs.runSecrets(row.runId)).withBudget(),
 		);
 	}
 
@@ -353,7 +356,8 @@ export class TaskActions {
 		const earliest = rows.length > limit ? shown.at(-1) : undefined;
 		const end = taskEndOf(task);
 		// 明细是写入时打过码的；读取时再按此刻的 secret 值打一遍。
-		const secrets = await this.deps.logs.runSecrets(task.runId);
+		// 这一页共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
+		const secrets = (await this.deps.logs.runSecrets(task.runId)).withBudget();
 		return {
 			...empty,
 			actions: shown.map((row) => maskedAction(detailView(row, end), secrets)),
@@ -418,7 +422,8 @@ export class TaskActions {
 		let checking = false;
 		// 推送的内容是写入时打过码的；发出去之前再按此刻的 secret 值打一遍（连着很久的流里，之后才创建的子流程带来的
 		// secret 值也要算）：每个事件发出前取一次此刻的值，没有 secret 参数的运行不查库（TaskLogs.runSecrets 按版本缓存）。
-		const secretsNow = () => this.deps.logs.runSecrets(runId);
+		// 每次取一个新的带预算的视图：一个事件、一批明细共用一份预算，不同的事件之间不连着算。
+		const secretsNow = async () => (await this.deps.logs.runSecrets(runId)).withBudget();
 		const sendSummary = async (status: TaskStatus) =>
 			emit({
 				kind: "summary",

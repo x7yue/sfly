@@ -13,8 +13,10 @@ import {
 } from "../src/actions/action-text.js";
 import {
 	canonicalJson,
+	charCount,
 	compareUtf8,
 	MAX_CLIP_WORK,
+	MAX_MASK_WORK,
 	MIN_CLIPPED_PREFIX_CHARS,
 	MIN_LEAF_CHARS,
 	maskParams,
@@ -22,11 +24,13 @@ import {
 	maskSecrets,
 	maskValue,
 	NO_SECRETS,
+	READ_WORK_BUDGET,
 	SECRET_MASK,
 	SecretSet,
 	secretPartsOf,
 	secretSetOf,
 	shortLeafCount,
+	WorkBudget,
 } from "../src/logs/secrets.js";
 import { pythonJson, sortKeysDeep } from "./support/secret-forms.js";
 
@@ -1075,7 +1079,7 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 		for (const kept of [4, 5, 8, 15]) {
 			const text = clipped(kept);
 			expect(text.length, `kept=${kept}`).toBe(LIMIT);
-			expect(set.maskClippedTail(text, LIMIT), `kept=${kept}`).toBe(
+			expect(set.maskClipped(text, LIMIT), `kept=${kept}`).toBe(
 				`${"x".repeat(LIMIT - kept)}${MASK}`,
 			);
 		}
@@ -1084,24 +1088,23 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 	it("前缀短于下限：不盖（盖了会把正常的文字也换掉）", () => {
 		for (const kept of [1, 2, 3]) {
 			const text = clipped(kept);
-			expect(set.maskClippedTail(text, LIMIT), `kept=${kept}`).toBe(text);
+			expect(set.maskClipped(text, LIMIT), `kept=${kept}`).toBe(text);
 		}
 	});
 
 	it("文字没到上限（没被截断过）：不看结尾，原样", () => {
 		const text = `short ${secret.slice(0, 8)}`;
-		expect(set.maskClippedTail(text, LIMIT)).toBe(text);
+		expect(set.maskClipped(text, LIMIT)).toBe(text);
 		// 差一个字符到上限
 		const almost = clipped(8).slice(1);
 		expect(almost.length).toBe(LIMIT - 1);
-		expect(set.maskClippedTail(almost, LIMIT)).toBe(almost);
+		expect(set.maskClipped(almost, LIMIT)).toBe(almost);
 	});
 
-	it("结尾不是 secret 值的前缀：原样；整个值出现在结尾由 mask 换掉，不是这里的事", () => {
+	it("结尾不是 secret 值的前缀：原样；整个值出现在结尾是完整的出现，和别处的一样换成一个掩码", () => {
 		const text = `${"x".repeat(LIMIT - 8)}zebra-xx`;
-		expect(set.maskClippedTail(text, LIMIT)).toBe(text);
+		expect(set.maskClipped(text, LIMIT)).toBe(text);
 		const whole = "x".repeat(LIMIT - secret.length) + secret;
-		expect(set.maskClippedTail(whole, LIMIT)).toBe(whole);
 		expect(set.maskClipped(whole, LIMIT)).toBe(`${"x".repeat(LIMIT - secret.length)}${MASK}`);
 	});
 
@@ -1109,10 +1112,10 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 		const emoji = "😀".repeat(LIMIT - 8);
 		const text = emoji + secret.slice(0, 8);
 		expect(Array.from(text).length).toBe(LIMIT);
-		expect(set.maskClippedTail(text, LIMIT)).toBe(`${emoji}${MASK}`);
+		expect(set.maskClipped(text, LIMIT)).toBe(`${emoji}${MASK}`);
 		// 码点数没到上限（只是码元数到了）：原样
 		const notClipped = "😀".repeat(LIMIT - 20) + secret.slice(0, 8);
-		expect(set.maskClippedTail(notClipped, LIMIT)).toBe(notClipped);
+		expect(set.maskClipped(notClipped, LIMIT)).toBe(notClipped);
 	});
 
 	it("失败原因：截断时末尾补了「…」，判断时不算它，盖住时连它一起换掉", () => {
@@ -1120,27 +1123,27 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 			.slice(0, -8)
 			.slice(0, LIMIT - 9)}${secret.slice(0, 8)}…`;
 		expect(Array.from(text).length).toBe(LIMIT);
-		expect(set.maskClippedTail(text, LIMIT, { ellipsis: true })).toBe(
+		expect(set.maskClipped(text, LIMIT, { ellipsis: true })).toBe(
 			`${"x".repeat(LIMIT - 9)}${MASK}`,
 		);
 		// 不带 ellipsis 选项时，结尾的「…」让它不是前缀：原样
-		expect(set.maskClippedTail(text, LIMIT)).toBe(text);
+		expect(set.maskClipped(text, LIMIT)).toBe(text);
 	});
 
 	it("有好几个 secret 值：任何一个的前缀都盖；最靠前的前缀开头起换", () => {
 		const two = setOf(secret, "another-secret-token");
-		expect(two.maskClippedTail(`${"y".repeat(LIMIT - 7)}another`, LIMIT)).toBe(
+		expect(two.maskClipped(`${"y".repeat(LIMIT - 7)}another`, LIMIT)).toBe(
 			`${"y".repeat(LIMIT - 7)}${MASK}`,
 		);
-		expect(two.maskClippedTail(`${"y".repeat(LIMIT - 8)}zebra-la`, LIMIT)).toBe(
+		expect(two.maskClipped(`${"y".repeat(LIMIT - 8)}zebra-la`, LIMIT)).toBe(
 			`${"y".repeat(LIMIT - 8)}${MASK}`,
 		);
 	});
 
 	it("没有 secret 值时原样；多行的 secret 值按行的前缀也算（每一行都是一个要打码的文本）", () => {
-		expect(setOf().maskClippedTail(clipped(8), LIMIT)).toBe(clipped(8));
+		expect(setOf().maskClipped(clipped(8), LIMIT)).toBe(clipped(8));
 		const pem = setOf("-----BEGIN TEST KEY-----\nabcdef123456\n-----END TEST KEY-----");
-		expect(pem.maskClippedTail(`${"z".repeat(LIMIT - 9)}abcdef123`, LIMIT)).toBe(
+		expect(pem.maskClipped(`${"z".repeat(LIMIT - 9)}abcdef123`, LIMIT)).toBe(
 			`${"z".repeat(LIMIT - 9)}${MASK}`,
 		);
 	});
@@ -1151,15 +1154,15 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 		const many = setOf(...values);
 		const reason = `${"0".repeat(4094)}1…`;
 		const started = performance.now();
-		const out = many.maskClippedTail(reason, 4096, { ellipsis: true });
+		const out = many.maskClipped(reason, 4096, { ellipsis: true });
 		expect(performance.now() - started).toBeLessThan(1000);
 		expect(out).toBe(MASK);
 		// 字段值的上限（256）：同样
-		expect(many.maskClippedTail(`${"0".repeat(255)}1`, 256)).toBe(MASK);
+		expect(many.maskClipped(`${"0".repeat(255)}1`, 256)).toBe(MASK);
 		// 200 个各 1 万个 0 的值
 		const long = setOf(...Array.from({ length: 200 }, (_, i) => `${"0".repeat(10_000)}-${i}`));
 		const started2 = performance.now();
-		expect(long.maskClippedTail(reason, 4096, { ellipsis: true })).toBe(MASK);
+		expect(long.maskClipped(reason, 4096, { ellipsis: true })).toBe(MASK);
 		expect(performance.now() - started2).toBeLessThan(1000);
 		expect(MAX_CLIP_WORK).toBeLessThanOrEqual(10_000_000);
 	});
@@ -1168,14 +1171,14 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 		const values = Array.from({ length: 50 }, (_, i) => `test-secret-value-${i}-end`);
 		const many = setOf(...values);
 		// 结尾是 `test-secr`（9 个字符，是 `test-secret-value-N-end` 的前缀）
-		expect(many.maskClippedTail(`${"x".repeat(256 - 9)}test-secr`, 256)).toBe(
+		expect(many.maskClipped(`${"x".repeat(256 - 9)}test-secr`, 256)).toBe(
 			`${"x".repeat(256 - 9)}${MASK}`,
 		);
 		const plain = "x".repeat(256);
-		expect(many.maskClippedTail(plain, 256)).toBe(plain);
+		expect(many.maskClipped(plain, 256)).toBe(plain);
 		// 文字里到处是首字符 t 但对不上前缀：不盖
 		const noisy = "t".repeat(256);
-		expect(many.maskClippedTail(noisy, 256)).toBe(noisy);
+		expect(many.maskClipped(noisy, 256)).toBe(noisy);
 	});
 
 	it("随机的对比：和直接检查「结尾是不是某个文本的前缀」的参照实现一致", () => {
@@ -1195,17 +1198,38 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 			const texts = setOf(...secrets);
 			const text = word(LIMIT, LIMIT + 2).slice(0, LIMIT) + "";
 			const body = text;
-			// 参照实现：最靠前的位置 i，使 body.slice(i) 是某个 secret 文本的真前缀且不短于下限
-			let expected = body;
+			// 参照实现：要盖住的位置是每个文本的每个出现位置（一个一个找），加上最靠前的位置 at——body.slice(at) 是某个 secret 文本的
+			// 真前缀且不短于下限——到结尾；重叠的合成一段，每段一个掩码。
+			const spans: Array<[number, number]> = [];
+			for (const t of texts.texts) {
+				for (let from = body.indexOf(t); from >= 0; from = body.indexOf(t, from + 1)) {
+					spans.push([from, from + t.length]);
+				}
+			}
 			for (let at = 0; at < body.length; at++) {
 				const tail = body.slice(at);
 				if (tail.length < MIN_CLIPPED_PREFIX_CHARS) break;
 				if (texts.texts.some((t) => t.length > tail.length && t.startsWith(tail))) {
-					expected = body.slice(0, at) + MASK;
+					spans.push([at, body.length]);
 					break;
 				}
 			}
-			expect(texts.maskClippedTail(text, LIMIT), JSON.stringify([secrets, text])).toBe(expected);
+			spans.sort((x, y) => x[0] - y[0] || y[1] - x[1]);
+			let expected = "";
+			let cursor = 0;
+			for (let k = 0; k < spans.length; ) {
+				const from = (spans[k] as [number, number])[0];
+				let to = (spans[k] as [number, number])[1];
+				k += 1;
+				while (k < spans.length && (spans[k] as [number, number])[0] < to) {
+					to = Math.max(to, (spans[k] as [number, number])[1]);
+					k += 1;
+				}
+				expected += body.slice(cursor, from) + MASK;
+				cursor = to;
+			}
+			expected += body.slice(cursor);
+			expect(texts.maskClipped(text, LIMIT), JSON.stringify([secrets, text])).toBe(expected);
 		}
 	});
 });
@@ -1289,5 +1313,214 @@ describe("动作的文字：写入时和读取时的打码（action-text.ts）",
 		expect(out.running[0]?.fields).toEqual({ [`k-${MASK}`]: `/x/${MASK}` });
 		expect(out.recent_failed[0]?.reason).toBe(`bad ${MASK}`);
 		expect(maskedSummary(summary, setOf())).toBe(summary);
+	});
+});
+
+describe("被截断的文字：是不是被截断过、结尾的半截，按打码之前的文字判断（#517）", () => {
+	const secret = "FAKE-tok-0123456789abcdef";
+	const late = setOf(secret);
+	const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
+	/** 前面完整出现一次 secret 值，结尾被截在值的中间（留下前 `kept` 个字符），整段正好 `limit` 个字符。 */
+	const fullThenClipped = (filler: string, limit: number, kept = 8) =>
+		`${filler}${secret}${filler.repeat(limit - filler.length - secret.length - kept)}${secret.slice(0, kept)}`;
+
+	it("前面完整出现过一次、结尾被截在值中间：读取时两处都盖住（前面的完整出现换成掩码后文字变短，不影响结尾的判断）", () => {
+		for (const [limit, filler] of [
+			[nameChars, "n"],
+			[valueChars, "v"],
+			[reasonChars, "r"],
+		] as const) {
+			const text = fullThenClipped(filler, limit);
+			expect(Array.from(text).length).toBe(limit);
+			const out = late.maskClipped(text, limit);
+			expect(out, `limit=${limit}`).not.toContain(secret.slice(0, 4));
+			expect(out.endsWith(MASK), `limit=${limit}`).toBe(true);
+			expect(out.startsWith(`${filler}${MASK}${filler}`), `limit=${limit}`).toBe(true);
+		}
+		// 对照：前面没有完整出现过，同样盖住（原来就是这样）
+		const control = `${"c".repeat(nameChars - 8)}${secret.slice(0, 8)}`;
+		expect(late.maskClipped(control, nameChars)).toBe(`${"c".repeat(nameChars - 8)}${MASK}`);
+	});
+
+	it("失败原因：带「…」的同样：判断时不算它，结尾的半截连「…」一起盖住", () => {
+		const reason = `${fullThenClipped("r", reasonChars - 1)}…`;
+		expect(Array.from(reason).length).toBe(reasonChars);
+		const out = late.maskClipped(reason, reasonChars, { ellipsis: true });
+		expect(out).not.toContain(secret.slice(0, 4));
+		expect(out.endsWith(MASK)).toBe(true);
+	});
+
+	it("写入时：名称、字段的键和值、失败原因，同样的输入也盖住结尾的半截", () => {
+		const name = fullThenClipped("n", nameChars);
+		const key = fullThenClipped("k", nameChars);
+		const value = fullThenClipped("v", valueChars);
+		const reason = `${fullThenClipped("r", reasonChars - 1)}…`;
+		for (const stored of [
+			actionName(name, late),
+			...actionField(key, value, late),
+			actionReason(reason, late),
+		]) {
+			expect(stored).not.toContain(secret.slice(0, 4));
+			expect(stored.endsWith(MASK)).toBe(true);
+		}
+		expect(actionName(name, late)).toBe(
+			`n${MASK}${"n".repeat(nameChars - 1 - secret.length - 8)}${MASK}`,
+		);
+	});
+
+	it("写入时已经打过码的文字（里面有掩码，比原文短，看长度认不出被截断过）：后来才成为 secret 的另一个值留在结尾的半截也盖住", () => {
+		const stored = `load ${MASK} then ${secret.slice(0, 8)}`;
+		expect(stored.length).toBeLessThan(nameChars);
+		expect(late.maskClipped(stored, nameChars)).toBe(`load ${MASK} then ${MASK}`);
+		// 没有掩码、也没到上限的文字：不看结尾，原样
+		const plain = `load then ${secret.slice(0, 8)}`;
+		expect(late.maskClipped(plain, nameChars)).toBe(plain);
+	});
+
+	it("完整出现的值和结尾的半截连在一起（完整出现的结尾落在半截里）：合成一个掩码，不留下前缀", () => {
+		// `ab-zebr` 的结尾 `zebr` 同时是 `zebra-late-value` 的开头：文字结尾是 `…ab-zebra-la`
+		const both = setOf("zebra-late-value", "ab-zebr");
+		const text = `${"x".repeat(40 - 11)}ab-zebra-la`;
+		expect(Array.from(text).length).toBe(40);
+		expect(both.maskClipped(text, 40)).toBe(`${"x".repeat(40 - 11)}${MASK}`);
+	});
+
+	it("整段是掩码的文字、结尾没有半截：原样（掩码本身不会被当成值的前缀）", () => {
+		const text = `${MASK} and ${MASK}`;
+		expect(late.maskClipped(text, nameChars)).toBe(text);
+	});
+});
+
+describe("读取的工作量预算：一次读取共用一份，用完之后剩下的整段盖住（#517）", () => {
+	const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
+	/** 确定的伪随机，不用 Math.random：失败了能重现。 */
+	let seed = 7;
+	const random = (n: number): number => {
+		seed = (seed * 1664525 + 1013904223) % 4294967296;
+		return Math.floor((seed / 4294967296) * n);
+	};
+	const word = (n: number) =>
+		Array.from({ length: n }, () => "bcdefghijklmnopqrstuvwxyz"[random(25)]).join("");
+	/** 病态的值集合：`count` 个值，各 `length` 个字符，首字符都是 a。 */
+	const pathological = (count: number, length: number) =>
+		setOf(...Array.from({ length: count }, (_, i) => `a${word(length - 1)}${i}`));
+	/** 一条动作明细：名称、8 个字段（键和值）、失败原因，每一处都是首字符 a、正好到上限的文字。 */
+	const detail = () => {
+		const value = "a".repeat(valueChars);
+		const fields = Object.fromEntries(
+			Array.from({ length: 8 }, (_, f) => [`${"a".repeat(nameChars - 1)}${f}`, value]),
+		);
+		return {
+			id: 1,
+			parent: null,
+			depth: 0,
+			name: "a".repeat(nameChars),
+			fields,
+			reason: `${"a".repeat(reasonChars - 1)}…`,
+			started_at: "2026-01-01T00:00:01.000Z",
+			agent_started_at: "2026-01-01T00:00:01.000Z",
+			ended_at: "2026-01-01T00:00:02.000Z",
+			agent_ended_at: "2026-01-01T00:00:02.000Z",
+			duration_ms: 1000,
+			result: "failed" as const,
+		};
+	};
+
+	it("字符数不分配数组：和 Array.from 的码点数一致（emoji、孤立的代理项、空串）", () => {
+		const units = ["a", "😀", "\ud83d", "\ude00", "中", "\u0000", "é"];
+		for (let i = 0; i < 2000; i++) {
+			const text = Array.from({ length: random(12) }, () => units[random(units.length)]).join("");
+			expect(charCount(text), JSON.stringify(text)).toBe(Array.from(text).length);
+		}
+		expect(charCount("")).toBe(0);
+	});
+
+	it("没用完预算时：带预算的视图和原来的集合打码结果逐条相同（普通文字、结尾的半截、完整的出现）", () => {
+		const set = setOf("zebra-late-value", { env: "fake-env-value", user: "fake-user" }, 8260413);
+		const view = set.withBudget();
+		expect(view).not.toBe(set);
+		expect(view.texts).toBe(set.texts);
+		for (const text of [
+			"nothing here",
+			"load zebra-late-value ok",
+			`${"x".repeat(30)}zebra-late`,
+			'cfg={"env":"fake-env-value","user":"fake-user"}',
+			"pin 8260413",
+		]) {
+			expect(view.mask(text), text).toBe(set.mask(text));
+			expect(view.maskClipped(text, 40), text).toBe(set.maskClipped(text, 40));
+		}
+		// 没有要打码的东西时就是它自己
+		expect(NO_SECRETS.withBudget()).toBe(NO_SECRETS);
+		expect(setOf().withBudget()).toBe(setOf());
+	});
+
+	it("一页 500 条动作、病态的值集合：共用一份预算，一页很快读完，用完之后剩下的整段盖住；没有预算要几秒", () => {
+		// 3000 个各 300 个字符的值：每处文字都花满单次的上限，500 条动作的总和是几十秒量级
+		const set = pathological(300, 300);
+		const one = detail();
+		const budget = new WorkBudget();
+		const view = set.withBudget(budget);
+		const started = performance.now();
+		let whole = 0;
+		for (let i = 0; i < 500; i++) {
+			const masked = maskedAction(one, view);
+			if (masked.name === MASK && masked.reason === MASK) whole += 1;
+		}
+		const elapsed = performance.now() - started;
+		expect(elapsed, "一页的同步耗时").toBeLessThan(1000);
+		expect(budget.remaining, "预算用完了").toBe(0);
+		// 前面的几条用预算打码，后面的整段盖住；不会有任何一条漏出原文（文字不是值的前缀，原样也不算漏，这里只看上面的耗时和预算）
+		expect(whole).toBeGreaterThan(400);
+		// 对照：同一条动作不带预算，一条就是单次上限的若干倍（几毫秒）；上限仍然有效
+		const single = performance.now();
+		maskedAction(one, set);
+		expect(performance.now() - single, "单条动作不带预算").toBeLessThan(1000);
+	});
+
+	it("预算用完之后：要花工作量才能打码的文字整段盖住，不花工作量的照常打码", () => {
+		// 周期性的值（`00`）：合并位置的路径，每次打码都要花工作量
+		const periodic = setOf("00");
+		expect(periodic.matching().plain).toBe(false);
+		const spent = periodic.withBudget(new WorkBudget(0));
+		expect(spent.mask("hello")).toBe(MASK);
+		expect(spent.maskClipped("hello", 40)).toBe(MASK);
+		// 新的预算：照常
+		expect(periodic.withBudget().mask("hello")).toBe("hello");
+		expect(periodic.withBudget().mask("a 00 b")).toBe(`a ${MASK} b`);
+		// 不会部分重叠的值：一次 replace，不花工作量，预算用完了也照常
+		const plain = setOf("abcdefgh");
+		expect(plain.matching().plain).toBe(true);
+		const plainSpent = plain.withBudget(new WorkBudget(0));
+		expect(plainSpent.mask("hello abcdefgh")).toBe(`hello ${MASK}`);
+		expect(plainSpent.maskClipped("short abcdefgh", 40)).toBe(`short ${MASK}`);
+		// 要找结尾的半截（到了上限的文字）要花工作量：用完了整段盖住
+		expect(plainSpent.maskClipped("x".repeat(40), 40)).toBe(MASK);
+	});
+
+	it("预算由几个视图共用（一次读取涉及几个运行的值集合）：一个用掉的，另一个看得到", () => {
+		const shared = new WorkBudget(300);
+		const first = setOf("00").withBudget(shared);
+		const second = setOf("11").withBudget(shared);
+		// `0000` 里 `00` 的三个出现位置，每个按它的长度加固定的一份算：198
+		expect(first.mask("0000")).toBe(MASK);
+		expect(shared.remaining).toBe(102);
+		// 另一个视图的 `1111` 同样要 198，剩下的不够：整段盖住，预算归零
+		expect(second.mask("1111")).toBe(MASK);
+		expect(shared.remaining).toBe(0);
+		// 对照：各自一份预算时都照常算完
+		expect(setOf("00").withBudget(new WorkBudget(300)).mask("a0000")).toBe(`a${MASK}`);
+	});
+
+	it("没有出现的文字不花预算：预算只被真正的出现位置和找半截的比较用掉（读一页日志，行里没有 secret 值时不会把预算用光）", () => {
+		const budget = new WorkBudget();
+		const view = setOf("zz").withBudget(budget);
+		for (let i = 0; i < 1000; i++)
+			expect(view.mask(`line ${i} nothing here`)).toBe(`line ${i} nothing here`);
+		expect(budget.remaining).toBe(READ_WORK_BUDGET);
+		// 一个出现位置：它的长度（2）加固定的一份（64）
+		expect(view.mask("a zz b")).toBe(`a ${MASK} b`);
+		expect(budget.remaining).toBe(READ_WORK_BUDGET - 66);
+		expect(READ_WORK_BUDGET).toBeLessThanOrEqual(MAX_MASK_WORK);
 	});
 });

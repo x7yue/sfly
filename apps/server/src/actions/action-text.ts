@@ -16,28 +16,28 @@ import { clipChars } from "../util/text.js";
  * 和 Python 的 `len` 一致。字段的键 SDK 不限长，这里按名称的上限兜底，免得被改过的 SDK 用超长的键写爆数据库。
  *
  * SDK 是在控制面看到之前截断的：一个 secret 值跨在 SDK 的截断处时，控制面收到的只是它的前半截，按整个值打码认不出。
- * 所以截断之后再把结尾留下的半截 secret 值盖住（{@link SecretSet.maskClippedTail}）；读取时（下面的 `masked…`）
- * 用同一个函数再打一遍，之后才创建的子流程带来的 secret 值也算。
+ * 所以打码时把结尾留下的半截 secret 值也盖住（{@link SecretSet.maskClipped}）：「是不是被截断过」按收到的文字（打码之前）判断，
+ * 不按打码之后的长度；读取时（下面的 `masked…`）用同一个函数再打一遍，之后才创建的子流程带来的 secret 值也算。
  */
 
 const { nameChars, valueChars, reasonChars, fields: maxFields } = ACTION_LIMITS;
 
 /** 动作或标记的名称。 */
 export const actionName = (name: string, secrets: SecretSet): string =>
-	secrets.maskClippedTail(clipChars(secrets.mask(name), nameChars), nameChars);
+	clipChars(secrets.maskClipped(name, nameChars), nameChars);
 
 /** 失败原因：超过上限时和 SDK 一样留前 `reasonChars - 1` 个字符、末尾加「…」。 */
 export function actionReason(reason: string, secrets: SecretSet): string {
-	const chars = Array.from(secrets.mask(reason));
-	const clipped =
-		chars.length > reasonChars ? `${chars.slice(0, reasonChars - 1).join("")}…` : chars.join("");
-	return secrets.maskClippedTail(clipped, reasonChars, { ellipsis: true });
+	const chars = Array.from(secrets.maskClipped(reason, reasonChars, { ellipsis: true }));
+	return chars.length > reasonChars
+		? `${chars.slice(0, reasonChars - 1).join("")}…`
+		: chars.join("");
 }
 
 /** 一个字段：键和值里的 secret 值都打码，键截到名称的上限、值截到字段值的上限。 */
 export const actionField = (key: string, value: string, secrets: SecretSet): [string, string] => [
-	secrets.maskClippedTail(clipChars(secrets.mask(key), nameChars), nameChars),
-	secrets.maskClippedTail(clipChars(secrets.mask(value), valueChars), valueChars),
+	clipChars(secrets.maskClipped(key, nameChars), nameChars),
+	clipChars(secrets.maskClipped(value, valueChars), valueChars),
 ];
 
 /** 读取时：存下的名称再按此刻的 secret 值打一遍码（含截断处留下的半截）。 */

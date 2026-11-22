@@ -7,10 +7,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type LogLineView, type RunFocus, runFocusApi, runSummaryApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { secretSetOf } from "../src/logs/secrets.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { publishBench, putFocusItemsOk } from "./support/focus-items.js";
+import { formsOf } from "./support/secret-forms.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -275,6 +277,122 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		);
 		expect(report.attention_items[0]?.anomaly.message).toBe(`${"e".repeat(500 - 8)}${MASK}`);
 	});
+
+	it("后来才成为 secret 的值用各种写法写进日志（#517）：任务日志下载、按页读、按运行下载读出来的每一行，和写入时打码的结果逐条相同", async () => {
+		// 一个值里有非 ASCII、引号、反斜杠、制表符：Python 的 json.dumps 默认写法（\uXXXX）、JSON 的转义写法写进文件时又转义了一层
+		const value = 'FAKE口令"q\\p\tz';
+		const set = secretSetOf([value]);
+		const id = await api.orchestrationWith(LATE_SECRET);
+		const runId = await api.triggerOk(id, { user: value });
+		const first = await agent.nextAssign();
+		const second = await agent.nextAssign();
+		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+		const forms = formsOf(value);
+		expect(forms.length).toBeGreaterThanOrEqual(5);
+		const written = forms.map((form) => `before ${form} after`);
+		agent.logs(
+			sa,
+			written.map((text, i) => line(i + 1, text)),
+		);
+		await eventually(async () => {
+			const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs?limit=1000`);
+			expect(page.lines).toHaveLength(written.length);
+		});
+		await agent.succeed(b);
+		await eventually(async () =>
+			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+		);
+
+		// 写入时就知道这个值的话，每一行会被打成这样
+		const expected = written.map((text) => set.mask(text));
+		expect(expected.filter((text, i) => text !== written[i]).length).toBeGreaterThanOrEqual(5);
+		const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs?limit=1000`);
+		expect(texts(page.lines)).toEqual(expected);
+		const download = await (await cp.fetch(`/tasks/${sa.taskId}/logs/download`)).text();
+		expect(texts(jsonl(download))).toEqual(expected);
+		const merged = await (await cp.fetch(`/runs/${runId}/logs/download`)).text();
+		expect(texts(jsonl(merged))).toEqual(expected);
+		const mergedPage = await api.getJson<{ lines: LogLineView[] }>(
+			`/runs/${runId}/logs?limit=1000`,
+		);
+		expect(texts(mergedPage.lines)).toEqual(expected);
+	});
+
+	it("日志类异常的说明：前面完整出现过一次 secret 值、结尾又被截在值中间（500 个字符）：关注项、运行摘要、运行视图里都没有留下它的前几个字符（#517）", async () => {
+		const prefix = LATE.slice(0, 4);
+		const id = await api.orchestrationWith(LATE_SECRET);
+		await putFocusItemsOk(api, id, [{ node_id: "sa", chart: "TPS" }]);
+		const runId = await api.triggerOk(id, { user: LATE });
+		const first = await agent.nextAssign();
+		const second = await agent.nextAssign();
+		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+		// 前面的完整出现换成掩码后这段文字不到 500 个字符：按打码之后的长度判断，结尾的半截就放过了。
+		const fillerLength = 500 - 2 * 1 - LATE.length - 8;
+		agent.logs(sa, [
+			line(1, `e${LATE}${"e".repeat(fillerLength + 1)}${LATE.slice(0, 8)}`, LogLevel.ERROR),
+		]);
+		await eventually(async () => {
+			const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs`);
+			expect(page.lines).toHaveLength(1);
+		});
+		await agent.succeed(b);
+		await eventually(async () =>
+			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+		);
+
+		for (const path of [`/runs/${runId}/focus`, `/runs/${runId}/summary`, `/runs/${runId}`]) {
+			const body = await (await cp.fetch(path)).text();
+			expect(body, `${path}：不能留下 ${prefix}`).not.toContain(prefix);
+		}
+		const focus: RunFocus = runFocusApi.focus.response.parse(
+			await (await cp.fetch(`/runs/${runId}/focus`)).json(),
+		);
+		expect(focus.items[0]?.anomaly).toMatchObject({
+			kind: "log",
+			message: `e${MASK}${"e".repeat(fillerLength + 1)}${MASK}`,
+		});
+	});
+
+	it("下载按块、按批读：病态的值（00）碰上整行都是 0 的长行，每一块（按任务）、每一批（按运行）一份新的预算，后面的正常行不会因为前面用掉了预算被整行盖住（#517）", async () => {
+		const id = await api.orchestrationWith(LATE_SECRET);
+		const runId = await api.triggerOk(id, { user: "00" });
+		const first = await agent.nextAssign();
+		const second = await agent.nextAssign();
+		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+		// 6 行各 4 万个 0（写入时 `00` 还不是 secret 值，文件里是原文），后面跟 1500 行正常的（约 250 KB，按任务下载要读好几块，
+		// 按运行下载一批 1000 行，要读两批）；序号写成字母：数字里的 `00` 会被打码
+		const zeros = "0".repeat(40_000);
+		const letters = (i: number) =>
+			i.toString(26).replace(/\d/g, (d) => "qrstuvwxyz"[Number(d)] ?? d);
+		const clean = Array.from({ length: 1500 }, (_, i) => `clean line ${letters(i)}`);
+		agent.logs(sa, [
+			...Array.from({ length: 6 }, (_, i) => line(i + 1, zeros)),
+			...clean.map((text, i) => line(i + 7, text)),
+		]);
+		await eventually(async () => {
+			const page = await api.getJson<Page & { last_seq: number }>(
+				`/tasks/${sa.taskId}/logs?limit=1`,
+			);
+			expect(page.last_seq).toBe(1506);
+		});
+		await agent.succeed(b);
+		await eventually(async () =>
+			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+		);
+
+		for (const path of [`/tasks/${sa.taskId}/logs/download`, `/runs/${runId}/logs/download`]) {
+			const started = performance.now();
+			const rows = texts(jsonl(await (await cp.fetch(path)).text()));
+			expect(performance.now() - started, path).toBeLessThan(8000);
+			expect(rows, path).toHaveLength(1506);
+			// 长行都盖住；整个下载共用一份预算的话，前面就把它用光，后面的行也都被整行盖住。每一块、每一批各一份，后面是原样的
+			expect(rows.slice(0, 6), path).toEqual(Array(6).fill(MASK));
+			expect(rows.slice(-400), path).toEqual(clean.slice(-400));
+		}
+		// 按页读（最近 100 行）：一页一份预算，正常行原样
+		const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs?limit=100`);
+		expect(texts(page.lines)).toEqual(clean.slice(-100));
+	}, 90_000);
 
 	it("没有 secret 参数的运行：读出来的日志和文件里逐字相同（下载是文件的原样，分页是同样的行）", async () => {
 		const { runId, sa, b } = await startRun(NO_SECRET);

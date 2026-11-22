@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { logMask, NO_LOG_MASK } from "../src/logs/log-mask.js";
 import { SECRET_MASK as MASK, NO_SECRETS, secretSetOf } from "../src/logs/secrets.js";
+import { allForms } from "./support/secret-forms.js";
 
 const rowOf = (fields: Record<string, unknown>) => Buffer.from(JSON.stringify(fields));
 /** 一组 secret 值（每个值是一个 secret 参数的值）的读日志打码。 */
@@ -99,5 +100,107 @@ describe("读日志时的打码", () => {
 		const masked = mask.row(rowOf({ ...row, text: "login 口令一二三 ok" }));
 		expect(JSON.parse(masked.toString("utf8")).text).toBe(`login ${MASK} ok`);
 		expect(mask.line({ text: "口令一二三" })).toEqual({ text: MASK });
+	});
+});
+
+describe("文件里的一行：每种写法读出来都和写入时打码的结果一样（任务日志下载用的 row）", () => {
+	/** 各类 secret 值（都是假值）：普通、带引号、带反斜杠、带制表符、带换行、非 ASCII、对象（含只有短叶子的）、数字。 */
+	const values: Record<string, unknown> = {
+		plain: "FAKE-tok-0123456789abcdef",
+		quote: 'FAKE"tok"quoted',
+		backslash: "FAKE\\tok\\path",
+		tab: "FAKE\ttok\tabbed",
+		newline: "FAKE-line-one\nFAKE-line-two",
+		nonascii: "口令一二三四五六",
+		object: { env: "fake-env-value", user: "fake-user", pin: 8260413 },
+		shortOnly: { a: "b", n: 1, on: true },
+		number: 8260413,
+		small: 0.000025,
+	};
+
+	/** 这个值的每种写法，各自写成日志行的正文（带前后文字），经 row 读出的正文，和写入时的打码结果（`SecretSet.mask`）比。 */
+	for (const [kind, value] of Object.entries(values)) {
+		it(`${kind}：全部写法，下载读出的和写入时打码的逐条相同`, () => {
+			const set = secretSetOf([value]);
+			const mask = logMask(set);
+			const forms = allForms({ value });
+			expect(forms.length).toBeGreaterThan(0);
+			let changed = 0;
+			for (const form of forms) {
+				const text = `before ${form} after`;
+				const decoded = JSON.parse(mask.row(rowOf({ ...row, text })).toString("utf8")).text;
+				expect(decoded, `${kind}：${JSON.stringify(form)}`).toBe(set.mask(text));
+				if (set.mask(text) !== text) changed += 1;
+			}
+			// 每一类至少有一种写法是被打码的（不是整个都没盖）
+			expect(changed, kind).toBeGreaterThan(0);
+		});
+	}
+
+	it("按页读取的 line 和下载的 row 对同一行结果相同", () => {
+		const set = secretSetOf(Object.values(values));
+		const mask = logMask(set);
+		for (const form of allForms(values)) {
+			const text = `x ${form} y`;
+			const fromRow = JSON.parse(mask.row(rowOf({ ...row, text })).toString("utf8")).text;
+			expect(fromRow, JSON.stringify(form)).toBe(mask.line({ text }).text);
+		}
+	});
+
+	it("行里有反斜杠但没有 secret 值：原样返回同一个 Buffer；格式坏的行不抛错，也不放行 secret 值", () => {
+		const mask = maskOf("FAKE-tok-0123456789abcdef");
+		const escaped = rowOf({ ...row, text: 'say "hi"\n' });
+		expect(escaped.toString("utf8")).toContain("\\");
+		expect(mask.row(escaped)).toBe(escaped);
+		const broken = Buffer.from('{"seq":1,"text":"FAKE-tok-0123456789abcdef\\');
+		expect(mask.row(broken).toString("utf8")).not.toContain("FAKE-tok");
+		const brokenPlain = Buffer.from('{"seq":1,"text":"ok\\');
+		expect(mask.row(brokenPlain)).toBe(brokenPlain);
+	});
+});
+
+describe("读日志的工作量预算：一页、一块、一批共用一份（#517）", () => {
+	// 周期性的值碰上整行都是 0 的长行：每行要花几百万的工作量，一页几百行不带预算要几秒
+	const zeros = "0".repeat(65536);
+	const periodic = secretSetOf(["00"]);
+
+	it("按页读取（line）：一页 600 行很快读完，用完预算之后剩下的行整行盖住；换一份新的（fresh）照常", () => {
+		const mask = logMask(periodic);
+		const started = performance.now();
+		const out = Array.from({ length: 600 }, (_, i) => mask.line({ seq: i, text: zeros }).text);
+		expect(performance.now() - started, "一页的同步耗时").toBeLessThan(1000);
+		expect(out.every((text) => text === MASK)).toBe(true);
+		// 预算用完之后，连没有 secret 值的行也整行盖住（宁可多盖，不漏）
+		expect(mask.line({ text: "clean line" }).text).toBe(MASK);
+		// 下一页、下一块、下一批：新的预算
+		const next = mask.fresh();
+		expect(next).not.toBe(mask);
+		expect(next.active).toBe(true);
+		expect(next.line({ text: "clean line" }).text).toBe("clean line");
+		expect(next.line({ text: "a 00 b" }).text).toBe(`a ${MASK} b`);
+	});
+
+	it("下载（row）：同样，一块里的行共用一份预算，每一块（fresh）一份新的", () => {
+		const mask = logMask(periodic);
+		const started = performance.now();
+		for (let i = 0; i < 600; i++) {
+			const masked = mask.row(rowOf({ ...row, seq: i, text: zeros }));
+			expect(JSON.parse(masked.toString("utf8")).text).toBe(MASK);
+		}
+		expect(performance.now() - started, "一块的同步耗时").toBeLessThan(1000);
+		const clean = rowOf({ ...row, text: "clean line" });
+		expect(JSON.parse(mask.row(clean).toString("utf8")).text).toBe(MASK);
+		expect(mask.fresh().row(clean)).toBe(clean);
+		expect(NO_LOG_MASK.fresh()).toBe(NO_LOG_MASK);
+	});
+
+	it("正常的读取不会用光预算：一页 1000 行，每行出现一个 secret 值", () => {
+		const values = Array.from({ length: 100 }, (_, i) => `fake-secret-${i}-value`);
+		const mask = logMask(secretSetOf(values));
+		for (let i = 0; i < 1000; i++) {
+			const masked = mask.line({ text: `request ${i} used ${values[i % 100]} and finished` });
+			expect(masked.text).toBe(`request ${i} used ${MASK} and finished`);
+		}
+		expect(mask.line({ text: "still clean" }).text).toBe("still clean");
 	});
 });

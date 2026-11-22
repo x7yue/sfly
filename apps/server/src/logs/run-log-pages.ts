@@ -176,12 +176,19 @@ export class RunLogs {
 		let lanes = streams.map((stream) => newLane(stream, 0));
 		while (lanes.length > 0) {
 			const lines: RunLogLine[] = [];
+			// 每一批一份新的工作量预算：一批的同步耗时有上限，批与批之间回到事件循环（交给下载响应、等它消费）。
+			const batchMask = mask.fresh();
 			for (
 				let blocked = take(lanes, lines, DOWNLOAD_BATCH, true);
 				blocked.length > 0;
 				blocked = take(lanes, lines, DOWNLOAD_BATCH, true)
 			) {
-				await extend(blocked, true, { limit: DOWNLOAD_BATCH, filter: {}, scanLimit, mask });
+				await extend(blocked, true, {
+					limit: DOWNLOAD_BATCH,
+					filter: {},
+					scanLimit,
+					mask: batchMask,
+				});
 			}
 			if (lines.length > 0) yield lines;
 			for (const lane of lanes) {

@@ -35,6 +35,7 @@ import {
 	type SecretSet,
 	secretParamNames,
 	secretValues,
+	WorkBudget,
 } from "../logs/secrets.js";
 import { LOG_ISSUE_TEXT_CHARS, taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
@@ -458,10 +459,12 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 	};
 
 	const reads = new Map<string, R>();
+	const budget = new WorkBudget();
 	for (const { run, version, scenario } of rows) {
 		const { document } = version;
 		const runChains = chainsOf.get(run.id) ?? [];
-		const mask = masker(document, secretValues(document, runChains));
+		// 这一次读取（几个运行共用）的打码共用一份工作量预算（{@link SecretSet.withBudget}）。
+		const mask = masker(document, secretValues(document, runChains).withBudget(budget));
 		const nodesOf = planOf(version);
 		const chains = runChains.map(
 			(chain): RunChain<A> => ({

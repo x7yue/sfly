@@ -267,6 +267,8 @@ class LogRowNormalizer extends Transform {
 	}
 
 	override _transform(chunk: Buffer, _encoding: BufferEncoding, done: TransformCallback): void {
+		// 每一块一份新的工作量预算：一块的同步耗时有上限，块与块之间回到事件循环（文件是一块一块异步读出来的）。
+		const mask = this.mask.fresh();
 		const bytes = this.#partial.length ? Buffer.concat([this.#partial, chunk]) : chunk;
 		const out: Buffer[] = [];
 		let changed = false;
@@ -276,7 +278,7 @@ class LogRowNormalizer extends Transform {
 			if (nl < 0) break;
 			const row = bytes.subarray(from, nl);
 			// 升级之前的行补成两种时间都有的格式，再按此刻的 secret 值打码（行里没有 secret 值时原样通过）。
-			const normalized = this.mask.row(normalizeLogRow(row));
+			const normalized = mask.row(normalizeLogRow(row));
 			changed ||= normalized !== row;
 			out.push(normalized, NEWLINE);
 			from = nl + 1;
