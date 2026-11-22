@@ -88,7 +88,7 @@ const DESCRIPTION =
 	"只写访问日志这类不影响资源内容的痕迹也算）或 write（有副作用）；" +
 	"resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：" +
 	"{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；" +
-	"upload 是具体的那一个在上传的内容里；global 是平台自身）；" +
+	"upload 是具体的那一个在上传的内容里；global 是平台自身；self 是发起请求的用户自己，只用于账号）；" +
 	"有 creates 的接口新建一个这类资源，这时 resource 定位到的资源只被读、写落在新建出来的资源上；" +
 	"有 removes 的接口让 resource 定位到的资源（或它的一部分）不再可用（删除、归档）。" +
 	"params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；" +

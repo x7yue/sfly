@@ -1,12 +1,6 @@
-import { type PackageCatalog, packageKey } from "@sfly/orchestration";
 import type { StoredOrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import {
-	checkSummary,
-	documentFieldErrors,
-	undeclaredInputNotes,
-	warningsSummary,
-} from "./validation";
+import { checkSummary, documentFieldErrors, warningsSummary } from "./validation";
 
 const base: StoredOrchestrationDocument = {
 	nodes: [
@@ -145,52 +139,11 @@ describe("已移除种类的节点（ADR 0028）", () => {
 	});
 });
 
-describe("提醒：节点类型没有声明的输入", () => {
-	const doc: StoredOrchestrationDocument = {
-		...base,
-		nodes: [
-			...base.nodes,
-			{
-				id: "fetch",
-				kind: "package",
-				always: false,
-				package: "demo",
-				node: "http_check",
-				inputs: { url: "x", token: "t" },
-			},
-		],
-		packages: { demo: "1.0.0" },
-	};
-	const type = {
-		name: "http_check",
-		inputs: { type: "object", properties: { url: { type: "string" } } },
-		outputs: { type: "object", properties: {} },
-	};
-
-	it("节点类型加载后列出没有声明的输入；还没加载时不算", () => {
-		const loaded = new Map([[packageKey("demo", "1.0.0"), [type]]]) as unknown as PackageCatalog;
-		expect(undeclaredInputNotes(doc, loaded)).toEqual([
-			{ node_id: "fetch", input: "token", message: "fetch 的输入 token 没有在节点类型中声明" },
-		]);
-		expect(undeclaredInputNotes(doc, new Map())).toEqual([]);
-	});
-
-	it("提醒里的节点写成「显示名称（节点 ID）」", () => {
-		const loaded = new Map([[packageKey("demo", "1.0.0"), [type]]]) as unknown as PackageCatalog;
-		const named: StoredOrchestrationDocument = {
-			...doc,
-			nodes: doc.nodes.map((n) => (n.id === "fetch" ? { ...n, display_name: "探测站点" } : n)),
-		};
-		expect(undeclaredInputNotes(named, loaded)[0]?.message).toBe(
-			"探测站点（fetch） 的输入 token 没有在节点类型中声明",
-		);
-	});
-
-	it("检查结果：字段错误最先，其次警告，没有警告时带上提醒条数", () => {
-		expect(checkSummary(0, 2, 1)).toEqual({ kind: "warn", label: "2 条警告" });
-		expect(checkSummary(0, 0, 1)).toEqual({ kind: "ok", label: "检查通过 · 1 条提醒" });
-		expect(checkSummary(0, 0, 0)).toEqual({ kind: "ok", label: "检查通过" });
-		expect(checkSummary(1, 2, 1)).toEqual({ kind: "failed", label: "1 处字段错误" });
+describe("检查结果", () => {
+	it("字段错误最先，其次警告，都没有时是检查通过", () => {
+		expect(checkSummary(0, 2)).toEqual({ kind: "warn", label: "2 条警告" });
+		expect(checkSummary(0, 0)).toEqual({ kind: "ok", label: "检查通过" });
+		expect(checkSummary(1, 2)).toEqual({ kind: "failed", label: "1 处字段错误" });
 	});
 
 	it("保存后的提示：只有注释框的警告时说明不影响触发运行；混着时说清有几条要处理", () => {

@@ -1,13 +1,14 @@
 import {
 	dispatchTarget,
 	isAnnotationWarning,
+	type NodeTypeIo,
 	nameWithId,
 	nodeCardText,
 	nodeDefaultTitle,
 	nodeNameWithId,
-	nodeTypeOf,
 	type OrchestrationWarning,
 	type PackageCatalog,
+	undeclaredInputs,
 } from "@sfly/orchestration";
 import {
 	type AgentView,
@@ -39,9 +40,10 @@ import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { inspectorNodeType } from "../catalog";
 import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
-import { checkSummary, type FieldError, type InputNote } from "../validation";
+import { checkSummary, type FieldError } from "../validation";
 import { AgentSelect } from "./AgentSelect";
 import { AnnotationInspector } from "./AnnotationInspector";
 import { DisplayNameField, isNamedNode } from "./DisplayNameField";
@@ -87,8 +89,6 @@ export interface InspectorContext {
 	/** 已登记的飞书机器人（「飞书机器人」类型的输入的下拉框）。 */
 	bots: FeishuBotView[];
 	warnings: OrchestrationWarning[];
-	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
-	notes: readonly InputNote[];
 	shownFieldErrors: FieldError[];
 	focusRequest: FocusRequest | null;
 	onChangeNode(id: string, node: DocNode): void;
@@ -243,7 +243,10 @@ function NodeInspector({
 		return focusField(request.key);
 	}, [request]);
 	const meta = KIND_META[node.kind];
-	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
+	// 两份节点类型：检查用的（和控制面同一套取法，「没有声明 / 移除」按它）和参数表单用的（开发版本检查跳过时也有字段）。
+	const types =
+		node.kind === "package" ? inspectorNodeType(doc, node, catalog, context.agents) : undefined;
+	const type = types?.form;
 	const choices = useMemo(() => referenceChoices(doc, id, catalog), [doc, id, catalog]);
 	const warnings = context.warnings.filter((w) => w.node_id === id);
 	const fieldErrors = context.shownFieldErrors.filter((e) => e.nodeId === id);
@@ -366,6 +369,7 @@ function NodeInspector({
 							id={id}
 							node={node}
 							type={type}
+							undeclared={types?.checked ? undeclaredInputs(types.checked.inputs, node.inputs) : []}
 							choices={choices}
 							problemsOf={problemsOf}
 							defaultAgent={doc.default_agent}
@@ -417,7 +421,13 @@ function NodeInspector({
 				</TabsContent>
 				{hasExec && (
 					<TabsContent value="exec" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
-						<ExecutionSettings id={id} node={node} type={type} onChange={change} />
+						<ExecutionSettings
+							id={id}
+							node={node}
+							type={type}
+							problemsOf={problemsOf}
+							onChange={change}
+						/>
 					</TabsContent>
 				)}
 				<TabsContent value="doc" className="overflow-auto px-3.5 py-3">
@@ -443,7 +453,10 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 
 function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: InspectorContext }) {
 	const { doc, catalog } = context;
-	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
+	const type =
+		node.kind === "package"
+			? inspectorNodeType(doc, node, catalog, context.agents).form
+			: undefined;
 	const outputs =
 		type && Object.keys(type.outputs.properties).length > 0 ? type.outputs : undefined;
 	return (
@@ -505,7 +518,7 @@ function NodeMetrics({
 	context,
 }: {
 	id: string;
-	type: ReturnType<typeof nodeTypeOf>;
+	type: NodeTypeIo | null | undefined;
 	context: InspectorContext;
 }) {
 	const focus = useFocusItems(context.orchestrationId);
@@ -596,8 +609,8 @@ function ScenarioInspector({
 
 /** 场景设置的「概况」页：默认 Agent、节点包版本和检查结果。必须放在 `FIELD_LIST_CLASS` 的容器里。 */
 function ScenarioOverview({ context }: { context: InspectorContext }) {
-	const { doc, warnings, notes, shownFieldErrors: fieldErrors } = context;
-	const summary = checkSummary(fieldErrors.length, warnings.length, notes.length);
+	const { doc, warnings, shownFieldErrors: fieldErrors } = context;
+	const summary = checkSummary(fieldErrors.length, warnings.length);
 	const used = [
 		...new Set(doc.nodes.flatMap((n) => (n.kind === "package" ? [n.package] : []))),
 	].sort();
@@ -681,11 +694,10 @@ function ScenarioOverview({ context }: { context: InspectorContext }) {
 			) : (
 				<p className="m-0 mb-3 text-xs text-ok">结构、包版本和引用检查都通过了。</p>
 			)}
-			{notes.length > 0 && <WarningList warnings={notes} onLocate={context.onLocate} />}
 			<p className="m-0 text-xs text-fg-3">
 				警告不阻止保存，触发运行时必须全部通过
 				{warnings.some(isAnnotationWarning) && "（注释框的警告除外，它不影响运行）"}
-				；提醒不影响运行；字段错误（红色）改正后才能保存。
+				；字段错误（红色）改正后才能保存。
 			</p>
 		</>
 	);

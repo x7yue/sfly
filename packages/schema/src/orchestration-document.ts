@@ -2,6 +2,7 @@ import { z } from "zod";
 import { optionalLine, optionalMultiline, requiredLine } from "./display-text.js";
 import { NODE_TIMEOUT_MAX_SECONDS, nodeTimeoutMessage } from "./node-timeout.js";
 import { NodeName, PackageName } from "./package-metadata.js";
+import { QUEUE_TIMEOUT_MAX_SECONDS, queueTimeoutMessage } from "./queue-timeout.js";
 import { REMOVED_NODE_KIND_NAMES } from "./removed-nodes.js";
 
 /**
@@ -122,8 +123,15 @@ export const PackageNode = z.strictObject({
 	// 读版本不拦，升级前保存的版本里可以已经有更大的值，读出来要能处理（派发时以配置错误失败）。JSON Schema 里写成 `maximum`。
 	timeout: z.number().int().positive().optional().meta({ maximum: NODE_TIMEOUT_MAX_SECONDS }),
 	retries: z.number().int().nonnegative().optional(),
-	/** 秒。 */
-	queue_timeout: z.number().int().positive().optional(),
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限，#559）。 */
+	// 上限（QUEUE_TIMEOUT_MAX_SECONDS，保证排队截止时间是有效的时间）同 timeout，也只在保存时检查（OrchestrationDocument 的
+	// superRefine），读版本不拦：升级前保存的版本里可以已经有更大的值，读出来要能处理（预检阻断触发，排队时以配置错误失败）。
+	queue_timeout: z
+		.number()
+		.int()
+		.positive()
+		.optional()
+		.meta({ maximum: QUEUE_TIMEOUT_MAX_SECONDS }),
 });
 
 export const OrchestrationNode = z.discriminatedUnion("kind", [
@@ -236,7 +244,7 @@ export const OrchestrationDocument = z
 		sticky_notes: EmptyRemovedField,
 	})
 	.superRefine((doc, ctx) => {
-		// 节点的超时不能超过 uint32（#476）：只在保存时拦（读版本的 schema 不拦）。错误信息写明是哪个节点。
+		// 节点的超时不能超过 uint32（#476），排队超时不能超过上限（#559）：只在保存时拦（读版本的 schema 不拦）。错误信息写明是哪个节点。
 		for (const [i, node] of doc.nodes.entries()) {
 			if (
 				node.kind === "package" &&
@@ -248,6 +256,19 @@ export const OrchestrationDocument = z
 					code: "custom",
 					path: ["nodes", i, "timeout"],
 					message: nodeTimeoutMessage(label, node.timeout),
+				});
+			}
+			// 排队超时同理（#559）：排队截止时间要是有效的时间。
+			if (
+				node.kind === "package" &&
+				node.queue_timeout !== undefined &&
+				node.queue_timeout > QUEUE_TIMEOUT_MAX_SECONDS
+			) {
+				const label = node.display_name ? `${node.display_name}（${node.id}）` : node.id;
+				ctx.addIssue({
+					code: "custom",
+					path: ["nodes", i, "queue_timeout"],
+					message: queueTimeoutMessage(label, node.queue_timeout),
 				});
 			}
 		}
