@@ -202,6 +202,11 @@ message Welcome {
   string agent_binary_url = 8;
   // 该二进制的 sha256（hex）。
   string agent_binary_sha256 = 9;
+  // 控制面的包索引（PEP 503，带末尾 `/`，例如 http://控制面/simple/）：里面有平台自己的包（SDK、标准节点包 sfly-std），
+  // 不需要凭据。Agent 安装节点包依赖时把它作为优先于 PyPI 镜像的索引，所以节点包依赖 sfly-std 时从这里取，
+  // 同名的包即使出现在 PyPI 镜像上也不会被装上；其余依赖仍来自 PyPI 镜像。空串（旧版本控制面不带这个字段）时
+  // Agent 只用 PyPI 镜像，行为和以前一样。
+  string package_index_url = 10;
 }
 
 // 控制面对 Agent 手上一个任务的处置。

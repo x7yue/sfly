@@ -1,0 +1,52 @@
+{
+	"ok": true,
+	"idle": { "exit_seconds": 0.017, "exit_code": 0 },
+	"mid_turn": {
+		"closed_at": 1795366644.379263,
+		"exit_seconds": 0.035,
+		"exit_code": 0,
+		"tool_end_seconds": null,
+		"tool_result": "",
+		"settled": false,
+		"events_after_close": [],
+		"session_tail": [
+			"{\"type\":\"message\",\"id\":\"3eb4866a\",\"parentId\":\"49d7dcb8\",\"timestamp\":\"2026-11-22T16:57:24.382Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1002,\"timestamp\":1795366644382}}",
+			"{\"type\":\"message\",\"id\":\"01328147\",\"parentId\":\"3eb4866a\",\"timestamp\":\"2026-11-22T16:57:24.384Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+		],
+		"session_tool_result": "aborted",
+		"session_last_line_json": true,
+		"workbench": { "seen": true, "after": true, "gone_seconds": 0.2 }
+	},
+	"mid_turn_sigterm": {
+		"closed_at": 1795366645.8049858,
+		"exit_seconds": 0.034,
+		"exit_code": 0,
+		"tool_end_seconds": null,
+		"tool_result": "",
+		"settled": false,
+		"events_after_close": [],
+		"session_tail": [
+			"{\"type\":\"message\",\"id\":\"47b11c97\",\"parentId\":\"cfe90d4c\",\"timestamp\":\"2026-11-22T16:57:25.808Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1012,\"timestamp\":1795366645807}}",
+			"{\"type\":\"message\",\"id\":\"ea86f6c0\",\"parentId\":\"47b11c97\",\"timestamp\":\"2026-11-22T16:57:25.810Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+		],
+		"session_tool_result": "aborted",
+		"session_last_line_json": true,
+		"workbench": { "seen": true, "after": true, "gone_seconds": 0.05 }
+	},
+	"sigterm_only": {
+		"closed_at": 1795366647.2218916,
+		"exit_seconds": 0.035,
+		"exit_code": 143,
+		"tool_end_seconds": null,
+		"tool_result": "",
+		"settled": false,
+		"events_after_close": [],
+		"session_tail": [
+			"{\"type\":\"message\",\"id\":\"1f0677cc\",\"parentId\":\"541d89b8\",\"timestamp\":\"2026-11-22T16:57:27.225Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1009,\"timestamp\":1795366647225}}",
+			"{\"type\":\"message\",\"id\":\"73d66462\",\"parentId\":\"1f0677cc\",\"timestamp\":\"2026-11-22T16:57:27.228Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+		],
+		"session_tool_result": "aborted",
+		"session_last_line_json": true,
+		"workbench": { "seen": true, "after": true, "gone_seconds": 0.08 }
+	}
+}

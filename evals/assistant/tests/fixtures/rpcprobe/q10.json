@@ -1,0 +1,12 @@
+{
+	"ok": true,
+	"probe": {
+		"cwd_lines": ["    <location>/work/tc/.agents/skills/demo/SKILL.md</location>", "/work/tc"]
+	},
+	"control": {
+		"cwd_lines": [
+			"    <location>/work/tc/.agents/skills/demo/SKILL.md</location>",
+			"/srv/assistant"
+		]
+	}
+}
