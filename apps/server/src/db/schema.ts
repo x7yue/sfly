@@ -889,6 +889,11 @@ export const sessionEvents = pgTable(
 	(t) => [
 		primaryKey({ columns: [t.sessionId, t.seq] }),
 		check("session_events_seq", sql`${t.seq} >= 1`),
+		// 「上一轮的结局」（会话视图和列表里的 last_turn_outcome）取每个会话最近一条 turn_end：只给 turn_end 建索引
+		// （每轮一条），按序号倒序，查询不用扫整个会话的事件（几万条）。谓词写成字面量，查询里也要写成字面量才用得上它。
+		index("session_events_turn_end")
+			.on(t.sessionId, t.seq.desc())
+			.where(sql`${t.type} = 'turn_end'`),
 	],
 );
 

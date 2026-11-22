@@ -433,6 +433,39 @@ describe("契约路由的访问检查", () => {
 			const stranger = token({ kind: "session", user: USERS.stranger, projectId: DEFAULT });
 			expect(outcome(await run(route("GET /orchestrations"), stranger))).toBe(404);
 		});
+
+		it("会话令牌对会话只有读（ADR 0027）：建会话、发话、停止是 403，读照常；这条规则不靠「写一律 403」的临时总闸", async () => {
+			const session = token({
+				kind: "session",
+				user: USERS.editor,
+				projectId: DEFAULT,
+				name: "会话",
+			});
+			// 同样的发起人用个人令牌：编辑者，三个写接口都放行（说明挡住会话令牌的不是范围）。
+			const personalEditor = personal(USERS.editor);
+			for (const key of [
+				"POST /projects/:project/sessions",
+				"POST /sessions/:id/messages",
+				"POST /sessions/:id/stop",
+			]) {
+				expect(outcome(await run(route(key), personalEditor)), `个人令牌 ${key}`).toBe("ok");
+				// 说法是这条规则自己的，不是总闸的「写入还没有开放」：#495 拿掉总闸以后，它还在。
+				expect(await run(route(key), session), key).toMatchObject({
+					ok: false,
+					status: 403,
+					message: expect.stringContaining("会话令牌对会话只有读"),
+				});
+			}
+			for (const key of [
+				"GET /projects/:project/sessions",
+				"GET /sessions/:id",
+				"GET /sessions/:id/events",
+			]) {
+				expect(outcome(await run(route(key), session)), key).toBe("ok");
+			}
+			// 别的项目的会话令牌：不是它的项目，404（不是 403），读和写一样。
+			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);
+		});
 	});
 
 	describe("别的项目的资源和不存在一样：404，不是 403", () => {

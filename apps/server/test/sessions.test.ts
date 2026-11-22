@@ -6,6 +6,8 @@ import {
 	PERSISTED_SESSION_EVENT_TYPES,
 	PersistedSessionEvent,
 	SESSION_HISTORY_PAGE,
+	SESSION_LIST_LIMIT,
+	SESSION_SEQ_MAX,
 	type SessionDetailResponse,
 	type SessionEventBody,
 	type SessionListResponse,
@@ -13,12 +15,11 @@ import {
 	sessionEventSchemas,
 } from "@sfly/schema";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { SessionNotFoundError } from "../src/sessions/session-store.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
-import { eventually } from "./support/eventually.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { messageId, persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient } from "./support/sse-client.js";
@@ -235,6 +236,35 @@ describe("读：一页事件、列表、上一轮的结局", () => {
 		});
 	});
 
+	it("列表最多 SESSION_LIST_LIMIT 个：在做的排在前面不会被挤掉，最旧的不返回", async () => {
+		await using_project("list-limit", async (project) => {
+			const total = SESSION_LIST_LIMIT + 3;
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				// 一个在做的（最近活动最早），再加 total 个空闲的，最近活动一分钟一个。
+				await client.query(
+					`insert into sessions (id, project_id, title, status, created_by, created_at, last_activity_at)
+					select gen_random_uuid(), $1, '空闲 ' || i, 'idle', 'alice', $2::timestamptz, $2::timestamptz + i * interval '1 minute'
+					from generate_series(1, $3::int) i`,
+					[project, T0, total],
+				);
+				await client.query(
+					`insert into sessions (id, project_id, title, status, created_by, created_at, last_activity_at)
+					values (gen_random_uuid(), $1, '在做的', 'running', 'alice', $2, $2)`,
+					[project, T0],
+				);
+			} finally {
+				await client.end();
+			}
+			const list = await json<SessionListResponse>(await api.get(`/projects/${project}/sessions`));
+			expect(list.sessions).toHaveLength(SESSION_LIST_LIMIT);
+			expect(list.sessions[0]?.title).toBe("在做的");
+			expect(list.sessions[1]?.title).toBe(`空闲 ${total}`);
+			expect(list.sessions.at(-1)?.title).toBe(`空闲 ${total - SESSION_LIST_LIMIT + 2}`);
+		});
+	});
+
 	it("列表的就绪状态：助手没有配置，写明原因；没有会话时是空数组", async () => {
 		await using_project("empty-project", async (project) => {
 			const list = await json<SessionListResponse>(await api.get(`/projects/${project}/sessions`));
@@ -355,24 +385,113 @@ describe("事件流：补发加实时", () => {
 		}
 	});
 
-	it("补发的同时有新事件落库：不重不漏，顺序不乱（补发期间的实时事件排在补发之后，按序号去重）", async () => {
+	it("补发和实时真的重叠（停住补发的最后一次读库）：持久的事件不重不漏，过时的增量不会出现在它之后的持久事件后面", async () => {
 		const id = await seedSession(cp.database.url, {
 			events: Array.from({ length: 450 }, (_, i) => userBody(i % 9)),
 		});
+		// 补发按 200 条一批：读 1–200、201–400，第三次读库才是最后一批。停住它，在它开始之前落库新事件。
+		const original = store().after.bind(store());
+		let reads = 0;
+		let reachedLast!: () => void;
+		const lastReadStarted = new Promise<void>((resolve) => {
+			reachedLast = resolve;
+		});
+		let openGate!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			openGate = resolve;
+		});
+		let lastRead: Awaited<ReturnType<typeof original>> = [];
+		const spy = vi.spyOn(store(), "after").mockImplementation(async (sessionId, after, limit) => {
+			if (sessionId !== id) return original(sessionId, after, limit);
+			reads += 1;
+			if (reads !== 3) return original(sessionId, after, limit);
+			reachedLast();
+			await gate;
+			lastRead = await original(sessionId, after, limit);
+			return lastRead;
+		});
 		const sse = await SseClient.open(cp, `/sessions/${id}/events`);
 		try {
-			// 连上之后马上写：补发 450 条（要读几批）的同时来了新事件。
-			await Promise.all(Array.from({ length: 5 }, () => store().append(id, userBody(1))));
-			await eventually(
-				() => expect(sse.received.filter((e) => e.event === "user_message")).toHaveLength(455),
-				10_000,
+			await lastReadStarted;
+			// 补发停在最后一次读库之前：实时的事件到了。先一条过时的（在 451 之前，451 的完整内容里已经有它），
+			// 再落库 5 条，再一条还没有落库的完整内容的增量（在它们之后）。
+			store().publish(id, { type: "thinking" });
+			for (let n = 0; n < 5; n++) await store().append(id, userBody(1));
+			store().publish(id, { type: "assistant_delta", text: "新的增量" });
+			openGate();
+			await sse.next("assistant_delta");
+			// 重叠真的发生了：最后一次读库读到了停住期间落库的事件，实时来的这 5 条在缓冲里又出现了一遍。
+			expect(lastRead.at(-1)?.seq).toBe(455);
+			const events = sse.received.filter((e) => e.event !== "time");
+			// 持久的：1 到 455 各一条，按序；不持久的：只有后面的那条增量，在最后（过时的 thinking 丢了）。
+			expect(events.filter((e) => e.id !== undefined).map((e) => Number(e.id))).toEqual(
+				Array.from({ length: 455 }, (_, i) => i + 1),
 			);
-			const seqs = sse.received.filter((e) => e.event === "user_message").map((e) => Number(e.id));
-			expect(seqs).toEqual(Array.from({ length: 455 }, (_, i) => i + 1));
+			expect(events.filter((e) => e.id === undefined).map((e) => e.event)).toEqual([
+				"assistant_delta",
+			]);
+			expect(events.at(-1)?.event).toBe("assistant_delta");
+			// 补发完以后接着是实时的。
+			await store().append(id, userBody(2));
+			await sse.next("user_message");
+			expect(sse.received.filter((e) => e.event === "user_message").at(-1)?.id).toBe("456");
 		} finally {
+			spy.mockRestore();
 			sse.close();
 		}
 	}, 30_000);
+
+	it("序号超过 int4 的最大值：读接口和事件流的 before、after 是 400，Last-Event-ID 当作没带（从头补发，不报错关流）", async () => {
+		const { id } = await newSession();
+		for (let n = 1; n <= 3; n++) await store().append(id, userBody(n));
+		for (const path of [
+			`/sessions/${id}?before=${SESSION_SEQ_MAX + 1}`,
+			`/sessions/${id}?before=3000000000`,
+			`/sessions/${id}/events?after=${SESSION_SEQ_MAX + 1}`,
+			`/sessions/${id}/events?after=3000000000`,
+		]) {
+			expect((await api.get(path)).status, path).toBe(400);
+		}
+		// 恰好是上限：合法。before 是 int4 的最大值：前面的 3 条都在；after 是最大值：没有更晚的事件，流开着。
+		const atMax = await json<SessionDetailResponse>(
+			await api.get(`/sessions/${id}?before=${SESSION_SEQ_MAX}`),
+		);
+		expect(atMax.events.map((e) => e.seq)).toEqual([1, 2, 3]);
+		const afterMax = await SseClient.open(cp, `/sessions/${id}/events?after=${SESSION_SEQ_MAX}`);
+		try {
+			await afterMax.next("time");
+			await afterMax.expectNone(150);
+			expect(afterMax.ended).toBe(false);
+		} finally {
+			afterMax.close();
+		}
+		// Last-Event-ID 超过上限（或大到不是安全整数）：当作没有，从头补发三条，流照常开着。
+		for (const huge of [String(SESSION_SEQ_MAX + 1), "3000000000", "9007199254740993"]) {
+			const sse = await SseClient.open(cp, `/sessions/${id}/events`, { "last-event-id": huge });
+			try {
+				for (let n = 0; n < 3; n++) await sse.next("user_message");
+				expect(
+					idsOf(sse).map(([, eventId]) => eventId),
+					huge,
+				).toEqual(["1", "2", "3"]);
+				await sse.expectNone(100);
+				expect(sse.ended, huge).toBe(false);
+				// 流是好的：后面落库的事件照常推来。
+				await store().append(id, userBody(4));
+				await sse.next("user_message");
+			} finally {
+				sse.close();
+			}
+			// 清掉这条测试里加的第 4 条，下一轮仍然是 3 条：直接删库里那一行。
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				await client.query("delete from session_events where session_id = $1 and seq = 4", [id]);
+			} finally {
+				await client.end();
+			}
+		}
+	});
 
 	it("别的会话的事件不会推给这条流", async () => {
 		const [a, b] = [await newSession(), await newSession()];
@@ -438,10 +557,13 @@ describe("助手没有配置：写接口 503，读接口照常", () => {
 describe("有凭据的请求：会话的写要「编辑」范围，读要「读」，别的项目的成员 404", () => {
 	let accounts: TestAccounts;
 	let sessionId: string;
+	/** 另一个项目（sessions-elsewhere）里的会话：默认项目的凭据访问它都应该是 404。 */
+	let elsewhereId: string;
 	let headers: {
 		reader: Record<string, string>;
 		editor: Record<string, string>;
 		other: Record<string, string>;
+		sessionToken: Record<string, string>;
 	};
 
 	beforeAll(async () => {
@@ -454,10 +576,16 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 		await accounts.member("default", reader, "read_only");
 		await accounts.member("default", editor, "editor");
 		await accounts.member("sessions-elsewhere", other, "project_admin");
+		elsewhereId = await seedSession(cp.database.url, {
+			project: "sessions-elsewhere",
+			title: "另一个项目里的会话",
+			events: persistedBodies(),
+		});
 		headers = {
 			reader: bearer(await accounts.personalToken(reader)),
 			editor: loginCookie(await accounts.login(editor)),
 			other: bearer(await accounts.personalToken(other)),
+			sessionToken: bearer(await accounts.sessionToken(editor, "default")),
 		};
 	});
 	afterAll(async () => {
@@ -486,6 +614,70 @@ describe("有凭据的请求：会话的写要「编辑」范围，读要「读�
 			expect((await call("reader", "POST", path, body)).status, path).toBe(403);
 			expect((await call("editor", "POST", path, body)).status, path).toBe(503);
 		}
+	});
+
+	it("会话在另一个项目里：默认项目的成员（只读、编辑者）读它、开它的事件流、发话、停止、列出和新建那个项目的会话，都是 404；那个项目自己的成员读得到", async () => {
+		const requests = [
+			["GET", `/sessions/${elsewhereId}`, undefined],
+			["GET", `/sessions/${elsewhereId}/events`, undefined],
+			["POST", `/sessions/${elsewhereId}/messages`, { text: "你好" }],
+			["POST", `/sessions/${elsewhereId}/stop`, {}],
+			["GET", "/projects/sessions-elsewhere/sessions", undefined],
+			["POST", "/projects/sessions-elsewhere/sessions", { text: "你好" }],
+		] as const;
+		const notFound = await (await call("other", "GET", "/sessions/not-a-session")).text();
+		for (const who of ["reader", "editor"] as const) {
+			for (const [method, path, body] of requests) {
+				const res = await call(who, method, path, body);
+				expect(res.status, `${who} ${method} ${path}`).toBe(404);
+				// 说法和会话不存在一样（不泄露「别的项目里有这个会话」）。
+				if (path.startsWith("/sessions/")) {
+					expect(await res.text(), `${who} ${method} ${path}`).toBe(notFound);
+				}
+			}
+		}
+		// 反方向：那个项目的管理员读得到它的会话、列表里只有它自己项目的会话，写走到处理函数（助手没有配置：503）。
+		const detail = await call("other", "GET", `/sessions/${elsewhereId}`);
+		expect(detail.status).toBe(200);
+		expect(await json<SessionView>(detail)).toMatchObject({
+			id: elsewhereId,
+			project: "sessions-elsewhere",
+		});
+		const listed = await json<SessionListResponse>(
+			await call("other", "GET", "/projects/sessions-elsewhere/sessions"),
+		);
+		expect(listed.sessions.map((session) => session.id)).toEqual([elsewhereId]);
+		expect(
+			(await call("other", "POST", `/sessions/${elsewhereId}/messages`, { text: "你好" })).status,
+		).toBe(503);
+		expect(
+			(await call("other", "POST", "/projects/sessions-elsewhere/sessions", { text: "你好" }))
+				.status,
+		).toBe(503);
+		// 默认项目的会话对它也是 404。
+		expect((await call("other", "GET", `/sessions/${sessionId}`)).status).toBe(404);
+		// 默认项目的编辑者列出默认项目的会话：没有那个项目的会话混进来。
+		const defaultList = await json<SessionListResponse>(
+			await call("editor", "GET", "/projects/default/sessions"),
+		);
+		expect(defaultList.sessions.map((session) => session.id)).not.toContain(elsewhereId);
+		expect(defaultList.sessions.map((session) => session.id)).toContain(sessionId);
+	});
+
+	it("会话令牌对会话只有读（ADR 0027）：列表和会话读得到，建会话、发话、停止是 403", async () => {
+		expect((await call("sessionToken", "GET", "/projects/default/sessions")).status).toBe(200);
+		expect((await call("sessionToken", "GET", `/sessions/${sessionId}`)).status).toBe(200);
+		for (const [path, body] of [
+			["/projects/default/sessions", { text: "你好" }],
+			[`/sessions/${sessionId}/messages`, { text: "你好" }],
+			[`/sessions/${sessionId}/stop`, {}],
+		] as const) {
+			const res = await call("sessionToken", "POST", path, body);
+			expect(res.status, path).toBe(403);
+			expect(await res.text(), path).toContain("会话令牌对会话只有读");
+		}
+		// 别的项目的会话：404，和不存在一样。
+		expect((await call("sessionToken", "GET", `/sessions/${elsewhereId}`)).status).toBe(404);
 	});
 
 	it("别的项目的成员：列表、会话、事件流、写都是 404，说法和不存在一样", async () => {

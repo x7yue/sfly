@@ -1,11 +1,13 @@
 import {
 	type Readiness,
+	SESSION_SEQ_MAX,
 	type SessionDetailResponse,
 	type SessionView,
 	sessionsApi,
 } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { parseProjectId } from "../projects/project-id.js";
+import { FollowOverflowError } from "../sessions/follow.js";
 import { type SessionRow, type SessionStore, toListItem } from "../sessions/session-store.js";
 import type { Sse } from "../sse/sse.js";
 import { requireActor } from "./actor.js";
@@ -84,21 +86,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
 		open((stream) => {
+			// 序号超过 int4 的 Last-Event-ID 和超限的 `after` 一样不合法；流已经打开不能再 400，当作没带。
 			const resume = Number(stream.lastEventId);
 			const after = Math.max(
 				query.after ?? 0,
-				Number.isSafeInteger(resume) && resume > 0 ? resume : 0,
+				Number.isSafeInteger(resume) && resume > 0 && resume <= SESSION_SEQ_MAX ? resume : 0,
 			);
 			return sessions.follow(
 				row.id,
 				after,
-				(event) => {
-					// 持久的事件以序号作 SSE 的事件 ID；不持久的没有 ID，不推进浏览器续传的位置。
-					if ("seq" in event) stream.send(event.type, event, event.seq);
-					else stream.send(event.type, event);
+				{
+					emit: (event) => {
+						// 持久的事件以序号作 SSE 的事件 ID；不持久的没有 ID，不推进浏览器续传的位置。
+						if ("seq" in event) stream.send(event.type, event, event.seq);
+						else stream.send(event.type, event);
+					},
+					drained: () => stream.drained(),
 				},
 				(error) => {
-					request.log.error(error);
+					// 缓冲溢出是客户端读得太慢，不是服务端的错：关掉流，浏览器按 Last-Event-ID 重连。
+					if (error instanceof FollowOverflowError) request.log.warn(error.message);
+					else request.log.error(error);
 					stream.close();
 				},
 			);

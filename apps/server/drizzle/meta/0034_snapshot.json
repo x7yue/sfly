@@ -1,5 +1,5 @@
 {
-  "id": "e0425f36-66b0-40f2-a0f0-7cfccc39b64c",
+  "id": "21141118-5e16-45c0-bce6-cb2b5993af99",
   "prevId": "140f444c-2b03-4b16-a645-413c52689175",
   "version": "7",
   "dialect": "postgresql",
@@ -2133,7 +2133,30 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "session_events_turn_end": {
+          "name": "session_events_turn_end",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"session_events\".\"type\" = 'turn_end'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "session_events_session_id_sessions_id_fk": {
           "name": "session_events_session_id_sessions_id_fk",

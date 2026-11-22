@@ -2616,7 +2616,10 @@ export interface SessionDetailResponse {
 	has_more: boolean;
 }
 
-/** `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`）。 */
+/**
+ * `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`，
+ * 它不是整数或超过 `SESSION_SEQ_MAX` 的当作没带）。
+ */
 export interface SessionEventsQuery {
 	after?: number;
 }
@@ -2642,7 +2645,7 @@ export interface SessionListItem {
 
 /**
  * `GET /projects/:project/sessions`：助手此刻能不能用，和项目里的会话：在做和排队中的在前，其余按最近活动倒序
- * （#551 的写法；#544 之前没有排队，在做的至多一个）。
+ * （#551 的写法；#544 之前没有排队，在做的至多一个），最多 `SESSION_LIST_LIMIT` 个。
  */
 export interface SessionListResponse {
 	readiness: Readiness;

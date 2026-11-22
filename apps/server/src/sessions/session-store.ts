@@ -3,6 +3,7 @@ import {
 	PERSISTED_SESSION_EVENT_TYPES,
 	type PersistedSessionEvent,
 	SESSION_HISTORY_PAGE,
+	SESSION_LIST_LIMIT,
 	type SessionEvent,
 	SessionEventBody,
 	type SessionListItem,
@@ -16,6 +17,7 @@ import { projects, sessionEvents, sessions } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
+import { type FollowSink, follow } from "./follow.js";
 
 /** 库里的一个会话。 */
 export type SessionRow = typeof sessions.$inferSelect;
@@ -24,9 +26,6 @@ const PERSISTED: ReadonlySet<string> = new Set(PERSISTED_SESSION_EVENT_TYPES);
 
 /** 事件类型是不是持久的（落库的）。 */
 export const isPersistedType = (type: string): boolean => PERSISTED.has(type);
-
-/** 补发时一次从库里读多少条事件。 */
-const REPLAY_BATCH = 200;
 
 /** 会话在列表里的样子：`queue_position` 在 #544 之前总是 null（没有排队）。 */
 export function toListItem(row: SessionRow, lastTurnOutcome: TurnOutcome | null): SessionListItem {
@@ -97,7 +96,7 @@ export class SessionStore {
 
 	/**
 	 * 项目里的会话：在做和排队中的在前，其余按最近活动倒序（#551 的写法）；带上一轮的结局。
-	 * 同样活跃的按 ID 排，顺序固定。
+	 * 同样活跃的按 ID 排，顺序固定。最多 {@link SESSION_LIST_LIMIT} 个。
 	 */
 	async list(project: ProjectId): Promise<SessionListItem[]> {
 		const { db } = this.deps;
@@ -109,7 +108,8 @@ export class SessionStore {
 				sql`case when ${sessions.status} in ('running', 'queued') then 0 else 1 end`,
 				desc(sessions.lastActivityAt),
 				desc(sessions.id),
-			);
+			)
+			.limit(SESSION_LIST_LIMIT);
 		const outcomes = await this.#lastOutcomes(rows.map((row) => row.id));
 		return rows.map((row) => toListItem(row, outcomes.get(row.id) ?? null));
 	}
@@ -128,7 +128,8 @@ export class SessionStore {
 				outcome: sql<string | null>`${sessionEvents.payload}->>'outcome'`,
 			})
 			.from(sessionEvents)
-			.where(and(inArray(sessionEvents.sessionId, ids), eq(sessionEvents.type, "turn_end")))
+			// type 写成字面量：它要和部分索引 session_events_turn_end 的谓词对上（参数化的值规划时不一定用得上）。
+			.where(and(inArray(sessionEvents.sessionId, ids), sql`${sessionEvents.type} = 'turn_end'`))
 			.orderBy(sessionEvents.sessionId, desc(sessionEvents.seq));
 		for (const row of rows) {
 			const parsed = TurnOutcome.safeParse(row.outcome);
@@ -263,51 +264,24 @@ export class SessionStore {
 	}
 
 	/**
-	 * 实时推送一个会话的事件（`GET /sessions/:id/events`）：先订阅再从库里补发，订阅之后发布的排在补发之后，
-	 * 持久的事件按 `seq` 去重，所以按事件 ID 接续不重复也不遗漏。`after` 是已经收到的最大序号（0 表示从头开始）；
-	 * 不持久的事件没有序号，不推进它。返回取消订阅的函数；读库出错时调用 `onError`，之后不再推送。
+	 * 实时推送一个会话的事件（`GET /sessions/:id/events`）：先订阅、再从库里补发，补发完接上实时的。
+	 * 不重不漏、持久和不持久的先后、慢客户端的背压和缓冲上限见 {@link follow}。
+	 * 返回取消订阅的函数；读库出错或缓冲溢出时调用 `onError`，之后不再推送。
 	 */
 	follow(
 		sessionId: string,
 		after: number,
-		emit: (event: SessionEvent) => void,
+		sink: FollowSink,
 		onError: (error: unknown) => void,
 	): () => void {
-		let stopped = false;
-		let ready = false;
-		let sent = after;
-		const pending: SessionEvent[] = [];
-		const deliver = (event: SessionEvent) => {
-			if (stopped) return;
-			if ("seq" in event) {
-				if (event.seq <= sent) return;
-				sent = event.seq;
-			}
-			emit(event);
-		};
-		const unsubscribe = this.#live.subscribe(sessionId, (event) => {
-			if (ready) deliver(event);
-			else pending.push(event);
-		});
-		const replay = async () => {
-			for (;;) {
-				const batch = await this.after(sessionId, sent, REPLAY_BATCH);
-				if (stopped) return;
-				for (const event of batch) deliver(event);
-				if (batch.length < REPLAY_BATCH) break;
-			}
-			ready = true;
-			for (const event of pending.splice(0)) deliver(event);
-		};
-		replay().catch((error) => {
-			if (stopped) return;
-			stopped = true;
-			unsubscribe();
-			onError(error);
-		});
-		return () => {
-			stopped = true;
-			unsubscribe();
-		};
+		return follow(
+			{
+				subscribe: (listener) => this.#live.subscribe(sessionId, listener),
+				read: (from, limit) => this.after(sessionId, from, limit),
+			},
+			after,
+			sink,
+			onError,
+		);
 	}
 }
