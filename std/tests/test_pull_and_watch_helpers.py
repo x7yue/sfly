@@ -98,8 +98,9 @@ def test_watch_agent_files_pulls_files_that_appear_once_each_until_duration(
     writer = threading.Thread(target=later)
     writer.start()
     try:
+        # stable：文件刚创建、内容还没写完时不拉（平台不判断文件是否写完）。
         result = watch_agent_files(
-            run.ctx, SOURCE, LOGS, str(local), pattern="app.log.*", duration=2.5
+            run.ctx, SOURCE, LOGS, str(local), pattern="app.log.*", stable=0.3, duration=4
         )
     finally:
         writer.join()
