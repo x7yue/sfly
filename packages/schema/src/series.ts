@@ -41,7 +41,7 @@ export function compareSeries(
 /**
  * 序列在图例和读数里的名字（#78）：不带标签时是指标名；带标签时是标签值以「 · 」连接（按声明的标签键的顺序，
  * 没有声明时按键名），图表引用多个指标时前面再加上指标名（例如 `read_bytes · sda`）。
- * 运行监控的图例、关注项读数和运行通知的卡片共用。
+ * 运行监控的图例和关注项读数共用。
  */
 export function seriesName(
 	name: string,

@@ -1,11 +1,11 @@
-import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
-import { expect, test } from "./fixtures";
+import { type E2eFixtures, expect, test } from "./fixtures";
 import {
 	createFeishuBot,
 	createScenario,
+	failRun,
 	publishPackage,
+	scenarioUsing,
 	setRunNotification,
-	triggerRun,
 } from "./support";
 
 // 飞书机器人管理页（ADR 0020）：登记、Webhook 地址打码、替换、删除、发送测试消息。
@@ -337,21 +337,26 @@ const alertNodes = [
 	},
 ];
 
-/** 一个只有入口的场景，运行结束时（运行通知，总是触发）向这个机器人发一张卡片：投递的消息来源。 */
-async function notifiedScenario(controlPlane: TestControlPlane, bot: string): Promise<string> {
-	const id = await createScenario(controlPlane, "通知", {
-		nodes: [{ id: "entry", kind: "entry", params: [] }],
-		edges: [],
-		packages: {},
-	});
-	await setRunNotification(controlPlane, id, { bot, trigger: "always" });
-	return id;
+/**
+ * 一个会失败的运行，失败时（运行通知，触发条件取默认的「仅失败」）向这个机器人发一张卡片：投递的消息来源。
+ * 运行通知只在失败或取消时发（#446），所以要有节点包和 Agent 让节点失败。
+ */
+async function failedNotifiedRun(
+	{ controlPlane, connectAgent }: Pick<E2eFixtures, "controlPlane" | "connectAgent">,
+	bot: string,
+): Promise<void> {
+	await publishPackage(controlPlane);
+	const agent = await connectAgent({ name: "agent-a" });
+	const id = await createScenario(controlPlane, "通知", scenarioUsing("agent-a"));
+	await setRunNotification(controlPlane, id, { bot });
+	await failRun(controlPlane, agent, id);
 }
 const POLL_WAIT = { timeout: 15_000 };
 
 test("最近投递和积压：登记之后尚无投递；消息送达后显示已送达和时间，积压为 0", async ({
 	page,
 	controlPlane,
+	connectAgent,
 	feishu,
 }) => {
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
@@ -360,8 +365,7 @@ test("最近投递和积压：登记之后尚无投递；消息送达后显示�
 	await expect(bot.getByRole("cell").nth(CELL.lastDelivery)).toHaveText("尚无投递");
 	await expect(bot.getByRole("cell").nth(CELL.backlog)).toHaveText("0");
 
-	const scenario = await notifiedScenario(controlPlane, "压测群");
-	await triggerRun(controlPlane, scenario);
+	await failedNotifiedRun({ controlPlane, connectAgent }, "压测群");
 
 	const last = bot.getByRole("cell").nth(CELL.lastDelivery);
 	await expect(last).toContainText("已送达", POLL_WAIT);
@@ -373,13 +377,13 @@ test("最近投递和积压：登记之后尚无投递；消息送达后显示�
 test("可重试的失败：最近投递是失败的原因，积压是还在排队的条数；飞书恢复后重试送达", async ({
 	page,
 	controlPlane,
+	connectAgent,
 	feishu,
 	clock,
 }) => {
 	feishu.reply({ status: 503 });
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
-	const scenario = await notifiedScenario(controlPlane, "压测群");
-	await triggerRun(controlPlane, scenario);
+	await failedNotifiedRun({ controlPlane, connectAgent }, "压测群");
 	await page.goto("/feishu-bots");
 	const bot = row(page, "压测群");
 	const last = bot.getByRole("cell").nth(CELL.lastDelivery);
@@ -400,12 +404,12 @@ test("可重试的失败：最近投递是失败的原因，积压是还在排�
 test("不可重试的失败：最近投递写着中文原因和下一步，不再排队，页面上没有 Webhook 地址的令牌", async ({
 	page,
 	controlPlane,
+	connectAgent,
 	feishu,
 }) => {
 	feishu.reply({ code: 19024, msg: `Key Words Not Found ${feishu.webhookUrl(SECRET)}` });
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl(SECRET));
-	const scenario = await notifiedScenario(controlPlane, "压测群");
-	await triggerRun(controlPlane, scenario);
+	await failedNotifiedRun({ controlPlane, connectAgent }, "压测群");
 	await page.goto("/feishu-bots");
 	const bot = row(page, "压测群");
 	const last = bot.getByRole("cell").nth(CELL.lastDelivery);
@@ -420,12 +424,12 @@ test("不可重试的失败：最近投递写着中文原因和下一步，不�
 test("删除机器人：它还在排队的消息被丢弃，积压清零；同名重新登记后没有旧的记录", async ({
 	page,
 	controlPlane,
+	connectAgent,
 	feishu,
 }) => {
 	feishu.replyAlways({ status: 503 });
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
-	const scenario = await notifiedScenario(controlPlane, "压测群");
-	await triggerRun(controlPlane, scenario);
+	await failedNotifiedRun({ controlPlane, connectAgent }, "压测群");
 	await page.goto("/feishu-bots");
 	await expect(row(page, "压测群").getByRole("cell").nth(CELL.backlog)).toHaveText(
 		"1 条",
