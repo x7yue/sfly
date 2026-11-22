@@ -273,6 +273,37 @@ describe("节点类型声明的默认超时", () => {
 			expect(body.error.message).toContain(MESSAGE("a"));
 		});
 
+		it("检查（POST /check，sfly scenario check）和保存一样：400，同一句错误信息；升级前存下来的超限值，拉下来改别处再检查仍是这句，改掉这个字段才过", async () => {
+			const id = await api.createOrchestration("超限检查");
+			const rejected = await api.post(`/orchestrations/${id}/check`, {
+				document: scenario("short", "2.0.0", { timeout: TOO_LARGE }),
+			});
+			expect(rejected.status).toBe(400);
+			const body = (await rejected.json()) as { error: { message: string } };
+			expect(body.error.message).toContain(MESSAGE("a"));
+
+			// 升级前存下来的版本里有超限的值：拉下来、改了别的地方再检查，仍然被拒绝并指到这个节点。
+			const stored = await api.orchestrationWith(scenario("short", "2.0.0", { timeout: 120 }));
+			await tamper(cp.database.url, stored);
+			await cp.restart();
+			const document = (
+				await api.getJson<{ document: Record<string, unknown> }>(`/orchestrations/${stored}/head`)
+			).document as { nodes: Array<Record<string, unknown>>; default_agent?: string };
+			expect(document.nodes.find((n) => n.id === "a")?.timeout).toBe(TOO_LARGE);
+			const stillBad = await api.post(`/orchestrations/${stored}/check`, {
+				document: { ...document, default_agent: "agent-b" },
+			});
+			expect(stillBad.status).toBe(400);
+			expect(((await stillBad.json()) as { error: { message: string } }).error.message).toContain(
+				MESSAGE("a"),
+			);
+
+			// 把这个字段改成合格的值就能检查（也能保存）。
+			for (const node of document.nodes) if (node.id === "a") node.timeout = 120;
+			const fixed = await api.post(`/orchestrations/${stored}/check`, { document });
+			expect(fixed.status).toBe(200);
+		});
+
 		/** 绕过保存校验把已保存的版本里节点 a 的超时改成超限的值：模拟升级前保存的版本。 */
 		const tamper = async (databaseUrl: string, orchestrationId: string) => {
 			const client = new pg.Client({ connectionString: databaseUrl });
