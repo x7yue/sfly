@@ -397,7 +397,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		stdIndex: createStdIndex({
 			packages,
 			onSkipped: (version, reason) => {
-				if (logger) console.error(`package index: sfly-std ${version} is not listed: ${reason}`);
+				logError(`package index: sfly-std ${version} is not listed:`, reason);
 			},
 		}),
 		clientTarballs,
