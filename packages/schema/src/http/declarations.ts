@@ -71,6 +71,17 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "account",
 		why: "平台管理员管理账号：列出、建用户、停用和恢复、重置密码；不属于任何项目，只认平台管理员的登录",
 	},
+	"/account": {
+		kind: "account",
+		why: "自己的账号：个人令牌的签发、列出、吊销；定位在发起请求的用户自己，不属于任何项目（ADR 0029「凭据」）",
+	},
+	// 路径里的项目一律写成 `/projects/:project/…`：前缀里的 `:project` 就是路径模板里的 `:project`，按字面匹配。
+	// 每一类属于项目的资源（项目令牌、以后的成员、项目密钥）各写一项，#488 把现有接口搬到项目下时照这个写
+	// （`/projects/:project/orchestrations` 等）：新增一类要改这张表，审查时看得见。
+	"/projects/:project/tokens": {
+		kind: "project",
+		why: "项目令牌的签发、列出、吊销：项目令牌是项目的一部分（服务账号），定位用路径里的 :project，要「管理」范围",
+	},
 	"/health": { kind: "system", exact: true, why: "健康检查：控制面自己的状态，不属于任何项目" },
 	"/docs": { kind: "system", exact: true, why: "用户文档的目录：公开的说明文字，不属于任何项目" },
 	"/docs/:page.md": {
@@ -101,14 +112,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/sdk/project-settings": {
 		kind: "system",
 		exact: true,
-		why: "sfly init 写进新项目的配置（控制面版本、sfly 索引、镜像）：与具体场景无关",
+		why: "sfly init 写进新节点包目录的配置（控制面版本、sfly 索引、镜像）：与具体场景无关",
 	},
 	"/simple/": {
 		kind: "system",
 		exact: true,
 		why: "sfly 简单索引（PEP 503）的根页面：uv 从这里装 sfly，与具体场景无关",
 	},
-	"/simple/:project/": {
+	"/simple/:package/": {
 		kind: "system",
 		exact: true,
 		why: "sfly 简单索引的项目页：SDK wheel 的下载链接，与具体场景无关",
@@ -168,6 +179,9 @@ export const DECLARATION_RULES: DeclarationRules = {
 export const SUMMARY_MAX_LENGTH = 80;
 
 const PATH_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g;
+
+/** 路径里用来写项目的参数名（ADR 0029：`/projects/:project/…`）。 */
+export const PROJECT_PARAM = "project";
 
 /** 路径模板里的参数名（不含末尾的 `*`）。 */
 export function pathParamNames(path: string): string[] {
@@ -303,6 +317,29 @@ function pathKindFor(
 	return best;
 }
 
+/**
+ * 路径里的项目一律写成 `/projects/:project/…`（ADR 0029「项目从请求的哪里来」）：访问检查按路径里的 `:project` 参数得出项目，
+ * 所以 `:project` 不能有别的写法或位置，别的东西也不能占用这个名字（公开的 `/simple/:package/` 里指 PEP 503 的包，
+ * 不叫 `:project`）；`/projects/…` 下面的路径也要这样写，不能写成别的参数名。
+ */
+function checkProjectPath(def: RouteDef): string[] {
+	const segments = pathSegments(def.path);
+	const problems: string[] = [];
+	const projectParam = segments.findIndex((segment) => segment === `:${PROJECT_PARAM}`);
+	if (projectParam !== -1 && !(projectParam === 1 && segments[0] === "projects")) {
+		problems.push(
+			`路径 ${def.path} 里的 :${PROJECT_PARAM} 位置不对：项目一律写成 /projects/:${PROJECT_PARAM}/…（访问检查据此得出项目）；` +
+				"别的东西不要叫 :project（PEP 503 的包叫 :package）",
+		);
+	}
+	if (segments[0] === "projects" && segments.length > 1 && segments[1] !== `:${PROJECT_PARAM}`) {
+		problems.push(
+			`路径 ${def.path}：/projects/ 后面一段要写 :${PROJECT_PARAM}（项目一律写成 /projects/:${PROJECT_PARAM}/…）`,
+		);
+	}
+	return problems;
+}
+
 /** 接口的路径前缀和声明的资源类别要对得上 {@link PATH_KINDS}。 */
 function checkPathKind(def: RouteDef, kind: ResourceKind, rules: DeclarationRules): string[] {
 	const found = pathKindFor(def.path, rules.pathKinds);
@@ -417,6 +454,7 @@ export function checkRouteDeclarations(
 			continue;
 		}
 		for (const problem of checkTarget(def, kind, target)) add(def, problem);
+		for (const problem of checkProjectPath(def)) add(def, problem);
 		for (const problem of checkPathKind(def, kind, rules)) add(def, problem);
 	}
 	return problems;

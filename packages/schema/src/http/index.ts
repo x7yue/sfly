@@ -16,6 +16,7 @@ import { runListApi } from "./run-list.js";
 import { runSummaryApi } from "./run-summary.js";
 import { artifactsApi, logsApi, runsApi } from "./runs.js";
 import { sdkApi, systemApi } from "./system.js";
+import { tokensApi } from "./tokens.js";
 
 export * from "./accounts.js";
 export * from "./actions.js";
@@ -37,6 +38,7 @@ export * from "./run-list.js";
 export * from "./run-summary.js";
 export * from "./runs.js";
 export * from "./system.js";
+export * from "./tokens.js";
 
 export const httpApis = {
 	actions: actionsApi,
@@ -56,6 +58,7 @@ export const httpApis = {
 	runs: { ...runListApi, ...runFocusApi, ...runSummaryApi, ...runsApi },
 	sdk: sdkApi,
 	system: systemApi,
+	tokens: tokensApi,
 	users: usersApi,
 } satisfies Record<string, Record<string, RouteDef>>;
 

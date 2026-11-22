@@ -18,6 +18,7 @@ import { DbAccessStore } from "../auth/access-store.js";
 import type { AccountService } from "../auth/accounts.js";
 import type { OriginRules } from "../auth/cross-site.js";
 import { PasswordGateAborted, PasswordGateBusy } from "../auth/password-gate.js";
+import type { TokenService } from "../auth/tokens.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
@@ -62,6 +63,7 @@ import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerRunSummaryRoutes } from "./run-summary-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
+import { registerTokenRoutes } from "./token-routes.js";
 import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
 
 export interface HttpApiDeps {
@@ -103,6 +105,8 @@ export interface HttpApiDeps {
 	corsOrigins?: readonly string[];
 	/** 本地账号与登录（src/auth/accounts.ts）。 */
 	accounts: AccountService;
+	/** 个人令牌和项目令牌（src/auth/tokens.ts）。 */
+	tokens: TokenService;
 	/** 登录的空闲期限（毫秒）；默认 12 小时，要和 `accounts` 里的一致（下发和续期 Cookie 用它）。 */
 	loginIdleMs?: number;
 	/** 哪些来源算同源（登录 Cookie 的跨站检查，src/auth/cross-site.ts）。 */
@@ -161,6 +165,7 @@ export function buildHttpApi({
 	webApp,
 	corsOrigins,
 	accounts,
+	tokens,
 	loginIdleMs,
 	origins,
 	publicHttps,
@@ -222,9 +227,10 @@ export function buildHttpApi({
 		heartbeatMs: sseHeartbeatMs,
 	});
 
-	// 登录被注销、用户被停用时，关掉受影响的事件流（ADR 0029「SSE」）。
+	// 登录被注销、用户被停用、令牌被吊销时，关掉受影响的事件流（ADR 0029「SSE」）。
 	const stopWatching = accounts.onRevoked((revocation) => {
 		sse.closeWhere((stream) => {
+			if (revocation.type === "token") return stream.tokenId === revocation.tokenId;
 			if (stream.userId !== revocation.userId) return false;
 			if (revocation.type === "user") return true;
 			if (stream.loginId === null) return false;
@@ -275,6 +281,7 @@ export function buildHttpApi({
 	});
 
 	registerAccountRoutes(app, { accounts, publicHttps, publicUrl });
+	registerTokenRoutes(app, { tokens, accounts });
 	registerAgentRoutes(app, { hub, engine, orchestrations });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });

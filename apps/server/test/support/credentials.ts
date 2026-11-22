@@ -1,4 +1,5 @@
-// 测试里造用户、项目、成员和各种凭据：直接写库（签发凭据的接口在 #490、#491、#492），返回请求里要带的原值。
+// 测试里造用户、项目、成员和各种凭据：直接写库（不经签发的接口：个人令牌、项目令牌的签发在 tokens-http.test.ts 里经 HTTP 测），
+// 返回请求里要带的原值。
 // 访问检查（src/auth/access-guard.ts）只认库里已有的凭据，所以访问检查的测试、跨项目的测试都从这里取。
 import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
@@ -137,6 +138,15 @@ export class TestAccounts {
 			],
 		);
 		return token;
+	}
+
+	/** 令牌行的 ID（`api_tokens.id`）：按原值的哈希找。 */
+	async tokenId(token: string): Promise<string> {
+		const { rows } = await this.#pool.query("select id from api_tokens where token_hash = $1", [
+			hashCredential(token),
+		]);
+		if (rows[0] === undefined) throw new Error("没有这个令牌");
+		return rows[0].id as string;
 	}
 
 	personalToken(userId: string, options: TokenOptions = {}): Promise<string> {

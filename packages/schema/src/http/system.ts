@@ -79,17 +79,19 @@ export const sdkApi = {
 		client: false,
 	}),
 	/**
-	 * `sfly init` 写进新项目 `pyproject.toml` 的配置：`sfly[cli]` 锁定的控制面版本、sfly 简单索引，
-	 * 以及控制面统一配置的镜像（ADR 0012，未配置时为 null，项目用 uv 的默认来源）。
+	 * `sfly init` 写进新节点包目录 `pyproject.toml` 的配置：`sfly[cli]` 锁定的控制面版本、sfly 简单索引，
+	 * 以及控制面统一配置的镜像（ADR 0012，未配置时为 null，节点包目录用 uv 的默认来源）。
+	 * 路径 `/sdk/project-settings` 保留：旧版 `sfly init` 在用，改了路径旧版命令行就初始化不了；
+	 * 里面的「项目」指节点包目录（ADR 0029：「项目」这个词留给租户），只改了说明和内部的名字。
 	 */
-	projectSettings: endpoint({
+	packageDirSettings: endpoint({
 		method: "GET",
 		path: "/sdk/project-settings",
-		summary: "sfly init 写进新项目的配置：控制面版本、sfly 索引和镜像",
+		summary: "sfly init 写进新节点包目录的配置：控制面版本、sfly 索引和镜像",
 		effect: "read",
 		resource: { kind: "system", target: "global" },
 		client: false,
-		key: ["sdk", "project-settings"],
+		key: ["sdk", "package-dir-settings"],
 		response: z.object({
 			version: z.string(),
 			/** sfly 简单索引的完整地址（带末尾 `/`）。 */
@@ -102,15 +104,15 @@ export const sdkApi = {
 	}),
 	/** 索引的项目页：与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`sfly` 以外的项目 404。 */
 	indexProject: download({
-		path: "/simple/:project/",
+		path: "/simple/:package/",
 		summary: "sfly 简单索引的项目页：SDK wheel 的下载链接",
 		effect: "read",
 		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		params: z.object({
-			/** 索引里的项目名；只有 `sfly`。 */
-			project: z.string(),
+			/** 索引里的包名（PEP 503 里叫 project）；只有 `sfly`。 */
+			package: z.string(),
 		}),
 		contentType: "text/html; charset=utf-8",
 	}),

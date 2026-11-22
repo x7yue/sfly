@@ -73,6 +73,9 @@ export interface RawRequest {
  * - `account` 账号：登录、登出、当前用户、改自己的密码，以及平台管理员管理账号（建用户、停用、重置密码）。
  *   账号不属于任何项目，路径不带项目，不走项目的范围表：各接口认哪种凭据由访问检查里的一张表规定
  *   （apps/server/src/auth/access-rules.ts 的 `ACCOUNT_ROUTES`）。ADR 0029「凭据」。
+ * - `project` 项目本身，以及属于项目的管理面：成员、项目令牌、项目密钥（它们是项目的一部分，和「运行预设是场景的一部分」同一条规则）。
+ *   定位用路径里的 `:project`（`target: { params: "project" }`）；写要「管理」范围，读也要「管理」（令牌、成员、密钥的列表
+ *   不给只读和编辑者看，见 apps/server/src/auth/scopes.ts 的 `SCOPE_TABLE`）。ADR 0029「项目从请求的哪里来」。
  */
 export const RESOURCE_KINDS = [
 	"scenario",
@@ -83,6 +86,7 @@ export const RESOURCE_KINDS = [
 	"feishu_bot",
 	"system",
 	"account",
+	"project",
 ] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 
@@ -96,6 +100,7 @@ export const RESOURCE_KIND_LABELS = {
 	feishu_bot: "飞书机器人",
 	system: "系统",
 	account: "账号",
+	project: "项目",
 } as const satisfies Record<ResourceKind, string>;
 
 /**

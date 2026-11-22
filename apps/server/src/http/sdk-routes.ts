@@ -14,9 +14,9 @@ import { sendError } from "./errors.js";
  * |---|---|---|
  * | GET | `/sdk/python` | `{ wheels: [{ version, filename, sha256, url }] }` |
  * | GET | `/sdk/python/:version/:filename` | 下载 wheel |
- * | GET | `/simple/` | sfly 简单索引（PEP 503）：只有 `sfly` 项目 |
+ * | GET | `/simple/` | sfly 简单索引（PEP 503）：只有 `sfly` 这个包 |
  * | GET | `/simple/sfly/` | 与控制面同版本的 wheel，链接带 `#sha256=` |
- * | GET | `/sdk/project-settings` | `sfly init` 写进新项目的版本、sfly 索引与镜像 |
+ * | GET | `/sdk/project-settings` | `sfly init` 写进新节点包目录的版本、sfly 索引与镜像 |
  */
 export function registerSdkRoutes(
 	app: FastifyInstance,
@@ -28,7 +28,7 @@ export function registerSdkRoutes(
 		publicHttpUrl: publicConfig.httpUrl,
 		mirrors: publicConfig.mirrors,
 	};
-	contractRoute(app, sdkApi.projectSettings, async () => {
+	contractRoute(app, sdkApi.packageDirSettings, async () => {
 		const githubRelease = deps.mirrors.githubRelease?.replace(/\/+$/, "");
 		return {
 			version: deps.version,
@@ -66,9 +66,14 @@ export function registerSdkRoutes(
 			.send(simplePage("sfly 简单索引", [{ href: "sfly/", text: "sfly" }])),
 	);
 
-	contractDownload(app, sdkApi.indexProject, async ({ params: { project } }, reply) => {
-		if (normalizeProject(project) !== "sfly") {
-			return sendError(reply, 404, "not_found", `sfly 索引里只有 sfly 项目，没有 ${project}`);
+	contractDownload(app, sdkApi.indexProject, async ({ params }, reply) => {
+		if (normalizePackageName(params.package) !== "sfly") {
+			return sendError(
+				reply,
+				404,
+				"not_found",
+				`sfly 索引里只有 sfly 这个包，没有 ${params.package}`,
+			);
 		}
 		// 只列出与控制面同版本的 wheel（ADR 0010：SDK 与控制面同版本）。
 		const links = deps.wheels
@@ -84,8 +89,8 @@ export function registerSdkRoutes(
 	});
 }
 
-/** PEP 503 的项目名规范化。 */
-const normalizeProject = (name: string) => name.toLowerCase().replace(/[-_.]+/g, "-");
+/** PEP 503 的包名规范化（PEP 503 里叫 project name；这里的「项目」留给租户，ADR 0029）。 */
+const normalizePackageName = (name: string) => name.toLowerCase().replace(/[-_.]+/g, "-");
 
 const escapeHtml = (text: string) =>
 	text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

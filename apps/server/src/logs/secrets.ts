@@ -1,4 +1,4 @@
-import { SECRET_MASK, type StoredOrchestrationDocument } from "@sfly/schema";
+import { SECRET_MASK, type StoredOrchestrationDocument, TOKEN_VALUE_PATTERN } from "@sfly/schema";
 
 /**
  * secret 参数的值在日志和运行视图里替换成的掩码（docs/SEMANTICS.md §2.1：secret 参数在界面和日志中打码显示）。
@@ -9,6 +9,16 @@ import { SECRET_MASK, type StoredOrchestrationDocument } from "@sfly/schema";
  * （secret 属性按值传播）；子流程实例创建后，它声明的 secret 值也用于整个运行。
  */
 export { SECRET_MASK };
+
+/**
+ * 把文本中的令牌原值（`sfly_pat_…`、`sfly_prj_…` 等，{@link TOKEN_VALUE_PATTERN}）换成掩码。令牌原值只在签发那一次的响应里
+ * 出现，不该出现在任何日志和视图里；它不是某次运行的 secret 参数，没法按值打码，所以按前缀认：不用先知道是哪个令牌，
+ * 没有 secret 参数的运行也一样（节点把环境里的令牌打印出来、把令牌写进输出，都是这条规则拦住）。宁可多盖，不能漏。
+ * 它是 {@link SecretSet.mask} 的一部分，读取和写入走的是同一处，不另有一套。
+ */
+export function maskTokens(text: string): string {
+	return text.includes("sfly_") ? text.replace(TOKEN_VALUE_PATTERN, SECRET_MASK) : text;
+}
 
 /**
  * 值是对象或数组的 secret 参数，它里面的字符串、数字叶子按值打码的最短长度（字符数；数字按它的 JSON 文本算）。
@@ -563,7 +573,10 @@ export class SecretSet {
 		return this.containers.has(canonicalJson(value));
 	}
 
-	/** 没有任何要打码的东西：读取和写入都可以跳过打码。 */
+	/**
+	 * 没有任何按值要打码的东西（不含令牌原值：那一条按前缀认，对每个集合都生效，见 {@link maskTokens}）。
+	 * 为真时不用比对 secret 值，只剩令牌原值的前缀检查。
+	 */
 	get isEmpty(): boolean {
 		return this.texts.length === 0 && this.scalars.size === 0 && this.containers.size === 0;
 	}
@@ -582,6 +595,11 @@ export class SecretSet {
 	 * 失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；错误本身不往外带，它的消息里可能有值。
 	 */
 	mask(text: string): string {
+		return maskTokens(this.#maskValues(text));
+	}
+
+	/** 按值打码（不含令牌原值）。 */
+	#maskValues(text: string): string {
 		if (this.texts.length === 0) return text;
 		try {
 			this.#matcher ??= buildMatcher(this.texts, this.#compile);
@@ -712,7 +730,6 @@ export function maskSecrets(text: string, secrets: SecretSet): string {
  *   不等于时递归里面的值。键不打码。
  */
 export function maskValue<T>(value: T, secrets: SecretSet): T {
-	if (secrets.isEmpty) return value;
 	return mask(value, secrets) as T;
 }
 
@@ -745,10 +762,11 @@ export function maskRecord<T extends Record<string, unknown> | null | undefined>
 	record: T,
 	secrets: SecretSet,
 ): T {
-	if (secrets.isEmpty || !record) return record;
-	return Object.fromEntries(
-		Object.entries(record).map(([key, value]) => [key, mask(value, secrets)]),
-	) as T;
+	if (!record) return record;
+	return unchangedOr(
+		record,
+		Object.entries(record).map(([key, value]) => [key, mask(value, secrets)] as const),
+	);
 }
 
 function mask(value: unknown, secrets: SecretSet): unknown {
@@ -758,8 +776,27 @@ function mask(value: unknown, secrets: SecretSet): unknown {
 	}
 	if (value !== null && typeof value === "object") {
 		if (secrets.equalsContainer(value)) return SECRET_MASK;
-		if (Array.isArray(value)) return value.map((item) => mask(item, secrets));
-		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, mask(v, secrets)]));
+		if (Array.isArray(value)) {
+			const items = value.map((item) => mask(item, secrets));
+			return items.every((item, i) => item === value[i]) ? value : items;
+		}
+		return unchangedOr(
+			value,
+			Object.entries(value).map(([k, v]) => [k, mask(v, secrets)] as const),
+		);
 	}
 	return value;
+}
+
+/**
+ * 逐个处理过的键值对：没有任何一个变化就返回原来的对象，不复制。令牌原值的前缀检查对每个运行都生效（没有 secret 参数的也是），
+ * 读取时每个输出都要走一遍；绝大多数没有变化，不为它们每次都复制整份输出。
+ */
+function unchangedOr<T extends object>(
+	original: T,
+	masked: ReadonlyArray<readonly [string, unknown]>,
+): T {
+	const before = Object.values(original);
+	if (masked.every(([, value], i) => value === before[i])) return original;
+	return Object.fromEntries(masked) as T;
 }

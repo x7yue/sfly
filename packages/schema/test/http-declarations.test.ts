@@ -101,8 +101,10 @@ describe("契约里全部接口的声明", () => {
 			.filter((def) => def.removes)
 			.map((def) => `${def.method} ${def.path}`);
 		expect(removing.sort()).toEqual([
+			"DELETE /account/tokens/:id",
 			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
+			"DELETE /projects/:project/tokens/:id",
 			"POST /orchestrations/:id/archive",
 		]);
 		// 恢复归档、改、取消都不是 removes
@@ -396,6 +398,73 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(list).toHaveLength(2);
 		expect(list[0]).toMatch(/^GET \/things\/:id：/);
 		expect(list[1]).toMatch(/^PATCH \/other\/:id：/);
+	});
+});
+
+describe("路径里的项目一律写成 /projects/:project/…（访问检查据此得出项目）", () => {
+	const problems = (def: RouteDef) => checkRouteDeclarations([def], DECLARATION_RULES);
+	const project = (patch: Record<string, unknown>) =>
+		broken({
+			method: "GET",
+			path: "/projects/:project/tokens",
+			resource: { kind: "project", target: { params: "project" } },
+			key: ["tokens", "project"],
+			params: z.object({ project: z.string() }),
+			...patch,
+		});
+
+	it("项目令牌的接口（/projects/:project/tokens…）按 PATH_KINDS 里的一项登记，资源类别是 project，定位用路径里的 :project", () => {
+		for (const key of [
+			"GET /projects/:project/tokens",
+			"POST /projects/:project/tokens",
+			"DELETE /projects/:project/tokens/:id",
+		]) {
+			const def = httpContract.find((d) => `${d.method} ${d.path}` === key);
+			expect(def?.resource, key).toEqual({ kind: "project", target: { params: "project" } });
+			expect(problems(def as RouteDef), key).toEqual([]);
+		}
+		expect(PATH_KINDS["/projects/:project/tokens"]?.kind).toBe("project");
+		expect(PATH_KINDS["/account"]?.kind).toBe("account");
+	});
+
+	it(":project 只能写在 /projects/:project/… 里：别处的 :project（PEP 503 的包曾经叫它）被拦下，说明改叫什么", () => {
+		const other = broken({
+			path: "/simple/:project/",
+			resource: { kind: "system", target: "global" },
+			params: z.object({ project: z.string() }),
+		});
+		expect(checkRouteDeclarations([other], { ...DECLARATION_RULES })[0]).toContain(
+			"里的 :project 位置不对",
+		);
+		expect(problems(project({ path: "/things/:project/tokens" })).join("；")).toContain(
+			"里的 :project 位置不对",
+		);
+		// 公开的简单索引现在叫 :package，没有这个问题。
+		expect(problems(httpContract.find((d) => d.path === "/simple/:package/") as RouteDef)).toEqual(
+			[],
+		);
+		expect(
+			httpContract.some((d) => d.path.includes(":project") && !d.path.startsWith("/projects/")),
+		).toBe(false);
+	});
+
+	it("/projects/ 后面一段不是 :project：拦下", () => {
+		expect(
+			problems(
+				project({
+					path: "/projects/:name/tokens",
+					params: z.object({ name: z.string() }),
+					resource: { kind: "project", target: { params: "name" } },
+				}),
+			).join("；"),
+		).toContain("/projects/ 后面一段要写 :project");
+	});
+
+	it("路径带项目的接口写成别的资源类别：拦住（项目令牌的路径只能是 project）", () => {
+		const wrong = project({ resource: { kind: "scenario", target: { params: "project" } } });
+		expect(problems(wrong).join("；")).toContain(
+			"PATH_KINDS 里 /projects/:project/tokens 对应 project",
+		);
 	});
 });
 

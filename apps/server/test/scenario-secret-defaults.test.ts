@@ -397,7 +397,9 @@ describe("场景版本里 secret 参数的默认值", () => {
 					page: "x",
 					skill: "x",
 					file: "x",
-					project: "stub",
+					// 简单索引里的包（PEP 503）；路径里的项目（`/projects/:project/…`）。
+					package: "stub",
+					project: "default",
 				};
 				const found = others[name];
 				if (found === undefined) {
@@ -637,6 +639,12 @@ describe("场景版本里 secret 参数的默认值", () => {
 			"POST /users/:id/disable": "同上",
 			"POST /users/:id/enable": "同上",
 			"POST /users/:id/password": "同上",
+			// 令牌类接口：和场景的默认值无关，处理的是令牌原值，另有专门的测试遍历它们的每个出口
+			// （accounts-secrets.test.ts：令牌原值只出现在签发它的那一次响应里）。
+			"POST /account/tokens": "令牌类接口，令牌原值另见 accounts-secrets.test.ts",
+			"DELETE /account/tokens/:id": "同上",
+			"POST /projects/:project/tokens": "同上",
+			"DELETE /projects/:project/tokens/:id": "同上",
 		};
 		/** 一个请求（方法 + 路径）对上契约里的哪个接口（路径模板）。 */
 		const templateOf = (method: string, path: string): string | undefined => {
