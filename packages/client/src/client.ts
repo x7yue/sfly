@@ -47,6 +47,11 @@ export interface ClientOptions {
 	 * 默认 `console.warn(mismatch.message)`。
 	 */
 	onVersionMismatch?: (mismatch: VersionMismatch) => void;
+	/**
+	 * 带着令牌往不是本机的 `http://` 地址发请求时（令牌在网络上是明文），每个客户端实例调用一次；请求照常进行。
+	 * 默认 `console.warn(message)`。
+	 */
+	onInsecureToken?: (message: string) => void;
 }
 
 /** 按路由描述调用任何接口：生成的方法建立在它上面，控制台用契约里的 zod 定义调用它。 */
@@ -80,6 +85,7 @@ export function createClient(options: ClientOptions): Client {
 		nickname: options.nickname,
 		onControlPlaneTime: options.onControlPlaneTime ?? (() => {}),
 		onVersionMismatch: options.onVersionMismatch ?? ((mismatch) => console.warn(mismatch.message)),
+		onInsecureToken: options.onInsecureToken ?? ((message) => console.warn(message)),
 	});
 
 	function request(

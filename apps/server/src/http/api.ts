@@ -60,6 +60,7 @@ import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
+import { serializeRequest } from "./request-log.js";
 import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
@@ -192,7 +193,9 @@ export function buildHttpApi({
 				? false
 				: {
 						...(logger === true ? {} : logger),
-						serializers: { err: serializeError },
+						// 请求日志记的是完整地址：客户端写错、把令牌放进查询参数时，原值会进日志。长得像我们令牌的值（前缀加一串
+						// 字母数字）在写进日志之前盖住（和任务日志、运行视图是同一条规则，{@link maskTokens}）；请求头不记。
+						serializers: { err: serializeError, req: serializeRequest },
 						hooks: {
 							logMethod(args, method) {
 								(method as (...parts: unknown[]) => void).apply(this, sanitizeLogArgs(args));
