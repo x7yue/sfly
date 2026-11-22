@@ -20033,11 +20033,16 @@
                 "last_turn_outcome"
               ]
             }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "会话超过 `SESSION_LIST_LIMIT` 个，更早的没有列出来（页面据此提示）。"
           }
         },
         "required": [
           "readiness",
-          "sessions"
+          "sessions",
+          "truncated"
         ]
       },
       "notes": []
@@ -20240,6 +20245,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
@@ -22071,6 +22086,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },

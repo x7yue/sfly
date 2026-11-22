@@ -88,6 +88,18 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 		]);
 	});
 
+	it("输入：没有声明的输入名", () => {
+		const doc = StoredOrchestrationDocument.parse({
+			...document(),
+			nodes: document().nodes.map((n) =>
+				n.id === "fetch_1" && n.kind === "package" ? { ...n, inputs: { url: "x", agnt: 1 } } : n,
+			),
+		});
+		expect(messages(doc, "input_not_declared")).toEqual([
+			"节点 创建测试用户（fetch_1） 的输入 agnt 没有声明：节点类型 fetch 声明的输入有 url、agent；是不是想写 agent？",
+		]);
+	});
+
 	it.each([
 		[
 			"feishu_notify",

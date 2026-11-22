@@ -6,7 +6,7 @@ import {
 	type StructureDocument,
 	subflowName,
 } from "@sfly/orchestration";
-import type { AgentView, PackageSummary } from "@sfly/schema";
+import { type AgentView, DEV_VERSION, type PackageSummary } from "@sfly/schema";
 import type { DocNode } from "#/components/canvas/flow";
 import { latestVersion } from "#/lib/package-versions";
 import { devNodes } from "./catalog";
@@ -146,7 +146,7 @@ export function packageGroups(
 	for (const pkg of packages ?? []) {
 		published.add(pkg.name);
 		const version = locked[pkg.name] ?? latestVersion(packages, pkg.name);
-		if (version === "dev") group(pkg.name, "dev", devItems(agents, pkg.name));
+		if (version === DEV_VERSION) group(pkg.name, DEV_VERSION, devItems(agents, pkg.name));
 		else {
 			const found = pkg.versions.find((v) => v.version === version);
 			if (found) group(pkg.name, found.version, found.nodes);
@@ -154,7 +154,7 @@ export function packageGroups(
 	}
 	const devOnly = new Set(agents.flatMap((a) => a.dev_packages?.map((d) => d.name) ?? []));
 	for (const name of [...devOnly].filter((n) => !published.has(n)).sort()) {
-		group(name, "dev", devItems(agents, name));
+		group(name, DEV_VERSION, devItems(agents, name));
 	}
 	const isLocked = (g: PackageGroup) => Object.hasOwn(locked, g.name);
 	return groups.sort((a, b) => Number(isLocked(b)) - Number(isLocked(a)));

@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from sfly.cli.client import ApiError, segment
 from sfly.cli.errors import EXIT_BY_STATUS, EXIT_INTERRUPTED, EXIT_TIMEOUT, CliError
 from sfly.cli.presets import find_preset, with_next_step
-from sfly.cli.run_params import build_params, describe_declared
+from sfly.cli.run_params import Declaration, build_params, describe_declared
 from sfly.cli.run_summary import (
     SummaryUnavailable,
     fetch_summary,
@@ -157,9 +158,7 @@ def _start(session: Session, args: argparse.Namespace) -> int:
     except ApiError as error:
         if error.code == "invalid_params":
             raise CliError(
-                "invalid_params",
-                f"入口参数不对：{error.message}\n{describe_declared(declared)}",
-                next=show,
+                "invalid_params", _invalid_params_message(error, declared), next=show
             ) from None
         raise with_next_step(error, scenario_id) from None
 
@@ -184,6 +183,23 @@ def _start(session: Session, args: argparse.Namespace) -> int:
         return 0
     announce = "\n".join([f"已触发运行 {run_id}，链接：{url}", *warning_lines])
     return _follow(session, run_id, args.timeout, announce=announce)
+
+
+def _invalid_params_message(error: ApiError, declared: Sequence[Declaration]) -> str:
+    """触发被拒绝（`invalid_params`）时的报错。
+
+    值接到类型不符的节点输入（`param_input_type_mismatch`，例如 `--param n=8.5` 接到整数输入）时，
+    参数本身没问题（声明过、值也合法），问题是值和它接到的节点输入的类型不符：标题说这个，
+    说明里已经写明哪个参数、哪个节点的哪个输入、怎么改，不再把声明的参数列一遍。
+    其余（缺必填、类型不对、没声明……）仍是「入口参数不对」。
+    """
+    details = error.details if isinstance(error.details, list) else []
+    if details and all(
+        isinstance(item, dict) and item.get("code") == "param_input_type_mismatch"
+        for item in details
+    ):
+        return f"入口参数的值和它接到的节点输入的类型不符：{error.message}"
+    return f"入口参数不对：{error.message}\n{describe_declared(declared)}"
 
 
 def _warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
