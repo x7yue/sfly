@@ -14,7 +14,7 @@ from typing import Literal, TypeVar
 import psutil
 
 from sfly_std import _params, _supervise
-from sfly_std._waiting import poll_until
+from sfly_std.waiting import poll_until
 
 #: 日志和错误信息里命令、命令行的最大字符数。
 PREVIEW_CHARS = 200

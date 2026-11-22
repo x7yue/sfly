@@ -46,6 +46,11 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 - 失败了通知谁、按结果发什么：节点自己失败就抛异常，不要为了通知在失败的地方当场发告警；要按整个运行的结果发一条通知，写一个**汇总节点**：把一个输入声明成 `RunState` 类型（`from sfly import RunState`），场景里把它接到 `${{ run.state }}`，节点收到整个运行此刻的状态（每个链实例上每个节点的 `status`、`attempts`、`error`（`headline` 是失败原因一行，`message` 不含堆栈），运行级的 `result_so_far`、`cancel`、`failures`），再用 `ctx.notify` 发。放法：放在链尾、设为 always 节点（前面失败或被取消时它仍然执行）；要看到某个子流程的最终结果，放在停止这个子流程的节点之后（主链不等待的子流程在汇总节点派发时可能还在进行）。`${{ run.state }}` 只能整值写在包节点的输入里，不能夹在文字里，也不能写在异步任务节点的参数映射里；`RunState` 类型的必填输入没接 `${{ run.state }}` 保存时会警告。单元测试用 `sfly.testing.run_state(nodes={...})` 造状态，断言 `run_node(...).notifications`；用一次真实运行的状态调试：`uv run sfly run show <运行> --state` 存成文件，放进输入文件，`uv run sfly debug <节点> --params @文件`。用到 `RunState` 就把 `[tool.sfly]` 的 `requires-sdk` 调到 `>=0.6.0`。
 - 往飞书群发通知用 `ctx.notify(机器人, 文本)`，要带格式用 `ctx.notify(机器人, message=sfly.feishu.card(标题, Markdown 正文, 颜色))`（完整的飞书请求体也能直接给 `message=`）；机器人声明成 `FeishuBot` 类型的参数传进来，不要自己请求 Webhook 地址：消息由控制面发出，投递失败不会抛异常，也不会让节点变慢。单元测试里断言 `run_node(...).notifications`。
 
+### 用 sfly-std 的辅助函数
+- 节点里要起停后台进程、跑命令、采样整机或进程的资源、跟随日志、等端口、文件或日志行、从另一台 Agent 拉文件时，先用 `sfly-std` 的辅助函数（`sfly_std.commands`、`processes`、`resources`、`logs`、`waiting`、`agent_files`，函数、参数和完整示例见开发文档「标准节点」页，每个函数的文档字符串写明了抛出什么异常），在自己的节点里导入、组合，不要重写进程组的起停、日志轮转、判断文件写完这类逻辑；业务本身的逻辑（调用被测系统的协议、判断结果对不对）仍然写在自己的节点里。
+- 用到它就把 `sfly-std` 写进 `[project].dependencies`（只写下限，例如 `sfly-std>=0.4`）；只导入文档里列出的模块和名字，下划线开头的模块（`sfly_std._process` 这类）是内部实现，不要导入。
+- 启动后台进程的节点：要么在 `try`/`finally` 里用 `stop_background_process` 停掉，要么在场景里加一个停止它的节点（设为 always 节点）。保存文件为产物时 `ctx.artifacts.save(名称, Path(路径))` 要传 `Path`，传字符串保存的是这段字符串本身。
+
 ### 取消与清理
 - 取消或超时时，节点里会抛出 `sfly.Cancelled`（`BaseException` 的子类）。捕获异常时写 `except Exception` 或更具体的类型，让 `Cancelled` 继续往外传；清理代码放在 `finally` / `with` 里，宽限期 10 秒内要做完。后台线程轮询 `ctx.cancelled()`。
 - 节点结束后还要存活的资源（启动的进程、造的测试数据）：由创建它的节点输出句柄，清理写成另一个节点，并提醒用户在场景里把它设为 always 节点。

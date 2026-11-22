@@ -2,7 +2,7 @@
 
 标准节点包 `sfly-std` 由平台维护，提供 Shell 命令这类与业务无关的**标准节点**，不用每个团队自己再写一遍。它就是一个普通的节点包：在 Agent 上执行，场景锁定它的版本，可以用 `sfly debug` 和 `sfly.testing` 调试。
 
-`sfly-std` 有自己的版本号，不随控制面发布，也不会自动出现在控制面上：部署者从 Release 下载后上传一次，之后有新版本时再上传。业务相关的节点仍然由你自己开发（见 [开发节点](sdk-reference.md)）。
+`sfly-std` 有自己的版本号，不随控制面发布，也不会自动出现在控制面上：部署者从 Release 下载后上传一次，之后有新版本时再上传。业务相关的节点仍然由你自己开发（见 [开发节点](sdk-reference.md)）；开发时常用的能力（起停进程、采样资源、跟随日志、拉文件……）也可以直接调用 `sfly-std` 的[辅助函数](#辅助函数)，不用再写一遍。
 
 ## 上传 sfly-std
 
@@ -39,6 +39,92 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 读日志文件的节点（`wait_log_line`、`follow_log`）用 `read_from` 指定从文件末尾还是开头读起。它没有叫 `from`：参数名就是 Python 函数的参数名，`from` 是 Python 关键字，不能用作参数名。
 - 进程、端口、文件类的节点作用于执行它的 Agent 所在的机器：启动进程的节点和后面停止、监控、检查它的节点要选同一个 Agent。
 - 跨 Agent 的节点（`pull_files`、`watch_files`）用 Agent 能力（见 [开发节点](sdk-reference.md) 的「`ctx.agent()`：Agent 能力」）访问参数 `source` 选的另一台 Agent：两台 Agent 直接连接，数据不经过控制面，两台之间要能连通（防火墙放行那台 Agent 的端口，默认 50052）。这些接口没有认证，只应在内网使用。两台 Agent 都要是 0.2.0 及以上，版本更旧时触发前的预检就会阻断，写明是哪台 Agent。
+
+## 辅助函数
+
+标准节点包的主体是**节点代码里可以直接调用的辅助函数**（从 `sfly-std` 0.4.0 起提供，0.3.0 里没有）。这些能力里难写对的是逻辑，不是节点的外壳：进程组的启动、停止和看护，采样整机与进程的资源，跟随会轮转的日志，判断文件写完了没有，经 Agent 能力从另一台机器拉文件，等端口、文件、日志行。把它们做成函数，你在自己的业务节点里导入、组合，行为由你的代码决定：函数能传参数、传回调（例如「进程重启之后按名字重新找到它」），不像上面的标准节点那样固定。
+
+用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`；`sfly init` 生成的项目已经配好从控制面的包索引取它，见 [创建节点包项目](init-project.md)），然后从下面的模块导入：
+
+| 模块 | 函数 | 做什么 |
+|---|---|---|
+| `sfly_std.commands` | `run_command` | 执行一段命令，输出实时转成任务日志，返回退出码和输出的末尾，可以把完整输出存成产物 |
+| `sfly_std.processes` | `start_background_process`、`stop_background_process`、`background_exit_code` | 启动跨节点存活的后台进程（新会话、有看护进程记退出码）、停止它所在的进程组（先 SIGTERM、宽限期后 SIGKILL）、读它的退出码 |
+| `sfly_std.processes` | `find_processes`、`ProcessFinder` | 按进程号、进程名或命令行找进程，可以连同子孙进程；每次都重新找，进程重启后按名字能找到新的 |
+| `sfly_std.resources` | `monitor_system`、`monitor_processes` | 按间隔采样整机或一组进程的 CPU、内存、磁盘、网络等并上报指标；`monitor_processes` 的 `refind` 让进程重启后按名字重新找到它、接着监控 |
+| `sfly_std.logs` | `LogFile`、`follow_log_file`、`wait_for_log_line` | 像 `tail -F` 一样读日志（处理轮转和截断）、把日志转成任务日志并在出现错误行时失败、等日志里出现某一行 |
+| `sfly_std.waiting` | `poll_until`、`wait_for_port`、`wait_for_file` | 反复检查直到条件成立或超时、等端口可以连接、等文件出现并写完 |
+| `sfly_std.agent_files` | `pull_files_from_agent`、`watch_agent_files` | 经 Agent 能力把另一台 Agent 上匹配的文件一次性拉过来、持续盯着一个目录拉新出现的 |
+
+每个函数都有文档字符串和类型标注（编辑器里直接看参数和会抛出什么异常）；资源采样、跟随日志、监听文件上报的指标由调用它们的节点在 `@node(metrics=...)` 里声明，模块里提供现成的声明：`SYSTEM_METRICS`、`SYSTEM_CHARTS`、`PROCESS_METRICS`、`PROCESS_CHARTS`、`FOLLOW_METRICS`、`WATCH_METRICS`。
+
+**兼容性承诺**：一台 Agent 的共享环境里只有一个 `sfly-std` 版本，所有依赖它的节点包用的是同一份，所以公开的接口只做向后兼容的改动：上面这些模块里 `__all__` 列出的函数和类，签名只增不减（新增的参数是带默认值的关键字参数），返回值只增加字段，异常的类型名不变；要改变已有行为就加一个新名字的函数，旧的继续保留。以下划线开头的模块（`sfly_std._process` 这类）是内部实现，不要导入。
+
+### 示例：起服务、等就绪、采样资源、收集日志、停服务
+
+下面的节点启动被测服务，等它打出就绪日志、端口可以连接，就绪后采样服务进程的资源，把服务日志存成产物，最后停掉服务。启动服务和停止服务在同一个节点里，所以放在 `try`/`finally` 里：节点失败或被取消时服务也一定会被停掉。它在 `std/tests/service_example.py` 里被真正跑过（起一个 HTTP 服务、采样、收集日志、停掉）。
+
+```python
+"""示例业务节点：起服务、等就绪、采样资源、收集日志、停服务。"""
+
+from pathlib import Path
+from typing import Annotated, TypedDict
+
+from sfly import Context, Doc, node
+from sfly_std.logs import wait_for_log_line
+from sfly_std.processes import start_background_process, stop_background_process
+from sfly_std.resources import PROCESS_CHARTS, PROCESS_METRICS, monitor_processes
+from sfly_std.waiting import wait_for_port
+
+
+class ServiceCheckOutputs(TypedDict):
+    samples: Annotated[int, Doc("采样了多少次")]
+    log: Annotated[str, Doc("服务日志的产物引用")]
+    exit_code: Annotated[int | None, Doc("停止服务时它的退出码")]
+
+
+@node(
+    title="服务冒烟检查",
+    metrics=PROCESS_METRICS,
+    charts=PROCESS_CHARTS,
+    primary_metric="cpu_percent",
+)
+def service_check(
+    ctx: Context,
+    command: Annotated[str, Doc("启动被测服务的命令")],
+    port: Annotated[int, Doc("服务监听的端口")],
+    ready_line: Annotated[str, Doc("服务就绪时打出的日志行（正则）")],
+    observe: Annotated[float, Doc("就绪后采样资源的秒数")] = 10,
+) -> ServiceCheckOutputs:
+    """起服务，等它就绪，采样它的资源，收集日志，最后停掉服务。
+
+    副作用：启动的服务在节点结束前一定会被停掉，包括节点失败、被取消的时候。
+
+    失败：服务 60 秒内没有就绪，或者采样期间服务退出了。
+    """
+    service = start_background_process(ctx, command)
+    try:
+        wait_for_log_line(ctx, service.log_file, ready_line, read_from="start", wait=60)
+        wait_for_port(ctx, port, wait=10)
+        monitor = monitor_processes(ctx, pid=service.pid, duration=observe)
+        log = ctx.artifacts.save("service.log", Path(service.log_file))
+    finally:
+        stopped = stop_background_process(ctx, service.pid)
+    return {"samples": monitor.samples, "log": log, "exit_code": stopped.exit_code}
+```
+
+几个要点：
+
+- `start_background_process` 启动的进程不属于任务的进程树，节点结束后它继续运行：要么像上面这样在 `finally` 里停，要么由场景里另一个节点（设为 always 节点）停止，用 `start_process` 和 `stop_process` 这两个节点就是这种做法。
+- `monitor_processes` 的指标要在 `@node` 里声明：`metrics=PROCESS_METRICS, charts=PROCESS_CHARTS`；不设置 `duration` 时它一直采样到任务被取消，所以要和压测同时跑的监控放在子流程里。
+- `ctx.artifacts.save(名称, 数据)`：数据是 `str` 或 `bytes` 时保存的是这段内容；要保存一个文件，传 `Path`。上面传的是 `Path(service.log_file)`，传成字符串会把路径当成内容存进去。
+- 被监控的进程会重启（崩溃后被拉起、发版时被替换）时，按名字或命令行指定目标并给 `refind`，进程退出后最多再等这么多秒让新的进程出现，出现了就接着监控，超过才按 `on_exit` 处理：
+
+  ```python
+  monitor_processes(ctx, name="gateway", refind=30, duration=600)
+  ```
+
+  按 `pid` 指定的目标不能这样找（进程号是一次性的），退出了就按 `on_exit` 处理。
 
 ## 节点一览
 

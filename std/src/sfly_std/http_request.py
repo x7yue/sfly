@@ -17,9 +17,9 @@ from typing import Annotated, Any, Literal, TypedDict
 import httpx
 
 from sfly import Context, Doc, Metric, node
-from sfly_std import _waiting
+from sfly_std import waiting as _waiting
 from sfly_std._assertions import Assertion, check, describe, validate
-from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
+from sfly_std.waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 
 #: 输出里响应内容（json 或 text）JSON 序列化后的最大字节数：json 超过时改为输出 text，
 #: text 超过时只保留开头。按序列化后的大小算，是因为控制字符会转义成 \u00XX（6 字节）、

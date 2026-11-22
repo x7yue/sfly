@@ -1,7 +1,7 @@
 """`wait_log_line`：等日志文件里出现匹配正则的行。
 
 用法见开发文档「标准节点」页（docs/guide/standard-nodes.md）的 `wait_log_line` 一节；
-读取日志文件的逻辑与 `follow_log` 共用（_logfile.py）。
+逻辑在辅助函数 `sfly_std.logs.wait_for_log_line`，这里是它的节点外壳。
 """
 
 from __future__ import annotations
@@ -9,9 +9,8 @@ from __future__ import annotations
 from typing import Annotated, Literal, TypedDict
 
 from sfly import Context, Doc, node
-from sfly_std import _params
-from sfly_std._logfile import LogFile
-from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until, validate
+from sfly_std.logs import wait_for_log_line
+from sfly_std.waiting import DEFAULT_POLL, DEFAULT_WAIT
 
 
 class WaitLogLineOutputs(TypedDict):
@@ -40,23 +39,6 @@ def wait_log_line(
     失败：wait 秒内没有出现匹配的行时失败，错误信息写明文件、正则和等了多久。
     文件一直不存在时，错误信息注明「文件不存在」。
     """
-    validate(wait, poll)
-    regex = _params.regex("pattern", pattern)
-    log = LogFile(path, from_start=read_from == "start")
-    try:
-        ctx.log.info("等待日志 %s 出现匹配 %s 的行，最多 %g 秒", path, pattern, wait)
-
-        def check() -> str | None:
-            return next((line for line in log.lines() if regex.search(line)), None)
-
-        line, waited = poll_until(
-            check,
-            what=f"日志 {path} 出现匹配 {pattern} 的行",
-            wait=wait,
-            poll=poll,
-            detail=lambda: "" if log.exists() else "文件不存在",
-        )
-    finally:
-        log.close()
-    ctx.log.info("等了 %.1f 秒，匹配到：%s", waited, line)
-    return {"line": line}
+    return {
+        "line": wait_for_log_line(ctx, path, pattern, read_from=read_from, wait=wait, poll=poll)
+    }
