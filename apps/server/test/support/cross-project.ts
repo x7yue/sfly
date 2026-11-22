@@ -10,9 +10,12 @@ import {
 } from "../../src/auth/access-rules.js";
 import { packageArchive, packageMetadata } from "./package-archive.js";
 
-/** 要生成测试的接口：不属于项目的（系统自身，不需要凭据）不在其中。 */
+/** 要生成测试的接口：不属于项目的（系统自身，不需要凭据；账号类接口，不属于任何项目）不在其中。 */
 export const projectRoutes = (contract: readonly RouteDef[] = httpContract): RouteDef[] =>
-	contract.filter((def) => locatorOf(def)?.from !== "none");
+	contract.filter((def) => {
+		const from = locatorOf(def)?.from;
+		return from !== "none" && from !== "account";
+	});
 
 /** 不属于项目的接口：任何凭据（含失效的）都不影响它们。 */
 export const systemRoutes = (contract: readonly RouteDef[] = httpContract): RouteDef[] =>

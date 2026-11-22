@@ -29,6 +29,7 @@ describe("平台管理员的写记录：响应的状态码", () => {
 	beforeEach(async () => {
 		store = new FakeAccessStore();
 		store.tokens.set(hashCredential("admin-token"), {
+			id: "token-1",
 			kind: "personal",
 			name: "运维",
 			user: ADMIN,

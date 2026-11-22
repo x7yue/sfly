@@ -13,6 +13,7 @@ export * from "./metric-format.js";
 export * from "./node-timeout.js";
 export * from "./orchestration-document.js";
 export * from "./package-metadata.js";
+export * from "./queue-timeout.js";
 export * from "./removed-document-fields.js";
 export * from "./removed-nodes.js";
 export * from "./run-failures.js";
