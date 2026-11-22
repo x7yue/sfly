@@ -44,6 +44,27 @@ export async function refreshIdentity(): Promise<void> {
 	}
 }
 
+/**
+ * 登录失效之后做什么（空闲期限到了、被注销、被停用）：由 `main.tsx` 登记，跳到登录页并带上现在的页面。
+ * 不放在这个文件里直接跳转：这里不依赖路由。
+ */
+let onSessionExpired: (() => void) | undefined;
+export function setSessionExpiredHandler(handler: (() => void) | undefined): void {
+	onSessionExpired = handler;
+}
+
+/**
+ * 有请求拿到了 401（接口请求，或事件流重连）：**本来登录着**、现在不是了，就把身份改成没有登录并通知一次，
+ * 页面回到登录页。一个开着的监控页悄悄停止更新（事件流拿到 401 就停了，页面上还显示着账号），比被请去重新登录糟得多。
+ * 只有 `user` 才通知：从没登录过的人（昵称模式，#494 之前仍然合法）、还不知道有没有登录（页面刚打开）、
+ * 登录页上登录失败的 401，都不跳转；同时到的好几个 401 只通知一次（第一个就把身份改了）。
+ */
+export function noteUnauthorized(): void {
+	if (identity.status !== "user") return;
+	set({ status: "anonymous" });
+	onSessionExpired?.();
+}
+
 export function subscribeIdentity(listener: () => void): () => void {
 	listeners.add(listener);
 	return () => listeners.delete(listener);
