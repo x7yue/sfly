@@ -24,8 +24,10 @@ export interface TokenOptions {
 export const bearer = (token: string): Record<string, string> => ({
 	authorization: `Bearer ${token}`,
 });
+/** 登录 Cookie 只对同源的请求有效（src/auth/cross-site.ts）：测试里的请求默认是控制台页面自己发的。 */
 export const loginCookie = (cookie: string): Record<string, string> => ({
 	cookie: `sfly_login=${cookie}`,
+	"sec-fetch-site": "same-origin",
 });
 
 export class TestAccounts {
