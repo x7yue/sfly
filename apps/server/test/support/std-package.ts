@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import pg from "pg";
 import { repoRoot } from "./agent-binary.js";
 import { bearer, TestAccounts } from "./credentials.js";
 import { publishInit } from "./package-archive.js";
