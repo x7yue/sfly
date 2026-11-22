@@ -1,6 +1,12 @@
-import { NODE_TIMEOUT_MAX_SECONDS } from "@sfly/schema";
+import { NODE_TIMEOUT_MAX_SECONDS, QUEUE_TIMEOUT_MAX_SECONDS } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { effectiveTimeout, NODE_DEFAULTS, nodeTimeoutProblem } from "../src/index.js";
+import {
+	effectiveQueueTimeout,
+	effectiveTimeout,
+	NODE_DEFAULTS,
+	nodeTimeoutProblem,
+	queueTimeoutProblem,
+} from "../src/index.js";
 
 // 生效的超时（#476）：场景里这个节点写的 → 节点类型声明的 → 平台默认的 1 小时；同时给出它从哪来。
 describe("effectiveTimeout", () => {
@@ -93,5 +99,58 @@ describe("nodeTimeoutProblem", () => {
 		expect(nodeTimeoutProblem("部署（deploy）", value)).toBe(
 			`节点 部署（deploy）：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 ${shown}`,
 		);
+	});
+});
+
+// 生效的排队超时（#559）：场景里这个节点写的，没写就是平台默认的 10 分钟；返回的永远是能算出有效截止时间的值。
+describe("effectiveQueueTimeout", () => {
+	it("写了用它，没写用平台默认的 10 分钟", () => {
+		expect(effectiveQueueTimeout({ queue_timeout: 30 })).toBe(30);
+		expect(effectiveQueueTimeout({})).toBe(NODE_DEFAULTS.queue_timeout);
+		expect(NODE_DEFAULTS.queue_timeout).toBe(600);
+	});
+
+	it("上限本身可以，排队截止时间是有效的时间", () => {
+		expect(effectiveQueueTimeout({ queue_timeout: QUEUE_TIMEOUT_MAX_SECONDS })).toBe(
+			QUEUE_TIMEOUT_MAX_SECONDS,
+		);
+		const deadline = new Date(
+			Date.now() + effectiveQueueTimeout({ queue_timeout: QUEUE_TIMEOUT_MAX_SECONDS }) * 1000,
+		);
+		expect(Number.isNaN(deadline.getTime())).toBe(false);
+	});
+
+	it.each([
+		["超过上限", QUEUE_TIMEOUT_MAX_SECONDS + 1],
+		["issue 里的量级", 8.64e12],
+		["零", 0],
+		["负数", -1],
+		["小数", 1.5],
+		["NaN", Number.NaN],
+		["Infinity", Number.POSITIVE_INFINITY],
+		["字符串", "600"],
+		["null", null],
+	])("写的是%s：不采用，用平台默认，算出的截止时间仍然有效", (_, bad) => {
+		const seconds = effectiveQueueTimeout({ queue_timeout: bad as number });
+
+		expect(seconds).toBe(NODE_DEFAULTS.queue_timeout);
+		expect(Number.isNaN(new Date(Date.now() + seconds * 1000).getTime())).toBe(false);
+	});
+});
+
+describe("queueTimeoutProblem", () => {
+	it("没写或合格：没有问题", () => {
+		expect(queueTimeoutProblem("n", undefined)).toBeUndefined();
+		expect(queueTimeoutProblem("n", null)).toBeUndefined();
+		expect(queueTimeoutProblem("n", 1)).toBeUndefined();
+		expect(queueTimeoutProblem("n", QUEUE_TIMEOUT_MAX_SECONDS)).toBeUndefined();
+	});
+
+	it("不合格：写明节点、字段、范围和实际的值", () => {
+		expect(queueTimeoutProblem("等槽位（wait）", 8.64e12)).toBe(
+			"节点 等槽位（wait）：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 8640000000000",
+		);
+		expect(queueTimeoutProblem("n", 0)).toContain("实际是 0");
+		expect(queueTimeoutProblem("n", "x")).toContain("实际是 x");
 	});
 });

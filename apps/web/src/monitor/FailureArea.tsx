@@ -3,7 +3,7 @@ import { ChevronRightIcon, OctagonXIcon } from "lucide-react";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { NodeNameInline, runNodeName } from "#/components/node-name";
 import { StatusDot } from "#/components/status";
-import { attemptLabel, FAILURE_AREA, moreLabel } from "#/lib/copy";
+import { attemptLabel, ERROR_LOCATION_LABEL, FAILURE_AREA, moreLabel } from "#/lib/copy";
 import { formatClock } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import type { OverviewTarget } from "./Overview";
@@ -42,6 +42,7 @@ function FullNodeName({
  * 概览首屏的失败区域（PRODUCT 第一条：为什么失败任何时候都要一眼可见）：运行里已有节点最终失败时（失败的运行，
  * 或者运行还在进行）出现在链路上面，写出第一个失败的节点（GLOSSARY「第一个失败的节点」）、第几次尝试、失败时间、
  * 失败原因的一行（`errorHeadline`，完整显示、放不下就折行，超过 4 行的收起：一行摘要几乎总是一行，一个几千字的单行不该把链路挤出首屏，全文在「展开全文」里）和一步直达它的尝试、日志的按钮；
+ * 失败原因下面一行写「出错位置：…」（节点的 `error.location`，有值才写）；
  * 错误信息的全文（含堆栈）、被收起的原因收在「展开全文」里，展开才看。
  *
  * 怎么成为首屏最突出的内容：位置在最上面；是概览里唯一铺着色底（`danger-soft`）和描边（`danger-line`）的块；
@@ -71,7 +72,16 @@ export function FailureArea({
 		check();
 		const observer = new ResizeObserver(check);
 		observer.observe(element);
-		return () => observer.disconnect();
+		// 字体加载完字宽变了：后备字体下正好 4 行、加载后变成 5 行时元素的高度没变（4 行），ResizeObserver 不回调，
+		// 文字被省略了却没有「展开全文」；字体就绪后再量一次。
+		let active = true;
+		void document.fonts.ready.then(() => {
+			if (active) check();
+		});
+		return () => {
+			active = false;
+			observer.disconnect();
+		};
 	}, [reason]);
 	if (!first) return null;
 	const title =
@@ -126,6 +136,11 @@ export function FailureArea({
 					{first.message}
 				</p>
 			)}
+			{first.location && (
+				<p data-testid="failure-location" className="m-0 font-mono text-xs text-fg-2 wrap-anywhere">
+					{ERROR_LOCATION_LABEL}：{first.location}
+				</p>
+			)}
 			<div className="flex flex-wrap items-center gap-2">
 				<Button size="sm" onClick={() => onOpen(targetOf(first, "attempts"))}>
 					{FAILURE_AREA.viewAttempts(node)}
@@ -145,7 +160,7 @@ export function FailureArea({
 							className="transition-[rotate] duration-(--motion-base) ease-(--motion-ease-out) motion-reduce:transition-none"
 							style={{ rotate: expanded ? "90deg" : "0deg" }}
 						/>
-						{FAILURE_AREA.fullMessage}
+						{FAILURE_AREA.fullMessage(expanded)}
 					</Button>
 				)}
 			</div>

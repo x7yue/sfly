@@ -165,25 +165,52 @@ export function foldLabel(station: Extract<Station, { kind: "fold" }>): string {
 	}
 }
 
+/** 链名那一列最宽 10rem（再长的链名截断，悬停看全名）。 */
+const LABEL_COLUMN_MAX = "10rem";
+
+/** 链名在 `text-xs`（0.75rem）里大概有多宽（rem）：全角字一个字宽，其余按 0.6 个字宽估。 */
+const labelRem = (text: string) =>
+	[...text].reduce((width, ch) => width + (ch.charCodeAt(0) > 0x2e7f ? 0.75 : 0.75 * 0.6), 0);
+
+/**
+ * 几块线路共用的链名列宽（控制台里上下排着的运行块）：按这些块里最长的链名估一个宽度，给每块的 {@link RunLines}
+ * 的 `labelWidth`，各块的线路才从同一个横坐标开始（每块自己取链名的宽度，「主链」和「子流程 监控」的块就错开了）。
+ * 是估算（见 {@link labelRem}）：估多了只是多一点空白，估少了链名的末尾省略（悬停看全名）；最宽 10rem。
+ */
+export function labelColumnWidth(labels: readonly string[]): string {
+	const widest = Math.max(0, ...labels.map(labelRem));
+	// 加上名称右边的 0.75rem 间距和 0.375rem 余量。
+	return `min(${LABEL_COLUMN_MAX}, ${(widest + 1.125).toFixed(3)}rem)`;
+}
+
 /**
  * 线路。每行是一条链：名称、各站（站名在点的下面）、已完成数 / 节点数。所有行共用一套列（CSS subgrid），
  * 子流程的第一站和父链上触发它的那一站对齐，分支竖线从父链那一站画下来。
+ * 链名那一列默认取这块里最长链名的宽度；上下排着几块时传 `labelWidth`（{@link labelColumnWidth}），各块对齐。
  */
 export function RunLines({
 	chains,
 	className,
+	labelWidth,
 }: {
 	chains: readonly LineChain[];
 	className?: string;
+	/** 链名那一列的宽度（CSS 长度）；不给时取这块里最长链名的宽度。 */
+	labelWidth?: string | undefined;
 }) {
 	const { rows, columns } = layoutLines(chains);
 	return (
 		<ul
 			aria-label={LIST_LABEL.chainProgress}
 			data-viz
-			style={{ "--line-columns": columns } as CSSProperties}
+			style={
+				{
+					"--line-columns": columns,
+					...(labelWidth ? { "--line-label": labelWidth } : {}),
+				} as CSSProperties
+			}
 			className={cn(
-				"m-0 grid list-none grid-cols-[max-content_repeat(var(--line-columns),minmax(0,14rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
+				"m-0 grid list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,14rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
 				className,
 			)}
 		>

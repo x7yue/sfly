@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import {
+	effectiveQueueTimeout,
 	InvalidReferenceError,
-	NODE_DEFAULTS,
+	nodeNameWithId,
+	queueTimeoutProblem,
 	type ResolveScope,
 	referencesRunState,
 	resolveInputs,
@@ -29,6 +31,7 @@ import type { ClockOffset } from "../agents/agent-clock.js";
 import type { AgentEnvironmentFor } from "../agents/agent-environment.js";
 import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
 import { loadAgentTasks } from "../agents/agent-tasks.js";
+import { connectionBlock, freeSlots } from "../agents/dispatch-gate.js";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import {
@@ -95,9 +98,12 @@ import { platformTimeoutHint } from "./timeout-hint.js";
 
 export { DEFAULT_LEASE_MS } from "./leases.js";
 
-/** 节点进入 queued 后最多排队多久（docs/SEMANTICS.md §3.3 queue_timeout，默认 10 分钟）。 */
-const queueTimeoutMs = (node: PackageNode) =>
-	(node.queue_timeout ?? NODE_DEFAULTS.queue_timeout) * 1000;
+/**
+ * 节点进入 queued 后最多排队多久（docs/SEMANTICS.md §3.3 queue_timeout，默认 10 分钟）。
+ * 场景里写的值不合格时（升级前保存的版本里可能有，#559）用默认值：调用方先用 {@link queueTimeoutProblem} 拦下，
+ * 这里保证算出的截止时间永远是有效的时间，不会因为一个写错的数字抛出 Invalid time value。
+ */
+const queueTimeoutMs = (node: PackageNode) => effectiveQueueTimeout(node) * 1000;
 
 export type TriggerOutcome = { ok: true; runId: string } | TriggerRejection;
 
@@ -723,6 +729,18 @@ export class Engine implements AgentSessionHandler {
 				continue;
 			}
 			if (node.kind === "package") {
+				// 场景里写的排队超时不合格（升级前保存的版本里可能有，保存和触发前的预检已经拦了，#559）：算不出有效的排队
+				// 截止时间，这个节点按配置错误失败（不重试），这条链后面的节点照常按失败的规则推进。
+				const queueProblem = queueTimeoutProblem(nodeNameWithId(node), node.queue_timeout);
+				if (queueProblem) {
+					const [task] = await step.tx
+						.insert(tasks)
+						.values({ ...base, status: "running", startedAt: step.now })
+						.onConflictDoNothing()
+						.returning();
+					if (task) await this.#failTask(step, task, "config_error", queueProblem);
+					return;
+				}
 				const agentName = agentFor(document, node);
 				await step.tx
 					.insert(tasks)
@@ -1094,7 +1112,14 @@ export class Engine implements AgentSessionHandler {
 			})
 			.where(eq(tasks.id, task.id));
 		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（docs/SEMANTICS.md §4.1 第 4 条），后面的普通节点记为 stopped。
-		if (!stopped && task.agentName && shouldRetry(node, kind, task.attempt)) {
+		// 排队超时不合格的节点（升级前保存的版本里可能有）第一次尝试就没有排上队，走不到这里；防御性地不为它重试。
+		if (
+			!stopped &&
+			task.agentName &&
+			shouldRetry(node, kind, task.attempt) &&
+			(node.kind !== "package" ||
+				queueTimeoutProblem(nodeNameWithId(node), node.queue_timeout) === undefined)
+		) {
 			const attempt = task.attempt + 1;
 			await step.tx
 				.insert(tasks)
@@ -1283,13 +1308,14 @@ export class Engine implements AgentSessionHandler {
 	 */
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
-		if (!conn?.ready || this.deps.hub.versionMismatch(conn.info)) return;
+		// 能不能派发由 agents/dispatch-gate.ts 判断（页面上「排队中的任务在等什么」用的是同一段判断）。
+		if (!conn || connectionBlock(conn, this.deps.hub.versionMismatch(conn.info)) !== null) return;
 		await this.#step(async (step) => {
 			const [running] = await step.tx
 				.select({ n: count() })
 				.from(tasks)
 				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)));
-			let free = conn.info.slots - (running?.n ?? 0);
+			let free = freeSlots(conn.info.slots, running?.n ?? 0);
 			if (free <= 0) return;
 			const queued = await step.tx
 				.select()
