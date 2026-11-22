@@ -62,3 +62,82 @@ export function documentWarnings(
 		...annotationWarnings(doc),
 	];
 }
+
+/**
+ * 全部警告的种类（运行时的名单，`documentWarnings` 可能给出的每一种）。类型上保证和 `OrchestrationWarning["code"]` 完全一致：
+ * 新加一种警告而没有写进这里，编译不过；「同一条警告」的测试按这份名单逐种检查定位的字段够不够。
+ */
+export const DOCUMENT_WARNING_CODES = [
+	"entry_count",
+	"unknown_node",
+	"invalid_dispatch",
+	"multiple_outgoing",
+	"multiple_incoming",
+	"entry_incoming",
+	"cycle",
+	"async_without_dispatch",
+	"async_multiple_dispatch",
+	"subflow_not_triggered",
+	"subflow_multiple_triggers",
+	"subflow_name_empty",
+	"subflow_name_duplicate",
+	"stop_subflow_unset",
+	"stop_subflow_unknown",
+	"stop_subflow_before_trigger",
+	"stop_subflow_out_of_scope",
+	"nesting_too_deep",
+	"orphan_node",
+	"missing_agent",
+	"package_not_locked",
+	"package_version_missing",
+	"unknown_node_type",
+	"reference_invalid",
+	"reference_unknown_param",
+	"reference_unknown_node",
+	"reference_not_earlier",
+	"reference_unknown_output",
+	"subflow_param_unknown",
+	"subflow_param_missing",
+	"reference_run_state_embedded",
+	"reference_run_state_misplaced",
+	"input_run_state_missing",
+	"input_run_state_value",
+	"input_required",
+	"input_type_mismatch",
+	"agent_input_not_registered",
+	"feishu_bot_not_registered",
+	"node_kind_removed",
+	"annotation_unknown_node",
+	"annotation_unknown_subflow",
+	"annotation_no_members",
+	"annotation_duplicate_member",
+] as const satisfies readonly OrchestrationWarning["code"][];
+
+type MissingCodes = Exclude<OrchestrationWarning["code"], (typeof DOCUMENT_WARNING_CODES)[number]>;
+/** 名单漏了哪种警告时这里报类型错误（`MissingCodes` 不是 never）。 */
+const _allCodesListed: [MissingCodes] extends [never] ? true : MissingCodes = true;
+void _allCodesListed;
+
+/** 定位一条警告的字段：种类加它指向的对象（`node_id`、`input`、`annotation_id`、`target`）。 */
+export interface WarningLocation {
+	code: string;
+	message?: string;
+	node_id?: string | undefined;
+	input?: string | undefined;
+	annotation_id?: string | undefined;
+	target?: string | undefined;
+}
+
+/**
+ * 「同一条警告」的键（#424）：种类加它指向的对象，不看文字。检查一份文档时，最新版本里有同样键的警告算「改动之前就有」。
+ * 指向的对象由 `node_id`、`input`、`annotation_id` 和 `target` 共同确定；同一个节点（或注释框）上可能有两条同种警告的，
+ * 都在 `target` 里写清是哪一个（引用的路径、注释框的成员、连线、选的 Agent……），见各警告的说明。
+ */
+export const warningIdentity = (w: WarningLocation): string =>
+	JSON.stringify([
+		w.code,
+		w.node_id ?? null,
+		w.input ?? null,
+		w.annotation_id ?? null,
+		w.target ?? null,
+	]);

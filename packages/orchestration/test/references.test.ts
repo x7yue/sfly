@@ -151,6 +151,7 @@ describe("引用检查", () => {
 					node_id: "b",
 					input: "value",
 					message: "节点 b 的输入 value 引用了不存在的节点 zzz",
+					target: "nodes.zzz.outputs.x",
 				},
 			],
 		);
@@ -176,6 +177,7 @@ describe("引用检查", () => {
 				node_id: "b",
 				input: "value",
 				message: "节点 b 的输入 value 引用的输出键 bdoy 没有在节点 a 的节点类型中声明",
+				target: "nodes.a.outputs.bdoy",
 			},
 		]);
 	});
