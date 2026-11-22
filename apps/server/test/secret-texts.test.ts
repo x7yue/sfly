@@ -1312,13 +1312,25 @@ describe("长值的索引：扫一遍就查全，结果和逐个 indexOf 的参�
 		expect(set.mask(`x short-secret y ${long} z`)).toBe(`x ${MASK} y ${MASK} z`);
 	});
 
-	it("650 个各 1500 个字符、开头相同的值：一页 1000 行（每行 4096 个同样的字符）带预算时总耗时有上限；没有预算时每行不再随值的个数成倍增长", () => {
+	it("650 个各 1500 个字符、开头相同、长度相同的值：一页 1000 行（每行 4096 个同样的字符）每个位置只算一次整段的哈希，一页用不完预算、一行也不盖", () => {
 		const values = Array.from(
 			{ length: 650 },
 			(_, i) => `${"a".repeat(1490)}${i.toString(36).padStart(10, "0")}`,
 		);
 		const set = setOf(...values);
 		expect(set.matching().literals).toBeGreaterThan(600);
+		const line = "a".repeat(4096);
+		const budget = new WorkBudget();
+		const view = set.withBudget(budget);
+		const started = performance.now();
+		for (let i = 0; i < 1000; i++) expect(view.mask(line)).toBe(line);
+		expect(performance.now() - started, "一页").toBeLessThan(500);
+		expect(budget.remaining).toBeGreaterThan(READ_WORK_BUDGET * 0.2);
+	});
+
+	it("开头相同、长度各不相同的 650 个值（每个位置要看 650 组）：一页 1000 行总耗时有上限，用完预算之后整段盖住", () => {
+		const values = Array.from({ length: 650 }, (_, i) => `${"a".repeat(1100 + i)}z`);
+		const set = setOf(...values);
 		const line = "a".repeat(4096);
 		const budget = new WorkBudget();
 		const view = set.withBudget(budget);

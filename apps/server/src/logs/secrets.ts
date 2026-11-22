@@ -362,10 +362,18 @@ const compileGlobal: Compile = (source) => new RegExp(source, "g");
 interface LiteralIndex {
 	/** 开头哈希的低 16 位出现过哪些：先查它，绝大多数位置不用查表。 */
 	filter: Uint8Array;
-	/** 开头哈希 → 以它开头的文本（长的在前，同 {@link SecretSet.texts} 的顺序）。 */
-	byHash: Map<number, Array<{ text: string; hash: number; pow: number }>>;
+	/** 开头哈希 → 以它开头的文本，按长度分组（开头相同、长度相同的很多个值，每个位置只算一次整段的哈希）。 */
+	byHash: Map<number, LengthGroup[]>;
 	minLength: number;
 	maxLength: number;
+}
+
+/** 开头相同的文本里长度相同的一组：整段的哈希 → 文本（哈希撞了才会有一个以上）。 */
+interface LengthGroup {
+	length: number;
+	/** HASH_BASE 的 length 次方。 */
+	pow: number;
+	byFull: Map<number, string[]>;
 }
 
 /** 长文本的索引按开头这么多个码元分组。 */
@@ -396,16 +404,26 @@ function hashOf(text: string, from: number, length: number): number {
 function buildIndex(longTexts: readonly string[]): LiteralIndex | undefined {
 	if (longTexts.length === 0) return undefined;
 	const filter = new Uint8Array(1 << 16);
-	const byHash = new Map<number, Array<{ text: string; hash: number; pow: number }>>();
+	const byHash = new Map<number, LengthGroup[]>();
 	let minLength = Number.POSITIVE_INFINITY;
 	let maxLength = 0;
 	for (const text of longTexts) {
 		const prefix = hashOf(text, 0, LITERAL_PREFIX);
 		filter[prefix & 0xffff] = 1;
-		const entry = { text, hash: hashOf(text, 0, text.length), pow: hashPower(text.length) };
-		const list = byHash.get(prefix);
-		if (list) list.push(entry);
-		else byHash.set(prefix, [entry]);
+		let groups = byHash.get(prefix);
+		if (!groups) {
+			groups = [];
+			byHash.set(prefix, groups);
+		}
+		let group = groups.find((g) => g.length === text.length);
+		if (!group) {
+			group = { length: text.length, pow: hashPower(text.length), byFull: new Map() };
+			groups.push(group);
+		}
+		const full = hashOf(text, 0, text.length);
+		const list = group.byFull.get(full);
+		if (list) list.push(text);
+		else group.byFull.set(full, [text]);
 		minLength = Math.min(minLength, text.length);
 		maxLength = Math.max(maxLength, text.length);
 	}
@@ -629,22 +647,22 @@ function maskSpans(text: string, matcher: Matcher, budget?: WorkBudget): string 
 				const head = H[at] as number;
 				const prefix = ((H[at + LITERAL_PREFIX] as number) - Math.imul(head, HASH_POW_PREFIX)) | 0;
 				if (index.filter[prefix & 0xffff] !== 1) continue;
-				const candidates = index.byHash.get(prefix);
-				if (!candidates) continue;
-				for (const candidate of candidates) {
-					const length = candidate.text.length;
+				const groups = index.byHash.get(prefix);
+				if (!groups) continue;
+				for (const group of groups) {
+					// 每看一组记一份；放不下的（比剩下的文字长）不用算
 					work += 1;
-					if (i + length > text.length) continue;
+					if (i + group.length > text.length) continue;
 					// 整段的哈希对不上就不用核对
-					if (
-						(((H[at + length] as number) - Math.imul(head, candidate.pow)) | 0) !==
-						candidate.hash
-					)
-						continue;
-					work += length;
-					if (text.startsWith(candidate.text, i)) {
-						spans.push([i, i + length]);
-						work += MASK_WORK_PER_MATCH;
+					const full = ((H[at + group.length] as number) - Math.imul(head, group.pow)) | 0;
+					const list = group.byFull.get(full);
+					if (!list) continue;
+					for (const literal of list) {
+						work += literal.length;
+						if (text.startsWith(literal, i)) {
+							spans.push([i, i + literal.length]);
+							work += MASK_WORK_PER_MATCH;
+						}
 					}
 					if (work > cap) {
 						spend();
