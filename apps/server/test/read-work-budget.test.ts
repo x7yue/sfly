@@ -8,7 +8,7 @@ import { ACTION_LIMITS, SECRET_MASK as MASK } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import { FakeAgent } from "./support/fake-agent.js";
+import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { publishBench } from "./support/focus-items.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -57,6 +57,37 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		]).flat();
 	};
 
+	/** 动作摘要：1 个正在做的、最近结束的 20 个、最近失败的 5 个，文字同 {@link actionEvents}。 */
+	const sendSummary = (task: AssignedTask) => {
+		const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
+		const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+		const name = `${"a".repeat(nameChars - 1)}b`;
+		const value = `${"a".repeat(valueChars - 1)}b`;
+		const fields = Object.fromEntries(
+			Array.from({ length: 8 }, (_, f) => [`${"a".repeat(nameChars - 2)}b${f}`, value]),
+		);
+		const end = agent.stamp(t0 + 5_000);
+		const running = { id: 1, parent: null, depth: 0, name, fields, ...agent.stamp(t0) };
+		const ended = (id: number) => ({
+			...running,
+			id,
+			...agent.stamp(t0 + id),
+			end_ts: end.ts,
+			end_mono: end.mono,
+			result: "failed" as const,
+			reason: `${"a".repeat(reasonChars - 2)}b…`,
+		});
+		const zero = { reported: 200, capped_ts: null, capped_mono: null, failed: 200 };
+		agent.actionSummary(task, {
+			total: 200,
+			reported: 200,
+			names: [{ name, total: 200, ...zero }],
+			running: [running],
+			recent: Array.from({ length: 20 }, (_, i) => ended(i + 2)),
+			recent_failed: Array.from({ length: 5 }, (_, i) => ended(i + 30)),
+		});
+	};
+
 	/** 读一页动作和动作摘要，每一步的耗时都有上限；用完预算之后剩下的整段盖住。 */
 	const expectFastReads = async (taskId: string) => {
 		const readStarted = performance.now();
@@ -71,8 +102,9 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 
 		const summaryStarted = performance.now();
 		const summary = await cp.fetch(`/tasks/${taskId}/actions/summary`);
-		await summary.text();
+		const body = (await summary.json()) as { recent: unknown[]; running: unknown[] };
 		expect(summary.status).toBe(200);
+		expect(body.recent.length).toBe(20);
 		expect(performance.now() - summaryStarted, "读摘要").toBeLessThan(2000);
 	};
 
@@ -91,6 +123,7 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 
 		const writeStarted = performance.now();
 		agent.actions(task, actionEvents());
+		sendSummary(task);
 		await agent.sync();
 		// 一批 200 条的写入：共用一份预算，不是每处文字各花满一次（那样要几十秒）
 		expect(performance.now() - writeStarted, "写入一批 200 条动作").toBeLessThan(5000);
@@ -131,6 +164,7 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
 		// 写入时这些值还不是 secret 值：文字原样写下，读的时候才每一处都要和这一千个值比
 		agent.actions(sa, actionEvents());
+		sendSummary(sa);
 		await agent.sync();
 		await agent.succeed(b);
 		await eventually(async () =>
