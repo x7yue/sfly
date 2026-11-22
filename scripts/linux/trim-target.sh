@@ -6,13 +6,13 @@
 # 这里在每次运行开始时量一下：
 # 1. 超过上限：先删增量编译的缓存（target/<profile>/incremental，只加快改动一个 crate 之后的重编，删了不影响其余）；
 # 2. 还是超过：整个 target 删掉，这次运行从头编译（几分钟），之后重新长起来。
-# 上限默认 5120 MB，用 SFLY_LINUX_TARGET_LIMIT_MB 改（entry.sh 在容器里调用，宿主上改 ~/.zshrc 之类里的环境变量即可）。
+# 上限默认 4096 MB，用 SFLY_LINUX_TARGET_LIMIT_MB 改（entry.sh 在容器里调用，宿主上改 ~/.zshrc 之类里的环境变量即可）。
 #
 # 用法：trim-target.sh <target 目录> [上限 MB]
 set -euo pipefail
 
 dir=${1:?用法：trim-target.sh <target 目录> [上限 MB]}
-limit=${2:-${SFLY_LINUX_TARGET_LIMIT_MB:-5120}}
+limit=${2:-${SFLY_LINUX_TARGET_LIMIT_MB:-4096}}
 case $dir in "" | / | .) echo "trim-target.sh：不删 $dir" >&2; exit 2 ;; esac
 [[ -d $dir ]] || exit 0
 

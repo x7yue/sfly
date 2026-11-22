@@ -84,7 +84,10 @@ if [[ ${#targets[@]} -eq 0 ]]; then
 	exit 0
 fi
 
-kb_text() { awk -v kb="$1" 'BEGIN { printf "%.1f GB", kb / 1024 / 1024 }'; }
+# 1 GB 以上写 GB，不到写 MB。
+kb_text() {
+	awk -v kb="$1" 'BEGIN { if (kb >= 1024 * 1024) printf "%.1f GB", kb / 1024 / 1024; else printf "%d MB", kb / 1024 }'
+}
 
 # 清理（或 --dry-run 时只数大小）：容器里先数大小再删，逐行输出「目录名 大小(KB) 状态」。
 # 下面两段单引号里的 $d、$kb 是在容器里的 sh 展开的，不是这里。

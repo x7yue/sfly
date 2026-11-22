@@ -260,7 +260,7 @@ def test_only_copies_without_an_owner_are_removed(volume: str, image: str) -> No
         assert name in done.stderr
     assert "已经不存在" in done.stderr
     assert "没有记录工作区路径" in done.stderr
-    assert "GB" in done.stderr
+    assert "MB" in done.stderr  # 每个测试目录 2 MB 多，不到 1 GB 写 MB
     for name in (NAME_ALIVE, NAME_LEGACY_NEW, NAME_NOT_A_COPY):
         assert name not in done.stderr
 

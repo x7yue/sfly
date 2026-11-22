@@ -16,7 +16,7 @@
 # - 默认限制在 4 个 CPU（与 CI 的 runner 相同），用 SFLY_LINUX_CPUS 改。
 # - 卷不会一直涨（#579）：每次运行前自动清掉已经没有主人的工作区副本（记在副本里的路径在本机不存在了；旧版本脚本建的、
 #   没有记录路径的，SFLY_LINUX_STALE_DAYS 天（默认 14）没用过的），见 prune.sh；运行开始时这个工作区的编译结果超过
-#   SFLY_LINUX_TARGET_LIMIT_MB（默认 5120）先删增量编译的缓存、还超就整个删，见 trim-target.sh；uv 的缓存超过
+#   SFLY_LINUX_TARGET_LIMIT_MB（默认 4096）先删增量编译的缓存、还超就整个删，见 trim-target.sh；uv 的缓存超过
 #   SFLY_LINUX_UV_CACHE_LIMIT_MB（默认 1024）让 uv 清掉不再被引用的部分（entry.sh）。
 # - SFLY_LINUX_VOLUME 改卷的名字（测试用）。
 set -euo pipefail
