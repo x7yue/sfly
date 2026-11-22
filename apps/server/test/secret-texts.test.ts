@@ -1586,6 +1586,15 @@ describe("读取的工作量预算：一次读取共用一份，用完之后剩�
 		const small = new WorkBudget(100);
 		expect(set.withBudget(small).maskClipped(text, 40)).toBe(MASK);
 		expect(small.remaining).toBe(0);
+		// 不会部分重叠的值（一次 replace 的路径，打码本身不花工作量）：结尾没有半截，但比较花掉的工作量超过了预算：同样整段盖住
+		// 值少一些，编译成一个正则（plain 要求只有一个正则）
+		const plain = setOf(...values.slice(0, 100));
+		expect(plain.matching().plain).toBe(true);
+		const noTail = "a".repeat(40);
+		expect(plain.maskClipped(noTail, 40)).toBe(noTail);
+		const tiny = new WorkBudget(100);
+		expect(plain.withBudget(tiny).maskClipped(noTail, 40)).toBe(MASK);
+		expect(tiny.remaining).toBe(0);
 	});
 
 	it("没有出现的文字不花预算：预算只被真正的出现位置和找半截的比较用掉（读一页日志，行里没有 secret 值时不会把预算用光）", () => {
