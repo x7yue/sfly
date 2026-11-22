@@ -15,7 +15,9 @@ import type {
  * - 持久的事件（有 `seq`）同一个序号来两次不重复：先读最近一页历史、再接事件流（从最大序号之后），两边可能有重叠；
  * - `assistant_delta` 追加到当前这条助手的话里，之后的 `assistant_message` 用整条的文字替换它（以它为准）；
  * - `tool_call` 之后同一个 `call_id` 的 `tool_result` 落在同一行；一轮结束时还没有结果的行不再算在做；
- * - `thinking` 只留一个「在思考」的标记，有文字或工具出来就去掉（思考的内容不显示）；
+ * - `thinking` 只留一个「在思考」的标记，有文字或工具出来就去掉（思考的内容不显示）；一轮不在进行时（`turn_end` 之后、
+ *   会话已结束）才到的 `thinking` 和 `assistant_delta` 是迟到的，不处理，「思考中」不会挂着；
+ * - 用户的话按 `message_id` 去重，不靠文字；
  * - 这一版不渲染的类型（`turn_queued`、`tool_output`、`steer_queue`、`platform`、`snapshot`）和不认识的类型原样放过，不抛错。
  *   其中 `turn_started`、`session_ended` 只用来算会话的状态。
  */
@@ -36,6 +38,8 @@ export type TimelineItem =
 			key: string;
 			seq: number;
 			at: string;
+			/** 这句话自己的 ID（控制面收到时分配）：去重和对应用它，不靠文字。 */
+			messageId: string;
 			author: string;
 			text: string;
 	  }
@@ -154,9 +158,17 @@ export function applyEvent(state: TimelineState, event: SessionEvent): TimelineS
 	};
 }
 
+/** 有一轮在进行：思考和文字增量只在这时有意义（它们不持久，一轮结束之后才到的是迟到的）。 */
+const inTurn = (state: TimelineState): boolean =>
+	state.status === "running" || state.status === "queued";
+
 function apply(state: TimelineState, event: SessionEvent): TimelineState {
 	switch (event.type) {
 		case "user_message":
+			// 同一句话（`message_id` 相同）不会有两个序号：补发和重叠时按它去重，连发两句相同的话仍是两句。
+			if (state.items.some((item) => item.kind === "user" && item.messageId === event.message_id)) {
+				return state;
+			}
 			return {
 				...state,
 				thinking: false,
@@ -167,6 +179,7 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 						key: `e${event.seq}`,
 						seq: event.seq,
 						at: event.at,
+						messageId: event.message_id,
 						author: event.author,
 						text: event.text,
 					},
@@ -175,8 +188,11 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 		case "turn_started":
 			return { ...state, status: "running" };
 		case "thinking":
+			// 一轮已经结束（或会话已结束）之后才到的思考（补发历史期间到达的、乱序的）不让「思考中」挂着。
+			if (!inTurn(state)) return state;
 			return state.thinking ? state : { ...state, thinking: true };
 		case "assistant_delta": {
+			if (!inTurn(state)) return state;
 			if (state.streamingKey !== null) {
 				const key = state.streamingKey;
 				return {

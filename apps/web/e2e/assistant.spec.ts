@@ -53,7 +53,9 @@ test("没有配置助手：就绪状态写明原因，「开始」不可用，�
 	const readiness = page.getByTestId("readiness");
 	await expect(readiness).toHaveAttribute("data-ready", "false");
 	await expect(readiness).toContainText("现在不能用：");
-	await expect(readiness).toContainText("控制面没有配置助手服务");
+	await expect(readiness).toContainText("助手没有开启");
+	// 缺的每一条都写出来，不只认某一种。
+	await expect(readiness.getByRole("listitem")).toHaveCount(2);
 
 	const input = assistantInput(page);
 	await input.fill("给 http_check 加一个超时参数");

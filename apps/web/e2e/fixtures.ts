@@ -53,6 +53,11 @@ export interface E2eFixtures {
 		metricLimitBytes?: number;
 		logScanBytes?: number;
 		corsOrigins?: readonly string[];
+		/** 助手服务（假的，`FakeAssistant`）的地址、共享密钥、工作台的 Agent 名称和重连间隔：不给时助手没有配置。 */
+		assistantUrl?: string;
+		assistantSecret?: string;
+		workbenchAgent?: string;
+		assistantReconnectMs?: { min: number; max: number };
 	};
 }
 

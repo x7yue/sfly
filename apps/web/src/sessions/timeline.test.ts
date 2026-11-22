@@ -74,7 +74,8 @@ const end = (
 	...extra,
 });
 
-const run = (events: SessionEvent[], from: TimelineState = emptyTimeline("idle")) =>
+/** 从会话在做（一轮在进行）开始：模型的思考和文字增量只在一轮进行时处理。 */
+const run = (events: SessionEvent[], from: TimelineState = emptyTimeline("running")) =>
 	events.reduce(applyEvent, from);
 
 describe("会话时间线：由事件序列算出", () => {
@@ -86,6 +87,7 @@ describe("会话时间线：由事件序列算出", () => {
 				key: "e1",
 				seq: 1,
 				at: expect.any(String),
+				messageId: MSG(1),
 				author: "alice",
 				text: "给 http_check 加超时",
 			},
@@ -235,6 +237,37 @@ describe("会话时间线：由事件序列算出", () => {
 		// 同一个 call_id 的调用第二次来（序号不同）也不另起一行。
 		const again = applyEvent(once, call(3, "c", "command", "ls"));
 		expect(again.items.filter((i) => i.kind === "tool")).toHaveLength(1);
+	});
+
+	it("一轮结束之后才到的思考和文字增量（补发历史期间到达的、乱序的）不让「思考中」挂着，也不另起一条助手的话", () => {
+		const ended = run([started(1), call(2, "c", "command", "ls"), end(3, "completed")]);
+		expect(ended.status).toBe("idle");
+		const lateThinking = applyEvent(ended, { type: "thinking" });
+		expect(lateThinking.thinking).toBe(false);
+		expect(lateThinking).toBe(ended);
+		const lateDelta = applyEvent(ended, delta("迟到的字"));
+		expect(lateDelta.items).toEqual(ended.items);
+		expect(lateDelta.streamingKey).toBeNull();
+		// 会话已结束之后同样。
+		const sessionEnded = run([{ type: "session_ended", seq: 1, at: at(), by: "alice" }]);
+		expect(applyEvent(sessionEnded, { type: "thinking" }).thinking).toBe(false);
+		// 下一轮开始（turn_started）之后思考和增量照常处理。
+		const next = run([started(4, 2), { type: "thinking" }, delta("新的一轮")], ended);
+		expect(next.thinking).toBe(false);
+		expect(next.items.at(-1)).toMatchObject({
+			kind: "assistant",
+			text: "新的一轮",
+			streaming: true,
+		});
+		expect(run([started(4, 2), { type: "thinking" }], ended).thinking).toBe(true);
+	});
+
+	it("用户的话按 message_id 去重：同一句话不重复，连发两句相同的话是两句", () => {
+		const first = user(1, "继续");
+		const same = { ...user(2, "继续"), message_id: (first as { message_id: string }).message_id };
+		expect(run([first, same]).items.filter((i) => i.kind === "user")).toHaveLength(1);
+		const other = { ...user(2, "继续"), message_id: MSG(7) };
+		expect(run([first, other]).items.filter((i) => i.kind === "user")).toHaveLength(2);
 	});
 
 	it("会话结束：状态是已结束；之后的 turn_end 不把它改回空闲", () => {

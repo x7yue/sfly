@@ -140,7 +140,7 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 		>
 			<Textarea
 				aria-label={SESSION.page.sendLabel}
-				placeholder={blocked ?? SESSION.page.sendPlaceholder}
+				placeholder={SESSION.page.sendPlaceholder}
 				value={text}
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={2}
