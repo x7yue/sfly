@@ -21,6 +21,8 @@ export class FakeAccessStore implements AccessStore {
 	readonly sessions = new Map<string, ProjectId>();
 	readonly tasks = new Map<string, { projectId: ProjectId; agentName: string | null }>();
 	readonly adminWrites: AdminWrite[] = [];
+	/** 登录用了之后写下的最后使用时间和空闲期限。 */
+	readonly touches: { id: string; lastUsedAt: Date; idleExpiresAt: Date }[] = [];
 	/** 回填的响应状态码（`completeAdminWrite`）。 */
 	readonly adminResults: { id: string; status: number }[] = [];
 	/** 每个方法被调用的次数：不需要凭据的请求不该读库。 */
@@ -36,9 +38,43 @@ export class FakeAccessStore implements AccessStore {
 		this.reads++;
 		return this.tokens.get(hash);
 	}
+	async liveCredentials(
+		ids: { loginIds: readonly string[]; tokenIds: readonly string[] },
+		now: Date,
+	) {
+		const loginIds = new Set<string>();
+		for (const login of this.logins.values()) {
+			if (
+				ids.loginIds.includes(login.id) &&
+				login.revokedAt === null &&
+				login.idleExpiresAt > now &&
+				login.user.disabledAt === null
+			) {
+				loginIds.add(login.id);
+			}
+		}
+		const tokenIds = new Set<string>();
+		for (const token of this.tokens.values()) {
+			if (
+				ids.tokenIds.includes(token.id) &&
+				token.revokedAt === null &&
+				(token.expiresAt === null || token.expiresAt > now) &&
+				(token.user === null || token.user.disabledAt === null)
+			) {
+				tokenIds.add(token.id);
+			}
+		}
+		return { loginIds, tokenIds };
+	}
 	async loginByCookieHash(hash: string) {
 		this.reads++;
 		return this.logins.get(hash);
+	}
+	async touchLogin(id: string, lastUsedAt: Date, idleExpiresAt: Date) {
+		this.touches.push({ id, lastUsedAt, idleExpiresAt });
+		for (const login of this.logins.values()) {
+			if (login.id === id) Object.assign(login, { lastUsedAt, idleExpiresAt });
+		}
 	}
 	async agentCredentialByHash(hash: string) {
 		this.reads++;
