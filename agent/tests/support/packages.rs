@@ -51,6 +51,8 @@ struct Files {
     by_path: HashMap<String, File>,
     /// 镜像中的项目（规范化名）→ wheel 文件名。
     projects: HashMap<String, Vec<String>>,
+    /// 路径 → 重定向到哪（302）。
+    redirects: HashMap<String, String>,
 }
 
 /// 本地 HTTP 桩服务：节点包归档下载 + PyPI simple index。
@@ -60,8 +62,21 @@ pub struct HttpFixture {
     requests: Requests,
 }
 
+/// 控制面的包索引在成功的响应上带的标记头（apps/server/src/http/sdk-routes.ts 的 `PACKAGE_INDEX_HEADER`）。
+pub const PACKAGE_INDEX_MARKER: &str = "x-sfly-package-index";
+
 impl HttpFixture {
     pub async fn start() -> Self {
+        Self::start_with_marker(None).await
+    }
+
+    /// 扮演控制面的包索引：每个 200 响应都带标记头 `x-sfly-package-index`（值是版本）。
+    pub async fn start_control_plane() -> Self {
+        Self::start_with_marker(Some("0.0.0-test")).await
+    }
+
+    /// 200 响应带标记头 `x-sfly-package-index: <marker>`（`Some("")` 是带了但值为空）；`None` 不带。
+    pub async fn start_with_marker(marker: Option<&'static str>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let files = Arc::new(Mutex::new(Files::default()));
@@ -74,7 +89,7 @@ impl HttpFixture {
                 };
                 let (f, r) = (f.clone(), r.clone());
                 tokio::spawn(async move {
-                    let _ = serve(stream, f, r).await;
+                    let _ = serve(stream, f, r, marker).await;
                 });
             }
         });
@@ -107,6 +122,15 @@ impl HttpFixture {
             },
         );
         format!("{}{path}", self.url)
+    }
+
+    /// 对 `path` 的请求回 302，重定向到 `location`（优先于 [`put`](Self::put) 放的内容）。
+    pub fn redirect(&self, path: &str, location: &str) {
+        self.files
+            .lock()
+            .unwrap()
+            .redirects
+            .insert(path.to_string(), location.to_string());
     }
 
     /// 把 wheel 放进 PyPI 镜像；第一次下载这个文件时先等待 `delay`。
@@ -192,6 +216,7 @@ async fn serve(
     mut stream: tokio::net::TcpStream,
     files: Arc<Mutex<Files>>,
     requests: Requests,
+    marker: Option<&'static str>,
 ) -> std::io::Result<()> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -245,6 +270,14 @@ async fn serve(
         path.clone(),
         header(&head, "user-agent").map(str::to_string),
     ));
+    let redirect = files.lock().unwrap().redirects.get(&path).cloned();
+    if let Some(location) = redirect {
+        let reply = format!(
+            "HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        );
+        stream.write_all(reply.as_bytes()).await?;
+        return stream.shutdown().await;
+    }
     // 延迟只作用于第一次请求（uv 可能为同一个文件发多次请求）。
     let file = files.lock().unwrap().by_path.get_mut(&path).map(|f| {
         let served = f.clone();
@@ -254,8 +287,11 @@ async fn serve(
     match file {
         Some(file) => {
             tokio::time::sleep(file.delay).await;
+            let marker = marker
+                .map(|value| format!("{PACKAGE_INDEX_MARKER}: {value}\r\n"))
+                .unwrap_or_default();
             let header = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\ncontent-type: {}\r\ncontent-length: {}\r\n{marker}connection: close\r\n\r\n",
                 file.content_type,
                 file.body.len()
             );

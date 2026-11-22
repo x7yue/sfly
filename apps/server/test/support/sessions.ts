@@ -98,6 +98,8 @@ export interface SeededSession {
 	createdBy?: string;
 	createdAt?: Date;
 	lastActivityAt?: Date;
+	/** 此刻在做的那一轮（会话表的 `current_turn`）；不写时是事件里 `turn_started` 的条数，和控制面自己写的一样。 */
+	currentTurn?: number;
 	events?: readonly SessionEventBody[];
 	/** 第一条事件的时间。 */
 	at?: Date;
@@ -112,8 +114,8 @@ export async function seedSession(databaseUrl: string, seed: SeededSession = {})
 	await client.connect();
 	try {
 		await client.query(
-			`insert into sessions (id, project_id, title, status, created_by, created_at, last_activity_at)
-			values ($1, $2, $3, $4, $5, $6, $7)`,
+			`insert into sessions (id, project_id, title, status, created_by, created_at, last_activity_at, current_turn)
+			values ($1, $2, $3, $4, $5, $6, $7, $8)`,
 			[
 				id,
 				seed.project ?? "default",
@@ -122,6 +124,7 @@ export async function seedSession(databaseUrl: string, seed: SeededSession = {})
 				seed.createdBy ?? "alice",
 				seed.createdAt ?? at,
 				seed.lastActivityAt ?? new Date(at.getTime() + events.length * 1000),
+				seed.currentTurn ?? events.filter((event) => event.type === "turn_started").length,
 			],
 		);
 		for (const [index, body] of events.entries()) {
