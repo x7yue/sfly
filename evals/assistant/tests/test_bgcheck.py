@@ -47,6 +47,28 @@ def test_one_cross_command_dependency_and_one_in_the_same_command(tmp_path: Path
     assert finding["session"] == "cross" and finding["how"] == "端口 18080"
     assert [s["index"] for s in finding["around"]] == [1, 3]
     assert "跨两次工具调用依赖后台进程 1 处" in bgcheck.render(result)
+    # 起后台进程的命令逐条列出来供人工看（识别是启发式的）。
+    assert [(b["session"], b["index"]) for b in result["background"]] == [
+        ("cross", 0),
+        ("same", 0),
+    ]
+    assert "`python3 -m http.server 18081 & sleep 1; curl -s localhost:18081/`" in bgcheck.render(
+        result
+    )
+
+
+def test_known_misses_are_listed_for_a_human(tmp_path: Path) -> None:
+    # 认不出来的一种：起服务时没写端口，之后连默认端口。不算一处，但起后台进程的命令列出来了。
+    _session(
+        tmp_path / "run",
+        "default-port",
+        [("bash", "python3 -m http.server &"), ("bash", "curl -s localhost:8000/")],
+    )
+    result = bgcheck.scan([tmp_path])
+    assert result["findings"] == 0
+    assert result["background"] == [
+        {"session": "default-port", "index": 0, "text": "python3 -m http.server &"}
+    ]
 
 
 def test_reading_the_output_file_counts(tmp_path: Path) -> None:

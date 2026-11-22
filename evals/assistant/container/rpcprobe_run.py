@@ -1,7 +1,7 @@
 """探针（#539）在探针容器里的那一半：用助手服务的那套启动参数起 pi 的 RPC 模式，照问题做实验，
 把看到的原样写成 JSON（不下结论；结论由 aeval/rpcprobe.py 在宿主机上算）。
 
-`python3 rpcprobe_run.py <问题> --out <文件>`，问题是 q1…q4。模型是同一个容器里的假模型端点
+`python3 rpcprobe_run.py <问题> --out <文件>`，问题是 q1…q10。模型是同一个容器里的假模型端点
 （fake_model.py，127.0.0.1:8101），它把收到的每个请求存进 `<根目录>/dump/`。
 
 RPC 的读法照 pi 的文档：stdout 只按 LF 切记录（JSON 字符串里的 U+2028、U+2029 不算换行），
@@ -364,10 +364,13 @@ def _skill(folder: Path, name: str, marker: str) -> None:
     )
 
 
+Q3_SYSTEM_FILES = (AGENT_DIR / "SYSTEM.md", Path(WORKSPACE) / ".pi" / "SYSTEM.md")
+
+
 def plant_q3() -> list[Path]:
     """各个默认位置放上带标记的文件；返回放过的东西（之后删掉）。
     给的东西：--skill 目录里的 given-skill、
-    --append-system-prompt 的 context.md。"""
+    --append-system-prompt 的 context.md。两个 SYSTEM.md（Q3_SYSTEM_FILES）由 q3 自己放。"""
     ws = Path(WORKSPACE)
     home = Path(os.environ.get("HOME", "/root"))
     planted: list[Path] = []
@@ -381,8 +384,6 @@ def plant_q3() -> list[Path]:
     text(ws.parent / "CLAUDE.md", "MARK-LOCAL-PARENT-CLAUDE\n")
     text(AGENT_DIR / "AGENTS.md", "MARK-AGENT-DIR-AGENTS\n")
     text(AGENT_DIR / "APPEND_SYSTEM.md", "MARK-AGENT-DIR-APPEND-SYSTEM\n")
-    text(AGENT_DIR / "SYSTEM.md", "MARK-AGENT-DIR-SYSTEM\n")
-    text(ws / ".pi" / "SYSTEM.md", "MARK-PROJECT-SYSTEM\n")
     text(ws / ".pi" / "APPEND_SYSTEM.md", "MARK-PROJECT-APPEND-SYSTEM\n")
     text(
         AGENT_DIR / "prompts" / "tpl-agent-dir.md", "---\ndescription: MARK-TPL-AGENT-DIR\n---\nx\n"
@@ -432,6 +433,9 @@ def q3() -> Record:
     planted = plant_q3()
     result: Record = {}
     for run, drop, add in (
+        # 先不放 SYSTEM.md：默认系统提示，助手服务走的路径。
+        ("default", (), ()),
+        # 再放上两个 SYSTEM.md：系统提示整个被换掉的情况和它的对照。
         ("probe", (), ()),
         (
             "control",
@@ -439,6 +443,13 @@ def q3() -> Record:
             ("--approve",),
         ),
     ):
+        if run == "probe":
+            for path, mark in zip(
+                Q3_SYSTEM_FILES, ("MARK-AGENT-DIR-SYSTEM", "MARK-PROJECT-SYSTEM"), strict=True
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(mark + "\n")
+                planted.append(path)
         before = dump_count()
         pi = RpcPi(rpc_command(f"q3-{run}", drop=drop, add=add))
         commands = pi.call({"type": "get_commands"})
@@ -488,7 +499,8 @@ def q4() -> Record:
     """--session-dir D --session-id S：第一次新建，关 stdin 退出后同一条命令再起是恢复。"""
     session = "q4-session"
     cmd = rpc_command(session)
-    first = RpcPi(cmd)
+    first_stderr = ROOT / "q4-first-stderr.log"
+    first = RpcPi(cmd, stderr=first_stderr)
     first.prompt_and_settle("第一句")
     first.prompt_and_settle("第二句")
     state1 = first.call({"type": "get_state"}).get("data") or {}
@@ -522,6 +534,7 @@ def q4() -> Record:
             "state": {k: state1.get(k) for k in keep},
             "messages": messages1,
             "exit_seconds": exit1,
+            "stderr": first_stderr.read_text()[-600:] if first_stderr.exists() else "",
         },
         "second": {
             "state": {k: state2.get(k) for k in keep},
@@ -582,6 +595,20 @@ def tail_lines(path: Path | None, count: int = 3) -> list[str]:
     if path is None or not path.exists():
         return []
     return [line[:300] for line in path.read_text().splitlines()[-count:]]
+
+
+def last_line_is_json(path: Path | None) -> bool:
+    """会话文件的最后一行能不能解析成 JSON（被结束时没有留下写了一半的一行）。"""
+    if path is None or not path.exists():
+        return False
+    lines = path.read_text().splitlines()
+    if not lines:
+        return False
+    try:
+        json.loads(lines[-1])
+    except ValueError:
+        return False
+    return True
 
 
 def q5() -> Record:
@@ -662,8 +689,10 @@ def q6() -> Record:
     response = pi.call({"type": "abort"}, timeout=120)
     settled = pi.wait_for(lambda r: r.get("type") == "agent_settled", 120, start=mark)
     tool_end = find(pi, "tool_execution_end", mark)
+    next_turn = _after_abort(pi)
     exit_seconds = pi.close()
     return {
+        "next_turn": next_turn,
         "abort_sent_at": wall,
         "abort_response_seconds": round(response["_t"] - sent_at, 3),
         "abort_ok": bool(response.get("success")),
@@ -673,6 +702,46 @@ def q6() -> Record:
         "tool_result": _text((tool_end or {}).get("result", {}).get("content"))[:300],
         "exit_seconds": exit_seconds,
     }
+
+
+def _after_abort(pi: RpcPi) -> Record:
+    """abort 之后同一个进程再发一轮：发不发得出去、做没做完，发给模型的请求和之后的会话。"""
+    messages_before = _messages(pi)
+    before = dump_count()
+    mark = len(pi.events())
+    response = pi.call({"type": "prompt", "message": "接着说"})
+    settled = None
+    if response.get("success"):
+        try:
+            settled = pi.wait_for(lambda r: r.get("type") == "agent_settled", 120, start=mark)
+        except TimeoutError:
+            settled = None
+    ends = [
+        r.get("message") or {}
+        for r in pi.events()[mark:]
+        if r.get("type") == "message_end" and (r.get("message") or {}).get("role") == "assistant"
+    ]
+    last = ends[-1] if ends else {}
+    sent = requests_text(dumped_requests(before))
+    return {
+        "messages_before": messages_before,
+        "prompt_ok": bool(response.get("success")),
+        "prompt_error": response.get("error"),
+        "settled": settled is not None,
+        "stop_reason": last.get("stopReason"),
+        "error": last.get("errorMessage"),
+        "request": sent[0] if sent else [],
+        "messages_after": _messages(pi),
+    }
+
+
+def _user_messages(pi: RpcPi, start: int = 0) -> list[Record]:
+    """事件里出现的用户消息（message_end，role=user）：插话送出时它作为用户消息出现。"""
+    return [
+        {"t": r["_t"], "text": _text((r.get("message") or {}).get("content"))[:300]}
+        for r in pi.events()[start:]
+        if r.get("type") == "message_end" and (r.get("message") or {}).get("role") == "user"
+    ]
 
 
 def _queue_updates(pi: RpcPi, start: int = 0) -> list[Record]:
@@ -706,6 +775,7 @@ def q7() -> Record:
     result["during_tool"] = {
         "steer_response": {k: steer.get(k) for k in ("success", "data", "error")},
         "queue_updates": _queue_updates(pi, mark),
+        "user_messages": _user_messages(pi, mark),
         "order": _order(
             pi,
             mark,
@@ -727,6 +797,7 @@ def q7() -> Record:
     result["text_only"] = {
         "steer_response": {k: steer.get(k) for k in ("success", "data", "error")},
         "queue_updates": _queue_updates(pi, mark),
+        "user_messages": _user_messages(pi, mark),
         "requests": sent,
         "messages": _messages(pi),
     }
@@ -748,6 +819,7 @@ def q7() -> Record:
         "clear_queue": cleared.get("data"),
         "abort_ok": bool(aborted.get("success")),
         "queue_updates": _queue_updates(pi, mark),
+        "user_messages": _user_messages(pi, mark),
         "requests": sent,
         "messages": _messages(pi),
     }
@@ -757,12 +829,12 @@ def q7() -> Record:
 
 def q8() -> Record:
     """关 stdin、SIGTERM 的收场：空闲时关 stdin；一轮进行中关 stdin；
-    一轮进行中关 stdin 同时发 SIGTERM。"""
+    一轮进行中关 stdin 同时发 SIGTERM；一轮进行中只发 SIGTERM（stdin 开着）。"""
     result: Record = {}
     pi = RpcPi(rpc_command("q8-idle"))
     pi.call({"type": "get_state"})
     result["idle"] = {"exit_seconds": pi.close(), "exit_code": pi.proc.returncode}
-    for variant in ("mid_turn", "mid_turn_sigterm"):
+    for variant in ("mid_turn", "mid_turn_sigterm", "sigterm_only"):
         session = f"q8-{variant}"
         pi = RpcPi(rpc_command(session))
         pi.call({"type": "prompt", "message": script_prompt("rpcprobe-steer")})
@@ -771,8 +843,9 @@ def q8() -> Record:
         mark = len(pi.events())
         closed_at, wall = pi.now(), time.time()
         assert pi.proc.stdin is not None
-        pi.proc.stdin.close()
-        if variant == "mid_turn_sigterm":
+        if variant != "sigterm_only":
+            pi.proc.stdin.close()
+        if variant in ("mid_turn_sigterm", "sigterm_only"):
             pi.proc.send_signal(signal.SIGTERM)
         try:
             pi.proc.wait(timeout=120)
@@ -795,6 +868,7 @@ def q8() -> Record:
                 pi, mark, ("tool_execution_end", "turn_end", "agent_end", "agent_settled")
             ),
             "session_tail": tail_lines(session_file(session), 2),
+            "session_last_line_json": last_line_is_json(session_file(session)),
         }
     return result
 

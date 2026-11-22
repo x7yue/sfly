@@ -237,11 +237,17 @@ def judge_q3(raw: dict[str, Any]) -> Verdict:
         HOLDS,
     )
     probe, control = raw["probe"], raw["control"]
+    default = raw.get("default")
+    if default is None:
+        v.worsen(UNFINISHED)
+        v.facts.append("没有设置目录里不放 SYSTEM.md 的那次运行（助手服务走的路径）")
+    else:
+        _judge_q3_default(v, default)
     seen = set(_MARK.findall(probe["system_prompt"]))
     missing = GIVEN - seen
     extra = sorted(seen - GIVEN)
     templates = [c["name"] for c in probe["commands"] if c["source"] == "prompt"]
-    v.numbers = {"extra_markers": extra, "templates": templates}
+    v.numbers.update({"extra_markers": extra, "templates": templates})
     if missing:
         v.worsen(FAILS)
         v.facts.append("给的东西不在系统提示里：" + "、".join(sorted(missing)))
@@ -254,7 +260,10 @@ def judge_q3(raw: dict[str, Any]) -> Verdict:
         v.worsen(PARTLY)
         v.facts.append("还加载了提示模板：" + "、".join(templates))
     if not extra and not templates:
-        v.facts.append("各个默认位置放的 AGENTS.md、CLAUDE.md、skill、提示模板都没有进来")
+        v.facts.append(
+            "设置目录里放了 SYSTEM.md 时（系统提示整个被换掉）："
+            "各个默认位置放的 AGENTS.md、CLAUDE.md、skill、提示模板都没有进来"
+        )
     from_extension = [
         label for mark, label in FROM_EXTENSION.items() if mark in probe["system_prompt"]
     ]
@@ -272,6 +281,36 @@ def judge_q3(raw: dict[str, Any]) -> Verdict:
     return v
 
 
+def _judge_q3_default(v: Verdict, default: dict[str, Any]) -> None:
+    """设置目录里不放 SYSTEM.md（默认系统提示，助手服务走的路径）：除了给的，别的标记都不该进来。"""
+    prompt = default["system_prompt"]
+    seen = set(_MARK.findall(prompt))
+    extra = sorted(seen - GIVEN)
+    templates = [c["name"] for c in default["commands"] if c["source"] == "prompt"]
+    v.numbers["default_extra_markers"] = extra
+    v.numbers["default_templates"] = templates
+    if not prompt:
+        v.worsen(UNFINISHED)
+        v.facts.append("不放 SYSTEM.md 的那次运行没有存下发给模型的请求")
+        return
+    if GIVEN - seen:
+        v.worsen(FAILS)
+        v.facts.append(
+            "不放 SYSTEM.md 时给的东西不在系统提示里：" + "、".join(sorted(GIVEN - seen))
+        )
+    if extra or templates:
+        v.worsen(FAILS)
+        v.facts.append(
+            "不放 SYSTEM.md 时（默认系统提示，助手服务走的路径）系统提示里还有："
+            + "、".join([place(m) for m in extra] + [f"提示模板 {t}" for t in templates])
+        )
+    else:
+        v.facts.append(
+            "不放 SYSTEM.md 时（默认系统提示，助手服务走的路径）：给的 skill 和 context.md 在，"
+            "各个默认位置放的 AGENTS.md、CLAUDE.md、skill、提示模板都没有进来"
+        )
+
+
 def judge_q4(raw: dict[str, Any]) -> Verdict:
     v = Verdict("q4", "--session-dir D --session-id S：第一次新建，第二次恢复", HOLDS)
     first, second, files = raw["first"], raw["second"], raw["files"]
@@ -287,6 +326,9 @@ def judge_q4(raw: dict[str, Any]) -> Verdict:
     }
     same_file = first["state"]["sessionFile"] == second["state"]["sessionFile"]
     sent = second.get("last_request_users", [])
+    if not sent:
+        v.worsen(UNFINISHED)
+        v.facts.append("第三句发给模型的请求没有存下来")
     if (
         resumed == turns
         and len(after) == len(turns) + 2
@@ -298,7 +340,7 @@ def judge_q4(raw: dict[str, Any]) -> Verdict:
             f"第二次起来时 get_messages 是第一次的 {len(turns)} 条消息，同一个会话文件；"
             "接着说的第三句和回复追加在后面，发给模型的请求里依次是三句话"
         )
-    else:
+    elif sent:
         v.worsen(FAILS)
         v.facts.append(
             f"第一次 {len(turns)} 条，再起时 {len(resumed)} 条；会话文件 {files['after_second']}；"
@@ -314,10 +356,25 @@ def judge_q4(raw: dict[str, Any]) -> Verdict:
             "first": changed + "恢复后发给模型的仍是第一次的内容（用的是会话文件里存的系统提示）",
         }.get(str(context), f"恢复后的系统提示里两份 context.md 都没有（{context}）")
     )
-    v.facts.append(
-        "第一次起时 stderr 有一行「No project session found with id …; creating a new session」"
-        "的提示，不影响 RPC"
-    )
+    # 每次起 pi，会话里多一条 role=system 的消息（存着系统提示的各段）：
+    # 翻译事件、读会话文件的代码要认它。
+    systems = [
+        sum(m["role"] == "system" for m in first["messages"]),
+        sum(m["role"] == "system" for m in second["messages_after_third"]),
+    ]
+    v.numbers["system_messages"] = systems
+    if systems == [1, 2]:
+        v.facts.append(
+            "每次起 pi，会话里多一条 role=system 的消息：第一次起后 1 条，再起、说完第三句后 2 条"
+            f"（get_messages 第一次共 {len(first['messages'])} 条，不只是 user 和 assistant）"
+        )
+    else:
+        v.worsen(PARTLY)
+        v.facts.append(
+            f"会话里 role=system 的消息：第一次起后 {systems[0]} 条，再起后 {systems[1]} 条"
+        )
+    stderr = str(first.get("stderr", "")).strip()
+    v.facts.append(f"第一次起时 stderr：{stderr[:160]}" if stderr else "第一次起时 stderr 是空的")
     return v
 
 
@@ -336,13 +393,35 @@ def parse_watch(log: str) -> list[tuple[float, str]]:
     return samples
 
 
-def gone_after(samples: list[tuple[float, str]], marker: str, since: float) -> float | None:
-    """从 `since` 起，工作台上的命令 `marker` 多久之后第一次不见了（取第一个不含它的采样）；
-    一直在（或者没有采样）时是 None。"""
+def gone_after(samples: list[tuple[float, str]], marker: str, since: float) -> dict[str, Any]:
+    """工作台上的命令 `marker` 在 `since` 之后多久不见了。
+
+    只有 `since` 之前采到过它（命令确实在跑），之后第一个不含它的采样才算「消失」：
+    `{"seen": True, "gone_seconds": 秒数}`；一直在时 `gone_seconds` 是 None。
+    `since` 之前一次都没采到（模式写错、命令名变了、采样没起来）时是 `{"seen": False}`：
+    分不清「已经消失」和「没采到」，不给秒数。"""
+    seen = any(stamp <= since and marker in running for stamp, running in samples)
+    if not seen:
+        return {"seen": False, "gone_seconds": None}
     for stamp, running in samples:
         if stamp >= since and marker not in running:
-            return round(stamp - since, 2)
-    return None
+            return {"seen": True, "gone_seconds": round(stamp - since, 2)}
+    return {"seen": True, "gone_seconds": None}
+
+
+def _workbench_fact(v: Verdict, label: str, watch: dict[str, Any] | None) -> None:
+    """工作台上的命令：结束之前在跑、之后不在了才算消失（预期）；一直在是不成立，没采到是没跑完。"""
+    if not watch or not watch.get("seen"):
+        v.worsen(UNFINISHED)
+        v.facts.append(f"{label}：结束之前没采到工作台上的命令，看不出它有没有消失")
+    elif watch.get("gone_seconds") is None:
+        v.worsen(FAILS)
+        v.facts.append(f"{label}：工作台上的命令结束之前在跑，之后一直没消失（看到采样结束）")
+    else:
+        v.facts.append(
+            f"{label}：工作台上的命令结束之前在跑，{watch['gone_seconds']} 秒内消失"
+            "（采样间隔 0.2 秒）"
+        )
 
 
 def judge_q5(raw: dict[str, Any]) -> Verdict:
@@ -375,40 +454,78 @@ def judge_q5(raw: dict[str, Any]) -> Verdict:
             v.facts.append(f"{label}：再起后模型（假的）又发了一次工具调用")
         if x.get("stderr", "").strip():
             v.facts.append(f"{label}：stderr：{x['stderr'].strip()[:160]}")
-        gone = x.get("workbench_gone_seconds")
-        v.numbers[f"{variant}_workbench_gone_seconds"] = gone
-        v.facts.append(
-            f"{label}：工作台上的命令在 pi 被结束后 {gone} 秒内消失"
-            if gone is not None
-            else f"{label}：工作台上的命令没有消失（看到采样结束）"
-        )
+        watch = x.get("workbench")
+        v.numbers[f"{variant}_workbench"] = watch
+        _workbench_fact(v, f"{label}，pi 被结束后", watch)
     v.facts.append("「接着做」用真模型试的那一半：欠着（这次只用假的模型端点）")
     return v
 
 
 def judge_q6(raw: dict[str, Any]) -> Verdict:
-    v = Verdict("q6", "abort 要多久", HOLDS)
-    numbers = {
+    v = Verdict("q6", "abort 要多久，之后还能不能接着发下一轮", HOLDS)
+    watch = raw.get("workbench")
+    v.numbers = {
         "abort_response_seconds": raw["abort_response_seconds"],
         "settled_seconds": raw["settled_seconds"],
-        "workbench_gone_seconds": raw.get("workbench_gone_seconds"),
+        "workbench": watch,
     }
-    v.numbers = numbers
     v.facts.append(
         f"远程执行 sleep 602 时发 abort：{raw['abort_response_seconds']} 秒收到响应，"
         f"{raw['settled_seconds']} 秒 agent_settled（aborted={raw.get('settled_aborted')}），"
         f"工具结果是「{raw.get('tool_result')}」"
     )
-    gone = raw.get("workbench_gone_seconds")
-    if gone is None:
+    # 预期：这一轮被中止（agent_settled 的 aborted 为 true，命令的结果是 Command aborted）。
+    if raw.get("settled_aborted") is not True or "aborted" not in str(raw.get("tool_result")):
         v.worsen(FAILS)
-        v.facts.append("工作台上的命令没有消失")
-    else:
-        v.facts.append(f"工作台上的命令 {gone} 秒内消失（采样间隔 0.2 秒）")
-    if max(raw["abort_response_seconds"], raw["settled_seconds"], gone or 0) > 10:
+        v.facts.append("这一轮没有被中止：agent_settled 不是 aborted，或者命令照常跑完了")
+    _workbench_fact(v, "abort 之后", watch)
+    gone = (watch or {}).get("gone_seconds") or 0
+    if max(raw["abort_response_seconds"], raw["settled_seconds"], gone) > 10:
         v.worsen(FAILS)
         v.facts.append("超过 10 秒")
+    _judge_after_abort(v, raw.get("next_turn"))
     return v
+
+
+def _judge_after_abort(v: Verdict, nxt: dict[str, Any] | None) -> None:
+    """abort 之后同一个进程再发一轮：发不发得出去，
+    发给模型的请求里有没有那条空的 assistant 消息。"""
+    if nxt is None:
+        v.worsen(UNFINISHED)
+        v.facts.append("abort 之后没有再发一轮")
+        return
+    request = nxt.get("request") or []
+    if not request:
+        v.worsen(UNFINISHED)
+        v.facts.append("abort 之后再发一轮：发给模型的请求没有存下来")
+        return
+    empty = [
+        m
+        for m in request
+        if m.get("role") == "assistant" and not m.get("text") and not m.get("tool_calls")
+    ]
+    roles = [m.get("role") for m in request]
+    v.numbers["after_abort_request_roles"] = roles
+    before = nxt.get("messages_before") or []
+    left = bool(before) and before[-1].get("role") == "assistant" and not before[-1].get("text")
+    v.numbers["after_abort_session_keeps_empty_assistant"] = left
+    if left:
+        v.facts.append("abort 之后会话里留下一条内容为空的 assistant 消息（中止的那次回复）")
+    if not nxt.get("prompt_ok") or not nxt.get("settled") or nxt.get("error"):
+        v.worsen(FAILS)
+        v.facts.append(f"abort 之后再发一轮没有做完：{nxt.get('error') or nxt.get('prompt_error')}")
+    else:
+        v.facts.append("abort 之后同一个进程再发一轮：照常做完")
+    v.facts.append(
+        f"这一轮发给模型的请求里依次是 {roles}；"
+        + (
+            f"带着 abort 留下的 {len(empty)} 条内容为空的 assistant 消息"
+            "（假的模型端点收了；有的模型端点可能拒收，助手服务要按真的端点处理）"
+            if empty
+            else "没有带 abort 留下的那条空的 assistant 消息"
+        )
+    )
+    v.numbers["after_abort_empty_assistant"] = len(empty)
 
 
 def _user_texts(request: list[dict[str, Any]]) -> list[str]:
@@ -418,6 +535,9 @@ def _user_texts(request: list[dict[str, Any]]) -> list[str]:
 def judge_q7(raw: dict[str, Any], steer: str = "插话：顺便看一下日志") -> Verdict:
     v = Verdict("q7", "steer 什么时候送到", HOLDS)
     during = raw["during_tool"]
+    if not during["requests"] or not raw["text_only"]["requests"]:
+        v.worsen(UNFINISHED)
+        v.facts.append("发给模型的请求没有存下来")
     second = during["requests"][1] if len(during["requests"]) > 1 else []
     roles = [m.get("role") for m in second]
     if second and roles[-2:] == ["tool", "user"] and second[-1]["text"] == steer:
@@ -430,17 +550,30 @@ def judge_q7(raw: dict[str, Any], steer: str = "插话：顺便看一下日志")
         v.facts.append(f"命令执行中插话：下一次请求的最后几条是 {roles[-3:]}")
     updates = [len(u["steering"] or []) for u in during["queue_updates"]]
     v.numbers["queue_updates_during_tool"] = updates
-    v.facts.append(
-        "queue_update：插话时一条（steering 里是这句话），送出去时一条（steering 变空）"
-        if updates == [1, 0]
-        else f"queue_update 的 steering 条数依次是 {updates}"
-    )
+    # 「送出」= steering 变空，并且随后出现了这句插话的用户消息
+    # （clear_queue 之后 steering 也会变空）。
+    emptied = next((u["t"] for u in during["queue_updates"] if not u["steering"]), None)
+    shown = [m for m in during.get("user_messages", []) if m.get("text") == steer]
+    delivered = emptied is not None and any(m["t"] >= emptied for m in shown)
+    v.numbers["steer_user_message_after_empty"] = delivered
+    if updates == [1, 0] and delivered:
+        v.facts.append(
+            "queue_update：插话时一条（steering 里是这句话），送出去时一条（steering 变空），"
+            "随后这句插话作为用户消息出现（message_end，role=user）：两样都看到才算送出"
+        )
+    else:
+        v.worsen(FAILS)
+        v.facts.append(
+            f"queue_update 的 steering 条数依次是 {updates}；"
+            f"steering 变空之后{'出现了' if delivered else '没有出现'}这句插话的用户消息"
+        )
     text_only = raw["text_only"]
     asked = [_user_texts(r) for r in text_only["requests"]]
     if len(asked) >= 2 and steer in asked[-1]:
         v.facts.append(
             "最后一次回复不带工具调用时插话：这次回复照常结束，pi 带着插话再请求一次模型"
-            "（插话不会丢，也不会等到下一次 prompt）"
+            "（插话不会丢，也不会等到下一次 prompt）。假的模型端点先等 4 秒才开始输出，"
+            "所以测的是模型还没开始输出时插话，不是输出到一半时"
         )
     else:
         v.worsen(PARTLY)
@@ -452,7 +585,9 @@ def judge_q7(raw: dict[str, Any], steer: str = "插话：顺便看一下日志")
     if cleared == [steer] and not sent_after and not in_session:
         v.facts.append(
             "插话之后先 clear_queue 再 abort：clear_queue 的响应里有这句插话，"
-            "之后没有发给模型，也不在会话里"
+            "之后没有发给模型，也不在会话里；"
+            "clear_queue 之后也有一条 steering 变空的 queue_update，"
+            "所以只看 steering 变空分不清送出和清掉"
         )
     else:
         v.worsen(FAILS)
@@ -463,30 +598,57 @@ def judge_q7(raw: dict[str, Any], steer: str = "插话：顺便看一下日志")
     return v
 
 
+Q8_VARIANTS = (
+    ("mid_turn", "一轮进行中关 stdin"),
+    ("mid_turn_sigterm", "一轮进行中关 stdin 同时发 SIGTERM"),
+    ("sigterm_only", "一轮进行中只发 SIGTERM（stdin 开着）"),
+)
+
+
+def q8_outcome(x: dict[str, Any]) -> str:
+    """一轮进行中被结束时 pi 怎么收场：「中止」（正在跑的命令被中止）、
+    「等做完」（命令照常跑完才退出）、
+    「看不出来」（会话文件和事件里都没有这次命令的结果）。"""
+    texts = [x.get("tool_result", ""), *x.get("session_tail", [])]
+    if any("Command aborted" in t for t in texts):
+        return "中止"
+    if any("slept" in t for t in texts):
+        return "等做完"
+    return "看不出来"
+
+
 def judge_q8(raw: dict[str, Any]) -> Verdict:
     v = Verdict("q8", "关 stdin、SIGTERM 的收场", HOLDS)
     idle = raw["idle"]
     v.numbers["idle_exit_seconds"] = idle["exit_seconds"]
     v.facts.append(f"空闲时关 stdin：{idle['exit_seconds']} 秒退出，退出码 {idle['exit_code']}")
-    for variant, label in (
-        ("mid_turn", "一轮进行中关 stdin"),
-        ("mid_turn_sigterm", "同时发 SIGTERM"),
-    ):
-        x = raw[variant]
+    for variant, label in Q8_VARIANTS:
+        x = raw.get(variant)
+        if x is None:
+            v.worsen(UNFINISHED)
+            v.facts.append(f"{label}：没有跑")
+            continue
+        outcome = q8_outcome(x)
         v.numbers[f"{variant}_exit_seconds"] = x["exit_seconds"]
-        aborted = any("Command aborted" in line for line in x.get("session_tail", []))
-        how = (
-            "不等这一轮做完：正在跑的命令被中止（会话文件里记的工具结果是「Command aborted」）"
-            if aborted
-            else "会话文件末尾：" + "；".join(line[:80] for line in x.get("session_tail", []))
-        )
-        gone = x.get("workbench_gone_seconds")
+        v.numbers[f"{variant}_outcome"] = outcome
+        complete = x.get("session_last_line_json")
         v.facts.append(
-            f"{label}：{x['exit_seconds']} 秒退出，退出码 {x['exit_code']}；{how}；"
-            f"工作台上的命令 {gone} 秒内消失"
+            f"{label}：{x['exit_seconds']} 秒退出，退出码 {x['exit_code']}；结局：{outcome}"
+            + ("（会话文件里记的工具结果是「Command aborted」）" if outcome == "中止" else "")
+            + f"；会话文件最后一行{'能' if complete else '不能'}解析成 JSON"
         )
-        if x["exit_seconds"] is None or x["exit_code"] not in (0, None):
+        # 预期：不等这一轮做完，正在跑的命令被中止，10 秒内退出，会话文件完整。
+        if outcome == "等做完":
+            v.worsen(FAILS)
+        elif outcome == "看不出来":
+            v.worsen(UNFINISHED)
+        if x["exit_seconds"] is None or x["exit_seconds"] > 10:
+            v.worsen(FAILS)
+        elif x["exit_code"] not in (0, None, -15, 143):
             v.worsen(PARTLY)
+        if not complete:
+            v.worsen(PARTLY)
+        _workbench_fact(v, f"{label}之后", x.get("workbench"))
     return v
 
 
@@ -506,7 +668,8 @@ def judge_q9(raw: dict[str, Any]) -> Verdict:
         f"带远程工具扩展的 RPC 进程，{len(runs)} 次："
         f"从启动到回应第一条命令 {spread('ready_seconds')} 秒；"
         f"空闲常驻 {spread('idle_rss_mib')} MiB；跑完工具自检的一轮（19 次工具调用）"
-        f"峰值（VmHWM）{spread('peak_hwm_mib')} MiB"
+        f"峰值（VmHWM）{spread('peak_hwm_mib')} MiB。这是下限：假的模型端点、很短的一轮，"
+        "真实会话的上下文长得多"
     )
     slim = raw.get("slim")
     if slim is None:
@@ -656,13 +819,14 @@ def attach_watch(question: str, raw: dict[str, Any], samples: list[tuple[float, 
     if question == "q5":
         for variant in ("as_killed", "half_line"):
             x = raw[variant]
-            x["workbench_gone_seconds"] = gone_after(samples, "sleep 601", x["killed_at"])
+            x["workbench"] = gone_after(samples, "sleep 601", x["killed_at"])
     elif question == "q6":
-        raw["workbench_gone_seconds"] = gone_after(samples, "sleep 602", raw["abort_sent_at"])
+        raw["workbench"] = gone_after(samples, "sleep 602", raw["abort_sent_at"])
     elif question == "q8":
-        for variant in ("mid_turn", "mid_turn_sigterm"):
-            x = raw[variant]
-            x["workbench_gone_seconds"] = gone_after(samples, "sleep 6; echo", x["closed_at"])
+        for variant, _ in Q8_VARIANTS:
+            if variant in raw:
+                x = raw[variant]
+                x["workbench"] = gone_after(samples, "sleep 6; echo", x["closed_at"])
 
 
 SLIM_BASE = "node:26-trixie-slim"
@@ -675,11 +839,12 @@ RUN ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
 """
 
 
-def slim_check(stack: Stack) -> dict[str, Any]:
+def slim_check(stack: Stack) -> dict[str, Any] | None:
     """第 9 题的后一半：pi 和远程工具扩展在 Node 26 的 slim 镜像上能不能跑（只复制 pi 的包和扩展）。
     slim 镜像里没有 python3，用 shell 喂 RPC 命令；模型是探针容器里的假的模型端点。"""
     if not d.exists("image", SLIM_BASE):
-        return {"ok": False, "error": f"没有镜像 {SLIM_BASE}（docker pull 之后再跑）"}
+        print(f"q9：没有镜像 {SLIM_BASE}，slim 镜像那一半没有测（docker pull 之后再跑）")
+        return None
     image = "sfly-aeval-rpcprobe-slim:latest"
     dockerfile = SLIM_DOCKERFILE.format(remote=stack.remote_image, base=SLIM_BASE)
     built = d.docker("build", "-t", image, "-", input_text=dockerfile, check=False, timeout=900)
@@ -757,7 +922,10 @@ def run(
         )
         raw = json.loads(d.sh(container, f"cat {out}").stdout)
         if raw.get("ok"):
-            attach_watch(question, raw, parse_watch(d.sh(stack.dev, f"cat {WATCH_LOG}").stdout))
+            watch_log = d.sh(stack.dev, f"cat {WATCH_LOG}").stdout
+            # 原始采样也进结果目录：「x 秒内消失」能复核。
+            (results / "rpcprobe-watch.log").write_text(watch_log)
+            attach_watch(question, raw, parse_watch(watch_log))
             if question == "q9":
                 raw["slim"] = slim_check(stack)
         (results / f"rpcprobe-{question}.json").write_text(json.dumps(raw, ensure_ascii=False))

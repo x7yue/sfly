@@ -3,7 +3,7 @@
 	"first": {
 		"state": {
 			"sessionId": "q4-session",
-			"sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T05-25-23-469Z_q4-session.jsonl",
+			"sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T14-57-05-317Z_q4-session.jsonl",
 			"messageCount": 5
 		},
 		"messages": [
@@ -13,12 +13,13 @@
 			{ "role": "user", "text": "第二句" },
 			{ "role": "assistant", "text": "认不出这道题，什么都没做。" }
 		],
-		"exit_seconds": 0.067
+		"exit_seconds": 0.342,
+		"stderr": "Warning: No project session found with id 'q4-session'; creating a new session with that id.\n"
 	},
 	"second": {
 		"state": {
 			"sessionId": "q4-session",
-			"sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T05-25-23-469Z_q4-session.jsonl",
+			"sessionFile": "/root/rpcprobe/sessions/q4-session/2026-11-22T14-57-05-317Z_q4-session.jsonl",
 			"messageCount": 5
 		},
 		"messages_on_start": [
@@ -40,11 +41,10 @@
 		],
 		"last_request_users": ["第一句", "第二句", "第三句"],
 		"context_after_restart": "second",
-		"exit_seconds": 0.017
+		"exit_seconds": 0.126
 	},
 	"files": {
-		"after_first": ["2026-11-22T05-25-23-469Z_q4-session.jsonl"],
-		"after_second": ["2026-11-22T05-25-23-469Z_q4-session.jsonl"]
-	},
-	"seconds": 2.0
+		"after_first": ["2026-11-22T14-57-05-317Z_q4-session.jsonl"],
+		"after_second": ["2026-11-22T14-57-05-317Z_q4-session.jsonl"]
+	}
 }

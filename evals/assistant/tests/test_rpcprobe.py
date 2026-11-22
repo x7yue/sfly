@@ -98,6 +98,25 @@ def test_q3_names_where_an_extra_file_came_from() -> None:
     assert any("工作目录的 AGENTS.md" in fact for fact in verdict.facts)
 
 
+def test_q3_default_prompt_path_holds_in_the_recorded_run() -> None:
+    verdict = judge("q3", fixture("q3"))
+    assert verdict.numbers["default_extra_markers"] == []
+    assert verdict.numbers["default_templates"] == []
+    assert any("不放 SYSTEM.md 时（默认系统提示" in fact for fact in verdict.facts)
+
+
+def test_q3_fails_when_a_default_location_reaches_the_default_prompt() -> None:
+    raw = fixture("q3")
+    raw["default"]["system_prompt"] += "\nMARK-AGENT-DIR-AGENTS"
+    assert judge("q3", raw).verdict == FAILS
+
+
+def test_q3_is_unfinished_without_the_default_prompt_run() -> None:
+    raw = fixture("q3")
+    del raw["default"]
+    assert judge("q3", raw).verdict == UNFINISHED
+
+
 def test_q3_fails_when_the_given_skill_is_missing() -> None:
     raw = fixture("q3")
     raw["probe"]["system_prompt"] = raw["probe"]["system_prompt"].replace("MARK-SKILL-GIVEN", "")
@@ -120,6 +139,28 @@ def test_q4_fails_when_the_model_does_not_get_the_earlier_turns() -> None:
     raw = fixture("q4")
     raw["second"]["last_request_users"] = ["第三句"]
     assert judge("q4", raw).verdict == FAILS
+
+
+def test_q4_counts_the_system_message_each_start_adds() -> None:
+    verdict = judge("q4", fixture("q4"))
+    assert verdict.numbers["system_messages"] == [1, 2]
+    raw = fixture("q4")
+    raw["second"]["messages_after_third"] = [
+        m for m in raw["second"]["messages_after_third"] if m["role"] != "system"
+    ]
+    assert judge("q4", raw).verdict == PARTLY
+
+
+def test_q4_is_unfinished_when_the_request_was_not_saved() -> None:
+    raw = fixture("q4")
+    raw["second"]["last_request_users"] = []
+    assert judge("q4", raw).verdict == UNFINISHED
+
+
+def test_q4_reports_the_recorded_stderr() -> None:
+    raw = fixture("q4")
+    raw["first"]["stderr"] = ""
+    assert "第一次起时 stderr 是空的" in judge("q4", raw).facts
 
 
 def test_unfinished_question() -> None:
@@ -234,6 +275,20 @@ def test_q5_reports_the_filled_in_tool_result_and_the_open_real_model_half() -> 
     assert any("欠着" in fact for fact in verdict.facts)
 
 
+def test_q5_fails_when_the_workbench_command_never_goes_away() -> None:
+    raw = fixture("q5")
+    raw["as_killed"]["workbench"] = {"seen": True, "gone_seconds": None}
+    assert judge("q5", raw).verdict == FAILS
+
+
+def test_q5_is_unfinished_when_the_command_was_never_sampled() -> None:
+    raw = fixture("q5")
+    raw["half_line"]["workbench"] = {"seen": False, "gone_seconds": None}
+    verdict = judge("q5", raw)
+    assert verdict.verdict == UNFINISHED
+    assert any("没采到" in fact for fact in verdict.facts)
+
+
 def test_q5_fails_when_the_restart_fails() -> None:
     raw = fixture("q5")
     raw["half_line"]["restart_ok"] = False
@@ -246,8 +301,35 @@ def test_q6_fails_over_ten_seconds() -> None:
     raw["settled_seconds"] = 12.0
     assert judge("q6", raw).verdict == FAILS
     raw = fixture("q6")
-    raw["workbench_gone_seconds"] = None
+    raw["workbench"] = {"seen": True, "gone_seconds": None}
     assert judge("q6", raw).verdict == FAILS
+
+
+def test_q6_fails_when_the_turn_is_not_aborted() -> None:
+    raw = fixture("q6")
+    raw["settled_aborted"] = False
+    assert judge("q6", raw).verdict == FAILS
+    raw = fixture("q6")
+    raw["tool_result"] = "slept"
+    assert judge("q6", raw).verdict == FAILS
+
+
+def test_q6_reports_the_next_turn_after_abort() -> None:
+    verdict = judge("q6", fixture("q6"))
+    # 这次实跑：会话里留着那条空的 assistant 消息，发给模型的请求里 pi 把它去掉了。
+    assert verdict.numbers["after_abort_session_keeps_empty_assistant"] is True
+    assert verdict.numbers["after_abort_empty_assistant"] == 0
+    assert any("abort 之后同一个进程再发一轮" in fact for fact in verdict.facts)
+    raw = fixture("q6")
+    raw["next_turn"]["prompt_ok"] = False
+    raw["next_turn"]["prompt_error"] = "rejected"
+    assert judge("q6", raw).verdict == FAILS
+    raw = fixture("q6")
+    raw["next_turn"]["request"] = []
+    assert judge("q6", raw).verdict == UNFINISHED
+    raw = fixture("q6")
+    del raw["next_turn"]
+    assert judge("q6", raw).verdict == UNFINISHED
 
 
 def test_q7_fails_when_the_steer_is_sent_before_the_tool_result() -> None:
@@ -263,9 +345,48 @@ def test_q7_fails_when_a_cleared_steer_still_reaches_the_model() -> None:
     assert judge("q7", raw).verdict == FAILS
 
 
-def test_q8_says_closing_stdin_mid_turn_aborts_the_command() -> None:
-    facts = judge("q8", fixture("q8")).facts
-    assert any("不等这一轮做完" in fact for fact in facts)
+def test_q7_fails_when_the_steering_queue_never_empties() -> None:
+    raw = fixture("q7")
+    for update in raw["during_tool"]["queue_updates"]:
+        update["steering"] = ["插话：顺便看一下日志"]
+    assert judge("q7", raw).verdict == FAILS
+
+
+def test_q7_needs_the_steer_as_a_user_message_after_the_queue_empties() -> None:
+    assert judge("q7", fixture("q7")).numbers["steer_user_message_after_empty"] is True
+    raw = fixture("q7")
+    raw["during_tool"]["user_messages"] = []
+    assert judge("q7", raw).verdict == FAILS
+
+
+def test_q7_is_unfinished_when_the_requests_were_not_saved() -> None:
+    raw = fixture("q7")
+    raw["during_tool"]["requests"] = []
+    assert judge("q7", raw).verdict == UNFINISHED
+
+
+def test_q8_expects_the_running_command_to_be_aborted() -> None:
+    verdict = judge("q8", fixture("q8"))
+    for variant, _ in rpcprobe.Q8_VARIANTS:
+        assert verdict.numbers[f"{variant}_outcome"] == "中止"
+    raw = fixture("q8")
+    raw["mid_turn"]["tool_result"] = "slept"
+    raw["mid_turn"]["session_tail"] = ['{"type":"message","message":{"content":"slept"}}']
+    verdict = judge("q8", raw)
+    assert verdict.numbers["mid_turn_outcome"] == "等做完"
+    assert verdict.verdict == FAILS
+
+
+def test_q8_checks_the_session_file_ends_with_a_whole_line() -> None:
+    raw = fixture("q8")
+    raw["sigterm_only"]["session_last_line_json"] = False
+    assert judge("q8", raw).verdict == PARTLY
+
+
+def test_q8_is_unfinished_without_the_sigterm_only_run() -> None:
+    raw = fixture("q8")
+    del raw["sigterm_only"]
+    assert judge("q8", raw).verdict == UNFINISHED
 
 
 def test_q9_reports_the_slim_image() -> None:
@@ -273,6 +394,10 @@ def test_q9_reports_the_slim_image() -> None:
     assert any("slim" in fact and "能跑" in fact for fact in judge("q9", raw).facts)
     raw["slim"] = {"ok": False, "error": "pi: not found"}
     assert judge("q9", raw).verdict == PARTLY
+    raw["slim"] = None
+    verdict = judge("q9", raw)
+    assert verdict.verdict == HOLDS
+    assert "Node 26 的 slim 镜像：没有测" in verdict.facts
 
 
 def test_q10_fails_when_the_prompt_keeps_the_local_directory() -> None:
@@ -285,8 +410,33 @@ def test_gone_after_takes_the_first_sample_without_the_command() -> None:
     samples = rpcprobe.parse_watch(
         "10.0 sleep 601|\n10.2 sleep 601|\n10.4 \n10.6 sleep 601|\nbad line\n"
     )
-    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == pytest.approx(0.3)
-    assert rpcprobe.gone_after(samples, "sleep 601", 10.5) is None
+    gone = rpcprobe.gone_after(samples, "sleep 601", 10.1)
+    assert gone["seen"] is True and gone["gone_seconds"] == pytest.approx(0.3)
+
+
+def test_gone_after_does_not_count_a_command_that_was_never_sampled() -> None:
+    # 从头到尾没采到这条命令（模式写错、命令名变了）：不是「0.1 秒内消失」。
+    samples = rpcprobe.parse_watch("10.0 \n10.2 \n10.4 \n")
+    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == {"seen": False, "gone_seconds": None}
+    # 只在 since 之后才采到的也不算：结束之前它得在跑。
+    samples = rpcprobe.parse_watch("10.0 \n10.2 sleep 601|\n10.4 \n")
+    assert rpcprobe.gone_after(samples, "sleep 601", 10.1)["seen"] is False
+
+
+def test_gone_after_reports_a_command_that_stays() -> None:
+    samples = rpcprobe.parse_watch("10.0 sleep 601|\n10.2 sleep 601|\n")
+    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == {"seen": True, "gone_seconds": None}
+
+
+def test_rpcprobe_rejects_an_unknown_question_before_touching_the_environment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from aeval import cli
+
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["rpcprobe", "q11"])
+    assert raised.value.code == 2
+    assert "q11" in capsys.readouterr().err
 
 
 def test_verdict_only_gets_worse() -> None:

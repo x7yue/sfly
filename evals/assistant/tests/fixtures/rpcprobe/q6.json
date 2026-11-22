@@ -1,13 +1,45 @@
 {
 	"ok": true,
-	"abort_sent_at": 1795350136.9720097,
-	"abort_response_seconds": 0.009,
+	"next_turn": {
+		"messages_before": [
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+			{ "role": "assistant", "text": "" },
+			{ "role": "toolResult", "text": "Command aborted" },
+			{ "role": "assistant", "text": "" }
+		],
+		"prompt_ok": true,
+		"prompt_error": null,
+		"settled": true,
+		"stop_reason": "stop",
+		"error": null,
+		"request": [
+			{
+				"role": "system",
+				"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
+			},
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+			{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+			{ "role": "tool", "text": "Command aborted", "tool_call_id": "call_1" },
+			{ "role": "user", "text": "接着说" }
+		],
+		"messages_after": [
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+			{ "role": "assistant", "text": "" },
+			{ "role": "toolResult", "text": "Command aborted" },
+			{ "role": "assistant", "text": "" },
+			{ "role": "user", "text": "接着说" },
+			{ "role": "assistant", "text": "完成。" }
+		]
+	},
+	"abort_sent_at": 1795359463.3610592,
+	"abort_response_seconds": 0.036,
 	"abort_ok": true,
-	"settled_seconds": 0.009,
+	"settled_seconds": 0.036,
 	"settled_aborted": true,
-	"tool_end_seconds": 0.003,
+	"tool_end_seconds": 0.024,
 	"tool_result": "Command aborted",
-	"exit_seconds": 0.016,
-	"seconds": 1.7,
-	"workbench_gone_seconds": 0.03
+	"exit_seconds": 0.219,
+	"workbench": { "seen": true, "gone_seconds": 0.06 }
 }

@@ -138,7 +138,13 @@ def main(argv: list[str] | None = None) -> int:
     rp = sub.add_parser(
         "rpcprobe", help="助手服务那套启动参数下 pi 的 RPC 模式怎么表现（#539，假的模型端点）"
     )
-    rp.add_argument("questions", nargs="*", help="只跑这几题（q1…q4），默认全部")
+    rp.add_argument(
+        "questions",
+        nargs="*",
+        choices=rpcprobe.QUESTIONS,
+        metavar="题号",
+        help="只跑这几题（q1…q10），默认全部；题号写错时在重置环境之前就报错",
+    )
     rp.add_argument(
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-rpcprobe"
     )

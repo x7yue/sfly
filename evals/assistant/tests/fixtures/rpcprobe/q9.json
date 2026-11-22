@@ -2,25 +2,24 @@
 	"ok": true,
 	"runs": [
 		{
-			"ready_seconds": 0.632,
-			"idle_rss_mib": 117.4,
-			"peak_hwm_mib": 136.5,
-			"after_turn_rss_mib": 136.5
+			"ready_seconds": 1.327,
+			"idle_rss_mib": 116.4,
+			"peak_hwm_mib": 135.1,
+			"after_turn_rss_mib": 135.1
 		},
 		{
-			"ready_seconds": 0.406,
-			"idle_rss_mib": 118.2,
-			"peak_hwm_mib": 136.6,
-			"after_turn_rss_mib": 136.6
-		},
-		{
-			"ready_seconds": 0.542,
+			"ready_seconds": 2.029,
 			"idle_rss_mib": 117.3,
-			"peak_hwm_mib": 136.2,
-			"after_turn_rss_mib": 136.2
+			"peak_hwm_mib": 136.1,
+			"after_turn_rss_mib": 136.1
+		},
+		{
+			"ready_seconds": 0.854,
+			"idle_rss_mib": 117.0,
+			"peak_hwm_mib": 136.3,
+			"after_turn_rss_mib": 136.3
 		}
 	],
-	"seconds": 34.5,
 	"slim": {
 		"ok": true,
 		"base": "node:26-trixie-slim",

@@ -1,114 +1,67 @@
 {
 	"ok": true,
 	"as_killed": {
-		"killed_at": 1795350132.278698,
+		"killed_at": 1795359441.2889764,
 		"session_tail": [
-			"{\"type\":\"message\",\"id\":\"36a20b62\",\"parentId\":\"36f18909\",\"timestamp\":\"2026-11-22T12:22:11.227Z\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"Y",
-			"{\"type\":\"message\",\"id\":\"e05f1875\",\"parentId\":\"36a20b62\",\"timestamp\":\"2026-11-22T12:22:11.228Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"AEVAL-",
-			"{\"type\":\"message\",\"id\":\"4ea8dcd4\",\"parentId\":\"e05f1875\",\"timestamp\":\"2026-11-22T12:22:11.277Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":"
+			"{\"type\":\"message\",\"id\":\"0493aeae\",\"parentId\":\"345708e7\",\"timestamp\":\"2026-11-22T14:57:19.857Z\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\",\"tools\":\"<too",
+			"{\"type\":\"message\",\"id\":\"f1a6aebc\",\"parentId\":\"0493aeae\",\"timestamp\":\"2026-11-22T14:57:19.857Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"AEVAL-SCRIPT:rpcprobe-kill 照剧本做。\"}],\"timestamp\":1795359439841}}",
+			"{\"type\":\"message\",\"id\":\"2a1876e0\",\"parentId\":\"f1a6aebc\",\"timestamp\":\"2026-11-22T14:57:20.247Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"bash\",\"arguments\":{\"command\":\"sleep 601\",\"timeout\":900}}],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usa"
 		],
 		"restart_ok": true,
 		"restart_error": null,
 		"messages_on_restart": [
-			{
-				"role": "system",
-				"text": ""
-			},
-			{
-				"role": "user",
-				"text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。"
-			},
-			{
-				"role": "assistant",
-				"text": ""
-			}
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。" },
+			{ "role": "assistant", "text": "" }
 		],
 		"prompt_ok": true,
 		"prompt_error": null,
 		"first_request": [
 			{
 				"role": "system",
-				"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
 			},
-			{
-				"role": "user",
-				"text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。"
-			},
-			{
-				"role": "assistant",
-				"text": "",
-				"tool_calls": ["call_1"]
-			},
-			{
-				"role": "tool",
-				"text": "No result provided",
-				"tool_call_id": "call_1"
-			},
-			{
-				"role": "user",
-				"text": "继续"
-			}
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。" },
+			{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+			{ "role": "tool", "text": "No result provided", "tool_call_id": "call_1" },
+			{ "role": "user", "text": "继续" }
 		],
 		"requests": 1,
 		"reran_tool": false,
-		"exit_seconds": 0.034,
+		"exit_seconds": 0.07,
 		"stderr": "",
-		"workbench_gone_seconds": 0.16
+		"workbench": { "seen": true, "gone_seconds": 0.13 }
 	},
 	"half_line": {
-		"killed_at": 1795350134.3519905,
+		"killed_at": 1795359446.4815593,
 		"session_tail": [
-			"{\"type\":\"message\",\"id\":\"3bd90f1f\",\"parentId\":\"7ace325d\",\"timestamp\":\"2026-11-22T12:22:13.314Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"AEVAL-",
-			"{\"type\":\"message\",\"id\":\"2ce42f4f\",\"parentId\":\"3bd90f1f\",\"timestamp\":\"2026-11-22T12:22:13.351Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":",
+			"{\"type\":\"message\",\"id\":\"60cfa87f\",\"parentId\":\"a5da70b3\",\"timestamp\":\"2026-11-22T14:57:25.282Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"AEVAL-SCRIPT:rpcprobe-kill 照剧本做。\"}],\"timestamp\":1795359445273}}",
+			"{\"type\":\"message\",\"id\":\"af5049c7\",\"parentId\":\"60cfa87f\",\"timestamp\":\"2026-11-22T14:57:25.444Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"bash\",\"arguments\":{\"command\":\"sleep 601\",\"timeout\":900}}],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usa",
 			"{\"type\":\"message\",\"id\":\"half\",\"message\":{\"role\":\"assi"
 		],
 		"restart_ok": true,
 		"restart_error": null,
 		"messages_on_restart": [
-			{
-				"role": "system",
-				"text": ""
-			},
-			{
-				"role": "user",
-				"text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。"
-			},
-			{
-				"role": "assistant",
-				"text": ""
-			}
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。" },
+			{ "role": "assistant", "text": "" }
 		],
 		"prompt_ok": true,
 		"prompt_error": null,
 		"first_request": [
 			{
 				"role": "system",
-				"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
 			},
-			{
-				"role": "user",
-				"text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。"
-			},
-			{
-				"role": "assistant",
-				"text": "",
-				"tool_calls": ["call_1"]
-			},
-			{
-				"role": "tool",
-				"text": "No result provided",
-				"tool_call_id": "call_1"
-			},
-			{
-				"role": "user",
-				"text": "继续"
-			}
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-kill 照剧本做。" },
+			{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+			{ "role": "tool", "text": "No result provided", "tool_call_id": "call_1" },
+			{ "role": "user", "text": "继续" }
 		],
 		"requests": 1,
 		"reran_tool": false,
-		"exit_seconds": 0.016,
+		"exit_seconds": 0.075,
 		"stderr": "",
-		"workbench_gone_seconds": 0.14
-	},
-	"seconds": 5.1
+		"workbench": { "seen": true, "gone_seconds": 0.06 }
+	}
 }

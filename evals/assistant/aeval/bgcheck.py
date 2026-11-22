@@ -13,6 +13,9 @@
 这是启发式的：端口按 `:<端口>`、`--port <端口>`、`-p <端口>`、`http.server <端口>`、
 `PORT=<端口>` 认，
 输出文件按重定向（`>`、`>>`、`&>`、`tee`）和 `nohup` 默认的 `nohup.out` 认。
+认不出来的：起服务的命令里没写端口（`python3 -m http.server &`、`npm run dev &` 用默认端口）、
+之后用 `pkill`、`ps` 按名字找它、`docker run -d` 起的；URL 引号里的 `&` 会被当成放到后台（误报）。
+所以起过后台进程的每条命令都列出来，数的时候要人工看。
 """
 
 from __future__ import annotations
@@ -146,6 +149,8 @@ def scan(roots: list[Path], *, include_fake: bool = False) -> dict[str, Any]:
     started: Counter[tuple[str, str, str]] = Counter()
     commands = 0
     findings: list[Finding] = []
+    # 起过后台进程的每条命令：识别是启发式的，数的时候要人工看。
+    background: list[dict[str, Any]] = []
     seen: set[Path] = set()
     for root in roots:
         for record_file in sorted(root.rglob("session.json")):
@@ -164,7 +169,16 @@ def scan(roots: list[Path], *, include_fake: bool = False) -> dict[str, Any]:
             sessions[key] += 1
             steps = steps_of(read_events(folder / "events.jsonl"))
             commands += sum(1 for s in steps if s.tool == "bash")
-            started[key] += sum(1 for s in steps if s.tool == "bash" and backgrounds(s.text))
+            for s in steps:
+                if s.tool == "bash" and backgrounds(s.text):
+                    started[key] += 1
+                    background.append(
+                        {
+                            "session": str(record.get("session", folder.name)),
+                            "index": s.index,
+                            "text": s.text[:300],
+                        }
+                    )
             for start, used, how in find_in_session(steps):
                 hits[key] += 1
                 around = [s for s in steps if abs(s.index - used.index) == 1]
@@ -189,6 +203,7 @@ def scan(roots: list[Path], *, include_fake: bool = False) -> dict[str, Any]:
         "findings": len(findings),
         "groups": groups,
         "details": [f.as_dict() for f in findings],
+        "background": background,
     }
 
 
@@ -213,6 +228,11 @@ def render(result: dict[str, Any]) -> str:
             f"  - 第 {d['used']['index']} 步依赖它：`{d['used']['text']}`",
         ]
         lines += [f"  - 前后：第 {s['index']} 步 {s['tool']} `{s['text']}`" for s in d["around"]]
+    if result["background"]:
+        lines += ["", "起后台进程的命令（识别是启发式的，会漏也会误报，逐条人工看）："]
+        lines += [
+            f"- {b['session']} 第 {b['index']} 步：`{b['text']}`" for b in result["background"]
+        ]
     return "\n".join(lines) + "\n"
 
 
