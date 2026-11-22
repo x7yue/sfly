@@ -35,8 +35,8 @@ import {
 import type { FocusItem } from "./focus-list.js";
 
 /**
- * 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（HTTP 接口、控制台、运行结束时的运行通知）传这三样。
- * `db` 可以是事务：运行通知在写入运行最终状态的事务里读，要看到这个事务里刚写下的节点状态，运行的读取（`readRuns`）
+ * 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（HTTP 接口、控制台）传这三样。
+ * `db` 可以是事务：在事务里读时，要看到这个事务里刚写下的节点状态，运行的读取（`readRuns`）
  * 也要走同一个事务。所有查询（包括 `queries` 读的序列）都走 `db`，一个接一个地执行，不从连接池另取连接。
  */
 export interface RunFocusDeps {
@@ -160,7 +160,7 @@ function placedNodes(chains: readonly RunChain<RunAttemptDetail>[]): Placed {
 /**
  * 每个要读的节点的来源（docs/ARCHITECTURE.md §6.1「运行里的关注项读数」）：链实例、状态、最新一次尝试和它前面的一次都出自
  * 运行读取里同一个链实例的同一项（{@link placedNodes}），尝试不含占位。判断异常要的错误信息和运行视图一样在读取时打码，
- * 所以异常原因（失败、重试的 `message`）在各页面和运行通知里都已打码。
+ * 所以异常原因（失败、重试的 `message`）在各页面里都已打码。
  */
 async function sourcesOf(
 	db: Db | Tx,

@@ -1333,6 +1333,11 @@ export interface NodeTypeView {
 	 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
 	 */
 	description?: string;
+	/**
+	 * 节点类型声明的默认超时（秒，`@node(timeout=…)`）：场景里这个节点没写超时时用它，都没有时用平台默认的 1 小时
+	 * （docs/SEMANTICS.md §3.3）。没声明的节点类型没有这个字段；带它的包发布到没有这个字段的旧控制面会被拒绝。
+	 */
+	timeout?: number;
 	/** 入口：`module:function`。 */
 	entry: string;
 	inputs: IoSchema;
@@ -1464,7 +1469,7 @@ export interface PackageNode {
 	/** 未设置时使用编排的默认 Agent。 */
 	agent?: string;
 	inputs: Record<string, unknown>;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
 	/** 秒。 */
@@ -1488,7 +1493,7 @@ export interface PackageNodeInput {
 	/** 未设置时使用编排的默认 Agent。 */
 	agent?: string;
 	inputs?: Record<string, unknown>;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
 	/** 秒。 */
@@ -2102,7 +2107,7 @@ export interface RunMetricSummary {
 export interface RunNotificationChanges {
 	/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 	bot?: FeishuBotName | null;
-	/** 什么情况下发：仅失败、失败和取消、总是。 */
+	/** 什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。 */
 	trigger?: RunNotificationTrigger;
 	/** 卡片标题；空字符串用场景名。 */
 	title?: string;
@@ -2136,8 +2141,12 @@ export interface RunNotificationState {
 	reason: string | null;
 }
 
-/** 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。 */
-export type RunNotificationTrigger = "failed" | "failed_or_cancelled" | "always";
+/**
+ * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消。运行通知是兜底，成功的运行不发；不想发就把机器人设成
+ * null。曾经有的「总是」（`always`，成功、失败、取消都发）已经去掉（#446）：升级时存量的「总是」改成了失败和取消，
+ * 保存设置时再写它会被拒绝（`runNotificationTriggerRemovedMessage`）。
+ */
+export type RunNotificationTrigger = "failed" | "failed_or_cancelled";
 
 /** 运行用的运行预设，记的是触发时的情况：预设之后改名、删除都不影响。 */
 export interface RunPresetView {

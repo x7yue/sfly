@@ -1,6 +1,7 @@
 // 切入点 A：失败处理（docs/SEMANTICS.md §3.2、§3.3）——错误分类与重试、跳过与 always、运行状态。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PLATFORM_TIMEOUT_HINT } from "../src/engine/timeout-hint.js";
 import { ApiClient } from "./support/api-client.js";
 import { ErrorKind, FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
@@ -66,17 +67,16 @@ describe("失败处理", () => {
 			expect(new Set(seen).size).toBe(3);
 			await agent.expectNoAssign();
 
+			// 超时失败：节点和节点类型都没设超时（用的是平台默认的）时，错误信息后面补一句怎么办（#476）。
+			const message = (n: number) =>
+				kind === "timeout" ? `failure ${n}\n${PLATFORM_TIMEOUT_HINT}` : `failure ${n}`;
 			const a = await api.node(runId, "a");
 			expect(a.status).toBe("failed");
-			expect(a.error).toEqual({ kind, message: "failure 3", location: null });
+			expect(a.error).toEqual({ kind, message: message(3), location: null });
 			expect(
 				a.attempts.map((t) => [t.task_id, t.attempt, t.status, t.agent, t.error?.kind]),
 			).toEqual(seen.map((taskId, i) => [taskId, i + 1, "failed", "agent-a", kind]));
-			expect(a.attempts.map((t) => t.error?.message)).toEqual([
-				"failure 1",
-				"failure 2",
-				"failure 3",
-			]);
+			expect(a.attempts.map((t) => t.error?.message)).toEqual([message(1), message(2), message(3)]);
 			expect(await statuses(runId)).toMatchObject({ a: "failed", b: "skipped" });
 			expect((await api.run(runId)).status).toBe("failed");
 		});

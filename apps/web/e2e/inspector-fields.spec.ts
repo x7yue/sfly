@@ -198,3 +198,54 @@ test("检查器的标题最多两行、不截成一行；工具条里的场景�
 	await name.hover();
 	await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(scenarioName);
 });
+
+// 节点类型声明的默认超时（#476）：检查器的执行页写出生效的超时和它从哪来。
+test("执行页的超时：写出生效的值和它从哪来（节点类型声明、平台默认、这个节点上设置的）", async ({
+	page,
+	controlPlane,
+}) => {
+	const nodes = [
+		{ ...uploadNodes[0], name: "keep", title: "保持", timeout: 43_200 },
+		{ ...uploadNodes[0], name: "ping", title: "探活" },
+	];
+	await publishPackage(controlPlane, { nodes });
+	const document = {
+		...uploadDocument,
+		nodes: [
+			uploadDocument.nodes[0],
+			{ ...uploadDocument.nodes[1], id: "keep", node: "keep" },
+			{ ...uploadDocument.nodes[1], id: "ping", node: "ping", position: { x: 600, y: 0 } },
+		],
+		edges: [
+			{ from: "entry", to: "keep", kind: "chain" },
+			{ from: "keep", to: "ping", kind: "chain" },
+		],
+	};
+	const id = await createScenario(controlPlane, "保持十二小时", document);
+	await openEditor(page, id, "keep");
+	const panel = inspector(page);
+	const timeout = panel.getByLabel("超时", { exact: true });
+
+	// 节点类型声明了：没填时占位是它声明的值，说明里写来源。
+	await nodeCard(page, "keep").click();
+	await panel.getByRole("tab", { name: "执行" }).click();
+	await expect(timeout).toHaveAttribute("placeholder", "43200（节点类型声明，秒）");
+	await expect(panel).toContainText("生效 43200 秒：节点类型声明");
+
+	// 这个节点上填了：说明里写盖过了节点类型声明的哪个值。
+	await timeout.fill("120");
+	await expect(panel).toContainText("生效 120 秒：节点上设置，盖过节点类型声明的 43200 秒");
+
+	// 超过上限（派发给 Agent 的超时是 uint32）：字段报错，不能保存。
+	await timeout.fill("5000000000");
+	await timeout.blur();
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toBeVisible();
+	await timeout.fill("120");
+	await expect(panel.getByText("不能超过 4294967295（秒）")).toHaveCount(0);
+
+	// 没声明的节点类型：平台默认。
+	await nodeCard(page, "ping").click();
+	await panel.getByRole("tab", { name: "执行" }).click();
+	await expect(timeout).toHaveAttribute("placeholder", "3600（平台默认，秒）");
+	await expect(panel).toContainText("生效 3600 秒：平台默认");
+});
