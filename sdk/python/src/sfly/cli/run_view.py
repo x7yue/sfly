@@ -178,6 +178,64 @@ def format_duration(ms: int | None) -> str:
     return f"{hours}h{minutes:02d}m"
 
 
+# ---------------------------------------------------------------- 排队中的节点在等什么
+
+# 排队中的节点最多列出几个占着槽位的任务，其余写「还有 N 个」。
+_MAX_SLOT_HOLDERS = 3
+
+
+def _holder_label(holder: Mapping[str, Any]) -> str:
+    """占着槽位的任务：`撮合压测（运行 5e2d1c7a）的 main:soak「浸泡」`。
+    写明是哪次运行：同一场景触发两次互相抢槽位时分得开。"""
+    ref = NodeRef(chain_name(holder["chain_name"]), holder["node_id"]).label
+    named = with_display_name(ref, holder.get("display_name"))
+    return f"{holder['orchestration_name']}（运行 {holder['run_id'][:8]}）的 {named}"
+
+
+def queue_wait_text(wait: Mapping[str, Any], queued_at: str) -> str:
+    """排队中的节点在等什么（运行视图里排队中尝试的 `queue_wait`；时间按它的 `now`，控制面时间）：
+    `等 agent-a（不在线，已离线 2m00s）· 排队 3m05s · 6m55s 后超时`。
+
+    和界面写法一致（apps/web/src/lib/copy.ts 的 `QUEUE_WAIT`，`test_cli_run_view.py` 检查）：
+    括号里是这台 Agent 现在的情况；槽位占满时后面接占着槽位的任务（最多 3 个）；最后是排了多久
+    和多久后排队超时（没有设置排队超时的只写排了多久，过了超时时间、控制面还没处理的写「即将超时」）。
+    """
+    now = parse_time(wait["now"])
+
+    def since(text: str) -> str:
+        return format_duration(max(round((now - parse_time(text)).total_seconds() * 1000), 0))
+
+    state = wait["state"]
+    if state == "offline":
+        situation = "不在线" if wait["since"] is None else f"不在线，已离线 {since(wait['since'])}"
+    elif state == "preparing":
+        situation = "准备环境中" if wait["since"] is None else f"准备环境中 {since(wait['since'])}"
+    elif state == "version_mismatch":
+        situation = "版本与控制面不一致，不派新任务"
+    elif state == "slots_full":
+        situation = f"槽位占满，{wait['slots']} / {wait['slots']}"
+    else:
+        situation = "正在派发"
+    timing = [f"排队 {since(queued_at)}"]
+    expires = wait["expires_at"]
+    if expires is not None:
+        left = round((parse_time(expires) - now).total_seconds() * 1000)
+        timing.append(f"{format_duration(left)} 后超时" if left > 0 else "即将超时")
+    # 全角括号后面的分隔不再加空格（和界面一致）。
+    text = f"等 {wait['agent']}（{situation}）· " + " · ".join(timing)
+    holders = wait["holders"]
+    elsewhere = wait.get("other_project_holders", 0)
+    if holders or elsewhere:
+        shown = "、".join(_holder_label(h) for h in holders[:_MAX_SLOT_HOLDERS])
+        more = len(holders) - _MAX_SLOT_HOLDERS
+        rest = [f"还有 {more} 个"] if more > 0 else []
+        # 同一台 Agent 上别的项目的任务只有个数，看不到它们的场景和运行（和界面一致）。
+        if elsewhere:
+            rest.append(f"{'另有' if shown else ''}别的项目的任务 {elsewhere} 个")
+        text += "；占着槽位的任务：" + shown + ("，" if shown and rest else "") + "，".join(rest)
+    return text
+
+
 # ---------------------------------------------------------------- 日志行
 
 
