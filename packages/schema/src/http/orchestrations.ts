@@ -7,6 +7,7 @@ import {
 	StoredOrchestrationDocument,
 } from "../orchestration-document.js";
 import { ChartDeclaration } from "../package-metadata.js";
+import { QUEUE_TIMEOUT_MAX_SECONDS, queueTimeoutMessage } from "../queue-timeout.js";
 import { removedFieldsMessage, removedFieldsWithContent } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
 import { endpoint, Timestamp } from "./contract.js";
@@ -30,22 +31,33 @@ import { FeishuBotName } from "./feishu-bots.js";
  * 有内容的被拒绝，错误信息写明有几条、怎么办。
  */
 
-/** 保存的文档里节点写的超时超过上限的说明（每个这样的节点一句，写明是哪个节点、范围、实际是多少，#476）。 */
+/**
+ * 保存的文档里节点写的超时、排队超时超过上限的说明（每个这样的节点和字段一句，写明是哪个节点、范围、实际是多少，
+ * #476、#559）。
+ */
 function timeoutMessages(nodes: unknown): string[] {
 	if (!Array.isArray(nodes)) return [];
 	return nodes.flatMap((n: unknown) => {
 		if (typeof n !== "object" || n === null || !("kind" in n) || n.kind !== "package") return [];
-		const timeout = "timeout" in n ? n.timeout : undefined;
-		if (typeof timeout !== "number" || !(timeout > NODE_TIMEOUT_MAX_SECONDS)) return [];
 		const id = "id" in n && typeof n.id === "string" ? n.id : "?";
 		const name = "display_name" in n && typeof n.display_name === "string" ? n.display_name : "";
-		return [nodeTimeoutMessage(name ? `${name}（${id}）` : id, timeout)];
+		const label = name ? `${name}（${id}）` : id;
+		const timeout = "timeout" in n ? n.timeout : undefined;
+		const queueTimeout = "queue_timeout" in n ? n.queue_timeout : undefined;
+		return [
+			...(typeof timeout === "number" && timeout > NODE_TIMEOUT_MAX_SECONDS
+				? [nodeTimeoutMessage(label, timeout)]
+				: []),
+			...(typeof queueTimeout === "number" && queueTimeout > QUEUE_TIMEOUT_MAX_SECONDS
+				? [queueTimeoutMessage(label, queueTimeout)]
+				: []),
+		];
 	});
 }
 
 /**
  * 保存的文档不合法时的说明：含已移除种类的节点，或已移除的顶层字段（便签）里有内容时，写明是哪些、怎么办（ADR 0028）；
- * 节点写的超时超过上限时写明是哪个节点、上限多少（#476）。
+ * 节点写的超时、排队超时超过上限时写明是哪个节点、上限多少（#476、#559）。
  */
 function invalidDocumentMessage(body: object): string {
 	const document = "document" in body ? body.document : undefined;

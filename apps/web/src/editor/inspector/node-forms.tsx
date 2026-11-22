@@ -12,6 +12,7 @@ import {
 	type FeishuBotView,
 	NODE_TIMEOUT_MAX_SECONDS,
 	type PackageSummary,
+	QUEUE_TIMEOUT_MAX_SECONDS,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useRef } from "react";
@@ -160,6 +161,7 @@ const SETTINGS = [
 		key: "queue_timeout",
 		label: "排队超时",
 		min: 1,
+		max: QUEUE_TIMEOUT_MAX_SECONDS,
 		placeholder: `${NODE_DEFAULTS.queue_timeout}（默认，秒）`,
 		help: "等待 Agent 空闲槽位的最长时间",
 	},
@@ -170,12 +172,15 @@ export function ExecutionSettings({
 	id,
 	node,
 	type,
+	problemsOf,
 	onChange,
 }: {
 	id: string;
 	node: AlwaysNode;
 	/** 包节点的节点类型（超时没填时写它声明的）；null：找不到；undefined：还在加载。 */
 	type?: NodeTypeIo | null | undefined;
+	/** 这个节点上指向某个配置字段的警告（版本里已经存下来的超限的超时、排队超时，#476、#559）：显示在字段下面。 */
+	problemsOf?: ProblemsOf;
 	onChange(node: AlwaysNode): void;
 }) {
 	return (
@@ -191,6 +196,7 @@ export function ExecutionSettings({
 								: s
 						}
 						value={node[s.key]}
+						problems={problemsOf?.(s.key) ?? []}
 						onChange={(value) => {
 							const { [s.key]: _old, ...rest } = node;
 							onChange(value === undefined ? rest : { ...rest, [s.key]: value });
@@ -226,11 +232,14 @@ function SettingField({
 	fieldKey,
 	setting,
 	value,
+	problems,
 	onChange,
 }: {
 	fieldKey: string;
 	setting: { label: string; min: number; max?: number; placeholder: string; help: string };
 	value: number | undefined;
+	/** 这个字段已存下来的值有什么问题（来自检查的警告）；输入时的错误（`field.error`）优先。 */
+	problems: readonly string[];
 	onChange(value: number | undefined): void;
 }) {
 	const field = useParsedField<number | undefined>({
@@ -251,7 +260,12 @@ function SettingField({
 		onChange,
 	});
 	return (
-		<Field label={setting.label} fieldKey={fieldKey} error={field.error} help={setting.help}>
+		<Field
+			label={setting.label}
+			fieldKey={fieldKey}
+			error={field.error ?? problems[0]}
+			help={setting.help}
+		>
 			{(control) => (
 				<Input
 					{...control}
