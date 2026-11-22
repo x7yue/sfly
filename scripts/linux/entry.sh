@@ -15,7 +15,8 @@ bash /src/scripts/linux/trim-target.sh "$base/target" || true
 if [[ -f $base/files ]]; then
 	comm -z -23 <(sort -z "$base/files") <(sort -z /sync/files) | (cd "$work" && xargs -0 -r rm -f --)
 fi
-rsync -a --files-from=/sync/files --from0 /src/ "$work/"
+# 内容变了的文件修改时间变成现在，没变的不动：cargo 按修改时间判断要不要重编（见 sync-copy.sh，#589）。
+bash /src/scripts/linux/sync-copy.sh /src /sync/files "$work"
 cp /sync/files "$base/files"
 cd "$work"
 
@@ -28,6 +29,9 @@ git commit -q --allow-empty --no-verify -m "pnpm linux 同步的工作区"
 
 # 依赖装在副本里，与宿主的 node_modules、.venv 无关；缓存在卷里，各工作区共用。
 export CARGO_TARGET_DIR=$base/target npm_config_store_dir=/vol/cache/pnpm UV_CACHE_DIR=/vol/cache/uv
+# cargo 的调试信息只留行号表（编译结果小一半多、快几倍，回溯里的文件和行号还在），调用者设了就不覆盖。
+# shellcheck source=cargo-env.sh
+source /src/scripts/linux/cargo-env.sh
 # uv 的缓存只增不减（每次同步都加新的解包内容，不再被引用的不会自己清）：超过上限让 uv 自己清掉不再被引用的部分。
 uv_limit_kb=$((${SFLY_LINUX_UV_CACHE_LIMIT_MB:-1024} * 1024))
 if [[ $(du -sk "$UV_CACHE_DIR" 2>/dev/null | cut -f1) -gt $uv_limit_kb ]]; then
