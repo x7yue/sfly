@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -100,6 +101,7 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 		cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
 		cp = await startTestControlPlane({ clock, version: cliVersion });
 		api = new ApiClient(cp);
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 		dir = await mkdtemp(join(tmpdir(), "sfly-node-note-"));
 	}, 120_000);
 
@@ -124,10 +126,10 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 					"主链",
 					"  入口参数：无",
 					"  节点：",
-					"    节点    显示名称  节点类型                  包版本  Agent",
-					"    deploy  -         stub/echo                 1.0.0   agent-b",
-					"    spawn   -         异步任务 → 子流程 report  -       -",
-					"    pause   -         stub/echo                 1.0.0   agent-a",
+					"    节点    显示名称  节点类型                  包版本  Agent    超时",
+					"    deploy  -         stub/echo                 1.0.0   agent-b  3600（平台默认，秒）",
+					"    spawn   -         异步任务 → 子流程 report  -       -        -",
+					"    pause   -         stub/echo                 1.0.0   agent-a  3600（平台默认，秒）",
 					"  备注：",
 					"    entry：整个场景的说明：先发布，再等灰度",
 					"    deploy：发布到测试环境",
@@ -139,15 +141,15 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 					"子流程 report（入口 sub，由 spawn 触发）",
 					"  入口参数：无",
 					"  节点：",
-					"    节点  显示名称  节点类型   包版本  Agent",
-					"    send  -         stub/echo  1.0.0   agent-a",
+					"    节点  显示名称  节点类型   包版本  Agent    超时",
+					"    send  -         stub/echo  1.0.0   agent-a  3600（平台默认，秒）",
 					"  备注：",
 					"    sub：报告子流程：汇总并发给值班同学",
 					"    send：只发一次",
 					"",
 					"没有连进任何链的节点：",
-					"  节点   显示名称  节点类型   包版本  Agent",
-					"  loose  -         stub/echo  1.0.0   agent-a",
+					"  节点   显示名称  节点类型   包版本  Agent    超时",
+					"  loose  -         stub/echo  1.0.0   agent-a  3600（平台默认，秒）",
 					"  备注：",
 					"    loose：还没接进任何链",
 					"           接好之后删掉",

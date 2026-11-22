@@ -30,6 +30,7 @@ import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fak
 import { putFocusItemsOk } from "./support/focus-items.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
+import { persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient, type SseEvent } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import {
@@ -93,6 +94,8 @@ interface Fixture {
 
 interface Seeded {
 	fixtures: Record<FixtureKey, Fixture>;
+	/** 有每种持久事件的会话。 */
+	sessionId: string;
 	presetId: string;
 	botName: string;
 	docSlug: string;
@@ -312,7 +315,13 @@ describe("声明为只读的接口真的不写库", () => {
 	});
 
 	it("事件流的事件都和清单里的 schema 对过一遍（不是空转）", () => {
-		for (const expected of ["GET /runs/:id/events run", "GET /tasks/:id/actions/events summary"]) {
+		for (const expected of [
+			"GET /runs/:id/events run",
+			"GET /tasks/:id/actions/events summary",
+			"GET /sessions/:id/events user_message",
+			"GET /sessions/:id/events platform",
+			"GET /sessions/:id/events turn_end",
+		]) {
 			expect(validatedEvents, expected).toContain(expected);
 		}
 	});
@@ -413,9 +422,12 @@ describe("声明为只读的接口真的不写库", () => {
 function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture): string {
 	const kind = def.resource.kind;
 	const samples: Record<string, string | undefined> = {
-		id: { scenario: fixture?.scenarioId, run: fixture?.runId, task: fixture?.taskId }[
-			kind as string
-		],
+		id: {
+			scenario: fixture?.scenarioId,
+			run: fixture?.runId,
+			task: fixture?.taskId,
+			session: s.sessionId,
+		}[kind as string],
 		presetId: s.presetId,
 		number: "1",
 		a: "1",
@@ -429,7 +441,8 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		page: s.docSlug,
 		skill: "sfly-platform",
 		file: "SKILL.md",
-		project: "sfly",
+		// 会话的列表在 `/projects/:project/sessions`，项目是真实存在的默认项目；`/simple/:project/` 的 project 是 PEP 503 里的包名。
+		project: kind === "session" ? "default" : "sfly",
 	};
 	const value = samples[name];
 	if (value === undefined) {
@@ -824,6 +837,9 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 		expect(agents[0]?.queued_tasks).toHaveLength(1);
 	});
 
+	// 会话：有每种持久事件，上一轮结束了；再来一个在做的、一个空闲没有事件的（列表里状态不同的几种）。
+	const sessionId = await seedSession(cp.database.url, { events: persistedBodies() });
+	await seedSession(cp.database.url, { title: "没有事件的会话", status: "idle" });
 	const docs = await api.getJson<{ pages: Array<{ slug: string }> }>("/docs");
 	const fixture = async (
 		scenarioId: string,
@@ -855,6 +871,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 				rich: await fixture(rich),
 				diffed: await fixture(diffed),
 			},
+			sessionId,
 			presetId: preset.id,
 			botName: bot.name,
 			docSlug: docs.pages[0]?.slug as string,

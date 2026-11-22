@@ -21,6 +21,11 @@ export interface SseStream {
 	readonly closed: boolean;
 	/** 浏览器重连时带上的最后一条消息 ID（`Last-Event-ID` 请求头）。 */
 	readonly lastEventId: string | undefined;
+	/**
+	 * 写出去的数据还没被对端读走时，等它读走；已经读走或流已经结束时马上完成。一次要写很多条的（补发历史）
+	 * 每写一批等一次，慢客户端就不会让整段历史堆在服务端的内存里。
+	 */
+	drained(): Promise<void>;
 }
 
 /** setup 里订阅数据源，返回的清理函数在流结束（客户端断开、服务端关闭）时调用一次。 */
@@ -89,6 +94,12 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 
 			let closed = false;
 			let cleanup: (() => void) | undefined;
+			const drainWaiters = new Set<() => void>();
+			const releaseWaiters = () => {
+				for (const release of [...drainWaiters]) release();
+				drainWaiters.clear();
+			};
+			res.on("drain", releaseWaiters);
 			const heartbeat = setInterval(sendTime, heartbeatMs);
 			heartbeat.unref();
 
@@ -98,6 +109,7 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 				clearInterval(heartbeat);
 				open.delete(stream);
 				cleanup?.();
+				releaseWaiters();
 			};
 			const lastEventId = request.headers["last-event-id"];
 			const stream: SseStream = {
@@ -113,6 +125,12 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 					if (closed) return;
 					finish();
 					res.end();
+				},
+				drained() {
+					if (closed || !res.writableNeedDrain) return Promise.resolve();
+					return new Promise<void>((resolve) => {
+						drainWaiters.add(resolve);
+					});
 				},
 			};
 			open.add(stream);
