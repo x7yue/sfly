@@ -12,7 +12,7 @@ import {
 } from "@sfly/schema";
 import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { projects, sessionEvents, sessions } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
@@ -67,6 +67,46 @@ function violates(error: unknown, constraint: string): boolean {
 		if (fields.code === "23505" && fields.constraint === constraint) return true;
 	}
 	return false;
+}
+
+/** 持久事件的内容要过 schema，不持久的类型不能落库。 */
+function parsePersistent(body: SessionEventBody): SessionEventBody {
+	if (!isPersistedType(body.type)) {
+		throw new Error(`会话事件 ${body.type} 不持久，不能落库（用 publish 推送）`);
+	}
+	return SessionEventBody.parse(body);
+}
+
+/** 会话此刻在做的那一轮：在做的会话没有记过轮次（旧数据、测试里直接写库造的）时当作第 1 轮。 */
+export const effectiveTurn = (session: Pick<SessionRow, "currentTurn">): number =>
+	Math.max(1, session.currentTurn);
+
+/** 事务里记一条持久事件的结果：落库（或已有）的事件，以及是不是重复的（这一轮已经有 `turn_end`）。 */
+interface Inserted {
+	event: PersistedSessionEvent;
+	duplicate: boolean;
+}
+
+/** 助手服务发来的事件为什么不收：会话不存在、不在做、不是此刻在做的那一轮。 */
+export type DropReason = "unknown_session" | "not_running" | "other_turn";
+
+function dropReason(
+	session: Pick<SessionRow, "status" | "currentTurn">,
+	turn: number,
+): DropReason | undefined {
+	if (session.status !== "running") return "not_running";
+	return turn === effectiveTurn(session) ? undefined : "other_turn";
+}
+
+/** 事务里锁住会话那一行并取出它；不存在时抛 {@link SessionNotFoundError}。 */
+async function lockSession(tx: Tx, sessionId: string): Promise<SessionRow> {
+	const [session] = await tx
+		.select()
+		.from(sessions)
+		.where(eq(sessions.id, sessionId))
+		.for("update");
+	if (!session) throw new SessionNotFoundError(sessionId);
+	return session;
 }
 
 /** 写事件时会话不存在。 */
@@ -167,15 +207,6 @@ export class SessionStore {
 			.where(and(eq(sessions.status, "running"), lt(sessions.lastActivityAt, before)));
 	}
 
-	/** 一个会话已经开始过几轮（`turn_started` 的条数）。 */
-	async turnCount(sessionId: string): Promise<number> {
-		const [row] = await this.deps.db
-			.select({ n: sql<number>`count(*)::int` })
-			.from(sessionEvents)
-			.where(and(eq(sessionEvents.sessionId, sessionId), eq(sessionEvents.type, "turn_started")));
-		return row?.n ?? 0;
-	}
-
 	/** 一个会话上一轮的结局（最近一条 `turn_end`）；没有结束过的一轮时为 null。 */
 	async lastOutcome(sessionId: string): Promise<TurnOutcome | null> {
 		return (await this.#lastOutcomes([sessionId])).get(sessionId) ?? null;
@@ -237,9 +268,10 @@ export class SessionStore {
 	}
 
 	/**
-	 * 新建一个会话（`created_by_user_id` 是发起人的用户，#494 之前的请求没有用户）。同一个项目已经有一个 `running`
-	 * 的会话时，建一个 `running` 的会话抛 {@link ProjectBusyError}（数据库的唯一约束
-	 * `sessions_one_running_per_project`，并发的两个请求只有一个写得成）。
+	 * 新建一个空的会话（没有事件，不开始任何一轮；测试和以后的排队用）。`created_by_user_id` 是发起人的用户，
+	 * #494 之前的请求没有用户。同一个项目已经有一个 `running` 的会话时，建一个 `running` 的会话抛 {@link ProjectBusyError}
+	 * （数据库的唯一约束 `sessions_one_running_per_project`，并发的两个请求只有一个写得成）。
+	 * 带第一轮的新建用 {@link createWithTurn}。
 	 */
 	async create(input: {
 		project: ProjectId;
@@ -272,6 +304,53 @@ export class SessionStore {
 		}
 	}
 
+	/**
+	 * 新建一个会话并开始它的第一轮：建会话（`running`，第 1 轮）、写 `user_message`、写 `turn_started`，**在一个事务里**：
+	 * 不会有「在做、但这一轮没有开始」的会话。项目里已经有在做的会话时抛 {@link ProjectBusyError}（整个事务回滚，
+	 * 不留下行）。`opening` 给出这一轮开头要写的事件（第 1 轮）。
+	 */
+	async createWithTurn(
+		input: { project: ProjectId; title: string; createdBy: string; createdByUserId: string | null },
+		opening: (turn: number) => SessionEventBody[],
+	): Promise<{ session: SessionRow; events: PersistedSessionEvent[] }> {
+		const id = randomUUID();
+		return this.#serial(id, async () => {
+			const now = this.deps.clock.now();
+			let created: { session: SessionRow; events: PersistedSessionEvent[] };
+			try {
+				created = await this.deps.db.transaction(async (tx) => {
+					const [row] = await tx
+						.insert(sessions)
+						.values({
+							id,
+							projectId: input.project,
+							title: input.title,
+							status: "running",
+							createdBy: input.createdBy,
+							createdByUserId: input.createdByUserId,
+							createdAt: now,
+							lastActivityAt: now,
+							currentTurn: 1,
+						})
+						.returning();
+					const session = row as SessionRow;
+					const events: PersistedSessionEvent[] = [];
+					for (const body of opening(1)) {
+						events.push((await this.#insert(tx, session, parsePersistent(body), now)).event);
+					}
+					return { session, events };
+				});
+			} catch (error) {
+				if (violates(error, "sessions_one_running_per_project")) {
+					throw new ProjectBusyError(input.project);
+				}
+				throw error;
+			}
+			await this.#publishCommitted(id, created.events);
+			return created;
+		});
+	}
+
 	/** 项目里在做（`running`）的会话；没有时为 undefined（至多一个）。 */
 	async running(project: ProjectId): Promise<SessionRow | undefined> {
 		const [row] = await this.deps.db
@@ -282,28 +361,58 @@ export class SessionStore {
 	}
 
 	/**
-	 * 一个空闲的会话开始新的一轮（`idle` → `running`），返回是不是成功：已经在做（`running`）、排队（`queued`）或已结束
-	 * （`ended`）时返回当时的状态，什么也没有改。项目里已经有别的会话在做时抛 {@link ProjectBusyError}。
-	 * 两个并发的请求对同一个会话只有一个成功。
+	 * 一个空闲的会话开始新的一轮：`idle` → `running`、轮次加一、写 `opening` 给出的事件（`user_message`、
+	 * `turn_started`），**在一个事务里**：要么这一轮完整地开始了，要么什么都没有变，不会停在「在做、但这一轮没有开始」。
+	 * 已经在做（`running`）、排队（`queued`）或已结束（`ended`）时返回当时的状态，什么也没有改。项目里已经有别的会话
+	 * 在做时抛 {@link ProjectBusyError}。两个并发的请求对同一个会话只有一个成功。
 	 */
 	async beginTurn(
 		sessionId: string,
 		project: ProjectId,
-	): Promise<{ started: true } | { started: false; status: SessionStatus }> {
-		try {
-			const [row] = await this.deps.db
-				.update(sessions)
-				.set({ status: "running", lastActivityAt: this.deps.clock.now() })
-				.where(and(eq(sessions.id, sessionId), eq(sessions.status, "idle")))
-				.returning({ id: sessions.id });
-			if (row) return { started: true };
-		} catch (error) {
-			if (violates(error, "sessions_one_running_per_project")) throw new ProjectBusyError(project);
-			throw error;
-		}
-		const current = await this.find(sessionId);
-		if (!current) throw new SessionNotFoundError(sessionId);
-		return { started: false, status: current.status };
+		opening: (turn: number) => SessionEventBody[],
+	): Promise<
+		| { started: true; turn: number; events: PersistedSessionEvent[] }
+		| { started: false; status: SessionStatus }
+	> {
+		return this.#serial(sessionId, async () => {
+			const now = this.deps.clock.now();
+			let begun:
+				| { started: true; turn: number; events: PersistedSessionEvent[] }
+				| { started: false; status: SessionStatus };
+			try {
+				begun = await this.deps.db.transaction(async (tx) => {
+					const [row] = await tx
+						.update(sessions)
+						.set({
+							status: "running",
+							currentTurn: sql`${sessions.currentTurn} + 1`,
+							lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${now.toISOString()}::timestamptz)`,
+						})
+						.where(and(eq(sessions.id, sessionId), eq(sessions.status, "idle")))
+						.returning();
+					if (!row) {
+						const [current] = await tx
+							.select({ status: sessions.status })
+							.from(sessions)
+							.where(eq(sessions.id, sessionId));
+						if (!current) throw new SessionNotFoundError(sessionId);
+						return { started: false as const, status: current.status };
+					}
+					const events: PersistedSessionEvent[] = [];
+					for (const body of opening(row.currentTurn)) {
+						events.push((await this.#insert(tx, row, parsePersistent(body), now)).event);
+					}
+					return { started: true as const, turn: row.currentTurn, events };
+				});
+			} catch (error) {
+				if (violates(error, "sessions_one_running_per_project")) {
+					throw new ProjectBusyError(project);
+				}
+				throw error;
+			}
+			if (begun.started) await this.#publishCommitted(sessionId, begun.events);
+			return begun;
+		});
 	}
 
 	/** 删除一个会话和它的事件（建会话时助手服务没接住第一轮：不留下会话）。 */
@@ -314,14 +423,15 @@ export class SessionStore {
 	/**
 	 * 记一条持久事件，返回落库后的事件（带 `seq`、`at`）并发布给订阅这个会话的连接。序号在会话内严格递增、不重复：
 	 * 在同一个事务里锁住会话那一行再取下一个，并发写同一个会话的几条事件依次执行。落库的同时更新会话的
-	 * `last_activity_at`。发布在事务提交之后：订阅的一方收到时，库里一定读得到它。
+	 * `last_activity_at`（用控制面的时钟，不倒退）。发布在事务提交之后：订阅的一方收到时，库里一定读得到它。
 	 * `at` 是事件**产生**的时间，不是落库的时间：助手服务产生的事件传它盖的时间（`AssistantStreamRecord.at`），
-	 * 控制面自己产生的不传，用控制面的时钟（#538 的约定）。
-	 * 一轮结束（`turn_end`）时会话回到空闲（`running` → `idle`），和这条事件在同一个事务里：页面看到一轮结束时，
-	 * 接着发的话一定能开始新的一轮。**同一轮的 `turn_end` 只记一条**：这一轮已经有 `turn_end` 时（比如停止时控制面
-	 * 先补了一条，助手服务的结局晚到），后到的不记、不发布，返回已有的那条；它也就不会把下一轮的会话改回空闲。
+	 * 控制面自己产生的不传，用控制面的时钟（#538 的约定）；它只是事件上的时间，**不影响** `last_activity_at`。
+	 * 一轮结束（`turn_end`）时：这一轮是会话此刻在做的那一轮，会话回到空闲（`running` → `idle`），和这条事件在同一个
+	 * 事务里（页面看到一轮结束时，接着发的话一定能开始新的一轮）；不是此刻在做的那一轮（迟到的、重复的）不动状态。
+	 * **同一轮的 `turn_end` 只记一条**：这一轮已经有 `turn_end` 时（比如停止时控制面先补了一条，助手服务的结局晚到），
+	 * 后到的不记、不发布，返回已有的那条；但**去重不吞状态转换**：会话还在做这一轮（状态和事件不一致）时，照样改回空闲。
 	 * **同一个会话的「落库加发布」在进程内依次执行**（{@link SessionStore.#serial}）：发布的顺序等于提交的顺序，
-	 * 事件流的实时阶段看到的序号一定是递增的；订阅的一方收到时，库里一定读得到它。
+	 * 事件流的实时阶段看到的序号一定是递增的。
 	 * 事件的内容要过 `@sfly/schema` 的 `SessionEventBody`；不持久的类型不能用它记（用 {@link publish}）。
 	 */
 	async append(
@@ -329,73 +439,134 @@ export class SessionStore {
 		body: SessionEventBody,
 		at: Date = this.deps.clock.now(),
 	): Promise<PersistedSessionEvent> {
-		if (!isPersistedType(body.type)) {
-			throw new Error(`会话事件 ${body.type} 不持久，不能落库（用 publish 推送）`);
-		}
-		const parsed = SessionEventBody.parse(body);
+		const parsed = parsePersistent(body);
 		return this.#serial(sessionId, async () => {
-			const stored = await this.#store(sessionId, parsed, at);
-			if (stored.duplicate) return stored.event;
-			await this.deps.afterCommit?.(sessionId, stored.event);
-			this.#live.publish(sessionId, stored.event);
+			const stored = await this.deps.db.transaction(async (tx) => {
+				const session = await lockSession(tx, sessionId);
+				return this.#insert(tx, session, parsed, at);
+			});
+			if (!stored.duplicate) await this.#publishCommitted(sessionId, [stored.event]);
 			return stored.event;
 		});
 	}
 
-	/** 落库（一个事务）；这一轮已经有 `turn_end` 时什么也不写，返回已有的。 */
-	async #store(
+	/**
+	 * 助手服务发来的持久事件：落库之前核对**会话存在、在做、`turn` 是会话此刻在做的那一轮**，核对和落库在同一个事务里；
+	 * 不符合的不记、不发布、不改状态，返回为什么（调用方记日志）。上一轮迟到的事件（停止之后助手服务才发来）、空闲或
+	 * 已结束的会话收到的事件都是这样丢掉的。
+	 */
+	async appendFromAssistant(
 		sessionId: string,
+		turn: number,
+		body: SessionEventBody,
+		at: Date,
+	): Promise<{ stored: PersistedSessionEvent } | { dropped: DropReason }> {
+		const parsed = parsePersistent(body);
+		return this.#serial(sessionId, async () => {
+			const result = await this.deps.db.transaction(
+				async (tx): Promise<{ dropped: DropReason } | { stored: Inserted }> => {
+					const [session] = await tx
+						.select()
+						.from(sessions)
+						.where(eq(sessions.id, sessionId))
+						.for("update");
+					if (!session) return { dropped: "unknown_session" };
+					const dropped = dropReason(session, turn);
+					if (dropped !== undefined) return { dropped };
+					return { stored: await this.#insert(tx, session, parsed, at) };
+				},
+			);
+			if ("dropped" in result) return { dropped: result.dropped };
+			if (!result.stored.duplicate) await this.#publishCommitted(sessionId, [result.stored.event]);
+			return { stored: result.stored.event };
+		});
+	}
+
+	/** 助手服务发来的不持久事件（增量、思考、工具输出……）：同样核对会话在做、轮次对，对才发布；排在这个会话的链上。 */
+	async publishFromAssistant(
+		sessionId: string,
+		turn: number,
+		body: SessionEventBody,
+	): Promise<{ published: true } | { dropped: DropReason }> {
+		if (isPersistedType(body.type)) {
+			throw new Error(`会话事件 ${body.type} 是持久的，要落库（用 appendFromAssistant）`);
+		}
+		const parsed = SessionEventBody.parse(body) as SessionEvent;
+		return this.#serial(sessionId, async () => {
+			const [session] = await this.deps.db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.id, sessionId));
+			const dropped = session ? dropReason(session, turn) : "unknown_session";
+			if (dropped !== undefined) return { dropped };
+			this.#live.publish(sessionId, parsed);
+			return { published: true as const };
+		});
+	}
+
+	/** 提交之后按顺序发布（测试缝 `afterCommit` 在每条发布之前）。 */
+	async #publishCommitted(sessionId: string, events: PersistedSessionEvent[]): Promise<void> {
+		for (const event of events) {
+			await this.deps.afterCommit?.(sessionId, event);
+			this.#live.publish(sessionId, event);
+		}
+	}
+
+	/**
+	 * 事务里记一条持久事件（会话那一行已经锁住）。`last_activity_at` 取控制面的时钟；`turn_end` 的规则见 {@link append}：
+	 * 这一轮已经有 `turn_end` 时不再写，但此刻在做的正是这一轮的话照样改回空闲。
+	 */
+	async #insert(
+		tx: Tx,
+		session: SessionRow,
 		parsed: SessionEventBody,
 		at: Date,
-	): Promise<{ event: PersistedSessionEvent; duplicate: boolean }> {
+	): Promise<Inserted> {
 		const { type, ...payload } = parsed;
-		return this.deps.db.transaction(async (tx) => {
-			const [session] = await tx
-				.select({ id: sessions.id })
-				.from(sessions)
-				.where(eq(sessions.id, sessionId))
-				.for("update");
-			if (!session) throw new SessionNotFoundError(sessionId);
-			if (parsed.type === "turn_end") {
-				const [existing] = await tx
-					.select()
-					.from(sessionEvents)
-					.where(
-						and(
-							eq(sessionEvents.sessionId, sessionId),
-							sql`${sessionEvents.type} = 'turn_end'`,
-							sql`${sessionEvents.payload}->>'turn' = ${String(parsed.turn)}`,
-						),
-					)
-					.limit(1);
-				if (existing) return { event: toEvent(existing), duplicate: true };
-			}
-			const [last] = await tx
-				.select({ seq: sql<number>`coalesce(max(${sessionEvents.seq}), 0)::int` })
+		const now = this.deps.clock.now();
+		const touched = sql`greatest(${sessions.lastActivityAt}, ${now.toISOString()}::timestamptz)`;
+		const endsCurrent =
+			parsed.type === "turn_end" &&
+			session.status === "running" &&
+			parsed.turn === effectiveTurn(session);
+		if (parsed.type === "turn_end") {
+			const [existing] = await tx
+				.select()
 				.from(sessionEvents)
-				.where(eq(sessionEvents.sessionId, sessionId));
-			const [row] = await tx
-				.insert(sessionEvents)
-				.values({
-					sessionId,
-					seq: (last?.seq ?? 0) + 1,
-					type,
-					payload,
-					createdAt: at,
-				})
-				.returning();
-			// 事件的时间来自另一个时钟时可能比会话已有的最近活动还早：最近活动不倒退。
-			await tx
-				.update(sessions)
-				.set({
-					lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${at.toISOString()}::timestamptz)`,
-					...(type === "turn_end" && {
-						status: sql`case when ${sessions.status} = 'running' then 'idle' else ${sessions.status} end`,
-					}),
-				})
-				.where(eq(sessions.id, sessionId));
-			return { event: toEvent(row as EventRow), duplicate: false };
-		});
+				.where(
+					and(
+						eq(sessionEvents.sessionId, session.id),
+						sql`${sessionEvents.type} = 'turn_end'`,
+						sql`${sessionEvents.payload}->>'turn' = ${String(parsed.turn)}`,
+					),
+				)
+				.limit(1);
+			if (existing) {
+				if (endsCurrent) {
+					await tx.update(sessions).set({ status: "idle" }).where(eq(sessions.id, session.id));
+				}
+				return { event: toEvent(existing), duplicate: true };
+			}
+		}
+		const [last] = await tx
+			.select({ seq: sql<number>`coalesce(max(${sessionEvents.seq}), 0)::int` })
+			.from(sessionEvents)
+			.where(eq(sessionEvents.sessionId, session.id));
+		const [row] = await tx
+			.insert(sessionEvents)
+			.values({
+				sessionId: session.id,
+				seq: (last?.seq ?? 0) + 1,
+				type,
+				payload,
+				createdAt: at,
+			})
+			.returning();
+		await tx
+			.update(sessions)
+			.set({ lastActivityAt: touched, ...(endsCurrent && { status: "idle" as const }) })
+			.where(eq(sessions.id, session.id));
+		return { event: toEvent(row as EventRow), duplicate: false };
 	}
 
 	/** 推送一条不持久的事件（文字增量、工具输出、思考、排队状态、快照）：不落库，没有 `seq`，不推进续传的位置。 */

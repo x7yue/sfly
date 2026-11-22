@@ -145,6 +145,10 @@ export interface ControlPlaneOptions {
 	sessionSweepIntervalMs?: number;
 	/** 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 5 秒；超过由控制面结束这一轮。测试里调小。 */
 	sessionStopGraceMs?: number;
+	/** 发给助手服务的命令（不含事件流和 `/health`）最多等多久（毫秒），默认 10 秒；测试里调小。 */
+	assistantCommandTimeoutMs?: number;
+	/** 事件连接多久没有收到任何字节（心跳也没有）就当它死了、断开重连（毫秒），默认 45 秒（3 个心跳间隔）；测试里调小。 */
+	assistantEventsIdleMs?: number;
 	/** 助手服务的事件连接断了之后重连的等待（毫秒）：第一次等 `min`，之后每次翻倍到 `max`；测试里调小。 */
 	assistantReconnectMs?: { min: number; max: number };
 }
@@ -320,7 +324,16 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	// 助手默认关闭：没配好时写明原因（日志里一行，就绪状态里也写）。
 	const assistant = assistantSetup({ url: options.assistantUrl, secret: options.assistantSecret });
 	if (!assistant.configured && logger) console.log(`sfly: 助手没有开启：${assistant.reason}`);
-	const assistantClient = assistant.configured ? new AssistantClient(assistant.config) : undefined;
+	const assistantClient = assistant.configured
+		? new AssistantClient(assistant.config, {
+				...(options.assistantCommandTimeoutMs !== undefined && {
+					timeoutMs: options.assistantCommandTimeoutMs,
+				}),
+				...(options.assistantEventsIdleMs !== undefined && {
+					eventsIdleMs: options.assistantEventsIdleMs,
+				}),
+			})
+		: undefined;
 	const sessionService = new SessionService({
 		sessions,
 		db: database.db,

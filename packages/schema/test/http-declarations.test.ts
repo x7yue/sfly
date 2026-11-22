@@ -311,12 +311,18 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: collection, path: "/things/:project", params: project }))[0],
 		).toContain("路径里有参数");
-		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）照旧可以。
+		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）：不是用 ID 定位的类别照旧可以；
+		// 用 ID 定位的类别（场景、运行、任务、会话）在这类路径上只接受 collection，写 { params: "project" } 也拒绝。
 		expect(
-			problems(
-				broken({ resource: { kind: "scenario", target: { params: "project" } }, ...scoped }),
-			),
+			problems(broken({ resource: { kind: "package", target: { params: "project" } }, ...scoped })),
 		).toEqual([]);
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			const found = problems(
+				broken({ resource: { kind, target: { params: "project" } }, ...scoped }),
+			);
+			expect(found, kind).toHaveLength(1);
+			expect(found[0], kind).toContain("只能写 collection");
+		}
 	});
 
 	it('/projects/:project/… 下还有别的路径参数：用 ID 定位的资源不带 :project，{ params: "project" } 不算定位；按名字定位的写 :project 之后的参数', () => {
@@ -330,7 +336,8 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			for (const params of ["project", "id"]) {
 				const found = problems(broken({ resource: { kind, target: { params } }, ...withId }));
 				expect(found, `${kind} ${params}`).toHaveLength(1);
-				expect(found[0], `${kind} ${params}`).toContain("用 ID 定位，路径里不带 :project");
+				expect(found[0], `${kind} ${params}`).toContain("用 ID 定位，路径带 :project");
+				expect(found[0], `${kind} ${params}`).toContain("只能写 collection");
 				// 报错提示不能再叫人「改成 { params: "project" }」。
 				expect(found[0], `${kind} ${params}`).not.toContain('改成 { params: "project" }');
 				expect(found[0], `${kind} ${params}`).toContain('{ params: "id" }');

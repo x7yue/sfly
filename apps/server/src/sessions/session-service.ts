@@ -23,7 +23,12 @@ import {
 } from "./assistant-client.js";
 import type { AssistantSetup } from "./assistant-config.js";
 import { commandEnv } from "./command-env.js";
-import { ProjectBusyError, type SessionRow, type SessionStore } from "./session-store.js";
+import {
+	effectiveTurn,
+	ProjectBusyError,
+	type SessionRow,
+	type SessionStore,
+} from "./session-store.js";
 
 /** 请求没有成功的原因：状态码、错误码（`SessionErrorCode`）和给人看的一句话。 */
 export interface Rejection {
@@ -61,8 +66,11 @@ export const STALE_TURN_MS = 30 * 60 * 1000;
 /** 停止会话：把中止发给助手服务之后，最多等多久它把这一轮的结局（`turn_end`）带回来（毫秒）；超过由控制面结束这一轮。 */
 export const STOP_GRACE_MS = 5_000;
 
-/** 助手服务的 `/health` 结果缓存多久（毫秒）：每次列出会话都问一遍太频繁。 */
-const HEALTH_TTL_MS = 30_000;
+/** 助手服务的 `/health` 结果缓存多久（毫秒）：每次列出会话都问一遍太频繁；同时来的请求共用一次（见 `#assistantHealth`）。 */
+export const HEALTH_TTL_MS = 5_000;
+
+/** `/health` 最多等多久（毫秒）：助手服务接了连接却不回话时，列出会话不能跟着卡 10 秒。 */
+export const HEALTH_TIMEOUT_MS = 2_000;
 
 export interface SessionServiceDeps {
 	sessions: SessionStore;
@@ -91,25 +99,37 @@ type WorkbenchTarget = PromptCommandBody["workbench"];
  */
 export class SessionService {
 	#health: { at: number; result: { health: AssistantHealth } | { error: string } } | undefined;
+	/** 正在问的那一次 `/health`：同时来的请求等它，不各问一遍。 */
+	#healthAsking: Promise<{ health: AssistantHealth } | { error: string }> | undefined;
 
 	constructor(private readonly deps: SessionServiceDeps) {}
 
 	// ---- 就绪状态 ----
 
-	/** 助手服务的 `/health`（缓存 30 秒）；连不上时是原因。 */
+	/**
+	 * 助手服务的 `/health`（缓存 {@link HEALTH_TTL_MS}，最多等 {@link HEALTH_TIMEOUT_MS}，同时来的请求共用一次）；
+	 * 连不上时是原因。
+	 */
 	async #assistantHealth(): Promise<{ health: AssistantHealth } | { error: string }> {
 		const { client, clock } = this.deps;
 		if (!client) return { error: "助手没有配置" };
 		const now = clock.now().getTime();
 		if (this.#health && now - this.#health.at < HEALTH_TTL_MS) return this.#health.result;
-		let result: { health: AssistantHealth } | { error: string };
-		try {
-			result = { health: await client.health() };
-		} catch (error) {
-			result = { error: error instanceof Error ? error.message : String(error) };
-		}
-		this.#health = { at: now, result };
-		return result;
+		if (this.#healthAsking) return this.#healthAsking;
+		const asking = (async () => {
+			let result: { health: AssistantHealth } | { error: string };
+			try {
+				result = { health: await client.health(HEALTH_TIMEOUT_MS) };
+			} catch (error) {
+				result = { error: error instanceof Error ? error.message : String(error) };
+			}
+			this.#health = { at: now, result };
+			return result;
+		})().finally(() => {
+			this.#healthAsking = undefined;
+		});
+		this.#healthAsking = asking;
+		return asking;
 	}
 
 	/** 工作台：能用时是这一轮的目标（Agent 名、能力端口的地址、工作区路径），不能用时是原因。 */
@@ -199,22 +219,28 @@ export class SessionService {
 		return { ok: true, value: { client, target: workbench.target } };
 	}
 
-	/** 新建会话：第一句话作为第一轮。 */
+	/**
+	 * 新建会话：第一句话作为第一轮。建会话、写 `user_message`、写 `turn_started` 在一个事务里
+	 * （{@link SessionStore.createWithTurn}），再把这一轮交给助手服务。
+	 */
 	async create(project: ProjectId, actor: Actor, text: string): Promise<Outcome<SessionRow>> {
 		const { sessions } = this.deps;
 		const ready = await this.#ready(project);
 		if (!ready.ok) return ready;
 		const busy = await sessions.running(project);
 		if (busy) return projectBusy(busy);
-		let session: SessionRow;
+		const messageId = randomUUID();
+		let created: Awaited<ReturnType<SessionStore["createWithTurn"]>>;
 		try {
-			session = await sessions.create({
-				project,
-				title: titleOf(text),
-				status: "running",
-				createdBy: actor.nickname,
-				createdByUserId: actor.userId,
-			});
+			created = await sessions.createWithTurn(
+				{
+					project,
+					title: titleOf(text),
+					createdBy: actor.nickname,
+					createdByUserId: actor.userId,
+				},
+				opening(messageId, actor, text),
+			);
 		} catch (error) {
 			if (error instanceof ProjectBusyError) {
 				const other = await sessions.running(project);
@@ -222,7 +248,8 @@ export class SessionService {
 			}
 			throw error;
 		}
-		const sent = await this.#startTurn(session, actor, text, ready.value);
+		const { session } = created;
+		const sent = await this.#handOver(session, 1, { messageId, text, actor }, ready.value);
 		if (!sent.ok) {
 			// 不留下会话。
 			await sessions.delete(session.id);
@@ -235,19 +262,33 @@ export class SessionService {
 	async say(session: SessionRow, actor: Actor, text: string): Promise<Outcome<{ seq: number }>> {
 		const ready = await this.#ready(session.projectId);
 		if (!ready.ok) return ready;
-		const begun = await this.#begin(session);
+		const messageId = randomUUID();
+		const begun = await this.#begin(session, opening(messageId, actor, text));
 		if (!begun.ok) return begun;
-		const sent = await this.#startTurn(session, actor, text, ready.value);
+		const sent = await this.#handOver(
+			session,
+			begun.value.turn,
+			{ messageId, text, actor },
+			ready.value,
+		);
 		if (!sent.ok) return sent;
-		return { ok: true, value: { seq: sent.value.seq } };
+		return { ok: true, value: { seq: begun.value.seq } };
 	}
 
-	/** 空闲的会话开始一轮（`idle` → `running`）；其余状态和项目里有别的会话在做时拒绝。 */
-	async #begin(session: SessionRow): Promise<Outcome<null>> {
+	/**
+	 * 空闲的会话开始一轮：`idle` → `running`、轮次加一、写 `user_message` 和 `turn_started`，在一个事务里
+	 * （{@link SessionStore.beginTurn}）；其余状态和项目里有别的会话在做时拒绝。
+	 */
+	async #begin(
+		session: SessionRow,
+		events: (turn: number) => SessionEventBody[],
+	): Promise<Outcome<{ turn: number; seq: number }>> {
 		const { sessions } = this.deps;
 		try {
-			const result = await sessions.beginTurn(session.id, session.projectId);
-			if (result.started) return { ok: true, value: null };
+			const result = await sessions.beginTurn(session.id, session.projectId, events);
+			if (result.started) {
+				return { ok: true, value: { turn: result.turn, seq: result.events[0]?.seq ?? 0 } };
+			}
 			switch (result.status) {
 				case "ended":
 					return rejected(409, "session_ended", "这个会话已经结束了，不再接受消息");
@@ -265,46 +306,45 @@ export class SessionService {
 		}
 	}
 
-	/** 写 `user_message` 和 `turn_started`，把这一轮交给助手服务。失败时的收尾见类的说明。 */
-	async #startTurn(
+	/**
+	 * 把这一轮交给助手服务（`user_message` 和 `turn_started` 已经落库）。没接住时补一条失败的结局（这一轮是会话此刻在做的
+	 * 那一轮，会话回到空闲；新建的会话由调用方删掉）。**超时、连不上的结果是未知的**（助手服务可能已经收下了这一轮，
+	 * 冷启动慢的时候就会这样）：尽力补发一次中止，让它别白做；这个窗口里助手服务发来的事件，会话已经不在做这一轮，
+	 * 连接那边按「不是此刻在做的那一轮」丢掉。
+	 */
+	async #handOver(
 		session: SessionRow,
-		actor: Actor,
-		text: string,
+		turn: number,
+		message: { messageId: string; text: string; actor: Actor },
 		ready: { client: AssistantClient; target: WorkbenchTarget },
 	): Promise<Outcome<{ seq: number }>> {
 		const { sessions } = this.deps;
-		const messageId = randomUUID();
-		const turn = (await sessions.turnCount(session.id)) + 1;
-		const message = await sessions.append(session.id, {
-			type: "user_message",
-			message_id: messageId,
-			text,
-			steer: false,
-			author: actor.nickname,
-			author_user_id: actor.userId,
-		});
-		await sessions.append(session.id, { type: "turn_started", turn });
 		try {
 			await ready.client.prompt(session.id, {
 				turn,
-				message_id: messageId,
-				text,
+				message_id: message.messageId,
+				text: message.text,
 				session: { title: session.title, created_by: session.createdBy },
 				workbench: ready.target,
-				...commandEnv(actor),
+				...commandEnv(message.actor),
 			});
 		} catch (error) {
 			const failure = describeFailure(error);
-			// 这一轮没有开始：补一条失败的结局，会话回到空闲（新建的会话由调用方删掉）。
+			if (error instanceof AssistantUnreachableError) {
+				ready.client.abort(session.id).catch(() => {
+					// 尽力而为：连不上就算了。
+				});
+			}
 			await sessions.append(session.id, failureEnd(turn, failure));
 			return rejected(failure.status, failure.code, failure.message);
 		}
-		return { ok: true, value: { seq: message.seq } };
+		return { ok: true, value: { seq: 0 } };
 	}
 
 	/**
-	 * 兜底：在做的会话超过 {@link STALE_TURN_MS} 没有持久事件，补一条结局为 `interrupted` 的 `turn_end`，会话回到空闲，
-	 * 项目才能再开始新的一轮。控制面启动时和之后周期性地调用。返回补了几个。
+	 * 兜底：在做的会话超过 {@link STALE_TURN_MS} 没有动静（按控制面自己的时钟记的 `last_activity_at`，助手服务的时钟偏了
+	 * 也不影响），补一条结局为 `interrupted` 的 `turn_end`，会话回到空闲，项目才能再开始新的一轮。控制面启动时和之后
+	 * 周期性地调用。返回补了几个。
 	 */
 	async expireStale(): Promise<number> {
 		const { sessions, clock } = this.deps;
@@ -312,6 +352,7 @@ export class SessionService {
 		for (const session of stale) {
 			await this.#endTurn(
 				session,
+				effectiveTurn(session),
 				"interrupted",
 				"这一轮超过 30 分钟没有收到助手服务的消息，按中断处理（控制面或助手服务可能重启过）",
 			);
@@ -323,8 +364,9 @@ export class SessionService {
 	 * 停止会话正在做的这一轮：不在做时什么也不做（助手没有配置时仍是 503，和别的写一样）；在做时先把中止发给助手服务，
 	 * 它会带回这一轮的 `turn_end`（等一小会儿，{@link STOP_GRACE_MS}）；助手服务没有配置、连不上、不认识这一轮、
 	 * 或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：
-	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。助手服务晚到的同一轮的结局不再记
-	 * （`SessionStore.append`：同一轮的 `turn_end` 只记一条）。
+	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始
+	 * 就记下是第几轮，结束时按它核对（`SessionStore.append`）——这一轮已经结束、会话开始了下一轮，就不会把新的一轮结束掉。
+	 * 助手服务晚到的同一轮的结局不再记（同一轮的 `turn_end` 只记一条）。
 	 */
 	async stop(session: SessionRow): Promise<Outcome<null>> {
 		const { sessions, client } = this.deps;
@@ -333,6 +375,7 @@ export class SessionService {
 			const configured = await this.#configured();
 			return configured.ok ? { ok: true, value: null } : configured;
 		}
+		const turn = effectiveTurn(current);
 		let aborted = false;
 		if (client) {
 			try {
@@ -342,9 +385,10 @@ export class SessionService {
 				// 连不上或被拒绝：下面由控制面结束这一轮。
 			}
 		}
-		if (aborted && (await this.#settled(current.id))) return { ok: true, value: null };
+		if (aborted && (await this.#settled(current.id, turn))) return { ok: true, value: null };
 		await this.#endTurn(
 			current,
+			turn,
 			"stopped",
 			aborted
 				? "用户停止；助手服务没有及时带回这一轮的结局，由控制面结束"
@@ -353,28 +397,29 @@ export class SessionService {
 		return { ok: true, value: null };
 	}
 
-	/** 等会话离开「在做」（助手服务带回了结局），最多等宽限那么久；返回等到了没有。 */
-	async #settled(sessionId: string): Promise<boolean> {
+	/** 等第 `turn` 轮结束（会话离开「在做」，或已经在做下一轮），最多等宽限那么久；返回等到了没有。 */
+	async #settled(sessionId: string, turn: number): Promise<boolean> {
 		const deadline = Date.now() + (this.deps.stopGraceMs ?? STOP_GRACE_MS);
 		for (;;) {
 			const row = await this.deps.sessions.find(sessionId);
-			if (!row || row.status !== "running") return true;
+			if (!row || row.status !== "running" || effectiveTurn(row) !== turn) return true;
 			const left = deadline - Date.now();
 			if (left <= 0) return false;
 			await new Promise((resolve) => setTimeout(resolve, Math.min(25, left)));
 		}
 	}
 
-	/** 控制面自己结束一轮：补一条 `turn_end`（会话回到空闲和它在同一个事务里）。 */
+	/** 控制面自己结束第 `turn` 轮：补一条 `turn_end`（会话回到空闲和它在同一个事务里；这一轮已经有结局时也照样改回空闲）。 */
 	async #endTurn(
 		session: SessionRow,
+		turn: number,
 		outcome: "stopped" | "interrupted",
 		reason: string,
 	): Promise<void> {
 		const { sessions, clock } = this.deps;
 		await sessions.append(session.id, {
 			type: "turn_end",
-			turn: Math.max(1, await sessions.turnCount(session.id)),
+			turn,
 			outcome,
 			reason,
 			duration_ms: Math.max(0, clock.now().getTime() - session.lastActivityAt.getTime()),
@@ -393,6 +438,21 @@ export class SessionService {
 		return { ok: true, value: client };
 	}
 }
+
+/** 一轮开头要写的事件：用户的话和这一轮的开始。 */
+const opening =
+	(messageId: string, actor: Actor, text: string) =>
+	(turn: number): SessionEventBody[] => [
+		{
+			type: "user_message",
+			message_id: messageId,
+			text,
+			steer: false,
+			author: actor.nickname,
+			author_user_id: actor.userId,
+		},
+		{ type: "turn_started", turn },
+	];
 
 const projectBusy = (running: SessionRow): Outcome<never> =>
 	rejected(

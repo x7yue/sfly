@@ -83,6 +83,8 @@ export async function startTestControlPlane(
 		| "assistantSecret"
 		| "workbenchAgent"
 		| "assistantReconnectMs"
+		| "assistantEventsIdleMs"
+		| "assistantCommandTimeoutMs"
 		| "sessionSweepIntervalMs"
 		| "sessionStopGraceMs"
 	> = {},
@@ -124,6 +126,8 @@ export async function startTestControlPlane(
 			assistantSecret: options.assistantSecret,
 			workbenchAgent: options.workbenchAgent,
 			assistantReconnectMs: options.assistantReconnectMs,
+			assistantEventsIdleMs: options.assistantEventsIdleMs,
+			assistantCommandTimeoutMs: options.assistantCommandTimeoutMs,
 			// 兜底收拾「一直在做」的会话（超过 30 分钟没有持久事件）：测试里默认不扫（用例里手动推进时钟、直接写库造会话，
 			// 不该被它收拾掉），要测它的用例自己传间隔。
 			sessionSweepIntervalMs: options.sessionSweepIntervalMs ?? 3_600_000,

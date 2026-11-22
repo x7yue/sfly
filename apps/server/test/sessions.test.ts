@@ -121,7 +121,7 @@ describe("事件落库：序号、时间、内容", () => {
 		expect(() => store().publish(id, userBody(1))).toThrow(/持久的/);
 	});
 
-	it("事件的时间是事件产生的时间：不传用控制面的时钟，传了原样存；会话的最近活动不会因为旧的事件时间倒退", async () => {
+	it("事件的时间是事件产生的时间：不传用控制面的时钟，传了原样存；会话的最近活动用控制面的时钟，助手服务盖的时间不影响它", async () => {
 		const { id } = await newSession();
 		(cp.clock as ManualClock).set("2026-03-01T00:00:00.000Z");
 		const own = await store().append(id, userBody(1));
@@ -131,8 +131,15 @@ describe("事件落库：序号、时间、内容", () => {
 		expect(stamped.at).toBe("2026-02-28T23:59:00.000Z");
 		const row = await store().find(id);
 		expect(row?.lastActivityAt.toISOString()).toBe("2026-03-01T00:00:00.000Z");
-		const later = await store().append(id, userBody(3), new Date("2026-03-02T00:00:00.000Z"));
-		expect((await store().find(id))?.lastActivityAt.toISOString()).toBe(later.at);
+		// 助手服务的时钟快了两个小时：事件的时间照存，但最近活动是控制面的时钟（兜底按它判断，不会被推到未来）。
+		(cp.clock as ManualClock).set("2026-03-01T00:10:00.000Z");
+		const fast = await store().append(id, userBody(3), new Date("2026-03-01T02:10:00.000Z"));
+		expect(fast.at).toBe("2026-03-01T02:10:00.000Z");
+		expect((await store().find(id))?.lastActivityAt.toISOString()).toBe("2026-03-01T00:10:00.000Z");
+		// 控制面的时钟不会倒退（最近活动不倒退）。
+		(cp.clock as ManualClock).set("2026-03-01T00:05:00.000Z");
+		await store().append(id, userBody(4));
+		expect((await store().find(id))?.lastActivityAt.toISOString()).toBe("2026-03-01T00:10:00.000Z");
 	});
 });
 

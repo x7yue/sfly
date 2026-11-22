@@ -19364,6 +19364,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
@@ -21195,6 +21205,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },

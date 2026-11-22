@@ -161,7 +161,14 @@ describe("契约和访问检查的规则对得上", () => {
 				resource: { kind, target: { params: "id" } },
 			} as Pick<RouteDef, "path" | "resource">;
 			const locator = locatorOf(probe);
-			return locator?.from === kind;
+			// 「从资源本身的 ID 找项目」：locator 带着路径参数名，来源就是这个类别自己。
+			// 不按「来源等于类别」一条判：以后有类别从别处得出项目（不靠路径里的资源 ID），不该算进去。
+			return (
+				locator !== undefined &&
+				"param" in locator &&
+				locator.param !== null &&
+				locator.from === kind
+			);
 		});
 		expect([...idLocated].sort()).toEqual([...ID_LOCATED_KINDS].sort());
 	});
