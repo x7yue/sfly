@@ -48,13 +48,17 @@ import { MetricRetention } from "./metrics/metric-retention.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
+import { createStdIndex } from "./packages/std-index.js";
 import { PresetStore } from "./presets/preset-store.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { createTriggerAdmission } from "./runs/trigger-admission.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
-import { assistantReadiness } from "./sessions/readiness.js";
+import { AssistantClient } from "./sessions/assistant-client.js";
+import { assistantSetup } from "./sessions/assistant-config.js";
+import { AssistantConnection } from "./sessions/assistant-connection.js";
+import { SessionService } from "./sessions/session-service.js";
 import { SessionStore } from "./sessions/session-store.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
@@ -149,6 +153,25 @@ export interface ControlPlaneOptions {
 	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
 	migrationsDir?: string;
 	/**
+	 * 助手服务的地址（`SFLY_ASSISTANT_URL`，ADR 0027）。助手默认关闭：地址和共享密钥（`assistantSecret`）都配好了才开，
+	 * 没配时会话的写接口返回 503 `assistant_not_configured`，读接口照常。
+	 */
+	assistantUrl?: string;
+	/** 和助手服务共用的密钥（`SFLY_ASSISTANT_SECRET`）：短于 32 个字符当作没有配置，原因写进日志和就绪状态。 */
+	assistantSecret?: string;
+	/** 哪台 Agent 是工作台（Agent 的名字，`SFLY_WORKBENCH_AGENT`）；骨架期间由部署者配置，#549 换成项目上的一列、删掉它。 */
+	workbenchAgent?: string;
+	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
+	sessionSweepIntervalMs?: number;
+	/** 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 5 秒；超过由控制面结束这一轮。测试里调小。 */
+	sessionStopGraceMs?: number;
+	/** 发给助手服务的命令（不含事件流和 `/health`）最多等多久（毫秒），默认 10 秒；测试里调小。 */
+	assistantCommandTimeoutMs?: number;
+	/** 事件连接多久没有收到任何字节（心跳也没有）就当它死了、断开重连（毫秒），默认 45 秒（3 个心跳间隔）；测试里调小。 */
+	assistantEventsIdleMs?: number;
+	/** 助手服务的事件连接断了之后重连的等待（毫秒）：第一次等 `min`，之后每次翻倍到 `max`；测试里调小。 */
+	assistantReconnectMs?: { min: number; max: number };
+	/**
 	 * 初始管理员（环境变量 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`，src/auth/bootstrap.ts 的 parseInitialAdmin）：
 	 * 只在没有任何用户时生效；不给时没有任何用户就生成一次性的初始化码（打印在日志里，写进数据目录的 setup-code 文件）。
 	 */
@@ -197,8 +220,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	 * 控制面自己往标准错误写错误日志的唯一出口：错误先过 `safeError`，数据库错误里的参数（密码的哈希、令牌的哈希、
 	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
 	 */
-	const logError = (what: string, error: unknown): void => {
-		if (logger) console.error(what, safeError(error));
+	const logError = (what: string, error?: unknown): void => {
+		if (logger) console.error(what, ...(error === undefined ? [] : [safeError(error)]));
 	};
 	const database = openDatabase(
 		options.databaseUrl,
@@ -318,6 +341,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 				return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
 			},
 			mirrors,
+			packageIndexUrl: () => `${publicHttpUrl}/simple/`,
 			agentBinary: async (arch) => {
 				const binary = await agentBinaries.find(version, arch);
 				return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
@@ -380,6 +404,29 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	}
 	const publicUrl = options.publicHttpUrl?.replace(/\/+$/, "");
 	const sessions = new SessionStore({ db: database.db, clock });
+	// 助手默认关闭：没配好时写明原因（日志里一行，就绪状态里也写）。
+	const assistant = assistantSetup({ url: options.assistantUrl, secret: options.assistantSecret });
+	if (!assistant.configured && logger) console.log(`sfly: 助手没有开启：${assistant.reason}`);
+	const assistantClient = assistant.configured
+		? new AssistantClient(assistant.config, {
+				...(options.assistantCommandTimeoutMs !== undefined && {
+					timeoutMs: options.assistantCommandTimeoutMs,
+				}),
+				...(options.assistantEventsIdleMs !== undefined && {
+					eventsIdleMs: options.assistantEventsIdleMs,
+				}),
+			})
+		: undefined;
+	const sessionService = new SessionService({
+		sessions,
+		db: database.db,
+		hub,
+		clock,
+		setup: assistant,
+		client: assistantClient,
+		workbenchAgent: options.workbenchAgent || undefined,
+		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
+	});
 	const api = buildHttpApi({
 		database,
 		clock,
@@ -393,7 +440,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		actions,
 		sessions,
-		assistantReadiness,
+		sessionService,
 		metrics,
 		metricQueries,
 		retention,
@@ -406,6 +453,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			mirrors,
 		},
 		sdkWheels,
+		stdIndex: createStdIndex({
+			packages,
+			onSkipped: (version, reason) => {
+				logError(`package index: sfly-std ${version} is not listed:`, reason);
+			},
+		}),
 		clientTarballs,
 		agentBinaries,
 		installScript,
@@ -480,9 +533,32 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		options.publicGrpcUrl ?? withPort(publicHttpUrl, new URL(gateway.url).port)
 	).replace(/\/+$/, "");
 
+	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
+	const assistantConnection = assistantClient
+		? new AssistantConnection({
+				client: assistantClient,
+				sessions,
+				log: (message, error) => logError(`sfly: ${message}`, error),
+				reconnect: options.assistantReconnectMs && {
+					minMs: options.assistantReconnectMs.min,
+					maxMs: options.assistantReconnectMs.max,
+				},
+			})
+		: undefined;
+	assistantConnection?.start();
+	// 兜底：超过 30 分钟没有持久事件的「在做」的会话按中断处理，项目才能再开始新的一轮（控制面启动时先收拾一遍）。
+	await sessionService
+		.expireStale()
+		.catch((error) => logError("sfly: 收拾一直在做的会话失败：", error));
+
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
 	const fail = (what: string) => (error: unknown) => logError(`${what} failed:`, error);
 	const sweeps = [
+		periodic(
+			options.sessionSweepIntervalMs ?? 60_000,
+			() => sessionService.expireStale(),
+			fail("session sweep"),
+		),
 		// 任务租约过期与排队超时（#15）。
 		periodic(options.sweepIntervalMs ?? 250, () => engine.expireTasks(), fail("sweep")),
 		// 日志和产物的保留期清理（#18）；指标分区的提前创建与到期删除（#32）。
@@ -511,6 +587,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		grpcUrl: gateway.url,
 		sessions,
 		async close() {
+			await assistantConnection?.close();
 			await Promise.all(sweeps.map((s) => s.stop()));
 			await retention.idle();
 			await metricRetention.idle();

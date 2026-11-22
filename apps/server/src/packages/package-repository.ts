@@ -240,6 +240,28 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			return row && toVersion(row);
 		},
 
+		/**
+		 * 一个项目自己发布的、某个名字的全部版本的归档（按发布时间从旧到新）。只看这个项目，不含公共项目的包
+		 * （和 {@link readableProjects} 的范围不同）：控制面的包索引用它列出公共项目里平台自己的包。
+		 */
+		async archivesIn(
+			project: ProjectId,
+			name: string,
+		): Promise<Array<StoredArchive & { version: string; requiresPython: string }>> {
+			const rows = await db
+				.select()
+				.from(nodePackages)
+				.where(and(eq(nodePackages.projectId, project), eq(nodePackages.name, name)))
+				.orderBy(asc(nodePackages.publishedAt), asc(nodePackages.version));
+			return rows.map((row) => ({
+				version: row.version,
+				path: join(dataDir, row.filePath),
+				sha256: row.sha256,
+				size: row.size,
+				requiresPython: row.metadata.requires_python,
+			}));
+		},
+
 		/** 归档文件在磁盘上的位置（供下载）；不存在或属于别的项目时返回 undefined。 */
 		async archive(
 			project: ProjectId,

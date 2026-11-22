@@ -2,7 +2,6 @@ import {
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
 	httpContract,
-	type Readiness,
 	systemApi,
 } from "@sfly/schema";
 import Fastify, {
@@ -32,11 +31,13 @@ import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
+import type { StdIndex } from "../packages/std-index.js";
 import type { PresetStore } from "../presets/preset-store.js";
 import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
+import type { SessionService } from "../sessions/session-service.js";
 import type { SessionStore } from "../sessions/session-store.js";
 import { registerSse } from "../sse/sse.js";
 import { watchStreamCredentials } from "../sse/stream-recheck.js";
@@ -83,8 +84,8 @@ export interface HttpApiDeps {
 	actions: TaskActions;
 	/** 助手会话和它的事件（src/sessions/，ADR 0027）。 */
 	sessions: SessionStore;
-	/** 助手此刻能不能用（src/sessions/readiness.ts）。 */
-	assistantReadiness: () => Promise<Readiness>;
+	/** 会话的写和助手此刻能不能用（src/sessions/session-service.ts）。 */
+	sessionService: SessionService;
 	metrics: TaskMetrics;
 	metricQueries: MetricQueries;
 	retention: Retention;
@@ -95,6 +96,8 @@ export interface HttpApiDeps {
 	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 控制面的包索引里的标准节点包 sfly-std（公共项目里已发布的版本）。 */
+	stdIndex: StdIndex;
 	clientTarballs: readonly ClientTarball[];
 	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
 	agentBinaries: AgentBinaries;
@@ -153,7 +156,7 @@ export function buildHttpApi({
 	logs,
 	actions,
 	sessions,
-	assistantReadiness,
+	sessionService,
 	metrics,
 	metricQueries,
 	retention,
@@ -161,6 +164,7 @@ export function buildHttpApi({
 	agentToken,
 	publicConfig,
 	sdkWheels,
+	stdIndex,
 	clientTarballs,
 	agentBinaries,
 	installScript,
@@ -311,10 +315,10 @@ export function buildHttpApi({
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerActionRoutes(app, { actions, sse });
-	registerSessionRoutes(app, { sessions, sse, readiness: assistantReadiness });
+	registerSessionRoutes(app, { sessions, service: sessionService, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
-	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });
+	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig, stdIndex });
 	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });
 	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });
 	registerDocsRoutes(app, {
