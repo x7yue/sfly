@@ -2,7 +2,7 @@
 // 依据是控制面收到的请求带着哪个会话的令牌，不是模型在对话里怎么说，也不是可以伪造的 `x-sfly-client` 标注。
 // 真实控制面、真实 PostgreSQL、假 Agent；会话和会话令牌直接写库造（签发和吊销在会话的写接口里，不在这里）。
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, TestAccounts } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -200,6 +200,36 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			await json(await asSession("POST", `/orchestrations/${empty}/runs`, { params: {} }), 400);
 			expect((await db.query("select count(*)::int as n from runs")).rows[0]).toEqual({ n: 0 });
 			expect(await platform()).toEqual([]);
+		});
+
+		it("推送发生在事务提交之后：推送的那一刻，写记录的事务已经结束（会话那一行的锁放掉了）；运行和版本两条路径一样", async () => {
+			const id = await scenario();
+			const lockFree: Promise<boolean>[] = [];
+			const original = cp.current.sessions.announce.bind(cp.current.sessions);
+			vi.spyOn(cp.current.sessions, "announce").mockImplementation((target, event) => {
+				// 事务没结束时，它还锁着会话那一行：NOWAIT 立刻失败。
+				lockFree.push(
+					db.query("select id from sessions where id = $1 for update nowait", [target]).then(
+						() => true,
+						() => false,
+					),
+				);
+				original(target, event);
+			});
+			await json(
+				await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } }),
+				201,
+			);
+			await json(
+				await asSession("POST", `/orchestrations/${id}/versions`, {
+					base_version: 1,
+					document: document(),
+				}),
+				201,
+			);
+			await json(await asSession("POST", `/orchestrations/${id}/versions/1/restore`), 201);
+			await json(await asSession("POST", `/orchestrations/${id}/copy`, { name: "副本" }), 201);
+			expect(await Promise.all(lockFree)).toEqual([true, true, true, true]);
 		});
 
 		it("记录提交之后才推送：订阅会话事件流的一方收到 platform，读库也读得到", async () => {
