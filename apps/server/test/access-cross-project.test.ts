@@ -13,7 +13,7 @@ import Fastify from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
-import { routeKey } from "../src/auth/access-rules.js";
+import { HUMAN_ONLY_KINDS, routeKey } from "../src/auth/access-rules.js";
 import { requiredScope } from "../src/auth/scopes.js";
 import { guardHttpContract } from "../src/http/contract-route.js";
 import { ApiClient } from "./support/api-client.js";
@@ -128,6 +128,9 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			project: "default",
 			token: await accounts.tokenId(
 				await accounts.projectToken("default", { name: "victim-token" }),
+			),
+			credential: await accounts.agentCredentialId(
+				await accounts.agentCredential("default", "agent-victim"),
 			),
 		};
 
@@ -256,8 +259,12 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 					expect(res.status, insider.name).toBe(403);
 					continue;
 				}
-				// 项目令牌不能带「管理」：管理范围的接口对它是 403（缺少范围），不是 404；别的接口走到了处理函数。
-				if (insider.name.includes("项目令牌") && requiredScope(def) === "manage") {
+				// 项目令牌不能带「管理」：管理范围的接口对它是 403（缺少范围），不是 404；只认有用户的人的凭据的接口
+				// （我的开发 Agent）对它也是 403；别的接口走到了处理函数。
+				if (
+					insider.name.includes("项目令牌") &&
+					(requiredScope(def) === "manage" || HUMAN_ONLY_KINDS.has(def.resource.kind))
+				) {
 					expect(res.status, insider.name).toBe(403);
 					expect(await isAccessNotFound(res), insider.name).toBe(false);
 					continue;
@@ -464,6 +471,7 @@ describe("新加接口自动覆盖", () => {
 			bot: "b",
 			project: "default",
 			token: "k",
+			credential: "c",
 		};
 		const get = { ...fake, method: "GET", effect: "read" };
 		const other = { ...get, resource: { kind: "package", target: { params: "id" } } } as RouteDef;
@@ -493,6 +501,7 @@ describe("新加接口自动覆盖", () => {
 				bot: "b",
 				project: "default",
 				token: "k",
+				credential: "c",
 			}),
 		).toThrow(/请求样本/);
 	});
@@ -511,6 +520,7 @@ describe("生成的请求打的是那一类资源（资源类别穷举，#554）
 		bot: "sample-bot",
 		project: "sample-project",
 		token: "sample-token",
+		credential: "sample-credential",
 	};
 
 	it("每个资源类别在生成器里都有自己的取值办法：加了类别而没有补，类型检查和这条测试都会失败", () => {

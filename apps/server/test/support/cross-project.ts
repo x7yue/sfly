@@ -36,6 +36,8 @@ export interface Victim {
 	project: string;
 	/** 项目乙里一个项目令牌的 ID：项目令牌的接口（`/projects/:project/tokens/:id`）填它。 */
 	token: string;
+	/** 项目乙里 `agent` 这台 Agent 的一个 Agent 凭据的 ID：Agent 凭据的接口（`/agents/:name/credentials/:id`）填它。 */
+	credential: string;
 }
 
 const PATH_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)|\*$/g;
@@ -52,7 +54,7 @@ export const ID_PARAM_VALUES = {
 	session: (v) => v.session,
 	project: (v) => v.token,
 	package: () => null,
-	agent: () => null,
+	agent: (v) => v.credential,
 	dev_agent: () => null,
 	feishu_bot: () => null,
 	system: () => null,
@@ -129,6 +131,7 @@ const JSON_BODIES: Record<string, unknown> = {
 	"POST /orchestrations/:id/presence": { session_id: "s1" },
 	"POST /orchestrations/:id/presence/leave": { session_id: "s1" },
 	"POST /projects/:project/sessions": { text: "你好" },
+	"POST /projects/:project/dev-agents": { host: "laptop" },
 	"POST /sessions/:id/messages": { text: "你好" },
 };
 
@@ -143,6 +146,11 @@ const NO_BODY = new Set([
 	"DELETE /feishu-bots/:name",
 	"POST /feishu-bots/:name/test",
 	"DELETE /projects/:project/tokens/:id",
+	"POST /agents/:name/credentials",
+	"DELETE /agents/:name/credentials/:id",
+	"POST /agents/:name/disable",
+	"POST /agents/:name/enable",
+	"DELETE /projects/:project/dev-agents/:name",
 	"POST /sessions/:id/stop",
 ]);
 
