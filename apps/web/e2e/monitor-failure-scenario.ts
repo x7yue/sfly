@@ -8,7 +8,7 @@ import {
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { type E2eFixtures, expect } from "./fixtures";
-import { logLine, metricPackage } from "./monitor-scenario";
+import { logLine, metricPackage, pingPoints } from "./monitor-scenario";
 import { createRunPreset } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
@@ -94,7 +94,16 @@ export async function failedRun(
 	controlPlane: TestControlPlane,
 	connectAgent: E2eFixtures["connectAgent"],
 	clock: ManualClock,
-	options: { cleanupDone: boolean; preset?: boolean; message?: string; location?: string } = {
+	options: {
+		cleanupDone: boolean;
+		preset?: boolean;
+		message?: string;
+		location?: string;
+		/** 准备、部署两个节点各上报一组指标（level、total），图表工作区里有图表卡片。 */
+		metrics?: boolean;
+		/** 失败的节点在出错之前还写了一行 WARN 日志（概览的「其他警告与错误」里除了它自己的 ERROR 日志，还有这一行）。 */
+		warn?: string;
+	} = {
 		cleanupDone: true,
 	},
 ): Promise<FailureRun> {
@@ -124,12 +133,20 @@ export async function failedRun(
 	for (const step of ["prepare", "deploy"]) {
 		const task = await agent.nextAssign();
 		expect(task.nodeId).toBe(step);
+		const started = clock.now().getTime();
 		clock.advance(3000);
+		if (options.metrics) {
+			agent.metrics(task, pingPoints(started, 0, 3));
+			await agent.sync();
+		}
 		await agent.succeed(task);
 	}
 	const failed = await agent.nextAssign();
 	expect(failed.nodeId).toBe(FAILED_NODE);
-	agent.logs(failed, [logLine(clock, 1, "成功率 97.2% 低于阈值 99%", LogLevel.ERROR)]);
+	agent.logs(failed, [
+		...(options.warn ? [logLine(clock, 1, options.warn, LogLevel.WARN)] : []),
+		logLine(clock, options.warn ? 2 : 1, "成功率 97.2% 低于阈值 99%", LogLevel.ERROR),
+	]);
 	clock.advance(5000);
 	await agent.fail(
 		failed,

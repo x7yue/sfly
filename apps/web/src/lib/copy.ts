@@ -121,6 +121,8 @@ export const FOCUS = {
 	noneInRun: `这次运行里没有可显示的${TERM.focusItem}：场景设置的${TERM.focusItem}所在的节点不在这次运行的版本里。`,
 	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁、控制台运行块的读数区标题旁和 Agent 槽位格里的主指标共用这一句。 */
 	noneSet: `场景没有设置${TERM.focusItem}`,
+	/** 运行已经结束、场景没设关注项：概览里这一栏只写这一句（主指标是执行中节点的，结束后不会再有读数）。 */
+	endedNoneSet: `运行结束后不再显示执行中节点的${TERM.primaryMetric}。设置${TERM.focusItem}后，这里会显示它们的最终值。`,
 	/** 「关注项」页每一项名称输入框的可访问名称：「名称（子单接口（fetch2） · errors）」，写明是哪个节点的哪张图表。 */
 	nameField: (node: string, chart: string) => `名称（${node} · ${chart}）`,
 	/**

@@ -97,25 +97,25 @@ test("脉冲：同屏每个执行中的对象只在前沿脉冲一处；「暂�
 	await expect.poll(() => pulses(page)).toBe(3);
 });
 
-test("时间线主体最高占视口的 30%：行少时按内容的高度，放不下时滚动；不把执行中的节点藏到折叠线下面", async ({
+test("时间线主体最高占视口的 22%：行少时按内容的高度，放不下时滚动；不把执行中的节点藏到折叠线下面", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
-	await page.setViewportSize({ width: 1024, height: 1080 });
+	await page.setViewportSize({ width: 1024, height: 1440 });
 	await openMonitor(page, clock, runId);
 	const main = body(page);
-	// 9 行（2 条链、7 个节点）：1080 的 30% 放得下全部行，没有滚动，主体就是内容的高度。
+	// 9 行（2 条链、7 个节点）：1440 的 22%（317px）放得下全部行，没有滚动，主体就是内容的高度。
 	await expect(timeline(page).locator("[data-chain-row], [data-node-row]")).toHaveCount(9);
 	await expect.poll(() => main.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
-	await expect.poll(() => main.evaluate((el) => el.clientHeight)).toBeLessThan(1080 * 0.3);
+	await expect.poll(() => main.evaluate((el) => el.clientHeight)).toBeLessThan(1440 * 0.22);
 	await expect(timeline(page).locator('[data-node-row="probe"]')).toBeInViewport();
 
-	// 笔记本屏（768 高）：主体限在 30%（230px），放不下全部行，滚动；第一个执行中的节点（verify）看得见。
+	// 笔记本屏（768 高）：主体限在 22%（169px），放不下全部行，滚动；第一个执行中的节点（verify）看得见。
 	await page.setViewportSize({ width: 1024, height: 768 });
-	await expect.poll(() => main.evaluate((el) => el.clientHeight)).toBeLessThanOrEqual(231);
+	await expect.poll(() => main.evaluate((el) => el.clientHeight)).toBeLessThanOrEqual(170);
 	await expect(timeline(page).locator('[data-node-row="verify"]')).toBeInViewport({ ratio: 1 });
 
 	// 窗口矮到放不下全部行：第一个执行中的节点（verify）自动滚进可视范围。

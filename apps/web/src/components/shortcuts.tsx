@@ -124,10 +124,10 @@ export function ShortcutsDialog({
 									{items.map((s) => (
 										<div
 											key={s.id}
-											className="flex items-center justify-between border-b border-border-soft py-1.25 text-sm"
+											className="flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm"
 										>
-											<dt>{s.label}</dt>
-											<dd className="m-0">
+											<dt className="min-w-0">{s.label}</dt>
+											<dd className="m-0 flex-none">
 												<Keys shortcut={s.id} />
 											</dd>
 										</div>

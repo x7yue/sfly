@@ -53,7 +53,7 @@ import {
 	dropHint,
 	hasDropEffect,
 } from "./annotation-drop";
-import { CanvasDock, type CanvasTool } from "./CanvasDock";
+import { CanvasDock, type CanvasTool, DOCK_CLEARANCE } from "./CanvasDock";
 import { type CanvasMenuTarget, FitViewMenuItem, menuAnchor } from "./CanvasMenu";
 import { SelectionToolbar } from "./CanvasToolbar";
 import {
@@ -1073,6 +1073,7 @@ export function FlowCanvas({
 					clearRight={area.right}
 				/>
 				<ContextMenu
+					avoidBottom={DOCK_CLEARANCE}
 					label={menuState ? MENU_LABEL[menuState.target.kind] : "画布菜单"}
 					open={menuState?.open ?? false}
 					anchor={menuState ? menuAnchor(menuState.target) : null}

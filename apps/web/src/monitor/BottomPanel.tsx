@@ -47,7 +47,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionsTab } from "./ActionsTab";
 import { attemptAgentTimes } from "./attempt-clock";
-import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
 import { LogList, type LogPaging, type LogReveal } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
@@ -124,9 +123,12 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 export function BottomPanel({
 	run,
 	doc,
+	chartsReserved,
 }: {
 	run: RunView;
 	doc: StoredOrchestrationDocument | undefined;
+	/** 图表工作区要留出的高度（px）：面板最高到容器的高度减去它，见 `CHARTS_RESERVED_HEIGHT`。 */
+	chartsReserved: number;
 }) {
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
@@ -177,13 +179,14 @@ export function BottomPanel({
 	const logTimeKind = useLogTimeKind();
 
 	// 收起时只剩标签行；默认占满图表工作区下面剩下的高度；拖动以后是拖到的高度。最高到图表工作区和底部面板共有的
-	// 高度减去图表的最小高度：窗口变矮、时间线调高时图表先让出高度，面板不会被挤出窗口。
-	const highest = `calc(100% - ${CHARTS_MIN_HEIGHT}px)`;
+	// 高度减去图表要留的高度（`chartsReserved`）：窗口变矮、时间线调高、面板被拖高时先压面板，图表至少有那么高；
+	// 窗口矮到两样都放不下时面板最矮是标签行（`minHeight`），图表再让到工具栏的高度，总在窗口里。
+	const highest = `calc(100% - ${chartsReserved}px)`;
 	const style: React.CSSProperties = collapsed
 		? { height: COLLAPSED_HEIGHT }
 		: height === null
-			? { flex: `1 0 ${DEFAULT_HEIGHT}`, maxHeight: highest }
-			: { height, maxHeight: highest };
+			? { flex: `1 0 ${DEFAULT_HEIGHT}`, maxHeight: highest, minHeight: COLLAPSED_HEIGHT }
+			: { height, maxHeight: highest, minHeight: COLLAPSED_HEIGHT };
 	// 「动作」页签上的个数：看着「动作」页签时由它的推送更新，没在看、任务还在执行时定时重新读。
 	const actionSummary = useActionSummary(
 		attempt?.task_id,
@@ -712,7 +715,8 @@ function AttemptsTab({
 						)}
 					>
 						<header className="flex items-center gap-2">
-							<NodeName node={n} />
+							{/* 卡片很窄：显示名称优先，放不下时先收起节点 ID，名称占满再截断（和时间线的名称列一样）。 */}
+							<NodeName node={n} priority="name" />
 							<b className="flex-none font-semibold">{attemptLabel(a.attempt)}</b>
 							<StatusPill kind={status.kind}>{status.label}</StatusPill>
 							<span className="ml-auto flex-none font-mono text-2xs text-fg-3">

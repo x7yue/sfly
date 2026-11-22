@@ -61,10 +61,10 @@ const LABEL_W = "var(--label-w)";
 const BRUSH_MIN = 0.004;
 /** 拖选范围小于轨道宽度的这个比例时不缩放。 */
 const ZOOM_MIN = 0.01;
-/** 主体最高占视口的约 30%（至少 150px、最多 420px），图表和底部面板总有地方；行不多时按内容的高度。 */
 /** 时间线主体最高的高度（px）：默认的上限，拖动调高也不超过它。 */
 const TIMELINE_MAX_PX = 420;
-const BODY_MAX_HEIGHT = `clamp(150px, 30dvh, ${TIMELINE_MAX_PX}px)`;
+/** 主体默认最高占视口的约 22%（至少 120px、最多 420px），图表和底部面板总有地方；行不多时按内容的高度，行多了在里面滚动。 */
+const BODY_MAX_HEIGHT = `clamp(120px, 22dvh, ${TIMELINE_MAX_PX}px)`;
 
 /** 区段种类对应的状态（docs/DESIGN-SYSTEM.md §6.1）。执行中的段不用实心青（只有段尾的脉冲头是实心）：长时间的运行里最大的几块不能全是饱和青。 */
 const SEGMENT_STATUS: Record<SegmentKind, StatusKind> = {
@@ -193,7 +193,7 @@ export function Timeline({
 	return (
 		<section
 			aria-label="链路时间线"
-			className="relative flex-none border-b border-border-soft bg-bg [--label-w:clamp(220px,18cqi,380px)] [container-type:inline-size]"
+			className="relative flex-none border-b border-border-soft bg-bg [--label-w:clamp(260px,22cqi,440px)] [container-type:inline-size]"
 		>
 			<div className="flex min-w-0 items-center gap-2 border-b border-border-soft px-3 py-1.5">
 				<h2 className="m-0 flex-none text-sm font-semibold">链路时间线</h2>
