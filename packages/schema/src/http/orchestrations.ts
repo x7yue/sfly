@@ -9,6 +9,7 @@ import {
 import { ChartDeclaration } from "../package-metadata.js";
 import { removedFieldsMessage, removedFieldsWithContent } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
+import { SessionRef } from "../sessions.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
@@ -218,6 +219,8 @@ export const VersionSummaryView = z.object({
 	author: z.string(),
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: z.string().nullable(),
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session: SessionRef.optional(),
 	created_at: Timestamp,
 });
 
@@ -229,6 +232,8 @@ export const OrchestrationVersionView = z.object({
 	/** 保存这个版本的人的昵称。 */
 	author: z.string(),
 	author_via: z.string().nullable(),
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session: SessionRef.optional(),
 	created_at: Timestamp,
 	document: StoredOrchestrationDocument,
 });

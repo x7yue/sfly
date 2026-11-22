@@ -7,6 +7,7 @@ import {
 	type NodeStatus,
 	type RunListActiveNode,
 	type RunView,
+	type SessionRef,
 	type StoredNode,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
@@ -40,6 +41,7 @@ import {
 import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { sessionRefs, withSession } from "../sessions/session-ref.js";
 import { isUuid } from "../util/uuid.js";
 
 /*
@@ -140,6 +142,8 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	version: { id: string; number: number; document: StoredOrchestrationDocument };
 	/** 场景此刻的名称和关注项（不属于场景版本）。 */
 	scenario: Pick<typeof orchestrations.$inferSelect, "name" | "focusItems">;
+	/** 经哪个会话触发（会话令牌触发的，#547）：会话的 ID 和标题；不是会话触发的为 undefined。 */
+	session: SessionRef | undefined;
 	/**
 	 * 按这次运行此刻的 secret 值给一段文字打码：读取方在读取结果之外拿到用户内容（任务动作摘要里的失败的动作等）时，
 	 * 和读取结果里的用户内容用同一个口径。
@@ -217,6 +221,10 @@ async function readByIds(
 		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
 		.where(inArray(runs.id, ids));
 	if (rows.length === 0) return new Map();
+	const refs = await sessionRefs(
+		db,
+		rows.map((r) => r.run.sessionId),
+	);
 	const found = rows.map((r) => r.run.id);
 	const chains = await db
 		.select()
@@ -244,7 +252,7 @@ async function readByIds(
 				.from(tasks)
 				.where(inArray(tasks.runId, found))
 				.orderBy(asc(tasks.attempt));
-			return assemble(rows, chains, taskRows, attemptOf, (read) => read);
+			return assemble(rows, refs, chains, taskRows, attemptOf, (read) => read);
 		}
 		const taskRows = await db
 			.select({
@@ -256,7 +264,7 @@ async function readByIds(
 			.from(tasks)
 			.where(inArray(tasks.runId, found))
 			.orderBy(asc(tasks.attempt));
-		return assemble(rows, chains, taskRows, attemptStateOf, (read) => read);
+		return assemble(rows, refs, chains, taskRows, attemptStateOf, (read) => read);
 	}
 
 	const taskRows = (
@@ -271,7 +279,7 @@ async function readByIds(
 		db,
 		rows.map((r) => r.run),
 	);
-	return assemble(rows, chains, taskRows, attemptDetailOf, (read) => ({
+	return assemble(rows, refs, chains, taskRows, attemptDetailOf, (read) => ({
 		...read,
 		runNotification: notifications.get(read.run.id) ?? null,
 	}));
@@ -461,6 +469,7 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 
 function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead<A>>(
 	rows: ReadonlyArray<Pick<RunRead<A>, "run" | "version" | "scenario">>,
+	refs: ReadonlyMap<string, SessionRef>,
 	chainRows: readonly ChainRow[],
 	taskRows: readonly T[],
 	toAttempt: (row: T, mask: Masker) => A,
@@ -524,6 +533,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				run: { ...run, params: mask.params(entryIdOf(document), run.params) },
 				version,
 				scenario,
+				session: run.sessionId === null ? undefined : refs.get(run.sessionId),
 				maskText: mask.text,
 				chains,
 				activeNodes: activeNodesOf(chains),
@@ -628,6 +638,7 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 		status: run.status,
 		triggered_by: run.triggeredBy,
 		triggered_via: run.triggeredVia,
+		...withSession(read.session),
 		params: run.params,
 		preset: runPresetView(run),
 		started_at: run.startedAt.toISOString(),

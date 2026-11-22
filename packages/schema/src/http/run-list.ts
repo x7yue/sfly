@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SessionRef } from "../sessions.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { RunListPreset } from "./runs.js";
 
@@ -89,6 +90,8 @@ export const RunListItem = z.object({
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: z.string().nullable(),
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session: SessionRef.optional(),
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunListPreset.nullable(),
 	started_at: Timestamp,

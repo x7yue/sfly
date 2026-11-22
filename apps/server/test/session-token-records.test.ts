@@ -332,6 +332,74 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 		});
 	});
 
+	describe("响应里的会话：运行页、版本历史上「经 …」显示它", () => {
+		it("运行视图、场景的运行列表、运行记录里，会话触发的运行带 session（ID 和会话此刻的标题）；别的运行没有这个字段", async () => {
+			const id = await scenario();
+			const mine = await json<{ id: string }>(
+				await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } }),
+				201,
+			);
+			const byPerson = await api.triggerOk(id, { host: "h" });
+			// 标题是会话此刻的标题：会话改了名，页面上跟着变。
+			await db.query("update sessions set title = '改完的标题' where id = $1", [sessionId]);
+			const ref = { id: sessionId, title: "改完的标题" };
+
+			expect((await api.run(mine.id)).session).toEqual(ref);
+			expect("session" in (await api.run(byPerson))).toBe(false);
+			const forScenario = await api.getJson<{ runs: Array<{ id: string; session?: unknown }> }>(
+				`/orchestrations/${id}/runs`,
+			);
+			expect(forScenario.runs.find((run) => run.id === mine.id)?.session).toEqual(ref);
+			expect("session" in (forScenario.runs.find((run) => run.id === byPerson) ?? {})).toBe(false);
+			const records = await api.getJson<{ runs: Array<{ id: string; session?: unknown }> }>(
+				"/runs",
+			);
+			expect(records.runs.find((run) => run.id === mine.id)?.session).toEqual(ref);
+			expect("session" in (records.runs.find((run) => run.id === byPerson) ?? {})).toBe(false);
+		});
+
+		it("版本历史、单个版本、保存的响应里，会话保存的版本带 session；人保存的没有", async () => {
+			const id = await scenario();
+			const saved = await json<{ number: number; session?: unknown }>(
+				await asSession("POST", `/orchestrations/${id}/versions`, {
+					base_version: 1,
+					document: document(),
+				}),
+				201,
+			);
+			const ref = { id: sessionId, title: "改巡检节点" };
+			expect(saved.session).toEqual(ref);
+			const { versions: list } = await api.getJson<{
+				versions: Array<{ number: number; session?: unknown }>;
+			}>(`/orchestrations/${id}/versions`);
+			expect(list.find((v) => v.number === 2)?.session).toEqual(ref);
+			expect("session" in (list.find((v) => v.number === 1) ?? {})).toBe(false);
+			const one = await api.getJson<{ session?: unknown }>(`/orchestrations/${id}/versions/2`);
+			expect(one.session).toEqual(ref);
+			const first = await api.getJson<{ session?: unknown }>(`/orchestrations/${id}/versions/1`);
+			expect("session" in first).toBe(false);
+		});
+
+		it("编辑起点过期（409）时带回的最新版本摘要也带 session", async () => {
+			const id = await scenario();
+			await json(
+				await asSession("POST", `/orchestrations/${id}/versions`, {
+					base_version: 1,
+					document: document(),
+				}),
+				201,
+			);
+			const stale = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: 1,
+				document: document(),
+			});
+			expect(stale.status).toBe(409);
+			expect(await stale.json()).toMatchObject({
+				error: { details: { head: { number: 2, session: { id: sessionId } } } },
+			});
+		});
+	});
+
 	describe("会话令牌能做什么、不能做什么（经 HTTP）", () => {
 		it("取消：自己触发的成功；人触发的、别的会话触发的 403；取消之后运行上仍记着会话", async () => {
 			const id = await scenario();

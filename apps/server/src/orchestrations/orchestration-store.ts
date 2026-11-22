@@ -7,6 +7,7 @@ import type {
 	OrchestrationView,
 	RunNotificationChanges,
 	SecretDefaultProblem,
+	SessionRef,
 	StoredOrchestrationDocument,
 	VersionCheckView,
 } from "@sfly/schema";
@@ -20,6 +21,7 @@ import type { FocusRejection } from "../focus/focus-list.js";
 import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-settings.js";
 import { copyPresets } from "../presets/preset-store.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { sessionRefs, withSession } from "../sessions/session-ref.js";
 import type { SessionStore } from "../sessions/session-store.js";
 import { maskSecretDefaults, restoreSecretDefaults } from "./secret-defaults.js";
 import { newWarnings, versionCheck } from "./version-check.js";
@@ -153,7 +155,10 @@ async function conflict(
 	orchestration: OrchestrationRow,
 ): Promise<{ kind: "conflict"; head: VersionSummary | null }> {
 	const head = await versionRow(db, orchestration.id, orchestration.headVersion);
-	return { kind: "conflict", head: head ? toSummary(head) : null };
+	return {
+		kind: "conflict",
+		head: head ? toSummary(head, await sessionOfVersion(db, head)) : null,
+	};
 }
 
 /** 场景的基本信息（场景列表用）；场景视图在它之上加了对照最新版本才能得出的关注项，见 {@link OrchestrationStore}。 */
@@ -182,22 +187,31 @@ const runNotifyColumns = (settings: RunNotificationChanges) => ({
 
 const toSummary = (
 	row: Pick<VersionRow, "number" | "author" | "authorVia" | "createdAt">,
+	session?: SessionRef,
 ): VersionSummary => ({
 	number: row.number,
 	author: row.author,
 	author_via: row.authorVia,
+	...withSession(session),
 	created_at: row.createdAt.toISOString(),
 });
 
-export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
+export const toVersionView = (row: VersionRow, session?: SessionRef): OrchestrationVersionView => ({
 	id: row.id,
 	orchestration_id: row.orchestrationId,
 	number: row.number,
 	author: row.author,
 	author_via: row.authorVia,
+	...withSession(session),
 	created_at: row.createdAt.toISOString(),
 	document: maskSecretDefaults(row.document),
 });
+
+/** 一个版本上记的会话（会话令牌保存的版本）：会话的 ID 和标题；不是会话保存的为 undefined。 */
+async function sessionOfVersion(db: Db | Tx, row: VersionRow): Promise<SessionRef | undefined> {
+	if (row.sessionId === null) return undefined;
+	return (await sessionRefs(db, [row.sessionId])).get(row.sessionId);
+}
 
 /**
  * 编排与编排版本的存取。版本只追加、不修改。每个场景属于一个项目（ADR 0029）：新建要传项目，按项目取（`getInProject`）
@@ -567,12 +581,19 @@ export class OrchestrationStore {
 				number: orchestrationVersions.number,
 				author: orchestrationVersions.author,
 				authorVia: orchestrationVersions.authorVia,
+				sessionId: orchestrationVersions.sessionId,
 				createdAt: orchestrationVersions.createdAt,
 			})
 			.from(orchestrationVersions)
 			.where(eq(orchestrationVersions.orchestrationId, orchestrationId))
 			.orderBy(desc(orchestrationVersions.number));
-		return rows.map(toSummary);
+		const refs = await sessionRefs(
+			this.deps.db,
+			rows.map((row) => row.sessionId),
+		);
+		return rows.map((row) =>
+			toSummary(row, row.sessionId === null ? undefined : refs.get(row.sessionId)),
+		);
 	}
 
 	/**
@@ -636,7 +657,7 @@ export class OrchestrationStore {
 			.set({ headVersion: number })
 			.where(eq(orchestrations.id, orchestration.id));
 		await this.#recordForSession(tx, actor, orchestration, number, pending);
-		return toVersionView(row as VersionRow);
+		return toVersionView(row as VersionRow, await sessionOfVersion(tx, row as VersionRow));
 	}
 
 	async getVersion(
@@ -644,6 +665,6 @@ export class OrchestrationStore {
 		number: number,
 	): Promise<OrchestrationVersionView | undefined> {
 		const row = await versionRow(this.deps.db, orchestrationId, number);
-		return row && toVersionView(row);
+		return row && toVersionView(row, await sessionOfVersion(this.deps.db, row));
 	}
 }
