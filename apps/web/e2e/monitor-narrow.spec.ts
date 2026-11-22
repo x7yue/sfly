@@ -227,12 +227,15 @@ for (const viewport of VIEWPORTS) {
 		}) => {
 			const id = await createEditorScenario(controlPlane);
 			await openEditor(page, id);
-			// 主链下方、子流程区域左侧的空白处（和 edit-ops.spec.ts 的 BLANK 相同）。
-			await page.mouse.click(200, 640, { button: "right" });
+			// 空白处：工具条左边一点、离窗口底部 130px（菜单有 6 项约 190px 高，往下展开放不下，会贴着窗口底边，
+			// 右边缘伸到工具条的最左端上面）。
+			const dockBox = await rectOf(dock(page));
+			await page.mouse.click(Math.max(40, dockBox.x - 150), viewport.height - 130, {
+				button: "right",
+			});
 			const menu = paneMenu(page);
 			await expect(menu).toBeVisible();
 			const menuBox = await rectOf(menu);
-			const dockBox = await rectOf(dock(page));
 			expect(
 				intersects(menuBox, dockBox),
 				`${size}：菜单 ${JSON.stringify(menuBox)}、工具条 ${JSON.stringify(dockBox)}`,
