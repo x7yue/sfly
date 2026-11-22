@@ -1,7 +1,9 @@
 // 助手服务协议的 HTTP 一侧：鉴权、请求的校验、健康检查、事件流的第一行。
 import { join } from "node:path";
-import { AssistantHealth } from "@sfly/schema";
+import { ASSISTANT_STREAM_HEARTBEAT_MS, AssistantHealth, AssistantStreamLine } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { HEARTBEAT_MS } from "../src/server.js";
+import { eventually } from "./support/eventually.js";
 import { EventsClient, Harness, SECRET } from "./support/harness.js";
 
 let h: Harness;
@@ -80,5 +82,45 @@ describe("健康检查和事件流", () => {
 
 	it("GET /events：第一行是 hello（带纪元，没有缺口）", () => {
 		expect(h.events.hello).toEqual({ type: "hello", epoch: expect.any(String), gap: false });
+	});
+});
+
+describe("事件流的心跳", () => {
+	it("协议的间隔是 15 秒（控制面 3 个间隔收不到任何字节就断开重连）", () => {
+		expect(HEARTBEAT_MS).toBe(ASSISTANT_STREAM_HEARTBEAT_MS);
+		expect(ASSISTANT_STREAM_HEARTBEAT_MS).toBe(15_000);
+	});
+
+	it("没有事件时也按间隔写心跳；有事件时照样写；断开之后不再写", async () => {
+		const fast = await Harness.start({
+			piArgv: [process.execPath, join(import.meta.dirname, "support", "fake-pi.mjs")],
+			heartbeatMs: 40,
+		});
+		try {
+			// 空闲：只有心跳。
+			await eventually(() => expect(fast.events.heartbeats).toBeGreaterThanOrEqual(3));
+			// 每一行都是协议的一行（hello、心跳或事件记录）。
+			for (const line of fast.events.lines) {
+				expect(() => AssistantStreamLine.parse(JSON.parse(line))).not.toThrow();
+			}
+			expect(fast.events.lines.filter((l) => l === '{"type":"heartbeat"}')).toHaveLength(
+				fast.events.heartbeats,
+			);
+			// 一轮进行中照样写。
+			const id = crypto.randomUUID();
+			await fast.prompt(id, { text: "hang" });
+			const before = fast.events.heartbeats;
+			await eventually(() => expect(fast.events.heartbeats).toBeGreaterThan(before + 2));
+			await fast.abort(id);
+			await fast.turnEnd(id);
+			// 断开之后这条连接的心跳定时器停了，也不再订阅。
+			const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+			const withStream = timers();
+			fast.events.close();
+			await eventually(() => expect(fast.bus.subscribers).toBe(0));
+			await eventually(() => expect(timers()).toBeLessThan(withStream));
+		} finally {
+			await fast.close();
+		}
 	});
 });

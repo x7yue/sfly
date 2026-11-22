@@ -6,6 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+	AssistantStreamHeartbeat,
 	type AssistantStreamHello,
 	AssistantStreamRecord,
 	type PromptCommandBody,
@@ -42,6 +43,7 @@ export interface HarnessOptions {
 	killGraceMs?: number;
 	hostEnv?: NodeJS.ProcessEnv;
 	earlyAbortWindowMs?: number;
+	heartbeatMs?: number;
 }
 
 export class Harness {
@@ -54,6 +56,7 @@ export class Harness {
 		readonly model: FakeModel,
 		readonly workbench: FakeWorkbench,
 		readonly sessions: SessionManager,
+		readonly bus: EventBus,
 		readonly server: Server,
 		readonly url: string,
 		/** 助手服务写的日志。 */
@@ -100,6 +103,7 @@ export class Harness {
 			versions: { assistant: "0.0.0-test", pi: piPackage().version },
 			modelsFile,
 			log: (message) => logs.push(message),
+			heartbeatMs: options.heartbeatMs,
 		});
 		await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
 		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -110,6 +114,7 @@ export class Harness {
 			model,
 			workbench,
 			sessions,
+			bus,
 			server,
 			url,
 			logs,
@@ -178,6 +183,8 @@ export class Harness {
 /** `GET /events` 的客户端：收下每一行（经协议的 schema 检查）。 */
 export class EventsClient {
 	hello: AssistantStreamHello | undefined;
+	/** 收到的心跳行数。 */
+	heartbeats = 0;
 	readonly records: AssistantStreamRecord[] = [];
 	readonly lines: string[] = [];
 
@@ -219,6 +226,11 @@ export class EventsClient {
 		const json = JSON.parse(line) as { type?: string };
 		if (json.type === "hello") {
 			this.hello = json as AssistantStreamHello;
+			return;
+		}
+		if (json.type === "heartbeat") {
+			AssistantStreamHeartbeat.parse(json);
+			this.heartbeats += 1;
 			return;
 		}
 		this.records.push(AssistantStreamRecord.parse(json));
