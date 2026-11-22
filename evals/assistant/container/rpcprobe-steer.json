@@ -1,0 +1,17 @@
+{
+	"说明": "第 7、8 题：远程执行一个几秒的命令，之后回一段文字。",
+	"steps": [
+		{
+			"id": "short",
+			"tool": "bash",
+			"args": {
+				"command": "sleep 6; echo slept",
+				"timeout": 60
+			}
+		},
+		{
+			"id": "done",
+			"text": "命令执行完了。"
+		}
+	]
+}

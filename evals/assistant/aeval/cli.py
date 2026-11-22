@@ -8,8 +8,8 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
+from aeval import bgcheck, probe, rpcprobe, toolcheck, transcript
 from aeval import docker as d
-from aeval import probe, toolcheck, transcript
 from aeval.env import (
     DATA_HOME,
     DEFAULT_SERVER_IMAGE,
@@ -35,6 +35,10 @@ def _stack(args: argparse.Namespace) -> Stack:
         internal=getattr(args, "isolated", False),
         fake_model=getattr(args, "fake_model", False),
     )
+    if args.command != "up" and stack.network_internal():
+        # `up --isolated` 起的槽位：之后的命令（reset、toolcheck、rpcprobe……）照网络的实际情况，
+        # 不然重建控制面时会在断网的网络上发布端口。
+        stack.internal = True
     if getattr(args, "cache", None):
         stack.cache_dir = args.cache.resolve()
     if getattr(args, "pypi_mirror", None):
@@ -131,6 +135,27 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument(
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-probe"
     )
+    rp = sub.add_parser(
+        "rpcprobe", help="助手服务那套启动参数下 pi 的 RPC 模式怎么表现（#539，假的模型端点）"
+    )
+    rp.add_argument(
+        "questions",
+        nargs="*",
+        choices=rpcprobe.QUESTIONS,
+        metavar="题号",
+        help="只跑这几题（q1…q10），默认全部；题号写错时在重置环境之前就报错",
+    )
+    rp.add_argument(
+        "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-rpcprobe"
+    )
+    bg = sub.add_parser(
+        "bgcheck", help="已有的会话记录里，模型多常跨两次命令依赖后台进程（#539，不调模型）"
+    )
+    bg.add_argument("results", type=Path, nargs="+", help="结果目录（可以写多个，会往下找会话）")
+    bg.add_argument("--json", action="store_true", help="输出 JSON")
+    bg.add_argument(
+        "--include-fake", action="store_true", help="也算假的模型端点的会话（照剧本，默认不算）"
+    )
     mem = sub.add_parser("memory", help="量 pi 进程（RPC 模式）空闲和工作时的内存")
     mem.add_argument("--model", required=True)
     mem.add_argument("--repeat", type=int, default=3)
@@ -142,6 +167,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "transcript":
         print(transcript.render(args.session, args.lines))
+        return 0
+    if args.command == "bgcheck":
+        found = bgcheck.scan(args.results, include_fake=args.include_fake)
+        print(
+            json.dumps(found, ensure_ascii=False, indent=2) if args.json else bgcheck.render(found)
+        )
         return 0
     if args.command == "report":
         print(render(args.results))
@@ -175,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
         results = args.results or DATA_HOME / f"{date.today().isoformat()}-toolcheck"
         results.mkdir(parents=True, exist_ok=True)
         return toolcheck.run(stack, results, EVALS_DIR)
+    elif args.command == "rpcprobe":
+        results = args.results or DATA_HOME / f"{date.today().isoformat()}-rpcprobe"
+        questions = tuple(args.questions) or rpcprobe.QUESTIONS
+        return rpcprobe.run(stack, results, EVALS_DIR, questions)
     elif args.command == "probe":
         results = args.results or DATA_HOME / f"{date.today().isoformat()}-probe"
         # 假的模型端点照剧本把每件事都试一遍：看配置允许什么，不看模型愿不愿意做。

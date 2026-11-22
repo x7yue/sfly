@@ -308,7 +308,7 @@ class Stack:
         log(f"环境就绪：控制面 {self.cp_url}")
 
     def down(self) -> None:
-        for role in ("hardened", "pi", "dev", "sut", "cp", "pg", "mirror", "fake"):
+        for role in ("rpcprobe", "hardened", "pi", "dev", "sut", "cp", "pg", "mirror", "fake"):
             d.docker("rm", "-f", self.name(role), check=False)
         d.docker("volume", "rm", self.name("cpdata"), check=False)
         d.docker("network", "rm", self.network, check=False)

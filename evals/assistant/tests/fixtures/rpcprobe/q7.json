@@ -1,0 +1,100 @@
+{
+	"ok": true,
+	"during_tool": {
+		"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+		"queue_updates": [
+			{ "t": 1.486, "steering": ["插话：顺便看一下日志"], "followUp": [] },
+			{ "t": 7.765, "steering": [], "followUp": [] }
+		],
+		"user_messages": [{ "t": 7.776, "text": "插话：顺便看一下日志" }],
+		"order": [
+			"queue_update",
+			"tool_execution_end",
+			"message_start",
+			"turn_end",
+			"turn_start",
+			"queue_update",
+			"message_start",
+			"message_start",
+			"turn_end"
+		],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。" }
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+				{ "role": "tool", "text": "slept\n", "tool_call_id": "call_1" },
+				{ "role": "user", "text": "插话：顺便看一下日志" }
+			]
+		]
+	},
+	"text_only": {
+		"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+		"queue_updates": [
+			{ "t": 3.207, "steering": ["插话：顺便看一下日志"], "followUp": [] },
+			{ "t": 6.374, "steering": [], "followUp": [] }
+		],
+		"user_messages": [{ "t": 6.374, "text": "插话：顺便看一下日志" }],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-slow-text 照剧本做。" }
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-slow-text 照剧本做。" },
+				{ "role": "assistant", "text": "慢慢说完。" },
+				{ "role": "user", "text": "插话：顺便看一下日志" }
+			]
+		],
+		"messages": [
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-slow-text 照剧本做。" },
+			{ "role": "assistant", "text": "慢慢说完。" },
+			{ "role": "user", "text": "插话：顺便看一下日志" },
+			{ "role": "assistant", "text": "慢慢说完。" }
+		]
+	},
+	"clear_then_abort": {
+		"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+		"clear_queue": { "steering": ["插话：顺便看一下日志"], "followUp": [] },
+		"abort_ok": true,
+		"queue_updates": [
+			{ "t": 2.474, "steering": ["插话：顺便看一下日志"], "followUp": [] },
+			{ "t": 2.476, "steering": [], "followUp": [] }
+		],
+		"user_messages": [],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.\n\n<tools>\n- bash: Execute bash commands (ls, grep, find, etc.)\n\nAdditional tools may be available.\n</tools>\n\n<rules>\n- Use bash for file operations like ls, rg, find\n- You ca"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" }
+			]
+		],
+		"messages": [
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+			{ "role": "assistant", "text": "" },
+			{ "role": "toolResult", "text": "Command aborted" },
+			{ "role": "assistant", "text": "" }
+		]
+	}
+}
