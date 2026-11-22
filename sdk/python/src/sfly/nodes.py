@@ -28,6 +28,8 @@ class _InputTypeMarker:
 
 AGENT_MARKER = _InputTypeMarker("AgentName")
 FEISHU_BOT_MARKER = _InputTypeMarker("FeishuBot")
+#: `sfly.RunState` 的标记：值是整个运行此刻的状态（一个普通的字典），类型定义在 `sfly.run_state`。
+RUN_STATE_MARKER = _InputTypeMarker("RunState")
 
 #: 「Agent」类型的输入：值是 Agent 名称（运行时就是 `str`），表示节点会访问这台 Agent（ADR 0019）。
 #: 检查器里显示成 Agent 下拉框；触发前检查它是已注册的 Agent；派发时控制面把它的地址和端口随任务下发
@@ -112,6 +114,7 @@ class NodeDeclaration:
     metrics: Sequence[Metric] = ()
     charts: Sequence[Chart] = ()
     primary_metric: str | None = None
+    timeout: int | None = None
 
 
 @overload
@@ -127,6 +130,7 @@ def node(
     metrics: Sequence[Metric] = (),
     charts: Sequence[Chart] = (),
     primary_metric: str | None = None,
+    timeout: int | None = None,
 ) -> Callable[[F], F]: ...
 
 
@@ -140,6 +144,7 @@ def node(
     metrics: Sequence[Metric] = (),
     charts: Sequence[Chart] = (),
     primary_metric: str | None = None,
+    timeout: int | None = None,
 ) -> F | Callable[[F], F]:
     """声明一个节点类型。
 
@@ -148,6 +153,9 @@ def node(
     - `name` 默认为函数名，`title` 默认为节点名。
     - `metrics`：节点运行时上报的指标；`charts`：怎么把指标画出来（没被任何图表引用的指标由
       平台生成默认图表）；`primary_metric`：在紧凑位置显示的主指标，必须是已声明的指标名。
+    - `timeout`：这个节点类型的默认超时（秒，正整数）：跑得久的节点在这里声明（保持 12 小时
+      的写 43200），场景里不用逐个节点设。场景里这个节点自己写了超时时以场景里的为准；
+      都没有时是平台的 1 小时。
     """
 
     def decorate(f: F) -> F:
@@ -158,6 +166,7 @@ def node(
             metrics=tuple(metrics),
             charts=tuple(charts),
             primary_metric=primary_metric,
+            timeout=timeout,
         )
         setattr(f, NODE_ATTR, decl)
         return f

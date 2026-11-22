@@ -13,7 +13,12 @@ type Node = StructureDocument["nodes"][number];
 type Edge = StructureDocument["edges"][number];
 
 const entry = (id = "entry"): Node => ({ id, kind: "entry" });
-const pkg = (id: string, agent?: string): Node => ({ id, kind: "package", agent });
+const pkg = (id: string, agent?: string, timeout?: number): Node => ({
+	id,
+	kind: "package",
+	agent,
+	timeout,
+});
 const asyncNode = (id: string): Node => ({ id, kind: "async" });
 const subflow = (id: string, name?: string): Node =>
 	name === undefined ? { id, kind: "subflow_entry" } : { id, kind: "subflow_entry", name };
@@ -145,6 +150,27 @@ describe("结构警告", () => {
 				code: "missing_agent",
 				node_id: "a",
 				message: "节点 a 没有选择 Agent，场景也没有默认 Agent",
+			},
+		]);
+	});
+
+	it("包节点的超时不是上限以内的正整数（升级前保存的版本里可能有）：警告指到这个节点，说明和派发时的一句话一样", () => {
+		const d = doc(
+			[
+				entry(),
+				pkg("ok", "agent-a", 4_294_967_295),
+				pkg("big", "agent-a", 5_000_000_000),
+				pkg("none", "agent-a"),
+			],
+			[chain("entry", "ok"), chain("ok", "big"), chain("big", "none")],
+		);
+
+		expect(structureWarnings(d)).toEqual([
+			{
+				code: "timeout_out_of_range",
+				node_id: "big",
+				input: "timeout",
+				message: "节点 big：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 5000000000",
 			},
 		]);
 	});
@@ -329,6 +355,7 @@ describe("停止子流程节点的引用检查（docs/SEMANTICS.md §4.1 第 1 �
 				node_id: "stopper",
 				input: "subflow",
 				message: "停止子流程节点 stopper 要停止的子流程 gone 不存在",
+				target: "gone",
 			},
 		]);
 		expect(codes(scene("spawnB"))).toEqual([["stop_subflow_unknown", "stopper"]]);
@@ -341,6 +368,7 @@ describe("停止子流程节点的引用检查（docs/SEMANTICS.md §4.1 第 1 �
 				node_id: "stopper",
 				input: "subflow",
 				message: "停止子流程节点 stopper 在触发子流程「压测」的异步任务节点 spawnB 之前",
+				target: "b",
 			},
 		]);
 	});
@@ -352,6 +380,7 @@ describe("停止子流程节点的引用检查（docs/SEMANTICS.md §4.1 第 1 �
 				node_id: "inner",
 				input: "subflow",
 				message: "停止子流程节点 inner 只能停止本链触发的子流程，「监控」不是",
+				target: "a",
 			},
 		]);
 		expect(codes(scene("a", "b"))).toEqual([["stop_subflow_out_of_scope", "inner"]]);

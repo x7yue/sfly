@@ -3,12 +3,14 @@ import { RunState } from "./http/run-summary.js";
 import { OrchestrationDocument } from "./orchestration-document.js";
 import { PackageMetadata } from "./package-metadata.js";
 
+export * from "./assistant-protocol.js";
 export * from "./count-only-periods.js";
 export * from "./display-text.js";
 export * from "./focus-list.js";
 export * from "./focus-reading.js";
 export * from "./http/index.js";
 export * from "./metric-format.js";
+export * from "./node-timeout.js";
 export * from "./orchestration-document.js";
 export * from "./package-metadata.js";
 export * from "./removed-document-fields.js";
@@ -19,6 +21,7 @@ export * from "./run-log-scope.js";
 export * from "./run-state.js";
 export * from "./secret-mask.js";
 export * from "./series.js";
+export * from "./sessions.js";
 
 /** 导出给 Python CLI 使用的 JSON Schema：文件名（不含扩展名） → zod schema。 */
 export const exportedSchemas = {

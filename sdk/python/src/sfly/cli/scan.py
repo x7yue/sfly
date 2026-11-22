@@ -26,6 +26,7 @@ from sfly.nodes import (
     AGENT_MARKER,
     FEISHU_BOT_MARKER,
     NODE_ATTR,
+    RUN_STATE_MARKER,
     Chart,
     Doc,
     Metric,
@@ -54,11 +55,17 @@ def _is_typeddict(tp: Any) -> bool:
     return isinstance(tp, type) and issubclass(tp, dict) and hasattr(tp, "__required_keys__")
 
 
-#: 扩展输入类型的标记 → 输入 schema 里 `x-sfly-type` 的值：`sfly.AgentName` 是
+#: 扩展输入类型的标记 → （输入 schema 里 `x-sfly-type` 的值，值的 JSON 类型）：`sfly.AgentName` 是
 #: `{"type": "string", "x-sfly-type": "agent"}`，`sfly.FeishuBot` 是
-#: `{"type": "string", "x-sfly-type": "feishu_bot"}`。
-#: 控制面、画布和本地调试按它识别（packages/orchestration/src/agent-inputs.ts、feishu-bots.ts）。
-_INPUT_TYPES = ((AGENT_MARKER, "agent"), (FEISHU_BOT_MARKER, "feishu_bot"))
+#: `{"type": "string", "x-sfly-type": "feishu_bot"}`，`sfly.RunState` 是
+#: `{"type": "object", "x-sfly-type": "run_state"}`。
+#: 控制面、画布和本地调试按它识别（packages/orchestration/src/agent-inputs.ts、feishu-bots.ts、
+#: run-state-references.ts）。
+_INPUT_TYPES = (
+    (AGENT_MARKER, "agent", "string"),
+    (FEISHU_BOT_MARKER, "feishu_bot", "string"),
+    (RUN_STATE_MARKER, "run_state", "object"),
+)
 
 
 #: 输入（和输出字段）的说明最多这么多个 Unicode 字符；Python 的 `len` 数的就是 Unicode 字符。
@@ -110,8 +117,9 @@ def split_doc(hint: Any) -> tuple[Any, str | None]:
 def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     """把类型注解转换为 JSON Schema；不支持的注解抛出 ScanError。
 
-    `param`：是不是节点参数本身的类型。`sfly.AgentName`、`sfly.FeishuBot` 只能直接用作节点参数的类型
-    （或 `AgentName | None`），用在别处（列表的元素、字典的值、输出）时报错。
+    `param`：是不是节点参数本身的类型。`sfly.AgentName`、`sfly.FeishuBot`、`sfly.RunState`
+    只能直接用作节点参数的类型（或 `AgentName | None`），用在别处（列表的元素、字典的值、
+    输出）时报错。
     """
     if tp is Any or tp is inspect.Parameter.empty or tp is object:
         return {}
@@ -129,13 +137,13 @@ def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
                 "Doc 只能写在注解的最外层，不能写在 list[...]、| 等的里面；"
                 '例如 Annotated[str | None, Doc("…")]'
             )
-        for marker, name in _INPUT_TYPES:
+        for marker, name, json_type in _INPUT_TYPES:
             if any(meta is marker for meta in tp.__metadata__):
                 if not param:
                     raise ScanError(
                         f"{marker.name} 只能直接用作节点参数的类型（可以写成 {marker.name} | None）"
                     )
-                return {"type": "string", "x-sfly-type": name}
+                return {"type": json_type, "x-sfly-type": name}
         return type_schema(args[0])
     if origin is typing.Union or origin is types.UnionType:
         optional = len(args) == 2 and type(None) in args
@@ -398,6 +406,28 @@ def node_description(fn: Any, label: str) -> str | None:
     return description or None
 
 
+#: 节点类型声明的超时的上限（秒）：任务派发给 Agent 时超时是 32 位无符号整数
+#: （agent.proto 的 `timeout_seconds`）。
+MAX_TIMEOUT_SECONDS = 4_294_967_295
+
+
+def node_timeout(decl: NodeDeclaration, label: str) -> int | None:
+    """`@node(timeout=...)`：没声明时返回 None；声明了就必须是正整数（秒，和场景里的超时一样）。"""
+    value = decl.timeout
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 < value <= MAX_TIMEOUT_SECONDS
+    ):
+        raise ScanError(
+            f"{label}：timeout 必须是 1 到 {MAX_TIMEOUT_SECONDS} 之间的正整数（秒），"
+            f"实际是 {value!r}"
+        )
+    return value
+
+
 def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     qualname: str = fn.__qualname__
     label = f"节点 {fn.__module__}.{qualname}"
@@ -409,10 +439,12 @@ def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     except ScanError as error:
         raise ScanError(f"{label}：{error}") from None
     description = node_description(fn, label)
+    timeout = node_timeout(decl, label)
     return {
         "name": name,
         "title": decl.title or name,
         **({"description": description} if description else {}),
+        **({"timeout": timeout} if timeout is not None else {}),
         "entry": f"{fn.__module__}:{qualname}",
         "inputs": input_schema(fn, label),
         "outputs": output_schema(fn, decl, label),

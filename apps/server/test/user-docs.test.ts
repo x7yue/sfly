@@ -150,7 +150,9 @@ describe("仓库里的用户文档", () => {
 				expect(index).toContain(`(${cp.httpUrl}/docs/${slug}.md)`);
 				const res = await cp.fetch(`/docs/${slug}.md`);
 				expect(res.status, slug).toBe(200);
-				expect(await res.text(), slug).not.toMatch(/\{\{/);
+				// 占位符的写法同 src/placeholders.ts：名称只有字母、数字、下划线。场景里的引用（`${{ params.x }}`、
+				// `${{ run.state }}`）名称里有点，不是占位符，文档里照写。
+				expect(await res.text(), slug).not.toMatch(/\{\{\s*[A-Za-z0-9_]+\s*\}\}/);
 			}
 			// skill 的原文与 SDK wheel 里的内容出自同一份源文件（sdk/python/tests/test_skill.py）。
 			const guide = join(repoRoot, "docs", "guide");

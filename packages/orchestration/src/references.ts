@@ -6,15 +6,25 @@ import {
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { nodeNameWithId } from "./node-display.js";
-import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
+import {
+	OUTPUT_PATH,
+	PARAM_PATH,
+	REFERENCE,
+	RUN_STATE_FIELD_HINT,
+	RUN_STATE_FIELD_PATH,
+	RUN_STATE_PATH,
+} from "./reference-syntax.js";
 
 /**
- * 引用（docs/SEMANTICS.md §2）：`${{ params.<name> }}` 和 `${{ nodes.<id>.outputs.<key> }}`。
+ * 引用（docs/SEMANTICS.md §2）：`${{ params.<name> }}`、`${{ nodes.<id>.outputs.<key> }}` 和 `${{ run.state }}`。
  * 这里是静态的部分（补全、保存时的检查），控制面和画布共用；派发时的解析在 resolve.ts。
  */
 
-/** 节点类型中用到的元信息：输入 schema 生成参数表单，输出键用于补全和引用检查。 */
-export type NodeTypeIo = Pick<NodeTypeMetadata, "name" | "inputs" | "outputs" | "description">;
+/** 节点类型中用到的元信息：输入 schema 生成参数表单，输出键用于补全和引用检查，声明的超时写在检查器的执行页。 */
+export type NodeTypeIo = Pick<
+	NodeTypeMetadata,
+	"name" | "inputs" | "outputs" | "description" | "timeout"
+>;
 
 /**
  * 节点包目录：`packageKey(包名, 版本)` → 该版本的节点类型。
@@ -97,7 +107,7 @@ export interface ReferenceOption {
 	expression: string;
 	/** 写进输入里的文本：`${{ <expression> }}`。 */
 	text: string;
-	kind: "param" | "output";
+	kind: "param" | "output" | "run_state";
 	/** 输出引用所属的节点。 */
 	node_id?: string;
 	/** 参数名或输出键。 */
@@ -106,7 +116,10 @@ export interface ReferenceOption {
 
 export const referenceText = (expression: string) => `\${{ ${expression} }}`;
 
-/** 引用补全：本链的入口参数，以及本链上前面节点已声明的输出键。 */
+/**
+ * 引用补全：本链的入口参数，以及本链上前面节点已声明的输出键；包节点还可以引用这次运行的状态（`run.state`，
+ * 只能整值引用，run-state-references.ts）。
+ */
 export function referenceOptions(
 	doc: StoredOrchestrationDocument,
 	nodeId: string,
@@ -120,6 +133,14 @@ export function referenceOptions(
 		kind: "param",
 		key: p.name,
 	}));
+	if (doc.nodes.find((n) => n.id === nodeId)?.kind === "package") {
+		options.push({
+			expression: "run.state",
+			text: referenceText("run.state"),
+			kind: "run_state",
+			key: "state",
+		});
+	}
 	for (const node of earlier) {
 		for (const key of declaredOutputs(doc, node, catalog) ?? []) {
 			const expression = `nodes.${node.id}.outputs.${key}`;
@@ -157,6 +178,8 @@ export interface ReferenceWarning {
 	node_id: string;
 	/** 引用所在的输入名（包节点的输入、异步任务节点的子流程参数）。 */
 	input?: string;
+	/** 引用的警告：是这个输入里的哪个引用（引用的路径，`${{ }}` 里面的部分）；一个输入里可能有几个。没有闭合的引用不写。 */
+	target?: string;
 }
 
 /** 值里出现的全部引用路径（递归进入对象和数组）；`${{` 没有闭合时给出 null。 */
@@ -199,18 +222,30 @@ export function referenceWarnings(
 		const earlierById = new Map(earlier.map((n) => [n.id, n]));
 		for (const [input, value] of values) {
 			const where = `节点 ${nodeNameWithId(node)} 的输入 ${input}`;
-			const warn = (code: ReferenceWarningCode, message: string) =>
-				warnings.push({ code, message, node_id: node.id, input });
+			const warn = (code: ReferenceWarningCode, message: string, target?: string) =>
+				warnings.push({
+					code,
+					message,
+					node_id: node.id,
+					input,
+					...(target === undefined ? {} : { target }),
+				});
 			for (const path of referencesIn(value)) {
 				if (path === null) {
 					warn("reference_invalid", `${where} 中有没有闭合的引用 \${{`);
 					continue;
 				}
+				// run.state 的位置和类型由 run-state-references.ts 检查。
+				if (RUN_STATE_PATH.test(path)) continue;
 				const param = PARAM_PATH.exec(path);
 				if (param) {
 					const name = param[1] as string;
 					if (!params.has(name)) {
-						warn("reference_unknown_param", `${where} 引用的参数 ${name} 不是本链入口声明的参数`);
+						warn(
+							"reference_unknown_param",
+							`${where} 引用的参数 ${name} 不是本链入口声明的参数`,
+							path,
+						);
 					}
 					continue;
 				}
@@ -218,7 +253,10 @@ export function referenceWarnings(
 				if (!output) {
 					warn(
 						"reference_invalid",
-						`${where} 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名> 或 nodes.<节点>.outputs.<输出键>`,
+						`${where} 的引用 \${{ ${path} }} 格式不对，只能写 params.<参数名>、nodes.<节点>.outputs.<输出键> 或 run.state${
+							RUN_STATE_FIELD_PATH.test(path) ? `；${RUN_STATE_FIELD_HINT}` : ""
+						}`,
+						path,
 					);
 					continue;
 				}
@@ -226,11 +264,12 @@ export function referenceWarnings(
 				const targetNode = earlierById.get(target);
 				const declaredNode = nodeById.get(target);
 				if (!declaredNode) {
-					warn("reference_unknown_node", `${where} 引用了不存在的节点 ${target}`);
+					warn("reference_unknown_node", `${where} 引用了不存在的节点 ${target}`, path);
 				} else if (!targetNode) {
 					warn(
 						"reference_not_earlier",
 						`${where} 引用的节点 ${nodeNameWithId(declaredNode)} 不在本链上它的前面`,
+						path,
 					);
 				} else {
 					const declared = declaredOutputs(doc, targetNode, catalog);
@@ -238,6 +277,7 @@ export function referenceWarnings(
 						warn(
 							"reference_unknown_output",
 							`${where} 引用的输出键 ${key} 没有在节点 ${nodeNameWithId(targetNode)} 的节点类型中声明`,
+							path,
 						);
 					}
 				}

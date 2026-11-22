@@ -117,7 +117,7 @@ export function formatClockMs(time: number | string): string {
 	return `${formatClock(d.getTime())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
 }
 
-/** 指标值：`1.2M`、`12.3k`、`812`、`3.14`；和运行通知的卡片共用同一个定义。 */
+/** 指标值：`1.2M`、`12.3k`、`812`、`3.14`；定义在 `@sfly/schema`（`metric-format.ts`），各处共用。 */
 export { formatMetric } from "@sfly/schema";
 
 /** 整数加千位分隔：`1,284,819`（计数）。 */

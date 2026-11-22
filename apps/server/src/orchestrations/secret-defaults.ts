@@ -126,11 +126,13 @@ export function describeSecretDefaultProblem({
  */
 export function secretDefaultWarnings(
 	document: Doc,
-): Array<{ code: string; message: string; node_id: string }> {
+): Array<{ code: string; message: string; node_id: string; input: string }> {
 	return document.nodes.filter(isEntry).flatMap((node) =>
 		node.params.filter(hasSecretDefault).map((param) => ({
 			code: SECRET_PARAM_DEFAULT_WARNING,
 			node_id: node.id,
+			// 指向哪个参数：一个入口节点上可能有几个这样的参数（「同一条警告」要分得开）。
+			input: param.name,
 			message: `参数 ${param.name} 是 secret 参数却写了默认值：版本保存之后不能修改，默认值会一直留在这个版本里。建议去掉默认值，改用运行预设固定它，或者触发时再给出`,
 		})),
 	);

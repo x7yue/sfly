@@ -8,8 +8,9 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from sfly.cli import scenario_edit, scenario_versions
+from sfly.cli import scenario_check, scenario_edit, scenario_versions
 from sfly.cli.client import segment
+from sfly.cli.node_timeouts import declared_timeouts, timeout_text, timeout_view
 from sfly.cli.output import (
     add_limit_option,
     apply_limit,
@@ -28,10 +29,11 @@ from sfly.cli.session import Session, command, common_options
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser(
         "scenario",
-        help="查看和编辑平台上的场景：列表、入口参数、链路上的节点、pull / push 保存新版本",
+        help="查看和编辑平台上的场景：列表、节点、pull / check / push 保存新版本、对比版本",
         description="查看和编辑控制面上的场景。场景用 id 或准确名称指定，"
         "名称对应多个场景时报错并列出候选。默认输出精简文本，--json 输出 JSON。"
-        "退出码：成功 0，命令出错（参数不对、连不上控制面、场景不存在……）2。",
+        "退出码：成功 0，命令出错（参数不对、连不上控制面、场景不存在……）2，"
+        "场景文档只有警告（check、push --strict）4。",
     )
     group = parser.add_subparsers(dest="scenario_command", required=True)
 
@@ -63,6 +65,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
 
     scenario_edit.register(group)
     scenario_versions.register(group)
+    scenario_check.register(group)
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:
@@ -105,17 +108,22 @@ def _show(session: Session, args: argparse.Namespace) -> None:
     scenario_path = f"/orchestrations/{segment(scenario['id'])}"
     head = session.client.get(f"{scenario_path}/head")
     presets = session.client.get(f"{scenario_path}/presets")["presets"]
-    view = describe(scenario, head, presets)
+    view = describe(scenario, head, presets, declared_timeouts(session.client, head["document"]))
     annotations = render_annotations(view["annotations"], head["document"])
     session.out.emit(view, "\n".join([render(view), *annotations]))
 
 
 def describe(
-    scenario: dict[str, Any], head: dict[str, Any], presets: list[dict[str, Any]]
+    scenario: dict[str, Any],
+    head: dict[str, Any],
+    presets: list[dict[str, Any]],
+    declared: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`scenario show --json` 的内容：场景的基本信息、运行预设、入口参数、主链和各子流程上的节点。
     `head` 是 `GET /orchestrations/:id/head`（最新版本，还没有版本时是初始文档），
-    `presets` 是 `GET /orchestrations/:id/presets` 的 `presets`。"""
+    `presets` 是 `GET /orchestrations/:id/presets` 的 `presets`。
+    `declared` 是各包节点（节点 ID）的节点类型声明的超时（`node_timeouts.declared_timeouts`），
+    包节点的 `timeout` 据此写出生效的超时和它从哪来；没给时按找不到节点类型处理。"""
     document = head["document"]
     nodes: dict[str, dict[str, Any]] = {n["id"]: n for n in document["nodes"]}
     default_agent = document.get("default_agent")
@@ -153,6 +161,11 @@ def describe(
             view["node"] = node["node"]
             view["package_version"] = locked.get(node["package"])
             view["agent"] = node.get("agent") or default_agent
+            view["timeout"] = timeout_view(
+                node,
+                name_with_id(node["id"], node.get("display_name")),
+                (declared or {}).get(node["id"], "unknown"),
+            )
         elif node["kind"] == "async":
             view["subflow"] = subflow_name(triggers.get(node["id"]))
         elif node["kind"] == "stop_subflow":
@@ -374,6 +387,7 @@ def _nodes_table(nodes: list[dict[str, Any]]) -> str:
                 _node_type(n),
                 (n["package_version"] or "-") if is_package else "-",
                 (n["agent"] or "-") if is_package else "-",
+                timeout_text(n["timeout"]) if is_package else "-",
             ]
         )
-    return format_table(["节点", "显示名称", "节点类型", "包版本", "Agent"], rows)
+    return format_table(["节点", "显示名称", "节点类型", "包版本", "Agent", "超时"], rows)
