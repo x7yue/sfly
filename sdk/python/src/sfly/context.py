@@ -252,6 +252,28 @@ class DeferCancel:
                 raise Cancelled("任务被终止（SIGTERM）")
 
 
+class ArtifactLimitExceeded(Exception):
+    """`ctx.artifacts.save` 保存的文件会让这个任务的产物合计超过上限（每个任务的合计，部署者用
+    `SFLY_ARTIFACT_LIMIT_MB` 设置）：文件没有写，之前保存的产物不受影响。节点可以接住它，把文件留在
+    这台机器上、在输出里给出路径；不接住，任务就在保存的那一行失败。
+
+    属性：`name`（要保存的产物名称）、`size`（它的字节数）、`saved`（已保存的合计字节数，同名的旧文件
+    不算）、`limit`（上限的字节数）。
+    """
+
+    def __init__(self, name: str, size: int, saved: int, limit: int) -> None:
+        self.name = name
+        self.size = size
+        self.saved = saved
+        self.limit = limit
+        super().__init__(
+            f"产物 {name} 没有保存：它 {size} 字节，这个任务已保存 {saved} 字节，"
+            f"加起来超过产物合计的上限 {limit} 字节（部署者用 SFLY_ARTIFACT_LIMIT_MB 设置）。"
+            "大文件留在这台机器上，在节点的输出里给出它在哪台 Agent 的哪个路径；"
+            "保存前可以看 ctx.artifacts.limit_bytes，或者接住这个异常再改成留在本机"
+        )
+
+
 class ArtifactDownloadError(Exception):
     """`ctx.artifacts.download` 失败：产物引用无效、产物不存在或已过保留期被清理、
     连不上控制面（重试之后仍然失败）。消息里写明是哪一种和产物引用。"""
@@ -421,6 +443,10 @@ class Artifacts:
     `cancelled` 是「任务是否已取消」的判断（`Context.cancelled`），下载时用来及时停止。
     `downloads_path` 是本地调试时的下载内容表（`SFLY_DOWNLOADS`，见 `sfly.local`）：
     一个 JSON 文件，产物引用 → 本地文件路径，表里有的引用不访问网络。
+
+    `limit_bytes` 是这个任务的产物合计最多能有多少字节（控制面的 `SFLY_ARTIFACT_LIMIT_MB`，
+    Agent 通过 `SFLY_ARTIFACT_LIMIT_BYTES` 交给执行器；每个任务的合计，不是单个文件的上限）。
+    本地调试（`sfly debug`、`sfly.testing`）和旧版本的控制面没有这个数：是 None，不检查。
     """
 
     def __init__(
@@ -430,9 +456,11 @@ class Artifacts:
         *,
         cancelled: Callable[[], bool] | None = None,
         downloads_path: str | os.PathLike[str] | None = None,
+        limit_bytes: int | None = None,
     ) -> None:
         from pathlib import Path
 
+        self._limit = limit_bytes
         self._dir = Path(directory) if directory is not None else None
         self._url = url or None
         self._cancelled = cancelled
@@ -484,12 +512,31 @@ class Artifacts:
             )
         return self._downloads
 
+    @property
+    def limit_bytes(self) -> int | None:
+        """这个任务的产物合计最多能有多少字节（只读）；没有上限（本地调试、旧版本控制面）时是 None。
+
+        产物在任务结束后才上传，合计超过上限时超出的文件传不上去、任务失败：节点要保存大文件之前
+        可以先和它比（估计的大小超过时，把文件留在这台机器上，在输出里给出路径），也可以接住
+        `save` 抛出的 `ArtifactLimitExceeded`。
+        """
+        return self._limit
+
     def save(self, name: str, data: bytes | str | os.PathLike[str]) -> str:
         """保存一个产物并返回产物引用。
 
         `data` 为 bytes / str（按 UTF-8）时写入内容，为路径时复制该文件。
+
+        有上限（`limit_bytes`）时先检查：已保存的合计（产物目录里的文件，包括直接写进目录的；同名的旧
+        文件不算）加上这个文件超过上限时，抛出 `ArtifactLimitExceeded`：这个文件不写，
+        同名的旧文件也不动。
         """
         target = self.path(name)
+        if self._limit is not None:
+            size = _data_size(data)
+            saved = self._saved_bytes(excluding=target)
+            if saved + size > self._limit:
+                raise ArtifactLimitExceeded(name, size, saved, self._limit)
         if isinstance(data, bytes):
             target.write_bytes(data)
         elif isinstance(data, str):
@@ -499,6 +546,25 @@ class Artifacts:
 
             shutil.copyfile(data, target)
         return self.ref(name)
+
+    def _saved_bytes(self, excluding: Path) -> int:
+        """产物目录里已有的文件的字节数合计（和 Agent 上传时数的一样：只数普通文件，不跟随链接）；
+        `excluding` 是要被覆盖的那个文件，不算。"""
+        from pathlib import Path
+
+        total = 0
+        if self._dir is None or not self._dir.is_dir():
+            return total
+        for root, _dirs, names in os.walk(self._dir):
+            for file_name in names:
+                path = Path(root, file_name)
+                if path == excluding or path.is_symlink():
+                    continue
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    continue
+        return total
 
     def path(self, name: str) -> Path:
         """产物在本地的文件路径（父目录已创建），节点可以直接写入；写完用 `ref(name)` 得到引用。"""
@@ -519,6 +585,15 @@ class Artifacts:
         if self._dir is None:
             raise RuntimeError("没有产物目录：执行器没有设置 SFLY_ARTIFACTS")
         return str(self._dir.joinpath(*parts))
+
+
+def _data_size(data: bytes | str | os.PathLike[str]) -> int:
+    """`Artifacts.save` 要写的内容有多少字节：bytes 的长度，str 按 UTF-8，路径是文件的大小。"""
+    if isinstance(data, bytes):
+        return len(data)
+    if isinstance(data, str):
+        return len(data.encode("utf-8"))
+    return os.path.getsize(data)
 
 
 def _artifact_parts(name: str) -> list[str]:
@@ -592,12 +667,25 @@ def _default_procs_dir(task: TaskInfo) -> Path:
     return Path(home).absolute() / "procs" / task.run_id
 
 
+def _limit_from_env(value: str | None) -> int | None:
+    """`SFLY_ARTIFACT_LIMIT_BYTES`：正整数；没有、空、不是整数或不大于 0 都当作没有上限。"""
+    if not value:
+        return None
+    try:
+        limit = int(value)
+    except ValueError:
+        return None
+    return limit if limit > 0 else None
+
+
 class Context:
     """节点执行时由执行器传入的任务上下文。
 
     `events_path` 默认取环境变量 `SFLY_EVENTS`；为 None（或环境变量未设置）时日志和进度被丢弃。
     `cancel_path` 默认取 `SFLY_CANCEL`；为 None 时 `cancelled()` 总是 False。
-    `artifacts_dir` / `artifacts_url` 默认取 `SFLY_ARTIFACTS` / `SFLY_ARTIFACTS_URL`。
+    `artifacts_dir` / `artifacts_url` 默认取 `SFLY_ARTIFACTS` / `SFLY_ARTIFACTS_URL`；
+    `artifact_limit_bytes`（产物合计的上限）默认取 `SFLY_ARTIFACT_LIMIT_BYTES`，没有或不是正整数时
+    是 None。
     `task` 默认读 `SFLY_TASK` 指向的 task.json（见 `TaskInfo`）；`procs_dir` 默认取 `SFLY_PROCS`。
     `metrics` 是节点类型声明的指标（`sfly.Metric` 列表），执行器从 `@node` 的声明传入；
     为 None（不知道声明，例如在节点之外直接构造）时不检查指标名和标签键，都按 `gauge` 上报。
@@ -612,6 +700,7 @@ class Context:
         metrics: Sequence[Metric] | None = None,
         task: TaskInfo | None = None,
         procs_dir: str | os.PathLike[str] | None = None,
+        artifact_limit_bytes: int | None = _FROM_ENV,
     ) -> None:
         if events_path is _FROM_ENV:
             events_path = os.environ.get("SFLY_EVENTS")
@@ -621,6 +710,8 @@ class Context:
             artifacts_dir = os.environ.get("SFLY_ARTIFACTS")
         if artifacts_url is _FROM_ENV:
             artifacts_url = os.environ.get("SFLY_ARTIFACTS_URL")
+        if artifact_limit_bytes is _FROM_ENV:
+            artifact_limit_bytes = _limit_from_env(os.environ.get("SFLY_ARTIFACT_LIMIT_BYTES"))
         from pathlib import Path
 
         self.task = task if task is not None else _task_from_env()
@@ -638,6 +729,7 @@ class Context:
             artifacts_url,
             cancelled=self.cancelled,
             downloads_path=os.environ.get("SFLY_DOWNLOADS"),
+            limit_bytes=artifact_limit_bytes,
         )
         # 指标名 → (类型, 声明的标签键)。
         self._metrics = (

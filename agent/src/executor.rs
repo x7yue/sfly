@@ -8,6 +8,7 @@
 //! | `SFLY_OUTPUT` | `output.json`：执行器写入的结果 |
 //! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录（任务结束后由 [`crate::artifacts`] 上传） |
 //! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
+//! | `SFLY_ARTIFACT_LIMIT_BYTES` | 这个任务的产物合计上限（字节，`AssignTask.artifact_limit_bytes`，0 即旧版本控制面没带时不设置；SDK 的 `ctx.artifacts.limit_bytes`，#477） |
 //! | `SFLY_EVENTS` | `events.fifo`：结构化日志、进度与指标（命名管道，启动执行器前由 Agent 创建并打开读端，ADR 0015） |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
 //! | `SFLY_PROCS` | `<procs_dir>/<运行 ID>/`：这次运行的后台进程目录（不在任务目录里，不预先创建；运行 ID 不能用作目录名时不设置） |
@@ -272,6 +273,13 @@ fn spawn_process(
         .stderr(Stdio::piped());
     if !task.artifact_upload_url.is_empty() {
         command.env("SFLY_ARTIFACTS_URL", &task.artifact_upload_url);
+    }
+    // 产物合计的上限：节点在保存时就知道，不用等任务结束、传了很多之后才被拒绝（#477）。
+    if task.artifact_limit_bytes > 0 {
+        command.env(
+            "SFLY_ARTIFACT_LIMIT_BYTES",
+            task.artifact_limit_bytes.to_string(),
+        );
     }
     if let Some(procs) = procs {
         command.env("SFLY_PROCS", procs);

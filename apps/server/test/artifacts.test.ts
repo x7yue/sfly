@@ -5,6 +5,16 @@ import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
+import {
+	clone,
+	create,
+	createFileRegistry,
+	fromBinary,
+	toBinary,
+	toJson,
+} from "@bufbuild/protobuf";
+import { FileDescriptorProtoSchema } from "@bufbuild/protobuf/wkt";
+import { AssignTaskSchema, file_sfly_agent_v1_agent } from "@sfly/proto";
 import { artifactsApi } from "@sfly/schema";
 import { Agent } from "undici";
 import { afterEach, describe, expect, it } from "vitest";
@@ -286,6 +296,119 @@ describe("产物", () => {
 		]);
 	});
 
+	describe("产物上限（#477）", () => {
+		const GIB = 1024 * 1024 * 1024;
+
+		it("旧版本 Agent 连新控制面：按没有 artifact_limit_bytes 的旧协议解码控制面发出的任务，其余字段原样，认不得的字段被忽略", async () => {
+			const { task } = await setup({ artifactLimitBytes: 5000 });
+			expect(task.artifactLimitBytes).toBe(5000n);
+
+			// 旧版本 Agent 手里的协议：同一个文件描述，AssignTask 里没有字段 15。
+			const oldFile = clone(FileDescriptorProtoSchema, file_sfly_agent_v1_agent.proto);
+			const message = oldFile.messageType.find((m) => m.name === "AssignTask");
+			expect(message?.field.map((f) => f.number)).toContain(15);
+			if (message) message.field = message.field.filter((f) => f.number !== 15);
+			const registry = createFileRegistry(oldFile, (name) =>
+				file_sfly_agent_v1_agent.dependencies.find((d) => d.name === name),
+			);
+			const OldAssignTask = registry.getMessage("sfly.agent.v1.AssignTask");
+			if (!OldAssignTask) throw new Error("旧协议里没有 AssignTask");
+
+			// 控制面发出的字节（Agent 收到的就是这些）：旧协议能解码，不认识的字段 15 被忽略，其余字段一个不少。
+			const wire = toBinary(AssignTaskSchema, create(AssignTaskSchema, task));
+			const old = toJson(OldAssignTask, fromBinary(OldAssignTask, wire));
+			const current = toJson(AssignTaskSchema, create(AssignTaskSchema, task)) as Record<
+				string,
+				unknown
+			>;
+			const { artifactLimitBytes, ...withoutLimit } = current;
+			expect(artifactLimitBytes).toBe("5000");
+			expect(old).toEqual(withoutLimit);
+			expect(old).toMatchObject({
+				taskId: task.taskId,
+				package: "stub",
+				artifactUploadUrl: task.artifactUploadUrl,
+			});
+		});
+
+		it("派发的任务带产物上限：配置的值；没配置时是默认的 1 GB", async () => {
+			const configured = await setup({ artifactLimitBytes: 5000 });
+			expect(configured.task.artifactLimitBytes).toBe(5000n);
+			await agents.pop()?.disconnect();
+			await cp.close();
+
+			const { task } = await setup();
+			expect(task.artifactLimitBytes).toBe(BigInt(GIB));
+		});
+
+		it("超限的错误信息是中文：写明这个文件多大、这个任务已经上传了多少、上限多少、是哪个设置", async () => {
+			const { task } = await setup({ artifactLimitBytes: 1000 });
+			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+
+			const res = await upload(task, "b.bin", Buffer.alloc(600));
+
+			expect(res.status).toBe(413);
+			const { error } = (await res.json()) as { error: { code: string; message: string } };
+			expect(error.code).toBe("artifact_too_large");
+			expect(error.message).toContain("b.bin");
+			expect(error.message).toContain("600 字节");
+			expect(error.message).toContain("已上传 600 字节");
+			expect(error.message).toContain("上限 1000 字节");
+			expect(error.message).toContain("SFLY_ARTIFACT_LIMIT_MB");
+			// 超限的文件没有留下，已有的不受影响。
+			expect((await list(task.taskId)).artifacts.map((a) => [a.name, a.size])).toEqual([
+				["a.bin", 600],
+			]);
+		});
+
+		it("请求带了长度时，在读请求体之前就拒绝：只发请求头、不发请求体，413 已经回来了", async () => {
+			const { task } = await setup({ artifactLimitBytes: 1000 });
+			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+
+			// 声明 5 GB、一个字节的请求体都不发：读了请求体才拒绝的话，这里会一直等。
+			const res = await headersOnlyPut(`${task.artifactUploadUrl}huge.bin`, 5 * GIB);
+
+			expect(res.status).toBe(413);
+			const { error } = JSON.parse(res.body) as { error: { code: string; message: string } };
+			expect(error.code).toBe("artifact_too_large");
+			expect(error.message).toContain("huge.bin");
+			expect(error.message).toContain(`${5 * GIB} 字节`);
+			expect(error.message).toContain("已上传 600 字节");
+			expect(error.message).toContain("上限 1000 字节");
+			expect((await list(task.taskId)).artifacts.map((a) => a.name)).toEqual(["a.bin"]);
+		});
+
+		it("声明的长度刚好放得下的请求照常接受；同名的旧文件不算在已上传里", async () => {
+			const { task } = await setup({ artifactLimitBytes: 1000 });
+			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+
+			expect((await upload(task, "b.bin", Buffer.alloc(400))).status).toBe(201);
+			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+			expect((await list(task.taskId)).artifacts.map((a) => [a.name, a.size])).toEqual([
+				["a.bin", 600],
+				["b.bin", 400],
+			]);
+		});
+
+		it("没有带长度的请求（分块传输）也拒绝：读到超过时停下，错误信息写明上限和已上传的", async () => {
+			const { task } = await setup({ artifactLimitBytes: 1000 });
+			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+
+			const res = await chunkedPut(`${task.artifactUploadUrl}b.bin`, [
+				Buffer.alloc(300),
+				Buffer.alloc(300),
+			]);
+
+			expect(res.status).toBe(413);
+			const { error } = JSON.parse(res.body) as { error: { message: string } };
+			expect(error.message).toContain("b.bin");
+			expect(error.message).toContain("已上传 600 字节");
+			expect(error.message).toContain("上限 1000 字节");
+			expect(error.message).toContain("SFLY_ARTIFACT_LIMIT_MB");
+			expect((await list(task.taskId)).artifacts.map((a) => a.name)).toEqual(["a.bin"]);
+		});
+	});
+
 	it("配置了 Agent 注册令牌时，上传必须带上令牌", async () => {
 		const { task } = await setup({ agentToken: "s3cret" });
 		expect((await upload(task, "a.txt", "x")).status).toBe(401);
@@ -442,5 +565,60 @@ function rawPut(url: string, body: string): Promise<{ status: number; body: stri
 		);
 		req.on("error", reject);
 		req.end(body);
+	});
+}
+
+/** 只发请求头（声明了 `length` 字节的请求体）、不发请求体的 PUT：控制面在读请求体之前回了响应，就能收到。 */
+function headersOnlyPut(url: string, length: number): Promise<{ status: number; body: string }> {
+	return new Promise((resolve, reject) => {
+		const req = httpRequest(
+			url,
+			{
+				method: "PUT",
+				headers: { "content-type": "application/octet-stream", "content-length": String(length) },
+			},
+			(res) => {
+				let text = "";
+				res.setEncoding("utf8");
+				res.on("data", (c: string) => {
+					text += c;
+				});
+				res.on("end", () => {
+					req.destroy();
+					resolve({ status: res.statusCode ?? 0, body: text });
+				});
+			},
+		);
+		req.on("error", reject);
+		// 不调用 req.end()：请求头发出去、请求体一个字节也没有。
+		req.flushHeaders();
+		setTimeout(() => {
+			req.destroy();
+			reject(new Error("控制面没有在读请求体之前回响应"));
+		}, 5000).unref();
+	});
+}
+
+/** 分块传输（没有 content-length）的 PUT。 */
+function chunkedPut(url: string, chunks: Buffer[]): Promise<{ status: number; body: string }> {
+	return new Promise((resolve, reject) => {
+		const req = httpRequest(
+			url,
+			{
+				method: "PUT",
+				headers: { "content-type": "application/octet-stream", "transfer-encoding": "chunked" },
+			},
+			(res) => {
+				let text = "";
+				res.setEncoding("utf8");
+				res.on("data", (c: string) => {
+					text += c;
+				});
+				res.on("end", () => resolve({ status: res.statusCode ?? 0, body: text }));
+			},
+		);
+		req.on("error", reject);
+		for (const chunk of chunks) req.write(chunk);
+		req.end();
 	});
 }

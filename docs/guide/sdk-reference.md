@@ -538,6 +538,36 @@ return {"report": ref}
 - 任务结束后 Agent 把产物上传到控制面，运行视图里可以下载。
 - **产物引用**：在 Agent 上是产物在控制面上的下载地址，写进输出交给后续节点，后续节点用 `ctx.artifacts.download` 下载；本地调试时是本地文件路径。
 
+### 大小上限：大文件怎么办
+
+一个任务的产物合计有上限：默认 1 GB，部署者用控制面的 `SFLY_ARTIFACT_LIMIT_MB` 调整。它是每个任务的合计，不是单个文件的上限。上限随任务一起交给节点，不用等任务结束、传了很多之后才发现：
+
+```python
+import subprocess
+from pathlib import Path
+
+import sfly
+from sfly import Context, node
+
+
+@node(title="抓包")
+def capture(ctx: Context) -> dict[str, str]:
+    pcap = Path("capture.pcap").resolve()                  # 文件在本机，可能很大
+    subprocess.run(["tcpdump", "-c", "100000", "-w", str(pcap)], check=True)
+    try:
+        return {"capture": ctx.artifacts.save("capture.pcap", pcap)}
+    except sfly.ArtifactLimitExceeded:
+        # 放不下：留在这台机器上，输出里给出它在哪里，要用它的节点用 Agent 的文件能力读
+        return {"capture_path": str(pcap)}
+```
+
+- `ctx.artifacts.limit_bytes` 是这个任务的产物合计最多能有多少字节（`int`）。本地调试（`sfly debug`、`sfly.testing`）和旧版本的控制面没有上限，是 `None`，不检查。
+- `ctx.artifacts.save` 发现这个文件加上这个任务已经保存的会超过上限时，不写这个文件，抛出 `sfly.ArtifactLimitExceeded`：之前保存的产物不受影响，同名的旧文件也不动。属性：`name`（要保存的产物名称）、`size`（它的字节数）、`saved`（已保存的合计字节数，同名的旧文件不算）、`limit`（上限的字节数）。节点不接住它，任务就在 `save` 那一行失败，错误信息写明这个文件多大、已保存多少、上限多少，以及上限怎么调。
+- 大文件留在这台机器上，在节点的输出里给出它在哪台 Agent 的哪个路径；要用它的节点把这台 Agent 声明成「Agent」类型的参数，用 `ctx.agent(名称).files.download(...)` 取（见下文「`ctx.agent()`：Agent 能力」）。
+- 直接写进 `ctx.artifacts.path(...)` 的文件，`save` 不经手：任务结束后 Agent 把产物目录里的文件加一遍。合计没超过上限时照常上传。超过时，放得下的文件（从小到大）照常上传，放不下的不传：任务以 `env_error` 失败，不按重试配置重试（重试一遍还是超限），错误信息写明合计、上限，和没上传的文件（最大的优先列出）。任务本来就失败时，保留原来的错误类型和信息，没上传的文件附在后面。
+- 控制面的上传接口同样检查上限：请求带了长度时，在读请求体之前就以 HTTP 413 拒绝，错误信息写明是哪个产物、这个任务已上传多少。
+- `limit_bytes` 和 `ArtifactLimitExceeded` 从 SDK 0.6.0 起可用。用到它们的节点包把 `requires-sdk` 调到 `>=0.6.0`；更旧的 SDK 上 `save` 不检查，超限时由上面 Agent 的检查兜住。
+
 ### 下载产物
 
 ```python

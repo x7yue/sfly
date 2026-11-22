@@ -71,6 +71,7 @@ describe("派发内容", () => {
 	const content = createAssignContent({
 		packageArchiveUrl: (name, version) => `http://sfly.test/${name}/${version}/archive`,
 		artifactUploadUrl: (taskId) => `http://sfly.test/artifacts/${taskId}`,
+		artifactLimitBytes: 5000,
 	});
 	const scope = (
 		params: Record<string, unknown> = {},
@@ -120,6 +121,7 @@ describe("派发内容", () => {
 				packageSha256: createHash("sha256").update(demo).digest("hex"),
 				packageUrl: "http://sfly.test/demo/1.0.0/archive",
 				artifactUploadUrl: "http://sfly.test/artifacts/task-1",
+				artifactLimitBytes: 5000n,
 				referencedAgents: [],
 				referencedFeishuBots: [],
 			},

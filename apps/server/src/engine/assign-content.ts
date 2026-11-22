@@ -66,10 +66,12 @@ export type AssignContent =
  */
 export type AssignContentOf = (tx: Tx, request: AssignRequest) => Promise<AssignContent>;
 
-/** `urls` 是 Agent 下载节点包归档、上传任务产物的地址（Agent 通过 HTTP 访问）。 */
+/** `urls` 是 Agent 下载节点包归档、上传任务产物的地址（Agent 通过 HTTP 访问），和每个任务的产物合计上限。 */
 export function createAssignContent(urls: {
 	packageArchiveUrl: (name: string, version: string) => string;
 	artifactUploadUrl: (taskId: string) => string;
+	/** 每个任务的产物合计上限（字节），随任务下发给 Agent（AssignTask.artifact_limit_bytes，#477）。 */
+	artifactLimitBytes: number;
 }): AssignContentOf {
 	return async (tx, { task, node, packageVersion, scope, target }) => {
 		let inputs: Record<string, unknown>;
@@ -145,6 +147,7 @@ export function createAssignContent(urls: {
 				packageSha256: archive?.sha256 ?? "",
 				packageUrl: archive ? urls.packageArchiveUrl(node.package, packageVersion) : "",
 				artifactUploadUrl: urls.artifactUploadUrl(task.id),
+				artifactLimitBytes: BigInt(urls.artifactLimitBytes),
 				referencedAgents: referenced.agents,
 				referencedFeishuBots: bots,
 			},

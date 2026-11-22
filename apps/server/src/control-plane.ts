@@ -12,7 +12,11 @@ import { loadInstallScript } from "./agent-binaries/install-script.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
-import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
+import {
+	ArtifactStore,
+	artifactBaseUrl,
+	DEFAULT_ARTIFACT_LIMIT_BYTES,
+} from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
@@ -247,6 +251,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			packageArchiveUrl: (name, version) =>
 				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 			artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
+			artifactLimitBytes: options.artifactLimitBytes ?? DEFAULT_ARTIFACT_LIMIT_BYTES,
 		}),
 		admitTrigger: createTriggerAdmission({ preflight, paramsCheck: createParamsCheck() }),
 		notifications: new EngineNotifications({

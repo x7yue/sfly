@@ -35,6 +35,8 @@ export type SaveOutcome =
 			status: 400 | 404 | 409 | 413;
 			code: "invalid_artifact_name" | "not_found" | "task_not_running" | "artifact_too_large";
 			message: string;
+			/** 请求体一个字节也没读就拒绝了（按声明的长度）：调用方不用也不该把它读完，回响应后关掉连接。 */
+			unread?: true;
 	  };
 
 /**
@@ -44,7 +46,8 @@ export type SaveOutcome =
  * - 只接受状态为 running 的任务（Agent 先上传、再上报结果）；同名覆盖。
  *   例外：因取消（#12）终止、且已经派发给 Agent 开始执行（started_at 非空）的任务也接受——强制取消时控制面先把任务记为
  *   cancelled，Agent 杀掉进程后才上传产物、报结果。运行已被保留期清理时不再接受。
- * - 单个任务的产物总大小不超过 `limitBytes`（默认 1 GB），超出时整个文件被拒绝。
+ * - 单个任务的产物总大小不超过 `limitBytes`（默认 1 GB），超出时整个文件被拒绝（413）：请求带了长度（`declaredBytes`）时
+ *   在读请求体之前就拒绝，没带长度时读到超过为止。上限随任务下发给 Agent（AssignTask.artifact_limit_bytes，#477）。
  * - 文件在 Agent 上的修改时间（Agent 时间，ADR 0018）原样保存，不做范围检查，也不参与任何判断；可以为空。
  * - 文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`，按运行分目录，保留期清理整目录删除（src/retention）。
  */
@@ -67,12 +70,21 @@ export class ArtifactStore {
 		return undefined;
 	}
 
-	/** 把请求体流式写成任务的一个产物；`agentModifiedAt` 是文件在 Agent 上的修改时间，没有上报时为 null。 */
+	/** 每个任务的产物合计上限（字节）：随任务下发给 Agent，上传时按它拒绝。 */
+	get limitBytes(): number {
+		return this.#limit;
+	}
+
+	/**
+	 * 把请求体流式写成任务的一个产物；`agentModifiedAt` 是文件在 Agent 上的修改时间，没有上报时为 null；
+	 * `declaredBytes` 是请求声明的请求体长度（Content-Length），没有时为 undefined。
+	 */
 	async save(
 		taskId: string,
 		name: string,
 		body: Readable,
 		agentModifiedAt: Date | null = null,
+		declaredBytes?: number,
 	): Promise<SaveOutcome> {
 		const invalid = ArtifactStore.invalidName(name);
 		if (invalid) return { ok: false, status: 400, code: "invalid_artifact_name", message: invalid };
@@ -108,7 +120,18 @@ export class ArtifactStore {
 			.select({ bytes: sum(artifacts.size) })
 			.from(artifacts)
 			.where(and(eq(artifacts.taskId, taskId), ne(artifacts.name, name)));
-		const allowed = this.#limit - Number(others?.bytes ?? 0);
+		const uploaded = Number(others?.bytes ?? 0);
+		const allowed = this.#limit - uploaded;
+		// 声明的长度已经放不下：不读请求体就拒绝。
+		if (declaredBytes !== undefined && declaredBytes > allowed) {
+			return {
+				ok: false,
+				status: 413,
+				code: "artifact_too_large",
+				message: this.#tooLarge(name, uploaded, declaredBytes),
+				unread: true,
+			};
+		}
 
 		const relative = join("artifacts", task.runId, taskId, ...name.split("/"));
 		const file = join(this.deps.dataDir, relative);
@@ -142,7 +165,7 @@ export class ArtifactStore {
 					ok: false,
 					status: 413,
 					code: "artifact_too_large",
-					message: `artifacts of a task must not exceed ${this.#limit} bytes in total`,
+					message: this.#tooLarge(name, uploaded),
 				};
 			}
 			const code = (error as NodeJS.ErrnoException).code;
@@ -218,6 +241,15 @@ export class ArtifactStore {
 
 	get #limit(): number {
 		return this.deps.limitBytes ?? DEFAULT_ARTIFACT_LIMIT_BYTES;
+	}
+
+	/** 超限的错误信息：这个文件多大（读完才知道时不写）、这个任务已经上传了多少、上限多少、是哪个设置、怎么办。 */
+	#tooLarge(name: string, uploaded: number, size?: number): string {
+		const file = size === undefined ? "超过这个任务还能上传的大小" : `大小 ${size} 字节`;
+		return (
+			`产物 ${name} ${file}，这个任务已上传 ${uploaded} 字节，加起来超过每个任务的产物合计上限 ${this.#limit} 字节` +
+			"（部署者用 SFLY_ARTIFACT_LIMIT_MB 设置；大文件留在 Agent 上，在节点的输出里给出它在哪台 Agent 的哪个路径）"
+		);
 	}
 
 	#view(row: typeof artifacts.$inferSelect): ArtifactRow {
