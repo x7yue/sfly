@@ -17,24 +17,42 @@ const PRE_LABEL: Record<string, string> = {
 };
 
 /**
+ * 数字段规范化成十进制字符串（去掉先行零）：不用 `Number`，超过 2^53 的数字段（`1.0.9007199254740993`）会丢精度，
+ * 两个不同的版本被判成同一个。
+ */
+const digits = (text: string): string => BigInt(text).toString();
+
+/**
+ * 本地版本标识（`+` 后面）规范化：小写，分隔符 `-`、`_`、`.` 都当 `.`，全是数字的段按数字比较（`01` 和 `1` 相同），
+ * 其余的段按字母（PEP 440 的本地版本比较规则；Python 的 `packaging` 也是这样）。
+ */
+const canonicalLocal = (local: string): string =>
+	local
+		.toLowerCase()
+		.split(/[-_.]/)
+		.map((part) => (/^[0-9]+$/.test(part) ? digits(part) : part))
+		.join(".");
+
+/**
  * 规范化后的版本号（比较用：发布段末尾的 0 去掉，`1.0` 和 `1.0.0` 是同一个版本）；不是合法的 PEP 440 版本号时返回 undefined。
+ * 所有数字段都按字符串比较，没有大小限制。
  */
 export function canonicalVersion(version: string): string | undefined {
 	const groups = PEP440.exec(version)?.groups;
 	if (!groups) return undefined;
-	const release = (groups.release ?? "").split(".").map((part) => String(Number(part)));
+	const release = (groups.release ?? "").split(".").map(digits);
 	while (release.length > 1 && release[release.length - 1] === "0") release.pop();
 	let text = release.join(".");
-	const epoch = Number(groups.epoch ?? 0);
-	if (epoch !== 0) text = `${epoch}!${text}`;
+	const epoch = digits(groups.epoch ?? "0");
+	if (epoch !== "0") text = `${epoch}!${text}`;
 	if (groups.preLabel !== undefined) {
-		text += `${PRE_LABEL[groups.preLabel.toLowerCase()]}${Number(groups.preNumber ?? 0)}`;
+		text += `${PRE_LABEL[groups.preLabel.toLowerCase()]}${digits(groups.preNumber ?? "0")}`;
 	}
 	if (groups.post !== undefined) {
-		text += `.post${Number(groups.postNumber1 ?? groups.postNumber2 ?? 0)}`;
+		text += `.post${digits(groups.postNumber1 ?? groups.postNumber2 ?? "0")}`;
 	}
-	if (groups.devLabel !== undefined) text += `.dev${Number(groups.devNumber ?? 0)}`;
-	if (groups.local !== undefined) text += `+${groups.local.toLowerCase().replace(/[-_]/g, ".")}`;
+	if (groups.devLabel !== undefined) text += `.dev${digits(groups.devNumber ?? "0")}`;
+	if (groups.local !== undefined) text += `+${canonicalLocal(groups.local)}`;
 	return text;
 }
 

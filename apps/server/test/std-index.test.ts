@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { strToU8 } from "fflate";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { publishIntoPublicProject } from "./support/std-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -143,6 +144,32 @@ describe("sfly-std 在控制面的包索引里", () => {
 	});
 });
 
+describe("索引的响应头", () => {
+	let cp: TestControlPlane;
+
+	beforeAll(async () => {
+		cp = await startTestControlPlane({ version: "1.2.3" });
+	});
+	afterAll(async () => {
+		await cp?.close();
+	});
+
+	it("每个成功的响应都带标记头 x-sfly-package-index，值是控制面的版本（Agent 靠它确认回答的是控制面，#556）", async () => {
+		const std = archiveOf("sfly-std", "0.1.0");
+		await publishIntoPublicProject(cp, std.archive, { name: "sfly-std", version: "0.1.0" });
+		for (const path of [
+			"/simple/",
+			"/simple/sfly/",
+			"/simple/sfly-std/",
+			`/simple/sfly-std/files/${std.filename}`,
+		]) {
+			const res = await cp.fetch(path);
+			expect(res.status, path).toBe(200);
+			expect(res.headers.get("x-sfly-package-index"), path).toBe("1.2.3");
+		}
+	});
+});
+
 describe("wheel 要和归档登记的名字、版本对得上", () => {
 	let cp: TestControlPlane;
 
@@ -179,24 +206,53 @@ describe("wheel 要和归档登记的名字、版本对得上", () => {
 		expect((await cp.fetch(`/simple/sfly-std/files/${spelled.filename}`)).status).toBe(200);
 	});
 
-	it("两个归档里是同名的 wheel（版本写法不同的 0.8 和 0.8.0）：只列第一个，页上没有两条同名的链接", async () => {
-		const first = archiveOf("sfly-std", "0.8", "sfly_std", "0.8.0");
-		const second = archiveOf("sfly-std", "0.8.0");
-		// 内容不同：第二个归档的 wheel 内容不是第一个的。
-		const different = {
-			...second,
-			archive: packageArchive(
-				packageMetadata({ name: "sfly-std", version: "0.8.0", requires_python: ">=3.10" }),
-				{ [second.filename]: strToU8("另一份内容") },
-			),
-		};
-		await publishIntoPublicProject(cp, first.archive, { name: "sfly-std", version: "0.8" });
-		await publishIntoPublicProject(cp, different.archive, { name: "sfly-std", version: "0.8.0" });
+	it("同一个版本（规范化之后）只列最早发布的那个：0.8.0 之后再发 0.8 和 0.8.0.0（带构建标签的 wheel），页上只有 0.8.0", async () => {
+		// 归档按「名字@版本」的写法区分，写法不同的同一个版本能各发布一次；后发布的归档里的 wheel 不能和先发布的一起列出，
+		// 否则 uv 装 ==0.8.0 时可能选中后者的内容，绕过「已发布的版本不能覆盖」。
+		const first = archiveOf("sfly-std", "0.8.0");
+		const shorter = archiveOf("sfly-std", "0.8", "sfly_std", "0.8");
+		const built = archiveOf("sfly-std", "0.8.0.0", "sfly_std", "0.8.0.0");
+		for (const [archive, version] of [
+			[first, "0.8.0"],
+			[shorter, "0.8"],
+			[built, "0.8.0.0"],
+		] as const) {
+			await publishIntoPublicProject(cp, archive.archive, { name: "sfly-std", version });
+			// 发布时间不同（测试里的时钟是手动的）：「最早发布的」按它排，不是按版本的写法。
+			(cp.clock as ManualClock).advance(1_000);
+		}
 
-		const listed = (await names()).filter((n) => n === first.filename);
-		expect(listed).toHaveLength(1);
+		const listed = (await names()).filter((n) => n?.startsWith("sfly_std-0.8"));
+		expect(listed).toEqual([first.filename]);
+		for (const other of [shorter, built]) {
+			expect((await cp.fetch(`/simple/sfly-std/files/${other.filename}`)).status).toBe(404);
+		}
 		const download = await cp.fetch(`/simple/sfly-std/files/${first.filename}`);
 		expect(await download.text()).toBe(first.wheel);
+	});
+
+	it("版本里的数字段超过 2^53 也不会把两个不同的版本判成同一个", async () => {
+		const low = archiveOf("sfly-std", "2.0.9007199254740992");
+		const high = archiveOf("sfly-std", "2.0.9007199254740993");
+		const liar = archiveOf("sfly-std", "2.1.9007199254740992", "sfly_std", "2.1.9007199254740993");
+		for (const [archive, version] of [
+			[low, "2.0.9007199254740992"],
+			[high, "2.0.9007199254740993"],
+			[liar, "2.1.9007199254740992"],
+		] as const) {
+			await publishIntoPublicProject(cp, archive.archive, { name: "sfly-std", version });
+		}
+
+		const listed = (await names()).filter((n) => n?.startsWith("sfly_std-2."));
+		// 两个只差最后一位的版本都列出（不是同一个版本）；登记 2.1.…992 的归档里放的是 …993 的 wheel：不列。
+		expect(listed).toEqual([low.filename, high.filename]);
+	});
+
+	it("本地版本标识里的先行零不影响（1.0+01 和 1.0+1 是同一个版本）：wheel 写 +1、归档登记 +01 照样列出", async () => {
+		const padded = archiveOf("sfly-std", "3.0+01", "sfly_std", "3.0+1");
+		await publishIntoPublicProject(cp, padded.archive, { name: "sfly-std", version: "3.0+01" });
+
+		expect(await names()).toContain(padded.filename);
 	});
 });
 

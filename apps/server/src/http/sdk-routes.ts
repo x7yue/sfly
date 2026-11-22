@@ -72,6 +72,7 @@ export function registerSdkRoutes(
 	contractDownload(app, sdkApi.index, async (_request, reply) =>
 		reply
 			.header("content-type", sdkApi.index.contentType)
+			.header(PACKAGE_INDEX_HEADER, deps.version)
 			.header("cache-control", "no-cache")
 			.send(
 				simplePage("控制面的包索引", [
@@ -107,6 +108,7 @@ export function registerSdkRoutes(
 					}));
 		return reply
 			.header("content-type", sdkApi.indexProject.contentType)
+			.header(PACKAGE_INDEX_HEADER, deps.version)
 			.header("cache-control", "no-cache")
 			.send(simplePage(name, links));
 	});
@@ -118,10 +120,20 @@ export function registerSdkRoutes(
 		}
 		return reply
 			.header("content-type", sdkApi.stdWheel.contentType)
+			.header(PACKAGE_INDEX_HEADER, deps.version)
 			.header("content-disposition", attachment(filename))
 			.send(Buffer.from(bytes));
 	});
 }
+
+/**
+ * 控制面的包索引的每个成功的响应（根页面、项目页、wheel 下载）都带这个响应头，值是控制面的版本。Agent 装依赖之前
+ * 要求 `<包索引>sfly-std/` 直接回 200 **并且带这个头**（agent/src/install.rs 的 `check_package_index`）：对外地址配到了
+ * 别的 HTTP 服务、反向代理漏转了 `/simple/` 时，那里回 404 或重定向会被拦下；而指向一个 PyPI 风格的索引、那里恰好有
+ * 同名包而回 200 时，只看状态码拦不住，要靠这个头确认回答的是控制面。它防的是配错，不是有意伪造：能控制这个地址的人
+ * 本来就能直接给出假包。
+ */
+export const PACKAGE_INDEX_HEADER = "x-sfly-package-index";
 
 /** sfly-std wheel 的下载地址（对 Agent 和开发机可见）。 */
 const stdWheelUrl = (publicHttpUrl: string, filename: string) =>
