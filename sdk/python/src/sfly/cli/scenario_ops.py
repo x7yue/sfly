@@ -15,10 +15,11 @@ import argparse
 import json
 import os
 import shlex
+from collections.abc import Callable
 from typing import Any
 
 from sfly.cli import scenario_check
-from sfly.cli.client import ApiError, segment
+from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import EXIT_WARNINGS, CliError
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -69,7 +70,10 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         "一组操作里有一个不合法时都不生效，报错写明是第几个、为什么"
         "（节点 ID 写错时列出相近的 ID，缺必填输入时列出缺的输入和类型，"
         "连线接不上时写明两端各是什么）。"
-        '值（--input、set 的值）按 JSON 解析，不是 JSON 的当字符串：3 是数字，"3" 要写成 \'"3"\'。'
+        "值（--input、set 的值）按 JSON 解析，不是 JSON 的当字符串：3 是数字，true 是布尔；"
+        '节点类型声明这个输入是字符串时按原样存字符串（1.10 存成 "1.10"，不会变成数字 1.1）；'
+        "查不到节点类型时（例如开发版本没有在线的 Agent 上报）要字符串就写成 JSON 字符串，"
+        "例如 '\"1.10\"'。值以 - 开头时在它前面加 --，例如 set probe_1 inputs.offset -- -5。"
         "入口参数、注释框、子流程的结构和场景的设置仍用 pull / push。"
         f"退出码：保存成功 0；--dry-run 没有问题 0、只有警告 {EXIT_WARNINGS}；有错误 2。",
     )
@@ -100,7 +104,10 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         action="append",
         default=[],
         metavar="名=值",
-        help="节点的输入，可以重复；引用写成 ${{ params.名 }} 或 ${{ 节点.输出 }}",
+        help="节点的输入，可以重复。引用入口参数写 ${{ params.<参数名> }}，"
+        "引用前面节点的输出写 ${{ nodes.<节点 ID>.outputs.<输出键> }}，"
+        "「运行状态」类型的输入写 ${{ run.state }}（新节点会自动填好）；"
+        "在 shell 里用单引号括起来，例如 --input 'url=${{ nodes.fetch_data.outputs.body }}'",
     )
     for flag, dest, kind, text in _ADD_FIELDS:
         p_add.add_argument(flag, dest=dest, type=kind, help=text)
@@ -137,21 +144,105 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
     p_set.add_argument("node", metavar="节点", help="节点 ID")
     p_set.add_argument("field", metavar="字段", help="例如 inputs.url、display_name")
     p_set.add_argument(
-        "value", metavar="值", nargs="?", help="新的值（按 JSON 解析）；不写就是去掉"
+        "value",
+        metavar="值",
+        nargs="?",
+        help="新的值（按 JSON 解析；输入声明是字符串时按原样）；不写就是去掉；"
+        "以 - 开头时前面加 --，例如 set probe_1 inputs.offset -- -5",
     )
 
     parser.set_defaults(func=command(_edit))
 
 
-def _value(text: str) -> Any:
-    """值按 JSON 解析，不是 JSON 的当字符串。"""
+def _value(text: str, schema: dict[str, Any] | None = None) -> Any:
+    """值按 JSON 解析，不是 JSON 的当字符串。`schema` 是节点类型里这个输入的声明：
+    它收字符串、不收按 JSON 解析出来的值时（声明是字符串，写的是 1.10、true、3）
+    按原样存字符串，不改写成数字或布尔。"""
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except ValueError:
         return text
+    if schema is not None and not isinstance(parsed, str):
+        if _accepts(schema, text) and not _accepts(schema, parsed):
+            return text
+    return parsed
 
 
-def _operations(args: argparse.Namespace) -> list[dict[str, Any]]:
+_JSON_TYPES: dict[str, Any] = {
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, int | float) and not isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+    "null": lambda v: v is None,
+    "array": lambda v: isinstance(v, list),
+    "object": lambda v: isinstance(v, dict),
+}
+
+
+def _accepts(schema: dict[str, Any], value: Any) -> bool:
+    """输入的声明收不收这个值：只看 type、anyOf、enum（和控制面检查输入类型的规则一致，
+    packages/orchestration/src/inputs.ts）；没有类型信息时什么都收。"""
+    if isinstance(schema.get("enum"), list):
+        return value in schema["enum"]
+    if isinstance(schema.get("anyOf"), list):
+        return any(_accepts(s, value) for s in schema["anyOf"] if isinstance(s, dict))
+    kind = schema.get("type")
+    kinds = [kind] if isinstance(kind, str) else kind if isinstance(kind, list) else None
+    if not kinds:
+        return True
+    return any(_JSON_TYPES.get(k, lambda _v: True)(value) for k in kinds)
+
+
+def _needs_types(texts: list[str]) -> bool:
+    """有按 JSON 解析出来不是字符串的值时，才要查节点类型（查不到也照常按 JSON 解析）。"""
+    for text in texts:
+        try:
+            if not isinstance(json.loads(text), str):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _node_inputs(
+    client: Client, document: dict[str, Any], package: str, node: str, version: str | None
+) -> dict[str, Any]:
+    """节点类型的输入声明（输入名 → schema）；查不到时是空的（值照常按 JSON 解析）。
+
+    版本和控制面加节点时一样取：给了用给的，场景锁定了用锁定的，否则最新发布的，没有发布过时取
+    在线的 Agent 上报的开发版本。"""
+    version = version or document.get("packages", {}).get(package)
+    nodes: Any = None
+    try:
+        if version is None:
+            published = client.get(f"/packages/{segment(package)}")["versions"]
+            version = published[0]["version"] if published else "dev"
+        if version == "dev":
+            agents = sorted(client.get("/agents")["agents"], key=lambda a: str(a.get("name")))
+            nodes = next(
+                (
+                    d.get("metadata", {}).get("nodes")
+                    for a in agents
+                    if a.get("status") == "online"
+                    for d in a.get("dev_packages", [])
+                    if d.get("name") == package
+                ),
+                None,
+            )
+        else:
+            detail = client.get(f"/packages/{segment(package)}/versions/{segment(version)}")
+            nodes = detail["metadata"]["nodes"]
+    except (ApiError, KeyError, TypeError, IndexError):
+        return {}
+    found = next((n for n in nodes or [] if isinstance(n, dict) and n.get("name") == node), None)
+    properties = (found or {}).get("inputs", {}).get("properties")
+    return properties if isinstance(properties, dict) else {}
+
+
+def _operations(
+    args: argparse.Namespace, types: Callable[[], dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """命令行参数变成操作。`types` 取这个操作涉及的节点类型的输入声明（只在有值要解析时才调用）。"""
     if args.file is not None and args.edit_op is not None:
         raise CliError("invalid_args", "--file 和单个操作不能一起写")
     if args.file is not None:
@@ -163,7 +254,7 @@ def _operations(args: argparse.Namespace) -> list[dict[str, Any]]:
             next="sfly scenario edit --help",
         )
     if args.edit_op == "add":
-        return [_add(args)]
+        return [_add(args, types)]
     if args.edit_op == "remove":
         return [{"op": "remove_node", "node": args.node}]
     if args.edit_op in ("connect", "disconnect"):
@@ -171,11 +262,15 @@ def _operations(args: argparse.Namespace) -> list[dict[str, Any]]:
         return [{"op": args.edit_op, "from": args.source, "to": args.target, "kind": kind}]
     op: dict[str, Any] = {"op": "set", "node": args.node, "field": args.field}
     if args.value is not None:
-        op["value"] = _value(args.value)
+        name = args.field.removeprefix("inputs.") if args.field.startswith("inputs.") else None
+        schemas = types() if name is not None and types and _needs_types([args.value]) else {}
+        op["value"] = _value(args.value, schemas.get(name) if name else None)
     return [op]
 
 
-def _add(args: argparse.Namespace) -> dict[str, Any]:
+def _add(
+    args: argparse.Namespace, types: Callable[[], dict[str, Any]] | None = None
+) -> dict[str, Any]:
     package, slash, node = args.type.partition("/")
     if not slash or not package or not node:
         raise CliError(
@@ -183,18 +278,35 @@ def _add(args: argparse.Namespace) -> dict[str, Any]:
             f"节点类型要写成 包名/节点名，收到 {args.type!r}",
             next="sfly package show <包> 看节点类型",
         )
-    inputs: dict[str, Any] = {}
+    pairs: list[tuple[str, str]] = []
     for item in args.input:
         name, eq, text = item.partition("=")
         if not eq or not name:
             raise CliError("invalid_args", f"--input 要写成 名=值，收到 {item!r}")
-        inputs[name] = _value(text)
+        pairs.append((name, text))
+    schemas = types() if types and _needs_types([t for _, t in pairs]) else {}
+    inputs = {name: _value(text, schemas.get(name)) for name, text in pairs}
     op: dict[str, Any] = {"op": "add_node", "package": package, "node": node, "inputs": inputs}
     for key in ("id", "after", "version", *(dest for _, dest, _, _ in _ADD_FIELDS), "always"):
         value = getattr(args, key)
         if value is not None:
             op[key] = value
     return op
+
+
+def _types_for(client: Client, scenario_id: str, args: argparse.Namespace) -> dict[str, Any]:
+    """`add` 的节点类型、`set inputs.<名>` 那个节点的节点类型的输入声明。"""
+    try:
+        document = client.get(f"/orchestrations/{segment(scenario_id)}/head")["document"]
+    except (ApiError, KeyError, TypeError):
+        return {}
+    if args.edit_op == "add":
+        package, _, node = args.type.partition("/")
+        return _node_inputs(client, document, package, node, args.version)
+    target = next((n for n in document.get("nodes", []) if n.get("id") == args.node), None)
+    if not target or target.get("kind") != "package":
+        return {}
+    return _node_inputs(client, document, target["package"], target["node"], None)
 
 
 def _read_operations(path: str) -> list[dict[str, Any]]:
@@ -216,9 +328,10 @@ def _read_operations(path: str) -> list[dict[str, Any]]:
 
 def _edit(session: Session, args: argparse.Namespace) -> int:
     client = session.client
-    operations = _operations(args)
+    _operations(args)  # 参数写错时先报错，不去查场景
     scenario = find_scenario(client, args.scenario, command="sfly scenario edit")
     scenario_id, name = scenario["id"], scenario["name"]
+    operations = _operations(args, lambda: _types_for(client, scenario_id, args))
     base = args.base_version if args.base_version is not None else scenario["head_version"]
     body = {"base_version": base, "operations": operations}
     try:
@@ -236,6 +349,15 @@ def _edit(session: Session, args: argparse.Namespace) -> int:
     if args.dry_run:
         lines = [f"检查过了，没有保存（场景「{name}」仍是版本 {base}）：这组操作会造成的改动："]
         view: dict[str, Any] = {"scenario": scenario_id, "saved": False, "base_version": base}
+    elif result.get("unchanged"):
+        lines = [f"没有改动，没有存出新版本（场景「{name}」仍是版本 {result['number']}）。"]
+        view = {
+            "scenario": scenario_id,
+            "saved": False,
+            "unchanged": True,
+            "version": result["number"],
+            "base_version": base,
+        }
     else:
         lines = [f"已保存场景「{name}」的版本 {result['number']}（基于版本 {base}）："]
         view = {
@@ -247,7 +369,8 @@ def _edit(session: Session, args: argparse.Namespace) -> int:
             "author_via": result["author_via"],
             "created_at": result["created_at"],
         }
-    lines.extend(f"  {line}" for line in changes or ["没有改动。"])
+    if not result.get("unchanged"):
+        lines.extend(f"  {line}" for line in changes or ["没有改动。"])
     new = scenario_check.fresh(warnings)
     if new:
         lines.append(f"这次改动带进来的警告（{len(new)}）：")

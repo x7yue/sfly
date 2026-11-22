@@ -160,6 +160,80 @@ describe("sfly scenario edit → 控制面", () => {
 			expect(await versionCount(id)).toBe(6);
 		});
 
+		it("值按节点类型的声明解析：声明是字符串的输入按原样存（1.10、true、3 不变成数字和布尔），声明是整数的照常是数字", async () => {
+			const id = await scenario("编辑-字符串输入");
+			const added = await cli(
+				"scenario",
+				"edit",
+				id,
+				"add",
+				"http/probe",
+				"--after",
+				"report",
+				"--id",
+				"probe",
+				"--input",
+				"host=1.10",
+				"--input",
+				"count=3",
+			);
+			expect(added.code, added.stderr).toBe(0);
+			expect(added.stdout).not.toContain("警告");
+			for (const [value, stored] of [
+				["true", "true"],
+				["3", "3"],
+				['"7"', "7"],
+			] as const) {
+				const set = await cli("scenario", "edit", id, "set", "fetch_data", "inputs.url", value);
+				expect(set.code, set.stderr).toBe(0);
+				expect((await headDoc(id)).nodes.find((n) => n.id === "fetch_data")?.inputs).toEqual({
+					url: stored,
+				});
+			}
+			expect((await headDoc(id)).nodes.find((n) => n.id === "probe")?.inputs).toEqual({
+				host: "1.10",
+				count: 3,
+			});
+			// 以 - 开头的值前面加 --（帮助里写的做法）。
+			// （--server 写在前面：-- 之后的都是值。）
+			const dashed = await sfly([
+				"scenario",
+				"edit",
+				"--server",
+				cp.httpUrl,
+				id,
+				"set",
+				"probe",
+				"inputs.count",
+				"--",
+				"-5",
+			]);
+			expect(dashed.code, dashed.stderr).toBe(0);
+			expect((await headDoc(id)).nodes.find((n) => n.id === "probe")?.inputs).toEqual({
+				host: "1.10",
+				count: -5,
+			});
+		});
+
+		it("结果和原来相同：不存出新版本，写明没有改动", async () => {
+			const id = await scenario("编辑-没有改动");
+			const same = await cli("scenario", "edit", id, "set", "fetch_data", "display_name", "取数据");
+			expect(same.code, same.stderr).toBe(0);
+			expect(same.stdout).toBe("没有改动，没有存出新版本（场景「编辑-没有改动」仍是版本 1）。\n");
+			const json = await cli(
+				"scenario",
+				"edit",
+				id,
+				"set",
+				"fetch_data",
+				"display_name",
+				"取数据",
+				"--json",
+			);
+			expect(JSON.parse(json.stdout)).toMatchObject({ saved: false, unchanged: true, version: 1 });
+			expect(await versionCount(id)).toBe(1);
+		});
+
 		it("--json：一个对象，带版本号、警告和控制面的差异", async () => {
 			const id = await scenario("编辑-json");
 			const result = await cli("scenario", "edit", id, "remove", "report", "--json");

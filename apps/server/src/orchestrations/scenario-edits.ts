@@ -1,5 +1,6 @@
 import {
 	applyEditOperations,
+	compareVersions,
 	type EditContext,
 	type NodeTypeIo,
 	newestVersion,
@@ -13,12 +14,13 @@ import {
 	removedNodesMessage,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import type { z } from "zod";
 import type { Db } from "../db/database.js";
-import { agents, nodePackages } from "../db/schema.js";
+import { agents, nodePackages, orchestrations as orchestrationRows } from "../db/schema.js";
 import { DEV_VERSION } from "../engine/assign-content.js";
 import { findPackageVersion } from "../packages/package-repository.js";
+import { readableProjects } from "../projects/project-id.js";
 import type { OrchestrationStore, VersionSummary } from "./orchestration-store.js";
 
 /**
@@ -68,7 +70,7 @@ export async function prepareEdits(
 	const outcome = applyEditOperations(
 		head.document,
 		operations,
-		await editContext(db, head.document, operations),
+		await editContext(db, orchestrationId, head.document, operations),
 	);
 	if (!outcome.ok) return { kind: "invalid_operation", problem: outcome.problem };
 	const parsed = OrchestrationDocument.safeParse(outcome.doc);
@@ -108,27 +110,44 @@ function devNodeTypes(metadata: Record<string, unknown> | null): NodeTypeIo[] | 
  */
 async function editContext(
 	db: Db,
+	orchestrationId: string,
 	doc: StoredOrchestrationDocument,
 	operations: readonly EditOperation[],
 ): Promise<EditContext> {
+	const [scenario] = await db
+		.select({ projectId: orchestrationRows.projectId })
+		.from(orchestrationRows)
+		.where(eq(orchestrationRows.id, orchestrationId));
+	const projects = scenario ? readableProjects(scenario.projectId) : [];
 	const adds = operations.flatMap((op) => (op.op === "add_node" ? [op] : []));
 	const names = new Set([...Object.keys(doc.packages), ...adds.map((op) => op.package)]);
 	const dev = new Map<string, NodeTypeIo[] | undefined>();
-	if (names.size > 0) {
-		const online = await db
-			.select({ info: agents.info })
-			.from(agents)
-			.where(eq(agents.status, "online"))
-			.orderBy(asc(agents.name));
-		for (const { info } of online) {
-			for (const p of info.dev_packages ?? []) {
-				if (!dev.has(p.name)) dev.set(p.name, devNodeTypes(p.metadata));
-			}
+	const online = await db
+		.select({ info: agents.info, projectId: agents.projectId })
+		.from(agents)
+		.where(eq(agents.status, "online"))
+		.orderBy(asc(agents.name));
+	// 包名写错时只从这个场景读得到的包里找相近的（本项目的、公共项目的；开发版本只看本项目的 Agent），不列出别的项目的包名。
+	const devHere = new Set<string>();
+	for (const { info, projectId } of online) {
+		for (const p of info.dev_packages ?? []) {
+			if (!dev.has(p.name)) dev.set(p.name, devNodeTypes(p.metadata));
+			if (projects.includes(projectId)) devHere.add(p.name);
 		}
 	}
+	// 这个场景读得到的已发布版本（版本写错时列出来）：一次读完，行数是已发布的版本数。
+	const releases = new Map<string, string[]>();
+	for (const row of await db
+		.select({ name: nodePackages.name, version: nodePackages.version })
+		.from(nodePackages)
+		.where(inArray(nodePackages.projectId, projects))) {
+		releases.set(row.name, [...(releases.get(row.name) ?? []), row.version]);
+	}
+	for (const versions of releases.values()) versions.sort((a, b) => compareVersions(b, a));
 	const catalog = new Map<string, readonly NodeTypeIo[] | null>();
 	const defaults = new Map<string, string | undefined>();
 	for (const name of names) {
+		// 默认版本和节点类型照旧按名字找（名字全局唯一，见 findPackageVersion）；只是线索按项目收窄。
 		const published = (
 			await db
 				.select({ version: nodePackages.version })
@@ -156,5 +175,10 @@ async function editContext(
 			catalog.set(packageKey(name, version), found ? found.metadata.nodes : null);
 		}
 	}
-	return { catalog, defaultVersion: (name) => defaults.get(name) };
+	return {
+		catalog,
+		defaultVersion: (name) => defaults.get(name),
+		packageNames: [...new Set([...releases.keys(), ...devHere])].sort(),
+		publishedVersions: (name) => releases.get(name) ?? [],
+	};
 }

@@ -3,6 +3,7 @@
 import {
 	disconnectEdge,
 	insertAfter,
+	isEmptyDiff,
 	newPackageNode,
 	removeNodes,
 	uniqueNodeId,
@@ -325,7 +326,48 @@ describe("场景的局部编辑", () => {
 		});
 	});
 
+	describe("没有改动的一组操作", () => {
+		it("结果和最新版本相同时不存出新版本：200，返回当前版本，unchanged 为 true", async () => {
+			const id = await scenario("没有改动");
+			for (const operations of [
+				[{ op: "set", node: "fetch_data", field: "display_name", value: "取数据" }],
+				[
+					{ op: "add_node", id: "tmp", package: "http", node: "get", inputs: { url: "x" } },
+					{ op: "remove_node", node: "tmp" },
+				],
+			]) {
+				const res = await edit(id, operations);
+				const text = await res.text();
+				expect(res.status, text).toBe(200);
+				const body = orchestrationsApi.edit.response.parse(JSON.parse(text));
+				expect(body).toMatchObject({ number: 1, unchanged: true });
+				expect(isEmptyDiff(body.diff)).toBe(true);
+			}
+			expect(await versionCount(id)).toBe(1);
+			// 有改动时照常存成新版本，没有 unchanged。
+			const changed = await editOk(id, [
+				{ op: "set", node: "fetch_data", field: "display_name", value: "取数据 2" },
+			]);
+			expect(changed.number).toBe(2);
+			expect(changed.unchanged).toBeUndefined();
+		});
+	});
+
 	describe("让调用方自己改对的报错", () => {
+		it("包名、版本写错：列出相近的包名、这个包已发布的版本", async () => {
+			const id = await scenario("报错-包名");
+			const typo = await problemOf(
+				await edit(id, [{ op: "add_node", package: "htp", node: "get" }]),
+			);
+			expect(typo.message).toContain("相近的包：http");
+			const version = await problemOf(
+				await edit(id, [{ op: "add_node", package: "svc", node: "scan", version: "9.9.9" }]),
+			);
+			expect(version.message).toMatch(
+				/控制面上没有节点包版本 svc@9\.9\.9，已发布的版本：1\.2\.0、1\.0\.0$/,
+			);
+		});
+
 		it("节点 ID 不存在：列出相近的 ID", async () => {
 			const id = await scenario("报错-节点不存在");
 			const error = await problemOf(await edit(id, [{ op: "remove_node", node: "fetch-data" }]));

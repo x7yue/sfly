@@ -18,7 +18,7 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注） |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注）；`--json` 里包节点还带 `inputs`、异步任务节点带 `params`（原样） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
 | `sfly scenario edit <场景> <操作> [--dry-run]` / `sfly scenario edit <场景> --file <文件>` | 局部编辑：加节点（`add 包/节点 [--after 节点]`）、删节点（`remove`）、连线（`connect`）、断开（`disconnect`）、改节点的字段（`set`），存成一个新版本；`--dry-run` 只检查 |
@@ -242,14 +242,15 @@ sfly scenario edit 回归 --file 改动.json
 
 - 操作：
   - `add <包名>/<节点名>`：加一个包节点。`--after <节点>` 接在那个节点后面，它是链尾时追加，后面还有节点时插在它和下一个节点之间（和画布上「在后面添加」一样）；不写时只加节点、不连线。`--id` 给节点 ID（只能用字母、数字、下划线和连字符；不写时是节点名加序号，例如 `probe_1`）；`--input 名=值` 给输入，可以重复，必填的输入都要给；`--display-name`、`--note`、`--agent`、`--always`、`--timeout`、`--retries`、`--queue-timeout` 和场景文档里的同名字段一样。包还没有锁定时一起锁定：`--version` 写了用它，不写时用最新发布的版本，只有在线的 Agent 加载着开发版本时用 `dev`；已经锁定的包只能用锁定的版本。新节点不用写坐标，保存时按整理布局放好。
-  - `remove <节点>`：删一个节点，连同它的连线；它恰好一进一出时前后两个节点接上，注释框里的成员一起去掉。入口节点不能删。
+  - `remove <节点>`：删一个节点，连同它的连线；它恰好一进一出时前后两个节点接上，注释框里的成员一起去掉。入口节点不能删；子流程入口节点也不能删（局部编辑不改子流程的结构，用 pull / push）。
   - `connect <起点> <终点>`、`disconnect <起点> <终点>`：连一条线、断开一条线，默认是链上的连线，`--dispatch` 是调度连线。连线的规则和画布一样（链不分叉、不汇合、不成环）。
   - `set <节点> <字段> [值]`：改一个节点的一个字段。包节点能改 `inputs.<输入名>`、`agent`、`display_name`、`note`、`always`、`timeout`、`retries`、`queue_timeout`，异步任务节点能改 `display_name`、`note`，停止子流程节点还能改 `always`，子流程入口节点只能改 `note`。不写值就是去掉这个字段；写 `null` 就是 null（输入可以是 null）。
-- 值（`--input`、`set` 的值）按 JSON 解析，不是 JSON 的当字符串：`3` 是数字，`true` 是布尔，要字符串 `"3"` 时写 `'"3"'`。引用入口参数或前面节点的输出时，写法和场景文档里节点的 `inputs` 一样（照 `scenario show --json` 里已有节点的写），在 shell 里用单引号括起来，免得被 shell 展开。
+- 值（`--input`、`set` 的值）按 JSON 解析，不是 JSON 的当字符串：`3` 是数字，`true` 是布尔。节点类型声明这个输入是字符串时按原样存字符串（`--input tag=1.10` 存的是 `"1.10"`，不会变成数字 1.1）；查不到节点类型时（开发版本没有在线的 Agent 上报）要字符串就写成 JSON 字符串，例如 `'"1.10"'`。值以 `-` 开头时在它前面加 `--`：`set probe_1 inputs.offset -- -5`。
+- 引用有三种写法，和场景文档里节点的 `inputs` 一样，在 shell 里用单引号括起来，免得被 shell 展开：入口参数写 `--input 'base_url=${{ params.base_url }}'`；同一条链上前面节点的输出写 `--input 'body=${{ nodes.fetch_data.outputs.body }}'`（`nodes.` 后面是节点 ID，不是显示名称）；「运行状态」类型的输入写 `--input 'state=${{ run.state }}'`（新节点会自动填好）。已有节点的输入用 `scenario show <场景> --json` 看：包节点带 `inputs`，异步任务节点带 `params`，都是原样的。
 - `--file <文件>` 一次提交一组操作：JSON 文件，操作的数组或 `{"operations": [...]}`；每个操作是 `{"op": "add_node", "package": …, "node": …, "after": …, "inputs": {…}}`、`{"op": "remove_node", "node": …}`、`{"op": "connect" 或 "disconnect", "from": …, "to": …, "kind": "chain"}`、`{"op": "set", "node": …, "field": …, "value": …}`（和接口 `POST /orchestrations/:id/edits` 的 `operations` 相同，`sfly api --describe POST /orchestrations/:id/edits` 列出全部字段）。一组操作按顺序执行，后面的操作看得到前面加的节点；有一个不合法时都不生效。
-- 操作由控制面执行，用的是画布上做同样的事的那几个函数：和在画布上做同样的事得到同样的文档。保存之后的检查和 `push` 一样：输出新版本号、警告（和 `push` 时相同）和这次的改动（写法和 `scenario diff` 一样）。`--json` 是 `{scenario, saved, version, base_version, author, author_via, created_at, warnings, diff}`。
+- 操作由控制面执行，用的是画布上做同样的事的那几个函数：和在画布上做同样的事得到同样的文档。保存之后的检查和 `push` 一样：输出新版本号、警告（和 `push` 时相同）和这次的改动（写法和 `scenario diff` 一样）。`--json` 是 `{scenario, saved, version, base_version, author, author_via, created_at, warnings, diff}`。这组操作的结果和最新版本相同时（字段改成原来的值、同一组里先加后删）不存出新版本，输出「没有改动，没有存出新版本」，`--json` 是 `{scenario, saved: false, unchanged: true, version, base_version, warnings, diff}`；整份文档原样 `push` 仍会存出新版本。
 - `--dry-run` 只检查不保存：输出这组操作会造成的改动和警告，不产生版本。警告和 `scenario check` 一样分成这次改动带进来的和改动之前就有的（后者单独一段）；这次改动没有带进来警告时退出码 0，带进来了时 4。`--json` 是 `{scenario, saved: false, base_version, warnings, diff}`，每条警告带 `existing`。保存成功时警告也分两段列出。
-- 操作不合法时什么都不保存，退出码 2，错误写明是第几个操作、为什么（`--json` 时错误对象的 `details` 是控制面给的结构化线索：`index`、`similar`、`missing`、`from`、`to`、`choices`）：节点 ID 不存在时列出相近的 ID（没有相近的就列出场景里全部的节点），包节点缺必填输入时列出缺哪几个和各自的类型，连线接不上时写明两端各是什么（种类、包节点的节点类型），节点类型、输入名、能改的字段写错时列出可选的。
+- 操作不合法时什么都不保存，退出码 2，错误写明是第几个操作、为什么（`--json` 时错误对象的 `details` 是控制面给的结构化线索：`index`、`similar`、`missing`、`from`、`to`、`choices`）：节点 ID 不存在时列出相近的 ID（写的是某个节点的显示名称时直接给出它的 ID；没有相近的就列出场景里全部的节点，写成「显示名称（节点 ID）」），包名写错时列出相近的包名，版本写错时列出这个包已发布的版本，包节点缺必填输入时列出缺哪几个和各自的类型，连线接不上时写明两端各是什么（种类、包节点的节点类型），节点类型、输入名、能改的字段写错时列出可选的。
 - 编辑基于命令读到的最新版本；`--base-version N` 指定编辑基于的版本。在那之后有人保存了新版本时报版本冲突（退出码 2），写明最新版本号、作者和保存时间，下一步是 `sfly scenario diff` 看那个版本改了什么；确认这次编辑仍然要做之后再执行一次（写了 `--base-version` 的去掉它）。
 - 入口参数、注释框、子流程的结构和场景的设置不能用 `scenario edit` 改，用 pull / push。
 

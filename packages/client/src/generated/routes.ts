@@ -652,6 +652,8 @@ export interface Api {
 				warnings: CheckedWarningView[];
 				/** 这组操作造成的差异：从 base_version 到新版本。 */
 				diff: DocumentDiffView;
+				/** true：这组操作没有改动，没有存出新版本，返回的是当前版本（状态码 200）；存出了新版本时没有这个字段。 */
+				unchanged?: true;
 			}
 		>;
 		/**

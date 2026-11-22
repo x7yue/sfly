@@ -62,9 +62,13 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
    uv run sfly scenario edit <场景> add <包名>/<节点名> --after <前一个节点 id> --display-name "<说明它做什么的显示名称>" --input <输入名>=<值> --dry-run
    ```
 
-   - 节点有哪些输入用 `uv run sfly package show <包>@<版本>` 看（开发版本写 `<包>@dev`；它加载在不止一台在线的 Agent 上时加 `--agent <Agent>` 指定看哪一台的）。必填的输入都要用 `--input` 给出；值按 JSON 解析，不是 JSON 的当字符串；要引用入口参数或同一条链上前面节点的输出，照 `scenario show --json` 里已有节点的 `inputs` 的写法写。新节点不用写坐标；`--agent` 指定执行它的 Agent，不写就用场景的默认 Agent。
+   - 节点有哪些输入用 `uv run sfly package show <包>@<版本>` 看（开发版本写 `<包>@dev`；它加载在不止一台在线的 Agent 上时加 `--agent <Agent>` 指定看哪一台的）。必填的输入都要用 `--input` 给出；值按 JSON 解析，不是 JSON 的当字符串（节点类型声明是字符串的输入按原样保存）。引用有三种写法，在 shell 里用单引号括起来：
+     - 入口参数：`--input 'base_url=${{ params.base_url }}'`（`params.` 后面是入口参数名）；
+     - 同一条链上前面节点的输出：`--input 'body=${{ nodes.fetch_data.outputs.body }}'`（`nodes.` 后面是节点 ID，不是显示名称；`outputs.` 后面是那个节点类型声明的输出键）；
+     - 「运行状态」类型的输入：`--input 'state=${{ run.state }}'`（新节点会自动填好，一般不用写）。
+     已有节点的输入怎么写的，用 `uv run sfly scenario show <场景> --json` 看各节点的 `inputs`。新节点不用写坐标；`--agent` 指定执行它的 Agent，不写就用场景的默认 Agent。
    - 几个改动合起来才对时（例如断开一条线再接到新节点上），写成一个 JSON 文件用 `--file` 一次提交：要么全部生效、要么都不生效。
-   - 报错时按报错改：节点 ID 写错时它列出相近的 ID，缺必填输入时列出缺的输入和类型，连线接不上时写明两端各是什么。
+   - 报错时按报错改：节点 ID 写错时它列出相近的 ID（把显示名称当成了 ID 时直接给出对应的 ID），缺必填输入时列出缺的输入和类型，连线接不上时写明两端各是什么，包名、版本写错时列出相近的包名、已发布的版本。结果和原来相同的一组操作不存出新版本（输出「没有改动」）。
    完成：输出新版本号，这次改动没有带进来警告（`--dry-run` 退出码 0；4 是带进来了，按这些警告改；「改动之前就有的警告」不是这次要改的，不要自己改，要改先问用户），列出的改动就是这次要做的；新增和改动的节点都有显示名称。
 3. **其余的改动**（入口参数、注释框、子流程、默认 Agent、锁定的包版本）用 pull / push：
    - `uv run sfly scenario pull <场景> -o <文件>`，改文件里的 `document`（`scenario` 和 `base_version` 保持原样）；说明按「给场景留下说明」写。节点的 `agent` 字段指定执行它的 Agent，不写就用场景的 `default_agent`。

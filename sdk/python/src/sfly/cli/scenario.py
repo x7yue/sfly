@@ -58,7 +58,8 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="查看一个场景：入口参数、各链路上的节点、子流程、默认 Agent",
         description="查看场景最新版本的内容：入口参数、主链和各子流程上的节点"
         "（显示名称、节点类型、锁定的节点包版本、sfly Agent）、默认 Agent、注释框，"
-        "以及场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码）。",
+        "以及场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码）。"
+        "--json 里包节点带 inputs、异步任务节点带 params（原样，引用写成 ${{ … }}）。",
     )
     p_show.add_argument("scenario", metavar="场景", help="场景 id 或准确名称")
     p_show.set_defaults(func=command(_show))
@@ -167,8 +168,12 @@ def describe(
                 name_with_id(node["id"], node.get("display_name")),
                 (declared or {}).get(node["id"], "unknown"),
             )
+            # 输入原样给出（引用写成 ${{ … }}，照着写新节点的引用）。secret 参数的值不在这里：
+            # 它只在入口参数的默认值里，下面的 params 不输出它。
+            view["inputs"] = node.get("inputs", {})
         elif node["kind"] == "async":
             view["subflow"] = subflow_name(triggers.get(node["id"]))
+            view["params"] = node.get("params", {})
         elif node["kind"] == "stop_subflow":
             view["subflow"] = subflow_name(node.get("subflow"))
         if node.get("note"):

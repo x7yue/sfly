@@ -98,6 +98,8 @@ const catalog: PackageCatalog = new Map([
 const context = {
 	catalog,
 	defaultVersion: (name: string) => ({ svc: "2.0.0", local: "dev" })[name],
+	packageNames: ["http", "svc", "local"],
+	publishedVersions: (name: string) => ({ http: ["1.0.0"], svc: ["2.0.0", "1.0.0"] })[name] ?? [],
 };
 
 const apply = (ops: EditOperationInput[], from = doc()) =>
@@ -220,8 +222,12 @@ describe("场景的局部编辑：操作", () => {
 				choices: ["url"],
 			});
 			expect(
-				problemOf([{ op: "add_node", package: "svc", node: "scan", version: "9.9.9" }]).message,
-			).toBe("第 1 个操作（add_node）：控制面上没有节点包版本 svc@9.9.9");
+				problemOf([{ op: "add_node", package: "svc", node: "scan", version: "9.9.9" }]),
+			).toMatchObject({
+				message:
+					"第 1 个操作（add_node）：控制面上没有节点包版本 svc@9.9.9，已发布的版本：2.0.0、1.0.0",
+				choices: ["2.0.0", "1.0.0"],
+			});
 			expect(
 				problemOf([{ op: "add_node", package: "http", node: "get", version: "2.0.0" }]).message,
 			).toBe(
@@ -230,6 +236,14 @@ describe("场景的局部编辑：操作", () => {
 			expect(problemOf([{ op: "add_node", package: "nope", node: "x" }]).message).toBe(
 				"第 1 个操作（add_node）：控制面上没有节点包 nope：没有发布过，也没有在线的 Agent 加载着它的开发版本",
 			);
+		});
+
+		it("包名写错：列出相近的包名", () => {
+			expect(problemOf([{ op: "add_node", package: "htp", node: "get" }])).toMatchObject({
+				message:
+					"第 1 个操作（add_node）：控制面上没有节点包 htp：没有发布过，也没有在线的 Agent 加载着它的开发版本；相近的包：http",
+				similar: ["http"],
+			});
 		});
 
 		it("「运行状态」类型的输入不用写：和画布上一样直接填好 ${{ run.state }}，必填也不算缺", () => {
@@ -283,13 +297,30 @@ describe("场景的局部编辑：操作", () => {
 			});
 		});
 
-		it("没有相近的 ID 时列出场景里全部的节点", () => {
+		it("没有相近的 ID 时列出场景里全部的节点（有显示名称的写成「显示名称（ID）」）", () => {
 			expect(problemOf([{ op: "remove_node", node: "zzzzzz" }])).toMatchObject({
 				message:
-					"第 1 个操作（remove_node）：节点 zzzzzz 不存在，场景里的节点：entry、fetch_data、report、spawn、sub",
+					"第 1 个操作（remove_node）：节点 zzzzzz 不存在，场景里的节点：entry、取数据（fetch_data）、report、spawn、监控（sub）",
 				similar: [],
 				choices: ["entry", "fetch_data", "report", "spawn", "sub"],
 			});
+		});
+
+		it("把显示名称当成节点 ID：直接给出对应的 ID", () => {
+			expect(problemOf([{ op: "remove_node", node: "取数据" }])).toMatchObject({
+				message:
+					"第 1 个操作（remove_node）：节点 取数据 不存在：取数据 是节点 fetch_data 的显示名称，节点 ID 写 fetch_data",
+				similar: ["fetch_data"],
+			});
+			expect(problemOf([{ op: "connect", from: "取数据", to: "spawn" }]).similar).toEqual([
+				"fetch_data",
+			]);
+		});
+
+		it("子流程入口节点不能删：局部编辑不改子流程的结构，用 pull / push", () => {
+			expect(problemOf([{ op: "remove_node", node: "sub" }]).message).toBe(
+				"第 1 个操作（remove_node）：节点 监控（sub）是子流程入口节点：局部编辑不改子流程的结构，删子流程用 pull / push",
+			);
 		});
 	});
 

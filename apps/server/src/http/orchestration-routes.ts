@@ -1,3 +1,4 @@
+import { isEmptyDiff } from "@sfly/orchestration";
 import { orchestrationsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Db } from "../db/database.js";
@@ -196,6 +197,19 @@ export function registerOrchestrationRoutes(
 		if (!actor) return reply;
 		const prepared = await editsOf(params.id, body.operations, body.base_version);
 		if (prepared.kind !== "edited") return rejectEdits(reply, prepared, body.base_version);
+		// 结果和最新版本相同：不存出新版本，返回当前版本（检查走和保存同一段代码，警告和差异与保存时一样）。
+		if (prepared.base > 0) {
+			const checked = await orchestrations.checkVersion(
+				params.id,
+				prepared.document,
+				prepared.base,
+			);
+			if (checked.kind !== "checked") return rejectVersion(reply, checked, prepared.base);
+			if (isEmptyDiff(checked.check.diff)) {
+				const current = await orchestrations.getVersion(params.id, prepared.base);
+				if (current) return { ...current, ...checked.check, unchanged: true as const };
+			}
+		}
 		const result = await orchestrations.saveVersion(
 			params.id,
 			prepared.document,

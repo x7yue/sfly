@@ -11,7 +11,7 @@ import {
 } from "@sfly/schema";
 import { disconnectEdge, insertAfter } from "./chain-edits.js";
 import { describeSchema, orderedInputs } from "./inputs.js";
-import { nodeKindLabel, nodeNameWithId } from "./node-display.js";
+import { nodeKindLabel, nodeNameBeforeId, nodeNameWithId } from "./node-display.js";
 import { uniqueNodeId } from "./node-id.js";
 import { type NodeTypeIo, type PackageCatalog, packageKey } from "./references.js";
 import { removeNodes } from "./remove-nodes.js";
@@ -34,6 +34,10 @@ export interface EditContext {
 	catalog: PackageCatalog;
 	/** 还没有锁定的包默认用哪个版本：最新发布的版本，没有发布过、有在线的 Agent 加载着开发版本时是 `dev`；控制面上没有这个包时 undefined。 */
 	defaultVersion(packageName: string): string | undefined;
+	/** 控制面上有的节点包名（发布过的，和在线的 Agent 加载着开发版本的）：包名写错时从里面找相近的。 */
+	packageNames: readonly string[];
+	/** 这个包已发布的版本（从新到旧）：版本写错时列出来。 */
+	publishedVersions(packageName: string): readonly string[];
 }
 
 export type EditOutcome = { ok: true; doc: Doc } | { ok: false; problem: EditOperationProblem };
@@ -151,15 +155,33 @@ export function similarNodeIds(id: string, ids: Iterable<string>): string[] {
 		.map((s) => s.candidate);
 }
 
-/** 节点不存在：列出相近的 ID，没有相近的就列出场景里全部的节点（最多 30 个）。 */
+/**
+ * 节点不存在：写的是某个节点的显示名称时直接给出它的 ID；否则列出相近的 ID，没有相近的就列出场景里全部的节点
+ * （最多 30 个，写成「显示名称（ID）」；`choices` 里只有 ID）。
+ */
 function unknownNode(doc: Doc, id: string): Step {
+	const wanted = id.trim();
+	const named = doc.nodes.filter((n) => nodeNameBeforeId(n) === wanted);
+	if (named.length > 0) {
+		const ids = named.map((n) => n.id);
+		const hint =
+			ids.length === 1
+				? `节点 ID 写 ${ids[0]}`
+				: `有 ${ids.length} 个节点叫这个名字，节点 ID 写其中一个`;
+		return fail(`节点 ${id} 不存在：${id} 是节点 ${ids.join("、")} 的显示名称，${hint}`, {
+			similar: ids,
+		});
+	}
 	const ids = doc.nodes.map((n) => n.id);
 	const similar = similarNodeIds(id, ids);
 	if (similar.length > 0) {
 		return fail(`节点 ${id} 不存在，相近的节点：${similar.join("、")}`, { similar });
 	}
-	const choices = ids.slice(0, 30);
-	return fail(`节点 ${id} 不存在，场景里的节点：${choices.join("、")}`, { similar, choices });
+	const listed = doc.nodes.slice(0, 30);
+	return fail(`节点 ${id} 不存在，场景里的节点：${listed.map(nodeNameWithId).join("、")}`, {
+		similar,
+		choices: listed.map((n) => n.id),
+	});
 }
 
 const findNode = (doc: Doc, id: string) => doc.nodes.find((n) => n.id === id);
@@ -216,14 +238,22 @@ function inputsProblem(
 
 /** 包节点的节点类型：知道时返回它，不知道时（没有上报的开发版本）返回 undefined，不对时返回拒绝。 */
 function nodeType(
-	catalog: PackageCatalog,
+	context: EditContext,
 	pkg: string,
 	version: string,
 	node: string,
 ): { type: NodeTypeIo | undefined } | Step {
-	const types = catalog.get(packageKey(pkg, version));
+	const types = context.catalog.get(packageKey(pkg, version));
 	if (types === undefined) return { type: undefined };
-	if (types === null) return fail(`控制面上没有节点包版本 ${pkg}@${version}`);
+	if (types === null) {
+		const choices = [...context.publishedVersions(pkg)];
+		return fail(
+			`控制面上没有节点包版本 ${pkg}@${version}${
+				choices.length > 0 ? `，已发布的版本：${choices.join("、")}` : ""
+			}`,
+			choices.length > 0 ? { choices } : {},
+		);
+	}
 	const type = types.find((t) => t.name === node);
 	if (type) return { type };
 	const choices = types.map((t) => t.name);
@@ -275,9 +305,15 @@ function addNode(
 	}
 	const version = locked ?? operation.version ?? context.defaultVersion(pkg);
 	if (version === undefined) {
-		return fail(`控制面上没有节点包 ${pkg}：没有发布过，也没有在线的 Agent 加载着它的开发版本`);
+		const similar = similarNodeIds(pkg, context.packageNames);
+		return fail(
+			`控制面上没有节点包 ${pkg}：没有发布过，也没有在线的 Agent 加载着它的开发版本${
+				similar.length > 0 ? `；相近的包：${similar.join("、")}` : ""
+			}`,
+			similar.length > 0 ? { similar } : {},
+		);
 	}
-	const found = nodeType(context.catalog, pkg, version, nodeName);
+	const found = nodeType(context, pkg, version, nodeName);
 	if (isStep(found)) return found;
 	const filled = newPackageNode(
 		pkg,
@@ -316,7 +352,14 @@ function addNode(
 }
 
 function removeNode(doc: Doc, id: string): Step {
-	if (!findNode(doc, id)) return unknownNode(doc, id);
+	const node = findNode(doc, id);
+	if (!node) return unknownNode(doc, id);
+	if (node.kind === "subflow_entry") {
+		// 删掉入口，子流程里的节点就不在任何链上了；子流程的结构（这一版的局部编辑不做）用 pull / push 改。
+		return fail(
+			`节点 ${named(node)}是子流程入口节点：局部编辑不改子流程的结构，删子流程用 pull / push`,
+		);
+	}
 	const edit = removeNodes(doc, [id]);
 	if (!edit.ok) return fail(edit.reason);
 	return { ok: true, doc: edit.doc };

@@ -610,6 +610,8 @@ export const orchestrationsApi = {
 	 *
 	 * 之后的检查和保存完全一样：`warnings` 和保存时相同，每条带 `existing`（改动之前就有，见 CheckedWarningView），
 	 * 新节点没有坐标时按整理布局补上（接在节点后面的放在它右侧一列，和画布一样）。
+	 * 这组操作的结果和最新版本相同时（例如把字段改成原来的值，同一组里先加后删）不存出新版本：返回 200、当前版本，
+	 * `unchanged` 为 true，`diff` 为空。（整份文档原样保存仍会存出新版本，那是保存接口的既有行为。）
 	 * 只检查不保存用 checkEdits。
 	 */
 	edit: endpoint({
@@ -639,6 +641,8 @@ export const orchestrationsApi = {
 			warnings: z.array(CheckedWarningView),
 			/** 这组操作造成的差异：从 base_version 到新版本。 */
 			diff: DocumentDiffView,
+			/** true：这组操作没有改动，没有存出新版本，返回的是当前版本（状态码 200）；存出了新版本时没有这个字段。 */
+			unchanged: z.literal(true).optional(),
 		}),
 	}),
 	/**
