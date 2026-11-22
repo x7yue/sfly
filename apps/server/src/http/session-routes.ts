@@ -1,5 +1,4 @@
 import {
-	type Readiness,
 	SESSION_SEQ_MAX,
 	type SessionDetailResponse,
 	type SessionView,
@@ -8,6 +7,7 @@ import {
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { parseProjectId } from "../projects/project-id.js";
 import { FollowOverflowError } from "../sessions/follow.js";
+import type { Outcome, SessionService } from "../sessions/session-service.js";
 import { type SessionRow, type SessionStore, toListItem } from "../sessions/session-store.js";
 import type { Sse } from "../sse/sse.js";
 import { requireActor } from "./actor.js";
@@ -19,35 +19,31 @@ const projectNotFound = (reply: FastifyReply) =>
 const sessionNotFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "session not found");
 
-/** 助手没有配置（或还没有接上）：写接口返回 503 `assistant_not_configured`。 */
-const notConfigured = (reply: FastifyReply, readiness: Readiness) =>
-	sendError(
-		reply,
-		503,
-		"assistant_not_configured",
-		readiness.problems.map((problem) => problem.message).join("；") || "助手没有配置",
-	);
+/** 写没有成功：状态码、错误码和说明都是服务给的。 */
+const refuse = (reply: FastifyReply, outcome: Extract<Outcome<unknown>, { ok: false }>) =>
+	sendError(reply, outcome.status, outcome.code, outcome.message);
 
 export interface SessionRouteDeps {
 	sessions: SessionStore;
+	/** 写接口和就绪状态（src/sessions/session-service.ts）。 */
+	service: SessionService;
 	sse: Sse;
-	/** 助手此刻能不能用（src/sessions/readiness.ts）；每次列出会话时算一次。 */
-	readiness: () => Promise<Readiness>;
 }
 
 /**
  * 助手会话（契约见 @sfly/schema 的 sessionsApi，ADR 0027）：列出、读、事件流，以及写接口。
  * 项目不存在、会话不存在（或属于别的项目：访问检查在进处理函数之前已经按会话所在的项目判断过）都是 404。
  * 写接口需要昵称（记为发起人）；助手没有配置时返回 503 `assistant_not_configured`，读接口照常。
+ * 新建返回 201 和新会话；发话返回这句话的序号；停止返回会话（这一轮的 `turn_end` 由助手服务的事件带回来）。
  */
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
-	const { sessions, sse } = deps;
+	const { sessions, service, sse } = deps;
 
-	/** 会话的视图：列表项的字段加项目和就绪状态。 */
-	const view = async (row: SessionRow, readiness: Readiness): Promise<SessionView> => ({
+	/** 会话的视图：列表项的字段加项目、就绪状态和在等谁。 */
+	const view = async (row: SessionRow): Promise<SessionView> => ({
 		...toListItem(row, await sessions.lastOutcome(row.id)),
 		project: row.projectId,
-		readiness,
+		readiness: await service.readiness(row.projectId),
 		// 排队（#544）之前没有会话在排队，也就没有在等谁。
 		waiting_for: null,
 	});
@@ -57,28 +53,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (project === undefined || !(await sessions.projectExists(project))) {
 			return projectNotFound(reply);
 		}
-		return { readiness: await deps.readiness(), sessions: await sessions.list(project) };
+		const { sessions: items, truncated } = await sessions.list(project);
+		return { readiness: await service.readiness(project), sessions: items, truncated };
 	});
 
-	contractRoute(app, sessionsApi.create, async ({ params }, reply, request) => {
+	contractRoute(app, sessionsApi.create, async ({ params, body }, reply, request) => {
 		const actor = requireActor(request, reply);
 		if (actor === undefined) return reply;
 		const project = parseProjectId(params.project);
 		if (project === undefined || !(await sessions.projectExists(project))) {
 			return projectNotFound(reply);
 		}
-		return notConfigured(reply, await deps.readiness());
+		const created = await service.create(project, actor, body.text);
+		if (!created.ok) return refuse(reply, created);
+		return reply.code(201).send(await view(created.value));
 	});
 
 	contractRoute(app, sessionsApi.get, async ({ params, query }, reply) => {
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
 		const { events, hasMore } = await sessions.page(row.id, query.before);
-		const detail: SessionDetailResponse = {
-			...(await view(row, await deps.readiness())),
-			events,
-			has_more: hasMore,
-		};
+		const detail: SessionDetailResponse = { ...(await view(row)), events, has_more: hasMore };
 		return detail;
 	});
 
@@ -114,12 +109,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		return undefined;
 	});
 
-	contractRoute(app, sessionsApi.message, async ({ params }, reply, request) => {
+	contractRoute(app, sessionsApi.message, async ({ params, body }, reply, request) => {
 		const actor = requireActor(request, reply);
 		if (actor === undefined) return reply;
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
-		return notConfigured(reply, await deps.readiness());
+		const said = await service.say(row, actor, body.text);
+		return said.ok ? said.value : refuse(reply, said);
 	});
 
 	contractRoute(app, sessionsApi.stop, async ({ params }, reply, request) => {
@@ -127,6 +123,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (actor === undefined) return reply;
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
-		return notConfigured(reply, await deps.readiness());
+		const stopped = await service.stop(row);
+		if (!stopped.ok) return refuse(reply, stopped);
+		return view((await sessions.find(row.id)) ?? row);
 	});
 }
