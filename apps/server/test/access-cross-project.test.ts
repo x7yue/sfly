@@ -182,7 +182,9 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			},
 			{
 				name: "任务凭据（项目甲）",
-				headers: bearer(await accounts.taskCredential("alpha", task)),
+				// 任务凭据只在那次尝试还在 Agent 手上时有效：用一个正在执行的任务（项目乙里的那个）；任务结束的凭据是 401，
+				// 测不到「项目不对」这一层。
+				headers: bearer(await accounts.taskCredential("alpha", runningTask)),
 				expected: expectedForTask,
 			},
 		];

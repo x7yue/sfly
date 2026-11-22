@@ -2,6 +2,7 @@
 // 可以不连数据库单独测试；数据库实现在这个文件里。
 import { randomUUID } from "node:crypto";
 import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { taskIsActive } from "../agents/task-credentials.js";
 import type { Db } from "../db/database.js";
 import {
 	agentCredentials,
@@ -44,6 +45,11 @@ export interface StoredToken {
 	lastUsedAt: Date | null;
 	/** 会话令牌属于的会话（库里的约束要求会话令牌有会话）；其余令牌为 null。 */
 	sessionId: string | null;
+	/**
+	 * 任务凭据：这次任务尝试此刻还在 Agent 手上（派发中、执行中）才为 true，结束、取消、租约过期之后为 false，
+	 * 凭据随之失效（src/agents/task-credentials.ts）；其余令牌为 null。
+	 */
+	taskActive: boolean | null;
 }
 
 /** 库里的登录（控制台的 Cookie）。 */
@@ -144,10 +150,12 @@ export class DbAccessStore implements AccessStore {
 				revokedAt: apiTokens.revokedAt,
 				lastUsedAt: apiTokens.lastUsedAt,
 				sessionId: apiTokens.sessionId,
+				taskStatus: tasks.status,
 				user: userColumns,
 			})
 			.from(apiTokens)
 			.leftJoin(users, eq(users.id, apiTokens.userId))
+			.leftJoin(tasks, eq(tasks.id, apiTokens.taskId))
 			.where(eq(apiTokens.tokenHash, hash));
 		return (
 			row && {
@@ -161,6 +169,7 @@ export class DbAccessStore implements AccessStore {
 				revokedAt: row.revokedAt,
 				lastUsedAt: row.lastUsedAt,
 				sessionId: row.sessionId,
+				taskActive: row.taskStatus === null ? null : taskIsActive(row.taskStatus),
 			}
 		);
 	}

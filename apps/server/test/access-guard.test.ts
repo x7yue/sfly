@@ -115,6 +115,8 @@ describe("契约路由的访问检查", () => {
 			projectId: null,
 			scopes: [...SCOPES],
 			sessionId: fields.kind === "session" ? MY_SESSION : null,
+			// 任务凭据默认是「这次任务尝试还在 Agent 手上」。
+			taskActive: fields.kind === "task" ? true : null,
 			expiresAt: null,
 			revokedAt: null,
 			lastUsedAt: null,

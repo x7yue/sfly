@@ -721,7 +721,8 @@ function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
 						project: token.projectId,
 					};
 		case "task":
-			return token.projectId === null
+			// 任务凭据只在这次任务尝试还在 Agent 手上的时候有效（结束、取消、租约过期之后失效）。
+			return token.projectId === null || token.taskActive !== true
 				? undefined
 				: { kind: "task", tokenId: token.id, name: token.name, project: token.projectId };
 	}

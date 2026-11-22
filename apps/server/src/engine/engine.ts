@@ -30,6 +30,7 @@ import type { AgentEnvironmentFor } from "../agents/agent-environment.js";
 import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
 import { loadAgentTasks } from "../agents/agent-tasks.js";
 import { connectionBlock, freeSlots } from "../agents/dispatch-gate.js";
+import { mintTaskCredential } from "../agents/task-credentials.js";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import {
@@ -1368,7 +1369,15 @@ export class Engine implements AgentSessionHandler {
 			})
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
-		return create(ServerMessageSchema, { body: { case: "assign", value: content.assign } });
+		// 任务凭据：只在这次尝试有效，SDK 下载产物用（ADR 0029「凭据」）；和「派发中」的状态在同一个事务里。
+		const taskToken = await mintTaskCredential(
+			step.tx,
+			{ id: task.id, projectId: run.projectId },
+			step.now,
+		);
+		return create(ServerMessageSchema, {
+			body: { case: "assign", value: { ...content.assign, taskToken } },
+		});
 	}
 
 	/**
