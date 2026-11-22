@@ -165,6 +165,87 @@ test("线路：每条链一行，节点是站，已完成数写在右边；子�
 	expect(await segment("entry")).not.toBe(signal);
 });
 
+test("线路：链名列宽只按展开的运行块算：收起成一行的运行有很长的子流程名，不让展开的块多出空白", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 12 });
+	await publishPackage(controlPlane);
+	// 6 个以上运行：都是收起成一行的紧凑行。其中一个的子流程名字很长（收起时看不到它的线路）。
+	await manyRuns(controlPlane, agent, clock, 5);
+	const longName = "一个名字特别特别长的子流程用来撑宽链名那一列";
+	const base = mainChain(agent.name, ["prepare", "soak"]);
+	const scenario = await createScenario(controlPlane, "浸泡 长名", {
+		...base,
+		nodes: [
+			...base.nodes.slice(0, 2),
+			{ id: "spawn", kind: "async", params: {} },
+			...base.nodes.slice(2),
+			{ id: "sub", kind: "subflow_entry", name: longName },
+			{ id: "s1", kind: "package", package: "demo-checks", node: "ping", inputs: { host: "s1" } },
+		],
+		edges: [
+			{ from: "entry", to: "prepare", kind: "chain" },
+			{ from: "prepare", to: "spawn", kind: "chain" },
+			{ from: "spawn", to: "soak", kind: "chain" },
+			{ from: "sub", to: "s1", kind: "chain" },
+			{ from: "spawn", to: "sub", kind: "dispatch" },
+		],
+	});
+	await triggerRun(controlPlane, scenario);
+	for (let i = 0; i < 3; i++) {
+		const task = await agent.nextAssign();
+		if (task.nodeId === "prepare") await agent.succeed(task);
+	}
+	await page.goto("/");
+	const left = region(page, "正在运行");
+	await expect(left.getByRole("button", { expanded: false })).toHaveCount(6);
+
+	// 展开一个只有主链的运行块：它的链名列只按它自己（「主链」）算，不被收起的那个运行的长名字撑宽。
+	await left.getByRole("button", { expanded: false }).last().click();
+	const lines = left.getByRole("region").getByRole("list", { name: "各链进度" });
+	await expect(lines).toHaveCount(1);
+	const labelColumn = await lines.evaluate((el) => {
+		const first = el.querySelector("li > span:first-child");
+		return first ? first.getBoundingClientRect().width : Number.NaN;
+	});
+	expect(labelColumn).toBeLessThan(80);
+});
+
+test("线路：上下排着的运行块里，线路从同一个横坐标开始（链名那一列同宽），链名都完整", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await seedWall({ page, controlPlane, connectAgent, clock });
+	await page.goto("/");
+	// 「撮合压测」有子流程（链名「子流程 sub」），「夜间巡检」只有主链：各块自己取链名的宽度时，线路的起点会错开。
+	const lines = (scenario: string) => block(page, scenario).getByRole("list", { name: "各链进度" });
+	const firstStation = (scenario: string) =>
+		lines(scenario).locator(":scope > li").first().getByRole("listitem").first();
+	await expect(lines("撮合压测").locator(":scope > li")).toHaveCount(2);
+	await expect(lines("夜间巡检").locator(":scope > li")).toHaveCount(1);
+	const [stress, nightly] = await Promise.all([
+		firstStation("撮合压测").boundingBox(),
+		firstStation("夜间巡检").boundingBox(),
+	]);
+	expect(stress?.x).toBeGreaterThan(0);
+	expect(Math.abs((stress?.x ?? 0) - (nightly?.x ?? Number.NaN))).toBeLessThan(1);
+
+	// 链名都完整（列宽按最长的链名估的，不够时末尾才省略）。
+	for (const scenario of ["撮合压测", "夜间巡检"]) {
+		for (const label of await lines(scenario).locator("> li > span:first-child").all()) {
+			const clipped = await label.evaluate((el) =>
+				[...el.querySelectorAll("[data-truncate-clip]")].some((c) => c.scrollWidth > c.clientWidth),
+			);
+			expect(clipped).toBe(false);
+		}
+	}
+});
+
 test("进行中的节点那一行：节点、Agent、尝试号、已执行时长；排队中的节点写状态；运行监控概览的链路里写法一样", async ({
 	page,
 	controlPlane,
@@ -180,10 +261,10 @@ test("进行中的节点那一行：节点、Agent、尝试号、已执行时长
 		block(page, "夜间巡检").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
 	).toHaveText(["pingagent-mac · 第 1 次尝试 · 排队中"]);
 
-	// 点进概览，停在排队上的运行仍写排队中的节点，不会整行消失。
+	// 点进概览，停在排队上的运行仍写排队中的节点，不会整行消失；概览里还写明在等谁、等了多久（#457）。
 	await page.goto(`/runs/${queued}?view=overview`);
 	await expect(page.getByRole("list", { name: "进行中的节点" }).getByRole("listitem")).toHaveText([
-		"ping agent-mac · 第 1 次尝试 · 排队中",
+		"ping 第 1 次尝试 · 排队中 · 等 agent-mac（不在线，已离线 1h 05m）· 排队 20s · 9m 40s 后超时",
 	]);
 });
 

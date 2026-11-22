@@ -1,4 +1,10 @@
-import { isNodeTimeout, nodeTimeoutMessage, type OrchestrationNode } from "@sfly/schema";
+import {
+	isNodeTimeout,
+	isQueueTimeout,
+	nodeTimeoutMessage,
+	type OrchestrationNode,
+	queueTimeoutMessage,
+} from "@sfly/schema";
 
 /**
  * 包节点执行配置的默认值（docs/SEMANTICS.md §3.3），单位：秒 / 次。
@@ -37,6 +43,26 @@ export function effectiveTimeout(
 export function nodeTimeoutProblem(label: string, written: unknown): string | undefined {
 	if (written === undefined || written === null || isNodeTimeout(written)) return undefined;
 	return nodeTimeoutMessage(label, written);
+}
+
+/**
+ * 包节点生效的排队超时（秒，docs/SEMANTICS.md §3.3）：场景里这个节点写的，没写就是平台默认的 10 分钟。
+ * 返回的永远是 1 到上限之间的正整数，排队截止时间（进入排队的时刻 + 它）一定是有效的时间；场景里写的值不合格时
+ * （升级前保存的版本里可能有）这里不采用它，由 {@link queueTimeoutProblem} 先报成配置错误，不会走到这里。
+ * 节点类型不能声明排队超时（只有超时可以，`NodeTypeMetadata.timeout`）。
+ */
+export function effectiveQueueTimeout(node: { queue_timeout?: number | undefined }): number {
+	return isQueueTimeout(node.queue_timeout) ? node.queue_timeout : NODE_DEFAULTS.queue_timeout;
+}
+
+/**
+ * 场景里这个节点写的排队超时不合格（不是 1 到 4294967295 之间的整数）时的说明，没写或合格时为 undefined。
+ * 排队时以配置错误失败（不重试）、触发前的预检阻断、画布的警告用同一句；保存时更早被拒绝，
+ * 这里管的是升级前保存的、已经在库里的值。`label` 是节点（`显示名称（节点 ID）`）。
+ */
+export function queueTimeoutProblem(label: string, written: unknown): string | undefined {
+	if (written === undefined || written === null || isQueueTimeout(written)) return undefined;
+	return queueTimeoutMessage(label, written);
 }
 
 /** 任务失败的错误类型（docs/SEMANTICS.md §3.3）。 */

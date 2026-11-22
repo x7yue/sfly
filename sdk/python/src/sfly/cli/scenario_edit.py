@@ -593,16 +593,20 @@ def _document_problems(document: Any) -> list[str]:
     return [f"  {where[key]}: {message}" for key in sorted(found) for message in sorted(found[key])]
 
 
+#: 超过上限时换成和控制面同一句中文的节点字段：场景里节点写的超时（#476）和排队超时（#559）。
+_LIMITED_NODE_FIELDS = ("timeout", "queue_timeout")
+
+
 def _message(error: ValidationError, document: Any) -> str:
-    """JSON Schema 的错误信息；节点的 `timeout` 超过上限时换成和控制面、`sfly build` 同一句中文
-    （写明是哪个节点、范围、实际是多少，#476）。"""
+    """JSON Schema 的错误信息；节点的 `timeout`、`queue_timeout` 超过上限时换成和控制面、
+    `sfly build` 同一句中文（写明是哪个节点、范围、实际是多少，#476、#559）。"""
     path = list(error.absolute_path)
     nodes = document.get("nodes") if isinstance(document, dict) else None
     if (
         error.validator == "maximum"
         and len(path) == 3
         and path[0] == "nodes"
-        and path[2] == "timeout"
+        and path[2] in _LIMITED_NODE_FIELDS
         and isinstance(nodes, list)
         and isinstance(path[1], int)
         and path[1] < len(nodes)
@@ -612,7 +616,7 @@ def _message(error: ValidationError, document: Any) -> str:
         name = node.get("display_name")
         label = f"{name}（{node.get('id')}）" if isinstance(name, str) and name else node.get("id")
         return (
-            f"节点 {label}：timeout 必须是 1 到 {error.validator_value} 之间的正整数（秒），"
+            f"节点 {label}：{path[2]} 必须是 1 到 {error.validator_value} 之间的正整数（秒），"
             f"实际是 {error.instance!r}"
         )
     return error.message

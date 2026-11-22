@@ -1,6 +1,6 @@
 import type { StoredNode, StoredOrchestrationDocument } from "@sfly/schema";
 import { subflowName } from "./chain-label.js";
-import { nodeTimeoutProblem } from "./node-config.js";
+import { nodeTimeoutProblem, queueTimeoutProblem } from "./node-config.js";
 import { nodeNameWithId } from "./node-display.js";
 
 /**
@@ -21,6 +21,8 @@ export interface StructureDocument {
 		subflow?: string | undefined;
 		/** 包节点写的超时（秒）。 */
 		timeout?: number | undefined;
+		/** 包节点写的排队超时（秒）。 */
+		queue_timeout?: number | undefined;
 	}[];
 	edges: readonly Pick<StoredOrchestrationDocument["edges"][number], "from" | "to" | "kind">[];
 }
@@ -49,7 +51,8 @@ export type StructureWarningCode =
 	| "nesting_too_deep"
 	| "orphan_node"
 	| "missing_agent"
-	| "timeout_out_of_range";
+	| "timeout_out_of_range"
+	| "queue_timeout_out_of_range";
 
 export interface StructureWarning {
 	code: StructureWarningCode;
@@ -397,11 +400,14 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 			);
 		}
 	}
-	// 节点写的超时超过派发能下发的范围（升级前保存的版本里可能有）：保存时已经拒绝，这里挡住触发、给画布一条警告。
+	// 节点写的超时超过派发能下发的范围、排队超时超过上限（升级前保存的版本里可能有）：保存时已经拒绝，这里挡住触发、给画布一条警告。
 	for (const node of doc.nodes) {
 		if (node.kind !== "package") continue;
 		const problem = nodeTimeoutProblem(nodeNameWithId(node), node.timeout);
 		if (problem) warn("timeout_out_of_range", problem, node.id, "timeout");
+		// 排队超时同理（#559）：排队截止时间要是有效的时间。
+		const queueProblem = queueTimeoutProblem(nodeNameWithId(node), node.queue_timeout);
+		if (queueProblem) warn("queue_timeout_out_of_range", queueProblem, node.id, "queue_timeout");
 	}
 	return warnings;
 }
