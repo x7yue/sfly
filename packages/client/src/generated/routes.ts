@@ -8,8 +8,12 @@ import type {
 	ActionSummaryView,
 	AgentView,
 	ArtifactView,
+	AssistantDeltaEvent,
+	CommitFile,
+	CreateSessionBody,
 	DashboardView,
 	DocumentDiffView,
+	ErrorClass,
 	FeishuBotName,
 	FeishuBotScenario,
 	FeishuBotView,
@@ -25,6 +29,7 @@ import type {
 	MetricSeriesQuery,
 	NodeName,
 	NodeTypeView,
+	NoticeKind,
 	OrchestrationDocument,
 	OrchestrationHeadView,
 	OrchestrationSummary,
@@ -61,7 +66,23 @@ import type {
 	RunView,
 	RunningTaskView,
 	SavedVersionView,
+	SendMessageBody,
+	SendMessageResult,
+	SessionDetailQuery,
+	SessionDetailResponse,
+	SessionEventsQuery,
+	SessionListResponse,
+	SessionTool,
+	SessionView,
+	SnapshotEvent,
+	SteerQueueEvent,
+	ThinkingEvent,
 	Timestamp,
+	TokenUsage,
+	ToolOutputEvent,
+	TurnLimit,
+	TurnOutcome,
+	TurnQueuedEvent,
 	VersionCheckView,
 	VersionSummaryView,
 } from "./types.js";
@@ -1077,6 +1098,209 @@ export interface Api {
 			}
 		>;
 	};
+	sessions: {
+		/**
+		 * `GET /projects/:project/sessions`
+		 *
+		 * 项目里的会话（最近活动在前），以及助手此刻能不能用。
+		 */
+		list: Endpoint<
+			{
+				params: {
+					project: string;
+				};
+			},
+			SessionListResponse
+		>;
+		/**
+		 * `POST /projects/:project/sessions`
+		 *
+		 * 新建一个会话，`text` 是它的第一句话，作为第一轮：写 `user_message` 和 `turn_started`，把这一轮交给助手服务。
+		 * 返回 201 和新会话。助手没有配置时 503 `assistant_not_configured`；这个项目已有一个会话在做 409 `project_busy`；
+		 * 助手服务连不上 503 `assistant_unavailable`，不留下会话。
+		 */
+		create: Endpoint<
+			{
+				params: {
+					project: string;
+				};
+				body: CreateSessionBody;
+			},
+			SessionView
+		>;
+		/**
+		 * `GET /sessions/:id`
+		 *
+		 * 一个会话和它最近的持久事件（至多一页，序号升序）；`before`（序号）往前翻页，`has_more` 为 true 表示更早的还有。
+		 */
+		get: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				query?: SessionDetailQuery;
+			},
+			SessionDetailResponse
+		>;
+		/**
+		 * `GET /sessions/:id/events`
+		 *
+		 * 实时推送一个会话的事件（SSE）：先按 `after` 和 `Last-Event-ID` 里较大的一个从库里补发，再接实时。
+		 * 事件名是事件的 `type`，data 是事件（`SessionEvent`）：持久的事件以会话内序号 `seq` 作事件 ID，
+		 * 不持久的（文字增量、工具输出、思考、排队状态、快照）没有 ID，不推进续传的位置。
+		 */
+		events: Stream<
+			{
+				params: {
+					id: string;
+				};
+				query?: SessionEventsQuery;
+			},
+			{
+				user_message: {
+					type: "user_message";
+					message_id: string;
+					text: string;
+					steer: boolean;
+					author: string;
+					author_user_id: string | null;
+					seq: number;
+					at: Timestamp;
+				};
+				turn_started: {
+					type: "turn_started";
+					turn: number;
+					seq: number;
+					at: Timestamp;
+				};
+				turn_queued: TurnQueuedEvent;
+				thinking: ThinkingEvent;
+				assistant_delta: AssistantDeltaEvent;
+				assistant_message: {
+					type: "assistant_message";
+					text: string;
+					usage: TokenUsage;
+					seq: number;
+					at: Timestamp;
+				};
+				tool_call: {
+					type: "tool_call";
+					call_id: string;
+					tool: SessionTool;
+					title: string;
+					seq: number;
+					at: Timestamp;
+				};
+				tool_output: ToolOutputEvent;
+				tool_result: {
+					type: "tool_result";
+					call_id: string;
+					is_error: boolean;
+					text: string;
+					truncated: boolean;
+					exit_code?: number;
+					diff?: string;
+					duration_ms: number;
+					seq: number;
+					at: Timestamp;
+				};
+				steer_queue: SteerQueueEvent;
+				notice: {
+					kind: NoticeKind;
+					type: "notice";
+					/** 给人看的一句话。 */
+					message: string;
+					/** 第几次重试（从 1 起）；只有 `retry`。 */
+					attempt?: number;
+					/** 最多重试几次；只有 `retry`。 */
+					max_attempts?: number;
+					/** 多久（毫秒）之后重试；只有 `retry`。 */
+					retry_delay_ms?: number;
+					/** 重试的原因按什么分；#548 起有值。 */
+					error_class?: ErrorClass;
+					seq: number;
+					at: Timestamp;
+				};
+				turn_end: {
+					type: "turn_end";
+					turn: number;
+					outcome: TurnOutcome;
+					reason: string;
+					steps?: number;
+					model_calls?: number;
+					duration_ms: number;
+					usage?: TokenUsage;
+					limit_kind?: TurnLimit;
+					error_class?: ErrorClass;
+					seq: number;
+					at: Timestamp;
+				};
+				platform: {
+					type: "platform";
+					kind: "commit";
+					turn: number;
+					hash: string;
+					files: CommitFile[];
+					diff: string;
+					truncated: boolean;
+					seq: number;
+					at: Timestamp;
+				} | {
+					type: "platform";
+					kind: "scenario_version";
+					turn: number;
+					scenario_id: string;
+					name: string;
+					version: number;
+					seq: number;
+					at: Timestamp;
+				} | {
+					type: "platform";
+					kind: "run";
+					turn: number;
+					run_id: string;
+					scenario_name: string;
+					seq: number;
+					at: Timestamp;
+				};
+				session_ended: {
+					type: "session_ended";
+					by: string;
+					seq: number;
+					at: Timestamp;
+				};
+				snapshot: SnapshotEvent;
+			}
+		>;
+		/**
+		 * `POST /sessions/:id/messages`
+		 *
+		 * 对会话说一句话：空闲时开始新的一轮，返回这句话的 `user_message` 的序号。在做时 409 `turn_running`
+		 * （#544 起改成插话）；已结束 409 `session_ended`。
+		 */
+		message: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: SendMessageBody;
+			},
+			SendMessageResult
+		>;
+		/**
+		 * `POST /sessions/:id/stop`
+		 *
+		 * 停止会话正在做的这一轮（把中止发给助手服务，这一轮的 `turn_end` 由助手服务的事件带回来）；不在做时什么也不做。
+		 */
+		stop: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			SessionView
+		>;
+	};
 	system: {
 		/**
 		 * `GET /health`
@@ -1175,6 +1399,14 @@ export const routes = {
 		get: { method: "GET", path: "/runs/:id", kind: "endpoint" },
 		cancel: { method: "POST", path: "/runs/:id/cancel", kind: "endpoint" },
 		events: { method: "GET", path: "/runs/:id/events", kind: "stream" },
+	},
+	sessions: {
+		list: { method: "GET", path: "/projects/:project/sessions", kind: "endpoint" },
+		create: { method: "POST", path: "/projects/:project/sessions", kind: "endpoint" },
+		get: { method: "GET", path: "/sessions/:id", kind: "endpoint" },
+		events: { method: "GET", path: "/sessions/:id/events", kind: "stream" },
+		message: { method: "POST", path: "/sessions/:id/messages", kind: "endpoint" },
+		stop: { method: "POST", path: "/sessions/:id/stop", kind: "endpoint" },
 	},
 	system: {
 		health: { method: "GET", path: "/health", kind: "endpoint" },
