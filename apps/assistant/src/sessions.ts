@@ -44,6 +44,12 @@ export const TURN_LIMITS = {
  */
 export const MAX_PROCESSES = 8;
 
+/**
+ * 中止到得比这一轮早（控制面等 `prompt` 的回应超时，补发一次中止；那句 `prompt` 还在路上）：中止记下来，这么久之内
+ * 到的下一轮直接以 `stopped` 结束，不拉起 pi。控制面等回应只等 10 秒，补发的中止紧跟着发出，留足余量。
+ */
+export const EARLY_ABORT_WINDOW_MS = 30_000;
+
 /** 模型没给超时的命令用多少秒：和一轮的时间上限一样（到了上限这一轮反正要结束）。 */
 const DEFAULT_COMMAND_TIMEOUT_SECONDS = TURN_LIMITS.durationMs / 1000;
 
@@ -61,6 +67,7 @@ export interface SessionManagerOptions {
 	log: (message: string) => void;
 	limits?: { modelCalls: number; durationMs: number };
 	maxProcesses?: number;
+	earlyAbortWindowMs?: number;
 	killGraceMs?: number;
 }
 
@@ -85,6 +92,10 @@ interface Session {
 	closing: Promise<void> | undefined;
 	turn: Turn | undefined;
 	lastActive: number;
+	/** 这个助手服务进程里，这个会话最近一轮的轮次（重启之后不知道）。 */
+	lastTurn: number | undefined;
+	/** 没有在做的一轮时收到的中止：{@link EARLY_ABORT_WINDOW_MS} 之内到的下一轮直接结束。 */
+	earlyAbort: { at: number; afterTurn: number | undefined } | undefined;
 }
 
 export type PromptResult =
@@ -126,6 +137,17 @@ export class SessionManager {
 		if (session.turn) {
 			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
 		}
+		session.redactor.add(Object.values(body.secret_env));
+		if (this.#abortedEarly(session, body.turn)) {
+			// 控制面在这一轮登记下来之前就要求停止了：不拉起 pi，直接结束。
+			const turn = this.#register(session, body.turn);
+			this.options.log(`会话 ${session.id} 第 ${body.turn} 轮：到之前已经收到中止，直接结束`);
+			this.#end(session, turn, {
+				outcome: "stopped",
+				reason: "这一轮到之前已经要求停止了",
+			});
+			return { ok: true };
+		}
 		if (!session.process || session.process.exited) {
 			if (this.activeProcesses >= this.#maxProcesses && !this.#evictIdle()) {
 				return {
@@ -136,7 +158,6 @@ export class SessionManager {
 				};
 			}
 		}
-		session.redactor.add(Object.values(body.secret_env));
 		try {
 			this.#writeTurnConfig(session, body);
 		} catch (error) {
@@ -147,16 +168,7 @@ export class SessionManager {
 				message: `写不了这一轮的配置：${error instanceof Error ? error.message : String(error)}`,
 			};
 		}
-		const turn: Turn = {
-			number: body.turn,
-			startedAt: Date.now(),
-			translator: new TurnTranslator(session.redactor),
-			timer: undefined,
-			ending: undefined,
-			ended: false,
-		};
-		session.turn = turn;
-		session.lastActive = Date.now();
+		const turn = this.#register(session, body.turn);
 		turn.timer = setTimeout(
 			() =>
 				this.#stop(session, turn, {
@@ -170,17 +182,53 @@ export class SessionManager {
 		return { ok: true };
 	}
 
+	/** 登记这一轮（还没有拉起 pi）。 */
+	#register(session: Session, number: number): Turn {
+		const turn: Turn = {
+			number,
+			startedAt: Date.now(),
+			translator: new TurnTranslator(session.redactor),
+			timer: undefined,
+			ending: undefined,
+			ended: false,
+		};
+		session.turn = turn;
+		session.lastTurn = number;
+		session.lastActive = Date.now();
+		return turn;
+	}
+
+	/**
+	 * 这一轮到之前是不是已经收到过中止：中止在 {@link EARLY_ABORT_WINDOW_MS} 之内，并且这一轮紧接着中止时最近的那一轮
+	 * （控制面没接住的那一轮，下一次是新的轮次；不知道最近一轮时只看时间）。看过就清掉：只作用于一轮。
+	 */
+	#abortedEarly(session: Session, number: number): boolean {
+		const early = session.earlyAbort;
+		session.earlyAbort = undefined;
+		if (!early) return false;
+		const window = this.options.earlyAbortWindowMs ?? EARLY_ABORT_WINDOW_MS;
+		if (Date.now() - early.at > window) return false;
+		return early.afterTurn === undefined || number === early.afterTurn + 1;
+	}
+
 	/** 这个会话现在的 pi 进程号（诊断和测试用）；没有活着的进程时 undefined。 */
 	pid(sessionId: string): number | undefined {
 		const process = this.#sessions.get(sessionId)?.process;
 		return process && !process.exited ? process.pid : undefined;
 	}
 
-	/** `POST /sessions/:id/abort`：竖切版，直接结束 pi 进程，这一轮以 `stopped` 结束（#544 改成先中止）。 */
+	/**
+	 * `POST /sessions/:id/abort`：竖切版，直接结束 pi 进程，这一轮以 `stopped` 结束（#544 改成先中止）。
+	 * 没有在做的一轮时不当成没这回事：控制面等 `prompt` 的回应超时之后会补发中止，那句 `prompt` 可能还没到。
+	 * 记下来，紧接着到的那一轮直接结束（{@link EARLY_ABORT_WINDOW_MS}）。
+	 */
 	abort(sessionId: string): void {
-		const session = this.#sessions.get(sessionId);
-		const turn = session?.turn;
-		if (!session || !turn) return;
+		const session = this.#session(sessionId);
+		const turn = session.turn;
+		if (!turn) {
+			session.earlyAbort = { at: Date.now(), afterTurn: session.lastTurn };
+			return;
+		}
 		this.#stop(session, turn, { outcome: "stopped", reason: "用户停止了这一轮" });
 	}
 
@@ -211,6 +259,8 @@ export class SessionManager {
 				closing: undefined,
 				turn: undefined,
 				lastActive: Date.now(),
+				lastTurn: undefined,
+				earlyAbort: undefined,
 			};
 			this.#sessions.set(id, session);
 		}

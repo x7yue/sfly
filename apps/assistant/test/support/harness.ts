@@ -41,6 +41,7 @@ export interface HarnessOptions {
 	maxProcesses?: number;
 	killGraceMs?: number;
 	hostEnv?: NodeJS.ProcessEnv;
+	earlyAbortWindowMs?: number;
 }
 
 export class Harness {
@@ -90,6 +91,7 @@ export class Harness {
 			limits: options.limits,
 			maxProcesses: options.maxProcesses,
 			killGraceMs: options.killGraceMs,
+			earlyAbortWindowMs: options.earlyAbortWindowMs,
 		});
 		const server = createAssistantServer({
 			secret: SECRET,

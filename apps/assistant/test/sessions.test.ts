@@ -245,6 +245,48 @@ describe("保密环境变量按值打码", () => {
 	});
 });
 
+describe("中止比这一轮先到（控制面等 prompt 的回应超时后补发的中止）", () => {
+	const piStarted = (harness: Harness, id: string) =>
+		rawEvents(harness, id).some((r) => r.type === "fake_env");
+
+	it("没有在做的一轮时收到中止：记下来，紧接着到的那一轮直接以 stopped 结束，不拉起 pi", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		expect((await harness.abort(id)).status).toBe(202);
+		expect((await harness.prompt(id, { text: "hang" })).status).toBe(202);
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "stopped",
+			steps: 0,
+			model_calls: 0,
+		});
+		expect(piStarted(harness, id)).toBe(false);
+		expect(harness.sessions.activeProcesses).toBe(0);
+		// 只作用于一轮：下一轮照常。
+		await harness.prompt(id, { turn: 2, text: "settle" });
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+	});
+
+	it("中止之后、知道最近一轮时：只作用于紧接着的那一轮（那一轮没到，下一次是新的轮次，照常做）", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		await harness.turnEnd(id);
+		await harness.abort(id);
+		// 第 2 轮没到（丢了），控制面记了失败，用户再说的是第 3 轮。
+		await harness.prompt(id, { turn: 3, text: "settle" });
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+	});
+
+	it("中止之后过了时间窗才到的一轮照常做；一轮结束之后的重复中止不影响下一轮", async () => {
+		const harness = await start({ earlyAbortWindowMs: 50 });
+		const id = crypto.randomUUID();
+		await harness.abort(id);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		await harness.prompt(id, { text: "settle" });
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+	});
+});
+
 describe("看管进程的边界", () => {
 	it("pi 的标准错误写进 pi-stderr.log 之前也打码（值跨两块写也认得出）", async () => {
 		const harness = await start();
