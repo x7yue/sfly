@@ -230,15 +230,25 @@ for (const viewport of VIEWPORTS) {
 			// 空白处：工具条左边一点、离窗口底部 130px（菜单有 6 项约 190px 高，往下展开放不下，会贴着窗口底边，
 			// 右边缘伸到工具条的最左端上面）。
 			const dockBox = await rectOf(dock(page));
-			await page.mouse.click(Math.max(40, dockBox.x - 150), viewport.height - 130, {
-				button: "right",
-			});
+			// 点的地方要真的是画布空白处（不是节点卡片、子流程区域）：在工具条左边一点的几处里取第一个。
+			const candidates = [150, 120, 180, 90, 210].flatMap((dx) =>
+				[130, 100, 160, 70].map((dy) => ({ x: dockBox.x - dx, y: viewport.height - dy })),
+			);
+			const blank = await page.evaluate(
+				(points) =>
+					points.find(({ x, y }) =>
+						document.elementFromPoint(x, y)?.classList.contains("react-flow__pane"),
+					),
+				candidates,
+			);
+			if (!blank) throw new Error(`${size}：工具条左边找不到画布空白处`);
+			await page.mouse.click(blank.x, blank.y, { button: "right" });
 			const menu = paneMenu(page);
 			await expect(menu).toBeVisible();
 			const menuBox = await rectOf(menu);
 			expect(
 				intersects(menuBox, dockBox),
-				`${size}：菜单 ${JSON.stringify(menuBox)}、工具条 ${JSON.stringify(dockBox)}`,
+				`${size}：点在 ${JSON.stringify(blank)}，菜单 ${JSON.stringify(menuBox)}、工具条 ${JSON.stringify(dockBox)}`,
 			).toBe(false);
 		});
 
