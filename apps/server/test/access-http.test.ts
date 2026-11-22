@@ -267,16 +267,25 @@ describe("带凭据的请求", () => {
 			packageArchive(packageMetadata({ name, version }), {
 				[`${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`]: strToU8(`wheel ${name}`),
 			}) as Uint8Array<ArrayBuffer>;
-		const publish = (headers: Record<string, string>, name: string, query = "") =>
+		const publish = (
+			headers: Record<string, string>,
+			name: string,
+			query = "",
+			version = "1.0.0",
+		) =>
 			cp.fetch(`/packages${query}`, {
 				method: "POST",
 				headers: { "content-type": "application/octet-stream", ...headers },
-				body: archive(name),
+				body: archive(name, version),
 			});
 		const projectOf = async (name: string) =>
 			(await db.query("select project_id from node_packages where name = $1", [name])).rows.map(
 				(r) => r.project_id,
 			);
+		const versionsOf = async (name: string) =>
+			(
+				await db.query("select version from node_packages where name = $1 order by version", [name])
+			).rows.map((r) => r.version);
 		const error = async (res: Response) =>
 			((await res.json()) as { error: { code: string; message: string } }).error;
 
@@ -327,6 +336,46 @@ describe("带凭据的请求", () => {
 			expect((await db.query("select project_id from platform_admin_actions")).rows).toEqual([
 				{ project_id: "default" },
 			]);
+		});
+
+		it("公共项目里和已有版本规范化（PEP 440）之后相同的版本不能再发布：409，写明已有的是哪个；一模一样的版本也 409；不同的版本照常；默认项目不受这条限制", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = bearer(await accounts.personalToken(admin));
+			expect((await publish(token, "sfly-std", "?project=public", "0.9.0")).status).toBe(201);
+
+			for (const same of ["0.9", "0.9.0.0", "00.9.0"]) {
+				const res = await publish(token, "sfly-std", "?project=public", same);
+				expect(res.status, same).toBe(409);
+				const { code, message } = await error(res);
+				expect(code, same).toBe("conflict");
+				expect(message, same).toContain(`sfly-std@${same}`);
+				expect(message, same).toContain("公共项目里已有的 sfly-std@0.9.0");
+			}
+			// 一模一样的版本：照旧是「已存在」。
+			const identical = await publish(token, "sfly-std", "?project=public", "0.9.0");
+			expect(identical.status).toBe(409);
+			expect((await error(identical)).message).toContain("已存在");
+			// 不同的版本、别的名字照常发布。
+			expect((await publish(token, "sfly-std", "?project=public", "0.9.1")).status).toBe(201);
+			expect((await publish(token, "other", "?project=public", "0.9")).status).toBe(201);
+			expect(await versionsOf("sfly-std")).toEqual(["0.9.0", "0.9.1"]);
+			// 默认项目里发布不受这条限制（索引只列公共项目里的包）。
+			expect((await publish(token, "sfly-std", "", "0.9")).status).toBe(201);
+			expect((await projectOf("sfly-std")).sort()).toEqual(["default", "public", "public"]);
+		});
+
+		it("同时发布规范化之后相同的两个版本：只有一个成功，另一个 409（咨询锁，不会两个都通过检查）", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = bearer(await accounts.personalToken(admin));
+
+			const results = await Promise.all(
+				["1.5", "1.5.0", "1.5.0.0", "01.5"].map((version) =>
+					publish(token, "racing", "?project=public", version),
+				),
+			);
+
+			expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);
+			expect(await versionsOf("racing")).toHaveLength(1);
 		});
 
 		it("别的凭据指明 public 被拒绝：项目管理员、编辑者、项目令牌、不是平台管理员的令牌 403，不带凭据 401，信息写明原因；什么也没有发布", async () => {

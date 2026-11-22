@@ -2,13 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PackageMetadata } from "@sfly/schema";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
-import { type ProjectId, readableProjects } from "../projects/project-id.js";
+import { type ProjectId, PUBLIC_PROJECT, readableProjects } from "../projects/project-id.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
+import { sameVersion } from "./pep440.js";
 
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */
 export const METADATA_FILE = "sfly-package.json";
@@ -137,6 +138,32 @@ export interface PackageRepositoryDeps {
 }
 
 /**
+ * 公共项目里同一个名字的版本，按 PEP 440 规范化之后相同的（`0.9` 和 `0.9.0`）只能有一个：控制面的包索引（#556）对同一个
+ * 版本只列最早发布的那个，后发布的归档会被悄悄丢在索引外，所以发布时就拒绝，报错写明已有的是哪个，索引里的去重只剩防御作用
+ * （升级迁移、手工改库留下的数据）。同一个名字的并发发布排队（咨询锁，随事务释放），不会两个都通过检查。
+ * 一模一样的版本（`名字@版本` 相同）由插入时的主键冲突拒绝，信息不同。
+ */
+async function rejectEquivalentVersion(
+	tx: Tx,
+	{ name, version }: { name: string; version: string },
+): Promise<void> {
+	await tx.execute(
+		sql`select pg_advisory_xact_lock(hashtextextended(${`sfly:public-package:${name}`}, 0))`,
+	);
+	const existing = await tx
+		.select({ version: nodePackages.version })
+		.from(nodePackages)
+		.where(and(eq(nodePackages.projectId, PUBLIC_PROJECT), eq(nodePackages.name, name)));
+	const same = existing.find((row) => row.version !== version && sameVersion(row.version, version));
+	if (same) {
+		throw new PackageError(
+			"conflict",
+			`节点包 ${name}@${version} 和公共项目里已有的 ${name}@${same.version} 是同一个版本（按 PEP 440 规范化之后相同），不能再发布；已发布的版本不能覆盖`,
+		);
+	}
+}
+
+/**
  * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
  * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
  * （{@link readableProjects}）。`名字@版本` 仍然全局唯一（主键不变，第二步改成项目内唯一，#502），所以磁盘上的路径
@@ -158,6 +185,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			const filePath = join("packages", metadata.name, `${metadata.version}.sflypkg`);
 
 			return db.transaction(async (tx) => {
+				if (project === PUBLIC_PROJECT) await rejectEquivalentVersion(tx, metadata);
 				const [row] = await tx
 					.insert(nodePackages)
 					.values({

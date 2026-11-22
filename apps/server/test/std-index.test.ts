@@ -7,7 +7,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
-import { publishIntoPublicProject } from "./support/std-package.js";
+import { moveIntoPublicProject, publishIntoPublicProject } from "./support/std-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const sha256 = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex");
@@ -217,7 +217,9 @@ describe("wheel 要和归档登记的名字、版本对得上", () => {
 			[shorter, "0.8"],
 			[built, "0.8.0.0"],
 		] as const) {
-			await publishIntoPublicProject(cp, archive.archive, { name: "sfly-std", version });
+			// 发布到公共项目时会拒绝规范化之后相同的版本（#565）：这里要的是升级迁移、手工改库留下的数据，
+			// 所以挪进去，索引自己的去重才是被测的东西。
+			await moveIntoPublicProject(cp, archive.archive, { name: "sfly-std", version });
 			// 发布时间不同（测试里的时钟是手动的）：「最早发布的」按它排，不是按版本的写法。
 			(cp.clock as ManualClock).advance(1_000);
 		}
