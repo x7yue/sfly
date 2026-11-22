@@ -96,6 +96,11 @@ export const TokenView = z.object({
 	revoked_at: Timestamp.nullable(),
 	/** 最后一次使用的时间，精确到分钟（为了不在每个请求上写库，一分钟内的多次使用只记一次）；从没用过为 null。 */
 	last_used_at: Timestamp.nullable(),
+	/**
+	 * 项目令牌的签发人（显示名）：项目令牌属于项目，不随签发人失效（签发人被停用、移出项目之后照样有效），但记着是谁签发的。
+	 * 个人令牌（签发人就是所属用户）和这一项记录加进来之前签发的为 null。
+	 */
+	issued_by: z.string().nullable(),
 	current: z.boolean(),
 });
 

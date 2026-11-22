@@ -22399,6 +22399,12 @@
                     }
                   ]
                 },
+                "issued_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "current": {
                   "type": "boolean"
                 }
@@ -22414,6 +22420,7 @@
                 "expires_at",
                 "revoked_at",
                 "last_used_at",
+                "issued_by",
                 "current"
               ]
             }
@@ -22592,6 +22599,13 @@
             ],
             "description": "最后一次使用的时间，精确到分钟（为了不在每个请求上写库，一分钟内的多次使用只记一次）；从没用过为 null。"
           },
+          "issued_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "项目令牌的签发人（显示名）：项目令牌属于项目，不随签发人失效（签发人被停用、移出项目之后照样有效），但记着是谁签发的。\n个人令牌（签发人就是所属用户）和这一项记录加进来之前签发的为 null。"
+          },
           "current": {
             "type": "boolean"
           },
@@ -22610,11 +22624,18 @@
           "expires_at",
           "revoked_at",
           "last_used_at",
+          "issued_by",
           "current",
           "token"
         ]
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）"
+        }
+      ]
     },
     {
       "method": "DELETE",
@@ -22754,6 +22775,12 @@
                     }
                   ]
                 },
+                "issued_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "current": {
                   "type": "boolean"
                 }
@@ -22769,6 +22796,7 @@
                 "expires_at",
                 "revoked_at",
                 "last_used_at",
+                "issued_by",
                 "current"
               ]
             }
@@ -22920,6 +22948,13 @@
             ],
             "description": "最后一次使用的时间，精确到分钟（为了不在每个请求上写库，一分钟内的多次使用只记一次）；从没用过为 null。"
           },
+          "issued_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "项目令牌的签发人（显示名）：项目令牌属于项目，不随签发人失效（签发人被停用、移出项目之后照样有效），但记着是谁签发的。\n个人令牌（签发人就是所属用户）和这一项记录加进来之前签发的为 null。"
+          },
           "current": {
             "type": "boolean"
           },
@@ -22938,11 +22973,18 @@
           "expires_at",
           "revoked_at",
           "last_used_at",
+          "issued_by",
           "current",
           "token"
         ]
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）"
+        }
+      ]
     },
     {
       "method": "DELETE",

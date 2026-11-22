@@ -5,6 +5,7 @@
 //   不靠进程里的表。HTTP 层的测试里访问检查先在内存里判断过一遍，数据库这一条条件拿掉也看不出来，所以直接测存储。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DbAccessStore } from "../src/auth/access-store.js";
+import { hashCredential } from "../src/auth/credential-hash.js";
 import { RevocationBus } from "../src/auth/revocations.js";
 import { TokenService } from "../src/auth/tokens.js";
 import { type Database, openDatabase } from "../src/db/database.js";
@@ -38,6 +39,17 @@ describe("令牌服务和访问存储", () => {
 		if (DEFAULT === undefined) throw new Error("默认项目的标识写不对");
 		return DEFAULT;
 	};
+	/** 签发人：库里要有这个用户（令牌行的签发人是指向用户的外键）。 */
+	let issuer: { id: string; displayName: string };
+	beforeEach(async () => {
+		const id = crypto.randomUUID();
+		await database.pool.query(
+			`insert into users (id, login_name, display_name, password_hash, is_platform_admin, created_at)
+			values ($1, 'issuer', '签发人', 'scrypt$placeholder', false, now())`,
+			[id],
+		);
+		issuer = { id, displayName: "签发人" };
+	});
 
 	describe("签发项目令牌：范围不超过签发人此刻的范围，也不能带「管理」", () => {
 		it("签发人的范围比要的窄：scope_exceeds_role，说明超出了哪些、签发人能有哪些；没有签出令牌", async () => {
@@ -46,6 +58,7 @@ describe("令牌服务和访问存储", () => {
 				project(),
 				{ name: "自动化", scopes: ["read", "run", "edit"] },
 				["read", "manage"],
+				issuer,
 			);
 			expect(result).toEqual({
 				ok: false,
@@ -57,11 +70,12 @@ describe("令牌服务和访问存储", () => {
 		});
 
 		it("没超过：签出；签发人的「管理」不会被带进项目令牌", async () => {
-			const result = await tokens.issueProject(project(), { name: "只读", scopes: ["read"] }, [
-				"read",
-				"run",
-				"manage",
-			]);
+			const result = await tokens.issueProject(
+				project(),
+				{ name: "只读", scopes: ["read"] },
+				["read", "run", "manage"],
+				issuer,
+			);
 			expect(result.ok).toBe(true);
 			const [row] = await database.db.select().from(apiTokens);
 			expect(row?.scopes).toEqual(["read"]);
@@ -72,18 +86,46 @@ describe("令牌服务和访问存储", () => {
 				project(),
 				{ name: "想管理", scopes: ["read", "manage"] },
 				["read", "run", "edit", "session_build", "publish", "manage"],
+				issuer,
 			);
 			expect(result).toEqual({ ok: false, reason: "manage_scope_not_allowed" });
 			expect(await database.db.select().from(apiTokens)).toHaveLength(0);
 		});
 	});
 
+	describe("项目令牌记着签发人", () => {
+		it("记在令牌行上，列出时带显示名；个人令牌不记；签发人之后被停用，令牌照样有效、签发人还在", async () => {
+			const result = await tokens.issueProject(
+				project(),
+				{ name: "ci", scopes: ["read"] },
+				["read", "manage"],
+				issuer,
+			);
+			if (!result.ok) throw new Error(`签发失败：${result.reason}`);
+			expect(result.issued.view.issued_by).toBe("签发人");
+			const [row] = await database.db.select().from(apiTokens);
+			expect(row?.issuedByUserId).toBe(issuer.id);
+			expect(row?.userId).toBeNull();
+			const listed = await tokens.listProject(project());
+			expect(listed.map((t) => [t.name, t.issued_by])).toEqual([["ci", "签发人"]]);
+			// 签发人被停用：项目令牌不随他失效（属于项目），记录还在，列出时仍然看得到是谁签的。
+			await database.pool.query("update users set disabled_at = now() where id = $1", [issuer.id]);
+			const store = new DbAccessStore(database.db);
+			const found = await store.tokenByHash(hashCredential(result.issued.token));
+			expect(found?.kind).toBe("project");
+			expect(found?.revokedAt).toBeNull();
+			expect((await tokens.listProject(project()))[0]?.issued_by).toBe("签发人");
+		});
+	});
+
 	describe("最后使用时间（AccessStore.touchToken）：条件在更新语句里", () => {
 		async function aToken() {
-			const result = await tokens.issueProject(project(), { name: "节流", scopes: ["read"] }, [
-				"read",
-				"manage",
-			]);
+			const result = await tokens.issueProject(
+				project(),
+				{ name: "节流", scopes: ["read"] },
+				["read", "manage"],
+				issuer,
+			);
 			if (!result.ok) throw new Error(`签发失败：${result.reason}`);
 			return result.issued.view.id;
 		}
