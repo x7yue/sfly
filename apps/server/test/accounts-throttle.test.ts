@@ -238,7 +238,7 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 		const accounts = await withAlice(service({ hold: release.promise, gate }));
 		// 一次验证占住闸；这时第一次碰到不存在的登录名：这一次没有去验证，503。
 		const occupying = accounts.login("alice", "wrong-password-0", "10.0.0.1");
-		await sleep(20);
+		await vi.waitFor(() => expect(gate.active).toBe(1));
 		await expect(accounts.login("ghost", "wrong-password-0", "10.0.0.2")).rejects.toBeInstanceOf(
 			PasswordGateBusy,
 		);
@@ -279,7 +279,7 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 		const release = deferred();
 		const accounts = await withAlice(service({ hold: release.promise, gate }));
 		const occupying = accounts.login("alice", PASSWORD, "10.0.0.1");
-		await sleep(20);
+		await vi.waitFor(() => expect(gate.active).toBe(1));
 		const verifiedBefore = verifyCalls;
 		// 8 个来源地址各排着一个错密码（每个地址只有一次尝试，限速不会先拦下它们），然后全部断开。
 		const controllers = Array.from({ length: 8 }, () => new AbortController());
@@ -289,7 +289,7 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 				(error: unknown) => error,
 			),
 		);
-		await sleep(20);
+		await vi.waitFor(() => expect(gate.waiting).toBe(8));
 		expect(gate.waiting).toBe(8);
 		for (const controller of controllers) controller.abort();
 		const outcomes = await Promise.all(queued);
@@ -315,7 +315,7 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 		const accounts = await withAlice(service({ hold: release.promise, gate }));
 		const id = (await accounts.findByLoginName("alice"))?.id ?? "";
 		const occupying = accounts.login("alice", PASSWORD, "10.0.0.1");
-		await sleep(20);
+		await vi.waitFor(() => expect(gate.active).toBe(1));
 		const verifiedBefore = verifyCalls;
 		const controller = new AbortController();
 		const queued = accounts
@@ -331,7 +331,7 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 				() => "completed",
 				(error: unknown) => error,
 			);
-		await sleep(20);
+		await vi.waitFor(() => expect(gate.waiting).toBe(1));
 		controller.abort();
 		expect(await queued).toBeInstanceOf(PasswordGateAborted);
 		release.resolve();
