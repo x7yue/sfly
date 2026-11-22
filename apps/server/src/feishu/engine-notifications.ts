@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type { RunRow, Step } from "../engine/step.js";
 import type { FeishuDelivery } from "./feishu-delivery.js";
 import { enqueueRunNotification } from "./run-notification.js";
@@ -6,6 +7,16 @@ import { enqueueRunNotification } from "./run-notification.js";
 export interface PendingNotifications {
 	/** 这个事务往飞书发送队列里写了消息：提交后唤醒投递。 */
 	queued: boolean;
+}
+
+/** 事务还能不能继续用：一条最轻的查询。 */
+async function usable(tx: Step["tx"]): Promise<boolean> {
+	try {
+		await tx.execute(sql`select 1`);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 export const noPendingNotifications = (): PendingNotifications => ({ queued: false });
@@ -53,6 +64,10 @@ export class EngineNotifications {
 				);
 			});
 		} catch (error) {
+			// 通知自己的错：保存点已经回滚，事务还能用。连接断了这类错不是通知自己的：回滚保存点都失败，整个事务已经没了，
+			// 往外抛，由已有的处理接手（事件处理失败，Agent 的流被关，它重连后重发结果）；这时不能记「这次不发」，
+			// 因为运行结束的事务没有提交，不是「不发、运行照常结束」。用一条最轻的查询判断事务还能不能用。
+			if (!(await usable(step.tx))) throw error;
 			this.deps.onError(error, finished.run.id);
 		}
 	}

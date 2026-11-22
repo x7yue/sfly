@@ -10,7 +10,7 @@ import { readNodeError } from "../src/runs/run-read.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
-import { ErrorKind, FakeAgent } from "./support/fake-agent.js";
+import { ErrorKind, FakeAgent, TaskStatus } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -755,6 +755,111 @@ describe("运行通知", () => {
 			const runId = await runEnding(id, "failed");
 
 			await expectRunEndedAndNothingSent(runId, /读不出来/);
+		});
+
+		// 保存点里写到一半出错：入队和运行上的记录是同一个保存点里的两次写入，一起回滚。用数据库触发器让其中一次写入失败
+		// （应用代码里没有别的办法让「语句本身合法、写入却失败」）。
+		it.each([
+			[
+				"runs",
+				"update",
+				"if new.notification_bot is not null and old.notification_bot is null then raise exception 'probe: write to runs fails'; end if;",
+				/Failed query: update "runs"/,
+			],
+			[
+				"feishu_messages",
+				"insert",
+				"raise exception 'probe: insert into feishu_messages fails';",
+				/Failed query: insert into "feishu_messages"/,
+			],
+		] as const)("保存点里写到一半出错（%s 上的触发器抛错）：入队和运行上的记录一起回滚，运行照常结束，下一次通知照常", async (table, event, body, failed) => {
+			const id = await scenario(single());
+			const fn = `probe_fail_${table}`;
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				await client.query(
+					`create function ${fn}() returns trigger language plpgsql as $$ begin ${body} return new; end $$`,
+				);
+				await client.query(
+					`create trigger ${fn} before ${event} on ${table} for each row execute function ${fn}()`,
+				);
+
+				const runId = await runEnding(id, "failed");
+
+				// 回滚的是保存点里的全部：发送队列里没有这个运行的消息，运行上没有记「发给哪个机器人」，也没有「未发送」。
+				const messages = await client.query(
+					"select count(*)::int as n from feishu_messages where run_id = $1",
+					[runId],
+				);
+				expect(messages.rows[0]?.n).toBe(0);
+				const run = await client.query(
+					"select status, notification_bot, notification_not_sent from runs where id = $1",
+					[runId],
+				);
+				expect(run.rows[0]).toMatchObject({
+					status: "failed",
+					notification_bot: null,
+					notification_not_sent: null,
+				});
+				await expectRunEndedAndNothingSent(runId, failed);
+
+				// 触发器拿掉之后，下一次运行的通知照常发出。
+				await client.query(`drop trigger ${fn} on ${table}`);
+				const next = await runEnding(id, "failed");
+				await onlyCard();
+				expect((await api.run(next)).run_notification).toMatchObject({ bot: "ops" });
+			} finally {
+				await client.query(`drop trigger if exists ${fn} on ${table}`);
+				await client.query(`drop function if exists ${fn}()`);
+				await client.end();
+			}
+		});
+
+		// 连接断了（不是通知自己的错）：保存点接不住，整个事务都没了。这时不能再记一条「这次不发」：它不是真的——
+		// 运行结束的事务没有提交，Agent 的流被关，它重连重发结果，运行才结束，卡片才发出。错误照原样往外抛给已有的处理。
+		it("连接在保存点里断开：错误往外抛，不记「这次不发」；Agent 重连重发结果之后运行结束、卡片发出一张", async () => {
+			const id = await scenario(single());
+			const actual =
+				await vi.importActual<typeof import("../src/runs/run-read.js")>("../src/runs/run-read.js");
+			let calls = 0;
+			vi.mocked(readNodeError).mockImplementation(async (db, input) => {
+				calls++;
+				if (calls === 1) {
+					// 被终止的连接，pg 会在这个连接上触发 error 事件；连接池只在连接空闲时接这个事件，借出去的连接上没有监听者，
+					// 事件就成了未捕获的异常（这和通知无关，是 pg 的行为）：测试自己接住它。
+					const session = (db as unknown as { session?: { client?: pg.PoolClient } }).session;
+					session?.client?.on("error", () => {});
+					await db.execute(sql`select pg_terminate_backend(pg_backend_pid())`);
+				}
+				return actual.readNodeError(db, input);
+			});
+			const runId = await api.triggerOk(id);
+			const assigned = await agent.nextAssign();
+			await agent.fail(assigned, "boom").catch(() => {});
+			expect(errors.mock.calls.map((call) => call.map(String).join(" ")).join("\n")).not.toMatch(
+				/run notification: not sent/,
+			);
+
+			// 重连，带上手上的任务，重发结果：这一次的事务正常提交。
+			const again = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-a",
+				slots: 4,
+				runningTasks: [{ taskId: assigned.taskId, attempt: assigned.attempt, started: true }],
+			});
+			try {
+				await again.report({
+					taskId: assigned.taskId,
+					attempt: assigned.attempt,
+					status: TaskStatus.FAILED,
+					error: { kind: ErrorKind.NODE_ERROR, message: "boom", location: "" },
+				});
+				await status(runId, "failed");
+				await onlyCard();
+				expect((await api.run(runId)).run_notification).toMatchObject({ bot: "ops" });
+			} finally {
+				await again.disconnect();
+			}
 		});
 
 		it("取消的运行同样：通知出错不影响运行记为已取消", async () => {
