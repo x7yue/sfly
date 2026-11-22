@@ -219,6 +219,13 @@ export interface AgentView {
 	/** 支持的 Agent 能力及版本，按上报的顺序；不上报能力的旧版本 Agent 为空。 */
 	capabilities: CapabilityView[];
 	endpoint: AgentEndpointView;
+	/**
+	 * 最近一次连接用的凭据（ADR 0029「迁移与过渡」，#492）：`agent` 是这台 Agent 自己的凭据，`shared` 是共享令牌
+	 * （`SFLY_AGENT_TOKEN`，控制台提示换成 Agent 凭据），`none` 没带凭据（只在过渡版本里被接受）；还没有记过（升级之前连接的）为 null。
+	 */
+	auth_kind: "agent" | "shared" | "none" | null;
+	/** 停用这台 Agent 的时间；没有停用为 null。停用的 Agent 不能连接、不参与派发。 */
+	disabled_at: Timestamp | null;
 }
 
 /**

@@ -20,6 +20,7 @@ import {
 	type AccountCredential,
 	AGENT_CREDENTIAL_ROUTES,
 	exhaustive,
+	HUMAN_ONLY_KINDS,
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
 	type ProjectLocator,
@@ -567,6 +568,17 @@ export class AccessGuard {
 		const loginOnly = (LOGIN_ONLY_ROUTES as Record<string, string>)[routeKey(route)];
 		if (loginOnly !== undefined && principal.kind !== "login") {
 			return denied(403, "forbidden", loginOnly);
+		}
+		// 只认有用户的人的凭据的资源类别（我的开发 Agent）：会话令牌和项目令牌都不行，同样先于范围检查。
+		if (
+			HUMAN_ONLY_KINDS.has(route.resource.kind) &&
+			(principal.kind === "session" || principal.kind === "project")
+		) {
+			return denied(
+				403,
+				"forbidden",
+				"这个接口只认有用户的人的凭据（登录、个人令牌）：会话令牌和项目令牌不能用它",
+			);
 		}
 		if (needed === null) {
 			return denied(

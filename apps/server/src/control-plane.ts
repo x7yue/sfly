@@ -11,6 +11,7 @@ import {
 	agentBinaryUrl,
 } from "./agent-binaries/agent-binaries.js";
 import { loadInstallScript } from "./agent-binaries/install-script.js";
+import { AgentCredentialService } from "./agents/agent-credentials.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
@@ -359,6 +360,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	// 假哈希提前算好（不等第一个不存在的登录名）；算不出来不挡启动，用到时再算。
 	void accounts.warmUp().catch(() => {});
 	const tokens = new TokenService({ db: database.db, clock, revocations });
+	// Agent 凭据吊销时，用它连着的 Agent 连接断开（#492）。
+	const agentCredentials = new AgentCredentialService({
+		db: database.db,
+		clock,
+		onRevoked: (ids) => hub.closeByCredentials(ids),
+	});
 	try {
 		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({
@@ -412,6 +419,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		corsOrigins: options.corsOrigins,
 		accounts,
 		tokens,
+		agentCredentials,
 		loginIdleMs: options.loginIdleMs,
 		// 登录 Cookie 的跨站检查：配置的公开地址（反向代理后面是浏览器看到的地址），加上开发时 vite 的地址；
 		// 没有配置公开地址时用请求的 Host 兜底。

@@ -15,6 +15,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
+	type AgentAuthKind,
 	type AgentInfo,
 	type AgentStatus,
 	type AgentUpdateInfo,
@@ -92,6 +93,8 @@ export class AgentConnection {
 		readonly outbox: AsyncQueue<ServerMessage>,
 		/** 这次连接的「单调时钟读数 → 控制面时间」对应关系（ADR 0018）：日志、进度、指标、任务事件共用。 */
 		readonly clock: ConnectionClock,
+		/** 这条连接用的 Agent 凭据（`agent_credentials.id`）；不带凭据或用共享令牌连接的为 null。凭据吊销时据此断开。 */
+		readonly credentialId: string | null = null,
 	) {}
 
 	#phase: ConnectionPhase = { name: "registered" };
@@ -175,6 +178,10 @@ export interface AgentView {
 	capabilities: CapabilityInfo[];
 	/** 其它 Agent 连接这台 Agent 用的地址（ADR 0019）。 */
 	endpoint: AgentEndpointView;
+	/** 最近一次连接用的凭据（#492）；记下之前连接的为 null。 */
+	auth_kind: AgentAuthKind | null;
+	/** 停用这台 Agent 的时间（#492）；没有停用为 null。 */
+	disabled_at: string | null;
 }
 
 /**
@@ -410,8 +417,42 @@ export class AgentHub {
 				update: update ?? NO_UPDATE,
 				capabilities: capabilities ?? [],
 				endpoint: agentEndpoint({ peer, source_address }),
+				auth_kind: row.lastAuthKind,
+				disabled_at: row.disabledAt?.toISOString() ?? null,
 			}),
 		);
+	}
+
+	/** 凭据被吊销：断开用它连着的 Agent 连接（Agent 手上的任务走失联处理：租约到期后 `agent_lost`）。 */
+	closeByCredentials(credentialIds: readonly string[]): void {
+		for (const conn of this.#connections.values()) {
+			if (conn.credentialId !== null && credentialIds.includes(conn.credentialId)) conn.close();
+		}
+	}
+
+	/**
+	 * 停用或恢复一台 Agent（ADR 0029「迁移与过渡」）：停用的立即断开连接，不能连接、不参与派发；恢复清空时间。
+	 * 返回：`not_found` 没有这台 Agent，`unchanged` 已经是这个状态，`ok` 改了。
+	 */
+	setDisabled(
+		project: ProjectId,
+		name: string,
+		disabled: boolean,
+	): Promise<"ok" | "unchanged" | "not_found"> {
+		return this.deps.mutex.run(async () => {
+			const [row] = await this.deps.db
+				.select({ disabledAt: agents.disabledAt })
+				.from(agents)
+				.where(and(eq(agents.name, name), eq(agents.projectId, project)));
+			if (!row) return "not_found";
+			if ((row.disabledAt !== null) === disabled) return "unchanged";
+			await this.deps.db
+				.update(agents)
+				.set({ disabledAt: disabled ? this.deps.clock.now() : null })
+				.where(eq(agents.name, name));
+			if (disabled) this.#connections.get(name)?.close();
+			return "ok";
+		});
 	}
 
 	/** 控制面启动时：库里残留的在线状态来自上一个进程，一律改为离线，等 Agent 重新连接。 */

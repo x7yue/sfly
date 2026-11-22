@@ -47,6 +47,7 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 		case "session":
 		case "package":
 		case "agent":
+		case "dev_agent":
 		case "feishu_bot":
 			return locatorOfScoped(def, kind, target);
 		default:
@@ -57,14 +58,14 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 /** 属于项目的资源类别（场景、运行、任务、会话、节点包、Agent、飞书机器人）：路径带项目、列表与新建、按名字或按 ID 定位。 */
 function locatorOfScoped(
 	def: Pick<RouteDef, "path">,
-	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "feishu_bot",
+	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "dev_agent" | "feishu_bot",
 	target: ResourceTarget,
 ): ProjectLocator | undefined {
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
 		return { from: "path", param: PROJECT_PARAM };
 	if (target === "collection" || target === "upload") return { from: "path", param: null };
 	if (typeof target === "object" && "params" in target) {
-		if (kind === "agent" || kind === "package" || kind === "feishu_bot") {
+		if (kind === "agent" || kind === "dev_agent" || kind === "package" || kind === "feishu_bot") {
 			return { from: "path", param: null };
 		}
 		return { from: kind, param: target.params };
@@ -137,6 +138,12 @@ export const LOGIN_ONLY_ROUTES = {
  * 到时这张表删掉。
  */
 export const REQUIRES_CREDENTIAL: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["project"]);
+
+/**
+ * 只认有用户的人的凭据（登录 Cookie、个人令牌）的资源类别：会话令牌和项目令牌都不行（ADR 0029「凭据」：我的开发 Agent）。
+ * 开发 Agent 的凭据记在这个用户名下，名字里带着他的登录名：一个没有用户的凭据、或者代用户干活的会话令牌，不能替他注册。
+ */
+export const HUMAN_ONLY_KINDS: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["dev_agent"]);
 
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
