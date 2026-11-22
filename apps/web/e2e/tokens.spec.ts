@@ -155,31 +155,39 @@ test.describe("个人令牌页", () => {
 		await expect(dialogOf(page, "令牌「laptop」已签发")).toBeVisible();
 	});
 
-	test("过期的令牌：到了过期时间，列表里变成「已过期」，不再有吊销按钮，令牌 401", async ({
-		page,
-		request,
-		clock,
-	}) => {
-		await signIn(page);
-		await page.goto("/account/tokens");
-		await page.getByRole("button", { name: "签发令牌" }).click();
-		const dialog = dialogOf(page, "签发个人令牌");
-		await dialog.getByLabel("名称").fill("short-lived");
-		await dialog.getByLabel("有效期").selectOption("30");
-		await dialog.getByRole("button", { name: "签发" }).click();
-		const issued = dialogOf(page, "令牌「short-lived」已签发");
-		const token = await issuedToken(issued);
-		await issued.getByRole("button", { name: "我已保存，完成" }).click();
-		await expect(row(page, "short-lived")).toContainText("有效");
-
-		// 控制面的时钟走到 31 天之后：页面按控制面的时间算，到点就是「已过期」。
-		clock.advance(31 * 24 * 3600 * 1000);
-		await expect(row(page, "short-lived")).toContainText("已过期", { timeout: 15_000 });
-		await expect(row(page, "short-lived").getByRole("button", { name: "吊销" })).toBeHidden();
-		const expired = await request.get("/api/account/tokens", {
-			headers: { authorization: `Bearer ${token}` },
+	// 控制面的时钟要走过 31 天，默认的登录闲置时限（12 小时）会先到，页面按「登录失效」回到登录页（#490），
+	// 看不到令牌列表了：这一条把登录闲置时限放长，只留令牌自己的有效期。
+	test.describe("时钟走过令牌的有效期", () => {
+		test.use({
+			controlPlaneOptions: { initialAdmin: ADMIN, loginIdleMs: 365 * 24 * 3600 * 1000 },
 		});
-		expect(expired.status()).toBe(401);
+
+		test("过期的令牌：到了过期时间，列表里变成「已过期」，不再有吊销按钮，令牌 401", async ({
+			page,
+			request,
+			clock,
+		}) => {
+			await signIn(page);
+			await page.goto("/account/tokens");
+			await page.getByRole("button", { name: "签发令牌" }).click();
+			const dialog = dialogOf(page, "签发个人令牌");
+			await dialog.getByLabel("名称").fill("short-lived");
+			await dialog.getByLabel("有效期").selectOption("30");
+			await dialog.getByRole("button", { name: "签发" }).click();
+			const issued = dialogOf(page, "令牌「short-lived」已签发");
+			const token = await issuedToken(issued);
+			await issued.getByRole("button", { name: "我已保存，完成" }).click();
+			await expect(row(page, "short-lived")).toContainText("有效");
+
+			// 控制面的时钟走到 31 天之后：页面按控制面的时间算，到点就是「已过期」。
+			clock.advance(31 * 24 * 3600 * 1000);
+			await expect(row(page, "short-lived")).toContainText("已过期", { timeout: 15_000 });
+			await expect(row(page, "short-lived").getByRole("button", { name: "吊销" })).toBeHidden();
+			const expired = await request.get("/api/account/tokens", {
+				headers: { authorization: `Bearer ${token}` },
+			});
+			expect(expired.status()).toBe(401);
+		});
 	});
 });
 
