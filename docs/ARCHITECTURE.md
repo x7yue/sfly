@@ -93,7 +93,7 @@ flowchart LR
 ```
 apps/web            前端 SPA（vite 构建，Playwright 端到端测试在 apps/web/e2e）
 apps/server         控制面（API · 引擎 · Agent 网关 · 节点包仓库）
-apps/assistant      助手服务：单独的助手容器里拉起和看管 pi，唯一依赖 pi 的代码（ADR 0027，§6.8）
+apps/assistant      助手服务：单独的助手容器里拉起和看管 pi，唯一依赖 pi 的代码（ADR 0027，§6.9）
 agent/              Rust Agent（cargo）
 sdk/python          Python SDK 运行时 + CLI（uv）
 proto/              Agent ↔ 控制面的 protobuf 契约（buf 管理，breaking 检查）
