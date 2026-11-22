@@ -6,6 +6,10 @@ set -euo pipefail
 base=/vol/$SFLY_LINUX_ID
 work=$base/work
 mkdir -p "$work" /vol/cache/cargo-registry /vol/cache/cargo-git
+# 记下这个副本属于宿主上的哪个工作区：之后工作区删掉了，prune.sh 才知道这个目录没有主人了（#579）。
+if [[ -n ${SFLY_LINUX_ROOT:-} ]]; then printf '%s' "$SFLY_LINUX_ROOT" >"$base/root"; fi
+# 编译结果超过上限时清一部分（cargo 不清自己的旧产物）。
+bash /src/scripts/linux/trim-target.sh "$base/target" || true
 
 # 删掉上次同步过、这次已经不在工作区里的文件。node_modules、.venv 这些容器里生成的不在清单里，保留。
 if [[ -f $base/files ]]; then
@@ -24,6 +28,11 @@ git commit -q --allow-empty --no-verify -m "pnpm linux 同步的工作区"
 
 # 依赖装在副本里，与宿主的 node_modules、.venv 无关；缓存在卷里，各工作区共用。
 export CARGO_TARGET_DIR=$base/target npm_config_store_dir=/vol/cache/pnpm UV_CACHE_DIR=/vol/cache/uv
+# uv 的缓存只增不减（每次同步都加新的解包内容，不再被引用的不会自己清）：超过上限让 uv 自己清掉不再被引用的部分。
+uv_limit_kb=$((${SFLY_LINUX_UV_CACHE_LIMIT_MB:-1024} * 1024))
+if [[ $(du -sk "$UV_CACHE_DIR" 2>/dev/null | cut -f1) -gt $uv_limit_kb ]]; then
+	uv cache prune >&2 || true
+fi
 if ! { pnpm install --frozen-lockfile && uv sync --locked --all-packages; } >"$base/install.log" 2>&1; then
 	cat "$base/install.log" >&2
 	echo "pnpm linux：安装依赖失败（上面是输出）" >&2
