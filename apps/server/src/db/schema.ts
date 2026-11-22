@@ -863,9 +863,16 @@ export const sessions = pgTable(
 		createdBy: text("created_by").notNull(),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id),
 		createdAt: timestamptz("created_at").notNull(),
+		/** 最近一次有动静的时间：用控制面的时钟记（不是助手服务盖的事件时间，它的时钟偏了也不影响兜底判断）。 */
 		lastActivityAt: timestamptz("last_activity_at").notNull(),
+		/**
+		 * 最近一次开始的轮次（`turn_started` 的条数）：在做时就是正在做的那一轮。和「改成在做、写 `user_message`、写
+		 * `turn_started`」在同一个事务里加一；助手服务发来的事件要带这个轮次才收，控制面结束一轮时也按它核对。
+		 */
+		currentTurn: integer("current_turn").notNull().default(0),
 	},
 	(t) => [
+		check("sessions_current_turn", sql`${t.currentTurn} >= 0`),
 		// 一个项目的会话列表，最近活动在前。
 		index("sessions_project_activity").on(t.projectId, t.lastActivityAt),
 		uniqueIndex("sessions_one_running_per_project")

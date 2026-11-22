@@ -35,7 +35,7 @@ import {
  * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；没有在做的一轮 409 `no_turn_running` | #544 |
  * | `POST /sessions/:id/abort` | — | 202（重复调用无害） | #540、#544 |
  * | `POST /sessions/:id/end` | — | 202（重复调用无害） | #544 |
- * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}） | #540；续传 #545 |
+ * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳** | #540；续传 #545 |
  * | `GET /health` | — | 200 {@link AssistantHealth} | #540；模型 #548；进程数 #545 |
  *
  * 失败的回应体是 {@link AssistantErrorBody}。
@@ -81,8 +81,8 @@ const EnvName = z
 	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "环境变量名只能有字母、数字、下划线，且不以数字开头");
 
 /**
- * 这一轮在哪个工作台上做：`name` 是工作台的 Agent 名，`address` 是它的能力端口的地址，`workdir` 是工作区在工作台
- * 上的路径。pi 的读、写、编辑、命令四个工具经远程工具扩展落到这个地址。
+ * 这一轮在哪个工作台上做：`name` 是工作台的 Agent 名，`address` 是它的能力端口的地址，写成 `主机:端口`（IPv6 地址写成
+ * `[地址]:端口`；主机和端口取 Agent 上报的，ADR 0019），`workdir` 是工作区在工作台上的路径。pi 的读、写、编辑、命令四个工具经远程工具扩展落到这个地址。
  */
 export const WorkbenchTarget = z.object({
 	name: z.string().min(1),
@@ -170,6 +170,23 @@ export const AssistantStreamHello = z.object({
 export type AssistantStreamHello = z.infer<typeof AssistantStreamHello>;
 
 /**
+ * 事件流的心跳：助手服务每隔 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 在事件流里写一行 `{"type":"heartbeat"}`，不论有没有事件。
+ * 没有会话在做时事件流可以几个小时没有任何内容；HTTP 客户端的响应体超时（Node 的 `fetch` 默认 300 秒）会把这样的连接
+ * 掐断，而协议现在没有续传（#545），断开期间的事件就丢了。心跳让连接不空闲，也让控制面能分清「静默」和「死了」：
+ * 超过 {@link ASSISTANT_STREAM_IDLE_INTERVALS} 个间隔没有收到任何字节（心跳、事件都算），控制面就认为连接已经死了
+ * （半开的连接、对端挂住），主动断开重连，不等响应体超时。**只增，不影响已有的行**：不认识心跳的控制面按「不是约定的形状」
+ * 跳过它（但会因此没有死连接检测）。
+ */
+export const AssistantStreamHeartbeat = z.object({ type: z.literal("heartbeat") });
+export type AssistantStreamHeartbeat = z.infer<typeof AssistantStreamHeartbeat>;
+
+/** 助手服务写心跳的间隔（毫秒）。 */
+export const ASSISTANT_STREAM_HEARTBEAT_MS = 15_000;
+
+/** 控制面超过几个心跳间隔没有收到事件流里的任何字节，就认为连接死了。 */
+export const ASSISTANT_STREAM_IDLE_INTERVALS = 3;
+
+/**
  * 事件流里的一条事件记录（NDJSON 的一行）：`seq` 是助手服务内递增的序号，**只有持久的事件有**
  * （{@link PERSISTED_SESSION_EVENT_TYPES}：持久的必须有，不持久的不能有；它不是会话内序号，会话内序号由控制面
  * 落库时给）；`turn` 是这个事件属于哪一轮；`at` 是助手服务产生这个事件的时间：控制面原样存成持久事件的 `at`
@@ -197,8 +214,15 @@ export const AssistantStreamRecord = z
 	});
 export type AssistantStreamRecord = z.infer<typeof AssistantStreamRecord>;
 
-/** 事件流的一行：第一行是 {@link AssistantStreamHello}，之后是 {@link AssistantStreamRecord}。 */
-export const AssistantStreamLine = z.union([AssistantStreamHello, AssistantStreamRecord]);
+/**
+ * 事件流的一行：第一行是 {@link AssistantStreamHello}，之后是 {@link AssistantStreamRecord}，夹着
+ * {@link AssistantStreamHeartbeat}（每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 一行）。
+ */
+export const AssistantStreamLine = z.union([
+	AssistantStreamHello,
+	AssistantStreamHeartbeat,
+	AssistantStreamRecord,
+]);
 export type AssistantStreamLine = z.infer<typeof AssistantStreamLine>;
 
 /** 助手服务和它带的 pi 的版本。 */

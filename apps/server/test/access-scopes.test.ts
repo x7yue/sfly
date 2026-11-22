@@ -1,6 +1,6 @@
 // 范围表（ADR 0029「一处检查」）：范围由「接口作用在哪类资源上 × 只读或写」查表得出，对着 ADR 里逐个接口的那张表，
 // 每一行一条；契约里的每个接口都要有一个期望的范围，新加的写接口不在表里就失败，不会悄悄没人管。
-import { httpContract, RESOURCE_KINDS } from "@sfly/schema";
+import { httpContract, ID_LOCATED_KINDS, RESOURCE_KINDS, type RouteDef } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	ACCOUNT_ROUTES,
@@ -17,6 +17,7 @@ import {
 	SCOPE_TABLE,
 	SCOPES,
 	type Scope,
+	writeNeedsPerson,
 } from "../src/auth/scopes.js";
 
 /**
@@ -117,7 +118,64 @@ describe("角色是固定的一组范围（ADR 0029 的表）", () => {
 	});
 });
 
+describe("只有人能做的写（范围表的 humanOnly）", () => {
+	const writeOf = (
+		kind: (typeof RESOURCE_KINDS)[number],
+		creates?: (typeof RESOURCE_KINDS)[number],
+	) => ({
+		effect: "write" as const,
+		resource: { kind },
+		...(creates === undefined ? {} : { creates }),
+	});
+
+	it("会话的写（建、发话、停止）只有人能做：范围表里 session 是 humanOnly，别的类别不是", () => {
+		expect(writeNeedsPerson(writeOf("session"))).toBe(true);
+		// 看新建出来的是什么（和范围同一个取法）：新建会话的接口声明 creates 时也算。
+		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
+		for (const kind of RESOURCE_KINDS.filter((k) => k !== "session")) {
+			expect(writeNeedsPerson(writeOf(kind)), kind).toBe(false);
+		}
+		// 只读不受影响。
+		expect(writeNeedsPerson({ effect: "read", resource: { kind: "session" } })).toBe(false);
+		// 契约里恰好是会话的三个写接口。
+		expect(
+			httpContract
+				.filter((def) => def.effect === "write" && writeNeedsPerson(def))
+				.map(routeKey)
+				.sort(),
+		).toEqual([
+			"POST /projects/:project/sessions",
+			"POST /sessions/:id/messages",
+			"POST /sessions/:id/stop",
+		]);
+	});
+
+	it("在「范围够」之上再加一层：humanOnly 的写，范围表里的范围仍是「编辑」", () => {
+		expect(SCOPE_TABLE.session).toEqual({ write: "edit", humanOnly: true });
+		expect(requiredScope(writeOf("session"))).toBe("edit");
+	});
+});
+
 describe("契约和访问检查的规则对得上", () => {
+	it("按 ID 定位的类别（ID_LOCATED_KINDS，声明检查用）和访问检查的 locatorOf 是同一批：加一个类别只改一处会红", () => {
+		const idLocated = RESOURCE_KINDS.filter((kind) => {
+			const probe = {
+				path: "/probe/:id",
+				resource: { kind, target: { params: "id" } },
+			} as Pick<RouteDef, "path" | "resource">;
+			const locator = locatorOf(probe);
+			// 「从资源本身的 ID 找项目」：locator 带着路径参数名，来源就是这个类别自己。
+			// 不按「来源等于类别」一条判：以后有类别从别处得出项目（不靠路径里的资源 ID），不该算进去。
+			return (
+				locator !== undefined &&
+				"param" in locator &&
+				locator.param !== null &&
+				locator.from === kind
+			);
+		});
+		expect([...idLocated].sort()).toEqual([...ID_LOCATED_KINDS].sort());
+	});
+
 	it("每个接口的项目从哪里得出都认得出，两份凭据清单里的接口都在契约里", () => {
 		expect(checkAccessRules(httpContract)).toEqual([]);
 		expect(checkCredentialRoutes(httpContract)).toEqual([]);
