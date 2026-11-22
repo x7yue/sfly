@@ -9,7 +9,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from aeval import docker as d
-from aeval import probe, toolcheck, transcript
+from aeval import probe, rpcprobe, toolcheck, transcript
 from aeval.env import (
     DATA_HOME,
     DEFAULT_SERVER_IMAGE,
@@ -35,6 +35,10 @@ def _stack(args: argparse.Namespace) -> Stack:
         internal=getattr(args, "isolated", False),
         fake_model=getattr(args, "fake_model", False),
     )
+    if args.command != "up" and stack.network_internal():
+        # `up --isolated` 起的槽位：之后的命令（reset、toolcheck、rpcprobe……）照网络的实际情况，
+        # 不然重建控制面时会在断网的网络上发布端口。
+        stack.internal = True
     if getattr(args, "cache", None):
         stack.cache_dir = args.cache.resolve()
     if getattr(args, "pypi_mirror", None):
@@ -131,6 +135,13 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument(
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-probe"
     )
+    rp = sub.add_parser(
+        "rpcprobe", help="助手服务那套启动参数下 pi 的 RPC 模式怎么表现（#539，假的模型端点）"
+    )
+    rp.add_argument("questions", nargs="*", help="只跑这几题（q1…q4），默认全部")
+    rp.add_argument(
+        "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-rpcprobe"
+    )
     mem = sub.add_parser("memory", help="量 pi 进程（RPC 模式）空闲和工作时的内存")
     mem.add_argument("--model", required=True)
     mem.add_argument("--repeat", type=int, default=3)
@@ -175,6 +186,10 @@ def main(argv: list[str] | None = None) -> int:
         results = args.results or DATA_HOME / f"{date.today().isoformat()}-toolcheck"
         results.mkdir(parents=True, exist_ok=True)
         return toolcheck.run(stack, results, EVALS_DIR)
+    elif args.command == "rpcprobe":
+        results = args.results or DATA_HOME / f"{date.today().isoformat()}-rpcprobe"
+        questions = tuple(args.questions) or rpcprobe.QUESTIONS
+        return rpcprobe.run(stack, results, EVALS_DIR, questions)
     elif args.command == "probe":
         results = args.results or DATA_HOME / f"{date.today().isoformat()}-probe"
         # 假的模型端点照剧本把每件事都试一遍：看配置允许什么，不看模型愿不愿意做。

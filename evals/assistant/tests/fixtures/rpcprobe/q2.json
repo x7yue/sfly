@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "probe": {
+  "prompt_ok": true,
+  "markers": {
+   "agent_dir": false,
+   "project": false,
+   "settings": false
+  },
+  "extension_commands": []
+ },
+ "control": {
+  "prompt_ok": true,
+  "markers": {
+   "agent_dir": true,
+   "project": false,
+   "settings": true
+  },
+  "extension_commands": [
+   "llama",
+   "mcp"
+  ]
+ },
+ "read_only_agent_dir": {
+  "prompt_ok": false,
+  "error": "Credential store read failed for aeval: EACCES: permission denied, open '/tmp/rpcprobe-ro/agent/auth.json'",
+  "agent_dir_files": [
+   "models.json"
+  ]
+ },
+ "seconds": 3.0
+}

@@ -131,6 +131,9 @@ def chunks(reply: dict[str, Any], model: str) -> list[dict[str, Any]]:
 
 class Handler(BaseHTTPRequestHandler):
     tasks_dir = TASKS_DIR
+    # 给了目录时把收到的每个请求体原样存成 <序号>.json（探针看发给模型的系统提示用）。
+    dump_dir: Path | None = None
+    dumped = 0
 
     def log_message(self, format: str, *args: Any) -> None:
         sys.stderr.write(f"{self.command} {self.path}\n")
@@ -141,6 +144,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("content-length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
+        if self.dump_dir is not None:
+            Handler.dumped += 1
+            (self.dump_dir / f"{Handler.dumped:05d}.json").write_text(
+                json.dumps(body, ensure_ascii=False)
+            )
         reply = next_reply(body, self.tasks_dir)
         sys.stderr.write(f"回复：{json.dumps(reply, ensure_ascii=False)}\n")
         events = chunks(reply, str(body.get("model", "fake")))
@@ -176,8 +184,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="假的模型端点（只验证流程）")
     parser.add_argument("--port", type=int, default=8100)
     parser.add_argument("--tasks", type=Path, default=TASKS_DIR)
+    parser.add_argument("--dump", type=Path, help="把收到的每个请求体存进这个目录")
     args = parser.parse_args(argv)
     Handler.tasks_dir = args.tasks
+    if args.dump is not None:
+        args.dump.mkdir(parents=True, exist_ok=True)
+        Handler.dump_dir = args.dump
     with Server(("0.0.0.0", args.port), Handler) as server:
         sys.stderr.write(f"假的模型端点在 :{args.port}\n")
         server.serve_forever()
