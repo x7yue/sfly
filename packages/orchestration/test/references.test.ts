@@ -151,6 +151,7 @@ describe("引用检查", () => {
 					node_id: "b",
 					input: "value",
 					message: "节点 b 的输入 value 引用了不存在的节点 zzz",
+					target: "nodes.zzz.outputs.x",
 				},
 			],
 		);
@@ -176,8 +177,33 @@ describe("引用检查", () => {
 				node_id: "b",
 				input: "value",
 				message: "节点 b 的输入 value 引用的输出键 bdoy 没有在节点 a 的节点类型中声明",
+				target: "nodes.a.outputs.bdoy",
 			},
 		]);
+	});
+
+	it("引用开发版本节点没有声明的输出键：末尾提醒在节点派发到的 Agent 上重新运行 sfly dev；已发布的版本没有这句", () => {
+		const input = {
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ ...pkg("a"), agent: "agent-b" },
+				pkg("b", "check", { value: "${{ nodes.a.outputs.bdoy }}" }),
+			],
+			edges: chain("entry", "a", "b"),
+		};
+		const dev = OrchestrationDocument.parse({ ...input, packages: { demo: "dev" } });
+		const devCatalog: PackageCatalog = new Map([
+			[packageKey("demo", "dev"), catalog.get(packageKey("demo", "1.0.0")) ?? null],
+		]);
+		expect(referenceWarnings(dev, devCatalog)[0]?.message).toBe(
+			"节点 b 的输入 value 引用的输出键 bdoy 没有在节点 a 的节点类型中声明" +
+				"（开发版本的声明取自节点派发到的 Agent agent-b 上次运行 sfly dev 时的上报，刚改过节点的输出的话，在 agent-b 所在的机器上重新运行 sfly dev）",
+		);
+		const published = OrchestrationDocument.parse({ ...input, packages: { demo: "1.0.0" } });
+		expect(referenceWarnings(published, catalog)[0]?.message).toBe(
+			"节点 b 的输入 value 引用的输出键 bdoy 没有在节点 a 的节点类型中声明",
+		);
 	});
 
 	it("引用本链入口没有声明的参数", () => {

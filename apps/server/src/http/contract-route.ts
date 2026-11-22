@@ -14,7 +14,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
 import { checkAccessRules } from "../auth/access-rules.js";
 import type { Sse } from "../sse/sse.js";
-import { accessGuardOf } from "./access.js";
+import { accessGuardOf, isSecureRequest } from "./access.js";
 import { sendError } from "./errors.js";
 
 declare module "fastify" {
@@ -75,6 +75,8 @@ export interface ContractStream<S extends StreamDef> {
 	readonly closed: boolean;
 	/** 浏览器重连时带上的最后一条消息 ID（`Last-Event-ID` 请求头）。 */
 	readonly lastEventId: string | undefined;
+	/** 写出去的数据还没被对端读走时，等它读走（见 `SseStream.drained`）。 */
+	drained(): Promise<void>;
 }
 
 /**
@@ -106,6 +108,7 @@ export function contractStream<S extends StreamDef>(
 						get lastEventId() {
 							return stream.lastEventId;
 						},
+						drained: () => stream.drained(),
 					}),
 				),
 			reply,
@@ -126,6 +129,9 @@ export function contractDownload<D extends DownloadDef>(
 ): void {
 	register(app, def, handler);
 }
+
+const oneHeader = (value: string | string[] | undefined): string | undefined =>
+	Array.isArray(value) ? value[0] : value;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	if (value === null || typeof value !== "object") return false;
@@ -157,7 +163,15 @@ function register<D extends RouteDef>(
 				params: req.params as Record<string, string | undefined>,
 				authorization: req.headers.authorization,
 				cookie: req.headers.cookie,
+				fetchSite: oneHeader(req.headers["sec-fetch-site"]),
+				fetchMode: oneHeader(req.headers["sec-fetch-mode"]),
+				fetchDest: oneHeader(req.headers["sec-fetch-dest"]),
+				origin: oneHeader(req.headers.origin),
+				host: oneHeader(req.headers.host),
+				secure: isSecureRequest(req, app.publicHttps),
 			});
+			// 登录续期，或者失效的登录 Cookie 让浏览器删掉：拒绝的响应也带。
+			if (verdict.setCookie !== undefined) reply.header("set-cookie", verdict.setCookie);
 			if (!verdict.ok) {
 				// 请求体没有读：排空它，否则客户端还在发、连接挂着。
 				req.raw.resume();

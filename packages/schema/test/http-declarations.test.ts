@@ -11,8 +11,8 @@ import {
 	endpoint,
 	feishuBotsApi,
 	httpContract,
+	NON_GET_READS,
 	PATH_KINDS,
-	READS_WITH_TRACES,
 	RESOURCE_KIND_LABELS,
 	RESOURCE_KINDS,
 	type RouteDef,
@@ -68,12 +68,12 @@ describe("契约里全部接口的声明", () => {
 		const nonGetReads = httpContract
 			.filter((def) => def.method !== "GET" && def.effect === "read")
 			.map((def) => `${def.method} ${def.path}`);
-		expect(nonGetReads.sort()).toEqual(Object.keys(READS_WITH_TRACES).sort());
+		expect(nonGetReads.sort()).toEqual(Object.keys(NON_GET_READS).sort());
 	});
 
-	it("READS_WITH_TRACES 里的接口都在契约里、都声明为只读，都写明了写什么", () => {
+	it("NON_GET_READS 里的接口都在契约里、都声明为只读，都写明了为什么只读、会留下什么", () => {
 		const known = new Map(httpContract.map((def) => [`${def.method} ${def.path}`, def]));
-		for (const [key, what] of Object.entries(READS_WITH_TRACES)) {
+		for (const [key, what] of Object.entries(NON_GET_READS)) {
 			expect(known.get(key)?.effect, key).toBe("read");
 			expect(what.trim(), key).not.toBe("");
 		}
@@ -166,7 +166,7 @@ const rulesFor = (def: RouteDef): DeclarationRules => {
 	const kind = def.resource?.kind;
 	return {
 		pathKinds: kind ? { [`/${first}`]: { kind, why: "测试" } } : {},
-		readsWithTraces: READS_WITH_TRACES,
+		nonGetReads: NON_GET_READS,
 	};
 };
 
@@ -292,6 +292,30 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		).toContain("system 没有具体的那一个");
 	});
 
+	it("账号（account）：self 只用于账号，是发起请求的用户自己，路径里不能有参数；管理别人的账号用路径参数或 collection", () => {
+		const account = (target: unknown, path: string, params?: unknown) =>
+			broken({
+				path,
+				resource: { kind: "account", target },
+				...(params === undefined ? { params: undefined } : { params }),
+			});
+		// 合法：自己（路径没有参数）、用户 ID（路径参数）、列表和新建。
+		expect(problems(account("self", "/auth/me"))).toEqual([]);
+		expect(problems(account({ params: "id" }, "/users/:id"))).toEqual([]);
+		expect(problems(account("collection", "/users"))).toEqual([]);
+		// self 不是账号：只用于 account。
+		expect(
+			problems(broken({ resource: { kind: "scenario", target: "self" }, path: "/things" }))[0],
+		).toContain("self 只用于 account");
+		expect(
+			problems(broken({ resource: { kind: "system", target: "self" }, path: "/things" })).join(
+				"；",
+			),
+		).toContain("self 只用于 account");
+		// self 的路径里有参数：有参数就是在定位别人的账号。
+		expect(problems(account("self", "/auth/:id"))[0]).toContain("self，但路径里有参数");
+	});
+
 	it("路径带项目（/projects/:project/…）的列表和新建用 collection：:project 只限定项目，不算在定位资源", () => {
 		const project = z.object({ project: z.string() });
 		const scoped = { path: "/projects/:project/things", params: project };
@@ -311,10 +335,134 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: collection, path: "/things/:project", params: project }))[0],
 		).toContain("路径里有参数");
-		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）照旧可以。
+		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）：不是用 ID 定位的类别照旧可以；
+		// 用 ID 定位的类别（场景、运行、任务、会话）在这类路径上只接受 collection，写 { params: "project" } 也拒绝。
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "project" } }, ...scoped })),
+		).toEqual([]);
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			const found = problems(
+				broken({ resource: { kind, target: { params: "project" } }, ...scoped }),
+			);
+			expect(found, kind).toHaveLength(1);
+			expect(found[0], kind).toContain("只能写 collection");
+		}
+	});
+
+	it('/projects/:project/… 下还有别的路径参数：用 ID 定位的资源不带 :project，{ params: "project" } 不算定位；按名字定位的写 :project 之后的参数', () => {
+		const project = z.object({ project: z.string() });
+		const withId = {
+			path: "/projects/:project/things/:id",
+			params: project.extend({ id: z.string() }),
+		};
+		// 用 ID 定位的类别（场景、运行、任务、会话）：不管写 { params: "project" } 还是 { params: "id" }，路径都不该带项目。
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			for (const params of ["project", "id"]) {
+				const found = problems(broken({ resource: { kind, target: { params } }, ...withId }));
+				expect(found, `${kind} ${params}`).toHaveLength(1);
+				expect(found[0], `${kind} ${params}`).toContain("用 ID 定位，路径带 :project");
+				expect(found[0], `${kind} ${params}`).toContain("只能写 collection");
+				// 报错提示不能再叫人「改成 { params: "project" }」。
+				expect(found[0], `${kind} ${params}`).not.toContain('改成 { params: "project" }');
+				expect(found[0], `${kind} ${params}`).toContain('{ params: "id" }');
+			}
+		}
+		// 按名字定位的类别（节点包、Agent、飞书机器人）：项目在路径里，定位的是 :project 之后的第一个参数。
+		const byName = {
+			path: "/projects/:project/things/:name",
+			params: project.extend({ name: z.string() }),
+		};
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "name" } }, ...byName })),
+		).toEqual([]);
+		const wrongProject = problems(
+			broken({ resource: { kind: "package", target: { params: "project" } }, ...byName }),
+		);
+		expect(wrongProject).toHaveLength(1);
+		expect(wrongProject[0]).toContain('写了 { params: "project" }，但路径里还有 :name');
+		expect(wrongProject[0]).toContain('改成 { params: "name" }');
+		// :project 之后的第二个参数不是定位用的。
+		const deeper = {
+			path: "/projects/:project/things/:name/versions/:version",
+			params: project.extend({ name: z.string(), version: z.string() }),
+		};
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "version" } }, ...deeper })),
+		).toHaveLength(1);
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "name" } }, ...deeper })),
+		).toEqual([]);
+		// 路径不带项目的（按 ID 定位）照旧：第一个参数就是定位用的。
 		expect(
 			problems(
-				broken({ resource: { kind: "scenario", target: { params: "project" } }, ...scoped }),
+				broken({ resource: { kind: "session", target: { params: "id" } }, path: "/sessions/:id" }),
+			),
+		).toEqual([]);
+	});
+
+	it("/projects/:project/… 下用 ID 定位的类别写成 { query }、{ body } 也不行：只接受 collection；按名字定位的类别和路径不带项目的不受影响", () => {
+		const project = z.object({ project: z.string() });
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			// 路径只有 :project（列表和新建）：写 { body } 定位——访问检查只按路径里的项目查，不核对 body 里的 ID。
+			const byBody = problems(
+				broken({
+					method: "POST",
+					effect: "write",
+					path: "/projects/:project/things",
+					params: project,
+					body: z.object({ thing_id: z.string() }),
+					resource: { kind, target: { body: "thing_id" } },
+				}),
+			);
+			expect(byBody, `${kind} body`).toHaveLength(1);
+			expect(byBody[0], `${kind} body`).toContain("只能写 collection");
+			// 路径还有别的参数、定位写成 { query }：同样不行（同一类绕过）。
+			const byQuery = problems(
+				broken({
+					path: "/projects/:project/things/:id",
+					params: project.extend({ id: z.string() }),
+					query: z.object({ id: z.string() }),
+					resource: { kind, target: { query: "id" } },
+				}),
+			);
+			expect(byQuery, `${kind} query`).toHaveLength(1);
+			expect(byQuery[0], `${kind} query`).toContain("只能写 collection");
+			// collection 是对的。
+			expect(
+				problems(
+					broken({
+						method: "POST",
+						effect: "write",
+						path: "/projects/:project/things",
+						params: project,
+						resource: { kind, target: "collection" },
+					}),
+				),
+				`${kind} collection`,
+			).toEqual([]);
+		}
+		// 按名字定位的类别（节点包）：query、body 照旧可以（项目就是路径里的项目）。
+		expect(
+			problems(
+				broken({
+					method: "POST",
+					effect: "write",
+					path: "/projects/:project/things",
+					params: project,
+					body: z.object({ name: z.string() }),
+					resource: { kind: "package", target: { body: "name" } },
+				}),
+			),
+		).toEqual([]);
+		// 路径不带项目的 ID 定位类别：{ query } 照旧可以（项目从那个 ID 得出，不看路径）。
+		expect(
+			problems(
+				broken({
+					path: "/things",
+					params: undefined,
+					query: z.object({ id: z.string() }),
+					resource: { kind: "session", target: { query: "id" } },
+				}),
 			),
 		).toEqual([]);
 	});
@@ -327,11 +475,11 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(problems(broken({ method: "DELETE", effect: "write", removes: true }))).toEqual([]);
 		expect(
 			problems(broken({ method: "POST", effect: "read", path: "/things/:id/query" }))[0],
-		).toContain("READS_WITH_TRACES");
+		).toContain("NON_GET_READS");
 		// 登记过的（这里用测试自己的一张表）就没有问题
 		const registered: DeclarationRules = {
 			...rulesFor(broken({})),
-			readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+			nonGetReads: { "POST /things/:id/query": "测试：只写内存里的状态" },
 		};
 		expect(
 			checkRouteDeclarations(
@@ -341,25 +489,25 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		).toEqual([]);
 	});
 
-	it("表里没有登记的非 GET 只读接口被拦下，登记后才通过（和 READS_WITH_TRACES 里现在有什么无关）", () => {
+	it("表里没有登记的非 GET 只读接口被拦下，登记后才通过（和 NON_GET_READS 里现在有什么无关）", () => {
 		const def = broken({ method: "POST", effect: "read", path: "/things/:id/query" });
-		const rules = { ...rulesFor(def), readsWithTraces: {} };
+		const rules = { ...rulesFor(def), nonGetReads: {} };
 		expect(checkRouteDeclarations([def], rules)).toEqual([
-			expect.stringContaining("方法不是 GET 的只读接口要登记在 READS_WITH_TRACES"),
+			expect.stringContaining("方法不是 GET 的只读接口要登记在 NON_GET_READS"),
 		]);
 		expect(
 			checkRouteDeclarations([def], {
 				...rules,
-				readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+				nonGetReads: { "POST /things/:id/query": "测试：只写内存里的状态" },
 			}),
 		).toEqual([]);
 		// 登记了、但契约里没有这个接口（接口删了、表里留着）：表检查也报错
 		expect(
 			checkDeclarationTables([], {
 				pathKinds: {},
-				readsWithTraces: { "POST /things/:id/query": "测试：只写内存里的状态" },
+				nonGetReads: { "POST /things/:id/query": "测试：只写内存里的状态" },
 			}),
-		).toEqual(["READS_WITH_TRACES 的 POST /things/:id/query 不在契约里：接口改名或删掉了"]);
+		).toEqual(["NON_GET_READS 的 POST /things/:id/query 不在契约里：接口改名或删掉了"]);
 	});
 
 	it("creates 要是资源类别、只能在写接口上；removes 只能写 true、只能在写接口上、不能和 creates 同时出现", () => {
@@ -394,7 +542,7 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 				"/things": { kind: "scenario", why: "测试" },
 				"/other": { kind: "scenario", why: "测试" },
 			},
-			readsWithTraces: {},
+			nonGetReads: {},
 		});
 		expect(list).toHaveLength(2);
 		expect(list[0]).toMatch(/^GET \/things\/:id：/);
@@ -491,7 +639,7 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		// 表里的 system 项忘了写 exact：表检查报错
 		const loose = checkDeclarationTables([system("/health")], {
 			pathKinds: { "/health": { kind: "system", why: "健康检查" } },
-			readsWithTraces: {},
+			nonGetReads: {},
 		});
 		expect(loose.join("\n")).toContain("PATH_KINDS 的 /health 是 system，要写 exact: true");
 		// 现有表里的 system 项都是 exact
@@ -506,7 +654,7 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 				"/runs": { kind: "run", why: "运行" },
 				"/runs/:id/special": { kind: "system", why: "例外" },
 			},
-			readsWithTraces: {},
+			nonGetReads: {},
 		};
 		const make = (path: string, kind: "run" | "system") =>
 			endpoint({
@@ -539,27 +687,27 @@ describe("资源类别和路径前缀对得上（kind 写错、system 写错都�
 		const own = Object.fromEntries(
 			Object.entries(PATH_KINDS).filter(([prefix]) => ["/health", "/runs"].includes(prefix)),
 		);
-		expect(tables({ pathKinds: own, readsWithTraces: {} })).toEqual([]);
-		const cover = checkPathKindsCover({ pathKinds: own, readsWithTraces: {} }).join("\n");
+		expect(tables({ pathKinds: own, nonGetReads: {} })).toEqual([]);
+		const cover = checkPathKindsCover({ pathKinds: own, nonGetReads: {} }).join("\n");
 		expect(cover).toContain("资源类别 scenario 在 PATH_KINDS 里没有任何路径前缀");
 		expect(cover).not.toContain("资源类别 run ");
 
 		const stale = tables({
 			pathKinds: { ...own, "/old": { kind: "run", why: "旧的" } },
-			readsWithTraces: { "POST /gone": "没有这个接口", "GET /runs/:id": "不是写" },
+			nonGetReads: { "POST /gone": "没有这个接口", "GET /runs/:id": "不是写" },
 		}).join("\n");
 		expect(stale).toContain("PATH_KINDS 的 /old 没有接口在用");
-		expect(stale).toContain("READS_WITH_TRACES 的 POST /gone 不在契约里");
+		expect(stale).toContain("NON_GET_READS 的 POST /gone 不在契约里");
 		expect(stale).not.toContain("没有声明为只读");
 
 		const notRead = tables({
 			pathKinds: own,
-			readsWithTraces: { "GET /runs/:id": "" },
+			nonGetReads: { "GET /runs/:id": "" },
 		}).join("\n");
-		expect(notRead).toContain("READS_WITH_TRACES 的 GET /runs/:id：要写明写了什么");
+		expect(notRead).toContain("NON_GET_READS 的 GET /runs/:id：要写明为什么只读、会留下什么");
 		const bad = tables({
 			pathKinds: { "no-slash": { kind: "run", why: "" } },
-			readsWithTraces: {},
+			nonGetReads: {},
 		}).join("\n");
 		expect(bad).toContain("PATH_KINDS 的键 no-slash 要以 / 开头");
 		expect(bad).toContain("PATH_KINDS 的 no-slash：要写明为什么");

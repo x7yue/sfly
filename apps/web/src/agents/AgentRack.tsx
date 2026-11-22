@@ -1,6 +1,7 @@
 import type { AgentView, QueuedTaskView } from "@sfly/schema";
 import { cn } from "cn";
 import { useId } from "react";
+import { agentAnchor } from "#/agents/agent-anchor";
 import { acceptsTasks, agentStatusView, updateStatus } from "#/agents/agent-status";
 import { PreparingBadge } from "#/agents/PreparingBadge";
 import { queueTiming } from "#/agents/queue-timing";
@@ -46,7 +47,11 @@ export function AgentRack({
 		...agent.dev_packages.map((p) => `${p.name}@dev`),
 	];
 	return (
-		<Panel aria-labelledby={headingId}>
+		<Panel
+			id={agentAnchor(agent.name)}
+			aria-labelledby={headingId}
+			className="scroll-mt-4 target:border-border-strong"
+		>
 			<header className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 border-b border-border-soft px-4 py-3">
 				<RackStatus agent={agent} />
 				<h2 id={headingId} className="m-0 font-mono text-base font-semibold">

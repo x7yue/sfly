@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+	ASSISTANT_STREAM_HEARTBEAT_MS,
 	type AssistantErrorBody,
 	type AssistantErrorCode,
 	type AssistantEvent,
@@ -35,10 +36,21 @@ export class FakeAssistant {
 	readonly aborts: string[] = [];
 	/** 每个 prompt 的回应；默认全部 202。 */
 	promptReply: (prompt: ReceivedPrompt) => Reply | undefined = () => undefined;
+	/** 每个 abort 的回应；默认 202（重复调用无害）。 */
+	abortReply: (sessionId: string) => Reply | undefined = () => undefined;
 	/** `/health` 的回应；默认健康。 */
 	health: () => AssistantHealth | Reply = () => this.healthy();
+	/** 回应命令（prompt、abort）和 `/health` 之前先等多久（毫秒）：模拟助手服务冷启动慢、接了连接却不回话。 */
+	promptDelayMs = 0;
+	healthDelayMs = 0;
+	/** 收到过几次 `GET /health`。 */
+	healthRequests = 0;
 	/** 助手服务每次启动生成的随机 ID。 */
 	epoch = "fake-epoch";
+	/** 事件流里写心跳的间隔（毫秒），默认和协议一样 15 秒；0 是不写（模拟一个不发心跳的助手服务）。 */
+	heartbeatMs: number = ASSISTANT_STREAM_HEARTBEAT_MS;
+	/** 收到过几次 `GET /events`（连接断了重连会多一次）。 */
+	#eventRequests = 0;
 
 	private constructor(
 		readonly secret: string,
@@ -49,17 +61,25 @@ export class FakeAssistant {
 		this.#port = port;
 	}
 
-	static async start(options: { secret?: string } = {}): Promise<FakeAssistant> {
+	static async start(
+		options: { secret?: string; heartbeatMs?: number } = {},
+	): Promise<FakeAssistant> {
 		const secret = options.secret ?? FAKE_SECRET;
 		const server = createServer();
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const fake = new FakeAssistant(secret, server, (server.address() as AddressInfo).port);
+		if (options.heartbeatMs !== undefined) fake.heartbeatMs = options.heartbeatMs;
 		server.on("request", (req, res) => void fake.#handle(req, res));
 		return fake;
 	}
 
 	get url(): string {
 		return `http://127.0.0.1:${this.#port}`;
+	}
+
+	/** 收到过几次 `GET /events`。 */
+	get eventRequests(): number {
+		return this.#eventRequests;
 	}
 
 	/** 密钥不对的请求被拒绝了几次。 */
@@ -184,6 +204,8 @@ export class FakeAssistant {
 		const url = new URL(req.url ?? "/", this.url);
 		const route = `${req.method} ${url.pathname}`;
 		if (route === "GET /health") {
+			this.healthRequests += 1;
+			if (this.healthDelayMs > 0) await new Promise((r) => setTimeout(r, this.healthDelayMs));
 			const health = this.health();
 			if ("status" in health) return this.#error(res, health);
 			return this.#send(res, 200, health);
@@ -191,8 +213,21 @@ export class FakeAssistant {
 		if (route === "GET /events") {
 			res.writeHead(200, { "content-type": "application/x-ndjson" });
 			res.write(`${JSON.stringify({ type: "hello", epoch: this.epoch, gap: false })}\n`);
+			this.#eventRequests += 1;
 			this.#streams.add(res);
-			res.on("close", () => this.#streams.delete(res));
+			// 心跳：协议要求助手服务每隔一段时间写一行，让连接不空闲（控制面也靠它分清「静默」和「死了」）。
+			const beat =
+				this.heartbeatMs > 0
+					? setInterval(
+							() => res.write(`${JSON.stringify({ type: "heartbeat" })}\n`),
+							this.heartbeatMs,
+						)
+					: undefined;
+			beat?.unref();
+			res.on("close", () => {
+				clearInterval(beat);
+				this.#streams.delete(res);
+			});
 			return;
 		}
 		const command = /^POST \/sessions\/([^/]+)\/(prompt|abort)$/.exec(route);
@@ -200,6 +235,8 @@ export class FakeAssistant {
 		const sessionId = command[1] as string;
 		if (command[2] === "abort") {
 			this.aborts.push(sessionId);
+			const reply = this.abortReply(sessionId);
+			if (reply) return this.#error(res, reply);
 			return this.#send(res, 202);
 		}
 		let json: unknown;
@@ -222,6 +259,7 @@ export class FakeAssistant {
 			authorization: req.headers.authorization,
 		};
 		this.prompts.push(prompt);
+		if (this.promptDelayMs > 0) await new Promise((r) => setTimeout(r, this.promptDelayMs));
 		const reply = this.promptReply(prompt);
 		if (reply) return this.#error(res, reply);
 		this.#send(res, 202);

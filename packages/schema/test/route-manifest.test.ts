@@ -71,6 +71,10 @@ describe("路由清单里每个接口的声明和响应", () => {
 		expect(noBody.map((e) => `${e.method} ${e.path}`).sort()).toEqual([
 			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
+			"POST /auth/logout",
+			"POST /auth/logout-all",
+			"POST /auth/password",
+			"POST /users/:id/password",
 		]);
 	});
 
@@ -112,7 +116,7 @@ describe("导出响应的规则", () => {
 						],
 			),
 		),
-		readsWithTraces: {},
+		nonGetReads: {},
 	});
 	const build = (...defs: Parameters<typeof buildRouteManifest>[0]) =>
 		buildRouteManifest(defs, lenient(defs)).routes;

@@ -391,6 +391,8 @@ describe("场景版本里 secret 参数的默认值", () => {
 				const others: Record<string, string> = {
 					presetId: ids.preset,
 					number: "1",
+					a: "1",
+					b: "1",
 					version: "1.0.0",
 					name: "stub",
 					node: "echo",
@@ -410,7 +412,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 			});
 
 		/**
-		 * 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（登记在 READS_WITH_TRACES）要请求体，
+		 * 按契约声明的 effect 遍历，不自己维护清单（#464）：GET 一定是只读；非 GET 的只读接口（登记在 NON_GET_READS）要请求体，
 		 * 不在这里（下面的写接口用例会要求请求过它们）。每个 GET 接口（SSE 除外）读一遍，响应交给 `check`（`what`、响应文本）。
 		 */
 		const sweepReads = async (
@@ -641,6 +643,17 @@ describe("场景版本里 secret 参数的默认值", () => {
 			"DELETE /feishu-bots/:name": "同上",
 			"POST /feishu-bots/:name/test": "同上",
 			"POST /packages": "发布节点包，不带场景和参数",
+			// 账号类接口（登录、初始化、改密码、管理账号）：和场景的默认值无关，但处理的是密码，另有专门的测试
+			// 遍历它们的每个出口（accounts-secrets.test.ts：每个账号类接口成功的和失败的响应里没有密码、Cookie、初始化码、哈希）。
+			"POST /auth/setup": "账号类接口，密码另见 accounts-secrets.test.ts",
+			"POST /auth/login": "同上",
+			"POST /auth/logout": "同上",
+			"POST /auth/logout-all": "同上",
+			"POST /auth/password": "同上",
+			"POST /users": "同上",
+			"POST /users/:id/disable": "同上",
+			"POST /users/:id/enable": "同上",
+			"POST /users/:id/password": "同上",
 		};
 		/** 一个请求（方法 + 路径）对上契约里的哪个接口（路径模板）。 */
 		const templateOf = (method: string, path: string): string | undefined => {
@@ -712,6 +725,22 @@ describe("场景版本里 secret 参数的默认值", () => {
 			await record(
 				"保存：缺 base_version",
 				tracked.post(`/orchestrations/${id}/versions`, { document }),
+			);
+			// 检查（不保存，#424）：和保存同样的成功与失败；新的默认值写的是原值（含 SECRET），响应里的差异也是打码的。
+			const changed = structuredClone(document);
+			paramAt(changed, 0).default = `${SECRET}-new`;
+			await record("检查", tracked.post(`/orchestrations/${id}/check`, { document: changed }));
+			await record(
+				"检查：冲突",
+				tracked.post(`/orchestrations/${id}/check`, { base_version: number, document }),
+			);
+			await record(
+				"检查：文档不合法",
+				tracked.post(`/orchestrations/${id}/check`, { document: { ...document, nodes: SECRET } }),
+			);
+			await record(
+				"检查：占位符沿用不了",
+				tracked.post(`/orchestrations/${id}/check`, { document: renamed }),
 			);
 			// 恢复、复制。
 			await record("恢复", tracked.postEmpty(`/orchestrations/${id}/versions/1/restore`));

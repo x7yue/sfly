@@ -1,5 +1,5 @@
 {
-  "id": "e0425f36-66b0-40f2-a0f0-7cfccc39b64c",
+  "id": "8ab2ecaf-469f-4fa8-84c7-9b38fde4caf9",
   "prevId": "140f444c-2b03-4b16-a645-413c52689175",
   "version": "7",
   "dialect": "postgresql",
@@ -392,19 +392,6 @@
           "tableTo": "projects",
           "columnsFrom": [
             "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "api_tokens_session_id_sessions_id_fk": {
-          "name": "api_tokens_session_id_sessions_id_fk",
-          "tableFrom": "api_tokens",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
           ],
           "columnsTo": [
             "id"
@@ -1447,7 +1434,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "orchestrations_run_notify_trigger": {
+          "name": "orchestrations_run_notify_trigger",
+          "value": "\"orchestrations\".\"run_notify_trigger\" in ('failed', 'failed_or_cancelled')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.platform_admin_actions": {
@@ -2096,207 +2088,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.session_events": {
-      "name": "session_events",
-      "schema": "",
-      "columns": {
-        "session_id": {
-          "name": "session_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "seq": {
-          "name": "seq",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payload": {
-          "name": "payload",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "session_events_session_id_sessions_id_fk": {
-          "name": "session_events_session_id_sessions_id_fk",
-          "tableFrom": "session_events",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "session_events_session_id_seq_pk": {
-          "name": "session_events_session_id_seq_pk",
-          "columns": [
-            "session_id",
-            "seq"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "session_events_seq": {
-          "name": "session_events_seq",
-          "value": "\"session_events\".\"seq\" >= 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.sessions": {
-      "name": "sessions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "last_activity_at": {
-          "name": "last_activity_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "sessions_project_activity": {
-          "name": "sessions_project_activity",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "last_activity_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "sessions_one_running_per_project": {
-          "name": "sessions_one_running_per_project",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"sessions\".\"status\" = 'running'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "sessions_project_id_projects_id_fk": {
-          "name": "sessions_project_id_projects_id_fk",
-          "tableFrom": "sessions",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "sessions_created_by_user_id_users_id_fk": {
-          "name": "sessions_created_by_user_id_users_id_fk",
-          "tableFrom": "sessions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "created_by_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "sessions_status": {
-          "name": "sessions_status",
-          "value": "\"sessions\".\"status\" in ('idle', 'running', 'queued', 'ended')"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.task_action_names": {

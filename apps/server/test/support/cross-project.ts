@@ -10,9 +10,12 @@ import {
 } from "../../src/auth/access-rules.js";
 import { packageArchive, packageMetadata } from "./package-archive.js";
 
-/** 要生成测试的接口：不属于项目的（系统自身，不需要凭据）不在其中。 */
+/** 要生成测试的接口：不属于项目的（系统自身，不需要凭据；账号类接口，不属于任何项目）不在其中。 */
 export const projectRoutes = (contract: readonly RouteDef[] = httpContract): RouteDef[] =>
-	contract.filter((def) => locatorOf(def)?.from !== "none");
+	contract.filter((def) => {
+		const from = locatorOf(def)?.from;
+		return from !== "none" && from !== "account";
+	});
 
 /** 不属于项目的接口：任何凭据（含失效的）都不影响它们。 */
 export const systemRoutes = (contract: readonly RouteDef[] = httpContract): RouteDef[] =>
@@ -86,6 +89,10 @@ const JSON_BODIES: Record<string, unknown> = {
 	"PATCH /orchestrations/:id/presets/:presetId": { name: "预设改名" },
 	"POST /orchestrations/:id/presets/:presetId/copy": { name: "预设副本" },
 	"POST /orchestrations/:id/runs": { params: { host: "h" } },
+	// 检查场景文档（#424）：方法不是 GET 的只读接口，同样要求项目乙的资源对项目甲不可见
+	"POST /orchestrations/:id/check": {
+		document: { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },
+	},
 	"POST /feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
 	"PATCH /feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },

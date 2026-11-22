@@ -252,8 +252,15 @@ export const orchestrations = pgTable(
 		/** 关注项最后一次修改；从没改过时为空。 */
 		focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
 	},
-	// 给 `runs` 的组合外键（运行的项目恒等于它的场景的项目）当目标；`id` 已经是主键，这条约束只为了让外键有可引用的唯一组合。
-	(t) => [unique("orchestrations_id_project").on(t.id, t.projectId)],
+	(t) => [
+		// 给 `runs` 的组合外键（运行的项目恒等于它的场景的项目）当目标；`id` 已经是主键，这条约束只为了让外键有可引用的唯一组合。
+		unique("orchestrations_id_project").on(t.id, t.projectId),
+		// 运行通知的触发条件只有这两个值（#446 去掉了 always）：库里不能有认不出的值，运行结束时就不会读到它。
+		check(
+			"orchestrations_run_notify_trigger",
+			sql`${t.runNotifyTrigger} in ('failed', 'failed_or_cancelled')`,
+		),
+	],
 );
 
 /**
@@ -856,9 +863,16 @@ export const sessions = pgTable(
 		createdBy: text("created_by").notNull(),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id),
 		createdAt: timestamptz("created_at").notNull(),
+		/** 最近一次有动静的时间：用控制面的时钟记（不是助手服务盖的事件时间，它的时钟偏了也不影响兜底判断）。 */
 		lastActivityAt: timestamptz("last_activity_at").notNull(),
+		/**
+		 * 最近一次开始的轮次（`turn_started` 的条数）：在做时就是正在做的那一轮。和「改成在做、写 `user_message`、写
+		 * `turn_started`」在同一个事务里加一；助手服务发来的事件要带这个轮次才收，控制面结束一轮时也按它核对。
+		 */
+		currentTurn: integer("current_turn").notNull().default(0),
 	},
 	(t) => [
+		check("sessions_current_turn", sql`${t.currentTurn} >= 0`),
 		// 一个项目的会话列表，最近活动在前。
 		index("sessions_project_activity").on(t.projectId, t.lastActivityAt),
 		uniqueIndex("sessions_one_running_per_project")
@@ -889,6 +903,11 @@ export const sessionEvents = pgTable(
 	(t) => [
 		primaryKey({ columns: [t.sessionId, t.seq] }),
 		check("session_events_seq", sql`${t.seq} >= 1`),
+		// 「上一轮的结局」（会话视图和列表里的 last_turn_outcome）取每个会话最近一条 turn_end：只给 turn_end 建索引
+		// （每轮一条），按序号倒序，查询不用扫整个会话的事件（几万条）。谓词写成字面量，查询里也要写成字面量才用得上它。
+		index("session_events_turn_end")
+			.on(t.sessionId, t.seq.desc())
+			.where(sql`${t.type} = 'turn_end'`),
 	],
 );
 

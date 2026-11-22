@@ -331,6 +331,8 @@ export interface AttemptView {
 	progress: TaskProgressView | null;
 	/** 执行中的尝试此刻在做的动作（见 CurrentAction）；没有时为 null，尝试结束后也为 null。 */
 	current_action: CurrentAction | null;
+	/** 排队中（`status` 为 queued）的尝试在等什么；其余状态为 null。 */
+	queue_wait: QueueWaitView | null;
 }
 
 /** 一项 Agent 能力（ADR 0019）：Agent 自身提供、节点在执行中通过 SDK 调用的一组操作。 */
@@ -404,6 +406,29 @@ export interface ChartView {
 	type: "line" | "area" | "bar" | "stat";
 	metrics: MetricName[];
 	default: boolean;
+}
+
+/**
+ * 检查时的一条警告（#424）：和保存时的一样，再加一个标记——改动之前（最新版本里）是不是就有。
+ * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`、`target`）判断，不看文字：
+ * 同一种警告指向另一个节点算新的；同一个对象上同一种警告有几条，最新版本里有几条就有几条算已有（按出现的顺序）。
+ * 会失效的运行预设（`preset_invalidated`）说的就是这次改动，总是新的；场景还没有版本时全部是新的。
+ */
+export interface CheckedWarningView {
+	code: string;
+	message: string;
+	node_id?: string;
+	/** 警告所指的字段：包节点的输入、子流程参数、入口参数（`secret_param_default` 是参数名）、节点配置的字段。 */
+	input?: string;
+	annotation_id?: string;
+	/**
+	 * 同一个节点（或注释框）上可能有两条同种警告时，具体是哪一个：引用的警告是引用的路径，注释框指向成员的警告是
+	 * `nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`，连线的警告是 `起点->终点:种类`，停止子流程节点的警告是它要停的子流程入口 ID，
+	 * 会失效的运行预设是预设的名称。用来认出「同一条警告」（见 CheckedWarningView），界面上不显示。
+	 */
+	target?: string;
+	/** true：改动之前就有，不是这次改动带进来的（`sfly scenario check` 的退出码和 `push --strict` 不看它）。 */
+	existing: boolean;
 }
 
 /**
@@ -639,6 +664,62 @@ export interface DevPackageView {
 	metadata: Record<string, unknown> | null;
 }
 
+/** 差异里的一个节点：ID、种类，有显示名称时带上（子流程入口节点是子流程名称）。 */
+export interface DiffNodeView {
+	id: string;
+	kind: string;
+	display_name?: string;
+}
+
+/**
+ * 两份场景文档的差异（@sfly/orchestration 的 diffDocuments，前端的版本对比用的是同一个函数）：只列出差异，不做合并。
+ * 节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。`moved` 是两边都有、只是位置变了的节点。
+ * secret 参数的默认值两边都是占位符，它的值变了看不出来。
+ */
+export interface DocumentDiffView {
+	/** 场景级设置：默认 Agent（`default_agent`）、锁定的节点包版本（`packages.<包名>`）。 */
+	settings: FieldChangeView[];
+	/** 改动的节点逐项列出字段：包节点的输入是 `inputs.<名>`，入口和子流程入口的参数是 `params.<参数名>`。 */
+	nodes: {
+		added: DiffNodeView[];
+		removed: DiffNodeView[];
+		changed: {
+			id: string;
+			kind: string;
+			display_name?: string;
+			changes: FieldChangeView[];
+		}[];
+	};
+	edges: {
+		added: {
+			from: string;
+			to: string;
+			kind: string;
+		}[];
+		removed: {
+			from: string;
+			to: string;
+			kind: string;
+		}[];
+	};
+	moved: string[];
+	annotations: {
+		added: {
+			id: string;
+			title: string;
+		}[];
+		removed: {
+			id: string;
+			title: string;
+		}[];
+		changed: {
+			id: string;
+			title: string;
+			changes: FieldChangeView[];
+		}[];
+	};
+}
+
 /**
  * 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。
  * 注释框的警告带 `annotation_id`，指出是哪个注释框；它们也不阻断触发。
@@ -647,8 +728,15 @@ export interface DocumentWarningView {
 	code: string;
 	message: string;
 	node_id?: string;
+	/** 警告所指的字段：包节点的输入、子流程参数、入口参数（`secret_param_default` 是参数名）、节点配置的字段。 */
 	input?: string;
 	annotation_id?: string;
+	/**
+	 * 同一个节点（或注释框）上可能有两条同种警告时，具体是哪一个：引用的警告是引用的路径，注释框指向成员的警告是
+	 * `nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`，连线的警告是 `起点->终点:种类`，停止子流程节点的警告是它要停的子流程入口 ID，
+	 * 会失效的运行预设是预设的名称。用来认出「同一条警告」（见 CheckedWarningView），界面上不显示。
+	 */
+	target?: string;
 }
 
 export interface Edge {
@@ -792,6 +880,15 @@ export interface FeishuTestResult {
 
 /** Webhook 地址：必须是 http 或 https 地址，不含空白字符。 */
 export type FeishuWebhookUrl = string;
+
+/** 一项字段的变化：`path` 例如 `default_agent`、`packages.http`、`inputs.url`、`params.env`；前后值不存在时没有这个字段。 */
+export interface FieldChangeView {
+	path: string;
+	/** 改之前的值；之前没有这一项（新加的输入、参数、包）时没有这个字段。 */
+	before?: unknown;
+	/** 改之后的值；之后没有这一项（删掉的输入、参数、包）时没有这个字段。 */
+	after?: unknown;
+}
 
 /** 一项的异常；没有异常为 null。 */
 export interface FocusAnomaly {
@@ -1265,6 +1362,11 @@ export interface NodeTypeView {
 	 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
 	 */
 	description?: string;
+	/**
+	 * 节点类型声明的默认超时（秒，`@node(timeout=…)`）：场景里这个节点没写超时时用它，都没有时用平台默认的 1 小时
+	 * （docs/SEMANTICS.md §3.3）。没声明的节点类型没有这个字段；带它的包发布到没有这个字段的旧控制面会被拒绝。
+	 */
+	timeout?: number;
 	/** 入口：`module:function`。 */
 	entry: string;
 	inputs: IoSchema;
@@ -1406,10 +1508,10 @@ export interface PackageNode {
 	/** 未设置时使用编排的默认 Agent。 */
 	agent?: string;
 	inputs: Record<string, unknown>;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限，#559）。 */
 	queue_timeout?: number;
 }
 
@@ -1430,10 +1532,10 @@ export interface PackageNodeInput {
 	/** 未设置时使用编排的默认 Agent。 */
 	agent?: string;
 	inputs?: Record<string, unknown>;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限，#559）。 */
 	queue_timeout?: number;
 }
 
@@ -1784,6 +1886,34 @@ export interface ProgressEvent {
 	node_id: string;
 	task_id: string;
 	progress: TaskProgressView;
+}
+
+/**
+ * 排队中的尝试在等什么：等的那台 Agent 现在为什么没接它。控制面在读取的这一刻按派发的条件判断（在线、准备好环境、
+ * 版本与控制面一致、有空闲槽位），不是尝试自己存下来的状态：Agent 上下线、槽位被占或释放不改变运行本身，
+ * 所以运行视图没有变化的推送也会过时，页面和命令行在尝试排队期间定时重新读取。
+ */
+export interface QueueWaitView {
+	/** 等的是哪台 Agent（和尝试的 `agent` 相同）。 */
+	agent: string;
+	/** 读取这一刻的控制面时间：排了多久、离线了多久、多久后排队超时都按它算（命令行不用自己的时钟）。 */
+	now: Timestamp;
+	/**
+	 * offline：Agent 不在线（从没连上过，或已经断开）；preparing：在线，还在准备环境，不接任务；
+	 * version_mismatch：版本与控制面不一致，不派新任务；slots_full：在线、已准备好，槽位都被占着（`holders`）；
+	 * dispatching：在线、有空闲槽位，正在派发，马上会开始。
+	 */
+	state: "offline" | "preparing" | "version_mismatch" | "slots_full" | "dispatching";
+	/** offline：Agent 最后在线的时间（从没连上过时为 null）；preparing：开始准备环境的时间；其余状态为 null。 */
+	since: Timestamp | null;
+	/** 排队超时的时间（超过它仍没有派发，任务以 env_error 失败）；没有设置排队超时时为 null。 */
+	expires_at: Timestamp | null;
+	/** Agent 的槽位总数；Agent 不在线时为 null。 */
+	slots: number | null;
+	/** slots_full：占着槽位的任务，按派发顺序；其余状态为空数组。只列读这个运行的人所在项目里的任务。 */
+	holders: SlotHolderView[];
+	/** slots_full：同一台 Agent 上别的项目的任务占着多少个槽位（只有个数，不给场景、运行和节点）；其余状态为 0。 */
+	other_project_holders: number;
 }
 
 /**
@@ -2170,7 +2300,7 @@ export interface RunMetricSummary {
 export interface RunNotificationChanges {
 	/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 	bot?: FeishuBotName | null;
-	/** 什么情况下发：仅失败、失败和取消、总是。 */
+	/** 什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。 */
 	trigger?: RunNotificationTrigger;
 	/** 卡片标题；空字符串用场景名。 */
 	title?: string;
@@ -2204,8 +2334,12 @@ export interface RunNotificationState {
 	reason: string | null;
 }
 
-/** 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。 */
-export type RunNotificationTrigger = "failed" | "failed_or_cancelled" | "always";
+/**
+ * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消。运行通知是兜底，成功的运行不发；不想发就把机器人设成
+ * null。曾经有的「总是」（`always`，成功、失败、取消都发）已经去掉（#446）：升级时存量的「总是」改成了失败和取消，
+ * 保存设置时再写它会被拒绝（`runNotificationTriggerRemovedMessage`）。
+ */
+export type RunNotificationTrigger = "failed" | "failed_or_cancelled";
 
 /** 运行用的运行预设，记的是触发时的情况：预设之后改名、删除都不影响。 */
 export interface RunPresetView {
@@ -2616,7 +2750,10 @@ export interface SessionDetailResponse {
 	has_more: boolean;
 }
 
-/** `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`）。 */
+/**
+ * `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`，
+ * 它不是整数或超过 `SESSION_SEQ_MAX` 的当作没带）。
+ */
 export interface SessionEventsQuery {
 	after?: number;
 }
@@ -2642,11 +2779,13 @@ export interface SessionListItem {
 
 /**
  * `GET /projects/:project/sessions`：助手此刻能不能用，和项目里的会话：在做和排队中的在前，其余按最近活动倒序
- * （#551 的写法；#544 之前没有排队，在做的至多一个）。
+ * （#551 的写法；#544 之前没有排队，在做的至多一个），最多 `SESSION_LIST_LIMIT` 个。
  */
 export interface SessionListResponse {
 	readiness: Readiness;
 	sessions: SessionListItem[];
+	/** 会话超过 `SESSION_LIST_LIMIT` 个，更早的没有列出来（页面据此提示）。 */
+	truncated: boolean;
 }
 
 /** 会话里的一句话：新建会话的第一句、发话、插话。非空（不能只有空白），不超过 `SESSION_MESSAGE_MAX_CHARS` 个字符。 */
@@ -2681,6 +2820,24 @@ export interface SessionView {
 	project: string;
 	readiness: Readiness;
 	waiting_for: WaitingFor | null;
+}
+
+/** 占着槽位的任务：哪个场景的哪个运行里哪个节点的第几次尝试（排队的尝试在等的槽位被它们占着）。 */
+export interface SlotHolderView {
+	run_id: string;
+	orchestration_id: string;
+	/** 场景现在的名称（名称不跟版本走）。 */
+	orchestration_name: string;
+	node_id: string;
+	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
+	display_name?: string;
+	/** 子流程名称（没有名称的旧版本为子流程入口的节点 ID，名称为空时为空字符串）；任务在主链上为 null。 */
+	chain_name: string | null;
+	attempt: number;
+	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
+	status: "dispatched" | "running";
+	/** 执行器启动的时间；准备中为 null。 */
+	started_at: Timestamp | null;
 }
 
 /**
@@ -2890,6 +3047,14 @@ export interface TurnQueuedEvent {
 	type: "turn_queued";
 	position: number;
 	waiting_for: WaitingFor;
+}
+
+/** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */
+export interface VersionCheckView {
+	/** 和保存时相同的警告，每条带 `existing`。 */
+	warnings: CheckedWarningView[];
+	/** 保存之后相对最新版本（还没有版本时是初始文档）的差异。 */
+	diff: DocumentDiffView;
 }
 
 export interface VersionSummaryView {

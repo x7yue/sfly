@@ -1,6 +1,11 @@
 import type { AssistantStreamRecord } from "@sfly/schema";
 import type { AssistantClient } from "./assistant-client.js";
-import { isPersistedType, SessionNotFoundError, type SessionStore } from "./session-store.js";
+import {
+	type DropReason,
+	isPersistedType,
+	SessionNotFoundError,
+	type SessionStore,
+} from "./session-store.js";
 
 export interface AssistantConnectionOptions {
 	client: AssistantClient;
@@ -13,10 +18,19 @@ export interface AssistantConnectionOptions {
 
 const DEFAULT_RECONNECT = { minMs: 1000, maxMs: 30_000 };
 
+const DROP_TEXT: Record<DropReason | "turn_mismatch", string> = {
+	unknown_session: "控制面不认识这个会话",
+	not_running: "会话不在做（空闲或已结束）",
+	other_turn: "不是会话此刻在做的那一轮（上一轮迟到的事件）",
+	turn_mismatch: "turn_end 的轮次和记录的轮次不一致",
+};
+
 /**
- * 控制面和助手服务的事件连接（协议里的 `GET /events`）：控制面启动时（配置了助手服务的话）打开它，断了按退避重连。
- * 收到的记录依次处理：持久的事件按会话落库（时间用助手服务盖的）并发布，不持久的只发布；会话不存在的（控制面不认识的
- * 会话 ID）记一条日志丢掉。一轮结束（`turn_end`）时会话回到空闲，和这条事件在同一个事务里（`SessionStore.append`）。
+ * 控制面和助手服务的事件连接（协议里的 `GET /events`）：控制面启动时（配置了助手服务的话）打开它，断了按退避重连；
+ * 助手服务每 15 秒写一行心跳，超过 45 秒没有收到任何字节就当连接死了、断开重连（`AssistantClient.events`）。
+ * 收到的记录依次处理：持久的事件按会话落库（时间用助手服务盖的）并发布，不持久的只发布，**两者都先核对会话在做、
+ * `turn` 是此刻在做的那一轮**（见 `#handle`）。一轮结束（`turn_end`）时会话回到空闲，和这条事件在同一个事务里
+ * （`SessionStore.append`）。
  *
  * 断线期间助手服务产生的事件丢掉：续传、纪元变化的处理、助手服务重启之后的中断是 #545。
  */
@@ -24,6 +38,8 @@ export class AssistantConnection {
 	readonly #abort = new AbortController();
 	#done: Promise<void> | undefined;
 	#wake: (() => void) | undefined;
+	/** 已经记过日志的不持久事件的丢弃（会话:轮次:原因），不让一轮迟到的几百条增量刷屏。 */
+	readonly #loggedDrops = new Set<string>();
 
 	constructor(private readonly options: AssistantConnectionOptions) {}
 
@@ -53,7 +69,7 @@ export class AssistantConnection {
 						first = false;
 						wait = minMs;
 					}
-					if ("type" in line) continue; // hello：续传和缺口的处理是 #545
+					if ("type" in line) continue; // hello（续传和缺口的处理是 #545）和心跳
 					await this.#handle(line);
 				}
 				if (!this.#abort.signal.aborted) this.options.log("助手服务的事件流结束了，重新连接");
@@ -66,23 +82,57 @@ export class AssistantConnection {
 		}
 	}
 
+	/**
+	 * 一条助手服务发来的记录：**落库或发布之前先核对**——会话存在、在做、记录里的 `turn` 是会话此刻在做的那一轮，
+	 * `turn_end` 的轮次和记录的轮次一致；不符合的（上一轮迟到的事件、空闲或已结束的会话收到的事件）不落库、不推给
+	 * 浏览器、不改状态，记一条日志（会话、轮次、事件类型，不含内容）。只该由控制面产生的事件（用户的话、一轮开始、
+	 * 平台记录、会话结束……）不在 `AssistantEvent` 里，整行过不了 schema，在 `AssistantClient.events` 就跳过了。
+	 */
 	async #handle(record: AssistantStreamRecord): Promise<void> {
 		const { sessions, log } = this.options;
-		const { event, session_id: sessionId } = record;
+		const { event, session_id: sessionId, turn } = record;
+		if (event.type === "turn_end" && event.turn !== turn) {
+			this.#dropped("turn_mismatch", record);
+			return;
+		}
 		if (!isPersistedType(event.type)) {
-			sessions.publish(sessionId, event);
+			const result = await sessions.publishFromAssistant(sessionId, turn, event);
+			if ("dropped" in result) this.#dropped(result.dropped, record);
 			return;
 		}
 		try {
-			await sessions.append(sessionId, event, new Date(record.at));
+			const result = await sessions.appendFromAssistant(
+				sessionId,
+				turn,
+				event,
+				new Date(record.at),
+			);
+			if ("dropped" in result) this.#dropped(result.dropped, record);
 		} catch (error) {
 			if (error instanceof SessionNotFoundError) {
-				log(`助手服务的事件属于控制面不认识的会话 ${sessionId}，已丢弃（${event.type}）`);
+				this.#dropped("unknown_session", record);
 				return;
 			}
 			// 写库出错：这条事件丢了，连接继续（后面的事件照常处理）。
-			log(`助手服务的事件落库失败，已丢弃（会话 ${sessionId}，${event.type}）`, error);
+			log(
+				`助手服务的事件落库失败，已丢弃（会话 ${sessionId}，轮次 ${turn}，${event.type}）`,
+				error,
+			);
 		}
+	}
+
+	/** 丢弃一条事件：持久的每条记一行；增量一类（量大）每个（会话、轮次、原因）只记第一条。 */
+	#dropped(reason: DropReason | "turn_mismatch", record: AssistantStreamRecord): void {
+		const { session_id: sessionId, turn, event } = record;
+		if (!isPersistedType(event.type)) {
+			const key = `${sessionId}:${turn}:${reason}`;
+			if (this.#loggedDrops.has(key)) return;
+			if (this.#loggedDrops.size >= 500) this.#loggedDrops.clear();
+			this.#loggedDrops.add(key);
+		}
+		this.options.log(
+			`助手服务的事件已丢弃：${DROP_TEXT[reason]}（会话 ${sessionId}，轮次 ${turn}，${event.type}）`,
+		);
 	}
 
 	#sleep(ms: number): Promise<void> {

@@ -12,7 +12,7 @@ import {
  * 类型已经保证每个接口写了必填的三项，这里检查写出来的值站得住：说明不是空的，资源类别在枚举里，
  * 定位的字段真的在请求里，`creates` 和 `removes` 只出现在写接口上、互不同时出现；
  * 再加守着下游的前提：GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口一定登记在
- * {@link READS_WITH_TRACES}；`{ params }` 定位用的一定是路径里的第一个参数；
+ * {@link NON_GET_READS}；`{ params }` 定位用的一定是路径里的第一个参数；
  * 接口的路径前缀和资源类别一定对得上 {@link PATH_KINDS}（`system` 的接口就是这张表里的 `system` 项：
  * 按鉴权的设想它们不带项目、不需要凭据，所以写错一个就是悄悄多了一个公开的接口，必须过这张表）。
  * 契约测试对 `httpContract` 运行它；路由清单导出时也运行它，有问题就不导出。
@@ -62,6 +62,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/dashboard": {
 		kind: "run",
 		why: "控制台统计以运行为主（窗口内的运行结果、运行中的运行、最近结束的运行），Agent 在线数只是附带；以后按项目隔离时，它的运行部分要按项目过滤",
+	},
+	"/auth": {
+		kind: "account",
+		why: "账号类接口：登录、登出、当前用户、改自己的密码、初始化第一个管理员；定位在发起请求的用户自己，路径不带项目（ADR 0029「凭据」）",
+	},
+	"/users": {
+		kind: "account",
+		why: "平台管理员管理账号：列出、建用户、停用和恢复、重置密码；不属于任何项目，只认平台管理员的登录",
 	},
 	"/projects/:project/sessions": {
 		kind: "session",
@@ -143,24 +151,25 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 /** 检查用到的两张表；测试可以换成自己的。 */
 export interface DeclarationRules {
 	pathKinds: Readonly<Record<string, PathKind>>;
-	readsWithTraces: Readonly<Record<string, string>>;
+	nonGetReads: Readonly<Record<string, string>>;
 }
 
 /**
- * 声明为只读、但调用后会留下点什么的接口：只写不影响任何资源内容的东西（访问日志、最后访问时间、内存里的临时状态），
- * 算只读，要在这里登记，写明写了什么。方法不是 GET 的只读接口（不是一眼看得出只读的）也一定在这里。
- * 键是 `方法 路径`（路径模板）。契约测试检查表里的接口都存在、都声明为只读；
+ * 方法不是 GET、声明为只读的接口：一眼看不出它只读，所以每一个都要在这里登记，写明为什么只读、调用后会留下什么
+ * （只能是不影响任何资源内容的东西：访问日志、最后访问时间、内存里的临时状态；什么都不留下就写什么都不留下）。
+ * 键是 `方法 路径`（路径模板）。契约测试检查表里的接口都存在、都声明为只读，非 GET 的只读接口都在表里；
  * 控制面的测试（read-only-routes.test.ts）对这里的接口同样要求库里和数据目录里没有变化，
  * 所以只写内存的才能登记；写库的（访问日志）要先在那个测试里单独说明。
- *
- * 现在没有这样的接口，表是空的（原来只有在线编辑者的心跳和离开，随功能删除）；
- * 机制保留：非 GET 的接口声明为只读时仍然要来这里登记，没登记就报错。
+ * GET 一定是只读，不用登记。
  */
-export const READS_WITH_TRACES: Readonly<Record<string, string>> = {};
+export const NON_GET_READS: Readonly<Record<string, string>> = {
+	"POST /orchestrations/:id/check":
+		"检查一份场景文档：用 POST 只是因为请求体是一整份文档；不改库、数据目录和内存，什么都不留下",
+};
 
 export const DECLARATION_RULES: DeclarationRules = {
 	pathKinds: PATH_KINDS,
-	readsWithTraces: READS_WITH_TRACES,
+	nonGetReads: NON_GET_READS,
 };
 
 /** 说明的长度上限：它是一句话，在 `sfly api --list` 的一行里显示。 */
@@ -184,8 +193,18 @@ export function pathParamNames(path: string): string[] {
  */
 function paramsBesidesProject(path: string): string[] {
 	const names = pathParamNames(path);
-	return path.startsWith(`/projects/:${PROJECT_PARAM}/`) ? names.slice(1) : names;
+	return isProjectScoped(path) ? names.slice(1) : names;
 }
+
+/** 路径是不是 `/projects/:project/…`（项目写在路径里：列表、新建，以及按名字定位的资源）。 */
+const isProjectScoped = (path: string): boolean => path.startsWith(`/projects/:${PROJECT_PARAM}/`);
+
+/**
+ * 用 ID 定位的资源类别（ADR 0029「项目从请求的哪里来」）：项目从那个资源所在的项目得出，路径里不带 `:project`——
+ * ID 已经确定了项目，再带一份就多出「两者不一致」这种情况，访问检查也不会核对 ID 属于路径里的那个项目。
+ * 和访问检查（`apps/server/src/auth/access-rules.ts` 的 `locatorOf`）认的是同一批。
+ */
+export const ID_LOCATED_KINDS: readonly ResourceKind[] = ["scenario", "run", "task", "session"];
 
 /** 对象 schema 的字段名；不是对象（或套了一层包装也认不出对象）时返回 undefined。 */
 function fieldNames(schema: z.ZodType | undefined): string[] | undefined {
@@ -215,6 +234,14 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 		if (target === "global" && kind !== "system") {
 			problems.push("resource.target 的 global 只用于 system");
 		}
+		if (target === "self" && kind !== "account") {
+			problems.push("resource.target 的 self 只用于 account（发起请求的用户自己）");
+		}
+		if (target === "self" && hasPathParams) {
+			problems.push(
+				"resource.target 写了 self，但路径里有参数：self 是发起请求的用户自己，管理别人的账号写 { params: 参数名 }",
+			);
+		}
 		if (kind === "system" && target !== "global") {
 			problems.push("system 没有具体的那一个，resource.target 写 global");
 		}
@@ -225,6 +252,29 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 		const names = pathParamNames(def.path);
 		if (!names.includes(target.params)) {
 			problems.push(`resource.target 的路径参数 ${target.params} 不在路径 ${def.path} 里`);
+			return problems;
+		}
+		// `/projects/:project/…` 的路径里 :project 只限定项目，定位用的是它之后的第一个参数。
+		const located = paramsBesidesProject(def.path);
+		if (isProjectScoped(def.path) && ID_LOCATED_KINDS.includes(kind)) {
+			// 用 ID 定位的类别在这类路径上只接受 collection：写 { params }（不论 :project 还是别的参数）都拒绝。
+			problems.push(
+				`${kind} 用 ID 定位，路径带 :${PROJECT_PARAM}（/projects/:${PROJECT_PARAM}/…）时只能写 collection（列表和新建）：` +
+					`访问检查对这类路径只按路径里的项目判断，不会核对 { params: "${target.params}" } 指的资源属于哪个项目。` +
+					`要按 ID 定位，路径写成不带 /projects/:${PROJECT_PARAM} 的写法（例如 /sessions/:id/…），定位写 { params: "id" }`,
+			);
+		} else if (isProjectScoped(def.path) && located.length > 0) {
+			if (target.params === PROJECT_PARAM) {
+				problems.push(
+					`resource.target 写了 { params: "${PROJECT_PARAM}" }，但路径里还有 :${located[0]}：它定位的是项目下的那一个资源，不是项目本身；` +
+						`改成 { params: "${located[0]}" }。（资源类别 project 加进来之后，定位项目本身的路径再在这里放宽）`,
+				);
+			} else if (located[0] !== target.params) {
+				problems.push(
+					`resource.target 的路径参数 ${target.params} 不是 :${PROJECT_PARAM} 之后的第一个参数 :${located[0]}：定位用的是它（${located[0]} 之后的参数是它名下的子项）。` +
+						`改成 { params: "${located[0]}" }；确有例外时在 checkTarget（http/declarations.ts）里放宽这条规则并写明理由`,
+				);
+			}
 		} else if (names[0] !== target.params) {
 			problems.push(
 				`resource.target 的路径参数 ${target.params} 不是路径里的第一个参数 :${names[0]}：定位用的是路径里的第一个参数（它标识路径的主体资源，${names[0]} 之后的参数是它名下的子项）。` +
@@ -236,6 +286,16 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 	if (!("query" in target) && !("body" in target)) {
 		problems.push(
 			"resource.target 要写 { params }、{ query }、{ body }、collection、upload 或 global",
+		);
+		return problems;
+	}
+	// `/projects/:project/…` 下用 ID 定位的类别只接受 collection（列表和新建）：访问检查看到路径里有 :project 就按路径的项目
+	// 查，不会去核对 query 或 body 里的那个 ID 属于哪个项目——写成 { query }、{ body } 就等于绕过了「ID 决定项目」。
+	if (isProjectScoped(def.path) && ID_LOCATED_KINDS.includes(kind)) {
+		problems.push(
+			`${kind} 用 ID 定位，路径带 :${PROJECT_PARAM}（/projects/:${PROJECT_PARAM}/…）时只能写 collection（列表和新建）：` +
+				`访问检查只按路径里的项目判断，不会核对 ${"query" in target ? "query" : "body"} 里的 ID 属于哪个项目。` +
+				`要按 ID 定位，路径写成不带 /projects/:${PROJECT_PARAM} 的写法（例如 /sessions/:id/…），定位写 { params: "id" }`,
 		);
 		return problems;
 	}
@@ -262,9 +322,9 @@ function checkEffect(def: RouteDef, rules: DeclarationRules): string[] {
 			"GET 要声明为只读（effect: read）：有副作用的接口用别的方法，下游按「所有 GET 都没有副作用」判断",
 		);
 	}
-	if (def.method !== "GET" && def.effect === "read" && !(key in rules.readsWithTraces)) {
+	if (def.method !== "GET" && def.effect === "read" && !(key in rules.nonGetReads)) {
 		problems.push(
-			"方法不是 GET 的只读接口要登记在 READS_WITH_TRACES（./declarations.ts），写明它为什么是只读；没有登记的写接口应声明 effect: write",
+			"方法不是 GET 的只读接口要登记在 NON_GET_READS（./declarations.ts），写明为什么只读、会留下什么；没有登记的写接口应声明 effect: write",
 		);
 	}
 	if (creates !== undefined) {
@@ -335,7 +395,7 @@ function checkPathKind(def: RouteDef, kind: ResourceKind, rules: DeclarationRule
 }
 
 /**
- * 检查那两张表（{@link PATH_KINDS}、{@link READS_WITH_TRACES}）和契约对得上：类别合法、写了理由、
+ * 检查那两张表（{@link PATH_KINDS}、{@link NON_GET_READS}）和契约对得上：类别合法、写了理由、
  * 每一项都有接口在用（改名或删了接口，表里的残留会报错），登记的只读接口都存在、都声明为只读。
  */
 export function checkDeclarationTables(
@@ -360,12 +420,11 @@ export function checkDeclarationTables(
 		}
 	}
 	const known = new Map(contract.map((def) => [label(def), def]));
-	for (const [key, what] of Object.entries(rules.readsWithTraces)) {
+	for (const [key, what] of Object.entries(rules.nonGetReads)) {
 		const def = known.get(key);
-		if (def === undefined)
-			problems.push(`READS_WITH_TRACES 的 ${key} 不在契约里：接口改名或删掉了`);
-		else if (def.effect !== "read") problems.push(`READS_WITH_TRACES 的 ${key} 没有声明为只读`);
-		if (what.trim() === "") problems.push(`READS_WITH_TRACES 的 ${key}：要写明写了什么`);
+		if (def === undefined) problems.push(`NON_GET_READS 的 ${key} 不在契约里：接口改名或删掉了`);
+		else if (def.effect !== "read") problems.push(`NON_GET_READS 的 ${key} 没有声明为只读`);
+		if (what.trim() === "") problems.push(`NON_GET_READS 的 ${key}：要写明为什么只读、会留下什么`);
 	}
 	return problems;
 }

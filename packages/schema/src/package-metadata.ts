@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { optionalMultiline } from "./display-text.js";
+import { NODE_TIMEOUT_MAX_SECONDS } from "./node-timeout.js";
 
 /** 节点包名：小写字母、数字、`-`、`_`，以字母或数字开头。 */
 export const PackageName = z
@@ -10,6 +11,12 @@ export const PackageName = z
 export const NodeName = z
 	.string()
 	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "节点名必须是合法的 Python 标识符");
+
+/**
+ * 开发版本的版本号：场景把包锁定到 `dev`（`包名@dev`）表示用 Agent 上以 `sfly dev` 加载的源码，docs/SEMANTICS.md §7。
+ * 控制面、画布、编排库都用这一个常量（Python 一侧各有自己的 `dev`）。
+ */
+export const DEV_VERSION = "dev";
 
 /** 节点输入或输出的 JSON Schema（type=object，properties 的键即参数名 / 输出键）。 */
 export const IoSchema = z.looseObject({
@@ -73,6 +80,11 @@ export const NodeTypeMetadata = z
 		 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
 		 */
 		description: optionalMultiline(NODE_DESCRIPTION_MAX),
+		/**
+		 * 节点类型声明的默认超时（秒，`@node(timeout=…)`）：场景里这个节点没写超时时用它，都没有时用平台默认的 1 小时
+		 * （docs/SEMANTICS.md §3.3）。没声明的节点类型没有这个字段；带它的包发布到没有这个字段的旧控制面会被拒绝。
+		 */
+		timeout: z.number().int().positive().max(NODE_TIMEOUT_MAX_SECONDS).optional(),
 		/** 入口：`module:function`。 */
 		entry: z.string().regex(/^[A-Za-z_][\w.]*:[A-Za-z_]\w*$/, "入口必须形如 module:function"),
 		inputs: IoSchema,

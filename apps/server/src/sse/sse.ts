@@ -21,6 +21,23 @@ export interface SseStream {
 	readonly closed: boolean;
 	/** 浏览器重连时带上的最后一条消息 ID（`Last-Event-ID` 请求头）。 */
 	readonly lastEventId: string | undefined;
+	/**
+	 * 写出去的数据还没被对端读走时，等它读走；已经读走或流已经结束时马上完成。一次要写很多条的（补发历史）
+	 * 每写一批等一次，慢客户端就不会让整段历史堆在服务端的内存里。
+	 */
+	drained(): Promise<void>;
+}
+
+/**
+ * 一条流是谁打开的（访问检查得出的身份，ADR 0029「SSE」）：登录被注销、用户被停用时按它关掉受影响的流。
+ * 不带凭据的请求（照旧放行的阶段）没有身份，永远不会被这样关掉。
+ */
+export interface StreamIdentity {
+	userId: string | null;
+	/** 登录 Cookie 对应的登录（`logins.id`）；令牌没有。 */
+	loginId: string | null;
+	/** 令牌的 ID；登录没有。 */
+	tokenId: string | null;
 }
 
 /** setup 里订阅数据源，返回的清理函数在流结束（客户端断开、服务端关闭）时调用一次。 */
@@ -48,22 +65,39 @@ export interface Sse {
 	open(request: FastifyRequest, reply: FastifyReply, setup: SseSetup): void;
 	/** 当前打开的流数量。 */
 	readonly size: number;
+	/** 关掉身份满足条件的流（登录被注销、用户被停用），返回关了几条。没有身份的流不会被关。 */
+	closeWhere(predicate: (identity: StreamIdentity) => boolean): number;
+	/** 现在打开着的、有身份的流的身份（不去重）：定期重新检查它们的凭据用。 */
+	identities(): StreamIdentity[];
 }
 
 export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 	const { clock } = options;
 	const heartbeatMs = options.heartbeatMs ?? 15_000;
 	const retryMs = options.retryMs ?? 3_000;
-	const open = new Set<SseStream>();
+	const open = new Map<SseStream, StreamIdentity | null>();
 
 	app.addHook("preClose", (done) => {
-		for (const stream of [...open]) stream.close();
+		for (const stream of [...open.keys()]) stream.close();
 		done();
 	});
 
 	return {
 		get size() {
 			return open.size;
+		},
+		identities() {
+			return [...open.values()].filter((identity): identity is StreamIdentity => identity !== null);
+		},
+		closeWhere(predicate) {
+			let closed = 0;
+			for (const [stream, identity] of [...open]) {
+				if (identity !== null && predicate(identity)) {
+					stream.close();
+					closed++;
+				}
+			}
+			return closed;
 		},
 		open(request, reply, setup) {
 			reply.hijack();
@@ -89,6 +123,12 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 
 			let closed = false;
 			let cleanup: (() => void) | undefined;
+			const drainWaiters = new Set<() => void>();
+			const releaseWaiters = () => {
+				for (const release of [...drainWaiters]) release();
+				drainWaiters.clear();
+			};
+			res.on("drain", releaseWaiters);
 			const heartbeat = setInterval(sendTime, heartbeatMs);
 			heartbeat.unref();
 
@@ -98,6 +138,7 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 				clearInterval(heartbeat);
 				open.delete(stream);
 				cleanup?.();
+				releaseWaiters();
 			};
 			const lastEventId = request.headers["last-event-id"];
 			const stream: SseStream = {
@@ -114,8 +155,18 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 					finish();
 					res.end();
 				},
+				drained() {
+					if (closed || !res.writableNeedDrain) return Promise.resolve();
+					return new Promise<void>((resolve) => {
+						drainWaiters.add(resolve);
+					});
+				},
 			};
-			open.add(stream);
+			const { access } = request;
+			open.set(
+				stream,
+				access ? { userId: access.userId, loginId: access.loginId, tokenId: access.tokenId } : null,
+			);
 			res.on("close", finish);
 			try {
 				cleanup = setup(stream) ?? undefined;

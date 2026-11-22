@@ -33,7 +33,6 @@ export function EditorTopLeft({
 	version,
 	fieldErrors,
 	warnings,
-	notes,
 	onShowChecks,
 	mode,
 	onMode,
@@ -44,14 +43,12 @@ export function EditorTopLeft({
 	/** 阻止保存的字段错误条数（检查结果里最先显示）。 */
 	fieldErrors: number;
 	warnings: number;
-	/** 不影响保存与触发的提醒条数（validation.ts 的 undeclaredInputNotes）。 */
-	notes: number;
 	onShowChecks(): void;
 	mode: EditorMode;
 	onMode(mode: EditorMode): void;
 	runState?: ReactNode;
 }) {
-	const summary = checkSummary(fieldErrors, warnings, notes);
+	const summary = checkSummary(fieldErrors, warnings);
 	return (
 		<div className={cn(floatGroupClass, "top-3 left-3")}>
 			<Link

@@ -1,14 +1,16 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import {
+	effectiveTimeout,
 	InvalidReferenceError,
 	inputProblems,
-	NODE_DEFAULTS,
+	nodeNameWithId,
+	nodeTimeoutProblem,
 	type ResolveScope,
 	referencedFeishuBots,
 	resolveInputs,
 } from "@sfly/orchestration";
 import type { AssignTaskSchema } from "@sfly/proto";
-import type { PackageMetadata } from "@sfly/schema";
+import { DEV_VERSION, type PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import type { Tx } from "../db/database.js";
 import { type AgentInfo, nodePackages } from "../db/schema.js";
@@ -18,12 +20,6 @@ import type { PackageNode } from "./chain.js";
 import { isAlways } from "./failures.js";
 import { resolveReferencedAgents } from "./referenced-agents.js";
 import type { TaskRow } from "./step.js";
-
-/** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
-const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
-
-/** 开发版本（docs/SEMANTICS.md §7）。 */
-export const DEV_VERSION = "dev";
 
 /** 这次尝试派给的 Agent：名称、版本，以及它以开发模式加载的节点包（开发版本的元信息由它上报）。 */
 export interface AssignTarget {
@@ -108,6 +104,10 @@ export function createAssignContent(urls: {
 		if (problems.length > 0) {
 			return { ok: false, kind: "config_error", message: problems.join("; "), inputs };
 		}
+		// 场景里这个节点写的超时超过 uint32（升级前保存的版本里可能有，保存时已经拦了）：下发会序列化失败、
+		// 拆掉这台 Agent 的连接，这个任务以配置错误失败（不重试），同一台 Agent 上的其他任务照常派发。
+		const timeoutProblem = nodeTimeoutProblem(nodeNameWithId(node), node.timeout);
+		if (timeoutProblem) return { ok: false, kind: "config_error", message: timeoutProblem, inputs };
 		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
 		const referenced = type
 			? await resolveReferencedAgents(tx, node.id, type.inputs, inputs, {
@@ -135,7 +135,8 @@ export function createAssignContent(urls: {
 				packageVersion,
 				node: node.node,
 				inputsJson: JSON.stringify(inputs),
-				timeoutSeconds: node.timeout ?? DEFAULT_TIMEOUT_SECONDS,
+				// 场景里这个节点写的 → 节点类型声明的 → 平台默认的 1 小时（docs/SEMANTICS.md §3.3）。
+				timeoutSeconds: effectiveTimeout(node, type).seconds,
 				runId: task.runId,
 				nodeId: node.id,
 				packageSha256: archive?.sha256 ?? "",

@@ -38,6 +38,19 @@ export const SESSION_EVENT_LIMITS = {
 /** `GET /sessions/:id` 一次最多返回的持久事件条数。 */
 export const SESSION_HISTORY_PAGE = 200;
 
+/**
+ * `GET /projects/:project/sessions` 最多返回的会话个数：在做和排队中的在前，其余按最近活动倒序，超出的更早的会话不返回
+ * （页面上没有「更多」之前，一个项目的会话数不会多到这里；翻页在会话的删除和保留期那一步做）。
+ */
+export const SESSION_LIST_LIMIT = 200;
+
+/**
+ * 会话内序号 `seq` 的上限：PostgreSQL `integer`（int4）的最大值。`before`、`after` 和 `Last-Event-ID` 超过它的，
+ * 契约直接 400（或当作不是数字），不会走到库里的 `integer` 比较去 500。一个会话写满这么多条事件要很久很久，
+ * 到了就是到了。
+ */
+export const SESSION_SEQ_MAX = 2_147_483_647;
+
 // ---------------------------------------------------------------------------
 // 枚举
 // ---------------------------------------------------------------------------
@@ -492,9 +505,12 @@ export const SessionEventBody = z.discriminatedUnion("type", [
 ]);
 export type SessionEventBody = z.infer<typeof SessionEventBody>;
 
-/** 持久的事件落库后多出的两个字段：会话内序号（从 1 起，SSE 的事件 ID）和落库的时间（控制面时间）。 */
+/**
+ * 持久的事件落库后多出的两个字段：会话内序号（从 1 起，SSE 的事件 ID，上限 {@link SESSION_SEQ_MAX}）和事件产生的时间
+ * （不是落库的时间：助手服务产生的事件由它盖时间，控制面原样存，见 {@link SESSION_EVENT_TYPES}）。
+ */
 const persisted = {
-	seq: z.int().min(1),
+	seq: z.int().min(1).max(SESSION_SEQ_MAX),
 	at: Timestamp,
 };
 
@@ -574,7 +590,10 @@ export const SessionMessageText = z
 	.string()
 	.min(1, "不能为空")
 	.max(SESSION_MESSAGE_MAX_CHARS, `不能超过 ${SESSION_MESSAGE_MAX_CHARS} 个字符`)
-	.refine((text) => text.trim().length > 0, "不能只有空白");
+	.refine((text) => text.trim().length > 0, "不能只有空白")
+	// 会存进数据库的 jsonb：NUL 和不成对的代理字符（`\ud800` 这类）它拒收。挡在写之前，不能等到改了状态再失败。
+	.refine((text) => !text.includes("\u0000"), "不能含 NUL 字符")
+	.refine((text) => !/\p{Surrogate}/u.test(text), "不能含不成对的代理字符");
 
 /** `POST /projects/:project/sessions`：新建会话，`text` 是它的第一句话，作为第一轮。 */
 export const CreateSessionBody = z.object({ text: SessionMessageText });
@@ -638,11 +657,13 @@ export type SessionView = z.infer<typeof SessionView>;
 
 /**
  * `GET /projects/:project/sessions`：助手此刻能不能用，和项目里的会话：在做和排队中的在前，其余按最近活动倒序
- * （#551 的写法；#544 之前没有排队，在做的至多一个）。
+ * （#551 的写法；#544 之前没有排队，在做的至多一个），最多 {@link SESSION_LIST_LIMIT} 个。
  */
 export const SessionListResponse = z.object({
 	readiness: Readiness,
-	sessions: z.array(SessionListItem),
+	sessions: z.array(SessionListItem).max(SESSION_LIST_LIMIT),
+	/** 会话超过 {@link SESSION_LIST_LIMIT} 个，更早的没有列出来（页面据此提示）。 */
+	truncated: z.boolean(),
 });
 export type SessionListResponse = z.infer<typeof SessionListResponse>;
 
@@ -652,7 +673,7 @@ const blankAsMissing = <S extends z.ZodType>(schema: S) =>
 
 /** `GET /sessions/:id` 的 query：`before` 是序号，取比它小的事件（往前翻页）。 */
 export const SessionDetailQuery = z.object({
-	before: blankAsMissing(z.coerce.number().int().min(1)),
+	before: blankAsMissing(z.coerce.number().int().min(1).max(SESSION_SEQ_MAX)),
 });
 export type SessionDetailQuery = z.infer<typeof SessionDetailQuery>;
 
@@ -666,8 +687,11 @@ export const SessionDetailResponse = SessionView.extend({
 });
 export type SessionDetailResponse = z.infer<typeof SessionDetailResponse>;
 
-/** `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`）。 */
+/**
+ * `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`，
+ * 它不是整数或超过 {@link SESSION_SEQ_MAX} 的当作没带）。
+ */
 export const SessionEventsQuery = z.object({
-	after: blankAsMissing(z.coerce.number().int().min(0)),
+	after: blankAsMissing(z.coerce.number().int().min(0).max(SESSION_SEQ_MAX)),
 });
 export type SessionEventsQuery = z.infer<typeof SessionEventsQuery>;

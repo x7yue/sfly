@@ -10,6 +10,7 @@ import {
 	type AccessResult,
 } from "../src/auth/access-guard.js";
 import {
+	ACCOUNT_ROUTES,
 	AGENT_CREDENTIAL_ROUTES,
 	locatorOf,
 	routeKey,
@@ -93,6 +94,8 @@ describe("契约路由的访问检查", () => {
 	) => {
 		const cookie = `cookie-${++counter}`;
 		store.logins.set(hashCredential(cookie), {
+			id: `login-${counter}`,
+			lastUsedAt: clock.now(),
 			user: who,
 			idleExpiresAt: extra.idleExpiresAt ?? AFTER,
 			revokedAt: extra.revokedAt ?? null,
@@ -102,6 +105,7 @@ describe("契约路由的访问检查", () => {
 	const token = (fields: Partial<StoredToken> & Pick<StoredToken, "kind">) => {
 		const secret = `sfly_x_${++counter}`;
 		store.tokens.set(hashCredential(secret), {
+			id: `token-${counter}`,
 			name: `令牌${counter}`,
 			user: null,
 			projectId: null,
@@ -138,13 +142,22 @@ describe("契约路由的访问检查", () => {
 			if (kind === "task") filled[target.params] = RES.task[project];
 			if (kind === "session") filled[target.params] = RES.session[project];
 		}
-		return { route, params: { ...filled, ...params }, ...credentials };
+		// 登录 Cookie 要同源的请求才认（./cross-site.ts）：这些测试默认是控制台自己发的请求。
+		return {
+			route,
+			params: { ...filled, ...params },
+			fetchSite: "same-origin",
+			...credentials,
+		};
 	};
 	const run = (route: RouteDef, credentials: Credentials, project?: "default" | "alpha") =>
 		guard.check(request(route, credentials, project));
 
 	const outcome = (result: AccessResult) => (result.ok ? "ok" : result.status);
-	const OUTSIDE_PROJECT = httpContract.filter((def) => locatorOf(def)?.from !== "none");
+	const OUTSIDE_PROJECT = httpContract.filter((def) => {
+		const from = locatorOf(def)?.from;
+		return from !== "none" && from !== "account";
+	});
 	const SYSTEM = httpContract.filter((def) => locatorOf(def)?.from === "none");
 	const route = (key: string): RouteDef => {
 		const found = httpContract.find((def) => routeKey(def) === key);
@@ -153,10 +166,24 @@ describe("契约路由的访问检查", () => {
 	};
 
 	describe("不带凭据、带共享令牌：照旧放行（到 #494 才拒绝）", () => {
-		it("不带凭据的请求每个接口都放行，不读库，没有身份", async () => {
+		it("不带凭据的请求每个接口都放行，不读库，没有身份（账号类接口除外：它们需要登录，见 accounts-http.test.ts）", async () => {
 			for (const def of httpContract) {
+				// 登录、初始化、状态本来就不要凭据，登出什么凭据都不拒绝，其余账号类接口不带登录是 401：这是新接口，没有「照旧」可言。
+				if (locatorOf(def)?.from === "account") continue;
 				const result = await run(def, {});
 				expect(result, routeKey(def)).toEqual({ ok: true, access: null });
+			}
+			expect(store.reads).toBe(0);
+		});
+
+		it("账号类接口：登录、初始化、状态不要凭据（带什么都不看）；其余需要登录，不带凭据是 401，不读库", async () => {
+			for (const def of httpContract) {
+				if (locatorOf(def)?.from !== "account") continue;
+				const rule = ACCOUNT_ROUTES[routeKey(def) as keyof typeof ACCOUNT_ROUTES];
+				const result = await run(def, {});
+				if (rule === "anonymous" || rule === "logout") {
+					expect(result, routeKey(def)).toEqual({ ok: true, access: null });
+				} else expect(outcome(result), routeKey(def)).toBe(401);
 			}
 			expect(store.reads).toBe(0);
 		});
@@ -340,6 +367,8 @@ describe("契约路由的访问检查", () => {
 					userId: USERS.editor.id,
 					name: "用户2",
 					tokenName: "我的令牌",
+					loginId: null,
+					tokenId: expect.stringMatching(/^token-\d+$/),
 					adminActionId: null,
 					project: DEFAULT,
 					role: "editor",
@@ -432,6 +461,88 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await run(route("GET /orchestrations"), session, "alpha"))).toBe("ok");
 			const stranger = token({ kind: "session", user: USERS.stranger, projectId: DEFAULT });
 			expect(outcome(await run(route("GET /orchestrations"), stranger))).toBe(404);
+		});
+
+		it("会话的写（建、发话、停止）只有人能做：项目令牌范围再够也是 403，登录的用户和个人令牌走范围表；读照常", async () => {
+			const writes = [
+				"POST /projects/:project/sessions",
+				"POST /sessions/:id/messages",
+				"POST /sessions/:id/stop",
+			];
+			// 项目令牌（服务账号，没有用户）带着全部范围：范围表里会话的写要「编辑」，它有，但凭据不是人。
+			const projectToken = token({ kind: "project", projectId: DEFAULT, name: "ci" });
+			for (const key of writes) {
+				expect(await run(route(key), projectToken), `项目令牌 ${key}`).toMatchObject({
+					ok: false,
+					status: 403,
+					message: expect.stringContaining("项目令牌不能做这件事"),
+				});
+			}
+			// 同一个项目令牌的读：按范围，照常。
+			for (const key of ["GET /projects/:project/sessions", "GET /sessions/:id"]) {
+				expect(outcome(await run(route(key), projectToken)), `项目令牌 ${key}`).toBe("ok");
+			}
+			// 项目令牌在别的项目：404，不是 403（不泄露）。
+			expect(outcome(await run(route("POST /sessions/:id/stop"), projectToken, "alpha"))).toBe(404);
+			// 人：登录和个人令牌，编辑者放行；只读成员没有「编辑」范围，403 是范围表的那一条。
+			for (const key of writes) {
+				expect(outcome(await run(route(key), login(USERS.editor))), `登录 ${key}`).toBe("ok");
+				expect(outcome(await run(route(key), personal(USERS.editor))), `个人令牌 ${key}`).toBe(
+					"ok",
+				);
+				expect(outcome(await run(route(key), login(USERS.reader))), `只读 ${key}`).toBe(403);
+			}
+			// 令牌只给了读范围的个人令牌：范围不够，403。
+			const readOnlyToken = personal(USERS.editor, { scopes: ["read"] });
+			for (const key of writes) {
+				expect(outcome(await run(route(key), readOnlyToken)), `只读令牌 ${key}`).toBe(403);
+			}
+			// Agent 凭据（接口清单里没有会话的任何接口）：读和写都是 403。
+			const secret = `sfly_agt_${++counter}`;
+			store.agentCredentials.set(hashCredential(secret), {
+				kind: "agent",
+				projectId: DEFAULT,
+				agentName: "agent-a",
+				user: null,
+				revokedAt: null,
+			});
+			const agent = { authorization: `Bearer ${secret}` };
+			for (const key of [...writes, "GET /sessions/:id", "GET /projects/:project/sessions"]) {
+				expect(outcome(await run(route(key), agent)), `Agent 凭据 ${key}`).toBe(403);
+			}
+		});
+
+		it("会话令牌对会话只有读（ADR 0027）：建会话、发话、停止是 403，读照常；这条规则不靠「写一律 403」的临时总闸", async () => {
+			const session = token({
+				kind: "session",
+				user: USERS.editor,
+				projectId: DEFAULT,
+				name: "会话",
+			});
+			// 同样的发起人用个人令牌：编辑者，三个写接口都放行（说明挡住会话令牌的不是范围）。
+			const personalEditor = personal(USERS.editor);
+			for (const key of [
+				"POST /projects/:project/sessions",
+				"POST /sessions/:id/messages",
+				"POST /sessions/:id/stop",
+			]) {
+				expect(outcome(await run(route(key), personalEditor)), `个人令牌 ${key}`).toBe("ok");
+				// 说法是这条规则自己的，不是总闸的「写入还没有开放」：#495 拿掉总闸以后，它还在。
+				expect(await run(route(key), session), key).toMatchObject({
+					ok: false,
+					status: 403,
+					message: expect.stringContaining("会话令牌对会话只有读"),
+				});
+			}
+			for (const key of [
+				"GET /projects/:project/sessions",
+				"GET /sessions/:id",
+				"GET /sessions/:id/events",
+			]) {
+				expect(outcome(await run(route(key), session)), key).toBe("ok");
+			}
+			// 别的项目的会话令牌：不是它的项目，404（不是 403），读和写一样。
+			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);
 		});
 	});
 
@@ -605,6 +716,70 @@ describe("契约路由的访问检查", () => {
 					404,
 				);
 			}
+		});
+	});
+
+	describe("登录的空闲期限：用着就顺延，不用就过期（PR #555 的独立审查）", () => {
+		const HOUR = 3_600_000;
+		const idle = 12 * HOUR;
+		const get = () => route("GET /orchestrations");
+		const loginFor = (who: StoredUser) =>
+			login(who, { idleExpiresAt: new Date(clock.now().getTime() + idle) });
+
+		it("满一分钟之后再用：空闲期限顺延到「现在 + 12 小时」，库里记下最后使用时间，响应重新下发 Cookie（Max-Age 是空闲期限）", async () => {
+			const { cookie } = loginFor(USERS.reader);
+			clock.advance(60_000);
+			const result = await run(get(), { cookie });
+			expect(result).toMatchObject({ ok: true });
+			expect(store.touches).toEqual([
+				{
+					id: expect.stringMatching(/^login-/),
+					lastUsedAt: clock.now(),
+					idleExpiresAt: new Date(clock.now().getTime() + idle),
+				},
+			]);
+			const setCookie = (result as { setCookie?: string }).setCookie ?? "";
+			expect(setCookie).toContain(`sfly_login=${cookie.replace("sfly_login=", "")}`);
+			expect(setCookie).toContain(`Max-Age=${idle / 1000}`);
+			expect(setCookie).toMatch(/HttpOnly/);
+		});
+
+		it("一分钟之内再用：不写库，也不重新下发 Cookie；满了一分钟才再写一次", async () => {
+			const { cookie } = loginFor(USERS.reader);
+			clock.advance(60_000);
+			await run(get(), { cookie });
+			expect(store.touches).toHaveLength(1);
+			clock.advance(59_999);
+			const soon = await run(get(), { cookie });
+			expect(store.touches).toHaveLength(1);
+			expect((soon as { setCookie?: string }).setCookie).toBeUndefined();
+			clock.advance(1);
+			const again = await run(get(), { cookie });
+			expect(store.touches).toHaveLength(2);
+			expect((again as { setCookie?: string }).setCookie).toContain("Max-Age=");
+			// 刚用过一次，不到一分钟：登录没有因为期间有人用着就一直写。
+			expect(store.touches[1]?.idleExpiresAt).toEqual(new Date(clock.now().getTime() + idle));
+		});
+
+		it("用着就一直有效：每隔不到空闲期限用一次，几天之后仍然有效", async () => {
+			const { cookie } = loginFor(USERS.reader);
+			for (let i = 0; i < 10; i++) {
+				clock.advance(idle - HOUR);
+				expect(outcome(await run(get(), { cookie })), `第 ${i + 1} 次`).toBe("ok");
+			}
+		});
+
+		it("过了空闲期限没人用：被拒绝（401），并让浏览器删掉这个 Cookie；到点的那一刻也算过期", async () => {
+			const { cookie } = loginFor(USERS.reader);
+			clock.advance(idle - 1);
+			expect(outcome(await run(get(), { cookie }))).toBe("ok");
+			// 上面用过一次，期限顺延了；再不用，过一个空闲期限就失效。
+			clock.advance(idle);
+			const expired = await run(get(), { cookie });
+			expect(outcome(expired)).toBe(401);
+			const setCookie = (expired as { setCookie?: string }).setCookie ?? "";
+			expect(setCookie).toContain("Max-Age=0");
+			expect(setCookie).toMatch(/sfly_login=;/);
 		});
 	});
 

@@ -1,5 +1,6 @@
 import type { StoredNode, StoredOrchestrationDocument } from "@sfly/schema";
 import { subflowName } from "./chain-label.js";
+import { nodeTimeoutProblem, queueTimeoutProblem } from "./node-config.js";
 import { nodeNameWithId } from "./node-display.js";
 
 /**
@@ -18,6 +19,10 @@ export interface StructureDocument {
 		name?: string | undefined;
 		/** 停止子流程节点要停止的子流程（子流程入口的节点 ID）。 */
 		subflow?: string | undefined;
+		/** 包节点写的超时（秒）。 */
+		timeout?: number | undefined;
+		/** 包节点写的排队超时（秒）。 */
+		queue_timeout?: number | undefined;
 	}[];
 	edges: readonly Pick<StoredOrchestrationDocument["edges"][number], "from" | "to" | "kind">[];
 }
@@ -45,7 +50,9 @@ export type StructureWarningCode =
 	| "stop_subflow_out_of_scope"
 	| "nesting_too_deep"
 	| "orphan_node"
-	| "missing_agent";
+	| "missing_agent"
+	| "timeout_out_of_range"
+	| "queue_timeout_out_of_range";
 
 export interface StructureWarning {
 	code: StructureWarningCode;
@@ -54,6 +61,11 @@ export interface StructureWarning {
 	node_id?: string;
 	/** 警告所指的节点配置字段（子流程入口的 name、停止子流程节点的 subflow），检查器显示在字段下面。 */
 	input?: string;
+	/**
+	 * 同一个节点上可能有两条同种警告时，具体是哪一个（「同一条警告」的键要用，见 `warningIdentity`）：
+	 * 连线的警告是那条连线（`起点->终点:种类`），停止子流程节点的警告是它要停的子流程入口 ID。
+	 */
+	target?: string;
 }
 
 /** 子流程嵌套深度上限（主链为第 0 层）。 */
@@ -136,13 +148,21 @@ export function checkConnection(doc: StructureDocument, edge: StructureEdge): st
 /** 结构检查：返回全部警告（顺序固定：按规则分类，同类按节点 / 连线在文档中的顺序）。 */
 export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	const warnings: StructureWarning[] = [];
-	const warn = (code: StructureWarningCode, message: string, node_id?: string, input?: string) =>
+	const warn = (
+		code: StructureWarningCode,
+		message: string,
+		node_id?: string,
+		input?: string,
+		target?: string,
+	) =>
 		warnings.push({
 			code,
 			message,
 			...(node_id === undefined ? {} : { node_id }),
 			...(input === undefined ? {} : { input }),
+			...(target === undefined ? {} : { target }),
 		});
+	const edgeTarget = (edge: StructureEdge) => `${edge.from}->${edge.to}:${edge.kind}`;
 	const { byId, out, into } = indexEdges(doc);
 	const count = (m: Map<string, string[]>, id: string) => (m.get(id) ?? []).length;
 
@@ -158,6 +178,8 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 					"unknown_node",
 					`连线 ${nameOf(byId, edge.from)} → ${nameOf(byId, edge.to)} 指向不存在的节点 ${id}`,
 					id,
+					undefined,
+					edgeTarget(edge),
 				);
 		}
 	}
@@ -168,6 +190,8 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				"invalid_dispatch",
 				`调度连线 ${nameOf(byId, edge.from)} → ${nameOf(byId, edge.to)} 必须从异步任务节点连到子流程入口节点`,
 				edge.from,
+				undefined,
+				edgeTarget(edge),
 			);
 		}
 	}
@@ -300,6 +324,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				`停止子流程节点 ${nodeNameWithId(node)} 要停止的子流程 ${node.subflow} 不存在`,
 				node.id,
 				"subflow",
+				node.subflow,
 			);
 			continue;
 		}
@@ -314,6 +339,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				`停止子流程节点 ${nodeNameWithId(node)} 在触发子流程「${name}」的异步任务节点 ${nameOf(byId, trigger)} 之前`,
 				node.id,
 				"subflow",
+				target.id,
 			);
 		} else {
 			warn(
@@ -321,6 +347,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				`停止子流程节点 ${nodeNameWithId(node)} 只能停止本链触发的子流程，「${name}」不是`,
 				node.id,
 				"subflow",
+				target.id,
 			);
 		}
 	}
@@ -372,6 +399,15 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				node.id,
 			);
 		}
+	}
+	// 节点写的超时超过派发能下发的范围、排队超时超过上限（升级前保存的版本里可能有）：保存时已经拒绝，这里挡住触发、给画布一条警告。
+	for (const node of doc.nodes) {
+		if (node.kind !== "package") continue;
+		const problem = nodeTimeoutProblem(nodeNameWithId(node), node.timeout);
+		if (problem) warn("timeout_out_of_range", problem, node.id, "timeout");
+		// 排队超时同理（#559）：排队截止时间要是有效的时间。
+		const queueProblem = queueTimeoutProblem(nodeNameWithId(node), node.queue_timeout);
+		if (queueProblem) warn("queue_timeout_out_of_range", queueProblem, node.id, "queue_timeout");
 	}
 	return warnings;
 }

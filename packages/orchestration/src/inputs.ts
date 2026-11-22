@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, StoredOrchestrationDocument } from "@sfly/schema";
+import { devRefreshHint } from "./dev-node-types.js";
 import { isInputOfType } from "./input-marker.js";
 import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
@@ -128,16 +129,102 @@ export function inputProblems(
 	return problems;
 }
 
+/** 编辑距离，相邻两个字符颠倒算一次改动（拼写错误里最常见的一种）。 */
+function editDistance(a: string, b: string): number {
+	const rows = Array.from({ length: a.length + 1 }, (_, i) => [
+		i,
+		...new Array<number>(b.length).fill(0),
+	]);
+	const row0 = rows[0] as number[];
+	for (let j = 0; j <= b.length; j++) row0[j] = j;
+	for (let i = 1; i <= a.length; i++) {
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			const row = rows[i] as number[];
+			row[j] = Math.min(
+				((rows[i - 1] as number[])[j] as number) + 1,
+				(row[j - 1] as number) + 1,
+				((rows[i - 1] as number[])[j - 1] as number) + cost,
+			);
+			if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+				row[j] = Math.min(row[j] as number, ((rows[i - 2] as number[])[j - 2] as number) + 1);
+			}
+		}
+	}
+	return (rows[a.length] as number[])[b.length] as number;
+}
+
+/**
+ * 写错的输入名最像哪个已声明的输入：只差一两个字符（不区分大小写，相邻字符颠倒算一个），
+ * 名字够长（8 个字符以上）时可以差两个；太短的名字、差得远的不猜。没有时为 undefined。
+ */
+export function similarInput(name: string, declared: readonly string[]): string | undefined {
+	const lower = name.toLowerCase();
+	let best: { name: string; distance: number } | undefined;
+	for (const candidate of declared) {
+		const other = candidate.toLowerCase();
+		const distance = editDistance(lower, other);
+		const allowed = Math.max(lower.length, other.length) >= 8 ? 2 : 1;
+		if (distance > allowed || distance >= Math.min(lower.length, other.length)) continue;
+		if (best === undefined || distance < best.distance) best = { name: candidate, distance };
+	}
+	return best?.name;
+}
+
+/**
+ * 节点类型是不是接收没有声明的输入：输入 schema 的 `additionalProperties` 是 true 或一个 schema（JSON Schema 的写法）。
+ * `sfly build` 不接受 `**kwargs`，所以 SDK 生成的元信息里没有这种写法，不会误报；这是给手写的元信息留的口子。
+ */
+const acceptsAnyInput = (io: Io): boolean =>
+	io.additionalProperties === true ||
+	(typeof io.additionalProperties === "object" && io.additionalProperties !== null);
+
+/** 节点上写了、但节点类型没有声明的输入名（按写入的顺序）；节点类型接收任意输入时没有。画布和静态检查共用。 */
+export function undeclaredInputs(io: Io, inputs: Record<string, unknown>): string[] {
+	if (acceptsAnyInput(io)) return [];
+	return Object.keys(inputs).filter((name) => !Object.hasOwn(io.properties, name));
+}
+
+/**
+ * 没有声明的输入的说明：写明是哪个输入、节点类型声明了哪些输入，能猜到时问是不是想写另一个。
+ * `refresh` 是开发版本的提醒（{@link devRefreshHint}）：声明是 Agent 上次运行 `sfly dev` 时上报的，改了节点的参数而没有
+ * 重新运行时是旧的；已发布的版本是空串。
+ */
+function undeclaredInputMessage(
+	node: { node: string; inputs: Record<string, unknown> },
+	label: string,
+	io: Io,
+	input: string,
+	refresh: string,
+): string {
+	const declared = orderedInputs(io).map(([name]) => name);
+	const head = `节点 ${label} 的输入 ${input} 没有声明：节点类型 ${node.node}`;
+	if (declared.length === 0) return `${head} 不接收任何输入；删掉这个输入${refresh}`;
+	const listed = `${head} 声明的输入有 ${declared.join("、")}`;
+	// 已经写了的输入不再建议（它们是对的）；声明的输入都已经写在节点上了，就只能删掉这个。
+	const free = declared.filter((name) => !Object.hasOwn(node.inputs, name));
+	const similar = similarInput(input, free);
+	const advice =
+		similar !== undefined
+			? `是不是想写 ${similar}？`
+			: free.length === 0
+				? "删掉这个输入"
+				: "改成其中一个，或者删掉这个输入";
+	return `${listed}；${advice}${refresh}`;
+}
+
 export interface InputWarning {
-	code: "input_required" | "input_type_mismatch";
+	code: "input_required" | "input_type_mismatch" | "input_not_declared";
 	message: string;
 	node_id: string;
 	input: string;
 }
 
 /**
- * 输入的静态检查（保存时警告，触发时必须通过）：包节点的必填输入要填写；常量要符合输入类型。
- * 含引用的值在派发时才知道类型，这里不检查；节点类型未知时跳过（包版本检查会指出）。
+ * 输入的静态检查（保存时警告，触发时必须通过）：包节点的必填输入要填写；写的输入名要是节点类型声明过的
+ * （没有声明的，执行器在运行时以 config_error 拒绝，`runner.py` 的 `_check_declared`）；常量要符合输入类型。
+ * 含引用的值在派发时才知道类型，这里不检查类型，输入名照样检查；节点类型未知时跳过（包版本检查会指出）。
+ * 三种问题级别相同：保存只警告（草稿可以先存着），触发前必须改好，运行时都是同一个 config_error。
  */
 export function inputWarnings(
 	doc: StoredOrchestrationDocument,
@@ -161,7 +248,23 @@ export function inputWarnings(
 				input,
 			});
 		}
+		const undeclared = new Set(undeclaredInputs(type.inputs, node.inputs));
 		for (const [input, value] of Object.entries(node.inputs)) {
+			if (undeclared.has(input)) {
+				warnings.push({
+					code: "input_not_declared",
+					message: undeclaredInputMessage(
+						node,
+						nodeNameWithId(node),
+						type.inputs,
+						input,
+						devRefreshHint(doc, node, "参数"),
+					),
+					node_id: node.id,
+					input,
+				});
+				continue;
+			}
 			if (referencesIn(value).length > 0 || owned(input)) continue;
 			const problem = typeProblem(type.inputs, input, value);
 			if (!problem) continue;

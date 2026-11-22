@@ -37,7 +37,7 @@ import { z } from "zod";
  *    它们进入路由清单（`sfly api --list` / `--describe` 读的就是它），
  *    以后的鉴权也在契约路由一处按它们判断一个请求要什么、作用在什么上，不靠各个接口自己记。
  *    `checkRouteDeclarations`（./declarations.ts）检查声明本身站得住，契约测试对每个接口运行它：
- *    GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口要在 `READS_WITH_TRACES` 登记，`{ params }` 用的是路径里的第一个参数，
+ *    GET 一定是只读，DELETE 一定声明 `removes`，非 GET 的只读接口要在 `NON_GET_READS` 登记，`{ params }` 用的是路径里的第一个参数，
  *    接口的路径前缀和 `resource.kind` 要对上 `PATH_KINDS`（`system` 就是那张表里的 `system` 项，每条路径单独列出：不带项目、不需要凭据，写错一个就是悄悄多一个公开的接口；
  *    新接口的路径前缀不在表里、或加一个资源类别，都要改那张表，审查时看得见）；
  *    声明为 `read` 的接口真的不写库，由控制面的测试用真实的请求核对（apps/server/test/read-only-routes.test.ts）。
@@ -71,6 +71,9 @@ export interface RawRequest {
  * - `session` 助手会话（会话的事件、停止都属于会话：定位用会话 id；列出和新建在项目下，定位的是会话的集合）。
  * - `system` 平台自身：与具体的场景、运行都无关的东西（健康检查、用户文档、SDK 与 Agent 的安装包和安装脚本、
  *   API 客户端安装包、项目设置）。
+ * - `account` 账号：登录、登出、当前用户、改自己的密码，以及平台管理员管理账号（建用户、停用、重置密码）。
+ *   账号不属于任何项目，路径不带项目，不走项目的范围表：各接口认哪种凭据由访问检查里的一张表规定
+ *   （apps/server/src/auth/access-rules.ts 的 `ACCOUNT_ROUTES`）。ADR 0029「凭据」。
  */
 export const RESOURCE_KINDS = [
 	"scenario",
@@ -81,6 +84,7 @@ export const RESOURCE_KINDS = [
 	"feishu_bot",
 	"session",
 	"system",
+	"account",
 ] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 
@@ -94,6 +98,7 @@ export const RESOURCE_KIND_LABELS = {
 	feishu_bot: "飞书机器人",
 	session: "会话",
 	system: "系统",
+	account: "账号",
 } as const satisfies Record<ResourceKind, string>;
 
 /**
@@ -106,6 +111,8 @@ export const RESOURCE_KIND_LABELS = {
  *   新建在别的资源名下的子资源（场景的运行预设、运行）时，定位的是那个上级资源。
  * - `"upload"`：具体的那一个在上传的内容里（发布节点包：包名与版本在归档的元信息里），请求的字段里没有。
  * - `"global"`：只用于 `system`，平台自身，没有「具体的那一个」。
+ * - `"self"`：只用于 `account`，定位在发起请求的用户自己（登录、登出、当前用户、改自己的密码），请求里没有指向任何资源的字段，
+ *   路径里也不能有参数。管理别人的账号用 `{ params }`（路径里的用户 ID）或 `"collection"`。
  */
 export type ResourceTarget =
 	| { params: string }
@@ -113,7 +120,8 @@ export type ResourceTarget =
 	| { body: string }
 	| "collection"
 	| "upload"
-	| "global";
+	| "global"
+	| "self";
 
 /** 接口作用在哪类资源上，以及怎么定位到具体的那一个。 */
 export interface ResourceRef {
@@ -125,8 +133,8 @@ export interface ResourceRef {
  * 接口对平台的影响：
  *
  * - `read` 只读：不改变平台里任何资源的内容，也不在平台之外产生副作用。打开 SSE 流时登记的订阅随连接结束，不算；
- *   只写访问日志、最后访问时间这类不影响任何资源内容的痕迹，也算只读，但要在 `READS_WITH_TRACES`
- *   （./declarations.ts）登记写了什么。
+ *   只写访问日志、最后访问时间这类不影响任何资源内容的痕迹，也算只读。方法不是 GET 的只读接口要在 `NON_GET_READS`
+ *   （./declarations.ts）登记为什么只读、会留下什么。
  * - `write` 有副作用：改变平台里的状态，或者在平台之外产生副作用（给飞书发消息、让 Agent 执行东西）。
  *
  * 声明与 HTTP 方法无关，要看接口实际做了什么；但 GET 一定是只读（`checkRouteDeclarations` 检查）。

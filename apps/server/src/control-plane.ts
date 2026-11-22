@@ -1,6 +1,8 @@
+import { mkdir } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
+import type { FastifyServerOptions } from "fastify";
 import packageJson from "../package.json" with { type: "json" };
 import { TaskActions } from "./actions/task-actions.js";
 import {
@@ -13,6 +15,12 @@ import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
+import { AccountService } from "./auth/accounts.js";
+import { bootstrapFirstAdmin, type InitialAdmin } from "./auth/bootstrap.js";
+import { LoginThrottle, type LoginThrottleOptions } from "./auth/login-throttle.js";
+import type { ScryptParams } from "./auth/password.js";
+import { PasswordGate, type PasswordGateOptions } from "./auth/password-gate.js";
+import { SetupCode } from "./auth/setup-code.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
@@ -47,6 +55,7 @@ import { SessionService } from "./sessions/session-service.js";
 import { SessionStore } from "./sessions/session-store.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
+import { safeError } from "./util/safe-error.js";
 
 export interface ListenOptions {
 	host?: string;
@@ -61,7 +70,11 @@ export interface ControlPlaneOptions {
 	clock?: Clock;
 	http?: ListenOptions;
 	grpc?: ListenOptions;
-	logger?: boolean;
+	/**
+	 * 打开 Fastify 的日志和控制面自己的控制台输出；给 `{ stream }` 时 Fastify 的日志写进这个流（测试用它检查日志里
+	 * 没有哈希、令牌这类不该出现的内容），控制台输出照常。
+	 */
+	logger?: boolean | { stream: NodeJS.WritableStream };
 	/** Agent 共享注册令牌；未设置（或为空串）时不校验。 */
 	agentToken?: string;
 	/**
@@ -143,8 +156,38 @@ export interface ControlPlaneOptions {
 	workbenchAgent?: string;
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
+	/** 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 5 秒；超过由控制面结束这一轮。测试里调小。 */
+	sessionStopGraceMs?: number;
+	/** 发给助手服务的命令（不含事件流和 `/health`）最多等多久（毫秒），默认 10 秒；测试里调小。 */
+	assistantCommandTimeoutMs?: number;
+	/** 事件连接多久没有收到任何字节（心跳也没有）就当它死了、断开重连（毫秒），默认 45 秒（3 个心跳间隔）；测试里调小。 */
+	assistantEventsIdleMs?: number;
 	/** 助手服务的事件连接断了之后重连的等待（毫秒）：第一次等 `min`，之后每次翻倍到 `max`；测试里调小。 */
 	assistantReconnectMs?: { min: number; max: number };
+	/**
+	 * 初始管理员（环境变量 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`，src/auth/bootstrap.ts 的 parseInitialAdmin）：
+	 * 只在没有任何用户时生效；不给时没有任何用户就生成一次性的初始化码（打印在日志里，写进数据目录的 setup-code 文件）。
+	 */
+	initialAdmin?: InitialAdmin;
+	/** 登录的空闲期限（毫秒），默认 12 小时（环境变量 `SFLY_LOGIN_IDLE_HOURS`）。 */
+	loginIdleMs?: number;
+	/** 密码哈希的 scrypt 参数，默认 N=2^16、r=8、p=2；测试里调小。 */
+	scrypt?: ScryptParams;
+	/**
+	 * 除了公开地址（`publicHttpUrl`）以外还算同源的来源，登录 Cookie 的跨站检查用（src/auth/cross-site.ts）：
+	 * 开发时 vite 开发服务器的地址（`http://localhost:3000`）。生产里不用设置。
+	 */
+	sameOrigins?: readonly string[];
+	/** 信任反向代理的 `X-Forwarded-For`（环境变量 `SFLY_TRUST_PROXY`）；默认不信任，见 {@link HttpApiDeps.trustProxy}。 */
+	trustProxy?: FastifyServerOptions["trustProxy"];
+	/** 算「假哈希」的函数（登录名不存在时拿它验证一次，对齐耗时）：默认按 `scrypt` 参数算；测试里换成数着次数的。 */
+	dummyHash?: (password: string) => Promise<string>;
+	/** 登录限速的参数（src/auth/login-throttle.ts），默认见那里；测试里调。 */
+	loginThrottle?: LoginThrottleOptions;
+	/** 密码验证的并发上限（src/auth/password-gate.ts），默认见那里；测试里调。 */
+	passwordGate?: PasswordGateOptions;
+	/** 打开着的事件流多久重新检查一次它的凭据（毫秒，src/http/api.ts），默认 30 秒；测试里调小。 */
+	streamRecheckMs?: number;
 }
 
 export interface ControlPlane {
@@ -159,11 +202,16 @@ export interface ControlPlane {
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
+	/**
+	 * 控制面自己往标准错误写错误日志的唯一出口：错误先过 `safeError`，数据库错误里的参数（密码的哈希、令牌的哈希、
+	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
+	 */
+	const logError = (what: string, error?: unknown): void => {
+		if (logger) console.error(what, ...(error === undefined ? [] : [safeError(error)]));
+	};
 	const database = openDatabase(
 		options.databaseUrl,
-		(error) => {
-			if (logger) console.error("postgres pool error:", error.message);
-		},
+		(error) => logError("postgres pool error:", error),
 		options.migrationsDir,
 	);
 
@@ -221,9 +269,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 控制面直接向飞书机器人的 Webhook 地址发请求（ADR 0020），不经代理。
 	const feishu = new FeishuClient();
-	const feishuError = (error: unknown) => {
-		if (logger) console.error("feishu delivery failed:", error);
-	};
+	const feishuError = (error: unknown) => logError("feishu delivery failed:", error);
 	const feishuBots = new FeishuBots({ db: database.db, clock, logs, onError: feishuError });
 	const feishuDelivery = new FeishuDelivery({
 		db: database.db,
@@ -241,7 +287,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		delivery: feishuDelivery,
 	});
-	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的值，和运行监控读指标用同一个读取。
+	// 指标要在引擎之前建好：任务上报指标要先于引擎处理（运行监控、关注项读数、控制台都读它）。
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -268,12 +314,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		notifications: new EngineNotifications({
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
-			focusDeps: {
-				clock,
-				queries: metricQueries,
-				onError: (error) => {
-					if (logger) console.error("run notification: reading focus items failed:", error);
-				},
+			onError: (error, runId) => {
+				logError(`run notification: not sent for run ${runId}:`, error);
 			},
 		}),
 		leaseMs: options.leaseMs,
@@ -293,12 +335,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	// 重启恢复：状态都在 PG，给租约和排队超时留出 Agent 重连的时间（#15）；升级前停在已移除的等待节点上的任务
 	// 按配置错误失败（ADR 0028），某个历史运行出错时记日志、跳过，不挡住启动。
 	await engine.recover((error, task) => {
-		if (logger) {
-			console.error(
-				`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
-				error,
-			);
-		}
+		logError(
+			`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
+			error,
+		);
 	});
 	const actions = new TaskActions({
 		db: database.db,
@@ -318,11 +358,49 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		dataDir: options.dataDir,
 		retentionDays: options.retentionDays,
 	});
+	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
+	const setupCode = new SetupCode(options.dataDir);
+	const accounts = new AccountService({
+		db: database.db,
+		clock,
+		setupCode,
+		scrypt: options.scrypt,
+		dummyHash: options.dummyHash,
+		loginIdleMs: options.loginIdleMs,
+		throttle: new LoginThrottle(clock, options.loginThrottle),
+		passwordGate: new PasswordGate(options.passwordGate),
+	});
+	// 假哈希提前算好（不等第一个不存在的登录名）；算不出来不挡启动，用到时再算。
+	void accounts.warmUp().catch(() => {});
+	try {
+		await mkdir(options.dataDir, { recursive: true });
+		await bootstrapFirstAdmin({
+			accounts,
+			setupCode,
+			initialAdmin: options.initialAdmin,
+			log: (message) => {
+				if (logger) console.log(message);
+			},
+		});
+	} catch (error) {
+		await database.close();
+		throw error;
+	}
+	const publicUrl = options.publicHttpUrl?.replace(/\/+$/, "");
 	const sessions = new SessionStore({ db: database.db, clock });
 	// 助手默认关闭：没配好时写明原因（日志里一行，就绪状态里也写）。
 	const assistant = assistantSetup({ url: options.assistantUrl, secret: options.assistantSecret });
 	if (!assistant.configured && logger) console.log(`sfly: 助手没有开启：${assistant.reason}`);
-	const assistantClient = assistant.configured ? new AssistantClient(assistant.config) : undefined;
+	const assistantClient = assistant.configured
+		? new AssistantClient(assistant.config, {
+				...(options.assistantCommandTimeoutMs !== undefined && {
+					timeoutMs: options.assistantCommandTimeoutMs,
+				}),
+				...(options.assistantEventsIdleMs !== undefined && {
+					eventsIdleMs: options.assistantEventsIdleMs,
+				}),
+			})
+		: undefined;
 	const sessionService = new SessionService({
 		sessions,
 		db: database.db,
@@ -331,6 +409,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		setup: assistant,
 		client: assistantClient,
 		workbenchAgent: options.workbenchAgent || undefined,
+		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
 	});
 	const api = buildHttpApi({
 		database,
@@ -368,6 +447,21 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logScanBytes: options.logScanBytes,
 		webApp,
 		corsOrigins: options.corsOrigins,
+		accounts,
+		loginIdleMs: options.loginIdleMs,
+		// 登录 Cookie 的跨站检查：配置的公开地址（反向代理后面是浏览器看到的地址），加上开发时 vite 的地址；
+		// 没有配置公开地址时用请求的 Host 兜底。
+		origins: {
+			origins: [
+				...(publicUrl && URL.canParse(publicUrl) ? [new URL(publicUrl).origin] : []),
+				...(options.sameOrigins ?? []),
+			],
+			hostFallback: publicUrl === undefined,
+		},
+		publicHttps: publicUrl?.startsWith("https://") ?? false,
+		publicUrl,
+		trustProxy: options.trustProxy,
+		streamRecheckMs: options.streamRecheckMs,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
@@ -378,9 +472,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		(httpHost === "0.0.0.0" || httpHost === "::" ? `http://${hostname()}:${httpPort}` : httpUrl)
 	).replace(/\/+$/, "");
 
-	const sessionError = (error: unknown) => {
-		if (logger) console.error("agent session error:", error);
-	};
+	const sessionError = (error: unknown) => logError("agent session error:", error);
 	let gateway: Awaited<ReturnType<typeof startAgentGateway>>;
 	try {
 		gateway = await startAgentGateway({
@@ -424,9 +516,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		? new AssistantConnection({
 				client: assistantClient,
 				sessions,
-				log: (message, error) => {
-					if (logger) console.error(`sfly: ${message}`, ...(error === undefined ? [] : [error]));
-				},
+				log: (message, error) => logError(`sfly: ${message}`, error),
 				reconnect: options.assistantReconnectMs && {
 					minMs: options.assistantReconnectMs.min,
 					maxMs: options.assistantReconnectMs.max,
@@ -435,14 +525,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		: undefined;
 	assistantConnection?.start();
 	// 兜底：超过 30 分钟没有持久事件的「在做」的会话按中断处理，项目才能再开始新的一轮（控制面启动时先收拾一遍）。
-	await sessionService.expireStale().catch((error) => {
-		if (logger) console.error("sfly: 收拾一直在做的会话失败：", error);
-	});
+	await sessionService
+		.expireStale()
+		.catch((error) => logError("sfly: 收拾一直在做的会话失败：", error));
 
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
-	const fail = (what: string) => (error: unknown) => {
-		if (logger) console.error(`${what} failed:`, error);
-	};
+	const fail = (what: string) => (error: unknown) => logError(`${what} failed:`, error);
 	const sweeps = [
 		periodic(
 			options.sessionSweepIntervalMs ?? 60_000,

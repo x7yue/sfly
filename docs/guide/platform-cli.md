@@ -18,24 +18,26 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注） |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
-| `sfly scenario push <文件>` | 本地校验后保存成新的场景版本 |
+| `sfly scenario check <文件>` | 检查改过的文件，不保存：列出 `push` 时会有的错误和警告（分成这次改动带进来的和改动之前就有的），以及保存之后相对最新版本的改动；这次改动带进来了警告时退出码 4 |
+| `sfly scenario push <文件> [--strict]` | 本地校验后保存成新的场景版本；`--strict` 这次改动带进来了警告时不保存（退出码 4） |
+| `sfly scenario diff <场景> [版本A] [版本B]` / `sfly scenario diff <场景> --file <文件>` | 对比两个版本（默认最新的两个，只写一个时和最新版本比），或者最新版本和本地文件：设置、新增和删除的节点（显示名称和节点 ID）、改动字段的前后值、连线、注释框 |
 | `sfly scenario create --name 名称 [--description 说明] [--from 文件]` | 新建场景；给了文件就用其中的场景文档保存第一个版本 |
 | `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版（secret 参数的默认值跟着复制，读副本仍打码） |
 | `sfly scenario rename <场景> [--name 名称] [--description 说明]` | 修改名称和说明；它们不属于场景版本，不产生新版本 |
-| `sfly run start <场景> [--preset 名称] [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--preset` 按运行预设触发；`--wait` 等到运行结束并输出摘要 |
+| `sfly run start <场景> [--preset 名称] [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--preset` 按运行预设触发；`--wait` 等到运行结束并输出摘要；节点排队时进度行写明在等什么（同 `run show`），等的情况变了再写一行 |
 | `sfly run wait <运行> [--timeout 时长]` | 等一次已经触发的运行结束，输出摘要；`运行` 可以只写 id 的前缀，或写 `latest`（见下文「运行的写法」） |
 | `sfly run cancel <运行>` | 取消运行；运行还没结束时再取消一次就是强制取消 |
 | `sfly run list [--scenario 场景] [--status 状态]` | 最近的运行，开始得晚的在前 |
-| `sfly run show <运行> [--outputs [--node 链:节点]… [--limit N]] [--state]` | 各条链、各个节点的状态（节点有显示名称时，写在节点 ID 后面）；失败或重试过的节点写出每次尝试的错误；有失败的动作、有异常的关注项时再各写一段；用了运行预设的运行写明预设的名称。`--outputs` 改为输出各节点的输出，`--state` 输出这次运行的运行状态（JSON），见下文「读结果」 |
+| `sfly run show <运行> [--outputs [--node 链:节点]… [--limit N]] [--state]` | 各条链、各个节点的状态（节点有显示名称时，写在节点 ID 后面）；排队中的节点写明在等什么：等哪台 Agent、它现在在线还是离线（离线了多久）、已经排了多久、多久后排队超时，槽位占满时写明占着槽位的任务（`--json` 里排队中的尝试多一个 `queue_wait`，其余尝试不带这个键）；失败或重试过的节点写出每次尝试的错误；有失败的动作、有异常的关注项时再各写一段；用了运行预设的运行写明预设的名称。`--outputs` 改为输出各节点的输出，`--state` 输出这次运行的运行状态（JSON），见下文「读结果」 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level 级别] [--tail N] [--before 游标] [--after 游标] [--all 文件]` | 运行的日志，按控制面时间合并各节点、各次尝试 |
 | `sfly run artifacts <运行> [--task 任务] [--download 目录]` | 列出各任务的产物，可以下载 |
 | `sfly run actions <运行> [--failed] [--node 链:节点]… [--limit N]` | 各任务的动作摘要：各名称的个数和失败数、最近结束的和失败的动作；节点是业务阶段时，失败点在动作里 |
 | `sfly run metrics <运行> [--node 链:节点]… [--limit N]` | 各任务的指标摘要：每个指标的最后值、最大、最小、平均和点数 |
 | `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
-| `sfly package list` / `sfly package show <包>[@版本] [--agent Agent]` | 节点包和它们的版本；一个版本里每个节点类型的标题、输入（类型、默认值、是否必填）和输出。`<包>@dev` 看用 `sfly dev` 加载在 Agent 上的开发版本的节点定义（它不在已发布的节点包列表里）；只算在线的 Agent（和触发运行时的检查一致，离线的 Agent 上次上报的定义不算）；同一个开发包加载在不止一台在线的 Agent 上时用 `--agent` 指定看哪一台的，没有加载在任何在线的 Agent 上时报错并提示 `sfly dev` |
+| `sfly package list` / `sfly package show <包>[@版本] [--agent Agent]` | 节点包和它们的版本；一个版本里每个节点类型的标题、声明了默认超时的写出默认超时、输入（类型、默认值、是否必填）和输出。`<包>@dev` 看用 `sfly dev` 加载在 Agent 上的开发版本的节点定义（它不在已发布的节点包列表里）；只算在线的 Agent（和触发运行时的检查一致，离线的 Agent 上次上报的定义不算）；同一个开发包加载在不止一台在线的 Agent 上时用 `--agent` 指定看哪一台的，没有加载在任何在线的 Agent 上时报错并提示 `sfly dev` |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` / `sfly api --describe <METHOD> <路径>` | 直接调用上面没有覆盖的接口；`--list` 列出全部接口；`--describe` 说明一个接口：它做什么、会不会改东西、请求和响应的字段 |
 
 本地调试是 `sfly debug <节点>`（见 [本地调试](local-debug.md)）。原来的写法 `sfly run <节点>` 已经失效：它报错并提示改用 `sfly debug`，退出码 2。
@@ -86,6 +88,7 @@ uv run sfly api --list runs
 | 1 | 运行失败（`run start --wait`、`run wait`） |
 | 2 | 命令本身出错：参数不对、连不上控制面、场景或运行不存在、预检没通过、运行预设不存在或已失效、保存版本冲突…… |
 | 3 | 运行被取消（`run start --wait`、`run wait`） |
+| 4 | 这次改动带进来了警告、没有错误（`scenario check`、`scenario push --strict`）：`check` 照常输出结果，`push --strict` 没有保存。改动之前就有的警告不算；有错误时是 2 |
 | 124 | 等待超时（`--timeout`）：运行仍在继续，没有被取消 |
 | 130 | 等待时按了 Ctrl-C：运行仍在继续，没有被取消 |
 
@@ -95,9 +98,9 @@ uv run sfly api --list runs
 sfly run start 回归 --param host=api.test --wait --timeout 5m
 ```
 
-- 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、Agent 的版本不满足节点包的要求、节点用的开发版本（`包名@dev`）没有在它派发到的在线 Agent 上加载（下一步：在那台 Agent 所在的机器上、节点包源码目录下运行 `sfly dev`）这类问题会全部列出，退出码 2，不触发运行。预检的警告不阻断触发（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到它）：运行照常触发，警告写在触发之后的输出里；`--json` 时 stdout 的对象带 `warnings`（每项 `{code, message, node_id}`），警告和下一步提示也写到 stderr；`--wait` 时写在 stderr 里「已触发运行」那一行之后。没有警告时输出不变。
-- 入口参数整个接到某个节点的输入、值的类型不对时（例如 `--param concurrency=8.5` 接到 `integer` 输入），报「入口参数不对」，写明是哪个参数、接到哪个节点的哪个输入、值从哪来，下一步写出可以直接执行的命令（例如 `sfly run start <场景> --param concurrency=<整数>`；值来自运行预设或默认值时写去哪里改），退出码 2，不触发运行。8 和 8.0 都是整数。
-- Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
+- 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、节点上写了节点类型没有声明的输入名（写明节点、写错的名字、声明了哪些输入，差一两个字符时问是不是想写另一个；锁定开发版本的节点用它派发到的 Agent 上报的元信息检查，Agent 不在线、没有加载或几台的内容不一样时不查）、Agent 的版本不满足节点包的要求、节点用的开发版本（`包名@dev`）没有在它派发到的在线 Agent 上加载（下一步：在那台 Agent 所在的机器上、节点包源码目录下运行 `sfly dev`）这类问题会全部列出，退出码 2，不触发运行。预检的警告不阻断触发（例如异步任务节点没有给子流程的参数传值，而子流程里有节点用到它）：运行照常触发，警告写在触发之后的输出里；`--json` 时 stdout 的对象带 `warnings`（每项 `{code, message, node_id}`），警告和下一步提示也写到 stderr；`--wait` 时写在 stderr 里「已触发运行」那一行之后。没有警告时输出不变。
+- 入口参数整个接到某个节点的输入、值的类型不对时（例如 `--param concurrency=8.5` 接到 `integer` 输入），报「入口参数的值和它接到的节点输入的类型不符」（其余参数问题仍报「入口参数不对」），写明是哪个参数、接到哪个节点的哪个输入、值从哪来，下一步写出可以直接执行的命令（例如 `sfly run start <场景> --param concurrency=<整数>`；值来自运行预设或默认值时写去哪里改），退出码 2，不触发运行。8 和 8.0 都是整数。
+- Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟，可以写 1 到 4294967295 秒；写得更大的保存和 `scenario check` 都会被拒绝，错误信息写明是哪个节点）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
 - 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数（参数表的「说明」列最前面是搭场景的人写的参数说明），退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
 - 场景保存了运行预设时，用 `--preset 名称` 按预设触发，见下面的「运行预设」。
 - 总是触发场景的最新版本，不支持指定场景版本。
@@ -196,17 +199,20 @@ sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集
 
 ## 编辑场景
 
-编辑场景是「pull 下载文件 → 改 → push 上传」：
+编辑场景是「pull 下载文件 → 改 → check 检查 → push 上传」：
 
 ```text
 sfly scenario pull 回归 -o 回归.json
 （编辑 回归.json 里的 document）
+sfly scenario check 回归.json
 sfly scenario push 回归.json
 ```
 
 - pull 写出的文件是 `{"scenario": <场景 id>, "base_version": <版本号>, "document": {…}}`：`document` 就是场景文档（`default_agent`、`nodes`、`edges`、`packages`、`annotations`），和控制面保存的内容相同；`base_version` 是 pull 时的最新版本号。`--version N` 拉取旧版本时 `base_version` 仍是最新版本号，push 就相当于以旧版本为起点再保存一次。
 - **secret 参数的默认值读不回来**：控制面给的是占位符 `******`（和运行预设里的 secret 值同一个掩码），`pull` 写出的文件里是它，`scenario show` 不显示它，`pull` 的输出里有一行提示。不改它直接 `push`，新版本沿用上一个版本里同名参数的默认值；改成别的值就保存新的值，删掉 `default` 就是去掉默认值。沿用不了时 `push` 报错（错误码 `secret_default_placeholder`，退出码 2），逐个写明是哪个节点的哪个参数：新增或改了名的参数、类型变了、参数从 secret 改成了普通参数（占位符不能存成默认值，原来的值也不会带到普通参数上），给新的默认值或删掉 `default` 再 `push`。`--version N` 拉旧版本时，占位符沿用的是最新版本的值，不是第 N 版的（`pull` 的输出里写明）。`scenario create --from` 的文件里不能有占位符（新场景没有上一个版本可以沿用，命令在新建场景之前就报错）：要连同 secret 的默认值复制一个场景，用 `scenario copy`。secret 参数的默认值写不成 `******` 本身。保存带 secret 默认值的版本时，`push` 的输出里有一条提醒（`secret_param_default`）：版本不能修改，默认值会一直留在这个版本里，建议去掉默认值，改用运行预设或触发时再给出。
 - push 先按场景文档的 JSON Schema 在本地校验，出错时列出出错的位置，不发请求。通过后带着 `base_version` 保存新版本，输出新版本号和控制面给出的警告（引用的 Agent 或节点包不存在、必填参数缺失、注释框引用了不存在的成员等）；`--json` 里每条警告是 `{code, message, node_id?, input?, annotation_id?}`，注释框的警告带 `annotation_id`；成功后文件里的 `base_version` 更新为新版本号、`document` 换成控制面实际保存的内容，可以接着改、接着 push。
+- **先 `check` 再 `push`**：`scenario check <文件>` 和 `push` 走同一段校验（本地按 JSON Schema 校验，再交给控制面），但不保存、不产生版本：警告和 `push` 时完全一样，分成两种：**这次改动带进来的**，和**改动之前就有的**（最新版本里已经有同一条：同一种警告、指向同一个节点、输入或注释框，不看文字；指向另一个节点就是新的；会失效的运行预设说的就是这次改动，总是新的；场景还没有版本时全部是新的）。退出码只看这次改动带进来的：没有时退出码 0，有时退出码 4（`push` 照常会保存）；改动之前就有的单独一段「改动之前就有的警告」，不影响退出码，也不是这次要改的东西。有错误时（文档不合法、secret 默认值的占位符沿用不了、文件基于的版本已经不是最新）和 `push` 一样报错，退出码 2。输出的最后是「保存之后相对版本 N 的改动」，写法和 `scenario diff` 一样，用来核对这次到底改了什么。`--json` 是 `{scenario, base_version, ok, warnings, diff}`，每条警告带 `existing`（`true` 是改动之前就有），`ok` 表示这次改动没有带进来警告。`push --strict` 先做同样的检查，这次改动带进来了警告时不保存、不改文件，两种警告分段列出，退出码 4（`--json` 是 `{scenario, saved: false, base_version, warnings, file}`）；没有时带着 `strict` 保存，控制面在保存的同一个事务里再判断一次（检查之后、保存之前有人改了节点包或运行预设、让这次改动带进来了警告，同样不保存、退出码 4），保存成功时剩下的警告写成「改动之前就有的警告」。控制面比命令行旧、不支持 `--strict`（没有检查接口）时报错，退出码 2，不保存。不加 `--strict` 时 `push` 的行为不变。
+- **对比版本**：`scenario diff <场景>` 对比最新的两个版本，`scenario diff <场景> 3 5` 对比第 3 版到第 5 版，只写一个版本时和最新版本比；`scenario diff <场景> --file <文件>` 对比最新版本和本地文件（保存这个文件之后会改变什么）。文件里的 `base_version` 不是最新版本时，输出的最后多一行提示：push 这个文件会报版本冲突，而且差异里混着「撤销别人在这之后的改动」的部分，先用 `scenario diff` 看别人改了什么（`--json` 时提示写在 stderr，对象里带 `file_base_version`）。输出分几节：「设置」（默认 Agent、锁定的节点包版本）；「节点」里 `+` 是新增、`-` 是删除，写「显示名称（节点 ID）」和节点类型，`~` 是改动，下面逐项写改动的字段和前后值（包节点的输入是 `inputs.<名>`，入口参数是 `params.<参数名>`，值是 JSON，不存在时写「（无）」）；「连线」写 `起点 → 终点（种类）`；「只改了位置的节点」；「注释框」。两边相同时写明没有差异。`--json` 的 `diff` 是控制面返回的结构（`GET /orchestrations/:id/versions/:a/diff/:b`，和控制台的版本对比是同一个算法）。secret 参数的默认值两边都是占位符，改了值也看不出来。
 - 入口节点和子流程入口节点的参数可以写 `description`：一行说明，最长 200 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存。触发表单、异步任务节点的参数映射表单和命令行的参数表（`scenario show`、`run start` 参数出错时）都会显示它；它不影响执行。超长或带换行时 push 的本地校验报出位置，例如 `nodes/0/params/1/description`（节点 entry）。
 - 除子流程入口节点外，每个节点都可以写 `display_name`：一行显示名称（例如「创建测试用户」），最长 40 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存，不要求唯一。控制台的节点卡片拿它当标题，`scenario show` 的节点表在「节点」后面有一列「显示名称」（没有写 `-`），`--json` 里节点的 `display_name` 就是它（没有时不出现这个字段）；入口节点不在节点表里，它的显示名称写在主链的标题上（`主链（入口 开始（entry））`，没有显示名称时标题还是 `主链`），`--json` 里是最外层的 `entry_display_name`（同时带上入口节点的 `entry`）；它不影响执行，引用和日志仍然以节点 ID 为准。子流程入口节点没有这个字段：子流程名称（`name`）就是它的显示名称。超长或带换行时 push 的本地校验报出位置，例如 `nodes/3/display_name`（节点 build）。
 - 每个节点（包括入口节点和子流程入口节点）都可以写 `note`：多行备注，说明这个节点在场景里做什么、为什么这样配置，最长 2000 个 Unicode 字符（一个 emoji 算一个，换行也算一个），去掉首尾空白后为空就不保存；它不影响执行。画布上节点卡片的头部有备注图标，版本对比和 `scenario show` 也会列出它。超长时 push 的本地校验报出位置，例如 `nodes/1/note`（节点 deploy）。

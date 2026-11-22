@@ -11,6 +11,7 @@ import {
 	SESSION_EVENT_TYPES,
 	SESSION_HISTORY_PAGE,
 	SESSION_MESSAGE_MAX_CHARS,
+	SESSION_SEQ_MAX,
 	SendMessageBody,
 	SessionDetailQuery,
 	SessionDetailResponse,
@@ -398,12 +399,15 @@ describe("会话接口的类型", () => {
 	it("就绪状态：每种问题都能表达，问题要写一句话", () => {
 		for (const kind of ReadinessProblemKind.options) {
 			const readiness = { ready: false, problems: [{ kind, message: "…" }], workbench: null };
-			expect(SessionListResponse.safeParse({ readiness, sessions: [] }).success).toBe(true);
+			expect(
+				SessionListResponse.safeParse({ readiness, sessions: [], truncated: false }).success,
+			).toBe(true);
 		}
 		expect(
 			SessionListResponse.safeParse({
 				readiness: { ready: false, problems: [{ kind: "workbench_offline" }], workbench: "w" },
 				sessions: [],
+				truncated: false,
 			}).success,
 		).toBe(false);
 		expect(
@@ -414,18 +418,29 @@ describe("会话接口的类型", () => {
 					workbench: null,
 				},
 				sessions: [],
+				truncated: false,
 			}).success,
 		).toBe(false);
 		expect(
-			SessionListResponse.safeParse({ readiness: readyNow, sessions: [listItem] }).success,
+			SessionListResponse.safeParse({ readiness: readyNow, sessions: [listItem], truncated: false })
+				.success,
 		).toBe(true);
-		expect(SessionListResponse.safeParse({ sessions: [listItem] }).success).toBe(false);
+		expect(SessionListResponse.safeParse({ sessions: [listItem], truncated: false }).success).toBe(
+			false,
+		);
+		// truncated 必须给：页面靠它提示「还有更早的会话」，缺了就分不清「没有更多」和「没告诉我」。
+		expect(
+			SessionListResponse.safeParse({ readiness: readyNow, sessions: [listItem] }).success,
+		).toBe(false);
+		expect(
+			SessionListResponse.safeParse({ readiness: readyNow, sessions: [], truncated: true }).success,
+		).toBe(true);
 	});
 
 	it("就绪状态：ready 当且仅当没有 problems", () => {
 		const problem = { kind: "workbench_offline", message: "工作台不在线" };
 		const check = (readiness: unknown) =>
-			SessionListResponse.safeParse({ readiness, sessions: [] }).success;
+			SessionListResponse.safeParse({ readiness, sessions: [], truncated: false }).success;
 		expect(check({ ready: true, problems: [], workbench: "w" })).toBe(true);
 		expect(check({ ready: false, problems: [problem], workbench: null })).toBe(true);
 		expect(check({ ready: true, problems: [problem], workbench: "w" })).toBe(false);
@@ -488,5 +503,26 @@ describe("会话接口的类型", () => {
 		// 空字符串等于没给（和 http/actions.ts、http/run-list.ts 的查询参数一致）。
 		expect(SessionDetailQuery.parse({ before: "" })).toEqual({});
 		expect(SessionEventsQuery.parse({ after: "" })).toEqual({});
+	});
+
+	it("序号不超过 int4 的最大值（库里 seq 是 integer）：before、after 超过就不合格，事件的 seq 也一样", () => {
+		expect(SESSION_SEQ_MAX).toBe(2_147_483_647);
+		expect(SessionDetailQuery.parse({ before: String(SESSION_SEQ_MAX) })).toEqual({
+			before: SESSION_SEQ_MAX,
+		});
+		expect(SessionDetailQuery.safeParse({ before: String(SESSION_SEQ_MAX + 1) }).success).toBe(
+			false,
+		);
+		expect(SessionDetailQuery.safeParse({ before: "3000000000" }).success).toBe(false);
+		expect(SessionEventsQuery.parse({ after: String(SESSION_SEQ_MAX) })).toEqual({
+			after: SESSION_SEQ_MAX,
+		});
+		expect(SessionEventsQuery.safeParse({ after: String(SESSION_SEQ_MAX + 1) }).success).toBe(
+			false,
+		);
+		expect(SessionEventsQuery.safeParse({ after: "9007199254740991" }).success).toBe(false);
+		const stamp = { at: "2026-01-01T00:00:00.000Z", type: "turn_started", turn: 1 };
+		expect(SessionEvent.safeParse({ ...stamp, seq: SESSION_SEQ_MAX }).success).toBe(true);
+		expect(SessionEvent.safeParse({ ...stamp, seq: SESSION_SEQ_MAX + 1 }).success).toBe(false);
 	});
 });
