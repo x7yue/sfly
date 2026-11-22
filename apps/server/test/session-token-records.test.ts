@@ -374,8 +374,9 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			await db.query("update sessions set title = '改完的标题' where id = $1", [sessionId]);
 			const ref = { id: sessionId, title: "改完的标题" };
 
-			expect((await api.run(mine.id)).session).toEqual(ref);
-			expect("session" in (await api.run(byPerson))).toBe(false);
+			const viewOf = (runId: string) => api.getJson<{ session?: unknown }>(`/runs/${runId}`);
+			expect((await viewOf(mine.id)).session).toEqual(ref);
+			expect("session" in (await viewOf(byPerson))).toBe(false);
 			const forScenario = await api.getJson<{ runs: Array<{ id: string; session?: unknown }> }>(
 				`/orchestrations/${id}/runs`,
 			);

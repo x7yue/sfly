@@ -540,9 +540,7 @@ describe("契约路由的访问检查", () => {
 				});
 				// 同一个发起人用个人令牌：放行（说明挡住会话令牌的不是角色）。
 				expect(outcome(await run(route("POST /feishu-bots"), personal(USERS.boss)))).toBe("ok");
-				expect(
-					outcome(await run(route("POST /packages"), personal(USERS.boss))),
-				).toBe("ok");
+				expect(outcome(await run(route("POST /packages"), personal(USERS.boss)))).toBe("ok");
 			});
 
 			it("声明了 removes 的接口（删除、归档）：一律 403，说明是会话令牌不能删除或归档；同一个发起人的个人令牌可以", async () => {
@@ -615,9 +613,15 @@ describe("契约路由的访问检查", () => {
 					access: { credential: "session", sessionId: MY_SESSION, userId: USERS.editor.id },
 				});
 				const other = await run(route("POST /orchestrations/:id/runs"), personal(USERS.editor));
-				expect(other).toMatchObject({ ok: true, access: { credential: "personal", sessionId: null } });
+				expect(other).toMatchObject({
+					ok: true,
+					access: { credential: "personal", sessionId: null },
+				});
 				const cookie = await run(route("POST /orchestrations/:id/runs"), login(USERS.editor));
-				expect(cookie).toMatchObject({ ok: true, access: { credential: "login", sessionId: null } });
+				expect(cookie).toMatchObject({
+					ok: true,
+					access: { credential: "login", sessionId: null },
+				});
 			});
 
 			it("会话令牌没有会话（库里这一行坏了）：401，不当作没有会话的凭据放行", async () => {
