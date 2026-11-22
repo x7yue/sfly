@@ -3,7 +3,7 @@
 #   docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" \
 #     -t sfly-assistant out/assistant
 #
-# 只复制文件、没有 RUN。运行：
+# 只复制文件，另建一个空的 /work（不装任何东西）。运行：
 #
 #   docker run --init -e SFLY_ASSISTANT_SECRET=<至少 32 个字符> -e SFLY_ASSISTANT_MODEL=<提供方>/<模型> \
 #     -v <模型文件>:/config/models.json:ro -v sfly-assistant-data:/data sfly-assistant
