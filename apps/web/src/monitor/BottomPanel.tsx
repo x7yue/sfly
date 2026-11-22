@@ -47,6 +47,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionsTab } from "./ActionsTab";
 import { attemptAgentTimes } from "./attempt-clock";
+import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
 import { LogList, type LogPaging, type LogReveal } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
@@ -178,15 +179,17 @@ export function BottomPanel({
 	});
 	const logTimeKind = useLogTimeKind();
 
-	// 收起时只剩标签行；默认占满图表工作区下面剩下的高度；拖动以后是拖到的高度。最高到图表工作区和底部面板共有的
-	// 高度减去图表要留的高度（`chartsReserved`）：窗口变矮、时间线调高、面板被拖高时先压面板，图表至少有那么高；
+	// 收起时只剩标签行；默认占满图表工作区下面剩下的高度；拖动以后是拖到的高度。默认的高度最高到图表工作区和底部面板
+	// 共有的高度减去图表要留的高度（`chartsReserved`）：窗口变矮、时间线调高时先压面板，图表至少有那么高；
 	// 窗口矮到两样都放不下时面板最矮是标签行（`minHeight`），图表再让到工具栏的高度，总在窗口里。
 	const highest = `calc(100% - ${chartsReserved}px)`;
+	// 用户自己拖高的：拖是明确的选择（要看日志、动作表），只留图表工具栏的高度；预留的高度只管默认的版面。
+	const draggedHighest = `calc(100% - ${CHARTS_MIN_HEIGHT}px)`;
 	const style: React.CSSProperties = collapsed
 		? { height: COLLAPSED_HEIGHT }
 		: height === null
 			? { flex: `1 0 ${DEFAULT_HEIGHT}`, maxHeight: highest, minHeight: COLLAPSED_HEIGHT }
-			: { height, maxHeight: highest, minHeight: COLLAPSED_HEIGHT };
+			: { height, maxHeight: draggedHighest, minHeight: COLLAPSED_HEIGHT };
 	// 「动作」页签上的个数：看着「动作」页签时由它的推送更新，没在看、任务还在执行时定时重新读。
 	const actionSummary = useActionSummary(
 		attempt?.task_id,
