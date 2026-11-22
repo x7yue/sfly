@@ -212,7 +212,7 @@ function undeclaredInputMessage(
 		similar !== undefined
 			? `是不是想写 ${similar}？`
 			: free.length === 0
-				? "声明的输入都已经写在这个节点上了；删掉这个输入"
+				? "删掉这个输入"
 				: "改成其中一个，或者删掉这个输入";
 	return `${listed}；${advice}${refresh}`;
 }

@@ -153,8 +153,7 @@ describeWithAgent("全栈冒烟：两个节点的链", () => {
 			},
 		});
 		expect(saved.status, await saved.clone().text()).toBe(201);
-		const message =
-			"节点 typo 的输入 tex 没有声明：节点类型 echo 声明的输入有 text；改成其中一个，或者删掉这个输入";
+		const message = "节点 typo 的输入 tex 没有声明：节点类型 echo 声明的输入有 text；删掉这个输入";
 		expect(((await saved.json()) as { warnings: unknown[] }).warnings).toEqual([
 			{ code: "input_not_declared", node_id: "typo", input: "tex", message },
 		]);

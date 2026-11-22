@@ -171,7 +171,7 @@ describe("输入名的静态检查：写了节点没有声明的输入", () => {
 	it("声明的输入都已经写在节点上了：没有可以改成的，只说删掉这个输入", () => {
 		const type = typeWith({ url: { type: "string" }, retries: { type: "integer" } });
 		expect(warningsFor(type, { url: "x", retries: 1, urll: 2 })[0]?.message).toBe(
-			"节点 f 的输入 urll 没有声明：节点类型 fetch 声明的输入有 url、retries；声明的输入都已经写在这个节点上了；删掉这个输入",
+			"节点 f 的输入 urll 没有声明：节点类型 fetch 声明的输入有 url、retries；删掉这个输入",
 		);
 		// 还有没写的声明的输入时照旧：改成其中一个。
 		expect(warningsFor(type, { url: "x", wat: 2 })[0]?.message).toContain(
