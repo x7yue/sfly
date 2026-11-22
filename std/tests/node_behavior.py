@@ -53,6 +53,8 @@ _BIG = re.compile(r"\d{4,}")
 #: 进程号、进程组号（容器里可能是三位以下的小数）和采样次数：随机，也抹掉。
 _PIDS = re.compile(r"(pid |进程 |进程组 )\d+")
 _SAMPLES = re.compile(r"(共采样 )\d+( 次)")
+#: 进程名：macOS 上 `sh` 是 bash，Linux 上常是 dash（日志里写「pid N 进程名：命令行」）。
+_SHELL_NAME = re.compile(r"(pid N )(?:bash|dash|zsh)(：)")
 #: 输出里每次运行都不一样的键：进程号、采样次数；其余的值逐字比较。
 _VARIABLE_KEYS = {"pid", "samples"}
 #: 输出里命令的输出、日志里匹配的那一行：内容就是被测的东西，只抹临时目录，不动数字。
@@ -100,6 +102,7 @@ class Normalizer:
         text = re.sub(r"/(?:private/)?(?:var|tmp)/[^\s'\"]*?(?=[\s'\"]|$)", "<TMPPATH>", text)
         text = _WHERE.sub(r"\1 <位置>", text)
         text = _PIDS.sub(r"\1N", _SAMPLES.sub(r"\1N\2", text))
+        text = _SHELL_NAME.sub(r"\1sh\2", text)
         return _BIG.sub("N", _DECIMAL.sub("F", text))
 
     def outputs(self, value: Any, key: str = "") -> Any:

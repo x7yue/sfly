@@ -101,7 +101,7 @@
 		"error_message": null,
 		"error_type": null,
 		"logs": {
-			"sdk": [["info", "监控 1 个进程：\npid N bash：sh -c sleep F & wait"]]
+			"sdk": [["info", "监控 1 个进程：\npid N sh：sh -c sleep F & wait"]]
 		},
 		"metric_names": [
 			"cpu_percent",
@@ -127,7 +127,7 @@
 		"error_message": null,
 		"error_type": null,
 		"logs": {
-			"sdk": [["info", "监控 2 个进程：\npid N bash：sh -c sleep F & wait\npid N sleep：sleep F"]]
+			"sdk": [["info", "监控 2 个进程：\npid N sh：sh -c sleep F & wait\npid N sleep：sleep F"]]
 		},
 		"metric_names": [
 			"cpu_percent",
@@ -978,6 +978,47 @@
 		"outputs": null,
 		"status": "failed"
 	},
+	"watch_cancel": {
+		"artifacts": [],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"监听 Agent A 的 /srv 下匹配 * 的文件，一出现就拉取，拉到 <TMP>/watch_cancel/gotc；直到被停止"
+				],
+				["info", "拉取了 /srv/a.log（2 字节）→ <TMP>/watch_cancel/gotc/a.log"],
+				["info", "任务被终止（SIGTERM），执行到 <位置>"]
+			]
+		},
+		"metric_names": ["bytes_per_s", "pulled_bytes", "pulled_files"],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"watch_duration": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"监听 Agent A 的 /srv 下匹配 * 的文件，至少 F 秒没有修改才拉取，拉到 <TMP>/watch_duration/gotw；运行 F 秒"
+				],
+				["info", "拉取了 /srv/a.log（2 字节）→ <TMP>/watch_duration/gotw/a.log"],
+				["info", "拉取了 1 个文件，共 2 字节"]
+			]
+		},
+		"metric_names": ["bytes_per_s", "pulled_bytes", "pulled_files"],
+		"outputs": {
+			"count": 1,
+			"total_bytes": 2
+		},
+		"status": "success"
+	},
 	"watch_negative_stable": {
 		"artifacts": [],
 		"error_kind": "node_error",
@@ -985,6 +1026,24 @@
 		"error_type": "ValueError",
 		"logs": {
 			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"watch_no_directory": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly.capabilities.errors.AgentFileNotFound: Agent A：/nope 不存在",
+		"error_type": "AgentFileNotFound",
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"监听 Agent A 的 /nope 下匹配 * 的文件，一出现就拉取，拉到 <TMP>/watch_no_directory/got；直到被停止"
+				],
+				["error", "出错位置： <位置>"]
+			]
 		},
 		"metric_names": [],
 		"outputs": null,
