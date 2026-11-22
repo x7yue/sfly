@@ -12,7 +12,8 @@ import {
 } from "./support";
 
 // 运行通知（#232，ADR 0020）：场景的「更多」菜单里配置（四项设置，不属于场景版本）、复制场景时一并复制、
-// 机器人被删除时给出提示；运行结束时由控制面发卡片（场景设了关注项时带上它们运行结束时的值，#354），运行抽屉里显示一行状态。
+// 机器人被删除时给出提示；运行通知是兜底（#446）：运行失败（或取消）时由控制面发一张短卡片，写第一个失败的节点和失败原因，
+// 成功的运行不发；运行抽屉里显示一行状态。
 
 const settingsOf = async (
 	cp: { fetch(path: string): Promise<Response> },
@@ -113,6 +114,60 @@ test("在场景的更多菜单里配置运行通知：不产生新版本，复�
 	expect(await settingsOf(controlPlane, id)).toEqual({ ...saved, bot: null });
 });
 
+test("触发条件只有「仅失败」和「失败和取消」两项，没有「总是」；保存后刷新页面设置还在", async ({
+	page,
+	controlPlane,
+	feishu,
+}) => {
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	const id = await createScenario(controlPlane, "订单压测");
+	await page.goto("/orchestrations");
+
+	const dialog = page.getByRole("dialog", { name: "运行通知" });
+	const openDialog = async () => {
+		await page
+			.getByRole("article", { name: "订单压测" })
+			.getByRole("button", { name: "更多操作" })
+			.click();
+		await page.getByRole("menuitem", { name: "运行通知…" }).click();
+		await expect(dialog).toBeVisible();
+	};
+	const trigger = dialog.getByRole("combobox", { name: "触发条件" });
+
+	await openDialog();
+	await expect(trigger.getByRole("option")).toHaveText(["仅失败", "失败和取消"]);
+	await expect(trigger).toHaveValue("failed");
+	// 说明里写明规则：运行通知是兜底，成功的运行不发；日常的结果由节点用 ctx.notify 发。
+	await expect(dialog).toContainText("成功的运行不发运行通知");
+	await expect(dialog).toContainText("ctx.notify");
+	await expect(dialog).not.toContainText("总是");
+
+	await dialog.getByRole("combobox", { name: "飞书机器人" }).selectOption("压测群");
+	await trigger.selectOption("失败和取消");
+	await dialog.getByRole("button", { name: "保存" }).click();
+	await expect(dialog).toBeHidden();
+	expect(await settingsOf(controlPlane, id)).toMatchObject({
+		bot: "压测群",
+		trigger: "failed_or_cancelled",
+	});
+
+	// 刷新页面：设置还在，选项还是两项。
+	await page.reload();
+	await openDialog();
+	await expect(dialog.getByRole("combobox", { name: "飞书机器人" })).toHaveValue("压测群");
+	await expect(trigger).toHaveValue("failed_or_cancelled");
+	await expect(trigger.getByRole("option")).toHaveText(["仅失败", "失败和取消"]);
+
+	// 改回「仅失败」，刷新后同样还在。
+	await trigger.selectOption("仅失败");
+	await dialog.getByRole("button", { name: "保存" }).click();
+	await expect(dialog).toBeHidden();
+	await page.reload();
+	await openDialog();
+	await expect(trigger).toHaveValue("failed");
+	expect(await settingsOf(controlPlane, id)).toMatchObject({ bot: "压测群", trigger: "failed" });
+});
+
 test("删除机器人前的引用列表里有运行通知的设置", async ({ page, controlPlane, feishu }) => {
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
 	const scenario = await createScenario(controlPlane, "订单压测");
@@ -152,7 +207,7 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		return drawer.getByRole("region", { name: "运行摘要" });
 	}
 
-	test("运行结束后：排队中，投递完成后变成已送达；运行没有发通知的场景没有这一行", async ({
+	test("运行失败后：排队中，投递完成后变成已送达", async ({
 		page,
 		controlPlane,
 		connectAgent,
@@ -161,12 +216,12 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		await publishPackage(controlPlane);
 		await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
 		const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
-		await setRunNotification(controlPlane, scenario, { bot: "压测群", trigger: "always" });
+		await setRunNotification(controlPlane, scenario, { bot: "压测群" });
 		// 飞书慢一点响应：先能看到「排队中」。
 		feishu.reply({ delayMs: 1500 });
 
-		const summary = await runFromDrawer({ page, connectAgent }, "success");
-		await expect(summary.getByTestId("summary-status")).toHaveText("成功");
+		const summary = await runFromDrawer({ page, connectAgent }, "fail");
+		await expect(summary.getByTestId("summary-status")).toHaveText("失败");
 		const line = summary.getByRole("group", { name: "运行通知" });
 		await expect(line).toContainText("排队中");
 		await expect(line).toContainText("发给「压测群」");
@@ -204,14 +259,14 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		await publishPackage(controlPlane);
 		await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
 		const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
-		await setRunNotification(controlPlane, scenario, { bot: "压测群", trigger: "always" });
+		await setRunNotification(controlPlane, scenario, { bot: "压测群" });
 		await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
 			method: "DELETE",
 			headers: { "x-sfly-nickname": "tester" },
 		});
 
-		const summary = await runFromDrawer({ page, connectAgent }, "success");
-		await expect(summary.getByTestId("summary-status")).toHaveText("成功");
+		const summary = await runFromDrawer({ page, connectAgent }, "fail");
+		await expect(summary.getByTestId("summary-status")).toHaveText("失败");
 		const line = summary.getByRole("group", { name: "运行通知" });
 		await expect(line).toContainText("未发送");
 		await expect(line).toContainText("「压测群」机器人已删除");
@@ -226,16 +281,37 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		await expect(summary.getByTestId("summary-status")).toHaveText("成功");
 		await expect(summary.getByRole("group", { name: "运行通知" })).toHaveCount(0);
 	});
+
+	test("成功的运行不发运行通知：机器人和触发条件（失败和取消）都设了，抽屉里没有这一行，飞书也没有收到卡片", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		feishu,
+	}) => {
+		await publishPackage(controlPlane);
+		await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+		const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
+		await setRunNotification(controlPlane, scenario, {
+			bot: "压测群",
+			trigger: "failed_or_cancelled",
+		});
+
+		const summary = await runFromDrawer({ page, connectAgent }, "success");
+		await expect(summary.getByTestId("summary-status")).toHaveText("成功");
+		await expect(summary.getByRole("group", { name: "运行通知" })).toHaveCount(0);
+		// 运行通知在运行结束的同一个事务里写进发送队列，抽屉里的状态和这一行来自同一份运行视图：成功了而这一行不在，就是没有入队。
+		expect(feishu.requests).toHaveLength(0);
+	});
 });
 
-test.describe("卡片里的关注项", () => {
+test.describe("卡片的内容", () => {
 	/** 卡片里各个元素的正文，按顺序（控制面没有配置对外地址，卡片上没有按钮）。 */
 	const elementsOf = (request: { json: unknown } | undefined): string[] =>
 		(
 			request?.json as { card: { body: { elements: Array<{ content: string }> } } }
 		).card.body.elements.map((e) => e.content);
 
-	test("场景设了关注项：运行失败后，卡片在失败的节点之后有「关注项」一段，写每一项运行结束时的值，来源节点失败的排在最前并写明", async ({
+	test("运行失败后：卡片只写场景、运行编号、触发人，第一个失败的节点、失败原因和出错位置；场景设了关注项也不带它们，没有开始时间和耗时", async ({
 		controlPlane,
 		connectAgent,
 		feishu,
@@ -252,7 +328,6 @@ test.describe("卡片里的关注项", () => {
 		await setRunNotification(controlPlane, scenario, { bot: "压测群" });
 		await setFocusItems(controlPlane, scenario, [
 			{ node_id: "fetch", chart: "延迟", title: "下单延迟" },
-			{ node_id: "fetch2", chart: "请求数" },
 			{ node_id: "fetch", chart: "errors" },
 			{ node_id: "ping", chart: "level", title: "探活 level" },
 		]);
@@ -264,45 +339,52 @@ test.describe("卡片里的关注项", () => {
 		clock.advance(6000);
 		await agent.succeed(fetch);
 		const fetch2 = await agent.nextAssign();
-		agent.metrics(fetch2, httpCheckPoints(clock0, 7, 9));
-		clock.advance(4000);
 		await agent.succeed(fetch2);
 		const ping = await agent.nextAssign();
 		agent.metrics(ping, pingPoints(clock0, 11, 12));
 		await agent.sync();
-		await agent.fail(ping, "探活超时");
+		await agent.fail(ping, "探活超时", undefined, undefined, "probe.ping 第 12 行");
 
 		await expect.poll(() => feishu.requests.length).toBe(1);
 		const texts = elementsOf(feishu.requests[0]);
-		expect(texts.map((t) => t.split("\n")[0])).toEqual([
-			"**场景**：撮合浸泡",
-			"**失败的节点**",
-			"**关注项**",
+		expect(texts).toEqual([
+			`**场景**：撮合浸泡\n**运行编号**：${runId.slice(0, 8)}\n**触发人**：tester`,
+			"**失败的节点**：主链：ping\n**失败原因**：探活超时\n**出错位置**：probe.ping 第 12 行",
 		]);
-		expect(texts[2]).toBe(
-			[
-				"**关注项**",
-				"- 探活 level：8（节点失败）",
-				"- 下单延迟（latency_ms）：50 ms",
-				"- 请求数：390 次",
-				"- errors：1 次",
-			].join("\n"),
-		);
-		expect(texts[0]).toContain(runId.slice(0, 8));
 	});
 
-	test("场景没有设关注项：卡片没有这一段", async ({ controlPlane, connectAgent, feishu }) => {
+	test("触发条件是「失败和取消」：取消的运行也发卡片，副标题是「运行已取消」，没有失败的节点", async ({
+		controlPlane,
+		connectAgent,
+		feishu,
+	}) => {
 		const agent = await connectAgent({ name: "agent-a" });
 		await publishPackage(controlPlane);
 		await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
 		const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
-		await setRunNotification(controlPlane, scenario, { bot: "压测群", trigger: "always" });
+		await setRunNotification(controlPlane, scenario, {
+			bot: "压测群",
+			trigger: "failed_or_cancelled",
+		});
 
-		await triggerRun(controlPlane, scenario);
-		await agent.succeed(await agent.nextAssign());
+		const runId = await triggerRun(controlPlane, scenario);
+		const task = await agent.nextAssign();
+		const cancel = await controlPlane.fetch(`/runs/${runId}/cancel`, {
+			method: "POST",
+			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			body: "{}",
+		});
+		expect(cancel.status).toBe(200);
+		expect(await agent.nextCancel()).toMatchObject({ taskId: task.taskId });
+		await agent.cancelled(task);
 
 		await expect.poll(() => feishu.requests.length).toBe(1);
-		const texts = elementsOf(feishu.requests[0]);
-		expect(texts.map((t) => t.split("\n")[0])).toEqual(["**场景**：订单压测"]);
+		const { card } = feishu.requests[0]?.json as {
+			card: { header: { subtitle: { content: string } } };
+		};
+		expect(card.header.subtitle.content).toBe("运行已取消");
+		expect(elementsOf(feishu.requests[0])).toEqual([
+			`**场景**：订单压测\n**运行编号**：${runId.slice(0, 8)}\n**触发人**：tester`,
+		]);
 	});
 });

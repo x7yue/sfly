@@ -49,6 +49,7 @@ import {
 	createScenario,
 	elapseWithHeartbeats,
 	failApi,
+	failRun,
 	holdApi,
 	publishPackage,
 	scenarioUsing,
@@ -249,7 +250,7 @@ test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connec
 	});
 });
 
-test("飞书机器人：列表与测试结果", async ({ page, controlPlane, feishu }) => {
+test("飞书机器人：列表与测试结果", async ({ page, controlPlane, connectAgent, feishu }) => {
 	await createFeishuBot(
 		controlPlane,
 		"压测群",
@@ -267,16 +268,14 @@ test("飞书机器人：列表与测试结果", async ({ page, controlPlane, fei
 	);
 
 	// 投递：压测群的消息送达；告警群的消息遇到 HTTP 503，在等重试（积压 1 条）；日报群还没有投递。
-	// 消息来源是运行通知：只有入口的场景，运行结束时（总是触发）向机器人发一张卡片。
+	// 消息来源是运行通知（只在失败或取消时发）：场景的节点失败，运行结束时向机器人发一张卡片。
 	feishu.replyTo("7d02c1b9-5e3a-4c88-b6f1-9e8d7c6b5a40", { status: 503 });
+	await publishPackage(controlPlane);
+	const agent = await connectAgent({ name: "agent-a" });
 	for (const bot of ["压测群", "告警群"]) {
-		const scenario = await createScenario(controlPlane, bot, {
-			nodes: [{ id: "entry", kind: "entry", params: [] }],
-			edges: [],
-			packages: {},
-		});
-		await setRunNotification(controlPlane, scenario, { bot, trigger: "always" });
-		await triggerRun(controlPlane, scenario);
+		const scenario = await createScenario(controlPlane, bot, scenarioUsing("agent-a"));
+		await setRunNotification(controlPlane, scenario, { bot });
+		await failRun(controlPlane, agent, scenario);
 	}
 
 	await page.goto("/feishu-bots");

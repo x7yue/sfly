@@ -7,7 +7,7 @@
 // 每张表每一行连同 xmin、序列、数据目录里的文件），有任何差别就是写了。同时把响应拿去和随 SDK 打包的
 // 路由清单里的响应 JSON Schema 对照。
 //
-// 方法不是 GET 的只读接口（登记在 READS_WITH_TRACES）也在其中：它们只能写内存里的状态，
+// 方法不是 GET 的只读接口（登记在 NON_GET_READS，例如检查场景文档）也在其中：它们最多只能写内存里的状态，
 // 所以库和数据目录同样要求没有变化。
 //
 // 没有用「只有 SELECT 权限的数据库角色」：控制面启动时要迁移，运行时后台有周期扫描和清理，用只读角色它起不来、
@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { httpContract, NICKNAME_HEADER, READS_WITH_TRACES, type RouteDef } from "@sfly/schema";
+import { httpContract, NICKNAME_HEADER, NON_GET_READS, type RouteDef } from "@sfly/schema";
 import Ajv2020 from "ajv/dist/2020.js";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -66,6 +66,7 @@ const FIXTURES = {
 	empty: "没有版本的场景",
 	archived: "已归档的场景",
 	rich: "有子流程、说明和失效预设的场景",
+	diffed: "两个版本之间节点、连线、注释框都有增删改的场景",
 } as const;
 type FixtureKey = keyof typeof FIXTURES;
 
@@ -83,6 +84,8 @@ const LATE_PROBE_MS = 1500;
 /** 一组真实存在的 id。 */
 interface Fixture {
 	scenarioId: string;
+	/** 最新版本号：对比两个版本时和第 1 版比。 */
+	latestVersion: number;
 	runId?: string;
 	taskId?: string;
 	chainInstanceId?: string;
@@ -115,9 +118,9 @@ function fixtureKeys(def: RouteDef): Array<FixtureKey | undefined> {
 	if (typeof target === "string") return [undefined];
 	// 没有版本的场景没有第 1 版：读版本只在有版本的场景上走得到成功的路径。
 	if (kind === "scenario") {
-		return def.path.includes(":number")
-			? ["done", "live", "archived", "rich"]
-			: ["done", "live", "empty", "archived", "rich"];
+		return def.path.includes("/versions/:")
+			? ["done", "live", "archived", "rich", "diffed"]
+			: ["done", "live", "empty", "archived", "rich", "diffed"];
 	}
 	if (kind === "task") return ["done", "failed", "live"];
 	// 排队中的运行：运行视图里排队中的尝试带 queue_wait（占着槽位的任务）。
@@ -301,11 +304,11 @@ describe("声明为只读的接口真的不写库", () => {
 		}
 	}
 
-	it("方法不是 GET 的只读接口（READS_WITH_TRACES）也被核对了", () => {
+	it("方法不是 GET 的只读接口（NON_GET_READS）也被核对了", () => {
 		const tested = readRoutes
 			.filter((def) => def.method !== "GET")
 			.map((def) => `${def.method} ${def.path}`);
-		expect(tested.sort()).toEqual(Object.keys(READS_WITH_TRACES).sort());
+		expect(tested.sort()).toEqual(Object.keys(NON_GET_READS).sort());
 	});
 
 	it("事件流的事件都和清单里的 schema 对过一遍（不是空转）", () => {
@@ -415,6 +418,8 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		],
 		presetId: s.presetId,
 		number: "1",
+		a: "1",
+		b: String(fixture?.latestVersion ?? 1),
 		node: "check",
 		"*": ARTIFACT,
 		name: { package: "probe", feishu_bot: s.botName, agent: "agent-a" }[kind as string],
@@ -435,9 +440,21 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 	return value;
 }
 
-/** 有请求体的只读接口的请求体样本：没有样本就报错，让新接口的作者在这里补上。 */
+/** 方法不是 GET 的只读接口的请求体样本：没有样本就报错，让新接口的作者在这里补上。 */
 function sampleBody(def: RouteDef): unknown {
 	if (!("body" in def) || !def.body) return undefined;
+	// 检查：第 1 版的「增删改」文档，再加一个没有这种节点类型的节点（有警告）；和各个场景的最新版本比都有差异
+	if (def.path === "/orchestrations/:id/check") {
+		const document = diffedDocument(1);
+		document.nodes.push({
+			id: "ghost",
+			kind: "package",
+			package: "probe",
+			node: "nope",
+			inputs: {},
+		});
+		return { document };
+	}
 	throw new Error(
 		`${def.method} ${def.path}：没有请求体的样本值，在 read-only-routes.test.ts 的 sampleBody 里补上`,
 	);
@@ -543,6 +560,52 @@ const richDocument = (param: string) => ({
 	],
 });
 
+/**
+ * 两个版本之间什么都改了的场景（对比两个版本的响应里每个数组都有内容）：第 2 版删掉 notify、加上 extra，改了 check 的输入和位置，
+ * 换了连线，注释框有增、删、改，多锁定了一个开发版本的包。
+ */
+function diffedDocument(version: 1 | 2) {
+	const doc = richDocument("env") as ReturnType<typeof richDocument> & {
+		nodes: Array<Record<string, unknown>>;
+		packages: Record<string, string>;
+	};
+	if (version === 1) {
+		doc.annotations.push({
+			id: "annotation_gone",
+			title: "要删的",
+			note: "",
+			nodes: ["check"],
+			subflows: [],
+		});
+		return doc;
+	}
+	doc.nodes = doc.nodes.filter((n) => n.id !== "notify");
+	doc.nodes.push({
+		id: "extra",
+		kind: "package",
+		package: "probe",
+		node: "check",
+		display_name: "额外的检查",
+		inputs: { url: "http://probe.test/extra" },
+	});
+	const check = doc.nodes.find((n) => n.id === "check") as Record<string, unknown>;
+	check.inputs = { url: "http://probe.test/v2" };
+	check.position = { x: 900, y: 900 };
+	doc.edges = doc.edges.map((e) => (e.to === "notify" ? { ...e, to: "extra" } : e));
+	doc.packages = { ...doc.packages, "dev-probe": "dev" };
+	doc.annotations = [
+		{
+			id: "annotation_1",
+			title: "汇报（改过）",
+			note: "跑完后异步汇报",
+			nodes: ["extra"],
+			subflows: ["report"],
+		},
+		{ id: "annotation_2", title: "新的", note: "", nodes: ["check"], subflows: [] },
+	];
+	return doc;
+}
+
 /** 节点包 `probe`：入口和出口有必填与顺序，指标有带标签的，图表引用它们（让包的、运行的响应里的数组都有内容）。 */
 async function publishProbe(cp: TestControlPlane): Promise<void> {
 	const archive = packageArchive(
@@ -610,6 +673,8 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	).toBe(200);
 	// 第二个版本改掉入口参数：第一个版本上建的预设失效
 	await api.saveVersion(rich, richDocument("stage"));
+	const diffed = await api.orchestrationWith(diffedDocument(1), "增删改");
+	await api.saveVersion(diffed, diffedDocument(2));
 
 	// Agent：一个槽位（还在跑的运行占着它，下一次运行就排队）、有能力、装了节点包、加载了开发版本
 	const agent = await FakeAgent.connect(
@@ -765,6 +830,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 		run?: { runId: string; task: AssignedTask },
 	): Promise<Fixture> => ({
 		scenarioId,
+		latestVersion: await api.headVersion(scenarioId),
 		...(run && {
 			runId: run.runId,
 			taskId: run.task.taskId,
@@ -786,6 +852,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 				empty: await fixture(empty),
 				archived: await fixture(archived),
 				rich: await fixture(rich),
+				diffed: await fixture(diffed),
 			},
 			presetId: preset.id,
 			botName: bot.name,

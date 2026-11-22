@@ -25,6 +25,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sfly.cli import scenario_check
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import CliError
 from sfly.cli.removed_document_fields import removed_fields_message, removed_fields_with_content
@@ -65,7 +66,7 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         help="写到这个文件（默认当前目录的 <场景名>.scenario.json）",
     )
     p_pull.add_argument(
-        "--version", type=_version_number, metavar="N", help="拉第 N 版（默认最新版本）"
+        "--version", type=version_number, metavar="N", help="拉第 N 版（默认最新版本）"
     )
     p_pull.set_defaults(func=command(_pull))
 
@@ -85,6 +86,7 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         "给新的默认值或删掉 default。写成新的值就保存新的值。",
     )
     p_push.add_argument("file", metavar="文件", help="pull 写出的 JSON 文件")
+    scenario_check.add_strict_option(p_push)
     p_push.set_defaults(func=command(_push))
 
     p_create = group.add_parser(
@@ -128,7 +130,7 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
     p_rename.set_defaults(func=command(_rename))
 
 
-def _version_number(text: str) -> int:
+def version_number(text: str) -> int:
     try:
         number = int(text)
     except ValueError:
@@ -198,10 +200,9 @@ def _default_file_name(scenario: dict[str, Any]) -> str:
 # —— push ——
 
 
-def _push(session: Session, args: argparse.Namespace) -> None:
-    client = session.client
-    target = os.path.abspath(args.file)
-    content = _read_file(target)
+def load_push_file(target: str) -> tuple[dict[str, Any], str, int, Any]:
+    """读 push（和 check）的文件：内容、场景 id、base_version、场景文档。"""
+    content = read_file(target)
     scenario_id, base_version = content.get("scenario"), content.get("base_version")
     if (
         not isinstance(scenario_id, str)
@@ -216,13 +217,30 @@ def _push(session: Session, args: argparse.Namespace) -> None:
             "sfly scenario pull 生成",
             next="sfly scenario pull <场景> -o <文件>",
         )
-    document = content["document"]
-    _check_document(document)
+    return content, scenario_id, base_version, content["document"]
+
+
+def _push(session: Session, args: argparse.Namespace) -> int | None:
+    client = session.client
+    target = os.path.abspath(args.file)
+    content, scenario_id, base_version, document = load_push_file(target)
+    check_document(document)
+    if args.strict:
+        refused = scenario_check.strict_precheck(
+            session, scenario_id, base_version, document, target
+        )
+        if refused is not None:
+            return refused
 
     try:
-        saved = _save_version(client, scenario_id, base_version, document)
+        saved = _save_version(client, scenario_id, base_version, document, strict=args.strict)
     except ApiError as error:
-        raise _explain_push_error(error, scenario_id, base_version, target) from None
+        if error.code == "strict_warnings" and isinstance(error.details, dict):
+            # 检查之后、保存之前带进来了新的警告：控制面在保存的事务里拒绝了，没有保存。
+            warnings = error.details.get("warnings")
+            if isinstance(warnings, list):
+                return scenario_check.refuse(session, scenario_id, base_version, warnings, target)
+        raise explain_save_error(error, scenario_id, base_version, target) from None
 
     note = None
     try:
@@ -233,7 +251,11 @@ def _push(session: Session, args: argparse.Namespace) -> None:
         note = f"新版本已保存，但没能更新文件里的 base_version 和 document：{error.message}"
     warnings = saved["warnings"]
     lines = [f"已保存场景 {scenario_id} 的版本 {saved['number']}（文件基于版本 {base_version}）。"]
-    lines.extend(_warning_lines(warnings))
+    if args.strict:
+        # strict 保存成功：剩下的警告都是改动之前就有的。
+        lines.extend(scenario_check.existing_lines([{**w, "existing": True} for w in warnings], ""))
+    else:
+        lines.extend(_warning_lines(warnings))
     if note is None:
         lines.append(
             f"文件 {target} 的 base_version 已更新为 {saved['number']}，"
@@ -253,20 +275,22 @@ def _push(session: Session, args: argparse.Namespace) -> None:
         "\n".join(lines),
         note=note,
     )
+    return None
 
 
 def _save_version(
-    client: Client, scenario_id: str, base_version: int, document: Any
+    client: Client, scenario_id: str, base_version: int, document: Any, *, strict: bool = False
 ) -> dict[str, Any]:
+    body: dict[str, Any] = {"document": document, "base_version": base_version}
+    if strict:
+        body["strict"] = True
     saved: dict[str, Any] = client.request(
-        "POST",
-        f"/orchestrations/{segment(scenario_id)}/versions",
-        body={"document": document, "base_version": base_version},
+        "POST", f"/orchestrations/{segment(scenario_id)}/versions", body=body
     )
     return saved
 
 
-def _explain_push_error(
+def explain_save_error(
     error: ApiError, scenario_id: str, base_version: int, target: str
 ) -> CliError:
     if error.status == 404:
@@ -400,9 +424,9 @@ def _create(session: Session, args: argparse.Namespace) -> None:
     name = _checked_name(args.name)
     document = None
     if args.source:
-        content = _read_file(os.path.abspath(args.source))
+        content = read_file(os.path.abspath(args.source))
         document = content["document"]
-        _check_document(document)
+        check_document(document)
         _check_no_placeholders(document, content.get("scenario"))
     created = client.request(
         "POST", "/orchestrations", body={"name": name, "description": args.description}
@@ -504,7 +528,7 @@ def _checked_name(name: str) -> str:
 # —— 文件和本地校验 ——
 
 
-def _read_file(path: str) -> dict[str, Any]:
+def read_file(path: str) -> dict[str, Any]:
     """读 pull 格式的文件：JSON 对象，里面要有对象类型的 `document`。"""
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -533,7 +557,7 @@ def _write_json(path: str, value: Any) -> None:
         raise CliError("file_unwritable", f"无法写入 {path}：{error.strerror or error}") from None
 
 
-def _check_document(document: Any) -> None:
+def check_document(document: Any) -> None:
     """按随 SDK 打包的场景文档 JSON Schema 校验；没通过时抛 `invalid_document`，列出出错的位置。"""
     problems = _document_problems(document)
     if problems:

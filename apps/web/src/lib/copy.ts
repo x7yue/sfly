@@ -78,10 +78,10 @@ export const CHART_TYPE_LABEL = {
 export const PROGRESS_LABEL = "进度";
 
 /**
- * 节点失败时出错的位置（`error.location`，「模块.函数 第 N 行」）的标签：画布检查器、运行监控的节点信息和概览的失败区域里，
- * 写在失败原因下面。一行摘要的地方（页头、「需要注意」、关注项、控制台「最近结束」）不写。
+ * 节点失败时出错的位置（`error.location`，「模块.函数 第 N 行」）的标签，定义在 `@sfly/schema`（运行通知的卡片也用它）：
+ * 画布检查器、运行监控的节点信息和概览的失败区域里，写在失败原因下面。一行摘要的地方（页头、「需要注意」、关注项、控制台「最近结束」）不写。
  */
-export const ERROR_LOCATION_LABEL = "出错位置";
+export { ERROR_LOCATION_LABEL } from "@sfly/schema";
 
 /** 「第 2 次尝试」：节点重试时指明是哪一次（运行监控的尝试页签、画布检查器的动作区共用）。 */
 export const attemptLabel = (attempt: number) => `第 ${attempt} 次${TERM.attempt}`;
@@ -246,6 +246,7 @@ export const DOC_PAGE = {
 	"install-agent": "安装 Agent",
 	publish: "发布",
 	"sdk-reference": "开发节点（SDK 参考）",
+	"feishu-notify": "飞书通知",
 } as const;
 export type DocPage = keyof typeof DOC_PAGE;
 

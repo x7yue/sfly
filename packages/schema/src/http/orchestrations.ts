@@ -61,9 +61,15 @@ function invalidDocumentMessage(body: object): string {
 }
 
 /**
- * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。
+ * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消。运行通知是兜底，成功的运行不发；不想发就把机器人设成
+ * null。曾经有的「总是」（`always`，成功、失败、取消都发）已经去掉（#446）：升级时存量的「总是」改成了失败和取消，
+ * 保存设置时再写它会被拒绝（{@link runNotificationTriggerRemovedMessage}）。
  */
-export const RunNotificationTrigger = z.enum(["failed", "failed_or_cancelled", "always"]);
+export const RunNotificationTrigger = z.enum(["failed", "failed_or_cancelled"]);
+
+/** 保存运行通知设置时还写着已经去掉的触发条件 `always`：写明它没了、现在可以填什么。 */
+export const runNotificationTriggerRemovedMessage =
+	"运行通知的触发条件 always（总是）已经去掉：运行通知只在失败或取消时发。现在可以填 failed（仅失败）或 failed_or_cancelled（失败和取消）；不想发就把 bot 设成 null。";
 
 /** 卡片标题和附加说明的长度上限（字符数）。 */
 export const RUN_NOTIFICATION_TITLE_MAX = 200;
@@ -88,7 +94,7 @@ export const RunNotificationChanges = z
 	.strictObject({
 		/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 		bot: FeishuBotName.nullable().optional(),
-		/** 什么情况下发：仅失败、失败和取消、总是。 */
+		/** 什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。 */
 		trigger: RunNotificationTrigger.optional(),
 		/** 卡片标题；空字符串用场景名。 */
 		title: z.string().trim().max(RUN_NOTIFICATION_TITLE_MAX).optional(),
@@ -219,14 +225,84 @@ export const DocumentWarningView = z.object({
 	code: z.string(),
 	message: z.string(),
 	node_id: z.string().optional(),
+	/** 警告所指的字段：包节点的输入、子流程参数、入口参数（`secret_param_default` 是参数名）、节点配置的字段。 */
 	input: z.string().optional(),
 	annotation_id: z.string().optional(),
+	/**
+	 * 同一个节点（或注释框）上可能有两条同种警告时，具体是哪一个：引用的警告是引用的路径，注释框指向成员的警告是
+	 * `nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`，连线的警告是 `起点->终点:种类`，停止子流程节点的警告是它要停的子流程入口 ID，
+	 * 会失效的运行预设是预设的名称。用来认出「同一条警告」（见 CheckedWarningView），界面上不显示。
+	 */
+	target: z.string().optional(),
+});
+
+/**
+ * 检查时的一条警告（#424）：和保存时的一样，再加一个标记——改动之前（最新版本里）是不是就有。
+ * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`、`target`）判断，不看文字：
+ * 同一种警告指向另一个节点算新的；同一个对象上同一种警告有几条，最新版本里有几条就有几条算已有（按出现的顺序）。
+ * 会失效的运行预设（`preset_invalidated`）说的就是这次改动，总是新的；场景还没有版本时全部是新的。
+ */
+export const CheckedWarningView = DocumentWarningView.extend({
+	/** true：改动之前就有，不是这次改动带进来的（`sfly scenario check` 的退出码和 `push --strict` 不看它）。 */
+	existing: z.boolean(),
 });
 
 export const SavedVersionView = z.object({
 	...OrchestrationVersionView.shape,
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
 	warnings: z.array(DocumentWarningView),
+});
+
+/** 一项字段的变化：`path` 例如 `default_agent`、`packages.http`、`inputs.url`、`params.env`；前后值不存在时没有这个字段。 */
+export const FieldChangeView = z.object({
+	path: z.string(),
+	/** 改之前的值；之前没有这一项（新加的输入、参数、包）时没有这个字段。 */
+	before: z.unknown().optional(),
+	/** 改之后的值；之后没有这一项（删掉的输入、参数、包）时没有这个字段。 */
+	after: z.unknown().optional(),
+});
+
+/** 差异里的一个节点：ID、种类，有显示名称时带上（子流程入口节点是子流程名称）。 */
+export const DiffNodeView = z.object({
+	id: z.string(),
+	kind: z.string(),
+	display_name: z.string().optional(),
+});
+
+const DiffEdgeView = z.object({ from: z.string(), to: z.string(), kind: z.string() });
+const DiffAnnotationView = z.object({ id: z.string(), title: z.string() });
+const withChanges = <T extends z.ZodRawShape>(ref: z.ZodObject<T>) =>
+	ref.extend({ changes: z.array(FieldChangeView) });
+
+/**
+ * 两份场景文档的差异（@sfly/orchestration 的 diffDocuments，前端的版本对比用的是同一个函数）：只列出差异，不做合并。
+ * 节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。`moved` 是两边都有、只是位置变了的节点。
+ * secret 参数的默认值两边都是占位符，它的值变了看不出来。
+ */
+export const DocumentDiffView = z.object({
+	/** 场景级设置：默认 Agent（`default_agent`）、锁定的节点包版本（`packages.<包名>`）。 */
+	settings: z.array(FieldChangeView),
+	/** 改动的节点逐项列出字段：包节点的输入是 `inputs.<名>`，入口和子流程入口的参数是 `params.<参数名>`。 */
+	nodes: z.object({
+		added: z.array(DiffNodeView),
+		removed: z.array(DiffNodeView),
+		changed: z.array(withChanges(DiffNodeView)),
+	}),
+	edges: z.object({ added: z.array(DiffEdgeView), removed: z.array(DiffEdgeView) }),
+	moved: z.array(z.string()),
+	annotations: z.object({
+		added: z.array(DiffAnnotationView),
+		removed: z.array(DiffAnnotationView),
+		changed: z.array(withChanges(DiffAnnotationView)),
+	}),
+});
+
+/** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */
+export const VersionCheckView = z.object({
+	/** 和保存时相同的警告，每条带 `existing`。 */
+	warnings: z.array(CheckedWarningView),
+	/** 保存之后相对最新版本（还没有版本时是初始文档）的差异。 */
+	diff: DocumentDiffView,
 });
 
 /**
@@ -429,6 +505,11 @@ export const orchestrationsApi = {
 			document: OrchestrationDocument,
 			/** 编辑起点的版本号（0 是还没有版本）；不是最新版本时 409 `version_conflict`。 */
 			base_version: z.number().int().nonnegative(),
+			/**
+			 * true：这次改动新带进来了警告（改动之前就有的不算，见 CheckedWarningView）时不保存，返回 400 `strict_warnings`，
+			 * details 是 VersionCheckView（和检查的响应一样）。在保存的同一个事务里判断。不写时和以前一样，警告不阻止保存。
+			 */
+			strict: z.boolean().optional(),
 		}),
 		requestError: ({ body }) =>
 			typeof body === "object" && body !== null && Object.hasOwn(body, "base_version")
@@ -438,6 +519,64 @@ export const orchestrationsApi = {
 						message: "base_version is required (use 0 for the first version)",
 					},
 		response: SavedVersionView,
+	}),
+	/**
+	 * 检查一份场景文档，不保存（#424）：返回的错误和警告与用同样的请求体保存时完全一样（同一段校验），
+	 * 外加保存之后相对最新版本会改变什么（`diff`）。不产生版本，什么都不写。
+	 *
+	 * - 错误和保存相同：文档不合法 400 `invalid_document`；secret 参数默认值的占位符沿用不了 400 `secret_default_placeholder`；
+	 *   给了 `base_version` 而它不是最新版本时 409 `version_conflict`。没有给 `base_version` 时对照最新版本检查，不报冲突。
+	 * - 200 时 `warnings` 和保存的响应里的 `warnings` 相同（静态检查、会失效的运行预设、secret 参数写了默认值），
+	 *   每条多一个 `existing`：改动之前就有（见 CheckedWarningView）。
+	 * - `diff` 是最新版本（还没有版本时是初始文档）到「保存之后的文档」（占位符换回原值、补好坐标）的差异。
+	 *
+	 * 用 POST 是因为请求体是一整份文档；它是只读的，不需要昵称请求头。
+	 */
+	check: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/check",
+		summary: "检查一份场景文档：返回保存时会有的错误和警告、和最新版本的差异，不保存",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "check"],
+		params: IdParams,
+		body: z.object({
+			/** 要检查的场景文档，和保存时一样。 */
+			document: OrchestrationDocument,
+			/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+			base_version: z.number().int().nonnegative().optional(),
+		}),
+		requestError: ({ body }) => ({
+			code: "invalid_document",
+			message:
+				typeof body === "object" && body !== null
+					? invalidDocumentMessage(body)
+					: "document does not match the orchestration schema",
+		}),
+		response: VersionCheckView,
+	}),
+	/**
+	 * 对比一个场景的两个版本（#424）：从版本 a 到版本 b 的差异，结构见 DocumentDiffView。a、b 可以相同（空差异），
+	 * 也可以 a 比 b 新（差异反过来）。版本不存在或不是整数时 404。
+	 */
+	versionDiff: endpoint({
+		method: "GET",
+		path: "/orchestrations/:id/versions/:a/diff/:b",
+		summary: "对比一个场景的两个版本：新增、删除、改动的节点和连线，改动字段的前后值",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "version-diff"],
+		params: z.object({
+			/** 场景 id。 */
+			id: z.string().min(1),
+			/** 对比的起点版本号。 */
+			a: z.string().min(1),
+			/** 对比的终点版本号。 */
+			b: z.string().min(1),
+		}),
+		response: z.object({ diff: DocumentDiffView }),
 	}),
 	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */
 	versions: endpoint({
@@ -534,6 +673,19 @@ export const orchestrationsApi = {
 				focus_items: z.array(FocusItemInput).optional(),
 			})
 			.refine((b) => Object.values(b).some((v) => v !== undefined), "没有要修改的字段"),
+		// 手里留着旧 JSON 的人还会写已经去掉的 trigger: "always"：写明它没了、现在可以填什么（仍是 400 `invalid_request`）。
+		requestError: ({ body }) => {
+			const settings =
+				typeof body === "object" && body !== null && "run_notification" in body
+					? body.run_notification
+					: undefined;
+			return typeof settings === "object" &&
+				settings !== null &&
+				"trigger" in settings &&
+				settings.trigger === "always"
+				? { code: "invalid_request", message: runNotificationTriggerRemovedMessage }
+				: undefined;
+		},
 		response: OrchestrationView,
 	}),
 	/**
@@ -597,6 +749,9 @@ export type LastRun = z.infer<typeof LastRun>;
 export type LastRunNodeStatus = z.infer<typeof NodeRunStatus>;
 export type OrchestrationHeadView = z.infer<typeof OrchestrationHeadView>;
 export type VersionSummaryView = z.infer<typeof VersionSummaryView>;
+export type DocumentDiffView = z.infer<typeof DocumentDiffView>;
+export type CheckedWarningView = z.infer<typeof CheckedWarningView>;
+export type VersionCheckView = z.infer<typeof VersionCheckView>;
 export type DocumentWarningView = z.infer<typeof DocumentWarningView>;
 export type OrchestrationVersionView = z.infer<typeof OrchestrationVersionView>;
 export type SavedVersionView = z.infer<typeof SavedVersionView>;

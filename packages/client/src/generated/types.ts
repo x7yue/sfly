@@ -403,6 +403,29 @@ export interface ChartView {
 }
 
 /**
+ * 检查时的一条警告（#424）：和保存时的一样，再加一个标记——改动之前（最新版本里）是不是就有。
+ * 「同一条」按警告的种类（`code`）加它指向的对象（`node_id`、`input`、`annotation_id`、`target`）判断，不看文字：
+ * 同一种警告指向另一个节点算新的；同一个对象上同一种警告有几条，最新版本里有几条就有几条算已有（按出现的顺序）。
+ * 会失效的运行预设（`preset_invalidated`）说的就是这次改动，总是新的；场景还没有版本时全部是新的。
+ */
+export interface CheckedWarningView {
+	code: string;
+	message: string;
+	node_id?: string;
+	/** 警告所指的字段：包节点的输入、子流程参数、入口参数（`secret_param_default` 是参数名）、节点配置的字段。 */
+	input?: string;
+	annotation_id?: string;
+	/**
+	 * 同一个节点（或注释框）上可能有两条同种警告时，具体是哪一个：引用的警告是引用的路径，注释框指向成员的警告是
+	 * `nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`，连线的警告是 `起点->终点:种类`，停止子流程节点的警告是它要停的子流程入口 ID，
+	 * 会失效的运行预设是预设的名称。用来认出「同一条警告」（见 CheckedWarningView），界面上不显示。
+	 */
+	target?: string;
+	/** true：改动之前就有，不是这次改动带进来的（`sfly scenario check` 的退出码和 `push --strict` 不看它）。 */
+	existing: boolean;
+}
+
+/**
  * 一次测得的时钟偏差（ADR 0018）：Agent 时间减去控制面时间，误差是一次单程网络延迟。
  * Agent 视图、任务和尝试视图（开始、结束时的偏差）共用这个形状。
  */
@@ -623,6 +646,62 @@ export interface DevPackageView {
 	metadata: Record<string, unknown> | null;
 }
 
+/** 差异里的一个节点：ID、种类，有显示名称时带上（子流程入口节点是子流程名称）。 */
+export interface DiffNodeView {
+	id: string;
+	kind: string;
+	display_name?: string;
+}
+
+/**
+ * 两份场景文档的差异（@sfly/orchestration 的 diffDocuments，前端的版本对比用的是同一个函数）：只列出差异，不做合并。
+ * 节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。`moved` 是两边都有、只是位置变了的节点。
+ * secret 参数的默认值两边都是占位符，它的值变了看不出来。
+ */
+export interface DocumentDiffView {
+	/** 场景级设置：默认 Agent（`default_agent`）、锁定的节点包版本（`packages.<包名>`）。 */
+	settings: FieldChangeView[];
+	/** 改动的节点逐项列出字段：包节点的输入是 `inputs.<名>`，入口和子流程入口的参数是 `params.<参数名>`。 */
+	nodes: {
+		added: DiffNodeView[];
+		removed: DiffNodeView[];
+		changed: {
+			id: string;
+			kind: string;
+			display_name?: string;
+			changes: FieldChangeView[];
+		}[];
+	};
+	edges: {
+		added: {
+			from: string;
+			to: string;
+			kind: string;
+		}[];
+		removed: {
+			from: string;
+			to: string;
+			kind: string;
+		}[];
+	};
+	moved: string[];
+	annotations: {
+		added: {
+			id: string;
+			title: string;
+		}[];
+		removed: {
+			id: string;
+			title: string;
+		}[];
+		changed: {
+			id: string;
+			title: string;
+			changes: FieldChangeView[];
+		}[];
+	};
+}
+
 /**
  * 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。
  * 注释框的警告带 `annotation_id`，指出是哪个注释框；它们也不阻断触发。
@@ -631,8 +710,15 @@ export interface DocumentWarningView {
 	code: string;
 	message: string;
 	node_id?: string;
+	/** 警告所指的字段：包节点的输入、子流程参数、入口参数（`secret_param_default` 是参数名）、节点配置的字段。 */
 	input?: string;
 	annotation_id?: string;
+	/**
+	 * 同一个节点（或注释框）上可能有两条同种警告时，具体是哪一个：引用的警告是引用的路径，注释框指向成员的警告是
+	 * `nodes/<节点 ID>` 或 `subflows/<子流程入口节点 ID>`，连线的警告是 `起点->终点:种类`，停止子流程节点的警告是它要停的子流程入口 ID，
+	 * 会失效的运行预设是预设的名称。用来认出「同一条警告」（见 CheckedWarningView），界面上不显示。
+	 */
+	target?: string;
 }
 
 export interface Edge {
@@ -767,6 +853,15 @@ export interface FeishuTestResult {
 
 /** Webhook 地址：必须是 http 或 https 地址，不含空白字符。 */
 export type FeishuWebhookUrl = string;
+
+/** 一项字段的变化：`path` 例如 `default_agent`、`packages.http`、`inputs.url`、`params.env`；前后值不存在时没有这个字段。 */
+export interface FieldChangeView {
+	path: string;
+	/** 改之前的值；之前没有这一项（新加的输入、参数、包）时没有这个字段。 */
+	before?: unknown;
+	/** 改之后的值；之后没有这一项（删掉的输入、参数、包）时没有这个字段。 */
+	after?: unknown;
+}
 
 /** 一项的异常；没有异常为 null。 */
 export interface FocusAnomaly {
@@ -2037,7 +2132,7 @@ export interface RunMetricSummary {
 export interface RunNotificationChanges {
 	/** 发给哪个飞书机器人（名称）；null 关闭运行通知。 */
 	bot?: FeishuBotName | null;
-	/** 什么情况下发：仅失败、失败和取消、总是。 */
+	/** 什么情况下发：failed 仅失败，failed_or_cancelled 失败和取消。`always` 已去掉：成功的运行不再发运行通知。 */
 	trigger?: RunNotificationTrigger;
 	/** 卡片标题；空字符串用场景名。 */
 	title?: string;
@@ -2071,8 +2166,12 @@ export interface RunNotificationState {
 	reason: string | null;
 }
 
-/** 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。 */
-export type RunNotificationTrigger = "failed" | "failed_or_cancelled" | "always";
+/**
+ * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消。运行通知是兜底，成功的运行不发；不想发就把机器人设成
+ * null。曾经有的「总是」（`always`，成功、失败、取消都发）已经去掉（#446）：升级时存量的「总是」改成了失败和取消，
+ * 保存设置时再写它会被拒绝（`runNotificationTriggerRemovedMessage`）。
+ */
+export type RunNotificationTrigger = "failed" | "failed_or_cancelled";
 
 /** 运行用的运行预设，记的是触发时的情况：预设之后改名、删除都不影响。 */
 export interface RunPresetView {
@@ -2588,6 +2687,14 @@ export type TaskStatus = "queued" | "dispatched" | "running" | "waiting" | "succ
 
 /** 时间：ISO 8601 字符串（控制面用 `Date#toISOString()` 输出）。 */
 export type Timestamp = string;
+
+/** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */
+export interface VersionCheckView {
+	/** 和保存时相同的警告，每条带 `existing`。 */
+	warnings: CheckedWarningView[];
+	/** 保存之后相对最新版本（还没有版本时是初始文档）的差异。 */
+	diff: DocumentDiffView;
+}
 
 export interface VersionSummaryView {
 	number: number;
