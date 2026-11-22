@@ -569,6 +569,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 - 主切入点是 `apps/web/e2e` 的 Playwright 端到端测试：浏览器访问由真实控制面托管的构建产物，背后是假 Agent（真实 gRPC）、每个测试独立的 PostgreSQL 数据库和手动时钟，沿用控制面测试基建（`apps/server/test/support`）。
 - 视觉回归：关键页面固定状态的截图基线（`e2e/__screenshots__`），只在 Playwright 官方镜像里生成和比对（`pnpm test:e2e:docker`，CI 的 e2e job 用同一镜像）。
+- 视觉回归的比较阈值是 0.03，另允许最多 10 个像素不同（`apps/web/playwright.config.ts` 的 `expect.toHaveScreenshot` 里的 `threshold`、`maxDiffPixels`；`threshold` 是每个像素的颜色距离，Playwright 默认 0.2，pixelmatch 自己判为抗锯齿的像素不算）。取值依据（2026-11，在 Playwright 镜像里用 Playwright 自带的比较器、对 95 张基线试出来的）：一，同一份代码连渲两遍，阈值 0.05 起一个像素都不差；0.03、0.02、0.01 各有一张图（`editor-annotations`）差 1 个像素，另外跑三遍时还见到 `editor-annotation-members-hovered` 差 1 个像素，所以留 10 个像素的余量。二，改动的最小样本：一行文字换了写法（「尝试 1」改成「第 1 次尝试」，最大灰度差 50）阈值 0.1 就是 361 个像素不同；运行监控页时间线图例里的一个字（弹窗背后、模糊过的，最大差 46）0.1 时 17 个像素、0.03 时 60 个；表格选中行的底色深了 8 个灰度级（`gray-850` 换成 `gray-800`）要到 0.03 才被发现（32487 个像素），0.05 时一个像素都不差。0.2 时这三处全部通过，所以它们过时了几天都没人发现。不要为了让某个用例通过把阈值放宽回去：不稳定的用例先找它截图时没等住的东西。基线在 arm64（本机的 Docker）上生成、CI 在 x86_64 上比较：把 `maxDiffPixels` 临时改成 0 在 x86_64 的镜像里整套跑了一遍，只有 `editor-annotation-members-hovered` 一张差 1 个像素（余量 10 够用）。以后某张图在 CI 上差几个像素时，先在 x86_64 的镜像里重新生成那几张，不放宽阈值。
 - 单测只覆盖纯逻辑模块（vitest）：整理布局、时间线区段与刻度、图表的时间范围与列数、引用补全、日志分页与实时接续、快捷键注册表等。不为展示型组件写快照或单测。
 
 ### 7.6 性能测试
