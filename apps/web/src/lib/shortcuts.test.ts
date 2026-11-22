@@ -71,6 +71,19 @@ describe("快捷键匹配", () => {
 		expect(m.handle(key("k", { editable: true, ctrlKey: true }), 300)).toBe("palette");
 	});
 
+	it("只在画布上生效的键（canvasOnly）：焦点在画布以外的地方不触发，在画布上或页面上没有焦点时照常触发", () => {
+		const canvasDefs: ShortcutDef[] = [
+			{ id: "delete", group: "编排画布", label: "删除", keys: "Delete", canvasOnly: true },
+			{ id: "undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
+		];
+		const m = new ShortcutMatcher(canvasDefs);
+		expect(m.handle(key("Delete", { offCanvas: true }), 0)).toBeNull();
+		expect(m.handle(key("Delete", { offCanvas: false }), 100)).toBe("delete");
+		expect(m.handle(key("Delete"), 200)).toBe("delete");
+		// 没登记 canvasOnly 的键不受影响：撤销在检查器里照常生效。
+		expect(m.handle(key("z", { ctrlKey: true, offCanvas: true }), 300)).toBe("undo");
+	});
+
 	it("只按下修饰键不会打断正在输入的序列", () => {
 		const m = new ShortcutMatcher(defs);
 		expect(m.handle(key("g"), 0)).toBeNull();
@@ -124,6 +137,21 @@ describe("快捷键注册表", () => {
 		expect(global.flatMap((g) => others.filter((o) => sameKeys(g, o)).map((o) => o.id))).toEqual(
 			[],
 		);
+	});
+
+	it("删东西的键只在画布上生效：编排画布里 Delete、Backspace 和删除注释框的键都登记了 canvasOnly，并且不是只展示", () => {
+		const deleting = SHORTCUTS.filter(
+			(s) => s.group === "编排画布" && /(^|\+)(Delete|Backspace)$|Ctrl\+Shift\+G$/.test(s.keys),
+		);
+		expect(deleting.map((s) => s.id).sort()).toEqual([
+			"canvas-annotation-delete",
+			"canvas-delete",
+			"canvas-delete-backspace",
+		]);
+		for (const s of deleting) {
+			expect(s, s.id).toMatchObject({ canvasOnly: true });
+			expect("displayOnly" in s, s.id).toBe(false);
+		}
 	});
 
 	it("同一分组内的键不重复（不同页面分组之间可以重复：它们是互斥的路由）", () => {
