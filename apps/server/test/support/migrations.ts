@@ -34,9 +34,12 @@ export async function migrationsCopy(
 
 /**
  * 在只含旧迁移的库上启动当前的控制面时，启动就会读写、旧迁移里却没有的表（`registerSharedAgentToken` 读写
- * `agent_credentials`）：补一个只有列、没有外键的占位。升级前要删掉（{@link dropStartupStubs}），由真正的迁移来建。
+ * `agent_credentials`，`bootstrapFirstAdmin` 数 `users`）：补一个只有列、没有外键的占位（`users` 只留 `id`，启动只数行）。
+ * 升级前要删掉（{@link dropStartupStubs}），由真正的迁移来建。
  */
-export const STARTUP_STUB_SQL = `CREATE TABLE "agent_credentials" (
+export const STARTUP_STUB_SQL = `CREATE TABLE "users" ("id" uuid PRIMARY KEY NOT NULL);
+--> statement-breakpoint
+CREATE TABLE "agent_credentials" (
 	"id" uuid PRIMARY KEY NOT NULL,
 	"kind" text NOT NULL,
 	"project_id" text NOT NULL,
@@ -67,6 +70,7 @@ export async function dropStartupStubs(databaseUrl: string): Promise<void> {
 	await client.connect();
 	try {
 		await client.query('drop table "agent_credentials"');
+		await client.query('drop table "users"');
 	} finally {
 		await client.end();
 	}

@@ -1,6 +1,8 @@
 // 切入点 A：运行通知（#232、#446，ADR 0020、docs/SEMANTICS.md §6）：运行通知是兜底，场景设置里选了机器人的场景，
 // 运行失败或被取消时由控制面发一张卡片，写明哪个节点为什么失败；成功的运行从不发。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
+
+import { inspect } from "node:util";
 import { errorHeadline, runsApi, runViewFailures } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import pg from "pg";
@@ -695,6 +697,24 @@ describe("运行通知", () => {
 			expect(logged).toMatch(reason);
 		}
 
+		/**
+		 * 控制面日志里没有这次出错的查询的参数：数据库错误（drizzle 的查询错误）带着语句的参数（`params`），
+		 * 通知入队的事务里写的是消息的内容、机器人名和运行 ID，原样打印会把它们带进日志（PR #555 的复审）。
+		 * 看的是传给 `console.error` 的错误对象的全部内容（`inspect` 会列出它的属性），不是只看一行文字；
+		 * `runId` 在这次查询的参数里，说明文字里的运行 ID 是控制面自己写的，不在错误对象里。
+		 */
+		function expectNoQueryParamsInLog(runId: string) {
+			const errorObjects = errors.mock.calls
+				.flat()
+				.filter((arg) => typeof arg !== "string")
+				.map((arg) => inspect(arg, { depth: 10 }))
+				.join("\n");
+			// 对照：错误确实记了，记的是 SQL。
+			expect(errorObjects).toMatch(/Failed query/);
+			expect(errorObjects).not.toContain(runId);
+			expect(errorObjects).not.toMatch(/params/);
+		}
+
 		/** 库里直接写进一个接口写不进去的触发条件（先去掉约束；迁移加的约束让数据库自己也拒绝，见迁移测试）。 */
 		async function writeTrigger(scenarioId: string, trigger: string) {
 			const client = new pg.Client({ connectionString: cp.database.url });
@@ -786,6 +806,7 @@ describe("运行通知", () => {
 				);
 
 				const runId = await runEnding(id, "failed");
+				expectNoQueryParamsInLog(runId);
 
 				// 回滚的是保存点里的全部：发送队列里没有这个运行的消息，运行上没有记「发给哪个机器人」，也没有「未发送」。
 				const messages = await client.query(
