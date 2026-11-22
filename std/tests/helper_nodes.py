@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Annotated, Literal, TypedDict
 
 from sfly import AgentName, Context, Doc, node
@@ -226,6 +228,20 @@ def follow_log(
     return {"lines": result.lines}
 
 
+def _listed(paths: Sequence[Path]) -> list[str]:
+    """输出里的本地路径列表（节点输出不能超过 1 MB）：最多 1000 个、序列化后最多 256 KiB，
+    超过时只保留前面的，文件数另有输出。"""
+    result: list[str] = []
+    size = 2  # []
+    for path in paths[:1000]:
+        text = str(path)
+        size += len(json.dumps(text, ensure_ascii=False).encode()) + 2  # 逗号和空格
+        if size > 256 * 1024:
+            break
+        result.append(text)
+    return result
+
+
 class PullFilesOutputs(TypedDict):
     files: Annotated[
         list[str],
@@ -285,7 +301,7 @@ def pull_files(
         delete_source=delete_source,
     )
     return {
-        "files": [str(path) for path in result.files],
+        "files": _listed(result.files),
         "count": result.count,
         "total_bytes": result.total_bytes,
     }
