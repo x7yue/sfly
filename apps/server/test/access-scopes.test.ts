@@ -47,6 +47,14 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"POST /packages": "publish",
 	// Agent 立即更新、飞书机器人的增删改与测试消息（写）→ 管理
 	"POST /agents/:name/update-now": "manage",
+	// Agent 凭据的签发、吊销，停用和恢复（Agent，写）→ 管理
+	"POST /agents/:name/credentials": "manage",
+	"DELETE /agents/:name/credentials/:id": "manage",
+	"POST /agents/:name/disable": "manage",
+	"POST /agents/:name/enable": "manage",
+	// 我的开发 Agent 的注册、吊销（开发 Agent，写）→ 编辑（只认有用户的人的凭据）
+	"POST /projects/:project/dev-agents": "edit",
+	"DELETE /projects/:project/dev-agents/:name": "edit",
 	"POST /feishu-bots": "manage",
 	"PATCH /feishu-bots/:name": "manage",
 	"DELETE /feishu-bots/:name": "manage",

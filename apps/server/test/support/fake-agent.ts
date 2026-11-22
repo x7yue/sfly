@@ -241,8 +241,9 @@ export class FakeAgent {
 					value: {
 						agentVersion: DEFAULT_AGENT_VERSION,
 						...(now === undefined ? {} : agentClock(now, SYNCED_MONOTONIC_MS)),
-						...(issued === undefined ? {} : { token: issued }),
 						...hello,
+						// Hello 里写了 `token: undefined` 的也算没写：签发的凭据放在最后，不被它盖掉。
+						...(issued === undefined ? {} : { token: issued }),
 					},
 				}),
 			{ ...options, name: hello.name },

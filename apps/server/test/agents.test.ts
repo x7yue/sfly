@@ -62,6 +62,9 @@ describe("Agent 注册", () => {
 				version_mismatch: true,
 				update: { state: "none", remaining_tasks: 0, reason: "" },
 				referencing_orchestrations: 0,
+				// 假 Agent 默认用 Agent 凭据连接；没有停用。
+				auth_kind: "agent",
+				disabled_at: null,
 				// 不上报端口和能力的旧版本 Agent（ADR 0019）。
 				capabilities: [],
 				endpoint: {
@@ -446,7 +449,10 @@ describe("Agent 注册", () => {
 		await expect(
 			FakeAgent.connect(cp.grpcUrl, { name: "intruder", token: "wrong" }),
 		).rejects.toThrow(/token/i);
-		await expect(FakeAgent.connect(cp.grpcUrl, { name: "anonymous" })).rejects.toThrow(/token/i);
+		// 没写 token 的假 Agent 默认用 Agent 凭据连接：要测「没有凭据」，Hello 里写空的 token。
+		await expect(FakeAgent.connect(cp.grpcUrl, { name: "anonymous", token: "" })).rejects.toThrow(
+			/token/i,
+		);
 		expect(await listAgents(cp)).toEqual([]);
 
 		agents.push(await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", token: "s3cret" }));
