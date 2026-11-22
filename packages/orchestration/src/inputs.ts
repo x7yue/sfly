@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, StoredOrchestrationDocument } from "@sfly/schema";
+import { devRefreshHint } from "./dev-node-types.js";
 import { isInputOfType } from "./input-marker.js";
 import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
@@ -184,25 +185,20 @@ export function undeclaredInputs(io: Io, inputs: Record<string, unknown>): strin
 	return Object.keys(inputs).filter((name) => !Object.hasOwn(io.properties, name));
 }
 
-/** 开发版本（`包名@dev`，docs/SEMANTICS.md §7）：节点类型取的是 Agent 上次 `sfly dev` 时上报的元信息。 */
-const DEV_VERSION = "dev";
-
 /**
  * 没有声明的输入的说明：写明是哪个输入、节点类型声明了哪些输入，能猜到时问是不是想写另一个。
- * 开发版本的声明是 Agent 上次运行 `sfly dev` 时上报的，改了节点的参数而没有重新运行时是旧的，说明里提醒一句。
+ * `refresh` 是开发版本的提醒（{@link devRefreshHint}）：声明是 Agent 上次运行 `sfly dev` 时上报的，改了节点的参数而没有
+ * 重新运行时是旧的；已发布的版本是空串。
  */
 function undeclaredInputMessage(
 	node: { node: string; inputs: Record<string, unknown> },
 	label: string,
 	io: Io,
 	input: string,
-	dev: boolean,
+	refresh: string,
 ): string {
 	const declared = orderedInputs(io).map(([name]) => name);
 	const head = `节点 ${label} 的输入 ${input} 没有声明：节点类型 ${node.node}`;
-	const refresh = dev
-		? "（开发版本的声明是 Agent 上次运行 sfly dev 时上报的，刚改过节点的参数的话，在那台机器上重新运行 sfly dev）"
-		: "";
 	if (declared.length === 0) return `${head} 不接收任何输入；删掉这个输入${refresh}`;
 	const listed = `${head} 声明的输入有 ${declared.join("、")}`;
 	// 已经写了的输入不再建议（它们是对的）；声明的输入都已经写在节点上了，就只能删掉这个。
@@ -262,7 +258,7 @@ export function inputWarnings(
 						nodeNameWithId(node),
 						type.inputs,
 						input,
-						doc.packages[node.package] === DEV_VERSION,
+						devRefreshHint(doc, node, "参数"),
 					),
 					node_id: node.id,
 					input,

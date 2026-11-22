@@ -5,10 +5,9 @@ import {
 	type PackageCatalog,
 	packageKey,
 } from "@sfly/orchestration";
-import type { StoredOrchestrationDocument } from "@sfly/schema";
+import { DEV_VERSION, type StoredOrchestrationDocument } from "@sfly/schema";
 import type { Db, Tx } from "../db/database.js";
 import { agents, feishuBots } from "../db/schema.js";
-import { DEV_VERSION } from "../engine/assign-content.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import { devNodeTypes } from "./dev-node-types.js";
 

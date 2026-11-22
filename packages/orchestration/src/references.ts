@@ -5,6 +5,7 @@ import {
 	type StoredNode,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
+import { devRefreshHint } from "./dev-node-types.js";
 import { nodeNameWithId } from "./node-display.js";
 import {
 	OUTPUT_PATH,
@@ -276,7 +277,9 @@ export function referenceWarnings(
 					if (declared && !declared.includes(key)) {
 						warn(
 							"reference_unknown_output",
-							`${where} 引用的输出键 ${key} 没有在节点 ${nodeNameWithId(targetNode)} 的节点类型中声明`,
+							`${where} 引用的输出键 ${key} 没有在节点 ${nodeNameWithId(targetNode)} 的节点类型中声明${
+								targetNode.kind === "package" ? devRefreshHint(doc, targetNode, "输出") : ""
+							}`,
 							path,
 						);
 					}

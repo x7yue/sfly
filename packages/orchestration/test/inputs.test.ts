@@ -179,11 +179,11 @@ describe("输入名的静态检查：写了节点没有声明的输入", () => {
 		);
 	});
 
-	it("开发版本（包名@dev）的节点：说明里提醒声明是 Agent 上次 sfly dev 时上报的，改了参数要重新运行；已发布的版本没有这句", () => {
-		const warn = (version: string) =>
+	it("开发版本（包名@dev）的节点：说明里提醒声明取自节点派发到的那台 Agent、改了参数要在那台机器上重新运行 sfly dev；已发布的版本没有这句", () => {
+		const warn = (version: string, agent?: string) =>
 			documentWarnings(
 				OrchestrationDocument.parse({
-					default_agent: "a",
+					default_agent: "agent-a",
 					packages: { demo: version },
 					nodes: [
 						{ id: "entry", kind: "entry" },
@@ -193,17 +193,21 @@ describe("输入名的静态检查：写了节点没有声明的输入", () => {
 							package: "demo",
 							node: "fetch",
 							inputs: { url: "x", wat: 1 },
+							...(agent === undefined ? {} : { agent }),
 						},
 					],
 					edges: [{ from: "entry", to: "f", kind: "chain" }],
 				}),
 				new Map([[packageKey("demo", version), [fetchType]]]),
 			).filter((w) => w.code === "input_not_declared")[0]?.message;
-		const hint =
-			"（开发版本的声明是 Agent 上次运行 sfly dev 时上报的，刚改过节点的参数的话，在那台机器上重新运行 sfly dev）";
-		expect(warn("dev")).toBe(
-			`节点 f 的输入 wat 没有声明：节点类型 fetch 声明的输入有 url、retries、mode、tags；改成其中一个，或者删掉这个输入${hint}`,
-		);
+		const head =
+			"节点 f 的输入 wat 没有声明：节点类型 fetch 声明的输入有 url、retries、mode、tags；改成其中一个，或者删掉这个输入";
+		const hint = (agent: string) =>
+			`（开发版本的声明取自节点派发到的 Agent ${agent} 上次运行 sfly dev 时的上报，刚改过节点的参数的话，在 ${agent} 所在的机器上重新运行 sfly dev）`;
+		// 没写 Agent：默认 Agent；写了：节点自己的。
+		expect(warn("dev")).toBe(`${head}${hint("agent-a")}`);
+		expect(warn("dev", "agent-b")).toBe(`${head}${hint("agent-b")}`);
+		expect(warn("1.0.0")).toBe(head);
 		expect(warn("1.0.0")).not.toContain("sfly dev");
 	});
 

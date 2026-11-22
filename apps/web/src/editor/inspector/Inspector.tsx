@@ -1,13 +1,14 @@
 import {
 	dispatchTarget,
 	isAnnotationWarning,
+	type NodeTypeIo,
 	nameWithId,
 	nodeCardText,
 	nodeDefaultTitle,
 	nodeNameWithId,
-	nodeTypeOf,
 	type OrchestrationWarning,
 	type PackageCatalog,
+	undeclaredInputs,
 } from "@sfly/orchestration";
 import {
 	type AgentView,
@@ -39,6 +40,7 @@ import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { inspectorNodeType } from "../catalog";
 import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError } from "../validation";
@@ -241,7 +243,10 @@ function NodeInspector({
 		return focusField(request.key);
 	}, [request]);
 	const meta = KIND_META[node.kind];
-	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
+	// 两份节点类型：检查用的（和控制面同一套取法，「没有声明 / 移除」按它）和参数表单用的（开发版本检查跳过时也有字段）。
+	const types =
+		node.kind === "package" ? inspectorNodeType(doc, node, catalog, context.agents) : undefined;
+	const type = types?.form;
 	const choices = useMemo(() => referenceChoices(doc, id, catalog), [doc, id, catalog]);
 	const warnings = context.warnings.filter((w) => w.node_id === id);
 	const fieldErrors = context.shownFieldErrors.filter((e) => e.nodeId === id);
@@ -364,6 +369,7 @@ function NodeInspector({
 							id={id}
 							node={node}
 							type={type}
+							undeclared={types?.checked ? undeclaredInputs(types.checked.inputs, node.inputs) : []}
 							choices={choices}
 							problemsOf={problemsOf}
 							defaultAgent={doc.default_agent}
@@ -441,7 +447,10 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 
 function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: InspectorContext }) {
 	const { doc, catalog } = context;
-	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
+	const type =
+		node.kind === "package"
+			? inspectorNodeType(doc, node, catalog, context.agents).form
+			: undefined;
 	const outputs =
 		type && Object.keys(type.outputs.properties).length > 0 ? type.outputs : undefined;
 	return (
@@ -503,7 +512,7 @@ function NodeMetrics({
 	context,
 }: {
 	id: string;
-	type: ReturnType<typeof nodeTypeOf>;
+	type: NodeTypeIo | null | undefined;
 	context: InspectorContext;
 }) {
 	const focus = useFocusItems(context.orchestrationId);

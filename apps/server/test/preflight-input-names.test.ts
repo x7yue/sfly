@@ -63,9 +63,9 @@ const tune = (id: string, pkg: string, inputs: Record<string, unknown>, agent?: 
 	...(agent === undefined ? {} : { agent }),
 });
 
-/** 开发版本的警告说明末尾那句：声明是 Agent 上次 sfly dev 时上报的。 */
-const DEV_HINT =
-	"（开发版本的声明是 Agent 上次运行 sfly dev 时上报的，刚改过节点的参数的话，在那台机器上重新运行 sfly dev）";
+/** 开发版本的警告说明末尾那句：声明取自节点派发到的 Agent 上次 sfly dev 时的上报，写明是哪台。 */
+const devHint = (agent: string) =>
+	`（开发版本的声明取自节点派发到的 Agent ${agent} 上次运行 sfly dev 时的上报，刚改过节点的参数的话，在 ${agent} 所在的机器上重新运行 sfly dev）`;
 
 describe("写错的输入名、开发版本的节点：保存时的警告和触发前的预检", () => {
 	let cp: TestControlPlane;
@@ -198,7 +198,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 				[
 					"input_not_declared",
 					"retires",
-					`节点 t 的输入 retires 没有声明：节点类型 tune 声明的输入有 host、retries、n；是不是想写 retries？${DEV_HINT}`,
+					`节点 t 的输入 retires 没有声明：节点类型 tune 声明的输入有 host、retries、n；是不是想写 retries？${devHint("agent-a")}`,
 				],
 			]);
 
@@ -330,6 +330,80 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 				["t1", "input_not_declared", "retires"],
 				["t2", "input_not_declared", "retires"],
 			]);
+		});
+
+		it("同一个包的两个节点：一个派到在线、加载了旧源码的 agent-a，另一个派到离线的（或在线但没加载的）agent-b：整包不查，不能只拿加载了的那台去查", async () => {
+			// agent-b 上次上报的是新源码（多了 extra）；agent-a 在线、旧源码。节点 t1 写了 extra：派到 agent-a 的话它没声明，
+			// 但整包不查（agent-b 不确定），所以没有警告、不拦。
+			const withExtra = { ...TUNE_INPUTS.properties, extra: { type: "string" } };
+			const two = () =>
+				document(
+					[
+						tune("t1", "tuner-dev", { host: "h", extra: "x" }, "agent-a"),
+						tune("t2", "tuner-dev", { host: "h", extra: "x" }, "agent-b"),
+					],
+					{ "tuner-dev": "dev" },
+				);
+			await connect("agent-a", loaded("tuner-dev"));
+			// agent-b 在线但没有加载这个包。
+			await connect("agent-b");
+			const notLoaded = await save(two());
+			expect(notLoaded.warnings.filter((w) => w.code === "input_not_declared")).toEqual([]);
+			// agent-b 离线（上次上报的是新源码）。
+			const off = await connect("agent-c", loaded("tuner-dev", withExtra));
+			await off.close();
+			await eventually(async () => {
+				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
+					"/agents",
+				);
+				expect(list.find((a) => a.name === "agent-c")?.status).toBe("offline");
+			});
+			const offline = await save(
+				document(
+					[
+						tune("t1", "tuner-dev", { host: "h", extra: "x" }, "agent-a"),
+						tune("t2", "tuner-dev", { host: "h", extra: "x" }, "agent-c"),
+					],
+					{ "tuner-dev": "dev" },
+				),
+			);
+			expect(offline.warnings.filter((w) => w.code === "input_not_declared")).toEqual([]);
+		});
+
+		it("开发节点的「飞书机器人」类型的输入写了没登记的机器人：和已发布的版本一样保存时警告、触发前阻断（以前开发版本触发成功，运行时不发送、任务照常成功）", async () => {
+			const botProps = {
+				host: { type: "string" },
+				bot: { type: "string", "x-sfly-type": "feishu_bot" },
+			};
+			await connect("agent-a", loaded("tuner-dev", botProps));
+			const { id, warnings } = await save(
+				document([tune("t", "tuner-dev", { host: "h", bot: "没登记的机器人" })], {
+					"tuner-dev": "dev",
+				}),
+			);
+			expect(warnings.map((w) => w.code)).toEqual(["feishu_bot_not_registered"]);
+			expect((await preflight(id)).map((p) => p.code)).toEqual(["feishu_bot_not_registered"]);
+			await refusal(await api.trigger(id));
+			expect(await runsOf(id)).toEqual([]);
+		});
+
+		it("引用开发节点没有声明的输出键：保存时警告并提醒在那台 Agent 上重新运行 sfly dev，触发前阻断", async () => {
+			await connect("agent-a", loaded("tuner-dev"));
+			const { id, warnings } = await save(
+				document(
+					[
+						tune("t1", "tuner-dev", { host: "h" }),
+						tune("t2", "tuner-dev", { host: "${{ nodes.t1.outputs.nope }}" }),
+					],
+					{ "tuner-dev": "dev" },
+				),
+			);
+			expect(warnings.map((w) => w.code)).toEqual(["reference_unknown_output"]);
+			expect(warnings[0]?.message).toContain("引用的输出键 nope 没有在节点 t1 的节点类型中声明");
+			expect(warnings[0]?.message).toContain(
+				"节点派发到的 Agent agent-a 上次运行 sfly dev 时的上报，刚改过节点的输出的话，在 agent-a 所在的机器上重新运行 sfly dev",
+			);
+			await refusal(await api.trigger(id));
 		});
 
 		it("派发目标的 Agent 没有注册过：不知道它加载了什么，不检查", async () => {
