@@ -156,6 +156,8 @@ export interface ControlPlaneOptions {
 	sameOrigins?: readonly string[];
 	/** 信任反向代理的 `X-Forwarded-For`（环境变量 `SFLY_TRUST_PROXY`）；默认不信任，见 {@link HttpApiDeps.trustProxy}。 */
 	trustProxy?: FastifyServerOptions["trustProxy"];
+	/** 算「假哈希」的函数（登录名不存在时拿它验证一次，对齐耗时）：默认按 `scrypt` 参数算；测试里换成数着次数的。 */
+	dummyHash?: (password: string) => Promise<string>;
 	/** 登录限速的参数（src/auth/login-throttle.ts），默认见那里；测试里调。 */
 	loginThrottle?: LoginThrottleOptions;
 	/** 密码验证的并发上限（src/auth/password-gate.ts），默认见那里；测试里调。 */
@@ -337,6 +339,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		setupCode,
 		scrypt: options.scrypt,
+		dummyHash: options.dummyHash,
 		loginIdleMs: options.loginIdleMs,
 		throttle: new LoginThrottle(clock, options.loginThrottle),
 		passwordGate: new PasswordGate(options.passwordGate),
