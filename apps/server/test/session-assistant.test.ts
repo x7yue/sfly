@@ -44,6 +44,10 @@ const turnEnd = (
 	usage: USAGE,
 });
 
+/** 控制面自己写的 turn_end（`SessionStore.append` 的事件内容）。 */
+const turnEndBody = (turn: number, outcome: "completed" | "stopped") =>
+	({ type: "turn_end", turn, outcome, reason: "测试", duration_ms: 1 }) as const;
+
 /** 一个会话的当前行（直接读库）。 */
 async function sessionRow(cp: TestControlPlane, id: string) {
 	const client = new pg.Client({ connectionString: cp.database.url });
@@ -62,6 +66,17 @@ async function sessionCount(cp: TestControlPlane): Promise<number> {
 	try {
 		const { rows } = await client.query("select count(*)::int as n from sessions");
 		return rows[0].n as number;
+	} finally {
+		await client.end();
+	}
+}
+
+/** 直接改库（测试里把会话改成某个状态）。 */
+async function database_query(cp: TestControlPlane, text: string, params: unknown[] = []) {
+	const client = new pg.Client({ connectionString: cp.database.url });
+	await client.connect();
+	try {
+		await client.query(text, params);
 	} finally {
 		await client.end();
 	}
@@ -307,7 +322,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect(assistant.prompts).toHaveLength(0);
 	});
 
-	it("停止：在做时助手服务收到中止，它在宽限内把这一轮的 turn_end 带回来，控制面不重复补；不在做时什么也不做", async () => {
+	it("停止：在做时助手服务收到中止，它在宽限内把这一轮的 turn_end 带回来，控制面不重复补；不在做时不改会话（空闲的会话仍补发一次中止，已结束的不发）", async () => {
 		const view = await json<SessionView>(await create());
 		// 助手服务收到中止后马上带回这一轮的结局（中止之后的事件在回应之后才推）。
 		assistant.abortReply = (id) => {
@@ -327,14 +342,22 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect(ends).toHaveLength(1);
 		expect(ends[0]).toMatchObject({ outcome: "stopped", reason: "用户停止" });
 
-		// 不在做：不发中止，返回当前状态。
+		// 不在做：不改会话，返回当前状态；空闲的会话向助手服务补发一次按会话的中止（`prompt` 超时后补发的中止可能落空，
+		// 这一次让用户有办法把它停下来）。
 		const again = await api.post(`/sessions/${view.id}/stop`, {});
 		expect(again.status).toBe(200);
-		expect(assistant.aborts).toEqual([view.id]);
+		await eventually(() => expect(assistant.aborts).toEqual([view.id, view.id]));
 		expect(await json<SessionView>(again)).toMatchObject({
 			status: "idle",
 			last_turn_outcome: "stopped",
 		});
+		expect((await events(view.id)).filter((e) => e.type === "turn_end")).toHaveLength(1);
+		// 已结束的会话：助手服务那边没有这一轮要停，不发。
+		await database_query(cp, "update sessions set status = 'ended' where id = $1", [view.id]);
+		const ended = await api.post(`/sessions/${view.id}/stop`, {});
+		expect(ended.status).toBe(200);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(assistant.aborts).toEqual([view.id, view.id]);
 	});
 
 	it("停止：助手服务不回话也能停（拒绝了中止、或收到了中止但没有带回结局）：控制面补一条 stopped 的 turn_end，会话回到空闲，项目可以再开始新的一轮", async () => {
@@ -389,6 +412,42 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 				.filter((e) => e.type === "turn_end")
 				.map((e) => (e as { turn: number }).turn),
 		).toEqual([1, 2]);
+	});
+
+	it("停止结束的是停止开始时记下的那一轮：中止还在路上的时候这一轮已经结束、下一轮已经开始，停止不会把新的一轮结束掉", async () => {
+		const view = await json<SessionView>(await create("第一句"));
+		const store = cp.current.sessions;
+		// 助手服务不认识这一轮（拒绝中止），而且回应很慢：控制面等它的时候，第 1 轮正常结束、第 2 轮开始。
+		assistant.abortReply = () => ({ status: 503, code: "start_failed", message: "不认识这一轮" });
+		assistant.abortDelayMs = 400;
+		assistant.aborts.length = 0;
+		let stopping: Promise<Response> | undefined;
+		try {
+			stopping = api.post(`/sessions/${view.id}/stop`, {});
+			await eventually(() => expect(assistant.aborts).toEqual([view.id]));
+			await store.append(view.id, turnEndBody(1, "completed"));
+			await store.beginTurn(view.id, "default" as never, (turn) => [
+				{
+					type: "user_message",
+					message_id: randomUUID(),
+					text: "第二句",
+					steer: false,
+					author: "alice",
+					author_user_id: null,
+				},
+				{ type: "turn_started", turn },
+			]);
+			expect((await stopping).status).toBe(200);
+		} finally {
+			await stopping?.catch(() => undefined);
+			assistant.abortDelayMs = 0;
+			assistant.abortReply = () => undefined;
+		}
+		// 第 2 轮还在做，它的状态没被这次停止碰；第 1 轮只有一条结局（正常结束的那条），第 2 轮没有结局。
+		expect((await sessionRow(cp, view.id))?.status).toBe("running");
+		const ends = (await events(view.id)).filter((e) => e.type === "turn_end");
+		expect(ends).toHaveLength(1);
+		expect(ends[0]).toMatchObject({ turn: 1, outcome: "completed" });
 	});
 
 	it("助手服务没接住第一轮：新建的会话删掉（不留下会话），503 assistant_unavailable 或它给的原因", async () => {
@@ -564,6 +623,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			}
 			const detail = await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`));
 			expect(detail.status).toBe("idle");
+			// 写进历史的 turn_end 的原因所有能读这个会话的人都看得到：同样不带地址和端口。
+			expect(JSON.stringify(detail.events.at(-1))).not.toContain(new URL(assistant.url).port);
 			const types = detail.events.map((e) => e.type);
 			expect(types.slice(-3)).toEqual(["user_message", "turn_started", "turn_end"]);
 			expect(detail.events.at(-1)).toMatchObject({
@@ -605,7 +666,9 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(res.status).toBe(503);
 			const { error } = await json<{ error: { code: string; message: string } }>(res);
 			expect(error.code).toBe("assistant_unavailable");
-			expect(error.message).toContain("连不上助手服务");
+			// 说明只有原因的种类：不带助手服务的地址和端口（原文进日志）。
+			expect(error.message).toBe("连不上助手服务：连接被拒绝");
+			expect(error.message).not.toContain(new URL(assistant.url).port);
 			expect(await sessionCount(cp)).toBe(0);
 		} finally {
 			await assistant.resume();
@@ -688,7 +751,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 				const now = await readiness();
 				expect(now.ready).toBe(false);
 				expect(now.problems).toEqual([expect.objectContaining({ kind: "assistant_unreachable" })]);
-				expect(now.problems[0]?.message).toContain("连不上助手服务");
+				expect(now.problems[0]?.message).toBe("连不上助手服务：连接被拒绝");
+				expect(JSON.stringify(now)).not.toContain(new URL(assistant.url).port);
 				expect(now.workbench).toBe(WORKBENCH);
 			} finally {
 				await assistant.resume();
@@ -1132,6 +1196,32 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		} finally {
 			assistant.promptDelayMs = 0;
 		}
+	});
+
+	it("补发的中止落了空（助手服务那时还没登记这一轮）：控制面看会话是空闲的，用户点停止时再向助手服务发一次按会话的中止，会话本身不变", async () => {
+		const view = await json<SessionView>(
+			await api.post("/projects/default/sessions", { text: "第一句" }),
+		);
+		assistant.emit(view.id, 1, turnEnd(1));
+		await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
+		assistant.aborts.length = 0;
+		assistant.promptDelayMs = 600;
+		try {
+			expect((await api.post(`/sessions/${view.id}/messages`, { text: "第二句" })).status).toBe(
+				503,
+			);
+			// 超时之后补发的那一次（这里的假助手服务只是记下，没有「登记」可言）。
+			await eventually(() => expect(assistant.aborts).toEqual([view.id]));
+		} finally {
+			assistant.promptDelayMs = 0;
+		}
+		const before = (await eventsOf(api, view.id)).length;
+		const stopped = await api.post(`/sessions/${view.id}/stop`, {});
+		expect(stopped.status).toBe(200);
+		expect(await json<SessionView>(stopped)).toMatchObject({ status: "idle" });
+		await eventually(() => expect(assistant.aborts).toEqual([view.id, view.id]));
+		expect((await eventsOf(api, view.id)).length).toBe(before);
+		expect((await sessionRow(cp, view.id))?.status).toBe("idle");
 	});
 });
 

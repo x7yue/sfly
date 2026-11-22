@@ -410,6 +410,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		client: assistantClient,
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
+		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
 	const api = buildHttpApi({
 		database,

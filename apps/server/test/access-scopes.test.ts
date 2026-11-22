@@ -150,6 +150,19 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		]);
 	});
 
+	it("范围表每一行都写了 humanOnly（布尔）：新的资源类别漏写过不了类型检查，这里运行时也核对一遍", () => {
+		for (const kind of RESOURCE_KINDS) {
+			expect(typeof SCOPE_TABLE[kind].humanOnly, kind).toBe("boolean");
+		}
+		expect(RESOURCE_KINDS.filter((kind) => SCOPE_TABLE[kind].humanOnly)).toEqual(["session"]);
+	});
+
+	it("作用在 humanOnly 的类别上、或新建出的是它，任何一个都算（不能靠写成别的 creates 绕过）", () => {
+		expect(writeNeedsPerson(writeOf("session", "scenario"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("scenario", "run"))).toBe(false);
+	});
+
 	it("在「范围够」之上再加一层：humanOnly 的写，范围表里的范围仍是「编辑」", () => {
 		expect(SCOPE_TABLE.session).toEqual({ write: "edit", humanOnly: true });
 		expect(requiredScope(writeOf("session"))).toBe("edit");

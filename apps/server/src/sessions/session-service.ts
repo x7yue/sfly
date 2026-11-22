@@ -84,6 +84,11 @@ export interface SessionServiceDeps {
 	workbenchAgent: string | undefined;
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
+	/**
+	 * 助手服务出问题时写日志（连不上、拒绝、`/health` 不通……）：底层错误的原文（带着助手服务的地址和端口）只进这里，
+	 * 回给请求的人和写进就绪状态、`turn_end` 的只有稳定的一句说明。
+	 */
+	log?: (message: string, error?: unknown) => void;
 }
 
 type WorkbenchTarget = PromptCommandBody["workbench"];
@@ -121,7 +126,8 @@ export class SessionService {
 			try {
 				result = { health: await client.health(HEALTH_TIMEOUT_MS) };
 			} catch (error) {
-				result = { error: error instanceof Error ? error.message : String(error) };
+				this.deps.log?.("助手服务的 /health 没有正常回应", error);
+				result = { error: publicMessage(error) };
 			}
 			this.#health = { at: now, result };
 			return result;
@@ -329,6 +335,7 @@ export class SessionService {
 				...commandEnv(message.actor),
 			});
 		} catch (error) {
+			this.deps.log?.(`助手服务没有接住会话 ${session.id} 的第 ${turn} 轮`, error);
 			const failure = describeFailure(error);
 			if (error instanceof AssistantUnreachableError) {
 				ready.client.abort(session.id).catch(() => {
@@ -361,7 +368,8 @@ export class SessionService {
 	}
 
 	/**
-	 * 停止会话正在做的这一轮：不在做时什么也不做（助手没有配置时仍是 503，和别的写一样）；在做时先把中止发给助手服务，
+	 * 停止会话正在做的这一轮：不在做时不改会话（助手没有配置时仍是 503，和别的写一样；空闲的会话仍向助手服务补发一次
+	 * 中止，见下面）；在做时先把中止发给助手服务，
 	 * 它会带回这一轮的 `turn_end`（等一小会儿，{@link STOP_GRACE_MS}）；助手服务没有配置、连不上、不认识这一轮、
 	 * 或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：
 	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始
@@ -373,7 +381,16 @@ export class SessionService {
 		const current = (await sessions.find(session.id)) ?? session;
 		if (current.status !== "running") {
 			const configured = await this.#configured();
-			return configured.ok ? { ok: true, value: null } : configured;
+			if (!configured.ok) return configured;
+			// 空闲的会话也向助手服务发一次按会话的中止（尽力而为，不等结果、不影响响应）：`prompt` 超时之后补发的中止
+			// 可能落空（助手服务还没把这一轮登记下来，中止什么也不做），这一轮照样跑起来，而控制面这边会话是空闲的：
+			// 用户再发话被拒绝（409），不发这一次，点停止也没有办法让它停下来。重复的中止无害。
+			if (current.status === "idle") {
+				configured.value.abort(current.id).catch((error) => {
+					this.deps.log?.(`给空闲的会话 ${current.id} 补发中止没有成功`, error);
+				});
+			}
+			return { ok: true, value: null };
 		}
 		const turn = effectiveTurn(current);
 		let aborted = false;
@@ -381,8 +398,9 @@ export class SessionService {
 			try {
 				await client.abort(current.id);
 				aborted = true;
-			} catch {
+			} catch (error) {
 				// 连不上或被拒绝：下面由控制面结束这一轮。
+				this.deps.log?.(`停止会话 ${current.id} 时中止没有送到助手服务`, error);
 			}
 		}
 		if (aborted && (await this.#settled(current.id, turn))) return { ok: true, value: null };
@@ -490,13 +508,23 @@ function describeFailure(error: unknown): Failure {
 				: error.message;
 		return { status: 503, code: "assistant_unavailable", message: why, outcome: "failed" };
 	}
-	const message = error instanceof Error ? error.message : String(error);
 	return {
 		status: 503,
 		code: "assistant_unavailable",
-		message: error instanceof AssistantUnreachableError ? message : `助手服务出错：${message}`,
+		message: publicMessage(error),
 		outcome: "failed",
 	};
+}
+
+/**
+ * 回给请求的人、写进就绪状态和 `turn_end` 的说明：连不上的一句（只有原因的种类，见 {@link AssistantUnreachableError}），
+ * 别的意外错误只说「助手服务出错」，原文只进日志。
+ */
+function publicMessage(error: unknown): string {
+	if (error instanceof AssistantUnreachableError || error instanceof AssistantError) {
+		return error.message;
+	}
+	return "助手服务出错";
 }
 
 /** 控制面补的 `turn_end`：这一轮没有交到助手服务手上，没有工具调用和模型调用。 */

@@ -42,6 +42,8 @@ export class FakeAssistant {
 	health: () => AssistantHealth | Reply = () => this.healthy();
 	/** 回应命令（prompt、abort）和 `/health` 之前先等多久（毫秒）：模拟助手服务冷启动慢、接了连接却不回话。 */
 	promptDelayMs = 0;
+	/** 收到 `abort` 之后先等这么久（毫秒）再回应：让测试在中止还在路上时让别的事发生。 */
+	abortDelayMs = 0;
 	healthDelayMs = 0;
 	/** 收到过几次 `GET /health`。 */
 	healthRequests = 0;
@@ -235,6 +237,7 @@ export class FakeAssistant {
 		const sessionId = command[1] as string;
 		if (command[2] === "abort") {
 			this.aborts.push(sessionId);
+			if (this.abortDelayMs > 0) await new Promise((r) => setTimeout(r, this.abortDelayMs));
 			const reply = this.abortReply(sessionId);
 			if (reply) return this.#error(res, reply);
 			return this.#send(res, 202);
