@@ -457,7 +457,7 @@ describe("新加接口自动覆盖", () => {
 		};
 		const get = { ...fake, method: "GET", effect: "read" };
 		const other = { ...get, resource: { kind: "package", target: { params: "id" } } } as RouteDef;
-		expect(() => requestFor(other, victim)).toThrow(/paramValue/);
+		expect(() => requestFor(other, victim)).toThrow(/没有取值办法/);
 		for (const kind of ["scenario", "run", "task", "session"] as const) {
 			const def = { ...get, resource: { kind, target: { params: "id" } } } as RouteDef;
 			expect(requestFor(def, victim).path).toBe(
