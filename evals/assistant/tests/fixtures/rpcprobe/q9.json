@@ -1,0 +1,31 @@
+{
+	"ok": true,
+	"runs": [
+		{
+			"ready_seconds": 0.632,
+			"idle_rss_mib": 117.4,
+			"peak_hwm_mib": 136.5,
+			"after_turn_rss_mib": 136.5
+		},
+		{
+			"ready_seconds": 0.406,
+			"idle_rss_mib": 118.2,
+			"peak_hwm_mib": 136.6,
+			"after_turn_rss_mib": 136.6
+		},
+		{
+			"ready_seconds": 0.542,
+			"idle_rss_mib": 117.3,
+			"peak_hwm_mib": 136.2,
+			"after_turn_rss_mib": 136.2
+		}
+	],
+	"seconds": 34.5,
+	"slim": {
+		"ok": true,
+		"base": "node:26-trixie-slim",
+		"pi": "1.6.0",
+		"node": "v26.13.1",
+		"image_mib": 551
+	}
+}

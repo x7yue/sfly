@@ -214,6 +214,26 @@ pi 进程的环境里放一个每次随机生成的假令牌。每一项的结�
 
 会话文件：默认工具列不出目录、命令进不了 pi 的家目录，所以找不到它的文件名，照剧本那次没去改它（记为「没测」）；pi 的编辑工具对同样归 pi 的文件是改得了的。
 
+## 探针：助手服务的启动参数（#539）
+
+```sh
+./aeval.sh rpcprobe                  # 不花钱：第 1–10 题全部跑一遍，写 rpcprobe.md、rpcprobe.json
+./aeval.sh rpcprobe q6 q7            # 只跑这几题
+./aeval.sh bgcheck <结果目录>…        # 不调模型：已有的会话记录里，跨两次命令依赖后台进程的有几处
+```
+
+`rpcprobe` 用助手服务（#540）那条 pi 启动命令（RPC 模式、`--no-extensions -e` 远程工具扩展、`--no-skills --skill`、
+`--no-context-files --append-system-prompt`、`--session-dir --session-id`……），在单独的探针容器
+（`sfly-aeval-<槽位>-rpcprobe`，臂 B 的镜像，每次重建）里照问题做实验：工具是否都落到能力端口、只加载给的扩展、
+系统提示里只有给的东西、会话恢复、kill -9 之后再起、abort 和 steer 的时机、关 stdin 和 SIGTERM 的收场、内存和启动时间、
+扩展改系统提示里的工作目录。模型是探针容器里的假的模型端点（照 `container/rpcprobe-*.json` 的剧本，存下每个请求），
+工作台上的命令什么时候消失由开发环境容器里的采样量（每 0.2 秒一次）。第 9 题另外在 Node 26 的 slim 镜像上试一次
+（要先 `docker pull node:26-trixie-slim`，没有时只记下没测）。断网的环境里也能跑（`up --offline --isolated`）。
+升级 pi 之后重跑它，对照上一次的结论。容器里那一半在 `container/rpcprobe_run.py`，结论在 `aeval/rpcprobe.py` 里算。
+
+`bgcheck` 找「一次命令里把进程放到后台，之后另一次工具调用连它的端口或读它的输出文件」，按题目、臂、档次计数，
+每一处列出前后各一步的命令。同一次命令里起后台进程又测它的不算；假的模型端点和作废的会话不算。
+
 ## 离线包
 
 在联网的环境里，先把每道题至少跑过一遍（`selfcheck` 就行），镜像站的缓存才是全的；再打包：

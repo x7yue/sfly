@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -540,7 +541,341 @@ def q4() -> Record:
     }
 
 
-QUESTIONS: dict[str, Callable[[], Record]] = {"q1": q1, "q2": q2, "q3": q3, "q4": q4}
+# ---- 第 5 到 10 题 ----
+
+
+def script_prompt(name: str, text: str = "照剧本做。") -> str:
+    """让假的模型端点照 container/<name>.json 的剧本回复。"""
+    return f"AEVAL-SCRIPT:{name} {text}"
+
+
+def wait_tool_started(pi: RpcPi, start: int = 0, timeout: float = 60) -> Record:
+    return pi.wait_for(lambda r: r.get("type") == "tool_execution_start", timeout, start=start)
+
+
+def find(pi: RpcPi, kind: str, start: int = 0) -> Record | None:
+    return next((r for r in pi.events()[start:] if r.get("type") == kind), None)
+
+
+def requests_text(requests: list[Record]) -> list[list[Record]]:
+    """每个发给模型的请求里的消息：角色、文字（截断）、工具调用的 ID。"""
+    found = []
+    for request in requests:
+        messages = []
+        for m in request.get("messages") or []:
+            item: Record = {"role": m.get("role"), "text": _text(m.get("content"))[:300]}
+            if m.get("tool_call_id"):
+                item["tool_call_id"] = m["tool_call_id"]
+            if m.get("tool_calls"):
+                item["tool_calls"] = [c.get("id") for c in m["tool_calls"]]
+            messages.append(item)
+        found.append(messages)
+    return found
+
+
+def session_file(session: str) -> Path | None:
+    files = sorted((SESSIONS / session).glob("*.jsonl"))
+    return files[0] if files else None
+
+
+def tail_lines(path: Path | None, count: int = 3) -> list[str]:
+    if path is None or not path.exists():
+        return []
+    return [line[:300] for line in path.read_text().splitlines()[-count:]]
+
+
+def q5() -> Record:
+    """工具执行到一半时 kill -9，同一条命令再起，发「继续」：
+    会话文件、发给模型的内容、工作台上的命令。
+    另做一遍：再起之前在会话文件末尾加半行（写到一半被结束），看 pi 会不会报错。"""
+    result: Record = {}
+    for variant in ("as_killed", "half_line"):
+        session = f"q5-{variant}"
+        cmd = rpc_command(session)
+        first = RpcPi(cmd)
+        first.call({"type": "prompt", "message": script_prompt("rpcprobe-kill")})
+        wait_tool_started(first)
+        time.sleep(1)
+        killed_at = time.time()
+        first.proc.kill()
+        first.proc.wait()
+        path = session_file(session)
+        if variant == "half_line" and path is not None:
+            with path.open("a") as f:
+                f.write('{"type":"message","id":"half","message":{"role":"assi')
+        lines = tail_lines(path)
+        second = RpcPi(cmd, stderr=ROOT / f"q5-{variant}-stderr.log")
+        try:
+            started = second.call({"type": "get_state"}, timeout=30)
+            messages = _messages(second)
+            before = dump_count()
+            mark = len(second.events())
+            response = second.call({"type": "prompt", "message": "继续"}, timeout=30)
+            try:
+                second.wait_for(
+                    lambda r: r.get("type") in ("agent_settled", "tool_execution_start"),
+                    30,
+                    start=mark,
+                )
+            except TimeoutError:
+                pass
+            restarted_tool = find(second, "tool_execution_start", mark) is not None
+            if restarted_tool:
+                second.call({"type": "abort"}, timeout=60)
+            sent = requests_text(dumped_requests(before))
+            exit_seconds = second.close()
+            result[variant] = {
+                "killed_at": killed_at,
+                "session_tail": lines,
+                "restart_ok": bool(started.get("success")),
+                "restart_error": started.get("error"),
+                "messages_on_restart": messages,
+                "prompt_ok": bool(response.get("success")),
+                "prompt_error": response.get("error"),
+                "first_request": sent[0] if sent else [],
+                "requests": len(sent),
+                "reran_tool": restarted_tool,
+                "exit_seconds": exit_seconds,
+                "stderr": (ROOT / f"q5-{variant}-stderr.log").read_text()[-600:],
+            }
+        except TimeoutError as error:
+            second.proc.kill()
+            result[variant] = {
+                "killed_at": killed_at,
+                "session_tail": lines,
+                "restart_ok": False,
+                "restart_error": str(error),
+                "stderr": (ROOT / f"q5-{variant}-stderr.log").read_text()[-600:],
+            }
+    return result
+
+
+def q6() -> Record:
+    """远程执行 sleep 602 时发 abort：到 abort 的响应、到 agent_settled 各多久
+    （工作台上的进程由宿主机量）。"""
+    pi = RpcPi(rpc_command("q6"))
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-abort")})
+    wait_tool_started(pi)
+    time.sleep(1)
+    mark = len(pi.events())
+    sent_at, wall = pi.now(), time.time()
+    response = pi.call({"type": "abort"}, timeout=120)
+    settled = pi.wait_for(lambda r: r.get("type") == "agent_settled", 120, start=mark)
+    tool_end = find(pi, "tool_execution_end", mark)
+    exit_seconds = pi.close()
+    return {
+        "abort_sent_at": wall,
+        "abort_response_seconds": round(response["_t"] - sent_at, 3),
+        "abort_ok": bool(response.get("success")),
+        "settled_seconds": round(settled["_t"] - sent_at, 3),
+        "settled_aborted": settled.get("aborted"),
+        "tool_end_seconds": round(tool_end["_t"] - sent_at, 3) if tool_end else None,
+        "tool_result": _text((tool_end or {}).get("result", {}).get("content"))[:300],
+        "exit_seconds": exit_seconds,
+    }
+
+
+def _queue_updates(pi: RpcPi, start: int = 0) -> list[Record]:
+    return [
+        {"t": r["_t"], "steering": r.get("steering"), "followUp": r.get("followUp")}
+        for r in pi.events()[start:]
+        if r.get("type") == "queue_update"
+    ]
+
+
+def _order(pi: RpcPi, start: int, kinds: tuple[str, ...]) -> list[str]:
+    return [str(r.get("type")) for r in pi.events()[start:] if r.get("type") in kinds]
+
+
+STEER = "插话：顺便看一下日志"
+
+
+def q7() -> Record:
+    """steer 什么时候送到：命令执行中、最后一次回复不带工具调用时、
+    插话后先 clear_queue 再 abort。"""
+    result: Record = {}
+    # 1. 命令执行中插话
+    pi = RpcPi(rpc_command("q7-during-tool"))
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-steer")})
+    wait_tool_started(pi)
+    mark = len(pi.events())
+    steer = pi.call({"type": "steer", "message": STEER})
+    pi.wait_for(lambda r: r.get("type") == "agent_settled", 120, start=mark)
+    sent = requests_text(dumped_requests(before))
+    result["during_tool"] = {
+        "steer_response": {k: steer.get(k) for k in ("success", "data", "error")},
+        "queue_updates": _queue_updates(pi, mark),
+        "order": _order(
+            pi,
+            mark,
+            ("queue_update", "tool_execution_end", "turn_end", "turn_start", "message_start"),
+        ),
+        "requests": sent,
+    }
+    pi.close()
+    # 2. 最后一次回复不带工具调用（回复之前等 4 秒）时插话
+    pi = RpcPi(rpc_command("q7-text-only"))
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-slow-text")})
+    pi.wait_for(lambda r: r.get("type") == "turn_start", 30)
+    time.sleep(1)
+    mark = len(pi.events())
+    steer = pi.call({"type": "steer", "message": STEER})
+    pi.wait_for(lambda r: r.get("type") == "agent_settled", 120, start=0)
+    sent = requests_text(dumped_requests(before))
+    result["text_only"] = {
+        "steer_response": {k: steer.get(k) for k in ("success", "data", "error")},
+        "queue_updates": _queue_updates(pi, mark),
+        "requests": sent,
+        "messages": _messages(pi),
+    }
+    pi.close()
+    # 3. 插话之后先 clear_queue 再 abort
+    pi = RpcPi(rpc_command("q7-clear"))
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-abort")})
+    wait_tool_started(pi)
+    mark = len(pi.events())
+    steer = pi.call({"type": "steer", "message": STEER})
+    cleared = pi.call({"type": "clear_queue"})
+    aborted = pi.call({"type": "abort"}, timeout=120)
+    pi.wait_for(lambda r: r.get("type") == "agent_settled", 120, start=mark)
+    time.sleep(1)
+    sent = requests_text(dumped_requests(before))
+    result["clear_then_abort"] = {
+        "steer_response": {k: steer.get(k) for k in ("success", "data", "error")},
+        "clear_queue": cleared.get("data"),
+        "abort_ok": bool(aborted.get("success")),
+        "queue_updates": _queue_updates(pi, mark),
+        "requests": sent,
+        "messages": _messages(pi),
+    }
+    pi.close()
+    return result
+
+
+def q8() -> Record:
+    """关 stdin、SIGTERM 的收场：空闲时关 stdin；一轮进行中关 stdin；
+    一轮进行中关 stdin 同时发 SIGTERM。"""
+    result: Record = {}
+    pi = RpcPi(rpc_command("q8-idle"))
+    pi.call({"type": "get_state"})
+    result["idle"] = {"exit_seconds": pi.close(), "exit_code": pi.proc.returncode}
+    for variant in ("mid_turn", "mid_turn_sigterm"):
+        session = f"q8-{variant}"
+        pi = RpcPi(rpc_command(session))
+        pi.call({"type": "prompt", "message": script_prompt("rpcprobe-steer")})
+        wait_tool_started(pi)
+        time.sleep(1)
+        mark = len(pi.events())
+        closed_at, wall = pi.now(), time.time()
+        assert pi.proc.stdin is not None
+        pi.proc.stdin.close()
+        if variant == "mid_turn_sigterm":
+            pi.proc.send_signal(signal.SIGTERM)
+        try:
+            pi.proc.wait(timeout=120)
+            exit_seconds: float | None = round(pi.now() - closed_at, 3)
+        except subprocess.TimeoutExpired:
+            pi.proc.kill()
+            pi.proc.wait()
+            exit_seconds = None
+        pi.reader.join(timeout=5)
+        tool_end = find(pi, "tool_execution_end", mark)
+        settled = find(pi, "agent_settled", mark)
+        result[variant] = {
+            "closed_at": wall,
+            "exit_seconds": exit_seconds,
+            "exit_code": pi.proc.returncode,
+            "tool_end_seconds": round(tool_end["_t"] - closed_at, 3) if tool_end else None,
+            "tool_result": _text((tool_end or {}).get("result", {}).get("content"))[:200],
+            "settled": settled is not None,
+            "events_after_close": _order(
+                pi, mark, ("tool_execution_end", "turn_end", "agent_end", "agent_settled")
+            ),
+            "session_tail": tail_lines(session_file(session), 2),
+        }
+    return result
+
+
+def _rss_kib(pid: int, field: str) -> int | None:
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith(f"{field}:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def q9() -> Record:
+    """带扩展的 RPC 进程：从启动到能接第一条命令的时间、空闲常驻内存、处理一轮时的峰值（VmHWM）。"""
+    runs = []
+    for i in range(3):
+        pi = RpcPi(rpc_command(f"q9-{i}"))
+        ready = pi.call({"type": "get_state"}, timeout=60)
+        ready_seconds = ready["_t"]
+        time.sleep(5)
+        idle = _rss_kib(pi.proc.pid, "VmRSS")
+        pi.prompt_and_settle(TOOLCHECK_PROMPT, timeout=600)
+        peak = _rss_kib(pi.proc.pid, "VmHWM")
+        after = _rss_kib(pi.proc.pid, "VmRSS")
+        pi.close()
+        runs.append(
+            {
+                "ready_seconds": ready_seconds,
+                "idle_rss_mib": round((idle or 0) / 1024, 1),
+                "peak_hwm_mib": round((peak or 0) / 1024, 1),
+                "after_turn_rss_mib": round((after or 0) / 1024, 1),
+            }
+        )
+    return {"runs": runs}
+
+
+CWD_EXTENSION = """export default function (pi) {{
+  pi.on("before_agent_start", async (event) => {{
+    event.systemPromptOptions.cwd = {cwd};
+  }});
+}}
+"""
+
+
+def q10() -> Record:
+    """扩展在 before_agent_start 里改系统提示里的工作目录：
+    pi 在 /srv/assistant 里运行，扩展改成工作台上的路径。"""
+    local = Path("/srv/assistant")
+    local.mkdir(parents=True, exist_ok=True)
+    extension = ROOT / "q10-cwd.mjs"
+    extension.write_text(CWD_EXTENSION.format(cwd=json.dumps(WORKSPACE)))
+    result: Record = {}
+    # 不加载远程工具扩展：它按本地的工作目录去工作台上找 skill，这里的工作目录在工作台上不存在。
+    for run, extra in (("probe", ("-e", str(extension))), ("control", ())):
+        before = dump_count()
+        pi = RpcPi(rpc_command(f"q10-{run}", drop=("-e",), add=extra), cwd=str(local))
+        pi.prompt_and_settle("你好")
+        pi.close()
+        requests = dumped_requests(before)
+        prompt = system_prompt(requests[0]) if requests else ""
+        lines = [
+            line for line in prompt.splitlines() if "/srv/assistant" in line or WORKSPACE in line
+        ]
+        result[run] = {"cwd_lines": lines}
+    return result
+
+
+QUESTIONS: dict[str, Callable[[], Record]] = {
+    "q1": q1,
+    "q2": q2,
+    "q3": q3,
+    "q4": q4,
+    "q5": q5,
+    "q6": q6,
+    "q7": q7,
+    "q8": q8,
+    "q9": q9,
+    "q10": q10,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -548,6 +883,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("question", choices=sorted(QUESTIONS))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
+    # 每个问题从空的会话目录开始（同一题再跑一遍时不接着上次的会话）。
+    shutil.rmtree(SESSIONS, ignore_errors=True)
     for folder in (ROOT, SESSIONS, DUMP):
         folder.mkdir(parents=True, exist_ok=True)
     # 每个问题从干净的设置目录开始：只有模型文件（宿主机放在 <根目录>/models.json）。

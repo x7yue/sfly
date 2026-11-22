@@ -30,7 +30,7 @@ def fixture(question: str) -> dict[str, Any]:
 
 
 def test_recorded_run_verdicts() -> None:
-    verdicts = {q: judge(q, fixture(q)).verdict for q in rpcprobe.QUESTIONS}
+    verdicts = {q: judge(q, fixture(q)).verdict for q in ("q1", "q2", "q3", "q4")}
     assert verdicts == {"q1": HOLDS, "q2": HOLDS, "q3": PARTLY, "q4": HOLDS}
 
 
@@ -218,3 +218,90 @@ def test_q4_reports_which_context_the_resumed_session_sends() -> None:
     raw = fixture("q4")
     raw["second"]["context_after_restart"] = "first"
     assert any("会话文件里存的系统提示" in fact for fact in judge("q4", raw).facts)
+
+
+# ---- 第 5 到 10 题 ----
+
+
+def test_recorded_run_verdicts_for_questions_5_to_10() -> None:
+    verdicts = {q: judge(q, fixture(q)).verdict for q in ("q5", "q6", "q7", "q8", "q9", "q10")}
+    assert set(verdicts.values()) == {HOLDS}
+
+
+def test_q5_reports_the_filled_in_tool_result_and_the_open_real_model_half() -> None:
+    verdict = judge("q5", fixture("q5"))
+    assert verdict.numbers["as_killed_tool_results"] == ["No result provided"]
+    assert any("欠着" in fact for fact in verdict.facts)
+
+
+def test_q5_fails_when_the_restart_fails() -> None:
+    raw = fixture("q5")
+    raw["half_line"]["restart_ok"] = False
+    raw["half_line"]["restart_error"] = "SyntaxError"
+    assert judge("q5", raw).verdict == FAILS
+
+
+def test_q6_fails_over_ten_seconds() -> None:
+    raw = fixture("q6")
+    raw["settled_seconds"] = 12.0
+    assert judge("q6", raw).verdict == FAILS
+    raw = fixture("q6")
+    raw["workbench_gone_seconds"] = None
+    assert judge("q6", raw).verdict == FAILS
+
+
+def test_q7_fails_when_the_steer_is_sent_before_the_tool_result() -> None:
+    raw = fixture("q7")
+    second = raw["during_tool"]["requests"][1]
+    second[-2], second[-1] = second[-1], second[-2]
+    assert judge("q7", raw).verdict == FAILS
+
+
+def test_q7_fails_when_a_cleared_steer_still_reaches_the_model() -> None:
+    raw = fixture("q7")
+    raw["clear_then_abort"]["requests"].append([{"role": "user", "text": "插话：顺便看一下日志"}])
+    assert judge("q7", raw).verdict == FAILS
+
+
+def test_q8_says_closing_stdin_mid_turn_aborts_the_command() -> None:
+    facts = judge("q8", fixture("q8")).facts
+    assert any("不等这一轮做完" in fact for fact in facts)
+
+
+def test_q9_reports_the_slim_image() -> None:
+    raw = fixture("q9")
+    assert any("slim" in fact and "能跑" in fact for fact in judge("q9", raw).facts)
+    raw["slim"] = {"ok": False, "error": "pi: not found"}
+    assert judge("q9", raw).verdict == PARTLY
+
+
+def test_q10_fails_when_the_prompt_keeps_the_local_directory() -> None:
+    raw = fixture("q10")
+    raw["probe"] = raw["control"]
+    assert judge("q10", raw).verdict == FAILS
+
+
+def test_gone_after_takes_the_first_sample_without_the_command() -> None:
+    samples = rpcprobe.parse_watch(
+        "10.0 sleep 601|\n10.2 sleep 601|\n10.4 \n10.6 sleep 601|\nbad line\n"
+    )
+    assert rpcprobe.gone_after(samples, "sleep 601", 10.1) == pytest.approx(0.3)
+    assert rpcprobe.gone_after(samples, "sleep 601", 10.5) is None
+
+
+def test_verdict_only_gets_worse() -> None:
+    verdict = rpcprobe.Verdict("q", "t", FAILS)
+    verdict.worsen(PARTLY)
+    assert verdict.verdict == FAILS
+
+
+def test_fake_model_follows_a_named_script(tmp_path: Path) -> None:
+    import fake_model
+
+    body = {"messages": [{"role": "user", "content": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。"}]}
+    first = fake_model.next_reply(body, tmp_path)
+    assert first["tool"] == "bash" and "sleep 6" in first["arguments"]
+    body["messages"].append({"role": "tool", "content": "slept"})
+    assert fake_model.next_reply(body, tmp_path) == {"text": "命令执行完了。", "delay": 0.0}
+    slow = {"messages": [{"role": "user", "content": "AEVAL-SCRIPT:rpcprobe-slow-text"}]}
+    assert fake_model.next_reply(slow, tmp_path)["delay"] == 4.0

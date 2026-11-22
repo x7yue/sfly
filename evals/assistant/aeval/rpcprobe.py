@@ -26,8 +26,19 @@ from aeval.toolcheck import EXPECT_B, ToolCheck
 PROBE_DIR = "/opt/aeval-probe"
 ROOT = "/root/rpcprobe"
 FAKE_PORT = 8101
-SCRIPTS = ("rpcprobe_run.py", "fake_model.py", "toolcheck.json")
-QUESTIONS = ("q1", "q2", "q3", "q4")
+SCRIPTS = (
+    "rpcprobe_run.py",
+    "fake_model.py",
+    "toolcheck.json",
+    "rpcprobe-kill.json",
+    "rpcprobe-abort.json",
+    "rpcprobe-steer.json",
+    "rpcprobe-slow-text.json",
+)
+QUESTIONS = ("q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10")
+# 工作台上要看什么时候消失的命令（剧本里的长命令）：第 5、6、8 题。
+WATCHED = ("sleep 601", "sleep 602", "sleep 6; echo")
+WATCH_LOG = "/tmp/rpcprobe-watch.log"
 
 HOLDS = "成立"
 FAILS = "不成立"
@@ -310,11 +321,242 @@ def judge_q4(raw: dict[str, Any]) -> Verdict:
     return v
 
 
+# ---- 第 5 到 10 题 ----
+
+
+def parse_watch(log: str) -> list[tuple[float, str]]:
+    """工作台上每 0.2 秒记一行：时间（秒）和当时在跑的、要看的命令。"""
+    samples = []
+    for line in log.splitlines():
+        stamp, _, rest = line.partition(" ")
+        try:
+            samples.append((float(stamp), rest))
+        except ValueError:
+            continue
+    return samples
+
+
+def gone_after(samples: list[tuple[float, str]], marker: str, since: float) -> float | None:
+    """从 `since` 起，工作台上的命令 `marker` 多久之后第一次不见了（取第一个不含它的采样）；
+    一直在（或者没有采样）时是 None。"""
+    for stamp, running in samples:
+        if stamp >= since and marker not in running:
+            return round(stamp - since, 2)
+    return None
+
+
+def judge_q5(raw: dict[str, Any]) -> Verdict:
+    v = Verdict("q5", "工具执行中途被 kill -9，同一条命令再起能不能接着做", HOLDS)
+    for variant, label in (
+        ("as_killed", "直接再起"),
+        ("half_line", "会话文件末尾有写了一半的一行"),
+    ):
+        x = raw[variant]
+        if not x.get("restart_ok") or not x.get("prompt_ok"):
+            v.worsen(FAILS)
+            v.facts.append(
+                f"{label}：再起失败（{x.get('restart_error') or x.get('prompt_error')}）"
+            )
+            continue
+        request = x.get("first_request", [])
+        tool_results = [m for m in request if m.get("role") == "tool"]
+        filled = [m["text"] for m in tool_results]
+        v.numbers[f"{variant}_tool_results"] = filled
+        if filled:
+            v.facts.append(
+                f"{label}：没有报错；再起后会话里是被打断时的样子（最后一条是带工具调用的助手消息，"
+                f"没有工具结果）；发「继续」时发给模型的请求里，pi 给那次工具调用补了一个结果"
+                f"「{filled[0]}」，后面接「继续」"
+            )
+        else:
+            v.worsen(PARTLY)
+            v.facts.append(f"{label}：发给模型的请求里那次工具调用没有结果")
+        if x.get("reran_tool"):
+            v.facts.append(f"{label}：再起后模型（假的）又发了一次工具调用")
+        if x.get("stderr", "").strip():
+            v.facts.append(f"{label}：stderr：{x['stderr'].strip()[:160]}")
+        gone = x.get("workbench_gone_seconds")
+        v.numbers[f"{variant}_workbench_gone_seconds"] = gone
+        v.facts.append(
+            f"{label}：工作台上的命令在 pi 被结束后 {gone} 秒内消失"
+            if gone is not None
+            else f"{label}：工作台上的命令没有消失（看到采样结束）"
+        )
+    v.facts.append("「接着做」用真模型试的那一半：欠着（这次只用假的模型端点）")
+    return v
+
+
+def judge_q6(raw: dict[str, Any]) -> Verdict:
+    v = Verdict("q6", "abort 要多久", HOLDS)
+    numbers = {
+        "abort_response_seconds": raw["abort_response_seconds"],
+        "settled_seconds": raw["settled_seconds"],
+        "workbench_gone_seconds": raw.get("workbench_gone_seconds"),
+    }
+    v.numbers = numbers
+    v.facts.append(
+        f"远程执行 sleep 602 时发 abort：{raw['abort_response_seconds']} 秒收到响应，"
+        f"{raw['settled_seconds']} 秒 agent_settled（aborted={raw.get('settled_aborted')}），"
+        f"工具结果是「{raw.get('tool_result')}」"
+    )
+    gone = raw.get("workbench_gone_seconds")
+    if gone is None:
+        v.worsen(FAILS)
+        v.facts.append("工作台上的命令没有消失")
+    else:
+        v.facts.append(f"工作台上的命令 {gone} 秒内消失（采样间隔 0.2 秒）")
+    if max(raw["abort_response_seconds"], raw["settled_seconds"], gone or 0) > 10:
+        v.worsen(FAILS)
+        v.facts.append("超过 10 秒")
+    return v
+
+
+def _user_texts(request: list[dict[str, Any]]) -> list[str]:
+    return [m["text"] for m in request if m.get("role") == "user"]
+
+
+def judge_q7(raw: dict[str, Any], steer: str = "插话：顺便看一下日志") -> Verdict:
+    v = Verdict("q7", "steer 什么时候送到", HOLDS)
+    during = raw["during_tool"]
+    second = during["requests"][1] if len(during["requests"]) > 1 else []
+    roles = [m.get("role") for m in second]
+    if second and roles[-2:] == ["tool", "user"] and second[-1]["text"] == steer:
+        v.facts.append(
+            "命令执行中插话：命令的结果回来之后、下一次请求模型之前送到；"
+            "下一次请求里是工具结果后面接这句插话"
+        )
+    else:
+        v.worsen(FAILS)
+        v.facts.append(f"命令执行中插话：下一次请求的最后几条是 {roles[-3:]}")
+    updates = [len(u["steering"] or []) for u in during["queue_updates"]]
+    v.numbers["queue_updates_during_tool"] = updates
+    v.facts.append(
+        "queue_update：插话时一条（steering 里是这句话），送出去时一条（steering 变空）"
+        if updates == [1, 0]
+        else f"queue_update 的 steering 条数依次是 {updates}"
+    )
+    text_only = raw["text_only"]
+    asked = [_user_texts(r) for r in text_only["requests"]]
+    if len(asked) >= 2 and steer in asked[-1]:
+        v.facts.append(
+            "最后一次回复不带工具调用时插话：这次回复照常结束，pi 带着插话再请求一次模型"
+            "（插话不会丢，也不会等到下一次 prompt）"
+        )
+    else:
+        v.worsen(PARTLY)
+        v.facts.append(f"最后一次回复不带工具调用时插话：各次请求里的用户消息 {asked}")
+    clear = raw["clear_then_abort"]
+    cleared = (clear.get("clear_queue") or {}).get("steering", [])
+    sent_after = any(steer in _user_texts(r) for r in clear["requests"])
+    in_session = any(m.get("text") == steer for m in clear.get("messages", []))
+    if cleared == [steer] and not sent_after and not in_session:
+        v.facts.append(
+            "插话之后先 clear_queue 再 abort：clear_queue 的响应里有这句插话，"
+            "之后没有发给模型，也不在会话里"
+        )
+    else:
+        v.worsen(FAILS)
+        v.facts.append(
+            f"先 clear_queue 再 abort：清掉的 {cleared}，"
+            f"之后发给了模型 {sent_after}，在会话里 {in_session}"
+        )
+    return v
+
+
+def judge_q8(raw: dict[str, Any]) -> Verdict:
+    v = Verdict("q8", "关 stdin、SIGTERM 的收场", HOLDS)
+    idle = raw["idle"]
+    v.numbers["idle_exit_seconds"] = idle["exit_seconds"]
+    v.facts.append(f"空闲时关 stdin：{idle['exit_seconds']} 秒退出，退出码 {idle['exit_code']}")
+    for variant, label in (
+        ("mid_turn", "一轮进行中关 stdin"),
+        ("mid_turn_sigterm", "同时发 SIGTERM"),
+    ):
+        x = raw[variant]
+        v.numbers[f"{variant}_exit_seconds"] = x["exit_seconds"]
+        aborted = any("Command aborted" in line for line in x.get("session_tail", []))
+        how = (
+            "不等这一轮做完：正在跑的命令被中止（会话文件里记的工具结果是「Command aborted」）"
+            if aborted
+            else "会话文件末尾：" + "；".join(line[:80] for line in x.get("session_tail", []))
+        )
+        gone = x.get("workbench_gone_seconds")
+        v.facts.append(
+            f"{label}：{x['exit_seconds']} 秒退出，退出码 {x['exit_code']}；{how}；"
+            f"工作台上的命令 {gone} 秒内消失"
+        )
+        if x["exit_seconds"] is None or x["exit_code"] not in (0, None):
+            v.worsen(PARTLY)
+    return v
+
+
+def judge_q9(raw: dict[str, Any]) -> Verdict:
+    v = Verdict("q9", "内存和启动时间", HOLDS)
+    runs = raw["runs"]
+
+    def spread(key: str) -> str:
+        values = sorted(r[key] for r in runs)
+        return f"{values[0]}–{values[-1]}" if values[0] != values[-1] else str(values[0])
+
+    v.numbers = {
+        key: [r[key] for r in runs]
+        for key in ("ready_seconds", "idle_rss_mib", "peak_hwm_mib", "after_turn_rss_mib")
+    }
+    v.facts.append(
+        f"带远程工具扩展的 RPC 进程，{len(runs)} 次："
+        f"从启动到回应第一条命令 {spread('ready_seconds')} 秒；"
+        f"空闲常驻 {spread('idle_rss_mib')} MiB；跑完工具自检的一轮（19 次工具调用）"
+        f"峰值（VmHWM）{spread('peak_hwm_mib')} MiB"
+    )
+    slim = raw.get("slim")
+    if slim is None:
+        v.facts.append("Node 26 的 slim 镜像：没有测")
+    elif slim.get("ok"):
+        v.facts.append(
+            f"Node 26 的 slim 镜像（{slim.get('base')}，只复制 pi 的包和扩展）：能跑，"
+            f"pi {slim.get('pi')}、Node {slim.get('node')}，远程工具扩展连上了工作台，"
+            f"一轮提示正常结束；镜像 {slim.get('image_mib')} MiB"
+        )
+    else:
+        v.worsen(PARTLY)
+        v.facts.append(f"Node 26 的 slim 镜像：没跑通（{slim.get('error', '')[:200]}）")
+    return v
+
+
+def judge_q10(raw: dict[str, Any]) -> Verdict:
+    v = Verdict("q10", "扩展能不能改系统提示里的工作目录", HOLDS)
+    probe = [line for line in raw["probe"]["cwd_lines"] if "<location>" not in line]
+    control = [line for line in raw["control"]["cwd_lines"] if "<location>" not in line]
+    v.numbers = {"probe": probe, "control": control}
+    if any("/work/tc" in line for line in probe) and not any(
+        "/srv/assistant" in line for line in probe
+    ):
+        v.facts.append(
+            "pi 在 /srv/assistant 里运行，扩展在 before_agent_start 里把 systemPromptOptions.cwd "
+            "改成工作台上的路径：系统提示里写的工作目录就是改后的"
+            "（对照：不加扩展时是 /srv/assistant）"
+        )
+    else:
+        v.worsen(FAILS)
+        v.facts.append(f"改了之后系统提示里是 {probe}，对照是 {control}")
+    v.facts.append(
+        "改的只是系统提示里写的工作目录；四个工具在哪个目录下解析路径，"
+        "由扩展注册工具时给的 cwd 决定（create*Tool 的第一个参数），这一题没有测"
+    )
+    return v
+
+
 JUDGES: dict[str, Callable[[dict[str, Any]], Verdict]] = {
     "q1": judge_q1,
     "q2": judge_q2,
     "q3": judge_q3,
     "q4": judge_q4,
+    "q5": judge_q5,
+    "q6": judge_q6,
+    "q7": judge_q7,
+    "q8": judge_q8,
+    "q9": judge_q9,
+    "q10": judge_q10,
 }
 
 
@@ -389,6 +631,112 @@ def prepare(stack: Stack, evals_dir: Path) -> str:
     return container
 
 
+# 工作台上的采样：每 0.2 秒一行「时间 正在跑的剧本命令|…」。
+WATCH_SCRIPT = (
+    "while :; do "
+    f"echo \"$(date +%s.%N) $(ps -eo args= | grep -E 'sleep 60[12]|sleep 6; echo' "
+    f"| grep -v grep | tr '\\n' '|')\" >> {WATCH_LOG}; "
+    "sleep 0.2; done"
+)
+
+
+def start_watch(stack: Stack) -> None:
+    """在工作台上起采样（第 5、6、8 题看剧本命令什么时候消失）。"""
+    stop_watch(stack)
+    d.sh(stack.dev, f"rm -f {WATCH_LOG}")
+    d.detach(stack.dev, ["sh", "-c", WATCH_SCRIPT])
+
+
+def stop_watch(stack: Stack) -> None:
+    d.sh(stack.dev, "pkill -f '[r]pcprobe-watch.log' || true", check=False)
+
+
+def attach_watch(question: str, raw: dict[str, Any], samples: list[tuple[float, str]]) -> None:
+    """把「工作台上的命令多久之后消失」写进这题的观察里。"""
+    if question == "q5":
+        for variant in ("as_killed", "half_line"):
+            x = raw[variant]
+            x["workbench_gone_seconds"] = gone_after(samples, "sleep 601", x["killed_at"])
+    elif question == "q6":
+        raw["workbench_gone_seconds"] = gone_after(samples, "sleep 602", raw["abort_sent_at"])
+    elif question == "q8":
+        for variant in ("mid_turn", "mid_turn_sigterm"):
+            x = raw[variant]
+            x["workbench_gone_seconds"] = gone_after(samples, "sleep 6; echo", x["closed_at"])
+
+
+SLIM_BASE = "node:26-trixie-slim"
+SLIM_DOCKERFILE = """FROM {remote} AS pi
+FROM {base}
+COPY --from=pi /usr/local/lib/node_modules/@earendil-works \\
+  /usr/local/lib/node_modules/@earendil-works
+COPY --from=pi /opt/aeval-remote /opt/aeval-remote
+RUN ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js /usr/local/bin/pi
+"""
+
+
+def slim_check(stack: Stack) -> dict[str, Any]:
+    """第 9 题的后一半：pi 和远程工具扩展在 Node 26 的 slim 镜像上能不能跑（只复制 pi 的包和扩展）。
+    slim 镜像里没有 python3，用 shell 喂 RPC 命令；模型是探针容器里的假的模型端点。"""
+    if not d.exists("image", SLIM_BASE):
+        return {"ok": False, "error": f"没有镜像 {SLIM_BASE}（docker pull 之后再跑）"}
+    image = "sfly-aeval-rpcprobe-slim:latest"
+    dockerfile = SLIM_DOCKERFILE.format(remote=stack.remote_image, base=SLIM_BASE)
+    built = d.docker("build", "-t", image, "-", input_text=dockerfile, check=False, timeout=900)
+    if built.returncode != 0:
+        return {"ok": False, "error": built.stderr[-400:]}
+    name = stack.name("rpcprobe-slim")
+    stack._run("rpcprobe-slim", image, ["sleep", "infinity"], extra=["--memory", "1g"])
+    try:
+        models = json.loads(models_json())
+        models["providers"]["aeval"]["baseUrl"] = f"http://{probe_container(stack)}:{FAKE_PORT}/v1"
+        d.sh(name, f"mkdir -p /root/agent {ToolCheck.workspace}")
+        d.docker(
+            "exec", "-i", name, "sh", "-c", "cat > /root/agent/models.json",
+            input_text=json.dumps(models),
+        )  # fmt: skip
+        commands = (
+            '{"id":"1","type":"get_state"}\n'
+            '{"id":"2","type":"prompt","message":"AEVAL-SCRIPT:rpcprobe-steer 照剧本做。"}\n'
+        )
+        script = (
+            f"cd {ToolCheck.workspace} && (printf '%s' '{commands}'; sleep 15) | "
+            "env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/root PI_CODING_AGENT_DIR=/root/agent "
+            "PI_TELEMETRY=0 AEVAL_AGENT_ADDR=dev:50052 AEVAL_REMOTE_LOG=/root/remote.jsonl "
+            "pi --mode rpc --offline --no-extensions -e /opt/aeval-remote/extension.mjs "
+            "--no-session --provider aeval --model fake 2>/root/stderr.log"
+        )
+        out = d.sh(name, script, check=False, timeout=120).stdout
+        records = []
+        for line in out.splitlines():
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                continue
+        state: dict[str, Any] = next((r for r in records if r.get("id") == "1"), {})
+        settled = any(r.get("type") == "agent_settled" for r in records)
+        tool_ok = any(
+            r.get("type") == "tool_execution_end" and not r.get("isError") for r in records
+        )
+        connected = "connected" in d.sh(name, "cat /root/remote.jsonl", check=False).stdout
+        size = d.docker("image", "inspect", "--format", "{{.Size}}", image).stdout.strip()
+        ok = bool(state.get("success")) and settled and tool_ok and connected
+        return {
+            "ok": ok,
+            "base": SLIM_BASE,
+            "pi": d.sh(name, "pi --version", check=False).stdout.strip(),
+            "node": d.sh(name, "node --version", check=False).stdout.strip(),
+            "image_mib": round(int(size) / 1024 / 1024) if size.isdigit() else None,
+            **(
+                {}
+                if ok
+                else {"error": d.sh(name, "tail -c 400 /root/stderr.log", check=False).stdout}
+            ),
+        }
+    finally:
+        d.docker("rm", "-f", name, check=False)
+
+
 def run(
     stack: Stack, results: Path, evals_dir: Path, questions: tuple[str, ...] = QUESTIONS
 ) -> int:
@@ -399,6 +747,7 @@ def run(
         "node": d.sh(container, "node --version", check=False).stdout.strip(),
     }
     verdicts = []
+    start_watch(stack)
     for question in questions:
         out = f"{ROOT}/{question}.json"
         d.sh(
@@ -407,10 +756,15 @@ def run(
             timeout=1800,
         )
         raw = json.loads(d.sh(container, f"cat {out}").stdout)
+        if raw.get("ok"):
+            attach_watch(question, raw, parse_watch(d.sh(stack.dev, f"cat {WATCH_LOG}").stdout))
+            if question == "q9":
+                raw["slim"] = slim_check(stack)
         (results / f"rpcprobe-{question}.json").write_text(json.dumps(raw, ensure_ascii=False))
         verdict = judge(question, raw)
         verdicts.append(verdict)
         print(f"{question}：{verdict.verdict}")
+    stop_watch(stack)
     d.copy_out(container, f"{ROOT}/.", str(results / "rpcprobe-container"), check=False)
     report = render(verdicts, versions)
     (results / "rpcprobe.md").write_text(report)

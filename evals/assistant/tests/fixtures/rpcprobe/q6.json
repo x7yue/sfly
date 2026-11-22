@@ -1,0 +1,13 @@
+{
+	"ok": true,
+	"abort_sent_at": 1795350136.9720097,
+	"abort_response_seconds": 0.009,
+	"abort_ok": true,
+	"settled_seconds": 0.009,
+	"settled_aborted": true,
+	"tool_end_seconds": 0.003,
+	"tool_result": "Command aborted",
+	"exit_seconds": 0.016,
+	"seconds": 1.7,
+	"workbench_gone_seconds": 0.03
+}

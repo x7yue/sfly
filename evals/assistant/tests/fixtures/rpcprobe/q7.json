@@ -1,0 +1,205 @@
+{
+	"ok": true,
+	"during_tool": {
+		"steer_response": {
+			"success": true,
+			"data": {
+				"disposition": "queued"
+			},
+			"error": null
+		},
+		"queue_updates": [
+			{
+				"t": 0.501,
+				"steering": ["插话：顺便看一下日志"],
+				"followUp": []
+			},
+			{
+				"t": 6.519,
+				"steering": [],
+				"followUp": []
+			}
+		],
+		"order": [
+			"queue_update",
+			"tool_execution_end",
+			"message_start",
+			"turn_end",
+			"turn_start",
+			"queue_update",
+			"message_start",
+			"message_start",
+			"turn_end"
+		],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{
+					"role": "user",
+					"text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。"
+				}
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{
+					"role": "user",
+					"text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。"
+				},
+				{
+					"role": "assistant",
+					"text": "",
+					"tool_calls": ["call_1"]
+				},
+				{
+					"role": "tool",
+					"text": "slept\n",
+					"tool_call_id": "call_1"
+				},
+				{
+					"role": "user",
+					"text": "插话：顺便看一下日志"
+				}
+			]
+		]
+	},
+	"text_only": {
+		"steer_response": {
+			"success": true,
+			"data": {
+				"disposition": "queued"
+			},
+			"error": null
+		},
+		"queue_updates": [
+			{
+				"t": 1.585,
+				"steering": ["插话：顺便看一下日志"],
+				"followUp": []
+			},
+			{
+				"t": 4.66,
+				"steering": [],
+				"followUp": []
+			}
+		],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{
+					"role": "user",
+					"text": "AEVAL-SCRIPT:rpcprobe-slow-text 照剧本做。"
+				}
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{
+					"role": "user",
+					"text": "AEVAL-SCRIPT:rpcprobe-slow-text 照剧本做。"
+				},
+				{
+					"role": "assistant",
+					"text": "慢慢说完。"
+				},
+				{
+					"role": "user",
+					"text": "插话：顺便看一下日志"
+				}
+			]
+		],
+		"messages": [
+			{
+				"role": "system",
+				"text": ""
+			},
+			{
+				"role": "user",
+				"text": "AEVAL-SCRIPT:rpcprobe-slow-text 照剧本做。"
+			},
+			{
+				"role": "assistant",
+				"text": "慢慢说完。"
+			},
+			{
+				"role": "user",
+				"text": "插话：顺便看一下日志"
+			},
+			{
+				"role": "assistant",
+				"text": "慢慢说完。"
+			}
+		]
+	},
+	"clear_then_abort": {
+		"steer_response": {
+			"success": true,
+			"data": {
+				"disposition": "queued"
+			},
+			"error": null
+		},
+		"clear_queue": {
+			"steering": ["插话：顺便看一下日志"],
+			"followUp": []
+		},
+		"abort_ok": true,
+		"queue_updates": [
+			{
+				"t": 0.5,
+				"steering": ["插话：顺便看一下日志"],
+				"followUp": []
+			},
+			{
+				"t": 0.501,
+				"steering": [],
+				"followUp": []
+			}
+		],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{
+					"role": "user",
+					"text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"
+				}
+			]
+		],
+		"messages": [
+			{
+				"role": "system",
+				"text": ""
+			},
+			{
+				"role": "user",
+				"text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"
+			},
+			{
+				"role": "assistant",
+				"text": ""
+			},
+			{
+				"role": "toolResult",
+				"text": "Command aborted"
+			},
+			{
+				"role": "assistant",
+				"text": ""
+			}
+		]
+	},
+	"seconds": 16.9
+}

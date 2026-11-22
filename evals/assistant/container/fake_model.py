@@ -50,6 +50,8 @@ def script(task: str | None) -> list[str]:
 
 TOOLCHECK = "AEVAL-TOOLCHECK"
 PROBE = "AEVAL-PROBE"
+# 探针（#539）的剧本：提示里写 AEVAL-SCRIPT:<名字> 时用同目录的 <名字>.json。
+_SCRIPT = re.compile(r"AEVAL-SCRIPT:([a-z0-9-]+)")
 _FULL_OUTPUT = re.compile(r"Full output: (/[^\]\s]+)\]")
 _TOKEN = re.compile(r"AEVAL_SESSION_TOKEN=([A-Za-z0-9_-]+)")
 
@@ -81,14 +83,24 @@ def next_reply(body: dict[str, Any], tasks_dir: Path) -> dict[str, Any]:
     messages = body.get("messages") or []
     prompt = next((_text(m.get("content")) for m in messages if m.get("role") == "user"), "")
     done = sum(1 for m in messages if m.get("role") == "tool")
+    named = _SCRIPT.search(prompt)
     script_file = (
-        "toolcheck.json" if TOOLCHECK in prompt else "probecheck.json" if PROBE in prompt else None
+        f"{named.group(1)}.json"
+        if named
+        else "toolcheck.json"
+        if TOOLCHECK in prompt
+        else "probecheck.json"
+        if PROBE in prompt
+        else None
     )
     if script_file:
         steps = toolcheck_steps(script_file)
         if done >= len(steps):
             return {"text": "完成。"}
         step = steps[done]
+        if "text" in step:
+            # 只回一段文字（不调工具）；delay 是回复之前等几秒（探针在这时插话）。
+            return {"text": step["text"], "delay": float(step.get("delay", 0))}
         args = _substitute(json.dumps(step["args"], ensure_ascii=False), messages)
         return {"tool": step["tool"], "arguments": args, "call_id": f"call_{done + 1}"}
     commands = script(find_task(prompt, tasks_dir))
@@ -151,6 +163,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         reply = next_reply(body, self.tasks_dir)
         sys.stderr.write(f"回复：{json.dumps(reply, ensure_ascii=False)}\n")
+        if reply.get("delay"):
+            time.sleep(float(reply["delay"]))
         events = chunks(reply, str(body.get("model", "fake")))
         if not body.get("stream"):
             self._json(200, events[-1])
@@ -190,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.dump is not None:
         args.dump.mkdir(parents=True, exist_ok=True)
         Handler.dump_dir = args.dump
+        # 重启之后接着编号，不覆盖已经存下的请求。
+        Handler.dumped = len(list(args.dump.glob("*.json")))
     with Server(("0.0.0.0", args.port), Handler) as server:
         sys.stderr.write(f"假的模型端点在 :{args.port}\n")
         server.serve_forever()

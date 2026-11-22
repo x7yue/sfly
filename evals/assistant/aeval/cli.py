@@ -8,8 +8,8 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
+from aeval import bgcheck, probe, rpcprobe, toolcheck, transcript
 from aeval import docker as d
-from aeval import probe, rpcprobe, toolcheck, transcript
 from aeval.env import (
     DATA_HOME,
     DEFAULT_SERVER_IMAGE,
@@ -142,6 +142,14 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument(
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-rpcprobe"
     )
+    bg = sub.add_parser(
+        "bgcheck", help="已有的会话记录里，模型多常跨两次命令依赖后台进程（#539，不调模型）"
+    )
+    bg.add_argument("results", type=Path, nargs="+", help="结果目录（可以写多个，会往下找会话）")
+    bg.add_argument("--json", action="store_true", help="输出 JSON")
+    bg.add_argument(
+        "--include-fake", action="store_true", help="也算假的模型端点的会话（照剧本，默认不算）"
+    )
     mem = sub.add_parser("memory", help="量 pi 进程（RPC 模式）空闲和工作时的内存")
     mem.add_argument("--model", required=True)
     mem.add_argument("--repeat", type=int, default=3)
@@ -153,6 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "transcript":
         print(transcript.render(args.session, args.lines))
+        return 0
+    if args.command == "bgcheck":
+        found = bgcheck.scan(args.results, include_fake=args.include_fake)
+        print(
+            json.dumps(found, ensure_ascii=False, indent=2) if args.json else bgcheck.render(found)
+        )
         return 0
     if args.command == "report":
         print(render(args.results))

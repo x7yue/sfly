@@ -1,0 +1,36 @@
+{
+	"ok": true,
+	"idle": {
+		"exit_seconds": 0.017,
+		"exit_code": 0
+	},
+	"mid_turn": {
+		"closed_at": 1795350156.3525589,
+		"exit_seconds": 0.037,
+		"exit_code": 0,
+		"tool_end_seconds": null,
+		"tool_result": "",
+		"settled": false,
+		"events_after_close": [],
+		"session_tail": [
+			"{\"type\":\"message\",\"id\":\"78415682\",\"parentId\":\"73536b95\",\"timestamp\":\"2026-11-22T12:22:36.359Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1004,\"timestamp\":1795350156359}}",
+			"{\"type\":\"message\",\"id\":\"d9469eb0\",\"parentId\":\"78415682\",\"timestamp\":\"2026-11-22T12:22:36.362Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+		],
+		"workbench_gone_seconds": 0.03
+	},
+	"mid_turn_sigterm": {
+		"closed_at": 1795350157.892273,
+		"exit_seconds": 0.017,
+		"exit_code": 0,
+		"tool_end_seconds": null,
+		"tool_result": "",
+		"settled": false,
+		"events_after_close": [],
+		"session_tail": [
+			"{\"type\":\"message\",\"id\":\"fea0b2ab\",\"parentId\":\"7b6cb070\",\"timestamp\":\"2026-11-22T12:22:37.896Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"bash\",\"content\":[{\"type\":\"text\",\"text\":\"Command aborted\"}],\"details\":{},\"isError\":true,\"durationMs\":1007,\"timestamp\":1795350157896}}",
+			"{\"type\":\"message\",\"id\":\"f2df0c1e\",\"parentId\":\"fea0b2ab\",\"timestamp\":\"2026-11-22T12:22:37.898Z\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-completions\",\"provider\":\"aeval\",\"model\":\"fake\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\""
+		],
+		"workbench_gone_seconds": 0.13
+	},
+	"seconds": 3.6
+}
