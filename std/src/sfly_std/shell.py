@@ -69,6 +69,9 @@ def shell(
             cwd=cwd,
             ok_exit_codes=ok_exit_codes,
             save_output=save_output,
+            # 节点的产物名称固定：一个任务只执行一次 shell。
+            stdout_artifact="stdout.txt" if save_output else None,
+            stderr_artifact="stderr.txt" if save_output else None,
         )
     except _CommandFailed as error:
         raise CommandFailed(*error.args) from None

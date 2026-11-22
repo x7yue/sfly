@@ -48,7 +48,7 @@ def follow_log(
     失败：有一行匹配 fail_on 里的任意一个正则时立即失败，错误信息附上第一行匹配的内容和匹配的正则。
     """
     try:
-        lines = follow_log_file(ctx, path, read_from=read_from, fail_on=fail_on, duration=duration)
+        result = follow_log_file(ctx, path, read_from=read_from, fail_on=fail_on, duration=duration)
     except _FailOnMatched as error:
         raise FailOnMatched(*error.args) from None
-    return {"lines": lines}
+    return {"lines": result.lines}

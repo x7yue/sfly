@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Annotated, TypedDict
 
 from sfly import AgentName, Context, Doc, node
+from sfly_std import _pull
 from sfly_std.agent_files import pull_files_from_agent
 
 
@@ -70,4 +71,8 @@ def pull_files(
         recursive=recursive,
         delete_source=delete_source,
     )
-    return {"files": result.files, "count": result.count, "total_bytes": result.total_bytes}
+    return {
+        "files": _pull.listed(result.files),
+        "count": result.count,
+        "total_bytes": result.total_bytes,
+    }

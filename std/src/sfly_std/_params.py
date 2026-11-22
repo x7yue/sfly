@@ -11,6 +11,14 @@ def port(value: int) -> None:
         raise ValueError(f"port 必须在 1–65535 之间，实际为 {value}")
 
 
+def wait_and_poll(wait: float, poll: float) -> None:
+    """等待的时长不能为负，轮询间隔必须大于 0。"""
+    if wait < 0:
+        raise ValueError(f"wait 不能为负数，实际为 {wait:g}")
+    if poll <= 0:
+        raise ValueError(f"poll 必须大于 0，实际为 {poll:g}")
+
+
 def regex(param: str, pattern: str, flags: int = 0) -> re.Pattern[str]:
     """编译参数 `param`（例如 `match`、`fail_on 第 2 条`）里的正则表达式；
     不合法时的错误信息写明参数、正则和原因。"""

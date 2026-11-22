@@ -31,4 +31,4 @@ def wait_file(
     失败：wait 秒内没等到时失败，错误信息写明当时的情况：「文件不存在」或「文件仍在变化」。
     只等普通文件：路径是目录时一直等到超时。
     """
-    return {"size": wait_for_file(ctx, path, stable=stable, wait=wait, poll=poll)}
+    return {"size": wait_for_file(ctx, path, stable=stable, wait=wait, poll=poll).size}

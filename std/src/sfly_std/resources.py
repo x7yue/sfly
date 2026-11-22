@@ -1,13 +1,14 @@
 """资源采样：按采样间隔上报整机或一组进程的 CPU、内存、磁盘、网络等指标。
 
 - `monitor_system`：本机的 CPU、内存、负载、磁盘空间、磁盘和网络速率（合计，以及按每块磁盘、
-  每块网卡）；
+  每块网卡），返回 `SystemMonitorResult`；
 - `monitor_processes`：一组目标进程（默认连同全部子孙进程）的资源，合计加每个进程各自一个序列，
-  每次采样的明细写进产物 `processes.csv`。目标可以按进程号、进程名或命令行指定，被监控的进程重启之后
-  （`refind` 秒内）按名字重新找到它、接着监控，不会因为进程换了一个就结束。
+  每次采样的明细写进产物 `processes.csv`（同一个节点里再调用依次是 `processes-2.csv`……，也可以用
+  `csv_artifact` 指定名称），返回 `ProcessMonitorResult`。目标可以按进程号、进程名或命令行指定，
+  被监控的进程重启之后（`refind` 秒内）按名字重新找到它、接着监控，不会因为进程换了一个就结束。
 
 指标要在调用它们的节点的 `@node` 里声明：用这里导出的 `SYSTEM_METRICS`、`SYSTEM_CHARTS`、
-`PROCESS_METRICS`、`PROCESS_CHARTS`：
+`PROCESS_METRICS`、`PROCESS_CHARTS`（都是元组，要加自己的指标时 `PROCESS_METRICS + (Metric(…),)`）：
 
     @node(title="压测期间监控", metrics=PROCESS_METRICS, charts=PROCESS_CHARTS,
           primary_metric="cpu_percent")
@@ -15,7 +16,12 @@
         monitor_processes(ctx, name=name, refind=30)
 
 不设置 `duration` 时一直采样，直到任务被取消（`sfly.Cancelled` 从 `time.sleep` 里抛出，已上报的
-指标都保留），所以要放在子流程里和压测同时运行，由停止子流程节点停止。
+指标都保留），所以要放在子流程里和压测同时运行，由停止子流程节点停止。路径参数可以是 `str` 或
+`os.PathLike`，时间以秒为单位。
+
+函数是同步的：在业务动作进行的同时采样，要把采样放在子流程里的另一个节点（和动作并行），或者放到
+一个线程里调用并用 `duration` 限定时长；没有「做完动作就停下」的回调（以后可以加一个关键字参数，
+不影响现在的用法）。
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ from typing import Literal, NamedTuple, TypedDict
 import psutil
 
 from sfly import Chart, Context, Metric
-from sfly_std import _process
+from sfly_std import _names, _process
 from sfly_std._sampling import rate, validate_duration, validate_interval
 from sfly_std.processes import ProcessFinder, ProcessTarget
 from sfly_std.waiting import poll_until
@@ -45,12 +51,13 @@ __all__ = [
     "ProcessExited",
     "ProcessMonitorResult",
     "ProcessNotFound",
+    "SystemMonitorResult",
     "monitor_processes",
     "monitor_system",
 ]
 
 
-class Counters(NamedTuple):
+class _Counters(NamedTuple):
     """某一时刻的累计字节数，两次之差除以间隔就是 `RATE_METRICS` 里对应的速率。"""
 
     disk_read: int
@@ -71,7 +78,7 @@ NIC_METRICS = ("net_rx_bytes_per_s_by_nic", "net_tx_bytes_per_s_by_nic")
 DISK_METRICS = ("disk_read_bytes_per_s_by_disk", "disk_write_bytes_per_s_by_disk")
 
 
-class Reading(NamedTuple):
+class _Reading(NamedTuple):
     """某一时刻每块网卡（接收、发送）和每块磁盘（读取、写入，含分区）的累计字节数。
 
     合计、按网卡和按磁盘的速率都从同一次读数算出。
@@ -81,10 +88,10 @@ class Reading(NamedTuple):
     disks: dict[str, tuple[int, int]]
 
 
-def _read() -> Reading:
+def _read() -> _Reading:
     nics = psutil.net_io_counters(pernic=True)
     disks = psutil.disk_io_counters(perdisk=True) or {}
-    return Reading(
+    return _Reading(
         {name: (c.bytes_recv, c.bytes_sent) for name, c in nics.items()},
         {name: (c.read_bytes, c.write_bytes) for name, c in disks.items()},
     )
@@ -98,7 +105,7 @@ def _whole_disk(name: str) -> bool:
     return os.path.exists(f"/sys/block/{name.replace('/', '!')}")
 
 
-def _net(reading: Reading, nic: str | None) -> tuple[int, int]:
+def _net(reading: _Reading, nic: str | None) -> tuple[int, int]:
     if nic is None:
         return _sum(reading.nics.values())
     if nic not in reading.nics:
@@ -106,7 +113,7 @@ def _net(reading: Reading, nic: str | None) -> tuple[int, int]:
     return reading.nics[nic]
 
 
-def _disk(reading: Reading, disk: str | None) -> tuple[int, int]:
+def _disk(reading: _Reading, disk: str | None) -> tuple[int, int]:
     if disk is None:
         return _sum(v for name, v in reading.disks.items() if _whole_disk(name))
     name = disk.removeprefix("/dev/")
@@ -123,13 +130,21 @@ def _sum(values: Iterable[tuple[int, int]]) -> tuple[int, int]:
     return first, second
 
 
-def _counters(reading: Reading, nic: str | None, disk: str | None) -> Counters:
-    return Counters(*_disk(reading, disk), *_net(reading, nic))
+def _counters(reading: _Reading, nic: str | None, disk: str | None) -> _Counters:
+    return _Counters(*_disk(reading, disk), *_net(reading, nic))
+
+
+@dataclass(frozen=True)
+class SystemMonitorResult:
+    """`monitor_system` 的结果。"""
+
+    #: 采样了多少次。
+    samples: int
 
 
 #: `monitor_system` 上报的指标：自己的节点用 `@node(metrics=SYSTEM_METRICS, charts=SYSTEM_CHARTS,
 #: primary_metric="cpu_percent")` 声明。
-SYSTEM_METRICS = [
+SYSTEM_METRICS = (
     Metric("cpu_percent", "%", description="CPU 使用率，所有核的平均"),
     Metric("mem_used_percent", "%", description="已用内存占总内存的比例"),
     Metric(
@@ -147,40 +162,40 @@ SYSTEM_METRICS = [
         "net_rx_bytes_per_s_by_nic",
         "B/s",
         description="每块网卡（含回环网卡 lo）每秒接收的字节数",
-        labels=["nic"],
+        labels=("nic",),
     ),
     Metric(
         "net_tx_bytes_per_s_by_nic",
         "B/s",
         description="每块网卡（含回环网卡 lo）每秒发送的字节数",
-        labels=["nic"],
+        labels=("nic",),
     ),
     Metric(
         "disk_read_bytes_per_s_by_disk",
         "B/s",
         description="每块磁盘（整块，不含分区）每秒读取的字节数",
-        labels=["disk"],
+        labels=("disk",),
     ),
     Metric(
         "disk_write_bytes_per_s_by_disk",
         "B/s",
         description="每块磁盘（整块，不含分区）每秒写入的字节数",
-        labels=["disk"],
+        labels=("disk",),
     ),
-]
+)
 
 #: `monitor_system` 配套的图表。
-SYSTEM_CHARTS = [
-    Chart("CPU 使用率", "line", ["cpu_percent"]),
-    Chart("内存使用率", "line", ["mem_used_percent"]),
-    Chart("已用内存", "line", ["mem_used_bytes"]),
-    Chart("负载", "line", ["load1"]),
-    Chart("磁盘空间使用率", "line", ["disk_used_percent"]),
-    Chart("磁盘读写", "line", ["disk_read_bytes_per_s", "disk_write_bytes_per_s"]),
-    Chart("网络收发", "line", ["net_rx_bytes_per_s", "net_tx_bytes_per_s"]),
-    Chart("磁盘读写（按磁盘）", "line", list(DISK_METRICS)),
-    Chart("网络收发（按网卡）", "line", list(NIC_METRICS)),
-]
+SYSTEM_CHARTS = (
+    Chart("CPU 使用率", "line", ("cpu_percent",)),
+    Chart("内存使用率", "line", ("mem_used_percent",)),
+    Chart("已用内存", "line", ("mem_used_bytes",)),
+    Chart("负载", "line", ("load1",)),
+    Chart("磁盘空间使用率", "line", ("disk_used_percent",)),
+    Chart("磁盘读写", "line", ("disk_read_bytes_per_s", "disk_write_bytes_per_s")),
+    Chart("网络收发", "line", ("net_rx_bytes_per_s", "net_tx_bytes_per_s")),
+    Chart("磁盘读写（按磁盘）", "line", DISK_METRICS),
+    Chart("网络收发（按网卡）", "line", NIC_METRICS),
+)
 
 
 def monitor_system(
@@ -188,10 +203,10 @@ def monitor_system(
     *,
     interval: float = 1,
     duration: float | None = None,
-    disk_path: str = "/",
+    disk_path: str | os.PathLike[str] = "/",
     nic: str | None = None,
     disk: str | None = None,
-) -> int:
+) -> SystemMonitorResult:
     """按采样间隔上报执行它的 Agent 所在机器的 CPU、内存、负载、磁盘和网络指标；返回采样了多少次。
 
     `interval` 是采样间隔（秒，必须大于 0）；`duration` 秒后成功返回，不设置时一直运行，直到任务
@@ -242,7 +257,7 @@ def monitor_system(
             ctx.metric("mem_used_percent", memory.percent)
             ctx.metric("mem_used_bytes", memory.total - memory.available)
             ctx.metric("load1", psutil.getloadavg()[0])
-            ctx.metric("disk_used_percent", psutil.disk_usage(disk_path).percent)
+            ctx.metric("disk_used_percent", psutil.disk_usage(os.fspath(disk_path)).percent)
             for name, current, previous in zip(RATE_METRICS, after, before, strict=True):
                 ctx.metric(name, rate(current, previous, elapsed))
             _report_by_device(ctx, NIC_METRICS, "nic", reading.nics, last_reading.nics, elapsed)
@@ -252,7 +267,7 @@ def monitor_system(
     finally:
         # 被停止或取消时（Cancelled 从 sleep 里抛出）也执行；已上报的指标不受影响。
         ctx.log.info("监控结束，共采样 %d 次", samples)
-    return samples
+    return SystemMonitorResult(samples=samples)
 
 
 def _report_by_device(
@@ -271,7 +286,7 @@ def _report_by_device(
             ctx.metric(metric, rate(now, then, elapsed), labels={label: device})
 
 
-#: 每个进程每次采样的明细产物。
+#: 每个进程每次采样的明细产物的默认名称：同一个节点里第二次起依次是 `processes-2.csv`……
 CSV_NAME = "processes.csv"
 #: processes.csv 的列（与「标准节点」页一致）。
 CSV_COLUMNS = (
@@ -320,8 +335,10 @@ class ProcessMonitorResult:
 
     #: 采样了多少次。
     samples: int
-    #: 产物 `processes.csv` 的引用：每个进程每次采样的明细。
+    #: 明细产物的引用（下载地址，不是本地路径）：每个进程每次采样的明细。
     processes_csv: str
+    #: 明细实际保存成的产物名称（`ctx.artifacts.path(它)` 是本地文件）。
+    csv_artifact: str
 
 
 class ProcessNotFound(Exception):
@@ -347,7 +364,7 @@ class _Sample(TypedDict):
 
 #: `monitor_processes` 上报的指标：自己的节点用 `@node(metrics=PROCESS_METRICS,
 #: charts=PROCESS_CHARTS, primary_metric="cpu_percent")` 声明。
-PROCESS_METRICS = [
+PROCESS_METRICS = (
     Metric("cpu_percent", unit="%", description="所有进程的 CPU 占用之和（一个核满载为 100）"),
     Metric("rss_bytes", unit="B", description="所有进程的常驻内存之和"),
     Metric("threads", description="所有进程的线程数之和"),
@@ -384,23 +401,23 @@ PROCESS_METRICS = [
         description="每个进程的磁盘写入速率（读不到的进程不上报）",
         labels=BY_PROCESS_LABELS,
     ),
-]
+)
 
 #: `monitor_processes` 配套的图表。
-PROCESS_CHARTS = [
-    Chart("CPU", metrics=["cpu_percent"]),
-    Chart("内存", metrics=["rss_bytes"]),
-    Chart("线程与文件描述符", metrics=["threads", "open_fds"]),
-    Chart("磁盘读写", metrics=["io_read_bytes_per_s", "io_write_bytes_per_s"]),
-    Chart("CPU（按进程）", metrics=["cpu_percent_by_process"]),
-    Chart("内存（按进程）", metrics=["rss_bytes_by_process"]),
-    Chart("线程数（按进程）", metrics=["threads_by_process"]),
-    Chart("文件描述符（按进程）", metrics=["open_fds_by_process"]),
+PROCESS_CHARTS = (
+    Chart("CPU", metrics=("cpu_percent",)),
+    Chart("内存", metrics=("rss_bytes",)),
+    Chart("线程与文件描述符", metrics=("threads", "open_fds")),
+    Chart("磁盘读写", metrics=("io_read_bytes_per_s", "io_write_bytes_per_s")),
+    Chart("CPU（按进程）", metrics=("cpu_percent_by_process",)),
+    Chart("内存（按进程）", metrics=("rss_bytes_by_process",)),
+    Chart("线程数（按进程）", metrics=("threads_by_process",)),
+    Chart("文件描述符（按进程）", metrics=("open_fds_by_process",)),
     Chart(
         "磁盘读写（按进程）",
-        metrics=["io_read_bytes_per_s_by_process", "io_write_bytes_per_s_by_process"],
+        metrics=("io_read_bytes_per_s_by_process", "io_write_bytes_per_s_by_process"),
     ),
-]
+)
 
 
 def monitor_processes(
@@ -415,6 +432,7 @@ def monitor_processes(
     duration: float | None = None,
     on_exit: Literal["fail", "succeed"] = "fail",
     refind: float = 0,
+    csv_artifact: str | None = None,
 ) -> ProcessMonitorResult:
     """统计目标进程（默认连同全部子孙进程）用了多少资源，上报合计和每个进程各自的指标。
 
@@ -427,10 +445,17 @@ def monitor_processes(
     某个目标匹配的进程全部退出时：`on_exit` 为 `"fail"`（默认）抛出 `ProcessExited`，为 `"succeed"`
     成功返回。
 
+    明细保存成的产物名称默认每次调用不同：第一次是 `processes.csv`，同一个节点里再调用依次是
+    `processes-2.csv`、`processes-3.csv`……（前一次的明细不会被覆盖）；用 `csv_artifact` 指定名称时
+    直接用它（同名的已有产物被覆盖）。实际用的名称在返回值的 `csv_artifact` 里。
+
     `refind` 解决被监控的进程会重启的问题（崩溃后被拉起、发版时被替换）：给了 `refind`（秒）时，
     按 `name` 或 `match` 指定的目标，进程退出之后最多再等这么多秒让新的进程出现，出现了就接着监控
     （日志里写明），超过时才按 `on_exit` 处理；等待期间不上报指标（没有进程可统计）。按 `pid`
     指定的目标不能这样找（进程号是一次性的），退出了就按 `on_exit` 处理。默认 0：不等。
+    注意两点：新出现的进程是新的进程号，按进程的那组指标（标签 `pid`、`name`）因为 `pid` 标签变了
+    是新的一条序列，合计的指标接着原来的序列、中间断开等待的那一段；等待期间任何名字、命令行
+    符合条件的进程都算「重新出现」，同名的无关进程也一样，所以 `name`、`match` 要写得足够具体。
 
     `interval`、`duration` 不合法，或 `pid`、`name`、`match` 一个都没给、写法不对时抛出
     `ValueError`。
@@ -452,7 +477,8 @@ def monitor_processes(
     count = 0
     # 按名字指定的目标：从什么时候起没有匹配的进程（`refind` 用）。
     missing_since: dict[ProcessTarget, float] = {}
-    with open(ctx.artifacts.path(CSV_NAME), "w", newline="", encoding="utf-8") as f:
+    csv_name = csv_artifact or _names.claim(ctx.artifacts.path, CSV_NAME)
+    with open(ctx.artifacts.path(csv_name), "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         writer.writeheader()
         f.flush()
@@ -469,8 +495,9 @@ def monitor_processes(
                 writer.writerow({"time": now, **{k: "" if v is None else v for k, v in s.items()}})
             f.flush()
             count += 1
-            # 等被监控的进程重新出现期间没有进程可统计：不上报全是 0 的合计。
-            if samples or not missing_since:
+            # 等被监控的进程重新出现期间（给了 refind、这一次一个进程都没采到）没有进程可统计：
+            # 不上报全是 0 的合计。
+            if samples or refind <= 0:
                 _report_totals(ctx, samples)
                 _report_by_process(ctx, samples)
 
@@ -491,7 +518,9 @@ def monitor_processes(
                     raise ProcessExited(f"目标进程已退出：{what}")
                 ctx.log.info("目标进程已退出：%s；on_exit 为 succeed，结束监控", what)
                 break
-    return ProcessMonitorResult(samples=count, processes_csv=ctx.artifacts.ref(CSV_NAME))
+    return ProcessMonitorResult(
+        samples=count, processes_csv=ctx.artifacts.ref(csv_name), csv_artifact=csv_name
+    )
 
 
 def _wait_for_targets(ctx: Context, targets: ProcessFinder, wait: float) -> None:

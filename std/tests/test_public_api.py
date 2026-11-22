@@ -14,21 +14,19 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from public_api_snapshot import (
+    PUBLIC_MODULES,
+    SNAPSHOT,
+    compare,
+    current,
+    parse,
+    render,
+)
 
 import sfly_std
 
 PACKAGE = Path(sfly_std.__file__).parent
 REPO = PACKAGE.parents[2]
-
-#: 公开的辅助函数所在的模块（`sfly_std/__init__.py` 的文档字符串里列出的那些）。
-PUBLIC_MODULES = [
-    "sfly_std.commands",
-    "sfly_std.processes",
-    "sfly_std.resources",
-    "sfly_std.logs",
-    "sfly_std.waiting",
-    "sfly_std.agent_files",
-]
 
 
 def public_names(module: ModuleType) -> list[tuple[str, Any]]:
@@ -169,3 +167,242 @@ def test_node_modules_do_not_define_helpers_other_modules_would_have_to_import()
                 if node.module.startswith("sfly_std.") and target in node_modules:
                     offenders.append(f"{path.name} 从节点模块 {target} 导入")
     assert offenders == []
+
+
+@pytest.mark.parametrize("module_name", PUBLIC_MODULES)
+def test_every_public_name_is_defined_in_the_module_that_lists_it(module_name: str) -> None:
+    # `ProcessTarget` 曾经定义在内部模块里再从 `processes` 导出：用户在补全、报错里看到的路径是
+    # 内部的，搬家时会连带破坏 pickle、日志里的类型名。公开的名字就定义在公开的模块里。
+    module = importlib.import_module(module_name)
+    for name, obj in public_names(module):
+        if inspect.isfunction(obj) or inspect.isclass(obj):
+            assert obj.__module__ == module_name, f"{name} 定义在 {obj.__module__}"
+
+
+@pytest.mark.parametrize("module_name", PUBLIC_MODULES)
+def test_a_class_or_function_without_an_underscore_is_part_of_the_promise(
+    module_name: str,
+) -> None:
+    # 规则写的是「不在 `__all__` 里的就是内部的」，但用户从补全里看到一个不带下划线、名字又通用的
+    # 函数就会用：本模块定义的函数和类，要么在 `__all__` 里（承诺），要么以下划线开头（内部）。
+    module = importlib.import_module(module_name)
+    undeclared = [
+        name
+        for name, obj in vars(module).items()
+        if (inspect.isfunction(obj) or inspect.isclass(obj))
+        and getattr(obj, "__module__", None) == module_name
+        and not name.startswith("_")
+        and name not in module.__all__
+    ]
+    assert undeclared == [], f"{module_name} 里没有下划线又不在 __all__ 里：{undeclared}"
+
+
+def test_the_committed_snapshot_matches_the_public_signatures() -> None:
+    # 兼容性承诺：公开的接口只做向后兼容的改动。快照提交在仓库里：改接口必须同时改快照，
+    # 评审的人一眼看得见；更新快照的办法写在 `public_api_snapshot.py` 的文档字符串里。
+    committed = parse(SNAPSHOT.read_text(encoding="utf-8"))
+    diff = compare(committed, current())
+
+    assert diff.breaking == [], (
+        "这违反兼容性承诺（一台 Agent 上只有一个 sfly-std，旧的节点包还在用旧的接口）；"
+        "确实要改就加一个新名字的函数、类，旧的留着。如果评审认可这次不兼容的改动，"
+        "再用 `uv run python std/tests/public_api_snapshot.py --write` 更新快照：\n"
+        + "\n".join(diff.breaking)
+    )
+    assert diff.added == [], (
+        "公开接口有新增（兼容的改动），把它们记进快照："
+        "`uv run python std/tests/public_api_snapshot.py --write`：\n" + "\n".join(diff.added)
+    )
+    assert render(current()) == SNAPSHOT.read_text(encoding="utf-8")
+
+
+def snapshot_of(text: str) -> dict[str, list[str]]:
+    return parse(text.strip("\n") + "\n")
+
+
+SIGNATURE = """
+function sfly_std.a.f -> Result
+  pos ctx: Context
+  pos name: str
+  kw wait: float = 1.0
+  kw poll: float = 0.5
+dataclass sfly_std.a.Result frozen
+  field count: int
+  field size: int = 0
+exception sfly_std.a.Failed(Exception)
+constant sfly_std.a.METRICS = tuple
+  metric cpu kind=gauge labels=()
+  metric mem kind=gauge labels=()
+"""
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ("kw wait: float = 1.0\n  kw poll: float = 0.5", "kw poll: float = 0.5"),  # 删除参数
+        ("kw poll: float = 0.5", "kw gap: float = 0.5"),  # 改名
+        ("kw wait: float = 1.0", "kw wait: float = 2.0"),  # 改默认值
+        ("kw wait: float = 1.0", "kw wait: int = 1.0"),  # 改类型标注
+        ("pos name: str", "kw name: str"),  # 改参数的种类
+        ("function sfly_std.a.f -> Result", "function sfly_std.a.f -> int"),  # 改返回值类型
+        (
+            "pos ctx: Context\n  pos name: str",
+            "pos ctx: Context\n  pos name: str\n  pos extra: int = 0",
+        ),
+        ("kw poll: float = 0.5", "kw poll: float = 0.5\n  kw gap: float"),  # 新增的参数没有默认值
+        ("field count: int\n  field size: int = 0", "field size: int = 0"),  # 删除字段
+        ("field size: int = 0", "field size: int = 0\n  field extra: int"),  # 新增字段没有默认值
+        ("exception sfly_std.a.Failed(Exception)", "exception sfly_std.a.Failed(ValueError)"),
+        ("  metric cpu kind=gauge labels=()\n", ""),  # 常量里删了一项
+        ("metric mem kind=gauge labels=()", "metric mem kind=counter labels=()"),
+        (
+            "  metric cpu kind=gauge labels=()\n  metric mem kind=gauge labels=()",
+            "  metric mem kind=gauge labels=()\n  metric cpu kind=gauge labels=()",
+        ),
+        ("dataclass sfly_std.a.Result frozen", "dataclass sfly_std.a.Result"),  # 不再是 frozen
+        ("exception sfly_std.a.Failed(Exception)\n", ""),  # 删除名字
+    ],
+)
+def test_the_comparison_flags_every_incompatible_change(changed: str, expected: str) -> None:
+    old = snapshot_of(SIGNATURE)
+    new = snapshot_of(SIGNATURE.replace(changed, expected))
+
+    diff = compare(old, new)
+
+    assert diff.breaking, f"{changed!r} → {expected!r} 违反兼容性承诺，却没有被发现"
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ("kw poll: float = 0.5", "kw poll: float = 0.5\n  kw gap: float = 0.1"),  # 新增关键字参数
+        ("field size: int = 0", "field size: int = 0\n  field extra: int = 0"),  # 新增字段
+        (
+            "metric mem kind=gauge labels=()",
+            "metric mem kind=gauge labels=()\n  metric disk kind=gauge labels=()",
+        ),
+        (
+            "exception sfly_std.a.Failed(Exception)",
+            "exception sfly_std.a.Failed(Exception)\nexception sfly_std.a.Other(Exception)",
+        ),
+    ],
+)
+def test_the_comparison_accepts_compatible_additions_but_still_wants_the_snapshot_updated(
+    changed: str, expected: str
+) -> None:
+    old = snapshot_of(SIGNATURE)
+    new = snapshot_of(SIGNATURE.replace(changed, expected))
+
+    diff = compare(old, new)
+
+    assert diff.breaking == []
+    assert diff.added, "兼容的新增要记进快照，所以比对要报告它们"
+
+
+def test_the_snapshot_covers_every_public_name() -> None:
+    names = {
+        f"{module_name}.{name}"
+        for module_name in PUBLIC_MODULES
+        for name in importlib.import_module(module_name).__all__
+    }
+    committed = {
+        header.split(" ", 1)[1].split(" ")[0].split("(")[0]
+        for header in parse(SNAPSHOT.read_text(encoding="utf-8"))
+    }
+    assert committed == names
+
+
+def python_blocks(path: Path) -> list[ast.Module]:
+    text = path.read_text(encoding="utf-8")
+    blocks = re.findall(r"^[ ]*```python\n(.*?)^[ ]*```", text, flags=re.MULTILINE | re.DOTALL)
+    return [ast.parse(inspect.cleandoc(block)) for block in blocks]
+
+
+#: 文档和技能里讲 sfly-std 的地方。
+DOCS = [
+    REPO / "docs" / "guide" / "standard-nodes.md",
+    REPO / "docs" / "guide" / "skills" / "sfly-node-dev" / "SKILL.md",
+]
+
+
+def imported_helpers(tree: ast.Module) -> dict[str, Any]:
+    """代码块里 `from sfly_std.xxx import a, b` 导入的名字 → 对象；不在 `__all__` 里的报错。"""
+    found: dict[str, Any] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("sfly_std."):
+            assert node.module is not None
+            module = importlib.import_module(node.module)
+            for alias in node.names:
+                assert alias.name in module.__all__, f"{node.module} 没有公开 {alias.name}"
+                found[alias.asname or alias.name] = getattr(module, alias.name)
+    return found
+
+
+def all_helpers() -> dict[str, Any]:
+    """全部公开的函数和类，按名字：只有一行调用、没有写导入的片段也能对上。"""
+    return {
+        name: obj
+        for module_name in PUBLIC_MODULES
+        for name, obj in public_names(importlib.import_module(module_name))
+        if inspect.isfunction(obj) or inspect.isclass(obj)
+    }
+
+
+@pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)
+def test_every_call_of_a_helper_in_the_documentation_matches_its_signature(path: Path) -> None:
+    # 文档里的片段没人跑过时，参数名写错（`refnd=30`）也不会有人发现：把片段里每个辅助函数的调用
+    # 绑到真实的签名上，参数名不存在、位置参数太多都会失败。
+    checked = 0
+    for tree in python_blocks(path):
+        helpers = {**all_helpers(), **imported_helpers(tree)}
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            if not isinstance(call.func, ast.Name) or call.func.id not in helpers:
+                continue
+            if any(isinstance(a, ast.Starred) for a in call.args) or any(
+                k.arg is None for k in call.keywords
+            ):
+                continue
+            signature = inspect.signature(helpers[call.func.id])
+            signature.bind_partial(
+                *[None] * len(call.args), **{k.arg: None for k in call.keywords if k.arg}
+            )
+            checked += 1
+    assert checked > 0 or path.name == "SKILL.md"
+
+
+@pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)
+def test_the_modules_and_names_the_documentation_mentions_exist(path: Path) -> None:
+    # 技能随 SDK 的 wheel 写进用户的项目：它提到的模块、函数要真的存在、真的公开。
+    text = path.read_text(encoding="utf-8")
+    for module_name in sorted(set(re.findall(r"sfly_std\.([a-z][a-z_]*)", text))):
+        module = importlib.import_module(f"sfly_std.{module_name}")
+        assert not module_name.startswith("_")
+        if f"sfly_std.{module_name}" not in PUBLIC_MODULES:
+            continue
+        for name in set(re.findall(rf"sfly_std\.{module_name}\.([A-Za-z_]\w*)", text)):
+            assert name in module.__all__, (
+                f"{path.name} 提到的 sfly_std.{module_name}.{name} 不存在"
+            )
+
+
+def test_the_unit_test_snippet_in_the_documentation_builds_a_working_context(
+    tmp_path: Path,
+) -> None:
+    # 文档告诉用户直接调用辅助函数的单元测试怎么造 `Context`：这段代码真的能用。
+    from sfly_std.commands import run_command
+
+    source = next(
+        ast.unparse(tree)
+        for tree in python_blocks(DOCS[0])
+        if any(isinstance(n, ast.FunctionDef) and n.name == "make_context" for n in ast.walk(tree))
+    )
+    namespace: dict[str, Any] = {}
+    exec(source, namespace)  # noqa: S102 -- 文档里的片段，只定义一个函数
+    ctx = namespace["make_context"](tmp_path)
+
+    assert not ctx.cancelled()
+    (tmp_path / "cancel").write_text("")
+    assert ctx.cancelled()
+    result = run_command(ctx, "echo 你好", save_output=True)
+    assert result.stdout == "你好\n"
+    assert (tmp_path / "artifacts" / "stdout.txt").read_text() == "你好\n"

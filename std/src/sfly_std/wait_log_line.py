@@ -39,6 +39,5 @@ def wait_log_line(
     失败：wait 秒内没有出现匹配的行时失败，错误信息写明文件、正则和等了多久。
     文件一直不存在时，错误信息注明「文件不存在」。
     """
-    return {
-        "line": wait_for_log_line(ctx, path, pattern, read_from=read_from, wait=wait, poll=poll)
-    }
+    found = wait_for_log_line(ctx, path, pattern, read_from=read_from, wait=wait, poll=poll)
+    return {"line": found.line}

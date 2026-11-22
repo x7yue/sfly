@@ -65,7 +65,7 @@ def watch_files(
         directory,
         local_dir,
         pattern=pattern,
-        stable=stable,
+        stable=stable or 0,
         delete_source=delete_source,
         duration=duration,
     )

@@ -15,6 +15,7 @@ import psutil
 import pytest
 from direct_context import DirectRun
 
+from sfly_std.logs import wait_for_log_line
 from sfly_std.processes import (
     ProcessFinder,
     StartFailed,
@@ -135,12 +136,10 @@ def test_the_log_file_is_relative_to_cwd_when_given(
     work = tmp_path / "work"
     work.mkdir()
 
-    started = start_background_process(
-        run.ctx, "echo 写进指定的日志", cwd=str(work), log_file="a/b.log"
-    )
+    started = start_background_process(run.ctx, "echo 写进指定的日志", cwd=work, log_file="a/b.log")
     reap(started.pid)
 
-    assert started.log_file == str(work / "a" / "b.log")
+    assert started.log_file == work / "a" / "b.log"  # 返回的是 Path
     poll_until(
         lambda: "写进指定的日志" in Path(started.log_file).read_text() or None,
         what="日志里有输出",
@@ -197,3 +196,120 @@ def test_the_finder_looks_again_every_time_so_a_restarted_process_is_found_by_na
     finally:
         second.kill()
         second.wait()
+
+
+def test_a_second_process_in_the_same_node_gets_its_own_default_log_file(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    # 起两个服务（数据库加被测服务）：日志不能混在一起，否则等第二个服务就绪时会匹配到第一个打的行。
+    run = DirectRun(tmp_path, node_id="setup")
+    first = start_background_process(run.ctx, "echo A-ready; sleep 60")
+    second = start_background_process(run.ctx, "echo B-ready; sleep 60")
+    third = start_background_process(run.ctx, "echo C-ready; sleep 60")
+    for started in (first, second, third):
+        reap(started.pid)
+
+    assert [p.log_file.name for p in (first, second, third)] == [
+        "setup.log",
+        "setup-2.log",
+        "setup-3.log",
+    ]
+    assert all(p.log_file.parent == run.ctx.procs_dir for p in (first, second, third))
+    found = wait_for_log_line(run.ctx, second.log_file, "ready", read_from="start", wait=10)
+    assert found.line == "B-ready"
+    assert wait_for_log_line(run.ctx, first.log_file, "ready", read_from="start", wait=10).line == (
+        "A-ready"
+    )
+    # 自己指定日志文件时直接用它（同一个文件接着写）。
+    own = tmp_path / "own.log"
+    again = start_background_process(run.ctx, "echo 又一个", log_file=own)
+    reap(again.pid)
+    assert again.log_file == own
+
+
+#: 忽略 SIGTERM 的服务：停它只能靠 SIGKILL。
+STUBBORN = "trap '' TERM; echo 就绪; while true; do sleep 0.1; done"
+
+
+def start_stubborn(run: DirectRun, reap: Callable[[int], int]) -> int:
+    started = start_background_process(run.ctx, STUBBORN)
+    reap(started.pid)
+    poll_until(
+        lambda: "就绪" in started.log_file.read_text() or None,
+        what="日志里有输出",
+        wait=10,
+        poll=0.05,
+    )
+    return started.pid
+
+
+def test_the_default_grace_leaves_time_to_kill_before_the_platform_does(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    # 平台终止任务时只给节点 10 秒：在 finally 里停进程，默认的宽限期要明显短于它。
+    run = DirectRun(tmp_path)
+    pid = start_stubborn(run, reap)
+    started = time.monotonic()
+
+    stopped = stop_background_process(run.ctx, pid)
+
+    elapsed = time.monotonic() - started
+    assert (stopped.was_running, stopped.exit_code) == (True, 137)
+    assert 4 <= elapsed < 8, f"默认宽限期应该约 5 秒，实际 {elapsed:.1f} 秒"
+
+
+def test_a_cancelled_task_shortens_the_grace_period_to_what_the_platform_leaves(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    run = DirectRun(tmp_path)
+    pid = start_stubborn(run, reap)
+    run.cancel()  # 平台取消任务：写取消标记，同时发 SIGTERM；留给收尾的时间已经不多
+    started = time.monotonic()
+
+    stopped = stop_background_process(run.ctx, pid, grace=30)
+
+    elapsed = time.monotonic() - started
+    assert (stopped.was_running, stopped.exit_code) == (True, 137)
+    assert 2.5 <= elapsed < 5, f"取消时宽限期最多 3 秒，实际 {elapsed:.1f} 秒"
+    assert any("宽限期从 30 秒缩短为 3 秒" in m for m in run.logs("info"))
+
+
+def test_a_grace_period_shorter_than_the_cap_is_kept_when_cancelled(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    run = DirectRun(tmp_path)
+    pid = start_stubborn(run, reap)
+    run.cancel()
+    started = time.monotonic()
+
+    stop_background_process(run.ctx, pid, grace=0.5)
+
+    assert time.monotonic() - started < 2.5
+
+
+def test_find_processes_includes_children_by_default_like_the_finder_and_the_monitor() -> None:
+    tag = f"tag-{uuid.uuid4().hex}"
+    code = "import subprocess, time; subprocess.Popen(['sleep', '60']); time.sleep(60)"
+    parent = subprocess.Popen([sys.executable, "-c", code, tag])
+    try:
+        children = {
+            c.pid
+            for c in poll_until(
+                lambda: psutil.Process(parent.pid).children(recursive=True) or None,
+                what="父进程启动了子进程",
+                wait=10,
+                poll=0.05,
+            ).value
+        }
+        finder = ProcessFinder(match=tag)
+        by_default = {p.pid for p in find_processes(match=tag)}
+        only_matched = {p.pid for p in find_processes(match=tag, include_children=False)}
+        by_finder = {p.pid for p in finder.processes(finder.roots()).values()}
+    finally:
+        for child in psutil.Process(parent.pid).children(recursive=True):
+            child.kill()
+        parent.kill()
+        parent.wait()
+
+    assert only_matched == {parent.pid}
+    assert by_default == by_finder == {parent.pid} | children

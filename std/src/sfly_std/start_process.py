@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, TypedDict
 
 from sfly import Context, Doc, node
@@ -54,10 +55,13 @@ def start_process(
     失败：只有解释器或工作目录不存在时失败。
     命令随后失败退出时节点仍然成功：用 wait_port、wait_log_line 等节点等它就绪。
     """
+    if log_file is None:
+        # 节点的默认日志文件固定是 <节点 ID>.log（节点重试时接着写）：一个任务只启动一次进程。
+        log_file = os.path.abspath(ctx.procs_dir / f"{ctx.task.node_id}.log")
     try:
         started = start_background_process(
             ctx, command, shell=shell, env=env, cwd=cwd, log_file=log_file
         )
     except _StartFailed as error:
         raise StartFailed(*error.args) from None
-    return {"pid": started.pid, "log_file": started.log_file}
+    return {"pid": started.pid, "log_file": str(started.log_file)}

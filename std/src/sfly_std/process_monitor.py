@@ -96,6 +96,7 @@ def process_monitor(
             interval=interval,
             duration=duration,
             on_exit=on_exit,
+            csv_artifact="processes.csv",
         )
     except _ProcessNotFound as error:
         raise ProcessNotFound(*error.args) from None

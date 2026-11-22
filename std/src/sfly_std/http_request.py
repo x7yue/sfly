@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal, TypedDict
 import httpx
 
 from sfly import Context, Doc, Metric, node
-from sfly_std import waiting as _waiting
+from sfly_std import _params
 from sfly_std._assertions import Assertion, check, describe, validate
 from sfly_std.waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 
@@ -161,7 +161,7 @@ def http_request(
         raise ValueError("json 和 body 只能填一个")
     if request_timeout <= 0:
         raise ValueError("request_timeout 必须大于 0")
-    _waiting.validate(wait, poll)
+    _params.wait_and_poll(wait, poll)
     statuses = _status_patterns(expect_status)
     validate(expect_json)
     request = _Request(
@@ -201,7 +201,7 @@ def http_request(
                 return None
 
         try:
-            outputs, _ = poll_until(retry, what="请求满足", wait=wait, poll=poll)
+            outputs = poll_until(retry, what="请求满足", wait=wait, poll=poll).value
         except TimeoutError:
             assert last is not None
             raise type(last)(f"{wait:g} 秒内 {attempts} 次请求都不满足，最后一次：{last}") from None

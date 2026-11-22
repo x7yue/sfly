@@ -12,6 +12,7 @@ import psutil
 
 from sfly import Context, Doc, node
 from sfly_std import _process
+from sfly_std.processes import ProcessFinder
 
 #: 失败信息里最多列出多少个进程。
 LIST_LIMIT = 20
@@ -50,7 +51,7 @@ def process_assert(
     失败：检查不通过时失败，错误信息写明期望与实际，并列出匹配到的进程。
     pid、name、match 一个都没给时也失败。
     """
-    targets = _process.targets(pid, name, match)
+    targets = ProcessFinder(pid=pid, name=name, match=match).targets
     if count is not None and count < 0:
         raise ValueError(f"count 不能是负数，实际为 {count}")
     if not running and count:

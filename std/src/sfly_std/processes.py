@@ -8,12 +8,17 @@
 
 后台进程不属于任务的进程树：节点结束、任务被取消或超时都不会停止它，运行结束后也不会自动停止。
 启动它的节点所在的场景里，一定要有一个停止它的节点（设为 always 节点），或者在节点自己的 `finally`
-里停。
+里停：在 `finally` 里停要在平台给的收尾时间（默认 10 秒）内做完，见 `stop_background_process`。
+
+路径参数可以是 `str` 或 `os.PathLike`，返回的路径是 `pathlib.Path`；时间都以秒为单位。
+`find_processes`、`ProcessFinder` 返回的进程是 `psutil.Process`：psutil 的接口也是这里的接口。
 """
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import select
 import signal
 import subprocess
@@ -21,12 +26,13 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, TypeVar
 
 import psutil
 
 from sfly import Context
-from sfly_std import _process, _supervise
-from sfly_std._process import Target as ProcessTarget
+from sfly_std import _names, _params, _process, _supervise
 from sfly_std.waiting import poll_until
 
 __all__ = [
@@ -42,10 +48,19 @@ __all__ = [
     "stop_background_process",
 ]
 
+T = TypeVar("T", int, str)
+
 #: 等看护进程报告命令 pid 的最长时间（秒）。
 REPORT_TIMEOUT = 30.0
+#: `stop_background_process` 的 `grace` 默认值（秒）：平台终止任务时只给节点 10 秒收尾
+#: （Agent 的 `--terminate-grace`，默认 10 秒），在 `finally` 里停进程要留出发 SIGKILL 的时间。
+DEFAULT_GRACE = 5.0
 #: SIGKILL 之后等进程消失的最长时间（秒）。
 KILL_WAIT = 5.0
+#: 任务已经被取消（`ctx.cancelled()`）时，宽限期最长这么多秒、SIGKILL 之后最多等这么多秒：
+#: 取消时平台的 SIGTERM 和取消标记同时到，剩下的收尾时间已经不多。
+CANCELLED_GRACE = 3.0
+CANCELLED_KILL_WAIT = 2.0
 
 
 class StartFailed(Exception):
@@ -62,9 +77,9 @@ class BackgroundProcess:
 
     #: 进程号：交给 `stop_background_process`、`ProcessFinder` 等。
     pid: int
-    #: 日志文件的绝对路径：进程的标准输出和标准错误追加写在这里，
-    #: `LogFile`、`follow_log_file` 读的就是它。
-    log_file: str
+    #: 日志文件的绝对路径：进程的标准输出和标准错误追加写在这里，`LogFile`、`follow_log_file`、
+    #: `wait_for_log_line` 读的就是它；要存成产物时直接交给 `ctx.artifacts.save(名称, 它)`。
+    log_file: Path
 
 
 @dataclass(frozen=True)
@@ -84,26 +99,32 @@ def start_background_process(
     *,
     shell: str = "/bin/sh",
     env: dict[str, str] | None = None,
-    cwd: str | None = None,
-    log_file: str | None = None,
+    cwd: str | os.PathLike[str] | None = None,
+    log_file: str | os.PathLike[str] | None = None,
 ) -> BackgroundProcess:
     """在后台启动一个常驻进程，不等它结束，返回进程号和日志文件的路径。
 
     进程在新的会话和进程组里运行，不属于任务的进程树：节点结束、任务被取消或超时都不会停止它。
-    标准输出和标准错误只写进日志文件（`log_file`，相对路径相对于 `cwd`，目录不存在时自动创建；
-    不给时在后台进程目录 `ctx.procs_dir` 里，和任务目录按同一个保留期清理），不转为任务日志。
+    标准输出和标准错误只写进日志文件，不转为任务日志。`log_file` 相对路径相对于 `cwd`，目录不存在
+    时自动创建，同一个文件追加写（自己指定时写到哪里是你的事，同名的文件被接着写）；不给时每次
+    调用得到一个新的文件，在后台进程目录 `ctx.procs_dir`（和任务目录按同一个保留期清理）里：
+    第一次是 `<节点 ID>.log`，同一个节点里再起进程（起第二个服务；节点被重试）依次是
+    `<节点 ID>-2.log`、`<节点 ID>-3.log`……，所以两个进程的日志不会混在一起，
+    `wait_for_log_line(…, read_from="start")` 也不会匹配到上一个进程打的行。
     `shell`、`env`、`cwd` 的含义同 `run_command`。
 
-    只有解释器或工作目录不存在时（`FileNotFoundError`、`NotADirectoryError`）、看护进程没能启动
-    命令时抛出 `StartFailed`；命令随后失败退出时这里仍然成功：用 `wait_for_port`、
-    `wait_for_log_line` 等它就绪。
+    工作目录不存在时抛出 `NotADirectoryError`；解释器不存在、看护进程没能启动命令时抛出
+    `StartFailed`（`run_command` 在解释器不存在时抛出的是 `FileNotFoundError`，两个函数不同）。
+    命令随后失败退出时这里仍然成功：用 `wait_for_port`、`wait_for_log_line` 等它就绪。
     """
     _process.check_cwd(cwd)
     if log_file is None:
-        log = os.path.abspath(ctx.procs_dir / f"{ctx.task.node_id}.log")
+        procs = Path(ctx.procs_dir)
+        procs.mkdir(parents=True, exist_ok=True)
+        log = (procs / _names.claim(procs.joinpath, f"{ctx.task.node_id}.log")).absolute()
     else:
-        log = os.path.abspath(os.path.join(cwd or os.getcwd(), log_file))
-    os.makedirs(os.path.dirname(log), exist_ok=True)
+        log = Path(os.path.abspath(os.path.join(cwd or os.getcwd(), log_file)))
+        log.parent.mkdir(parents=True, exist_ok=True)
 
     read_fd, write_fd = os.pipe()
     try:
@@ -163,7 +184,7 @@ def stop_background_process(
     ctx: Context,
     pid: int | None,
     *,
-    grace: float = 10,
+    grace: float = DEFAULT_GRACE,
 ) -> StoppedProcess:
     """停止 `start_background_process` 启动的后台进程：终止 `pid` 所在的整个进程组。
 
@@ -171,6 +192,13 @@ def stop_background_process(
     进程不在其中。进程已经不在、或 `pid` 为 None（例如启动它的那一步没有成功）时什么也不做，直接
     成功，所以适合放在 `finally` 里清理。返回开始停止时它是否在运行，和退出码（取自看护进程
     记下的）。
+
+    在 `finally` 里清理要在平台给节点的收尾时间内做完：任务被取消或超时时，平台向节点发 SIGTERM，
+    10 秒（Agent 的 `--terminate-grace`，默认 10 秒）后强制杀掉整棵进程树，来不及发 SIGKILL 时
+    服务和它的看护进程都会留下。所以 `grace` 默认只有 5 秒，比平台的收尾时间短；任务已经被取消
+    （`ctx.cancelled()`）时再收紧：宽限期最多 3 秒，SIGKILL 之后最多等 2 秒（给的 `grace` 更小时
+    用更小的）。服务退出得慢、需要更长的宽限期时，不要在 `finally` 里停，用单独的 always 节点
+    （`stop_process`，它有自己的时间）。
 
     SIGKILL 之后进程仍然没有退出（例如卡在不可中断的磁盘读写里）时抛出 `StopFailed`；`pid` 不是
     正整数时抛出 `ValueError`。
@@ -180,6 +208,15 @@ def stop_background_process(
         return StoppedProcess(was_running=False, exit_code=None)
     if pid <= 0:
         raise ValueError(f"pid 必须是正整数，实际为 {pid}")
+    cancelled = ctx.cancelled()
+    kill_wait = CANCELLED_KILL_WAIT if cancelled else KILL_WAIT
+    if cancelled and grace > CANCELLED_GRACE:
+        ctx.log.info(
+            "任务已被取消，平台留给收尾的时间不多，宽限期从 %g 秒缩短为 %g 秒",
+            grace,
+            CANCELLED_GRACE,
+        )
+        grace = CANCELLED_GRACE
     status = _supervise.read_status(ctx.procs_dir, pid)
     was_running = _process.alive_pid(pid)
     try:
@@ -215,8 +252,8 @@ def stop_background_process(
             ctx.log.warn("宽限期 %g 秒已过，%s仍未退出，发送 SIGKILL", grace, what)
             killed = was_running and _process.alive_pid(pid)
             send(signal.SIGKILL)
-            if not _wait_gone(targets, KILL_WAIT):
-                raise StopFailed(f"发送 SIGKILL 后 {KILL_WAIT:g} 秒，{what}仍未退出：{targets()}")
+            if not _wait_gone(targets, kill_wait):
+                raise StopFailed(f"发送 SIGKILL 后 {kill_wait:g} 秒，{what}仍未退出：{targets()}")
     elif not was_running:
         ctx.log.info("进程 %d 已不在运行", pid)
 
@@ -267,19 +304,80 @@ def background_exit_code(
     return _process.exit_code(ctx.procs_dir, pid, wait)
 
 
+@dataclass(frozen=True)
+class ProcessTarget:
+    """一个找进程的条件：`pid`（进程号）、`name`（进程名，完全相同）或 `match`（命令行正则，
+    部分匹配）；`kind` 说明是哪一种，另外三个字段只有对应的那种有值。"""
+
+    kind: Literal["pid", "name", "match"]
+    #: `kind` 为 `"pid"` 时的进程号。
+    pid: int = 0
+    #: `kind` 为 `"name"`、`"match"` 时的进程名、正则的原文。
+    text: str = ""
+    #: `kind` 为 `"match"` 时编译好的正则。
+    pattern: re.Pattern[str] | None = None
+
+    @property
+    def label(self) -> str:
+        """日志和错误信息里的写法，例如 `pid 123`、`name "nginx"`、`match "server\\.py"`。"""
+        if self.kind == "pid":
+            return f"pid {self.pid}"
+        return f"{self.kind} {json.dumps(self.text, ensure_ascii=False)}"
+
+    def matches(self, proc: psutil.Process, name: str, command: str) -> bool:
+        """进程 `proc`（进程名 `name`、命令行 `command`，各参数以空格连接）是否满足这个条件。"""
+        if self.kind == "pid":
+            return proc.pid == self.pid
+        if self.kind == "name":
+            return name == self.text
+        assert self.pattern is not None
+        return self.pattern.search(command) is not None
+
+
+def _targets(
+    pid: int | Sequence[int] | None,
+    name: str | Sequence[str] | None,
+    match: str | Sequence[str] | None,
+) -> list[ProcessTarget]:
+    """把 `pid`、`name`、`match` 参数（单个值或列表）变成条件，按这个顺序；
+    写法不对时抛出 ValueError。"""
+    pids, names, patterns = _as_list(pid), _as_list(name), _as_list(match)
+    if not (pids or names or patterns):
+        raise ValueError("至少要给出 pid、name、match 中的一个")
+    for p in pids:
+        if p <= 0:
+            raise ValueError(f"pid 必须是正整数，实际为 {p}")
+    return (
+        [ProcessTarget("pid", pid=p) for p in pids]
+        + [ProcessTarget("name", text=n) for n in names]
+        + [ProcessTarget("match", text=m, pattern=_params.regex("match", m)) for m in patterns]
+    )
+
+
+def _as_list(value: T | Sequence[T] | None) -> list[T]:
+    """单个值或列表（JSON 数组）统一成列表。"""
+    if value is None:
+        return []
+    if isinstance(value, (int, str)):
+        return [value]
+    return list(value)
+
+
 def find_processes(
     *,
     pid: int | Sequence[int] | None = None,
     name: str | Sequence[str] | None = None,
     match: str | Sequence[str] | None = None,
-    include_children: bool = False,
+    include_children: bool = True,
 ) -> list[psutil.Process]:
-    """按进程号、进程名（完全相同）或命令行（正则，部分匹配）找当前存在的进程，可以连同子孙进程。
+    """按进程号、进程名（完全相同）或命令行（正则，部分匹配）找当前存在的进程，默认连同子孙进程。
 
     三个参数都可以是单个值或列表，满足其中任意一个就算；不含僵尸进程和调用者自己。至少要给一个，
-    否则抛出 `ValueError`。每次调用都重新找：进程重启之后按 `name` 或 `match` 就能找到新的进程，
-    `pid` 找到的是那个进程号现在对应的进程。要一直盯着一组目标（再找、记住第一次找到的进程）用
-    `ProcessFinder`。
+    否则抛出 `ValueError`。`include_children` 为 True（默认，和 `ProcessFinder`、
+    `monitor_processes` 一致：一个服务指的是它的主进程和启动的全部子进程）时结果里还有匹配到的
+    进程的全部子孙进程；只要匹配到的进程本身时传 False。每次调用都重新找：进程重启之后按
+    `name` 或 `match` 就能找到新的进程，`pid` 找到的是那个进程号现在对应的进程。要一直盯着一组
+    目标（再找、记住第一次找到的进程）用 `ProcessFinder`。
     """
     finder = ProcessFinder(pid=pid, name=name, match=match, include_children=include_children)
     return list(finder.processes(finder.roots()).values())
@@ -292,8 +390,11 @@ class ProcessFinder:
     没有进程），`processes(roots)` 展开成 pid → 进程。按 `pid` 指定的目标第一次找到时记住进程对象，
     之后 pid 被别的进程复用时不会把新进程当成它；按 `name`、`match` 指定的目标每次都重新找，
     进程重启之后能找到新的。写法不对（一个目标都没有、`pid` 不是正整数、正则不合法）时构造函数抛出
-    `ValueError`。
+    `ValueError`。`include_children` 默认 True，和 `find_processes`、`monitor_processes` 一致。
     """
+
+    #: 找进程的条件，按 `pid`、`name`、`match` 的顺序。
+    targets: tuple[ProcessTarget, ...]
 
     def __init__(
         self,
@@ -303,7 +404,7 @@ class ProcessFinder:
         match: str | Sequence[str] | None = None,
         include_children: bool = True,
     ) -> None:
-        self.targets: list[ProcessTarget] = _process.targets(pid, name, match)
+        self.targets = tuple(_targets(pid, name, match))
         self._include_children = include_children
         # 按 pid 指定的目标第一次找到时的进程：pid 被别的进程复用时不会把新进程当成它。
         self._pinned: dict[int, psutil.Process] = {}
