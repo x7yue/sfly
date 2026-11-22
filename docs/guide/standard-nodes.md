@@ -126,6 +126,30 @@ def service_check(
 
   按 `pid` 指定的目标不能这样找（进程号是一次性的），退出了就按 `on_exit` 处理。
 
+### `monitor_processes`：每个进程的明细和按进程的序列
+
+`monitor_processes` 上报所有目标进程（默认连同它们的全部子孙进程）的合计，并按每个进程（标签 `pid`、`name`）各上报一个序列；每个进程每次采样的明细写进产物 `processes.csv`：
+
+| `processes.csv` 的列 | 说明 |
+|---|---|
+| `time` | 采样时间（UTC，ISO 8601，到毫秒），同一次采样的各行相同 |
+| `pid` | 进程号 |
+| `ppid` | 父进程号 |
+| `name` | 进程名 |
+| `cpu_percent` | 这个进程在上一次采样以来的 CPU 占用 |
+| `rss_bytes` | 常驻内存（字节） |
+| `threads` | 线程数 |
+| `open_fds` | 打开的文件描述符数 |
+| `io_read_bytes_per_s` | 磁盘读取速率（字节/秒） |
+| `io_write_bytes_per_s` | 磁盘写入速率（字节/秒） |
+| `cmdline` | 命令行 |
+
+- `processes.csv` 每采样一次就写入：被停止、取消、因目标退出失败时，已采集的明细都在产物里。第一次采样在开始后一个 `interval` 时（CPU 占用要两次读数才能算出来）；某个进程第一次被采样时它的 IO 速率为空。
+- 默认图表（`PROCESS_CHARTS`）：CPU、内存、线程与文件描述符、磁盘读写这四张画合计；CPU（按进程）、内存（按进程）、线程数（按进程）、文件描述符（按进程）、磁盘读写（按进程）这五张每个进程一条曲线，图例是 `进程号 · 进程名`。按进程的指标和 `processes.csv` 里同一次采样的那一行数值相同。
+- 别的用户的进程读不到文件描述符数和 IO（Agent 不是 root 时），`processes.csv` 里这两项为空，不计入合计，也不上报这个进程的 `open_fds_by_process`、`io_read_bytes_per_s_by_process`、`io_write_bytes_per_s_by_process`。
+- 进程名为空时（读不到进程名，例如某些内核线程），这个进程不上报按进程的指标（标签值不能为空），合计和 `processes.csv` 照常包括它。
+- 每个进程是一个序列：进程很多或者频繁启停（例如每个请求起一个子进程）时序列会很多，一个任务最多 1000 个序列（见 [SDK 参考](sdk-reference.md) `ctx.metric` 一节的「序列上限」），超出后新进程的点不再上报，任务日志里每个按进程的指标有一条警告；合计和 `processes.csv` 不受影响。
+
 ## 节点一览
 
 | 类别 | 节点 | 标题 | 用途 |

@@ -61,4 +61,4 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 
 ### 状态与依赖
 - 状态只放在函数的局部变量里：每个任务是一个新进程，同一节点的多个任务可能并发。临时文件用 `tempfile`；路径从参数或 `ctx` 取得。
-- 依赖写进 `[project].dependencies`，只写宽松的下限（如 `requests>=2.28`）：Agent 上所有节点包共用一个 venv，钉死版本最容易和别的节点包冲突。依赖必须能从 PyPI 镜像安装。`sfly` 只放在 dev 依赖组里，因为 Agent 自带 SDK 运行时。
+- 依赖写进 `[project].dependencies`，只写宽松的下限（如 `requests>=2.28`）：Agent 上所有节点包共用一个 venv，钉死版本最容易和别的节点包冲突。依赖必须能从 PyPI 镜像安装（`sfly-std` 例外：它不在 PyPI 上，由控制面的包索引提供，写 `sfly-std>=0.4` 即可，见开发文档「标准节点」页）。`sfly` 只放在 dev 依赖组里，因为 Agent 自带 SDK 运行时。

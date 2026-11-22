@@ -378,7 +378,7 @@ def test_the_standard_nodes_page_documents_the_csv_columns_in_order() -> None:
     page = (Path(__file__).parents[2] / "docs" / "guide" / "standard-nodes.md").read_text(
         encoding="utf-8"
     )
-    section = page.split("## `process_monitor`", 1)[1].split("\n## ", 1)[0]
+    section = page.split("### `monitor_processes`", 1)[1].split("\n## ", 1)[0]
     table = section.split("| `processes.csv` 的列 |", 1)[1].split("\n\n", 1)[0]
 
     assert re.findall(r"^\| `([a-z_]+)` \|", table, re.M) == CSV_COLUMNS
