@@ -25,6 +25,18 @@
 //   SFLY_CLIENT_DIR  API 客户端安装包（@sfly/client 的 tarball）所在目录（默认 apps/server/dist/client，由
 //                    `pnpm --filter @sfly/server build` 生成）；控制面提供 GET /client 和同版本安装包的下载（ADR 0022）。
 //                    目录不存在时不提供下载，控制面照常启动
+//   SFLY_ADMIN_LOGIN、SFLY_ADMIN_PASSWORD 初始管理员的登录名和密码（可选，要一起设置；SFLY_ADMIN_DISPLAY_NAME 是显示名，
+//                    默认同登录名）：只在库里没有任何用户时生效，供自动化部署和测试使用。不设置时，没有任何用户就在日志里打印一次性的
+//                    初始化码（同时写进数据目录的 setup-code 文件，只有属主可读），用它在 /setup 页建第一个平台管理员（ADR 0029）
+//   SFLY_LOGIN_IDLE_HOURS 登录的空闲期限（小时，默认 12）：这么久没有用过的登录失效，用着就顺延
+//   SFLY_DEV_ORIGINS 开发时也算同源的来源，逗号分隔，例如 http://localhost:3000（vite 开发服务器）：登录 Cookie 的跨站检查用，
+//                    生产里不要设置（可选）。同源的判断见 src/auth/cross-site.ts：配置了 SFLY_PUBLIC_URL 时以它为准
+//   SFLY_TRUST_PROXY 信任反向代理带来的 X-Forwarded-For，登录限速用它里面的来源地址（可选）。取的是可信代理之前的那个地址
+//                    （代理追加在最后的，不是客户端自己写在最左边的）。不设置（空、false、0）：不看这个头，来源地址是 TCP 对端
+//                    （在反向代理后面这样配，所有人是同一个来源地址，同一个地址上失败太多次会连累别人）；代理的地址段
+//                    127.0.0.1,10.0.0.0/8（推荐：对端在段里才信）；代理的层数 1（或 true）、2……：不管对端是谁都跳过右边这几个
+//                    地址，控制面的端口只能经代理访问，层数要和实际一致（配多了会信伪造的地址，配少了所有人落在同一个限速桶里）。
+//                    写错了启动失败（src/http/trust-proxy.ts）
 //   SFLY_CORS_ORIGINS 允许跨域调用 API 的来源，逗号分隔，例如 https://dash.example.com,http://localhost:5173（可选）。
 //                    自建页面托管在别的来源时，浏览器靠它才调得通控制面（ADR 0022）；设置后只有名单里的来源能调用，
 //                    没有设置（或写 *）时允许所有来源，不带凭据。控制台自己的页面同源，不受影响
@@ -44,9 +56,12 @@ import { fileURLToPath } from "node:url";
 import type { AgentArch } from "@sfly/schema";
 import packageJson from "../package.json" with { type: "json" };
 import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
+import { parseInitialAdmin } from "./auth/bootstrap.js";
+import { runResetPassword } from "./auth/reset-password-cli.js";
 import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
+import { parseTrustProxy } from "./http/trust-proxy.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
 declare const SFLY_BUNDLED: boolean | undefined;
@@ -92,6 +107,17 @@ const agentBinaries = (dir: string | undefined): AgentBinaryFiles => {
 };
 
 const env = process.env;
+// 子命令：`node main.mjs reset-password <登录名>` 重置密码（管理员忘了密码时在控制面所在的主机上执行），不启动控制面。
+if (process.argv[2] === "reset-password") {
+	const code = await runResetPassword(process.argv.slice(3), {
+		databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
+		stdin: process.stdin,
+		stdinIsTty: process.stdin.isTTY === true,
+		stdout: process.stdout,
+		stderr: process.stderr,
+	});
+	process.exit(code);
+}
 const MB = 1024 * 1024;
 /** 可选的正数环境变量；未设置时为 undefined（用默认值），非法值直接报错退出。 */
 const positive = (name: string): number | undefined => {
@@ -104,6 +130,10 @@ const positive = (name: string): number | undefined => {
 const mb = (name: string) => {
 	const n = positive(name);
 	return n === undefined ? undefined : Math.floor(n * MB);
+};
+const hours = (name: string) => {
+	const n = positive(name);
+	return n === undefined ? undefined : Math.floor(n * 3_600_000);
 };
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
 if (!webDir) console.warn(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
@@ -126,6 +156,10 @@ const controlPlane = await startControlPlane({
 	clientPackageDir: env.SFLY_CLIENT_DIR || defaults.clientDir,
 	webDir,
 	corsOrigins: parseCorsOrigins(env.SFLY_CORS_ORIGINS),
+	initialAdmin: parseInitialAdmin(env),
+	loginIdleMs: hours("SFLY_LOGIN_IDLE_HOURS"),
+	sameOrigins: parseCorsOrigins(env.SFLY_DEV_ORIGINS),
+	trustProxy: parseTrustProxy(env.SFLY_TRUST_PROXY),
 	docsDir: env.SFLY_DOCS_DIR || defaults.docsDir,
 	agentBinaries: agentBinaries(env.SFLY_AGENT_DIR || defaults.agentDir),
 	installScriptFile: defaults.installScriptFile,

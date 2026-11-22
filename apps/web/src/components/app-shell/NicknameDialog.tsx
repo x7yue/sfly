@@ -1,5 +1,7 @@
+import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
+import { useIdentity } from "#/lib/identity";
 import { setNickname, useNickname } from "#/lib/nickname";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +19,8 @@ import { Input } from "@/components/ui/input";
 /**
  * 昵称弹窗。第一次打开页面（还没有昵称）时强制弹出、不能关闭；之后从顶栏或命令面板打开修改。
  * 昵称只用于显示（版本作者、运行触发人），不做鉴权。
+ * 登录之后写操作的身份是登录的用户（显示名），昵称弹窗不再出现；登录页和初始化页上也不弹（先登录）。
+ * 还没有登录的人（#494 之前仍然可以不登录使用）在弹窗里有「去登录」。
  */
 export function NicknameDialog({
 	open,
@@ -26,8 +30,13 @@ export function NicknameDialog({
 	onOpenChange: (open: boolean) => void;
 }) {
 	const nickname = useNickname();
-	const required = nickname === null;
-	const visible = required || open;
+	const identity = useIdentity();
+	const onAuthPage = useRouterState({
+		select: (state) => ["/login", "/setup"].includes(state.location.pathname),
+	});
+	// 还不知道有没有登录时（页面刚打开）不弹：有登录 Cookie 的人不该闪一下昵称弹窗。
+	const required = nickname === null && identity.status === "anonymous" && !onAuthPage;
+	const visible = required || (open && identity.status !== "user");
 	const [value, setValue] = useState("");
 	const [submitted, setSubmitted] = useState(false);
 	const input = useRef<HTMLInputElement>(null);
@@ -88,6 +97,15 @@ export function NicknameDialog({
 							<Button variant="ghost" onClick={() => onOpenChange(false)}>
 								取消
 							</Button>
+						)}
+						{identity.status === "anonymous" && (
+							<Link
+								to="/login"
+								className="mr-auto text-sm text-fg-2 underline underline-offset-2 hover:text-fg-1"
+								onClick={() => onOpenChange(false)}
+							>
+								已有账号，去登录
+							</Link>
 						)}
 						<Button type="submit" variant="primary">
 							{required ? "开始使用" : "保存"}
