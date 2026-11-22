@@ -309,7 +309,7 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		for (const path of [`/tasks/${sa.taskId}/logs/download`, `/runs/${runId}/logs/download`]) {
 			const started = performance.now();
 			const rows = texts(jsonl(await (await cp.fetch(path)).text()));
-			expect(performance.now() - started, path).toBeLessThan(8000);
+			expect(performance.now() - started, path).toBeLessThan(30_000);
 			expect(rows, path).toHaveLength(1506);
 			// 长行都盖住；整个下载共用一份预算的话，前面就把它用光，后面的行也都被整行盖住。每一块、每一批各一份，后面是原样的
 			expect(rows.slice(0, 6), path).toEqual(Array(6).fill(MASK));

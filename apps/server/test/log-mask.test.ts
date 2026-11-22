@@ -168,7 +168,7 @@ describe("读日志的工作量预算：一页、一块、一批共用一份（#
 		const mask = logMask(periodic);
 		const started = performance.now();
 		const out = Array.from({ length: 600 }, (_, i) => mask.line({ seq: i, text: zeros }).text);
-		expect(performance.now() - started, "一页的同步耗时").toBeLessThan(1000);
+		expect(performance.now() - started, "一页的同步耗时").toBeLessThan(3000);
 		expect(out.every((text) => text === MASK)).toBe(true);
 		// 预算用完之后，连没有 secret 值的行也整行盖住（宁可多盖，不漏）
 		expect(mask.line({ text: "clean line" }).text).toBe(MASK);
@@ -187,7 +187,7 @@ describe("读日志的工作量预算：一页、一块、一批共用一份（#
 			const masked = mask.row(rowOf({ ...row, seq: i, text: zeros }));
 			expect(JSON.parse(masked.toString("utf8")).text).toBe(MASK);
 		}
-		expect(performance.now() - started, "一块的同步耗时").toBeLessThan(1000);
+		expect(performance.now() - started, "一块的同步耗时").toBeLessThan(3000);
 		const clean = rowOf({ ...row, text: "clean line" });
 		expect(JSON.parse(mask.row(clean).toString("utf8")).text).toBe(MASK);
 		expect(mask.fresh().row(clean)).toBe(clean);

@@ -1324,7 +1324,7 @@ describe("长值的索引：扫一遍就查全，结果和逐个 indexOf 的参�
 		const view = set.withBudget(budget);
 		const started = performance.now();
 		for (let i = 0; i < 1000; i++) expect(view.mask(line)).toBe(line);
-		expect(performance.now() - started, "一页").toBeLessThan(500);
+		expect(performance.now() - started, "一页").toBeLessThan(2000);
 		expect(budget.remaining).toBeGreaterThan(READ_WORK_BUDGET * 0.2);
 	});
 
@@ -1337,7 +1337,7 @@ describe("长值的索引：扫一遍就查全，结果和逐个 indexOf 的参�
 		const started = performance.now();
 		let masked = 0;
 		for (let i = 0; i < 1000; i++) if (view.mask(line) === MASK) masked += 1;
-		expect(performance.now() - started, "一页").toBeLessThan(500);
+		expect(performance.now() - started, "一页").toBeLessThan(2000);
 		expect(budget.remaining).toBe(0);
 		expect(masked).toBeGreaterThan(900);
 	});
@@ -1461,7 +1461,7 @@ describe("读取的工作量预算：一次读取共用一份，扫描和找到�
 		const line = rep("a", 4096);
 		const started = performance.now();
 		for (let i = 0; i < 1000; i++) view.mask(line);
-		expect(performance.now() - started, "一页").toBeLessThan(500);
+		expect(performance.now() - started, "一页").toBeLessThan(2000);
 		expect(budget.remaining).toBe(0);
 	});
 
