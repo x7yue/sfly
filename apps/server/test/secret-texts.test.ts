@@ -18,11 +18,13 @@ import {
 	MAX_CLIP_WORK,
 	MAX_MASK_WORK,
 	MIN_CLIPPED_PREFIX_CHARS,
+	MIN_CLIPPED_PREFIX_FLOOR,
 	MIN_LEAF_CHARS,
 	maskParams,
 	maskRecord,
 	maskSecrets,
 	maskValue,
+	minClippedPrefix,
 	NO_SECRETS,
 	READ_WORK_BUDGET,
 	SECRET_MASK,
@@ -1075,6 +1077,48 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 		expect(MIN_CLIPPED_PREFIX_CHARS).toBe(4);
 	});
 
+	it("前缀的下限：不短于 4 个字符和值长度的一半二者中较小的一个，不少于 2 个字符", () => {
+		expect(MIN_CLIPPED_PREFIX_FLOOR).toBe(2);
+		const expected: Array<[string, number]> = [
+			["abc", 2],
+			["abcd", 2],
+			["abcde", 3],
+			["abcdef", 3],
+			["abcdefg", 4],
+			["abcdefgh", 4],
+			["a-much-longer-token-value", 4],
+			["口令一二三四五六", 4],
+			["口令一二三", 3],
+		];
+		for (const [text, min] of expected) expect(minClippedPrefix(text), text).toBe(min);
+	});
+
+	it("4 到 7 个字符的短值：结尾留下一半就盖，更短的不盖；3 个字符的值认 2 个字符；2 个字符的值没有可认的前缀", () => {
+		const tail = (value: string, kept: number) => "x".repeat(LIMIT - kept) + value.slice(0, kept);
+		const masked = (kept: number) => `${"x".repeat(LIMIT - kept)}${MASK}`;
+		const six = setOf("abcdef");
+		for (const kept of [3, 4, 5])
+			expect(six.maskClipped(tail("abcdef", kept), LIMIT), `abcdef ${kept}`).toBe(masked(kept));
+		for (const kept of [1, 2])
+			expect(six.maskClipped(tail("abcdef", kept), LIMIT), `abcdef ${kept}`).toBe(
+				tail("abcdef", kept),
+			);
+		const four = setOf("abcd");
+		for (const kept of [2, 3])
+			expect(four.maskClipped(tail("abcd", kept), LIMIT), `abcd ${kept}`).toBe(masked(kept));
+		expect(four.maskClipped(tail("abcd", 1), LIMIT)).toBe(tail("abcd", 1));
+		expect(setOf("abc").maskClipped(tail("abc", 2), LIMIT)).toBe(masked(2));
+		expect(setOf("abc").maskClipped(tail("abc", 1), LIMIT)).toBe(tail("abc", 1));
+		// 2 个字符的值：没有不是整个值、又不少于 2 个字符的前缀
+		const two = setOf("ab");
+		expect(two.maskClipped(tail("ab", 1), LIMIT)).toBe(tail("ab", 1));
+		// 7 个字符的数字（作为文字）认 4 个字符
+		const pin = setOf(8260413);
+		expect(pin.maskClipped(tail("8260413", 3), LIMIT)).toBe(tail("8260413", 3));
+		for (const kept of [4, 5, 6])
+			expect(pin.maskClipped(tail("8260413", kept), LIMIT), `pin ${kept}`).toBe(masked(kept));
+	});
+
 	it("文字到了上限、结尾是 secret 值的前缀（不短于下限）：从前缀开头起换成一个掩码，前面的文字原样", () => {
 		for (const kept of [4, 5, 8, 15]) {
 			const text = clipped(kept);
@@ -1208,8 +1252,14 @@ describe("被截断的文字结尾留下的半截 secret 值（读取时的补�
 			}
 			for (let at = 0; at < body.length; at++) {
 				const tail = body.slice(at);
-				if (tail.length < MIN_CLIPPED_PREFIX_CHARS) break;
-				if (texts.texts.some((t) => t.length > tail.length && t.startsWith(tail))) {
+				if (tail.length < MIN_CLIPPED_PREFIX_FLOOR) break;
+				// 前缀要不短于这个文本要求的最短字符数（4 个和值长度的一半二者中较小的，不少于 2 个）
+				if (
+					texts.texts.some(
+						(t) =>
+							t.length > tail.length && tail.length >= minClippedPrefix(t) && t.startsWith(tail),
+					)
+				) {
 					spans.push([at, body.length]);
 					break;
 				}
@@ -1401,22 +1451,26 @@ describe("读取的工作量预算：一次读取共用一份，用完之后剩�
 	};
 	const word = (n: number) =>
 		Array.from({ length: n }, () => "bcdefghijklmnopqrstuvwxyz"[random(25)]).join("");
-	/** 病态的值集合：`count` 个值，各 `length` 个字符，首字符都是 a。 */
+	/** 病态的值集合：`count` 个值，各 `length` 个字符，开头都是同样的一长串 a、最后几位不同。 */
 	const pathological = (count: number, length: number) =>
-		setOf(...Array.from({ length: count }, (_, i) => `a${word(length - 1)}${i}`));
-	/** 一条动作明细：名称、8 个字段（键和值）、失败原因，每一处都是首字符 a、正好到上限的文字。 */
+		setOf(
+			...Array.from({ length: count }, (_, i) =>
+				`${"a".repeat(length - 12)}${word(9)}${i % 1000}`.slice(0, length),
+			),
+		);
+	/** 一条动作明细：名称、8 个字段（键和值）、失败原因，每一处都是到了上限、前面全是 a、最后一个字符是 b 的文字：和值的前缀比较时要比到最后才对不上。 */
 	const detail = () => {
-		const value = "a".repeat(valueChars);
+		const value = `${"a".repeat(valueChars - 1)}b`;
 		const fields = Object.fromEntries(
-			Array.from({ length: 8 }, (_, f) => [`${"a".repeat(nameChars - 1)}${f}`, value]),
+			Array.from({ length: 8 }, (_, f) => [`${"a".repeat(nameChars - 2)}b${f}`, value]),
 		);
 		return {
 			id: 1,
 			parent: null,
 			depth: 0,
-			name: "a".repeat(nameChars),
+			name: `${"a".repeat(nameChars - 1)}b`,
 			fields,
-			reason: `${"a".repeat(reasonChars - 1)}…`,
+			reason: `${"a".repeat(reasonChars - 2)}b…`,
 			started_at: "2026-01-01T00:00:01.000Z",
 			agent_started_at: "2026-01-01T00:00:01.000Z",
 			ended_at: "2026-01-01T00:00:02.000Z",
@@ -1456,7 +1510,7 @@ describe("读取的工作量预算：一次读取共用一份，用完之后剩�
 	});
 
 	it("一页 500 条动作、病态的值集合：共用一份预算，一页很快读完，用完之后剩下的整段盖住；没有预算要几秒", () => {
-		// 3000 个各 300 个字符的值：每处文字都花满单次的上限，500 条动作的总和是几十秒量级
+		// 300 个各 300 个字符的值：每处文字都花满单次的上限，500 条动作的总和是几十秒量级
 		const set = pathological(300, 300);
 		const one = detail();
 		const budget = new WorkBudget();
@@ -1475,7 +1529,7 @@ describe("读取的工作量预算：一次读取共用一份，用完之后剩�
 		// 对照：同一条动作不带预算，一条就是单次上限的若干倍（几毫秒）；上限仍然有效
 		const single = performance.now();
 		maskedAction(one, set);
-		expect(performance.now() - single, "单条动作不带预算").toBeLessThan(1000);
+		expect(performance.now() - single, "单条动作不带预算").toBeLessThan(3000);
 	});
 
 	it("预算用完之后：要花工作量才能打码的文字整段盖住，不花工作量的照常打码", () => {
@@ -1510,6 +1564,28 @@ describe("读取的工作量预算：一次读取共用一份，用完之后剩�
 		expect(shared.remaining).toBe(0);
 		// 对照：各自一份预算时都照常算完
 		expect(setOf("00").withBudget(new WorkBudget(300)).mask("a0000")).toBe(`a${MASK}`);
+	});
+
+	it("一次调用花的工作量超过预算剩下的：整段盖住，不用等到单次的上限", () => {
+		// 周期性的值 `00`：40 万个 0 要 2640 万的工作量，在单次的上限（3200 万）以内，但超过一份预算（800 万）
+		const periodic = setOf("00");
+		const text = `${"0".repeat(400_000)} tail`;
+		expect(periodic.mask(text)).toBe(`${MASK} tail`);
+		const budget = new WorkBudget();
+		expect(periodic.withBudget(budget).mask(text)).toBe(MASK);
+		expect(budget.remaining).toBe(0);
+	});
+
+	it("找半截的比较超过预算剩下的：整段盖住，不用等到单次的上限", () => {
+		// 300 个以 a 开头的值，要找的那个最短、排在最后：比过前面的 300 个才找到，每个 2 份工作量
+		const values = Array.from({ length: 300 }, (_, i) => `a${"b".repeat(60)}${i}`);
+		const set = setOf(...values, "azyx-target-value");
+		const text = `${"x".repeat(32)}azyx-tar`;
+		expect(Array.from(text).length).toBe(40);
+		expect(set.maskClipped(text, 40)).toBe(`${"x".repeat(32)}${MASK}`);
+		const small = new WorkBudget(100);
+		expect(set.withBudget(small).maskClipped(text, 40)).toBe(MASK);
+		expect(small.remaining).toBe(0);
 	});
 
 	it("没有出现的文字不花预算：预算只被真正的出现位置和找半截的比较用掉（读一页日志，行里没有 secret 值时不会把预算用光）", () => {

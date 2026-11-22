@@ -19,12 +19,23 @@ export { SECRET_MASK };
 export const MIN_LEAF_CHARS = 4;
 
 /**
- * 被截断的文字（日志类异常的说明、动作的名称、字段、失败原因）结尾留下的半截 secret 值，按它的前缀盖住时，前缀最短多少个字符（码点）。
- * 太短的前缀（`a`、`te`）在别的文字里太常见，盖了会把正常的文字也换掉：不盖。真正的密钥、口令、令牌的前 4 个字符不会碰巧和
- * 一段普通文字的结尾一样，所以这里取和 {@link MIN_LEAF_CHARS} 一样的 4。这是读取这一侧的补救（根本的办法是写入时打码、
- * 原样另存，属于 #505），短于它的前缀盖不住，docs/SEMANTICS.md §2.1 的「没有覆盖的写法」里写明。
+ * 被截断的文字（日志类异常的说明、动作的名称、字段、失败原因）结尾留下的半截 secret 值，按它的前缀盖住时，前缀最短多少个字符（码点）：
+ * 不短于 {@link MIN_CLIPPED_PREFIX_CHARS}（4）和值长度的一半二者中较小的一个，但不少于 {@link MIN_CLIPPED_PREFIX_FLOOR}（2）。
+ * 太短的前缀（`a`、`te`）在别的文字里太常见，盖了会把正常的文字也换掉：长的值（不少于 8 个字符）认前 4 个字符，真正的密钥、口令、
+ * 令牌的前 4 个字符不会碰巧和一段普通文字的结尾一样；4 到 7 个字符的短值（短口令、验证码）露出 1 到 3 个字符就是大半，认一半
+ * （2 到 4 个字符）；2 个字符以下的值没有「不是整个值的、不短于 2 个字符的前缀」，盖不住。这是读取这一侧的补救（根本的办法是写入时打码、
+ * 原样另存，属于 #505），docs/SEMANTICS.md §2.1 的「被截断的文字，结尾留下的半截」里写明。
  */
 export const MIN_CLIPPED_PREFIX_CHARS = 4;
+/** 前缀下限的下限：见 {@link MIN_CLIPPED_PREFIX_CHARS}。 */
+export const MIN_CLIPPED_PREFIX_FLOOR = 2;
+
+/** 这个文本在结尾被截断时，前缀最短多少个字符才盖（见 {@link MIN_CLIPPED_PREFIX_CHARS}）。 */
+export const minClippedPrefix = (text: string): number =>
+	Math.max(
+		MIN_CLIPPED_PREFIX_FLOOR,
+		Math.min(MIN_CLIPPED_PREFIX_CHARS, Math.ceil(charCount(text) / 2)),
+	);
 
 /**
  * 找截断处留下的半截 secret 值时，比较的工作量上限（比较的字符数，每个候选文本另加一份）：超过就把这段文字整个盖住。
@@ -704,12 +715,11 @@ export class SecretSet {
 
 	/**
 	 * 打码一段存下来时可能被截断过的文字（日志类异常的说明、动作的名称、字段、失败原因，上限 `limit` 个字符（码点））：
-	 * 先看这段文字有没有可能被截断过，有的话，结尾是某个要打码的文本的前缀（不短于 {@link MIN_CLIPPED_PREFIX_CHARS}，又不是整个文本；
+	 * 先看这段文字有没有可能被截断过，有的话，结尾是某个要打码的文本的前缀（不短于 {@link minClippedPrefix}，又不是整个文本；
 	 * 整个文本是完整的出现，和其余的完整出现一样换掉）时，从这个前缀开头起到结尾也换成掩码，前面的部分照常打码。
 	 *
-	 * 「可能被截断过」和结尾的前缀都按**这段文字本身**（打码之前）判断：长度到了上限；或者里面已经有掩码（写入时打过码的文字比原文短，
-	 * 看长度认不出它被截断过，后来才成为 secret 的另一个值的半截可能就在结尾）。按打码之后的长度判断是错的：同一段文字前面完整出现过
-	 * 一次 secret 值，换成掩码后变短了，到不了上限，结尾那半截就没人管了。
+	 * 「可能被截断过」和结尾的前缀都按**这段文字本身**（打码之前）判断，不按打码之后的长度（打码会改变长度）：长度到了上限；
+	 * 或者里面已经有掩码（写入时打过码的文字比原文短，看长度认不出它被截断过）。
 	 *
 	 * `ellipsis`：截断时末尾补了「…」（失败原因，SDK 和控制面都这样截），判断时不算它，盖住时连它一起换掉。长度没到上限的文字就是
 	 * {@link mask}。任何意外同 {@link mask}：整段盖住。工作量超过 {@link MAX_CLIP_WORK}（或这个视图的预算）时也整段盖住，宁可多盖。
@@ -744,12 +754,13 @@ export class SecretSet {
 		if (budget && budget.remaining <= 0) return undefined;
 		const cap = budget ? Math.min(MAX_CLIP_WORK, budget.remaining) : MAX_CLIP_WORK;
 		if (!this.#lazy.byFirstUnit) {
-			const byFirst = new Map<number, string[]>();
+			const byFirst = new Map<number, Array<{ text: string; min: number }>>();
 			for (const text of this.texts) {
 				const unit = text.charCodeAt(0);
+				const entry = { text, min: minClippedPrefix(text) };
 				const list = byFirst.get(unit);
-				if (list) list.push(text);
-				else byFirst.set(unit, [text]);
+				if (list) list.push(entry);
+				else byFirst.set(unit, [entry]);
 			}
 			this.#lazy.byFirstUnit = byFirst;
 		}
@@ -765,16 +776,13 @@ export class SecretSet {
 			const candidates = byFirstUnit.get(body.charCodeAt(i));
 			if (!candidates) continue;
 			const tailLength = body.length - i;
-			// 结尾不到 {@link MIN_CLIPPED_PREFIX_CHARS} 个字符（码点）时更靠后的位置也不够：不盖。不少于 8 个码元一定不少于 4 个码点。
-			if (
-				tailLength < MIN_CLIPPED_PREFIX_CHARS * 2 &&
-				charCount(body.slice(i)) < MIN_CLIPPED_PREFIX_CHARS
-			) {
-				return done(-1);
-			}
-			for (const text of candidates) {
+			// 结尾不到 {@link MIN_CLIPPED_PREFIX_FLOOR} 个字符（码点）时更靠后的位置也不够：不盖。不少于 4 个码元一定不少于 2 个码点。
+			const tailChars =
+				tailLength < MIN_CLIPPED_PREFIX_CHARS * 2 ? charCount(body.slice(i)) : tailLength;
+			if (tailChars < MIN_CLIPPED_PREFIX_FLOOR) return done(-1);
+			for (const { text, min } of candidates) {
 				work += 1;
-				if (text.length <= tailLength) continue;
+				if (text.length <= tailLength || tailChars < min) continue;
 				let k = 1;
 				// 第一个码元已经相同；逐个比较，不分配
 				while (k < tailLength && text.charCodeAt(k) === body.charCodeAt(i + k)) k += 1;
@@ -792,7 +800,7 @@ export class SecretSet {
 interface Lazy {
 	matcher?: Matcher;
 	/** 每个要打码的文本，按它的第一个码元分组：找结尾的半截时，每个位置只和同一个码元开头的文本比。 */
-	byFirstUnit?: ReadonlyMap<number, readonly string[]>;
+	byFirstUnit?: ReadonlyMap<number, ReadonlyArray<{ text: string; min: number }>>;
 }
 
 /** 对象里值不是 undefined 的键的个数（标准写法不写 undefined 的键）。 */
