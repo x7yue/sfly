@@ -292,6 +292,30 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		).toContain("system 没有具体的那一个");
 	});
 
+	it("账号（account）：self 只用于账号，是发起请求的用户自己，路径里不能有参数；管理别人的账号用路径参数或 collection", () => {
+		const account = (target: unknown, path: string, params?: unknown) =>
+			broken({
+				path,
+				resource: { kind: "account", target },
+				...(params === undefined ? { params: undefined } : { params }),
+			});
+		// 合法：自己（路径没有参数）、用户 ID（路径参数）、列表和新建。
+		expect(problems(account("self", "/auth/me"))).toEqual([]);
+		expect(problems(account({ params: "id" }, "/users/:id"))).toEqual([]);
+		expect(problems(account("collection", "/users"))).toEqual([]);
+		// self 不是账号：只用于 account。
+		expect(
+			problems(broken({ resource: { kind: "scenario", target: "self" }, path: "/things" }))[0],
+		).toContain("self 只用于 account");
+		expect(
+			problems(broken({ resource: { kind: "system", target: "self" }, path: "/things" })).join(
+				"；",
+			),
+		).toContain("self 只用于 account");
+		// self 的路径里有参数：有参数就是在定位别人的账号。
+		expect(problems(account("self", "/auth/:id"))[0]).toContain("self，但路径里有参数");
+	});
+
 	it("路径带项目（/projects/:project/…）的列表和新建用 collection：:project 只限定项目，不算在定位资源", () => {
 		const project = z.object({ project: z.string() });
 		const scoped = { path: "/projects/:project/things", params: project };

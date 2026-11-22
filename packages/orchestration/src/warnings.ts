@@ -89,6 +89,7 @@ export const DOCUMENT_WARNING_CODES = [
 	"orphan_node",
 	"missing_agent",
 	"timeout_out_of_range",
+	"queue_timeout_out_of_range",
 	"package_not_locked",
 	"package_version_missing",
 	"unknown_node_type",
