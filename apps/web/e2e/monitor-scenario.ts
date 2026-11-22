@@ -74,6 +74,16 @@ export const MONITOR_SCENARIO = {
  */
 export const METRIC_NODES = {
 	http_check: {
+		// 场景里 fetch 还传了入口的保密参数 token：节点类型要声明它，不然保存时有「没有声明的输入」的警告、触发前被拦下（#444）。
+		inputs: {
+			type: "object",
+			properties: {
+				url: { type: "string" },
+				expect: { type: "integer", default: 200 },
+				token: { type: "string" },
+			},
+			required: ["url"],
+		},
 		metrics: [
 			{ name: "latency_ms", unit: "ms", kind: "gauge" },
 			{ name: "p99_ms", unit: "ms", kind: "gauge" },

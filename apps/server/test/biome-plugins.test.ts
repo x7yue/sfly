@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
+import { retryOnWorkspaceRace } from "./support/biome-lint.js";
 
 const pluginsDir = join(repoRoot, "biome-plugins");
 const fixturesDir = join(pluginsDir, "fixtures");
@@ -77,24 +78,29 @@ function lint(plugin: string, dir: string): { diagnostics: Diagnostic[]; files: 
 			plugins: [join(pluginsDir, `${plugin}.grit`)],
 		}),
 	);
-	const result = spawnSync(
-		biomeBin,
-		["lint", `--config-path=${configDir}`, "--reporter=json", dir],
-		// 在样例目录里跑：biome 会先扫描工作目录里的全部文件，工作目录只有样例时扫描的范围小得多。CI 里出现过一次
-		// `internalError/fs: The file does not exist in the workspace`（本地和 Linux 容器里都没有复现，原因没有查明，
-		// 怀疑是整个仓库的扫描碰上了同时在仓库里建、删文件的其他测试）。诊断里的路径相对于工作目录。
-		{ cwd: dir, encoding: "utf8" },
-	);
-	let report: { summary: { changed: number; unchanged: number }; diagnostics: Diagnostic[] };
-	try {
-		report = JSON.parse(result.stdout);
-	} catch {
-		throw new Error(`biome lint 没有给出 JSON 报告（退出码 ${result.status}）：\n${result.stderr}`);
-	}
-	return {
-		diagnostics: report.diagnostics,
-		files: report.summary.changed + report.summary.unchanged,
-	};
+	// biome 偶发工作区竞态（CPU 紧张时 `internalError/fs: The file does not exist in the workspace`，
+	// 和规则、样例的内容无关），出现时重跑，见 support/biome-lint.ts。
+	return retryOnWorkspaceRace(() => {
+		const result = spawnSync(
+			biomeBin,
+			["lint", `--config-path=${configDir}`, "--reporter=json", dir],
+			// 在样例目录里跑：biome 会先扫描工作目录里的全部文件，工作目录只有样例时扫描的范围小得多。
+			// 诊断里的路径相对于工作目录。
+			{ cwd: dir, encoding: "utf8" },
+		);
+		let report: { summary: { changed: number; unchanged: number }; diagnostics: Diagnostic[] };
+		try {
+			report = JSON.parse(result.stdout);
+		} catch {
+			throw new Error(
+				`biome lint 没有给出 JSON 报告（退出码 ${result.status}）：\n${result.stderr}`,
+			);
+		}
+		return {
+			diagnostics: report.diagnostics,
+			files: report.summary.changed + report.summary.unchanged,
+		};
+	});
 }
 
 /** 把诊断换成「相对 fixtures 的路径:行号」；诊断里的路径相对于 `dir`（biome 的工作目录）。 */
