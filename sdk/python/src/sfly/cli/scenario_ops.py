@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 from collections.abc import Callable
 from typing import Any
@@ -138,7 +139,8 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         parents=nested,
         help="改一个节点的字段：inputs.<输入名>、agent、display_name、note、always、timeout……",
         description="改一个节点的一个字段：包节点能改 inputs.<输入名>、agent、display_name、note、"
-        "always、timeout、retries、queue_timeout，其他节点能改 display_name、note。"
+        "always、timeout、retries、queue_timeout；异步任务节点能改 display_name、note，"
+        "停止子流程节点还能改 always，子流程入口节点只能改 note。"
         "不写值就是去掉这个字段。",
     )
     p_set.add_argument("node", metavar="节点", help="节点 ID")
@@ -209,34 +211,91 @@ def _node_inputs(
 ) -> dict[str, Any]:
     """节点类型的输入声明（输入名 → schema）；查不到时是空的（值照常按 JSON 解析）。
 
-    版本和控制面加节点时一样取：给了用给的，场景锁定了用锁定的，否则最新发布的，没有发布过时取
-    在线的 Agent 上报的开发版本。"""
+    版本和控制面加节点时一样取：给了用给的，场景锁定了用锁定的，否则最新发布的（按版本号比较），
+    没有发布过（`GET /packages/<名>` 是 404）时取在线的 Agent 上报的开发版本。"""
     version = version or document.get("packages", {}).get(package)
-    nodes: Any = None
     try:
         if version is None:
-            published = client.get(f"/packages/{segment(package)}")["versions"]
-            version = published[0]["version"] if published else "dev"
+            try:
+                published = client.get(f"/packages/{segment(package)}")["versions"]
+            except ApiError as e:
+                if e.status != 404:
+                    raise
+                published = []
+            version = _newest_version([str(v["version"]) for v in published]) or "dev"
         if version == "dev":
-            agents = sorted(client.get("/agents")["agents"], key=lambda a: str(a.get("name")))
-            nodes = next(
-                (
-                    d.get("metadata", {}).get("nodes")
-                    for a in agents
-                    if a.get("status") == "online"
-                    for d in a.get("dev_packages", [])
-                    if d.get("name") == package
-                ),
-                None,
-            )
+            nodes = _dev_nodes(client, package)
         else:
             detail = client.get(f"/packages/{segment(package)}/versions/{segment(version)}")
-            nodes = detail["metadata"]["nodes"]
-    except (ApiError, KeyError, TypeError, IndexError):
+            nodes = _field(detail.get("metadata"), "nodes")
+    except (ApiError, KeyError, TypeError, IndexError, AttributeError):
         return {}
-    found = next((n for n in nodes or [] if isinstance(n, dict) and n.get("name") == node), None)
-    properties = (found or {}).get("inputs", {}).get("properties")
+    candidates = nodes if isinstance(nodes, list) else []
+    found = next((n for n in candidates if isinstance(n, dict) and n.get("name") == node), None)
+    properties = _field(_field(found, "inputs"), "properties")
     return properties if isinstance(properties, dict) else {}
+
+
+def _field(value: Any, name: str) -> Any:
+    """对象的字段；不是对象（null、格式不对）时是 None。"""
+    return value.get(name) if isinstance(value, dict) else None
+
+
+def _dev_nodes(client: Client, package: str) -> Any:
+    """在线的 Agent 上报的开发版本的节点类型（按 Agent 名字取第一个上报了这个包的）。"""
+    agents = sorted(client.get("/agents")["agents"], key=lambda a: str(a.get("name")))
+    for agent in agents:
+        if agent.get("status") != "online":
+            continue
+        for dev in agent.get("dev_packages") or []:
+            if isinstance(dev, dict) and dev.get("name") == package:
+                return _field(dev.get("metadata"), "nodes")
+    return None
+
+
+def _newest_version(versions: list[str]) -> str | None:
+    """一组版本号里最新的，和控制面一个口径（packages/orchestration 的 compareVersions）：
+    按版本号比较，不是按发布时间。"""
+    newest: str | None = None
+    for version in versions:
+        if newest is None or _compare_versions(version, newest) > 0:
+            newest = version
+    return newest
+
+
+def _compare_versions(a: str, b: str) -> int:
+    """PEP 440 的核心规则：数字段逐段比较（缺的段当 0），字母段是预发布标记、排在同号正式版之前，
+    都是字母时按字典序。小于 0 表示 a 更旧。"""
+    ta, tb = _version_tokens(a), _version_tokens(b)
+    for i in range(max(len(ta), len(tb))):
+        x = ta[i] if i < len(ta) else None
+        y = tb[i] if i < len(tb) else None
+        if x is None:
+            if isinstance(y, str):
+                return 1
+            if y != 0:
+                return -1
+            continue
+        if y is None:
+            if isinstance(x, str):
+                return -1
+            if x != 0:
+                return 1
+            continue
+        if isinstance(x, int) and isinstance(y, int):
+            if x != y:
+                return x - y
+            continue
+        if isinstance(x, str) and isinstance(y, str):
+            if x != y:
+                return -1 if x < y else 1
+            continue
+        return -1 if isinstance(x, str) else 1
+    return 0
+
+
+def _version_tokens(version: str) -> list[int | str]:
+    return [int(m) if m.isdigit() else m for m in re.findall(r"\d+|[a-z]+", version.lower())]
 
 
 def _operations(

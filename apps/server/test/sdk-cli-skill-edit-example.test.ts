@@ -1,7 +1,8 @@
 // sfly-platform skill「编辑场景」里的例子（#472，#470 改成 scenario edit）：AI 编程助手照它改场景，
 // `scenario edit … add --help` 是它会读的另一份说明。把例子里的占位换成真实的值，真实的 sfly 进程照着执行：
 // - 这一节唯一的 sh 例子：--dry-run 不产生版本，去掉 --dry-run 存成新版本，都没有警告；
-// - 这一节和 add --help 里出现的每一种引用写法（每个 `--input '…'` 和 ${{ … }}）：加一个节点用上它，--dry-run 没有警告。
+// - 这一节、platform-cli.md「局部编辑」一节里的每个 `--input '…'`、`--input "…"`，add --help 里出现的每一种引用写法
+//   （每个 `--input '…'` 和 ${{ … }}）：加一个节点用上它，--dry-run 没有警告。
 // skill 是助手唯一的说明书，它教错了没有别的测试会发现（#537 的审查：帮助教了一种不合法的引用写法）。
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -28,9 +29,24 @@ async function editSection(): Promise<string> {
 	return /^## 编辑场景\n([\s\S]*?)(?=^## )/m.exec(skill)?.[1] ?? "";
 }
 
-/** 一段文字里的 `--input '名=值'` 例子（单引号里的部分）。 */
+/** platform-cli.md「局部编辑」一节的正文。 */
+async function platformCliEditSection(): Promise<string> {
+	const doc = await readFile(join(repoRoot, "docs/guide/platform-cli.md"), "utf8");
+	return /^### 局部编辑\n([\s\S]*?)(?=^##? )/m.exec(doc)?.[1] ?? "";
+}
+
+/**
+ * 一段文字里的 `--input '名=值'`、`--input "名=值"` 例子（引号里的部分）。双引号里的 `$` 会被 shell 展开
+ * （`${{` 直接报错），照着抄的人拿不到写的值：双引号的例子里不能有 `$`。
+ */
 const inputExamples = (text: string): string[] =>
-	[...text.matchAll(/--input '([^']+)'/g)].map((m) => m[1] ?? "");
+	[...text.matchAll(/--input (?:'([^']+)'|"([^"]+)")/g)].map((m) => {
+		if (m[2] !== undefined) {
+			expect(m[2], "双引号里的 $ 会被 shell 展开：引用要用单引号").not.toContain("$");
+			return m[2];
+		}
+		return m[1] ?? "";
+	});
 
 /** 一段文字里出现的引用（`${{ … }}`），去重。 */
 const references = (text: string): string[] => [
@@ -154,6 +170,18 @@ describe("sfly-platform skill「编辑场景」的例子 → sfly scenario edit"
 				).toBe(true);
 			}
 			const id = await refScenario("skill 的引用例子");
+			for (const example of examples) await dryRunWith(id, example);
+		});
+
+		it("platform-cli.md「局部编辑」一节：三种引用各有一个例子，照着执行没有警告", async () => {
+			const examples = inputExamples(await platformCliEditSection());
+			for (const form of ["${{ params.", "${{ nodes.", "${{ run.state }}"]) {
+				expect(
+					examples.some((e) => e.includes(form)),
+					`platform-cli.md 里缺 ${form} 的例子`,
+				).toBe(true);
+			}
+			const id = await refScenario("platform-cli 的引用例子");
 			for (const example of examples) await dryRunWith(id, example);
 		});
 

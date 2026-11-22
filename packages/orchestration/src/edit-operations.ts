@@ -2,9 +2,11 @@ import {
 	type EditOperation,
 	type EditOperationProblem,
 	isNodeTimeout,
+	isQueueTimeout,
 	isRemovedNodeKind,
 	nodeTimeoutMessage,
 	OrchestrationNode,
+	queueTimeoutMessage,
 	SETTABLE_NODE_FIELDS,
 	type StoredNode,
 	type StoredOrchestrationDocument,
@@ -474,11 +476,18 @@ function setField(
 	return { ok: true, doc: { ...doc, nodes: doc.nodes.map((n) => (n === node ? parsed.data : n)) } };
 }
 
-/** 节点的超时超过上限（#534）：和保存同一句话。节点的 schema 只管是正整数，上限在文档一级检查，这里先拦下，好写明是第几个操作。 */
+/**
+ * 节点的超时（#534）、排队超时（#559）超过上限：和保存同一句话。节点的 schema 只管是正整数，上限在文档一级检查，
+ * 这里先拦下，好写明是第几个操作。
+ */
 function timeoutProblem(node: Node): Step | null {
-	if (node.kind !== "package" || node.timeout === undefined || isNodeTimeout(node.timeout)) {
-		return null;
-	}
+	if (node.kind !== "package") return null;
 	const label = node.display_name ? `${node.display_name}（${node.id}）` : node.id;
-	return fail(nodeTimeoutMessage(label, node.timeout));
+	if (node.timeout !== undefined && !isNodeTimeout(node.timeout)) {
+		return fail(nodeTimeoutMessage(label, node.timeout));
+	}
+	if (node.queue_timeout !== undefined && !isQueueTimeout(node.queue_timeout)) {
+		return fail(queueTimeoutMessage(label, node.queue_timeout));
+	}
+	return null;
 }

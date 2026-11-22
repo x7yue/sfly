@@ -428,6 +428,35 @@ describe("场景的局部编辑：操作", () => {
 			);
 		});
 
+		it("queue_timeout 超过上限（#559）：和 timeout 一样在这一步拒绝，写明第几个操作；上限本身可以", () => {
+			expect(
+				problemOf([{ op: "set", node: "report", field: "queue_timeout", value: 4_294_967_296 }])
+					.message,
+			).toBe(
+				"第 1 个操作（set）：节点 report：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 4294967296",
+			);
+			expect(
+				nodeOf(
+					okDoc([{ op: "set", node: "fetch_data", field: "queue_timeout", value: 4_294_967_295 }]),
+					"fetch_data",
+				)?.queue_timeout,
+			).toBe(4_294_967_295);
+			expect(
+				problemOf([
+					{
+						op: "add_node",
+						package: "svc",
+						node: "scan",
+						display_name: "扫日志",
+						id: "scan_log",
+						queue_timeout: 4_294_967_296,
+					},
+				]).message,
+			).toBe(
+				"第 1 个操作（add_node）：节点 扫日志（scan_log）：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 4294967296",
+			);
+		});
+
 		it("字段名不对、值不合法、改了不能改的字段：拒绝并写明能改什么", () => {
 			expect(
 				problemOf([{ op: "set", node: "report", field: "timeout", value: "60s" }]).message,

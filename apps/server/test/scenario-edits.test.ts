@@ -9,6 +9,7 @@ import {
 	uniqueNodeId,
 } from "@sfly/orchestration";
 import { orchestrationsApi, type StoredOrchestrationDocument } from "@sfly/schema";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -366,6 +367,52 @@ describe("场景的局部编辑", () => {
 			expect(version.message).toMatch(
 				/控制面上没有节点包版本 svc@9\.9\.9，已发布的版本：1\.2\.0、1\.0\.0$/,
 			);
+		});
+
+		it("包名写错时的线索按项目收窄：别的项目的已发布包、别的项目的 Agent 上的开发版本都不列出来", async () => {
+			// 别的项目里的已发布包和 Agent（接口的路径还不带项目，直接改库把它们放进项目 other）。
+			await publishPackage(cp, "secret-kit", "1.0.0", { scan: [] });
+			const other = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-other",
+				devPackages: [
+					{
+						name: "hidden-dev",
+						source: "/src/hidden-dev",
+						metadataJson: JSON.stringify(
+							packageMetadata({ name: "hidden-dev", version: "dev", nodes: [] }),
+						),
+					},
+				],
+			});
+			const pool = new pg.Pool({ connectionString: cp.database.url, max: 1 });
+			try {
+				await eventually(async () => {
+					const { agents } = await api.getJson<{
+						agents: Array<{ name: string; status: string }>;
+					}>("/agents");
+					expect(agents.find((a) => a.name === "agent-other")?.status).toBe("online");
+				});
+				await pool.query(
+					"insert into projects (id, display_name, created_at) values ('other', 'other', now()) on conflict do nothing",
+				);
+				await pool.query("update node_packages set project_id = 'other' where name = 'secret-kit'");
+				await pool.query("update agents set project_id = 'other' where name = 'agent-other'");
+				const id = await scenario("报错-包名-别的项目");
+				for (const typo of ["secret-ki", "hidden-de"]) {
+					const error = await problemOf(
+						await edit(id, [{ op: "add_node", package: typo, node: "scan" }]),
+					);
+					expect(JSON.stringify(error)).not.toMatch(/secret-kit|hidden-dev/);
+				}
+				// 对照：同样的写错在本项目的包上给出线索。
+				const here = await problemOf(
+					await edit(id, [{ op: "add_node", package: "local-prob", node: "stats" }]),
+				);
+				expect(here.message).toContain("相近的包：local-probe");
+			} finally {
+				await other.disconnect();
+				await pool.end();
+			}
 		});
 
 		it("节点 ID 不存在：列出相近的 ID", async () => {
