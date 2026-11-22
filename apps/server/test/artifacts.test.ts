@@ -386,7 +386,8 @@ describe("产物", () => {
 				nodes: DOC.nodes.map((n) => (n.id === "a" ? { ...n, retries: 1 } : n)),
 			};
 			const { agent, task } = await setup({ artifactLimitBytes: 1000, document: retrying });
-			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+			// 名称和重试时存的不同：同名的文件本来就不算在已上传里，同名的话按「运行」合计也看不出来。
+			expect((await upload(task, "first-attempt.bin", Buffer.alloc(600))).status).toBe(201);
 			await agent.fail(task, "探测失败");
 
 			const retry = await agent.nextAssign();
@@ -396,7 +397,7 @@ describe("产物", () => {
 			expect((await upload(retry, "a.bin", Buffer.alloc(1000))).status).toBe(201);
 			expect((await upload(retry, "b.bin", Buffer.alloc(1))).status).toBe(413);
 			expect((await list(task.taskId)).artifacts.map((a) => [a.name, a.size])).toEqual([
-				["a.bin", 600],
+				["first-attempt.bin", 600],
 			]);
 			expect((await list(retry.taskId)).artifacts.map((a) => [a.name, a.size])).toEqual([
 				["a.bin", 1000],
