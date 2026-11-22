@@ -1,3 +1,4 @@
+import { dispatchAgentOf } from "@sfly/orchestration";
 import {
 	isRemovedNodeKind,
 	type OrchestrationNode,
@@ -182,5 +183,6 @@ function walkChain(
 
 /** 包节点派发到的 Agent：节点另选的 Agent 优先，否则用编排的默认 Agent。 */
 export function agentFor(document: StoredOrchestrationDocument, node: PackageNode): string {
-	return (node.agent ?? document.default_agent) as string;
+	// 定义在 @sfly/orchestration（画布和控制面取开发版本的节点类型也按它），这里只是引擎用的形状。
+	return dispatchAgentOf(document, node) as string;
 }
