@@ -112,6 +112,8 @@ struct State {
     sdk_wheel: Mutex<(String, String)>,
     /// Welcome 中的镜像（PyPI 镜像, GitHub Release 镜像）。
     mirrors: Mutex<(String, String)>,
+    /// Welcome 中的控制面包索引（空串 = 旧版本控制面不带这个字段）。
+    package_index_url: Mutex<String>,
     /// Welcome 中的目标 Agent 版本（空串 = 与 Hello.agent_version 相同，即版本一致）。
     target_version: Mutex<String>,
     /// Welcome 中目标版本的 Agent 二进制（下载地址, sha256）。
@@ -338,6 +340,11 @@ impl FakeControlPlane {
         *self.state.mirrors.lock().unwrap() = (pypi.to_string(), github_release.to_string());
     }
 
+    /// 之后的 Welcome 下发的控制面包索引（带末尾 `/`；空串表示没有，也就是旧版本控制面的 Welcome）。
+    pub fn set_package_index(&self, url: &str) {
+        *self.state.package_index_url.lock().unwrap() = url.to_string();
+    }
+
     /// 之后的 Welcome 给出的目标 Agent 版本（控制面版本）；不设置时回给 Agent 它自己上报的版本。
     pub fn set_target_version(&self, version: &str) {
         *self.state.target_version.lock().unwrap() = version.to_string();
@@ -436,6 +443,7 @@ impl AgentGateway for Gateway {
                             state.sdk_wheel.lock().unwrap().clone();
                         let (pypi_mirror, github_release_mirror) =
                             state.mirrors.lock().unwrap().clone();
+                        let package_index_url = state.package_index_url.lock().unwrap().clone();
                         let target_agent_version =
                             match state.target_version.lock().unwrap().clone() {
                                 target if target.is_empty() => hello.agent_version.clone(),
@@ -468,6 +476,7 @@ impl AgentGateway for Gateway {
                             target_agent_version,
                             agent_binary_url,
                             agent_binary_sha256,
+                            package_index_url,
                         }))
                     }
                     Some(agent_message::Body::Result(r))

@@ -49,11 +49,15 @@ const pending = async (promise: Promise<void>, ms = 100): Promise<boolean> =>
 		new Promise((r) => setTimeout(() => r(true), ms)),
 	])) as boolean;
 
-/** 一直写到服务端的写缓冲写满（`drained()` 不再马上完成）。 */
+/**
+ * 一直写到服务端的写缓冲写满，并且确认它「稳定地满着」：内核的缓冲区会在一段时间里继续往对端挪数据（回环地址上
+ * 缓冲区还会自己长大），满的状态可能在刚判断完之后才松开，断言就会落在 drain 之后。所以要连着两个 50 毫秒窗口
+ * 都没有被读走才算满；中途松开了就接着写。
+ */
 async function fillUp(stream: SseStream): Promise<void> {
 	const chunk = "x".repeat(256 * 1024);
 	for (let i = 0; i < 400; i++) {
-		if (await pending(stream.drained(), 0)) return;
+		if ((await pending(stream.drained(), 50)) && (await pending(stream.drained(), 50))) return;
 		stream.send({ event: "fill", data: chunk });
 	}
 	throw new Error("写了 100 MB 缓冲还没写满");
