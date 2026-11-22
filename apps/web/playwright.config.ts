@@ -29,7 +29,18 @@ export default defineConfig({
 			]
 		: "list",
 	timeout: 30_000,
-	expect: { toHaveScreenshot: { animations: "disabled", caret: "hide" } },
+	expect: {
+		toHaveScreenshot: {
+			animations: "disabled",
+			caret: "hide",
+			// 每个像素的颜色距离阈值（pixelmatch，Playwright 的默认值是 0.2）：0.2 宽到整行文字换了写法
+			// （「尝试 1」改成「第 1 次尝试」）、表格选中行的底色深了 8 个灰度级都能通过。0.03 能发现这两种变化和
+			// 一个字的改动；同一份代码连渲两遍偶尔有 1 个像素不同（抗锯齿判断之后剩下的），所以允许最多 10 个像素
+			// 不同（`maxDiffPixels`）：真的改了一个字至少 60 个像素。取值的依据和试验写在 docs/ARCHITECTURE.md §7.5。
+			threshold: 0.03,
+			maxDiffPixels: 10,
+		},
+	},
 	use: {
 		...devices["Desktop Chrome"],
 		viewport: { width: 1440, height: 900 },
