@@ -59,9 +59,12 @@ test.describe("个人令牌页", () => {
 		await expect(issued).toBeVisible();
 		const token = await issuedToken(issued);
 		expect(token).toMatch(/^sfly_pat_[A-Za-z0-9_-]{16,}$/);
-		// 显示原值的时候 Esc 不关：只能点「我已保存，完成」。
+		// 显示原值的时候 Esc、点遮罩都不关，也没有右上角的关闭按钮：只能点「我已保存，完成」。
 		await page.keyboard.press("Escape");
 		await expect(issued).toBeVisible();
+		await page.mouse.click(5, 5);
+		await expect(issued).toBeVisible();
+		await expect(issued.getByRole("button", { name: "关闭" })).toHaveCount(0);
 		await issued.getByRole("button", { name: "我已保存，完成" }).click();
 		await expect(issued).toBeHidden();
 

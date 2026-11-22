@@ -150,17 +150,19 @@ export function IssueTokenDialog({
 	return (
 		<Dialog
 			open={open}
-			// 原值只显示这一次：显示它的时候点遮罩、按 Esc 都不关，只能点「完成」。
+			// 原值只显示这一次：显示它的时候点遮罩、按 Esc 都不关，只能点「我已保存，完成」。
 			pointerDismiss={issued ? "never" : "pristine"}
 			onOpenChange={(next, details) => {
-				if (!next && issued && details.reason === "escape-key") {
+				// 显示原值的时候，Esc、点遮罩（pointerDismiss 已经挡了）、关闭按钮（也没有渲染）都不关。
+				if (!next && issued) {
 					details.cancel();
 					return;
 				}
 				onOpenChange(next);
 			}}
 		>
-			<DialogContent>
+			{/* 显示原值的时候没有右上角的关闭按钮：和 Esc、点遮罩一样，只能点「我已保存，完成」关掉，免得手滑把只显示一次的原值丢了。 */}
+			<DialogContent showCloseButton={!issued}>
 				{issued ? (
 					<IssuedView issued={issued} onDone={() => onOpenChange(false)} />
 				) : (
