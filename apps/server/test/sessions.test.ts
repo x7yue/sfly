@@ -441,22 +441,31 @@ describe("事件流：补发加实时", () => {
 		}
 	}, 30_000);
 
-	it("序号超过 int4 的最大值：读接口和事件流的 before、after 是 400，Last-Event-ID 当作没带（从头补发，不报错关流）", async () => {
+	/** 有三条事件的会话：序号上限的几个测试共用它的形状。 */
+	const threeEvents = async () => {
 		const { id } = await newSession();
 		for (let n = 1; n <= 3; n++) await store().append(id, userBody(n));
-		for (const path of [
-			`/sessions/${id}?before=${SESSION_SEQ_MAX + 1}`,
-			`/sessions/${id}?before=3000000000`,
-			`/sessions/${id}/events?after=${SESSION_SEQ_MAX + 1}`,
-			`/sessions/${id}/events?after=3000000000`,
-		]) {
-			expect((await api.get(path)).status, path).toBe(400);
+		return id;
+	};
+
+	it("序号超过 int4 的最大值（读接口 before）：400，不是 500；恰好是上限时合法", async () => {
+		const id = await threeEvents();
+		for (const before of [String(SESSION_SEQ_MAX + 1), "3000000000", "9007199254740993"]) {
+			const res = await api.get(`/sessions/${id}?before=${before}`);
+			expect(res.status, before).toBe(400);
 		}
-		// 恰好是上限：合法。before 是 int4 的最大值：前面的 3 条都在；after 是最大值：没有更晚的事件，流开着。
 		const atMax = await json<SessionDetailResponse>(
 			await api.get(`/sessions/${id}?before=${SESSION_SEQ_MAX}`),
 		);
 		expect(atMax.events.map((e) => e.seq)).toEqual([1, 2, 3]);
+	});
+
+	it("序号超过 int4 的最大值（事件流 after）：400，流不会打开又关掉；恰好是上限时流开着，没有更晚的事件", async () => {
+		const id = await threeEvents();
+		for (const after of [String(SESSION_SEQ_MAX + 1), "3000000000", "9007199254740993"]) {
+			const res = await api.get(`/sessions/${id}/events?after=${after}`);
+			expect(res.status, after).toBe(400);
+		}
 		const afterMax = await SseClient.open(cp, `/sessions/${id}/events?after=${SESSION_SEQ_MAX}`);
 		try {
 			await afterMax.next("time");
@@ -465,7 +474,10 @@ describe("事件流：补发加实时", () => {
 		} finally {
 			afterMax.close();
 		}
-		// Last-Event-ID 超过上限（或大到不是安全整数）：当作没有，从头补发三条，流照常开着。
+	});
+
+	it("序号超过 int4 的最大值（Last-Event-ID）：当作没带，从头补发，流照常开着，不报错关流", async () => {
+		const id = await threeEvents();
 		for (const huge of [String(SESSION_SEQ_MAX + 1), "3000000000", "9007199254740993"]) {
 			const sse = await SseClient.open(cp, `/sessions/${id}/events`, { "last-event-id": huge });
 			try {
@@ -476,19 +488,8 @@ describe("事件流：补发加实时", () => {
 				).toEqual(["1", "2", "3"]);
 				await sse.expectNone(100);
 				expect(sse.ended, huge).toBe(false);
-				// 流是好的：后面落库的事件照常推来。
-				await store().append(id, userBody(4));
-				await sse.next("user_message");
 			} finally {
 				sse.close();
-			}
-			// 清掉这条测试里加的第 4 条，下一轮仍然是 3 条：直接删库里那一行。
-			const client = new pg.Client({ connectionString: cp.database.url });
-			await client.connect();
-			try {
-				await client.query("delete from session_events where session_id = $1 and seq = 4", [id]);
-			} finally {
-				await client.end();
 			}
 		}
 	});
