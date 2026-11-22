@@ -42,6 +42,8 @@ export interface StoredToken {
 	revokedAt: Date | null;
 	/** 最后一次使用的时间（节流过的，见 {@link AccessStore.touchToken}）；从没用过为 null。 */
 	lastUsedAt: Date | null;
+	/** 会话令牌属于的会话（库里的约束要求会话令牌有会话）；其余令牌为 null。 */
+	sessionId: string | null;
 }
 
 /** 库里的登录（控制台的 Cookie）。 */
@@ -107,6 +109,8 @@ export interface AccessStore {
 	projectOfTask(id: string): Promise<ProjectId | undefined>;
 	/** 会话所在的项目；不存在时为 undefined。 */
 	projectOfSession(id: string): Promise<ProjectId | undefined>;
+	/** 运行是哪个会话触发的（`runs.session_id`）：不是会话触发的为 null，运行不存在为 undefined。 */
+	sessionOfRun(id: string): Promise<string | null | undefined>;
 	/** 任务所在的项目，以及派给了哪台 Agent（排队中、内置节点的任务没有）。 */
 	taskAssignment(
 		id: string,
@@ -139,6 +143,7 @@ export class DbAccessStore implements AccessStore {
 				expiresAt: apiTokens.expiresAt,
 				revokedAt: apiTokens.revokedAt,
 				lastUsedAt: apiTokens.lastUsedAt,
+				sessionId: apiTokens.sessionId,
 				user: userColumns,
 			})
 			.from(apiTokens)
@@ -155,6 +160,7 @@ export class DbAccessStore implements AccessStore {
 				expiresAt: row.expiresAt,
 				revokedAt: row.revokedAt,
 				lastUsedAt: row.lastUsedAt,
+				sessionId: row.sessionId,
 			}
 		);
 	}
@@ -285,6 +291,15 @@ export class DbAccessStore implements AccessStore {
 			.from(runs)
 			.where(eq(runs.id, id));
 		return row?.projectId;
+	}
+
+	async sessionOfRun(id: string): Promise<string | null | undefined> {
+		if (!isUuid(id)) return undefined;
+		const [row] = await this.db
+			.select({ sessionId: runs.sessionId })
+			.from(runs)
+			.where(eq(runs.id, id));
+		return row === undefined ? undefined : row.sessionId;
 	}
 
 	async projectOfTask(id: string): Promise<ProjectId | undefined> {

@@ -44,6 +44,7 @@ import {
 	ROLE_SCOPES,
 	requiredScope,
 	SCOPE_LABELS,
+	SESSION_TOKEN_SCOPES,
 	type Scope,
 } from "./scopes.js";
 
@@ -66,6 +67,11 @@ export interface Access {
 	loginId: string | null;
 	/** 令牌的 ID（`api_tokens.id`）；登录和 Agent 凭据没有。 */
 	tokenId: string | null;
+	/**
+	 * 会话令牌属于的会话（ADR 0029「经 …」：会话令牌记会话）；其余凭据为 null。运行和场景版本记着它，
+	 * 依据是请求带的会话令牌，不是模型在对话里怎么说，也不是可以伪造的 `x-sfly-client` 标注。
+	 */
+	sessionId: string | null;
 	/**
 	 * 这次请求在 `platform_admin_actions` 里的记录（平台管理员靠自己的权限做的写）；没有记录为 null。
 	 * 请求结束时用它回填响应的状态码（{@link AccessGuard.finishAdminWrite}）。
@@ -90,7 +96,7 @@ export type AccessResult =
 
 /** 一个请求里和检查有关的部分。 */
 export interface AccessRequest {
-	route: Pick<RouteDef, "method" | "path" | "effect" | "resource" | "creates">;
+	route: Pick<RouteDef, "method" | "path" | "effect" | "resource" | "creates" | "removes">;
 	/** 路径参数（解析前的字符串）。 */
 	params: Record<string, string | undefined>;
 	/** `Authorization` 请求头。 */
@@ -161,6 +167,8 @@ type Principal =
 			/** 令牌的 ID；登录没有。 */
 			tokenId: string | null;
 			tokenName: string | null;
+			/** 会话令牌属于的会话；其余没有。 */
+			sessionId: string | null;
 			/** 令牌自己的范围（登录没有）。 */
 			granted: readonly string[] | undefined;
 			/** 令牌限定的项目（登录和没有限定的个人令牌没有）。 */
@@ -324,6 +332,7 @@ export class AccessGuard {
 					tokenName: person.tokenName,
 					loginId: person.loginId,
 					tokenId: person.tokenId,
+					sessionId: null,
 					adminActionId: null,
 					project: null,
 					role: null,
@@ -356,6 +365,7 @@ export class AccessGuard {
 				tokenName: null,
 				loginId: principal.loginId,
 				tokenId: null,
+				sessionId: null,
 				adminActionId: null,
 				project: null,
 				role: null,
@@ -467,6 +477,7 @@ export class AccessGuard {
 			tokenName: null,
 			loginId: null,
 			tokenId: principal.kind === "task" ? principal.tokenId : null,
+			sessionId: null,
 			adminActionId: null,
 			project,
 			role: null,
@@ -546,6 +557,7 @@ export class AccessGuard {
 						: principal.tokenName,
 			loginId: principal.kind === "login" ? principal.loginId : null,
 			tokenId: principal.kind === "login" ? null : principal.tokenId,
+			sessionId: principal.kind === "session" ? principal.sessionId : null,
 			adminActionId: null,
 			project,
 			role,
@@ -571,8 +583,7 @@ export class AccessGuard {
 			);
 		}
 		// ADR 0027「凭据」：会话令牌对会话这一类只有读——它是助手在会话里干活用的凭据，不能用来建会话、替人发话、
-		// 停掉会话。这一条写死在这里，和下面「会话令牌的写入还没有开放」的临时总闸分开：#495 拿掉总闸、让会话令牌的
-		// 「编辑」范围去改场景之后，它仍然不能写会话。
+		// 停掉会话。这一条是独立的：「编辑」范围让它能改场景，不会让它能写会话。
 		if (
 			principal.kind === "session" &&
 			route.resource.kind === "session" &&
@@ -580,10 +591,27 @@ export class AccessGuard {
 		) {
 			return denied(403, "forbidden", "会话令牌对会话只有读：不能建会话、发话和停止");
 		}
-		// 会话令牌的勾选（可以改的场景、可以用的 Agent、可以发消息的机器人）和待批准的操作在 #495、#496 接进来；
-		// 在那之前会话令牌只读，不放任何写。
 		if (principal.kind === "session" && route.effect === "write") {
-			return denied(403, "forbidden", "会话令牌的写入还没有开放");
+			// 会话令牌的勾选（可以改的场景、可以用的 Agent、可以发消息的机器人）和待批准的操作在 #495、#496 接进来；
+			// 在那之前，会话能改项目里的任何场景、往任何 Agent 派任务（骨架不对真实用户开放）。
+			// 删除和归档不放：会话自己建的东西可以删（#495 记下「会话自己建的场景」之后放开），其余不行。
+			if (route.removes === true) {
+				return denied(403, "forbidden", "会话令牌不能删除或归档");
+			}
+			// 取消（写一个已有的运行）：只放行这个会话自己触发的运行。依据是运行上记的会话，不是对话里的说法。
+			const target = route.resource.target;
+			if (
+				route.resource.kind === "run" &&
+				route.creates === undefined &&
+				typeof target === "object" &&
+				"params" in target
+			) {
+				const owner = await this.deps.store.sessionOfRun(request.params[target.params] ?? "");
+				if (owner === undefined) return notFound();
+				if (owner !== principal.sessionId) {
+					return denied(403, "forbidden", "会话令牌只能取消这个会话自己触发的运行");
+				}
+			}
 		}
 		if (admin !== null && route.effect === "write" && !admin.memberScopes.includes(needed)) {
 			const target = route.resource.target;
@@ -628,6 +656,7 @@ function loginPrincipal(login: StoredLogin, now: Date): Principal | undefined {
 		loginId: login.id,
 		tokenId: null,
 		tokenName: null,
+		sessionId: null,
 		granted: undefined,
 		limit: null,
 	};
@@ -640,16 +669,33 @@ function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
 	if (token.user !== null && token.user.disabledAt !== null) return undefined;
 	switch (token.kind) {
 		case "personal":
-		case "session":
 			return token.user === null
 				? undefined
 				: {
-						kind: token.kind,
+						kind: "personal",
 						user: token.user,
 						loginId: null,
 						tokenId: token.id,
 						tokenName: token.name,
+						sessionId: null,
 						granted: token.scopes,
+						limit: token.projectId,
+					};
+		case "session":
+			// 会话令牌要有用户、项目和会话（库里的约束保证；缺哪个都不放行）。范围的上限是
+			// {@link SESSION_TOKEN_SCOPES}：令牌行里写了发布、管理也不认。
+			return token.user === null || token.projectId === null || token.sessionId === null
+				? undefined
+				: {
+						kind: "session",
+						user: token.user,
+						loginId: null,
+						tokenId: token.id,
+						tokenName: token.name,
+						sessionId: token.sessionId,
+						granted: token.scopes.filter((scope) =>
+							(SESSION_TOKEN_SCOPES as readonly string[]).includes(scope),
+						),
 						limit: token.projectId,
 					};
 		case "project":

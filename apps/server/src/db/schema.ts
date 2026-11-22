@@ -304,6 +304,11 @@ export const orchestrationVersions = pgTable(
 		authorVia: text("author_via"),
 		/** 经哪个令牌保存（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 保存的为空。是可信的，和上面不经校验的标注分开记。 */
 		authorToken: text("author_token"),
+		/**
+		 * 经哪个会话保存（ADR 0027、0029「经 …」）：依据是请求带的会话令牌，不是模型在对话里怎么说，
+		 * 也不是可以伪造的 `x-sfly-client` 标注。不是会话保存的为空。
+		 */
+		sessionId: uuid("session_id").references(() => sessions.id),
 		createdAt: timestamptz("created_at").notNull(),
 	},
 	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
@@ -385,6 +390,11 @@ export const runs = pgTable(
 		triggeredVia: text("triggered_via"),
 		/** 经哪个令牌触发（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 触发的为空。 */
 		triggeredToken: text("triggered_token"),
+		/**
+		 * 经哪个会话触发（ADR 0027、0029「经 …」）：依据是请求带的会话令牌，不是模型在对话里怎么说；
+		 * 会话只能取消自己触发的运行，会话页的成果栏也只认它。不是会话触发的为空。
+		 */
+		sessionId: uuid("session_id").references(() => sessions.id),
 		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
 		/**
 		 * 触发时选用的运行预设：ID（不是外键，预设删除后仍保留）、触发时的名称、预设参数的名单。

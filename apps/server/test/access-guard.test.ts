@@ -41,6 +41,8 @@ const RES = {
 	task: { default: id(21), alpha: id(22), mine: id(23) },
 	session: { default: id(31), alpha: id(32) },
 };
+/** 会话令牌所属的会话。 */
+const MY_SESSION = id(41);
 
 const user = (n: number, extra: Partial<StoredUser> = {}): StoredUser => ({
 	id: id(100 + n),
@@ -112,6 +114,7 @@ describe("契约路由的访问检查", () => {
 			user: null,
 			projectId: null,
 			scopes: [...SCOPES],
+			sessionId: fields.kind === "session" ? MY_SESSION : null,
 			expiresAt: null,
 			revokedAt: null,
 			lastUsedAt: null,
@@ -410,6 +413,7 @@ describe("契约路由的访问检查", () => {
 					tokenName: "我的令牌",
 					loginId: null,
 					tokenId: expect.stringMatching(/^token-\d+$/),
+					sessionId: null,
 					adminActionId: null,
 					project: DEFAULT,
 					role: "editor",
@@ -488,20 +492,144 @@ describe("契约路由的访问检查", () => {
 			}
 		});
 
-		it("会话令牌：读照常按范围，写在 #495 接进来之前一律 403", async () => {
-			const session = token({
-				kind: "session",
-				user: USERS.editor,
-				projectId: DEFAULT,
-				name: "会话",
+		describe("会话令牌（#547）：范围取交集，发布和管理不放，删除和归档不放，取消只限自己触发的运行", () => {
+			// 签发时给的范围：读、运行、编辑、会话构建（ADR 0029 范围表的会话令牌一列）。
+			const GRANTED = ["read", "run", "edit", "session_build"];
+			const session = (who: StoredUser, extra: Partial<StoredToken> = {}) =>
+				token({
+					kind: "session",
+					user: who,
+					projectId: DEFAULT,
+					name: "会话：改场景",
+					scopes: GRANTED,
+					sessionId: MY_SESSION,
+					...extra,
+				});
+
+			it("读、触发运行、新建和保存场景（编辑）放行；限定在一个项目里，也和发起人此刻的角色取交集", async () => {
+				const mine = session(USERS.editor);
+				for (const key of [
+					"GET /orchestrations",
+					"POST /orchestrations/:id/runs",
+					"POST /orchestrations",
+					"POST /orchestrations/:id/versions",
+					"POST /orchestrations/:id/versions/:number/restore",
+				]) {
+					expect(outcome(await run(route(key), mine)), key).toBe("ok");
+				}
+				// 别的项目：不是令牌限定的项目，404（读和写一样）。
+				expect(outcome(await run(route("POST /orchestrations/:id/runs"), mine, "alpha"))).toBe(404);
+				// 发起人不是这个项目的成员：404。
+				const stranger = session(USERS.stranger);
+				expect(outcome(await run(route("GET /orchestrations"), stranger))).toBe(404);
+				expect(outcome(await run(route("POST /orchestrations/:id/runs"), stranger))).toBe(404);
 			});
-			expect(outcome(await run(route("GET /orchestrations"), session))).toBe("ok");
-			expect(outcome(await run(route("POST /orchestrations/:id/runs"), session))).toBe(403);
-			expect(outcome(await run(route("POST /orchestrations"), session))).toBe(403);
-			// 会话限定在一个项目里，也和发起人此刻的角色取交集。
-			expect(outcome(await run(route("GET /orchestrations"), session, "alpha"))).toBe("ok");
-			const stranger = token({ kind: "session", user: USERS.stranger, projectId: DEFAULT });
-			expect(outcome(await run(route("GET /orchestrations"), stranger))).toBe(404);
+
+			it("发布和管理：缺少范围，403，说明缺哪个；令牌行里写了这两个范围也不认（会话令牌的上限是读、运行、编辑、会话构建）", async () => {
+				// 发起人是项目管理员（有「发布」「管理」），令牌行里还写了这两个范围：仍然拿不到。
+				const generous = session(USERS.boss, { scopes: [...SCOPES] });
+				expect(await run(route("POST /packages"), generous)).toMatchObject({
+					ok: false,
+					status: 403,
+					message: expect.stringContaining("缺少「发布」范围"),
+				});
+				expect(await run(route("POST /feishu-bots"), generous)).toMatchObject({
+					ok: false,
+					status: 403,
+					message: expect.stringContaining("缺少「管理」范围"),
+				});
+				// 同一个发起人用个人令牌：放行（说明挡住会话令牌的不是角色）。
+				expect(outcome(await run(route("POST /feishu-bots"), personal(USERS.boss)))).toBe("ok");
+				expect(
+					outcome(await run(route("POST /packages"), personal(USERS.boss))),
+				).toBe("ok");
+			});
+
+			it("声明了 removes 的接口（删除、归档）：一律 403，说明是会话令牌不能删除或归档；同一个发起人的个人令牌可以", async () => {
+				const mine = session(USERS.editor);
+				const removing = httpContract.filter(
+					(def) => def.removes === true && locatorOf(def)?.from !== "account",
+				);
+				expect(removing.map(routeKey)).toEqual(
+					expect.arrayContaining([
+						"POST /orchestrations/:id/archive",
+						"DELETE /orchestrations/:id/presets/:presetId",
+						"DELETE /feishu-bots/:name",
+					]),
+				);
+				for (const def of removing) {
+					expect(outcome(await run(def, mine)), routeKey(def)).toBe(403);
+				}
+				// 范围够的（编辑）才走到这一条：说明写的是它自己的原因，不是缺范围。
+				for (const key of [
+					"POST /orchestrations/:id/archive",
+					"DELETE /orchestrations/:id/presets/:presetId",
+				]) {
+					expect(await run(route(key), mine), key).toMatchObject({
+						ok: false,
+						status: 403,
+						message: expect.stringContaining("会话令牌不能删除或归档"),
+					});
+					expect(outcome(await run(route(key), personal(USERS.editor))), `个人令牌 ${key}`).toBe(
+						"ok",
+					);
+				}
+			});
+
+			it("取消运行：只放行这个会话自己触发的；别的会话、人触发的是 403；运行不存在或在别的项目里是 404", async () => {
+				const cancel = route("POST /runs/:id/cancel");
+				const mine = session(USERS.editor);
+				const ownRun = RES.run.default;
+				store.runSessions.set(ownRun, MY_SESSION);
+				expect(outcome(await run(cancel, mine))).toBe("ok");
+				// 别的会话触发的、人触发的（没有会话）：403，说明只能取消自己这个会话触发的。
+				for (const owner of ["session-other", null]) {
+					store.runSessions.set(ownRun, owner);
+					expect(await run(cancel, mine), String(owner)).toMatchObject({
+						ok: false,
+						status: 403,
+						message: expect.stringContaining("只能取消这个会话自己触发的运行"),
+					});
+				}
+				// 同一个发起人的个人令牌不受这条限制。
+				expect(outcome(await run(cancel, personal(USERS.editor)))).toBe("ok");
+				// 别的项目的运行：令牌限定的项目对不上，404，和这条规则无关。
+				expect(outcome(await run(cancel, mine, "alpha"))).toBe(404);
+			});
+
+			it("发起人被降成只读：写立即 403，读照旧；移出项目：404；停用：401", async () => {
+				const mine = session(USERS.editor);
+				expect(outcome(await run(route("POST /orchestrations/:id/runs"), mine))).toBe("ok");
+				store.setRole("default", USERS.editor, "read_only");
+				expect(outcome(await run(route("POST /orchestrations/:id/runs"), mine))).toBe(403);
+				expect(outcome(await run(route("POST /orchestrations"), mine))).toBe(403);
+				expect(outcome(await run(route("GET /orchestrations"), mine))).toBe("ok");
+				store.setRole("default", USERS.editor, undefined);
+				expect(outcome(await run(route("GET /orchestrations"), mine))).toBe(404);
+			});
+
+			it("放行时带出会话的 ID（运行和版本记着它）；个人令牌、登录没有", async () => {
+				const mine = await run(route("POST /orchestrations/:id/runs"), session(USERS.editor));
+				expect(mine).toMatchObject({
+					ok: true,
+					access: { credential: "session", sessionId: MY_SESSION, userId: USERS.editor.id },
+				});
+				const other = await run(route("POST /orchestrations/:id/runs"), personal(USERS.editor));
+				expect(other).toMatchObject({ ok: true, access: { credential: "personal", sessionId: null } });
+				const cookie = await run(route("POST /orchestrations/:id/runs"), login(USERS.editor));
+				expect(cookie).toMatchObject({ ok: true, access: { credential: "login", sessionId: null } });
+			});
+
+			it("会话令牌没有会话（库里这一行坏了）：401，不当作没有会话的凭据放行", async () => {
+				const broken = token({
+					kind: "session",
+					user: USERS.editor,
+					projectId: DEFAULT,
+					scopes: GRANTED,
+					sessionId: null,
+				});
+				expect(outcome(await run(route("GET /orchestrations"), broken))).toBe(401);
+			});
 		});
 
 		it("会话令牌对会话只有读（ADR 0027）：建会话、发话、停止是 403，读照常；这条规则不靠「写一律 403」的临时总闸", async () => {
