@@ -60,8 +60,8 @@ def start_process(
         log_file = os.path.abspath(ctx.procs_dir / f"{ctx.task.node_id}.log")
     try:
         started = start_background_process(
-            ctx, command, shell=shell, env=env, cwd=cwd, log_file=log_file
+            ctx, command, shell=shell, env=env, cwd=cwd, log_path=log_file
         )
     except _StartFailed as error:
         raise StartFailed(*error.args) from None
-    return {"pid": started.pid, "log_file": str(started.log_file)}
+    return {"pid": started.pid, "log_file": str(started.log_path)}

@@ -48,10 +48,12 @@ def test_pull_files_from_agent_returns_the_local_paths_and_the_sizes(
     local = tmp_path / "pulled"
 
     # 本地目录可以是 Path；返回的文件也是 Path（不截断：节点自己限制输出里列出的个数）。
-    result = pull_files_from_agent(run.ctx, SOURCE, LOGS, local, pattern="app.log.*")
+    result = pull_files_from_agent(
+        run.ctx, SOURCE, directory=LOGS, local_dir=local, pattern="app.log.*"
+    )
 
     assert result == PullResult(
-        files=(local / "app.log.1", local / "app.log.2"), count=2, total_bytes=13
+        paths=(local / "app.log.1", local / "app.log.2"), count=2, total_bytes=13
     )
     assert (local / "app.log.2").read_bytes() == b"second\n"
 
@@ -63,7 +65,7 @@ def test_pull_files_from_agent_can_delete_what_it_pulled_from_the_source(
     run = DirectRun(tmp_path / "run")
 
     result = pull_files_from_agent(
-        run.ctx, SOURCE, LOGS, str(tmp_path / "pulled"), delete_source=True
+        run.ctx, SOURCE, directory=LOGS, local_dir=str(tmp_path / "pulled"), delete_source=True
     )
 
     assert result.count == 1
@@ -76,9 +78,11 @@ def test_pull_files_from_agent_needs_a_local_directory_and_an_existing_source_di
     run = DirectRun(tmp_path / "run")
 
     with pytest.raises(ValueError, match="local_dir 不能为空"):
-        pull_files_from_agent(run.ctx, SOURCE, LOGS, "")
+        pull_files_from_agent(run.ctx, SOURCE, directory=LOGS, local_dir="")
     with pytest.raises(Exception, match="/nope"):
-        pull_files_from_agent(run.ctx, SOURCE, "/nope", str(tmp_path / "pulled"))
+        pull_files_from_agent(
+            run.ctx, SOURCE, directory="/nope", local_dir=str(tmp_path / "pulled")
+        )
 
 
 @pytest.mark.skipif(
@@ -101,7 +105,13 @@ def test_watch_agent_files_pulls_files_that_appear_once_each_until_duration(
     try:
         # stable：文件刚创建、内容还没写完时不拉（平台不判断文件是否写完）。
         result = watch_agent_files(
-            run.ctx, SOURCE, LOGS, str(local), pattern="app.log.*", stable=0.3, duration=4
+            run.ctx,
+            SOURCE,
+            directory=LOGS,
+            local_dir=str(local),
+            pattern="app.log.*",
+            stable=0.3,
+            duration=4,
         )
     finally:
         writer.join()
@@ -117,8 +127,20 @@ def test_watch_agent_files_rejects_a_bad_stable_or_duration_before_connecting(
     run = DirectRun(tmp_path / "run")
 
     with pytest.raises(ValueError):
-        watch_agent_files(run.ctx, SOURCE, LOGS, str(tmp_path / "p"), stable=-1)
+        watch_agent_files(run.ctx, SOURCE, directory=LOGS, local_dir=str(tmp_path / "p"), stable=-1)
     with pytest.raises(ValueError):
-        watch_agent_files(run.ctx, SOURCE, LOGS, str(tmp_path / "p"), duration=0)
+        watch_agent_files(
+            run.ctx, SOURCE, directory=LOGS, local_dir=str(tmp_path / "p"), duration=0
+        )
     with pytest.raises(ValueError, match="local_dir 不能为空"):
-        watch_agent_files(run.ctx, SOURCE, LOGS, "")
+        watch_agent_files(run.ctx, SOURCE, directory=LOGS, local_dir="")
+
+
+def test_directory_and_local_dir_can_only_be_given_by_keyword(tmp_path: Path, source: Path) -> None:
+    # 两个路径连着写，写反了看不出来：只能按关键字传。
+    run = DirectRun(tmp_path / "run")
+
+    with pytest.raises(TypeError):
+        pull_files_from_agent(run.ctx, SOURCE, LOGS, str(tmp_path / "pulled"))  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        watch_agent_files(run.ctx, SOURCE, LOGS, str(tmp_path / "pulled"))  # type: ignore[call-arg]

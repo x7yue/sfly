@@ -166,6 +166,7 @@ def wait_for_file(
     超时时抛出 `TimeoutError`，信息写明当时的情况：「文件不存在」「路径存在但不是文件」或
     「文件仍在变化」；`stable` 为负数时抛出 `ValueError`。
     """
+    _params.seconds("stable", stable)
     if stable < 0:
         raise ValueError(f"stable 不能为负数，实际为 {stable:g}")
     # 上一次看到的 (大小, 修改时间) 和从什么时候起没再变过。

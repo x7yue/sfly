@@ -54,8 +54,8 @@ class LogFile:
 
     `lines()` 返回上次调用以来新增的完整行（不含换行符，按 UTF-8 解码，无法解码的字节替换为 �）。
     `read_from` 为 `"end"`（默认）时只读创建时之后新写入的内容，为 `"start"` 时从文件开头读起；
-    创建时文件不存在的，出现后的内容都算新的。最后一行还没写完（没有换行符）时留到下次；
-    `flush()` 返回这样留下的半行。
+    创建时文件不存在的，出现后的内容都算新的；`read_from` 写成别的值时抛出 `ValueError`。最后一行
+    还没写完（没有换行符）时留到下次；`flush()` 返回这样留下的半行。
     """
 
     #: 读的日志文件（参数 `path` 的写法，不转成绝对路径）。
@@ -64,6 +64,7 @@ class LogFile:
     def __init__(
         self, path: str | os.PathLike[str], *, read_from: Literal["end", "start"] = "end"
     ) -> None:
+        _params.choice("read_from", read_from, ("end", "start"))
         self.path = Path(path)
         self._file: BinaryIO | None = None
         self._ident: tuple[int, int] | None = None
@@ -179,7 +180,8 @@ def follow_log_file(
     行写到执行器自己的标准输出（Agent 实时转为任务日志）。`read_from` 为 `"end"` 时从调用时的文件
     末尾开始，`"start"` 时先转发文件里已有的内容；文件还不存在时等它出现，被轮转或截断时继续跟随
     新的内容。`fail_on` 是正则表达式列表（`re.search`）：有一行匹配其中任意一个时抛出
-    `FailOnMatched`，信息附上第一行匹配的内容和匹配的正则；不合法的正则抛出 `ValueError`。
+    `FailOnMatched`，信息附上第一行匹配的内容和匹配的正则；不合法的正则、`read_from` 写成别的值抛出
+    `ValueError`。
 
     `duration` 秒后成功返回；不设置时一直跟随，直到任务被取消（`sfly.Cancelled` 从 `time.sleep`
     里抛出，已转发的行都留在任务日志里）。按 `FOLLOW_METRICS` 上报指标（调用方的节点要声明它们）。
@@ -270,7 +272,7 @@ def wait_for_log_line(
     文件开头看起。文件还不存在时等它出现，被轮转或截断时继续读新的内容。
 
     `wait` 秒内没有出现时抛出 `TimeoutError`，信息写明文件、正则和等了多久，文件一直不存在时注明
-    「文件不存在」；`pattern` 不是合法的正则时抛出 `ValueError`。
+    「文件不存在」；`pattern` 不是合法的正则、`read_from` 写成别的值时抛出 `ValueError`。
     """
     _params.wait_and_poll(wait, poll)
     regex = _params.regex("pattern", pattern)

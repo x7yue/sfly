@@ -101,3 +101,14 @@ def test_wait_for_file_times_out_saying_what_it_saw(tmp_path: Path) -> None:
         wait_for_file(run.ctx, str(tmp_path), wait=0.2, poll=0.05)
     with pytest.raises(ValueError, match="stable 不能为负数"):
         wait_for_file(run.ctx, str(tmp_path), stable=-1)
+
+
+def test_seconds_parameters_reject_booleans(tmp_path: Path) -> None:
+    run = DirectRun(tmp_path)
+
+    with pytest.raises(ValueError, match="wait 是秒数，不能是布尔值"):
+        wait_for_port(run.ctx, 1, wait=True)
+    with pytest.raises(ValueError, match="poll 是秒数，不能是布尔值"):
+        poll_until(lambda: True, what="x", wait=1, poll=True)
+    with pytest.raises(ValueError, match="stable 是秒数，不能是布尔值"):
+        wait_for_file(run.ctx, tmp_path, stable=True)

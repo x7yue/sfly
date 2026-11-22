@@ -65,20 +65,29 @@ def cmdline(proc: psutil.Process) -> str:
         return ""
 
 
-def exit_code(procs_dir: str | os.PathLike[str], pid: int, wait: float) -> int | None:
-    """`start_process` 的看护进程记下的退出码；不是它启动的进程、或还没退出时为 None。
+def exit_status(
+    procs_dir: str | os.PathLike[str], pid: int, wait: float
+) -> _supervise.Status | None:
+    """`start_process` 的看护进程记下的状态；不是它启动的进程（没有记录）时为 None。
 
-    进程刚退出时看护进程可能还没写下退出码：最多等 `wait` 秒。
+    还没有退出码的（还在运行）最多等 `wait` 秒：进程刚退出时看护进程可能还没写下退出码；等不到时
+    返回最后一次读到的状态（`exit_code` 为 None）。
     """
+    last: _supervise.Status | None = None
 
-    def check() -> tuple[int | None] | None:
-        status = _supervise.read_status(procs_dir, pid)
-        if status is None or status.exit_code is not None:
-            return (status.exit_code if status is not None else None,)
-        return None
+    def check() -> tuple[None] | None:
+        nonlocal last
+        last = _supervise.read_status(procs_dir, pid)
+        return (None,) if last is None or last.exit_code is not None else None
 
     try:
-        (code,) = poll_until(check, what="退出码", wait=wait, poll=POLL_INTERVAL).value
+        poll_until(check, what="退出码", wait=wait, poll=POLL_INTERVAL)
     except TimeoutError:
-        return None
-    return code
+        pass
+    return last
+
+
+def exit_code(procs_dir: str | os.PathLike[str], pid: int, wait: float) -> int | None:
+    """看护进程记下的退出码；不是它启动的进程、或还没退出时为 None（见 `exit_status`）。"""
+    status = exit_status(procs_dir, pid, wait)
+    return status.exit_code if status is not None else None

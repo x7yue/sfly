@@ -15,11 +15,13 @@ import psutil
 import pytest
 from direct_context import DirectRun
 
+from sfly_std import processes
+from sfly_std._finder import ProcessFinder
 from sfly_std.logs import wait_for_log_line
 from sfly_std.processes import (
-    ProcessFinder,
     StartFailed,
-    background_exit_code,
+    StopFailed,
+    background_exit_status,
     find_processes,
     start_background_process,
     stop_background_process,
@@ -61,7 +63,7 @@ def test_a_background_process_outlives_the_call_and_stop_ends_its_whole_process_
 
     assert alive(started.pid)
     poll_until(
-        lambda: "已启动" in Path(started.log_file).read_text() or None,
+        lambda: "已启动" in Path(started.log_path).read_text() or None,
         what="日志里有输出",
         wait=10,
         poll=0.05,
@@ -84,7 +86,8 @@ def test_the_exit_code_of_a_process_that_ended_on_its_own_is_recorded(
     started = start_background_process(run.ctx, "exit 7")
     reap(started.pid)
 
-    assert background_exit_code(run.ctx, started.pid, wait=10) == 7
+    exited = background_exit_status(run.ctx, started.pid, wait=10)
+    assert (exited.supervised, exited.running, exited.exit_code) == (True, False, 7)
     stopped = stop_background_process(run.ctx, started.pid)
 
     assert (stopped.was_running, stopped.exit_code) == (False, 7)
@@ -107,7 +110,7 @@ def test_a_process_that_ignores_sigterm_is_killed_after_the_grace_period(
     )
     reap(started.pid)
     poll_until(
-        lambda: "就绪" in Path(started.log_file).read_text() or None,
+        lambda: "就绪" in Path(started.log_path).read_text() or None,
         what="日志里有输出",
         wait=10,
         poll=0.05,
@@ -136,12 +139,12 @@ def test_the_log_file_is_relative_to_cwd_when_given(
     work = tmp_path / "work"
     work.mkdir()
 
-    started = start_background_process(run.ctx, "echo 写进指定的日志", cwd=work, log_file="a/b.log")
+    started = start_background_process(run.ctx, "echo 写进指定的日志", cwd=work, log_path="a/b.log")
     reap(started.pid)
 
-    assert started.log_file == work / "a" / "b.log"  # 返回的是 Path
+    assert started.log_path == work / "a" / "b.log"  # 返回的是 Path
     poll_until(
-        lambda: "写进指定的日志" in Path(started.log_file).read_text() or None,
+        lambda: "写进指定的日志" in Path(started.log_path).read_text() or None,
         what="日志里有输出",
         wait=10,
         poll=0.05,
@@ -209,22 +212,22 @@ def test_a_second_process_in_the_same_node_gets_its_own_default_log_file(
     for started in (first, second, third):
         reap(started.pid)
 
-    assert [p.log_file.name for p in (first, second, third)] == [
+    assert [p.log_path.name for p in (first, second, third)] == [
         "setup.log",
         "setup-2.log",
         "setup-3.log",
     ]
-    assert all(p.log_file.parent == run.ctx.procs_dir for p in (first, second, third))
-    found = wait_for_log_line(run.ctx, second.log_file, "ready", read_from="start", wait=10)
+    assert all(p.log_path.parent == run.ctx.procs_dir for p in (first, second, third))
+    found = wait_for_log_line(run.ctx, second.log_path, "ready", read_from="start", wait=10)
     assert found.line == "B-ready"
-    assert wait_for_log_line(run.ctx, first.log_file, "ready", read_from="start", wait=10).line == (
+    assert wait_for_log_line(run.ctx, first.log_path, "ready", read_from="start", wait=10).line == (
         "A-ready"
     )
     # 自己指定日志文件时直接用它（同一个文件接着写）。
     own = tmp_path / "own.log"
-    again = start_background_process(run.ctx, "echo 又一个", log_file=own)
+    again = start_background_process(run.ctx, "echo 又一个", log_path=own)
     reap(again.pid)
-    assert again.log_file == own
+    assert again.log_path == own
 
 
 #: 忽略 SIGTERM 的服务：停它只能靠 SIGKILL。
@@ -235,7 +238,7 @@ def start_stubborn(run: DirectRun, reap: Callable[[int], int]) -> int:
     started = start_background_process(run.ctx, STUBBORN)
     reap(started.pid)
     poll_until(
-        lambda: "就绪" in started.log_file.read_text() or None,
+        lambda: "就绪" in started.log_path.read_text() or None,
         what="日志里有输出",
         wait=10,
         poll=0.05,
@@ -313,3 +316,58 @@ def test_find_processes_includes_children_by_default_like_the_finder_and_the_mon
 
     assert only_matched == {parent.pid}
     assert by_default == by_finder == {parent.pid} | children
+
+
+def test_background_exit_status_tells_a_process_that_is_not_ours_from_one_still_running(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    # 以前返回 `int | None`：None 混了「还在运行」和「不是后台进程启动的，查不到」。
+    run = DirectRun(tmp_path)
+    started = start_background_process(run.ctx, "sleep 60")
+    reap(started.pid)
+
+    running = background_exit_status(run.ctx, started.pid, wait=0.3)
+    stranger = background_exit_status(run.ctx, os.getpid(), wait=0)
+    stop_background_process(run.ctx, started.pid, grace=2)
+    exited = background_exit_status(run.ctx, started.pid, wait=5)
+
+    assert (running.supervised, running.running, running.exit_code) == (True, True, None)
+    assert (stranger.supervised, stranger.running, stranger.exit_code) == (False, False, None)
+    assert (exited.supervised, exited.running, exited.exit_code) == (True, False, 143)
+
+
+def test_seconds_parameters_reject_booleans(tmp_path: Path) -> None:
+    # `True` 是 1：`grace=True` 之类不报错，会被当成 1 秒。
+    run = DirectRun(tmp_path)
+
+    with pytest.raises(ValueError, match="grace 是秒数，不能是布尔值"):
+        stop_background_process(run.ctx, 1, grace=True)
+    with pytest.raises(ValueError, match="wait 是秒数，不能是布尔值"):
+        background_exit_status(run.ctx, 1, wait=True)
+
+
+@pytest.mark.parametrize(("cancelled", "expected"), [(False, 5), (True, 2)])
+def test_the_wait_after_sigkill_is_shorter_once_the_task_is_cancelled(
+    tmp_path: Path,
+    reap: Callable[[int], int],
+    monkeypatch: pytest.MonkeyPatch,
+    cancelled: bool,
+    expected: int,
+) -> None:
+    # 卡在不可中断的磁盘读写里的进程造不出来：用桩让「等进程消失」总是等不到，看等了多久。
+    run = DirectRun(tmp_path)
+    pid = start_stubborn(run, reap)
+    if cancelled:
+        run.cancel()
+    waits: list[float] = []
+
+    def never_gone(targets: Callable[[], list[int]], timeout: float) -> bool:
+        waits.append(timeout)
+        return False
+
+    monkeypatch.setattr(processes, "_wait_gone", never_gone)
+
+    with pytest.raises(StopFailed, match=f"发送 SIGKILL 后 {expected} 秒"):
+        stop_background_process(run.ctx, pid, grace=0.2)
+
+    assert waits == [0.2, expected]

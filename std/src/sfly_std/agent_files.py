@@ -38,7 +38,7 @@ from sfly import (
     Metric,
     WatchSnapshot,
 )
-from sfly_std import _pull
+from sfly_std import _params, _pull
 from sfly_std._sampling import validate_duration
 
 __all__ = [
@@ -63,7 +63,7 @@ class PullResult:
     """`pull_files_from_agent` 的结果。"""
 
     #: 拉下来的文件的本地绝对路径，按拉取的顺序。
-    files: tuple[Path, ...]
+    paths: tuple[Path, ...]
     #: 拉下来的文件数。
     count: int
     #: 拉下来的文件的总字节数。
@@ -73,16 +73,17 @@ class PullResult:
 def pull_files_from_agent(
     ctx: Context,
     source: str,
+    *,
     directory: str | os.PathLike[str],
     local_dir: str | os.PathLike[str],
-    *,
     pattern: str = "*",
     recursive: bool = False,
     delete_source: bool = False,
 ) -> PullResult:
     """把另一台 Agent 上某个目录下匹配通配符的文件一次性拉到本地目录，可以拉完后删除源文件。
 
-    `source` 是来源 Agent 的名称（「Agent」类型的参数的值），`directory` 是它所在机器上的目录
+    `source` 是来源 Agent 的名称（「Agent」类型的参数的值），`directory`、`local_dir` 只能按关键字
+    传（两个路径连着写，写反了看不出来）；`directory` 是它所在机器上的目录
     （绝对路径），`local_dir` 是拉到哪个本地目录（执行节点的 Agent 所在机器上，相对路径相对于任务
     工作目录，不存在时自动创建；同名的已有文件被替换）。`pattern` 只匹配文件名（不含目录），
     `recursive` 时也拉子目录里匹配的文件，并在 `local_dir` 下保留子目录结构。每个文件先写到临时
@@ -129,7 +130,7 @@ def pull_files_from_agent(
         if delete_source and _pull.delete_pulled(agent, got) == "changed":
             ctx.log.warning("%s 在下载之后被改动或替换，没有删除", file.path)
     ctx.log.info("拉取了 %d 个文件，共 %d 字节", len(pulled), done)
-    return PullResult(files=tuple(pulled), count=len(pulled), total_bytes=done)
+    return PullResult(paths=tuple(pulled), count=len(pulled), total_bytes=done)
 
 
 #: `watch_agent_files` 上报的指标：自己的节点用 `@node(metrics=WATCH_METRICS,
@@ -163,9 +164,9 @@ class WatchResult:
 def watch_agent_files(
     ctx: Context,
     source: str,
+    *,
     directory: str | os.PathLike[str],
     local_dir: str | os.PathLike[str],
-    *,
     pattern: str = "*",
     stable: float = 0,
     delete_source: bool = False,
@@ -173,10 +174,11 @@ def watch_agent_files(
 ) -> WatchResult:
     """持续监听另一台 Agent 上的一个目录，把匹配通配符的文件拉到本地目录，每个文件只拉一次。
 
-    启动时已有的和之后出现的文件都拉；`directory` 不含子目录。`stable`：文件至少这么多秒没有修改
-    才拉（为 0，默认，时一出现就拉；和 `wait_for_file` 的 `stable` 是同一个意思）。
-    平台不判断文件是否写完，按被测系统怎样轮转日志来选
-    `pattern` 和 `stable`。`delete_source` 时每拉完一个文件就删除来源上的源文件，只删拉成功的。
+    `directory`、`local_dir` 只能按关键字传，含义同 `pull_files_from_agent`。启动时已有的和之后
+    出现的文件都拉；`directory` 不含子目录。`stable`：文件至少这么多秒没有修改才拉（为 0，默认，
+    时一出现就拉；和 `wait_for_file` 的 `stable` 是同一个意思）。平台不判断文件是否写完，按被测
+    系统怎样轮转日志来选 `pattern` 和 `stable`。`delete_source` 时每拉完一个文件就删除来源上的
+    源文件，只删拉成功的。
 
     `duration` 秒后成功返回；不设置时一直运行，直到任务被取消（已经拉完的文件保留）。按
     `WATCH_METRICS` 上报指标。
@@ -187,6 +189,7 @@ def watch_agent_files(
     """
     if not os.fspath(local_dir):
         raise ValueError("local_dir 不能为空")
+    _params.seconds("stable", stable)
     if stable < 0:
         raise ValueError(f"stable 不能小于 0，实际为 {stable:g}")
     validate_duration(duration)

@@ -79,6 +79,6 @@ def shell(
         "exit_code": result.exit_code,
         "stdout": result.stdout,
         "stderr": result.stderr,
-        "stdout_file": result.stdout_file,
-        "stderr_file": result.stderr_file,
+        "stdout_file": result.stdout_ref,
+        "stderr_file": result.stderr_ref,
     }

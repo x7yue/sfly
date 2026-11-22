@@ -406,3 +406,66 @@ def test_the_unit_test_snippet_in_the_documentation_builds_a_working_context(
     result = run_command(ctx, "echo 你好", save_output=True)
     assert result.stdout == "你好\n"
     assert (tmp_path / "artifacts" / "stdout.txt").read_text() == "你好\n"
+
+
+MEMBERS = """
+class sfly_std.a.Reader
+  attribute path: Path
+  method __init__(pos path: str ; kw read_from: str = 'end') -> None
+  method lines(-) -> Iterator[str]
+dataclass sfly_std.a.Shown frozen
+  field name: str
+  property label -> str
+constant sfly_std.a.UNITS = tuple
+  metric speed kind=gauge unit='B/s' labels=()
+"""
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        (
+            "  method lines(-) -> Iterator[str]\n",
+            "  method lines(-) -> Iterator[str]\n  method size(-) -> int\n",
+        ),  # 加方法
+        (
+            "kw read_from: str = 'end') -> None",
+            "kw read_from: str = 'end' ; kw strict: bool = False) -> None",
+        ),  # 构造函数末尾加带默认值的关键字参数
+        ("  attribute path: Path\n", "  attribute path: Path\n  attribute mode: str\n"),  # 加属性
+        ("  property label -> str\n", "  property label -> str\n  property short -> str\n"),
+    ],
+)
+def test_a_class_can_gain_methods_attributes_and_defaulted_constructor_arguments(
+    changed: str, expected: str
+) -> None:
+    diff = compare(snapshot_of(MEMBERS), snapshot_of(MEMBERS.replace(changed, expected)))
+
+    assert diff.breaking == [], diff.breaking
+    assert diff.added, "兼容的新增要记进快照"
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ("  method lines(-) -> Iterator[str]\n", ""),  # 删方法
+        ("method lines(-) -> Iterator[str]", "method lines(-) -> list[str]"),  # 改返回值类型
+        ("kw read_from: str = 'end'", "kw mode: str = 'end'"),  # 构造函数的参数改名
+        ("kw read_from: str = 'end'", "kw read_from: str"),  # 默认值没了
+        (
+            "kw read_from: str = 'end') -> None",
+            "kw read_from: str = 'end' ; kw strict: bool) -> None",
+        ),  # 新增的参数没有默认值
+        ("  attribute path: Path\n", "  attribute path: str\n"),  # 属性的类型变了
+        ("  property label -> str\n", "  property label -> int\n"),
+        ("unit='B/s'", "unit='MB/s'"),  # 常量里指标的单位变了
+    ],
+)
+def test_a_class_member_or_metric_unit_change_that_breaks_users_is_flagged(
+    changed: str, expected: str
+) -> None:
+    assert changed in MEMBERS, changed
+
+    diff = compare(snapshot_of(MEMBERS), snapshot_of(MEMBERS.replace(changed, expected)))
+
+    assert diff.breaking, f"{changed!r} → {expected!r} 违反兼容性承诺，却没有被发现"

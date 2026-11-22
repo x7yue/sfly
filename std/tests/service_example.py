@@ -39,7 +39,7 @@ def service_check(
     service = start_background_process(ctx, command)
     try:
         try:
-            wait_for_log_line(ctx, service.log_file, ready_line, read_from="start", wait=60)
+            wait_for_log_line(ctx, service.log_path, ready_line, read_from="start", wait=60)
             wait_for_port(ctx, port, wait=10)
             monitor = monitor_processes(ctx, pid=service.pid, duration=observe)
         finally:
@@ -48,5 +48,5 @@ def service_check(
             stopped = stop_background_process(ctx, service.pid)
     finally:
         # 服务停掉之后再存：日志里有它停止时的输出；节点失败时（最需要日志的时候）也存。
-        log = ctx.artifacts.save("service.log", service.log_file)
+        log = ctx.artifacts.save("service.log", service.log_path)
     return {"samples": monitor.samples, "log": log, "exit_code": stopped.exit_code}
