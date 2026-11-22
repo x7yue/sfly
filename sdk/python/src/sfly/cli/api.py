@@ -408,7 +408,7 @@ def _upload_unsupported(route: Route) -> CliError:
     return CliError(
         "upload_unsupported",
         f"{route.method} {route.path} 的请求体是原始字节，sfly api 不支持上传",
-        next="sfly publish <节点包文件或项目目录>" if publish else None,
+        next="sfly publish <节点包文件或节点包目录>" if publish else None,
     )
 
 
