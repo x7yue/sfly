@@ -3,8 +3,10 @@
 import {
 	existsSync,
 	mkdirSync,
+	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -14,6 +16,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { piPackage } from "../src/launch.js";
 import { skillFiles } from "../src/skills.js";
+import { eventually } from "./support/eventually.js";
 import { Harness, skillsDir } from "./support/harness.js";
 
 describe("真的 pi：四个工具经扩展落到工作台上", () => {
@@ -139,8 +142,10 @@ describe("真的 pi：只加载给的扩展，系统提示里只有给的东西"
 			plant(join(h.root, "config"));
 			plant(h.dataDir);
 			plant(join(h.dataDir, "agents", "old-session"));
-			plant(join(h.dataDir, "cwd"));
-			plant(join(h.dataDir, "cwd", ".pi"));
+			// pi 的工作目录就是工作区（两边路径相同），和它的上级目录。
+			plant(h.workdir);
+			plant(join(h.workdir, ".pi"));
+			plant(join(h.workdir, ".."));
 			const id = crypto.randomUUID();
 			await h.prompt(id, { text: "你好" });
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed" });
@@ -149,6 +154,67 @@ describe("真的 pi：只加载给的扩展，系统提示里只有给的东西"
 			expect(prompt.startsWith("You are")).toBe(true);
 		} finally {
 			await h.close();
+		}
+	}, 120_000);
+});
+
+describe("真的 pi：设置目录里没有 SYSTEM.md 时（默认系统提示，助手服务走的路径）", () => {
+	it("默认位置的 AGENTS.md、CLAUDE.md、skill、提示模板都不进系统提示，给的 skill 和平台说明在", async () => {
+		const planted = realpathSync(mkdtempSync(join(tmpdir(), "sfly-planted-")));
+		const skill = (dir: string, name: string) => {
+			mkdirSync(join(dir, name), { recursive: true });
+			writeFileSync(
+				join(dir, name, "SKILL.md"),
+				`---\nname: ${name}\ndescription: PLANTED-SKILL-${name}\n---\n\nPLANTED-SKILL-${name}\n`,
+			);
+		};
+		const template = (dir: string, name: string) => {
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, `${name}.md`), `---\ndescription: PLANTED-TPL-${name}\n---\nx\n`);
+		};
+		// 设置目录（每次启动新建，只能在拉起时放）：AGENTS.md、skill、提示模板、设置文件里配置的 skill 和模板，
+		// 以及 HOME 下的 ~/.agents/skills（HOME 就是设置目录）。不放 SYSTEM.md。
+		skill(join(planted, "configured", "skills"), "configured");
+		template(join(planted, "configured", "prompts"), "configured");
+		const wrapper = join(planted, "pi.sh");
+		writeFileSync(
+			wrapper,
+			[
+				"#!/bin/sh",
+				'd="$PI_CODING_AGENT_DIR"',
+				'echo PLANTED-AGENT-DIR-AGENTS > "$d/AGENTS.md"',
+				'mkdir -p "$d/skills/agent-dir" "$d/prompts" "$HOME/.agents/skills/home"',
+				`printf -- '---\nname: agent-dir\ndescription: PLANTED-SKILL-agent-dir\n---\nx\n' > "$d/skills/agent-dir/SKILL.md"`,
+				`printf -- '---\nname: home\ndescription: PLANTED-SKILL-home\n---\nx\n' > "$HOME/.agents/skills/home/SKILL.md"`,
+				`printf -- '---\ndescription: PLANTED-TPL-agent-dir\n---\nx\n' > "$d/prompts/agent-dir.md"`,
+				`printf '%s' ${JSON.stringify(JSON.stringify({ skills: [join(planted, "configured", "skills")], prompts: [join(planted, "configured", "prompts")] }))} > "$d/settings.json"`,
+				`exec ${JSON.stringify(process.execPath)} ${JSON.stringify(piPackage().cli)} "$@"`,
+				"",
+			].join("\n"),
+			{ mode: 0o755 },
+		);
+		const h = await Harness.start({ piArgv: [wrapper] });
+		try {
+			// 工作区（pi 的工作目录）和它的上级目录：上下文文件、项目的 skill 和提示模板。
+			writeFileSync(join(h.workdir, "AGENTS.md"), "PLANTED-WORKDIR-AGENTS\n");
+			writeFileSync(join(h.workdir, "..", "CLAUDE.md"), "PLANTED-PARENT-CLAUDE\n");
+			skill(join(h.workdir, ".pi", "skills"), "project");
+			skill(join(h.workdir, "..", ".agents", "skills"), "parent");
+			skill(join(h.workdir, ".agents", "skills"), "stale");
+			template(join(h.workdir, ".pi", "prompts"), "project");
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "你好" });
+			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed" });
+			const prompt = h.model.systemPrompt(0);
+			expect(prompt.startsWith("You are")).toBe(true);
+			expect(prompt.match(/PLANTED-[\w-]+/g) ?? []).toEqual([]);
+			expect(prompt).toContain("平台说明");
+			for (const name of readdirSync(skillsDir)) expect(prompt).toContain(`<name>${name}</name>`);
+			// 工作区里原来的 .agents/skills 被换成镜像里的那份（不留镜像之外的东西）。
+			expect(existsSync(join(h.workdir, ".agents", "skills", "stale"))).toBe(false);
+		} finally {
+			await h.close();
+			rmSync(planted, { recursive: true, force: true });
 		}
 	}, 120_000);
 });
@@ -163,7 +229,7 @@ describe("真的 pi：工作台返回的内容带不偏扩展（要求 2）", ()
 			const id = crypto.randomUUID();
 			const targets = [
 				join(h.dataDir, "sessions", other, "events.jsonl"),
-				join(h.dataDir, "cwd", "evil.txt"),
+				join(h.dataDir, "evil.txt"),
 				join(h.dataDir, "agents", "x", "extensions", "evil.mjs"),
 				join(h.root, "config", "models.json"),
 			];
@@ -209,6 +275,95 @@ function snapshot(root: string, skip: string[]): Record<string, string> {
 	walk(root);
 	return files;
 }
+
+describe("真的 pi：一轮进行中被结束，工作台上的命令不留下，会话接着说", () => {
+	/** 剧本：在工作台上起一个长命令，它把自己的进程号写进文件（`exec` 之后还是同一个进程）。 */
+	const longCommand = (h: Harness, key: string) => {
+		h.model.scripts.set(key, [
+			{ tool: "bash", args: { command: "echo $$ > running.pid; exec sleep 60", timeout: 120 } },
+			{ text: "接着说完了。" },
+		]);
+	};
+	const alive = (pid: number) => {
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	/** 等工作台上的命令起来，返回它的进程号（断言结束之前它确实在跑）。 */
+	const running = async (h: Harness): Promise<number> => {
+		let pid = 0;
+		await eventually(() => {
+			pid = Number(readFileSync(join(h.workdir, "running.pid"), "utf8"));
+			expect(pid).toBeGreaterThan(0);
+		}, 30_000);
+		expect(alive(pid)).toBe(true);
+		return pid;
+	};
+	/** 下一轮发给模型的请求：前一轮的话、带工具调用的助手消息、工具结果、这一句；没有内容为空的助手消息。 */
+	const expectResumed = (h: Harness, previous: string, before: number) => {
+		const request = h.model.requests.slice(before).at(0);
+		const messages = request?.messages ?? [];
+		const roles = messages.map((m) => m.role);
+		expect(roles).toEqual(["system", "user", "assistant", "tool", "user"]);
+		const text = (c: unknown) =>
+			typeof c === "string" ? c : Array.isArray(c) ? c.map((p) => p?.text ?? "").join("") : "";
+		expect(text(messages[1]?.content)).toBe(previous);
+		expect(messages[2]?.tool_calls).toBeDefined();
+		expect(text(messages[4]?.content)).toBe("接着说");
+		const empty = messages.filter(
+			(m) => m.role === "assistant" && !text(m.content) && !m.tool_calls,
+		);
+		expect(empty).toEqual([]);
+	};
+
+	it("停止（先关 stdin，再 SIGTERM）：命令结束之前在跑、之后不在了；下一轮发给模型的请求里没有空的助手消息", async () => {
+		const h = await Harness.start();
+		try {
+			longCommand(h, "剧本：长命令");
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "剧本：长命令" });
+			const pid = await running(h);
+			expect((await h.abort(id)).status).toBe(202);
+			expect(await h.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+			await eventually(() => expect(alive(pid)).toBe(false), 10_000);
+			const before = h.model.requests.length;
+			await h.prompt(id, { turn: 2, text: "接着说" });
+			expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+			expectResumed(h, "剧本：长命令", before);
+		} finally {
+			await h.close();
+		}
+	}, 120_000);
+
+	it("stdin 开着、pi 只收到 SIGTERM：这一轮以 interrupted 结束，命令不留下，会话文件完整，下一轮照常", async () => {
+		const h = await Harness.start();
+		try {
+			longCommand(h, "剧本：只发信号");
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "剧本：只发信号" });
+			const pid = await running(h);
+			const pi = h.sessions.pid(id);
+			expect(pi).toBeDefined();
+			process.kill(pi as number, "SIGTERM");
+			expect(await h.turnEnd(id)).toMatchObject({ outcome: "interrupted" });
+			await eventually(() => expect(alive(pid)).toBe(false), 10_000);
+			const sessionDir = join(h.dataDir, "sessions", id, "pi-session");
+			for (const file of readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"))) {
+				const lines = readFileSync(join(sessionDir, file), "utf8").trimEnd().split("\n");
+				expect(() => JSON.parse(lines.at(-1) ?? "")).not.toThrow();
+			}
+			const before = h.model.requests.length;
+			await h.prompt(id, { turn: 2, text: "接着说" });
+			expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+			expectResumed(h, "剧本：只发信号", before);
+		} finally {
+			await h.close();
+		}
+	}, 120_000);
+});
 
 describe("真的 pi：保密环境变量不出助手服务", () => {
 	it("工作台上的命令打印出 secret_env 的值：发出的所有事件、pi 原始事件、助手服务的日志里都没有它", async () => {

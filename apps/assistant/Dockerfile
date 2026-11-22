@@ -20,6 +20,9 @@ ENV NODE_ENV=production \
 # 程序文件归 root 所有，运行用户只读。
 COPY . /app/
 
+# 工作区在助手容器里的同名目录（两边路径相同）：空的，助手服务用户可写；pi 在这里运行，只放助手服务复制的 skill。
+RUN mkdir /work && chown node:node /work
+
 # 数据目录（每个会话一个目录、pi 的设置目录）在 USER 之后创建，归 node 用户所有；命名卷首次挂载时沿用这个属主。
 USER node
 WORKDIR /data

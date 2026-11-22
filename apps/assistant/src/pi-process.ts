@@ -11,8 +11,10 @@ import { LineSplitter } from "./jsonl.js";
  * 结束的两种做法（#539 第 8 题）：
  * - {@link PiProcess.close}：关 stdin，pi 有序退出。**只在空闲时用**：一轮进行中关 stdin，pi 不等这一轮做完，
  *   正在跑的命令被中止；
- * - {@link PiProcess.terminate}：先 SIGTERM，{@link KILL_GRACE_MS} 之后还没退出就 SIGKILL（pi「Shutdown」：
- *   第二个信号立即退出）。到了上限、停止、会话结束用它。
+ * - {@link PiProcess.terminate}：先关 stdin，再 SIGTERM，{@link KILL_GRACE_MS} 之后还没退出就 SIGKILL（pi
+ *   「Shutdown」：第二个信号立即退出）。到了上限、停止、会话结束用它。#539 第 8 题实测：一轮进行中关 stdin、
+ *   关 stdin 同时 SIGTERM、stdin 开着只发 SIGTERM，pi 都中止正在跑的命令、很快退出，会话文件的最后一行完整；
+ *   两样都发，不靠其中哪一样单独起作用。
  */
 
 export const KILL_GRACE_MS = 10_000;
@@ -149,9 +151,10 @@ export class PiProcess {
 		}
 	}
 
-	/** 先 SIGTERM，宽限期之后还没退出就 SIGKILL；等它退出。 */
+	/** 先关 stdin，再 SIGTERM，宽限期之后还没退出就 SIGKILL；等它退出。 */
 	async terminate(): Promise<void> {
 		if (this.exited) return;
+		this.#child.stdin?.end();
 		this.#child.kill("SIGTERM");
 		const timer = setTimeout(() => {
 			if (!this.exited) this.#child.kill("SIGKILL");

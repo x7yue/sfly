@@ -8,7 +8,9 @@
 //    由助手服务写到工作台上；工作台上的 AGENTS.md 由模型自己用读工具读，不读回本机。
 //
 // 工作台的地址、命令的环境变量、默认超时每一轮可能不同：每次用到时读助手服务写的这一轮的配置（turn-config.ts）。
-// 系统提示里的工作目录和 skill 的位置写成工作台上的路径（#539 第 10 题：扩展在 before_agent_start 里改得了）。
+// 两边路径相同：pi 在助手容器里和工作台上同一个路径（工作区）下运行，skill 也放在两边同一个位置，所以系统提示里
+// 写的工作目录、skill 的位置就是工作台上的，扩展不改系统提示（#539 第 10 题只证明了工作目录能改，skill 的位置和
+// 工具的工作目录换不过来）。
 
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -71,7 +73,7 @@ export function createRemoteTools(pi: ExtensionAPI, deps: ExtensionDeps): void {
 		}
 		return client;
 	};
-	const { workdir, skills } = deps.config();
+	const { workdir } = deps.config();
 
 	pi.registerTool(
 		atWorkdir(createReadToolDefinition(workdir, { operations: readOps(agent) }), workdir),
@@ -106,21 +108,11 @@ export function createRemoteTools(pi: ExtensionAPI, deps: ExtensionDeps): void {
 			return result;
 		},
 	});
-
-	// 系统提示里写工作台上的路径：工作目录，以及 skill 的位置（模型用读工具读工作台上的那份）。
-	pi.on("before_agent_start", async (event) => {
-		const options = event.systemPromptOptions;
-		options.cwd = workdir;
-		for (const skill of options.skills) {
-			skill.filePath = onWorkbench(skill.filePath, skills);
-			skill.baseDir = onWorkbench(skill.baseDir, skills);
-		}
-	});
 }
 
 /**
- * pi 的工具解析相对路径时先用调用时的 `ctx.cwd`（pi 进程本地的工作目录），没有才用创建时给的：换成工作台上的工作区，
- * 相对路径和命令的工作目录才落在工作台上（#539 第 10 题没测的那一半，这里实测出来的）。
+ * pi 的工具解析相对路径时先用调用时的 `ctx.cwd`（pi 进程本地的工作目录），没有才用创建时给的。两边路径相同时
+ * 两者一样；这里仍固定成这一轮的工作区，相对路径和命令的工作目录不随 pi 进程本地的目录变。
  */
 function withCwd<T>(ctx: T, workdir: string): T {
 	if (ctx === undefined || ctx === null || typeof ctx !== "object") return ctx;
@@ -136,14 +128,6 @@ function atWorkdir<T extends ToolDefinition<any, any, any>>(tool: T, workdir: st
 		execute: (id, params, signal, onUpdate, ctx) =>
 			tool.execute(id, params, signal, onUpdate, withCwd(ctx, workdir)),
 	};
-}
-
-/** 镜像里 skill 目录下的路径换成工作台上同一个位置；不在那个目录下的原样。 */
-export function onWorkbench(path: string, skills: TurnConfig["skills"]): string {
-	const local = skills.local.replace(/\/+$/, "");
-	if (path === local) return skills.workbench;
-	if (path.startsWith(`${local}/`)) return skills.workbench + path.slice(local.length);
-	return path;
 }
 
 function readOps(agent: () => AgentClient): ReadOperations {

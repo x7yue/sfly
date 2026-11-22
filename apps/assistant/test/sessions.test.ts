@@ -1,5 +1,5 @@
 // 看管 pi 进程和一轮：用照 RPC 协议说话的假 pi（support/fake-pi.mjs），按 prompt 的文字决定这一轮怎么走。
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { eventually } from "./support/eventually.js";
@@ -131,7 +131,7 @@ describe("一轮的结局", () => {
 		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "limit", limit_kind: "duration" });
 	});
 
-	it("不理会 SIGTERM 的 pi：宽限期之后被 SIGKILL，这一轮以 stopped 结束", async () => {
+	it("停止：先关 stdin，再 SIGTERM；都不理会的 pi 宽限期之后被 SIGKILL，这一轮以 stopped 结束", async () => {
 		const harness = await start({ killGraceMs: 300 });
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "ignore-term" });
@@ -141,7 +141,11 @@ describe("一轮的结局", () => {
 		);
 		expect((await harness.abort(id)).status).toBe(202);
 		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
-		expect(rawEvents(harness, id).some((r) => r.type === "fake_ignored_sigterm")).toBe(true);
+		const order = rawEvents(harness, id)
+			.map((r) => r.type)
+			.filter((t) => t === "fake_stdin_closed" || t === "fake_ignored_sigterm");
+		// 两样都收到了（子进程里哪个先处理不一定）。
+		expect(order.sort()).toEqual(["fake_ignored_sigterm", "fake_stdin_closed"]);
 		expect(harness.sessions.activeProcesses).toBe(0);
 	});
 
@@ -236,6 +240,61 @@ describe("保密环境变量按值打码", () => {
 		expect(events.find((e) => e.type === "notice")).toMatchObject({
 			message: expect.stringContaining("******"),
 		});
+	});
+});
+
+describe("看管进程的边界", () => {
+	it("pi 的标准错误写进 pi-stderr.log 之前也打码（值跨两块写也认得出）", async () => {
+		const harness = await start();
+		const value = "stderr-secret-0123456789";
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: `stderr:${value}`, secret_env: { SFLY_API_TOKEN: value } });
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		await harness.sessions.shutdown();
+		const stderr = readFileSync(join(harness.dataDir, "sessions", id, "pi-stderr.log"), "utf8");
+		expect(stderr).toContain("warning: token ****** rejected");
+		expect(stderr).not.toContain(value);
+	});
+
+	it("换了工作区：空闲的旧进程关掉重起，旧进程退出不结束新的一轮", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		await harness.turnEnd(id);
+		const other = join(harness.root, "workbench", "other");
+		mkdirSync(other, { recursive: true });
+		await harness.prompt(id, {
+			turn: 2,
+			text: "hang",
+			workbench: { name: "fake-workbench", address: harness.workbench.address, workdir: other },
+		});
+		await eventually(() =>
+			expect(rawEvents(harness, id).some((r) => r.type === "fake_stdin_closed")).toBe(true),
+		);
+		await eventually(() =>
+			expect(rawEvents(harness, id).filter((r) => r.type === "turn_start")).toHaveLength(2),
+		);
+		// 旧进程已经退出：新的一轮还在做，没有被记成 interrupted。
+		expect(harness.events.of(id).filter((r) => r.event.type === "turn_end")).toHaveLength(1);
+		const started = rawEvents(harness, id).filter((r) => r.type === "fake_env") as Array<{
+			argv: string[];
+		}>;
+		expect(started).toHaveLength(2);
+		await harness.abort(id);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped" });
+	});
+
+	it("写不了这一轮的配置：503 start_failed，会话没有卡在「这一轮在做」", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		const turnConfig = join(harness.dataDir, "sessions", id, "turn.json");
+		mkdirSync(join(turnConfig, "blocked"), { recursive: true });
+		const res = await harness.prompt(id, { text: "settle" });
+		expect(res.status).toBe(503);
+		expect(await res.json()).toMatchObject({ code: "start_failed" });
+		rmSync(turnConfig, { recursive: true, force: true });
+		expect((await harness.prompt(id, { text: "settle" })).status).toBe(202);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
 	});
 });
 

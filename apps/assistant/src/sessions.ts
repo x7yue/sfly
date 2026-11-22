@@ -13,7 +13,7 @@ import type { EventBus } from "./bus.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
 import { Redactor } from "./redact.js";
-import { workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
+import { mirrorSkillsLocally, workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
 import { TurnTranslator } from "./translate.js";
 import type { TurnConfig } from "./turn-config.js";
 
@@ -23,11 +23,11 @@ import type { TurnConfig } from "./turn-config.js";
  *
  * - 先回应 `prompt`（已接受），再去拉起 pi：控制面等回应只等 10 秒，冷启动（#539 第 9 题最慢 2.6 秒）加第一次调模型
  *   不能算在里面。拉起失败、写不了工作台上的 skill，这一轮以 `failed` 结束。
- * - 每一轮的上限在这里执行，模型够不着：{@link TURN_LIMITS}。到了就结束 pi 进程（先 SIGTERM，10 秒后 SIGKILL），
+ * - 每一轮的上限在这里执行，模型够不着：{@link TURN_LIMITS}。到了就结束 pi 进程（先关 stdin，再 SIGTERM，10 秒后 SIGKILL），
  *   这一轮以 `limit` 结束；会话还能接着说（下一轮用同一条启动命令起 pi，从会话文件恢复）。
  * - 同时活着的 pi 进程数有上限（{@link MAX_PROCESSES}）。到了上限时，先关掉最久没用的**空闲**进程（关 stdin：
  *   它没有在做的一轮，#539 第 8 题）；没有空闲的就拒绝（503 `process_limit`，控制面把这一轮记成 `failed`）。
- *   一轮进行中的进程不关 stdin（关了 pi 不等这一轮做完），要停走结束进程。
+ *   为了回收而关 stdin 只对空闲的进程做（一轮进行中关了，pi 不等这一轮做完）；停止、上限走结束进程。
  * - 保密环境变量的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（redact.ts）。
  */
 
@@ -102,12 +102,6 @@ export class SessionManager {
 		this.#limits = options.limits ?? TURN_LIMITS;
 		this.#maxProcesses = options.maxProcesses ?? MAX_PROCESSES;
 		mkdirSync(join(options.dataDir, "sessions"), { recursive: true });
-		mkdirSync(this.#cwd, { recursive: true });
-	}
-
-	/** pi 的工作目录：助手容器里一个固定的空目录。 */
-	get #cwd(): string {
-		return join(this.options.dataDir, "cwd");
 	}
 
 	/**
@@ -176,6 +170,12 @@ export class SessionManager {
 		return { ok: true };
 	}
 
+	/** 这个会话现在的 pi 进程号（诊断和测试用）；没有活着的进程时 undefined。 */
+	pid(sessionId: string): number | undefined {
+		const process = this.#sessions.get(sessionId)?.process;
+		return process && !process.exited ? process.pid : undefined;
+	}
+
 	/** `POST /sessions/:id/abort`：竖切版，直接结束 pi 进程，这一轮以 `stopped` 结束（#544 改成先中止）。 */
 	abort(sessionId: string): void {
 		const session = this.#sessions.get(sessionId);
@@ -217,11 +217,12 @@ export class SessionManager {
 		return session;
 	}
 
-	#paths(session: Session): LaunchPaths {
+	/** `workdir`：这一轮的工作区。pi 在助手容器里同一个路径下运行，skill 也放在同一个位置（两边路径相同）。 */
+	#paths(session: Session, workdir = ""): LaunchPaths {
 		return {
 			sessionDir: session.dir,
-			cwd: this.#cwd,
-			skillsDir: this.options.skillsDir,
+			cwd: workdir,
+			skillsDir: workbenchSkillsDir(workdir),
 			extension: this.options.extension,
 			turnConfig: join(session.dir, "turn.json"),
 			contextFile: join(session.dir, "context.md"),
@@ -235,10 +236,6 @@ export class SessionManager {
 			workdir: body.workbench.workdir,
 			env: { ...body.env, ...body.secret_env },
 			defaultTimeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS,
-			skills: {
-				local: this.options.skillsDir,
-				workbench: workbenchSkillsDir(body.workbench.workdir),
-			},
 		};
 		const path = this.#paths(session).turnConfig;
 		rmSync(path, { force: true });
@@ -299,7 +296,10 @@ export class SessionManager {
 	}
 
 	#spawn(session: Session, startedFor: { workbench: string; workdir: string }): void {
-		const paths = this.#paths(session);
+		const paths = this.#paths(session, startedFor.workdir);
+		// 两边路径相同：助手容器里建同一个工作区（空的，镜像里有 /work），skill 放进同一个位置。
+		mkdirSync(startedFor.workdir, { recursive: true });
+		mirrorSkillsLocally(this.options.skillsDir, startedFor.workdir);
 		writeContextFile(paths.contextFile, startedFor.workbench, startedFor.workdir);
 		const launch = prepareLaunch({
 			sessionId: session.id,

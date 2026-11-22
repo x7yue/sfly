@@ -8,14 +8,12 @@ import { readFileSync } from "node:fs";
 export interface TurnConfig {
 	/** 工作台 Agent 的能力端口：`主机:端口`。 */
 	address: string;
-	/** 工作区在工作台上的路径：工具在这里解析相对路径，系统提示里写的工作目录也是它。 */
+	/** 工作区在工作台上的路径：工具在这里解析相对路径；pi 在助手容器里同一个路径下运行（两边路径相同）。 */
 	workdir: string;
 	/** 命令要加的环境变量（普通的和保密的合在一起）。 */
 	env: Record<string, string>;
 	/** 模型没给超时的命令用多少秒（能力端口要求命令必须有超时）。 */
 	defaultTimeoutSeconds: number;
-	/** 镜像里的 skill 目录（`--skill` 给 pi 的）和它在工作台上的位置：系统提示里 skill 的位置写成工作台上的。 */
-	skills: { local: string; workbench: string };
 }
 
 export function readTurnConfig(path: string): TurnConfig {

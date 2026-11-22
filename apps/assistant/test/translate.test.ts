@@ -96,6 +96,21 @@ describe("pi 的事件 → 会话事件", () => {
 		expect(translator.translate({ type: "entry_appended" })).toEqual({ events: [] });
 	});
 
+	it("role=system 的消息（每次起 pi 会话里多一条）、用户消息、queue_update：都不翻成助手的话", () => {
+		const translator = new TurnTranslator(new Redactor());
+		const records = [
+			{ type: "message_start", message: { role: "system", content: [] } },
+			{ type: "message_end", message: { role: "system", content: [{ type: "text", text: "段" }] } },
+			{ type: "message_start", message: { role: "user", content: "插话" } },
+			{ type: "message_end", message: { role: "user", content: [{ type: "text", text: "插话" }] } },
+			// 「插话已送出」不能只看 steering 变空（clear_queue 之后也会变空）：这里一律不翻（#544 的事）。
+			{ type: "queue_update", steering: [], followUp: [] },
+		];
+		for (const record of records) expect(translator.translate(record)).toEqual({ events: [] });
+		expect(translator.usage).toEqual({ input: 0, output: 0, cache_read: 0, cache_write: 0 });
+		expect(translator.lastModelError).toBeUndefined();
+	});
+
 	it("思考只发一条「在想」，不带内容", () => {
 		const translator = new TurnTranslator(new Redactor());
 		const thinking = (type: string) =>

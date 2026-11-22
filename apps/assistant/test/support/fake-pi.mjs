@@ -21,9 +21,11 @@ process.stdin.on("data", (chunk) => {
 		lf = pending.indexOf("\n");
 	}
 });
+// `ignore-term`：stdin 被关、收到 SIGTERM 都不退出（只有 SIGKILL 结束得了它）。
+let stubborn = false;
 process.stdin.on("end", () => {
 	out({ type: "fake_stdin_closed" });
-	process.exit(0);
+	if (!stubborn) process.exit(0);
 });
 
 const settle = () => {
@@ -83,6 +85,7 @@ function handle(command) {
 			out({ type: "turn_start" });
 		}, 5);
 	} else if (text.startsWith("ignore-term")) {
+		stubborn = true;
 		process.on("SIGTERM", () => out({ type: "fake_ignored_sigterm" }));
 	} else if (text.startsWith("exit")) {
 		setTimeout(() => process.exit(7), 20);
@@ -91,6 +94,16 @@ function handle(command) {
 		out(assistant("", { stopReason: "error", errorMessage: "503 upstream" }));
 		out({ type: "auto_retry_end", success: false, attempt: 1, finalError: "503 upstream" });
 		settle();
+	} else if (text.startsWith("stderr:")) {
+		// 保密值分两次写进标准错误（一个值跨两块）。
+		const value = text.slice("stderr:".length);
+		const half = Math.floor(value.length / 2);
+		process.stderr.write(`warning: token ${value.slice(0, half)}`);
+		setTimeout(() => {
+			process.stderr.write(`${value.slice(half)} rejected\n`);
+			out(assistant("好的"));
+			settle();
+		}, 50);
 	} else if (text.startsWith("secret:")) {
 		const value = text.slice("secret:".length);
 		const half = Math.floor(value.length / 2);

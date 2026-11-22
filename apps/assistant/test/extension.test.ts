@@ -16,7 +16,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { connectAgent } from "../src/agent.js";
-import { createRemoteTools, isPiTempFile, onWorkbench } from "../src/extension/extension.js";
+import { createRemoteTools, isPiTempFile } from "../src/extension/extension.js";
 import type { TurnConfig } from "../src/turn-config.js";
 import { FakeWorkbench } from "./support/fake-workbench.js";
 
@@ -50,7 +50,6 @@ beforeEach(() => {
 		workdir,
 		env: { SFLY_NICKNAME: "tester" },
 		defaultTimeoutSeconds: 7,
-		skills: { local: "/app/skills", workbench: join(workdir, ".agents/skills") },
 	};
 	tools = new Map();
 	handlers = new Map();
@@ -152,23 +151,8 @@ describe("要求 2：不根据工作台返回的内容在本机写任何文件",
 		}
 	});
 
-	it("系统提示里的工作目录和 skill 位置换成工作台上的（只换路径的写法，不读任何东西）", async () => {
-		const options = {
-			cwd: "/local/cwd",
-			skills: [{ filePath: "/app/skills/a/SKILL.md", baseDir: "/app/skills/a" }],
-		};
-		await handlers.get("before_agent_start")?.({ systemPromptOptions: options });
-		expect(options).toEqual({
-			cwd: workdir,
-			skills: [
-				{
-					filePath: join(workdir, ".agents/skills/a/SKILL.md"),
-					baseDir: join(workdir, ".agents/skills/a"),
-				},
-			],
-		});
-		expect(onWorkbench("/elsewhere/x", config.skills)).toBe("/elsewhere/x");
-		expect(workbench.reads).toEqual([]);
+	it("扩展不改系统提示：不订阅任何事件（两边路径相同，系统提示里的路径本来就是工作台上的）", () => {
+		expect([...handlers.keys()]).toEqual([]);
 	});
 });
 
