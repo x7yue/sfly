@@ -141,11 +141,13 @@ describe("一轮的结局", () => {
 		);
 		expect((await harness.abort(id)).status).toBe(202);
 		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
-		const order = rawEvents(harness, id)
-			.map((r) => r.type)
-			.filter((t) => t === "fake_stdin_closed" || t === "fake_ignored_sigterm");
-		// 两样都收到了（子进程里哪个先处理不一定）。
-		expect(order.sort()).toEqual(["fake_ignored_sigterm", "fake_stdin_closed"]);
+		// 两样都收到了（子进程里哪个先处理不一定）。events.jsonl 在进程退出后才写完，等它写完再看。
+		await eventually(() => {
+			const order = rawEvents(harness, id)
+				.map((r) => r.type)
+				.filter((t) => t === "fake_stdin_closed" || t === "fake_ignored_sigterm");
+			expect(order.sort()).toEqual(["fake_ignored_sigterm", "fake_stdin_closed"]);
+		});
 		expect(harness.sessions.activeProcesses).toBe(0);
 	});
 
@@ -251,9 +253,12 @@ describe("看管进程的边界", () => {
 		await harness.prompt(id, { text: `stderr:${value}`, secret_env: { SFLY_API_TOKEN: value } });
 		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
 		await harness.sessions.shutdown();
-		const stderr = readFileSync(join(harness.dataDir, "sessions", id, "pi-stderr.log"), "utf8");
-		expect(stderr).toContain("warning: token ****** rejected");
-		expect(stderr).not.toContain(value);
+		// 最后留着的那一段在进程退出时才写下：等文件写完再看。
+		const path = join(harness.dataDir, "sessions", id, "pi-stderr.log");
+		await eventually(() =>
+			expect(readFileSync(path, "utf8")).toContain("warning: token ****** rejected"),
+		);
+		expect(readFileSync(path, "utf8")).not.toContain(value);
 	});
 
 	it("换了工作区：空闲的旧进程关掉重起，旧进程退出不结束新的一轮", async () => {
