@@ -49,7 +49,8 @@ const MAX_CHAIN_BADGES = 4;
 
 /**
  * 概览的「数据更新于 10:59:17」：关注项读数的生成时间（控制面时间，`generated_at`）。与概览读同一份读数
- * （同一个查询，不多发请求），盯运行的人看得出页面本身还在刷新。还没读到时不显示。
+ * （同一个查询，不多发请求），盯运行的人看得出页面本身还在刷新；所以只在运行还在进行时显示（已结束的运行读数不再刷新，
+ * 写「更新于」没有意义）。还没读到时不显示。
  */
 function FocusFreshness({ run }: { run: RunView }) {
 	const focus = useRunFocus(run.id, { live: run.status === "running" });
@@ -64,28 +65,27 @@ function FocusFreshness({ run }: { run: RunView }) {
 
 /**
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
- * 运行切换（同场景的其他运行）、运行状态（概览里后面写「数据更新于」）、「概览 / 详情」标签页、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
+ * 运行切换（同场景的其他运行）、运行状态（运行还在进行时，概览里后面写「数据更新于」）、「概览 / 详情」标签页、失败摘要（有节点最终失败、运行结束与否都有：第一个失败的节点，点击查看它的尝试；
+ * 页面里已经有失败区域（概览）或失败横幅（详情）时不重复，只在它们看不到的地方出现，同一屏上同一件事只说一次）、各链状态、
  * 在画布中打开、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。失败摘要只用别的内容占完之后剩下的宽度
- * （最窄 96px，全文在悬停提示里；概览有失败区域、详情有横幅）：预设名、场景名和耗时在宽的窗口里原样显示，窄的窗口里
+ * （最窄 96px，全文在悬停提示里）：预设名、场景名和耗时在宽的窗口里原样显示，窄的窗口里
  * 才按各链状态（整个收起，不留半截）、预设名、场景名与触发信息的顺序让位；耗时、状态、视图标签页和按钮不让位。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
  */
 export function MonitorTopBar({
 	run,
 	name,
-	failureInBanner,
+	failureShown,
 	view,
 	onViewChange,
-	onShowDetail,
 }: {
 	run: RunView;
 	name: string | undefined;
-	failureInBanner: boolean;
+	/** 页面里已经有一处写着失败（概览的失败区域、详情的失败横幅）：顶栏不再重复一遍摘要。 */
+	failureShown: boolean;
 	view: MonitorView;
 	onViewChange: (view: MonitorView) => void;
-	/** 切到详情，不改变记住的视图。 */
-	onShowDetail: () => void;
 }) {
 	const { now, live } = useTimeAxis();
 	const paused = useMotionPaused();
@@ -94,7 +94,9 @@ export function MonitorTopBar({
 	useShortcut("monitor-rerun", () => setRerunOpen(true), run.status !== "running");
 	const chains = orderedChains(run);
 	const status = runStatus(run);
-	const failure = run.status === "failed" ? runFailure(run) : null;
+	// 运行还没结束、已经有节点最终失败时也有（不等运行结束）。页面里已经写着失败的地方（概览的失败区域、详情的失败横幅）
+	// 顶栏不再写一遍：同一屏上同一件事只说一次；看不到它们的地方（详情里收起了横幅、运行还在进行时的详情）顶栏照常显示。
+	const failure = runFailure(run);
 	const elapsed = (run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at);
 
 	return (
@@ -136,15 +138,10 @@ export function MonitorTopBar({
 					{status.label}
 				</StatusPill>
 			</output>
-			{view === "overview" && <FocusFreshness run={run} />}
+			{view === "overview" && run.status === "running" && <FocusFreshness run={run} />}
 			{run.preset && <RunPresetInfo preset={run.preset} />}
 			<ViewTabs view={view} onChange={onViewChange} />
-			{failure && !failureInBanner && (
-				<FailureSummary
-					failure={failure}
-					onShowDetail={view === "detail" ? undefined : onShowDetail}
-				/>
-			)}
+			{failure && !failureShown && <FailureSummary failure={failure} />}
 			<ul
 				aria-label="各链状态"
 				className="m-0 flex min-w-0 shrink-1000 list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
@@ -233,16 +230,9 @@ export function MonitorTopBar({
 
 /**
  * 失败摘要：「失败于 verify（第 2 次尝试）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
- * 点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
+ * 只在详情里没有失败横幅时出现（概览有失败区域）。点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
  */
-function FailureSummary({
-	failure,
-	onShowDetail,
-}: {
-	failure: RunFailure;
-	/** 在概览里点时切到详情：「尝试」页签在详情里。 */
-	onShowDetail?: (() => void) | undefined;
-}) {
+function FailureSummary({ failure }: { failure: RunFailure }) {
 	const actions = useMonitorActions();
 	return (
 		<Truncate
@@ -252,10 +242,7 @@ function FailureSummary({
 					type="button"
 					aria-description="点击查看这个节点的尝试"
 					data-testid="run-failure"
-					onClick={() => {
-						actions.report({ type: "failure", node: failure.ref });
-						onShowDetail?.();
-					}}
+					onClick={() => actions.report({ type: "failure", node: failure.ref })}
 					className="block h-6.5 min-w-24 max-w-max flex-[100_1_0%] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
 				/>
 			}

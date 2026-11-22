@@ -87,6 +87,15 @@ export async function startTestControlPlane(
 		| "assistantCommandTimeoutMs"
 		| "sessionSweepIntervalMs"
 		| "sessionStopGraceMs"
+		| "initialAdmin"
+		| "loginIdleMs"
+		| "sameOrigins"
+		| "scrypt"
+		| "dummyHash"
+		| "loginThrottle"
+		| "passwordGate"
+		| "trustProxy"
+		| "streamRecheckMs"
 	> = {},
 ): Promise<TestControlPlane> {
 	let migrationsDir = options.migrationsDir;
@@ -133,6 +142,16 @@ export async function startTestControlPlane(
 			sessionSweepIntervalMs: options.sessionSweepIntervalMs ?? 3_600_000,
 			// 停止之后等助手服务带回结局的宽限：测试里短一点（要测它的用例自己传）。
 			sessionStopGraceMs: options.sessionStopGraceMs ?? 300,
+			initialAdmin: options.initialAdmin,
+			loginIdleMs: options.loginIdleMs,
+			sameOrigins: options.sameOrigins,
+			// 密码哈希用小参数：测试里每次登录都要算，默认参数一次约 0.2 秒、占 64 MiB（要测真实代价的测试自己传）。
+			scrypt: options.scrypt ?? { logN: 10, r: 8, p: 1 },
+			dummyHash: options.dummyHash,
+			loginThrottle: options.loginThrottle,
+			passwordGate: options.passwordGate,
+			trustProxy: options.trustProxy,
+			streamRecheckMs: options.streamRecheckMs,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 飞书发送队列的周期扫描同样调快。

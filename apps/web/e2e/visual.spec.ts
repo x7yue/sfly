@@ -27,6 +27,7 @@ import {
 	setFocusItems,
 } from "./focus-support";
 import { failedRun, openFailedOverview } from "./monitor-failure-scenario";
+import { queuedOffline, queuedSlotsFull } from "./monitor-queue-scenario";
 import {
 	connPoint,
 	labeledRun,
@@ -812,7 +813,9 @@ for (const viewport of [
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
 		await expect(page.getByTestId("failure-area")).toBeVisible();
-		await expect(page.getByTestId("focus-freshness")).toBeVisible();
+		// 运行已经结束：读数不再刷新，顶栏不写「数据更新于」；失败区域已经写着失败，顶栏也不重复摘要。
+		await expect(page.getByTestId("focus-freshness")).toHaveCount(0);
+		await expect(page.getByRole("banner").getByTestId("run-failure")).toHaveCount(0);
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-${viewport.width}.png`, {
 			mask: runIds(page),
@@ -829,6 +832,7 @@ for (const viewport of [
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
 		await expect(page.getByTestId("failure-area")).toBeVisible();
+		await expect(page.getByTestId("focus-freshness")).toBeVisible();
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-running-${viewport.width}.png`, {
 			mask: runIds(page),
@@ -851,6 +855,58 @@ for (const viewport of [
 		});
 	});
 }
+
+// 排队中的节点写明在等谁（#457）：Agent 不在线、槽位占满；详情的尝试卡片写同样的话。
+for (const viewport of [
+	{ width: 1440, height: 900 },
+	{ width: 1280, height: 800 },
+] as const) {
+	test(`运行监控：概览（节点在排队，等的 Agent 不在线）${viewport.width}×${viewport.height}`, async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const { runId } = await queuedOffline(controlPlane, connectAgent, clock);
+		await page.setViewportSize(viewport);
+		await openFailedOverview(page, clock, runId);
+		await expect(page.getByTestId("waiting-nodes")).toBeVisible();
+		await page.mouse.move(20, viewport.height - 20);
+		await expect(page).toHaveScreenshot(`monitor-overview-queued-offline-${viewport.width}.png`, {
+			mask: runIds(page),
+		});
+	});
+}
+
+test("运行监控：概览（节点在排队，Agent 在线但槽位占满，写明占着槽位的任务）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await queuedSlotsFull(controlPlane, connectAgent, clock);
+	await openFailedOverview(page, clock, runId);
+	await expect(page.getByTestId("queue-wait-holders").first()).toBeVisible();
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview-queued-slots.png", {
+		// 占着槽位的任务写着运行编号（随机的）：和别处的运行编号一样遮住。
+		mask: [...runIds(page), page.getByTestId("queue-wait-holders").getByRole("link")],
+	});
+});
+
+test("运行监控：详情（选中排队中的节点，尝试卡片写明在等谁）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await queuedOffline(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId, "a", "attempts");
+	await expect(page.getByRole("article", { name: "准备环境（a） 第 1 次尝试" })).toBeVisible();
+	await expect(page.getByRole("region", { name: "图表工作区" })).toBeVisible();
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-queued-attempt.png", { mask: runIds(page) });
+});
 
 test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({
 	page,
@@ -1712,5 +1768,99 @@ test.describe("开发文档", () => {
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await openDocs(page);
 		await expect(page).toHaveScreenshot("docs-narrow.png");
+	});
+});
+
+// 本地账号与登录（ADR 0029，#490）：登录页、初始化页、账号菜单、修改密码弹窗。
+test.describe("账号与登录", () => {
+	const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
+	// 没有预先写昵称：登录页和初始化页上没有昵称弹窗，登录之后也没有。
+	test.use({ nickname: null });
+
+	const signIn = async (page: Page) => {
+		await page.goto("/login");
+		await page.getByLabel("登录名").fill(ADMIN.loginName);
+		await page.getByLabel("密码").fill(ADMIN.password);
+		await page.getByRole("button", { name: "登录" }).click();
+		await expect(page.getByRole("banner").getByRole("button", { name: /管理员/ })).toBeVisible();
+	};
+
+	test.describe("已经有用户", () => {
+		test.use({
+			controlPlaneOptions: {
+				publicHttpUrl: "http://sfly.example:8080",
+				version: "0.1.0",
+				initialAdmin: ADMIN,
+			},
+		});
+		test("登录页", async ({ page }) => {
+			await page.goto("/login");
+			await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+			await expect(page).toHaveScreenshot("login.png");
+		});
+
+		test("登录页：登录名或密码不对", async ({ page }) => {
+			await page.goto("/login");
+			await page.getByLabel("登录名").fill(ADMIN.loginName);
+			await page.getByLabel("密码").fill("不对的密码");
+			await page.getByRole("button", { name: "登录" }).click();
+			await expect(page.getByRole("alert")).toContainText("登录名或密码不对");
+			await expect(page).toHaveScreenshot("login-error.png");
+		});
+
+		test("账号菜单", async ({ page }) => {
+			await signIn(page);
+			await page
+				.getByRole("banner")
+				.getByRole("button", { name: /管理员/ })
+				.click();
+			await expect(page.getByRole("menu")).toBeVisible();
+			await expect(page).toHaveScreenshot("account-menu.png");
+		});
+
+		test("修改密码弹窗", async ({ page }) => {
+			await signIn(page);
+			await page
+				.getByRole("banner")
+				.getByRole("button", { name: /管理员/ })
+				.click();
+			await page.getByRole("menuitem", { name: "修改密码…" }).click();
+			const dialog = page.getByRole("dialog", { name: "修改密码" });
+			await dialog.getByRole("button", { name: "修改密码" }).click();
+			await expect(dialog.getByLabel("旧密码")).toHaveAccessibleDescription("填写旧密码");
+			await expect(page).toHaveScreenshot("account-change-password.png");
+		});
+	});
+
+	test.describe("公开地址对不上", () => {
+		test.use({
+			controlPlaneOptions: {
+				publicHttpUrl: "http://sfly.example:8080",
+				version: "0.1.0",
+				initialAdmin: ADMIN,
+			},
+		});
+
+		test("登录页：提示请用公开地址打开", async ({ page }) => {
+			// 提示针对内网 http 加 IP 访问（不是安全上下文）；e2e 的 127.0.0.1 是安全上下文，用初始化脚本模拟。
+			await page.addInitScript(() => {
+				Object.defineProperty(window, "isSecureContext", { value: false });
+			});
+			await page.goto("/login");
+			await expect(page.locator('[data-slot="origin-notice"]')).toContainText(
+				"请用 http://sfly.example:8080 打开",
+			);
+			await expect(page).toHaveScreenshot("login-origin-notice.png");
+		});
+	});
+
+	test.describe("还没有任何用户", () => {
+		test("初始化页：提交时每个必填字段写明原因", async ({ page }) => {
+			await page.goto("/setup");
+			await expect(page.getByRole("heading", { name: "创建第一个管理员" })).toBeVisible();
+			await page.getByRole("button", { name: "创建并登录" }).click();
+			await expect(page.getByLabel("初始化码")).toHaveAccessibleDescription("填写初始化码");
+			await expect(page).toHaveScreenshot("setup.png");
+		});
 	});
 });

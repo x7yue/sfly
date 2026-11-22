@@ -63,6 +63,7 @@ const FIXTURES = {
 	done: "已结束的运行",
 	failed: "失败的运行",
 	live: "还在跑的运行",
+	queued: "排队中的运行（Agent 的槽位被占满）",
 	empty: "没有版本的场景",
 	archived: "已归档的场景",
 	rich: "有子流程、说明和失效预设的场景",
@@ -124,7 +125,9 @@ function fixtureKeys(def: RouteDef): Array<FixtureKey | undefined> {
 			? ["done", "live", "archived", "rich", "diffed"]
 			: ["done", "live", "empty", "archived", "rich", "diffed"];
 	}
-	if (kind === "run" || kind === "task") return ["done", "failed", "live"];
+	if (kind === "task") return ["done", "failed", "live"];
+	// 排队中的运行：运行视图里排队中的尝试带 queue_wait（占着槽位的任务）。
+	if (kind === "run") return ["done", "failed", "live", "queued"];
 	return [undefined];
 }
 
@@ -132,6 +135,7 @@ describe("声明为只读的接口真的不写库", () => {
 	let cp: TestControlPlane;
 	let dir: string;
 	let seeded: Seeded;
+	let adminCookie = "";
 	let agent: FakeAgent;
 	/** 验证过的 SSE 事件（`方法 路径 事件名`）：证明对照响应 schema 不是空转。 */
 	const validatedEvents = new Set<string>();
@@ -151,8 +155,17 @@ describe("声明为只读的接口真的不写库", () => {
 			clientPackageDir: dir,
 			docsDir: join(repoRoot, "docs/guide"),
 			agentBinaries: { x86_64: join(dir, "agent-x86"), aarch64: join(dir, "agent-arm") },
+			// 账号类的只读接口（当前用户、用户列表）要登录：种数据之后登录一次，下面调它们时带上 Cookie。
+			initialAdmin: { loginName: "root", password: "admin-password-1" },
 		});
 		({ seeded, agent } = await seed(cp));
+		const login = await cp.fetch("/auth/login", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ login_name: "root", password: "admin-password-1" }),
+		});
+		expect(login.status).toBe(200);
+		adminCookie = /sfly_login=([^;]+)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
 	}, 120_000);
 
 	afterAll(async () => {
@@ -377,8 +390,14 @@ describe("声明为只读的接口真的不写库", () => {
 			}
 		}
 		const body = sampleBody(def);
+		// 账号类的只读接口只认登录 Cookie（同源的请求）。
+		const credentials =
+			def.resource.kind === "account"
+				? { cookie: `sfly_login=${adminCookie}`, "sec-fetch-site": "same-origin" }
+				: undefined;
 		const res = await cp.fetch(url, {
 			method: def.method,
+			...(credentials && { headers: credentials }),
 			...(body !== undefined && {
 				headers: {
 					"content-type": "application/json",
@@ -828,7 +847,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	const live = await start(pressure, LogLevel.INFO, "压测中", { running: true });
 	await settle(live.runId, "running");
 	// 再来一次运行：Agent 的槽位满了，任务排队
-	await api.triggerOk(pressure, { env: "prod" });
+	const queuedRunId = await api.triggerOk(pressure, { env: "prod" });
 	await eventually(async () => {
 		const { agents } = await api.getJson<{ agents: Array<{ queued_tasks: unknown[] }> }>("/agents");
 		expect(agents[0]?.queued_tasks).toHaveLength(1);
@@ -857,6 +876,12 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 				done: await fixture(checked, done),
 				failed: await fixture(checked, failed),
 				live: await fixture(pressure, live),
+				queued: {
+					scenarioId: pressure,
+					latestVersion: await api.headVersion(pressure),
+					runId: queuedRunId,
+					chainInstanceId: (await api.run(queuedRunId)).chains[0]?.id as string,
+				},
 				empty: await fixture(empty),
 				archived: await fixture(archived),
 				rich: await fixture(rich),

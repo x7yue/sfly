@@ -48,6 +48,8 @@ export const SCOPE_TABLE = {
 	// 而且只有人能做：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
 	session: { write: "edit", humanOnly: true },
 	system: { write: null },
+	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
+	account: { write: null },
 } as const satisfies Record<ResourceKind, { write: Scope | null; humanOnly?: true }>;
 
 /**

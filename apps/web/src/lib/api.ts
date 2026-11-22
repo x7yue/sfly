@@ -1,4 +1,4 @@
-import { ApiError, createClient, type RouteInput } from "@sfly/client";
+import { ApiError, createClient, type FetchLike, type RouteInput } from "@sfly/client";
 import {
 	type DownloadDef,
 	type EndpointDef,
@@ -9,6 +9,7 @@ import {
 } from "@sfly/schema";
 import { queryOptions } from "@tanstack/react-query";
 import { observeControlPlaneTime } from "./control-plane-time";
+import { noteUnauthorized } from "./identity";
 import { getNickname } from "./nickname";
 
 export { ApiError };
@@ -31,9 +32,32 @@ const API_BASE = "/api";
  * 类型由契约推导，开发环境（vite dev）下响应会按契约解析，不符合时抛出 code 为
  * `contract_violation` 的 ApiError（页面上显示为错误状态，details 是 zod issues）。
  */
+/**
+ * 浏览器的 `fetch`，加一步：拿到 401 就告诉身份模块（`noteUnauthorized`）。接口请求、下载和事件流的重连都经过这里：
+ * 登录失效（空闲期限到了、被注销、被停用）之后，事件流重连时拿到 401 订阅就停了，页面不能停在原处不动。
+ */
+const watchedFetch: FetchLike = async (url, init) => {
+	const response = await globalThis.fetch(url, init);
+	if (response.status === 401) noteUnauthorized();
+	return response;
+};
+
 export const apiClient = createClient({
 	baseUrl: API_BASE,
+	fetch: watchedFetch,
 	nickname: getNickname,
+	onControlPlaneTime: observeControlPlaneTime,
+});
+
+/**
+ * 账号类接口（登录、初始化、登出、改密码…，资源类别 `account`）用的客户端：它们的身份是登录或密码，不看昵称，
+ * 但 API 客户端对非 GET 的请求要求有昵称（还没登录、也没填过昵称的人要能登录）：这里没有昵称时给一个占位，
+ * 控制面不读它。
+ */
+const accountClient = createClient({
+	baseUrl: API_BASE,
+	fetch: watchedFetch,
+	nickname: () => getNickname() ?? "未登录",
 	onControlPlaneTime: observeControlPlaneTime,
 });
 
@@ -61,7 +85,8 @@ async function send<E extends EndpointDef>(
 	def: E,
 	input: EndpointInput<E> | undefined,
 ): Promise<EndpointResponse<E>> {
-	const data = await apiClient.request(def, routeInput(input));
+	const client = def.resource.kind === "account" ? accountClient : apiClient;
+	const data = await client.request(def, routeInput(input));
 	if (import.meta.env.DEV) {
 		const parsed = def.response.safeParse(data);
 		if (!parsed.success) {
