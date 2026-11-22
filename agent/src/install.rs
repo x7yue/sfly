@@ -304,7 +304,7 @@ fn index_check_failure(label: &str, url: &str, answer: &IndexAnswer) -> String {
 ///   有人放了同名的更高版本也不会被装上。这是 uv 的默认策略，仍然写在命令行上：环境变量 `UV_INDEX_STRATEGY` 或
 ///   用户级的 uv 配置换成别的策略（例如「在所有索引里选最高版本」）时，命令行的值优先，防线不会被悄悄拆掉。
 ///   「有它」指索引对这个名字有回应：控制面的索引对 `sfly-std` 总有回应（还没发布时是一个没有版本的页面），不会
-///   因为 404 而转去 PyPI。
+///   因为 404 而转去 PyPI；这个地址上回答的是不是控制面，由装之前的检查确认（[`Installer::check_package_index`]）。
 ///
 /// 控制面没有下发包索引（旧版本控制面）时不加 `--index`：依赖只来自 PyPI 镜像，和以前一样。
 fn index_args(pypi: Option<&str>, package_index: Option<&str>) -> Vec<String> {
