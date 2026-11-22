@@ -143,12 +143,15 @@ export interface PackageRepositoryDeps {
  * （升级迁移、手工改库留下的数据）。同一个名字的并发发布排队（咨询锁，随事务释放），不会两个都通过检查。
  * 一模一样的版本（`名字@版本` 相同）由插入时的主键冲突拒绝，信息不同。
  */
+/** 公共项目里发布同一个名字的咨询锁的键（测试要拿同一把锁来排出确定的先后，所以导出）。 */
+export const publicPackageLockKey = (name: string) => `sfly:public-package:${name}`;
+
 async function rejectEquivalentVersion(
 	tx: Tx,
 	{ name, version }: { name: string; version: string },
 ): Promise<void> {
 	await tx.execute(
-		sql`select pg_advisory_xact_lock(hashtextextended(${`sfly:public-package:${name}`}, 0))`,
+		sql`select pg_advisory_xact_lock(hashtextextended(${publicPackageLockKey(name)}, 0))`,
 	);
 	const existing = await tx
 		.select({ version: nodePackages.version })

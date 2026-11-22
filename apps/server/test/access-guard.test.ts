@@ -728,11 +728,13 @@ describe("契约路由的访问检查", () => {
 
 	describe("发布节点包时指明公共项目：过渡的查询参数 project=public（#565）", () => {
 		const publish = route("POST /packages");
-		const check = (credentials: Credentials, project?: unknown) =>
+		const check = (credentials: Credentials & { fetchSite?: string }, project?: unknown) =>
 			guard.check({
 				route: publish,
 				params: {},
 				...(project === undefined ? {} : { query: { project } }),
+				// 登录 Cookie 要同源的请求才认（./cross-site.ts）：这些测试默认是控制台自己发的请求。
+				fetchSite: "same-origin",
 				...credentials,
 			});
 		const DENIED = "公共项目只有平台管理员能写";
@@ -835,6 +837,25 @@ describe("契约路由的访问检查", () => {
 				401,
 			);
 			expect(outcome(await check({ authorization: "Bearer unknown" }, "public"))).toBe(401);
+		});
+
+		it("跨站的请求带着平台管理员的登录 Cookie 指明 public：Cookie 不算（和不带凭据一样 401），不写平台管理员的记录；不指明 project 时和不带凭据一样放行", async () => {
+			const { cookie } = login(USERS.admin);
+			for (const fetchSite of ["cross-site", "same-site"]) {
+				const result = await check({ cookie, fetchSite }, "public");
+				expect(result, fetchSite).toMatchObject({
+					ok: false,
+					status: 401,
+					code: "unauthorized",
+					message: expect.stringContaining(DENIED),
+				});
+				expect(await check({ cookie, fetchSite })).toEqual({ ok: true, access: null });
+			}
+			expect(store.adminWrites).toEqual([]);
+			// 对照：同源的同一个 Cookie 通过（上一条用例）。
+			expect(await check({ cookie, fetchSite: "same-origin" }, "public")).toMatchObject({
+				ok: true,
+			});
 		});
 
 		it("指明 public 以外的值：400，写明现在只能写 public；有没有凭据、是谁都一样", async () => {

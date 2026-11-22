@@ -7,6 +7,7 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
 import { locatorOf, routeKey } from "../src/auth/access-rules.js";
+import { publicPackageLockKey } from "../src/packages/package-repository.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -376,6 +377,40 @@ describe("带凭据的请求", () => {
 
 			expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);
 			expect(await versionsOf("racing")).toHaveLength(1);
+		});
+
+		it("发布时先取这个名字的咨询锁：另一条连接正在发布同名的包时，等它提交了再比较，看到它写的版本（没有锁两个都会通过检查）", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = bearer(await accounts.personalToken(admin));
+			// 另一条连接：开事务、拿同一把锁、写下 1.5、先不提交——相当于一次正在进行的发布。
+			const holder = new pg.Client({ connectionString: cp.database.url });
+			await holder.connect();
+			try {
+				await holder.query("begin");
+				await holder.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [
+					publicPackageLockKey("locked"),
+				]);
+				await holder.query(
+					`insert into node_packages (name, version, project_id, metadata, file_path, sha256, size, published_at)
+					 values ('locked', '1.5', 'public', '{}'::jsonb, 'packages/locked/1.5.sflypkg', 'x', 1, now())`,
+				);
+
+				const racing = publish(token, "locked", "?project=public", "1.5.0");
+				const early = await Promise.race([
+					racing.then(() => "done"),
+					new Promise((resolve) => setTimeout(() => resolve("waiting"), 500)),
+				]);
+				expect(early, "拿不到锁的发布要等着").toBe("waiting");
+
+				await holder.query("commit");
+				const res = await racing;
+				expect(res.status, await res.clone().text()).toBe(409);
+				expect((await error(res)).message).toContain("locked@1.5");
+			} finally {
+				await holder.query("rollback").catch(() => undefined);
+				await holder.end();
+			}
+			expect(await versionsOf("locked")).toEqual(["1.5"]);
 		});
 
 		it("别的凭据指明 public 被拒绝：项目管理员、编辑者、项目令牌、不是平台管理员的令牌 403，不带凭据 401，信息写明原因；什么也没有发布", async () => {
