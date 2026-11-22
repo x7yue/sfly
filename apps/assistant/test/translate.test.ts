@@ -103,7 +103,7 @@ describe("pi 的事件 → 会话事件", () => {
 			{ type: "message_end", message: { role: "system", content: [{ type: "text", text: "段" }] } },
 			{ type: "message_start", message: { role: "user", content: "插话" } },
 			{ type: "message_end", message: { role: "user", content: [{ type: "text", text: "插话" }] } },
-			// 「插话已送出」不能只看 steering 变空（clear_queue 之后也会变空）：这里一律不翻（#544 的事）。
+			// 「插话已送出」以这句插话的用户消息为准，不看 steering 变空、也不依赖两者的先后：这里一律不翻（#544 的事）。
 			{ type: "queue_update", steering: [], followUp: [] },
 		];
 		for (const record of records) expect(translator.translate(record)).toEqual({ events: [] });

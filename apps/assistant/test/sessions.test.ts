@@ -67,6 +67,8 @@ describe("拉起 pi", () => {
 				"--no-skills",
 				"--no-context-files",
 				"--no-prompt-templates",
+				// 不传它时 APPEND_SYSTEM.md 可能进系统提示（#539 第 3 题测不出来）：一定要传。
+				"--append-system-prompt",
 			]),
 		);
 		expect(started.argv[started.argv.indexOf("--tools") + 1]).toBe("read,bash,edit,write");
@@ -149,6 +151,22 @@ describe("一轮的结局", () => {
 			expect(order.sort()).toEqual(["fake_ignored_sigterm", "fake_stdin_closed"]);
 		});
 		expect(harness.sessions.activeProcesses).toBe(0);
+	});
+
+	it("停止时 pi 收到 SIGTERM 以 143 退出：照样是 stopped，不当成出错", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "term-143" });
+		await eventually(() =>
+			expect(rawEvents(harness, id).some((r) => r.type === "turn_start")).toBe(true),
+		);
+		await harness.abort(id);
+		const end = await harness.turnEnd(id);
+		expect(end).toMatchObject({ outcome: "stopped", reason: "用户停止了这一轮" });
+		expect(end.error_class).toBeUndefined();
+		await eventually(() =>
+			expect(rawEvents(harness, id).some((r) => r.type === "fake_exit_143")).toBe(true),
+		);
 	});
 
 	it("pi 进程在一轮中途退出：interrupted，带退出码", async () => {

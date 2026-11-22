@@ -89,6 +89,14 @@ function handle(command) {
 		process.on("SIGTERM", () => out({ type: "fake_ignored_sigterm" }));
 		// stdin 关了之后事件循环里就没有别的了，不留一个定时器进程会自己退出（Linux 上比 SIGTERM 先到）。
 		setInterval(() => {}, 60_000);
+	} else if (text.startsWith("term-143")) {
+		// 照 pi 只收到 SIGTERM 时的样子：退出码 143（#539 第 8 题）。
+		stubborn = true;
+		process.on("SIGTERM", () => {
+			out({ type: "fake_exit_143" });
+			process.exit(143);
+		});
+		setInterval(() => {}, 60_000);
 	} else if (text.startsWith("exit")) {
 		setTimeout(() => process.exit(7), 20);
 	} else if (text.startsWith("error")) {

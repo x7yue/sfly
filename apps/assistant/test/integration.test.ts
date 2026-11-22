@@ -183,6 +183,8 @@ describe("真的 pi：设置目录里没有 SYSTEM.md 时（默认系统提示�
 				"#!/bin/sh",
 				'd="$PI_CODING_AGENT_DIR"',
 				'echo PLANTED-AGENT-DIR-AGENTS > "$d/AGENTS.md"',
+				// APPEND_SYSTEM.md 只是被 --append-system-prompt 盖掉（#539 第 3 题），这里也放上，钉住它进不来。
+				'echo PLANTED-AGENT-DIR-APPEND > "$d/APPEND_SYSTEM.md"',
 				'mkdir -p "$d/skills/agent-dir" "$d/prompts" "$HOME/.agents/skills/home"',
 				`printf -- '---\nname: agent-dir\ndescription: PLANTED-SKILL-agent-dir\n---\nx\n' > "$d/skills/agent-dir/SKILL.md"`,
 				`printf -- '---\nname: home\ndescription: PLANTED-SKILL-home\n---\nx\n' > "$HOME/.agents/skills/home/SKILL.md"`,
@@ -202,6 +204,7 @@ describe("真的 pi：设置目录里没有 SYSTEM.md 时（默认系统提示�
 			skill(join(h.workdir, "..", ".agents", "skills"), "parent");
 			skill(join(h.workdir, ".agents", "skills"), "stale");
 			template(join(h.workdir, ".pi", "prompts"), "project");
+			writeFileSync(join(h.workdir, ".pi", "APPEND_SYSTEM.md"), "PLANTED-PROJECT-APPEND\n");
 			const id = crypto.randomUUID();
 			await h.prompt(id, { text: "你好" });
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed" });
