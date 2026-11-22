@@ -196,7 +196,9 @@ fn non_empty(s: &str) -> Option<String> {
 
 /// Welcome 里控制面的包索引（`package_index_url`，带末尾 `/`）：节点包依赖平台自己的包（标准节点包 `sfly-std`）时
 /// 从这里取（[`crate::install`]）。没有下发（旧版本控制面）为 None。它不是镜像，不能被本机覆盖：
-/// 它指向 Agent 连着的这个控制面，里面的包就是这个控制面发布的。
+/// 它是控制面按自己的对外地址（`SFLY_PUBLIC_URL`）拼出来的，对外地址配错了（指到了别的 HTTP 服务、
+/// 反向代理漏转了 `/simple/`）时这个地址上回答的就不是这个控制面，所以装依赖之前先检查它
+/// （[`crate::install`] 的 `check_package_index`：直接 200 并且带控制面的标记头）。
 pub fn package_index(welcome: &Welcome) -> Option<String> {
     non_empty(&welcome.package_index_url)
 }
