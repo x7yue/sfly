@@ -345,6 +345,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throttle: new LoginThrottle(clock, options.loginThrottle),
 		passwordGate: new PasswordGate(options.passwordGate),
 	});
+	// 假哈希提前算好（不等第一个不存在的登录名）；算不出来不挡启动，用到时再算。
+	void accounts.warmUp().catch(() => {});
 	try {
 		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({

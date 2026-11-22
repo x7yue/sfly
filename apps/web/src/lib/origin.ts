@@ -9,6 +9,10 @@ import type { AuthStatus } from "@sfly/schema";
  * 不让人在这样的页面上干等：对不上就提示该用哪个地址打开。
  *
  * 开发时（vite 开发服务器）页面的地址本来就和控制面的不同，控制面用 `SFLY_DEV_ORIGINS` 认它，这里不提示（调用方判断）。
+ *
+ * 页面在安全上下文（https、localhost）里时不提示：浏览器只在安全上下文里发 `Sec-Fetch-Site`，控制面看到
+ * `same-origin` 就放行，不再比公开地址或 `Host`。页面却总拿公开地址和 `Host` 去比，https 下用别名主机名打开、
+ * 或反向代理改写了 `Host` 但走的是 https 时，请求其实一切正常，提示是误报。
  */
 export type OriginProblem =
 	/** 配了公开地址，浏览器用的不是它。 */
@@ -18,8 +22,9 @@ export type OriginProblem =
 
 export function originProblem(
 	status: Pick<AuthStatus, "public_url" | "request_host">,
-	location: { origin: string; host: string },
+	location: { origin: string; host: string; isSecureContext: boolean },
 ): OriginProblem | undefined {
+	if (location.isSecureContext) return undefined;
 	if (status.public_url !== null) {
 		const expected = URL.canParse(status.public_url)
 			? new URL(status.public_url).origin

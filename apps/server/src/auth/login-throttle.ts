@@ -2,6 +2,7 @@
 // 同一个地址上失败得太多（不管试的是哪些用户名）整个地址也限速，不然一个地址对每个用户各试几次密码、永远碰不到按用户的限制。
 // 只记在内存里（控制面是单进程）：重启清零，不是账号锁定，被限速的只是这个来源要等一会儿。
 import type { Clock } from "../clock.js";
+import { throttleAddress } from "./source-address.js";
 
 export interface LoginThrottleOptions {
 	/** 一个（用户、地址）组合前几次失败不限制，默认 5。 */
@@ -101,12 +102,13 @@ export class LoginThrottle {
 		else this.#entries.set(key, { ...entry, failures: entry.failures - 1 });
 	}
 
+	// 键里的来源地址是归一后的（./source-address.ts）：去掉端口，IPv6 按 /64 归在一起。
 	#userKey(user: string, address: string): string {
-		return `u|${address}|${user.toLowerCase()}`;
+		return `u|${throttleAddress(address)}|${user.toLowerCase()}`;
 	}
 
 	#addressKey(address: string): string {
-		return `a|${address}`;
+		return `a|${throttleAddress(address)}`;
 	}
 
 	#wait(key: string, free: number, now: number): number {

@@ -17,7 +17,7 @@ import { AccessGuard } from "../auth/access-guard.js";
 import { DbAccessStore } from "../auth/access-store.js";
 import type { AccountService } from "../auth/accounts.js";
 import type { OriginRules } from "../auth/cross-site.js";
-import { PasswordGateBusy } from "../auth/password-gate.js";
+import { PasswordGateAborted, PasswordGateBusy } from "../auth/password-gate.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
@@ -256,6 +256,8 @@ export function buildHttpApi({
 			reply.header("retry-after", Math.max(1, Math.ceil(error.retryAfterMs / 1000)));
 			return sendError(reply, 503, "server_busy", error.message);
 		}
+		// 客户端在排队等着验证密码时断开了（src/auth/password-gate.ts）：没有去验证，响应也没人收，不是错误，不写错误日志。
+		if (error instanceof PasswordGateAborted) return reply.code(499).send();
 		const status = error.statusCode ?? 500;
 		if (status >= 500) {
 			request.log.error(error);

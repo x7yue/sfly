@@ -2,8 +2,10 @@
 // 1. 限速把「在途」的尝试也算进去，并发的错密码绕不过；
 // 2. 反向代理后面取来源地址：可信代理的层数或地址段，客户端自己写的 X-Forwarded-For 首段不作数；
 // 3. 打开着的事件流定期重新检查凭据：主机上重置密码、直接改库停用、空闲期限到了，都会被关掉；
-// 4. 密码验证有并发上限：登录风暴期间读文件的接口不被拖慢，队列满了回 503；
-// 5. 登出总是清掉 Cookie（哪怕这次请求没被当作已登录）。
+// 4. 密码验证有并发上限：登录风暴期间读文件的接口不被拖慢，队列满了回 503；闸满过一次之后不存在的登录名不会永远是 503；
+//    排队的请求客户端断开之后不再占着闸；
+// 5. 登出总是清掉 Cookie（哪怕这次请求没被当作已登录），带着有效的登录 Cookie 就注销库里的这条登录（不看同源判定）；
+// 6. 限速用的来源地址去掉端口、IPv6 按 /64 归在一起。
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -113,6 +115,41 @@ describe("反向代理后面的来源地址（SFLY_TRUST_PROXY）", () => {
 		const results: Response[] = [];
 		for (let i = 0; i < 12; i++) results.push(await wrongLogin(c, forged(i)));
 		expect(statuses(results).get(429) ?? 0).toBeGreaterThanOrEqual(6);
+	});
+
+	it("代理追加的地址带着端口、IPv6 地址换着写：同一个来源，限速不被端口或同一个 /64 里的换地址绕过", async () => {
+		const { parseTrustProxy } = await import("../src/http/trust-proxy.js");
+		cp = await startTestControlPlane({ initialAdmin: ADMIN, trustProxy: parseTrustProxy("1") });
+		const c = cp;
+		// IPv4：同一个地址，每次换一个源端口。
+		const v4: Response[] = [];
+		for (let i = 0; i < 12; i++) {
+			v4.push(await wrongLogin(c, { "x-forwarded-for": `10.9.9.9:${5000 + i}` }, "someone"));
+		}
+		expect(statuses(v4).get(401) ?? 0).toBeLessThanOrEqual(6);
+		expect(statuses(v4).get(429) ?? 0).toBeGreaterThanOrEqual(6);
+		// IPv6：同一个 /64 里换着写（带方括号和端口、不带、同一个前缀里的不同地址）。
+		const forms = [
+			"[2001:db8:1:2::1]:443",
+			"2001:db8:1:2::2",
+			"2001:db8:1:2:aaaa:bbbb:cccc:dddd",
+			"[2001:db8:1:2::3]:8443",
+			"2001:DB8:1:2::4",
+			"2001:db8:1:2:0:0:0:5",
+			"[2001:db8:1:2::6]:1",
+			"2001:db8:1:2::7",
+			"[2001:db8:1:2::8]:2",
+			"2001:db8:1:2::9",
+			"2001:db8:1:2::a",
+			"2001:db8:1:2::b",
+		];
+		const v6: Response[] = [];
+		for (const form of forms) v6.push(await wrongLogin(c, { "x-forwarded-for": form }, "other"));
+		expect(statuses(v6).get(401) ?? 0).toBeLessThanOrEqual(6);
+		expect(statuses(v6).get(429) ?? 0).toBeGreaterThanOrEqual(6);
+		// 另一个 /64 是另一个来源：不被牵连。
+		const elsewhere = await wrongLogin(c, { "x-forwarded-for": "2001:db8:1:3::1" }, "other");
+		expect(elsewhere.status).toBe(401);
 	});
 
 	it("配了地址段、但直连的对端不在段里：X-Forwarded-For 不作数（直连的客户端伪造不了来源）", async () => {
@@ -227,6 +264,101 @@ describe("打开着的事件流定期重新检查凭据", () => {
 		again.close();
 	});
 });
+
+describe("密码验证的并发闸：满过一次之后、客户端断开之后", () => {
+	/** 单独的一次登录要多久（没有排队）。 */
+	const timed = async (c: TestControlPlane, body: unknown) => {
+		const started = performance.now();
+		const res = await post(c, "/auth/login", body);
+		await res.arrayBuffer();
+		return { status: res.status, ms: performance.now() - started };
+	};
+
+	it("闸满过一次之后，不存在的登录名和存在的用户错密码的响应逐字相同（不会永远是 503，不能用来分辨登录名有没有这个人）", async () => {
+		cp = await startTestControlPlane({
+			initialAdmin: ADMIN,
+			scrypt: { logN: 15, r: 8, p: 1 },
+			passwordGate: { concurrency: 1, maxQueue: 1 },
+			loginThrottle: { freeAttempts: 1_000_000, addressFreeAttempts: 1_000_000 },
+		});
+		const c = cp;
+		// 存在的用户并发地错密码把闸填满；闸满的时候来一个不存在的登录名。
+		const flood = Array.from({ length: 8 }, () => wrongLogin(c));
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		const whileFull = await post(c, "/auth/login", {
+			login_name: "no-such-user",
+			password: "wrong-password-0",
+		});
+		const floodResults = await Promise.all(flood);
+		expect(floodResults.some((r) => r.status === 503)).toBe(true);
+		// 闸满的时候被拒绝是 503；之后闸空了，不存在的登录名和存在的用户错密码一模一样，不管试多少次。
+		expect([401, 503]).toContain(whileFull.status);
+		const wrong = await wrongLogin(c);
+		expect(wrong.status).toBe(401);
+		const wrongBody = await wrong.text();
+		for (let i = 0; i < 3; i++) {
+			const ghost = await post(c, "/auth/login", {
+				login_name: `no-such-user-${i}`,
+				password: "wrong-password-0",
+			});
+			expect(ghost.status).toBe(401);
+			expect(await ghost.text()).toBe(wrongBody);
+		}
+	}, 60_000);
+
+	it("排队的请求客户端断开之后不再占着闸：断开前后正常登录要等的时间差一个数量级（不断开要等完所有排着的）", async () => {
+		cp = await startTestControlPlane({
+			initialAdmin: ADMIN,
+			scrypt: { logN: 15, r: 8, p: 1 },
+			passwordGate: { concurrency: 1, maxQueue: 16 },
+			loginThrottle: { freeAttempts: 1_000_000, addressFreeAttempts: 1_000_000 },
+		});
+		const c = cp;
+		const good = { login_name: ADMIN.loginName, password: ADMIN.password };
+		await timed(c, good);
+		const quiet = Math.min((await timed(c, good)).ms, (await timed(c, good)).ms);
+
+		// 12 个请求进闸（1 个在算，其余排队），30 毫秒后客户端全部断开。
+		const sockets = Array.from({ length: 12 }, (_, i) =>
+			startLogin(c, { login_name: `ghost${i}`, password: "wrong-password-0" }),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		for (const socket of sockets) socket.abort();
+		// 断开之后马上来一个正常的登录：它只用等已经在算的那一个算完，再算自己的。
+		const after = await timed(c, good);
+		expect(after.status).toBe(200);
+		console.log(
+			`断开之后正常登录用了 ${Math.round(after.ms)} 毫秒（没有排队时 ${Math.round(quiet)} 毫秒）`,
+		);
+		// 没有这个修复时要等 12 个都算完（约 13 倍）；这里留足余量。
+		expect(after.ms, `没有排队时 ${Math.round(quiet)} 毫秒`).toBeLessThan(quiet * 5 + 150);
+		await Promise.allSettled(sockets.map((socket) => socket.done));
+	}, 60_000);
+});
+
+/** 发一个登录请求但不等响应：可以随时断开（模拟发了就走的客户端）。 */
+function startLogin(c: TestControlPlane, body: unknown) {
+	const payload = JSON.stringify(body);
+	let request_: ReturnType<typeof request> | undefined;
+	const done = new Promise<void>((resolve) => {
+		request_ = request(
+			new URL("/auth/login", c.httpUrl),
+			{
+				method: "POST",
+				agent: false,
+				headers: { ...JSON_HEADERS, "content-length": Buffer.byteLength(payload) },
+			},
+			(res) => {
+				res.resume();
+				res.on("end", resolve);
+			},
+		);
+		request_.on("error", () => resolve());
+		request_.on("close", () => resolve());
+		request_.end(payload);
+	});
+	return { done, abort: () => request_?.destroy() };
+}
 
 describe("密码验证的并发上限", () => {
 	it("登录风暴期间读文件的接口不被拖慢（真实的 scrypt 参数，限速放开，只看并发闸）", async () => {
@@ -357,6 +489,37 @@ describe("登出总是清掉 Cookie", () => {
 		});
 		expect(res.status).toBe(204);
 		expect(cleared(res.headers["set-cookie"])).toBe(true);
+		// 带着有效的登录 Cookie：库里的这条登录也被注销了，不看同源判定（浏览器上的 Cookie 清掉了，库里的却还有效的话，
+		// 拿到这个 Cookie 的人还能继续用）。
+		const me = await c.fetch("/auth/me", {
+			headers: { cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" },
+		});
+		expect(me.status).toBe(401);
+	});
+
+	it("跨站的登出也一样：带着有效的登录 Cookie 就注销库里的这条登录，别的登录不受影响；响应仍然是 204 并清掉 Cookie", async () => {
+		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		const c = cp;
+		const mine = cookieOf(
+			await post(c, "/auth/login", { login_name: "root", password: ADMIN.password }),
+		);
+		const other = cookieOf(
+			await post(c, "/auth/login", { login_name: "root", password: ADMIN.password }),
+		);
+		const res = await raw(c, "/auth/logout", "POST", {
+			cookie: `sfly_login=${mine}`,
+			"sec-fetch-site": "cross-site",
+			"sec-fetch-mode": "cors",
+			"sec-fetch-dest": "empty",
+		});
+		expect(res.status).toBe(204);
+		expect(cleared(res.headers["set-cookie"])).toBe(true);
+		const me = (cookie: string) =>
+			c.fetch("/auth/me", {
+				headers: { cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" },
+			});
+		expect((await me(mine)).status).toBe(401);
+		expect((await me(other)).status).toBe(200);
 	});
 
 	it("没有 Cookie、Cookie 已经失效的登出：也是 204 并清掉 Cookie（登出是幂等的）", async () => {

@@ -274,9 +274,20 @@ test.describe("公开地址和浏览器打开的地址不一致", () => {
 		controlPlaneOptions: { initialAdmin: ADMIN, publicHttpUrl: "http://sfly.example.test:8080" },
 	});
 
+	/**
+	 * e2e 只能用 127.0.0.1 打开页面，它是浏览器的安全上下文（和 https、localhost 一样会发 Sec-Fetch-Site）。
+	 * 提示针对的是内网 http 加 IP 或主机名访问（不是安全上下文，浏览器不发这个头）：用初始化脚本把
+	 * `isSecureContext` 改成 false 来模拟。请求本身仍然是真实浏览器发的，所以登录照常。
+	 */
+	const asInsecureContext = (page: import("@playwright/test").Page) =>
+		page.addInitScript(() => {
+			Object.defineProperty(window, "isSecureContext", { value: false });
+		});
+
 	test("登录页和登录之后的控制台顶部都提示「请用 <公开地址> 打开」（登录之后写请求会被当作没登录，登出也不生效）", async ({
 		page,
 	}) => {
+		await asInsecureContext(page);
 		await page.goto("/login");
 		const notice = page.locator('[data-slot="origin-notice"]');
 		await expect(notice).toBeVisible();
@@ -289,5 +300,22 @@ test.describe("公开地址和浏览器打开的地址不一致", () => {
 		await expect(page.locator('[data-slot="origin-notice"]')).toContainText(
 			"请用 http://sfly.example.test:8080 打开",
 		);
+	});
+
+	test("安全上下文（https、localhost、127.0.0.1）里不提示：浏览器会发 Sec-Fetch-Site，控制面据此放行，提示是误报", async ({
+		page,
+	}) => {
+		await page.goto("/login");
+		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+		await expect(page.locator('[data-slot="origin-notice"]')).toBeHidden();
+		await login(page);
+		await expect(page).toHaveURL(/\/$/);
+		await expect(accountMenu(page)).toBeVisible();
+		await expect(page.locator('[data-slot="origin-notice"]')).toBeHidden();
+		// 写请求、登出都照常（同源请求不看公开地址）。
+		await accountMenu(page).click();
+		await page.getByRole("menuitem", { name: "登出" }).click();
+		await expect(page).toHaveURL(/\/login$/);
+		expect((await page.request.get("/api/auth/me")).status()).toBe(401);
 	});
 });

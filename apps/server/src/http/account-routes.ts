@@ -6,6 +6,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { type AccountService, LoginNameTaken, type UserRecord } from "../auth/accounts.js";
 import { clearLoginCookieHeader, loginCookieHeader } from "../auth/login-cookie.js";
 import { isSecureRequest } from "./access.js";
+import { clientGone } from "./client-gone.js";
 import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
@@ -89,7 +90,7 @@ export function registerAccountRoutes(
 	});
 
 	contractRoute(app, authApi.login, async ({ body }, reply, raw) => {
-		const result = await accounts.login(body.login_name, body.password, raw.ip);
+		const result = await accounts.login(body.login_name, body.password, raw.ip, clientGone(reply));
 		if (!result.ok) {
 			if (result.reason === "throttled") return tooManyAttempts(reply, result.retryAfterMs);
 			return sendError(reply, 401, "invalid_credentials", "登录名或密码不对");
@@ -130,6 +131,7 @@ export function registerAccountRoutes(
 			body.old_password,
 			body.new_password,
 			raw.ip,
+			clientGone(reply),
 		);
 		if (result.ok) return reply.code(204).send();
 		if (result.reason === "throttled") return tooManyAttempts(reply, result.retryAfterMs);

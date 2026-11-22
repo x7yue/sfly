@@ -3,7 +3,10 @@
 // - 并发的错密码放行的次数不超过限速允许的（失败等算完才记，这条会红）；
 // - 算不过来被拒绝的尝试不算失败；
 // - 每次登录签发新的、不同的标识（改成「用户 ID 加时间」，同一个时刻两次登录的标识相同，这条会红）；
-// - 登录、初始化、改密码、建用户、重置密码都走同一个并发闸。
+// - 登录、初始化、改密码、建用户、重置密码都走同一个并发闸；
+// - 并发闸满的那一刻第一次碰到不存在的登录名，之后闸空了，不存在的登录名和存在的用户错密码的结果逐字相同
+//   （假哈希不缓存被闸拒绝的结果，不然不存在的登录名永远是 503，能用来分辨登录名有没有这个人）；
+// - 排队中的请求，客户端断开（中止信号）之后不再占着闸，也把限速里的在途占位还回去。
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,8 +16,8 @@ import { DbAccessStore } from "../src/auth/access-store.js";
 import { AccountService } from "../src/auth/accounts.js";
 import { hashCredential } from "../src/auth/credential-hash.js";
 import { LoginThrottle } from "../src/auth/login-throttle.js";
-import { verifyPassword } from "../src/auth/password.js";
-import { PasswordGate, PasswordGateBusy } from "../src/auth/password-gate.js";
+import { hashPassword, verifyPassword } from "../src/auth/password.js";
+import { PasswordGate, PasswordGateAborted, PasswordGateBusy } from "../src/auth/password-gate.js";
 import { SetupCode } from "../src/auth/setup-code.js";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { ManualClock } from "./support/manual-clock.js";
@@ -23,6 +26,13 @@ import { createTestDatabase, type TestDatabase } from "./support/test-database.j
 const SMALL = { logN: 10, r: 8, p: 1 } as const;
 const PASSWORD = "alice-password-1";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
+}
 
 describe("账号服务：限速、并发闸、登录标识", () => {
 	let testDb: TestDatabase;
@@ -49,7 +59,15 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 
 	/** 数着验证次数的账号服务；`delayMs` 让验证慢一点，并发的请求才会真的重叠。 */
 	const service = (
-		options: { delayMs?: number; gate?: PasswordGate; setupCode?: SetupCode } = {},
+		options: {
+			delayMs?: number;
+			/** 验证一直等到它完成：让一次验证占着闸，测试里想占多久占多久。 */
+			hold?: Promise<void>;
+			gate?: PasswordGate;
+			setupCode?: SetupCode;
+			/** 算假哈希用的函数（默认真的算）。 */
+			dummyHash?: (password: string) => Promise<string>;
+		} = {},
 	) =>
 		new AccountService({
 			db: database.db,
@@ -58,8 +76,10 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 			throttle,
 			...(options.gate ? { passwordGate: options.gate } : {}),
 			...(options.setupCode ? { setupCode: options.setupCode } : {}),
+			...(options.dummyHash ? { dummyHash: options.dummyHash } : {}),
 			verify: async (password, stored) => {
 				verifyCalls += 1;
+				if (options.hold) await options.hold;
 				if (options.delayMs) await sleep(options.delayMs);
 				return verifyPassword(password, stored);
 			},
@@ -191,12 +211,14 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 		expect(calls()).toBe(2);
 		await accounts.resetPassword(created.id, "reset-password-1");
 		expect(calls()).toBe(3);
-		// 登录：验证一次；登录名不存在的也验证一次（假哈希：第一次要先算出假哈希）。
+		// 登录：验证一次；登录名不存在的也验证一次（对着假哈希验证）。假哈希本身只算一次、不过闸：
+		// 闸满的那一刻它不能被拒绝（见下面「闸满过一次之后」那条）。
 		await accounts.login("alice", "reset-password-1", "10.0.0.1");
 		expect(calls()).toBe(4);
-		const before = calls();
 		await accounts.login("nobody", "x-password-1", "10.0.0.1");
-		expect(calls()).toBeGreaterThanOrEqual(before + 2);
+		expect(calls()).toBe(5);
+		await accounts.login("nobody", "x-password-1", "10.0.0.1");
+		expect(calls()).toBe(6);
 		// 改密码：验证旧密码一次，算新密码一次。
 		const beforeChange = calls();
 		const changed = await accounts.changePassword(
@@ -208,6 +230,114 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 		);
 		expect(changed.ok).toBe(true);
 		expect(calls()).toBe(beforeChange + 2);
+	});
+
+	it("闸满过一次之后：不存在的登录名和存在的用户错密码的结果逐字相同，不会永远是 503（假哈希不缓存被拒绝的结果）", async () => {
+		const gate = new PasswordGate({ concurrency: 1, maxQueue: 0 });
+		const release = deferred();
+		const accounts = await withAlice(service({ hold: release.promise, gate }));
+		// 一次验证占住闸；这时第一次碰到不存在的登录名：这一次没有去验证，503。
+		const occupying = accounts.login("alice", "wrong-password-0", "10.0.0.1");
+		await sleep(20);
+		await expect(accounts.login("ghost", "wrong-password-0", "10.0.0.2")).rejects.toBeInstanceOf(
+			PasswordGateBusy,
+		);
+		release.resolve();
+		await occupying;
+		// 闸空了：之后不存在的登录名得到的结果，和存在的用户错密码一模一样（同一个形状，连着几次都一样）。
+		const wrongPassword = await accounts.login("alice", "wrong-password-0", "10.0.0.3");
+		for (let i = 0; i < 3; i++) {
+			const ghost = await accounts.login("ghost", "wrong-password-0", `10.0.1.${i}`);
+			expect(ghost).toEqual(wrongPassword);
+		}
+		expect(wrongPassword).toEqual({ ok: false, reason: "invalid" });
+	});
+
+	it("假哈希算失败了也不缓存：下一次重新算，不会永远带着那次的失败", async () => {
+		let calls = 0;
+		const accounts = await withAlice(
+			service({
+				dummyHash: async (password) => {
+					calls += 1;
+					if (calls === 1) throw new Error("算假哈希时出错");
+					return hashPassword(password, SMALL);
+				},
+			}),
+		);
+		await expect(accounts.login("ghost", "wrong-password-0", "10.0.0.1")).rejects.toThrow(
+			"算假哈希时出错",
+		);
+		expect(await accounts.login("ghost", "wrong-password-0", "10.0.0.1")).toEqual({
+			ok: false,
+			reason: "invalid",
+		});
+		expect(calls).toBe(2);
+	});
+
+	it("排队中的登录请求，客户端断开之后：不去验证、抛 PasswordGateAborted，限速里的在途占位还回去", async () => {
+		const gate = new PasswordGate({ concurrency: 1, maxQueue: 16 });
+		const release = deferred();
+		const accounts = await withAlice(service({ hold: release.promise, gate }));
+		const occupying = accounts.login("alice", PASSWORD, "10.0.0.1");
+		await sleep(20);
+		const verifiedBefore = verifyCalls;
+		// 8 个来源地址各排着一个错密码（每个地址只有一次尝试，限速不会先拦下它们），然后全部断开。
+		const controllers = Array.from({ length: 8 }, () => new AbortController());
+		const queued = controllers.map((controller, i) =>
+			accounts.login("alice", `wrong-password-${i}`, `10.0.9.${i}`, controller.signal).then(
+				() => "completed",
+				(error: unknown) => error,
+			),
+		);
+		await sleep(20);
+		expect(gate.waiting).toBe(8);
+		for (const controller of controllers) controller.abort();
+		const outcomes = await Promise.all(queued);
+		expect(outcomes.every((error) => error instanceof PasswordGateAborted)).toBe(true);
+		expect(gate.waiting).toBe(0);
+		release.resolve();
+		await occupying;
+		// 一次都没有验证；占的位都还了：断开的那个地址上还能连着试到限速的次数（断开的那一次不算失败，
+		// 占位没还的话只能试 5 次）。
+		expect(verifyCalls).toBe(verifiedBefore);
+		for (let i = 0; i < 8; i++) expect(throttle.retryAfterMs("alice", `10.0.9.${i}`)).toBe(0);
+		let invalid = 0;
+		for (let i = 0; i < 6; i++) {
+			const result = await accounts.login("alice", "wrong-password-0", "10.0.9.0");
+			if (!result.ok && result.reason === "invalid") invalid++;
+		}
+		expect(invalid).toBe(6);
+	});
+
+	it("排队中的改密码请求（验证旧密码），客户端断开之后：同样不验证、把占位还回去", async () => {
+		const gate = new PasswordGate({ concurrency: 1, maxQueue: 16 });
+		const release = deferred();
+		const accounts = await withAlice(service({ hold: release.promise, gate }));
+		const id = (await accounts.findByLoginName("alice"))?.id ?? "";
+		const occupying = accounts.login("alice", PASSWORD, "10.0.0.1");
+		await sleep(20);
+		const verifiedBefore = verifyCalls;
+		const controller = new AbortController();
+		const queued = accounts
+			.changePassword(
+				id,
+				randomUUID(),
+				"wrong-old-password",
+				"new-password-123",
+				"10.0.0.7",
+				controller.signal,
+			)
+			.then(
+				() => "completed",
+				(error: unknown) => error,
+			);
+		await sleep(20);
+		controller.abort();
+		expect(await queued).toBeInstanceOf(PasswordGateAborted);
+		release.resolve();
+		await occupying;
+		expect(verifyCalls).toBe(verifiedBefore);
+		expect(throttle.retryAfterMs(`password:${id}`, "10.0.0.7")).toBe(0);
 	});
 
 	it("改密码：旧密码并发地猜也受限速（占位在验证之前）；旧密码对了之后限速清零", async () => {

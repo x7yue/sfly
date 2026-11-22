@@ -14,7 +14,11 @@ import { originProblem, originProblemText } from "#/lib/origin";
 export function OriginNotice({ className }: { className?: string }) {
 	const status = useQuery({ ...apiQuery(authApi.status), retry: false, staleTime: 60_000 });
 	if (import.meta.env.DEV || !status.data) return null;
-	const problem = originProblem(status.data, window.location);
+	const problem = originProblem(status.data, {
+		origin: window.location.origin,
+		host: window.location.host,
+		isSecureContext: window.isSecureContext,
+	});
 	if (!problem) return null;
 	return (
 		<div

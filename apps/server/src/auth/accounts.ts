@@ -63,6 +63,8 @@ export interface AccountServiceOptions {
 	passwordGate?: PasswordGate;
 	/** 验证密码的函数，默认 {@link verifyPassword}；测试里换成数着次数的，确认被限速的请求没有去验证。 */
 	verify?: (password: string, stored: string) => Promise<boolean>;
+	/** 算「假哈希」的函数（登录名不存在时拿它验证一次，对齐耗时），默认按 `scrypt` 参数算；测试里换成会失败的。 */
+	dummyHash?: (password: string) => Promise<string>;
 }
 
 /** 登录名重复。 */
@@ -100,6 +102,7 @@ export class AccountService {
 	readonly #gate: PasswordGate;
 	readonly #verifyFn: (password: string, stored: string) => Promise<boolean>;
 	readonly #listeners = new Set<(revocation: Revocation) => void>();
+	readonly #dummyFn: (password: string) => Promise<string>;
 	#dummy: Promise<string> | undefined;
 
 	constructor(options: AccountServiceOptions) {
@@ -111,6 +114,15 @@ export class AccountService {
 		this.#setupCode = options.setupCode;
 		this.#gate = options.passwordGate ?? new PasswordGate();
 		this.#verifyFn = options.verify ?? verifyPassword;
+		this.#dummyFn = options.dummyHash ?? ((password) => hashPassword(password, this.#scrypt));
+	}
+
+	/**
+	 * 提前把「假哈希」算好（控制面启动时调用，不等第一个不存在的登录名）：不然第一次碰到不存在的登录名要多算一次哈希，
+	 * 比存在的用户多花一倍时间，只有那一次。算失败了不缓存，下一次用到时重新算。
+	 */
+	async warmUp(): Promise<void> {
+		await this.#dummyHash();
 	}
 
 	/** 算一个密码的哈希：过并发闸，队列满了抛 {@link PasswordGateBusy}，不去算。 */
@@ -211,24 +223,41 @@ export class AccountService {
 
 	// ---- 登录与登出 ----
 
-	/** 一个不存在的用户也要花同样的时间验证一次密码，响应时间不泄露「登录名有没有这个人」。 */
+	/**
+	 * 一个不存在的用户也要花同样的时间验证一次密码，响应时间不泄露「登录名有没有这个人」：拿一个假哈希验证。
+	 * 假哈希只算一次、缓存起来，**不过并发闸**：它不是某个请求的验证，闸正好满的时候第一次算它被拒绝的话，
+	 * 被拒绝的结果会被一直缓存，之后不存在的登录名永远是 503，存在的用户错密码却是 401，能直接分辨登录名有没有这个人
+	 * （PR #555 的差异复审）。同时只会有这一个在算，不会放大闸要挡住的负载；算失败了不缓存，下一次重新算。
+	 */
 	#dummyHash(): Promise<string> {
-		this.#dummy ??= this.#hash(randomBytes(16).toString("hex"));
+		this.#dummy ??= this.#dummyFn(randomBytes(16).toString("hex")).catch((error: unknown) => {
+			this.#dummy = undefined;
+			throw error;
+		});
 		return this.#dummy;
 	}
 
 	/** 密码对不对；没有存储的密码（用户不存在、只靠外部身份登录）也要花同样的时间验证一次，响应时间不泄露这一点。 */
-	async #passwordMatches(password: string, stored: string | undefined): Promise<boolean> {
-		if (stored !== undefined) return this.#gate.run(() => this.#verifyFn(password, stored));
+	async #passwordMatches(
+		password: string,
+		stored: string | undefined,
+		signal?: AbortSignal,
+	): Promise<boolean> {
+		if (stored !== undefined) return this.#gate.run(() => this.#verifyFn(password, stored), signal);
 		const dummy = await this.#dummyHash();
-		await this.#gate.run(() => this.#verifyFn(password, dummy));
+		await this.#gate.run(() => this.#verifyFn(password, dummy), signal);
 		return false;
 	}
 
+	/**
+	 * 登录。`signal` 是请求的中止信号（客户端断开）：排队等着验证时断开，就不去验证，抛 `PasswordGateAborted`，
+	 * 占的限速名额还回去（不是这个人的失败）；已经在算的不打断。
+	 */
 	async login(
 		loginName: string,
 		password: string,
 		address: string,
+		signal?: AbortSignal,
 	): Promise<
 		| { ok: true; login: LoggedIn }
 		| { ok: false; reason: "invalid" }
@@ -244,7 +273,7 @@ export class AccountService {
 		try {
 			[row] = await this.#db.select().from(users).where(eq(users.loginName, name));
 			stored = row?.passwordHash ?? undefined;
-			correct = await this.#passwordMatches(password, stored);
+			correct = await this.#passwordMatches(password, stored, signal);
 		} catch (error) {
 			// 没有验证成（算不过来被拒绝、读库出错）：不是这个人的失败，把占的位还回去。
 			this.#throttle.cancel(name, address);
@@ -315,6 +344,7 @@ export class AccountService {
 
 	/**
 	 * 改自己的密码（要旧密码）：旧密码不对是 `wrong_password`（也算失败，按用户限速：偷到 Cookie 的人不能借这个接口猜旧密码）。
+	 * 验证旧密码排队时客户端断开（`signal`）同登录：不验证，抛 `PasswordGateAborted`，占位还回去。
 	 * 改完之后别处的其他登录都注销，当前这个保留。
 	 */
 	async changePassword(
@@ -323,6 +353,7 @@ export class AccountService {
 		oldPassword: string,
 		newPassword: string,
 		address: string,
+		signal?: AbortSignal,
 	): Promise<
 		| { ok: true }
 		| { ok: false; reason: "wrong_password" }
@@ -334,7 +365,7 @@ export class AccountService {
 		let correct: boolean;
 		try {
 			const [row] = await this.#db.select().from(users).where(eq(users.id, userId));
-			correct = await this.#passwordMatches(oldPassword, row?.passwordHash ?? undefined);
+			correct = await this.#passwordMatches(oldPassword, row?.passwordHash ?? undefined, signal);
 		} catch (error) {
 			this.#throttle.cancel(key, address);
 			throw error;

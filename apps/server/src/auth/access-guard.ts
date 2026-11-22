@@ -202,10 +202,12 @@ export class AccessGuard {
 		}
 		// 不属于项目的接口不需要凭据，带了也不看（过期的 Cookie 不该让健康检查和下载安装脚本失败）。
 		if (locator.from === "none") return { ok: true, access: null };
-		let presented = presentedCredential(request);
+		const offered = presentedCredential(request);
 		// 登录 Cookie 是浏览器自动带上的：跨站的请求（有副作用的，或者不是页面导航的）不认它，当作没有登录。
-		if (presented?.from === "cookie" && !this.#sameSite(request)) presented = undefined;
-		if (locator.from === "account") return this.#checkAccount(request, presented);
+		const crossSite = offered?.from === "cookie" && !this.#sameSite(request);
+		const presented = crossSite ? undefined : offered;
+		// 登出例外（`#checkLogout`）：它要看到跨站带来的 Cookie，才能把库里的这条登录也注销。
+		if (locator.from === "account") return this.#checkAccount(request, presented, offered);
 		if (presented === undefined) return { ok: true, access: null };
 		const resolved = await this.#resolve(presented);
 		const result = await this.#decide(resolved, request, locator);
@@ -254,6 +256,7 @@ export class AccessGuard {
 	async #checkAccount(
 		request: AccessRequest,
 		presented: Presented | undefined,
+		offered: Presented | undefined,
 	): Promise<AccessResult> {
 		const key = routeKey(request.route);
 		const rule: string | undefined = (ACCOUNT_ROUTES as Record<string, string>)[key];
@@ -262,7 +265,7 @@ export class AccessGuard {
 		}
 		// 登录、初始化、状态不要凭据，带了什么都不看：过期的 Cookie 不该让登录页登录不了。
 		if (rule === "anonymous") return { ok: true, access: null };
-		if (rule === "logout") return this.#checkLogout(presented);
+		if (rule === "logout") return this.#checkLogout(offered);
 		if (presented === undefined) return denied(401, "unauthorized", "需要登录");
 		const resolved = await this.#resolve(presented);
 		const { principal } = resolved;
@@ -298,8 +301,11 @@ export class AccessGuard {
 	}
 
 	/**
-	 * 登出：总是放行。认得出是同源的、有效的登录时带出身份（处理函数据此注销这一个登录）；没带 Cookie、令牌、Cookie 失效、
-	 * 请求没有被当作已登录（跨站、公开地址对不上）都没有身份，处理函数只清浏览器上的 Cookie。
+	 * 登出：总是放行。请求带着有效的登录 Cookie 就带出身份（处理函数据此注销库里的这一个登录），**不看同源判定**：
+	 * 浏览器上的 Cookie 无条件清掉，库里的登录却因为这次请求被当作跨站、公开地址对不上而留着有效，
+	 * 拿到这个 Cookie 的人还能继续用；而能带上这个 Cookie 的「不同源」请求只有同站的（SameSite=Lax 挡掉了跨站的写请求），
+	 * 它们能做到的只是强迫登出，清 Cookie 本来就是无条件的，服务端多注销一次不增加危害。
+	 * 没带 Cookie、带的是令牌、Cookie 已经失效，都没有身份，处理函数只清浏览器上的 Cookie。
 	 */
 	async #checkLogout(presented: Presented | undefined): Promise<AccessResult> {
 		if (presented?.from !== "cookie") return { ok: true, access: null };

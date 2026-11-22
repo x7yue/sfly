@@ -154,13 +154,17 @@ describe("跨站检查：带 Cookie 的请求", () => {
 			const res = await cp.fetch(path, { method, headers: browser(cookie, crossSite) });
 			expect(res.status, `${method} ${path}`).toBe(401);
 		}
-		// 登出不拒绝任何凭据：跨站的登出不被当作已登录，不会注销这个登录，只清掉浏览器上的 Cookie。
+		// 登出不拒绝任何凭据，也不看同源判定：跨站的登出带着有效的登录 Cookie，库里的这条登录照样被注销
+		// （浏览器上的 Cookie 无条件清掉；库里的登录留着有效，拿到这个 Cookie 的人还能继续用）。用另一条登录来试。
+		// 其余的跨站请求都没有登出，这个 Cookie 还在用。
+		expect((await cp.fetch("/auth/me", { headers: browser(cookie, sameOrigin) })).status).toBe(200);
+		const other = await loginCookie(cp, "root", ADMIN.password);
 		const logout = await cp.fetch("/auth/logout", {
 			method: "POST",
-			headers: browser(cookie, crossSite),
+			headers: browser(other, crossSite),
 		});
 		expect(logout.status).toBe(204);
-		// 以上都没有登出：Cookie 还在用。
+		expect((await cp.fetch("/auth/me", { headers: browser(other, sameOrigin) })).status).toBe(401);
 		expect((await cp.fetch("/auth/me", { headers: browser(cookie, sameOrigin) })).status).toBe(200);
 	});
 
@@ -185,10 +189,12 @@ describe("跨站检查：带 Cookie 的请求", () => {
 	});
 
 	it("有副作用的跨站请求就算是页面导航（表单提交）也不被当作已登录", async () => {
-		// 登出不拒绝任何凭据（204，清掉 Cookie），但没有被当作已登录：库里的登录没有被注销（下一条测试里 Cookie 还在用）。
-		const res = await rawRequest(cp, "/auth/logout", browser(cookie, crossNavigation), "POST");
+		// 登出不拒绝任何凭据（204，清掉 Cookie），也不看同源判定：带着有效的登录 Cookie，库里的这条登录照样被注销
+		// （用另一条登录来试，这个 Cookie 留给下面的测试用）。
+		const other = await loginCookie(cp, "root", ADMIN.password);
+		const res = await rawRequest(cp, "/auth/logout", browser(other, crossNavigation), "POST");
 		expect(res.status).toBe(204);
-		expect((await cp.fetch("/auth/me", { headers: browser(cookie, sameOrigin) })).status).toBe(200);
+		expect((await cp.fetch("/auth/me", { headers: browser(other, sameOrigin) })).status).toBe(401);
 		// 其余有副作用的账号接口：401。
 		const logoutAll = await rawRequest(
 			cp,
