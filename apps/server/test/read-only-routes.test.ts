@@ -846,6 +846,7 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 				live: await fixture(pressure, live),
 				queued: {
 					scenarioId: pressure,
+					latestVersion: await api.headVersion(pressure),
 					runId: queuedRunId,
 					chainInstanceId: (await api.run(queuedRunId)).chains[0]?.id as string,
 				},
