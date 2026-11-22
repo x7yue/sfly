@@ -15,9 +15,8 @@ export const OPEN_DIALOG = '[role="dialog"][data-open], [role="alertdialog"][dat
 export const dialogOpen = (): boolean => document.querySelector(OPEN_DIALOG) !== null;
 
 /**
- * 焦点在画布上：画布区域本身、节点卡片、画布空白处，或者页面上没有焦点（`body`）。检查器、大纲、工具条、菜单等
- * 盖在画布上的面板不算。画布自己的方向键、Enter、Esc（FlowCanvas）和登记了 `canvasOnly` 的快捷键（删除）都按它判断：
- * 焦点在别的面板里时，这些键不传给画布。
+ * 焦点在画布本身：画布区域、节点卡片、画布空白处，或者页面上没有焦点（`body`）。画布自己的方向键、Enter、Esc（FlowCanvas）
+ * 按它判断：画布工具条、检查器、大纲等盖在画布上的东西里，这些键归它们自己用（工具条里 ← → 在按钮之间移动）。
  */
 export const onCanvasFocus = (target: EventTarget | null): boolean => {
 	if (!(target instanceof Element)) return true;
@@ -27,4 +26,16 @@ export const onCanvasFocus = (target: EventTarget | null): boolean => {
 		target.closest("[data-node-id]") !== null ||
 		target.classList.contains("react-flow__pane")
 	);
+};
+
+/**
+ * 焦点在画布区域里、不在检查器和大纲这类面板（`aside`）里：画布本身、节点卡片、画布工具条、浮在画布上的工具条，
+ * 或者页面上没有焦点。登记了 `canvasOnly` 的快捷键（删除节点、连线、注释框）按它判断：点完画布工具条的按钮接着按
+ * Delete 照常删除选中的节点，但在检查器里点一下不是输入框的地方再按 Backspace 不能删掉画布上的节点（#461）；
+ * 页头、侧边栏、弹出的菜单（在画布区域之外）里同样不触发。
+ */
+export const inCanvasArea = (target: EventTarget | null): boolean => {
+	if (!(target instanceof Element)) return true;
+	if (target === document.body) return true;
+	return target.closest("[data-canvas-region]") !== null && target.closest("aside") === null;
 };

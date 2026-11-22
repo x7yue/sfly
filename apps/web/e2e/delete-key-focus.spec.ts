@@ -109,7 +109,7 @@ for (const key of KEYS) {
 		}
 	});
 
-	test(`焦点在画布的工具条、大纲上（也不是画布）：${key} 不删除选中的节点`, async ({
+	test(`焦点在大纲（检查器以外的另一个面板）里：${key} 不删除选中的节点`, async ({
 		page,
 		controlPlane,
 	}) => {
@@ -119,16 +119,42 @@ for (const key of KEYS) {
 		await dock(page).getByRole("button", { name: "大纲" }).click();
 		const outline = page.getByRole("complementary", { name: "大纲" });
 		await expect(outline).toBeVisible();
-		for (const focus of [
-			dock(page).getByRole("button", { name: "适配视图" }),
-			outline.getByRole("button").first(),
-		]) {
-			await focus.focus();
-			await expect(focus).toBeFocused();
-			await page.keyboard.press(key);
-			await expect(nodeCard(page, "ping")).toBeVisible();
-			await expect(notice(page)).toHaveCount(0);
-		}
+		const focus = outline.getByRole("button").first();
+		await focus.focus();
+		await expect(focus).toBeFocused();
+		await page.keyboard.press(key);
+		await expect(nodeCard(page, "ping")).toBeVisible();
+		await expect(notice(page)).toHaveCount(0);
+	});
+
+	test(`焦点在页头的「运行」按钮上（画布区域之外）：${key} 不删除选中的节点`, async ({
+		page,
+		controlPlane,
+	}) => {
+		const id = await createEditorScenario(controlPlane);
+		await openEditor(page, id);
+		await nodeCard(page, "ping").click();
+		const focus = page.getByRole("button", { name: "运行", exact: true });
+		await focus.focus();
+		await expect(focus).toBeFocused();
+		await page.keyboard.press(key);
+		await expect(nodeCard(page, "ping")).toBeVisible();
+		await expect(notice(page)).toHaveCount(0);
+	});
+
+	test(`焦点在画布工具条的按钮上（点完工具条接着用键盘）：${key} 照常删除选中的节点`, async ({
+		page,
+		controlPlane,
+	}) => {
+		const id = await createEditorScenario(controlPlane);
+		await openEditor(page, id);
+		await nodeCard(page, "ping").click();
+		const fit = dock(page).getByRole("button", { name: "适配视图" });
+		await fit.focus();
+		await expect(fit).toBeFocused();
+		await page.keyboard.press(key);
+		await expect(nodeCard(page, "ping")).toHaveCount(0);
+		await expect(notice(page)).toBeVisible();
 	});
 
 	test(`页面上没有焦点（点在顶栏标题文字上，焦点落到 body）：${key} 和方向键等画布键一样照常作用于选中的节点`, async ({

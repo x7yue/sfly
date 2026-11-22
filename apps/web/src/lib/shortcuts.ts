@@ -28,9 +28,9 @@ export interface ShortcutDef {
 	/** 只在面板里展示，由组件自身处理（例如 Esc 关闭浮层）。 */
 	displayOnly?: boolean;
 	/**
-	 * 只在焦点在画布上（卡片、空白处）或页面上没有焦点时触发：焦点在检查器、大纲、工具条等不属于画布的地方不触发
-	 * （`lib/focus` 的 `onCanvasFocus`，和画布自己的方向键、Enter、Esc 是同一个判断）。删东西的键用它：
-	 * 在检查器里点一下不是输入框的地方，Backspace 不该删掉画布上选中的节点（#461）。
+	 * 只在焦点在画布区域里（画布、节点卡片、画布工具条）或页面上没有焦点时触发：焦点在检查器、大纲等面板里、页头、
+	 * 弹出的菜单里不触发（`lib/focus` 的 `inCanvasArea`）。删东西的键用它：在检查器里点一下不是输入框的地方，
+	 * Backspace 不该删掉画布上选中的节点（#461）。
 	 */
 	canvasOnly?: boolean;
 	/** 绑定了处理函数时，同时作为命令出现在命令面板的「当前页面」分组里。 */
@@ -229,7 +229,7 @@ export interface KeyInput {
 	editable: boolean;
 	/** 有模态弹窗打开。 */
 	inDialog?: boolean;
-	/** 焦点在画布以外的地方（检查器、大纲、工具条……）：登记了 `canvasOnly` 的键不触发。 */
+	/** 焦点不在画布区域里（检查器、大纲、页头、弹出的菜单……）：登记了 `canvasOnly` 的键不触发。 */
 	offCanvas?: boolean;
 }
 

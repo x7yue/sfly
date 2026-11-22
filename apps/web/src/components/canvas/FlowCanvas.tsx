@@ -768,8 +768,8 @@ export function FlowCanvas({
 	// 删除选中的节点和连线（Delete / Backspace）：照 React Flow 自己的删除键处理（useGlobalKeyHandler）做，走同一条
 	// deleteElements（onBeforeDelete 把节点整组交给使用方）。React Flow 自己的删除键是挂在 window 上的，不管焦点在哪个面板里
 	// 都会触发（检查器里点一下不是输入框的地方、按钮、页签上按 Backspace 就删了节点，#461），所以关掉它（deleteKeyCode），
-	// 改由快捷键注册表里的 `canvas-delete` / `canvas-delete-backspace` 绑定（canvasOnly，只认画布焦点；
-	// 输入框、弹窗里照常不触发）。
+	// 改由快捷键注册表里的 `canvas-delete` / `canvas-delete-backspace` 绑定（canvasOnly，只在焦点在画布区域里时生效；
+	// 检查器、大纲、输入框、弹窗里不触发）。
 	const deleteSelected = () => {
 		const nodes = flow.getNodes().filter((n) => n.selected);
 		const edges = flow.getEdges().filter((e) => e.selected);
@@ -811,8 +811,7 @@ export function FlowCanvas({
 			const target = event.target instanceof Element ? event.target : null;
 			const root = wrapper.current;
 			if (!root || isEditable(target) || dialogOpen()) return;
-			// 焦点在画布本身（空白处、节点卡片）或页面上没有焦点时才处理，工具条按钮等保持原样
-			// （和登记了 canvasOnly 的快捷键、删除键同一个判断：lib/focus 的 onCanvasFocus）。
+			// 焦点在画布本身（空白处、节点卡片）或页面上没有焦点时才处理，工具条按钮等保持原样（lib/focus 的 onCanvasFocus）。
 			if (!onCanvasFocus(target) || !(target === document.body || root.contains(target))) return;
 			const { nodes, edges, selection, onSelect, onEnter, reveal, openNodeMenu, stopFollowing } =
 				latest.current;
@@ -855,7 +854,7 @@ export function FlowCanvas({
 		return () => document.removeEventListener("keydown", onKeyDown);
 	}, []);
 
-	// 删除选中的节点和连线：Delete 和 Backspace 在快捷键注册表里各登记一行（canvasOnly：焦点在检查器等面板里不生效）。
+	// 删除选中的节点和连线：Delete 和 Backspace 在快捷键注册表里各登记一行（canvasOnly：焦点在检查器、大纲等面板里不生效）。
 	useShortcut("canvas-delete", deleteSelected, editable);
 	useShortcut("canvas-delete-backspace", deleteSelected, editable);
 	useShortcut("canvas-fit", fit);
