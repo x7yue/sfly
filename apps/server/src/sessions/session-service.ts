@@ -58,6 +58,9 @@ export function titleOf(text: string): string {
  */
 export const STALE_TURN_MS = 30 * 60 * 1000;
 
+/** 停止会话：把中止发给助手服务之后，最多等多久它把这一轮的结局（`turn_end`）带回来（毫秒）；超过由控制面结束这一轮。 */
+export const STOP_GRACE_MS = 5_000;
+
 /** 助手服务的 `/health` 结果缓存多久（毫秒）：每次列出会话都问一遍太频繁。 */
 const HEALTH_TTL_MS = 30_000;
 
@@ -71,6 +74,8 @@ export interface SessionServiceDeps {
 	client: AssistantClient | undefined;
 	/** 哪台 Agent 是工作台（Agent 的名字，`SFLY_WORKBENCH_AGENT`）；骨架期间由部署者配置，#549 换成项目上的一列。 */
 	workbenchAgent: string | undefined;
+	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
+	stopGraceMs?: number;
 }
 
 type WorkbenchTarget = PromptCommandBody["workbench"];
@@ -305,30 +310,75 @@ export class SessionService {
 		const { sessions, clock } = this.deps;
 		const stale = await sessions.staleRunning(new Date(clock.now().getTime() - STALE_TURN_MS));
 		for (const session of stale) {
-			await sessions.append(session.id, {
-				type: "turn_end",
-				turn: Math.max(1, await sessions.turnCount(session.id)),
-				outcome: "interrupted",
-				reason:
-					"这一轮超过 30 分钟没有收到助手服务的消息，按中断处理（控制面或助手服务可能重启过）",
-				duration_ms: Math.max(0, clock.now().getTime() - session.lastActivityAt.getTime()),
-			});
+			await this.#endTurn(
+				session,
+				"interrupted",
+				"这一轮超过 30 分钟没有收到助手服务的消息，按中断处理（控制面或助手服务可能重启过）",
+			);
 		}
 		return stale.length;
 	}
 
-	/** 停止会话正在做的这一轮：在做时把中止发给助手服务（这一轮的 `turn_end` 由助手服务的事件带回来）；不在做时什么也不做。 */
+	/**
+	 * 停止会话正在做的这一轮：不在做时什么也不做（助手没有配置时仍是 503，和别的写一样）；在做时先把中止发给助手服务，
+	 * 它会带回这一轮的 `turn_end`（等一小会儿，{@link STOP_GRACE_MS}）；助手服务没有配置、连不上、不认识这一轮、
+	 * 或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：
+	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。助手服务晚到的同一轮的结局不再记
+	 * （`SessionStore.append`：同一轮的 `turn_end` 只记一条）。
+	 */
 	async stop(session: SessionRow): Promise<Outcome<null>> {
-		const ready = await this.#configured();
-		if (!ready.ok) return ready;
-		if (session.status !== "running") return { ok: true, value: null };
-		try {
-			await ready.value.abort(session.id);
-		} catch (error) {
-			const failure = describeFailure(error);
-			return rejected(failure.status, failure.code, failure.message);
+		const { sessions, client } = this.deps;
+		const current = (await sessions.find(session.id)) ?? session;
+		if (current.status !== "running") {
+			const configured = await this.#configured();
+			return configured.ok ? { ok: true, value: null } : configured;
 		}
+		let aborted = false;
+		if (client) {
+			try {
+				await client.abort(current.id);
+				aborted = true;
+			} catch {
+				// 连不上或被拒绝：下面由控制面结束这一轮。
+			}
+		}
+		if (aborted && (await this.#settled(current.id))) return { ok: true, value: null };
+		await this.#endTurn(
+			current,
+			"stopped",
+			aborted
+				? "用户停止；助手服务没有及时带回这一轮的结局，由控制面结束"
+				: "用户停止；助手服务没有回话（没有配置、连不上或不认识这一轮），由控制面结束",
+		);
 		return { ok: true, value: null };
+	}
+
+	/** 等会话离开「在做」（助手服务带回了结局），最多等宽限那么久；返回等到了没有。 */
+	async #settled(sessionId: string): Promise<boolean> {
+		const deadline = Date.now() + (this.deps.stopGraceMs ?? STOP_GRACE_MS);
+		for (;;) {
+			const row = await this.deps.sessions.find(sessionId);
+			if (!row || row.status !== "running") return true;
+			const left = deadline - Date.now();
+			if (left <= 0) return false;
+			await new Promise((resolve) => setTimeout(resolve, Math.min(25, left)));
+		}
+	}
+
+	/** 控制面自己结束一轮：补一条 `turn_end`（会话回到空闲和它在同一个事务里）。 */
+	async #endTurn(
+		session: SessionRow,
+		outcome: "stopped" | "interrupted",
+		reason: string,
+	): Promise<void> {
+		const { sessions, clock } = this.deps;
+		await sessions.append(session.id, {
+			type: "turn_end",
+			turn: Math.max(1, await sessions.turnCount(session.id)),
+			outcome,
+			reason,
+			duration_ms: Math.max(0, clock.now().getTime() - session.lastActivityAt.getTime()),
+		});
 	}
 
 	async #configured(): Promise<Outcome<AssistantClient>> {

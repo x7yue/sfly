@@ -659,6 +659,8 @@ export type SessionView = z.infer<typeof SessionView>;
 export const SessionListResponse = z.object({
 	readiness: Readiness,
 	sessions: z.array(SessionListItem).max(SESSION_LIST_LIMIT),
+	/** 会话超过 {@link SESSION_LIST_LIMIT} 个，更早的没有列出来（页面据此提示）。 */
+	truncated: z.boolean(),
 });
 export type SessionListResponse = z.infer<typeof SessionListResponse>;
 

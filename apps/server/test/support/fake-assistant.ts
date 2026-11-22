@@ -35,6 +35,8 @@ export class FakeAssistant {
 	readonly aborts: string[] = [];
 	/** 每个 prompt 的回应；默认全部 202。 */
 	promptReply: (prompt: ReceivedPrompt) => Reply | undefined = () => undefined;
+	/** 每个 abort 的回应；默认 202（重复调用无害）。 */
+	abortReply: (sessionId: string) => Reply | undefined = () => undefined;
 	/** `/health` 的回应；默认健康。 */
 	health: () => AssistantHealth | Reply = () => this.healthy();
 	/** 助手服务每次启动生成的随机 ID。 */
@@ -200,6 +202,8 @@ export class FakeAssistant {
 		const sessionId = command[1] as string;
 		if (command[2] === "abort") {
 			this.aborts.push(sessionId);
+			const reply = this.abortReply(sessionId);
+			if (reply) return this.#error(res, reply);
 			return this.#send(res, 202);
 		}
 		let json: unknown;

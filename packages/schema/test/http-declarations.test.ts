@@ -369,6 +369,73 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		).toEqual([]);
 	});
 
+	it("/projects/:project/… 下用 ID 定位的类别写成 { query }、{ body } 也不行：只接受 collection；按名字定位的类别和路径不带项目的不受影响", () => {
+		const project = z.object({ project: z.string() });
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			// 路径只有 :project（列表和新建）：写 { body } 定位——访问检查只按路径里的项目查，不核对 body 里的 ID。
+			const byBody = problems(
+				broken({
+					method: "POST",
+					effect: "write",
+					path: "/projects/:project/things",
+					params: project,
+					body: z.object({ thing_id: z.string() }),
+					resource: { kind, target: { body: "thing_id" } },
+				}),
+			);
+			expect(byBody, `${kind} body`).toHaveLength(1);
+			expect(byBody[0], `${kind} body`).toContain("只能写 collection");
+			// 路径还有别的参数、定位写成 { query }：同样不行（同一类绕过）。
+			const byQuery = problems(
+				broken({
+					path: "/projects/:project/things/:id",
+					params: project.extend({ id: z.string() }),
+					query: z.object({ id: z.string() }),
+					resource: { kind, target: { query: "id" } },
+				}),
+			);
+			expect(byQuery, `${kind} query`).toHaveLength(1);
+			expect(byQuery[0], `${kind} query`).toContain("只能写 collection");
+			// collection 是对的。
+			expect(
+				problems(
+					broken({
+						method: "POST",
+						effect: "write",
+						path: "/projects/:project/things",
+						params: project,
+						resource: { kind, target: "collection" },
+					}),
+				),
+				`${kind} collection`,
+			).toEqual([]);
+		}
+		// 按名字定位的类别（节点包）：query、body 照旧可以（项目就是路径里的项目）。
+		expect(
+			problems(
+				broken({
+					method: "POST",
+					effect: "write",
+					path: "/projects/:project/things",
+					params: project,
+					body: z.object({ name: z.string() }),
+					resource: { kind: "package", target: { body: "name" } },
+				}),
+			),
+		).toEqual([]);
+		// 路径不带项目的 ID 定位类别：{ query } 照旧可以（项目从那个 ID 得出，不看路径）。
+		expect(
+			problems(
+				broken({
+					path: "/things",
+					params: undefined,
+					query: z.object({ id: z.string() }),
+					resource: { kind: "session", target: { query: "id" } },
+				}),
+			),
+		).toEqual([]);
+	});
+
 	it("GET 必须只读，DELETE 必须声明 removes，非 GET 的只读接口必须登记", () => {
 		expect(problems(broken({ effect: "write" }))[0]).toContain("GET 要声明为只读");
 		expect(problems(broken({ method: "DELETE", effect: "write" }))[0]).toContain(

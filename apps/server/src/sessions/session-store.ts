@@ -79,6 +79,11 @@ export class SessionNotFoundError extends Error {
 export interface SessionStoreDeps {
 	db: Db;
 	clock: Clock;
+	/**
+	 * 测试用的缝：一条持久事件提交之后、发布之前调用（并等它），用来在这两步之间停住，验证发布顺序和
+	 * 「补发不会读到提交了但还没发布的事件」。生产里不传。
+	 */
+	afterCommit?: (sessionId: string, event: PersistedSessionEvent) => Promise<void>;
 }
 
 /**
@@ -91,8 +96,27 @@ export interface SessionStoreDeps {
 export class SessionStore {
 	/** 按会话 ID 发布的事件：持久的已经落库（带 `seq`、`at`），不持久的只在这里。 */
 	readonly #live = new Topics<SessionEvent>();
+	/** 每个会话一条 Promise 链：这个会话的「落库加发布」和事件流补发的读库依次执行，见 {@link SessionStore.append}。 */
+	readonly #chains = new Map<string, Promise<unknown>>();
 
 	constructor(private readonly deps: SessionStoreDeps) {}
+
+	/**
+	 * 在这个会话的链上依次执行：前一个（不论成败）结束了才开始。进程内的这个会话，「落库加发布」一次一个，
+	 * 发布的先后就是提交的先后（也就是 `seq` 的先后）；补发读库也排在这条链上，所以读到的不会有「已经提交、
+	 * 但还没发布」的事件。控制面只有一个进程（不是多副本）时成立；多副本要换成数据库的通知（那时再说）。
+	 */
+	#serial<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+		const previous = this.#chains.get(sessionId) ?? Promise.resolve();
+		const result = previous.then(run, run);
+		const tail = result.catch(() => undefined);
+		this.#chains.set(sessionId, tail);
+		// 链尾没有后来者时清掉，不让每个会话在 Map 里留一条。
+		void tail.then(() => {
+			if (this.#chains.get(sessionId) === tail) this.#chains.delete(sessionId);
+		});
+		return result;
+	}
 
 	/** 项目存不存在（路径里的项目标识）。 */
 	async projectExists(project: ProjectId): Promise<boolean> {
@@ -112,11 +136,11 @@ export class SessionStore {
 
 	/**
 	 * 项目里的会话：在做和排队中的在前，其余按最近活动倒序（#551 的写法）；带上一轮的结局。
-	 * 同样活跃的按 ID 排，顺序固定。最多 {@link SESSION_LIST_LIMIT} 个。
+	 * 同样活跃的按 ID 排，顺序固定。最多 {@link SESSION_LIST_LIMIT} 个，超出的更早的会话不返回，`truncated` 为 true。
 	 */
-	async list(project: ProjectId): Promise<SessionListItem[]> {
+	async list(project: ProjectId): Promise<{ sessions: SessionListItem[]; truncated: boolean }> {
 		const { db } = this.deps;
-		const rows = await db
+		const found = await db
 			.select()
 			.from(sessions)
 			.where(eq(sessions.projectId, project))
@@ -125,9 +149,14 @@ export class SessionStore {
 				desc(sessions.lastActivityAt),
 				desc(sessions.id),
 			)
-			.limit(SESSION_LIST_LIMIT);
+			// 多取一个：多出来了就是被截断了（`truncated`），页面据此提示。
+			.limit(SESSION_LIST_LIMIT + 1);
+		const rows = found.slice(0, SESSION_LIST_LIMIT);
 		const outcomes = await this.#lastOutcomes(rows.map((row) => row.id));
-		return rows.map((row) => toListItem(row, outcomes.get(row.id) ?? null));
+		return {
+			sessions: rows.map((row) => toListItem(row, outcomes.get(row.id) ?? null)),
+			truncated: found.length > SESSION_LIST_LIMIT,
+		};
 	}
 
 	/** 在做（`running`）、但最近一次活动早于 `before` 的会话。 */
@@ -289,7 +318,10 @@ export class SessionStore {
 	 * `at` 是事件**产生**的时间，不是落库的时间：助手服务产生的事件传它盖的时间（`AssistantStreamRecord.at`），
 	 * 控制面自己产生的不传，用控制面的时钟（#538 的约定）。
 	 * 一轮结束（`turn_end`）时会话回到空闲（`running` → `idle`），和这条事件在同一个事务里：页面看到一轮结束时，
-	 * 接着发的话一定能开始新的一轮。
+	 * 接着发的话一定能开始新的一轮。**同一轮的 `turn_end` 只记一条**：这一轮已经有 `turn_end` 时（比如停止时控制面
+	 * 先补了一条，助手服务的结局晚到），后到的不记、不发布，返回已有的那条；它也就不会把下一轮的会话改回空闲。
+	 * **同一个会话的「落库加发布」在进程内依次执行**（{@link SessionStore.#serial}）：发布的顺序等于提交的顺序，
+	 * 事件流的实时阶段看到的序号一定是递增的；订阅的一方收到时，库里一定读得到它。
 	 * 事件的内容要过 `@sfly/schema` 的 `SessionEventBody`；不持久的类型不能用它记（用 {@link publish}）。
 	 */
 	async append(
@@ -301,14 +333,43 @@ export class SessionStore {
 			throw new Error(`会话事件 ${body.type} 不持久，不能落库（用 publish 推送）`);
 		}
 		const parsed = SessionEventBody.parse(body);
+		return this.#serial(sessionId, async () => {
+			const stored = await this.#store(sessionId, parsed, at);
+			if (stored.duplicate) return stored.event;
+			await this.deps.afterCommit?.(sessionId, stored.event);
+			this.#live.publish(sessionId, stored.event);
+			return stored.event;
+		});
+	}
+
+	/** 落库（一个事务）；这一轮已经有 `turn_end` 时什么也不写，返回已有的。 */
+	async #store(
+		sessionId: string,
+		parsed: SessionEventBody,
+		at: Date,
+	): Promise<{ event: PersistedSessionEvent; duplicate: boolean }> {
 		const { type, ...payload } = parsed;
-		const event = await this.deps.db.transaction(async (tx) => {
+		return this.deps.db.transaction(async (tx) => {
 			const [session] = await tx
 				.select({ id: sessions.id })
 				.from(sessions)
 				.where(eq(sessions.id, sessionId))
 				.for("update");
 			if (!session) throw new SessionNotFoundError(sessionId);
+			if (parsed.type === "turn_end") {
+				const [existing] = await tx
+					.select()
+					.from(sessionEvents)
+					.where(
+						and(
+							eq(sessionEvents.sessionId, sessionId),
+							sql`${sessionEvents.type} = 'turn_end'`,
+							sql`${sessionEvents.payload}->>'turn' = ${String(parsed.turn)}`,
+						),
+					)
+					.limit(1);
+				if (existing) return { event: toEvent(existing), duplicate: true };
+			}
 			const [last] = await tx
 				.select({ seq: sql<number>`coalesce(max(${sessionEvents.seq}), 0)::int` })
 				.from(sessionEvents)
@@ -333,10 +394,8 @@ export class SessionStore {
 					}),
 				})
 				.where(eq(sessions.id, sessionId));
-			return toEvent(row as EventRow);
+			return { event: toEvent(row as EventRow), duplicate: false };
 		});
-		this.#live.publish(sessionId, event);
-		return event;
 	}
 
 	/** 推送一条不持久的事件（文字增量、工具输出、思考、排队状态、快照）：不落库，没有 `seq`，不推进续传的位置。 */
@@ -361,7 +420,8 @@ export class SessionStore {
 		return follow(
 			{
 				subscribe: (listener) => this.#live.subscribe(sessionId, listener),
-				read: (from, limit) => this.after(sessionId, from, limit),
+				// 补发读库排在这个会话的链上：读到的事件一定已经发布过，缓冲里排在它前面的增量才判断得了先后。
+				read: (from, limit) => this.#serial(sessionId, () => this.after(sessionId, from, limit)),
 			},
 			after,
 			sink,

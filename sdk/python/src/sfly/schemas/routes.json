@@ -19152,11 +19152,16 @@
                 "last_turn_outcome"
               ]
             }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "会话超过 `SESSION_LIST_LIMIT` 个，更早的没有列出来（页面据此提示）。"
           }
         },
         "required": [
           "readiness",
-          "sessions"
+          "sessions",
+          "truncated"
         ]
       },
       "notes": []

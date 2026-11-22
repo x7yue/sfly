@@ -273,6 +273,16 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 		);
 		return problems;
 	}
+	// `/projects/:project/…` 下用 ID 定位的类别只接受 collection（列表和新建）：访问检查看到路径里有 :project 就按路径的项目
+	// 查，不会去核对 query 或 body 里的那个 ID 属于哪个项目——写成 { query }、{ body } 就等于绕过了「ID 决定项目」。
+	if (isProjectScoped(def.path) && ID_LOCATED_KINDS.includes(kind)) {
+		problems.push(
+			`${kind} 用 ID 定位，路径带 :${PROJECT_PARAM}（/projects/:${PROJECT_PARAM}/…）时只能写 collection（列表和新建）：` +
+				`访问检查只按路径里的项目判断，不会核对 ${"query" in target ? "query" : "body"} 里的 ID 属于哪个项目。` +
+				`要按 ID 定位，路径写成不带 /projects/:${PROJECT_PARAM} 的写法（例如 /sessions/:id/…），定位写 { params: "id" }`,
+		);
+		return problems;
+	}
 	const part = "query" in target ? "query" : "body";
 	const field = "query" in target ? target.query : target.body;
 	const schema = part === "query" ? def.query : "body" in def ? def.body : undefined;

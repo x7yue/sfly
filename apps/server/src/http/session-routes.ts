@@ -1,5 +1,4 @@
 import {
-	type Readiness,
 	SESSION_SEQ_MAX,
 	type SessionDetailResponse,
 	type SessionView,
@@ -54,7 +53,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (project === undefined || !(await sessions.projectExists(project))) {
 			return projectNotFound(reply);
 		}
-		return { readiness: await service.readiness(project), sessions: await sessions.list(project) };
+		const { sessions: items, truncated } = await sessions.list(project);
+		return { readiness: await service.readiness(project), sessions: items, truncated };
 	});
 
 	contractRoute(app, sessionsApi.create, async ({ params, body }, reply, request) => {
