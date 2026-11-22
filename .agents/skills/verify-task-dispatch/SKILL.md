@@ -71,7 +71,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 | 模型里的动作 | 代码 |
 |---|---|
-| `Dispatch` | `apps/server/src/engine/engine.ts` `#dispatch`（只派给 `AgentConnection.ready` 的连接，即 `ready`）、`#prepareAssign`（派发即设租约；派什么由 `assign-content.ts` 回答，不在模型里） |
+| `Dispatch` | `apps/server/src/engine/engine.ts` `#dispatch`（只派给 `AgentConnection.ready` 的连接，即 `ready`；能不能接新任务的判断在 `apps/server/src/agents/dispatch-gate.ts`，页面上「排队中的任务在等什么」（`queue-wait.ts`）用的是同一段，不改状态转移）、`#prepareAssign`（派发即设租约；派什么由 `assign-content.ts` 回答，不在模型里） |
 | `CPRecv` 的 started / result / hb | `engine.ts` `onMessage`、`#started`、`#applyResult`、`#heartbeat`；`apps/server/src/engine/leases.ts` `renewHeld`、`MissedHeartbeats`、`agentLost`（hb 判丢的尝试记下强制取消）；hb 还经 `apps/server/src/agents/agent-hub.ts` `AgentConnection.heartbeat` 把连接记为已准备好（`ready`），第一次时 `#step` 提交后为这台 Agent 派发 |
 | `FailAll` | `engine.ts` `#failTask` 的重试分支；`apps/server/src/engine/failures.ts` `shouldRetry` |
 | `LeaseExpire` | `leases.ts` `expireTasks`、`agentLost`；`engine.ts` `#step`（提交后先发取消、再派发）、`#sendCancel`；`apps/server/src/agents/agent-hub.ts` `connection`（只返回已推送 Welcome 的连接，即 `CPConnected`） |

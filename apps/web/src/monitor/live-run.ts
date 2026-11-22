@@ -7,10 +7,17 @@ import {
 } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { apiQuery } from "#/lib/api";
-import { LIVE_POLL_MS } from "#/lib/polling";
+import { LIVE_POLL_MS, STATUS_POLL_MS } from "#/lib/polling";
 import { openEventSource } from "#/lib/sse";
 import { applyProgress, latestRunView } from "./run-model";
 import { applyMetricIncrement, refetchSeries } from "./use-run-metrics";
+
+/** 有没有排队中的尝试（它的 `queue_wait` 随 Agent 的状态变，要定时重新读取）。 */
+const hasQueuedAttempt = (run: RunView | undefined) =>
+	run?.status === "running" &&
+	run.chains.some((chain) =>
+		chain.nodes.some((node) => node.attempts.some((a) => a.queue_wait !== null)),
+	);
 
 const runViewKey = (runId: string) => queryKey(runsApi.get, { params: { id: runId } });
 
@@ -23,8 +30,12 @@ export function runViewQuery(runId: string) {
 	return {
 		...apiQuery(runsApi.get, { params: { id: runId } }),
 		// 运行结束后事件流就关了，而运行通知在运行结束时才入队、之后才投递：排队中时定时重新获取，等它有结果。
-		refetchInterval: (query: { state: { data: RunView | undefined } }) =>
-			query.state.data?.run_notification?.status === "queued" ? LIVE_POLL_MS : false,
+		refetchInterval: (query: { state: { data: RunView | undefined } }) => {
+			const run = query.state.data;
+			if (run?.run_notification?.status === "queued") return LIVE_POLL_MS;
+			// 排队中的节点在等什么（Agent 上下线、槽位占用和释放）不让运行视图变化，事件流不推送：排队期间定时重新读取。
+			return hasQueuedAttempt(run) ? STATUS_POLL_MS : false;
+		},
 		structuralSharing: (current: unknown, next: unknown) =>
 			replaceEqualDeep(current, latestRunView(current as RunView | undefined, next as RunView)),
 	};

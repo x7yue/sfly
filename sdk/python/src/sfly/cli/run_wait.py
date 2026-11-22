@@ -22,9 +22,11 @@ from sfly.cli.run_view import (
     NodeRef,
     chain_label,
     duration_ms,
+    fetch_run,
     format_duration,
     last_attempt,
     node_status_label,
+    queue_wait_text,
     with_display_name,
 )
 
@@ -35,6 +37,12 @@ RECONNECT_FIRST_SECONDS = 0.5
 RECONNECT_MAX_SECONDS = 5.0
 # 主线程每隔多久检查一次超时。
 _POLL_SECONDS = 0.5
+
+# 有节点在排队时，隔这么久重新读一次运行：Agent 上下线、槽位占用和释放不会让运行本身变化，
+# 事件流不推送。排队的节点等的情况没变时，隔 QUEUE_REPEAT_SECONDS 再写一行
+# （排了多久、多久后超时在变）。
+QUEUE_REFRESH_SECONDS = 15.0
+QUEUE_REPEAT_SECONDS = 60.0
 
 # 节点完成后进度行里带上耗时。
 _ENDED = {"success", "failed", "cancelled", "stopped"}
@@ -133,33 +141,57 @@ class _Feed(threading.Thread):
 
 class _Progress:
     """节点状态每变化一次写一行：`链:节点[#尝试][「显示名称」] 状态 [耗时]`，
-    例如 `main:deploy「部署服务」 成功 12s`。"""
+    例如 `main:deploy「部署服务」 成功 12s`。排队中的节点后面写在等什么
+    （`main:deploy 排队中：等 agent-a（不在线，已离线 2m00s）· 排队 3m05s · 6m55s 后超时`）：
+    等的情况变了（Agent 上线、槽位占满……）再写一行，没变时隔 `QUEUE_REPEAT_SECONDS` 重写一行。"""
 
-    def __init__(self, write: Callable[[str], None]) -> None:
+    def __init__(
+        self, write: Callable[[str], None], clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self._write = write
-        self._seen: dict[tuple[str, str], tuple[str, int]] = {}
+        self._clock = clock
+        self._seen: dict[tuple[str, str], tuple[str, int, str]] = {}
+        self._written_at: dict[tuple[str, str], float] = {}
+        self.queued = False
 
     def update(self, run: Mapping[str, Any]) -> None:
+        self.queued = False
         for chain in run["chains"]:
             for node in chain["nodes"]:
                 if node["kind"] in _PSEUDO_NODES:
                     continue
                 key = (chain["id"], node["node_id"])
-                state = (node["status"], len(node["attempts"]))
-                if state == self._seen.get(key, ("pending", 0)):
+                attempt = last_attempt(node)
+                wait = attempt.get("queue_wait") if attempt and node["status"] == "queued" else None
+                self.queued = self.queued or wait is not None
+                # 等的情况：Agent 的状态和占着槽位的任务；排了多久、多久后超时每次都在变，不算。
+                situation = "" if wait is None else _situation(wait)
+                state = (node["status"], len(node["attempts"]), situation)
+                now = self._clock()
+                if state == self._seen.get(key, ("pending", 0, "")) and not (
+                    wait is not None
+                    and now - self._written_at.get(key, now) >= QUEUE_REPEAT_SECONDS
+                ):
                     continue
                 self._seen[key] = state
-                attempt = last_attempt(node)
+                self._written_at[key] = now
                 ref = NodeRef(
                     chain_label(chain), node["node_id"], attempt["attempt"] if attempt else None
                 )
                 named = with_display_name(ref.format(), node.get("display_name"))
                 line = f"{named} {node_status_label(node['status'])}"
+                if wait is not None and attempt is not None:
+                    line += f"：{queue_wait_text(wait, attempt['queued_at'])}"
                 if node["status"] in _ENDED and attempt:
                     elapsed = duration_ms(attempt["started_at"], attempt["ended_at"])
                     if elapsed is not None:
                         line += f" {format_duration(elapsed)}"
                 self._write(line)
+
+
+def _situation(wait: Mapping[str, Any]) -> str:
+    holders = ",".join(f"{h['run_id']}/{h['node_id']}/{h['attempt']}" for h in wait["holders"])
+    return f"{wait['agent']}|{wait['state']}|{holders}"
 
 
 def wait_for_run(
@@ -176,6 +208,7 @@ def wait_for_run(
     events: queue.Queue[tuple[str, Any]] = queue.Queue()
     feed = _Feed(client, run_id, events)
     progress = _Progress(log)
+    refreshed = time.monotonic()
     feed.start()
     try:
         while True:
@@ -188,9 +221,17 @@ def wait_for_run(
             try:
                 kind, value = events.get(timeout=wait)
             except queue.Empty:
+                if progress.queued and time.monotonic() - refreshed >= QUEUE_REFRESH_SECONDS:
+                    refreshed = time.monotonic()
+                    view = _refetch(client, run_id)
+                    if view is not None:
+                        progress.update(view)
+                        if view["status"] != "running":
+                            return view
                 continue
             if kind == "run":
                 progress.update(value)
+                refreshed = time.monotonic()
                 if value["status"] != "running":
                     return dict(value)
             elif kind == "fatal":
@@ -201,3 +242,11 @@ def wait_for_run(
                 log("已重新连接")
     finally:
         feed.stop()
+
+
+def _refetch(client: Client, run_id: str) -> dict[str, Any] | None:
+    """重新读一次运行；控制面暂时读不到时下次再来（事件流自己会重连）。"""
+    try:
+        return fetch_run(client, run_id)
+    except (ApiError, CliError):
+        return None
