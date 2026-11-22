@@ -3,6 +3,9 @@ import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { repoRoot } from "./agent-binary.js";
+import { bearer, TestAccounts } from "./credentials.js";
+import { publishInit } from "./package-archive.js";
+import type { TestControlPlane } from "./test-control-plane.js";
 
 const run = promisify(execFile);
 
@@ -97,4 +100,47 @@ export async function wheelhouse(
 				],
 		),
 	);
+}
+
+const publishers = new WeakMap<TestControlPlane, Promise<string>>();
+
+/** 每个控制面一个平台管理员（直接写库，签发凭据的接口在 #490–#492）和他的个人令牌，发布到公共项目用。 */
+function publisherToken(cp: TestControlPlane): Promise<string> {
+	let token = publishers.get(cp);
+	if (token === undefined) {
+		token = (async () => {
+			const accounts = new TestAccounts(cp.database.url);
+			try {
+				const admin = await accounts.user("std_publisher", {
+					displayName: "标准节点包发布人",
+					admin: true,
+				});
+				return await accounts.personalToken(admin, { name: "发布 sfly-std" });
+			} finally {
+				await accounts.close();
+			}
+		})();
+		publishers.set(cp, token);
+	}
+	return token;
+}
+
+/**
+ * 把节点包归档发布成公共项目里的版本（ADR 0029：平台维护的节点包放在公共项目）：平台管理员的个人令牌
+ * `POST /packages?project=public`，和部署者发布 sfly-std 的做法一样（#565）。
+ */
+export async function publishIntoPublicProject(
+	cp: TestControlPlane,
+	archive: Uint8Array,
+	where: { name: string; version: string },
+): Promise<void> {
+	const res = await cp.fetch("/packages?project=public", {
+		...publishInit(archive),
+		headers: {
+			"content-type": "application/octet-stream",
+			...bearer(await publisherToken(cp)),
+		},
+	});
+	if (res.status !== 201)
+		throw new Error(`发布 ${where.name}@${where.version}：${res.status} ${await res.text()}`);
 }

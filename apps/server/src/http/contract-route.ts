@@ -155,6 +155,7 @@ function register<D extends RouteDef>(
 			const verdict = await guard.check({
 				route: def,
 				params: req.params as Record<string, string | undefined>,
+				query: req.query as Record<string, unknown>,
 				authorization: req.headers.authorization,
 				cookie: req.headers.cookie,
 			});

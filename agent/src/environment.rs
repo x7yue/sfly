@@ -194,6 +194,13 @@ fn non_empty(s: &str) -> Option<String> {
     (!s.trim().is_empty()).then(|| s.trim().to_string())
 }
 
+/// Welcome 里控制面的包索引（`package_index_url`，带末尾 `/`）：节点包依赖平台自己的包（标准节点包 `sfly-std`）时
+/// 从这里取（[`crate::install`]）。没有下发（旧版本控制面）为 None。它不是镜像，不能被本机覆盖：
+/// 它指向 Agent 连着的这个控制面，里面的包就是这个控制面发布的。
+pub fn package_index(welcome: &Welcome) -> Option<String> {
+    non_empty(&welcome.package_index_url)
+}
+
 impl Mirrors {
     pub fn new(welcome: &Welcome, local: &LocalMirrors) -> Self {
         let clean = |v: &Option<String>| v.as_deref().and_then(non_empty);

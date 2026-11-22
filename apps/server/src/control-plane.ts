@@ -34,6 +34,7 @@ import { MetricRetention } from "./metrics/metric-retention.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
+import { createStdIndex } from "./packages/std-index.js";
 import { PresetStore } from "./presets/preset-store.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
@@ -260,6 +261,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 				return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
 			},
 			mirrors,
+			packageIndexUrl: () => `${publicHttpUrl}/simple/`,
 			agentBinary: async (arch) => {
 				const binary = await agentBinaries.find(version, arch);
 				return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
@@ -318,6 +320,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			mirrors,
 		},
 		sdkWheels,
+		stdIndex: createStdIndex({
+			packages,
+			onSkipped: (version, reason) => {
+				if (logger) console.error(`package index: sfly-std ${version} is not listed: ${reason}`);
+			},
+		}),
 		clientTarballs,
 		agentBinaries,
 		installScript,

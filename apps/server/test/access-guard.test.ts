@@ -532,13 +532,20 @@ describe("契约路由的访问检查", () => {
 			}
 		});
 
-		it("只是节点包的读：写、别的资源、别的项目都照旧", async () => {
+		it("只是节点包的读：别的资源、别的项目都照旧；公共项目的写只有平台管理员（403，说明原因）", async () => {
 			const c = personal(USERS.stranger);
-			expect(outcome(await guard.check(at(publish, "public", c)))).toBe(404);
 			expect(outcome(await guard.check(at(scenarios, "public", c)))).toBe(404);
 			expect(outcome(await guard.check(at(publicPackage, "alpha", c)))).toBe(404);
-			// 公共项目的发布要平台管理员（#501 再加「只有平台管理员」的规则；这里只看范围）。
-			expect(outcome(await guard.check(at(publish, "public", personal(USERS.boss))))).toBe(404);
+			// 公共项目的发布只有平台管理员（#565）：不是成员的、项目管理员都是 403，不是 404。
+			for (const who of [c, personal(USERS.boss)]) {
+				expect(await guard.check(at(publish, "public", who))).toMatchObject({
+					ok: false,
+					status: 403,
+					code: "forbidden",
+					message: expect.stringContaining("公共项目只有平台管理员能写"),
+				});
+			}
+			expect(outcome(await guard.check(at(publish, "public", personal(USERS.admin))))).toBe("ok");
 		});
 
 		it("路径里的项目写得不对、项目不存在：404", async () => {
@@ -548,6 +555,153 @@ describe("契约路由的访问检查", () => {
 					404,
 				);
 			}
+		});
+	});
+
+	describe("发布节点包时指明公共项目：过渡的查询参数 project=public（#565）", () => {
+		const publish = route("POST /packages");
+		const check = (credentials: Credentials, project?: unknown) =>
+			guard.check({
+				route: publish,
+				params: {},
+				...(project === undefined ? {} : { query: { project } }),
+				...credentials,
+			});
+		const DENIED = "公共项目只有平台管理员能写";
+
+		it("发布的项目从查询参数得出：不写是默认项目，写 public 是公共项目", () => {
+			expect(locatorOf(publish)).toEqual({ from: "query", param: "project" });
+		});
+
+		it("不写 project：和以前一样发布到默认项目，不带凭据放行、没有身份", async () => {
+			expect(await check({})).toEqual({ ok: true, access: null });
+			const result = await check(personal(USERS.boss));
+			expect(result).toMatchObject({ ok: true, access: { project: "default" } });
+		});
+
+		it("平台管理员（登录或个人令牌）指明 public：通过，项目是公共项目，写一条平台管理员的记录", async () => {
+			clock.set("2026-06-02T03:04:05.000Z");
+			for (const credentials of [login(USERS.admin), personal(USERS.admin, { name: "发布令牌" })]) {
+				const result = await check(credentials, "public");
+				expect(result).toMatchObject({ ok: true, access: { project: "public" } });
+			}
+			expect(
+				store.adminWrites.map((w) => [w.projectId, w.route, w.resourceKind, w.resourceId]),
+			).toEqual([
+				["public", "POST /packages", "package", null],
+				["public", "POST /packages", "package", null],
+			]);
+			expect(store.adminWrites[1]).toMatchObject({ tokenName: "发布令牌", userId: USERS.admin.id });
+		});
+
+		it("限定了公共项目的平台管理员个人令牌可以；限定了别的项目的不行", async () => {
+			expect(
+				outcome(await check(personal(USERS.admin, { projectId: p("public") }), "public")),
+			).toBe("ok");
+			expect(await check(personal(USERS.admin, { projectId: DEFAULT }), "public")).toMatchObject({
+				ok: false,
+				status: 403,
+				message: expect.stringContaining(DENIED),
+			});
+		});
+
+		it("别的凭据指明 public：403，写明原因（项目管理员、编辑者、只读成员、不是成员的人、项目令牌、会话令牌）", async () => {
+			const cases: [string, Credentials][] = [
+				["项目管理员的登录", login(USERS.boss)],
+				["项目管理员的个人令牌", personal(USERS.boss)],
+				["编辑者", personal(USERS.editor)],
+				["只读成员", personal(USERS.reader)],
+				["不是成员的人", personal(USERS.stranger)],
+				["项目令牌（默认项目）", token({ kind: "project", projectId: DEFAULT })],
+				["项目令牌（公共项目）", token({ kind: "project", projectId: p("public") })],
+				["平台管理员的会话令牌", token({ kind: "session", user: USERS.admin, projectId: DEFAULT })],
+				// 限定了公共项目也不行：会话令牌是助手用的，发布本来就不给它（限定项目的检查拦不住它，要靠凭据种类）。
+				[
+					"平台管理员的会话令牌（限定公共项目）",
+					token({ kind: "session", user: USERS.admin, projectId: p("public") }),
+				],
+			];
+			for (const [name, credentials] of cases) {
+				expect(await check(credentials, "public"), name).toMatchObject({
+					ok: false,
+					status: 403,
+					code: "forbidden",
+					message: expect.stringContaining(DENIED),
+				});
+			}
+			expect(store.adminWrites).toEqual([]);
+		});
+
+		it("Agent 凭据、任务凭据：403（这个接口不在它们的清单里）；共享令牌：403；不带凭据：401", async () => {
+			store.agentCredentials.set(hashCredential("agent-secret"), {
+				kind: "agent",
+				projectId: DEFAULT,
+				agentName: "agent-a",
+				user: null,
+				revokedAt: null,
+			});
+			store.agentCredentials.set(hashCredential("shared-secret"), {
+				kind: "shared",
+				projectId: DEFAULT,
+				agentName: null,
+				user: null,
+				revokedAt: null,
+			});
+			expect(outcome(await check({ authorization: "Bearer agent-secret" }, "public"))).toBe(403);
+			expect(outcome(await check(token({ kind: "task", projectId: DEFAULT }), "public"))).toBe(403);
+			expect(await check({ authorization: "Bearer shared-secret" }, "public")).toMatchObject({
+				ok: false,
+				status: 403,
+				message: expect.stringContaining(DENIED),
+			});
+			expect(await check({}, "public")).toMatchObject({
+				ok: false,
+				status: 401,
+				code: "unauthorized",
+				message: expect.stringContaining(DENIED),
+			});
+		});
+
+		it("失效的凭据指明 public：仍然是 401，不会退回到放行", async () => {
+			expect(outcome(await check(personal(USERS.admin, { revokedAt: BEFORE }), "public"))).toBe(
+				401,
+			);
+			expect(outcome(await check({ authorization: "Bearer unknown" }, "public"))).toBe(401);
+		});
+
+		it("指明 public 以外的值：400，写明现在只能写 public；有没有凭据、是谁都一样", async () => {
+			for (const value of [
+				"alpha",
+				"default",
+				"Public",
+				"public ",
+				"",
+				["public", "public"],
+				"public\u0000",
+			]) {
+				for (const credentials of [{}, personal(USERS.admin), personal(USERS.boss)]) {
+					expect(await check(credentials, value), JSON.stringify(value)).toMatchObject({
+						ok: false,
+						status: 400,
+						code: "invalid_request",
+						message: expect.stringContaining("现在只能写 public"),
+					});
+				}
+			}
+		});
+
+		it("指明 public 不影响别的写：公共项目只有平台管理员能写这条规则对每个写接口都一样", async () => {
+			const future: RouteDef = {
+				...route("POST /orchestrations"),
+				path: "/projects/:project/orchestrations",
+			};
+			const at = (credentials: Credentials) => ({
+				route: future,
+				params: { project: "public" },
+				...credentials,
+			});
+			expect(outcome(await guard.check(at(personal(USERS.boss))))).toBe(403);
+			expect(outcome(await guard.check(at(personal(USERS.admin))))).toBe("ok");
 		});
 	});
 

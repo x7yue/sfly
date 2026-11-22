@@ -134,7 +134,14 @@ describe("契约和访问检查的规则对得上", () => {
 			const label = locator?.from === "path" ? "path" : (locator?.from ?? "undefined");
 			classes.set(label, [...(classes.get(label) ?? []), routeKey(def)]);
 		}
-		expect([...classes.keys()].sort()).toEqual(["none", "path", "run", "scenario", "task"]);
+		expect([...classes.keys()].sort()).toEqual([
+			"none",
+			"path",
+			"query",
+			"run",
+			"scenario",
+			"task",
+		]);
 		// 列表与新建（场景、运行、Agent、节点包、飞书机器人、控制台统计）和按名字定位的 Agent、节点包、飞书机器人。
 		expect(classes.get("path")).toEqual(
 			expect.arrayContaining([
@@ -145,12 +152,13 @@ describe("契约和访问检查的规则对得上", () => {
 				"GET /orchestrations",
 				"POST /orchestrations",
 				"GET /packages",
-				"POST /packages",
 				"GET /packages/:name/versions/:version/archive",
 				"GET /feishu-bots",
 				"DELETE /feishu-bots/:name",
 			]),
 		);
+		// 发布节点包：路径里没有项目，过渡的查询参数 project=public（#565；#488 之后由路径替代）。
+		expect(classes.get("query")).toEqual(["POST /packages"]);
 		expect(classes.get("scenario")).toContain("POST /orchestrations/:id/runs");
 		expect(classes.get("run")).toContain("POST /runs/:id/cancel");
 		expect(classes.get("task")).toContain("PUT /tasks/:id/artifacts/*");

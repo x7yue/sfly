@@ -6,16 +6,20 @@
 
 ## 上传 sfly-std
 
-在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验并上传到控制面：
+`sfly-std` 要发布到**公共项目**：平台自己维护的节点包放在那里，任何凭据都能读，只有**平台管理员**能发布；控制面的包索引也只列公共项目里的 `sfly-std`，依赖它的节点包装依赖时从那里取（见 [安装 Agent](install-agent.md) 的「控制面的包索引」）。
+
+在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验，再用平台管理员的个人令牌上传到公共项目（发布请求加查询参数 `project=public`）：
 
 ```sh
 cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
-curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.4.0.sflypkg {{SFLY_URL}}/packages
+curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer $SFLY_ADMIN_TOKEN" \
+  --data-binary @sfly-std-0.4.0.sflypkg '{{SFLY_URL}}/packages?project=public'
 ```
 
-- 上传成功时返回节点包的版本信息（JSON）；装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.4.0.sflypkg`。
-- 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里。Agent 第一次执行时从控制面安装它，依赖（`psutil`、`httpx`）从 PyPI 镜像安装。
+- 上传成功时返回节点包的版本信息（JSON）。装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.4.0.sflypkg --project public`（命令行带令牌随 API 令牌那部分提供，见下一条）。
+- **需要平台管理员的凭据**（登录，或 `Authorization: Bearer <个人令牌>`）：项目管理员、项目令牌、会话令牌、Agent 凭据、不带凭据都不行，不带凭据是 401，其余是 403，信息写明原因；`project` 现在只能写 `public`，写别的值是 400；不写 `project` 就是发布到默认项目，和以前一样（`sfly-std` 在默认项目里不会出现在包索引里）。发布记录里有发布人（用户和令牌的名称），也在平台管理员的写记录里。平台管理员的凭据怎么得到：账号和登录在 #490（第一个管理员），个人令牌和 `sfly login` 在 #491；这两个合入之前，新部署里还拿不到平台管理员的凭据，发布不进公共项目。这是过渡的写法，路径带项目（#488）之后改成 `/projects/public/packages`。
+- 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里，`{{SFLY_URL}}/simple/sfly-std/` 也提供它的 wheel。Agent 第一次执行时从控制面安装它，依赖（`psutil`）从 PyPI 镜像安装。
 - Release 说明写明了需要的**最低 Agent 版本**。Agent 版本更旧时任务以 `env_error` 失败并提示升级（见 [需要的 SDK 版本](publish.md#需要的-sdk-版本)）；Agent 跟随控制面的版本，升级控制面即可。
 - 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。
 

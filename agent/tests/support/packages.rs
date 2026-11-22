@@ -51,6 +51,8 @@ struct Files {
     by_path: HashMap<String, File>,
     /// 镜像中的项目（规范化名）→ wheel 文件名。
     projects: HashMap<String, Vec<String>>,
+    /// 路径 → 重定向到哪（302）。
+    redirects: HashMap<String, String>,
 }
 
 /// 本地 HTTP 桩服务：节点包归档下载 + PyPI simple index。
@@ -107,6 +109,15 @@ impl HttpFixture {
             },
         );
         format!("{}{path}", self.url)
+    }
+
+    /// 对 `path` 的请求回 302，重定向到 `location`（优先于 [`put`](Self::put) 放的内容）。
+    pub fn redirect(&self, path: &str, location: &str) {
+        self.files
+            .lock()
+            .unwrap()
+            .redirects
+            .insert(path.to_string(), location.to_string());
     }
 
     /// 把 wheel 放进 PyPI 镜像；第一次下载这个文件时先等待 `delay`。
@@ -245,6 +256,14 @@ async fn serve(
         path.clone(),
         header(&head, "user-agent").map(str::to_string),
     ));
+    let redirect = files.lock().unwrap().redirects.get(&path).cloned();
+    if let Some(location) = redirect {
+        let reply = format!(
+            "HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        );
+        stream.write_all(reply.as_bytes()).await?;
+        return stream.shutdown().await;
+    }
     // 延迟只作用于第一次请求（uv 可能为同一个文件发多次请求）。
     let file = files.lock().unwrap().by_path.get_mut(&path).map(|f| {
         let served = f.clone();

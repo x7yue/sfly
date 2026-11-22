@@ -397,7 +397,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 					page: "x",
 					skill: "x",
 					file: "x",
-					project: "stub",
+					package: "stub",
 				};
 				const found = others[name];
 				if (found === undefined) {

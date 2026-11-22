@@ -98,12 +98,17 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/simple/": {
 		kind: "system",
 		exact: true,
-		why: "sfly 简单索引（PEP 503）的根页面：uv 从这里装 sfly，与具体场景无关",
+		why: "控制面的包索引（PEP 503）的根页面：uv 从这里装 sfly 和 sfly-std，与具体场景无关",
 	},
-	"/simple/:project/": {
+	"/simple/:package/": {
 		kind: "system",
 		exact: true,
-		why: "sfly 简单索引的项目页：SDK wheel 的下载链接，与具体场景无关",
+		why: "控制面的包索引的项目页：SDK wheel、sfly-std wheel 的下载链接，与具体场景无关",
+	},
+	"/simple/sfly-std/files/:filename": {
+		kind: "system",
+		exact: true,
+		why: "下载包索引里的一个 sfly-std wheel：Agent 和开发机装 sfly-std 用的，与具体场景无关",
 	},
 	"/install.sh": {
 		kind: "system",
@@ -175,6 +180,11 @@ function fieldNames(schema: z.ZodType | undefined): string[] | undefined {
 		def = inner?._zod.def as typeof def;
 	}
 	return undefined;
+}
+
+/** 接口的查询参数名；没有声明查询参数时是空的。 */
+export function queryParamNames(def: { query?: z.ZodType | undefined }): string[] {
+	return fieldNames(def.query) ?? [];
 }
 
 const label = (def: Pick<RouteDef, "method" | "path">) => `${def.method} ${def.path}`;

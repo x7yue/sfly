@@ -54,7 +54,7 @@
 CI 用上一个 Release 的 Agent 验证它能在当前控制面上跑完任务并自更新，含义与失败时的处理见 `docs/agents/branching-and-release.md`「跨版本自更新测试」。
 
 标准节点包 `sfly-std`（`std/`，ADR 0017）版本号独立，推送 `std-vX.Y.Z` tag 后由 `.github/workflows/std-release.yml` 发布：
-Release 附件 `sfly-std-X.Y.Z.sflypkg` 与 `SHA256SUMS`，部署者下载后上传到控制面（开发文档「标准节点」页）。步骤见 `docs/agents/branching-and-release.md`「发布 sfly-std」。
+Release 附件 `sfly-std-X.Y.Z.sflypkg` 与 `SHA256SUMS`，部署者下载后以平台管理员的身份发布到控制面的公共项目（开发文档「标准节点」页）。步骤见 `docs/agents/branching-and-release.md`「发布 sfly-std」。
 
 ## 部署与运维
 

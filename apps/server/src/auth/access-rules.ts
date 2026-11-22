@@ -1,6 +1,7 @@
 // 访问检查要用的、只和契约有关的规则（ADR 0029「项目从请求的哪里来」「一处检查」）：
 // 一个接口的项目从哪里得出，以及 Agent 凭据和任务凭据各自能调用的接口清单。不依赖 Fastify，也不碰数据库。
-import { pathParamNames, type RouteDef } from "@sfly/schema";
+import { pathParamNames, queryParamNames, type RouteDef } from "@sfly/schema";
+import type { z } from "zod";
 
 /**
  * 一个接口的项目怎么得出（ADR 0029 把现有接口分成四类）：
@@ -8,23 +9,31 @@ import { pathParamNames, type RouteDef } from "@sfly/schema";
  * - `none`：不属于项目（`system`：健康检查、文档、SDK 与 Agent 二进制、安装脚本、API 客户端安装包、Python 索引），不需要凭据；
  * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人）：取路径里的 `:project`。
  *   #488 把这些接口的路径改成 `/projects/:project/…` 之前，路径里没有项目，`param` 是 null，项目就是默认项目；
+ * - `query`：路径里没有项目，项目写在查询参数里（过渡，#565：发布节点包的 `project=public`；路径带项目之后由 `path` 替代）：
+ *   不写是默认项目，写了只认公共项目；
  * - `scenario`、`run`、`task`：经场景、运行或任务（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
  *   （任务经它所属的运行）。`param` 是路径里 ID 的参数名。
  */
 export type ProjectLocator =
 	| { from: "none" }
 	| { from: "path"; param: string | null }
+	| { from: "query"; param: string }
 	| { from: "scenario" | "run" | "task"; param: string };
 
 /** 路径里用来写项目的参数名（#488：`/projects/:project/…`）。 */
 export const PROJECT_PARAM = "project";
 
 /** 接口的项目怎么得出；认不出时返回 undefined（`checkAccessRules` 在启动时拒绝，访问检查不会走到这里）。 */
-export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLocator | undefined {
+export function locatorOf(
+	def: Pick<RouteDef, "path" | "resource"> & { query?: z.ZodType | undefined },
+): ProjectLocator | undefined {
 	const { kind, target } = def.resource;
 	if (kind === "system") return { from: "none" };
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
 		return { from: "path", param: PROJECT_PARAM };
+	if (target === "upload" && queryParamNames(def).includes(PROJECT_PARAM)) {
+		return { from: "query", param: PROJECT_PARAM };
+	}
 	if (target === "collection" || target === "upload") return { from: "path", param: null };
 	if (typeof target === "object" && "params" in target) {
 		if (kind === "agent" || kind === "package" || kind === "feishu_bot") {

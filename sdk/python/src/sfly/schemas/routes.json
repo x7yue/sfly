@@ -12871,6 +12871,16 @@
         "kind": "package",
         "target": "upload"
       },
+      "query": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "const": "public",
+            "description": "过渡参数（#565）：发布到公共项目写 `public`，只有平台管理员能这样做（别的凭据 403、不带凭据 401）；\n写别的项目名 400；不写发布到默认项目。路径带项目（#488）之后由路径里的项目替代，这个参数随之去掉。"
+          }
+        }
+      },
       "response": {
         "type": "object",
         "properties": {
@@ -18917,7 +18927,7 @@
       "path": "/simple/",
       "key": null,
       "kind": "download",
-      "summary": "sfly 简单索引（PEP 503）的根页面",
+      "summary": "控制面的包索引（PEP 503）的根页面：sfly 和 sfly-std",
       "effect": "read",
       "resource": {
         "kind": "system",
@@ -18976,10 +18986,10 @@
     },
     {
       "method": "GET",
-      "path": "/simple/:project/",
+      "path": "/simple/:package/",
       "key": null,
       "kind": "download",
-      "summary": "sfly 简单索引的项目页：SDK wheel 的下载链接",
+      "summary": "控制面的包索引的项目页：sfly 的 SDK wheel、sfly-std 的 wheel 的下载链接",
       "effect": "read",
       "resource": {
         "kind": "system",
@@ -18989,13 +18999,39 @@
       "params": {
         "type": "object",
         "properties": {
-          "project": {
+          "package": {
             "type": "string",
-            "description": "索引里的项目名；只有 `sfly`。"
+            "description": "索引里的包名（PEP 503 里叫项目）；只有 `sfly` 和 `sfly-std`。"
           }
         },
         "required": [
-          "project"
+          "package"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/simple/sfly-std/files/:filename",
+      "key": null,
+      "kind": "download",
+      "summary": "下载控制面的包索引里的一个 sfly-std wheel",
+      "effect": "read",
+      "resource": {
+        "kind": "system",
+        "target": "global"
+      },
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "wheel 的文件名（`/simple/sfly-std/` 列出的）。"
+          }
+        },
+        "required": [
+          "filename"
         ]
       },
       "notes": []
