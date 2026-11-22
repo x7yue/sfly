@@ -125,3 +125,40 @@ def test_another_unexpected_top_level_field_is_still_reported_as_unexpected() ->
 def test_a_document_without_removed_fields_has_no_such_problem() -> None:
     problems = _document_problems({"nodes": [{"id": "entry", "kind": "entry"}]})
     assert not any("已不再支持" in p for p in problems)
+
+
+@pytest.mark.parametrize("timeout", [4_294_967_296, 5_000_000_000])
+def test_a_node_timeout_over_the_limit_is_reported_with_the_node_and_the_limit(
+    timeout: int,
+) -> None:
+    """场景里节点的超时上限和节点类型声明的超时一样（#476）：派发给 Agent 的超时是 uint32。"""
+    document = {
+        "nodes": [
+            {"id": "entry", "kind": "entry"},
+            {"id": "slow", "kind": "package", "package": "p", "node": "n", "timeout": timeout},
+        ]
+    }
+
+    problems = _document_problems(document)
+
+    assert problems == [
+        f"  nodes/1/timeout（节点 slow）: 节点 slow：timeout 必须是 1 到 4294967295 之间的正整数"
+        f"（秒），实际是 {timeout}"
+    ]
+
+
+def test_a_node_timeout_at_the_limit_is_accepted() -> None:
+    document = {
+        "nodes": [
+            {"id": "entry", "kind": "entry"},
+            {
+                "id": "slow",
+                "kind": "package",
+                "package": "p",
+                "node": "n",
+                "timeout": 4_294_967_295,
+            },
+        ]
+    }
+
+    assert _document_problems(document) == []
