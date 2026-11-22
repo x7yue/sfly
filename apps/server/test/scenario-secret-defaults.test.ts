@@ -675,7 +675,10 @@ describe("场景版本里 secret 参数的默认值", () => {
 			await eventually(async () =>
 				expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
 			);
-			return { agent, ids: { scenario: id, run: runId, task: sa.taskId, preset: "x" } };
+			return {
+				agent,
+				ids: { scenario: id, run: runId, task: sa.taskId, session: await session(), preset: "x" },
+			};
 		};
 
 		/** 日志里已经写了 `count` 行（日志是异步写入的）。 */
