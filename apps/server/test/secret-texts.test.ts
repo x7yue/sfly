@@ -1427,6 +1427,14 @@ describe("读取的工作量预算：一次读取共用一份，扫描和找到�
 		expect(budget.remaining).toBe(READ_WORK_BUDGET - 81);
 		view.mask("");
 		expect(budget.remaining).toBe(READ_WORK_BUDGET - 82);
+		// 只有长值（索引）：文字不比最短的长值短时扫一遍，每个字符一份；更短的文字不用扫
+		const longOnly = setOf(`${"L".repeat(40)}${word(1100)}`);
+		const indexBudget = new WorkBudget();
+		const indexView = longOnly.withBudget(indexBudget);
+		indexView.mask("x".repeat(2000));
+		expect(indexBudget.remaining).toBe(READ_WORK_BUDGET - 2001);
+		indexView.mask("x".repeat(100));
+		expect(indexBudget.remaining).toBe(READ_WORK_BUDGET - 2001);
 	});
 
 	it("正则路径的病态：1000 个各 1000 个字符、开头相同的值，一页 1000 行（每行 4096 个同样的字符）总耗时有上限", () => {
