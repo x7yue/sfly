@@ -3,6 +3,7 @@ import {
 	type FeishuBotView,
 	feishuBotsApi,
 	NICKNAME_HEADER,
+	type QueueWaitView,
 	runsApi,
 } from "@sfly/schema";
 import { expect } from "vitest";
@@ -162,6 +163,8 @@ export interface AttemptView {
 	} | null;
 	/** 执行中的尝试此刻在做的动作（#356）；没有时为 null。 */
 	current_action: { name: string; started_at: string } | null;
+	/** 排队中的尝试在等什么（#457）；其余状态为 null。 */
+	queue_wait: QueueWaitView | null;
 }
 
 export interface NodeView {

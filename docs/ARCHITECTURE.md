@@ -400,10 +400,19 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | `projects` | id（主键，就是项目的标识：小写字母、数字、连字符，不以连字符开头，最长 63 个字符，创建后不变）, display_name, created_at；迁移时建默认项目 `default` 和公共项目 `public` |
 | `users` | id, login_name（唯一，小写字母、数字、下划线，长度 1–32，不含连字符：库里有约束）, display_name, password_hash（`scrypt` 存储串，只靠外部身份登录的用户为空）, disabled_at, is_platform_admin, external_identity（留给反向代理头或 OIDC，唯一）, created_at；密码哈希和外部身份至少有一个 |
 | `project_members` | (project_id, user_id) 主键, role（read_only / editor / project_admin）, created_at |
-| `api_tokens` | id, kind（personal / project / session / task：会话令牌和任务凭据的种类先留出来）, name, prefix（展示用的前缀）, token_hash（SHA-256，唯一，原值只在签发时显示一次）, user_id（个人令牌的所属用户、会话令牌的发起人）, project_id（项目令牌的所属项目；会话令牌、任务凭据、可选的个人令牌限定的项目）, session_id（会话由骨架建，先不加外键）, task_id（`tasks.id`：任务凭据属于一次尝试）, scopes（范围的名字数组，库里不约束）, created_at, expires_at, revoked_at, last_used_at；每种令牌用哪几列由约束保证；只吊销、不删除 |
+| `api_tokens` | id, kind（personal / project / session / task：会话令牌和任务凭据的种类先留出来）, name, prefix（展示用的前缀）, token_hash（SHA-256，唯一，原值只在签发时显示一次）, user_id（个人令牌的所属用户、会话令牌的发起人）, project_id（项目令牌的所属项目；会话令牌、任务凭据、可选的个人令牌限定的项目）, session_id（外键到 `sessions`，不级联）, task_id（`tasks.id`：任务凭据属于一次尝试）, scopes（范围的名字数组，库里不约束）, created_at, expires_at, revoked_at, last_used_at；每种令牌用哪几列由约束保证；只吊销、不删除 |
 | `logins` | id, user_id, cookie_hash（唯一）, created_at, last_used_at, idle_expires_at（空闲期限）, revoked_at；控制台的登录 Cookie |
 | `agent_credentials` | id, kind（agent：按台签发 / shared：旧式共享令牌）, project_id, agent_name（按台签发的有，共享令牌为空）, prefix, token_hash（SHA-256，唯一）, user_id（开发 Agent 的凭据记在签发它的编辑者名下，项目管理员签发的为空）, created_at, revoked_at, last_used_at；控制面启动时配了 `SFLY_AGENT_TOKEN` 就登记它的哈希为默认项目的共享令牌（换了新值，旧的那条随之删除） |
 | `platform_admin_actions` | id, project_id, user_id, at, route（`方法 路径模板`）, resource_kind / resource_id（请求定位到的资源）, token_name, member_role（他当时在这个项目里的角色，不是成员为空）, status（响应的状态码，请求结束时回填；只有 2xx、3xx、4xx 说明了结果，空和 5xx 都按「结果未知」看待：空是请求还在处理、进程在回填之前退出、客户端在响应发出之前断开（`onResponse` 不触发）、回填本身失败；5xx 是处理函数出错，出错之前可能已经做成了一部分）；平台管理员在自己不是成员的项目里的写操作（以及靠管理员权限才通过的写）：访问检查先于处理函数写下，项目的成员看得到（查看页在 #499）；索引 `(project_id, at)` |
+
+助手会话（ADR 0027，`apps/server/src/sessions/`，一次迁移 `0035_sessions`）：
+
+| 表 | 主要字段 |
+|---|---|
+| `sessions` | id, project_id（所属项目，外键；竖切里都是 `default`）, title（第一句话的前 60 个字）, status（idle 空闲 / running 在做 / queued 排队中 / ended 已结束：约束里一次写全，竖切只用前两个）, created_by（发起人的昵称）, created_by_user_id（发起人的用户，可空：#494 之前的请求没有用户）, created_at, last_activity_at；索引 `(project_id, last_activity_at)`；每个项目至多一个 `running` 的会话（部分唯一索引 `sessions_one_running_per_project`）：同一个项目同一时刻只跑一轮，并发的两个「开始一轮」只有一个写得成 |
+| `session_events` | (session_id, seq) 主键, type, payload（JSONB：事件里除 `type` 以外的字段）, created_at；只存持久的那几类事件（`PERSISTED_SESSION_EVENT_TYPES`）；`seq` 是会话内序号，从 1 起，严格递增；`created_at` 是事件产生的时间，不是落库的时间；部分索引 `session_events_turn_end`（`(session_id, seq desc) where type = 'turn_end'`）给「上一轮的结局」；会话删除时事件一起删 |
+
+`api_tokens.session_id`（会话令牌属于一个会话）是指向 `sessions` 的外键，不级联（no action）：令牌只吊销、不删除，所以签发过会话令牌的会话删不掉；骨架里没有删除会话的接口，做会话的删除和保留期时要一起处理令牌。`session_events` 的外键是级联的。迁移 0035 加这个外键时，库里不能已经有 `kind = 'session'` 的令牌行（外键会让迁移失败并整体回滚）；还没有任何代码签发会话令牌，真实的库里不会有。
 
 场景、Agent、节点包、飞书机器人和运行都属于一个项目（`project_id`）。存储层的列表、按名字取和新建都要传项目（类型上必填，`apps/server/src/projects/project-id.ts` 的 `ProjectId`）：
 别的项目的资源和不存在一样；按场景或运行的 ID 取、再确认它在某个项目里用 `getInProject`、`getRunViewInProject`。节点包例外地多读公共项目：任何项目都读得到公共项目里的包（`readableProjects`），
@@ -466,7 +475,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 - **只对带了凭据的请求生效**（#494 才拒绝不带凭据的请求）：不带凭据的请求、带共享令牌（`SFLY_AGENT_TOKEN`，登记成默认项目的旧式 Agent 凭据，不对应任何一台 Agent）的请求照旧放行，没有身份。带了凭据就一定检查：库里没有的 Bearer、过期的、吊销的、用户停用的，一律 401，不会退回到「不带凭据」的放行。不属于项目的接口（`system`，不需要凭据）带什么都不看。
 - **凭据**：`Authorization: Bearer` 的令牌（个人、项目、会话令牌、任务凭据）和 Agent 凭据，库里只存 SHA-256 哈希（`apps/server/src/auth/credential-hash.ts`）；Bearer 优先，没有时看 `sfly_login` Cookie 里的登录：两个都带时以 Bearer 为准，Bearer 无效时不退回 Cookie。写了 `Bearer`（令牌空的、缺的也算）或带了 `sfly_login` Cookie 就是带了凭据，库里没有就 401；`Basic …` 这类别的 Authorization 写法不是 sfly 的凭据，当作没带（#494 之后它和不带凭据一样被拒绝）。开发 Agent 的凭据记在编辑者名下（`agent_credentials.user_id`），所属用户被停用时它立即失效；按台签发的和共享令牌没有用户。令牌的签发、登录和 Agent 凭据的签发在 #490–#492，这一步只认库里已有的。
-- **项目从请求的哪里来**（`src/auth/access-rules.ts` 的 `locatorOf`，由契约里每个接口的声明得出）：不属于项目的（`system`）；路径带项目（列表和新建，以及按名字定位的 Agent、节点包、飞书机器人）取路径里的 `:project`——#488 把路径改成 `/projects/:project/…` 之前路径里没有项目，就是默认项目；经场景（`/orchestrations/:id/…`）、经运行或任务（`/runs/:id/…`、`/tasks/:id/…`，任务经它所属的运行）取那个资源所在的项目。资源不存在、ID 写得不对、属于别的项目、凭据限定的项目不是这个、不是项目的成员：一律 404（同一句话，`ACCESS_NOT_FOUND_MESSAGE`），不透露别的项目里有什么；403 只用于「在这个项目里，但没有这个范围」。公共项目任何凭据都能读它的节点包。
+- **项目从请求的哪里来**（`src/auth/access-rules.ts` 的 `locatorOf`，由契约里每个接口的声明得出）：不属于项目的（`system`）；路径带项目（列表和新建，以及按名字定位的 Agent、节点包、飞书机器人）取路径里的 `:project`——#488 把路径改成 `/projects/:project/…` 之前路径里没有项目，就是默认项目；经场景（`/orchestrations/:id/…`）、经运行或任务（`/runs/:id/…`、`/tasks/:id/…`，任务经它所属的运行）、经会话（`/sessions/:id/…`，路径里不带项目）取那个资源所在的项目；会话的列表和新建在 `/projects/:project/sessions`，项目取路径里的 `:project`（契约里第一批带项目前缀的路径：`resource.target` 写 `collection`，路径里的 `:project` 只限定项目，不算在定位某个资源，`checkRouteDeclarations` 按这条判断；`/projects/:project/…` 以外的路径参数照旧）。资源不存在、ID 写得不对、属于别的项目、凭据限定的项目不是这个、不是项目的成员：一律 404（同一句话，`ACCESS_NOT_FOUND_MESSAGE`），不透露别的项目里有什么；403 只用于「在这个项目里，但没有这个范围」。公共项目任何凭据都能读它的节点包。
 - **范围**（`src/auth/scopes.ts`）：由「接口作用在哪类资源上 × 只读或写」查表得出：只读都是「读」；写取声明的 `creates`（有的话）否则取 `resource.kind`：场景写要「编辑」、运行写要「运行」、节点包写要「发布」、Agent 和飞书机器人写要「管理」，任务的写没有人和程序能调用。表是 `Record<ResourceKind, …>`，契约里加资源类别不加一行过不了类型检查。三种角色是固定的一组范围，平台管理员在每个项目里是项目管理员；有用户的凭据（登录、个人令牌、会话令牌）取令牌的范围和用户此刻在这个项目里的范围的交集，所以用户被降级、移出项目、停用后他的令牌立刻失去权限；项目令牌没有用户，只看自己的范围，并且不能带「管理」（成员、角色、Agent 和它的凭据、飞书机器人的管理只能由人做；令牌行里写了 `manage` 也不认）。
 - **Agent 凭据和任务凭据不走范围表**：各有一份显式的接口清单（`AGENT_CREDENTIAL_ROUTES`、`TASK_CREDENTIAL_ROUTES`），清单之外一律 403，先于得出项目：403 只取决于接口，不取决于资源存不存在、在哪个项目里。Agent 凭据：下载节点包归档（本项目和公共项目的包）、上传产物（派给这台 Agent 的任务）；任务凭据：下载产物（本项目的任务），不能读日志和动作。
 - **会话令牌**：读按范围，写在 #495 接进来之前一律 403。
@@ -476,6 +485,16 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 - **身份交给处理函数**：通过检查的凭据放在 `request.access`；写操作的 `Actor`（`src/actor.ts`）带用户 ID 和令牌的名称，记进 `author_user_id`/`author_token`、`triggered_by_user_id`/`triggered_token`、`cancel_requested_by_user_id`/`cancel_requested_token`、`run_presets.updated_by_user_id`、`focus_edit.by_user_id`、`node_packages.published_*`。带了凭据的请求，显示名（`author`、`triggered_by` 等）是用户的显示名（项目令牌是令牌的名称），不看昵称请求头，也不要求带它；`*_via` 仍是 `x-sfly-client` 里不经校验的助手名，令牌名是检查过的，两者分开记。
 - **启动检查**（`guardHttpContract`）：每个接口的声明站得住（`checkRouteDeclarations`），访问检查认得出每个接口的项目从哪里得出（`checkAccessRules`），缺声明的接口让控制面起不来；每条路由都是经 `register`（`contractRoute`、`contractStream`、`contractDownload`）注册的：`register` 在路由的 config 上打了标记，`onRoute` 检查它，手写一条契约里有的路径会绕过访问检查，所以启动就失败；HEAD 也要求标记（Fastify 为 GET 自动生成的 HEAD 带着 GET 的标记；先于契约里的 GET 手写的 HEAD 会顶掉自动生成的那个，没有访问检查）。按 ID 查 uuid 列的地方（`AccessStore` 的各个方法和 Agent 上传产物前的任务查询）先判断格式，不是 UUID 的和不存在一样（404）：PostgreSQL 对不是 UUID 的字符串报错，会变成 500；有一条真库的测试对每个按 ID 定位的接口、每种凭据都请求一遍，保证不会是 500。
 - **测试**：`test/access-scopes.test.ts`（范围表对着 ADR 的表，每一行一条）、`test/access-guard.test.ts`（鉴权模块，内存里的 `AccessStore`：每种角色对每个接口的结果、凭据、公共项目、平台管理员、Agent 凭据和任务凭据）、`test/access-http.test.ts`（经 HTTP：身份写进库、记录、HEAD 和事件流）、`test/access-cross-project.test.ts`（从路由清单生成：项目甲的每种凭据请求项目乙的资源，每个属于项目的接口一条；写接口前后控制面留下的痕迹没有任何变化）。造凭据的辅助在 `test/support/credentials.ts`。
+
+### 6.7 助手会话（ADR 0027，`src/sessions/`）
+
+会话（GLOSSARY「会话」）是用户和助手围绕一件事的一次对话；助手是单独的助手容器里的助手服务（apps/assistant 包，唯一依赖 pi 的代码）里的 pi，控制面是用户和助手之间唯一的入口：会话接口在 HTTP 契约里，经 §6.6 的同一处检查，助手服务只和控制面说话。类型都在 `@sfly/schema`：`sessions.ts`（平台的会话事件、会话接口的请求和响应）、`assistant-protocol.ts`（控制面和助手服务之间的命令和事件流，不进 HTTP 契约），接口在 `http/sessions.ts`（`sessionsApi`）。这一节写控制面里现在有的部分；和助手服务的连接（建会话、发话、停止、收回事件）在后面的 PR 里加，写在这一节里。
+
+- **事件的落库与推送**（`SessionStore`）：只存持久的几类事件（用户的话、一轮的开始和结束、助手的整条消息、工具调用和结果、提示、平台留下的记录、会话结束），文字增量、工具输出、思考、排队状态、快照只推不存（页面重放要的是条目，不是 token 流）。`append` 在同一个事务里锁住会话那一行再取下一个序号，并发写同一个会话的几条事件依次执行，序号连续、不重复；落库的同时更新会话的 `last_activity_at`（不倒退）；事件的内容先过 `SessionEventBody` 的 schema；发布在事务提交之后，订阅的一方收到时库里一定读得到它。事件的时间是产生它的时间：控制面自己产生的用控制面的时钟，助手服务产生的由它盖时间、控制面原样存。
+- **事件流**（`GET /sessions/:id/events`，SSE）：和动作明细的实时推送同一个做法（§6.3）——先订阅再从库里补发，补发期间到的实时事件（持久的和不持久的）按到达先后缓冲，补发完按原来的相对顺序放出，持久的事件按 `seq` 去重，所以按事件 ID 接续不重复也不遗漏；缓冲里排在「已经补发过的持久事件」前面的不持久事件已经过时（它们属于那些事件之前的状态），丢掉，不会出现在它后面（`src/sessions/follow.ts`）。补发分批读库，每发完一批等对端读走（`drain`）再读下一批，慢客户端不会把整段历史顶进内存；补发期间缓冲的实时事件有上限，超过就关掉这条流，客户端按 `Last-Event-ID` 重连。`after` 和 `Last-Event-ID` 取较大的一个；序号不超过 int4 的最大值（`SESSION_SEQ_MAX`），`before`、`after` 超过是 400，`Last-Event-ID` 超过当作没带。事件名是事件的 `type`，持久的事件以 `seq` 作 SSE 的事件 ID、data 带 `seq` 和 `at`，不持久的没有 ID，不推进续传的位置。读历史（`GET /sessions/:id`）一页最多 200 条持久事件，`before` 往前翻页。
+- **就绪状态**（`src/sessions/readiness.ts`，列表接口一并返回）：助手现在能不能用。助手默认关闭：控制面没有配置助手服务时，会话的写接口返回 503 `assistant_not_configured`，读接口照常，就绪状态里写明原因；这是代码保证的开关，不是文档。
+- **列表**：在做和排队中的会话在前，其余按最近活动倒序，最多 `SESSION_LIST_LIMIT`（200）个；带上一轮的结局（最近一条 `turn_end` 的 `outcome`）：查询走部分索引 `session_events_turn_end`（`(session_id, seq desc) where type = 'turn_end'`，每轮一条），不扫会话的全部事件。
+- **测试**：`test/sessions.test.ts`（序号、时间、内容、读、事件流、503、范围）；读接口和事件流也在 `test/read-only-routes.test.ts`、`test/access-cross-project.test.ts`、`test/access-guard.test.ts` 的生成测试里；表的约束在 `test/tenancy-schema.test.ts`。
 
 ---
 

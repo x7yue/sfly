@@ -120,8 +120,6 @@ function LoadedMonitor({ run, address }: { run: RunView; address: MonitorSearch 
 		document.getElementById(viewTabId("detail"))?.focus();
 		void navigate(runMonitorLink(runId, next));
 	};
-	/** 顶栏的失败摘要在概览里点了以后切到详情（那里有它要打开的「尝试」页签）；不算用户选了视图，不记。 */
-	const showDetail = () => void navigate(runMonitorLink(runId, { ...address, view: "detail" }));
 
 	const orchestration = useQuery(
 		apiQuery(orchestrationsApi.get, { params: { id: run.orchestration_id } }),
@@ -155,10 +153,9 @@ function LoadedMonitor({ run, address }: { run: RunView; address: MonitorSearch 
 				<MonitorTopBar
 					run={run}
 					name={name}
-					failureInBanner={failureBanner && view === "detail"}
+					failureShown={view === "overview" || failureBanner}
 					view={view}
 					onViewChange={changeView}
-					onShowDetail={showDetail}
 				/>
 				<main className="flex min-h-0 flex-1 flex-col">
 					<div

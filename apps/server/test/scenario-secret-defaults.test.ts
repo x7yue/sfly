@@ -18,6 +18,7 @@ import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, listPresets, presetScenario } from "./support/presets.js";
 import { allForms, BEYOND_I64 } from "./support/secret-forms.js";
+import { persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient } from "./support/sse-client.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -126,6 +127,8 @@ describe("场景版本里 secret 参数的默认值", () => {
 		agents.push(agent);
 		return agent;
 	};
+	/** 库里的一个会话，带每种持久事件：按会话 ID 定位的接口读它。 */
+	const session = () => seedSession(cp.database.url, { events: persistedBodies() });
 	/** 起一个控制面：发布 stub 包，注册 agent-a（触发前的预检只要求 Agent 已注册）。 */
 	const start = async () => {
 		cp = await startTestControlPlane();
@@ -330,7 +333,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const runId = await api.triggerOk(id);
 			const assign = await agent.nextAssign();
 			await sweepStreams(
-				{ scenario: id, run: runId, task: assign.taskId, preset: "x" },
+				{ scenario: id, run: runId, task: assign.taskId, session: await session(), preset: "x" },
 				expectNoRaw,
 			);
 		});
@@ -340,7 +343,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		 * 路径随便填的接口返回 404（不是 SSE），这里只看连上的；404 的响应在「所有 GET 接口」里查过。
 		 */
 		const sweepStreams = async (
-			ids: { scenario: string; run: string; task: string; preset: string },
+			ids: { scenario: string; run: string; task: string; session: string; preset: string },
 			check: (what: string, text: string) => void,
 			options: { waitFor?: (path: string) => string | undefined } = {},
 		) => {
@@ -375,7 +378,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		/** 路径参数填什么：看路径的前缀和参数名；没见过的组合直接报错，新接口要在这里补上取值。 */
 		const fill = (
 			path: string,
-			ids: { scenario: string; run: string; task: string; preset: string },
+			ids: { scenario: string; run: string; task: string; session: string; preset: string },
 		) =>
 			path.replace(/:([A-Za-z]+)|\*$/g, (_, name?: string) => {
 				if (name === undefined) return "x";
@@ -383,6 +386,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 					if (path.startsWith("/orchestrations/")) return ids.scenario;
 					if (path.startsWith("/runs/")) return ids.run;
 					if (path.startsWith("/tasks/")) return ids.task;
+					if (path.startsWith("/sessions/")) return ids.session;
 				}
 				const others: Record<string, string> = {
 					presetId: ids.preset,
@@ -398,6 +402,8 @@ describe("场景版本里 secret 参数的默认值", () => {
 					skill: "x",
 					file: "x",
 					package: "stub",
+					// 会话的列表在 /projects/:project/sessions，项目是默认项目；PEP 503 索引的包名参数是 :package。
+					project: "default",
 				};
 				const found = others[name];
 				if (found === undefined) {
@@ -411,7 +417,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		 * 不在这里（下面的写接口用例会要求请求过它们）。每个 GET 接口（SSE 除外）读一遍，响应交给 `check`（`what`、响应文本）。
 		 */
 		const sweepReads = async (
-			ids: { scenario: string; run: string; task: string; preset: string },
+			ids: { scenario: string; run: string; task: string; session: string; preset: string },
 			check: (what: string, text: string) => void,
 		) => {
 			const reads = httpContract.filter(
@@ -442,7 +448,13 @@ describe("场景版本里 secret 参数的默认值", () => {
 				params: [{ name: "token", value: SECRET }],
 			});
 			await sweepReads(
-				{ scenario: id, run: runId, task: assign.taskId, preset: preset.id },
+				{
+					scenario: id,
+					run: runId,
+					task: assign.taskId,
+					session: await session(),
+					preset: preset.id,
+				},
 				expectNoRaw,
 			);
 		});
@@ -545,7 +557,13 @@ describe("场景版本里 secret 参数的默认值", () => {
 				expect(page.last_seq).toBe(logLines.length);
 			});
 
-			const ids = { scenario: id, run: runId, task: a.taskId, preset: "x" };
+			const ids = {
+				scenario: id,
+				run: runId,
+				task: a.taskId,
+				session: await session(),
+				preset: "x",
+			};
 			const noLeaks = (when: string) => (what: string, text: string) => {
 				for (const leak of WRITE_LEAKS) {
 					// 响应、事件、日志文件里的文字是 JSON 编码过的：带引号的片段在里面是 `\"` 的写法，两种都要查。
@@ -765,6 +783,11 @@ describe("场景版本里 secret 参数的默认值", () => {
 			await record("归档", tracked.postEmpty(`/orchestrations/${id}/archive`));
 			await record("触发：已归档", tracked.trigger(id));
 			await record("恢复归档", tracked.postEmpty(`/orchestrations/${id}/unarchive`));
+			// 会话的写（助手没有配置：503）：响应里的错误说明也不能带原值。
+			const sessionId = await session();
+			await record("会话：新建", tracked.post("/projects/default/sessions", { text: "你好" }));
+			await record("会话：发话", tracked.post(`/sessions/${sessionId}/messages`, { text: "你好" }));
+			await record("会话：停止", tracked.postEmpty(`/sessions/${sessionId}/stop`));
 
 			const statuses = new Set<number>();
 			for (const [what, res] of responses) {
