@@ -135,6 +135,53 @@ describe("令牌的几处收紧", () => {
 		});
 	});
 
+	describe("项目令牌记着签发人，不随签发人失效", () => {
+		it("列表和签发的响应里带签发人的显示名；签发人在库里被停用之后令牌照样有效，列表里还是他；个人令牌不记签发人", async () => {
+			// 第二个平台管理员签发项目令牌：他之后被停用。
+			const boss = await accounts.user("boss", { admin: true, displayName: "老板" });
+			const bossToken = await accounts.login(boss);
+			const issued = await call(loginCookie(bossToken), "POST", "/projects/default/tokens", {
+				name: "自动化",
+				scopes: ["read"],
+			});
+			expect(issued.status, await issued.clone().text()).toBe(201);
+			const created = (await issued.json()) as { token: string; issued_by: string | null };
+			expect(created.issued_by).toBe("老板");
+
+			const list = async () =>
+				(
+					(await (
+						await call(loginCookie(adminCookie), "GET", "/projects/default/tokens")
+					).json()) as { tokens: { name: string; issued_by: string | null }[] }
+				).tokens;
+			expect(await list()).toEqual([
+				expect.objectContaining({ name: "自动化", issued_by: "老板" }),
+			]);
+
+			await db.query("update users set disabled_at = now() where id = $1", [boss]);
+			// 项目令牌属于项目：签发人被停用，它照样有效；记录还在。
+			expect((await call(bearer(created.token), "GET", "/orchestrations")).status).toBe(200);
+			expect(await list()).toEqual([
+				expect.objectContaining({ name: "自动化", issued_by: "老板" }),
+			]);
+			expect(
+				(await db.query("select issued_by_user_id from api_tokens where name = '自动化'")).rows[0]
+					.issued_by_user_id,
+			).toBe(boss);
+
+			// 个人令牌：签发人就是所属用户，不另记。
+			const personal = await issue({ name: "我的" });
+			const row = (
+				await db.query("select issued_by_user_id from api_tokens where id = $1", [personal.id])
+			).rows[0];
+			expect(row.issued_by_user_id).toBeNull();
+			const own = (await (await call(bearer(personal.token), "GET", "/account/tokens")).json()) as {
+				tokens: { issued_by: string | null }[];
+			};
+			expect(own.tokens.every((t) => t.issued_by === null)).toBe(true);
+		});
+	});
+
 	describe("令牌名称", () => {
 		it("换行、制表符、转义序列（ESC）、DEL、NUL、行分隔符都拒绝（400），没有签出令牌；正常的名字（含中文、空格、emoji）可以", async () => {
 			for (const name of [
