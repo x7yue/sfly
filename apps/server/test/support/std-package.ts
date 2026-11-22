@@ -144,3 +144,27 @@ export async function publishIntoPublicProject(
 	if (res.status !== 201)
 		throw new Error(`发布 ${where.name}@${where.version}：${res.status} ${await res.text()}`);
 }
+
+/**
+ * 升级迁移或手工改库留下的数据：先发布到默认项目，再把它挪进公共项目，不经过「发布到公共项目」时的检查
+ * （那里会拒绝和已有版本规范化之后相同的版本）。测包索引对这种数据的防御（同一个版本只列最早发布的那个）用它。
+ */
+export async function moveIntoPublicProject(
+	cp: TestControlPlane,
+	archive: Uint8Array,
+	where: { name: string; version: string },
+): Promise<void> {
+	const res = await cp.fetch("/packages", publishInit(archive));
+	if (res.status !== 201)
+		throw new Error(`发布 ${where.name}@${where.version}：${res.status} ${await res.text()}`);
+	const client = new pg.Client({ connectionString: cp.database.url });
+	await client.connect();
+	try {
+		await client.query(
+			"update node_packages set project_id = 'public' where name = $1 and version = $2",
+			[where.name, where.version],
+		);
+	} finally {
+		await client.end();
+	}
+}
