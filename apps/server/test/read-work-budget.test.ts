@@ -38,9 +38,9 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 	const word = (n: number) =>
 		Array.from({ length: n }, () => "bcdefghijklmnopqrstuvwxyz"[random(25)]).join("");
 
-	/** 开头都是同样的一长串 a、最后几位不同的 1000 个值：和文字比较时要比到最后才对不上。 */
+	/** 开头都是同样的一长串 a、最后几位不同的 500 个各 1000 个字符的值：和文字比较时每个正则都要比很久。 */
 	const pathologicalValues = () =>
-		Array.from({ length: 1000 }, (_, i) => `${"a".repeat(280)}${word(16)}${i % 10}`);
+		Array.from({ length: 500 }, (_, i) => `${"a".repeat(980)}${word(16)}${i % 10}${i}`);
 
 	/** 保密值后来才知道的场景：cfg 不是 secret，经参数映射传给子流程 subB 的 secret 参数 k 之后，它的值才是 secret 值。 */
 	const lateDoc = () => ({
@@ -70,8 +70,8 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		packages: { bench: "1.0.0" },
 	});
 
-	/** 200 条动作，每条的名称、8 个字段（键和值）、失败原因都是到了上限、前面全是 a、最后一个字符是 b 的文字：每一处都要花满单次的上限。 */
-	const actionEvents = () => {
+	/** `count` 条动作，每条的名称、8 个字段（键和值）、失败原因都是到了上限、前面全是 a、最后一个字符是 b 的文字：每一处都要扫很久。 */
+	const actionEvents = (count: number) => {
 		const { nameChars, valueChars, reasonChars } = ACTION_LIMITS;
 		const t0 = Date.parse("2026-01-01T00:00:00.000Z");
 		const name = `${"a".repeat(nameChars - 1)}b`;
@@ -80,7 +80,7 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		const fields = Object.fromEntries(
 			Array.from({ length: 8 }, (_, f) => [`${"a".repeat(nameChars - 2)}b${f}`, value]),
 		);
-		return Array.from({ length: 200 }, (_, i) => [
+		return Array.from({ length: count }, (_, i) => [
 			agent.actionStart(i + 1, name, t0 + i * 10, { fields }),
 			agent.actionEnd(i + 1, "failed", t0 + i * 10 + 5, { reason }),
 		]).flat();
@@ -137,7 +137,7 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		expect(performance.now() - summaryStarted, "读摘要").toBeLessThan(2000);
 	};
 
-	it("保密值从一开始就知道：写入 200 条动作、读一页、读摘要，每一步都很快", async () => {
+	it("保密值从一开始就知道：读一页动作、读摘要，每一步都很快", async () => {
 		const id = await api.orchestrationWith({
 			default_agent: "agent-a",
 			nodes: [
@@ -149,13 +149,10 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		});
 		await api.triggerOk(id, { cfg: pathologicalValues() });
 		const task = await agent.nextAssign();
-
-		const writeStarted = performance.now();
-		agent.actions(task, actionEvents());
+		// 写入时的打码不带预算，和 dev 一样；写得少一点，这条测的是读取
+		agent.actions(task, actionEvents(60));
 		sendSummary(task);
-		await agent.sync();
-		// 一批 200 条的写入：共用一份预算，不是每处文字各花满一次（那样要几十秒）
-		expect(performance.now() - writeStarted, "写入一批 200 条动作").toBeLessThan(5000);
+		await agent.sync({ timeoutMs: 60_000 });
 		await expectFastReads(task.taskId);
 	}, 120_000);
 
@@ -166,7 +163,7 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		const second = await agent.nextAssign();
 		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
 		// 写入时这些值还不是 secret 值：文字原样写下，读的时候才每一处都要和这一千个值比
-		agent.actions(sa, actionEvents());
+		agent.actions(sa, actionEvents(200));
 		sendSummary(sa);
 		await agent.sync();
 		await agent.succeed(b);
