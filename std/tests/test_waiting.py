@@ -20,15 +20,26 @@ def test_poll_until_returns_the_value_and_how_long_it_waited() -> None:
         calls.append(1)
         return "好了" if len(calls) == 3 else None
 
-    value, waited = poll_until(check, what="条件成立", wait=5, poll=0.05)
+    result = poll_until(check, what="条件成立", wait=5, poll=0.05)
 
-    assert value == "好了" and len(calls) == 3
-    assert 0.1 <= waited < 2
+    assert result.value == "好了" and len(calls) == 3
+    assert 0.1 <= result.waited < 2
 
 
 def test_poll_until_times_out_with_what_and_the_detail() -> None:
     with pytest.raises(TimeoutError, match="等待条件成立超时：已等 0.2 秒.*还差一点"):
         poll_until(lambda: None, what="条件成立", wait=0.2, poll=0.05, detail=lambda: "还差一点")
+    # 不给 detail 时信息到「已等 … 秒」为止。
+    with pytest.raises(TimeoutError) as error:
+        poll_until(lambda: None, what="条件成立", wait=0.1, poll=0.05)
+    assert str(error.value) == "等待条件成立超时：已等 0.1 秒"
+
+
+def test_poll_until_validates_wait_and_poll() -> None:
+    with pytest.raises(ValueError, match="wait 不能为负数，实际为 -1"):
+        poll_until(lambda: True, what="x", wait=-1, poll=0.1)
+    with pytest.raises(ValueError, match="poll 必须大于 0，实际为 0"):
+        poll_until(lambda: True, what="x", wait=1, poll=0)
 
 
 def test_wait_for_port_returns_once_something_listens(tmp_path: Path) -> None:
@@ -38,11 +49,12 @@ def test_wait_for_port_returns_once_something_listens(tmp_path: Path) -> None:
     port = server.getsockname()[1]
     threading.Timer(0.4, server.listen).start()
     try:
-        waited = wait_for_port(run.ctx, port, wait=10, poll=0.1)
+        ready = wait_for_port(run.ctx, port, wait=10, poll=0.1)
     finally:
         server.close()
 
-    assert 0.2 <= waited < 5
+    assert (ready.host, ready.port) == ("127.0.0.1", port)
+    assert 0.2 <= ready.waited < 5
 
 
 def test_wait_for_port_times_out_naming_the_address_and_the_last_error(tmp_path: Path) -> None:
@@ -71,11 +83,12 @@ def test_wait_for_file_waits_for_the_file_to_exist_and_stop_changing(tmp_path: P
     writer.start()
     started = time.monotonic()
     try:
-        size = wait_for_file(run.ctx, str(report), stable=0.8, wait=10, poll=0.1)
+        ready = wait_for_file(run.ctx, report, stable=0.8, wait=10, poll=0.1)
     finally:
         writer.join()
 
-    assert size == 3
+    assert ready.size == 3 and ready.path == report  # 路径参数可以是 Path，返回的路径是 Path
+    assert ready.waited >= 0.3 + 0.3 + 0.8 - 0.2
     assert time.monotonic() - started >= 0.3 + 0.3 + 0.8 - 0.2  # 最后一次写入之后又静止了 stable 秒
 
 

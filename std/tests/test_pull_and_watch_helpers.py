@@ -47,10 +47,11 @@ def test_pull_files_from_agent_returns_the_local_paths_and_the_sizes(
     run = DirectRun(tmp_path / "run")
     local = tmp_path / "pulled"
 
-    result = pull_files_from_agent(run.ctx, SOURCE, LOGS, str(local), pattern="app.log.*")
+    # 本地目录可以是 Path；返回的文件也是 Path（不截断：节点自己限制输出里列出的个数）。
+    result = pull_files_from_agent(run.ctx, SOURCE, LOGS, local, pattern="app.log.*")
 
     assert result == PullResult(
-        files=[str(local / "app.log.1"), str(local / "app.log.2")], count=2, total_bytes=13
+        files=(local / "app.log.1", local / "app.log.2"), count=2, total_bytes=13
     )
     assert (local / "app.log.2").read_bytes() == b"second\n"
 

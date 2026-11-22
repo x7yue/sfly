@@ -5,8 +5,12 @@
   （例如 logrotate 的 copytruncate）时从头读。只按「检查时」的状态判断：两次检查之间被截断又写到
   超过原来的长度时，截断前后的差别看不出来；
 - `follow_log_file`：把新增的行实时转为任务日志，出现匹配 `fail_on` 的行时失败，并上报每秒行数
-  的指标；
-- `wait_for_log_line`：等日志里出现匹配正则的行，用来等被测系统打出就绪日志。
+  的指标，返回 `FollowResult`；
+- `wait_for_log_line`：等日志里出现匹配正则的行，用来等被测系统打出就绪日志，返回
+  `LogLineMatch`。
+
+「从哪里开始读」在三处都写成 `read_from`：`"end"`（默认）只读之后新写入的内容，`"start"` 从文件
+开头读起。路径可以是 `str` 或 `os.PathLike`；时间以秒为单位。
 """
 
 from __future__ import annotations
@@ -15,17 +19,22 @@ import os
 import sys
 import time
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from types import TracebackType
 from typing import BinaryIO, Literal
 
 from sfly import Context, Metric
 from sfly_std import _params
 from sfly_std._sampling import validate_duration
-from sfly_std.waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until, validate
+from sfly_std.waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 
 __all__ = [
     "FOLLOW_METRICS",
     "FailOnMatched",
+    "FollowResult",
     "LogFile",
+    "LogLineMatch",
     "follow_log_file",
     "wait_for_log_line",
 ]
@@ -37,26 +46,49 @@ MAX_LINE_BYTES = 64 * 1024
 
 
 class LogFile:
-    """`lines()` 返回上次调用以来新增的完整行（不含换行符，按 UTF-8 解码，无法解码的字节替换为 �）。
+    """读一个日志文件新增的行，像 `tail -F`；用 `with` 或最后调用 `close()` 释放文件。
 
-    `from_start` 为 False 时只读创建时之后新写入的内容；创建时文件不存在的，出现后的内容都算新的。
-    最后一行还没写完（没有换行符）时留到下次；`flush()` 返回这样留下的半行。
+        with LogFile(path) as log:
+            for line in log.lines():
+                ...
+
+    `lines()` 返回上次调用以来新增的完整行（不含换行符，按 UTF-8 解码，无法解码的字节替换为 �）。
+    `read_from` 为 `"end"`（默认）时只读创建时之后新写入的内容，为 `"start"` 时从文件开头读起；
+    创建时文件不存在的，出现后的内容都算新的。最后一行还没写完（没有换行符）时留到下次；
+    `flush()` 返回这样留下的半行。
     """
 
-    def __init__(self, path: str, *, from_start: bool) -> None:
-        self.path = path
+    #: 读的日志文件（参数 `path` 的写法，不转成绝对路径）。
+    path: Path
+
+    def __init__(
+        self, path: str | os.PathLike[str], *, read_from: Literal["end", "start"] = "end"
+    ) -> None:
+        self.path = Path(path)
         self._file: BinaryIO | None = None
         self._ident: tuple[int, int] | None = None
         self._pending = bytearray()
-        if self._open() and not from_start:
+        if self._open() and read_from == "end":
             assert self._file is not None
             self._file.seek(0, os.SEEK_END)
+
+    def __enter__(self) -> LogFile:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
 
     def exists(self) -> bool:
         """正在读的文件存在（创建以来出现过，且没有被删掉）。"""
         return self._file is not None and os.path.exists(self.path)
 
     def lines(self) -> Iterator[str]:
+        """上次调用以来新增的完整行；文件被轮转、截断时先读完旧文件剩下的，再读新的内容。"""
         if self._file is not None:
             if os.fstat(self._file.fileno()).st_size < self._file.tell():
                 yield from self.flush()  # 被截断：截断前没写完的半行不会再有后续
@@ -73,11 +105,13 @@ class LogFile:
                 yield from self._read()
 
     def flush(self) -> Iterator[str]:
+        """留下的没有换行符的最后半行（没有时什么也不返回），读完以后不再保留。"""
         if self._pending:
             yield _decode(self._pending)
             self._pending.clear()
 
     def close(self) -> None:
+        """关闭正在读的文件；可以重复调用。"""
         if self._file is not None:
             self._file.close()
             self._file, self._ident = None, None
@@ -114,24 +148,32 @@ METRIC_INTERVAL = 1.0
 
 #: `follow_log_file` 上报的指标：自己的节点用 `@node(metrics=FOLLOW_METRICS,
 #: primary_metric="lines_per_s")` 声明。
-FOLLOW_METRICS = [
+FOLLOW_METRICS = (
     Metric("lines_per_s", unit="行/s", description="每秒新增的行数"),
     Metric("fail_matches", kind="counter", description="累计匹配 fail_on 的行数"),
-]
+)
 
 
 class FailOnMatched(Exception):
     """日志里出现了匹配 `fail_on` 的行。"""
 
 
+@dataclass(frozen=True)
+class FollowResult:
+    """`follow_log_file` 的结果。"""
+
+    #: 转发了多少行。
+    lines: int
+
+
 def follow_log_file(
     ctx: Context,
-    path: str,
+    path: str | os.PathLike[str],
     *,
     read_from: Literal["end", "start"] = "end",
     fail_on: Sequence[str] = (),
     duration: float | None = None,
-) -> int:
+) -> FollowResult:
     """把日志文件新增的行实时转为任务日志，出现匹配的错误行时失败；返回转发的总行数。
 
     行写到执行器自己的标准输出（Agent 实时转为任务日志）。`read_from` 为 `"end"` 时从调用时的文件
@@ -145,7 +187,7 @@ def follow_log_file(
     validate_duration(duration)
     patterns = [_params.regex(f"fail_on 第 {i} 条", p) for i, p in enumerate(fail_on, 1)]
 
-    log = LogFile(path, from_start=read_from == "start")
+    log = LogFile(path, read_from=read_from)
     out = sys.stdout.buffer
     total = matches = window_lines = 0
     started = window_start = time.monotonic()
@@ -200,43 +242,50 @@ def follow_log_file(
     finally:
         log.close()
     ctx.log.info("跟随结束，共 %d 行", total)
-    return total
+    return FollowResult(lines=total)
+
+
+@dataclass(frozen=True)
+class LogLineMatch:
+    """`wait_for_log_line` 的结果。"""
+
+    #: 第一行匹配的内容（不含换行符）。
+    line: str
+    #: 等了多少秒。
+    waited: float
 
 
 def wait_for_log_line(
     ctx: Context,
-    path: str,
+    path: str | os.PathLike[str],
     pattern: str,
     *,
     read_from: Literal["end", "start"] = "end",
     wait: float = DEFAULT_WAIT,
     poll: float = DEFAULT_POLL,
-) -> str:
+) -> LogLineMatch:
     """等日志文件里出现匹配正则（`re.search`，要匹配整行用 `^...$`）的行，返回第一行匹配的内容。
 
-    返回的内容不含换行符。`read_from` 为 `"end"` 时只看调用之后新写入的内容，`"start"` 时从文件
-    开头看起。文件还不存在时等它出现，被轮转或截断时继续读新的内容。
+    返回的 `line` 不含换行符。`read_from` 为 `"end"` 时只看调用之后新写入的内容，`"start"` 时从
+    文件开头看起。文件还不存在时等它出现，被轮转或截断时继续读新的内容。
 
     `wait` 秒内没有出现时抛出 `TimeoutError`，信息写明文件、正则和等了多久，文件一直不存在时注明
     「文件不存在」；`pattern` 不是合法的正则时抛出 `ValueError`。
     """
-    validate(wait, poll)
+    _params.wait_and_poll(wait, poll)
     regex = _params.regex("pattern", pattern)
-    log = LogFile(path, from_start=read_from == "start")
-    try:
+    with LogFile(path, read_from=read_from) as log:
         ctx.log.info("等待日志 %s 出现匹配 %s 的行，最多 %g 秒", path, pattern, wait)
 
         def check() -> str | None:
             return next((line for line in log.lines() if regex.search(line)), None)
 
-        line, waited = poll_until(
+        polled = poll_until(
             check,
             what=f"日志 {path} 出现匹配 {pattern} 的行",
             wait=wait,
             poll=poll,
             detail=lambda: "" if log.exists() else "文件不存在",
         )
-    finally:
-        log.close()
-    ctx.log.info("等了 %.1f 秒，匹配到：%s", waited, line)
-    return line
+    ctx.log.info("等了 %.1f 秒，匹配到：%s", polled.waited, polled.value)
+    return LogLineMatch(line=polled.value, waited=polled.waited)

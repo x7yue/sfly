@@ -1511,7 +1511,7 @@ export interface PackageNode {
 	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限，#559）。 */
 	queue_timeout?: number;
 }
 
@@ -1535,7 +1535,7 @@ export interface PackageNodeInput {
 	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限，#559）。 */
 	queue_timeout?: number;
 }
 

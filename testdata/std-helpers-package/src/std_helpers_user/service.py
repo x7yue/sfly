@@ -1,6 +1,5 @@
 """示例业务节点：起服务、等就绪、采样资源、收集日志、停服务。"""
 
-from pathlib import Path
 from typing import Annotated, TypedDict
 
 from sfly import Context, Doc, node
@@ -31,16 +30,23 @@ def service_check(
 ) -> ServiceCheckOutputs:
     """起服务，等它就绪，采样它的资源，收集日志，最后停掉服务。
 
-    副作用：启动的服务在节点结束前一定会被停掉，包括节点失败、被取消的时候。
+    副作用：启动的服务在节点结束前会被停掉，包括节点失败、被取消的时候：先发 SIGTERM，服务
+    没有退出就在 5 秒后发 SIGKILL（被取消时最多等 3 秒）。服务日志在服务停掉之后存成产物，
+    节点失败时也存。
 
     失败：服务 60 秒内没有就绪，或者采样期间服务退出了。
     """
     service = start_background_process(ctx, command)
     try:
-        wait_for_log_line(ctx, service.log_file, ready_line, read_from="start", wait=60)
-        wait_for_port(ctx, port, wait=10)
-        monitor = monitor_processes(ctx, pid=service.pid, duration=observe)
-        log = ctx.artifacts.save("service.log", Path(service.log_file))
+        try:
+            wait_for_log_line(ctx, service.log_file, ready_line, read_from="start", wait=60)
+            wait_for_port(ctx, port, wait=10)
+            monitor = monitor_processes(ctx, pid=service.pid, duration=observe)
+        finally:
+            # 在 finally 里清理要在平台给的收尾时间（默认 10 秒）内做完：stop_background_process
+            # 的宽限期默认 5 秒，被取消时最多 3 秒，来得及发 SIGKILL。
+            stopped = stop_background_process(ctx, service.pid)
     finally:
-        stopped = stop_background_process(ctx, service.pid)
+        # 服务停掉之后再存：日志里有它停止时的输出；节点失败时（最需要日志的时候）也存。
+        log = ctx.artifacts.save("service.log", service.log_file)
     return {"samples": monitor.samples, "log": log, "exit_code": stopped.exit_code}

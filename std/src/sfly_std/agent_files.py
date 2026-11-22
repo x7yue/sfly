@@ -9,12 +9,14 @@
   断线时一直重试到连上，日志按序号轮转时同名的不同文件不会互相覆盖。
 
 另一台 Agent 要通过「Agent」类型的参数（`sfly.AgentName`）传给节点，调用的是 `ctx.agent(source)`；
-下载先写临时文件、完成后才改名，不会留下半截文件。内部的下载、删除源文件、输出路径列表的截断在
+下载先写临时文件、完成后才改名，不会留下半截文件。路径参数可以是 `str` 或 `os.PathLike`，返回的
+路径是 `pathlib.Path`；时间以秒为单位。内部的下载、删除源文件、输出路径列表的截断在
 `_pull.py`。
 """
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -60,9 +62,8 @@ MAX_BACKOFF = 10.0
 class PullResult:
     """`pull_files_from_agent` 的结果。"""
 
-    #: 拉下来的文件的本地绝对路径，按拉取的顺序；最多列出 1000 个（序列化后最多 256 KiB），
-    #: 更多时只列前面的，以 `count` 为准。
-    files: list[str]
+    #: 拉下来的文件的本地绝对路径，按拉取的顺序。
+    files: tuple[Path, ...]
     #: 拉下来的文件数。
     count: int
     #: 拉下来的文件的总字节数。
@@ -72,8 +73,8 @@ class PullResult:
 def pull_files_from_agent(
     ctx: Context,
     source: str,
-    directory: str,
-    local_dir: str,
+    directory: str | os.PathLike[str],
+    local_dir: str | os.PathLike[str],
     *,
     pattern: str = "*",
     recursive: bool = False,
@@ -92,8 +93,9 @@ def pull_files_from_agent(
     `sfly.AgentError`；某个文件下载失败时立即抛出，信息写明是哪个文件，之后的不再拉取；文件在下载
     期间被改写、截短或大小变了（还在写入）时下载失败。没有匹配的文件时不失败，`count` 为 0。
     """
-    if not local_dir:
+    if not os.fspath(local_dir):
         raise ValueError("local_dir 不能为空")
+    directory = os.fspath(directory)
     agent = ctx.agent(source)
     root = Path(local_dir).absolute()
     matched = list(agent.files.list(directory, pattern, recursive=recursive))
@@ -127,12 +129,12 @@ def pull_files_from_agent(
         if delete_source and _pull.delete_pulled(agent, got) == "changed":
             ctx.log.warning("%s 在下载之后被改动或替换，没有删除", file.path)
     ctx.log.info("拉取了 %d 个文件，共 %d 字节", len(pulled), done)
-    return PullResult(files=_pull.listed(pulled), count=len(pulled), total_bytes=done)
+    return PullResult(files=tuple(pulled), count=len(pulled), total_bytes=done)
 
 
 #: `watch_agent_files` 上报的指标：自己的节点用 `@node(metrics=WATCH_METRICS,
 #: primary_metric="bytes_per_s")` 声明。
-WATCH_METRICS = [
+WATCH_METRICS = (
     Metric("pulled_files", kind="counter", description="累计拉下来的文件数"),
     Metric(
         "pulled_bytes",
@@ -145,7 +147,7 @@ WATCH_METRICS = [
         "B/s",
         description="当前的拉取速率：每秒传输的字节数，含正在拉取的文件已经下载的部分",
     ),
-]
+)
 
 
 @dataclass(frozen=True)
@@ -161,18 +163,19 @@ class WatchResult:
 def watch_agent_files(
     ctx: Context,
     source: str,
-    directory: str,
-    local_dir: str,
+    directory: str | os.PathLike[str],
+    local_dir: str | os.PathLike[str],
     *,
     pattern: str = "*",
-    stable: float | None = None,
+    stable: float = 0,
     delete_source: bool = False,
     duration: float | None = None,
 ) -> WatchResult:
     """持续监听另一台 Agent 上的一个目录，把匹配通配符的文件拉到本地目录，每个文件只拉一次。
 
     启动时已有的和之后出现的文件都拉；`directory` 不含子目录。`stable`：文件至少这么多秒没有修改
-    才拉（不设置或为 0 时一出现就拉）。平台不判断文件是否写完，按被测系统怎样轮转日志来选
+    才拉（为 0，默认，时一出现就拉；和 `wait_for_file` 的 `stable` 是同一个意思）。
+    平台不判断文件是否写完，按被测系统怎样轮转日志来选
     `pattern` 和 `stable`。`delete_source` 时每拉完一个文件就删除来源上的源文件，只删拉成功的。
 
     `duration` 秒后成功返回；不设置时一直运行，直到任务被取消（已经拉完的文件保留）。按
@@ -182,11 +185,12 @@ def watch_agent_files(
     子类）；之后连接中断不失败，写一条警告日志，一直重试到连上。`local_dir` 为空、`stable` 或
     `duration` 不合法时抛出 `ValueError`。
     """
-    if not local_dir:
+    if not os.fspath(local_dir):
         raise ValueError("local_dir 不能为空")
-    if stable is not None and stable < 0:
+    if stable < 0:
         raise ValueError(f"stable 不能小于 0，实际为 {stable:g}")
     validate_duration(duration)
+    directory = os.fspath(directory)
     agent = ctx.agent(source)
     root = Path(local_dir).absolute()
     pattern = pattern or "*"
@@ -204,7 +208,7 @@ def watch_agent_files(
         until,
     )
     events = _Watching(ctx, agent, source, directory, pattern)
-    files = _Files(stable or 0.0)
+    files = _Files(stable)
     stats = _Stats(ctx, started)
     puller = _Puller(ctx, agent, files, stats, _LocalNames(root, directory), delete_source)
     while True:

@@ -160,7 +160,7 @@ def wait_file(
     失败：wait 秒内没等到时失败，错误信息写明当时的情况：「文件不存在」或「文件仍在变化」。
     只等普通文件：路径是目录时一直等到超时。
     """
-    return {"size": wait_for_file(ctx, path, stable=stable, wait=wait, poll=poll)}
+    return {"size": wait_for_file(ctx, path, stable=stable, wait=wait, poll=poll).size}
 
 
 class WaitLogLineOutputs(TypedDict):
@@ -189,9 +189,8 @@ def wait_log_line(
     失败：wait 秒内没有出现匹配的行时失败，错误信息写明文件、正则和等了多久。
     文件一直不存在时，错误信息注明「文件不存在」。
     """
-    return {
-        "line": wait_for_log_line(ctx, path, pattern, read_from=read_from, wait=wait, poll=poll)
-    }
+    found = wait_for_log_line(ctx, path, pattern, read_from=read_from, wait=wait, poll=poll)
+    return {"line": found.line}
 
 
 class FollowLogOutputs(TypedDict):
@@ -223,8 +222,8 @@ def follow_log(
 
     失败：有一行匹配 fail_on 里的任意一个正则时立即失败，错误信息附上第一行匹配的内容和匹配的正则。
     """
-    lines = follow_log_file(ctx, path, read_from=read_from, fail_on=fail_on, duration=duration)
-    return {"lines": lines}
+    result = follow_log_file(ctx, path, read_from=read_from, fail_on=fail_on, duration=duration)
+    return {"lines": result.lines}
 
 
 class PullFilesOutputs(TypedDict):
@@ -285,7 +284,11 @@ def pull_files(
         recursive=recursive,
         delete_source=delete_source,
     )
-    return {"files": result.files, "count": result.count, "total_bytes": result.total_bytes}
+    return {
+        "files": [str(path) for path in result.files],
+        "count": result.count,
+        "total_bytes": result.total_bytes,
+    }
 
 
 class WatchFilesOutputs(TypedDict):
@@ -341,7 +344,7 @@ def watch_files(
         directory,
         local_dir,
         pattern=pattern,
-        stable=stable,
+        stable=stable or 0,
         delete_source=delete_source,
         duration=duration,
     )

@@ -18,7 +18,7 @@ def test_log_file_returns_only_new_complete_lines_and_keeps_a_half_line_for_late
 ) -> None:
     path = tmp_path / "app.log"
     path.write_text("旧的一行\n")
-    log = LogFile(str(path), from_start=False)
+    log = LogFile(str(path), read_from="end")
 
     with path.open("a") as f:
         f.write("新的一行\n半")
@@ -33,7 +33,7 @@ def test_log_file_reads_the_rest_of_the_old_file_and_then_the_new_one_after_rota
 ) -> None:
     path = tmp_path / "app.log"
     path.write_text("")
-    log = LogFile(str(path), from_start=True)
+    log = LogFile(path, read_from="start")
     with path.open("a") as f:
         f.write("轮转前\n")
     os.rename(path, tmp_path / "app.log.1")
@@ -44,10 +44,33 @@ def test_log_file_reads_the_rest_of_the_old_file_and_then_the_new_one_after_rota
     assert list(log.lines()) == ["轮转前", "旧文件里最后写的", "新文件第一行"]
 
 
+def test_log_file_is_a_context_manager_and_reads_from_the_end_by_default(tmp_path: Path) -> None:
+    path = tmp_path / "app.log"
+    path.write_text("旧的一行\n")
+
+    with LogFile(path) as log:
+        assert log.path == path
+        with path.open("a") as f:
+            f.write("新的一行\n")
+        assert list(log.lines()) == ["新的一行"]
+    assert not log.exists()  # 离开 with 就关闭了
+
+
+def test_log_file_flush_returns_the_unfinished_last_line(tmp_path: Path) -> None:
+    path = tmp_path / "app.log"
+    path.write_text("")
+    with LogFile(path, read_from="start") as log:
+        with path.open("a") as f:
+            f.write("完整\n没写完")
+        assert list(log.lines()) == ["完整"]
+        assert list(log.flush()) == ["没写完"]
+        assert list(log.flush()) == []
+
+
 def test_log_file_starts_from_the_beginning_when_the_file_is_truncated(tmp_path: Path) -> None:
     path = tmp_path / "app.log"
     path.write_text("很长的一段旧内容\n" * 5)
-    log = LogFile(str(path), from_start=False)
+    log = LogFile(str(path), read_from="end")
     path.write_text("截断后\n")
 
     assert list(log.lines()) == ["截断后"]
@@ -66,11 +89,11 @@ def test_follow_log_file_forwards_lines_and_returns_the_total(tmp_path: Path) ->
     writer = threading.Thread(target=append)
     writer.start()
     try:
-        total = follow_log_file(run.ctx, str(path), read_from="start", duration=1.5)
+        result = follow_log_file(run.ctx, path, read_from="start", duration=1.5)
     finally:
         writer.join()
 
-    assert total == 3
+    assert result.lines == 3
     assert run.metric("lines_per_s")
 
 
@@ -97,11 +120,12 @@ def test_wait_for_log_line_returns_the_first_matching_line(tmp_path: Path) -> No
     writer = threading.Thread(target=append)
     writer.start()
     try:
-        line = wait_for_log_line(run.ctx, str(path), r"就绪 端口 (\d+)", wait=10, poll=0.1)
+        found = wait_for_log_line(run.ctx, path, r"就绪 端口 (\d+)", wait=10, poll=0.1)
     finally:
         writer.join()
 
-    assert line == "服务就绪 端口 8080"
+    assert found.line == "服务就绪 端口 8080"
+    assert 0.2 <= found.waited < 5
 
 
 def test_wait_for_log_line_times_out_naming_the_file_and_the_pattern(tmp_path: Path) -> None:
