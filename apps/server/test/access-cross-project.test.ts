@@ -163,6 +163,16 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 				expected: () => 404,
 			},
 			{
+				name: "会话令牌（项目甲的会话）",
+				headers: bearer(await accounts.sessionToken(mallory, "alpha")),
+				expected: () => 404,
+			},
+			{
+				name: "会话令牌（项目甲的会话，发起人也是项目乙的项目管理员）",
+				headers: bearer(await accounts.sessionToken(dual, "alpha")),
+				expected: () => 404,
+			},
+			{
 				name: "Agent 凭据（项目甲）",
 				headers: bearer(await accounts.agentCredential("alpha", "agent-victim")),
 				expected: expectedForAgent,
