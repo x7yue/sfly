@@ -1,4 +1,4 @@
-import { orchestrationsApi } from "@sfly/schema";
+import { orchestrationsApi, runNotificationTriggerRemovedMessage } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
@@ -340,6 +340,10 @@ describe("场景的运行通知设置", () => {
 	const OFF = { bot: null, trigger: "failed", title: "", note: "" };
 	const settingsOf = async (id: string) =>
 		(await api.getJson<{ run_notification: unknown }>(`/orchestrations/${id}`)).run_notification;
+	const notificationOk = async (id: string, settings: Record<string, unknown>) => {
+		const res = await api.patch(`/orchestrations/${id}`, { run_notification: settings });
+		expect(res.status, await res.clone().text()).toBe(200);
+	};
 
 	it("新场景默认关闭运行通知：没有机器人，仅失败时触发，标题和附加说明为空", async () => {
 		const id = await api.createOrchestration("默认");
@@ -375,16 +379,20 @@ describe("场景的运行通知设置", () => {
 			},
 		});
 
-		await patch({ trigger: "always" });
+		await patch({ trigger: "failed" });
 		expect(await settingsOf(id)).toEqual({
 			bot: "压测群",
-			trigger: "always",
+			trigger: "failed",
 			title: "【订单压测-A 环境】",
 			note: "负责人 <at id=ou_1></at>",
 		});
 
+		await patch({ trigger: "failed_or_cancelled" });
+		expect(await settingsOf(id)).toMatchObject({ bot: "压测群", trigger: "failed_or_cancelled" });
+
+		// 机器人传 null 即关闭；没提到的触发条件（这里不是默认值）保持不变。
 		await patch({ bot: null, title: "", note: "" });
-		expect(await settingsOf(id)).toEqual({ ...OFF, trigger: "always" });
+		expect(await settingsOf(id)).toEqual({ ...OFF, trigger: "failed_or_cancelled" });
 
 		// 没有产生新版本。
 		const versions = await api.getJson<{ versions: unknown[] }>(`/orchestrations/${id}/versions`);
@@ -397,19 +405,19 @@ describe("场景的运行通知设置", () => {
 		const res = await api.patch(`/orchestrations/${id}`, {
 			name: "改过",
 			description: "说明",
-			run_notification: { bot: "群", trigger: "always" },
+			run_notification: { bot: "群", trigger: "failed_or_cancelled" },
 		});
 		expect(res.status).toBe(200);
 		expect(await res.json()).toMatchObject({
 			name: "改过",
 			description: "说明",
-			run_notification: { bot: "群", trigger: "always", title: "", note: "" },
+			run_notification: { bot: "群", trigger: "failed_or_cancelled", title: "", note: "" },
 		});
 
 		const renamed = await api.patch(`/orchestrations/${id}`, { name: "只改名" });
 		expect(await renamed.json()).toMatchObject({
 			name: "只改名",
-			run_notification: { bot: "群", trigger: "always" },
+			run_notification: { bot: "群", trigger: "failed_or_cancelled" },
 		});
 	});
 
@@ -428,16 +436,95 @@ describe("场景的运行通知设置", () => {
 		expect(await settingsOf(id)).toEqual(OFF);
 	});
 
+	it("触发条件带已经去掉的 always：400 invalid_request，message 写明它没了、现在可以填什么；设置没有被改", async () => {
+		const id = await api.createOrchestration("旧 JSON");
+		await notificationOk(id, {
+			bot: "压测群",
+			trigger: "failed_or_cancelled",
+			title: "标题",
+			note: "说明",
+		});
+		const before = await settingsOf(id);
+
+		const res = await api.patch(`/orchestrations/${id}`, {
+			run_notification: { trigger: "always" },
+		});
+
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({
+			error: { code: "invalid_request", message: runNotificationTriggerRemovedMessage },
+		});
+		expect(runNotificationTriggerRemovedMessage).toContain("failed_or_cancelled");
+		expect(runNotificationTriggerRemovedMessage).toContain("bot");
+		expect(await settingsOf(id)).toEqual(before);
+	});
+
+	it("触发条件 always 和别的项一起提交时整体被拒绝：同一次请求里的名称、说明和别的运行通知设置也都没改", async () => {
+		const id = await api.createOrchestration("整体拒绝");
+		await notificationOk(id, { bot: "压测群", title: "原标题" });
+		const before = await api.getJson<{
+			name: string;
+			description: string;
+			run_notification: unknown;
+		}>(`/orchestrations/${id}`);
+
+		const res = await api.patch(`/orchestrations/${id}`, {
+			name: "改过的名称",
+			description: "改过的说明",
+			run_notification: {
+				bot: "群",
+				trigger: "always",
+				title: "改过的标题",
+				note: "改过的附加说明",
+			},
+		});
+
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({
+			error: { code: "invalid_request", message: runNotificationTriggerRemovedMessage },
+		});
+		const after = await api.getJson<{
+			name: string;
+			description: string;
+			run_notification: unknown;
+		}>(`/orchestrations/${id}`);
+		expect(after).toMatchObject({
+			name: before.name,
+			description: before.description,
+			run_notification: before.run_notification,
+		});
+		expect(after.run_notification).toEqual({ ...OFF, bot: "压测群", title: "原标题" });
+	});
+
+	it("触发条件带别的不合法的值（不是 always）：仍是默认的 400 invalid_request，message 不是 always 已经去掉那一句", async () => {
+		const id = await api.createOrchestration("别的不合法值");
+		const res = await api.patch(`/orchestrations/${id}`, {
+			run_notification: { trigger: "sometimes" },
+		});
+
+		expect(res.status).toBe(400);
+		const { error } = (await res.json()) as { error: { code: string; message: string } };
+		expect(error.code).toBe("invalid_request");
+		expect(error.message).not.toBe(runNotificationTriggerRemovedMessage);
+		expect(error.message).not.toContain("已经去掉");
+		expect(await settingsOf(id)).toEqual(OFF);
+	});
+
 	it("复制场景时复制运行通知的设置；之后各改各的", async () => {
 		const source = await api.orchestrationWith(docV1, "复制源");
 		await api.patch(`/orchestrations/${source}`, {
-			run_notification: { bot: "A 群", trigger: "always", title: "标题", note: "说明" },
+			run_notification: {
+				bot: "A 群",
+				trigger: "failed_or_cancelled",
+				title: "标题",
+				note: "说明",
+			},
 		});
 
 		const res = await api.post(`/orchestrations/${source}/copy`, { name: "复制副本" });
 		expect(res.status).toBe(201);
 		const copy = (await res.json()) as { id: string; run_notification: unknown };
-		const expected = { bot: "A 群", trigger: "always", title: "标题", note: "说明" };
+		const expected = { bot: "A 群", trigger: "failed_or_cancelled", title: "标题", note: "说明" };
 		expect(copy.run_notification).toEqual(expected);
 		expect(await settingsOf(copy.id)).toEqual(expected);
 

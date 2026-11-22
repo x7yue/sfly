@@ -187,6 +187,19 @@ describe("sfly api → 控制面", () => {
 			expect(extra).toContain("下一步：sfly api --list POST /orchestrations/:id/runs --json");
 		});
 
+		it("取值不在枚举里：列出可以填的值，带上字段在契约里的说明（已经去掉的 always 写明去掉了）", async () => {
+			const removed = await rejected([
+				"PATCH",
+				`/orchestrations/${alphaId}`,
+				"--body",
+				'{"run_notification":{"trigger":"always"}}',
+			]);
+			expect(removed).toContain(
+				'body.run_notification.trigger：取值要是 "failed"、"failed_or_cancelled" 之一',
+			);
+			expect(removed).toContain("`always` 已去掉：成功的运行不再发运行通知");
+		});
+
 		it("缺 --body、body 不是 JSON、文件读不了、接口没有请求体", async () => {
 			expect(await rejected(["POST", "/orchestrations"])).toContain("缺少 --body，必填字段：name");
 			expect(await rejected(["POST", "/orchestrations", "--body", "{name:"])).toContain(

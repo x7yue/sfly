@@ -375,7 +375,10 @@ def _describe(part: str, error: Any) -> list[str]:
         return [f"{where}：需要 {error.validator_value}，收到 {_type_name(error.instance)}"]
     if validator == "enum":
         options = "、".join(json.dumps(item, ensure_ascii=False) for item in error.validator_value)
-        return [f"{where}：取值要是 {options} 之一"]
+        # 字段的说明（契约里写的）一并带上：只列出取值，看不出某个旧值为什么没了、该改成哪个。
+        described = error.schema.get("description")
+        note = f"（{described}）" if isinstance(described, str) and described else ""
+        return [f"{where}：取值要是 {options} 之一{note}"]
     return [f"{where}：{error.message}"]
 
 

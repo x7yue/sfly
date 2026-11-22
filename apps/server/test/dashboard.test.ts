@@ -2,6 +2,7 @@
 // 手动时钟；响应按契约解析（不符合契约时测试失败）。
 import { type DashboardView, dashboardApi, runFocusApi, runListApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PLATFORM_TIMEOUT_HINT } from "../src/engine/timeout-hint.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, ErrorKind, FakeAgent, type HelloInit } from "./support/fake-agent.js";
@@ -309,7 +310,12 @@ describe("控制台统计", () => {
 				subflow: false,
 				node_id: "a",
 				attempt: 2,
-				error: { kind: "timeout", message: "等待响应超时", location: null },
+				// 超时失败、节点和节点类型都没设超时：错误信息后面补一句怎么办（#476）。
+				error: {
+					kind: "timeout",
+					message: `等待响应超时\n${PLATFORM_TIMEOUT_HINT}`,
+					location: null,
+				},
 			});
 		});
 
