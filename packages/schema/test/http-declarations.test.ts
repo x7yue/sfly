@@ -331,7 +331,7 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 				}),
 			)[0],
 		).toContain("路径里有参数");
-		// 不是 /projects/:project/ 下面的 :project 参数（例如 PEP 503 索引里指包的 /simple/:project/）不是项目。
+		// 不是 /projects/:project/ 下面的 :project 参数（别的路径里碰巧叫 project 的参数）不是项目。
 		expect(
 			problems(broken({ resource: collection, path: "/things/:project", params: project }))[0],
 		).toContain("路径里有参数");

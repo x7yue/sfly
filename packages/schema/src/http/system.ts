@@ -66,12 +66,13 @@ export const sdkApi = {
 		contentType: "application/octet-stream",
 	}),
 	/**
-	 * sfly 简单索引（PEP 503）的根页面：只有 `sfly` 一个项目。开发机从这里装 `sfly`
-	 * （`install.sh --dev`、`sfly init` 写入的显式索引），不会从 PyPI 镜像装到同名的其他包。
+	 * 控制面的包索引（PEP 503）的根页面：平台自己的两个包，`sfly`（SDK）和 `sfly-std`（标准节点包）。开发机从这里装 `sfly`
+	 * （`install.sh --dev`、`sfly init` 写入的显式索引），Agent 装节点包的依赖时也用它（`sfly-std` 只从这里取），
+	 * 都不会从 PyPI 镜像装到同名的其他包。不需要凭据（和 SDK wheel 的下载一样；ADR 0029 的「Python 索引」一行）。
 	 */
 	index: download({
 		path: "/simple/",
-		summary: "sfly 简单索引（PEP 503）的根页面",
+		summary: "控制面的包索引（PEP 503）的根页面：sfly 和 sfly-std",
 		effect: "read",
 		resource: { kind: "system", target: "global" },
 		raw: true,
@@ -100,19 +101,35 @@ export const sdkApi = {
 			python_install_mirror: z.string().nullable(),
 		}),
 	}),
-	/** 索引的项目页：与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`sfly` 以外的项目 404。 */
+	/**
+	 * 索引的项目页（项目名按 PEP 503 规范化）：`sfly` 是与控制面同版本的 SDK wheel，`sfly-std` 是公共项目里已发布的标准节点包的
+	 * wheel（还没有发布时是没有版本的页面，不是 404）；链接带 `#sha256=`。别的名字 404：索引只提供平台自己的这两个包。
+	 */
 	indexProject: download({
-		path: "/simple/:project/",
-		summary: "sfly 简单索引的项目页：SDK wheel 的下载链接",
+		path: "/simple/:package/",
+		summary: "控制面的包索引的项目页：sfly 的 SDK wheel、sfly-std 的 wheel 的下载链接",
 		effect: "read",
 		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		params: z.object({
-			/** 索引里的项目名；只有 `sfly`。 */
-			project: z.string(),
+			/** 索引里的包名（PEP 503 里叫项目）；只有 `sfly` 和 `sfly-std`。 */
+			package: z.string(),
 		}),
 		contentType: "text/html; charset=utf-8",
+	}),
+	/** 下载索引里的一个 sfly-std wheel（项目页的链接指向这里）；文件名不在索引里时 404。 */
+	stdWheel: download({
+		path: "/simple/sfly-std/files/:filename",
+		summary: "下载控制面的包索引里的一个 sfly-std wheel",
+		effect: "read",
+		resource: { kind: "system", target: "global" },
+		client: false,
+		params: z.object({
+			/** wheel 的文件名（`/simple/sfly-std/` 列出的）。 */
+			filename: z.string(),
+		}),
+		contentType: "application/octet-stream",
 	}),
 };
 
