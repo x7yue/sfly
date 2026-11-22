@@ -22,7 +22,7 @@
 | `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前检查分支名前缀、Node 版本和依赖与锁文件是否一致，再运行版本号检查、gen:check、lint、typecheck（跳过用 `git push --no-verify`）；测试在 CI 里跑 |
 | `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema、路由清单和 API 客户端的类型（`pnpm gen:check` 检查这些生成物没有过期） |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint），以及手工抄在几处的版本号是否一致（`pnpm lint:node`：Node 主版本、CI 的 Playwright 镜像标签与 `@playwright/test`、Python 版本、PostgreSQL 镜像，不一致时报出是哪两处）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查；控制面里依赖真实 Agent 的测试文件在 macOS 上自动跳过（跑完时有提示），用 `pnpm linux pnpm --filter @sfly/server test` 运行 |
-| `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh` |
+| `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh`。卷 `sfly-linux` 里每个工作区一份副本（0.7 GB 起，编译之后几个 GB）：工作区删掉之后留下的副本每次运行前自动清（也可以 `pnpm linux --prune [--dry-run]` 手动清，`--clean` 只清当前工作区自己的）；一个工作区的编译结果超过 4 GB（`SFLY_LINUX_TARGET_LIMIT_MB`）时先删增量编译的缓存、还超就整个删，uv 缓存超过 1 GB（`SFLY_LINUX_UV_CACHE_LIMIT_MB`）时让 uv 清掉不再被引用的部分 |
 | `pnpm heavy [--pg] <命令>` | 重型命令（完整测试、`pnpm test:e2e*`、`pnpm linux` 整套、`pnpm perf`）在本机同一把 flock 锁上排队、前台运行，并把 `TMPDIR`、`CARGO_TARGET_DIR` 指向按工作区区分的短目录（Unix socket 路径不能超过 108 字节）。多个工作区同时跑时用它。`--pg` 为这次运行单独起一个 PostgreSQL 容器并设置 `DATABASE_URL`，结束时删掉，避免共用的库超过连接上限；`pnpm heavy --clean` 删掉短目录和这个工作区没人在用的 PostgreSQL 容器（还有 heavy 在跑时保留短目录和它的容器）。同名、位置不同的两个检出会共用短目录和容器标签，目录名要不同。macOS 的 flock 用 `brew install flock` 安装，CI 上不加锁；锁文件和目录用 `SFLY_HEAVY_LOCK`、`SFLY_HEAVY_TMP_ROOT` 改，见 `scripts/heavy.sh`。`--pg` 的容器连它的匿名数据卷一起删（`docker rm -f -v`）；#525 修好之前的版本每跑一次留下一个没有容器引用的卷（50 到 80 MB），升级后清一次：先 `docker volume ls -qf dangling=true` 看一眼，再 `docker volume prune`（Docker 23 及以上只删匿名卷；更老的版本还会删没有容器在用的命名卷，例如 `pnpm linux` 的 `sfly-linux`，那时改用 `docker volume ls -qf dangling=true \| grep -E '^[0-9a-f]{64}$' \| xargs docker volume rm`）。没有容器引用的匿名卷里也包括本机别的项目留下的，不需要的再删 |
 | `pnpm proto:breaking` | buf breaking 检查 |
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main` 和 `dev`、PR（含草稿），以及手动触发；CI 里按语言拆成并行的 job） |
@@ -98,8 +98,23 @@ docker compose up -d
       proxy_buffering off;          # SSE
       proxy_read_timeout 1h;
       client_max_body_size 1g;      # 节点包与产物上传
+      proxy_set_header Host $host;                              # 原样传 Host，见下面「登录与反向代理」
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;  # 把对端地址追加在最后
   }
   ```
+
+- **登录与反向代理**（ADR 0029）：
+  - **浏览器要用 `SFLY_PUBLIC_URL` 打开控制台。** 登录 Cookie 只认同源的请求；内网用 http 访问时浏览器不发 `Sec-Fetch-Site`，控制面看请求的 `Origin`：配了 `SFLY_PUBLIC_URL` 就和它比，没配就和请求的 `Host` 比。对不上（主机名对 IP、端口不同、反向代理改写了 `Host` 又没配公开地址）时，页面看起来登录着，写请求却被当作没有登录，登出也不生效。登录页和控制台顶部会提示「请用 <公开地址> 打开」。所以反向代理后面要配 `SFLY_PUBLIC_URL`（浏览器看到的地址），或者让代理原样传 `Host`（nginx 的 `proxy_set_header Host $host`）。
+  - **来源地址（登录限速用）和 `SFLY_TRUST_PROXY`**：来源地址默认取 TCP 对端的地址。反向代理把它看到的客户端地址追加在 `X-Forwarded-For` 的最后，客户端自己写的在前面，所以要取「可信代理之前的那一个」，最左边的一段不作数（每次换一个就能绕过限速）。每个取值的意思：
+    - 不设置（空、`false`、`0`）：不看 `X-Forwarded-For`，来源地址是 TCP 对端。**在反向代理后面这样配，所有人是同一个来源地址**：一个人输错很多次，这个地址上的所有人都被限速。
+    - 代理的地址段，例如 `127.0.0.1,10.0.0.0/8`（推荐）：连接控制面的对端在段里，才信它带来的 `X-Forwarded-For`，从右往左跳过段里的地址，第一个不在段里的就是客户端；直连的客户端不在段里，写什么都不作数。
+    - 代理的层数 `1`（也可以写 `true`）、`2`……（最多 10）：不管直连的对端是谁，都跳过右边这几个地址。用它时控制面的端口只能经代理访问（防火墙、只监听内网地址），否则直连的客户端能伪造来源。**层数要和实际的代理层数一致**：配多了，取到的是客户端自己写的地址，限速会被伪造的来源绕过；配少了（两层代理只写 `1`），取到的是内层代理的地址，所有人落在同一个限速桶里（偏向多拦，不是绕过）。
+    - 写错了（认不出的值）启动失败，不会悄悄退回到不信任或全信任。
+
+    限速用的来源地址会去掉端口，IPv6 按 /64 归在一起（同一个用户通常拿到一整个 /64）。
+  - **限速的维度**：按「登录名 + 来源地址」连续失败 5 次之后每次失败等待翻倍（2 秒起，上限 15 分钟），同一个来源地址上失败 30 次之后整个地址也限速；验证在途的尝试也算（并发的请求绕不过）。没有只按登录名（不看来源）的限速：那样任何人都能不停地输错，把某个账号（尤其是管理员）锁在外面，忘了密码的补救只有主机上的命令。另有并发上限：同时验证（和计算）的密码最多 2 个，再多的排队（最多 16 个），队列满了直接回 503 并带 `Retry-After`，不去算哈希：scrypt 和任务日志、产物、节点包下载共用一个线程池，没有上限时一阵并发的登录就能拖慢它们。
+  - **事件流**：登录被注销、用户被停用、令牌被吊销时，进程内立即关掉他已经打开的事件流；主机上的 `reset-password` 命令、直接改库、空闲期限到了这些进程内收不到通知的失效，由控制面每 30 秒重新检查一次打开着的流的凭据：**最迟 30 秒之后流被关**。
+  - **控制面用独立的主机名**，不和不受信任的应用共用父域：同站的别的子域可以写一个同名的 Cookie 盖住登录 Cookie（`__Host-` 前缀这一步没有做）。
 
 不用 Docker 时，在 `.node-version` 指定的 Node 上直接运行 `pnpm bundle:server` 的产物：`node --enable-source-maps out/server/main.mjs`（前端、SDK、API 客户端、迁移、用户文档、Agent 目录和 install.sh 自动取 `main.mjs` 旁边的 `web/`、`sdk/`、`client/`、`drizzle/`、`docs/`、`agent/`、`install.sh`）。
 

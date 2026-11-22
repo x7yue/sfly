@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ShellRouteImport } from './routes/_shell'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ShellIndexRouteImport } from './routes/_shell/index'
 import { Route as ShellAgentsRouteImport } from './routes/_shell/agents'
 import { Route as ShellFeishuBotsRouteImport } from './routes/_shell/feishu-bots'
@@ -24,6 +26,16 @@ import { Route as ShellOrchestrationsIdVersionsRouteImport } from './routes/_she
 
 const ShellRoute = ShellRouteImport.update({
   id: '/_shell',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShellIndexRoute = ShellIndexRouteImport.update({
@@ -86,6 +98,8 @@ const ShellOrchestrationsIdVersionsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
   '/agents': typeof ShellAgentsRoute
   '/feishu-bots': typeof ShellFeishuBotsRoute
   '/packages': typeof ShellPackagesRoute
@@ -98,6 +112,8 @@ export interface FileRoutesByFullPath {
   '/orchestrations/$id/versions': typeof ShellOrchestrationsIdVersionsRoute
 }
 export interface FileRoutesByTo {
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
   '/agents': typeof ShellAgentsRoute
   '/feishu-bots': typeof ShellFeishuBotsRoute
   '/packages': typeof ShellPackagesRoute
@@ -113,6 +129,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_shell': typeof ShellRouteWithChildren
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
   '/_shell/agents': typeof ShellAgentsRoute
   '/_shell/feishu-bots': typeof ShellFeishuBotsRoute
   '/_shell/packages': typeof ShellPackagesRoute
@@ -129,6 +147,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/login'
+    | '/setup'
     | '/agents'
     | '/feishu-bots'
     | '/packages'
@@ -141,6 +161,8 @@ export interface FileRouteTypes {
     | '/orchestrations/$id/versions'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/login'
+    | '/setup'
     | '/agents'
     | '/feishu-bots'
     | '/packages'
@@ -155,6 +177,8 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_shell'
+    | '/login'
+    | '/setup'
     | '/_shell/agents'
     | '/_shell/feishu-bots'
     | '/_shell/packages'
@@ -170,6 +194,8 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ShellRoute: typeof ShellRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  SetupRoute: typeof SetupRoute
   OrchestrationsIdRoute: typeof OrchestrationsIdRoute
   RunsIdRoute: typeof RunsIdRoute
 }
@@ -181,6 +207,20 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof ShellRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_shell/': {
@@ -291,6 +331,8 @@ const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   ShellRoute: ShellRouteWithChildren,
+  LoginRoute: LoginRoute,
+  SetupRoute: SetupRoute,
   OrchestrationsIdRoute: OrchestrationsIdRoute,
   RunsIdRoute: RunsIdRoute,
 }

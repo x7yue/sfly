@@ -44,10 +44,29 @@ export const SCOPE_TABLE = {
 	package: { write: "publish" },
 	agent: { write: "manage" },
 	feishu_bot: { write: "manage" },
-	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）。
-	session: { write: "edit" },
+	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）；
+	// 而且只有人能做：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
+	session: { write: "edit", humanOnly: true },
 	system: { write: null },
-} as const satisfies Record<ResourceKind, { write: Scope | null }>;
+	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
+	account: { write: null },
+} as const satisfies Record<ResourceKind, { write: Scope | null; humanOnly?: true }>;
+
+/**
+ * 这个接口的写是不是只有人能做（范围表里的 `humanOnly`）：在「范围够」之上再加一道「凭据必须是人」——登录的用户和
+ * 个人令牌（它是用户本人的凭据，命令行和 API 客户端用）。项目令牌是服务账号，没有用户，不行；会话令牌是助手干活用的，
+ * 不行；Agent 凭据和任务凭据走自己的接口清单，不在这里。只读不受影响。
+ */
+export function writeNeedsPerson(route: {
+	effect: Effect;
+	resource: { kind: ResourceKind };
+	creates?: ResourceKind | undefined;
+}): boolean {
+	if (route.effect === "read") return false;
+	const entry: { write: Scope | null; humanOnly?: true } =
+		SCOPE_TABLE[route.creates ?? route.resource.kind];
+	return entry.humanOnly === true;
+}
 
 /**
  * 一个接口要什么范围：只读都是「读」；写看「作用在哪类资源上」：声明了 `creates` 取它，否则取 `resource.kind`。

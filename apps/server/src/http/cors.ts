@@ -10,6 +10,9 @@ const ENV_NAME = "SFLY_CORS_ORIGINS";
 const ALLOWED_METHODS = "GET, POST, PUT, PATCH, DELETE";
 const ALLOWED_REQUEST_HEADERS = [
 	"content-type",
+	// 跨域的页面只能用请求头里的令牌（`Authorization: Bearer`）；控制面永远不发 Access-Control-Allow-Credentials，
+	// 所以跨域请求带不了登录 Cookie（ADR 0029「认证的几处细节」）。
+	"authorization",
 	NICKNAME_HEADER,
 	CLIENT_HEADER,
 	"last-event-id",
