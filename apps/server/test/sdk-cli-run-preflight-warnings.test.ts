@@ -1,6 +1,7 @@
 // sfly run start 输出预检的警告（#421）：不阻断触发的警告（异步任务节点没有给子流程的参数传值）写在触发之后的输出里，
 // 和控制台的触发对话框读的是同一份预检结果（`GET /orchestrations/:id/preflight` 的 warnings）。
-// 阻断的问题（开发版本没有加载、值接到类型不符的输入）和以前一样：预检的问题退出码 2，参数的问题报「入口参数不对」。
+// 阻断的问题（开发版本没有加载、值接到类型不符的输入）和以前一样：预检的问题退出码 2；入口参数的问题报「入口参数不对」，
+// 值接到类型不符的输入时标题改说实际的问题（#444）。
 // 真实的 sfly 进程对测试控制面，运行由假 Agent 接收。
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -181,7 +182,7 @@ describe("sfly run start 的预检警告 → 控制面", { timeout: 60_000 }, ()
 			expect(await runsOf(id)).toEqual([]);
 		});
 
-		it("小数接到整数输入：报「入口参数不对」并写明参数和节点输入；8.0 是整数，照常触发", async () => {
+		it("小数接到整数输入：标题说的是值和节点输入的类型不符，并写明参数和节点输入；8.0 是整数，照常触发", async () => {
 			const name = `整数输入场景-${++scenes}`;
 			const id = await api.orchestrationWith(
 				{
@@ -209,8 +210,11 @@ describe("sfly run start 的预检警告 → 控制面", { timeout: 60_000 }, ()
 			const bad = await cli("run", "start", name, "--param", "n=8.5");
 			expect(bad.code).toBe(2);
 			expect(bad.stderr).toContain(
-				"错误：入口参数不对：节点 t 的输入 n 应为 integer，实际是 8.5（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发，例如：sfly run start <场景> --param n=<整数>",
+				"错误：入口参数的值和它接到的节点输入的类型不符：节点 t 的输入 n 应为 integer，实际是 8.5（入口参数 n，触发时给的值）：请把 n 改成 integer 类型的值再触发，例如：sfly run start <场景> --param n=<整数>",
 			);
+			// 参数本身没问题（n 是声明过的参数、值是数字），不再把声明的参数列一遍。
+			expect(bad.stderr).not.toContain("入口参数不对");
+			expect(bad.stderr).not.toMatch(/参数\s+类型\s+说明/);
 			expect(bad.stderr).toContain(`下一步：sfly scenario show ${id}`);
 			expect(await runsOf(id)).toEqual([]);
 

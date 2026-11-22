@@ -114,3 +114,17 @@ def test_up_and_fresh_slots_use_what_was_given_or_the_default(
         DEFAULT_SERVER_IMAGE,
         DEFAULT_WORKBENCH_IMAGE,
     )
+
+
+def test_commands_after_up_isolated_follow_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`up --isolated` 之后的命令不带 --isolated：照网络的实际情况，
+    重建控制面时不在断网的网络上发布端口。"""
+    import argparse
+
+    from aeval.cli import _stack
+
+    monkeypatch.setattr(Stack, "network_internal", lambda self: True)
+    assert _stack(argparse.Namespace(command="reset", slot=3)).internal is True
+    assert _stack(argparse.Namespace(command="up", slot=3, isolated=False)).internal is False
+    monkeypatch.setattr(Stack, "network_internal", lambda self: None)
+    assert _stack(argparse.Namespace(command="rpcprobe", slot=3)).internal is False

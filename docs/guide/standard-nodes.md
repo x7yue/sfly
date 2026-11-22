@@ -15,7 +15,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 ```
 
 - 上传成功时返回节点包的版本信息（JSON）；装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.3.0.sflypkg`。
-- 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里。Agent 第一次执行时从控制面安装它，依赖（`psutil`、`httpx`）从 PyPI 镜像安装。
+- 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里。Agent 第一次执行时从控制面安装它，依赖（`psutil`、`httpx`）从 PyPI 镜像安装。**注意**：这样上传的 `sfly-std` 在默认项目里，不会出现在控制面的包索引 `{{SFLY_URL}}/simple/sfly-std/` 里。依赖 `sfly-std` 的节点包装依赖时从这个索引取（不用往自己的 PyPI 镜像里放），索引只列公共项目里的 `sfly-std`；现在上传接口只往默认项目发，所以新部署里依赖 `sfly-std` 的节点包装依赖时通常无解（见 [安装 Agent](install-agent.md) 的「控制面的包索引」）。平台管理员把 `sfly-std` 发布进公共项目的办法随 #565 提供，那时这里的步骤再更新。
 - Release 说明写明了需要的**最低 Agent 版本**。Agent 版本更旧时任务以 `env_error` 失败并提示升级（见 [需要的 SDK 版本](publish.md#需要的-sdk-版本)）；Agent 跟随控制面的版本，升级控制面即可。
 - 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。
 

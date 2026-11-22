@@ -2,7 +2,10 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import pg from "pg";
 import { repoRoot } from "./agent-binary.js";
+import { publishInit } from "./package-archive.js";
+import type { TestControlPlane } from "./test-control-plane.js";
 
 const run = promisify(execFile);
 
@@ -97,4 +100,28 @@ export async function wheelhouse(
 				],
 		),
 	);
+}
+
+/**
+ * 把节点包归档发布成公共项目里的版本（ADR 0029：平台维护的包放在公共项目）。现在接口只往默认项目发布，
+ * 所以先经 HTTP 发布，再照升级时迁移的做法把这个包的版本移进公共项目（`update node_packages set project_id = 'public'`）。
+ */
+export async function publishIntoPublicProject(
+	cp: TestControlPlane,
+	archive: Uint8Array,
+	where: { name: string; version: string },
+): Promise<void> {
+	const res = await cp.fetch("/packages", publishInit(archive));
+	if (res.status !== 201)
+		throw new Error(`发布 ${where.name}@${where.version}：${await res.text()}`);
+	const client = new pg.Client({ connectionString: cp.database.url });
+	await client.connect();
+	try {
+		await client.query(
+			"update node_packages set project_id = 'public' where name = $1 and version = $2",
+			[where.name, where.version],
+		);
+	} finally {
+		await client.end();
+	}
 }

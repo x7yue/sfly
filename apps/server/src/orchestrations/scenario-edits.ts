@@ -7,6 +7,7 @@ import {
 	packageKey,
 } from "@sfly/orchestration";
 import {
+	DEV_VERSION,
 	type EditOperation,
 	type EditOperationProblem,
 	OrchestrationDocument,
@@ -18,7 +19,6 @@ import { asc, eq, inArray } from "drizzle-orm";
 import type { z } from "zod";
 import type { Db } from "../db/database.js";
 import { agents, nodePackages, orchestrations as orchestrationRows } from "../db/schema.js";
-import { DEV_VERSION } from "../engine/assign-content.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import { readableProjects } from "../projects/project-id.js";
 import type { OrchestrationStore, VersionSummary } from "./orchestration-store.js";

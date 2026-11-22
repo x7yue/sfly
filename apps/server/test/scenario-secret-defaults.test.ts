@@ -401,8 +401,9 @@ describe("场景版本里 secret 参数的默认值", () => {
 					page: "x",
 					skill: "x",
 					file: "x",
-					// 会话的列表在 /projects/:project/sessions，项目是默认项目；其余（PEP 503 索引）的 project 是包名。
-					project: path.startsWith("/projects/") ? "default" : "stub",
+					package: "stub",
+					// 会话的列表在 /projects/:project/sessions，项目是默认项目；PEP 503 索引的包名参数是 :package。
+					project: "default",
 				};
 				const found = others[name];
 				if (found === undefined) {

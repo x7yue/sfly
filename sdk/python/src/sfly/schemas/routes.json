@@ -21414,7 +21414,7 @@
       "path": "/simple/",
       "key": null,
       "kind": "download",
-      "summary": "sfly 简单索引（PEP 503）的根页面",
+      "summary": "控制面的包索引（PEP 503）的根页面：sfly 和 sfly-std",
       "effect": "read",
       "resource": {
         "kind": "system",
@@ -21473,10 +21473,10 @@
     },
     {
       "method": "GET",
-      "path": "/simple/:project/",
+      "path": "/simple/:package/",
       "key": null,
       "kind": "download",
-      "summary": "sfly 简单索引的项目页：SDK wheel 的下载链接",
+      "summary": "控制面的包索引的项目页：sfly 的 SDK wheel、sfly-std 的 wheel 的下载链接",
       "effect": "read",
       "resource": {
         "kind": "system",
@@ -21486,13 +21486,39 @@
       "params": {
         "type": "object",
         "properties": {
-          "project": {
+          "package": {
             "type": "string",
-            "description": "索引里的项目名；只有 `sfly`。"
+            "description": "索引里的包名（PEP 503 里叫项目）；只有 `sfly` 和 `sfly-std`。"
           }
         },
         "required": [
-          "project"
+          "package"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/simple/sfly-std/files/:filename",
+      "key": null,
+      "kind": "download",
+      "summary": "下载控制面的包索引里的一个 sfly-std wheel",
+      "effect": "read",
+      "resource": {
+        "kind": "system",
+        "target": "global"
+      },
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "wheel 的文件名（`/simple/sfly-std/` 列出的）。"
+          }
+        },
+        "required": [
+          "filename"
         ]
       },
       "notes": []
@@ -21648,11 +21674,16 @@
                 "last_turn_outcome"
               ]
             }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "会话超过 `SESSION_LIST_LIMIT` 个，更早的没有列出来（页面据此提示）。"
           }
         },
         "required": [
           "readiness",
-          "sessions"
+          "sessions",
+          "truncated"
         ]
       },
       "notes": []
@@ -21855,6 +21886,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
@@ -23686,6 +23727,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
