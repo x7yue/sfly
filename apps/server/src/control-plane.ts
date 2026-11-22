@@ -11,6 +11,7 @@ import {
 	agentBinaryUrl,
 } from "./agent-binaries/agent-binaries.js";
 import { loadInstallScript } from "./agent-binaries/install-script.js";
+import { AgentAuthenticator } from "./agents/agent-auth.js";
 import { AgentCredentialService } from "./agents/agent-credentials.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
@@ -176,6 +177,8 @@ export interface ControlPlane {
 	readonly grpcUrl: string;
 	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
 	readonly sessions: SessionStore;
+	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts）：测试用它给假 Agent 签发凭据。 */
+	readonly agentCredentials: AgentCredentialService;
 	close(): Promise<void>;
 }
 
@@ -469,7 +472,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 					return engine.onMessage(conn, limitOutputs(message));
 				},
 			},
-			agentToken: options.agentToken,
+			authenticator: new AgentAuthenticator({ db: database.db, clock }),
 			onError: sessionError,
 		});
 	} catch (error) {
@@ -513,6 +516,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		httpUrl,
 		grpcUrl: gateway.url,
 		sessions,
+		agentCredentials,
 		async close() {
 			await Promise.all(sweeps.map((s) => s.stop()));
 			await retention.idle();

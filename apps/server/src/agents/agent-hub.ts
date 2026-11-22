@@ -31,6 +31,7 @@ import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import type { ProjectId } from "../projects/project-id.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
+import type { AgentAuth } from "./agent-auth.js";
 import {
 	type AgentClockReading,
 	ConnectionClock,
@@ -86,6 +87,9 @@ type ConnectionPhase =
 	| { readonly name: "ready" };
 
 /** 一个已完成握手的 Agent 连接。 */
+/** 同名连接的顶掉规则不允许这次连接。 */
+export class AgentConnectionRefused extends Error {}
+
 export class AgentConnection {
 	constructor(
 		readonly name: string,
@@ -93,9 +97,17 @@ export class AgentConnection {
 		readonly outbox: AsyncQueue<ServerMessage>,
 		/** 这次连接的「单调时钟读数 → 控制面时间」对应关系（ADR 0018）：日志、进度、指标、任务事件共用。 */
 		readonly clock: ConnectionClock,
-		/** 这条连接用的 Agent 凭据（`agent_credentials.id`）；不带凭据或用共享令牌连接的为 null。凭据吊销时据此断开。 */
-		readonly credentialId: string | null = null,
+		/**
+		 * 这条连接是怎么认的身份（#492）：带 Agent 凭据，还是「以旧方式连接」（共享令牌、没有凭据）。#494 的 HTTP 过渡规则、
+		 * 同名连接的顶掉规则（{@link AgentHub.attach}）和凭据吊销时断开连接都看它。
+		 */
+		readonly auth: AgentAuth = { kind: "none" },
 	) {}
+
+	/** 这条连接用的 Agent 凭据（`agent_credentials.id`）；以旧方式连接的为 null。 */
+	get credentialId(): string | null {
+		return this.auth.kind === "agent" ? this.auth.credentialId : null;
+	}
 
 	#phase: ConnectionPhase = { name: "registered" };
 
@@ -244,11 +256,19 @@ export class AgentHub {
 		outbox: AsyncQueue<ServerMessage>,
 		helloClock?: AgentClockReading,
 		receivedAt: Date = this.deps.clock.now(),
+		auth: AgentAuth = { kind: "none" },
 	): Promise<AgentConnection> {
 		return this.deps.mutex.run(async () => {
 			const clock = new ConnectionClock(this.deps.clock, helloClock, receivedAt);
-			const conn = new AgentConnection(name, info, outbox, clock);
+			const conn = new AgentConnection(name, info, outbox, clock, auth);
 			const old = this.#connections.get(name);
+			// 同名的新连接顶掉旧连接（让断电、断网后重启的 Agent 马上连得上，旧连接要等传输层发现才结束）。例外：
+			// 以旧方式连接（共享令牌、没有凭据）的，不能顶掉还活着的带 Agent 凭据的连接（ADR 0029「迁移与过渡」）。
+			if (old && !old.closed && old.credentialId !== null && auth.kind !== "agent") {
+				throw new AgentConnectionRefused(
+					`Agent「${name}」已经带着 Agent 凭据连着：以旧方式连接（共享令牌或没有凭据）的不能顶掉它`,
+				);
+			}
 			this.#connections.set(name, conn);
 			old?.close();
 			const now = this.deps.clock.now();
@@ -266,11 +286,18 @@ export class AgentHub {
 					status: "online",
 					registeredAt: now,
 					lastSeenAt: now,
+					lastAuthKind: auth.kind,
 					...clockOffset,
 				})
 				.onConflictDoUpdate({
 					target: agents.name,
-					set: { info, status: "online", lastSeenAt: now, ...clockOffset },
+					set: {
+						info,
+						status: "online",
+						lastSeenAt: now,
+						lastAuthKind: auth.kind,
+						...clockOffset,
+					},
 				});
 			return conn;
 		});

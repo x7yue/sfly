@@ -150,6 +150,36 @@ export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
  *
  * 后续票据在这里继续加可编程行为（延迟、断线重连等）。
  */
+/** 给一个控制面（按 gRPC 地址）按名字签发 Agent 凭据的办法：`startTestControlPlane` 登记，`FakeAgent.connect` 用。 */
+const credentialIssuers = new Map<string, (name: string) => Promise<string>>();
+const issuedCredentials = new Map<string, Promise<string>>();
+
+/** 登记一个控制面的签发办法；同一个名字只签发一次，之后的连接复用它。 */
+export function registerCredentialIssuer(
+	grpcUrl: string,
+	issue: (name: string) => Promise<string>,
+): () => void {
+	credentialIssuers.set(grpcUrl, issue);
+	return () => {
+		credentialIssuers.delete(grpcUrl);
+		for (const key of issuedCredentials.keys()) {
+			if (key.startsWith(`${grpcUrl}\n`)) issuedCredentials.delete(key);
+		}
+	};
+}
+
+function credentialFor(grpcUrl: string, name: string): Promise<string> | undefined {
+	const issue = credentialIssuers.get(grpcUrl);
+	if (issue === undefined) return undefined;
+	const key = `${grpcUrl}\n${name}`;
+	let token = issuedCredentials.get(key);
+	if (token === undefined) {
+		token = issue(name);
+		issuedCredentials.set(key, token);
+	}
+	return token;
+}
+
 export class FakeAgent {
 	/** 控制面推送的全部消息，含 {@link sync} 自己用的 Ack。 */
 	#received: ServerMessage[] = [];
@@ -197,6 +227,12 @@ export class FakeAgent {
 		options: { timeoutMs?: number; clock?: { now(): Date }; preparing?: boolean } = {},
 	): Promise<FakeAgent> {
 		const now = options.clock?.now().getTime();
+		// 没写 token 时用 Agent 凭据连接（和真实的部署一样，#492）：向这个控制面按名字签发一个并缓存。
+		// 要测「没有凭据」的旧方式，Hello 里写 `token: ""`。
+		const issued =
+			hello.token === undefined && hello.name !== undefined
+				? await credentialFor(grpcUrl, hello.name)
+				: undefined;
 		const agent = await FakeAgent.connectRaw(
 			grpcUrl,
 			(agent) =>
@@ -205,6 +241,7 @@ export class FakeAgent {
 					value: {
 						agentVersion: DEFAULT_AGENT_VERSION,
 						...(now === undefined ? {} : agentClock(now, SYNCED_MONOTONIC_MS)),
+						...(issued === undefined ? {} : { token: issued }),
 						...hello,
 					},
 				}),

@@ -10,6 +10,8 @@ import {
 	type ControlPlaneOptions,
 	startControlPlane,
 } from "../../src/control-plane.js";
+import { DEFAULT_PROJECT } from "../../src/projects/project-id.js";
+import { registerCredentialIssuer } from "./fake-agent.js";
 import { ManualClock } from "./manual-clock.js";
 import { createTestDatabase, type TestDatabase } from "./test-database.js";
 
@@ -152,6 +154,12 @@ export async function startTestControlPlane(
 		throw error;
 	}
 
+	// 假 Agent 没写 token 时用 Agent 凭据连接：按名字向这个控制面签发（和真实的部署一样，#492）。
+	const unregister = registerCredentialIssuer(current.grpcUrl, async (name) => {
+		const issued = await current.agentCredentials.issue(DEFAULT_PROJECT, name);
+		return issued.token;
+	});
+
 	// 每个控制面实例一套独立的 HTTP 连接池：重启时销毁旧池，重启后的请求不会复用
 	// 已被旧实例关闭的 keep-alive 连接（全局 fetch 的连接池会复用，偶发 ECONNRESET）。
 	let dispatcher = new Agent();
@@ -183,6 +191,7 @@ export async function startTestControlPlane(
 			current = await start(ports);
 		},
 		async close() {
+			unregister();
 			await current.close();
 			await dispatcher.destroy();
 			await database.drop();
