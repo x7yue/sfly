@@ -174,11 +174,16 @@ export interface ControlPlane {
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
+	/**
+	 * 控制面自己往标准错误写错误日志的唯一出口：错误先过 `safeError`，数据库错误里的参数（密码的哈希、令牌的哈希、
+	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
+	 */
+	const logError = (what: string, error: unknown): void => {
+		if (logger) console.error(what, safeError(error));
+	};
 	const database = openDatabase(
 		options.databaseUrl,
-		(error) => {
-			if (logger) console.error("postgres pool error:", error.message);
-		},
+		(error) => logError("postgres pool error:", error),
 		options.migrationsDir,
 	);
 
@@ -236,9 +241,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 控制面直接向飞书机器人的 Webhook 地址发请求（ADR 0020），不经代理。
 	const feishu = new FeishuClient();
-	const feishuError = (error: unknown) => {
-		if (logger) console.error("feishu delivery failed:", safeError(error));
-	};
+	const feishuError = (error: unknown) => logError("feishu delivery failed:", error);
 	const feishuBots = new FeishuBots({ db: database.db, clock, logs, onError: feishuError });
 	const feishuDelivery = new FeishuDelivery({
 		db: database.db,
@@ -256,7 +259,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		delivery: feishuDelivery,
 	});
-	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的值，和运行监控读指标用同一个读取。
+	// 指标要在引擎之前建好：任务上报指标要先于引擎处理（运行监控、关注项读数、控制台都读它）。
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -283,13 +286,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		notifications: new EngineNotifications({
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
-			focusDeps: {
-				clock,
-				queries: metricQueries,
-				onError: (error) => {
-					if (logger)
-						console.error("run notification: reading focus items failed:", safeError(error));
-				},
+			onError: (error, runId) => {
+				logError(`run notification: not sent for run ${runId}:`, error);
 			},
 		}),
 		leaseMs: options.leaseMs,
@@ -309,12 +307,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	// 重启恢复：状态都在 PG，给租约和排队超时留出 Agent 重连的时间（#15）；升级前停在已移除的等待节点上的任务
 	// 按配置错误失败（ADR 0028），某个历史运行出错时记日志、跳过，不挡住启动。
 	await engine.recover((error, task) => {
-		if (logger) {
-			console.error(
-				`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
-				safeError(error),
-			);
-		}
+		logError(
+			`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
+			error,
+		);
 	});
 	const actions = new TaskActions({
 		db: database.db,
@@ -421,9 +417,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		(httpHost === "0.0.0.0" || httpHost === "::" ? `http://${hostname()}:${httpPort}` : httpUrl)
 	).replace(/\/+$/, "");
 
-	const sessionError = (error: unknown) => {
-		if (logger) console.error("agent session error:", safeError(error));
-	};
+	const sessionError = (error: unknown) => logError("agent session error:", error);
 	let gateway: Awaited<ReturnType<typeof startAgentGateway>>;
 	try {
 		gateway = await startAgentGateway({
@@ -463,9 +457,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	).replace(/\/+$/, "");
 
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
-	const fail = (what: string) => (error: unknown) => {
-		if (logger) console.error(`${what} failed:`, safeError(error));
-	};
+	const fail = (what: string) => (error: unknown) => logError(`${what} failed:`, error);
 	const sweeps = [
 		// 任务租约过期与排队超时（#15）。
 		periodic(options.sweepIntervalMs ?? 250, () => engine.expireTasks(), fail("sweep")),

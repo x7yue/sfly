@@ -1,5 +1,6 @@
 import type { StoredNode, StoredOrchestrationDocument } from "@sfly/schema";
 import { subflowName } from "./chain-label.js";
+import { nodeTimeoutProblem } from "./node-config.js";
 import { nodeNameWithId } from "./node-display.js";
 
 /**
@@ -18,6 +19,8 @@ export interface StructureDocument {
 		name?: string | undefined;
 		/** 停止子流程节点要停止的子流程（子流程入口的节点 ID）。 */
 		subflow?: string | undefined;
+		/** 包节点写的超时（秒）。 */
+		timeout?: number | undefined;
 	}[];
 	edges: readonly Pick<StoredOrchestrationDocument["edges"][number], "from" | "to" | "kind">[];
 }
@@ -45,7 +48,8 @@ export type StructureWarningCode =
 	| "stop_subflow_out_of_scope"
 	| "nesting_too_deep"
 	| "orphan_node"
-	| "missing_agent";
+	| "missing_agent"
+	| "timeout_out_of_range";
 
 export interface StructureWarning {
 	code: StructureWarningCode;
@@ -392,6 +396,12 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				node.id,
 			);
 		}
+	}
+	// 节点写的超时超过派发能下发的范围（升级前保存的版本里可能有）：保存时已经拒绝，这里挡住触发、给画布一条警告。
+	for (const node of doc.nodes) {
+		if (node.kind !== "package") continue;
+		const problem = nodeTimeoutProblem(nodeNameWithId(node), node.timeout);
+		if (problem) warn("timeout_out_of_range", problem, node.id, "timeout");
 	}
 	return warnings;
 }
