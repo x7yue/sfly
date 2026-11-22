@@ -106,6 +106,7 @@ export const DOCUMENT_WARNING_CODES = [
 	"input_run_state_value",
 	"input_required",
 	"input_type_mismatch",
+	"input_not_declared",
 	"agent_input_not_registered",
 	"feishu_bot_not_registered",
 	"node_kind_removed",

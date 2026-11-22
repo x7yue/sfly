@@ -1,7 +1,8 @@
 """SDK 测试共用的桩（`sfly init` 及其生成的项目用；fixture 在 conftest.py）。
 
 - `FakeControlPlane`：本地 HTTP 服务，提供 `sfly init` 读取的 `/sdk/project-settings`，
-  以及 sfly 简单索引 `/simple/`（与控制面相同：只有 `sfly` 项目，wheel 从本仓库 sdk/python 构建）。
+  以及控制面的包索引 `/simple/`（与控制面相同：只有 `sfly`、`sfly-std` 两个项目，wheel 从本仓库
+  sdk/python、std 构建）。
 - `StaticServer.add_index` + `wheelhouse`：PEP 503 的「PyPI 镜像」桩。wheel 是把当前测试环境里
   已安装的发行版（pytest、ruff、jsonschema 及其依赖）重新打包出来的；当前环境没有安装的依赖
   （例如只在 Windows 上需要的 colorama）用空模块的同名 wheel 代替。
@@ -28,6 +29,8 @@ from pathlib import Path
 from packaging.requirements import Requirement
 
 SDK = Path(__file__).resolve().parents[1]
+#: 标准节点包 sfly-std 的源码目录（uv 工作区成员）。
+STD = SDK.parents[1] / "std"
 
 
 def normalize(name: str) -> str:
@@ -98,17 +101,18 @@ class StaticServer:
 
 @dataclass
 class FakeControlPlane:
-    """`sfly init` 看到的控制面：项目配置与 sfly 简单索引。"""
+    """`sfly init` 看到的控制面：项目配置与包索引（sfly、sfly-std）。"""
 
     server: StaticServer
     version: str
     pypi_mirror: str | None = None
     python_install_mirror: str | None = None
-    sfly_wheels: list[Path] = field(default_factory=list)
+    #: 控制面的包索引里的 wheel（sfly 和 sfly-std）。
+    wheels: list[Path] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.url = self.server.url
-        self.server.add_index("/simple", self.sfly_wheels)
+        self.server.add_index("/simple", self.wheels)
         self.server.routes["/sdk/project-settings"] = lambda: (
             200,
             "application/json",

@@ -1,5 +1,20 @@
-import { type NodeTypeIo, type PackageCatalog, packageKey } from "@sfly/orchestration";
-import { type AgentView, type FeishuBotView, packagesApi } from "@sfly/schema";
+import {
+	type AgentDevReport,
+	devNodeTypes,
+	formNodeTypes,
+	type NodeTypeIo,
+	nodeTypeOf,
+	type PackageCatalog,
+	packageKey,
+	reportedNodeTypes,
+} from "@sfly/orchestration";
+import {
+	type AgentView,
+	DEV_VERSION,
+	type FeishuBotView,
+	packagesApi,
+	type StoredOrchestrationDocument,
+} from "@sfly/schema";
 import { type QueryClient, useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { ApiError, apiQuery } from "#/lib/api";
@@ -10,47 +25,66 @@ export const agentsWithDev = (agents: AgentView[], name: string) =>
 		.filter((a) => a.dev_packages?.some((d) => d.name === name))
 		.sort((a, b) => Number(b.status === "online") - Number(a.status === "online"));
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
-	typeof v === "object" && v !== null && !Array.isArray(v);
+/** Agent 列表 → 开发版本上报（给 `@sfly/orchestration` 里按派发目标取节点类型的纯函数用，控制面用的是同一个）。 */
+export function devReports(agents: readonly AgentView[]): AgentDevReport[] {
+	return agents.map((agent) => ({
+		name: agent.name,
+		online: agent.status === "online",
+		devPackages: new Map((agent.dev_packages ?? []).map((d) => [d.name, d.metadata?.nodes])),
+	}));
+}
 
 /**
- * 开发版本（dev）的节点类型：取加载了它的 Agent 上报的元信息（在线的 Agent 优先）。
- * 没有 Agent 加载时返回 undefined（不知道，相关检查跳过）。
+ * 「添加节点」菜单用的开发版本节点类型：加载了这个包的 Agent 里第一台（在线的优先）上报的；没有 Agent 加载、上报的内容
+ * 不合法时返回 undefined。菜单只是列出有哪些节点可以加，不做检查；检查和参数表单按节点派发到的 Agent 取
+ * （{@link usePackageCatalog}、{@link inspectorNodeType}）。
  */
 export function devNodes(agents: AgentView[], name: string): NodeTypeIo[] | undefined {
 	const [agent] = agentsWithDev(agents, name);
-	const nodes = agent?.dev_packages.find((d) => d.name === name)?.metadata?.nodes;
-	if (!Array.isArray(nodes)) return undefined;
-	const valid = nodes.every(
-		(n) =>
-			isObject(n) &&
-			typeof n.name === "string" &&
-			isObject(n.inputs) &&
-			isObject(n.outputs) &&
-			(n.description === undefined || typeof n.description === "string"),
-	);
-	return valid ? (nodes as NodeTypeIo[]) : undefined;
+	return reportedNodeTypes(agent?.dev_packages.find((d) => d.name === name)?.metadata?.nodes);
+}
+
+/**
+ * 检查器里一个包节点的节点类型，两份：
+ * - `checked`：检查用的，和控制面是同一套取法（`catalog` 里的：开发版本只按节点派发到的 Agent 取，查不到、对不齐时是
+ *   undefined）；参数页的「没有声明 / 移除」按它：查不到时不报，不会让人删掉目标 Agent 其实声明了的输入；
+ * - `form`：参数表单、执行设置、指标声明用的，尽力而为：检查用的有就用它，开发版本查不到时优先取这个节点派发到的
+ *   Agent 上报的，再退到别的 Agent 的（{@link formNodeTypes}），表单不会因为检查跳过了就一直显示「加载中」。
+ * null：找不到这个节点类型；undefined：还在加载（或没有 Agent 加载这个开发包）。
+ */
+export function inspectorNodeType(
+	doc: StoredOrchestrationDocument,
+	node: { package: string; node: string; agent?: string | undefined },
+	catalog: PackageCatalog,
+	agents: readonly AgentView[],
+): { checked: NodeTypeIo | null | undefined; form: NodeTypeIo | null | undefined } {
+	const checked = nodeTypeOf(doc, node, catalog);
+	if (checked !== undefined || doc.packages[node.package] !== DEV_VERSION) {
+		return { checked, form: checked };
+	}
+	const nodes = formNodeTypes(doc, node, devReports(agents));
+	return { checked, form: nodes ? (nodes.find((n) => n.name === node.node) ?? null) : undefined };
 }
 
 /**
  * 场景锁定的节点包版本的元信息，用来生成参数表单、引用补全和静态检查（与控制面同一套规则）。
- * 还在加载的版本不在目录里，相关检查暂时跳过；开发版本（dev）用 Agent 上报的元信息，
- * 没有 Agent 加载它时同样跳过。
+ * 还在加载的版本不在目录里，相关检查暂时跳过；开发版本（dev）按节点派发到的 Agent 上报的元信息取
+ * （`@sfly/orchestration` 的 `devNodeTypes`，控制面用的是同一个函数：派发目标都在线、都加载了、内容相同才用），
+ * 不确定时跳过，和控制面的检查结果一致。
  */
 export function usePackageCatalog(
-	locked: Record<string, string>,
+	doc: StoredOrchestrationDocument | undefined,
 	agents: AgentView[],
 ): PackageCatalog {
-	const entries = Object.entries(locked).filter(([, version]) => version !== "dev");
+	const locked = doc?.packages ?? NO_PACKAGES;
+	const entries = Object.entries(locked).filter(([, version]) => version !== DEV_VERSION);
 	const results = useQueries({
 		queries: entries.map(([name, version]) => ({
 			...apiQuery(packagesApi.version, { params: { name, version } }),
 			staleTime: Number.POSITIVE_INFINITY, // 已发布的版本不可变
 		})),
 	});
-	const dev = Object.entries(locked)
-		.filter(([, version]) => version === "dev")
-		.map(([name]) => [name, devNodes(agents, name)] as const);
+	const dev = useMemo(() => (doc ? [...devNodeTypes(doc, devReports(agents))] : []), [doc, agents]);
 	// 只在锁定表或加载结果变化时生成新的目录，避免每次渲染都重新计算警告。
 	const key = JSON.stringify([
 		entries.map(([n, v], i) => [n, v, results[i]?.dataUpdatedAt, results[i]?.errorUpdatedAt]),
@@ -68,11 +102,13 @@ export function usePackageCatalog(
 			}
 		});
 		for (const [name, nodes] of dev) {
-			if (nodes) catalog.set(packageKey(name, "dev"), nodes);
+			catalog.set(packageKey(name, DEV_VERSION), nodes);
 		}
 		return catalog;
 	}, [key]);
 }
+
+const NO_PACKAGES: Record<string, string> = {};
 
 /**
  * 已发布版本里某个节点类型的输入 schema：「添加节点」菜单的摘要里没有输入，选中节点时读。
