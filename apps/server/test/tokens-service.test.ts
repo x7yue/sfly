@@ -22,6 +22,8 @@ describe("令牌服务和访问存储", () => {
 	let database: Database;
 	let clock: ManualClock;
 	let tokens: TokenService;
+	/** 签发人：库里要有这个用户（令牌行的签发人是指向用户的外键）。 */
+	let issuer: { id: string; displayName: string };
 
 	beforeEach(async () => {
 		testDb = await createTestDatabase();
@@ -29,6 +31,13 @@ describe("令牌服务和访问存储", () => {
 		await database.migrate();
 		clock = new ManualClock();
 		tokens = new TokenService({ db: database.db, clock, revocations: new RevocationBus() });
+		const id = crypto.randomUUID();
+		await database.pool.query(
+			`insert into users (id, login_name, display_name, password_hash, is_platform_admin, created_at)
+			values ($1, 'issuer', '签发人', 'scrypt$placeholder', false, now())`,
+			[id],
+		);
+		issuer = { id, displayName: "签发人" };
 	});
 	afterEach(async () => {
 		await database?.close();
@@ -39,17 +48,6 @@ describe("令牌服务和访问存储", () => {
 		if (DEFAULT === undefined) throw new Error("默认项目的标识写不对");
 		return DEFAULT;
 	};
-	/** 签发人：库里要有这个用户（令牌行的签发人是指向用户的外键）。 */
-	let issuer: { id: string; displayName: string };
-	beforeEach(async () => {
-		const id = crypto.randomUUID();
-		await database.pool.query(
-			`insert into users (id, login_name, display_name, password_hash, is_platform_admin, created_at)
-			values ($1, 'issuer', '签发人', 'scrypt$placeholder', false, now())`,
-			[id],
-		);
-		issuer = { id, displayName: "签发人" };
-	});
 
 	describe("签发项目令牌：范围不超过签发人此刻的范围，也不能带「管理」", () => {
 		it("签发人的范围比要的窄：scope_exceeds_role，说明超出了哪些、签发人能有哪些；没有签出令牌", async () => {
