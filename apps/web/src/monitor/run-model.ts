@@ -176,6 +176,8 @@ export interface RunFailure {
 	message: string;
 	/** 错误信息的全文（含堆栈）；没有错误信息时为空字符串。 */
 	detail: string;
+	/** 节点代码里出错的位置（「模块.函数 第 N 行」，`error.location`）；没有时为 null。 */
+	location: string | null;
 	/** 失败的那次尝试结束的时间（控制面时间）；没有时为 null。 */
 	endedAt: string | null;
 	/** 节点所在的子流程实例（「子流程 压测监控 · 5e2d」）；主链上的节点为 null。 */
@@ -191,6 +193,7 @@ function failureOf({ chain, node }: { chain: ChainRunView; node: NodeRunView }):
 		attempt: attempt?.attempt ?? null,
 		message: errorHeadline(error?.message),
 		detail: error?.message.trim() ?? "",
+		location: error?.location ?? null,
 		endedAt: attempt?.ended_at ?? null,
 		chain: chain.depth > 0 ? chainLabel(chain) : null,
 	};

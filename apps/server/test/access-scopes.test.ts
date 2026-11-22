@@ -54,6 +54,10 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"POST /feishu-bots/:name/test": "manage",
 	// 上传产物（任务，写）→ 不给人和程序：只有 Agent 凭据，限派给这台 Agent 的任务
 	"PUT /tasks/:id/artifacts/*": null,
+	// 建会话、对它说话、停止它（会话，写）→ 编辑：都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）
+	"POST /projects/:project/sessions": "edit",
+	"POST /sessions/:id/messages": "edit",
+	"POST /sessions/:id/stop": "edit",
 };
 
 describe("范围表：接口 × 范围", () => {
@@ -84,6 +88,8 @@ describe("范围表：接口 × 范围", () => {
 		expect(requiredScope({ effect: "write", resource: { kind: "package" } })).toBe("publish");
 		expect(requiredScope({ effect: "write", resource: { kind: "agent" } })).toBe("manage");
 		expect(requiredScope({ effect: "write", resource: { kind: "feishu_bot" } })).toBe("manage");
+		expect(requiredScope({ effect: "write", resource: { kind: "session" } })).toBe("edit");
+		expect(requiredScope({ effect: "read", resource: { kind: "session" } })).toBe("read");
 		expect(requiredScope({ effect: "write", resource: { kind: "task" } })).toBeNull();
 		expect(requiredScope({ effect: "read", resource: { kind: "task" } })).toBe("read");
 	});
@@ -129,14 +135,21 @@ describe("契约和访问检查的规则对得上", () => {
 		expect(checkAccessRules([write])).toEqual([expect.stringContaining("只能是只读的")]);
 	});
 
-	it("项目的四类：不属于项目、路径带项目、经场景、经运行或任务", () => {
+	it("项目的五类：不属于项目、路径带项目、经场景、经运行或任务、经会话", () => {
 		const classes = new Map<string, string[]>();
 		for (const def of httpContract) {
 			const locator = locatorOf(def);
 			const label = locator?.from === "path" ? "path" : (locator?.from ?? "undefined");
 			classes.set(label, [...(classes.get(label) ?? []), routeKey(def)]);
 		}
-		expect([...classes.keys()].sort()).toEqual(["none", "path", "run", "scenario", "task"]);
+		expect([...classes.keys()].sort()).toEqual([
+			"none",
+			"path",
+			"run",
+			"scenario",
+			"session",
+			"task",
+		]);
 		// 列表与新建（场景、运行、Agent、节点包、飞书机器人、控制台统计）和按名字定位的 Agent、节点包、飞书机器人。
 		expect(classes.get("path")).toEqual(
 			expect.arrayContaining([
@@ -151,11 +164,23 @@ describe("契约和访问检查的规则对得上", () => {
 				"GET /packages/:name/versions/:version/archive",
 				"GET /feishu-bots",
 				"DELETE /feishu-bots/:name",
+				// 会话的列表和新建：路径里的 :project 是项目（会话的集合属于项目）。
+				"GET /projects/:project/sessions",
+				"POST /projects/:project/sessions",
 			]),
 		);
 		expect(classes.get("scenario")).toContain("POST /orchestrations/:id/runs");
 		expect(classes.get("run")).toContain("POST /runs/:id/cancel");
 		expect(classes.get("task")).toContain("PUT /tasks/:id/artifacts/*");
+		// 按会话 ID 定位的，路径里不带项目：项目从会话得出。
+		expect(classes.get("session")).toEqual(
+			expect.arrayContaining([
+				"GET /sessions/:id",
+				"GET /sessions/:id/events",
+				"POST /sessions/:id/messages",
+				"POST /sessions/:id/stop",
+			]),
+		);
 		expect(classes.get("none")).toEqual(expect.arrayContaining(["GET /health", "GET /install.sh"]));
 	});
 });

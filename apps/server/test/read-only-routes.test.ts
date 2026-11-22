@@ -30,6 +30,7 @@ import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fak
 import { putFocusItemsOk } from "./support/focus-items.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { createPresetOk } from "./support/presets.js";
+import { persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient, type SseEvent } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import {
@@ -62,6 +63,7 @@ const FIXTURES = {
 	done: "已结束的运行",
 	failed: "失败的运行",
 	live: "还在跑的运行",
+	queued: "排队中的运行（Agent 的槽位被占满）",
 	empty: "没有版本的场景",
 	archived: "已归档的场景",
 	rich: "有子流程、说明和失效预设的场景",
@@ -92,6 +94,8 @@ interface Fixture {
 
 interface Seeded {
 	fixtures: Record<FixtureKey, Fixture>;
+	/** 有每种持久事件的会话。 */
+	sessionId: string;
 	presetId: string;
 	botName: string;
 	docSlug: string;
@@ -125,7 +129,9 @@ function fixtureKeys(def: RouteDef): Array<FixtureKey | undefined> {
 			? ["done", "live", "archived", "rich", "diffed"]
 			: ["done", "live", "empty", "archived", "rich", "diffed"];
 	}
-	if (kind === "run" || kind === "task") return ["done", "failed", "live"];
+	if (kind === "task") return ["done", "failed", "live"];
+	// 排队中的运行：运行视图里排队中的尝试带 queue_wait（占着槽位的任务）。
+	if (kind === "run") return ["done", "failed", "live", "queued"];
 	return [undefined];
 }
 
@@ -313,7 +319,13 @@ describe("声明为只读的接口真的不写库", () => {
 	});
 
 	it("事件流的事件都和清单里的 schema 对过一遍（不是空转）", () => {
-		for (const expected of ["GET /runs/:id/events run", "GET /tasks/:id/actions/events summary"]) {
+		for (const expected of [
+			"GET /runs/:id/events run",
+			"GET /tasks/:id/actions/events summary",
+			"GET /sessions/:id/events user_message",
+			"GET /sessions/:id/events platform",
+			"GET /sessions/:id/events turn_end",
+		]) {
 			expect(validatedEvents, expected).toContain(expected);
 		}
 	});
@@ -414,9 +426,12 @@ describe("声明为只读的接口真的不写库", () => {
 function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture): string {
 	const kind = def.resource.kind;
 	const samples: Record<string, string | undefined> = {
-		id: { scenario: fixture?.scenarioId, run: fixture?.runId, task: fixture?.taskId }[
-			kind as string
-		],
+		id: {
+			scenario: fixture?.scenarioId,
+			run: fixture?.runId,
+			task: fixture?.taskId,
+			session: s.sessionId,
+		}[kind as string],
 		presetId: s.presetId,
 		number: "1",
 		a: "1",
@@ -430,7 +445,8 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		page: s.docSlug,
 		skill: "sfly-platform",
 		file: "SKILL.md",
-		project: "sfly",
+		// 会话的列表在 `/projects/:project/sessions`，项目是真实存在的默认项目；`/simple/:project/` 的 project 是 PEP 503 里的包名。
+		project: kind === "session" ? "default" : "sfly",
 	};
 	const value = samples[name];
 	if (value === undefined) {
@@ -845,12 +861,15 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	const live = await start(pressure, LogLevel.INFO, "压测中", { running: true });
 	await settle(live.runId, "running");
 	// 再来一次运行：Agent 的槽位满了，任务排队
-	await api.triggerOk(pressure, { env: "prod" });
+	const queuedRunId = await api.triggerOk(pressure, { env: "prod" });
 	await eventually(async () => {
 		const { agents } = await api.getJson<{ agents: Array<{ queued_tasks: unknown[] }> }>("/agents");
 		expect(agents[0]?.queued_tasks).toHaveLength(1);
 	});
 
+	// 会话：有每种持久事件，上一轮结束了；再来一个在做的、一个空闲没有事件的（列表里状态不同的几种）。
+	const sessionId = await seedSession(cp.database.url, { events: persistedBodies() });
+	await seedSession(cp.database.url, { title: "没有事件的会话", status: "idle" });
 	const docs = await api.getJson<{ pages: Array<{ slug: string }> }>("/docs");
 	const fixture = async (
 		scenarioId: string,
@@ -871,11 +890,18 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 				done: await fixture(checked, done),
 				failed: await fixture(checked, failed),
 				live: await fixture(pressure, live),
+				queued: {
+					scenarioId: pressure,
+					latestVersion: await api.headVersion(pressure),
+					runId: queuedRunId,
+					chainInstanceId: (await api.run(queuedRunId)).chains[0]?.id as string,
+				},
 				empty: await fixture(empty),
 				archived: await fixture(archived),
 				rich: await fixture(rich),
 				diffed: await fixture(diffed),
 			},
+			sessionId,
 			presetId: preset.id,
 			botName: bot.name,
 			docSlug: docs.pages[0]?.slug as string,

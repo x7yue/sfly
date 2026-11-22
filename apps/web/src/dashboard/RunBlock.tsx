@@ -58,11 +58,14 @@ export const lineChains = (chains: readonly DashboardChain[]): LineChain[] =>
 export function RunBlock({
 	run,
 	activeLimit,
+	labelWidth,
 	onCollapse,
 	focusCollapse = false,
 }: {
 	run: DashboardRunningRun;
 	activeLimit: number | null;
+	/** 线路里链名那一列的宽度：上下排着的运行块用同一个，线路才从同一个横坐标开始（`labelColumnWidth`）。 */
+	labelWidth?: string | undefined;
 	onCollapse?: () => void;
 	/** 刚展开：焦点放到「收起」上（展开按钮已经换成了这个运行块）。 */
 	focusCollapse?: boolean;
@@ -113,7 +116,7 @@ export function RunBlock({
 					</Button>
 				)}
 			</div>
-			<RunLines chains={lineChains(run.chains)} className="mt-3.5" />
+			<RunLines chains={lineChains(run.chains)} labelWidth={labelWidth} className="mt-3.5" />
 			<RunReadout run={run} limit={activeLimit} />
 			<ActiveNodes nodes={run.active_nodes} limit={activeLimit} now={now} />
 			<div className="mt-2.5 flex gap-1.5">
