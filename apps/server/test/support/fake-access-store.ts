@@ -18,6 +18,7 @@ export class FakeAccessStore implements AccessStore {
 	readonly projects = new Set<string>(["default", "public"]);
 	readonly scenarios = new Map<string, ProjectId>();
 	readonly runs = new Map<string, ProjectId>();
+	readonly sessions = new Map<string, ProjectId>();
 	readonly tasks = new Map<string, { projectId: ProjectId; agentName: string | null }>();
 	readonly adminWrites: AdminWrite[] = [];
 	/** 登录用了之后写下的最后使用时间和空闲期限。 */
@@ -98,6 +99,10 @@ export class FakeAccessStore implements AccessStore {
 	async projectOfTask(id: string) {
 		this.reads++;
 		return this.tasks.get(id)?.projectId;
+	}
+	async projectOfSession(id: string) {
+		this.reads++;
+		return this.sessions.get(id);
 	}
 	async taskAssignment(id: string) {
 		this.reads++;

@@ -1,6 +1,6 @@
 // 访问检查要用的、只和契约有关的规则（ADR 0029「项目从请求的哪里来」「一处检查」）：
 // 一个接口的项目从哪里得出，以及 Agent 凭据和任务凭据各自能调用的接口清单。不依赖 Fastify，也不碰数据库。
-import { pathParamNames, type RouteDef } from "@sfly/schema";
+import { PROJECT_PARAM, pathParamNames, type RouteDef } from "@sfly/schema";
 
 /**
  * 一个接口的项目怎么得出（ADR 0029 把现有接口分成四类）：
@@ -9,17 +9,14 @@ import { pathParamNames, type RouteDef } from "@sfly/schema";
  * - `account`：账号类接口（登录、登出、当前用户、改密码、管理账号），不属于项目，不走范围表：认哪种凭据看 {@link ACCOUNT_ROUTES}；
  * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人）：取路径里的 `:project`。
  *   #488 把这些接口的路径改成 `/projects/:project/…` 之前，路径里没有项目，`param` 是 null，项目就是默认项目；
- * - `scenario`、`run`、`task`：经场景、运行或任务（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
+ * - `scenario`、`run`、`task`、`session`：经场景、运行、任务或会话（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
  *   （任务经它所属的运行）。`param` 是路径里 ID 的参数名。
  */
 export type ProjectLocator =
 	| { from: "none" }
 	| { from: "account" }
 	| { from: "path"; param: string | null }
-	| { from: "scenario" | "run" | "task"; param: string };
-
-/** 路径里用来写项目的参数名（#488：`/projects/:project/…`）。 */
-export const PROJECT_PARAM = "project";
+	| { from: "scenario" | "run" | "task" | "session"; param: string };
 
 /** 接口的项目怎么得出；认不出时返回 undefined（`checkAccessRules` 在启动时拒绝，访问检查不会走到这里）。 */
 export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLocator | undefined {
@@ -33,7 +30,7 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 		if (kind === "agent" || kind === "package" || kind === "feishu_bot") {
 			return { from: "path", param: null };
 		}
-		if (kind === "scenario" || kind === "run" || kind === "task") {
+		if (kind === "scenario" || kind === "run" || kind === "task" || kind === "session") {
 			return { from: kind, param: target.params };
 		}
 	}

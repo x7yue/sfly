@@ -272,6 +272,12 @@ export interface ArtifactView {
 	url: string;
 }
 
+/** 助手正在输出的那条消息的增量文字。助手服务产生，对应 pi 的 `text_delta`。不存。#540 起。 */
+export interface AssistantDeltaEvent {
+	type: "assistant_delta";
+	text: string;
+}
+
 export interface AsyncTaskNode {
 	id: string;
 	/** 布局属于版本内容。 */
@@ -436,6 +442,13 @@ export interface ClockOffsetView {
 	exceeds_threshold: boolean;
 }
 
+/** 提交里一个文件的改动；`additions`、`deletions` 是增、删的行数，二进制文件为 null。 */
+export interface CommitFile {
+	path: string;
+	additions: number | null;
+	deletions: number | null;
+}
+
 /**
  * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
  *
@@ -455,6 +468,11 @@ export interface CountOnlyPeriod {
 	to: Timestamp | null;
 	/** 这一段里没有明细的个数。 */
 	count: number;
+}
+
+/** `POST /projects/:project/sessions`：新建会话，`text` 是它的第一句话，作为第一轮。 */
+export interface CreateSessionBody {
+	text: SessionMessageText;
 }
 
 /**
@@ -777,6 +795,15 @@ export interface EntryNodeInput {
 	kind: "entry";
 	params?: ParamDeclarationInput[];
 }
+
+/**
+ * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
+ * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
+ * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
+ * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
+ * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
+ */
+export type ErrorClass = "unreachable" | "timeout" | "auth" | "quota" | "rate_limit" | "upstream" | "context_overflow" | "other";
 
 /**
  * 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。
@@ -1349,6 +1376,16 @@ export interface NodeTypeView {
 	primary_metric?: MetricName;
 }
 
+/**
+ * 提示（`notice`）的种类。助手服务产生的：`retry` 正在重试、`retry_end` 重试结束、`compaction` 压缩了上下文、
+ * `steer_dropped` 插话因停止没有送到、`context_reset` 接不上之前的上下文，换成了一段摘要；
+ * 控制面产生的：`queue_cancelled` 排队中的话因停止没有交给助手、`events_lost` 控制面和助手服务断开太久，
+ * 这一段过程没有记下。
+ * 产生：`retry`、`retry_end`、`compaction` #540；`steer_dropped`、`queue_cancelled` #544；
+ * `events_lost`、`context_reset` #545。
+ */
+export type NoticeKind = "retry" | "retry_end" | "compaction" | "steer_dropped" | "queue_cancelled" | "events_lost" | "context_reset";
+
 /** 可以保存的场景文档：节点都是现在支持的种类（保存、命令行的本地检查、导出给 Python 的 JSON Schema 用它）。 */
 export interface OrchestrationDocument {
 	default_agent?: string;
@@ -1590,6 +1627,108 @@ export interface ParamDeclarationInput {
  */
 export type ParamType = "string" | "number" | "boolean" | "json";
 
+/** 一个持久的会话事件：`PERSISTED_SESSION_EVENT_TYPES` 里的类型，带 `seq` 和 `at`（历史接口返回它）。 */
+export type PersistedSessionEvent = {
+	type: "user_message";
+	message_id: string;
+	text: string;
+	steer: boolean;
+	author: string;
+	author_user_id: string | null;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "turn_started";
+	turn: number;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "assistant_message";
+	text: string;
+	usage: TokenUsage;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "tool_call";
+	call_id: string;
+	tool: SessionTool;
+	title: string;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "tool_result";
+	call_id: string;
+	is_error: boolean;
+	text: string;
+	truncated: boolean;
+	exit_code?: number;
+	diff?: string;
+	duration_ms: number;
+	seq: number;
+	at: Timestamp;
+} | {
+	kind: NoticeKind;
+	type: "notice";
+	/** 给人看的一句话。 */
+	message: string;
+	/** 第几次重试（从 1 起）；只有 `retry`。 */
+	attempt?: number;
+	/** 最多重试几次；只有 `retry`。 */
+	max_attempts?: number;
+	/** 多久（毫秒）之后重试；只有 `retry`。 */
+	retry_delay_ms?: number;
+	/** 重试的原因按什么分；#548 起有值。 */
+	error_class?: ErrorClass;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "turn_end";
+	turn: number;
+	outcome: TurnOutcome;
+	reason: string;
+	steps?: number;
+	model_calls?: number;
+	duration_ms: number;
+	usage?: TokenUsage;
+	limit_kind?: TurnLimit;
+	/** 重试的原因按什么分；#548 起有值。 */
+	error_class?: ErrorClass;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "platform";
+	kind: "commit";
+	turn: number;
+	hash: string;
+	files: CommitFile[];
+	diff: string;
+	truncated: boolean;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "platform";
+	kind: "scenario_version";
+	turn: number;
+	scenario_id: string;
+	name: string;
+	version: number;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "platform";
+	kind: "run";
+	turn: number;
+	run_id: string;
+	scenario_name: string;
+	seq: number;
+	at: Timestamp;
+} | {
+	type: "session_ended";
+	by: string;
+	seq: number;
+	at: Timestamp;
+};
+
 /** 平台自带图表的一个时间桶：桶内的最大值与按时间加权的平均值。 */
 export interface PlatformBucket {
 	time: Timestamp;
@@ -1775,6 +1914,30 @@ export interface QueuedTaskView {
 	/** 排队超时的时间；没有设置排队超时的任务为 null。 */
 	queue_expires_at: Timestamp | null;
 }
+
+/**
+ * 助手此刻能不能用：`ready` 为 true 当且仅当 `problems` 为空，否则列出全部原因。`workbench` 是配置的工作台（Agent 的名字），
+ * 没有设置时为 null：页面据此写「可以用 · 工作台 X 在线」，工作台不在线时也能写出是哪一台。
+ */
+export interface Readiness {
+	ready: boolean;
+	problems: ReadinessProblem[];
+	workbench: string | null;
+}
+
+/** 助手此刻不能用的一个原因：种类加一句给人看的话。 */
+export interface ReadinessProblem {
+	kind: ReadinessProblemKind;
+	message: string;
+}
+
+/**
+ * 助手此刻不能用的原因的种类（`Readiness`）：`assistant_not_configured` 控制面没有配置助手服务，
+ * `assistant_unreachable` 助手服务连不上，`workbench_not_set` 项目没有设置工作台，`workbench_offline` 工作台的
+ * Agent 不在线，`model_not_configured` 助手容器里没有配置模型，`model_unreachable` 模型连不上。
+ * 产生：`assistant_*` 和 `workbench_*` 四种 #541（`workbench_*` 从 #549 起按项目的工作台登记判断），模型的两种 #548。
+ */
+export type ReadinessProblemKind = "assistant_not_configured" | "assistant_unreachable" | "workbench_not_set" | "workbench_offline" | "model_not_configured" | "model_unreachable";
 
 /** 场景引用的 Agent；unknown：还没有注册过（从没连接过控制面）。 */
 export interface ReferencedAgent {
@@ -2500,6 +2663,14 @@ export interface RunningTaskView {
 	progress: TaskProgressView | null;
 }
 
+/** 助手正在跑的一次工具调用，和它已经输出的最后一段（至多 `runningToolOutputBytes`）。 */
+export interface RunningTool {
+	call_id: string;
+	tool: SessionTool;
+	title: string;
+	output: string;
+}
+
 export interface SavedVersionView {
 	id: string;
 	orchestration_id: string;
@@ -2511,6 +2682,141 @@ export interface SavedVersionView {
 	document: StoredOrchestrationDocument;
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
 	warnings: DocumentWarningView[];
+}
+
+/** `POST /sessions/:id/messages`：对会话说一句话（空闲时开始新的一轮，在做时是插话）。 */
+export interface SendMessageBody {
+	text: SessionMessageText;
+}
+
+/** 发话的结果：这句话的 `user_message` 的序号。 */
+export interface SendMessageResult {
+	seq: number;
+}
+
+/** `GET /sessions/:id` 的 query：`before` 是序号，取比它小的事件（往前翻页）。 */
+export interface SessionDetailQuery {
+	before?: number;
+}
+
+/**
+ * `GET /sessions/:id`：会话，和最多 `SESSION_HISTORY_PAGE` 条持久事件（序号升序，没有 `before` 时是最新的
+ * 一页）；`has_more` 为 true 表示更早的还有。
+ */
+export interface SessionDetailResponse {
+	id: SessionId;
+	title: string;
+	status: SessionStatus;
+	created_by: string;
+	created_at: Timestamp;
+	/** 最近一次活动（新建、发话、事件落库）的时间。 */
+	last_activity_at: Timestamp;
+	queue_position: number | null;
+	last_turn_outcome: TurnOutcome | null;
+	project: string;
+	readiness: Readiness;
+	waiting_for: WaitingFor | null;
+	events: PersistedSessionEvent[];
+	has_more: boolean;
+}
+
+/**
+ * `GET /sessions/:id/events` 的 query：`after` 是序号，从它之后的持久事件开始推（浏览器重连也可以带 `Last-Event-ID`，
+ * 它不是整数或超过 `SESSION_SEQ_MAX` 的当作没带）。
+ */
+export interface SessionEventsQuery {
+	after?: number;
+}
+
+/** 会话 ID：UUID。助手服务拿它给 pi 的会话文件命名，所以协议里就限定成 UUID，不会带出路径。 */
+export type SessionId = string;
+
+/**
+ * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 只在排队中（`status` 为 `queued`）时有值，
+ * 从 1 起；`last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
+ */
+export interface SessionListItem {
+	id: SessionId;
+	title: string;
+	status: SessionStatus;
+	created_by: string;
+	created_at: Timestamp;
+	/** 最近一次活动（新建、发话、事件落库）的时间。 */
+	last_activity_at: Timestamp;
+	queue_position: number | null;
+	last_turn_outcome: TurnOutcome | null;
+}
+
+/**
+ * `GET /projects/:project/sessions`：助手此刻能不能用，和项目里的会话：在做和排队中的在前，其余按最近活动倒序
+ * （#551 的写法；#544 之前没有排队，在做的至多一个），最多 `SESSION_LIST_LIMIT` 个。
+ */
+export interface SessionListResponse {
+	readiness: Readiness;
+	sessions: SessionListItem[];
+}
+
+/** 会话里的一句话：新建会话的第一句、发话、插话。非空（不能只有空白），不超过 `SESSION_MESSAGE_MAX_CHARS` 个字符。 */
+export type SessionMessageText = string;
+
+/**
+ * 会话的状态：`idle` 空闲、`running` 在做（有一轮在进行）、`queued` 排队中（同一个项目另一个会话在做，#544）、
+ * `ended` 已结束。
+ */
+export type SessionStatus = "idle" | "running" | "queued" | "ended";
+
+/**
+ * 助手能用的工具：读、写、编辑文件，执行命令（`command`）。文件和命令都落在工作台上。取值是平台的叫法，不是 pi 的工具名：
+ * 换 pi 或换嵌入方式时它不跟着变（助手服务把 pi 的工具名翻成它们）。
+ */
+export type SessionTool = "read" | "write" | "edit" | "command";
+
+/**
+ * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；
+ * `turn_queued` 不持久，刷新页面后靠它拿回在等谁，#544）。
+ */
+export interface SessionView {
+	id: SessionId;
+	title: string;
+	status: SessionStatus;
+	created_by: string;
+	created_at: Timestamp;
+	/** 最近一次活动（新建、发话、事件落库）的时间。 */
+	last_activity_at: Timestamp;
+	queue_position: number | null;
+	last_turn_outcome: TurnOutcome | null;
+	project: string;
+	readiness: Readiness;
+	waiting_for: WaitingFor | null;
+}
+
+/**
+ * 会话此刻的状态：控制面在浏览器刚连上事件流时，只发给这一条连接，让断线期间错过的增量不用补发
+ * （`partial_text` 是正在输出的那条助手消息已有的文字，没有时为空字符串；`running_tool` 没有在跑的工具时为 null；
+ * `steer_queue` 是还没送到模型的插话；`waiting_for` 是排队中在等谁，不在排队时为 null）。不存。#545 起（`waiting_for` #544）。
+ */
+export interface SnapshotEvent {
+	type: "snapshot";
+	status: SessionStatus;
+	partial_text: string;
+	running_tool: RunningTool | null;
+	steer_queue: SteerEntry[];
+	waiting_for: WaitingFor | null;
+}
+
+/** 插话队列里的一条：用户这句话的 ID（`user_message.message_id`）和文字。 */
+export interface SteerEntry {
+	message_id: string;
+	text: string;
+}
+
+/**
+ * 还没送到模型的插话，完整列表（每次变化都发一条，取代上一条）：每条带自己的 `message_id`，不靠文字对应。
+ * 助手服务产生，对应 pi 的 `queue_update` 的 `steering`。不存。#544 起。
+ */
+export interface SteerQueueEvent {
+	type: "steer_queue";
+	messages: SteerEntry[];
 }
 
 export interface StopSubflowNode {
@@ -2642,8 +2948,56 @@ export interface TaskProgressView {
  */
 export type TaskStatus = "queued" | "dispatched" | "running" | "waiting" | "success" | "failed" | "skipped" | "cancelled" | "stopped";
 
+/** 模型在思考（不带思考的内容）。助手服务产生，对应 pi 的 `thinking_start`、`thinking_delta`。不存。#540 起。 */
+export interface ThinkingEvent {
+	type: "thinking";
+}
+
 /** 时间：ISO 8601 字符串（控制面用 `Date#toISOString()` 输出）。 */
 export type Timestamp = string;
+
+/** 一次模型调用（或一轮合计）用的 token：输入、输出、缓存读、缓存写。 */
+export interface TokenUsage {
+	input: number;
+	output: number;
+	cache_read: number;
+	cache_write: number;
+}
+
+/** 工具执行中输出的增量文字（对应 pi 的 `tool_execution_update`）。助手服务产生。不存。#540 起。 */
+export interface ToolOutputEvent {
+	type: "tool_output";
+	call_id: string;
+	text: string;
+}
+
+/** 一轮到了哪一种上限（`turn_end.limit_kind`，`outcome` 为 `limit` 时给出）：`model_calls` 模型调用次数，`duration` 用时。#540 起。 */
+export type TurnLimit = "model_calls" | "duration";
+
+/**
+ * 一轮（GLOSSARY「一轮」）的结局，`turn_end.outcome` 和会话的 `last_turn_outcome`：
+ * - `completed` 完成：pi 报告 `agent_settled`；
+ * - `stopped` 已停止：用户停止；
+ * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，`TurnLimit`；默认 40 次模型调用、
+ *   20 分钟，#540）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
+ * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
+ * - `failed` 其他错误。
+ * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
+ * （助手服务同时在做的会话太多，进程数满了，#545）。
+ */
+export type TurnOutcome = "completed" | "stopped" | "limit" | "model_unavailable" | "interrupted" | "failed";
+
+/**
+ * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
+ * `waiting_for` 是正在做的那个会话。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
+ * （`SessionView`）和快照（`SnapshotEvent`）里，刷新页面后拿得回来。#544 起。
+ */
+export interface TurnQueuedEvent {
+	type: "turn_queued";
+	position: number;
+	waiting_for: WaitingFor;
+}
 
 /** 检查的结果：带标记的警告，和保存之后相对最新版本的差异。保存带 `strict` 被拒绝时，错误的 details 也是它。 */
 export interface VersionCheckView {
@@ -2660,4 +3014,11 @@ export interface VersionSummaryView {
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: string | null;
 	created_at: Timestamp;
+}
+
+/** 排队的会话在等谁：正在做的那个会话，它的标题和发起人（昵称）。 */
+export interface WaitingFor {
+	session_id: SessionId;
+	title: string;
+	created_by: string;
 }

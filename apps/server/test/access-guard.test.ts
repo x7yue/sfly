@@ -37,6 +37,7 @@ const RES = {
 	scenario: { default: id(1), alpha: id(2) },
 	run: { default: id(11), alpha: id(12) },
 	task: { default: id(21), alpha: id(22), mine: id(23) },
+	session: { default: id(31), alpha: id(32) },
 };
 
 const user = (n: number, extra: Partial<StoredUser> = {}): StoredUser => ({
@@ -72,6 +73,7 @@ describe("契约路由的访问检查", () => {
 		store.projects.add("alpha");
 		store.scenarios.set(RES.scenario.default, DEFAULT).set(RES.scenario.alpha, ALPHA);
 		store.runs.set(RES.run.default, DEFAULT).set(RES.run.alpha, ALPHA);
+		store.sessions.set(RES.session.default, DEFAULT).set(RES.session.alpha, ALPHA);
 		store.tasks
 			.set(RES.task.default, { projectId: DEFAULT, agentName: "agent-default" })
 			.set(RES.task.alpha, { projectId: ALPHA, agentName: "agent-alpha" })
@@ -130,12 +132,15 @@ describe("契约路由的访问检查", () => {
 		for (const name of route.path.matchAll(/:([A-Za-z_]+)|\*$/g)) {
 			filled[name[1] ?? "*"] = "x";
 		}
+		// 路径带项目的接口（`/projects/:project/…`）：路径里的项目就是请求作用的项目。
+		if (route.path.startsWith("/projects/:project/")) filled.project = project;
 		const target = route.resource.target;
 		if (typeof target === "object" && "params" in target) {
 			const kind = route.resource.kind;
 			if (kind === "scenario") filled[target.params] = RES.scenario[project];
 			if (kind === "run") filled[target.params] = RES.run[project];
 			if (kind === "task") filled[target.params] = RES.task[project];
+			if (kind === "session") filled[target.params] = RES.session[project];
 		}
 		// 登录 Cookie 要同源的请求才认（./cross-site.ts）：这些测试默认是控制台自己发的请求。
 		return {
@@ -457,6 +462,39 @@ describe("契约路由的访问检查", () => {
 			const stranger = token({ kind: "session", user: USERS.stranger, projectId: DEFAULT });
 			expect(outcome(await run(route("GET /orchestrations"), stranger))).toBe(404);
 		});
+
+		it("会话令牌对会话只有读（ADR 0027）：建会话、发话、停止是 403，读照常；这条规则不靠「写一律 403」的临时总闸", async () => {
+			const session = token({
+				kind: "session",
+				user: USERS.editor,
+				projectId: DEFAULT,
+				name: "会话",
+			});
+			// 同样的发起人用个人令牌：编辑者，三个写接口都放行（说明挡住会话令牌的不是范围）。
+			const personalEditor = personal(USERS.editor);
+			for (const key of [
+				"POST /projects/:project/sessions",
+				"POST /sessions/:id/messages",
+				"POST /sessions/:id/stop",
+			]) {
+				expect(outcome(await run(route(key), personalEditor)), `个人令牌 ${key}`).toBe("ok");
+				// 说法是这条规则自己的，不是总闸的「写入还没有开放」：#495 拿掉总闸以后，它还在。
+				expect(await run(route(key), session), key).toMatchObject({
+					ok: false,
+					status: 403,
+					message: expect.stringContaining("会话令牌对会话只有读"),
+				});
+			}
+			for (const key of [
+				"GET /projects/:project/sessions",
+				"GET /sessions/:id",
+				"GET /sessions/:id/events",
+			]) {
+				expect(outcome(await run(route(key), session)), key).toBe("ok");
+			}
+			// 别的项目的会话令牌：不是它的项目，404（不是 403），读和写一样。
+			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);
+		});
 	});
 
 	describe("别的项目的资源和不存在一样：404，不是 403", () => {
@@ -530,6 +568,58 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await run(route("POST /orchestrations/:id/runs"), bearer, "default"))).toBe(
 				404,
 			);
+		});
+	});
+
+	describe("会话：项目从会话所在的项目得出（路径里不带项目），不会被当成任务去查", () => {
+		it("一个和任务 ID 相同的会话 ID：按会话所在的项目判断，不是任务所在的项目", async () => {
+			// 同一个 ID：会话在默认项目，任务在项目 alpha。
+			const shared = id(77);
+			store.sessions.set(shared, DEFAULT);
+			store.tasks.set(shared, { projectId: ALPHA, agentName: "agent-alpha" });
+			const read = route("GET /sessions/:id");
+			const write = route("POST /sessions/:id/messages");
+			const askFor = (def: RouteDef, credentials: Credentials) => ({
+				...request(def, credentials),
+				params: { id: shared },
+			});
+			// 默认项目的编辑者：会话在默认项目，通过（被当成项目 alpha 的任务就是 404）。
+			const editor = login(USERS.editor);
+			expect(outcome(await guard.check(askFor(read, editor)))).toBe("ok");
+			expect(outcome(await guard.check(askFor(write, editor)))).toBe("ok");
+			// 项目 alpha 的成员：会话不在 alpha，404（被当成任务就会通过）。
+			const outsider = login(USERS.outsider);
+			expect(outcome(await guard.check(askFor(read, outsider)))).toBe(404);
+			expect(outcome(await guard.check(askFor(write, outsider)))).toBe(404);
+		});
+
+		it("会话不存在、ID 写得不对：404（只对带了凭据的请求）；只有任务用这个 ID 也一样", async () => {
+			const events = route("GET /sessions/:id/events");
+			const taskOnly = id(78);
+			store.tasks.set(taskOnly, { projectId: DEFAULT, agentName: "agent-default" });
+			const boss = login(USERS.boss);
+			for (const bad of [id(999), taskOnly, "x", "not-a-uuid", ""]) {
+				expect(
+					await guard.check({ ...request(events, boss), params: { id: bad } }),
+					JSON.stringify(bad),
+				).toMatchObject({ ok: false, status: 404, message: ACCESS_NOT_FOUND_MESSAGE });
+			}
+		});
+
+		it("列出和新建会话：项目取路径里的 :project，不是默认项目", async () => {
+			const list = route("GET /projects/:project/sessions");
+			const create = route("POST /projects/:project/sessions");
+			const alphaAdmin = login(USERS.outsider);
+			expect(outcome(await run(list, alphaAdmin, "alpha"))).toBe("ok");
+			expect(outcome(await run(create, alphaAdmin, "alpha"))).toBe("ok");
+			// 路径里写默认项目，用户不是它的成员：404。
+			expect(outcome(await run(list, alphaAdmin, "default"))).toBe(404);
+			expect(outcome(await run(create, alphaAdmin, "default"))).toBe(404);
+			// 项目不存在、写法不对：404。
+			for (const project of ["nope", "Bad_Name", ""]) {
+				const asked = { ...request(list, alphaAdmin), params: { project } };
+				expect(outcome(await guard.check(asked)), JSON.stringify(project)).toBe(404);
+			}
 		});
 	});
 

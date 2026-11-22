@@ -2,6 +2,7 @@ import {
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
 	httpContract,
+	type Readiness,
 	systemApi,
 } from "@sfly/schema";
 import Fastify, {
@@ -36,6 +37,7 @@ import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
+import type { SessionStore } from "../sessions/session-store.js";
 import { registerSse } from "../sse/sse.js";
 import { watchStreamCredentials } from "../sse/stream-recheck.js";
 import { sanitizeLogArgs, serializeError } from "../util/safe-error.js";
@@ -62,6 +64,7 @@ import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerRunSummaryRoutes } from "./run-summary-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
+import { registerSessionRoutes } from "./session-routes.js";
 import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
 
 export interface HttpApiDeps {
@@ -78,6 +81,10 @@ export interface HttpApiDeps {
 	logs: TaskLogs;
 	/** 任务的动作（src/actions/）。 */
 	actions: TaskActions;
+	/** 助手会话和它的事件（src/sessions/，ADR 0027）。 */
+	sessions: SessionStore;
+	/** 助手此刻能不能用（src/sessions/readiness.ts）。 */
+	assistantReadiness: () => Promise<Readiness>;
 	metrics: TaskMetrics;
 	metricQueries: MetricQueries;
 	retention: Retention;
@@ -145,6 +152,8 @@ export function buildHttpApi({
 	preflight,
 	logs,
 	actions,
+	sessions,
+	assistantReadiness,
 	metrics,
 	metricQueries,
 	retention,
@@ -302,6 +311,7 @@ export function buildHttpApi({
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerActionRoutes(app, { actions, sse });
+	registerSessionRoutes(app, { sessions, sse, readiness: assistantReadiness });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });

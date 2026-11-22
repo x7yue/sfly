@@ -26,6 +26,8 @@ export interface Victim {
 	scenario: string;
 	run: string;
 	task: string;
+	/** 项目乙里的会话：按会话 ID 定位的接口（项目从会话得出）填它。 */
+	session: string;
 	preset: string;
 	agent: string;
 	pkg: string;
@@ -40,7 +42,21 @@ function paramValue(def: RouteDef, name: string, victim: Victim): string {
 	const kind = def.resource.kind;
 	switch (name) {
 		case "id":
-			return kind === "run" ? victim.run : kind === "task" ? victim.task : victim.scenario;
+			// 没有认出的类别不能悄悄落到场景上：那会让新类别的接口请求一个不存在的资源，测试看着通过其实什么也没测。
+			switch (kind) {
+				case "run":
+					return victim.run;
+				case "task":
+					return victim.task;
+				case "session":
+					return victim.session;
+				case "scenario":
+					return victim.scenario;
+				default:
+					throw new Error(
+						`${def.method} ${def.path}：路径参数 :id 的资源类别 ${kind} 没有样本，在 test/support/cross-project.ts 的 paramValue 里补上`,
+					);
+			}
 		case "name":
 			return kind === "agent" ? victim.agent : kind === "package" ? victim.pkg : victim.bot;
 		case "project":
@@ -81,6 +97,8 @@ const JSON_BODIES: Record<string, unknown> = {
 	"PATCH /feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },
 	"POST /orchestrations/:id/presence/leave": { session_id: "s1" },
+	"POST /projects/:project/sessions": { text: "你好" },
+	"POST /sessions/:id/messages": { text: "你好" },
 };
 
 /** 没有请求体的写接口。 */
@@ -93,6 +111,7 @@ const NO_BODY = new Set([
 	"POST /agents/:name/update-now",
 	"DELETE /feishu-bots/:name",
 	"POST /feishu-bots/:name/test",
+	"POST /sessions/:id/stop",
 ]);
 
 /** 上传：请求体是原始字节。 */
