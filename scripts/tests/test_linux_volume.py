@@ -109,6 +109,17 @@ def test_still_over_the_limit_after_that_the_whole_target_goes(tmp_path: Path) -
     assert "从头编译" in done.stderr
 
 
+def test_a_target_exactly_at_the_limit_is_left_alone(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    _fill(target / "debug" / "build" / "a.bin", 3)
+
+    done = _trim(target, 3)
+
+    assert done.returncode == 0, done.stderr
+    assert done.stderr == ""
+    assert _tree(target) == {"debug/build/a.bin"}
+
+
 def test_the_limit_can_come_from_the_environment(tmp_path: Path) -> None:
     target = tmp_path / "target"
     _fill(target / "debug" / "build" / "a.bin", 3)
@@ -311,6 +322,41 @@ def test_the_stale_threshold_can_be_changed(volume: str, image: str) -> None:
     assert done.returncode == 0, done.stderr
     # 40 天没动过，阈值改成 60 天：留下。
     assert NAME_LEGACY_OLD in _entries(volume, image)
+
+
+def test_a_copy_used_between_listing_and_deleting_is_not_removed(
+    volume: str, image: str, tmp_path: Path
+) -> None:
+    """列出之后、删之前有人用了这个没有记录路径的旧副本（files 的时间更新了）：不删。
+
+    用一个转发给真 docker 的假 docker：看到删除那一步的容器启动之前，先把旧副本的 files 碰一下。"""
+    real = shutil.which("docker")
+    assert real is not None
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "docker").write_text(
+        f"""#!/usr/bin/env bash
+if [[ $1 == run && "$*" == *"rm -rf"* && "$*" == *"{volume}:/vol "* ]]; then
+	{real} run --rm -v {volume}:/vol --entrypoint touch {image} /vol/{NAME_LEGACY_OLD}/files
+fi
+exec {real} "$@"
+""",
+        encoding="utf-8",
+    )
+    (shim / "docker").chmod(0o755)
+
+    done = subprocess.run(
+        ["bash", str(LINUX / "prune.sh"), volume, image],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{shim}:{os.environ['PATH']}"},
+    )
+
+    assert done.returncode == 0, done.stderr
+    entries = _entries(volume, image)
+    assert NAME_LEGACY_OLD in entries  # 刚被用过：留下
+    assert NAME_DEAD not in entries  # 主人不在了的照常删
+    assert NAME_DEAD_ODD_PATH not in entries
 
 
 def test_a_volume_that_does_not_exist_is_not_created(image: str) -> None:
