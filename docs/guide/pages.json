@@ -12,7 +12,7 @@
 		},
 		{
 			"slug": "init-project",
-			"title": "初始化项目",
+			"title": "初始化节点包",
 			"description": "sfly init 创建节点包项目：生成的文件、pyproject 里的镜像与 sfly 索引、给 AI 编程助手的 skill 与 sfly skill update"
 		},
 		{

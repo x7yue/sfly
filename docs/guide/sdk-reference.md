@@ -2,11 +2,11 @@
 
 节点包里的每个节点都是一个用 `@node` 声明的 Python 函数。发布后，sfly Agent 每执行一个任务就启动一个新的 Python 进程，导入节点函数，把输入作为关键字参数传进去，把返回值作为输出。
 
-本页是 `sfly` SDK 的完整参考，也随 SDK 打进 `sfly init` 生成的项目（`.agents/skills/sfly-node-dev/reference.md`）。
+本页是 `sfly` SDK 的完整参考，也随 SDK 打进 `sfly init` 生成的节点包目录（`.agents/skills/sfly-node-dev/reference.md`）。
 
-## 项目结构
+## 节点包目录的结构
 
-`sfly init` 生成的项目已经符合下面的约定：
+`sfly init` 生成的节点包目录已经符合下面的约定：
 
 | 位置 | 内容 |
 |---|---|
@@ -19,7 +19,7 @@
 - `sfly build` 导入模块及其全部子模块，收集其中的 `@node`。节点名在一个节点包里不能重复。
 - 依赖只写在 `[project].dependencies`（pyproject 没有声明 dependencies 时读 `requirements.txt`）。Agent 上所有节点包共用一个 venv，只写宽松的下限。
 - `sfly` 不能写进 `[project].dependencies`：Agent 自带 SDK 运行时，`sfly build` 遇到它直接报错。
-- Agent 上 SDK 运行时的版本就是 Agent 的版本。`requires-sdk` 声明节点包需要的 SDK 版本，`sfly build` 把它写进节点包元信息的 `requires_sdk`；没写时用构建时 SDK 的版本作为下限（`>=<版本>`），`sfly init` 生成的项目写的是当时控制面的版本。格式是逗号分隔的比较符加数字版本号（`>=`、`>`、`<=`、`<`、`==`、`!=`、`~=`），例如 `>=0.0.4`。用到新版 SDK 才有的接口时调高它：派发到版本不满足的 Agent 时任务以 `env_error` 失败，错误信息写明需要的 SDK 版本和 Agent 的版本，提示升级 Agent。触发前检查比较的是控制面的版本（Agent 会先自更新到控制面的版本再执行任务），不满足时提示升级控制面。
+- Agent 上 SDK 运行时的版本就是 Agent 的版本。`requires-sdk` 声明节点包需要的 SDK 版本，`sfly build` 把它写进节点包元信息的 `requires_sdk`；没写时用构建时 SDK 的版本作为下限（`>=<版本>`），`sfly init` 生成的节点包写的是当时控制面的版本。格式是逗号分隔的比较符加数字版本号（`>=`、`>`、`<=`、`<`、`==`、`!=`、`~=`），例如 `>=0.0.4`。用到新版 SDK 才有的接口时调高它：派发到版本不满足的 Agent 时任务以 `env_error` 失败，错误信息写明需要的 SDK 版本和 Agent 的版本，提示升级 Agent。触发前检查比较的是控制面的版本（Agent 会先自更新到控制面的版本再执行任务），不满足时提示升级控制面。
 - `requires-agent` 声明节点包需要的 Agent 版本，格式同 `requires-sdk`，`sfly build` 把它写进元信息的 `requires_agent`；没写时不检查。它同时约束节点所在的 Agent 和节点通过「Agent」类型的参数访问的 Agent，用到 Agent 能力（见下文「`ctx.agent()`：Agent 能力」）时声明（例如 `>=0.2.0`），见那一节的「版本」。从 SDK 0.2.0 起可用。
 
 ## `@node`
@@ -575,7 +575,7 @@ log.parent.mkdir(parents=True, exist_ok=True)
 
 - `ctx.procs_dir` 是这次运行的**后台进程目录**：节点启动的、节点结束后还要继续运行的进程，把日志等文件放在这里。它不在任务目录里，任务目录被清理或任务重试时不受影响；同一次运行的任务共用一个目录（用节点 ID 区分文件名）。目录不一定已经存在，使用前自己创建。
 - 在 Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`，和任务目录按同一个保留期清理（运行还有任务在 Agent 上时不动），见「安装 Agent」。0.0.4 之前的 Agent 不提供这个目录，SDK 取同样的位置，但旧 Agent 不会清理它。
-- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly debug` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
+- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly debug` 的运行 ID 是运行目录名，后台进程目录是节点包目录下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
 
 ## `ctx.agent()`：Agent 能力
 
@@ -1016,16 +1016,16 @@ def test_summary_names_the_failed_node() -> None:
 
 ## 命令行 `sfly`
 
-在项目里用 `uv run sfly <命令>` 运行；每个命令的完整参数见 `uv run sfly <命令> --help`。需要控制面地址的命令按 `--server` > 环境变量 `SFLY_SERVER` > `~/.sfly/agent.env`（`SFLY_HOME`）里的 `SFLY_CONTROL_PLANE_URL` 取值，`install.sh --dev` 安装的开发机不用传 `--server`。
+在节点包目录里用 `uv run sfly <命令>` 运行；每个命令的完整参数见 `uv run sfly <命令> --help`。需要控制面地址的命令按 `--server` > 环境变量 `SFLY_SERVER` > `~/.sfly/agent.env`（`SFLY_HOME`）里的 `SFLY_CONTROL_PLANE_URL` 取值，`install.sh --dev` 安装的开发机不用传 `--server`。
 
 | 命令 | 作用 |
 |---|---|
-| `sfly init <目录> [--name <包名>]` | 创建节点包项目：uv 项目、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、两份给 AI 编程助手的 skill（节点开发、操作平台）。包名默认是目录名 |
-| `sfly debug <节点> [--params '<JSON>']` | 本地调试：在当前项目环境里执行一个节点，不经过控制面和 Agent |
-| `sfly dev [项目目录]` | 联调：把项目以 `<包名>@dev` 装到本机 Agent（通过本机 Agent 的本地 socket） |
-| `sfly build [项目目录]` | 扫描 `@node`，构建节点包 `dist/<包名>-<版本>.sflypkg` |
-| `sfly publish [项目目录或 .sflypkg]` | 发布到控制面；给项目目录时先构建 |
-| `sfly skill update [--force]` | 把项目里的两份 skill（节点开发、操作平台）换成当前 SDK 版本的内容 |
+| `sfly init <目录> [--name <包名>]` | 创建节点包目录：uv 工程、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、两份给 AI 编程助手的 skill（节点开发、操作平台）。包名默认是目录名 |
+| `sfly debug <节点> [--params '<JSON>'] [--package-dir 节点包目录]` | 本地调试：在当前节点包目录的环境里执行一个节点，不经过控制面和 Agent |
+| `sfly dev [节点包目录]` | 联调：把节点包目录以 `<包名>@dev` 装到本机 Agent（通过本机 Agent 的本地 socket） |
+| `sfly build [节点包目录]` | 扫描 `@node`，构建节点包 `dist/<包名>-<版本>.sflypkg` |
+| `sfly publish [节点包目录或 .sflypkg]` | 发布到控制面；给节点包目录时先构建 |
+| `sfly skill update [--force] [--package-dir 节点包目录]` | 把节点包目录里的两份 skill（节点开发、操作平台）换成当前 SDK 版本的内容 |
 | `sfly scenario`、`sfly run`、`sfly agent`、`sfly package`、`sfly api` | 操作平台：查看场景、运行、Agent、节点包，触发、等待、取消运行，读日志，pull / push 编辑场景，直接调用接口。见 [用命令行操作平台](platform-cli.md) |
 
 ### `sfly debug`
@@ -1057,5 +1057,5 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 
 ### `sfly skill update`
 
-- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/` 和 `.agents/skills/sfly-platform/`（`.claude/skills/` 下同名的软链接不存在时一并创建；项目里还没有的 skill 直接写入）。
+- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/` 和 `.agents/skills/sfly-platform/`（`.claude/skills/` 下同名的软链接不存在时一并创建；节点包目录里还没有的 skill 直接写入）。
 - 每份 skill 单独检查：目录内容和上次写入的不同时不覆盖这一份，列出改动过的文件，最后以 1 退出，另一份照常更新；确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。

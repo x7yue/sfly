@@ -15,13 +15,13 @@ curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 安装脚本识别 CPU 架构，从控制面下载 sfly Agent {{SFLY_VERSION}} 并校验 sha256，写好配置，注册并启动 systemd 服务。
 
 - `--name`：Agent 名称，全局唯一，场景按名称选择 Agent。上面的命令用主机名，也可以换成别的名称。
-- `--token '<令牌>'`：控制面配置了注册令牌时必填，向平台管理员索取。令牌不对时 Agent 打印 `invalid agent token` 后退出。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
+- `--token '<令牌>'`：控制面配置了共享令牌时必填，向平台管理员索取（这是 Agent 连控制面用的共享令牌，不是个人令牌；命令行登录用的个人令牌见「用命令行操作平台」）。令牌不对时 Agent 打印 `invalid agent token` 后退出。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
 - `--slots <数量>`：同时执行的任务上限，默认 4。
 - `--listen-port <端口>`、`--public-address <地址>`：供其它 Agent 连接的端口（默认 50052）和对外地址，见下面的「供其它 Agent 连接的端口」。
 - `--no-auto-update`：不自动更新（见「版本与自动更新」）。
 - 完整参数：`curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --help`。
 
-用环境变量传令牌：先读入令牌（粘贴后回车，输入不显示），再运行安装命令：
+用环境变量传共享令牌：先读入令牌（粘贴后回车，输入不显示），再运行安装命令：
 
 ```text
 read -rs SFLY_TOKEN && export SFLY_TOKEN
@@ -37,7 +37,7 @@ curl -fsSL {{SFLY_URL}}/install.sh | sudo sh -s -- --name "$(uname -n)"
 ```
 
 - Agent 以 root 运行，文件在 root 的家目录下（通常是 `/root/.sfly`，以安装脚本最后打印的路径为准），下面写的 `~/.sfly` 都指这个目录。之后升级、改配置也要用 `sudo`。
-- `sudo` 默认不传递环境变量：用环境变量传令牌、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
+- `sudo` 默认不传递环境变量：用环境变量传共享令牌、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
 - 同一台机器上之前用普通用户装过时，先停掉那个 Agent（`systemctl --user disable --now sfly-agent`，或结束前台进程），否则两个同名的 Agent 会同时连接控制面。
 
 Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动时它会准备运行环境，需要一两分钟：
@@ -103,7 +103,7 @@ sfly --version
 |---|---|
 | `bin/sfly-agent` | Agent 二进制 |
 | `bin/uv` | Agent 管理的 uv |
-| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、令牌、槽位数、是否自动更新、本机的镜像覆盖 |
+| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、共享令牌、槽位数、是否自动更新、本机的镜像覆盖 |
 | `venv/` | 共享 venv：SDK 运行时和所有节点包都装在这里 |
 | `work/` | 任务工作目录（每个任务一个子目录），以及 `sfly dev` 连接的本地 socket `agent.sock` |
 | `procs/` | 后台进程目录（每次运行一个子目录）：节点启动的、节点结束后继续运行的进程（例如标准节点 `start_process`）的日志 |
@@ -179,7 +179,7 @@ Agent 和控制面必须是同一个版本。控制面升级（或回滚）后�
 - 配置了不自动更新：安装时加 `--no-auto-update`（`agent.env` 里写入 `SFLY_NO_AUTO_UPDATE=1`；也可以自己写这一行再重启 Agent，值可以是 `1`/`true`/`yes`）。需要严格控制版本的机器这样设置，升级时自己重新运行安装命令，这个设置会保留；要恢复自动更新，删掉 `agent.env` 里的这一行再重启 Agent。
 - Agent 二进制不在 `$SFLY_HOME/bin`（默认 `~/.sfly/bin`）下（不是安装脚本安装的），或者这个目录不可写。
 
-手动升级就是重新运行安装命令，名称、令牌和原来一样。
+手动升级就是重新运行安装命令，名称、共享令牌和原来一样。
 
 **旧 Agent 首次升级**：在有安装脚本之前部署的 Agent（从 GitHub Release 下载、自己写启动参数或 systemd 服务）没有自动更新能力，需要手动升级一次：停掉旧的进程或服务，在同一台机器上用原来的名称运行上面的安装命令。之后的版本都会自动更新。旧的 venv 和工作目录不再使用，可以删除。
 
