@@ -155,12 +155,7 @@ import {
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { useRunMotion } from "./run-state/use-run-motion";
 import { useUndoNotice } from "./undo-notice";
-import {
-	documentFieldErrors,
-	type FieldError,
-	undeclaredInputNotes,
-	warningsSummary,
-} from "./validation";
+import { documentFieldErrors, type FieldError, warningsSummary } from "./validation";
 
 /** 检查器右边距。 */
 
@@ -206,8 +201,6 @@ export function ScenarioEditor({
 		</ReactFlowProvider>
 	);
 }
-
-const NO_PACKAGES: Record<string, string> = {};
 
 const cardOf = (id: string) =>
 	document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
@@ -287,14 +280,13 @@ function Editor({
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
 	const regionBoxes = useMemo(() => subflowRegions(doc).map((r) => r.box), [doc]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
-	const catalog = usePackageCatalog(meta.packages, agentList);
+	const catalog = usePackageCatalog(doc, agentList);
 	const registered = useRegisteredAgents(agents.data?.agents);
 	const registeredBots = useRegisteredBots(bots.data?.bots);
 	const warnings = useMemo(
 		() => documentWarnings(doc, catalog, { agents: registered, feishuBots: registeredBots }),
 		[doc, catalog, registered, registeredBots],
 	);
-	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	const warningsByNode = useMemo(() => {
 		const map = new Map<string, OrchestrationWarning[]>();
@@ -332,7 +324,7 @@ function Editor({
 	const runState = useCanvasRun(orchestration.id, initialRun, mode === "run");
 	const readyRun = runState.status === "ready" ? runState : undefined;
 	// 运行绑定的版本锁定的节点包（节点菜单「复制输出引用」按它列出输出）。
-	const runCatalog = usePackageCatalog(readyRun?.doc?.packages ?? NO_PACKAGES, agentList);
+	const runCatalog = usePackageCatalog(readyRun?.doc, agentList);
 	const runNow = useNow(readyRun?.run.status === "running");
 	const decorations = useRunDecorations(
 		readyRun?.run,
@@ -997,7 +989,6 @@ function Editor({
 		agents: agentList,
 		bots: botList,
 		warnings,
-		notes,
 		shownFieldErrors: shownErrors,
 		focusRequest,
 		onChangeNode: updateNode,
@@ -1054,7 +1045,6 @@ function Editor({
 					}
 					fieldErrors={shownErrors.length}
 					warnings={warnings.length}
-					notes={notes.length}
 					onShowChecks={() => {
 						setSelection(NO_SELECTION);
 						setInspectorOpen(true);

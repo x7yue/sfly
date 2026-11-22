@@ -5,6 +5,7 @@ export * from "./annotations.js";
 export * from "./arrange.js";
 export * from "./chain-edits.js";
 export * from "./chain-label.js";
+export * from "./dev-node-types.js";
 export * from "./diff.js";
 export type { DocumentEdit, Rejected } from "./edit-result.js";
 export * from "./feishu-bots.js";
