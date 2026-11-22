@@ -323,7 +323,7 @@ fn index_check_failure(label: &str, url: &str, answer: &IndexAnswer) -> String {
 /// `uv pip install` 的索引参数（#556）。节点包可以依赖平台自己的包（标准节点包 `sfly-std`，它不在 PyPI 上）：
 ///
 /// - `--index <控制面的包索引>`：排在默认索引（PyPI 镜像）前面；
-/// - `--default-index <PyPI 镜像>`：配置了镜像时用它，其余依赖（httpx、psutil 等）从这里取；
+/// - `--default-index <PyPI 镜像>`：配置了镜像时用它，其余依赖（psutil 等）从这里取；
 /// - `--index-strategy first-index`：同一个名字只看第一个有它的索引，所以 `sfly-std` 只来自控制面的索引，PyPI 镜像上
 ///   有人放了同名的更高版本也不会被装上。这是 uv 的默认策略，仍然写在命令行上：环境变量 `UV_INDEX_STRATEGY` 或
 ///   用户级的 uv 配置换成别的策略（例如「在所有索引里选最高版本」）时，命令行的值优先，防线不会被悄悄拆掉。
