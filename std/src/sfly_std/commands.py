@@ -49,11 +49,11 @@ class CommandResult:
     stdout: str
     #: 标准错误的最后 64 KiB。
     stderr: str
-    #: 产物 stdout.txt（完整的标准输出）的引用（下载地址，不是本地路径）；`save_output` 为 False
-    #: 时是 None。
-    stdout_file: str | None
-    #: 产物 stderr.txt（完整的标准错误）的引用；`save_output` 为 False 时是 None。
-    stderr_file: str | None
+    #: 保存下来的完整标准输出的产物引用（下载地址，可以交给后面的节点下载；不是本地路径，
+    #: 本地调试时恰好是路径，上了 Agent 就不是）；`save_output` 为 False 时是 None。
+    stdout_ref: str | None
+    #: 保存下来的完整标准错误的产物引用；`save_output` 为 False 时是 None。
+    stderr_ref: str | None
     #: 完整标准输出实际保存成的产物名称（`ctx.artifacts.path(它)` 是本地文件）；
     #: `save_output` 为 False 时是 None。
     stdout_artifact: str | None = None
@@ -137,7 +137,7 @@ def run_command(
 
     `shell` 是任何能用 `-c` 执行一段命令的程序（`/bin/bash`、`python3` 等）；`env` 追加在执行器的
     环境变量之上；`cwd` 必须已经存在。标准输出和标准错误实时转为任务日志；`save_output` 为 True 时
-    完整的输出各保存为一个产物（`stdout_file`、`stderr_file` 是产物引用，可以交给后面的节点下载）。
+    完整的输出各保存为一个产物（`stdout_ref`、`stderr_ref` 是产物引用，可以交给后面的节点下载）。
     产物名称默认每次调用不同：第一次是 `stdout.txt`、`stderr.txt`，同一个节点里再调用依次是
     `stdout-2.txt`、`stdout-3.txt`……，前一次的输出不会被覆盖；用 `stdout_artifact`、
     `stderr_artifact` 自己指定名称时直接用这个名称（同名的已有产物被覆盖）。实际用的名称在返回值的
@@ -146,13 +146,20 @@ def run_command(
     退出码不在 `ok_exit_codes` 里时抛出 `CommandFailed`，信息是退出码、命令和标准错误的末尾；
     解释器不存在抛出 `FileNotFoundError`（`start_background_process` 在同样的情况下抛出的是
     `StartFailed`，两个函数不同），`cwd` 不存在抛出 `NotADirectoryError`；没有打开 `save_output`
-    却给了 `stdout_artifact` 或 `stderr_artifact` 时抛出 `ValueError`。
+    却给了 `stdout_artifact` 或 `stderr_artifact`、给的产物名称不合法、两个名称相同时抛出
+    `ValueError`（命令启动之前就检查，不会先跑起命令再报错）。
     任务被取消或超时时，命令和它启动的全部子进程都由平台终止（它们和执行器在同一个进程组里），
     `sfly.Cancelled` 照常往外传，不用自己终止命令。
     """
     _process.check_cwd(cwd)
     if not save_output and (stdout_artifact is not None or stderr_artifact is not None):
         raise ValueError("给了 stdout_artifact 或 stderr_artifact 时要同时打开 save_output")
+    # 自己给的产物名称在命令启动之前就检查：不合法时不能先跑起命令再报错。
+    for given in (stdout_artifact, stderr_artifact):
+        if given is not None:
+            ctx.artifacts.ref(given)
+    if stdout_artifact is not None and stdout_artifact == stderr_artifact:
+        raise ValueError(f"stdout_artifact 和 stderr_artifact 不能是同一个产物：{stdout_artifact}")
     try:
         proc = subprocess.Popen(
             [shell, "-c", command],
@@ -168,8 +175,16 @@ def run_command(
     # 命令启动之后才认领产物名称：命令没能启动时不留下空的产物。
     out_name = err_name = None
     if save_output:
-        out_name = stdout_artifact or _names.claim(ctx.artifacts.path, STDOUT_ARTIFACT)
-        err_name = stderr_artifact or _names.claim(ctx.artifacts.path, STDERR_ARTIFACT)
+        out_name = (
+            stdout_artifact
+            if stdout_artifact is not None
+            else _names.claim(ctx.artifacts.path, STDOUT_ARTIFACT)
+        )
+        err_name = (
+            stderr_artifact
+            if stderr_artifact is not None
+            else _names.claim(ctx.artifacts.path, STDERR_ARTIFACT)
+        )
     stdout = _Forward(ctx, sys.stdout.buffer, out_name)
     stderr = _Forward(ctx, sys.stderr.buffer, err_name)
     stdout.start(proc.stdout)
@@ -201,8 +216,8 @@ def run_command(
         exit_code=exit_code,
         stdout=stdout.text(),
         stderr=stderr.text(),
-        stdout_file=stdout.ref,
-        stderr_file=stderr.ref,
+        stdout_ref=stdout.ref,
+        stderr_ref=stderr.ref,
         stdout_artifact=out_name,
         stderr_artifact=err_name,
     )

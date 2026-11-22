@@ -5,7 +5,8 @@
 - `monitor_processes`：一组目标进程（默认连同全部子孙进程）的资源，合计加每个进程各自一个序列，
   每次采样的明细写进产物 `processes.csv`（同一个节点里再调用依次是 `processes-2.csv`……，也可以用
   `csv_artifact` 指定名称），返回 `ProcessMonitorResult`。目标可以按进程号、进程名或命令行指定，
-  被监控的进程重启之后（`refind` 秒内）按名字重新找到它、接着监控，不会因为进程换了一个就结束。
+  被监控的进程重启之后（`refind_within` 秒内）按名字重新找到它、接着监控，不会因为进程换了一个
+  就结束。
 
 指标要在调用它们的节点的 `@node` 里声明：用这里导出的 `SYSTEM_METRICS`、`SYSTEM_CHARTS`、
 `PROCESS_METRICS`、`PROCESS_CHARTS`（都是元组，要加自己的指标时 `PROCESS_METRICS + (Metric(…),)`）：
@@ -13,7 +14,7 @@
     @node(title="压测期间监控", metrics=PROCESS_METRICS, charts=PROCESS_CHARTS,
           primary_metric="cpu_percent")
     def watch(ctx: Context, name: str) -> None:
-        monitor_processes(ctx, name=name, refind=30)
+        monitor_processes(ctx, name=name, refind_within=30)
 
 不设置 `duration` 时一直采样，直到任务被取消（`sfly.Cancelled` 从 `time.sleep` 里抛出，已上报的
 指标都保留），所以要放在子流程里和压测同时运行，由停止子流程节点停止。路径参数可以是 `str` 或
@@ -38,9 +39,9 @@ from typing import Literal, NamedTuple, TypedDict
 import psutil
 
 from sfly import Chart, Context, Metric
-from sfly_std import _names, _process
+from sfly_std import _names, _params, _process
+from sfly_std._finder import ProcessFinder, ProcessTarget
 from sfly_std._sampling import rate, validate_duration, validate_interval
-from sfly_std.processes import ProcessFinder, ProcessTarget
 from sfly_std.waiting import poll_until
 
 __all__ = [
@@ -336,13 +337,13 @@ class ProcessMonitorResult:
     #: 采样了多少次。
     samples: int
     #: 明细产物的引用（下载地址，不是本地路径）：每个进程每次采样的明细。
-    processes_csv: str
+    csv_ref: str
     #: 明细实际保存成的产物名称（`ctx.artifacts.path(它)` 是本地文件）。
     csv_artifact: str
 
 
 class ProcessNotFound(Exception):
-    """等了 `wait_for_process` 秒，仍有目标没有匹配到进程。"""
+    """等了 `appear_within` 秒，仍有目标没有匹配到进程。"""
 
 
 class ProcessExited(Exception):
@@ -427,18 +428,18 @@ def monitor_processes(
     name: str | Sequence[str] | None = None,
     match: str | Sequence[str] | None = None,
     include_children: bool = True,
-    wait_for_process: float = 60,
+    appear_within: float = 60,
     interval: float = 1,
     duration: float | None = None,
     on_exit: Literal["fail", "succeed"] = "fail",
-    refind: float = 0,
+    refind_within: float = 0,
     csv_artifact: str | None = None,
 ) -> ProcessMonitorResult:
     """统计目标进程（默认连同全部子孙进程）用了多少资源，上报合计和每个进程各自的指标。
 
     目标用 `pid`（进程号）、`name`（进程名，必须完全一致）、`match`（命令行的正则，部分匹配）指定，
     都可以是单个值或列表，至少给一个。每个进程每次采样的明细写进产物 `processes.csv`，进程列表有
-    变化时写一条任务日志。指标按 `PROCESS_METRICS` 声明。开始时最多等 `wait_for_process` 秒让每个
+    变化时写一条任务日志。指标按 `PROCESS_METRICS` 声明。开始时最多等 `appear_within` 秒让每个
     目标都出现，等不到时抛出 `ProcessNotFound`，信息列出没找到的目标。
 
     `duration` 秒后成功返回；不设置时一直采样，直到任务被取消（已上报的指标和已写的明细都保留）。
@@ -449,7 +450,7 @@ def monitor_processes(
     `processes-2.csv`、`processes-3.csv`……（前一次的明细不会被覆盖）；用 `csv_artifact` 指定名称时
     直接用它（同名的已有产物被覆盖）。实际用的名称在返回值的 `csv_artifact` 里。
 
-    `refind` 解决被监控的进程会重启的问题（崩溃后被拉起、发版时被替换）：给了 `refind`（秒）时，
+    `refind_within` 解决被监控的进程会重启的问题（崩溃后被拉起、发版时被替换）：给了它（秒）时，
     按 `name` 或 `match` 指定的目标，进程退出之后最多再等这么多秒让新的进程出现，出现了就接着监控
     （日志里写明），超过时才按 `on_exit` 处理；等待期间不上报指标（没有进程可统计）。按 `pid`
     指定的目标不能这样找（进程号是一次性的），退出了就按 `on_exit` 处理。默认 0：不等。
@@ -463,10 +464,15 @@ def monitor_processes(
     targets = ProcessFinder(pid=pid, name=name, match=match, include_children=include_children)
     validate_interval(interval)
     validate_duration(duration)
-    if refind < 0:
-        raise ValueError(f"refind 不能为负数，实际为 {refind:g}")
+    _params.seconds("appear_within", appear_within)
+    _params.seconds("refind_within", refind_within)
+    _params.choice("on_exit", on_exit, ("fail", "succeed"))
+    if refind_within < 0:
+        raise ValueError(f"refind_within 不能为负数，实际为 {refind_within:g}")
+    if csv_artifact is not None:
+        ctx.artifacts.ref(csv_artifact)  # 名称不合法时马上报错，不要等到目标出现之后
 
-    _wait_for_targets(ctx, targets, wait_for_process)
+    _wait_for_targets(ctx, targets, appear_within)
     tracked: dict[int, _Tracked] = {}
     _refresh(targets, tracked)
     ctx.log.info(
@@ -475,9 +481,11 @@ def monitor_processes(
 
     started = last_log = time.monotonic()
     count = 0
-    # 按名字指定的目标：从什么时候起没有匹配的进程（`refind` 用）。
+    # 按名字指定的目标：从什么时候起没有匹配的进程（`refind_within` 用）。
     missing_since: dict[ProcessTarget, float] = {}
-    csv_name = csv_artifact or _names.claim(ctx.artifacts.path, CSV_NAME)
+    csv_name = (
+        csv_artifact if csv_artifact is not None else _names.claim(ctx.artifacts.path, CSV_NAME)
+    )
     with open(ctx.artifacts.path(csv_name), "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         writer.writeheader()
@@ -495,14 +503,14 @@ def monitor_processes(
                 writer.writerow({"time": now, **{k: "" if v is None else v for k, v in s.items()}})
             f.flush()
             count += 1
-            # 等被监控的进程重新出现期间（给了 refind、这一次一个进程都没采到）没有进程可统计：
-            # 不上报全是 0 的合计。
-            if samples or refind <= 0:
+            # 等被监控的进程重新出现期间（给了 refind_within、这一次一个进程都没采到）没有进程可
+            # 统计：不上报全是 0 的合计。
+            if samples or refind_within <= 0:
                 _report_totals(ctx, samples)
                 _report_by_process(ctx, samples)
 
             exited, added, removed = _refresh(targets, tracked)
-            exited = _still_exited(ctx, exited, missing_since, refind)
+            exited = _still_exited(ctx, exited, missing_since, refind_within)
             if added or removed:
                 lines = [f"新增 {t.describe()}" for t in added]
                 lines += [f"已退出 pid {t.proc.pid} {t.name}" for t in removed]
@@ -519,7 +527,7 @@ def monitor_processes(
                 ctx.log.info("目标进程已退出：%s；on_exit 为 succeed，结束监控", what)
                 break
     return ProcessMonitorResult(
-        samples=count, processes_csv=ctx.artifacts.ref(csv_name), csv_artifact=csv_name
+        samples=count, csv_ref=ctx.artifacts.ref(csv_name), csv_artifact=csv_name
     )
 
 
@@ -667,15 +675,15 @@ def _still_exited(
     ctx: Context,
     exited: list[ProcessTarget],
     missing_since: dict[ProcessTarget, float],
-    refind: float,
+    refind_within: float,
 ) -> list[ProcessTarget]:
-    """`refind` 秒内按名字指定的目标还没有重新出现之前不算退出：返回真的该按 `on_exit` 处理的目标，
-    并记下等待的开始和重新出现（写日志）。"""
+    """`refind_within` 秒内按名字指定的目标还没有重新出现之前不算退出：返回真的该按 `on_exit`
+    处理的目标，并记下等待的开始和重新出现（写日志）。"""
     now = time.monotonic()
     for target in [t for t in missing_since if t not in exited]:
         waited = now - missing_since.pop(target)
         ctx.log.info("目标 %s 重新出现，等了 %.1f 秒，接着监控", target.label, waited)
-    if refind <= 0:
+    if refind_within <= 0:
         return exited
     gone: list[ProcessTarget] = []
     for target in exited:
@@ -684,7 +692,9 @@ def _still_exited(
             continue
         since = missing_since.setdefault(target, now)
         if since == now:
-            ctx.log.info("目标 %s 的进程都退出了，最多再等 %g 秒让它重新出现", target.label, refind)
-        if now - since >= refind:
+            ctx.log.info(
+                "目标 %s 的进程都退出了，最多再等 %g 秒让它重新出现", target.label, refind_within
+            )
+        if now - since >= refind_within:
             gone.append(target)
     return gone

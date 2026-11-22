@@ -62,8 +62,8 @@ def watch_files(
     result = watch_agent_files(
         ctx,
         source,
-        directory,
-        local_dir,
+        directory=directory,
+        local_dir=local_dir,
         pattern=pattern,
         stable=stable or 0,
         delete_source=delete_source,

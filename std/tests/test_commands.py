@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ def test_returns_the_exit_code_and_the_output_tails(tmp_path: Path) -> None:
     result = run_command(run.ctx, "echo 你好; echo 警告 >&2")
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "你好\n", "警告\n")
-    assert result.stdout_file is None and result.stderr_file is None
+    assert result.stdout_ref is None and result.stderr_ref is None
     assert result.stdout_artifact is None and result.stderr_artifact is None
 
 
@@ -25,7 +26,7 @@ def test_save_output_keeps_the_whole_output_as_artifacts(tmp_path: Path) -> None
 
     result = run_command(run.ctx, "echo 完整输出", save_output=True)
 
-    assert result.stdout_file is not None
+    assert result.stdout_ref is not None
     assert (result.stdout_artifact, result.stderr_artifact) == ("stdout.txt", "stderr.txt")
     assert (tmp_path / "artifacts" / "stdout.txt").read_text() == "完整输出\n"
     assert (tmp_path / "artifacts" / "stderr.txt").read_text() == ""
@@ -89,12 +90,12 @@ def test_every_call_saves_its_output_under_a_different_artifact_name(tmp_path: P
         "stderr-2.txt",
         "stderr-3.txt",
     ]
-    assert len({r.stdout_file for r in (first, second, third)}) == 3
+    assert len({r.stdout_ref for r in (first, second, third)}) == 3
     assert (artifacts / "stdout.txt").read_text() == "第一次\n"
     assert (artifacts / "stderr.txt").read_text() == "第一次错误\n"
     assert (artifacts / "stdout-2.txt").read_text() == "第二次\n"
     assert (artifacts / "stderr-2.txt").read_text() == "第二次错误\n"
-    assert first.stdout_file is not None and first.stdout_file.endswith("stdout.txt")
+    assert first.stdout_ref is not None and first.stdout_ref.endswith("stdout.txt")
 
 
 def test_the_artifact_names_can_be_chosen_and_then_they_are_used_as_given(tmp_path: Path) -> None:
@@ -129,3 +130,31 @@ def test_a_command_that_cannot_start_leaves_no_empty_artifacts(tmp_path: Path) -
     # 解释器不存在抛出 FileNotFoundError，工作目录不存在抛出 NotADirectoryError。
     with pytest.raises(NotADirectoryError):
         run_command(run.ctx, "true", cwd=tmp_path / "missing")
+
+
+def test_an_invalid_artifact_name_fails_before_the_command_starts(tmp_path: Path) -> None:
+    # 命令已经跑起来了才报错的话，调用方以为命令没执行（`except Exception` 之后继续），其实执行了。
+    run = DirectRun(tmp_path)
+    marker = tmp_path / "started"
+    command = f"sleep 0.3; touch {marker}"
+
+    for bad in ["../x.txt", "a\\b.txt", "", "/abs.txt"]:
+        with pytest.raises(ValueError):
+            run_command(run.ctx, command, save_output=True, stdout_artifact=bad)
+        with pytest.raises(ValueError):
+            run_command(run.ctx, command, save_output=True, stderr_artifact=bad)
+    with pytest.raises(ValueError, match="不能是同一个产物"):
+        run_command(
+            run.ctx, command, save_output=True, stdout_artifact="a.txt", stderr_artifact="a.txt"
+        )
+    time.sleep(0.8)
+
+    assert not marker.exists(), "命令在参数检查失败之后还是被启动了"
+
+
+def test_the_same_artifact_name_for_stdout_and_stderr_is_the_default_never(tmp_path: Path) -> None:
+    run = DirectRun(tmp_path)
+
+    result = run_command(run.ctx, "echo out; echo err >&2", save_output=True)
+
+    assert result.stdout_artifact != result.stderr_artifact

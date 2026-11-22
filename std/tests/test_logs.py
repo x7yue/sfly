@@ -136,3 +136,18 @@ def test_wait_for_log_line_times_out_naming_the_file_and_the_pattern(tmp_path: P
         wait_for_log_line(run.ctx, str(path), "不会出现", wait=0.3, poll=0.1)
     with pytest.raises(ValueError):
         wait_for_log_line(run.ctx, str(path), "(", wait=0.1)
+
+
+@pytest.mark.parametrize("wrong", ["begin", "END", "tail", ""])
+def test_read_from_only_takes_end_or_start(tmp_path: Path, wrong: str) -> None:
+    # 写错的值以前一律当成「从头读」（再早是「从末尾读」，回退的方向反过来了）。
+    run = DirectRun(tmp_path)
+    path = tmp_path / "app.log"
+    path.write_text("ready\n")
+
+    with pytest.raises(ValueError, match='read_from 只能是 "end" 或 "start"'):
+        LogFile(path, read_from=wrong)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match='read_from 只能是 "end" 或 "start"'):
+        follow_log_file(run.ctx, path, read_from=wrong, duration=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match='read_from 只能是 "end" 或 "start"'):
+        wait_for_log_line(run.ctx, path, "ready", read_from=wrong, wait=1)  # type: ignore[arg-type]

@@ -12,7 +12,7 @@ import psutil
 
 from sfly import Context, Doc, node
 from sfly_std import _process
-from sfly_std.processes import ProcessFinder
+from sfly_std._finder import ProcessFinder
 
 #: 失败信息里最多列出多少个进程。
 LIST_LIMIT = 20

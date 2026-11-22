@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -43,15 +44,39 @@ NODE_ENTRIES: dict[str, str] = {
 
 LINUX = sys.platform.startswith("linux")
 
-_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 #: 「执行到 …… 第 N 行」「出错位置：…… 第 N 行」：逻辑搬进辅助函数模块后位置会变。
-_WHERE = re.compile(r"(执行到|出错位置：) ?\S+ 第 N 行")
-#: 输出里内容固定、要逐字比较的数值；其余数值（进程号、采样次数、耗时）抹成 N。
-_EXACT_KEYS = {"exit_code", "count", "total_bytes", "size", "lines", "was_running"}
+_WHERE = re.compile(r"(执行到|出错位置：) ?\S+ 第 \d+ 行")
+#: 每次运行都不一样的数：小数（耗时、间隔）和四位以上的整数（端口、进程号、字节数的大数）；
+#: 小整数（退出码、个数、秒数、宽限期）逐字比较，写错一个数夹具就红。
+_DECIMAL = re.compile(r"\d+\.\d+")
+_BIG = re.compile(r"\d{4,}")
+#: 进程号、进程组号（容器里可能是三位以下的小数）和采样次数：随机，也抹掉。
+_PIDS = re.compile(r"(pid |进程 |进程组 )\d+")
+_SAMPLES = re.compile(r"(共采样 )\d+( 次)")
+#: 输出里每次运行都不一样的键：进程号、采样次数；其余的值逐字比较。
+_VARIABLE_KEYS = {"pid", "samples"}
+#: 输出里命令的输出、日志里匹配的那一行：内容就是被测的东西，只抹临时目录，不动数字。
+_VERBATIM_KEYS = {"stdout", "stderr", "line"}
 #: 因机器而异的指标：磁盘、网卡的个数不同；按进程的磁盘读写只有 Linux 上读得到。
 _MACHINE_METRICS = re.compile(r"_by_(nic|disk)$|^io_(read|write)_bytes_per_s_by_process$")
 #: 错误信息里列出的本机的网卡、磁盘（每台机器不同）。
 _MACHINE_LISTS = re.compile(r"(本机的(?:网卡|磁盘)有：).*")
+
+
+def first_metric(partial: Any) -> bool:
+    """取消的时机：第一个指标上报之后。不按「开始后几秒」：执行器启动的快慢不同，取消正好卡在
+    每秒上报一次指标的边上时，有没有指标就不稳定。"""
+    return bool(partial.metrics)
+
+
+def wait_for_text(path: Path, text: str, seconds: float = 20) -> None:
+    """等 `path` 里出现 `text`（被测的进程已经装好信号处理，再去停它）。"""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if path.exists() and text in path.read_text(errors="replace"):
+            return
+        time.sleep(0.05)
+    raise TimeoutError(f"{path} 里 {seconds} 秒内没有出现 {text!r}")
 
 
 def free_port() -> int:
@@ -73,7 +98,9 @@ class Normalizer:
             text = text.replace(tmp, "<TMP>")
         text = _MACHINE_LISTS.sub(r"\1<列表>", text)
         text = re.sub(r"/(?:private/)?(?:var|tmp)/[^\s'\"]*?(?=[\s'\"]|$)", "<TMPPATH>", text)
-        return _WHERE.sub(r"\1 <位置>", _NUMBER.sub("N", text))
+        text = _WHERE.sub(r"\1 <位置>", text)
+        text = _PIDS.sub(r"\1N", _SAMPLES.sub(r"\1N\2", text))
+        return _BIG.sub("N", _DECIMAL.sub("F", text))
 
     def outputs(self, value: Any, key: str = "") -> Any:
         if isinstance(value, dict):
@@ -83,11 +110,13 @@ class Normalizer:
         if isinstance(value, bool) or value is None:
             return value
         if isinstance(value, (int, float)):
-            return value if key in _EXACT_KEYS else "N"
+            return "N" if key in _VARIABLE_KEYS else value
         if isinstance(value, str):
-            for tmp in self._tmp:
-                value = value.replace(tmp, "<TMP>")
-            return re.sub(r"\d{4,}", "N", value) if key == "log_file" else value
+            if key in _VERBATIM_KEYS:
+                for tmp in self._tmp:
+                    value = value.replace(tmp, "<TMP>")
+                return value
+            return self.text(value)  # 路径、产物引用：临时目录、进程号这些抹掉
         return value
 
 
@@ -96,19 +125,19 @@ def summarize(result: Any, norm: Normalizer) -> dict[str, Any]:
     error = result.error
     # 失败时执行器把堆栈写到 stderr（文件路径、代码行都随实现变）：堆栈本身不比对。
     traceback = set(error.traceback.splitlines()) if error and error.traceback else set()
-    logs = {
-        (log.level, log.source, norm.text(log.message))
-        for log in result.logs
-        if not (log.source == "stderr" and log.message in traceback)
-    }
+    # 日志按来源（sdk、stdout、stderr）分开，各自保持顺序、不去重：条数和顺序都比；
+    # 不同来源之间走各自的管道，先后不一定。
+    logs: dict[str, list[list[str]]] = {}
+    for log in result.logs:
+        if log.source == "stderr" and log.message in traceback:
+            continue
+        logs.setdefault(log.source, []).append([log.level, norm.text(log.message)])
     return {
         "status": result.status,
         "error_type": error.type if error else None,
         "error_kind": error.kind if error else None,
-        "error_message": norm.text(error.message.splitlines()[0])
-        if error and error.message
-        else None,
-        "logs": sorted(logs),
+        "error_message": norm.text(error.message) if error and error.message else None,
+        "logs": logs,
         "outputs": norm.outputs(result.outputs) if result.outputs is not None else None,
         "metric_names": sorted(
             {m.name for m in result.metrics if not _MACHINE_METRICS.search(m.name)}
@@ -124,10 +153,19 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
     norm = Normalizer(tmp)
     cases: dict[str, dict[str, Any]] = {}
 
-    def case(name: str, node: str, inputs: Mapping[str, Any], **run_kwargs: Any) -> None:
+    def case(
+        name: str,
+        node: str,
+        inputs: Mapping[str, Any],
+        *,
+        work: str | None = None,
+        **run_kwargs: Any,
+    ) -> None:
         if only is not None and name not in only:
             return
-        result = run_node(NODE_ENTRIES[node], dict(inputs), work_dir=tmp / name, **run_kwargs)
+        result = run_node(
+            NODE_ENTRIES[node], dict(inputs), work_dir=tmp / (work or name), **run_kwargs
+        )
         cases[name] = summarize(result, norm)
 
     # ---- shell ----
@@ -139,7 +177,7 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
     case("shell_no_interpreter", "shell", {"command": "true", "shell": "/nonexistent/sh"})
     case("shell_bad_cwd", "shell", {"command": "true", "cwd": str(tmp / "no-such-dir")})
     case("shell_env", "shell", {"command": "echo $GREETING", "env": {"GREETING": "hello"}})
-    case("shell_cancel", "shell", {"command": "sleep 30"}, cancel_after=1.0, grace=3)
+    case("shell_cancel", "shell", {"command": "sleep 30"}, cancel_after=2.0, grace=3)
 
     # ---- start_process / stop_process ----
     case("start_ok", "start_process", {"command": "echo started"})
@@ -156,13 +194,30 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
     sleeper = subprocess.Popen(["sleep", "30"], start_new_session=True)
     case("stop_real", "stop_process", {"pid": sleeper.pid, "grace": 2})
     sleeper.wait()
+    # 服务忽略 SIGTERM（SIGKILL 的路径）：用 start_process 起（看护进程记退出码），再用
+    # stop_process 停，两个节点用同一个 work_dir，相当于同一次运行里的两个节点。
+    stubborn = tmp / "stop_sigkill"
+    if only is None or "stop_sigkill" in only:
+        started = run_node(
+            NODE_ENTRIES["start_process"],
+            {"command": "trap '' TERM; echo ready; while true; do sleep 0.2; done"},
+            work_dir=stubborn,
+        )
+        assert started.outputs is not None, started.error
+        wait_for_text(Path(started.outputs["log_file"]), "ready")
+        case(
+            "stop_sigkill",
+            "stop_process",
+            {"pid": started.outputs["pid"], "grace": 1},
+            work="stop_sigkill",
+        )
 
     # ---- wait_port ----
     port = free_port()
     case("wait_port_timeout", "wait_port", {"port": port, "wait": 0.5, "poll": 0.2})
     case("wait_port_bad_port", "wait_port", {"port": 70000})
     case("wait_port_negative_wait", "wait_port", {"port": port, "wait": -1})
-    case("wait_port_cancel", "wait_port", {"port": port, "wait": 30, "poll": 0.2}, cancel_after=1.0)
+    case("wait_port_cancel", "wait_port", {"port": port, "wait": 30, "poll": 0.2}, cancel_after=2.0)
     with listening() as open_port:
         case("wait_port_ok", "wait_port", {"port": open_port, "wait": 5, "poll": 0.2})
 
@@ -199,6 +254,13 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
         {"path": str(log), "pattern": "ready", "wait": 0.5, "poll": 0.2},
     )
 
+    case(
+        "wait_log_cancel",
+        "wait_log_line",
+        {"path": str(tmp / "nolog"), "pattern": "x", "wait": 30, "poll": 0.2},
+        cancel_after=2.0,
+    )
+
     # ---- follow_log ----
     case(
         "follow_fail_on",
@@ -208,14 +270,15 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
     case("follow_duration", "follow_log", {"path": str(log), "read_from": "start", "duration": 0.6})
     case("follow_bad_regex", "follow_log", {"path": str(log), "fail_on": ["("]})
     case("follow_negative_duration", "follow_log", {"path": str(log), "duration": -1})
-    case("follow_cancel", "follow_log", {"path": str(log)}, cancel_after=1.0)
+    case("follow_cancel", "follow_log", {"path": str(log)}, cancel_when=first_metric)
 
     # ---- system_monitor ----
     case("sysmon_bad_nic", "system_monitor", {"nic": "nonexistent0", "duration": 0.3})
     case("sysmon_bad_disk_path", "system_monitor", {"disk_path": "/nonexistent", "duration": 0.3})
+    case("sysmon_bad_disk", "system_monitor", {"disk": "nonexistent-disk", "duration": 0.3})
     case("sysmon_bad_interval", "system_monitor", {"interval": 0})
     case("sysmon_duration", "system_monitor", {"interval": 0.2, "duration": 0.7})
-    case("sysmon_cancel", "system_monitor", {"interval": 0.2}, cancel_after=1.0)
+    case("sysmon_cancel", "system_monitor", {"interval": 0.2}, cancel_when=first_metric)
 
     # ---- process_monitor ----
     case("procmon_no_target", "process_monitor", {})
@@ -232,9 +295,39 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
             "process_monitor",
             {"pid": pid, "interval": 0.2, "on_exit": "succeed"},
         )
+    with sleeping(29.7):
+        case(
+            "procmon_match",
+            "process_monitor",
+            {"match": "sleep 29\\.7", "interval": 0.2, "duration": 0.7},
+        )
+    with sleeping(28.9) as first, sleeping(28.8) as second:
+        case(
+            "procmon_two_pids",
+            "process_monitor",
+            {"pid": [first, second], "interval": 0.2, "duration": 0.7},
+        )
+    parent = subprocess.Popen(["sh", "-c", "sleep 28.3 & wait"])
+    try:
+        time.sleep(0.5)  # 子进程起来
+        for children in (True, False):
+            case(
+                f"procmon_children_{str(children).lower()}",
+                "process_monitor",
+                {"pid": parent.pid, "include_children": children, "interval": 0.2, "duration": 0.7},
+            )
+    finally:
+        subprocess.run(["pkill", "-P", str(parent.pid)], check=False)
+        parent.kill()
+        parent.wait()
     with sleeping(30) as pid:
         case("procmon_duration", "process_monitor", {"pid": pid, "interval": 0.2, "duration": 0.7})
-        case("procmon_cancel", "process_monitor", {"pid": pid, "interval": 0.2}, cancel_after=1.0)
+        case(
+            "procmon_cancel",
+            "process_monitor",
+            {"pid": pid, "interval": 0.2},
+            cancel_when=first_metric,
+        )
 
     # ---- pull_files / watch_files（agents：本地目录模拟另一台 Agent）----
     agent_root = tmp / "agentA"
@@ -315,7 +408,7 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
             "watch_files",
             {"source": "A", "directory": "/srv", "local_dir": "gotc"},
             agents=agents,
-            cancel_after=2.0,
+            cancel_when=first_metric,
         )
     return cases
 

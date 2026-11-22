@@ -92,7 +92,7 @@ def process_monitor(
             name=name,
             match=match,
             include_children=include_children,
-            wait_for_process=wait_for_process,
+            appear_within=wait_for_process,
             interval=interval,
             duration=duration,
             on_exit=on_exit,
@@ -102,4 +102,4 @@ def process_monitor(
         raise ProcessNotFound(*error.args) from None
     except _ProcessExited as error:
         raise ProcessExited(*error.args) from None
-    return {"samples": result.samples, "processes_csv": result.processes_csv}
+    return {"samples": result.samples, "processes_csv": result.csv_ref}

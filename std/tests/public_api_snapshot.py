@@ -119,7 +119,7 @@ def _methods(cls: type, *, init: bool = False) -> list[str]:
         if isinstance(member, property):
             lines.append(f"property {name} -> {_ret(member.fget)}")
         elif inspect.isfunction(member):
-            params = ", ".join(_params(member, skip_self=True)) or "-"
+            params = " ; ".join(_params(member, skip_self=True)) or "-"
             lines.append(f"method {name}({params}) -> {_ret(member)}")
     return lines
 
@@ -127,7 +127,8 @@ def _methods(cls: type, *, init: bool = False) -> list[str]:
 def _item(item: Any) -> str:
     """常量里的一项：指标写名字、类型和标签，图表写标题、类型和用到的指标。"""
     if hasattr(item, "labels") and hasattr(item, "kind"):
-        return f"metric {item.name} kind={item.kind} labels={tuple(item.labels)!r}"
+        unit = f" unit={item.unit!r}" if item.unit else ""
+        return f"metric {item.name} kind={item.kind}{unit} labels={tuple(item.labels)!r}"
     if hasattr(item, "title") and hasattr(item, "metrics"):
         return f"chart {item.title} type={item.type} metrics={tuple(item.metrics)!r}"
     return f"item {item!r}"
@@ -211,6 +212,8 @@ def _compare_item(
         _compare_dataclass(path, old_header, old, new_header, new, diff)
     elif kind == "constant":
         _compare_constant(path, old_header, old, new_header, new, diff)
+    elif kind == "class":
+        _compare_members(path, old, new, diff)
     elif old_header != new_header or old != new:
         diff.breaking.append(f"{path} 变了：{old_header} → {new_header}（{old} → {new}）")
 
@@ -225,11 +228,15 @@ def _split(line: str) -> tuple[str, str, str | None]:
 def _compare_function(
     path: str, old_header: str, old: list[str], new_header: str, new: list[str], diff: Diff
 ) -> None:
-    if old_header.rpartition(" -> ")[2] != new_header.rpartition(" -> ")[2]:
-        diff.breaking.append(
-            f"{path} 的返回值类型变了：{old_header.rpartition(' -> ')[2]}"
-            f" → {new_header.rpartition(' -> ')[2]}"
-        )
+    old_ret, new_ret = old_header.rpartition(" -> ")[2], new_header.rpartition(" -> ")[2]
+    if old_ret != new_ret:
+        diff.breaking.append(f"{path} 的返回值类型变了：{old_ret} → {new_ret}")
+    _compare_params(path, old, new, diff)
+
+
+def _compare_params(path: str, old: list[str], new: list[str], diff: Diff) -> None:
+    """参数行（`pos name: 类型`、`kw name: 类型 = 默认值`）的兼容性：位置参数不变，已有的关键字
+    参数名、类型、默认值不变，新增的只能是带默认值的关键字参数。"""
     old_pos = [_split(line) for line in old if not line.startswith("kw ")]
     new_pos = [_split(line) for line in new if not line.startswith("kw ")]
     if new_pos[: len(old_pos)] != old_pos:
@@ -255,6 +262,42 @@ def _compare_function(
                 diff.added.append(f"{path} 新增参数 {head}: {annotation} = {default}")
 
 
+def _compare_members(path: str, old: list[str], new: list[str], diff: Diff) -> None:
+    """类的属性、property 和方法：已有的不变，新增的兼容；`__init__` 和方法的参数按函数的规则。"""
+    old_by_name = {_member_name(line): line for line in old}
+    new_by_name = {_member_name(line): line for line in new}
+    for name, line in old_by_name.items():
+        if name not in new_by_name:
+            diff.breaking.append(f"{path} 删除了 {name}")
+            continue
+        other = new_by_name[name]
+        if line == other:
+            continue
+        if line.startswith("method ") and other.startswith("method "):
+            old_params, old_ret = _method_signature(line)
+            new_params, new_ret = _method_signature(other)
+            if old_ret != new_ret:
+                diff.breaking.append(f"{path}.{name} 的返回值类型变了：{old_ret} → {new_ret}")
+            _compare_params(f"{path}.{name}", old_params, new_params, diff)
+        else:
+            diff.breaking.append(f"{path} 的 {name} 变了：{line} → {other}")
+    for name, line in new_by_name.items():
+        if name not in old_by_name:
+            diff.added.append(f"{path} 新增 {line}")
+
+
+def _member_name(line: str) -> str:
+    """`method lines(-) -> …`、`property label -> …`、`attribute path: …` 里的名字。"""
+    return line.split(" ", 1)[1].split("(")[0].split(" ")[0].rstrip(":")
+
+
+def _method_signature(line: str) -> tuple[list[str], str]:
+    """`method name(P1 ; P2) -> RET` → ([P1, P2], RET)。"""
+    inside = line.split("(", 1)[1].rpartition(") -> ")
+    params = [] if inside[0] == "-" else inside[0].split(" ; ")
+    return params, inside[2]
+
+
 def _compare_dataclass(
     path: str, old_header: str, old: list[str], new_header: str, new: list[str], diff: Diff
 ) -> None:
@@ -272,8 +315,7 @@ def _compare_dataclass(
                 diff.breaking.append(f"{path} 新增的字段 {line.removeprefix('field ')} 没有默认值")
     old_other = [x for x in old if not x.startswith("field ")]
     new_other = [x for x in new if not x.startswith("field ")]
-    if old_other != new_other:
-        diff.breaking.append(f"{path} 的方法变了：{old_other} → {new_other}")
+    _compare_members(path, old_other, new_other, diff)
 
 
 def _compare_constant(

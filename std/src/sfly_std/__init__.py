@@ -4,19 +4,20 @@
 
 - `sfly_std.commands`：`run_command` 执行一段命令，输出实时转成任务日志；
 - `sfly_std.processes`：`start_background_process`、`stop_background_process` 起停跨节点存活的
-  后台进程，`find_processes`、`ProcessFinder` 按进程号、进程名或命令行找进程；
+  后台进程，`background_exit_status` 读它的状态，`find_processes` 按进程号、进程名或命令行找进程；
 - `sfly_std.resources`：`monitor_system`、`monitor_processes` 采样整机或一组进程的资源并上报指标，
-  进程重启后按名字重新找到它（`refind`）；
+  进程重启后按名字重新找到它（`refind_within`）；
 - `sfly_std.logs`：`LogFile`、`follow_log_file`、`wait_for_log_line` 像 `tail -F` 一样读日志，
   处理轮转和截断；
 - `sfly_std.waiting`：`poll_until`、`wait_for_port`、`wait_for_file` 等条件成立、判断文件写完；
 - `sfly_std.agent_files`：`pull_files_from_agent`、`watch_agent_files` 经 Agent 能力从另一台机器
   拉文件。
 
-业务节点导入它们自己组合：函数能传参数、传回调，节点的行为由自己的代码决定。用法和一个完整的
-示例见开发文档「标准节点」页（docs/guide/standard-nodes.md）。写法上的约定：结果是 frozen 数据类
-（不返回裸的数字）；路径参数可以是 `str` 或 `os.PathLike`，返回的路径是 `pathlib.Path`；时间都以秒
-为单位；同一个节点里可以多次调用，默认的产物名、日志文件名每次不同。
+业务节点导入它们自己组合：函数有参数可以调（`poll_until` 还收回调），节点的行为由自己的代码决定。
+用法和一个完整的示例见开发文档「标准节点」页（docs/guide/standard-nodes.md）。写法上的约定：结果是
+frozen 数据类（不返回裸的数字）；路径参数可以是 `str` 或 `os.PathLike`，返回的路径是 `Path`；
+字段和参数的后缀：`*_path` 是本地路径，`*_artifact` 是产物的名称，`*_ref` 是产物的引用（下载地址，
+不是本地路径）；时间都以秒为单位；同一个节点里可以多次调用，默认的产物名、日志文件名每次不同。
 
 三个节点是这些函数上的薄封装：`shell`、`start_process`、`stop_process`。`sfly build` 导入全部
 子模块收集 `@node`，不需要在这里登记。

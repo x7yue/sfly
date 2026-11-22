@@ -65,14 +65,14 @@ def pull_files(
     result = pull_files_from_agent(
         ctx,
         source,
-        directory,
-        local_dir,
+        directory=directory,
+        local_dir=local_dir,
         pattern=pattern,
         recursive=recursive,
         delete_source=delete_source,
     )
     return {
-        "files": _pull.listed(result.files),
+        "files": _pull.listed(result.paths),
         "count": result.count,
         "total_bytes": result.total_bytes,
     }

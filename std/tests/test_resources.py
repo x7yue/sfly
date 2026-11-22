@@ -75,7 +75,7 @@ def test_a_restarted_process_is_found_again_by_name_within_refind_seconds(
     restarter.start()
     try:
         result = monitor_processes(
-            run.ctx, match=tag, refind=10, interval=0.2, duration=4, wait_for_process=5
+            run.ctx, match=tag, refind_within=10, interval=0.2, duration=4, appear_within=5
         )
     finally:
         restarter.join()
@@ -116,7 +116,7 @@ def test_without_refind_a_restart_ends_the_monitoring_with_process_exited(
     threading.Timer(0.6, first.kill).start()
 
     with pytest.raises(ProcessExited, match="目标进程已退出"):
-        monitor_processes(run.ctx, match=tag, interval=0.2, duration=10, wait_for_process=5)
+        monitor_processes(run.ctx, match=tag, interval=0.2, duration=10, appear_within=5)
 
 
 def test_a_process_that_does_not_come_back_within_refind_seconds_counts_as_exited(
@@ -130,7 +130,7 @@ def test_a_process_that_does_not_come_back_within_refind_seconds_counts_as_exite
 
     with pytest.raises(ProcessExited):
         monitor_processes(
-            run.ctx, match=tag, refind=1, interval=0.2, duration=20, wait_for_process=5
+            run.ctx, match=tag, refind_within=1, interval=0.2, duration=20, appear_within=5
         )
 
     assert time.monotonic() - started >= 1.6  # 先监控了约 0.6 秒，再等满 refind 的 1 秒
@@ -145,7 +145,7 @@ def test_on_exit_succeed_ends_quietly_after_refind_runs_out(
     threading.Timer(0.6, first.kill).start()
 
     result = monitor_processes(
-        run.ctx, match=tag, refind=0.5, on_exit="succeed", interval=0.2, duration=20
+        run.ctx, match=tag, refind_within=0.5, on_exit="succeed", interval=0.2, duration=20
     )
 
     assert result.samples >= 2
@@ -161,7 +161,7 @@ def test_refind_does_not_apply_to_targets_given_by_pid(
     started = time.monotonic()
 
     with pytest.raises(ProcessExited):
-        monitor_processes(run.ctx, pid=first.pid, refind=30, interval=0.2, duration=20)
+        monitor_processes(run.ctx, pid=first.pid, refind_within=30, interval=0.2, duration=20)
 
     assert time.monotonic() - started < 10
 
@@ -169,11 +169,11 @@ def test_refind_does_not_apply_to_targets_given_by_pid(
 def test_a_negative_refind_or_a_target_that_never_appears_is_an_error(tmp_path: Path) -> None:
     run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
 
-    with pytest.raises(ValueError, match="refind 不能为负数"):
-        monitor_processes(run.ctx, match="x", refind=-1)
+    with pytest.raises(ValueError, match="refind_within 不能为负数"):
+        monitor_processes(run.ctx, match="x", refind_within=-1)
     with pytest.raises(ProcessNotFound, match="没有找到目标进程"):
         monitor_processes(
-            run.ctx, match=f"no-such-{uuid.uuid4().hex}", wait_for_process=0.5, duration=1
+            run.ctx, match=f"no-such-{uuid.uuid4().hex}", appear_within=0.5, duration=1
         )
 
 
@@ -193,7 +193,7 @@ def test_refind_finds_a_restarted_process_by_name(tmp_path: Path, named_sleep: N
     restarter.start()
     try:
         result = monitor_processes(
-            run.ctx, name=name, refind=10, interval=0.2, duration=4, wait_for_process=5
+            run.ctx, name=name, refind_within=10, interval=0.2, duration=4, appear_within=5
         )
     finally:
         restarter.join()
@@ -225,7 +225,12 @@ def test_refind_keeps_sampling_the_other_target_while_one_of_two_is_restarting(
     try:
         # 一个目标在等待重新出现，另一个一直在：不失败，也不停止上报。
         result = monitor_processes(
-            run.ctx, match=[tag_a, tag_b], refind=10, interval=0.2, duration=4, wait_for_process=5
+            run.ctx,
+            match=[tag_a, tag_b],
+            refind_within=10,
+            interval=0.2,
+            duration=4,
+            appear_within=5,
         )
     finally:
         restarter.join()
@@ -257,7 +262,7 @@ def test_the_duration_can_run_out_while_waiting_for_a_process_to_come_back(
 
     # refind 比 duration 长：等待重新出现的时候 duration 到期，成功返回（不是 ProcessExited）。
     result = monitor_processes(
-        run.ctx, match=tag, refind=30, interval=0.2, duration=2, wait_for_process=5
+        run.ctx, match=tag, refind_within=30, interval=0.2, duration=2, appear_within=5
     )
 
     assert time.monotonic() - started < 10
@@ -265,7 +270,7 @@ def test_the_duration_can_run_out_while_waiting_for_a_process_to_come_back(
     assert any("最多再等 30 秒" in m for m in run.logs())
 
 
-def test_each_call_saves_its_own_processes_csv_unless_a_name_is_given(
+def test_each_call_saves_its_own_csv_ref_unless_a_name_is_given(
     tmp_path: Path, spawn: Callable[[str], subprocess.Popen[bytes]]
 ) -> None:
     # 压测前、压测中各采一段：两次调用的明细互不覆盖。
@@ -284,10 +289,43 @@ def test_each_call_saves_its_own_processes_csv_unless_a_name_is_given(
         "processes-2.csv",
         "压测/明细.csv",
     ]
-    assert len({first.processes_csv, second.processes_csv, named.processes_csv}) == 3
+    assert len({first.csv_ref, second.csv_ref, named.csv_ref}) == 3
     artifacts = tmp_path / "artifacts"
     assert len((artifacts / "processes.csv").read_text().splitlines()) >= 2
     assert len((artifacts / "processes-2.csv").read_text().splitlines()) >= 2
     assert (artifacts / "压测" / "明细.csv").exists()
     # 第二次调用没有覆盖第一次：第一次的明细行数和采样次数一致（每次采样一个进程一行，外加表头）。
     assert len((artifacts / "processes.csv").read_text().splitlines()) == first.samples + 1
+
+
+def test_booleans_for_seconds_and_unknown_choices_are_rejected_before_anything_runs(
+    tmp_path: Path,
+) -> None:
+    # `refind_within=True`（以前叫 refind）不报错，被当成 1 秒；`on_exit="Fail"` 被当成 succeed。
+    run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
+
+    with pytest.raises(ValueError, match="refind_within 是秒数，不能是布尔值"):
+        monitor_processes(run.ctx, match="x", refind_within=True)
+    with pytest.raises(ValueError, match="appear_within 是秒数，不能是布尔值"):
+        monitor_processes(run.ctx, match="x", appear_within=True)
+    with pytest.raises(ValueError, match="duration 是秒数，不能是布尔值"):
+        monitor_processes(run.ctx, match="x", duration=True)
+    with pytest.raises(ValueError, match='on_exit 只能是 "fail" 或 "succeed"，实际为 \'Fail\''):
+        monitor_processes(run.ctx, match="x", on_exit="Fail")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="interval 是秒数，不能是布尔值"):
+        monitor_system(run.ctx, interval=True)
+
+
+def test_a_bad_csv_artifact_name_fails_at_once_not_after_waiting_for_the_targets(
+    tmp_path: Path, spawn: Callable[[str], subprocess.Popen[bytes]]
+) -> None:
+    tag = f"tag-{uuid.uuid4().hex}"
+    spawn(tag)
+    run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
+    started = time.monotonic()
+
+    with pytest.raises(ValueError, match="产物名称"):
+        monitor_processes(run.ctx, match=tag, csv_artifact="../x.csv", duration=5)
+
+    assert time.monotonic() - started < 1
+    assert not (tmp_path / "artifacts").exists() or not list((tmp_path / "artifacts").iterdir())

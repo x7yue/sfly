@@ -3,8 +3,8 @@ dataclass sfly_std.commands.CommandResult frozen
   field exit_code: int
   field stdout: str
   field stderr: str
-  field stdout_file: str | None
-  field stderr_file: str | None
+  field stdout_ref: str | None
+  field stderr_ref: str | None
   field stdout_artifact: str | None = None
   field stderr_artifact: str | None = None
 function sfly_std.commands.run_command -> CommandResult
@@ -17,27 +17,19 @@ function sfly_std.commands.run_command -> CommandResult
   kw save_output: bool = False
   kw stdout_artifact: str | None = None
   kw stderr_artifact: str | None = None
+dataclass sfly_std.processes.BackgroundExit frozen
+  field supervised: bool
+  field running: bool
+  field exit_code: int | None
 dataclass sfly_std.processes.BackgroundProcess frozen
   field pid: int
-  field log_file: Path
-class sfly_std.processes.ProcessFinder
-  attribute targets: tuple[ProcessTarget, ...]
-  method __init__(kw pid: int | Sequence[int] | None = None, kw name: str | Sequence[str] | None = None, kw match: str | Sequence[str] | None = None, kw include_children: bool = True) -> None
-  method roots(-) -> dict[ProcessTarget, list[psutil.Process]]
-  method processes(pos roots: dict[ProcessTarget, list[psutil.Process]]) -> dict[int, psutil.Process]
-dataclass sfly_std.processes.ProcessTarget frozen
-  field kind: Literal['pid', 'name', 'match']
-  field pid: int = 0
-  field text: str = ''
-  field pattern: re.Pattern[str] | None = None
-  property label -> str
-  method matches(pos proc: psutil.Process, pos name: str, pos command: str) -> bool
+  field log_path: Path
 exception sfly_std.processes.StartFailed(Exception)
 exception sfly_std.processes.StopFailed(Exception)
 dataclass sfly_std.processes.StoppedProcess frozen
   field was_running: bool
   field exit_code: int | None
-function sfly_std.processes.background_exit_code -> int | None
+function sfly_std.processes.background_exit_status -> BackgroundExit
   pos ctx: Context
   pos pid: int
   kw wait: float = 2.0
@@ -52,7 +44,7 @@ function sfly_std.processes.start_background_process -> BackgroundProcess
   kw shell: str = '/bin/sh'
   kw env: dict[str, str] | None = None
   kw cwd: str | os.PathLike[str] | None = None
-  kw log_file: str | os.PathLike[str] | None = None
+  kw log_path: str | os.PathLike[str] | None = None
 function sfly_std.processes.stop_background_process -> StoppedProcess
   pos ctx: Context
   pos pid: int | None
@@ -68,18 +60,18 @@ constant sfly_std.resources.PROCESS_CHARTS = tuple
   chart 文件描述符（按进程） type=line metrics=('open_fds_by_process',)
   chart 磁盘读写（按进程） type=line metrics=('io_read_bytes_per_s_by_process', 'io_write_bytes_per_s_by_process')
 constant sfly_std.resources.PROCESS_METRICS = tuple
-  metric cpu_percent kind=gauge labels=()
-  metric rss_bytes kind=gauge labels=()
+  metric cpu_percent kind=gauge unit='%' labels=()
+  metric rss_bytes kind=gauge unit='B' labels=()
   metric threads kind=gauge labels=()
   metric open_fds kind=gauge labels=()
-  metric io_read_bytes_per_s kind=gauge labels=()
-  metric io_write_bytes_per_s kind=gauge labels=()
-  metric cpu_percent_by_process kind=gauge labels=('pid', 'name')
-  metric rss_bytes_by_process kind=gauge labels=('pid', 'name')
+  metric io_read_bytes_per_s kind=gauge unit='B/s' labels=()
+  metric io_write_bytes_per_s kind=gauge unit='B/s' labels=()
+  metric cpu_percent_by_process kind=gauge unit='%' labels=('pid', 'name')
+  metric rss_bytes_by_process kind=gauge unit='B' labels=('pid', 'name')
   metric threads_by_process kind=gauge labels=('pid', 'name')
   metric open_fds_by_process kind=gauge labels=('pid', 'name')
-  metric io_read_bytes_per_s_by_process kind=gauge labels=('pid', 'name')
-  metric io_write_bytes_per_s_by_process kind=gauge labels=('pid', 'name')
+  metric io_read_bytes_per_s_by_process kind=gauge unit='B/s' labels=('pid', 'name')
+  metric io_write_bytes_per_s_by_process kind=gauge unit='B/s' labels=('pid', 'name')
 constant sfly_std.resources.SYSTEM_CHARTS = tuple
   chart CPU 使用率 type=line metrics=('cpu_percent',)
   chart 内存使用率 type=line metrics=('mem_used_percent',)
@@ -91,23 +83,23 @@ constant sfly_std.resources.SYSTEM_CHARTS = tuple
   chart 磁盘读写（按磁盘） type=line metrics=('disk_read_bytes_per_s_by_disk', 'disk_write_bytes_per_s_by_disk')
   chart 网络收发（按网卡） type=line metrics=('net_rx_bytes_per_s_by_nic', 'net_tx_bytes_per_s_by_nic')
 constant sfly_std.resources.SYSTEM_METRICS = tuple
-  metric cpu_percent kind=gauge labels=()
-  metric mem_used_percent kind=gauge labels=()
-  metric mem_used_bytes kind=gauge labels=()
+  metric cpu_percent kind=gauge unit='%' labels=()
+  metric mem_used_percent kind=gauge unit='%' labels=()
+  metric mem_used_bytes kind=gauge unit='B' labels=()
   metric load1 kind=gauge labels=()
-  metric disk_used_percent kind=gauge labels=()
-  metric disk_read_bytes_per_s kind=gauge labels=()
-  metric disk_write_bytes_per_s kind=gauge labels=()
-  metric net_rx_bytes_per_s kind=gauge labels=()
-  metric net_tx_bytes_per_s kind=gauge labels=()
-  metric net_rx_bytes_per_s_by_nic kind=gauge labels=('nic',)
-  metric net_tx_bytes_per_s_by_nic kind=gauge labels=('nic',)
-  metric disk_read_bytes_per_s_by_disk kind=gauge labels=('disk',)
-  metric disk_write_bytes_per_s_by_disk kind=gauge labels=('disk',)
+  metric disk_used_percent kind=gauge unit='%' labels=()
+  metric disk_read_bytes_per_s kind=gauge unit='B/s' labels=()
+  metric disk_write_bytes_per_s kind=gauge unit='B/s' labels=()
+  metric net_rx_bytes_per_s kind=gauge unit='B/s' labels=()
+  metric net_tx_bytes_per_s kind=gauge unit='B/s' labels=()
+  metric net_rx_bytes_per_s_by_nic kind=gauge unit='B/s' labels=('nic',)
+  metric net_tx_bytes_per_s_by_nic kind=gauge unit='B/s' labels=('nic',)
+  metric disk_read_bytes_per_s_by_disk kind=gauge unit='B/s' labels=('disk',)
+  metric disk_write_bytes_per_s_by_disk kind=gauge unit='B/s' labels=('disk',)
 exception sfly_std.resources.ProcessExited(Exception)
 dataclass sfly_std.resources.ProcessMonitorResult frozen
   field samples: int
-  field processes_csv: str
+  field csv_ref: str
   field csv_artifact: str
 exception sfly_std.resources.ProcessNotFound(Exception)
 dataclass sfly_std.resources.SystemMonitorResult frozen
@@ -118,11 +110,11 @@ function sfly_std.resources.monitor_processes -> ProcessMonitorResult
   kw name: str | Sequence[str] | None = None
   kw match: str | Sequence[str] | None = None
   kw include_children: bool = True
-  kw wait_for_process: float = 60
+  kw appear_within: float = 60
   kw interval: float = 1
   kw duration: float | None = None
   kw on_exit: Literal['fail', 'succeed'] = 'fail'
-  kw refind: float = 0
+  kw refind_within: float = 0
   kw csv_artifact: str | None = None
 function sfly_std.resources.monitor_system -> SystemMonitorResult
   pos ctx: Context
@@ -132,16 +124,16 @@ function sfly_std.resources.monitor_system -> SystemMonitorResult
   kw nic: str | None = None
   kw disk: str | None = None
 constant sfly_std.logs.FOLLOW_METRICS = tuple
-  metric lines_per_s kind=gauge labels=()
+  metric lines_per_s kind=gauge unit='行/s' labels=()
   metric fail_matches kind=counter labels=()
 exception sfly_std.logs.FailOnMatched(Exception)
 dataclass sfly_std.logs.FollowResult frozen
   field lines: int
 class sfly_std.logs.LogFile
   attribute path: Path
-  method __init__(pos path: str | os.PathLike[str], kw read_from: Literal['end', 'start'] = 'end') -> None
+  method __init__(pos path: str | os.PathLike[str] ; kw read_from: Literal['end', 'start'] = 'end') -> None
   method __enter__(-) -> LogFile
-  method __exit__(pos exc_type: type[BaseException] | None, pos exc: BaseException | None, pos traceback: TracebackType | None) -> None
+  method __exit__(pos exc_type: type[BaseException] | None ; pos exc: BaseException | None ; pos traceback: TracebackType | None) -> None
   method exists(-) -> bool
   method lines(-) -> Iterator[str]
   method flush(-) -> Iterator[str]
@@ -195,10 +187,10 @@ function sfly_std.waiting.wait_for_port -> PortReady
   kw poll: float = 1.0
 constant sfly_std.agent_files.WATCH_METRICS = tuple
   metric pulled_files kind=counter labels=()
-  metric pulled_bytes kind=counter labels=()
-  metric bytes_per_s kind=gauge labels=()
+  metric pulled_bytes kind=counter unit='B' labels=()
+  metric bytes_per_s kind=gauge unit='B/s' labels=()
 dataclass sfly_std.agent_files.PullResult frozen
-  field files: tuple[Path, ...]
+  field paths: tuple[Path, ...]
   field count: int
   field total_bytes: int
 dataclass sfly_std.agent_files.WatchResult frozen
@@ -207,16 +199,16 @@ dataclass sfly_std.agent_files.WatchResult frozen
 function sfly_std.agent_files.pull_files_from_agent -> PullResult
   pos ctx: Context
   pos source: str
-  pos directory: str | os.PathLike[str]
-  pos local_dir: str | os.PathLike[str]
+  kw directory: str | os.PathLike[str]
+  kw local_dir: str | os.PathLike[str]
   kw pattern: str = '*'
   kw recursive: bool = False
   kw delete_source: bool = False
 function sfly_std.agent_files.watch_agent_files -> WatchResult
   pos ctx: Context
   pos source: str
-  pos directory: str | os.PathLike[str]
-  pos local_dir: str | os.PathLike[str]
+  kw directory: str | os.PathLike[str]
+  kw local_dir: str | os.PathLike[str]
   kw pattern: str = '*'
   kw stable: float = 0
   kw delete_source: bool = False
