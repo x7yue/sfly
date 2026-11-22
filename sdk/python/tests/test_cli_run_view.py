@@ -19,6 +19,7 @@ from sfly.cli.run_view import (
     UNNAMED_SUBFLOW,
     format_duration,
     node_type_label,
+    queue_wait_text,
 )
 
 REPO = Path(__file__).resolve().parents[3]
@@ -87,6 +88,117 @@ def test_the_removed_kinds_are_the_ones_the_control_plane_registers() -> None:
     for label, replacement in REMOVED_NODE_KINDS.values():
         assert label
         assert replacement
+
+
+# ---------------------------------------------------------------- 排队中的节点在等什么
+
+NOW = "2026-01-01T00:05:00.000Z"
+QUEUED_AT = "2026-01-01T00:01:55.000Z"  # 排了 3m05s
+
+
+def _wait(**fields: object) -> dict[str, object]:
+    return {
+        "agent": "agent-a",
+        "now": NOW,
+        "state": "offline",
+        "since": None,
+        "expires_at": None,
+        "slots": None,
+        "holders": [],
+        "other_project_holders": 0,
+        **fields,
+    }
+
+
+def test_a_queued_node_on_an_offline_agent_says_who_how_long_and_when_it_times_out() -> None:
+    wait = _wait(since="2026-01-01T00:02:50.000Z", expires_at="2026-01-01T00:11:55.000Z")
+    assert queue_wait_text(wait, QUEUED_AT) == (
+        "等 agent-a（不在线，已离线 2m10s）· 排队 3m05s · 6m55s 后超时"
+    )
+
+
+def test_no_last_seen_time_and_no_queue_timeout_means_nothing_to_count_down() -> None:
+    assert queue_wait_text(_wait(), QUEUED_AT) == "等 agent-a（不在线）· 排队 3m05s"
+
+
+def test_past_the_deadline_the_control_plane_has_not_swept_yet_says_about_to_time_out() -> None:
+    wait = _wait(expires_at="2026-01-01T00:04:59.000Z")
+    assert queue_wait_text(wait, QUEUED_AT).endswith("· 即将超时")
+
+
+def test_an_agent_preparing_its_environment_says_for_how_long() -> None:
+    wait = _wait(state="preparing", since="2026-01-01T00:03:50.000Z", slots=4)
+    assert queue_wait_text(wait, QUEUED_AT) == "等 agent-a（准备环境中 1m10s）· 排队 3m05s"
+
+
+def test_a_version_mismatch_says_no_new_tasks_are_dispatched() -> None:
+    wait = _wait(state="version_mismatch", slots=4)
+    assert queue_wait_text(wait, QUEUED_AT) == (
+        "等 agent-a（版本与控制面不一致，不派新任务）· 排队 3m05s"
+    )
+
+
+def _holder(
+    node: str, chain_name: str | None = None, display_name: str | None = None
+) -> dict[str, object]:
+    return {
+        "run_id": "5e2d1c7a-0000-4000-8000-000000000001",
+        "orchestration_id": "00000000-0000-4000-8000-0000000000f1",
+        "orchestration_name": "撮合压测",
+        "node_id": node,
+        **({"display_name": display_name} if display_name else {}),
+        "chain_name": chain_name,
+        "attempt": 1,
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00.000Z",
+    }
+
+
+def test_full_slots_name_the_tasks_holding_them_at_most_three() -> None:
+    holders = [
+        _holder("soak", display_name="浸泡"),
+        _holder("probe", chain_name="监控"),
+        _holder("report"),
+        _holder("cleanup"),
+        _holder("verify"),
+    ]
+    wait = _wait(state="slots_full", slots=5, holders=holders)
+    assert queue_wait_text(wait, QUEUED_AT) == (
+        "等 agent-a（槽位占满，5 / 5）· 排队 3m05s；占着槽位的任务："
+        "撮合压测（运行 5e2d1c7a）的 main:soak「浸泡」、撮合压测（运行 5e2d1c7a）的 监控:probe、"
+        "撮合压测（运行 5e2d1c7a）的 main:report，还有 2 个"
+    )
+
+
+def test_slots_held_by_other_projects_are_only_a_count() -> None:
+    own = _wait(
+        state="slots_full",
+        slots=3,
+        holders=[_holder("soak", display_name="浸泡")],
+        other_project_holders=2,
+    )
+    assert queue_wait_text(own, QUEUED_AT).endswith(
+        "；占着槽位的任务：撮合压测（运行 5e2d1c7a）的 main:soak「浸泡」，另有别的项目的任务 2 个"
+    )
+    only_others = _wait(state="slots_full", slots=2, other_project_holders=2)
+    assert queue_wait_text(only_others, QUEUED_AT).endswith("；占着槽位的任务：别的项目的任务 2 个")
+
+
+def test_waiting_words_are_the_ones_the_console_shows() -> None:
+    """界面（copy.ts 的 QUEUE_WAIT 和 agents/queue-timing.ts）和命令行用同样的话。"""
+    copy = _web("lib/copy.ts") + _web("agents/queue-timing.ts")
+    for phrase in (
+        "不在线",
+        "已离线",
+        "准备环境中",
+        "版本与控制面不一致，不派新任务",
+        "槽位占满",
+        "正在派发",
+        "占着槽位的任务",
+        "后超时",
+        "即将超时",
+    ):
+        assert phrase in copy, f"界面里没有「{phrase}」"
 
 
 def test_the_removed_document_fields_are_the_ones_the_control_plane_registers() -> None:

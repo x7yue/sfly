@@ -291,6 +291,8 @@ describe("运行视图", () => {
 					end_clock_offset: null,
 					progress: null,
 					current_action: null,
+					// 不是排队中的尝试：没有在等什么。
+					queue_wait: null,
 				},
 			]);
 		});
