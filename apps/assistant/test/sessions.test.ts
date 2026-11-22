@@ -1,0 +1,266 @@
+// 看管 pi 进程和一轮：用照 RPC 协议说话的假 pi（support/fake-pi.mjs），按 prompt 的文字决定这一轮怎么走。
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { eventually } from "./support/eventually.js";
+import { Harness, type HarnessOptions } from "./support/harness.js";
+
+const FAKE_PI = [process.execPath, join(import.meta.dirname, "support", "fake-pi.mjs")];
+
+let h: Harness | undefined;
+afterEach(async () => {
+	await h?.close();
+	h = undefined;
+});
+
+const start = async (options: HarnessOptions = {}) => {
+	h = await Harness.start({ piArgv: FAKE_PI, ...options });
+	return h;
+};
+
+/** 这个会话的 pi 原始事件（`events.jsonl`）。 */
+const rawEvents = (harness: Harness, id: string): Array<Record<string, unknown>> => {
+	const path = join(harness.dataDir, "sessions", id, "events.jsonl");
+	if (!existsSync(path)) return [];
+	return readFileSync(path, "utf8")
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+};
+
+describe("拉起 pi", () => {
+	it("子进程的环境只有给它的几项：没有共享密钥、没有命令的环境变量、没有助手服务其余的环境", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		expect(
+			(
+				await harness.prompt(id, {
+					text: "settle",
+					secret_env: { SFLY_API_TOKEN: "tok-0123456789" },
+				})
+			).status,
+		).toBe(202);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		const started = rawEvents(harness, id).find((r) => r.type === "fake_env") as {
+			env: Record<string, string>;
+			argv: string[];
+			agentDir: string[];
+		};
+		expect(started.agentDir).toEqual(["models.json"]);
+		// macOS 给每个进程加 __CF_USER_TEXT_ENCODING（不是助手服务给的）。
+		const keys = Object.keys(started.env).filter((k) => !k.startsWith("__CF_"));
+		expect(keys.sort()).toEqual([
+			"FAKE_MODEL_KEY",
+			"HOME",
+			"PATH",
+			"PI_CODING_AGENT_DIR",
+			"PI_TELEMETRY",
+			"SFLY_ASSISTANT_TURN_CONFIG",
+		]);
+		expect(started.env.PI_TELEMETRY).toBe("0");
+		// 设置目录每次启动新建，里面只有模型文件；进程退出后删掉。
+		const agentDir = started.env.PI_CODING_AGENT_DIR as string;
+		expect(agentDir.startsWith(join(harness.dataDir, "agents"))).toBe(true);
+		expect(started.argv).toEqual(
+			expect.arrayContaining([
+				"--no-extensions",
+				"--no-skills",
+				"--no-context-files",
+				"--no-prompt-templates",
+			]),
+		);
+		expect(started.argv[started.argv.indexOf("--tools") + 1]).toBe("read,bash,edit,write");
+		expect(started.argv[started.argv.indexOf("--session-id") + 1]).toBe(id);
+		await harness.sessions.shutdown();
+		await eventually(() => expect(existsSync(agentDir)).toBe(false));
+		// 这一轮的配置（里面有保密的环境变量）在这一轮结束时删掉。
+		expect(existsSync(join(harness.dataDir, "sessions", id, "turn.json"))).toBe(false);
+	});
+
+	it("先回应 prompt（202），再拉起 pi：拉起失败时这一轮以 failed 结束", async () => {
+		const harness = await start({ piArgv: [join(import.meta.dirname, "no-such-pi")] });
+		const id = crypto.randomUUID();
+		expect((await harness.prompt(id, { text: "settle" })).status).toBe(202);
+		const end = await harness.turnEnd(id);
+		expect(end.outcome).toMatch(/^(failed|interrupted)$/);
+	});
+
+	it("pi 不接受这句话：failed", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "reject" });
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "failed",
+			reason: expect.stringContaining("不接受"),
+		});
+	});
+});
+
+describe("一轮的结局", () => {
+	it("completed：带工具调用次数、模型调用次数、用时和用量", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "completed",
+			steps: 0,
+			model_calls: 1,
+			usage: { input: 10, output: 2, cache_read: 1, cache_write: 0 },
+			duration_ms: expect.any(Number),
+		});
+	});
+
+	it("模型调用到了 40 次：第 41 次之前以 limit（model_calls）结束，进程被结束；会话还能接着说", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "loop" });
+		const end = await harness.turnEnd(id);
+		expect(end).toMatchObject({ outcome: "limit", limit_kind: "model_calls", model_calls: 40 });
+		// 决定结束之后 pi 还在吐的事件不外传。
+		const results = harness.events.of(id).filter((r) => r.event.type === "tool_result");
+		expect(results.length).toBeLessThanOrEqual(40);
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
+		await harness.prompt(id, { turn: 2, text: "settle" });
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+	});
+
+	it("用时到了上限：limit（duration）", async () => {
+		const harness = await start({ limits: { modelCalls: 40, durationMs: 300 } });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "hang" });
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "limit", limit_kind: "duration" });
+	});
+
+	it("不理会 SIGTERM 的 pi：宽限期之后被 SIGKILL，这一轮以 stopped 结束", async () => {
+		const harness = await start({ killGraceMs: 300 });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "ignore-term" });
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(1));
+		await eventually(() =>
+			expect(rawEvents(harness, id).some((r) => r.type === "turn_start")).toBe(true),
+		);
+		expect((await harness.abort(id)).status).toBe(202);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+		expect(rawEvents(harness, id).some((r) => r.type === "fake_ignored_sigterm")).toBe(true);
+		expect(harness.sessions.activeProcesses).toBe(0);
+	});
+
+	it("pi 进程在一轮中途退出：interrupted，带退出码", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "exit" });
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "interrupted",
+			reason: expect.stringContaining("退出码 7"),
+		});
+	});
+
+	it("模型出错、重试用尽：model_unavailable，error_class 先写 other；重试有提示", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "error" });
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "model_unavailable",
+			error_class: "other",
+		});
+		const notices = harness.events
+			.of(id)
+			.flatMap((r) => (r.event.type === "notice" ? [r.event] : []));
+		expect(notices.map((n) => n.kind)).toEqual(["retry", "retry_end"]);
+		expect(notices[0]).toMatchObject({ attempt: 1, max_attempts: 1, retry_delay_ms: 10 });
+	});
+
+	it("一轮在做时再开始一轮：409 turn_running", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "hang" });
+		const res = await harness.prompt(id, { turn: 2, text: "settle" });
+		expect(res.status).toBe(409);
+		expect(await res.json()).toMatchObject({ code: "turn_running" });
+		await harness.abort(id);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+	});
+});
+
+describe("同时活着的 pi 进程数的上限", () => {
+	it("满了、都在做：503 process_limit；在做的那一轮的进程不关 stdin", async () => {
+		const harness = await start({ maxProcesses: 1 });
+		const a = crypto.randomUUID();
+		await harness.prompt(a, { text: "hang" });
+		await eventually(() =>
+			expect(rawEvents(harness, a).some((r) => r.type === "turn_start")).toBe(true),
+		);
+		const res = await harness.prompt(crypto.randomUUID(), { text: "settle" });
+		expect(res.status).toBe(503);
+		expect(await res.json()).toMatchObject({ code: "process_limit" });
+		expect(rawEvents(harness, a).some((r) => r.type === "fake_stdin_closed")).toBe(false);
+		expect(harness.sessions.activeProcesses).toBe(1);
+	});
+
+	it("满了、有空闲的：关掉最久没用的空闲进程（关 stdin），新会话照常开始", async () => {
+		const harness = await start({ maxProcesses: 1 });
+		const a = crypto.randomUUID();
+		await harness.prompt(a, { text: "settle" });
+		await harness.turnEnd(a);
+		const b = crypto.randomUUID();
+		expect((await harness.prompt(b, { text: "settle" })).status).toBe(202);
+		expect(await harness.turnEnd(b)).toMatchObject({ outcome: "completed" });
+		await eventually(() =>
+			expect(rawEvents(harness, a).some((r) => r.type === "fake_stdin_closed")).toBe(true),
+		);
+	});
+});
+
+describe("保密环境变量按值打码", () => {
+	it("模型的话、工具的输出和结果、提示里出现的值（含跨两条增量、JSON 转义的）：事件、pi 原始事件、日志里都没有", async () => {
+		const harness = await start();
+		const value = 'tok-"9f3a\\b7c1-secret-value';
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: `secret:${value}`, secret_env: { SFLY_API_TOKEN: value } });
+		await harness.turnEnd(id);
+		const jsonForm = JSON.stringify(value).slice(1, -1);
+		for (const text of [
+			harness.events.lines.join("\n"),
+			readFileSync(join(harness.dataDir, "sessions", id, "events.jsonl"), "utf8"),
+			harness.logs.join("\n"),
+		]) {
+			expect(text).not.toContain(value);
+			expect(text).not.toContain(jsonForm);
+		}
+		const events = harness.events.of(id).map((r) => r.event);
+		const deltas = events.flatMap((e) => (e.type === "assistant_delta" ? [e.text] : [])).join("");
+		expect(deltas).toBe("令牌是 ****** 。");
+		const output = events.flatMap((e) => (e.type === "tool_output" ? [e.text] : [])).join("");
+		expect(output).toContain("TOKEN=******");
+		expect(events.find((e) => e.type === "tool_call")).toMatchObject({ title: "echo ******" });
+		expect(events.find((e) => e.type === "notice")).toMatchObject({
+			message: expect.stringContaining("******"),
+		});
+	});
+});
+
+describe("事件流", () => {
+	it("持久的事件带纪元内递增的序号，不持久的不带；每条带会话、轮次和产生的时间", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { turn: 3, text: "settle" });
+		await harness.turnEnd(id, 3);
+		const records = harness.events.of(id);
+		expect(records.every((r) => r.turn === 3 && r.epoch === harness.events.hello?.epoch)).toBe(
+			true,
+		);
+		const seqs = records.flatMap((r) => (r.seq === undefined ? [] : [r.seq]));
+		expect(seqs).toEqual([...seqs].sort((x, y) => x - y));
+		expect(records.find((r) => r.event.type === "assistant_message")?.seq).toBeDefined();
+	});
+
+	it("扩展、skill 目录照镜像的内容；会话目录里有 events.jsonl 和 pi-stderr.log", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		await harness.turnEnd(id);
+		expect(readdirSync(join(harness.dataDir, "sessions", id)).sort()).toEqual(
+			expect.arrayContaining(["context.md", "events.jsonl", "pi-stderr.log"]),
+		);
+	});
+});

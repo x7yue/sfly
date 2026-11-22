@@ -93,6 +93,7 @@ flowchart LR
 ```
 apps/web            前端 SPA（vite 构建，Playwright 端到端测试在 apps/web/e2e）
 apps/server         控制面（API · 引擎 · Agent 网关 · 节点包仓库）
+apps/assistant      助手服务：单独的助手容器里拉起和看管 pi，唯一依赖 pi 的代码（ADR 0027，§6.8）
 agent/              Rust Agent（cargo）
 sdk/python          Python SDK 运行时 + CLI（uv）
 proto/              Agent ↔ 控制面的 protobuf 契约（buf 管理，breaking 检查）
@@ -494,6 +495,19 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 - **就绪状态**（`src/sessions/readiness.ts`，列表接口一并返回）：助手现在能不能用。助手默认关闭：控制面没有配置助手服务时，会话的写接口返回 503 `assistant_not_configured`，读接口照常，就绪状态里写明原因；这是代码保证的开关，不是文档。
 - **列表**：在做和排队中的会话在前，其余按最近活动倒序，最多 `SESSION_LIST_LIMIT`（200）个；带上一轮的结局（最近一条 `turn_end` 的 `outcome`）：查询走部分索引 `session_events_turn_end`（`(session_id, seq desc) where type = 'turn_end'`，每轮一条），不扫会话的全部事件。
 - **测试**：`test/sessions.test.ts`（序号、时间、内容、读、事件流、503、范围）；读接口和事件流也在 `test/read-only-routes.test.ts`、`test/access-cross-project.test.ts`、`test/access-guard.test.ts` 的生成测试里；表的约束在 `test/tenancy-schema.test.ts`。
+
+### 6.8 助手服务（ADR 0027，`apps/assistant`）
+
+助手服务不在控制面里：它在单独的助手容器里（镜像 `apps/assistant/Dockerfile`，构建上下文是 `pnpm bundle:assistant` 组装的 `out/assistant/`），只和控制面说话。它只做三件事：起和看管 pi 进程（RPC 模式，一个会话一个进程）；把 pi 的事件翻成平台的会话事件；执行控制面发来的命令。不碰数据库，不存业务状态。它是唯一依赖 pi 的代码：pi 的版本写在 `apps/assistant/package.json` 里（精确版本），升级要过评测集；`biome-plugins/pi-only-in-assistant.grit` 拦下别处对 pi 的引入。
+
+- **和控制面之间**：协议的类型在 `@sfly/schema` 的 `assistant-protocol.ts`。控制面发命令（`POST /sessions/:id/prompt`、`/abort`），打开一条 NDJSON 长连接收事件（`GET /events`），`GET /health` 看纪元、版本和进程数；每个请求带共享密钥 `SFLY_ASSISTANT_SECRET`（短于 32 个字符时助手服务拒绝启动）。`prompt` 先回应（202）再去拉起 pi：控制面等回应只等 10 秒，冷启动加第一次调模型不能算在里面。事件记录带纪元、持久事件的序号和产生的时间（`src/bus.ts`）；没有连接时产生的事件丢掉（续传是 #545）。
+- **拉起 pi**（`src/launch.ts`）：参数照 #539 第 1–4 题的结论（只加载平台的远程工具扩展；系统提示里只有镜像里的 skill 和平台说明 `src/platform-prompt.md`；`--session-dir --session-id` 新建和恢复是同一条命令）。设置目录（`PI_CODING_AGENT_DIR`）每次启动新建、只放模型文件、进程退出后删掉：设置目录里的 `SYSTEM.md` 会替换整个系统提示，几个开关挡不住。子进程的环境只有 `PATH`、`HOME`、`PI_CODING_AGENT_DIR`、`PI_TELEMETRY=0`、模型文件里 `"$变量名"` 引用的变量和这一轮配置文件的路径；共享密钥和命令的环境变量都不给它。
+- **工具在工作台上执行**（远程工具扩展，`src/extension/`，打包成 `dist/extension.mjs`）：读、写、编辑、命令经工作台 Agent 的能力端口执行；工作台的地址、命令的环境变量（含保密的）、默认超时写在这一轮的配置文件里（会话目录下的 `turn.json`，只有属主可读，这一轮结束时删掉）。系统提示里的工作目录和 skill 的位置、工具解析相对路径用的都是工作台上的工作区。扩展不根据工具结果里的文字决定读本机的哪个文件，不根据工作台返回的内容在本机写任何文件（`test/extension.test.ts`、`test/integration.test.ts` 守着）；skill 由助手服务从镜像写到工作台的 `<工作区>/.agents/skills/`。
+- **一轮**（`src/sessions.ts`）：从 `prompt` 到 pi 报告 `agent_settled`（`completed`，中止了是 `stopped`，模型出错、重试用尽是 `model_unavailable`）、到了上限（40 次模型调用或 20 分钟，`limit`）、被停止（`stopped`）、pi 进程退出（`interrupted`），以一条 `turn_end` 结束。到了上限和停止都结束 pi 进程（SIGTERM，10 秒后 SIGKILL）；决定结束之后 pi 还在吐的事件不外传。同时活着的 pi 进程最多 8 个（一个空闲约 117 MiB、一轮的峰值约 137 MiB，#539 第 9 题；容器内存上限按 2 GiB 配）：满了时先关掉最久没用的空闲进程（关 stdin，它没有在做的一轮），没有空闲的就回 503 `process_limit`。一轮进行中不关 stdin：pi 不等这一轮做完，正在跑的命令会被中止（#539 第 8 题）。
+- **保密值**（`src/redact.ts`）：`secret_env` 的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（原文、JSON 转义的写法、`\u` 写法，值有几行时每一行；一个值跨两条增量也认得出）。认不出编码过（base64 等）或被拆成几段打出来的值，这些靠会话令牌的权限范围兜底。pi 自己的会话文件（`pi-session/`）里是原值：那是给模型的上下文，模型本来就看到了。
+- **数据目录**（`SFLY_ASSISTANT_DATA`，默认 `/data`，卷）：`sessions/<会话 ID>/` 下是 pi 的原始事件 `events.jsonl`（打过码）、`pi-stderr.log`、pi 的会话文件 `pi-session/`、平台说明 `context.md`，布局照评测集的结果目录；`agents/` 下是运行中的 pi 进程各自的设置目录；`cwd/` 是 pi 的工作目录（空的，所有文件都在工作台上）。
+- **排障**：会话卡住，看事件流里最后一条工具调用（`tool_call`）是哪条命令；要看 pi 到底收发了什么，看这个会话目录里的 `events.jsonl` 和 `pi-session/`；pi 起不来看 `pi-stderr.log` 和助手服务自己的标准错误（容器日志）。
+- **测试**（`apps/assistant/test/`）：`integration.test.ts` 用真的 pi、打包好的扩展、照剧本回复的假模型（`test/support/fake-model.ts`）和假的工作台（`test/support/fake-workbench.ts`，能力端口的 gRPC 服务，在本机临时目录里真的执行）跑完整的一轮；`sessions.test.ts` 用照 RPC 协议说话的假 pi（`test/support/fake-pi.mjs`）测上限、中断、进程数和打码；`translate.test.ts` 的夹具是录下来的 pi 事件流。
 
 ---
 
