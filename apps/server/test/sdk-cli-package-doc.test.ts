@@ -23,6 +23,7 @@ describe("sfly package show：输入和输出的说明", () => {
 					name: "fetch",
 					title: "抓取",
 					entry: "documented.fetch:fetch",
+					timeout: 43_200,
 					inputs: {
 						type: "object",
 						properties: {
@@ -127,5 +128,17 @@ describe("sfly package show：输入和输出的说明", () => {
 			{ name: "status", type: "integer", description: "HTTP 状态码" },
 		]);
 		expect(nodes[1].outputs).toEqual([{ name: "status", type: "integer" }]);
+	});
+
+	it("节点类型声明了默认超时（#476）：节点类型的标题下面写出来，--json 的节点带 timeout；没声明的不写", async () => {
+		const text = (await cli("package", "show", "documented")).stdout.split("\n");
+		expect(text).toContain(
+			"  默认超时：43200 秒（节点类型声明，场景里这个节点写了超时时以场景里的为准）",
+		);
+		expect(text.filter((line) => line.includes("默认超时"))).toHaveLength(1);
+
+		const { nodes } = JSON.parse((await cli("package", "show", "documented", "--json")).stdout);
+		expect(nodes[0].timeout).toBe(43_200);
+		expect(nodes[1]).not.toHaveProperty("timeout");
 	});
 });
