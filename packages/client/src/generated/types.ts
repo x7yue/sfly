@@ -1467,6 +1467,8 @@ export interface OrchestrationVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 }
@@ -2137,6 +2139,8 @@ export interface RunListItem {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunListPreset | null;
 	started_at: Timestamp;
@@ -2607,6 +2611,8 @@ export interface RunSummary {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
@@ -2624,6 +2630,8 @@ export interface RunView {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	params: Record<string, unknown>;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunPresetView | null;
@@ -2708,6 +2716,8 @@ export interface SavedVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
@@ -2788,6 +2798,16 @@ export interface SessionListResponse {
 
 /** 会话里的一句话：新建会话的第一句、发话、插话。非空（不能只有空白），不超过 `SESSION_MESSAGE_MAX_CHARS` 个字符。 */
 export type SessionMessageText = string;
+
+/**
+ * 运行、场景版本上的「经哪个会话」（ADR 0029「经 …」：会话令牌记会话，#547）：会话的 ID 和标题，页面上显示成
+ * 会话「<标题>」并链到会话页。依据是控制面收到的请求带着哪个会话的令牌，不是模型在对话里怎么说，也不是可以伪造的
+ * `x-sfly-client` 标注。不是会话做的，响应里没有这个字段。
+ */
+export interface SessionRef {
+	id: string;
+	title: string;
+}
 
 /**
  * 会话的状态：`idle` 空闲、`running` 在做（有一轮在进行）、`queued` 排队中（同一个项目另一个会话在做，#544）、
@@ -3061,6 +3081,8 @@ export interface VersionSummaryView {
 	author: string;
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 }
 
