@@ -143,6 +143,31 @@ export interface ActionSummaryView {
 	recent_failed: EndedActionView[];
 }
 
+/**
+ * 加一个包节点。`id` 不写时按画布的规则生成（节点名加序号，例如 `check_1`）。`after` 写了就接在那个节点后面：
+ * 它是链尾时追加，后面还有节点时插在它和下一个节点之间（和画布上「在后面添加」一样）。
+ * 包还没有锁定时一起锁定：`version` 写了用它，不写时用最新发布的版本，没有发布过、只有在线的 Agent 加载着开发版本时用 `dev`；
+ * 已经锁定的包只能用锁定的版本。
+ */
+export interface AddNodeOperation {
+	op: "add_node";
+	/** 只能用字母、数字、下划线和连字符（输出的引用里要写它）。 */
+	id?: string;
+	package: PackageName;
+	node: NodeName;
+	version?: string;
+	after?: string;
+	/** 节点的输入：常量或含 `${{ ... }}` 引用的字符串。必填的输入要给出。 */
+	inputs?: Record<string, unknown>;
+	display_name?: string;
+	note?: string;
+	agent?: string;
+	always?: boolean;
+	timeout?: number;
+	retries?: number;
+	queue_timeout?: number;
+}
+
 /** 其它 Agent 连接这台 Agent、调用它的能力用的地址（ADR 0019），按最近一次连接上报的。 */
 export interface AgentEndpointView {
 	/**
@@ -436,6 +461,14 @@ export interface ClockOffsetView {
 	exceeds_threshold: boolean;
 }
 
+/** 加一条连线，规则和画布上连线一样（链不分叉、不汇合、不成环；调度连线从异步任务节点连到子流程入口）。 */
+export interface ConnectOperation {
+	op: "connect";
+	from: string;
+	to: string;
+	kind?: "chain" | "dispatch";
+}
+
 /**
  * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
  *
@@ -651,6 +684,14 @@ export interface DiffNodeView {
 	display_name?: string;
 }
 
+/** 断开一条连线；没有这条连线时这个操作不合法。 */
+export interface DisconnectOperation {
+	op: "disconnect";
+	from: string;
+	to: string;
+	kind?: "chain" | "dispatch";
+}
+
 /**
  * 两份场景文档的差异（@sfly/orchestration 的 diffDocuments，前端的版本对比用的是同一个函数）：只列出差异，不做合并。
  * 节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。`moved` 是两边都有、只是位置变了的节点。
@@ -725,6 +766,10 @@ export interface Edge {
 	/** chain：链上的顺序连线；dispatch：异步任务节点 → 子流程入口节点的调度连线。 */
 	kind: "chain" | "dispatch";
 }
+
+export type EditOperation = AddNodeOperation | RemoveNodeOperation | ConnectOperation | DisconnectOperation | SetFieldOperation;
+
+export type EditOperations = EditOperation[];
 
 /** 一个已经结束的动作。 */
 export interface EndedActionView {
@@ -1784,6 +1829,12 @@ export interface ReferencedAgent {
 	status: "online" | "offline" | "unknown";
 }
 
+/** 删一个节点，连同它的连线；它恰好一进一出时前后接上（和画布上删除一样），注释框里的成员一起去掉。入口节点不能删。 */
+export interface RemoveNodeOperation {
+	op: "remove_node";
+	node: string;
+}
+
 /**
  * 已移除种类的节点（ADR 0028，种类见 removed-nodes.ts）：读取历史版本时认得它，只读显示，不能保存。
  * 只描述所有节点共有的字段；控制面读库时把它当时的其余配置原样带着（`keepRemovedNodeConfig`），
@@ -2511,6 +2562,17 @@ export interface SavedVersionView {
 	document: StoredOrchestrationDocument;
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
 	warnings: DocumentWarningView[];
+}
+
+/**
+ * 改一个节点的一个字段：`field` 是 SETTABLE_NODE_FIELDS 之一或 `inputs.<输入名>`；`value` 不写就是去掉这个字段，
+ * 去掉的字段按没有写处理（`always` 为 false、Agent 用场景的默认 Agent）；写 null 就是 null（输入可以是 null）。
+ */
+export interface SetFieldOperation {
+	op: "set";
+	node: string;
+	field: string;
+	value?: unknown;
 }
 
 export interface StopSubflowNode {

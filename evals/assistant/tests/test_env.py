@@ -1,5 +1,6 @@
 """环境里不起容器就能测的部分：--isolated 的网络检查。docker 调用都换成记录。"""
 
+import argparse
 import subprocess
 from typing import Any
 
@@ -69,3 +70,47 @@ def test_source_hash_changes_with_content_and_is_none_when_missing(tmp_path: Any
     (tmp_path / "Dockerfile").write_text("FROM b\n")
     assert source_hash([tmp_path]) != first
     assert source_hash([tmp_path / "missing"]) is None
+
+
+class ImagesInUse(FakeDocker):
+    """槽位里已经起好的容器用的是哪个镜像：`up` 时指定了 --server-image / --workbench-image。"""
+
+    def __init__(self, images: dict[str, str]) -> None:
+        super().__init__(internal="false")
+        self.images = images
+
+    def docker(self, *args: str, check: bool = True, **kw: Any) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ("inspect",) and args[-1] in self.images:
+            return subprocess.CompletedProcess(args, 0, f"{self.images[args[-1]]}\n", "")
+        if args[:1] == ("inspect",):
+            return subprocess.CompletedProcess(args, 1, "", "no such container")
+        return super().docker(*args, check=check, **kw)
+
+
+def test_later_commands_keep_the_images_the_slot_was_started_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`up --server-image X` 之后，run、seed、reset 重建控制面和工作台时沿用 X，不退回默认镜像。"""
+    from aeval.cli import _stack
+
+    fake = ImagesInUse({"sfly-aeval-9-cp": "sfly-server:dev", "sfly-aeval-9-dev": "wb:dev"})
+    monkeypatch.setattr(d, "docker", fake.docker)
+    stack = _stack(argparse.Namespace(slot=9, command="run"))
+    assert (stack.server_image, stack.workbench_image) == ("sfly-server:dev", "wb:dev")
+
+
+def test_up_and_fresh_slots_use_what_was_given_or_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aeval.cli import _stack
+    from aeval.env import DEFAULT_SERVER_IMAGE, DEFAULT_WORKBENCH_IMAGE
+
+    fake = ImagesInUse({"sfly-aeval-9-cp": "sfly-server:old"})
+    monkeypatch.setattr(d, "docker", fake.docker)
+    given = _stack(argparse.Namespace(slot=9, command="up", server_image="sfly-server:new"))
+    assert given.server_image == "sfly-server:new"
+    fresh = _stack(argparse.Namespace(slot=8, command="run"))
+    assert (fresh.server_image, fresh.workbench_image) == (
+        DEFAULT_SERVER_IMAGE,
+        DEFAULT_WORKBENCH_IMAGE,
+    )

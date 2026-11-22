@@ -7,8 +7,9 @@ import type {
 	OrchestrationStore,
 	SaveVersionResult,
 } from "../orchestrations/orchestration-store.js";
+import { type PreparedEdits, prepareEdits } from "../orchestrations/scenario-edits.js";
 import { describeSecretDefaultProblem } from "../orchestrations/secret-defaults.js";
-import { versionDiff, versionWarnings } from "../orchestrations/version-check.js";
+import { versionCheck, versionDiff, versionWarnings } from "../orchestrations/version-check.js";
 import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
@@ -161,6 +162,64 @@ export function registerOrchestrationRoutes(
 			? await orchestrations.checkVersion(params.id, body.document, body.base_version)
 			: ({ kind: "not_found" } as const);
 		if (result.kind !== "checked") return rejectVersion(reply, result, body.base_version);
+		return result.check;
+	});
+
+	// 局部编辑（#470）：操作作用在最新版本上，之后和整份文档保存、检查走同一条路。错误码见契约的 edit。
+	const rejectEdits = (
+		reply: FastifyReply,
+		prepared: Exclude<PreparedEdits, { kind: "edited" }>,
+		baseVersion: number | undefined,
+	): FastifyReply => {
+		switch (prepared.kind) {
+			case "invalid_operation":
+				return sendError(
+					reply,
+					400,
+					"invalid_operation",
+					prepared.problem.message,
+					prepared.problem,
+				);
+			case "invalid_document":
+				return sendError(reply, 400, "invalid_document", prepared.message, prepared.issues);
+			default:
+				return rejectVersion(reply, prepared, baseVersion);
+		}
+	};
+	const editsOf = (id: string, operations: Parameters<typeof prepareEdits>[3], base?: number) =>
+		isUuid(id)
+			? prepareEdits(db, orchestrations, id, operations, base)
+			: Promise.resolve({ kind: "not_found" } as const);
+
+	contractRoute(app, orchestrationsApi.edit, async ({ params, body }, reply, raw) => {
+		const actor = requireActor(raw, reply);
+		if (!actor) return reply;
+		const prepared = await editsOf(params.id, body.operations, body.base_version);
+		if (prepared.kind !== "edited") return rejectEdits(reply, prepared, body.base_version);
+		const result = await orchestrations.saveVersion(
+			params.id,
+			prepared.document,
+			actor,
+			prepared.base,
+		);
+		if (result.kind !== "saved") return rejectVersion(reply, result, prepared.base);
+		const saved = result.version;
+		reply.code(201);
+		const check = await versionCheck(
+			db,
+			params.id,
+			saved.document,
+			result.previous,
+			prepared.before,
+		);
+		return { ...saved, ...check };
+	});
+
+	contractRoute(app, orchestrationsApi.checkEdits, async ({ params, body }, reply) => {
+		const prepared = await editsOf(params.id, body.operations, body.base_version);
+		if (prepared.kind !== "edited") return rejectEdits(reply, prepared, body.base_version);
+		const result = await orchestrations.checkVersion(params.id, prepared.document, prepared.base);
+		if (result.kind !== "checked") return rejectVersion(reply, result, prepared.base);
 		return result.check;
 	});
 

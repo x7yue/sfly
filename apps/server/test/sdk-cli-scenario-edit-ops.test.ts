@@ -1,0 +1,371 @@
+// sfly scenario edit（#470）：真实的 sfly 进程对测试控制面里的场景做局部编辑。
+// 操作由控制面执行（POST /orchestrations/:id/edits 和 /edits/check），命令行只把参数变成操作、把结果写成文本。
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ApiClient } from "./support/api-client.js";
+import { publishPackage } from "./support/package-archive.js";
+import { startRecordingProxy } from "./support/recording-proxy.js";
+import { sfly } from "./support/sfly-cli.js";
+import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
+
+/** 只有警告时的退出码（和 scenario check 一样）。 */
+const EXIT_WARNINGS = 4;
+
+/** 入口 → 取数据 → 出报告；锁定的包版本已发布，保存时没有警告。 */
+const baseDocument = () => ({
+	default_agent: "agent-a",
+	nodes: [
+		{ id: "entry", kind: "entry", params: [], position: { x: 40, y: 40 } },
+		{
+			id: "fetch_data",
+			kind: "package",
+			package: "http",
+			node: "get",
+			display_name: "取数据",
+			inputs: { url: "http://a.test" },
+			position: { x: 340, y: 40 },
+		},
+		{
+			id: "report",
+			kind: "package",
+			package: "http",
+			node: "get",
+			inputs: { url: "http://b.test" },
+			position: { x: 640, y: 40 },
+		},
+	],
+	edges: [
+		{ from: "entry", to: "fetch_data", kind: "chain" },
+		{ from: "fetch_data", to: "report", kind: "chain" },
+	],
+	packages: { http: "1.0.0" },
+});
+
+describe("sfly scenario edit → 控制面", () => {
+	let cp: TestControlPlane;
+	let api: ApiClient;
+	let dir: string;
+	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl]);
+	const versionCount = async (id: string) =>
+		(await api.getJson<{ versions: unknown[] }>(`/orchestrations/${id}/versions`)).versions.length;
+	const headDoc = async (id: string) =>
+		(
+			await api.getJson<{
+				document: {
+					nodes: Array<Record<string, unknown> & { id: string }>;
+					edges: Array<{ from: string; to: string; kind: string }>;
+				};
+			}>(`/orchestrations/${id}/head`)
+		).document;
+	const scenario = (name: string) => api.orchestrationWith(baseDocument(), name);
+
+	beforeAll(async () => {
+		const version = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
+		cp = await startTestControlPlane({ version });
+		api = new ApiClient(cp);
+		await publishPackage(cp, "http", "1.0.0", {
+			get: {
+				outputs: ["body"],
+				inputs: { properties: { url: { type: "string" } }, required: ["url"] },
+			},
+			probe: {
+				outputs: [],
+				inputs: {
+					properties: { host: { type: "string" }, count: { type: "integer" } },
+					required: ["host", "count"],
+				},
+			},
+		});
+		dir = await mkdtemp(join(tmpdir(), "sfly-scenario-edit-ops-"));
+	}, 120_000);
+
+	afterAll(async () => {
+		await cp?.close();
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	describe("一次一个操作", () => {
+		it("add --after：存成新版本，输出新版本号和改动；输入的值按 JSON 解析，不是 JSON 的当字符串", async () => {
+			const id = await scenario("编辑-加节点");
+			const result = await cli(
+				"scenario",
+				"edit",
+				"编辑-加节点",
+				"add",
+				"http/probe",
+				"--after",
+				"fetch_data",
+				"--id",
+				"probe",
+				"--input",
+				"host=api.test",
+				"--input",
+				"count=3",
+				"--display-name",
+				"探测接口",
+			);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stderr).toBe("");
+			expect(result.stdout).toBe(
+				[
+					"已保存场景「编辑-加节点」的版本 2（基于版本 1）：",
+					"  节点：",
+					"    + 探测接口（probe）  package",
+					"  连线：",
+					"    + fetch_data → probe（chain）",
+					"    + probe → report（chain）",
+					"    - fetch_data → report（chain）",
+					"  只改了位置的节点：report",
+					"",
+				].join("\n"),
+			);
+			const probe = (await headDoc(id)).nodes.find((n) => n.id === "probe");
+			expect(probe).toMatchObject({
+				inputs: { host: "api.test", count: 3 },
+				display_name: "探测接口",
+			});
+		});
+
+		it("remove、connect、disconnect、set：各存一个版本", async () => {
+			const id = await scenario("编辑-各种操作");
+			const removed = await cli("scenario", "edit", id, "remove", "report");
+			expect(removed.code, removed.stderr).toBe(0);
+			expect(removed.stdout).toContain("    - report  package");
+
+			const cut = await cli("scenario", "edit", id, "disconnect", "entry", "fetch_data");
+			expect(cut.code, cut.stderr).toBe(0);
+			expect(cut.stdout).toContain("    - entry → fetch_data（chain）");
+
+			const joined = await cli("scenario", "edit", id, "connect", "entry", "fetch_data");
+			expect(joined.code, joined.stderr).toBe(0);
+			expect(joined.stdout).toContain("    + entry → fetch_data（chain）");
+
+			const set = await cli(
+				"scenario",
+				"edit",
+				id,
+				"set",
+				"fetch_data",
+				"inputs.url",
+				"http://c.test",
+			);
+			expect(set.code, set.stderr).toBe(0);
+			expect(set.stdout).toContain('        inputs.url："http://a.test" → "http://c.test"');
+
+			const unset = await cli("scenario", "edit", id, "set", "fetch_data", "display_name");
+			expect(unset.code, unset.stderr).toBe(0);
+			expect(unset.stdout).toContain('        display_name："取数据" → （无）');
+			expect(await versionCount(id)).toBe(6);
+		});
+
+		it("--json：一个对象，带版本号、警告和控制面的差异", async () => {
+			const id = await scenario("编辑-json");
+			const result = await cli("scenario", "edit", id, "remove", "report", "--json");
+			expect(result.code, result.stderr).toBe(0);
+			const body = JSON.parse(result.stdout);
+			expect(body).toMatchObject({
+				scenario: id,
+				saved: true,
+				version: 2,
+				base_version: 1,
+				warnings: [],
+			});
+			expect(body.diff.nodes.removed).toEqual([{ id: "report", kind: "package" }]);
+		});
+	});
+
+	describe("--file 一次提交一组", () => {
+		it("一组操作存成一个版本", async () => {
+			const id = await scenario("编辑-文件");
+			const file = join(dir, "ops.json");
+			await writeFile(
+				file,
+				JSON.stringify([
+					{
+						op: "add_node",
+						id: "check",
+						package: "http",
+						node: "get",
+						after: "report",
+						inputs: { url: "x" },
+					},
+					{ op: "set", node: "check", field: "note", value: "收尾检查" },
+				]),
+			);
+			const result = await cli("scenario", "edit", id, "--file", file);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain("已保存场景「编辑-文件」的版本 2（基于版本 1）：");
+			expect(await versionCount(id)).toBe(2);
+		});
+
+		it("有一个操作不合法：整组不生效，退出码 2，写明第几个；版本数不变", async () => {
+			const id = await scenario("编辑-文件不合法");
+			const file = join(dir, "bad-ops.json");
+			await writeFile(
+				file,
+				JSON.stringify({
+					operations: [
+						{ op: "remove_node", node: "report" },
+						{ op: "remove_node", node: "entry" },
+					],
+				}),
+			);
+			const result = await cli("scenario", "edit", id, "--file", file);
+			expect(result.code).toBe(2);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toBe(
+				"错误：没有保存，这组操作都不生效：第 2 个操作（remove_node）：入口节点不能删除\n",
+			);
+			expect(await versionCount(id)).toBe(1);
+		});
+	});
+
+	describe("--dry-run", () => {
+		it("版本数不变；警告和真正保存时一样，只有警告时退出码 4", async () => {
+			const id = await scenario("编辑-只检查");
+			const args = ["scenario", "edit", id, "add", "http/get", "--id", "loose", "--input", "url=x"];
+			const dry = await cli(...args, "--dry-run");
+			expect(dry.code).toBe(EXIT_WARNINGS);
+			expect(await versionCount(id)).toBe(1);
+			const dryJson = JSON.parse((await cli(...args, "--dry-run", "--json")).stdout);
+			expect(dryJson).toMatchObject({ scenario: id, saved: false, base_version: 1 });
+			expect(dry.stdout).toMatch(/^检查过了，没有保存（场景「编辑-只检查」仍是版本 1）：/);
+			expect(dry.stdout).toContain("    + loose  package");
+			expect(dry.stdout).toContain("警告（1）：");
+
+			const saved = JSON.parse((await cli(...args, "--json")).stdout);
+			expect(saved.warnings).toEqual(dryJson.warnings);
+			expect(saved.diff).toEqual(dryJson.diff);
+		});
+
+		it("场景原来就有的警告：单独一段、写明改动之前就有，不影响退出码", async () => {
+			const doc = baseDocument();
+			(doc.nodes[2] as { inputs: Record<string, unknown> }).inputs = {};
+			const id = await api.orchestrationWith(doc, "编辑-只检查-已有警告");
+			const result = await cli(
+				"scenario",
+				"edit",
+				id,
+				"set",
+				"fetch_data",
+				"display_name",
+				"取一下数据",
+				"--dry-run",
+			);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain(
+				"改动之前就有的警告（1，不是这次改动带进来的，不影响退出码）：\n  节点 report 的必填输入 url 没有填写",
+			);
+			const saved = await cli(
+				"scenario",
+				"edit",
+				id,
+				"set",
+				"fetch_data",
+				"display_name",
+				"取一下数据",
+			);
+			expect(saved.code, saved.stderr).toBe(0);
+			expect(saved.stdout).toContain("改动之前就有的警告（1，不是这次改动带进来的）：");
+		});
+
+		it("没有警告时退出码 0", async () => {
+			const id = await scenario("编辑-只检查-没有警告");
+			const result = await cli("scenario", "edit", id, "remove", "report", "--dry-run");
+			expect(result.code, result.stderr).toBe(0);
+			expect(await versionCount(id)).toBe(1);
+		});
+	});
+
+	it("--base-version 落后：报冲突，退出码 2，提示和 push 一样写明最新版本的作者和时间", async () => {
+		const id = await scenario("编辑-冲突");
+		await api.saveVersion(id, baseDocument(), "bob");
+		const result = await cli("scenario", "edit", id, "remove", "report", "--base-version", "1");
+		expect(result.code).toBe(2);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toMatch(
+			/^错误：场景已有更新的版本：版本 2 由 bob 保存于 \S+，这次编辑基于版本 1。/,
+		);
+		expect(result.stderr).toContain(`下一步：sfly scenario diff ${id} 1 2`);
+		expect(await versionCount(id)).toBe(2);
+	});
+
+	it("没写 --base-version、读到最新版本之后有人保存了：报冲突，提示重新执行（不提 --base-version）", async () => {
+		const id = await scenario("编辑-中途冲突");
+		const proxy = await startRecordingProxy(cp.httpUrl, async (request) => {
+			if (request.method === "POST" && request.path.endsWith("/edits")) {
+				await api.saveVersion(id, baseDocument(), "bob");
+			}
+		});
+		try {
+			const result = await sfly([
+				"scenario",
+				"edit",
+				id,
+				"remove",
+				"report",
+				"--server",
+				proxy.url,
+			]);
+			expect(result.code).toBe(2);
+			expect(result.stderr).toMatch(
+				/^错误：场景已有更新的版本：版本 2 由 bob 保存于 \S+，这次编辑基于版本 1。/,
+			);
+			expect(result.stderr).toContain("确认这次编辑仍然要做之后再执行一次同样的命令");
+			expect(result.stderr).not.toContain("--base-version");
+		} finally {
+			await proxy.close();
+		}
+		expect(await versionCount(id)).toBe(2);
+	});
+
+	describe("让模型自己改对的报错", () => {
+		it("节点 ID 不存在：列出相近的 ID", async () => {
+			const id = await scenario("编辑-报错-节点");
+			const result = await cli("scenario", "edit", id, "remove", "fetch-data");
+			expect(result.code).toBe(2);
+			expect(result.stderr).toBe(
+				"错误：没有保存，这组操作都不生效：第 1 个操作（remove_node）：节点 fetch-data 不存在，相近的节点：fetch_data\n",
+			);
+			// --json 时线索是结构化的：控制面给的 details 原样带上
+			const json = await cli("scenario", "edit", id, "remove", "fetch-data", "--json");
+			expect(json.code).toBe(2);
+			expect(JSON.parse(json.stderr).error).toMatchObject({
+				code: "invalid_operation",
+				details: { index: 0, op: "remove_node", similar: ["fetch_data"] },
+			});
+		});
+
+		it("包节点缺必填输入：列出缺哪几个和各自的类型", async () => {
+			const id = await scenario("编辑-报错-输入");
+			const result = await cli("scenario", "edit", id, "add", "http/probe", "--after", "report");
+			expect(result.code).toBe(2);
+			expect(result.stderr).toContain(
+				"节点类型 http/probe 缺少必填输入：host（string）、count（integer）",
+			);
+			const json = await cli("scenario", "edit", id, "add", "http/probe", "--json");
+			expect(JSON.parse(json.stderr).error.code).toBe("invalid_operation");
+		});
+
+		it("连线两端接不上：写明两端各是什么", async () => {
+			const id = await scenario("编辑-报错-连线");
+			const result = await cli("scenario", "edit", id, "connect", "report", "entry");
+			expect(result.code).toBe(2);
+			expect(result.stderr).toContain(
+				"入口节点不能有入线（起点 report 是包节点 http/get，终点 entry 是入口）",
+			);
+		});
+
+		it("命令写错：节点类型不是「包/节点」、输入不是「名=值」，在本地报错", async () => {
+			const id = await scenario("编辑-报错-参数");
+			const type = await cli("scenario", "edit", id, "add", "http.get");
+			expect(type.code).toBe(2);
+			expect(type.stderr).toContain("节点类型要写成 包名/节点名");
+			const input = await cli("scenario", "edit", id, "add", "http/get", "--input", "url");
+			expect(input.code).toBe(2);
+			expect(input.stderr).toContain("--input 要写成 名=值");
+		});
+	});
+});

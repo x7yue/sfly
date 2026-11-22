@@ -27,6 +27,8 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	// 保存版本、恢复版本、改设置（运行通知、关注项）、新建、归档与恢复场景（场景，写）→ 编辑
 	"POST /orchestrations/:id/versions": "edit",
 	"POST /orchestrations/:id/versions/:number/restore": "edit",
+	// 局部编辑（#470）：一组操作存成新版本，就是 ADR 表里「保存版本」那一行（场景 × 写）→ 编辑
+	"POST /orchestrations/:id/edits": "edit",
 	"PATCH /orchestrations/:id": "edit",
 	"POST /orchestrations": "edit",
 	"POST /orchestrations/:id/archive": "edit",
