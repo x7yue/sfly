@@ -51,6 +51,7 @@ import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
 import { assistantReadiness } from "./sessions/readiness.js";
 import { SessionStore } from "./sessions/session-store.js";
 import { Mutex } from "./util/mutex.js";
+import { printError, printInfo } from "./util/output.js";
 import { periodic } from "./util/periodic.js";
 import { safeError } from "./util/safe-error.js";
 
@@ -176,8 +177,19 @@ export interface ControlPlane {
 	close(): Promise<void>;
 }
 
-/** 启动控制面：执行迁移，然后启动 HTTP API 和 Agent 网关。 */
+/**
+ * 启动控制面：执行迁移，然后启动 HTTP API 和 Agent 网关。启动失败时抛出去的错误已经去掉数据库查询的参数
+ * （{@link safeError}）：用环境变量建第一个管理员时写库失败，错误里带着密码的哈希，谁拿到这个错误去打印都不会把它带出去。
+ */
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
+	try {
+		return await start(options);
+	} catch (error) {
+		throw safeError(error);
+	}
+}
+
+async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
 	/**
@@ -185,7 +197,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
 	 */
 	const logError = (what: string, error: unknown): void => {
-		if (logger) console.error(what, safeError(error));
+		if (logger) printError(what, error);
 	};
 	const database = openDatabase(
 		options.databaseUrl,
@@ -357,7 +369,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			setupCode,
 			initialAdmin: options.initialAdmin,
 			log: (message) => {
-				if (logger) console.log(message);
+				if (logger) printInfo(message);
 			},
 		});
 	} catch (error) {

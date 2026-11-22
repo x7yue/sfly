@@ -1,0 +1,22 @@
+language js
+
+// 控制面往终端写东西只能走统一的出口（apps/server/src/util/output.ts，#578）：错误在那里先去掉数据库查询的参数
+// （密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
+// 拦的是「用到 console、process.stdout、process.stderr」这件事本身，不是某一种写法：换一个打印的函数（`console.warn`、
+// `console.log`）、给打印的函数起别名（`const log = console.error`）、把 console 交给别人、直接写标准错误
+// （`process.stderr.write`）、写标准输出，都在这里命中。
+//
+// 范围：apps/server/src（控制面的源码）；统一的出口 apps/server/src/util/output.ts 本身除外。测试、前端、别的工作区不管。
+// `$filename` 是绝对路径，规则不知道仓库根在哪，所以按目录名认。
+//
+// 拦不住的（规则只看源码里写出来的名字）：`globalThis["con" + "sole"]` 这类拼出来的、`process["stderr"]` 这类计算属性、
+// 从别的模块拿到 console 对象。这些都得是有意写出来的绕法；一般的写法（上面列的）拦得住。
+or {
+	`console` as $span,
+	`process.stdout` as $span,
+	`process.stderr` as $span
+} where {
+	$filename <: r".*/apps/server/src/.*",
+	$filename <: not r".*/apps/server/src/util/output\.ts",
+	register_diagnostic(span=$span, message="控制面往终端写东西只能走统一的出口 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout）：错误在那里先去掉数据库查询的参数，别处直接用 console、process.stdout、process.stderr 可能把密码的哈希、令牌的哈希、保密参数的值带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。")
+}

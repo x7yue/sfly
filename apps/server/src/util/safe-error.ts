@@ -25,6 +25,17 @@ const PG_SAFE_FIELDS = [
 
 const MAX_DEPTH = 6;
 
+/**
+ * 数据库把值直接写进错误的 message（`detail` 之外的另一条路）：类别 22（数据异常）的错误，
+ * 例如 `invalid input syntax for type uuid: "<值>"`、`date/time field value out of range: "<值>"`、
+ * `invalid byte sequence for encoding "UTF8": 0x00`。引号里的和 `0x` 开头的十六进制都换成省略号，说明（类型、原因）留着；
+ * 别的类别（约束、列不存在……）的 message 里只有名字，不动。
+ */
+const embedsValues = (error: Error): boolean =>
+	String((error as { code?: unknown }).code).startsWith("22");
+const scrubValues = (message: string): string =>
+	message.replace(/"(?:[^"\\]|\\.)*"/g, '"…"').replace(/\b0x[0-9a-fA-F]+\b/g, "0x…");
+
 const isQueryError = (error: Error): error is DrizzleLike =>
 	"query" in error && "params" in error && typeof (error as DrizzleLike).query === "string";
 
@@ -34,18 +45,30 @@ const isPgError = (error: Error): boolean =>
 	typeof (error as { code?: unknown }).code === "string";
 
 /**
- * 去掉参数之后的错误：drizzle 的查询错误只留 SQL，pg 的数据库错误只留数据库给的原因；沿着 `cause` 链一路处理。
+ * 去掉参数之后的错误：drizzle 的查询错误只留 SQL，pg 的数据库错误只留数据库给的原因（类别 22 的数据异常，message 里直接带着
+ * 值的，把值去掉）；沿着 `cause` 链一路处理，聚合的错误（`AggregateError`，里面包着几个错误）把里面的每一个也处理。
  * 别的错误原样返回（不改它的内容）；不是 Error 的值原样返回。
  */
 export function safeError(error: unknown, depth = 0): unknown {
 	if (!(error instanceof Error) || depth > MAX_DEPTH) return error;
 	const cause = (error as { cause?: unknown }).cause;
 	const safeCause = cause === undefined ? undefined : safeError(cause, depth + 1);
+	const members = error instanceof AggregateError ? (error.errors as unknown[]) : undefined;
+	const safeMembers = members?.map((member) => safeError(member, depth + 1));
+	const membersChanged = safeMembers?.some((member, index) => member !== members?.[index]) ?? false;
 	const query = isQueryError(error);
 	const pg = isPgError(error);
-	if (!query && !pg && safeCause === cause) return error;
-	const message = query ? `Failed query: ${(error as DrizzleLike).query as string}` : error.message;
-	const safe = new Error(message, safeCause === undefined ? undefined : { cause: safeCause });
+	if (!query && !pg && safeCause === cause && !membersChanged) return error;
+	const message = query
+		? `Failed query: ${(error as DrizzleLike).query as string}`
+		: pg && embedsValues(error)
+			? scrubValues(error.message)
+			: error.message;
+	const options = safeCause === undefined ? undefined : { cause: safeCause };
+	const safe =
+		safeMembers === undefined
+			? new Error(message, options)
+			: new AggregateError(safeMembers, message, options);
 	safe.name = error.name;
 	// 堆栈的第一行是错误的 message：换成去掉参数之后的。
 	safe.stack = error.stack?.includes(error.message)
@@ -100,5 +123,8 @@ export function serializeError(error: unknown, depth = 0): SerializedError {
 	}
 	const cause = (safe as { cause?: unknown }).cause;
 	if (cause !== undefined && depth < MAX_DEPTH) out.cause = serializeError(cause, depth + 1);
+	if (safe instanceof AggregateError && depth < MAX_DEPTH) {
+		out.errors = (safe.errors as unknown[]).map((member) => serializeError(member, depth + 1));
+	}
 	return out;
 }

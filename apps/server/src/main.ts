@@ -62,6 +62,7 @@ import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
+import { printError, printInfo, printWarning, terminalStreams } from "./util/output.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
 declare const SFLY_BUNDLED: boolean | undefined;
@@ -113,8 +114,7 @@ if (process.argv[2] === "reset-password") {
 		databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 		stdin: process.stdin,
 		stdinIsTty: process.stdin.isTTY === true,
-		stdout: process.stdout,
-		stderr: process.stderr,
+		...terminalStreams(),
 	});
 	process.exit(code);
 }
@@ -136,7 +136,8 @@ const hours = (name: string) => {
 	return n === undefined ? undefined : Math.floor(n * 3_600_000);
 };
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
-if (!webDir) console.warn(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
+if (!webDir) printWarning(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
+// 启动失败（写库失败、端口被占……）也走统一的出口：数据库错误里的参数不会随未捕获的异常打到终端上。
 const controlPlane = await startControlPlane({
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
@@ -165,8 +166,11 @@ const controlPlane = await startControlPlane({
 	installScriptFile: defaults.installScriptFile,
 	publicGrpcUrl: env.SFLY_PUBLIC_GRPC_URL || undefined,
 	migrationsDir: env.SFLY_MIGRATIONS_DIR || defaults.migrationsDir,
+}).catch((error: unknown) => {
+	printError("sfly: 控制面没有启动：", error);
+	process.exit(1);
 });
-console.log(
+printInfo(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
 );
 
