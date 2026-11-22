@@ -1,5 +1,6 @@
-// 切入点 A：控制面的 sfly 简单索引（PEP 503）。只列出 `sfly` 项目和与控制面同版本的 SDK wheel，
+// 切入点 A：控制面的包索引（PEP 503）里的 `sfly`：只列出与控制面同版本的 SDK wheel，
 // 开发机用 `uv tool install` / 项目的显式索引从这里装 `sfly`，不会从 PyPI 镜像装到同名的其他包。
+// 索引里的另一个包 sfly-std 见 std-index.test.ts。
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +10,7 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
-describe("sfly 简单索引", () => {
+describe("sfly 在控制面的包索引里", () => {
 	let cp: TestControlPlane;
 	let dir: string;
 
@@ -31,11 +32,14 @@ describe("sfly 简单索引", () => {
 			text,
 		}));
 
-	it("根页面只列出 sfly 项目", async () => {
+	it("根页面只列出平台自己的两个包：sfly 和 sfly-std", async () => {
 		const res = await cp.fetch("/simple/");
 		expect(res.status).toBe(200);
 		expect(res.headers.get("content-type")).toMatch(/^text\/html/);
-		expect(links(await res.text())).toEqual([{ href: "sfly/", text: "sfly" }]);
+		expect(links(await res.text())).toEqual([
+			{ href: "sfly/", text: "sfly" },
+			{ href: "sfly-std/", text: "sfly-std" },
+		]);
 	});
 
 	it("项目页只列出与控制面同版本的 wheel，链接带 sha256", async () => {

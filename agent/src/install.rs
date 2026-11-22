@@ -1,6 +1,6 @@
 //! 节点包安装（docs/ARCHITECTURE.md §4.4、ADR 0002）：从控制面下载 `.sflypkg` 归档、校验 sha256，
 //! 取出其中的 wheel，用 `uv pip install` 装进共享 venv（同名的其他版本被就地替换），
-//! 依赖从配置的 PyPI 镜像安装。
+//! 依赖从配置的 PyPI 镜像安装；平台自己的包（标准节点包 `sfly-std`）只从控制面的包索引取（[`index_args`]）。
 //!
 //! 共享 venv 里其他节点包声明的依赖（Requires-Dist）会和新 wheel 一起交给 uv 解析：
 //! 新包的依赖与它们冲突时 uv 解析失败、venv 保持原样，任务以 `env_error` 失败并带上完整的 uv 输出。
@@ -38,6 +38,8 @@ pub struct Installer {
     pub scratch: PathBuf,
     /// 生效的 PyPI 镜像：本地 `--index-url`，否则控制面在 Welcome 里下发的镜像（每次连上控制面时更新）。
     pub index_url: std::sync::Mutex<Option<String>>,
+    /// 控制面的包索引（Welcome 的 `package_index_url`，每次连上控制面时更新）；旧版本控制面不下发，为 None。
+    pub package_index: std::sync::Mutex<Option<String>>,
     pub uv: PathBuf,
     pub http: reqwest::Client,
 }
@@ -171,9 +173,9 @@ impl Installer {
             .args(["pip", "install", "--no-progress", "--color", "never"])
             .arg("--python")
             .arg(self.venv.python());
-        if let Some(index) = self.index_url.lock().unwrap().clone() {
-            command.args(["--index-url", &index]);
-        }
+        let pypi = self.index_url.lock().unwrap().clone();
+        let package_index = self.package_index.lock().unwrap().clone();
+        command.args(index_args(pypi.as_deref(), package_index.as_deref()));
         if reinstall {
             command
                 .args(["--reinstall-package", package])
@@ -197,9 +199,13 @@ impl Installer {
         if output.status.success() {
             Ok(text)
         } else {
+            // uv 的报错只说「你要求 sfly-std<0.4」，不说是哪个包要求的：另外写明是哪几个包、各要什么版本（#556）。
+            let note = conflict_note(label, &wheel_requires(wheel_path), package, others, &text)
+                .map(|note| format!("\n\n{note}"))
+                .unwrap_or_default();
             Err(InstallError {
                 message: format!(
-                    "安装节点包 {label} 失败（uv {}）\n\n{}",
+                    "安装节点包 {label} 失败（uv {}）\n\n{}{note}",
                     output.status,
                     text.trim_end()
                 ),
@@ -207,6 +213,137 @@ impl Installer {
             })
         }
     }
+}
+
+/// `uv pip install` 的索引参数（#556）。节点包可以依赖平台自己的包（标准节点包 `sfly-std`，它不在 PyPI 上）：
+///
+/// - `--index <控制面的包索引>`：排在默认索引（PyPI 镜像）前面；
+/// - `--default-index <PyPI 镜像>`：配置了镜像时用它，其余依赖（httpx、psutil 等）从这里取；
+/// - `--index-strategy first-index`：同一个名字只看第一个有它的索引，所以 `sfly-std` 只来自控制面的索引，PyPI 镜像上
+///   有人放了同名的更高版本也不会被装上。这是 uv 的默认策略，仍然写在命令行上：环境变量 `UV_INDEX_STRATEGY` 或
+///   用户级的 uv 配置换成别的策略（例如「在所有索引里选最高版本」）时，命令行的值优先，防线不会被悄悄拆掉。
+///   「有它」指索引对这个名字有回应：控制面的索引对 `sfly-std` 总有回应（还没发布时是一个没有版本的页面），不会
+///   因为 404 而转去 PyPI。
+///
+/// 控制面没有下发包索引（旧版本控制面）时不加 `--index`：依赖只来自 PyPI 镜像，和以前一样。
+fn index_args(pypi: Option<&str>, package_index: Option<&str>) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(index) = package_index {
+        args.extend(["--index".to_string(), index.to_string()]);
+    }
+    if let Some(mirror) = pypi {
+        args.extend(["--default-index".to_string(), mirror.to_string()]);
+    }
+    args.extend(["--index-strategy".to_string(), "first-index".to_string()]);
+    args
+}
+
+/// uv 没能解析出依赖（版本要求互相矛盾）时，在 uv 的输出后面补一段：共享 venv 里一个包只能有一个版本，
+/// 哪几个节点包对同一个包的版本要求不一样、各要什么。`label` 是这次要装的节点包（`名字@版本`），`requires` 是它的
+/// Requires-Dist，`others` 是共享 venv 里其他节点包的依赖。没有这样的包、或者失败不是依赖解析造成的时返回 None。
+///
+/// 补这一段是因为 uv 只写「你要求 sfly-std<0.4」：其他已装节点包的依赖是作为一份要求清单交给 uv 的，uv 不知道
+/// 它们来自哪个包。uv 提示的 `--index-strategy unsafe-best-match` 不能用（它让 PyPI 上同名的包顶替平台自己的包），
+/// 输出里有这个提示时一并说明。
+fn conflict_note(
+    label: &str,
+    requires: &[String],
+    package: &str,
+    others: &BTreeMap<String, Vec<String>>,
+    uv_output: &str,
+) -> Option<String> {
+    if !uv_output.contains("No solution found") {
+        return None;
+    }
+    let mut by_name: BTreeMap<String, Vec<(String, &str)>> = BTreeMap::new();
+    for requirement in requires {
+        by_name
+            .entry(requirement_name(requirement))
+            .or_default()
+            .push((label.to_string(), requirement));
+    }
+    for (name, list) in others {
+        if same_name(name, package) {
+            continue;
+        }
+        for requirement in list {
+            by_name
+                .entry(requirement_name(requirement))
+                .or_default()
+                .push((format!("{name}（已安装）"), requirement));
+        }
+    }
+    let mut lines = Vec::new();
+    for (name, list) in &by_name {
+        let mut distinct: Vec<&str> = list.iter().map(|(_, r)| *r).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() < 2 {
+            continue;
+        }
+        lines.push(format!("  {name}："));
+        lines.extend(
+            list.iter()
+                .map(|(owner, r)| format!("    {owner} 要求 {r}")),
+        );
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut note = format!(
+        "依赖冲突：共享 venv 里一个包只能有一个版本，下面这些节点包对同一个包的版本要求不一样：\n{}",
+        lines.join("\n")
+    );
+    if uv_output.contains("unsafe-best-match") {
+        note.push_str(
+            "\n不要照 uv 的提示改用 --index-strategy unsafe-best-match：Agent 有意不用它，\
+             让平台自己的包（sfly、sfly-std）只来自控制面的包索引，不会被 PyPI 上同名的包顶替。",
+        );
+    }
+    Some(note)
+}
+
+/// 要求（PEP 508）里的包名，按 PEP 503 规范化：到第一个版本比较符、`[`、`;`、`@`、括号或空白为止。
+fn requirement_name(requirement: &str) -> String {
+    let end = requirement
+        .find(|c: char| {
+            matches!(c, '<' | '>' | '=' | '!' | '~' | '[' | ';' | '@' | '(') || c.is_whitespace()
+        })
+        .unwrap_or(requirement.len());
+    requirement[..end]
+        .to_ascii_lowercase()
+        .replace(['_', '.'], "-")
+}
+
+/// wheel 声明的依赖（METADATA 里的 Requires-Dist，不含只在某个 extra 下才要的）；读不出来时为空。
+fn wheel_requires(wheel: &Path) -> Vec<String> {
+    let Ok(file) = std::fs::File::open(wheel) else {
+        return Vec::new();
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        return Vec::new();
+    };
+    let Some(name) = zip
+        .file_names()
+        .filter_map(Result::ok)
+        .find(|n| n.ends_with(".dist-info/METADATA") && n.matches('/').count() == 1)
+        .map(|n| n.into_owned())
+    else {
+        return Vec::new();
+    };
+    let mut text = String::new();
+    if zip
+        .by_name(&name)
+        .and_then(|mut f| f.read_to_string(&mut text).map_err(Into::into))
+        .is_err()
+    {
+        return Vec::new();
+    }
+    text.lines()
+        .filter_map(|line| line.strip_prefix("Requires-Dist:"))
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.contains("extra =="))
+        .collect()
 }
 
 /// 包名按 PEP 503 规范化后比较。
@@ -238,4 +375,164 @@ fn extract_wheel(archive: Vec<u8>) -> Result<(String, Vec<u8>), String> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     Ok((name.clone(), bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{conflict_note, index_args, requirement_name};
+
+    fn args(pypi: Option<&str>, package_index: Option<&str>) -> Vec<String> {
+        index_args(pypi, package_index)
+    }
+
+    #[test]
+    fn the_control_plane_index_comes_before_the_pypi_mirror_and_the_strategy_is_always_spelled_out()
+    {
+        assert_eq!(
+            args(Some("https://mirror/simple"), Some("http://plane/simple/")),
+            [
+                "--index",
+                "http://plane/simple/",
+                "--default-index",
+                "https://mirror/simple",
+                "--index-strategy",
+                "first-index",
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_package_index_only_the_pypi_mirror_is_used() {
+        assert_eq!(
+            args(Some("https://mirror/simple"), None),
+            [
+                "--default-index",
+                "https://mirror/simple",
+                "--index-strategy",
+                "first-index"
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_mirror_pypi_stays_the_default_index() {
+        assert_eq!(
+            args(None, Some("http://plane/simple/")),
+            [
+                "--index",
+                "http://plane/simple/",
+                "--index-strategy",
+                "first-index"
+            ]
+        );
+        assert_eq!(args(None, None), ["--index-strategy", "first-index"]);
+    }
+
+    #[test]
+    fn requirement_names_are_normalized() {
+        for (requirement, name) in [
+            ("sfly-std>=0.4", "sfly-std"),
+            ("Sfly_Std==0.4.0", "sfly-std"),
+            ("httpx[http2]>=0.25 ; python_version >= '3.10'", "httpx"),
+            ("psutil", "psutil"),
+            ("pkg @ https://example.com/pkg.whl", "pkg"),
+        ] {
+            assert_eq!(requirement_name(requirement), name, "{requirement}");
+        }
+    }
+
+    fn requires(items: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
+        items
+            .iter()
+            .map(|(name, list)| {
+                (
+                    name.to_string(),
+                    list.iter().map(|r| r.to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    const NO_SOLUTION: &str = "× No solution found when resolving dependencies:";
+
+    #[test]
+    fn the_note_names_both_packages_and_what_each_requires() {
+        let others = requires(&[
+            ("sfly-a", &["sfly-std<0.4", "httpx>=0.25"]),
+            ("sfly-b", &["httpx>=0.25"]),
+        ]);
+        let note = conflict_note(
+            "sfly-c@1.0.0",
+            &["sfly-std>=0.4".to_string(), "httpx>=0.25".to_string()],
+            "sfly-c",
+            &others,
+            NO_SOLUTION,
+        )
+        .expect("note");
+        assert!(note.contains("sfly-std："), "{note}");
+        assert!(note.contains("sfly-c@1.0.0 要求 sfly-std>=0.4"), "{note}");
+        assert!(
+            note.contains("sfly-a（已安装） 要求 sfly-std<0.4"),
+            "{note}"
+        );
+        // 大家要求相同的包（httpx>=0.25）不是冲突，不写。
+        assert!(!note.contains("httpx"), "{note}");
+        assert!(!note.contains("unsafe-best-match"), "{note}");
+    }
+
+    #[test]
+    fn the_note_is_only_for_resolution_failures_with_a_real_difference() {
+        let others = requires(&[("sfly-a", &["sfly-std<0.4"])]);
+        let new = ["sfly-std>=0.4".to_string()];
+        // 失败不是依赖解析造成的（例如下载失败）。
+        assert_eq!(
+            conflict_note(
+                "sfly-c@1",
+                &new,
+                "sfly-c",
+                &others,
+                "error: failed to download"
+            ),
+            None
+        );
+        // 要求一样，没有可写的。
+        assert_eq!(
+            conflict_note(
+                "sfly-c@1",
+                &["sfly-std<0.4".to_string()],
+                "sfly-c",
+                &others,
+                NO_SOLUTION
+            ),
+            None
+        );
+        // 这个包自己的旧版本的依赖不算：它就要被换掉。
+        assert_eq!(
+            conflict_note(
+                "sfly-a@2",
+                &["sfly-std>=0.4".to_string()],
+                "sfly-a",
+                &others,
+                NO_SOLUTION
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_note_warns_against_the_unsafe_best_match_hint_that_uv_prints() {
+        let others = requires(&[("sfly-a", &["sfly-std<0.4"])]);
+        let output = format!("{NO_SOLUTION}\nhint: use `--index-strategy unsafe-best-match`");
+        let note = conflict_note(
+            "sfly-c@1",
+            &["sfly-std>=0.4".to_string()],
+            "sfly-c",
+            &others,
+            &output,
+        )
+        .expect("note");
+        assert!(note.contains("不要照 uv 的提示"), "{note}");
+    }
 }

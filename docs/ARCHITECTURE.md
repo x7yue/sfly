@@ -196,15 +196,15 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 - **指定场景（`scenario_lookup.py`）**：写 id 或准确名称；先按 id 找，找不到再按名称找；名称对应多个场景时报错并列出每个候选的 id 和最新版本号；已归档的场景不参与名称匹配。
 - **外壳（`session.py`）**：`common_options()` 给命令加上 `--server`、`--nickname`、`--json`；`command(handler)` 创建请求客户端和输出，把 `CliError` 输出成错误并以退出码 2 结束，handler 可以返回自己的退出码。
 
-开发机上的 `sfly` CLI 从控制面的 sfly 简单索引安装：`GET /simple/`（PEP 503）只有 `sfly` 一个项目，`/simple/sfly/` 只列出与控制面同版本的 SDK wheel（链接带 `#sha256=`），其他项目 404，所以不会从 PyPI 镜像装到同名的其他包。`install.sh --dev` 在安装 Agent 之外用一次性的镜像环境变量装好 uv（没有时），再 `uv tool install --index sfly=<控制面>/simple/ 'sfly[cli]==<控制面版本>'`（其余依赖走 PyPI 镜像）；重新运行即升级到控制面的版本。
+开发机上的 `sfly` CLI 从控制面的包索引安装：`GET /simple/`（PEP 503）只有平台自己的两个包，`sfly` 和 `sfly-std`。`/simple/sfly/` 只列出与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`/simple/sfly-std/` 列出**公共项目**里已发布的标准节点包的 wheel（`src/packages/std-index.ts`：wheel 取自节点包归档里唯一的那个 `.whl`，摘要按归档的 sha256 缓存，链接带 wheel 的 `#sha256=` 和 `data-requires-python`，文件在 `/simple/sfly-std/files/<文件名>`），别的项目里发布的 `sfly-std` 版本、公共项目里别的名字的包都不在索引里（项目页 404）；公共项目里还没有发布 `sfly-std` 时，`/simple/sfly-std/` 是 200 和一个没有任何版本的页面，不是 404：uv 对一个名字只看第一个有回应的索引，404 才会转去下一个索引，所以没发布时依赖它的节点包装不上，而不会装上 PyPI 上有人放的同名包。其余名字 404，所以不会从 PyPI 镜像装到同名的其他包。**不需要凭据**：索引的几个路径在契约里都是 `system` 类（ADR 0029「不属于项目」一类：`/sdk/python` 的 wheel、Agent 二进制、安装脚本同类），经契约路由注册、过启动守卫的同一处检查；理由是内容只有平台自己的包（公共项目的包本来任何凭据都能读，ADR 0029），而 uv 从索引地址里的凭据取认证会把它写进命令行和安装输出（Agent 的安装输出会进任务错误和 `InstallStatus`）。公共项目的包只有平台管理员能发布，所以索引里不会出现别人上传的内容；发布到公共项目的路径随 #488、#501 到位之前，只有升级时迁移进公共项目的 `sfly-std` 版本在索引里。`install.sh --dev` 在安装 Agent 之外用一次性的镜像环境变量装好 uv（没有时），再 `uv tool install --index sfly=<控制面>/simple/ 'sfly[cli]==<控制面版本>'`（其余依赖走 PyPI 镜像）；重新运行即升级到控制面的版本。
 
 ### 4.4 Agent 上的安装（共享 venv）
 
 - 每个 Agent 有**一个**共享 venv（与 Agent 自身完全隔离），节点包和 SDK 运行时都装在里面。
-- venv 不存在时，Agent 在收到控制面的 Welcome 之后用 `uv venv --python 3.13` 创建，Python 从 Welcome 下发的 GitHub Release 镜像下载（ADR 0012；控制面不可达时不创建）；没有指定 `--uv` 时先准备 `SFLY_HOME/bin/uv`（不存在就用镜像上的 `uv-installer.sh` 安装）；环境准备失败时 Agent 以退出码 78 退出；节点包依赖从 Welcome 下发的 PyPI 镜像安装（本地 `--index-url` 优先）；SDK 运行时由控制面提供（构建时打包 `sdk/python` 的 wheel，`GET /sdk/python/<版本>/<wheel>`），Welcome 给出与 Agent 版本相同的 wheel 地址和 sha256，venv 里的 SDK 版本不一致时 Agent 下载、校验并安装，一致时不重装。
+- venv 不存在时，Agent 在收到控制面的 Welcome 之后用 `uv venv --python 3.13` 创建，Python 从 Welcome 下发的 GitHub Release 镜像下载（ADR 0012；控制面不可达时不创建）；没有指定 `--uv` 时先准备 `SFLY_HOME/bin/uv`（不存在就用镜像上的 `uv-installer.sh` 安装）；环境准备失败时 Agent 以退出码 78 退出；节点包依赖从 Welcome 下发的 PyPI 镜像安装（本地 `--index-url` 优先），同时把控制面的包索引（`Welcome.package_index_url`，`<对外地址>/simple/`，#556）作为优先于镜像的索引：`uv pip install --index <控制面的包索引> --default-index <PyPI 镜像> --index-strategy first-index`（`agent/src/install.rs` 的 `index_args`），所以节点包可以依赖 `sfly-std`，它只会来自控制面的索引，PyPI 镜像上同名的更高版本也不会被装上（策略写在命令行上，环境变量 `UV_INDEX_STRATEGY` 或用户级的 uv 配置换不掉它）；旧版本控制面的 Welcome 没有这个字段（空串），Agent 就只用 PyPI 镜像，和以前一样，旧 Agent 不认识这个字段、照常读其余字段（版本不一致的 Agent 本来就不派任务、要先更新到控制面的版本，ADR 0014，所以这两种组合只出现在更新的间隙里）；SDK 运行时由控制面提供（构建时打包 `sdk/python` 的 wheel，`GET /sdk/python/<版本>/<wheel>`），Welcome 给出与 Agent 版本相同的 wheel 地址和 sha256，venv 里的 SDK 版本不一致时 Agent 下载、校验并安装，一致时不重装。
 - 任务需要的 `包名@版本` 与已安装的版本不一致时，Agent 用 `uv pip install` 安装或切换版本。
 - **安装与启动新任务互斥**：安装期间不启动新任务，已经在运行的任务继续执行。
-- 安装失败（包括依赖冲突）时，任务以 `env_error` 失败，不重试，并展示完整的 uv 输出。
+- 安装失败（包括依赖冲突）时，任务以 `env_error` 失败，不重试，并展示完整的 uv 输出。共享 venv 里一个包只有一个版本（`sfly-std` 也是：同一台 Agent 上所有依赖它的节点包共用一份）：两个节点包对同一个包的版本要求互相矛盾时，uv 只说「你要求 sfly-std<0.4」，不说是哪个包要求的，所以错误信息在 uv 的输出后面补一段，写明是哪几个节点包、各要求什么（`install.rs` 的 `conflict_note`，只列要求不一样的包）；uv 提示的 `--index-strategy unsafe-best-match` 不能用（它让 PyPI 上同名的包顶替平台自己的包），输出里有这个提示时补充说明。
 
 ---
 

@@ -26,6 +26,20 @@ describe("镜像配置", () => {
 		});
 	});
 
+	it("Welcome 总是带上控制面的包索引地址（对外地址加 /simple/），不用配置，和镜像无关（#556）", async () => {
+		cp = await startTestControlPlane();
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-index" });
+		agents.push(agent);
+		expect(agent.welcome.packageIndexUrl).toBe(`${cp.httpUrl}/simple/`);
+	});
+
+	it("包索引地址跟着配置的对外地址走（反向代理后面带路径前缀时也是）", async () => {
+		cp = await startTestControlPlane({ publicHttpUrl: "https://sfly.example.com/base" });
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-index-proxied" });
+		agents.push(agent);
+		expect(agent.welcome.packageIndexUrl).toBe("https://sfly.example.com/base/simple/");
+	});
+
 	it("未配置镜像时两个字段为空", async () => {
 		cp = await startTestControlPlane();
 		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-no-mirrors" });

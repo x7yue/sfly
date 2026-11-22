@@ -201,13 +201,24 @@ SFLY_GITHUB_RELEASE_MIRROR=https://mirrors.ustc.edu.cn/github-release
 
 不配置时用 uv 的官方来源，能访问公网的环境不用配置。单台 Agent 可以用 `--uv`（`SFLY_UV`）指定自己的 uv，这时 Agent 不再安装和更新 uv。
 
+### 控制面的包索引：`sfly` 和 `sfly-std`
+
+控制面自己提供一个包索引（PEP 503）`{{SFLY_URL}}/simple/`，里面只有平台自己的两个包：`sfly`（SDK 和命令行）和 `sfly-std`（[标准节点包](standard-nodes.md)的辅助函数）。它们不在 PyPI 上，所以不用往自己的 PyPI 镜像里放任何东西：
+
+- **Agent**：连上控制面时 Welcome 带着这个索引的地址，Agent 装节点包的依赖时把它作为优先于 PyPI 镜像的索引，所以依赖 `sfly-std` 的节点包能直接装上；`sfly-std` 只会来自这个索引，PyPI 镜像（或上游 PyPI）上有人放了同名、版本更高的包也不会被装上；其余依赖（`httpx`、`psutil` 等）仍然来自 PyPI 镜像，离线环境本来就要有这个镜像。这个地址不用配置，也不能在 Agent 上覆盖：它就是 Agent 连着的这个控制面。
+- **开发机**：`sfly init` 生成的项目把 `sfly` 和 `sfly-std` 都指向它（见 [创建节点包项目](init-project.md)）。
+- 不需要凭据，和 SDK、Agent 二进制的下载一样；索引只提供这两个包，别的名字一律 404，也不会列出任何项目里用户自己发布的节点包。
+- `sfly-std` 的内容是**公共项目**里已发布的版本：上传（发布）`sfly-std` 的步骤见 [标准节点](standard-nodes.md#上传-sfly-std)。公共项目里还没有发布 `sfly-std` 时，依赖它的节点包装不上，任务以 `env_error` 失败，uv 报「没有 sfly-std 的版本」；这时先发布 `sfly-std`。
+- Agent 和控制面的版本不一致时，控制面不给这台 Agent 派新任务，Agent 先更新到控制面的版本（见 [版本与自动更新](#版本与自动更新)），所以下面两种组合只出现在更新的间隙里：旧版本的 Agent 不认识 Welcome 里的索引地址，照常工作，只是装不了依赖 `sfly-std` 的节点包；新版本的 Agent 连上还没有这个索引的旧控制面时，Welcome 里没有地址，Agent 只用 PyPI 镜像，和以前一样。
+- 一台 Agent 的共享环境里每个包只有一个版本，`sfly-std` 也是：两个节点包对它的版本要求互相矛盾时，第二个节点包装不上，任务以 `env_error` 失败，错误信息写明是哪几个节点包、各要求什么版本。不要按 uv 提示的 `--index-strategy unsafe-best-match` 去改：Agent 有意不用它，那会让 PyPI 上同名的包顶替平台自己的包。
+
 ### 单台机器覆盖镜像
 
 个别机器访问不了控制面配置的镜像时（网络不同，或镜像站拒绝这台机器的请求），可以只在这台机器上换成别的镜像，不影响其他 Agent 和项目。有三个覆盖项，名字和 Agent 参数对应的环境变量相同：
 
 | 本机覆盖 | Agent 参数 | 用途 |
 |---|---|---|
-| `SFLY_INDEX_URL` | `--index-url` | PyPI 镜像：Agent 安装节点包的依赖（Agent 访问 PyPI 只有这一处）、`--dev` 安装 `sfly` 命令行的依赖、`sfly init` 写进新项目 |
+| `SFLY_INDEX_URL` | `--index-url` | PyPI 镜像：Agent 安装节点包的依赖（Agent 访问 PyPI 只有这一处；平台自己的包 `sfly-std` 不走镜像，见下一节）、`--dev` 安装 `sfly` 命令行的依赖、`sfly init` 写进新项目 |
 | `SFLY_GITHUB_RELEASE_MIRROR` | `--github-release-mirror` | GitHub Release 镜像：安装和更新 uv；没有覆盖 Python 下载镜像时也用来下载 Python |
 | `SFLY_PYTHON_INSTALL_MIRROR` | `--python-install-mirror` | Python 下载镜像，直接作为 uv 的 `UV_PYTHON_INSTALL_MIRROR`（以 `/astral-sh/python-build-standalone/` 结尾） |
 

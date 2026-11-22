@@ -19,3 +19,5 @@ Agent 机器上的 uv 和 Python 解释器不随 sfly 打包，也不固定版�
 「执行 `uv self update`」改为：控制面配置了 GitHub Release 镜像时，重新运行镜像上的 `astral-sh/uv/LatestRelease/uv-installer.sh`（与首次安装 uv 相同，`UV_DOWNLOAD_URL` 指向镜像），没有配置时才执行 `uv self update`。原因：`uv self update` 要用镜像时得设 `UV_INSTALLER_GITHUB_BASE_URL`，设了之后 uv 会去访问镜像主机上的 GitHub API（`api.<主机>/repos/astral-sh/uv/releases`），中科大 `github-release` 这类只镜像文件的站点上不存在；而 `uv self update` 内部本来也是下载并运行这个安装脚本。时机不变：Agent 安装后和自更新后的首次启动各一次，失败但旧 uv 可用时只告警。
 
 单台机器可以在本机覆盖下发的镜像（#72）：Agent 的 `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`（命令行 > 环境变量 > `agent.env` > 控制面下发），install.sh 写进 `agent.env`、`sfly init` 读取同样的来源；控制面仍只配置两项，Python 下载镜像只能在本机单独覆盖（默认从 GitHub Release 镜像推导）。原因：uv 把发行版名写进 User-Agent 且不能修改，中科大会拒绝个别发行版（如 Omarchy）的请求，这类机器要绕开，其他机器不受影响。
+
+平台自己的包不走镜像（#556）：节点包可以依赖标准节点包 `sfly-std`，它不在 PyPI 上，由控制面的包索引（`/simple/`，和 `sfly` 一样）提供；Agent 装节点包依赖时把控制面的包索引排在 PyPI 镜像前面，并在命令行上写明 `--index-strategy first-index`，所以 `sfly-std` 只来自控制面，镜像或 PyPI 上同名的包不会被装上。其余依赖仍来自本 ADR 的 PyPI 镜像。见 docs/ARCHITECTURE.md §4.4。
