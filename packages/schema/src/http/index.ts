@@ -1,3 +1,4 @@
+import { authApi, usersApi } from "./accounts.js";
 import { actionsApi } from "./actions.js";
 import { agentBinariesApi } from "./agent-binaries.js";
 import { agentsApi } from "./agents.js";
@@ -17,6 +18,7 @@ import { artifactsApi, logsApi, runsApi } from "./runs.js";
 import { sessionsApi } from "./sessions.js";
 import { sdkApi, systemApi } from "./system.js";
 
+export * from "./accounts.js";
 export * from "./actions.js";
 export * from "./agent-binaries.js";
 export * from "./agents.js";
@@ -43,6 +45,7 @@ export const httpApis = {
 	agentBinaries: agentBinariesApi,
 	agents: agentsApi,
 	artifacts: artifactsApi,
+	auth: authApi,
 	clientPackage: clientPackageApi,
 	dashboard: dashboardApi,
 	docs: docsApi,
@@ -56,6 +59,7 @@ export const httpApis = {
 	sdk: sdkApi,
 	sessions: sessionsApi,
 	system: systemApi,
+	users: usersApi,
 } satisfies Record<string, Record<string, RouteDef>>;
 
 /**

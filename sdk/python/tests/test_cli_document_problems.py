@@ -162,3 +162,69 @@ def test_a_node_timeout_at_the_limit_is_accepted() -> None:
     }
 
     assert _document_problems(document) == []
+
+
+@pytest.mark.parametrize("queue_timeout", [4_294_967_296, 9_000_000_000_000])
+def test_a_node_queue_timeout_over_the_limit_is_reported_with_the_node_the_field_and_the_limit(
+    queue_timeout: int,
+) -> None:
+    """场景里节点的排队超时有上限（#559）：排队截止时间要是有效的时间；和控制面同一句话。"""
+    document = {
+        "nodes": [
+            {"id": "entry", "kind": "entry"},
+            {
+                "id": "wait",
+                "kind": "package",
+                "package": "p",
+                "node": "n",
+                "display_name": "等槽位",
+                "queue_timeout": queue_timeout,
+            },
+        ]
+    }
+
+    problems = _document_problems(document)
+
+    assert problems == [
+        "  nodes/1/queue_timeout（节点 wait）: 节点 等槽位（wait）：queue_timeout 必须是 1 到 "
+        f"4294967295 之间的正整数（秒），实际是 {queue_timeout}"
+    ]
+
+
+def test_a_node_queue_timeout_at_the_limit_is_accepted() -> None:
+    document = {
+        "nodes": [
+            {"id": "entry", "kind": "entry"},
+            {
+                "id": "wait",
+                "kind": "package",
+                "package": "p",
+                "node": "n",
+                "queue_timeout": 4_294_967_295,
+            },
+        ]
+    }
+
+    assert _document_problems(document) == []
+
+
+def test_timeout_and_queue_timeout_over_the_limit_are_each_reported_with_their_own_field() -> None:
+    document = {
+        "nodes": [
+            {"id": "entry", "kind": "entry"},
+            {
+                "id": "both",
+                "kind": "package",
+                "package": "p",
+                "node": "n",
+                "timeout": 5_000_000_000,
+                "queue_timeout": 6_000_000_000,
+            },
+        ]
+    }
+
+    problems = _document_problems(document)
+
+    assert len(problems) == 2
+    assert "both：queue_timeout 必须是 1 到 4294967295" in problems[0]
+    assert "both：timeout 必须是 1 到 4294967295" in problems[1]

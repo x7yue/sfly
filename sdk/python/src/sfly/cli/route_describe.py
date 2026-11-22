@@ -25,6 +25,7 @@ _TARGET_TEXT = {
     "collection": "列表或新建，没有具体的那一个",
     "upload": "具体的那一个在上传的内容里",
     "global": "平台自身，没有具体的那一个",
+    "self": "发起请求的用户自己",
 }
 _PATH_PARAM = re.compile(r":([A-Za-z_][A-Za-z0-9_]*)|\*$")
 
