@@ -7,6 +7,7 @@ import {
 	orderedInputs,
 	type PackageCatalog,
 	packageKey,
+	similarInput,
 } from "../src/index.js";
 
 /** fetch(url: str, retries: int = 3, mode: Literal["a","b"] = "a", tags: list[str] | None = None) */
@@ -153,6 +154,57 @@ describe("输入名的静态检查：写了节点没有声明的输入", () => {
 		expect(warningsFor(type, { host: "h", conccurrency_: 2 })[0]?.message).toContain(
 			"是不是想写 concurrency？",
 		);
+	});
+
+	it("一个字符的名字不猜：差一个字符也是整个名字都不一样（a 对声明的 b）", () => {
+		const type = typeWith({ b: { type: "string" }, host: { type: "string" } });
+		expect(warningsFor(type, { host: "h", a: 1 })[0]?.message).toBe(
+			"节点 f 的输入 a 没有声明：节点类型 fetch 声明的输入有 b、host；改成其中一个，或者删掉这个输入",
+		);
+		// 两个字符的名字差一个字符可以猜。
+		const two = typeWith({ ab: { type: "string" } });
+		expect(warningsFor(two, { cb: 1 })[0]?.message).toContain("是不是想写 ab？");
+		expect(similarInput("a", ["b"])).toBeUndefined();
+		expect(similarInput("cb", ["ab"])).toBe("ab");
+	});
+
+	it("声明的输入都已经写在节点上了：没有可以改成的，只说删掉这个输入", () => {
+		const type = typeWith({ url: { type: "string" }, retries: { type: "integer" } });
+		expect(warningsFor(type, { url: "x", retries: 1, urll: 2 })[0]?.message).toBe(
+			"节点 f 的输入 urll 没有声明：节点类型 fetch 声明的输入有 url、retries；声明的输入都已经写在这个节点上了；删掉这个输入",
+		);
+		// 还有没写的声明的输入时照旧：改成其中一个。
+		expect(warningsFor(type, { url: "x", wat: 2 })[0]?.message).toContain(
+			"改成其中一个，或者删掉这个输入",
+		);
+	});
+
+	it("开发版本（包名@dev）的节点：说明里提醒声明是 Agent 上次 sfly dev 时上报的，改了参数要重新运行；已发布的版本没有这句", () => {
+		const warn = (version: string) =>
+			documentWarnings(
+				OrchestrationDocument.parse({
+					default_agent: "a",
+					packages: { demo: version },
+					nodes: [
+						{ id: "entry", kind: "entry" },
+						{
+							id: "f",
+							kind: "package",
+							package: "demo",
+							node: "fetch",
+							inputs: { url: "x", wat: 1 },
+						},
+					],
+					edges: [{ from: "entry", to: "f", kind: "chain" }],
+				}),
+				new Map([[packageKey("demo", version), [fetchType]]]),
+			).filter((w) => w.code === "input_not_declared")[0]?.message;
+		const hint =
+			"（开发版本的声明是 Agent 上次运行 sfly dev 时上报的，刚改过节点的参数的话，在那台机器上重新运行 sfly dev）";
+		expect(warn("dev")).toBe(
+			`节点 f 的输入 wat 没有声明：节点类型 fetch 声明的输入有 url、retries、mode、tags；改成其中一个，或者删掉这个输入${hint}`,
+		);
+		expect(warn("1.0.0")).not.toContain("sfly dev");
 	});
 
 	it("引用也要检查名字；每个没有声明的输入一条", () => {

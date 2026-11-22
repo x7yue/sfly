@@ -14,7 +14,7 @@ import { devNodeTypes } from "./dev-node-types.js";
 
 /**
  * 文档锁定的节点包版本的元信息（不存在的版本为 null）。一个版本一个版本地读：`db` 可能是事务对象。
- * 开发版本取在线 Agent 上报的元信息（{@link devNodeTypes}）；不知道它的节点类型时没有这一项，相关检查跳过。
+ * 开发版本取节点派发到的 Agent 上报的元信息（{@link devNodeTypes}）；不知道它的节点类型时没有这一项，相关检查跳过。
  */
 export async function packageCatalogFor(
 	db: Db | Tx,

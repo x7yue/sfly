@@ -59,7 +59,7 @@ async function lockedPackages(
 	return locked;
 }
 
-/** 文档锁定的节点包版本的元信息，再加上锁定开发版本的包的节点类型（在线 Agent 上报的，不知道的不在里面）。 */
+/** 文档锁定的节点包版本的元信息，再加上锁定开发版本的包的节点类型（节点派发到的 Agent 上报的，不知道的不在里面）。 */
 async function withDevNodeTypes(
 	db: Db | Tx,
 	doc: StoredOrchestrationDocument,
@@ -197,7 +197,7 @@ export type ParamsCheck = (
  * 「飞书机器人」类型的输入引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
  * 整个引用入口参数的节点输入，值（触发时给的值、运行预设里的值、默认值，子流程里是异步任务节点传入的值）
  * 的类型要符合输入的类型，判断和派发时是同一个（{@link paramInputTypeProblems}）；
- * 锁定开发版本的节点按在线 Agent 上报的元信息检查（{@link devNodeTypes}，不知道时跳过）。
+ * 锁定开发版本的节点按它派发到的 Agent 上报的元信息检查（{@link devNodeTypes}，不知道时跳过）。
  * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过。
  */
 export function createParamsCheck(): ParamsCheck {

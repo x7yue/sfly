@@ -54,13 +54,18 @@ const loaded = (
 	],
 });
 
-const tune = (id: string, pkg: string, inputs: Record<string, unknown>) => ({
+const tune = (id: string, pkg: string, inputs: Record<string, unknown>, agent?: string) => ({
 	id,
 	kind: "package",
 	package: pkg,
 	node: "tune",
 	inputs,
+	...(agent === undefined ? {} : { agent }),
 });
+
+/** 开发版本的警告说明末尾那句：声明是 Agent 上次 sfly dev 时上报的。 */
+const DEV_HINT =
+	"（开发版本的声明是 Agent 上次运行 sfly dev 时上报的，刚改过节点的参数的话，在那台机器上重新运行 sfly dev）";
 
 describe("写错的输入名、开发版本的节点：保存时的警告和触发前的预检", () => {
 	let cp: TestControlPlane;
@@ -193,7 +198,7 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 				[
 					"input_not_declared",
 					"retires",
-					"节点 t 的输入 retires 没有声明：节点类型 tune 声明的输入有 host、retries、n；是不是想写 retries？",
+					`节点 t 的输入 retires 没有声明：节点类型 tune 声明的输入有 host、retries、n；是不是想写 retries？${DEV_HINT}`,
 				],
 			]);
 
@@ -239,24 +244,108 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 			expect(await preflight(id)).toEqual([]);
 		});
 
-		it("同一个开发包加载在几台在线的 Agent 上、内容相同：照常检查", async () => {
-			await connect("agent-a", loaded("tuner-dev"));
+		it("只看节点派发到的 Agent：别的在线 Agent 上加载的内容不同，不影响检查", async () => {
+			// agent-a（默认 Agent）加载的新源码多了输入 extra；agent-b 上是没有 extra 的旧源码。
+			const withExtra = { ...TUNE_INPUTS.properties, extra: { type: "string" } };
+			await connect("agent-a", loaded("tuner-dev", withExtra));
 			await connect("agent-b", loaded("tuner-dev"));
-			const { warnings } = await save(
-				document([tune("t", "tuner-dev", { host: "h", retires: 2 })], { "tuner-dev": "dev" }),
+			// 节点派发到 agent-a：extra 是声明过的，不报；写错的 retires 报。
+			const onA = await save(
+				document([tune("t", "tuner-dev", { host: "h", extra: "x", retires: 2 })], {
+					"tuner-dev": "dev",
+				}),
 			);
-			expect(warnings.map((w) => w.code)).toEqual(["input_not_declared"]);
+			expect(onA.warnings.map((w) => [w.code, w.input])).toEqual([
+				["input_not_declared", "retires"],
+			]);
+			// 节点派发到 agent-b：按 agent-b 加载的，extra 没有声明。
+			const onB = await save(
+				document([tune("t", "tuner-dev", { host: "h", extra: "x" }, "agent-b")], {
+					"tuner-dev": "dev",
+				}),
+			);
+			expect(onB.warnings.map((w) => [w.code, w.input])).toEqual([["input_not_declared", "extra"]]);
 		});
 
-		it("几台在线的 Agent 加载的内容不同：不知道节点会落在哪一份上，不检查（和没有元信息一样），不误报", async () => {
+		it("派发目标离线、别的在线 Agent 加载的是旧源码：不检查，不拦，触发后任务排队等它上线", async () => {
+			// agent-b 上的新源码声明了 extra，现在离线；在线的 agent-a 加载的是没有 extra 的旧源码。
+			const withExtra = { ...TUNE_INPUTS.properties, extra: { type: "string" } };
+			const off = await connect("agent-b", loaded("tuner-dev", withExtra));
+			await off.close();
+			await eventually(async () => {
+				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
+					"/agents",
+				);
+				expect(list.find((a) => a.name === "agent-b")?.status).toBe("offline");
+			});
 			await connect("agent-a", loaded("tuner-dev"));
-			// agent-b 上的是旧源码：没有 retires 之外的输入声明。
-			await connect("agent-b", loaded("tuner-dev", { host: { type: "string" } }));
 			const { id, warnings } = await save(
-				document([tune("t", "tuner-dev", { host: "h", retires: 2 })], { "tuner-dev": "dev" }),
+				document([tune("t", "tuner-dev", { host: "h", extra: "x" }, "agent-b")], {
+					"tuner-dev": "dev",
+				}),
 			);
 			expect(warnings).toEqual([]);
 			expect(await preflight(id)).toEqual([]);
+			await api.triggerOk(id);
+		});
+
+		it("派发目标在线但没加载这个包（别的 Agent 加载了）：预检只指出没有加载，不再按别的 Agent 的声明多报输入名", async () => {
+			await connect("agent-a", loaded("tuner-dev"));
+			await connect("agent-b");
+			const { id, warnings } = await save(
+				document([tune("t", "tuner-dev", { host: "h", retires: 2 }, "agent-b")], {
+					"tuner-dev": "dev",
+				}),
+			);
+			expect(warnings).toEqual([]);
+			expect((await preflight(id)).map((p) => p.code)).toEqual(["dev_package_not_loaded"]);
+		});
+
+		it("用到这个包的几个节点派发到不同的 Agent：这几台上报的内容相同才检查，不同就不检查", async () => {
+			const two = () =>
+				document(
+					[
+						tune("t1", "tuner-dev", { host: "h", retires: 1 }, "agent-a"),
+						tune("t2", "tuner-dev", { host: "h", retires: 2 }, "agent-b"),
+					],
+					{ "tuner-dev": "dev" },
+				);
+			await connect("agent-a", loaded("tuner-dev"));
+			// agent-b 上是旧源码：没有 retries、n 的声明。
+			const b = await connect("agent-b", loaded("tuner-dev", { host: { type: "string" } }));
+			const differ = await save(two());
+			expect(differ.warnings).toEqual([]);
+			expect(await preflight(differ.id)).toEqual([]);
+			// agent-b 重新 sfly dev 之后内容相同：两个节点都按它检查。
+			await b.close();
+			await eventually(async () => {
+				const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
+					"/agents",
+				);
+				expect(list.find((a) => a.name === "agent-b")?.status).toBe("offline");
+			});
+			await connect("agent-b", loaded("tuner-dev"));
+			const same = await save(two());
+			expect(same.warnings.map((w) => [w.node_id, w.code, w.input]).sort()).toEqual([
+				["t1", "input_not_declared", "retires"],
+				["t2", "input_not_declared", "retires"],
+			]);
+		});
+
+		it("派发目标的 Agent 没有注册过：不知道它加载了什么，不检查", async () => {
+			await connect("agent-a", loaded("tuner-dev"));
+			const { warnings } = await save(
+				document([tune("t", "tuner-dev", { host: "h", retires: 2 }, "agent-nobody")], {
+					"tuner-dev": "dev",
+				}),
+			);
+			expect(warnings).toEqual([]);
+		});
+
+		it("没有节点用这个开发包：不读 Agent，没有警告", async () => {
+			await connect("agent-a", loaded("tuner-dev"));
+			const { warnings } = await save(document([], { "tuner-dev": "dev" }));
+			expect(warnings.filter((w) => w.code === "input_not_declared")).toEqual([]);
 		});
 
 		it("只有离线的 Agent 加载过它：控制面不知道它现在加载了什么，不检查", async () => {
@@ -269,7 +358,9 @@ describe("写错的输入名、开发版本的节点：保存时的警告和触�
 				expect(list.find((a) => a.name === "agent-off")?.status).toBe("offline");
 			});
 			const { warnings } = await save(
-				document([tune("t", "tuner-dev", { host: "h", retires: 2 })], { "tuner-dev": "dev" }),
+				document([tune("t", "tuner-dev", { host: "h", retires: 2 }, "agent-off")], {
+					"tuner-dev": "dev",
+				}),
 			);
 			expect(warnings).toEqual([]);
 		});
