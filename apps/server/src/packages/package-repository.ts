@@ -137,15 +137,15 @@ export interface PackageRepositoryDeps {
 	dataDir: string;
 }
 
+/** 公共项目里发布同一个名字的咨询锁的键（测试要拿同一把锁来排出确定的先后，所以导出）。 */
+export const publicPackageLockKey = (name: string) => `sfly:public-package:${name}`;
+
 /**
  * 公共项目里同一个名字的版本，按 PEP 440 规范化之后相同的（`0.9` 和 `0.9.0`）只能有一个：控制面的包索引（#556）对同一个
  * 版本只列最早发布的那个，后发布的归档会被悄悄丢在索引外，所以发布时就拒绝，报错写明已有的是哪个，索引里的去重只剩防御作用
  * （升级迁移、手工改库留下的数据）。同一个名字的并发发布排队（咨询锁，随事务释放），不会两个都通过检查。
  * 一模一样的版本（`名字@版本` 相同）由插入时的主键冲突拒绝，信息不同。
  */
-/** 公共项目里发布同一个名字的咨询锁的键（测试要拿同一把锁来排出确定的先后，所以导出）。 */
-export const publicPackageLockKey = (name: string) => `sfly:public-package:${name}`;
-
 async function rejectEquivalentVersion(
 	tx: Tx,
 	{ name, version }: { name: string; version: string },
