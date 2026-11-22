@@ -311,6 +311,18 @@ describe("场景的局部编辑", () => {
 			expect(error.message).toMatch(/^第 1 个操作（set）：字段 retries 的值不合法：/);
 			expect(await versionCount(id)).toBe(1);
 		});
+
+		it("timeout 超过上限（#534）：拒绝，指出是第几个操作，和保存同一句话", async () => {
+			const id = await scenario("超时超限");
+			const error = await problemOf(
+				await edit(id, [{ op: "set", node: "report", field: "timeout", value: 4_294_967_296 }]),
+			);
+			expect(error.code).toBe("invalid_operation");
+			expect(error.message).toBe(
+				"第 1 个操作（set）：节点 report：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 4294967296",
+			);
+			expect(await versionCount(id)).toBe(1);
+		});
 	});
 
 	describe("让调用方自己改对的报错", () => {

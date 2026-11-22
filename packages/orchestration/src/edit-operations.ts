@@ -1,7 +1,9 @@
 import {
 	type EditOperation,
 	type EditOperationProblem,
+	isNodeTimeout,
 	isRemovedNodeKind,
+	nodeTimeoutMessage,
 	OrchestrationNode,
 	SETTABLE_NODE_FIELDS,
 	type StoredNode,
@@ -299,6 +301,8 @@ function addNode(
 		ADD_NODE_FIELDS.flatMap((key) => (operation[key] === undefined ? [] : [[key, operation[key]]])),
 	);
 	const node = { ...newPackageNode(pkg, nodeName, id), inputs, ...fields } as Node;
+	const timeout = timeoutProblem(node);
+	if (timeout) return timeout;
 	const packages = locked === undefined ? { ...doc.packages, [pkg]: version } : doc.packages;
 	if (operation.after === undefined) {
 		return { ok: true, doc: { ...doc, nodes: [...doc.nodes, node], packages } };
@@ -422,5 +426,16 @@ function setField(
 		const reasons = parsed.error.issues.map((i) => i.message).join("；");
 		return fail(`字段 ${field} 的值不合法：${reasons}`);
 	}
+	const timeout = timeoutProblem(parsed.data);
+	if (timeout) return timeout;
 	return { ok: true, doc: { ...doc, nodes: doc.nodes.map((n) => (n === node ? parsed.data : n)) } };
+}
+
+/** 节点的超时超过上限（#534）：和保存同一句话。节点的 schema 只管是正整数，上限在文档一级检查，这里先拦下，好写明是第几个操作。 */
+function timeoutProblem(node: Node): Step | null {
+	if (node.kind !== "package" || node.timeout === undefined || isNodeTimeout(node.timeout)) {
+		return null;
+	}
+	const label = node.display_name ? `${node.display_name}（${node.id}）` : node.id;
+	return fail(nodeTimeoutMessage(label, node.timeout));
 }
