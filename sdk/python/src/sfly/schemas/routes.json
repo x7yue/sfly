@@ -1,5 +1,5 @@
 {
-  "description": "sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。summary 是一句话说明；effect 是 read（只读：不改变平台里任何资源的内容，也不在平台之外产生副作用；只写访问日志这类不影响资源内容的痕迹也算）或 write（有副作用）；resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；upload 是具体的那一个在上传的内容里；global 是平台自身）；有 creates 的接口新建一个这类资源，这时 resource 定位到的资源只被读、写落在新建出来的资源上；有 removes 的接口让 resource 定位到的资源（或它的一部分）不再可用（删除、归档）。params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。response 是成功响应体的 JSON Schema（按输出方向导出，控制面以后可以加字段，所以对象不是封闭的），events 是 SSE 每个事件的 data 的 JSON Schema，没有这两个字段的接口没有 JSON 响应体。notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。",
+  "description": "sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。summary 是一句话说明；effect 是 read（只读：不改变平台里任何资源的内容，也不在平台之外产生副作用；只写访问日志这类不影响资源内容的痕迹也算）或 write（有副作用）；resource 是接口作用在哪类资源上（kind，取值见 resource_kinds），以及用请求的哪个字段定位到具体的那一个（target：{params: 路径参数名}、{query: 查询参数名}、{body: 请求体字段名}；collection 是列表或新建，没有具体的那一个；upload 是具体的那一个在上传的内容里；global 是平台自身；self 是发起请求的用户自己，只用于账号）；有 creates 的接口新建一个这类资源，这时 resource 定位到的资源只被读、写落在新建出来的资源上；有 removes 的接口让 resource 定位到的资源（或它的一部分）不再可用（删除、归档）。params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。response 是成功响应体的 JSON Schema（按输出方向导出，控制面以后可以加字段，所以对象不是封闭的），events 是 SSE 每个事件的 data 的 JSON Schema，没有这两个字段的接口没有 JSON 响应体。notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。",
   "resource_kinds": {
     "scenario": "场景",
     "run": "运行",
@@ -8,7 +8,8 @@
     "agent": "Agent",
     "feishu_bot": "飞书机器人",
     "session": "会话",
-    "system": "系统"
+    "system": "系统",
+    "account": "账号"
   },
   "routes": [
     {
@@ -2494,6 +2495,280 @@
         "required": [
           "id",
           "*"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/auth/status",
+      "key": [
+        "auth",
+        "status"
+      ],
+      "kind": "endpoint",
+      "summary": "读登录状态：是不是还没有任何用户、要先初始化第一个管理员",
+      "effect": "read",
+      "resource": {
+        "kind": "account",
+        "target": "self"
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "setup_required": {
+            "type": "boolean"
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_host": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "setup_required",
+          "public_url",
+          "request_host"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/auth/setup",
+      "key": [
+        "auth",
+        "setup"
+      ],
+      "kind": "endpoint",
+      "summary": "用初始化码建第一个平台管理员并登录",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": "self"
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "setup_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "login_name": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,32}$"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "setup_code",
+          "login_name",
+          "display_name",
+          "password"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "login_name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "type": "boolean",
+            "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          }
+        },
+        "required": [
+          "id",
+          "login_name",
+          "display_name",
+          "is_platform_admin"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login",
+      "key": [
+        "auth",
+        "login"
+      ],
+      "kind": "endpoint",
+      "summary": "用登录名和密码登录",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": "self"
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "login_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "login_name",
+          "password"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "login_name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "type": "boolean",
+            "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          }
+        },
+        "required": [
+          "id",
+          "login_name",
+          "display_name",
+          "is_platform_admin"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout",
+      "key": [
+        "auth",
+        "logout"
+      ],
+      "kind": "endpoint",
+      "summary": "登出：注销当前这一个登录",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": "self"
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout-all",
+      "key": [
+        "auth",
+        "logout-all"
+      ],
+      "kind": "endpoint",
+      "summary": "注销自己所有的登录",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": "self"
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/auth/me",
+      "key": [
+        "auth",
+        "me"
+      ],
+      "kind": "endpoint",
+      "summary": "读当前登录的用户",
+      "effect": "read",
+      "resource": {
+        "kind": "account",
+        "target": "self"
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "login_name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "type": "boolean",
+            "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          }
+        },
+        "required": [
+          "id",
+          "login_name",
+          "display_name",
+          "is_platform_admin"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/auth/password",
+      "key": [
+        "auth",
+        "password"
+      ],
+      "kind": "endpoint",
+      "summary": "改自己的密码（要旧密码）",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": "self"
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "old_password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "new_password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "old_password",
+          "new_password"
         ]
       },
       "notes": []
@@ -7046,9 +7321,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -7606,9 +7881,9 @@
                           "maximum": 9007199254740991
                         },
                         "queue_timeout": {
+                          "maximum": 4294967295,
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "exclusiveMinimum": 0
                         }
                       },
                       "required": [
@@ -8118,9 +8393,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -8747,9 +9022,9 @@
                           "maximum": 9007199254740991
                         },
                         "queue_timeout": {
+                          "maximum": 4294967295,
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "exclusiveMinimum": 0
                         }
                       },
                       "required": [
@@ -10011,9 +10286,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -10596,9 +10871,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -19768,11 +20043,16 @@
                 "last_turn_outcome"
               ]
             }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "会话超过 `SESSION_LIST_LIMIT` 个，更早的没有列出来（页面据此提示）。"
           }
         },
         "required": [
           "readiness",
-          "sessions"
+          "sessions",
+          "truncated"
         ]
       },
       "notes": []
@@ -19975,6 +20255,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
@@ -21806,6 +22096,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
@@ -22037,6 +22337,357 @@
           "status",
           "database",
           "time"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/users",
+      "key": [
+        "users",
+        "list"
+      ],
+      "kind": "endpoint",
+      "summary": "列出所有用户（平台管理员）",
+      "effect": "read",
+      "resource": {
+        "kind": "account",
+        "target": "collection"
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "login_name": {
+                  "type": "string"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "is_platform_admin": {
+                  "type": "boolean"
+                },
+                "disabled_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                }
+              },
+              "required": [
+                "id",
+                "login_name",
+                "display_name",
+                "is_platform_admin",
+                "disabled_at",
+                "created_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "users"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/users",
+      "key": [
+        "users",
+        "create"
+      ],
+      "kind": "endpoint",
+      "summary": "建一个用户（平台管理员）",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": "collection"
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "login_name": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,32}$"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+          },
+          "is_platform_admin": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "login_name",
+          "display_name",
+          "password"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "login_name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "type": "boolean",
+            "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "停用的时间；没有停用为 null。停用的用户的登录和令牌立即失效。"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "id",
+          "login_name",
+          "display_name",
+          "is_platform_admin",
+          "disabled_at",
+          "created_at"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/users/:id/disable",
+      "key": [
+        "users",
+        "disable"
+      ],
+      "kind": "endpoint",
+      "summary": "停用一个用户（平台管理员）",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "login_name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "type": "boolean",
+            "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "停用的时间；没有停用为 null。停用的用户的登录和令牌立即失效。"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "id",
+          "login_name",
+          "display_name",
+          "is_platform_admin",
+          "disabled_at",
+          "created_at"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/users/:id/enable",
+      "key": [
+        "users",
+        "enable"
+      ],
+      "kind": "endpoint",
+      "summary": "恢复一个停用的用户（平台管理员）",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "login_name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "type": "boolean",
+            "description": "平台管理员：管理账号、建项目、维护公共项目，并在每个项目里有项目管理员的权限。"
+          },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "停用的时间；没有停用为 null。停用的用户的登录和令牌立即失效。"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "id",
+          "login_name",
+          "display_name",
+          "is_platform_admin",
+          "disabled_at",
+          "created_at"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/users/:id/password",
+      "key": [
+        "users",
+        "reset-password"
+      ],
+      "kind": "endpoint",
+      "summary": "重置一个用户的密码（平台管理员）",
+      "effect": "write",
+      "resource": {
+        "kind": "account",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "password"
         ]
       },
       "notes": []

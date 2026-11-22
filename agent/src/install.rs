@@ -298,7 +298,7 @@ enum IndexAnswer {
 fn index_check_failure(label: &str, url: &str, answer: &IndexAnswer) -> String {
     let got = match answer {
         IndexAnswer::NoMarker => format!(
-            "返回 200，但响应里没有 {PACKAGE_INDEX_MARKER} 头：这个地址回了 200 但不是 sfly 控制面的包索引"
+            "返回 200，但响应里没有 {PACKAGE_INDEX_MARKER} 头：这个地址回了 200 但不是 sfly 控制面的包索引，或者中间的反向代理去掉了这个响应头"
         ),
         IndexAnswer::Status(status) => format!("返回 {status}"),
         IndexAnswer::Redirect {
@@ -697,6 +697,11 @@ mod tests {
         );
         assert!(
             imposter.contains("这个地址回了 200 但不是 sfly 控制面的包索引"),
+            "{imposter}"
+        );
+        // 反向代理去掉了响应头时回答的其实是控制面：第一句也要把这种可能写上。
+        assert!(
+            imposter.contains("或者中间的反向代理去掉了这个响应头"),
             "{imposter}"
         );
         assert!(imposter.contains("SFLY_PUBLIC_URL"), "{imposter}");
