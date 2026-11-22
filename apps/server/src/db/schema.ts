@@ -252,8 +252,15 @@ export const orchestrations = pgTable(
 		/** 关注项最后一次修改；从没改过时为空。 */
 		focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
 	},
-	// 给 `runs` 的组合外键（运行的项目恒等于它的场景的项目）当目标；`id` 已经是主键，这条约束只为了让外键有可引用的唯一组合。
-	(t) => [unique("orchestrations_id_project").on(t.id, t.projectId)],
+	(t) => [
+		// 给 `runs` 的组合外键（运行的项目恒等于它的场景的项目）当目标；`id` 已经是主键，这条约束只为了让外键有可引用的唯一组合。
+		unique("orchestrations_id_project").on(t.id, t.projectId),
+		// 运行通知的触发条件只有这两个值（#446 去掉了 always）：库里不能有认不出的值，运行结束时就不会读到它。
+		check(
+			"orchestrations_run_notify_trigger",
+			sql`${t.runNotifyTrigger} in ('failed', 'failed_or_cancelled')`,
+		),
+	],
 );
 
 /**
