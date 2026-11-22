@@ -1,32 +1,44 @@
-// 切入点 A：运行通知（#232，ADR 0020、docs/SEMANTICS.md §6）：场景设置里选了机器人的场景，运行结束时由控制面发一张卡片。
+// 切入点 A：运行通知（#232、#446，ADR 0020、docs/SEMANTICS.md §6）：运行通知是兜底，场景设置里选了机器人的场景，
+// 运行失败或被取消时由控制面发一张卡片，写明哪个节点为什么失败；成功的运行从不发。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
+import { errorHeadline, runsApi, runViewFailures } from "@sfly/schema";
+import { sql } from "drizzle-orm";
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { resolveRunFocus } from "../src/focus/run-focus.js";
-import { MetricQueries } from "../src/metrics/metric-queries.js";
-import { MetricRetention } from "../src/metrics/metric-retention.js";
-import { TaskMetrics } from "../src/metrics/task-metrics.js";
-import { readRuns } from "../src/runs/run-read.js";
+import { readNodeError } from "../src/runs/run-read.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
-import { FakeAgent } from "./support/fake-agent.js";
+import { ErrorKind, FakeAgent, TaskStatus } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
-import { createPresetOk, renamePresetInDb, triggerWithPreset } from "./support/presets.js";
-import { singleConnection } from "./support/single-connection.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-// 卡片里的时间按控制面所在的时区显示：固定成东八区，期望值才与运行测试的机器无关。
-process.env.TZ = "Asia/Shanghai";
+// 运行通知不再读关注项（#446）：把 resolveRunFocus 换成对真实实现包一层的 vi.fn，数它被调用了几次。
+// 控制面里所有调用 resolveRunFocus 的地方（关注项接口、控制台）读到的都是这一份，真实实现照常执行。
+vi.mock("../src/focus/run-focus.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/focus/run-focus.js")>();
+	return { ...actual, resolveRunFocus: vi.fn(actual.resolveRunFocus) };
+});
+
+// 读第一个失败节点的失败原因出错时，运行照常结束（#533 审查）：把 readNodeError 换成对真实实现包一层的 vi.fn，
+// 个别用例让它抛错。控制面里读运行的其他地方不用它。
+vi.mock("../src/runs/run-read.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/runs/run-read.js")>();
+	return { ...actual, readNodeError: vi.fn(actual.readNodeError) };
+});
 
 const TOKEN = "tok-6c1f0d52-90a7-4e3b-8f44-2d7a1b9c0e35";
 const PUBLIC_URL = "https://sfly.example.com";
+/** 明显的假值：入口参数里声明为 secret 的值。 */
+const SECRET = "s3cr3t-value-for-notify";
+const MASK = "******";
 
 type Node = Record<string, unknown> & { id: string };
-type Trigger = "failed" | "failed_or_cancelled" | "always";
+type Trigger = "failed" | "failed_or_cancelled";
 type Ending = "success" | "failed" | "cancelled";
 
 const echo = (id: string, extra: Record<string, unknown> = {}): Node => ({
@@ -69,7 +81,7 @@ describe("运行通知", () => {
 	let feishu: FakeFeishu;
 	let agent: FakeAgent;
 
-	/** 默认配置了对外地址（SFLY_PUBLIC_URL）；没有配置的情况在最后一组里另起控制面。 */
+	/** 默认配置了对外地址（SFLY_PUBLIC_URL）；没有配置的情况在「卡片」一组里另起控制面。 */
 	async function start(
 		options: Parameters<typeof startTestControlPlane>[0] = { publicHttpUrl: PUBLIC_URL },
 	) {
@@ -105,8 +117,26 @@ describe("运行通知", () => {
 	const status = async (runId: string, expected: string) =>
 		eventually(async () => expect((await api.run(runId)).status).toBe(expected));
 	const cards = () => feishu.requests.map((r) => r.json as Card);
+	/** 等飞书收到了唯一的一张卡片并返回它。 */
+	const onlyCard = async (): Promise<Card> => {
+		await eventually(() => expect(feishu.requests).toHaveLength(1));
+		return cards()[0] as Card;
+	};
 	const facts = (card: Card) =>
 		card.card.body.elements.find((e) => e.content?.includes("**场景**"));
+	/** 「失败的节点」那一段（没有失败的节点时没有这一段）。 */
+	const failureOf = (card: Card) =>
+		card.card.body.elements.find((e) => e.content?.startsWith("**失败的节点**"));
+	/** 卡片上除标题以外的全部文字（各元素的 markdown 正文，按钮写 button）。 */
+	const textOf = (card: Card) => card.card.body.elements.map((e) => e.content ?? e.tag).join("\n");
+	/** 「失败的节点」那一段里某个标签后面的内容；没有这一行时为 undefined。 */
+	const fieldOf = (card: Card, label: string): string | undefined => {
+		const prefix = `**${label}**：`;
+		return failureOf(card)
+			?.content?.split("\n")
+			.find((line) => line.startsWith(prefix))
+			?.slice(prefix.length);
+	};
 
 	/** 触发一次运行并让它以指定的结果结束（单个包节点 a）。 */
 	async function runEnding(id: string, ending: Ending): Promise<string> {
@@ -122,24 +152,42 @@ describe("运行通知", () => {
 		await status(runId, ending);
 		return runId;
 	}
+	/** 触发一次运行，让单个包节点 a 带着给定的错误信息和出错位置失败。 */
+	async function runFailing(
+		id: string,
+		error: { message: string; location?: string },
+		params: Record<string, unknown> = {},
+	): Promise<string> {
+		const runId = await api.triggerOk(id, params);
+		await agent.fail(
+			await agent.nextAssign(),
+			error.message,
+			ErrorKind.NODE_ERROR,
+			undefined,
+			error.location,
+		);
+		await status(runId, "failed");
+		return runId;
+	}
+	/** 运行视图里这个节点的错误（按 HTTP 契约解析后的 `error`）。 */
+	const viewError = async (runId: string, nodeId: string) =>
+		(await api.run(runId)).chains.flatMap((c) => c.nodes).find((n) => n.node_id === nodeId)
+			?.error ?? null;
 	const single = () => flow([echo("a")]);
 
 	describe("触发条件", () => {
-		it.each<[Trigger, Ending, boolean]>([
-			["failed", "success", false],
-			["failed", "failed", true],
-			["failed", "cancelled", false],
-			["failed_or_cancelled", "success", false],
-			["failed_or_cancelled", "failed", true],
-			["failed_or_cancelled", "cancelled", true],
-			["always", "success", true],
-			["always", "failed", true],
-			["always", "cancelled", true],
-		])("%s：运行%s时%s", async (trigger, ending, sends) => {
+		it.each<[Trigger, Ending, "发" | "不发"]>([
+			["failed", "success", "不发"],
+			["failed", "failed", "发"],
+			["failed", "cancelled", "不发"],
+			["failed_or_cancelled", "success", "不发"],
+			["failed_or_cancelled", "failed", "发"],
+			["failed_or_cancelled", "cancelled", "发"],
+		])("%s：运行%s时%s（成功的运行从不发运行通知）", async (trigger, ending, verdict) => {
 			const id = await scenario(single(), { trigger });
 			const runId = await runEnding(id, ending);
 
-			if (sends) {
+			if (verdict === "发") {
 				await eventually(() => expect(feishu.requests).toHaveLength(1));
 				await eventually(async () =>
 					expect((await api.run(runId)).run_notification).toMatchObject({
@@ -156,26 +204,46 @@ describe("运行通知", () => {
 
 		it("没有选机器人（默认）时不发，任何结果都不发", async () => {
 			const id = await api.orchestrationWith(single(), "没开");
-			const runId = await runEnding(id, "failed");
-			expect((await api.run(runId)).run_notification).toBeNull();
+			const failed = await runEnding(id, "failed");
+			expect((await api.run(failed)).run_notification).toBeNull();
+			const cancelled = await runEnding(id, "cancelled");
+			expect((await api.run(cancelled)).run_notification).toBeNull();
+			const succeeded = await runEnding(id, "success");
+			expect((await api.run(succeeded)).run_notification).toBeNull();
 			expect(feishu.requests).toHaveLength(0);
 		});
 
 		it("读的是运行结束时场景当前的设置：运行中改了设置，按新设置发", async () => {
+			// 运行开始时是「仅失败」，取消的运行不发；运行中改成「失败和取消」并换了标题，取消之后按新设置发。
 			const id = await scenario(single(), { trigger: "failed", title: "旧标题" });
 			const runId = await api.triggerOk(id);
 			const a = await agent.nextAssign();
-			await notification(id, { trigger: "always", title: "新标题" });
-			await agent.succeed(a);
-			await status(runId, "success");
+			await notification(id, { trigger: "failed_or_cancelled", title: "新标题" });
+			await api.cancelOk(runId);
+			await agent.nextCancel();
+			await agent.cancelled(a);
+			await status(runId, "cancelled");
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(cards()[0]?.card.header.title.content).toBe("新标题");
+			const card = await onlyCard();
+			expect(card.card.header.title.content).toBe("新标题");
+			expect(card.card.header.subtitle?.content).toBe("运行已取消");
+		});
+
+		it("运行中把机器人设成 null：按新设置不发，失败的运行也不发", async () => {
+			const id = await scenario(single());
+			const runId = await api.triggerOk(id);
+			const a = await agent.nextAssign();
+			await notification(id, { bot: null });
+			await agent.fail(a, "boom");
+			await status(runId, "failed");
+
+			expect((await api.run(runId)).run_notification).toBeNull();
+			expect(feishu.requests).toHaveLength(0);
 		});
 	});
 
 	describe("卡片", () => {
-		it("失败的运行：标题、副标题、颜色、附加说明、各个字段、失败的节点、「查看运行」按钮", async () => {
+		it("失败的运行：标题、副标题、颜色、附加说明、场景/运行编号/触发人、第一个失败的节点和失败原因、「查看运行」按钮", async () => {
 			const id = await scenario(
 				flow([echo("a"), echo("b")]),
 				{ title: "【订单压测-A 环境】", note: "环境 A，负责人 <at id=ou_1></at>" },
@@ -209,11 +277,12 @@ describe("运行通知", () => {
 									"**场景**：订单压测",
 									`**运行编号**：${runId.slice(0, 8)}`,
 									"**触发人**：tester",
-									"**开始时间**：2026-01-01 08:00:00 (UTC+8)",
-									"**耗时**：2 分 05 秒",
 								].join("\n"),
 							},
-							{ tag: "markdown", content: "**失败的节点**\n- 主链：a" },
+							{
+								tag: "markdown",
+								content: ["**失败的节点**：主链：a", "**失败原因**：boom"].join("\n"),
+							},
 							{
 								tag: "button",
 								text: { tag: "plain_text", content: "查看运行" },
@@ -226,68 +295,134 @@ describe("运行通知", () => {
 			});
 		});
 
-		it.each<[Ending, string, string]>([
-			["success", "green", "运行成功"],
-			["failed", "red", "运行失败"],
-			["cancelled", "grey", "运行已取消"],
-		])("运行%s：颜色 %s，副标题写明结果；标题默认是场景名，没有附加说明和失败节点时不出现", async (ending, color, subtitle) => {
-			const id = await scenario(single(), { trigger: "always" }, "默认标题的场景");
+		it.each<[string, Exclude<Ending, "success">, string, string]>([
+			["失败", "failed", "red", "运行失败"],
+			["取消", "cancelled", "grey", "运行已取消"],
+		])("运行%s：颜色 %s，副标题「%s」；标题默认是场景名，没有附加说明时不出现；只有失败的运行有「失败的节点」一段", async (_, ending, color, subtitle) => {
+			const id = await scenario(single(), { trigger: "failed_or_cancelled" }, "默认标题的场景");
 			await runEnding(id, ending);
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const card = cards()[0] as Card;
+			const card = await onlyCard();
 			expect(card.card.header).toEqual({
 				title: { tag: "plain_text", content: "默认标题的场景" },
 				subtitle: { tag: "plain_text", content: subtitle },
 				template: color,
 			});
-			// 附加说明为空：第一个元素就是各个字段；只有失败的运行才有失败的节点。
+			// 附加说明为空：第一个元素就是各个字段；取消的运行没有失败的节点，也就没有失败的那一段。
 			expect(card.card.body.elements[0]).toBe(facts(card));
-			const text = card.card.body.elements.map((e) => e.content ?? e.tag).join("\n");
-			expect(text.includes("失败的节点")).toBe(ending === "failed");
+			expect(card.card.body.elements.map((e) => e.tag)).toEqual(
+				ending === "failed" ? ["markdown", "markdown", "button"] : ["markdown", "button"],
+			);
+			expect(failureOf(card) !== undefined).toBe(ending === "failed");
+			expect(textOf(card).includes("失败原因")).toBe(ending === "failed");
 		});
 
-		it("用了运行预设的运行：场景名下面有「预设」一行，写触发时的名称；没用预设的运行没有这一行", async () => {
-			const document = flow([echo("a")]);
-			document.nodes[0] = {
-				id: "entry",
-				kind: "entry",
-				params: [{ name: "host", type: "string", required: true }],
+		it("卡片里没有关注项、预设、开始时间、耗时：这些信息由场景自己的节点用 ctx.notify 发", async () => {
+			const id = await scenario(single());
+			clock.advance(125_000);
+			await runEnding(id, "failed");
+
+			const card = await onlyCard();
+			const text = `${card.card.header.title.content}\n${textOf(card)}`;
+			for (const gone of ["关注项", "预设", "开始时间", "耗时", "2026-01-01"]) {
+				expect(text, gone).not.toContain(gone);
+			}
+		});
+
+		it("没有配置对外地址（SFLY_PUBLIC_URL）时不显示按钮", async () => {
+			await agent.disconnect();
+			await feishu.close();
+			await cp.close();
+			await start({});
+			const id = await scenario(single());
+			await runEnding(id, "failed");
+
+			const elements = (await onlyCard()).card.body.elements;
+			expect(elements.map((e) => e.tag)).toEqual(["markdown", "markdown"]);
+		});
+
+		it("附加说明在 JSON 里占的字节数超过 20 KB 时截断，其余字段不受影响", async () => {
+			// 设置里附加说明最多 4000 个字符；控制字符在 JSON 里要转义成 6 个字节，刚好撑过飞书的上限。
+			const id = await scenario(single(), { note: "\u0001".repeat(4000) });
+			await runEnding(id, "failed");
+
+			const card = await onlyCard();
+			expect(Buffer.byteLength(feishu.requests[0]?.body ?? "", "utf8")).toBeLessThanOrEqual(
+				20 * 1024,
+			);
+			const note = card.card.body.elements[0]?.content ?? "";
+			expect(note.endsWith("…（已截断）")).toBe(true);
+			expect(note.length).toBeLessThan(4000);
+			expect(facts(card)).toBeDefined();
+			expect(failureOf(card)?.content).toBe("**失败的节点**：主链：a\n**失败原因**：boom");
+			expect(card.card.body.elements.map((e) => e.tag)).toEqual([
+				"markdown",
+				"markdown",
+				"markdown",
+				"button",
+			]);
+		});
+	});
+
+	describe("第一个失败的节点", () => {
+		it("有多个失败的节点时只写第一个，不列清单、不写总数", async () => {
+			const nodes = [
+				echo("f0"),
+				...Array.from({ length: 12 }, (_, i) => echo(`f${i + 1}`, { always: true })),
+			];
+			const id = await scenario(flow(nodes));
+			const runId = await api.triggerOk(id);
+			for (let i = 0; i < 13; i++) await agent.fail(await agent.nextAssign(), `原因 ${i}`);
+			await status(runId, "failed");
+
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe("**失败的节点**：主链：f0\n**失败原因**：原因 0");
+			const text = textOf(card);
+			expect(text.match(/失败的节点/g)).toHaveLength(1);
+			expect(text).not.toContain("共 13 个");
+			expect(text).not.toContain("f1：");
+			expect(text).not.toContain("- ");
+			expect(text).not.toContain("原因 1");
+		});
+
+		it("和运行视图里的「第一个失败的节点」同一个：按失败的先后，不是链上排在前面的那个", async () => {
+			// 主链的 m 和子流程的 s 同时派发，s 先失败、m 晚 5 秒失败；主链排在子流程前面，但第一个失败的是 s。
+			const id = await scenario(
+				orchestration(
+					[
+						[{ id: "entry", kind: "entry", params: [] }, spawn("go"), echo("m")],
+						[{ id: "sub", kind: "subflow_entry", name: "压测", params: [] }, echo("s")],
+					],
+					[["go", "sub"]],
+				),
+			);
+			const runId = await api.triggerOk(id);
+			const assigned = [await agent.nextAssign(), await agent.nextAssign()];
+			const task = (nodeId: string) => {
+				const found = assigned.find((a) => a.nodeId === nodeId);
+				if (!found) throw new Error(`没有派发节点 ${nodeId}`);
+				return found;
 			};
-			const id = await scenario(document, { trigger: "always" }, "订单压测");
-			const preset = await createPresetOk(api, id, {
-				name: "压测 A 集群",
-				params: [{ name: "host", value: "a.example" }],
-			});
+			await agent.fail(task("s"), "子流程里的节点先失败");
+			clock.advance(5_000);
+			await agent.fail(task("m"), "主链上的节点后失败");
+			await status(runId, "failed");
 
-			const res = await triggerWithPreset(api, id, preset.id);
-			expect(res.status, await res.clone().text()).toBe(201);
-			const presetRun = ((await res.json()) as { id: string }).id;
-			// 预设在运行结束之前改了名，卡片上仍是触发时的名称。
-			await renamePresetInDb(cp, preset.id, "改过的名字");
-			await agent.succeed(await agent.nextAssign());
-			await status(presetRun, "success");
+			const view = runsApi.get.response.parse(await api.getJson(`/runs/${runId}`));
+			const failures = runViewFailures(view.chains);
+			expect(failures.map((f) => f.node.node_id)).toEqual(["s", "m"]);
+			const instance = chainOf(await api.run(runId), "sub").id.slice(0, 8);
 
-			const plainRun = await api.triggerOk(id, { host: "h" });
-			await agent.succeed(await agent.nextAssign());
-			await status(plainRun, "success");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(2));
-			const lines = (card: Card | undefined) =>
-				(card ? facts(card)?.content : undefined)?.split("\n");
-			expect(lines(cards()[0])?.slice(0, 3)).toEqual([
-				"**场景**：订单压测",
-				"**预设**：压测 A 集群",
-				`**运行编号**：${presetRun.slice(0, 8)}`,
-			]);
-			expect(lines(cards()[1])?.slice(0, 2)).toEqual([
-				"**场景**：订单压测",
-				`**运行编号**：${plainRun.slice(0, 8)}`,
-			]);
-			expect(lines(cards()[1])?.some((line) => line.includes("预设"))).toBe(false);
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe(
+				[`**失败的节点**：子流程 压测 · ${instance}：s`, "**失败原因**：子流程里的节点先失败"].join(
+					"\n",
+				),
+			);
+			expect(textOf(card)).not.toContain("主链上的节点后失败");
 		});
 
-		it("失败的节点带上所在的链：子流程写子流程名称和实例短 ID", async () => {
+		it("第一个失败的节点带上所在的链：子流程写子流程名称和实例短 ID", async () => {
 			const id = await scenario(
 				orchestration(
 					[
@@ -302,30 +437,25 @@ describe("运行通知", () => {
 			await status(runId, "failed");
 			const instance = chainOf(await api.run(runId), "sub").id.slice(0, 8);
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const list = (cards()[0] as Card).card.body.elements.find((e) =>
-				e.content?.startsWith("**失败的节点**"),
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe(
+				`**失败的节点**：子流程 压测 · ${instance}：b\n**失败原因**：boom`,
 			);
-			expect(list?.content).toBe(`**失败的节点**\n- 子流程 压测 · ${instance}：b`);
 		});
 
-		it("失败的节点有显示名称时写成「显示名称（节点 ID）」，没有时只写节点 ID", async () => {
-			const id = await scenario(
-				flow([
-					echo("a", { display_name: "创建测试用户" }),
-					echo("b", { always: true }),
-					echo("c", { always: true, display_name: "c" }),
-				]),
-			);
-			const runId = await api.triggerOk(id);
-			for (let i = 0; i < 3; i++) await agent.fail(await agent.nextAssign(), "boom");
-			await status(runId, "failed");
+		it.each<[string, Record<string, unknown>, string]>([
+			[
+				"有显示名称：写成「显示名称（节点 ID）」",
+				{ display_name: "创建测试用户" },
+				"创建测试用户（a）",
+			],
+			["没有显示名称：只写节点 ID", {}, "a"],
+			["显示名称和节点 ID 相同：只写节点 ID", { display_name: "a" }, "a"],
+		])("第一个失败的节点%s", async (_, extra, written) => {
+			const id = await scenario(flow([echo("a", extra)]));
+			await runEnding(id, "failed");
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const list = (cards()[0] as Card).card.body.elements.find((e) =>
-				e.content?.startsWith("**失败的节点**"),
-			);
-			expect(list?.content).toBe("**失败的节点**\n- 主链：创建测试用户（a）\n- 主链：b\n- 主链：c");
+			expect(fieldOf(await onlyCard(), "失败的节点")).toBe(`主链：${written}`);
 		});
 
 		it("子流程里失败的节点也写显示名称；名称取自运行绑定的版本，运行中改了场景不影响", async () => {
@@ -347,408 +477,398 @@ describe("运行通知", () => {
 			await status(runId, "failed");
 			const instance = chainOf(await api.run(runId), "sub").id.slice(0, 8);
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const list = (cards()[0] as Card).card.body.elements.find((e) =>
-				e.content?.startsWith("**失败的节点**"),
-			);
-			expect(list?.content).toBe(`**失败的节点**\n- 子流程 压测 · ${instance}：压测下单接口（b）`);
-		});
-
-		it("失败的节点最多列 10 个，其余写总数", async () => {
-			const nodes = [
-				echo("f0"),
-				...Array.from({ length: 12 }, (_, i) => echo(`f${i + 1}`, { always: true })),
-			];
-			const id = await scenario(flow(nodes));
-			const runId = await api.triggerOk(id);
-			for (let i = 0; i < 13; i++) await agent.fail(await agent.nextAssign(), "boom");
-			await status(runId, "failed");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const list = (cards()[0] as Card).card.body.elements.find((e) =>
-				e.content?.startsWith("**失败的节点**"),
-			);
-			expect(list?.content).toBe(
-				[
-					"**失败的节点**（共 13 个，只列出前 10 个）",
-					...Array.from({ length: 10 }, (_, i) => `- 主链：f${i}`),
-				].join("\n"),
-			);
-		});
-
-		it("附加说明在 JSON 里占的字节数超过 20 KB 时截断，其余字段不受影响", async () => {
-			// 设置里附加说明最多 4000 个字符；控制字符在 JSON 里要转义成 6 个字节，刚好撑过飞书的上限。
-			const id = await scenario(single(), { trigger: "always", note: "\u0001".repeat(4000) });
-			await runEnding(id, "failed");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const request = feishu.requests[0];
-			expect(Buffer.byteLength(request?.body ?? "", "utf8")).toBeLessThanOrEqual(20 * 1024);
-			const note = (cards()[0] as Card).card.body.elements[0]?.content ?? "";
-			expect(note.endsWith("…（已截断）")).toBe(true);
-			expect(note.length).toBeLessThan(4000);
-			expect(facts(cards()[0] as Card)).toBeDefined();
-			expect(cards()[0]?.card.body.elements.map((e) => e.tag)).toEqual([
-				"markdown",
-				"markdown",
-				"markdown",
-				"button",
-			]);
-		});
-
-		it("没有配置对外地址（SFLY_PUBLIC_URL）时不显示按钮", async () => {
-			await agent.disconnect();
-			await feishu.close();
-			await cp.close();
-			await start({});
-			const id = await scenario(single(), { trigger: "always" });
-			await runEnding(id, "success");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const elements = (cards()[0] as Card).card.body.elements;
-			expect(elements.map((e) => e.tag)).toEqual(["markdown"]);
+			const card = await onlyCard();
+			expect(fieldOf(card, "失败的节点")).toBe(`子流程 压测 · ${instance}：压测下单接口（b）`);
 		});
 	});
 
-	describe("关注项", () => {
-		/** 测试时钟的起点（2026-01-01T00:00:00Z）之后第 s 秒（Unix 秒）。 */
-		const at = (s: number) => Date.UTC(2026, 0, 1) / 1000 + s;
-		const focusSection = (card: Card | undefined) =>
-			card?.card.body.elements.find((e) => e.content?.startsWith("**关注项**"));
-		/** 一张卡片的各个元素（按顺序）：markdown 的写开头一行，其余写标签。 */
-		const outline = (card: Card | undefined) =>
-			card?.card.body.elements.map((e) =>
-				e.tag === "markdown" ? e.content?.split("\n")[0] : e.tag,
-			);
+	describe("失败原因", () => {
+		it.each<[string, string, string]>([
+			["一行文字", "boom", "boom"],
+			[
+				"错误信息有堆栈（空行之后）时只取第一行",
+				'ValueError: 余额不足\n\nTraceback (most recent call last):\n  File "pay.py", line 3, in run\nValueError: 余额不足',
+				"ValueError: 余额不足",
+			],
+			[
+				"第一行以冒号结尾时接上下一行，行首的异常模块路径去掉",
+				"sfly_std.assert_.AssertionFailed: 2 条断言不通过：\n第 1 条：响应码不是 200\n第 2 条：…",
+				"AssertionFailed: 2 条断言不通过：第 1 条：响应码不是 200",
+			],
+			["前面有空行时取第一行有内容的", "\n\n  下单失败  \n库存不足", "下单失败"],
+		])("卡片上的失败原因和监控页头同一个 errorHeadline，不是整段错误信息：%s", async (_, message, expected) => {
+			const id = await scenario(single());
+			const runId = await runFailing(id, { message });
 
-		beforeEach(async () => {
-			await publishBench(cp);
-			await publishPackage(cp, "procs", "1.0.0", {
-				watch: {
-					outputs: [],
-					metrics: [
-						{ name: "cpu", unit: "%", kind: "gauge" as const, labels: ["pid"] },
-						{ name: "mem", unit: "MB", kind: "gauge" as const },
-					],
-					charts: [
-						{ title: "CPU", type: "line" as const, metrics: ["cpu"] },
-						{ title: "资源", type: "line" as const, metrics: ["mem", "cpu"] },
-					],
-				},
-			});
+			const card = await onlyCard();
+			// 期望值取自运行视图里这个节点的 error.message，按同一个函数算，不在测试里再写一遍规则。
+			const view = await viewError(runId, "a");
+			expect(view?.message).toBe(message);
+			expect(fieldOf(card, "失败原因")).toBe(errorHeadline(view?.message));
+			expect(fieldOf(card, "失败原因")).toBe(expected);
 		});
 
-		it("运行结束时卡片在失败的节点之后、按钮之前有「关注项」一段：每项一行写名称、运行结束时的值和单位，有异常的项（来源节点失败）排在最前、写（节点失败），没有值的写 —", async () => {
-			const id = await scenario(
-				benchDocument([
-					["load", "load"],
-					["probe", "probe"],
-					["tail", "probe"],
-				]),
+		it("错误信息里有 secret 参数的值时卡片里是掩码，不是原值", async () => {
+			const document = single();
+			document.nodes[0] = {
+				id: "entry",
+				kind: "entry",
+				params: [{ name: "token", type: "string", secret: true }],
+			};
+			const id = await scenario(document);
+			const runId = await runFailing(
+				id,
+				{ message: `auth failed for ${SECRET}\n\nTraceback: ${SECRET}` },
+				{ token: SECRET },
 			);
-			await putFocusItemsOk(api, id, [
-				{ node_id: "load", chart: "延迟", title: "下单延迟" },
-				{ node_id: "load", chart: "TPS" },
-				{ node_id: "load", chart: "orders" },
-				{ node_id: "probe", chart: "level", title: "探活" },
-				{ node_id: "tail", chart: "level", title: "收尾" },
-			]);
+
+			const card = await onlyCard();
+			expect(fieldOf(card, "失败原因")).toBe(`auth failed for ${MASK}`);
+			expect(fieldOf(card, "失败原因")).toBe(errorHeadline((await viewError(runId, "a"))?.message));
+			// 整个请求体里（标题、各段文字、链接）都没有原值。
+			expect(feishu.requests[0]?.body).not.toContain(SECRET);
+		});
+
+		it("错误信息的第一行超过 300 个字符时截断，末尾加「…」", async () => {
+			const id = await scenario(single());
+			const runId = await runFailing(id, { message: `${"错".repeat(301)}\n第二行` });
+
+			const reason = fieldOf(await onlyCard(), "失败原因");
+			expect(reason).toBe(`${"错".repeat(300)}…`);
+			// 截的是卡片上的这一行，运行视图里的错误信息原样保留。
+			expect((await viewError(runId, "a"))?.message).toBe(`${"错".repeat(301)}\n第二行`);
+		});
+
+		it("恰好 300 个字符不截断；字符数按 Unicode 字符算，一个字符不会被截成两半", async () => {
+			const exactly = await scenario(single(), {}, "恰好 300");
+			await runFailing(exactly, { message: "好".repeat(300) });
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(fieldOf(cards()[0] as Card, "失败原因")).toBe("好".repeat(300));
+
+			// 「𠮷」在 UTF-16 里占两个码元：按码元数截会把最后一个字符截成两半。
+			const astral = await scenario(single(), {}, "补充平面字符");
+			await runFailing(astral, { message: "𠮷".repeat(301) });
+			await eventually(() => expect(feishu.requests).toHaveLength(2));
+			const reason = fieldOf(cards()[1] as Card, "失败原因");
+			expect(reason).toBe(`${"𠮷".repeat(300)}…`);
+			expect([...(reason ?? "")]).toHaveLength(301);
+		});
+
+		it("没有错误信息时只有失败的节点，没有「失败原因」那一行", async () => {
+			const id = await scenario(single());
+			await runFailing(id, { message: "" });
+
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe("**失败的节点**：主链：a");
+			expect(textOf(card)).not.toContain("失败原因");
+		});
+
+		it("节点重试过：失败原因是最后一次失败的尝试的，不是第一次的", async () => {
+			const id = await scenario(flow([echo("a", { retries: 1 })]));
 			const runId = await api.triggerOk(id);
-			const load = await agent.nextAssign();
-			agent.metrics(load, [
-				["p99", at(1), 10],
-				["p99", at(2), 45],
-				["tps", at(2), 500],
-				["orders", at(2), 1_284_814],
-			]);
-			await agent.succeed(load);
-			const probe = await agent.nextAssign();
-			agent.metrics(probe, [["level", at(3), 3]]);
-			await agent.sync();
-			await agent.fail(probe, "boom");
+			await agent.fail(await agent.nextAssign(), "第一次尝试的原因");
+			await agent.fail(await agent.nextAssign(), "第二次尝试的原因");
 			await status(runId, "failed");
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			const card = cards()[0];
-			expect(outline(card)).toEqual([
-				"**场景**：订单压测",
-				"**失败的节点**",
-				"**关注项**",
-				"button",
-			]);
-			expect(focusSection(card)?.content).toBe(
-				[
-					"**关注项**",
-					"- 探活：3（节点失败）",
-					"- 下单延迟：45 ms",
-					"- TPS：500 req/s",
-					"- orders：1.3M",
-					"- 收尾：—",
-				].join("\n"),
+			const card = await onlyCard();
+			expect(fieldOf(card, "失败原因")).toBe("第二次尝试的原因");
+			expect(textOf(card)).not.toContain("第一次尝试的原因");
+		});
+	});
+
+	describe("出错位置", () => {
+		it("节点失败带出错位置：「失败原因」的下一行写「出错位置」，和运行视图里的 error.location 一致", async () => {
+			const id = await scenario(single());
+			const runId = await runFailing(id, { message: "boom", location: "stub.echo 第 12 行" });
+
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe(
+				["**失败的节点**：主链：a", "**失败原因**：boom", "**出错位置**：stub.echo 第 12 行"].join(
+					"\n",
+				),
+			);
+			expect(fieldOf(card, "出错位置")).toBe((await viewError(runId, "a"))?.location);
+		});
+
+		it("没有出错位置时这一行不出现", async () => {
+			const id = await scenario(single());
+			await runFailing(id, { message: "boom" });
+
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe("**失败的节点**：主链：a\n**失败原因**：boom");
+			expect(textOf(card)).not.toContain("出错位置");
+		});
+
+		it("没有错误信息但有出错位置：写节点和出错位置，没有「失败原因」那一行", async () => {
+			const id = await scenario(single());
+			await runFailing(id, { message: "", location: "stub.echo 第 7 行" });
+
+			expect(failureOf(await onlyCard())?.content).toBe(
+				"**失败的节点**：主链：a\n**出错位置**：stub.echo 第 7 行",
 			);
 		});
 
-		it("取运行结束那一刻场景的关注项：运行中改了关注项，卡片按新的", async () => {
-			const id = await scenario(benchDocument(), { trigger: "always" });
-			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "TPS" }]);
-			const runId = await api.triggerOk(id);
-			const load = await agent.nextAssign();
-			agent.metrics(load, [
-				["tps", at(1), 500],
-				["p99", at(1), 9],
-			]);
-			await agent.sync();
-			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟", title: "改过的名字" }]);
-			await agent.succeed(load);
-			await agent.succeed(await agent.nextAssign());
-			await status(runId, "success");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(focusSection(cards()[0])?.content).toBe("**关注项**\n- 改过的名字：9 ms");
-		});
-
-		it("这次运行的版本里没有这张图表：写「这个版本的节点没有图表 X」，其余项照常", async () => {
-			// 运行锁定 bench 1.0.0（图表叫 TPS）；之后的版本升到 2.0.0，图表改名为「吞吐」，作者按新名字设了关注项。
-			const id = await scenario(benchDocument(), { trigger: "always" });
-			const runId = await api.triggerOk(id);
-			const load = await agent.nextAssign();
-			agent.metrics(load, [
-				["tps", at(1), 7],
-				["p99", at(1), 9],
-			]);
-			await agent.sync();
-			await api.saveVersion(id, benchDocument(undefined, "2.0.0"));
-			await putFocusItemsOk(api, id, [
-				{ node_id: "load", chart: "吞吐", title: "吞吐量" },
-				{ node_id: "load", chart: "延迟" },
-			]);
-			await agent.succeed(load);
-			await agent.succeed(await agent.nextAssign());
-			await status(runId, "success");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(focusSection(cards()[0])?.content).toBe(
-				["**关注项**", "- 吞吐量：这个版本的节点没有图表 吞吐", "- 延迟：9 ms"].join("\n"),
+		it("出错位置里有 secret 参数的值时同样是掩码", async () => {
+			const document = single();
+			document.nodes[0] = {
+				id: "entry",
+				kind: "entry",
+				params: [{ name: "token", type: "string", secret: true }],
+			};
+			const id = await scenario(document);
+			await runFailing(
+				id,
+				{ message: "boom", location: `login.py 第 3 行 token=${SECRET}` },
+				{ token: SECRET },
 			);
+
+			const card = await onlyCard();
+			expect(fieldOf(card, "出错位置")).toBe(`login.py 第 3 行 token=${MASK}`);
+			expect(feishu.requests[0]?.body).not.toContain(SECRET);
 		});
+	});
 
-		it("多个序列的图表：写最近更新的那个序列的值，带上它的名字", async () => {
-			const id = await scenario(
-				{
-					default_agent: "agent-a",
-					nodes: [
-						{ id: "entry", kind: "entry" },
-						{ id: "watch", kind: "package", package: "procs", node: "watch" },
-					],
-					edges: [{ from: "entry", to: "watch", kind: "chain" }],
-					packages: { procs: "1.0.0" },
-				},
-				{ trigger: "always" },
-			);
-			await putFocusItemsOk(api, id, [
-				{ node_id: "watch", chart: "CPU", title: "撮合进程 CPU" },
-				{ node_id: "watch", chart: "资源" },
-			]);
-			const runId = await api.triggerOk(id);
-			const watch = await agent.nextAssign();
-			agent.metrics(watch, [
-				{
-					name: "cpu",
-					labels: { pid: "100" },
-					timeUnixS: BigInt(at(4)),
-					value: 30,
-					min: 30,
-					max: 30,
-				},
-				{
-					name: "cpu",
-					labels: { pid: "200" },
-					timeUnixS: BigInt(at(5)),
-					value: 12,
-					min: 12,
-					max: 12,
-				},
-				{ name: "mem", labels: {}, timeUnixS: BigInt(at(6)), value: 512, min: 512, max: 512 },
-			]);
-			await agent.sync();
-			await agent.succeed(watch);
-			await status(runId, "success");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(focusSection(cards()[0])?.content).toBe(
-				["**关注项**", "- 撮合进程 CPU（200）：12 %", "- 资源（mem）：512 MB"].join("\n"),
-			);
-		});
-
-		it("最多 8 行：场景的关注项上限是 8，每项一行，顺序是作者排的", async () => {
-			const id = await scenario(benchDocument([["w", "wide"]]), { trigger: "always" });
-			const charts = Array.from({ length: 8 }, (_, i) => `m${i + 1}`);
-			await putFocusItemsOk(api, id, charts.map((chart) => ({ node_id: "w", chart })).reverse());
-			const runId = await api.triggerOk(id);
-			const task = await agent.nextAssign();
-			agent.metrics(
-				task,
-				charts.map((name, i): [string, number, number] => [name, at(1), i + 1]),
-			);
-			await agent.sync();
-			await agent.succeed(task);
-			await status(runId, "success");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(focusSection(cards()[0])?.content).toBe(
-				["**关注项**", ...charts.map((chart, i) => `- ${chart}：${i + 1}`).reverse()].join("\n"),
-			);
-		});
-
-		it("没有关注项，或者这些关注项都不在这次运行的版本里：卡片和没有这项功能时一字不差", async () => {
-			const id = await scenario(benchDocument(), { trigger: "always" });
-			await putFocusItemsOk(api, id, [{ node_id: "probe", chart: "level" }]);
-			// 之后的版本删掉了 probe，关注项原样保留；这次运行用的是新版本。
-			await api.saveVersion(id, benchDocument([["load", "load"]]));
-			const notInVersion = await runEnding(id, "failed");
-			await putFocusItemsOk(api, id, []);
-			const none = await runEnding(id, "failed");
-
-			await eventually(() => expect(feishu.requests).toHaveLength(2));
-			// 两个运行的编号不同：换成占位符之后整张卡片逐字相同。
-			const normalized = (card: Card | undefined, runId: string) =>
-				JSON.parse(
-					JSON.stringify(card).replaceAll(runId, "<运行>").replaceAll(runId.slice(0, 8), "<运行>"),
-				);
-			expect(normalized(cards()[0], notInVersion)).toEqual(normalized(cards()[1], none));
-			expect(focusSection(cards()[0])).toBeUndefined();
-			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
-		});
-
-		/** 在控制面的数据库上直接执行一条 SQL（模拟库里的数据或结构出了问题）。 */
-		const execute = async (query: string) => {
-			const client = new pg.Client({ connectionString: cp.database.url });
-			await client.connect();
-			try {
-				await client.query(query);
-			} finally {
-				await client.end();
-			}
-		};
-
-		it("读关注项时抛出异常也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段", async () => {
+	describe("运行结束时不读关注项", () => {
+		it("场景设了关注项也不读：卡片照常发出，resolveRunFocus 一次都没被调用，卡片里没有关注项", async () => {
+			await publishBench(cp);
 			const id = await scenario(benchDocument());
-			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
+			const view = await putFocusItemsOk(api, id, [
+				{ node_id: "load", chart: "TPS", title: "吞吐" },
+				{ node_id: "probe", chart: "level" },
+			]);
+			expect(view.focus_items).toHaveLength(2);
+			const runFocus = vi.mocked(resolveRunFocus);
+			runFocus.mockClear();
+
 			const runId = await api.triggerOk(id);
 			const load = await agent.nextAssign();
-			// 节点包的元信息被改坏（`nodes` 不是数组）：解析关注项时读节点类型会抛出异常。
-			await execute(
-				"UPDATE node_packages SET metadata = jsonb_set(metadata, '{nodes}', '5'::jsonb) WHERE name = 'bench'",
-			);
+			agent.metrics(load, [["tps", Date.UTC(2026, 0, 1) / 1000 + 1, 500]]);
+			await agent.sync();
 			await agent.fail(load, "boom");
 			await status(runId, "failed");
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
-			await eventually(async () =>
-				expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
-			);
-		});
+			const card = await onlyCard();
+			expect(card.card.header.subtitle?.content).toBe("运行失败");
+			expect(failureOf(card)?.content).toBe("**失败的节点**：主链：load\n**失败原因**：boom");
+			expect(card.card.body.elements.map((e) => e.tag)).toEqual(["markdown", "markdown", "button"]);
+			expect(textOf(card)).not.toContain("关注项");
+			expect(textOf(card)).not.toContain("吞吐");
+			expect(runFocus).not.toHaveBeenCalled();
 
-		it("读关注项时数据库报错也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段，错误记下来", async () => {
+			// 对照：这个替身确实接在控制面用的那个模块上，读关注项的接口一调用，它就记一次。
+			const read = await api.get(`/runs/${runId}/focus`);
+			expect(read.status, await read.clone().text()).toBe(200);
+			expect(runFocus).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	// 通知是运行结束事务里的一部分（#232：运行的最终状态和「要发这张卡片」一起提交），但从不拦住运行结束：
+	// 为通知做的任何一步出错（不认识的触发条件、读失败原因、拼卡片），结果都是「这次不发，记一条日志」，运行照常结束。
+	describe("为通知做的事出错不拦住运行结束", () => {
+		let errors: MockInstance<typeof console.error>;
+
+		// 控制面的日志默认关着：这一组要看到「记了一条日志」，所以换一个开着日志的控制面。
+		beforeEach(async () => {
 			await agent.disconnect();
 			await feishu.close();
 			await cp.close();
 			await start({ publicHttpUrl: PUBLIC_URL, logger: true });
-			await publishBench(cp);
-			const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-			try {
-				const id = await scenario(benchDocument());
-				await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
-				const runId = await api.triggerOk(id);
-				const load = await agent.nextAssign();
-				// 指标摘要表不见了：读关注项的序列时查询报错，运行结束的事务里这条语句失败。
-				await execute("ALTER TABLE metric_series RENAME TO metric_series_gone");
-				await agent.fail(load, "boom");
-				await status(runId, "failed");
-
-				await eventually(() => expect(feishu.requests).toHaveLength(1));
-				expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
-				await eventually(async () =>
-					expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
-				);
-				expect(errors).toHaveBeenCalledWith(
-					"run notification: reading focus items failed:",
-					expect.objectContaining({ cause: expect.objectContaining({ code: "42P01" }) }),
-				);
-			} finally {
-				errors.mockRestore();
-			}
+			errors = vi.spyOn(console, "error").mockImplementation(() => {});
+		});
+		afterEach(async () => {
+			errors.mockRestore();
+			// 换回真实的实现（用例里换成了会出错的）。
+			const actual =
+				await vi.importActual<typeof import("../src/runs/run-read.js")>("../src/runs/run-read.js");
+			vi.mocked(readNodeError).mockReset().mockImplementation(actual.readNodeError);
 		});
 
-		it("在事务里读关注项（运行结束时就是这样读的）不从连接池另取连接、一条一条地读：只有一个连接的连接池上照样读出最终值", async () => {
-			const id = await scenario(benchDocument(), { trigger: "always" });
-			await putFocusItemsOk(api, id, [
-				{ node_id: "load", chart: "TPS" },
-				{ node_id: "probe", chart: "level", title: "探活" },
-			]);
-			const runId = await api.triggerOk(id);
-			const load = await agent.nextAssign();
-			agent.metrics(load, [["tps", at(1), 500]]);
-			await agent.succeed(load);
-			const probe = await agent.nextAssign();
-			agent.metrics(probe, [["level", at(2), 3]]);
-			await agent.sync();
-			await agent.succeed(probe);
-			await status(runId, "success");
+		/** 运行结束后：运行是失败、Agent 还连着能接新任务、没有发卡片、运行详情里没有运行通知；控制面日志里有这条错误。 */
+		async function expectRunEndedAndNothingSent(runId: string, reason: RegExp) {
+			expect((await api.run(runId)).run_notification).toBeNull();
+			expect(agent.ended).toBe(false);
+			const online = await api.get("/agents");
+			expect(await online.text()).toContain('"status":"online"');
+			expect(feishu.requests).toHaveLength(0);
+			const logged = errors.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+			expect(logged).toMatch(/run notification/);
+			expect(logged).toMatch(reason);
+		}
 
-			const single = singleConnection(cp.database.url);
+		/** 库里直接写进一个接口写不进去的触发条件（先去掉约束；迁移加的约束让数据库自己也拒绝，见迁移测试）。 */
+		async function writeTrigger(scenarioId: string, trigger: string) {
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
 			try {
-				const { db } = single;
-				const queries = new MetricQueries({
-					db,
-					clock,
-					metrics: new TaskMetrics({ db, clock, retention: new MetricRetention({ db, clock }) }),
-				});
-				// 点写进库之后才读得到（这里的 MetricQueries 看不到控制面内存里还没写库的点）。
-				await eventually(async () => {
-					const focus = await db.transaction(async (tx) => {
-						const read = (await readRuns(tx, [runId], "full")).get(runId);
-						return read && resolveRunFocus({ db: tx, clock, queries }, read, { points: 0 });
-					});
-					expect(focus?.items.map((item) => item.latest?.value)).toEqual([500, 3]);
-				});
-				expect(single.mostPending()).toBe(1);
+				await client.query(
+					"alter table orchestrations drop constraint if exists orchestrations_run_notify_trigger",
+				);
+				await client.query("update orchestrations set run_notify_trigger = $1 where id = $2", [
+					trigger,
+					scenarioId,
+				]);
 			} finally {
-				await single.end();
+				await client.end();
 			}
+		}
+
+		it("库里是不认识的触发条件：运行照常以失败结束，Agent 没有被断开，不发通知，控制面记一条错误", async () => {
+			const id = await scenario(single());
+			await writeTrigger(id, "always");
+
+			const runId = await runEnding(id, "failed");
+
+			await expectRunEndedAndNothingSent(runId, /always/);
+			// 之后的运行照常：改回认识的值，通知又能发出去。
+			await notification(id, { trigger: "failed" });
+			const next = await runEnding(id, "failed");
+			expect(feishu.requests).toHaveLength(1);
+			expect((await api.run(next)).run_notification).toMatchObject({ bot: "ops" });
 		});
 
-		it("附加说明让卡片超过 20 KB 时先截断附加说明：关注项一段还在，内容不变", async () => {
-			const id = await scenario(benchDocument(), {
-				trigger: "always",
-				note: "\u0001".repeat(4000),
+		it("读第一个失败的节点时数据库报错（会让整个事务作废的那种）：运行照常以失败结束，不发通知，下一次通知照常", async () => {
+			const id = await scenario(single());
+			// 持续出错（不是只错一次）：运行结束的事务如果被这个错误作废，会被重做，只错一次就看不出来了。
+			vi.mocked(readNodeError).mockImplementation(async (db) => {
+				await db.execute(sql`select 1 / 0`);
+				throw new Error("不会到这里");
 			});
-			await putFocusItemsOk(api, id, [
-				{ node_id: "load", chart: "TPS" },
-				{ node_id: "load", chart: "延迟", title: "下单延迟" },
-			]);
-			const runId = await api.triggerOk(id);
-			const load = await agent.nextAssign();
-			agent.metrics(load, [
-				["tps", at(1), 500],
-				["p99", at(1), 9],
-			]);
-			await agent.sync();
-			await agent.succeed(load);
-			await agent.succeed(await agent.nextAssign());
-			await status(runId, "success");
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(Buffer.byteLength(feishu.requests[0]?.body ?? "", "utf8")).toBeLessThanOrEqual(
-				20 * 1024,
+			const runId = await runEnding(id, "failed");
+
+			await expectRunEndedAndNothingSent(runId, /Failed query: select 1 \/ 0/);
+			// 出错之后事务还能继续用：同一个运行结束的事务里，运行的最终状态已经提交（上面断言了），
+			// 之后读到真实实现时，下一次运行的通知照常发出。
+			const actual =
+				await vi.importActual<typeof import("../src/runs/run-read.js")>("../src/runs/run-read.js");
+			vi.mocked(readNodeError).mockImplementation(actual.readNodeError);
+			const next = await runEnding(id, "failed");
+			const card = await onlyCard();
+			expect(failureOf(card)?.content).toBe("**失败的节点**：主链：a\n**失败原因**：boom");
+			expect((await api.run(next)).run_notification).toMatchObject({ bot: "ops" });
+		});
+
+		it("读第一个失败的节点时抛出普通的错误：同样不发、运行照常结束", async () => {
+			const id = await scenario(single());
+			vi.mocked(readNodeError).mockRejectedValue(new Error("读不出来"));
+
+			const runId = await runEnding(id, "failed");
+
+			await expectRunEndedAndNothingSent(runId, /读不出来/);
+		});
+
+		// 保存点里写到一半出错：入队和运行上的记录是同一个保存点里的两次写入，一起回滚。用数据库触发器让其中一次写入失败
+		// （应用代码里没有别的办法让「语句本身合法、写入却失败」）。
+		it.each([
+			[
+				"runs",
+				"update",
+				"if new.notification_bot is not null and old.notification_bot is null then raise exception 'probe: write to runs fails'; end if;",
+				/Failed query: update "runs"/,
+			],
+			[
+				"feishu_messages",
+				"insert",
+				"raise exception 'probe: insert into feishu_messages fails';",
+				/Failed query: insert into "feishu_messages"/,
+			],
+		] as const)("保存点里写到一半出错（%s 上的触发器抛错）：入队和运行上的记录一起回滚，运行照常结束，下一次通知照常", async (table, event, body, failed) => {
+			const id = await scenario(single());
+			const fn = `probe_fail_${table}`;
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				await client.query(
+					`create function ${fn}() returns trigger language plpgsql as $$ begin ${body} return new; end $$`,
+				);
+				await client.query(
+					`create trigger ${fn} before ${event} on ${table} for each row execute function ${fn}()`,
+				);
+
+				const runId = await runEnding(id, "failed");
+
+				// 回滚的是保存点里的全部：发送队列里没有这个运行的消息，运行上没有记「发给哪个机器人」，也没有「未发送」。
+				const messages = await client.query(
+					"select count(*)::int as n from feishu_messages where run_id = $1",
+					[runId],
+				);
+				expect(messages.rows[0]?.n).toBe(0);
+				const run = await client.query(
+					"select status, notification_bot, notification_not_sent from runs where id = $1",
+					[runId],
+				);
+				expect(run.rows[0]).toMatchObject({
+					status: "failed",
+					notification_bot: null,
+					notification_not_sent: null,
+				});
+				await expectRunEndedAndNothingSent(runId, failed);
+
+				// 触发器拿掉之后，下一次运行的通知照常发出。
+				await client.query(`drop trigger ${fn} on ${table}`);
+				const next = await runEnding(id, "failed");
+				await onlyCard();
+				expect((await api.run(next)).run_notification).toMatchObject({ bot: "ops" });
+			} finally {
+				await client.query(`drop trigger if exists ${fn} on ${table}`);
+				await client.query(`drop function if exists ${fn}()`);
+				await client.end();
+			}
+		});
+
+		// 连接断了（不是通知自己的错）：保存点接不住，整个事务都没了。这时不能再记一条「这次不发」：它不是真的——
+		// 运行结束的事务没有提交，Agent 的流被关，它重连重发结果，运行才结束，卡片才发出。错误照原样往外抛给已有的处理。
+		it("连接在保存点里断开：错误往外抛，不记「这次不发」；Agent 重连重发结果之后运行结束、卡片发出一张", async () => {
+			const id = await scenario(single());
+			const actual =
+				await vi.importActual<typeof import("../src/runs/run-read.js")>("../src/runs/run-read.js");
+			let calls = 0;
+			vi.mocked(readNodeError).mockImplementation(async (db, input) => {
+				calls++;
+				if (calls === 1) {
+					// 被终止的连接，pg 会在这个连接上触发 error 事件；连接池只在连接空闲时接这个事件，借出去的连接上没有监听者，
+					// 事件就成了未捕获的异常（这和通知无关，是 pg 的行为）：测试自己接住它。
+					const session = (db as unknown as { session?: { client?: pg.PoolClient } }).session;
+					session?.client?.on("error", () => {});
+					await db.execute(sql`select pg_terminate_backend(pg_backend_pid())`);
+				}
+				return actual.readNodeError(db, input);
+			});
+			const runId = await api.triggerOk(id);
+			const assigned = await agent.nextAssign();
+			await agent.fail(assigned, "boom").catch(() => {});
+			expect(errors.mock.calls.map((call) => call.map(String).join(" ")).join("\n")).not.toMatch(
+				/run notification: not sent/,
 			);
-			const note = cards()[0]?.card.body.elements[0]?.content ?? "";
-			expect(note.endsWith("…（已截断）")).toBe(true);
-			expect(note.length).toBeLessThan(4000);
-			expect(focusSection(cards()[0])?.content).toBe(
-				["**关注项**", "- TPS：500 req/s", "- 下单延迟：9 ms"].join("\n"),
-			);
+
+			// 重连，带上手上的任务，重发结果：这一次的事务正常提交。
+			const again = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-a",
+				slots: 4,
+				runningTasks: [{ taskId: assigned.taskId, attempt: assigned.attempt, started: true }],
+			});
+			try {
+				await again.report({
+					taskId: assigned.taskId,
+					attempt: assigned.attempt,
+					status: TaskStatus.FAILED,
+					error: { kind: ErrorKind.NODE_ERROR, message: "boom", location: "" },
+				});
+				await status(runId, "failed");
+				await onlyCard();
+				expect((await api.run(runId)).run_notification).toMatchObject({ bot: "ops" });
+			} finally {
+				await again.disconnect();
+			}
+		});
+
+		it("取消的运行同样：通知出错不影响运行记为已取消", async () => {
+			const id = await scenario(single(), { trigger: "failed_or_cancelled" });
+			await writeTrigger(id, "always");
+
+			const runId = await runEnding(id, "cancelled");
+
+			await expectRunEndedAndNothingSent(runId, /always/);
 		});
 	});
 
@@ -767,14 +887,14 @@ describe("运行通知", () => {
 
 		it("投递失败：运行通知是失败并写明原因，运行的结果不变", async () => {
 			feishu.reply({ code: 19024 });
-			const id = await scenario(single(), { trigger: "always" });
-			const runId = await runEnding(id, "success");
+			const id = await scenario(single(), { trigger: "failed_or_cancelled" });
+			const runId = await runEnding(id, "failed");
 
 			await eventually(async () => expect((await settled(runId))?.status).toBe("failed"));
 			const state = await settled(runId);
 			expect(state?.reason).toContain("关键词");
 			expect(state?.reason).not.toContain(TOKEN);
-			expect((await api.run(runId)).status).toBe("success");
+			expect((await api.run(runId)).status).toBe("failed");
 		});
 
 		it("机器人在消息投递之前被删除：已丢弃", async () => {
@@ -795,32 +915,33 @@ describe("运行通知", () => {
 		});
 
 		it("投递记录跟随运行的保留期：清理之后运行详情里不再有运行通知，运行本身还在", async () => {
-			const id = await scenario(single(), { trigger: "always" });
-			const runId = await runEnding(id, "success");
+			const id = await scenario(single(), { trigger: "failed_or_cancelled" });
+			const runId = await runEnding(id, "failed");
 			await eventually(async () => expect((await settled(runId))?.status).toBe("delivered"));
 
 			clock.advance(31 * 24 * 3600 * 1000);
 
 			await eventually(async () => expect((await settled(runId)) ?? null).toBeNull());
-			expect((await api.run(runId)).status).toBe("success");
+			expect((await api.run(runId)).status).toBe("failed");
 		});
 
 		it("机器人在运行结束时已经不存在：触发不被拦截，运行详情里是「未发送：机器人已删除」", async () => {
 			await api.createFeishuBot("gone", feishu.webhookUrl("gone-token"));
-			const id = await scenario(single(), { bot: "gone", trigger: "always" });
+			const id = await scenario(single(), { bot: "gone", trigger: "failed_or_cancelled" });
 			const removed = await cp.fetch("/feishu-bots/gone", {
 				method: "DELETE",
 				headers: { "x-sfly-nickname": "tester" },
 			});
 			expect(removed.status).toBe(204);
 
-			const runId = await runEnding(id, "success");
+			const runId = await runEnding(id, "failed");
 
 			expect(await settled(runId)).toEqual({
 				status: "not_sent",
 				bot: "gone",
 				reason: "机器人已删除",
 			});
+			expect((await api.run(runId)).status).toBe("failed");
 			expect(feishu.requests).toHaveLength(0);
 		});
 	});
@@ -842,16 +963,18 @@ describe("运行通知", () => {
 			expect(feishu.requests[1]?.body).toBe(feishu.requests[0]?.body);
 
 			// 再重启一次：已送达的不会再发，重启时也不会为已经结束的运行补发。
-			// 随后另一个运行的卡片到达时，前面只有这两次请求。
+			// 随后另一个运行的卡片到达时，前面只有这两次请求。（重启断开了假 Agent 的连接，另连一个。）
 			await cp.restart();
-			const other = await api.orchestrationWith(
-				{ nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },
-				"另一个",
-			);
-			await notification(other, { bot: "ops", trigger: "always" });
-			await api.triggerOk(other);
-			await eventually(() => expect(feishu.requests).toHaveLength(3));
-			expect((cards()[2] as Card).card.header.title.content).toBe("另一个");
+			const second = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
+			try {
+				const other = await scenario(single(), {}, "另一个");
+				await api.triggerOk(other);
+				await second.fail(await second.nextAssign(), "boom");
+				await eventually(() => expect(feishu.requests).toHaveLength(3));
+				expect((cards()[2] as Card).card.header.title.content).toBe("另一个");
+			} finally {
+				await second.disconnect();
+			}
 		});
 	});
 });

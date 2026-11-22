@@ -5,7 +5,7 @@ import type { ChartDeclaration } from "./package-metadata.js";
 import { type Labels, seriesName } from "./series.js";
 
 /**
- * 关注项读数的写法（GLOSSARY「关注项」）：运行监控的读数和图表、运行通知的卡片共用，同一项在哪里看到说法都一样。
+ * 关注项读数的写法（GLOSSARY「关注项」）：运行监控的读数和图表、控制台共用，同一项在哪里看到说法都一样。
  */
 
 /** 关注项失效的一种原因：节点包的这个版本没有声明这张图表（规格 #344 的写法，别处写这句都引用它）。 */
