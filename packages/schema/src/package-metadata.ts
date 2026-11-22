@@ -12,6 +12,12 @@ export const NodeName = z
 	.string()
 	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "节点名必须是合法的 Python 标识符");
 
+/**
+ * 开发版本的版本号：场景把包锁定到 `dev`（`包名@dev`）表示用 Agent 上以 `sfly dev` 加载的源码，docs/SEMANTICS.md §7。
+ * 控制面、画布、编排库都用这一个常量（Python 一侧各有自己的 `dev`）。
+ */
+export const DEV_VERSION = "dev";
+
 /** 节点输入或输出的 JSON Schema（type=object，properties 的键即参数名 / 输出键）。 */
 export const IoSchema = z.looseObject({
 	type: z.literal("object"),

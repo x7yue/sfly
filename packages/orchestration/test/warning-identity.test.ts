@@ -412,6 +412,16 @@ const FIXTURES: Record<OrchestrationWarning["code"], Doc | { single: string }> =
 		],
 		chain("entry", "w1"),
 	),
+	// 同一个节点上写了两个没声明的输入名：节点和种类都相同，靠 input 分开
+	input_not_declared: doc(
+		[
+			entry(),
+			work("w1", {
+				inputs: { a: 1, b: 2, s1: "${{ run.state }}", s2: "${{ run.state }}", zz1: 1, zz2: 2 },
+			}),
+		],
+		chain("entry", "w1"),
+	),
 	// 一个「Agent」（「飞书机器人」）类型的输入只有一个值：同一个节点上的两个输入
 	agent_input_not_registered: doc(
 		[
