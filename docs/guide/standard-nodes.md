@@ -237,7 +237,7 @@ def process(ctx: Context, pid: int) -> None:
 - 监控从压测开始前一直持续到压测结束。停止子流程节点停止「监控」时，连同它触发的下级子流程一起停止，监控节点记为「已停止」，不算失败。运行监控页上能看到整个压测期间的系统指标和进程指标，`monitor_processes` 的产物里有每个进程的明细 `processes.csv`。
 - 停止子流程节点要设为 always 节点：压测失败时也要停止监控，否则监控一直运行到节点超时，运行迟迟不能结束。
 - 停止子流程节点放在 `stop_server` 之前：先停监控再停服务，否则 `monitor_processes` 会因为服务退出而失败（默认 `on_exit="fail"`）。
-- 服务在压测中意外退出时 `monitor_processes` 失败（`on_exit` 默认 `fail`）；服务会被拉起重启时给 `refind`（秒），它按名字重新找到新进程、接着监控。子流程失败不影响主链继续执行，但运行最终记为失败，在运行监控里能看到是哪个子流程。
+- 服务在压测中意外退出时 `monitor_processes` 失败（`on_exit` 默认 `fail`）；服务会被拉起重启时给 `refind_within`（秒），它按名字重新找到新进程、接着监控。子流程失败不影响主链继续执行，但运行最终记为失败，在运行监控里能看到是哪个子流程。
 - 压测时长固定、不需要停止子流程节点时，给监控函数设置 `duration`，到期后自己成功结束；它们仍然要放在子流程里才能和压测同时运行。
 
 ## `shell`：Shell 命令
@@ -351,14 +351,14 @@ def process(ctx: Context, pid: int) -> None:
 | 删掉的节点 | 怎么替换 |
 |---|---|
 | `system_monitor` | 自己的节点里调用 `sfly_std.resources.monitor_system`（指标和图表声明：`SYSTEM_METRICS`、`SYSTEM_CHARTS`） |
-| `process_monitor` | `sfly_std.resources.monitor_processes`（`PROCESS_METRICS`、`PROCESS_CHARTS`）；新增参数 `refind`：进程重启后按名字重新找到它、接着监控 |
+| `process_monitor` | `sfly_std.resources.monitor_processes`（`PROCESS_METRICS`、`PROCESS_CHARTS`）；新增参数 `refind_within`：进程重启后按名字重新找到它、接着监控；节点的 `wait_for_process` 在函数里叫 `appear_within`，节点输出的 `processes_csv` 是结果的 `csv_ref` |
 | `wait_port` | `sfly_std.waiting.wait_for_port` |
 | `wait_file` | `sfly_std.waiting.wait_for_file` |
 | `wait_log_line` | `sfly_std.logs.wait_for_log_line` |
 | `follow_log` | `sfly_std.logs.follow_log_file`（指标声明：`FOLLOW_METRICS`） |
 | `collect_artifacts` | 自己的节点里用 `ctx.artifacts.save(名称, Path(文件))` |
-| `pull_files` | `sfly_std.agent_files.pull_files_from_agent` |
-| `watch_files` | `sfly_std.agent_files.watch_agent_files`（指标声明：`WATCH_METRICS`） |
+| `pull_files` | `sfly_std.agent_files.pull_files_from_agent`（`directory`、`local_dir` 只能按关键字传；节点输出的 `files` 是结果的 `paths`，元素是 `Path`） |
+| `watch_files` | `sfly_std.agent_files.watch_agent_files`（`directory`、`local_dir` 只能按关键字传；指标声明：`WATCH_METRICS`） |
 | `http_request` | 自己的节点里直接用 `httpx`（写进节点包自己的依赖）；要重试到成功用 `sfly_std.waiting.poll_until` |
 | `assert` | 阈值和判断写在自己的节点代码里，不满足就抛异常 |
 | `file_assert` | 自己的节点里读文件、判断后抛异常（等文件写完用 `sfly_std.waiting.wait_for_file`） |

@@ -116,12 +116,12 @@ def process_monitor(
         name=name,
         match=match,
         include_children=include_children,
-        wait_for_process=wait_for_process,
+        appear_within=wait_for_process,
         interval=interval,
         duration=duration,
         on_exit=on_exit,
     )
-    return {"samples": result.samples, "processes_csv": result.processes_csv}
+    return {"samples": result.samples, "processes_csv": result.csv_ref}
 
 
 @node(title="等待端口")
@@ -294,14 +294,14 @@ def pull_files(
     result = pull_files_from_agent(
         ctx,
         source,
-        directory,
-        local_dir,
+        directory=directory,
+        local_dir=local_dir,
         pattern=pattern,
         recursive=recursive,
         delete_source=delete_source,
     )
     return {
-        "files": _listed(result.files),
+        "files": _listed(result.paths),
         "count": result.count,
         "total_bytes": result.total_bytes,
     }
@@ -357,8 +357,8 @@ def watch_files(
     result = watch_agent_files(
         ctx,
         source,
-        directory,
-        local_dir,
+        directory=directory,
+        local_dir=local_dir,
         pattern=pattern,
         stable=stable or 0,
         delete_source=delete_source,

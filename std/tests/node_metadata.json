@@ -1,648 +1,5 @@
 [
 	{
-		"name": "assert",
-		"title": "断言",
-		"description": "对一个值逐条做断言：数值、文本、JSON 都用同一个节点检查。\n每条断言用 path 取出值的一部分，再用 op 和 value 比较。\n\n失败：有断言不通过时失败，错误信息逐条列出不通过的断言：第几条、具体路径、期望和实际值。\n路径不存在时，除 exists 外的断言都不通过。\n断言写错时（路径无法解析、缺少 value、value 类型不对、正则不合法、有未知的键）也失败，\n错误信息写明是第几条，不检查任何断言。",
-		"entry": "sfly_std.assert_:assert_",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"actual": {
-					"description": "要检查的值，通常整个值就是一个引用（引用上游节点的输出，保持原类型）；也可以是包含多个引用的对象"
-				},
-				"assertions": {
-					"type": "array",
-					"items": {
-						"type": "object",
-						"properties": {
-							"op": {
-								"enum": [
-									"eq",
-									"ne",
-									"gt",
-									"ge",
-									"lt",
-									"le",
-									"contains",
-									"matches",
-									"exists",
-									"len_eq"
-								]
-							},
-							"path": { "type": "string" },
-							"value": {}
-						},
-						"required": ["op"]
-					},
-					"description": "断言列表，至少一条；每条是 {\"path\": ..., \"op\": ..., \"value\": ...}"
-				}
-			},
-			"required": ["actual", "assertions"],
-			"order": ["actual", "assertions"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": { "passed": { "type": "boolean", "description": "全部通过时为 true" } },
-			"required": ["passed"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "collect_artifacts",
-		"title": "收集产物",
-		"description": "按通配符把文件保存为产物，在运行页面的节点详情里下载，也可以把产物引用交给后面的节点。\n\n副作用：匹配到的文件保存为产物（archive 为 true 时打成一个 zip），不改动原文件。\n产物在任务结束后由 Agent 上传到控制面，随运行一起按保留期清理。\n\n失败：base_dir 不存在时失败。\n一个文件都没匹配到时，required 为 true（默认）则失败，错误信息写明 base_dir 和通配符。\n匹配的文件太多、输出放不下时失败，错误信息写明文件数，改用 archive 或缩小 paths。\n通配符是绝对路径或含 .. 时失败。",
-		"entry": "sfly_std.collect_artifacts:collect_artifacts",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"paths": {
-					"type": "array",
-					"items": { "type": "string" },
-					"description": "通配符列表，都是相对 base_dir 的路径，例如 *.log 或目录 screenshots"
-				},
-				"base_dir": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "在哪个目录下匹配，通常写被测系统或前面的 shell 写结果的绝对路径",
-					"default": null
-				},
-				"archive": {
-					"type": "boolean",
-					"description": "为 true 时把匹配到的文件打成一个 zip 产物 artifacts.zip，不再逐个保存",
-					"default": false
-				},
-				"required": {
-					"type": "boolean",
-					"description": "一个文件都没匹配到时是否让节点失败",
-					"default": true
-				}
-			},
-			"required": ["paths"],
-			"order": ["paths", "base_dir", "archive", "required"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"refs": {
-					"type": "object",
-					"additionalProperties": { "type": "string" },
-					"description": "产物名称（相对 base_dir 的路径，/ 分隔）→ 产物引用；archive 为 true 时只有 artifacts.zip 一项；没有匹配到文件时为空对象"
-				}
-			},
-			"required": ["refs"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "file_assert",
-		"title": "文件断言",
-		"description": "检查一次文件的状态：存在或不存在、大小、行数、内容匹配正则。只检查当下这一次，不等待。\n\n检查行数和内容会把整个文件读进内存，不要用于很大的文件。\n\n失败：有检查不通过时失败，错误信息逐项列出不通过的检查和实际值。\n给了大小、行数或内容的检查而路径是目录时也失败。\n要等文件出现用 wait_file。",
-		"entry": "sfly_std.file_assert:file_assert",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"path": {
-					"type": "string",
-					"description": "文件路径；相对路径相对任务工作目录，通常写绝对路径"
-				},
-				"exists": {
-					"type": "boolean",
-					"description": "文件应存在；为 false 时应不存在，这时不能再给大小、行数、内容的检查",
-					"default": true
-				},
-				"min_size": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
-					"description": "文件大小（字节）的下限，含边界",
-					"default": null
-				},
-				"max_size": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
-					"description": "文件大小（字节）的上限，含边界",
-					"default": null
-				},
-				"min_lines": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
-					"description": "文件行数的下限，含边界；最后一行没有换行符也算一行，空文件是 0 行",
-					"default": null
-				},
-				"max_lines": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
-					"description": "文件行数的上限，含边界；最后一行没有换行符也算一行，空文件是 0 行",
-					"default": null
-				},
-				"matches": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "内容（按 UTF-8 解码）应匹配的正则表达式：在任意位置匹配即可，多行模式（^ 和 $ 匹配每一行的开头和结尾）",
-					"default": null
-				}
-			},
-			"required": ["path"],
-			"order": ["path", "exists", "min_size", "max_size", "min_lines", "max_lines", "matches"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": { "passed": { "type": "boolean", "description": "全部通过时为 true" } },
-			"required": ["passed"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "follow_log",
-		"title": "跟随日志",
-		"description": "把日志文件新增的行实时转为任务日志，出现匹配的错误行时失败。\n\n文件还不存在时等它出现；文件被轮转或截断时继续跟随新的内容。\n不设置 duration 时一直跟随，直到被停止子流程节点停止或运行被取消。\n被停止时不算失败，已经转发的行都留在任务日志里。\n\n失败：有一行匹配 fail_on 里的任意一个正则时立即失败，错误信息附上第一行匹配的内容和匹配的正则。",
-		"entry": "sfly_std.follow_log:follow_log",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"path": { "type": "string", "description": "日志文件路径；相对路径相对于任务工作目录" },
-				"read_from": {
-					"enum": ["end", "start"],
-					"description": "从哪里开始跟随：end 从节点开始时的文件末尾，start 先转发文件里已有的内容",
-					"default": "end"
-				},
-				"fail_on": {
-					"type": "array",
-					"items": { "type": "string" },
-					"description": "正则表达式列表（re.search）：有一行匹配其中任意一个时节点失败",
-					"default": []
-				},
-				"duration": {
-					"anyOf": [{ "type": "number" }, { "type": "null" }],
-					"description": "跟随多少秒后成功结束；不设置时一直跟随，直到被停止子流程节点停止或运行被取消",
-					"default": null
-				}
-			},
-			"required": ["path"],
-			"order": ["path", "read_from", "fail_on", "duration"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"lines": { "type": "integer", "description": "转发的总行数（duration 到期时才有输出）" }
-			},
-			"required": ["lines"]
-		},
-		"metrics": [
-			{ "name": "lines_per_s", "unit": "行/s", "kind": "gauge", "description": "每秒新增的行数" },
-			{
-				"name": "fail_matches",
-				"unit": "",
-				"kind": "counter",
-				"description": "累计匹配 fail_on 的行数"
-			}
-		],
-		"charts": [],
-		"primary_metric": "lines_per_s"
-	},
-	{
-		"name": "http_request",
-		"title": "HTTP 请求",
-		"description": "发一个 HTTP 请求，检查状态码和响应 JSON，可以重试直到满足。\n\n副作用：请求本身对被测服务的影响，例如 POST 可能创建数据。\n请求头和请求体在运行页面上对所有人可见，不要直接写密钥。\n打开 save_body 时，完整的响应体保存为产物 body。\n不跟随重定向；走 Agent 的 HTTP_PROXY、HTTPS_PROXY、NO_PROXY 环境变量设置的代理。\n\n失败：没有得到响应（连接被拒绝、请求超时、证书校验失败）时失败。\n状态码不在 expect_status 里，或 expect_json 的断言不通过时失败，错误信息写明请求方法、\n地址和状态码。\n打开 until_ok 时会重试，超过 wait 秒仍不满足才失败，错误信息是请求次数和最后一次不满足的原因。",
-		"entry": "sfly_std.http_request:http_request",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"url": { "type": "string", "description": "请求地址，以 http:// 或 https:// 开头" },
-				"method": {
-					"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-					"description": "GET、POST、PUT、PATCH、DELETE、HEAD、OPTIONS",
-					"default": "GET"
-				},
-				"headers": {
-					"anyOf": [
-						{ "type": "object", "additionalProperties": { "type": "string" } },
-						{ "type": "null" }
-					],
-					"description": "请求头（对象，值为字符串）",
-					"default": null
-				},
-				"json": {
-					"description": "JSON 请求体（任意 JSON 值），自动加上 Content-Type: application/json",
-					"default": null
-				},
-				"body": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "文本请求体，按 UTF-8 发送；需要时在 headers 里写 Content-Type。与 json 只能填一个",
-					"default": null
-				},
-				"request_timeout": {
-					"type": "number",
-					"description": "单次请求最多等多少秒（连接、发送、等响应）",
-					"default": 30
-				},
-				"verify_tls": {
-					"type": "boolean",
-					"description": "是否校验 HTTPS 证书；被测环境用自签证书时设为 false",
-					"default": true
-				},
-				"expect_status": {
-					"anyOf": [
-						{ "type": "integer" },
-						{ "type": "string" },
-						{ "type": "array", "items": { "anyOf": [{ "type": "integer" }, { "type": "string" }] } }
-					],
-					"description": "算作成功的状态码：状态码（例如 404）或 \"1xx\"～\"5xx\"，可以是列表，例如 [200, \"3xx\"]",
-					"default": "2xx"
-				},
-				"expect_json": {
-					"type": "array",
-					"items": {
-						"type": "object",
-						"properties": {
-							"op": {
-								"enum": [
-									"eq",
-									"ne",
-									"gt",
-									"ge",
-									"lt",
-									"le",
-									"contains",
-									"matches",
-									"exists",
-									"len_eq"
-								]
-							},
-							"path": { "type": "string" },
-							"value": {}
-						},
-						"required": ["op"]
-					},
-					"description": "对响应 JSON 的断言列表，格式与 assert 节点的 assertions 相同",
-					"default": []
-				},
-				"until_ok": {
-					"type": "boolean",
-					"description": "打开时，没有得到响应（连接失败、超时）或断言不通过就每 poll 秒重试一次，直到通过或超过 wait 秒",
-					"default": false
-				},
-				"wait": { "type": "number", "description": "until_ok 时最多等多少秒", "default": 300.0 },
-				"poll": { "type": "number", "description": "until_ok 时的重试间隔（秒）", "default": 1.0 },
-				"save_body": {
-					"type": "boolean",
-					"description": "保存响应体：打开时把响应体的原始字节存成产物 body，输出 body_file 给出它的产物引用",
-					"default": false
-				}
-			},
-			"required": ["url"],
-			"order": [
-				"url",
-				"method",
-				"headers",
-				"json",
-				"body",
-				"request_timeout",
-				"verify_tls",
-				"expect_status",
-				"expect_json",
-				"until_ok",
-				"wait",
-				"poll",
-				"save_body"
-			]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"status": { "type": "integer", "description": "状态码" },
-				"headers": {
-					"type": "object",
-					"additionalProperties": { "type": "string" },
-					"description": "响应头（对象）。名字都是小写；同名的多个响应头用逗号加空格连起来。名字和值合计超过 64 KiB 时只保留前面的响应头（写一条警告日志）"
-				},
-				"elapsed_ms": { "type": "number", "description": "最后一次请求的耗时（毫秒）" },
-				"body_file": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "save_body 打开时是产物 body 的产物引用，后续节点可以引用它下载完整的响应体；关闭时为空值"
-				},
-				"json": {
-					"description": "响应内容是 JSON、且解析后的值写进输出（JSON 序列化）后不超过 256 KiB 时，解析后的值"
-				},
-				"text": {
-					"type": "string",
-					"description": "响应内容不是 JSON，或输出 json 超过 256 KiB 时的文本，写进输出后最多 256 KiB，超过时只保留开头（截断、或 JSON 改为输出 text 时写一条警告日志）"
-				}
-			},
-			"required": ["status", "headers", "elapsed_ms", "body_file"]
-		},
-		"metrics": [
-			{ "name": "elapsed_ms", "unit": "ms", "kind": "gauge", "description": "每次请求的耗时" }
-		],
-		"charts": [],
-		"primary_metric": "elapsed_ms"
-	},
-	{
-		"name": "port_assert",
-		"title": "端口断言",
-		"description": "尝试连接一次 TCP 端口，检查能连或不能连。只检查当下这一次，不等待、不重试。\n\n连接从执行这个节点的 Agent 发起。\n\n失败：检查不通过时失败，错误信息写明地址、期望与实际。\n主机名解析不到时，无论 reachable 是什么都失败：多半是主机名写错了。\n要等端口可以连接用 wait_port。",
-		"entry": "sfly_std.port_assert:port_assert",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"port": { "type": "integer", "description": "端口号" },
-				"host": { "type": "string", "description": "主机名或 IP 地址", "default": "127.0.0.1" },
-				"reachable": {
-					"type": "boolean",
-					"description": "应能连接；为 false 时应不能连接（连接被拒绝或超时）",
-					"default": true
-				},
-				"connect_timeout": {
-					"type": "number",
-					"description": "这一次连接最多等多少秒，超时算不能连接",
-					"default": 3
-				}
-			},
-			"required": ["port"],
-			"order": ["port", "host", "reachable", "connect_timeout"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": { "passed": { "type": "boolean", "description": "通过时为 true" } },
-			"required": ["passed"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "process_assert",
-		"title": "进程断言",
-		"description": "检查一次执行这个节点的 Agent 所在机器上的进程：在不在、有几个。只检查当下这一次，不等待。\n\n失败：检查不通过时失败，错误信息写明期望与实际，并列出匹配到的进程。\npid、name、match 一个都没给时也失败。",
-		"entry": "sfly_std.process_assert:process_assert",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"pid": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
-					"description": "进程号，通常引用 start_process 的输出 pid",
-					"default": null
-				},
-				"name": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "进程名（可执行文件名，例如 nginx，必须完全一致）",
-					"default": null
-				},
-				"match": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "命令行（各参数以空格连接）的正则表达式，部分匹配即可",
-					"default": null
-				},
-				"running": {
-					"type": "boolean",
-					"description": "应至少有一个匹配的进程；为 false 时应一个都没有",
-					"default": true
-				},
-				"count": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
-					"description": "应恰好有这么多个匹配的进程；给出时代替 running 的检查",
-					"default": null
-				}
-			},
-			"order": ["pid", "name", "match", "running", "count"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"passed": { "type": "boolean", "description": "通过时为 true" },
-				"count": { "type": "integer", "description": "匹配的进程数" },
-				"pids": {
-					"type": "array",
-					"items": { "type": "integer" },
-					"description": "匹配的进程号，从小到大；最多列出 1000 个（超过时写一条警告日志，count 仍是全部数量）"
-				}
-			},
-			"required": ["passed", "count", "pids"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "process_monitor",
-		"title": "监控进程",
-		"description": "统计目标进程（默认连同全部子孙进程）用了多少资源，上报合计和每个进程各自的指标。\n\n副作用：每个进程每次采样的明细写进产物 processes.csv，进程列表有变化时写一条任务日志。\n\n不设置 duration 时一直运行，直到被停止子流程节点停止或运行被取消，被停止时记为「已停止」，\n不算失败。\n\n失败：开始时最多等 wait_for_process 秒让每个目标都出现，等不到时失败，错误信息列出没找到的目标。\n某个目标匹配的进程全部退出时，on_exit 为 fail（默认）则失败，为 succeed 则成功结束。\npid、name、match 一个都没给时也失败。",
-		"entry": "sfly_std.process_monitor:process_monitor",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"pid": {
-					"anyOf": [
-						{ "type": "integer" },
-						{ "type": "array", "items": { "type": "integer" } },
-						{ "type": "null" }
-					],
-					"description": "进程号，或进程号的列表；通常引用 start_process 的输出 pid",
-					"default": null
-				},
-				"name": {
-					"anyOf": [
-						{ "type": "string" },
-						{ "type": "array", "items": { "type": "string" } },
-						{ "type": "null" }
-					],
-					"description": "进程名（可执行文件名，例如 nginx，必须完全一致），或进程名的列表",
-					"default": null
-				},
-				"match": {
-					"anyOf": [
-						{ "type": "string" },
-						{ "type": "array", "items": { "type": "string" } },
-						{ "type": "null" }
-					],
-					"description": "命令行（各参数以空格连接）的正则表达式，部分匹配即可，或正则的列表",
-					"default": null
-				},
-				"include_children": {
-					"type": "boolean",
-					"description": "是否连同目标的全部子孙进程一起统计",
-					"default": true
-				},
-				"wait_for_process": {
-					"type": "number",
-					"description": "开始时最多等多少秒让每个目标都出现",
-					"default": 60
-				},
-				"interval": { "type": "number", "description": "采样间隔（秒）", "default": 1 },
-				"duration": {
-					"anyOf": [{ "type": "number" }, { "type": "null" }],
-					"description": "监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消",
-					"default": null
-				},
-				"on_exit": {
-					"enum": ["fail", "succeed"],
-					"description": "目标进程退出时：fail 让节点失败，succeed 让节点成功结束",
-					"default": "fail"
-				}
-			},
-			"order": [
-				"pid",
-				"name",
-				"match",
-				"include_children",
-				"wait_for_process",
-				"interval",
-				"duration",
-				"on_exit"
-			]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"samples": { "type": "integer", "description": "采样了多少次" },
-				"processes_csv": { "type": "string", "description": "产物 processes.csv 的引用" }
-			},
-			"required": ["samples", "processes_csv"]
-		},
-		"metrics": [
-			{
-				"name": "cpu_percent",
-				"unit": "%",
-				"kind": "gauge",
-				"description": "所有进程的 CPU 占用之和（一个核满载为 100）"
-			},
-			{
-				"name": "rss_bytes",
-				"unit": "B",
-				"kind": "gauge",
-				"description": "所有进程的常驻内存之和"
-			},
-			{ "name": "threads", "unit": "", "kind": "gauge", "description": "所有进程的线程数之和" },
-			{
-				"name": "open_fds",
-				"unit": "",
-				"kind": "gauge",
-				"description": "所有进程打开的文件描述符数之和"
-			},
-			{
-				"name": "io_read_bytes_per_s",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "所有进程的磁盘读取速率之和"
-			},
-			{
-				"name": "io_write_bytes_per_s",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "所有进程的磁盘写入速率之和"
-			},
-			{
-				"name": "cpu_percent_by_process",
-				"unit": "%",
-				"kind": "gauge",
-				"description": "每个进程的 CPU 占用（一个核满载为 100）",
-				"labels": ["pid", "name"]
-			},
-			{
-				"name": "rss_bytes_by_process",
-				"unit": "B",
-				"kind": "gauge",
-				"description": "每个进程的常驻内存",
-				"labels": ["pid", "name"]
-			},
-			{
-				"name": "threads_by_process",
-				"unit": "",
-				"kind": "gauge",
-				"description": "每个进程的线程数",
-				"labels": ["pid", "name"]
-			},
-			{
-				"name": "open_fds_by_process",
-				"unit": "",
-				"kind": "gauge",
-				"description": "每个进程打开的文件描述符数（读不到的进程不上报）",
-				"labels": ["pid", "name"]
-			},
-			{
-				"name": "io_read_bytes_per_s_by_process",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "每个进程的磁盘读取速率（读不到的进程不上报）",
-				"labels": ["pid", "name"]
-			},
-			{
-				"name": "io_write_bytes_per_s_by_process",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "每个进程的磁盘写入速率（读不到的进程不上报）",
-				"labels": ["pid", "name"]
-			}
-		],
-		"charts": [
-			{ "title": "CPU", "type": "line", "metrics": ["cpu_percent"] },
-			{ "title": "内存", "type": "line", "metrics": ["rss_bytes"] },
-			{ "title": "线程与文件描述符", "type": "line", "metrics": ["threads", "open_fds"] },
-			{
-				"title": "磁盘读写",
-				"type": "line",
-				"metrics": ["io_read_bytes_per_s", "io_write_bytes_per_s"]
-			},
-			{ "title": "CPU（按进程）", "type": "line", "metrics": ["cpu_percent_by_process"] },
-			{ "title": "内存（按进程）", "type": "line", "metrics": ["rss_bytes_by_process"] },
-			{ "title": "线程数（按进程）", "type": "line", "metrics": ["threads_by_process"] },
-			{ "title": "文件描述符（按进程）", "type": "line", "metrics": ["open_fds_by_process"] },
-			{
-				"title": "磁盘读写（按进程）",
-				"type": "line",
-				"metrics": ["io_read_bytes_per_s_by_process", "io_write_bytes_per_s_by_process"]
-			}
-		],
-		"primary_metric": "cpu_percent"
-	},
-	{
-		"name": "pull_files",
-		"title": "拉取文件",
-		"description": "把另一台 Agent 上某个目录下匹配通配符的文件一次性拉到本地目录，可以拉完后删除源文件。\n\n副作用：在 local_dir 里创建文件，目录不存在时自动创建，同名的已有文件被替换。\n每个文件先写到临时文件，下载完成、核对大小后才改名，不会留下半截文件，已经拉完的文件保留。\ndelete_source 打开时，每拉完一个文件就删除来源 Agent 上的这个源文件，只删下载成功的。\n\n失败：directory 不存在、不是目录或没有权限时失败。\n某个文件下载失败时立即失败，错误信息写明是哪个文件，之后的不再拉取。\n文件在下载期间被改写、截短或大小变了（还在写入）时，下载失败。\n没有匹配的文件时不失败，输出的 count 为 0。",
-		"entry": "sfly_std.pull_files:pull_files",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"source": {
-					"type": "string",
-					"x-sfly-type": "agent",
-					"description": "来源 Agent：文件在哪一台 Agent 上（「Agent」类型的参数，检查器里从已注册的 Agent 中选）"
-				},
-				"directory": { "type": "string", "description": "来源 Agent 所在机器上的目录，绝对路径" },
-				"local_dir": {
-					"type": "string",
-					"description": "拉到哪个本地目录：执行这个节点的 Agent 所在机器上的路径，相对路径相对于任务工作目录；不存在时自动创建"
-				},
-				"pattern": {
-					"type": "string",
-					"description": "文件名的通配符，只匹配文件名（不含目录），例如 app.log.*",
-					"default": "*"
-				},
-				"recursive": {
-					"type": "boolean",
-					"description": "为 true 时也拉取子目录里匹配的文件，在 local_dir 下保留子目录结构",
-					"default": false
-				},
-				"delete_source": {
-					"type": "boolean",
-					"description": "为 true 时每拉完一个文件就删除来源 Agent 上的这个源文件",
-					"default": false
-				}
-			},
-			"required": ["source", "directory", "local_dir"],
-			"order": ["source", "directory", "local_dir", "pattern", "recursive", "delete_source"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"files": {
-					"type": "array",
-					"items": { "type": "string" },
-					"description": "拉下来的文件的本地绝对路径，按拉取的顺序；最多列出 1000 个（序列化后最多 256 KiB），更多时只列出前面的，以 count 为准"
-				},
-				"count": { "type": "integer", "description": "拉下来的文件数" },
-				"total_bytes": { "type": "integer", "description": "拉下来的文件的总字节数" }
-			},
-			"required": ["files", "count", "total_bytes"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
 		"name": "shell",
 		"title": "Shell 命令",
 		"description": "执行一段命令，输出退出码、标准输出和标准错误。\n\n副作用：命令做什么，就有什么副作用。\n标准输出和标准错误实时转为任务日志。\n打开 save_output 时，完整的标准输出和标准错误各保存为一个产物。\n命令退出时还在运行的后台进程不会被终止。\n\n失败：退出码不在 ok_exit_codes 里时失败，错误信息是退出码、命令和标准错误的末尾。\n解释器或工作目录不存在时也失败。\n任务被取消或超时时，命令和它启动的全部子进程都会被终止。",
@@ -650,7 +7,10 @@
 		"inputs": {
 			"type": "object",
 			"properties": {
-				"command": { "type": "string", "description": "要执行的命令" },
+				"command": {
+					"type": "string",
+					"description": "要执行的命令"
+				},
 				"shell": {
 					"type": "string",
 					"description": "解释器：/bin/bash、python3 等任何能用 -c 执行一段命令的程序",
@@ -658,20 +18,36 @@
 				},
 				"env": {
 					"anyOf": [
-						{ "type": "object", "additionalProperties": { "type": "string" } },
-						{ "type": "null" }
+						{
+							"type": "object",
+							"additionalProperties": {
+								"type": "string"
+							}
+						},
+						{
+							"type": "null"
+						}
 					],
 					"description": "追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上",
 					"default": null
 				},
 				"cwd": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "工作目录，必须已经存在",
 					"default": null
 				},
 				"ok_exit_codes": {
 					"type": "array",
-					"items": { "type": "integer" },
+					"items": {
+						"type": "integer"
+					},
 					"description": "算作成功的退出码",
 					"default": [0]
 				},
@@ -691,14 +67,34 @@
 					"type": "integer",
 					"description": "退出码；命令被信号终止时为 128 + 信号值（与 shell 的 $? 相同）"
 				},
-				"stdout": { "type": "string", "description": "标准输出的最后 64 KiB" },
-				"stderr": { "type": "string", "description": "标准错误的最后 64 KiB" },
+				"stdout": {
+					"type": "string",
+					"description": "标准输出的最后 64 KiB"
+				},
+				"stderr": {
+					"type": "string",
+					"description": "标准错误的最后 64 KiB"
+				},
 				"stdout_file": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "产物 stdout.txt（完整的标准输出）的引用；save_output 为 false 时是空值"
 				},
 				"stderr_file": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "产物 stderr.txt（完整的标准错误）的引用；save_output 为 false 时是空值"
 				}
 			},
@@ -715,7 +111,10 @@
 		"inputs": {
 			"type": "object",
 			"properties": {
-				"command": { "type": "string", "description": "要执行的命令" },
+				"command": {
+					"type": "string",
+					"description": "要执行的命令"
+				},
 				"shell": {
 					"type": "string",
 					"description": "解释器，与 shell 节点相同",
@@ -723,19 +122,40 @@
 				},
 				"env": {
 					"anyOf": [
-						{ "type": "object", "additionalProperties": { "type": "string" } },
-						{ "type": "null" }
+						{
+							"type": "object",
+							"additionalProperties": {
+								"type": "string"
+							}
+						},
+						{
+							"type": "null"
+						}
 					],
 					"description": "追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上",
 					"default": null
 				},
 				"cwd": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "工作目录，必须已经存在",
 					"default": null
 				},
 				"log_file": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "进程的标准输出和标准错误追加写入的文件；相对路径相对于 cwd，目录不存在时自动创建",
 					"default": null
 				}
@@ -769,7 +189,14 @@
 			"type": "object",
 			"properties": {
 				"pid": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
+					"anyOf": [
+						{
+							"type": "integer"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "要停止的进程号，通常引用 start_process 的输出 pid；为空时什么也不做、直接成功",
 					"default": null
 				},
@@ -784,9 +211,19 @@
 		"outputs": {
 			"type": "object",
 			"properties": {
-				"was_running": { "type": "boolean", "description": "开始停止时进程是否还在运行" },
+				"was_running": {
+					"type": "boolean",
+					"description": "开始停止时进程是否还在运行"
+				},
 				"exit_code": {
-					"anyOf": [{ "type": "integer" }, { "type": "null" }],
+					"anyOf": [
+						{
+							"type": "integer"
+						},
+						{
+							"type": "null"
+						}
+					],
 					"description": "进程的退出码：被信号终止时为 128 + 信号值（SIGTERM 为 143，被 SIGKILL 强制杀掉为 137）；拿不到时为 null"
 				}
 			},
@@ -794,316 +231,5 @@
 		},
 		"metrics": [],
 		"charts": []
-	},
-	{
-		"name": "system_monitor",
-		"title": "系统监控",
-		"description": "按采样间隔上报执行它的 Agent 所在机器的 CPU、内存、负载、磁盘和网络指标。\n\n不设置 duration 时一直运行，直到被停止子流程节点停止或运行被取消，\n所以要放在子流程里和压测同时运行。\n被停止时记为「已停止」，不算失败，已经上报的指标都保留。\n\n失败：指定的网卡、磁盘或 disk_path 不存在时立即失败，错误信息列出本机有哪些网卡、磁盘。",
-		"entry": "sfly_std.system_monitor:system_monitor",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"interval": { "type": "number", "description": "采样间隔（秒），必须大于 0", "default": 1 },
-				"duration": {
-					"anyOf": [{ "type": "number" }, { "type": "null" }],
-					"description": "监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消",
-					"default": null
-				},
-				"disk_path": {
-					"type": "string",
-					"description": "统计哪个文件系统的空间使用率：给出其中的任意路径，必须已经存在",
-					"default": "/"
-				},
-				"nic": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "统计哪块网卡的收发速率，例如 eth0；合计包含回环网卡 lo",
-					"default": null
-				},
-				"disk": {
-					"anyOf": [{ "type": "string" }, { "type": "null" }],
-					"description": "统计哪块磁盘的读写速率，例如 nvme0n1 或 /dev/sda；合计只算整块磁盘，不重复计入分区",
-					"default": null
-				}
-			},
-			"order": ["interval", "duration", "disk_path", "nic", "disk"]
-		},
-		"outputs": { "type": "object", "properties": {} },
-		"metrics": [
-			{
-				"name": "cpu_percent",
-				"unit": "%",
-				"kind": "gauge",
-				"description": "CPU 使用率，所有核的平均"
-			},
-			{
-				"name": "mem_used_percent",
-				"unit": "%",
-				"kind": "gauge",
-				"description": "已用内存占总内存的比例"
-			},
-			{
-				"name": "mem_used_bytes",
-				"unit": "B",
-				"kind": "gauge",
-				"description": "已用内存：总内存减去可用内存（available），不含可以回收的缓存"
-			},
-			{ "name": "load1", "unit": "", "kind": "gauge", "description": "1 分钟平均负载" },
-			{
-				"name": "disk_used_percent",
-				"unit": "%",
-				"kind": "gauge",
-				"description": "disk_path 所在文件系统的已用空间比例"
-			},
-			{
-				"name": "disk_read_bytes_per_s",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "磁盘每秒读取的字节数"
-			},
-			{
-				"name": "disk_write_bytes_per_s",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "磁盘每秒写入的字节数"
-			},
-			{
-				"name": "net_rx_bytes_per_s",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "网卡每秒接收的字节数"
-			},
-			{
-				"name": "net_tx_bytes_per_s",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "网卡每秒发送的字节数"
-			},
-			{
-				"name": "net_rx_bytes_per_s_by_nic",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "每块网卡（含回环网卡 lo）每秒接收的字节数",
-				"labels": ["nic"]
-			},
-			{
-				"name": "net_tx_bytes_per_s_by_nic",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "每块网卡（含回环网卡 lo）每秒发送的字节数",
-				"labels": ["nic"]
-			},
-			{
-				"name": "disk_read_bytes_per_s_by_disk",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "每块磁盘（整块，不含分区）每秒读取的字节数",
-				"labels": ["disk"]
-			},
-			{
-				"name": "disk_write_bytes_per_s_by_disk",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "每块磁盘（整块，不含分区）每秒写入的字节数",
-				"labels": ["disk"]
-			}
-		],
-		"charts": [
-			{ "title": "CPU 使用率", "type": "line", "metrics": ["cpu_percent"] },
-			{ "title": "内存使用率", "type": "line", "metrics": ["mem_used_percent"] },
-			{ "title": "已用内存", "type": "line", "metrics": ["mem_used_bytes"] },
-			{ "title": "负载", "type": "line", "metrics": ["load1"] },
-			{ "title": "磁盘空间使用率", "type": "line", "metrics": ["disk_used_percent"] },
-			{
-				"title": "磁盘读写",
-				"type": "line",
-				"metrics": ["disk_read_bytes_per_s", "disk_write_bytes_per_s"]
-			},
-			{
-				"title": "网络收发",
-				"type": "line",
-				"metrics": ["net_rx_bytes_per_s", "net_tx_bytes_per_s"]
-			},
-			{
-				"title": "磁盘读写（按磁盘）",
-				"type": "line",
-				"metrics": ["disk_read_bytes_per_s_by_disk", "disk_write_bytes_per_s_by_disk"]
-			},
-			{
-				"title": "网络收发（按网卡）",
-				"type": "line",
-				"metrics": ["net_rx_bytes_per_s_by_nic", "net_tx_bytes_per_s_by_nic"]
-			}
-		],
-		"primary_metric": "cpu_percent"
-	},
-	{
-		"name": "wait_file",
-		"title": "等待文件",
-		"description": "等一个文件出现，可以要求它保持若干秒不变，例如等对方把报告写完。\n\n失败：wait 秒内没等到时失败，错误信息写明当时的情况：「文件不存在」或「文件仍在变化」。\n只等普通文件：路径是目录时一直等到超时。",
-		"entry": "sfly_std.wait_file:wait_file",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"path": { "type": "string", "description": "文件路径；相对路径相对于任务工作目录" },
-				"stable": {
-					"type": "number",
-					"description": "文件出现后，还要等它的大小和修改时间连续这么多秒不变；为 0 时出现就成功",
-					"default": 0
-				},
-				"wait": { "type": "number", "description": "最多等多少秒", "default": 300.0 },
-				"poll": { "type": "number", "description": "检查间隔（秒）", "default": 1.0 }
-			},
-			"required": ["path"],
-			"order": ["path", "stable", "wait", "poll"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": { "size": { "type": "integer", "description": "成功时文件的大小（字节）" } },
-			"required": ["size"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "wait_log_line",
-		"title": "等待日志行",
-		"description": "等日志文件里出现匹配正则的行，用来等被测系统打出就绪日志。\n\n文件还不存在时等它出现；文件被轮转或截断时继续读新的内容。\n\n失败：wait 秒内没有出现匹配的行时失败，错误信息写明文件、正则和等了多久。\n文件一直不存在时，错误信息注明「文件不存在」。",
-		"entry": "sfly_std.wait_log_line:wait_log_line",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"path": { "type": "string", "description": "日志文件路径；相对路径相对于任务工作目录" },
-				"pattern": {
-					"type": "string",
-					"description": "Python 正则表达式，匹配行内任意位置（re.search）；要匹配整行用 ^...$"
-				},
-				"read_from": {
-					"enum": ["end", "start"],
-					"description": "从哪里开始看：end 只看节点开始之后新写入的内容，start 从文件开头看起",
-					"default": "end"
-				},
-				"wait": { "type": "number", "description": "最多等多少秒", "default": 300.0 },
-				"poll": { "type": "number", "description": "检查间隔（秒）", "default": 1.0 }
-			},
-			"required": ["path", "pattern"],
-			"order": ["path", "pattern", "read_from", "wait", "poll"]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"line": { "type": "string", "description": "第一行匹配的内容（不含换行符）" }
-			},
-			"required": ["line"]
-		},
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "wait_port",
-		"title": "等待端口",
-		"description": "等一个 TCP 端口可以连接，用来等被测服务开始监听。\n\n失败：wait 秒内一直连不上时失败，错误信息写明等的是哪个地址、等了多久和最后一次连接的错误。\n端口能连上只说明进程在监听，不一定已经能处理请求：\n服务有健康检查接口时改用 http_request（打开 until_ok）等它返回成功。",
-		"entry": "sfly_std.wait_port:wait_port",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"port": { "type": "integer", "description": "端口号" },
-				"host": {
-					"type": "string",
-					"description": "主机名或 IP 地址，从执行节点的 Agent 所在的机器上连接",
-					"default": "127.0.0.1"
-				},
-				"wait": { "type": "number", "description": "最多等多少秒", "default": 300.0 },
-				"poll": { "type": "number", "description": "检查间隔（秒）", "default": 1.0 }
-			},
-			"required": ["port"],
-			"order": ["port", "host", "wait", "poll"]
-		},
-		"outputs": { "type": "object", "properties": {} },
-		"metrics": [],
-		"charts": []
-	},
-	{
-		"name": "watch_files",
-		"title": "持续拉取文件",
-		"description": "持续监听另一台 Agent 上的一个目录，把匹配通配符的文件拉到本地目录，每个文件只拉一次。\n\n副作用：在 local_dir 里创建文件，目录不存在时自动创建，同名的已有文件被替换。\n启动时已有的和之后出现的文件都拉；每个文件先写到临时文件，下载完成后才改名，不会留下半截文件。\ndelete_source 打开时，每拉完一个文件就删除来源 Agent 上的源文件，只删拉成功的。\n一直运行到 duration 到期，或被停止子流程节点停止、运行被取消。\n被停止时记为「已停止」，不算失败，已经拉完的文件保留。\n平台不判断文件是否写完：按被测系统怎样轮转日志来选 pattern 和 stable。\n\n失败：第一次就连不上来源 Agent、directory 不存在或没有权限时立即失败。\n之后连接中断不失败，写一条警告日志，一直重试到连上。",
-		"entry": "sfly_std.watch_files:watch_files",
-		"inputs": {
-			"type": "object",
-			"properties": {
-				"source": {
-					"type": "string",
-					"x-sfly-type": "agent",
-					"description": "来源 Agent：文件在哪一台 Agent 上（「Agent」类型的参数，检查器里从已注册的 Agent 中选）"
-				},
-				"directory": {
-					"type": "string",
-					"description": "来源 Agent 所在机器上要监听的目录，绝对路径；不含子目录"
-				},
-				"local_dir": {
-					"type": "string",
-					"description": "拉到哪个本地目录：执行这个节点的 Agent 所在机器上的路径，相对路径相对于任务工作目录；不存在时自动创建"
-				},
-				"pattern": {
-					"type": "string",
-					"description": "文件名的通配符，只匹配文件名（不含目录），例如 app.log.*",
-					"default": "*"
-				},
-				"stable": {
-					"anyOf": [{ "type": "number" }, { "type": "null" }],
-					"description": "文件至少这么多秒没有修改才拉；不设置（或为 0）时一出现就拉",
-					"default": null
-				},
-				"delete_source": {
-					"type": "boolean",
-					"description": "为 true 时每拉完一个文件就删除来源 Agent 上的这个源文件",
-					"default": false
-				},
-				"duration": {
-					"anyOf": [{ "type": "number" }, { "type": "null" }],
-					"description": "运行多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消",
-					"default": null
-				}
-			},
-			"required": ["source", "directory", "local_dir"],
-			"order": [
-				"source",
-				"directory",
-				"local_dir",
-				"pattern",
-				"stable",
-				"delete_source",
-				"duration"
-			]
-		},
-		"outputs": {
-			"type": "object",
-			"properties": {
-				"count": { "type": "integer", "description": "拉下来的文件数（duration 到期时才有输出）" },
-				"total_bytes": { "type": "integer", "description": "拉下来的文件的总字节数" }
-			},
-			"required": ["count", "total_bytes"]
-		},
-		"metrics": [
-			{
-				"name": "pulled_files",
-				"unit": "",
-				"kind": "counter",
-				"description": "累计拉下来的文件数"
-			},
-			{
-				"name": "pulled_bytes",
-				"unit": "B",
-				"kind": "counter",
-				"description": "累计拉下来的文件的总字节数（一个文件拉完才计入）"
-			},
-			{
-				"name": "bytes_per_s",
-				"unit": "B/s",
-				"kind": "gauge",
-				"description": "当前的拉取速率：每秒传输的字节数，含正在拉取的文件已经下载的部分"
-			}
-		],
-		"charts": [],
-		"primary_metric": "bytes_per_s"
 	}
 ]
