@@ -337,12 +337,18 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: collection, path: "/things/:project", params: project }))[0],
 		).toContain("路径里有参数");
-		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）照旧可以。
+		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）：不是用 ID 定位的类别照旧可以；
+		// 用 ID 定位的类别（场景、运行、任务、会话）在这类路径上只接受 collection，写 { params: "project" } 也拒绝。
 		expect(
-			problems(
-				broken({ resource: { kind: "scenario", target: { params: "project" } }, ...scoped }),
-			),
+			problems(broken({ resource: { kind: "package", target: { params: "project" } }, ...scoped })),
 		).toEqual([]);
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			const found = problems(
+				broken({ resource: { kind, target: { params: "project" } }, ...scoped }),
+			);
+			expect(found, kind).toHaveLength(1);
+			expect(found[0], kind).toContain("只能写 collection");
+		}
 	});
 
 	it('/projects/:project/… 下还有别的路径参数：用 ID 定位的资源不带 :project，{ params: "project" } 不算定位；按名字定位的写 :project 之后的参数', () => {
@@ -356,7 +362,8 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 			for (const params of ["project", "id"]) {
 				const found = problems(broken({ resource: { kind, target: { params } }, ...withId }));
 				expect(found, `${kind} ${params}`).toHaveLength(1);
-				expect(found[0], `${kind} ${params}`).toContain("用 ID 定位，路径里不带 :project");
+				expect(found[0], `${kind} ${params}`).toContain("用 ID 定位，路径带 :project");
+				expect(found[0], `${kind} ${params}`).toContain("只能写 collection");
 				// 报错提示不能再叫人「改成 { params: "project" }」。
 				expect(found[0], `${kind} ${params}`).not.toContain('改成 { params: "project" }');
 				expect(found[0], `${kind} ${params}`).toContain('{ params: "id" }');
@@ -422,6 +429,73 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(
 			problems(broken({ resource: { kind: "package", target: { params: "project" } }, ...byName })),
 		).toHaveLength(1);
+	});
+
+	it("/projects/:project/… 下用 ID 定位的类别写成 { query }、{ body } 也不行：只接受 collection；按名字定位的类别和路径不带项目的不受影响", () => {
+		const project = z.object({ project: z.string() });
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			// 路径只有 :project（列表和新建）：写 { body } 定位——访问检查只按路径里的项目查，不核对 body 里的 ID。
+			const byBody = problems(
+				broken({
+					method: "POST",
+					effect: "write",
+					path: "/projects/:project/things",
+					params: project,
+					body: z.object({ thing_id: z.string() }),
+					resource: { kind, target: { body: "thing_id" } },
+				}),
+			);
+			expect(byBody, `${kind} body`).toHaveLength(1);
+			expect(byBody[0], `${kind} body`).toContain("只能写 collection");
+			// 路径还有别的参数、定位写成 { query }：同样不行（同一类绕过）。
+			const byQuery = problems(
+				broken({
+					path: "/projects/:project/things/:id",
+					params: project.extend({ id: z.string() }),
+					query: z.object({ id: z.string() }),
+					resource: { kind, target: { query: "id" } },
+				}),
+			);
+			expect(byQuery, `${kind} query`).toHaveLength(1);
+			expect(byQuery[0], `${kind} query`).toContain("只能写 collection");
+			// collection 是对的。
+			expect(
+				problems(
+					broken({
+						method: "POST",
+						effect: "write",
+						path: "/projects/:project/things",
+						params: project,
+						resource: { kind, target: "collection" },
+					}),
+				),
+				`${kind} collection`,
+			).toEqual([]);
+		}
+		// 按名字定位的类别（节点包）：query、body 照旧可以（项目就是路径里的项目）。
+		expect(
+			problems(
+				broken({
+					method: "POST",
+					effect: "write",
+					path: "/projects/:project/things",
+					params: project,
+					body: z.object({ name: z.string() }),
+					resource: { kind: "package", target: { body: "name" } },
+				}),
+			),
+		).toEqual([]);
+		// 路径不带项目的 ID 定位类别：{ query } 照旧可以（项目从那个 ID 得出，不看路径）。
+		expect(
+			problems(
+				broken({
+					path: "/things",
+					params: undefined,
+					query: z.object({ id: z.string() }),
+					resource: { kind: "session", target: { query: "id" } },
+				}),
+			),
+		).toEqual([]);
 	});
 
 	it("GET 必须只读，DELETE 必须声明 removes，非 GET 的只读接口必须登记", () => {

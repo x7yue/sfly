@@ -45,6 +45,7 @@ import {
 	requiredScope,
 	SCOPE_LABELS,
 	type Scope,
+	writeNeedsPerson,
 } from "./scopes.js";
 
 /** 控制台登录的 Cookie 名（签发在 #490）。 */
@@ -598,6 +599,11 @@ export class AccessGuard {
 				"forbidden",
 				`缺少「${SCOPE_LABELS[needed]}」范围：${routeKey(route)} 需要它`,
 			);
+		}
+		// 会话的写（建、发话、停止）只有人能做（`writeNeedsPerson`，范围表里的 `humanOnly`）：范围够也不行。
+		// 项目令牌没有用户，建出来的会话没有发起人；会话令牌的情况在下面单独写死。
+		if (principal.kind === "project" && writeNeedsPerson(route)) {
+			return denied(403, "forbidden", "项目令牌不能做这件事：它只有人能做（登录的用户或个人令牌）");
 		}
 		// ADR 0027「凭据」：会话令牌对会话这一类只有读——它是助手在会话里干活用的凭据，不能用来建会话、替人发话、
 		// 停掉会话。这一条写死在这里，和下面「会话令牌的写入还没有开放」的临时总闸分开：#495 拿掉总闸、让会话令牌的
