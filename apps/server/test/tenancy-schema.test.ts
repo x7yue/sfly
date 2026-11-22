@@ -26,6 +26,19 @@ afterAll(async () => {
 
 const hex = () => randomUUID().replaceAll("-", "").repeat(2);
 
+/** 项目里的一个会话（`sessions`）；返回会话 ID。 */
+async function addSession(
+	fields: { project?: string; status?: string; user?: string | null } = {},
+): Promise<string> {
+	const id = randomUUID();
+	await client.query(
+		`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at)
+		values ($1, $2, '会话', $3, '昵称', $4, $5, $5)`,
+		[id, fields.project ?? "default", fields.status ?? "idle", fields.user ?? null, AT],
+	);
+	return id;
+}
+
 async function addUser(
 	fields: { login?: string; password?: string | null; external?: string | null } = {},
 ): Promise<string> {
@@ -178,7 +191,11 @@ describe("令牌", () => {
 			/api_tokens_shape/,
 		);
 		// 会话令牌：代发起人、限一个项目、属于一个会话。
-		await insert({ kind: "session", user: owner, project: "default", session: randomUUID() });
+		await insert({ kind: "session", user: owner, project: "default", session: await addSession() });
+		// 会话令牌指向的会话要存在（外键）。
+		await expect(
+			insert({ kind: "session", user: owner, project: "default", session: randomUUID() }),
+		).rejects.toThrow(/api_tokens_session_id_sessions_id_fk/);
 		await expect(insert({ kind: "session", user: owner, project: "default" })).rejects.toThrow(
 			/api_tokens_shape/,
 		);
@@ -423,5 +440,82 @@ describe("Agent 最近一次连接用的凭据", () => {
 			`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'agent_credentials_kind'`,
 		);
 		expect(rows[0].def).toMatch(/'agent'.*'shared'|'shared'.*'agent'/);
+	});
+});
+
+describe("助手会话和它的事件（ADR 0027）", () => {
+	/** 新建一个项目，返回它的标识。 */
+	const addProject = async (id: string): Promise<string> => {
+		await client.query("insert into projects (id, display_name, created_at) values ($1, $1, $2)", [
+			id,
+			AT,
+		]);
+		return id;
+	};
+	const addEvent = (session: string, seq: number, type = "user_message") =>
+		client.query(
+			`insert into session_events (session_id, seq, type, payload, created_at) values ($1, $2, $3, '{}', $4)`,
+			[session, seq, type, AT],
+		);
+
+	it("会话属于一个存在的项目；状态一次写全：idle、running、queued、ended，别的不行", async () => {
+		for (const status of ["idle", "running", "queued", "ended"]) {
+			// running 在同一个项目里至多一个，所以每个状态用自己的项目。
+			const project = await addProject(`s-${status}`);
+			await expect(addSession({ project, status }), status).resolves.toBeTypeOf("string");
+		}
+		await expect(addSession({ status: "paused" })).rejects.toThrow(/sessions_status/);
+		await expect(addSession({ project: "no-such-project" })).rejects.toThrow(
+			/sessions_project_id_projects_id_fk/,
+		);
+	});
+
+	it("发起人的用户可以为空（#494 之前的请求没有用户），有的话要是存在的用户", async () => {
+		await expect(addSession({ user: null })).resolves.toBeTypeOf("string");
+		await expect(addSession({ user: await addUser() })).resolves.toBeTypeOf("string");
+		await expect(addSession({ user: randomUUID() })).rejects.toThrow(
+			/sessions_created_by_user_id_users_id_fk/,
+		);
+	});
+
+	it("同一个项目至多一个在做（running）的会话：同一时刻只跑一轮；别的状态不限，别的项目不受影响", async () => {
+		const project = await addProject("one-running");
+		const other = await addProject("other-running");
+		await addSession({ project, status: "running" });
+		await expect(addSession({ project, status: "running" })).rejects.toThrow(
+			/sessions_one_running_per_project/,
+		);
+		await addSession({ project, status: "idle" });
+		await addSession({ project, status: "idle" });
+		await addSession({ project, status: "queued" });
+		await addSession({ project, status: "queued" });
+		await addSession({ project, status: "ended" });
+		await addSession({ project: other, status: "running" });
+	});
+
+	it("事件：主键是（会话，序号），序号从 1 起，会话要存在，会话删除时事件一起删", async () => {
+		const session = await addSession();
+		await addEvent(session, 1);
+		await addEvent(session, 2, "turn_started");
+		await expect(addEvent(session, 2)).rejects.toThrow(/session_events_session_id_seq_pk/);
+		await expect(addEvent(session, 0)).rejects.toThrow(/session_events_seq/);
+		await expect(addEvent(session, -1)).rejects.toThrow(/session_events_seq/);
+		await expect(addEvent(randomUUID(), 1)).rejects.toThrow(
+			/session_events_session_id_sessions_id_fk/,
+		);
+		// 另一个会话可以有同样的序号。
+		const another = await addSession();
+		await addEvent(another, 1);
+		await client.query("delete from sessions where id = $1", [session]);
+		const { rows } = await client.query(
+			"select count(*)::int as n from session_events where session_id = $1",
+			[session],
+		);
+		expect(rows[0].n).toBe(0);
+		const kept = await client.query(
+			"select count(*)::int as n from session_events where session_id = $1",
+			[another],
+		);
+		expect(kept.rows[0].n).toBe(1);
 	});
 });

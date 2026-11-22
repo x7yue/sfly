@@ -415,7 +415,7 @@ function NodeInspector({
 				</TabsContent>
 				{hasExec && (
 					<TabsContent value="exec" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
-						<ExecutionSettings id={id} node={node} onChange={change} />
+						<ExecutionSettings id={id} node={node} type={type} onChange={change} />
 					</TabsContent>
 				)}
 				<TabsContent value="doc" className="overflow-auto px-3.5 py-3">

@@ -8,11 +8,12 @@ import {
 	stopCandidates,
 	undeclaredInputs,
 } from "@sfly/orchestration";
-import type {
-	AgentView,
-	FeishuBotView,
-	PackageSummary,
-	StoredOrchestrationDocument,
+import {
+	type AgentView,
+	type FeishuBotView,
+	NODE_TIMEOUT_MAX_SECONDS,
+	type PackageSummary,
+	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
@@ -33,6 +34,7 @@ import {
 	type ReferenceEditorHandle,
 } from "./ReferenceEditor";
 import type { ReferenceChoice } from "./reference-completion";
+import { timeoutHelp, timeoutPlaceholder } from "./timeout-note";
 import { Problems, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { ReferenceActions } from "./ZoomEditor";
@@ -144,6 +146,7 @@ const SETTINGS = [
 		key: "timeout",
 		label: "超时",
 		min: 1,
+		max: NODE_TIMEOUT_MAX_SECONDS,
 		placeholder: `${NODE_DEFAULTS.timeout}（默认，秒）`,
 		help: "从任务开始运行时计时",
 	},
@@ -167,10 +170,13 @@ const SETTINGS = [
 export function ExecutionSettings({
 	id,
 	node,
+	type,
 	onChange,
 }: {
 	id: string;
 	node: AlwaysNode;
+	/** 包节点的节点类型（超时没填时写它声明的）；null：找不到；undefined：还在加载。 */
+	type?: NodeTypeIo | null | undefined;
 	onChange(node: AlwaysNode): void;
 }) {
 	return (
@@ -180,7 +186,11 @@ export function ExecutionSettings({
 					<SettingField
 						key={s.key}
 						fieldKey={draftKey(id, s.key)}
-						setting={s}
+						setting={
+							s.key === "timeout"
+								? { ...s, placeholder: timeoutPlaceholder(type), help: timeoutHelp(node, type) }
+								: s
+						}
 						value={node[s.key]}
 						onChange={(value) => {
 							const { [s.key]: _old, ...rest } = node;
@@ -220,7 +230,7 @@ function SettingField({
 	onChange,
 }: {
 	fieldKey: string;
-	setting: (typeof SETTINGS)[number];
+	setting: { label: string; min: number; max?: number; placeholder: string; help: string };
 	value: number | undefined;
 	onChange(value: number | undefined): void;
 }) {
@@ -233,6 +243,9 @@ function SettingField({
 			const n = Number(raw);
 			if (!Number.isInteger(n) || n < setting.min) {
 				return { error: setting.min > 0 ? "需要正整数" : "需要非负整数" };
+			}
+			if (setting.max !== undefined && n > setting.max) {
+				return { error: `不能超过 ${setting.max}（秒）` };
 			}
 			return { value: n };
 		},

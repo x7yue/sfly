@@ -242,6 +242,11 @@ const FIXTURES: Record<OrchestrationWarning["code"], Doc | { single: string }> =
 		chain("entry", "w1", "w2"),
 		{ default_agent: undefined },
 	),
+	// 每个节点最多一条（节点自己写的超时只有一个字段），指向不同的节点；`input` 都是 timeout
+	timeout_out_of_range: doc(
+		[entry(), work("w1", { timeout: 4_294_967_296 }), work("w2", { timeout: 0 })],
+		chain("entry", "w1", "w2"),
+	),
 	package_not_locked: doc(
 		[entry(), work("w1", { package: "nope" }), work("w2", { package: "nope2" })],
 		chain("entry", "w1", "w2"),

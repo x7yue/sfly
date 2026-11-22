@@ -84,7 +84,8 @@ export type ChartSpec = {
 
 /**
  * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限），
- * 或 `{ outputs, inputs, metrics, charts, primary_metric }`（inputs 是输入 schema，派发前按它校验已解析的输入）。
+ * 或 `{ outputs, inputs, metrics, charts, primary_metric, timeout }`（inputs 是输入 schema，派发前按它校验已解析的输入；
+ * timeout 是节点类型声明的默认超时，秒）。
  * 触发运行前的预检要求编排锁定的包版本已经发布、引用的输出键已经声明。
  */
 export async function publishPackage(
@@ -100,6 +101,7 @@ export async function publishPackage(
 				metrics?: MetricSpec[];
 				charts?: ChartSpec[];
 				primary_metric?: string;
+				timeout?: number;
 		  }
 	>,
 ): Promise<void> {
@@ -124,6 +126,7 @@ export async function publishPackage(
 					...(declared?.metrics && { metrics: declared.metrics }),
 					...(declared?.charts && { charts: declared.charts }),
 					...(declared?.primary_metric && { primary_metric: declared.primary_metric }),
+					...(declared?.timeout !== undefined && { timeout: declared.timeout }),
 				};
 			}),
 		}),

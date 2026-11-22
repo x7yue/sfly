@@ -223,6 +223,8 @@ def _nodes(metadata: dict[str, Any]) -> list[dict[str, Any]]:
         {
             "name": n["name"],
             "title": n["title"],
+            # 节点类型声明的默认超时（秒，#476）；没声明的没有这个键。
+            **({"timeout": n["timeout"]} if "timeout" in n else {}),
             "inputs": _fields(n["inputs"], with_required=True),
             "outputs": _fields(n["outputs"], with_required=False),
         }
@@ -292,6 +294,11 @@ def render_nodes(heading: str, nodes: list[dict[str, Any]]) -> str:
     lines = [heading]
     for node in nodes:
         lines.extend(["", f"节点类型 {node['name']}  {node['title']}"])
+        if "timeout" in node:
+            lines.append(
+                f"  默认超时：{node['timeout']} 秒"
+                "（节点类型声明，场景里这个节点写了超时时以场景里的为准）"
+            )
         lines.append("  输入：" if node["inputs"] else "  输入：无")
         if node["inputs"]:
             lines.extend(_indent(_inputs_table(node["inputs"])))

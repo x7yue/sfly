@@ -6,6 +6,7 @@ import { InstallState } from "@sfly/proto";
 import { actionsApi, agentsApi, logsApi, metricsApi, type RunMetricSummary } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PLATFORM_TIMEOUT_HINT } from "../src/engine/timeout-hint.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { AgentUpdateState, ErrorKind, FakeAgent, type HelloInit } from "./support/fake-agent.js";
@@ -114,9 +115,10 @@ describe("Agent 上报的字符串里含 NUL", () => {
 		const a = await agent.nextAssign();
 		await agent.fail(a, `bad${NUL}byte`, ErrorKind.TIMEOUT);
 
+		// 超时失败、节点和节点类型都没设超时：NUL 换掉之后，错误信息后面补一句怎么办（#476）。
 		expect((await api.node(runId, "a")).error).toEqual({
 			kind: "timeout",
-			message: `bad${REPLACEMENT}byte`,
+			message: `bad${REPLACEMENT}byte\n${PLATFORM_TIMEOUT_HINT}`,
 			location: null,
 		});
 		expect((await api.run(runId)).status).toBe("failed");
