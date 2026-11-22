@@ -466,6 +466,9 @@ class Artifacts:
         self._cancelled = cancelled
         self._downloads_path = downloads_path
         self._downloads: dict[str, str] | None = None
+        # `save` 把「数已保存的合计 + 写入」包在一把锁里：不然多个线程同时保存会都通过检查、
+        # 合起来超限（#477）。
+        self._save_lock = _thread.allocate_lock()
 
     def download(
         self,
@@ -529,22 +532,25 @@ class Artifacts:
 
         有上限（`limit_bytes`）时先检查：已保存的合计（产物目录里的文件，包括直接写进目录的；同名的旧
         文件不算）加上这个文件超过上限时，抛出 `ArtifactLimitExceeded`：这个文件不写，
-        同名的旧文件也不动。
+        同名的旧文件也不动。检查和写入是一起做的（一把锁）：多个线程同时 `save` 不会都通过检查、
+        合起来超限；代价是同一个任务里的 `save` 一个接一个写。直接写进 `path(...)` 的文件
+        不经过这里，由 Agent 上传前的检查兜住。
         """
         target = self.path(name)
-        if self._limit is not None:
-            size = _data_size(data)
-            saved = self._saved_bytes(excluding=target)
-            if saved + size > self._limit:
-                raise ArtifactLimitExceeded(name, size, saved, self._limit)
-        if isinstance(data, bytes):
-            target.write_bytes(data)
-        elif isinstance(data, str):
-            target.write_text(data, encoding="utf-8")
-        else:
-            import shutil
+        with self._save_lock:
+            if self._limit is not None:
+                size = _data_size(data)
+                saved = self._saved_bytes(excluding=target)
+                if saved + size > self._limit:
+                    raise ArtifactLimitExceeded(name, size, saved, self._limit)
+            if isinstance(data, bytes):
+                target.write_bytes(data)
+            elif isinstance(data, str):
+                target.write_text(data, encoding="utf-8")
+            else:
+                import shutil
 
-            shutil.copyfile(data, target)
+                shutil.copyfile(data, target)
         return self.ref(name)
 
     def _saved_bytes(self, excluding: Path) -> int:

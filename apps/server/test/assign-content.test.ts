@@ -4,7 +4,9 @@
 // （requires-sdk、requires-agent、agent-inputs、feishu-bot-inputs、failures）覆盖，这里只看模块自己的回答：
 // 派发内容有哪些字段、各个失败出口的类型、哪些失败带已解析的输入。
 import { createHash } from "node:crypto";
+import { create, toBinary } from "@bufbuild/protobuf";
 import type { ResolveScope } from "@sfly/orchestration";
+import { AssignTaskSchema } from "@sfly/proto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { type AssignRequest, createAssignContent } from "../src/engine/assign-content.js";
@@ -126,6 +128,25 @@ describe("派发内容", () => {
 				referencedFeishuBots: [],
 			},
 		});
+	});
+
+	it("产物上限是 Infinity 或超过 uint64 时夹在 uint64 的最大值：派发内容能序列化（不让派发出错）", async () => {
+		for (const wild of [Number.POSITIVE_INFINITY, 1e30]) {
+			const wildContent = createAssignContent({
+				packageArchiveUrl: (name, version) => `http://sfly.test/${name}/${version}/archive`,
+				artifactUploadUrl: (taskId) => `http://sfly.test/artifacts/${taskId}`,
+				artifactLimitBytes: wild,
+			});
+			const result = await database.db.transaction((tx) =>
+				wildContent(tx, request({ node: node({ inputs: { url: "u" } }) })),
+			);
+
+			expect(result).toMatchObject({ ok: true, assign: { artifactLimitBytes: 2n ** 64n - 1n } });
+			if (!result.ok) throw new Error("派发内容应该能生成");
+			expect(() =>
+				toBinary(AssignTaskSchema, create(AssignTaskSchema, result.assign)),
+			).not.toThrow();
+		}
 	});
 
 	it("节点自己设了超时就用它", async () => {

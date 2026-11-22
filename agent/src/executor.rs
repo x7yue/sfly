@@ -51,8 +51,10 @@ struct RunnerError {
     /// 都当作没有：位置只是附带的信息，写错了不能让整份 output.json 读不出来。
     #[serde(default, deserialize_with = "string_or_none")]
     location: Option<String>,
-    /// 执行器在调用节点之前就拒绝了输入（有节点没有声明的名字）时写 `config_error`；
-    /// 没有这个键或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
+    /// 执行器在调用节点之前就拒绝了输入（有节点没有声明的名字）时写 `config_error`；节点没接住
+    /// `ctx.artifacts.save` 抛出的产物超限（`ArtifactLimitExceeded`）时写 `env_error`（和上传前发现超限同一个
+    /// 类型，不按重试配置重试，#477）；没有这个键或是别的值，都是节点出错（共用用例表
+    /// testdata/local-protocol-cases.json）。
     #[serde(default)]
     kind: Option<String>,
 }
@@ -70,6 +72,7 @@ impl RunnerError {
     fn error_kind(&self) -> ErrorKind {
         match self.kind.as_deref() {
             Some("config_error") => ErrorKind::ConfigError,
+            Some("env_error") => ErrorKind::EnvError,
             _ => ErrorKind::NodeError,
         }
     }

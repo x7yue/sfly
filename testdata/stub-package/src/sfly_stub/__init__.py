@@ -481,7 +481,7 @@ def artifacts(
     return {"refs": refs}
 
 
-@node(title="产物上限", outputs=["refs", "limit", "refused"])
+@node(title="产物上限", outputs=["refs", "limit", "refused", "limit_env"])
 def artifact_limit(
     ctx: Context,
     files: dict[str, str] | None = None,
@@ -507,7 +507,14 @@ def artifact_limit(
         ctx.artifacts.path(name).write_bytes(b"x" * size)
     if fail:
         raise RuntimeError("保存产物后失败")
-    return {"refs": refs, "limit": getattr(ctx.artifacts, "limit_bytes", None), "refused": refused}
+    return {
+        "refs": refs,
+        "limit": getattr(ctx.artifacts, "limit_bytes", None),
+        "refused": refused,
+        # 执行器的环境变量原文：Agent 在上限是 0（旧版本控制面没带）时不设置它
+        # （SDK 把 "0" 也当作没有上限，看不出区别）。
+        "limit_env": os.environ.get("SFLY_ARTIFACT_LIMIT_BYTES"),
+    }
 
 
 @node(title="大输出", outputs=["text"])

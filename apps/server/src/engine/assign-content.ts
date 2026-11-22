@@ -12,6 +12,7 @@ import {
 import type { AssignTaskSchema } from "@sfly/proto";
 import { DEV_VERSION, type PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
+import { artifactLimitForWire } from "../artifacts/artifact-store.js";
 import type { Tx } from "../db/database.js";
 import { type AgentInfo, nodePackages } from "../db/schema.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
@@ -144,7 +145,7 @@ export function createAssignContent(urls: {
 				packageSha256: archive?.sha256 ?? "",
 				packageUrl: archive ? urls.packageArchiveUrl(node.package, packageVersion) : "",
 				artifactUploadUrl: urls.artifactUploadUrl(task.id),
-				artifactLimitBytes: BigInt(urls.artifactLimitBytes),
+				artifactLimitBytes: artifactLimitForWire(urls.artifactLimitBytes),
 				referencedAgents: referenced.agents,
 				referencedFeishuBots: bots,
 			},

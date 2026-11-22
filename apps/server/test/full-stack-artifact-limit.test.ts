@@ -77,6 +77,7 @@ describeWithAgent("全栈：产物合计的上限随任务下发", () => {
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 60_000);
 		const save = await api.node(runId, "save");
 		expect(save.outputs?.limit).toBe(LIMIT);
+		expect(save.outputs?.limit_env).toBe(String(LIMIT));
 		expect(save.outputs?.refused).toEqual(["b.bin"]);
 		expect(await stored(save.attempts[0]?.task_id as string)).toEqual([
 			["a.bin", 600],
@@ -84,16 +85,19 @@ describeWithAgent("全栈：产物合计的上限随任务下发", () => {
 		]);
 	}, 90_000);
 
-	it("节点不接住：任务在 save 那一行以 node_error 失败，信息写明大小、已保存的、上限和怎么调", async () => {
-		const runId = await run({ files: { "big.bin": "x".repeat(LIMIT + 1) } });
+	it("节点不接住：任务在 save 那一行以 env_error 失败，设了 retries: 2 也只跑一次（不重试），信息写明大小、已保存的、上限和怎么调", async () => {
+		const runId = await run({ files: { "big.bin": "x".repeat(LIMIT + 1) } }, { retries: 2 });
 
 		await eventually(async () => expect((await api.run(runId)).status).toBe("failed"), 60_000);
 		const save = await api.node(runId, "save");
-		expect(save.error?.kind).toBe("node_error");
+		// 和 Agent 上传前发现超限（直接写进产物目录）同一个类型：重试一遍产物还是这么大。
+		expect(save.error?.kind).toBe("env_error");
 		expect(save.error?.message).toContain("ArtifactLimitExceeded");
 		expect(save.error?.message).toContain(`${LIMIT + 1} 字节`);
 		expect(save.error?.message).toContain(`${LIMIT} 字节`);
 		expect(save.error?.message).toContain("SFLY_ARTIFACT_LIMIT_MB");
+		expect(save.error?.location).toContain("artifact_limit");
+		expect(save.attempts).toHaveLength(1);
 		expect(await stored(save.attempts[0]?.task_id as string)).toEqual([]);
 	}, 90_000);
 

@@ -12,6 +12,49 @@ import { artifacts, runs, tasks } from "../db/schema.js";
 /** 单个任务产物总大小的默认上限：1 GB。 */
 export const DEFAULT_ARTIFACT_LIMIT_BYTES = 1024 * 1024 * 1024;
 
+/**
+ * 上限能取的最大值（字节）：能精确表示的最大整数 2^53 − 1（约 8 PiB）。再大的值没有意义（磁盘装不下），
+ * 而且 `Infinity` 和超过 uint64 的值下发给 Agent 时会让派发出错（`BigInt(Infinity)` 抛异常；序列化 `AssignTask` 时
+ * `invalid uint64` 让 gRPC 流断开，#477 的审查），所以启动时就拒绝，不留到派发时。
+ */
+export const MAX_ARTIFACT_LIMIT_BYTES = Number.MAX_SAFE_INTEGER;
+
+/** 上限（字节）合不合格：1 到 {@link MAX_ARTIFACT_LIMIT_BYTES} 之间的整数。 */
+export const isArtifactLimitBytes = (value: unknown): value is number =>
+	typeof value === "number" &&
+	Number.isInteger(value) &&
+	value >= 1 &&
+	value <= MAX_ARTIFACT_LIMIT_BYTES;
+
+/** 上限不合格的说明；`source` 是它的来源（环境变量名、选项名），`actual` 是写的值。 */
+export const artifactLimitMessage = (source: string, actual: unknown): string =>
+	`${source} 不合法：产物合计的上限换算成字节后必须是 1 到 ${MAX_ARTIFACT_LIMIT_BYTES} 之间的整数，实际是 ${String(actual)}`;
+
+/**
+ * 把 `SFLY_ARTIFACT_LIMIT_MB` 的原文（MB，可以带小数）换算成字节。没设置（或空串）时是 undefined（用默认值）；
+ * 不是数、不是有限的数、换算后不到 1 字节或超过 {@link MAX_ARTIFACT_LIMIT_BYTES} 时抛出，写明原因，控制面不启动。
+ */
+export function artifactLimitBytesFromMb(
+	raw: string | undefined,
+	name = "SFLY_ARTIFACT_LIMIT_MB",
+): number | undefined {
+	if (raw === undefined || raw === "") return undefined;
+	const bytes = Math.floor(Number(raw) * 1024 * 1024);
+	if (!isArtifactLimitBytes(bytes)) {
+		throw new Error(`${artifactLimitMessage(name, JSON.stringify(raw))}（换算后 ${bytes} 字节）`);
+	}
+	return bytes;
+}
+
+/** AssignTask.artifact_limit_bytes 是 uint64：下发时夹在能装下的范围内（上限已经在启动时检查过，这是第二道）。 */
+const MAX_UINT64 = 2n ** 64n - 1n;
+export const artifactLimitForWire = (limit: number): bigint =>
+	Number.isFinite(limit) && limit >= 1
+		? BigInt(Math.floor(limit)) < MAX_UINT64
+			? BigInt(Math.floor(limit))
+			: MAX_UINT64
+		: MAX_UINT64;
+
 /** 名称（产物目录内的相对路径）的最大长度。 */
 const MAX_NAME_LENGTH = 1024;
 

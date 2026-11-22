@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ import pytest
 
 import sfly
 from sfly import ArtifactLimitExceeded, Context
+from sfly.context import Artifacts
 from sfly.testing import run_node
 
 SDK_SRC = Path(__file__).resolve().parents[1] / "src"
@@ -265,3 +267,100 @@ def test_the_executor_without_the_variable_means_no_limit(tmp_path: Path) -> Non
     output = run_runner(tmp_path, NODE, {})
 
     assert output == {"status": "success", "outputs": {"limit": None, "saved": True}}
+
+
+def test_saves_from_several_threads_are_checked_and_written_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """两个线程同时存 600 字节、上限 1000：检查和写入在同一把锁里，只有一个存得下，合计不会超限。
+
+    没有锁时两个线程都先数到「已保存 0」才各自写，合计 1200：数完之后让两个线程在栅栏上会合，
+    没有锁就会同时通过；有锁时第二个线程进不来，栅栏超时放行，它在第一个写完之后才数。"""
+    ctx = context(tmp_path, 1000)
+    rendezvous = threading.Barrier(2)
+    original = Artifacts._saved_bytes
+
+    def counted_then_wait(self: Artifacts, excluding: Path) -> int:
+        saved = original(self, excluding)
+        try:
+            rendezvous.wait(timeout=0.5)
+        except threading.BrokenBarrierError:
+            pass
+        return saved
+
+    monkeypatch.setattr(Artifacts, "_saved_bytes", counted_then_wait)
+    outcomes: list[str] = []
+
+    def save(name: str) -> None:
+        try:
+            ctx.artifacts.save(name, b"x" * 600)
+            outcomes.append("saved")
+        except ArtifactLimitExceeded:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=save, args=(f"{n}.bin",)) for n in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(outcomes) == ["refused", "saved"]
+    assert sum(files_in(tmp_path).values()) == 600
+
+
+def test_symbolic_links_in_the_artifacts_directory_are_not_counted(tmp_path: Path) -> None:
+    """Agent 上传时不跟随符号链接，不上传它们；SDK 数「已保存的合计」时同样不算，口径一致。"""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "huge.bin").write_bytes(b"x" * 5000)
+    (outside / "dir").mkdir()
+    (outside / "dir" / "inner.bin").write_bytes(b"x" * 5000)
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "link.bin").symlink_to(outside / "huge.bin")
+    (artifacts / "linked-dir").symlink_to(outside / "dir", target_is_directory=True)
+    ctx = context(tmp_path, 1000)
+
+    ctx.artifacts.save("a.bin", b"x" * 600)  # 链接指向的 10000 字节要是算进去，这里就超限了
+
+    with pytest.raises(ArtifactLimitExceeded) as raised:
+        ctx.artifacts.save("b.bin", b"x" * 600)
+    assert raised.value.saved == 600  # 只有真正的文件算
+
+
+def test_an_uncaught_limit_is_written_as_env_error_with_the_usual_failure_fields(
+    tmp_path: Path,
+) -> None:
+    """没接住 `save` 抛出的超限：output.json 的失败带 `kind: env_error`（Agent 据此不按 retries
+    重试，#477），类型、信息、堆栈和位置照常。"""
+    source = """
+    from sfly import Context
+
+    def work(ctx: Context) -> dict:
+        ctx.artifacts.save("big.bin", b"x" * 2000)
+        return {}
+    """
+
+    output = run_runner(tmp_path, source, {"SFLY_ARTIFACT_LIMIT_BYTES": "1500"})
+
+    assert output["status"] == "failed"
+    error = output["error"]
+    assert error["kind"] == "env_error"
+    assert error["type"] == "ArtifactLimitExceeded"
+    assert "big.bin" in error["message"] and "1500 字节" in error["message"]
+    assert "Traceback" in error["traceback"]
+    assert "limitnode" in error["location"]
+
+
+def test_other_failures_still_have_no_kind(tmp_path: Path) -> None:
+    source = """
+    from sfly import Context
+
+    def work(ctx: Context) -> dict:
+        raise RuntimeError("拒单")
+    """
+
+    output = run_runner(tmp_path, source, {"SFLY_ARTIFACT_LIMIT_BYTES": "1500"})
+
+    assert output["status"] == "failed"
+    assert "kind" not in output["error"]

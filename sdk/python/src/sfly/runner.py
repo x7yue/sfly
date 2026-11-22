@@ -8,7 +8,9 @@
   - 失败：`{"status": "failed", "error": {"type", "message", "traceback"}}`，退出码 1；
     输入有节点没有声明的名字时，在调用节点之前就失败：
     `{"status": "failed", "error": {"kind": "config_error", "message"}}`（没有 `type` 和
-    `traceback`）。`kind` 是读取端记的错误类型，没有这个键的失败是 `node_error`。
+    `traceback`）。节点没接住 `ctx.artifacts.save` 抛出的 `ArtifactLimitExceeded` 时，失败照常带
+    `type`、`message`、`traceback`，另外有 `"kind": "env_error"`。`kind` 是读取端记的错误类型，
+    没有这个键的失败是 `node_error`。
 - `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_ARTIFACT_LIMIT_BYTES`、`SFLY_EVENTS`、
   `SFLY_CANCEL`：产物目录、产物下载地址前缀、这个任务的产物合计上限（字节，没有时不检查）、
   事件文件、取消标记（由 Context 使用）。
@@ -34,6 +36,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from sfly.context import (
+    ArtifactLimitExceeded,
     Cancelled,
     Context,
     describe_non_finite,
@@ -476,6 +479,10 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
         }
         if place:
             failure_error["location"] = place
+        if isinstance(error, ArtifactLimitExceeded):
+            # 没接住 `ctx.artifacts.save` 抛出的超限：和 Agent 上传前发现产物超限同一个类型
+            # env_error，不按 retries 重试（重跑一遍产物还是这么大，#477）。
+            failure_error["kind"] = "env_error"
         failure = {"status": "failed", "error": failure_error}
         return 1, json.dumps(failure, ensure_ascii=False)
 

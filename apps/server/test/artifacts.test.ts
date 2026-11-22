@@ -71,7 +71,9 @@ describe("产物", () => {
 		await cp.close();
 	});
 
-	const setup = async (options: { artifactLimitBytes?: number; agentToken?: string } = {}) => {
+	const setup = async (
+		options: { artifactLimitBytes?: number; agentToken?: string; document?: unknown } = {},
+	) => {
 		cp = await startTestControlPlane(options);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		const agent = await FakeAgent.connect(cp.grpcUrl, {
@@ -80,7 +82,7 @@ describe("产物", () => {
 		});
 		agents.push(agent);
 		const api = new ApiClient(cp);
-		const runId = await api.triggerOk(await api.orchestrationWith(DOC));
+		const runId = await api.triggerOk(await api.orchestrationWith(options.document ?? DOC));
 		const task = await agent.nextAssign();
 		return { agent, task, runId, api };
 	};
@@ -378,6 +380,42 @@ describe("产物", () => {
 			expect((await list(task.taskId)).artifacts.map((a) => a.name)).toEqual(["a.bin"]);
 		});
 
+		it("合计按一次尝试算：前一次尝试存的不算，重试的那次还能存满", async () => {
+			const retrying = {
+				...DOC,
+				nodes: DOC.nodes.map((n) => (n.id === "a" ? { ...n, retries: 1 } : n)),
+			};
+			const { agent, task } = await setup({ artifactLimitBytes: 1000, document: retrying });
+			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+			await agent.fail(task, "探测失败");
+
+			const retry = await agent.nextAssign();
+			expect(retry.attempt).toBe(2);
+			expect(retry.taskId).not.toBe(task.taskId);
+			// 第一次尝试存了 600，重试的这一次的上限还是整个 1000，不是 400。
+			expect((await upload(retry, "a.bin", Buffer.alloc(1000))).status).toBe(201);
+			expect((await upload(retry, "b.bin", Buffer.alloc(1))).status).toBe(413);
+			expect((await list(task.taskId)).artifacts.map((a) => [a.name, a.size])).toEqual([
+				["a.bin", 600],
+			]);
+			expect((await list(retry.taskId)).artifacts.map((a) => [a.name, a.size])).toEqual([
+				["a.bin", 1000],
+			]);
+		});
+
+		it("按声明的长度提前拒绝之后不再读请求体：响应带 connection: close，请求体写进去也没人读，连接随后关闭", async () => {
+			const { task } = await setup({ artifactLimitBytes: 1000 });
+			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
+
+			const done = await rejectedEarlyThenSendBody(`${task.artifactUploadUrl}big.bin`, 5000);
+
+			expect(done.status).toBe(413);
+			expect(done.connection).toBe("close");
+			expect(done.closed, "413 之后连接应该被关掉，控制面不去读剩下的请求体").toBe(true);
+			// 请求体没有被收下：产物列表里仍然只有 a.bin。
+			expect((await list(task.taskId)).artifacts.map((a) => a.name)).toEqual(["a.bin"]);
+		});
+
 		it("声明的长度刚好放得下的请求照常接受；同名的旧文件不算在已上传里", async () => {
 			const { task } = await setup({ artifactLimitBytes: 1000 });
 			expect((await upload(task, "a.bin", Buffer.alloc(600))).status).toBe(201);
@@ -565,6 +603,57 @@ function rawPut(url: string, body: string): Promise<{ status: number; body: stri
 		);
 		req.on("error", reject);
 		req.end(body);
+	});
+}
+
+/**
+ * 声明了 `length` 字节的请求体、先只发请求头：收到响应之后再把请求体写进去，看控制面有没有关掉连接。
+ * 返回响应的状态码、`connection` 头，和写完请求体之后连接有没有在 3 秒内被关掉。
+ */
+function rejectedEarlyThenSendBody(
+	url: string,
+	length: number,
+): Promise<{ status: number; connection: string | undefined; closed: boolean }> {
+	const { hostname, port, pathname } = new URL(url);
+	return new Promise((resolve) => {
+		const socket = connect(Number(port), hostname);
+		let received = "";
+		let answered: { status: number; connection: string | undefined } | undefined;
+		let closed = false;
+		const finish = (closedInTime: boolean) => {
+			if (!answered) return resolve({ status: 0, connection: undefined, closed: closedInTime });
+			resolve({ ...answered, closed: closedInTime });
+			socket.destroy();
+		};
+		socket.on("error", () => {});
+		socket.on("close", () => {
+			closed = true;
+			if (answered) finish(true);
+		});
+		socket.on("data", (chunk: Buffer) => {
+			received += chunk.toString("latin1");
+			const end = received.indexOf("\r\n\r\n");
+			if (answered || end < 0) return;
+			const head = received.slice(0, end).split("\r\n");
+			const status = Number(head[0]?.split(" ")[1]);
+			const connectionHeader = head
+				.slice(1)
+				.find((line) => line.toLowerCase().startsWith("connection:"));
+			answered = { status, connection: connectionHeader?.split(":")[1]?.trim().toLowerCase() };
+			// 把声明的请求体写进去（连接已被对方关掉时写会失败，忽略）。
+			for (let sent = 0; sent < length; sent += 1000) {
+				socket.write(Buffer.alloc(Math.min(1000, length - sent)), () => {});
+			}
+			setTimeout(() => {
+				if (!closed) finish(false);
+			}, 3000);
+		});
+		socket.on("connect", () => {
+			socket.write(
+				`PUT ${pathname} HTTP/1.1\r\nhost: ${hostname}:${port}\r\n` +
+					`content-type: application/octet-stream\r\ncontent-length: ${length}\r\n\r\n`,
+			);
+		});
 	});
 }
 

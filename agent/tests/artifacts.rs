@@ -287,7 +287,7 @@ async fn saving_a_file_over_the_limit_raises_in_the_node_which_can_carry_on_and_
 }
 
 #[tokio::test]
-async fn a_node_that_does_not_catch_the_limit_fails_on_the_line_that_saves() {
+async fn a_node_that_does_not_catch_the_limit_fails_on_the_line_that_saves_as_env_error() {
     let fixture = HttpFixture::start().await;
     let cp = FakeControlPlane::start().await;
     let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-limit-raise"));
@@ -304,7 +304,8 @@ async fn a_node_that_does_not_catch_the_limit_fails_on_the_line_that_saves() {
 
     assert_eq!(result.status(), TaskStatus::Failed);
     let error = result.error.unwrap();
-    assert_eq!(error.kind(), ErrorKind::NodeError);
+    // env_error：和上传前发现超限同一个类型，重试一遍产物还是这么大，不按重试配置重试（#477）。
+    assert_eq!(error.kind(), ErrorKind::EnvError);
     assert!(
         error.message.contains("ArtifactLimitExceeded"),
         "{}",
@@ -472,9 +473,109 @@ async fn many_files_that_do_not_fit_are_listed_up_to_a_cap_with_the_count_of_the
         error.message
     );
     assert!(
-        error.message.contains("共 20 个文件没有上传"),
+        error.message.contains("另有 20 个超限的文件没有上传"),
         "{}",
         error.message
     );
     assert!(error.message.contains("另有 10 个"), "{}", error.message);
+}
+
+/// `retries` 设了也只跑一次：没接住的超限是 env_error，不在可重试的类型里；这里看 Agent 上报的类型，
+/// 全栈的 `full-stack-artifact-limit.test.ts` 用真实的控制面看尝试次数。
+#[tokio::test]
+async fn an_uncaught_limit_is_the_same_kind_as_the_agents_own_check_so_neither_is_retried() {
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-limit-kinds"));
+    cp.hello(0).await;
+
+    cp.assign(limited_task(
+        "task-kind-save",
+        &fixture,
+        500,
+        json!({ "files": { "big.bin": "x".repeat(600) } }),
+    ))
+    .await;
+    cp.assign(limited_task(
+        "task-kind-direct",
+        &fixture,
+        500,
+        json!({ "direct": { "big.bin": 600 } }),
+    ))
+    .await;
+    let (by_save, _) = cp.result("task-kind-save").await;
+    let (by_agent, _) = cp.result("task-kind-direct").await;
+
+    assert_eq!(by_save.error.unwrap().kind(), ErrorKind::EnvError);
+    assert_eq!(by_agent.error.unwrap().kind(), ErrorKind::EnvError);
+}
+
+#[tokio::test]
+async fn the_environment_variable_is_set_only_when_the_control_plane_sent_a_limit() {
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-limit-envvar"));
+    cp.hello(0).await;
+
+    cp.assign(limited_task("task-env-set", &fixture, 1_500, json!({})))
+        .await;
+    cp.assign(limited_task("task-env-unset", &fixture, 0, json!({})))
+        .await;
+    let (with_limit, _) = cp.result("task-env-set").await;
+    let (without, _) = cp.result("task-env-unset").await;
+
+    let env_of = |result: &sfly_agent::proto::TaskResult| {
+        assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+        serde_json::from_str::<Value>(&result.outputs_json).unwrap()["limit_env"].clone()
+    };
+    assert_eq!(env_of(&with_limit), json!("1500"));
+    // 字段是 0（旧版本控制面没带）：不设置，不是设成 "0"。
+    assert_eq!(env_of(&without), Value::Null);
+}
+
+#[tokio::test]
+async fn the_message_does_not_say_uploaded_when_the_upload_failed_part_way() {
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-limit-midway"));
+    cp.hello(0).await;
+
+    // 放得下的两个（a、b），c 放不下；控制面拒绝上传：a 就没传上。
+    fixture.reject_uploads(400);
+    cp.assign(limited_task(
+        "task-limit-midway",
+        &fixture,
+        1_000,
+        json!({ "direct": { "a.bin": 300, "b.bin": 500, "c.bin": 900 } }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-limit-midway").await;
+
+    let message = result.error.unwrap().message;
+    assert!(message.contains("只上传了 0 个"), "{message}");
+    assert!(!message.contains("已上传"), "{message}");
+    assert!(message.contains("上传产物失败：a.bin"), "{message}");
+    assert!(message.contains("c.bin（900 字节）"), "{message}");
+}
+
+#[tokio::test]
+async fn the_message_says_uploaded_when_everything_that_fits_was_uploaded() {
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-limit-done"));
+    cp.hello(0).await;
+
+    cp.assign(limited_task(
+        "task-limit-done",
+        &fixture,
+        1_000,
+        json!({ "direct": { "a.bin": 300, "b.bin": 500, "c.bin": 900 } }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-limit-done").await;
+
+    let message = result.error.unwrap().message;
+    assert!(message.contains("放得下的 2 个文件已上传"), "{message}");
+    assert!(message.contains("另有 1 个超限的文件没有上传"), "{message}");
+    assert!(!message.contains("上传产物失败"), "{message}");
 }
