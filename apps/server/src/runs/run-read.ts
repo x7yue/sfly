@@ -10,7 +10,7 @@ import {
 	type StoredNode,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
 import { clockOffsetView } from "../agents/agent-clock.js";
 import type { Db, Tx } from "../db/database.js";
@@ -272,6 +272,46 @@ async function readByIds(
 		...read,
 		runNotification: notifications.get(read.run.id) ?? null,
 	}));
+}
+
+/**
+ * 一个节点最后一次有错误的尝试的错误（打码后，同运行视图里尝试的 `error`）；没有时为 null。只查这个节点的任务行（一条查询），
+ * 不读整个运行的输入和输出：运行通知在运行结束的事务里取第一个失败的节点的失败原因，要的只是这一条。
+ * 打码用调用方手里同一次读取的 `secrets`（{@link RunRead.secrets}，运行绑定的版本里声明为 secret 的参数在各链里的值），由调用方包成
+ * `(text) => read.secrets.mask(text)` 交进来（不要把 `read.secrets.mask` 这个方法直接传出去：它依赖 `this`），
+ * 和运行视图里尝试的 `error` 同一个口径，不另查一遍链实例。
+ */
+export async function readNodeError(
+	db: Db | Tx,
+	input: {
+		runId: string;
+		chainInstanceId: string;
+		nodeId: string;
+		maskText: (text: string) => string;
+	},
+): Promise<AttemptView["error"]> {
+	const [row] = await db
+		.select({
+			kind: tasks.errorKind,
+			message: tasks.errorMessage,
+			location: tasks.errorLocation,
+		})
+		.from(tasks)
+		.where(
+			and(
+				eq(tasks.chainInstanceId, input.chainInstanceId),
+				eq(tasks.nodeId, input.nodeId),
+				isNotNull(tasks.errorKind),
+			),
+		)
+		.orderBy(desc(tasks.attempt))
+		.limit(1);
+	if (!row?.kind) return null;
+	return {
+		kind: row.kind,
+		message: input.maskText(row.message ?? ""),
+		location: row.location === null ? null : input.maskText(row.location),
+	};
 }
 
 /** 一个运行的运行视图（契约见 @sfly/schema 的 runsApi）；运行不存在时为 undefined。 */

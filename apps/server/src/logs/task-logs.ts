@@ -656,7 +656,7 @@ function formatBytes(n: number): string {
 
 /**
  * 这些运行此刻的全部 secret 值（{@link secretValues}），按运行 ID：`document` 是运行绑定的版本，链实例可能在运行期间新增，
- * 所以每次现查，整批一条查询。`db` 可以是事务（运行通知读关注项时）。写日志、动作时打码（{@link TaskLogs.runSecrets}）、
+ * 所以每次现查，整批一条查询。`db` 可以是事务（在事务里读时）。写日志、动作时打码（{@link TaskLogs.runSecrets}）、
  * 关注项的异常原因、Agent 列表的进度和正在做的动作都用它，和运行视图同一个算法。
  */
 export async function runSecretValues(

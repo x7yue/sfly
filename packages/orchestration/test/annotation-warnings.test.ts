@@ -57,6 +57,7 @@ describe("注释框的警告", () => {
 				code: "annotation_unknown_node",
 				message: "注释框「造测试数据」（annotation_1）引用了不存在的节点 http_request_9",
 				annotation_id: "annotation_1",
+				target: "nodes/http_request_9",
 			},
 		]);
 	});
@@ -97,11 +98,13 @@ describe("注释框的警告", () => {
 				code: "annotation_duplicate_member",
 				message: "注释框「造测试数据」（annotation_1）把节点 创建测试用户（fetch_1） 写了 2 次",
 				annotation_id: "annotation_1",
+				target: "nodes/fetch_1",
 			},
 			{
 				code: "annotation_duplicate_member",
 				message: "注释框「造测试数据」（annotation_1）把子流程 监控（mon） 写了 2 次",
 				annotation_id: "annotation_1",
+				target: "subflows/mon",
 			},
 		]);
 	});
