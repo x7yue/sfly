@@ -411,6 +411,7 @@ describe("运行的项目恒等于它的场景的项目", () => {
 			"runs_cancel_requested_by_user_id_users_id_fk",
 			"runs_orchestration_project_fk",
 			"runs_orchestration_version_id_orchestration_versions_id_fk",
+			"runs_session_id_sessions_id_fk",
 			"runs_triggered_by_user_id_users_id_fk",
 		]);
 	});
