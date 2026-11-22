@@ -20,6 +20,7 @@ import type { FocusRejection } from "../focus/focus-list.js";
 import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-settings.js";
 import { copyPresets } from "../presets/preset-store.js";
 import type { ProjectId } from "../projects/project-id.js";
+import type { SessionStore } from "../sessions/session-store.js";
 import { maskSecretDefaults, restoreSecretDefaults } from "./secret-defaults.js";
 import { newWarnings, versionCheck } from "./version-check.js";
 
@@ -204,7 +205,29 @@ export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
  * （契约路由的检查，#489），场景属于哪个项目由检查负责。
  */
 export class OrchestrationStore {
-	constructor(private readonly deps: { db: Db; clock: Clock }) {}
+	constructor(private readonly deps: { db: Db; clock: Clock; sessions: SessionStore }) {}
+
+	/**
+	 * 会话令牌保存的版本：在记下版本的同一个事务里给会话写一条平台记录（`scenario_version`，#547）。
+	 * 返回的收尾在事务提交之后调用（推送）；不是会话保存的什么都不做。
+	 */
+	async #recordForSession(
+		tx: Tx,
+		actor: Actor,
+		scenario: { id: string; name: string },
+		version: number,
+		pending: Array<() => void>,
+	): Promise<void> {
+		const { sessionId } = actor;
+		if (sessionId === null) return;
+		const event = await this.deps.sessions.recordPlatform(tx, sessionId, {
+			kind: "scenario_version",
+			scenario_id: scenario.id,
+			name: scenario.name,
+			version,
+		});
+		pending.push(() => this.deps.sessions.announce(sessionId, event));
+	}
 
 	/**
 	 * 场景视图：基本信息，加上关注项和它们在最新版本里的状态（{@link focusFields}）。
@@ -340,6 +363,7 @@ export class OrchestrationStore {
 	 * 关注项的最后修改记为复制的人（{@link copiedFocus}）。源编排不存在时返回 undefined。
 	 */
 	async copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
+		const pending: Array<() => void> = [];
 		const copied = await this.deps.db.transaction(async (tx) => {
 			const [source] = await tx
 				.select()
@@ -385,12 +409,15 @@ export class OrchestrationStore {
 					authorUserId: actor.userId,
 					authorVia: actor.via,
 					authorToken: actor.token,
+					sessionId: actor.sessionId,
 					createdAt: now,
 				});
+				await this.#recordForSession(tx, actor, { id, name }, 1, pending);
 			}
 			await copyPresets(tx, sourceId, id, actor, now);
 			return row as OrchestrationRow;
 		});
+		for (const after of pending) after();
 		return copied && this.#view(copied, this.deps.db);
 	}
 
@@ -446,14 +473,15 @@ export class OrchestrationStore {
 	 * 上一个版本就是 base_version，在冲突检查通过之后、同一个行锁内读取。
 	 * `strict`：这次改动新带进来了警告时不保存（{@link versionCheck}，同一个事务里判断），返回 `strict_rejected`。
 	 */
-	saveVersion(
+	async saveVersion(
 		orchestrationId: string,
 		document: OrchestrationDocument,
 		actor: Actor,
 		baseVersion: number,
 		options: { strict?: boolean } = {},
 	): Promise<SaveVersionResult> {
-		return this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
+		const pending: Array<() => void> = [];
+		const result = await this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
 			const [orchestration] = await tx
 				.select()
 				.from(orchestrations)
@@ -485,10 +513,12 @@ export class OrchestrationStore {
 			}
 			return {
 				kind: "saved",
-				version: await this.#append(tx, orchestration, prepared.document, actor),
+				version: await this.#append(tx, orchestration, prepared.document, actor, pending),
 				previous: masked,
 			};
 		});
+		for (const after of pending) after();
+		return result;
 	}
 
 	/**
@@ -549,7 +579,7 @@ export class OrchestrationStore {
 	 * 恢复历史版本：用该版本的内容追加一个新版本（作者为恢复的人），不改写历史。
 	 * 编排或版本不存在时返回 undefined。
 	 */
-	restoreVersion(
+	async restoreVersion(
 		orchestrationId: string,
 		number: number,
 		actor: Actor,
@@ -557,7 +587,8 @@ export class OrchestrationStore {
 		| { version: OrchestrationVersionView; previous: StoredOrchestrationDocument | undefined }
 		| undefined
 	> {
-		return this.deps.db.transaction(async (tx) => {
+		const pending: Array<() => void> = [];
+		const result = await this.deps.db.transaction(async (tx) => {
 			const [orchestration] = await tx
 				.select()
 				.from(orchestrations)
@@ -568,10 +599,12 @@ export class OrchestrationStore {
 			if (!source) return undefined;
 			const previous = await versionRow(tx, orchestrationId, orchestration.headVersion);
 			return {
-				version: await this.#append(tx, orchestration, source.document, actor),
+				version: await this.#append(tx, orchestration, source.document, actor, pending),
 				previous: previous && maskSecretDefaults(previous.document),
 			};
 		});
+		for (const after of pending) after();
+		return result;
 	}
 
 	/** 在已加行锁的编排上追加下一个版本，并更新最新版本号。 */
@@ -580,6 +613,7 @@ export class OrchestrationStore {
 		orchestration: OrchestrationRow,
 		document: StoredOrchestrationDocument,
 		actor: Actor,
+		pending: Array<() => void>,
 	): Promise<OrchestrationVersionView> {
 		const number = orchestration.headVersion + 1;
 		const [row] = await tx
@@ -593,6 +627,7 @@ export class OrchestrationStore {
 				authorUserId: actor.userId,
 				authorVia: actor.via,
 				authorToken: actor.token,
+				sessionId: actor.sessionId,
 				createdAt: this.deps.clock.now(),
 			})
 			.returning();
@@ -600,6 +635,7 @@ export class OrchestrationStore {
 			.update(orchestrations)
 			.set({ headVersion: number })
 			.where(eq(orchestrations.id, orchestration.id));
+		await this.#recordForSession(tx, actor, orchestration, number, pending);
 		return toVersionView(row as VersionRow);
 	}
 

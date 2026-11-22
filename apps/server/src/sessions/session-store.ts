@@ -12,7 +12,7 @@ import {
 } from "@sfly/schema";
 import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
-import type { Db } from "../db/database.js";
+import type { Db, Tx } from "../db/database.js";
 import { projects, sessionEvents, sessions } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
@@ -216,43 +216,92 @@ export class SessionStore {
 		body: SessionEventBody,
 		at: Date = this.deps.clock.now(),
 	): Promise<PersistedSessionEvent> {
+		const event = await this.deps.db.transaction((tx) => this.appendIn(tx, sessionId, body, at));
+		this.announce(sessionId, event);
+		return event;
+	}
+
+	/**
+	 * 在调用方的事务里记一条持久事件（序号规则同 {@link append}：锁住会话那一行取下一个）；返回落库的事件，
+	 * **事务提交之后**由调用方交给 {@link announce} 推送（提交前推送，订阅的一方收到时库里读不到它）。
+	 * 控制面在记下一条记录（运行、场景版本）的同一个事务里给会话写平台记录用它（{@link recordPlatform}）。
+	 */
+	async appendIn(
+		tx: Tx,
+		sessionId: string,
+		body: SessionEventBody,
+		at: Date = this.deps.clock.now(),
+	): Promise<PersistedSessionEvent> {
 		if (!isPersistedType(body.type)) {
 			throw new Error(`会话事件 ${body.type} 不持久，不能落库（用 publish 推送）`);
 		}
 		const parsed = SessionEventBody.parse(body);
 		const { type, ...payload } = parsed;
-		const event = await this.deps.db.transaction(async (tx) => {
-			const [session] = await tx
-				.select({ id: sessions.id })
-				.from(sessions)
-				.where(eq(sessions.id, sessionId))
-				.for("update");
-			if (!session) throw new SessionNotFoundError(sessionId);
-			const [last] = await tx
-				.select({ seq: sql<number>`coalesce(max(${sessionEvents.seq}), 0)::int` })
-				.from(sessionEvents)
-				.where(eq(sessionEvents.sessionId, sessionId));
-			const [row] = await tx
-				.insert(sessionEvents)
-				.values({
-					sessionId,
-					seq: (last?.seq ?? 0) + 1,
-					type,
-					payload,
-					createdAt: at,
-				})
-				.returning();
-			// 事件的时间来自另一个时钟时可能比会话已有的最近活动还早：最近活动不倒退。
-			await tx
-				.update(sessions)
-				.set({
-					lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${at.toISOString()}::timestamptz)`,
-				})
-				.where(eq(sessions.id, sessionId));
-			return toEvent(row as EventRow);
-		});
+		const [session] = await tx
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.for("update");
+		if (!session) throw new SessionNotFoundError(sessionId);
+		const [last] = await tx
+			.select({ seq: sql<number>`coalesce(max(${sessionEvents.seq}), 0)::int` })
+			.from(sessionEvents)
+			.where(eq(sessionEvents.sessionId, sessionId));
+		const [row] = await tx
+			.insert(sessionEvents)
+			.values({
+				sessionId,
+				seq: (last?.seq ?? 0) + 1,
+				type,
+				payload,
+				createdAt: at,
+			})
+			.returning();
+		// 事件的时间来自另一个时钟时可能比会话已有的最近活动还早：最近活动不倒退。
+		await tx
+			.update(sessions)
+			.set({
+				lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${at.toISOString()}::timestamptz)`,
+			})
+			.where(eq(sessions.id, sessionId));
+		return toEvent(row as EventRow);
+	}
+
+	/** 把已经提交的持久事件发布给订阅这个会话的连接（{@link appendIn} 的收尾）。 */
+	announce(sessionId: string, event: PersistedSessionEvent): void {
 		this.#live.publish(sessionId, event);
-		return event;
+	}
+
+	/**
+	 * 在调用方的事务里给会话记一条平台记录：助手用会话令牌触发了运行、保存了场景版本（#547）。`turn` 是会话此刻
+	 * 进行到第几轮，取库里最后一条 `turn_started`（会话令牌只在一轮之内有效，所以总有；没有时按第 1 轮）。
+	 * 返回的事件在事务提交之后交给 {@link announce}。
+	 */
+	async recordPlatform(
+		tx: Tx,
+		sessionId: string,
+		record:
+			| { kind: "run"; run_id: string; scenario_name: string }
+			| { kind: "scenario_version"; scenario_id: string; name: string; version: number },
+	): Promise<PersistedSessionEvent> {
+		// 先锁住会话那一行（appendIn 里也会锁，同一个事务里重复锁没有关系）：读到的轮次和写下的事件之间，
+		// 别的事务不能插进一条 turn_started。
+		await tx
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.for("update");
+		const [current] = await tx
+			.select({
+				turn: sql<number>`coalesce(max((${sessionEvents.payload}->>'turn')::int), 1)::int`,
+			})
+			.from(sessionEvents)
+			.where(and(eq(sessionEvents.sessionId, sessionId), eq(sessionEvents.type, "turn_started")));
+		return this.appendIn(tx, sessionId, {
+			type: "platform",
+			turn: current?.turn ?? 1,
+			...record,
+		});
 	}
 
 	/** 推送一条不持久的事件（文字增量、工具输出、思考、排队状态、快照）：不落库，没有 `seq`，不推进续传的位置。 */

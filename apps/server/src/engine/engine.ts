@@ -57,6 +57,7 @@ import type {
 	TriggerRejection,
 	TriggerRequest,
 } from "../runs/trigger-admission.js";
+import type { SessionStore } from "../sessions/session-store.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
@@ -219,6 +220,8 @@ export class Engine implements AgentSessionHandler {
 			admitTrigger: TriggerAdmission;
 			/** 运行通知：在 step 的事务里入队，提交后唤醒投递（src/feishu/engine-notifications.ts）。 */
 			notifications: EngineNotifications;
+			/** 会话：会话令牌触发的运行，在同一个事务里给会话写一条平台记录（#547）。 */
+			sessions: SessionStore;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
 			/** Welcome 里和调度无关的部分：目标版本、SDK wheel、镜像、Agent 二进制（src/agents/agent-environment.ts）。 */
@@ -272,6 +275,8 @@ export class Engine implements AgentSessionHandler {
 					triggeredByUserId: actor.userId,
 					triggeredVia: actor.via,
 					triggeredToken: actor.token,
+					// 经哪个会话触发：依据是请求带的会话令牌（访问检查给出），不是模型在对话里怎么说。
+					sessionId: actor.sessionId,
 					params,
 					...runPreset,
 					status: "running",
@@ -290,6 +295,16 @@ export class Engine implements AgentSessionHandler {
 					startedAt: step.now,
 				})
 				.returning();
+			if (actor.sessionId !== null) {
+				// 同一个事务里给会话写一条平台记录（成果栏只读这些记录）；提交之后再推送。
+				const event = await this.deps.sessions.recordPlatform(step.tx, actor.sessionId, {
+					kind: "run",
+					run_id: runId,
+					scenario_name: admitted.scenarioName,
+				});
+				const { sessionId } = actor;
+				step.afterCommit.push(() => this.deps.sessions.announce(sessionId, event));
+			}
 			await this.#advance(step, run as RunRow, chain as ChainRow, 0);
 			return { ok: true, runId };
 		});
@@ -595,9 +610,11 @@ export class Engine implements AgentSessionHandler {
 			cancels: [],
 			assigns: [],
 			notifications: noPendingNotifications(),
+			afterCommit: [],
 		};
 		const result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
 		this.#publish(step.touchedRuns);
+		for (const after of step.afterCommit) after();
 		for (const order of step.cancels) this.#sendCancel(order);
 		for (const { conn, message } of step.assigns) conn.send(message);
 		await this.deps.notifications.committed(step.notifications);

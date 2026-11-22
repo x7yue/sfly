@@ -162,15 +162,44 @@ export class TestAccounts {
 		return this.#token("project", "sfly_prj_", { project }, options);
 	}
 
-	/** 会话令牌属于一个会话（`api_tokens.session_id` 外键到 `sessions`）：先在项目里建一个会话。 */
-	async sessionToken(userId: string, project: string, options: TokenOptions = {}): Promise<string> {
+	/**
+	 * 在项目里建一个会话（直接写库）：`turns` 是已经开始了几轮（写 `turn_started` 事件），默认一轮。
+	 * 返回会话 ID。
+	 */
+	async session(
+		userId: string,
+		project: string,
+		options: { title?: string; turns?: number } = {},
+	): Promise<string> {
 		const sessionId = randomUUID();
 		await this.#pool.query(
 			`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at)
-			values ($1, $2, '会话令牌用的会话', 'idle', '测试', $3, $4, $4)`,
-			[sessionId, project, userId, AT],
+			values ($1, $2, $3, 'idle', '测试', $4, $5, $5)`,
+			[sessionId, project, options.title ?? "会话令牌用的会话", userId, AT],
 		);
+		for (let turn = 1; turn <= (options.turns ?? 1); turn++) {
+			await this.#pool.query(
+				`insert into session_events (session_id, seq, type, payload, created_at)
+				values ($1, $2, 'turn_started', $3, $4)`,
+				[sessionId, turn, JSON.stringify({ turn }), AT],
+			);
+		}
+		return sessionId;
+	}
+
+	/** 一个已有会话的会话令牌（`api_tokens.session_id` 外键到 `sessions`）。 */
+	sessionTokenIn(
+		sessionId: string,
+		userId: string,
+		project: string,
+		options: TokenOptions = {},
+	): Promise<string> {
 		return this.#token("session", "sfly_ses_", { userId, project, sessionId }, options);
+	}
+
+	/** 会话令牌：先在项目里建一个会话。 */
+	async sessionToken(userId: string, project: string, options: TokenOptions = {}): Promise<string> {
+		return this.sessionTokenIn(await this.session(userId, project), userId, project, options);
 	}
 
 	taskCredential(project: string, taskId: string, options: TokenOptions = {}): Promise<string> {

@@ -44,8 +44,8 @@ import {
 	ROLE_SCOPES,
 	requiredScope,
 	SCOPE_LABELS,
-	SESSION_TOKEN_SCOPES,
 	type Scope,
+	SESSION_TOKEN_SCOPES,
 } from "./scopes.js";
 
 /** 控制台登录的 Cookie 名（签发在 #490）。 */

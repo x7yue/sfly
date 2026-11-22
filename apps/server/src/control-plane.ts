@@ -235,7 +235,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
-	const orchestrations = new OrchestrationStore({ db: database.db, clock });
+	// 会话令牌触发的运行、保存的场景版本，在同一个事务里给会话写平台记录（#547）：引擎和场景存储都用它。
+	const sessions = new SessionStore({ db: database.db, clock });
+	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
@@ -285,6 +287,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		mutex,
 		hub,
+		sessions,
 		assignContent: createAssignContent({
 			packageArchiveUrl: (name, version) =>
 				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
@@ -371,7 +374,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 	const publicUrl = options.publicHttpUrl?.replace(/\/+$/, "");
-	const sessions = new SessionStore({ db: database.db, clock });
 	const api = buildHttpApi({
 		database,
 		clock,
