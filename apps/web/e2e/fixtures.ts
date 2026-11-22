@@ -55,6 +55,8 @@ export interface E2eFixtures {
 		logScanBytes?: number;
 		corsOrigins?: readonly string[];
 		initialAdmin?: { loginName: string; password: string; displayName?: string };
+		/** 打开着的事件流多久重新检查一次凭据（毫秒，默认 30 秒）：登录失效之后流多久被关掉。 */
+		streamRecheckMs?: number;
 	};
 }
 

@@ -10,7 +10,7 @@ describe("SFLY_TRUST_PROXY", () => {
 		}
 	});
 
-	it("数字是代理的层数：对端和往右的 N-1 个地址可信，再往左的不可信（旧的 1 和 true 是一层）", () => {
+	it("数字是代理的层数：对端和往右的 N-1 个地址可信，再往左的不可信（1 和 true 都是一层）", () => {
 		for (const value of ["1", "true", "TRUE"]) {
 			const trust = parseTrustProxy(value) as (address: string, hop: number) => boolean;
 			expect(typeof trust, value).toBe("function");

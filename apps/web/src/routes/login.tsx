@@ -12,8 +12,11 @@ import { Input } from "@/components/ui/input";
 
 /** 登录页（ADR 0029）：登录名和密码。登录成功后回到 `redirect` 指的本站路径，没有就回首页。 */
 export const Route = createFileRoute("/login")({
-	validateSearch: (search: Record<string, unknown>): { redirect?: string } =>
-		typeof search.redirect === "string" ? { redirect: search.redirect } : {},
+	validateSearch: (search: Record<string, unknown>): { redirect?: string; expired?: true } => ({
+		...(typeof search.redirect === "string" ? { redirect: search.redirect } : {}),
+		// 登录失效之后被带到这里（`lib/identity.ts` 的 noteUnauthorized）：写明原因，不让人以为是出了故障。
+		...(search.expired === true || search.expired === "true" ? { expired: true as const } : {}),
+	}),
 	staticData: { crumb: "登录" },
 	component: LoginPage,
 });
@@ -27,7 +30,7 @@ const errorText = (error: unknown): string => {
 };
 
 function LoginPage() {
-	const { redirect } = Route.useSearch();
+	const { redirect, expired } = Route.useSearch();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const identity = useIdentity();
@@ -51,7 +54,11 @@ function LoginPage() {
 	return (
 		<AuthPage
 			title="登录"
-			description="用你的账号登录 sfly。"
+			description={
+				expired
+					? "登录已失效（空闲太久、被注销或账号被停用）：请重新登录，登录之后回到刚才的页面。"
+					: "用你的账号登录 sfly。"
+			}
 			footer={
 				status.data?.setup_required ? (
 					<>

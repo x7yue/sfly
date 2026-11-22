@@ -15,14 +15,14 @@ import {
  * - `account`：账号类接口（登录、登出、当前用户、改密码、管理账号），不属于项目，不走范围表：认哪种凭据看 {@link ACCOUNT_ROUTES}；
  * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人）：取路径里的 `:project`。
  *   #488 把这些接口的路径改成 `/projects/:project/…` 之前，路径里没有项目，`param` 是 null，项目就是默认项目；
- * - `scenario`、`run`、`task`：经场景、运行或任务（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
+ * - `scenario`、`run`、`task`、`session`：经场景、运行、任务或会话（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
  *   （任务经它所属的运行）。`param` 是路径里 ID 的参数名。
  */
 export type ProjectLocator =
 	| { from: "none" }
 	| { from: "account" }
 	| { from: "path"; param: string | null }
-	| { from: "scenario" | "run" | "task"; param: string };
+	| { from: "scenario" | "run" | "task" | "session"; param: string };
 
 /**
  * 接口的项目怎么得出；认不出时返回 undefined（`checkAccessRules` 在启动时拒绝，访问检查不会走到这里）。
@@ -44,6 +44,7 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 		case "scenario":
 		case "run":
 		case "task":
+		case "session":
 		case "package":
 		case "agent":
 		case "feishu_bot":
@@ -53,10 +54,10 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 	}
 }
 
-/** 属于项目的资源类别（场景、运行、任务、节点包、Agent、飞书机器人）：路径带项目、列表与新建、按名字或按 ID 定位。 */
+/** 属于项目的资源类别（场景、运行、任务、会话、节点包、Agent、飞书机器人）：路径带项目、列表与新建、按名字或按 ID 定位。 */
 function locatorOfScoped(
 	def: Pick<RouteDef, "path">,
-	kind: "scenario" | "run" | "task" | "package" | "agent" | "feishu_bot",
+	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "feishu_bot",
 	target: ResourceTarget,
 ): ProjectLocator | undefined {
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))

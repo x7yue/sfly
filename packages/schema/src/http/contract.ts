@@ -68,6 +68,7 @@ export interface RawRequest {
  * - `package` 节点包（版本、节点类型、归档都属于节点包：定位用包名）。
  * - `agent` Agent。
  * - `feishu_bot` 飞书机器人。
+ * - `session` 助手会话（会话的事件、停止都属于会话：定位用会话 id；列出和新建在项目下，定位的是会话的集合）。
  * - `system` 平台自身：与具体的场景、运行都无关的东西（健康检查、用户文档、SDK 与 Agent 的安装包和安装脚本、
  *   API 客户端安装包、项目设置）。
  * - `account` 账号：登录、登出、当前用户、改自己的密码，以及平台管理员管理账号（建用户、停用、重置密码）。
@@ -84,6 +85,7 @@ export const RESOURCE_KINDS = [
 	"package",
 	"agent",
 	"feishu_bot",
+	"session",
 	"system",
 	"account",
 	"project",
@@ -98,6 +100,7 @@ export const RESOURCE_KIND_LABELS = {
 	package: "节点包",
 	agent: "Agent",
 	feishu_bot: "飞书机器人",
+	session: "会话",
 	system: "系统",
 	account: "账号",
 	project: "项目",

@@ -318,6 +318,112 @@ describe("写得不对的声明：检查给出具体的问题", () => {
 		expect(problems(account("self", "/auth/:id"))[0]).toContain("self，但路径里有参数");
 	});
 
+	it("路径带项目（/projects/:project/…）的列表和新建用 collection：:project 只限定项目，不算在定位资源", () => {
+		const project = z.object({ project: z.string() });
+		const scoped = { path: "/projects/:project/things", params: project };
+		const collection = { kind: "scenario", target: "collection" };
+		expect(problems(broken({ resource: collection, ...scoped }))).toEqual([]);
+		// 项目之外还有别的路径参数，就是在定位某个资源，仍然不能写 collection。
+		expect(
+			problems(
+				broken({
+					resource: collection,
+					path: "/projects/:project/things/:id",
+					params: project.extend({ id: z.string() }),
+				}),
+			)[0],
+		).toContain("路径里有参数");
+		// 不是 /projects/:project/ 下面的 :project 参数（例如 PEP 503 索引里指包的 /simple/:project/）不是项目。
+		expect(
+			problems(broken({ resource: collection, path: "/things/:project", params: project }))[0],
+		).toContain("路径里有参数");
+		// 用 { params: "project" } 定位项目本身（以后的资源类别 project）照旧可以。
+		expect(
+			problems(
+				broken({ resource: { kind: "scenario", target: { params: "project" } }, ...scoped }),
+			),
+		).toEqual([]);
+	});
+
+	it('/projects/:project/… 下还有别的路径参数：用 ID 定位的资源不带 :project，{ params: "project" } 不算定位；按名字定位的写 :project 之后的参数', () => {
+		const project = z.object({ project: z.string() });
+		const withId = {
+			path: "/projects/:project/things/:id",
+			params: project.extend({ id: z.string() }),
+		};
+		// 用 ID 定位的类别（场景、运行、任务、会话）：不管写 { params: "project" } 还是 { params: "id" }，路径都不该带项目。
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			for (const params of ["project", "id"]) {
+				const found = problems(broken({ resource: { kind, target: { params } }, ...withId }));
+				expect(found, `${kind} ${params}`).toHaveLength(1);
+				expect(found[0], `${kind} ${params}`).toContain("用 ID 定位，路径里不带 :project");
+				// 报错提示不能再叫人「改成 { params: "project" }」。
+				expect(found[0], `${kind} ${params}`).not.toContain('改成 { params: "project" }');
+				expect(found[0], `${kind} ${params}`).toContain('{ params: "id" }');
+			}
+		}
+		// 按名字定位的类别（节点包、Agent、飞书机器人）：项目在路径里，定位的是 :project 之后的第一个参数。
+		const byName = {
+			path: "/projects/:project/things/:name",
+			params: project.extend({ name: z.string() }),
+		};
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "name" } }, ...byName })),
+		).toEqual([]);
+		const wrongProject = problems(
+			broken({ resource: { kind: "package", target: { params: "project" } }, ...byName }),
+		);
+		expect(wrongProject).toHaveLength(1);
+		expect(wrongProject[0]).toContain('写了 { params: "project" }，但路径里还有 :name');
+		expect(wrongProject[0]).toContain('改成 { params: "name" }');
+		// :project 之后的第二个参数不是定位用的。
+		const deeper = {
+			path: "/projects/:project/things/:name/versions/:version",
+			params: project.extend({ name: z.string(), version: z.string() }),
+		};
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "version" } }, ...deeper })),
+		).toHaveLength(1);
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "name" } }, ...deeper })),
+		).toEqual([]);
+		// 路径不带项目的（按 ID 定位）照旧：第一个参数就是定位用的。
+		expect(
+			problems(
+				broken({ resource: { kind: "session", target: { params: "id" } }, path: "/sessions/:id" }),
+			),
+		).toEqual([]);
+	});
+
+	it("项目本身和它的管理面（project）：定位的就是路径里的 :project，它之后的参数（令牌 ID…）是项目名下的子项，不算在定位", () => {
+		const project = z.object({ project: z.string() });
+		const tokens = { path: "/projects/:project/tokens", params: project };
+		const token = {
+			path: "/projects/:project/tokens/:id",
+			params: project.extend({ id: z.string() }),
+		};
+		const located = { kind: "project", target: { params: "project" } };
+		// 列表、新建：只有 :project。吊销一个令牌：:project 之后还有令牌的 ID，定位的仍然是项目（要「管理」范围的是项目）。
+		expect(problems(broken({ resource: located, ...tokens }))).toEqual([]);
+		expect(problems(broken({ resource: located, ...token }))).toEqual([]);
+		// 定位写成令牌 ID 不对：project 定位的是项目本身，访问检查只认路径里的 :project。
+		const wrong = problems(
+			broken({ resource: { kind: "project", target: { params: "id" } }, ...token }),
+		);
+		expect(wrong).toHaveLength(1);
+		expect(wrong[0]).toContain(
+			'project 定位的是项目本身，resource.target 写 { params: "project" }',
+		);
+		// 别的按名字定位的类别不受这条放宽影响：{ params: "project" } 仍然不算它们的定位。
+		const byName = {
+			path: "/projects/:project/things/:name",
+			params: project.extend({ name: z.string() }),
+		};
+		expect(
+			problems(broken({ resource: { kind: "package", target: { params: "project" } }, ...byName })),
+		).toHaveLength(1);
+	});
+
 	it("GET 必须只读，DELETE 必须声明 removes，非 GET 的只读接口必须登记", () => {
 		expect(problems(broken({ effect: "write" }))[0]).toContain("GET 要声明为只读");
 		expect(problems(broken({ method: "DELETE", effect: "write" }))[0]).toContain(

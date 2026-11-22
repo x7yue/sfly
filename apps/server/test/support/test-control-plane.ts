@@ -83,6 +83,7 @@ export async function startTestControlPlane(
 		| "loginIdleMs"
 		| "sameOrigins"
 		| "scrypt"
+		| "dummyHash"
 		| "loginThrottle"
 		| "passwordGate"
 		| "trustProxy"
@@ -127,6 +128,7 @@ export async function startTestControlPlane(
 			sameOrigins: options.sameOrigins,
 			// 密码哈希用小参数：测试里每次登录都要算，默认参数一次约 0.2 秒、占 64 MiB（要测真实代价的测试自己传）。
 			scrypt: options.scrypt ?? { logN: 10, r: 8, p: 1 },
+			dummyHash: options.dummyHash,
 			loginThrottle: options.loginThrottle,
 			passwordGate: options.passwordGate,
 			trustProxy: options.trustProxy,

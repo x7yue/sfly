@@ -1,6 +1,8 @@
 // 出错时写进日志的数据库报错不带查询的参数（PR #555 的独立审查）：drizzle 的查询错误的 message 里带着参数，
 // 写 `users` 表出错时密码的 scrypt 哈希会进日志；别的表的参数里有令牌的哈希、保密参数的默认值、飞书 Webhook 的地址。
 // 保留 SQL 和数据库给的原因（错误码、约束名、表名、列名），去掉参数和 `detail`、`where`（里面带着值）。
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 import { DrizzleQueryError } from "drizzle-orm/errors";
 import pg from "pg";
@@ -154,5 +156,40 @@ describe("请求出错时的日志", () => {
 		expect(output).not.toContain("scrypt$");
 		expect(output).not.toContain("secretly");
 		expect(output).not.toContain("plain-password-value-1");
+	});
+});
+
+describe("控制面往标准错误写的错误都过 safeError", () => {
+	const SRC = join(import.meta.dirname, "..", "src");
+
+	/** 源码里每一处 `console.error(…)` 调用（括号配平，跨行的也取全）：文件和调用的文字。 */
+	function consoleErrorCalls(): { file: string; call: string }[] {
+		const found: { file: string; call: string }[] = [];
+		for (const entry of readdirSync(SRC, { recursive: true, encoding: "utf8" })) {
+			if (!entry.endsWith(".ts")) continue;
+			const text = readFileSync(join(SRC, entry), "utf8");
+			for (
+				let at = text.indexOf("console.error(");
+				at !== -1;
+				at = text.indexOf("console.error(", at + 1)
+			) {
+				let depth = 0;
+				let end = at + "console.error".length;
+				for (; end < text.length; end++) {
+					if (text[end] === "(") depth++;
+					if (text[end] === ")" && --depth === 0) break;
+				}
+				found.push({ file: entry, call: text.slice(at, end + 1) });
+			}
+		}
+		return found;
+	}
+
+	it("每一处 console.error 的参数里都有 safeError(…)：数据库错误带着语句的参数，原样打印会把密码哈希、令牌哈希、保密参数的值带进日志；新加的打印不过它，这条就红", () => {
+		const calls = consoleErrorCalls();
+		// 认得出写法：控制面的统一出口 logError、SSE 主题的监听器至少两处，找不到说明这条测试自己坏了。
+		expect(calls.length).toBeGreaterThanOrEqual(2);
+		const unsafe = calls.filter(({ call }) => !call.includes("safeError("));
+		expect(unsafe.map(({ file, call }) => `${file}: ${call.replace(/\s+/g, " ")}`)).toEqual([]);
 	});
 });

@@ -77,6 +77,7 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		const chain = "00000000-0000-4000-8000-0000000000a2";
 		const task = "00000000-0000-4000-8000-0000000000a3";
 		runningTask = "00000000-0000-4000-8000-0000000000a4";
+		const session = "00000000-0000-4000-8000-0000000000a5";
 		const client = new pg.Client({ connectionString: cp.database.url });
 		await client.connect();
 		try {
@@ -107,6 +108,11 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 				values ($1, $2, $3, 'b', 1, 'agent-victim', 'running', $4, $4)`,
 				[runningTask, run, chain, at],
 			);
+			await client.query(
+				`insert into sessions (id, project_id, title, status, created_by, created_at, last_activity_at)
+				values ($1, 'default', '项目乙的会话', 'idle', '旧人', $2, $2)`,
+				[session, at],
+			);
 		} finally {
 			await client.end();
 		}
@@ -114,6 +120,7 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			scenario,
 			run,
 			task,
+			session,
 			preset,
 			agent: "agent-victim",
 			pkg: "stub",
@@ -252,6 +259,28 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			}
 		}, 30_000);
 	}
+
+	it("会话：路径参数填的是项目乙里真实存在的会话 ID（请求真的打到了会话上，不是 404 因为 ID 不对）", async () => {
+		const get = projectRoutes().find((d) => routeKey(d) === "GET /sessions/:id") as RouteDef;
+		const request = requestFor(get, victim);
+		expect(request.path).toBe(`/sessions/${victim.session}`);
+		// 项目乙自己的凭据读到了这个会话：项目乙的 ID 不会被当成任务或场景去查。
+		for (const insider of insiders) {
+			const res = await send(get, request, insider.headers);
+			expect(res.status, insider.name).toBe(200);
+			expect(await res.json(), insider.name).toMatchObject({
+				id: victim.session,
+				project: "default",
+			});
+		}
+		// 项目甲的凭据读同一个 ID：访问检查的 404（和资源不存在一样的说法）。
+		for (const attacker of attackers.filter((a) => a.expected(get) === 404)) {
+			expect(
+				await isAccessNotFound(await send(get, request, attacker.headers)),
+				attacker.name,
+			).toBe(true);
+		}
+	});
 
 	it("对照：项目乙自己的 Agent 凭据、任务凭据能调用清单里的接口（上传产物、下载节点包归档、下载产物）", async () => {
 		const own = {
@@ -413,6 +442,30 @@ describe("新加接口自动覆盖", () => {
 		expect(() => guardHttpContract(Fastify(), [undeclared], fakeRules)).toThrow(/缺少 resource/);
 	});
 
+	it("路径参数 :id 属于不认识的资源类别时，生成请求就失败：不会悄悄填成场景 ID", () => {
+		const victim = {
+			scenario: "s",
+			run: "r",
+			task: "t",
+			session: "e",
+			preset: "p",
+			agent: "a",
+			pkg: "k",
+			bot: "b",
+			project: "default",
+			token: "k",
+		};
+		const get = { ...fake, method: "GET", effect: "read" };
+		const other = { ...get, resource: { kind: "package", target: { params: "id" } } } as RouteDef;
+		expect(() => requestFor(other, victim)).toThrow(/paramValue/);
+		for (const kind of ["scenario", "run", "task", "session"] as const) {
+			const def = { ...get, resource: { kind, target: { params: "id" } } } as RouteDef;
+			expect(requestFor(def, victim).path).toBe(
+				`/fake-things/${{ scenario: "s", run: "r", task: "t", session: "e" }[kind]}`,
+			);
+		}
+	});
+
 	it("写了声明之后，生成的测试里就有它", () => {
 		expect(() => guardHttpContract(Fastify(), [fake], fakeRules)).not.toThrow();
 		const generated = projectRoutes([...httpContract, fake]).map(routeKey);
@@ -423,6 +476,7 @@ describe("新加接口自动覆盖", () => {
 				scenario: "s",
 				run: "r",
 				task: "t",
+				session: "e",
 				preset: "p",
 				agent: "a",
 				pkg: "k",
@@ -440,6 +494,7 @@ describe("生成的请求打的是那一类资源（资源类别穷举，#554）
 		scenario: "sample-scenario",
 		run: "sample-run",
 		task: "sample-task",
+		session: "sample-session",
 		preset: "sample-preset",
 		agent: "sample-agent",
 		pkg: "sample-package",

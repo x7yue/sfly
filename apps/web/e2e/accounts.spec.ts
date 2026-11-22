@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage, scenarioUsing } from "./support";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // pg 是控制面的依赖（apps/web 没有它）：和 legacy-sticky-support.ts 一样从控制面的包里取。
 const { Client } = createRequire(new URL("../../server/package.json", import.meta.url))("pg") as {
@@ -266,6 +266,99 @@ test.describe("登录与账号菜单", () => {
 		await expect(page).toHaveURL(/\/login$/);
 		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
 		await expect(page.getByRole("dialog")).toBeHidden();
+	});
+});
+
+test.describe("登录失效之后回到登录页", () => {
+	// 打开着的事件流每 0.3 秒重新检查一次凭据（默认 30 秒）：登录在库里被注销之后，流很快就被关掉。
+	test.use({ controlPlaneOptions: { initialAdmin: ADMIN, streamRecheckMs: 300 } });
+
+	/** 在库里注销这个用户的全部登录（空闲期限到了、被管理员注销、直接改库……控制面收不到通知的那种）。 */
+	async function revokeLogins(controlPlane: { database: { url: string } }) {
+		const db = new Client({ connectionString: controlPlane.database.url });
+		await db.connect();
+		try {
+			await db.query("update logins set revoked_at = now()");
+		} finally {
+			await db.end();
+		}
+	}
+
+	test("登录着打开一个有事件流的页面，登录在库里被注销：事件流重连拿到 401，回到登录页，写明原因，登录之后回到原来的页面", async ({
+		page,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await connectAgent({ name: "agent-a" });
+		await publishPackage(controlPlane);
+		const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+		const runId = await triggerRun(controlPlane, scenario);
+
+		await page.goto("/login");
+		await login(page);
+		await expect(accountMenu(page)).toBeVisible();
+		await page.goto(`/runs/${runId}`);
+		await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?view=overview)?$`));
+		await expect(page.getByRole("tablist", { name: "运行监控视图" })).toBeVisible();
+
+		await revokeLogins(controlPlane);
+
+		// 控制面关掉流 → 页面重连 → 401 → 回到登录页，带上原来的页面。
+		await expect(page).toHaveURL(/\/login\?/, { timeout: 15_000 });
+		const url = new URL(page.url());
+		// 监控页自己在地址后面带上 ?view=overview：原样带回去。
+		expect(url.searchParams.get("redirect")).toBe(`/runs/${runId}?view=overview`);
+		await expect(page.getByText("登录已失效")).toBeVisible();
+		await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+
+		// 重新登录：回到刚才的监控页。
+		await login(page);
+		await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?view=overview)?$`));
+	});
+
+	test("登录着停在一个轮询的页面（没有事件流），登录被注销：下一次接口请求拿到 401，回到登录页；redirect 带着查询参数，登录之后原样回来", async ({
+		page,
+		controlPlane,
+	}) => {
+		await page.goto("/login");
+		await login(page);
+		await expect(accountMenu(page)).toBeVisible();
+		await page.goto("/runs?status=failed");
+		await expect(page).toHaveURL(/\/runs\?status=failed$/);
+
+		await revokeLogins(controlPlane);
+
+		await expect(page).toHaveURL(/\/login\?/, { timeout: 20_000 });
+		expect(new URL(page.url()).searchParams.get("redirect")).toBe("/runs?status=failed");
+		await expect(page.getByText("登录已失效")).toBeVisible();
+
+		await login(page);
+		await expect(page).toHaveURL(/\/runs\?status=failed$/);
+	});
+
+	test.describe("从没登录过的人（昵称模式）", () => {
+		test.use({ nickname: "tester" });
+
+		test("打开同一个有事件流的页面：不跳转，页面照常在原处（昵称模式在 #494 之前仍然合法）", async ({
+			page,
+			controlPlane,
+			connectAgent,
+		}) => {
+			await connectAgent({ name: "agent-a" });
+			await publishPackage(controlPlane);
+			const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+			const runId = await triggerRun(controlPlane, scenario);
+
+			await page.goto(`/runs/${runId}`);
+			await expect(page.getByRole("tablist", { name: "运行监控视图" })).toBeVisible();
+			// 库里没有登录可注销；等过几轮重新检查和重连，页面仍然在原处。
+			await revokeLogins(controlPlane);
+			// biome-ignore lint/plugin/e2e-fixed-wait: 确认「没有跳转」这件事没有发生，只能等过几轮重新检查和重连（间隔 0.3 秒）
+			await page.waitForTimeout(3_000);
+			await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?view=overview)?$`));
+			await expect(page.getByRole("tablist", { name: "运行监控视图" })).toBeVisible();
+			await expect(page.getByText("登录已失效")).toBeHidden();
+		});
 	});
 });
 

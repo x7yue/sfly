@@ -26,6 +26,8 @@ export interface Victim {
 	scenario: string;
 	run: string;
 	task: string;
+	/** 项目乙里的会话：按会话 ID 定位的接口（项目从会话得出）填它。 */
+	session: string;
 	preset: string;
 	agent: string;
 	pkg: string;
@@ -47,6 +49,7 @@ export const ID_PARAM_VALUES = {
 	scenario: (v) => v.scenario,
 	run: (v) => v.run,
 	task: (v) => v.task,
+	session: (v) => v.session,
 	project: (v) => v.token,
 	package: () => null,
 	agent: () => null,
@@ -60,6 +63,7 @@ export const NAME_PARAM_VALUES = {
 	scenario: () => null,
 	run: () => null,
 	task: () => null,
+	session: () => null,
 	project: () => null,
 	package: (v) => v.pkg,
 	agent: (v) => v.agent,
@@ -122,6 +126,8 @@ const JSON_BODIES: Record<string, unknown> = {
 	"POST /projects/:project/tokens": { name: "新令牌", scopes: ["read"] },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },
 	"POST /orchestrations/:id/presence/leave": { session_id: "s1" },
+	"POST /projects/:project/sessions": { text: "你好" },
+	"POST /sessions/:id/messages": { text: "你好" },
 };
 
 /** 没有请求体的写接口。 */
@@ -135,6 +141,7 @@ const NO_BODY = new Set([
 	"DELETE /feishu-bots/:name",
 	"POST /feishu-bots/:name/test",
 	"DELETE /projects/:project/tokens/:id",
+	"POST /sessions/:id/stop",
 ]);
 
 /** 上传：请求体是原始字节。 */

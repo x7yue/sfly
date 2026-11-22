@@ -21,9 +21,12 @@ export const PROJECT_TOKEN_SCOPES: readonly Scope[] = SCOPES.filter((scope) => s
 /** 平台管理员在每个项目里都有项目管理员的权限。 */
 export const PLATFORM_ADMIN_SCOPES: readonly Scope[] = ROLE_SCOPES.project_admin;
 
-/** 范围表的一行：这类资源的读、写各要什么范围；`write` 是 null 表示没有任何人和程序能写。 */
+/**
+ * 范围表的一行：这类资源的写要什么范围（`write` 是 null 表示没有任何人和程序能写）；读几乎都是「读」，
+ * 例外写在 `read` 里（项目的管理面：列表也要「管理」）。
+ */
 interface ScopeRow {
-	read: Scope;
+	read?: Scope;
 	write: Scope | null;
 }
 
@@ -34,15 +37,17 @@ interface ScopeRow {
  * 写成 `Record<ResourceKind, …>`：契约里加一个资源类别，这里不加一行就过不了类型检查，不会悄悄没人管。
  */
 export const SCOPE_TABLE = {
-	scenario: { read: "read", write: "edit" },
-	run: { read: "read", write: "run" },
-	task: { read: "read", write: null },
-	package: { read: "read", write: "publish" },
-	agent: { read: "read", write: "manage" },
-	feishu_bot: { read: "read", write: "manage" },
-	system: { read: "read", write: null },
+	scenario: { write: "edit" },
+	run: { write: "run" },
+	task: { write: null },
+	package: { write: "publish" },
+	agent: { write: "manage" },
+	feishu_bot: { write: "manage" },
+	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）。
+	session: { write: "edit" },
+	system: { write: null },
 	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
-	account: { read: "read", write: null },
+	account: { write: null },
 	// 项目令牌、（以后的）成员和项目密钥：是项目的管理面，读和写都要管理。
 	project: { read: "manage", write: "manage" },
 } as const satisfies Record<ResourceKind, ScopeRow>;
@@ -57,7 +62,10 @@ export function requiredScope(route: {
 	resource: { kind: ResourceKind };
 	creates?: ResourceKind | undefined;
 }): Scope | null {
-	if (route.effect === "read") return SCOPE_TABLE[route.resource.kind].read;
+	if (route.effect === "read") {
+		const row: ScopeRow = SCOPE_TABLE[route.resource.kind];
+		return row.read ?? "read";
+	}
 	return SCOPE_TABLE[route.creates ?? route.resource.kind].write;
 }
 

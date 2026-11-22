@@ -239,6 +239,13 @@
       "when": 1795252390391,
       "tag": "0034_run_notify_always_to_failed_or_cancelled",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795330688703,
+      "tag": "0035_sessions",
+      "breakpoints": true
     }
   ]
 }

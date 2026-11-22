@@ -14,6 +14,7 @@ import { Readable, Writable } from "node:stream";
 import pg from "pg";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
+import { hashPassword } from "../src/auth/password.js";
 import { runResetPassword } from "../src/auth/reset-password-cli.js";
 import { loginCookie, TestAccounts } from "./support/credentials.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -306,6 +307,59 @@ describe("密码验证的并发闸：满过一次之后、客户端断开之后"
 		}
 	}, 60_000);
 
+	it("假哈希在控制面启动时就算好（warmUp）：启动后没有任何登录，它已经算过一次；之后不存在的登录名不再算", async () => {
+		let computed = 0;
+		cp = await startTestControlPlane({
+			initialAdmin: ADMIN,
+			dummyHash: async (password) => {
+				computed += 1;
+				return hashPassword(password, { logN: 10, r: 8, p: 1 });
+			},
+		});
+		const c = cp;
+		// 启动之后、还没有任何人登录：预热是启动时放到后台去做的，等它做完。
+		await vi.waitFor(() => expect(computed).toBe(1));
+		// 不存在的登录名：对着已经算好的假哈希验证，不再算一次（等多久都是一次）。
+		for (const name of ["no-such-user-1", "no-such-user-2"]) {
+			const res = await post(c, "/auth/login", { login_name: name, password: "wrong-password-0" });
+			expect(res.status).toBe(401);
+		}
+		expect(computed).toBe(1);
+	});
+
+	it("排队的改密码请求（验证旧密码）客户端断开之后也不再占着闸：断开前后正常登录要等的时间差一个数量级", async () => {
+		cp = await startTestControlPlane({
+			initialAdmin: ADMIN,
+			scrypt: { logN: 15, r: 8, p: 1 },
+			passwordGate: { concurrency: 1, maxQueue: 16 },
+			loginThrottle: { freeAttempts: 1_000_000, addressFreeAttempts: 1_000_000 },
+		});
+		const c = cp;
+		const good = { login_name: ADMIN.loginName, password: ADMIN.password };
+		const cookie = cookieOf(await post(c, "/auth/login", good));
+		await timed(c, good);
+		const quiet = Math.min((await timed(c, good)).ms, (await timed(c, good)).ms);
+
+		// 12 个改密码请求（旧密码是错的）进闸，30 毫秒后客户端全部断开。
+		const sockets = Array.from({ length: 12 }, () =>
+			startRequest(
+				c,
+				"/auth/password",
+				{ old_password: "wrong-old-password", new_password: "new-password-123" },
+				cookie,
+			),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		for (const socket of sockets) socket.abort();
+		const after = await timed(c, good);
+		expect(after.status).toBe(200);
+		console.log(
+			`断开之后正常登录用了 ${Math.round(after.ms)} 毫秒（没有排队时 ${Math.round(quiet)} 毫秒）`,
+		);
+		expect(after.ms, `没有排队时 ${Math.round(quiet)} 毫秒`).toBeLessThan(quiet * 5 + 150);
+		await Promise.allSettled(sockets.map((socket) => socket.done));
+	}, 60_000);
+
 	it("排队的请求客户端断开之后不再占着闸：断开前后正常登录要等的时间差一个数量级（不断开要等完所有排着的）", async () => {
 		cp = await startTestControlPlane({
 			initialAdmin: ADMIN,
@@ -336,17 +390,24 @@ describe("密码验证的并发闸：满过一次之后、客户端断开之后"
 	}, 60_000);
 });
 
-/** 发一个登录请求但不等响应：可以随时断开（模拟发了就走的客户端）。 */
-function startLogin(c: TestControlPlane, body: unknown) {
+/** 发一个 POST 请求但不等响应：可以随时断开（模拟发了就走的客户端）；`cookie` 是登录 Cookie（可选）。 */
+function startRequest(c: TestControlPlane, path: string, body: unknown, cookie?: string) {
 	const payload = JSON.stringify(body);
 	let request_: ReturnType<typeof request> | undefined;
 	const done = new Promise<void>((resolve) => {
 		request_ = request(
-			new URL("/auth/login", c.httpUrl),
+			new URL(path, c.httpUrl),
 			{
 				method: "POST",
 				agent: false,
-				headers: { ...JSON_HEADERS, "content-length": Buffer.byteLength(payload) },
+				headers: {
+					...JSON_HEADERS,
+					"content-length": Buffer.byteLength(payload),
+					// 同源的浏览器请求：带 Cookie 的请求要过跨站检查。
+					...(cookie === undefined
+						? {}
+						: { cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" }),
+				},
 			},
 			(res) => {
 				res.resume();
@@ -359,6 +420,9 @@ function startLogin(c: TestControlPlane, body: unknown) {
 	});
 	return { done, abort: () => request_?.destroy() };
 }
+
+/** 发一个登录请求但不等响应。 */
+const startLogin = (c: TestControlPlane, body: unknown) => startRequest(c, "/auth/login", body);
 
 describe("密码验证的并发上限", () => {
 	it("登录风暴期间读文件的接口不被拖慢（真实的 scrypt 参数，限速放开，只看并发闸）", async () => {
@@ -495,6 +559,36 @@ describe("登出总是清掉 Cookie", () => {
 			headers: { cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" },
 		});
 		expect(me.status).toBe(401);
+	});
+
+	it("登出时带着 Bearer（无效的、空的）又带着有效的登录 Cookie：204、清 Cookie，库里的登录不注销（带令牌时登出只清 Cookie，令牌不是登录）", async () => {
+		cp = await startTestControlPlane({ initialAdmin: ADMIN });
+		const c = cp;
+		const cookie = cookieOf(
+			await post(c, "/auth/login", { login_name: "root", password: ADMIN.password }),
+		);
+		const me = () =>
+			c.fetch("/auth/me", {
+				headers: { cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" },
+			});
+		for (const authorization of ["Bearer sfly_pat_no-such-token-0000000000", "Bearer", "Bearer "]) {
+			const res = await raw(c, "/auth/logout", "POST", {
+				cookie: `sfly_login=${cookie}`,
+				authorization,
+				"sec-fetch-site": "same-origin",
+			});
+			expect(res.status, authorization).toBe(204);
+			expect(cleared(res.headers["set-cookie"]), authorization).toBe(true);
+			// 库里的登录还有效。
+			expect((await me()).status, authorization).toBe(200);
+		}
+		// 对照：只带 Cookie 的登出注销库里的登录。
+		const plain = await raw(c, "/auth/logout", "POST", {
+			cookie: `sfly_login=${cookie}`,
+			"sec-fetch-site": "same-origin",
+		});
+		expect(plain.status).toBe(204);
+		expect((await me()).status).toBe(401);
 	});
 
 	it("跨站的登出也一样：带着有效的登录 Cookie 就注销库里的这条登录，别的登录不受影响；响应仍然是 204 并清掉 Cookie", async () => {
