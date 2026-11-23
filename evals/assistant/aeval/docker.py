@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Mapping, Sequence
 
@@ -15,13 +16,17 @@ def docker(
     check: bool = True,
     input_text: str | None = None,
     timeout: float | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """`env`：加给 docker 命令行进程的环境变量。保密的值用它，配合参数里只写名字的 `-e 名字`：
+    值不出现在命令行参数里（`ps` 看得到参数），出错时也不会被带进异常。"""
     result = subprocess.run(
         ["docker", *args],
         input=input_text,
         capture_output=True,
         text=True,
         timeout=timeout,
+        env={**os.environ, **env} if env else None,
     )
     if check and result.returncode != 0:
         tail = (result.stderr or result.stdout).strip().splitlines()[-15:]

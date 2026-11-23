@@ -122,27 +122,20 @@ for (let buf = ""; ; ) {
 
 ### 5. 接控制面
 
-控制面配三个环境变量就会把会话交给这个助手服务：`SFLY_ASSISTANT_URL=http://sfly-aeval-1-assistant:8090`
-（控制面和助手容器在同一个网络里时；不在时用助手容器映射出来的地址）、`SFLY_ASSISTANT_SECRET`（和上面同一个）、
-`SFLY_WORKBENCH_AGENT=dev-root-dev`。控制面把工作台 Agent 上报的能力端口地址、工作区 `/work` 交给助手服务。控制面怎么建会话、
-发话见 `docs/ARCHITECTURE.md`「助手会话」一节。
+评测集的 `./aeval.sh up --server-image <源码构建的控制面> --assistant` 一条命令起好：助手容器、控制面配上
+`SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`、`SFLY_WORKBENCH_AGENT=dev-root-dev`，Agent 在线、助手就绪才结束；
+`./aeval.sh e2e` 经控制面的接口跑一道题（见 `evals/assistant/README.md`「平台的助手」）。上面第 1–4 步是不经控制面、
+直接驱动助手服务的做法，查助手服务自己的问题时用。
 
-评测环境的控制面容器是 `aeval.sh` 起的，不带这三个变量：先照评测集 README 用当前源码构建控制面镜像（`--server-image`），
-`up`、`reset` 之后，把 `sfly-aeval-1-cp` 按 `docker inspect` 看到的参数（网络、别名 `sfly.internal`、数据卷、环境变量、端口）
-重新 `docker run` 一遍，加上这三个变量；要登录时再加 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`（值从宿主的环境带进去）。
-`aeval.sh` 再重建控制面（`reset`、`run`）时这几个变量就没了。
-
-然后经控制面的接口驱动（`POST /auth/login` 拿 Cookie，写请求带 `x-sfly-nickname`）：
+控制面把工作台 Agent 上报的能力端口地址、工作区 `/work` 交给助手服务。控制面怎么建会话、发话见 `docs/ARCHITECTURE.md`
+「助手会话」一节。照着跑过一遍时看到的：
 
 - `GET /projects/default/sessions` 的 `readiness` 是 `{"ready": true, "workbench": "dev-root-dev"}`；
-- `POST /projects/default/sessions {"text": "AEVAL-SCRIPT:demo 照剧本做。"}` 是 201，几秒后 `GET /sessions/<ID>` 里依次是
-  `user_message`、`turn_started`、写和命令的 `tool_call` / `tool_result`（命令拿到了昵称）、`assistant_message`、
-  `turn_end`（`completed`），工作台上的 `/work/notes/a.txt` 和 `/work/.agents/skills/` 都在；
-- 另一个会话跑一条 `sleep 600` 时 `POST /sessions/<ID>/stop`：1 秒左右这一轮以 `stopped`（「用户停止了这一轮」，是助手服务
+- `POST /projects/default/sessions`（写请求带 `x-sfly-nickname`）是 201，几秒后 `GET /sessions/<ID>` 里依次是
+  `user_message`、`turn_started`、`tool_call` / `tool_result`（命令拿到了昵称）、`assistant_message`、`turn_end`（`completed`）；
+- 一条 `sleep 600` 跑着时 `POST /sessions/<ID>/stop`：1 秒左右这一轮以 `stopped`（「用户停止了这一轮」，是助手服务
   带回来的结局）结束，工作台上的 `sleep` 没了；
 - 这个会话空闲时再点一次停止（控制面带最近一轮的轮次发 `abort`，那一轮已经结束），紧接着发一句：新的一轮照常 `completed`。
-
-剧本由会话的第一句话决定：假模型照第一句话里的 `AEVAL-SCRIPT:<名字>` 选剧本，后面的话不换剧本。
 
 ### 常见问题
 

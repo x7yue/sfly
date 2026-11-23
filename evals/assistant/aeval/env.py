@@ -8,6 +8,7 @@
 | `sfly-aeval-<槽位>-dev` | 开发环境容器（工作台的雏形）：`--dev` 装的 Agent、uv、sfly、pi |
 | `sfly-aeval-<槽位>-sut` | 被测机：普通的 Agent，上面跑着被测服务 |
 | `sfly-aeval-<槽位>-pi` | 臂 B 的 pi：本地没有工作区，工具经能力端口落到 `dev` 上 |
+| `sfly-aeval-<槽位>-assistant` | `up --assistant`：平台的助手服务，控制面把会话交给它 |
 
 两个槽位可以同时跑会话，互不影响。容器、网络、卷都以 `sfly-aeval-` 开头，`down` 全部删掉。
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import tempfile
 import time
@@ -30,6 +32,12 @@ EVALS_DIR = Path(__file__).resolve().parent.parent
 DATA_HOME = Path(os.environ.get("AEVAL_HOME", Path.home() / ".local/share/sfly/evals"))
 DEFAULT_SERVER_IMAGE = "ghcr.io/x7yue/sfly-server:0.5.0"
 DEFAULT_WORKBENCH_IMAGE = "sfly-aeval-workbench:pi-1.6.0"
+# 助手镜像从源码构建（README「前提」）；控制面也要用源码构建的（会话模块在 0.5.0 之后）。
+DEFAULT_ASSISTANT_IMAGE = "sfly-assistant:dev"
+ASSISTANT_PORT = 8090
+# 助手容器上记着它用的是模型配置里的哪个模型：之后的命令（reset、e2e）照着重建。
+ASSISTANT_MODEL_LABEL = "sfly.aeval.assistant-model"
+ASSISTANT_SECRET_ENV = "SFLY_ASSISTANT_SECRET"
 REPO_DIR = EVALS_DIR.parent.parent
 POSTGRES_IMAGE = "postgres:18"
 SUT_AGENT = "sut-01"
@@ -116,6 +124,13 @@ class Stack:
     pypi_mirror: str = "http://mirror.internal:8000/pypi/simple"
     github_mirror: str = "http://mirror.internal:8000/github-release"
     evals_dir: Path = EVALS_DIR
+    # 平台的助手（#543）：起助手容器，控制面配上它和工作台（dev 上的 Agent）。
+    assistant: bool = False
+    assistant_image: str = DEFAULT_ASSISTANT_IMAGE
+    # 模型配置（aeval.models）里的模型名：fake 是假的模型端点，别的经宿主机的转发口。
+    assistant_model: str = "fake"
+    # 控制面和助手服务共用的密钥：up 时随机生成，之后从助手容器读回来；不打印、不写文件。
+    assistant_secret: str | None = field(default=None, repr=False)
 
     def name(self, role: str) -> str:
         return f"sfly-aeval-{self.slot}-{role}"
@@ -143,6 +158,14 @@ class Stack:
     @property
     def cp_url(self) -> str:
         return f"http://127.0.0.1:{self.http_port}"
+
+    @property
+    def assistant_container(self) -> str:
+        return self.name("assistant")
+
+    @property
+    def assistant_url(self) -> str:
+        return f"http://assistant.internal:{ASSISTANT_PORT}"
 
     # ---- 起停 ----
 
@@ -254,6 +277,11 @@ class Stack:
 
     def up(self, log: Any = print) -> None:
         self.ensure_images(log)
+        if self.assistant:
+            self.check_assistant_model()
+            if self.assistant_model == "fake":
+                self.fake_model = True
+            self.assistant_secret = self.assistant_secret or secrets.token_hex(24)
         self.ensure_network(log)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         log(f"镜像站（{self.mirror_mode}）")
@@ -275,6 +303,12 @@ class Stack:
             )
         log("PostgreSQL")
         self._start_postgres()
+        if self.assistant:
+            log(f"助手服务 {self.assistant_image}（模型 {self.assistant_model}）")
+            self._start_assistant()
+        else:
+            # 以前 up --assistant 留下的助手容器：之后的命令会照着它接着用，这次没要助手就删掉。
+            d.docker("rm", "-f", self.assistant_container, check=False)
         log(f"控制面 {self.server_image}")
         self._start_control_plane()
         for role, memory in (("dev", "4g"), ("sut", "1g")):
@@ -305,10 +339,28 @@ class Stack:
         if self.internal:
             self.verify_isolated()
             log("已确认断网：开发环境容器连不上外网和宿主机")
+        if self.assistant:
+            # 上面取完基线就停了 Agent（别的命令都先 reset 再用）；助手要工作台在线，这里重新起好，
+            # up 完就能用。
+            self.start_agents()
+            self.wait_agents(timeout=180)
+            self.wait_assistant_ready()
+            log("助手就绪：工作台是 dev 上的 Agent")
         log(f"环境就绪：控制面 {self.cp_url}")
 
     def down(self) -> None:
-        for role in ("rpcprobe", "hardened", "pi", "dev", "sut", "cp", "pg", "mirror", "fake"):
+        for role in (
+            "rpcprobe",
+            "hardened",
+            "pi",
+            "assistant",
+            "dev",
+            "sut",
+            "cp",
+            "pg",
+            "mirror",
+            "fake",
+        ):
             d.docker("rm", "-f", self.name(role), check=False)
         d.docker("volume", "rm", self.name("cpdata"), check=False)
         d.docker("network", "rm", self.network, check=False)
@@ -323,9 +375,12 @@ class Stack:
         hostname: str | None = None,
         volumes: list[str] | None = None,
         env: dict[str, str] | None = None,
+        secret_env: dict[str, str] | None = None,
         ports: list[str] | None = None,
         extra: list[str] | None = None,
     ) -> None:
+        """`secret_env`：保密的环境变量，参数里只写名字（`-e 名字`），
+        值经 docker 命令行进程的环境带进去。"""
         name = self.name(role)
         d.docker("rm", "-f", name, check=False)
         args = ["run", "-d", "--name", name, "--network", self.network, "--init"]
@@ -338,10 +393,12 @@ class Stack:
             args += ["-v", volume]
         for key, value in (env or {}).items():
             args += ["-e", f"{key}={value}"]
+        for key in secret_env or {}:
+            args += ["-e", key]
         for port in ports or []:
             args += ["-p", port]
         args += extra or []
-        d.docker(*args, image, *argv)
+        d.docker(*args, image, *argv, env=secret_env)
 
     def _start_postgres(self) -> None:
         self._run(
@@ -363,18 +420,26 @@ class Stack:
 
     def _start_control_plane(self) -> None:
         d.docker("volume", "rm", self.name("cpdata"), check=False)
+        env = {
+            "DATABASE_URL": f"postgres://sfly:sfly@{self.name('pg')}:5432/sfly",
+            "SFLY_PUBLIC_URL": "http://sfly.internal:8080",
+            "SFLY_PYPI_MIRROR": self.pypi_mirror,
+            "SFLY_GITHUB_RELEASE_MIRROR": self.github_mirror,
+        }
+        secret_env: dict[str, str] = {}
+        if self.assistant:
+            # 控制面把会话交给助手服务，工作台是 dev 上的 Agent（竖切的桩，#549 换成项目上的设置）。
+            env["SFLY_ASSISTANT_URL"] = self.assistant_url
+            env["SFLY_WORKBENCH_AGENT"] = DEV_AGENT
+            secret_env[ASSISTANT_SECRET_ENV] = self._secret()
         self._run(
             "cp",
             self.server_image,
             [],
             aliases=["sfly.internal"],
             volumes=[f"{self.name('cpdata')}:/data"],
-            env={
-                "DATABASE_URL": f"postgres://sfly:sfly@{self.name('pg')}:5432/sfly",
-                "SFLY_PUBLIC_URL": "http://sfly.internal:8080",
-                "SFLY_PYPI_MIRROR": self.pypi_mirror,
-                "SFLY_GITHUB_RELEASE_MIRROR": self.github_mirror,
-            },
+            env=env,
+            secret_env=secret_env,
             # 断网的网络发布不了端口；所有操作本来就经 docker exec，不依赖它。
             ports=[] if self.internal else [f"127.0.0.1:{self.http_port}:8080"],
         )
@@ -390,6 +455,145 @@ class Stack:
                 raise d.DockerError("控制面容器退出了：\n" + logs.stdout + logs.stderr)
             time.sleep(1)
         raise d.DockerError("控制面 120 秒内没有变成 healthy")
+
+    # ---- 助手（#543） ----
+
+    def check_assistant_model(self) -> None:
+        """助手用的模型在模型配置里；断网的环境只能用假的模型端点。"""
+        from aeval.models import load_models
+
+        if self.internal and self.assistant_model != "fake":
+            raise d.DockerError(
+                "断网的环境（--isolated）里助手只能用假的模型端点（--assistant-model fake）"
+            )
+        if self.assistant_model not in load_models():
+            raise d.DockerError(f"模型配置里没有 {self.assistant_model}（见 README.md「模型」）")
+
+    def assistant_models_file(self) -> Path:
+        """挂给助手容器的模型文件（pi 的格式）：一个提供方 aeval，指向这个模型的端点，
+        `apiKey` 是占位值
+        （转发口转发时才加上凭据，见 aeval.models），文件里没有密钥。"""
+        from aeval.models import load_models
+
+        model = load_models()[self.assistant_model]
+        path = DATA_HOME / "assistant" / f"slot-{self.slot}" / "models.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(model.pi_models_json(), ensure_ascii=False, indent=2))
+        return path
+
+    def assistant_model_ref(self) -> str:
+        """`SFLY_ASSISTANT_MODEL`：照 pi 的 `--model` 写，`aeval/<模型 id>`，有思考强度时带上。"""
+        from aeval.models import PROVIDER, load_models
+
+        model = load_models()[self.assistant_model]
+        ref = f"{PROVIDER}/{model.model_id}"
+        return f"{ref}:{model.thinking}" if model.thinking else ref
+
+    def _secret(self) -> str:
+        if not self.assistant_secret:
+            raise d.DockerError("没有控制面和助手服务共用的密钥：先 ./aeval.sh up --assistant")
+        return self.assistant_secret
+
+    def adopt_assistant(self) -> bool:
+        """这个槽位已经起着助手容器时，照它接着用（镜像、模型、密钥）：reset、e2e 重建控制面和助手时
+        沿用 up 时的设置。密钥从容器的环境读回来，只放在内存里。"""
+        found = d.docker(
+            "inspect",
+            "--format",
+            "{{json .Config.Env}}\t{{index .Config.Labels "
+            f'"{ASSISTANT_MODEL_LABEL}"'
+            "}}\t{{.Config.Image}}",
+            self.assistant_container,
+            check=False,
+        )
+        parts = found.stdout.strip().split("\t")
+        if found.returncode != 0 or len(parts) != 3:
+            return False
+        env_json, model, image = parts
+        try:
+            listed = json.loads(env_json)
+        except ValueError:
+            return False
+        values = dict(str(item).split("=", 1) for item in listed or [] if "=" in str(item))
+        secret = values.get(ASSISTANT_SECRET_ENV)
+        if not secret:
+            return False
+        self.assistant = True
+        self.assistant_secret = secret
+        self.assistant_image = image
+        if model and model != "<no value>":
+            self.assistant_model = model
+        return True
+
+    def _start_assistant(self) -> None:
+        """助手容器：和别的容器同一个网络（连得到控制面、dev 上 Agent 的能力端口、假的模型端点），
+        宿主机的模型转发口经 host.docker.internal。没有密钥以外的凭据：
+        模型的凭据在宿主机的转发口里。"""
+        if not d.exists("image", self.assistant_image):
+            raise d.DockerError(
+                f"没有助手镜像 {self.assistant_image}：先从源码构建，见 README.md「前提」"
+            )
+        models = self.assistant_models_file()
+        self._run(
+            "assistant",
+            self.assistant_image,
+            [],
+            aliases=["assistant.internal"],
+            volumes=[f"{models}:/config/models.json:ro"],
+            env={"SFLY_ASSISTANT_MODEL": self.assistant_model_ref()},
+            secret_env={ASSISTANT_SECRET_ENV: self._secret()},
+            extra=[
+                "--memory",
+                "2g",
+                "--label",
+                f"{ASSISTANT_MODEL_LABEL}={self.assistant_model}",
+                "--add-host",
+                "host.docker.internal:host-gateway",
+            ],
+        )
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            logs = d.docker("logs", self.assistant_container, check=False)
+            if "助手服务在 :" in logs.stdout + logs.stderr:
+                return
+            if not d.container_running(self.assistant_container):
+                raise d.DockerError("助手容器退出了：\n" + (logs.stdout + logs.stderr)[-2000:])
+            time.sleep(1)
+        raise d.DockerError("助手服务 60 秒内没有起来")
+
+    def readiness(self) -> dict[str, Any] | None:
+        """控制面说助手此刻能不能用（`GET /projects/default/sessions` 的 readiness）；
+        读不到时是 None。控制面没有会话的接口（404，镜像太旧）时直接报错，不用等。"""
+        out = d.sh(
+            self.dev,
+            "curl -sS -m 10 -w '\\n%{http_code}' http://sfly.internal:8080/projects/default/sessions",
+            check=False,
+        )
+        body, _, status = out.stdout.rpartition("\n")
+        if status.strip() == "404":
+            raise d.DockerError(
+                "控制面没有会话的接口：--assistant 要用源码构建的控制面镜像"
+                "（--server-image，见 README.md「前提」）"
+            )
+        try:
+            value = json.loads(body).get("readiness")
+        except (ValueError, AttributeError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def wait_assistant_ready(self, timeout: float = 60) -> None:
+        """等控制面说助手能用（助手服务连得上、工作台在线、能力端口有地址）。"""
+        deadline = time.monotonic() + timeout
+        ready: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            ready = self.readiness()
+            if ready and ready.get("ready"):
+                return
+            time.sleep(2)
+        if ready is None:
+            raise d.DockerError(f"{timeout:.0f} 秒内读不到控制面的就绪状态")
+        problems = "；".join(str(p.get("message")) for p in ready.get("problems") or [])
+        raise d.DockerError(f"助手在 {timeout:.0f} 秒内没有就绪：{problems}")
 
     def _install_agents(self) -> None:
         url = "http://sfly.internal:8080/install.sh"
@@ -489,6 +693,9 @@ class Stack:
         pg = self.name("pg")
         d.docker("exec", pg, "dropdb", "-U", "sfly", "--force", "--if-exists", "sfly")
         d.docker("exec", pg, "createdb", "-U", "sfly", "sfly")
+        if self.assistant:
+            # 助手服务也重建：上一次的会话、pi 进程和会话目录不留到下一次（库已经重建了）。
+            self._start_assistant()
         self._start_control_plane()
         for container in (self.dev, self.sut):
             d.sh(
@@ -511,6 +718,8 @@ class Stack:
         self.start_agents()
         self.wait_agents(timeout=180)
         self.start_service()
+        if self.assistant:
+            self.wait_assistant_ready()
 
     # ---- 在开发环境容器里执行 ----
 
