@@ -6,7 +6,7 @@ import type { PersistedSessionEvent, SessionEvent } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/database.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../src/projects/project-id.js";
-import { ProjectBusyError, SessionStore } from "../src/sessions/session-store.js";
+import { SessionStore } from "../src/sessions/session-store.js";
 import { eventually } from "./support/eventually.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { messageId } from "./support/sessions.js";
@@ -42,6 +42,7 @@ describe("会话事件的落库和发布顺序", () => {
 	/** 每个用例换一个：afterCommit 在构造时给。 */
 	let hold: ((sessionId: string, event: PersistedSessionEvent) => Promise<void>) | undefined;
 	let store: SessionStore;
+	const clock = new ManualClock(new Date("2026-01-01T00:00:00.000Z"));
 
 	beforeAll(async () => {
 		testDb = await createTestDatabase();
@@ -49,7 +50,7 @@ describe("会话事件的落库和发布顺序", () => {
 		await database.migrate();
 		store = new SessionStore({
 			db: database.db,
-			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+			clock,
 			afterCommit: (sessionId, event) => hold?.(sessionId, event) ?? Promise.resolve(),
 		});
 	});
@@ -79,9 +80,6 @@ describe("会话事件的落库和发布顺序", () => {
 		);
 		return id as ProjectId;
 	};
-
-	/** 一轮开头的事件：用户的话和这一轮的开始。 */
-	const opening = (turn: number) => [userBody(turn), { type: "turn_started" as const, turn }];
 
 	/** 订阅一个会话的实时事件（和事件流的补发一起用 `store.follow`）。 */
 	const collect = (sessionId: string, after = 0) => {
@@ -146,8 +144,12 @@ describe("会话事件的落库和发布顺序", () => {
 			}
 		};
 		try {
-			// 第 4 条已经提交、停在发布之前。
-			const fourth = store.append(id, userBody(4));
+			// 第 4 条（助手的一条完整消息）已经提交、停在发布之前。
+			const fourth = store.append(id, {
+				type: "assistant_message",
+				text: "完整的消息",
+				usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+			});
 			await committed.opened;
 			// 这时一个新的事件流打开：订阅，再补发读库。读库排在链上，等第 4 条发布完再读。
 			const { out, stop } = collect(id, 3);
@@ -245,7 +247,7 @@ describe("会话事件的落库和发布顺序", () => {
 		const { out, stop } = collect(id);
 		await settle();
 		const status = async () => (await store.find(id))?.status;
-		await store.beginTurn(id, project, opening);
+		await store.beginTurn(id, project, userBody(1));
 		const first = await store.append(id, turnEnd(1, "stopped"));
 		expect(await status()).toBe("idle");
 		// 同一轮的第二条（晚到的助手服务的结局）：不记。
@@ -255,7 +257,7 @@ describe("会话事件的落库和发布顺序", () => {
 		expect((await store.after(id, 0, 10)).filter((e) => e.type === "turn_end")).toHaveLength(1);
 		await eventually(() => expect(shape(out)).toEqual([1, 2, 3]));
 		// 第 2 轮开始（会话在做）后，晚到的第 1 轮结局不会把它改回空闲。
-		await store.beginTurn(id, project, opening);
+		await store.beginTurn(id, project, userBody(1));
 		expect(await status()).toBe("running");
 		await store.append(id, turnEnd(1, "completed"));
 		expect(await status()).toBe("running");
@@ -278,20 +280,20 @@ describe("会话事件的落库和发布顺序", () => {
 		it("beginTurn：改成在做、轮次加一、用户的话和一轮开始一起落库；已经在做、已结束的不动，返回当时的状态", async () => {
 			const project = await newProject();
 			const { id } = await newSession("idle", project);
-			const first = await store.beginTurn(id, project, opening);
-			expect(first).toMatchObject({ started: true, turn: 1 });
-			expect(first.started && first.events.map((e) => e.type)).toEqual([
+			const first = await store.beginTurn(id, project, userBody(1));
+			expect(first).toMatchObject({ outcome: "started", turn: 1 });
+			expect(first.outcome === "started" && first.events.map((e) => e.type)).toEqual([
 				"user_message",
 				"turn_started",
 			]);
 			expect(await store.find(id)).toMatchObject({ status: "running", currentTurn: 1 });
-			expect(await store.beginTurn(id, project, opening)).toEqual({
-				started: false,
+			expect(await store.beginTurn(id, project, userBody(1))).toEqual({
+				outcome: "refused",
 				status: "running",
 			});
 			await database.pool.query("update sessions set status = 'ended' where id = $1", [id]);
-			expect(await store.beginTurn(id, project, opening)).toEqual({
-				started: false,
+			expect(await store.beginTurn(id, project, userBody(1))).toEqual({
+				outcome: "refused",
 				status: "ended",
 			});
 			expect(await eventsOf(id)).toEqual(["user_message", "turn_started"]);
@@ -300,45 +302,183 @@ describe("会话事件的落库和发布顺序", () => {
 		it("beginTurn 中途出错（事件过不了 schema）：整个事务回滚，会话还是空闲、轮次没动、一条事件也没有，项目没被占着", async () => {
 			const project = await newProject();
 			const { id } = await newSession("idle", project);
-			await expect(
-				store.beginTurn(id, project, (turn) => [
-					userBody(1),
-					{ type: "turn_started", turn: -turn } as never,
-				]),
-			).rejects.toThrow();
+			await expect(store.beginTurn(id, project, { type: "nope" } as never)).rejects.toThrow();
 			expect(await store.find(id)).toMatchObject({ status: "idle", currentTurn: 0 });
 			expect(await eventsOf(id)).toEqual([]);
 			expect(await store.running(project)).toBeUndefined();
 			// 之后照常能开始。
-			expect(await store.beginTurn(id, project, opening)).toMatchObject({ started: true, turn: 1 });
+			expect(await store.beginTurn(id, project, userBody(1))).toMatchObject({
+				outcome: "started",
+				turn: 1,
+			});
 		});
 
-		it("项目里已经有在做的会话：别的会话 beginTurn 抛 ProjectBusyError，整个事务回滚，没有事件也没有改状态", async () => {
+		it("项目里已经有在做的会话：别的会话 beginTurn 排队（queued、记下排队时间、只写用户的话，不写一轮开始），不是报错（#544）", async () => {
 			const project = await newProject();
 			const a = await newSession("idle", project);
 			const b = await newSession("idle", project);
-			await store.beginTurn(a.id, project, opening);
-			await expect(store.beginTurn(b.id, project, opening)).rejects.toBeInstanceOf(
-				ProjectBusyError,
-			);
-			expect(await store.find(b.id)).toMatchObject({ status: "idle", currentTurn: 0 });
-			expect(await eventsOf(b.id)).toEqual([]);
+			await store.beginTurn(a.id, project, userBody(1));
+			const queued = await store.beginTurn(b.id, project, userBody(2));
+			expect(queued).toMatchObject({ outcome: "queued" });
+			expect(queued.outcome === "queued" && queued.events.map((e) => e.type)).toEqual([
+				"user_message",
+			]);
+			expect(await store.find(b.id)).toMatchObject({ status: "queued", currentTurn: 0 });
+			expect((await store.find(b.id))?.queuedAt).toBeInstanceOf(Date);
+			expect(await eventsOf(b.id)).toEqual(["user_message"]);
+			// 排队中再 beginTurn：什么也不改，返回当时的状态。
+			expect(await store.beginTurn(b.id, project, userBody(3))).toEqual({
+				outcome: "refused",
+				status: "queued",
+			});
+			expect(await eventsOf(b.id)).toEqual(["user_message"]);
 		});
 
-		it("createWithTurn：会话、用户的话、一轮开始在一个事务里；撞上在做的会话、或者事件写不进去，都不留下行", async () => {
+		it("排队的先来：项目里有排队的会话时，新来的会话即使没有会话在做也排队，不能插队（#544）", async () => {
+			const project = await newProject();
+			const a = await newSession("idle", project);
+			const b = await newSession("idle", project);
+			const c = await newSession("idle", project);
+			await store.beginTurn(a.id, project, userBody(1));
+			expect(await store.beginTurn(b.id, project, userBody(2))).toMatchObject({
+				outcome: "queued",
+			});
+			// a 这一轮结束，项目的位置空出来了；b 排着队、还没被开始。
+			await store.append(a.id, turnEnd(1));
+			expect(await store.running(project)).toBeUndefined();
+			// c 这时来了：不能插到 b 前面。
+			expect(await store.beginTurn(c.id, project, userBody(3))).toMatchObject({
+				outcome: "queued",
+			});
+			expect((await store.queued(project)).map((row) => row.id)).toEqual([b.id, c.id]);
+		});
+
+		it("promoteNext：开始排队时间最早的会话（同一时刻的按 ID），轮次加一、写 turn_started、清掉排队时间，返回它排队时说的那句话；项目里有会话在做时什么也不做", async () => {
+			const project = await newProject();
+			const [a, b, c] = [
+				await newSession("idle", project),
+				await newSession("idle", project),
+				await newSession("idle", project),
+			] as const;
+			await store.beginTurn(a.id, project, userBody(1));
+			clock.advance(1000);
+			await store.beginTurn(b.id, project, { ...userBody(2), text: "乙的话", author: "bob" });
+			clock.advance(1000);
+			await store.beginTurn(c.id, project, userBody(3));
+			// a 在做：什么也不做。
+			expect(await store.promoteNext(project)).toBeUndefined();
+			await store.append(a.id, turnEnd(1));
+			const promoted = await store.promoteNext(project);
+			expect(promoted).toMatchObject({
+				session: { id: b.id, status: "running", currentTurn: 1 },
+				turn: 1,
+				message: { text: "乙的话", author: "bob" },
+			});
+			expect((await store.find(b.id))?.queuedAt).toBeNull();
+			expect(await eventsOf(b.id)).toEqual(["user_message", "turn_started"]);
+			// b 在做：不会再开始 c。
+			expect(await store.promoteNext(project)).toBeUndefined();
+			expect((await store.queued(project)).map((row) => row.id)).toEqual([c.id]);
+			expect(await store.queuePosition((await store.find(c.id)) as never)).toBe(1);
+		});
+
+		it("onTurnEnd：turn_end 把会话从在做改回空闲时调用（不论是 append 还是助手服务发来的；重复的、迟到的不调用）", async () => {
+			const project = await newProject();
+			const { id } = await newSession("idle", project);
+			const calls: string[] = [];
+			store.onTurnEnd((p) => calls.push(p));
+			try {
+				await store.beginTurn(id, project, userBody(1));
+				await store.append(id, turnEnd(1));
+				expect(calls).toEqual([project]);
+				// 同一轮的重复结局：会话已经空闲，不再调用。
+				await store.append(id, turnEnd(1, "stopped"));
+				expect(calls).toEqual([project]);
+				await store.beginTurn(id, project, userBody(2));
+				await store.appendFromAssistant(id, 2, turnEnd(2), new Date("2026-01-01T00:00:00.000Z"));
+				expect(calls).toEqual([project, project]);
+			} finally {
+				store.onTurnEnd(() => {});
+			}
+		});
+
+		it("steer：在做时写 user_message（steer: true）；不在做时什么也不写，返回当时的状态", async () => {
+			const project = await newProject();
+			const { id } = await newSession("idle", project);
+			expect(await store.steer(id, { ...userBody(1), steer: true })).toEqual({
+				steered: false,
+				status: "idle",
+			});
+			await store.beginTurn(id, project, userBody(2));
+			const steered = await store.steer(id, { ...userBody(3), steer: true });
+			expect(steered).toMatchObject({ steered: true, turn: 1 });
+			expect((await store.after(id, 0, 10)).at(-1)).toMatchObject({
+				type: "user_message",
+				steer: true,
+			});
+			await store.append(id, turnEnd(1));
+			expect(await store.steer(id, { ...userBody(4), steer: true })).toMatchObject({
+				steered: false,
+			});
+			expect(await eventsOf(id)).toEqual([
+				"user_message",
+				"turn_started",
+				"user_message",
+				"turn_end",
+			]);
+		});
+
+		it("cancelQueued：排队中的会话回到空闲、清掉排队时间、写 queue_cancelled（带那句话的 message_id）；不在排队时什么也不改", async () => {
+			const project = await newProject();
+			const a = await newSession("idle", project);
+			const b = await newSession("idle", project);
+			await store.beginTurn(a.id, project, userBody(1));
+			await store.beginTurn(b.id, project, userBody(2));
+			expect(await store.cancelQueued(a.id)).toEqual({ cancelled: false, status: "running" });
+			const cancelled = await store.cancelQueued(b.id);
+			expect(cancelled).toMatchObject({
+				cancelled: true,
+				event: { type: "notice", kind: "queue_cancelled", message_id: userBody(2).message_id },
+			});
+			expect(await store.find(b.id)).toMatchObject({ status: "idle", queuedAt: null });
+			expect(await store.cancelQueued(b.id)).toEqual({ cancelled: false, status: "idle" });
+		});
+
+		it("end：空闲和排队中的会话改成 ended、写 session_ended；在做的不能结束；已经结束的什么也不写", async () => {
+			const project = await newProject();
+			const a = await newSession("idle", project);
+			const b = await newSession("idle", project);
+			await store.beginTurn(a.id, project, userBody(1));
+			await store.beginTurn(b.id, project, userBody(2));
+			expect(await store.end(a.id, "bob")).toEqual({ ended: false, status: "running" });
+			const endedQueued = await store.end(b.id, "bob");
+			expect(endedQueued).toMatchObject({
+				ended: true,
+				event: { type: "session_ended", by: "bob" },
+			});
+			expect(await store.find(b.id)).toMatchObject({ status: "ended", queuedAt: null });
+			expect(await store.end(b.id, "carol")).toEqual({ ended: false, status: "ended" });
+			expect(await eventsOf(b.id)).toEqual(["user_message", "session_ended"]);
+		});
+
+		it("createWithTurn：会话、用户的话、一轮开始在一个事务里；项目里已经有在做的就排队；事件写不进去，不留下行", async () => {
 			const project = await newProject();
 			const input = { project, title: "新", createdBy: "alice", createdByUserId: null };
-			const created = await store.createWithTurn(input, opening);
+			const created = await store.createWithTurn(input, userBody(1));
 			expect(created.session).toMatchObject({ status: "running", currentTurn: 1 });
+			expect(created.queued).toBe(false);
 			expect(created.events.map((e) => e.type)).toEqual(["user_message", "turn_started"]);
 			expect(await count(project)).toBe(1);
-			// 项目里已经有在做的：409，不留下行。
-			await expect(store.createWithTurn(input, opening)).rejects.toBeInstanceOf(ProjectBusyError);
-			expect(await count(project)).toBe(1);
+			// 项目里已经有在做的：新会话排队（只写用户的话），不是报错。
+			const waiting = await store.createWithTurn(input, userBody(2));
+			expect(waiting.queued).toBe(true);
+			expect(waiting.session).toMatchObject({ status: "queued", currentTurn: 0 });
+			expect(waiting.events.map((e) => e.type)).toEqual(["user_message"]);
+			expect(await count(project)).toBe(2);
 			// 另一个项目：事件过不了 schema，整个事务回滚，不留下会话。
 			const other = await newProject();
 			await expect(
-				store.createWithTurn({ ...input, project: other }, () => [{ type: "nope" } as never]),
+				store.createWithTurn({ ...input, project: other }, { type: "nope" } as never),
 			).rejects.toThrow();
 			expect(await count(other)).toBe(0);
 		});
@@ -346,7 +486,7 @@ describe("会话事件的落库和发布顺序", () => {
 		it("控制面结束一轮带上轮次：结束的是此刻在做的那一轮；这一轮已经有结局但会话还在做（不一致）时，也改回空闲", async () => {
 			const project = await newProject();
 			const { id } = await newSession("idle", project);
-			await store.beginTurn(id, project, opening);
+			await store.beginTurn(id, project, userBody(1));
 			// 不一致的状态：这一轮已经有 turn_end，会话却还是在做（旧版本的 bug 留下的）。
 			await database.pool.query(
 				`insert into session_events (session_id, seq, type, payload, created_at)
@@ -360,7 +500,7 @@ describe("会话事件的落库和发布顺序", () => {
 			expect(await eventsOf(id)).toEqual(["user_message", "turn_started", "turn_end"]);
 			expect((await store.find(id))?.status).toBe("idle");
 			// 第 2 轮开始之后，再来结束第 1 轮（迟到的、重复的）动不了它。
-			await store.beginTurn(id, project, opening);
+			await store.beginTurn(id, project, userBody(1));
 			await store.append(id, turnEnd(1, "stopped"));
 			expect(await store.find(id)).toMatchObject({ status: "running", currentTurn: 2 });
 		});
@@ -374,8 +514,8 @@ describe("会话事件的落库和发布顺序", () => {
 			// 重复的第 1 轮结局：不再记，也不动 current_turn。
 			await store.append(id, turnEnd(1, "completed"));
 			expect(await store.find(id)).toMatchObject({ status: "idle", currentTurn: 1 });
-			const begun = await store.beginTurn(id, project, opening);
-			expect(begun).toMatchObject({ started: true, turn: 2 });
+			const begun = await store.beginTurn(id, project, userBody(1));
+			expect(begun).toMatchObject({ outcome: "started", turn: 2 });
 			const at = new Date("2026-01-01T00:00:00.000Z");
 			// 第 2 轮真正的结局不会被当成重复吞掉。
 			expect(await store.appendFromAssistant(id, 2, turnEnd(2), at)).toMatchObject({
@@ -395,7 +535,10 @@ describe("会话事件的落库和发布顺序", () => {
 			const again = await store.append(id, turnEnd(1, "stopped"));
 			expect(again).toMatchObject({ seq: 1, outcome: "failed" });
 			expect(await store.find(id)).toMatchObject({ status: "idle", currentTurn: 1 });
-			expect(await store.beginTurn(id, project, opening)).toMatchObject({ started: true, turn: 2 });
+			expect(await store.beginTurn(id, project, userBody(1))).toMatchObject({
+				outcome: "started",
+				turn: 2,
+			});
 		});
 
 		it("助手服务发来的事件：会话不存在、不在做、不是此刻在做的那一轮都丢掉，不落库、不发布、不改状态；对的那一轮才收", async () => {
@@ -426,7 +569,7 @@ describe("会话事件的落库和发布顺序", () => {
 			});
 			expect(await store.publishFromAssistant(id, 1, delta)).toEqual({ dropped: "not_running" });
 			// 第 1 轮在做：第 1 轮的收，别的轮次丢。
-			await store.beginTurn(id, project, opening);
+			await store.beginTurn(id, project, userBody(1));
 			expect(await store.appendFromAssistant(id, 2, message, at)).toEqual({
 				dropped: "other_turn",
 			});
@@ -448,7 +591,7 @@ describe("会话事件的落库和发布顺序", () => {
 				dropped: "not_running",
 			});
 			// 第 2 轮在做：第 1 轮迟到的事件丢掉（不是此刻在做的那一轮）。
-			await store.beginTurn(id, project, opening);
+			await store.beginTurn(id, project, userBody(1));
 			expect(await store.appendFromAssistant(id, 1, message, at)).toEqual({
 				dropped: "other_turn",
 			});

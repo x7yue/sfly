@@ -150,6 +150,7 @@ const NO_BODY = new Set([
 	"POST /feishu-bots/:name/test",
 	"DELETE /projects/:project/tokens/:id",
 	"POST /sessions/:id/stop",
+	"POST /sessions/:id/end",
 ]);
 
 /** 上传：请求体是原始字节。 */

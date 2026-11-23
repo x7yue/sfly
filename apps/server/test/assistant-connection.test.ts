@@ -381,17 +381,15 @@ describe("事件连接：核对会话和轮次", () => {
 		);
 		return id as ProjectId;
 	};
-	const opening = (turn: number) => [
-		{
-			type: "user_message" as const,
-			message_id: messageId(turn % 9),
-			text: `第 ${turn} 句`,
-			steer: false,
-			author: "alice",
-			author_user_id: null,
-		},
-		{ type: "turn_started" as const, turn },
-	];
+	/** 用户的一句话（`beginTurn` 写它和这一轮的开始）。 */
+	const opening = {
+		type: "user_message" as const,
+		message_id: messageId(1),
+		text: "一句话",
+		steer: false,
+		author: "alice",
+		author_user_id: null,
+	};
 	const newSession = async (project: ProjectId) =>
 		store.create({
 			project,
@@ -758,7 +756,7 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 			}) as typeof fetch,
 		});
 		const service = new SessionService({
-			sessions: undefined as never,
+			sessions: { onTurnEnd: () => {} } as never,
 			db: undefined as never,
 			hub: undefined as never,
 			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
@@ -781,7 +779,7 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 	it("意外的错误（不是连不上、也不是助手服务的拒绝）：说明只有「助手服务出错」，原文只进日志", async () => {
 		const logs: unknown[] = [];
 		const service = new SessionService({
-			sessions: undefined as never,
+			sessions: { onTurnEnd: () => {} } as never,
 			db: undefined as never,
 			hub: undefined as never,
 			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),

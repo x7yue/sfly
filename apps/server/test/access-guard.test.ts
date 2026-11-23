@@ -504,11 +504,12 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await run(route("GET /orchestrations"), stranger))).toBe(404);
 		});
 
-		it("会话的写（建、发话、停止）只有人能做：项目令牌范围再够也是 403，登录的用户和个人令牌走范围表；读照常", async () => {
+		it("会话的写（建、发话、停止、结束）只有人能做：项目令牌范围再够也是 403，登录的用户和个人令牌走范围表；读照常", async () => {
 			const writes = [
 				"POST /projects/:project/sessions",
 				"POST /sessions/:id/messages",
 				"POST /sessions/:id/stop",
+				"POST /sessions/:id/end",
 			];
 			// 项目令牌（服务账号，没有用户）带着全部范围：范围表里会话的写要「编辑」，它有，但凭据不是人。
 			const projectToken = token({ kind: "project", projectId: DEFAULT, name: "ci" });
@@ -566,6 +567,7 @@ describe("契约路由的访问检查", () => {
 				"POST /projects/:project/sessions",
 				"POST /sessions/:id/messages",
 				"POST /sessions/:id/stop",
+				"POST /sessions/:id/end",
 			]) {
 				expect(outcome(await run(route(key), personalEditor)), `个人令牌 ${key}`).toBe("ok");
 				// 说法是这条规则自己的，不是总闸的「写入还没有开放」：#495 拿掉总闸以后，它还在。

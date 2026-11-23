@@ -10,7 +10,7 @@ import {
 	type SessionStatus,
 	TurnOutcome,
 } from "@sfly/schema";
-import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import { projects, sessionEvents, sessions } from "../db/schema.js";
@@ -27,8 +27,12 @@ const PERSISTED: ReadonlySet<string> = new Set(PERSISTED_SESSION_EVENT_TYPES);
 /** 事件类型是不是持久的（落库的）。 */
 export const isPersistedType = (type: string): boolean => PERSISTED.has(type);
 
-/** 会话在列表里的样子：`queue_position` 在 #544 之前总是 null（没有排队）。 */
-export function toListItem(row: SessionRow, lastTurnOutcome: TurnOutcome | null): SessionListItem {
+/** 会话在列表里的样子：`queuePosition` 是排队中的会话排第几（从 1 起），不在排队时不给（null）。 */
+export function toListItem(
+	row: SessionRow,
+	lastTurnOutcome: TurnOutcome | null,
+	queuePosition: number | null = null,
+): SessionListItem {
 	return {
 		id: row.id,
 		title: row.title,
@@ -36,7 +40,7 @@ export function toListItem(row: SessionRow, lastTurnOutcome: TurnOutcome | null)
 		created_by: row.createdBy,
 		created_at: row.createdAt.toISOString(),
 		last_activity_at: row.lastActivityAt.toISOString(),
-		queue_position: null,
+		queue_position: row.status === "queued" ? queuePosition : null,
 		last_turn_outcome: lastTurnOutcome,
 	};
 }
@@ -85,6 +89,9 @@ export const effectiveTurn = (session: Pick<SessionRow, "currentTurn">): number 
 interface Inserted {
 	event: PersistedSessionEvent;
 	duplicate: boolean;
+	/** 这条 `turn_end` 把会话从「在做」改回了空闲（这个项目的位置空出来了，排队的可以开始）。 */
+	endedTurn: boolean;
+	project: ProjectId;
 }
 
 /** 助手服务发来的事件为什么不收：会话不存在、不在做、不是此刻在做的那一轮。 */
@@ -96,6 +103,25 @@ function dropReason(
 ): DropReason | undefined {
 	if (session.status !== "running") return "not_running";
 	return turn === effectiveTurn(session) ? undefined : "other_turn";
+}
+
+/**
+ * 项目里有没有**别的**会话占着位置：在做的（`running`），或者排队的（`queued`：排队的先来，新来的不能插队）。
+ * 事务里查；并发的两个请求可能同时看到没有，那时由唯一约束（`sessions_one_running_per_project`）裁判，输的排队。
+ */
+async function occupied(tx: Tx, project: ProjectId, exceptId: string): Promise<boolean> {
+	const [row] = await tx
+		.select({ id: sessions.id })
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.projectId, project),
+				ne(sessions.id, exceptId),
+				inArray(sessions.status, ["running", "queued"]),
+			),
+		)
+		.limit(1);
+	return row !== undefined;
 }
 
 /** 事务里锁住会话那一行并取出它；不存在时抛 {@link SessionNotFoundError}。 */
@@ -139,7 +165,27 @@ export class SessionStore {
 	/** 每个会话一条 Promise 链：这个会话的「落库加发布」和事件流补发的读库依次执行，见 {@link SessionStore.append}。 */
 	readonly #chains = new Map<string, Promise<unknown>>();
 
+	/** 一轮结束、项目的位置空出来之后调用（见 {@link SessionStore.onTurnEnd}）。 */
+	#turnEndListener: ((project: ProjectId) => void) | undefined;
+
 	constructor(private readonly deps: SessionStoreDeps) {}
+
+	/**
+	 * 登记「一轮结束了」的监听（只有一个，会话服务用它让排队的会话开始）：`turn_end` 把会话从在做改回空闲、事务提交并发布
+	 * 之后调用，参数是项目；**不等它**（它在后台做事，抛的错自己处理）。不论这条 `turn_end` 是助手服务带回来的、控制面补的
+	 * （停止、兜底）还是重复的，只要这一刻会话是从「在做」改回空闲的，都算。
+	 */
+	onTurnEnd(listener: (project: ProjectId) => void): void {
+		this.#turnEndListener = listener;
+	}
+
+	#turnEnded(project: ProjectId): void {
+		try {
+			this.#turnEndListener?.(project);
+		} catch {
+			// 监听自己处理错误；这里不能因为它让落库的调用失败。
+		}
+	}
 
 	/**
 	 * 在这个会话的链上依次执行：前一个（不论成败）结束了才开始。进程内的这个会话，「落库加发布」一次一个，
@@ -175,7 +221,7 @@ export class SessionStore {
 	}
 
 	/**
-	 * 项目里的会话：在做和排队中的在前，其余按最近活动倒序（#551 的写法）；带上一轮的结局。
+	 * 项目里的会话：在做和排队中的在前，其余按最近活动倒序（#551 的写法）；带上一轮的结局，排队中的带排第几。
 	 * 同样活跃的按 ID 排，顺序固定。最多 {@link SESSION_LIST_LIMIT} 个，超出的更早的会话不返回，`truncated` 为 true。
 	 */
 	async list(project: ProjectId): Promise<{ sessions: SessionListItem[]; truncated: boolean }> {
@@ -193,8 +239,17 @@ export class SessionStore {
 			.limit(SESSION_LIST_LIMIT + 1);
 		const rows = found.slice(0, SESSION_LIST_LIMIT);
 		const outcomes = await this.#lastOutcomes(rows.map((row) => row.id));
+		// 排队中的会话排第几：按排队的先后（和轮到谁开始的顺序一致），不是列表里的顺序。
+		const positions = new Map<string, number>();
+		if (rows.some((row) => row.status === "queued")) {
+			for (const [index, row] of (await this.queued(project)).entries()) {
+				positions.set(row.id, index + 1);
+			}
+		}
 		return {
-			sessions: rows.map((row) => toListItem(row, outcomes.get(row.id) ?? null)),
+			sessions: rows.map((row) =>
+				toListItem(row, outcomes.get(row.id) ?? null, positions.get(row.id) ?? null),
+			),
 			truncated: found.length > SESSION_LIST_LIMIT,
 		};
 	}
@@ -293,6 +348,7 @@ export class SessionStore {
 					createdByUserId: input.createdByUserId,
 					createdAt: now,
 					lastActivityAt: now,
+					queuedAt: input.status === "queued" ? now : null,
 				})
 				.returning();
 			return row as SessionRow;
@@ -305,46 +361,53 @@ export class SessionStore {
 	}
 
 	/**
-	 * 新建一个会话并开始它的第一轮：建会话（`running`，第 1 轮）、写 `user_message`、写 `turn_started`，**在一个事务里**：
-	 * 不会有「在做、但这一轮没有开始」的会话。项目里已经有在做的会话时抛 {@link ProjectBusyError}（整个事务回滚，
-	 * 不留下行）。`opening` 给出这一轮开头要写的事件（第 1 轮）。
+	 * 新建一个会话并开始它的第一轮：建会话、写 `user_message`、（项目里没有别的会话在做、也没有排队的时）写 `turn_started`，
+	 * **在一个事务里**：不会有「在做、但这一轮没有开始」的会话。项目里已经有别的会话在做（`running`）或在排队（`queued`，
+	 * 排队的先来，新来的不能插队）时，这个会话排队：状态是 `queued`、记下 `queued_at`、只写 `user_message`，结果是
+	 * `queued`（#544）；两个并发的请求撞上唯一约束，输的那个排队。事件写不进去时整个事务回滚，不留下行。
+	 * `user` 是这一轮开头用户的话（`user_message`），`turn_started` 由这里写。
 	 */
 	async createWithTurn(
 		input: { project: ProjectId; title: string; createdBy: string; createdByUserId: string | null },
-		opening: (turn: number) => SessionEventBody[],
-	): Promise<{ session: SessionRow; events: PersistedSessionEvent[] }> {
+		user: SessionEventBody,
+	): Promise<{ session: SessionRow; events: PersistedSessionEvent[]; queued: boolean }> {
 		const id = randomUUID();
 		return this.#serial(id, async () => {
 			const now = this.deps.clock.now();
-			let created: { session: SessionRow; events: PersistedSessionEvent[] };
-			try {
-				created = await this.deps.db.transaction(async (tx) => {
+			const attempt = (forceQueue: boolean) =>
+				this.deps.db.transaction(async (tx) => {
+					const queue = forceQueue || (await occupied(tx, input.project, id));
 					const [row] = await tx
 						.insert(sessions)
 						.values({
 							id,
 							projectId: input.project,
 							title: input.title,
-							status: "running",
+							status: queue ? "queued" : "running",
 							createdBy: input.createdBy,
 							createdByUserId: input.createdByUserId,
 							createdAt: now,
 							lastActivityAt: now,
-							currentTurn: 1,
+							currentTurn: queue ? 0 : 1,
+							queuedAt: queue ? now : null,
 						})
 						.returning();
 					const session = row as SessionRow;
-					const events: PersistedSessionEvent[] = [];
-					for (const body of opening(1)) {
-						events.push((await this.#insert(tx, session, parsePersistent(body), now)).event);
+					const events: PersistedSessionEvent[] = [
+						(await this.#insert(tx, session, parsePersistent(user), now)).event,
+					];
+					if (!queue) {
+						const started = { type: "turn_started" as const, turn: 1 };
+						events.push((await this.#insert(tx, session, parsePersistent(started), now)).event);
 					}
-					return { session, events };
+					return { session, events, queued: queue };
 				});
+			let created: Awaited<ReturnType<typeof attempt>>;
+			try {
+				created = await attempt(false);
 			} catch (error) {
-				if (violates(error, "sessions_one_running_per_project")) {
-					throw new ProjectBusyError(input.project);
-				}
-				throw error;
+				if (!violates(error, "sessions_one_running_per_project")) throw error;
+				created = await attempt(true);
 			}
 			await this.#publishCommitted(id, created.events);
 			return created;
@@ -361,57 +424,313 @@ export class SessionStore {
 	}
 
 	/**
-	 * 一个空闲的会话开始新的一轮：`idle` → `running`、轮次加一、写 `opening` 给出的事件（`user_message`、
-	 * `turn_started`），**在一个事务里**：要么这一轮完整地开始了，要么什么都没有变，不会停在「在做、但这一轮没有开始」。
-	 * 已经在做（`running`）、排队（`queued`）或已结束（`ended`）时返回当时的状态，什么也没有改。项目里已经有别的会话
-	 * 在做时抛 {@link ProjectBusyError}。两个并发的请求对同一个会话只有一个成功。
+	 * 项目里排队的会话（最早的在前，同一时刻的按 ID）和它们各自排第几（从 1 起）。
+	 */
+	async queued(project: ProjectId): Promise<SessionRow[]> {
+		return this.deps.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.projectId, project), eq(sessions.status, "queued")))
+			.orderBy(asc(sessions.queuedAt), asc(sessions.id));
+	}
+
+	/** 排队中的会话排第几（从 1 起）；不在排队时为 null。 */
+	async queuePosition(row: SessionRow): Promise<number | null> {
+		if (row.status !== "queued") return null;
+		const ahead = await this.queued(row.projectId);
+		const index = ahead.findIndex((other) => other.id === row.id);
+		return index < 0 ? null : index + 1;
+	}
+
+	/** 有排队的会话、却没有会话在做的项目（控制面启动时和每分钟的兜底里开始它们的最早一个）。 */
+	async projectsWaitingForTurn(): Promise<ProjectId[]> {
+		const rows = await this.deps.db
+			.selectDistinct({ project: sessions.projectId })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.status, "queued"),
+					sql`not exists (select 1 from ${sessions} as running where running.project_id = ${sessions.projectId} and running.status = 'running')`,
+				),
+			);
+		return rows.map((row) => row.project);
+	}
+
+	/** 会话最近的一句用户的话（排队中的会话轮到它时，要交给助手服务的就是它）；没有时为 undefined。 */
+	async lastUserMessage(sessionId: string): Promise<
+		| {
+				message_id: string;
+				text: string;
+				steer: boolean;
+				author: string;
+				author_user_id: string | null;
+		  }
+		| undefined
+	> {
+		const [row] = await this.deps.db
+			.select({ payload: sessionEvents.payload })
+			.from(sessionEvents)
+			.where(
+				and(eq(sessionEvents.sessionId, sessionId), sql`${sessionEvents.type} = 'user_message'`),
+			)
+			.orderBy(desc(sessionEvents.seq))
+			.limit(1);
+		if (!row) return undefined;
+		const parsed = SessionEventBody.safeParse({ type: "user_message", ...row.payload });
+		return parsed.success && parsed.data.type === "user_message" ? parsed.data : undefined;
+	}
+
+	/**
+	 * 一个会话开始新的一轮：先看项目里有没有别的会话在做或在排队，在**一个事务里**（锁住这个会话那一行）：
+	 * - 空闲的会话：项目里没有别的会话在做（`running`）、也没有排队的（`queued`，排队的先来）时，`idle` → `running`、轮次
+	 *   加一、写 `user`（用户的话）和 `turn_started`，结果是 `started`；否则 `idle` → `queued`、记下 `queued_at`、只写 `user`，
+	 *   结果是 `queued`（#544：同一个项目同一时刻只跑一轮，其余排队）。两个并发的请求撞上唯一约束
+	 *   （`sessions_one_running_per_project`），输的那个排队。
+	 * - 已经在做、排队、结束的会话：什么也没有改，结果是 `refused` 和当时的状态。在做时的发话是插话，见 {@link steer}。
+	 * 要么这一轮完整地开始了（或完整地排上了队），要么什么都没有变。两个并发的请求对同一个会话只有一个成功。
 	 */
 	async beginTurn(
 		sessionId: string,
 		project: ProjectId,
-		opening: (turn: number) => SessionEventBody[],
+		user: SessionEventBody,
 	): Promise<
-		| { started: true; turn: number; events: PersistedSessionEvent[] }
-		| { started: false; status: SessionStatus }
+		| { outcome: "started"; turn: number; events: PersistedSessionEvent[] }
+		| { outcome: "queued"; events: PersistedSessionEvent[] }
+		| { outcome: "refused"; status: SessionStatus }
 	> {
 		return this.#serial(sessionId, async () => {
 			const now = this.deps.clock.now();
-			let begun:
-				| { started: true; turn: number; events: PersistedSessionEvent[] }
-				| { started: false; status: SessionStatus };
-			try {
-				begun = await this.deps.db.transaction(async (tx) => {
+			const attempt = (forceQueue: boolean) =>
+				this.deps.db.transaction(async (tx) => {
+					const session = await lockSession(tx, sessionId);
+					if (session.status !== "idle") {
+						return { outcome: "refused" as const, status: session.status };
+					}
+					const touched = sql`greatest(${sessions.lastActivityAt}, ${now.toISOString()}::timestamptz)`;
+					if (forceQueue || (await occupied(tx, project, sessionId))) {
+						const [row] = await tx
+							.update(sessions)
+							.set({ status: "queued", queuedAt: now, lastActivityAt: touched })
+							.where(eq(sessions.id, sessionId))
+							.returning();
+						const queued = (await this.#insert(tx, row as SessionRow, parsePersistent(user), now))
+							.event;
+						return { outcome: "queued" as const, events: [queued] };
+					}
 					const [row] = await tx
 						.update(sessions)
 						.set({
 							status: "running",
 							currentTurn: sql`${sessions.currentTurn} + 1`,
-							lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${now.toISOString()}::timestamptz)`,
+							lastActivityAt: touched,
 						})
-						.where(and(eq(sessions.id, sessionId), eq(sessions.status, "idle")))
+						.where(eq(sessions.id, sessionId))
 						.returning();
-					if (!row) {
-						const [current] = await tx
-							.select({ status: sessions.status })
-							.from(sessions)
-							.where(eq(sessions.id, sessionId));
-						if (!current) throw new SessionNotFoundError(sessionId);
-						return { started: false as const, status: current.status };
-					}
-					const events: PersistedSessionEvent[] = [];
-					for (const body of opening(row.currentTurn)) {
-						events.push((await this.#insert(tx, row, parsePersistent(body), now)).event);
-					}
-					return { started: true as const, turn: row.currentTurn, events };
+					const running = row as SessionRow;
+					const started = { type: "turn_started" as const, turn: running.currentTurn };
+					const events = [
+						(await this.#insert(tx, running, parsePersistent(user), now)).event,
+						(await this.#insert(tx, running, parsePersistent(started), now)).event,
+					];
+					return { outcome: "started" as const, turn: running.currentTurn, events };
 				});
+			let begun: Awaited<ReturnType<typeof attempt>>;
+			try {
+				begun = await attempt(false);
 			} catch (error) {
-				if (violates(error, "sessions_one_running_per_project")) {
-					throw new ProjectBusyError(project);
-				}
-				throw error;
+				if (!violates(error, "sessions_one_running_per_project")) throw error;
+				begun = await attempt(true);
 			}
-			if (begun.started) await this.#publishCommitted(sessionId, begun.events);
+			if (begun.outcome !== "refused") await this.#publishCommitted(sessionId, begun.events);
 			return begun;
+		});
+	}
+
+	/**
+	 * 在做的会话里用户插话：写 `user_message`（`steer` 为 true），在**一个事务里**核对会话此刻在做（不在做时什么也不写，
+	 * 返回当时的状态，调用方按空闲的会话处理）。返回这一轮的轮次和写下的事件。
+	 */
+	async steer(
+		sessionId: string,
+		user: SessionEventBody,
+	): Promise<
+		| { steered: true; turn: number; event: PersistedSessionEvent }
+		| { steered: false; status: SessionStatus }
+	> {
+		return this.#serial(sessionId, async () => {
+			const now = this.deps.clock.now();
+			const result = await this.deps.db.transaction(async (tx) => {
+				const session = await lockSession(tx, sessionId);
+				if (session.status !== "running")
+					return { steered: false as const, status: session.status };
+				const { event } = await this.#insert(tx, session, parsePersistent(user), now);
+				return { steered: true as const, turn: effectiveTurn(session), event };
+			});
+			if (result.steered) await this.#publishCommitted(sessionId, [result.event]);
+			return result;
+		});
+	}
+
+	/**
+	 * 排队中的会话轮到它了：项目里没有会话在做时，把排队时间最早的那个会话改成在做（`queued` → `running`、轮次加一、
+	 * 写 `turn_started`，一个事务），返回它、这一轮的轮次和它排队时说的那句话（要交给助手服务的）。没有排队的、或者项目里
+	 * 有会话在做（撞上唯一约束）时为 undefined。重复调用无害：谁先开始、谁在做，都是数据库说了算。
+	 */
+	async promoteNext(project: ProjectId): Promise<
+		| {
+				session: SessionRow;
+				turn: number;
+				message: {
+					message_id: string;
+					text: string;
+					author: string;
+					author_user_id: string | null;
+				};
+		  }
+		| undefined
+	> {
+		for (let tries = 0; tries < 5; tries++) {
+			const [next] = await this.deps.db
+				.select({ id: sessions.id })
+				.from(sessions)
+				.where(and(eq(sessions.projectId, project), eq(sessions.status, "queued")))
+				.orderBy(asc(sessions.queuedAt), asc(sessions.id))
+				.limit(1);
+			if (!next) return undefined;
+			const promoted = await this.#serial(next.id, async () => {
+				const now = this.deps.clock.now();
+				let result: { session: SessionRow; event: PersistedSessionEvent } | undefined;
+				try {
+					result = await this.deps.db.transaction(async (tx) => {
+						const session = await lockSession(tx, next.id);
+						// 排队的这一个在这之间被停止或结束了：换下一个。
+						if (session.status !== "queued") return undefined;
+						const [row] = await tx
+							.update(sessions)
+							.set({
+								status: "running",
+								queuedAt: null,
+								currentTurn: sql`${sessions.currentTurn} + 1`,
+								lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${now.toISOString()}::timestamptz)`,
+							})
+							.where(eq(sessions.id, next.id))
+							.returning();
+						const running = row as SessionRow;
+						const started = { type: "turn_started" as const, turn: running.currentTurn };
+						return {
+							session: running,
+							event: (await this.#insert(tx, running, parsePersistent(started), now)).event,
+						};
+					});
+				} catch (error) {
+					// 项目里别的会话已经在做了：位置不是空的，什么也不做。
+					if (violates(error, "sessions_one_running_per_project")) return "occupied" as const;
+					throw error;
+				}
+				if (!result) return undefined;
+				await this.#publishCommitted(next.id, [result.event]);
+				return result;
+			});
+			if (promoted === "occupied") return undefined;
+			if (!promoted) continue;
+			const message = await this.lastUserMessage(promoted.session.id);
+			if (!message) {
+				// 排队的会话没有用户的话（库里被改过）：不该有。这一轮没有东西可交，按失败结束，让下一个有机会。
+				await this.append(promoted.session.id, {
+					type: "turn_end",
+					turn: promoted.session.currentTurn,
+					outcome: "failed",
+					reason: "排队的会话里找不到它说的那句话，这一轮没有开始",
+					steps: 0,
+					model_calls: 0,
+					duration_ms: 0,
+				});
+				continue;
+			}
+			return { session: promoted.session, turn: promoted.session.currentTurn, message };
+		}
+		return undefined;
+	}
+
+	/**
+	 * 排队中的会话被停止：移出队列、回到空闲（`queued` → `idle`、清掉 `queued_at`），给排队时说的那句话写一条
+	 * `queue_cancelled` 的提示（带这句话的 `message_id`），一个事务。不在排队时什么也不改，返回当时的状态。
+	 */
+	async cancelQueued(
+		sessionId: string,
+	): Promise<
+		{ cancelled: true; event: PersistedSessionEvent } | { cancelled: false; status: SessionStatus }
+	> {
+		return this.#serial(sessionId, async () => {
+			const now = this.deps.clock.now();
+			const result = await this.deps.db.transaction(async (tx) => {
+				const session = await lockSession(tx, sessionId);
+				if (session.status !== "queued") {
+					return { cancelled: false as const, status: session.status };
+				}
+				const [row] = await tx
+					.update(sessions)
+					.set({ status: "idle", queuedAt: null })
+					.where(eq(sessions.id, sessionId))
+					.returning();
+				const [said] = await tx
+					.select({ payload: sessionEvents.payload })
+					.from(sessionEvents)
+					.where(
+						and(
+							eq(sessionEvents.sessionId, sessionId),
+							sql`${sessionEvents.type} = 'user_message'`,
+						),
+					)
+					.orderBy(desc(sessionEvents.seq))
+					.limit(1);
+				const messageId = said?.payload.message_id;
+				const notice: SessionEventBody = {
+					type: "notice",
+					kind: "queue_cancelled",
+					message: "这句话排队时被取消了，没有交给助手",
+					...(typeof messageId === "string" ? { message_id: messageId } : {}),
+				};
+				const { event } = await this.#insert(tx, row as SessionRow, parsePersistent(notice), now);
+				return { cancelled: true as const, event };
+			});
+			if (result.cancelled) await this.#publishCommitted(sessionId, [result.event]);
+			return result;
+		});
+	}
+
+	/**
+	 * 结束会话：`idle` 或 `queued` → `ended`（清掉 `queued_at`）、写 `session_ended`（`by` 是结束它的人的昵称），一个事务。
+	 * 已经结束的什么也不写（`already`）；还在做（`running`）的不能结束，要先停止（返回 `running`）。
+	 */
+	async end(
+		sessionId: string,
+		by: string,
+	): Promise<
+		{ ended: true; event: PersistedSessionEvent } | { ended: false; status: "ended" | "running" }
+	> {
+		return this.#serial(sessionId, async () => {
+			const now = this.deps.clock.now();
+			const result = await this.deps.db.transaction(async (tx) => {
+				const session = await lockSession(tx, sessionId);
+				if (session.status === "ended") return { ended: false as const, status: "ended" as const };
+				if (session.status === "running")
+					return { ended: false as const, status: "running" as const };
+				const [row] = await tx
+					.update(sessions)
+					.set({ status: "ended", queuedAt: null })
+					.where(eq(sessions.id, sessionId))
+					.returning();
+				const { event } = await this.#insert(
+					tx,
+					row as SessionRow,
+					parsePersistent({ type: "session_ended", by }),
+					now,
+				);
+				return { ended: true as const, event };
+			});
+			if (result.ended) await this.#publishCommitted(sessionId, [result.event]);
+			return result;
 		});
 	}
 
@@ -446,6 +765,7 @@ export class SessionStore {
 				return this.#insert(tx, session, parsed, at);
 			});
 			if (!stored.duplicate) await this.#publishCommitted(sessionId, [stored.event]);
+			if (stored.endedTurn) this.#turnEnded(stored.project);
 			return stored.event;
 		});
 	}
@@ -478,6 +798,7 @@ export class SessionStore {
 			);
 			if ("dropped" in result) return { dropped: result.dropped };
 			if (!result.stored.duplicate) await this.#publishCommitted(sessionId, [result.stored.event]);
+			if (result.stored.endedTurn) this.#turnEnded(result.stored.project);
 			return { stored: result.stored.event };
 		});
 	}
@@ -552,7 +873,12 @@ export class SessionStore {
 				if (endsCurrent) {
 					await tx.update(sessions).set(endsTurn).where(eq(sessions.id, session.id));
 				}
-				return { event: toEvent(existing), duplicate: true };
+				return {
+					event: toEvent(existing),
+					duplicate: true,
+					endedTurn: endsCurrent,
+					project: session.projectId,
+				};
 			}
 		}
 		const [last] = await tx
@@ -573,7 +899,12 @@ export class SessionStore {
 			.update(sessions)
 			.set({ lastActivityAt: touched, ...(endsCurrent && endsTurn) })
 			.where(eq(sessions.id, session.id));
-		return { event: toEvent(row as EventRow), duplicate: false };
+		return {
+			event: toEvent(row as EventRow),
+			duplicate: false,
+			endedTurn: endsCurrent,
+			project: session.projectId,
+		};
 	}
 
 	/** 推送一条不持久的事件（文字增量、工具输出、思考、排队状态、快照）：不落库，没有 `seq`，不推进续传的位置。 */

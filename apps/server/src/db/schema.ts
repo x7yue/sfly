@@ -870,9 +870,20 @@ export const sessions = pgTable(
 		 * `turn_started`」在同一个事务里加一；助手服务发来的事件要带这个轮次才收，控制面结束一轮时也按它核对。
 		 */
 		currentTurn: integer("current_turn").notNull().default(0),
+		/**
+		 * 开始排队的时间（#544）：只有排队中（`queued`）的会话有，其余为 null。同一个项目里排队的会话按它先后轮流开始
+		 * （最早的先开始，同一时刻的按 ID），控制面记的时间，不是助手服务盖的。
+		 */
+		queuedAt: timestamptz("queued_at"),
 	},
 	(t) => [
 		check("sessions_current_turn", sql`${t.currentTurn} >= 0`),
+		// 排队中的会话有排队时间，其余没有。
+		check("sessions_queued_at", sql`(${t.status} = 'queued') = (${t.queuedAt} is not null)`),
+		// 一个项目里排队的会话，最早的在前（轮到谁开始、排第几）。
+		index("sessions_project_queue")
+			.on(t.projectId, t.queuedAt, t.id)
+			.where(sql`${t.status} = 'queued'`),
 		// 一个项目的会话列表，最近活动在前。
 		index("sessions_project_activity").on(t.projectId, t.lastActivityAt),
 		uniqueIndex("sessions_one_running_per_project")

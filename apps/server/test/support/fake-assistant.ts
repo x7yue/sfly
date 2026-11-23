@@ -13,6 +13,7 @@ import {
 	AssistantStreamRecord,
 	PERSISTED_SESSION_EVENT_TYPES,
 	PromptCommandBody,
+	SteerCommandBody,
 } from "@sfly/schema";
 
 export const FAKE_SECRET = "fake-assistant-shared-secret-0123456789";
@@ -22,6 +23,12 @@ export interface ReceivedPrompt {
 	sessionId: string;
 	body: PromptCommandBody;
 	authorization: string | undefined;
+}
+
+/** 收到的一条插话（`steer` 的 `body` 已经过协议的 schema）。 */
+export interface ReceivedSteer {
+	sessionId: string;
+	body: SteerCommandBody;
 }
 
 /** 命令的回应：默认 202；要拒绝时给状态码和错误码。 */
@@ -47,6 +54,20 @@ export class FakeAssistant {
 	readonly abortedTurns = new Set<string>();
 	/** 每个 prompt 的回应；默认全部 202。 */
 	promptReply: (prompt: ReceivedPrompt) => Reply | undefined = () => undefined;
+	/** 收到的插话（`steer`），按到达的先后。 */
+	readonly steers: ReceivedSteer[] = [];
+	/** 收到过 `end` 的会话 ID（每次一条）。 */
+	readonly ends: string[] = [];
+	/** 每个 steer 的回应；默认 202（`strictTurns` 开着时，没有可以送到的一轮回 409 `no_turn_running`）。 */
+	steerReply: (steer: ReceivedSteer) => Reply | undefined = () => undefined;
+	/** 每个 end 的回应；默认 202。 */
+	endReply: (sessionId: string) => Reply | undefined = () => undefined;
+	/**
+	 * 按协议「在停止」的那一段有多久（毫秒，`strictTurns` 开着时）：收到中止之后，这一轮的结局（`turn_end`）过这么久才发
+	 * （模拟 pi 不理 `abort`、助手服务等了又结束进程）；这期间这个会话的新一轮 `prompt` 回 202、登记着、等旧的一轮结束
+	 * 再开始（协议「一轮的状态」第 1 条），`steer` 回 409 `no_turn_running`。默认 0：马上结束。
+	 */
+	stopSettleMs = 0;
 	/** 每个 abort 的回应；默认 202（重复调用无害）。 */
 	abortReply: (sessionId: string, turn: number) => Reply | undefined = () => undefined;
 	/** `/health` 的回应；默认健康。 */
@@ -65,6 +86,10 @@ export class FakeAssistant {
 	/** `strictTurns` 开着时，被中止结束的轮次（会话和轮次，按结束的先后）。 */
 	readonly endedByAbort: Array<{ sessionId: string; turn: number }> = [];
 	readonly #running = new Map<string, number>();
+	/** 「在停止」的轮次（`strictTurns` 开着、`stopSettleMs` 大于 0 时，收到中止到发出结局之间）。 */
+	readonly #stopping = new Map<string, number>();
+	/** 在旧的一轮停止期间登记的新一轮（会话 → 轮次）：旧的结束之后才开始。 */
+	readonly #pending = new Map<string, number>();
 	healthDelayMs = 0;
 	/** 收到过几次 `GET /health`。 */
 	healthRequests = 0;
@@ -154,7 +179,46 @@ export class FakeAssistant {
 			this.#running.delete(sessionId);
 		}
 		this.#write(record);
+		if (event.type === "turn_end" && this.#stopping.get(sessionId) === turn) {
+			this.#stopping.delete(sessionId);
+			this.#startPending(sessionId);
+		}
 		return record;
+	}
+
+	/** 会话在「在停止」：收到了中止、结局还没发（`stopSettleMs` 内）。 */
+	stoppingTurn(sessionId: string): number | undefined {
+		return this.#stopping.get(sessionId);
+	}
+
+	/** 在旧的一轮停止期间登记、等着开始的新一轮。 */
+	pendingTurn(sessionId: string): number | undefined {
+		return this.#pending.get(sessionId);
+	}
+
+	/** 旧的一轮结束了：登记着的新一轮开始（被中止过的直接以 stopped 结束）。 */
+	#startPending(sessionId: string): void {
+		const turn = this.#pending.get(sessionId);
+		if (turn === undefined) return;
+		this.#pending.delete(sessionId);
+		if (this.abortedTurns.has(`${sessionId}:${turn}`)) {
+			this.#emitEnd(sessionId, turn, "这一轮在开始之前就被中止了");
+			return;
+		}
+		this.#running.set(sessionId, turn);
+	}
+
+	#emitEnd(sessionId: string, turn: number, reason: string): void {
+		this.emit(sessionId, turn, {
+			type: "turn_end",
+			turn,
+			outcome: "stopped",
+			reason,
+			steps: 0,
+			model_calls: 0,
+			duration_ms: 0,
+			usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+		});
 	}
 
 	/** 往事件流里写一行任意的内容（测试不是约定形状的行）。 */
@@ -256,9 +320,51 @@ export class FakeAssistant {
 			});
 			return;
 		}
-		const command = /^POST \/sessions\/([^/]+)\/(prompt|abort)$/.exec(route);
+		const command = /^POST \/sessions\/([^/]+)\/(prompt|abort|steer|end)$/.exec(route);
 		if (!command) return this.#error(res, { status: 404, code: "invalid_request" });
 		const sessionId = command[1] as string;
+		if (command[2] === "end") {
+			this.ends.push(sessionId);
+			const reply = this.endReply(sessionId);
+			if (reply) return this.#error(res, reply);
+			return this.#send(res, 202);
+		}
+		if (command[2] === "steer") {
+			let steerJson: unknown;
+			try {
+				steerJson = JSON.parse(await readBody(req));
+			} catch {
+				return this.#error(res, { status: 400, code: "invalid_request", message: "不是 JSON" });
+			}
+			const steer = SteerCommandBody.safeParse(steerJson);
+			if (!steer.success) {
+				return this.#error(res, {
+					status: 400,
+					code: "invalid_request",
+					message: steer.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；"),
+				});
+			}
+			const received = { sessionId, body: steer.data };
+			this.steers.push(received);
+			const reply = this.steerReply(received);
+			if (reply) return this.#error(res, reply);
+			// 协议：在做（包括登记着、等旧的一轮结束的新一轮）回 202，没有一轮、在停止回 409 `no_turn_running`。
+			if (
+				this.strictTurns &&
+				!this.#running.has(sessionId) &&
+				!(
+					this.#pending.has(sessionId) &&
+					!this.abortedTurns.has(`${sessionId}:${this.#pending.get(sessionId)}`)
+				)
+			) {
+				return this.#error(res, {
+					status: 409,
+					code: "no_turn_running",
+					message: "没有可以送到的一轮",
+				});
+			}
+			return this.#send(res, 202);
+		}
 		if (command[2] === "abort") {
 			this.abortAttempts++;
 			let abortJson: unknown;
@@ -287,16 +393,18 @@ export class FakeAssistant {
 			const running = this.#running.get(sessionId);
 			if (this.strictTurns && running !== undefined && running <= turn) {
 				this.endedByAbort.push({ sessionId, turn: running });
-				this.emit(sessionId, running, {
-					type: "turn_end",
-					turn: running,
-					outcome: "stopped",
-					reason: "助手服务按中止结束了这一轮",
-					steps: 0,
-					model_calls: 0,
-					duration_ms: 0,
-					usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-				});
+				if (this.stopSettleMs > 0) {
+					// 在停止：结局过一会儿才发，这期间新一轮的 `prompt` 登记着等它。
+					this.#running.delete(sessionId);
+					this.#stopping.set(sessionId, running);
+					setTimeout(() => {
+						if (this.#stopping.get(sessionId) === running) {
+							this.#emitEnd(sessionId, running, "助手服务按中止结束了这一轮");
+						}
+					}, this.stopSettleMs).unref();
+				} else {
+					this.#emitEnd(sessionId, running, "助手服务按中止结束了这一轮");
+				}
 			}
 			return;
 		}
@@ -323,30 +431,24 @@ export class FakeAssistant {
 		if (this.promptDelayMs > 0) await new Promise((r) => setTimeout(r, this.promptDelayMs));
 		const reply = this.promptReply(prompt);
 		if (reply) return this.#error(res, reply);
-		if (this.strictTurns && this.#running.has(sessionId)) {
+		// 在做（正常地，包括登记着的新一轮）才回 409；旧的一轮在停止时不回（协议「一轮的状态」第 1 条）：
+		// 登记这一轮、回 202，旧的一轮结束之后才开始。
+		if (this.strictTurns && (this.#running.has(sessionId) || this.#pending.has(sessionId))) {
 			return this.#error(res, {
 				status: 409,
 				code: "turn_running",
-				message: `这个会话的第 ${this.#running.get(sessionId)} 轮还在做`,
+				message: `这个会话的第 ${this.#running.get(sessionId) ?? this.#pending.get(sessionId)} 轮还在做`,
 			});
 		}
 		this.#send(res, 202);
-		if (this.strictTurns && !this.abortedTurns.has(`${sessionId}:${parsed.data.turn}`)) {
-			this.#running.set(sessionId, parsed.data.turn);
+		const aborted = this.abortedTurns.has(`${sessionId}:${parsed.data.turn}`);
+		if (this.strictTurns && this.#stopping.has(sessionId)) {
+			this.#pending.set(sessionId, parsed.data.turn);
+			return;
 		}
+		if (this.strictTurns && !aborted) this.#running.set(sessionId, parsed.data.turn);
 		// 这一轮已经被中止过（中止先到）：直接以 stopped 结束，不去做。
-		if (this.abortedTurns.has(`${sessionId}:${parsed.data.turn}`)) {
-			this.emit(sessionId, parsed.data.turn, {
-				type: "turn_end",
-				turn: parsed.data.turn,
-				outcome: "stopped",
-				reason: "这一轮在开始之前就被中止了",
-				steps: 0,
-				model_calls: 0,
-				duration_ms: 0,
-				usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-			});
-		}
+		if (aborted) this.#emitEnd(sessionId, parsed.data.turn, "这一轮在开始之前就被中止了");
 	}
 }
 

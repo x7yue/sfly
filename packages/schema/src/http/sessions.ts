@@ -19,9 +19,9 @@ import { endpoint, stream } from "./contract.js";
  * 项目从会话所在的项目得出。控制面是用户和助手之间唯一的入口：助手服务只和控制面说话（../assistant-protocol.ts）。
  *
  * 错误码（`ApiErrorBody.error.code`，取值见 `SessionErrorCode`）：写接口在助手没有配置时返回 503 `assistant_not_configured`
- * （读接口照常，就绪状态里写明原因）；助手服务连不上 503 `assistant_unavailable`；发话时这个会话有一轮在做 409
- * `turn_running`、同一个项目另一个会话在做 409 `project_busy`（#544 起改成插话和排队）；会话已结束 409 `session_ended`。
- * 项目或会话不存在（或属于别的项目）一律 404。
+ * （读接口照常，就绪状态里写明原因）；助手服务连不上 503 `assistant_unavailable`；发话时会话在排队中 409
+ * `session_queued`，已结束 409 `session_ended`（在做时发话是插话，不再是 409；同一个项目另一个会话在做时这个会话排队，
+ * 不再是 409 `project_busy`，#544）。项目或会话不存在（或属于别的项目）一律 404。
  */
 
 /** 路径里的项目标识（`/projects/:project/…`，ADR 0029）：写法不对或不存在时 404。 */
@@ -45,8 +45,9 @@ export const sessionsApi = {
 	}),
 	/**
 	 * 新建一个会话，`text` 是它的第一句话，作为第一轮：写 `user_message` 和 `turn_started`，把这一轮交给助手服务。
-	 * 返回 201 和新会话。助手没有配置时 503 `assistant_not_configured`；这个项目已有一个会话在做 409 `project_busy`；
-	 * 助手服务连不上 503 `assistant_unavailable`，不留下会话。
+	 * 返回 201 和新会话。助手没有配置时 503 `assistant_not_configured`；这个项目里已有别的会话在做（或在排队）时，新会话
+	 * 排队（`status` 是 `queued`，`queue_position` 是排第几，`waiting_for` 是在等谁），这句话照常写 `user_message`，
+	 * 轮到它时才交给助手服务；助手服务连不上 503 `assistant_unavailable`，不留下会话。
 	 */
 	create: endpoint({
 		method: "POST",
@@ -91,8 +92,9 @@ export const sessionsApi = {
 		events: sessionEventSchemas,
 	}),
 	/**
-	 * 对会话说一句话：空闲时开始新的一轮，返回这句话的 `user_message` 的序号。在做时 409 `turn_running`
-	 * （#544 起改成插话）；已结束 409 `session_ended`。
+	 * 对会话说一句话，返回这句话的 `user_message` 的序号：空闲时开始新的一轮（这个项目里别的会话在做时，这个会话排队，
+	 * 这句话轮到它时才交给助手服务）；**在做时是插话**（`user_message` 的 `steer` 为 true，交给助手服务的 `steer`，在当前这一步
+	 * 的工具调用做完之后、下一次调用模型之前送到；响应类型不变）；排队中 409 `session_queued`；已结束 409 `session_ended`。
 	 */
 	message: endpoint({
 		method: "POST",
@@ -106,7 +108,10 @@ export const sessionsApi = {
 		body: SendMessageBody,
 		response: SendMessageResult,
 	}),
-	/** 停止会话正在做的这一轮（把中止发给助手服务，这一轮的 `turn_end` 由助手服务的事件带回来）；不在做时什么也不做。 */
+	/**
+	 * 停止会话正在做的这一轮（把中止发给助手服务，这一轮的 `turn_end` 由助手服务的事件带回来）；排队中的会话移出队列、
+	 * 回到空闲（给排队时说的那句话补一条 `queue_cancelled` 的提示）；空闲和已结束时什么也不做。
+	 */
 	stop: endpoint({
 		method: "POST",
 		path: "/sessions/:id/stop",
@@ -115,6 +120,22 @@ export const sessionsApi = {
 		resource: { kind: "session", target: { params: "id" } },
 		client: true,
 		key: ["sessions", "stop"],
+		params: IdParams,
+		response: SessionView,
+	}),
+	/**
+	 * 结束会话：在做的一轮先停止，排队的移出队列，把 `end` 发给助手服务（它结束这个会话的进程），会话变成已结束并写
+	 * `session_ended`。之后发话 409 `session_ended`。工作区、提交、场景版本、运行都留着，不删除任何东西。
+	 * 已经结束的会话再调用无害（返回会话，不再写事件）。助手没有配置时 503 `assistant_not_configured`。
+	 */
+	end: endpoint({
+		method: "POST",
+		path: "/sessions/:id/end",
+		summary: "结束会话：之后不再接受消息，工作区和运行都留着",
+		effect: "write",
+		resource: { kind: "session", target: { params: "id" } },
+		client: true,
+		key: ["sessions", "end"],
 		params: IdParams,
 		response: SessionView,
 	}),

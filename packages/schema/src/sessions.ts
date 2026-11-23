@@ -174,8 +174,9 @@ export type ReadinessProblemKind = z.infer<typeof ReadinessProblemKind>;
  * - 503 `assistant_not_configured`：助手没有配置，写接口返回它（读接口照常，就绪状态里写明）；
  * - 503 `assistant_unavailable`：助手服务连不上；
  * - 503 `model_unavailable`：模型没有配置或连不上，新的一轮在开始之前被拒绝（#548）；
- * - 409 `turn_running`：这个会话有一轮在做时发话，409 `project_busy`：同一个项目另一个会话在做（竖切里有，
- *   #544 改成插话和排队，这两个码随之不再出现）；
+ * - 409 `turn_running`：助手服务说这个会话还有一轮在做，而控制面看来已经结束了（例如交给助手服务的请求超时、助手服务
+ *   其实收下了那一轮的窗口里再发话；在做时发话是插话，不是它）；409 `project_busy`：竖切里同一个项目另一个会话在做时的
+ *   拒绝，#544 起改成排队，不再出现（码留着，不影响生成的类型）；
  * - 409 `session_queued`：排队中再发话（#544）；409 `session_ended`：会话已结束；
  * - 409 `session_predates_login`：这个会话建于登录之前（没有发起人的用户），签发不了会话令牌，要新建一个会话（#547）。
  */

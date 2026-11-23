@@ -7,6 +7,7 @@ import {
 	AssistantHealth,
 	AssistantStreamLine,
 	type PromptCommandBody,
+	type SteerCommandBody,
 } from "@sfly/schema";
 import type { z } from "zod";
 import type { AssistantConfig } from "./assistant-config.js";
@@ -121,6 +122,19 @@ export class AssistantClient {
 	async abort(sessionId: string, turn: number): Promise<void> {
 		const body: AbortCommandBody = { turn };
 		await this.#command("POST", `/sessions/${sessionId}/abort`, body);
+	}
+
+	/**
+	 * 插话（`POST /sessions/:id/steer`）：助手服务收下了就返回（202）；这个会话没有可以送到的一轮时它回 409 `no_turn_running`
+	 * （抛 {@link AssistantError}），连不上抛 {@link AssistantUnreachableError}。协议见 {@link SteerCommandBody}。
+	 */
+	async steer(sessionId: string, body: SteerCommandBody): Promise<void> {
+		await this.#command("POST", `/sessions/${sessionId}/steer`, body);
+	}
+
+	/** 结束会话（`POST /sessions/:id/end`）：助手服务结束这个会话的进程；重复调用、不认识的会话都是 202。 */
+	async end(sessionId: string): Promise<void> {
+		await this.#command("POST", `/sessions/${sessionId}/end`);
 	}
 
 	/** 助手服务和它的模型、进程的状态。 */

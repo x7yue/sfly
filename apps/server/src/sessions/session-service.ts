@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-	ASSISTANT_PROCESS_KILL_GRACE_MS,
+	ASSISTANT_STOP_WAIT_MS,
 	type AssistantErrorCode,
 	type AssistantHealth,
 	type PromptCommandBody,
@@ -8,6 +8,7 @@ import {
 	type ReadinessProblem,
 	type SessionErrorCode,
 	type SessionEventBody,
+	type SessionView,
 } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import type { Actor } from "../actor.js";
@@ -24,12 +25,7 @@ import {
 } from "./assistant-client.js";
 import type { AssistantSetup } from "./assistant-config.js";
 import { commandEnv } from "./command-env.js";
-import {
-	effectiveTurn,
-	ProjectBusyError,
-	type SessionRow,
-	type SessionStore,
-} from "./session-store.js";
+import { effectiveTurn, type SessionRow, type SessionStore } from "./session-store.js";
 
 /** 请求没有成功的原因：状态码、错误码（`SessionErrorCode`）和给人看的一句话。 */
 export interface Rejection {
@@ -64,17 +60,14 @@ export function titleOf(text: string): string {
  */
 export const STALE_TURN_MS = 30 * 60 * 1000;
 
-/** 控制面等助手服务带回结局时，在它的强制结束宽限之外多留的余量（毫秒）：命令往返、进程退出之后发事件的时间。 */
-export const STOP_MARGIN_MS = 3_000;
-
 /**
  * 停止会话：把中止发给助手服务之后，最多等多久它把这一轮的结局（`turn_end`）带回来（毫秒）；超过由控制面结束这一轮。
- * **不短于助手服务停止一轮的宽限**（{@link ASSISTANT_PROCESS_KILL_GRACE_MS}：SIGTERM 之后这么久才 SIGKILL，结局在进程退出之后
- * 才发）加余量：短了的话，控制面先补一条 `stopped`、会话回到空闲，用户马上再说一句，助手服务那边上一轮还挂着，回 409
- * `turn_running`，新的一轮被记成失败。在做的会话点停止的响应最坏是「中止的命令超时 + 这个宽限」，平时助手服务很快带回结局，
- * 马上返回。
+ * **不短于助手服务停止一轮最晚的时间**（协议里的 {@link ASSISTANT_STOP_WAIT_MS}，两边引用同一个数：先用 pi 的 `abort` 等
+ * 10 秒，不行才结束进程，SIGTERM 之后 10 秒才 SIGKILL，结局在进程退出之后才发，再加余量）：短了的话，控制面先补一条
+ * `stopped`、会话回到空闲，用户马上再说一句，助手服务那边上一轮还挂着。在做的会话点停止的响应最坏是「中止的命令超时 +
+ * 这个时间」，平时助手服务很快带回结局，马上返回。
  */
-export const STOP_GRACE_MS = ASSISTANT_PROCESS_KILL_GRACE_MS + STOP_MARGIN_MS;
+export const STOP_GRACE_MS = ASSISTANT_STOP_WAIT_MS;
 
 /** 助手服务的 `/health` 结果缓存多久（毫秒）：每次列出会话都问一遍太频繁；同时来的请求共用一次（见 `#assistantHealth`）。 */
 export const HEALTH_TTL_MS = 5_000;
@@ -95,6 +88,11 @@ export interface SessionServiceDeps {
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
 	/**
+	 * 会话结束（会话已经改成 `ended`、`session_ended` 已经写下）之后调用：会话令牌合入之后在这里吊销这个会话的令牌
+	 * （#544 留好的接口，谁后合入谁接上）。尽力而为，抛的错只进日志，不影响结束。
+	 */
+	onEnded?: (session: SessionRow) => Promise<void>;
+	/**
 	 * 助手服务出问题时写日志（连不上、拒绝、`/health` 不通……）：底层错误的原文（带着助手服务的地址和端口）只进这里，
 	 * 回给请求的人和写进就绪状态、`turn_end` 的只有稳定的一句说明。
 	 */
@@ -104,9 +102,10 @@ export interface SessionServiceDeps {
 type WorkbenchTarget = PromptCommandBody["workbench"];
 
 /**
- * 会话的写（建会话、发话、停止）和助手此刻能不能用：把一轮交给助手服务（`POST /sessions/:id/prompt`），
+ * 会话的写（建会话、发话、停止、结束）和助手此刻能不能用：把一轮交给助手服务（`POST /sessions/:id/prompt`），
  * 助手没有配置时都返回 503 `assistant_not_configured`（读接口照常）。一个项目同一时刻只跑一轮：
- * 在做的会话在库里至多一个（唯一约束），冲突就拒绝，排队是 #544。
+ * 在做的会话在库里至多一个（唯一约束）；项目里有别的会话在做时，新的一轮排队（`queued`），在做的那一轮结束时控制面
+ * 开始排队时间最早的那个（#544；排队只在控制面，助手服务不知道项目）。在做时发话是插话（`steer`）。
  *
  * 一轮开始时先写 `user_message` 和 `turn_started` 再交给助手服务：助手服务的事件可能在回应之前就到了，
  * 用户的话要排在它们前面。助手服务没接住：新建的会话删掉（不留下会话）；已有的会话补一条结局为失败的
@@ -117,7 +116,26 @@ export class SessionService {
 	/** 正在问的那一次 `/health`：同时来的请求等它，不各问一遍。 */
 	#healthAsking: Promise<{ health: AssistantHealth } | { error: string }> | undefined;
 
-	constructor(private readonly deps: SessionServiceDeps) {}
+	/** 后台在做的事（开始排队中的下一个会话）：关闭时等它们做完，测试也能等。 */
+	readonly #background = new Set<Promise<unknown>>();
+
+	constructor(private readonly deps: SessionServiceDeps) {
+		// 一轮结束、项目的位置空出来了：让排队的最早一个开始。不等它（交给助手服务最多等 10 秒），错误自己记日志。
+		deps.sessions.onTurnEnd((project) => this.#later(() => this.#promote(project)));
+	}
+
+	/** 后台做一件事：不等、错误进日志；{@link idle} 等它们做完。 */
+	#later(run: () => Promise<void>): void {
+		const task = run()
+			.catch((error) => this.deps.log?.("开始排队中的会话失败", error))
+			.finally(() => this.#background.delete(task));
+		this.#background.add(task);
+	}
+
+	/** 等后台的事做完（关闭控制面之前；测试里等排队的会话开始）。 */
+	async idle(): Promise<void> {
+		while (this.#background.size > 0) await Promise.all([...this.#background]);
+	}
 
 	// ---- 就绪状态 ----
 
@@ -237,34 +255,28 @@ export class SessionService {
 
 	/**
 	 * 新建会话：第一句话作为第一轮。建会话、写 `user_message`、写 `turn_started` 在一个事务里
-	 * （{@link SessionStore.createWithTurn}），再把这一轮交给助手服务。
+	 * （{@link SessionStore.createWithTurn}），再把这一轮交给助手服务。项目里有别的会话在做（或在排队）时，这个会话排队
+	 * （`queued`）：这句话照常写 `user_message`，不交给助手服务，轮到它时才交（{@link SessionService.#promote}）。
 	 */
 	async create(project: ProjectId, actor: Actor, text: string): Promise<Outcome<SessionRow>> {
 		const { sessions } = this.deps;
 		const ready = await this.#ready(project);
 		if (!ready.ok) return ready;
-		const busy = await sessions.running(project);
-		if (busy) return projectBusy(busy);
 		const messageId = randomUUID();
-		let created: Awaited<ReturnType<SessionStore["createWithTurn"]>>;
-		try {
-			created = await sessions.createWithTurn(
-				{
-					project,
-					title: titleOf(text),
-					createdBy: actor.nickname,
-					createdByUserId: actor.userId,
-				},
-				opening(messageId, actor, text),
-			);
-		} catch (error) {
-			if (error instanceof ProjectBusyError) {
-				const other = await sessions.running(project);
-				return other ? projectBusy(other) : rejected(409, "project_busy", error.message);
-			}
-			throw error;
-		}
+		const created = await sessions.createWithTurn(
+			{
+				project,
+				title: titleOf(text),
+				createdBy: actor.nickname,
+				createdByUserId: actor.userId,
+			},
+			userMessage(messageId, actor, text),
+		);
 		const { session } = created;
+		if (created.queued) {
+			await this.#announceQueue(project);
+			return { ok: true, value: (await sessions.find(session.id)) ?? session };
+		}
 		const sent = await this.#handOver(session, 1, { messageId, text, actor }, ready.value);
 		if (!sent.ok) {
 			// 不留下会话。
@@ -274,52 +286,180 @@ export class SessionService {
 		return { ok: true, value: (await sessions.find(session.id)) ?? session };
 	}
 
-	/** 对会话说一句话：空闲时开始新的一轮，返回这句话的 `user_message` 的序号。 */
+	/**
+	 * 对会话说一句话，返回这句话的 `user_message` 的序号：
+	 * - **在做**：插话（`steer: true`，{@link SessionService.#steer}），交给助手服务的 `steer`；
+	 * - **空闲**：开始新的一轮；项目里有别的会话在做（或在排队）时，这个会话排队，这句话轮到它时才交给助手服务；
+	 * - **排队中** 409 `session_queued`，**已结束** 409 `session_ended`。
+	 * 状态在两次读之间变了（比如刚读到在做、插话之前这一轮结束了）就按新的状态再来一次，最多三次。
+	 */
 	async say(session: SessionRow, actor: Actor, text: string): Promise<Outcome<{ seq: number }>> {
-		const ready = await this.#ready(session.projectId);
-		if (!ready.ok) return ready;
-		const messageId = randomUUID();
-		const begun = await this.#begin(session, opening(messageId, actor, text));
-		if (!begun.ok) return begun;
-		const sent = await this.#handOver(
-			session,
-			begun.value.turn,
-			{ messageId, text, actor },
-			ready.value,
-		);
-		if (!sent.ok) return sent;
-		return { ok: true, value: { seq: begun.value.seq } };
+		const { sessions } = this.deps;
+		const configured = await this.#configured();
+		if (!configured.ok) return configured;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const current = (await sessions.find(session.id)) ?? session;
+			if (current.status === "running") {
+				const steered = await this.#steer(current, actor, text, configured.value);
+				if (steered !== "retry") return steered;
+				continue;
+			}
+			const ready = await this.#ready(session.projectId);
+			if (!ready.ok) return ready;
+			const messageId = randomUUID();
+			const begun = await sessions.beginTurn(
+				session.id,
+				session.projectId,
+				userMessage(messageId, actor, text),
+			);
+			switch (begun.outcome) {
+				case "started": {
+					const sent = await this.#handOver(
+						session,
+						begun.turn,
+						{ messageId, text, actor },
+						ready.value,
+					);
+					if (!sent.ok) return sent;
+					return { ok: true, value: { seq: begun.events[0]?.seq ?? 0 } };
+				}
+				case "queued":
+					await this.#announceQueue(session.projectId);
+					return { ok: true, value: { seq: begun.events[0]?.seq ?? 0 } };
+				case "refused":
+					if (begun.status === "running") continue;
+					if (begun.status === "ended") {
+						return rejected(409, "session_ended", "这个会话已经结束了，不再接受消息");
+					}
+					return rejected(409, "session_queued", "这个会话在排队，等开始之后再说，或者先停止");
+			}
+		}
+		return rejected(409, "turn_running", "会话的状态一直在变，稍后再说一次");
 	}
 
 	/**
-	 * 空闲的会话开始一轮：`idle` → `running`、轮次加一、写 `user_message` 和 `turn_started`，在一个事务里
-	 * （{@link SessionStore.beginTurn}）；其余状态和项目里有别的会话在做时拒绝。
+	 * 在做的会话里插话：写 `user_message`（`steer: true`，在一个事务里核对会话此刻在做），再交给助手服务的 `steer`
+	 * （协议见 `SteerCommandBody`）。助手服务回 409 `no_turn_running`（这一轮刚好结束、在停止、助手服务重启过）时，这句话
+	 * 没有送到：**为它写一条 `steer_dropped` 的提示**（带这句话的 `message_id`），不重试，也不当作新的一轮；这句话已经记在
+	 * 时间线上，响应照常返回它的序号，用户看到提示可以再说一次。连不上、被拒绝（结果可能已送到、也可能没有）也写提示，
+	 * 响应是 503。这一刻已经不在做了返回 `"retry"`，调用方按空闲的会话处理。
 	 */
-	async #begin(
+	async #steer(
 		session: SessionRow,
-		events: (turn: number) => SessionEventBody[],
-	): Promise<Outcome<{ turn: number; seq: number }>> {
+		actor: Actor,
+		text: string,
+		client: AssistantClient,
+	): Promise<Outcome<{ seq: number }> | "retry"> {
 		const { sessions } = this.deps;
+		const messageId = randomUUID();
+		const steered = await sessions.steer(session.id, userMessage(messageId, actor, text, true));
+		if (!steered.steered) return "retry";
+		const seq = steered.event.seq;
 		try {
-			const result = await sessions.beginTurn(session.id, session.projectId, events);
-			if (result.started) {
-				return { ok: true, value: { turn: result.turn, seq: result.events[0]?.seq ?? 0 } };
-			}
-			switch (result.status) {
-				case "ended":
-					return rejected(409, "session_ended", "这个会话已经结束了，不再接受消息");
-				case "queued":
-					return rejected(409, "session_queued", "这个会话在排队，等轮到它");
-				default:
-					return rejected(409, "turn_running", "助手还在做上一轮，等它停下来再说");
-			}
+			await client.steer(session.id, { message_id: messageId, text });
 		} catch (error) {
-			if (error instanceof ProjectBusyError) {
-				const other = await sessions.running(session.projectId);
-				return other ? projectBusy(other) : rejected(409, "project_busy", error.message);
-			}
-			throw error;
+			this.deps.log?.(`会话 ${session.id} 的插话没有送到助手服务`, error);
+			const noTurn = error instanceof AssistantError && error.code === "no_turn_running";
+			const unknown = error instanceof AssistantUnreachableError && error.outcomeUnknown;
+			await sessions.append(session.id, {
+				type: "notice",
+				kind: "steer_dropped",
+				message: noTurn
+					? "这句插话没有送到：这一轮刚好结束了（或者正在停止），需要的话再说一次"
+					: unknown
+						? "这句插话可能没有送到（助手服务没有及时回应），需要的话再说一次"
+						: "这句插话没有送到助手服务，需要的话再说一次",
+				message_id: messageId,
+			});
+			if (noTurn) return { ok: true, value: { seq } };
+			const failure = describeFailure(error);
+			return rejected(failure.status, failure.code, failure.message);
 		}
+		return { ok: true, value: { seq } };
+	}
+
+	/**
+	 * 排队中的会话轮到它了（项目里在做的那一轮结束、控制面启动时和每分钟的兜底）：开始排队时间最早的那个会话
+	 * （{@link SessionStore.promoteNext}：`queued` → `running`、写 `turn_started`），把它排队时说的那句话交给助手服务；
+	 * 剩下的排队的位置前进了，各推一条 `turn_queued`。交给助手服务没接住的话，这一轮以失败结束（`turn_end` 又会让下一个
+	 * 开始）。没有排队的、项目里有会话在做、助手服务和工作台此刻不能用时什么也不做（排队的留在队里，兜底的扫描再来）；
+	 * 重复调用无害。
+	 */
+	async #promote(project: ProjectId): Promise<void> {
+		const { sessions } = this.deps;
+		// 助手服务或工作台此刻不能用（控制面刚重启、工作台的 Agent 还没重新连上）：排队的留在队里，不把它们的话一个个失败掉；
+		// 兜底的扫描（每分钟）会再来。
+		const ready = await this.#ready(project);
+		if (!ready.ok) {
+			this.deps.log?.(`项目 ${project} 里排队的会话先不开始：${ready.message}`);
+			return;
+		}
+		const promoted = await sessions.promoteNext(project);
+		if (!promoted) return;
+		await this.#announceQueue(project);
+		const { session, turn, message } = promoted;
+		const actor: Actor = {
+			nickname: message.author,
+			via: null,
+			userId: message.author_user_id,
+			token: null,
+		};
+		// 没接住时 `#handOver` 自己补了失败的结局（让下一个排队的开始）。
+		await this.#handOver(
+			session,
+			turn,
+			{ messageId: message.message_id, text: message.text, actor },
+			ready.value,
+		);
+	}
+
+	/**
+	 * 兜底：有会话排队、项目里却没有会话在做的（控制面重启、开始它的那一次没做完），开始排队最早的那个。控制面启动时和
+	 * 每分钟（`expireStale` 之后）调用。返回开始了几个项目的。
+	 */
+	async startWaiting(): Promise<number> {
+		const projects = await this.deps.sessions.projectsWaitingForTurn();
+		for (const project of projects) this.#later(() => this.#promote(project));
+		return projects.length;
+	}
+
+	/**
+	 * 给项目里每个排队中的会话推一条 `turn_queued`（不持久）：排第几、在等哪个会话和它的发起人。队列变化时调用（有会话排上
+	 * 队、有会话被停止或结束、排队的开始了）。没有会话在做时不推：它们在等开始，开始那一刻再推。
+	 */
+	async #announceQueue(project: ProjectId): Promise<void> {
+		const { sessions } = this.deps;
+		const queued = await sessions.queued(project);
+		if (queued.length === 0) return;
+		const running = await sessions.running(project);
+		if (!running) return;
+		const waitingFor = {
+			session_id: running.id,
+			title: running.title,
+			created_by: running.createdBy,
+		};
+		for (const [index, row] of queued.entries()) {
+			sessions.publish(row.id, {
+				type: "turn_queued",
+				position: index + 1,
+				waiting_for: waitingFor,
+			});
+		}
+	}
+
+	/** 排队中的会话排第几和在等谁（接口的会话视图用）；不在排队时都是 null。 */
+	async queueInfo(
+		row: SessionRow,
+	): Promise<{ position: number | null; waitingFor: SessionView["waiting_for"] }> {
+		if (row.status !== "queued") return { position: null, waitingFor: null };
+		const { sessions } = this.deps;
+		const running = await sessions.running(row.projectId);
+		return {
+			position: await sessions.queuePosition(row),
+			waitingFor: running
+				? { session_id: running.id, title: running.title, created_by: running.createdBy }
+				: null,
+		};
 	}
 
 	/**
@@ -379,17 +519,26 @@ export class SessionService {
 	}
 
 	/**
-	 * 停止会话正在做的这一轮：不在做时不改会话（助手没有配置时仍是 503，和别的写一样；空闲的会话仍向助手服务补发一次
-	 * 带轮次的中止，见下面）；在做时先把这一轮的中止发给助手服务，
-	 * 它会带回这一轮的 `turn_end`（等的时间 {@link STOP_GRACE_MS}，13 秒）；助手服务没有配置、连不上、不认识这一轮、
-	 * 或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：
-	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始
-	 * 就记下是第几轮，结束时按它核对（`SessionStore.append`）——这一轮已经结束、会话开始了下一轮，就不会把新的一轮结束掉。
-	 * 助手服务晚到的同一轮的结局不再记（同一轮的 `turn_end` 只记一条）。
+	 * 停止会话：
+	 * - **排队中**：移出队列、回到空闲，给排队时说的那句话写一条 `queue_cancelled` 的提示（{@link SessionStore.cancelQueued}），
+	 *   后面的会话的位置随之更新（各推一条 `turn_queued`）；不需要助手服务；
+	 * - **空闲、已结束**：不改会话（助手没有配置时仍是 503，和别的写一样）；空闲的会话仍向助手服务补发一次带轮次的中止，
+	 *   见下面；
+	 * - **在做**：先把这一轮的中止发给助手服务，它会带回这一轮的 `turn_end`（等的时间 {@link STOP_GRACE_MS}，23 秒：
+	 *   助手服务先用 pi 的 `abort` 等 10 秒、不行才结束进程）；助手服务没有配置、连不上、不认识这一轮、或者没有及时带回结局时，
+	 *   **由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：助手服务不回话，用户也停得下来，项目不会因此一直
+	 *   开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始就记下是第几轮，结束时按它核对
+	 *   （`SessionStore.append`）——这一轮已经结束、会话开始了下一轮，就不会把新的一轮结束掉。助手服务晚到的同一轮的结局不再记
+	 *   （同一轮的 `turn_end` 只记一条）。这一轮结束时项目的位置空出来，排队的最早一个开始（`SessionStore.onTurnEnd`）。
 	 */
 	async stop(session: SessionRow): Promise<Outcome<null>> {
 		const { sessions, client } = this.deps;
 		const current = (await sessions.find(session.id)) ?? session;
+		if (current.status === "queued") {
+			const cancelled = await sessions.cancelQueued(current.id);
+			if (cancelled.cancelled) await this.#announceQueue(current.projectId);
+			return { ok: true, value: null };
+		}
 		if (current.status !== "running") {
 			const configured = await this.#configured();
 			if (!configured.ok) return configured;
@@ -434,6 +583,47 @@ export class SessionService {
 		return { ok: true, value: null };
 	}
 
+	/**
+	 * 结束会话：之后不再接受消息（409 `session_ended`），工作区、提交、场景版本、运行都留着，不删除任何东西。
+	 * 在做的一轮先停止（{@link SessionService.stop}，等它的结局），排队的移出队列（`queue_cancelled`），然后会话改成
+	 * `ended` 并写 `session_ended`（一个事务，{@link SessionStore.end}），再把 `end` 发给助手服务（它结束这个会话的进程；
+	 * 尽力而为：连不上时会话照样已经结束，进程由助手服务自己回收，#545）。已经结束的再调用无害（什么也不写）。
+	 * 助手没有配置时 503（和别的写一样）。结束之后调用 `onEnded`（会话令牌合入之后在那里吊销）。
+	 * 停止到结束之间会话又开始了一轮（别人刚好说了话）就再停一次，最多三次，还不行是 409 `turn_running`。
+	 */
+	async end(session: SessionRow, actor: Actor): Promise<Outcome<null>> {
+		const { sessions } = this.deps;
+		const configured = await this.#configured();
+		if (!configured.ok) return configured;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const current = (await sessions.find(session.id)) ?? session;
+			if (current.status === "ended") return { ok: true, value: null };
+			if (current.status === "running") {
+				await this.stop(current);
+				continue;
+			}
+			if (current.status === "queued") {
+				const cancelled = await sessions.cancelQueued(current.id);
+				if (cancelled.cancelled) await this.#announceQueue(current.projectId);
+				continue;
+			}
+			const ended = await sessions.end(current.id, actor.nickname);
+			if (!ended.ended) continue;
+			try {
+				await configured.value.end(current.id);
+			} catch (error) {
+				this.deps.log?.(`会话 ${current.id} 已经结束，但没能通知助手服务结束它的进程`, error);
+			}
+			try {
+				await this.deps.onEnded?.(current);
+			} catch (error) {
+				this.deps.log?.(`会话 ${current.id} 结束之后的收尾失败`, error);
+			}
+			return { ok: true, value: null };
+		}
+		return rejected(409, "turn_running", "会话又开始了一轮，先停止再结束");
+	}
+
 	/** 等第 `turn` 轮结束（会话离开「在做」，或已经在做下一轮），最多等宽限那么久；返回等到了没有。 */
 	async #settled(sessionId: string, turn: number): Promise<boolean> {
 		const deadline = Date.now() + (this.deps.stopGraceMs ?? STOP_GRACE_MS);
@@ -476,27 +666,20 @@ export class SessionService {
 	}
 }
 
-/** 一轮开头要写的事件：用户的话和这一轮的开始。 */
-const opening =
-	(messageId: string, actor: Actor, text: string) =>
-	(turn: number): SessionEventBody[] => [
-		{
-			type: "user_message",
-			message_id: messageId,
-			text,
-			steer: false,
-			author: actor.nickname,
-			author_user_id: actor.userId,
-		},
-		{ type: "turn_started", turn },
-	];
-
-const projectBusy = (running: SessionRow): Outcome<never> =>
-	rejected(
-		409,
-		"project_busy",
-		`这个项目里的会话「${running.title}」（${running.id}）正在做，同一个项目同一时刻只跑一轮，等它停下来`,
-	);
+/** 用户说的一句话（`user_message`）：`steer` 是在做时说的（插话）。 */
+const userMessage = (
+	messageId: string,
+	actor: Actor,
+	text: string,
+	steer = false,
+): SessionEventBody => ({
+	type: "user_message",
+	message_id: messageId,
+	text,
+	steer,
+	author: actor.nickname,
+	author_user_id: actor.userId,
+});
 
 interface Failure {
 	status: 409 | 503;
