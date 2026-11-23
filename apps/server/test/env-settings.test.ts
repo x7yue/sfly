@@ -299,8 +299,8 @@ describe("端口：SFLY_HTTP_PORT、SFLY_GRPC_PORT", () => {
 });
 
 describe("全部变量一起读", () => {
-	it("什么都不设置：端口用默认值，别的都用各自的默认值（undefined）", () => {
-		expect(readEnvSettings({})).toEqual({
+	it("什么都不设置：端口用默认值，别的数值都用各自的默认值（undefined；字符串类的见 env-settings-strings.test.ts）", () => {
+		expect(readEnvSettings({})).toMatchObject({
 			retentionDays: undefined,
 			metricRetentionDays: undefined,
 			logLimitBytes: undefined,
@@ -324,7 +324,7 @@ describe("全部变量一起读", () => {
 				SFLY_HTTP_PORT: "65535",
 				SFLY_GRPC_PORT: "65535",
 			}),
-		).toEqual({
+		).toMatchObject({
 			retentionDays: MAX_RETENTION_DAYS,
 			metricRetentionDays: MAX_RETENTION_DAYS,
 			logLimitBytes: LARGEST_MB * MB,

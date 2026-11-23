@@ -1,5 +1,6 @@
-// 控制面读的数值类环境变量（#577）：启动时就检查，不合法的写明变量名、填的原文和允许的范围，控制面不启动，
-// 不留到运行时才出错。
+// 控制面读的环境变量里，数值类（#577）和字符串类（#619：代理信任、跨域来源、初始管理员、对外地址、数据库地址、镜像地址）
+// 启动时就检查，不合法的写明变量名、填的值和要求，控制面不启动，不留到运行时才出错；全部收集起来一次报完。
+// 报错里不出现密码、密钥和地址里的凭据（url-setting.ts 的 `shownValue`：带 @ 的值整个不回显）。
 //
 // 以前只要求「大于 0」：`Infinity`、很大的数都能通过。保留天数填得很大时，清理用它算的截止时间早于数据库能表示的下限
 // （约 247 万天起，清理的查询被数据库拒绝）或在控制面里就是无效的时间（约 1 亿天起）：启动正常、进程不退出，清理任务每分钟
@@ -8,9 +9,19 @@
 // 每个变量一个合理的范围（常量在下面），别的由部署者设置的数字（程序里给 `startControlPlane` 的选项）按同一个范围检查
 // （{@link numericOptionProblems}）。取值的范围和「不想清理怎么写」写在 deploy/.env.example、README 的部署部分和
 // docs/ARCHITECTURE.md。
+import type { FastifyServerOptions } from "fastify";
 import { LOGIN_TOUCH_INTERVAL_MS } from "../auth/access-guard.js";
+import { type InitialAdmin, parseInitialAdmin } from "../auth/bootstrap.js";
+import { parseCorsOrigins } from "../http/cors.js";
+import { parseTrustProxy } from "../http/trust-proxy.js";
 import { byteLimitBytesFromMb, byteLimitMessage, isByteLimit } from "./byte-limit.js";
 import { decimalOf, isUnset } from "./decimal.js";
+import {
+	databaseUrlFromEnv,
+	gatewayUrlFrom,
+	type HttpUrlRule,
+	httpUrlFromEnv,
+} from "./url-setting.js";
 
 /**
  * 保留天数（日志和产物、指标）的上限：36500 天（100 年）。再大的值没有意义，写它就是「永不清理」：不支持专门的写法，
@@ -113,6 +124,26 @@ function portFromEnv(name: string, raw: string | undefined, fallback: number): n
 	return port;
 }
 
+/** 对外地址（HTTP）：写进 Agent 的配置、通知卡片的链接，后面拼路径。 */
+const PUBLIC_URL_RULE: HttpUrlRule = {
+	requirement:
+		"要写成带协议和主机的 http 或 https 地址（例如 https://sfly.example.com，不带用户名密码、? 和 #）",
+	strict: true,
+};
+/** Agent 网关（gRPC）的对外地址：主机加端口。 */
+const PUBLIC_GRPC_URL_RULE: HttpUrlRule = {
+	requirement:
+		"要写成带协议和主机的 http 或 https 地址（例如 http://sfly.example.com:50051，不带路径、用户名密码、? 和 #）",
+	strict: true,
+	noPath: true,
+};
+/** 镜像地址：下发给 Agent 的 uv 用，可以带用户名和密码。 */
+const MIRROR_URL_RULE: HttpUrlRule = {
+	requirement:
+		"要写成带协议和主机的 http 或 https 地址（例如 https://mirrors.ustc.edu.cn/pypi/simple）",
+	strict: false,
+};
+
 /** 环境变量换成的设置；没设置的项是 undefined（用各自的默认值）。 */
 export interface EnvSettings {
 	retentionDays: number | undefined;
@@ -123,10 +154,31 @@ export interface EnvSettings {
 	loginIdleMs: number | undefined;
 	httpPort: number;
 	grpcPort: number;
+	/** 数据库连接串（`DATABASE_URL`，默认本机开发用的）。 */
+	databaseUrl: string;
+	/** 信任反向代理带来的 `X-Forwarded-For`（`SFLY_TRUST_PROXY`）。 */
+	trustProxy: FastifyServerOptions["trustProxy"];
+	/** 允许跨域调用 API 的来源（`SFLY_CORS_ORIGINS`）；undefined 是允许所有来源。 */
+	corsOrigins: string[] | undefined;
+	/** 开发时也算同源的来源（`SFLY_DEV_ORIGINS`）。 */
+	sameOrigins: string[] | undefined;
+	/** 初始管理员（`SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`、`SFLY_ADMIN_DISPLAY_NAME`）。 */
+	initialAdmin: InitialAdmin | undefined;
+	/** HTTP API 对 Agent 可见的地址（`SFLY_PUBLIC_URL`）。 */
+	publicHttpUrl: string | undefined;
+	/**
+	 * Agent 网关对 Agent 可见的地址：`SFLY_PUBLIC_GRPC_URL`；没有时，给了对外地址（HTTP）且网关端口是确定的（不是 0），
+	 * 启动时就用对外地址的主机名加网关端口算好；端口让系统选（0）时要监听之后才知道，留给控制面。
+	 */
+	publicGrpcUrl: string | undefined;
+	/** PyPI 镜像（`SFLY_PYPI_MIRROR`）。 */
+	pypiMirror: string | undefined;
+	/** GitHub Release 镜像（`SFLY_GITHUB_RELEASE_MIRROR`）。 */
+	githubReleaseMirror: string | undefined;
 }
 
 /**
- * 读数值设置时发现的问题：每个不合法的一条，写明变量名（或选项名）、填的值和允许的范围。`subject` 是它说的东西：
+ * 读设置时发现的问题：每个不合法的一条，写明变量名（或选项名）、填的值和允许的范围。`subject` 是它说的东西：
  * 环境变量（`main.ts` 读的），或者程序里直接给 `startControlPlane` 的选项。
  */
 export class EnvSettingsError extends Error {
@@ -144,8 +196,10 @@ export class EnvSettingsError extends Error {
 }
 
 /**
- * 控制面读的数值类环境变量，换成设置。每一项都检查：有限、在有意义的范围里；不合法的全部收集起来，一次报完
- * （{@link EnvSettingsError}），部署者不用改一个、重启、再看下一个。
+ * 控制面读的数值类和字符串类环境变量，换成设置。每一项都检查：数值有限、在有意义的范围里，字符串写得合规矩；
+ * 不合法的全部收集起来，一次报完（{@link EnvSettingsError}），部署者不用改一个、重启、再看下一个。
+ * 只检查写法，不访问网络和文件系统（连得上数据库、数据目录能不能写、助手服务的地址和密钥、工作台 Agent 的名字都不在这里：
+ * 见 docs/ARCHITECTURE.md「启动时检查哪些环境变量」）。
  */
 export function readEnvSettings(env: Readonly<Record<string, string | undefined>>): EnvSettings {
 	const problems: string[] = [];
@@ -157,6 +211,20 @@ export function readEnvSettings(env: Readonly<Record<string, string | undefined>
 			return fallback;
 		}
 	};
+	// 先读端口和对外地址：网关的对外地址要用它们算。
+	const grpcPort = read(() => portFromEnv("SFLY_GRPC_PORT", env.SFLY_GRPC_PORT, 50051), 50051);
+	const publicHttpUrl = read(
+		() => httpUrlFromEnv("SFLY_PUBLIC_URL", env.SFLY_PUBLIC_URL, PUBLIC_URL_RULE),
+		undefined,
+	);
+	const publicGrpcUrl =
+		read(
+			() => httpUrlFromEnv("SFLY_PUBLIC_GRPC_URL", env.SFLY_PUBLIC_GRPC_URL, PUBLIC_GRPC_URL_RULE),
+			undefined,
+		) ??
+		(publicHttpUrl !== undefined && grpcPort !== 0
+			? gatewayUrlFrom(publicHttpUrl, grpcPort)
+			: undefined);
 	const settings: EnvSettings = {
 		retentionDays: read(
 			() => retentionDaysFromEnv("SFLY_RETENTION_DAYS", env.SFLY_RETENTION_DAYS),
@@ -193,7 +261,27 @@ export function readEnvSettings(env: Readonly<Record<string, string | undefined>
 			undefined,
 		),
 		httpPort: read(() => portFromEnv("SFLY_HTTP_PORT", env.SFLY_HTTP_PORT, 8080), 8080),
-		grpcPort: read(() => portFromEnv("SFLY_GRPC_PORT", env.SFLY_GRPC_PORT, 50051), 50051),
+		grpcPort,
+		databaseUrl: read(() => databaseUrlFromEnv(env.DATABASE_URL), databaseUrlFromEnv(undefined)),
+		trustProxy: read(() => parseTrustProxy(env.SFLY_TRUST_PROXY), false),
+		corsOrigins: read(() => parseCorsOrigins(env.SFLY_CORS_ORIGINS), undefined),
+		sameOrigins: read(() => parseCorsOrigins(env.SFLY_DEV_ORIGINS, "SFLY_DEV_ORIGINS"), undefined),
+		initialAdmin: read(() => parseInitialAdmin(env), undefined),
+		publicHttpUrl,
+		publicGrpcUrl,
+		pypiMirror: read(
+			() => httpUrlFromEnv("SFLY_PYPI_MIRROR", env.SFLY_PYPI_MIRROR, MIRROR_URL_RULE),
+			undefined,
+		),
+		githubReleaseMirror: read(
+			() =>
+				httpUrlFromEnv(
+					"SFLY_GITHUB_RELEASE_MIRROR",
+					env.SFLY_GITHUB_RELEASE_MIRROR,
+					MIRROR_URL_RULE,
+				),
+			undefined,
+		),
 	};
 	if (problems.length > 0) throw new EnvSettingsError(problems);
 	return settings;
