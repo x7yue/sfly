@@ -5,6 +5,7 @@ import { seedSession } from "../../server/test/support/sessions.js";
 import {
 	apiError,
 	assistantMessage,
+	eventAt,
 	fulfillJson,
 	installSessionStream,
 	pushEvent,
@@ -609,6 +610,54 @@ test("停止失败：写明原因，会话仍是在做", async ({ page }) => {
 		page.locator("[data-sonner-toast]").filter({ hasText: "无法停止这一轮" }),
 	).toContainText("助手服务连不上");
 	await expect(page.getByTestId("session-status")).toHaveText("在做");
+	// 失败之后按钮恢复可点，焦点还在它上面（请求在路上时它只是 aria-disabled，没有被浏览器夺走焦点）。
+	const stop = page.getByRole("button", { name: "停止" });
+	await expect(stop).not.toHaveAttribute("aria-disabled", "true");
+	await expect(stop).toBeFocused();
+});
+
+test("停止的请求在路上（慢）：「停止」不可点但保留焦点；这一轮结束之后焦点交给输入框；会话同时结束时没有输入框，焦点落在页面标题", async ({
+	page,
+}) => {
+	for (const mode of ["turn_end", "session_ended"] as const) {
+		const view = sessionView({ status: "running" });
+		await installSessionStream(page);
+		await stubSessionDetail(page, view, [userMessage(1), turnStarted(2)]);
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let stops = 0;
+		await page.route(new RegExp(`/api/sessions/${view.id}/stop$`), async (route) => {
+			stops++;
+			await gate;
+			await fulfillJson(route, 200, { ...view, status: "running" });
+		});
+		await page.goto(`/sessions/${view.id}`);
+		const stop = page.getByRole("button", { name: "停止" });
+		await stop.click();
+		await expect.poll(() => stops).toBe(1);
+		// 请求在路上：不可点（再点不会再发一个请求），但焦点还在按钮上，不是被禁用夺走了。
+		await expect(stop).toHaveAttribute("aria-disabled", "true");
+		await expect(stop).toBeFocused();
+		await stop.click({ force: true });
+		expect(stops).toBe(1);
+		release();
+		if (mode === "turn_end") {
+			await pushEvent(page, turnEnd(3, "stopped"));
+			await expect(page.getByTestId("session-status")).toHaveText("空闲");
+			await expect(stop).toHaveCount(0);
+			await expect(composer(page)).toBeFocused();
+		} else {
+			await pushEvent(page, { type: "session_ended", seq: 3, at: eventAt(), by: "alice" });
+			await expect(page.getByTestId("session-status")).toHaveText("已结束");
+			await expect(stop).toHaveCount(0);
+			await expect(composer(page)).toHaveCount(0);
+			// 声明的接班元素（输入框）已经没有了：退回原来的规则，交给页面标题。
+			await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+		}
+		await page.unrouteAll({ behavior: "ignoreErrors" });
+	}
 });
 
 // ---------------------------------------------------------------- 会话页：接着说
@@ -937,6 +986,70 @@ test("接着说：在做时输入框照常可写、不能发（Ctrl/⌘+Enter �
 	await expect(group).toContainText("发送（输入框里）");
 	await expect(group).toContainText("Ctrl");
 	await expect(group).toContainText("Enter");
+});
+
+test("Ctrl/⌘+Enter 只在输入框里发送：焦点在页面上别的地方时，输入框里写了一半的话不会被发出去（会话页和助手页）", async ({
+	page,
+	controlPlane,
+}) => {
+	const idle = await seedSession(controlPlane.database.url, { status: "idle", events: [] });
+	const posts: unknown[] = [];
+	await page.route(/\/api\/sessions\/[^/]+\/messages$/, async (route) => {
+		posts.push(route.request().postDataJSON());
+		await fulfillJson(route, 200, { seq: 7 });
+	});
+	await page.goto(`/sessions/${idle}`);
+	await composer(page).fill("写了一半的话");
+	// 焦点移到页面标题上（不在输入框里）：Ctrl/⌘+Enter 什么也不做。
+	await page.getByRole("heading", { level: 1 }).focus();
+	await page.keyboard.press("ControlOrMeta+Enter");
+	// biome-ignore lint/plugin/e2e-fixed-wait: 确认一件事没有发生（没有请求发出），没有可以等的信号
+	await page.waitForTimeout(300);
+	expect(posts).toEqual([]);
+	await expect(composer(page)).toHaveValue("写了一半的话");
+	// 回到输入框里才发。
+	await composer(page).focus();
+	await page.keyboard.press("ControlOrMeta+Enter");
+	await expect.poll(() => posts).toEqual([{ text: "写了一半的话" }]);
+
+	// 助手页的新建会话一样。
+	const id = await seedSession(controlPlane.database.url, { status: "running", events: [] });
+	const posted: unknown[] = [];
+	await stubSessionList(page, READY, [], async (route, body) => {
+		posted.push(body);
+		const detail = (await (await controlPlane.fetch(`/sessions/${id}`)).json()) as Record<
+			string,
+			unknown
+		>;
+		const { events: _events, has_more: _hasMore, ...view } = detail;
+		await fulfillJson(route, 201, view);
+	});
+	await page.goto("/sessions");
+	await assistantInput(page).fill("还没写完的话");
+	await page.getByRole("heading", { level: 1 }).focus();
+	await page.keyboard.press("ControlOrMeta+Enter");
+	// biome-ignore lint/plugin/e2e-fixed-wait: 确认一件事没有发生（没有请求发出），没有可以等的信号
+	await page.waitForTimeout(300);
+	expect(posted).toEqual([]);
+	await assistantInput(page).focus();
+	await page.keyboard.press("ControlOrMeta+Enter");
+	await expect(page).toHaveURL(new RegExp(`/sessions/${id}$`));
+	expect(posted).toEqual([{ text: "还没写完的话" }]);
+});
+
+test("详情响应里的状态和事件对不上（读到「在做」之后这一轮结束了）：页面按事件显示「空闲」，不停在「在做」", async ({
+	page,
+}) => {
+	// 响应的状态是 running，事件里最后一条是 turn_end：事件流从这一页最大的序号之后接，这条结局不会再来。
+	const view = sessionView({ status: "running" });
+	await installSessionStream(page);
+	await stubSessionDetail(page, view, [userMessage(1), turnStarted(2), turnEnd(3, "completed")]);
+	await page.goto(`/sessions/${view.id}`);
+	await expect(page.getByTestId("turn-end")).toBeVisible();
+	await expect(page.getByTestId("session-status")).toHaveText("空闲");
+	await expect(page.getByRole("button", { name: "停止" })).toHaveCount(0);
+	await composer(page).fill("接着说");
+	await expect(page.getByRole("button", { name: "发送" })).toBeEnabled();
 });
 
 test("助手页：Ctrl/⌘+Enter 开始会话（和「开始」按钮一样的请求）", async ({

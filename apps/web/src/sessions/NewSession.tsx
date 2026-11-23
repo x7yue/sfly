@@ -8,11 +8,10 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { useShortcut } from "#/components/shortcuts";
 import { ApiError, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
-import { shortcutText } from "#/lib/shortcuts";
+import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,8 +50,6 @@ export function NewSession({
 	const start = () => {
 		if (reason === null && !empty && !create.isPending) create.mutate(text);
 	};
-	// Ctrl/⌘+Enter 开始（和会话页的「接着说」同一个快捷键）；Enter 是换行。
-	useShortcut("assistant-send", start);
 	return (
 		<form
 			aria-label={SESSION.input.label}
@@ -70,6 +67,13 @@ export function NewSession({
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={3}
 				onChange={(event) => setText(event.target.value)}
+				onKeyDown={(event) => {
+					// Ctrl/⌘+Enter 开始（和会话页的「接着说」同一个快捷键），只在输入框里；Enter 是换行。
+					if (isShortcut("assistant-send", event) && !event.nativeEvent.isComposing) {
+						event.preventDefault();
+						start();
+					}
+				}}
 			/>
 			<div className="flex items-center gap-3">
 				<Button

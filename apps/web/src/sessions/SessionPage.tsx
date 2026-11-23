@@ -7,16 +7,15 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
 import { Page, PageHeader } from "#/components/page";
-import { useShortcut } from "#/components/shortcuts";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
-import { shortcutText } from "#/lib/shortcuts";
+import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -110,7 +109,11 @@ function StopButton({ id }: { id: string }) {
 		<Button
 			size="sm"
 			title={SESSION.page.stopTitle}
+			// 请求在路上时不可点，但保留焦点（aria-disabled，不是 disabled 属性）：浏览器会让被禁用的按钮失去焦点，
+			// 之后按钮随这一轮消失时就没有焦点可交接了；停止失败后按钮恢复可点，焦点也还在它上面。
 			disabled={stop.isPending}
+			focusableWhenDisabled
+			className="aria-disabled:cursor-not-allowed aria-disabled:opacity-40"
 			onClick={() => stop.mutate()}
 			// 这一轮结束时这个按钮随之消失：焦点交给输入框（components/focus-recovery）。
 			data-focus-successor={COMPOSER_SELECTOR}
@@ -122,12 +125,11 @@ function StopButton({ id }: { id: string }) {
 
 /**
  * 底部的输入框：空闲时「接着说」；在做时照常可以写下一句、只是不能发（「发送」不可用并写明原因，Ctrl/⌘+Enter 同样不发），
- * 和助手页的输入框一致；一轮结束时焦点回到输入框（点「停止」的按钮随这一轮消失，焦点不落在 body 上）；已结束时不显示。
+ * 和助手页的输入框一致；Ctrl/⌘+Enter 只在输入框里发送；点「停止」的按钮随这一轮消失时焦点交给输入框（`data-focus-successor`，不落在 body 上）；已结束时不显示。
  */
 function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const client = useQueryClient();
 	const [text, setText] = useState("");
-	const field = useRef<HTMLTextAreaElement>(null);
 	const blockedId = useId();
 	const send = useMutation({
 		mutationFn: (message: string) =>
@@ -144,17 +146,6 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const submit = () => {
 		if (canSend) send.mutate(text);
 	};
-	useShortcut("assistant-send", submit, status !== "ended");
-	// 一轮结束（在做 → 空闲）：焦点在 body 上（用户点了空白处）时放回输入框；用户在别处就不抢。点过「停止」的由焦点恢复交给输入框。
-	const before = useRef(status);
-	useEffect(() => {
-		const was = before.current;
-		before.current = status;
-		if (status === "idle" && (was === "running" || was === "queued")) {
-			const active = document.activeElement;
-			if (!active || active === document.body) field.current?.focus();
-		}
-	}, [status]);
 	if (status === "ended") {
 		return <p className="mt-4 text-sm text-fg-3">{SESSION.page.ended}</p>;
 	}
@@ -168,7 +159,6 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 			}}
 		>
 			<Textarea
-				ref={field}
 				data-session-composer
 				aria-label={SESSION.page.sendLabel}
 				aria-describedby={blocked === null ? undefined : blockedId}
@@ -177,6 +167,13 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={2}
 				onChange={(event) => setText(event.target.value)}
+				onKeyDown={(event) => {
+					// Ctrl/⌘+Enter 只在输入框里发送（登记在快捷键面板里，但不是全局快捷键）；输入法选字时的 Enter 不算。
+					if (isShortcut("assistant-send", event) && !event.nativeEvent.isComposing) {
+						event.preventDefault();
+						submit();
+					}
+				}}
 			/>
 			<div className="flex items-center gap-3">
 				<Button

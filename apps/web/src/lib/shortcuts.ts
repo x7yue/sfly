@@ -61,12 +61,13 @@ export const SHORTCUTS = [
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
 	{ id: "new-scenario", group: "全局", label: "新建场景", keys: "N" },
 	// 助手页和会话页（sessions/）的输入框：Ctrl/⌘+Enter 发出（助手页是开始，会话页是接着说）；Enter 是换行。
+	// 只在输入框里生效，由输入框自己的 onKeyDown 处理（`isShortcut`）：全局绑定的话，焦点在别处时也会把输入框里的半句话发出去。
 	{
 		id: "assistant-send",
 		group: "助手",
 		label: "发送（输入框里）",
 		keys: "Ctrl+Enter",
-		inInputs: true,
+		displayOnly: true,
 	},
 	// 编排画布（全屏页）：方向键、Enter、Esc 由画布组件自己处理（components/canvas/FlowCanvas.tsx）。
 	{
@@ -311,6 +312,20 @@ function chordMatches(chord: Chord, input: KeyInput): boolean {
 	// 字母键区分 Shift；符号键（? ! …）本身就要按 Shift，不比较。
 	const isLetter = /^[a-z]$/.test(chord.key);
 	return !isLetter || input.shiftKey === chord.shift;
+}
+
+/**
+ * 这一次按键是不是注册表里这个快捷键（单个组合键，不含序列）：不由全局监听处理、而由组件自己的 onKeyDown 处理的
+ * （`displayOnly`）快捷键用它判断，Ctrl 同时匹配 ⌘，写法和全局监听一致。
+ */
+export function isShortcut(
+	id: ShortcutId,
+	event: Pick<KeyInput, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+): boolean {
+	const [chord, ...rest] = parseKeys(shortcutById(id).keys);
+	return (
+		chord !== undefined && rest.length === 0 && chordMatches(chord, { ...event, editable: true })
+	);
 }
 
 /** 按键序列的超时（毫秒）。 */

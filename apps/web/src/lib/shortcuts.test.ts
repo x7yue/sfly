@@ -4,6 +4,7 @@ import type { ToolButton } from "#/components/canvas/CanvasDock";
 import type { KeyHint, Keys } from "#/components/page";
 import type { Kbd } from "#/components/ui/kbd";
 import {
+	isShortcut,
 	type KeyInput,
 	keyChords,
 	keyLabels,
@@ -158,6 +159,35 @@ describe("快捷键注册表", () => {
 		for (const group of new Set(live.map((s) => s.group))) {
 			expect(clashes(live.filter((s) => s.group === group))).toEqual([]);
 		}
+	});
+});
+
+describe("组件自己处理的快捷键（displayOnly）", () => {
+	it("发送（输入框里）：Ctrl 或 ⌘ 加 Enter 算，没有修饰键、多按了 Alt、按的是别的键不算", () => {
+		const event = (key: string, extra: Partial<Parameters<typeof isShortcut>[1]> = {}) => ({
+			key,
+			ctrlKey: false,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			...extra,
+		});
+		expect(isShortcut("assistant-send", event("Enter", { ctrlKey: true }))).toBe(true);
+		expect(isShortcut("assistant-send", event("Enter", { metaKey: true }))).toBe(true);
+		expect(isShortcut("assistant-send", event("Enter"))).toBe(false);
+		expect(isShortcut("assistant-send", event("Enter", { ctrlKey: true, altKey: true }))).toBe(
+			false,
+		);
+		expect(isShortcut("assistant-send", event("a", { ctrlKey: true }))).toBe(false);
+	});
+
+	it("发送（输入框里）不是全局快捷键：只展示，全局监听不会匹配它（焦点在别处时不会发出去）", () => {
+		const def = SHORTCUTS.find((s) => s.id === "assistant-send");
+		expect(def && "displayOnly" in def && def.displayOnly).toBe(true);
+		const matcher = new ShortcutMatcher(SHORTCUTS);
+		expect(matcher.handle(key("Enter", { ctrlKey: true, editable: true }), 0, () => true)).not.toBe(
+			"assistant-send",
+		);
 	});
 });
 
