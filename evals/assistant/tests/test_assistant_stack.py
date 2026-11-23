@@ -317,7 +317,7 @@ def test_reset_and_other_commands_adopt_the_assistant(monkeypatch: pytest.Monkey
     assert not up.assistant
 
 
-def _quiet_up(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> list[str]:
+def _quiet_up(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> list[int]:
     """把 up、reset 里起容器、装 Agent 的那些步骤换成什么都不做，只留下对助手容器的处理。"""
     for name in (
         "ensure_images",
@@ -335,9 +335,9 @@ def _quiet_up(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> list[str]:
         monkeypatch.setattr(Stack, name, lambda self, *a, **k: None)
     monkeypatch.setattr("aeval.env.copy_scripts", lambda *a, **k: None)
     monkeypatch.setattr(d, "sh", lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
-    started: list[str] = []
+    started: list[int] = []
     monkeypatch.setattr(Stack, "_start_assistant", lambda self: started.append(self.slot))
-    return started  # type: ignore[return-value]
+    return started
 
 
 def test_up_without_the_assistant_removes_one_left_behind(
