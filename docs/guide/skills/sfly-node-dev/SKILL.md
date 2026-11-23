@@ -52,7 +52,7 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 
 ### 用 sfly-std 的辅助函数
 - 节点里要起停后台进程、跑命令、采样整机或进程的资源、跟随日志、等端口、文件或日志行、从另一台 Agent 拉文件时，先用 `sfly-std` 的辅助函数（`sfly_std.commands`、`processes`、`resources`、`logs`、`waiting`、`agent_files`，函数、参数和完整示例见开发文档「标准节点」页，每个函数的文档字符串写明了抛出什么异常），在自己的节点里导入、组合，不要重写进程组的起停、日志轮转、判断文件写完这类逻辑；业务本身的逻辑（调用被测系统的协议、判断结果对不对）仍然写在自己的节点里。
-- 用到它就把 `sfly-std` 写进 `[project].dependencies`（只写下限，例如 `sfly-std>=0.4`）。它不在 PyPI 上：这是下面「依赖必须能从 PyPI 镜像安装」的例外，由控制面的包索引提供（`sfly init` 生成的项目已经绑定它，开发机上 `uv add sfly-std` 就能装上，Agent 装依赖时也从它取）；索引里的是公共项目里已发布的版本，要先由平台管理员发布（用户文档「标准节点」页写了现状）。只导入文档里列出的模块和名字，下划线开头的模块（`sfly_std._process` 这类）是内部实现，不要导入。
+- 用到它就把 `sfly-std` 写进 `[project].dependencies`（只写下限，例如 `sfly-std>=0.4`）。它不在 PyPI 上：这是下面「依赖必须能从 PyPI 镜像安装」的例外，由控制面的包索引提供（`sfly init` 生成的项目已经绑定它，开发机上 `uv add sfly-std` 就能装上，Agent 装依赖时也从它取）；索引里的是公共项目里已发布的版本，要先由平台管理员发布（这个办法在 #573 合入之后才有；用户文档「标准节点」页写了现状）。只导入文档里列出的模块和名字，下划线开头的模块（`sfly_std._process` 这类）是内部实现，不要导入。
 - 启动后台进程的节点：要么在 `try`/`finally` 里用 `stop_background_process` 停掉，要么在场景里加一个停止它的节点（设为 always 节点）。在 `finally` 里停要在平台给的收尾时间（默认 10 秒）内做完：`stop_background_process` 的 `grace` 默认 5 秒、被取消时最多 3 秒，别把它调到接近 10 秒；这些是每次调用的上限，不是整个收尾的预算，任务超时（不是取消）时每停一个忽略 SIGTERM 的服务就要用掉约 `grace` 秒，所以在 `finally` 里停两个及以上服务时把 `grace` 给小（各 2 秒）；服务退出慢、要更长的宽限期就用单独的 always 节点停。保存文件为产物时 `ctx.artifacts.save(名称, 路径)` 要传 `Path`（`start_background_process` 返回的 `log_path` 就是 `Path`），传字符串保存的是这段字符串本身。
 - 同一个节点里多次调用辅助函数是正常用法：默认的产物名、日志文件名每次调用不同，前一次的不会被覆盖；要自己决定名字就传 `stdout_artifact`、`csv_artifact`、`log_path` 这类参数。字段后缀：`*_path` 是本地路径、`*_artifact` 是产物名称、`*_ref` 是产物引用（下载地址，不是本地路径，别拿去 `open`）。
 

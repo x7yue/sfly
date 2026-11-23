@@ -16,6 +16,7 @@ import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import IO
 
 from sfly import Context
@@ -121,6 +122,12 @@ class _Forward:
         return tail.decode("utf-8", errors="replace").rstrip("\n")
 
 
+def _unclaim(claimed: list[Path]) -> None:
+    """命令没能启动：删掉认领默认名称时创建的空文件。"""
+    for path in claimed:
+        path.unlink(missing_ok=True)
+
+
 def run_command(
     ctx: Context,
     command: str,
@@ -146,20 +153,39 @@ def run_command(
     退出码不在 `ok_exit_codes` 里时抛出 `CommandFailed`，信息是退出码、命令和标准错误的末尾；
     解释器不存在抛出 `FileNotFoundError`（`start_background_process` 在同样的情况下抛出的是
     `StartFailed`，两个函数不同），`cwd` 不存在抛出 `NotADirectoryError`；没有打开 `save_output`
-    却给了 `stdout_artifact` 或 `stderr_artifact`、给的产物名称不合法、两个名称相同时抛出
-    `ValueError`（命令启动之前就检查，不会先跑起命令再报错）。
+    却给了 `stdout_artifact` 或 `stderr_artifact`、给的产物名称不合法、两路的名称相同（包括自己给的
+    名称正好是另一路的默认名，例如标准输出取名 `stderr.txt`、标准错误用默认名）时抛出 `ValueError`，
+    打开 `save_output` 却没有产物目录时抛出 `RuntimeError`（都在命令启动之前检查，不会先跑起命令
+    再报错，也不留下空的产物）。
     任务被取消或超时时，命令和它启动的全部子进程都由平台终止（它们和执行器在同一个进程组里），
     `sfly.Cancelled` 照常往外传，不用自己终止命令。
     """
     _process.check_cwd(cwd)
     if not save_output and (stdout_artifact is not None or stderr_artifact is not None):
         raise ValueError("给了 stdout_artifact 或 stderr_artifact 时要同时打开 save_output")
-    # 自己给的产物名称在命令启动之前就检查：不合法时不能先跑起命令再报错。
+    # 产物的事在命令启动之前都办完：名称不合法、没有产物目录、两路的名称相同时命令不能先跑起来
+    # 再报错。自己给的名称先检查；默认的名称在这里认领（把文件创建出来），命令没能启动时再删掉。
     for given in (stdout_artifact, stderr_artifact):
         if given is not None:
             ctx.artifacts.ref(given)
-    if stdout_artifact is not None and stdout_artifact == stderr_artifact:
-        raise ValueError(f"stdout_artifact 和 stderr_artifact 不能是同一个产物：{stdout_artifact}")
+    out_name, err_name = stdout_artifact, stderr_artifact
+    claimed: list[Path] = []
+    if save_output:
+        try:
+            if out_name is None:
+                out_name = _names.claim(ctx.artifacts.path, STDOUT_ARTIFACT)
+                claimed.append(ctx.artifacts.path(out_name))
+            if err_name is None:
+                err_name = _names.claim(ctx.artifacts.path, STDERR_ARTIFACT)
+                claimed.append(ctx.artifacts.path(err_name))
+            if out_name == err_name:
+                raise ValueError(
+                    f"标准输出和标准错误不能是同一个产物：{out_name}"
+                    "（自己给的名称正好是另一路的默认名时，换一个名称）"
+                )
+        except BaseException:
+            _unclaim(claimed)
+            raise
     try:
         proc = subprocess.Popen(
             [shell, "-c", command],
@@ -170,21 +196,12 @@ def run_command(
             stderr=subprocess.PIPE,
         )
     except FileNotFoundError:
+        _unclaim(claimed)
         raise FileNotFoundError(f"找不到解释器 {shell}") from None
+    except BaseException:
+        _unclaim(claimed)
+        raise
     assert proc.stdout is not None and proc.stderr is not None
-    # 命令启动之后才认领产物名称：命令没能启动时不留下空的产物。
-    out_name = err_name = None
-    if save_output:
-        out_name = (
-            stdout_artifact
-            if stdout_artifact is not None
-            else _names.claim(ctx.artifacts.path, STDOUT_ARTIFACT)
-        )
-        err_name = (
-            stderr_artifact
-            if stderr_artifact is not None
-            else _names.claim(ctx.artifacts.path, STDERR_ARTIFACT)
-        )
     stdout = _Forward(ctx, sys.stdout.buffer, out_name)
     stderr = _Forward(ctx, sys.stderr.buffer, err_name)
     stdout.start(proc.stdout)

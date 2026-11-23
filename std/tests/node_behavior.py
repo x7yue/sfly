@@ -387,6 +387,10 @@ def run_cases(tmp: Path, *, only: set[str] | None = None) -> dict[str, dict[str,
         {"source": "A", "directory": "/srv", "local_dir": "got", "stable": -1},
         agents=agents,
     )
+    # 监听文件的用例看到的是「b.txt 已经被 pull_delete_source 删掉」之后的目录（夹具就是这样
+    # 生成的）。前提在这里自己准备好，不靠前一个用例的副作用：只挑 `watch_*` 单独跑（`only`）
+    # 时结果也一样。
+    (agent_root / "srv" / "b.txt").unlink(missing_ok=True)
     if LINUX:
         case(
             "watch_no_directory",

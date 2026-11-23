@@ -1,4 +1,4 @@
-"""`sfly_std.resources`：直接调用采样辅助函数；重点是进程重启后按名字重新找到它（`refind`）。"""
+"""`sfly_std.resources`：直接调用采样辅助函数；重点是进程重启后按名字重新找到它（`refind_within`）。"""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def test_monitor_system_reports_the_declared_metrics_and_returns_the_sample_coun
 def test_a_restarted_process_is_found_again_by_name_within_refind_seconds(
     tmp_path: Path, spawn: Callable[[str], subprocess.Popen[bytes]]
 ) -> None:
-    # 原来的 process_monitor 在进程重启后失败：给了 refind 就按名字找到新进程、接着监控。
+    # 原来的 process_monitor 在进程重启后失败：给了 refind_within 就按名字找到新进程、接着监控。
     tag = f"tag-{uuid.uuid4().hex}"
     first = spawn(tag)
     run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
@@ -133,7 +133,7 @@ def test_a_process_that_does_not_come_back_within_refind_seconds_counts_as_exite
             run.ctx, match=tag, refind_within=1, interval=0.2, duration=20, appear_within=5
         )
 
-    assert time.monotonic() - started >= 1.6  # 先监控了约 0.6 秒，再等满 refind 的 1 秒
+    assert time.monotonic() - started >= 1.6  # 先监控了约 0.6 秒，再等满 refind_within 的 1 秒
 
 
 def test_on_exit_succeed_ends_quietly_after_refind_runs_out(
@@ -260,7 +260,7 @@ def test_the_duration_can_run_out_while_waiting_for_a_process_to_come_back(
     threading.Timer(0.6, first.kill).start()
     started = time.monotonic()
 
-    # refind 比 duration 长：等待重新出现的时候 duration 到期，成功返回（不是 ProcessExited）。
+    # refind_within 比 duration 长：等待重新出现时 duration 到期，成功返回（不是 ProcessExited）。
     result = monitor_processes(
         run.ctx, match=tag, refind_within=30, interval=0.2, duration=2, appear_within=5
     )
@@ -270,7 +270,7 @@ def test_the_duration_can_run_out_while_waiting_for_a_process_to_come_back(
     assert any("最多再等 30 秒" in m for m in run.logs())
 
 
-def test_each_call_saves_its_own_csv_ref_unless_a_name_is_given(
+def test_each_call_saves_its_own_csv_artifact_unless_a_name_is_given(
     tmp_path: Path, spawn: Callable[[str], subprocess.Popen[bytes]]
 ) -> None:
     # 压测前、压测中各采一段：两次调用的明细互不覆盖。
@@ -320,15 +320,15 @@ def test_booleans_for_seconds_and_unknown_choices_are_rejected_before_anything_r
 
 
 def test_a_bad_csv_artifact_name_fails_at_once_not_after_waiting_for_the_targets(
-    tmp_path: Path, spawn: Callable[[str], subprocess.Popen[bytes]]
+    tmp_path: Path,
 ) -> None:
+    # 目标根本不存在、`appear_within` 给得很长：没有提前检查时要等满它才会报别的错（目标没出现）。
     tag = f"tag-{uuid.uuid4().hex}"
-    spawn(tag)
     run = DirectRun(tmp_path, metrics=PROCESS_METRICS)
     started = time.monotonic()
 
     with pytest.raises(ValueError, match="产物名称"):
-        monitor_processes(run.ctx, match=tag, csv_artifact="../x.csv", duration=5)
+        monitor_processes(run.ctx, match=tag, csv_artifact="../x.csv", appear_within=30, duration=5)
 
-    assert time.monotonic() - started < 1
+    assert time.monotonic() - started < 2
     assert not (tmp_path / "artifacts").exists() or not list((tmp_path / "artifacts").iterdir())

@@ -4,7 +4,7 @@
 每个进程每次采样的明细写进产物 `processes.csv`，每采样一次就写入并刷新，
 节点被停止、取消时已采集的明细不丢。用法见开发文档「标准节点」页（docs/guide/standard-nodes.md）的
 `process_monitor` 一节；逻辑在辅助函数 `sfly_std.resources.monitor_processes`，这里是它的节点外壳
-（节点没有 `refind` 参数：目标进程退出就按 `on_exit` 处理，和 0.3.0 一致；
+（节点没有 `refind_within` 参数：目标进程退出就按 `on_exit` 处理，和 0.3.0 一致；
 进程重启后接着监控要用辅助函数）。
 """
 

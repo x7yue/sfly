@@ -235,31 +235,113 @@ def _compare_function(
 
 
 def _compare_params(path: str, old: list[str], new: list[str], diff: Diff) -> None:
-    """参数行（`pos name: 类型`、`kw name: 类型 = 默认值`）的兼容性：位置参数不变，已有的关键字
-    参数名、类型、默认值不变，新增的只能是带默认值的关键字参数。"""
+    """参数行（`pos name: 类型`、`kw name: 类型 = 默认值`）的兼容性。
+
+    违反承诺的：删除、改名、位置参数的顺序变了、默认值变了或没了、类型换成别的、关键字参数改成
+    只能按位置传、新增的参数没有默认值。兼容的（要记进快照）：新增带默认值的关键字参数；必填的
+    参数加上默认值；参数的类型放宽（联合类型多一个成员、`Literal` 多一个取值）；只能按关键字传的
+    参数放宽成也能按位置传。
+    """
     old_pos = [_split(line) for line in old if not line.startswith("kw ")]
     new_pos = [_split(line) for line in new if not line.startswith("kw ")]
-    if new_pos[: len(old_pos)] != old_pos:
-        diff.breaking.append(f"{path} 的位置参数变了：{[p[0] for p in old_pos]}")
-    for head, _, default in new_pos[len(old_pos) :]:
-        extra = "新增的参数只能是带默认值的关键字参数" if default is not None else "也没有默认值"
-        diff.breaking.append(f"{path} 新增了位置参数 {head}：{extra}")
     old_kw = {head: (a, d) for head, a, d in map(_split, (x for x in old if x.startswith("kw ")))}
     new_kw = {head: (a, d) for head, a, d in map(_split, (x for x in new if x.startswith("kw ")))}
-    for head, (annotation, default) in old_kw.items():
+
+    if [p[0] for p in new_pos[: len(old_pos)]] != [p[0] for p in old_pos] or len(new_pos) < len(
+        old_pos
+    ):
+        diff.breaking.append(f"{path} 的位置参数变了：{[p[0] for p in old_pos]}")
+    else:
+        for (head, old_a, old_d), (_, new_a, new_d) in zip(old_pos, new_pos, strict=False):
+            _compare_one(path, head, (old_a, old_d), (new_a, new_d), diff)
+
+    relaxed: set[str] = set()  # 原来只能按关键字传、现在也能按位置传的
+    for head, annotation, default in new_pos[len(old_pos) :]:
+        name = head.split(" ", 1)[1]
+        was = old_kw.get(f"kw {name}")
+        if head.startswith("pos ") and was is not None:
+            relaxed.add(f"kw {name}")
+            diff.added.append(f"{path} 的参数 {name} 放宽成也能按位置传")
+            _compare_one(path, f"kw {name}", was, (annotation, default), diff)
+        else:
+            extra = (
+                "新增的参数只能是带默认值的关键字参数" if default is not None else "也没有默认值"
+            )
+            diff.breaking.append(f"{path} 新增了位置参数 {head}：{extra}")
+
+    for head, was in old_kw.items():
+        if head in relaxed:
+            continue
         if head not in new_kw:
             diff.breaking.append(f"{path} 删除或改名了参数 {head}")
-        elif new_kw[head] != (annotation, default):
-            diff.breaking.append(
-                f"{path} 的参数 {head} 变了：{annotation} = {default} → "
-                f"{new_kw[head][0]} = {new_kw[head][1]}"
-            )
+        else:
+            _compare_one(path, head, was, new_kw[head], diff)
     for head, (annotation, default) in new_kw.items():
         if head not in old_kw:
             if default is None:
                 diff.breaking.append(f"{path} 新增的参数 {head} 没有默认值")
             else:
                 diff.added.append(f"{path} 新增参数 {head}: {annotation} = {default}")
+
+
+def _compare_one(
+    path: str,
+    head: str,
+    old: tuple[str, str | None],
+    new: tuple[str, str | None],
+    diff: Diff,
+) -> None:
+    """同一个参数的类型标注和默认值：放宽、必填加上默认值是兼容的，别的变化违反承诺。"""
+    (old_annotation, old_default), (new_annotation, new_default) = old, new
+    if old_annotation != new_annotation:
+        before, after = _alternatives(old_annotation), _alternatives(new_annotation)
+        if before <= after:
+            diff.added.append(
+                f"{path} 的参数 {head} 的类型放宽了：{old_annotation} → {new_annotation}"
+            )
+        else:
+            diff.breaking.append(
+                f"{path} 的参数 {head} 的类型变了：{old_annotation} → {new_annotation}"
+                "（只是放宽的话，评审确认之后更新快照；收窄或换成别的类型违反兼容性承诺）"
+            )
+    if old_default != new_default:
+        if old_default is None:
+            diff.added.append(f"{path} 的参数 {head} 有了默认值 {new_default}")
+        else:
+            diff.breaking.append(
+                f"{path} 的参数 {head} 的默认值变了：{old_default} → {new_default}"
+            )
+
+
+def _alternatives(annotation: str) -> set[str]:
+    """类型标注能接受的取值的集合：顶层的 `A | B` 拆成各个成员，`Literal['a', 'b']` 拆成一个个取值。
+    新的集合包含旧的，就是放宽（调用方原来传的仍然有效）。"""
+    found: set[str] = set()
+    for member in _split_top(annotation, "|"):
+        if member.startswith("Literal[") and member.endswith("]"):
+            found.update(f"Literal:{v}" for v in _split_top(member[len("Literal[") : -1], ","))
+        else:
+            found.add(member)
+    return found
+
+
+def _split_top(text: str, separator: str) -> list[str]:
+    """按顶层的分隔符拆开（括号里和引号里的不拆），去掉两边的空白。"""
+    parts, depth, quote, start = [], 0, "", 0
+    for index, char in enumerate(text):
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char in "[({":
+            depth += 1
+        elif char in "])}":
+            depth -= 1
+        elif char == separator and depth == 0:
+            parts.append(text[start:index].strip())
+            start = index + 1
+    parts.append(text[start:].strip())
+    return parts
 
 
 def _compare_members(path: str, old: list[str], new: list[str], diff: Diff) -> None:

@@ -134,6 +134,15 @@ def test_watch_agent_files_rejects_a_bad_stable_or_duration_before_connecting(
         )
     with pytest.raises(ValueError, match="local_dir 不能为空"):
         watch_agent_files(run.ctx, SOURCE, directory=LOGS, local_dir="")
+    # `True` 是 1：写成布尔值不报错的话会被当成 1 秒。
+    with pytest.raises(ValueError, match="stable 是秒数，不能是布尔值"):
+        watch_agent_files(
+            run.ctx, SOURCE, directory=LOGS, local_dir=str(tmp_path / "p"), stable=True
+        )
+    with pytest.raises(ValueError, match="duration 是秒数，不能是布尔值"):
+        watch_agent_files(
+            run.ctx, SOURCE, directory=LOGS, local_dir=str(tmp_path / "p"), duration=True
+        )
 
 
 def test_directory_and_local_dir_can_only_be_given_by_keyword(tmp_path: Path, source: Path) -> None:

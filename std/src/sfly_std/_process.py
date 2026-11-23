@@ -1,6 +1,6 @@
 """涉及进程的函数（`run_command`、`start_background_process`、`stop_background_process`、
 `monitor_processes`）共用的工具：启动命令的参数、判断进程是否还活着、读看护进程记下的退出码。
-按 pid / 进程名 / 命令行找进程在 `processes.py`（`ProcessTarget`、`ProcessFinder`）。"""
+按 pid / 进程名 / 命令行找进程在 `_finder.py`（`find_processes` 用它）。"""
 
 from __future__ import annotations
 

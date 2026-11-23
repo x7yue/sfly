@@ -3,7 +3,7 @@
 - `start_background_process`：在新会话里启动后台进程，节点结束后它继续运行（跨节点存活的进程，
   例如被测服务）；由一个看护进程记下它的退出码；
 - `stop_background_process`：终止后台进程所在的进程组，先 SIGTERM，宽限期后 SIGKILL；
-- `background_exit_status`：看护进程记下的后台进程的状态（在运行、已退出和退出码、不是它启动的）；
+- `background_exit_status`：后台进程现在还在不在，退出了的话退出码是什么（只有看护进程记过的才有）；
 - `find_processes`：按 `pid`、`name`、`match` 找进程，可以连同子孙进程，每次调用都重新找
   （进程重启之后按名字就能找到新的）。
 
@@ -72,7 +72,7 @@ class StopFailed(Exception):
 class BackgroundProcess:
     """`start_background_process` 启动起来的后台进程。"""
 
-    #: 进程号：交给 `stop_background_process`、`ProcessFinder` 等。
+    #: 进程号：交给 `stop_background_process`、`background_exit_status`、`find_processes` 等。
     pid: int
     #: 日志文件的绝对路径（本地路径）：进程的标准输出和标准错误追加写在这里，`LogFile`、
     #: `follow_log_file`、`wait_for_log_line` 读的就是它；要存成产物时直接交给
@@ -235,9 +235,12 @@ def stop_background_process(
         pgid = None  # 不是独立的进程组（例如和执行器同组）：只终止这个进程
 
     def targets() -> list[int]:
-        if pgid is not None:
-            return _members(pgid)
-        return [pid] if _process.alive_pid(pid) else []
+        found = _members(pgid) if pgid is not None else []
+        # 进程刚被杀掉、内核还在收尾时，进程组里查不到它，但 `background_exit_status` 看它还在：
+        # 等到连这个进程号也不在了才算停好，两个函数对同一个进程的说法才一致。
+        if pid not in found and _process.alive_pid(pid):
+            found.append(pid)
+        return found
 
     def send(sig: signal.Signals) -> None:
         try:
@@ -302,35 +305,42 @@ def _wait_gone(targets: Callable[[], list[int]], timeout: float) -> bool:
 class BackgroundExit:
     """`background_exit_status` 的结果：后台进程现在是什么状态。
 
-    三种情况：不是 `start_background_process` 启动的（`supervised` 为 False，查不到）；还在运行
-    （`supervised` 和 `running` 都为 True，`exit_code` 为 None）；已经退出（`running` 为 False，
-    `exit_code` 是退出码）。
+    `running` 回答的是「这个进程现在还在不在」，不管它是不是 `start_background_process` 启动的；
+    `supervised` 说明退出码查不查得到（只有看护进程记过的才有）。四种情况：
+
+    - 还在运行：`running` 为 True，`exit_code` 为 None；
+    - 已经退出，有退出码：`running` 为 False，`exit_code` 是退出码；
+    - 已经退出，不知道退出码：`running` 为 False，`exit_code` 为 None。看护进程没来得及记下就
+      没了：整个进程组被强制结束（`stop_background_process` 发了 SIGKILL，或者被 `kill -9`、
+      内存不足时被系统杀掉）时看护进程和服务一起没了；
+    - 不是 `start_background_process` 启动的（`supervised` 为 False）：只知道进程号现在对应的进程
+      在不在（`running`），`exit_code` 一定是 None。
     """
 
-    #: 是 `start_background_process` 启动的（看护进程有它的记录）。不是时 `running` 为 False、
-    #: `exit_code` 为 None：不知道它的状态，不等于它没在运行。
+    #: 是 `start_background_process` 启动的（看护进程有它的记录），退出之后一般查得到退出码。
     supervised: bool
-    #: 还在运行（还没有退出码）。
+    #: 进程现在还在（不算已退出、还没被回收的僵尸进程）。
     running: bool
-    #: 退出码：被信号终止时为 128 + 信号值；还在运行、或查不到时为 None。
+    #: 退出码：被信号终止时为 128 + 信号值；还在运行、查不到、或者看护进程没来得及记下时为 None。
     exit_code: int | None
 
 
-def background_exit_status(
-    ctx: Context, pid: int, *, wait: float = _process.EXIT_CODE_WAIT
-) -> BackgroundExit:
-    """看护进程记下的后台进程的状态：还在运行、已经退出（和退出码）、或不是它启动的。
+def background_exit_status(ctx: Context, pid: int, *, wait: float = 0) -> BackgroundExit:
+    """后台进程现在的状态：还在不在（`running`），退出了的话退出码是什么（`exit_code`）。
 
-    进程刚退出时看护进程可能还没写下退出码：还没有退出码的最多等 `wait` 秒再回答「还在运行」。
+    这是个查询，默认看一眼就返回。进程刚退出时看护进程可能还没写下退出码：`wait` 给大于 0 的
+    秒数时，还没有退出码的最多等这么久；等完还没有退出码，再看进程还在不在（整个进程组被强制
+    结束时退出码永远写不进去，这时回答「已经退出，不知道退出码」，而不是「还在运行」）。
     `wait` 是秒数（不能是布尔值，否则抛出 `ValueError`）。
     """
     _params.seconds("wait", wait)
     status = _process.exit_status(ctx.procs_dir, pid, wait)
+    running = _process.alive_pid(pid)
     if status is None:
-        return BackgroundExit(supervised=False, running=False, exit_code=None)
-    return BackgroundExit(
-        supervised=True, running=status.exit_code is None, exit_code=status.exit_code
-    )
+        return BackgroundExit(supervised=False, running=running, exit_code=None)
+    if status.exit_code is not None:
+        return BackgroundExit(supervised=True, running=False, exit_code=status.exit_code)
+    return BackgroundExit(supervised=True, running=running, exit_code=None)
 
 
 def find_processes(

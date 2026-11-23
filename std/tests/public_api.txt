@@ -32,7 +32,7 @@ dataclass sfly_std.processes.StoppedProcess frozen
 function sfly_std.processes.background_exit_status -> BackgroundExit
   pos ctx: Context
   pos pid: int
-  kw wait: float = 2.0
+  kw wait: float = 0
 function sfly_std.processes.find_processes -> list[psutil.Process]
   kw pid: int | Sequence[int] | None = None
   kw name: str | Sequence[str] | None = None
