@@ -2,7 +2,7 @@ import { z } from "zod";
 import { endpoint, Timestamp } from "./contract.js";
 import { RunFocusItem } from "./run-focus.js";
 import { RunListActiveNode } from "./run-list.js";
-import { ErrorView } from "./runs.js";
+import { ErrorView, QueueWaitView } from "./runs.js";
 
 /**
  * 控制台统计接口的契约（约定见 ./contract.ts）。统计窗口是「最近 24 小时」：
@@ -57,6 +57,20 @@ export const DashboardChain = z.object({
 	),
 });
 
+/**
+ * 控制台运行块里进行中的节点：运行列表的 `active_nodes` 一项，排队中的节点多两个字段，写明它在等什么
+ * （运行监控概览里同一件事的写法，#457）。其余状态的节点两个字段都是 null。
+ */
+export const DashboardActiveNode = RunListActiveNode.extend({
+	/**
+	 * 排队中的节点：它在等什么（同运行视图里排队中的尝试的 `queue_wait`，控制面读取这一刻按派发的条件判断）；
+	 * 排队中但没有可等的 Agent（没有指定 Agent）时和其余状态一样为 null。
+	 */
+	queue_wait: QueueWaitView.nullable(),
+	/** 最后一次尝试进入排队的时间（「排了多久」用它）；只有 `queue_wait` 有值时有值。 */
+	queued_at: Timestamp.nullable(),
+});
+
 export const DashboardRunningRun = z.object({
 	id: z.string(),
 	orchestration_id: z.string(),
@@ -71,8 +85,8 @@ export const DashboardRunningRun = z.object({
 	cancelling: z.boolean(),
 	/** 主链在前，子流程按深度、开始时间。 */
 	chains: z.array(DashboardChain),
-	/** 进行中的节点（与运行列表的 `active_nodes` 相同）。 */
-	active_nodes: z.array(RunListActiveNode),
+	/** 进行中的节点（运行列表的 `active_nodes`，排队中的多写明在等什么）。 */
+	active_nodes: z.array(DashboardActiveNode),
 });
 
 /** 失败的运行最先出问题的地方：跨所有链，最后一次尝试失败、最先结束的节点和它所在的链。 */
@@ -198,6 +212,7 @@ export const dashboardApi = {
 
 export type DashboardSetup = z.infer<typeof DashboardSetup>;
 export type DashboardView = z.infer<typeof DashboardView>;
+export type DashboardActiveNode = z.infer<typeof DashboardActiveNode>;
 export type DashboardRunningRun = z.infer<typeof DashboardRunningRun>;
 export type DashboardChain = z.infer<typeof DashboardChain>;
 export type DashboardRunFailure = z.infer<typeof DashboardRunFailure>;

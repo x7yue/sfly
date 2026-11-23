@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type {
-	AssistantErrorCode,
-	AssistantHealth,
-	PromptCommandBody,
-	Readiness,
-	ReadinessProblem,
-	SessionErrorCode,
-	SessionEventBody,
+import {
+	ASSISTANT_PROCESS_KILL_GRACE_MS,
+	type AssistantErrorCode,
+	type AssistantHealth,
+	type PromptCommandBody,
+	type Readiness,
+	type ReadinessProblem,
+	type SessionErrorCode,
+	type SessionEventBody,
 } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import type { Actor } from "../actor.js";
@@ -63,8 +64,17 @@ export function titleOf(text: string): string {
  */
 export const STALE_TURN_MS = 30 * 60 * 1000;
 
-/** 停止会话：把中止发给助手服务之后，最多等多久它把这一轮的结局（`turn_end`）带回来（毫秒）；超过由控制面结束这一轮。 */
-export const STOP_GRACE_MS = 5_000;
+/** 控制面等助手服务带回结局时，在它的强制结束宽限之外多留的余量（毫秒）：命令往返、进程退出之后发事件的时间。 */
+export const STOP_MARGIN_MS = 3_000;
+
+/**
+ * 停止会话：把中止发给助手服务之后，最多等多久它把这一轮的结局（`turn_end`）带回来（毫秒）；超过由控制面结束这一轮。
+ * **不短于助手服务停止一轮的宽限**（{@link ASSISTANT_PROCESS_KILL_GRACE_MS}：SIGTERM 之后这么久才 SIGKILL，结局在进程退出之后
+ * 才发）加余量：短了的话，控制面先补一条 `stopped`、会话回到空闲，用户马上再说一句，助手服务那边上一轮还挂着，回 409
+ * `turn_running`，新的一轮被记成失败。在做的会话点停止的响应最坏是「中止的命令超时 + 这个宽限」，平时助手服务很快带回结局，
+ * 马上返回。
+ */
+export const STOP_GRACE_MS = ASSISTANT_PROCESS_KILL_GRACE_MS + STOP_MARGIN_MS;
 
 /** 助手服务的 `/health` 结果缓存多久（毫秒）：每次列出会话都问一遍太频繁；同时来的请求共用一次（见 `#assistantHealth`）。 */
 export const HEALTH_TTL_MS = 5_000;
@@ -84,6 +94,11 @@ export interface SessionServiceDeps {
 	workbenchAgent: string | undefined;
 	/** 停止之后等助手服务带回结局的宽限（毫秒），默认 {@link STOP_GRACE_MS}。 */
 	stopGraceMs?: number;
+	/**
+	 * 助手服务出问题时写日志（连不上、拒绝、`/health` 不通……）：底层错误的原文（带着助手服务的地址和端口）只进这里，
+	 * 回给请求的人和写进就绪状态、`turn_end` 的只有稳定的一句说明。
+	 */
+	log?: (message: string, error?: unknown) => void;
 }
 
 type WorkbenchTarget = PromptCommandBody["workbench"];
@@ -121,7 +136,8 @@ export class SessionService {
 			try {
 				result = { health: await client.health(HEALTH_TIMEOUT_MS) };
 			} catch (error) {
-				result = { error: error instanceof Error ? error.message : String(error) };
+				this.deps.log?.("助手服务的 /health 没有正常回应", error);
+				result = { error: publicMessage(error) };
 			}
 			this.#health = { at: now, result };
 			return result;
@@ -329,9 +345,11 @@ export class SessionService {
 				...commandEnv(message.actor),
 			});
 		} catch (error) {
+			this.deps.log?.(`助手服务没有接住会话 ${session.id} 的第 ${turn} 轮`, error);
 			const failure = describeFailure(error);
 			if (error instanceof AssistantUnreachableError) {
-				ready.client.abort(session.id).catch(() => {
+				// 带这一轮的轮次：助手服务那时还没登记这一轮的话，记下「这一轮已被中止」，它的 `prompt` 到了直接结束。
+				ready.client.abort(session.id, turn).catch(() => {
 					// 尽力而为：连不上就算了。
 				});
 			}
@@ -361,8 +379,9 @@ export class SessionService {
 	}
 
 	/**
-	 * 停止会话正在做的这一轮：不在做时什么也不做（助手没有配置时仍是 503，和别的写一样）；在做时先把中止发给助手服务，
-	 * 它会带回这一轮的 `turn_end`（等一小会儿，{@link STOP_GRACE_MS}）；助手服务没有配置、连不上、不认识这一轮、
+	 * 停止会话正在做的这一轮：不在做时不改会话（助手没有配置时仍是 503，和别的写一样；空闲的会话仍向助手服务补发一次
+	 * 带轮次的中止，见下面）；在做时先把这一轮的中止发给助手服务，
+	 * 它会带回这一轮的 `turn_end`（等的时间 {@link STOP_GRACE_MS}，13 秒）；助手服务没有配置、连不上、不认识这一轮、
 	 * 或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：
 	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始
 	 * 就记下是第几轮，结束时按它核对（`SessionStore.append`）——这一轮已经结束、会话开始了下一轮，就不会把新的一轮结束掉。
@@ -373,16 +392,34 @@ export class SessionService {
 		const current = (await sessions.find(session.id)) ?? session;
 		if (current.status !== "running") {
 			const configured = await this.#configured();
-			return configured.ok ? { ok: true, value: null } : configured;
+			if (!configured.ok) return configured;
+			// 空闲的会话也向助手服务发一次中止（尽力而为，不等结果、不影响响应），**带最近的那一轮的轮次**：`prompt` 超时
+			// 之后补发的中止如果没送到，这一轮可能照样在助手服务那边跑，而控制面这边会话是空闲的：用户再发话被拒绝（409），
+			// 不发这一次，点停止也没有办法让它停下来。带轮次，助手服务只结束这一轮（已经结束的什么也不做），用户紧接着说
+			// 一句话开始的新一轮不受影响。从没有过一轮的会话（`current_turn` 为 0）没有什么可结束的，不发。重复的中止无害。
+			if (current.status === "idle" && current.currentTurn >= 1) {
+				configured.value.abort(current.id, current.currentTurn).catch((error) => {
+					this.deps.log?.(`给空闲的会话 ${current.id} 补发中止没有成功`, error);
+				});
+			}
+			return { ok: true, value: null };
 		}
 		const turn = effectiveTurn(current);
+		// 中止送到了，或者结果未知（命令超时、连接在发出请求之后断了：助手服务可能已经收下了、只是没来得及回应）：都要等助手服务
+		// 带回结局；一定没送到（连接被拒绝、域名解析不了……）或者被拒绝才由控制面马上结束这一轮。
 		let aborted = false;
 		if (client) {
 			try {
-				await client.abort(current.id);
+				await client.abort(current.id, turn);
 				aborted = true;
-			} catch {
-				// 连不上或被拒绝：下面由控制面结束这一轮。
+			} catch (error) {
+				aborted = error instanceof AssistantUnreachableError && error.outcomeUnknown;
+				this.deps.log?.(
+					aborted
+						? `停止会话 ${current.id} 时中止的结果未知（可能已经送到助手服务），照样等它带回结局`
+						: `停止会话 ${current.id} 时中止没有送到助手服务`,
+					error,
+				);
 			}
 		}
 		if (aborted && (await this.#settled(current.id, turn))) return { ok: true, value: null };
@@ -472,6 +509,7 @@ interface Failure {
 /** 助手服务没接住这一轮：翻译成接口的错误码和这一轮的结局。 */
 function describeFailure(error: unknown): Failure {
 	if (error instanceof AssistantError) {
+		// 说明是按错误码给的固定的一句（`AssistantError.message`），助手服务自己写的那句话只进日志。
 		const code: AssistantErrorCode | undefined = error.code;
 		if (code === "turn_running") {
 			return { status: 409, code: "turn_running", message: error.message, outcome: "failed" };
@@ -484,19 +522,30 @@ function describeFailure(error: unknown): Failure {
 				outcome: "model_unavailable",
 			};
 		}
-		const why =
-			code === "unauthorized"
-				? "助手服务拒绝了共享密钥（两边的 SFLY_ASSISTANT_SECRET 不一致）"
-				: error.message;
-		return { status: 503, code: "assistant_unavailable", message: why, outcome: "failed" };
+		return {
+			status: 503,
+			code: "assistant_unavailable",
+			message: error.message,
+			outcome: "failed",
+		};
 	}
-	const message = error instanceof Error ? error.message : String(error);
 	return {
 		status: 503,
 		code: "assistant_unavailable",
-		message: error instanceof AssistantUnreachableError ? message : `助手服务出错：${message}`,
+		message: publicMessage(error),
 		outcome: "failed",
 	};
+}
+
+/**
+ * 回给请求的人、写进就绪状态和 `turn_end` 的说明：连不上的一句（只有原因的种类，见 {@link AssistantUnreachableError}），
+ * 别的意外错误只说「助手服务出错」，原文只进日志。
+ */
+function publicMessage(error: unknown): string {
+	if (error instanceof AssistantUnreachableError || error instanceof AssistantError) {
+		return error.message;
+	}
+	return "助手服务出错";
 }
 
 /** 控制面补的 `turn_end`：这一轮没有交到助手服务手上，没有工具调用和模型调用。 */
