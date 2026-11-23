@@ -235,6 +235,11 @@ function fieldNames(schema: z.ZodType | undefined): string[] | undefined {
 	return undefined;
 }
 
+/** 接口的查询参数名；没有声明查询参数时是空的。 */
+export function queryParamNames(def: { query?: z.ZodType | undefined }): string[] {
+	return fieldNames(def.query) ?? [];
+}
+
 const label = (def: Pick<RouteDef, "method" | "path">) => `${def.method} ${def.path}`;
 
 function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget): string[] {
