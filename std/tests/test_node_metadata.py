@@ -6,7 +6,8 @@
 `start_process`、`stop_process`（其余节点随 0.4.0 删除，见 ADR 0030）。这里扫现在的 `std/src`，
 和它逐个节点比对。行为（运行出来的东西）另有夹具 `node_behavior.json`。
 
-生成：对 0.3.0 的 `std/src`（`git archive std-v0.3.0 std/src` 解出来的目录）运行
+生成：对 #566 重构之前的 `std/src`（`git archive b0622fbd^ std/src` 解出来的目录：每个节点自己实现
+逻辑，各参数的 `Doc` 说明已经有了；std-v0.3.0 的 tag 里还没有这些说明，不能用）运行
 `python -m sfly.cli.scan <src 的绝对路径> sfly_std`，只留上面三个节点的条目，写成
 `std/tests/node_metadata.json`，再用 `pnpm exec biome format --write std/tests/node_metadata.json`
 按仓库的格式整理（比对的是内容）。

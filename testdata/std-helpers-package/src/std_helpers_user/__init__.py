@@ -138,7 +138,7 @@ def wait_port(
 
     失败：wait 秒内一直连不上时失败，错误信息写明等的是哪个地址、等了多久和最后一次连接的错误。
     端口能连上只说明进程在监听，不一定已经能处理请求：
-    服务有健康检查接口时改用 http_request（打开 until_ok）等它返回成功。
+    服务有健康检查接口时改用 poll_until 配 httpx（重试到返回成功）等它就绪。
     """
     wait_for_port(ctx, port, host=host, wait=wait, poll=poll)
 

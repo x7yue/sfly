@@ -106,7 +106,7 @@
 	{
 		"name": "start_process",
 		"title": "启动后台进程",
-		"description": "在后台启动一个常驻进程，不等它结束，输出进程号和日志文件的路径。\n\n副作用：进程在新的会话和进程组里运行，不属于任务的进程树。\n节点结束、任务被取消或超时都不会停止它，运行结束后也不会自动停止。\n一定要配一个 stop_process 并设为 always 节点，前面的节点失败或运行被取消时它仍然会执行。\n进程的标准输出和标准错误只写进日志文件，不转为任务日志。\n默认的日志文件不在任务目录里，和任务目录按同一个保留期清理。\n\n失败：只有解释器或工作目录不存在时失败。\n命令随后失败退出时节点仍然成功：用 wait_port、wait_log_line 等节点等它就绪。",
+		"description": "在后台启动一个常驻进程，不等它结束，输出进程号和日志文件的路径。\n\n副作用：进程在新的会话和进程组里运行，不属于任务的进程树。\n节点结束、任务被取消或超时都不会停止它，运行结束后也不会自动停止。\n一定要配一个 stop_process 并设为 always 节点，前面的节点失败或运行被取消时它仍然会执行。\n进程的标准输出和标准错误只写进日志文件，不转为任务日志。\n默认的日志文件不在任务目录里，和任务目录按同一个保留期清理。\n\n失败：只有解释器或工作目录不存在时失败。\n命令随后失败退出时节点仍然成功：\n在自己的节点里用 wait_for_port、wait_for_log_line 等函数等它就绪。",
 		"entry": "sfly_std.start_process:start_process",
 		"inputs": {
 			"type": "object",
@@ -168,11 +168,11 @@
 			"properties": {
 				"pid": {
 					"type": "integer",
-					"description": "进程号：交给 stop_process、process_monitor 等节点"
+					"description": "进程号：交给 stop_process，或者自己节点里的 monitor_processes 等"
 				},
 				"log_file": {
 					"type": "string",
-					"description": "日志文件的绝对路径：交给 wait_log_line、follow_log、collect_artifacts 等节点"
+					"description": "日志文件的绝对路径：交给自己节点里的 wait_for_log_line、follow_log_file，或者 ctx.artifacts.save"
 				}
 			},
 			"required": ["pid", "log_file"]

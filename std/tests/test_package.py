@@ -303,6 +303,84 @@ def test_every_parameter_and_output_description_matches_the_standard_nodes_page(
                     assert descriptions[name] == row[column], where
 
 
+#: 0.4.0 删除的 14 个节点（ADR 0030，名单也在 std/tests/test_release.py 和
+#: packages/orchestration 的 `REMOVED_STD_NODES` 里）。
+REMOVED_NODES = [
+    "system_monitor",
+    "process_monitor",
+    "wait_port",
+    "wait_file",
+    "wait_log_line",
+    "follow_log",
+    "collect_artifacts",
+    "pull_files",
+    "watch_files",
+    "http_request",
+    "assert",
+    "file_assert",
+    "process_assert",
+    "port_assert",
+]
+
+
+def guide_texts() -> dict[str, str]:
+    """开发文档目录里的页面（不含「标准节点」页里「从 0.3.0 升级」一节：那里要写被删的节点）。"""
+    guide = REPO / "docs" / "guide"
+    texts: dict[str, str] = {}
+    for path in sorted([*guide.rglob("*.md"), guide / "pages.json"]):
+        text = path.read_text(encoding="utf-8")
+        if path == DOC:
+            text = text.split("\n## 从 0.3.0 升级", 1)[0]
+        texts[str(path.relative_to(REPO))] = text
+    return texts
+
+
+def uses_a_removed_node_as_a_node(text: str) -> list[str]:
+    """文字里把被删的节点当节点来用的地方：`"node": "名字"`、`node: 名字`、「`名字` 节点」、
+    `sfly-std` 后面跟着节点名；名字很特别的（`wait_port` 这类）出现就算，`assert` 这样的
+    普通词只认前面几种写法。"""
+    found: list[str] = []
+    for name in REMOVED_NODES:
+        node_forms = [
+            rf'"node"\s*:\s*"{name}"',
+            rf"\bnode:\s*{name}\b",
+            rf"`{name}`\s*节点",
+            rf"sfly-std[/.:@]{name}\b",
+            rf"`sfly-std`\s*的\s*`{name}`",
+        ]
+        if name != "assert":
+            # 下划线连着的名字（`pull_files_from_agent`、`follow_log_file`）是辅助函数，不是节点。
+            node_forms.append(rf"(?<![\w.]){name}(?!\w)")
+        for form in node_forms:
+            found += [m.group(0) for m in re.finditer(form, text)]
+    return found
+
+
+def test_no_guide_page_names_a_removed_node_as_a_node() -> None:
+    # 页面改成辅助函数之后，把 0.3.0 的节点名写回去（例如 quickstart 的示例场景里又用
+    # `http_request`）没有别的测试会红：用户照着写会得到「节点包 sfly-std@0.4.0 中没有节点类型」。
+    found = {
+        page: hits
+        for page, text in guide_texts().items()
+        if (hits := uses_a_removed_node_as_a_node(text))
+    }
+
+    assert found == {}
+
+
+def test_the_guard_for_removed_nodes_tells_a_node_from_an_ordinary_word() -> None:
+    uses = uses_a_removed_node_as_a_node
+    # 当节点来用：认出来。
+    assert uses('{"package": "sfly-std", "node": "http_request"}')
+    assert uses("先用 `wait_port` 节点等服务就绪")
+    assert uses("sfly-std/assert")
+    assert uses("起服务后再 follow_log")
+    # 辅助函数、普通的词：不算。
+    assert not uses("`sfly_std.logs.follow_log_file` 和 pull_files_from_agent")
+    assert not uses("assert result.status == 'success'，断言失败时抛出异常")
+    assert not uses("用 `shell` 节点跑一条命令")
+
+
 def test_descriptions_are_plain_text(metadata: dict[str, Any]) -> None:
     # 节点、输入、输出、指标的说明在画布上按纯文本显示（不渲染 Markdown）：反引号和链接会原样出现。
     markdown = re.compile(r"`|\]\(")

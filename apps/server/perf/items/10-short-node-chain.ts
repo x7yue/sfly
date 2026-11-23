@@ -1,8 +1,11 @@
 // 负载：30 个节点的单链，每个节点只做一点点事，看「一个任务一个进程」的固定开销（docs/ARCHITECTURE.md §7.6「短节点链路」，#76）。
 // 三类节点各一条链（同样的编排，只换节点）：
 // - 空节点：sfly-short 的 empty（testdata/short-package），除了 SDK 什么都不导入，测出的是执行器进程本身的开销；
-// - sfly-std 的 shell：执行 `true`（什么都不做的命令），sfly-std 的依赖从 PyPI 镜像桩安装（0.3.0 以前用的是 http_request，
-//   它在 0.4.0 删除了，ADR 0030：每节点的固定开销是执行器进程加导入 sfly_std，shell 同样能测出来）；
+// - sfly-std 的 shell：执行 `true`（什么都不做的命令），sfly-std 的依赖从 PyPI 镜像桩安装（0.4.0 以前用的是 http_request，
+//   它在 0.4.0 删除了，ADR 0030：每节点的固定开销是执行器进程加导入 sfly_std，shell 同样能测出来）。
+//   换成 shell 有两点要知道：它不再含第三方库（httpx）的导入，所以 ≤ 120 ms 的目标比以前宽松很多（0.5.0 发版报告里
+//   http_request 是 202 ms、空节点 73 ms；shell 在同类机器上是 60～97 ms、比空节点多出约 20 ms）；数值的标识从 std_http
+//   改成 std_shell，报告里当作新数值，下一份报告里这一行没有「上一次」也没有发版基线可比；
 // - 重依赖节点：sfly-short 的 heavy，模块顶层把整个标准库导入一遍，模拟顶层导入 pandas 这类大库的节点
 //   （不从 PyPI 下载 pandas，理由见 testdata/short-package/src/sfly_short/heavy.py）。
 // 每类先跑一次预热（Agent 安装节点包、写 .pyc），不计入；之后三类轮流各跑 RUNS 次，机器上别的负载均摊到三类上。

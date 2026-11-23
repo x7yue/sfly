@@ -309,6 +309,42 @@ describe("节点包版本锁定", () => {
 		);
 	});
 
+	it("标准节点包 0.4.0 删掉的节点：警告指向替换办法；其他找不到的节点类型照旧", () => {
+		const std = (node: string) =>
+			doc({
+				packages: { "sfly-std": "0.4.0" },
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "a", kind: "package", package: "sfly-std", node, inputs: {} },
+				],
+				edges: chain("entry", "a"),
+			});
+		const stdCatalog: PackageCatalog = new Map([
+			[
+				packageKey("sfly-std", "0.4.0"),
+				[
+					{
+						name: "shell",
+						inputs: { type: "object", properties: {} },
+						outputs: { type: "object", properties: {} },
+					},
+				],
+			],
+		]);
+
+		expect(documentWarnings(std("assert"), stdCatalog)[0]?.message).toBe(
+			"节点包 sfly-std@0.4.0 中没有节点类型 assert（0.4.0 起删除了：替换办法见开发文档「标准节点」页的「从 0.3.0 升级」一节）",
+		);
+		// 删掉的节点之外的名字、别的包里的同名节点：没有这句话。
+		expect(documentWarnings(std("gone"), stdCatalog)[0]?.message).toBe(
+			"节点包 sfly-std@0.4.0 中没有节点类型 gone",
+		);
+		expect(documentWarnings(lockDoc({ demo: "1.0.0" }, "assert"), catalog)[0]?.message).toBe(
+			"节点包 demo@1.0.0 中没有节点类型 assert",
+		);
+		expect(documentWarnings(std("shell"), stdCatalog)).toEqual([]);
+	});
+
 	it("结构警告排在前面，然后是包版本和引用的警告", () => {
 		const d = doc({
 			packages: {},

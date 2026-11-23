@@ -42,7 +42,7 @@ curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer 
 
 ## 辅助函数
 
-标准节点包的主体是**节点代码里可以直接调用的辅助函数**（从 `sfly-std` 0.4.0 起提供，0.3.0 里没有）。这些能力里难写对的是逻辑，不是节点的外壳：进程组的启动、停止和看护，采样整机与进程的资源，跟随会轮转的日志，判断文件写完了没有，经 Agent 能力从另一台机器拉文件，等端口、文件、日志行。把它们做成函数，你在自己的业务节点里导入、组合，行为由你的代码决定：函数有参数可以调（例如「进程重启之后按名字重新找到它」的 `refind_within`），`poll_until` 还收回调，不像上面的标准节点那样固定。
+标准节点包的主体是**节点代码里可以直接调用的辅助函数**（从 `sfly-std` 0.4.0 起提供，0.3.0 里没有）。这些能力里难写对的是逻辑，不是节点的外壳：进程组的启动、停止和看护，采样整机与进程的资源，跟随会轮转的日志，判断文件写完了没有，经 Agent 能力从另一台机器拉文件，等端口、文件、日志行。把它们做成函数，你在自己的业务节点里导入、组合，行为由你的代码决定：函数有参数可以调（例如「进程重启之后按名字重新找到它」的 `refind_within`），`poll_until` 还收回调，不像节点那样固定。
 
 用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`），然后从下面的模块导入。**依赖怎么装上**：`sfly-std` 不在 PyPI 上，由控制面的包索引提供（见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节）：`sfly init` 生成的项目已经把 `sfly-std` 绑到它（见 [创建节点包项目](init-project.md)，开发机上 `uv add sfly-std` 就能装上），Agent 装节点包的依赖时也从它取，不用往自己的 PyPI 镜像里放。索引里的是**公共项目**里已发布的 `sfly-std`，所以新部署里要先让平台管理员把它发布进公共项目（办法见上面「上传 sfly-std」），依赖它的节点包才装得上。
 
@@ -296,13 +296,13 @@ def process(ctx: Context, pid: int) -> None:
 
 | 输出 | 说明 |
 |---|---|
-| `pid` | 进程号：交给 stop_process、process_monitor 等节点 |
-| `log_file` | 日志文件的绝对路径：交给 wait_log_line、follow_log、collect_artifacts 等节点 |
+| `pid` | 进程号：交给 stop_process，或者自己节点里的 monitor_processes 等 |
+| `log_file` | 日志文件的绝对路径：交给自己节点里的 wait_for_log_line、follow_log_file，或者 ctx.artifacts.save |
 
 - 进程在新的会话和进程组里，不属于任务的进程树：节点结束、任务被取消或超时都不会终止它，运行结束后也不会自动停止，**一定要配一个 `stop_process`**（见下一节的例子）。
 - 进程的输出不转为任务日志，只写进 `log_file`。默认位置不在任务目录里：任务目录被清理时不受影响，和任务目录按同一个保留期清理（运行还有任务在这个 Agent 上时不动，后台进程还在写日志时不会被删，见 [安装 Agent](install-agent.md)）。同一个节点重试时追加到同一个文件。
-- 节点只负责把进程启动起来：命令随后失败退出时节点仍然成功，用 `wait_port`、`wait_log_line` 等节点等它就绪，用 `stop_process` 的 `exit_code` 查看它是否异常退出过。解释器或工作目录不存在时节点失败。
-- 进程运行在执行这个节点的 Agent 所在的机器上，后面引用它的节点（`stop_process`、监控节点等）要选同一个 Agent。
+- 节点只负责把进程启动起来：命令随后失败退出时节点仍然成功，在自己的节点里用 `wait_for_port`、`wait_for_log_line` 等函数等它就绪，用 `stop_process` 的 `exit_code` 查看它是否异常退出过。解释器或工作目录不存在时节点失败。
+- 进程运行在执行这个节点的 Agent 所在的机器上，后面引用它的节点（`stop_process`、自己的监控节点等）要选同一个 Agent。
 
 例：启动被测服务。节点 `server` 的参数：
 
@@ -346,7 +346,9 @@ def process(ctx: Context, pid: int) -> None:
 
 ## 从 0.3.0 升级
 
-0.4.0 只保留 `shell`、`start_process`、`stop_process` 三个节点（行为和 0.3.0 一致），其余 14 个节点删除，逻辑成了上面的辅助函数。已发布的 0.3.0 不变，锁定它的场景不受影响；要升级到 0.4.0 的场景，引用了被删节点的地方按下表改成自己的节点（和 Release 说明里的表相同）。
+0.4.0 只保留 `shell`、`start_process`、`stop_process` 三个节点（行为和 0.3.0 一致），其余 14 个节点删除，逻辑成了上面的辅助函数。已发布的 0.3.0 不变，锁定它的场景仍然可以用，但**同一台 Agent 上不能同时用 0.3.0 和 0.4.0**（见表后面的说明）；要升级到 0.4.0 的场景，引用了被删节点的地方按下表改成自己的节点（和 Release 说明里的表相同）。
+
+升级后场景里还引用着被删的节点时：保存和 `sfly scenario check` 的警告写「节点包 sfly-std@0.4.0 中没有节点类型 assert（0.4.0 起删除了：替换办法见开发文档「标准节点」页的「从 0.3.0 升级」一节）」，触发前的预检在「包版本锁定」这一项阻断。照下表把这些节点改成自己的节点，或者把 `sfly-std` 的版本选回 0.3.0（画布上升级和选回都是一键的）。
 
 | 删掉的节点 | 怎么替换 |
 |---|---|
@@ -362,7 +364,9 @@ def process(ctx: Context, pid: int) -> None:
 | `http_request` | 自己的节点里直接用 `httpx`（写进节点包自己的依赖）；要重试到成功用 `sfly_std.waiting.poll_until` |
 | `assert` | 阈值和判断写在自己的节点代码里，不满足就抛异常 |
 | `file_assert` | 自己的节点里读文件、判断后抛异常（等文件写完用 `sfly_std.waiting.wait_for_file`） |
-| `process_assert` | 自己的节点里用 `sfly_std.processes.find_processes(…, include_children=False)` 数进程（`include_children` 默认 True，会连子进程一起找出来）、判断后抛异常 |
+| `process_assert` | 自己的节点里用 `sfly_std.processes.find_processes(…, include_children=False)` 数进程（`include_children` 默认 True，会连子进程一起找出来）、判断后抛异常。注意：`find_processes` 的 `pid`、`name`、`match` 是**满足其中任意一个就算**，0.3.0 的 `process_assert` 同时给几个时要求**全部满足**；要全部满足，就按一个条件找、再自己过滤，例如 `[p for p in find_processes(name="python", include_children=False) if re.search(r"server\.py", " ".join(p.cmdline()))]` |
 | `port_assert` | 自己的节点里用标准库 `socket.create_connection` 检查端口（等端口出现用 `sfly_std.waiting.wait_for_port`） |
 
 依赖的变化：0.4.0 只依赖 `psutil`；`httpx` 随 `http_request` 一起去掉了，要用的节点包自己依赖它。
+
+**两个版本不能在同一台 Agent 上共存。** 一台 Agent 的环境里只能有一个 `sfly-std`（一台 Agent 上所有节点包共用一个环境，见 [安装 Agent](install-agent.md)），所以锁定 0.3.0 的场景和依赖 `sfly-std>=0.4` 的节点包（上表替换办法里「写进依赖」的那种）不能在同一台 Agent 上并存：这台 Agent 装过依赖 `sfly-std>=0.4` 的节点包之后，锁定 0.3.0 的场景在它上面执行 `sfly-std` 的节点，任务以 `env_error` 失败；反过来，先装了 0.3.0、后来又装依赖 `>=0.4` 的节点包，环境里的 0.3.0 会被换成 0.4.0，之后锁定 0.3.0 的任务同样失败。撞上时看到的是 uv 的原话，写着 `No solution found when resolving dependencies` 和 `Because only sfly-std<0.4.0 is available and you require sfly-std>=0.4.0`，不会指出是哪个节点包要求 `>=0.4`。怎么安排：同一台 Agent 上的场景一起升到 0.4.0（先把会派到这台 Agent 上的场景都升级，再装依赖 0.4 的节点包）；还要用 0.3.0 的场景留在别的 Agent 上，那些 Agent 上不装依赖 0.4 的节点包。

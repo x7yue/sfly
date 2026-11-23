@@ -53,7 +53,7 @@
 		{
 			"slug": "cross-agent-files",
 			"title": "跨 Agent 处理文件",
-			"description": "在一台 Agent 上处理另一台 Agent 上的文件：以日志清洗为例，清洗节点用 ctx.agent() 监听、下载、删除另一台机器上的日志，清洗放在子流程里与主链并行，判断文件不再续写的几种做法及各自的坑，以及不写代码的 watch_files"
+			"description": "在一台 Agent 上处理另一台 Agent 上的文件：以日志清洗为例，清洗节点用 ctx.agent() 监听、下载、删除另一台机器上的日志，清洗放在子流程里与主链并行，判断文件不再续写的几种做法及各自的坑，以及标准节点包里现成的辅助函数 watch_agent_files"
 		},
 		{
 			"slug": "run-scenario",
