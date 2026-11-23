@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, openDatabase } from "../src/db/database.js";
 import { type AssignRequest, createAssignContent } from "../src/engine/assign-content.js";
 import type { PackageNode } from "../src/engine/chain.js";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -90,6 +91,7 @@ describe("派发内容", () => {
 	});
 	const request = (over: Partial<AssignRequest> = {}): AssignRequest => ({
 		task: { id: "task-1", attempt: 2, runId: "run-1" },
+		project: DEFAULT_PROJECT,
 		node: node(),
 		packageVersion: "1.0.0",
 		scope: scope(),
