@@ -40,12 +40,18 @@ def _text(content: Any) -> str:
 
 # 评测在会话开始前把这道题的参考答案复制到开发环境容器的这个目录（只有用假的模型端点时）。
 REFERENCE_DIR = "/tmp/aeval-reference"
+# 参考答案在节点包目录里执行。会话的工作目录不是节点包目录时（平台的会话在工作区 /work，
+# 题目的节点包在它下面），评测把节点包目录写进这个文件；没有这个文件时就在工作目录里执行。
+WORKDIR_FILE = f"{REFERENCE_DIR}/workdir"
 
 
 def script(task: str | None) -> list[str]:
     if task is None:
         return []
-    return ["ls -la", f"bash {REFERENCE_DIR}/solve.sh"]
+    return [
+        "ls -la",
+        f'cd "$(cat {WORKDIR_FILE} 2>/dev/null || pwd)" && bash {REFERENCE_DIR}/solve.sh',
+    ]
 
 
 TOOLCHECK = "AEVAL-TOOLCHECK"
