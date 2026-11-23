@@ -10240,6 +10240,22 @@
               "null"
             ]
           },
+          "session": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ],
+            "description": "经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
