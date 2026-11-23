@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
  * - `announce`：横幅出现时让读屏读一次（danger 用 alert，其余用 status）。页面已经有别的播报（例如运行状态的
  *   `<output>`）时不要打开，免得读两遍。
  * - `onDismiss`：给了才有关闭按钮；关闭只是收起，状态本身仍在页面别处可见。
+ * - `inline`：标题和说明排在一行，横幅只占一行高：运行监控详情里的失败横幅用它，窗口矮的时候把高度让给图表。
+ *   说明放不下时的截断由使用方负责（说明用 `Truncate` 包起来：截断在末尾，悬停或聚焦看全文）。
  */
 const TONE = {
 	danger: {
@@ -41,6 +43,7 @@ export function Banner({
 	actions,
 	onDismiss,
 	announce = false,
+	inline = false,
 	className,
 }: {
 	tone: BannerTone;
@@ -51,6 +54,7 @@ export function Banner({
 	actions?: React.ReactNode;
 	onDismiss?: () => void;
 	announce?: boolean;
+	inline?: boolean;
 	className?: string;
 }) {
 	const look = TONE[tone];
@@ -68,9 +72,20 @@ export function Banner({
 			)}
 		>
 			<Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", look.title)} />
-			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-				<p className={cn("m-0 text-sm font-semibold", look.title)}>{title}</p>
-				{children && <div className="text-sm text-pretty text-fg-2">{children}</div>}
+			<div
+				className={cn(
+					"flex min-w-0 flex-1",
+					inline ? "items-baseline gap-2.5" : "flex-col gap-0.5",
+				)}
+			>
+				<p className={cn("m-0 text-sm font-semibold", inline && "flex-none", look.title)}>
+					{title}
+				</p>
+				{children && (
+					<div className={cn("text-sm text-fg-2", inline ? "min-w-0" : "text-pretty")}>
+						{children}
+					</div>
+				)}
 			</div>
 			{actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
 			{onDismiss && (

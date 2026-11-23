@@ -8,13 +8,14 @@ import {
 } from "@sfly/schema";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { anomalyText, readingValue, sourceNodeName } from "#/focus/focus-format";
-import { FOCUS, LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
+import { ERROR_LOCATION_LABEL, FOCUS, LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
 import { formatClock, formatClockMs, formatElapsed } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MAX_OTHER_FAILURES } from "./FailureArea";
 import { LOG_LEVEL_STYLE } from "./LogList";
 import type { OverviewTarget } from "./Overview";
-import { logOrigin } from "./run-model";
+import { allRunFailures, logOrigin, type RunFailure } from "./run-model";
 import { useRunLogs } from "./use-run-logs";
 
 /**
@@ -146,8 +147,27 @@ function inAttention(focus: RunFocus | undefined, line: RunLogLine): boolean {
 }
 
 /**
+ * 这一行是不是失败区域已经写了的那条错误：失败的那次尝试自己的 ERROR 日志，两种：正文是失败原因的全文里的一段
+ * （节点出错时执行器把异常写成 ERROR 日志，再把同一个异常作为失败原因上报），或者执行器在堆栈之前写的一行
+ * 「出错位置：<位置>」（它不在失败原因的全文里，失败区域把同一个位置写在失败原因下面）。失败区域写了的，这里不再列一遍。
+ */
+function inFailureArea(failures: readonly RunFailure[], line: RunLogLine): boolean {
+	if (line.level !== "error") return false;
+	const text = line.text.trim();
+	return failures.some(
+		(f) =>
+			f.ref.chainInstanceId === line.chain_instance_id &&
+			f.ref.nodeId === line.node_id &&
+			f.attempt === line.attempt &&
+			(f.detail.includes(text) ||
+				(f.location !== null && text === `${ERROR_LOCATION_LABEL}：${f.location}`)),
+	);
+}
+
+/**
  * 概览最后一段「其他警告与错误」：这次运行全部节点的 WARN / ERROR（运行日志接口按级别筛选，运行中实时追加），
- * 去掉已经出现在「需要注意」里的那几条，新的在上面，最多列 {@link SHOWN_LINES} 条。点一行进详情，日志定位到这一行。
+ * 去掉已经出现在「需要注意」和失败区域里的那几条，新的在上面，最多列 {@link SHOWN_LINES} 条。
+ * 点一行进详情，日志定位到这一行。节点名那一列取这些行里最长的节点名的宽度（最宽 20rem），不被截成几个字。
  */
 export function OtherWarnings({
 	run,
@@ -159,7 +179,11 @@ export function OtherWarnings({
 	onOpen: (target: OverviewTarget) => void;
 }) {
 	const logs = useRunLogs(run.id, undefined, ALERT_LOG_LEVELS);
-	const others = logs.lines.filter((line) => !inAttention(focus, line));
+	// 失败区域写了错误的那几个失败节点（第一个写全文，其余各写一行原因）。
+	const failures = allRunFailures(run).slice(0, 1 + MAX_OTHER_FAILURES);
+	const others = logs.lines.filter(
+		(line) => !inAttention(focus, line) && !inFailureArea(failures, line),
+	);
 	const shown = others.slice(-SHOWN_LINES).reverse();
 	return (
 		<section
@@ -185,11 +209,11 @@ export function OtherWarnings({
 					{logs.expired ? MESSAGE.logsExpired : `${FOCUS.noOtherAlerts}。`}
 				</p>
 			) : (
-				<ul className="m-0 list-none p-0">
+				<ul className="m-0 grid list-none grid-cols-[96px_48px_minmax(0,max-content)_minmax(0,1fr)] gap-x-2 p-0">
 					{shown.map((line) => (
 						<li
 							key={`${line.task_id}:${line.seq}`}
-							className="border-t border-border-soft first:border-t-0"
+							className="col-span-full grid grid-cols-subgrid border-t border-border-soft first:border-t-0"
 						>
 							<button
 								type="button"
@@ -201,11 +225,11 @@ export function OtherWarnings({
 										...(line.time === null ? {} : { at: line.time }),
 									})
 								}
-								className="grid w-full cursor-pointer grid-cols-[96px_48px_minmax(0,10rem)_minmax(0,1fr)] gap-2 py-1 text-left font-mono text-xs text-fg-2 hover:bg-fg-1/3"
+								className="col-span-full grid w-full cursor-pointer grid-cols-subgrid py-1 text-left font-mono text-xs text-fg-2 hover:bg-fg-1/3"
 							>
 								<span>{line.time === null ? "—" : formatClockMs(line.time)}</span>
 								<span className={LOG_LEVEL_STYLE[line.level]}>{LOG_LEVEL_LABEL[line.level]}</span>
-								<span className="truncate">{logOrigin(run, line)}</span>
+								<span className="max-w-80 truncate">{logOrigin(run, line)}</span>
 								<span className="truncate">{line.text}</span>
 							</button>
 						</li>
