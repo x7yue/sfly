@@ -36,6 +36,7 @@ import {
 import { FormAlert, FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Segmented } from "@/components/ui/segmented";
 
 /**
  * 令牌的弹窗（ADR 0029「凭据」）：签发（成功后只显示这一次原值）、吊销确认。
@@ -124,6 +125,8 @@ export function IssueTokenDialog({
 				? "项目标识只能用小写字母、数字和连字符"
 				: undefined,
 	};
+	// 提交过一次、上面还标着问题时「签发」不可用（改好之后恢复）：报着错的时候它看起来不该能点。
+	const blocked = submitted && Object.values(problems).some((problem) => problem !== undefined);
 	const choices = project ? PROJECT_TOKEN_SCOPES : SCOPES;
 	const toggle = (scope: Scope, checked: boolean) =>
 		setScopes((current) =>
@@ -186,7 +189,7 @@ export function IssueTokenDialog({
 								label="名称"
 								required
 								error={submitted ? problems.name : undefined}
-								help="记在它触发的运行和版本上的「经」字段里，起个认得出是哪一个的名字。"
+								help="用这个令牌触发的运行、保存的版本上会写「经 名称」，让人看得出是哪个令牌做的：起个认得出是哪一个的名字。"
 							>
 								{(control) => (
 									<Input
@@ -210,14 +213,24 @@ export function IssueTokenDialog({
 									)}
 								</legend>
 								{!project && (
-									<CheckRow checked={partial} onChange={setPartial}>
-										只要部分范围
-									</CheckRow>
+									<Segmented
+										label="范围的选法"
+										value={partial ? "some" : "all"}
+										onChange={(value) => setPartial(value === "some")}
+										options={[
+											{ value: "all", label: "全部范围" },
+											{ value: "some", label: "只选一部分" },
+										]}
+										className="self-start"
+									/>
 								)}
 								{!chooseScopes && (
 									<p className="m-0 text-xs text-fg-3">
-										不勾就是你此刻能有的全部范围；使用时还会和你当时的角色取交集。
+										你此刻能有的全部范围；使用时还会和你当时的角色取交集。
 									</p>
+								)}
+								{!project && chooseScopes && (
+									<p className="m-0 text-xs text-fg-3">只有勾上的范围；令牌不能做勾选之外的事。</p>
 								)}
 								{chooseScopes && (
 									<ul className="m-0 grid list-none grid-cols-2 gap-x-4 gap-y-2 p-0">
@@ -288,7 +301,12 @@ export function IssueTokenDialog({
 							<Button variant="ghost" onClick={() => onOpenChange(false)}>
 								取消
 							</Button>
-							<Button type="submit" variant="primary" disabled={issue.isPending}>
+							<Button
+								type="submit"
+								variant="primary"
+								disabled={issue.isPending || blocked}
+								title={blocked ? "先改正上面标出的问题" : undefined}
+							>
 								签发
 							</Button>
 						</DialogFooter>

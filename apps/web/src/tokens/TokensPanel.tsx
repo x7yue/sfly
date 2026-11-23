@@ -7,7 +7,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { Page, PageHeader, Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
 import { scopesText, TOKEN_STATE_LABEL } from "#/lib/copy";
-import { formatDateTime } from "#/lib/format";
+import { formatDateTimeWithYear } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { Truncate } from "@/components/ui/truncate";
 import { IssueTokenDialog, RevokeTokenDialog, type TokenOwner } from "./dialogs";
 import { type TokenState, tokenState } from "./state";
 
@@ -53,6 +54,7 @@ export function TokensPage({
 			<PageHeader
 				title={title}
 				count={list?.length}
+				countClassName="text-fg-2"
 				description={description}
 				actions={list && list.length > 0 && issueButton}
 			/>
@@ -95,17 +97,17 @@ function TokenTable({ owner, tokens }: { owner: TokenOwner; tokens: TokenView[] 
 		<Table aria-label={personal ? "个人令牌列表" : "项目令牌列表"}>
 			<TableHeader>
 				<TableRow>
-					<TableHead width="fit">名称</TableHead>
+					<TableHead width="grow">名称</TableHead>
 					<TableHead width="fit">前缀</TableHead>
-					<TableHead>范围</TableHead>
+					<TableHead width="fit">范围</TableHead>
 					{personal && <TableHead width="fit">限定项目</TableHead>}
 					{!personal && <TableHead width="fit">签发人</TableHead>}
 					<TableHead width="fit">创建时间</TableHead>
 					<TableHead width="fit">最后使用</TableHead>
 					<TableHead width="fit">过期时间</TableHead>
 					<TableHead width="fit">状态</TableHead>
-					<TableHead width="fit">
-						<span className="sr-only">操作</span>
+					<TableHead width="fit" className="text-right">
+						操作
 					</TableHead>
 				</TableRow>
 			</TableHeader>
@@ -132,13 +134,13 @@ function TokenRow({
 	const live = state === "active";
 	return (
 		<TableRow data-token={token.name} data-state={state}>
-			<TableCell width="fit" className={cn("font-semibold", !live && "text-fg-3")}>
-				{token.name}
+			<TableCell width="grow" className={cn("font-semibold", !live && "text-fg-3")}>
+				<Truncate>{token.name}</Truncate>
 			</TableCell>
 			<TableCell width="fit" data-slot="token-prefix" className="font-mono text-xs text-fg-2">
 				{token.prefix}…
 			</TableCell>
-			<TableCell className={cn("text-xs", live ? "text-fg-1" : "text-fg-3")}>
+			<TableCell width="fit" className={cn("text-xs", live ? "text-fg-1" : "text-fg-3")}>
 				{scopesText(token.scopes)}
 			</TableCell>
 			{owner.kind === "personal" && (
@@ -153,18 +155,18 @@ function TokenRow({
 				</TableCell>
 			)}
 			<TableCell width="fit" className="font-mono text-xs text-fg-3">
-				{formatDateTime(token.created_at)}
+				{formatDateTimeWithYear(token.created_at)}
 			</TableCell>
 			<TableCell width="fit" className="font-mono text-xs text-fg-3">
 				{token.last_used_at ? (
-					formatDateTime(token.last_used_at)
+					formatDateTimeWithYear(token.last_used_at)
 				) : (
 					<span className="font-sans">从未使用</span>
 				)}
 			</TableCell>
 			<TableCell width="fit" className="font-mono text-xs text-fg-3">
 				{token.expires_at ? (
-					formatDateTime(token.expires_at)
+					formatDateTimeWithYear(token.expires_at)
 				) : (
 					<span className="font-sans">不过期</span>
 				)}
@@ -177,7 +179,7 @@ function TokenRow({
 				<div className="flex h-7 items-center justify-end">
 					{live && (
 						<>
-							<Button size="sm" variant="ghost" onClick={() => setRevoking(true)}>
+							<Button size="sm" onClick={() => setRevoking(true)}>
 								吊销
 							</Button>
 							<RevokeTokenDialog

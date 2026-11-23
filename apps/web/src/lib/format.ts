@@ -14,6 +14,15 @@ export function formatDateTime(iso: string, now: Date = new Date(controlPlaneNow
 		: `${d.getFullYear()}-${date} ${time}`;
 }
 
+/**
+ * `2026-11-23 09:05`：总是带年份、不带秒。同一列里的时间写法一致（令牌页的创建、最后使用、过期时间：过期的时间常常在明年，
+ * `formatDateTime` 只在跨年时带年份，同一张表里有的带有的不带）。
+ */
+export function formatDateTimeWithYear(iso: string): string {
+	const d = new Date(iso);
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** 没有记录的时间显示成这个，不猜一个值（ADR 0018：升级之前存下的数据缺一种时间）。 */
 export const TIME_NOT_RECORDED = "未记录";
 

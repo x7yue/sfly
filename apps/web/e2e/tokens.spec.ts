@@ -48,10 +48,16 @@ test.describe("个人令牌页", () => {
 		await expect(dialog.getByLabel("名称")).toHaveAccessibleDescription(/填写令牌的名称/);
 
 		await dialog.getByLabel("名称").fill("ci-bot");
-		// 默认是全部范围（不勾「只要部分范围」），有效期默认 90 天。
-		await expect(dialog.getByLabel("只要部分范围")).not.toBeChecked();
+		// 默认是全部范围（「范围的选法」停在「全部范围」，下面没有勾选项），有效期默认 90 天。
+		const scopeChoice = dialog.getByRole("group", { name: "范围的选法" });
+		await expect(scopeChoice.getByRole("button", { name: "全部范围" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		await expect(dialog.getByRole("checkbox")).toHaveCount(0);
 		await expect(dialog.getByLabel("有效期")).toHaveValue("90");
-		await dialog.getByLabel("只要部分范围").check();
+		await scopeChoice.getByRole("button", { name: "只选一部分" }).click();
+		await expect(dialog.getByRole("checkbox", { name: /^读/ })).toBeChecked();
 		await dialog.getByLabel("运行", { exact: false }).first().check();
 		await dialog.getByRole("button", { name: "签发" }).click();
 
@@ -105,6 +111,43 @@ test.describe("个人令牌页", () => {
 		expect(after.status()).toBe(401);
 	});
 
+	test("刚签发的令牌：原值比只读框宽，也能整个选中、用键盘和「复制」按钮复制出完整的原值", async ({
+		page,
+	}) => {
+		await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+		await signIn(page);
+		await page.goto("/account/tokens");
+		await page.getByRole("button", { name: "签发令牌" }).click();
+		const dialog = dialogOf(page, "签发个人令牌");
+		await dialog.getByLabel("名称").fill("copy-check");
+		await dialog.getByRole("button", { name: "签发", exact: true }).click();
+		const issued = dialogOf(page, "令牌「copy-check」已签发");
+		const box = issued.getByLabel("令牌原值");
+		const token = await issuedToken(issued);
+		// 基线里原值是遮住的，这里量：原值比只读框宽（框里放不下，只显示一部分）。
+		const sizes = await box.evaluate((el: HTMLInputElement) => ({
+			scroll: el.scrollWidth,
+			client: el.clientWidth,
+		}));
+		expect(sizes.scroll, "原值比只读框宽").toBeGreaterThan(sizes.client);
+		// 弹出来时焦点就在框里、原值整个被选中：选区从头到尾。
+		await expect(box).toBeFocused();
+		const selection = await box.evaluate((el: HTMLInputElement) => [
+			el.selectionStart,
+			el.selectionEnd,
+			el.value.length,
+		]);
+		expect(selection).toEqual([0, token.length, token.length]);
+		// 键盘复制拿到完整的原值。
+		await page.keyboard.press("ControlOrMeta+c");
+		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(token);
+		// 「复制」按钮拿到的也是完整的原值。
+		await page.evaluate(() => navigator.clipboard.writeText(""));
+		await issued.getByRole("button", { name: "复制" }).click();
+		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(token);
+		await issued.getByRole("button", { name: "我已保存，完成" }).click();
+	});
+
 	test("签发的校验：没选范围、项目标识写法不对、同名的有效令牌已经有了，都写明原因", async ({
 		page,
 	}) => {
@@ -113,25 +156,29 @@ test.describe("个人令牌页", () => {
 		await page.getByRole("button", { name: "签发令牌" }).click();
 		const dialog = dialogOf(page, "签发个人令牌");
 
+		const issue = dialog.getByRole("button", { name: "签发", exact: true });
 		await dialog.getByLabel("名称").fill("laptop");
-		await dialog.getByLabel("只要部分范围").check();
+		await dialog.getByRole("button", { name: "只选一部分" }).click();
 		// 默认勾着「读」：取消之后一个范围都没有。
 		await dialog.getByLabel("读", { exact: false }).first().uncheck();
-		await dialog.getByRole("button", { name: "签发" }).click();
+		await issue.click();
 		await expect(dialog.getByRole("alert")).toContainText("至少选一个范围");
+		// 标着问题的时候「签发」不可用（看起来不该能点），改好之后恢复。
+		await expect(issue).toBeDisabled();
 
 		await dialog.getByLabel("读", { exact: false }).first().check();
+		await expect(issue).toBeEnabled();
 		await dialog.getByLabel("限定项目").fill("Bad_Project");
-		await dialog.getByRole("button", { name: "签发" }).click();
-		await expect(dialog.getByLabel("限定项目")).toBeFocused();
 		await expect(dialog.getByLabel("限定项目")).toHaveAccessibleDescription(
 			/小写字母、数字和连字符/,
 		);
+		await expect(issue).toBeDisabled();
 
 		// 限定到默认项目：列表里「限定项目」显示它。
 		await dialog.getByLabel("限定项目").fill("default");
+		await expect(issue).toBeEnabled();
 		await dialog.getByLabel("有效期").selectOption("never");
-		await dialog.getByRole("button", { name: "签发" }).click();
+		await issue.click();
 		await dialogOf(page, "令牌「laptop」已签发")
 			.getByRole("button", { name: "我已保存，完成" })
 			.click();
@@ -212,8 +259,9 @@ test.describe("项目令牌页", () => {
 
 		await dialog.getByLabel("名称").fill("nightly");
 		await dialog.getByLabel("读", { exact: false }).first().uncheck();
-		await dialog.getByRole("button", { name: "签发" }).click();
+		await dialog.getByRole("button", { name: "签发", exact: true }).click();
 		await expect(dialog.getByRole("alert")).toContainText("至少选一个范围");
+		await expect(dialog.getByRole("button", { name: "签发", exact: true })).toBeDisabled();
 		await dialog.getByLabel("读", { exact: false }).first().check();
 		await dialog.getByLabel("运行", { exact: false }).first().check();
 		await dialog.getByRole("button", { name: "签发" }).click();
