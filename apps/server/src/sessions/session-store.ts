@@ -124,6 +124,11 @@ export interface SessionStoreDeps {
 	 * 「补发不会读到提交了但还没发布的事件」。生产里不传。
 	 */
 	afterCommit?: (sessionId: string, event: PersistedSessionEvent) => Promise<void>;
+	/**
+	 * 测试用的缝：{@link SessionStore.detail} 读到会话那一行之后、读事件之前调用（并等它），用来在这两步之间让这个会话
+	 * 提交别的事件，验证读到的三样东西来自同一个快照。生产里不传。
+	 */
+	afterDetailRow?: (sessionId: string) => Promise<void>;
 }
 
 /**
@@ -212,10 +217,13 @@ export class SessionStore {
 		return (await this.#lastOutcomes([sessionId])).get(sessionId) ?? null;
 	}
 
-	async #lastOutcomes(ids: string[]): Promise<Map<string, TurnOutcome>> {
+	async #lastOutcomes(
+		ids: string[],
+		db: Db | Tx = this.deps.db,
+	): Promise<Map<string, TurnOutcome>> {
 		const outcomes = new Map<string, TurnOutcome>();
 		if (ids.length === 0) return outcomes;
-		const rows = await this.deps.db
+		const rows = await db
 			.selectDistinctOn([sessionEvents.sessionId], {
 				sessionId: sessionEvents.sessionId,
 				outcome: sql<string | null>`${sessionEvents.payload}->>'outcome'`,
@@ -238,8 +246,9 @@ export class SessionStore {
 	async page(
 		sessionId: string,
 		before?: number,
+		db: Db | Tx = this.deps.db,
 	): Promise<{ events: PersistedSessionEvent[]; hasMore: boolean }> {
-		const rows = await this.deps.db
+		const rows = await db
 			.select()
 			.from(sessionEvents)
 			.where(
@@ -254,6 +263,38 @@ export class SessionStore {
 			events: rows.slice(0, SESSION_HISTORY_PAGE).reverse().map(toEvent),
 			hasMore: rows.length > SESSION_HISTORY_PAGE,
 		};
+	}
+
+	/**
+	 * 读一个会话（`GET /sessions/:id`）：会话那一行、最近的一页持久事件（{@link page}）和上一轮的结局，**取自同一个快照**
+	 * （一个 `REPEATABLE READ` 的只读事务）。分开读的话，读到会话那一行之后、读事件之前这一轮结束了，响应里就是「状态在做」
+	 * 加上已经带着 `turn_end` 的事件：页面用响应里的状态当时间线的状态（不从事件里重算），事件流又从这页最大的序号之后接，
+	 * 这条 `turn_end` 不会再来，页面就永远停在「在做」。会话不存在时为 undefined。
+	 */
+	async detail(
+		sessionId: string,
+		before?: number,
+	): Promise<
+		| {
+				row: SessionRow;
+				events: PersistedSessionEvent[];
+				hasMore: boolean;
+				lastOutcome: TurnOutcome | null;
+		  }
+		| undefined
+	> {
+		if (!isUuid(sessionId)) return undefined;
+		return this.deps.db.transaction(
+			async (tx) => {
+				const [row] = await tx.select().from(sessions).where(eq(sessions.id, sessionId));
+				if (!row) return undefined;
+				await this.deps.afterDetailRow?.(sessionId);
+				const { events, hasMore } = await this.page(sessionId, before, tx);
+				const lastOutcome = (await this.#lastOutcomes([sessionId], tx)).get(sessionId) ?? null;
+				return { row, events, hasMore, lastOutcome };
+			},
+			{ isolationLevel: "repeatable read", accessMode: "read only" },
+		);
 	}
 
 	/** 序号大于 `after` 的持久事件，序号升序，最多 `limit` 条。 */
