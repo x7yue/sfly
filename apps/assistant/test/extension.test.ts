@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { Code } from "@connectrpc/connect";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type AgentOptions, connectAgent, WORKBENCH_UNREACHABLE } from "../src/agent.js";
+import { type AgentOptions, asFsError, connectAgent, WORKBENCH_UNREACHABLE } from "../src/agent.js";
 import {
 	createRemoteTools,
 	isPiTempFile,
@@ -550,5 +550,12 @@ describe("整份读文件（读图片等）也在源头打码", () => {
 		);
 		const data = await ops.readFile(join(workdir, "w.bin"));
 		expect(Buffer.from(data).toString()).toBe("x******y");
+	});
+});
+
+describe("asFsError 的兜底", () => {
+	it("不是工作台这条连接换过的错误：不放行原文", () => {
+		const error = asFsError(new Error("MARKER-raw-99 10.9.8.7:50052"), "open", "/work/a.txt");
+		expect(error.message).toBe("open '/work/a.txt' 失败（助手服务内部出错）");
 	});
 });
