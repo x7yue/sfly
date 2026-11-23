@@ -1,7 +1,8 @@
 // 控制面读的字符串类环境变量也在启动时和数值类的一起检查（#619，接 #577）：代理信任、跨域来源、初始管理员、对外地址、
 // 数据库地址、镜像地址。写错了的都收进同一条 EnvSettingsError，一次报完；退出码 1、不打印堆栈（main.ts 接住它，见
-// main-env-settings.test.ts）。报错里不出现密码、密钥和地址里的凭据：这里每个会带保密内容的变量都填一个带记号的值，
-// 断言记号不在说明里。
+// main-env-settings.test.ts）。启动检查不比真正用这个值的一方更严（数据库地址：连接库认的写法都过；镜像：uv 认的
+// `file://` 和绝对路径都过）；报错里回显什么只有一处决定（echo.ts，认得的才回显）：这里每个变量单独断言说明里写了什么，
+// 「每个变量 × 各种带凭据的形状」的总表在 main-env-settings.test.ts（走真的 main.ts）和 echo.test.ts。
 import { describe, expect, it } from "vitest";
 import { EnvSettingsError, readEnvSettings } from "../src/config/env-settings.js";
 
@@ -76,15 +77,32 @@ describe("SFLY_TRUST_PROXY", () => {
 	});
 
 	it.each([
-		["banana", "banana"],
-		["11", "11"],
-		["10.0.0.0/33", "10.0.0.0/33"],
-		["10.0.0.0/8,oops", "oops"],
-	])("写错了（%s）：报变量名和填的原文，不是带堆栈的未捕获错误", (value, shown) => {
+		// 层数写大了：是个数，原样回显；地址段里写错的项是认不出的字母（不是 IP、网段用得到的字符），只说第几项。
+		["banana", "第 1 项是 （认不出，没有回显）", "banana"],
+		["11", '实际是 "11"', undefined],
+		["10.0.0.0/33", '第 1 项是 "10.0.0.0/33"', undefined],
+		["10.0.0.0/8,oops", "第 2 项是 （认不出，没有回显）", "oops"],
+	])("写错了（%s）：报变量名和第几项，只回显认得的写法，不是带堆栈的未捕获错误", (value, shown, hidden) => {
 		const problem = oneProblem({ SFLY_TRUST_PROXY: value });
 
 		expect(problem).toContain("SFLY_TRUST_PROXY");
 		expect(problem).toContain(shown);
+		if (hidden !== undefined) expect(problem).not.toContain(hidden);
+	});
+
+	it.each([
+		["误填了带用户名和密码的地址", `https://admin:${SECRET}@proxy.internal`],
+		["全角的 ＠", `admin:${SECRET}＠proxy.internal`],
+		["令牌在路径里", `proxy.internal/${SECRET}`],
+		["令牌在查询串里", `10.0.0.1?token=${SECRET}`],
+		["地址段的其中一项带凭据", `10.0.0.0/8,admin:${SECRET}@proxy.internal`],
+	])("%s：说明里没有凭据，只说是第几项认不出", (_, value) => {
+		const problem = oneProblem({ SFLY_TRUST_PROXY: value });
+
+		expect(problem).toContain("SFLY_TRUST_PROXY 认不出");
+		expect(problem).toContain("（认不出，没有回显）");
+		expect(problem).not.toContain(SECRET);
+		expect(problem).not.toContain("proxy.internal");
 	});
 });
 
@@ -101,22 +119,52 @@ describe("SFLY_CORS_ORIGINS、SFLY_DEV_ORIGINS", () => {
 		]);
 	});
 
-	it("写错了：写明是哪个变量；SFLY_DEV_ORIGINS 写错说的是它自己，不是 SFLY_CORS_ORIGINS", () => {
-		const cors = oneProblem({ SFLY_CORS_ORIGINS: "dash.example.com" });
-		expect(cors).toContain("SFLY_CORS_ORIGINS");
-		expect(cors).toContain('"dash.example.com"');
+	it("写错了：写明是哪个变量、第几项；SFLY_DEV_ORIGINS 写错说的是它自己，不是 SFLY_CORS_ORIGINS", () => {
+		// `dash.example.com` 被 URL 解析成协议 `dash.example.com:` 以外的东西（没有 `:`，解析不了）：没有回显。
+		const cors = oneProblem({ SFLY_CORS_ORIGINS: "https://ok.example.com, dash.example.com" });
+		expect(cors).toContain("SFLY_CORS_ORIGINS 里的第 2 项");
+		expect(cors).toContain("https://dash.example.com");
+		expect(cors).toContain("（解析不了，没有回显）");
 
 		const dev = oneProblem({ SFLY_DEV_ORIGINS: "localhost:3000x y" });
 		expect(dev).toContain("SFLY_DEV_ORIGINS");
 		expect(dev).not.toContain("SFLY_CORS_ORIGINS");
 	});
 
-	it("名单里写错的一项带着用户名和密码：说明里没有它们", () => {
-		// 没有协议、有 @：浏览器的来源不带用户名和密码，这一项本来就写错了。
+	it("写错的一项能解析、协议是认得的：只回显协议、主机和端口，路径、查询串、用户名密码不回显", () => {
+		// 非 http(s) 的协议解析出来的 origin 是 "null"：这一项不是来源。能解析、协议认得（file、postgres……）才回显协议、主机和端口。
+		const problem = oneProblem({
+			SFLY_CORS_ORIGINS: `postgres://admin:${SECRET}@db.internal:5432/sfly?token=${SECRET}#${SECRET}`,
+		});
+
+		expect(problem).toContain("SFLY_CORS_ORIGINS 里的第 1 项");
+		expect(problem).toContain('"postgres://db.internal:5432"');
+		expect(problem).not.toContain(SECRET);
+		expect(problem).not.toContain("admin");
+	});
+
+	it("写错的一项协议不是认得的（user:密码@主机 被解析成协议 user:）：不回显，不把用户名当协议写出来", () => {
 		const problem = oneProblem({ SFLY_CORS_ORIGINS: `admin:${SECRET}@dash.example.com` });
 
-		expect(problem).toContain("SFLY_CORS_ORIGINS");
+		expect(problem).toContain("（协议不是认得的 http、https、file 等，没有回显）");
+		expect(problem).not.toContain("admin");
 		expect(problem).not.toContain(SECRET);
+	});
+
+	it.each([
+		["用户名和密码、没有协议", `admin:${SECRET}@dash.example.com`],
+		["全角的 ＠", `https://admin:${SECRET}＠dash.example.com`],
+		["令牌在路径里、没有协议", `dash.example.com/${SECRET}`],
+		["令牌在查询串里、没有协议", `dash.example.com?token=${SECRET}`],
+		["逗号分隔的其中一项带凭据", `https://ok.example.com,admin:${SECRET}@dash.example.com`],
+	])("名单里写错的一项带着凭据（%s）：说明里没有它们", (_, value) => {
+		// 没有协议、有 @：浏览器的来源不带用户名和密码，这一项本来就写错了。
+		for (const name of ["SFLY_CORS_ORIGINS", "SFLY_DEV_ORIGINS"]) {
+			const problem = oneProblem({ [name]: value });
+
+			expect(problem).toContain(name);
+			expect(problem).not.toContain(SECRET);
+		}
 	});
 });
 
@@ -171,7 +219,8 @@ describe("SFLY_PUBLIC_URL", () => {
 		const problem = oneProblem({ SFLY_PUBLIC_URL: "sfly.internal:8080" });
 
 		expect(problem).toContain("SFLY_PUBLIC_URL");
-		expect(problem).toContain('"sfly.internal:8080"');
+		// `sfly.internal:8080` 被解析成协议 `sfly.internal:`：不是认得的协议，没有回显（里面可能是别的变量的值）。
+		expect(problem).toContain("（协议不是认得的 http、https、file 等，没有回显）");
 		expect(problem).toContain("http 或 https");
 	});
 
@@ -179,7 +228,16 @@ describe("SFLY_PUBLIC_URL", () => {
 		const problem = oneProblem({ SFLY_PUBLIC_URL: "http//sfly:8080" });
 
 		expect(problem).toContain("SFLY_PUBLIC_URL");
-		expect(problem).toContain('"http//sfly:8080"');
+		expect(problem).toContain("（解析不了，没有回显）");
+		expect(problem).not.toContain("http//sfly:8080");
+	});
+
+	it("写错但能解析的地址：只回显协议、主机和端口", () => {
+		const problem = oneProblem({ SFLY_PUBLIC_URL: "https://sfly.example.com:8443/path?x=1#top" });
+
+		expect(problem).toContain('"https://sfly.example.com:8443"');
+		expect(problem).not.toContain("/path");
+		expect(problem).not.toContain("x=1");
 	});
 
 	it.each([
@@ -198,6 +256,9 @@ describe("SFLY_PUBLIC_URL", () => {
 			`https://${SECRET}@sfly.example.com`,
 			`http//admin:${SECRET}@sfly:8080`,
 			`https://sfly.example.com/?token=${SECRET}`,
+			`https://sfly.example.com/${SECRET}?x`,
+			`https://admin:${SECRET}＠sfly.example.com`,
+			`postgres://admin:${SECRET}@db:5432/sfly`,
 		]) {
 			const problem = oneProblem({ SFLY_PUBLIC_URL: value });
 			expect(problem, value).toContain("SFLY_PUBLIC_URL");
@@ -261,29 +322,101 @@ describe("Agent 网关的对外地址：SFLY_PUBLIC_GRPC_URL，或者由 SFLY_PU
 });
 
 describe("DATABASE_URL", () => {
-	it("postgres:// 或 postgresql:// 开头的地址：通过，原样交给控制面（不改写，也不做规范化）", () => {
+	it("什么都不写、空串、只有空白：用默认的地址（空串不再交给连接库去用 PG* 环境变量）", () => {
+		for (const value of [undefined, "", "  "]) {
+			expect(readEnvSettings(value === undefined ? {} : { DATABASE_URL: value }).databaseUrl).toBe(
+				"postgres://sfly:sfly@127.0.0.1:5432/sfly",
+			);
+		}
+	});
+
+	it("TCP 的写法：通过，原样（去掉前后空白）交给控制面，不改写，也不做规范化", () => {
 		for (const url of [
 			"postgres://sfly:sfly@127.0.0.1:5432/sfly",
 			"postgresql://u:p%40ss@db.internal/sfly?sslmode=require",
 			"postgres://db/sfly",
+			// 多个参数、sslmode、连接超时。
+			"postgres://u:p@db.internal:6432/sfly?application_name=sfly&sslmode=verify-full&connect_timeout=5",
+			// IPv6。
+			"postgres://u:p@[::1]:5432/sfly",
+			"postgres://u:p@[fd00::5]/sfly",
 		]) {
+			expect(readEnvSettings({ DATABASE_URL: ` ${url} ` }).databaseUrl, url).toBe(url);
+		}
+	});
+
+	// 连接库（pg）认、以前能启动的 Unix 套接字写法：检查不能比它更严（#619 的审查：这几种被拒，升级后起不来）。
+	it.each([
+		["URL，主机留空、host 参数写目录", "postgres://u:p@/sfly?host=/var/run/postgresql"],
+		["URL，主机写成 %2F 编码的目录", "postgres://u:p@%2Fvar%2Frun%2Fpostgresql/sfly"],
+		[
+			"URL，主机留空、host 参数和别的参数一起写",
+			"postgres://u:p@/sfly?host=/var/run/postgresql&sslmode=disable",
+		],
+		["「目录 库名」", "/var/run/postgresql sfly"],
+		["socket: 加目录和 db 参数", "socket:/var/run/postgresql?db=sfly"],
+	])("Unix 套接字：%s（%s）通过", (_, url) => {
+		expect(readEnvSettings({ DATABASE_URL: url }).databaseUrl).toBe(url);
+	});
+
+	it("连接库认不认只看连接库：它认的写法（哪怕不以 postgres:// 开头）检查都不拦，不另定前缀规则", () => {
+		// 没写协议、协议写错、别的协议：连接库都解析得了（照旧在连接时才失败）；检查不比它更严。
+		for (const url of ["sfly:p@db/sfly", "postgres//sfly:p@db/sfly", "mysql://sfly:p@db/sfly"]) {
 			expect(readEnvSettings({ DATABASE_URL: url }).databaseUrl, url).toBe(url);
 		}
 	});
 
+	// 连接库自己也解析不了的：照实拒。
 	it.each([
-		["没写协议", `sfly:${SECRET}@db/sfly`],
-		["协议写错了", `postgres//sfly:${SECRET}@db/sfly`],
-		["别的协议", `mysql://sfly:${SECRET}@db/sfly`],
 		["端口不是数字", `postgres://sfly:${SECRET}@db:abc/sfly`],
-		["主机里有空格", `postgres://sfly:${SECRET}@db host/sfly`],
-	])("%s：报错，说明里没有填的原文（里面有密码）", (_, value) => {
+		["端口超出范围", `postgres://sfly:${SECRET}@db:99999/sfly`],
+		["多个主机（连接库不认）", `postgres://sfly:${SECRET}@h1:5432,h2:5432/sfly`],
+		["全角的 ＠", `postgres://sfly:${SECRET}＠db/sfly`],
+	])("%s：报错，说明是固定的文字，没有填的原文（里面有密码）", (_, value) => {
 		const problem = oneProblem({ DATABASE_URL: value });
 
 		expect(problem).toContain("DATABASE_URL");
+		expect(problem).toContain("postgres://");
+		expect(problem).toContain("Unix 套接字");
 		expect(problem).not.toContain(SECRET);
 		expect(problem).not.toContain(value);
-		expect(problem).toContain("postgres://");
+		expect(problem).not.toContain("sfly:");
+	});
+
+	it("说明是固定的一句：不同的值得到同样的说明（什么都不回显，不靠「有没有 @」「能不能解析」去挑）", () => {
+		const messages = new Set(
+			[
+				`postgres://sfly:${SECRET}@db:abc/sfly`,
+				`postgres://db:abc/${SECRET}`,
+				`postgres://db:${SECRET}/sfly`,
+				`postgres://sfly:${SECRET}@h1:5432,h2:5432/sfly`,
+				"postgres://db:abc/sfly",
+			].map((value) => oneProblem({ DATABASE_URL: value })),
+		);
+
+		expect(messages.size).toBe(1);
+	});
+
+	it("不带 @ 的地址写错了也不回显：数据库地址的说明里什么填的值都不写（不靠「看起来有凭据」）", () => {
+		// 密码放在没有 @ 的位置（路径、库名、参数里）：说明是固定的文字，不是「有 @ 才藏」。
+		const problem = oneProblem({ DATABASE_URL: `postgres://db:abc/${SECRET}?password=${SECRET}` });
+
+		expect(problem).toContain("DATABASE_URL");
+		expect(problem).not.toContain(SECRET);
+		expect(problem).not.toContain("db:abc");
+	});
+
+	it("解析时不重复发 sslmode 的警告（连接时 pg 还会发一次）", () => {
+		const warnings: unknown[] = [];
+		const onWarning = (warning: unknown) => warnings.push(warning);
+		process.on("warning", onWarning);
+		try {
+			readEnvSettings({ DATABASE_URL: "postgres://u:p@db/sfly?sslmode=require" });
+		} finally {
+			process.off("warning", onWarning);
+		}
+
+		expect(warnings).toEqual([]);
 	});
 });
 
@@ -298,19 +431,72 @@ describe("镜像：SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR", () => {
 		).toBe(`https://u:${SECRET}@mirror.internal/github`);
 	});
 
+	// uv 认 `file://` 和绝对路径做 PyPI 镜像（`--default-index`）：内网、离线的部署用共享目录。
+	it.each([
+		["file:// 地址", "file:///mnt/mirror/pypi/simple"],
+		["file:// 地址（大写协议）", "FILE:///mnt/mirror/pypi/simple"],
+		["绝对路径", "/mnt/mirror/pypi/simple"],
+	])("SFLY_PYPI_MIRROR：%s通过（%s），去掉前后空白", (_, value) => {
+		expect(readEnvSettings({ SFLY_PYPI_MIRROR: `  ${value}  ` }).pypiMirror).toBe(value);
+	});
+
+	// GitHub Release 镜像给 curl（装 uv 的脚本）和 uv（下载 Python）用：两者都认 `file://`；裸的绝对路径 curl 不认。
+	it("SFLY_GITHUB_RELEASE_MIRROR：file:// 地址通过；裸的绝对路径不通过（curl 不认）", () => {
+		expect(
+			readEnvSettings({ SFLY_GITHUB_RELEASE_MIRROR: "file:///mnt/mirror/github-release" })
+				.githubReleaseMirror,
+		).toBe("file:///mnt/mirror/github-release");
+
+		const problem = oneProblem({ SFLY_GITHUB_RELEASE_MIRROR: "/mnt/mirror/github-release" });
+		expect(problem).toContain("SFLY_GITHUB_RELEASE_MIRROR");
+		expect(problem).toContain("file://");
+		expect(problem).not.toContain("绝对路径");
+		expect(problem).toContain("（一个路径，没有回显）");
+	});
+
 	it.each([
 		["SFLY_PYPI_MIRROR", "mirrors.ustc.edu.cn/pypi/simple"],
 		["SFLY_PYPI_MIRROR", "ftp://mirror.internal/simple"],
 		["SFLY_GITHUB_RELEASE_MIRROR", "https:/mirror.internal"],
 		["SFLY_GITHUB_RELEASE_MIRROR", "http://"],
+		["SFLY_GITHUB_RELEASE_MIRROR", "relative/path"],
+		["SFLY_PYPI_MIRROR", "relative/path"],
 	])("%s=%s：报错，写明变量名", (name, value) => {
 		expect(oneProblem({ [name]: value })).toContain(name);
 	});
 
-	it("写错的镜像地址带着用户名和密码：说明里没有它们", () => {
-		const problem = oneProblem({ SFLY_PYPI_MIRROR: `u:${SECRET}@mirror.internal/simple` });
-		expect(problem).toContain("SFLY_PYPI_MIRROR");
+	it("示例按变量给：GitHub Release 镜像写错时不显示 PyPI 的地址，反过来也一样", () => {
+		const github = oneProblem({ SFLY_GITHUB_RELEASE_MIRROR: "mirror.internal" });
+		expect(github).toContain("https://mirrors.ustc.edu.cn/github-release");
+		expect(github).not.toContain("pypi");
+
+		const pypi = oneProblem({ SFLY_PYPI_MIRROR: "mirror.internal" });
+		expect(pypi).toContain("https://mirrors.ustc.edu.cn/pypi/simple");
+		expect(pypi).not.toContain("github-release");
+	});
+
+	it.each([
+		["用户名和密码、没有协议", `u:${SECRET}@mirror.internal/simple`],
+		["全角的 ＠", `https://u:${SECRET}＠mirror.internal/simple`],
+		["令牌在路径里、没有协议", `mirror.internal/${SECRET}/simple`],
+		["令牌在查询串里、没有协议", `mirror.internal/simple?token=${SECRET}`],
+		["协议写错、带用户名和密码", `https//u:${SECRET}@mirror.internal/simple`],
+	])("写错的镜像地址带着凭据（%s）：说明里没有它们", (_, value) => {
+		for (const name of ["SFLY_PYPI_MIRROR", "SFLY_GITHUB_RELEASE_MIRROR"]) {
+			const problem = oneProblem({ [name]: value });
+			expect(problem).toContain(name);
+			expect(problem).not.toContain(SECRET);
+		}
+	});
+
+	it("写错但能解析的镜像地址（协议不对）：只回显协议、主机和端口", () => {
+		const problem = oneProblem({
+			SFLY_PYPI_MIRROR: `ftp://u:${SECRET}@mirror.internal:2121/simple?x=1`,
+		});
+
+		expect(problem).toContain('实际是 "ftp://mirror.internal:2121"');
 		expect(problem).not.toContain(SECRET);
+		expect(problem).not.toContain("x=1");
 	});
 });
 
@@ -323,7 +509,7 @@ describe("字符串类和数值类一起：一次报完", () => {
 		SFLY_ADMIN_LOGIN: "root",
 		SFLY_PUBLIC_URL: "sfly.internal:8080",
 		SFLY_PUBLIC_GRPC_URL: "http//grpc:50051",
-		DATABASE_URL: `postgres//sfly:${SECRET}@db/sfly`,
+		DATABASE_URL: `postgres://sfly:${SECRET}@db:abc/sfly`,
 		SFLY_PYPI_MIRROR: "mirror.internal",
 	};
 

@@ -33,6 +33,13 @@ const rejected = (name: string, value: string): string => {
 	throw new Error(`${name}=${JSON.stringify(value)} 应该被拒绝，却通过了`);
 };
 
+/**
+ * 说明里回显的填的值：像数的原样回显（带引号）；`abc` 这样不像数的不回显，只说认不出（echo.ts：认得的才回显，
+ * 填错的变量里常常是别的变量的值）。
+ */
+const shown = (raw: string): string =>
+	raw === "abc" ? "（认不出，没有回显）" : JSON.stringify(raw);
+
 /** 不合法的原文：不是数、不是有限的数。 */
 const NOT_NUMBERS = [
 	"abc",
@@ -88,7 +95,7 @@ describe("保留天数：SFLY_RETENTION_DAYS、SFLY_METRIC_RETENTION_DAYS", () =
 				const message = rejected(name, raw as string);
 
 				expect(message).toContain(`${name} 不合法`);
-				expect(message).toContain(JSON.stringify(raw));
+				expect(message).toContain(shown(raw as string));
 				expect(message).toContain(`大于 0、不超过 ${MAX_RETENTION_DAYS} 的数（天）`);
 				expect(message).toContain(`不想清理就填 ${MAX_RETENTION_DAYS}`);
 			});
@@ -149,7 +156,7 @@ describe("三个上限（MB）：SFLY_LOG_LIMIT_MB、SFLY_ARTIFACT_LIMIT_MB、SF
 				expect(message).toContain(
 					`${what}换算成字节后必须是 1 到 ${Number.MAX_SAFE_INTEGER} 之间的整数`,
 				);
-				expect(message).toContain(JSON.stringify(raw));
+				expect(message).toContain(shown(raw as string));
 				expect(message).toContain("换算后");
 			});
 
@@ -166,7 +173,7 @@ describe("三个上限（MB）：SFLY_LOG_LIMIT_MB、SFLY_ARTIFACT_LIMIT_MB、SF
 				const message = rejected(name, raw);
 
 				expect(message).toContain(`${name} 不合法`);
-				expect(message).toContain(JSON.stringify(raw));
+				expect(message).toContain(shown(raw as string));
 				expect(message).toContain("单位是 MB");
 				expect(message).toContain("只写数字");
 				// 范围仍然写明。
@@ -220,7 +227,7 @@ describe("登录的空闲期限（小时）：SFLY_LOGIN_IDLE_HOURS", () => {
 		const message = rejected(name, raw as string);
 
 		expect(message).toContain(`${name} 不合法`);
-		expect(message).toContain(JSON.stringify(raw));
+		expect(message).toContain(shown(raw as string));
 		expect(message).toContain(`2 分钟到 ${MAX_LOGIN_IDLE_HOURS} 小时之间的数`);
 		expect(message).toContain("单位是小时");
 		expect(message).toContain("下限是登录续期间隔（60 秒）的两倍");
@@ -292,7 +299,7 @@ describe("端口：SFLY_HTTP_PORT、SFLY_GRPC_PORT", () => {
 				expect(message).toContain(`${name} 不合法`);
 				expect(message).toContain("端口必须是 0 到 65535 之间的整数");
 				expect(message).toContain("只认不带符号的十进制整数");
-				expect(message).toContain(JSON.stringify(raw));
+				expect(message).toContain(shown(raw as string));
 			});
 		});
 	}
@@ -374,8 +381,8 @@ describe("全部变量一起读", () => {
 	});
 
 	it("只有一个不合法时，说明就是那一条，不带「N 个」的前缀", () => {
-		expect(rejected("SFLY_HTTP_PORT", "x")).toBe(
-			'SFLY_HTTP_PORT 不合法：端口必须是 0 到 65535 之间的整数（0 是让系统选一个空闲端口），只认不带符号的十进制整数（不要写 +8080、8080.0、1e3、0x1F90），实际是 "x"',
+		expect(rejected("SFLY_HTTP_PORT", "70000")).toBe(
+			'SFLY_HTTP_PORT 不合法：端口必须是 0 到 65535 之间的整数（0 是让系统选一个空闲端口），只认不带符号的十进制整数（不要写 +8080、8080.0、1e3、0x1F90），实际是 "70000"',
 		);
 	});
 });

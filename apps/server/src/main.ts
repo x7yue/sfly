@@ -1,5 +1,6 @@
 // 控制面入口。配置全部来自环境变量：
-//   DATABASE_URL     PostgreSQL 连接串，postgres:// 或 postgresql:// 开头（默认 postgres://sfly:sfly@127.0.0.1:5432/sfly）
+//   DATABASE_URL     PostgreSQL 连接串（默认 postgres://sfly:sfly@127.0.0.1:5432/sfly；空串当作没设置）。启动时用连接库（pg）
+//                    自己解析连接串的函数检查，只拒它也解析不了的：Unix 套接字的写法（postgres://用户:密码@/库名?host=/var/run/postgresql）也行
 //   SFLY_DATA_DIR    数据目录：节点包文件等（默认 ./data）
 //   SFLY_HTTP_HOST   HTTP API 监听地址（默认 0.0.0.0）
 //   SFLY_HTTP_PORT   HTTP API 端口（默认 8080）
@@ -16,7 +17,7 @@
 //                    下发给 Agent 安装节点包依赖（可选；未设置时 Agent 用 uv 自己的配置，ADR 0012）
 //   SFLY_GITHUB_RELEASE_MIRROR GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release），
 //                    下发给 Agent 安装 uv、下载 Python（可选；未设置时 Agent 用 uv 的官方来源）
-//                    两个镜像都要写成 http 或 https 地址，没写协议启动失败
+//                    两个镜像都要写成 http 或 https 地址，没写协议启动失败；uv 认的 file:// 地址也行，PyPI 镜像还认绝对路径
 //   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30，大于 0、最大 36500），运行结束超过这么久后自动清理；
 //                    不想清理就填 36500（约 100 年），没有别的「永不清理」的写法
 //   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30，大于 0、最大 36500），整天超过保留期的指标分区自动删除
@@ -28,8 +29,9 @@
 //   端口（SFLY_HTTP_PORT、SFLY_GRPC_PORT）是 0 到 65535 的整数，0 让系统选一个空闲端口。
 //   字符串类的变量也在启动时和它们一起检查（#619）：SFLY_TRUST_PROXY、SFLY_CORS_ORIGINS、SFLY_DEV_ORIGINS、
 //   SFLY_ADMIN_LOGIN 和 SFLY_ADMIN_PASSWORD（要一起给）、SFLY_PUBLIC_URL、SFLY_PUBLIC_GRPC_URL、DATABASE_URL、
-//   SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR。报错里不出现密码、密钥和地址里的凭据（带 @ 的值整个不回显，
-//   数据库地址一律不回显）。哪些检查、哪些留给第一次用到，见 docs/ARCHITECTURE.md「启动时检查哪些环境变量」
+//   SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR。报错里不出现密码、密钥和地址里的凭据：回显填的值只经过 src/config/echo.ts，
+//   认得的才回显（地址只写协议、主机和端口，数据库地址、密码一律不写）；报错的顺序是读的顺序（稳定）。
+//   哪些检查、哪些留给第一次用到，见 docs/ARCHITECTURE.md「启动时检查哪些环境变量」
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
 //   SFLY_CLIENT_DIR  API 客户端安装包（@sfly/client 的 tarball）所在目录（默认 apps/server/dist/client，由
@@ -73,6 +75,7 @@ import packageJson from "../package.json" with { type: "json" };
 import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
 import { runResetPassword } from "./auth/reset-password-cli.js";
 import { EnvSettingsError, readEnvSettings } from "./config/env-settings.js";
+import { databaseUrlFromEnv } from "./config/url-setting.js";
 import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { safeError } from "./util/safe-error.js";
@@ -123,8 +126,17 @@ const agentBinaries = (dir: string | undefined): AgentBinaryFiles => {
 const env = process.env;
 // 子命令：`node main.mjs reset-password <登录名>` 重置密码（管理员忘了密码时在控制面所在的主机上执行），不启动控制面。
 if (process.argv[2] === "reset-password") {
+	// 读 DATABASE_URL 和控制面用的是同一个函数（去前后空白、空串当作没设置、pg 解析不了的拒绝，说明里没有填的值）。
+	const databaseUrl = (() => {
+		try {
+			return databaseUrlFromEnv(env.DATABASE_URL);
+		} catch (error) {
+			console.error(`sfly: ${(safeError(error) as Error).message}`);
+			process.exit(1);
+		}
+	})();
 	const code = await runResetPassword(process.argv.slice(3), {
-		databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
+		databaseUrl,
 		stdin: process.stdin,
 		stdinIsTty: process.stdin.isTTY === true,
 		stdout: process.stdout,
@@ -152,9 +164,6 @@ const controlPlane = await startControlPlane({
 	grpc: { host: env.SFLY_GRPC_HOST ?? "0.0.0.0", port: grpcPort },
 	logger: true,
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
-	// 检查过的设置（保留天数、各种上限、登录的空闲期限、数据库地址、对外地址、跨域来源、初始管理员、代理信任、镜像）：
-	// `...settings` 一次传进去，不逐项接线（漏掉一项就是悄悄不生效）。
-	...settings,
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
 	clientPackageDir: env.SFLY_CLIENT_DIR || defaults.clientDir,
 	webDir,
@@ -165,6 +174,10 @@ const controlPlane = await startControlPlane({
 	assistantUrl: env.SFLY_ASSISTANT_URL || undefined,
 	assistantSecret: env.SFLY_ASSISTANT_SECRET || undefined,
 	workbenchAgent: env.SFLY_WORKBENCH_AGENT || undefined,
+	// 检查过的设置（保留天数、各种上限、登录的空闲期限、数据库地址、对外地址、跨域来源、初始管理员、代理信任、镜像）：
+	// `...settings` 一次传进去，不逐项接线（漏掉一项就是悄悄不生效）。放在最后：前面没有同名的项（有就编译不过），后面也不能再有
+	// 把它盖掉的（test/main-env-settings.test.ts 的结构检查守着）。
+	...settings,
 });
 console.log(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,

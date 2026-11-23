@@ -5,7 +5,7 @@ import {
 	NICKNAME_HEADER,
 } from "@sfly/schema";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { shownValue } from "../config/url-setting.js";
+import { echoUrl } from "../config/echo.js";
 
 const ENV_NAME = "SFLY_CORS_ORIGINS";
 const ALLOWED_METHODS = "GET, POST, PUT, PATCH, DELETE";
@@ -26,7 +26,8 @@ const PREFLIGHT_MAX_AGE_SECONDS = 600;
  * 解析环境变量 `SFLY_CORS_ORIGINS`（`name` 换成别的变量名时用来解析同样写法的名单，例如 `SFLY_DEV_ORIGINS`）：
  * 逗号分隔的来源名单，每一项规范成浏览器发来的 `Origin` 写法（协议和主机小写、去掉默认端口和路径）。
  * 没有设置、全是空项或含 `*` 时返回 undefined，表示允许所有来源；有不是来源的项时报错，不让一个写错的名单悄悄变成
- * 「谁也调不通」。报错里填的那一项按 {@link shownValue} 写：写错的一项可能带着用户名和密码（`user:pw@host`）。
+ * 「谁也调不通」。报错里说是第几项，填的那一项只经过 `echoUrl`（echo.ts）：写错的一项可能带着用户名和密码（`user:pw@host`），
+ * 只有能解析、协议认得的才回显协议、主机和端口。
  */
 export function parseCorsOrigins(
 	raw: string | undefined,
@@ -37,11 +38,11 @@ export function parseCorsOrigins(
 		.map((entry) => entry.trim())
 		.filter(Boolean);
 	if (entries.length === 0 || entries.includes("*")) return undefined;
-	return entries.map((entry) => {
+	return entries.map((entry, index) => {
 		const origin = URL.canParse(entry) ? new URL(entry).origin : "null";
 		if (origin === "null") {
 			throw new Error(
-				`${name} 里的 ${shownValue(entry)} 不是来源，要写成 https://dash.example.com 这样的「协议://主机[:端口]」`,
+				`${name} 里的第 ${index + 1} 项不是来源，要写成 https://dash.example.com 这样的「协议://主机[:端口]」，实际是 ${echoUrl(entry)}`,
 			);
 		}
 		return origin;
