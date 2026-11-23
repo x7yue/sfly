@@ -98,6 +98,9 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	);
 }
 
+/** 会话页的输入框（「停止」的 data-focus-successor 指向它）。 */
+const COMPOSER_SELECTOR = "[data-session-composer]";
+
 function StopButton({ id }: { id: string }) {
 	const stop = useMutation({
 		mutationFn: () => callApi(sessionsApi.stop, { params: { id } }),
@@ -109,6 +112,8 @@ function StopButton({ id }: { id: string }) {
 			title={SESSION.page.stopTitle}
 			disabled={stop.isPending}
 			onClick={() => stop.mutate()}
+			// 这一轮结束时这个按钮随之消失：焦点交给输入框（components/focus-recovery）。
+			data-focus-successor={COMPOSER_SELECTOR}
 		>
 			{SESSION.page.stop}
 		</Button>
@@ -140,7 +145,7 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 		if (canSend) send.mutate(text);
 	};
 	useShortcut("assistant-send", submit, status !== "ended");
-	// 一轮结束（在做 → 空闲）：焦点在 body 上（点过「停止」，那个按钮已经没了）时放回输入框；用户在别处就不抢。
+	// 一轮结束（在做 → 空闲）：焦点在 body 上（用户点了空白处）时放回输入框；用户在别处就不抢。点过「停止」的由焦点恢复交给输入框。
 	const before = useRef(status);
 	useEffect(() => {
 		const was = before.current;
@@ -164,6 +169,7 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 		>
 			<Textarea
 				ref={field}
+				data-session-composer
 				aria-label={SESSION.page.sendLabel}
 				aria-describedby={blocked === null ? undefined : blockedId}
 				placeholder={SESSION.page.sendPlaceholder}

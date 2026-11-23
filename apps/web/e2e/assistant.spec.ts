@@ -568,6 +568,16 @@ test("停止：在做时点「停止」，请求发给停止接口，时间线�
 		stops.push(route.request().method());
 		await fulfillJson(route, 200, { ...view, status: "running" });
 	});
+	// 记下依次获得焦点的元素：「停止」消失之后焦点直接交给输入框，中间不经过页面标题（焦点恢复的兜底去向）。
+	await page.addInitScript(() => {
+		const seen: string[] = [];
+		(window as unknown as { __focused: string[] }).__focused = seen;
+		document.addEventListener(
+			"focusin",
+			(event) => seen.push(event.target instanceof Element ? event.target.tagName : "?"),
+			true,
+		);
+	});
 	await page.goto(`/sessions/${view.id}`);
 	await expect(toolRows(page).first()).toHaveAttribute("data-state", "running");
 	await page.getByRole("button", { name: "停止" }).click();
@@ -579,8 +589,11 @@ test("停止：在做时点「停止」，请求发给停止接口，时间线�
 	await expect(page.getByRole("button", { name: "停止" })).toHaveCount(0);
 	// 停下来时还没有结果的工具行不再算在做。
 	await expect(toolRows(page).first()).toHaveAttribute("data-state", "abandoned");
-	// 点「停止」的按钮随这一轮消失：焦点回到输入框，不落在 body 上。
+	// 点「停止」的按钮随这一轮消失：焦点回到输入框，不落在 body 上，也不先落在页面标题上。
 	await expect(composer(page)).toBeFocused();
+	expect(
+		await page.evaluate(() => (window as unknown as { __focused: string[] }).__focused),
+	).toEqual(["BUTTON", "TEXTAREA"]);
 });
 
 test("停止失败：写明原因，会话仍是在做", async ({ page }) => {
