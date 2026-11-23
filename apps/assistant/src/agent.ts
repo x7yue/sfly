@@ -54,17 +54,22 @@ export class UnreachableError extends Error {}
  * 探不通时消息以 {@link WORKBENCH_UNREACHABLE} 开头。
  */
 export class DeadlineError extends Error {
+	/** 工作台的地址：只给日志用，不进消息。 */
+	readonly address: string;
+
 	constructor(
 		readonly what: string,
 		readonly seconds: number,
 		readonly reachable: boolean,
 		address: string,
 	) {
+		// 不带工作台的地址：这句话会进工具结果、显示在页面上（#640）。
 		super(
 			reachable
-				? `工作台 ${address} 在 ${seconds} 秒内没有回应这次${what}（工作台还连得上，只是这次调用卡住了）`
-				: `${WORKBENCH_UNREACHABLE}：${address} 在 ${seconds} 秒内没有回应这次${what}，之后也探不通`,
+				? `工作台在 ${seconds} 秒内没有回应这次${what}（工作台还连得上，只是这次调用卡住了）`
+				: `${WORKBENCH_UNREACHABLE}：在 ${seconds} 秒内没有回应这次${what}，之后也探不通`,
 		);
+		this.address = address;
 	}
 }
 
@@ -127,7 +132,10 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 			!outer?.aborted &&
 			!(await reachable())
 		) {
-			return new UnreachableError(`${WORKBENCH_UNREACHABLE}：${address}（${error.rawMessage}）`);
+			// 连接层的原文里有工作台的地址：只写进 pi 的标准错误（助手服务打码后存下），消息里写是哪一类。
+			console.error(`工作台 ${address} 连不上：${error.rawMessage}`);
+			const why = /PING/i.test(error.rawMessage) ? "保活的 ping 没有回应" : "连接断了";
+			return new UnreachableError(`${WORKBENCH_UNREACHABLE}：${why}，之后也探不通`);
 		}
 		return error;
 	};

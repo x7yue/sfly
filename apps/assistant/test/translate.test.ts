@@ -84,9 +84,24 @@ describe("pi 的事件 → 会话事件", () => {
 			"retry",
 			"retry_end",
 		]);
-		expect(events[0]).toMatchObject({ attempt: 1, max_attempts: 3, retry_delay_ms: 2000 });
-		expect(translator.retriesExhausted).toContain("ECONNREFUSED");
-		expect(translator.lastModelError).toContain("ECONNREFUSED");
+		expect(events[0]).toMatchObject({
+			attempt: 1,
+			max_attempts: 3,
+			retry_delay_ms: 2000,
+			// 助手服务自己的说法：上游的原文（这里是连接的报错，带着地址）不进事件（#640）。
+			message: "连不上上游模型，正在重试第 1 次",
+			error_class: "unreachable",
+		});
+		expect(events.at(-1)).toMatchObject({ message: "重试用尽：连不上上游模型" });
+		expect(JSON.stringify(events)).not.toContain("ECONNREFUSED");
+		expect(translator.retriesExhausted).toEqual({
+			errorClass: "unreachable",
+			text: "连不上上游模型",
+		});
+		expect(translator.lastModelError).toEqual({
+			errorClass: "unreachable",
+			text: "连不上上游模型",
+		});
 	});
 
 	it("认不出的 pi 事件：不抛错、不外传，交给调用方记日志", () => {

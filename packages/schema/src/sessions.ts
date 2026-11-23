@@ -68,7 +68,7 @@ export type SessionTool = z.infer<typeof SessionTool>;
  * - `stopped` 已停止：用户停止；
  * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，{@link TurnLimit}；默认 40 次模型调用、
  *   20 分钟，#540）；
- * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#640 起按下面 {@link ErrorClass} 的规则分）；
  * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
  * - `failed` 其他错误。
  * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
@@ -90,8 +90,8 @@ export type TurnLimit = z.infer<typeof TurnLimit>;
 
 /**
  * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
- * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
- * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
+ * `evals/assistant/aeval/classify.py` 的 `_INFRA`。#640 起助手服务按上游的错误分好再写（`turn_end` 模型不可用时、
+ * 重试的 `notice`），上游的错误原文不进事件，只进助手服务的日志：
  * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
  * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
  */
@@ -371,7 +371,7 @@ const noticeFields = {
 	max_attempts: z.int().min(1).optional(),
 	/** 多久（毫秒）之后重试；只有 `retry`。 */
 	retry_delay_ms: z.int().min(0).optional(),
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class: ErrorClass.optional(),
 };
 
@@ -389,7 +389,7 @@ export const AssistantNoticeEvent = z.object({ kind: AssistantNoticeKind, ...not
  * `reason` 是一句话；`steps` 是工具调用次数，`model_calls` 是模型调用次数，`usage` 是这一轮合计：
  * 控制面补的 `interrupted`（助手服务重启了，#545）拿不到这三项，不给。`duration_ms` 是这一轮用的时间。
  * `limit_kind` 在 `outcome` 为 `limit` 时给出，是哪一种上限（{@link TurnLimit}），不靠 `reason` 的文字；
- * `error_class` 在模型不可用时给出（#540 起，先写 `other`，#548 分细）。助手服务产生（控制面也会写 `interrupted`、
+ * `error_class` 在模型不可用时给出（#640 起按类别分）。`reason` 不带「模型不可用」这几个字，页面按结局加。助手服务产生（控制面也会写 `interrupted`、
  * `failed` 的，#545），持久。#540 起。
  */
 export const TurnEndEvent = z.object({

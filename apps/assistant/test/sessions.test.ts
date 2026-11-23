@@ -238,13 +238,15 @@ describe("一轮的结局", () => {
 		});
 	});
 
-	it("模型出错、重试用尽：model_unavailable，error_class 先写 other；重试有提示", async () => {
+	it("模型出错、重试用尽：model_unavailable，原因和 error_class 是助手服务自己的说法；重试有提示", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "error" });
 		expect(await harness.turnEnd(id)).toMatchObject({
 			outcome: "model_unavailable",
-			error_class: "other",
+			// 不带「模型不可用」：页面按结局加这个前缀（#640）。
+			reason: "上游出错（上游返回 503）",
+			error_class: "upstream",
 		});
 		const notices = harness.events
 			.of(id)
@@ -316,9 +318,10 @@ describe("保密环境变量按值打码", () => {
 		const output = events.flatMap((e) => (e.type === "tool_output" ? [e.text] : [])).join("");
 		expect(output).toContain("TOKEN=******");
 		expect(events.find((e) => e.type === "tool_call")).toMatchObject({ title: "echo ******" });
-		expect(events.find((e) => e.type === "notice")).toMatchObject({
-			message: expect.stringContaining("******"),
-		});
+		// 上游的错误原文（里面有这个值）不进提示，只进日志，进日志之前打码（#640）。
+		expect(events.find((e) => e.type === "notice")?.type).toBe("notice");
+		expect(JSON.stringify(events)).not.toContain("bad key");
+		expect(harness.logs.join("\n")).toContain("上游模型出错：bad key ******");
 	});
 });
 
@@ -668,11 +671,13 @@ describe("审查补的守护", () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "error-once" });
-		expect(await harness.turnEnd(id)).toMatchObject({
+		const end = await harness.turnEnd(id);
+		expect(end).toMatchObject({
 			outcome: "model_unavailable",
-			error_class: "other",
-			reason: expect.stringContaining("401 unauthorized"),
+			error_class: "auth",
+			reason: "上游拒绝了密钥（上游返回 401）",
 		});
+		expect(harness.logs.join("\n")).toContain("上游模型出错：401 unauthorized");
 	});
 
 	it("工具结果里的 NUL、不成对的代理字符：发出之前换成看得见的占位（控制面存得进去）", async () => {
@@ -700,6 +705,10 @@ describe("审查补的守护", () => {
 			const end = await harness.turnEnd(id, 1, 40_000);
 			expect(end).toMatchObject({ outcome: "failed" });
 			expect(end.reason).toContain("工作台连不上");
+			// 给人看的原因里没有工作台的地址（#640）；地址在日志里。
+			expect(end.reason).not.toContain(port.address);
+			expect(end.reason).not.toContain("127.0.0.1");
+			expect(harness.logs.join("\n")).toContain(port.address);
 		} finally {
 			await port.close();
 		}

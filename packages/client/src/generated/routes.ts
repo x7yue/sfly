@@ -1279,7 +1279,7 @@ export interface Api {
 					max_attempts?: number;
 					/** 多久（毫秒）之后重试；只有 `retry`。 */
 					retry_delay_ms?: number;
-					/** 重试的原因按什么分；#548 起有值。 */
+					/** 重试的原因按什么分（#640 起有值）。 */
 					error_class?: ErrorClass;
 					seq: number;
 					at: Timestamp;

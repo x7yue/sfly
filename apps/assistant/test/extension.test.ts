@@ -263,6 +263,8 @@ describe("工作台接了连接却不回话：每次调用都有期限", () => {
 				const started = Date.now();
 				const text = await run(quick, name, params);
 				expect(text, name).toContain(WORKBENCH_UNREACHABLE);
+				// 工具结果会显示在页面上：不带工作台的地址（#640）。
+				expect(text, name).not.toContain(port.address);
 				expect(Date.now() - started, name).toBeLessThan(3_000);
 			}
 		} finally {
@@ -343,6 +345,8 @@ describe("连接在命令进行中冻住：保活发现连接死了", () => {
 			proxy.freeze();
 			const text = await pending;
 			expect(text).toContain(WORKBENCH_UNREACHABLE);
+			expect(text).toContain("保活的 ping 没有回应");
+			expect(text).not.toContain(proxy.address);
 			// 命令的期限是 120 + 20 秒；保活 1 + 1 秒、探测 0.5 秒。
 			expect(Date.now() - started).toBeLessThan(10_000);
 		} finally {
