@@ -612,19 +612,21 @@ export class AccessGuard {
 				`缺少「${SCOPE_LABELS[needed]}」范围：${routeKey(route)} 需要它`,
 			);
 		}
-		// 会话的写（建、发话、停止）只有人能做（`writeNeedsPerson`，范围表里的 `humanOnly`）：范围够也不行。
-		// 项目令牌没有用户，建出来的会话没有发起人；会话令牌的情况在下面单独写死。
-		if (principal.kind === "project" && writeNeedsPerson(route)) {
-			return denied(403, "forbidden", "项目令牌不能做这件事：它只有人能做（登录的用户或个人令牌）");
-		}
-		// ADR 0027「凭据」：会话令牌对会话这一类只有读——它是助手在会话里干活用的凭据，不能用来建会话、替人发话、
-		// 停掉会话。这一条是独立的：「编辑」范围让它能改场景，不会让它能写会话。
-		if (
-			principal.kind === "session" &&
-			route.resource.kind === "session" &&
-			route.effect === "write"
-		) {
-			return denied(403, "forbidden", "会话令牌对会话只有读：不能建会话、发话和停止");
+		// 只有人能做的写（`writeNeedsPerson`，范围表里的 `humanOnly`，ADR 0032）：范围够也不行。只有登录和个人令牌算人，
+		// 别的凭据一律拒绝：项目令牌没有用户，建出来的会话没有发起人；会话令牌是助手干活用的，不能建会话、替人发话、
+		// 停掉会话（ADR 0027），#495 拿掉下面「会话令牌的写入还没有开放」的临时总闸之后也一样；以后新种类的凭据默认也不行。
+		if (writeNeedsPerson(route) && principal.kind !== "login" && principal.kind !== "personal") {
+			// 说明按「是什么凭据、做的是什么」写准：会话令牌对会话只有读；别的人才能做的写（例如项目令牌的签发和吊销）不能说成
+			// 「对会话」。
+			const onSession = route.resource.kind === "session" || route.creates === "session";
+			const who = principal.kind === "session" ? "会话令牌" : "项目令牌";
+			return denied(
+				403,
+				"forbidden",
+				principal.kind === "session" && onSession
+					? "会话令牌对会话只有读：不能建会话、发话和停止"
+					: `${who}不能做这件事：它只有人能做（登录的用户或个人令牌）`,
+			);
 		}
 		if (principal.kind === "session" && route.effect === "write") {
 			// 会话令牌的勾选（可以改的场景、可以用的 Agent、可以发消息的机器人）和待批准的操作在 #495、#496 接进来；
