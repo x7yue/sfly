@@ -19,7 +19,7 @@ export const INGEST_POINTS_PER_SECOND = 10_000;
 export const INGEST_SECONDS = 3600;
 /** 控制面接收指标：1 小时范围的指标查询 p95 < 500 ms。 */
 export const QUERY_P95_MS = 500;
-/** 运行监控页的图表：一张图表最多 100 个序列（标准节点 process_monitor 按进程的图表最多引用 2 个指标 × 50 个进程）。 */
+/** 运行监控页的图表：一张图表最多 100 个序列（sfly-std 的辅助函数 monitor_processes 按进程的图表最多引用 2 个指标 × 50 个进程）。 */
 export const CHART_SERIES = 100;
 /** 运行监控页的图表：1 小时范围的降采样查询 p95 < 500 ms。 */
 export const CHART_QUERY_P95_MS = 500;

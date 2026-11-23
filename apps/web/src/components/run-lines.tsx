@@ -210,7 +210,9 @@ export function RunLines({
 				} as CSSProperties
 			}
 			className={cn(
-				"m-0 grid list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,14rem))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
+				// 站名那几列：每列最宽 18rem、各取自己站名的宽度（`auto`），放不下时按各列缺的宽度均分：短站名让出的宽度给长站名，
+				// 长节点 ID 的站名（常常正好是失败的那个节点）不再和短站名平分同样的宽度。
+				"m-0 grid list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,auto))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
 				className,
 			)}
 		>
@@ -277,7 +279,7 @@ function StationCell({
 	const status = node ? nodeStatusView(node.status) : undefined;
 	const kind = nodeStatusView(station.kind === "fold" ? station.status : station.node.status).kind;
 	return (
-		<li style={{ gridColumnStart: column + 1 }} className="relative min-w-0">
+		<li style={{ gridColumnStart: column + 1 }} className="relative min-w-0 max-w-72">
 			<span className="relative flex h-5 items-center">
 				{next && (
 					<span

@@ -45,6 +45,7 @@ import {
 	sameCurrentAction,
 	summaryOfTask,
 } from "./action-summary.js";
+import { maskedAction, maskedSummary } from "./action-text.js";
 
 /** 写入的明细和存下的摘要，按任务发布给实时推送（{@link TaskActions.follow}）。 */
 type Published =
@@ -276,6 +277,7 @@ export class TaskActions {
 		if (!isUuid(taskId)) return undefined;
 		const [row] = await this.deps.db
 			.select({
+				runId: tasks.runId,
 				status: tasks.status,
 				actionCapped: tasks.actionCapped,
 				summary: taskActionSummaries.summary,
@@ -283,7 +285,13 @@ export class TaskActions {
 			.from(tasks)
 			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
 			.where(eq(tasks.id, taskId));
-		return row && summaryOfTask(row, row.summary);
+		if (!row) return undefined;
+		// 存下的摘要是写入时按那一刻已知的 secret 值打过码的；读取时再按此刻的打一遍（之后才创建的子流程带来的 secret 值也算）。
+		// 这一次读取共用一份打码的预算（完整的出现的段数，{@link SecretSet.withBudget}）。
+		return maskedSummary(
+			summaryOfTask(row, row.summary),
+			(await this.deps.logs.runSecrets(row.runId)).withBudget(),
+		);
 	}
 
 	/**
@@ -297,6 +305,7 @@ export class TaskActions {
 		const [task] = await db
 			.select({
 				...TASK_END_COLUMNS,
+				runId: tasks.runId,
 				rev: tasks.actionRev,
 				purgedAt: runs.purgedAt,
 				names: sql<ActionNameCount[] | null>`${taskActionSummaries.summary} -> 'names'`,
@@ -344,9 +353,12 @@ export class TaskActions {
 		const shown = rows.slice(0, limit);
 		const earliest = rows.length > limit ? shown.at(-1) : undefined;
 		const end = taskEndOf(task);
+		// 明细是写入时打过码的；读取时再按此刻的 secret 值打一遍。
+		// 这一页共用一份打码的预算（完整的出现的段数，{@link SecretSet.withBudget}）。
+		const secrets = (await this.deps.logs.runSecrets(task.runId)).withBudget();
 		return {
 			...empty,
-			actions: shown.map((row) => detailView(row, end)),
+			actions: shown.map((row) => maskedAction(detailView(row, end), secrets)),
 			before: earliest ? encodeActionCursor(earliest) : null,
 			count_only: countOnlyPeriods(
 				{ names: task.names ?? [], cappedAt: task.cappedAt, dropped, to: task.endedAt },
@@ -406,16 +418,29 @@ export class TaskActions {
 		let actionCapped = false;
 		let expired = false;
 		let checking = false;
-		const sendSummary = (status: TaskStatus) =>
+		// 推送的内容是写入时打过码的；发出去之前再按此刻的 secret 值打一遍（连着很久的流里，之后才创建的子流程带来的
+		// secret 值也要算）：每个事件发出前取一次此刻的值，没有 secret 参数的运行不查库（TaskLogs.runSecrets 按版本缓存）。
+		// 每次取一个新的带预算的视图：一个事件、一批明细共用一份预算，不同的事件之间不连着算。
+		const secretsNow = async () => (await this.deps.logs.runSecrets(runId)).withBudget();
+		const sendSummary = async (status: TaskStatus) =>
 			emit({
 				kind: "summary",
-				summary: summaryOfTask({ status, actionCapped }, summary),
+				summary: maskedSummary(
+					summaryOfTask({ status, actionCapped }, summary),
+					await secretsNow(),
+				),
 				rev: sent,
 			});
-		const sendRows = (rows: StoredDetail[], rev: number, end: TaskEnd | null) =>
-			emit({ kind: "actions", actions: rows.map((row) => detailView(row, end)), rev });
+		const sendRows = async (rows: StoredDetail[], rev: number, end: TaskEnd | null) => {
+			const secrets = await secretsNow();
+			emit({
+				kind: "actions",
+				actions: rows.map((row) => maskedAction(detailView(row, end), secrets)),
+				rev,
+			});
+		};
 		const sendUnfinished = async (upTo: number, end: TaskEnd) => {
-			for await (const rows of this.#unfinished(taskId, upTo)) sendRows(rows, sent, end);
+			for await (const rows of this.#unfinished(taskId, upTo)) await sendRows(rows, sent, end);
 		};
 
 		serial(async () => {
@@ -426,26 +451,26 @@ export class TaskActions {
 			actionCapped = read.actionCapped;
 			expired = read.expired;
 			if (!isActiveStatus(read.status)) unsubscribeRun();
-			sendSummary(read.status);
+			await sendSummary(read.status);
 			if (expired) return;
 			for await (const { rev, rows } of this.#changedSince(taskId, sent)) {
 				sent = rev;
-				sendRows(rows, rev, read.end);
+				await sendRows(rows, rev, read.end);
 			}
 			if (read.end) await sendUnfinished(after, read.end);
 		});
 		const unsubscribe = this.#published.subscribe(taskId, (event) =>
-			serial(() => {
+			serial(async () => {
 				if (!state) return;
 				if (event.kind === "summary") {
 					summary = event.summary;
-					sendSummary(state.status);
+					await sendSummary(state.status);
 				} else if (event.kind === "capped") {
 					actionCapped = true;
-					sendSummary(state.status);
+					await sendSummary(state.status);
 				} else if (!expired && event.rev > sent) {
 					sent = event.rev;
-					sendRows(event.rows, event.rev, state.end);
+					await sendRows(event.rows, event.rev, state.end);
 				}
 			}),
 		);
@@ -459,7 +484,7 @@ export class TaskActions {
 				const ended = state.end === null && now.end !== null;
 				state = now;
 				if (ended && now.end && !expired) {
-					sendSummary(now.status);
+					await sendSummary(now.status);
 					await sendUnfinished(sent, now.end);
 				}
 				if (!isActiveStatus(now.status)) unsubscribeRun();

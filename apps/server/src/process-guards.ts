@@ -1,4 +1,4 @@
-import { safeError } from "./util/safe-error.js";
+import { printError } from "./util/output.js";
 
 /**
  * 进程要不要退出、怎么退出（#563，docs/ARCHITECTURE.md §6.9）：进程级的未捕获异常（`uncaughtException`）、未处理的拒绝
@@ -64,9 +64,9 @@ export function installProcessGuards(options: ProcessGuardsOptions): ProcessGuar
 		exit(1);
 	};
 
-	/** 错误日志都过 safeError（test/error-log.test.ts 守着）：数据库错误带着语句的参数，原样打印会把保密的值带进日志。 */
+	/** 往终端写东西只走 `util/output.ts` 的 `printError`（它先去掉数据库的参数：错误带着语句的参数，原样打印会把保密的值带进日志）。 */
 	const print = (what: string, error: unknown): void => {
-		console.error(what, ...(error === undefined ? [] : [safeError(describeThrown(error))]));
+		printError(what, error === undefined ? undefined : describeThrown(error));
 	};
 	/**
 	 * 记日志本身出错（`safeError` 读错误的属性时抛了）时退一步只记一行（不带这个错误），再出错就什么都不做：

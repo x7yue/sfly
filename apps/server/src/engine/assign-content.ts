@@ -17,6 +17,7 @@ import type { Tx } from "../db/database.js";
 import { type AgentInfo, nodePackages } from "../db/schema.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
+import type { ProjectId } from "../projects/project-id.js";
 import type { PackageNode } from "./chain.js";
 import { isAlways } from "./failures.js";
 import { resolveReferencedAgents } from "./referenced-agents.js";
@@ -30,6 +31,8 @@ export interface AssignTarget {
 
 export interface AssignRequest {
 	task: Pick<TaskRow, "id" | "attempt" | "runId">;
+	/** 运行所在的项目：「Agent」类型的输入引用的 Agent 只在这个项目里找。 */
+	project: ProjectId;
 	node: PackageNode;
 	/** 场景版本锁定的这个节点包的版本；没有锁定时为空串。 */
 	packageVersion: string;
@@ -73,7 +76,7 @@ export function createAssignContent(urls: {
 }): AssignContentOf {
 	// 造这个函数时就换算（不合格的值在这里抛出，不留到派发时）：每个任务下发同一个上限。
 	const artifactLimit = artifactLimitForWire(urls.artifactLimitBytes);
-	return async (tx, { task, node, packageVersion, scope, target }) => {
+	return async (tx, { task, project, node, packageVersion, scope, target }) => {
 		let inputs: Record<string, unknown>;
 		try {
 			inputs = resolveInputs(node.inputs, scope);
@@ -114,8 +117,9 @@ export function createAssignContent(urls: {
 		const timeoutProblem = nodeTimeoutProblem(nodeNameWithId(node), node.timeout);
 		if (timeoutProblem) return { ok: false, kind: "config_error", message: timeoutProblem, inputs };
 		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
+		// 在运行所在的项目里找这些 Agent：别的项目的 Agent 和没有注册过一样，它的地址不会下发给这个任务。
 		const referenced = type
-			? await resolveReferencedAgents(tx, node.id, type.inputs, inputs, {
+			? await resolveReferencedAgents(tx, project, node.id, type.inputs, inputs, {
 					metadata: metadata ?? {},
 					pkg,
 				})

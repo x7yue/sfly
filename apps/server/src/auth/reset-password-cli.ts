@@ -6,6 +6,7 @@
 import { NewPassword } from "@sfly/schema";
 import { systemClock } from "../clock.js";
 import { openDatabase } from "../db/database.js";
+import { describeError, writeStdout } from "../util/output.js";
 import { AccountService } from "./accounts.js";
 import type { ScryptParams } from "./password.js";
 
@@ -41,7 +42,7 @@ async function readFirstLine(stdin: NodeJS.ReadableStream): Promise<string> {
 export function readHiddenFromTty(prompt: string): Promise<string> {
 	const stdin = process.stdin;
 	return new Promise((resolve, reject) => {
-		process.stdout.write(prompt);
+		writeStdout(prompt);
 		let value = "";
 		stdin.setRawMode(true);
 		stdin.resume();
@@ -50,7 +51,7 @@ export function readHiddenFromTty(prompt: string): Promise<string> {
 			stdin.setRawMode(false);
 			stdin.pause();
 			stdin.off("data", onData);
-			process.stdout.write("\n");
+			writeStdout("\n");
 		};
 		const onData = (chunk: string) => {
 			for (const char of chunk) {
@@ -121,16 +122,20 @@ export async function runResetPassword(argv: string[], io: ResetPasswordIo): Pro
 		try {
 			user = await accounts.findByLoginName(loginName);
 		} catch (error) {
-			fail(
-				`连不上数据库（DATABASE_URL）：${error instanceof Error ? error.message : String(error)}`,
-			);
+			fail(`连不上数据库（DATABASE_URL）：${describeError(error)}`);
 			return 1;
 		}
 		if (user === undefined) {
 			fail(`没有登录名是 ${loginName} 的用户`);
 			return 1;
 		}
-		await accounts.resetPassword(user.id, password);
+		try {
+			await accounts.resetPassword(user.id, password);
+		} catch (error) {
+			// 写库失败：错误里带着新密码的哈希，只打去掉数据库参数之后的说明（#578）。
+			fail(`重置密码失败（没有改动）：${describeError(error)}`);
+			return 1;
+		}
 		say(`已重置 ${user.loginName} 的密码，他的全部登录已注销（令牌不受影响）。`);
 		return 0;
 	} finally {

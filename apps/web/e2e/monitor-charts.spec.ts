@@ -649,7 +649,8 @@ test("时间线拖选的范围作用于图表；日志标记显示在图表上�
 	await expect(group(page, "verify").getByTestId("node-summary")).toContainText("2");
 
 	// 拖选 7–14 秒（轴取 20 秒，即 35%–70%）：probe 的横轴截到这一段，fetch（2–6 秒）在这段里没有数据。
-	await brush(page, 7 / 20, 14 / 20);
+	// 比 7 秒和 14 秒各多 0.1 秒：范围的两头向下取整到整秒，正好压在整秒上时差半个像素就是另一秒（时间线名称列的宽度变过一次）。
+	await brush(page, 7.1 / 20, 14.1 / 20);
 	await expect(timeline(page).getByTestId("zoom-range")).toHaveText("08:00:07 – 08:00:14");
 	await expect(probeLevel.locator("[data-window]")).toHaveText("08:00:07 – 08:00:14");
 
