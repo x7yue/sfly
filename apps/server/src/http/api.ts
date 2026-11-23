@@ -278,7 +278,7 @@ export function buildHttpApi({
 			reply.header("retry-after", Math.max(1, Math.ceil(error.retryAfterMs / 1000)));
 			return sendError(reply, 503, "server_busy", error.message);
 		}
-		// 会话令牌的写等行锁超过上限（src/sessions/session-store.ts 的 SESSION_WRITE_LOCK_TIMEOUT_MS）：事务已经回滚，这一次没有生效，
+		// 会话令牌的写等行锁超过上限（src/sessions/session-store.ts 的 DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS）：事务已经回滚，这一次没有生效，
 		// 让对方稍后重试；不是控制面出错，不写错误日志里的堆栈，只记一行警告。
 		if (isLockTimeout(error)) {
 			request.log.warn("session write: lock wait timed out");
