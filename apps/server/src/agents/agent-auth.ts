@@ -182,7 +182,8 @@ export class AgentAuthenticator {
 	/**
 	 * 这个名字对这次连接的资格（认身份和登记前再确认共用）。**先比项目，后看停用**：
 	 * 1. 名字已经登记在别的项目里：和没有登记过一样（{@link notRegisteredHere}）；
-	 * 2. 以旧方式连接（共享令牌、没有凭据），而这个名字有没被吊销的 Agent 凭据：只认凭据，同一句话；
+	 * 2. 以旧方式连接（共享令牌、没有凭据），而这个项目里这个名字有没被吊销的 Agent 凭据：只认凭据，同一句话
+	 *    （只看连接的项目里的凭据：别的项目为同一个名字签发的凭据，不能让这个项目里用旧方式连着的那台连不上）；
 	 * 3. 登记在这个项目里、被停用：已被停用；
 	 * 4. 没有凭据的连接，名字还没有登记：同一句话（过渡版本只接受已登记过的名字）。
 	 * 通过返回 undefined。
@@ -204,6 +205,7 @@ export class AgentAuthenticator {
 				.where(
 					and(
 						eq(agentCredentials.kind, "agent"),
+						eq(agentCredentials.projectId, project),
 						eq(agentCredentials.agentName, name),
 						isNull(agentCredentials.revokedAt),
 					),

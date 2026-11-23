@@ -59,6 +59,7 @@ describe("连接的项目", () => {
 	const row = async (name: string) =>
 		(await db.query("select project_id, status, disabled_at from agents where name = $1", [name]))
 			.rows[0] as { project_id: string; status: string; disabled_at: Date | null } | undefined;
+	const alphaCredential = (name: string) => issue(ALPHA, name);
 	/** 被拒绝的连接：gRPC 状态和说明（说明里的名字换成 NAME，好互相比较）。 */
 	const refusal = async (name: string, token?: string) => {
 		const error = await connect(name, token).then(
@@ -174,6 +175,18 @@ describe("连接的项目", () => {
 		for (const name of ["in-alpha", "off-alpha", "has-cred"]) {
 			expect(await refusal(name, "s3cret"), `共享令牌 × ${name}`).toEqual(SAME);
 		}
+	}, 60_000);
+
+	it("只看这个项目里的 Agent 凭据：别的项目为同一个名字签发了凭据，不能让默认项目里用旧方式连着的那台连不上", async () => {
+		await start({ agentToken: "s3cret" });
+		await connect("legacy-1", "s3cret");
+		await alphaCredential("legacy-1");
+		// 默认项目里这个名字没有 Agent 凭据：共享令牌照旧能重连（顶掉旧连接）。
+		await connect("legacy-1", "s3cret");
+		expect((await row("legacy-1"))?.project_id).toBe("default");
+		// 默认项目为它签发了凭据之后才只认凭据。
+		await issue(DEFAULT_PROJECT, "legacy-1");
+		expect((await refusal("legacy-1", "s3cret")).message).toBe(SAME.message);
 	}, 60_000);
 
 	it("先比项目、后看停用：别的项目里被停用的 Agent，和不存在一样（不说「已被停用」）；自己项目里被停用的才说", async () => {
