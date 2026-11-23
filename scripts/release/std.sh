@@ -84,14 +84,16 @@ print(f"""sfly-std {version}：平台维护的标准节点包，版本号独立�
 
 ## 上传到控制面
 
-下载附件 `{name}` 和 `SHA256SUMS`，校验后上传（和用户的节点包一样，不随控制面镜像发布）：
+下载附件 `{name}` 和 `SHA256SUMS`，校验后以平台管理员的身份发布到控制面的公共项目（不随控制面镜像发布；
+只有平台管理员能发布到公共项目，包索引也只列公共项目里的 `sfly-std`）：
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
-curl -fsS -H 'content-type: application/octet-stream' --data-binary @{name} <控制面地址>/packages
+curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer $SFLY_ADMIN_TOKEN" \\
+  --data-binary @{name} '<控制面地址>/packages?project=public'
 ```
 
-装了 sfly 命令行时也可以用 `sfly publish {name}`。之后在场景里选用 `sfly-std` 的节点，版本选 `{version}`。
+`$SFLY_ADMIN_TOKEN` 是平台管理员本人的个人令牌：在控制台账号菜单的「令牌」页签发（范围要含「发布」），或者用 `sfly login` 登录之后直接 `sfly publish {name} --project public`（命令行自己带着令牌）。之后在场景里选用 `sfly-std` 的节点，版本选 `{version}`。
 各节点的参数、输出和用法见控制面开发文档的「标准节点」页（`<控制面地址>/docs/standard-nodes.md`）。
 
 ## 节点

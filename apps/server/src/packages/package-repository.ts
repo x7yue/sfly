@@ -2,13 +2,19 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PackageMetadata } from "@sfly/schema";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
-import { type ProjectId, readableProjects } from "../projects/project-id.js";
+import {
+	DEFAULT_PROJECT,
+	type ProjectId,
+	PUBLIC_PROJECT,
+	readableProjects,
+} from "../projects/project-id.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
+import { sameVersion } from "./pep440.js";
 
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */
 export const METADATA_FILE = "sfly-package.json";
@@ -136,6 +142,61 @@ export interface PackageRepositoryDeps {
 	dataDir: string;
 }
 
+/** 公共项目里发布同一个名字的咨询锁的键（测试要拿同一把锁来排出确定的先后，所以导出）。 */
+export const publicPackageLockKey = (name: string) => `sfly:public-package:${name}`;
+
+/**
+ * 公共项目里同一个名字的版本，按 PEP 440 规范化之后相同的（`0.9` 和 `0.9.0`）只能有一个：控制面的包索引（#556）对同一个
+ * 版本只列最早发布的那个，后发布的归档会被悄悄丢在索引外，所以发布时就拒绝，报错写明已有的是哪个，索引里的去重只剩防御作用
+ * （升级迁移、手工改库留下的数据）。同一个名字的并发发布排队（咨询锁，随事务释放），不会两个都通过检查。
+ * 一模一样的版本（`名字@版本` 相同）由插入时的主键冲突拒绝，信息不同。
+ */
+async function rejectEquivalentVersion(
+	tx: Tx,
+	{ name, version }: { name: string; version: string },
+): Promise<void> {
+	await tx.execute(
+		sql`select pg_advisory_xact_lock(hashtextextended(${publicPackageLockKey(name)}, 0))`,
+	);
+	const existing = await tx
+		.select({ version: nodePackages.version })
+		.from(nodePackages)
+		.where(and(eq(nodePackages.projectId, PUBLIC_PROJECT), eq(nodePackages.name, name)));
+	const same = existing.find((row) => row.version !== version && sameVersion(row.version, version));
+	if (same) {
+		throw new PackageError(
+			"conflict",
+			`节点包 ${name}@${version} 和公共项目里已有的 ${name}@${same.version} 是同一个版本（按 PEP 440 规范化之后相同），不能再发布；已发布的版本不能覆盖`,
+		);
+	}
+}
+
+/**
+ * `名字@版本` 已经有了（不论哪个项目里）：说明已有的那个在哪个项目——只说公共项目和默认项目，不透露别的项目
+ * 的 ID。要紧的是平台管理员往公共项目发布、而默认项目里先有了同名同版本：它不在包索引里，只写「已存在」看不出原因。
+ */
+async function existingMessage(
+	tx: Tx,
+	project: ProjectId,
+	name: string,
+	version: string,
+): Promise<string> {
+	const base = `节点包 ${name}@${version} 已存在`;
+	const [existing] = await tx
+		.select({ projectId: nodePackages.projectId })
+		.from(nodePackages)
+		.where(and(eq(nodePackages.name, name), eq(nodePackages.version, version)));
+	if (existing === undefined || existing.projectId === project) {
+		return `${base}，不能覆盖已发布的版本`;
+	}
+	if (existing.projectId === DEFAULT_PROJECT) {
+		const hint = project === PUBLIC_PROJECT ? "，它不在包索引里；换一个版本号发布到公共项目" : "";
+		return `${base}（在默认项目里），不能覆盖已发布的版本${hint}`;
+	}
+	if (existing.projectId === PUBLIC_PROJECT) return `${base}（在公共项目里），不能覆盖已发布的版本`;
+	return `${base}，不能覆盖已发布的版本`;
+}
+
 /**
  * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
  * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
@@ -158,6 +219,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 			const filePath = join("packages", metadata.name, `${metadata.version}.sflypkg`);
 
 			return db.transaction(async (tx) => {
+				if (project === PUBLIC_PROJECT) await rejectEquivalentVersion(tx, metadata);
 				const [row] = await tx
 					.insert(nodePackages)
 					.values({
@@ -178,7 +240,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				if (!row) {
 					throw new PackageError(
 						"conflict",
-						`节点包 ${metadata.name}@${metadata.version} 已存在，不能覆盖已发布的版本`,
+						await existingMessage(tx, project, metadata.name, metadata.version),
 					);
 				}
 				// 先写临时文件再改名；事务提交前失败会回滚记录。

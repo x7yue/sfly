@@ -46,7 +46,8 @@ describeWithAgent("全栈：节点包依赖 sfly-std，sfly-std 来自控制面�
 		expect(wheels.map(([project]) => project)).not.toContain("sfly_std");
 		pypi = await startPypiStub(wheels);
 		pypiWithFake = await startPypiStub([...wheels, dependencyWheel("sfly-std", FAKE_VERSION)]);
-		// sfly-std 发布成公共项目里的版本（平台维护的包放在公共项目，ADR 0029）；依赖它的节点包是普通的用户节点包。
+		// sfly-std 由平台管理员经接口发布到公共项目（POST /packages?project=public，#565，平台维护的包放在公共项目，
+		// ADR 0029）；依赖它的节点包是普通的用户节点包。
 		await publishIntoPublicProject(cp, new Uint8Array(await readFile(std.path)), {
 			name: "sfly-std",
 			version: std.version,
