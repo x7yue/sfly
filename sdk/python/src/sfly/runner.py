@@ -32,7 +32,7 @@ import re
 import signal
 import sys
 import typing
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Container, Mapping, Sequence
 from typing import Any
 
 from sfly.context import (
@@ -228,7 +228,7 @@ def _is_runtime_frame(filename: str, dirs: tuple[list[str], list[str], list[str]
 PLATFORM_PACKAGES = frozenset({"sfly_std"})
 
 
-def _is_platform_module(module: str, own: set[str]) -> bool:
+def _is_platform_module(module: str, own: Container[str]) -> bool:
     """这个模块是平台自带的包、而节点不是它里面的节点（节点自己的包不在这里跳过）。"""
     top = module.partition(".")[0]
     return top in PLATFORM_PACKAGES and top not in own
@@ -267,7 +267,7 @@ def _terminated_at(error: BaseException, entry: str = "", package: str | None = 
     if not frames:
         return None
     dirs = _runtime_dirs()
-    own = _node_packages(entry, package)
+    own = _OwnPackages(entry, package)  # 栈里出现 `sfly_std` 的帧时才算：这一步发生在收尾时间里
     inside = False  # 正在 sfly_std 调用的栈段里
     platform: list[bool] = []
     internal: list[bool] = []
@@ -278,8 +278,15 @@ def _terminated_at(error: BaseException, entry: str = "", package: str | None = 
         runtime = _is_runtime_frame(filename, dirs)
         if is_platform:
             inside = True
-        elif not runtime and inside and _is_node_code(filename, module, own, dirs):
-            inside = False  # 用户传进去的回调：节点自己的代码
+        elif (
+            inside
+            and not runtime
+            and not _is_unreal_file(filename)
+            and _is_node_code(filename, module, own, dirs)
+        ):
+            inside = (
+                False  # 用户传进去的回调：节点自己的代码（有真的文件的帧：`<string>` 这类留在段里）
+            )
         platform.append(is_platform)
         internal.append(runtime or is_platform or inside)
     index = next(
@@ -322,10 +329,25 @@ def _node_packages(entry: str, package: str | None) -> set[str]:
     return names
 
 
+class _OwnPackages:
+    """节点包自己的顶层模块名（`_node_packages`），第一次问到时才算：算它要读全部发行版的元信息，
+    被终止时在收尾时间里做这件事，栈里没有 `sfly_std` 的帧（用不上它）时不该花这个时间。"""
+
+    def __init__(self, entry: str, package: str | None) -> None:
+        self._entry = entry
+        self._package = package
+        self._names: set[str] | None = None
+
+    def __contains__(self, name: object) -> bool:
+        if self._names is None:
+            self._names = _node_packages(self._entry, self._package)
+        return name in self._names
+
+
 def _is_node_code(
     filename: str,
     module: str,
-    own: set[str],
+    own: Container[str],
     dirs: tuple[list[str], list[str], list[str]],
 ) -> bool:
     """这一帧是节点项目自己的代码：不是 SDK 或标准库，也不是第三方库。

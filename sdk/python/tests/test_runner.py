@@ -813,14 +813,23 @@ def test_a_type_error_raised_inside_the_node_is_still_a_node_error(
 
 
 def terminate(
-    tmp_path: Path, code_dir: Path, entry: str, ready: Path, *, extra_path: Path | None = None
+    tmp_path: Path,
+    code_dir: Path,
+    entry: str,
+    ready: Path,
+    *,
+    extra_path: Path | None = None,
+    task_fields: dict[str, Any] | None = None,
 ) -> Execution:
     """启动执行器，等节点写出 `ready` 后像 Agent 那样先写取消标记再发 SIGTERM，等它退出。
 
-    `extra_path` 是再多加进导入路径的目录（装第三方库、标准节点包的 site-packages）。"""
+    `extra_path` 是再多加进导入路径的目录（装第三方库、标准节点包的 site-packages），
+    `task_fields` 是写进 task.json 的其他字段（例如 `package`）。"""
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    (work / "task.json").write_text(json.dumps({"entry": entry, "inputs": {}}))
+    (work / "task.json").write_text(
+        json.dumps({"entry": entry, "inputs": {}, **(task_fields or {})})
+    )
     env = {
         **{k: v for k, v in os.environ.items() if not k.startswith("SFLY_")},
         "PYTHONPATH": os.pathsep.join(
@@ -1205,6 +1214,51 @@ def test_a_callback_the_user_passes_to_a_helper_reports_the_callback_line(
     assert event["message"] == (
         "任务被终止（SIGTERM），执行到 business.wait_a_bit "
         f"第 {marked_line(code_dir, 'business')} 行"
+    )
+    assert run.stderr == ""
+
+
+def test_the_package_in_task_json_tells_the_nodes_own_modules_from_the_libraries_beside_them(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 节点包装进来的顶层模块不止入口模块的那一个（`helpers`）：用户直接传给辅助函数的回调在
+    # `helpers` 里，靠 task.json 的 `package`（发行版）才认得出它是节点自己的代码，被终止时报回调
+    # 那一行。执行器不把 `package` 传下去的话，`helpers` 在 site-packages 里被当成第三方库，位置
+    # 落回业务节点调用辅助函数的那一行。
+    ready = tmp_path / "ready"
+    library = fake_sfly_std(code_dir, ready)
+    (library / "sfly_std" / "polling.py").write_text(
+        "def poll_until(check) -> None:\n    check()\n", encoding="utf-8"
+    )
+    site = code_dir / "site-packages"
+    (site / "helpers.py").write_text(
+        "import threading\n\n\ndef wait_a_bit(ready) -> None:\n"
+        f"    open(ready, 'w').close(); threading.Event().wait(60)  {STOPPED_HERE}\n",
+        encoding="utf-8",
+    )
+    dist = site / "my_pkg-1.0.dist-info"
+    dist.mkdir()
+    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: my-pkg\nVersion: 1.0\n")
+    (dist / "top_level.txt").write_text("business\nhelpers\n")
+    write_module(
+        code_dir,
+        "business",
+        f"""
+        import functools, sys
+        sys.path[:0] = [{str(library)!r}, {str(site)!r}]
+        import helpers
+        from sfly_std.polling import poll_until
+
+        def check() -> None:
+            poll_until(functools.partial(helpers.wait_a_bit, {str(ready)!r}))
+        """,
+    )
+
+    run = terminate(tmp_path, code_dir, "business:check", ready, task_fields={"package": "my-pkg"})
+
+    [event] = events_of(tmp_path)
+    assert event["message"] == (
+        f"任务被终止（SIGTERM），执行到 helpers.wait_a_bit 第 {marked_line(site, 'helpers')} 行"
     )
     assert run.stderr == ""
 
@@ -1952,6 +2006,72 @@ def test_a_callback_passed_to_a_helper_is_the_nodes_own_code_and_is_reported() -
     assert runner._terminated_at(callback_in_a_library) == "psutil.pid 第 3 行"
 
 
+def test_standard_library_frames_inside_a_helper_do_not_end_the_helpers_stack_segment() -> None:
+    # 真实的 `with proc.oneshot():`：`sfly_std` → `contextlib` → psutil。标准库的帧夹在中间，后面的
+    # psutil 仍然是辅助函数调到的库，不是节点自己的代码。
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "check", "biz.checks"),
+        frame_in("/venv/site-packages/sfly_std/resources.py", "sample", "sfly_std.resources"),
+        frame_in(f"{STDLIB}/contextlib.py", "__enter__", "contextlib"),
+        frame_in(PSUTIL_FILE, "oneshot", "psutil"),
+    )
+
+    assert runner._terminated_at(error) == (
+        "biz.checks.check 第 3 行（正在 sfly_std.resources.sample 第 3 行）"
+    )
+
+
+def test_a_frame_without_a_file_inside_a_helper_is_not_taken_for_a_callback() -> None:
+    # psutil 返回的 namedtuple，`__new__` 的文件名是 `<string>`：没有文件，看不出来历，不是用户
+    # 传进去的回调；它留在辅助函数的栈段里，位置仍是业务节点调用辅助函数的那一行。
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "check", "biz.checks"),
+        frame_in(
+            "/venv/site-packages/sfly_std/resources.py",
+            "monitor_processes",
+            "sfly_std.resources",
+        ),
+        frame_in(PSUTIL_FILE, "memory_info", "psutil"),
+        frame_in("<string>", "__new__", "namedtuple_pmem"),
+    )
+
+    assert runner._terminated_at(error) == (
+        "biz.checks.check 第 3 行（正在 sfly_std.resources.monitor_processes 第 3 行）"
+    )
+
+
+def test_the_node_package_metadata_is_only_read_when_the_stack_has_a_standard_package_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 取「执行到哪」发生在收尾时间里：节点包的发行版信息（读全部发行版的元信息，发行版多时要几十
+    # 毫秒）只有栈里出现 `sfly_std` 的帧时才用得上，没有时不读。
+    calls: list[tuple[str, str | None]] = []
+    real = runner._node_packages
+
+    def spy(entry: str, package: str | None) -> set[str]:
+        calls.append((entry, package))
+        return real(entry, package)
+
+    monkeypatch.setattr(runner, "_node_packages", spy)
+    plain = cancelled_through(
+        frame_in(NODE_FRAME, "check", "biz.checks"),
+        frame_in(f"{STDLIB}/time.py", "sleep", "time"),
+        frame_in(PSUTIL_FILE, "pid", "psutil"),
+    )
+    helper = cancelled_through(
+        frame_in(NODE_FRAME, "check", "biz.checks"),
+        frame_in(STD_FILE, "poll_until", "sfly_std.waiting"),
+    )
+
+    assert runner._terminated_at(plain, "biz.checks:check", "biz") == "psutil.pid 第 3 行"
+    assert calls == []
+
+    assert runner._terminated_at(helper, "biz.checks:check", "biz") == (
+        "biz.checks.check 第 3 行（正在 sfly_std.waiting.poll_until 第 3 行）"
+    )
+    assert calls == [("biz.checks:check", "biz")]
+
+
 def test_a_helper_wrapped_in_the_users_own_tool_module_reports_the_tool_module_line() -> None:
     # 用户把辅助函数再包一层自己的工具模块：最近的一帧用户代码是工具模块里调用它的那一行。
     error = cancelled_through(
@@ -1999,7 +2119,7 @@ def test_frames_of_other_packages_are_not_taken_for_the_standard_package() -> No
 
 def test_a_stack_of_only_runtime_and_standard_package_frames_reports_the_innermost_helper() -> None:
     # 整条栈都是辅助函数内部（入口不是 `sfly_std`，很难碰到）：先取最里面一帧 `sfly_std` 的帧，
-    # 没有补充；    # 没有 `sfly_std` 的帧时才取最里面一帧。
+    # 没有补充；没有 `sfly_std` 的帧时才取最里面一帧。
     only_helpers = cancelled_through(
         frame_in(STD_FILE, "wait_for_port", "sfly_std.waiting"),
         frame_in(STD_FILE, "poll_until", "sfly_std.waiting"),
