@@ -5,6 +5,7 @@
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
+import type { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 describe("停用期间吊销自己的凭据", () => {
@@ -186,6 +187,8 @@ describe("停用期间吊销自己的凭据", () => {
 		const cookie = await accounts.login(alice);
 		const token = await accounts.personalToken(alice);
 		await accounts.disable(alice);
+		// 距离上次使用已经过了续期的间隔：没停用的用户这时会顺延空闲期限、记最后使用时间。
+		(cp.clock as ManualClock).advance(60 * 60_000);
 		const before = (await db.query("select last_used_at from logins where user_id = $1", [alice]))
 			.rows[0].last_used_at as Date;
 		const res = await call(loginCookie(cookie), "POST", "/auth/logout-all");
