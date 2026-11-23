@@ -1,7 +1,7 @@
 import { printError } from "./util/output.js";
 
 /**
- * 进程要不要退出、怎么退出（#563，docs/ARCHITECTURE.md §6.9）：进程级的未捕获异常（`uncaughtException`）、未处理的拒绝
+ * 进程要不要退出、怎么退出（#563，docs/ARCHITECTURE.md §6.10）：进程级的未捕获异常（`uncaughtException`）、未处理的拒绝
  * （`unhandledRejection`），和借出去的数据库连接出错（`main.ts` 经 {@link ProcessGuards.fatal} 交进来）。
  *
  * 策略：**记一条带上下文的错误日志，有序关闭，以退出码 1 退出，由部署的重启策略（`restart: unless-stopped`）拉起来。**

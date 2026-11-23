@@ -1,4 +1,5 @@
 import { createServer, type Server, Socket } from "node:net";
+import pg from "pg";
 
 /** 在哪个位置、怎样让连接断开。 */
 export type SabotageAction =
@@ -10,7 +11,13 @@ export type SabotageAction =
 	 * 匹配之后标记这条连接，它的下一条 COMMIT 照常转发、数据库提交了，但回给客户端的结果丢掉、断开
 	 * （提交成功了，客户端只看到连接断了：结局不明）。
 	 */
-	| "commit-after";
+	| "commit-after"
+	/**
+	 * 匹配的那条语句不转发给数据库，改用另一条管理连接对**这条连接的后端**执行 `pg_terminate_backend`：数据库照常先发一条
+	 * 致命错误消息（`FATAL 57P01`）、再关连接，客户端这时有一条正在执行的语句（被扣住的这一条）。和 `drop`（TCP 直接掐断）不同：
+	 * pg 收到致命错误消息时只让正在执行的语句以错误结束、**不发 `error`**，`error` 要等连接真的关闭才来（#563 的审查）。
+	 */
+	| "terminate-backend";
 
 interface Arm {
 	match: RegExp;
@@ -41,11 +48,14 @@ export class PgProxy {
 	#arms: Arm[] = [];
 	readonly fired: Fired[] = [];
 
-	private constructor(private readonly target: { host: string; port: number }) {}
+	private constructor(
+		private readonly target: { host: string; port: number },
+		private readonly targetUrl: string,
+	) {}
 
 	static async start(targetUrl: string): Promise<PgProxy> {
 		const target = new URL(targetUrl);
-		const proxy = new PgProxy({ host: target.hostname, port: Number(target.port) });
+		const proxy = new PgProxy({ host: target.hostname, port: Number(target.port) }, targetUrl);
 		await proxy.#listen(0);
 		return proxy;
 	}
@@ -79,6 +89,20 @@ export class PgProxy {
 			let marked: Arm | undefined;
 			let dropServerReplies = false;
 			let dead = false;
+			// 数据库发来的 BackendKeyData（`K`）里的后端进程号：`terminate-backend` 用它结束这一条连接的后端。
+			let backendPid: number | undefined;
+			let upstreamBuffer = Buffer.alloc(0);
+			const scanUpstream = (data: Buffer) => {
+				upstreamBuffer = Buffer.concat([upstreamBuffer, data]);
+				for (;;) {
+					if (upstreamBuffer.length < 5) return;
+					const length = upstreamBuffer.readInt32BE(1);
+					if (upstreamBuffer.length < 1 + length) return;
+					if (upstreamBuffer[0] === 0x4b && length === 12)
+						backendPid = upstreamBuffer.readInt32BE(5);
+					upstreamBuffer = upstreamBuffer.subarray(1 + length);
+				}
+			};
 			const kill = () => {
 				dead = true;
 				client.destroy();
@@ -86,6 +110,7 @@ export class PgProxy {
 			};
 			upstream.on("data", (data: Buffer) => {
 				if (dead) return;
+				scanUpstream(data);
 				if (dropServerReplies) {
 					kill();
 					return;
@@ -150,6 +175,11 @@ export class PgProxy {
 								kill();
 								return;
 							}
+							if (arm.action === "terminate-backend") {
+								// 这条语句不转发（客户端在等它的结果）；数据库结束这条连接的后端，先发 FATAL 再关连接。
+								void this.#terminateBackend(backendPid);
+								continue;
+							}
 							marked = arm;
 						}
 					}
@@ -172,6 +202,19 @@ export class PgProxy {
 				resolve();
 			});
 		});
+	}
+
+	/** 用一条自己的管理连接结束后端 `pid`（`pg_terminate_backend`）。 */
+	async #terminateBackend(pid: number | undefined): Promise<void> {
+		if (pid === undefined)
+			throw new Error("PgProxy：这条连接还没有收到后端进程号（BackendKeyData）");
+		const admin = new pg.Client({ connectionString: this.targetUrl });
+		await admin.connect();
+		try {
+			await admin.query("select pg_terminate_backend($1)", [pid]);
+		} finally {
+			await admin.end();
+		}
 	}
 
 	/** 数据库不可用：掐断所有连接，不再接受新的。 */

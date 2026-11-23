@@ -145,7 +145,7 @@ const { httpPort, grpcPort, ...limits } = (() => {
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
 if (!webDir) printWarning(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
 // 进程级的未捕获异常和未处理的拒绝、借出去的数据库连接出错：记错误日志、有序关闭、退出码 1 退出，由部署的重启策略拉起来
-// （#563，docs/ARCHITECTURE.md §6.9）。装在控制面启动之前：启动时（迁移）的连接出错也一样处理；控制面起来之前没有东西可关。
+// （#563，docs/ARCHITECTURE.md §6.10）。装在控制面启动之前：启动时（迁移）的连接出错也一样处理；控制面起来之前没有东西可关。
 let running: ControlPlane | undefined;
 const guards = installProcessGuards({
 	shutdown: async () => {

@@ -1,4 +1,4 @@
-// 数据库连接出错时控制面怎么办（#563，docs/ARCHITECTURE.md §6.9）。用真实的控制面**进程**（`node --import tsx src/main.ts`，
+// 数据库连接出错时控制面怎么办（#563，docs/ARCHITECTURE.md §6.10）。用真实的控制面**进程**（`node --import tsx src/main.ts`，
 // 生产环境变量）：进程退不退出在测试进程里看不出来，只有起一个进程才能断言。数据库前面放一个 TCP 转发（`PgProxy`），
 // 在客户端**发出**某条语句的那一刻断开这一条连接：每次都是同一个位置（`BEGIN` 上、事务中间、COMMIT 之前、COMMIT 之后）。
 //
@@ -164,8 +164,42 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 
 			expect(proxy.fired).toHaveLength(1);
 			await expectOrderlyExit();
-			// 借出去没还的连接让 pool.end() 永远不结束：有序关闭没有卡在那里，记了一条说明。
+			// 借出去没还的连接让 pool.end() 永远不结束：有序关闭没有卡在那里，记了一条说明，用自己的前缀（不是又断了一条连接）。
 			expect(cp.log).toContain("没有关完");
+			expect(cp.log).toContain("database pool shutdown:");
+			expect(cp.log).not.toMatch(/postgres connection error:[^\n]*没有关完/);
+			const second = await restart();
+			const retried = await second.request("POST", `/orchestrations/${created.id}/versions`, {
+				base_version: 0,
+				document: ENTRY_ONLY,
+			});
+			expect(retried.status).toBe(201);
+		}, 120_000);
+	});
+
+	describe("数据库先发致命错误消息、再关连接（pg_terminate_backend）", () => {
+		// 和上面「掐断 TCP」的区别：pg 收到致命错误消息时，连接上有正在执行的语句（这里是被扣住的 BEGIN），只让这条语句以错误结束，
+		// 不发 `error`，`error` 要等连接真的关闭才来。HTTP 的事务在这里出错只是请求以 5xx 结束，没有失败处理会写东西，所以这条本身
+		// 不区分有没有「一收到致命错误消息就当作完了」；区分的是下面引擎的那条（失败处理会再借连接写）。
+		it("HTTP 请求里的事务在 BEGIN 上收到：进程有序退出，没有存下，重启之后一切照常", async () => {
+			const created = (await (
+				await cp.request("POST", "/orchestrations", { name: "BEGIN 上收到 FATAL" })
+			).json()) as { id: string };
+			proxy.arm(/^begin/i, "terminate-backend");
+
+			const response = await cp
+				.request("POST", `/orchestrations/${created.id}/versions`, {
+					base_version: 0,
+					document: ENTRY_ONLY,
+				})
+				.then((r) => r.status)
+				.catch(() => "没有响应");
+
+			expect(response === "没有响应" || (typeof response === "number" && response >= 500)).toBe(
+				true,
+			);
+			expect(proxy.fired.map((f) => f.action)).toEqual(["terminate-backend"]);
+			await expectOrderlyExit();
 			const second = await restart();
 			const retried = await second.request("POST", `/orchestrations/${created.id}/versions`, {
 				base_version: 0,
@@ -222,6 +256,42 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 			expect(reconnected.dispositions[task.taskId]).toBe("continue");
 			await reconnected.succeed(task, { v: 1 });
 			await finishRemaining(second, reconnected, runId);
+		}, 150_000);
+
+		// 数据库先发一条致命错误消息、再关连接，而这条消息落在写结果的事务的 BEGIN 上：事务立刻被拒绝，引擎的失败处理（把这次尝试
+		// 记成节点出错）马上要从池里借另一条好的连接写。连接池要是等到连接真的关闭（`error` 事件）才结束，失败处理已经写进去了：
+		// Agent 报来的成功被记成节点出错，运行失败，配了重试的还会再执行一遍（#563 的复审）。现在致命错误消息一到连接池就结束了。
+		it("写任务结果的事务在 BEGIN 上收到数据库的致命错误消息（pg_terminate_backend）：进程有序退出，没有被记成节点出错（库里还是在跑），Agent 重连、重发，运行成功，每个节点只尝试一次", async () => {
+			const { agent, runId } = await startRun(TWO_NODES, "结果-BEGIN-FATAL");
+			const task = await agent.nextAssign();
+			proxy.arm(/^begin/i, "terminate-backend");
+
+			await agent.succeed(task, { v: PARAM_MARK }).catch(() => undefined);
+
+			await expectOrderlyExit();
+			expect(proxy.fired.map((f) => f.action)).toEqual(["terminate-backend"]);
+			// 失败处理什么都没写进去：这次尝试还是「在跑」，没有错误，没有失败的状态。
+			const rows = await taskRows();
+			expect(rows.find((r) => r.node_id === "a")).toMatchObject({
+				status: "running",
+				error_kind: null,
+			});
+			expect(rows.map((r) => r.status)).not.toContain("failed");
+			expect(await sql(database.url, "select status from runs")).toEqual([{ status: "running" }]);
+
+			const second = await restart();
+			await agent.disconnect();
+			const reconnected = await connectAgent(second, [task]);
+			expect(reconnected.dispositions[task.taskId]).toBe("continue");
+			await reconnected.succeed(task, { v: 1 });
+			await finishRemaining(second, reconnected, runId);
+			// 没有第二次执行：每个节点只有第 1 次尝试。
+			expect(
+				await sql<{ node_id: string; attempt: number }>(
+					database.url,
+					"select node_id, attempt from tasks where attempt > 1",
+				),
+			).toEqual([]);
 		}, 150_000);
 
 		it("写任务结果的 COMMIT 之后断开（数据库已经提交，结果的确认丢了）：进程有序退出，重启之后下一个节点照常派发，运行成功", async () => {
