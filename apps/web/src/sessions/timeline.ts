@@ -62,7 +62,7 @@ export type TimelineItem =
 			/** 调用开始的时间（事件产生的时间）；没有对上的调用时没有。 */
 			at: string | null;
 			result: ToolResultInfo | null;
-			/** 这一轮已经结束、却一直没有结果：不再算在做。 */
+			/** 这一轮已经有了结局、却一直没有结果（被停止、到了上限、中断）：不再算在做，写「已中止」。 */
 			abandoned: boolean;
 	  }
 	| {
@@ -276,7 +276,8 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 						title: event.title,
 						at: event.at,
 						result: null,
-						abandoned: false,
+						// 一轮已经有了结局（或会话已结束）才到的调用：没有结果也不会再有，不转圈。
+						abandoned: !inTurn(state),
 					},
 				],
 			};

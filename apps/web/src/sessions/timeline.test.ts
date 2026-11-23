@@ -245,6 +245,29 @@ describe("会话时间线：由事件序列算出", () => {
 		expect(finished.items.filter((i) => i.kind === "turn_end")).toHaveLength(2);
 	});
 
+	it("一轮有了结局而调用一直没有结果：这一行是已中止，不转圈；结局之后才到的调用也不转圈", () => {
+		// 到了上限、最后一次调用只有调用没有结果：不再算在做。
+		const limited = run([
+			started(1),
+			call(2, "c", "command", "sleep 600"),
+			end(3, "limit", { limit_kind: "duration", duration_ms: 1_200_000 }),
+		]);
+		expect(limited.items.find((i) => i.kind === "tool")).toMatchObject({
+			callId: "c",
+			result: null,
+			abandoned: true,
+		});
+		// 结局已经画了，这一轮的调用才到（乱序、补发）：一来就是已中止，之后也不会有结果让它转。
+		const late = applyEvent(limited, call(4, "late", "command", "ls"));
+		expect(late.items.find((i) => i.kind === "tool" && i.callId === "late")).toMatchObject({
+			result: null,
+			abandoned: true,
+		});
+		// 会话在做时的调用照常转圈。
+		const live = run([started(1), call(2, "now", "command", "ls")]);
+		expect(live.items.find((i) => i.kind === "tool")).toMatchObject({ abandoned: false });
+	});
+
 	it("turn_end 把还在逐字出现的话定稿", () => {
 		const state = run([delta("写到一半"), end(1, "stopped")]);
 		expect(state.items[0]).toMatchObject({ kind: "assistant", text: "写到一半", streaming: false });

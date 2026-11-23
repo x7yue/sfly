@@ -311,7 +311,8 @@ export const SESSION = {
 		command: "$",
 		unknown: "工具",
 		running: "在做",
-		abandoned: "没有结果",
+		/** 一轮已经有了结局、这个调用却一直没有结果（被停止、到了上限、中断）。 */
+		abandoned: "已中止",
 		failed: "出错",
 		exitCode: (code: number) => `退出码 ${code}`,
 		duration: (text: string) => `用时 ${text}`,

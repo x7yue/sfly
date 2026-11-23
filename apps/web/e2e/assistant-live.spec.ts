@@ -209,6 +209,53 @@ test("在做时点「停止」：助手服务收到中止，时间线出现「�
 	await expect(toolRows(page).first()).toHaveAttribute("data-state", "abandoned");
 });
 
+test("一轮到了上限、最后一次工具调用只有调用没有结果：这一行写「已中止」，不转圈，也没有空的结果", async ({
+	page,
+	assistant,
+	workbench,
+}) => {
+	void workbench;
+	const id = await startSession(page, "跑一个很长的命令");
+	await streamReady(page, assistant, id);
+	assistant.emit(
+		id,
+		1,
+		{ type: "tool_call", call_id: "c1", tool: "command", title: "sleep 600" },
+		eventAt(),
+	);
+	const row = toolRows(page).first();
+	await expect(row).toHaveAttribute("data-state", "running");
+	// 助手服务直接发这一轮的结局（到了用时上限），没有这个调用的结果。
+	assistant.emit(
+		id,
+		1,
+		{
+			type: "turn_end",
+			turn: 1,
+			outcome: "limit",
+			reason: "到了上限",
+			steps: 1,
+			model_calls: 3,
+			duration_ms: 1_200_000,
+			usage: USAGE,
+			limit_kind: "duration",
+		},
+		eventAt(),
+	);
+	await expect(page.getByTestId("turn-end")).toContainText("到了上限");
+	await expect(row).toHaveAttribute("data-state", "abandoned");
+	await expect(row).toContainText("已中止");
+	await expect(row).not.toContainText("在做");
+	// 没有结果，所以不能展开，也没有空的结果块。
+	await expect(row.getByRole("button")).toBeDisabled();
+	await expect(row.getByTestId("tool-result")).toHaveCount(0);
+	await expect(page.getByTestId("session-status")).toHaveText("空闲");
+	// 刷新（历史重放）后还是一样。
+	await page.reload();
+	await expect(toolRows(page).first()).toHaveAttribute("data-state", "abandoned");
+	await expect(toolRows(page).first()).toContainText("已中止");
+});
+
 test("project_busy：同一个项目另一个会话在做时，留住写好的话，给出正在做的那个会话的链接", async ({
 	page,
 	workbench,
