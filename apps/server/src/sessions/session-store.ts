@@ -21,19 +21,19 @@ import { type FollowSink, follow, REPLAY_BATCH } from "./follow.js";
 
 /**
  * 一个会话的推送指针（{@link SessionStore.#cursors}）：`published` 是已经推送到的序号；`registered` 是登记过的最大序号
- * （在事务里分配序号的那一刻登记，比 `published` 大说明有已经分配、还没推出去的事件）；`busy` 是正有一次推送在做（可能在等读库）。
+ * （在事务里分配序号的那一刻登记，比 `published` 大说明有已经分配、还没推出去的事件：包括已提交、`announce` 还没调的，
+ * 和正在补推、等读库的——补推只会发生在比 `published + 1` 大的序号上，那个序号一定登记过）。
  */
 interface PushCursor {
 	published: number;
 	registered: number;
-	busy: boolean;
 	usedAt: number;
 }
 
 /** 推送指针（{@link SessionStore.#cursors}）多到这个数时，顺手清掉闲置的（{@link SessionStoreDeps.cursorSweepSize}）。 */
 const CURSOR_SWEEP_SIZE = 1_000;
 /**
- * 有在途推送（登记过的序号还没推完，或者正在推送）的指针不清：清掉的话，之后这个会话再登记时指针从「本次序号减一」算起，
+ * 有在途推送（登记过的序号还没推完，包括正在补推）的指针不清：清掉的话，之后这个会话再登记时指针从「本次序号减一」算起，
  * 那条在途的事件在实时流里就再也不推。但「在途」不能永远算：事务分配了序号之后回滚，登记的序号永远推不出去（下一条事件
  * 用同一个序号），所以在途的指针也闲置超过这个时间就清（远远超过一次写的时间，这样的指针不是在途，是留下来的）。
  */
@@ -670,7 +670,6 @@ export class SessionStore {
 			this.#cursors.set(sessionId, {
 				published: seq - 1,
 				registered: seq,
-				busy: false,
 				usedAt: now,
 			});
 		} else {
@@ -686,7 +685,7 @@ export class SessionStore {
 			const idleMs = this.deps.cursorIdleMs ?? CURSOR_IDLE_MS;
 			for (const [id, c] of this.#cursors) {
 				// 有在途推送的不清（见 CURSOR_PENDING_MS）。
-				const inFlight = c.busy || c.registered > c.published;
+				const inFlight = c.registered > c.published;
 				if (now - c.usedAt > (inFlight ? Math.max(idleMs, CURSOR_PENDING_MS) : idleMs)) {
 					this.#cursors.delete(id);
 				}
@@ -726,35 +725,29 @@ export class SessionStore {
 		const cursor = this.#cursors.get(sessionId) ?? {
 			published: event.seq - 1,
 			registered: event.seq - 1,
-			busy: false,
 			usedAt: Date.now(),
 		};
 		this.#cursors.set(sessionId, cursor);
 		cursor.usedAt = Date.now();
-		// 正在推送（可能在等读库）的指针不清（见 CURSOR_PENDING_MS）。
-		cursor.busy = true;
-		try {
-			if (event.seq === cursor.published + 1) {
+		if (event.seq === cursor.published + 1) {
+			this.#live.publish(sessionId, event);
+			cursor.published = event.seq;
+			return;
+		}
+		// 补推（等读库）期间这个指针不会被清：这条事件登记过（`registered` 不小于它的序号），比 `published` 大，算在途。
+		while (cursor.published < event.seq) {
+			const batch = await this.after(sessionId, cursor.published, REPLAY_BATCH);
+			if (batch.length === 0) {
+				// 已经提交的事件读不到：不该发生。不空转，把这一条推出去（序号有跳跃，客户端按 seq 去重不受影响）。
 				this.#live.publish(sessionId, event);
 				cursor.published = event.seq;
 				return;
 			}
-			while (cursor.published < event.seq) {
-				const batch = await this.after(sessionId, cursor.published, REPLAY_BATCH);
-				if (batch.length === 0) {
-					// 已经提交的事件读不到：不该发生。不空转，把这一条推出去（序号有跳跃，客户端按 seq 去重不受影响）。
-					this.#live.publish(sessionId, event);
-					cursor.published = event.seq;
-					return;
-				}
-				for (const found of batch) {
-					if (found.seq > event.seq) return;
-					this.#live.publish(sessionId, found);
-					cursor.published = found.seq;
-				}
+			for (const found of batch) {
+				if (found.seq > event.seq) return;
+				this.#live.publish(sessionId, found);
+				cursor.published = found.seq;
 			}
-		} finally {
-			cursor.busy = false;
 		}
 	}
 
