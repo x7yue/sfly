@@ -179,6 +179,8 @@ export interface DeclarationRules {
  * GET 一定是只读，不用登记。
  */
 export const NON_GET_READS: Readonly<Record<string, string>> = {
+	"POST /orchestrations/:id/edits/check":
+		"检查一组局部编辑：用 POST 只是因为请求体是一组操作；不改库、数据目录和内存，什么都不留下",
 	"POST /orchestrations/:id/check":
 		"检查一份场景文档：用 POST 只是因为请求体是一整份文档；不改库、数据目录和内存，什么都不留下",
 };

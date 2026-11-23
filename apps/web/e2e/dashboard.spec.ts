@@ -259,7 +259,10 @@ test("进行中的节点那一行：节点、Agent、尝试号、已执行时长
 	).toHaveText(["probeagent-linux · 第 1 次尝试 · 15s"]);
 	await expect(
 		block(page, "夜间巡检").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
-	).toHaveText(["pingagent-mac · 第 1 次尝试 · 排队中"]);
+	).toHaveText([
+		// 排队中的节点写明在等什么（#601，和概览同一句话）。
+		"ping第 1 次尝试 · 排队中 · 等 agent-mac（不在线，已离线 1h 05m）· 排队 20s · 9m 40s 后超时",
+	]);
 
 	// 点进概览，停在排队上的运行仍写排队中的节点，不会整行消失；概览里还写明在等谁、等了多久（#457）。
 	await page.goto(`/runs/${queued}?view=overview`);
