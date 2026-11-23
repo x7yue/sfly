@@ -314,9 +314,7 @@ export const orchestrationVersions = pgTable(
 	(t) => [
 		unique("orchestration_versions_number").on(t.orchestrationId, t.number),
 		// 删会话时数据库按它找引用它的版本（置空）：没有索引就要顺序扫整张表。
-		index("orchestration_versions_session")
-			.on(t.sessionId)
-			.where(sql`${t.sessionId} is not null`),
+		index("orchestration_versions_session").on(t.sessionId).where(sql`${t.sessionId} is not null`),
 	],
 );
 
@@ -454,9 +452,7 @@ export const runs = pgTable(
 		// 按项目的运行列表：项目内按开始时间从新到旧（倒序扫描这条索引）。
 		index("runs_project_started").on(t.projectId, t.startedAt, t.id),
 		// 删会话时数据库按它找引用它的运行（置空）：没有索引就要顺序扫整张表。
-		index("runs_session")
-			.on(t.sessionId)
-			.where(sql`${t.sessionId} is not null`),
+		index("runs_session").on(t.sessionId).where(sql`${t.sessionId} is not null`),
 	],
 );
 
