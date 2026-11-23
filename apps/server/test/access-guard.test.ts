@@ -611,6 +611,49 @@ describe("契约路由的访问检查", () => {
 				expect(outcome(await run(route("GET /orchestrations"), mine))).toBe(404);
 			});
 
+			it("会话令牌取出时联表核对（#547）：用户被停用是 401（读、写都是）；会话已结束、会话在别的项目、发起人对不上、没有发起人、会话不存在：都是 401，当作不认识的令牌；空闲、在做、排队的会话放行", async () => {
+				const get = route("GET /orchestrations");
+				const post = route("POST /orchestrations/:id/runs");
+				const disabled = { ...USERS.editor, disabledAt: BEFORE };
+				for (const def of [get, post]) {
+					expect(outcome(await run(def, session(disabled))), routeKey(def)).toBe(401);
+				}
+				const ok = (status: "idle" | "running" | "queued" | "ended") => ({
+					session: { projectId: DEFAULT, createdByUserId: USERS.editor.id, status },
+				});
+				const broken: [string, Partial<StoredToken>][] = [
+					["会话已结束", ok("ended")],
+					[
+						"会话在别的项目",
+						{ session: { projectId: ALPHA, createdByUserId: USERS.editor.id, status: "running" } },
+					],
+					[
+						"发起人对不上",
+						{ session: { projectId: DEFAULT, createdByUserId: USERS.admin.id, status: "running" } },
+					],
+					[
+						"会话没有发起人",
+						{ session: { projectId: DEFAULT, createdByUserId: null, status: "running" } },
+					],
+					["会话不存在", { session: null }],
+				];
+				for (const [what, extra] of broken) {
+					for (const def of [get, post]) {
+						expect(
+							outcome(await run(def, session(USERS.editor, extra))),
+							`${what} ${routeKey(def)}`,
+						).toBe(401);
+					}
+				}
+				for (const status of ["idle", "running", "queued"] as const) {
+					for (const def of [get, post]) {
+						expect(outcome(await run(def, session(USERS.editor, ok(status)))), `${status}`).toBe(
+							"ok",
+						);
+					}
+				}
+			});
+
 			it("放行时带出会话的 ID（运行和版本记着它）；个人令牌、登录没有", async () => {
 				const mine = await run(route("POST /orchestrations/:id/runs"), session(USERS.editor));
 				expect(mine).toMatchObject({
@@ -1663,6 +1706,17 @@ describe("契约路由的访问检查", () => {
 			params: { id: RES.task.mine, "*": "a.txt" },
 		});
 		expect(outcome(upload)).toBe("ok");
+		expect(store.reads).toBe(3);
+		// 会话令牌取消自己触发的运行：令牌一次（联表读出会话），成员一次，运行一次（项目和「是哪个会话触发的」是同一行，不读两遍）。
+		store.runSessions.set(RES.run.default, MY_SESSION);
+		const mine = token({
+			kind: "session",
+			user: USERS.editor,
+			projectId: DEFAULT,
+			scopes: ["read", "run", "edit", "session_build"],
+		});
+		store.reads = 0;
+		expect(outcome(await run(route("POST /runs/:id/cancel"), mine))).toBe("ok");
 		expect(store.reads).toBe(3);
 	});
 });
