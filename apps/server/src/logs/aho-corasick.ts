@@ -31,6 +31,8 @@ export interface Automaton {
 	readonly width: number;
 	/** 码元 → 字符类（0 表示所有文本里都没有这个码元）。 */
 	readonly classOf: Uint16Array;
+	/** 每个字符类：能不能是某个文本的第一个字符（根状态下直接跳过不能开头的字符，只加快扫描，不改变结果）。 */
+	readonly canStart: Uint8Array;
 	/** 稠密节点的转移表：`delta[节点 * width + 字符类]`。 */
 	readonly delta: Int32Array;
 	/** 稀疏节点进来的码元（用于判断 s+1 是不是链上的孩子、校验哈希表的命中）。 */
@@ -265,9 +267,14 @@ export function buildAutomaton(
 		finalParent[h] = parent;
 		finalChild[h] = node;
 	}
+	const canStart = new Uint8Array(width);
+	eachChild(0, (v) => {
+		canStart[classOf[chO[v] as number] as number] = 1;
+	});
 	return {
 		dense,
 		width,
+		canStart,
 		classOf,
 		delta,
 		ch,
@@ -301,14 +308,24 @@ function growSpans(): void {
  * 每个字符的代价是常数（摊销），只取决于文字的长度：文字里有没有某个文本的开头、半截不影响它走多少步以外的任何东西。
  */
 export function scanSpans(a: Automaton, text: string, limit: number): number {
-	const { dense, width, classOf, delta, ch, branch, fail, out, hParent, hChild, hMask } = a;
+	const { dense, width, classOf, canStart, delta, ch, branch, fail, out, hParent, hChild, hMask } =
+		a;
 	const { seedA, seedB } = a;
 	let s = 0;
 	let top = 0;
 	const length = text.length;
 	for (let i = 0; i < length; i++) {
-		const c = text.charCodeAt(i);
-		const k = classOf[c] as number;
+		let c = text.charCodeAt(i);
+		let k = classOf[c] as number;
+		if (s === 0) {
+			// 根状态：跳过不能开头的字符（两次独立的查表，不在依赖链上）；只加快扫描，走到哪里的结果不变
+			while (canStart[k] === 0) {
+				i += 1;
+				if (i >= length) return top;
+				c = text.charCodeAt(i);
+				k = classOf[c] as number;
+			}
+		}
 		for (;;) {
 			if (s < dense) {
 				s = delta[s * width + k] as number;
@@ -370,7 +387,7 @@ export function maskedByAutomaton(text: string, count: number, mask: string): st
  * 所以不超过 2 × 长度），测试在最坏的值集合上数出来，不看耗时。和 {@link scanSpans} 走的是同一条路。
  */
 export function scanSteps(a: Automaton, text: string): { advances: number; fails: number } {
-	const { dense, width, classOf, delta, ch, branch, fail, hParent, hChild, hMask } = a;
+	const { dense, width, classOf, canStart, delta, ch, branch, fail, hParent, hChild, hMask } = a;
 	let s = 0;
 	let advances = 0;
 	let fails = 0;
@@ -378,6 +395,7 @@ export function scanSteps(a: Automaton, text: string): { advances: number; fails
 		const c = text.charCodeAt(i);
 		const k = classOf[c] as number;
 		advances += 1;
+		if (s === 0 && canStart[k] === 0) continue;
 		for (;;) {
 			if (s < dense) {
 				s = delta[s * width + k] as number;
