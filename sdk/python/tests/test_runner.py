@@ -1977,6 +1977,14 @@ def test_a_standard_node_itself_keeps_reporting_the_place_inside_the_package() -
     assert runner._terminated_at(error, "sfly_std.shell:shell") == (
         "sfly_std.commands.run_command 第 3 行"
     )
+    # 标准节点自己的栈里没有「辅助函数内部」这回事，什么都不跳过：停在它调到的第三方库里，
+    # 和以前一样报库里的位置（这一条不随 #568 变）。
+    in_a_library = cancelled_through(
+        frame_in("/venv/site-packages/sfly_std/shell.py", "shell", "sfly_std.shell"),
+        frame_in("/venv/site-packages/sfly_std/commands.py", "run_command", "sfly_std.commands"),
+        frame_in(PSUTIL_FILE, "pid", "psutil"),
+    )
+    assert runner._terminated_at(in_a_library, "sfly_std.shell:shell") == "psutil.pid 第 3 行"
 
 
 def test_frames_of_other_packages_are_not_taken_for_the_standard_package() -> None:
