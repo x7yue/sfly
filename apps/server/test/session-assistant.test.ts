@@ -2,7 +2,10 @@
 // 推给浏览器，断了重连，助手没有配置、连不上、拒绝时的 503 和 409，就绪状态。真实控制面 + 真实数据库 + 进程内的假助手服务
 // （support/fake-assistant.ts，说 @sfly/schema 的协议，记下收到的命令，测试往它的事件流里推事件）。
 import { randomUUID } from "node:crypto";
+import { Writable } from "node:stream";
+import { inspect } from "node:util";
 import {
+	ASSISTANT_PROCESS_KILL_GRACE_MS,
 	type AssistantEvent,
 	PersistedSessionEvent,
 	type Readiness,
@@ -12,6 +15,8 @@ import {
 } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ASSISTANT_REJECTION_TEXT } from "../src/sessions/assistant-client.js";
+import { STOP_GRACE_MS, STOP_MARGIN_MS } from "../src/sessions/session-service.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -395,6 +400,24 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect((await sessionRow(cp, view.id))?.status).toBe("idle");
 	});
 
+	it("空闲的会话点停止不等中止的回应：助手服务的中止几秒才回，响应也马上回来", async () => {
+		const view = await json<SessionView>(await create());
+		assistant.emit(view.id, 1, turnEnd(1));
+		await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
+		assistant.abortDelayMs = 3_000;
+		try {
+			const started = Date.now();
+			const stopped = await api.post(`/sessions/${view.id}/stop`, {});
+			expect(stopped.status).toBe(200);
+			expect(Date.now() - started).toBeLessThan(1_000);
+			await eventually(() =>
+				expect(assistant.abortRequests).toEqual([{ sessionId: view.id, turn: 1 }]),
+			);
+		} finally {
+			assistant.abortDelayMs = 0;
+		}
+	});
+
 	it("没有过任何一轮的空闲会话点停止：没有什么可结束的，不向助手服务发中止", async () => {
 		const id = await seedSession(cp.database.url, { status: "idle", title: "从没做过" });
 		expect((await api.post(`/sessions/${id}/stop`, {})).status).toBe(200);
@@ -493,32 +516,42 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect(ends[0]).toMatchObject({ turn: 1, outcome: "completed" });
 	});
 
-	it("助手服务没接住第一轮：新建的会话删掉（不留下会话），503 assistant_unavailable 或它给的原因", async () => {
+	it("助手服务没接住第一轮：新建的会话删掉（不留下会话），503 assistant_unavailable 等；说明是按错误码给的固定的一句，助手服务自己写的那句话（带内部的地址和路径）不对外", async () => {
+		const internal = "ENOENT /srv/assistant/sessions/x 10.9.8.7:4000";
 		for (const [reply, status, code] of [
 			[
-				{ status: 503, code: "start_failed", message: "起不了 pi 进程" },
+				{ status: 503, code: "start_failed", message: `起不了 pi 进程：${internal}` },
 				503,
 				"assistant_unavailable",
 			],
 			[
-				{ status: 503, code: "process_limit", message: "进程数到了上限" },
+				{ status: 503, code: "process_limit", message: `进程数到了上限：${internal}` },
 				503,
 				"assistant_unavailable",
 			],
 			[
-				{ status: 503, code: "model_not_configured", message: "没有配置模型" },
+				{ status: 503, code: "model_not_configured", message: `没有配置模型：${internal}` },
 				503,
 				"model_unavailable",
 			],
-			[{ status: 503, code: "model_unreachable", message: "模型连不上" }, 503, "model_unavailable"],
-			[{ status: 409, code: "turn_running", message: "已有一轮在做" }, 409, "turn_running"],
+			[
+				{ status: 503, code: "model_unreachable", message: `模型连不上：${internal}` },
+				503,
+				"model_unavailable",
+			],
+			[
+				{ status: 409, code: "turn_running", message: `已有一轮在做：${internal}` },
+				409,
+				"turn_running",
+			],
 		] as const) {
 			assistant.promptReply = () => reply;
 			const res = await create();
 			expect(res.status, reply.code).toBe(status);
 			const { error } = await json<{ error: { code: string; message: string } }>(res);
 			expect(error.code, reply.code).toBe(code);
-			expect(error.message, reply.code).toContain(reply.message);
+			expect(error.message, reply.code).toBe(ASSISTANT_REJECTION_TEXT[reply.code]);
+			expect(error.message, reply.code).not.toMatch(/10\.9\.8\.7|\/srv\/assistant/);
 			expect(await sessionCount(cp), reply.code).toBe(0);
 		}
 	});
@@ -687,7 +720,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			assistant.promptReply = () => ({
 				status: 503,
 				code: "model_unreachable",
-				message: "模型连不上",
+				message: "模型连不上：10.9.8.7:4000 /srv/assistant/x",
 			});
 			const res = await api.post(`/sessions/${view.id}/messages`, { text: "再来一次" });
 			expect(res.status).toBe(503);
@@ -697,7 +730,10 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 				type: "turn_end",
 				outcome: "model_unavailable",
 				error_class: "other",
+				// 历史里的原因所有能读这个会话的人都看得到：固定的一句，不带助手服务写的原文。
+				reason: ASSISTANT_REJECTION_TEXT.model_unreachable,
 			});
+			expect(JSON.stringify(detail.events.at(-1))).not.toMatch(/10\.9\.8\.7|\/srv\/assistant/);
 			expect(detail.status).toBe("idle");
 		});
 	});
@@ -829,6 +865,27 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			}
 			expect((await readiness()).ready).toBe(true);
 		}, 20_000);
+
+		it("助手服务的 /health 回了拒绝（带内部地址和路径的说明）：就绪状态里是按错误码给的固定的一句，不带原文", async () => {
+			const advance = (ms: number) => (cp.clock as ManualClock).advance(ms);
+			advance(6_000);
+			assistant.health = () => ({
+				status: 503,
+				code: "start_failed",
+				message: "ENOENT /srv/assistant/x 10.9.8.7:4000",
+			});
+			try {
+				const now = await readiness();
+				expect(now.problems).toEqual([
+					{ kind: "assistant_unreachable", message: ASSISTANT_REJECTION_TEXT.start_failed },
+				]);
+				expect(JSON.stringify(now)).not.toMatch(/10\.9\.8\.7|\/srv\/assistant/);
+			} finally {
+				assistant.health = () => assistant.healthy();
+				advance(6_000);
+			}
+			expect((await readiness()).ready).toBe(true);
+		});
 
 		it("工作台不在线：workbench_offline，写明是哪一台；上线之后又好了", async () => {
 			await workbench.disconnect();
@@ -1368,6 +1425,131 @@ describe("事件流的心跳：静默的连接不会被掐断，死了的连接�
 			);
 			expect(assistant.eventRequests).toBe(1);
 		} finally {
+			await workbench.disconnect();
+			await cp.close();
+			await assistant.close();
+		}
+	}, 30_000);
+});
+
+describe("停止的等待和助手服务的强制结束对齐", () => {
+	it("控制面等的时间不短于助手服务的宽限（协议里的同一个常量）加余量", () => {
+		expect(STOP_MARGIN_MS).toBeGreaterThan(0);
+		expect(STOP_GRACE_MS).toBe(ASSISTANT_PROCESS_KILL_GRACE_MS + STOP_MARGIN_MS);
+		expect(STOP_GRACE_MS).toBeGreaterThanOrEqual(ASSISTANT_PROCESS_KILL_GRACE_MS + 1_000);
+	});
+
+	it("助手服务 6 秒之后才带回这一轮的结局（比原来的 5 秒慢、比宽限快）：控制面等着它，不先补结局；停止之后马上再说一句，新的一轮照常开始", async () => {
+		const assistant = await FakeAssistant.start();
+		// 用真正的默认宽限（不是测试里缩短的 300 毫秒）。
+		const cp = await startTestControlPlane({
+			assistantUrl: assistant.url,
+			assistantSecret: assistant.secret,
+			workbenchAgent: WORKBENCH,
+			assistantReconnectMs: { min: 20, max: 100 },
+			sessionStopGraceMs: STOP_GRACE_MS,
+		});
+		const workbench = await FakeAgent.connect(
+			cp.grpcUrl,
+			{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },
+			{ clock: cp.clock },
+		);
+		try {
+			await assistant.connected();
+			const api = new ApiClient(cp);
+			const view = await json<SessionView>(
+				await api.post("/projects/default/sessions", { text: "第一句" }),
+			);
+			// 助手服务停一轮要几秒（先关输入、SIGTERM、等进程退出），结局在进程退出之后才发。
+			assistant.abortReply = (id) => {
+				setTimeout(
+					() => assistant.emit(id, 1, turnEnd(1, "stopped", "助手服务停下来了（进程退出之后）")),
+					6_000,
+				);
+				return undefined;
+			};
+			const started = Date.now();
+			const stopped = await api.post(`/sessions/${view.id}/stop`, {});
+			expect(stopped.status).toBe(200);
+			expect(Date.now() - started).toBeGreaterThanOrEqual(5_500);
+			expect(await json<SessionView>(stopped)).toMatchObject({
+				status: "idle",
+				last_turn_outcome: "stopped",
+			});
+			// 结局是助手服务带回来的，不是控制面先补的。
+			const ends = (await eventsOf(api, view.id)).filter((e) => e.type === "turn_end");
+			expect(ends).toHaveLength(1);
+			expect(ends[0]).toMatchObject({ reason: "助手服务停下来了（进程退出之后）" });
+			// 马上再说一句：新的一轮照常开始。
+			assistant.abortReply = () => undefined;
+			expect((await api.post(`/sessions/${view.id}/messages`, { text: "再来一句" })).status).toBe(
+				200,
+			);
+			expect(assistant.prompts.at(-1)?.body.turn).toBe(2);
+		} finally {
+			await workbench.disconnect();
+			await cp.close();
+			await assistant.close();
+		}
+	}, 30_000);
+});
+
+describe("日志里有原因、没有会话的内容", () => {
+	it("助手服务没有接住这一轮：日志写会话、轮次和底层错误的原文，不写用户的话；回给人的只有稳定的一句", async () => {
+		const assistant = await FakeAssistant.start();
+		const sink = new Writable({ write: (_chunk, _encoding, done) => done() });
+		const cp = await startTestControlPlane({
+			assistantUrl: assistant.url,
+			assistantSecret: assistant.secret,
+			workbenchAgent: WORKBENCH,
+			assistantReconnectMs: { min: 20, max: 100 },
+			logger: { stream: sink },
+		});
+		const workbench = await FakeAgent.connect(
+			cp.grpcUrl,
+			{ name: WORKBENCH, peer: { port: 7001, publicAddress: "10.0.0.5" } },
+			{ clock: cp.clock },
+		);
+		const logged: string[] = [];
+		const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+			logged.push(
+				args.map((arg) => (typeof arg === "string" ? arg : inspect(arg, { depth: 6 }))).join(" "),
+			);
+		});
+		try {
+			await assistant.connected();
+			const api = new ApiClient(cp);
+			const secretText = "我的私密的话 hunter2-不该出现在日志里";
+			const port = new URL(assistant.url).port;
+			// 1. 助手服务连不上。
+			await assistant.stop();
+			const refused = await api.post("/projects/default/sessions", { text: secretText });
+			expect(refused.status).toBe(503);
+			expect((await json<{ error: { message: string } }>(refused)).error.message).toBe(
+				"连不上助手服务：连接被拒绝",
+			);
+			await assistant.resume();
+			await assistant.connected();
+			// 2. 助手服务拒绝，说明里带内部的路径。
+			assistant.promptReply = () => ({
+				status: 503,
+				code: "start_failed",
+				message: "ENOENT /srv/assistant/internal-path",
+			});
+			const rejected = await api.post("/projects/default/sessions", { text: secretText });
+			expect(rejected.status).toBe(503);
+			expect(JSON.stringify(await rejected.json())).not.toContain("/srv/assistant");
+			const text = logged.join("\n");
+			// 日志里：哪个会话的哪一轮没接住，底层错误的原文（连接被拒带地址和端口、助手服务写的那句话）。
+			expect(text).toMatch(/助手服务没有接住会话 [0-9a-f-]{36} 的第 1 轮/);
+			expect(text).toContain("ECONNREFUSED");
+			expect(text).toContain(port);
+			expect(text).toContain("/srv/assistant/internal-path");
+			// 日志里没有用户的话。
+			expect(text).not.toContain("hunter2");
+			expect(text).not.toContain("我的私密的话");
+		} finally {
+			spy.mockRestore();
 			await workbench.disconnect();
 			await cp.close();
 			await assistant.close();

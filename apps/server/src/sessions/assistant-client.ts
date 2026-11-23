@@ -11,14 +11,30 @@ import {
 import type { z } from "zod";
 import type { AssistantConfig } from "./assistant-config.js";
 
-/** 助手服务拒绝了请求：状态码，和它给的错误码（回应体不是约定的形状时没有）。 */
+/** 助手服务拒绝时回给人的固定说明，按错误码：助手服务自己写的那句话（`detail`）可能带内部的地址和路径，只进日志。 */
+export const ASSISTANT_REJECTION_TEXT: Record<AssistantErrorCode, string> = {
+	unauthorized: "助手服务拒绝了共享密钥（两边的 SFLY_ASSISTANT_SECRET 不一致）",
+	invalid_request: "助手服务认为这个请求不合法（控制面和助手服务的协议版本可能不一致）",
+	turn_running: "助手服务说这个会话已经有一轮在做",
+	no_turn_running: "助手服务说这个会话没有在做的一轮",
+	model_not_configured: "助手服务没有配置模型",
+	model_unreachable: "助手服务连不上模型",
+	process_limit: "助手服务的进程数到了上限",
+	start_failed: "助手服务起不了这一轮的进程",
+};
+
+/**
+ * 助手服务拒绝了请求：状态码，和它给的错误码（回应体不是约定的形状时没有）。
+ * `message` 是按错误码给的固定说明（{@link ASSISTANT_REJECTION_TEXT}），会回给请求的人、写进就绪状态和 `turn_end` 的原因；
+ * 助手服务自己写的那句话在 `detail` 里，只进日志（它可能带内部的地址、路径和文件系统错误的原文）。
+ */
 export class AssistantError extends Error {
 	constructor(
 		readonly status: number,
 		readonly code: AssistantErrorCode | undefined,
-		message: string,
+		readonly detail: string | undefined,
 	) {
-		super(message);
+		super(code === undefined ? `助手服务回应了 ${status}` : ASSISTANT_REJECTION_TEXT[code]);
 	}
 }
 
@@ -219,7 +235,11 @@ async function rejectUnlessOk(res: Response): Promise<void> {
 	} catch {
 		body = undefined;
 	}
-	throw new AssistantError(res.status, body?.code, body?.message ?? `助手服务回应了 ${res.status}`);
+	throw new AssistantError(
+		res.status,
+		body?.code,
+		body?.message ?? (text.slice(0, 200) || undefined),
+	);
 }
 
 /**
@@ -260,9 +280,15 @@ export function describeSkippedLine(json: unknown, issues: readonly z.core.$ZodI
 		typeof event === "object" && event !== null ? (event as { type?: unknown }).type : undefined;
 	const label = (value: unknown): string | undefined =>
 		typeof value === "string" || typeof value === "number" ? String(value).slice(0, 80) : undefined;
+	// 会话 ID 只在它合 UUID 时写：不合法的原样写进日志没有意义，也可能是别的东西。
+	const sessionId =
+		typeof record?.session_id === "string" && UUID.test(record.session_id)
+			? record.session_id
+			: undefined;
 	const who = [
 		label(record?.type) && `行类型 ${label(record?.type)}`,
-		label(record?.session_id) && `会话 ${label(record?.session_id)}`,
+		sessionId && `会话 ${sessionId}`,
+		record?.session_id !== undefined && sessionId === undefined && "会话 ID 不合法",
 		label(record?.turn) && `轮次 ${label(record?.turn)}`,
 		label(eventType) && `事件类型 ${label(eventType)}`,
 	].filter(Boolean);
@@ -283,14 +309,20 @@ function flattenIssues(
 				(branch) => !branch.some((i) => i.code === "invalid_value" && i.path.join(".") === "type"),
 			);
 			const best = branches.length > 0 ? branches : issue.errors;
-			for (const branch of best) {
-				for (const inner of flattenIssues(branch)) {
-					const prefix = issue.path.join(".");
-					out.push({
-						path: prefix === "" ? inner.path : `${prefix}.${inner.path}`,
-						message: inner.message,
-					});
-				}
+			const inner = best.flatMap((branch) => flattenIssues(branch));
+			if (inner.length === 0) {
+				// 判别字段对不上（不认识的类型）、或者没有分支可钻：写这一条 issue 本身（zod 在 `note` 里写原因，例如
+				// 「No matching discriminator」），不能让冒号后面是空的。
+				const note = (issue as { note?: string }).note;
+				out.push({ path: issue.path.join("."), message: note ?? issue.message });
+				continue;
+			}
+			const prefix = issue.path.join(".");
+			for (const item of inner) {
+				out.push({
+					path: prefix === "" ? item.path : `${prefix}.${item.path}`,
+					message: item.message,
+				});
 			}
 			continue;
 		}
@@ -298,3 +330,5 @@ function flattenIssues(
 	}
 	return out;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type {
-	AssistantErrorCode,
-	AssistantHealth,
-	PromptCommandBody,
-	Readiness,
-	ReadinessProblem,
-	SessionErrorCode,
-	SessionEventBody,
+import {
+	ASSISTANT_PROCESS_KILL_GRACE_MS,
+	type AssistantErrorCode,
+	type AssistantHealth,
+	type PromptCommandBody,
+	type Readiness,
+	type ReadinessProblem,
+	type SessionErrorCode,
+	type SessionEventBody,
 } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import type { Actor } from "../actor.js";
@@ -63,8 +64,17 @@ export function titleOf(text: string): string {
  */
 export const STALE_TURN_MS = 30 * 60 * 1000;
 
-/** 停止会话：把中止发给助手服务之后，最多等多久它把这一轮的结局（`turn_end`）带回来（毫秒）；超过由控制面结束这一轮。 */
-export const STOP_GRACE_MS = 5_000;
+/** 控制面等助手服务带回结局时，在它的强制结束宽限之外多留的余量（毫秒）：命令往返、进程退出之后发事件的时间。 */
+export const STOP_MARGIN_MS = 3_000;
+
+/**
+ * 停止会话：把中止发给助手服务之后，最多等多久它把这一轮的结局（`turn_end`）带回来（毫秒）；超过由控制面结束这一轮。
+ * **不短于助手服务停止一轮的宽限**（{@link ASSISTANT_PROCESS_KILL_GRACE_MS}：SIGTERM 之后这么久才 SIGKILL，结局在进程退出之后
+ * 才发）加余量：短了的话，控制面先补一条 `stopped`、会话回到空闲，用户马上再说一句，助手服务那边上一轮还挂着，回 409
+ * `turn_running`，新的一轮被记成失败。在做的会话点停止的响应最坏是「中止的命令超时 + 这个宽限」，平时助手服务很快带回结局，
+ * 马上返回。
+ */
+export const STOP_GRACE_MS = ASSISTANT_PROCESS_KILL_GRACE_MS + STOP_MARGIN_MS;
 
 /** 助手服务的 `/health` 结果缓存多久（毫秒）：每次列出会话都问一遍太频繁；同时来的请求共用一次（见 `#assistantHealth`）。 */
 export const HEALTH_TTL_MS = 5_000;
@@ -492,6 +502,7 @@ interface Failure {
 /** 助手服务没接住这一轮：翻译成接口的错误码和这一轮的结局。 */
 function describeFailure(error: unknown): Failure {
 	if (error instanceof AssistantError) {
+		// 说明是按错误码给的固定的一句（`AssistantError.message`），助手服务自己写的那句话只进日志。
 		const code: AssistantErrorCode | undefined = error.code;
 		if (code === "turn_running") {
 			return { status: 409, code: "turn_running", message: error.message, outcome: "failed" };
@@ -504,11 +515,12 @@ function describeFailure(error: unknown): Failure {
 				outcome: "model_unavailable",
 			};
 		}
-		const why =
-			code === "unauthorized"
-				? "助手服务拒绝了共享密钥（两边的 SFLY_ASSISTANT_SECRET 不一致）"
-				: error.message;
-		return { status: 503, code: "assistant_unavailable", message: why, outcome: "failed" };
+		return {
+			status: 503,
+			code: "assistant_unavailable",
+			message: error.message,
+			outcome: "failed",
+		};
 	}
 	return {
 		status: 503,

@@ -168,6 +168,73 @@ describe("事件流：心跳和死连接检测", () => {
 		expect(error).toBeUndefined();
 	});
 
+	it("判别字段对不上的行（助手服务发了只该控制面产生的类型、或不认识的类型）：说明里写明是哪个字段、没有匹配的类型，冒号后面不是空的；session_id 不合法时不写原值", async () => {
+		const sessionId = randomUUID();
+		const record = (event: unknown, extra: Record<string, unknown> = {}) =>
+			JSON.stringify({
+				epoch: "e1",
+				session_id: sessionId,
+				turn: 1,
+				at: "2026-01-01T00:00:00.000Z",
+				event,
+				...extra,
+			});
+		const client = new AssistantClient(config, {
+			fetch: streamFetch((push, close) => {
+				push(hello);
+				// 只该由控制面产生的类型。
+				push(record({ type: "user_message", text: "伪造的话 hunter2" }, { seq: 1 }));
+				// 不认识的类型。
+				push(record({ type: "no_such_event" }));
+				// session_id 不合法：原值（可能是任何东西）不写进日志。
+				push(
+					JSON.stringify({
+						epoch: "e1",
+						session_id: "不是UUID-hunter2-也不该出现",
+						turn: 1,
+						at: "2026-01-01T00:00:00.000Z",
+						event: { type: "assistant_delta", text: "好" },
+					}),
+				);
+				close();
+			}),
+		});
+		const { skipped } = await drain(client, new AbortController().signal);
+		expect(skipped).toHaveLength(3);
+		const [forged, unknown, badSession] = skipped as [string, string, string];
+		for (const line of [forged, unknown]) {
+			expect(line).toContain(sessionId);
+			expect(line).toContain("event");
+			expect(line).not.toMatch(/：\s*$/);
+			expect(line).not.toContain("hunter2");
+		}
+		expect(forged).toContain("事件类型 user_message");
+		expect(unknown).toContain("事件类型 no_such_event");
+		expect(forged).toMatch(/No matching discriminator/i);
+		expect(badSession).toContain("会话 ID 不合法");
+		expect(badSession).not.toContain("hunter2");
+		expect(badSession).not.toContain("不是UUID");
+	});
+
+	it("describeSkippedLine：联合类型没有可钻的分支时，写这一条 issue 本身（note 或 message），不留空", () => {
+		const issues = [
+			{
+				code: "invalid_union",
+				errors: [],
+				note: "No matching discriminator",
+				path: ["event"],
+				message: "Invalid input",
+			},
+		] as never;
+		expect(describeSkippedLine({ event: { type: "x" } }, issues)).toBe(
+			"事件类型 x：event: No matching discriminator",
+		);
+		const noNote = [
+			{ code: "invalid_union", errors: [], path: [], message: "Invalid input" },
+		] as never;
+		expect(describeSkippedLine({}, noNote)).toBe("Invalid input");
+	});
+
 	it("调用方处理得慢不算连接死了：对端一直在写，单行处理超过空闲上限也不断；处理完之后对端不再写，照样被发现", async () => {
 		let beat: NodeJS.Timeout | undefined;
 		const client = new AssistantClient(config, {
