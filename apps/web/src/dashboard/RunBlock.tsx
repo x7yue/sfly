@@ -1,4 +1,4 @@
-import type { DashboardChain, DashboardRunningRun, RunListActiveNode } from "@sfly/schema";
+import type { DashboardActiveNode, DashboardChain, DashboardRunningRun } from "@sfly/schema";
 import { isOnAgentStatus } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
@@ -18,6 +18,7 @@ import { useRunFocus } from "#/focus/use-run-focus";
 import {
 	ACTION,
 	ACTIVE_LABEL,
+	attemptLabel,
 	ELAPSED_LABEL,
 	FOCUS,
 	LIST_LABEL,
@@ -31,6 +32,7 @@ import { formatElapsed, shortId } from "#/lib/format";
 import { useElementWidth } from "#/lib/use-element-width";
 import { useNow } from "#/lib/use-now";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
+import { QueueWaitNote } from "#/monitor/QueueWaitNote";
 import { runMonitorLink } from "#/monitor/run-link";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -250,7 +252,7 @@ function ActiveNodes({
 	limit,
 	now,
 }: {
-	nodes: readonly RunListActiveNode[];
+	nodes: readonly DashboardActiveNode[];
 	limit: number | null;
 	now: number;
 }) {
@@ -262,18 +264,36 @@ function ActiveNodes({
 			<span className="flex-none text-fg-3">{ACTIVE_LABEL}</span>
 			<ul
 				aria-label={LIST_LABEL.activeNodes}
-				className="m-0 flex min-w-0 list-none flex-wrap gap-x-5 gap-y-1 p-0"
+				className="m-0 flex min-w-0 flex-1 list-none flex-wrap gap-x-5 gap-y-1 p-0"
 			>
-				{shown.map((node) => (
-					<li
-						key={`${node.chain_instance_id}/${node.node_id}`}
-						className="flex min-w-0 items-center gap-1.5"
-					>
-						<StatusDot kind={nodeStatusView(node.status).kind} />
-						<NodeName node={node} className="font-medium text-fg-1" />
-						<span className="whitespace-nowrap text-fg-3">{activeDetail(node, now)}</span>
-					</li>
-				))}
+				{shown.map((node) => {
+					const waiting = node.status === "queued" ? node.queue_wait : null;
+					return (
+						<li
+							key={`${node.chain_instance_id}/${node.node_id}`}
+							// 排队中的节点写着在等谁，一句话比较长：单独占一行（和运行监控概览一样）。
+							className={
+								waiting
+									? "flex basis-full items-baseline gap-1.5"
+									: "flex min-w-0 items-center gap-1.5"
+							}
+						>
+							<StatusDot
+								kind={nodeStatusView(node.status).kind}
+								className={waiting ? "self-center" : undefined}
+							/>
+							<NodeName node={node} className="flex-none font-medium text-fg-1" />
+							{waiting && node.queued_at ? (
+								<span className="min-w-0 text-fg-3">
+									{attemptLabel(node.attempt)} · {nodeStatusView(node.status).label} ·{" "}
+									<QueueWaitNote wait={waiting} queuedAt={node.queued_at} now={now} />
+								</span>
+							) : (
+								<span className="whitespace-nowrap text-fg-3">{activeDetail(node, now)}</span>
+							)}
+						</li>
+					);
+				})}
 				{shown.length < nodes.length && (
 					<li className="text-fg-3">{moreLabel(nodes.length - shown.length)}</li>
 				)}

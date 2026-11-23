@@ -1,10 +1,11 @@
-"""`sfly debug`：在当前项目环境里执行一个节点（本地调试），不经过控制面和 Agent。
+"""`sfly debug`：在当前节点包目录的环境里执行一个节点（本地调试），不经过控制面和 Agent。
 
 和 Agent 用同一个执行器与本地协议（见 `sfly.local`）：节点按 `sfly build` 扫描出的元信息查找，
 参数按元信息里的输入 schema 校验。日志实时打印到标准错误；结束后把输出值、指标汇总和运行目录
 打印到标准输出。每次运行的工作目录（task.json、output.json、事件管道 events.fifo、stdout.log、
-stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。运行目录名同时作为运行 ID
-（`ctx.task.run_id`），后台进程目录（`ctx.procs_dir`）是 `.sfly/procs/<运行目录名>/`。
+stderr.log、artifacts/）是节点包目录下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。
+运行目录名同时作为运行 ID（`ctx.task.run_id`），
+后台进程目录（`ctx.procs_dir`）是 `.sfly/procs/<运行目录名>/`。
 
 `--params` 是节点的输入（JSON 对象）：直接写 JSON 文本，或写 `@文件` 从文件读，`@-` 从标准输入读
 （和 `sfly api --body @文件` 一致；文件路径相对当前目录）。节点要读整个运行状态（`sfly.RunState`）
@@ -55,9 +56,9 @@ from sfly.local import (
     execute,
 )
 
-#: 运行目录（相对项目根目录）。
+#: 运行目录（相对节点包目录）。
 RUNS_DIR = Path(".sfly") / "runs"
-#: 后台进程目录的根目录（相对项目根目录）。
+#: 后台进程目录的根目录（相对节点包目录）。
 PROCS_DIR = Path(".sfly") / "procs"
 
 EXIT_FAILED = 1
@@ -265,7 +266,7 @@ def debug(
     found = next((n for n in nodes if n["name"] == node), None)
     if found is None:
         names = "、".join(n["name"] for n in nodes)
-        raise DebugError(f"找不到节点 {node}（项目 {meta.name} 里的节点：{names}）")
+        raise DebugError(f"找不到节点 {node}（节点包 {meta.name} 里的节点：{names}）")
     problems = input_problems(found["inputs"], params)
     if problems:
         raise DebugError("参数不合法：" + "; ".join(problems))

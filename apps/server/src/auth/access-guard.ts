@@ -4,7 +4,7 @@
 // 这一步只对带了凭据的请求生效（规格 #489）：不带凭据的请求照旧放行，到 #494 才改成 401；带共享令牌的 HTTP 请求
 // 和不带凭据的走同一套（共享令牌不对应任何一台 Agent）。带了凭据就一定检查：库里没有的、过期的、吊销的、用户停用的，
 // 一律 401，不会退回到「不带凭据」的放行。
-import type { RouteDef } from "@sfly/schema";
+import { type RouteDef, TOKEN_PREFIXES } from "@sfly/schema";
 import type { Clock } from "../clock.js";
 import type { ProjectRole } from "../db/schema.js";
 import {
@@ -17,9 +17,13 @@ import {
 import { isUuid } from "../util/uuid.js";
 import {
 	ACCOUNT_ROUTES,
+	type AccountCredential,
 	AGENT_CREDENTIAL_ROUTES,
+	exhaustive,
+	LOGIN_ONLY_ROUTES,
 	locatorOf,
 	type ProjectLocator,
+	REQUIRES_CREDENTIAL,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "./access-rules.js";
@@ -83,13 +87,21 @@ export interface Access {
  */
 export type AccessResult =
 	| { ok: true; access: Access | null; setCookie?: string }
-	| { ok: false; status: 401 | 403 | 404; code: string; message: string; setCookie?: string };
+	| {
+			ok: false;
+			status: 400 | 401 | 403 | 404;
+			code: string;
+			message: string;
+			setCookie?: string;
+	  };
 
 /** 一个请求里和检查有关的部分。 */
 export interface AccessRequest {
 	route: Pick<RouteDef, "method" | "path" | "effect" | "resource" | "creates">;
 	/** 路径参数（解析前的字符串）。 */
 	params: Record<string, string | undefined>;
+	/** 查询参数（解析前）：项目写在查询参数里的接口（过渡，#565）要看它。 */
+	query?: Record<string, unknown> | undefined;
 	/** `Authorization` 请求头。 */
 	authorization?: string | undefined;
 	/** `Cookie` 请求头。 */
@@ -106,6 +118,13 @@ export interface AccessRequest {
 
 /** 登录用了之后，隔多久才把「最后使用时间」写一次库（并续期）：不要每个请求写一次库。 */
 export const LOGIN_TOUCH_INTERVAL_MS = 60_000;
+/**
+ * 令牌的「最后使用时间」隔多久才写一次库：每个令牌每分钟最多写一次。这个时间只用来让人看出一个令牌还在不在用
+ * （几分钟的误差不影响判断），而每个请求写一次库，会让每个只读请求都变成写请求；和登录的续期用同一个间隔。
+ * 「到没到时间」放在更新语句的条件里（`AccessStore.touchToken`），并发的请求只有一个写成功，不靠进程里的表：
+ * 控制面重启之后也不会多写，将来有多个进程也不会各写各的。
+ */
+export const TOKEN_TOUCH_INTERVAL_MS = 60_000;
 /** 登录的空闲期限，默认 12 小时（`SFLY_LOGIN_IDLE_HOURS`）。 */
 export const DEFAULT_LOGIN_IDLE_MS = 12 * 3_600_000;
 
@@ -115,13 +134,24 @@ export const DEFAULT_LOGIN_IDLE_MS = 12 * 3_600_000;
  */
 export const ACCESS_NOT_FOUND_MESSAGE = "资源不存在，或不在这个凭据能访问的项目里";
 
-const denied = (status: 401 | 403 | 404, code: string, message: string): AccessResult => ({
+const denied = (status: 400 | 401 | 403 | 404, code: string, message: string): AccessResult => ({
 	ok: false,
 	status,
 	code,
 	message,
 });
 const notFound = () => denied(404, "not_found", ACCESS_NOT_FOUND_MESSAGE);
+
+/**
+ * 公共项目只有平台管理员能写（ADR 0029：平台维护的节点包放在公共项目）。项目管理员、项目令牌、会话令牌、Agent 凭据、
+ * 共享令牌、不带凭据都不行，限定了别的项目的个人令牌也不行。说清楚原因，不用「资源不存在」的 404：公共项目的存在
+ * 不是秘密，被拒绝的人需要知道为什么。
+ */
+const PUBLIC_WRITE_DENIED =
+	"公共项目只有平台管理员能写：需要平台管理员的登录或个人令牌，" +
+	"项目管理员、项目令牌、会话令牌、限定了别的项目的令牌、共享令牌和不带凭据的请求都不行";
+const writesPublicProject = (project: ProjectId | undefined, route: { effect: string }) =>
+	project === PUBLIC_PROJECT && route.effect === "write";
 
 /** 请求里带的凭据原值，来自哪里。 */
 type Presented = { from: "bearer" | "cookie"; secret: string };
@@ -140,6 +170,25 @@ function presentedCredential(request: AccessRequest): Presented | undefined {
 	}
 	return undefined;
 }
+
+const OUR_TOKEN_PREFIX = new RegExp(
+	`(?:${Object.values(TOKEN_PREFIXES).join("|")})[A-Za-z0-9_-]{8,}`,
+);
+
+/**
+ * `Authorization` 头里有我们的令牌（认得出前缀），却不是 `Bearer <令牌>` 的写法（`Authorization: <令牌>`、`token <令牌>`、
+ * `Bearer: <令牌>`……）：写错了请求头的脚本，不能被当作没带凭据而以匿名身份继续写。别的方案（`Basic …`，前面有反向代理做
+ * 基本认证的部署）里没有我们的令牌前缀，不在这里，照旧当作没带。放在别的头里（`X-Api-Key`）的管不了。
+ */
+function malformedAuthorization(request: AccessRequest): boolean {
+	const header = (request.authorization ?? "").trim();
+	if (header === "" || /^Bearer(?:\s+(.*))?$/is.test(header)) return false;
+	return OUR_TOKEN_PREFIX.test(header);
+}
+
+const MALFORMED_AUTHORIZATION_MESSAGE =
+	"Authorization 头里有 sfly 令牌，但写法不对：要写成 `Authorization: Bearer <令牌>`" +
+	"（不是 `Authorization: <令牌>`，也不是 `token <令牌>`）";
 
 /** 解析出的凭据：有用户的（登录、个人令牌、会话令牌）、项目令牌、Agent 凭据、任务凭据；共享令牌单独一种。 */
 type Principal =
@@ -195,7 +244,13 @@ export class AccessGuard {
 		return this.deps.loginIdleMs ?? DEFAULT_LOGIN_IDLE_MS;
 	}
 
-	/** 检查一个请求；返回拒绝的原因，或通过时的身份。 */
+	/**
+	 * 检查一个请求；返回拒绝的原因，或通过时的身份。
+	 *
+	 * 公共项目只有平台管理员能写（{@link PUBLIC_WRITE_DENIED}），判的范围：项目写在路径或查询参数里的写接口（对所有身份，
+	 * 不读库），和带凭据的、按 ID 定位的写接口（读库得出项目之后，在 `#checkScoped` 里判）。不带凭据和共享令牌的、按 ID 定位的
+	 * 写（场景、运行、任务、会话）没有判：读库之前没有项目可判，强制登录（#494）之后这一类都带凭据，由 #494 关上。
+	 */
 	async check(request: AccessRequest): Promise<AccessResult> {
 		const locator = locatorOf(request.route);
 		if (locator === undefined) {
@@ -203,15 +258,44 @@ export class AccessGuard {
 		}
 		// 不属于项目的接口不需要凭据，带了也不看（过期的 Cookie 不该让健康检查和下载安装脚本失败）。
 		if (locator.from === "none") return { ok: true, access: null };
+		// 写错了写法的令牌：401 并说明正确的写法（登录、初始化、状态、登出本来就不看凭据，照旧）。
+		if (malformedAuthorization(request)) {
+			const rule =
+				locator.from === "account"
+					? (ACCOUNT_ROUTES as Record<string, AccountCredential>)[routeKey(request.route)]
+					: undefined;
+			if (rule !== "anonymous" && rule !== "logout") {
+				return denied(401, "unauthorized", MALFORMED_AUTHORIZATION_MESSAGE);
+			}
+		}
 		const offered = presentedCredential(request);
 		// 登录 Cookie 是浏览器自动带上的：跨站的请求（有副作用的，或者不是页面导航的）不认它，当作没有登录。
 		const crossSite = offered?.from === "cookie" && !this.#sameSite(request);
 		const presented = crossSite ? undefined : offered;
 		// 登出例外（`#checkLogout`）：它要看到跨站带来的 Cookie，才能把库里的这条登录也注销。
 		if (locator.from === "account") return this.#checkAccount(request, presented, offered);
-		if (presented === undefined) return { ok: true, access: null };
+		// 项目写在查询参数里（过渡，#565）：写错了的先拒绝，不管有没有凭据。
+		const queried = locator.from === "query" ? queriedProject(locator.param, request) : undefined;
+		if (queried !== undefined && "denied" in queried) return queried.denied;
+		// 这次写的是公共项目吗：只看不用读库就知道的（查询参数里的项目、路径里的项目）。按 ID 定位的资源
+		// （场景、运行、会话…）要读库才知道它在哪个项目里：带了凭据的在 `#checkScoped` 里判，不带凭据和共享令牌的
+		// 这里没有判（到 #494 强制登录之后它们都带凭据）。
+		const named =
+			locator.from === "query"
+				? queried?.project
+				: locator.from === "path" && locator.param !== null
+					? parseProjectId(request.params[locator.param] ?? "")
+					: undefined;
+		const publicWrite = writesPublicProject(named, request.route);
+		if (presented === undefined) {
+			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
+			if (publicWrite) return denied(401, "unauthorized", PUBLIC_WRITE_DENIED);
+			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+				? denied(401, "unauthorized", "需要登录或令牌")
+				: { ok: true, access: null };
+		}
 		const resolved = await this.#resolve(presented);
-		const result = await this.#decide(resolved, request, locator);
+		const result = await this.#decide(resolved, request, locator, queried?.project, publicWrite);
 		return withCookie(result, resolved, request, this.#idleMs);
 	}
 
@@ -219,11 +303,18 @@ export class AccessGuard {
 		{ principal }: Resolved,
 		request: AccessRequest,
 		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
+		queried: ProjectId | undefined,
+		publicWrite: boolean,
 	): Promise<AccessResult> {
 		if (principal === undefined) {
 			return denied(401, "unauthorized", "凭据无效、已过期或已吊销");
 		}
-		if (principal.kind === "shared") return { ok: true, access: null };
+		if (principal.kind === "shared") {
+			if (publicWrite) return denied(403, "forbidden", PUBLIC_WRITE_DENIED);
+			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+				? denied(403, "forbidden", "共享令牌不能调用这个接口：它只给 Agent 用")
+				: { ok: true, access: null };
+		}
 		// 路径参数含 NUL：它不指向任何东西，和不带凭据时一样是 404（契约路由的约定，#212）；
 		// 不能往下走：管理员的写记录要把路径参数写进库，NUL 存不进 PostgreSQL 的文本。
 		if (Object.values(request.params).some((value) => value?.includes("\u0000"))) {
@@ -233,7 +324,7 @@ export class AccessGuard {
 		if (principal.kind === "agent" || principal.kind === "task") {
 			return this.#checkProgram(principal, request, locator);
 		}
-		const project = await this.#projectOf(locator, request.params);
+		const project = queried ?? (await this.#projectOf(locator, request.params));
 		if (project === undefined) return notFound();
 		return this.#checkScoped(principal, request, project);
 	}
@@ -260,35 +351,52 @@ export class AccessGuard {
 		offered: Presented | undefined,
 	): Promise<AccessResult> {
 		const key = routeKey(request.route);
-		const rule: string | undefined = (ACCOUNT_ROUTES as Record<string, string>)[key];
+		const rule: AccountCredential | undefined = (
+			ACCOUNT_ROUTES as Record<string, AccountCredential>
+		)[key];
 		if (rule === undefined) {
 			throw new Error(`${key} 是账号类接口，却没有写在 ACCOUNT_ROUTES 里（启动时应该已经拒绝）`);
 		}
 		// 登录、初始化、状态不要凭据，带了什么都不看：过期的 Cookie 不该让登录页登录不了。
 		if (rule === "anonymous") return { ok: true, access: null };
 		if (rule === "logout") return this.#checkLogout(offered);
+		// 签发个人令牌可以不带凭据：请求体里是账号密码（`sfly login`），由处理函数验证，和登录一样限速。
+		if (rule === "login_or_password" && presented === undefined) return { ok: true, access: null };
 		if (presented === undefined) return denied(401, "unauthorized", "需要登录");
 		const resolved = await this.#resolve(presented);
 		const { principal } = resolved;
 		const refused = (status: 401 | 403, code: string, message: string): AccessResult =>
 			withCookie(denied(status, code, message), resolved, request, this.#idleMs);
 		if (principal === undefined) return refused(401, "unauthorized", "凭据无效、已过期或已吊销");
-		if (principal.kind !== "login") {
-			return refused(403, "forbidden", "这个接口只认登录（Cookie），令牌和别的凭据不能用它");
+		// 登录一直可以；个人令牌只有 `login_or_personal` 认。
+		const person =
+			principal.kind === "login" || (rule === "login_or_personal" && principal.kind === "personal")
+				? principal
+				: undefined;
+		if (person === undefined || (person.kind !== "login" && person.kind !== "personal")) {
+			return refused(
+				403,
+				"forbidden",
+				rule === "login_or_password"
+					? "令牌不能签发令牌：用登录（Cookie）签发，或者用账号密码换（sfly login）"
+					: rule === "login_or_personal"
+						? "这个接口只认登录（Cookie）和个人令牌，别的凭据不能用它"
+						: "这个接口只认登录（Cookie），令牌和别的凭据不能用它",
+			);
 		}
-		if (rule === "platform_admin" && !principal.user.isPlatformAdmin) {
+		if (rule === "platform_admin" && !person.user.isPlatformAdmin) {
 			return refused(403, "forbidden", "只有平台管理员能这样做");
 		}
 		return withCookie(
 			{
 				ok: true,
 				access: {
-					credential: "login",
-					userId: principal.user.id,
-					name: principal.user.displayName,
-					tokenName: null,
-					loginId: principal.loginId,
-					tokenId: null,
+					credential: person.kind,
+					userId: person.user.id,
+					name: person.user.displayName,
+					tokenName: person.tokenName,
+					loginId: person.loginId,
+					tokenId: person.tokenId,
 					adminActionId: null,
 					project: null,
 					role: null,
@@ -347,7 +455,18 @@ export class AccessGuard {
 			return { principal };
 		}
 		const token = await this.deps.store.tokenByHash(hash);
-		if (token) return { principal: tokenPrincipal(token, now) };
+		if (token) {
+			const principal = tokenPrincipal(token, now);
+			// 用着才记（失效的令牌不记）；一分钟内只写一次，先在内存里判断一下，省得每个请求都发一条更新。
+			if (
+				principal !== undefined &&
+				(token.lastUsedAt === null ||
+					now.getTime() - token.lastUsedAt.getTime() >= TOKEN_TOUCH_INTERVAL_MS)
+			) {
+				await this.deps.store.touchToken(token.id, now, TOKEN_TOUCH_INTERVAL_MS);
+			}
+			return { principal };
+		}
 		const credential = await this.deps.store.agentCredentialByHash(hash);
 		return { principal: credential && agentPrincipal(credential) };
 	}
@@ -359,6 +478,8 @@ export class AccessGuard {
 		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
 		params: AccessRequest["params"],
 	): Promise<ProjectId | undefined> {
+		// 查询参数里的项目在 check() 里先得出（写错了要拒绝，不是「找不到」）。
+		if (locator.from === "query") return DEFAULT_PROJECT;
 		if (locator.from === "path") {
 			if (locator.param === null) return DEFAULT_PROJECT;
 			const value = params[locator.param];
@@ -367,6 +488,8 @@ export class AccessGuard {
 		const id = params[locator.param];
 		if (id === undefined || !isUuid(id)) return undefined;
 		const { store } = this.deps;
+		// 对定位的来源穷举：新加一类按 ID 定位的资源（会话…）而忘了在这里写，类型检查会报错，
+		// 不会把它的 ID 当任务 ID 去查（#554）。
 		switch (locator.from) {
 			case "scenario":
 				return store.projectOfScenario(id);
@@ -376,6 +499,8 @@ export class AccessGuard {
 				return store.projectOfTask(id);
 			case "session":
 				return store.projectOfSession(id);
+			default:
+				return exhaustive(locator);
 		}
 	}
 
@@ -453,6 +578,14 @@ export class AccessGuard {
 		const publicRead =
 			project === PUBLIC_PROJECT && route.effect === "read" && route.resource.kind === "package";
 		const limit = principal.kind === "project" ? principal.project : principal.limit;
+		if (writesPublicProject(project, route)) {
+			// 平台管理员本人的登录或个人令牌（令牌没有限定别的项目）才能写公共项目。
+			const platformAdmin =
+				(principal.kind === "login" || principal.kind === "personal") &&
+				principal.user.isPlatformAdmin &&
+				(limit === null || limit === PUBLIC_PROJECT);
+			if (!platformAdmin) return denied(403, "forbidden", PUBLIC_WRITE_DENIED);
+		}
 		if (!publicRead && limit !== null && limit !== project) return notFound();
 
 		let role: ProjectRole | null = null;
@@ -501,6 +634,11 @@ export class AccessGuard {
 			role,
 			scopes,
 		};
+		// 只认人的登录的接口（签发项目令牌：令牌不能签发令牌）：先于范围检查，说明的是凭据的种类。
+		const loginOnly = (LOGIN_ONLY_ROUTES as Record<string, string>)[routeKey(route)];
+		if (loginOnly !== undefined && principal.kind !== "login") {
+			return denied(403, "forbidden", loginOnly);
+		}
 		if (needed === null) {
 			return denied(
 				403,
@@ -515,20 +653,21 @@ export class AccessGuard {
 				`缺少「${SCOPE_LABELS[needed]}」范围：${routeKey(route)} 需要它`,
 			);
 		}
-		// 会话的写（建、发话、停止）只有人能做（`writeNeedsPerson`，范围表里的 `humanOnly`）：范围够也不行。
-		// 项目令牌没有用户，建出来的会话没有发起人；会话令牌的情况在下面单独写死。
-		if (principal.kind === "project" && writeNeedsPerson(route)) {
-			return denied(403, "forbidden", "项目令牌不能做这件事：它只有人能做（登录的用户或个人令牌）");
-		}
-		// ADR 0027「凭据」：会话令牌对会话这一类只有读——它是助手在会话里干活用的凭据，不能用来建会话、替人发话、
-		// 停掉会话。这一条写死在这里，和下面「会话令牌的写入还没有开放」的临时总闸分开：#495 拿掉总闸、让会话令牌的
-		// 「编辑」范围去改场景之后，它仍然不能写会话。
-		if (
-			principal.kind === "session" &&
-			route.resource.kind === "session" &&
-			route.effect === "write"
-		) {
-			return denied(403, "forbidden", "会话令牌对会话只有读：不能建会话、发话和停止");
+		// 只有人能做的写（`writeNeedsPerson`，范围表里的 `humanOnly`，ADR 0032）：范围够也不行。只有登录和个人令牌算人，
+		// 别的凭据一律拒绝：项目令牌没有用户，建出来的会话没有发起人；会话令牌是助手干活用的，不能建会话、替人发话、
+		// 停掉会话（ADR 0027），#495 拿掉下面「会话令牌的写入还没有开放」的临时总闸之后也一样；以后新种类的凭据默认也不行。
+		if (writeNeedsPerson(route) && principal.kind !== "login" && principal.kind !== "personal") {
+			// 说明按「是什么凭据、做的是什么」写准：会话令牌对会话只有读；别的人才能做的写（例如项目令牌的签发和吊销）不能说成
+			// 「对会话」。
+			const onSession = route.resource.kind === "session" || route.creates === "session";
+			const who = principal.kind === "session" ? "会话令牌" : "项目令牌";
+			return denied(
+				403,
+				"forbidden",
+				principal.kind === "session" && onSession
+					? "会话令牌对会话只有读：不能建会话、发话和停止"
+					: `${who}不能做这件事：它只有人能做（登录的用户或个人令牌）`,
+			);
 		}
 		// 会话令牌的勾选（可以改的场景、可以用的 Agent、可以发消息的机器人）和待批准的操作在 #495、#496 接进来；
 		// 在那之前会话令牌只读，不放任何写。
@@ -560,6 +699,27 @@ export class AccessGuard {
 	async finishAdminWrite(id: string, status: number): Promise<void> {
 		await this.deps.store.completeAdminWrite(id, status);
 	}
+}
+
+/**
+ * 项目写在查询参数里的接口（过渡，#565）：不写是默认项目，写了只认 `public`；别的值（别的项目名、写了几次、不是字符串）
+ * 拒绝 400，说明现在只能写 public。
+ */
+function queriedProject(
+	param: string,
+	request: AccessRequest,
+): { project: ProjectId } | { denied: AccessResult } {
+	const value = request.query?.[param];
+	if (value === undefined) return { project: DEFAULT_PROJECT };
+	if (value === PUBLIC_PROJECT) return { project: PUBLIC_PROJECT };
+	return {
+		denied: denied(
+			400,
+			"invalid_request",
+			`查询参数 ${param} 现在只能写 ${PUBLIC_PROJECT}（发布到公共项目，只有平台管理员能这样做）；` +
+				"不写时发布到默认项目",
+		),
+	};
 }
 
 const requestTaskId = (request: AccessRequest): string => {

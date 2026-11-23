@@ -147,7 +147,7 @@ export function llmsTxt({ pages, skills }: UserDocs, values: DocValues): string 
 			"",
 			`## ${skill.heading}`,
 			"",
-			`给 AI 编程助手的 ${skill.name} skill（sfly init 已写进项目的 .agents/skills/${skill.name}/，两个文件放在同一目录下使用）：`,
+			`给 AI 编程助手的 ${skill.name} skill（sfly init 已写进节点包目录的 .agents/skills/${skill.name}/，两个文件放在同一目录下使用）：`,
 			"",
 			`- [SKILL.md](${skillFileUrl(values.SFLY_URL, skill.name, "SKILL.md")}): ${skill.skillSummary}`,
 			`- [reference.md](${skillFileUrl(values.SFLY_URL, skill.name, "reference.md")}): ${skill.referenceSummary}（与「${pages.find((p) => p.slug === skill.referencePage)?.title}」页相同）`,
