@@ -2,37 +2,51 @@ language js
 
 // 控制面往终端写东西只能走统一的出口（apps/server/src/util/output.ts，#578）：错误在那里先去掉数据库查询的参数
 // （密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
-// 规则拦的是「碰到能写终端的东西」，一般的写法都拦得住，但不是所有写法：它只看源码里写出来的名字，不跟踪值的去向。
-// 每一种拦的写法有一个名字（`$form`，报出的诊断以 `[名字]` 开头），biome-plugins/fixtures/no-direct-output/hit/ 里每个名字
-// 至少有一个样例命中它，自测要求这一点（biome-plugins.test.ts）：名字分得细，样例删掉哪一种，那个名字就没人命中、测试红。
-//   console                       用到 `console` 这个名字：`console.error`、`console.log`、`const log = console.error`、
-//                                 把 console 交给别人、`globalThis.console`、`global.console`、`const { error } = console`
-//   process-stream                `process.stdout`、`process.stderr`（`process["stderr"]` 会先被 useLiteralKeys 报出来，改成点号写法就命中这里）
-//   process-stream-global         `globalThis.process.stdout`、`global.process.stderr`
-//   process-emit-warning          `process.emitWarning(…)`、`globalThis.process.emitWarning(…)`：Node 默认把警告打到标准错误，传进去查询错误时
-//                                 message 里的参数整段打出来
-//   process-destructure           从 process 解构出 stdout、stderr：`const { stderr } = process`（初始值本身是 `process` 才算，
-//                                 `const { stdout } = spawnSync(process.execPath, …)` 这类子进程的结果不报）
-//   process-destructure-global    同上，初始值是 `globalThis.process`、`global.process`
-//   module-import-static          静态导入 `node:process`、`process`、`node:console`、`console`（具名、默认、`* as`）：导入本身就报，
-//                                 所以 `import { stderr } from "node:process"` 之后再怎么用都不用另外看
-//   module-import-dynamic         `import("node:process")` 这样的动态导入
-//   module-require                `require("console")`
-//   write-fd                      往文件描述符 1、2 写：`writeSync`、`writevSync`、`writeFileSync`、`appendFileSync`（任何接收者），
-//                                 `fs.write`、`fs.writev`、`fs.writeFile`、`fs.appendFile`（只认字面量 1、2）
-//   create-write-stream-fd        `createWriteStream("", { fd: 2 })`（fd 只认字面量 1、2）
+//
+// **这条规则是方便，不是保证。** 它认的是下面这个清单里的写法（每一种有名字，报出的诊断以 `[名字]` 开头）；清单之外的写法
+// 不保证拦得住：它只看源码里写出来的名字，不跟踪值的去向，写法是开放的，清单不求列全（认不出的几种典型写法列在文件末尾的注释里）。
+// 清单里每一种写法在 biome-plugins/fixtures/no-direct-output/hit/ 里至少有一个样例命中它，biome-plugins.test.ts 要求这一点，
+// 并要求这份清单、规则里的名字、docs/ARCHITECTURE.md 里的名字三处一致。
+//
+// 清单（`名字`  认的写法）：
+//   `console`                          用到 `console` 这个名字：`console.error`、`console.log`、`const log = console.error`、
+//                                      把 console 交给别人、`globalThis.console`、`global.console`、`const { error } = console`
+//   `process-stream`                   `process.stdout`、`process.stderr`
+//   `process-stream-optional`          `process?.stdout`、`process?.stderr`
+//   `process-stream-global`            `globalThis.process.stdout`、`global.process.stderr`
+//   `process-stream-global-optional`   `globalThis.process?.stdout`、`globalThis?.process.stderr`
+//   `process-emit-warning`             `process.emitWarning`、`process?.emitWarning`：Node 默认把警告打到标准错误，传进去查询错误时
+//                                      message 里的参数整段打出来
+//   `process-emit-warning-global`      `globalThis.process.emitWarning`、`global.process?.emitWarning`
+//   `process-raw-debug`                `process._rawDebug`、`process?._rawDebug`：直接写标准错误
+//   `process-destructure`              `const { stdout | stderr | emitWarning | _rawDebug } = process`；初始值本身是 `process` 才算，
+//                                      外面可以有括号、`as …`、`!`、`satisfies …`；`const { stdout } = spawnSync(process.execPath, …)`
+//                                      这类子进程的结果不报
+//   `process-destructure-global`       同上，初始值是 `globalThis.process`、`global.process`
+//   `process-destructure-from-global`  `const { process: { stdout | stderr | emitWarning | _rawDebug } } = globalThis`（或 `global`）
+//   `module-import-static`             静态导入 `node:process`、`process`、`node:console`、`console`（具名、默认、`* as`）：导入本身就报
+//   `module-import-dynamic`            `import("node:process")`
+//   `module-require`                   `require("console")`
+//   往文件描述符 1、2 写（文件描述符只认整数字面量 `1`、`2`、`0x1`、`0x2`；每个函数两个名字：任意接收者的 `fs.writeSync(2, …)`、
+//   `nodeFs.writeSync(2, …)`，和直接调用的 `writeSync(2, …)`，后者名字带 `-direct`）：
+//   `write-sync`、`write-sync-direct`（`writeSync`）；`writev-sync`、`writev-sync-direct`（`writevSync`）；
+//   `write-file-sync`、`write-file-sync-direct`（`writeFileSync`）；`append-file-sync`、`append-file-sync-direct`（`appendFileSync`）；
+//   `write`、`write-direct`（`write`）；`writev`、`writev-direct`（`writev`）；
+//   `write-file`、`write-file-direct`（`writeFile`）；`append-file`、`append-file-direct`（`appendFile`）
+//   `create-write-stream`              `fs.createWriteStream(path, { fd: 2, … })`：选项里有 `fd: 1|2`，别的选项不碍事
+//   `create-write-stream-direct`       直接调用的 `createWriteStream(path, { fd: 1, … })`
 //
 // 范围：apps/server/src（控制面的源码）；统一的出口 apps/server/src/util/output.ts 本身除外（那个文件由 test/error-log.test.ts 里
 // 「统一的出口文件自己」守，认同一批写法）。测试、前端、别的工作区不管。
 // `$filename` 是绝对路径，规则不知道仓库根在哪，所以按目录名认。
 //
-// 拦不住的（没写进规则，靠审查；ARCHITECTURE.md 里同样列着）：
-//   - 把 `process` 存进变量再取 stdout、stderr（`const p = process; p.stderr.write`）、传给别的函数、`Reflect.get(process, "stderr")`；
+// 清单之外认不出的（几种典型的，不求列全；ARCHITECTURE.md 里是同一份）：
+//   - 把 `process` 存进变量再取标准输出（`const p = process; p.stderr.write(…)`）、传给别的函数、`Reflect.get(process, "stderr")`；
 //   - 赋值解构（`({ stderr } = process)`）、参数默认值里的解构（`function f({ stderr } = process) {}`）；
 //   - 再导出（`export { stderr } from "node:process"`、`export * from "node:console"`）；
 //   - 模块名不是字符串字面量的导入（模板字符串 ``import(`node:process`)``）、`createRequire(import.meta.url)("node:process")`；
-//   - 拼出来的名字（`globalThis["con" + "sole"]`）、用变量当文件描述符的写（`writeSync(fd, …)`）、写 `/dev/stderr` 的文件流；
-//   - `tty`、`util.debuglog`、`diagnostics_channel`、子进程和工作线程继承来的标准输出、第三方日志库自己的输出。
+//   - 拼出来的名字（`globalThis["con" + "sole"]`）、用变量当文件描述符的写（`writeSync(fd, …)`）；
+//   - 写 `/dev/stderr` 的文件流、`tty`、`util.debuglog`、`diagnostics_channel`、子进程和工作线程继承来的标准输出、第三方日志库自己的输出。
 // Fastify 的日志是另一条出口，由 `sanitizeLogArgs` 处理（见 CODING_STANDARDS.md「日志与错误」）。
 or {
 	`console` as $span where { $form = "console" },
@@ -40,6 +54,10 @@ or {
 		`process.stdout`,
 		`process.stderr`
 	} as $span where { $form = "process-stream" },
+	or {
+		`process?.stdout`,
+		`process?.stderr`
+	} as $span where { $form = "process-stream-optional" },
 	or {
 		`$g.process.stdout`,
 		`$g.process.stderr`
@@ -51,28 +69,75 @@ or {
 		$form = "process-stream-global"
 	},
 	or {
+		`$g.process?.stdout`,
+		`$g.process?.stderr`,
+		`$g?.process.stdout`,
+		`$g?.process.stderr`,
+		`$g?.process?.stdout`,
+		`$g?.process?.stderr`
+	} as $span where {
+		$g <: or {
+			`globalThis`,
+			`global`
+		},
+		$form = "process-stream-global-optional"
+	},
+	or {
 		`process.emitWarning`,
-		`$g.process.emitWarning`
+		`process?.emitWarning`
 	} as $span where { $form = "process-emit-warning" },
+	or {
+		`$g.process.emitWarning`,
+		`$g.process?.emitWarning`,
+		`$g?.process.emitWarning`,
+		`$g?.process?.emitWarning`
+	} as $span where {
+		$g <: or {
+			`globalThis`,
+			`global`
+		},
+		$form = "process-emit-warning-global"
+	},
+	or {
+		`process._rawDebug`,
+		`process?._rawDebug`
+	} as $span where { $form = "process-raw-debug" },
 	JsVariableDeclarator() as $span where {
-		$span <: r"(?s)^\s*\{.*\}\s*(?::[^=]*)?=\s*process\s*$",
+		$span <: r"(?s)^\s*\{.*\}\s*(?::[^=]*)?=\s*\(*\s*process\s*\)*\s*(?:!|\bas\b.*|\bsatisfies\b.*)?$",
 		$span <: contains JsObjectBindingPattern() as $pattern where {
 			$pattern <: contains or {
 				`stdout`,
-				`stderr`
+				`stderr`,
+				`emitWarning`,
+				`_rawDebug`
 			}
 		},
 		$form = "process-destructure"
 	},
 	JsVariableDeclarator() as $span where {
-		$span <: r"(?s)^\s*\{.*\}\s*(?::[^=]*)?=\s*(?:globalThis|global)\.process\s*$",
+		$span <: r"(?s)^\s*\{.*\}\s*(?::[^=]*)?=\s*\(*\s*(?:globalThis|global)\.process\s*\)*\s*(?:!|\bas\b.*|\bsatisfies\b.*)?$",
 		$span <: contains JsObjectBindingPattern() as $pattern where {
 			$pattern <: contains or {
 				`stdout`,
-				`stderr`
+				`stderr`,
+				`emitWarning`,
+				`_rawDebug`
 			}
 		},
 		$form = "process-destructure-global"
+	},
+	JsVariableDeclarator() as $span where {
+		$span <: r"(?s)^\s*\{.*\}\s*(?::[^=]*)?=\s*\(*\s*(?:globalThis|global)\s*\)*\s*(?:!|\bas\b.*|\bsatisfies\b.*)?$",
+		$span <: contains JsObjectBindingPatternProperty() as $property where {
+			$property <: r"(?s)^\s*process\s*:.*",
+			$property <: contains or {
+				`stdout`,
+				`stderr`,
+				`emitWarning`,
+				`_rawDebug`
+			}
+		},
+		$form = "process-destructure-from-global"
 	},
 	or {
 		`import $_ from $source`,
@@ -90,34 +155,41 @@ or {
 		$form = "module-require"
 	},
 	or {
-		`$_.writeSync($fd, $...)`,
-		`writeSync($fd, $...)`,
-		`$_.writevSync($fd, $...)`,
-		`writevSync($fd, $...)`,
-		`$_.writeFileSync($fd, $...)`,
-		`writeFileSync($fd, $...)`,
-		`$_.appendFileSync($fd, $...)`,
-		`appendFileSync($fd, $...)`,
-		`fs.write($fd, $...)`,
-		`fs.writev($fd, $...)`,
-		`fs.writeFile($fd, $...)`,
-		`fs.appendFile($fd, $...)`
-	} as $span where {
+		`$_.writeSync($fd, $...)` as $span where { $form = "write-sync" },
+		`writeSync($fd, $...)` as $span where { $form = "write-sync-direct" },
+		`$_.writevSync($fd, $...)` as $span where { $form = "writev-sync" },
+		`writevSync($fd, $...)` as $span where { $form = "writev-sync-direct" },
+		`$_.writeFileSync($fd, $...)` as $span where { $form = "write-file-sync" },
+		`writeFileSync($fd, $...)` as $span where { $form = "write-file-sync-direct" },
+		`$_.appendFileSync($fd, $...)` as $span where { $form = "append-file-sync" },
+		`appendFileSync($fd, $...)` as $span where { $form = "append-file-sync-direct" },
+		`$_.write($fd, $...)` as $span where { $form = "write" },
+		`write($fd, $...)` as $span where { $form = "write-direct" },
+		`$_.writev($fd, $...)` as $span where { $form = "writev" },
+		`writev($fd, $...)` as $span where { $form = "writev-direct" },
+		`$_.writeFile($fd, $...)` as $span where { $form = "write-file" },
+		`writeFile($fd, $...)` as $span where { $form = "write-file-direct" },
+		`$_.appendFile($fd, $...)` as $span where { $form = "append-file" },
+		`appendFile($fd, $...)` as $span where { $form = "append-file-direct" }
+	} where {
 		$fd <: or {
 			`1`,
-			`2`
-		},
-		$form = "write-fd"
+			`2`,
+			`0x1`,
+			`0x2`
+		}
 	},
 	or {
-		`createWriteStream($_, { fd: $fd })`,
-		`$_.createWriteStream($_, { fd: $fd })`
-	} as $span where {
+		`$_.createWriteStream($_, $opts)` as $span where { $form = "create-write-stream" },
+		`createWriteStream($_, $opts)` as $span where { $form = "create-write-stream-direct" }
+	} where {
+		$opts <: contains `fd: $fd`,
 		$fd <: or {
 			`1`,
-			`2`
-		},
-		$form = "create-write-stream-fd"
+			`2`,
+			`0x1`,
+			`0x2`
+		}
 	}
 } where {
 	$filename <: r".*/apps/server/src/.*",

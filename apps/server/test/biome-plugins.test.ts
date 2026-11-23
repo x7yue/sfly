@@ -126,6 +126,42 @@ describe("自定义 lint 规则（biome-plugins/）", () => {
 		).toEqual(expected);
 	});
 
+	it("no-direct-output：规则里的名字、规则文件开头的清单、ARCHITECTURE 里的名字三处一致", () => {
+		// 清单是封闭的：规则认哪几种写法，就是文档列的那几种，每一种有名字（样例要求每个名字至少命中一次，见下）。
+		// 新加一种写法没写进清单、或者文档里列了规则里没有的名字，这里红。
+		const grit = readFileSync(join(pluginsDir, "no-direct-output.grit"), "utf8");
+		const declared = [
+			...new Set([...grit.matchAll(/\$form = "([\w-]+)"/g)].map((m) => m[1])),
+		].sort();
+		expect(
+			declared.length,
+			"规则里没有读到 $form 的名字：这条测试的读法和规则的写法对不上",
+		).toBeGreaterThan(20);
+		const header = grit
+			.split("\n")
+			.filter((line) => line.startsWith("//"))
+			.join("\n");
+		expect(
+			declared.filter((name) => !header.includes(`\`${name}\``)),
+			"规则文件开头的清单里没有写这些名字（用反引号括起来）：规则认的写法都要列在清单里。",
+		).toEqual([]);
+		const architecture = readFileSync(join(repoRoot, "docs", "ARCHITECTURE.md"), "utf8");
+		const paragraph = architecture
+			.split("\n")
+			.find((line) => line.includes("no-direct-output.grit"));
+		expect(
+			paragraph,
+			"docs/ARCHITECTURE.md 里找不到讲 no-direct-output 规则的那一段",
+		).toBeDefined();
+		const documented = [
+			...new Set([...(paragraph ?? "").matchAll(/`\[([a-z][a-z-]*)\]`/g)].map((m) => m[1])),
+		].sort();
+		expect(
+			documented,
+			"docs/ARCHITECTURE.md 里写的 `[名字]` 和规则里的 $form 名字不一致：规则认的写法要在文档里列全，文档里不能有规则里没有的名字。",
+		).toEqual(declared);
+	});
+
 	it("fixtures/ 里没有找不到规则的样例目录", () => {
 		const orphans = subdirs(fixturesDir).filter((name) => !plugins.includes(name));
 		expect(

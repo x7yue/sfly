@@ -1,7 +1,7 @@
 // 控制面往终端写东西的唯一出口（#578）：`apps/server/src` 里除了这个文件，要打印就走这里，不直接用 `console`、`process.stdout`、
-// `process.stderr`：lint 规则 no-direct-output 拦着一般的写法（换打印的函数、起别名、`globalThis.process`、`fs.writeSync(2, …)`、
-// `process.emitWarning` 等，完整的清单在 biome-plugins/no-direct-output.grit 开头和 docs/ARCHITECTURE.md），但它只看源码里写出来的名字，
-// 有意写出来的绕法（存进变量的 `process`、拼出来的名字……）它拦不住，那些靠审查。
+// `process.stderr`：lint 规则 no-direct-output 拦着一批写法（换打印的函数、起别名、`globalThis.process`、`fs.writeSync(2, …)`、
+// `process.emitWarning` 等），**它是方便，不是保证**：认的是 biome-plugins/no-direct-output.grit 开头清单里的写法（docs/ARCHITECTURE.md
+// 里是同一份），清单之外的（存进变量的 `process`、拼出来的名字……）不保证拦住，靠审查。
 // 错误一律过 {@link safeError}，数据库错误里的参数（密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址）不会进日志，
 // 也不会打在操作者的终端上。**只有 {@link printError} 收错误**：{@link printWarning}、{@link printInfo}、{@link writeStdout} 收的是
 // 字符串，把错误拼进去（`` printWarning(`失败：${error}`) ``）时已经是字符串，认不出来、去不了参数——要打印错误就用 printError。

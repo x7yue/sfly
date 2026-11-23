@@ -425,14 +425,16 @@ describe("describeError：给操作者看的一行说明带着原因（#578）",
 
 describe("统一的出口文件自己（#578）", () => {
 	/**
-	 * 出口文件里每个顶层的声明（函数、变量、类）：名字、起止行、函数的参数类型文字、函数体里有没有 `safeError(`。
+	 * 出口文件里每个顶层的语句：声明（函数、变量、类、导入）有名字，别的语句（默认导出、顶层的表达式语句……）叫「（语句种类）」；
+	 * 记下起止行、函数的参数类型文字、函数体里有没有 `safeError(`。
 	 * 「直接往终端写」不自己判断：用 lint 规则 no-direct-output 跑这个文件的副本（换个文件名，规则就不把它当出口文件排除），
 	 * 规则认的写法——包括 `const { stderr } = process`、`import { stderr } from "node:process"`、`writeSync(2, …)`、类的方法——
-	 * 这里同样认，命中的行落在哪个声明里，那个声明就是「直接往终端写」的。
+	 * 这里同样认，命中的行落在哪个顶层语句里，那个语句就是「直接往终端写」的。**每个命中都要落在登记的声明里**：
+	 * 落在别的语句里（默认导出的箭头函数、顶层直接打印的语句）也算，名字不在登记的里面，测试红。
 	 */
-	function declarations() {
-		const file = new URL("../src/util/output.ts", import.meta.url);
-		const text = readFileSync(file, "utf8");
+	function declarations(
+		text = readFileSync(new URL("../src/util/output.ts", import.meta.url), "utf8"),
+	) {
 		const source = ts.createSourceFile("output.ts", text, ts.ScriptTarget.Latest, true);
 		const hits = pluginHitLines(
 			"no-direct-output",
@@ -477,6 +479,9 @@ describe("统一的出口文件自己（#578）", () => {
 			} else if (ts.isImportDeclaration(statement)) {
 				// 导入本身命中（`import { stderr } from "node:process"`）：算在一个叫「（导入）」的声明里，一定不在登记的里面。
 				add("（导入）", statement);
+			} else {
+				// 默认导出的箭头函数、顶层的表达式语句等：命中落在这里也是「直接往终端写」，一定不在登记的里面。
+				add(`（${ts.SyntaxKind[statement.kind]}）`, statement);
 			}
 		}
 		return found;
@@ -501,6 +506,25 @@ describe("统一的出口文件自己（#578）", () => {
 			printing,
 			"apps/server/src/util/output.ts 里新加了直接往终端写的声明（或把已有的删了）：在这个测试的 REGISTERED 里登记它收什么参数；收错误的要先过 safeError。",
 		).toEqual(Object.keys(REGISTERED).sort());
+	});
+
+	it("守卫自己：出口文件里加默认导出的箭头函数、顶层直接打印的语句、不在登记里的函数，命中都落在没登记的语句里", () => {
+		const original = readFileSync(new URL("../src/util/output.ts", import.meta.url), "utf8");
+		const printing = (extra: string) =>
+			declarations(`${original}\n${extra}\n`)
+				.filter((d) => d.terminal)
+				.map((d) => d.name)
+				.filter((name) => !(name in REGISTERED));
+		expect(printing("export default (error: unknown) => { console.error(error); };")).toEqual([
+			"（ExportAssignment）",
+		]);
+		expect(printing('process.on("warning", (warning) => { console.error(warning); });')).toEqual([
+			"（ExpressionStatement）",
+		]);
+		expect(
+			printing("export function sneaky(text: string) { process.stderr.write(text); }"),
+		).toEqual(["sneaky"]);
+		expect(printing("")).toEqual([]);
 	});
 
 	it("登记的函数收的参数和登记的一样；只收字符串的不会打印错误对象，收错误的（unknown）先过 safeError", () => {
