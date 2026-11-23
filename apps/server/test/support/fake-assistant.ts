@@ -84,11 +84,14 @@ export class FakeAssistant {
 	promptDelayMs = 0;
 	/** 收到 `abort` 之后先等这么久（毫秒）再回应：让测试在中止还在路上时让别的事发生。 */
 	abortDelayMs = 0;
+	/** 收到 `steer` 之后先等这么久（毫秒）再回应：让测试在插话命令还在路上时让别的事发生。 */
+	steerDelayMs = 0;
 	/**
-	 * 按真助手服务的样子记「哪一轮在做」（默认关，多数用例自己用 `emit` 和 `abortReply` 控制）：开着时，会话已经有一轮在做时
-	 * 收到别的轮次的 `prompt` 回 409 `turn_running`；收到 `emit` 的这一轮的 `turn_end`，这一轮就不在做了；收到轮次是 N 的
-	 * 中止（回应是 202 的话），**还在做的、轮次不大于 N 的那一轮也结束**（协议 {@link AbortCommandBody}），记在
-	 * {@link endedByAbort}。
+	 * 按协议「一轮的状态」的表记每个会话的状态（没有一轮 / 在做 / 在停止 / 在停止且有一轮在等；默认关，多数用例自己用 `emit` 和
+	 * `abortReply` 控制）：开着时，会话已经有一轮在做（包括登记着、在等的）时收到别的轮次的 `prompt` 回 409 `turn_running`；
+	 * 收到 `emit` 的这一轮的 `turn_end`，这一轮就不在做了（**`emit` 直接发的 `turn_end` 也守插话的不变式**：这一轮没送到的插话先各发
+	 * 一条 `steer_dropped`）；收到轮次是 N 的中止（回应是 202 的话），**还在做的、轮次不大于 N 的那一轮也结束**
+	 * （协议 {@link AbortCommandBody}），记在 {@link endedByAbort}。
 	 */
 	strictTurns = false;
 	/** `strictTurns` 开着时，被中止结束的轮次（会话和轮次，按结束的先后）。 */
@@ -98,16 +101,14 @@ export class FakeAssistant {
 	readonly #stopping = new Map<string, number>();
 	/** 在旧的一轮停止期间登记的新一轮（会话 → 轮次）：旧的结束之后才开始。 */
 	readonly #pending = new Map<string, number>();
-	/** 收到过 `end` 的会话（`strictTurns` 开着时）：登记着、没开始的一轮不再开始（协议「结束会话」）。 */
-	readonly #ended = new Set<string>();
 	/**
-	 * 助手服务收下、还没送到的插话（`strictTurns` 开着时，会话 → 轮次和按收到顺序的列表）：收下时发一份含它的 `steer_queue`；
-	 * 一轮被中止或结束会话时，没送到的各发一条 `steer_dropped`（排在这一轮的 `turn_end` 前面，协议的不变式）；
-	 * 测试用 {@link deliverSteers} 模拟送到。
+	 * 助手服务收下、还没送到的插话（`strictTurns` 开着时，会话 → 轮次 → 按收到顺序的列表，**每一轮各有一份**：第 m 轮在停止、第 k 轮在等
+	 * 时两轮都可能有）：收下时发一份含它的 `steer_queue`；一轮结束时（中止、结束会话，或者测试用 `emit` 直接发的 `turn_end`），没送到的
+	 * 各发一条 `steer_dropped`，排在这一轮的 `turn_end` 前面（协议的不变式）；测试用 {@link deliverSteers} 模拟送到。
 	 */
-	readonly #steerQueue = new Map<
+	readonly #steerQueues = new Map<
 		string,
-		{ turn: number; messages: Array<{ message_id: string; text: string }> }
+		Map<number, Array<{ message_id: string; text: string }>>
 	>();
 	healthDelayMs = 0;
 	/** 收到过几次 `GET /health`。 */
@@ -185,6 +186,8 @@ export class FakeAssistant {
 		event: AssistantEvent,
 		at: Date | string = new Date("2026-01-01T00:00:00.000Z"),
 	): AssistantStreamRecord {
+		// 协议的不变式：这一轮没送到的插话，各有一条 `steer_dropped`，排在这一轮的 `turn_end` 前面（不论这条 `turn_end` 是谁发的）。
+		if (event.type === "turn_end") this.#dropSteers(sessionId, turn);
 		const persisted = (PERSISTED_SESSION_EVENT_TYPES as readonly string[]).includes(event.type);
 		const record = AssistantStreamRecord.parse({
 			epoch: this.epoch,
@@ -197,8 +200,8 @@ export class FakeAssistant {
 		if (event.type === "turn_end" && this.#running.get(sessionId) === turn) {
 			this.#running.delete(sessionId);
 		}
-		if (event.type === "turn_end" && this.#steerQueue.get(sessionId)?.turn === turn) {
-			this.#steerQueue.delete(sessionId);
+		if (event.type === "turn_end" && this.#pending.get(sessionId) === turn) {
+			this.#pending.delete(sessionId);
 		}
 		this.#write(record);
 		if (event.type === "turn_end" && this.#stopping.get(sessionId) === turn) {
@@ -218,36 +221,43 @@ export class FakeAssistant {
 		return this.#pending.get(sessionId);
 	}
 
-	/** 旧的一轮结束了：登记着的新一轮开始（被中止过的直接以 stopped 结束）。 */
+	/**
+	 * 旧的一轮结束了：登记着的新一轮开始。被中止的那一轮（轮次不大于记号）在 `abort` 到的那一刻就已经立即结束了（协议表「在停止、
+	 * 第 k 轮在等 × `abort`」），不会走到这里。
+	 */
 	#startPending(sessionId: string): void {
 		const turn = this.#pending.get(sessionId);
 		if (turn === undefined) return;
 		this.#pending.delete(sessionId);
-		if (this.#ended.has(sessionId)) {
-			this.#emitEnd(sessionId, turn, "会话结束了，这一轮没有开始");
-			return;
-		}
-		if ((this.abortMarks.get(sessionId) ?? 0) >= turn) {
-			this.#emitEnd(sessionId, turn, "这一轮在开始之前就被中止了");
-			return;
-		}
 		this.#running.set(sessionId, turn);
 	}
 
-	/** 模拟助手服务把这个会话里收下的插话都送到了模型：发一份空的 `steer_queue`（`strictTurns` 开着时）。 */
-	deliverSteers(sessionId: string): void {
-		const queue = this.#steerQueue.get(sessionId);
+	/**
+	 * 模拟助手服务把这个会话里这一轮（默认是在做的那一轮，没有就是在停止的、在等的）收下的插话都送到了模型（`strictTurns` 开着时）：
+	 * 这一轮在做时发一份空的 `steer_queue`；**这一轮已经在停止时只更新自己的记录、不再外传**（协议「停止一轮」第 1 步：决定结束之后不再发
+	 * `steer_queue`），所以这样送到的话在 `turn_end` 到的时候仍列在最后一份 `steer_queue` 里、又没有 `steer_dropped`，算送到。
+	 */
+	deliverSteers(sessionId: string, turn?: number): void {
+		const target =
+			turn ??
+			this.#running.get(sessionId) ??
+			this.#stopping.get(sessionId) ??
+			this.#pending.get(sessionId);
+		if (target === undefined) return;
+		const queue = this.#steerQueues.get(sessionId)?.get(target);
 		if (!queue) return;
-		queue.messages.length = 0;
-		this.emit(sessionId, queue.turn, { type: "steer_queue", messages: [] });
+		queue.length = 0;
+		if (this.#stopping.get(sessionId) === target) return;
+		this.emit(sessionId, target, { type: "steer_queue", messages: [] });
 	}
 
-	/** `#emitEnd` 之前：没送到的插话各发一条 `steer_dropped`（协议的不变式），之后这一轮没有待送的插话。 */
+	/** 这一轮的 `turn_end` 之前：没送到的插话各发一条 `steer_dropped`（协议的不变式），之后这一轮没有待送的插话。 */
 	#dropSteers(sessionId: string, turn: number): void {
-		const queue = this.#steerQueue.get(sessionId);
-		if (!queue || queue.turn !== turn) return;
-		this.#steerQueue.delete(sessionId);
-		for (const message of queue.messages) {
+		const queues = this.#steerQueues.get(sessionId);
+		const queue = queues?.get(turn);
+		if (!queues || !queue) return;
+		queues.delete(turn);
+		for (const message of queue) {
 			this.emit(sessionId, turn, {
 				type: "notice",
 				kind: "steer_dropped",
@@ -270,8 +280,14 @@ export class FakeAssistant {
 		}
 	}
 
+	/** 在等的第 `turn` 轮立即以 `stopped` 结束（被中止、会话结束了）：不起 pi，状态回到「在停止」。 */
+	#endPending(sessionId: string, turn: number, reason: string): void {
+		this.#pending.delete(sessionId);
+		this.#emitEnd(sessionId, turn, reason);
+	}
+
+	/** 发这一轮的 `stopped` 的 `turn_end`（`emit` 先为没送到的插话发 `steer_dropped`）。 */
 	#emitEnd(sessionId: string, turn: number, reason: string): void {
-		this.#dropSteers(sessionId, turn);
 		this.emit(sessionId, turn, {
 			type: "turn_end",
 			turn,
@@ -393,10 +409,14 @@ export class FakeAssistant {
 			const reply = this.endReply(sessionId);
 			if (reply) return this.#error(res, reply);
 			this.#send(res, 202);
-			// 协议「结束会话」：202 收到就回；有一轮在做就照停止结束它、`turn_end` 照常发；在停止的等它停完；登记着、没开始的一轮
-			// 不再开始；不动中止记号。
+			// 协议「结束会话」和表里 `end` 一列：202 收到就回；有一轮在做就照停止结束它、`turn_end` 照常发；在停止的照常停完；在停止、
+			// 又有一轮在等的，等的那一轮立即 `stopped`；不动中止记号。**助手服务不记得会话结束了**：`end` 之后轮次比记号大的 `prompt`
+			// 照表处理（正确的控制面不会发出这样的 `prompt`）。
 			if (this.strictTurns) {
-				this.#ended.add(sessionId);
+				const pending = this.#pending.get(sessionId);
+				if (pending !== undefined) {
+					this.#endPending(sessionId, pending, "会话结束了，这一轮没有开始");
+				}
 				const running = this.#running.get(sessionId);
 				if (running !== undefined) this.#stopTurn(sessionId, running, "会话结束了");
 			}
@@ -420,36 +440,31 @@ export class FakeAssistant {
 			const received = { sessionId, body: steer.data };
 			this.steers.push(received);
 			this.log.push(`steer:${sessionId}`);
+			if (this.steerDelayMs > 0) await new Promise((r) => setTimeout(r, this.steerDelayMs));
 			const reply = this.steerReply(received);
 			if (reply) return this.#error(res, reply);
-			// 协议：只有 `turn` 那一轮在做（包括登记着、等旧的一轮结束的新一轮）才回 202；没有一轮、在停止、轮次对不上回 409
-			// `no_turn_running`。同一个 `message_id` 只认一次。
+			// 协议「插话」：只有 `turn` 那一轮「在做」（包括登记着、等旧的一轮结束的新一轮）才回 202；没有一轮、`turn` 那一轮在停止或者
+			// 已经结束、`turn` 不是在做的那一轮回 409 `no_turn_running`。同一个 `message_id` 只认一次。**每一轮各有自己的待送队列**。
 			if (this.strictTurns) {
 				const turn = steer.data.turn;
-				const pending = this.#pending.get(sessionId);
-				const waiting =
-					pending === turn &&
-					!this.#ended.has(sessionId) &&
-					(this.abortMarks.get(sessionId) ?? 0) < turn;
-				if (this.#running.get(sessionId) !== turn && !waiting) {
+				if (this.#running.get(sessionId) !== turn && this.#pending.get(sessionId) !== turn) {
 					return this.#error(res, {
 						status: 409,
 						code: "no_turn_running",
 						message: "没有可以送到的一轮",
 					});
 				}
-				const queue = this.#steerQueue.get(sessionId);
-				const entry = { message_id: steer.data.message_id, text: steer.data.text };
-				if (!queue || queue.turn !== turn) {
-					this.#steerQueue.set(sessionId, { turn, messages: [entry] });
-				} else if (!queue.messages.some((m) => m.message_id === entry.message_id)) {
-					queue.messages.push(entry);
+				const queues =
+					this.#steerQueues.get(sessionId) ??
+					new Map<number, Array<{ message_id: string; text: string }>>();
+				this.#steerQueues.set(sessionId, queues);
+				const queue = queues.get(turn) ?? [];
+				queues.set(turn, queue);
+				if (!queue.some((m) => m.message_id === steer.data.message_id)) {
+					queue.push({ message_id: steer.data.message_id, text: steer.data.text });
 				}
 				this.#send(res, 202);
-				this.emit(sessionId, turn, {
-					type: "steer_queue",
-					messages: [...(this.#steerQueue.get(sessionId)?.messages ?? [])],
-				});
+				this.emit(sessionId, turn, { type: "steer_queue", messages: [...queue] });
 				return;
 			}
 			return this.#send(res, 202);
@@ -480,12 +495,18 @@ export class FakeAssistant {
 			// 协议：先把中止记号提到 N（只增不减），再按状态处理；回应不等这一轮的 `turn_end`。
 			this.abortMarks.set(sessionId, Math.max(this.abortMarks.get(sessionId) ?? 0, turn));
 			this.#send(res, 202);
-			// 在做的、轮次不大于 N 的那一轮进入在停止；比 N 新的不动。登记着、没开始的一轮（轮次不大于 N）在旧的一轮结束
-			// 之后以 `stopped` 结束（`#startPending`）。
-			const running = this.#running.get(sessionId);
-			if (this.strictTurns && running !== undefined && running <= turn) {
-				this.endedByAbort.push({ sessionId, turn: running });
-				this.#stopTurn(sessionId, running, "助手服务按中止结束了这一轮");
+			// 表里 `abort` 一列：在做的、轮次不大于 N 的那一轮进入在停止；比 N 新的不动；在停止的照常停完；在停止、第 k 轮在等时，k 不大于
+			// N 的话**立即**以 `stopped` 结束（它的插话各发 `steer_dropped`，排在这条 `turn_end` 前面），状态回到「在停止」，k 大于 N 的不动。
+			if (this.strictTurns) {
+				const pending = this.#pending.get(sessionId);
+				if (pending !== undefined && pending <= turn) {
+					this.#endPending(sessionId, pending, "这一轮在开始之前就被中止了");
+				}
+				const running = this.#running.get(sessionId);
+				if (running !== undefined && running <= turn) {
+					this.endedByAbort.push({ sessionId, turn: running });
+					this.#stopTurn(sessionId, running, "助手服务按中止结束了这一轮");
+				}
 			}
 			return;
 		}

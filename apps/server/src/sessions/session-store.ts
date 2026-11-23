@@ -40,7 +40,7 @@ export function toListItem(
 		created_by: row.createdBy,
 		created_at: row.createdAt.toISOString(),
 		last_activity_at: row.lastActivityAt.toISOString(),
-		queue_position: row.status === "queued" ? queuePosition : null,
+		queue_position: row.queuedAt !== null ? queuePosition : null,
 		last_turn_outcome: lastTurnOutcome,
 	};
 }
@@ -260,10 +260,10 @@ export class SessionStore {
 			.limit(SESSION_LIST_LIMIT + 1);
 		const rows = found.slice(0, SESSION_LIST_LIMIT);
 		const outcomes = await this.#lastOutcomes(rows.map((row) => row.id));
-		// 排队中的会话排第几：按排队的先后（和轮到谁开始的顺序一致），不是列表里的顺序。
+		// 排队中的会话（和停止途中说了话、排在这一轮后面的会话）排第几：按排队的先后（和轮到谁开始的顺序一致），不是列表里的顺序。
 		const positions = new Map<string, number>();
-		if (rows.some((row) => row.status === "queued")) {
-			for (const [index, row] of (await this.queued(project)).entries()) {
+		if (rows.some((row) => row.queuedAt !== null)) {
+			for (const [index, row] of (await this.queueOrder(project)).entries()) {
 				positions.set(row.id, index + 1);
 			}
 		}
@@ -491,11 +491,23 @@ export class SessionStore {
 			.orderBy(asc(sessions.queuedAt), asc(sessions.id));
 	}
 
-	/** 排队中的会话排第几（从 1 起）；不在排队时为 null。 */
+	/**
+	 * 项目里有排队时间的会话（排队中的，和停止途中说了话、排在这一轮后面的在做的会话），最早的在前（按说话的时刻排，不插队），
+	 * 同一时刻的按 ID：它们各自开始下一轮的先后，也是页面显示「排在第几位」的依据。
+	 */
+	async queueOrder(project: ProjectId): Promise<SessionRow[]> {
+		return this.deps.db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.projectId, project), sql`${sessions.queuedAt} is not null`))
+			.orderBy(asc(sessions.queuedAt), asc(sessions.id));
+	}
+
+	/** 排队的会话排第几（从 1 起，见 {@link queueOrder}）；没有排队时间时为 null。 */
 	async queuePosition(row: SessionRow): Promise<number | null> {
-		if (row.status !== "queued") return null;
-		const ahead = await this.queued(row.projectId);
-		const index = ahead.findIndex((other) => other.id === row.id);
+		if (row.queuedAt === null) return null;
+		const order = await this.queueOrder(row.projectId);
+		const index = order.findIndex((other) => other.id === row.id);
 		return index < 0 ? null : index + 1;
 	}
 
@@ -604,8 +616,8 @@ export class SessionStore {
 	}
 
 	/**
-	 * 在做的会话里用户插话：写 `user_message`（`steer` 为 true），在**一个事务里**核对会话此刻在做（不在做时什么也不写，
-	 * 返回当时的状态，调用方按空闲的会话处理）。返回这一轮的轮次和写下的事件。
+	 * 在做的会话里用户插话：写 `user_message`（`steer` 为 true），在**一个事务里**核对会话此刻在做、没有话排在这一轮后面（不满足时什么也不写，
+	 * 返回当时的状态，调用方重新判断）。返回这一轮的轮次和写下的事件。
 	 */
 	async steer(
 		sessionId: string,
@@ -618,13 +630,108 @@ export class SessionStore {
 			const now = this.deps.clock.now();
 			const result = await this.deps.db.transaction(async (tx) => {
 				const session = await lockSession(tx, sessionId);
-				if (session.status !== "running")
+				// 在做、但已经有话排在这一轮后面（正在停止，{@link queueBehind}）的会话也不收插话：那句排着的话是下一轮要交给助手服务的，
+				// 插话写在它后面的话，下一轮取到的就是插话。
+				if (session.status !== "running" || session.queuedAt !== null)
 					return { steered: false as const, status: session.status };
 				const { event } = await this.#insert(tx, session, parsePersistent(user), now);
 				return { steered: true as const, turn: effectiveTurn(session), event };
 			});
 			if (result.steered) await this.#publishCommitted(sessionId, [result.event]);
 			return result;
+		});
+	}
+
+	/**
+	 * 在做的会话**正在停止**（控制面发出了中止、这一轮的结局还没有写下）时用户又说了话：不是插话，是新的一轮的开头，排在这一轮后面
+	 * （协议「停止一轮」的控制面一侧）。在**一个事务里**核对会话此刻在做、还没有排在后面的话，写 `user_message`（`steer` 为 false）、
+	 * 记下排队时间（按说话的时刻排，不插队：项目里前面已经有别的会话在排，它就排在它们后面）；会话仍是在做，这一轮的结局写下时改成
+	 * 排队中（保留排队时间，{@link SessionStore.append}）、由排队开始它。不在做时什么也不写，返回当时的状态；已经有话排在后面时返回
+	 * `already`（排队中再说话 409）。
+	 */
+	async queueBehind(
+		sessionId: string,
+		user: SessionEventBody,
+	): Promise<
+		| { queued: true; event: PersistedSessionEvent }
+		| { queued: false; status: SessionStatus; already: boolean }
+	> {
+		return this.#serial(sessionId, async () => {
+			const now = this.deps.clock.now();
+			const result = await this.deps.db.transaction(async (tx) => {
+				const session = await lockSession(tx, sessionId);
+				if (session.status !== "running") {
+					return { queued: false as const, status: session.status, already: false };
+				}
+				if (session.queuedAt !== null) {
+					return { queued: false as const, status: session.status, already: true };
+				}
+				const [row] = await tx
+					.update(sessions)
+					.set({
+						queuedAt: now,
+						lastActivityAt: sql`greatest(${sessions.lastActivityAt}, ${now.toISOString()}::timestamptz)`,
+					})
+					.where(eq(sessions.id, sessionId))
+					.returning();
+				const { event } = await this.#insert(tx, row as SessionRow, parsePersistent(user), now);
+				return { queued: true as const, event };
+			});
+			if (result.queued) await this.#publishCommitted(sessionId, [result.event]);
+			return result;
+		});
+	}
+
+	/**
+	 * 控制面为一句没有送到的插话写 `steer_dropped`（插话命令回 409、超时、连不上、5xx）：**这一轮已经有 `turn_end` 的不写**
+	 * （那时控制面补结局已经为没有确认送到的插话各写过，助手服务带回结局的话它自己写过；`steer_dropped` 都在 `turn_end` 前面，
+	 * 不能落在它后面、更不能落进下一轮）；这句话已经有 `steer_dropped` 的也不再写。核对和写在一个事务里。返回写下的事件，没写返回 undefined。
+	 */
+	async appendSteerDropped(
+		sessionId: string,
+		turn: number,
+		messageId: string,
+		message: string,
+	): Promise<PersistedSessionEvent | undefined> {
+		return this.#serial(sessionId, async () => {
+			const stored = await this.deps.db.transaction(async (tx) => {
+				const session = await lockSession(tx, sessionId);
+				const [ended] = await tx
+					.select({ seq: sessionEvents.seq })
+					.from(sessionEvents)
+					.where(
+						and(
+							eq(sessionEvents.sessionId, sessionId),
+							sql`${sessionEvents.type} = 'turn_end'`,
+							sql`${sessionEvents.payload}->>'turn' = ${String(turn)}`,
+						),
+					)
+					.limit(1);
+				if (ended) return undefined;
+				const [dropped] = await tx
+					.select({ seq: sessionEvents.seq })
+					.from(sessionEvents)
+					.where(
+						and(
+							eq(sessionEvents.sessionId, sessionId),
+							sql`${sessionEvents.type} = 'notice'`,
+							sql`${sessionEvents.payload}->>'kind' = 'steer_dropped'`,
+							sql`${sessionEvents.payload}->>'message_id' = ${messageId}`,
+						),
+					)
+					.limit(1);
+				if (dropped) return undefined;
+				const body = {
+					type: "notice" as const,
+					kind: "steer_dropped" as const,
+					message,
+					message_id: messageId,
+				};
+				return (await this.#insert(tx, session, parsePersistent(body), this.deps.clock.now()))
+					.event;
+			});
+			if (stored) await this.#publishCommitted(sessionId, [stored]);
+			return stored;
 		});
 	}
 
@@ -934,8 +1041,12 @@ export class SessionStore {
 			});
 			for (const drop of stored.drops) await this.#publishCommitted(sessionId, [drop.event]);
 			if (!stored.end.duplicate) await this.#publishCommitted(sessionId, [stored.end.event]);
-			if (stored.end.endedTurn) this.#turnEnded(stored.end.project);
-			this.#steerSeen.delete(sessionId);
+			if (stored.end.endedTurn) {
+				// 只有写的是**当前这一轮**的结局才清「确认送到」的记录：更早一轮的重复结局（比如第 t 轮的 `prompt` 超时时第 t+1 轮已经
+				// 开始）不动当前这一轮的。
+				this.#steerSeen.delete(sessionId);
+				this.#turnEnded(stored.end.project);
+			}
 			return stored.end.event;
 		});
 	}
@@ -1031,8 +1142,9 @@ export class SessionStore {
 		// 结束的是「此刻在做的那一轮」：会话回到空闲，`current_turn` 也抬到这一轮。在做、但一条 `turn_started` 都没有的
 		// 旧数据（迁移回填成 0，`effectiveTurn` 当作第 1 轮）不抬的话，下一轮又是第 1 轮，那一轮真正的 `turn_end`
 		// 会被当作第 1 轮的重复吞掉。
+		// 这一轮正在停止时用户又说了话（排队时间有值）：会话改成排队中、保留排队时间，由排队开始它的下一轮；否则回到空闲。
 		const endsTurn = {
-			status: "idle" as const,
+			status: (session.queuedAt !== null ? "queued" : "idle") as "queued" | "idle",
 			currentTurn: sql`greatest(${sessions.currentTurn}, ${parsed.type === "turn_end" ? parsed.turn : 0})`,
 		};
 		if (parsed.type === "turn_end") {

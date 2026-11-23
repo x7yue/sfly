@@ -1,5 +1,5 @@
 {
-  "id": "a23638a7-cea2-4b39-848d-73dc39377acc",
+  "id": "298f08a5-7060-4cac-8458-53dc1aaa15a1",
   "prevId": "1b4d1b14-d376-44df-832c-751bb22eeb74",
   "version": "7",
   "dialect": "postgresql",
@@ -2305,7 +2305,7 @@
             }
           ],
           "isUnique": false,
-          "where": "\"sessions\".\"status\" = 'queued'",
+          "where": "\"sessions\".\"queued_at\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -2386,7 +2386,7 @@
         },
         "sessions_queued_at": {
           "name": "sessions_queued_at",
-          "value": "(\"sessions\".\"status\" = 'queued') = (\"sessions\".\"queued_at\" is not null)"
+          "value": "(\"sessions\".\"queued_at\" is null and \"sessions\".\"status\" <> 'queued') or (\"sessions\".\"queued_at\" is not null and \"sessions\".\"status\" in ('queued', 'running'))"
         },
         "sessions_status": {
           "name": "sessions_status",

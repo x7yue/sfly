@@ -196,7 +196,7 @@ describe("假助手服务按协议的状态表回应", () => {
 		expect(await prompt(3)).toBe(409); // 第 2 轮在做
 	});
 
-	it("在停止、第 k 轮在等：abort 带的 N 不小于 k，第 k 轮不再开始，旧的一轮的 turn_end 之后发它的 steer_dropped 和 stopped", async () => {
+	it("在停止、第 k 轮在等：abort 带的 N 不小于 k，第 k 轮立即 stopped（它的插话各发 steer_dropped 在前），不等第 m 轮的 turn_end，状态回到在停止", async () => {
 		assistant.stopSettleMs = 500;
 		expect(await prompt(1)).toBe(202);
 		expect(await abort(1)).toBe(202);
@@ -205,14 +205,89 @@ describe("假助手服务按协议的状态表回应", () => {
 		expect(await steer(2, id)).toBe(202);
 		expect(await abort(2)).toBe(202);
 		await until(() => seen().includes("turn_end:2:stopped"));
-		const tail = seen();
-		expect(tail.indexOf("turn_end:1:stopped")).toBeGreaterThanOrEqual(0);
-		// 第 2 轮：它的插话各一条 steer_dropped，之后才是它的 stopped；都在第 1 轮的 turn_end 之后。
-		const dropped = tail.indexOf(`steer_dropped:${id}`);
-		expect(dropped).toBeGreaterThan(tail.indexOf("turn_end:1:stopped"));
-		expect(tail.indexOf("turn_end:2:stopped")).toBeGreaterThan(dropped);
+		// 第 2 轮：它的插话各一条 steer_dropped，之后才是它的 stopped；第 1 轮还在停止，它的 turn_end 还没有发。
+		const early = seen();
+		expect(early.indexOf(`steer_dropped:${id}`)).toBeGreaterThan(-1);
+		expect(early.indexOf("turn_end:2:stopped")).toBeGreaterThan(
+			early.indexOf(`steer_dropped:${id}`),
+		);
+		expect(early).not.toContain("turn_end:1:stopped");
 		expect(assistant.pendingTurn(SESSION)).toBeUndefined();
+		expect(assistant.stoppingTurn(SESSION)).toBe(1); // 状态回到「在停止（第 1 轮）」
+		expect(await steer(2)).toBe(409); // 第 2 轮已经结束
+		await until(() => seen().includes("turn_end:1:stopped"));
 		expect(await prompt(3)).toBe(202); // 第 2 轮没有在做：第 3 轮（大于记号 2）照常
+	});
+
+	it("在停止、第 k 轮在等：abort 带的 N 小于 k，第 k 轮不动，第 m 轮的 turn_end 之后它开始", async () => {
+		assistant.stopSettleMs = 300;
+		expect(await prompt(1)).toBe(202);
+		expect(await abort(1)).toBe(202);
+		expect(await prompt(3)).toBe(202); // 第 3 轮在等
+		expect(await abort(2)).toBe(202); // N=2 小于 3：不动第 3 轮
+		expect(assistant.pendingTurn(SESSION)).toBe(3);
+		await until(() => seen().includes("turn_end:1:stopped"));
+		expect(assistant.pendingTurn(SESSION)).toBeUndefined();
+		expect(await prompt(4)).toBe(409); // 第 3 轮在做
+	});
+
+	it("插话的待送队列每一轮各一份：第 m 轮在停止时给等着的第 k 轮插话，不影响第 m 轮没送到的话的 steer_dropped", async () => {
+		assistant.stopSettleMs = 300;
+		expect(await prompt(1)).toBe(202);
+		const first = randomUUID();
+		expect(await steer(1, first, "给第 1 轮")).toBe(202);
+		expect(await abort(1)).toBe(202); // 第 1 轮在停止，那句话还没送到
+		expect(await prompt(2)).toBe(202); // 第 2 轮在等
+		const second = randomUUID();
+		expect(await steer(2, second, "给第 2 轮")).toBe(202);
+		await until(() => seen().includes("turn_end:1:stopped"));
+		const tail = seen();
+		// 第 1 轮那句话的 steer_dropped 在第 1 轮的 turn_end 前面；第 2 轮的话没有被丢。
+		expect(tail.indexOf(`steer_dropped:${first}`)).toBeGreaterThan(-1);
+		expect(tail.indexOf("turn_end:1:stopped")).toBeGreaterThan(
+			tail.indexOf(`steer_dropped:${first}`),
+		);
+		expect(tail).not.toContain(`steer_dropped:${second}`);
+		// 第 2 轮开始了（在做），它的待送队列还在：用 emit 直接发它的 turn_end，没送到的话仍各发一条 steer_dropped 在前。
+		await settle();
+		lines.length = 0;
+		turnEnd(2);
+		await settle();
+		expect(seen()).toEqual([`steer_dropped:${second}`, "turn_end:2:completed"]);
+	});
+
+	it("emit 直接发的 turn_end 也守插话的不变式：没送到的插话各发一条 steer_dropped 在前；已经送到的不发", async () => {
+		expect(await prompt(1)).toBe(202);
+		const lost = randomUUID();
+		const delivered = randomUUID();
+		expect(await steer(1, lost, "没送到")).toBe(202);
+		turnEnd(1);
+		await settle();
+		expect(seen().slice(-3)).toEqual([
+			`steer_queue:1`,
+			`steer_dropped:${lost}`,
+			"turn_end:1:completed",
+		]);
+		expect(await prompt(2)).toBe(202);
+		expect(await steer(2, delivered, "送到了")).toBe(202);
+		assistant.deliverSteers(SESSION); // 送到：空的 steer_queue
+		await settle();
+		lines.length = 0;
+		turnEnd(2);
+		await settle();
+		expect(seen()).toEqual(["turn_end:2:completed"]);
+	});
+
+	it("在停止时送到的插话（决定结束之后、清空之前）只更新助手服务自己的记录、不再外传 steer_queue：turn_end 前既没有 steer_dropped，最后一份 steer_queue 里还列着它", async () => {
+		assistant.stopSettleMs = 300;
+		expect(await prompt(1)).toBe(202);
+		const id = randomUUID();
+		expect(await steer(1, id)).toBe(202);
+		expect(await abort(1)).toBe(202);
+		assistant.deliverSteers(SESSION, 1); // T0 之后送到
+		await until(() => seen().includes("turn_end:1:stopped"));
+		const all = seen();
+		expect(all).toEqual(["steer_queue:1", "turn_end:1:stopped"]);
 	});
 
 	it("在停止的轮次有没送到的插话：停止结束时每句各一条 steer_dropped，排在 turn_end 前面", async () => {
@@ -229,8 +304,8 @@ describe("假助手服务按协议的状态表回应", () => {
 		]);
 	});
 
-	it("end：202 收到就回；在做的一轮照停止结束、turn_end 照常发；登记着没开始的一轮不再开始；不动中止记号", async () => {
-		assistant.stopSettleMs = 500;
+	it("end：202 收到就回；在做的一轮照停止结束、turn_end 照常发；在停止、第 k 轮在等时 k 立即 stopped；不动中止记号；助手服务不记得会话结束了", async () => {
+		assistant.stopSettleMs = 800;
 		expect(await prompt(1)).toBe(202);
 		expect(await end()).toBe(202);
 		await settle();
@@ -238,9 +313,16 @@ describe("假助手服务按协议的状态表回应", () => {
 		expect(seen()).toEqual([]); // 在停止：还没发 turn_end
 		expect(assistant.abortMarks.get(SESSION)).toBeUndefined(); // end 不动记号
 		expect(await prompt(2)).toBe(202); // 在停止、第 2 轮在等
-		await until(() => seen().length >= 2);
-		expect(seen()).toEqual(["turn_end:1:stopped", "turn_end:2:stopped"]);
-		// 没有一轮时 end 也是 202（重复调用无害）。
+		expect(await end()).toBe(202); // 在停止、第 2 轮在等 × end：第 2 轮立即 stopped
+		await until(() => seen().includes("turn_end:2:stopped"));
+		expect(seen()).not.toContain("turn_end:1:stopped");
+		await until(() => seen().includes("turn_end:1:stopped"));
+		// 没有一轮时 end 也是 202（重复调用无害）；助手服务不记得 end：之后轮次比记号大的 prompt 照表处理，起一轮、照常做。
 		expect(await end()).toBe(202);
+		lines.length = 0;
+		expect(await prompt(3)).toBe(202);
+		await settle();
+		expect(seen()).toEqual([]);
+		expect(await prompt(4)).toBe(409); // 第 3 轮在做，没有因为 end 被拒绝或结束
 	});
 });

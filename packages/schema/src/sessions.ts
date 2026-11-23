@@ -174,8 +174,9 @@ export type ReadinessProblemKind = z.infer<typeof ReadinessProblemKind>;
  * - 503 `assistant_not_configured`：助手没有配置，写接口返回它（读接口照常，就绪状态里写明）；
  * - 503 `assistant_unavailable`：助手服务连不上；
  * - 503 `model_unavailable`：模型没有配置或连不上，新的一轮在开始之前被拒绝（#548）；
- * - 409 `turn_running`：助手服务说这个会话还有一轮在做，而控制面看来已经结束了（例如交给助手服务的请求超时、助手服务
- *   其实收下了那一轮的窗口里再发话；在做时发话是插话，不是它）；409 `project_busy`：竖切里同一个项目另一个会话在做时的
+ * - 409 `turn_running`：助手服务说这个会话还有一轮在做，而控制面看来已经结束了（例如控制面等了 `ASSISTANT_STOP_WAIT_MS` 没有等到
+ *   结局、自己补了结局，助手服务那边那一轮其实还在做，这时再发话；在做时发话是插话，正在停止时发话排在后面，都不是它）；
+ *   409 `project_busy`：竖切里同一个项目另一个会话在做时的
  *   拒绝，#544 起改成排队，不再出现（码留着，不影响生成的类型）；
  * - 409 `session_queued`：排队中再发话（#544）；409 `session_ended`：会话已结束；
  * - 409 `session_predates_login`：这个会话建于登录之前（没有发起人的用户），签发不了会话令牌，要新建一个会话（#547）。
@@ -277,7 +278,7 @@ export type WaitingFor = z.infer<typeof WaitingFor>;
 
 /**
  * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
- * `waiting_for` 是正在做的那个会话。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
+ * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
  * （{@link SessionView}）和快照（{@link SnapshotEvent}）里，刷新页面后拿得回来。#544 起。
  */
 export const TurnQueuedEvent = z.object({
@@ -666,8 +667,9 @@ export const Readiness = z
 export type Readiness = z.infer<typeof Readiness>;
 
 /**
- * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 只在排队中（`status` 为 `queued`）时有值，
- * 从 1 起；`last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
+ * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
+ * 排在这一轮后面的在做的会话（`status` 为 `running`）也有，从 1 起，按说话的时刻排（和轮到谁开始的顺序一致）；
+ * `last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
  */
 export const SessionListItem = z.object({
 	id: SessionId,
@@ -683,7 +685,8 @@ export const SessionListItem = z.object({
 export type SessionListItem = z.infer<typeof SessionListItem>;
 
 /**
- * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；
+ * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；停止途中说了话的
+ * 在做的会话在等的是它自己正在停止的这一轮；
  * `turn_queued` 不持久，刷新页面后靠它拿回在等谁，#544）。
  */
 export const SessionView = SessionListItem.extend({
