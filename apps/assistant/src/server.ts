@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
+	AbortCommandBody,
 	ASSISTANT_STREAM_HEARTBEAT_MS,
 	type AssistantErrorBody,
 	type AssistantErrorCode,
@@ -11,7 +12,6 @@ import {
 	SessionId,
 } from "@sfly/schema";
 import type { EventBus } from "./bus.js";
-import { AbortCommandBody } from "./protocol-pending.js";
 import type { SessionManager } from "./sessions.js";
 
 /**

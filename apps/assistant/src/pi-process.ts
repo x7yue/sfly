@@ -2,8 +2,8 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
+import { ASSISTANT_PROCESS_KILL_GRACE_MS } from "@sfly/schema";
 import { LineSplitter } from "./jsonl.js";
-import { ASSISTANT_PROCESS_KILL_GRACE_MS } from "./protocol-pending.js";
 
 /**
  * 一个 RPC 模式的 pi 进程（pi `docs/rpc.md`）：写命令（照顾 stdin 的背压），按 LF 切读 stdout 的记录，
