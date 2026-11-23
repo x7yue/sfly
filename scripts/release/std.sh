@@ -18,7 +18,10 @@ cd "$(dirname "$0")/../.."
 PYPROJECT=std/pyproject.toml
 SEMVER='^[0-9]+\.[0-9]+\.[0-9]+$'
 
-std_version() { sed -nE '/^\[project\]/,/^\[/{s/^version = "([^"]*)".*/\1/p}' "$PYPROJECT" | head -n1; }
+# 取 [project] 节里的 version（awk 在 GNU 和 BSD 上写法一样；sed 的 -E 与 {} 在 macOS 上不通用，#377）
+std_version() {
+	awk -F'"' '/^\[/ { in_project = ($0 == "[project]"); next } in_project && /^version = "/ { print $2; exit }' "$PYPROJECT"
+}
 
 cmd_pack() {
 	local tag=${1:?用法：std.sh pack <std-vX.Y.Z> [目录]}
@@ -32,7 +35,7 @@ cmd_pack() {
 	local actual
 	actual=$(std_version)
 	if [[ $actual != "$version" ]]; then
-		echo "$PYPROJECT 的版本号是 $actual，与 tag $tag 不一致" >&2
+		echo "$PYPROJECT 的版本号是 ${actual}，与 tag $tag 不一致" >&2
 		exit 1
 	fi
 

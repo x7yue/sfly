@@ -1,0 +1,1052 @@
+{
+	"follow_bad_regex": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: fail_on 第 1 条不是合法的正则表达式：'('（missing ), unterminated subpattern at position 0）",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"follow_cancel": {
+		"artifacts": [],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "跟随日志 <TMP>/app.log（从末尾开始，直到被停止）"],
+				["info", "任务被终止（SIGTERM），执行到 <位置>"]
+			]
+		},
+		"metric_names": ["fail_matches", "lines_per_s"],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"follow_duration": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "跟随日志 <TMP>/app.log（从头开始，F 秒）"], ["info", "跟随结束，共 3 行"]],
+			"stdout": [["info", "starting"], ["info", "ready now"], ["info", "ERROR bad"]]
+		},
+		"metric_names": ["fail_matches", "lines_per_s"],
+		"outputs": {
+			"lines": 3
+		},
+		"status": "success"
+	},
+	"follow_fail_on": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly_std.follow_log.FailOnMatched: 日志 <TMP>/app.log 出现匹配 fail_on ERROR 的行：ERROR bad",
+		"error_type": "FailOnMatched",
+		"logs": {
+			"sdk": [
+				["info", "跟随日志 <TMP>/app.log（从头开始，直到被停止）"],
+				["error", "出错位置： <位置>"]
+			],
+			"stdout": [["info", "starting"], ["info", "ready now"], ["info", "ERROR bad"]]
+		},
+		"metric_names": ["fail_matches", "lines_per_s"],
+		"outputs": null,
+		"status": "failed"
+	},
+	"follow_negative_duration": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: duration 必须大于 0，实际为 -1",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"procmon_cancel": {
+		"artifacts": ["processes.csv"],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "监控 1 个进程：\npid N sleep：sleep 30"],
+				["info", "任务被终止（SIGTERM），执行到 <位置>"]
+			]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"procmon_children_false": {
+		"artifacts": ["processes.csv"],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "监控 1 个进程：\npid N sh：sh -c sleep F & wait"]]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": {
+			"processes_csv": "<TMP>/procmon_children_false/artifacts/processes.csv",
+			"samples": "N"
+		},
+		"status": "success"
+	},
+	"procmon_children_true": {
+		"artifacts": ["processes.csv"],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "监控 2 个进程：\npid N sh：sh -c sleep F & wait\npid N sleep：sleep F"]]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": {
+			"processes_csv": "<TMP>/procmon_children_true/artifacts/processes.csv",
+			"samples": "N"
+		},
+		"status": "success"
+	},
+	"procmon_duration": {
+		"artifacts": ["processes.csv"],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "监控 1 个进程：\npid N sleep：sleep 30"]]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": {
+			"processes_csv": "<TMP>/procmon_duration/artifacts/processes.csv",
+			"samples": "N"
+		},
+		"status": "success"
+	},
+	"procmon_exit_fails": {
+		"artifacts": ["processes.csv"],
+		"error_kind": "node_error",
+		"error_message": "sfly_std.process_monitor.ProcessExited: 目标进程已退出：pid N",
+		"error_type": "ProcessExited",
+		"logs": {
+			"sdk": [
+				["info", "监控 1 个进程：\npid N sleep：sleep F"],
+				["info", "进程有变化，现在监控 0 个进程：\n已退出 pid N sleep"],
+				["error", "出错位置： <位置>"]
+			]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": null,
+		"status": "failed"
+	},
+	"procmon_exit_succeeds": {
+		"artifacts": ["processes.csv"],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "监控 1 个进程：\npid N sleep：sleep F"],
+				["info", "进程有变化，现在监控 0 个进程：\n已退出 pid N sleep"],
+				["info", "目标进程已退出：pid N；on_exit 为 succeed，结束监控"]
+			]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": {
+			"processes_csv": "<TMP>/procmon_exit_succeeds/artifacts/processes.csv",
+			"samples": "N"
+		},
+		"status": "success"
+	},
+	"procmon_match": {
+		"artifacts": ["processes.csv"],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "监控 1 个进程：\npid N sleep：sleep F"]]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": {
+			"processes_csv": "<TMP>/procmon_match/artifacts/processes.csv",
+			"samples": "N"
+		},
+		"status": "success"
+	},
+	"procmon_no_target": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: 至少要给出 pid、name、match 中的一个",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"procmon_not_found": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly_std.process_monitor.ProcessNotFound: 等待 F 秒后仍没有找到目标进程：name \"no-such-process-sfly-golden\"",
+		"error_type": "ProcessNotFound",
+		"logs": {
+			"sdk": [
+				["info", "等待目标进程出现（最多 F 秒）：name \"no-such-process-sfly-golden\""],
+				["error", "出错位置： <位置>"]
+			]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"procmon_two_pids": {
+		"artifacts": ["processes.csv"],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "监控 2 个进程：\npid N sleep：sleep F\npid N sleep：sleep F"]]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"cpu_percent_by_process",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"open_fds_by_process",
+			"rss_bytes",
+			"rss_bytes_by_process",
+			"threads",
+			"threads_by_process"
+		],
+		"outputs": {
+			"processes_csv": "<TMP>/procmon_two_pids/artifacts/processes.csv",
+			"samples": "N"
+		},
+		"status": "success"
+	},
+	"pull_delete_source": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"Agent A 的 /srv 下有 1 个文件匹配 b.txt，共 3 字节，拉到 <TMP>/pull_delete_source/got3"
+				],
+				["info", "拉取了 1 个文件，共 3 字节"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"count": 1,
+			"files": ["<TMP>/pull_delete_source/got3/b.txt"],
+			"total_bytes": 3
+		},
+		"status": "success"
+	},
+	"pull_empty_local_dir": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: local_dir 不能为空",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"pull_no_directory": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly.capabilities.errors.AgentFileNotFound: Agent A：/nope 不存在",
+		"error_type": "AgentFileNotFound",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"pull_ok": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "Agent A 的 /srv 下有 2 个文件匹配 *，共 5 字节，拉到 <TMP>/pull_ok/got"],
+				["info", "拉取了 2 个文件，共 5 字节"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"count": 2,
+			"files": ["<TMP>/pull_ok/got/a.log", "<TMP>/pull_ok/got/b.txt"],
+			"total_bytes": 5
+		},
+		"status": "success"
+	},
+	"pull_pattern_recursive": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"Agent A 的 /srv 下有 2 个文件匹配 *.log，共 6 字节，拉到 <TMP>/pull_pattern_recursive/got2"
+				],
+				["info", "拉取了 2 个文件，共 6 字节"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"count": 2,
+			"files": [
+				"<TMP>/pull_pattern_recursive/got2/a.log",
+				"<TMP>/pull_pattern_recursive/got2/sub/c.log"
+			],
+			"total_bytes": 6
+		},
+		"status": "success"
+	},
+	"shell_bad_cwd": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "NotADirectoryError: 工作目录不存在：<TMP>/no-such-dir",
+		"error_type": "NotADirectoryError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"shell_cancel": {
+		"artifacts": [],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "任务被终止（SIGTERM），执行到 <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"shell_env": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"stdout": [["info", "hello"]]
+		},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": 0,
+			"stderr": "",
+			"stderr_file": null,
+			"stdout": "hello\n",
+			"stdout_file": null
+		},
+		"status": "success"
+	},
+	"shell_fail": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly_std.shell.CommandFailed: 命令退出码 3，不在 ok_exit_codes [0] 中：echo boom >&2; exit 3\n\nstderr 末尾：\nboom",
+		"error_type": "CommandFailed",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"shell_no_interpreter": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "FileNotFoundError: 找不到解释器 /nonexistent/sh",
+		"error_type": "FileNotFoundError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"shell_ok": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"stderr": [["error", "err"]],
+			"stdout": [["info", "hi"]]
+		},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": 0,
+			"stderr": "err\n",
+			"stderr_file": null,
+			"stdout": "hi\n",
+			"stdout_file": null
+		},
+		"status": "success"
+	},
+	"shell_ok_exit_codes": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": 3,
+			"stderr": "",
+			"stderr_file": null,
+			"stdout": "",
+			"stdout_file": null
+		},
+		"status": "success"
+	},
+	"shell_save_output": {
+		"artifacts": ["stderr.txt", "stdout.txt"],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"stderr": [["error", "err"]],
+			"stdout": [["info", "hi"]]
+		},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": 0,
+			"stderr": "err\n",
+			"stderr_file": "<TMP>/shell_save_output/artifacts/stderr.txt",
+			"stdout": "hi\n",
+			"stdout_file": "<TMP>/shell_save_output/artifacts/stdout.txt"
+		},
+		"status": "success"
+	},
+	"shell_signal": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly_std.shell.CommandFailed: 命令被信号 SIGKILL 终止（退出码 137），不在 ok_exit_codes [0] 中：kill -9 $$",
+		"error_type": "CommandFailed",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"start_bad_cwd": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "NotADirectoryError: 工作目录不存在：<TMP>/no-such-dir",
+		"error_type": "NotADirectoryError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"start_log_file": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "已启动后台进程 N：echo started；日志：<TMP>/logs/own.log"]]
+		},
+		"metric_names": [],
+		"outputs": {
+			"log_file": "<TMP>/logs/own.log",
+			"pid": "N"
+		},
+		"status": "success"
+	},
+	"start_no_interpreter": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly_std.start_process.StartFailed: 无法启动后台进程（[Errno 2] No such file or directory: '/nonexistent/sh'）：true",
+		"error_type": "StartFailed",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"start_ok": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "已启动后台进程 N：echo started；日志：<TMP>/start_ok/procs/start_process.log"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"log_file": "<TMP>/start_ok/procs/start_process.log",
+			"pid": "N"
+		},
+		"status": "success"
+	},
+	"stop_gone": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "进程 N 已不在运行"]]
+		},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": null,
+			"was_running": false
+		},
+		"status": "success"
+	},
+	"stop_negative": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: pid 必须是正整数，实际为 -5",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"stop_none": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "没有给出 pid，不需要停止"]]
+		},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": null,
+			"was_running": false
+		},
+		"status": "success"
+	},
+	"stop_real": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "向进程组 N发送 SIGTERM，宽限期 2 秒"],
+				["info", "进程 N 已退出，退出码 None"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": null,
+			"was_running": true
+		},
+		"status": "success"
+	},
+	"stop_sigkill": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "向进程组 N发送 SIGTERM，宽限期 1 秒"],
+				["warn", "宽限期 1 秒已过，进程组 N仍未退出，发送 SIGKILL"],
+				["info", "进程 N 已退出，退出码 137"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"exit_code": 137,
+			"was_running": true
+		},
+		"status": "success"
+	},
+	"sysmon_bad_disk": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: 磁盘 'nonexistent-disk' 不存在，本机的磁盘有：<列表>",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"sysmon_bad_disk_path": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: disk_path 不存在：/nonexistent",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"sysmon_bad_interval": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: interval 必须大于 0，实际为 0",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"sysmon_bad_nic": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: 网卡 'nonexistent0' 不存在，本机的网卡有：<列表>",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"sysmon_cancel": {
+		"artifacts": [],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"开始监控：每 F 秒采样一次，空间使用率统计 / 所在的文件系统，网卡取合计，磁盘取合计；一直运行到被停止或取消"
+				],
+				["info", "监控结束，共采样 N 次"],
+				["info", "任务被终止（SIGTERM），执行到 <位置>"]
+			]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"disk_read_bytes_per_s",
+			"disk_used_percent",
+			"disk_write_bytes_per_s",
+			"load1",
+			"mem_used_bytes",
+			"mem_used_percent",
+			"net_rx_bytes_per_s",
+			"net_tx_bytes_per_s"
+		],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"sysmon_duration": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"开始监控：每 F 秒采样一次，空间使用率统计 / 所在的文件系统，网卡取合计，磁盘取合计；运行 F 秒"
+				],
+				["info", "监控结束，共采样 N 次"]
+			]
+		},
+		"metric_names": [
+			"cpu_percent",
+			"disk_read_bytes_per_s",
+			"disk_used_percent",
+			"disk_write_bytes_per_s",
+			"load1",
+			"mem_used_bytes",
+			"mem_used_percent",
+			"net_rx_bytes_per_s",
+			"net_tx_bytes_per_s"
+		],
+		"outputs": {},
+		"status": "success"
+	},
+	"wait_file_is_dir": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "TimeoutError: 等待文件 <TMP> 出现超时：已等 F 秒，路径存在但不是文件",
+		"error_type": "TimeoutError",
+		"logs": {
+			"sdk": [["info", "等待文件 <TMP> 出现，最多 F 秒"], ["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_file_negative_stable": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: stable 不能为负数，实际为 -1",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_file_ok": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "等待文件 <TMP>/report.txt 出现，最多 5 秒"],
+				["info", "文件 <TMP>/report.txt 已就绪（7 字节），等了 F 秒"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"size": 7
+		},
+		"status": "success"
+	},
+	"wait_file_stable": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "等待文件 <TMP>/report.txt 出现并稳定 F 秒，最多 5 秒"],
+				["info", "文件 <TMP>/report.txt 已就绪（7 字节），等了 F 秒"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"size": 7
+		},
+		"status": "success"
+	},
+	"wait_file_timeout": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "TimeoutError: 等待文件 <TMP>/nofile 出现超时：已等 F 秒，文件不存在",
+		"error_type": "TimeoutError",
+		"logs": {
+			"sdk": [["info", "等待文件 <TMP>/nofile 出现，最多 F 秒"], ["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_log_bad_regex": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: pattern 不是合法的正则表达式：'('（missing ), unterminated subpattern at position 0）",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_log_cancel": {
+		"artifacts": [],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "等待日志 <TMP>/nolog 出现匹配 x 的行，最多 30 秒"],
+				["info", "任务被终止（SIGTERM），执行到 <位置>"]
+			]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"wait_log_from_end_timeout": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "TimeoutError: 等待日志 <TMP>/app.log 出现匹配 ready 的行超时：已等 F 秒",
+		"error_type": "TimeoutError",
+		"logs": {
+			"sdk": [
+				["info", "等待日志 <TMP>/app.log 出现匹配 ready 的行，最多 F 秒"],
+				["error", "出错位置： <位置>"]
+			]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_log_ok": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "等待日志 <TMP>/app.log 出现匹配 ready 的行，最多 300 秒"],
+				["info", "等了 F 秒，匹配到：ready now"]
+			]
+		},
+		"metric_names": [],
+		"outputs": {
+			"line": "ready now"
+		},
+		"status": "success"
+	},
+	"wait_log_timeout": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "TimeoutError: 等待日志 <TMP>/nolog 出现匹配 x 的行超时：已等 F 秒，文件不存在",
+		"error_type": "TimeoutError",
+		"logs": {
+			"sdk": [
+				["info", "等待日志 <TMP>/nolog 出现匹配 x 的行，最多 F 秒"],
+				["error", "出错位置： <位置>"]
+			]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_port_bad_port": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: port 必须在 1–N 之间，实际为 N",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_port_cancel": {
+		"artifacts": [],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				["info", "等待 F.F:N 可以连接，最多 30 秒"],
+				["info", "任务被终止（SIGTERM），执行到 <位置>"]
+			]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"wait_port_negative_wait": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: wait 不能为负数，实际为 -1",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["info", "等待 F.F:N 可以连接，最多 -1 秒"], ["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"wait_port_ok": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [["info", "等待 F.F:N 可以连接，最多 5 秒"], ["info", "F.F:N 已可以连接，等了 F 秒"]]
+		},
+		"metric_names": [],
+		"outputs": {},
+		"status": "success"
+	},
+	"wait_port_timeout": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "TimeoutError: 等待端口 F.F:N 可以连接超时：已等 F 秒，最后一次连接：Connection refused",
+		"error_type": "TimeoutError",
+		"logs": {
+			"sdk": [["info", "等待 F.F:N 可以连接，最多 F 秒"], ["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"watch_cancel": {
+		"artifacts": [],
+		"error_kind": "cancelled",
+		"error_message": "任务已取消，已终止进程树",
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"监听 Agent A 的 /srv 下匹配 * 的文件，一出现就拉取，拉到 <TMP>/watch_cancel/gotc；直到被停止"
+				],
+				["info", "拉取了 /srv/a.log（2 字节）→ <TMP>/watch_cancel/gotc/a.log"],
+				["info", "任务被终止（SIGTERM），执行到 <位置>"]
+			]
+		},
+		"metric_names": ["bytes_per_s", "pulled_bytes", "pulled_files"],
+		"outputs": null,
+		"status": "cancelled"
+	},
+	"watch_duration": {
+		"artifacts": [],
+		"error_kind": null,
+		"error_message": null,
+		"error_type": null,
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"监听 Agent A 的 /srv 下匹配 * 的文件，至少 F 秒没有修改才拉取，拉到 <TMP>/watch_duration/gotw；运行 F 秒"
+				],
+				["info", "拉取了 /srv/a.log（2 字节）→ <TMP>/watch_duration/gotw/a.log"],
+				["info", "拉取了 1 个文件，共 2 字节"]
+			]
+		},
+		"metric_names": ["bytes_per_s", "pulled_bytes", "pulled_files"],
+		"outputs": {
+			"count": 1,
+			"total_bytes": 2
+		},
+		"status": "success"
+	},
+	"watch_negative_stable": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "ValueError: stable 不能小于 0，实际为 -1",
+		"error_type": "ValueError",
+		"logs": {
+			"sdk": [["error", "出错位置： <位置>"]]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	},
+	"watch_no_directory": {
+		"artifacts": [],
+		"error_kind": "node_error",
+		"error_message": "sfly.capabilities.errors.AgentFileNotFound: Agent A：/nope 不存在",
+		"error_type": "AgentFileNotFound",
+		"logs": {
+			"sdk": [
+				[
+					"info",
+					"监听 Agent A 的 /nope 下匹配 * 的文件，一出现就拉取，拉到 <TMP>/watch_no_directory/got；直到被停止"
+				],
+				["error", "出错位置： <位置>"]
+			]
+		},
+		"metric_names": [],
+		"outputs": null,
+		"status": "failed"
+	}
+}
