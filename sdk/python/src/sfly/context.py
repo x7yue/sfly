@@ -6,7 +6,8 @@
 - `ctx.metric(指标名, 数值, labels={...})`：上报节点类型声明的指标，可以带标签
   （见 `Context.metric`）；
 - `ctx.artifacts`：保存产物，返回可以写进输出的产物引用；按产物引用下载产物（见 `Artifacts`）；
-- `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）；
+- `ctx.cancelled()`：任务是否进入了收尾时间——被取消、超时、被停止子流程节点停止时 Agent 都先写
+  取消标记（`SFLY_CANCEL` 文件），它存在就是真（不说明原因，任务的结局由原因决定）；
 - `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
 - `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）；
 - `ctx.agent()` / `ctx.agent(名称)`：自己所在的 Agent / 通过「Agent」类型的参数拿到的
@@ -16,7 +17,8 @@
 - `ctx.action(名称, **字段)` / `ctx.action.start(...)` / `ctx.mark(名称, **字段)`：记录节点正在做的
   事（动作）和某个时刻（标记）（见 `sfly.actions`）。
 
-取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
+取消、超时、被停止子流程节点停止时，Agent 先写入取消标记，再向进程树发 SIGTERM；
+执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
 宽限期（默认 10 秒）过后整棵进程树被强制杀掉。一次取消，主线程里只抛一次 `Cancelled`：
 清理代码不会被再打断一次。在后台线程里可以轮询 `ctx.cancelled()`。
@@ -195,7 +197,8 @@ class _Sigterm:
 
 
 def cancelled_error(message: str) -> Cancelled:
-    """SDK 自己发现任务已取消（取消标记、Agent 回复 `cancelled`）时要抛出的 `Cancelled`。
+    """SDK 自己发现任务该收尾了（取消标记出现：取消、超时、被停止子流程节点停止；Agent 回复
+    `cancelled`）时要抛出的 `Cancelled`。
 
     取消时这些和 SIGTERM 几乎同时到，谁先到不一定。主线程里先由 SDK 抛出时记下来，随后送达的
     SIGTERM 不再抛第二次：节点的 `except Cancelled` / `finally` 已经在执行，再抛一次会把清理打断。
@@ -446,7 +449,8 @@ class Artifacts:
     是这个产物的下载地址（前缀 + 按路径段百分号编码的名称），可以写进节点输出交给后续节点，
     后续节点用 `download(ref, 目标路径)` 下载；没有前缀时（本地调试）是本地文件路径。
 
-    `cancelled` 是「任务是否已取消」的判断（`Context.cancelled`），下载时用来及时停止。
+    `cancelled` 是「任务是否进入了收尾时间」的判断（`Context.cancelled`：被取消、超时、被停止子流程
+    节点停止时都为真），下载时用来及时停止：进入收尾时间之后新的下载一开始就抛出 `sfly.Cancelled`。
     `downloads_path` 是本地调试时的下载内容表（`SFLY_DOWNLOADS`，见 `sfly.local`）：
     一个 JSON 文件，产物引用 → 本地文件路径，表里有的引用不访问网络。
 
@@ -492,7 +496,9 @@ class Artifacts:
           （间隔 0.5 秒起每次加倍）；`timeout` 是连接和每次读取的超时秒数。
         - 失败时抛出 `sfly.ArtifactDownloadError`，消息写明原因：产物引用无效、产物不存在
           （404）、产物已过保留期被清理（410）、连不上控制面或连接中断（重试耗尽）。
-        - 任务被取消时立即停止并抛出 `sfly.Cancelled`（在后台线程里下载时，在两次读取之间停止）。
+        - 任务进入收尾时间（取消、超时、被停止子流程节点停止：取消标记出现）之后立即停止并抛出
+          `sfly.Cancelled`：新的下载一开始就抛出，已经在下载的（在后台线程里下载时）在两次读取之间停止。
+          超时的节点在自己的 `finally` 里也下载不了，要拿的东西放在 always 节点里下载。
 
         产物在保存它的任务结束后才上传到控制面：只能下载前面的节点保存的产物。
         下载地址在控制面上，任何一台 Agent 上的节点都能下载。本地调试时产物引用是本地文件路径，
@@ -890,7 +896,12 @@ class Context:
         self.action.mark(name, parent=parent, **fields)
 
     def cancelled(self) -> bool:
-        """任务是否已被取消（Agent 已写入取消标记）。"""
+        """任务是否进入了收尾时间（Agent 已写入取消标记）。
+
+        取消、超时、被停止子流程节点停止时 Agent 都先写取消标记再发 SIGTERM（Agent 自己退出时
+        也一样），所以这些情况下它在收尾时间里都是真；它不说明原因（超时的任务仍然记成超时，
+        不是取消）。清理代码靠它把宽限期压短。
+        """
         return self._cancel is not None and os.path.exists(self._cancel)
 
     def progress(self, current: float, total: float | None = None, message: str = "") -> None:

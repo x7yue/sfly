@@ -1,8 +1,11 @@
-import { OrchestrationDocument } from "@sfly/schema";
+import { OrchestrationDocument, type StoredNode } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	declaredOutputs,
 	documentWarnings,
 	type NodeTypeIo,
+	type NodeTypeLookup,
+	nodeTypeLookup,
 	type PackageCatalog,
 	packageKey,
 	referenceOptions,
@@ -113,6 +116,44 @@ describe("引用补全", () => {
 		// 运行状态不依赖节点类型的元信息：包节点总是可以引用。
 		expect(referenceOptions(d, "b", new Map()).map((o) => o.expression)).toEqual(["run.state"]);
 		expect(referenceOptions(d, "lost", catalog)).toEqual([]);
+	});
+});
+
+describe("引用补全：按节点查节点类型（NodeTypeLookup）", () => {
+	// 同一个包、同一个节点类型的 a、b 各有自己的声明（例如派发到不同的 Agent），不能并成目录里的一份。
+	const own: Record<string, NodeTypeIo> = {
+		a: { name: "fetch", inputs: { type: "object", properties: {} }, outputs: outputs("body") },
+		b: { name: "fetch", inputs: { type: "object", properties: {} }, outputs: outputs("status") },
+	};
+	function outputs(...keys: string[]): NodeTypeIo["outputs"] {
+		return { type: "object", properties: Object.fromEntries(keys.map((k) => [k, {}])) };
+	}
+	const d = doc({
+		nodes: [{ id: "entry", kind: "entry" }, pkg("a"), pkg("b"), pkg("c")],
+		edges: chain("entry", "a", "b", "c"),
+	});
+	const lookup: NodeTypeLookup = (node) => own[(node as { id?: string }).id ?? ""] ?? null;
+
+	it("每个上游节点用自己的声明列输出，不看目录", () => {
+		expect(referenceOptions(d, "c", lookup).map((o) => o.expression)).toEqual([
+			"run.state",
+			"nodes.a.outputs.body",
+			"nodes.b.outputs.status",
+		]);
+	});
+
+	it("declaredOutputs 也按节点查；查不到（undefined / null）不提供输出键", () => {
+		const [, a, b] = d.nodes as StoredNode[];
+		expect(declaredOutputs(d, a as StoredNode, lookup)).toEqual(["body"]);
+		expect(declaredOutputs(d, b as StoredNode, lookup)).toEqual(["status"]);
+		expect(declaredOutputs(d, a as StoredNode, () => undefined)).toBeUndefined();
+		expect(declaredOutputs(d, a as StoredNode, () => null)).toBeUndefined();
+	});
+
+	it("目录和按节点查的函数给同样的类型时，结果一样", () => {
+		const viaCatalog = referenceOptions(d, "c", catalog).map((o) => o.expression);
+		const viaLookup = referenceOptions(d, "c", nodeTypeLookup(d, catalog)).map((o) => o.expression);
+		expect(viaLookup).toEqual(viaCatalog);
 	});
 });
 
