@@ -60,7 +60,8 @@ PROBE = "AEVAL-PROBE"
 _SCRIPT = re.compile(r"AEVAL-SCRIPT:([a-z0-9-]+)")
 _FULL_OUTPUT = re.compile(r"Full output: (/[^\]\s]+)\]")
 _TOKEN = re.compile(r"AEVAL_SESSION_TOKEN=([A-Za-z0-9_-]+)")
-# 压缩上下文（544-B 的探针）：pi 请求摘要时系统提示的开头，和假的摘要里的记号（压缩之后的请求里认它）。
+# 压缩上下文（544-B 的探针）：pi 请求摘要时系统提示的开头，
+# 和假的摘要里的记号（压缩之后的请求里认它）。
 SUMMARIZATION = "You are a context summarization assistant"
 COMPACTED = "AEVAL-COMPACTED"
 # 上下文超长时回的错误：pi 认得这句（pi-ai 的 overflow 规则），会压缩上下文再重试。
@@ -129,15 +130,11 @@ def next_reply(body: dict[str, Any], tasks_dir: Path) -> dict[str, Any]:
             # 只回一段文字（不调工具）；delay 是回复之前等几秒（探针在这时插话）；
             # pieces、interval 是把文字分成几段、每段之间隔几秒地流出来（探针在输出到一半时中止）；
             # prompt_tokens 是这次回复报的用量（探针让 pi 觉得上下文快满了）。
-            return {
-                "text": step["text"],
-                "delay": float(step.get("delay", 0)),
-                "pieces": int(step.get("pieces", 1)),
-                "interval": float(step.get("interval", 0)),
-                **(
-                    {"prompt_tokens": int(step["prompt_tokens"])} if "prompt_tokens" in step else {}
-                ),
-            }
+            reply: dict[str, Any] = {"text": step["text"], "delay": float(step.get("delay", 0))}
+            for key, kind in (("pieces", int), ("interval", float), ("prompt_tokens", int)):
+                if key in step:
+                    reply[key] = kind(step[key])
+            return reply
         args = _substitute(json.dumps(step["args"], ensure_ascii=False), messages)
         return {"tool": step["tool"], "arguments": args, "call_id": f"call_{done + 1}"}
     commands = script(find_task(prompt, tasks_dir))

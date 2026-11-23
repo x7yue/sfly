@@ -961,7 +961,8 @@ def q10() -> Record:
 
 
 # ---- 544-B 先测的七题（第 11 到 17 题）----
-# 助手服务停止一轮时接连写 clear_queue 和 abort、插话设成「一次全送」、按顺序认「送到」：动手之前先在真的 pi 上看。
+# 助手服务停止一轮时接连写 clear_queue 和 abort、插话设成「一次全送」、
+# 按顺序认「送到」：动手之前先在真的 pi 上看。
 
 STEER_A = "插话一：先别改测试"
 STEER_B = "插话二：顺便看一下日志"
@@ -1008,7 +1009,8 @@ def _assistant_ends(pi: RpcPi, start: int = 0) -> list[Record]:
 
 
 def q11() -> Record:
-    """模型输出到一半时 abort：这一轮怎么结束，之后同一个进程再发一轮是不是照常做完、发给模型的请求是什么样。"""
+    """模型输出到一半时 abort：这一轮怎么结束，之后同一个进程再发一轮是不是照常做完、"
+    "发给模型的请求是什么样。"""
     pi = RpcPi(rpc_command("q11"))
     pi.call({"type": "prompt", "message": script_prompt("rpcprobe-midstream")})
     pi.wait_for(
@@ -1044,13 +1046,32 @@ def q11() -> Record:
     }
 
 
-def _clear_then_abort(together: bool, steers: list[str], round_no: int) -> Record:
-    """命令执行中插话（等 steer 的回应回来），然后写 clear_queue 和 abort（同一次写，或者接连两次写），
+def _wait_busy(pi: RpcPi, script: str) -> None:
+    """等到这一轮在忙：命令开始执行（rpcprobe-abort），或者模型开始输出、"
+    "再过一秒（rpcprobe-midstream）。"""
+    if script == "rpcprobe-midstream":
+        pi.wait_for(
+            lambda r: (
+                r.get("type") == "message_update"
+                and (r.get("assistantMessageEvent") or {}).get("type") == "text_delta"
+            ),
+            60,
+        )
+        time.sleep(1)
+    else:
+        wait_tool_started(pi)
+
+
+def _clear_then_abort(
+    together: bool, steers: list[str], round_no: int, script: str = "rpcprobe-abort"
+) -> Record:
+    """命令执行中插话（等 steer 的回应回来），然后写 clear_queue 和 abort（同一次写，"
+    "或者接连两次写），
     看插话有没有漏出去：之后发给模型的请求、会话里、同一个进程的下一轮。"""
-    pi = RpcPi(rpc_command(f"q12-{'together' if together else 'apart'}-{round_no}"))
+    pi = RpcPi(rpc_command(f"q12-{script}-{'together' if together else 'apart'}-{round_no}"))
     before = dump_count()
-    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-abort")})
-    wait_tool_started(pi)
+    pi.call({"type": "prompt", "message": script_prompt(script)})
+    _wait_busy(pi, script)
     for text in steers:
         pi.call({"type": "steer", "message": text})
     mark = len(pi.events())
@@ -1068,6 +1089,7 @@ def _clear_then_abort(together: bool, steers: list[str], round_no: int) -> Recor
     pi.close()
     return {
         "together": together,
+        "script": script,
         "clear_queue": cleared.get("data"),
         "clear_before_abort": cleared["_t"] <= aborted["_t"],
         "abort_ok": bool(aborted.get("success")),
@@ -1080,52 +1102,68 @@ def _clear_then_abort(together: bool, steers: list[str], round_no: int) -> Recor
 
 
 def q12() -> Record:
-    """abort 紧跟在 clear_queue 后面写出：没有插话漏出去（各五遍，一句和两句；同一次写和接连两次写）。"""
+    """abort 紧跟在 clear_queue 后面写出：没有插话漏出去（各五遍，一句和两句；"
+    "同一次写和接连两次写）。"""
     rounds = []
     for round_no in range(5):
         for together in (True, False):
             steers = [STEER_A] if round_no % 2 == 0 else [STEER_A, STEER_B]
             rounds.append(_clear_then_abort(together, steers, round_no))
+    # 模型输出到一半时停止（不在命令执行中）：一句和两句各一遍。
+    for round_no, steers in enumerate(([STEER_A], [STEER_A, STEER_B])):
+        rounds.append(_clear_then_abort(True, steers, round_no, "rpcprobe-midstream"))
     return {"rounds": rounds}
 
 
-def _race(pre_clear: bool, round_no: int) -> Record:
-    """steer 和紧跟着的 clear_queue、abort 在同一次写里写出（steer 的回应还没回来时 clear_queue 已经写出）：
-    这句话是不是在清空之后才进队列；下一轮交 prompt 之前先 clear_queue 一次（pre_clear）时兜不兜得住。"""
-    pi = RpcPi(rpc_command(f"q13-{'pre' if pre_clear else 'bare'}-{round_no}"))
+def _race(gap: float | None, round_no: int, script: str = "rpcprobe-abort") -> Record:
+    """steer 写出之后、它的回应回来之前就写 clear_queue 和 abort（gap 是 None：三条在同一次写里；"
+    "否则 steer 先写，
+    隔 gap 秒再写 clear_queue 和 abort）。
+    这句话可能在清空之后才进队列：看它最后去了哪里：成了这一轮的一条用户消息
+    （在 agent_settled 之前还是之后）、留在 pi 的队列里（下一轮之前的 clear_queue 取回），
+    还是别的。"""
+    pi = RpcPi(rpc_command(f"q13-{script}-{gap}-{round_no}"))
     before = dump_count()
-    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-abort")})
-    wait_tool_started(pi)
+    pi.call({"type": "prompt", "message": script_prompt(script)})
+    _wait_busy(pi, script)
     mark = len(pi.events())
-    steer_id, clear_id, abort_id = send_together(
-        pi, [{"type": "steer", "message": STEER_B}, {"type": "clear_queue"}, {"type": "abort"}]
-    )
+    if gap is None:
+        steer_id, clear_id, abort_id = send_together(
+            pi, [{"type": "steer", "message": STEER_B}, {"type": "clear_queue"}, {"type": "abort"}]
+        )
+    else:
+        steer_id = pi.send({"type": "steer", "message": STEER_B})
+        time.sleep(gap)
+        clear_id, abort_id = send_together(pi, [{"type": "clear_queue"}, {"type": "abort"}])
     steer = response_of(pi, steer_id)
     cleared = response_of(pi, clear_id)
     aborted = response_of(pi, abort_id, 60)
-    _settled(pi, mark)
+    settled = _settled(pi, mark)
     time.sleep(1)
     during = requests_text(dumped_requests(before))
-    queue_after = _queue_updates(pi, mark)
+    turn_users = _user_messages(pi, mark)
     state = pi.call({"type": "get_state"}).get("data") or {}
-    pre = pi.call({"type": "clear_queue"}).get("data") if pre_clear else None
+    pre = pi.call({"type": "clear_queue"}).get("data")
     next_turn = _after_abort(pi)
     pi.close()
     return {
-        "pre_clear": pre_clear,
+        "gap": gap,
+        "script": script,
         "order": [
-            r.get("id")
+            name
             for r in pi.events()[mark:]
-            if r.get("type") == "response" and r.get("id") in (steer_id, clear_id, abort_id)
+            for name, cid in (("steer", steer_id), ("clear_queue", clear_id), ("abort", abort_id))
+            if r.get("type") == "response" and r.get("id") == cid
         ],
-        "ids": {"steer": steer_id, "clear_queue": clear_id, "abort": abort_id},
         "steer_response": {k: steer.get(k) for k in ("success", "data", "error")},
         "clear_queue": cleared.get("data"),
         "abort_ok": bool(aborted.get("success")),
-        "queue_updates": queue_after,
+        "settled_t": settled["_t"],
+        "settled_aborted": settled.get("aborted"),
+        "queue_updates": _queue_updates(pi, mark),
+        "turn_user_messages": turn_users,
         "pending_after_settle": state.get("pendingMessageCount"),
         "pre_clear_got": pre,
-        "user_messages": _user_messages(pi, mark),
         "sent_during_turn": _user_texts_sent(during),
         "next_turn_request": next_turn["request"],
         "next_turn_settled": next_turn["settled"],
@@ -1133,8 +1171,13 @@ def _race(pre_clear: bool, round_no: int) -> Record:
 
 
 def q13() -> Record:
-    """steer 的回应还没回来时 clear_queue 已经写出：各五遍，下一轮之前先 clear_queue 一次和不清。"""
-    return {"rounds": [_race(pre, n) for n in range(5) for pre in (True, False)]}
+    """steer 的回应还没回来时 clear_queue 已经写出：三条在同一次写里，或者 steer 先写、隔 0、1、"
+    "2、5 毫秒再写
+    clear_queue 和 abort，各五遍；每遍都在下一轮之前 clear_queue 一次。"""
+    during_tool = [_race(gap, n) for gap in (None, 0.0, 0.001, 0.002, 0.005) for n in range(5)]
+    # 模型输出到一半时停止（不在命令执行中）。
+    mid_stream = [_race(gap, n, "rpcprobe-midstream") for gap in (None, 0.005) for n in range(5)]
+    return {"rounds": during_tool + mid_stream}
 
 
 def _two_steers(mode: str | None) -> Record:
@@ -1165,7 +1208,8 @@ def _two_steers(mode: str | None) -> Record:
 
 
 def q14() -> Record:
-    """插话设成「一次全送」（set_steering_mode all）时连着发的两句是不是一次送完；对照 pi 的默认模式。"""
+    """插话设成「一次全送」（set_steering_mode all）时连着发的两句是不是一次送完；"
+    "对照 pi 的默认模式。"""
     return {"all": _two_steers("all"), "default": _two_steers(None)}
 
 
@@ -1190,7 +1234,8 @@ def q15() -> Record:
 
 
 def q16() -> Record:
-    """steer 的回应里 disposition 的实际取值：普通的一句（queued），被扩展的输入处理器吃掉的一句（handled）。"""
+    """steer 的回应里 disposition 的实际取值：普通的一句（queued），"
+    "被扩展的输入处理器吃掉的一句（handled）。"""
     pi = RpcPi(rpc_command("q16", add=("-e", HANDLED_EXTENSION)))
     before = dump_count()
     pi.call({"type": "prompt", "message": script_prompt("rpcprobe-steer")})
@@ -1270,7 +1315,8 @@ def _compaction_turn(script: str, steer_when: str) -> Record:
 
 
 def q17() -> Record:
-    """一轮里除了这一轮的 prompt，pi 产生的 role=user 的消息是不是都是插话：没有压缩、中途因为上下文超长压缩
+    """一轮里除了这一轮的 prompt，pi 产生的 role=user 的消息是不是都是插话：没有压缩、"
+    "中途因为上下文超长压缩
     （压缩之后重试）、这一轮收尾时到了阈值压缩。"""
     return {
         "plain": _compaction_turn("rpcprobe-steer", "tool"),

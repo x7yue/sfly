@@ -759,14 +759,16 @@ def judge_q11(raw: dict[str, Any]) -> Verdict:
         and aborted.get("stop_reason") == "aborted"
     ):
         v.facts.append(
-            f"收到 {raw['deltas_before_abort']} 段输出之后 abort：{raw['abort_response_seconds']} 秒回应，"
+            f"收到 {raw['deltas_before_abort']} 段输出之后 abort："
+            f"{raw['abort_response_seconds']} 秒回应，"
             f"{raw['settled_seconds']} 秒 agent_settled（aborted），这条助手消息以 aborted 结束，"
             f"留下了 {len(aborted.get('text') or '')} 个字的半截文字"
         )
     else:
         v.worsen(FAILS)
         v.facts.append(
-            f"abort 之后：回应 {raw['abort_ok']}，agent_settled 的 aborted 是 {raw.get('settled_aborted')}，"
+            f"abort 之后：回应 {raw['abort_ok']}，"
+            f"agent_settled 的 aborted 是 {raw.get('settled_aborted')}，"
             f"助手消息的结局 {aborted.get('stop_reason')}"
         )
     nxt = raw.get("next_turn") or {}
@@ -781,7 +783,8 @@ def judge_q11(raw: dict[str, Any]) -> Verdict:
     else:
         v.worsen(FAILS)
         v.facts.append(
-            f"再发一轮：接受 {nxt.get('prompt_ok')}（{nxt.get('prompt_error')}），做完 {nxt.get('settled')}，"
+            f"再发一轮：接受 {nxt.get('prompt_ok')}（{nxt.get('prompt_error')}），"
+            f"做完 {nxt.get('settled')}，"
             f"结局 {nxt.get('stop_reason')}（{nxt.get('error')}）"
         )
     if request and request[-1].get("role") != "user":
@@ -805,8 +808,10 @@ def judge_q12(raw: dict[str, Any]) -> Verdict:
             or any(m.get("text") == t for m in r["messages_after"])
         ]
         if leaked or steering != texts or not r["clear_before_abort"] or not r["abort_ok"]:
+            where = "模型输出到一半，" if r.get("script") == "rpcprobe-midstream" else ""
             leaks.append(
-                f"第 {n + 1} 遍（{'同一次写' if r['together'] else '接连两次写'}）：clear_queue 取回 {steering}，"
+                f"第 {n + 1} 遍（{where}"
+                f"{'同一次写' if r['together'] else '接连两次写'}）：clear_queue 取回 {steering}，"
                 f"漏出去的 {leaked}，clear_queue 先回应 {r['clear_before_abort']}"
             )
     v.numbers["rounds"] = len(raw["rounds"])
@@ -815,48 +820,78 @@ def judge_q12(raw: dict[str, Any]) -> Verdict:
         v.facts += leaks
     else:
         v.facts.append(
-            f"{len(raw['rounds'])} 遍（一句和两句插话，clear_queue 和 abort 在同一次写里、接连两次写各一半）："
+            f"{len(raw['rounds'])} 遍（一句和两句插话；命令执行中十遍，"
+            "clear_queue 和 abort 在同一次写里、接连两次写各一半；"
+            "模型输出到一半时两遍）："
             "clear_queue 都取回了全部插话、先于 abort 回应；之后这一轮没有再请求模型带上它们，"
             "会话里没有它们，同一个进程的下一轮的请求里也没有"
         )
     return v
 
 
+def q13_fate(r: dict[str, Any]) -> str:
+    """这句插话最后去了哪里：
+    「这一轮里送到」（停下之前成了这一轮的一条用户消息，没有再请求模型）、
+    「清掉」（clear_queue 取回了）、
+    「留在队列里」（停下之后还在 pi 的队列里，下一轮之前的 clear_queue 取回）、「漏」（别的，
+    例如停下之后才成了用户消息、
+    这一轮又请求了模型、下一轮带着它却不在会话里）。"""
+    caught = STEER_B in ((r.get("clear_queue") or {}).get("steering") or [])
+    shown = [m for m in r["turn_user_messages"] if m.get("text") == STEER_B]
+    before_settle = [m for m in shown if m["t"] <= r["settled_t"]]
+    pre_got = STEER_B in ((r.get("pre_clear_got") or {}).get("steering") or [])
+    next_has = STEER_B in _sent_users(r["next_turn_request"])
+    asked_in_turn = STEER_B in r["sent_during_turn"]
+    if caught and not shown and not next_has:
+        return "清掉"
+    if before_settle and len(shown) == 1 and not asked_in_turn and not pre_got:
+        return "这一轮里送到"
+    if not shown and pre_got and not next_has and not asked_in_turn:
+        return "留在队列里"
+    return "漏"
+
+
 def judge_q13(raw: dict[str, Any]) -> Verdict:
-    v = Verdict(
-        "q13",
-        "steer 的回应回来之前 clear_queue 已经写出：下一轮之前再 clear_queue 兜不兜得住",
-        HOLDS,
-    )
-    late = 0
+    v = Verdict("q13", "steer 的回应回来之前 clear_queue 已经写出：这句话去了哪里", HOLDS)
+    counts: dict[str, dict[str, int]] = {}
     for n, r in enumerate(raw["rounds"]):
-        caught = STEER_B in ((r.get("clear_queue") or {}).get("steering") or [])
-        in_turn = STEER_B in r["sent_during_turn"] or any(
-            m.get("text") == STEER_B for m in r["user_messages"]
-        )
-        next_has = STEER_B in _sent_users(r["next_turn_request"])
-        pre_got = STEER_B in ((r.get("pre_clear_got") or {}).get("steering") or [])
-        late += 0 if caught else 1
-        what = (
-            f"第 {n + 1} 遍（{'下一轮之前清' if r['pre_clear'] else '不清'}）：回应的先后 {r['order']}，"
-            f"clear_queue 取回 {'有' if caught else '没有'}这句，停下之后队列里还有 {r['pending_after_settle']} 句，"
-            f"这一轮里送给模型 {in_turn}，下一轮之前的 clear_queue 取回 {pre_got}，下一轮的请求里 {next_has}"
-        )
-        v.facts.append(what)
-        if in_turn:
+        fate = q13_fate(r)
+        label = "同一次写" if r["gap"] is None else f"隔 {round(r['gap'] * 1000)} 毫秒"
+        if r.get("script") == "rpcprobe-midstream":
+            label = f"模型输出到一半、{label}"
+        else:
+            label = f"命令执行中、{label}"
+        counts.setdefault(label, {}).setdefault(fate, 0)
+        counts[label][fate] += 1
+        if fate == "漏":
             v.worsen(FAILS)
-        elif r["pre_clear"] and next_has:
-            v.worsen(FAILS)
-    v.numbers["steer_after_clear"] = late
-    v.numbers["rounds"] = len(raw["rounds"])
+            v.facts.append(
+                f"第 {n + 1} 遍（{label}）漏了：回应的先后 {r['order']}，"
+                f"clear_queue 取回 {r['clear_queue']}，"
+                f"这一轮的用户消息 {r['turn_user_messages']}（agent_settled 在 {r['settled_t']}），"
+                f"下一轮之前取回 {r['pre_clear_got']}，"
+                f"下一轮的请求里的用户消息 {_sent_users(r['next_turn_request'])}"
+            )
+    v.numbers["fates"] = counts
+    v.facts.insert(
+        0,
+        "每种写法各五遍，这句话的去处："
+        + "；".join(f"{label} {fates}" for label, fates in counts.items())
+        + "。「这一轮里送到」：abort 收尾时 pi 把队列里的插话放进了对话（一条用户消息，"
+        "在 agent_settled 之前），"
+        "没有再请求模型，下一轮的请求里它是历史的一部分；按「出现用户消息就算送到」记，"
+        "和会话里一致",
+    )
     return v
 
 
 def _two_in_one(run: dict[str, Any], first: str, second: str) -> tuple[bool, list[list[str]]]:
     """两句插话是不是在同一次请求里、紧挨着、各是一条用户消息。"""
-    users = [_sent_users(r) for r in run["requests"]]
-    together = any(u[-2:] == [first, second] for u in users)
-    return together, [u[1:] for u in users]
+    together = any(
+        [(m.get("role"), m.get("text")) for m in r[-2:]] == [("user", first), ("user", second)]
+        for r in run["requests"]
+    )
+    return together, [_sent_users(r)[1:] for r in run["requests"]]
 
 
 def judge_q14(raw: dict[str, Any]) -> Verdict:
@@ -871,12 +906,14 @@ def judge_q14(raw: dict[str, Any]) -> Verdict:
     else:
         v.worsen(FAILS)
         v.facts.append(
-            f"一次全送：模式 {all_mode.get('steering_mode')}，各次请求里第一条之后的用户消息 {users}"
+            f"一次全送：模式 {all_mode.get('steering_mode')}，"
+            f"各次请求里第一条之后的用户消息 {users}"
         )
     default = raw["default"]
     d_together, d_users = _two_in_one(default, STEER_A, STEER_B)
     v.facts.append(
-        f"对照 pi 的默认模式（{default.get('steering_mode')}）：两句{'也在同一次请求里' if d_together else '分在两次请求里'}"
+        f"对照 pi 的默认模式（{default.get('steering_mode')}）："
+        f"两句{'也在同一次请求里' if d_together else '分在两次请求里'}"
         f"（各次请求里第一条之后的用户消息 {d_users}）"
     )
     return v
@@ -912,7 +949,8 @@ def judge_q16(raw: dict[str, Any]) -> Verdict:
     )
     if handled == "handled" and not seen:
         v.facts.append(
-            "被扩展的输入处理器吃掉的一句：回应成功、disposition 是 handled；没有进队列（queue_update 里没有）、"
+            "被扩展的输入处理器吃掉的一句：回应成功、disposition 是 handled；"
+            "没有进队列（queue_update 里没有）、"
             "没有用户消息、没有送到模型"
         )
     else:
@@ -926,7 +964,8 @@ def judge_q16(raw: dict[str, Any]) -> Verdict:
         v.worsen(FAILS)
         v.facts.append(f"普通的一句：disposition {queued}，送到模型 {STEER_B in raw['sent']}")
     v.facts.append(
-        f"对照：没有一轮在做时 steer 的回应 {idle.get('success')}、{idle.get('data') or idle.get('error')}"
+        f"对照：没有一轮在做时 steer 的回应 {idle.get('success')}、"
+        f"{idle.get('data') or idle.get('error')}"
     )
     return v
 
