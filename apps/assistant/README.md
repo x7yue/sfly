@@ -14,7 +14,7 @@ pnpm bundle:assistant                     # 组装镜像的构建上下文 out/a
 
 联调时要的是三样真的：助手镜像、一台有能力端口的 Agent 当工作台、（之后）控制面。Agent 只能在 Linux 上编译，
 在 macOS 上用评测集的环境：它的 `dev` 容器里就是一台真的 Agent（名字 `dev-root-dev`，能力端口 `dev:50052`），
-助手容器接到同一个 Docker 网络上就能连到它。下面第 1–4 步在 macOS 上照着跑过一遍（假的模型端点，不花钱）；第 5 步接控制面等 #561 合入后补核。命令都从仓库根目录执行。
+助手容器接到同一个 Docker 网络上就能连到它。下面五步在 macOS 上照着跑过一遍（假的模型端点，不花钱；第 5 步用的是 #597 合入之后的控制面）。命令都从仓库根目录执行。
 
 ### 1. 起评测环境
 
@@ -122,11 +122,27 @@ for (let buf = ""; ; ) {
 
 ### 5. 接控制面
 
-控制面（#541 起）配三个环境变量就会把会话交给这个助手服务：`SFLY_ASSISTANT_URL=http://sfly-aeval-1-assistant:8090`
+控制面配三个环境变量就会把会话交给这个助手服务：`SFLY_ASSISTANT_URL=http://sfly-aeval-1-assistant:8090`
 （控制面和助手容器在同一个网络里时；不在时用助手容器映射出来的地址）、`SFLY_ASSISTANT_SECRET`（和上面同一个）、
-`SFLY_WORKBENCH_AGENT=dev-root-dev`。控制面把工作台 Agent 上报的地址和端口、工作区 `/work` 交给助手服务，所以
-助手容器要能按 Agent 上报的地址连到它（评测环境里是 `dev:50052`）。控制面怎么建会话、发话见
-`docs/ARCHITECTURE.md`「助手会话」一节。
+`SFLY_WORKBENCH_AGENT=dev-root-dev`。控制面把工作台 Agent 上报的能力端口地址、工作区 `/work` 交给助手服务。控制面怎么建会话、
+发话见 `docs/ARCHITECTURE.md`「助手会话」一节。
+
+评测环境的控制面容器是 `aeval.sh` 起的，不带这三个变量：先照评测集 README 用当前源码构建控制面镜像（`--server-image`），
+`up`、`reset` 之后，把 `sfly-aeval-1-cp` 按 `docker inspect` 看到的参数（网络、别名 `sfly.internal`、数据卷、环境变量、端口）
+重新 `docker run` 一遍，加上这三个变量；要登录时再加 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`（值从宿主的环境带进去）。
+`aeval.sh` 再重建控制面（`reset`、`run`）时这几个变量就没了。
+
+然后经控制面的接口驱动（`POST /auth/login` 拿 Cookie，写请求带 `x-sfly-nickname`）：
+
+- `GET /projects/default/sessions` 的 `readiness` 是 `{"ready": true, "workbench": "dev-root-dev"}`；
+- `POST /projects/default/sessions {"text": "AEVAL-SCRIPT:demo 照剧本做。"}` 是 201，几秒后 `GET /sessions/<ID>` 里依次是
+  `user_message`、`turn_started`、写和命令的 `tool_call` / `tool_result`（命令拿到了昵称）、`assistant_message`、
+  `turn_end`（`completed`），工作台上的 `/work/notes/a.txt` 和 `/work/.agents/skills/` 都在；
+- 另一个会话跑一条 `sleep 600` 时 `POST /sessions/<ID>/stop`：1 秒左右这一轮以 `stopped`（「用户停止了这一轮」，是助手服务
+  带回来的结局）结束，工作台上的 `sleep` 没了；
+- 这个会话空闲时再点一次停止（控制面带最近一轮的轮次发 `abort`，那一轮已经结束），紧接着发一句：新的一轮照常 `completed`。
+
+剧本由会话的第一句话决定：假模型照第一句话里的 `AEVAL-SCRIPT:<名字>` 选剧本，后面的话不换剧本。
 
 ### 常见问题
 
