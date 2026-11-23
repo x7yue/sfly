@@ -579,3 +579,33 @@ async fn the_message_says_uploaded_when_everything_that_fits_was_uploaded() {
     assert!(message.contains("另有 1 个超限的文件没有上传"), "{message}");
     assert!(!message.contains("上传产物失败"), "{message}");
 }
+
+#[tokio::test]
+async fn when_not_a_single_file_fits_the_message_says_so_instead_of_zero_files_uploaded() {
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-limit-none-fit"));
+    cp.hello(0).await;
+
+    // 上限 1000，两个文件各自都比上限大：一个都放不下，一个都不上传。
+    cp.assign(limited_task(
+        "task-limit-none-fit",
+        &fixture,
+        1_000,
+        json!({ "direct": { "a.bin": 1_500, "b.bin": 2_000 } }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-limit-none-fit").await;
+
+    assert!(fixture.uploads().is_empty(), "一个都放不下：不发起任何上传");
+    let error = result.error.unwrap();
+    assert_eq!(error.kind(), ErrorKind::EnvError);
+    let message = &error.message;
+    assert!(message.contains("没有放得下的文件"), "{message}");
+    assert!(!message.contains("放得下的 0 个"), "{message}");
+    assert!(!message.contains("已上传"), "{message}");
+    assert!(
+        message.contains("另有 2 个超限的文件没有上传：b.bin（2000 字节）、a.bin（1500 字节）"),
+        "{message}"
+    );
+}

@@ -46,14 +46,21 @@ export function artifactLimitBytesFromMb(
 	return bytes;
 }
 
-/** AssignTask.artifact_limit_bytes 是 uint64：下发时夹在能装下的范围内（上限已经在启动时检查过，这是第二道）。 */
+/**
+ * AssignTask.artifact_limit_bytes 是 uint64：下发时的换算（上限已经在启动时检查过，这是第二道）。
+ * - `Infinity` 和超过 uint64 的值夹在最大值：控制面的 `ArtifactStore` 对它们也是「没有上限」，两边一致，序列化不会出错；
+ * - 0、负数、小数不到 1、`NaN`、不是数的值**抛出**：下发时 0 的意思是「不知道上限」（旧版本控制面没带），把它们悄悄
+ *   换成最大值，就等于把一个坏值变成「没有上限」，而控制面自己的检查对同一个值的处理不是这样（0 是什么都存不下）。
+ */
 const MAX_UINT64 = 2n ** 64n - 1n;
-export const artifactLimitForWire = (limit: number): bigint =>
-	Number.isFinite(limit) && limit >= 1
-		? BigInt(Math.floor(limit)) < MAX_UINT64
-			? BigInt(Math.floor(limit))
-			: MAX_UINT64
-		: MAX_UINT64;
+export function artifactLimitForWire(limit: number): bigint {
+	if (typeof limit !== "number" || Number.isNaN(limit) || limit < 1) {
+		throw new Error(artifactLimitMessage("产物合计的上限", limit));
+	}
+	if (!Number.isFinite(limit)) return MAX_UINT64;
+	const bytes = BigInt(Math.floor(limit));
+	return bytes < MAX_UINT64 ? bytes : MAX_UINT64;
+}
 
 /** 名称（产物目录内的相对路径）的最大长度。 */
 const MAX_NAME_LENGTH = 1024;

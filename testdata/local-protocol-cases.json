@@ -1085,6 +1085,26 @@
 			}
 		},
 		{
+			"name": "failed 带 kind 是 timeout、agent_lost 这样的别的错误类型：不照字面采信，按节点出错上报（只认 config_error、env_error）",
+			"output": "{\"status\":\"failed\",\"error\":{\"kind\":\"timeout\",\"type\":\"ValueError\",\"message\":\"拒单\"}}",
+			"exit_code": 1,
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"report": "拒单"
+			}
+		},
+		{
+			"name": "failed 带 kind 是 agent_lost：同样按节点出错上报",
+			"output": "{\"status\":\"failed\",\"error\":{\"kind\":\"agent_lost\",\"type\":\"ValueError\",\"message\":\"拒单\"}}",
+			"exit_code": 1,
+			"expect": {
+				"status": "failed",
+				"kind": "node_error",
+				"report": "拒单"
+			}
+		},
+		{
 			"name": "failed 带 kind 是 node_error 或不认识的值：按节点出错上报",
 			"output": "{\"status\":\"failed\",\"error\":{\"kind\":\"something_else\",\"type\":\"ValueError\",\"message\":\"拒单\"}}",
 			"exit_code": 1,

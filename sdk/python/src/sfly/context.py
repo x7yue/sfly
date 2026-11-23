@@ -273,6 +273,12 @@ class ArtifactLimitExceeded(Exception):
             "保存前可以看 ctx.artifacts.limit_bytes，或者接住这个异常再改成留在本机"
         )
 
+    def __reduce__(self) -> tuple[type[ArtifactLimitExceeded], tuple[str, int, int, int]]:
+        """跨进程传递：`multiprocessing.Pool`、`ProcessPoolExecutor` 把子进程里的异常 pickle 传回
+        父进程，重建要用四个参数。基类按 `self.args`（只有拼好的那一句话）重建会 `TypeError`，
+        父进程收不到异常，进程池一直等到节点超时、或者报进程池损坏，都会按 `retries` 重试。"""
+        return (type(self), (self.name, self.size, self.saved, self.limit))
+
 
 class ArtifactDownloadError(Exception):
     """`ctx.artifacts.download` 失败：产物引用无效、产物不存在或已过保留期被清理、

@@ -15,6 +15,7 @@ from types import ModuleType
 import pytest
 
 from sfly import Context
+from sfly.context import TaskInfo
 from sfly.nodes import NODE_ATTR
 
 GUIDE = Path(__file__).resolve().parents[3] / "docs" / "guide" / "sdk-reference.md"
@@ -80,8 +81,8 @@ def test_when_it_does_not_fit_the_file_stays_on_the_machine_and_the_artifact_is_
 
     outputs = example.export_data(context(tmp_path, 20), rows=100, keep_dir=str(keep))
 
-    assert outputs == {"export": None, "export_path": str(keep / "export.csv")}
-    assert (keep / "export.csv").is_file()
+    assert outputs == {"export": None, "export_path": str(keep / "export-local.csv")}
+    assert (keep / "export-local.csv").is_file()
     assert not (tmp_path / "artifacts" / "export.csv").exists()
 
 
@@ -103,3 +104,27 @@ def test_both_branches_return_exactly_the_declared_keys(
 
     assert set(fits) == declared
     assert set(stays) == declared
+
+
+def test_two_tasks_on_the_same_machine_do_not_overwrite_each_others_file(
+    example: ModuleType, tmp_path: Path
+) -> None:
+    """留在本机的文件名带任务 ID：并发的任务、下一次运行，都不会覆盖输出里给出的那个文件。"""
+    keep = tmp_path / "keep"
+
+    def context_of(task_id: str) -> Context:
+        return Context(
+            events_path=None,
+            cancel_path=None,
+            artifacts_dir=tmp_path / task_id / "artifacts",
+            artifacts_url="http://cp/tasks/t/artifacts/",
+            artifact_limit_bytes=20,
+            task=TaskInfo(task_id=task_id),
+        )
+
+    first = example.export_data(context_of("task-1"), rows=100, keep_dir=str(keep))
+    second = example.export_data(context_of("task-2"), rows=50, keep_dir=str(keep))
+
+    assert first["export_path"] != second["export_path"]
+    assert Path(first["export_path"]).read_text(encoding="utf-8").count("\n") == 100
+    assert Path(second["export_path"]).read_text(encoding="utf-8").count("\n") == 50

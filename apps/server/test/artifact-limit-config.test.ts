@@ -88,8 +88,14 @@ describe("下发给 Agent 的上限夹在 uint64 以内", () => {
 		expect(artifactLimitForWire(MAX_ARTIFACT_LIMIT_BYTES)).toBe(BigInt(MAX_ARTIFACT_LIMIT_BYTES));
 	});
 
-	it("Infinity、NaN、超过 uint64 的值夹到最大值：序列化 AssignTask 不会出错", () => {
-		for (const wild of [Number.POSITIVE_INFINITY, Number.NaN, 1e30, 1e14 * MB]) {
+	it("0、负数、不到 1 的小数、NaN、不是数的值抛出：不悄悄换成「没有上限」", () => {
+		for (const bad of [0, -1, -Infinity, 0.5, Number.NaN, "1000", null, undefined]) {
+			expect(() => artifactLimitForWire(bad as number), String(bad)).toThrow(/不合法/);
+		}
+	});
+
+	it("Infinity、超过 uint64 的值夹到最大值：序列化 AssignTask 不会出错", () => {
+		for (const wild of [Number.POSITIVE_INFINITY, 1e30, 1e14 * MB]) {
 			const wire = artifactLimitForWire(wild);
 			expect(wire, String(wild)).toBe(MAX_UINT64);
 			expect(() =>

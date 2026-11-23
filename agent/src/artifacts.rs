@@ -41,7 +41,10 @@ struct OverLimit {
 impl OverLimit {
     /// 写给人看的说明；`sent` 是放得下的文件里实际上传成功的个数：上传中途失败时不说「已上传」。
     fn message(&self, sent: usize) -> String {
-        let uploaded = if sent == self.fitting {
+        let uploaded = if self.fitting == 0 {
+            // 每个文件都比上限大：没有放得下的，不说「放得下的 0 个已上传」。
+            "没有放得下的文件".to_string()
+        } else if sent == self.fitting {
             format!("放得下的 {} 个文件已上传", self.fitting)
         } else {
             format!(

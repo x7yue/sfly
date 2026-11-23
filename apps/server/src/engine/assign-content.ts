@@ -71,6 +71,8 @@ export function createAssignContent(urls: {
 	/** 每个任务的产物合计上限（字节），随任务下发给 Agent（AssignTask.artifact_limit_bytes，#477）。 */
 	artifactLimitBytes: number;
 }): AssignContentOf {
+	// 造这个函数时就换算（不合格的值在这里抛出，不留到派发时）：每个任务下发同一个上限。
+	const artifactLimit = artifactLimitForWire(urls.artifactLimitBytes);
 	return async (tx, { task, node, packageVersion, scope, target }) => {
 		let inputs: Record<string, unknown>;
 		try {
@@ -145,7 +147,7 @@ export function createAssignContent(urls: {
 				packageSha256: archive?.sha256 ?? "",
 				packageUrl: archive ? urls.packageArchiveUrl(node.package, packageVersion) : "",
 				artifactUploadUrl: urls.artifactUploadUrl(task.id),
-				artifactLimitBytes: artifactLimitForWire(urls.artifactLimitBytes),
+				artifactLimitBytes: artifactLimit,
 				referencedAgents: referenced.agents,
 				referencedFeishuBots: bots,
 			},

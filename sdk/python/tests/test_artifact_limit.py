@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
+import pickle
 import subprocess
 import sys
 import textwrap
@@ -364,3 +366,130 @@ def test_other_failures_still_have_no_kind(tmp_path: Path) -> None:
 
     assert output["status"] == "failed"
     assert "kind" not in output["error"]
+
+
+# ---- 异常跨进程传递（审查，#477）----
+
+
+def test_the_exception_survives_a_pickle_round_trip_with_all_its_attributes() -> None:
+    """进程池、`concurrent.futures` 把子进程里的异常 pickle 传回父进程：重建时要用四个参数，
+    不能只靠基类的 `args`（那里只有拼好的一句话）。"""
+    original = ArtifactLimitExceeded("dir/big.bin", 2000, 600, 1000)
+
+    copy = pickle.loads(pickle.dumps(original))
+
+    assert type(copy) is ArtifactLimitExceeded
+    assert (copy.name, copy.size, copy.saved, copy.limit) == ("dir/big.bin", 2000, 600, 1000)
+    assert str(copy) == str(original)
+
+
+@pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+def test_the_exception_round_trips_in_every_pickle_protocol(protocol: int) -> None:
+    original = ArtifactLimitExceeded("a.bin", 1, 2, 3)
+
+    copy = pickle.loads(pickle.dumps(original, protocol=protocol))
+
+    assert (copy.name, copy.size, copy.saved, copy.limit) == ("a.bin", 1, 2, 3)
+
+
+@pytest.mark.parametrize("method", ["fork", "spawn"])
+def test_a_node_saving_too_much_in_a_child_process_can_be_caught_in_the_parent(
+    tmp_path: Path, method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`multiprocessing.Pool` 的子进程里 `save` 超限：父进程接住的就是 `ArtifactLimitExceeded`。
+
+    没有 `__reduce__` 时子进程把异常发回来、父进程反序列化出错，收结果的线程退出，`apply` 一直等：
+    这里给它一个超时，挂住就是失败，不是测试自己挂住。"""
+    if method not in multiprocessing.get_all_start_methods():
+        pytest.skip(f"这个平台没有 {method}")
+    # spawn 的子进程继承父进程的 sys.path，按名字导入这个模块。
+    monkeypatch.syspath_prepend(str(Path(__file__).parent))
+    import artifact_nodes
+
+    context = multiprocessing.get_context(method)
+    with context.Pool(1) as pool:
+        pending = pool.apply_async(
+            artifact_nodes.save_too_much_in_a_child, (str(tmp_path / "artifacts"), 1000)
+        )
+        with pytest.raises(ArtifactLimitExceeded) as raised:
+            pending.get(timeout=30)
+
+    assert (raised.value.name, raised.value.size, raised.value.limit) == ("big.bin", 1001, 1000)
+    assert raised.value.saved == 0
+
+
+# ---- 异常组里的超限（审查，#477）----
+
+needs_groups = pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="ExceptionGroup 从 Python 3.11 起才有"
+)
+
+
+@needs_groups
+def test_a_task_group_where_every_task_hit_the_limit_is_env_error(tmp_path: Path) -> None:
+    """`asyncio.TaskGroup` 里几个任务都超限、都没接住：runner 看到的是异常组，叶子全是超限
+    就写 env_error（不按重试配置重试）。"""
+    source = """
+    import asyncio
+    from sfly import Context
+
+    def work(ctx: Context) -> dict:
+        async def save(name: str) -> None:
+            ctx.artifacts.save(name, b"x" * 2000)
+
+        async def main() -> None:
+            async with asyncio.TaskGroup() as group:
+                group.create_task(save("a.bin"))
+                group.create_task(save("b.bin"))
+
+        asyncio.run(main())
+        return {}
+    """
+
+    output = run_runner(tmp_path, source, {"SFLY_ARTIFACT_LIMIT_BYTES": "1500"})
+
+    assert output["status"] == "failed"
+    assert output["error"]["kind"] == "env_error"
+    assert output["error"]["type"] == "ExceptionGroup"
+
+
+@needs_groups
+def test_a_group_with_something_else_in_it_is_still_a_node_error(tmp_path: Path) -> None:
+    """组里混着别的异常：有别的原因，照常按节点出错（node_error）处理，会按重试配置重试。"""
+    source = """
+    from sfly import ArtifactLimitExceeded, Context
+
+    def work(ctx: Context) -> dict:
+        raise ExceptionGroup("g", [ArtifactLimitExceeded("a.bin", 2, 1, 1), RuntimeError("拒单")])
+    """
+
+    output = run_runner(tmp_path, source, {})
+
+    assert output["status"] == "failed"
+    assert "kind" not in output["error"]
+
+
+@needs_groups
+def test_nested_groups_count_every_leaf(tmp_path: Path) -> None:
+    only = """
+    from sfly import ArtifactLimitExceeded, Context
+
+    def work(ctx: Context) -> dict:
+        limit = ArtifactLimitExceeded("a.bin", 2, 1, 1)
+        raise ExceptionGroup("outer", [ExceptionGroup("inner", [limit]), limit])
+    """
+    mixed = """
+    from sfly import ArtifactLimitExceeded, Context
+
+    def work(ctx: Context) -> dict:
+        limit = ArtifactLimitExceeded("a.bin", 2, 1, 1)
+        raise ExceptionGroup("outer", [ExceptionGroup("inner", [limit, ValueError("x")]), limit])
+    """
+
+    (tmp_path / "only").mkdir()
+    (tmp_path / "mixed").mkdir()
+    only_output = run_runner(tmp_path / "only", only, {})
+    mixed_output = run_runner(tmp_path / "mixed", mixed, {})
+
+    assert only_output["error"]["kind"] == "env_error"
+    assert "kind" not in mixed_output["error"]

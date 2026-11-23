@@ -149,6 +149,20 @@ describe("派发内容", () => {
 		}
 	});
 
+	it("产物上限是 0、负数或 NaN：造派发内容的函数时就抛出（不留到派发时，也不悄悄下发成「没有上限」）", () => {
+		for (const bad of [0, -1, Number.NaN]) {
+			expect(
+				() =>
+					createAssignContent({
+						packageArchiveUrl: () => "",
+						artifactUploadUrl: () => "",
+						artifactLimitBytes: bad,
+					}),
+				String(bad),
+			).toThrow(/不合法/);
+		}
+	});
+
 	it("节点自己设了超时就用它", async () => {
 		const result = await assign({ node: node({ inputs: { url: "u" }, timeout: 90 }) });
 		expect(result).toMatchObject({ ok: true, assign: { timeoutSeconds: 90 } });
