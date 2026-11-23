@@ -595,10 +595,33 @@ class Stack:
         problems = "；".join(str(p.get("message")) for p in ready.get("problems") or [])
         raise d.DockerError(f"助手在 {timeout:.0f} 秒内没有就绪：{problems}")
 
+    def _agent_credential(self, container: str, name: str) -> str:
+        """向控制面为这台 Agent 签发 Agent 凭据（#492）：没有凭据的 Agent 只接受已登记过的名字，
+        全新的环境里谁都没登记过。凭据只交给这台 Agent 的安装脚本
+        （环境变量 `SFLY_TOKEN`，写进它的 agent.env）。"""
+        out = d.sh(
+            container,
+            "curl -fsS -X POST -H 'content-type: application/json' -d '{}' "
+            f"http://sfly.internal:8080/agents/{name}/credentials",
+        )
+        return str(json.loads(out.stdout)["token"])
+
     def _install_agents(self) -> None:
         url = "http://sfly.internal:8080/install.sh"
-        d.sh(self.dev, f"curl -fsSL {url} | sh -s -- --dev --no-service", timeout=600)
-        d.sh(self.sut, f"curl -fsSL {url} | sh -s -- --name {SUT_AGENT} --no-service", timeout=600)
+        dev_token = self._agent_credential(self.dev, DEV_AGENT)
+        sut_token = self._agent_credential(self.sut, SUT_AGENT)
+        d.sh(
+            self.dev,
+            f"curl -fsSL {url} | sh -s -- --dev --no-service",
+            env={"SFLY_TOKEN": dev_token},
+            timeout=600,
+        )
+        d.sh(
+            self.sut,
+            f"curl -fsSL {url} | sh -s -- --name {SUT_AGENT} --no-service",
+            env={"SFLY_TOKEN": sut_token},
+            timeout=600,
+        )
         # 安装脚本提示 ~/.local/bin 不在 PATH 上时，按用户文档把它加进 shell 配置。
         d.sh(
             self.dev,

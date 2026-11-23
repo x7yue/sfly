@@ -168,7 +168,8 @@ export function registerCredentialIssuer(
 	};
 }
 
-function credentialFor(grpcUrl: string, name: string): Promise<string> | undefined {
+/** 这个控制面给这个名字签发的 Agent 凭据（没有登记签发办法的控制面，例如打包的控制面子进程，返回 undefined）。 */
+export function credentialFor(grpcUrl: string, name: string): Promise<string> | undefined {
 	const issue = credentialIssuers.get(grpcUrl);
 	if (issue === undefined) return undefined;
 	const key = `${grpcUrl}\n${name}`;

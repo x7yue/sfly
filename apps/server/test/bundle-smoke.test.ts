@@ -181,10 +181,20 @@ console.log(JSON.stringify(await client.system.health()));
 			await rm(out, { recursive: true, force: true });
 		}
 
+		// 没有凭据的 Agent 只接受已登记过的名字（#492）：控制面是另一个进程，经 HTTP 为这台 Agent 签发凭据。
+		const issued = await fetchPath("/agents/bundle-agent/credentials", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		});
+		expect(issued.status).toBe(201);
+		const { token } = (await issued.json()) as { token: string };
+
 		// Agent 连上控制面后用 uv 创建 venv、下载安装 SDK，然后才发出 welcome。
 		agent = await startRealAgent({
 			grpcUrl: server.grpcUrl,
 			name: "bundle-agent",
+			credential: token,
 			bin: join(sflyHome, "bin", "sfly-agent"),
 			welcomeTimeoutMs: 120_000,
 		});

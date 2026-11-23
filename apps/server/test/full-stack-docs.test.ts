@@ -14,6 +14,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { docsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { TestAccounts } from "./support/credentials.js";
@@ -184,9 +185,16 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 		const work = join(dir, route, "blocks");
 		await mkdir(home, { recursive: true });
 		await mkdir(work, { recursive: true });
+		// 没有凭据的 Agent 只接受已登记过的名字（#492）：读者按文档先向平台管理员要一个 Agent 凭据，经环境变量 `SFLY_TOKEN`
+		// 交给安装脚本（文档里「用环境变量传令牌」那一段）；这里向控制面为 `dev-<用户名>-<主机名>` 签发一个。
+		const { token: agentCredential } = await cp.current.agentCredentials.issue(
+			DEFAULT_PROJECT,
+			devAgent,
+		);
 		const env = {
 			PATH: tools,
 			HOME: home,
+			SFLY_TOKEN: agentCredential,
 			LANG: "C.UTF-8",
 			TMPDIR: process.env.TMPDIR ?? tmpdir(),
 			UV_PYTHON: python,
