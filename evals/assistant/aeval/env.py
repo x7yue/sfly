@@ -340,6 +340,10 @@ class Stack:
             self.verify_isolated()
             log("已确认断网：开发环境容器连不上外网和宿主机")
         if self.assistant:
+            # 上面取完基线就停了 Agent（别的命令都先 reset 再用）；助手要工作台在线，这里重新起好，
+            # up 完就能用。
+            self.start_agents()
+            self.wait_agents(timeout=180)
             self.wait_assistant_ready()
             log("助手就绪：工作台是 dev 上的 Agent")
         log(f"环境就绪：控制面 {self.cp_url}")
