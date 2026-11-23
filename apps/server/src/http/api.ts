@@ -39,7 +39,7 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import type { SessionService } from "../sessions/session-service.js";
-import type { SessionStore } from "../sessions/session-store.js";
+import { isLockTimeout, type SessionStore } from "../sessions/session-store.js";
 import { registerSse } from "../sse/sse.js";
 import { watchStreamCredentials } from "../sse/stream-recheck.js";
 import { sanitizeLogArgs, serializeError } from "../util/safe-error.js";
