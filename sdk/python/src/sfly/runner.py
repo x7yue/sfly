@@ -221,12 +221,35 @@ def _is_runtime_frame(filename: str, dirs: tuple[list[str], list[str], list[str]
     return not in_site and any(_under(path, d) for d in stdlib)
 
 
-def _terminated_at(error: BaseException) -> str | None:
+#: 平台自带的、在用户的业务节点里被调用的包（标准节点包的辅助函数）。被终止时它们的栈帧和 SDK、
+#: Python 标准库一样不算「执行到哪」：报调用它们的那一行用户代码，里面那一帧写在后面作补充。
+#: 节点自己就是这个包里的节点（标准节点 `shell` 等）时不跳过：它们运行时位置仍然指向包里。
+PLATFORM_PACKAGES = frozenset({"sfly_std"})
+
+
+def _top_module(frame: Any) -> str:
+    return str(frame.f_globals.get("__name__") or "").partition(".")[0]
+
+
+def _frame_place(frame: Any, lineno: int) -> str:
+    code = frame.f_code
+    module = frame.f_globals.get("__name__") or os.path.basename(code.co_filename)
+    function = getattr(code, "co_qualname", code.co_name)
+    place = module if function == "<module>" else f"{module}.{function}"
+    return f"{place} 第 {lineno} 行"
+
+
+def _terminated_at(error: BaseException, entry: str = "") -> str | None:
     """任务被终止时执行到哪：节点代码里被打断的那一行，写成「模块.函数 第 N 行」。
 
-    取异常经过的栈里最里面、不是 SDK 也不是 Python 标准库的一帧：停在 SDK 里（等待 Agent、下载产物）
-    或标准库里（`Event.wait`、`subprocess.run`、`Thread.join`、`asyncio.run`）时报调用它的节点代码，
-    停在第三方库里时报库里的位置。整条栈都在 SDK 和标准库里时报最里面一帧；没有栈信息时是 None。
+    取异常经过的栈里最里面、不是 SDK、Python 标准库、平台自带的包（`PLATFORM_PACKAGES`）的一帧：
+    停在 SDK 里（等待 Agent、下载产物）、标准库里（`Event.wait`、`subprocess.run`、`Thread.join`、
+    `asyncio.run`）或标准节点包的辅助函数里（`wait_for_port`、`monitor_processes`、`run_command`）时，
+    报调用它们的节点代码；用户把辅助函数包进自己的工具模块时，报工具模块里调用它的那一行（它是
+    用户的代码，是最近的一帧）；停在第三方库里时报库里的位置。停在平台自带的包里时，里面那一帧
+    写在后面作补充：`my_pkg.check.run 第 12 行（正在 sfly_std.waiting.wait_for_port 第 88 行）`。
+    节点自己就是平台自带的包里的节点（`entry` 的顶层模块是它，标准节点）时不跳过它的帧。
+    整条栈都在 SDK 和标准库里时报最里面一帧；没有栈信息时是 None。
     """
     import traceback
 
@@ -234,15 +257,25 @@ def _terminated_at(error: BaseException) -> str | None:
     if not frames:
         return None
     dirs = _runtime_dirs()
-    frame, lineno = next(
-        ((f, n) for f, n in reversed(frames) if not _is_runtime_frame(f.f_code.co_filename, dirs)),
-        frames[-1],
+    skip_platform = entry.partition(":")[0].partition(".")[0] not in PLATFORM_PACKAGES
+
+    def is_platform(frame: Any) -> bool:
+        return skip_platform and _top_module(frame) in PLATFORM_PACKAGES
+
+    index = next(
+        (
+            i
+            for i in range(len(frames) - 1, -1, -1)
+            if not _is_runtime_frame(frames[i][0].f_code.co_filename, dirs)
+            and not is_platform(frames[i][0])
+        ),
+        len(frames) - 1,
     )
-    code = frame.f_code
-    module = frame.f_globals.get("__name__") or os.path.basename(code.co_filename)
-    function = getattr(code, "co_qualname", code.co_name)
-    place = module if function == "<module>" else f"{module}.{function}"
-    return f"{place} 第 {lineno} 行"
+    place = _frame_place(*frames[index])
+    inner = next(
+        (frames[i] for i in range(len(frames) - 1, index, -1) if is_platform(frames[i][0])), None
+    )
+    return f"{place}（正在 {_frame_place(*inner)}）" if inner is not None else place
 
 
 def _in_site_packages(filename: str, dirs: tuple[list[str], list[str], list[str]]) -> bool:
@@ -408,11 +441,11 @@ def _format_failure(error: BaseException, *, importing: bool = False) -> str:
     return "".join(exc.format())
 
 
-def _termination_message(error: BaseException) -> str:
+def _termination_message(error: BaseException, entry: str = "") -> str:
     """被终止时写进日志的那一行。找不到执行到哪时只写原因：这条路径在信号处理之后，不能再抛异常。"""
     text = str(error) or "任务被终止"
     try:
-        place = _terminated_at(error)
+        place = _terminated_at(error, entry)
     except Exception:  # noqa: BLE001 - 位置只是附带的信息，取不到不能影响结果
         place = None
     return f"{text}，执行到 {place}" if place else text
@@ -465,7 +498,7 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             # ERROR 级，不往那里写堆栈；只在事件管道里留一行 INFO，写明停在哪。被终止已经由任务状态
             # （已停止、已取消、超时）表达，这一行只是记录，不是需要处理的问题，所以不用 WARN。
             tb = traceback.format_exc()
-            _info(_termination_message(error))
+            _info(_termination_message(error, str(task.get("entry") or "")))
         else:
             # 堆栈从节点代码那一帧开始。出错的位置先于堆栈写进日志（一行 ERROR）：
             # `sfly run logs --failed` 只看日志也看得到，不用翻堆栈。整理堆栈、取位置都不能让失败

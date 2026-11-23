@@ -812,14 +812,20 @@ def test_a_type_error_raised_inside_the_node_is_still_a_node_error(
 # 被终止已经由任务状态表达，不是需要处理的问题，所以不是 WARN。
 
 
-def terminate(tmp_path: Path, code_dir: Path, entry: str, ready: Path) -> Execution:
-    """启动执行器，等节点写出 `ready` 后像 Agent 那样先写取消标记再发 SIGTERM，等它退出。"""
+def terminate(
+    tmp_path: Path, code_dir: Path, entry: str, ready: Path, *, extra_path: Path | None = None
+) -> Execution:
+    """启动执行器，等节点写出 `ready` 后像 Agent 那样先写取消标记再发 SIGTERM，等它退出。
+
+    `extra_path` 是再多加进导入路径的目录（装第三方库、标准节点包的 site-packages）。"""
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
     (work / "task.json").write_text(json.dumps({"entry": entry, "inputs": {}}))
     env = {
         **{k: v for k, v in os.environ.items() if not k.startswith("SFLY_")},
-        "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir)]),
+        "PYTHONPATH": os.pathsep.join(
+            [str(SDK_SRC), str(code_dir), *([str(extra_path)] if extra_path else [])]
+        ),
         "SFLY_TASK": str(work / "task.json"),
         "SFLY_OUTPUT": str(work / "output.json"),
         "SFLY_EVENTS": str(work / "events.jsonl"),
@@ -1066,6 +1072,75 @@ def test_stopped_inside_a_third_party_library_reports_the_place_in_the_library(
     assert event["message"] == f"任务被终止（SIGTERM），执行到 thirdparty.wait_for_it 第 {line} 行"
 
 
+def fake_sfly_std(code_dir: Path, ready: Path) -> Path:
+    """一个假的 `sfly_std` 放在名为 site-packages 的目录里（真的标准节点包也装在那里）。"""
+    library = code_dir / "site-packages"
+    package = library / "sfly_std"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "waiting.py").write_text(
+        "import threading\n\n\ndef wait_for_port() -> None:\n"
+        f"    open({str(ready)!r}, 'w').close(); threading.Event().wait(60)  {STOPPED_HERE}\n",
+        encoding="utf-8",
+    )
+    return library
+
+
+def test_stopped_inside_a_standard_package_helper_reports_the_node_line_that_called_it(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # #568：业务节点调用标准节点包（`sfly_std`）的辅助函数时被终止：「执行到哪」是业务节点里调用它
+    # 的那一行，里面那一帧作补充写在后面；以前报的是 `sfly_std` 内部的那一行，用户看不出是自己节点的
+    # 哪一步。
+    ready = tmp_path / "ready"
+    library = fake_sfly_std(code_dir, ready)
+    write_module(
+        code_dir,
+        "business",
+        f"""
+        import sys
+        sys.path.insert(0, __file__.rsplit("/", 1)[0] + "/site-packages")
+        from sfly_std.waiting import wait_for_port
+
+        def check() -> None:
+            wait_for_port()  {STOPPED_HERE}
+        """,
+    )
+
+    run = terminate(tmp_path, code_dir, "business:check", ready)
+
+    [event] = events_of(tmp_path)
+    inner = marked_line(library / "sfly_std", "waiting")
+    assert event["message"] == (
+        f"任务被终止（SIGTERM），执行到 business.check 第 {marked_line(code_dir, 'business')} 行"
+        f"（正在 sfly_std.waiting.wait_for_port 第 {inner} 行）"
+    )
+    assert run.stderr == ""
+
+
+def test_the_standard_nodes_themselves_still_report_the_place_inside_the_package(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 节点自己就是 `sfly_std` 里的节点（`shell` 这类）：它们的代码就在包里，位置仍然指向包里，
+    # 没有补充。
+    ready = tmp_path / "ready"
+    library = fake_sfly_std(code_dir, ready)
+    (library / "sfly_std" / "shell.py").write_text(
+        "from sfly_std.waiting import wait_for_port\n\n\ndef shell() -> None:\n"
+        "    wait_for_port()\n",
+        encoding="utf-8",
+    )
+
+    run = terminate(tmp_path, code_dir, "sfly_std.shell:shell", ready, extra_path=library)
+
+    [event] = events_of(tmp_path)
+    inner = marked_line(library / "sfly_std", "waiting")
+    assert event["message"] == (
+        f"任务被终止（SIGTERM），执行到 sfly_std.waiting.wait_for_port 第 {inner} 行"
+    )
+    assert run.stderr == ""
+
+
 # ---- 节点失败：堆栈从节点代码开始，给出出错的位置（#471） ----
 
 RAISED_HERE = "# 在这一行抛出"
@@ -1215,6 +1290,42 @@ def test_an_exception_raised_in_a_third_party_library_reports_the_node_line_that
     assert frame_files(error["traceback"]) == [
         str(code_dir / "uselib.py"),
         str(library / "thirdparty.py"),
+    ]
+
+
+def test_an_exception_raised_in_a_standard_package_helper_reports_the_node_line_that_called_it(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # #568：出错的位置也是业务节点里调用辅助函数的那一行（标准节点包是第三方库一类：从里面抛出时
+    # 报调用它的节点代码），不是 `sfly_std` 内部；堆栈里辅助函数的帧照常保留。
+    library = code_dir / "site-packages"
+    package = library / "sfly_std"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "waiting.py").write_text(
+        f"def wait_for_port() -> None:\n    raise TimeoutError('等不到')  {RAISED_HERE}\n",
+        encoding="utf-8",
+    )
+    write_module(
+        code_dir,
+        "business",
+        f"""
+        import sys
+        sys.path.insert(0, __file__.rsplit("/", 1)[0] + "/site-packages")
+        from sfly_std.waiting import wait_for_port
+
+        def check() -> dict:
+            wait_for_port()  {RAISED_HERE}
+            return {{}}
+        """,
+    )
+
+    _, error = failed(tmp_path, code_dir, "business:check")
+
+    assert error["location"] == f"business.check 第 {raised_line(code_dir, 'business')} 行"
+    assert frame_files(error["traceback"]) == [
+        str(code_dir / "business.py"),
+        str(package / "waiting.py"),
     ]
 
 
@@ -1654,9 +1765,9 @@ def test_failing_to_trim_the_traceback_reports_the_full_traceback_of_the_nodes_e
 # ---- 「执行到哪」的取法本身：用拼出来的栈直接测，不需要真的被终止 ----
 
 
-def frame_in(filename: str, function: str = "f") -> types.FrameType:
-    """一个代码文件名是 `filename` 的函数的栈帧（函数已经返回，帧对象还在）。"""
-    namespace: dict[str, Any] = {"__name__": "fake"}
+def frame_in(filename: str, function: str = "f", module: str = "fake") -> types.FrameType:
+    """一个代码文件名是 `filename`、模块名是 `module` 的函数的栈帧（函数已经返回，帧对象还在）。"""
+    namespace: dict[str, Any] = {"__name__": module}
     exec(  # noqa: S102 - 测试里造一个带指定文件名的帧
         compile(f"import sys\ndef {function}():\n    return sys._getframe()\n", filename, "exec"),
         namespace,
@@ -1687,6 +1798,71 @@ def test_sdk_and_standard_library_frames_are_skipped_the_innermost_node_frame_is
     )
 
     assert runner._terminated_at(error) == "fake.watch 第 3 行"
+
+
+STD_FILE = "/venv/site-packages/sfly_std/waiting.py"
+
+
+def test_standard_package_frames_are_skipped_and_the_innermost_one_is_added_as_a_supplement() -> (
+    None
+):
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "check", "biz.checks"),
+        frame_in(STD_FILE, "wait_for_port", "sfly_std.waiting"),
+        frame_in(f"{STDLIB}/socket.py", "create_connection", "socket"),
+        frame_in(f"{STDLIB}/time.py", "sleep", "time"),
+    )
+
+    assert runner._terminated_at(error) == (
+        "biz.checks.check 第 3 行（正在 sfly_std.waiting.wait_for_port 第 3 行）"
+    )
+
+
+def test_a_helper_wrapped_in_the_users_own_tool_module_reports_the_tool_module_line() -> None:
+    # 用户把辅助函数再包一层自己的工具模块：最近的一帧用户代码是工具模块里调用它的那一行。
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "check", "biz.checks"),
+        frame_in("/work/tools.py", "wait_ready", "biz.tools"),
+        frame_in(STD_FILE, "wait_for_port", "sfly_std.waiting"),
+        frame_in(f"{STDLIB}/threading.py", "wait", "threading"),
+    )
+
+    assert runner._terminated_at(error) == (
+        "biz.tools.wait_ready 第 3 行（正在 sfly_std.waiting.wait_for_port 第 3 行）"
+    )
+
+
+def test_a_standard_node_itself_keeps_reporting_the_place_inside_the_package() -> None:
+    error = cancelled_through(
+        frame_in("/venv/site-packages/sfly_std/shell.py", "shell", "sfly_std.shell"),
+        frame_in("/venv/site-packages/sfly_std/commands.py", "run_command", "sfly_std.commands"),
+        frame_in(f"{STDLIB}/subprocess.py", "wait", "subprocess"),
+    )
+
+    assert runner._terminated_at(error, "sfly_std.shell:shell") == (
+        "sfly_std.commands.run_command 第 3 行"
+    )
+
+
+def test_frames_of_other_packages_are_not_taken_for_the_standard_package() -> None:
+    # 只认顶层模块叫 `sfly_std` 的：名字相近的第三方库、用户自己的 `sfly_std_extra` 不跳过。
+    error = cancelled_through(
+        frame_in(NODE_FRAME, "check", "biz.checks"),
+        frame_in("/venv/site-packages/sfly_std_extra/x.py", "wait", "sfly_std_extra.x"),
+    )
+
+    assert runner._terminated_at(error) == "sfly_std_extra.x.wait 第 3 行"
+
+
+def test_a_stack_made_only_of_runtime_and_standard_package_frames_reports_the_innermost_frame() -> (
+    None
+):
+    error = cancelled_through(
+        frame_in(STD_FILE, "wait_for_port", "sfly_std.waiting"),
+        frame_in(f"{STDLIB}/time.py", "sleep", "time"),
+    )
+
+    assert runner._terminated_at(error) == "time.sleep 第 3 行"
 
 
 def test_a_frame_without_a_file_cannot_be_told_apart_so_it_counts_as_node_code() -> None:
