@@ -1,8 +1,11 @@
-// 全栈（#563）：真实的控制面**进程**、真实的 Rust Agent、数据库前面放一个可以掐断的 TCP 转发。数据库整体不可用一小段时间
-// 再恢复：控制面进程不退出，恢复后自己回到正常；Agent 不需要人工做任何事，任务照常跑完、运行成功，之后的运行也正常。
-// 实测（Linux 容器里）：4 秒的中断里真实 Agent 的流没有断，没有重连（welcome 事件前后都是 1），任务一直在 Agent 上跑；
-// Agent 断开重连之后继续手上的任务那一段（Hello/Welcome）由 Agent 和协议自己的测试管，这里不重复，下面只把 welcome 的数量
-// 记在输出里、不断言它变不变。（假 Agent 版本的同类场景在 db-connection-errors.test.ts：那里的 Agent 流在中断里断了，测试照真实 Agent 的做法重连。）
+// 全栈（#563）：真实的控制面**进程**、真实的 Rust Agent、数据库前面放一个可以掐断的 TCP 转发。数据库出问题时：
+// - 此刻没有借出去的连接：控制面不退出，恢复后自己好；
+// - 此刻有事务在进行（借出去的连接断了）：控制面有序退出（退出码 1），由部署的重启策略（测试里自己照做：同一个库、同一个数据目录、
+//   同样的端口再起一个）拉起来，真实的 Agent 自己重连、带着手上的任务、重发结果。
+// 两种情况下 Agent 都不需要人工做任何事，任务照常跑完、运行成功，之后的运行也正常（#563，docs/ARCHITECTURE.md §6.9）。
+// 第一条的两种结局取决于中断那一刻碰巧有没有事务在进行（Agent 在跑、心跳不断，有时有），所以两种都接受、断言各自的后续；
+// 第二条用在写任务结果的那条语句上断开，结局是确定的。
+import { createServer } from "node:net";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
@@ -16,10 +19,26 @@ import { createTestDatabase, type TestDatabase } from "./support/test-database.j
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-describeWithAgent("全栈：数据库整体不可用一小段时间再恢复，真实的 Agent 不需要人工做任何事", () => {
+/** 一个现在空闲的端口（取到之后立刻放掉）：控制面重启要在同样的端口上，Agent 才能按原来的地址重连。 */
+async function freePort(): Promise<number> {
+	const server = createServer();
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const { port } = server.address() as { port: number };
+	await new Promise((resolve) => server.close(resolve));
+	return port;
+}
+
+const RESULT_UPDATE = /^update "tasks" set .*"outputs" = /s;
+
+describeWithAgent("全栈：数据库出问题，真实的 Agent 不需要人工做任何事", () => {
 	let database: TestDatabase;
 	let proxy: PgProxy;
-	let cp: ControlPlaneProcess;
+	let ports: { http: number; grpc: number };
+	/** 第一个控制面进程（请求都经它发：重启之后端口不变、登录凭据在库里，它的 `fetch` 照样能用）。 */
+	let first: ControlPlaneProcess;
+	/** 现在在跑的控制面进程（重启之后是新的）。 */
+	let current: ControlPlaneProcess;
+	const restarts: ControlPlaneProcess[] = [];
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;
 	let api: ApiClient;
@@ -28,14 +47,16 @@ describeWithAgent("全栈：数据库整体不可用一小段时间再恢复，�
 		const bin = agentBinary();
 		database = await createTestDatabase("sfly_dbout");
 		proxy = await PgProxy.start(database.url);
-		[cp, venv] = await Promise.all([
-			ControlPlaneProcess.start(proxy.urlFor(database.url)),
+		ports = { http: await freePort(), grpc: await freePort() };
+		[first, venv] = await Promise.all([
+			ControlPlaneProcess.start(proxy.urlFor(database.url), {}, { ports }),
 			createStubVenv(),
 		]);
-		api = new ApiClient(cp);
-		await publishStubPackage(cp);
+		current = first;
+		api = new ApiClient(first);
+		await publishStubPackage(first);
 		agent = await startRealAgent({
-			grpcUrl: cp.grpcUrl,
+			grpcUrl: first.grpcUrl,
 			name: "outage-agent",
 			venv: venv.path,
 			bin,
@@ -44,7 +65,8 @@ describeWithAgent("全栈：数据库整体不可用一小段时间再恢复，�
 
 	afterAll(async () => {
 		await agent?.close();
-		await cp?.stop();
+		for (const process of restarts) await process.stop();
+		await first?.stop();
 		await proxy?.close();
 		await database?.drop();
 		await venv?.remove();
@@ -67,33 +89,66 @@ describeWithAgent("全栈：数据库整体不可用一小段时间再恢复，�
 			edges: [{ from: "entry", to: "wait", kind: "chain" }],
 			packages: { "sfly-stub": "0.1.0" },
 		});
-	const welcomes = () => agent.events.filter((e) => e.event === "welcome").length;
+	/** 部署的重启策略：同一个库、同一个数据目录、同样的端口再起一个控制面（测试里自己做）。 */
+	const restart = async () => {
+		const next = await ControlPlaneProcess.start(
+			proxy.urlFor(database.url),
+			{},
+			{ dataDir: first.dataDir, ports },
+		);
+		restarts.push(next);
+		current = next;
+	};
 
-	it("任务在 Agent 上跑着时数据库不可用几秒再恢复：控制面进程不退出，不可用时读接口 503、恢复后 200；不用任何人工操作，任务跑完、运行成功，之后的运行也正常", async () => {
+	it("任务在 Agent 上跑着时数据库不可用几秒再恢复：控制面要么不退出、自己好，要么有序退出（退出码 1）、被重启拉起来；真实的 Agent 都不需要人工操作，任务跑完、运行成功，之后的运行也正常", async () => {
 		const runId = await api.triggerOk(await waitScenario(14));
 		await eventually(
 			async () => expect((await api.node(runId, "wait")).status).toBe("running"),
 			60_000,
 		);
-		const before = welcomes();
 
 		await proxy.outage();
 		await sleep(4000);
-		expect(cp.exit, cp.log.slice(-1500)).toBeUndefined();
-		expect((await cp.request("GET", "/health")).status).toBe(503);
+		// 中断那一刻碰巧有事务在进行（借出去的连接断了）就退出，没有就一直活着、读接口 503。
+		const exited = await first.waitForExit(1000);
+		if (exited) {
+			expect(exited, first.log.slice(-1500)).toMatchObject({ code: 1 });
+			expect(first.log).toContain("数据库连接在使用中断开");
+		} else {
+			expect((await first.request("GET", "/health")).status).toBe(503);
+		}
 		await proxy.recover();
-
+		if (exited) await restart();
 		await eventually(
-			async () => expect((await cp.request("GET", "/health")).status).toBe(200),
-			30_000,
+			async () => expect((await current.request("GET", "/health")).status).toBe(200),
+			60_000,
 		);
-		// 任务在 Agent 上一直跑着：不用任何人工操作，控制面恢复后收到结果，运行成功。
-		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 90_000);
-		expect(cp.exit, cp.log.slice(-1500)).toBeUndefined();
-		// 只记录，不断言：流有没有断取决于中断多久（实测 4 秒里没有断）。
-		console.log(`数据库不可用期间 Agent 的 welcome 事件：${before} → ${welcomes()}`);
+		// 任务在 Agent 上一直跑着：不用任何人工操作，控制面恢复（或被重启拉起来、Agent 重连重发结果）后运行成功。
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 120_000);
+		console.log(`数据库不可用期间控制面${exited ? "有序退出、被重启拉起来" : "没有退出"}`);
 
 		const second = await api.triggerOk(await waitScenario(1));
 		await eventually(async () => expect((await api.run(second)).status).toBe("success"), 60_000);
-	}, 240_000);
+	}, 300_000);
+
+	it("真实的 Agent 报告任务结果时写结果的事务断开：控制面有序退出，没有把成功记成失败；重启之后 Agent 重连、重发结果，运行成功", async () => {
+		const runId = await api.triggerOk(await waitScenario(6));
+		await eventually(
+			async () => expect((await api.node(runId, "wait")).status).toBe("running"),
+			60_000,
+		);
+		const victim = current;
+		// 任务结束、Agent 报结果时，写结果的那条语句上断开这条连接。
+		proxy.arm(RESULT_UPDATE, "drop");
+
+		const exit = await victim.waitForExit(60_000);
+
+		expect(exit, victim.log.slice(-1500)).toMatchObject({ code: 1 });
+		expect(victim.log).toContain("数据库连接在使用中断开");
+		expect((await api.node(runId, "wait")).status).not.toBe("failed");
+
+		await restart();
+		// 真实的 Agent 自己重连、重发手上的结果：运行成功，不是失败。
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 120_000);
+	}, 300_000);
 });

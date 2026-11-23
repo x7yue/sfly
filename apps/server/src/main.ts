@@ -68,7 +68,7 @@ import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
 import { parseInitialAdmin } from "./auth/bootstrap.js";
 import { runResetPassword } from "./auth/reset-password-cli.js";
 import { EnvSettingsError, readEnvSettings } from "./config/env-settings.js";
-import { startControlPlane } from "./control-plane.js";
+import { type ControlPlane, startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
@@ -144,7 +144,16 @@ const { httpPort, grpcPort, ...limits } = (() => {
 })();
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
 if (!webDir) console.warn(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
+// 进程级的未捕获异常和未处理的拒绝、借出去的数据库连接出错：记错误日志、有序关闭、退出码 1 退出，由部署的重启策略拉起来
+// （#563，docs/ARCHITECTURE.md §6.9）。装在控制面启动之前：启动时（迁移）的连接出错也一样处理；控制面起来之前没有东西可关。
+let running: ControlPlane | undefined;
+const guards = installProcessGuards({
+	shutdown: async () => {
+		await running?.close();
+	},
+});
 const controlPlane = await startControlPlane({
+	onFatalDatabaseError: (error) => guards.fatal("数据库连接在使用中断开", error),
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
 	http: { host: env.SFLY_HTTP_HOST ?? "0.0.0.0", port: httpPort },
@@ -176,9 +185,7 @@ console.log(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
 );
 
-// 进程级的未捕获异常和未处理的拒绝：记错误日志、有序关闭、退出码 1 退出，由部署的重启策略拉起来（#563，
-// docs/ARCHITECTURE.md §6.9）；数据库连接断了不走这里，在出错的地方处理，进程不退出。
-installProcessGuards({ shutdown: () => controlPlane.close() });
+running = controlPlane;
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
 	process.once(signal, () => {

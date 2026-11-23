@@ -5,6 +5,14 @@ import { join } from "node:path";
 
 const serverDir = join(import.meta.dirname, "..", "..");
 
+/** 控制面在启动完成之前就退出了（连不上数据库、迁移出错……）；`output` 是它到那时为止写的全部输出。 */
+export class StartupExitError extends Error {
+	constructor(readonly output: string) {
+		super(`控制面启动时退出了：${output}`);
+		this.name = "StartupExitError";
+	}
+}
+
 /** 控制面进程的退出信息。 */
 export interface ProcessExit {
 	code: number | null;
@@ -23,7 +31,9 @@ export class ControlPlaneProcess {
 		private readonly child: ChildProcess,
 		readonly httpUrl: string,
 		readonly grpcUrl: string,
-		private readonly dataDir: string,
+		/** 数据目录；自己建的在 `stop()` 时删掉，传进来的（要用同一个数据目录重新起）由调用方删。 */
+		readonly dataDir: string,
+		private readonly ownsDataDir: boolean,
 		private readonly auth: Record<string, string>,
 		private readonly captured: { output: string },
 		private readonly exited: Promise<ProcessExit>,
@@ -33,11 +43,17 @@ export class ControlPlaneProcess {
 		});
 	}
 
+	/**
+	 * `env` 覆盖默认的环境变量；`options.dataDir` 给了就用它（同一个数据目录和库重新起一个，模拟重启策略把退出的控制面拉起来），
+	 * 并且 `stop()` 不删它；`options.ports` 给了就监听这两个端口（真实的 Agent 按原来的地址重连要用）。
+	 */
 	static async start(
 		databaseUrl: string,
 		env: Record<string, string> = {},
+		options: { dataDir?: string; ports?: { http: number; grpc: number } } = {},
 	): Promise<ControlPlaneProcess> {
-		const dataDir = await mkdtemp(join(tmpdir(), "sfly-cp-process-"));
+		const ownsDataDir = options.dataDir === undefined;
+		const dataDir = options.dataDir ?? (await mkdtemp(join(tmpdir(), "sfly-cp-process-")));
 		const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
 			cwd: serverDir,
 			env: {
@@ -48,8 +64,8 @@ export class ControlPlaneProcess {
 				SFLY_DATA_DIR: dataDir,
 				SFLY_HTTP_HOST: "127.0.0.1",
 				SFLY_GRPC_HOST: "127.0.0.1",
-				SFLY_HTTP_PORT: "0",
-				SFLY_GRPC_PORT: "0",
+				SFLY_HTTP_PORT: String(options.ports?.http ?? 0),
+				SFLY_GRPC_PORT: String(options.ports?.grpc ?? 0),
 				SFLY_ADMIN_LOGIN: "root",
 				SFLY_ADMIN_PASSWORD: "admin-password-1",
 				...env,
@@ -80,8 +96,14 @@ export class ControlPlaneProcess {
 			void exited.then(() => {
 				clearTimeout(timer);
 				clearInterval(check);
-				reject(new Error(`控制面启动时退出了：${captured.output}`));
+				reject(new StartupExitError(captured.output));
 			});
+		}).catch(async (error: unknown) => {
+			// 没有起来：杀掉进程，自己建的数据目录也删掉。
+			child.kill("SIGKILL");
+			await exited;
+			if (ownsDataDir) await rm(dataDir, { recursive: true, force: true });
+			throw error;
 		});
 		const login = await fetch(`${urls.http}/auth/login`, {
 			method: "POST",
@@ -94,6 +116,7 @@ export class ControlPlaneProcess {
 			urls.http,
 			urls.grpc,
 			dataDir,
+			ownsDataDir,
 			{ cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" },
 			captured,
 			exited,
@@ -139,6 +162,6 @@ export class ControlPlaneProcess {
 	async stop(): Promise<void> {
 		this.child.kill("SIGKILL");
 		await this.exited;
-		await rm(this.dataDir, { recursive: true, force: true });
+		if (this.ownsDataDir) await rm(this.dataDir, { recursive: true, force: true });
 	}
 }
