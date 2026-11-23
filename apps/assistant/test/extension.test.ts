@@ -49,6 +49,7 @@ beforeEach(() => {
 	workbench.hostile = undefined;
 	workbench.hang = undefined;
 	workbench.silent = false;
+	workbench.timeoutReplyDelayMs = 0;
 	workbench.runs.length = 0;
 	workbench.reads.length = 0;
 	workbench.writes.length = 0;
@@ -194,6 +195,12 @@ describe("保留下来的适配", () => {
 		expect(text).toContain("Command timed out after 1 seconds");
 	});
 
+	it("Agent 超时之后要等宽限和管道（约 12 秒）才回复：期限盖得过，模型看到的仍是命令超时", async () => {
+		workbench.timeoutReplyDelayMs = 12_000;
+		const { text } = await call("bash", { command: "sleep 30", timeout: 1 });
+		expect(text).toContain("Command timed out after 1 seconds");
+	}, 30_000);
+
 	it("模型给的超时特别大：夹到这一轮的默认超时（用时上限）以内，期限的定时器不溢出", async () => {
 		const { text } = await call("bash", { command: "sleep 0.2; echo ok", timeout: 2_200_000 });
 		expect(text).toBe("ok\n");
@@ -337,6 +344,34 @@ describe("连接在命令进行中冻住：保活发现连接死了", () => {
 			const text = await pending;
 			expect(text).toContain(WORKBENCH_UNREACHABLE);
 			// 命令的期限是 120 + 20 秒；保活 1 + 1 秒、探测 0.5 秒。
+			expect(Date.now() - started).toBeLessThan(10_000);
+		} finally {
+			await proxy.close();
+		}
+	}, 20_000);
+
+	it("按块读的时候连接死了：也探一下工作台，以「工作台连不上」结束（不只是读失败）", async () => {
+		const proxy = await freezableProxy(workbench.address);
+		try {
+			writeFileSync(join(workdir, "r.txt"), "hello\n");
+			const client = connectAgent(proxy.address, {
+				pingIntervalMs: 1_000,
+				pingTimeoutMs: 1_000,
+				probeDeadlineMs: 500,
+			});
+			const ops = readOps(
+				() => client,
+				() => config,
+			);
+			// 先建好连接，再冻住：按块读只限多久没有动静（60 秒），比测试的时限长，靠 ping 发现连接死了。
+			await client.stat(join(workdir, "r.txt"));
+			proxy.freeze();
+			const started = Date.now();
+			const read = async () => {
+				for await (const _ of ops.createReadStream?.(join(workdir, "r.txt"), {}) ?? []) {
+				}
+			};
+			await expect(read()).rejects.toThrow(WORKBENCH_UNREACHABLE);
 			expect(Date.now() - started).toBeLessThan(10_000);
 		} finally {
 			await proxy.close();

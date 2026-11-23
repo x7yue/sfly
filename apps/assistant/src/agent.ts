@@ -37,10 +37,8 @@ export const PROBE_DEADLINE_MS = 5_000;
  */
 export const PING_INTERVAL_MS = 15_000;
 export const PING_TIMEOUT_MS = 10_000;
-/** `setTimeout` 能接受的最长时间（再长 Node 当成 1 毫秒）。 */
-const MAX_TIMER_MS = 2_147_483_647;
 
-/** 工作台连不上时工具结果、`turn_end` 的原因的开头：助手服务据此结束这一轮（sessions.ts）。 */
+/** 工作台连不上时工具结果、`turn_end` 的原因的开头：助手服务看到它时自己再探一次工作台，探不通才结束这一轮（sessions.ts）。 */
 export const WORKBENCH_UNREACHABLE = "工作台连不上";
 
 export class TimeoutError extends Error {}
@@ -136,7 +134,7 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 		call: (signal: AbortSignal) => Promise<T>,
 	): Promise<T> {
 		const deadline = new AbortController();
-		const timer = setTimeout(() => deadline.abort(), Math.min(ms, MAX_TIMER_MS));
+		const timer = setTimeout(() => deadline.abort(), ms);
 		const signal = outer ? AbortSignal.any([outer, deadline.signal]) : deadline.signal;
 		try {
 			return await call(signal);

@@ -39,6 +39,8 @@ export class FakeWorkbench {
 	 */
 	hang: { marker: string; thenSilent: boolean } | undefined;
 	silent = false;
+	/** 照真的 Agent 的时序：命令超时之后先等这么久（SIGTERM 的宽限 + 等管道）才回复超时。 */
+	timeoutReplyDelayMs = 0;
 
 	private constructor(
 		private readonly server: http2.Http2Server,
@@ -137,6 +139,9 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 						continue;
 					}
 					if (item.exit === -2) {
+						if (wb.timeoutReplyDelayMs > 0) {
+							await new Promise((resolve) => setTimeout(resolve, wb.timeoutReplyDelayMs));
+						}
 						throw new ConnectError("timeout", Code.DeadlineExceeded);
 					}
 					if (item.exit !== undefined) {
