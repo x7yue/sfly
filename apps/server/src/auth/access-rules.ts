@@ -185,7 +185,7 @@ export const TASK_CREDENTIAL_ROUTES = {
 	"GET /tasks/:id/artifacts/*": "project_task",
 } as const satisfies Record<string, "project_task">;
 
-/** 访问检查要求的契约性质，启动时检查（`guardHttpContract`）：每个接口的项目都认得出来。返回问题列表，空表示没有问题。 */
+/** 访问检查要求的契约性质，启动时检查（`guardHttpContract`）：每个接口的项目都认得出来，吊销自己的凭据的例外清单里只有账号类接口。返回问题列表，空表示没有问题。 */
 export function checkAccessRules(contract: readonly RouteDef[]): string[] {
 	return contract.flatMap((def) => {
 		// 没有写 resource 的接口由声明检查（checkRouteDeclarations）报，这里不重复。
@@ -201,6 +201,16 @@ export function checkAccessRules(contract: readonly RouteDef[]): string[] {
 			problems.push(
 				`${routeKey(def)}：账号类接口要在 ACCOUNT_ROUTES（src/auth/access-rules.ts）里写明认哪种凭据：没有写明的账号类接口不能上线`,
 			);
+		}
+		// 吊销自己的凭据的例外清单（REVOKE_OWN_ROUTES）只能放账号类、认登录或个人令牌的接口：写进别的接口既不生效也不报错，
+		// 写进别的账号类接口会悄悄放宽那个接口（启动时检查，#606）。
+		if (REVOKE_OWN_ROUTES.has(routeKey(def))) {
+			const rule = (ACCOUNT_ROUTES as Record<string, string>)[routeKey(def)];
+			if (def.resource.kind !== "account" || (rule !== "login" && rule !== "login_or_personal")) {
+				problems.push(
+					`${routeKey(def)}：REVOKE_OWN_ROUTES（停用的用户也认自己的凭据）只能放账号类、认登录或个人令牌的接口（ACCOUNT_ROUTES 里是 login、login_or_personal）`,
+				);
+			}
 		}
 		if (def.resource.kind === "system" && def.effect !== "read") {
 			problems.push(

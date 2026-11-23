@@ -7,6 +7,7 @@ import {
 	checkAccessRules,
 	checkCredentialRoutes,
 	locatorOf,
+	REVOKE_OWN_ROUTES,
 	routeKey,
 } from "../src/auth/access-rules.js";
 import {
@@ -328,6 +329,34 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 			expect(def.path, routeKey(def)).not.toContain(":project");
 			expect(locatorOf(def), routeKey(def)).toEqual({ from: "account" });
 		}
+	});
+
+	it("吊销自己的凭据的例外清单（REVOKE_OWN_ROUTES）：契约里没有清单里的接口，契约测试报出它；清单里写进不是账号类的接口、或认别的凭据的账号类接口，启动检查报错", () => {
+		const without = httpContract.filter((def) => routeKey(def) !== "POST /auth/logout-all");
+		expect(
+			checkCredentialRoutes(without).filter((p) => p.includes("REVOKE_OWN_ROUTES")),
+		).toHaveLength(1);
+		const list = REVOKE_OWN_ROUTES as Set<string>;
+		const mentions = (problems: string[]) =>
+			problems.filter((p) => p.includes("REVOKE_OWN_ROUTES"));
+		try {
+			// 不是账号类的接口。
+			list.add("GET /orchestrations");
+			expect(mentions(checkAccessRules(httpContract))).toEqual([
+				expect.stringContaining("GET /orchestrations"),
+			]);
+			list.delete("GET /orchestrations");
+			// 账号类，但认的是平台管理员（写进去会悄悄放宽管理账号的接口）。
+			list.add("POST /users");
+			expect(mentions(checkAccessRules(httpContract))).toEqual([
+				expect.stringContaining("POST /users"),
+			]);
+		} finally {
+			list.delete("GET /orchestrations");
+			list.delete("POST /users");
+		}
+		// 现在的清单没有问题。
+		expect(mentions(checkAccessRules(httpContract))).toEqual([]);
 	});
 
 	it("契约里加了账号类接口却没有写进 ACCOUNT_ROUTES，启动检查报错", () => {

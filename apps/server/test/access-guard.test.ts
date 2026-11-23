@@ -1124,8 +1124,17 @@ describe("契约路由的访问检查", () => {
 				// 停用的用户的令牌失效；吊销自己的凭据的接口例外（REVOKE_OWN_ROUTES）：停用期间也认他自己的登录和个人令牌。
 				const disabled = user(50, { disabledAt: BEFORE });
 				const refusedWhenDisabled = def === revoke ? "ok" : 401;
-				expect(outcome(await run(def, personal(disabled))), routeKey(def)).toBe(
-					refusedWhenDisabled,
+				// 停用的用户的个人令牌：只有吊销它自己通过（路径里的 ID 是它自己的），吊销别的令牌、别的接口一律 401。
+				const own = personal(disabled);
+				const ownId = [...store.tokens.values()].at(-1)?.id ?? "";
+				expect(
+					outcome(
+						await guard.check(request(def, own, "default", def === revoke ? { id: ownId } : {})),
+					),
+					routeKey(def),
+				).toBe(refusedWhenDisabled);
+				expect(outcome(await run(def, personal(disabled))), `${routeKey(def)}（别的令牌）`).toBe(
+					401,
 				);
 				expect(outcome(await run(def, login(disabled))), routeKey(def)).toBe(refusedWhenDisabled);
 				// 例外只给登录和个人令牌：停用的用户的会话令牌照旧 401（不是 403）。
@@ -1179,7 +1188,20 @@ describe("契约路由的访问检查", () => {
 			}
 		});
 
-		it("停用的用户：登出、注销全部登录认他自己的登录（身份里有登录的 ID，处理函数据此注销）；别的账号接口照旧 401；个人令牌在只认登录的接口上还是 403", async () => {
+		it("已注销或空闲期限已到的登录，在吊销自己的凭据的三个接口上仍然无效：停用或没停用都一样（401；登出没有身份，没有登录可注销）", async () => {
+			for (const who of [USERS.editor, user(52, { disabledAt: BEFORE })]) {
+				for (const extra of [{ revokedAt: BEFORE }, { idleExpiresAt: BEFORE }]) {
+					for (const key of ["POST /auth/logout-all", "DELETE /account/tokens/:id"]) {
+						expect(outcome(await run(route(key), login(who, extra))), `${who.id} ${key}`).toBe(401);
+					}
+					const out = await run(route("POST /auth/logout"), login(who, extra));
+					expect(outcome(out)).toBe("ok");
+					expect((out as { access: unknown }).access).toBeNull();
+				}
+			}
+		});
+
+		it("停用的用户：登出、注销全部登录认他自己的登录（身份里有登录的 ID，处理函数据此注销）；别的账号接口照旧 401；个人令牌在注销全部登录上是 401（只有吊销它自己通过）", async () => {
 			const disabled = user(51, { disabledAt: BEFORE });
 			for (const key of ["POST /auth/logout", "POST /auth/logout-all"]) {
 				const result = await run(route(key), login(disabled));
@@ -1199,7 +1221,7 @@ describe("契约路由的访问检查", () => {
 			expect(
 				outcome(await run(route("POST /auth/logout-all"), personal(disabled))),
 				"个人令牌",
-			).toBe(403);
+			).toBe(401);
 		});
 
 		it("登出什么凭据都不拒绝（幂等，总是清 Cookie），但令牌登不了出：带令牌的登出没有身份，不注销任何登录", async () => {

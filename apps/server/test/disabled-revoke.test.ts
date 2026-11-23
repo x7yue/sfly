@@ -107,7 +107,7 @@ describe("停用期间吊销自己的凭据", () => {
 		expect((await call(bearer(other), "GET", "/orchestrations")).status).toBe(200);
 	});
 
-	it("个人令牌只能吊销它自己：停用期间也一样，吊销别的令牌是 403，那个令牌没动", async () => {
+	it("个人令牌只能吊销它自己：停用期间吊销别的令牌、注销全部登录一律 401（和已吊销的令牌分不出来），那个令牌没动", async () => {
 		const alice = await accounts.user("alice");
 		const token = await accounts.personalToken(alice);
 		const other = await accounts.personalToken(alice);
@@ -117,7 +117,8 @@ describe("停用期间吊销自己的凭据", () => {
 			"DELETE",
 			`/account/tokens/${await accounts.tokenId(other)}`,
 		);
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
+		expect((await call(bearer(token), "POST", "/auth/logout-all")).status).toBe(401);
 		expect(await revokedTokens(alice)).toBe(0);
 	});
 

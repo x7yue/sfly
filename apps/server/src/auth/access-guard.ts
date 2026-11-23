@@ -3,7 +3,8 @@
 //
 // 这一步只对带了凭据的请求生效（规格 #489）：不带凭据的请求照旧放行，到 #494 才改成 401；带共享令牌的 HTTP 请求
 // 和不带凭据的走同一套（共享令牌不对应任何一台 Agent）。带了凭据就一定检查：库里没有的、过期的、吊销的、用户停用的，
-// 一律 401，不会退回到「不带凭据」的放行。
+// 一律 401，不会退回到「不带凭据」的放行。一处例外：吊销自己的凭据的三个接口，停用的用户的登录和个人令牌也认
+// （{@link REVOKE_OWN_ROUTES}，#578），只能用来吊销自己的凭据。
 import { type RouteDef, TOKEN_PREFIXES } from "@sfly/schema";
 import type { Clock } from "../clock.js";
 import type { ProjectRole } from "../db/schema.js";
@@ -370,6 +371,12 @@ export class AccessGuard {
 		const refused = (status: 401 | 403, code: string, message: string): AccessResult =>
 			withCookie(denied(status, code, message), resolved, request, this.#idleMs);
 		if (principal === undefined) return refused(401, "unauthorized", "凭据无效、已过期或已吊销");
+		// 停用的用户的个人令牌（走 REVOKE_OWN_ROUTES 才解析得出来）：只有吊销它自己通过，别的一律 401——和已吊销的令牌
+		// 分不出来，持有令牌的人不能借状态码看出它是「停用中、仍然有效」。
+		if (principal.kind === "personal" && principal.user.disabledAt !== null) {
+			const own = key === "DELETE /account/tokens/:id" && request.params.id === principal.tokenId;
+			if (!own) return refused(401, "unauthorized", "凭据无效、已过期或已吊销");
+		}
 		// 登录一直可以；个人令牌只有 `login_or_personal` 认。
 		const person =
 			principal.kind === "login" || (rule === "login_or_personal" && principal.kind === "personal")
