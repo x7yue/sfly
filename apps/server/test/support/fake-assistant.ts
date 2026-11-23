@@ -36,6 +36,8 @@ export class FakeAssistant {
 	readonly prompts: ReceivedPrompt[] = [];
 	/** 收到过中止的会话 ID（每次一条；带的轮次在 {@link abortRequests}）。 */
 	readonly aborts: string[] = [];
+	/** 收到过几次 `abort` 请求（不管请求体对不对）：测试要确认「没有发」时看它。 */
+	abortAttempts = 0;
 	/** 收到的中止：会话和它要结束的轮次（过了协议的 schema）。 */
 	readonly abortRequests: Array<{ sessionId: string; turn: number }> = [];
 	/**
@@ -245,6 +247,7 @@ export class FakeAssistant {
 		if (!command) return this.#error(res, { status: 404, code: "invalid_request" });
 		const sessionId = command[1] as string;
 		if (command[2] === "abort") {
+			this.abortAttempts++;
 			let abortJson: unknown;
 			try {
 				abortJson = JSON.parse(await readBody(req));

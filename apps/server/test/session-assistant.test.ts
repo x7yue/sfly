@@ -130,6 +130,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		assistant.aborts.length = 0;
 		assistant.abortRequests.length = 0;
 		assistant.abortedTurns.clear();
+		assistant.abortAttempts = 0;
 		assistant.promptReply = () => undefined;
 		assistant.abortReply = () => undefined;
 		assistant.health = () => assistant.healthy();
@@ -388,15 +389,17 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect(assistant.abortedTurns.has(`${view.id}:2`)).toBe(false);
 		expect((await sessionRow(cp, view.id))?.status).toBe("running");
 		expect((await events(view.id)).filter((e) => e.type === "turn_end")).toHaveLength(1);
-		// 第 2 轮自己的结局照常记。
-		assistant.emit(view.id, 2, turnEnd(2));
-		await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
+		// 第 2 轮在做时点停止：中止带的是第 2 轮；助手服务这边什么也不带回，宽限之后由控制面结束它。
+		expect((await api.post(`/sessions/${view.id}/stop`, {})).status).toBe(200);
+		expect(assistant.abortRequests.at(-1)).toEqual({ sessionId: view.id, turn: 2 });
+		expect((await sessionRow(cp, view.id))?.status).toBe("idle");
 	});
 
 	it("没有过任何一轮的空闲会话点停止：没有什么可结束的，不向助手服务发中止", async () => {
 		const id = await seedSession(cp.database.url, { status: "idle", title: "从没做过" });
 		expect((await api.post(`/sessions/${id}/stop`, {})).status).toBe(200);
 		await new Promise((resolve) => setTimeout(resolve, 150));
+		expect(assistant.abortAttempts).toBe(0);
 		expect(assistant.abortRequests).toEqual([]);
 	});
 
