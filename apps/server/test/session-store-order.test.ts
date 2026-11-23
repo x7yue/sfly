@@ -3,7 +3,7 @@
 // 真实数据库；`SessionStoreDeps.afterCommit` 是测试用的缝，让一条事件停在「已提交、未发布」之间。
 import { randomUUID } from "node:crypto";
 import type { PersistedSessionEvent, SessionEvent } from "@sfly/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/db/database.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../src/projects/project-id.js";
 import { ProjectBusyError, SessionStore } from "../src/sessions/session-store.js";
@@ -355,6 +355,8 @@ describe("会话事件的落库和发布顺序", () => {
 				db: database.db,
 				clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
 				cursorSweepSize: 2,
+				// 闲置 0 毫秒：别的会话的写触发清理时，这个会话的指针「闲置」了，只有「有在途推送的不清」留得住它。
+				cursorIdleMs: 0,
 			});
 			const { id } = await newSession("running", await newProject());
 			const out: SessionEvent[] = [];
@@ -377,7 +379,9 @@ describe("会话事件的落库和发布顺序", () => {
 				);
 			const first = await recordIn(id, 1);
 			const second = await recordIn(id, 2);
-			// 别的会话的写把指针数推过上限（2）：清理这时跑，只清闲置的，这个会话的指针刚用过，不能清。
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			// 别的会话的写把指针数推过上限（2）：清理这时跑，只清闲置的；这个会话有已提交、还没推送的事件（在途），不能清：
+			// 清掉的话，下一次登记时指针从「本次序号减一」算起，那条在途的事件在实时流里就再也不推。
 			for (let i = 0; i < 3; i++) {
 				const other = await newSession("running", await newProject());
 				await sweeping.append(other.id, userBody(i));
@@ -387,6 +391,126 @@ describe("会话事件的落库和发布顺序", () => {
 			sweeping.announce(id, first);
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			expect(shape(out)).toEqual([1, 2]);
+			stop();
+		});
+
+		it("推送指针的清理：闲置的确实被清掉（内存不无限涨），刚用过的留着", async () => {
+			const sweeping = new SessionStore({
+				db: database.db,
+				clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+				cursorSweepSize: 2,
+				cursorIdleMs: 0,
+			});
+			const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+			for (let i = 0; i < 2; i++) {
+				const other = await newSession("running", await newProject());
+				await sweeping.append(other.id, userBody(i));
+				await pause();
+			}
+			expect(sweeping.cursorCount).toBe(2);
+			// 第三个会话的写把指针数推过上限（2）：前两个已经推完、闲置，被清掉；这一个刚登记，留着。
+			const third = await newSession("running", await newProject());
+			await sweeping.append(third.id, userBody(3));
+			expect(sweeping.cursorCount).toBe(1);
+		});
+
+		it("事务分配了序号之后回滚留下的在途指针：闲置超过一小时就清（不无限留着）；没到一小时的留着", async () => {
+			vi.useFakeTimers({ toFake: ["Date"] });
+			try {
+				const sweeping = new SessionStore({
+					db: database.db,
+					clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+					cursorSweepSize: 1,
+					cursorIdleMs: 0,
+				});
+				const { id } = await newSession("running", await newProject());
+				await database.db
+					.transaction(async (tx) => {
+						await sweeping.recordPlatform(tx, id, {
+							kind: "run",
+							run_id: randomUUID(),
+							scenario_name: "回滚的",
+						});
+						throw new Error("提交之前出错");
+					})
+					.catch(() => undefined);
+				expect(sweeping.cursorCount).toBe(1);
+				// 十分钟之后别的会话的写触发清理：回滚留下的指针算「在途」，不到一小时不清。
+				vi.setSystemTime(new Date(Date.now() + 10 * 60_000));
+				const second = await newSession("running", await newProject());
+				await sweeping.append(second.id, userBody(1));
+				expect(sweeping.cursorCount).toBe(2);
+				// 过了一小时（清理限频每分钟一次）：在途的也清掉，剩刚用过的。
+				vi.setSystemTime(new Date(Date.now() + 2 * 60 * 60_000));
+				const third = await newSession("running", await newProject());
+				await sweeping.append(third.id, userBody(2));
+				expect(sweeping.cursorCount).toBe(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it.each([
+			"append",
+			"appendFromAssistant",
+			"beginTurn",
+		] as const)("补推时读库出错（%s）：已经提交的写照常返回，不报成失败；只记日志、指针不前进，下一条事件推送时补上，订阅的一方看到的序号连续", async (kind) => {
+			const errors: unknown[] = [];
+			const local = new SessionStore({
+				db: database.db,
+				clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+				onError: (_what, error) => errors.push(error),
+			});
+			const { id } = await local.create({
+				project: await newProject(),
+				title: "补推出错",
+				status: kind === "beginTurn" ? "idle" : "running",
+				createdBy: "alice",
+				createdByUserId: null,
+			});
+			const out: SessionEvent[] = [];
+			const stop = local.follow(
+				id,
+				0,
+				{ emit: (event) => out.push(event), drained: () => Promise.resolve() },
+				(error) => {
+					throw error;
+				},
+			);
+			await settle();
+			// 一条已经提交、推送还没轮到的平台记录：这次写的推送要先从库里补它。
+			await database.db.transaction((tx) =>
+				local.recordPlatform(tx, id, {
+					kind: "run",
+					run_id: randomUUID(),
+					scenario_name: "先提交的",
+				}),
+			);
+			const read = vi.spyOn(local, "after").mockRejectedValueOnce(new Error("读库坏了"));
+			const write =
+				kind === "append"
+					? local.append(id, userBody(1))
+					: kind === "appendFromAssistant"
+						? local.appendFromAssistant(id, 1, userBody(1), new Date())
+						: local.beginTurn(id, DEFAULT_PROJECT, (turn) => [
+								userBody(turn),
+								{ type: "turn_started" as const, turn },
+							]);
+			// 事件已经提交：写照常返回（以前这里抛读库的错，beginTurn 的发话被报成 500，会话却已经是「在做」）。
+			await expect(write).resolves.toBeDefined();
+			expect(errors).toHaveLength(1);
+			expect(String(errors[0])).toContain("读库坏了");
+			read.mockRestore();
+			const committed = await local.after(id, 0, 10);
+			expect(committed.length).toBeGreaterThanOrEqual(2);
+			// 指针没有前进：订阅的一方这时什么都没收到；下一条事件的推送把没推出去的按序号补上。
+			expect(shape(out)).toEqual([]);
+			await local.append(id, userBody(2));
+			await eventually(() =>
+				expect(shape(out)).toEqual(
+					(committed.map((e) => e.seq) as number[]).concat(committed.length + 1),
+				),
+			);
 			stop();
 		});
 

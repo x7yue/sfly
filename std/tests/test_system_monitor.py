@@ -12,10 +12,10 @@ from pathlib import Path
 
 import psutil
 import pytest
+from helper_nodes import system_monitor
 
 from sfly.local import Execution
 from sfly.testing import run_node
-from sfly_std.system_monitor import system_monitor
 
 METRICS = {
     "cpu_percent",
@@ -308,6 +308,8 @@ def test_runs_until_cancelled_without_duration_and_keeps_the_samples(tmp_path: P
         "一直运行到被停止或取消",
         f"监控结束，共采样 {samples} 次",
     ]
-    # 被取消是正常终止：执行器不写堆栈，只留一行 INFO 写明停在哪。
-    assert terminated.startswith("任务被终止（SIGTERM），执行到 sfly_std.resources.")
+    # 被取消是正常终止：执行器不写堆栈，只留一行 INFO 写明停在哪：业务节点里调用辅助函数的那一行，
+    # 用户直接调用的那个辅助函数写在后面作补充（#568）。
+    assert terminated.startswith("任务被终止（SIGTERM），执行到 helper_nodes.system_monitor 第 ")
+    assert "（正在 sfly_std.resources.monitor_system 第 " in terminated
     assert [line.level for line in result.logs if line.level in ("warn", "error")] == []

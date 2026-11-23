@@ -9,9 +9,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from helper_nodes import wait_port
 
 from sfly.testing import run_node
-from sfly_std.wait_port import wait_port
 
 
 def free_port() -> int:
