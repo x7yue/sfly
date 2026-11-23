@@ -122,6 +122,19 @@ export const ACCOUNT_ROUTES = {
 } as const satisfies Record<string, AccountCredential>;
 
 /**
+ * 被停用的用户仍然可以用自己的凭据做的事：吊销自己的凭据（#578）。停用是可撤回的暂停，不是作废：停用期间他的登录和个人令牌对
+ * 别的接口都拒绝；要是连吊销也拒绝，想登出的人（脚本里的 `sfly logout`、停用之前开着的页面）吊销不了，启用之后这些凭据又能用了。
+ * 所以这几个接口在停用期间也认他自己的登录 Cookie 和个人令牌（别的凭据——会话令牌、项目令牌……——不认，所有者被停用的照旧 401）：
+ * 注销全部登录、吊销个人令牌（登录可以吊销自己名下的任何一个，个人令牌只能吊销它自己，处理函数核对，停用期间也一样）；
+ * `POST /auth/logout` 本来就认任何 Cookie（上面 `logout`），停用的用户的登录同样在内。这是账号类接口表之外的一条例外，放在同一处检查。
+ * 不续期（不顺延登录的空闲期限、不写令牌的最后使用时间）：停用期间的凭据是只出不进的。
+ */
+export const REVOKE_OWN_ROUTES: ReadonlySet<string> = new Set([
+	"POST /auth/logout-all",
+	"DELETE /account/tokens/:id",
+]);
+
+/**
  * 只认人的登录 Cookie 的项目内接口（令牌不能签发令牌）：签发项目令牌要「管理」范围，并且只认登录；带了令牌（含带「管理」范围的
  * 个人令牌）是 403。列出和吊销项目令牌不在其中：令牌可以吊销令牌，那只会收窄权限。
  * 这是范围表之外的一条凭据种类的限制，和范围表放在同一处检查里（./access-guard.ts）。
@@ -196,6 +209,7 @@ export function checkCredentialRoutes(contract: readonly RouteDef[]): string[] {
 		["TASK_CREDENTIAL_ROUTES", TASK_CREDENTIAL_ROUTES],
 		["ACCOUNT_ROUTES", ACCOUNT_ROUTES],
 		["LOGIN_ONLY_ROUTES", LOGIN_ONLY_ROUTES],
+		["REVOKE_OWN_ROUTES", Object.fromEntries([...REVOKE_OWN_ROUTES].map((key) => [key, true]))],
 	].flatMap(([name, list]) =>
 		Object.keys(list as object)
 			.filter((key) => !known.has(key))

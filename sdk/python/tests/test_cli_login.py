@@ -629,13 +629,15 @@ class TestLogout:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         assert login(capsys, monkeypatch)[0] == 0
-        server.revoke_status = 401  # 令牌失效了，或者账号被停用了：控制面都只说 401
+        # 令牌已经失效了（账号被停用时令牌照样能吊销它自己，不是这个原因）
+        server.revoke_status = 401
         code, out, err = run(capsys, monkeypatch, "logout")
         assert code == 0, err
         assert credentials.load(server.url) is None
-        # 如实说：这次登出没有吊销令牌；账号被停用时令牌还在，启用之后又能用；去哪里吊销。
+        # 如实说：这次登出没有吊销令牌；去哪里核对。
         assert "本机的凭据已删除" in out and "令牌已吊销" not in out
-        assert "401" in out and "账号被停用" in out and "没有被吊销" in out and "令牌」页" in out
+        assert "401" in out and "没有吊销" in out and "令牌」页" in out
+        assert "账号被停用" not in out
         assert TOKEN not in out + err
         # --json 里分得清：没有吊销，被控制面拒绝了。
         assert login(capsys, monkeypatch)[0] == 0
