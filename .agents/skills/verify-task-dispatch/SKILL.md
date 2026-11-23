@@ -110,6 +110,16 @@ git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
 - **停用或吊销时断开连接**（`AgentConnection.close`）：就是模型的 `Disconnect`。它手上的任务没有新的处理：控制面照旧等租约过期，走 `LeaseExpire` → `agentLost` 的强制取消和 `retries` 重试；停用期间 Agent 连不上，所以第 2 次尝试留在队列里，恢复后重连才派发。同一条路径有测试：`apps/server/test/agent-disable-dispatch.test.ts`。重连被拒绝所以 Welcome 里的放弃不会发生，旧尝试只由租约过期结束。
 - **`AssignTask.task_token`**：`engine.ts` `#prepareAssign` 在「记为 dispatched 并设租约」的同一个事务里签发任务凭据（`agents/task-credentials.ts`），加在消息里；没有新的状态转移，派发的条件（`AssignOnlyWhenReady`、槽位）没有动。任务凭据是否有效由任务当前的状态得出（还在 Agent 手上），不另有吊销动作，所以不会有哪条路径漏掉。
 
+### #638 审查之后的再核对（连接的项目、旧方式只认凭据、任务凭据随 Agent 状态）
+
+审查之后又改了三处，逐项对照模型，**没有改模型，也没有移动同步提交**：
+
+- **连接的项目**（`AgentConnection.project`，`attach` 在引擎的锁里核对「已登记的项目等于连接的项目」，`#prepareAssign` 比较连接的项目和运行的项目）：派发前多了一次**只读的比较**，比较的两边（连接的项目、运行的项目）在连接建立、运行创建之后都不再变；比不上时任务以 `config_error` 失败，这条路径在 #629 之前就有（比较的对象从登记记录的项目换成连接的项目），**没有新的状态转移，没有新的同步点，没有动派发的先后条件**（`AssignOnlyWhenReady`、槽位）。`attach` 多了一次读库和一次拒绝，都在登记之前、引擎的锁里，和上面「认身份和登记之间的空档」同一把锁；被拒绝的 Hello 仍然是一次没有发生的 `AgentConnect`。
+- **名字有没被吊销的 Agent 凭据就只认凭据**、Hello 三种情况同一句话、先比项目后看停用：都只改「这次 Hello 连不连得上」，同上，不碰任务和租约。
+- **停用、吊销之后任务凭据立刻不认**（`taskIsActive` 多看这台 Agent 的停用和凭据）：任务凭据只用于下载产物的 HTTP 请求，不在派发、结果、心跳、租约的任何一步里；它不改变任务的状态，所以和模型无关（任务照旧等租约过期走 `agent_lost`）。
+
+`check.sh`、`mutants.sh` 重新跑过，结果和上面一致。
+
 ## 读结果
 
 模型检查的结果请用户运行 pstack 的 `/statechart` 来读（它只能由用户手动启动）。违例时它把最短反例讲成白话步骤，通过时画出状态之间怎么迁移。自己读原始输出时：TLC 打印 `Error: Invariant X is violated.`，后面是 `State 1 … State N`，每个状态前写着动作名（如 `<Dispatch(1) …>`），对照上面的覆盖表翻译成代码里的步骤。
