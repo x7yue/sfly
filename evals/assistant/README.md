@@ -97,9 +97,14 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
   参考答案，不花钱，只验证这条路走得通。`--assistant-model` 写模型配置里的名字（见下面「模型」），助手容器挂的模型文件指向
   宿主机的转发口，里面的 `apiKey` 是占位值，凭据由转发口加上：转发口要先起好（Linux 上照「模型」一节监听 docker0 的地址）。
 - **浏览器**：打开 `http://127.0.0.1:<18100 + 槽位>`（槽位 1 是 `http://127.0.0.1:18101`）。第一次打开时页面让你填一个昵称（不用登录，
-  会话和操作记在这个昵称下）。**助手页和会话页在 #564 里，它合入之前控制台里还没有「助手」**：会话只能经接口
-  （`POST /projects/default/sessions`、`GET /sessions/<ID>`，写请求带 `x-sfly-nickname`）或下面的 `e2e` 看。
+  会话和操作记在这个昵称下），点侧边栏的「助手」（`/sessions`）：上面是助手此刻能不能用，输入框里说一句话就开始一个会话，
+  点进一个会话看它的时间线（`/sessions/<ID>`），在做时可以停止。也可以经接口（`POST /projects/default/sessions`、
+  `GET /sessions/<ID>`，写请求带 `x-sfly-nickname`）或下面的 `e2e` 看会话。
   在被测机上起着的被测服务、`seed` 准备好的节点包和场景都照常在。
+  用假的模型端点在页面上看各种情况时，第一句话里写 `AEVAL-SCRIPT:<剧本>` 选 `container/` 下的剧本：
+  `walkthrough`（带换行和引号的命令、控制字符和颜色码、写读改、被截断的长输出、失败的命令、带 Markdown 的长回复）、
+  `walkthrough-stop`（一条 5 分钟的命令，看停止）、`walkthrough-instant`（马上就结束的一轮）、
+  `walkthrough-many`（130 步，看到了上限和往前翻页）。剧本按会话的第一句话选，后面的话不换剧本。
 - **断网和离线包**：`up --isolated --assistant` 能起（模型只能用 `fake`，假的模型端点在网络里），会话经控制面照常走，
   但断网的网络不映射控制面的端口：宿主机上的浏览器和 `e2e` 都连不到，`e2e` 会直接拒绝；要看只能在 `dev` 里
   `curl http://sfly.internal:8080/…`。离线包（`pack`）不带助手镜像，在不能联网的机器上要另外 `docker save` /

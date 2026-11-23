@@ -1,0 +1,1049 @@
+{
+	"说明": "联调第 3 部分（#543）：很多步的会话。一轮最多 40 次模型调用，第 1 轮到上限结束；接着说几句，每轮接着往下做，用来看上限的结局和往前翻页（一页 200 条）。提示里写 AEVAL-SCRIPT:walkthrough-many。",
+	"steps": [
+		{
+			"id": "step1",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 1 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step2",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 2 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step3",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 3 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step4",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 4 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step5",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 5 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step6",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 6 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step7",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 7 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step8",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 8 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step9",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 9 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step10",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 10 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step11",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 11 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step12",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 12 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step13",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 13 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step14",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 14 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step15",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 15 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step16",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 16 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step17",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 17 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step18",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 18 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step19",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 19 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step20",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 20 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step21",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 21 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step22",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 22 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step23",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 23 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step24",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 24 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step25",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 25 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step26",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 26 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step27",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 27 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step28",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 28 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step29",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 29 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step30",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 30 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step31",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 31 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step32",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 32 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step33",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 33 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step34",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 34 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step35",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 35 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step36",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 36 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step37",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 37 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step38",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 38 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step39",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 39 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step40",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 40 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step41",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 41 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step42",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 42 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step43",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 43 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step44",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 44 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step45",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 45 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step46",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 46 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step47",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 47 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step48",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 48 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step49",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 49 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step50",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 50 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step51",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 51 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step52",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 52 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step53",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 53 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step54",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 54 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step55",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 55 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step56",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 56 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step57",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 57 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step58",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 58 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step59",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 59 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step60",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 60 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step61",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 61 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step62",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 62 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step63",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 63 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step64",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 64 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step65",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 65 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step66",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 66 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step67",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 67 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step68",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 68 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step69",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 69 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step70",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 70 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step71",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 71 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step72",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 72 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step73",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 73 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step74",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 74 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step75",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 75 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step76",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 76 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step77",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 77 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step78",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 78 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step79",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 79 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step80",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 80 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step81",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 81 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step82",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 82 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step83",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 83 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step84",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 84 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step85",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 85 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step86",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 86 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step87",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 87 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step88",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 88 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step89",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 89 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step90",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 90 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step91",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 91 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step92",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 92 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step93",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 93 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step94",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 94 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step95",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 95 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step96",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 96 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step97",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 97 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step98",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 98 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step99",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 99 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step100",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 100 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step101",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 101 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step102",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 102 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step103",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 103 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step104",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 104 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step105",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 105 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step106",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 106 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step107",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 107 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step108",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 108 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step109",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 109 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step110",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 110 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step111",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 111 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step112",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 112 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step113",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 113 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step114",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 114 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step115",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 115 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step116",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 116 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step117",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 117 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step118",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 118 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step119",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 119 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step120",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 120 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step121",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 121 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step122",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 122 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step123",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 123 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step124",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 124 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step125",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 125 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step126",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 126 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step127",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 127 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step128",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 128 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step129",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 129 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "step130",
+			"tool": "bash",
+			"args": {
+				"command": "echo 第 130 步",
+				"timeout": 30
+			}
+		},
+		{
+			"id": "done",
+			"text": "一百三十步都做完了。"
+		}
+	]
+}

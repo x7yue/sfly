@@ -1,0 +1,9 @@
+{
+	"说明": "联调第 3 部分（#543）：一轮刚开始就结束（模型马上回一句话、不调工具）。提示里写 AEVAL-SCRIPT:walkthrough-instant。",
+	"steps": [
+		{
+			"id": "instant",
+			"text": "好的，马上就做完了。"
+		}
+	]
+}
