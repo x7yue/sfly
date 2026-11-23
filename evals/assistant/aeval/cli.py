@@ -8,10 +8,11 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
-from aeval import bgcheck, probe, rpcprobe, toolcheck, transcript
+from aeval import bgcheck, e2e, probe, rpcprobe, toolcheck, transcript
 from aeval import docker as d
 from aeval.env import (
     DATA_HOME,
+    DEFAULT_ASSISTANT_IMAGE,
     DEFAULT_SERVER_IMAGE,
     DEFAULT_WORKBENCH_IMAGE,
     EVALS_DIR,
@@ -50,6 +51,13 @@ def _stack(args: argparse.Namespace) -> Stack:
         stack.pypi_mirror = args.pypi_mirror
     if getattr(args, "github_mirror", None):
         stack.github_mirror = args.github_mirror
+    if args.command == "up":
+        stack.assistant = getattr(args, "assistant", False)
+        stack.assistant_image = getattr(args, "assistant_image", None) or stack.assistant_image
+        stack.assistant_model = getattr(args, "assistant_model", None) or stack.assistant_model
+    else:
+        # up --assistant 起的槽位：之后的命令（reset、seed、e2e……）重建控制面和助手时沿用它的设置。
+        stack.adopt_assistant()
     return stack
 
 
@@ -80,6 +88,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     up.add_argument("--pypi-mirror", help="用已有的 PyPI 镜像（例如内网的），不用自带的镜像站")
     up.add_argument("--github-mirror", help="用已有的 GitHub Release 镜像，不用自带的镜像站")
+    up.add_argument(
+        "--assistant",
+        action="store_true",
+        help="加上平台的助手：起助手容器，控制面把会话交给它（要用源码构建的控制面和助手镜像）",
+    )
+    up.add_argument("--assistant-image", default=DEFAULT_ASSISTANT_IMAGE)
+    up.add_argument(
+        "--assistant-model",
+        default="fake",
+        help="助手用模型配置里的哪个模型，默认 fake（假的模型端点，照剧本执行参考答案）",
+    )
     sub.add_parser("down", help="删掉这个槽位的全部容器、网络和卷")
     sub.add_parser("reset", help="把环境恢复到刚起好的状态")
     seed = sub.add_parser("seed", help="重置环境并准备一道题的初始状态")
@@ -175,6 +194,21 @@ def main(argv: list[str] | None = None) -> int:
     mem.add_argument(
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-memory"
     )
+    e2e_cmd = sub.add_parser(
+        "e2e",
+        help="端到端：经控制面的接口建会话、发一道题，跟着事件流等到这一轮结束，"
+        "再判分（要 up --assistant）",
+    )
+    e2e_cmd.add_argument("task", nargs="?", default="write")
+    e2e_cmd.add_argument(
+        "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-e2e"
+    )
+    e2e_cmd.add_argument(
+        "--max-seconds",
+        type=float,
+        default=900,
+        help="等这一轮结束的时限；没有事件时按控制面的心跳（15 秒一次）检查，最多晚这么久",
+    )
     report = sub.add_parser("report", help="把结果目录汇总成 Markdown 表格")
     report.add_argument("results", type=Path)
     args = parser.parse_args(argv)
@@ -238,6 +272,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "selfcheck":
         return selfcheck(stack, args.tasks or list(TASKS))
+    elif args.command == "e2e":
+        results = args.results or DATA_HOME / f"{date.today().isoformat()}-e2e"
+        return e2e.run(stack, TASKS[args.task], results, args.max_seconds)
     return 0
 
 

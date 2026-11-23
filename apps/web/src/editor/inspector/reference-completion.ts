@@ -1,7 +1,8 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import {
+	type NodeTypeLookup,
 	nodeNameWithId,
-	nodeTypeOf,
+	nodeTypeLookup,
 	type PackageCatalog,
 	REFERENCE,
 	type ReferenceOption,
@@ -35,8 +36,9 @@ const RUN_STATE_DESCRIPTION =
 export function referenceChoices(
 	doc: StoredOrchestrationDocument,
 	id: string,
-	catalog: PackageCatalog,
+	catalog: PackageCatalog | NodeTypeLookup,
 ): ReferenceChoice[] {
+	const typeOf = nodeTypeLookup(doc, catalog);
 	const scope = referenceScope(doc, id);
 	const params = new Map((scope.start?.params ?? []).map((p) => [p.name, p]));
 	const choiceOf = (o: ReferenceOption): ReferenceChoice => {
@@ -50,9 +52,7 @@ export function referenceChoices(
 			case "output": {
 				const source = doc.nodes.find((n) => n.id === o.node_id);
 				const schema =
-					source?.kind === "package"
-						? nodeTypeOf(doc, source, catalog)?.outputs.properties[o.key]
-						: undefined;
+					source?.kind === "package" ? typeOf(source)?.outputs.properties[o.key] : undefined;
 				const type = typeof schema?.type === "string" ? `${schema.type} · ` : "";
 				return {
 					...o,

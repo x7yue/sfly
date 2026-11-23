@@ -485,6 +485,29 @@ export interface ConnectOperation {
 }
 
 /**
+ * 复制场景的响应（#576）：新场景，加上第 1 版的警告，和保存、恢复版本的响应里的 `warnings` 同一套。复制把源场景最新版本的
+ * 文档原样写成新场景的第 1 版，不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样复制，问题在这里带出来。
+ * 源场景还没有版本（`head_version` 为 0）时为空。
+ */
+export interface CopiedOrchestrationView {
+	id: string;
+	name: string;
+	description: string;
+	/** 最新版本号；0 表示还没有保存过版本。 */
+	head_version: number;
+	created_at: Timestamp;
+	/** 归档时间；没有归档时为 null。 */
+	archived_at: Timestamp | null;
+	/** 运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。 */
+	run_notification: RunNotificationSettings;
+	/** 关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。 */
+	focus_items: FocusItemView[];
+	/** 关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。 */
+	focus_edit: FocusEditView | null;
+	warnings: DocumentWarningView[];
+}
+
+/**
  * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
  *
  * - `name_limit`：这个名称超过了每种名称的上限（`ACTION_LIMITS.perName`），失败的动作仍有明细，不在 `count` 里；

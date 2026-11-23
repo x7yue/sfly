@@ -53,6 +53,9 @@ describe("pi 的事件 → 会话事件", () => {
 		expect(results[3]).toMatchObject({ is_error: false, exit_code: 0 });
 		expect(results[4]).toMatchObject({ is_error: true, exit_code: 3 });
 		expect(results[5]?.text).toContain("Full output: /tmp/pi-bash-");
+		// pi 自己截断了命令的输出（3000 行只留了末尾 2000 行）：结果虽然没有超过事件的上限，也要标 truncated，
+		// 页面据此写明只显示了一部分。没截断的都是 false。
+		expect(results.map((r) => r.truncated)).toEqual([false, false, false, false, false, true]);
 		expect(results.every((r) => r.duration_ms >= 0)).toBe(true);
 		expect(events.at(-1)).toEqual({
 			type: "assistant_message",

@@ -15,12 +15,15 @@
 //                    下发给 Agent 安装节点包依赖（可选；未设置时 Agent 用 uv 自己的配置，ADR 0012）
 //   SFLY_GITHUB_RELEASE_MIRROR GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release），
 //                    下发给 Agent 安装 uv、下载 Python（可选；未设置时 Agent 用 uv 的官方来源）
-//   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
-//   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30），整天超过保留期的指标分区自动删除
+//   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30，大于 0、最大 36500），运行结束超过这么久后自动清理；
+//                    不想清理就填 36500（约 100 年），没有别的「永不清理」的写法
+//   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30，大于 0、最大 36500），整天超过保留期的指标分区自动删除
 //   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断
-//   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024；可以带小数，换算成字节后要在 1 到 2^53 − 1 之间，
-//                    不是数、Infinity 或太大的值启动时就报错退出，随任务下发给 Agent，#477）
+//   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024），随任务下发给 Agent（#477）
 //   SFLY_METRIC_LIMIT_MB  单个任务指标数据的上限（默认 50，按点数折算），超出后停止写入
+//                    三个上限都是 MB（可以带小数），换算成字节后要在 1 到 2^53 − 1 之间
+//   数值类的变量都在启动时检查：不是数、不是有限的数、超出范围的，写明变量名、填的原文和范围，一次报完，不启动（#577）；
+//   端口（SFLY_HTTP_PORT、SFLY_GRPC_PORT）是 0 到 65535 的整数，0 让系统选一个空闲端口
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
 //   SFLY_CLIENT_DIR  API 客户端安装包（@sfly/client 的 tarball）所在目录（默认 apps/server/dist/client，由
@@ -29,7 +32,8 @@
 //   SFLY_ADMIN_LOGIN、SFLY_ADMIN_PASSWORD 初始管理员的登录名和密码（可选，要一起设置；SFLY_ADMIN_DISPLAY_NAME 是显示名，
 //                    默认同登录名）：只在库里没有任何用户时生效，供自动化部署和测试使用。不设置时，没有任何用户就在日志里打印一次性的
 //                    初始化码（同时写进数据目录的 setup-code 文件，只有属主可读），用它在 /setup 页建第一个平台管理员（ADR 0029）
-//   SFLY_LOGIN_IDLE_HOURS 登录的空闲期限（小时，默认 12）：这么久没有用过的登录失效，用着就顺延
+//   SFLY_LOGIN_IDLE_HOURS 登录的空闲期限（小时，默认 12，2 分钟到 876000 小时，可以带小数，写 0.0334 或更大）：这么久没有用过的登录
+//                    失效，用着就顺延；下限是登录续期间隔（60 秒）的两倍，再短的话一直在用的登录也会过期
 //   SFLY_DEV_ORIGINS 开发时也算同源的来源，逗号分隔，例如 http://localhost:3000（vite 开发服务器）：登录 Cookie 的跨站检查用，
 //                    生产里不要设置（可选）。同源的判断见 src/auth/cross-site.ts：配置了 SFLY_PUBLIC_URL 时以它为准
 //   SFLY_TRUST_PROXY 信任反向代理带来的 X-Forwarded-For，登录限速用它里面的来源地址（可选）。取的是可信代理之前的那个地址
@@ -61,9 +65,9 @@ import { fileURLToPath } from "node:url";
 import type { AgentArch } from "@sfly/schema";
 import packageJson from "../package.json" with { type: "json" };
 import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
-import { artifactLimitBytesFromMb } from "./artifacts/artifact-store.js";
 import { parseInitialAdmin } from "./auth/bootstrap.js";
 import { runResetPassword } from "./auth/reset-password-cli.js";
+import { EnvSettingsError, readEnvSettings } from "./config/env-settings.js";
 import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
@@ -124,47 +128,39 @@ if (process.argv[2] === "reset-password") {
 	});
 	process.exit(code);
 }
-const MB = 1024 * 1024;
-/** 可选的正数环境变量；未设置时为 undefined（用默认值），非法值直接报错退出。 */
-const positive = (name: string): number | undefined => {
-	const raw = env[name];
-	if (raw === undefined || raw === "") return undefined;
-	const n = Number(raw);
-	if (!(n > 0)) throw new Error(`${name} must be a positive number, got ${JSON.stringify(raw)}`);
-	return n;
-};
-const mb = (name: string) => {
-	const n = positive(name);
-	return n === undefined ? undefined : Math.floor(n * MB);
-};
-const hours = (name: string) => {
-	const n = positive(name);
-	return n === undefined ? undefined : Math.floor(n * 3_600_000);
-};
+// 数值类的环境变量（端口、保留天数、各种上限、登录的空闲期限）在启动时就检查：不合法的写明变量名、填的原文和允许的范围，
+// 一次报完，不启动（#577），不留到运行时才出错。
+const { httpPort, grpcPort, ...limits } = (() => {
+	try {
+		return readEnvSettings(env);
+	} catch (error) {
+		if (!(error instanceof EnvSettingsError)) throw error;
+		// 往终端写东西只走统一的出口（lint 规则 no-direct-output 拦着直接用 console）：这个错误只有变量名、填的原文和范围，
+		// 没有数据库的参数，说明拼成字符串交给 printError。
+		printError(`sfly: 控制面没有启动，${error.message}`);
+		process.exit(1);
+	}
+})();
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
 if (!webDir) printWarning(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
 // 启动失败（写库失败、端口被占……）也走统一的出口：数据库错误里的参数不会随未捕获的异常打到终端上。
 const controlPlane = await startControlPlane({
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
-	http: { host: env.SFLY_HTTP_HOST ?? "0.0.0.0", port: Number(env.SFLY_HTTP_PORT ?? 8080) },
-	grpc: { host: env.SFLY_GRPC_HOST ?? "0.0.0.0", port: Number(env.SFLY_GRPC_PORT ?? 50051) },
+	http: { host: env.SFLY_HTTP_HOST ?? "0.0.0.0", port: httpPort },
+	grpc: { host: env.SFLY_GRPC_HOST ?? "0.0.0.0", port: grpcPort },
 	logger: true,
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
 	publicHttpUrl: env.SFLY_PUBLIC_URL || undefined,
 	pypiMirror: env.SFLY_PYPI_MIRROR || undefined,
 	githubReleaseMirror: env.SFLY_GITHUB_RELEASE_MIRROR || undefined,
-	retentionDays: positive("SFLY_RETENTION_DAYS"),
-	metricRetentionDays: positive("SFLY_METRIC_RETENTION_DAYS"),
-	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
-	artifactLimitBytes: artifactLimitBytesFromMb(env.SFLY_ARTIFACT_LIMIT_MB),
-	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),
+	// 保留天数、各种上限、登录的空闲期限：`...limits` 一次传进去，不逐项接线（漏掉一项就是悄悄不生效）。
+	...limits,
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
 	clientPackageDir: env.SFLY_CLIENT_DIR || defaults.clientDir,
 	webDir,
 	corsOrigins: parseCorsOrigins(env.SFLY_CORS_ORIGINS),
 	initialAdmin: parseInitialAdmin(env),
-	loginIdleMs: hours("SFLY_LOGIN_IDLE_HOURS"),
 	sameOrigins: parseCorsOrigins(env.SFLY_DEV_ORIGINS),
 	trustProxy: parseTrustProxy(env.SFLY_TRUST_PROXY),
 	docsDir: env.SFLY_DOCS_DIR || defaults.docsDir,
