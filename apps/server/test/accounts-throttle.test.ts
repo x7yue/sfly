@@ -381,4 +381,32 @@ describe("账号服务：限速、并发闸、登录标识", () => {
 		expect(bad).toBeLessThanOrEqual(6);
 		expect(results.filter((r) => !r.ok && r.reason === "throttled")).toHaveLength(30 - bad);
 	});
+
+	it("并发的两次初始化：输的那个请求验证时码已经被赢的那个作废了，回「已经初始化」，不是「码不对」，也不算一次猜错", async () => {
+		const setupCode = new SetupCode(dataDir);
+		const code = await setupCode.issue();
+		const accounts = service({ setupCode });
+		const input = (loginName: string) => ({
+			code,
+			loginName,
+			displayName: "老板",
+			password: "boss-password-1",
+		});
+		expect((await accounts.setup(input("winner"), "10.0.0.1")).ok).toBe(true);
+		expect(setupCode.active).toBe(false);
+		// 输的那个请求在赢的那个建好用户之前问过「还要不要初始化」（回答是要），验证时码已经作废了。
+		const realRequired = accounts.setupRequired.bind(accounts);
+		let stale = 0;
+		vi.spyOn(accounts, "setupRequired").mockImplementation(async () => {
+			stale += 1;
+			return stale % 2 === 1 ? true : realRequired();
+		});
+		// 比免费的次数多得多：要是每次都算一次猜错，早就被限速了。
+		for (let i = 0; i < 12; i++) {
+			const lost = await accounts.setup(input(`loser${i}`), "10.0.0.1");
+			expect(lost, `第 ${i + 1} 次`).toEqual({ ok: false, reason: "setup_done" });
+		}
+		expect(throttle.retryAfterMs("setup", "10.0.0.1")).toBe(0);
+		vi.restoreAllMocks();
+	});
 });

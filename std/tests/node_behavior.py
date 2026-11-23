@@ -27,25 +27,35 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-#: 节点名 → 入口。重构之后节点的模块没有变；以后节点移走时在这里改入口。
+#: 节点名 → 入口。0.4.0 起平台只提供 shell、start_process、stop_process 三个节点：其余节点的夹具
+#: 用测试用的外壳（`helper_nodes.py`，参数、输出和 0.3.0 里的节点一致）跑，守着辅助函数的行为。
 NODE_ENTRIES: dict[str, str] = {
     "shell": "sfly_std.shell:shell",
     "start_process": "sfly_std.start_process:start_process",
     "stop_process": "sfly_std.stop_process:stop_process",
-    "system_monitor": "sfly_std.system_monitor:system_monitor",
-    "process_monitor": "sfly_std.process_monitor:process_monitor",
-    "wait_port": "sfly_std.wait_port:wait_port",
-    "wait_file": "sfly_std.wait_file:wait_file",
-    "wait_log_line": "sfly_std.wait_log_line:wait_log_line",
-    "follow_log": "sfly_std.follow_log:follow_log",
-    "pull_files": "sfly_std.pull_files:pull_files",
-    "watch_files": "sfly_std.watch_files:watch_files",
+    "system_monitor": "helper_nodes:system_monitor",
+    "process_monitor": "helper_nodes:process_monitor",
+    "wait_port": "helper_nodes:wait_port",
+    "wait_file": "helper_nodes:wait_file",
+    "wait_log_line": "helper_nodes:wait_log_line",
+    "follow_log": "helper_nodes:follow_log",
+    "pull_files": "helper_nodes:pull_files",
+    "watch_files": "helper_nodes:watch_files",
+}
+
+#: 夹具里的错误信息以「节点模块.异常类名」开头（0.3.0 的节点模块里定义了同名的异常子类）；外壳里
+#: 失败时抛出的是辅助函数的异常，前缀是函数所在的模块：比对时把夹具里的前缀换成这里的。
+ERROR_PREFIXES: dict[str, str] = {
+    "sfly_std.process_monitor.": "sfly_std.resources.",
+    "sfly_std.follow_log.": "sfly_std.logs.",
 }
 
 LINUX = sys.platform.startswith("linux")
 
-#: 「执行到 …… 第 N 行」「出错位置：…… 第 N 行」：逻辑搬进辅助函数模块后位置会变。
-_WHERE = re.compile(r"(执行到|出错位置：) ?\S+ 第 \d+ 行")
+#: 「执行到 …… 第 N 行」「出错位置：…… 第 N 行」：逻辑搬进辅助函数模块后位置会变。被终止时
+#: 业务节点调用辅助函数的那一行后面还会补一句「（正在 sfly_std.… 第 N 行）」（#568：用户直接
+#: 调用的那个辅助函数，行号随 `sfly-std` 的版本变），一起不比对。
+_WHERE = re.compile(r"(执行到|出错位置：) ?\S+ 第 \d+ 行(（正在 \S+ 第 \d+ 行）)?")
 #: 每次运行都不一样的数：小数（耗时、间隔）和四位以上的整数（端口、进程号、字节数的大数）；
 #: 小整数（退出码、个数、秒数、宽限期）逐字比较，写错一个数夹具就红。
 _DECIMAL = re.compile(r"\d+\.\d+")

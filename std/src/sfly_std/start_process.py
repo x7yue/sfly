@@ -19,9 +19,13 @@ __all__ = ["StartFailed", "start_process"]
 
 
 class StartProcessOutputs(TypedDict):
-    pid: Annotated[int, Doc("进程号：交给 stop_process、process_monitor 等节点")]
+    pid: Annotated[int, Doc("进程号：交给 stop_process，或者自己节点里的 monitor_processes 等")]
     log_file: Annotated[
-        str, Doc("日志文件的绝对路径：交给 wait_log_line、follow_log、collect_artifacts 等节点")
+        str,
+        Doc(
+            "日志文件的绝对路径：交给自己节点里的 wait_for_log_line、follow_log_file，"
+            "或者转成 Path 后交给 ctx.artifacts.save(名称, Path(log_file))"
+        ),
     ]
 
 
@@ -53,7 +57,8 @@ def start_process(
     默认的日志文件不在任务目录里，和任务目录按同一个保留期清理。
 
     失败：只有解释器或工作目录不存在时失败。
-    命令随后失败退出时节点仍然成功：用 wait_port、wait_log_line 等节点等它就绪。
+    命令随后失败退出时节点仍然成功：
+    在自己的节点里用 wait_for_port、wait_for_log_line 等函数等它就绪。
     """
     if log_file is None:
         # 节点的默认日志文件固定是 <节点 ID>.log（节点重试时接着写）：一个任务只启动一次进程。

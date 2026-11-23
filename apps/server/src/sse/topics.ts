@@ -1,4 +1,4 @@
-import { safeError } from "../util/safe-error.js";
+import { printError } from "../util/output.js";
 
 /**
  * 进程内按主题（例如编排 ID、运行 ID）的发布/订阅，供 SSE 路由订阅。
@@ -28,7 +28,7 @@ export class Topics<E> {
 			try {
 				listener(event);
 			} catch (error) {
-				console.error(`topic ${topic} listener failed:`, safeError(error));
+				printError(`topic ${topic} listener failed:`, error);
 			}
 		}
 	}
