@@ -140,12 +140,8 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			]);
 		});
 
-		it("会话在第几轮，记录就写第几轮（取最后一条 turn_started）", async () => {
-			await db.query(
-				`insert into session_events (session_id, seq, type, payload, created_at)
-				values ($1, 2, 'turn_started', '{"turn": 2}', now())`,
-				[sessionId],
-			);
+		it("会话在第几轮，记录就写第几轮（取会话此刻在做的那一轮 current_turn）", async () => {
+			await db.query("update sessions set current_turn = 2 where id = $1", [sessionId]);
 			const id = await scenario();
 			await json(
 				await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } }),
