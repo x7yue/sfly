@@ -168,7 +168,7 @@ function walkChain(
 			errors.push(`node ${node.id}: kind '${node.kind}' is not supported yet`);
 		}
 		if (node.kind === "package") {
-			if (!(node.agent ?? document.default_agent)) {
+			if (!dispatchAgentOf(document, node)) {
 				errors.push(
 					`node ${node.id}: no agent selected and the orchestration has no default agent`,
 				);
