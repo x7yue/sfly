@@ -306,7 +306,8 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 	it("对照：项目乙自己的 Agent 凭据、任务凭据能调用清单里的接口（上传产物、下载节点包归档、下载产物）", async () => {
 		const own = {
 			agent: bearer(await accounts.agentCredential("default", "agent-victim")),
-			task: bearer(await accounts.taskCredential("default", victim.task)),
+			// 任务凭据只在这次尝试还在 Agent 手上时有效：用执行中的那条任务签发。
+			task: bearer(await accounts.taskCredential("default", runningTask)),
 		};
 		const upload = projectRoutes().find(
 			(d) => routeKey(d) === "PUT /tasks/:id/artifacts/*",

@@ -34,7 +34,8 @@ export async function migrationsCopy(
 
 /**
  * 在只含旧迁移的库上启动当前的控制面时，启动就会读写、旧迁移里却没有的表（`registerSharedAgentToken` 读写
- * `agent_credentials`，`bootstrapFirstAdmin` 数 `users`）：补一个只有列、没有外键的占位（`users` 只留 `id`，启动只数行）。
+ * `agent_credentials`，`bootstrapFirstAdmin` 数 `users`，派发一次任务时 `mintTaskCredential` 写 `api_tokens`）：
+ * 补一个只有列、没有外键的占位（`users` 只留 `id`，启动只数行；`api_tokens` 列和真表一致，只是没有约束）。
  * 升级前要删掉（{@link dropStartupStubs}），由真正的迁移来建。
  */
 export const STARTUP_STUB_SQL = `CREATE TABLE "users" ("id" uuid PRIMARY KEY NOT NULL);
@@ -48,6 +49,24 @@ CREATE TABLE "agent_credentials" (
 	"token_hash" text NOT NULL UNIQUE,
 	"user_id" uuid,
 	"created_at" timestamp with time zone NOT NULL,
+	"revoked_at" timestamp with time zone,
+	"last_used_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE TABLE "api_tokens" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"kind" text NOT NULL,
+	"name" text NOT NULL,
+	"prefix" text NOT NULL,
+	"token_hash" text NOT NULL UNIQUE,
+	"user_id" uuid,
+	"project_id" text,
+	"session_id" uuid,
+	"task_id" uuid,
+	"issued_by_user_id" uuid,
+	"scopes" text[] NOT NULL,
+	"created_at" timestamp with time zone NOT NULL,
+	"expires_at" timestamp with time zone,
 	"revoked_at" timestamp with time zone,
 	"last_used_at" timestamp with time zone
 );`;
@@ -69,6 +88,7 @@ export async function dropStartupStubs(databaseUrl: string): Promise<void> {
 	const client = new pg.Client({ connectionString: databaseUrl });
 	await client.connect();
 	try {
+		await client.query('drop table "api_tokens"');
 		await client.query('drop table "agent_credentials"');
 		await client.query('drop table "users"');
 	} finally {
