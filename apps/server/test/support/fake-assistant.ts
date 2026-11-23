@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
+	AbortCommandBody,
 	ASSISTANT_STREAM_HEARTBEAT_MS,
 	type AssistantErrorBody,
 	type AssistantErrorCode,
@@ -33,11 +34,19 @@ export class FakeAssistant {
 	#seq = 0;
 	#unauthorized = 0;
 	readonly prompts: ReceivedPrompt[] = [];
+	/** 收到过中止的会话 ID（每次一条；带的轮次在 {@link abortRequests}）。 */
 	readonly aborts: string[] = [];
+	/** 收到的中止：会话和它要结束的轮次（过了协议的 schema）。 */
+	readonly abortRequests: Array<{ sessionId: string; turn: number }> = [];
+	/**
+	 * 「已被中止」的轮次（`会话:轮次`）：和协议一致（{@link AbortCommandBody}），中止先于这一轮的 `prompt` 到达时记在这里，
+	 * 这一轮的 `prompt` 到了就直接以 `stopped` 结束，不去做；别的轮次不受影响。
+	 */
+	readonly abortedTurns = new Set<string>();
 	/** 每个 prompt 的回应；默认全部 202。 */
 	promptReply: (prompt: ReceivedPrompt) => Reply | undefined = () => undefined;
 	/** 每个 abort 的回应；默认 202（重复调用无害）。 */
-	abortReply: (sessionId: string) => Reply | undefined = () => undefined;
+	abortReply: (sessionId: string, turn: number) => Reply | undefined = () => undefined;
 	/** `/health` 的回应；默认健康。 */
 	health: () => AssistantHealth | Reply = () => this.healthy();
 	/** 回应命令（prompt、abort）和 `/health` 之前先等多久（毫秒）：模拟助手服务冷启动慢、接了连接却不回话。 */
@@ -236,9 +245,26 @@ export class FakeAssistant {
 		if (!command) return this.#error(res, { status: 404, code: "invalid_request" });
 		const sessionId = command[1] as string;
 		if (command[2] === "abort") {
+			let abortJson: unknown;
+			try {
+				abortJson = JSON.parse(await readBody(req));
+			} catch {
+				return this.#error(res, { status: 400, code: "invalid_request", message: "不是 JSON" });
+			}
+			const abort = AbortCommandBody.safeParse(abortJson);
+			if (!abort.success) {
+				return this.#error(res, {
+					status: 400,
+					code: "invalid_request",
+					message: abort.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；"),
+				});
+			}
+			const { turn } = abort.data;
 			this.aborts.push(sessionId);
+			this.abortRequests.push({ sessionId, turn });
+			this.abortedTurns.add(`${sessionId}:${turn}`);
 			if (this.abortDelayMs > 0) await new Promise((r) => setTimeout(r, this.abortDelayMs));
-			const reply = this.abortReply(sessionId);
+			const reply = this.abortReply(sessionId, turn);
 			if (reply) return this.#error(res, reply);
 			return this.#send(res, 202);
 		}
@@ -266,6 +292,19 @@ export class FakeAssistant {
 		const reply = this.promptReply(prompt);
 		if (reply) return this.#error(res, reply);
 		this.#send(res, 202);
+		// 这一轮已经被中止过（中止先到）：直接以 stopped 结束，不去做。
+		if (this.abortedTurns.has(`${sessionId}:${parsed.data.turn}`)) {
+			this.emit(sessionId, parsed.data.turn, {
+				type: "turn_end",
+				turn: parsed.data.turn,
+				outcome: "stopped",
+				reason: "这一轮在开始之前就被中止了",
+				steps: 0,
+				model_calls: 0,
+				duration_ms: 0,
+				usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+			});
+		}
 	}
 }
 

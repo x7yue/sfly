@@ -33,7 +33,7 @@ import {
  * |---|---|---|---|
  * | `POST /sessions/:id/prompt` | {@link PromptCommandBody} | 202；这个会话已有一轮在做 409 `turn_running`；起不了 503 | #540 |
  * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；没有在做的一轮 409 `no_turn_running` | #544 |
- * | `POST /sessions/:id/abort` | — | 202（重复调用无害；这个会话没有在做的一轮也是 202，什么也不做） | #540、#544 |
+ * | `POST /sessions/:id/abort` | {@link AbortCommandBody} | 202（重复调用无害，三种情况见 {@link AbortCommandBody}） | #540、#544 |
  * | `POST /sessions/:id/end` | — | 202（重复调用无害） | #544 |
  * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳** | #540；续传 #545 |
  * | `GET /health` | — | 200 {@link AssistantHealth} | #540；模型 #548；进程数 #545 |
@@ -102,9 +102,9 @@ export type WorkbenchTarget = z.infer<typeof WorkbenchTarget>;
  * - `env`：这一轮在工作台上执行命令时要加的**普通**环境变量，由控制面的一个函数生成，每一轮可以不同：竖切里是
  *   `SFLY_NICKNAME`（发起这句话的人的昵称）和 `AI_AGENT=pi`；
  * - **收到 `prompt` 先登记这一轮（`turn`、有一轮在做），再做慢的事**（起 pi 进程、准备 skill、连模型）：控制面等回应最多
- *   10 秒，超时的结果是未知的，控制面会补发一次 `abort`；`abort` 到达时这一轮还没登记的话它什么也不做，这一轮之后照样
- *   跑到上限，而控制面那边会话已经是空闲的。登记得早，`abort` 才收得住。控制面也会在用户对一个空闲的会话点「停止」时
- *   补发一次 `abort`（按会话，不带轮次）；助手服务在这时有一轮在做就把它中止。
+ *   10 秒，超时的结果是未知的，控制面会补发一次带这一轮轮次的 `abort`（{@link AbortCommandBody}）；登记得早，`abort`
+ *   到达时就能直接结束它。`abort` 先于这一轮的 `prompt` 到达也不要紧：助手服务记下「这一轮已被中止」，这一轮的 `prompt`
+ *   到了就直接以 `stopped` 结束。
  * - `secret_env`：要加的**保密**环境变量，#547 起里面有 `SFLY_API_TOKEN`（会话令牌）。工作台上的命令读得到它，模型一执行
  *   列环境变量的命令，它就会进工具的输出和持久的 `tool_result`，所以单独成一份：**它不进任何事件、不进助手服务的日志；
  *   助手服务在发出事件之前，要把事件里出现的这些值按值打码**（#540 的要求）。
@@ -126,6 +126,22 @@ export type PromptCommandBody = z.infer<typeof PromptCommandBody>;
  */
 export const SteerCommandBody = z.object({ message_id: z.uuid(), text: SessionMessageText });
 export type SteerCommandBody = z.infer<typeof SteerCommandBody>;
+
+/**
+ * `POST /sessions/:id/abort`：结束会话里的**某一轮**（`turn`，控制面给的轮次，和 `prompt` 里的 `turn` 是同一个）。
+ * 不按「会话里有没有在做」、更不按时间去猜，按这一轮的状态，三种情况：
+ *
+ * - **这一轮在做**：中止它，带回它的 `turn_end`（`stopped`）；
+ * - **这一轮还没登记**（它的 `prompt` 还没处理完、或者还没到）：记下「这一轮已被中止」，这一轮的 `prompt` 到了就直接以 `stopped`
+ *   结束，不去做；
+ * - **这一轮已经结束**（或者是更早的轮次）：什么也不做，202。
+ *
+ * 别的轮次不受影响：用户在空闲的会话上点了停止、紧接着说一句话，新的一轮（轮次更大）照常做。控制面带的轮次：用户点停止时
+ * 是此刻在做的那一轮；`prompt` 超时之后补发的是那一轮；会话空闲时点停止是最近的那一轮（它已经结束的话什么也不会发生）。
+ * 重复调用无害。
+ */
+export const AbortCommandBody = z.object({ turn: z.int().min(1) });
+export type AbortCommandBody = z.infer<typeof AbortCommandBody>;
 
 /**
  * 助手服务产生的会话事件：{@link SessionEventBody} 里由它产生的几种（`notice` 只有它产生的几种，`platform` 只有

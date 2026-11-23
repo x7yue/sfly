@@ -561,12 +561,35 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 				throw raw;
 			}) as typeof fetch,
 		});
-		for (const call of [() => client.health(), () => client.abort(randomUUID())]) {
+		for (const call of [() => client.health(), () => client.abort(randomUUID(), 1)]) {
 			const error = await call().catch((e: unknown) => e);
 			expect(error).toBeInstanceOf(AssistantUnreachableError);
 			expect((error as Error).message).toBe("连不上助手服务：连接被拒绝");
 			expect((error as Error).cause).toBe(raw);
 		}
+	});
+
+	it("中止的请求体是 { turn }：要结束的是第几轮，路径里是会话 ID", async () => {
+		const sent: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+		const client = new AssistantClient(config, {
+			fetch: (async (url: unknown, init?: RequestInit) => {
+				sent.push({
+					url: String(url),
+					method: init?.method,
+					body: JSON.parse(String(init?.body)),
+				});
+				return new Response(null, { status: 202 });
+			}) as typeof fetch,
+		});
+		const sessionId = randomUUID();
+		await client.abort(sessionId, 3);
+		expect(sent).toEqual([
+			{
+				url: `http://assistant.test/sessions/${sessionId}/abort`,
+				method: "POST",
+				body: { turn: 3 },
+			},
+		]);
 	});
 
 	it("事件流连不上：同样只有原因的种类，原错误在 cause 里（事件连接的日志打印它）", async () => {

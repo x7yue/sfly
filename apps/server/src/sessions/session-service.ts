@@ -338,7 +338,8 @@ export class SessionService {
 			this.deps.log?.(`助手服务没有接住会话 ${session.id} 的第 ${turn} 轮`, error);
 			const failure = describeFailure(error);
 			if (error instanceof AssistantUnreachableError) {
-				ready.client.abort(session.id).catch(() => {
+				// 带这一轮的轮次：助手服务那时还没登记这一轮的话，记下「这一轮已被中止」，它的 `prompt` 到了直接结束。
+				ready.client.abort(session.id, turn).catch(() => {
 					// 尽力而为：连不上就算了。
 				});
 			}
@@ -369,7 +370,7 @@ export class SessionService {
 
 	/**
 	 * 停止会话正在做的这一轮：不在做时不改会话（助手没有配置时仍是 503，和别的写一样；空闲的会话仍向助手服务补发一次
-	 * 中止，见下面）；在做时先把中止发给助手服务，
+	 * 带轮次的中止，见下面）；在做时先把这一轮的中止发给助手服务，
 	 * 它会带回这一轮的 `turn_end`（等一小会儿，{@link STOP_GRACE_MS}）；助手服务没有配置、连不上、不认识这一轮、
 	 * 或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：
 	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始
@@ -382,11 +383,12 @@ export class SessionService {
 		if (current.status !== "running") {
 			const configured = await this.#configured();
 			if (!configured.ok) return configured;
-			// 空闲的会话也向助手服务发一次按会话的中止（尽力而为，不等结果、不影响响应）：`prompt` 超时之后补发的中止
-			// 可能落空（助手服务还没把这一轮登记下来，中止什么也不做），这一轮照样跑起来，而控制面这边会话是空闲的：
-			// 用户再发话被拒绝（409），不发这一次，点停止也没有办法让它停下来。重复的中止无害。
-			if (current.status === "idle") {
-				configured.value.abort(current.id).catch((error) => {
+			// 空闲的会话也向助手服务发一次中止（尽力而为，不等结果、不影响响应），**带最近的那一轮的轮次**：`prompt` 超时
+			// 之后补发的中止如果没送到，这一轮可能照样在助手服务那边跑，而控制面这边会话是空闲的：用户再发话被拒绝（409），
+			// 不发这一次，点停止也没有办法让它停下来。带轮次，助手服务只结束这一轮（已经结束的什么也不做），用户紧接着说
+			// 一句话开始的新一轮不受影响。从没有过一轮的会话（`current_turn` 为 0）没有什么可结束的，不发。重复的中止无害。
+			if (current.status === "idle" && current.currentTurn >= 1) {
+				configured.value.abort(current.id, current.currentTurn).catch((error) => {
 					this.deps.log?.(`给空闲的会话 ${current.id} 补发中止没有成功`, error);
 				});
 			}
@@ -396,7 +398,7 @@ export class SessionService {
 		let aborted = false;
 		if (client) {
 			try {
-				await client.abort(current.id);
+				await client.abort(current.id, turn);
 				aborted = true;
 			} catch (error) {
 				// 连不上或被拒绝：下面由控制面结束这一轮。

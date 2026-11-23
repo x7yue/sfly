@@ -1,4 +1,5 @@
 import {
+	type AbortCommandBody,
 	ASSISTANT_STREAM_HEARTBEAT_MS,
 	ASSISTANT_STREAM_IDLE_INTERVALS,
 	AssistantErrorBody,
@@ -86,9 +87,10 @@ export class AssistantClient {
 		await this.#command("POST", `/sessions/${sessionId}/prompt`, body);
 	}
 
-	/** 停止这一轮；重复调用无害。 */
-	async abort(sessionId: string): Promise<void> {
-		await this.#command("POST", `/sessions/${sessionId}/abort`);
+	/** 结束会话里的第 `turn` 轮（在做就中止，还没登记就记下，已经结束就什么也不做，见 {@link AbortCommandBody}）；重复调用无害。 */
+	async abort(sessionId: string, turn: number): Promise<void> {
+		const body: AbortCommandBody = { turn };
+		await this.#command("POST", `/sessions/${sessionId}/abort`, body);
 	}
 
 	/** 助手服务和它的模型、进程的状态。 */
