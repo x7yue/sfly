@@ -23,13 +23,13 @@ export interface UpstreamError {
  * pi 只给一个字符串（`errorMessage`），没有结构化的状态码字段。它的写法是固定的几种（pi-ai 的
  * `formatProviderError`，和它原样留下的 SDK 的消息），状态码只在消息的开头：
  * - `502: <错误体>`；
- * - `<提供方> API error (502): <错误体>`（前缀一行之内、不带括号和冒号）；
+ * - `<提供方> API error (502): <错误体>`、`<名字> error (502): …`（前缀一行之内、不带括号和冒号，以 `error` 结尾）；
  * - SDK 自己的消息 `502 status code (no body)`、`403 Forbidden`、`529 {"type":"error",…}`：开头的三位数后面跟空格，
  *   只在它是登记过的 HTTP 状态码、或者后面紧跟错误体（`{`）时才算（`443 bytes received` 不算）。
  * 不在全文里找：错误体里提到的别的状态码（上游转述的、请求 ID 里的数字）不算。
  */
 const COLON = /^(\d{3}): /;
-const PREFIXED = /^[^\n():]{1,80} \((\d{3})\): /;
+const PREFIXED = /^[^\n():]{0,80}error \((\d{3})\): /;
 const SDK = /^(\d{3}) (.)/;
 
 export function statusOf(raw: string): number | undefined {

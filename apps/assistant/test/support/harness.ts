@@ -14,7 +14,7 @@ import {
 } from "@sfly/schema";
 import type { z } from "zod";
 import { buildExtension } from "../../scripts/build-extension.js";
-import { type AgentOptions, connectAgent } from "../../src/agent.js";
+import { type AgentClient, type AgentOptions, connectAgent } from "../../src/agent.js";
 import { EventBus } from "../../src/bus.js";
 import { piPackage } from "../../src/launch.js";
 import { createAssistantServer } from "../../src/server.js";
@@ -45,6 +45,8 @@ export interface HarnessOptions {
 	heartbeatMs?: number;
 	/** 助手服务连工作台时的期限（测试里改短）。 */
 	agentDeadlines?: AgentOptions;
+	/** 换掉助手服务拿到的工作台客户端的某几样（造工作台连接之外的错误）。 */
+	wrapAgent?: (client: AgentClient) => AgentClient;
 }
 
 export class Harness {
@@ -94,7 +96,8 @@ export class Harness {
 			},
 			bus,
 			connect: (address, log) => {
-				const client = connectAgent(address, { ...options.agentDeadlines, log });
+				const connected = connectAgent(address, { ...options.agentDeadlines, log });
+				const client = options.wrapAgent ? options.wrapAgent(connected) : connected;
 				counts.opened += 1;
 				return {
 					...client,

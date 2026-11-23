@@ -213,6 +213,18 @@ const TABLE: Case[] = [
 	["SDK 只说连不上", "Connection error.", "unreachable", undefined],
 	["正文里的数字不当成状态码", "model said 404 things went wrong", "other", undefined],
 	[
+		"正文里的 `NNN: ` 不算（不在开头）",
+		'{"error":{"message":"origin said 503: try later"}}',
+		"other",
+		undefined,
+	],
+	[
+		"开头的 `(NNN): ` 前面不是 error 不算",
+		"upstream stalled (502): retry later",
+		"other",
+		undefined,
+	],
+	[
 		"正文里的错误码不算（不在开头的 Node 写法里、不在末尾括号里）",
 		"upstream relay hit ECONNREFUSED earlier",
 		"other",

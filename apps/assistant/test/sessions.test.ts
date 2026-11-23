@@ -770,6 +770,26 @@ describe("审查补的守护", () => {
 		);
 	});
 
+	it("一轮开头写 skill 时出了不是工作台连接上的错误：原因里不放行它的原文，原文进日志", async () => {
+		const harness = await start({
+			wrapAgent: (client) => ({
+				...client,
+				writeFile: async () => {
+					throw new Error("MARKER-local-31 at 10.9.8.7");
+				},
+			}),
+		});
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "failed",
+			reason:
+				"开始这一轮失败：往工作台 fake-workbench 上写 skill 失败：助手服务内部出错（原文记在日志里）",
+		});
+		expect(JSON.stringify(harness.events.of(id))).not.toContain("MARKER");
+		expect(harness.logs.join("\n")).toContain("MARKER-local-31");
+	});
+
 	it("一轮开头写 skill 时工作台回了认不出的错误：特征串不出现在任何事件里，只进日志", async () => {
 		const harness = await start();
 		harness.workbench.fail = { code: Code.Internal, message: "MARKER-start-55 at 10.9.8.7" };
