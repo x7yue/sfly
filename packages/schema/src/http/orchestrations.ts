@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { optionalLine } from "../display-text.js";
-import { NODE_TIMEOUT_MAX_SECONDS, nodeTimeoutMessage } from "../node-timeout.js";
+import { isNodeTimeout, nodeTimeoutMessage } from "../node-timeout.js";
 import {
 	OrchestrationDocument,
 	STORED_NODE_KINDS,
 	StoredOrchestrationDocument,
 } from "../orchestration-document.js";
 import { ChartDeclaration } from "../package-metadata.js";
-import { QUEUE_TIMEOUT_MAX_SECONDS, queueTimeoutMessage } from "../queue-timeout.js";
+import { isQueueTimeout, queueTimeoutMessage } from "../queue-timeout.js";
 import { removedFieldsMessage, removedFieldsWithContent } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
 import { EditOperations } from "../scenario-edits.js";
@@ -33,8 +33,8 @@ import { FeishuBotName } from "./feishu-bots.js";
  */
 
 /**
- * 保存的文档里节点写的超时、排队超时超过上限的说明（每个这样的节点和字段一句，写明是哪个节点、范围、实际是多少，
- * #476、#559）。
+ * 保存的文档里节点写的超时、排队超时不合格的说明（每个这样的节点和字段一句，写明是哪个节点、字段、范围、实际的值，
+ * #476、#559、#576）：超过上限的、0、负数、小数、字符串……都是同一种说明，不只说「文档不符合 schema」。
  */
 function timeoutMessages(nodes: unknown): string[] {
 	if (!Array.isArray(nodes)) return [];
@@ -46,10 +46,10 @@ function timeoutMessages(nodes: unknown): string[] {
 		const timeout = "timeout" in n ? n.timeout : undefined;
 		const queueTimeout = "queue_timeout" in n ? n.queue_timeout : undefined;
 		return [
-			...(typeof timeout === "number" && timeout > NODE_TIMEOUT_MAX_SECONDS
+			...(timeout !== undefined && !isNodeTimeout(timeout)
 				? [nodeTimeoutMessage(label, timeout)]
 				: []),
-			...(typeof queueTimeout === "number" && queueTimeout > QUEUE_TIMEOUT_MAX_SECONDS
+			...(queueTimeout !== undefined && !isQueueTimeout(queueTimeout)
 				? [queueTimeoutMessage(label, queueTimeout)]
 				: []),
 		];
@@ -58,7 +58,7 @@ function timeoutMessages(nodes: unknown): string[] {
 
 /**
  * 保存的文档不合法时的说明：含已移除种类的节点，或已移除的顶层字段（便签）里有内容时，写明是哪些、怎么办（ADR 0028）；
- * 节点写的超时、排队超时超过上限时写明是哪个节点、上限多少（#476、#559）。
+ * 节点写的超时、排队超时不合格（超过上限、0、负数、小数、字符串……）时写明是哪个节点、字段、范围和实际的值（#476、#559、#576）。
  */
 function invalidDocumentMessage(body: object): string {
 	const document = "document" in body ? body.document : undefined;
@@ -279,6 +279,16 @@ export const CheckedWarningView = DocumentWarningView.extend({
 export const SavedVersionView = z.object({
 	...OrchestrationVersionView.shape,
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
+	warnings: z.array(DocumentWarningView),
+});
+
+/**
+ * 复制场景的响应（#576）：新场景，加上第 1 版的警告，和保存、恢复版本的响应里的 `warnings` 同一套。复制把源场景最新版本的
+ * 文档原样写成新场景的第 1 版，不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样复制，问题在这里带出来。
+ * 源场景还没有版本（`head_version` 为 0）时为空。
+ */
+export const CopiedOrchestrationView = z.object({
+	...OrchestrationView.shape,
 	warnings: z.array(DocumentWarningView),
 });
 
@@ -709,6 +719,8 @@ export const orchestrationsApi = {
 	/**
 	 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
 	 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
+	 * 恢复也不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样恢复（#576），响应的 `warnings` 里每个这样的字段一条
+	 * （`timeout_out_of_range`、`queue_timeout_out_of_range`）；要保存任何改动之前先把它们改成合格的值。
 	 */
 	restoreVersion: endpoint({
 		method: "POST",
@@ -792,7 +804,8 @@ export const orchestrationsApi = {
 	/**
 	 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
 	 * 源场景最新版本的内容作为第 1 版。有关注项时，副本的关注项最后修改记为复制的人，说明写「复制自「源场景名」」。
-	 * 联调副本也走这个接口。
+	 * 联调副本也走这个接口。第 1 版是原样复制，不过保存时的检查（升级前保存的版本里超限的超时、排队超时照样复制，#576），
+	 * 响应的 `warnings` 是第 1 版的警告，和保存、恢复版本的响应同一套。
 	 */
 	copy: endpoint({
 		method: "POST",
@@ -805,7 +818,7 @@ export const orchestrationsApi = {
 		key: ["orchestrations", "copy"],
 		params: IdParams,
 		body: z.strictObject({ name: Name }),
-		response: OrchestrationView,
+		response: CopiedOrchestrationView,
 	}),
 	/** 归档；有运行中的运行时返回 409 run_in_progress。 */
 	archive: endpoint({
@@ -836,6 +849,7 @@ export const orchestrationsApi = {
 
 export type OrchestrationBase = z.infer<typeof OrchestrationBase>;
 export type OrchestrationView = z.infer<typeof OrchestrationView>;
+export type CopiedOrchestrationView = z.infer<typeof CopiedOrchestrationView>;
 export type FocusItemInput = z.output<typeof FocusItemInput>;
 export type FocusItemView = z.infer<typeof FocusItemView>;
 export type FocusEditView = z.infer<typeof FocusEditView>;

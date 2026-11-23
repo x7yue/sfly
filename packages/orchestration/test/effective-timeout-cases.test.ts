@@ -13,7 +13,7 @@ interface EffectiveCase {
 interface ProblemCase {
 	name: string;
 	label: string;
-	written?: number;
+	written?: unknown;
 	problem: string | null;
 }
 const effectiveCases = cases.effective_cases as EffectiveCase[];
@@ -32,6 +32,9 @@ describe("生效的超时的共用用例表", () => {
 	});
 
 	it.each(problemCases.map((c) => [c.name, c] as const))("不合格时的说明：%s", (_, c) => {
-		expect(nodeTimeoutProblem(c.label, c.written)).toBe(c.problem ?? undefined);
+		// 没有 `written` 这个键是没写（undefined）；写了 null 不是没写。
+		expect(nodeTimeoutProblem(c.label, "written" in c ? c.written : undefined)).toBe(
+			c.problem ?? undefined,
+		);
 	});
 });

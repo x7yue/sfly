@@ -28,10 +28,12 @@ from typing import TYPE_CHECKING, Any
 from sfly.cli import scenario_check
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import CliError
+from sfly.cli.node_timeouts import MAX_TIMEOUT_SECONDS
 from sfly.cli.removed_document_fields import removed_fields_message, removed_fields_with_content
 from sfly.cli.removed_nodes import REMOVED_NODE_KINDS, removed_kind_label, removed_outputs_advice
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
+from sfly.cli.value_text import value_text
 
 if TYPE_CHECKING:
     from jsonschema.exceptions import ValidationError
@@ -471,6 +473,10 @@ def _copy(session: Session, args: argparse.Namespace) -> None:
         if copied["head_version"]
         else f"「{source['name']}」还没有保存过版本，副本也没有"
     )
+    # 第 1 版是原样复制，不过保存时的检查：升级前存下的超限的超时、排队超时照样复制，
+    # 问题在警告里带出来（#576）。还没升级的控制面的响应里没有 `warnings`：当作没有
+    # （副本已经建好了，这里不能再出错，不然用户看不到新场景的 id，重试还会多出一个副本）。
+    warnings = copied.get("warnings", [])
     session.out.emit(
         {
             "id": copied["id"],
@@ -478,8 +484,14 @@ def _copy(session: Session, args: argparse.Namespace) -> None:
             "description": copied["description"],
             "head_version": copied["head_version"],
             "source": source["id"],
+            "warnings": warnings,
         },
-        f"已把场景「{source['name']}」复制为「{copied['name']}」（{copied['id']}），{detail}。",
+        "\n".join(
+            [
+                f"已把场景「{source['name']}」复制为「{copied['name']}」（{copied['id']}），{detail}。",
+                *_warning_lines(warnings),
+            ]
+        ),
     )
 
 
@@ -593,18 +605,18 @@ def _document_problems(document: Any) -> list[str]:
     return [f"  {where[key]}: {message}" for key in sorted(found) for message in sorted(found[key])]
 
 
-#: 超过上限时换成和控制面同一句中文的节点字段：场景里节点写的超时（#476）和排队超时（#559）。
+#: 写了不合格的值时换成和控制面同一句中文的节点字段：场景里节点写的超时（#476）和排队超时（#559）。
 _LIMITED_NODE_FIELDS = ("timeout", "queue_timeout")
 
 
 def _message(error: ValidationError, document: Any) -> str:
-    """JSON Schema 的错误信息；节点的 `timeout`、`queue_timeout` 超过上限时换成和控制面、
-    `sfly build` 同一句中文（写明是哪个节点、范围、实际是多少，#476、#559）。"""
+    """JSON Schema 的错误信息；节点的 `timeout`、`queue_timeout` 不合格（超过上限、0、负数、小数、
+    字符串……）时换成和控制面、`sfly build` 同一句中文（写明是哪个节点、字段、范围、实际的值，
+    #476、#559、#576）。"""
     path = list(error.absolute_path)
     nodes = document.get("nodes") if isinstance(document, dict) else None
     if (
-        error.validator == "maximum"
-        and len(path) == 3
+        len(path) == 3
         and path[0] == "nodes"
         and path[2] in _LIMITED_NODE_FIELDS
         and isinstance(nodes, list)
@@ -613,11 +625,14 @@ def _message(error: ValidationError, document: Any) -> str:
         and isinstance(nodes[path[1]], dict)
     ):
         node = nodes[path[1]]
+        # 和控制面一样：节点没有 `id`、`id` 不是字符串时写 `?`。
+        node_id = node.get("id")
+        node_id = node_id if isinstance(node_id, str) else "?"
         name = node.get("display_name")
-        label = f"{name}（{node.get('id')}）" if isinstance(name, str) and name else node.get("id")
+        label = f"{name}（{node_id}）" if isinstance(name, str) and name else node_id
         return (
-            f"节点 {label}：{path[2]} 必须是 1 到 {error.validator_value} 之间的正整数（秒），"
-            f"实际是 {error.instance!r}"
+            f"节点 {label}：{path[2]} 必须是 1 到 {MAX_TIMEOUT_SECONDS} 之间的正整数（秒），"
+            f"实际是 {value_text(error.instance)}"
         )
     return error.message
 
