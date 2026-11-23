@@ -1,3 +1,5 @@
+import { valueText } from "./value-text.js";
+
 /**
  * 节点的超时（秒）的取值范围（#476）。上限 4294967295 是派发给 Agent 的 `AssignTask.timeout_seconds`（`uint32`）装得下的最大值，
  * 更大的值序列化会失败。节点类型声明的超时（`@node(timeout=…)`，节点包元信息里的 `timeout`）和场景里节点写的超时
@@ -12,6 +14,9 @@ export const isNodeTimeout = (value: unknown): value is number =>
 	value > 0 &&
 	value <= NODE_TIMEOUT_MAX_SECONDS;
 
-/** 超时不合格的说明；`label` 是节点（`显示名称（节点 ID）`、节点 ID），`actual` 是写的值。 */
+/**
+ * 超时不合格的说明；`label` 是节点（`显示名称（节点 ID）`、节点 ID），`actual` 是写的值（{@link valueText}）。
+ * 超限、0、负数、小数、字符串都是这一句，保存、检查、触发前的预检、派发、命令行的本地检查说同一句话。
+ */
 export const nodeTimeoutMessage = (label: string, actual: unknown): string =>
-	`节点 ${label}：timeout 必须是 1 到 ${NODE_TIMEOUT_MAX_SECONDS} 之间的正整数（秒），实际是 ${String(actual)}`;
+	`节点 ${label}：timeout 必须是 1 到 ${NODE_TIMEOUT_MAX_SECONDS} 之间的正整数（秒），实际是 ${valueText(actual)}`;

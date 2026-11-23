@@ -1,3 +1,5 @@
+import { valueText } from "./value-text.js";
+
 /**
  * 节点的排队超时（秒，`queue_timeout`）的取值范围（#559）。排队截止时间是「进入排队的时刻 + 排队超时」，要装进一个有效的
  * `Date`（和数据库的 timestamptz）：`Date` 能表示的时间到公元 275760 年，换算下来排队超时在 8.6e12 秒以内都是有效的，
@@ -16,6 +18,6 @@ export const isQueueTimeout = (value: unknown): value is number =>
 	value > 0 &&
 	value <= QUEUE_TIMEOUT_MAX_SECONDS;
 
-/** 排队超时不合格的说明；`label` 是节点（`显示名称（节点 ID）`、节点 ID），`actual` 是写的值。 */
+/** 排队超时不合格的说明；`label` 是节点（`显示名称（节点 ID）`、节点 ID），`actual` 是写的值（{@link valueText}）。 */
 export const queueTimeoutMessage = (label: string, actual: unknown): string =>
-	`节点 ${label}：queue_timeout 必须是 1 到 ${QUEUE_TIMEOUT_MAX_SECONDS} 之间的正整数（秒），实际是 ${String(actual)}`;
+	`节点 ${label}：queue_timeout 必须是 1 到 ${QUEUE_TIMEOUT_MAX_SECONDS} 之间的正整数（秒），实际是 ${valueText(actual)}`;

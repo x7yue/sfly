@@ -2,7 +2,7 @@
 	"$comment": [
 		"节点生效的超时（#476）的用例表，和实现无关：控制面派发、画布的检查器用的 TypeScript 实现（packages/orchestration/src/node-config.ts 的 effectiveTimeout、nodeTimeoutProblem）和 `sfly scenario show` 用的 Python 实现（sdk/python/src/sfly/cli/node_timeouts.py）各有一份，都要通过这里的全部用例（packages/orchestration/test/effective-timeout-cases.test.ts、sdk/python/tests/test_node_timeouts.py）。",
 		"effective_cases：`node` 是场景里这个节点写的超时（没有这个键表示没写），`type` 是节点类型声明的超时（没有这个键表示没声明），`expect` 是生效的秒数和来源（node、type、platform）。生效的顺序：场景里这个节点写的 → 节点类型声明的 → 平台默认的 3600 秒；不是 1 到 4294967295 之间的整数的值（字符串、小数、0、负数、布尔值、超过上限、null）当作没写，哪一种来源都一样。用例里的数都是 JSON 能写成整数的写法：`1.0` 这样的写法两端的 JSON 解析器读成的类型不同，不放进来。",
-		"problem_cases：场景里这个节点写的超时不合格时的说明（派发时以配置错误失败、保存时被拒绝、触发前的预检阻断、命令行的本地检查用同一句话），`label` 是节点（显示名称（节点 ID））；没写或合格时 `problem` 是 null。`written` 只放数字：字符串、布尔值这些在两种语言里转成文字的写法不一样。",
+		"problem_cases：场景里这个节点写的超时不合格时的说明（派发时以配置错误失败、保存时被拒绝、触发前的预检阻断、命令行的本地检查用同一句话），`label` 是节点（显示名称（节点 ID））；没写（没有 `written` 这个键）或合格时 `problem` 是 null。`written` 放数字和 `null`（写了 `null` 不是没写，和保存时一样报出来，#576）；字符串、布尔值、对象这些「实际的值」的写法见 node-timeout-value-cases.json。",
 		"两端不比较的：找不到节点类型时 `sfly scenario show` 写「未知」（Python 独有的来源 unknown），控制面派发时找不到节点类型按没有声明处理。"
 	],
 	"platform_seconds": 3600,
@@ -149,6 +149,12 @@
 			"label": "slow",
 			"written": 1.5,
 			"problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 1.5"
+		},
+		{
+			"name": "null：不是没写，和保存时一样报出来（#576）",
+			"label": "slow",
+			"written": null,
+			"problem": "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 null"
 		}
 	]
 }

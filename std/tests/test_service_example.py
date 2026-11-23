@@ -113,6 +113,14 @@ def test_a_cancelled_node_does_not_leave_a_service_that_ignores_sigterm_behind(
     # 清理里先停服务、再存日志：日志存下来了。
     assert (tmp_path / "artifacts" / "service.log").read_text().strip() == "服务就绪"
     assert any("宽限期" in log.message and "缩短" in log.message for log in result.logs)
+    # #568：被终止时报的位置是业务节点里的那一行，辅助函数（真的 `sfly_std`）里的那一帧写在后面
+    # 作补充。
+    [terminated] = [log.message for log in result.logs if log.message.startswith("任务被终止")]
+    assert re.fullmatch(
+        r"任务被终止（SIGTERM），执行到 service_example\.service_check 第 \d+ 行"
+        r"（正在 sfly_std\.[a-z]+\.[a-z][a-z_]* 第 \d+ 行）",
+        terminated,
+    ), terminated
 
 
 def test_the_documentation_shows_exactly_this_example() -> None:
