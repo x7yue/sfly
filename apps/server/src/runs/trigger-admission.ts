@@ -149,7 +149,7 @@ export function createTriggerAdmission(checks: {
 			);
 		if (!version) return reject(400, "no_version", "orchestration has no saved version");
 
-		const problems = await checks.preflight(tx, version.document);
+		const problems = await checks.preflight(tx, orchestration.projectId, version.document);
 		if (problems.length > 0) return invalidOrchestration(problems);
 		const plan = planRun(version.document);
 		if ("errors" in plan) {
@@ -175,11 +175,18 @@ export function createTriggerAdmission(checks: {
 			return reject(400, "invalid_params", filled.errors.join("; "), filled.errors);
 		}
 		const { presetName, presetParams } = applied.runPreset;
-		const paramProblems = await checks.paramsCheck(tx, version.document, plan, filled.params, {
-			preset:
-				presetName === null ? null : { name: presetName, params: new Set(presetParams ?? []) },
-			given: new Set(Object.keys(request.params)),
-		});
+		const paramProblems = await checks.paramsCheck(
+			tx,
+			orchestration.projectId,
+			version.document,
+			plan,
+			filled.params,
+			{
+				preset:
+					presetName === null ? null : { name: presetName, params: new Set(presetParams ?? []) },
+				given: new Set(Object.keys(request.params)),
+			},
+		);
 		if (paramProblems.length > 0) {
 			return reject(
 				400,

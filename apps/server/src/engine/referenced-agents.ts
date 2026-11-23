@@ -2,12 +2,13 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { agentNotRegistered, referencedAgents } from "@sfly/orchestration";
 import type { ReferencedAgentSchema } from "@sfly/proto";
 import type { NodeTypeMetadata, PackageMetadata } from "@sfly/schema";
-import { inArray } from "drizzle-orm";
 import { agentEndpoint } from "../agents/agent-endpoint.js";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Db, Tx } from "../db/database.js";
-import { type AgentInfo, agents } from "../db/schema.js";
+import type { AgentInfo } from "../db/schema.js";
 import { referencedAgentProblem } from "../packages/requires-agent.js";
 import type { PackageRef } from "../packages/requires-sdk.js";
+import type { ProjectId } from "../projects/project-id.js";
 
 export type ReferencedAgentInit = MessageInitShape<typeof ReferencedAgentSchema>;
 
@@ -45,17 +46,16 @@ export interface ReferencedAgentProblem {
  * 「Agent」类型的输入引用的 Agent 必须已注册（不要求在线），版本满足节点包需要的 Agent 版本
  * （`requires_agent`，比较它最近一次注册时上报的版本，requires-agent.ts）。触发前（常量）、触发时（取自入口参数）
  * 和派发时都用这一份检查，所有引用一次查库。返回问题，以及查到的 Agent 记录（派发时据此取地址）。
+ * 只在 `project`（运行所在的项目）里找 Agent：别的项目的 Agent 和没有注册过一样，它的地址不会下发给这个项目的任务。
  */
 export async function checkReferencedAgents(
 	db: Db | Tx,
+	project: ProjectId,
 	references: readonly AgentReference[],
 ): Promise<{ problems: ReferencedAgentProblem[]; infos: Map<string, AgentInfo> }> {
 	const names = [...new Set(references.map((r) => r.agent))];
 	if (names.length === 0) return { problems: [], infos: new Map() };
-	const rows = await db
-		.select({ name: agents.name, info: agents.info })
-		.from(agents)
-		.where(inArray(agents.name, names));
+	const rows = await agentsInProject(db, project, names);
 	const infos = new Map(rows.map((r) => [r.name, r.info]));
 	const problems = references.flatMap(
 		({
@@ -93,6 +93,7 @@ export async function checkReferencedAgents(
  */
 export async function resolveReferencedAgents(
 	tx: Tx,
+	project: ProjectId,
 	nodeId: string,
 	io: NodeTypeMetadata["inputs"],
 	inputs: Record<string, unknown>,
@@ -101,7 +102,7 @@ export async function resolveReferencedAgents(
 	{ agents: ReferencedAgentInit[] } | { problems: string[]; kind: "config_error" | "env_error" }
 > {
 	const wanted = referencedAgents(io, inputs).map((r) => ({ ...r, nodeId, requirement }));
-	const { problems, infos } = await checkReferencedAgents(tx, wanted);
+	const { problems, infos } = await checkReferencedAgents(tx, project, wanted);
 	const unregistered = problems.filter((p) => p.code === "agent_input_not_registered");
 	if (unregistered.length > 0) {
 		return { problems: unregistered.map((p) => p.message), kind: "config_error" };

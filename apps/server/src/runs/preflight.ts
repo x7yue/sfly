@@ -2,14 +2,14 @@ import {
 	agentInputs,
 	blocksTrigger,
 	feishuBotInputs,
+	nodeAgentNotRegistered,
 	nodeNameWithId,
 	referencedAgents,
 	referencesIn,
 } from "@sfly/orchestration";
 import type { PackageMetadata, StoredOrchestrationDocument } from "@sfly/schema";
-import { inArray } from "drizzle-orm";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Db, Tx } from "../db/database.js";
-import { agents } from "../db/schema.js";
 import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
 import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
@@ -18,6 +18,7 @@ import { checkDocument } from "../orchestrations/document-checks.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { checkDevPackagesLoaded } from "./dev-package-loaded.js";
 import { knownParams, resolved, secretTexts } from "./known-params.js";
 import { type ParamOrigins, paramInputTypeProblems } from "./param-input-type.js";
@@ -39,21 +40,24 @@ export interface PreflightProblem {
 
 /**
  * 预检读哪个数据库由调用方传：触发准入（trigger-admission.ts）在事务里调用，传事务对象（#380：预检另从连接池取连接，会和等锁的写入互相等死）。
+ * `project` 是场景所在的项目：包（本项目的和公共项目的）和 Agent（只有本项目的）都在这个范围里找，别的项目的当作不存在。
  * 预检和参数检查读库都是一条接一条地执行，不并发。
  */
 export type Preflight = (
 	db: Db | Tx,
+	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 ) => Promise<PreflightProblem[]>;
 
 /** 文档锁定的节点包版本的元信息（包名 → 元信息；控制面没有这个版本的不在里面）。每个包查一次，一个一个地查。 */
 async function lockedPackages(
 	db: Db | Tx,
+	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 ): Promise<Map<string, PackageMetadata>> {
 	const locked = new Map<string, PackageMetadata>();
 	for (const [name, version] of Object.entries(doc.packages)) {
-		const published = await findPackageVersion(db, name, version);
+		const published = await findPackageVersion(db, project, name, version);
 		if (published) locked.set(name, published.metadata);
 	}
 	return locked;
@@ -62,11 +66,12 @@ async function lockedPackages(
 /** 文档锁定的节点包版本的元信息，再加上锁定开发版本的包的节点类型（节点派发到的 Agent 上报的，不知道的不在里面）。 */
 async function withDevNodeTypes(
 	db: Db | Tx,
+	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 	locked: ReadonlyMap<string, PackageMetadata>,
 ): Promise<ReadonlyMap<string, Pick<PackageMetadata, "nodes">>> {
 	const merged = new Map<string, Pick<PackageMetadata, "nodes">>(locked);
-	for (const [name, nodes] of await devNodeTypes(db, doc)) {
+	for (const [name, nodes] of await devNodeTypes(db, project, doc)) {
 		merged.set(name, { nodes: nodes as PackageMetadata["nodes"] });
 	}
 	return merged;
@@ -85,9 +90,9 @@ async function withDevNodeTypes(
  * 记录里版本不同的 Agent 会先自更新到这个版本，所以 Agent 执行任务时的 SDK 版本就是控制面版本；提示也如实这样写。
  */
 export function createPreflight(deps: { version: string }): Preflight {
-	return async (db, doc) => {
+	return async (db, project, doc) => {
 		// 注释框的警告只提示，不阻断触发（docs/SEMANTICS.md §1.6）。
-		const problems: PreflightProblem[] = (await checkDocument(db, doc))
+		const problems: PreflightProblem[] = (await checkDocument(db, project, doc))
 			.filter(blocksTrigger)
 			.map((w) => ({
 				code: w.code,
@@ -102,14 +107,9 @@ export function createPreflight(deps: { version: string }): Preflight {
 			if (agent) wanted.set(node.id, agent);
 		}
 		const names = [...new Set(wanted.values())];
+		// 已登记的（含停用的）：停用的 Agent 连不上、不参与派发，预检要说清楚；别的项目的 Agent 和不存在一样（ADR 0029）。
 		const known = new Map(
-			(names.length
-				? await db
-						.select({ name: agents.name, disabledAt: agents.disabledAt })
-						.from(agents)
-						.where(inArray(agents.name, names))
-				: []
-			).map((r) => [r.name, r.disabledAt !== null]),
+			(await agentsInProject(db, project, names)).map((r) => [r.name, r.disabledAt !== null]),
 		);
 		const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
 		for (const [nodeId, agent] of wanted) {
@@ -122,7 +122,7 @@ export function createPreflight(deps: { version: string }): Preflight {
 				disabled === undefined
 					? {
 							code: "agent_not_registered",
-							message: `节点 ${shown} 派发到的 Agent ${agent} 还没有注册过`,
+							message: nodeAgentNotRegistered(shown, agent),
 							node_id: nodeId,
 						}
 					: {
@@ -132,9 +132,9 @@ export function createPreflight(deps: { version: string }): Preflight {
 						},
 			);
 		}
-		problems.push(...(await checkDevPackagesLoaded(db, doc)));
+		problems.push(...(await checkDevPackagesLoaded(db, project, doc)));
 
-		const locked = await lockedPackages(db, doc);
+		const locked = await lockedPackages(db, project, doc);
 		// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。
 		const constants: AgentReference[] = [];
 		for (const node of doc.nodes) {
@@ -172,7 +172,7 @@ export function createPreflight(deps: { version: string }): Preflight {
 			}
 		}
 		// 没有注册过的常量已经由静态检查（agent_input_not_registered）指出，这里只看版本。
-		const referenced = await checkReferencedAgents(db, constants);
+		const referenced = await checkReferencedAgents(db, project, constants);
 		problems.push(...referenced.problems.filter((p) => p.code === "agent_version_unsatisfied"));
 
 		// 执行计划的检查（单链、节点种类受支持、调度目标等）。
@@ -198,6 +198,7 @@ export function preflightWarnings(doc: StoredOrchestrationDocument): PreflightPr
 /** 触发时按入口参数的实际值做的检查（{@link createParamsCheck}）。 */
 export type ParamsCheck = (
 	db: Db | Tx,
+	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 	plan: RunPlan,
 	params: Record<string, unknown>,
@@ -214,8 +215,8 @@ export type ParamsCheck = (
  * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过。
  */
 export function createParamsCheck(): ParamsCheck {
-	return async (db, doc, plan, params, origins) => {
-		const locked = await lockedPackages(db, doc);
+	return async (db, project, doc, plan, params, origins) => {
+		const locked = await lockedPackages(db, project, doc);
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
 		const chains = knownParams(plan, params);
@@ -264,12 +265,12 @@ export function createParamsCheck(): ParamsCheck {
 			}
 		}
 		return [
-			...(await checkReferencedAgents(db, wanted)).problems,
+			...(await checkReferencedAgents(db, project, wanted)).problems,
 			...(await checkFeishuBots(db, bots)),
 			...paramInputTypeProblems(
 				plan.main,
 				chains,
-				await withDevNodeTypes(db, doc, locked),
+				await withDevNodeTypes(db, project, doc, locked),
 				origins,
 			),
 		];
