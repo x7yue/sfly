@@ -1478,10 +1478,10 @@ export interface NodeTypeView {
 
 /**
  * 提示（`notice`）的种类。助手服务产生的：`retry` 正在重试、`retry_end` 重试结束、`compaction` 压缩了上下文、
- * `steer_dropped` 插话没有送到模型（停止、到了上限、结束会话时还没送到，或者助手服务那边这一轮已经结束了；每句各一条，带这句话的
- * `message_id`；助手服务对插话回 409 `no_turn_running` 时，这句话的 `steer_dropped` 由控制面写）、`context_reset` 接不上之前的上下文，
- * 换成了一段摘要；
- * 控制面产生的：`queue_cancelled` 排队中的话因停止没有交给助手（带这句话的 `message_id`；`message` 固定写「这句话排队时被取消了，
+ * `steer_dropped` 插话没有送到模型（停止、到了上限、结束会话时还没送到，或者这一轮因为别的原因结束了；每句各一条，**必须带**这句话的
+ * `message_id`；插话命令回 409 或者没有得到 202、控制面自己补这一轮的结局时，没有确认送到的话的 `steer_dropped` 由控制面写，规则见
+ * 助手服务协议「插话」一节）、`context_reset` 接不上之前的上下文，换成了一段摘要；
+ * 控制面产生的：`queue_cancelled` 排队中的话因停止没有交给助手（**必须带**这句话的 `message_id`；`message` 固定写「这句话排队时被取消了，
  * 没有交给助手」）、`events_lost` 控制面和助手服务断开太久，这一段过程没有记下。
  * 产生：`retry`、`retry_end`、`compaction` #540；`steer_dropped`、`queue_cancelled` #544；
  * `events_lost`、`context_reset` #545。
@@ -1733,8 +1733,9 @@ export type ParamType = "string" | "number" | "boolean" | "json";
 export type PersistedSessionEvent = {
 	type: "user_message";
 	/**
-	 * 没有送到的那句话（`user_message.message_id`）：只有 `steer_dropped`（插话因停止、结束或这一轮已经结束没有送到模型）和
-	 * `queue_cancelled`（排队中的话因停止没有交给助手）。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字。#544 起。
+	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
+	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
+	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
 	 */
 	message_id: string;
 	text: string;
@@ -1786,8 +1787,9 @@ export type PersistedSessionEvent = {
 	/** 重试的原因按什么分；#548 起有值。 */
 	error_class?: ErrorClass;
 	/**
-	 * 没有送到的那句话（`user_message.message_id`）：只有 `steer_dropped`（插话因停止、结束或这一轮已经结束没有送到模型）和
-	 * `queue_cancelled`（排队中的话因停止没有交给助手）。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字。#544 起。
+	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
+	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
+	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
 	 */
 	message_id?: string;
 	seq: number;
