@@ -252,7 +252,11 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			await h.prompt(id, { text: "剧本：大输出" });
 			expect(await h.turnEnd(id, 1, 120_000)).toMatchObject({ outcome: "completed" });
 			const result = h.events.of(id).find((r) => r.event.type === "tool_result");
-			expect(result?.event).toMatchObject({ text: expect.stringContaining("字节丢掉了") });
+			expect(result?.event).toMatchObject({
+				text: expect.stringContaining("字节丢掉了"),
+				// 页面靠它写明只显示了一部分。
+				truncated: true,
+			});
 			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
 			expect(raw).not.toContain('"tool_execution_update"');
 			expect(raw.length).toBeLessThan(2 * 1024 * 1024);
