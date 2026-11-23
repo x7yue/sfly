@@ -29,6 +29,8 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	// 保存版本、恢复版本、改设置（运行通知、关注项）、新建、归档与恢复场景（场景，写）→ 编辑
 	"POST /orchestrations/:id/versions": "edit",
 	"POST /orchestrations/:id/versions/:number/restore": "edit",
+	// 局部编辑（#470）：一组操作存成新版本，就是 ADR 表里「保存版本」那一行（场景 × 写）→ 编辑
+	"POST /orchestrations/:id/edits": "edit",
 	"PATCH /orchestrations/:id": "edit",
 	"POST /orchestrations": "edit",
 	"POST /orchestrations/:id/archive": "edit",
@@ -157,9 +159,10 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 
 	it("会话的写（建、发话、停止）只有人能做：范围表里 session 是 humanOnly，别的类别不是", () => {
 		expect(writeNeedsPerson(writeOf("session"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("project"))).toBe(true);
 		// 看新建出来的是什么（和范围同一个取法）：新建会话的接口声明 creates 时也算。
 		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
-		for (const kind of RESOURCE_KINDS.filter((k) => k !== "session")) {
+		for (const kind of RESOURCE_KINDS.filter((k) => k !== "session" && k !== "project")) {
 			expect(writeNeedsPerson(writeOf(kind)), kind).toBe(false);
 		}
 		// 只读不受影响。
@@ -171,10 +174,28 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 				.map(routeKey)
 				.sort(),
 		).toEqual([
+			"DELETE /projects/:project/tokens/:id",
 			"POST /projects/:project/sessions",
+			"POST /projects/:project/tokens",
 			"POST /sessions/:id/messages",
 			"POST /sessions/:id/stop",
 		]);
+	});
+
+	it("范围表每一行都写了 humanOnly（布尔）：新的资源类别漏写过不了类型检查，这里运行时也核对一遍", () => {
+		for (const kind of RESOURCE_KINDS) {
+			expect(typeof SCOPE_TABLE[kind].humanOnly, kind).toBe("boolean");
+		}
+		expect(RESOURCE_KINDS.filter((kind) => SCOPE_TABLE[kind].humanOnly)).toEqual([
+			"session",
+			"project",
+		]);
+	});
+
+	it("作用在 humanOnly 的类别上、或新建出的是它，任何一个都算（不能靠写成别的 creates 绕过）", () => {
+		expect(writeNeedsPerson(writeOf("session", "scenario"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("scenario", "run"))).toBe(false);
 	});
 
 	it("在「范围够」之上再加一层：humanOnly 的写，范围表里的范围仍是「编辑」", () => {
@@ -232,6 +253,7 @@ describe("契约和访问检查的规则对得上", () => {
 			"account",
 			"none",
 			"path",
+			"query",
 			"run",
 			"scenario",
 			"session",
@@ -247,7 +269,6 @@ describe("契约和访问检查的规则对得上", () => {
 				"GET /orchestrations",
 				"POST /orchestrations",
 				"GET /packages",
-				"POST /packages",
 				"GET /packages/:name/versions/:version/archive",
 				"GET /feishu-bots",
 				"DELETE /feishu-bots/:name",
@@ -256,6 +277,8 @@ describe("契约和访问检查的规则对得上", () => {
 				"POST /projects/:project/sessions",
 			]),
 		);
+		// 发布节点包：路径里没有项目，过渡的查询参数 project=public（#565；#488 之后由路径替代）。
+		expect(classes.get("query")).toEqual(["POST /packages"]);
 		expect(classes.get("scenario")).toContain("POST /orchestrations/:id/runs");
 		expect(classes.get("run")).toContain("POST /runs/:id/cancel");
 		expect(classes.get("task")).toContain("PUT /tasks/:id/artifacts/*");

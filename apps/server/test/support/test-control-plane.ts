@@ -56,7 +56,12 @@ const portOf = (url: string) => Number(new URL(url).port);
  * 日志上限、产物上限、保留期等（#18）可以按需覆盖。
  */
 export async function startTestControlPlane(
-	options: { clock?: Clock; agentToken?: string } & Pick<
+	options: {
+		clock?: Clock;
+		agentToken?: string;
+		/** 停止之后等助手服务带回结局的宽限：默认 300 毫秒；`"production"` 是不传值、用控制面自己的默认（`STOP_GRACE_MS`）。 */
+		sessionStopGraceMs?: number | "production";
+	} & Pick<
 		ControlPlaneOptions,
 		| "logLimitBytes"
 		| "logScanBytes"
@@ -86,7 +91,6 @@ export async function startTestControlPlane(
 		| "assistantEventsIdleMs"
 		| "assistantCommandTimeoutMs"
 		| "sessionSweepIntervalMs"
-		| "sessionStopGraceMs"
 		| "initialAdmin"
 		| "loginIdleMs"
 		| "sameOrigins"
@@ -141,7 +145,10 @@ export async function startTestControlPlane(
 			// 不该被它收拾掉），要测它的用例自己传间隔。
 			sessionSweepIntervalMs: options.sessionSweepIntervalMs ?? 3_600_000,
 			// 停止之后等助手服务带回结局的宽限：测试里短一点（要测它的用例自己传）。
-			sessionStopGraceMs: options.sessionStopGraceMs ?? 300,
+			sessionStopGraceMs:
+				options.sessionStopGraceMs === "production"
+					? undefined
+					: (options.sessionStopGraceMs ?? 300),
 			initialAdmin: options.initialAdmin,
 			loginIdleMs: options.loginIdleMs,
 			sameOrigins: options.sameOrigins,

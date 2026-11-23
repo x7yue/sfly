@@ -179,6 +179,8 @@ export interface DeclarationRules {
  * GET 一定是只读，不用登记。
  */
 export const NON_GET_READS: Readonly<Record<string, string>> = {
+	"POST /orchestrations/:id/edits/check":
+		"检查一组局部编辑：用 POST 只是因为请求体是一组操作；不改库、数据目录和内存，什么都不留下",
 	"POST /orchestrations/:id/check":
 		"检查一份场景文档：用 POST 只是因为请求体是一整份文档；不改库、数据目录和内存，什么都不留下",
 };
@@ -231,6 +233,11 @@ function fieldNames(schema: z.ZodType | undefined): string[] | undefined {
 		def = inner?._zod.def as typeof def;
 	}
 	return undefined;
+}
+
+/** 接口的查询参数名；没有声明查询参数时是空的。 */
+export function queryParamNames(def: { query?: z.ZodType | undefined }): string[] {
+	return fieldNames(def.query) ?? [];
 }
 
 const label = (def: Pick<RouteDef, "method" | "path">) => `${def.method} ${def.path}`;

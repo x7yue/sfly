@@ -3,10 +3,12 @@
 import {
 	PROJECT_PARAM,
 	pathParamNames,
+	queryParamNames,
 	type ResourceKind,
 	type ResourceTarget,
 	type RouteDef,
 } from "@sfly/schema";
+import type { z } from "zod";
 
 /**
  * 一个接口的项目怎么得出（ADR 0029 把现有接口分成四类）：
@@ -15,6 +17,8 @@ import {
  * - `account`：账号类接口（登录、登出、当前用户、改密码、管理账号），不属于项目，不走范围表：认哪种凭据看 {@link ACCOUNT_ROUTES}；
  * - `path`：路径带项目（列表与新建，以及按名字定位的 Agent、节点包、飞书机器人）：取路径里的 `:project`。
  *   #488 把这些接口的路径改成 `/projects/:project/…` 之前，路径里没有项目，`param` 是 null，项目就是默认项目；
+ * - `query`：路径里没有项目，项目写在查询参数里（过渡，#565：发布节点包的 `project=public`；路径带项目之后由 `path` 替代）：
+ *   不写是默认项目，写了只认公共项目；
  * - `scenario`、`run`、`task`、`session`：经场景、运行、任务或会话（按 ID 定位，路径里不带项目）：项目是那个资源所在的项目
  *   （任务经它所属的运行）。`param` 是路径里 ID 的参数名。
  */
@@ -22,6 +26,7 @@ export type ProjectLocator =
 	| { from: "none" }
 	| { from: "account" }
 	| { from: "path"; param: string | null }
+	| { from: "query"; param: string }
 	| { from: "scenario" | "run" | "task" | "session"; param: string };
 
 /**
@@ -29,7 +34,9 @@ export type ProjectLocator =
  * 对资源类别穷举（`switch` 加 `never` 的兜底）：契约里加一个资源类别，这里不处理就过不了类型检查，
  * 不会让它悄悄落进某个默认的分支（#554）。
  */
-export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLocator | undefined {
+export function locatorOf(
+	def: Pick<RouteDef, "path" | "resource"> & { query?: z.ZodType | undefined },
+): ProjectLocator | undefined {
 	const { kind, target } = def.resource;
 	switch (kind) {
 		case "system":
@@ -56,12 +63,15 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 
 /** 属于项目的资源类别（场景、运行、任务、会话、节点包、Agent、飞书机器人）：路径带项目、列表与新建、按名字或按 ID 定位。 */
 function locatorOfScoped(
-	def: Pick<RouteDef, "path">,
+	def: Pick<RouteDef, "path"> & { query?: z.ZodType | undefined },
 	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "feishu_bot",
 	target: ResourceTarget,
 ): ProjectLocator | undefined {
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
 		return { from: "path", param: PROJECT_PARAM };
+	if (target === "upload" && queryParamNames(def).includes(PROJECT_PARAM)) {
+		return { from: "query", param: PROJECT_PARAM };
+	}
 	if (target === "collection" || target === "upload") return { from: "path", param: null };
 	if (typeof target === "object" && "params" in target) {
 		if (kind === "agent" || kind === "package" || kind === "feishu_bot") {

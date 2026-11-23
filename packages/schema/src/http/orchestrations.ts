@@ -10,6 +10,7 @@ import { ChartDeclaration } from "../package-metadata.js";
 import { QUEUE_TIMEOUT_MAX_SECONDS, queueTimeoutMessage } from "../queue-timeout.js";
 import { removedFieldsMessage, removedFieldsWithContent } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
+import { EditOperations } from "../scenario-edits.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
@@ -605,6 +606,78 @@ export const orchestrationsApi = {
 			b: z.string().min(1),
 		}),
 		response: z.object({ diff: DocumentDiffView }),
+	}),
+	/**
+	 * 对场景做一组局部编辑（#470），存成一个新版本，返回 201：和保存相同的响应，再加上这组操作造成的差异（`diff`，相对 base_version）。
+	 * 需要昵称请求头。操作见 @sfly/schema 的 EditOperation：加节点、删节点、连线、断开、改一个节点的字段，
+	 * 由控制面按顺序作用在最新版本上，用的是画布的编辑函数（@sfly/orchestration 的 applyEditOperations）。
+	 *
+	 * 要么全部生效，要么都不生效：
+	 * - 有一个操作不合法时 400 `invalid_operation`，details 是 EditOperationProblem（第几个、为什么，以及相近的节点 ID、
+	 *   缺的必填输入和类型、连线两端的节点这些线索）；
+	 * - base_version 不是最新版本时 409 `version_conflict`（和保存一样，details 见 VersionConflictDetails）；
+	 *   缺 base_version 时 400 `base_version_required`；
+	 * - 编辑之后的文档不合法时 400 `invalid_document`（例如最新版本里还有已移除种类的节点），
+	 *   secret 参数默认值的占位符沿用不了时 400 `secret_default_placeholder`，和保存一样。
+	 *
+	 * 之后的检查和保存完全一样：`warnings` 和保存时相同，每条带 `existing`（改动之前就有，见 CheckedWarningView），
+	 * 新节点没有坐标时按整理布局补上（接在节点后面的放在它右侧一列，和画布一样）。
+	 * 这组操作的结果和最新版本相同时（例如把字段改成原来的值；同一组里先加再删、加的时候没有把后面的节点挪开。插在两个节点中间的话，插入时往右挪的节点删掉后不挪回来，是改动；接在链尾再删没有改动）不存出新版本：返回 200、当前版本，
+	 * `unchanged` 为 true，`diff` 为空。（整份文档原样保存仍会存出新版本，那是保存接口的既有行为。）
+	 * 只检查不保存用 checkEdits。
+	 */
+	edit: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/edits",
+		summary: "对场景做一组局部编辑（增删节点和连线、改节点的字段），保存成新版本",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "edit"],
+		params: IdParams,
+		body: z.object({
+			/** 编辑起点的版本号；不是最新版本时 409 `version_conflict`。 */
+			base_version: z.number().int().nonnegative(),
+			/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+			operations: EditOperations,
+		}),
+		requestError: ({ body }) =>
+			typeof body === "object" && body !== null && !Object.hasOwn(body, "base_version")
+				? {
+						code: "base_version_required",
+						message: "base_version is required (use 0 for the first version)",
+					}
+				: undefined,
+		response: SavedVersionView.extend({
+			/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
+			warnings: z.array(CheckedWarningView),
+			/** 这组操作造成的差异：从 base_version 到新版本。 */
+			diff: DocumentDiffView,
+			/** true：这组操作没有改动，没有存出新版本，返回的是当前版本（状态码 200）；存出了新版本时没有这个字段。 */
+			unchanged: z.literal(true).optional(),
+		}),
+	}),
+	/**
+	 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
+	 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+	 * 没有给 base_version 时对照最新版本，不报冲突。
+	 */
+	checkEdits: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/edits/check",
+		summary: "检查一组局部编辑：返回保存时会有的错误、警告和这组操作造成的差异，不保存",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "check-edits"],
+		params: IdParams,
+		body: z.object({
+			/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+			base_version: z.number().int().nonnegative().optional(),
+			/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+			operations: EditOperations,
+		}),
+		response: VersionCheckView,
 	}),
 	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */
 	versions: endpoint({
