@@ -16,9 +16,14 @@ import { join } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { connectAgent, WORKBENCH_UNREACHABLE } from "../src/agent.js";
-import { createRemoteTools, isPiTempFile, OUTPUT_LIMIT_BYTES } from "../src/extension/extension.js";
+import {
+	createRemoteTools,
+	isPiTempFile,
+	OUTPUT_LIMIT_BYTES,
+	readOps,
+} from "../src/extension/extension.js";
 import type { TurnConfig } from "../src/turn-config.js";
-import { FakeWorkbench, silentPort } from "./support/fake-workbench.js";
+import { FakeWorkbench, freezableProxy, silentPort } from "./support/fake-workbench.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: 测试里按名字取注册的工具，参数各不相同。
 type AnyTool = ToolDefinition<any, any, any>;
@@ -189,6 +194,12 @@ describe("保留下来的适配", () => {
 		expect(text).toContain("Command timed out after 1 seconds");
 	});
 
+	it("模型给的超时特别大：夹到这一轮的默认超时（用时上限）以内，期限的定时器不溢出", async () => {
+		const { text } = await call("bash", { command: "sleep 0.2; echo ok", timeout: 2_200_000 });
+		expect(text).toBe("ok\n");
+		expect(workbench.runs[0]?.timeoutMs).toBe(7_000);
+	});
+
 	it("取消信号传给能力端口的调用：命令被结束，报 Command aborted", async () => {
 		const controller = new AbortController();
 		const pending = call("bash", { command: "sleep 30", timeout: 60 }, controller.signal);
@@ -303,4 +314,45 @@ describe("命令的输出有上限", () => {
 		expect(uploaded?.content.length).toBeLessThan(OUTPUT_LIMIT_BYTES + 4096);
 		rmSync(full as string, { force: true });
 	}, 60_000);
+});
+
+describe("连接在命令进行中冻住：保活发现连接死了", () => {
+	it("命令的超时比测试的时限长：靠保活的 ping 在「ping 间隔 + ping 超时 + 探测」左右以「工作台连不上」结束", async () => {
+		const proxy = await freezableProxy(workbench.address);
+		try {
+			const tools = new Map<string, AnyTool>();
+			const pi = {
+				registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
+				on: () => {},
+			} as unknown as ExtensionAPI;
+			createRemoteTools(pi, {
+				config: () => ({ ...config, address: proxy.address }),
+				connect: (a) =>
+					connectAgent(a, { pingIntervalMs: 1_000, pingTimeoutMs: 1_000, probeDeadlineMs: 500 }),
+			});
+			const started = Date.now();
+			const pending = run(tools, "bash", { command: "sleep 100", timeout: 120 });
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			proxy.freeze();
+			const text = await pending;
+			expect(text).toContain(WORKBENCH_UNREACHABLE);
+			// 命令的期限是 120 + 20 秒；保活 1 + 1 秒、探测 0.5 秒。
+			expect(Date.now() - started).toBeLessThan(10_000);
+		} finally {
+			await proxy.close();
+		}
+	}, 20_000);
+});
+
+describe("整份读文件（读图片等）也在源头打码", () => {
+	it("readFile：交给 pi 之前按值打码", async () => {
+		const secret = "whole-file-secret-77";
+		writeFileSync(join(workdir, "w.bin"), `x${secret}y`);
+		const ops = readOps(
+			() => connectAgent(workbench.address),
+			() => ({ ...config, secrets: [secret] }),
+		);
+		const data = await ops.readFile(join(workdir, "w.bin"));
+		expect(Buffer.from(data).toString()).toBe("x******y");
+	});
 });

@@ -1,4 +1,5 @@
 import { createWriteStream, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
 	AssistantErrorCode,
@@ -69,6 +70,11 @@ export interface SessionManagerOptions {
 	limits?: { modelCalls: number; durationMs: number };
 	maxProcesses?: number;
 	killGraceMs?: number;
+	/**
+	 * pi 进程的临时目录建在这下面（每个进程一个，`TMPDIR`），默认容器自己的临时目录下的 `sfly-assistant/`：截断输出的全文
+	 * 按「两边路径相同」传到工作台上同一个路径，工作台上 `/tmp` 一定在、谁都能写；它也不该占数据卷。
+	 */
+	tmpRoot?: string;
 }
 
 interface Turn {
@@ -79,6 +85,12 @@ interface Turn {
 	/** 由助手服务结束这一轮时的结局（停止、上限）：pi 进程退出后据此写 `turn_end`。 */
 	ending: { outcome: TurnOutcome; reason: string; limit?: TurnLimit } | undefined;
 	ended: boolean;
+	/** 这一轮的工作台（能力端口的地址）：工具结果说工作台连不上时，助手服务自己探它。 */
+	address: string | undefined;
+	/** 正在探工作台（不重复探）。 */
+	probing: boolean;
+	/** 探的时候 pi 报告停下来了：探完再定结局。 */
+	settled: Record<string, unknown> | undefined;
 }
 
 interface Session {
@@ -133,7 +145,7 @@ export class SessionManager {
 
 	/** pi 进程的临时目录都在这下面（每个进程一个，`TMPDIR`）。 */
 	get #tmpRoot(): string {
-		return join(this.options.dataDir, "tmp");
+		return this.options.tmpRoot ?? join(tmpdir(), "sfly-assistant");
 	}
 
 	/**
@@ -192,6 +204,7 @@ export class SessionManager {
 			};
 		}
 		const turn = this.#register(session, body.turn);
+		turn.address = body.workbench.address;
 		turn.timer = setTimeout(
 			() =>
 				this.#stop(session, turn, {
@@ -214,6 +227,9 @@ export class SessionManager {
 			timer: undefined,
 			ending: undefined,
 			ended: false,
+			address: undefined,
+			probing: false,
+			settled: undefined,
 		};
 		session.turn = turn;
 		session.lastTurn = number;
@@ -457,13 +473,27 @@ export class SessionManager {
 		if (unknown) this.options.log(`会话 ${session.id}：认不出的 pi 事件 ${unknown}`);
 		for (const event of events) this.#emit(session, turn, event);
 		const unreachable = workbenchUnreachable(record);
-		if (unreachable !== undefined) {
-			// 工作台连不上（一次调用过了期限、之后也探不通）：不等到上限，这一轮以失败结束，写明原因。
-			this.#stop(session, turn, {
-				outcome: "failed",
-				reason: session.redactor.redact(unreachable),
-			});
-			return;
+		if (unreachable !== undefined && turn.address !== undefined && !turn.probing) {
+			// 工具结果里有「工作台连不上」：可能是扩展写的，也可能是命令自己打出来的、读到的文件路径里带的。只看文字定不下来，
+			// 助手服务自己探一次这一轮的工作台：探不通才不等到上限、以失败结束这一轮；探得通就是普通的工具错误，照常往下走。
+			turn.probing = true;
+			void this.options
+				.connect(turn.address)
+				.reachable()
+				.then((ok) => {
+					turn.probing = false;
+					const settled = turn.settled;
+					turn.settled = undefined;
+					if (turn.ended || turn.ending) return;
+					if (!ok) {
+						this.#stop(session, turn, {
+							outcome: "failed",
+							reason: session.redactor.redact(unreachable),
+						});
+					} else if (settled) {
+						this.#settle(session, turn, settled);
+					}
+				});
 		}
 		if (record.type === "turn_start" && turn.translator.modelCalls > this.#limits.modelCalls) {
 			this.#stop(session, turn, {
@@ -474,19 +504,29 @@ export class SessionManager {
 			return;
 		}
 		if (record.type === "agent_settled") {
-			const t = turn.translator;
-			if (record.aborted === true) {
-				this.#end(session, turn, { outcome: "stopped", reason: "这一轮被中止了" });
-			} else if (t.retriesExhausted !== undefined || t.lastModelError !== undefined) {
-				const detail = t.retriesExhausted ?? t.lastModelError ?? "";
-				this.#end(session, turn, {
-					outcome: "model_unavailable",
-					reason: `模型不可用：${session.redactor.redact(detail)}`,
-					errorClass: "other",
-				});
-			} else {
-				this.#end(session, turn, { outcome: "completed", reason: "这一轮做完了" });
+			// 还在探工作台：等探完再定结局（探不通是「工作台连不上」，不是做完了）。
+			if (turn.probing) {
+				turn.settled = record;
+				return;
 			}
+			this.#settle(session, turn, record);
+		}
+	}
+
+	/** pi 报告这一轮停下来了（`agent_settled`）：定结局。 */
+	#settle(session: Session, turn: Turn, record: Record<string, unknown>): void {
+		const t = turn.translator;
+		if (record.aborted === true) {
+			this.#end(session, turn, { outcome: "stopped", reason: "这一轮被中止了" });
+		} else if (t.retriesExhausted !== undefined || t.lastModelError !== undefined) {
+			const detail = t.retriesExhausted ?? t.lastModelError ?? "";
+			this.#end(session, turn, {
+				outcome: "model_unavailable",
+				reason: `模型不可用：${session.redactor.redact(detail)}`,
+				errorClass: "other",
+			});
+		} else {
+			this.#end(session, turn, { outcome: "completed", reason: "这一轮做完了" });
 		}
 	}
 

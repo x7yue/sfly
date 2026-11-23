@@ -167,7 +167,8 @@ function atWorkdir<T extends ToolDefinition<any, any, any>>(tool: T, workdir: st
 	};
 }
 
-function readOps(agent: () => AgentClient, config: () => TurnConfig): ReadOperations {
+/** 读的两种操作：整份读、按块读，交给 pi 之前都按值打码（导出给测试）。 */
+export function readOps(agent: () => AgentClient, config: () => TurnConfig): ReadOperations {
 	return {
 		// 读到的内容交给 pi 之前就按值打码：pi 的截断、会话文件里都是打过码的。
 		readFile: async (path) => {
@@ -269,7 +270,8 @@ function bashOps(agent: () => AgentClient, config: () => TurnConfig): BashOperat
 			const current = config();
 			const { env, defaultTimeoutSeconds } = current;
 			// 能力端口的命令必须有超时：模型没给时用这一轮的默认值。
-			const seconds = timeout ?? defaultTimeoutSeconds;
+			// 夹在这一轮的用时上限（就是默认值）以内：到了上限这一轮反正要结束，太大的值还会让期限的定时器溢出。
+			const seconds = Math.min(timeout ?? defaultTimeoutSeconds, defaultTimeoutSeconds);
 			// 输出交给 pi 之前就按值打码（值跨两块也认得出），并且有上限：pi 的截断、临时文件、会话文件里
 			// 都是打过码的，也不会先截断、后打码留下半截。
 			const redact = redactorFor(current).byteStream();

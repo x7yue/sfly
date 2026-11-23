@@ -73,8 +73,10 @@ describe("拉起 pi", () => {
 			"SFLY_ASSISTANT_TURN_CONFIG",
 			"TMPDIR",
 		]);
-		// 临时目录每个进程一个，在数据目录下（一轮结束时清空、进程退出时删掉）。
-		expect(started.env.TMPDIR?.startsWith(join(harness.dataDir, "tmp"))).toBe(true);
+		// 临时目录每个进程一个，在临时目录的根下（不在数据卷上；一轮结束时清空、进程退出时删掉）。
+		const tmpDir = started.env.TMPDIR as string;
+		expect(tmpDir.startsWith(join(harness.root, "tmp"))).toBe(true);
+		expect(tmpDir.startsWith(harness.dataDir)).toBe(false);
 		expect(started.env.PI_TELEMETRY).toBe("0");
 		// 设置目录每次启动新建，里面只有模型文件；进程退出后删掉。
 		const agentDir = started.env.PI_CODING_AGENT_DIR as string;
@@ -93,6 +95,7 @@ describe("拉起 pi", () => {
 		expect(started.argv[started.argv.indexOf("--session-id") + 1]).toBe(id);
 		await harness.sessions.shutdown();
 		await eventually(() => expect(existsSync(agentDir)).toBe(false));
+		await eventually(() => expect(existsSync(tmpDir)).toBe(false));
 		// 这一轮的配置（里面有保密的环境变量）在这一轮结束时删掉。
 		expect(existsSync(join(harness.dataDir, "sessions", id, "turn.json"))).toBe(false);
 	});
@@ -590,7 +593,8 @@ describe("启动时清掉上次留下的东西", () => {
 		writeFileSync(join(session, "turn.json"), "{}");
 		writeFileSync(join(session, "events.jsonl"), "");
 		mkdirSync(join(dataDir, "agents", "old"), { recursive: true });
-		mkdirSync(join(dataDir, "tmp", "old"), { recursive: true });
+		const tmpRoot = join(dataDir, "pi-tmp");
+		mkdirSync(join(tmpRoot, "old"), { recursive: true });
 		new SessionManager({
 			dataDir,
 			modelsFile: "/nonexistent",
@@ -602,11 +606,12 @@ describe("启动时清掉上次留下的东西", () => {
 			bus: new EventBus(),
 			connect: connectAgent,
 			log: () => {},
+			tmpRoot,
 		});
 		expect(existsSync(join(session, "turn.json"))).toBe(false);
 		expect(existsSync(join(session, "events.jsonl"))).toBe(true);
 		expect(existsSync(join(dataDir, "agents"))).toBe(false);
-		expect(existsSync(join(dataDir, "tmp"))).toBe(false);
+		expect(existsSync(tmpRoot)).toBe(false);
 		rmSync(dataDir, { recursive: true, force: true });
 	});
 });

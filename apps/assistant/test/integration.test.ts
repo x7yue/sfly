@@ -214,6 +214,25 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 		}
 	}, 90_000);
 
+	it("命令自己打出「工作台连不上」、退出码不是 0：助手服务自己探工作台，探得通就是普通的工具错误，这一轮照常往下走", async () => {
+		const h = await Harness.start();
+		try {
+			h.model.scripts.set("剧本：字面的连不上", [
+				{
+					tool: "bash",
+					args: { command: "printf '构建失败：工作台连不上 redis\\n'; exit 1", timeout: 10 },
+				},
+				{ tool: "bash", args: { command: "echo 第二步", timeout: 10 } },
+				{ text: "看完了。" },
+			]);
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "剧本：字面的连不上" });
+			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed", steps: 2, model_calls: 3 });
+		} finally {
+			await h.close();
+		}
+	}, 120_000);
+
 	it("输出超过上限：结果写明丢了多少；events.jsonl 不存每一次的输出快照；一轮结束时助手容器里的临时文件清掉", async () => {
 		const h = await Harness.start();
 		try {
@@ -233,7 +252,7 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
 			expect(raw).not.toContain('"tool_execution_update"');
 			expect(raw.length).toBeLessThan(2 * 1024 * 1024);
-			const tmp = join(h.dataDir, "tmp");
+			const tmp = join(h.root, "tmp");
 			for (const dir of readdirSync(tmp)) expect(readdirSync(join(tmp, dir))).toEqual([]);
 			const uploaded = h.workbench.writes.find((w) => /pi-bash-[0-9a-f]+\.log$/.test(w.path));
 			expect(uploaded?.content.length).toBeLessThan(OUTPUT_LIMIT_BYTES + 4096);

@@ -95,6 +95,7 @@ export class Harness {
 			limits: options.limits,
 			maxProcesses: options.maxProcesses,
 			killGraceMs: options.killGraceMs,
+			tmpRoot: join(root, "tmp"),
 		});
 		const server = createAssistantServer({
 			secret: SECRET,

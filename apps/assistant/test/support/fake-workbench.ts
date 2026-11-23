@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import http2 from "node:http2";
-import { type AddressInfo, createServer, type Socket } from "node:net";
+import { type AddressInfo, connect, createServer, type Socket } from "node:net";
 import { Code, ConnectError, type ConnectRouter } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import {
@@ -24,7 +24,12 @@ export interface Hostile {
 }
 
 export class FakeWorkbench {
-	readonly runs: Array<{ argv: string[]; cwd: string; env: Record<string, string> }> = [];
+	readonly runs: Array<{
+		argv: string[];
+		cwd: string;
+		env: Record<string, string>;
+		timeoutMs: number;
+	}> = [];
 	readonly reads: string[] = [];
 	readonly writes: Array<{ path: string; content: Buffer }> = [];
 	hostile: Hostile | undefined;
@@ -86,7 +91,7 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 		async *run(req, ctx) {
 			const wb = workbench();
 			const env = Object.fromEntries(Object.entries(req.env));
-			wb.runs.push({ argv: [...req.argv], cwd: req.cwd, env });
+			wb.runs.push({ argv: [...req.argv], cwd: req.cwd, env, timeoutMs: Number(req.timeoutMs) });
 			if (wb.silent) await never(ctx.signal);
 			if (wb.hang && req.argv.join(" ").includes(wb.hang.marker)) {
 				if (wb.hang.thenSilent) wb.silent = true;
@@ -215,6 +220,47 @@ export async function silentPort(): Promise<{ address: string; close: () => Prom
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	return {
 		address: `127.0.0.1:${(server.address() as AddressInfo).port}`,
+		close: async () => {
+			for (const socket of sockets) socket.destroy();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		},
+	};
+}
+
+/**
+ * 一个能冻住的 TCP 代理：平时把连接原样转发给 `target`；`freeze()` 之后两头都不再转发（收到的数据丢掉），也不关连接，
+ * 新来的连接接下来但不转发（像工作台的容器被暂停、网络断了却没关连接）。
+ */
+export async function freezableProxy(target: string): Promise<{
+	address: string;
+	freeze: () => void;
+	close: () => Promise<void>;
+}> {
+	const [host, port] = target.split(":") as [string, string];
+	let frozen = false;
+	const sockets = new Set<Socket>();
+	const server = createServer((client) => {
+		sockets.add(client);
+		client.on("close", () => sockets.delete(client));
+		client.on("error", () => {});
+		if (frozen) return;
+		const upstream = connect(Number(port), host);
+		sockets.add(upstream);
+		upstream.on("close", () => sockets.delete(upstream));
+		upstream.on("error", () => client.destroy());
+		client.on("data", (data) => {
+			if (!frozen) upstream.write(data);
+		});
+		upstream.on("data", (data) => {
+			if (!frozen) client.write(data);
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	return {
+		address: `127.0.0.1:${(server.address() as AddressInfo).port}`,
+		freeze: () => {
+			frozen = true;
+		},
 		close: async () => {
 			for (const socket of sockets) socket.destroy();
 			await new Promise<void>((resolve) => server.close(() => resolve()));

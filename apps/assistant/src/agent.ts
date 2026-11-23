@@ -21,17 +21,24 @@ import {
 const CHUNK = 256 * 1024;
 
 /**
- * 命令的期限在它自己的超时之外留的余量：超时由 Agent 执行，到时它结束命令、回一个结果；过了这个余量还没有回应，
- * 就当作工作台没有回话（和 Agent 自己做节点调用时的 `REPLY_SLACK` 同一个数，agent/src/capabilities/exec.rs）。
+ * 命令的期限在它自己的超时之外留的余量：超时由 Agent 执行，到时它先 SIGTERM 整棵进程树、最多等宽限（默认 10 秒）再
+ * SIGKILL，再等管道最多 2 秒，然后才回复（agent/src/capabilities/exec.rs）；命令自己退出、留下不理 SIGTERM 的子进程时
+ * 退出码也要晚这么久。所以余量是宽限加管道再留几秒：过了它还没有回应，才当作工作台没有回话。
+ * （Agent 自己做节点调用时用的是「超时 + 宽限 + REPLY_SLACK」，和这里的算法一样。）
  */
-export const REPLY_SLACK_MS = 10_000;
+export const REPLY_SLACK_MS = 20_000;
 /** 读、写、查文件属性的期限。 */
 export const FILE_DEADLINE_MS = 60_000;
 /** 期限到了之后探一下工作台还在不在：这么久没有回应就当作连不上。 */
 export const PROBE_DEADLINE_MS = 5_000;
-/** HTTP/2 连接的保活：每隔这么久发一个 ping，这么久没有回应就关掉连接（连接上进行中的调用随之报错）。 */
-const PING_INTERVAL_MS = 15_000;
-const PING_TIMEOUT_MS = 10_000;
+/**
+ * HTTP/2 连接的保活：每隔这么久发一个 ping，这么久没有回应就关掉连接（连接上进行中的调用随之报错）。命令的期限是它的超时
+ * 加余量，默认超时 20 分钟；连接在命令进行中冻住（容器被暂停、网络断了却没关连接）时，只有保活能及时发现。
+ */
+export const PING_INTERVAL_MS = 15_000;
+export const PING_TIMEOUT_MS = 10_000;
+/** `setTimeout` 能接受的最长时间（再长 Node 当成 1 毫秒）。 */
+const MAX_TIMER_MS = 2_147_483_647;
 
 /** 工作台连不上时工具结果、`turn_end` 的原因的开头：助手服务据此结束这一轮（sessions.ts）。 */
 export const WORKBENCH_UNREACHABLE = "工作台连不上";
@@ -73,6 +80,8 @@ export interface AgentDeadlines {
 	replySlackMs?: number;
 	fileDeadlineMs?: number;
 	probeDeadlineMs?: number;
+	pingIntervalMs?: number;
+	pingTimeoutMs?: number;
 }
 
 export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
@@ -81,8 +90,8 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 	const probeDeadline = deadlines.probeDeadlineMs ?? PROBE_DEADLINE_MS;
 	const transport = createGrpcTransport({
 		baseUrl: `http://${address}`,
-		pingIntervalMs: PING_INTERVAL_MS,
-		pingTimeoutMs: PING_TIMEOUT_MS,
+		pingIntervalMs: deadlines.pingIntervalMs ?? PING_INTERVAL_MS,
+		pingTimeoutMs: deadlines.pingTimeoutMs ?? PING_TIMEOUT_MS,
 		pingIdleConnection: true,
 	});
 	const exec = createClient(AgentExec, transport);
@@ -101,6 +110,22 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 		}
 	};
 
+	/** 连接断了（对端关了连接、保活的 ping 没有回应）：探一下，探不通就是工作台连不上；否则原样。 */
+	const unreachableOr = async (
+		error: unknown,
+		outer: AbortSignal | undefined,
+	): Promise<unknown> => {
+		if (
+			error instanceof ConnectError &&
+			error.code === Code.Unavailable &&
+			!outer?.aborted &&
+			!(await reachable())
+		) {
+			return new UnreachableError(`${WORKBENCH_UNREACHABLE}：${address}（${error.rawMessage}）`);
+		}
+		return error;
+	};
+
 	/**
 	 * 带期限做一次调用：`call` 拿到一个合并了调用方取消和期限的信号。期限到时（调用方没有取消）抛 {@link DeadlineError}。
 	 */
@@ -111,7 +136,7 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 		call: (signal: AbortSignal) => Promise<T>,
 	): Promise<T> {
 		const deadline = new AbortController();
-		const timer = setTimeout(() => deadline.abort(), ms);
+		const timer = setTimeout(() => deadline.abort(), Math.min(ms, MAX_TIMER_MS));
 		const signal = outer ? AbortSignal.any([outer, deadline.signal]) : deadline.signal;
 		try {
 			return await call(signal);
@@ -119,16 +144,7 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 			if (deadline.signal.aborted && !outer?.aborted) {
 				throw new DeadlineError(what, Number((ms / 1000).toFixed(1)), await reachable(), address);
 			}
-			// 连接断了（对端关了连接、保活的 ping 没有回应）：探一下，探不通就是工作台连不上。
-			if (
-				error instanceof ConnectError &&
-				error.code === Code.Unavailable &&
-				!outer?.aborted &&
-				!(await reachable())
-			) {
-				throw new UnreachableError(`${WORKBENCH_UNREACHABLE}：${address}（${error.rawMessage}）`);
-			}
-			throw error;
+			throw await unreachableOr(error, outer);
 		} finally {
 			clearTimeout(timer);
 		}
@@ -194,7 +210,7 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 						address,
 					);
 				}
-				throw error;
+				throw await unreachableOr(error, signal);
 			} finally {
 				clearTimeout(timer);
 			}
