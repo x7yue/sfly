@@ -251,7 +251,7 @@ describe("会话事件的落库和发布顺序", () => {
 		});
 
 		it("助手事件抢在已经提交的平台记录的推送之前：先推平台记录（从库里补），再推助手事件，每条一次", async () => {
-			const { id } = await newSession("running");
+			const { id } = await newSession("running", await newProject());
 			const { out, stop } = collect(id);
 			await settle();
 			const platform = await record(id, 1);
@@ -290,7 +290,7 @@ describe("会话事件的落库和发布顺序", () => {
 		});
 
 		it("推送中途失败：指针不前进，下一条事件推送时从库里补上没推出去的（订阅的一方看到的序号连续，按序号）", async () => {
-			const { id } = await newSession("running");
+			const { id } = await newSession("running", await newProject());
 			const { out, stop } = collect(id);
 			await settle();
 			let failures = 0;
@@ -311,7 +311,7 @@ describe("会话事件的落库和发布顺序", () => {
 		});
 
 		it("事务回滚：登记的序号不留下痕迹，同一个序号的下一条事件照常直接推送", async () => {
-			const { id } = await newSession("running");
+			const { id } = await newSession("running", await newProject());
 			const { out, stop } = collect(id);
 			await settle();
 			await expect(
@@ -331,7 +331,7 @@ describe("会话事件的落库和发布顺序", () => {
 		});
 
 		it("平台记录和助手事件并发写同一个会话，推送乱序到达：序号连续（行锁分配），订阅的一方按序号一条不少、一条不重", async () => {
-			const { id } = await newSession("running");
+			const { id } = await newSession("running", await newProject());
 			const { out, stop } = collect(id);
 			await settle();
 			const platforms = await Promise.all(Array.from({ length: 10 }, (_, i) => record(id, i)));
@@ -351,7 +351,7 @@ describe("会话事件的落库和发布顺序", () => {
 		});
 
 		it("会话那一行的锁强度是 FOR NO KEY UPDATE：和外键检查加的共享锁（FOR KEY SHARE）不冲突，写事件的事务和插入带会话引用的行的事务互不等待", async () => {
-			const { id } = await newSession("running");
+			const { id } = await newSession("running", await newProject());
 			const locker = await database.pool.connect();
 			const sharer = await database.pool.connect();
 			try {
