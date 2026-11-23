@@ -226,6 +226,8 @@ test.describe("项目令牌页", () => {
 		await expect(issued).toBeHidden();
 		await expect(row(page, "nightly")).toContainText("读、运行");
 		await expect(row(page, "nightly")).toContainText("有效");
+		// 项目令牌属于项目、不随签发人失效，但记着是谁签发的：「签发人」列写着登录的这个人。
+		await expect(row(page, "nightly").locator('[data-slot="token-issuer"]')).toHaveText("管理员");
 		expect(await page.content()).not.toContain(token);
 
 		// 项目令牌属于项目，不是某个人：个人令牌页里没有它。

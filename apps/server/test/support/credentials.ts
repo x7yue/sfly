@@ -194,6 +194,11 @@ export class TestAccounts {
 				[sessionId, turn, JSON.stringify({ turn }), AT],
 			);
 		}
+		// 会话此刻在做的那一轮记在会话上（`current_turn`，#561）。
+		await this.#pool.query("update sessions set current_turn = $2 where id = $1", [
+			sessionId,
+			options.turns ?? 1,
+		]);
 		return sessionId;
 	}
 

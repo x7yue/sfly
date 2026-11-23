@@ -168,9 +168,9 @@ def configure_pyproject(project: NewProject) -> None:
     lines += [f"    {_toml(d)}," for d in dev]
     lines += ["]", ""]
     lines += [
-        "# 镜像与 sfly 索引来自控制面（sfly init 生成；本机覆盖了镜像时用覆盖的值）。",
-        "# sfly 不在 PyPI 上：它只从控制面的 sfly 索引解析（explicit，",
-        "# 不会装到 PyPI 上同名的其他包），其余依赖照常走 PyPI 镜像。",
+        "# 镜像与控制面的包索引来自控制面（sfly init 生成；本机覆盖了镜像时用覆盖的值）。",
+        "# sfly（SDK）和 sfly-std（标准节点包的辅助函数）不在 PyPI 上：它们只从控制面的包索引解析",
+        "# （explicit，不会装到 PyPI 上同名的其他包），其余依赖照常走 PyPI 镜像。",
         "[tool.uv]",
     ]
     if s.python_install_mirror:
@@ -192,6 +192,7 @@ def configure_pyproject(project: NewProject) -> None:
         "",
         "[tool.uv.sources]",
         'sfly = { index = "sfly" }',
+        'sfly-std = { index = "sfly" }',
         "",
         "# 节点包需要的最低 SDK 版本（即 Agent 版本）：更旧的 Agent 上任务会以 env_error 失败。",
         "# 用到新版 SDK 的接口时调高它。",

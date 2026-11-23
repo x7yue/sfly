@@ -13,8 +13,8 @@ import Fastify from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ACCESS_NOT_FOUND_MESSAGE } from "../src/auth/access-guard.js";
-import { HUMAN_ONLY_KINDS, routeKey } from "../src/auth/access-rules.js";
-import { requiredScope } from "../src/auth/scopes.js";
+import { routeKey } from "../src/auth/access-rules.js";
+import { requiredScope, writeNeedsPerson } from "../src/auth/scopes.js";
 import { guardHttpContract } from "../src/http/contract-route.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
@@ -261,12 +261,14 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 					expect(res.status, insider.name).toBe(403);
 					continue;
 				}
-				// 项目令牌不能带「管理」：管理范围的接口对它是 403（缺少范围），不是 404；只认有用户的人的凭据的接口
-				// （我的开发 Agent）对它也是 403；别的接口走到了处理函数。
-				if (
-					insider.name.includes("项目令牌") &&
-					(requiredScope(def) === "manage" || HUMAN_ONLY_KINDS.has(def.resource.kind))
-				) {
+				// 项目令牌不能带「管理」：管理范围的接口对它是 403（缺少范围），不是 404；别的接口走到了处理函数。
+				if (insider.name.includes("项目令牌") && requiredScope(def) === "manage") {
+					expect(res.status, insider.name).toBe(403);
+					expect(await isAccessNotFound(res), insider.name).toBe(false);
+					continue;
+				}
+				// 只有人能做的写（会话、我的开发 Agent）：项目令牌范围够也是 403（不是 404：它自己项目里的资源），别的人和程序走到了处理函数。
+				if (insider.name.includes("项目令牌") && writeNeedsPerson(def)) {
 					expect(res.status, insider.name).toBe(403);
 					expect(await isAccessNotFound(res), insider.name).toBe(false);
 					continue;

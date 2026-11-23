@@ -10,6 +10,7 @@ import {
 	hasOverlappingCards,
 	insertAfter,
 	insertOnEdge,
+	nameWithId,
 	nodeCardText,
 	nodeConnections,
 	nodeDisplayName,
@@ -153,12 +154,8 @@ import {
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { useRunMotion } from "./run-state/use-run-motion";
-import {
-	documentFieldErrors,
-	type FieldError,
-	undeclaredInputNotes,
-	warningsSummary,
-} from "./validation";
+import { useUndoNotice } from "./undo-notice";
+import { documentFieldErrors, type FieldError, warningsSummary } from "./validation";
 
 /** 检查器右边距。 */
 
@@ -204,8 +201,6 @@ export function ScenarioEditor({
 		</ReactFlowProvider>
 	);
 }
-
-const NO_PACKAGES: Record<string, string> = {};
 
 const cardOf = (id: string) =>
 	document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
@@ -280,17 +275,18 @@ function Editor({
 		{ nodes: onNodesChange, edges: onEdgesChange },
 	);
 
+	const undoNotice = useUndoNotice(history.version);
+
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
 	const regionBoxes = useMemo(() => subflowRegions(doc).map((r) => r.box), [doc]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
-	const catalog = usePackageCatalog(meta.packages, agentList);
+	const catalog = usePackageCatalog(doc, agentList);
 	const registered = useRegisteredAgents(agents.data?.agents);
 	const registeredBots = useRegisteredBots(bots.data?.bots);
 	const warnings = useMemo(
 		() => documentWarnings(doc, catalog, { agents: registered, feishuBots: registeredBots }),
 		[doc, catalog, registered, registeredBots],
 	);
-	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	const warningsByNode = useMemo(() => {
 		const map = new Map<string, OrchestrationWarning[]>();
@@ -328,7 +324,7 @@ function Editor({
 	const runState = useCanvasRun(orchestration.id, initialRun, mode === "run");
 	const readyRun = runState.status === "ready" ? runState : undefined;
 	// 运行绑定的版本锁定的节点包（节点菜单「复制输出引用」按它列出输出）。
-	const runCatalog = usePackageCatalog(readyRun?.doc?.packages ?? NO_PACKAGES, agentList);
+	const runCatalog = usePackageCatalog(readyRun?.doc, agentList);
 	const runNow = useNow(readyRun?.run.status === "running");
 	const decorations = useRunDecorations(
 		readyRun?.run,
@@ -557,6 +553,16 @@ function Editor({
 		for (const id of edit.removed) drafts.clear(`${id}/`);
 		setSelection((s) => keepNodes(s, (n) => !edit.removed.includes(n)));
 		applyEdit(edit.doc);
+		// 误删可以马上撤销：通知里的「撤销」就是撤销栈里的这一步（之后有了别的修改就收起，见 undo-notice.ts）。
+		const [only] = edit.removed;
+		const removedNode = doc.nodes.find((n) => n.id === only);
+		const label =
+			edit.removed.length === 1 && only !== undefined
+				? `已删除节点 ${nameWithId(only, removedNode && nodeDisplayName(removedNode))}`
+				: `已删除 ${edit.removed.length} 个节点`;
+		undoNotice.show(() =>
+			notify.success(label, { action: { label: ACTION.undo, onClick: history.undo } }),
+		);
 		const reasons = [...new Set(edit.skipped.map((s) => s.reason))];
 		if (reasons.length > 0) notify.warning(`${reasons.join("；")}，已跳过`);
 	};
@@ -850,30 +856,20 @@ function Editor({
 	// 整理之后画布把视图摆到看得清的大小（FlowCanvas 的 tidied）。
 	const [tidied, setTidied] = useState(0);
 	// 整理之后问一句保留还是还原：「还原」撤销这次整理；之后有了别的修改（或撤销、重做）就收起这条通知，
-	// 免得「还原」撤掉的是别的修改。
-	const tidyNotice = useRef<{ id: string | number; version: number | null } | null>(null);
+	// 免得「还原」撤掉的是别的修改（和删除节点之后的「撤销」同一个通知，undo-notice.ts）。
 	const tidy = () => {
 		const layout = tidyLayout(doc);
 		history.checkpoint();
 		setNodes((ns) => ns.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })));
 		setTidied((n) => n + 1);
-		if (tidyNotice.current) notify.dismiss(tidyNotice.current.id);
-		const id = notify.success("已整理布局", {
-			description: "保留整理后的布局，还是还原到整理之前？",
-			action: { label: "还原", onClick: history.undo },
-			cancel: { label: "保留", onClick: () => {} },
-		});
-		tidyNotice.current = { id, version: null };
+		undoNotice.show(() =>
+			notify.success("已整理布局", {
+				description: "保留整理后的布局，还是还原到整理之前？",
+				action: { label: "还原", onClick: history.undo },
+				cancel: { label: "保留", onClick: () => {} },
+			}),
+		);
 	};
-	useEffect(() => {
-		const notice = tidyNotice.current;
-		if (!notice) return;
-		if (notice.version === null) notice.version = history.version;
-		else if (notice.version !== history.version) {
-			notify.dismiss(notice.id);
-			tidyNotice.current = null;
-		}
-	}, [history.version]);
 	useShortcut("canvas-tidy", tidy, !running);
 
 	// —— 按旧的卡片尺寸排的场景（卡片从 208 宽改成 256 宽之前）：同一行相邻的卡片叠在一起 ——
@@ -993,7 +989,6 @@ function Editor({
 		agents: agentList,
 		bots: botList,
 		warnings,
-		notes,
 		shownFieldErrors: shownErrors,
 		focusRequest,
 		onChangeNode: updateNode,
@@ -1050,7 +1045,6 @@ function Editor({
 					}
 					fieldErrors={shownErrors.length}
 					warnings={warnings.length}
-					notes={notes.length}
 					onShowChecks={() => {
 						setSelection(NO_SELECTION);
 						setInspectorOpen(true);

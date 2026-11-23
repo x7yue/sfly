@@ -399,12 +399,15 @@ describe("会话接口的类型", () => {
 	it("就绪状态：每种问题都能表达，问题要写一句话", () => {
 		for (const kind of ReadinessProblemKind.options) {
 			const readiness = { ready: false, problems: [{ kind, message: "…" }], workbench: null };
-			expect(SessionListResponse.safeParse({ readiness, sessions: [] }).success).toBe(true);
+			expect(
+				SessionListResponse.safeParse({ readiness, sessions: [], truncated: false }).success,
+			).toBe(true);
 		}
 		expect(
 			SessionListResponse.safeParse({
 				readiness: { ready: false, problems: [{ kind: "workbench_offline" }], workbench: "w" },
 				sessions: [],
+				truncated: false,
 			}).success,
 		).toBe(false);
 		expect(
@@ -415,18 +418,29 @@ describe("会话接口的类型", () => {
 					workbench: null,
 				},
 				sessions: [],
+				truncated: false,
 			}).success,
 		).toBe(false);
 		expect(
-			SessionListResponse.safeParse({ readiness: readyNow, sessions: [listItem] }).success,
+			SessionListResponse.safeParse({ readiness: readyNow, sessions: [listItem], truncated: false })
+				.success,
 		).toBe(true);
-		expect(SessionListResponse.safeParse({ sessions: [listItem] }).success).toBe(false);
+		expect(SessionListResponse.safeParse({ sessions: [listItem], truncated: false }).success).toBe(
+			false,
+		);
+		// truncated 必须给：页面靠它提示「还有更早的会话」，缺了就分不清「没有更多」和「没告诉我」。
+		expect(
+			SessionListResponse.safeParse({ readiness: readyNow, sessions: [listItem] }).success,
+		).toBe(false);
+		expect(
+			SessionListResponse.safeParse({ readiness: readyNow, sessions: [], truncated: true }).success,
+		).toBe(true);
 	});
 
 	it("就绪状态：ready 当且仅当没有 problems", () => {
 		const problem = { kind: "workbench_offline", message: "工作台不在线" };
 		const check = (readiness: unknown) =>
-			SessionListResponse.safeParse({ readiness, sessions: [] }).success;
+			SessionListResponse.safeParse({ readiness, sessions: [], truncated: false }).success;
 		expect(check({ ready: true, problems: [], workbench: "w" })).toBe(true);
 		expect(check({ ready: false, problems: [problem], workbench: null })).toBe(true);
 		expect(check({ ready: true, problems: [problem], workbench: "w" })).toBe(false);

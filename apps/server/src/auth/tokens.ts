@@ -8,7 +8,7 @@ import { TOKEN_PREFIXES, type TokenView } from "@sfly/schema";
 import { and, desc, eq, gt, isNull, or, type SQL, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { apiTokens, projectMembers, projects } from "../db/schema.js";
+import { apiTokens, projectMembers, projects, users } from "../db/schema.js";
 import { type ProjectId, parseProjectId } from "../projects/project-id.js";
 import { hashCredential } from "./credential-hash.js";
 import type { RevocationBus } from "./revocations.js";
@@ -66,7 +66,11 @@ export interface TokenServiceOptions {
 const newSecret = (prefix: string): string =>
 	`${prefix}${randomBytes(SECRET_BYTES).toString("hex")}`;
 
-const toView = (row: TokenRow, currentTokenId: string | null = null): TokenView => ({
+const toView = (
+	row: TokenRow,
+	currentTokenId: string | null = null,
+	issuedBy: string | null = null,
+): TokenView => ({
 	id: row.id,
 	kind: row.kind === "project" ? "project" : "personal",
 	name: row.name,
@@ -77,6 +81,7 @@ const toView = (row: TokenRow, currentTokenId: string | null = null): TokenView 
 	expires_at: row.expiresAt?.toISOString() ?? null,
 	revoked_at: row.revokedAt?.toISOString() ?? null,
 	last_used_at: row.lastUsedAt?.toISOString() ?? null,
+	issued_by: issuedBy,
 	current: row.id === currentTokenId,
 });
 
@@ -167,6 +172,7 @@ export class TokenService {
 		project: ProjectId,
 		input: { name: string; scopes: readonly Scope[]; expiresInDays?: number },
 		issuerScopes: readonly Scope[],
+		issuer: { id: string; displayName: string },
 	): Promise<IssueResult> {
 		if (input.scopes.includes("manage")) return { ok: false, reason: "manage_scope_not_allowed" };
 		const allowed = issuerScopes.filter((scope) => PROJECT_TOKEN_SCOPES.includes(scope));
@@ -179,6 +185,7 @@ export class TokenService {
 			name: input.name,
 			scopes: [...new Set(input.scopes)],
 			userId: null,
+			issuedBy: issuer,
 			projectId: project,
 			expiresInDays: input.expiresInDays,
 		});
@@ -192,6 +199,8 @@ export class TokenService {
 		name: string;
 		scopes: readonly Scope[];
 		userId: string | null;
+		/** 项目令牌的签发人（记在令牌行上，令牌不随他失效）；个人令牌不记。 */
+		issuedBy?: { id: string; displayName: string };
 		projectId: ProjectId | null;
 		expiresInDays: number | undefined;
 	}): Promise<IssueResult> {
@@ -222,6 +231,7 @@ export class TokenService {
 					prefix: secret.slice(0, PREFIX_LENGTH),
 					tokenHash: hashCredential(secret),
 					userId: input.userId,
+					issuedByUserId: input.issuedBy?.id ?? null,
 					projectId: input.projectId,
 					scopes: [...input.scopes],
 					createdAt: now,
@@ -232,7 +242,10 @@ export class TokenService {
 				})
 				.returning();
 			if (row === undefined) throw new Error("签发令牌没有返回行");
-			return { ok: true, issued: { view: toView(row), token: secret } };
+			return {
+				ok: true,
+				issued: { view: toView(row, null, input.issuedBy?.displayName ?? null), token: secret },
+			};
 		});
 	}
 
@@ -251,11 +264,12 @@ export class TokenService {
 	/** 一个项目的项目令牌（含已吊销、已过期的，新的在前）。 */
 	async listProject(project: ProjectId): Promise<TokenView[]> {
 		const rows = await this.#db
-			.select()
+			.select({ token: apiTokens, issuedBy: users.displayName })
 			.from(apiTokens)
+			.leftJoin(users, eq(users.id, apiTokens.issuedByUserId))
 			.where(and(eq(apiTokens.kind, "project"), eq(apiTokens.projectId, project)))
 			.orderBy(desc(apiTokens.createdAt), desc(apiTokens.id));
-		return rows.map((row) => toView(row));
+		return rows.map((row) => toView(row.token, null, row.issuedBy));
 	}
 
 	// ---- 吊销 ----

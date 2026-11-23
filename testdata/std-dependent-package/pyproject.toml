@@ -1,0 +1,7 @@
+# 依赖标准节点包 sfly-std 的节点包（apps/server/test/full-stack-std-index.test.ts，#556）：节点导入 sfly_std，
+# 说明依赖装上了、装的是哪个版本。sfly-std 不在 PyPI 上，Agent 装它的依赖时只能从控制面的包索引取。
+# 用 `sfly build testdata/std-dependent-package` 构建；没写 requires-sdk，取构建时 SDK 的版本作为下限。
+[project]
+name = "sfly-std-user"
+version = "0.1.0"
+dependencies = ["sfly-std>=0.3.0"]

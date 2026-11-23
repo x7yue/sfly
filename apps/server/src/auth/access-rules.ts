@@ -139,12 +139,6 @@ export const LOGIN_ONLY_ROUTES = {
  */
 export const REQUIRES_CREDENTIAL: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["project"]);
 
-/**
- * 只认有用户的人的凭据（登录 Cookie、个人令牌）的资源类别：会话令牌和项目令牌都不行（ADR 0029「凭据」：我的开发 Agent）。
- * 开发 Agent 的凭据记在这个用户名下，名字里带着他的登录名：一个没有用户的凭据、或者代用户干活的会话令牌，不能替他注册。
- */
-export const HUMAN_ONLY_KINDS: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["dev_agent"]);
-
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
 	`${def.method} ${def.path}`;

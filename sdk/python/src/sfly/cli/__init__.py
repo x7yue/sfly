@@ -59,12 +59,13 @@ def _build(args: argparse.Namespace) -> int:
 
 def _publish(args: argparse.Namespace) -> int:
     from sfly.cli.build import BuildError, build
+    from sfly.cli.client import Client
     from sfly.cli.publish import PublishError, publish
 
     path = Path(args.path).resolve()
     try:
         archive = build(path) if path.is_dir() else path
-        result = publish(archive, control_plane_url(args.server, DEFAULT_SERVER))
+        result = publish(archive, Client.from_options(args.server, None))
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1

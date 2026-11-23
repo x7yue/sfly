@@ -401,7 +401,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 					page: "x",
 					skill: "x",
 					file: "x",
-					// 简单索引里的包（PEP 503）；路径里的项目（`/projects/:project/…`）。
+					// 简单索引里的包（PEP 503）；路径里的项目（`/projects/:project/…`，会话的列表在 /projects/:project/sessions）。
 					package: "stub",
 					project: "default",
 				};

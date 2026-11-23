@@ -338,6 +338,7 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 				"current",
 				"expires_at",
 				"id",
+				"issued_by",
 				"kind",
 				"last_used_at",
 				"name",

@@ -169,6 +169,10 @@ export function registerTokenRoutes(
 
 	contractRoute(app, tokensApi.issueProject, async ({ body }, reply, raw) => {
 		const access = inProject(raw);
+		// 签发项目令牌只认登录（令牌不能签发令牌，访问检查已经拒绝了别的凭据）：签发人是这个登录的用户，记在令牌行上。
+		if (access.userId === null) {
+			throw new Error("签发项目令牌的请求没有用户（访问检查应该只放行登录）");
+		}
 		const result = await tokens.issueProject(
 			access.project,
 			{
@@ -177,6 +181,7 @@ export function registerTokenRoutes(
 				...(body.expires_in_days === undefined ? {} : { expiresInDays: body.expires_in_days }),
 			},
 			access.scopes,
+			{ id: access.userId, displayName: access.name },
 		);
 		return result.ok ? issued(reply, result.issued) : refuseIssue(reply, result, body.name);
 	});

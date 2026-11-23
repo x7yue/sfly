@@ -1520,7 +1520,7 @@ export interface PackageNode {
 	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限，#559）。 */
 	queue_timeout?: number;
 }
 
@@ -1544,7 +1544,7 @@ export interface PackageNodeInput {
 	/** 秒，1 到 4294967295 之间的整数（保存时检查上限）。 */
 	timeout?: number;
 	retries?: number;
-	/** 秒。 */
+	/** 秒，1 到 4294967295 之间的整数（保存时检查上限，#559）。 */
 	queue_timeout?: number;
 }
 
@@ -2801,6 +2801,8 @@ export interface SessionListItem {
 export interface SessionListResponse {
 	readiness: Readiness;
 	sessions: SessionListItem[];
+	/** 会话超过 `SESSION_LIST_LIMIT` 个，更早的没有列出来（页面据此提示）。 */
+	truncated: boolean;
 }
 
 /** 会话里的一句话：新建会话的第一句、发话、插话。非空（不能只有空白），不超过 `SESSION_MESSAGE_MAX_CHARS` 个字符。 */

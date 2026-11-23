@@ -29,7 +29,7 @@ export interface Step {
 	/** 飞书通知在事务里留下的、提交后才能做的收尾（唤醒投递；src/feishu/engine-notifications.ts）。 */
 	notifications: PendingNotifications;
 	/** 事务提交之后才能做的收尾（推送会话里的平台记录：订阅的一方收到时库里要读得到它）。 */
-	afterCommit: Array<() => void>;
+	afterCommit: Array<() => Promise<void>>;
 }
 
 export interface CancelOrder {

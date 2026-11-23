@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -141,6 +142,19 @@ def _write(target: Path, data: Mapping[str, Any]) -> None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def loose_permissions(path: Path | None = None) -> str | None:
+    """凭据文件的权限别人也读得到（组或其他人有任何权限）时，返回当前权限（形如 `0644`）；
+    没有文件、权限没问题（0600）、取不到权限时为 None。Windows 的权限语义不同，不检查。"""
+    target = path or credentials_path()
+    if os.name == "nt":
+        return None
+    try:
+        mode = stat.S_IMODE(target.stat().st_mode)
+    except OSError:
+        return None
+    return f"{mode:04o}" if mode & 0o077 else None
 
 
 def resolve_token(

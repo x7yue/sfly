@@ -873,9 +873,16 @@ export const sessions = pgTable(
 		createdBy: text("created_by").notNull(),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id),
 		createdAt: timestamptz("created_at").notNull(),
+		/** 最近一次有动静的时间：用控制面的时钟记（不是助手服务盖的事件时间，它的时钟偏了也不影响兜底判断）。 */
 		lastActivityAt: timestamptz("last_activity_at").notNull(),
+		/**
+		 * 最近一次开始的轮次（`turn_started` 的条数）：在做时就是正在做的那一轮。和「改成在做、写 `user_message`、写
+		 * `turn_started`」在同一个事务里加一；助手服务发来的事件要带这个轮次才收，控制面结束一轮时也按它核对。
+		 */
+		currentTurn: integer("current_turn").notNull().default(0),
 	},
 	(t) => [
+		check("sessions_current_turn", sql`${t.currentTurn} >= 0`),
 		// 一个项目的会话列表，最近活动在前。
 		index("sessions_project_activity").on(t.projectId, t.lastActivityAt),
 		uniqueIndex("sessions_one_running_per_project")
@@ -946,6 +953,12 @@ export const apiTokens = pgTable(
 			.references(() => projects.id),
 		sessionId: uuid("session_id").references(() => sessions.id),
 		taskId: uuid("task_id"),
+		/**
+		 * 签发人（项目令牌记它，个人令牌的签发人就是所属用户，不另记）：项目令牌是项目的服务账号，**不随签发人失效**
+		 * （签发人被停用、移出项目之后照样有效，ADR 0029「用户、项目与角色」），但要记下是谁签发的，列表和审计里看得到。
+		 * 空：不是项目令牌，或者是这一列加进来之前签发的。
+		 */
+		issuedByUserId: uuid("issued_by_user_id").references(() => users.id),
 		scopes: text("scopes").array().notNull(),
 		createdAt: timestamptz("created_at").notNull(),
 		expiresAt: timestamptz("expires_at"),

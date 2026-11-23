@@ -3,7 +3,7 @@ import type { Mirrors } from "../public-config.js";
 
 /**
  * Welcome 里让 Agent 的环境和控制面一致的部分：目标 Agent 版本（ADR 0014）、与 Agent 版本一致的 SDK 运行时 wheel、
- * 配置的镜像（ADR 0012）、目标版本在这个架构上的 Agent 二进制。没有的项为空串（控制面没有这个版本的 wheel、
+ * 配置的镜像（ADR 0012）、控制面的包索引（#556）、目标版本在这个架构上的 Agent 二进制。没有的项为空串（控制面没有这个版本的 wheel、
  * 这个架构的二进制，没有配置镜像），Agent 按空串处理。它只取决于控制面的配置和 Agent 上报的版本、架构，和调度无关。
  */
 export interface AgentEnvironment {
@@ -11,6 +11,8 @@ export interface AgentEnvironment {
 	sdkWheelSha256: string;
 	pypiMirror: string;
 	githubReleaseMirror: string;
+	/** 控制面的包索引（`<对外地址>/simple/`）：Agent 装节点包的依赖时优先用它，平台自己的包（sfly-std）只从这里取。 */
+	packageIndexUrl: string;
 	targetAgentVersion: string;
 	agentBinaryUrl: string;
 	agentBinarySha256: string;
@@ -28,6 +30,8 @@ export function createAgentEnvironment(sources: {
 	sdkWheel: (agentVersion: string) => { url: string; sha256: string } | undefined;
 	/** 控制面配置的镜像，原样下发；未配置的为空。 */
 	mirrors: Mirrors;
+	/** 控制面的包索引地址（对 Agent 可见，带末尾 `/`）。 */
+	packageIndexUrl: () => string;
 	/** 目标版本、给定架构的 Agent 二进制；没有时为 undefined。 */
 	agentBinary: (arch: string) => Promise<{ url: string; sha256: string } | undefined>;
 }): AgentEnvironmentFor {
@@ -39,6 +43,7 @@ export function createAgentEnvironment(sources: {
 			sdkWheelSha256: sdk?.sha256 ?? "",
 			pypiMirror: sources.mirrors.pypi ?? "",
 			githubReleaseMirror: sources.mirrors.githubRelease ?? "",
+			packageIndexUrl: sources.packageIndexUrl(),
 			targetAgentVersion: sources.version,
 			agentBinaryUrl: binary?.url ?? "",
 			agentBinarySha256: binary?.sha256 ?? "",
