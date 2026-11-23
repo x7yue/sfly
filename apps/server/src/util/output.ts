@@ -36,8 +36,36 @@ export function terminalStreams(): {
 	return { stdout: process.stdout, stderr: process.stderr };
 }
 
-/** 一个错误给操作者看的一行说明：去掉数据库参数之后的 message；不是错误的值转成字符串。 */
+/**
+ * 一个错误给操作者看的一行说明：去掉数据库参数之后的 message，后面接最里层的原因（`（原因：…）`）；不是错误的值转成字符串。
+ * 写库失败时错误的 message 只是 `Failed query: update … returning …`，连不上数据库时也一样，真正的原因（触发器的报错、约束名、
+ * `ECONNREFUSED`）在 `cause` 里：沿着 `cause` 走到最里面，聚合的错误（连不上时 pg 抛的 `AggregateError`，自己的 message 是空的）
+ * 把每个成员的原因都接上。数据库给的错误码也带上。参数已经去掉了，不会因此带出值。
+ */
 export function describeError(error: unknown): string {
 	const safe = safeError(error);
-	return safe instanceof Error ? safe.message : String(safe);
+	if (!(safe instanceof Error)) return String(safe);
+	const head = safe.message;
+	const reasons = [...new Set(innerReasons(safe).filter((reason) => reason !== head))];
+	if (reasons.length === 0) return head || String(safe.name);
+	return head ? `${head}（原因：${reasons.join("；")}）` : reasons.join("；");
+}
+
+/** 一个错误最里层的原因：聚合的错误是每个成员的原因，有 cause 的是 cause 的原因，最里面的是它自己的 message（带上数据库的错误码）。 */
+function innerReasons(error: Error, depth = 0): string[] {
+	if (depth > 8) return [];
+	if (error instanceof AggregateError) {
+		const members = (error.errors as unknown[]).flatMap((member) =>
+			member instanceof Error ? innerReasons(member, depth + 1) : [String(member)],
+		);
+		if (members.length > 0) return members;
+	}
+	const cause = (error as { cause?: unknown }).cause;
+	if (cause instanceof Error) return innerReasons(cause, depth + 1);
+	if (cause !== undefined) return [String(cause)];
+	// 最里面的一个：自己的 message；数据库的错误码（`23505`）不在 message 里时带上。
+	if (depth === 0) return [];
+	const code = (error as { code?: unknown }).code;
+	const message = error.message;
+	return [typeof code === "string" && !message.includes(code) ? `${message} [${code}]` : message];
 }

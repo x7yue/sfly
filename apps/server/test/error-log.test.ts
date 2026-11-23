@@ -1,12 +1,14 @@
 // 出错时写进日志的数据库报错不带查询的参数（PR #555 的独立审查）：drizzle 的查询错误的 message 里带着参数，
 // 写 `users` 表出错时密码的 scrypt 哈希会进日志；别的表的参数里有令牌的哈希、保密参数的默认值、飞书 Webhook 的地址。
 // 保留 SQL 和数据库给的原因（错误码、约束名、表名、列名），去掉参数和 `detail`、`where`（里面带着值）。
+import { readFileSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { inspect } from "node:util";
 import { DrizzleQueryError } from "drizzle-orm/errors";
 import pg from "pg";
+import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { describeError, printError } from "../src/util/output.js";
 import { safeError, sanitizeLogArgs, serializeError } from "../src/util/safe-error.js";
@@ -214,7 +216,8 @@ describe("safeError 的两类遗漏（#578）", () => {
 			severity: "ERROR",
 			code: "22021",
 		});
-		expect((safeError(bytes) as Error).message).toBe('invalid byte sequence for encoding "…": 0x…');
+		// 引号以后的都是值或和值挨着的说明：一起去掉，只留引号之前的说明。
+		expect((safeError(bytes) as Error).message).toBe('invalid byte sequence for encoding "…"');
 		// 经 drizzle 包着时（外层是查询错误、cause 是 pg 的错误）里面的也处理。
 		const wrapped = new DrizzleQueryError(
 			"select * from t where id = $1",
@@ -225,6 +228,48 @@ describe("safeError 的两类遗漏（#578）", () => {
 			inspect(safeError(wrapped), { depth: 10 }) + JSON.stringify(serializeError(wrapped));
 		expect(printed).not.toContain("secret-value");
 		expect(printed).toContain("22P02");
+	});
+
+	it("值里自己带着引号：从值开始的地方一直去到信息的末尾，不是只去掉前一段引号里的", () => {
+		const shapes: [string, string, string][] = [
+			// 数据库不给值里的引号转义：值是 a"b-secret-v1，引号对着数就断在 a 上。
+			[
+				'invalid input syntax for type uuid: "a"b-secret-v1"',
+				"22P02",
+				'invalid input syntax for type uuid: "…"',
+			],
+			[
+				'invalid input syntax for type json: "{"k": "secret-v2"}"',
+				"22P02",
+				'invalid input syntax for type json: "…"',
+			],
+			['invalid value "x"y-secret-v3" for "YYYY"', "22007", 'invalid value "…"'],
+			['malformed array literal: "{"secret-v4","b"}"', "22P02", 'malformed array literal: "…"'],
+		];
+		for (const [message, code, expected] of shapes) {
+			const error = Object.assign(new Error(message), { severity: "ERROR", code });
+			const safe = safeError(error) as Error;
+			expect(safe.message).toBe(expected);
+			expect(safe.stack).not.toContain("secret-v");
+			expect(JSON.stringify(serializeError(error))).not.toContain("secret-v");
+		}
+		// 十六进制的值（字节序列）。
+		const bytes = Object.assign(
+			new Error(
+				'character with byte sequence 0xc3 0xa9 in encoding "UTF8" has no equivalent in encoding "LATIN1"',
+			),
+			{ severity: "ERROR", code: "22P05" },
+		);
+		const out = (safeError(bytes) as Error).message;
+		expect(out).not.toContain("0xc3");
+		expect(out).not.toContain("0xa9");
+		expect(out.startsWith("character with byte sequence 0x… 0x… in encoding")).toBe(true);
+		// 没有引号和十六进制的类别 22 的信息原样（只有说明）。
+		const plain = Object.assign(new Error("division by zero"), {
+			severity: "ERROR",
+			code: "22012",
+		});
+		expect((safeError(plain) as Error).message).toBe("division by zero");
 	});
 
 	it("别的类别的数据库错误（约束、列不存在……）的 message 里只有名字，不动", () => {
@@ -240,6 +285,70 @@ describe("safeError 的两类遗漏（#578）", () => {
 	});
 });
 
+describe("错误套得很深、聚合里套错误（#578）", () => {
+	it("cause 链比展开的层数还长：超过的那一层不原样放行，里面的查询参数也不在输出里", () => {
+		let error: unknown = new DrizzleQueryError("select 1 where a = $1", [SECRET], pgError());
+		for (let level = 0; level < 12; level++) error = new Error(`第 ${level} 层`, { cause: error });
+		const safe = safeError(error);
+		const shown = inspect(safe, { depth: 40 }) + JSON.stringify(serializeError(error));
+		expect(shown).not.toContain(SECRET);
+		expect(shown).not.toContain("xiaoming");
+		// 外面几层还在。
+		expect(shown).toContain("第 11 层");
+	});
+
+	it("聚合的错误在很深的一层：一样不放行", () => {
+		const failed = new DrizzleQueryError("select 1 where a = $1", [SECRET], pgError());
+		let error: unknown = new AggregateError([failed], "里面");
+		for (let level = 0; level < 12; level++) error = new Error(`第 ${level} 层`, { cause: error });
+		expect(inspect(safeError(error), { depth: 40 })).not.toContain(SECRET);
+		expect(JSON.stringify(serializeError(error))).not.toContain(SECRET);
+	});
+});
+
+describe("记日志的参数（#578）：日志库是第二条出口", () => {
+	const query = () => new DrizzleQueryError("insert into users values ($1)", [SECRET], pgError());
+	const text = (value: unknown) => inspect(value, { depth: 10 });
+
+	it("错误放在别的键里、放在后面的参数里、放在嵌套的对象和数组里：都去掉参数", () => {
+		const cases: unknown[][] = [
+			[{ error: query() }, "失败了"],
+			[{ cause: query(), reqId: "r1" }, "失败了"],
+			[{ detail: { failure: query() } }, "失败了"],
+			[{ errors: [query(), new Error("别的")] }, "失败了"],
+			["失败了：%s", query()],
+			["失败了", { a: 1 }, query()],
+			[{ err: query() }, "失败了", query()],
+		];
+		for (const args of cases) {
+			const out = sanitizeLogArgs(args);
+			expect(text(out), text(args)).not.toContain(SECRET);
+			expect(text(out), text(args)).toContain("Failed query");
+			expect(out).toHaveLength(args.length);
+		}
+		// 其余的内容原样。
+		const [merged] = sanitizeLogArgs([{ error: query(), reqId: "r1", n: 3 }]) as [
+			{ error: Error; reqId: string; n: number },
+		];
+		expect(merged.reqId).toBe("r1");
+		expect(merged.n).toBe(3);
+		expect(merged.error.message).toBe("Failed query: insert into users values ($1)");
+	});
+
+	it("里面没有错误的参数原样返回（同一个对象），不是普通对象的（类的实例）不动；对象里有环也不死循环", () => {
+		const plain = [{ a: { b: [1, 2, { c: "x" }] } }, "说明", 3];
+		expect(sanitizeLogArgs(plain)).toBe(plain);
+		class Holder {
+			readonly error = query();
+		}
+		const holder = new Holder();
+		expect(sanitizeLogArgs([holder])[0]).toBe(holder);
+		const loop: Record<string, unknown> = { name: "loop" };
+		loop.self = loop;
+		expect(() => sanitizeLogArgs([loop, query()])).not.toThrow();
+	});
+});
+
 describe("统一的出口（#578）", () => {
 	it("printError 打印前去掉数据库参数：打出去的参数里没有哈希；describeError 是给操作者看的一行说明", () => {
 		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -252,11 +361,131 @@ describe("统一的出口（#578）", () => {
 			expect(inspect(calls, { depth: 10 })).not.toContain(SECRET);
 			expect(inspect(calls, { depth: 10 })).toContain("Failed query");
 			expect(calls[1]).toEqual(["只有说明"]);
-			expect(describeError(error)).toBe("Failed query: insert into users values ($1)");
 			expect(describeError("字符串")).toBe("字符串");
 			expect(describeError(new Error("普通"))).toBe("普通");
 		} finally {
 			spy.mockRestore();
+		}
+	});
+});
+
+describe("describeError：给操作者看的一行说明带着原因（#578）", () => {
+	it("写库失败：语句之后接着数据库给的原因（去掉参数之后最里层的那一个），不带参数", () => {
+		const refused = Object.assign(new Error("refused"), { severity: "ERROR", code: "P0001" });
+		const error = new DrizzleQueryError("update users set a = $1", [SECRET], refused);
+		const shown = describeError(error);
+		expect(shown).toContain("Failed query: update users set a = $1");
+		expect(shown).toContain("refused");
+		expect(shown).toContain("P0001");
+		expect(shown).not.toContain(SECRET);
+		// 约束冲突：原因里是约束名，没有值。
+		const conflict = describeError(
+			new DrizzleQueryError("insert into users values ($1)", [SECRET], pgError()),
+		);
+		expect(conflict).toContain('violates unique constraint "users_login_name_key"');
+		expect(conflict).not.toContain(SECRET);
+		expect(conflict).not.toContain("xiaoming");
+	});
+
+	it("连不上数据库（聚合的错误，自己的 message 是空的）：每个成员的原因都接上", () => {
+		const refuse = (address: string) =>
+			Object.assign(new Error(`connect ECONNREFUSED ${address}`), { code: "ECONNREFUSED" });
+		const aggregate = new AggregateError([refuse("::1:5432"), refuse("127.0.0.1:5432")], "");
+		const shown = describeError(
+			new DrizzleQueryError("select * from users where login_name = $1", [SECRET], aggregate),
+		);
+		expect(shown).toContain("Failed query: select * from users where login_name = $1");
+		expect(shown).toContain("connect ECONNREFUSED ::1:5432");
+		expect(shown).toContain("connect ECONNREFUSED 127.0.0.1:5432");
+		expect(shown).not.toContain(SECRET);
+		// 没有外层语句、直接是聚合的错误。
+		expect(describeError(aggregate)).toContain("connect ECONNREFUSED 127.0.0.1:5432");
+	});
+
+	it("普通的错误带 cause：外层的说明之后接最里层的原因；没有 cause 的就是它自己的 message；原因和说明相同不重复", () => {
+		expect(describeError(new Error("外层", { cause: new Error("内层") }))).toBe(
+			"外层（原因：内层）",
+		);
+		expect(describeError(new Error("只有一层"))).toBe("只有一层");
+		expect(describeError(new Error("同一句", { cause: new Error("同一句") }))).toBe("同一句");
+		expect(describeError(new Error("外层", { cause: "字符串的原因" }))).toBe(
+			"外层（原因：字符串的原因）",
+		);
+	});
+});
+
+describe("统一的出口文件自己（#578）", () => {
+	/** 出口文件里每个顶层的函数或变量：名字、参数的类型文字、函数体里有没有 `safeError(`、有没有直接碰到终端。 */
+	function declarations() {
+		const file = new URL("../src/util/output.ts", import.meta.url);
+		const source = ts.createSourceFile(
+			"output.ts",
+			readFileSync(file, "utf8"),
+			ts.ScriptTarget.Latest,
+			true,
+		);
+		const touchesTerminal = (node: ts.Node) =>
+			/\bconsole\b|\bprocess\s*\.\s*(?:stdout|stderr)\b/.test(node.getText(source));
+		const found: { name: string; params: string[]; terminal: boolean; scrubs: boolean }[] = [];
+		const fromFunction = (name: string, fn: ts.SignatureDeclaration & { body?: ts.Node }) => ({
+			name,
+			params: fn.parameters.map((p) => p.type?.getText(source) ?? "（没写类型）"),
+			terminal: fn.body !== undefined && touchesTerminal(fn.body),
+			scrubs: fn.body?.getText(source).includes("safeError(") ?? false,
+		});
+		for (const statement of source.statements) {
+			if (ts.isFunctionDeclaration(statement) && statement.name) {
+				found.push(fromFunction(statement.name.text, statement));
+			} else if (ts.isVariableStatement(statement)) {
+				for (const declaration of statement.declarationList.declarations) {
+					const name = declaration.name.getText(source);
+					const init = declaration.initializer;
+					if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
+						found.push(fromFunction(name, init));
+					} else {
+						found.push({
+							name,
+							params: ["（不是函数）"],
+							terminal: touchesTerminal(declaration),
+							scrubs: false,
+						});
+					}
+				}
+			}
+		}
+		return found;
+	}
+
+	// 登记的是「能往终端写的函数，各自收什么」。以后在出口文件里加一个直接打印的函数，这条就红：要么登记在这里（审查时看得见它收什么、
+	// 是不是过了 safeError），要么不要加。lint 规则 no-direct-output 把这个文件整个排除在外，管不到它自己。
+	const REGISTERED: Record<string, string[]> = {
+		printError: ["string", "unknown"],
+		printWarning: ["string"],
+		printInfo: ["string"],
+		writeStdout: ["string"],
+		terminalStreams: [],
+	};
+
+	it("直接往终端写的函数只有登记的这几个", () => {
+		const printing = declarations()
+			.filter((d) => d.terminal)
+			.map((d) => d.name)
+			.sort();
+		expect(
+			printing,
+			"apps/server/src/util/output.ts 里新加了直接往终端写的函数（或把已有的删了）：在这个测试的 REGISTERED 里登记它收什么参数；收错误的要先过 safeError。",
+		).toEqual(Object.keys(REGISTERED).sort());
+	});
+
+	it("登记的函数收的参数和登记的一样；只收字符串的不会打印错误对象，收错误的（unknown）先过 safeError", () => {
+		for (const d of declarations().filter((d) => d.terminal)) {
+			expect(d.params, `${d.name} 的参数`).toEqual(REGISTERED[d.name]);
+			if (d.params.some((type) => type !== "string")) {
+				expect(
+					d.scrubs || d.params.length === 0,
+					`${d.name} 收的参数不只是字符串，却没有过 safeError`,
+				).toBe(true);
+			}
 		}
 	});
 });

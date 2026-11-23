@@ -175,6 +175,26 @@ describe("自定义 lint 规则（biome-plugins/）", () => {
 				placesOf(diagnostics, hitDir),
 				`biome-plugins/${plugin}.grit 报出的位置和样例里 // @hit 标出的不一致：规则匹配的写法改了、匹配条件写坏了，或样例没跟上规则；多报的位置说明规则拦了不该拦的写法。`,
 			).toEqual(expected);
+
+			// 规则里每一种写法有名字（`$form = "名字"`，诊断以 `[名字]` 开头）：样例要把每一种都命中过。只看位置，
+			// 样例删掉一半、或者规则里新加了一种写法没配样例，这条测试照样绿，哪一种写法没有被守住也看不出来。
+			const grit = readFileSync(join(pluginsDir, `${plugin}.grit`), "utf8");
+			const declared = [
+				...new Set([...grit.matchAll(/\$form = "([\w-]+)"/g)].map((m) => m[1])),
+			].sort();
+			if (declared.length > 0) {
+				const reported = [
+					...new Set(
+						diagnostics.map(
+							(d) => /^\[([\w-]+)\]/.exec(d.message)?.[1] ?? `（没有名字）${d.message}`,
+						),
+					),
+				].sort();
+				expect(
+					reported,
+					`biome-plugins/${plugin}.grit 里的每一种写法（$form 的名字）都要在 fixtures/${plugin}/hit/ 里有样例命中它：样例少了哪一种，或者规则里新加的写法没配样例，这里会不一致；报出的名字不在规则里说明诊断的写法和规则对不上。`,
+				).toEqual(declared);
+			}
 		});
 
 		it("不应命中的样例，一个诊断也没有", () => {

@@ -2,21 +2,48 @@ language js
 
 // 控制面往终端写东西只能走统一的出口（apps/server/src/util/output.ts，#578）：错误在那里先去掉数据库查询的参数
 // （密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
-// 拦的是「用到 console、process.stdout、process.stderr」这件事本身，不是某一种写法：换一个打印的函数（`console.warn`、
-// `console.log`）、给打印的函数起别名（`const log = console.error`）、把 console 交给别人、直接写标准错误
-// （`process.stderr.write`）、写标准输出，都在这里命中。
+// 拦的是「碰到能写终端的东西」这件事本身，不是某一种写法。每一种拦的写法有一个名字（`$form`，报出的诊断以 `[名字]` 开头），
+// biome-plugins/fixtures/no-direct-output/hit/ 里每一种都有样例，自测要求每个名字都被样例命中过（biome-plugins.test.ts）：
+//   console                 用到 `console` 这个名字：`console.error`、`console.log`、`const log = console.error`、
+//                           把 console 交给别人、`globalThis.console`、`global.console`、`const { error } = console`
+//   process-stream          `process.stdout`、`process.stderr`（`process["stderr"]` 会先被 useLiteralKeys 报出来，改成点号写法就命中这里）
+//   process-destructure     从 process 解构出 stdout、stderr（`const { stderr } = process`，也认 `globalThis.process`、`global.process`）
+//   stream-module-import    导入 `node:process`、`process`、`node:console`、`console`（具名、默认、`* as`、动态 `import()`、`require()`）：
+//                           导入本身就报，所以 `import { stderr } from "node:process"` 之后再怎么用都不用另外看
+//   write-sync              `fs.writeSync(1|2, …)`、`writeSync(1|2, …)`（直接写文件描述符 1、2）
 //
 // 范围：apps/server/src（控制面的源码）；统一的出口 apps/server/src/util/output.ts 本身除外。测试、前端、别的工作区不管。
 // `$filename` 是绝对路径，规则不知道仓库根在哪，所以按目录名认。
 //
-// 拦不住的（规则只看源码里写出来的名字）：`globalThis["con" + "sole"]` 这类拼出来的、`process["stderr"]` 这类计算属性、
-// 从别的模块拿到 console 对象。这些都得是有意写出来的绕法；一般的写法（上面列的）拦得住。
+// 拦不住的（规则只看源码里写出来的名字，不跟踪值的去向）：把 `process` 存进变量再取 stdout、stderr（`const p = process; p.stderr.write`）、
+// 把 `process` 传给别的函数、`Reflect.get(process, "stderr")`、`globalThis["con" + "sole"]` 这类拼出来的名字、
+// 用变量当文件描述符的 `writeSync(fd, …)`、`fs.createWriteStream("/dev/stderr")`、`tty`、`util.debuglog`、子进程和工作线程继承来的标准输出、
+// 第三方日志库自己的输出。这些都得是有意写出来的绕法，靠审查；Fastify 的日志是另一条出口，由 `sanitizeLogArgs` 处理（见 CODING_STANDARDS.md）。
 or {
-	`console` as $span,
-	`process.stdout` as $span,
-	`process.stderr` as $span
+	`console` as $span where { $form = "console" },
+	or { `process.stdout`, `process.stderr` } as $span where { $form = "process-stream" },
+	JsVariableDeclarator() as $span where {
+		$span <: contains `process`,
+		$span <: contains JsObjectBindingPattern() as $pattern where {
+			$pattern <: contains or { `stdout`, `stderr` }
+		},
+		$form = "process-destructure"
+	},
+	or {
+		`import $_ from $source`,
+		`import * as $_ from $source`,
+		`import($source)`,
+		`require($source)`
+	} as $span where {
+		$source <: r"[\"'](?:node:)?(?:process|console)[\"']",
+		$form = "stream-module-import"
+	},
+	or { `$_.writeSync($fd, $_)`, `writeSync($fd, $_)` } as $span where {
+		$fd <: or { `1`, `2` },
+		$form = "write-sync"
+	}
 } where {
 	$filename <: r".*/apps/server/src/.*",
 	$filename <: not r".*/apps/server/src/util/output\.ts",
-	register_diagnostic(span=$span, message="控制面往终端写东西只能走统一的出口 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout）：错误在那里先去掉数据库查询的参数，别处直接用 console、process.stdout、process.stderr 可能把密码的哈希、令牌的哈希、保密参数的值带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。")
+	register_diagnostic(span=$span, message=`[$form] 控制面往终端写东西只能走统一的出口 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout）：错误在那里先去掉数据库查询的参数，别处直接用 console、process.stdout、process.stderr（或者换个写法拿到它们）可能把密码的哈希、令牌的哈希、保密参数的值带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。`)
 }

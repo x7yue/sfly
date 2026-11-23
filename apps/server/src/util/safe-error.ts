@@ -25,16 +25,23 @@ const PG_SAFE_FIELDS = [
 
 const MAX_DEPTH = 6;
 
+/** 套得太深、不再展开的那一层的说明。 */
+const TRUNCATED = "（错误套得太深，这一层以及更里面的原因没有展开）";
+
 /**
  * 数据库把值直接写进错误的 message（`detail` 之外的另一条路）：类别 22（数据异常）的错误，
  * 例如 `invalid input syntax for type uuid: "<值>"`、`date/time field value out of range: "<值>"`、
- * `invalid byte sequence for encoding "UTF8": 0x00`。引号里的和 `0x` 开头的十六进制都换成省略号，说明（类型、原因）留着；
- * 别的类别（约束、列不存在……）的 message 里只有名字，不动。
+ * `invalid byte sequence for encoding "UTF8": 0x00`。数据库不给值里的引号转义，值里可以有引号，所以不能按「一对引号」去：
+ * 从第一个引号开始（值就从那里开始）一直到信息的末尾都换成 `"…"`，引号之前的说明（类型、原因）留着；引号之前的十六进制
+ * （字节序列的值）也换成 `0x…`。别的类别（约束、列不存在……）的 message 里只有名字，不动。
  */
 const embedsValues = (error: Error): boolean =>
 	String((error as { code?: unknown }).code).startsWith("22");
-const scrubValues = (message: string): string =>
-	message.replace(/"(?:[^"\\]|\\.)*"/g, '"…"').replace(/\b0x[0-9a-fA-F]+\b/g, "0x…");
+const scrubValues = (message: string): string => {
+	const quote = message.indexOf('"');
+	const head = quote === -1 ? message : message.slice(0, quote);
+	return `${head.replace(/\b0x[0-9a-fA-F]+\b/g, "0x…")}${quote === -1 ? "" : '"…"'}`;
+};
 
 const isQueryError = (error: Error): error is DrizzleLike =>
 	"query" in error && "params" in error && typeof (error as DrizzleLike).query === "string";
@@ -47,10 +54,12 @@ const isPgError = (error: Error): boolean =>
 /**
  * 去掉参数之后的错误：drizzle 的查询错误只留 SQL，pg 的数据库错误只留数据库给的原因（类别 22 的数据异常，message 里直接带着
  * 值的，把值去掉）；沿着 `cause` 链一路处理，聚合的错误（`AggregateError`，里面包着几个错误）把里面的每一个也处理。
- * 别的错误原样返回（不改它的内容）；不是 Error 的值原样返回。
+ * 别的错误原样返回（不改它的内容）；不是 Error 的值原样返回；套得比 {@link MAX_DEPTH} 还深的那一层换成占位的错误。
  */
 export function safeError(error: unknown, depth = 0): unknown {
-	if (!(error instanceof Error) || depth > MAX_DEPTH) return error;
+	if (!(error instanceof Error)) return error;
+	// 套得比展开的层数还深：这一层以及更里面的不展开，换成一个占位的错误，不原样放行（里面可能就有带着查询参数的错误）。
+	if (depth > MAX_DEPTH) return new Error(TRUNCATED);
 	const cause = (error as { cause?: unknown }).cause;
 	const safeCause = cause === undefined ? undefined : safeError(cause, depth + 1);
 	const members = error instanceof AggregateError ? (error.errors as unknown[]) : undefined;
@@ -83,22 +92,44 @@ export function safeError(error: unknown, depth = 0): unknown {
 	return safe;
 }
 
+/** 记日志的参数里往下找错误找几层（对象套对象、数组）。 */
+const MAX_LOG_DEPTH = 4;
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+	if (value === null || typeof value !== "object") return false;
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
+};
+
+/** 一个参数里的错误去掉参数：错误本身、普通对象的每个值、数组的每一项（往下 {@link MAX_LOG_DEPTH} 层）；没有要改的原样返回（同一个对象）。 */
+function sanitizeLogValue(value: unknown, depth: number): unknown {
+	if (value instanceof Error) return safeError(value);
+	if (depth >= MAX_LOG_DEPTH) return value;
+	if (Array.isArray(value)) {
+		const items = value.map((item) => sanitizeLogValue(item, depth + 1));
+		return items.some((item, index) => item !== value[index]) ? items : value;
+	}
+	if (isPlainObject(value)) {
+		const entries = Object.entries(value);
+		const cleaned = entries.map(([key, item]) => [key, sanitizeLogValue(item, depth + 1)] as const);
+		return cleaned.some(([, item], index) => item !== entries[index]?.[1])
+			? Object.fromEntries(cleaned)
+			: value;
+	}
+	return value;
+}
+
 /**
- * 记日志的调用 `log.error(error)`、`log.error({ err: error }, "…")` 的参数里的错误去掉参数。pino 在没有给说明文字时，用传进来的
- * 错误**自己的** message 当这一行日志的 `msg`，不是序列化之后的：只靠序列化器，`msg` 里仍有查询的参数，所以日志方法的入口也要过一遍
- * （pino 的 `hooks.logMethod`，每次记日志都经过它）。
+ * 记日志的调用 `log.error(error)`、`log.error({ err: error }, "…")` 的参数里的错误去掉参数：**所有**参数都过一遍，
+ * 错误放在对象的哪个键下（`{ error }`、`{ cause }`、嵌套的对象和数组里）、放在第几个参数（`log.warn("失败：%s", error)`）都一样处理。
+ * pino 在没有给说明文字时，用传进来的错误**自己的** message 当这一行日志的 `msg`，不是序列化之后的：只靠序列化器，`msg` 里仍有
+ * 查询的参数，所以日志方法的入口也要过一遍（pino 的 `hooks.logMethod`，每次记日志都经过它）。
+ * 管不到的：把错误拼进字符串（`` `失败：${error}` ``）或先 `util.inspect` 再交给日志，那时候它已经是字符串，认不出来——
+ * 日志里的错误一律用 `err` 这个键传，见 CODING_STANDARDS.md。
  */
 export function sanitizeLogArgs(args: unknown[]): unknown[] {
-	const [first, ...rest] = args;
-	if (first instanceof Error) return [safeError(first), ...rest];
-	if (
-		first !== null &&
-		typeof first === "object" &&
-		(first as { err?: unknown }).err instanceof Error
-	) {
-		return [{ ...first, err: safeError((first as { err: Error }).err) }, ...rest];
-	}
-	return args;
+	const cleaned = args.map((arg) => sanitizeLogValue(arg, 0));
+	return cleaned.some((arg, index) => arg !== args[index]) ? cleaned : args;
 }
 
 /** 日志里 `err` 的样子（和 pino 的标准序列化一样有类型、message、堆栈，再加上错误上的其他属性）。 */

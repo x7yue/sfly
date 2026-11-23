@@ -169,7 +169,15 @@ export class AccountService {
 		// 先占位再验证（./login-throttle.ts 的 acquire）：码不对，占的位就是这次失败。
 		const slot = this.#throttle.acquire("setup", address);
 		if (!slot.ok) return { ok: false, reason: "throttled", retryAfterMs: slot.retryAfterMs };
-		if (!this.#setupCode?.verify(input.code)) return { ok: false, reason: "bad_code" };
+		if (!this.#setupCode?.verify(input.code)) {
+			// 并发的两次初始化：这个请求问「还要不要初始化」时还没有用户，验证时赢的那个请求已经建好用户、作废了码。码其实是对的，
+			// 回「码不对」（403）不合理，还白白算一次猜错：再问一次，已经有用户了就是「已经初始化」（409），把占的位还回去。
+			if (!(await this.setupRequired())) {
+				this.#throttle.cancel("setup", address);
+				return { ok: false, reason: "setup_done" };
+			}
+			return { ok: false, reason: "bad_code" };
+		}
 		this.#throttle.confirm("setup", address);
 		const passwordHash = await this.#hash(input.password);
 		const created = await this.#createFirstAdmin({ ...input, passwordHash });

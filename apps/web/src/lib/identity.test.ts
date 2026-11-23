@@ -127,6 +127,87 @@ describe("请求拿到 401（noteUnauthorized）", () => {
 		expect(getIdentity().status).toBe("anonymous");
 	});
 
+	// 问 `GET /auth/me` 的这段时间里身份变了（登出、换了一个人登录）：回来的答案是登出之前、换人之前问的，不能用来改现在的状态。
+	it("问的这段时间里登出了，而 /auth/me 在登出之前已经回了 200：还是没有登录，顶栏不会又出现账号", async () => {
+		answer = "valid";
+		let release: () => void = () => {};
+		gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		setCurrentUser(USER);
+		noteUnauthorized();
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		setCurrentUser(null);
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(getIdentity().status).toBe("anonymous");
+		expect(expired).not.toHaveBeenCalled();
+	});
+
+	it("问的这段时间里换成另一个人登录了：回来的 200 是前一个人的，身份还是现在登录的这个人", async () => {
+		answer = "valid"; // 回答里的用户是 USER
+		let release: () => void = () => {};
+		gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		setCurrentUser(USER);
+		noteUnauthorized();
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		const other = { id: "u2", login_name: "alice", display_name: "爱丽丝", is_platform_admin: false };
+		setCurrentUser(other);
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(getIdentity()).toEqual({ status: "user", user: other });
+		expect(expired).not.toHaveBeenCalled();
+	});
+
+	it("问的这段时间里换成另一个人登录了：回来的 401 是前一个人的 Cookie 的，不能把现在登录的这个人踢下线", async () => {
+		answer = "expired";
+		let release: () => void = () => {};
+		gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		setCurrentUser(USER);
+		noteUnauthorized();
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		const other = { id: "u2", login_name: "alice", display_name: "爱丽丝", is_platform_admin: false };
+		setCurrentUser(other);
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(getIdentity()).toEqual({ status: "user", user: other });
+		expect(expired).not.toHaveBeenCalled();
+	});
+
+	it("没有变化时 200 照样刷新身份（显示名改了会跟着变）", async () => {
+		answer = "valid";
+		setCurrentUser({ ...USER, display_name: "旧名字" });
+		noteUnauthorized();
+		await vi.waitFor(() => expect(getIdentity()).toEqual({ status: "user", user: USER }));
+	});
+
+	it("确认的请求一直不回：到时间按「问不出结果」处理，不跳转、身份不变；之后登录真的失效了仍然能跳转", async () => {
+		vi.useFakeTimers();
+		try {
+			gate = new Promise<void>(() => {}); // 永远不回
+			setCurrentUser(USER);
+			noteUnauthorized();
+			await vi.advanceTimersByTimeAsync(9_000);
+			expect(expired).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(expired).not.toHaveBeenCalled();
+			expect(getIdentity()).toEqual({ status: "user", user: USER });
+			// 现在登录真的失效了：下一个 401 能再问、能跳转。
+			gate = undefined;
+			answer = "expired";
+			noteUnauthorized();
+			await vi.advanceTimersByTimeAsync(10);
+			expect(expired).toHaveBeenCalledTimes(1);
+			expect(getIdentity().status).toBe("anonymous");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("重新登录之后，下一次失效又能通知", async () => {
 		setCurrentUser(USER);
 		noteUnauthorized();
