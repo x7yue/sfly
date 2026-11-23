@@ -214,7 +214,7 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 						() => false,
 					),
 				);
-				original(target, event);
+				return original(target, event);
 			});
 			await json(
 				await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } }),
@@ -230,6 +230,50 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			await json(await asSession("POST", `/orchestrations/${id}/versions/1/restore`), 201);
 			await json(await asSession("POST", `/orchestrations/${id}/copy`, { name: "副本" }), 201);
 			expect(await Promise.all(lockFree)).toEqual([true, true, true, true]);
+		});
+
+		it("推送排在这个会话「落库加发布」的链上：推送被拖住时，助手服务的事件排在它后面，订阅的一方看到的序号一直递增、一条不少（先推送大的序号，小的就被当作已经发过而丢掉）", async () => {
+			const id = await scenario();
+			const sse = await SseClient.open(cp, `/sessions/${sessionId}/events`, bearer(token));
+			try {
+				await sse.next("turn_started");
+				let release: () => void = () => {};
+				const gate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				let entered: () => void = () => {};
+				const reached = new Promise<void>((resolve) => {
+					entered = resolve;
+				});
+				const original = cp.current.sessions.announce.bind(cp.current.sessions);
+				vi.spyOn(cp.current.sessions, "announce").mockImplementation(async (target, event) => {
+					entered();
+					await gate;
+					await original(target, event);
+				});
+				const triggered = asSession("POST", `/orchestrations/${id}/runs`, {
+					params: { host: "h" },
+				});
+				// 写记录的事务已经提交，推送被拖在这里。
+				await reached;
+				const appended = cp.current.sessions.append(sessionId, {
+					type: "notice",
+					kind: "compaction",
+					message: "压缩了上下文",
+				});
+				// 给这条事件足够的时间落库、发布（要是它不用排队的话）。
+				await new Promise((resolve) => setTimeout(resolve, 300));
+				release();
+				const created = await json<{ id: string }>(await triggered, 201);
+				await appended;
+				const platformEvent = await sse.next<{ kind: string; run_id: string }>("platform");
+				const notice = await sse.next("notice");
+				expect(platformEvent.data).toMatchObject({ kind: "run", run_id: created.id });
+				// 先收到平台记录，后收到提示；序号一直递增。
+				expect(Number(platformEvent.id)).toBeLessThan(Number(notice.id));
+			} finally {
+				sse.close();
+			}
 		});
 
 		it("记录提交之后才推送：订阅会话事件流的一方收到 platform，读库也读得到", async () => {
