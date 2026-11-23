@@ -20,7 +20,10 @@ from sfly.context import TaskInfo
 
 
 class DirectRun:
-    """一个临时的任务环境：工作目录、产物目录、后台进程目录和事件文件都在 `root` 下。"""
+    """一个临时的任务环境：工作目录、产物目录、后台进程目录和事件文件都在 `root` 下。
+
+    `artifacts=False` 时没有产物目录（`ctx.artifacts` 的读写抛出 `RuntimeError`）。
+    """
 
     def __init__(
         self,
@@ -28,6 +31,7 @@ class DirectRun:
         *,
         metrics: Sequence[Metric] | None = None,
         node_id: str = "node",
+        artifacts: bool = True,
     ) -> None:
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
@@ -36,8 +40,8 @@ class DirectRun:
         self.ctx = Context(
             events_path=self.events_path,
             cancel_path=self.cancel_path,
-            artifacts_dir=root / "artifacts",
-            artifacts_url="http://artifacts.invalid",
+            artifacts_dir=root / "artifacts" if artifacts else None,
+            artifacts_url="http://artifacts.invalid" if artifacts else None,
             metrics=metrics,
             task=TaskInfo(run_id="run", node_id=node_id, task_id="task", attempt=1),
             procs_dir=root / "procs",

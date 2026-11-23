@@ -152,6 +152,46 @@ def test_an_invalid_artifact_name_fails_before_the_command_starts(tmp_path: Path
     assert not marker.exists(), "命令在参数检查失败之后还是被启动了"
 
 
+def test_a_given_name_that_is_the_default_name_of_the_other_stream_is_refused(
+    tmp_path: Path,
+) -> None:
+    # 标准输出取名 `stderr.txt`、标准错误用默认名：两路会写进同一个文件。
+    run = DirectRun(tmp_path)
+    artifacts = tmp_path / "artifacts"
+    marker = tmp_path / "started"
+    command = f"touch {marker}"
+
+    with pytest.raises(ValueError, match="不能是同一个产物"):
+        run_command(run.ctx, command, save_output=True, stdout_artifact="stderr.txt")
+    with pytest.raises(ValueError, match="不能是同一个产物"):
+        run_command(run.ctx, command, save_output=True, stderr_artifact="stdout.txt")
+    # 默认名已经被占用、认领到的是 `stderr-2.txt` 时，同样不能撞。
+    (artifacts / "stderr.txt").write_text("前一次")
+    with pytest.raises(ValueError, match="不能是同一个产物"):
+        run_command(run.ctx, command, save_output=True, stdout_artifact="stderr-2.txt")
+    time.sleep(0.3)
+
+    assert not marker.exists(), "命令在名称检查失败之后还是被启动了"
+    # 没有留下认领默认名时创建的空文件。
+    assert sorted(p.name for p in artifacts.iterdir()) == ["stderr.txt"]
+    assert (artifacts / "stderr.txt").read_text() == "前一次"
+
+
+def test_a_missing_artifact_directory_is_reported_before_the_command_starts(
+    tmp_path: Path,
+) -> None:
+    run = DirectRun(tmp_path, artifacts=False)
+    marker = tmp_path / "started"
+
+    with pytest.raises(RuntimeError, match="没有产物目录"):
+        run_command(run.ctx, f"touch {marker}", save_output=True)
+    time.sleep(0.3)
+
+    assert not marker.exists(), "命令在检查失败之后还是被启动了"
+    # 不要产物时没有产物目录也能跑。
+    assert run_command(run.ctx, "echo ok").stdout == "ok\n"
+
+
 def test_the_same_artifact_name_for_stdout_and_stderr_is_the_default_never(tmp_path: Path) -> None:
     run = DirectRun(tmp_path)
 

@@ -36,7 +36,7 @@ curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer 
 - 节点名是英文标识符，标题是中文；下文表格里的参数名和输出名就是节点表单与引用上游输出时用的名字。
 - 运行时间由节点的超时（timeout，默认 1 小时）限制；超时和取消一样终止节点的整棵进程树。
 - 运行时的输出实时转为任务日志。节点输出不超过 1 MB，大内容保存为产物。
-- 产物在任务结束后由 Agent 上传到控制面，一个任务的产物合计不能超过控制面的产物上限（默认 1 GB，部署者用 `SFLY_ARTIFACT_LIMIT_MB` 调整）。超过时控制面拒绝上传（HTTP 413），任务以 `node_error` 失败，错误信息以「上传产物失败」开头并写明是哪个产物；节点本来就失败时保留原来的错误，上传失败的原因附在后面。产物随运行一起按保留期清理，清理后引用它的下载得到「产物已被清理」。
+- 产物在任务结束后由 Agent 上传到控制面，一个任务的产物合计不能超过控制面的产物上限（默认 1 GB，部署者用 `SFLY_ARTIFACT_LIMIT_MB` 调整）。上限随任务下发给 Agent，Agent 上传之前先把产物加一遍：超过时放得下的产物（从小到大）照常上传，放不下的不传，任务以 `env_error` 失败（不重试），错误信息写明产物合计、上限和没上传的产物；节点本来就失败时保留原来的错误，没上传的产物附在后面。其他原因（网络、控制面拒绝）上传失败时，任务以 `node_error` 失败，错误信息以「上传产物失败」开头并写明是哪个产物。产物随运行一起按保留期清理，清理后引用它的下载得到「产物已被清理」。
 - 失败时错误信息写明原因和关键参数，在运行监控页的节点详情里查看。
 - 进程类的节点作用于执行它的 Agent 所在的机器：`start_process` 和后面停止它的 `stop_process` 要选同一个 Agent。
 
@@ -44,12 +44,12 @@ curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer 
 
 标准节点包的主体是**节点代码里可以直接调用的辅助函数**（从 `sfly-std` 0.4.0 起提供，0.3.0 里没有）。这些能力里难写对的是逻辑，不是节点的外壳：进程组的启动、停止和看护，采样整机与进程的资源，跟随会轮转的日志，判断文件写完了没有，经 Agent 能力从另一台机器拉文件，等端口、文件、日志行。把它们做成函数，你在自己的业务节点里导入、组合，行为由你的代码决定：函数有参数可以调（例如「进程重启之后按名字重新找到它」的 `refind_within`），`poll_until` 还收回调，不像上面的标准节点那样固定。
 
-用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`），然后从下面的模块导入。**依赖怎么装上**：`sfly-std` 不在 PyPI 上，由控制面的包索引提供（见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节）：`sfly init` 生成的项目已经把 `sfly-std` 绑到它（见 [创建节点包项目](init-project.md)，开发机上 `uv add sfly-std` 就能装上），Agent 装节点包的依赖时也从它取，不用往自己的 PyPI 镜像里放。索引里的是**公共项目**里已发布的 `sfly-std`，上传接口现在只往默认项目发（见上面「上传 sfly-std」），所以新部署里要先让平台管理员把它发布进公共项目，依赖它的节点包才装得上。
+用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`），然后从下面的模块导入。**依赖怎么装上**：`sfly-std` 不在 PyPI 上，由控制面的包索引提供（见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节）：`sfly init` 生成的项目已经把 `sfly-std` 绑到它（见 [创建节点包项目](init-project.md)，开发机上 `uv add sfly-std` 就能装上），Agent 装节点包的依赖时也从它取，不用往自己的 PyPI 镜像里放。索引里的是**公共项目**里已发布的 `sfly-std`，上传接口现在只往默认项目发（见上面「上传 sfly-std」），所以新部署里要先让平台管理员把它发布进公共项目（这个办法在 #573 合入之后才有，在那之前新部署里没有办法发布进去），依赖它的节点包才装得上。
 
 | 模块 | 函数 | 做什么 |
 |---|---|---|
 | `sfly_std.commands` | `run_command` | 执行一段命令，输出实时转成任务日志，返回退出码和输出的末尾，可以把完整输出存成产物 |
-| `sfly_std.processes` | `start_background_process`、`stop_background_process`、`background_exit_status` | 启动跨节点存活的后台进程（新会话、有看护进程记退出码）、停止它所在的进程组（先 SIGTERM、宽限期后 SIGKILL）、读它的状态（在运行、已退出和退出码、不是它启动的） |
+| `sfly_std.processes` | `start_background_process`、`stop_background_process`、`background_exit_status` | 启动跨节点存活的后台进程（新会话、有看护进程记退出码）、停止它所在的进程组（先 SIGTERM、宽限期后 SIGKILL）、查它的状态（现在还在不在，退出了的话退出码是什么；默认看一眼就返回，要等它退出时传 `wait`） |
 | `sfly_std.processes` | `find_processes` | 按进程号、进程名或命令行找进程，可以连同子孙进程；每次都重新找，进程重启后按名字能找到新的 |
 | `sfly_std.resources` | `monitor_system`、`monitor_processes` | 按间隔采样整机或一组进程的 CPU、内存、磁盘、网络等并上报指标；`monitor_processes` 的 `refind_within` 让进程重启后按名字重新找到它、接着监控 |
 | `sfly_std.logs` | `LogFile`、`follow_log_file`、`wait_for_log_line` | 像 `tail -F` 一样读日志（处理轮转和截断）、把日志转成任务日志并在出现错误行时失败、等日志里出现某一行 |

@@ -327,13 +327,78 @@ def test_background_exit_status_tells_a_process_that_is_not_ours_from_one_still_
     reap(started.pid)
 
     running = background_exit_status(run.ctx, started.pid, wait=0.3)
-    stranger = background_exit_status(run.ctx, os.getpid(), wait=0)
     stop_background_process(run.ctx, started.pid, grace=2)
     exited = background_exit_status(run.ctx, started.pid, wait=5)
 
     assert (running.supervised, running.running, running.exit_code) == (True, True, None)
-    assert (stranger.supervised, stranger.running, stranger.exit_code) == (False, False, None)
     assert (exited.supervised, exited.running, exited.exit_code) == (True, False, 143)
+
+
+def test_running_says_whether_the_process_is_there_also_for_one_that_is_not_ours(
+    tmp_path: Path,
+) -> None:
+    # `running` 回答「这个进程现在还在不在」；`supervised` 说明退出码查不查得到。
+    run = DirectRun(tmp_path)
+    gone = subprocess.Popen(["true"])
+    gone.wait()
+
+    here = background_exit_status(run.ctx, os.getpid())
+    nothing = background_exit_status(run.ctx, gone.pid)
+
+    assert (here.supervised, here.running, here.exit_code) == (False, True, None)
+    assert (nothing.supervised, nothing.running, nothing.exit_code) == (False, False, None)
+
+
+def test_background_exit_status_looks_once_by_default(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    # 这是个查询：默认不等，一个正在运行的服务不会让每次查询白等好几秒。
+    run = DirectRun(tmp_path)
+    started = start_background_process(run.ctx, "sleep 60")
+    reap(started.pid)
+
+    began = time.monotonic()
+    status = background_exit_status(run.ctx, started.pid)
+
+    assert time.monotonic() - began < 0.5
+    assert (status.running, status.exit_code) == (True, None)
+
+
+def test_a_service_that_was_killed_with_its_whole_group_is_not_reported_as_running(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    # 整个进程组被强制结束时看护进程和服务一起没了，退出码永远写不进去：已经退出，不知道退出码，
+    # 不是「还在运行」（`while background_exit_status(…).running:` 会一直等下去）。
+    run = DirectRun(tmp_path)
+    started = start_background_process(run.ctx, STUBBORN)
+    reap(started.pid)
+    wait_for_log_line(run.ctx, started.log_path, "就绪", read_from="start", wait=10)
+
+    stopped = stop_background_process(run.ctx, started.pid, grace=0.5)
+    after_stop = background_exit_status(run.ctx, started.pid)
+
+    other = start_background_process(run.ctx, "sleep 60")
+    reap(other.pid)
+    os.killpg(os.getpgid(other.pid), signal.SIGKILL)
+    poll_until(lambda: not alive(other.pid) or None, what="进程组被杀掉", wait=10, poll=0.05)
+    after_kill = background_exit_status(run.ctx, other.pid, wait=0.3)
+
+    assert (stopped.was_running, stopped.exit_code) == (True, 137)
+    assert (after_stop.supervised, after_stop.running, after_stop.exit_code) == (True, False, None)
+    assert (after_kill.supervised, after_kill.running, after_kill.exit_code) == (True, False, None)
+
+
+def test_a_service_killed_alone_keeps_its_exit_code_because_the_supervisor_survives(
+    tmp_path: Path, reap: Callable[[int], int]
+) -> None:
+    run = DirectRun(tmp_path)
+    started = start_background_process(run.ctx, "sleep 60")
+    reap(started.pid)
+    os.kill(started.pid, signal.SIGKILL)
+
+    status = background_exit_status(run.ctx, started.pid, wait=10)
+
+    assert (status.supervised, status.running, status.exit_code) == (True, False, 137)
 
 
 def test_seconds_parameters_reject_booleans(tmp_path: Path) -> None:

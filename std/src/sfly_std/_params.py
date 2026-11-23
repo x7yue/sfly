@@ -13,7 +13,7 @@ def port(value: int) -> None:
 
 
 def seconds(name: str, value: float | None) -> None:
-    """表示秒数的参数不能是布尔值：`True` 是 1，写成 `refind=True` 不会报错，被当成 1 秒。"""
+    """表示秒数的参数不能是布尔值：`True` 是 1，写成 `refind_within=True` 不会报错，被当成 1 秒。"""
     if isinstance(value, bool):
         raise ValueError(f"{name} 是秒数，不能是布尔值 {value!r}")
 

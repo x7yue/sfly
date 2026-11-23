@@ -469,3 +469,86 @@ def test_a_class_member_or_metric_unit_change_that_breaks_users_is_flagged(
     diff = compare(snapshot_of(MEMBERS), snapshot_of(MEMBERS.replace(changed, expected)))
 
     assert diff.breaking, f"{changed!r} → {expected!r} 违反兼容性承诺，却没有被发现"
+
+
+PARAMS = """
+function sfly_std.a.g -> Literal['a', 'b']
+  pos ctx: Context
+  pos pid: int | Sequence[int] | None
+  kw mode: Literal['fail', 'succeed'] = 'fail'
+  kw limit: int
+  kw only_kw: str = 'x'
+"""
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        # 取固定值的参数多一个可选值
+        (
+            "kw mode: Literal['fail', 'succeed'] = 'fail'",
+            "kw mode: Literal['fail', 'succeed', 'restart'] = 'fail'",
+        ),
+        # 参数的类型放宽：联合类型多一个成员（位置参数、关键字参数都一样）
+        (
+            "pos pid: int | Sequence[int] | None",
+            "pos pid: int | str | Sequence[int] | None",
+        ),
+        ("kw only_kw: str = 'x'", "kw only_kw: str | None = 'x'"),
+        # 必填的关键字参数加上默认值
+        ("kw limit: int", "kw limit: int = 10"),
+        # 只能按关键字传的参数放宽成也能按位置传（关键字写法仍然有效）
+        (
+            "pos pid: int | Sequence[int] | None\n  kw mode: Literal['fail', 'succeed'] = 'fail'\n"
+            "  kw limit: int\n  kw only_kw: str = 'x'",
+            "pos pid: int | Sequence[int] | None\n  pos only_kw: str = 'x'\n"
+            "  kw mode: Literal['fail', 'succeed'] = 'fail'\n  kw limit: int",
+        ),
+    ],
+)
+def test_the_comparison_accepts_compatible_changes_to_existing_parameters(
+    changed: str, expected: str
+) -> None:
+    assert changed in PARAMS, changed
+
+    diff = compare(snapshot_of(PARAMS), snapshot_of(PARAMS.replace(changed, expected)))
+
+    assert diff.breaking == [], diff.breaking
+    assert diff.added, "兼容的改动要记进快照，所以比对要报告它们"
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        # 可选值少了一个
+        (
+            "kw mode: Literal['fail', 'succeed'] = 'fail'",
+            "kw mode: Literal['fail'] = 'fail'",
+        ),
+        # 联合类型少了一个成员、或者换成别的类型
+        ("pos pid: int | Sequence[int] | None", "pos pid: int | None"),
+        ("kw only_kw: str = 'x'", "kw only_kw: int = 'x'"),
+        # 默认值没了、变了
+        ("kw mode: Literal['fail', 'succeed'] = 'fail'", "kw mode: Literal['fail', 'succeed']"),
+        ("kw only_kw: str = 'x'", "kw only_kw: str = 'y'"),
+        # 位置参数改成只能按关键字传
+        ("pos pid: int | Sequence[int] | None", "kw pid: int | Sequence[int] | None"),
+        # 返回值的类型放宽不算兼容：调用方要处理新的取值
+        ("-> Literal['a', 'b']", "-> Literal['a', 'b', 'c']"),
+        # 放宽成也能按位置传，同时类型收窄了
+        (
+            "pos pid: int | Sequence[int] | None\n  kw mode: Literal['fail', 'succeed'] = 'fail'\n"
+            "  kw limit: int\n  kw only_kw: str = 'x'",
+            "pos pid: int | Sequence[int] | None\n  pos only_kw: int = 'x'\n"
+            "  kw mode: Literal['fail', 'succeed'] = 'fail'\n  kw limit: int",
+        ),
+    ],
+)
+def test_the_comparison_still_flags_narrowing_and_other_incompatible_parameter_changes(
+    changed: str, expected: str
+) -> None:
+    assert changed in PARAMS, changed
+
+    diff = compare(snapshot_of(PARAMS), snapshot_of(PARAMS.replace(changed, expected)))
+
+    assert diff.breaking, f"{changed!r} → {expected!r} 违反兼容性承诺，却没有被发现"
