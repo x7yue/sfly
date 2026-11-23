@@ -10,13 +10,16 @@ import { apiQuery } from "#/lib/api";
 import { DURATION_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { formatDuration, shortId } from "#/lib/format";
+import { useElementHeight } from "#/lib/use-element-height";
 import { useNow } from "#/lib/use-now";
 import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Truncate } from "@/components/ui/truncate";
 import { BottomPanel } from "./BottomPanel";
-import { ChartWorkspace } from "./ChartWorkspace";
+import { CHARTS_MIN_HEIGHT, CHARTS_RESERVED_HEIGHT, ChartWorkspace } from "./ChartWorkspace";
 import { chartsCompact } from "./chart-groups";
+import { timelineBodyMax } from "./detail-layout";
 import { useLiveRun } from "./live-run";
 import { MonitorTopBar } from "./MonitorTopBar";
 import { openedScope } from "./monitor-scope";
@@ -198,18 +201,40 @@ function DetailView({
 }) {
 	const catalog = useMetricCatalog(run.id, attemptsSignature(run));
 	const compact = chartsCompact(run, catalog.data);
+	// 图表工作区内容排出来的高度：留给它的是 CHARTS_RESERVED_HEIGHT 和内容高度里小的那个（内容少时不留空白）。
+	const [chartsContent, setChartsContent] = useState(0);
+	const chartsReserved = Math.max(
+		CHARTS_MIN_HEIGHT,
+		Math.min(CHARTS_RESERVED_HEIGHT, chartsContent),
+	);
+	// 详情的可用高度（失败横幅以下，时间线、图表工作区、底部面板共用）：窗口矮的时候时间线主体最高是剩下的高度，
+	// 图表和底部面板的位置才留得出来（`timelineBodyMax`）；窗口高时它比视口的 30% 大，不起作用。
+	const [rootRef, rootHeight] = useElementHeight<HTMLDivElement>();
+	const [bannerRef, bannerHeight] = useElementHeight<HTMLDivElement>();
+	const bodyMax =
+		rootHeight === 0 ? undefined : timelineBodyMax(rootHeight - bannerHeight, chartsReserved);
 	useEscapeClearsSelection();
 	useNextFailureShortcut(run);
 	return (
-		<>
-			{failureBanner && <FailureBanner run={run} onClose={onCloseBanner} />}
-			<Timeline run={run} doc={doc} />
-			{/* 时间线下面的高度由图表工作区和底部面板分：底部面板最高到这里减去图表的最小高度，不被挤出窗口。 */}
+		<div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+			{failureBanner && (
+				<div ref={bannerRef}>
+					<FailureBanner run={run} onClose={onCloseBanner} />
+				</div>
+			)}
+			<Timeline run={run} doc={doc} {...(bodyMax === undefined ? {} : { bodyMax })} />
+			{/* 时间线下面的高度由图表工作区和底部面板分：底部面板最高到这里减去图表要留的高度，图表不被压扁、面板不被挤出窗口。 */}
 			<div className="flex min-h-0 flex-1 flex-col">
-				<ChartWorkspace run={run} doc={doc} catalog={catalog} compact={compact} />
-				<BottomPanel run={run} doc={doc} />
+				<ChartWorkspace
+					run={run}
+					doc={doc}
+					catalog={catalog}
+					compact={compact}
+					onContentHeight={setChartsContent}
+				/>
+				<BottomPanel run={run} doc={doc} chartsReserved={chartsReserved} />
 			</div>
-		</>
+		</div>
 	);
 }
 
@@ -221,6 +246,7 @@ function FailureBanner({ run, onClose }: { run: RunView; onClose: () => void }) 
 		<Banner
 			tone="danger"
 			title="运行失败"
+			inline
 			className="flex-none rounded-none border-x-0 border-t-0 py-2"
 			onDismiss={onClose}
 			actions={
@@ -236,7 +262,12 @@ function FailureBanner({ run, onClose }: { run: RunView; onClose: () => void }) 
 				)
 			}
 		>
-			{failure && <span data-testid="run-failure">{failureSummary(failure)}</span>}
+			{failure && (
+				<span data-testid="run-failure" className="block min-w-0">
+					{/* 一行放不下时截断在末尾，悬停或聚焦看全文。 */}
+					<Truncate>{failureSummary(failure)}</Truncate>
+				</span>
+			)}
 		</Banner>
 	);
 }

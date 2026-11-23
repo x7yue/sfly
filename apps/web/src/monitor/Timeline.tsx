@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionLegend, ActionTracks } from "./ActionTracks";
 import type { PreparedTracks, TrackView } from "./action-tracks";
+import { TIMELINE_BODY_MAX, TIMELINE_BODY_MAX_PX } from "./detail-layout";
 import { useMonitor, useMonitorActions, useScope, useTimeAxis } from "./monitor-state";
 import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 import {
@@ -61,10 +62,6 @@ const LABEL_W = "var(--label-w)";
 const BRUSH_MIN = 0.004;
 /** 拖选范围小于轨道宽度的这个比例时不缩放。 */
 const ZOOM_MIN = 0.01;
-/** 主体最高占视口的约 30%（至少 150px、最多 420px），图表和底部面板总有地方；行不多时按内容的高度。 */
-/** 时间线主体最高的高度（px）：默认的上限，拖动调高也不超过它。 */
-const TIMELINE_MAX_PX = 420;
-const BODY_MAX_HEIGHT = `clamp(150px, 30dvh, ${TIMELINE_MAX_PX}px)`;
 
 /** 区段种类对应的状态（docs/DESIGN-SYSTEM.md §6.1）。执行中的段不用实心青（只有段尾的脉冲头是实心）：长时间的运行里最大的几块不能全是饱和青。 */
 const SEGMENT_STATUS: Record<SegmentKind, StatusKind> = {
@@ -110,9 +107,15 @@ const spanOf = (segments: Segment[]) =>
 export function Timeline({
 	run,
 	doc,
+	bodyMax,
 }: {
 	run: RunView;
 	doc: StoredOrchestrationDocument | undefined;
+	/**
+	 * 窗口矮时主体最高的高度（px，`detail-layout.ts` 的 `timelineBodyMax`）：默认的上限是视口的 30%，窗口矮的时候再受这个限制，
+	 * 图表和底部面板的位置才留得出来；还没量到详情的高度时不给，窗口高时它比 30% 大，不起作用。
+	 */
+	bodyMax?: number;
 }) {
 	const { range, extent, live, following, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
@@ -193,7 +196,7 @@ export function Timeline({
 	return (
 		<section
 			aria-label="链路时间线"
-			className="relative flex-none border-b border-border-soft bg-bg [--label-w:clamp(220px,18cqi,380px)] [container-type:inline-size]"
+			className="relative flex-none border-b border-border-soft bg-bg [--label-w:clamp(260px,22cqi,440px)] [container-type:inline-size]"
 		>
 			<div className="flex min-w-0 items-center gap-2 border-b border-border-soft px-3 py-1.5">
 				<h2 className="m-0 flex-none text-sm font-semibold">链路时间线</h2>
@@ -346,7 +349,11 @@ export function Timeline({
 				)}
 				style={
 					height === null
-						? { maxHeight: `min(${contentHeight + 2}px, ${BODY_MAX_HEIGHT})` }
+						? {
+								maxHeight: `min(${contentHeight + 2}px, ${TIMELINE_BODY_MAX}${
+									bodyMax === undefined ? "" : `, ${bodyMax}px`
+								})`,
+							}
 						: { height }
 				}
 			>
@@ -380,7 +387,7 @@ export function Timeline({
 					size={height}
 					measure={() => body.current?.clientHeight ?? 0}
 					min={56}
-					max={() => Math.min(window.innerHeight * 0.62, TIMELINE_MAX_PX)}
+					max={() => Math.min(window.innerHeight * 0.62, TIMELINE_BODY_MAX_PX)}
 					onResize={setHeight}
 					onReset={() => setHeight(null)}
 				/>

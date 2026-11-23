@@ -11,7 +11,13 @@ import { z } from "zod";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { StoredActionSummary } from "../db/schema.js";
 import type { SecretSet } from "../logs/secrets.js";
-import { actionField, actionName, actionReason, mergeFields } from "./action-text.js";
+import {
+	actionField,
+	actionName,
+	actionReason,
+	maskedCurrentAction,
+	mergeFields,
+} from "./action-text.js";
 
 /**
  * 动作摘要（规格 #345）的纯逻辑：解析 SDK 写的 `action_summary` 事件（格式见 sdk/python/src/sfly/context.py），
@@ -200,7 +206,7 @@ export function currentActionOfTask(
 	stored: CurrentAction | null,
 	secrets: SecretSet,
 ): CurrentAction | null {
-	return isDoing(status) && stored ? { ...stored, name: secrets.mask(stored.name) } : null;
+	return isDoing(status) ? maskedCurrentAction(stored, secrets) : null;
 }
 
 /** 两个「此刻在做的动作」是不是同一个（名称和开始时间都相同）。 */
