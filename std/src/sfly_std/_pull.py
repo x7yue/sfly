@@ -1,4 +1,5 @@
-"""从另一台 Agent 拉取文件（Agent 能力 files，ADR 0019）：拉取文件的节点共用。
+"""从另一台 Agent 拉取文件（Agent 能力 files，ADR 0019）：`pull_files_from_agent` 和
+`watch_agent_files` 共用。
 
 - `local_path`：来源上的文件拉到本地目录下的哪里（保留子目录）；
 - `download`：下载一个列出的文件，列出之后被删除时返回 None（跳过它）；

@@ -10,7 +10,7 @@ import type { OverviewTarget } from "./Overview";
 import { allRunFailures, failureSummary, type RunFailure } from "./run-model";
 
 /** 另有几个节点也失败了：最多列出这么多个，其余写「还有 N 个」。 */
-const MAX_OTHER_FAILURES = 3;
+export const MAX_OTHER_FAILURES = 3;
 
 /** 一个失败的节点写成一段文字：别的子流程实例里的节点前面写子流程实例（同一个节点在几个实例里都失败时分得开）。 */
 const failureLabel = (failure: RunFailure): string =>
