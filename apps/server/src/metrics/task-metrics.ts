@@ -20,6 +20,7 @@ import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
 import { labelsMatch } from "./labels.js";
@@ -617,6 +618,7 @@ export class TaskMetrics {
 				task: tasks,
 				document: orchestrationVersions.document,
 				purgedAt: runs.metricsPurgedAt,
+				projectId: runs.projectId,
 			})
 			.from(tasks)
 			.innerJoin(runs, eq(runs.id, tasks.runId))
@@ -624,7 +626,7 @@ export class TaskMetrics {
 			.where(eq(tasks.id, taskId));
 		if (!row) return undefined;
 		const { task } = row;
-		const metrics = await this.#declared(row.document, task.nodeId, task.agentName);
+		const metrics = await this.#declared(row.projectId, row.document, task.nodeId, task.agentName);
 		const rows = await this.deps.db
 			.select()
 			.from(metricSeries)
@@ -693,11 +695,12 @@ export class TaskMetrics {
 
 	/** 任务的节点类型声明的指标：锁定的节点包版本；开发版本取任务所在 Agent 上报的元信息。 */
 	async #declared(
+		project: ProjectId,
 		document: StoredOrchestrationDocument,
 		nodeId: string,
 		agentName: string | null,
 	): Promise<MetricDeclaration[]> {
-		const ref = await nodeTypeOf(this.deps.db, document, nodeId, agentName);
+		const ref = await nodeTypeOf(this.deps.db, project, document, nodeId, agentName);
 		return ref?.type?.metrics ?? [];
 	}
 }

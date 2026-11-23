@@ -117,6 +117,7 @@ import {
 	withNode,
 } from "./annotations";
 import {
+	completionTypes,
 	publishedNodeInputs,
 	usePackageCatalog,
 	useRegisteredAgents,
@@ -262,6 +263,7 @@ function Editor({
 	useShortcut("canvas-mode-run", () => setMode("run"));
 
 	const packages = useQuery(apiQuery(packagesApi.list));
+	// 开发版本的声明取自 Agent 上报的元信息：保存成功后再刷新一次（下面的 onSuccess），不等下一轮轮询（BACKGROUND_POLL_MS）。
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
 	const agentList = agents.data?.agents ?? [];
 	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), refetchInterval: BACKGROUND_POLL_MS });
@@ -281,6 +283,11 @@ function Editor({
 	const regionBoxes = useMemo(() => subflowRegions(doc).map((r) => r.box), [doc]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(doc, agentList);
+	// 「复制输出引用」列输出用的：每个节点按自己的表单那份声明取（开发版本检查跳过时也有，不影响检查用的 catalog）。
+	const menuTypes = useMemo(
+		() => completionTypes(doc, catalog, agentList),
+		[doc, catalog, agentList],
+	);
 	const registered = useRegisteredAgents(agents.data?.agents);
 	const registeredBots = useRegisteredBots(bots.data?.bots);
 	const warnings = useMemo(
@@ -325,6 +332,10 @@ function Editor({
 	const readyRun = runState.status === "ready" ? runState : undefined;
 	// 运行绑定的版本锁定的节点包（节点菜单「复制输出引用」按它列出输出）。
 	const runCatalog = usePackageCatalog(readyRun?.doc, agentList);
+	const runMenuTypes = useMemo(
+		() => (readyRun?.doc ? completionTypes(readyRun.doc, runCatalog, agentList) : runCatalog),
+		[readyRun?.doc, runCatalog, agentList],
+	);
 	const runNow = useNow(readyRun?.run.status === "running");
 	const decorations = useRunDecorations(
 		readyRun?.run,
@@ -943,6 +954,7 @@ function Editor({
 		}
 		versioning.save.mutate(doc, {
 			onSuccess: (saved) => {
+				void agents.refetch();
 				const { presets, secretDefaults, rest } = splitPresetWarnings(saved.warnings);
 				notify.success(
 					`已保存为版本 ${saved.number}`,
@@ -987,6 +999,7 @@ function Editor({
 		info,
 		packages: packages.data?.packages,
 		agents: agentList,
+		agentsStatus: agents.data !== undefined ? "ready" : agents.isError ? "failed" : "loading",
 		bots: botList,
 		warnings,
 		shownFieldErrors: shownErrors,
@@ -1118,8 +1131,8 @@ function Editor({
 							target={target}
 							outputsOf={(node) =>
 								running && readyRun?.doc
-									? declaredOutputs(readyRun.doc, node as StoredNode, runCatalog)
-									: declaredOutputs(doc, node as StoredNode, catalog)
+									? declaredOutputs(readyRun.doc, node as StoredNode, runMenuTypes)
+									: declaredOutputs(doc, node as StoredNode, menuTypes)
 							}
 							edit={
 								running

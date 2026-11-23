@@ -28,8 +28,13 @@ import { type ShortcutId, shortcutById, shortcutKeys } from "@/lib/shortcuts";
  *   `onClick`——处理函数可以再把焦点移到别处（例如打开另一个弹层）。
  *   所以打开菜单前，使用方要先让右键的对象拿到焦点（画布空白处见 FlowCanvas 的 onPaneContextMenu）。
  * - 快捷键文字只从注册表取（`ContextMenuItem` 的 `shortcut`），不在菜单里另写。
+ * - `avoidBottom`：窗口底部要让开多少像素（px）。菜单往下展开放不下时，按它给底边留边距，菜单就整个移到这条线以上，
+ *   不盖住贴在窗口底部的浮动工具条（画布的工具条，见 FlowCanvas）。
  */
 export type ContextMenuAnchor = { x: number; y: number } | Element;
+
+/** Base UI 默认的碰撞边距（px）：给了 `avoidBottom` 时其余三边仍用它。 */
+const COLLISION_PADDING = 5;
 
 /** 选了某一项：把焦点交还给打开前的元素，再执行这一项的操作。 */
 const PickContext = createContext<(action: () => void) => void>((action) => action());
@@ -39,6 +44,7 @@ function ContextMenu({
 	open,
 	anchor,
 	onOpenChange,
+	avoidBottom,
 	className,
 	children,
 }: {
@@ -47,6 +53,8 @@ function ContextMenu({
 	open: boolean;
 	anchor: ContextMenuAnchor | null;
 	onOpenChange(open: boolean): void;
+	/** 窗口底部要让开的高度（px）；不给时只留 Base UI 默认的边距。 */
+	avoidBottom?: number;
 	className?: string;
 	children: ReactNode;
 }) {
@@ -88,6 +96,16 @@ function ContextMenu({
 					align="start"
 					sideOffset={anchor instanceof Element ? 4 : 2}
 					alignOffset={anchor instanceof Element ? 0 : 2}
+					collisionPadding={
+						avoidBottom === undefined
+							? undefined
+							: {
+									top: COLLISION_PADDING,
+									left: COLLISION_PADDING,
+									right: COLLISION_PADDING,
+									bottom: avoidBottom,
+								}
+					}
 				>
 					<MenuPrimitive.Popup
 						data-slot="context-menu"
