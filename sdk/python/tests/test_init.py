@@ -77,7 +77,8 @@ def test_pyproject_has_mirrors_sfly_index_and_dev_dependencies(
         {"name": "pypi-mirror", "url": control_plane.pypi_mirror, "default": True},
         {"name": "sfly", "url": f"{control_plane.url}/simple/", "explicit": True},
     ]
-    assert uv["sources"] == {"sfly": {"index": "sfly"}}
+    # sfly 和 sfly-std 都只从控制面的包索引解析（它们不在 PyPI 上，#556）。
+    assert uv["sources"] == {"sfly": {"index": "sfly"}, "sfly-std": {"index": "sfly"}}
     # 最低 SDK 版本写成当前版本：节点包用到的接口在更旧的 Agent 上可能没有（#79）。
     assert data["tool"]["sfly"] == {"requires-sdk": f">={control_plane.version}"}
 
@@ -256,6 +257,35 @@ def test_unreachable_control_plane_fails_without_leftovers(work: Path) -> None:
     assert run.returncode == 1
     assert "无法连接控制面" in run.stderr
     assert list(work.iterdir()) == []
+
+
+def test_uv_add_sfly_std_in_a_generated_project_resolves_it_from_the_control_plane(
+    work: Path, control_plane: FakeControlPlane, pypi_mirror: StaticServer
+) -> None:
+    """依赖 sfly-std 的节点包（#454）：新项目里 `uv add sfly-std` 就能装上，本地测试也能用。"""
+    assert sfly_init(work, "demo", server=control_plane.url).returncode == 0
+    project = work / "demo"
+
+    add = subprocess.run(
+        ["uv", "add", "sfly-std"],
+        cwd=project,
+        env=uv_env(work.parent),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert add.returncode == 0, add.stderr
+    dependencies = pyproject(project)["project"]["dependencies"]
+    assert [d for d in dependencies if d.startswith("sfly-std")], dependencies
+    # sfly-std 来自控制面的包索引，它的依赖（httpx、psutil）来自 PyPI 镜像；
+    # PyPI 镜像上没有它，也没有去找它。
+    assert "/simple/sfly-std/" in control_plane.requests
+    assert "/pypi/simple/sfly-std/" not in pypi_mirror.requests
+    assert "/pypi/simple/httpx/" in pypi_mirror.requests
+    assert "pypi.org" not in (project / "uv.lock").read_text()
+    imported = run_in(project, "python", "-c", "import sfly_std; print(sfly_std.__file__)")
+    assert imported.returncode == 0, imported.stderr
 
 
 def run_in(project: Path, *command: str) -> subprocess.CompletedProcess[str]:

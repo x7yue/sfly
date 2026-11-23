@@ -41,7 +41,8 @@ demo/
 
 - 开发依赖组 `dev`：`sfly[cli]`（锁定为控制面版本 {{SFLY_VERSION}}）、pytest、ruff。`sfly` 只能放在这里，不能写进 `[project].dependencies`：Agent 自带 SDK 运行时，`sfly build` 遇到它会报错。
 - `[tool.sfly]` 的 `requires-sdk = ">={{SFLY_VERSION}}"`：节点包需要的 SDK 版本，见 [发布](publish.md) 的「需要的 SDK 版本」一节。
-- `[tool.uv]` 的 Python 下载镜像和 PyPI 镜像（控制面配置了镜像时；本机覆盖了镜像时用覆盖的值，见 [安装 Agent](install-agent.md) 的「单台机器覆盖镜像」一节），以及名为 `sfly` 的显式索引 `{{SFLY_URL}}/simple/`，`[tool.uv.sources]` 把 `sfly` 绑定到它：`sfly` 只从控制面安装，不会装到 PyPI 上同名的其他包。
+- `[tool.uv]` 的 Python 下载镜像和 PyPI 镜像（控制面配置了镜像时；本机覆盖了镜像时用覆盖的值，见 [安装 Agent](install-agent.md) 的「单台机器覆盖镜像」一节），以及名为 `sfly` 的显式索引 `{{SFLY_URL}}/simple/`（控制面的包索引，见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节），`[tool.uv.sources]` 把 `sfly` 和 `sfly-std` 绑定到它：这两个包只从控制面安装，不会装到 PyPI 上同名的其他包。节点代码里要用 `sfly-std` 的辅助函数时，`uv add sfly-std` 就能装上（它需要公共项目里已经发布了 `sfly-std`）。
+- **在这之前创建的项目**没有 `sfly-std` 这一行：在 `pyproject.toml` 的 `[tool.uv.sources]` 里加上 `sfly-std = { index = "sfly" }`，再 `uv add sfly-std`。
 - `[tool.ruff.lint]` 的 `select`：ruff 的规则集写成一组确切的规则编号（pyflakes 和 pycodestyle 里语句级、运行时错误的那几组）。不写的话 ruff 用自己的默认规则，而默认规则随 ruff 的版本变，新版本装上之后同一份代码会多出新的报告；写成编号而不是前缀（`F`、`E4`……），ruff 以后在这些族里新转正的规则也不会自动带进来。编号按族分组，每组前面一行注释说明这组查什么；要更严的检查时自己往里加编号。
 
 这些配置都在项目里，不改用户级的 uv 配置，`uv sync`、`uv run` 直接能用。

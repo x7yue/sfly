@@ -41,7 +41,7 @@ import {
 } from "react";
 import { useShortcut } from "#/components/shortcuts";
 import { ACTION } from "#/lib/copy";
-import { dialogOpen, isEditable } from "#/lib/focus";
+import { dialogOpen, isEditable, onCanvasFocus } from "#/lib/focus";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenu } from "@/components/ui/context-menu";
 import { AnnotationBoxes } from "./AnnotationBoxes";
@@ -765,6 +765,19 @@ export function FlowCanvas({
 	};
 
 	// —— 键盘：方向键沿链切换、Enter、Esc、Shift+F10 / 菜单键 ——
+	// 删除选中的节点和连线（Delete / Backspace）：照 React Flow 自己的删除键处理（useGlobalKeyHandler）做，走同一条
+	// deleteElements（onBeforeDelete 把节点整组交给使用方）。React Flow 自己的删除键是挂在 window 上的，不管焦点在哪个面板里
+	// 都会触发（检查器里点一下不是输入框的地方、按钮、页签上按 Backspace 就删了节点，#461），所以关掉它（deleteKeyCode），
+	// 改由快捷键注册表里的 `canvas-delete` / `canvas-delete-backspace` 绑定（canvasOnly，只在焦点在画布区域里时生效；
+	// 检查器、大纲、输入框、弹窗里不触发）。
+	const deleteSelected = () => {
+		const nodes = flow.getNodes().filter((n) => n.selected);
+		const edges = flow.getEdges().filter((e) => e.selected);
+		if (nodes.length === 0 && edges.length === 0) return false;
+		void flow.deleteElements({ nodes, edges });
+		store.setState({ nodesSelectionActive: false });
+		return true;
+	};
 	const latest = useRef({
 		nodes,
 		edges,
@@ -798,13 +811,8 @@ export function FlowCanvas({
 			const target = event.target instanceof Element ? event.target : null;
 			const root = wrapper.current;
 			if (!root || isEditable(target) || dialogOpen()) return;
-			// 焦点在画布本身（空白处、节点卡片）或页面上没有焦点时才处理，工具条按钮等保持原样。
-			const onCanvas =
-				target === document.body ||
-				target === root ||
-				target?.closest("[data-node-id]") !== null ||
-				target?.classList.contains("react-flow__pane");
-			if (!onCanvas || !(target === document.body || root.contains(target))) return;
+			// 焦点在画布本身（空白处、节点卡片）或页面上没有焦点时才处理，工具条按钮等保持原样（lib/focus 的 onCanvasFocus）。
+			if (!onCanvasFocus(target) || !(target === document.body || root.contains(target))) return;
 			const { nodes, edges, selection, onSelect, onEnter, reveal, openNodeMenu, stopFollowing } =
 				latest.current;
 			const cardId = target?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
@@ -846,6 +854,9 @@ export function FlowCanvas({
 		return () => document.removeEventListener("keydown", onKeyDown);
 	}, []);
 
+	// 删除选中的节点和连线：Delete 和 Backspace 在快捷键注册表里各登记一行（canvasOnly：焦点在检查器、大纲等面板里不生效）。
+	useShortcut("canvas-delete", deleteSelected, editable);
+	useShortcut("canvas-delete-backspace", deleteSelected, editable);
 	useShortcut("canvas-fit", fit);
 	useShortcut(
 		"canvas-follow",
@@ -968,7 +979,8 @@ export function FlowCanvas({
 					edgesFocusable={false}
 					elementsSelectable
 					selectNodesOnDrag={false}
-					deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
+					// 删除键由上面的监听处理（只在焦点在画布上时），不用 React Flow 挂在 window 上的那个。
+					deleteKeyCode={null}
 					// 加选、减选由 onNodeClick 按点击时的 Ctrl/⌘ 处理：React Flow 的多选键只翻转它自己的 selected，
 					// 这里的选中是受控的。Shift 框选是替换：React Flow 一开始框选就把原来选中的节点报告为取消选中
 					// （withSelectChanges 照着改），只有 Ctrl/⌘ + 点击是加选。框选只在可编辑、指针工具下：抓手工具下按住 Shift 拖动仍是平移。
