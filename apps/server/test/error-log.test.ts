@@ -390,6 +390,8 @@ describe("describeError：给操作者看的一行说明带着原因（#578）",
 			new DrizzleQueryError("insert into users values ($1)", [SECRET], pgError()),
 		);
 		expect(conflict).toContain('violates unique constraint "users_login_name_key"');
+		// 数据库报错的函数也带上（排查时看得出是哪一步）。
+		expect(conflict).toContain("_bt_check_unique");
 		expect(conflict).not.toContain(SECRET);
 		expect(conflict).not.toContain("xiaoming");
 	});
