@@ -17,7 +17,8 @@
 - `ctx.action(名称, **字段)` / `ctx.action.start(...)` / `ctx.mark(名称, **字段)`：记录节点正在做的
   事（动作）和某个时刻（标记）（见 `sfly.actions`）。
 
-取消、超时、被停止子流程节点停止时，Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
+取消、超时、被停止子流程节点停止时，Agent 先写入取消标记，再向进程树发 SIGTERM；
+执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
 宽限期（默认 10 秒）过后整棵进程树被强制杀掉。一次取消，主线程里只抛一次 `Cancelled`：
 清理代码不会被再打断一次。在后台线程里可以轮询 `ctx.cancelled()`。
