@@ -111,4 +111,50 @@ describeWithAgent("全栈：日志、进度与打码", () => {
 			sse.close();
 		}
 	}, 60_000);
+
+	it("超过 64 KiB 的一行被 Agent 拆开，secret 值正好跨在拆分处：控制面认得出，读日志、下载都只有一个掩码，没有任何一半（#622）", async () => {
+		const api = new ApiClient(cp);
+		const value = "FAKE-LONGLINE-SECRET-VALUE-0123456789";
+		const firstHalf = value.slice(0, 16);
+		const secondHalf = value.slice(16);
+		const id = await api.orchestrationWith({
+			default_agent: "logs-agent",
+			nodes: [
+				{
+					id: "entry",
+					kind: "entry",
+					params: [{ name: "token", type: "string", secret: true, required: true }],
+				},
+				{
+					id: "long",
+					kind: "package",
+					package: "sfly-stub",
+					node: "long_line",
+					// 值从第 65520 个字节开始：第 65536 个字节（拆分处）落在值的中间
+					inputs: { head: 65520, value: "${{ params.token }}", tail: 70000 },
+				},
+			],
+			edges: [{ from: "entry", to: "long", kind: "chain" }],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+		const runId = await api.triggerOk(id, { token: value });
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 30_000);
+		const [attempt] = (await api.node(runId, "long")).attempts;
+		const taskId = attempt?.task_id;
+
+		const page = await api.getJson<{ lines: LogLine[] }>(`/tasks/${taskId}/logs?limit=1000`);
+		const stdout = page.lines.filter((l) => l.source === "stdout");
+		// 一行超过 64 KiB：拆成了几段；接起来和不拆时一样（值只有一个掩码，在它开头所在的那一段里）
+		expect(stdout.length).toBeGreaterThanOrEqual(3);
+		expect(stdout.map((l) => l.text).join("")).toBe(
+			`${"a".repeat(65520)}******${"b".repeat(70000)}`,
+		);
+		expect(stdout[0]?.text.endsWith("******")).toBe(true);
+		const download = await (await cp.fetch(`/tasks/${taskId}/logs/download`)).text();
+		const merged = await (await cp.fetch(`/runs/${runId}/logs/download`)).text();
+		for (const body of [JSON.stringify(page), download, merged]) {
+			expect(body).not.toContain(firstHalf);
+			expect(body).not.toContain(secondHalf);
+		}
+	}, 60_000);
 });
