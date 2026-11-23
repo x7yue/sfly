@@ -30,7 +30,7 @@ export function byteLimitBytesFromMb(
 	if (!Number.isFinite(mb)) {
 		// 不是（有限的）数：`10MB`、`Infinity`……说单位和怎么写，不写「换算后 NaN 字节」。
 		throw new Error(
-			`${name} 不合法：${what}要写成数字，单位是 MB（可以带小数，例如 512、0.5）。只写数字，不要带单位，也不要写 Infinity，实际是 ${JSON.stringify(raw)}。换算成字节后要在 1 到 ${MAX_BYTE_LIMIT} 之间的整数`,
+			`${name} 不合法：${what}要写成数字，单位是 MB（可以带小数，例如 512、0.5）。只写数字，不要带单位，也不要写 Infinity，实际是 ${JSON.stringify(raw)}。换算成字节后要是 1 到 ${MAX_BYTE_LIMIT} 之间的整数`,
 		);
 	}
 	const bytes = Math.floor(mb * MB);

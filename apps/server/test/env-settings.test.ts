@@ -170,7 +170,7 @@ describe("三个上限（MB）：SFLY_LOG_LIMIT_MB、SFLY_ARTIFACT_LIMIT_MB、SF
 				expect(message).toContain("单位是 MB");
 				expect(message).toContain("只写数字");
 				// 范围仍然写明。
-				expect(message).toContain(`1 到 ${Number.MAX_SAFE_INTEGER} 之间的整数`);
+				expect(message).toContain(`要是 1 到 ${Number.MAX_SAFE_INTEGER} 之间的整数`);
 				expect(message).not.toContain("NaN 字节");
 				expect(message).not.toContain("换算后");
 			});
@@ -199,6 +199,7 @@ describe("登录的空闲期限（小时）：SFLY_LOGIN_IDLE_HOURS", () => {
 		["0.03333333333333333", MIN_LOGIN_IDLE_MS], // 2 分钟 = 1/30 小时，小数写不尽
 		["0.0333333333333333", MIN_LOGIN_IDLE_MS], // 四舍五入过的写法：浮点数乘出来是 119999.99999999987，向下取整会差 1 毫秒不够下限
 		["0.29", 1_044_000], // 浮点数乘出来是 1043999.9999999999：按最近的毫秒算，不能少 1 毫秒
+		["12.0000000001", 43_200_000], // 精确值 43200000.0036 毫秒：四舍五入是 43200000，向上取整会多 1 毫秒
 		[String(MAX_LOGIN_IDLE_HOURS), MAX_LOGIN_IDLE_HOURS * HOUR],
 	])("%s 合法", (raw, ms) => {
 		expect(one(name, raw).loginIdleMs).toBe(ms);
@@ -224,6 +225,18 @@ describe("登录的空闲期限（小时）：SFLY_LOGIN_IDLE_HOURS", () => {
 		expect(message).toContain("单位是小时");
 		expect(message).toContain("下限是登录续期间隔（60 秒）的两倍");
 		expect(message).toContain("一直在用的登录也会过期");
+	});
+
+	it("说明里「写 X 或更大」的 X 是从下限算出来的：写成 X 能通过，比 X 小一步（最后一位减 1）通不过", () => {
+		const message = rejected(name, "0.01");
+		const hint = /写 ([0-9.]+) 或更大/.exec(message)?.[1];
+
+		expect(hint, message).toBeDefined();
+		const text = hint as string;
+		expect(one(name, text).loginIdleMs).toBeGreaterThanOrEqual(MIN_LOGIN_IDLE_MS);
+		const decimals = text.split(".")[1]?.length ?? 0;
+		const below = (Number(text) - 10 ** -decimals).toFixed(decimals);
+		expect(() => one(name, below), `${below} 应该比下限小`).toThrow(EnvSettingsError);
 	});
 
 	it.each([

@@ -56,6 +56,10 @@ export const isLoginIdleMs = (value: unknown): value is number =>
 
 /** 登录的空闲期限的范围，和为什么有下限（写进两种单位的说明里）。 */
 const LOGIN_IDLE_RANGE = `${MIN_LOGIN_IDLE_MS / 60_000} 分钟到 ${MAX_LOGIN_IDLE_HOURS} 小时`;
+/** 下限换算成小时、向上取到 4 位小数的写法（2 分钟是 0.0334）：说明里「写 … 或更大」用它，不写死。 */
+const MIN_LOGIN_IDLE_HOURS_TEXT = String(
+	Math.ceil((MIN_LOGIN_IDLE_MS / HOUR_MS) * 10_000) / 10_000,
+);
 const LOGIN_IDLE_WHY = `下限是登录续期间隔（${LOGIN_TOUCH_INTERVAL_MS / 1000} 秒）的两倍：续期只在距上次续期满这么久之后的请求里做，期限比这短，一直在用的登录也会过期`;
 
 /** 环境变量（单位是小时）里登录的空闲期限不合格的说明；`notANumber` 同 {@link retentionDaysMessage}。 */
@@ -64,7 +68,7 @@ export const loginIdleHoursMessage = (
 	actual: unknown,
 	notANumber = false,
 ): string =>
-	`${source} 不合法：登录的空闲期限必须是 ${LOGIN_IDLE_RANGE}之间的数（单位是小时，可以带小数；${MIN_LOGIN_IDLE_MS / 60_000} 分钟是 1/30 小时，写 0.0334 或更大），实际是 ${String(actual)}${notANumber ? numbersOnly("小时", "12") : ""}。${LOGIN_IDLE_WHY}`;
+	`${source} 不合法：登录的空闲期限必须是 ${LOGIN_IDLE_RANGE}之间的数（单位是小时，可以带小数；${MIN_LOGIN_IDLE_MS / 60_000} 分钟换算成小时要写 ${MIN_LOGIN_IDLE_HOURS_TEXT} 或更大），实际是 ${String(actual)}${notANumber ? numbersOnly("小时", "12") : ""}。${LOGIN_IDLE_WHY}`;
 
 /** 程序选项（单位是毫秒）里登录的空闲期限不合格的说明。 */
 export const loginIdleMsMessage = (source: string, actual: unknown): string =>
