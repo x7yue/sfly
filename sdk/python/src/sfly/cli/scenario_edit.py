@@ -474,8 +474,9 @@ def _copy(session: Session, args: argparse.Namespace) -> None:
         else f"「{source['name']}」还没有保存过版本，副本也没有"
     )
     # 第 1 版是原样复制，不过保存时的检查：升级前存下的超限的超时、排队超时照样复制，
-    # 问题在警告里带出来（#576）。
-    warnings = copied["warnings"]
+    # 问题在警告里带出来（#576）。还没升级的控制面的响应里没有 `warnings`：当作没有
+    # （副本已经建好了，这里不能再出错，不然用户看不到新场景的 id，重试还会多出一个副本）。
+    warnings = copied.get("warnings", [])
     session.out.emit(
         {
             "id": copied["id"],
@@ -624,8 +625,11 @@ def _message(error: ValidationError, document: Any) -> str:
         and isinstance(nodes[path[1]], dict)
     ):
         node = nodes[path[1]]
+        # 和控制面一样：节点没有 `id`、`id` 不是字符串时写 `?`。
+        node_id = node.get("id")
+        node_id = node_id if isinstance(node_id, str) else "?"
         name = node.get("display_name")
-        label = f"{name}（{node.get('id')}）" if isinstance(name, str) and name else node.get("id")
+        label = f"{name}（{node_id}）" if isinstance(name, str) and name else node_id
         return (
             f"节点 {label}：{path[2]} 必须是 1 到 {MAX_TIMEOUT_SECONDS} 之间的正整数（秒），"
             f"实际是 {value_text(error.instance)}"

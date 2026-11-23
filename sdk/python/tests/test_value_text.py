@@ -22,7 +22,9 @@ CASES: dict[str, Any] = json.loads(
 
 @pytest.mark.parametrize("case", CASES["values"], ids=lambda c: c["name"])
 def test_a_value_is_written_the_way_the_control_plane_writes_it(case: dict[str, Any]) -> None:
-    assert value_text(case["value"]) == case["actual"]
+    units = case.get("string_from_code_units")  # 孤立的代理项写不进 JSON 文件
+    value = "".join(map(chr, units)) if units is not None else case["value"]
+    assert value_text(value) == case["actual"]
 
 
 @pytest.mark.parametrize(

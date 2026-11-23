@@ -9,12 +9,18 @@ import { nodeTimeoutMessage, orchestrationsApi, queueTimeoutMessage } from "../s
 
 interface ValueCase {
 	name: string;
-	value: unknown;
+	value?: unknown;
+	/** 值是用这些 UTF-16 码元造的字符串（孤立的代理项写不进 JSON 文件）。 */
+	string_from_code_units?: number[];
 	actual: string;
 }
+/** 用例里写的值。 */
+const valueOf = (c: ValueCase): unknown =>
+	c.string_from_code_units ? String.fromCharCode(...c.string_from_code_units) : c.value;
 const values = cases.values as ValueCase[];
 const fields = cases.fields as Array<"timeout" | "queue_timeout">;
 const labels = cases.labels as Array<{ node: Record<string, unknown>; label: string }>;
+const oddLabels = cases.odd_labels as Array<{ node: Record<string, unknown>; label: string }>;
 
 /** 期望的句子：字面写出来，不用实现里的函数拼（那样测的是实现自己）。 */
 const sentence = (label: string, field: string, actual: string) =>
@@ -41,7 +47,7 @@ describe("保存和检查：节点的超时、排队超时不合格", () => {
 			)(`${endpoint === "check" ? "检查" : "保存"} ${field}：%s`, (_, v) => {
 				const body = {
 					base_version: 0,
-					document: document({ id: "a", [field]: v.value }),
+					document: document({ id: "a", [field]: valueOf(v) }),
 				};
 
 				expect(messageOf(endpoint, body)).toBe(sentence("a", field, v.actual));
@@ -52,6 +58,14 @@ describe("保存和检查：节点的超时、排队超时不合格", () => {
 	it.each(
 		labels.map((l) => [l.label, l] as const),
 	)("节点写了显示名称时句子里是「显示名称（节点 ID）」：%s", (_, l) => {
+		const body = { base_version: 0, document: document({ ...l.node, timeout: 0 }) };
+
+		expect(messageOf("saveVersion", body)).toBe(sentence(l.label, "timeout", "0"));
+	});
+
+	it.each(
+		oddLabels.map((l) => [l.label, l] as const),
+	)("节点没有 id、id 不是字符串时句子里的节点写 ?：%s", (_, l) => {
 		const body = { base_version: 0, document: document({ ...l.node, timeout: 0 }) };
 
 		expect(messageOf("saveVersion", body)).toBe(sentence(l.label, "timeout", "0"));
@@ -95,9 +109,9 @@ describe("保存和检查：节点的超时、排队超时不合格", () => {
 
 describe("预检、派发时同一句话（库里已有的值）", () => {
 	it.each(
-		values.filter((v) => typeof v.value === "number").map((v) => [v.name, v] as const),
+		values.filter((v) => typeof valueOf(v) === "number").map((v) => [v.name, v] as const),
 	)("nodeTimeoutMessage、queueTimeoutMessage：%s", (_, v) => {
-		expect(nodeTimeoutMessage("a", v.value)).toBe(sentence("a", "timeout", v.actual));
-		expect(queueTimeoutMessage("a", v.value)).toBe(sentence("a", "queue_timeout", v.actual));
+		expect(nodeTimeoutMessage("a", valueOf(v))).toBe(sentence("a", "timeout", v.actual));
+		expect(queueTimeoutMessage("a", valueOf(v))).toBe(sentence("a", "queue_timeout", v.actual));
 	});
 });

@@ -246,6 +246,13 @@ VALUE_CASES: dict[str, Any] = json.loads(
 )
 
 
+def _value_of(case: dict[str, Any]) -> Any:
+    """用例里写的值；有 `string_from_code_units` 的是用这些 UTF-16 码元造的字符串（孤立的代理项
+    写不进 JSON 文件）。"""
+    units = case.get("string_from_code_units")
+    return "".join(map(chr, units)) if units is not None else case["value"]
+
+
 def _sentence(label: str, field: str, actual: str) -> str:
     """期望的句子：字面写出来，不用实现里的函数拼。"""
     return (
@@ -268,7 +275,7 @@ def _package_document(node: dict[str, Any]) -> dict[str, Any]:
 def test_an_invalid_timeout_value_is_reported_with_the_same_sentence_as_the_control_plane(
     field: str, case: dict[str, Any]
 ) -> None:
-    problems = _document_problems(_package_document({"id": "a", field: case["value"]}))
+    problems = _document_problems(_package_document({"id": "a", field: _value_of(case)}))
 
     assert problems == [f"  nodes/1/{field}（节点 a）: {_sentence('a', field, case['actual'])}"]
 
@@ -280,6 +287,18 @@ def test_the_sentence_names_the_node_by_display_name_and_id(case: dict[str, Any]
     assert problems == [
         f"  nodes/1/queue_timeout（节点 a）: {_sentence(case['label'], 'queue_timeout', '0')}"
     ]
+
+
+@pytest.mark.parametrize("case", VALUE_CASES["odd_labels"], ids=lambda c: c["label"])
+def test_a_node_without_an_id_or_with_a_non_string_id_is_named_with_a_question_mark(
+    case: dict[str, Any],
+) -> None:
+    """和控制面一样：节点没有 `id`、`id` 不是字符串时句子里写 `?`（文档里别的问题照常列出）。"""
+    problems = _document_problems(_package_document({**case["node"], "timeout": 0}))
+
+    assert any(_sentence(case["label"], "timeout", "0") in problem for problem in problems), (
+        problems
+    )
 
 
 def test_valid_values_next_to_an_invalid_one_are_not_reported() -> None:

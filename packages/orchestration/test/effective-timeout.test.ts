@@ -141,7 +141,6 @@ describe("effectiveQueueTimeout", () => {
 describe("queueTimeoutProblem", () => {
 	it("没写或合格：没有问题", () => {
 		expect(queueTimeoutProblem("n", undefined)).toBeUndefined();
-		expect(queueTimeoutProblem("n", null)).toBeUndefined();
 		expect(queueTimeoutProblem("n", 1)).toBeUndefined();
 		expect(queueTimeoutProblem("n", QUEUE_TIMEOUT_MAX_SECONDS)).toBeUndefined();
 	});
@@ -151,6 +150,8 @@ describe("queueTimeoutProblem", () => {
 			"节点 等槽位（wait）：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 8640000000000",
 		);
 		expect(queueTimeoutProblem("n", 0)).toContain("实际是 0");
+		// `null` 不是「没写」：和保存时的口径一样，报出来（#576）。
+		expect(queueTimeoutProblem("n", null)).toContain("实际是 null");
 		// 字符串带引号写（#576）：和写成数字的 `30` 看得出区别。
 		expect(queueTimeoutProblem("n", "x")).toContain('实际是 "x"');
 	});
