@@ -191,7 +191,8 @@ test("检查器的错误框：「前往」是行内链接的样式（红色错�
 	await page.keyboard.press("Control+s");
 	await page.getByRole("button", { name: /处字段错误/ }).click();
 	const error = inspector(page).getByRole("listitem").filter({ hasText: "已不再支持，不能保存" });
-	await expectInlineLink(error.getByRole("button", { name: "前往" }));
+	// 三个已移除种类的节点各有一条错误：看第一条。
+	await expectInlineLink(error.getByRole("button", { name: "前往" }).first());
 });
 
 test("运行监控底部面板：输入输出里的产物引用是行内链接的样式", async ({
