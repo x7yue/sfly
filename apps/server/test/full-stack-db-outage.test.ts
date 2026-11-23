@@ -145,9 +145,14 @@ describeWithAgent("全栈：数据库出问题，真实的 Agent 不需要人工
 
 		expect(exit, victim.log.slice(-1500)).toMatchObject({ code: 1 });
 		expect(victim.log).toContain("数据库连接在使用中断开");
-		expect((await api.node(runId, "wait")).status).not.toBe("failed");
 
 		await restart();
+		await eventually(
+			async () => expect((await current.request("GET", "/health")).status).toBe(200),
+			60_000,
+		);
+		// 写结果的失败处理没有把这次尝试记成失败（连接池在断开的那一刻就结束了，什么都写不进去）。
+		expect((await api.node(runId, "wait")).status).not.toBe("failed");
 		// 真实的 Agent 自己重连、重发手上的结果：运行成功，不是失败。
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 120_000);
 	}, 300_000);
