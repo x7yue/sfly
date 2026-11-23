@@ -11,6 +11,7 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -270,6 +271,17 @@ describe("工作台接了连接却不回话：每次调用都有期限", () => {
 		} finally {
 			await port.close();
 		}
+	});
+
+	it("端口拒绝连接：以「工作台连不上」结束，连接层的原文（带着地址）不进工具结果（#640）", async () => {
+		const closed = createServer();
+		await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+		const address = `127.0.0.1:${(closed.address() as AddressInfo).port}`;
+		await new Promise<void>((resolve) => closed.close(() => resolve()));
+		const text = await run(quickTools(address), "bash", { command: "echo hi", timeout: 1 });
+		expect(text).toContain(WORKBENCH_UNREACHABLE);
+		expect(text).not.toContain(address);
+		expect(text).not.toContain("ECONNREFUSED");
 	});
 
 	it("只有这一条命令卡住、工作台还连得上：这次调用以明确的错误结束，不说连不上", async () => {
