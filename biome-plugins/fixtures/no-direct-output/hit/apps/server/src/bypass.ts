@@ -26,6 +26,9 @@ import * as proc from "node:process";
 import procDefault from "node:process";
 // @hit
 import { Console } from "node:console";
+// 不带 `node:` 前缀的 `console`。
+// @hit
+import consoleDefault from "console";
 // module-import-dynamic 和 module-require。
 // @hit
 const dynamic = await import("node:process");
@@ -47,6 +50,9 @@ const { stdout: nonNull } = process!;
 const { emitWarning } = process;
 // @hit
 const { _rawDebug } = process;
+// `satisfies …` 也算包装。
+// @hit
+const { stdout: satisfied } = process satisfies NodeJS.Process;
 // process-destructure-global：初始值是 globalThis.process、global.process。
 // @hit
 const { stdout, stderr: other } = globalThis.process;
@@ -59,6 +65,10 @@ const { stderr: asGlobal } = globalThis.process as NodeJS.Process;
 const { process: { stderr: nested } } = globalThis;
 // @hit
 const { process: { stdout: nestedGlobal } } = global;
+// @hit
+const { process: { emitWarning: nestedWarning } } = globalThis;
+// @hit
+const { process: { _rawDebug: nestedRawDebug } } = global;
 
 // console：从 console 解构、globalThis 上的 console。
 // @hit
@@ -102,6 +112,8 @@ export function warn(error: Error) {
 	// process-raw-debug：直接写标准错误。
 	// @hit
 	process._rawDebug(error.message);
+	// @hit
+	process?._rawDebug(error.message);
 }
 
 // 往文件描述符 1、2 写（整数字面量，十六进制也认）：每个函数两个名字，任意接收者的和直接调用的。
@@ -115,6 +127,8 @@ export function raw(text: string, buffer: Buffer) {
 	writeSync(2, buffer, 0, buffer.length);
 	// @hit
 	fs.writeSync(0x2, text);
+	// @hit
+	writeSync(0x1, text);
 	// writev-sync、writev-sync-direct
 	// @hit
 	fs.writevSync(2, [buffer]);
@@ -163,7 +177,7 @@ export function stream() {
 	return [first, second, third];
 }
 
-export const used = [stderr, out, proc, procDefault, Console, dynamic, required];
+export const used = [stderr, out, proc, procDefault, Console, consoleDefault, dynamic, required];
 export const alsoUsed = [
 	viaStderr,
 	typed,
@@ -172,12 +186,15 @@ export const alsoUsed = [
 	nonNull,
 	emitWarning,
 	_rawDebug,
+	satisfied,
 	stdout,
 	other,
 	viaGlobal,
 	asGlobal,
 	nested,
 	nestedGlobal,
+	nestedWarning,
+	nestedRawDebug,
 	error,
 	viaGlobalThis,
 	viaGlobalName,

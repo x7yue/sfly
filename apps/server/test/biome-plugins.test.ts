@@ -137,14 +137,18 @@ describe("自定义 lint 规则（biome-plugins/）", () => {
 			declared.length,
 			"规则里没有读到 $form 的名字：这条测试的读法和规则的写法对不上",
 		).toBeGreaterThan(20);
-		const header = grit
+		// 规则文件开头的清单：每一种写法一行，行首是 `[名字]`。按行首取、整个比，两个方向都查：清单里多列了规则里没有的名字、
+		// 或者少列了规则里有的名字，这里都红（按子串找「名字出现在注释的哪一行」会被别的写法的说明里的同样的字挡住）。
+		const listed = grit
 			.split("\n")
-			.filter((line) => line.startsWith("//"))
-			.join("\n");
+			.flatMap((line) => /^\/\/\s+`\[([a-z][a-z-]*)\]`/.exec(line)?.[1] ?? []);
+		expect(new Set(listed).size, "规则文件开头的清单里有重复的名字：每一种写法只写一行。").toBe(
+			listed.length,
+		);
 		expect(
-			declared.filter((name) => !header.includes(`\`${name}\``)),
-			"规则文件开头的清单里没有写这些名字（用反引号括起来）：规则认的写法都要列在清单里。",
-		).toEqual([]);
+			[...listed].sort(),
+			"规则文件开头的清单（行首的 `[名字]`）和规则里的 $form 名字不一致：规则认的写法要在清单里列全，清单里不能有规则里没有的名字。",
+		).toEqual(declared);
 		const architecture = readFileSync(join(repoRoot, "docs", "ARCHITECTURE.md"), "utf8");
 		const paragraph = architecture
 			.split("\n")
