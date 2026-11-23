@@ -210,7 +210,9 @@ describe("main.ts 读字符串类环境变量", () => {
 
 		expect(result.code, result.output).not.toBe(0);
 		expect(result.output).not.toContain("不合法");
-		expect(result.output).not.toContain("没有启动");
+		// 启动失败也会打印「控制面没有启动：…」（#578），分不出「没过检查」和「连数据库失败」的是它：看原因，过了检查之后才走到的
+		// 连数据库那一步写着连不上（1 号端口没有人监听）。
+		expect(result.output).toContain("ECONNREFUSED");
 	}, 90_000);
 });
 
@@ -426,7 +428,9 @@ describe("main.ts：报错回显的总表（每个变量 × 带凭据的各种�
 
 		expect(result.code, result.output).not.toBe(0);
 		expect(result.output).not.toContain("不合法");
-		expect(result.output).not.toContain("没有启动");
+		// 启动失败也会打印「控制面没有启动：…」（#578），分不出「没过检查」和「连数据库失败」的是它：看原因，过了检查之后才走到的
+		// 连数据库那一步写着连不上（1 号端口没有人监听）。
+		expect(result.output).toContain("ECONNREFUSED");
 		const lower = result.output.toLowerCase();
 		for (const part of MARK_PARTS) expect(lower, part).not.toContain(part);
 	}, 90_000);
