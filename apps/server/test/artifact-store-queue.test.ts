@@ -4,7 +4,7 @@
 // - 队列按任务分（全局一把锁：一个任务的上传卡着，别的任务的上传也被拖住）；
 // - 任务状态是轮到时才查（到达时查：任务在排队期间成功或失败结束了，排着的那一份还是被收下）；
 // - 空闲计时从轮到这一份时才开始（从到达时开始：排在后面的一份还没轮到就超时了）。
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ArtifactStore, type SaveOutcome } from "../src/artifacts/artifact-store.js";
 import { type Database, openDatabase } from "../src/db/database.js";
@@ -107,6 +107,25 @@ describe("ArtifactStore 的队列", () => {
 			expect(brokenStore.pendingTasks).toBe(0);
 			expect(store.pendingTasks).toBe(0);
 		}, 60_000);
+	});
+
+	describe("请求体只能是字节流（#665）", () => {
+		// 上传的路由只按原始字节收请求体；存储自己也不接受字符串块：按字符数记的大小和写进磁盘的字节数不一致，守不住上限。
+		it("有字符串块：抛出，不记账、不留临时文件，队列的条目照样删掉，同一个任务的下一份照常存", async () => {
+			const store = storeWith();
+			const taskId = (tasks[first] as AssignedTask).taskId;
+
+			await expect(store.save(taskId, "text.txt", Readable.from(["中文"]))).rejects.toThrow(
+				"byte stream",
+			);
+			const next = await store.save(taskId, "ok.bin", complete(100));
+
+			expect(next.ok).toBe(true);
+			const listed = (await (await cp.fetch(`/tasks/${taskId}/artifacts`)).json()) as {
+				artifacts: Array<{ name: string; size: number }>;
+			};
+			expect(listed.artifacts.map((a) => [a.name, a.size])).toEqual([["ok.bin", 100]]);
+		});
 	});
 
 	it("队列按任务分：一个任务的上传卡着，另一个任务的上传不受影响", async () => {

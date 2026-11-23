@@ -334,6 +334,50 @@ describe("卡住的上传（连着、不发数据）", () => {
 		expect(listed.artifacts.map((a) => a.name)).toEqual(["next.bin"]);
 	}, 60_000);
 
+	// 408 之后客户端还在往连接里写（它以为还在上传）：控制面回了响应就关掉连接，不留着一条没有读完请求体的连接
+	// （keep-alive 的连接上，下一个请求会被读成这份没读完的请求体的后半截）。
+	it("408 之后连接被关掉：响应带 connection: close，服务端随即关闭这条连接", async () => {
+		const { task } = await setup(300);
+
+		const outcome = await new Promise<{
+			status: number;
+			connection: string | undefined;
+			closed: boolean;
+		}>((resolve, reject) => {
+			const req = httpRequest(`${task.artifactUploadUrl}stuck-close.bin`, {
+				method: "PUT",
+				agent: false,
+				headers: { "content-type": "application/octet-stream", "content-length": "1000" },
+			});
+			req.on("response", (res) => {
+				res.resume();
+				const socket = res.socket;
+				const report = (closed: boolean) =>
+					resolve({
+						status: res.statusCode ?? 0,
+						connection: res.headers.connection,
+						closed,
+					});
+				// 响应收完之后最多再等 3 秒，看服务端有没有关掉这条连接（keep-alive 的连接默认还会留 5 秒）。
+				const timer = setTimeout(() => report(false), 3_000);
+				socket.once("close", () => {
+					clearTimeout(timer);
+					report(true);
+				});
+				if (socket.destroyed) {
+					clearTimeout(timer);
+					report(true);
+				}
+			});
+			req.on("error", reject);
+			req.write(Buffer.alloc(100, 1));
+		});
+
+		expect(outcome.status).toBe(408);
+		expect(outcome.connection).toBe("close");
+		expect(outcome.closed).toBe(true);
+	}, 60_000);
+
 	it("一直在慢慢发数据的上传（总时长远超空闲时限）不被误杀", async () => {
 		const { task } = await setup(600);
 
