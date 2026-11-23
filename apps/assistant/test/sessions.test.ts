@@ -491,7 +491,10 @@ describe("中止带轮次：按这一轮的状态，不按时间猜", () => {
 		const res = await harness.prompt(id, { turn: 2, text: "settle" });
 		expect(res.status, await res.clone().text()).toBe(202);
 		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+		// 第 1 轮还在退出：直接结束的第 2 轮不动它的配置文件（它的 pi 还活着）。
+		expect(existsSync(join(harness.dataDir, "sessions", id, "turn.json"))).toBe(true);
 		expect(await harness.turnEnd(id, 1)).toMatchObject({ outcome: "stopped" });
+		expect(existsSync(join(harness.dataDir, "sessions", id, "turn.json"))).toBe(false);
 		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
 		// 之后照常：第 3 轮起新的 pi、做完。
 		await harness.prompt(id, { turn: 3, text: "settle" });
