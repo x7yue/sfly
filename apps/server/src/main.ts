@@ -71,6 +71,7 @@ import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
+import { safeError } from "./util/safe-error.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
 declare const SFLY_BUNDLED: boolean | undefined;
@@ -134,7 +135,8 @@ const { httpPort, grpcPort, ...limits } = (() => {
 		return readEnvSettings(env);
 	} catch (error) {
 		if (!(error instanceof EnvSettingsError)) throw error;
-		console.error(`sfly: 控制面没有启动，${error.message}`);
+		// 错误日志都过 safeError（test/error-log.test.ts 守着这条）：这里的错误只有变量名、填的原文和范围，原样返回。
+		console.error(`sfly: 控制面没有启动，${(safeError(error) as EnvSettingsError).message}`);
 		process.exit(1);
 	}
 })();
