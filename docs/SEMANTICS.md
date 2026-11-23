@@ -247,8 +247,10 @@ queued / dispatched / running / waiting / pending ──▶ stopped（所在子�
 | `node_error` | 节点代码抛出异常、进程非零退出 | 是 |
 | `timeout` | 执行超时 | 是 |
 | `agent_lost` | Agent 断线导致租约过期 | 是（仍派发到同一个 Agent） |
-| `env_error` | 节点包安装失败、依赖冲突、排队超时、Agent 版本不满足节点包需要的 SDK 版本 | 否 |
+| `env_error` | 节点包安装失败、依赖冲突、排队超时、Agent 版本不满足节点包需要的 SDK 版本、产物合计超过上限（节点没接住 `ctx.artifacts.save` 抛出的 `ArtifactLimitExceeded`，或直接写进产物目录的文件让合计超限；重试一遍产物还是这么大） | 否 |
 | `config_error` | 参数校验失败、引用的输出缺失、输入里有节点没有声明的名字（执行器在调用节点函数之前拒绝）、解析 `${{ run.state }}` 出错或运行状态太大（§2.7） | 否 |
+
+节点可以让自己的失败不被重试：节点自己抛出 `ArtifactLimitExceeded`（或自己写出带 `"kind": "env_error"` 的结果文件）就记成 `env_error`，不按 `retries` 重试。这只影响这个节点自己的失败要不要重试，绕不过控制面对产物合计的上限（控制面照常检查每一次上传），节点代码在 Agent 上本来就有完全的权限。
 
 排队超时的报错写明排队了多久和原因：任务排队超时那一刻它的 Agent 在线、还在准备环境时是「排队超过 N 秒仍未派发：Agent X 一直在准备环境」，其他情况（Agent 不在线、槽位一直满着）是「排队超过 N 秒仍未派发：Agent X 不在线或没有空闲槽位」。
 
