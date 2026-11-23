@@ -1,24 +1,18 @@
 """`stop_process`：终止后台进程所在的进程组，先 SIGTERM，宽限期后 SIGKILL。
 
 用法见开发文档「标准节点」页（docs/guide/standard-nodes.md）的 `stop_process` 一节；
-退出码取自 `start_process` 的看护进程写的状态文件（_supervise.py）。
+逻辑在辅助函数 `sfly_std.processes.stop_background_process`，这里是它的节点外壳。
 """
 
 from __future__ import annotations
 
-import os
-import signal
-from collections.abc import Callable
 from typing import Annotated, TypedDict
 
-import psutil
-
 from sfly import Context, Doc, node
-from sfly_std import _process, _supervise
-from sfly_std._waiting import poll_until
+from sfly_std.processes import StopFailed as _StopFailed
+from sfly_std.processes import stop_background_process
 
-#: SIGKILL 之后等进程消失的最长时间（秒）。
-KILL_WAIT = 5.0
+__all__ = ["StopFailed", "stop_process"]
 
 
 class StopProcessOutputs(TypedDict):
@@ -32,20 +26,9 @@ class StopProcessOutputs(TypedDict):
     ]
 
 
-class StopFailed(Exception):
-    """SIGKILL 之后进程仍然没有退出。"""
-
-
-def _members(pgid: int) -> list[int]:
-    """进程组里还活着的进程（不含僵尸进程）。"""
-    members = []
-    for proc in psutil.process_iter():
-        try:
-            if os.getpgid(proc.pid) == pgid and _process.alive(proc):
-                members.append(proc.pid)
-        except ProcessLookupError:
-            continue
-    return members
+class StopFailed(_StopFailed):
+    """SIGKILL 之后进程仍然没有退出（节点失败时的错误类型：和 0.3.0 一样写成
+    `sfly_std.stop_process.StopFailed`）。"""
 
 
 @node(title="停止后台进程")
@@ -66,70 +49,8 @@ def stop_process(
 
     失败：宽限期加 SIGKILL 之后进程仍然没有退出（例如卡在不可中断的磁盘读写里）时失败。
     """
-    if pid is None:
-        ctx.log.info("没有给出 pid，不需要停止")
-        return {"was_running": False, "exit_code": None}
-    if pid <= 0:
-        raise ValueError(f"pid 必须是正整数，实际为 {pid}")
-    status = _supervise.read_status(ctx.procs_dir, pid)
-    was_running = _process.alive_pid(pid)
     try:
-        pgid: int | None = os.getpgid(pid) if was_running else None
-    except ProcessLookupError:
-        was_running, pgid = False, None
-    if pgid is None and status is not None:
-        # 进程自己退出了，它在后台启动的进程可能还在同一个进程组里。
-        pgid = status.pgid
-    if pgid is not None and (pgid <= 1 or pgid == os.getpgrp()):
-        pgid = None  # 不是独立的进程组（例如和执行器同组）：只终止这个进程
-
-    def targets() -> list[int]:
-        if pgid is not None:
-            return _members(pgid)
-        return [pid] if _process.alive_pid(pid) else []
-
-    def send(sig: signal.Signals) -> None:
-        try:
-            if pgid is not None:
-                os.killpg(pgid, sig)
-            else:
-                os.kill(pid, sig)
-        except ProcessLookupError:
-            pass
-
-    killed = False
-    if targets():
-        what = f"进程组 {pgid}" if pgid is not None else f"进程 {pid}"
-        ctx.log.info("向%s发送 SIGTERM，宽限期 %g 秒", what, grace)
-        send(signal.SIGTERM)
-        if not _wait_gone(targets, grace):
-            ctx.log.warn("宽限期 %g 秒已过，%s仍未退出，发送 SIGKILL", grace, what)
-            killed = was_running and _process.alive_pid(pid)
-            send(signal.SIGKILL)
-            if not _wait_gone(targets, KILL_WAIT):
-                raise StopFailed(f"发送 SIGKILL 后 {KILL_WAIT:g} 秒，{what}仍未退出：{targets()}")
-    elif not was_running:
-        ctx.log.info("进程 %d 已不在运行", pid)
-
-    # 进程刚退出时看护进程可能还没写下退出码。
-    wait = _process.EXIT_CODE_WAIT if was_running and not killed else 0
-    exit_code = _process.exit_code(ctx.procs_dir, pid, wait)
-    if exit_code is None and killed:
-        exit_code = 128 + signal.SIGKILL
-    if was_running:
-        ctx.log.info("进程 %d 已退出，退出码 %s", pid, exit_code)
-    return {"was_running": was_running, "exit_code": exit_code}
-
-
-def _wait_gone(targets: Callable[[], list[int]], timeout: float) -> bool:
-    """最多等 `timeout` 秒，直到 `targets()` 为空；返回是否等到了。"""
-    try:
-        poll_until(
-            lambda: True if not targets() else None,
-            what="进程退出",
-            wait=max(timeout, 0),
-            poll=_process.POLL_INTERVAL,
-        )
-    except TimeoutError:
-        return False
-    return True
+        stopped = stop_background_process(ctx, pid, grace=grace)
+    except _StopFailed as error:
+        raise StopFailed(*error.args) from None
+    return {"was_running": stopped.was_running, "exit_code": stopped.exit_code}
