@@ -8,9 +8,9 @@
   令牌的原值不打印。这台控制面已经存过令牌时，**先换到新的、存好，再把旧的吊销**（重新登录不会越攒越多；
   密码输错或换令牌失败时，原来有效的登录原封不动）。旧令牌占着默认名称时，新令牌的名称带一个后缀。
 - `sfly logout`：让令牌吊销它自己（个人令牌只能吊销它自己），再删掉本机的这一条凭据。
-  吊销没成功（连不上控制面、403、500……）就不删，免得本机以为登出了、令牌还有效；
-  `--local` 只删本机的。控制面说 401 时（令牌已失效：别处吊销了、过期了）
-  本机的凭据照样删，但如实说「令牌没有被这次登出吊销」。账号被停用时令牌照样能吊销它自己
+  吊销没成功（连不上控制面、403、500……）就不删，免得本机以为登出了、令牌还有效，并说明
+  令牌没有被吊销、本机的凭据保留着；`--local` 只删本机的。控制面说 401 时（令牌已失效：
+  别处吊销了、过期了）本机的凭据照样删，但如实说「令牌没有被这次登出吊销」。账号被停用时令牌照样能吊销它自己
   （停用期间别的请求都拒绝，吊销自己的凭据例外），所以 401 不是因为账号被停用。
   `SFLY_API_TOKEN` 环境变量里的令牌不归它管。
 
@@ -85,12 +85,16 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="登出：让本机存的令牌吊销它自己，并删掉本机的凭据",
         description="让 sfly login 存下的令牌吊销它自己（控制面上立即失效），"
         "再删掉本机凭据文件里这台控制面的那一条。"
-        "吊销没成功（连不上控制面）时不删，加 --local 只删本机的。"
+        "吊销没成功（连不上控制面、控制面回 403、500……）时不删本机的凭据，并说明令牌没有被吊销、"
+        "本机的凭据保留着；控制面回 401（令牌已经失效）时照样删本机的，并说明这次没有吊销。"
+        "加 --local 只删本机的。"
         "SFLY_API_TOKEN 环境变量里的令牌不归它管。退出码：成功 0，失败 2。",
     )
     logout.add_argument("--server", help=_server_help())
     logout.add_argument(
-        "--local", action="store_true", help="只删本机的凭据，不去控制面吊销（控制面不可达时用）"
+        "--local",
+        action="store_true",
+        help="只删本机的凭据，不去控制面吊销（控制面不可达、或者吊销一直失败时用）",
     )
     logout.add_argument("--json", action="store_true", help="输出 JSON，不输出文本")
     logout.set_defaults(func=_run(_logout))
@@ -137,8 +141,9 @@ def _read_password(args: argparse.Namespace) -> str:
 
 
 def _anonymous(url: str) -> Client:
-    """换令牌用的客户端：不带令牌（`SFLY_API_TOKEN` 不该被发给控制面去换令牌）。"""
-    return Client(url, resolve_nickname(None))
+    """换令牌用的客户端：不带令牌（`SFLY_API_TOKEN` 不该被发给控制面去换令牌）；发出去的是账号密码，
+    往不是本机的 `http://` 地址发之前提示一次（明文）。"""
+    return Client(url, resolve_nickname(None), sends_password=True)
 
 
 def _login(args: argparse.Namespace, out: Output) -> int:
@@ -262,7 +267,9 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
                 rejected = True
             else:
                 raise CliError(
-                    error.code, error.message, next="sfly logout --local（只删本机的凭据）"
+                    error.code,
+                    f"{error.message}\n令牌没有被吊销，本机的凭据保留着",
+                    next="sfly logout --local（只删本机的凭据，令牌之后在控制台的「令牌」页吊销）",
                 ) from None
         except CliError as error:
             raise CliError(

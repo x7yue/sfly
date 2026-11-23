@@ -664,6 +664,8 @@ class TestLogout:
         code, _, err = run(capsys, monkeypatch, "logout")
         assert code == 2
         assert "sfly logout --local" in err
+        # 说明令牌没有被吊销、本机的凭据保留着（和连不上时一样），不只是给下一步。
+        assert "令牌没有被吊销" in err and "本机的凭据保留着" in err
         # 令牌没有被吊销，本机的凭据保留着：不能让本机以为登出了、令牌还有效。
         stored = credentials.load(server.url)
         assert stored and stored.token == TOKEN
@@ -872,6 +874,34 @@ class TestPlainHttpNote:
             with pytest.raises(CliError):
                 client.get("/runs")
             assert "明文" not in err.getvalue(), (server, token)
+
+
+class TestPlainHttpPasswordNote:
+    """第一次 `sfly login`（还没有令牌）往不是本机的 `http://` 地址发密码：发之前也提示。"""
+
+    def test_login_over_non_local_http_notes_that_the_password_is_sent_in_the_clear(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, out, err = login(capsys, monkeypatch, "--server", "http://cp.example.test:1")
+        assert code == 2  # 连不上：提示在发之前
+        assert err.count("明文") == 1 and "密码" in err and "https" in err
+        assert PASSWORD not in out + err
+
+    def test_no_note_for_localhost_or_https(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, _, err = login(capsys, monkeypatch)  # 本机的假控制面
+        assert code == 0 and "明文" not in err
+        for url in ("http://localhost:1", "http://127.0.0.1:1", "https://cp.example.test:1"):
+            _, _, err = login(capsys, monkeypatch, "--server", url)
+            assert "明文" not in err, url
 
 
 class TestCredentialsFilePermissions:

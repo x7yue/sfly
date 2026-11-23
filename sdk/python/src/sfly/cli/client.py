@@ -14,7 +14,7 @@
 - 控制面在所有响应上带 `x-sfly-version`；与命令行版本不一致时在 stderr 告警一次，命令照常执行；
 - 令牌不跟着重定向走：重定向到不同的源（协议、主机、端口任一不同）时去掉 `Authorization`
   （控制面前面的反向代理、单点登录网关、任何一处开放重定向都不该把令牌转给别的主机）；
-- 在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码在网络上是明文）；
+- 在不是本机的 `http://` 地址上带令牌、或者（`sfly login`）要发账号密码时，发之前提示一次（令牌和密码在网络上是明文）；
 - 连不上控制面抛 `CliError("unreachable", …)`，控制面返回错误抛 `ApiError`（沿用控制面的错误码）；
   401（没有登录、令牌失效或被吊销）的错误信息写明 `sfly login`，下一步也是它。
 """
@@ -164,6 +164,7 @@ class Client:
         nickname: str,
         *,
         token: str | None = None,
+        sends_password: bool = False,
         nickname_ignored: bool = False,
         ai_agent: str | None = None,
         stderr: IO[str] | None = None,
@@ -173,6 +174,8 @@ class Client:
         self.nickname = nickname
         self.token = token
         """有令牌时身份由它决定：请求带 `Authorization: Bearer`，不再带昵称。"""
+        self.sends_password = sends_password
+        """这个客户端要把账号密码发给控制面（`sfly login` 换令牌，不带令牌）：往明文地址发之前也提示。"""
         self.ai_agent = ai_agent
         self.timeout = timeout
         self._stderr = stderr
@@ -254,15 +257,19 @@ class Client:
         )
 
     def _note_plain_http(self) -> None:
-        """带着令牌往不是本机的 `http://` 地址发请求：提示一次（令牌在网络上是明文）。"""
-        if self._warned_plain_http or not self.token:
+        """带着令牌、或者要发账号密码（`sfly login`）往不是本机的 `http://` 地址发请求：提示一次
+        （令牌和密码在网络上是明文）。第一次 `sfly login` 还没有令牌，发出去的是密码，也要提示。"""
+        if self._warned_plain_http:
+            return
+        what = "令牌" if self.token else "密码" if self.sends_password else None
+        if what is None:
             return
         scheme, host, _ = origin_of(self.server)
         if scheme != "http" or host in _LOCAL_HOSTS:
             return
         self._warned_plain_http = True
         print(
-            f"警告：{self.server} 是 http 地址，令牌会以明文发送，网络上的人看得到："
+            f"警告：{self.server} 是 http 地址，{what}会以明文发送，网络上的人看得到："
             "有条件的话用 https 地址访问控制面",
             file=self._stderr or sys.stderr,
         )

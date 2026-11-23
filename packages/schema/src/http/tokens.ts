@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasUnsafeNameCharacter } from "../text-safety.js";
 import { CurrentUser, PASSWORD_MAX_LENGTH } from "./accounts.js";
 import { endpoint, Timestamp } from "./contract.js";
 
@@ -33,11 +34,7 @@ export const SCOPE_LABELS = {
 	manage: "管理",
 } as const satisfies Record<Scope, string>;
 
-/** 令牌的名称里不能有的字符：换行、转义序列（ESC）这类控制字符会把终端和日志弄乱（名称会出现在「经 …」和命令行的输出里）。 */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: 这里要拒绝的就是控制字符
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
-
-/** 令牌的名称（「经 …」记它，所以要认得出是哪一个）：去掉首尾空白后 1–64 个字符，不含控制字符，同一个所有者名下没有两个有效的同名令牌。 */
+/** 令牌的名称（「经 …」记它，所以要认得出是哪一个）：去掉首尾空白后 1–64 个字符，不含控制字符和看不见的格式字符（`text-safety.ts`），同一个所有者名下没有两个有效的同名令牌。 */
 export const TOKEN_NAME_MAX_LENGTH = 64;
 export const TokenName = z
 	.string()
@@ -45,8 +42,8 @@ export const TokenName = z
 	.min(1, "令牌的名称不能为空")
 	.max(TOKEN_NAME_MAX_LENGTH, `令牌的名称不能超过 ${TOKEN_NAME_MAX_LENGTH} 个字符`)
 	.refine(
-		(name) => !CONTROL_CHARACTERS.test(name),
-		"令牌的名称里不能有控制字符（换行、转义序列等）",
+		(name) => !hasUnsafeNameCharacter(name),
+		"令牌的名称里不能有控制字符（换行、转义序列等）和看不见的格式字符（零宽字符、双向文字的控制字符）",
 	);
 
 /** 过期时间：从签发起算的天数；不写表示不过期。 */

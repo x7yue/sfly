@@ -193,6 +193,13 @@ describe("令牌的几处收紧", () => {
 				"带\u0000NUL",
 				"带 行分隔符",
 				"带\u0085下一行",
+				// 看不见的格式字符（#606 审查）：两个看起来一样的名字能同时有效、名字还能倒着显示。
+				"带\u200b零宽空格",
+				"带\u200d零宽连接符",
+				"带\u202e倒着显示",
+				"带\u2067双向隔离",
+				"带\ufeff字节序标记",
+				"带\u00ad软连字符",
 			]) {
 				const personal = await call(loginCookie(adminCookie), "POST", "/account/tokens", { name });
 				expect(personal.status, JSON.stringify(name)).toBe(400);
@@ -207,6 +214,35 @@ describe("令牌的几处收紧", () => {
 				const res = await call(loginCookie(adminCookie), "POST", "/account/tokens", { name });
 				expect(res.status, name).toBe(201);
 			}
+		});
+	});
+
+	describe("显示名和昵称同样不能有控制字符和看不见的格式字符", () => {
+		it("建用户的显示名、写操作的昵称：拒绝（400）；正常的名字照常", async () => {
+			for (const display_name of ["带\u200b零宽", "带\u202e倒着", "带\n换行", "带\u0000NUL"]) {
+				const res = await call(loginCookie(adminCookie), "POST", "/users", {
+					login_name: "someone",
+					display_name,
+					password: "a-long-enough-password-1",
+				});
+				expect(res.status, JSON.stringify(display_name)).toBe(400);
+			}
+			const ok = await call(loginCookie(adminCookie), "POST", "/users", {
+				login_name: "someone",
+				display_name: "小明 💻",
+				password: "a-long-enough-password-1",
+			});
+			expect(ok.status).toBe(201);
+			for (const nickname of ["带\u200b零宽", "带\u202e倒着", "带\n换行"]) {
+				const res = await call(
+					{ "x-sfly-nickname": encodeURIComponent(nickname) },
+					"POST",
+					"/orchestrations",
+					{ name: "不该建出来" },
+				);
+				expect(res.status, JSON.stringify(nickname)).toBe(400);
+			}
+			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 	});
 

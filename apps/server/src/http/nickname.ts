@@ -1,4 +1,4 @@
-import { NICKNAME_HEADER } from "@sfly/schema";
+import { hasUnsafeNameCharacter, NICKNAME_HEADER } from "@sfly/schema";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { sendError } from "./errors.js";
 
@@ -29,6 +29,17 @@ export function requireNickname(request: FastifyRequest, reply: FastifyReply): s
 	// 昵称会被写进数据库（jsonb 拒收 NUL）：挡在任何写之前，不让它在改了状态之后才失败。
 	if (nickname.includes("\u0000")) {
 		sendError(reply, 400, "invalid_request", "昵称里不能含 NUL 字符（\\u0000）");
+		return undefined;
+	}
+	// 昵称会记成作者、触发人，出现在「经 …」和命令行的输出里：控制字符和看不见的格式字符（零宽字符、双向文字的控制字符）
+	// 会把终端弄乱、让看起来一样的名字不一样。
+	if (hasUnsafeNameCharacter(nickname)) {
+		sendError(
+			reply,
+			400,
+			"invalid_request",
+			"昵称里不能有控制字符（换行、转义序列等）和看不见的格式字符（零宽字符、双向文字的控制字符）",
+		);
 		return undefined;
 	}
 	return nickname;
