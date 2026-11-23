@@ -41,6 +41,7 @@
 		"perf:soak": "pnpm --filter @sfly/server perf:soak",
 		"proto:breaking": "bash scripts/proto-breaking.sh",
 		"build": "pnpm -r build && cargo build --workspace --locked",
+		"bundle:assistant": "pnpm --filter @sfly/assistant bundle",
 		"bundle:server": "pnpm --filter @sfly/web --filter @sfly/server build && pnpm --filter @sfly/server bundle",
 		"test:bundle": "SFLY_BUNDLE_DIR=\"$PWD/out/server\" SFLY_PREVIOUS_AGENT_DIR=\"$PWD/out/previous-agent\" pnpm --filter @sfly/server exec vitest run --reporter=verbose test/bundle-smoke.test.ts test/bundle-self-update.test.ts",
 		"fetch:previous-agent": "bash scripts/release/previous-agent.sh",

@@ -53,6 +53,9 @@ class Output:
         """输出错误（写到 stderr）。"""
         if self.json_mode:
             body = {"code": error.code, "message": error.message, "next": error.next}
+            hints = getattr(error, "hints", None)
+            if hints is not None:
+                body["details"] = hints
             print(dump_json({"error": body}), file=self.stderr)
             return
         print(f"错误：{error.message}", file=self.stderr)
