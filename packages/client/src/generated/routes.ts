@@ -10,6 +10,7 @@ import type {
 	ArtifactView,
 	AssistantDeltaEvent,
 	CommitFile,
+	CopiedOrchestrationView,
 	CreateSessionBody,
 	DashboardView,
 	DocumentDiffView,
@@ -655,6 +656,8 @@ export interface Api {
 		 *
 		 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
 		 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
+		 * 恢复也不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样恢复（#576），响应的 `warnings` 里每个这样的字段一条
+		 * （`timeout_out_of_range`、`queue_timeout_out_of_range`）；要保存任何改动之前先把它们改成合格的值。
 		 */
 		restoreVersion: Endpoint<
 			{
@@ -723,7 +726,8 @@ export interface Api {
 		 *
 		 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
 		 * 源场景最新版本的内容作为第 1 版。有关注项时，副本的关注项最后修改记为复制的人，说明写「复制自「源场景名」」。
-		 * 联调副本也走这个接口。
+		 * 联调副本也走这个接口。第 1 版是原样复制，不过保存时的检查（升级前保存的版本里超限的超时、排队超时照样复制，#576），
+		 * 响应的 `warnings` 是第 1 版的警告，和保存、恢复版本的响应同一套。
 		 */
 		copy: Endpoint<
 			{
@@ -734,7 +738,7 @@ export interface Api {
 					name: string;
 				};
 			},
-			OrchestrationView
+			CopiedOrchestrationView
 		>;
 		/**
 		 * `POST /orchestrations/:id/archive`

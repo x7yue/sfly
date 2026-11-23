@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from sfly.cli.client import ApiError, Client, segment
+from sfly.cli.value_text import value_text
 
 #: 平台默认的超时（秒）。
 PLATFORM_TIMEOUT_SECONDS = 3600
@@ -39,7 +40,7 @@ def node_timeout_problem(label: str, written: Any) -> str | None:
         return None
     return (
         f"节点 {label}：timeout 必须是 1 到 {MAX_TIMEOUT_SECONDS} 之间的正整数（秒），"
-        f"实际是 {written}"
+        f"实际是 {value_text(written)}"
     )
 
 

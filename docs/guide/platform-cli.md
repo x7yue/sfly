@@ -25,7 +25,7 @@ uv run sfly api --list runs
 | `sfly scenario push <文件> [--strict]` | 本地校验后保存成新的场景版本；`--strict` 这次改动带进来了警告时不保存（退出码 4） |
 | `sfly scenario diff <场景> [版本A] [版本B]` / `sfly scenario diff <场景> --file <文件>` | 对比两个版本（默认最新的两个，只写一个时和最新版本比），或者最新版本和本地文件：设置、新增和删除的节点（显示名称和节点 ID）、改动字段的前后值、连线、注释框 |
 | `sfly scenario create --name 名称 [--description 说明] [--from 文件]` | 新建场景；给了文件就用其中的场景文档保存第一个版本 |
-| `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版（secret 参数的默认值跟着复制，读副本仍打码） |
+| `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版（secret 参数的默认值跟着复制，读副本仍打码）；副本的第 1 版和源场景一样，里面超限的超时、排队超时照样复制，输出里的警告写明是哪个节点的哪个字段，改成合格的值之后才能保存、触发 |
 | `sfly scenario rename <场景> [--name 名称] [--description 说明]` | 修改名称和说明；它们不属于场景版本，不产生新版本 |
 | `sfly run start <场景> [--preset 名称] [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--preset` 按运行预设触发；`--wait` 等到运行结束并输出摘要；节点排队时进度行写明在等什么（同 `run show`），等的情况变了再写一行 |
 | `sfly run wait <运行> [--timeout 时长]` | 等一次已经触发的运行结束，输出摘要；`运行` 可以只写 id 的前缀，或写 `latest`（见下文「运行的写法」） |

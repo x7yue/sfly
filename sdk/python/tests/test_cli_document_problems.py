@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from sfly.cli.scenario_edit import _document_problems
@@ -228,3 +232,71 @@ def test_timeout_and_queue_timeout_over_the_limit_are_each_reported_with_their_o
     assert len(problems) == 2
     assert "both：queue_timeout 必须是 1 到 4294967295" in problems[0]
     assert "both：timeout 必须是 1 到 4294967295" in problems[1]
+
+
+# ---- 节点的 timeout、queue_timeout 写了不合格的值（#576） ----
+# 保存、检查（控制面，packages/schema 的 invalidDocumentMessage）和这里的本地检查说同一句话，共用
+# testdata/node-timeout-value-cases.json；TypeScript 一端在
+# packages/schema/test/node-timeout-values.test.ts。
+
+VALUE_CASES: dict[str, Any] = json.loads(
+    (Path(__file__).resolve().parents[3] / "testdata" / "node-timeout-value-cases.json").read_text(
+        "utf-8"
+    )
+)
+
+
+def _sentence(label: str, field: str, actual: str) -> str:
+    """期望的句子：字面写出来，不用实现里的函数拼。"""
+    return (
+        f"节点 {label}：{field} 必须是 1 到 {VALUE_CASES['max_seconds']} 之间的正整数（秒），"
+        f"实际是 {actual}"
+    )
+
+
+def _package_document(node: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "nodes": [
+            {"id": "entry", "kind": "entry"},
+            {"kind": "package", "package": "p", "node": "n", **node},
+        ]
+    }
+
+
+@pytest.mark.parametrize("field", VALUE_CASES["fields"])
+@pytest.mark.parametrize("case", VALUE_CASES["values"], ids=lambda c: c["name"])
+def test_an_invalid_timeout_value_is_reported_with_the_same_sentence_as_the_control_plane(
+    field: str, case: dict[str, Any]
+) -> None:
+    problems = _document_problems(_package_document({"id": "a", field: case["value"]}))
+
+    assert problems == [f"  nodes/1/{field}（节点 a）: {_sentence('a', field, case['actual'])}"]
+
+
+@pytest.mark.parametrize("case", VALUE_CASES["labels"], ids=lambda c: c["label"])
+def test_the_sentence_names_the_node_by_display_name_and_id(case: dict[str, Any]) -> None:
+    problems = _document_problems(_package_document({**case["node"], "queue_timeout": 0}))
+
+    assert problems == [
+        f"  nodes/1/queue_timeout（节点 a）: {_sentence(case['label'], 'queue_timeout', '0')}"
+    ]
+
+
+def test_valid_values_next_to_an_invalid_one_are_not_reported() -> None:
+    problems = _document_problems(
+        _package_document({"id": "a", "timeout": 4_294_967_295, "queue_timeout": 0})
+    )
+
+    assert problems == [
+        f"  nodes/1/queue_timeout（节点 a）: {_sentence('a', 'queue_timeout', '0')}"
+    ]
+
+
+def test_the_json_schema_limits_are_the_ones_the_sentence_names() -> None:
+    """句子里写的上限和导出给本地检查的 JSON Schema 里的 `maximum` 是同一个数（两个字段都是）。"""
+    from sfly.schemas import load_schema
+
+    nodes = load_schema("orchestration-document")["properties"]["nodes"]["items"]["oneOf"]
+    package = next(n for n in nodes if "queue_timeout" in n.get("properties", {}))
+    for field in VALUE_CASES["fields"]:
+        assert package["properties"][field]["maximum"] == VALUE_CASES["max_seconds"], field

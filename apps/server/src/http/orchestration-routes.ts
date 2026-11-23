@@ -91,7 +91,11 @@ export function registerOrchestrationRoutes(
 			? await orchestrations.copy(params.id, body.name, actor)
 			: undefined;
 		if (!copied) return notFound(reply);
-		return reply.code(201).send(copied);
+		// 第 1 版是源场景最新版本的原样复制，不过保存时的检查：问题（升级前存下的超限的超时、排队超时……）在警告里带出来。
+		const first =
+			copied.head_version > 0 ? await orchestrations.getVersion(copied.id, 1) : undefined;
+		const warnings = first ? await versionWarnings(db, copied.id, first.document, undefined) : [];
+		return reply.code(201).send({ ...copied, warnings });
 	});
 
 	contractRoute(app, orchestrationsApi.get, async ({ params }, reply) => {

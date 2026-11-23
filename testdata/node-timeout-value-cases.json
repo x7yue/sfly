@@ -1,0 +1,35 @@
+{
+	"_comment": "场景里节点的 timeout、queue_timeout 写了不合格的值（#576）：保存、检查（TypeScript，packages/schema 的 invalidDocumentMessage）和 sfly scenario push/check 的本地检查（Python，sdk/python 的 _document_problems）说同一句话，共用这张表。句子是：节点 <label>：<字段> 必须是 1 到 <max_seconds> 之间的正整数（秒），实际是 <actual>。values 里 value 是文档里写的值，actual 是句子里「实际是」后面的文字：数字按 JavaScript 的 Number#toString 写（两端的 JSON 解析器把同一个字面量读成不同的类型，写出来必须一样），其余的按 JSON 写（字符串带引号，所以 \"30\" 和 30 看得出区别）。",
+	"max_seconds": 4294967295,
+	"fields": ["timeout", "queue_timeout"],
+	"labels": [
+		{ "node": { "id": "a" }, "label": "a" },
+		{ "node": { "id": "a", "display_name": "等槽位" }, "label": "等槽位（a）" }
+	],
+	"values": [
+		{ "name": "零", "value": 0, "actual": "0" },
+		{ "name": "负数", "value": -5, "actual": "-5" },
+		{ "name": "小数", "value": 1.5, "actual": "1.5" },
+		{ "name": "不到 1 的小数", "value": 0.5, "actual": "0.5" },
+		{ "name": "字符串里写的数字", "value": "30", "actual": "\"30\"" },
+		{ "name": "字符串", "value": "abc", "actual": "\"abc\"" },
+		{ "name": "空字符串", "value": "", "actual": "\"\"" },
+		{ "name": "true", "value": true, "actual": "true" },
+		{ "name": "false", "value": false, "actual": "false" },
+		{ "name": "null", "value": null, "actual": "null" },
+		{ "name": "空数组", "value": [], "actual": "[]" },
+		{ "name": "对象", "value": { "a": 1 }, "actual": "{\"a\":1}" },
+		{ "name": "比上限大 1", "value": 4294967296, "actual": "4294967296" },
+		{ "name": "多打了几位", "value": 9000000000000, "actual": "9000000000000" },
+		{ "name": "科学计数法写的整数", "value": 5e9, "actual": "5000000000" },
+		{ "name": "1e21 以上 JavaScript 用指数写", "value": 1e21, "actual": "1e+21" },
+		{ "name": "很大的小数", "value": 1.5e300, "actual": "1.5e+300" },
+		{
+			"name": "超过 2 的 53 次方的整数按双精度写",
+			"value": 12345678901234567890,
+			"actual": "12345678901234567000"
+		},
+		{ "name": "很小的负数", "value": -1e-7, "actual": "-1e-7" },
+		{ "name": "小数点后五个零", "value": 0.000001, "actual": "0.000001" }
+	]
+}

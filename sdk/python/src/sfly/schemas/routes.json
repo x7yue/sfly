@@ -11902,6 +11902,36 @@
               }
             ],
             "description": "关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "input": {
+                  "type": "string"
+                },
+                "annotation_id": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            }
           }
         },
         "required": [
@@ -11913,7 +11943,8 @@
           "archived_at",
           "run_notification",
           "focus_items",
-          "focus_edit"
+          "focus_edit",
+          "warnings"
         ]
       },
       "notes": []

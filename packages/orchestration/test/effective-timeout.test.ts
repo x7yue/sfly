@@ -151,6 +151,7 @@ describe("queueTimeoutProblem", () => {
 			"节点 等槽位（wait）：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 8640000000000",
 		);
 		expect(queueTimeoutProblem("n", 0)).toContain("实际是 0");
-		expect(queueTimeoutProblem("n", "x")).toContain("实际是 x");
+		// 字符串带引号写（#576）：和写成数字的 `30` 看得出区别。
+		expect(queueTimeoutProblem("n", "x")).toContain('实际是 "x"');
 	});
 });
