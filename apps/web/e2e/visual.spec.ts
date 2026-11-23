@@ -1894,17 +1894,19 @@ test.describe("账号与登录", () => {
 			await expect(page).toHaveScreenshot("tokens-empty.png");
 		});
 
-		test("签发个人令牌弹窗：只要部分范围", async ({ page }) => {
+		test("签发个人令牌弹窗：只选一部分范围，项目标识写法不对时「签发」不可用", async ({ page }) => {
 			await signIn(page);
 			await page.goto("/account/tokens");
 			await page.getByRole("button", { name: "签发令牌" }).click();
 			const dialog = page.getByRole("dialog", { name: "签发个人令牌" });
 			await dialog.getByLabel("名称").fill("ci-bot");
-			await dialog.getByLabel("只要部分范围").check();
+			await dialog.getByRole("button", { name: "只选一部分" }).click();
 			await dialog.getByLabel("运行", { exact: false }).first().check();
 			await dialog.getByLabel("限定项目").fill("Bad_Project");
-			await dialog.getByRole("button", { name: "签发" }).click();
+			// 提交一次，标出问题之后「签发」不可用。
+			await dialog.getByRole("button", { name: "签发", exact: true }).click();
 			await expect(dialog.getByLabel("限定项目")).toHaveAccessibleDescription(/小写字母/);
+			await expect(dialog.getByRole("button", { name: "签发", exact: true })).toBeDisabled();
 			await expect(page).toHaveScreenshot("tokens-issue.png");
 		});
 
