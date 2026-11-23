@@ -181,6 +181,7 @@ describe("关闭控制面", () => {
 describe("日志文件的流", () => {
 	it("源流出错：已经读到的内容照常出来，之后返回的流以这个错误结束，源流被销毁；没有没人接的 error 事件", async () => {
 		const { normalizeLogStream } = await import("../src/http/log-routes.js");
+		const { NO_LOG_MASK } = await import("../src/logs/log-mask.js");
 		const boom = new Error("读文件出错");
 		let sourceDestroyed = false;
 		let reads = 0;
@@ -198,7 +199,7 @@ describe("日志文件的流", () => {
 		});
 		const chunks: string[] = [];
 		const result = await new Promise<Error | undefined>((resolve) => {
-			const stream = normalizeLogStream(source);
+			const stream = normalizeLogStream(source, NO_LOG_MASK);
 			stream.on("data", (chunk: Buffer) => chunks.push(chunk.toString()));
 			stream.on("error", resolve);
 			stream.on("end", () => resolve(undefined));
