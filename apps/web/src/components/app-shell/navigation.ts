@@ -4,6 +4,7 @@ import {
 	BoxIcon,
 	LayoutDashboardIcon,
 	type LucideIcon,
+	MessageSquareIcon,
 	PlayIcon,
 	ServerIcon,
 	WorkflowIcon,
@@ -16,7 +17,15 @@ import type { ShortcutId } from "#/lib/shortcuts";
  * 新增一级页面时在这里加一项（并在 #/lib/shortcuts 登记跳转快捷键）。
  */
 export interface NavItem {
-	to: "/" | "/orchestrations" | "/runs" | "/agents" | "/packages" | "/feishu-bots" | "/docs";
+	to:
+		| "/"
+		| "/sessions"
+		| "/orchestrations"
+		| "/runs"
+		| "/agents"
+		| "/packages"
+		| "/feishu-bots"
+		| "/docs";
 	label: string;
 	icon: LucideIcon;
 	shortcut: ShortcutId;
@@ -24,6 +33,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: readonly NavItem[] = [
 	{ to: "/", label: PAGE.dashboard, icon: LayoutDashboardIcon, shortcut: "go-dashboard" },
+	{ to: "/sessions", label: PAGE.assistant, icon: MessageSquareIcon, shortcut: "go-assistant" },
 	{ to: "/orchestrations", label: PAGE.scenarios, icon: WorkflowIcon, shortcut: "go-scenarios" },
 	{ to: "/runs", label: PAGE.runs, icon: PlayIcon, shortcut: "go-runs" },
 	{ to: "/agents", label: PAGE.agents, icon: ServerIcon, shortcut: "go-agents" },

@@ -192,6 +192,9 @@ export class TurnTranslator {
 			tool === "edit" && typeof details.diff === "string"
 				? headAndTail(this.#redactor.redact(details.diff))
 				: undefined;
+		// pi 自己截断过（命令的输出只留末尾、读文件只给了一部分）：结果里写着全文在哪，但模型看到的、事件里的都不是全部。
+		const truncation = details.truncation as { truncated?: unknown } | undefined;
+		const cutByPi = truncation?.truncated === true;
 		const exitCode = tool === "command" ? exitCodeOf(result) : undefined;
 		const durationMs = Number(event.durationMs);
 		out.push({
@@ -199,7 +202,7 @@ export class TurnTranslator {
 			call_id: callId,
 			is_error: event.isError === true,
 			text: text.text,
-			truncated: text.truncated || (diff?.truncated ?? false),
+			truncated: cutByPi || text.truncated || (diff?.truncated ?? false),
 			...(exitCode !== undefined && { exit_code: exitCode }),
 			...(diff !== undefined && { diff: diff.text }),
 			duration_ms: Number.isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : 0,

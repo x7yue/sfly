@@ -206,7 +206,9 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			const end = await h.turnEnd(id, 1, 60_000);
 			expect(end).toMatchObject({ outcome: "failed" });
 			expect(end.reason).toContain("工作台连不上");
-			// 命令的超时 1 秒 + 余量 10 秒 + 探测 5 秒，远小于 20 分钟的上限。
+			// 原因是助手服务自己的说法（工具结果里那一行可能是命令的输出），写明是它又探了一次。
+			expect(end.reason).toContain("助手服务又探了一次");
+			// 命令的超时 1 秒 + 余量 20 秒 + 探测 5 秒，远小于 20 分钟的上限。
 			expect(Date.now() - started).toBeLessThan(40_000);
 		} finally {
 			h.workbench.silent = false;
@@ -228,6 +230,8 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			const id = crypto.randomUUID();
 			await h.prompt(id, { text: "剧本：字面的连不上" });
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed", steps: 2, model_calls: 3 });
+			// 写 skill 一次、探工作台一次，用完都关了（不留下空闲的连接一直 ping）。
+			await eventually(() => expect(h.connections).toEqual({ opened: 2, closed: 2 }));
 		} finally {
 			await h.close();
 		}
@@ -248,7 +252,11 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			await h.prompt(id, { text: "剧本：大输出" });
 			expect(await h.turnEnd(id, 1, 120_000)).toMatchObject({ outcome: "completed" });
 			const result = h.events.of(id).find((r) => r.event.type === "tool_result");
-			expect(result?.event).toMatchObject({ text: expect.stringContaining("字节丢掉了") });
+			expect(result?.event).toMatchObject({
+				text: expect.stringContaining("字节丢掉了"),
+				// 页面靠它写明只显示了一部分。
+				truncated: true,
+			});
 			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
 			expect(raw).not.toContain('"tool_execution_update"');
 			expect(raw.length).toBeLessThan(2 * 1024 * 1024);
