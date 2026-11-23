@@ -308,6 +308,31 @@ export function referenceWarnings(
 	return warnings;
 }
 
+/** 标准节点包 `sfly-std` 0.4.0 删除的 14 个节点（ADR 0030）：场景里还引用它们时，警告指向替换办法。 */
+const REMOVED_STD_NODES: ReadonlySet<string> = new Set([
+	"system_monitor",
+	"process_monitor",
+	"wait_port",
+	"wait_file",
+	"wait_log_line",
+	"follow_log",
+	"collect_artifacts",
+	"pull_files",
+	"watch_files",
+	"http_request",
+	"assert",
+	"file_assert",
+	"process_assert",
+	"port_assert",
+]);
+
+/**
+ * 警告里指向替换办法的那半句。开发文档「标准节点」页和 sfly-std 0.4.0 的发布说明里各抄了一份原文：
+ * `std/tests/test_package.py` 逐字比对，改措辞时两处文档要一起改。
+ */
+const REMOVED_STD_NODE_HINT =
+	"（0.4.0 起删除了：替换办法见开发文档「标准节点」页的「从 0.3.0 升级」一节）";
+
 /** 包版本锁定检查：每个包节点都锁定到一个存在的版本，且该版本里有这个节点类型。 */
 export function packageWarnings(
 	doc: StoredOrchestrationDocument,
@@ -335,7 +360,11 @@ export function packageWarnings(
 		} else if (types && !types.some((t) => t.name === node.node)) {
 			warnings.push({
 				code: "unknown_node_type",
-				message: `节点包 ${node.package}@${version} 中没有节点类型 ${node.node}`,
+				message:
+					`节点包 ${node.package}@${version} 中没有节点类型 ${node.node}` +
+					(node.package === "sfly-std" && REMOVED_STD_NODES.has(node.node)
+						? REMOVED_STD_NODE_HINT
+						: ""),
 				node_id: node.id,
 			});
 		}

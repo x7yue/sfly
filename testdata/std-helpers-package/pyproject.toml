@@ -1,0 +1,8 @@
+# 用 sfly-std 的辅助函数写的节点包（apps/server/test/full-stack-std-helpers.test.ts，#454）：节点是辅助函数上的外壳，
+# 在真实的控制面和 Agent 上跑一遍，证明「业务节点里直接调用辅助函数」这条路走得通。
+# 源码和 std/tests/helper_nodes.py、std/tests/service_example.py 是同一份（std/tests/test_helper_nodes_package.py 检查）。
+# 用 `sfly build testdata/std-helpers-package` 构建；没写 requires-sdk，取构建时 SDK 的版本作为下限。
+[project]
+name = "std-helpers-user"
+version = "0.1.0"
+dependencies = ["sfly-std>=0.4.0"]

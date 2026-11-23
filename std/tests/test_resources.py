@@ -17,7 +17,9 @@ from direct_context import DirectRun
 from named_sleep import NamedSleep, named_sleep_fixture  # noqa: F401 -- fixture
 
 from sfly_std.resources import (
+    PROCESS_CHARTS,
     PROCESS_METRICS,
+    SYSTEM_CHARTS,
     SYSTEM_METRICS,
     ProcessExited,
     ProcessNotFound,
@@ -175,6 +177,32 @@ def test_a_negative_refind_or_a_target_that_never_appears_is_an_error(tmp_path: 
         monitor_processes(
             run.ctx, match=f"no-such-{uuid.uuid4().hex}", appear_within=0.5, duration=1
         )
+
+
+def test_system_metrics_are_declared_and_all_charted() -> None:
+    # 每个指标都画在声明的图表里，不靠平台生成的默认图表。
+    assert {m.name for m in SYSTEM_METRICS} == {
+        "cpu_percent",
+        "mem_used_percent",
+        "mem_used_bytes",
+        "load1",
+        "disk_used_percent",
+        "disk_read_bytes_per_s",
+        "disk_write_bytes_per_s",
+        "net_rx_bytes_per_s",
+        "net_tx_bytes_per_s",
+        "net_rx_bytes_per_s_by_nic",
+        "net_tx_bytes_per_s_by_nic",
+        "disk_read_bytes_per_s_by_disk",
+        "disk_write_bytes_per_s_by_disk",
+    }
+    charted = {name for chart in SYSTEM_CHARTS for name in chart.metrics}
+    assert charted == {m.name for m in SYSTEM_METRICS}
+
+
+def test_process_metrics_are_declared_and_all_charted() -> None:
+    charted = {name for chart in PROCESS_CHARTS for name in chart.metrics}
+    assert charted == {m.name for m in PROCESS_METRICS}
 
 
 def test_refind_finds_a_restarted_process_by_name(tmp_path: Path, named_sleep: NamedSleep) -> None:

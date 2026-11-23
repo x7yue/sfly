@@ -45,13 +45,13 @@ def std_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def pypi_mirror() -> Iterator[StaticServer]:
     """「PyPI 镜像」桩：`<url>/pypi/simple/`。
 
-    有 pytest、ruff、jsonschema、sfly-std 的依赖（httpx、psutil）及它们的依赖；
+    有 pytest、ruff、jsonschema、sfly-std 的依赖（psutil）及它们的依赖；
     没有 sfly-std 和 sfly：它们不在 PyPI 上，只在控制面的包索引里。"""
     with tempfile.TemporaryDirectory(prefix="sfly-wheelhouse-") as tmp:
         server = StaticServer()
         server.add_index(
             "/pypi/simple",
-            wheelhouse(["pytest", "ruff", "jsonschema", "httpx", "psutil"], Path(tmp)),
+            wheelhouse(["pytest", "ruff", "jsonschema", "psutil"], Path(tmp)),
         )
         yield server
         server.close()
