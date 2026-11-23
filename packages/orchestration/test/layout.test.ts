@@ -112,17 +112,17 @@ describe("整理布局：子流程放在主链下方", () => {
 
 	it("子流程排成一行，从触发它的异步任务节点右下方开始（调度连线先落下再水平进入）", () => {
 		const layout = tidyLayout(doc);
-		// 主链一行，底边 60；子流程第一行 y = 60 + 144。
+		// 主链一行，底边 60；子流程第一行 y = 60 + 166。
 		expect(at(layout, "go")).toEqual({ x: 600, y: 0 });
-		expect(at(layout, "sub")).toEqual({ x: 834, y: 204 });
-		expect(at(layout, "sub_a")).toEqual({ x: 1134, y: 204 });
-		expect(at(layout, "sub_go")).toEqual({ x: 1434, y: 204 });
+		expect(at(layout, "sub")).toEqual({ x: 834, y: 226 });
+		expect(at(layout, "sub_a")).toEqual({ x: 1134, y: 226 });
+		expect(at(layout, "sub_go")).toEqual({ x: 1434, y: 226 });
 	});
 
-	it("嵌套的子流程紧跟在上一层子流程下面一行（行距 164）", () => {
+	it("嵌套的子流程紧跟在上一层子流程下面一行（行距 186）", () => {
 		const layout = tidyLayout(doc);
-		expect(at(layout, "deep")).toEqual({ x: 1668, y: 368 });
-		expect(at(layout, "deep_a")).toEqual({ x: 1968, y: 368 });
+		expect(at(layout, "deep")).toEqual({ x: 1668, y: 412 });
+		expect(at(layout, "deep_a")).toEqual({ x: 1968, y: 412 });
 	});
 
 	it("子流程区域之间、子流程区域与主链之间不重叠", () => {
@@ -147,9 +147,9 @@ describe("整理布局：子流程放在主链下方", () => {
 			nodes: [...doc.nodes, node("lonely", "subflow_entry"), node("lonely_a"), node("orphan")],
 			edges: [...doc.edges, chain("lonely", "lonely_a")],
 		});
-		expect(at(layout, "lonely")).toEqual({ x: 0, y: 532 });
-		expect(at(layout, "lonely_a")).toEqual({ x: 300, y: 532 });
-		expect(at(layout, "orphan")).toEqual({ x: 0, y: 696 });
+		expect(at(layout, "lonely")).toEqual({ x: 0, y: 598 });
+		expect(at(layout, "lonely_a")).toEqual({ x: 300, y: 598 });
+		expect(at(layout, "orphan")).toEqual({ x: 0, y: 784 });
 	});
 
 	it("链上有环时每个节点仍只出现一次", () => {
@@ -440,8 +440,8 @@ describe("整理布局：子流程排在触发它的那一行下面", () => {
 			edges: [...base.edges, dispatch("n2", "sub"), chain("sub", "sub_a")],
 		};
 		const layout = tidyLayout(doc);
-		expect(at(layout, "sub")).toEqual({ x: 834, y: 204 });
-		expect(at(layout, "n4")).toEqual({ x: 0, y: 368 });
+		expect(at(layout, "sub")).toEqual({ x: 834, y: 226 });
+		expect(at(layout, "n4")).toEqual({ x: 0, y: 412 });
 		expect(dispatchCrossings(doc, layout)).toEqual([]);
 	});
 
