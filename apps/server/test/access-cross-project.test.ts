@@ -226,6 +226,20 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 		return res;
 	};
 
+	/**
+	 * 项目乙自己的管理员在「对照」里真的调了停用接口：停用的 Agent 手上任务的任务凭据立刻不认（#638），
+	 * 之后的用例（项目甲的任务凭据、项目乙自己的任务凭据）要的是 Agent 在线可用的状态，每个接口测完恢复。
+	 */
+	const restoreVictim = async () => {
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			await client.query("update agents set disabled_at = null where name = 'agent-victim'");
+		} finally {
+			await client.end();
+		}
+	};
+
 	for (const def of projectRoutes()) {
 		const key = routeKey(def);
 		it(key, async () => {
@@ -278,6 +292,7 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 				);
 				expect(await isAccessNotFound(res), insider.name).toBe(false);
 			}
+			await restoreVictim();
 		}, 30_000);
 	}
 

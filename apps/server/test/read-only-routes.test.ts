@@ -23,6 +23,7 @@ import { strToU8 } from "fflate";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
+import { requiresCredential } from "../src/auth/access-rules.js";
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { ArrayCoverage } from "./support/array-coverage.js";
@@ -417,7 +418,7 @@ describe("声明为只读的接口真的不写库", () => {
 		const body = sampleBody(def);
 		// 账号类的只读接口只认登录 Cookie（同源的请求）；项目的管理面（项目令牌的列表）要「管理」，管理员的登录有。
 		const credentials =
-			def.resource.kind === "account" || def.resource.kind === "project"
+			def.resource.kind === "account" || requiresCredential(def)
 				? { cookie: `sfly_login=${adminCookie}`, "sec-fetch-site": "same-origin" }
 				: undefined;
 		const res = await cp.fetch(url, {

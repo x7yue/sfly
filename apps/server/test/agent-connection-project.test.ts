@@ -7,6 +7,7 @@
 import { ConnectError } from "@connectrpc/connect";
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
+import { notRegisteredHere } from "../src/agents/agent-auth.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../src/projects/project-id.js";
 import { ApiClient } from "./support/api-client.js";
 import { bearer, TestAccounts } from "./support/credentials.js";
@@ -126,27 +127,23 @@ describe("连接的项目", () => {
 		await agent.expectNoAssign(300);
 	});
 
+	/** 没有有效凭据时统一的回应（说明里的名字换成了 NAME）。 */
+	const SAME = { code: 16, message: notRegisteredHere("NAME") };
+
 	it("三种情况同一个回应：连接的一方对这个名字所在的项目没有有效凭据时，还没有登记、登记在别的项目、在别的项目里被停用、这个名字有 Agent 凭据，说法一样（状态和说明都一样）", async () => {
-		await start({ agentToken: "s3cret" });
+		await start();
 		// 登记在 alpha 的两台（一台停用了）、登记在默认项目并签发过 Agent 凭据的一台。
 		await registerAndLeave("in-alpha", await issue(ALPHA, "in-alpha"));
 		await registerAndLeave("off-alpha", await issue(ALPHA, "off-alpha"));
-		// 别的项目里的 Agent 现在没有 HTTP 入口（路径里没有项目，#488 之前）：直接写库停用。
 		await db.query("update agents set disabled_at = now() where name = 'off-alpha'");
 		await registerAndLeave("has-cred", await issue(DEFAULT_PROJECT, "has-cred"));
 
-		const baseline = await refusal("fresh", "");
-		expect(baseline.code).toBe(16);
 		const cells: Record<string, { code: number; message: string }> = {};
 		for (const [how, token] of [
 			["没有凭据", ""],
-			["共享令牌", "s3cret"],
 			["不认识的旧令牌", "stale-token"],
 		] as const) {
-			// 共享令牌连没有登记过的名字是接受的（旧方式）：它只在另外三个名字上比。
-			const names = how === "共享令牌" ? [] : ["fresh"];
-			for (const name of [...names, "in-alpha", "off-alpha", "has-cred"]) {
-				if (how === "不认识的旧令牌" && name === "fresh") continue;
+			for (const name of ["fresh", "in-alpha", "off-alpha", "has-cred"]) {
 				cells[`${how} × ${name}`] = await refusal(name, token);
 			}
 		}
@@ -163,9 +160,20 @@ describe("连接的项目", () => {
 			await issue(ALPHA, "has-cred"),
 		);
 		for (const [cell, outcome] of Object.entries(cells)) {
-			expect(outcome, cell).toEqual(baseline);
+			expect(outcome, cell).toEqual(SAME);
 		}
-		expect(Object.keys(cells).length).toBeGreaterThanOrEqual(10);
+		expect(Object.keys(cells).length).toBeGreaterThanOrEqual(11);
+	}, 60_000);
+
+	it("配了共享令牌的部署：共享令牌连别的项目登记的名字、别的项目里被停用的名字、有 Agent 凭据的名字，同样是这一句话", async () => {
+		await start({ agentToken: "s3cret" });
+		await registerAndLeave("in-alpha", await issue(ALPHA, "in-alpha"));
+		await registerAndLeave("off-alpha", await issue(ALPHA, "off-alpha"));
+		await db.query("update agents set disabled_at = now() where name = 'off-alpha'");
+		await registerAndLeave("has-cred", await issue(DEFAULT_PROJECT, "has-cred"));
+		for (const name of ["in-alpha", "off-alpha", "has-cred"]) {
+			expect(await refusal(name, "s3cret"), `共享令牌 × ${name}`).toEqual(SAME);
+		}
 	}, 60_000);
 
 	it("先比项目、后看停用：别的项目里被停用的 Agent，和不存在一样（不说「已被停用」）；自己项目里被停用的才说", async () => {
