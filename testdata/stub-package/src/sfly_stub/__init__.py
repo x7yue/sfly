@@ -145,12 +145,20 @@ def sleep(ctx: Context, seconds: float) -> dict[str, Any]:
 
 @node(title="进程树", outputs=["pids"])
 def process_tree(
-    ctx: Context, pid_file: str, seconds: float = 3600, ignore_term: bool = False
+    ctx: Context,
+    pid_file: str,
+    seconds: float = 3600,
+    ignore_term: bool = False,
+    block_cancel_marker: bool = False,
 ) -> dict[str, Any]:
     """启动一个子进程后一起等待，把自己和子进程的 PID 写到 pid_file（超时、取消杀进程树的测试用）。
 
     ignore_term 时两个进程都忽略 SIGTERM，只能被强制杀掉。
+    block_cancel_marker 时先在取消标记的路径（`SFLY_CANCEL`）上建一个目录：Agent 写取消标记会失败
+    （EISDIR），测试看写失败时任务还是照常被终止。
     """
+    if block_cancel_marker:
+        os.mkdir(os.environ["SFLY_CANCEL"])
     prelude = "import signal, time\n"
     if ignore_term:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -182,6 +190,54 @@ def wait_cancel(
     finally:
         with open(report_file, "w") as f:
             f.write("cancelled" if ctx.cancelled() else "not cancelled")
+
+
+@node(title="停不理会 SIGTERM 的服务", outputs=[])
+def stubborn_services(
+    ctx: Context,
+    pid_file: str,
+    count: int = 2,
+    grace: float = 3,
+    cancelled_grace: float = 1,
+) -> None:
+    """起 count 个不理会 SIGTERM 的服务（各自一个会话，不在任务的进程树里），把 PID 写到 pid_file；
+    被终止时在 finally 里依次停它们：SIGTERM 之后最多等一个宽限期再 SIGKILL。
+
+    宽限期是 grace 秒；任务已被取消、也就是 `ctx.cancelled()` 为真（取消和超时进入收尾时间时 Agent
+    都先写取消标记，#593）时压短成 cancelled_grace 秒。和 sfly-std 的 `stop_background_process`
+    同样的做法：平台留给收尾的时间有限，每个服务都用满宽限期的话，后面的服务来不及被停掉。
+    """
+    services = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import signal, time\n"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                "time.sleep(3600)",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        for _ in range(count)
+    ]
+    tmp = f"{pid_file}.tmp"
+    with open(tmp, "w") as f:
+        f.write(" ".join(str(service.pid) for service in services))
+    os.replace(tmp, pid_file)
+    try:
+        time.sleep(3600)
+    finally:
+        wait = min(grace, cancelled_grace) if ctx.cancelled() else grace
+        for service in services:
+            service.terminate()
+            try:
+                service.wait(timeout=wait)
+            except subprocess.TimeoutExpired:
+                service.kill()
+                service.wait()
 
 
 @node(title="环境探针", outputs=["prefix", "cwd", "env"])

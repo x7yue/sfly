@@ -1,5 +1,6 @@
 """假的模型端点：按第一条用户消息认题，照剧本一步一步回复，最后给出文字。"""
 
+import json
 from pathlib import Path
 
 from fake_model import chunks, next_reply
@@ -18,7 +19,10 @@ def test_plays_the_script_by_counting_tool_results(tmp_path: Path) -> None:
     assert first == {"tool": "bash", "arguments": '{"command": "ls -la"}', "call_id": "call_1"}
     tool = {"role": "tool", "content": "ok"}
     second = next_reply({"messages": [user, {"role": "assistant"}, tool]}, root)
-    assert second["arguments"] == '{"command": "bash /tmp/aeval-reference/solve.sh"}'
+    assert json.loads(second["arguments"]) == {
+        "command": 'cd "$(cat /tmp/aeval-reference/workdir 2>/dev/null || pwd)" '
+        "&& bash /tmp/aeval-reference/solve.sh"
+    }
     done = next_reply({"messages": [user, tool, tool]}, root)
     assert done == {"text": "完成。"}
 

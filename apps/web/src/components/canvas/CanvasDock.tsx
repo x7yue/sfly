@@ -24,6 +24,12 @@ import { viewportDuration } from "./motion";
 export const floatGroupClass =
 	"absolute z-10 flex items-center gap-1.5 rounded-xl border border-border-soft bg-surface p-1.25 shadow-float";
 
+/**
+ * 底部工具条占的高度加留白（px）：画布上的右键菜单底边最低到窗口底边上面这么多（工具条 bottom-3.5 = 14px，
+ * 条高约 44px，再留 6px），往下展开放不下时整个移到上面，不盖住工具条。
+ */
+export const DOCK_CLEARANCE = 64;
+
 export function GroupDivider() {
 	return <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />;
 }
