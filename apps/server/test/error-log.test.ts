@@ -14,6 +14,7 @@ import { describeError, printError } from "../src/util/output.js";
 import { safeError, sanitizeLogArgs, serializeError } from "../src/util/safe-error.js";
 import { loginCookie } from "./support/credentials.js";
 import { migrationsCopy, STATEMENT_BREAKPOINT } from "./support/migrations.js";
+import { pluginHitLines } from "./support/plugin-lint.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const SECRET = "scrypt$ln=16,r=8,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaA";
@@ -421,49 +422,66 @@ describe("describeError：给操作者看的一行说明带着原因（#578）",
 });
 
 describe("统一的出口文件自己（#578）", () => {
-	/** 出口文件里每个顶层的函数或变量：名字、参数的类型文字、函数体里有没有 `safeError(`、有没有直接碰到终端。 */
+	/**
+	 * 出口文件里每个顶层的声明（函数、变量、类）：名字、起止行、函数的参数类型文字、函数体里有没有 `safeError(`。
+	 * 「直接往终端写」不自己判断：用 lint 规则 no-direct-output 跑这个文件的副本（换个文件名，规则就不把它当出口文件排除），
+	 * 规则认的写法——包括 `const { stderr } = process`、`import { stderr } from "node:process"`、`writeSync(2, …)`、类的方法——
+	 * 这里同样认，命中的行落在哪个声明里，那个声明就是「直接往终端写」的。
+	 */
 	function declarations() {
 		const file = new URL("../src/util/output.ts", import.meta.url);
-		const source = ts.createSourceFile(
-			"output.ts",
-			readFileSync(file, "utf8"),
-			ts.ScriptTarget.Latest,
-			true,
+		const text = readFileSync(file, "utf8");
+		const source = ts.createSourceFile("output.ts", text, ts.ScriptTarget.Latest, true);
+		const hits = pluginHitLines(
+			"no-direct-output",
+			"apps/server/src/util/output-under-test.ts",
+			text,
 		);
-		const touchesTerminal = (node: ts.Node) =>
-			/\bconsole\b|\bprocess\s*\.\s*(?:stdout|stderr)\b/.test(node.getText(source));
-		const found: { name: string; params: string[]; terminal: boolean; scrubs: boolean }[] = [];
-		const fromFunction = (name: string, fn: ts.SignatureDeclaration & { body?: ts.Node }) => ({
-			name,
-			params: fn.parameters.map((p) => p.type?.getText(source) ?? "（没写类型）"),
-			terminal: fn.body !== undefined && touchesTerminal(fn.body),
-			scrubs: fn.body?.getText(source).includes("safeError(") ?? false,
-		});
+		const lineOf = (pos: number) => source.getLineAndCharacterOfPosition(pos).line + 1;
+		const found: {
+			name: string;
+			params: string[];
+			terminal: boolean;
+			scrubs: boolean;
+		}[] = [];
+		const add = (
+			name: string,
+			node: ts.Node,
+			fn?: ts.SignatureDeclaration & { body?: ts.Node },
+		) => {
+			const start = lineOf(node.getStart(source));
+			const end = lineOf(node.getEnd());
+			found.push({
+				name,
+				params: fn
+					? fn.parameters.map((p) => p.type?.getText(source) ?? "（没写类型）")
+					: ["（不是函数）"],
+				terminal: hits.some((line) => line >= start && line <= end),
+				scrubs: fn?.body?.getText(source).includes("safeError(") ?? false,
+			});
+		};
 		for (const statement of source.statements) {
 			if (ts.isFunctionDeclaration(statement) && statement.name) {
-				found.push(fromFunction(statement.name.text, statement));
+				add(statement.name.text, statement, statement);
+			} else if (ts.isClassDeclaration(statement) && statement.name) {
+				add(statement.name.text, statement);
 			} else if (ts.isVariableStatement(statement)) {
 				for (const declaration of statement.declarationList.declarations) {
-					const name = declaration.name.getText(source);
 					const init = declaration.initializer;
-					if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
-						found.push(fromFunction(name, init));
-					} else {
-						found.push({
-							name,
-							params: ["（不是函数）"],
-							terminal: touchesTerminal(declaration),
-							scrubs: false,
-						});
-					}
+					const fn =
+						init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) ? init : undefined;
+					add(declaration.name.getText(source), declaration, fn);
 				}
+			} else if (ts.isImportDeclaration(statement)) {
+				// 导入本身命中（`import { stderr } from "node:process"`）：算在一个叫「（导入）」的声明里，一定不在登记的里面。
+				add("（导入）", statement);
 			}
 		}
 		return found;
 	}
 
-	// 登记的是「能往终端写的函数，各自收什么」。以后在出口文件里加一个直接打印的函数，这条就红：要么登记在这里（审查时看得见它收什么、
-	// 是不是过了 safeError），要么不要加。lint 规则 no-direct-output 把这个文件整个排除在外，管不到它自己。
+	// 登记的是「能往终端写的声明，各自收什么」。以后在出口文件里加一个直接打印的函数，这条就红：要么登记在这里（审查时看得见它收什么、
+	// 是不是过了 safeError），要么不要加。lint 规则 no-direct-output 把这个文件整个排除在外，管不到它自己，所以由这里用同一条规则查。
 	const REGISTERED: Record<string, string[]> = {
 		printError: ["string", "unknown"],
 		printWarning: ["string"],
@@ -472,14 +490,14 @@ describe("统一的出口文件自己（#578）", () => {
 		terminalStreams: [],
 	};
 
-	it("直接往终端写的函数只有登记的这几个", () => {
+	it("直接往终端写的声明只有登记的这几个（按 lint 规则认的写法判断，含类的方法、解构、导入）", () => {
 		const printing = declarations()
 			.filter((d) => d.terminal)
 			.map((d) => d.name)
 			.sort();
 		expect(
 			printing,
-			"apps/server/src/util/output.ts 里新加了直接往终端写的函数（或把已有的删了）：在这个测试的 REGISTERED 里登记它收什么参数；收错误的要先过 safeError。",
+			"apps/server/src/util/output.ts 里新加了直接往终端写的声明（或把已有的删了）：在这个测试的 REGISTERED 里登记它收什么参数；收错误的要先过 safeError。",
 		).toEqual(Object.keys(REGISTERED).sort());
 	});
 
@@ -492,6 +510,26 @@ describe("统一的出口文件自己（#578）", () => {
 					`${d.name} 收的参数不只是字符串，却没有过 safeError`,
 				).toBe(true);
 			}
+		}
+	});
+
+	it("守卫自己认得出规则认的那几种新写法：解构、导入、writeSync、类的方法（在副本里加一个函数试）", () => {
+		const base = readFileSync(new URL("../src/util/output.ts", import.meta.url), "utf8");
+		const hit = (extra: string) =>
+			pluginHitLines(
+				"no-direct-output",
+				"apps/server/src/util/output-under-test.ts",
+				`${base}\n${extra}`,
+			);
+		const before = hit("").length;
+		for (const extra of [
+			"export function a(error: unknown) { const { stderr } = process; stderr.write(String(error)); }",
+			'import { stderr } from "node:process";',
+			"export function b(error: unknown) { writeSync(2, String(error)); }",
+			"export class C { m(error: unknown) { console.error(error); } }",
+			"export const d = (error: unknown) => process.emitWarning(String(error));",
+		]) {
+			expect(hit(extra).length, extra).toBeGreaterThan(before);
 		}
 	});
 });
