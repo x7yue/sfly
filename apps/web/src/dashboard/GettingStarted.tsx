@@ -110,7 +110,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 				: "",
 			body: (
 				<>
-					在节点包项目里运行 <Mono>sfly publish</Mono>；只用标准节点时，上传 <Mono>sfly-std</Mono>{" "}
+					在节点包目录里运行 <Mono>sfly publish</Mono>；只用标准节点时，上传 <Mono>sfly-std</Mono>{" "}
 					的 <Mono>.sflypkg</Mono>。
 				</>
 			),

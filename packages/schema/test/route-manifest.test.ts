@@ -69,8 +69,10 @@ describe("路由清单里每个接口的声明和响应", () => {
 			(e) => (e.kind === "endpoint" || e.kind === "upload") && e.response === undefined,
 		);
 		expect(noBody.map((e) => `${e.method} ${e.path}`).sort()).toEqual([
+			"DELETE /account/tokens/:id",
 			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
+			"DELETE /projects/:project/tokens/:id",
 			"POST /auth/logout",
 			"POST /auth/logout-all",
 			"POST /auth/password",

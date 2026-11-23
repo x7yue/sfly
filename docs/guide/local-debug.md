@@ -2,7 +2,7 @@
 
 本地调试在开发机上直接执行节点，不经过控制面和 sfly Agent，几秒钟就能验证节点逻辑。单元测试（`sfly.testing`）和 `sfly debug` 都用和 Agent 相同的执行器：参数校验、输出限制、日志、指标、产物和取消的行为都和在 Agent 上一致，本地通过的节点在 Agent 上也能跑。
 
-下面的命令都在项目目录（`sfly init` 创建的目录）里运行。
+下面的命令都在节点包目录（`sfly init` 创建的目录）里运行。
 
 ## 检查与单元测试
 
@@ -12,7 +12,7 @@ uv run ruff check
 uv run pytest
 ```
 
-单元测试用 `sfly.testing.run_node` 执行节点，拿到输出、日志、进度、指标、产物、`ctx.notify` 要发的通知和 `ctx.action`、`ctx.mark` 记录的动作与标记，也能模拟取消，写法见 [开发节点（SDK 参考）](sdk-reference.md) 的「sfly.testing」一节和示例项目里的 `tests/test_example.py`。每个节点至少测一条成功路径和一条失败路径。
+单元测试用 `sfly.testing.run_node` 执行节点，拿到输出、日志、进度、指标、产物、`ctx.notify` 要发的通知和 `ctx.action`、`ctx.mark` 记录的动作与标记，也能模拟取消，写法见 [开发节点（SDK 参考）](sdk-reference.md) 的「sfly.testing」一节和示例节点包里的 `tests/test_example.py`。每个节点至少测一条成功路径和一条失败路径。
 
 ## `sfly debug`
 
