@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from indexes import SDK, FakeControlPlane, StaticServer, uv_env, wheelhouse
+from indexes import SDK, STD, FakeControlPlane, StaticServer, uv_env, wheelhouse
 
 
 @pytest.fixture(scope="session")
@@ -29,17 +29,38 @@ def sfly_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def std_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """从本仓库 std 构建的 sfly-std wheel（控制面的包索引里的 sfly-std）。"""
+    out = tmp_path_factory.mktemp("std-wheel")
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(out), str(STD)],
+        check=True,
+        capture_output=True,
+        env=uv_env(out),
+    )
+    return next(out.glob("sfly_std-*.whl"))
+
+
+@pytest.fixture(scope="session")
 def pypi_mirror() -> Iterator[StaticServer]:
-    """「PyPI 镜像」桩：`<url>/pypi/simple/`，有 pytest、ruff、jsonschema 及其依赖。"""
+    """「PyPI 镜像」桩：`<url>/pypi/simple/`。
+
+    有 pytest、ruff、jsonschema、sfly-std 的依赖（httpx、psutil）及它们的依赖；
+    没有 sfly-std 和 sfly：它们不在 PyPI 上，只在控制面的包索引里。"""
     with tempfile.TemporaryDirectory(prefix="sfly-wheelhouse-") as tmp:
         server = StaticServer()
-        server.add_index("/pypi/simple", wheelhouse(["pytest", "ruff", "jsonschema"], Path(tmp)))
+        server.add_index(
+            "/pypi/simple",
+            wheelhouse(["pytest", "ruff", "jsonschema", "httpx", "psutil"], Path(tmp)),
+        )
         yield server
         server.close()
 
 
 @pytest.fixture
-def control_plane(sfly_wheel: Path, pypi_mirror: StaticServer) -> Iterator[FakeControlPlane]:
+def control_plane(
+    sfly_wheel: Path, std_wheel: Path, pypi_mirror: StaticServer
+) -> Iterator[FakeControlPlane]:
     """配置了 PyPI 镜像（桩）和 Python 下载镜像（不会被访问：测试不下载 Python）的控制面。"""
     from sfly import __version__
 
@@ -49,7 +70,7 @@ def control_plane(sfly_wheel: Path, pypi_mirror: StaticServer) -> Iterator[FakeC
         version=__version__,
         pypi_mirror=f"{pypi_mirror.url}/pypi/simple/",
         python_install_mirror=f"{server.url}/github-release/astral-sh/python-build-standalone/",
-        sfly_wheels=[sfly_wheel],
+        wheels=[sfly_wheel, std_wheel],
     )
     server.close()
 

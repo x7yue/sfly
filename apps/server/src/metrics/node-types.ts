@@ -1,4 +1,5 @@
 import {
+	DEV_VERSION,
 	NodeTypeMetadata,
 	type PackageMetadata,
 	type StoredOrchestrationDocument,
@@ -7,8 +8,6 @@ import { and, eq } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents, nodePackages } from "../db/schema.js";
 import { type NodeTypeView, withDefaultCharts } from "../packages/default-charts.js";
-
-const DEV_VERSION = "dev";
 
 /** 包节点引用的节点类型。 */
 export interface NodeTypeRef {

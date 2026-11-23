@@ -40,6 +40,10 @@
 //   SFLY_CORS_ORIGINS 允许跨域调用 API 的来源，逗号分隔，例如 https://dash.example.com,http://localhost:5173（可选）。
 //                    自建页面托管在别的来源时，浏览器靠它才调得通控制面（ADR 0022）；设置后只有名单里的来源能调用，
 //                    没有设置（或写 *）时允许所有来源，不带凭据。控制台自己的页面同源，不受影响
+//   SFLY_ASSISTANT_URL 助手服务的地址（http 或 https，可选）。助手默认关闭：地址和密钥都配好了才开，
+//                    没开时会话的写接口返回 503 assistant_not_configured，读接口照常（ADR 0027）
+//   SFLY_ASSISTANT_SECRET 和助手服务共用的密钥，至少 32 个字符（可选；太短当作没有配置，原因写进日志和就绪状态）
+//   SFLY_WORKBENCH_AGENT 哪台 Agent 是工作台，Agent 的名字（可选；没设置时助手开着也建不了会话，503 写明原因）
 //   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
 //                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
 //   SFLY_MIGRATIONS_DIR 数据库迁移目录（默认 apps/server/drizzle）
@@ -166,6 +170,9 @@ const controlPlane = await startControlPlane({
 	installScriptFile: defaults.installScriptFile,
 	publicGrpcUrl: env.SFLY_PUBLIC_GRPC_URL || undefined,
 	migrationsDir: env.SFLY_MIGRATIONS_DIR || defaults.migrationsDir,
+	assistantUrl: env.SFLY_ASSISTANT_URL || undefined,
+	assistantSecret: env.SFLY_ASSISTANT_SECRET || undefined,
+	workbenchAgent: env.SFLY_WORKBENCH_AGENT || undefined,
 }).catch((error: unknown) => {
 	printError("sfly: 控制面没有启动：", error);
 	process.exit(1);

@@ -1,0 +1,13 @@
+{
+	"说明": "第 5 题：远程执行一个长命令，探针在它执行时结束 pi。",
+	"steps": [
+		{
+			"id": "long",
+			"tool": "bash",
+			"args": {
+				"command": "sleep 601",
+				"timeout": 900
+			}
+		}
+	]
+}
