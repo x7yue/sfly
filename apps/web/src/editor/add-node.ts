@@ -1,7 +1,6 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import {
 	type NodeTypeIo,
-	RUN_STATE_REFERENCE,
+	newPackageNode,
 	runStateInputs,
 	type StructureDocument,
 	subflowName,
@@ -182,17 +181,8 @@ export const idStem = (item: AddItem) =>
 export function newDocNode(item: AddItem, id: string): DocNode {
 	switch (item.kind) {
 		case "package":
-			return {
-				id,
-				kind: "package",
-				package: item.package,
-				node: item.node,
-				always: false,
-				// 「运行状态」类型的输入必须接 ${{ run.state }}（它只有这一种合法的值），新节点直接填好。
-				inputs: Object.fromEntries(
-					(item.runStateInputs ?? []).map((input) => [input, RUN_STATE_REFERENCE]),
-				),
-			};
+			// 和控制面的局部编辑（加节点）同一份内容：「运行状态」类型的输入直接填好 ${{ run.state }}。
+			return newPackageNode(item.package, item.node, id, item.runStateInputs);
 		case "async":
 			return { id, kind: "async", params: {} };
 		case "subflow_entry":
