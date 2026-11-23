@@ -112,6 +112,10 @@ describe("停止、插话、结束会话、排队", () => {
 		assistant.steerReply = () => undefined;
 		assistant.endReply = () => undefined;
 		assistant.stopSettleMs = 0;
+		assistant.endDelayMs = 0;
+		assistant.abortDelayMs = 0;
+		assistant.promptDelayMs = 0;
+		assistant.log.length = 0;
 		assistant.strictTurns = true;
 		assistant.health = () => assistant.healthy();
 	});
@@ -162,7 +166,11 @@ describe("停止、插话、结束会话、排队", () => {
 			expect(assistant.steers).toHaveLength(1);
 			expect(assistant.steers[0]).toMatchObject({
 				sessionId: first.id,
-				body: { text: "先别改测试", message_id: (events[2] as { message_id: string }).message_id },
+				body: {
+					turn: 1,
+					text: "先别改测试",
+					message_id: (events[2] as { message_id: string }).message_id,
+				},
 			});
 			// 没有开始新的一轮：助手服务只收到过一次 prompt，会话还在做第 1 轮。
 			expect(assistant.prompts).toHaveLength(1);
@@ -193,6 +201,7 @@ describe("停止、插话、结束会话、排队", () => {
 			const notice = events.find((e) => e.type === "notice");
 			expect(notice).toMatchObject({
 				kind: "steer_dropped",
+				message: expect.stringContaining("没有送到"),
 				message_id: (said as { message_id: string }).message_id,
 			});
 			// 没有重试，也没有开始新的一轮。
@@ -215,7 +224,11 @@ describe("停止、插话、结束会话、排队", () => {
 			}
 			const events = (await detail(first.id)).events;
 			expect(events.filter((e) => e.type === "user_message")).toHaveLength(2);
-			expect(events.find((e) => e.type === "notice")).toMatchObject({ kind: "steer_dropped" });
+			// 结果未知（连不上也可能是命令送到之后断了）：写「没有确认送到」，不写「没有送到」。
+			expect(events.find((e) => e.type === "notice")).toMatchObject({
+				kind: "steer_dropped",
+				message: expect.stringContaining("没有确认送到"),
+			});
 		});
 
 		it("这一轮刚结束（会话已经空闲）：这句话开始新的一轮，不是插话", async () => {
@@ -236,6 +249,210 @@ describe("停止、插话、结束会话、排队", () => {
 			const res = await say(first.id, "还能说吗");
 			expect(res.status).toBe(409);
 			expect((await json<{ error: { code: string } }>(res)).error.code).toBe("session_ended");
+		});
+	});
+
+	describe("插话的结局（协议「插话」的不变式）", () => {
+		/** 用户说的插话（steer: true）的 message_id，按说的先后。 */
+		const steerIds = async (id: string) =>
+			(await detail(id)).events
+				.filter((e) => e.type === "user_message" && e.steer)
+				.map((e) => (e as { message_id: string }).message_id);
+		const queue = (id: string, turn: number, ids: string[], texts: string[]) =>
+			assistant.emit(id, turn, {
+				type: "steer_queue",
+				messages: ids.map((message_id, i) => ({ message_id, text: texts[i] ?? "" })),
+			});
+
+		it("steer 命令带这句话是对第几轮说的：第 2 轮在做时是 2", async () => {
+			const first = await idleSession();
+			await say(first.id, "接着做");
+			expect(assistant.prompts.at(-1)?.body.turn).toBe(2);
+			expect((await say(first.id, "再补一句")).status).toBe(200);
+			expect(assistant.steers.at(-1)?.body).toMatchObject({ turn: 2, text: "再补一句" });
+		});
+
+		it("控制面自己补结局（助手服务收下了中止、却没有带回结局）：这一轮里没有确认送到、也没有 steer_dropped 的插话各补一条，排在补的 turn_end 前面；确认送到的不补", async () => {
+			assistant.strictTurns = false;
+			const first = await json<SessionView>(await create("做第一件事"));
+			for (const text of ["甲", "乙", "丙", "丁"])
+				expect((await say(first.id, text)).status).toBe(200);
+			const [a, b, c, d] = await steerIds(first.id);
+			expect([a, b, c, d].every(Boolean)).toBe(true);
+			// 助手服务的队列：四句都出现过，之后甲不在了（确认送到）。丁从没有出现在任何一份队列里（刚收下就不回话了）。
+			queue(first.id, 1, [a as string, b as string, c as string], ["甲", "乙", "丙"]);
+			queue(first.id, 1, [b as string, c as string], ["乙", "丙"]);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			// 助手服务收下了中止、没有带回结局：等宽限（测试里 300 毫秒）之后控制面自己补。
+			const stopped = await api.postEmpty(`/sessions/${first.id}/stop`);
+			expect(stopped.status).toBe(200);
+			const events = (await detail(first.id)).events;
+			const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
+			expect(dropped.map((e) => (e as { message_id: string }).message_id)).toEqual([b, c, d]);
+			for (const e of dropped) {
+				expect((e as { message: string }).message).toContain("没有确认送到");
+			}
+			// 顺序：用户的话、（插话各自的）、乙丙丁的 steer_dropped，最后是补的 turn_end。
+			const tail = events.slice(-4).map((e) => e.type);
+			expect(tail).toEqual(["notice", "notice", "notice", "turn_end"]);
+			expect(events.at(-1)).toMatchObject({ type: "turn_end", outcome: "stopped" });
+			// 助手服务晚到的 steer_dropped 和 turn_end：这一轮已经结束，丢掉，不重复。
+			assistant.emit(first.id, 1, {
+				type: "notice",
+				kind: "steer_dropped",
+				message: "晚到的",
+				message_id: b as string,
+			});
+			assistant.emit(first.id, 1, turnEnd(1, "stopped"));
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			expect((await detail(first.id)).events).toHaveLength(events.length);
+		});
+
+		it("已经有 steer_dropped 的插话（助手服务回 409 时控制面写过，或者助手服务发过）不再补第二条", async () => {
+			assistant.strictTurns = false;
+			const first = await json<SessionView>(await create("做第一件事"));
+			assistant.steerReply = () => ({ status: 409, code: "no_turn_running", message: "刚好结束" });
+			expect((await say(first.id, "来得太晚")).status).toBe(200);
+			assistant.steerReply = () => undefined;
+			expect((await say(first.id, "助手服务收下了")).status).toBe(200);
+			const [late, accepted] = await steerIds(first.id);
+			// 助手服务自己发了第二句的 steer_dropped（持久，核对通过），之后停止、控制面补结局。
+			assistant.emit(first.id, 1, {
+				type: "notice",
+				kind: "steer_dropped",
+				message: "没有送到：「助手服务收下了」",
+				message_id: accepted as string,
+			});
+			await eventually(async () =>
+				expect(
+					(await detail(first.id)).events.filter(
+						(e) => e.type === "notice" && e.kind === "steer_dropped",
+					),
+				).toHaveLength(2),
+			);
+			expect((await api.postEmpty(`/sessions/${first.id}/stop`)).status).toBe(200);
+			const dropped = (await detail(first.id)).events.filter(
+				(e) => e.type === "notice" && e.kind === "steer_dropped",
+			);
+			expect(dropped.map((e) => (e as { message_id: string }).message_id).sort()).toEqual(
+				[late as string, accepted as string].sort(),
+			);
+		});
+
+		it("助手服务带回了结局：控制面不替它补 steer_dropped（它自己发的在 turn_end 前面）", async () => {
+			const first = await json<SessionView>(await create("做第一件事"));
+			expect((await say(first.id, "甲")).status).toBe(200);
+			expect((await say(first.id, "乙")).status).toBe(200);
+			// 严格的假助手服务：收到中止时没送到的两句各发一条 steer_dropped，再发 turn_end（协议「停止一轮」第 4、5 步）。
+			expect((await api.postEmpty(`/sessions/${first.id}/stop`)).status).toBe(200);
+			const events = (await detail(first.id)).events;
+			const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
+			expect(dropped).toHaveLength(2);
+			expect(events.at(-1)).toMatchObject({ type: "turn_end", outcome: "stopped" });
+			expect((events.at(-1) as { reason: string }).reason).toContain("助手服务按中止结束");
+			// 控制面没有补：每句话只有一条 steer_dropped，没有写「没有确认送到」。
+			for (const e of dropped) {
+				expect((e as { message: string }).message).not.toContain("没有确认送到");
+			}
+		});
+
+		it("这一轮没有交到助手服务手上（prompt 被拒绝）：这期间说的插话（助手服务还没登记这一轮，回 409）只有一条 steer_dropped，控制面补的 failed 的 turn_end 在它后面", async () => {
+			const first = await idleSession();
+			// prompt 慢（模拟冷启动）：这期间用户又说了一句（插话），助手服务那边这一轮还没有登记，回 409 no_turn_running；
+			// 之后 prompt 被拒绝，控制面补 failed 的结局。
+			assistant.promptDelayMs = 300;
+			assistant.promptReply = () => ({
+				status: 503,
+				code: "model_not_configured",
+				message: "没配模型",
+			});
+			assistant.steerReply = () => ({ status: 409, code: "no_turn_running", message: "还没登记" });
+			const handing = say(first.id, "接着做");
+			await eventually(async () => expect(assistant.prompts).toHaveLength(2));
+			expect((await say(first.id, "插进来的话")).status).toBe(200);
+			expect((await handing).status).toBe(503);
+			await eventually(async () => expect(await statusOf(cp, first.id)).toBe("idle"));
+			const events = (await detail(first.id)).events;
+			expect(events.filter((e) => e.type === "notice" && e.kind === "steer_dropped")).toHaveLength(
+				1,
+			);
+			expect(events.at(-1)).toMatchObject({
+				type: "turn_end",
+				turn: 2,
+				outcome: "model_unavailable",
+			});
+			expect(events.at(-2)).toMatchObject({ type: "notice", kind: "steer_dropped" });
+		});
+	});
+
+	describe("停止的等待从发出 abort 起算", () => {
+		it("助手服务过了宽限才带回结局，但从收到回应算还在宽限之内：控制面已经按发出 abort 起算到点，自己补结局；晚到的 turn_end 丢掉", async () => {
+			assistant.strictTurns = false;
+			const first = await json<SessionView>(await create("做第一件事"));
+			// 测试里的宽限是 300 毫秒：abort 的回应 400 毫秒才到（已经过了宽限），助手服务在回应之后 100 毫秒才带回结局。
+			assistant.abortDelayMs = 400;
+			try {
+				const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
+				setTimeout(() => assistant.emit(first.id, 1, turnEnd(1, "stopped")), 500);
+				expect((await stopping).status).toBe(200);
+				await new Promise((resolve) => setTimeout(resolve, 300));
+			} finally {
+				assistant.abortDelayMs = 0;
+			}
+			const ends = (await detail(first.id)).events.filter((e) => e.type === "turn_end");
+			expect(ends).toHaveLength(1);
+			// 是控制面补的，不是助手服务带回的（助手服务的 reason 是「测试」）。
+			expect((ends[0] as { reason: string }).reason).toContain("没有及时带回");
+			expect(await statusOf(cp, first.id)).toBe("idle");
+		});
+
+		it("助手服务在宽限之内带回结局：不补，用助手服务的", async () => {
+			assistant.strictTurns = false;
+			const first = await json<SessionView>(await create("做第一件事"));
+			const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
+			setTimeout(() => assistant.emit(first.id, 1, turnEnd(1, "stopped")), 100);
+			expect((await stopping).status).toBe(200);
+			const ends = (await detail(first.id)).events.filter((e) => e.type === "turn_end");
+			expect(ends).toHaveLength(1);
+			expect((ends[0] as { reason: string }).reason).toBe("测试");
+		});
+	});
+
+	describe("结束会话的先后：先停止并等到结局，再发 end，再写 session_ended", () => {
+		it("end 在路上时会话还没有结束；回应之后才写 session_ended", async () => {
+			const first = await idleSession();
+			assistant.endDelayMs = 300;
+			try {
+				const ending = api.post(`/sessions/${first.id}/end`, {});
+				await eventually(async () => expect(assistant.ends).toEqual([first.id]));
+				// `end` 已经到了助手服务（它还没回应）：会话此刻不是已结束，也没有 session_ended。
+				expect(await statusOf(cp, first.id)).not.toBe("ended");
+				expect(await types(first.id)).not.toContain("session_ended");
+				expect((await ending).status).toBe(200);
+			} finally {
+				assistant.endDelayMs = 0;
+			}
+			expect(await statusOf(cp, first.id)).toBe("ended");
+			expect(await types(first.id)).toContain("session_ended");
+		});
+
+		it("在做的会话：先 abort 并等到这一轮的结局，之后才 end，最后写 session_ended", async () => {
+			const first = await json<SessionView>(await create("做第一件事"));
+			expect((await api.post(`/sessions/${first.id}/end`, {})).status).toBe(200);
+			expect(assistant.log.filter((entry) => entry.endsWith(first.id))).toEqual([
+				`prompt:${first.id}`,
+				`abort:${first.id}`,
+				`end:${first.id}`,
+			]);
+			const events = (await detail(first.id)).events.map((e) => e.type);
+			expect(events.slice(-2)).toEqual(["turn_end", "session_ended"]);
+		});
+
+		it("end 发不出去（助手服务连不上）：会话照样结束", async () => {
+			const first = await idleSession();
+			assistant.endReply = () => ({ status: 503, code: "start_failed", message: "出错了" });
+			expect((await api.post(`/sessions/${first.id}/end`, {})).status).toBe(200);
+			expect(await statusOf(cp, first.id)).toBe("ended");
 		});
 	});
 

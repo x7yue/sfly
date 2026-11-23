@@ -66,6 +66,10 @@ export class FakeAssistant {
 	steerReply: (steer: ReceivedSteer) => Reply | undefined = () => undefined;
 	/** 每个 end 的回应；默认 202。 */
 	endReply: (sessionId: string) => Reply | undefined = () => undefined;
+	/** 收到 `end` 之后先等这么久（毫秒）再回应：让测试在 `end` 还在路上时看控制面此刻的状态。 */
+	endDelayMs = 0;
+	/** 收到的命令按到达的先后，每条 `<命令>:<会话 ID>`（`prompt`、`steer`、`abort`、`end`）：测试看命令之间的先后。 */
+	readonly log: string[] = [];
 	/**
 	 * 按协议「在停止」的那一段有多久（毫秒，`strictTurns` 开着时）：收到中止（或结束会话）之后，这一轮的结局（`turn_end`）
 	 * 过这么久才发（模拟 pi 不理 `abort`、助手服务等了又结束进程）；这期间这个会话的新一轮 `prompt` 回 202、登记着、等旧的一轮结束
@@ -384,6 +388,8 @@ export class FakeAssistant {
 		const sessionId = command[1] as string;
 		if (command[2] === "end") {
 			this.ends.push(sessionId);
+			this.log.push(`end:${sessionId}`);
+			if (this.endDelayMs > 0) await new Promise((r) => setTimeout(r, this.endDelayMs));
 			const reply = this.endReply(sessionId);
 			if (reply) return this.#error(res, reply);
 			this.#send(res, 202);
@@ -413,6 +419,7 @@ export class FakeAssistant {
 			}
 			const received = { sessionId, body: steer.data };
 			this.steers.push(received);
+			this.log.push(`steer:${sessionId}`);
 			const reply = this.steerReply(received);
 			if (reply) return this.#error(res, reply);
 			// 协议：只有 `turn` 那一轮在做（包括登记着、等旧的一轮结束的新一轮）才回 202；没有一轮、在停止、轮次对不上回 409
@@ -465,6 +472,7 @@ export class FakeAssistant {
 			}
 			const { turn } = abort.data;
 			this.aborts.push(sessionId);
+			this.log.push(`abort:${sessionId}`);
 			this.abortRequests.push({ sessionId, turn });
 			if (this.abortDelayMs > 0) await new Promise((r) => setTimeout(r, this.abortDelayMs));
 			const reply = this.abortReply(sessionId, turn);
@@ -501,6 +509,7 @@ export class FakeAssistant {
 			authorization: req.headers.authorization,
 		};
 		this.prompts.push(prompt);
+		this.log.push(`prompt:${sessionId}`);
 		if (this.promptDelayMs > 0) await new Promise((r) => setTimeout(r, this.promptDelayMs));
 		const reply = this.promptReply(prompt);
 		if (reply) return this.#error(res, reply);
