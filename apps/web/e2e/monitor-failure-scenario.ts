@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { ERROR_LOCATION_LABEL } from "@sfly/schema";
 import {
 	type AssignedTask,
 	ErrorKind,
@@ -8,7 +9,7 @@ import {
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { type E2eFixtures, expect } from "./fixtures";
-import { logLine, metricPackage } from "./monitor-scenario";
+import { logLine, metricPackage, pingPoints } from "./monitor-scenario";
 import { createRunPreset } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
@@ -94,7 +95,16 @@ export async function failedRun(
 	controlPlane: TestControlPlane,
 	connectAgent: E2eFixtures["connectAgent"],
 	clock: ManualClock,
-	options: { cleanupDone: boolean; preset?: boolean; message?: string; location?: string } = {
+	options: {
+		cleanupDone: boolean;
+		preset?: boolean;
+		message?: string;
+		location?: string;
+		/** 准备、部署两个节点各上报一组指标（level、total），图表工作区里有图表卡片。 */
+		metrics?: boolean;
+		/** 失败的节点在出错之前还写了一行 WARN 日志（概览的「其他警告与错误」里除了它自己的 ERROR 日志，还有这一行）。 */
+		warn?: string;
+	} = {
 		cleanupDone: true,
 	},
 ): Promise<FailureRun> {
@@ -124,19 +134,35 @@ export async function failedRun(
 	for (const step of ["prepare", "deploy"]) {
 		const task = await agent.nextAssign();
 		expect(task.nodeId).toBe(step);
+		const started = clock.now().getTime();
 		clock.advance(3000);
+		if (options.metrics) {
+			agent.metrics(task, pingPoints(started, 0, 3));
+			await agent.sync();
+		}
 		await agent.succeed(task);
 	}
 	const failed = await agent.nextAssign();
 	expect(failed.nodeId).toBe(FAILED_NODE);
-	agent.logs(failed, [logLine(clock, 1, "成功率 97.2% 低于阈值 99%", LogLevel.ERROR)]);
+	const location = options.location ?? FAILURE_LOCATION;
+	// 和真的执行器一样：节点出错时先写一行 ERROR「出错位置：…」（有位置时），再写异常（堆栈）本身；它不是失败原因全文的一部分。
+	const errorLines = [
+		...(location === "" ? [] : [`${ERROR_LOCATION_LABEL}：${location}`]),
+		"成功率 97.2% 低于阈值 99%",
+	];
+	agent.logs(failed, [
+		...(options.warn ? [logLine(clock, 1, options.warn, LogLevel.WARN)] : []),
+		...errorLines.map((text, i) =>
+			logLine(clock, (options.warn ? 2 : 1) + i, text, LogLevel.ERROR),
+		),
+	]);
 	clock.advance(5000);
 	await agent.fail(
 		failed,
 		options.message ?? FAILURE_MESSAGE,
 		ErrorKind.NODE_ERROR,
 		undefined,
-		options.location ?? FAILURE_LOCATION,
+		location,
 	);
 	const cleanup = await agent.nextAssign();
 	if (options.cleanupDone) {

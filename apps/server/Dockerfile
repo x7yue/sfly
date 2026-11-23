@@ -25,6 +25,6 @@ VOLUME /data
 EXPOSE 8080 50051
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=2s --retries=3 \
-    CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.SFLY_HTTP_PORT || 8080}/api/health`).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+    CMD ["node", "-e", "fetch(`http://127.0.0.1:${(process.env.SFLY_HTTP_PORT || '').trim() || 8080}/api/health`).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 
 CMD ["node", "--enable-source-maps", "/app/main.mjs"]
