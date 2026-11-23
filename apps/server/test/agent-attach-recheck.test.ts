@@ -7,7 +7,7 @@ import { type AgentAuth, AgentAuthenticator } from "../src/agents/agent-auth.js"
 import { AgentCredentialService } from "../src/agents/agent-credentials.js";
 import { AgentConnectionRefused, AgentHub } from "../src/agents/agent-hub.js";
 import { type Database, openDatabase } from "../src/db/database.js";
-import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
+import { DEFAULT_PROJECT, type ProjectId } from "../src/projects/project-id.js";
 import { AsyncQueue } from "../src/util/async-queue.js";
 import { Mutex } from "../src/util/mutex.js";
 import { TestAccounts } from "./support/credentials.js";
@@ -51,9 +51,9 @@ describe("认身份之后、登记之前凭据或 Agent 变了：登记时再确
 		if (!outcome.ok) throw new Error(`认身份应该通过：${outcome.message}`);
 		return outcome.auth;
 	};
-	const attach = (name: string, auth: AgentAuth) =>
-		hub.attach(DEFAULT_PROJECT, name, INFO, new AsyncQueue(), undefined, clock.now(), auth, () =>
-			authenticator.recheck(auth, name),
+	const attach = (name: string, auth: AgentAuth, project: ProjectId = DEFAULT_PROJECT) =>
+		hub.attach(project, name, INFO, new AsyncQueue(), undefined, clock.now(), auth, () =>
+			authenticator.recheck(auth, name, project),
 		);
 	const registered = async () =>
 		(await database.pool.query("select name from agents order by name")).rows.map(
@@ -130,8 +130,80 @@ describe("认身份之后、登记之前凭据或 Agent 变了：登记时再确
 
 	it("没有凭据的连接（过渡）没有凭据可再确认，停用的 Agent 照样拒绝", async () => {
 		const none: AgentAuth = { kind: "none" };
-		await attach("legacy-1", none);
+		// 没有凭据的只接受已登记过的名字：先用共享令牌（旧方式，可以登记新名字）登记。
+		await attach("legacy-1", { kind: "shared" });
 		await hub.setDisabled(DEFAULT_PROJECT, "legacy-1", true);
 		await expect(attach("legacy-1", none)).rejects.toBeInstanceOf(AgentConnectionRefused);
+	});
+	it("认身份这一步就拒绝被吊销的凭据（不用等到登记前再确认）：说明写吊销，没有登记", async () => {
+		const issued = await service.issue(DEFAULT_PROJECT, "worker-1");
+		await service.revoke(DEFAULT_PROJECT, "worker-1", issued.credential.id);
+		expect(await authenticator.authenticate(issued.token, "worker-1")).toMatchObject({
+			ok: false,
+			code: "unauthenticated",
+			message: expect.stringContaining("吊销"),
+		});
+		expect(await registered()).toEqual([]);
+	});
+
+	it("认过身份之后别的项目先登记了这个名字：后到的连接在锁里被拒绝，不会有「登记在甲、活着的却是乙的连接」", async () => {
+		await database.pool.query(
+			"insert into projects (id, display_name, created_at) values ('alpha', 'alpha', now())",
+		);
+		const mine = await service.issue(DEFAULT_PROJECT, "worker-1");
+		const theirs = await service.issue("alpha" as ProjectId, "worker-1");
+		const first = await authenticated(mine.token, "worker-1");
+		const second = await authenticator.authenticate(theirs.token, "worker-1");
+		if (!second.ok) throw new Error("认身份应该通过：名字还没有登记");
+		// 默认项目的先登记；alpha 的在登记之前再确认时被拒绝（同一句「不能连接」，不透露在别的项目里）。
+		const conn = await attach("worker-1", first);
+		expect(conn.project).toBe("default");
+		await expect(attach("worker-1", second.auth, "alpha" as ProjectId)).rejects.toMatchObject({
+			code: "unauthenticated",
+			message: expect.stringContaining("不能连接"),
+		});
+		expect(conn.closed).toBe(false);
+		expect(
+			(await database.pool.query("select project_id from agents where name = 'worker-1'")).rows,
+		).toEqual([{ project_id: "default" }]);
+		// 登记表自己也守着这条不变式，不靠调用方的再确认：不带 verify 直接登记也被拒绝。
+		await expect(
+			hub.attach(
+				"alpha" as ProjectId,
+				"worker-1",
+				INFO,
+				new AsyncQueue(),
+				undefined,
+				clock.now(),
+				second.auth,
+			),
+		).rejects.toBeInstanceOf(AgentConnectionRefused);
+		expect(conn.closed).toBe(false);
+	});
+
+	it("认过身份（旧方式）之后这个名字签发了 Agent 凭据：登记前再确认拒绝（只认凭据），和还没有登记是同一句话", async () => {
+		const none: AgentAuth = { kind: "none" };
+		await attach("legacy-1", { kind: "shared" });
+		const before = await attach("legacy-1", none);
+		expect(before.closed).toBe(false);
+		await service.issue(DEFAULT_PROJECT, "legacy-1");
+		const refused = await attach("legacy-1", none).catch((error: unknown) => error);
+		expect(refused).toBeInstanceOf(AgentConnectionRefused);
+		expect(refused).toMatchObject({
+			code: "unauthenticated",
+			message: expect.stringContaining("不能连接"),
+		});
+	});
+
+	it("连接表里仍然保留的最后一道：以旧方式连接的不能顶掉还活着的带 Agent 凭据的同名连接（登记表自己守着，不靠认身份的前置规则）", async () => {
+		const issued = await service.issue(DEFAULT_PROJECT, "worker-1");
+		const secured = await attach("worker-1", await authenticated(issued.token, "worker-1"));
+		// 不带 verify 直接登记（认身份的前置规则会先挡住，这里测登记表自己的这一条）。
+		await expect(
+			hub.attach(DEFAULT_PROJECT, "worker-1", INFO, new AsyncQueue(), undefined, clock.now(), {
+				kind: "shared",
+			}),
+		).rejects.toMatchObject({ message: expect.stringContaining("不能顶掉") });
+		expect(secured.closed).toBe(false);
 	});
 });

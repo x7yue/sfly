@@ -22,6 +22,7 @@ import { createTestDatabase, type TestDatabase } from "./support/test-database.j
 
 const bundleDir = process.env.SFLY_BUNDLE_DIR;
 const { version } = packageJson;
+const ADMIN = { loginName: "root", password: "admin-password-1" };
 
 describe.skipIf(!bundleDir)("打包后的控制面", () => {
 	let database: TestDatabase;
@@ -42,6 +43,8 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 			dir: bundleDir as string,
 			databaseUrl: database.url,
 			dataDir,
+			// 给 Agent 签发凭据要登录（现在就要，不等 #494）：第一个管理员由环境变量建好。
+			env: { SFLY_ADMIN_LOGIN: ADMIN.loginName, SFLY_ADMIN_PASSWORD: ADMIN.password },
 		});
 	}, 60_000);
 
@@ -181,10 +184,31 @@ console.log(JSON.stringify(await client.system.health()));
 			await rm(out, { recursive: true, force: true });
 		}
 
-		// 没有凭据的 Agent 只接受已登记过的名字（#492）：控制面是另一个进程，经 HTTP 为这台 Agent 签发凭据。
-		const issued = await fetchPath("/agents/bundle-agent/credentials", {
+		// 没有凭据的 Agent 只接受已登记过的名字（#492）：控制面是另一个进程，管理员登录之后经 HTTP 为这台 Agent 签发凭据
+		// （签发要凭据，不带凭据是 401）。
+		expect(
+			(
+				await fetchPath("/agents/bundle-agent/credentials", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: "{}",
+				})
+			).status,
+		).toBe(401);
+		const login = await fetchPath("/auth/login", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ login_name: ADMIN.loginName, password: ADMIN.password }),
+		});
+		expect(login.status).toBe(200);
+		const cookie = /sfly_login=([^;]*)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
+		const issued = await fetchPath("/agents/bundle-agent/credentials", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				cookie: `sfly_login=${cookie}`,
+				"sec-fetch-site": "same-origin",
+			},
 			body: "{}",
 		});
 		expect(issued.status).toBe(201);

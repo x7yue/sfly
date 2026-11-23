@@ -4,7 +4,7 @@
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
-import { loginCookie, TestAccounts } from "./support/credentials.js";
+import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -25,6 +25,7 @@ describe("Agent 连接时的身份", () => {
 		await db?.end();
 		await accounts?.close();
 		accounts = undefined;
+		adminHeaders = undefined;
 		await cp?.close();
 	});
 
@@ -38,6 +39,26 @@ describe("Agent 连接时的身份", () => {
 	};
 	const issue = async (name: string) =>
 		(await cp.current.agentCredentials.issue(DEFAULT_PROJECT, name)).token;
+	/** 项目管理员的个人令牌：停用、恢复 Agent 要凭据（现在就要，不等 #494）。 */
+	let adminHeaders: Record<string, string> | undefined;
+	const admin = async (): Promise<Record<string, string>> => {
+		if (adminHeaders) return adminHeaders;
+		accounts ??= new TestAccounts(cp.database.url);
+		const id = await accounts.user("boss");
+		await accounts.member("default", id, "project_admin");
+		adminHeaders = bearer(await accounts.personalToken(id));
+		return adminHeaders;
+	};
+	const toggle = async (name: string, action: "disable" | "enable") =>
+		(await cp.fetch(`/agents/${name}/${action}`, { method: "POST", headers: await admin() }))
+			.status;
+	/** 把一个名字登记到项目 alpha（凭据连一次再断开），返回 alpha 里这台的凭据。 */
+	const alphaAgent = async (name: string) => {
+		await db.query(
+			"insert into projects (id, display_name, created_at) values ('alpha', 'alpha', now()) on conflict do nothing",
+		);
+		return cp.current.agentCredentials.issue("alpha" as never, name);
+	};
 	const row = async (name: string) =>
 		(
 			await db.query(
@@ -77,11 +98,9 @@ describe("Agent 连接时的身份", () => {
 		it("别的项目的凭据不能用来连默认项目里已经登记的名字（名字全局唯一）", async () => {
 			await start();
 			await connect("worker-1", await issue("worker-1"));
-			await db.query(
-				"insert into projects (id, display_name, created_at) values ('alpha', 'alpha', now())",
-			);
-			const alien = (await cp.current.agentCredentials.issue("alpha" as never, "worker-1")).token;
-			await expect(connect("worker-1", alien)).rejects.toThrow(/别的项目/);
+			const alien = (await alphaAgent("worker-1")).token;
+			// 不透露「在别的项目里」：和没有登记过是同一句话（见下面「三种情况同一个回应」）。
+			await expect(connect("worker-1", alien)).rejects.toThrow(/不能连接/);
 			expect((await row("worker-1")).project_id).toBe("default");
 		});
 
@@ -122,23 +141,27 @@ describe("Agent 连接时的身份", () => {
 
 		it("没有配共享令牌：没有凭据的 Agent 只接受已登记的名字；没登记过的被拒绝，提示去签发凭据", async () => {
 			await start();
-			// 先用凭据登记一台，之后它「忘了」凭据，没有凭据重连。
-			const first = await connect("known", await issue("known"));
+			// 先用凭据登记一台，管理员把它的凭据全部吊销之后（那是明确的选择），没有凭据才又接受它的名字。
+			const issued = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "known");
+			const first = await connect("known", issued.token);
 			await first.disconnect();
 			agents.splice(agents.indexOf(first), 1);
 			await eventually(async () => expect((await row("known")).status).toBe("offline"));
+			await cp.current.agentCredentials.revoke(DEFAULT_PROJECT, "known", issued.credential.id);
 			await connect("known", "");
 			expect((await row("known")).last_auth_kind).toBe("none");
-			await expect(connect("stranger", "")).rejects.toThrow(/已登记|凭据/);
+			await expect(connect("stranger", "")).rejects.toThrow(/不能连接/);
 			expect(await registered()).toEqual(["known"]);
 		});
 
 		it("没有配共享令牌：带一个不认识的旧令牌，和没有凭据一样（旧版本照旧接受已登记的名字）", async () => {
 			await start();
-			const first = await connect("known", await issue("known"));
+			const issued = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "known");
+			const first = await connect("known", issued.token);
 			await first.disconnect();
 			agents.splice(agents.indexOf(first), 1);
 			await eventually(async () => expect((await row("known")).status).toBe("offline"));
+			await cp.current.agentCredentials.revoke(DEFAULT_PROJECT, "known", issued.credential.id);
 			await connect("known", "stale-token-from-before");
 			expect((await row("known")).last_auth_kind).toBe("none");
 		});
@@ -157,7 +180,7 @@ describe("Agent 连接时的身份", () => {
 		it("以旧方式连接的新连接顶不掉同名的带 Agent 凭据的连接：被拒绝，原连接不受影响", async () => {
 			await start({ agentToken: "s3cret" });
 			const secured = await connect("worker-1", await issue("worker-1"));
-			await expect(connect("worker-1", "s3cret")).rejects.toThrow(/不能顶掉/);
+			await expect(connect("worker-1", "s3cret")).rejects.toThrow(/不能连接/);
 			expect(secured.ended).toBe(false);
 			const state = await row("worker-1");
 			expect(state).toMatchObject({ status: "online", last_auth_kind: "agent" });
@@ -166,7 +189,7 @@ describe("Agent 连接时的身份", () => {
 		it("没有配共享令牌时，没有凭据的新连接同样顶不掉带 Agent 凭据的连接", async () => {
 			await start();
 			const secured = await connect("worker-1", await issue("worker-1"));
-			await expect(connect("worker-1", "")).rejects.toThrow(/不能顶掉/);
+			await expect(connect("worker-1", "")).rejects.toThrow(/不能连接/);
 			expect(secured.ended).toBe(false);
 		});
 
@@ -190,11 +213,12 @@ describe("Agent 连接时的身份", () => {
 			await first.disconnect();
 			agents.splice(agents.indexOf(first), 1);
 			await eventually(async () => expect((await row("worker-1")).status).toBe("offline"));
-			expect((await cp.fetch("/agents/worker-1/disable", { method: "POST" })).status).toBe(204);
+			expect(await toggle("worker-1", "disable")).toBe(204);
 			await expect(connect("worker-1", token)).rejects.toThrow(/停用/);
-			await expect(connect("worker-1", "s3cret")).rejects.toThrow(/停用/);
+			// 这个名字有 Agent 凭据：旧方式（共享令牌、没有凭据）直接是「不能连接」，不说停用没停用。
+			await expect(connect("worker-1", "s3cret")).rejects.toThrow(/不能连接/);
 			expect((await row("worker-1")).status).toBe("offline");
-			expect((await cp.fetch("/agents/worker-1/enable", { method: "POST" })).status).toBe(204);
+			expect(await toggle("worker-1", "enable")).toBe(204);
 			await connect("worker-1", token);
 			expect((await row("worker-1")).status).toBe("online");
 		});
@@ -202,7 +226,7 @@ describe("Agent 连接时的身份", () => {
 		it("停用一台正连着的 Agent：立即断开连接", async () => {
 			await start();
 			const agent = await connect("worker-1", await issue("worker-1"));
-			expect((await cp.fetch("/agents/worker-1/disable", { method: "POST" })).status).toBe(204);
+			expect(await toggle("worker-1", "disable")).toBe(204);
 			await eventually(async () => expect(agent.ended).toBe(true));
 			await eventually(async () => expect((await row("worker-1")).status).toBe("offline"));
 			expect((await row("worker-1")).disabled_at).not.toBeNull();

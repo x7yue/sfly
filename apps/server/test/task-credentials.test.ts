@@ -158,4 +158,65 @@ describe("任务凭据", () => {
 		expect((await download(retry.taskId, "nothing.txt", task.taskToken)).status).toBe(401);
 		expect((await api.run(runId)).status).toBe("running");
 	});
+	describe("停用 Agent、吊销它的凭据之后立刻不认（不等租约过期）", () => {
+		const adminHeaders = async () => {
+			const id = await accounts.user("boss");
+			await accounts.member("default", id, "project_admin");
+			return bearer(await accounts.personalToken(id));
+		};
+		const taskStatus = async (taskId: string) =>
+			(await db.query("select status from tasks where id = $1", [taskId])).rows[0]?.status;
+
+		it("停用这台 Agent：它手上任务的凭据立刻是 401，任务本身还在执行中（租约没过期）；别的 Agent 手上的不受影响", async () => {
+			const { task, agent } = await setup();
+			// 另一台 Agent 手上的任务：停用不碰它。
+			const otherIssued = await cp.current.agentCredentials.issue("default" as never, "agent-b");
+			const other = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-b",
+				token: otherIssued.token,
+			});
+			agents.push(other);
+			const api = new ApiClient(cp);
+			const second = await api.orchestrationWith({ ...DOC, default_agent: "agent-b" }, "第二个");
+			await api.triggerOk(second);
+			const otherTask = await other.nextAssign();
+			expect((await download(task.taskId, "nothing.txt", task.taskToken)).status).toBe(404);
+
+			const res = await cp.fetch("/agents/agent-a/disable", {
+				method: "POST",
+				headers: await adminHeaders(),
+			});
+			expect(res.status).toBe(204);
+			expect(await taskStatus(task.taskId)).toBe("running");
+			expect((await download(task.taskId, "nothing.txt", task.taskToken)).status).toBe(401);
+			expect((await download(otherTask.taskId, "nothing.txt", otherTask.taskToken)).status).toBe(
+				404,
+			);
+			expect(agent.ended).toBe(true);
+		});
+
+		it("吊销这台 Agent 的全部 Agent 凭据：任务凭据立刻是 401；只吊销一个、还有别的有效凭据（轮换）时仍然有效", async () => {
+			const { task, agentToken } = await setup();
+			const second = await cp.current.agentCredentials.issue("default" as never, "agent-a");
+			const firstId = await accounts.agentCredentialId(agentToken);
+			// 轮换：先签发新的，再吊销旧的（连着的连接用的是旧的，随之断开）：任务凭据照旧有效。
+			await cp.current.agentCredentials.revoke("default" as never, "agent-a", firstId);
+			expect(await taskStatus(task.taskId)).toBe("running");
+			expect((await download(task.taskId, "nothing.txt", task.taskToken)).status).toBe(404);
+			// 全部吊销：立刻不认。
+			await cp.current.agentCredentials.revoke("default" as never, "agent-a", second.credential.id);
+			expect(await taskStatus(task.taskId)).toBe("running");
+			expect((await download(task.taskId, "nothing.txt", task.taskToken)).status).toBe(401);
+		});
+
+		it("最近一次连接不是用 Agent 凭据的 Agent（旧方式）：吊销凭据和它无关，任务凭据照旧有效；停用才失效", async () => {
+			const { task, agentToken } = await setup();
+			await db.query("update agents set last_auth_kind = 'shared' where name = 'agent-a'");
+			const credentialId = await accounts.agentCredentialId(agentToken);
+			await cp.current.agentCredentials.revoke("default" as never, "agent-a", credentialId);
+			expect((await download(task.taskId, "nothing.txt", task.taskToken)).status).toBe(404);
+			await db.query("update agents set disabled_at = now() where name = 'agent-a'");
+			expect((await download(task.taskId, "nothing.txt", task.taskToken)).status).toBe(401);
+		});
+	});
 });

@@ -68,14 +68,120 @@ def test_control_plane_is_pointed_at_the_assistant_and_the_workbench(recorder: R
     # 密钥只写名字，值经 docker 命令行进程的环境带进去：参数里（ps 看得到）没有它。
     assert "SFLY_ASSISTANT_SECRET" in args
     assert not any(SECRET in arg for arg in args)
-    assert env == {"SFLY_ASSISTANT_SECRET": SECRET}
+    assert env is not None and env["SFLY_ASSISTANT_SECRET"] == SECRET
 
 
 def test_control_plane_without_the_assistant_has_none_of_it(recorder: Recorder) -> None:
     Stack(slot=9)._start_control_plane()
     [(args, env)] = recorder.runs("cp")
     assert not any("SFLY_ASSISTANT" in arg or "SFLY_WORKBENCH" in arg for arg in args)
-    assert not env
+    # 只有初始管理员的密码（给 Agent 签发凭据要登录）：参数里只写名字。
+    assert env is not None and set(env) == {"SFLY_ADMIN_PASSWORD"}
+
+
+def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
+    recorder: Recorder,
+) -> None:
+    """给 Agent 签发凭据要登录（不带凭据是 401，#492）：控制面起来时由环境变量建出第一个管理员，
+    密码每次建库随机生成，参数里（ps 看得到）只有变量名。"""
+    stack = Stack(slot=9)
+    stack._start_control_plane()
+    [(args, env)] = recorder.runs("cp")
+    assert "SFLY_ADMIN_LOGIN=aeval-admin" in args
+    assert "SFLY_ADMIN_PASSWORD" in args
+    password = stack.admin_password
+    assert password and len(password) >= 32
+    assert not any(password in arg for arg in args)
+    assert env is not None and env["SFLY_ADMIN_PASSWORD"] == password
+    # 每次建库换一个新的密码。
+    stack._start_control_plane()
+    assert stack.admin_password != password
+
+
+class Shell:
+    """记下每次在容器里执行的脚本、保密的环境变量和标准输入。"""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(
+        self, container: str, script: str, **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        self.calls.append({"container": container, "script": script, **kwargs})
+        if "/auth/login" in script:
+            out = "HTTP/1.1 200 OK\r\nSet-Cookie: sfly_login=COOKIE123; Path=/; HttpOnly\r\n\r\n"
+        elif "/credentials" in script:
+            out = json.dumps({"token": f"sfly_agt_{'ab' * 24}"})
+        else:
+            out = ""
+        return subprocess.CompletedProcess((container, script), 0, out, "")
+
+
+def test_agent_credentials_are_issued_by_the_admin_and_secrets_go_by_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shell = Shell()
+    monkeypatch.setattr(d, "sh", shell)
+    stack = Stack(slot=9)
+    stack.admin_password = "p" * 32
+    token = stack._agent_credential("sfly-aeval-9-dev", "dev-root-dev")
+    assert token == f"sfly_agt_{'ab' * 24}"
+    login, issue = shell.calls
+    # 登录：密码经标准输入，不在脚本（命令行参数）里。
+    assert "p" * 32 not in login["script"]
+    assert json.loads(login["input_text"]) == {"login_name": "aeval-admin", "password": "p" * 32}
+    # 签发：登录 Cookie 经 `-H @-` 从标准输入读，带 same-origin（Cookie 只认同源的有副作用请求）。
+    assert "COOKIE123" not in issue["script"]
+    assert "-H @-" in issue["script"]
+    assert issue["input_text"] == "cookie: sfly_login=COOKIE123\nsec-fetch-site: same-origin\n"
+    assert "/agents/dev-root-dev/credentials" in issue["script"]
+
+
+def test_install_passes_the_agent_tokens_by_name_not_in_the_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shell = Shell()
+    monkeypatch.setattr(d, "sh", shell)
+    stack = Stack(slot=9)
+    stack.admin_password = "p" * 32
+    stack._install_agents()
+    installs = [c for c in shell.calls if "install.sh" in c["script"]]
+    assert len(installs) == 2
+    for call in installs:
+        assert set(call["secret_env"]) == {"SFLY_TOKEN"}
+        assert not call.get("env")
+        assert "sfly_agt_" not in call["script"]
+
+
+def test_reset_reissues_the_credentials_and_swaps_them_into_agent_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reset 把库重建了：登记和凭据都没了，agent.env 里还是旧凭据，
+    Agent 重启后会被拒绝、wait_agents 等到超时。
+    重新签发并换掉 agent.env 里的 SFLY_TOKEN（两台都换），凭据经标准输入。"""
+    shell = Shell()
+    monkeypatch.setattr(d, "sh", shell)
+    stack = Stack(slot=9)
+    stack.admin_password = "p" * 32
+    stack._renew_agent_credentials()
+    swaps = [c for c in shell.calls if "agent.env" in c["script"]]
+    assert [c["container"] for c in swaps] == ["sfly-aeval-9-dev", "sfly-aeval-9-sut"]
+    for call in swaps:
+        assert "SFLY_TOKEN=" in call["script"]
+        assert "sfly_agt_" not in call["script"]
+        assert call["input_text"] == f"sfly_agt_{'ab' * 24}\n"
+
+
+def test_reset_renews_the_credentials_before_the_agents_start(
+    monkeypatch: pytest.MonkeyPatch, recorder: Recorder
+) -> None:
+    order: list[str] = []
+    _quiet_up(monkeypatch, recorder)
+    monkeypatch.setattr(Stack, "_start_control_plane", lambda self: order.append("cp"))
+    monkeypatch.setattr(Stack, "_renew_agent_credentials", lambda self: order.append("renew"))
+    monkeypatch.setattr(Stack, "start_agents", lambda self: order.append("agents"))
+    Stack(slot=9).reset()
+    assert order == ["cp", "renew", "agents"]
 
 
 def test_assistant_container_gets_the_model_file_and_the_secret_by_name(
@@ -325,6 +431,7 @@ def _quiet_up(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> list[int]:
         "_start_postgres",
         "_start_control_plane",
         "_install_agents",
+        "_renew_agent_credentials",
         "start_agents",
         "stop_agents",
         "wait_agents",

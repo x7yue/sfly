@@ -149,6 +149,23 @@ export const LOGIN_ONLY_ROUTES = {
  */
 export const REQUIRES_CREDENTIAL: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["project"]);
 
+/**
+ * 现在就要求凭据的接口（在上面按资源类别要求的之外，按接口）：签发、列出、吊销 Agent 凭据，停用、恢复 Agent（#492）。
+ * Agent 凭据是新这一套信任的根——不带任何凭据的请求能给任意名字签发 Agent 凭据，再用它连上来顶掉用共享令牌连着的那一台——所以
+ * 这几个不走「不带凭据照旧放行」的过渡，不能匿名；范围照常要「管理」。Agent 的别的接口（列表、更新……）在 #494 之前照旧。
+ */
+export const REQUIRES_CREDENTIAL_ROUTES: ReadonlySet<string> = new Set([
+	"GET /agents/:name/credentials",
+	"POST /agents/:name/credentials",
+	"DELETE /agents/:name/credentials/:id",
+	"POST /agents/:name/disable",
+	"POST /agents/:name/enable",
+]);
+
+/** 这个接口现在就要求凭据（按资源类别，或者按接口）。 */
+export const requiresCredential = (def: Pick<RouteDef, "method" | "path" | "resource">): boolean =>
+	REQUIRES_CREDENTIAL.has(def.resource.kind) || REQUIRES_CREDENTIAL_ROUTES.has(routeKey(def));
+
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
 	`${def.method} ${def.path}`;
@@ -207,6 +224,10 @@ export function checkCredentialRoutes(contract: readonly RouteDef[]): string[] {
 		["TASK_CREDENTIAL_ROUTES", TASK_CREDENTIAL_ROUTES],
 		["ACCOUNT_ROUTES", ACCOUNT_ROUTES],
 		["LOGIN_ONLY_ROUTES", LOGIN_ONLY_ROUTES],
+		[
+			"REQUIRES_CREDENTIAL_ROUTES",
+			Object.fromEntries([...REQUIRES_CREDENTIAL_ROUTES].map((k) => [k, true])),
+		],
 	].flatMap(([name, list]) =>
 		Object.keys(list as object)
 			.filter((key) => !known.has(key))

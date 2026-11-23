@@ -23,7 +23,7 @@ import {
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
 	type ProjectLocator,
-	REQUIRES_CREDENTIAL,
+	requiresCredential,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "./access-rules.js";
@@ -298,7 +298,7 @@ export class AccessGuard {
 		if (presented === undefined) {
 			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
 			if (publicWrite) return denied(401, "unauthorized", PUBLIC_WRITE_DENIED);
-			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+			return requiresCredential(request.route)
 				? denied(401, "unauthorized", "需要登录或令牌")
 				: { ok: true, access: null };
 		}
@@ -319,7 +319,7 @@ export class AccessGuard {
 		}
 		if (principal.kind === "shared") {
 			if (publicWrite) return denied(403, "forbidden", PUBLIC_WRITE_DENIED);
-			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+			return requiresCredential(request.route)
 				? denied(403, "forbidden", "共享令牌不能调用这个接口：它只给 Agent 用")
 				: { ok: true, access: null };
 		}

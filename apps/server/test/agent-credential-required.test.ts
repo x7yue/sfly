@@ -113,10 +113,14 @@ describe("登记工作台：还没换成 Agent 凭据的 Agent，和登记之后
 			required = true;
 			expect(await authenticator.authenticate(undefined, "legacy")).toMatchObject({ ok: false });
 			// 认身份的时候还没登记、登记之前登记了：再确认拒绝（以旧方式连接的）；带 Agent 凭据的不受影响。
-			expect(await authenticator.recheck({ kind: "none" }, "legacy")).toMatchObject({
+			expect(
+				await authenticator.recheck({ kind: "none" }, "legacy", DEFAULT_PROJECT),
+			).toMatchObject({
 				code: "unauthenticated",
 			});
-			expect(await authenticator.recheck({ kind: "shared" }, "legacy")).toMatchObject({
+			expect(
+				await authenticator.recheck({ kind: "shared" }, "legacy", DEFAULT_PROJECT),
+			).toMatchObject({
 				code: "unauthenticated",
 			});
 			const issued = await service.issue(DEFAULT_PROJECT, "worker-1");
@@ -124,6 +128,7 @@ describe("登记工作台：还没换成 Agent 凭据的 Agent，和登记之后
 				await authenticator.recheck(
 					{ kind: "agent", credentialId: issued.credential.id },
 					"worker-1",
+					DEFAULT_PROJECT,
 				),
 			).toBeUndefined();
 		});

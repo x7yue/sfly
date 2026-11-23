@@ -28,10 +28,10 @@ import {
 	tasks,
 } from "../db/schema.js";
 import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
-import type { ProjectId } from "../projects/project-id.js";
+import { DEFAULT_PROJECT, type ProjectId } from "../projects/project-id.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
-import type { AgentAuth } from "./agent-auth.js";
+import { type AgentAuth, notRegisteredHere } from "./agent-auth.js";
 import {
 	type AgentClockReading,
 	ConnectionClock,
@@ -109,6 +109,12 @@ export class AgentConnection {
 		 * 同名连接的顶掉规则（{@link AgentHub.attach}）和凭据吊销时断开连接都看它。
 		 */
 		readonly auth: AgentAuth = { kind: "none" },
+		/**
+		 * 这条连接所在的项目：Agent 凭据的项目，以旧方式连接的是默认项目。**派发以它为准**（只派发这个项目的运行的任务），
+		 * 不看库里登记记录的项目：两个项目的凭据可能同时连同一个还没登记的名字，连接表里活着的是哪一条要和登记一致
+		 * （{@link AgentHub.attach} 在锁里核对），派发前再比较一次连接的项目。
+		 */
+		readonly project: ProjectId = DEFAULT_PROJECT,
 	) {}
 
 	/** 这条连接用的 Agent 凭据（`agent_credentials.id`）；以旧方式连接的为 null。 */
@@ -253,8 +259,7 @@ export class AgentHub {
 	 * 注册一个新连接：替换同名旧连接，记录为在线。`helloClock` 是 Hello 里的时钟读数（旧版本 Agent 没有），
 	 * `receivedAt` 是收到 Hello 的控制面时间：据此建立这次连接的折算关系并测一次时钟偏差；
 	 * 没有读数时时钟偏差记为未知。第一次连上时 Agent 登记在 `project` 里（ADR 0029）；之后重连只更新信息，
-	 * 不改它所属的项目：名字第一步仍然全局唯一，另一个项目已经登记了这个名字时，连接照旧接上、记录仍属于原来的项目
-	 * （项目来自凭据之后，由 #492、#502 处理）。
+	 * 不改它所属的项目：名字全局唯一，另一个项目已经登记了这个名字时拒绝这条连接（在锁里核对，见下面），连接记下它的项目。
 	 */
 	attach(
 		project: ProjectId,
@@ -272,8 +277,18 @@ export class AgentHub {
 		return this.deps.mutex.run(async () => {
 			const refusal = await verify?.();
 			if (refusal !== undefined) throw new AgentConnectionRefused(refusal.message, refusal.code);
+			// 连接的项目必须等于这个名字登记的项目（名字全局唯一，登记只在第一次连上时写、之后不改）：认身份时名字还没有登记，
+			// 两个项目的凭据可以同时通过，登记留在先到的那个，后到的在这里被拒绝，连接表里不会有「登记在甲、活着的却是乙的连接」。
+			// 这条不变式在登记表自己这里守着，不靠调用方的 `verify`。
+			const [registered] = await this.deps.db
+				.select({ projectId: agents.projectId })
+				.from(agents)
+				.where(eq(agents.name, name));
+			if (registered !== undefined && registered.projectId !== project) {
+				throw new AgentConnectionRefused(notRegisteredHere(name), "unauthenticated");
+			}
 			const clock = new ConnectionClock(this.deps.clock, helloClock, receivedAt);
-			const conn = new AgentConnection(name, info, outbox, clock, auth);
+			const conn = new AgentConnection(name, info, outbox, clock, auth, project);
 			const old = this.#connections.get(name);
 			// 同名的新连接顶掉旧连接（让断电、断网后重启的 Agent 马上连得上，旧连接要等传输层发现才结束）。例外：
 			// 以旧方式连接（共享令牌、没有凭据）的，不能顶掉还活着的带 Agent 凭据的连接（ADR 0029「迁移与过渡」）。

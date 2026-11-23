@@ -2,11 +2,12 @@
 // 可以不连数据库单独测试；数据库实现在这个文件里。
 import { randomUUID } from "node:crypto";
 import type { SessionStatus } from "@sfly/schema";
-import { and, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { taskIsActive } from "../agents/task-credentials.js";
 import type { Db } from "../db/database.js";
 import {
 	agentCredentials,
+	agents,
 	apiTokens,
 	logins,
 	orchestrations,
@@ -162,6 +163,15 @@ export class DbAccessStore implements AccessStore {
 				lastUsedAt: apiTokens.lastUsedAt,
 				sessionId: apiTokens.sessionId,
 				taskStatus: tasks.status,
+				taskAgentDisabledAt: agents.disabledAt,
+				taskAgentAuthKind: agents.lastAuthKind,
+				// 这台 Agent 有没有没被吊销的 Agent 凭据（任务凭据跟着它：凭据全部吊销之后立刻不认）。
+				taskAgentHasCredential: sql<boolean>`exists (
+					select 1 from ${agentCredentials}
+					where ${agentCredentials.kind} = 'agent'
+						and ${agentCredentials.agentName} = ${tasks.agentName}
+						and ${agentCredentials.revokedAt} is null
+				)`,
 				sessionProjectId: sessions.projectId,
 				sessionCreatedBy: sessions.createdByUserId,
 				sessionStatus: sessions.status,
@@ -170,6 +180,7 @@ export class DbAccessStore implements AccessStore {
 			.from(apiTokens)
 			.leftJoin(users, eq(users.id, apiTokens.userId))
 			.leftJoin(tasks, eq(tasks.id, apiTokens.taskId))
+			.leftJoin(agents, eq(agents.name, tasks.agentName))
 			.leftJoin(sessions, eq(sessions.id, apiTokens.sessionId))
 			.where(eq(apiTokens.tokenHash, hash));
 		return (
@@ -184,7 +195,14 @@ export class DbAccessStore implements AccessStore {
 				revokedAt: row.revokedAt,
 				lastUsedAt: row.lastUsedAt,
 				sessionId: row.sessionId,
-				taskActive: row.taskStatus === null ? null : taskIsActive(row.taskStatus),
+				taskActive:
+					row.taskStatus === null
+						? null
+						: taskIsActive(row.taskStatus, {
+								agentDisabled: row.taskAgentDisabledAt !== null,
+								agentOnCredentials: row.taskAgentAuthKind === "agent",
+								agentHasCredential: row.taskAgentHasCredential,
+							}),
 				session:
 					row.sessionProjectId === null || row.sessionStatus === null
 						? null
