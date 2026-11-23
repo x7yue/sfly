@@ -57,7 +57,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 - 多个节点或多个运行共享槽位。只有一个节点时同一时刻最多一个尝试在排队，所以 **`#dispatch` 里按 `slots` 计数这一处没有被验证**，`SlotBound` 守护的是「Hello 要上报安装中的任务」和「放弃的任务要杀掉」。
 - 运行取消（`cancel`、`#cancelChain`、`#resendCancels`）、停止子流程节点（docs/SEMANTICS.md §4.1）、立即更新（UpdateNow）和自更新排空、版本不一致时不派发。`agent_lost` 时的强制取消在模型里，但取消只建模成「被告知停止」，不区分优雅取消和强制取消。
-- 控制面重启（`extendForRecovery`）、多个控制面连接同一个 Agent、令牌。
+- 控制面重启（`extendForRecovery`）、多个控制面连接同一个 Agent、令牌本身（谁能连、项目从哪来）。认身份的结果只通过「连不连得上」影响协议，见下面「#492 的核对」。
 - 失败类型的区别：模型里所有失败都按 `retries` 重试；`env_error` 和 `config_error` 不重试，这一点没有建模。结果写不进数据库时按 `node_error` 失败（#207）也没有建模，模型里成功的结果总被记为成功。
 - 「结果已交出、还没发出」的任务有没有被漏报（#132）：Hello 或心跳少列了这样一个任务，只会让控制面多一次 `agent_lost`、多重试一次（旧尝试已经结束），不会破坏上面五条性质，所以模型里没有对应的性质。漏报还在安装或执行中的任务不一样：`SlotBound` 会抓到（`mutants.sh` 的 `hello-omits-installing`）。这一条由 `agent/src/ledger.rs` 的单元测试守着（`hello_lists_a_task_that_finished_before_it_was_listed` 等）。
 - 动作摘要和明细（`ActionSummary`、`ActionBatch`，#345）：和日志一样走遥测通道，由 `apps/server/src/actions/task-actions.ts` 处理（`engine.ts` `onMessage` 不碰），不回 Ack、不续租约、不改任务状态，对派发协议没有影响。
@@ -93,13 +93,22 @@ Agent 一侧「手上的任务」只有一个定义：`Ledger::held`（台账里
 ```sh
 git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
   apps/server/src/engine/engine.ts apps/server/src/engine/leases.ts apps/server/src/engine/failures.ts \
-  apps/server/src/agents/agent-hub.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/ledger.rs agent/src/executor.rs \
+  apps/server/src/agents/agent-hub.ts apps/server/src/agents/agent-auth.ts apps/server/src/gateway/agent-gateway.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/ledger.rs agent/src/executor.rs \
   proto/sfly/agent/v1/agent.proto
 ```
 
 有输出时，打开上表里对应的函数读一遍 diff：
 - 改动落在表里的函数上，就要重新核对模型。
 - 只改了这些文件里的其它部分（日志、指标、安装、UI 字段），可以不动模型，但仍要跑一次 `check.sh`。
+
+## #492 的核对（Agent 凭据、停用 Agent、任务凭据）
+
+改了 Hello 的处理、`AssignTask` 加字段、停用 Agent 让任务按 `agent_lost` 处理。逐项对照模型，**没有改模型，也没有移动上面的同步提交**（同步提交之后别的改动还没有逐个核对）。`check.sh` 三个配置的结果和上面一致（Safe 327,997、LateHeartbeats 5,410,113、SlowDelivery 6,596,137 个不同状态，都无违例），`mutants.sh` 七个变异体都被抓到。核对的结论：
+
+- **Hello 被拒绝**（凭据无效、吊销、名字和凭据不一致、所属用户或这台 Agent 被停用、登记工作台之后只认 Agent 凭据、同名顶掉规则不允许：`agents/agent-auth.ts` `AgentAuthenticator`、`agents/agent-hub.ts` `attach`、`gateway/agent-gateway.ts`）：没有连接登记进连接表，没有 Welcome，Agent 一侧是连接失败后重连。模型里 `Disconnect` 之后 Agent 离线多久都可以（重连次数不限），被拒绝的 Hello 就是一次没有发生的 `AgentConnect`，不引入新的状态。拒绝发生在 `attach` 登记之前，没有碰任务和租约。
+- **认身份和登记之间的空档**：`attach` 在引擎的锁里先再确认一遍（`verify`：凭据没吊销、所属用户没停用、Agent 没停用、登记工作台之后不是以旧方式连接），吊销、用户停用、停用 Agent 断开连接也在同一把锁里（`closeByCredentials`、`setDisabled`），不会有已经没有资格的连接留在连接表里。这个锁就是引擎的锁，和 `CPOnline`、`Disconnect` 共用，不会让连接的登记和已有的状态迁移交错。
+- **停用或吊销时断开连接**（`AgentConnection.close`）：就是模型的 `Disconnect`。它手上的任务没有新的处理：控制面照旧等租约过期，走 `LeaseExpire` → `agentLost` 的强制取消和 `retries` 重试；停用期间 Agent 连不上，所以第 2 次尝试留在队列里，恢复后重连才派发。同一条路径有测试：`apps/server/test/agent-disable-dispatch.test.ts`。重连被拒绝所以 Welcome 里的放弃不会发生，旧尝试只由租约过期结束。
+- **`AssignTask.task_token`**：`engine.ts` `#prepareAssign` 在「记为 dispatched 并设租约」的同一个事务里签发任务凭据（`agents/task-credentials.ts`），加在消息里；没有新的状态转移，派发的条件（`AssignOnlyWhenReady`、槽位）没有动。任务凭据是否有效由任务当前的状态得出（还在 Agent 手上），不另有吊销动作，所以不会有哪条路径漏掉。
 
 ## 读结果
 

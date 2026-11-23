@@ -1,15 +1,17 @@
 // Agent 连接时的身份：Hello.token 是什么、能不能连上（ADR 0029「迁移与过渡」、ADR 0014，规格 #492）。
 //
 // - **Agent 凭据**（`sfly_agt_` 前缀，按台签发）：项目和名字从凭据得出，`Hello.name` 和它不一致就拒绝；吊销的拒绝。
-// - **共享令牌**（`SFLY_AGENT_TOKEN`，默认项目的旧式凭据，控制面启动时登记）：照旧可以连，界面上标出「用共享令牌连接」。
 //   开发 Agent 的凭据（记在一个用户名下）还要所属用户没有被停用：停用期间拒绝连接、已连着的断开（`control-plane.ts` 订阅用户
 //   停用的广播），启用之后同一个凭据照常——停用是可撤回的暂停，不吊销凭据；停用的用户自己吊销不了（访问检查 401），项目管理员可以。
+// - **共享令牌**（`SFLY_AGENT_TOKEN`，默认项目的旧式凭据，控制面启动时登记）：照旧可以连，界面上标出「用共享令牌连接」。
 // - **没有凭据**：控制面没有配置共享令牌时，只接受默认项目里已经登记过的名字（过渡版本，下一个版本起拒绝）；配了共享令牌的部署
 //   不带令牌照旧被拒绝。
+// 登记工作台之后（#549 接上 `requireAgentCredential`）只接受 Agent 凭据：共享令牌和没有凭据的连接都拒绝；登记之前先要没有还没换成
+// Agent 凭据的 Agent（{@link agentsNotOnCredentials}）。
 // 停用的 Agent 不论带不带凭据都不能连接。「以旧方式连接」（共享令牌和没有凭据）的连接不能顶掉带 Agent 凭据的同名连接，
 // 这一条在 `AgentHub.attach`。
 import { TOKEN_PREFIXES } from "@sfly/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import { hashCredential } from "../auth/credential-hash.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -42,8 +44,39 @@ const OWNER_DISABLED =
 	"invalid agent token: 这个开发 Agent 所属的用户已被停用，恢复用户之后才能连接";
 const agentDisabled = (name: string) => `Agent「${name}」已被停用：让项目管理员恢复它`;
 
+/**
+ * 还没换成 Agent 凭据的 Agent（没有停用的，最近一次连接用的不是 Agent 凭据，或者记下之前连接的）：登记工作台之前必须是空的
+ * （ADR 0029「迁移与过渡」，登记那一步在 #549，有没换的就拒绝并列出它们）。只签发过、没用它连上过的不算换了；停用的不算。
+ */
+export async function agentsNotOnCredentials(db: Db): Promise<string[]> {
+	const rows = await db
+		.select({ name: agents.name })
+		.from(agents)
+		.where(
+			and(
+				isNull(agents.disabledAt),
+				or(isNull(agents.lastAuthKind), ne(agents.lastAuthKind, "agent")),
+			),
+		)
+		.orderBy(asc(agents.name));
+	return rows.map((row) => row.name);
+}
+
+const CREDENTIAL_REQUIRED =
+	"控制面已经登记了工作台，只接受 Agent 凭据：共享令牌和没有凭据的连接都不再接受，让项目管理员为这台 Agent 签发 Agent 凭据";
+
 export class AgentAuthenticator {
-	constructor(private readonly deps: { db: Db; clock: Clock }) {}
+	constructor(
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			/**
+			 * 登记工作台之后为真（#549 接上，现在没有登记，不传就是假）：只接受 Agent 凭据，共享令牌和没有凭据的连接都拒绝
+			 * （共享令牌不发给工作台，但工作台在网络上够得着控制面，别处泄露的共享令牌就能冒充一台还没换凭据的 Agent）。
+			 */
+			requireAgentCredential?: () => boolean | Promise<boolean>;
+		},
+	) {}
 
 	/** 认 Hello 里的凭据；通过时记下凭据的最后使用时间。 */
 	async authenticate(token: string | undefined, name: string): Promise<AuthOutcome> {
@@ -94,6 +127,10 @@ export class AgentAuthenticator {
 			);
 		}
 
+		if (auth.kind !== "agent" && (await this.deps.requireAgentCredential?.())) {
+			return refuse("unauthenticated", CREDENTIAL_REQUIRED);
+		}
+
 		const [existing] = await db
 			.select({ projectId: agents.projectId, disabledAt: agents.disabledAt })
 			.from(agents)
@@ -127,6 +164,9 @@ export class AgentAuthenticator {
 	 */
 	async recheck(auth: AgentAuth, name: string): Promise<Refusal | undefined> {
 		const { db } = this.deps;
+		if (auth.kind !== "agent" && (await this.deps.requireAgentCredential?.())) {
+			return { code: "unauthenticated", message: CREDENTIAL_REQUIRED };
+		}
 		if (auth.kind === "agent") {
 			const [credential] = await db
 				.select({ revokedAt: agentCredentials.revokedAt, userId: agentCredentials.userId })

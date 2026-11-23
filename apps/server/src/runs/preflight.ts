@@ -26,7 +26,7 @@ import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
 /**
  * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
  * `agent_input_not_registered`，「飞书机器人」类型的输入选的机器人没有登记的
- * `feishu_bot_not_registered`，场景里还有已移除种类的节点的 `node_kind_removed`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
+ * `feishu_bot_not_registered`，场景里还有已移除种类的节点的 `node_kind_removed`），另有 `agent_not_registered`、节点派发到的 Agent 已被停用的 `agent_disabled`、`not_supported`、`sdk_version_unsatisfied`、
  * `agent_version_unsatisfied`、开发版本没有在节点派发到的在线 Agent 上加载的 `dev_package_not_loaded`
  * （dev-package-loaded.ts），以及触发时入口参数的值接到类型不符的输入的 `param_input_type_mismatch`（param-input-type.ts）。
  * 预检的警告（不阻断触发，{@link preflightWarnings}）也是这个结构。
@@ -75,7 +75,7 @@ async function withDevNodeTypes(
 /**
  * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用、输入的静态检查全部通过
  * （「Agent」类型的输入的常量是已注册的 Agent，「飞书机器人」类型的输入的常量是已登记的机器人），
- * 包节点派发到的 Agent 都已注册（不要求在线），
+ * 包节点派发到的 Agent 都已注册、没有被停用（不要求在线），
  * 锁定开发版本的节点派发到的在线 Agent 已经加载了它（{@link checkDevPackagesLoaded}，不在线的 Agent 不知道它加载了什么，不阻断），
  * 且控制面版本满足节点包需要的 SDK 版本（#79），节点所在的 Agent 和「Agent」类型的输入引用的 Agent 满足
  * 节点包需要的 Agent 版本（ADR 0019，见 requires-agent.ts）。
@@ -102,22 +102,35 @@ export function createPreflight(deps: { version: string }): Preflight {
 			if (agent) wanted.set(node.id, agent);
 		}
 		const names = [...new Set(wanted.values())];
-		const registered = new Set(
-			names.length
-				? (
-						await db.select({ name: agents.name }).from(agents).where(inArray(agents.name, names))
-					).map((r) => r.name)
-				: [],
+		const known = new Map(
+			(names.length
+				? await db
+						.select({ name: agents.name, disabledAt: agents.disabledAt })
+						.from(agents)
+						.where(inArray(agents.name, names))
+				: []
+			).map((r) => [r.name, r.disabledAt !== null]),
 		);
 		const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
 		for (const [nodeId, agent] of wanted) {
-			if (registered.has(agent)) continue;
+			const disabled = known.get(agent);
+			if (disabled === false) continue;
 			const node = nodeById.get(nodeId);
-			problems.push({
-				code: "agent_not_registered",
-				message: `节点 ${node ? nodeNameWithId(node) : nodeId} 派发到的 Agent ${agent} 还没有注册过`,
-				node_id: nodeId,
-			});
+			const shown = node ? nodeNameWithId(node) : nodeId;
+			// 停用的 Agent 连不上、不参与派发（ADR 0029「迁移与过渡」）：触发了任务也只会排到超时，不如在这里说清楚。
+			problems.push(
+				disabled === undefined
+					? {
+							code: "agent_not_registered",
+							message: `节点 ${shown} 派发到的 Agent ${agent} 还没有注册过`,
+							node_id: nodeId,
+						}
+					: {
+							code: "agent_disabled",
+							message: `节点 ${shown} 派发到的 Agent ${agent} 已被停用：让项目管理员恢复它，或把节点换到别的 Agent`,
+							node_id: nodeId,
+						},
+			);
 		}
 		problems.push(...(await checkDevPackagesLoaded(db, doc)));
 
