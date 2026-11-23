@@ -3,6 +3,7 @@ import { ARRANGE_STEP } from "@sfly/orchestration";
 import {
 	annotated,
 	annotationBand,
+	annotationColors,
 	annotationFrame,
 	memberList,
 	type TestAnnotation,
@@ -172,6 +173,24 @@ test("多选节点：上方出现工具条，可以排列、新建注释框；Ct
 	await expect(nodeMenu(page).getByRole("menuitem", { name: /添加注释框/ })).toContainText("Ctrl");
 	await nodeMenu(page).getByRole("menuitem", { name: "纵向排列" }).click();
 	await expect.poll(() => nodePosition(page, "sub_ping")).toEqual({ x: 0, y: ARRANGE_STEP.y });
+});
+
+test("选中注释框后焦点在检查器里（颜色按钮）：Ctrl+Shift+G 不删除注释框；焦点回到画布后照常删除（#461）", async ({
+	page,
+	controlPlane,
+}) => {
+	await openAnnotated(page, controlPlane);
+	await annotationBand(page, "取数").click();
+	const color = annotationColors(page).getByRole("button").first();
+	await color.focus();
+	await expect(color).toBeFocused();
+	await page.keyboard.press("ControlOrMeta+Shift+g");
+	await expect(annotationFrame(page, "annotation_1")).toBeVisible();
+	await expect(dock(page).getByRole("button", { name: "撤销" })).toBeDisabled();
+
+	await page.locator("[data-canvas-region]").focus();
+	await page.keyboard.press("ControlOrMeta+Shift+g");
+	await expect(annotationFrame(page, "annotation_1")).toHaveCount(0);
 });
 
 test("把节点拖进注释框：卡片中心进了框时框高亮，卡片下面写着「松手加入」；松手加入，和这次拖动一起是一步撤销", async ({
