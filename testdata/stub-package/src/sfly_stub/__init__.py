@@ -184,6 +184,54 @@ def wait_cancel(
             f.write("cancelled" if ctx.cancelled() else "not cancelled")
 
 
+@node(title="停不理会 SIGTERM 的服务", outputs=[])
+def stubborn_services(
+    ctx: Context,
+    pid_file: str,
+    count: int = 2,
+    grace: float = 3,
+    cancelled_grace: float = 1,
+) -> None:
+    """起 count 个不理会 SIGTERM 的服务（各自一个会话，不在任务的进程树里），把 PID 写到 pid_file；
+    被终止时在 finally 里依次停它们：SIGTERM 之后最多等一个宽限期再 SIGKILL。
+
+    宽限期是 grace 秒；任务已被取消、也就是 `ctx.cancelled()` 为真（取消和超时进入收尾时间时 Agent
+    都先写取消标记，#593）时压短成 cancelled_grace 秒。和 sfly-std 的 `stop_background_process`
+    同样的做法：平台留给收尾的时间有限，每个服务都用满宽限期的话，后面的服务来不及被停掉。
+    """
+    services = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import signal, time\n"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                "time.sleep(3600)",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        for _ in range(count)
+    ]
+    tmp = f"{pid_file}.tmp"
+    with open(tmp, "w") as f:
+        f.write(" ".join(str(service.pid) for service in services))
+    os.replace(tmp, pid_file)
+    try:
+        time.sleep(3600)
+    finally:
+        wait = min(grace, cancelled_grace) if ctx.cancelled() else grace
+        for service in services:
+            service.terminate()
+            try:
+                service.wait(timeout=wait)
+            except subprocess.TimeoutExpired:
+                service.kill()
+                service.wait()
+
+
 @node(title="环境探针", outputs=["prefix", "cwd", "env"])
 def probe(ctx: Context) -> dict[str, Any]:
     """报告执行环境：解释器所在 venv、工作目录、相关环境变量。"""

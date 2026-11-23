@@ -67,6 +67,85 @@ async fn timed_out_task_has_its_process_tree_killed_and_fails_with_timeout() {
 }
 
 #[tokio::test]
+async fn timed_out_task_sees_the_cancel_marker_while_it_cleans_up_and_still_fails_with_timeout() {
+    // #593：超时进入收尾时间时和取消一样先写取消标记，节点里 `ctx.cancelled()` 是真的；
+    // 任务的结局不受影响，仍然是超时失败，不是取消。
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-timeout-marker"));
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let ready = dir.path().join("ready");
+    let report = dir.path().join("report");
+
+    let mut task = stub_task(
+        "task-timeout-marker",
+        "wait_cancel",
+        json!({ "ready_file": ready, "report_file": report }),
+    );
+    // 给节点留够启动的时间：SIGTERM 来得太早的话 `finally` 还没有进入。
+    task.timeout_seconds = 2;
+    cp.assign(task).await;
+
+    let (result, _) = cp.result("task-timeout-marker").await;
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    assert_eq!(result.error.expect("error").kind(), ErrorKind::Timeout);
+    assert_eq!(wait_for_report(&report).await, "cancelled");
+    assert!(
+        agent
+            .work_dir
+            .path()
+            .join("task-timeout-marker/cancel")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn cleaning_up_two_services_that_ignore_sigterm_finishes_within_the_grace_period_after_a_timeout()
+ {
+    // #593：节点在 `finally` 里依次停两个不理会 SIGTERM 的服务（和 sfly-std 的
+    // `stop_background_process` 同样的做法）：任务已经被「取消」（`ctx.cancelled()` 为真）时宽限期压短。
+    // 超时时 Agent 以前不写标记，宽限期压不短：第一个服务用满 3 秒，第二个刚发出 SIGTERM，
+    // 平台的收尾时间（这里 4 秒）就到了，第二个服务留在机器上。
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-timeout-services");
+    options.args = vec!["--terminate-grace".into(), "4".into()];
+    let _agent = spawn_agent(options);
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pids");
+
+    let mut task = stub_task(
+        "task-timeout-services",
+        "stubborn_services",
+        json!({ "pid_file": pid_file, "count": 2, "grace": 3, "cancelled_grace": 1 }),
+    );
+    // 给节点留够启动的时间：SIGTERM 来得太早的话 `finally` 还没有进入。
+    task.timeout_seconds = 2;
+    cp.assign(task).await;
+
+    let (result, _) = cp.result("task-timeout-services").await;
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    assert_eq!(result.error.expect("error").kind(), ErrorKind::Timeout);
+    let pids = pids(&pid_file);
+    assert_eq!(pids.len(), 2);
+    assert_all_gone(&pids).await;
+}
+
+/// 等节点在 `finally` 里写出报告（超时的任务结果和节点收尾的先后不保证）。
+async fn wait_for_report(path: &Path) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && !text.is_empty()
+        {
+            return text;
+        }
+        assert!(Instant::now() < deadline, "没有等到 {}", path.display());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
 async fn processes_ignoring_sigterm_are_killed_after_the_grace_period() {
     let cp = FakeControlPlane::start().await;
     let mut options = AgentOptions::new(&cp.url, "agent-stubborn");

@@ -412,15 +412,21 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
 }
 
 impl Running {
-    /// 取消任务（docs/SEMANTICS.md §3.4）：先写取消标记，再优雅终止进程树，宽限期过后强制杀掉；
-    /// 强制取消（或优雅终止期间又收到强制取消）时立即杀掉。
-    async fn cancel(mut self, force: bool, mut cancel: CancelSignal) -> TaskResult {
+    /// 写取消标记：节点里 `ctx.cancelled()` 之后为真。取消和超时进入收尾时间时都先写它：
+    /// 节点在 `finally` 里清理时靠它知道「平台留给收尾的时间不多了」。
+    async fn write_cancel_marker(&self) {
         if let Err(error) = tokio::fs::write(&self.paths.cancel, b"").await {
             eprintln!(
                 "cannot write cancel marker {}: {error}",
                 self.paths.cancel.display()
             );
         }
+    }
+
+    /// 取消任务（docs/SEMANTICS.md §3.4）：先写取消标记，再优雅终止进程树，宽限期过后强制杀掉；
+    /// 强制取消（或优雅终止期间又收到强制取消）时立即杀掉。
+    async fn cancel(mut self, force: bool, mut cancel: CancelSignal) -> TaskResult {
+        self.write_cancel_marker().await;
         let graceful = if force {
             None
         } else {
@@ -462,7 +468,10 @@ impl Running {
         }
     }
 
+    /// 超时（docs/SEMANTICS.md §3.3）：和取消一样先写取消标记，节点进入收尾时间（宽限期）时
+    /// `ctx.cancelled()` 就是真的；任务的结局不受影响，仍然记成超时，不是取消。
     async fn time_out(mut self, seconds: u32) -> TaskResult {
+        self.write_cancel_marker().await;
         let killed = match self.process.terminate(self.grace).await {
             Ok(_) => "已终止进程树".to_string(),
             Err(error) => format!("终止进程树时出错：{error}"),

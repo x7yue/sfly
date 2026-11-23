@@ -6,7 +6,8 @@
 - `ctx.metric(指标名, 数值, labels={...})`：上报节点类型声明的指标，可以带标签
   （见 `Context.metric`）；
 - `ctx.artifacts`：保存产物，返回可以写进输出的产物引用；按产物引用下载产物（见 `Artifacts`）；
-- `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）；
+- `ctx.cancelled()`：任务是否进入了收尾时间——被取消、超时、被停止子流程节点停止时 Agent 都先写
+  取消标记（`SFLY_CANCEL` 文件），它存在就是真（不说明原因，任务的结局由原因决定）；
 - `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
 - `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）；
 - `ctx.agent()` / `ctx.agent(名称)`：自己所在的 Agent / 通过「Agent」类型的参数拿到的
@@ -16,7 +17,7 @@
 - `ctx.action(名称, **字段)` / `ctx.action.start(...)` / `ctx.mark(名称, **字段)`：记录节点正在做的
   事（动作）和某个时刻（标记）（见 `sfly.actions`）。
 
-取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
+取消、超时、被停止子流程节点停止时，Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
 宽限期（默认 10 秒）过后整棵进程树被强制杀掉。一次取消，主线程里只抛一次 `Cancelled`：
 清理代码不会被再打断一次。在后台线程里可以轮询 `ctx.cancelled()`。
@@ -890,7 +891,11 @@ class Context:
         self.action.mark(name, parent=parent, **fields)
 
     def cancelled(self) -> bool:
-        """任务是否已被取消（Agent 已写入取消标记）。"""
+        """任务是否进入了收尾时间（Agent 已写入取消标记）。
+
+        取消、超时、被停止子流程节点停止时 Agent 都先写取消标记再发 SIGTERM，所以这三种情况下它在
+        收尾时间里都是真；它不说明原因（超时的任务仍然记成超时，不是取消）。清理代码靠它把宽限期压短。
+        """
         return self._cancel is not None and os.path.exists(self._cancel)
 
     def progress(self, current: float, total: float | None = None, message: str = "") -> None:
