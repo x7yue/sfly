@@ -4,7 +4,11 @@
 // 以前启动正常，清理任务每分钟报错、悄悄不清理；现在上限是 36500 天（100 年），截止时间永远是有效的时间。
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAX_LOGIN_IDLE_HOURS, MAX_RETENTION_DAYS } from "../src/config/env-settings.js";
+import {
+	MAX_LOGIN_IDLE_HOURS,
+	MAX_RETENTION_DAYS,
+	MIN_LOGIN_IDLE_MS,
+} from "../src/config/env-settings.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
@@ -26,6 +30,10 @@ describe("启动时拒绝超出范围的数值选项", () => {
 		["metricLimitBytes", { metricLimitBytes: 0 }],
 		["loginIdleMs", { loginIdleMs: Number.POSITIVE_INFINITY }],
 		["loginIdleMs", { loginIdleMs: MAX_LOGIN_IDLE_HOURS * HOUR + 1 }],
+		// 下限：小于 1 秒时登录返回 200 却下发 Max-Age=0，谁都登录不了；小于续期间隔时一直在用的登录也会过期。
+		["loginIdleMs", { loginIdleMs: 500 }],
+		["loginIdleMs", { loginIdleMs: 30_000 }],
+		["loginIdleMs", { loginIdleMs: MIN_LOGIN_IDLE_MS - 1 }],
 	])(
 		"%s：控制面不启动，说明写明选项名和范围",
 		async (name, options) => {
@@ -33,6 +41,22 @@ describe("启动时拒绝超出范围的数值选项", () => {
 		},
 		60_000,
 	);
+
+	it("几个选项同时不合法：一次报完，开头写「N 个选项不合法」（不是「环境变量」），每个一条", async () => {
+		const error = await startTestControlPlane({
+			retentionDays: 100_000_000,
+			logLimitBytes: 0,
+			loginIdleMs: 500,
+		}).catch((e: unknown) => e as Error);
+
+		expect(error).toBeInstanceOf(Error);
+		const message = (error as Error).message;
+		expect(message).toContain("3 个选项不合法");
+		expect(message).not.toContain("环境变量");
+		for (const name of ["retentionDays", "logLimitBytes", "loginIdleMs"]) {
+			expect(message, name).toContain(`${name} 不合法`);
+		}
+	}, 60_000);
 });
 
 describe("上限以内的最大值", () => {
@@ -175,6 +199,38 @@ describe("上限以内的最大值", () => {
 				headers: { cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" },
 			});
 			expect(me.status).toBe(200);
+		}, 60_000);
+	});
+
+	describe("登录的空闲期限的下限（登录续期间隔的两倍，2 分钟）", () => {
+		const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
+
+		it("下限本身：登录成功、Cookie 有效期 120 秒；每隔不到续期间隔就用一次的登录一直不会过期，没人用的过了期限才失效", async () => {
+			cp = await startTestControlPlane({ initialAdmin: ADMIN, loginIdleMs: MIN_LOGIN_IDLE_MS });
+			const res = await cp.fetch("/auth/login", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ login_name: ADMIN.loginName, password: ADMIN.password }),
+			});
+			expect(res.status).toBe(200);
+			const setCookie = res.headers.get("set-cookie") ?? "";
+			expect(setCookie).toContain("Max-Age=120");
+			const cookie = /sfly_login=([^;]*)/.exec(setCookie)?.[1] ?? "";
+			const me = async () =>
+				(
+					await (cp as TestControlPlane).fetch("/auth/me", {
+						headers: { cookie: `sfly_login=${cookie}`, "sec-fetch-site": "same-origin" },
+					})
+				).status;
+
+			// 每 59 秒用一次（比续期间隔 60 秒短，所以有的请求不续期）：用了 10 次，共 590 秒，比期限长得多，一直有效。
+			for (let i = 0; i < 10; i++) {
+				clock().advance(59_000);
+				expect(await me(), `第 ${i + 1} 次（${(i + 1) * 59} 秒）`).toBe(200);
+			}
+			// 没人用：过了期限就失效。
+			clock().advance(MIN_LOGIN_IDLE_MS + 1000);
+			expect(await me()).toBe(401);
 		}, 60_000);
 	});
 });

@@ -47,8 +47,11 @@ const BAD: Array<[name: string, value: string, range: string]> = [
 	["SFLY_LOG_LIMIT_MB", "1e300", "之间的整数"],
 	["SFLY_METRIC_LIMIT_MB", "Infinity", "之间的整数"],
 	["SFLY_METRIC_LIMIT_MB", "abc", "之间的整数"],
-	["SFLY_LOGIN_IDLE_HOURS", "Infinity", "大于 0、不超过 876000 的数（小时）"],
-	["SFLY_LOGIN_IDLE_HOURS", "1e9", "大于 0、不超过 876000 的数（小时）"],
+	["SFLY_LOGIN_IDLE_HOURS", "Infinity", "2 分钟到 876000 小时之间的数"],
+	["SFLY_LOGIN_IDLE_HOURS", "1e9", "2 分钟到 876000 小时之间的数"],
+	["SFLY_LOGIN_IDLE_HOURS", "0.01", "下限是登录续期间隔（60 秒）的两倍"],
+	["SFLY_LOG_LIMIT_MB", "10MB", "单位是 MB"],
+	["SFLY_HTTP_PORT", "+8080", "只认不带符号的十进制整数"],
 	["SFLY_HTTP_PORT", "70000", "端口必须是 0 到 65535 之间的整数"],
 	["SFLY_GRPC_PORT", "abc", "端口必须是 0 到 65535 之间的整数"],
 ];

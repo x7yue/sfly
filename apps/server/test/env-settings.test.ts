@@ -3,10 +3,12 @@
 // 以前只要求「大于 0」：`Infinity` 和很大的数都能通过——保留天数填得很大时，清理的截止时间早于数据库能表示的下限
 // （约 247 万天起）或在控制面里就是无效的时间（约 1 亿天起），启动正常，清理任务每分钟报错、悄悄不清理。
 import { describe, expect, it } from "vitest";
+import { LOGIN_TOUCH_INTERVAL_MS } from "../src/auth/access-guard.js";
 import {
 	EnvSettingsError,
 	MAX_LOGIN_IDLE_HOURS,
 	MAX_RETENTION_DAYS,
+	MIN_LOGIN_IDLE_MS,
 	numericOptionProblems,
 	readEnvSettings,
 } from "../src/config/env-settings.js";
@@ -90,6 +92,19 @@ describe("保留天数：SFLY_RETENTION_DAYS、SFLY_METRIC_RETENTION_DAYS", () =
 				expect(message).toContain(`大于 0、不超过 ${MAX_RETENTION_DAYS} 的数（天）`);
 				expect(message).toContain(`不想清理就填 ${MAX_RETENTION_DAYS}`);
 			});
+
+			it.each([
+				["30d"],
+				["30 天"],
+				["Infinity"],
+				["abc"],
+				["1e400"],
+			])("%s 不是（有限的）数：说明写明单位是天、只写数字，不带单位", (raw) => {
+				const message = rejected(name, raw);
+
+				expect(message).toContain("单位是天");
+				expect(message).toContain("只写数字");
+			});
 		});
 	}
 
@@ -127,9 +142,7 @@ describe("三个上限（MB）：SFLY_LOG_LIMIT_MB、SFLY_ARTIFACT_LIMIT_MB、SF
 				["0.0000001"], // 换算后不到 1 字节
 				[String(LARGEST_MB + 1)], // 换算后超过 2^53 − 1
 				["1e300"],
-				["1e400"],
-				...NOT_NUMBERS.map((v) => [v]),
-			])("%s 不合法：说明写明变量名、填的原文、范围", (raw) => {
+			])("%s 是数，但换算成字节后不在范围里：说明写明变量名、填的原文、范围和换算后的字节数", (raw) => {
 				const message = rejected(name, raw as string);
 
 				expect(message).toContain(`${name} 不合法`);
@@ -137,6 +150,29 @@ describe("三个上限（MB）：SFLY_LOG_LIMIT_MB、SFLY_ARTIFACT_LIMIT_MB、SF
 					`${what}换算成字节后必须是 1 到 ${Number.MAX_SAFE_INTEGER} 之间的整数`,
 				);
 				expect(message).toContain(JSON.stringify(raw));
+				expect(message).toContain("换算后");
+			});
+
+			it.each([
+				["10MB"],
+				["10 MB"],
+				["1GB"],
+				["Infinity"],
+				["-Infinity"],
+				["NaN"],
+				["abc"],
+				["1e400"],
+			])("%s 不是（有限的）数：说明写明单位是 MB、只写数字，不写「换算后 NaN 字节」", (raw) => {
+				const message = rejected(name, raw);
+
+				expect(message).toContain(`${name} 不合法`);
+				expect(message).toContain(JSON.stringify(raw));
+				expect(message).toContain("单位是 MB");
+				expect(message).toContain("只写数字");
+				// 范围仍然写明。
+				expect(message).toContain(`1 到 ${Number.MAX_SAFE_INTEGER} 之间的整数`);
+				expect(message).not.toContain("NaN 字节");
+				expect(message).not.toContain("换算后");
 			});
 		});
 	}
@@ -150,9 +186,17 @@ describe("登录的空闲期限（小时）：SFLY_LOGIN_IDLE_HOURS", () => {
 		expect(one(name, "").loginIdleMs).toBeUndefined();
 	});
 
+	it("下限是登录续期间隔的两倍（从常量算出来，不写死）：续期只在距上次续期满 LOGIN_TOUCH_INTERVAL_MS 之后的请求里做，期限比这短，一直在用的登录也会过期", () => {
+		expect(MIN_LOGIN_IDLE_MS).toBe(2 * LOGIN_TOUCH_INTERVAL_MS);
+		expect(MIN_LOGIN_IDLE_MS).toBe(120_000);
+	});
+
 	it.each([
 		["12", 12 * HOUR],
 		["0.5", HOUR / 2],
+		["0.04", 144_000],
+		["0.0334", 120_240], // 刚过下限
+		["0.03333333333333333", MIN_LOGIN_IDLE_MS], // 2 分钟 = 1/30 小时，小数写不尽，按最近的毫秒算
 		[String(MAX_LOGIN_IDLE_HOURS), MAX_LOGIN_IDLE_HOURS * HOUR],
 	])("%s 合法", (raw, ms) => {
 		expect(one(name, raw).loginIdleMs).toBe(ms);
@@ -161,16 +205,36 @@ describe("登录的空闲期限（小时）：SFLY_LOGIN_IDLE_HOURS", () => {
 	it.each([
 		["0"],
 		["-1"],
-		["0.0000000001"], // 换算后不到 1 毫秒
+		["0.0000000001"],
+		["0.0001"], // 0.36 秒：以前通过了检查，登录返回 200 却下发 Max-Age=0，谁都登录不了
+		["0.01"], // 36 秒：比续期间隔还短
+		["0.03"], // 1 分 48 秒
+		["0.0333"], // 差一点到 2 分钟
 		[String(MAX_LOGIN_IDLE_HOURS + 1)],
 		["1e9"],
 		...NOT_NUMBERS.map((v) => [v]),
-	])("%s 不合法：说明写明变量名、填的原文、范围", (raw) => {
+	])("%s 不合法：说明写明变量名、填的原文、最小值和原因、最大值", (raw) => {
 		const message = rejected(name, raw as string);
 
 		expect(message).toContain(`${name} 不合法`);
-		expect(message).toContain(`大于 0、不超过 ${MAX_LOGIN_IDLE_HOURS} 的数（小时）`);
 		expect(message).toContain(JSON.stringify(raw));
+		expect(message).toContain(`2 分钟到 ${MAX_LOGIN_IDLE_HOURS} 小时之间的数`);
+		expect(message).toContain("单位是小时");
+		expect(message).toContain("下限是登录续期间隔（60 秒）的两倍");
+		expect(message).toContain("一直在用的登录也会过期");
+	});
+
+	it.each([
+		["12h"],
+		["12 小时"],
+		["Infinity"],
+		["abc"],
+		["1e400"],
+	])("%s 不是（有限的）数：说明写明单位是小时、只写数字", (raw) => {
+		const message = rejected(name, raw);
+
+		expect(message).toContain("单位是小时");
+		expect(message).toContain("只写数字");
 	});
 });
 
@@ -198,16 +262,21 @@ describe("端口：SFLY_HTTP_PORT、SFLY_GRPC_PORT", () => {
 			it.each([
 				["65536"],
 				["-1"],
+				["-0"],
+				["+8080"],
+				["8080.0"],
 				["1.5"],
 				["1e3"],
+				["0x1F90"],
 				["80 80"],
 				["99999999999"],
 				...NOT_NUMBERS.map((v) => [v]),
-			])("%s 不合法：说明写明变量名、填的原文、范围", (raw) => {
+			])("%s 不合法：说明写明变量名、填的原文、范围，只认不带符号的十进制整数", (raw) => {
 				const message = rejected(name, raw as string);
 
 				expect(message).toContain(`${name} 不合法`);
 				expect(message).toContain("端口必须是 0 到 65535 之间的整数");
+				expect(message).toContain("只认不带符号的十进制整数");
 				expect(message).toContain(JSON.stringify(raw));
 			});
 		});
@@ -281,9 +350,17 @@ describe("全部变量一起读", () => {
 		expect(message).toContain("4 个环境变量不合法");
 	});
 
+	it("EnvSettingsError 的说明开头写的是它说的东西：环境变量，或者程序的选项", () => {
+		expect(new EnvSettingsError(["甲", "乙"]).message).toBe("2 个环境变量不合法：\n  - 甲\n  - 乙");
+		expect(new EnvSettingsError(["甲", "乙"], "选项").message).toBe(
+			"2 个选项不合法：\n  - 甲\n  - 乙",
+		);
+		expect(new EnvSettingsError(["甲"], "选项").message).toBe("甲");
+	});
+
 	it("只有一个不合法时，说明就是那一条，不带「N 个」的前缀", () => {
 		expect(rejected("SFLY_HTTP_PORT", "x")).toBe(
-			'SFLY_HTTP_PORT 不合法：端口必须是 0 到 65535 之间的整数（0 是让系统选一个空闲端口），实际是 "x"',
+			'SFLY_HTTP_PORT 不合法：端口必须是 0 到 65535 之间的整数（0 是让系统选一个空闲端口），只认不带符号的十进制整数（不要写 +8080、8080.0、1e3、0x1F90），实际是 "x"',
 		);
 	});
 });
@@ -298,7 +375,7 @@ describe("程序里直接给 startControlPlane 的数值选项：同一个范围
 				logLimitBytes: 500,
 				artifactLimitBytes: 1,
 				metricLimitBytes: 3 * 28,
-				loginIdleMs: 1,
+				loginIdleMs: MIN_LOGIN_IDLE_MS,
 			}),
 		).toEqual([]);
 	});
@@ -316,6 +393,10 @@ describe("程序里直接给 startControlPlane 的数值选项：同一个范围
 		["metricLimitBytes", { metricLimitBytes: 2 ** 53 }],
 		["artifactLimitBytes", { artifactLimitBytes: Number.NaN }],
 		["loginIdleMs", { loginIdleMs: 0 }],
+		["loginIdleMs", { loginIdleMs: 1 }],
+		["loginIdleMs", { loginIdleMs: 500 }],
+		["loginIdleMs", { loginIdleMs: 30_000 }],
+		["loginIdleMs", { loginIdleMs: MIN_LOGIN_IDLE_MS - 1 }],
 		["loginIdleMs", { loginIdleMs: Number.POSITIVE_INFINITY }],
 		["loginIdleMs", { loginIdleMs: MAX_LOGIN_IDLE_HOURS * HOUR + 1 }],
 	])("%s 不合法：说明写明选项名", (name, options) => {
@@ -323,5 +404,17 @@ describe("程序里直接给 startControlPlane 的数值选项：同一个范围
 
 		expect(problems).toHaveLength(1);
 		expect(problems[0]).toContain(`${name} 不合法`);
+	});
+
+	it("loginIdleMs 的说明用毫秒写（选项的单位是毫秒，不是环境变量的小时），写明最小值和原因", () => {
+		const [problem] = numericOptionProblems({ loginIdleMs: 500 });
+
+		expect(problem).toContain("loginIdleMs 不合法");
+		expect(problem).toContain(
+			`必须是 ${MIN_LOGIN_IDLE_MS} 到 ${MAX_LOGIN_IDLE_HOURS * HOUR} 毫秒之间的整数`,
+		);
+		expect(problem).toContain("2 分钟到 876000 小时");
+		expect(problem).toContain("实际是 500");
+		expect(problem).not.toContain("（小时）");
 	});
 });

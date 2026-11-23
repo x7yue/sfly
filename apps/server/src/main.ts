@@ -32,7 +32,8 @@
 //   SFLY_ADMIN_LOGIN、SFLY_ADMIN_PASSWORD 初始管理员的登录名和密码（可选，要一起设置；SFLY_ADMIN_DISPLAY_NAME 是显示名，
 //                    默认同登录名）：只在库里没有任何用户时生效，供自动化部署和测试使用。不设置时，没有任何用户就在日志里打印一次性的
 //                    初始化码（同时写进数据目录的 setup-code 文件，只有属主可读），用它在 /setup 页建第一个平台管理员（ADR 0029）
-//   SFLY_LOGIN_IDLE_HOURS 登录的空闲期限（小时，默认 12，大于 0、最大 876000）：这么久没有用过的登录失效，用着就顺延
+//   SFLY_LOGIN_IDLE_HOURS 登录的空闲期限（小时，默认 12，2 分钟到 876000 小时，可以带小数，写 0.0334 或更大）：这么久没有用过的登录
+//                    失效，用着就顺延；下限是登录续期间隔（60 秒）的两倍，再短的话一直在用的登录也会过期
 //   SFLY_DEV_ORIGINS 开发时也算同源的来源，逗号分隔，例如 http://localhost:3000（vite 开发服务器）：登录 Cookie 的跨站检查用，
 //                    生产里不要设置（可选）。同源的判断见 src/auth/cross-site.ts：配置了 SFLY_PUBLIC_URL 时以它为准
 //   SFLY_TRUST_PROXY 信任反向代理带来的 X-Forwarded-For，登录限速用它里面的来源地址（可选）。取的是可信代理之前的那个地址
