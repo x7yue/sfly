@@ -495,4 +495,42 @@ describe("值集合太大的运行：任务日志里有一行平台写的说明�
 			expect(times).toEqual([now - 5000, now - 5000, now - 4000, now - 1000]);
 		});
 	}, 60_000);
+
+	it("说明的时间取第一条真正写入的行：值集合后来才变大，这一批以重发的旧行开头，说明的时间也不倒退，这一批没有要写入的行时不写说明（#657）", async () => {
+		await agent.disconnect();
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 }, { clock: cp.clock });
+		await withSecretLimits({ automatonChars: 300 }, async () => {
+			// 子流程 subB 的 secret 参数 k 取 user 的值：值本身要写出很多种写法（原样、转义、\uXXXX），合计超过 300 个字符才算太大
+			const big = "é".repeat(150);
+			const id = await api.orchestrationWith(LATE_SECRET);
+			const runId = await api.triggerOk(id, { user: big });
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
+			const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+			const now = cp.clock.now().getTime();
+			const at = (seq: number, agoMs: number, text: string) => ({
+				...line(seq, text),
+				timeUnixMs: BigInt(now - agoMs),
+				monotonicMs: agent.monotonicAt(now - agoMs),
+			});
+			const pageOf = () => api.getJson<Page>(`/tasks/${sa.taskId}/logs`);
+			agent.logs(sa, [at(1, 4000, "first"), at(2, 3000, "second")]);
+			await eventually(async () => expect((await pageOf()).lines).toHaveLength(2));
+			// 值集合现在才变大（子流程创建之后）
+			await agent.succeed(b);
+			await eventually(async () =>
+				expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+			);
+			// 只有重发的旧行（序号不大于已写入的）：没有要写入的行，不写说明，文件不变
+			agent.logs(sa, [at(2, 20_000, "second")]);
+			// 重发的旧行开头（时间比文件里最后一行早得多）、后面是新行：说明取新行的时间
+			agent.logs(sa, [at(2, 20_000, "second"), at(3, 1000, "third")]);
+			await eventually(async () => expect((await pageOf()).lines).toHaveLength(4));
+			const page = await pageOf();
+			expect(texts(page.lines)).toEqual([MASK, MASK, OVERSIZE_NOTICE, MASK]);
+			const times = page.lines.map((l) => Date.parse(l.time ?? ""));
+			expect(times).toEqual([now - 4000, now - 3000, now - 1000, now - 1000]);
+			expect(times).toEqual([...times].sort((x, y) => x - y));
+		});
+	}, 60_000);
 });

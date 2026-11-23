@@ -10,6 +10,7 @@ from sfly.cli.client import ApiError, Client
 from sfly.cli.errors import CliError
 from sfly.cli.run_query import run_state
 from sfly.cli.run_summary import (
+    SECRETS_OVERSIZE_NOTE,
     SummaryUnavailable,
     fetch_report,
     minimal_summary,
@@ -503,3 +504,18 @@ def test_an_error_from_an_older_control_plane_has_no_location_and_looks_as_befor
 
     assert "出错位置" not in older
     assert render_summary(null) == older
+
+
+def test_a_run_whose_secret_values_are_too_many_says_why_everything_is_masked() -> None:
+    """保密值太多的运行（#657）：摘要的 JSON 多一个 `secrets_oversize`，文本里多一行提示，不含任何值；
+    正常的摘要没有这个键、没有这一行，和以前一字不差。"""
+    plain = summary_of(CLIENT, report())
+    assert "secrets_oversize" not in plain
+    oversize = summary_of(CLIENT, report(secrets_oversize=True))
+    assert oversize.pop("secrets_oversize") is True
+    assert oversize == plain
+    text = render_summary(summary_of(CLIENT, report(secrets_oversize=True)))
+    assert SECRETS_OVERSIZE_NOTE in text.split("\n")
+    assert SECRETS_OVERSIZE_NOTE not in render_summary(plain)
+    # 旧版本的控制面没有这个字段：读不到时当作没有
+    assert "secrets_oversize" not in summary_of(CLIENT, report(secrets_oversize=False))

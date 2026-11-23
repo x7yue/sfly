@@ -211,6 +211,8 @@ def _show(session: Session, args: argparse.Namespace) -> None:
     labels = chain_labels(report)
     view["failed_actions"] = [failed_action_entry(a, labels) for a in report["failed_actions"]]
     view["attention_items"] = [attention_entry(i) for i in report["attention_items"]]
+    if report.get("secrets_oversize"):
+        view["secrets_oversize"] = True
     text = "\n".join([render(view), *render_extra_sections(view)])
     session.out.emit(view, text)
 

@@ -107,6 +107,11 @@ export function RunSummary({ runId }: { runId: string }) {
 				</span>
 			</div>
 			{run.run_notification && <RunNotificationLine state={run.run_notification} />}
+			{run.secrets_oversize && (
+				<p role="note" className="m-0 mb-3 text-xs text-fg-2" data-testid="secrets-oversize">
+					{MESSAGE.secretsOversize}
+				</p>
+			)}
 			<ul aria-label={LIST_LABEL.chainProgress} className="m-0 flex list-none flex-col gap-1.5 p-0">
 				{chains.map((chain) => (
 					<ChainRow key={chain.id} chain={chain} />

@@ -640,6 +640,7 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 		run_notification: read.runNotification,
+		secrets_oversize: read.secrets.oversize,
 		cancel: run.cancelRequestedAt
 			? {
 					requested_by: run.cancelRequestedBy ?? "",
