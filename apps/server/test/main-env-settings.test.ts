@@ -109,7 +109,9 @@ describe("main.ts 读数值类环境变量", () => {
 
 		expect(result.code, result.output).not.toBe(0);
 		expect(result.output).not.toContain("不合法");
-		expect(result.output).not.toContain("没有启动");
+		// 启动失败也会打印「控制面没有启动：…」（#578，写库失败等），所以这里分不出「没过检查」和「连数据库失败」的是它：
+		// 看原因，过了检查之后才走到的连数据库那一步，写着连不上（1 号端口没有人监听）。
+		expect(result.output).toContain("ECONNREFUSED");
 	}, 90_000);
 });
 
