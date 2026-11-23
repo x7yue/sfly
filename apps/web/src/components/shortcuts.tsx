@@ -1,5 +1,7 @@
+import { cn } from "cn";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { dialogOpen, inCanvasArea, isEditable } from "#/lib/focus";
+import { MORE_BELOW_FADE, trackMoreBelow } from "#/lib/scroll-more";
 import {
 	type PaletteShortcut,
 	SHORTCUTS,
@@ -110,25 +112,28 @@ export function ShortcutsDialog({
 }) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="w-[740px]">
+			{/* 宽度跟着内容走（至少 740px）：名称不折行，最宽的一行（名称加按键）放得下。窗口宽到放得下四列（1100px 起）时
+			    排四列，放得下五列（1300px 起）时排五列：1440×900 里五列整个面板放得下、不用滚（四列还差 43px：「助手」
+			    一组加进来之后）；放不下的窗口（1280×800 等）面板自己滚，下面还有内容时底边渐隐。 */}
+			<DialogContent className="w-fit min-w-[740px]">
 				<DialogHeader>
 					<DialogTitle>快捷键</DialogTitle>
 				</DialogHeader>
-				<div className="overflow-y-auto">
+				<div ref={trackMoreBelow} className={cn("overflow-y-auto", MORE_BELOW_FADE)}>
 					{GROUPS.map((group) => {
 						const items = SHORTCUTS.filter((s) => s.group === group);
 						if (items.length === 0) return null;
 						return (
 							<section key={group} aria-label={group}>
 								<h4 className="mt-1 mb-1 text-xs font-semibold text-fg-3">{group}</h4>
-								<dl className="m-0 grid grid-cols-3 gap-x-6">
+								<dl className="m-0 grid grid-cols-[repeat(3,minmax(max-content,1fr))] gap-x-6 min-[1100px]:grid-cols-[repeat(4,minmax(max-content,1fr))] min-[1300px]:grid-cols-[repeat(5,minmax(max-content,1fr))]">
 									{items.map((s) => (
 										<div
 											key={s.id}
-											className="flex items-center justify-between border-b border-border-soft py-1.25 text-sm"
+											className="flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm"
 										>
-											<dt>{s.label}</dt>
-											<dd className="m-0">
+											<dt className="whitespace-nowrap">{s.label}</dt>
+											<dd className="m-0 flex-none">
 												<Keys shortcut={s.id} />
 											</dd>
 										</div>

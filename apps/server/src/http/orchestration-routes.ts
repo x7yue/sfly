@@ -96,7 +96,10 @@ export function registerOrchestrationRoutes(
 		// 第 1 版是源场景最新版本的原样复制，不过保存时的检查：问题（升级前存下的超限的超时、排队超时……）在警告里带出来。
 		const first =
 			copied.head_version > 0 ? await orchestrations.getVersion(copied.id, 1) : undefined;
-		const warnings = first ? await versionWarnings(db, copied.id, first.document, undefined) : [];
+		const project = (await orchestrations.projectOf(copied.id)) ?? DEFAULT_PROJECT;
+		const warnings = first
+			? await versionWarnings(db, project, copied.id, first.document, undefined)
+			: [];
 		return reply.code(201).send({ ...copied, warnings });
 	});
 
@@ -157,7 +160,8 @@ export function registerOrchestrationRoutes(
 		// 结构、包版本锁定和引用的问题，以及会让运行预设失效的改动，只产生警告，不阻止保存
 		// （docs/SEMANTICS.md §1.2、§2.4、§6）。先设状态码再返回响应：响应在类型上受契约约束。
 		reply.code(201);
-		const warnings = await versionWarnings(db, params.id, saved.document, result.previous);
+		const project = (await orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT;
+		const warnings = await versionWarnings(db, project, params.id, saved.document, result.previous);
 		return { ...saved, warnings };
 	});
 
@@ -225,6 +229,7 @@ export function registerOrchestrationRoutes(
 		reply.code(201);
 		const check = await versionCheck(
 			db,
+			(await orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT,
 			params.id,
 			saved.document,
 			result.previous,
@@ -260,7 +265,8 @@ export function registerOrchestrationRoutes(
 				: undefined;
 		if (!restored) return versionNotFound(reply);
 		const { version, previous } = restored;
-		const warnings = await versionWarnings(db, params.id, version.document, previous);
+		const project = (await orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT;
+		const warnings = await versionWarnings(db, project, params.id, version.document, previous);
 		return reply.code(201).send({ ...version, warnings });
 	});
 
