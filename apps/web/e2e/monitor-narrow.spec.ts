@@ -293,7 +293,7 @@ for (const viewport of VIEWPORTS) {
 			).toBe(false);
 		});
 
-		test("快捷键面板：每一行的名称不折行、和按键之间至少隔 12px，每一行一样高；滚到底最后一行完整露出", async ({
+		test("快捷键面板：每一行的名称不折行、和按键之间至少隔 12px，每一行一样高；1440×900 整个面板放得下，放不下时刚打开就有「还能往下滚」的提示，滚到底最后一行完整露出", async ({
 			page,
 		}) => {
 			await page.goto("/");
@@ -346,11 +346,29 @@ for (const viewport of VIEWPORTS) {
 			const box = await rectOf(dialog);
 			expect(box.x, size).toBeGreaterThanOrEqual(0);
 			expect(box.x + box.width, size).toBeLessThanOrEqual(viewport.width);
-			// 窗口矮时面板自己滚动：滚到底，最后一行完整露出（不被滚动区的底边切在文字中间）。
+			// 窗口宽到放得下四列（1100px 起）时排四列：1440×900 整个面板放得下。
+			const columns = await dialog
+				.locator("dl")
+				.first()
+				.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+			expect(columns, `${size}：列数`).toBe(4);
+			// 刚打开时（还没滚过）：放得下就没有滚动；放不下时底边渐隐、提示还能往下滚，不让一行被滚动区的底边从文字中间切开。
 			const area = dialog.locator("div.overflow-y-auto");
+			const overflow = await area.evaluate((el) => el.scrollHeight - el.clientHeight);
+			if (viewport.height >= 900) {
+				expect(overflow, `${size}：面板里的内容放得下，不用滚`).toBeLessThanOrEqual(1);
+				await expect(area).not.toHaveAttribute("data-more-below", "");
+			} else {
+				expect(overflow, `${size}：面板里的内容要滚`).toBeGreaterThan(1);
+				await expect(area).toHaveAttribute("data-more-below", "");
+				await expect(area).toHaveCSS("mask-image", /linear-gradient/);
+			}
+			// 滚到底：最后一行完整露出（不被滚动区的底边切在文字中间），不再渐隐。
 			await area.evaluate((el) => {
 				el.scrollTop = el.scrollHeight;
 			});
+			await expect(area).not.toHaveAttribute("data-more-below", "");
+			await expect(area).toHaveCSS("mask-image", "none");
 			const last = await rectOf(rows.last());
 			const areaBox = await rectOf(area);
 			expect(
