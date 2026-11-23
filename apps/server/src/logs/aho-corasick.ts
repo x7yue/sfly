@@ -283,8 +283,8 @@ export function buildAutomaton(
 }
 
 /** 找到的段（合并之后）的起止：`scanSpans` 返回的个数以内有效，下一次扫描会覆盖。同步使用，不会同时有两处在用。 */
-export let spanStarts = new Int32Array(1024);
-export let spanEnds = new Int32Array(1024);
+let spanStarts = new Int32Array(1024);
+let spanEnds = new Int32Array(1024);
 
 function growSpans(): void {
 	const starts = new Int32Array(spanStarts.length * 2);
@@ -296,7 +296,7 @@ function growSpans(): void {
 }
 
 /**
- * 扫一遍 `text`，把所有文本的完整的出现合并成段，起止在 {@link spanStarts}、{@link spanEnds} 里；返回段数，超过 `limit`
+ * 扫一遍 `text`，把所有文本的完整的出现合并成段，起止在模块里的两个数组里（用 {@link maskedByAutomaton} 取）；返回段数，超过 `limit`
  * 时放弃，返回 -1。重叠的出现（后一个的开头在前一个的结尾之前）合成一段，相邻但不重叠的各是一段。
  * 每个字符的代价是常数（摊销），只取决于文字的长度：文字里有没有某个文本的开头、半截不影响它走多少步以外的任何东西。
  */

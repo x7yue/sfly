@@ -166,7 +166,7 @@ describe("文件里的一行：每种写法读出来都和写入时打码的结�
 });
 
 describe("读日志的预算：一页、一块、一批共用一份（#517）", () => {
-	// 读取预算的上限调小（只给测试用）：用几十 KB 的行就能用完预算；真实的上限是 32 Mi 个字符
+	// 读取预算的上限调小（只给测试用）：用几十 KB 的行就能用完预算；真实的上限是 16 Mi 个字符
 	const LINE = "z".repeat(65536);
 	const set = secretSetOf(["fake-secret-value-00"]);
 	const withLimits = (chars: number, run: () => void) => {

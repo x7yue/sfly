@@ -1472,10 +1472,10 @@ describe("读取的预算：一次读取共用一份，只记扫过的字符数�
 		expect(NO_SECRETS.withBudget()).toBe(NO_SECRETS);
 	});
 
-	it("默认的预算取读取预算的上限：32 Mi 个字符、2^20 段；每个视图默认有自己的一份，也可以几个视图共用", () => {
+	it("默认的预算取读取预算的上限：16 Mi 个字符、2^20 段；每个视图默认有自己的一份，也可以几个视图共用", () => {
 		expect(new WorkBudget().chars).toBe(READ_SCAN_CHARS);
 		expect(new WorkBudget().masks).toBe(READ_MASKS);
-		expect(READ_SCAN_CHARS).toBe(4 * 8 * 1024 * 1024);
+		expect(READ_SCAN_CHARS).toBe(2 * 8 * 1024 * 1024);
 		const a = setOf("alpha-secret-aaa");
 		const b = setOf("bravo-secret-bbb");
 		const one = a.withBudget();
@@ -1612,12 +1612,12 @@ describe("读取的预算：一次读取共用一份，只记扫过的字符数�
 			expect(budget.chars).toBe(READ_SCAN_CHARS - 1000 * 4000);
 		});
 
-		it("最大的普通读取：一页日志扫 8 MiB（SCAN_LIMIT），用不到预算的三分之一；预算是它的 4 倍", () => {
+		it("最大的普通读取：一页日志扫 8 MiB（SCAN_LIMIT），用不到预算的一半；预算是它的 2 倍", () => {
 			const budget = new WorkBudget();
 			const view = secretSetOf([bigObject(5000, "")]).withBudget(budget);
 			const line = word(65_536);
 			for (let i = 0; i < 128; i++) expect(view.mask(line)).toBe(line);
-			expect(budget.chars).toBeGreaterThan((READ_SCAN_CHARS * 2) / 3);
+			expect(budget.chars).toBeGreaterThanOrEqual(READ_SCAN_CHARS / 2);
 		});
 
 		it("病态的值集合一样便宜：1000 个各 1000 个字符、开头都是 a，一页 1000 行各 4096 个 a，一行不多盖，记的预算和别的集合一样", () => {

@@ -49,7 +49,7 @@ export const MIN_LEAF_CHARS = 4;
  *
  * 上限按「一次读取最多会扫多少」定，正常的读取不论值集合多大都碰不到：{@link READ_SCAN_CHARS}。
  */
-export const READ_SCAN_CHARS = 32 * 1024 * 1024;
+export const READ_SCAN_CHARS = 16 * 1024 * 1024;
 
 /**
  * 一次读取里完整的出现（合并重叠之后）最多这么多段，一次不带预算的调用（写入）也是这个上限：超过时那段文字整段盖住。
