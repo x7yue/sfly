@@ -90,7 +90,7 @@ curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer 
   --data-binary @{name} '<控制面地址>/packages?project=public'
 ```
 
-装了 sfly 命令行时也可以用 `sfly publish {name} --project public`。之后在场景里选用 `sfly-std` 的节点，版本选 `{version}`。
+`$SFLY_ADMIN_TOKEN` 是平台管理员本人的个人令牌：在控制台账号菜单的「令牌」页签发（范围要含「发布」），或者用 `sfly login` 登录之后直接 `sfly publish {name} --project public`（命令行自己带着令牌）。之后在场景里选用 `sfly-std` 的节点，版本选 `{version}`。
 各节点的参数、输出和用法见控制面开发文档的「标准节点」页（`<控制面地址>/docs/standard-nodes.md`）。
 
 ## 节点

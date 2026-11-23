@@ -933,6 +933,83 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await guard.check(at(personal(USERS.boss))))).toBe(403);
 			expect(outcome(await guard.check(at(personal(USERS.admin))))).toBe("ok");
 		});
+
+		it("不带凭据、共享令牌写公共项目：项目写在路径里的接口也一样（401、403），不止查询参数那一个", async () => {
+			// 现在的 `POST /projects/:project/sessions`，和 #488 之后的 `POST /projects/:project/packages`
+			// （用 #488 的写法构造的接口）：项目都在路径里，这条规则对每个写公共项目的请求成立。
+			store.agentCredentials.set(hashCredential("shared-secret"), {
+				kind: "shared",
+				projectId: DEFAULT,
+				agentName: null,
+				user: null,
+				revokedAt: null,
+			});
+			const shared = { authorization: "Bearer shared-secret" };
+			const routes: [string, RouteDef][] = [
+				["POST /projects/:project/sessions", route("POST /projects/:project/sessions")],
+				[
+					"#488 之后的 POST /projects/:project/packages",
+					{ ...route("POST /packages"), path: "/projects/:project/packages" },
+				],
+				[
+					"#488 之后的 POST /projects/:project/orchestrations",
+					{ ...route("POST /orchestrations"), path: "/projects/:project/orchestrations" },
+				],
+			];
+			for (const [name, def] of routes) {
+				const at = (project: string, credentials: Credentials = {}) => ({
+					route: def,
+					params: { project },
+					fetchSite: "same-origin",
+					...credentials,
+				});
+				expect(await guard.check(at("public")), `${name}：不带凭据`).toMatchObject({
+					ok: false,
+					status: 401,
+					code: "unauthorized",
+					message: expect.stringContaining(DENIED),
+				});
+				expect(await guard.check(at("public", shared)), `${name}：共享令牌`).toMatchObject({
+					ok: false,
+					status: 403,
+					code: "forbidden",
+					message: expect.stringContaining(DENIED),
+				});
+				// 对照：同样的两种凭据写默认项目，和以前一样（到 #494 才拒绝；会话本身要登录或令牌）。
+				if (!name.includes("sessions")) {
+					expect(await guard.check(at("default")), `${name}：默认项目不带凭据`).toEqual({
+						ok: true,
+						access: null,
+					});
+					expect(await guard.check(at("default", shared)), `${name}：默认项目共享令牌`).toEqual({
+						ok: true,
+						access: null,
+					});
+				}
+				// 平台管理员的个人令牌照常通过。
+				expect(
+					await guard.check(at("public", personal(USERS.admin))),
+					`${name}：平台管理员`,
+				).toMatchObject({ ok: true });
+			}
+			// 读公共项目不受影响：不带凭据的读照旧放行。
+			const read: RouteDef = {
+				...route("GET /orchestrations"),
+				path: "/projects/:project/orchestrations",
+			};
+			expect(await guard.check({ route: read, params: { project: "public" } })).toEqual({
+				ok: true,
+				access: null,
+			});
+		});
+
+		it("拒绝的说明不带具体的操作：建会话、发布、建场景被拒时是同一句", async () => {
+			const session = route("POST /projects/:project/sessions");
+			const result = await guard.check({ route: session, params: { project: "public" } });
+
+			expect(result).toMatchObject({ ok: false, status: 401 });
+			expect((result as { message: string }).message).not.toContain("发布节点包");
+		});
 	});
 
 	describe("登录的空闲期限：用着就顺延，不用就过期（PR #555 的独立审查）", () => {

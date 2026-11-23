@@ -148,8 +148,8 @@ const notFound = () => denied(404, "not_found", ACCESS_NOT_FOUND_MESSAGE);
  * 不是秘密，被拒绝的人需要知道为什么。
  */
 const PUBLIC_WRITE_DENIED =
-	"公共项目只有平台管理员能写（发布节点包）：需要平台管理员的登录或个人令牌，" +
-	"项目管理员、项目令牌、会话令牌、限定了别的项目的令牌和不带凭据的请求都不行";
+	"公共项目只有平台管理员能写：需要平台管理员的登录或个人令牌，" +
+	"项目管理员、项目令牌、会话令牌、限定了别的项目的令牌、共享令牌和不带凭据的请求都不行";
 const writesPublicProject = (project: ProjectId | undefined, route: { effect: string }) =>
 	project === PUBLIC_PROJECT && route.effect === "write";
 
@@ -271,7 +271,14 @@ export class AccessGuard {
 		// 项目写在查询参数里（过渡，#565）：写错了的先拒绝，不管有没有凭据。
 		const queried = locator.from === "query" ? queriedProject(locator.param, request) : undefined;
 		if (queried !== undefined && "denied" in queried) return queried.denied;
-		const named = locator.from === "query" ? queried?.project : undefined;
+		// 这次写的是公共项目吗：只看不用读库就知道的（查询参数里的项目、路径里的项目）。按 ID 定位的资源
+		// （场景、运行、会话…）要读库才知道它在哪个项目里，那条路上没有凭据也没有「公共项目」这回事。
+		const named =
+			locator.from === "query"
+				? queried?.project
+				: locator.from === "path" && locator.param !== null
+					? parseProjectId(request.params[locator.param] ?? "")
+					: undefined;
 		const publicWrite = writesPublicProject(named, request.route);
 		if (presented === undefined) {
 			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。

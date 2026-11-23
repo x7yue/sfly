@@ -47,4 +47,4 @@ Agent 的版本不满足时，控制面不在 Agent 上运行这个节点：任�
 
 ## 标准节点包 sfly-std
 
-平台维护的标准节点包 `sfly-std`（Shell 命令、后台进程、监控、等待、日志、产物、HTTP、断言）也是这样发布的：它不随控制面发布，部署者从 GitHub Release 下载 `std-vX.Y.Z` 的附件，以平台管理员的身份发布到公共项目（`POST /packages?project=public`，`sfly publish --project public`），场景同样锁定它的版本。下载、校验和上传的步骤见 [标准节点](standard-nodes.md#上传-sfly-std)。发布到公共项目时，和已有版本按 PEP 440 规范化之后相同的版本（已有 `0.9.0` 再发 `0.9`）会被拒绝（409，信息写明已有的是哪个），所以包索引里同一个版本不会有两个候选。
+平台维护的标准节点包 `sfly-std`（Shell 命令、后台进程、监控、等待、日志、产物、HTTP、断言）也是这样发布的：它不随控制面发布，部署者从 GitHub Release 下载 `std-vX.Y.Z` 的附件，以平台管理员的身份发布到公共项目（`POST /packages?project=public`，或 `sfly login` 之后 `sfly publish --project public`；要平台管理员本人的个人令牌，令牌从哪里来见下面的链接），场景同样锁定它的版本。下载、校验和上传的步骤见 [标准节点](standard-nodes.md#上传-sfly-std)。发布到公共项目时，和已有版本按 PEP 440 规范化之后相同的版本（已有 `0.9.0` 再发 `0.9`）会被拒绝（409，信息写明已有的是哪个），所以包索引里同一个版本不会有两个候选。

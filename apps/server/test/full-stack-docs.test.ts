@@ -296,8 +296,8 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 			await copyFile(std.path, join(downloads, std.file));
 			const sum = (await run("sha256sum", [std.file], { cwd: downloads })).stdout;
 			await writeFile(join(downloads, "SHA256SUMS"), sum);
-			// 发布到公共项目要平台管理员的个人令牌（文档里写作 $SFLY_ADMIN_TOKEN）：读者从登录页和个人令牌（#490、#491）
-			// 得到它；签发的接口还没有做完，这里像别的访问检查的测试一样直接写库造一个，放进读者终端的环境变量。
+			// 发布到公共项目要平台管理员的个人令牌（文档里写作 $SFLY_ADMIN_TOKEN）：读者在控制台账号菜单的「令牌」页
+			// 签发（或 `sfly login`）；这里像别的访问检查的测试一样直接写库造一个，放进读者终端的环境变量。
 			const accounts = new TestAccounts(cp.database.url);
 			try {
 				const admin = await accounts.user("root", { displayName: "平台管理员", admin: true });
