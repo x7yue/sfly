@@ -1462,6 +1462,7 @@ export class Engine implements AgentSessionHandler {
 			}
 			return await this.deps.assignContent(step.tx, {
 				task,
+				project: at.run.projectId,
 				node: at.node,
 				packageVersion: at.packageVersion,
 				scope,

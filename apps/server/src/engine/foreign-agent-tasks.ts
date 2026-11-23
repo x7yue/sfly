@@ -21,6 +21,8 @@ export async function failForeignAgentTasks(
 	db: Db,
 	onError: (error: unknown, task: { id: string; runId: string }) => void = () => {},
 ): Promise<number> {
+	// 先看有没有还在进行的任务：没有就不用读项目（也是升级时旧库里没有项目列的那一步不会碰到它们）。
+	if (!(await anyTask(db, inArray(tasks.status, IN_PROGRESS)))) return 0;
 	const foreign = and(
 		inArray(tasks.status, IN_PROGRESS),
 		isNotNull(tasks.agentName),

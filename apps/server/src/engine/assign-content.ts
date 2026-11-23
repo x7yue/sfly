@@ -14,7 +14,7 @@ import { DEV_VERSION, type PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import { artifactLimitForWire } from "../artifacts/artifact-store.js";
 import type { Tx } from "../db/database.js";
-import { type AgentInfo, nodePackages, runs } from "../db/schema.js";
+import { type AgentInfo, nodePackages } from "../db/schema.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
 import type { ProjectId } from "../projects/project-id.js";
@@ -31,6 +31,8 @@ export interface AssignTarget {
 
 export interface AssignRequest {
 	task: Pick<TaskRow, "id" | "attempt" | "runId">;
+	/** 运行所在的项目：「Agent」类型的输入引用的 Agent 只在这个项目里找。 */
+	project: ProjectId;
 	node: PackageNode;
 	/** 场景版本锁定的这个节点包的版本；没有锁定时为空串。 */
 	packageVersion: string;
@@ -65,13 +67,6 @@ export type AssignContent =
  */
 export type AssignContentOf = (tx: Tx, request: AssignRequest) => Promise<AssignContent>;
 
-/** 运行所在的项目：每个运行属于它的场景所在的项目（`runs.project_id`）。 */
-async function projectOfRun(tx: Tx, runId: string): Promise<ProjectId> {
-	const [run] = await tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId));
-	if (!run) throw new Error(`run ${runId} not found`);
-	return run.projectId;
-}
-
 /** `urls` 是 Agent 下载节点包归档、上传任务产物的地址（Agent 通过 HTTP 访问），和每个任务的产物合计上限。 */
 export function createAssignContent(urls: {
 	packageArchiveUrl: (name: string, version: string) => string;
@@ -81,7 +76,7 @@ export function createAssignContent(urls: {
 }): AssignContentOf {
 	// 造这个函数时就换算（不合格的值在这里抛出，不留到派发时）：每个任务下发同一个上限。
 	const artifactLimit = artifactLimitForWire(urls.artifactLimitBytes);
-	return async (tx, { task, node, packageVersion, scope, target }) => {
+	return async (tx, { task, project, node, packageVersion, scope, target }) => {
 		let inputs: Record<string, unknown>;
 		try {
 			inputs = resolveInputs(node.inputs, scope);
@@ -124,17 +119,10 @@ export function createAssignContent(urls: {
 		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
 		// 在运行所在的项目里找这些 Agent：别的项目的 Agent 和没有注册过一样，它的地址不会下发给这个任务。
 		const referenced = type
-			? await resolveReferencedAgents(
-					tx,
-					await projectOfRun(tx, task.runId),
-					node.id,
-					type.inputs,
-					inputs,
-					{
-						metadata: metadata ?? {},
-						pkg,
-					},
-				)
+			? await resolveReferencedAgents(tx, project, node.id, type.inputs, inputs, {
+					metadata: metadata ?? {},
+					pkg,
+				})
 			: { agents: [] };
 		if ("problems" in referenced) {
 			return { ok: false, kind: referenced.kind, message: referenced.problems.join("; "), inputs };
