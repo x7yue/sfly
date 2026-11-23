@@ -999,7 +999,7 @@ function Editor({
 		info,
 		packages: packages.data?.packages,
 		agents: agentList,
-		agentsLoaded: agents.data !== undefined,
+		agentsStatus: agents.data !== undefined ? "ready" : agents.isError ? "failed" : "loading",
 		bots: botList,
 		warnings,
 		shownFieldErrors: shownErrors,

@@ -60,6 +60,7 @@ function formTypeOf(
 	node: TypedNode,
 	catalog: PackageCatalog,
 	reports: readonly AgentDevReport[],
+	validate?: (raw: unknown) => NodeTypeIo[] | undefined,
 ): {
 	checked: NodeTypeIo | null | undefined;
 	form: NodeTypeIo | null | undefined;
@@ -69,7 +70,7 @@ function formTypeOf(
 	if (checked !== undefined || doc.packages[node.package] !== DEV_VERSION) {
 		return { checked, form: checked, from: undefined };
 	}
-	const reported = formNodeTypes(doc, node, reports);
+	const reported = formNodeTypes(doc, node, reports, validate);
 	if (!reported) return { checked, form: undefined, from: undefined };
 	const form = reported.nodes.find((n) => n.name === node.node) ?? null;
 	const from = form && reported.agent !== dispatchAgentOf(doc, node) ? reported.agent : undefined;
@@ -136,14 +137,47 @@ export function uncheckedInputs(
  * 跳过时，取节点派发到的 Agent 上报的、找不到再取别的 Agent 的），和参数页同一个取法（{@link inspectorNodeType} 的 `form`）。
  * 不并成一份以包为键的目录：同一个包、同一个节点类型的几个节点派发到不同的 Agent 时，声明可能不同，各列各的输出，
  * 和 `nodes` 数组里谁排在前面无关。补全不拦东西，只是列出可以引用的输出；检查用的目录不受影响（警告和控制面一致）。
+ *
+ * 补全对每个上游节点、每个输出项都要查一次，检查器在每次输入时都重算：对整份上报做 schema 校验是其中最贵的一步，
+ * 所以每份上报在返回的这个函数里只校验一次（`validate` 只给测试数校验次数用），大场景里检查跳过时打字不卡。
  */
 export function completionTypes(
 	doc: StoredOrchestrationDocument,
 	catalog: PackageCatalog,
 	agents: readonly AgentView[],
+	validate: (raw: unknown) => NodeTypeIo[] | undefined = reportedNodeTypes,
 ): NodeTypeLookup {
 	const reports = devReports(agents);
-	return (node) => formTypeOf(doc, node, catalog, reports).form;
+	const validated = new Map<unknown, NodeTypeIo[] | undefined>();
+	const validateOnce = (raw: unknown) => {
+		if (!validated.has(raw)) validated.set(raw, validate(raw));
+		return validated.get(raw);
+	};
+	return (node) => formTypeOf(doc, node, catalog, reports, validateOnce).form;
+}
+
+/** Agent 列表的读取状态：还没拿到；拿到了（之后刷新失败仍用上一次的）；一直没拿到、请求失败。 */
+export type AgentsStatus = "loading" | "ready" | "failed";
+
+/**
+ * 参数表单还没有的原因（表单的节点类型 `form` 是 undefined 时）：
+ * - `loading`：还在加载（已发布的版本的元信息、Agent 列表）；
+ * - `not_loaded`：Agent 列表拿到了，但没有 Agent 加载这个开发包；
+ * - `agents_failed`：Agent 列表一直读取失败。
+ * 表单有了（不是 undefined）时没有这个问题，返回 undefined。
+ */
+export type FormPending = "loading" | "not_loaded" | "agents_failed";
+
+export function formPending(
+	doc: Pick<StoredOrchestrationDocument, "packages">,
+	node: { package: string },
+	form: NodeTypeIo | null | undefined,
+	agentsStatus: AgentsStatus,
+): FormPending | undefined {
+	if (form !== undefined) return undefined;
+	if (doc.packages[node.package] !== DEV_VERSION) return "loading";
+	if (agentsStatus === "ready") return "not_loaded";
+	return agentsStatus === "failed" ? "agents_failed" : "loading";
 }
 
 /**

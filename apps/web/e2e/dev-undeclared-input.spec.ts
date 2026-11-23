@@ -186,6 +186,42 @@ test("Agent 列表还没拿到时：参数页不列「没有检查」（节点�
 	await expect(panel.getByRole("button", { name: "移除" })).toHaveCount(1);
 });
 
+test("Agent 列表拿到了、但没有 Agent 加载这个开发包：参数页说没有 Agent 加载，不说「加载中」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	// agent-a 在线，但没有加载任何开发包。
+	await connectAgent({ name: "agent-a" });
+	const id = await createScenario(controlPlane, "没有 Agent 加载", scenario());
+	const panel = await openNode(page, id);
+
+	await expect(panel.getByText(/没有 Agent 加载这个节点包的开发版本/)).toBeVisible();
+	await expect(panel.getByText("加载中")).toHaveCount(0);
+	await expect(nodeCard(page, "t")).not.toContainText("警告");
+});
+
+test("Agent 列表一直读取失败（503）：参数页说读取失败，不停在「加载中」，也不列「没有检查」", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createScenario(controlPlane, "列表读取失败", scenario());
+	await page.route("**/api/agents", (route) =>
+		route.fulfill({
+			status: 503,
+			contentType: "application/json",
+			body: JSON.stringify({ error: { code: "unavailable", message: "暂时不可用" } }),
+		}),
+	);
+	const panel = await openNode(page, id);
+
+	// 重试两次（间隔 1 秒）之后才算失败。
+	await expect(panel.getByText(/读取 Agent 列表失败/)).toBeVisible({ timeout: 15_000 });
+	await expect(panel.getByText("加载中")).toHaveCount(0);
+	await expect(panel.getByText(/没有检查/)).toHaveCount(0);
+	await expect(panel.getByRole("button", { name: "移除" })).toHaveCount(0);
+});
+
 test("对照：节点派到的在线 agent-a 确实没有声明 extra：警告、「移除」都在，说明写明是哪台 Agent", async ({
 	page,
 	controlPlane,

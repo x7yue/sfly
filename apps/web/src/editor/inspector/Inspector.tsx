@@ -40,7 +40,14 @@ import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { completionTypes, formSourceNote, inspectorNodeType, uncheckedInputs } from "../catalog";
+import {
+	type AgentsStatus,
+	completionTypes,
+	formPending,
+	formSourceNote,
+	inspectorNodeType,
+	uncheckedInputs,
+} from "../catalog";
 import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError } from "../validation";
@@ -86,8 +93,8 @@ export interface InspectorContext {
 	info: CanvasInfo;
 	packages: PackageSummary[] | undefined;
 	agents: AgentView[];
-	/** Agent 列表已经拿到（还没拿到或请求失败时 `agents` 是空的，不等于「没有 Agent 加载这个包」）。 */
-	agentsLoaded: boolean;
+	/** Agent 列表的读取状态（还没拿到或请求失败时 `agents` 是空的，不等于「没有 Agent 加载这个包」）。 */
+	agentsStatus: AgentsStatus;
 	/** 已登记的飞书机器人（「飞书机器人」类型的输入的下拉框）。 */
 	bots: FeishuBotView[];
 	warnings: OrchestrationWarning[];
@@ -376,9 +383,12 @@ function NodeInspector({
 							node={node}
 							type={type}
 							undeclared={types?.checked ? undeclaredInputs(types.checked.inputs, node.inputs) : []}
-							// Agent 列表还没拿到时什么都不知道：不列「没有检查」（每个输入都会列出来，还带「移除」）。
-							unchecked={types && context.agentsLoaded ? uncheckedInputs(doc, node, types) : []}
+							// Agent 列表还没拿到（加载中、请求失败）时什么都不知道：不列「没有检查」（每个输入都会列出来，还带「移除」）。
+							unchecked={
+								types && context.agentsStatus === "ready" ? uncheckedInputs(doc, node, types) : []
+							}
 							formNote={types ? formSourceNote(doc, node, types.from) : undefined}
+							pending={types ? formPending(doc, node, types.form, context.agentsStatus) : undefined}
 							choices={choices}
 							problemsOf={problemsOf}
 							defaultAgent={doc.default_agent}

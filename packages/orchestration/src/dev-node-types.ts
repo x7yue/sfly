@@ -122,11 +122,14 @@ export interface FormNodeTypes {
  * 别的 Agent 上有就用它的；所有合法的上报里都没有时，返回第一份合法的上报（调用方据此知道「找不到这个节点类型」，
  * 和「还在加载」分开）；没有 Agent 加载它、或者上报的内容都不合法时是 undefined。
  * 返回值带着是哪台 Agent 上报的：不是节点派发到的那台时，界面要说明表单的字段取自哪台（{@link dispatchAgentOf}）。
+ * `validate` 校验一份上报（默认 {@link reportedNodeTypes}）：同一份文档里要给很多节点各取一遍时，调用方传一个记住结果的，
+ * 每份上报只校验一次。
  */
 export function formNodeTypes(
 	doc: Pick<StoredOrchestrationDocument, "default_agent">,
 	node: DispatchNode & { package: string; node: string },
 	agents: readonly AgentDevReport[],
+	validate: (raw: unknown) => NodeTypeIo[] | undefined = reportedNodeTypes,
 ): FormNodeTypes | undefined {
 	const target = dispatchAgentOf(doc, node);
 	const loaders = agents.filter((agent) => agent.devPackages.has(node.package));
@@ -137,7 +140,7 @@ export function formNodeTypes(
 	];
 	let firstValid: FormNodeTypes | undefined;
 	for (const agent of ordered) {
-		const nodes = reportedNodeTypes(agent.devPackages.get(node.package));
+		const nodes = validate(agent.devPackages.get(node.package));
 		if (!nodes) continue;
 		if (nodes.some((n) => n.name === node.node)) return { agent: agent.name, nodes };
 		firstValid ??= { agent: agent.name, nodes };

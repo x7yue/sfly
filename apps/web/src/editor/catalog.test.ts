@@ -1,4 +1,4 @@
-import { declaredOutputs, packageKey } from "@sfly/orchestration";
+import { declaredOutputs, packageKey, reportedNodeTypes } from "@sfly/orchestration";
 import {
 	type AgentView,
 	DEV_VERSION,
@@ -10,6 +10,7 @@ import {
 	completionTypes,
 	devNodes,
 	devReports,
+	formPending,
 	formSourceNote,
 	inspectorNodeType,
 	uncheckedInputs,
@@ -241,6 +242,40 @@ describe("completionTypes：引用补全和「复制输出引用」按每个上�
 		expect(results[2]).toEqual(results[0]);
 	});
 
+	it("每份上报只校验一次，不随节点数和输出项数增加（检查器每次输入都重算补全，大场景里不能每查一个节点就重新校验一遍）", () => {
+		// 40 个节点：偶数的派发到 agent-b（每个节点类型 10 个输出）、奇数的派发到 agent-a（5 个输出），内容不同，检查整包跳过。
+		const outputs = (n: number) =>
+			Object.fromEntries(Array.from({ length: n }, (_, i) => [`o${i}`, { type: "string" }]));
+		const ids = Array.from({ length: 40 }, (_, i) => `n${i}`);
+		const many = StoredOrchestrationDocument.parse({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				...ids.map((id, i) => pkgNode(id, i % 2 === 0 ? "agent-b" : "agent-a")),
+			],
+			edges: ["entry", ...ids]
+				.slice(1)
+				.map((to, i) => ({ from: ["entry", ...ids][i], to, kind: "chain" })),
+			packages: { tuner: DEV_VERSION },
+		});
+		const reported = [
+			agent("agent-a", "online", withOut(outputs(5))),
+			agent("agent-b", "offline", withOut(outputs(10))),
+		];
+		let validations = 0;
+		const validate = (raw: unknown) => {
+			validations += 1;
+			return reportedNodeTypes(raw);
+		};
+		const lookup = completionTypes(many, new Map(), reported, validate);
+		const choices = referenceChoices(many, "n39", lookup).filter((c) => c.kind === "output");
+		for (const n of many.nodes) declaredOutputs(many, n, lookup);
+		// n0 到 n38：偶数的 20 个 × 10 + 奇数的 19 个 × 5。
+		expect(choices).toHaveLength(20 * 10 + 19 * 5);
+		// 两台各一份上报，各校验一次。
+		expect(validations).toBe(2);
+	});
+
 	it("补全不改检查：检查用的目录不变，节点类型查不到时 checked 仍是 undefined（警告和控制面一致）", () => {
 		const d = chainDoc(ORDERS[0]);
 		const t = d.nodes.find((n) => n.id === "t") as { package: string; node: string; agent: string };
@@ -271,6 +306,31 @@ describe("completionTypes：引用补全和「复制输出引用」按每个上�
 	});
 });
 
+describe("formPending：参数表单还没有的原因", () => {
+	const d = doc();
+	const published = StoredOrchestrationDocument.parse({ ...doc(), packages: { tuner: "1.0.0" } });
+	const type = OLD[0] as never;
+
+	it("表单有了（包括 null：找不到这个节点类型）：没有这个问题", () => {
+		for (const status of ["loading", "ready", "failed"] as const) {
+			expect(formPending(d, node, type, status)).toBeUndefined();
+			expect(formPending(d, node, null, status)).toBeUndefined();
+		}
+	});
+
+	it("开发版本：Agent 列表还没拿到是加载中；拿到了、没有 Agent 加载它是 not_loaded；一直读取失败是 agents_failed", () => {
+		expect(formPending(d, node, undefined, "loading")).toBe("loading");
+		expect(formPending(d, node, undefined, "ready")).toBe("not_loaded");
+		expect(formPending(d, node, undefined, "failed")).toBe("agents_failed");
+	});
+
+	it("已发布的版本：元信息还在加载，不管 Agent 列表怎样都是加载中", () => {
+		for (const status of ["loading", "ready", "failed"] as const) {
+			expect(formPending(published, node, undefined, status)).toBe("loading");
+		}
+	});
+});
+
 describe("formSourceNote：表单的声明取自别的 Agent 时说明字段是哪台上报的", () => {
 	it("inspectorNodeType 的 from：表单取自别的 Agent 才有值；取自节点派发到的那台、取自检查用的目录时没有", () => {
 		const other = [{ name: "other", inputs: io({ x: {} }), outputs: io({}) }];
@@ -290,8 +350,11 @@ describe("formSourceNote：表单的声明取自别的 Agent 时说明字段是�
 		// 检查用的目录里有：不用说明。
 		const catalog = new Map([[packageKey("tuner", "dev"), NEW]]);
 		expect(inspectorNodeType(doc(), node, catalog as never, []).from).toBeUndefined();
-		// 找不到这个节点类型（form 是 null）：没有字段可说明。
-		const missing = inspectorNodeType(doc(), node, new Map(), [agent("agent-a", "online", other)]);
+		// 找不到这个节点类型（form 是 null）：没有字段可说明。节点派发到 agent-b（没有加载这个包），
+		// 上报的第一份合法的是别的 Agent（agent-a）的、里面没有 tune：form 是 null，from 也不能是 agent-a。
+		const missing = inspectorNodeType(doc("agent-b"), target, new Map(), [
+			agent("agent-a", "online", other),
+		]);
 		expect(missing.form).toBeNull();
 		expect(missing.from).toBeUndefined();
 	});

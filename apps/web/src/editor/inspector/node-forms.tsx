@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
-import { agentsWithDev } from "../catalog";
+import { agentsWithDev, type FormPending } from "../catalog";
 import { draftKey, useFieldErrors, useParsedField } from "../field-drafts";
 import { AgentSelect } from "./AgentSelect";
 import { Field, SectionTitle } from "./fields";
@@ -48,6 +48,13 @@ type AlwaysNode = PackageNode | StopSubflowNode;
 /** 某个字段的静态检查警告（不阻止保存）。 */
 export type ProblemsOf = (input: string) => string[];
 
+/** 参数表单还没有、又不是在加载时说的话（开发版本：Agent 列表拿到了但没有 Agent 加载这个包，或者 Agent 列表读取失败）。 */
+const PENDING_MESSAGE: Record<Exclude<FormPending, "loading">, string> = {
+	not_loaded:
+		"没有 Agent 加载这个节点包的开发版本，不能生成参数表单；在要运行它的机器上运行 sfly dev 之后会出现。",
+	agents_failed: "读取 Agent 列表失败，开发版本的参数表单暂时生成不了；会自动重试。",
+};
+
 /** 包节点的「参数」页：按输入 schema 生成的表单，以及节点的 Agent。 */
 export function PackageParams({
 	id,
@@ -56,6 +63,7 @@ export function PackageParams({
 	undeclared,
 	unchecked,
 	formNote,
+	pending,
 	choices,
 	problemsOf,
 	defaultAgent,
@@ -79,6 +87,8 @@ export function PackageParams({
 	unchecked: readonly string[];
 	/** 表单的声明取自别的 Agent（不是节点派发到的那台）时的一句说明：字段是哪台上报的。 */
 	formNote: string | undefined;
+	/** 表单还没有的原因（`type` 是 undefined 时）：还在加载，或者没有 Agent 加载这个开发包、Agent 列表读取失败。 */
+	pending: FormPending | undefined;
 	choices: ReferenceChoice[];
 	problemsOf: ProblemsOf;
 	defaultAgent: string | undefined;
@@ -94,7 +104,13 @@ export function PackageParams({
 	const required = new Set(type?.inputs.required ?? []);
 	return (
 		<>
-			{type === undefined && <p className="m-0 text-xs text-fg-3">{MESSAGE.loading}</p>}
+			{pending && (
+				<p
+					className={pending === "loading" ? "m-0 text-xs text-fg-3" : "m-0 mb-3 text-xs text-fg-3"}
+				>
+					{pending === "loading" ? MESSAGE.loading : PENDING_MESSAGE[pending]}
+				</p>
+			)}
 			{type === null && (
 				<p className="m-0 mb-3 text-xs text-warn-fg">
 					找不到这个节点类型的元信息，不能生成参数表单。
