@@ -4,7 +4,7 @@
 import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import { inspect, promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installProcessGuards } from "../src/process-guards.js";
 
@@ -115,19 +115,24 @@ describe("installProcessGuards（假的进程）", () => {
 
 	it("数据库错误里的参数不进日志（过 safeError）：保密的值、密码的哈希", async () => {
 		install(async () => {});
-		const queryError = Object.assign(new Error("Failed query: insert into users"), {
-			query: 'insert into "users" ("password_hash") values ($1)',
-			params: ["scrypt$secret-hash-value"],
-		});
+		// drizzle 的查询错误：message 和属性里都带着这次查询的参数。
+		const queryError = Object.assign(
+			new Error(
+				'Failed query: insert into "users" ("password_hash") values ($1)\nparams: scrypt$secret-hash-value',
+			),
+			{
+				query: 'insert into "users" ("password_hash") values ($1)',
+				params: ["scrypt$secret-hash-value"],
+			},
+		);
 
 		proc.emit("unhandledRejection", queryError);
 		await settle();
 
-		const printed = JSON.stringify(logs, (_, v) =>
-			v instanceof Error ? `${v.message}\n${v.stack}` : v,
-		);
-		expect(printed).not.toContain("scrypt$secret-hash-value");
+		// console.error 实际打印的样子（util.inspect 会把错误的属性也打出来）。
+		const printed = inspect(logs, { depth: 8 });
 		expect(printed).toContain("insert into");
+		expect(printed).not.toContain("scrypt$secret-hash-value");
 	});
 
 	it("卸掉之后不再处理", async () => {
