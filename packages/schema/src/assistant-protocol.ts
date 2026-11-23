@@ -162,7 +162,8 @@ export const ASSISTANT_SECRET_MIN_LENGTH = 32;
  * - 401 `unauthorized`：缺了密钥或不对；
  * - 400 `invalid_request`：请求体或路径不合 schema；
  * - 409 `turn_running`：开始一轮时这个会话有一轮在正常地做（「一轮的状态」里的「在做」；旧的一轮还在停止或进程还在退出时不是，
- *   那种情况回 202）；409 `no_turn_running`：插话时没有可以送到的一轮（没有一轮、在停止、已经结束）；
+ *   那种情况回 202，#544 起；dev 上现在有一轮在、包括在停止，都回 409）；409 `no_turn_running`：插话时没有可以送到的一轮
+ *   （没有一轮、在停止、已经结束；#544 起，dev 上现在没有 `steer`）；
  * - 503 `model_not_configured`、`model_unreachable`：模型没有配置或连不上，起不了（#548）；
  * - 503 `process_limit`：活着的 pi 进程数到了上限（#545）；
  * - 503 `start_failed`：其他原因起不了 pi 进程，`message` 写原因。
@@ -264,7 +265,8 @@ export type SteerCommandBody = z.infer<typeof SteerCommandBody>;
  * `POST /sessions/:id/abort`：结束会话里的**某一轮**（`turn`，控制面给的轮次，和 `prompt` 里的 `turn` 是同一个）。
  * 不按「会话里有没有在做」、更不按时间去猜（不按时间判断「是哪一轮」），按轮次，四种情况：
  *
- * - **这一轮在做**：中止它，带回它的 `turn_end`（`stopped`）；
+ * - **这一轮在做**：中止它，带回它的 `turn_end`（`stopped`）。怎么中止见「停止一轮」（先取回没送到的插话、发 pi 的 `abort`、
+ *   不行才结束进程）；dev 上现在是直接结束进程，见「各部分的进度」；
  * - **还在做的那一轮，轮次比 N 小**：也结束它。控制面看来比 N 早的轮次都已经结束了（它们的结局是控制面补的，或者助手服务回过一次
  *   409 `turn_running` 之后控制面已经把那次发话的轮次记成失败、轮次加了一）：助手服务那边还在跑的更早的轮次是没人管的，最多
  *   跑到上限（二十分钟）。这样定是安全的：不会碰到比 N 更新的轮次；
