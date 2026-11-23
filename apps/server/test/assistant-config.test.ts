@@ -27,6 +27,18 @@ describe("助手的配置", () => {
 		});
 	});
 
+	it("地址里带用户名和密码：当作没配好（每个请求都会失败），原因不回显这段地址，指出共享密钥写在哪个变量里", () => {
+		for (const url of ["http://user:hunter2@assistant:7000", "https://user@assistant:7000/"]) {
+			const setup = assistantSetup({ url, secret: SECRET });
+			expect(setup.configured, url).toBe(false);
+			const reason = setup.configured ? "" : setup.reason;
+			expect(reason, url).toBe(
+				"SFLY_ASSISTANT_URL 不能带用户名和密码（共享密钥写在 SFLY_ASSISTANT_SECRET 里）",
+			);
+			expect(reason, url).not.toMatch(/hunter2|user/);
+		}
+	});
+
 	it("地址配错：原因只说是哪个变量、哪一类问题，不回显配置的地址（带用户名和密码的也不会出现）", () => {
 		const bad = [
 			"://user:hunter2@host:7000",

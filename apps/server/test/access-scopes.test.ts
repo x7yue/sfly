@@ -184,7 +184,10 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		for (const kind of RESOURCE_KINDS) {
 			expect(typeof SCOPE_TABLE[kind].humanOnly, kind).toBe("boolean");
 		}
-		expect(RESOURCE_KINDS.filter((kind) => SCOPE_TABLE[kind].humanOnly)).toEqual(["session", "project"]);
+		expect(RESOURCE_KINDS.filter((kind) => SCOPE_TABLE[kind].humanOnly)).toEqual([
+			"session",
+			"project",
+		]);
 	});
 
 	it("作用在 humanOnly 的类别上、或新建出的是它，任何一个都算（不能靠写成别的 creates 绕过）", () => {

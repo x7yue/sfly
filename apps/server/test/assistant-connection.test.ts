@@ -14,10 +14,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/database.js";
 import type { ProjectId } from "../src/projects/project-id.js";
 import {
+	ASSISTANT_REJECTION_TEXT,
 	AssistantClient,
 	AssistantUnreachableError,
 	describeSkippedLine,
 	FETCH_BODY_TIMEOUT_MS,
+	MAX_REJECTION_DETAIL_CHARS,
+	outcomeUnknown,
 	reasonOf,
 } from "../src/sessions/assistant-client.js";
 import { AssistantConnection } from "../src/sessions/assistant-connection.js";
@@ -657,6 +660,80 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 				body: { turn: 3 },
 			},
 		]);
+	});
+
+	it("助手服务的拒绝：它自己写的那句话进 detail（有长度上限）；回应体不是约定的形状时 detail 不写内容，只写状态码和长度", async () => {
+		const reply = (status: number, body: string) =>
+			new AssistantClient(config, {
+				fetch: (async () => new Response(body, { status })) as typeof fetch,
+			});
+		// 约定形状、说明很长：截到上限。
+		const long = JSON.stringify({ code: "start_failed", message: "x".repeat(5_000) });
+		const rejected = (await reply(503, long)
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as {
+			message: string;
+			detail: string;
+			code: string;
+		};
+		expect(rejected.code).toBe("start_failed");
+		expect(rejected.detail).toHaveLength(MAX_REJECTION_DETAIL_CHARS);
+		expect(rejected.message).toBe("助手服务起不了这一轮的进程");
+		// 不是约定的形状（比如反向代理的 HTML 错误页，可能带着会话的内容）：不写内容。
+		const html = "<html>网关错误：我的私密的话 hunter2</html>";
+		const odd = (await reply(502, html)
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as {
+			message: string;
+			detail: string;
+		};
+		expect(odd.message).toBe("助手服务回应了 502");
+		expect(odd.detail).toBe(`回应体不是约定的形状（状态码 502，${html.length} 个字符）`);
+		expect(odd.detail).not.toContain("hunter2");
+	});
+
+	it("两句固定的说明告诉用户该怎么办：上一轮还在做（先停止再说）、进程数到了上限（等别的会话停下来）", () => {
+		expect(ASSISTANT_REJECTION_TEXT.turn_running).toContain("停止");
+		expect(ASSISTANT_REJECTION_TEXT.process_limit).toContain("再试");
+	});
+
+	it("命令有没有可能已经送到：超时、发出请求之后连接被关是未知；连接被拒绝、域名解析不了、网络不通一定没送到", () => {
+		const coded = (code: string) =>
+			Object.assign(new TypeError("fetch failed"), {
+				cause: Object.assign(new Error(code), { code }),
+			});
+		expect(outcomeUnknown(new DOMException("timeout", "TimeoutError"))).toBe(true);
+		for (const code of ["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"]) {
+			expect(outcomeUnknown(coded(code)), code).toBe(true);
+		}
+		for (const code of ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH"]) {
+			expect(outcomeUnknown(coded(code)), code).toBe(false);
+		}
+		expect(outcomeUnknown("不是 Error")).toBe(false);
+	});
+
+	it("命令的 AssistantUnreachableError 带着 outcomeUnknown：超时是 true，连接被拒绝是 false", async () => {
+		const timeout = new AssistantClient(config, {
+			fetch: (async () => {
+				throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+			}) as typeof fetch,
+		});
+		const refused = new AssistantClient(config, {
+			fetch: (async () => {
+				throw Object.assign(new TypeError("fetch failed"), {
+					cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+				});
+			}) as typeof fetch,
+		});
+		const a = (await timeout
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as AssistantUnreachableError;
+		const b = (await refused
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as AssistantUnreachableError;
+		expect(a).toBeInstanceOf(AssistantUnreachableError);
+		expect(a.outcomeUnknown).toBe(true);
+		expect(b.outcomeUnknown).toBe(false);
 	});
 
 	it("事件流连不上：同样只有原因的种类，原错误在 cause 里（事件连接的日志打印它）", async () => {

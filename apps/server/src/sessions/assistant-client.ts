@@ -11,15 +11,18 @@ import {
 import type { z } from "zod";
 import type { AssistantConfig } from "./assistant-config.js";
 
+/** 助手服务拒绝时，它自己写的那句话进日志的最大长度（字符）。 */
+export const MAX_REJECTION_DETAIL_CHARS = 500;
+
 /** 助手服务拒绝时回给人的固定说明，按错误码：助手服务自己写的那句话（`detail`）可能带内部的地址和路径，只进日志。 */
 export const ASSISTANT_REJECTION_TEXT: Record<AssistantErrorCode, string> = {
 	unauthorized: "助手服务拒绝了共享密钥（两边的 SFLY_ASSISTANT_SECRET 不一致）",
 	invalid_request: "助手服务认为这个请求不合法（控制面和助手服务的协议版本可能不一致）",
-	turn_running: "助手服务说这个会话已经有一轮在做",
+	turn_running: "助手服务说这个会话已经有一轮在做：先点「停止」，再说一次",
 	no_turn_running: "助手服务说这个会话没有在做的一轮",
 	model_not_configured: "助手服务没有配置模型",
 	model_unreachable: "助手服务连不上模型",
-	process_limit: "助手服务的进程数到了上限",
+	process_limit: "助手服务的进程数到了上限：等别的会话停下来再试",
 	start_failed: "助手服务起不了这一轮的进程",
 };
 
@@ -43,7 +46,18 @@ export class AssistantError extends Error {
  * `message` 是稳定的一句说明（只有原因的种类，见 {@link reasonOf}），会回给请求的人、写进就绪状态和 `turn_end` 的原因；
  * 底层错误的原文（带着助手服务的地址和端口）在 `cause` 里，只进日志。
  */
-export class AssistantUnreachableError extends Error {}
+export class AssistantUnreachableError extends Error {
+	/**
+	 * 命令有没有可能已经送到：请求超时、连接在发出请求之后被对端关闭时，助手服务可能已经收下了命令只是没来得及回应（结果未知）；
+	 * 连接被拒绝、域名解析不了、网络不通、建立连接就超时，命令一定没有送到。停止时据此决定要不要等助手服务带回结局。
+	 */
+	readonly outcomeUnknown: boolean;
+
+	constructor(message: string, options?: ErrorOptions & { outcomeUnknown?: boolean }) {
+		super(message, options);
+		this.outcomeUnknown = options?.outcomeUnknown ?? false;
+	}
+}
 
 /**
  * Node 的 `fetch`（undici）对响应体的默认超时：连接上 300 秒没有数据就断开。事件流靠心跳（15 秒一行）不静默，
@@ -220,7 +234,10 @@ export class AssistantClient {
 				signal: AbortSignal.timeout(timeoutMs),
 			});
 		} catch (error) {
-			throw new AssistantUnreachableError(`连不上助手服务：${reasonOf(error)}`, { cause: error });
+			throw new AssistantUnreachableError(`连不上助手服务：${reasonOf(error)}`, {
+				cause: error,
+				outcomeUnknown: outcomeUnknown(error),
+			});
 		}
 	}
 }
@@ -235,11 +252,32 @@ async function rejectUnlessOk(res: Response): Promise<void> {
 	} catch {
 		body = undefined;
 	}
-	throw new AssistantError(
-		res.status,
-		body?.code,
-		body?.message ?? (text.slice(0, 200) || undefined),
-	);
+	// 进日志的原文：助手服务自己写的那句话（有长度上限）；回应体不是约定的形状时**不写内容**（它可能带着会话的内容），只写
+	// 状态码和长度。
+	const detail = body
+		? body.message.slice(0, MAX_REJECTION_DETAIL_CHARS)
+		: `回应体不是约定的形状（状态码 ${res.status}，${text.length} 个字符）`;
+	throw new AssistantError(res.status, body?.code, detail);
+}
+
+/** 命令有没有可能已经送到（见 {@link AssistantUnreachableError.outcomeUnknown}）：超时、发出请求之后连接断了是未知。 */
+export function outcomeUnknown(error: unknown): boolean {
+	const codes = new Set<string>();
+	let current: unknown = error;
+	for (let depth = 0; current instanceof Error && depth < 5; depth++) {
+		const code = (current as { code?: unknown }).code;
+		if (typeof code === "string") codes.add(code);
+		codes.add(current.name);
+		current = current.cause;
+	}
+	return [
+		"TimeoutError",
+		"ECONNRESET",
+		"EPIPE",
+		"UND_ERR_SOCKET",
+		"UND_ERR_HEADERS_TIMEOUT",
+		"UND_ERR_BODY_TIMEOUT",
+	].some((name) => codes.has(name));
 }
 
 /**

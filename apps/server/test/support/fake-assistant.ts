@@ -55,6 +55,16 @@ export class FakeAssistant {
 	promptDelayMs = 0;
 	/** 收到 `abort` 之后先等这么久（毫秒）再回应：让测试在中止还在路上时让别的事发生。 */
 	abortDelayMs = 0;
+	/**
+	 * 按真助手服务的样子记「哪一轮在做」（默认关，多数用例自己用 `emit` 和 `abortReply` 控制）：开着时，会话已经有一轮在做时
+	 * 收到别的轮次的 `prompt` 回 409 `turn_running`；收到 `emit` 的这一轮的 `turn_end`，这一轮就不在做了；收到轮次是 N 的
+	 * 中止（回应是 202 的话），**还在做的、轮次不大于 N 的那一轮也结束**（协议 {@link AbortCommandBody}），记在
+	 * {@link endedByAbort}。
+	 */
+	strictTurns = false;
+	/** `strictTurns` 开着时，被中止结束的轮次（会话和轮次，按结束的先后）。 */
+	readonly endedByAbort: Array<{ sessionId: string; turn: number }> = [];
+	readonly #running = new Map<string, number>();
 	healthDelayMs = 0;
 	/** 收到过几次 `GET /health`。 */
 	healthRequests = 0;
@@ -140,6 +150,9 @@ export class FakeAssistant {
 			at: typeof at === "string" ? at : at.toISOString(),
 			event,
 		});
+		if (event.type === "turn_end" && this.#running.get(sessionId) === turn) {
+			this.#running.delete(sessionId);
+		}
 		this.#write(record);
 		return record;
 	}
@@ -269,7 +282,23 @@ export class FakeAssistant {
 			if (this.abortDelayMs > 0) await new Promise((r) => setTimeout(r, this.abortDelayMs));
 			const reply = this.abortReply(sessionId, turn);
 			if (reply) return this.#error(res, reply);
-			return this.#send(res, 202);
+			this.#send(res, 202);
+			// 还在做的、轮次不大于 N 的那一轮也结束（协议）；拒绝了中止的不算。
+			const running = this.#running.get(sessionId);
+			if (this.strictTurns && running !== undefined && running <= turn) {
+				this.endedByAbort.push({ sessionId, turn: running });
+				this.emit(sessionId, running, {
+					type: "turn_end",
+					turn: running,
+					outcome: "stopped",
+					reason: "助手服务按中止结束了这一轮",
+					steps: 0,
+					model_calls: 0,
+					duration_ms: 0,
+					usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+				});
+			}
+			return;
 		}
 		let json: unknown;
 		try {
@@ -294,7 +323,17 @@ export class FakeAssistant {
 		if (this.promptDelayMs > 0) await new Promise((r) => setTimeout(r, this.promptDelayMs));
 		const reply = this.promptReply(prompt);
 		if (reply) return this.#error(res, reply);
+		if (this.strictTurns && this.#running.has(sessionId)) {
+			return this.#error(res, {
+				status: 409,
+				code: "turn_running",
+				message: `这个会话的第 ${this.#running.get(sessionId)} 轮还在做`,
+			});
+		}
 		this.#send(res, 202);
+		if (this.strictTurns && !this.abortedTurns.has(`${sessionId}:${parsed.data.turn}`)) {
+			this.#running.set(sessionId, parsed.data.turn);
+		}
 		// 这一轮已经被中止过（中止先到）：直接以 stopped 结束，不去做。
 		if (this.abortedTurns.has(`${sessionId}:${parsed.data.turn}`)) {
 			this.emit(sessionId, parsed.data.turn, {

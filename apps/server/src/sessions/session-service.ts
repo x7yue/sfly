@@ -381,7 +381,7 @@ export class SessionService {
 	/**
 	 * 停止会话正在做的这一轮：不在做时不改会话（助手没有配置时仍是 503，和别的写一样；空闲的会话仍向助手服务补发一次
 	 * 带轮次的中止，见下面）；在做时先把这一轮的中止发给助手服务，
-	 * 它会带回这一轮的 `turn_end`（等一小会儿，{@link STOP_GRACE_MS}）；助手服务没有配置、连不上、不认识这一轮、
+	 * 它会带回这一轮的 `turn_end`（等的时间 {@link STOP_GRACE_MS}，13 秒）；助手服务没有配置、连不上、不认识这一轮、
 	 * 或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：
 	 * 助手服务不回话，用户也停得下来，项目不会因此一直开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始
 	 * 就记下是第几轮，结束时按它核对（`SessionStore.append`）——这一轮已经结束、会话开始了下一轮，就不会把新的一轮结束掉。
@@ -405,14 +405,21 @@ export class SessionService {
 			return { ok: true, value: null };
 		}
 		const turn = effectiveTurn(current);
+		// 中止送到了，或者结果未知（命令超时、连接在发出请求之后断了：助手服务可能已经收下了、只是没来得及回应）：都要等助手服务
+		// 带回结局；一定没送到（连接被拒绝、域名解析不了……）或者被拒绝才由控制面马上结束这一轮。
 		let aborted = false;
 		if (client) {
 			try {
 				await client.abort(current.id, turn);
 				aborted = true;
 			} catch (error) {
-				// 连不上或被拒绝：下面由控制面结束这一轮。
-				this.deps.log?.(`停止会话 ${current.id} 时中止没有送到助手服务`, error);
+				aborted = error instanceof AssistantUnreachableError && error.outcomeUnknown;
+				this.deps.log?.(
+					aborted
+						? `停止会话 ${current.id} 时中止的结果未知（可能已经送到助手服务），照样等它带回结局`
+						: `停止会话 ${current.id} 时中止没有送到助手服务`,
+					error,
+				);
 			}
 		}
 		if (aborted && (await this.#settled(current.id, turn))) return { ok: true, value: null };

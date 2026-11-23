@@ -47,5 +47,12 @@ export function assistantSetup(options: { url?: string; secret?: string }): Assi
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 		return { configured: false, reason: `${ASSISTANT_URL_ENV} 要写 http 或 https 地址` };
 	}
+	if (parsed.username !== "" || parsed.password !== "") {
+		// 地址里带用户名和密码：fetch 不让请求带它，每个请求都会失败，出错的原文还会把这段地址带进日志；共享密钥有自己的变量。
+		return {
+			configured: false,
+			reason: `${ASSISTANT_URL_ENV} 不能带用户名和密码（共享密钥写在 ${ASSISTANT_SECRET_ENV} 里）`,
+		};
+	}
 	return { configured: true, config: { url: parsed, secret } };
 }
