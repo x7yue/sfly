@@ -326,7 +326,8 @@ export const ToolOutputEvent = z.object({
 /**
  * 工具的结果（对应 pi 的 `tool_execution_end`）。`text` 是模型看到的那份结果；`exit_code` 只有命令才有
  * （拿不到退出码时不给）；`diff` 只有编辑才有，取 pi 结果里的 `details.diff`。`text` 和 `diff` 超过
- * {@link SESSION_EVENT_LIMITS} 的 `toolResultBytes` 只留头尾，`truncated` 标出（任何一段被截断都为 true）。
+ * {@link SESSION_EVENT_LIMITS} 的 `toolResultBytes` 只留头尾，`truncated` 标出（任何一段被截断都为 true；pi 自己截断过的
+ * 结果也为 true：命令的输出只留了末尾、读文件只给了一部分，模型看到的就不是全部）。
  * 助手服务产生。持久。#540 起。
  */
 export const ToolResultEvent = z.object({

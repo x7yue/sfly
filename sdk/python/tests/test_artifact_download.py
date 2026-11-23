@@ -325,6 +325,47 @@ def test_cancelling_the_task_stops_a_download_running_in_a_thread(
     assert "线程里的下载被取消" in [line.message for line in result.logs]
 
 
+def test_a_download_after_the_cancel_marker_raises_cancelled_before_doing_anything(
+    server: ArtifactServer, tmp_path: Path
+) -> None:
+    # 任务进入收尾时间（取消、超时、被停止子流程节点停止：取消标记在）之后，新的下载一开头就抛出
+    # `Cancelled`：不检查引用、不向控制面发请求、不建目录、不写文件，和 `AgentSocket.call` 同一个
+    # 口径。
+    # 本地的、远端的、空的、不存在的、写错的引用都一样。
+    from sfly import Cancelled
+    from sfly.download import download
+
+    local = tmp_path / "local.bin"
+    local.write_bytes(b"x")
+    refs = {
+        "本地文件": str(local),
+        "远端": server.serve("data.bin", ok(BODY)),
+        "远端的空产物": server.serve("empty.bin", ok(b"")),
+        "不存在": server.base + "/tasks/t/artifacts/missing.bin",
+        "写错的引用": "不是引用",
+        "空引用": "",
+    }
+    for name, ref in refs.items():
+        dest = tmp_path / name / "got.bin"
+        with pytest.raises(Cancelled, match="^任务正在收尾，下载中止$"):
+            download(ref, dest, retries=3, timeout=5, local={}, cancelled=lambda: True)
+        assert not dest.parent.exists(), name
+    assert server.requests == []
+
+
+def test_the_cancelled_messages_of_a_download_do_not_name_a_reason(tmp_path: Path) -> None:
+    # 超时的任务也会走到这里：说明不能写「已取消」，看日志的人会以为有人点了取消。
+    from sfly import Cancelled
+    from sfly.download import _sleep, _write
+
+    with pytest.raises(Cancelled) as in_write:
+        _write(tmp_path / "x.bin", lambda: iter([b"a"]), lambda: True)
+    with pytest.raises(Cancelled) as in_sleep:
+        _sleep(1, lambda: True)
+
+    assert str(in_write.value) == str(in_sleep.value) == "任务正在收尾，下载中止"
+
+
 # ---- 本地调试：产物引用是本地文件路径；也可以给某个引用指定本地内容 ----
 
 
