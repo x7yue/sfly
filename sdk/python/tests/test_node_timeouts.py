@@ -13,11 +13,13 @@ import pytest
 
 from sfly.cli import node_timeouts
 from sfly.cli.node_timeouts import (
+    ABSENT,
     MAX_TIMEOUT_SECONDS,
     PLATFORM_TIMEOUT_SECONDS,
     effective_timeout,
     node_timeout_problem,
     timeout_text,
+    timeout_view,
 )
 
 CASES: dict[str, Any] = json.loads(
@@ -46,7 +48,9 @@ def test_the_effective_timeout_is_what_the_shared_cases_say(case: dict[str, Any]
 def test_the_problem_with_a_written_timeout_is_the_sentence_the_shared_cases_say(
     case: dict[str, Any],
 ) -> None:
-    assert node_timeout_problem(case["label"], case.get("written")) == case["problem"]
+    # 没有 `written` 这个键是没写；写了 null 不是没写。
+    written = case["written"] if "written" in case else ABSENT
+    assert node_timeout_problem(case["label"], written) == case["problem"]
 
 
 def test_a_found_node_type_that_is_missing_stays_unknown_instead_of_guessing() -> None:
@@ -72,3 +76,16 @@ def test_a_written_value_dispatch_would_refuse_is_shown_as_invalid_with_the_sent
 
     assert view == {"seconds": None, "source": "invalid", "problem": problem}
     assert timeout_text(view) == f"无效：{problem}（派发时这个任务会以配置错误失败）"
+
+
+def test_a_null_timeout_is_an_invalid_one_in_the_scenario_view_like_any_other_bad_value() -> None:
+    """写了 `null` 不是没写（保存时 `null` 同样被拒绝，#576）：`scenario show` 和派发的口径一致。"""
+    view = timeout_view({"timeout": None}, "slow", None)
+
+    assert view["source"] == "invalid"
+    assert (
+        view["problem"]
+        == "节点 slow：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 null"
+    )
+    # 没有 `timeout` 这个键才是没写：平台默认。
+    assert timeout_view({}, "slow", None) == {"seconds": 3600, "source": "platform"}
