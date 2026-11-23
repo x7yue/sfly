@@ -175,7 +175,7 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 	}
 	measurements.push(shellOverEmpty(perNodeMs));
 	notes.push(
-		"shell 比空节点多出来的 = 同一次运行里两条链每节点端到端中位数之差：两条链轮流各跑 RUNS 次，机器上别的负载均摊到" +
+		`shell 比空节点多出来的 = 同一次运行里两条链每节点端到端中位数之差：两条链轮流各跑 ${RUNS} 次，机器上别的负载均摊到` +
 			"两条链上，所以差值比各自的绝对值稳；它测的是 sfly-std 在执行器进程之上多出来的部分（导入 sfly_std、执行命令、回报结果）。",
 		"每节点端到端 = 相邻两个节点的开始时间（Agent 上报执行器已启动、控制面记为 running）之差：一个节点从执行器启动、" +
 			"退出、回报结果，到控制面派发下一个节点、Agent 启动下一个执行器的完整周期；多次运行的差值合在一起取中位数。" +
