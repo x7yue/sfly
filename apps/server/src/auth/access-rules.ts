@@ -1,6 +1,12 @@
 // 访问检查要用的、只和契约有关的规则（ADR 0029「项目从请求的哪里来」「一处检查」）：
 // 一个接口的项目从哪里得出，以及 Agent 凭据和任务凭据各自能调用的接口清单。不依赖 Fastify，也不碰数据库。
-import { PROJECT_PARAM, pathParamNames, type RouteDef } from "@sfly/schema";
+import {
+	PROJECT_PARAM,
+	pathParamNames,
+	type ResourceKind,
+	type ResourceTarget,
+	type RouteDef,
+} from "@sfly/schema";
 
 /**
  * 一个接口的项目怎么得出（ADR 0029 把现有接口分成四类）：
@@ -18,11 +24,42 @@ export type ProjectLocator =
 	| { from: "path"; param: string | null }
 	| { from: "scenario" | "run" | "task" | "session"; param: string };
 
-/** 接口的项目怎么得出；认不出时返回 undefined（`checkAccessRules` 在启动时拒绝，访问检查不会走到这里）。 */
+/**
+ * 接口的项目怎么得出；认不出时返回 undefined（`checkAccessRules` 在启动时拒绝，访问检查不会走到这里）。
+ * 对资源类别穷举（`switch` 加 `never` 的兜底）：契约里加一个资源类别，这里不处理就过不了类型检查，
+ * 不会让它悄悄落进某个默认的分支（#554）。
+ */
 export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLocator | undefined {
 	const { kind, target } = def.resource;
-	if (kind === "system") return { from: "none" };
-	if (kind === "account") return { from: "account" };
+	switch (kind) {
+		case "system":
+			return { from: "none" };
+		case "account":
+			return { from: "account" };
+		case "project":
+			// 项目本身和项目的管理面：项目就是路径里的 `:project`，没有别的得出方式。
+			return pathParamNames(def.path).includes(PROJECT_PARAM)
+				? { from: "path", param: PROJECT_PARAM }
+				: undefined;
+		case "scenario":
+		case "run":
+		case "task":
+		case "session":
+		case "package":
+		case "agent":
+		case "feishu_bot":
+			return locatorOfScoped(def, kind, target);
+		default:
+			return exhaustive(kind);
+	}
+}
+
+/** 属于项目的资源类别（场景、运行、任务、会话、节点包、Agent、飞书机器人）：路径带项目、列表与新建、按名字或按 ID 定位。 */
+function locatorOfScoped(
+	def: Pick<RouteDef, "path">,
+	kind: "scenario" | "run" | "task" | "session" | "package" | "agent" | "feishu_bot",
+	target: ResourceTarget,
+): ProjectLocator | undefined {
 	if (pathParamNames(def.path).includes(PROJECT_PARAM))
 		return { from: "path", param: PROJECT_PARAM };
 	if (target === "collection" || target === "upload") return { from: "path", param: null };
@@ -30,11 +67,14 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
 		if (kind === "agent" || kind === "package" || kind === "feishu_bot") {
 			return { from: "path", param: null };
 		}
-		if (kind === "scenario" || kind === "run" || kind === "task" || kind === "session") {
-			return { from: kind, param: target.params };
-		}
+		return { from: kind, param: target.params };
 	}
 	return undefined;
+}
+
+/** `switch` 穷举的兜底：走到这里说明加了新的取值而没有处理（类型检查会先报错）。 */
+export function exhaustive(value: never): never {
+	throw new Error(`没有处理的取值：${String(value)}`);
 }
 
 /**
@@ -47,12 +87,21 @@ export function locatorOf(def: Pick<RouteDef, "path" | "resource">): ProjectLoca
  *   这一个登录注销，**不看同源判定**（公开地址和浏览器实际打开的地址不一致、跨站，同源检查都过不了：浏览器上的 Cookie
  *   清了、库里的登录却还有效，拿到这个 Cookie 的人还能继续用）；没带 Cookie、Cookie 已经失效，就只清 Cookie：
  *   不然页面说「已登出」，Cookie 还在，刷新又是登录着；
- * - `platform_admin`：只认平台管理员的登录 Cookie（管理账号）；不是平台管理员是 403。
+ * - `platform_admin`：只认平台管理员的登录 Cookie（管理账号）；不是平台管理员是 403；
+ * - `login_or_personal`：登录 Cookie 或个人令牌（列出自己的令牌；吊销自己的令牌：个人令牌只能吊销它自己，由处理函数核对）；
+ *   不带凭据是 401，别的凭据（项目令牌、会话令牌…）是 403；
+ * - `login_or_password`：签发个人令牌：登录 Cookie，或者请求体里的账号密码（`sfly login` 换令牌，由处理函数验证）；
+ *   带了令牌（任何一种）是 403：令牌不能签发令牌。
  *
  * 这些是新接口，不带凭据时的「照旧放行」（#494 才拒绝）不适用于它们：需要身份的接口没有身份就没法做。
- * 个人令牌的签发、吊销、列出（#491）在它们的接口加进契约时在这里写明。
  */
-export type AccountCredential = "anonymous" | "login" | "platform_admin" | "logout";
+export type AccountCredential =
+	| "anonymous"
+	| "login"
+	| "logout"
+	| "platform_admin"
+	| "login_or_personal"
+	| "login_or_password";
 
 export const ACCOUNT_ROUTES = {
 	"GET /auth/status": "anonymous",
@@ -67,7 +116,27 @@ export const ACCOUNT_ROUTES = {
 	"POST /users/:id/disable": "platform_admin",
 	"POST /users/:id/enable": "platform_admin",
 	"POST /users/:id/password": "platform_admin",
+	"GET /account/tokens": "login_or_personal",
+	"POST /account/tokens": "login_or_password",
+	"DELETE /account/tokens/:id": "login_or_personal",
 } as const satisfies Record<string, AccountCredential>;
+
+/**
+ * 只认人的登录 Cookie 的项目内接口（令牌不能签发令牌）：签发项目令牌要「管理」范围，并且只认登录；带了令牌（含带「管理」范围的
+ * 个人令牌）是 403。列出和吊销项目令牌不在其中：令牌可以吊销令牌，那只会收窄权限。
+ * 这是范围表之外的一条凭据种类的限制，和范围表放在同一处检查里（./access-guard.ts）。
+ */
+export const LOGIN_ONLY_ROUTES = {
+	"POST /projects/:project/tokens": "令牌不能签发令牌：项目令牌只能由人在控制台里用登录签发",
+} as const satisfies Record<string, string>;
+
+/**
+ * 现在就要求凭据的资源类别：不带凭据（和带共享令牌）是 401 / 403，不走「不带凭据照旧放行」的过渡。
+ * 过渡放行是为了让已有的用法（昵称、共享令牌）在 #494 之前不受影响；这些类别是新的，没有旧用法要保持，
+ * 放行就是没有检查：项目的管理面（项目令牌；以后的成员、项目密钥）没有身份就没法做。#494 开始所有类别都要求凭据，
+ * 到时这张表删掉。
+ */
+export const REQUIRES_CREDENTIAL: ReadonlySet<ResourceKind> = new Set<ResourceKind>(["project"]);
 
 /** `方法 路径模板`，清单和检查用它认接口。 */
 export const routeKey = (def: Pick<RouteDef, "method" | "path">): string =>
@@ -119,13 +188,14 @@ export function checkAccessRules(contract: readonly RouteDef[]): string[] {
 	});
 }
 
-/** 两份凭据清单里的接口都在（完整的）契约里：接口改名或删掉了，清单要一起改。契约测试对 `httpContract` 运行它。 */
+/** 几份凭据清单里的接口都在（完整的）契约里：接口改名或删掉了，清单要一起改。契约测试对 `httpContract` 运行它。 */
 export function checkCredentialRoutes(contract: readonly RouteDef[]): string[] {
 	const known = new Set(contract.map(routeKey));
 	return [
 		["AGENT_CREDENTIAL_ROUTES", AGENT_CREDENTIAL_ROUTES],
 		["TASK_CREDENTIAL_ROUTES", TASK_CREDENTIAL_ROUTES],
 		["ACCOUNT_ROUTES", ACCOUNT_ROUTES],
+		["LOGIN_ONLY_ROUTES", LOGIN_ONLY_ROUTES],
 	].flatMap(([name, list]) =>
 		Object.keys(list as object)
 			.filter((key) => !known.has(key))

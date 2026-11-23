@@ -2,7 +2,8 @@
  * 客户端自己给出的错误码；其余错误码来自控制面的 `{ error: { code } }`。
  *
  * - `network_error`：没有收到响应（控制面不可达、连接被断开、浏览器拦下跨域请求），status 为 0。
- * - `nickname_required`：写操作（非 GET）没有昵称，请求没有发出，status 为 400。控制面对没有昵称的写操作回复同一个错误码。
+ * - `nickname_required`：写操作（非 GET）既没有令牌也没有昵称，请求没有发出，status 为 400。控制面对没有昵称的写操作回复同一个错误码。
+ *   （名字是旧的：身份曾经只是昵称；错误码保持不变，信息里写明要给 `token`。）
  * - `http_error`：错误响应不是控制面的错误格式（例如代理返回的页面），details 是响应体。
  * - `invalid_response`：成功响应的格式不对（JSON 接口的不是 JSON，事件流的不是 `text/event-stream`）。
  */

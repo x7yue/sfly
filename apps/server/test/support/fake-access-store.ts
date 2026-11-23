@@ -23,6 +23,8 @@ export class FakeAccessStore implements AccessStore {
 	readonly adminWrites: AdminWrite[] = [];
 	/** 登录用了之后写下的最后使用时间和空闲期限。 */
 	readonly touches: { id: string; lastUsedAt: Date; idleExpiresAt: Date }[] = [];
+	/** 令牌用了之后写下的最后使用时间（`touchToken` 真的写了的）。 */
+	readonly tokenTouches: { id: string; at: Date }[] = [];
 	/** 回填的响应状态码（`completeAdminWrite`）。 */
 	readonly adminResults: { id: string; status: number }[] = [];
 	/** 每个方法被调用的次数：不需要凭据的请求不该读库。 */
@@ -65,6 +67,19 @@ export class FakeAccessStore implements AccessStore {
 			}
 		}
 		return { loginIds, tokenIds };
+	}
+	async touchToken(id: string, at: Date, intervalMs: number) {
+		for (const token of this.tokens.values()) {
+			if (token.id !== id) continue;
+			// 和数据库实现一样：上一次记录离现在不到一个间隔就不写。
+			if (token.lastUsedAt !== null && token.lastUsedAt.getTime() > at.getTime() - intervalMs) {
+				return false;
+			}
+			token.lastUsedAt = at;
+			this.tokenTouches.push({ id, at });
+			return true;
+		}
+		return false;
 	}
 	async loginByCookieHash(hash: string) {
 		this.reads++;

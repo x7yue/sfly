@@ -4,7 +4,7 @@
 // 这一步只对带了凭据的请求生效（规格 #489）：不带凭据的请求照旧放行，到 #494 才改成 401；带共享令牌的 HTTP 请求
 // 和不带凭据的走同一套（共享令牌不对应任何一台 Agent）。带了凭据就一定检查：库里没有的、过期的、吊销的、用户停用的，
 // 一律 401，不会退回到「不带凭据」的放行。
-import type { RouteDef } from "@sfly/schema";
+import { type RouteDef, TOKEN_PREFIXES } from "@sfly/schema";
 import type { Clock } from "../clock.js";
 import type { ProjectRole } from "../db/schema.js";
 import {
@@ -17,9 +17,13 @@ import {
 import { isUuid } from "../util/uuid.js";
 import {
 	ACCOUNT_ROUTES,
+	type AccountCredential,
 	AGENT_CREDENTIAL_ROUTES,
+	exhaustive,
+	LOGIN_ONLY_ROUTES,
 	locatorOf,
 	type ProjectLocator,
+	REQUIRES_CREDENTIAL,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "./access-rules.js";
@@ -106,6 +110,13 @@ export interface AccessRequest {
 
 /** 登录用了之后，隔多久才把「最后使用时间」写一次库（并续期）：不要每个请求写一次库。 */
 export const LOGIN_TOUCH_INTERVAL_MS = 60_000;
+/**
+ * 令牌的「最后使用时间」隔多久才写一次库：每个令牌每分钟最多写一次。这个时间只用来让人看出一个令牌还在不在用
+ * （几分钟的误差不影响判断），而每个请求写一次库，会让每个只读请求都变成写请求；和登录的续期用同一个间隔。
+ * 「到没到时间」放在更新语句的条件里（`AccessStore.touchToken`），并发的请求只有一个写成功，不靠进程里的表：
+ * 控制面重启之后也不会多写，将来有多个进程也不会各写各的。
+ */
+export const TOKEN_TOUCH_INTERVAL_MS = 60_000;
 /** 登录的空闲期限，默认 12 小时（`SFLY_LOGIN_IDLE_HOURS`）。 */
 export const DEFAULT_LOGIN_IDLE_MS = 12 * 3_600_000;
 
@@ -140,6 +151,25 @@ function presentedCredential(request: AccessRequest): Presented | undefined {
 	}
 	return undefined;
 }
+
+const OUR_TOKEN_PREFIX = new RegExp(
+	`(?:${Object.values(TOKEN_PREFIXES).join("|")})[A-Za-z0-9_-]{8,}`,
+);
+
+/**
+ * `Authorization` 头里有我们的令牌（认得出前缀），却不是 `Bearer <令牌>` 的写法（`Authorization: <令牌>`、`token <令牌>`、
+ * `Bearer: <令牌>`……）：写错了请求头的脚本，不能被当作没带凭据而以匿名身份继续写。别的方案（`Basic …`，前面有反向代理做
+ * 基本认证的部署）里没有我们的令牌前缀，不在这里，照旧当作没带。放在别的头里（`X-Api-Key`）的管不了。
+ */
+function malformedAuthorization(request: AccessRequest): boolean {
+	const header = (request.authorization ?? "").trim();
+	if (header === "" || /^Bearer(?:\s+(.*))?$/is.test(header)) return false;
+	return OUR_TOKEN_PREFIX.test(header);
+}
+
+const MALFORMED_AUTHORIZATION_MESSAGE =
+	"Authorization 头里有 sfly 令牌，但写法不对：要写成 `Authorization: Bearer <令牌>`" +
+	"（不是 `Authorization: <令牌>`，也不是 `token <令牌>`）";
 
 /** 解析出的凭据：有用户的（登录、个人令牌、会话令牌）、项目令牌、Agent 凭据、任务凭据；共享令牌单独一种。 */
 type Principal =
@@ -203,13 +233,27 @@ export class AccessGuard {
 		}
 		// 不属于项目的接口不需要凭据，带了也不看（过期的 Cookie 不该让健康检查和下载安装脚本失败）。
 		if (locator.from === "none") return { ok: true, access: null };
+		// 写错了写法的令牌：401 并说明正确的写法（登录、初始化、状态、登出本来就不看凭据，照旧）。
+		if (malformedAuthorization(request)) {
+			const rule =
+				locator.from === "account"
+					? (ACCOUNT_ROUTES as Record<string, AccountCredential>)[routeKey(request.route)]
+					: undefined;
+			if (rule !== "anonymous" && rule !== "logout") {
+				return denied(401, "unauthorized", MALFORMED_AUTHORIZATION_MESSAGE);
+			}
+		}
 		const offered = presentedCredential(request);
 		// 登录 Cookie 是浏览器自动带上的：跨站的请求（有副作用的，或者不是页面导航的）不认它，当作没有登录。
 		const crossSite = offered?.from === "cookie" && !this.#sameSite(request);
 		const presented = crossSite ? undefined : offered;
 		// 登出例外（`#checkLogout`）：它要看到跨站带来的 Cookie，才能把库里的这条登录也注销。
 		if (locator.from === "account") return this.#checkAccount(request, presented, offered);
-		if (presented === undefined) return { ok: true, access: null };
+		if (presented === undefined) {
+			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+				? denied(401, "unauthorized", "需要登录或令牌")
+				: { ok: true, access: null };
+		}
 		const resolved = await this.#resolve(presented);
 		const result = await this.#decide(resolved, request, locator);
 		return withCookie(result, resolved, request, this.#idleMs);
@@ -223,7 +267,11 @@ export class AccessGuard {
 		if (principal === undefined) {
 			return denied(401, "unauthorized", "凭据无效、已过期或已吊销");
 		}
-		if (principal.kind === "shared") return { ok: true, access: null };
+		if (principal.kind === "shared") {
+			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+				? denied(403, "forbidden", "共享令牌不能调用这个接口：它只给 Agent 用")
+				: { ok: true, access: null };
+		}
 		// 路径参数含 NUL：它不指向任何东西，和不带凭据时一样是 404（契约路由的约定，#212）；
 		// 不能往下走：管理员的写记录要把路径参数写进库，NUL 存不进 PostgreSQL 的文本。
 		if (Object.values(request.params).some((value) => value?.includes("\u0000"))) {
@@ -260,35 +308,52 @@ export class AccessGuard {
 		offered: Presented | undefined,
 	): Promise<AccessResult> {
 		const key = routeKey(request.route);
-		const rule: string | undefined = (ACCOUNT_ROUTES as Record<string, string>)[key];
+		const rule: AccountCredential | undefined = (
+			ACCOUNT_ROUTES as Record<string, AccountCredential>
+		)[key];
 		if (rule === undefined) {
 			throw new Error(`${key} 是账号类接口，却没有写在 ACCOUNT_ROUTES 里（启动时应该已经拒绝）`);
 		}
 		// 登录、初始化、状态不要凭据，带了什么都不看：过期的 Cookie 不该让登录页登录不了。
 		if (rule === "anonymous") return { ok: true, access: null };
 		if (rule === "logout") return this.#checkLogout(offered);
+		// 签发个人令牌可以不带凭据：请求体里是账号密码（`sfly login`），由处理函数验证，和登录一样限速。
+		if (rule === "login_or_password" && presented === undefined) return { ok: true, access: null };
 		if (presented === undefined) return denied(401, "unauthorized", "需要登录");
 		const resolved = await this.#resolve(presented);
 		const { principal } = resolved;
 		const refused = (status: 401 | 403, code: string, message: string): AccessResult =>
 			withCookie(denied(status, code, message), resolved, request, this.#idleMs);
 		if (principal === undefined) return refused(401, "unauthorized", "凭据无效、已过期或已吊销");
-		if (principal.kind !== "login") {
-			return refused(403, "forbidden", "这个接口只认登录（Cookie），令牌和别的凭据不能用它");
+		// 登录一直可以；个人令牌只有 `login_or_personal` 认。
+		const person =
+			principal.kind === "login" || (rule === "login_or_personal" && principal.kind === "personal")
+				? principal
+				: undefined;
+		if (person === undefined || (person.kind !== "login" && person.kind !== "personal")) {
+			return refused(
+				403,
+				"forbidden",
+				rule === "login_or_password"
+					? "令牌不能签发令牌：用登录（Cookie）签发，或者用账号密码换（sfly login）"
+					: rule === "login_or_personal"
+						? "这个接口只认登录（Cookie）和个人令牌，别的凭据不能用它"
+						: "这个接口只认登录（Cookie），令牌和别的凭据不能用它",
+			);
 		}
-		if (rule === "platform_admin" && !principal.user.isPlatformAdmin) {
+		if (rule === "platform_admin" && !person.user.isPlatformAdmin) {
 			return refused(403, "forbidden", "只有平台管理员能这样做");
 		}
 		return withCookie(
 			{
 				ok: true,
 				access: {
-					credential: "login",
-					userId: principal.user.id,
-					name: principal.user.displayName,
-					tokenName: null,
-					loginId: principal.loginId,
-					tokenId: null,
+					credential: person.kind,
+					userId: person.user.id,
+					name: person.user.displayName,
+					tokenName: person.tokenName,
+					loginId: person.loginId,
+					tokenId: person.tokenId,
 					adminActionId: null,
 					project: null,
 					role: null,
@@ -347,7 +412,18 @@ export class AccessGuard {
 			return { principal };
 		}
 		const token = await this.deps.store.tokenByHash(hash);
-		if (token) return { principal: tokenPrincipal(token, now) };
+		if (token) {
+			const principal = tokenPrincipal(token, now);
+			// 用着才记（失效的令牌不记）；一分钟内只写一次，先在内存里判断一下，省得每个请求都发一条更新。
+			if (
+				principal !== undefined &&
+				(token.lastUsedAt === null ||
+					now.getTime() - token.lastUsedAt.getTime() >= TOKEN_TOUCH_INTERVAL_MS)
+			) {
+				await this.deps.store.touchToken(token.id, now, TOKEN_TOUCH_INTERVAL_MS);
+			}
+			return { principal };
+		}
 		const credential = await this.deps.store.agentCredentialByHash(hash);
 		return { principal: credential && agentPrincipal(credential) };
 	}
@@ -367,6 +443,8 @@ export class AccessGuard {
 		const id = params[locator.param];
 		if (id === undefined || !isUuid(id)) return undefined;
 		const { store } = this.deps;
+		// 对定位的来源穷举：新加一类按 ID 定位的资源（会话…）而忘了在这里写，类型检查会报错，
+		// 不会把它的 ID 当任务 ID 去查（#554）。
 		switch (locator.from) {
 			case "scenario":
 				return store.projectOfScenario(id);
@@ -376,6 +454,8 @@ export class AccessGuard {
 				return store.projectOfTask(id);
 			case "session":
 				return store.projectOfSession(id);
+			default:
+				return exhaustive(locator);
 		}
 	}
 
@@ -501,6 +581,11 @@ export class AccessGuard {
 			role,
 			scopes,
 		};
+		// 只认人的登录的接口（签发项目令牌：令牌不能签发令牌）：先于范围检查，说明的是凭据的种类。
+		const loginOnly = (LOGIN_ONLY_ROUTES as Record<string, string>)[routeKey(route)];
+		if (loginOnly !== undefined && principal.kind !== "login") {
+			return denied(403, "forbidden", loginOnly);
+		}
 		if (needed === null) {
 			return denied(
 				403,
