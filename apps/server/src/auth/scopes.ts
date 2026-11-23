@@ -28,8 +28,8 @@ export const PLATFORM_ADMIN_SCOPES: readonly Scope[] = ROLE_SCOPES.project_admin
 interface ScopeRow {
 	read?: Scope;
 	write: Scope | null;
-	/** 写只有人能做：登录的用户和个人令牌，不是项目令牌、会话令牌（{@link writeNeedsPerson}）。 */
-	humanOnly?: true;
+	/** 写是不是只有人能做（只有登录的用户和个人令牌算人，{@link writeNeedsPerson}）：每一行都要写，漏写过不了类型检查。 */
+	humanOnly: boolean;
 }
 
 /**
@@ -39,26 +39,28 @@ interface ScopeRow {
  * 写成 `Record<ResourceKind, …>`：契约里加一个资源类别，这里不加一行就过不了类型检查，不会悄悄没人管。
  */
 export const SCOPE_TABLE = {
-	scenario: { write: "edit" },
-	run: { write: "run" },
-	task: { write: null },
-	package: { write: "publish" },
-	agent: { write: "manage" },
-	feishu_bot: { write: "manage" },
+	scenario: { write: "edit", humanOnly: false },
+	run: { write: "run", humanOnly: false },
+	task: { write: null, humanOnly: false },
+	package: { write: "publish", humanOnly: false },
+	agent: { write: "manage", humanOnly: false },
+	feishu_bot: { write: "manage", humanOnly: false },
 	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）；
-	// 而且只有人能做：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
+	// 而且只有人能做（ADR 0032）：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
 	session: { write: "edit", humanOnly: true },
-	system: { write: null },
+	system: { write: null, humanOnly: false },
 	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
-	account: { write: null },
-	// 项目令牌、（以后的）成员和项目密钥：是项目的管理面，读和写都要管理。
-	project: { read: "manage", write: "manage" },
+	account: { write: null, humanOnly: false },
+	// 项目令牌、（以后的）成员和项目密钥：是项目的管理面，读和写都要管理；写只有人能做（ADR 0032 的白名单）。
+	project: { read: "manage", write: "manage", humanOnly: true },
 } as const satisfies Record<ResourceKind, ScopeRow>;
 
 /**
- * 这个接口的写是不是只有人能做（范围表里的 `humanOnly`）：在「范围够」之上再加一道「凭据必须是人」——登录的用户和
- * 个人令牌（它是用户本人的凭据，命令行和 API 客户端用）。项目令牌是服务账号，没有用户，不行；会话令牌是助手干活用的，
- * 不行；Agent 凭据和任务凭据走自己的接口清单，不在这里。只读不受影响。
+ * 这个接口的写是不是只有人能做（范围表里的 `humanOnly`，ADR 0032）：在「范围够」之上再加一道「凭据必须是人」——
+ * 只有登录的用户和个人令牌（它是用户本人的凭据，命令行和 API 客户端用）算人，别的凭据一律不行（项目令牌是服务账号，
+ * 没有用户；会话令牌是助手干活用的；新种类的凭据默认也不行）。`humanOnly` 每一行都要写（布尔），新的资源类别漏写过不了
+ * 类型检查。接口作用在 `resource.kind` 上或新建出 `creates` 时，任何一个是 `humanOnly` 就算。只读不受影响。
+ * Agent 凭据和任务凭据走自己的接口清单，不经这里。
  */
 export function writeNeedsPerson(route: {
 	effect: Effect;
@@ -66,8 +68,10 @@ export function writeNeedsPerson(route: {
 	creates?: ResourceKind | undefined;
 }): boolean {
 	if (route.effect === "read") return false;
-	const entry: ScopeRow = SCOPE_TABLE[route.creates ?? route.resource.kind];
-	return entry.humanOnly === true;
+	return (
+		SCOPE_TABLE[route.resource.kind].humanOnly ||
+		(route.creates !== undefined && SCOPE_TABLE[route.creates].humanOnly)
+	);
 }
 
 /**

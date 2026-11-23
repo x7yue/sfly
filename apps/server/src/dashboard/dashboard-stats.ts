@@ -19,6 +19,7 @@ import {
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { type RunRead, type RunReadFull, readRuns } from "../runs/run-read.js";
+import { withQueueWaits } from "./queued-waits.js";
 import { setupSummary } from "./setup-summary.js";
 
 const HOUR_MS = 3_600_000;
@@ -63,6 +64,7 @@ export async function dashboardView(
 	}
 
 	const running = await runningRuns(db, project);
+	const activeNodes = await withQueueWaits(db, hub, project, running);
 	const recentEnded = await recentEndedRuns(deps, project, windowStart, now);
 	const failedSubflows = await failedSubflowCount(db, project, windowStart, now);
 	const agents = await hub.list(project);
@@ -80,7 +82,7 @@ export async function dashboardView(
 			...current,
 			failed_subflows: failedSubflows,
 		},
-		running_runs: running.map(({ run, scenario, version, chains, activeNodes }) => ({
+		running_runs: running.map(({ run, scenario, version, chains }) => ({
 			id: run.id,
 			orchestration_id: run.orchestrationId,
 			orchestration_name: scenario.name,
@@ -103,7 +105,7 @@ export async function dashboardView(
 					status: n.status,
 				})),
 			})),
-			active_nodes: activeNodes,
+			active_nodes: activeNodes.get(run.id) ?? [],
 		})),
 		recent_ended: recentEnded,
 		agents: {

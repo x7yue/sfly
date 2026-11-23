@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from sfly_std import _params
+
 
 def validate_interval(interval: float) -> None:
     """采样间隔必须大于 0（为 0 时采样循环会忙等）。"""
+    _params.seconds("interval", interval)
     if interval <= 0:
         raise ValueError(f"interval 必须大于 0，实际为 {interval:g}")
 
 
 def validate_duration(duration: float | None) -> None:
     """`duration` 不设置时一直运行；设置时必须大于 0（为 0 时一次都不采样就结束，没有意义）。"""
+    _params.seconds("duration", duration)
     if duration is not None and duration <= 0:
         raise ValueError(f"duration 必须大于 0，实际为 {duration:g}")
 

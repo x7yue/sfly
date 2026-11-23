@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	AbortCommandBody,
 	ASSISTANT_SECRET_ENV,
 	ASSISTANT_SECRET_MIN_LENGTH,
 	AssistantErrorBody,
@@ -151,6 +152,21 @@ describe("命令", () => {
 		expect(SteerCommandBody.safeParse({ text: "先别改测试" }).success).toBe(false);
 		expect(SteerCommandBody.safeParse({ ...steer, message_id: "m2" }).success).toBe(false);
 		expect(SteerCommandBody.safeParse({}).success).toBe(false);
+	});
+
+	it("结束一轮（中止）：带要结束的轮次（整数、从 1 起）；缺了、为 0、小数、不是数字都被拒绝，多余的字段被去掉", () => {
+		expect(AbortCommandBody.parse({ turn: 3 })).toEqual({ turn: 3 });
+		expect(AbortCommandBody.parse({ turn: 1, extra: "x" })).toEqual({ turn: 1 });
+		for (const bad of [
+			{},
+			{ turn: 0 },
+			{ turn: -1 },
+			{ turn: 1.5 },
+			{ turn: "2" },
+			{ turn: null },
+		]) {
+			expect(AbortCommandBody.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+		}
 	});
 
 	it("错误码和回应体", () => {
