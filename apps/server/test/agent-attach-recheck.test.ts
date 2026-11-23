@@ -88,6 +88,21 @@ describe("认身份之后、登记之前凭据或 Agent 变了：登记时再确
 		expect(await registered()).toEqual(["dev-alice-laptop"]);
 	});
 
+	it("认身份的时候所属用户已经被停用：认身份这一步就拒绝（不用等到登记）；别的用户的开发 Agent 不受影响", async () => {
+		const alice = await accounts.user("alice");
+		const bob = await accounts.user("bob");
+		const aliceCred = await service.issue(DEFAULT_PROJECT, "dev-alice-laptop", { userId: alice });
+		const bobCred = await service.issue(DEFAULT_PROJECT, "dev-bob-laptop", { userId: bob });
+		await database.pool.query("update users set disabled_at = now() where id = $1", [alice]);
+		expect(await authenticator.authenticate(aliceCred.token, "dev-alice-laptop")).toMatchObject({
+			ok: false,
+			code: "unauthenticated",
+			message: expect.stringContaining("所属的用户已被停用"),
+		});
+		expect((await authenticator.authenticate(bobCred.token, "dev-bob-laptop")).ok).toBe(true);
+		expect(await registered()).toEqual([]);
+	});
+
 	it("认过身份之后这台 Agent 被停用：登记被拒绝（403 一类）；恢复之后可以", async () => {
 		const issued = await service.issue(DEFAULT_PROJECT, "worker-1");
 		const auth = await authenticated(issued.token, "worker-1");
