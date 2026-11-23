@@ -14,7 +14,13 @@ import { loadInstallScript } from "./agent-binaries/install-script.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
-import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
+import {
+	ArtifactStore,
+	artifactBaseUrl,
+	artifactLimitMessage,
+	DEFAULT_ARTIFACT_LIMIT_BYTES,
+	isArtifactLimitBytes,
+} from "./artifacts/artifact-store.js";
 import { AccountService } from "./auth/accounts.js";
 import { bootstrapFirstAdmin, type InitialAdmin } from "./auth/bootstrap.js";
 import { LoginThrottle, type LoginThrottleOptions } from "./auth/login-throttle.js";
@@ -203,6 +209,13 @@ export interface ControlPlane {
 
 /** 启动控制面：执行迁移，然后启动 HTTP API 和 Agent 网关。 */
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
+	// 产物合计的上限随任务下发给 Agent（uint64）：`Infinity`、超过 2^53 − 1 的值下发时让派发出错，启动时就拒绝（#477）。
+	if (
+		options.artifactLimitBytes !== undefined &&
+		!isArtifactLimitBytes(options.artifactLimitBytes)
+	) {
+		throw new Error(artifactLimitMessage("artifactLimitBytes", options.artifactLimitBytes));
+	}
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
 	/**
@@ -312,6 +325,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			packageArchiveUrl: (name, version) =>
 				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 			artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
+			artifactLimitBytes: options.artifactLimitBytes ?? DEFAULT_ARTIFACT_LIMIT_BYTES,
 		}),
 		admitTrigger: createTriggerAdmission({ preflight, paramsCheck: createParamsCheck() }),
 		notifications: new EngineNotifications({
