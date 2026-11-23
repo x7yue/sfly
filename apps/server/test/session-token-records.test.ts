@@ -228,8 +228,42 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			expect(await Promise.all(lockFree)).toEqual([true, true, true, true]);
 		});
 
-		it("推送排在这个会话「落库加发布」的链上：推送被拖住时，助手服务的事件排在它后面，订阅的一方看到的序号一直递增、一条不少（先推送大的序号，小的就被当作已经发过而丢掉）", async () => {
+		it.each([
+			[
+				"触发运行",
+				(id: string) => ({
+					path: `/orchestrations/${id}/runs`,
+					body: { params: { host: "h" } },
+					kind: "run",
+				}),
+			],
+			[
+				"保存版本",
+				(id: string) => ({
+					path: `/orchestrations/${id}/versions`,
+					body: { base_version: 1, document: document() },
+					kind: "scenario_version",
+				}),
+			],
+			[
+				"恢复版本",
+				(id: string) => ({
+					path: `/orchestrations/${id}/versions/1/restore`,
+					body: undefined,
+					kind: "scenario_version",
+				}),
+			],
+			[
+				"复制场景",
+				(id: string) => ({
+					path: `/orchestrations/${id}/copy`,
+					body: { name: "副本" },
+					kind: "scenario_version",
+				}),
+			],
+		])("推送排在这个会话「落库加发布」的链上（%s）：推送被拖住时，助手服务的事件排在它后面，订阅的一方看到的序号一直递增、一条不少（先推送大的序号，小的就被当作已经发过而丢掉）", async (_name, request) => {
 			const id = await scenario();
+			const { path, body, kind } = request(id);
 			const sse = await SseClient.open(cp, `/sessions/${sessionId}/events`, bearer(token));
 			try {
 				await sse.next("turn_started");
@@ -247,9 +281,7 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 					await gate;
 					await original(target, event);
 				});
-				const triggered = asSession("POST", `/orchestrations/${id}/runs`, {
-					params: { host: "h" },
-				});
+				const done = asSession("POST", path, body);
 				// 写记录的事务已经提交，推送被拖在这里。
 				await reached;
 				const appended = cp.current.sessions.append(sessionId, {
@@ -260,11 +292,11 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 				// 给这条事件足够的时间落库、发布（要是它不用排队的话）。
 				await new Promise((resolve) => setTimeout(resolve, 300));
 				release();
-				const created = await json<{ id: string }>(await triggered, 201);
+				await json(await done, 201);
 				await appended;
-				const platformEvent = await sse.next<{ kind: string; run_id: string }>("platform");
+				const platformEvent = await sse.next<{ kind: string }>("platform");
 				const notice = await sse.next("notice");
-				expect(platformEvent.data).toMatchObject({ kind: "run", run_id: created.id });
+				expect(platformEvent.data).toMatchObject({ kind });
 				// 先收到平台记录，后收到提示；序号一直递增。
 				expect(Number(platformEvent.id)).toBeLessThan(Number(notice.id));
 			} finally {
