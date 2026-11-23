@@ -419,6 +419,28 @@ describe("带凭据的请求", () => {
 			);
 		});
 
+		it("同名同版本在一个无关的项目里：409 的说明不写那个项目的名字，也不说它在哪里（只有公共和默认两个项目会写明）", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = bearer(await accounts.personalToken(admin));
+			await accounts.project("secret-team");
+			await db.query(
+				`insert into node_packages (name, version, project_id, metadata, file_path, sha256, size, published_at)
+				 values ('hidden', '4.0', 'secret-team', '{}'::jsonb, 'packages/hidden/4.0.sflypkg', 'x', 1, now())`,
+			);
+
+			for (const [where, headers, query] of [
+				["往公共项目发", token, "?project=public"],
+				["往默认项目发", {}, ""],
+			] as const) {
+				const res = await publish(headers, "hidden", query, "4.0");
+				expect(res.status, where).toBe(409);
+				const { message } = await error(res);
+				expect(message, where).toBe("节点包 hidden@4.0 已存在，不能覆盖已发布的版本");
+				expect(message, where).not.toContain("secret-team");
+			}
+			expect(await projectOf("hidden")).toEqual(["secret-team"]);
+		});
+
 		it("发布时先取这个名字的咨询锁：另一条连接正在发布同名的包时，等它提交了再比较，看到它写的版本（没有锁两个都会通过检查）", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = bearer(await accounts.personalToken(admin));

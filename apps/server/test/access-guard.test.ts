@@ -954,7 +954,7 @@ describe("契约路由的访问检查", () => {
 
 		it("不带凭据、共享令牌写公共项目：项目写在路径里的接口也一样（401、403），不止查询参数那一个", async () => {
 			// 现在的 `POST /projects/:project/sessions`，和 #488 之后的 `POST /projects/:project/packages`
-			// （用 #488 的写法构造的接口）：项目都在路径里，这条规则对每个写公共项目的请求成立。
+			// （用 #488 的写法构造的接口）：项目都在路径里，这条规则对这类接口的每个请求成立（按 ID 定位的写不带凭据时读库之前没有项目，不在这里，由 #494 关上）。
 			store.agentCredentials.set(hashCredential("shared-secret"), {
 				kind: "shared",
 				projectId: DEFAULT,
@@ -993,7 +993,7 @@ describe("契约路由的访问检查", () => {
 					code: "forbidden",
 					message: expect.stringContaining(DENIED),
 				});
-				// 对照：同样的两种凭据写默认项目，和以前一样（到 #494 才拒绝；会话本身要登录或令牌）。
+				// 对照：同样的两种凭据写默认项目，和以前一样（到 #494 才拒绝；会话这一类的接口本来就要凭据，所以不在这里对照）。
 				if (!name.includes("sessions")) {
 					expect(await guard.check(at("default")), `${name}：默认项目不带凭据`).toEqual({
 						ok: true,

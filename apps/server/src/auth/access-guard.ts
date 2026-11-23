@@ -244,7 +244,13 @@ export class AccessGuard {
 		return this.deps.loginIdleMs ?? DEFAULT_LOGIN_IDLE_MS;
 	}
 
-	/** 检查一个请求；返回拒绝的原因，或通过时的身份。 */
+	/**
+	 * 检查一个请求；返回拒绝的原因，或通过时的身份。
+	 *
+	 * 公共项目只有平台管理员能写（{@link PUBLIC_WRITE_DENIED}），判的范围：项目写在路径或查询参数里的写接口（对所有身份，
+	 * 不读库），和带凭据的、按 ID 定位的写接口（读库得出项目之后，在 `#checkScoped` 里判）。不带凭据和共享令牌的、按 ID 定位的
+	 * 写（场景、运行、任务、会话）没有判：读库之前没有项目可判，强制登录（#494）之后这一类都带凭据，由 #494 关上。
+	 */
 	async check(request: AccessRequest): Promise<AccessResult> {
 		const locator = locatorOf(request.route);
 		if (locator === undefined) {
@@ -272,7 +278,8 @@ export class AccessGuard {
 		const queried = locator.from === "query" ? queriedProject(locator.param, request) : undefined;
 		if (queried !== undefined && "denied" in queried) return queried.denied;
 		// 这次写的是公共项目吗：只看不用读库就知道的（查询参数里的项目、路径里的项目）。按 ID 定位的资源
-		// （场景、运行、会话…）要读库才知道它在哪个项目里，那条路上没有凭据也没有「公共项目」这回事。
+		// （场景、运行、会话…）要读库才知道它在哪个项目里：带了凭据的在 `#checkScoped` 里判，不带凭据和共享令牌的
+		// 这里没有判（到 #494 强制登录之后它们都带凭据）。
 		const named =
 			locator.from === "query"
 				? queried?.project
