@@ -100,8 +100,15 @@ export type SaveOutcome =
  *   在读请求体之前就拒绝，没带长度时读到超过为止。上限随任务下发给 Agent（AssignTask.artifact_limit_bytes，#477）。
  * - 文件在 Agent 上的修改时间（Agent 时间，ADR 0018）原样保存，不做范围检查，也不参与任何判断；可以为空。
  * - 文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`，按运行分目录，保留期清理整目录删除（src/retention）。
+ * - **同一个任务的上传一个接一个做**（#588）：「这个任务的合计还剩多少」的检查和写入、记账在同一段互斥里，并发上传时合计不会
+ *   超过上限，超出的那一份得到和顺序上传时同样的拒绝。互斥在进程里：控制面是单进程设计（同一个数据库只能运行一个实例）。
+ *   不同任务互不影响；中途断开的上传出错结束，轮到下一份，它没有记账，不占额度。代价：同一个任务有一份上传卡住（连着、不发数据）
+ *   时，这个任务别的上传排在它后面，直到它发完或者连接断开。
  */
 export class ArtifactStore {
+	/** 每个任务一条队列：队尾是最后一份排队的上传结束时才完成的 promise；队列空了就删掉。 */
+	readonly #queues = new Map<string, Promise<void>>();
+
 	constructor(
 		private readonly deps: { db: Db; clock: Clock; dataDir: string; limitBytes?: number },
 	) {}
@@ -138,6 +145,36 @@ export class ArtifactStore {
 	): Promise<SaveOutcome> {
 		const invalid = ArtifactStore.invalidName(name);
 		if (invalid) return { ok: false, status: 400, code: "invalid_artifact_name", message: invalid };
+		return this.#exclusive(taskId, () =>
+			this.#save(taskId, name, body, agentModifiedAt, declaredBytes),
+		);
+	}
+
+	/** 同一个任务的 `fn` 一个接一个做（按调用的顺序）；`fn` 抛出也轮到下一个。 */
+	async #exclusive<T>(taskId: string, fn: () => Promise<T>): Promise<T> {
+		const previous = this.#queues.get(taskId) ?? Promise.resolve();
+		let release: () => void = () => {};
+		const mine = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const tail = previous.then(() => mine);
+		this.#queues.set(taskId, tail);
+		await previous;
+		try {
+			return await fn();
+		} finally {
+			release();
+			if (this.#queues.get(taskId) === tail) this.#queues.delete(taskId);
+		}
+	}
+
+	async #save(
+		taskId: string,
+		name: string,
+		body: Readable,
+		agentModifiedAt: Date | null,
+		declaredBytes: number | undefined,
+	): Promise<SaveOutcome> {
 		const [task] = await this.deps.db
 			.select({
 				runId: tasks.runId,
