@@ -395,32 +395,43 @@ describe("停止、插话、结束会话、排队", () => {
 			}
 		});
 
-		it("这一轮没有交到助手服务手上（prompt 被拒绝）：这期间说的插话（助手服务还没登记这一轮，回 409）只有一条 steer_dropped，控制面补的 failed 的 turn_end 在它后面", async () => {
+		it("这一轮没有交到助手服务手上（prompt 被拒绝）：这期间说的插话，回 409 的由控制面当场写「没有送到」，回了 202 却没有确认送到的由控制面补的 failed 的 turn_end 之前补「没有确认送到」，每句各一条", async () => {
+			assistant.strictTurns = false;
 			const first = await idleSession();
-			// prompt 慢（模拟冷启动）：这期间用户又说了一句（插话），助手服务那边这一轮还没有登记，回 409 no_turn_running；
+			// prompt 慢（模拟冷启动）：这期间用户又说了两句（插话）：第一句助手服务回 409（这一轮还没有登记），第二句回了 202；
 			// 之后 prompt 被拒绝，控制面补 failed 的结局。
-			assistant.promptDelayMs = 300;
+			assistant.promptDelayMs = 400;
 			assistant.promptReply = () => ({
 				status: 503,
 				code: "model_not_configured",
 				message: "没配模型",
 			});
-			assistant.steerReply = () => ({ status: 409, code: "no_turn_running", message: "还没登记" });
 			const handing = say(first.id, "接着做");
 			await eventually(async () => expect(assistant.prompts).toHaveLength(2));
-			expect((await say(first.id, "插进来的话")).status).toBe(200);
+			assistant.steerReply = () => ({ status: 409, code: "no_turn_running", message: "还没登记" });
+			expect((await say(first.id, "回 409 的话")).status).toBe(200);
+			assistant.steerReply = () => undefined;
+			expect((await say(first.id, "回了 202 的话")).status).toBe(200);
 			expect((await handing).status).toBe(503);
 			await eventually(async () => expect(await statusOf(cp, first.id)).toBe("idle"));
 			const events = (await detail(first.id)).events;
-			expect(events.filter((e) => e.type === "notice" && e.kind === "steer_dropped")).toHaveLength(
-				1,
-			);
+			const [refused, accepted] = events
+				.filter((e) => e.type === "user_message" && e.steer)
+				.map((e) => (e as { message_id: string }).message_id);
+			const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
+			expect(dropped.map((e) => (e as { message_id: string }).message_id)).toEqual([
+				refused,
+				accepted,
+			]);
+			expect((dropped[0] as { message: string }).message).not.toContain("没有确认送到");
+			expect((dropped[1] as { message: string }).message).toContain("没有确认送到");
+			// 控制面补的那一条在 failed 的 turn_end 前面。
 			expect(events.at(-1)).toMatchObject({
 				type: "turn_end",
 				turn: 2,
 				outcome: "model_unavailable",
 			});
-			expect(events.at(-2)).toMatchObject({ type: "notice", kind: "steer_dropped" });
+			expect(events.at(-2)).toMatchObject({ type: "notice", message_id: accepted });
 		});
 	});
 
