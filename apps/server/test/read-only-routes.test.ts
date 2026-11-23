@@ -170,6 +170,22 @@ describe("声明为只读的接口真的不写库", () => {
 		});
 		expect(login.status).toBe(200);
 		adminCookie = /sfly_login=([^;]+)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
+		// 令牌列表里要有内容（响应里的数组元素才对得上清单里的 schema）：一个个人令牌、一个项目令牌。
+		for (const [path, body] of [
+			["/account/tokens", { name: "笔记本" }],
+			["/projects/default/tokens", { name: "ci", scopes: ["read"] }],
+		] as const) {
+			const issued = await cp.fetch(path, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie: `sfly_login=${adminCookie}`,
+					"sec-fetch-site": "same-origin",
+				},
+				body: JSON.stringify(body),
+			});
+			expect(issued.status, await issued.clone().text()).toBe(201);
+		}
 	}, 120_000);
 
 	afterAll(async () => {
@@ -394,9 +410,9 @@ describe("声明为只读的接口真的不写库", () => {
 			}
 		}
 		const body = sampleBody(def);
-		// 账号类的只读接口只认登录 Cookie（同源的请求）。
+		// 账号类的只读接口只认登录 Cookie（同源的请求）；项目的管理面（项目令牌的列表）要「管理」，管理员的登录有。
 		const credentials =
-			def.resource.kind === "account"
+			def.resource.kind === "account" || def.resource.kind === "project"
 				? { cookie: `sfly_login=${adminCookie}`, "sec-fetch-site": "same-origin" }
 				: undefined;
 		const res = await cp.fetch(url, {
@@ -465,8 +481,9 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		page: s.docSlug,
 		skill: "sfly-platform",
 		file: "SKILL.md",
+		// 简单索引里的包（PEP 503 的 project）：sfly-std 和 sfly 一样可以读。
 		package: "sfly-std",
-		// 会话的列表在 `/projects/:project/sessions`，项目是真实存在的默认项目；PEP 503 索引的包名参数是 `:package`。
+		// 路径里的项目（`/projects/:project/…`）：默认项目，管理员在里面是项目管理员（会话的列表在 `/projects/:project/sessions`）。
 		project: "default",
 	};
 	const value = samples[name];

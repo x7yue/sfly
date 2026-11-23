@@ -1,7 +1,7 @@
 // 访问检查读的数据（凭据、用户、成员、资源所在的项目）。接口和实现分开：鉴权模块（./access-guard.ts）只认接口，
 // 可以不连数据库单独测试；数据库实现在这个文件里。
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import {
 	agentCredentials,
@@ -40,6 +40,8 @@ export interface StoredToken {
 	scopes: readonly string[];
 	expiresAt: Date | null;
 	revokedAt: Date | null;
+	/** 最后一次使用的时间（节流过的，见 {@link AccessStore.touchToken}）；从没用过为 null。 */
+	lastUsedAt: Date | null;
 }
 
 /** 库里的登录（控制台的 Cookie）。 */
@@ -77,6 +79,12 @@ export interface AdminWrite {
 export interface AccessStore {
 	/** 按哈希找令牌（`hashCredential`）。 */
 	tokenByHash(hash: string): Promise<StoredToken | undefined>;
+	/**
+	 * 用了一次令牌：记下最后使用的时间。同一个令牌上一次记录离现在不到 `intervalMs` 就不写：返回有没有写。
+	 * 判断放在更新语句里（`last_used_at is null or last_used_at <= at - interval`），并发的请求只有一个写成功，
+	 * 不会每个请求写一次库。
+	 */
+	touchToken(id: string, at: Date, intervalMs: number): Promise<boolean>;
 	/** 按 Cookie 的哈希找登录。 */
 	loginByCookieHash(hash: string): Promise<StoredLogin | undefined>;
 	/** 用了一次登录：记下最后使用的时间，并把空闲期限顺延。 */
@@ -130,6 +138,7 @@ export class DbAccessStore implements AccessStore {
 				scopes: apiTokens.scopes,
 				expiresAt: apiTokens.expiresAt,
 				revokedAt: apiTokens.revokedAt,
+				lastUsedAt: apiTokens.lastUsedAt,
 				user: userColumns,
 			})
 			.from(apiTokens)
@@ -145,8 +154,26 @@ export class DbAccessStore implements AccessStore {
 				scopes: row.scopes,
 				expiresAt: row.expiresAt,
 				revokedAt: row.revokedAt,
+				lastUsedAt: row.lastUsedAt,
 			}
 		);
+	}
+
+	async touchToken(id: string, at: Date, intervalMs: number): Promise<boolean> {
+		const rows = await this.db
+			.update(apiTokens)
+			.set({ lastUsedAt: at })
+			.where(
+				and(
+					eq(apiTokens.id, id),
+					or(
+						isNull(apiTokens.lastUsedAt),
+						lte(apiTokens.lastUsedAt, new Date(at.getTime() - intervalMs)),
+					),
+				),
+			)
+			.returning({ id: apiTokens.id });
+		return rows.length > 0;
 	}
 
 	async loginByCookieHash(hash: string): Promise<StoredLogin | undefined> {
