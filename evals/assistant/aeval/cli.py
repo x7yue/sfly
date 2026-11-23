@@ -203,7 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     e2e_cmd.add_argument(
         "--results", type=Path, help="结果目录，默认 ~/.local/share/sfly/evals/<日期>-e2e"
     )
-    e2e_cmd.add_argument("--max-seconds", type=float, default=900)
+    e2e_cmd.add_argument(
+        "--max-seconds",
+        type=float,
+        default=900,
+        help="等这一轮结束的时限；没有事件时按控制面的心跳（15 秒一次）检查，最多晚这么久",
+    )
     report = sub.add_parser("report", help="把结果目录汇总成 Markdown 表格")
     report.add_argument("results", type=Path)
     args = parser.parse_args(argv)

@@ -563,14 +563,20 @@ class Stack:
 
     def readiness(self) -> dict[str, Any] | None:
         """控制面说助手此刻能不能用（`GET /projects/default/sessions` 的 readiness）；
-        读不到时是 None。"""
+        读不到时是 None。控制面没有会话的接口（404，镜像太旧）时直接报错，不用等。"""
         out = d.sh(
             self.dev,
-            "curl -sS -m 10 http://sfly.internal:8080/projects/default/sessions",
+            "curl -sS -m 10 -w '\\n%{http_code}' http://sfly.internal:8080/projects/default/sessions",
             check=False,
         )
+        body, _, status = out.stdout.rpartition("\n")
+        if status.strip() == "404":
+            raise d.DockerError(
+                "控制面没有会话的接口：--assistant 要用源码构建的控制面镜像"
+                "（--server-image，见 README.md「前提」）"
+            )
         try:
-            value = json.loads(out.stdout).get("readiness")
+            value = json.loads(body).get("readiness")
         except (ValueError, AttributeError):
             return None
         return value if isinstance(value, dict) else None
@@ -585,10 +591,7 @@ class Stack:
                 return
             time.sleep(2)
         if ready is None:
-            raise d.DockerError(
-                "控制面没有会话的接口：--assistant 要用源码构建的控制面镜像"
-                "（--server-image，见 README.md）"
-            )
+            raise d.DockerError(f"{timeout:.0f} 秒内读不到控制面的就绪状态")
         problems = "；".join(str(p.get("message")) for p in ready.get("problems") or [])
         raise d.DockerError(f"助手在 {timeout:.0f} 秒内没有就绪：{problems}")
 
