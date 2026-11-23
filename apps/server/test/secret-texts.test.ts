@@ -1394,6 +1394,64 @@ describe("值集合缓存的大小上限（按条数和占用的字节数：文�
 		});
 	});
 
+	/** 一份值集合的文本占的字节数（每个字符按 2 字节）和建好的自动机占的字节数，和缓存记的一致。 */
+	const sizesOf = (values: string[]) => {
+		const set = secretSetOf(values);
+		const automaton = buildAutomaton(set.texts) as NonNullable<ReturnType<typeof buildAutomaton>>;
+		return {
+			text: 2 * set.texts.reduce((n, t) => n + t.length, 0),
+			automaton: automatonBytes(automaton),
+		};
+	};
+
+	it("一份集合被挤出去之后才建好自动机：它的字节数不再计入缓存的总数（计入的话总数只增不减，缓存越来越小）", () => {
+		const [a, b, c, d] = ["fa", "fb", "fc", "fd"].map(medium) as [
+			string[],
+			string[],
+			string[],
+			string[],
+		];
+		const sizes = [a, b, c, d].map(sizesOf);
+		const auto = (i: number) => (sizes[i] as { automaton: number }).automaton;
+		const text = (i: number) => (sizes[i] as { text: number }).text;
+		// 上限：b、c、d 的自动机和文本放得下，再加上 a 的自动机就放不下
+		const limit =
+			auto(1) + auto(2) + auto(3) + text(0) + text(1) + text(2) + text(3) + Math.floor(auto(0) / 2);
+		withSecretLimitsSync({ cacheBytes: limit }, () => {
+			const sa = secretSetOf(a);
+			const sb = secretSetOf(b);
+			const sc = secretSetOf(c);
+			const sd = secretSetOf(d);
+			// 依次建 b、c、d 的自动机：合计在上限以内，a 还在缓存里（只有文本）
+			sb.mask("warm");
+			sc.mask("warm");
+			sd.mask("warm");
+			// 再放一份新的、建好自动机：超过上限，最早的 a、b 被挤出去，留下 c、d、e
+			const e = medium("fe");
+			const se = secretSetOf(e);
+			se.mask("warm");
+			// a（已经不在缓存里）这时才建自动机：不计入；计入的话总数超过上限，c 也被挤出去
+			sa.mask("warm");
+			expect(secretSetOf(c), "c 还在缓存里").toBe(sc);
+			expect(secretSetOf(d)).toBe(sd);
+			expect(secretSetOf(e)).toBe(se);
+		});
+	});
+
+	it("文本的字节数计入缓存（只算自动机的话上限就放宽了一圈）：自动机合计刚好放得下、加上文本就放不下", () => {
+		const [a, b, c] = ["ga", "gb", "gc"].map(medium) as [string[], string[], string[]];
+		const sizes = [a, b, c].map(sizesOf);
+		const autos = sizes.reduce((n, x) => n + x.automaton, 0);
+		const texts = sizes.reduce((n, x) => n + x.text, 0);
+		withSecretLimitsSync({ cacheBytes: autos + Math.floor(texts / 2) }, () => {
+			const sa = secretSetOf(a);
+			for (const values of [a, b, c]) secretSetOf(values).mask("warm");
+			// 三份的自动机合计放得下，加上文本放不下：最早的一份被挤出去
+			expect(secretSetOf(a)).not.toBe(sa);
+			expect(secretSetOf(c)).toBe(secretSetOf(c));
+		});
+	});
+
 	it("两份都放得下就不会交替重建：缓存里的集合，再问是同一个对象，自动机也是同一个", () => {
 		const [v1, v2] = [medium("alt-a"), medium("alt-b")] as [string[], string[]];
 		withSecretLimitsSync({}, () => {

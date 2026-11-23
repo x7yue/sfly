@@ -461,4 +461,38 @@ describe("值集合太大的运行：任务日志里有一行平台写的说明�
 			expect(download).not.toContain("fake-oversize");
 		});
 	}, 60_000);
+
+	it("说明那一行的时间取这一批第一行的时间：Agent 攒着发、这一批的行比收到时早好几秒，文件里的时间也不倒着走", async () => {
+		await agent.disconnect();
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 }, { clock: cp.clock });
+		await withSecretLimits({ automatonChars: 300 }, async () => {
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json", secret: true }] },
+					{ id: "sa", kind: "package", package: "bench", node: "load" },
+				],
+				edges: [{ from: "entry", to: "sa", kind: "chain" }],
+				packages: { bench: "1.0.0" },
+			});
+			const values = Array.from({ length: 20 }, (_, i) => `fake-oversize-${i}-${"p".repeat(40)}`);
+			await api.triggerOk(id, { cfg: values });
+			const task = await agent.nextAssign();
+			const now = cp.clock.now().getTime();
+			const old = (seq: number, agoMs: number) => ({
+				...line(seq, `line ${seq}`),
+				timeUnixMs: BigInt(now - agoMs),
+				monotonicMs: agent.monotonicAt(now - agoMs),
+			});
+			agent.logs(task, [old(1, 5000), old(2, 4000), old(3, 1000)]);
+			await eventually(async () => {
+				const page = await api.getJson<Page>(`/tasks/${task.taskId}/logs`);
+				expect(page.lines).toHaveLength(4);
+			});
+			const page = await api.getJson<Page>(`/tasks/${task.taskId}/logs`);
+			expect(texts(page.lines)).toEqual([OVERSIZE_NOTICE, MASK, MASK, MASK]);
+			const times = page.lines.map((l) => Date.parse(l.time ?? ""));
+			expect(times).toEqual([now - 5000, now - 5000, now - 4000, now - 1000]);
+		});
+	}, 60_000);
 });

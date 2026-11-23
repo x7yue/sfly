@@ -194,7 +194,6 @@ interface TaskState {
 	truncated: boolean;
 	/** 已写入的 WARN / ERROR（`tasks.log_issues`）；还没有时为 null。 */
 	issues: TaskLogIssues | null;
-	secrets: SecretSet;
 	/** 这个任务的日志里是不是已经写过「值集合太大」的说明（{@link OVERSIZE_NOTICE}）；控制面重启之后重新算，会再写一行。 */
 	oversizeNoted: boolean;
 }
@@ -358,17 +357,19 @@ export class TaskLogs {
 	 * 调用方在 {@link TaskLogs.#serial} 里调用。
 	 */
 	async #write(taskId: string, state: TaskState, written: readonly NewLine[]): Promise<void> {
-		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
-		state.secrets = await this.runSecrets(state.runId);
+		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。只在这一次写入里用，不留在任务状态上：
+		// 值集合（和它的自动机）归值集合的缓存管（按字节数限大小，{@link secretSetOf}），任务状态留着它就管不住了。
+		const secrets = await this.runSecrets(state.runId);
 		// 这次运行的值集合大到认不出每一处出现，所有文字都整段盖住（SecretSet.oversize）：在这个任务的日志里留一行平台写的说明
-		// （不含值），用户才知道为什么全是掩码；每个任务写一次，写在这一批的最前面，打码时只有它原样放行。
-		const notice = state.secrets.oversize && !state.oversizeNoted;
+		// （不含值），用户才知道为什么全是掩码。写在「值集合变大之后这个任务第一次写日志」的那一批的最前面，每个任务一次，
+		// 时间取这一批第一行的时间（不比后面的行晚）；打码时只有它原样放行。在那之前写下的行、从不写日志的任务没有这一行。
+		const notice = secrets.oversize && !state.oversizeNoted;
 		let entries = written;
 		if (notice) {
 			entries = [
 				{
 					agentSeq: null,
-					timeMs: this.deps.clock.now().getTime(),
+					timeMs: written[0]?.timeMs ?? this.deps.clock.now().getTime(),
 					agent_time: null,
 					source: "system",
 					level: "warn",
@@ -405,7 +406,7 @@ export class TaskLogs {
 				seq,
 				time: new Date(timeMs).toISOString(),
 				...entry,
-				text: state.secrets.mask(entry.text),
+				text: secrets.mask(entry.text),
 			};
 			let row = `${JSON.stringify(view)}\n`;
 			if (bytes + Buffer.byteLength(row) > this.#limit) {
@@ -466,11 +467,11 @@ export class TaskLogs {
 		return this.#serial(progress.taskId, async () => {
 			const state = await this.#stateFor(progress.taskId, agentName);
 			if (!state) return;
-			state.secrets = await this.runSecrets(state.runId);
+			const secrets = await this.runSecrets(state.runId);
 			const value: TaskProgressView = {
 				current: progress.current,
 				total: progress.total ?? null,
-				message: state.secrets.mask(progress.message),
+				message: secrets.mask(progress.message),
 				time: controlPlaneTime(progress.monotonicMs).toISOString(),
 				agent_time: agentTime(progress.timeUnixMs),
 			};
@@ -637,8 +638,6 @@ export class TaskLogs {
 			// 写完截断标记、数据库还没更新时控制面可能退出过：文件已到上限也算截断。
 			truncated: task.logTruncated || bytes >= this.#limit,
 			issues: task.logIssues,
-			// 占位：写入前总会先经 runSecrets 刷新。
-			secrets: NO_SECRETS,
 			oversizeNoted: false,
 		};
 	}
