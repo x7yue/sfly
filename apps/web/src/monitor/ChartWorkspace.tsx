@@ -65,10 +65,17 @@ const PLATFORM_CHARTS = 4;
 const MIN_COLUMN = { standard: 340, compact: 230 };
 type Density = keyof typeof MIN_COLUMN;
 /**
- * 图表工作区最少的高度（px，大约是工具栏）：底部面板被拖高、窗口变矮时图表让出高度，滚动查看，时间线、图表、
- * 底部面板总在窗口里（底部面板的最大高度据此留出这一截）。
+ * 图表工作区最少的高度（px，大约是工具栏）：窗口矮到连 {@link CHARTS_RESERVED_HEIGHT} 也放不下时，图表最后让到这里，
+ * 滚动查看，时间线、图表、底部面板总在窗口里。
  */
 export const CHARTS_MIN_HEIGHT = 48;
+
+/**
+ * 图表工作区预留的高度（px）：窗口变矮（1280×800 带失败横幅）、底部面板被拖高时，先压底部面板，图表工作区至少有这么高
+ * （内容不够这么高时只留内容的高度，不留空白）。够放下工具栏、一个图表组的标题和节点摘要，加上一张 136px 高的图表
+ * 的绝大部分，能看清曲线。依据和实测写在 docs/DESIGN-SYSTEM.md 的「运行监控详情的竖直分配」。
+ */
+export const CHARTS_RESERVED_HEIGHT = 300;
 
 /** 分组内外的水平留白（px）：工作区 12×2、分组 10×2、描边。 */
 const GROUP_INSET = 48;
@@ -87,12 +94,15 @@ export function ChartWorkspace({
 	doc,
 	catalog,
 	compact,
+	onContentHeight,
 }: {
 	run: RunView;
 	/** 运行绑定的版本文档：节点的备注。 */
 	doc: StoredOrchestrationDocument | undefined;
 	catalog: ReturnType<typeof useMetricCatalog>;
 	compact: boolean;
+	/** 报告内容（含工作区自己的内边距）排出来的高度（px）：底部面板据此留出图表需要的那一截，见 {@link CHARTS_RESERVED_HEIGHT}。 */
+	onContentHeight?: (height: number) => void;
 }) {
 	const { range, live, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
@@ -114,6 +124,7 @@ export function ChartWorkspace({
 	const [opened, setOpened] = useState<Record<string, boolean>>({});
 	const scroller = useRef<HTMLElement>(null);
 	const toolbar = useRef<HTMLDivElement>(null);
+	const content = useRef<HTMLDivElement>(null);
 	const [measure, width] = useElementWidth<HTMLElement>();
 	const scrollerRef = useCallback(
 		(el: HTMLElement | null) => {
@@ -122,6 +133,23 @@ export function ChartWorkspace({
 		},
 		[measure],
 	);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: compact 变了内边距就变了，要重新报告一次，只用来触发重新量
+	useLayoutEffect(() => {
+		const inner = content.current;
+		const outer = scroller.current;
+		if (!inner || !outer || !onContentHeight) return;
+		// 内边距随 compact 变（紧凑时上下各不同），每次报告时现读，不用挂载那一刻的值。
+		const report = () => {
+			const style = getComputedStyle(outer);
+			const padding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+			onContentHeight(Math.ceil(inner.offsetHeight + padding));
+		};
+		report();
+		const observer = new ResizeObserver(report);
+		observer.observe(inner);
+		return () => observer.disconnect();
+	}, [onContentHeight, compact]);
 
 	const query = search.trim().toLowerCase();
 	const matches = (text: string) => text.toLowerCase().includes(query);
@@ -259,126 +287,129 @@ export function ChartWorkspace({
 			)}
 			style={compact ? undefined : { minHeight: CHARTS_MIN_HEIGHT }}
 		>
-			{!compact && (
-				<div
-					ref={toolbar}
-					role="toolbar"
-					aria-label="图表工具栏"
-					className="sticky top-0 z-4 -mx-3 mb-2.5 flex flex-wrap items-center gap-2 border-b border-border-soft bg-bg px-3 pt-2.5 pb-2"
-				>
-					<NodeFilter
-						label={filterLabel}
-						groups={groups}
-						filter={filter}
-						hasData={(g) => groupHasData(g, seriesByGroup.get(g.key)?.loaded ?? [])}
-						onChange={(next) => changeFilter(next)}
-					/>
-					{filter && (
-						<Button variant="ghost" size="sm" onClick={() => changeFilter(null)}>
-							清除筛选
-						</Button>
-					)}
-					<span className="text-xs text-fg-3" data-testid="chart-count">
-						{chartCountText(shown.length, chartCount, showPlatform)}
-					</span>
-					<div className="relative w-55">
-						<SearchIcon
-							aria-hidden
-							className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-fg-3"
+			{/* flow-root：最后一个子元素的下外边距算进它的高度（内容高度要量全）。 */}
+			<div ref={content} className="flow-root">
+				{!compact && (
+					<div
+						ref={toolbar}
+						role="toolbar"
+						aria-label="图表工具栏"
+						className="sticky top-0 z-4 -mx-3 mb-2.5 flex flex-wrap items-center gap-2 border-b border-border-soft bg-bg px-3 pt-2.5 pb-2"
+					>
+						<NodeFilter
+							label={filterLabel}
+							groups={groups}
+							filter={filter}
+							hasData={(g) => groupHasData(g, seriesByGroup.get(g.key)?.loaded ?? [])}
+							onChange={(next) => changeFilter(next)}
 						/>
-						<Input
-							aria-label="搜索图表或节点"
-							placeholder="搜索图表或节点"
-							value={search}
-							onChange={(e) => {
-								setSearch(e.target.value);
-								setOpened({});
-							}}
-							className="h-6.5 pl-7 text-xs"
+						{filter && (
+							<Button variant="ghost" size="sm" onClick={() => changeFilter(null)}>
+								清除筛选
+							</Button>
+						)}
+						<span className="text-xs text-fg-3" data-testid="chart-count">
+							{chartCountText(shown.length, chartCount, showPlatform)}
+						</span>
+						<div className="relative w-55">
+							<SearchIcon
+								aria-hidden
+								className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-fg-3"
+							/>
+							<Input
+								aria-label="搜索图表或节点"
+								placeholder="搜索图表或节点"
+								value={search}
+								onChange={(e) => {
+									setSearch(e.target.value);
+									setOpened({});
+								}}
+								className="h-6.5 pl-7 text-xs"
+							/>
+						</div>
+						<span className="flex-1" />
+						<Button variant="ghost" size="sm" onClick={() => setAll(true)}>
+							全部展开
+						</Button>
+						<Button variant="ghost" size="sm" onClick={() => setAll(false)}>
+							全部折叠
+						</Button>
+						<Segmented
+							label="图表密度"
+							value={density}
+							onChange={setDensity}
+							options={[
+								{ value: "standard", label: "标准" },
+								{ value: "compact", label: "紧凑" },
+							]}
+							className="h-6.5"
 						/>
 					</div>
-					<span className="flex-1" />
-					<Button variant="ghost" size="sm" onClick={() => setAll(true)}>
-						全部展开
-					</Button>
-					<Button variant="ghost" size="sm" onClick={() => setAll(false)}>
-						全部折叠
-					</Button>
-					<Segmented
-						label="图表密度"
-						value={density}
-						onChange={setDensity}
-						options={[
-							{ value: "standard", label: "标准" },
-							{ value: "compact", label: "紧凑" },
-						]}
-						className="h-6.5"
+				)}
+
+				{catalog.error && !catalog.data ? (
+					<ErrorState
+						title="无法加载指标"
+						error={catalog.error}
+						onRetry={() => void catalog.refetch()}
+						className="mb-2.5"
 					/>
-				</div>
-			)}
+				) : !catalog.data ? (
+					<output
+						aria-label={MESSAGE.loading}
+						aria-busy="true"
+						className="mb-2.5 flex flex-col gap-2.5"
+					>
+						<Skeleton className="h-10 w-full" />
+						<Skeleton className="h-10 w-full" />
+					</output>
+				) : catalog.data.expired ? (
+					<Notice compact={compact}>{MESSAGE.metricsExpired}</Notice>
+				) : groups.length === 0 ? (
+					<Notice compact={compact}>
+						这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。
+					</Notice>
+				) : shown.length === 0 && !showPlatform ? (
+					<Notice>没有匹配的图表。</Notice>
+				) : null}
 
-			{catalog.error && !catalog.data ? (
-				<ErrorState
-					title="无法加载指标"
-					error={catalog.error}
-					onRetry={() => void catalog.refetch()}
-					className="mb-2.5"
-				/>
-			) : !catalog.data ? (
-				<output
-					aria-label={MESSAGE.loading}
-					aria-busy="true"
-					className="mb-2.5 flex flex-col gap-2.5"
-				>
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-10 w-full" />
-				</output>
-			) : catalog.data.expired ? (
-				<Notice compact={compact}>{MESSAGE.metricsExpired}</Notice>
-			) : groups.length === 0 ? (
-				<Notice compact={compact}>
-					这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。
-				</Notice>
-			) : shown.length === 0 && !showPlatform ? (
-				<Notice>没有匹配的图表。</Notice>
-			) : null}
-
-			{shown.map(({ group, charts }) => (
-				<NodeGroup
-					key={group.key}
-					group={group}
-					note={decls.get(group.ref.nodeId)?.note?.trim() || undefined}
-					charts={charts}
-					series={seriesByGroup.get(group.key) ?? noSeries()}
-					open={isOpen(group.key, defaultOpen(group))}
-					onToggle={(open) => setOpened((o) => ({ ...o, [group.key]: open }))}
-					onlyThis={
-						filter?.size === 1 && filter.has(group.key)
-							? undefined
-							: () => changeFilter(new Set([group.key]), { [group.key]: true })
-					}
-					selected={selectedKey === group.key}
-					onAttempt={(attempt) => setChosen((c) => ({ ...c, [group.key]: attempt }))}
-					columns={balancedColumns(charts.length, width - GROUP_INSET, minColumn)}
-					dense={dense}
-					range={range}
-					zoomed={!!zoom}
-					now={now}
-				/>
-			))}
-			{showPlatform && (
-				<PlatformGroup
-					run={run}
-					data={platform.data}
-					error={platform.error}
-					open={platformOpen}
-					onToggle={(open) => setOpened((o) => ({ ...o, [PLATFORM_KEY]: open }))}
-					columns={balancedColumns(PLATFORM_CHARTS - 1, width - GROUP_INSET, minColumn)}
-					dense={dense}
-					range={range}
-					now={now}
-				/>
-			)}
+				{shown.map(({ group, charts }) => (
+					<NodeGroup
+						key={group.key}
+						group={group}
+						note={decls.get(group.ref.nodeId)?.note?.trim() || undefined}
+						charts={charts}
+						series={seriesByGroup.get(group.key) ?? noSeries()}
+						open={isOpen(group.key, defaultOpen(group))}
+						onToggle={(open) => setOpened((o) => ({ ...o, [group.key]: open }))}
+						onlyThis={
+							filter?.size === 1 && filter.has(group.key)
+								? undefined
+								: () => changeFilter(new Set([group.key]), { [group.key]: true })
+						}
+						selected={selectedKey === group.key}
+						onAttempt={(attempt) => setChosen((c) => ({ ...c, [group.key]: attempt }))}
+						columns={balancedColumns(charts.length, width - GROUP_INSET, minColumn)}
+						dense={dense}
+						range={range}
+						zoomed={!!zoom}
+						now={now}
+					/>
+				))}
+				{showPlatform && (
+					<PlatformGroup
+						run={run}
+						data={platform.data}
+						error={platform.error}
+						open={platformOpen}
+						onToggle={(open) => setOpened((o) => ({ ...o, [PLATFORM_KEY]: open }))}
+						columns={balancedColumns(PLATFORM_CHARTS - 1, width - GROUP_INSET, minColumn)}
+						dense={dense}
+						range={range}
+						now={now}
+					/>
+				)}
+			</div>
 		</section>
 	);
 }
@@ -487,7 +518,7 @@ function GroupShell({
 				</div>
 				{/* 右侧两栏的位置固定（没有尝试选择器、没有「只看」时留空），各组的右侧信息竖着对齐 */}
 				<div className="flex flex-none items-center gap-2">
-					<div className="w-34">{attempts}</div>
+					<div className="w-42">{attempts}</div>
 					<div className="w-11">{only}</div>
 				</div>
 			</div>

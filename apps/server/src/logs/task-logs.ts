@@ -21,8 +21,15 @@ import {
 } from "../db/schema.js";
 import { Topics } from "../sse/topics.js";
 import { clipChars } from "../util/text.js";
+import { type LogMask, logMask, NO_LOG_MASK } from "./log-mask.js";
 import { readLogPage } from "./log-pages.js";
-import { NO_SECRETS, type SecretSet, secretValues } from "./secrets.js";
+import {
+	declaresSecrets,
+	NO_SECRETS,
+	OVERSIZE_NOTICE,
+	type SecretSet,
+	secretValues,
+} from "./secrets.js";
 
 /**
  * 任务日志与进度（docs/ARCHITECTURE.md §6.3）。
@@ -159,6 +166,15 @@ export const LOG_ISSUE_TEXT_CHARS = 500;
 /** 缓存的任务状态数上限。 */
 const CACHE_LIMIT = 1000;
 
+/** 往有上限的缓存里记一项（超过上限丢掉最早的）。 */
+function remember<K, V>(cache: Map<K, V>, key: K, value: V): void {
+	cache.set(key, value);
+	if (cache.size > CACHE_LIMIT) {
+		const oldest = cache.keys().next().value;
+		if (oldest !== undefined) cache.delete(oldest);
+	}
+}
+
 interface TaskState {
 	runId: string;
 	chainInstanceId: string;
@@ -178,7 +194,8 @@ interface TaskState {
 	truncated: boolean;
 	/** 已写入的 WARN / ERROR（`tasks.log_issues`）；还没有时为 null。 */
 	issues: TaskLogIssues | null;
-	secrets: SecretSet;
+	/** 这个任务的日志里是不是已经写过「值集合太大」的说明（{@link OVERSIZE_NOTICE}）；控制面重启之后重新算，会再写一行。 */
+	oversizeNoted: boolean;
 }
 
 /**
@@ -216,6 +233,10 @@ export class TaskLogs {
 
 	#states = new Map<string, Promise<TaskState | undefined>>();
 	#queues = new Map<string, Promise<void>>();
+	/** 运行 ID → 它绑定的版本 ID（{@link TaskLogs.runSecrets} 用）。 */
+	#runVersions = new Map<string, string>();
+	/** 版本 ID → 它的文档（声明了 secret 参数时），没有声明为 undefined。 */
+	#secretVersions = new Map<string, StoredOrchestrationDocument | undefined>();
 
 	constructor(
 		private readonly deps: {
@@ -335,9 +356,28 @@ export class TaskLogs {
 	 * 放不下的第一行换成截断标记，之后的行全部丢弃（#18）。写完按任务和按运行各发布一次。
 	 * 调用方在 {@link TaskLogs.#serial} 里调用。
 	 */
-	async #write(taskId: string, state: TaskState, entries: readonly NewLine[]): Promise<void> {
-		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
-		state.secrets = await this.runSecrets(state.runId);
+	async #write(taskId: string, state: TaskState, written: readonly NewLine[]): Promise<void> {
+		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。只在这一次写入里用，不留在任务状态上：
+		// 值集合（和它的自动机）归值集合的缓存管（按字节数限大小，{@link secretSetOf}），任务状态留着它就管不住了。
+		const secrets = await this.runSecrets(state.runId);
+		// 这次运行的值集合大到认不出每一处出现，所有文字都整段盖住（SecretSet.oversize）：在这个任务的日志里留一行平台写的说明
+		// （不含值），用户才知道为什么全是掩码。写在「值集合变大之后这个任务第一次写日志」的那一批的最前面，每个任务一次，
+		// 时间取这一批第一行的时间（不比后面的行晚）；打码时只有它原样放行。在那之前写下的行、从不写日志的任务没有这一行。
+		const notice = secrets.oversize && !state.oversizeNoted;
+		let entries = written;
+		if (notice) {
+			entries = [
+				{
+					agentSeq: null,
+					timeMs: written[0]?.timeMs ?? this.deps.clock.now().getTime(),
+					agent_time: null,
+					source: "system",
+					level: "warn",
+					text: OVERSIZE_NOTICE,
+				},
+				...entries,
+			];
+		}
 		const file = join(this.deps.dataDir, state.path);
 		if (state.lastTimeMs === undefined) state.lastTimeMs = await lastLineTimeMs(file);
 		const lines: LogLineView[] = [];
@@ -366,7 +406,7 @@ export class TaskLogs {
 				seq,
 				time: new Date(timeMs).toISOString(),
 				...entry,
-				text: state.secrets.mask(entry.text),
+				text: secrets.mask(entry.text),
 			};
 			let row = `${JSON.stringify(view)}\n`;
 			if (bytes + Buffer.byteLength(row) > this.#limit) {
@@ -399,6 +439,7 @@ export class TaskLogs {
 		state.agentSeq = agentSeq;
 		state.lastTimeMs = lastTimeMs;
 		state.truncated = truncated;
+		if (notice) state.oversizeNoted = true;
 		const issuesChanged = issues !== state.issues;
 		state.issues = issues;
 		await this.deps.db
@@ -426,11 +467,11 @@ export class TaskLogs {
 		return this.#serial(progress.taskId, async () => {
 			const state = await this.#stateFor(progress.taskId, agentName);
 			if (!state) return;
-			state.secrets = await this.runSecrets(state.runId);
+			const secrets = await this.runSecrets(state.runId);
 			const value: TaskProgressView = {
 				current: progress.current,
 				total: progress.total ?? null,
-				message: state.secrets.mask(progress.message),
+				message: secrets.mask(progress.message),
 				time: controlPlaneTime(progress.monotonicMs).toISOString(),
 				agent_time: agentTime(progress.timeUnixMs),
 			};
@@ -448,11 +489,12 @@ export class TaskLogs {
 		});
 	}
 
-	/** 日志文件尾部最多 500 行中序号大于 `afterSeq` 的行。 */
+	/** 日志文件尾部最多 500 行中序号大于 `afterSeq` 的行；正文读取时按这次运行此刻的 secret 值再打一遍码（{@link TaskLogs.logMask}）。 */
 	async tail(taskId: string, afterSeq = 0): Promise<LogChunk> {
 		const state = await this.#state(taskId);
 		const empty = { task_id: taskId, lines: [], offset: state?.bytes ?? 0 };
 		if (!state) return empty;
+		const mask = await this.logMask(state.runId);
 		const file = join(this.deps.dataDir, state.path);
 		const size = await stat(file).then(
 			(s) => s.size,
@@ -481,7 +523,7 @@ export class TaskLogs {
 		const kept = found.slice(-TAIL_LINES);
 		return {
 			task_id: taskId,
-			lines: kept.map((f) => f.line),
+			lines: kept.map((f) => mask.line(f.line)),
 			offset: kept[0]?.offset ?? size,
 		};
 	}
@@ -527,18 +569,42 @@ export class TaskLogs {
 		return state;
 	}
 
-	/** 一次运行当前的全部 secret 值（{@link runSecretValues}）；动作摘要打码也用它。 */
+	/**
+	 * 一次运行当前的全部 secret 值（{@link runSecretValues}）；写日志、动作摘要打码和读日志（{@link TaskLogs.logMask}）都用它。
+	 * 运行绑定的版本、版本的内容都不会变，所以「这个版本有没有声明 secret 参数」按版本缓存：没有声明的运行（绝大多数）
+	 * 之后每次都不用再查库，也不用读版本文档。
+	 */
 	async runSecrets(runId: string): Promise<SecretSet> {
-		const [row] = await this.deps.db
+		const document = await this.#secretDocument(runId);
+		if (!document) return NO_SECRETS;
+		return (await runSecretValues(this.deps.db, [{ runId, document }])).get(runId) ?? NO_SECRETS;
+	}
+
+	/** 读日志时用的打码（log-mask.ts）：运行此刻的 secret 值；没有时读取方什么都不用做。 */
+	async logMask(runId: string): Promise<LogMask> {
+		return logMask(await this.runSecrets(runId));
+	}
+
+	/** 运行绑定的版本的文档，只在它声明了 secret 参数时返回（缓存）；运行不存在或版本没有声明时为 undefined。 */
+	async #secretDocument(runId: string): Promise<StoredOrchestrationDocument | undefined> {
+		let versionId = this.#runVersions.get(runId);
+		if (versionId === undefined) {
+			const [row] = await this.deps.db
+				.select({ versionId: runs.orchestrationVersionId })
+				.from(runs)
+				.where(eq(runs.id, runId));
+			if (!row) return undefined;
+			versionId = row.versionId;
+			remember(this.#runVersions, runId, versionId);
+		}
+		if (this.#secretVersions.has(versionId)) return this.#secretVersions.get(versionId);
+		const [version] = await this.deps.db
 			.select({ document: orchestrationVersions.document })
-			.from(runs)
-			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
-			.where(eq(runs.id, runId));
-		if (!row) return NO_SECRETS;
-		return (
-			(await runSecretValues(this.deps.db, [{ runId, document: row.document }])).get(runId) ??
-			NO_SECRETS
-		);
+			.from(orchestrationVersions)
+			.where(eq(orchestrationVersions.id, versionId));
+		const document = version && declaresSecrets(version.document) ? version.document : undefined;
+		remember(this.#secretVersions, versionId, document);
+		return document;
 	}
 
 	async #load(taskId: string): Promise<TaskState | undefined> {
@@ -572,8 +638,7 @@ export class TaskLogs {
 			// 写完截断标记、数据库还没更新时控制面可能退出过：文件已到上限也算截断。
 			truncated: task.logTruncated || bytes >= this.#limit,
 			issues: task.logIssues,
-			// 占位：写入前总会先经 runSecrets 刷新。
-			secrets: NO_SECRETS,
+			oversizeNoted: false,
 		};
 	}
 }
@@ -586,7 +651,13 @@ type NewLine = Omit<LogLineView, "seq" | "time"> & { agentSeq: number | null; ti
 
 /** 日志文件最后一行的控制面时间（毫秒）；没有行或最后一行是旧行时为 null。 */
 async function lastLineTimeMs(file: string): Promise<number | null> {
-	const { lines } = await readLogPage(file, { direction: "backward", limit: 1, filter: {} });
+	// 只取最后一行的时间，不用正文，不需要打码。
+	const { lines } = await readLogPage(file, {
+		direction: "backward",
+		limit: 1,
+		filter: {},
+		mask: NO_LOG_MASK,
+	});
 	const time = lines[0]?.time;
 	return time ? Date.parse(time) : null;
 }
