@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { createWriteStream, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type {
 	AssistantErrorCode,
 	AssistantEvent,
@@ -71,8 +72,9 @@ export interface SessionManagerOptions {
 	maxProcesses?: number;
 	killGraceMs?: number;
 	/**
-	 * pi 进程的临时目录建在这下面（每个进程一个，`TMPDIR`），默认容器自己的临时目录下的 `sfly-assistant/`：截断输出的全文
-	 * 按「两边路径相同」传到工作台上同一个路径，工作台上 `/tmp` 一定在、谁都能写；它也不该占数据卷。
+	 * pi 进程的临时目录建在这下面（每个进程一个，`TMPDIR`），默认容器自己的临时目录下的 `sfly-assistant-<数据目录的哈希>/`：
+	 * 截断输出的全文按「两边路径相同」传到工作台上同一个路径，工作台上 `/tmp` 一定在、谁都能写；它也不该占数据卷。
+	 * 按数据目录分开：本机起两个助手服务时，后起的启动清理不删先起的那个的；同一个数据目录重启后认得出上次留下的。
 	 */
 	tmpRoot?: string;
 }
@@ -137,15 +139,17 @@ export class SessionManager {
 	#cleanLeftovers(): void {
 		const { dataDir } = this.options;
 		rmSync(join(dataDir, "agents"), { recursive: true, force: true });
-		rmSync(this.#tmpRoot, { recursive: true, force: true });
+		rmSync(this.tmpRoot, { recursive: true, force: true });
 		for (const id of readdirSync(join(dataDir, "sessions"))) {
 			rmSync(join(dataDir, "sessions", id, "turn.json"), { force: true });
 		}
 	}
 
-	/** pi 进程的临时目录都在这下面（每个进程一个，`TMPDIR`）。 */
-	get #tmpRoot(): string {
-		return this.options.tmpRoot ?? join(tmpdir(), "sfly-assistant");
+	/** pi 进程的临时目录都在这下面（每个进程一个，`TMPDIR`）；见 {@link SessionManagerOptions.tmpRoot}。 */
+	get tmpRoot(): string {
+		if (this.options.tmpRoot) return this.options.tmpRoot;
+		const instance = createHash("sha256").update(resolve(this.options.dataDir)).digest("hex");
+		return join(tmpdir(), `sfly-assistant-${instance.slice(0, 12)}`);
 	}
 
 	/**
@@ -385,11 +389,12 @@ export class SessionManager {
 			// 被关掉的进程退出之前不起新的：两个 pi 不同时写同一个会话文件。
 			await session.closing;
 			if (!session.process || session.process.exited) {
-				await writeSkillsToWorkbench(
-					this.options.connect(body.workbench.address),
-					this.options.skillsDir,
-					body.workbench.workdir,
-				);
+				const agent = this.options.connect(body.workbench.address);
+				try {
+					await writeSkillsToWorkbench(agent, this.options.skillsDir, body.workbench.workdir);
+				} finally {
+					agent.close();
+				}
 				if (turn.ended || turn.ending) return;
 				this.#spawn(session, wanted);
 				spawned = true;
@@ -436,7 +441,7 @@ export class SessionManager {
 			model: this.options.model,
 			piArgv: this.options.piArgv,
 			hostEnv: this.options.hostEnv,
-			tmpRoot: this.#tmpRoot,
+			tmpRoot: this.tmpRoot,
 		});
 		session.startedFor = startedFor;
 		session.tmpDir = launch.tmpDir;
@@ -489,23 +494,25 @@ export class SessionManager {
 			// 工具结果里有「工作台连不上」：可能是扩展写的，也可能是命令自己打出来的、读到的文件路径里带的。只看文字定不下来，
 			// 助手服务自己探一次这一轮的工作台：探不通才不等到上限、以失败结束这一轮；探得通就是普通的工具错误，照常往下走。
 			turn.probing = true;
-			void this.options
-				.connect(turn.address)
-				.reachable()
-				.then((ok) => {
-					turn.probing = false;
-					const settled = turn.settled;
-					turn.settled = undefined;
-					if (turn.ended || turn.ending) return;
-					if (!ok) {
-						this.#stop(session, turn, {
-							outcome: "failed",
-							reason: session.redactor.redact(unreachable),
-						});
-					} else if (settled) {
-						this.#settle(session, turn, settled);
-					}
-				});
+			const address = turn.address;
+			const probe = this.options.connect(address);
+			void probe.reachable().then((ok) => {
+				// 探完就关：每探一次是一条新连接，留着它会空闲 15 分钟、其间一直 ping。
+				probe.close();
+				turn.probing = false;
+				const settled = turn.settled;
+				turn.settled = undefined;
+				if (turn.ended || turn.ending) return;
+				if (!ok) {
+					// 原因用助手服务自己的说法：工具结果里那一行可能是命令自己的输出。
+					this.#stop(session, turn, {
+						outcome: "failed",
+						reason: `${WORKBENCH_UNREACHABLE}：${address}（工具报了连不上，助手服务又探了一次，还是连不上）`,
+					});
+				} else if (settled) {
+					this.#settle(session, turn, settled);
+				}
+			});
 		}
 		if (record.type === "turn_start" && turn.translator.modelCalls > this.#limits.modelCalls) {
 			this.#stop(session, turn, {

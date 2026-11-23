@@ -40,7 +40,11 @@ const promptBody = (harness: Harness, text: string): PromptCommandBody => ({
 	message_id: crypto.randomUUID(),
 	text,
 	session: { title: "测试", created_by: "tester" },
-	workbench: { name: "fake-workbench", address: harness.workbench.address, workdir: harness.workdir },
+	workbench: {
+		name: "fake-workbench",
+		address: harness.workbench.address,
+		workdir: harness.workdir,
+	},
 	env: {},
 	secret_env: {},
 });
@@ -132,6 +136,28 @@ describe("拉起 pi", () => {
 });
 
 describe("一轮的结局", () => {
+	it("一轮开头写 skill 用的工作台连接用完就关；写不成时也关", async () => {
+		const harness = await start({
+			agentDeadlines: { replySlackMs: 200, fileDeadlineMs: 300, probeDeadlineMs: 300 },
+		});
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		expect(harness.connections).toEqual({ opened: 1, closed: 1 });
+		const port = await silentPort();
+		try {
+			const other = crypto.randomUUID();
+			await harness.prompt(other, {
+				text: "settle",
+				workbench: { name: "silent", address: port.address, workdir: harness.workdir },
+			});
+			expect(await harness.turnEnd(other, 1, 40_000)).toMatchObject({ outcome: "failed" });
+			expect(harness.connections).toEqual({ opened: 2, closed: 2 });
+		} finally {
+			await port.close();
+		}
+	}, 60_000);
+
 	it("completed：带工具调用次数、模型调用次数、用时和用量", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
@@ -717,6 +743,44 @@ describe("启动时清掉上次留下的东西", () => {
 		expect(existsSync(join(dataDir, "agents"))).toBe(false);
 		expect(existsSync(tmpRoot)).toBe(false);
 		rmSync(dataDir, { recursive: true, force: true });
+	});
+
+	it("没给临时目录时按数据目录分开：本机起两个助手服务，后起的不删先起的那个的临时目录", () => {
+		const manager = (dataDir: string) =>
+			new SessionManager({
+				dataDir,
+				modelsFile: "/nonexistent",
+				model: undefined,
+				piArgv: FAKE_PI,
+				extension: "/nonexistent",
+				skillsDir: "/nonexistent",
+				hostEnv: {},
+				bus: new EventBus(),
+				connect: connectAgent,
+				log: () => {},
+			});
+		const first = mkdtempSync(join(tmpdir(), "sfly-two-a-"));
+		const second = mkdtempSync(join(tmpdir(), "sfly-two-b-"));
+		try {
+			mkdirSync(join(first, "sessions"));
+			mkdirSync(join(second, "sessions"));
+			const a = manager(first).tmpRoot;
+			const b = manager(second).tmpRoot;
+			expect(a.startsWith(join(tmpdir(), "sfly-assistant"))).toBe(true);
+			expect(a).not.toBe(b);
+			// 先起的那个正在用的临时文件：后起的启动时不动它。
+			mkdirSync(join(a, "pi-1"), { recursive: true });
+			writeFileSync(join(a, "pi-1", "pi-bash-0123456789abcdef.log"), "x");
+			manager(second);
+			expect(existsSync(join(a, "pi-1", "pi-bash-0123456789abcdef.log"))).toBe(true);
+			// 同一个数据目录重启：上次留下的照样清掉。
+			manager(first);
+			expect(existsSync(a)).toBe(false);
+			// 同一个数据目录，临时目录也一样（容器里重启后照样认得出上次的）。
+			expect(manager(first).tmpRoot).toBe(a);
+		} finally {
+			for (const dir of [first, second]) rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 
