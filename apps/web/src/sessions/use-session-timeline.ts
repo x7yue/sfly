@@ -1,0 +1,87 @@
+import {
+	SESSION_EVENT_TYPES,
+	type SessionDetailResponse,
+	type SessionEvent,
+	sessionsApi,
+} from "@sfly/schema";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { callApi } from "#/lib/api";
+import { openEventSource } from "#/lib/sse";
+import { applyEvent, initialTimeline, prependHistory, type TimelineState } from "./timeline";
+
+type Action =
+	| { type: "event"; event: SessionEvent }
+	| { type: "older"; events: readonly SessionEvent[]; hasMore: boolean };
+
+function reduce(state: TimelineState, action: Action): TimelineState {
+	return action.type === "event"
+		? applyEvent(state, action.event)
+		: prependHistory(state, action.events, action.hasMore);
+}
+
+/** 时间线上有对应渲染的事件类型；其余在开发环境下在控制台记一条（由引入它们的任务加渲染）。 */
+const RENDERED: ReadonlySet<string> = new Set([
+	"user_message",
+	"turn_started",
+	"thinking",
+	"assistant_delta",
+	"assistant_message",
+	"tool_call",
+	"tool_result",
+	"notice",
+	"turn_end",
+	"session_ended",
+]);
+
+/**
+ * 会话页的时间线状态：先用 `GET /sessions/:id` 取到的最近一页事件算出来，再接 `GET /sessions/:id/events`
+ * （从已有的最大序号之后），每条事件交给纯函数 `applyEvent`；往前翻页用 `before`。断线后事件流自动重连，
+ * 重连带上最后收到的事件序号，补发断线期间的持久事件；重叠的事件按序号去重。
+ */
+export function useSessionTimeline(detail: SessionDetailResponse) {
+	const id = detail.id;
+	const [state, dispatch] = useReducer(reduce, detail, (d) =>
+		initialTimeline(d.status, d.events, d.has_more),
+	);
+	// 事件流从读到的历史之后开始：先读历史再接流，两边的重叠由序号去重。
+	const [after] = useState(() => state.lastSeq);
+	useEffect(() => {
+		const handlers = Object.fromEntries(
+			SESSION_EVENT_TYPES.map((type) => [
+				type,
+				(data: unknown) => {
+					if (import.meta.env.DEV && !RENDERED.has(type)) {
+						console.info(`会话事件「${type}」这一版不渲染`);
+					}
+					dispatch({ type: "event", event: data as SessionEvent });
+				},
+			]),
+		);
+		return openEventSource(
+			sessionsApi.events,
+			{ params: { id }, query: { after } },
+			handlers as Parameters<typeof openEventSource<typeof sessionsApi.events>>[2],
+		);
+	}, [id, after]);
+
+	const [loadingOlder, setLoadingOlder] = useState(false);
+	const [olderError, setOlderError] = useState<Error | null>(null);
+	const oldest = useRef(state.oldestSeq);
+	oldest.current = state.oldestSeq;
+	const loadOlder = useCallback(async () => {
+		const before = oldest.current;
+		if (before === null) return;
+		setLoadingOlder(true);
+		setOlderError(null);
+		try {
+			const page = await callApi(sessionsApi.get, { params: { id }, query: { before } });
+			dispatch({ type: "older", events: page.events, hasMore: page.has_more });
+		} catch (error) {
+			setOlderError(error instanceof Error ? error : new Error(String(error)));
+		} finally {
+			setLoadingOlder(false);
+		}
+	}, [id]);
+
+	return { state, loadOlder, loadingOlder, olderError };
+}

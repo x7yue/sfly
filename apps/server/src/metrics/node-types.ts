@@ -1,3 +1,4 @@
+import { dispatchAgentOf } from "@sfly/orchestration";
 import {
 	DEV_VERSION,
 	NodeTypeMetadata,
@@ -80,7 +81,8 @@ export async function declaredNodeType(
 		project,
 		document,
 		nodeId,
-		agentName ?? node.agent ?? document.default_agent ?? null,
+		// 节点派发到哪台 Agent 只在 `dispatchAgentOf` 里定义一次（引擎、预检、画布都用它）。
+		agentName ?? dispatchAgentOf(document, node) ?? null,
 	);
 	return nodeTypeView(ref?.type);
 }

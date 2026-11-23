@@ -49,6 +49,8 @@ export interface HarnessOptions {
 
 export class Harness {
 	events!: EventsClient;
+	/** 助手服务自己（不是扩展）开过、关过几个工作台的客户端：探工作台、写 skill 用完都要关。 */
+	connections = { opened: 0, closed: 0 };
 
 	private constructor(
 		readonly root: string,
@@ -75,6 +77,7 @@ export class Harness {
 		const modelsFile = join(configDir, "models.json");
 		writeFileSync(modelsFile, modelsJson(model));
 		const logs: string[] = [];
+		const counts = { opened: 0, closed: 0 };
 		const bus = new EventBus();
 		const sessions = new SessionManager({
 			dataDir,
@@ -90,7 +93,17 @@ export class Harness {
 				UNRELATED: "not-for-pi",
 			},
 			bus,
-			connect: (address) => connectAgent(address, options.agentDeadlines),
+			connect: (address) => {
+				const client = connectAgent(address, options.agentDeadlines);
+				counts.opened += 1;
+				return {
+					...client,
+					close: () => {
+						counts.closed += 1;
+						client.close();
+					},
+				};
+			},
 			log: (message) => logs.push(message),
 			limits: options.limits,
 			maxProcesses: options.maxProcesses,
@@ -121,6 +134,8 @@ export class Harness {
 			logs,
 		);
 		harness.events = await EventsClient.connect(url);
+		// 计数从启动时就开始：和 SessionManager 用的是同一个对象。
+		harness.connections = counts;
 		return harness;
 	}
 

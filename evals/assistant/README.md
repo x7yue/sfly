@@ -11,14 +11,37 @@
 - 磁盘：五个镜像约 7 GB（工作台、臂 B 的 pi、加固工作台三个各约 2 GB，共用大部分层），镜像站缓存约 50 MB，每次会话的记录几 MB。
 - 三个镜像：
   - 控制面：默认 `ghcr.io/x7yue/sfly-server:0.5.0`。从 GitHub Release 下载 `sfly-server-<版本>-linux-<架构>.tar.gz` 后 `docker load -i`；
-    要测当前源码，先 `pnpm bundle:server && pnpm pack:agents`，再
-    `docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-server:dev out/server`，
-    再 `./aeval.sh up --server-image sfly-server:dev`；之后这个槽位的命令（`run`、`seed`、`reset`……）重建控制面时沿用 `up` 时的镜像，
+    要测当前源码，照下面「从源码构建控制面镜像」构建 `sfly-server:dev`，再 `./aeval.sh up --server-image sfly-server:dev`；
+    之后这个槽位的命令（`run`、`seed`、`reset`……）重建控制面时沿用 `up` 时的镜像，
     不用再写（工作台的 `--workbench-image` 一样）。`down` 之后再 `up` 不写就回到默认镜像。
   - PostgreSQL：`postgres:18`。
   - 工作台：`sfly-aeval-workbench:pi-1.6.0`，`up` 发现没有时按 `workbench/Dockerfile` 自动构建
     （国内网络先设 `AEVAL_DEBIAN_MIRROR=http://mirrors.ustc.edu.cn AEVAL_NPM_REGISTRY=https://registry.npmmirror.com`）。
     镜像名里 `pi-` 后面是 pi 的版本：换 pi 的版本就换个镜像名（`--workbench-image sfly-aeval-workbench:pi-<版本>`）。
+
+### 从源码构建控制面镜像
+
+控制面镜像里带着同版本的 Agent（供 `install.sh` 下载），所以先打 Agent 的包、再打控制面、最后构建镜像（在仓库根目录运行）。
+Agent 只能在 Linux 上打包。
+
+Linux：
+
+```sh
+pnpm pack:agents            # 两个架构的 Agent，放在 out/agent/
+pnpm bundle:server          # 控制面、前端和 out/agent/ 里的 Agent，放在 out/server/
+docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-server:dev out/server
+```
+
+macOS：`pnpm pack:agents` 要 `readelf`，本机没有。在 `pnpm linux` 的容器里打包，再把包从它的卷里拷出来：
+
+```sh
+pnpm linux pnpm pack:agents     # 第一次要编译几分钟；产物在 docker 卷 sfly-linux 里这个工作区的副本中
+id=$(printf '%s' "$PWD" | git hash-object --stdin | cut -c1-12)    # 副本的目录名（scripts/linux/run.sh 这样算）
+mkdir -p out/agent
+docker run --rm -v sfly-linux:/vol:ro -v "$PWD/out/agent:/out" postgres:18 sh -c "cp /vol/$id/work/out/agent/* /out/"
+pnpm bundle:server
+docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-server:dev out/server
+```
 
 下面的命令都在 `evals/assistant/` 下运行。
 
@@ -38,11 +61,71 @@
 | `cp` | 控制面，HTTP 映射到宿主机 `127.0.0.1:<18100 + 槽位>`，可以在浏览器里看 |
 | `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi |
 | `sut` | 被测机：普通的 Agent（`sut-01`），上面常驻一个通用的 HTTP 被测服务（`http://sut:9000`，见 `container/demo_svc.py`） |
+| `assistant` | 只有 `up --assistant` 时：平台的助手服务，见下面「平台的助手」 |
 
 两个槽位互不影响，可以同时跑会话；这台机器的内存紧时只用一个。
 
 评测目录不挂进 `dev` 和 `sut`（助手的命令够得着这两台）：里面有参考答案和看不到的断言。
 容器里要运行的几个脚本复制到 `/opt/aeval/`，题目的文件在准备初始状态时复制进去，看不到的断言等会话结束、判分时才复制进去。
+
+## 平台的助手（竖切，#543）
+
+上面的评测是单独跑 pi，量的是模型和 skill。这一节起的是平台本身：控制面把会话交给助手服务，助手服务拉起 pi，
+pi 的读、写、编辑、命令经 `dev` 上 Agent 的能力端口落到工作台上，过程回到控制面，在浏览器里看得到。
+
+要两个从源码构建的镜像（在仓库根目录运行）：控制面（见上面「从源码构建控制面镜像」，会话模块在 0.5.0 之后），和助手：
+
+```sh
+pnpm bundle:assistant
+docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-assistant:dev out/assistant
+```
+
+然后一条命令起好（在 `evals/assistant/` 下）：
+
+```sh
+./aeval.sh up --server-image sfly-server:dev --assistant                          # 假的模型端点
+./aeval.sh up --server-image sfly-server:dev --assistant --assistant-model <模型名>  # 真实模型，经宿主机的转发口
+```
+
+- 多一个容器 `sfly-aeval-<槽位>-assistant`（网络别名 `assistant.internal`），助手镜像用 `--assistant-image` 换。
+  控制面配上 `SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`、`SFLY_WORKBENCH_AGENT=dev-root-dev`（工作台是 `dev` 上的 Agent，
+  竖切的桩，#549 换掉）。共用的密钥每次 `up` 随机生成，只经环境变量带进两个容器，不打印、不写文件。
+- `up` 完 Agent 在线、控制面说助手能用（`GET /projects/default/sessions` 的 `readiness.ready`）才结束。
+  之后这个槽位的 `reset`、`seed`、`e2e` 重建控制面时照着助手容器接着用（镜像、模型、密钥），`reset` 也重建助手容器
+  （上一次的会话和 pi 进程不留下）；`up` 不带 `--assistant` 会删掉以前留下的助手容器。
+- **模型**：默认 `fake`，网络里的假的模型端点认出题目（第一句话里有 `tasks/<题目>/prompt.md` 的原文）就照剧本执行这道题的
+  参考答案，不花钱，只验证这条路走得通。`--assistant-model` 写模型配置里的名字（见下面「模型」），助手容器挂的模型文件指向
+  宿主机的转发口，里面的 `apiKey` 是占位值，凭据由转发口加上：转发口要先起好（Linux 上照「模型」一节监听 docker0 的地址）。
+- **浏览器**：打开 `http://127.0.0.1:<18100 + 槽位>`（槽位 1 是 `http://127.0.0.1:18101`）。第一次打开时页面让你填一个昵称（不用登录，
+  会话和操作记在这个昵称下），点侧边栏的「助手」（`/sessions`）：上面是助手此刻能不能用，输入框里说一句话就开始一个会话，
+  点进一个会话看它的时间线（`/sessions/<ID>`），在做时可以停止。也可以经接口（`POST /projects/default/sessions`、
+  `GET /sessions/<ID>`，写请求带 `x-sfly-nickname`）或下面的 `e2e` 看会话。
+  在被测机上起着的被测服务、`seed` 准备好的节点包和场景都照常在。
+  用假的模型端点在页面上看各种情况时，第一句话里写 `AEVAL-SCRIPT:<剧本>` 选 `container/` 下的剧本：
+  `walkthrough`（带换行和引号的命令、控制字符和颜色码、写读改、被截断的长输出、失败的命令、带 Markdown 的长回复）、
+  `walkthrough-stop`（一条 5 分钟的命令，看停止）、`walkthrough-instant`（马上就结束的一轮）、
+  `walkthrough-many`（130 步，看到了上限和往前翻页）。剧本按会话的第一句话选，后面的话不换剧本。
+- **断网和离线包**：`up --isolated --assistant` 能起（模型只能用 `fake`，假的模型端点在网络里），会话经控制面照常走，
+  但断网的网络不映射控制面的端口：宿主机上的浏览器和 `e2e` 都连不到，`e2e` 会直接拒绝；要看只能在 `dev` 里
+  `curl http://sfly.internal:8080/…`。离线包（`pack`）不带助手镜像，在不能联网的机器上要另外 `docker save` /
+  `docker load` 助手镜像和源码构建的控制面镜像（包里的是默认的发布版控制面，没有会话的接口）。
+
+### 端到端测试
+
+```sh
+./aeval.sh e2e           # 默认题目「写」；./aeval.sh e2e <题目>
+```
+
+重置环境、准备题目（假的模型端点时把参考答案放进 `dev`），经控制面的接口 `POST /projects/default/sessions` 发这道题的那句话，
+跟着 `GET /sessions/:id/events`（SSE）等到这一轮的 `turn_end`，再读一次控制面存下的持久事件（`GET /sessions/:id`），
+检查它们依次是 `user_message`、`turn_started`、工具调用和各自的结果、助手的话、`turn_end`（`completed`），之后没有别的，
+序号从 1 起不跳号；再用评测的判分给这道题判分。两样都对才通过（退出码 0）。
+没等到结局（超过 `--max-seconds`，默认 900 秒；没有事件时按控制面的心跳 15 秒检查一次）时停掉这个会话。
+记录在 `~/.local/share/sfly/evals/<日期>-e2e/<题目>-<时间>/`：`events.jsonl`（事件流里收到的，没等到结局时是到那时为止的）、
+`persisted.json`（读回的持久事件）、`e2e.json`（会话 ID、检查出的问题、判分、用时）。建会话就被拒（例如工作台不在线时 503）
+也写一行原因和 `e2e.json`。
+和 `selfcheck` 一样要 Docker、手动跑，不进 `pnpm test`（#552 扩成四道题、进 CI）。会话的工作目录是工作区 `/work`，
+题目的节点包在它下面：假的模型端点照 `/tmp/aeval-reference/workdir` 进节点包目录再执行参考答案。
 
 ## 模型
 
