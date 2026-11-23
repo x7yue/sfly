@@ -239,6 +239,61 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		});
 	});
 
+	describe("关注项里「日志」类异常的说明（上限 500 个字符）：打不打码只看完整的出现（#517）", () => {
+		const limit = 500;
+		const filler = (n: number) => "e".repeat(n);
+		const partials = [LATE.slice(0, 1), LATE.slice(0, 6), LATE.slice(0, LATE.length - 1)];
+
+		/** 触发；sa 写下的 ERROR 行都到了说明的上限；写入时 LATE 还不是 secret 值，库里和文件里是原文。 */
+		async function start() {
+			const run = await startRun(LATE_SECRET, true);
+			let seq = 3;
+			const writeError = async (text: string) => {
+				agent.logs(run.sa, [line(seq, text, LogLevel.ERROR)]);
+				seq += 1;
+				await eventually(async () => {
+					const page = await api.getJson<Page>(`/tasks/${run.sa.taskId}/logs`);
+					expect(page.lines).toHaveLength(seq - 1);
+				});
+			};
+			const createSubflow = async () => {
+				await agent.succeed(run.b);
+				await eventually(async () =>
+					expect((await api.run(run.runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+				);
+			};
+			const message = async () => {
+				const res = await cp.fetch(`/runs/${run.runId}/focus`);
+				const text = await res.text();
+				expect(res.status, text).toBe(200);
+				return runFocusApi.focus.response.parse(JSON.parse(text)).items[0]?.anomaly?.message;
+			};
+			return { writeError, createSubflow, message };
+		}
+
+		it("最近一条 ERROR 的结尾是完整的值（写入时还不是 secret 值）：读取时盖住", async () => {
+			const { writeError, createSubflow, message } = await start();
+			await writeError(`${filler(limit - LATE.length)}${LATE}`);
+			await createSubflow();
+			await eventually(async () =>
+				expect(await message()).toBe(`${filler(limit - LATE.length)}${MASK}`),
+			);
+		});
+
+		it("结尾是值的前缀（半截）：读取时原样，没有掩码，也没有别的变化；不论是创建子流程之前还是之后写下的", async () => {
+			const { writeError, createSubflow, message } = await start();
+			const text = (part: string) => `${filler(limit - part.length)}${part}`;
+			const longest = partials.at(-1) as string;
+			await writeError(text(longest));
+			await createSubflow();
+			await eventually(async () => expect(await message()).toBe(text(longest)));
+			for (const part of partials) {
+				await writeError(text(part));
+				await eventually(async () => expect(await message()).toBe(text(part)));
+			}
+		});
+	});
+
 	it("后来才成为 secret 的值用各种写法写进日志（#517）：任务日志下载、按页读、按运行下载读出来的每一行，和写入时打码的结果逐条相同", async () => {
 		// 一个值里有非 ASCII、引号、反斜杠、制表符：Python 的 json.dumps 默认写法（\uXXXX）、JSON 的转义写法写进文件时又转义了一层
 		const value = 'FAKE口令"q\\p\tz';

@@ -135,6 +135,8 @@ describe("病态的 secret 值集合：一次读取、一次写入的同步耗�
 		const body = (await summary.json()) as { recent: unknown[]; running: unknown[] };
 		expect(summary.status).toBe(200);
 		expect(body.recent.length).toBe(20);
+		// 读摘要也用预算：原文里没有掩码，用完预算之后剩下的整段盖住（确定的证据，不看耗时）
+		expect(JSON.stringify(body)).toContain(MASK);
 		expect(performance.now() - summaryStarted, "读摘要").toBeLessThan(15_000);
 	};
 

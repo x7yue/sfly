@@ -23,16 +23,31 @@ export const MIN_LEAF_CHARS = 4;
  * 单次调用的上限只管一次调用，一页有几百条动作、上千行日志，每条都花很多，同步执行的时间就是它们的总和，控制面期间不响应：
  * 所以一次读取共用一个预算，用完之后这次读取里剩下的、还要花工作量才能打码的文字整段盖住（宁可多盖，不漏）。
  *
- * 预算里记两类工作量，一份大致是一次字符比较（几纳秒，量过：一个正则扫一遍文字每个字符 1–8 纳秒，长值的索引 3 纳秒）：
- * - 找到的出现位置：每个出现位置按它的长度加 {@link MASK_WORK_PER_MATCH}（和单次的上限 {@link MAX_MASK_WORK} 同一个算法）；
- *   长值的索引里每看一个候选记一份，哈希对上了的核对再按长度记；
- * - 扫描：每段要打码的文字，每个正则扫一遍、每个字符一份（再加每次扫描固定的一份），长值的索引一遍每个字符一份。
- *   没有命中时也要扫，所以读一页日志的代价不再随值的个数和行长无限增长：dev 上读日志不打码，这部分只在写入时付一次，
- *   现在每读一次付一次（按页、按时刻定位、按运行合并、下载、流的补发，控制台还会轮询）。
- * 取 1200 万：最坏情况下（很多很长的值、开头相同的行）几十毫秒到一百毫秒（见 PR 里的数字）；正常的读取（几十个值、一页几百 KB）
- * 一次用几十万，50 个各 4 KB 的证书、一页 2.5 MB（40 行各 64 KB）也用不到一半。
+ * 一份约 0.25 纳秒。计价按路径贴近实际代价，**只取决于文字的长度、值集合的形状和完整的出现**，不取决于文字里有没有某个值的
+ * 一部分（docs/SEMANTICS.md §2.1：部分匹配不能影响输出，预算在哪里用完也是输出的一部分）：
+ * - 扫描（每段要打码的文字都要扫，没有命中也一样）：每个正则每个字符 `w` 份，`w` 按这个正则里各个值的形状在建匹配时算一次
+ *   （{@link regexWeight}：值开头的分叉有多宽、开头有多长的重复），正常的值集合约 1–7 份，一个正则里有几百个互不相同的随机串
+ *   约 45 份，开头是一长串同一个字符的约 500 份；长值的索引每个字符 {@link INDEX_UNITS_PER_CHAR} 份，
+ *   同一个开头下的长度每多一种再加 {@link INDEX_UNITS_PER_GROUP} 份；每次扫描另加固定的 {@link SCAN_CALL_UNITS} 份；
+ * - 找到的出现位置：每个出现位置按它的长度加 {@link MASK_WORK_PER_MATCH}（和单次的上限 {@link MAX_MASK_WORK} 同一个算法），
+ *   再乘 {@link OCCURRENCE_UNITS}；哈希对上了的逐字核对按长度算。
+ * dev 上读日志不打码，这部分只在写入时付一次，现在每读一次付一次（按页、按时刻定位、按运行合并、下载、流的补发，控制台还会轮询）。
+ * 取 4 亿份（约 100 毫秒）：最坏情况下（很多很长的值、开头相同的行）一页约一百到两百毫秒，一个运行里一条十万个字符的行
+ * 在值集合很病态时一份都不用扫、直接整段盖住；正常的读取（几千个键的保密对象、一页 300 行各 4000 个字符、200 条各 4000
+ * 个字符的失败原因、200 个任务各 5000 个字符的输出，50 个各 4 KB 的证书、一页 2.5 MB）用不到一半。
  */
-export const READ_WORK_BUDGET = 12_000_000;
+export const READ_WORK_BUDGET = 400_000_000;
+
+/** 找到的出现位置的工作量（按 {@link MASK_WORK_PER_MATCH} 的算法）换成预算的份数。 */
+const OCCURRENCE_UNITS = 10;
+/** 每次扫描固定的份数（函数调用、正则的重置）。 */
+const SCAN_CALL_UNITS = 1000;
+/** 长值的索引扫一个字符的份数（算前缀哈希、查过滤表），量过 4–9 纳秒。 */
+const INDEX_UNITS_PER_CHAR = 30;
+/** 同一个开头下每多一种长度、每个位置多查一次表的份数。 */
+const INDEX_UNITS_PER_GROUP = 20;
+/** 编译失败、不进正则也不进索引的短文本：每个各做一次 `indexOf`，每个字符的份数。 */
+const SHORT_LITERAL_UNITS_PER_CHAR = 4;
 
 /** 一份工作量预算：剩多少。一次读取里打码用到的这个运行的值集合的视图共用同一份（每个运行各一份）。 */
 export class WorkBudget {
@@ -366,6 +381,8 @@ interface LiteralIndex {
 	byHash: Map<number, LengthGroup[]>;
 	minLength: number;
 	maxLength: number;
+	/** 同一个开头下最多有几种长度：每个位置最多查这么多次表（计价用，只取决于值集合的形状）。 */
+	groupsMax: number;
 }
 
 /** 开头相同的文本里长度相同的一组：整段的哈希 → 文本（哈希撞了才会有一个以上）。 */
@@ -401,6 +418,9 @@ function hashOf(text: string, from: number, length: number): number {
 	return hash;
 }
 
+/** 长文本索引里一段文字的哈希（整段和开头 {@link LITERAL_PREFIX} 个码元用同一个算法）：只给测试用，造哈希相同的文本。 */
+export const literalHashOf = (text: string): number => hashOf(text, 0, text.length);
+
 function buildIndex(longTexts: readonly string[]): LiteralIndex | undefined {
 	if (longTexts.length === 0) return undefined;
 	const filter = new Uint8Array(1 << 16);
@@ -427,15 +447,30 @@ function buildIndex(longTexts: readonly string[]): LiteralIndex | undefined {
 		minLength = Math.min(minLength, text.length);
 		maxLength = Math.max(maxLength, text.length);
 	}
-	return { filter, byHash, minLength, maxLength };
+	let groupsMax = 1;
+	for (const groups of byHash.values()) groupsMax = Math.max(groupsMax, groups.length);
+	return { filter, byHash, minLength, maxLength, groupsMax };
 }
 
 /** 算前缀哈希用的缓冲（同步使用，不会同时有两处在用）：`H[k]` 是窗口里前 k 个码元的哈希。 */
 let hashScratch = new Int32Array(0);
+/** 缓冲常驻的最大长度（Int32 的个数，16 MB）：更大的窗口用一次性的缓冲，用完就释放，不常驻。 */
+const HASH_SCRATCH_KEEP = 1 << 22;
+
+function hashBuffer(size: number): Int32Array {
+	if (size > HASH_SCRATCH_KEEP) return new Int32Array(size);
+	if (hashScratch.length < size)
+		hashScratch = new Int32Array(
+			Math.min(HASH_SCRATCH_KEEP, Math.max(size, hashScratch.length * 2)),
+		);
+	return hashScratch;
+}
 
 /** 一份值集合的匹配：几个正则（每个是一批文本的候选），加上不进正则的文本（长文本走索引，其余直接做字面量查找）。 */
 interface Matcher {
 	regexes: readonly RegExp[];
+	/** 每个正则扫一个字符的份数（{@link regexWeight}），和 `regexes` 一一对应。 */
+	weights: readonly number[];
 	/** 不进正则的全部文本（长文本和编译失败的块的文本）。 */
 	literals: readonly string[];
 	/** 其中不短于 {@link LITERAL_PREFIX} 个码元的，按索引查。 */
@@ -452,17 +487,93 @@ interface Matcher {
 }
 
 /**
- * 扫描一段 `chars` 个码元的文字的工作量（计入预算，见 {@link READ_WORK_BUDGET}）：每个正则一遍，长值的索引一遍（先算前缀哈希、
- * 再逐个位置查），每个短字面量一次查找；索引里最短的值比文字还长时不用扫。
+ * 扫描一段 `chars` 个码元的文字的工作量（计入预算，见 {@link READ_WORK_BUDGET}）：每个正则一遍（每个字符 `w` 份），长值的索引一遍，
+ * 每个短字面量一次查找；索引里最短的值比文字还长时不用扫。只取决于文字的长度和值集合的形状。
  */
 function scanUnits(matcher: Matcher, chars: number): number {
-	const perPass = 1 + chars;
-	let units = (matcher.regexes.length + matcher.shortLiterals.length) * perPass;
-	if (matcher.index && chars >= matcher.index.minLength) units += perPass;
+	let units = 0;
+	for (const weight of matcher.weights) units += SCAN_CALL_UNITS + weight * chars;
+	units += matcher.shortLiterals.length * (SCAN_CALL_UNITS + SHORT_LITERAL_UNITS_PER_CHAR * chars);
+	const { index } = matcher;
+	if (index && chars >= index.minLength) {
+		units +=
+			SCAN_CALL_UNITS +
+			(INDEX_UNITS_PER_CHAR + INDEX_UNITS_PER_GROUP * (index.groupsMax - 1)) * chars;
+	}
 	return units;
 }
 
-/** 一批文本分成若干块，每块转义之后的源码不超过 {@link MAX_REGEX_SOURCE_CHARS}（文本已按长度从长到短排好）。 */
+/**
+ * 「长的在前」的字典序：一个是另一个的前缀时，长的在前。同一批文本按它排好，开头相同的挨在一起，V8 把相邻的、开头相同的
+ * 备选项合并成「公共前缀加一个更小的选择」（量过：打乱的顺序比排好的最多慢 10 倍）；一个值是另一个的前缀时长的在前，
+ * 正则在同一个位置总是先取到最长的（{@link Matcher.plain} 靠这一点）。
+ */
+function compareLongestFirst(a: string, b: string): number {
+	const n = Math.min(a.length, b.length);
+	for (let i = 0; i < n; i++) {
+		const x = a.charCodeAt(i);
+		const y = b.charCodeAt(i);
+		if (x !== y) return x - y;
+	}
+	return b.length - a.length;
+}
+
+/**
+ * 一个正则（一批排好的备选项）扫一个字符的份数：1 + 1.5 × 分叉 + 0.8 × 重复。
+ * - 分叉：`F0 + F1`。`F0` 是第一个字符有几种（每个位置都要在它们里面找）；`F1` 是其余各个位置的「下一个字符有几种除以已经
+ *   匹配的字符数加一」的最大值（匹配到那里至少要走过这么多字符，分叉越靠后，文字越不容易每个位置都走到它）；
+ * - 重复：各个值里最长的「开头有一段循环」的比值（一段长 j、最短的循环节长 p 的开头，比值 j/p），`aaaa…` 的是长度，
+ *   文字也是 `aaaa…` 时每个位置都要走完这一整段。
+ * 只取决于这批值的形状（长度、开头的分叉、开头的循环），不取决于文字。量过的每个字符每个正则的纳秒数
+ * （{@link scanUnits} 里一份 0.25 纳秒）：几千个 `value-N-随机` 的 0.2–1 纳秒，每个正则里几百个随机串的 3–11 纳秒，
+ * 开头一长串 `a` 的 30–110 纳秒，计价都不低于实际的一半。
+ */
+function regexWeight(sorted: readonly string[]): number {
+	// 分叉：按排好的顺序，相邻两个值的公共前缀长度就是后一个值从哪里分出去；沿着当前这个值的路径记每个深度上孩子的个数。
+	const children: number[] = [];
+	let f1 = 0;
+	const settle = (from: number, to: number) => {
+		for (let depth = Math.max(from, 1); depth < to; depth++) {
+			f1 = Math.max(f1, (children[depth] ?? 0) / (depth + 1));
+		}
+	};
+	let previous = "";
+	let run = 1;
+	sorted.forEach((text, i) => {
+		let common = 0;
+		if (i > 0) {
+			const n = Math.min(previous.length, text.length);
+			while (common < n && previous.charCodeAt(common) === text.charCodeAt(common)) common += 1;
+			settle(common + 1, previous.length);
+		}
+		if (common < text.length) {
+			children[common] =
+				i === 0 || (children[common] ?? 0) === 0 ? 1 : (children[common] as number) + 1;
+			for (let depth = common + 1; depth < text.length; depth++) children[depth] = 1;
+		}
+		previous = text;
+		run = Math.max(run, repetition(text));
+	});
+	settle(1, previous.length);
+	const f0 = children[0] ?? 1;
+	return Math.ceil(1 + 1.5 * (f0 + f1) + 0.8 * run);
+}
+
+/** 一个值开头的循环：各个前缀 j 的 j / 最短循环节，取最大（KMP 的前缀函数）。 */
+function repetition(text: string): number {
+	const failure = new Int32Array(text.length);
+	let best = 1;
+	let k = 0;
+	for (let i = 1; i < text.length; i++) {
+		while (k > 0 && text.charCodeAt(i) !== text.charCodeAt(k)) k = failure[k - 1] as number;
+		if (text.charCodeAt(i) === text.charCodeAt(k)) k += 1;
+		failure[i] = k;
+		best = Math.max(best, (i + 1) / (i + 1 - k));
+	}
+	return best;
+}
+
+/** 一批文本分成若干块，每块转义之后的源码不超过 {@link MAX_REGEX_SOURCE_CHARS}（文本已按 {@link compareLongestFirst} 排好）。 */
 function chunksOf(texts: readonly string[]): string[][] {
 	const chunks: string[][] = [];
 	let current: string[] = [];
@@ -486,21 +597,23 @@ function chunksOf(texts: readonly string[]): string[][] {
  * 同样的值集合不重复编译。编译失败的块的文本（`failed`）退回字面量查找，失败的错误不往外抛、不记录：它的消息里带着正则源码，
  * 也就是 secret 值。
  */
-const compiled = new Map<string, { regexes: RegExp[]; failed: string[] }>();
+const compiled = new Map<string, { regexes: RegExp[]; weights: number[]; failed: string[] }>();
 const COMPILED_LIMIT = 64;
 
 function compileInline(inline: readonly string[], compile: Compile | undefined) {
 	const build = () => {
 		const regexes: RegExp[] = [];
+		const weights: number[] = [];
 		const failed: string[] = [];
 		for (const chunk of chunksOf(inline)) {
 			try {
 				regexes.push((compile ?? compileGlobal)(chunk.map(escapeRegExp).join("|")));
+				weights.push(regexWeight(chunk));
 			} catch {
 				failed.push(...chunk);
 			}
 		}
-		return { regexes, failed };
+		return { regexes, weights, failed };
 	};
 	// 注入的编译器只用于测试，不进共享的缓存。
 	if (compile) return build();
@@ -518,11 +631,12 @@ function compileInline(inline: readonly string[], compile: Compile | undefined) 
 }
 
 function buildMatcher(texts: readonly string[], compile: Compile | undefined): Matcher {
-	const inline = texts.filter((t) => t.length <= MAX_REGEX_TEXT_CHARS);
-	const { regexes, failed } = compileInline(inline, compile);
+	const inline = texts.filter((t) => t.length <= MAX_REGEX_TEXT_CHARS).sort(compareLongestFirst);
+	const { regexes, weights, failed } = compileInline(inline, compile);
 	const literals = [...texts.filter((t) => t.length > MAX_REGEX_TEXT_CHARS), ...failed];
 	return {
 		regexes,
+		weights,
 		literals,
 		index: buildIndex(literals.filter((t) => t.length >= LITERAL_PREFIX)),
 		shortLiterals: literals.filter((t) => t.length < LITERAL_PREFIX),
@@ -589,15 +703,16 @@ const MASK_WORK_PER_MATCH = 64;
  * 不会留下一个值的尾巴。
  */
 function maskSpans(text: string, matcher: Matcher, budget?: WorkBudget): string | undefined {
-	// 单次的上限；给了预算时不超过预算剩下的（预算不大于单次的上限，所以超限就是预算用完）。
-	const cap = budget ? Math.min(MAX_MASK_WORK, budget.remaining) : MAX_MASK_WORK;
+	// 单次的上限；给了预算时不超过预算剩下的（预算按 {@link OCCURRENCE_UNITS} 换算，超限就是预算用完）。
+	const cap = budget ? Math.min(MAX_MASK_WORK, budget.remaining / OCCURRENCE_UNITS) : MAX_MASK_WORK;
 	const spans: Array<[number, number]> = [];
 	// 工作量：每找到一个出现位置，记它的长度加上固定的一份（固定的一份限制 spans 占的内存）。周期性的值在周期性的文字里，
 	// 每个位置都是一个出现位置，一次打码的工作量是「文字长 × 值长」，值来自用户、文字来自节点，同步执行会让控制面卡住几秒：
 	// 超过上限时放弃，返回 undefined，调用方把这段文字整个盖住。
 	let work = 0;
 	const spend = () => {
-		if (budget) budget.remaining = work > cap ? 0 : Math.max(0, budget.remaining - work);
+		if (budget)
+			budget.remaining = work > cap ? 0 : Math.max(0, budget.remaining - work * OCCURRENCE_UNITS);
 	};
 	for (const regex of matcher.regexes) {
 		regex.lastIndex = 0;
@@ -636,9 +751,7 @@ function maskSpans(text: string, matcher: Matcher, budget?: WorkBudget): string 
 		for (let start = 0; start <= last; start += step) {
 			const end = Math.min(text.length, start + step + index.maxLength - 1);
 			const size = end - start;
-			if (hashScratch.length < size + 1)
-				hashScratch = new Int32Array(Math.max(size + 1, hashScratch.length * 2));
-			const H = hashScratch;
+			const H = hashBuffer(size + 1);
 			H[0] = 0;
 			for (let k = 0; k < size; k++)
 				H[k + 1] = (Math.imul(H[k] as number, HASH_BASE) + text.charCodeAt(start + k)) | 0;
@@ -650,8 +763,7 @@ function maskSpans(text: string, matcher: Matcher, budget?: WorkBudget): string 
 				const groups = index.byHash.get(prefix);
 				if (!groups) continue;
 				for (const group of groups) {
-					// 每看一组记一份；放不下的（比剩下的文字长）不用算
-					work += 1;
+					// 放不下的（比剩下的文字长）不用算；每个位置看多少组已经按值集合的形状计在扫描里（{@link scanUnits}）
 					if (i + group.length > text.length) continue;
 					// 整段的哈希对不上就不用核对
 					const full = ((H[at + group.length] as number) - Math.imul(head, group.pow)) | 0;
@@ -711,7 +823,7 @@ export class SecretSet {
 	/** 作为节点整个等于它就换成掩码的对象和数组：标准写法（{@link canonicalJson}）。 */
 	readonly containers: ReadonlySet<string>;
 	readonly #compile: Compile | undefined;
-	/** 延迟建好的匹配和按首字符的索引：同一份值集合的各个视图（{@link withBudget}）共用。 */
+	/** 延迟建好的匹配（正则、长值的索引和各自的计价）：同一份值集合的各个视图（{@link withBudget}）共用。 */
 	readonly #lazy: Lazy;
 	/** 这个视图的工作量预算；没有时只受单次调用的上限约束（写入、测试）。 */
 	readonly #budget: WorkBudget | undefined;
@@ -815,6 +927,11 @@ export class SecretSet {
 	matching(): { regexes: number; literals: number; plain: boolean } {
 		const { regexes, literals, plain } = this.#matcher();
 		return { regexes: regexes.length, literals: literals.length, plain };
+	}
+
+	/** 打码一段 `chars` 个码元的文字，扫描要记多少份预算（测试和诊断用；只取决于长度和值集合的形状）。 */
+	scanCost(chars: number): number {
+		return this.texts.length === 0 ? 0 : scanUnits(this.#matcher(), chars);
 	}
 
 	/**

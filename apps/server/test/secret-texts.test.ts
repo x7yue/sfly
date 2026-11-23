@@ -15,6 +15,7 @@ import {
 	canonicalJson,
 	charCount,
 	compareUtf8,
+	literalHashOf,
 	MAX_MASK_WORK,
 	MIN_LEAF_CHARS,
 	maskParams,
@@ -1312,6 +1313,98 @@ describe("长值的索引：扫一遍就查全，结果和逐个 indexOf 的参�
 		expect(set.mask(`x short-secret y ${long} z`)).toBe(`x ${MASK} y ${MASK} z`);
 	});
 
+	describe("哈希撞了：核对原文，不误盖，核对的代价按长度计入预算", () => {
+		/**
+		 * Thue–Morse 序列的一块（长度 2^k）和它按位取反的那一块，在模 2^32 的多项式哈希下总是撞的（底是奇数就行，k 够大）：
+		 * 值由同一个开头加几块组成，每块选原样或取反，所有的组合哈希都相同。
+		 */
+		const block = (k: number, flip: boolean) =>
+			Array.from({ length: 2 ** k }, (_, i) => {
+				let bits = 0;
+				for (let n = i; n > 0; n >>= 1) bits ^= n & 1;
+				return (bits === 1) !== flip ? "b" : "a";
+			}).join("");
+		const BLOCKS = 5;
+		const head = `${"FAKE-collide-".repeat(4)}01234567`;
+		/** 第 `bits` 种组合：长度 head + 5 × 256 = 1332 个字符，超过 1024（走索引）。 */
+		const colliding = (bits: number) =>
+			head + Array.from({ length: BLOCKS }, (_, j) => block(8, ((bits >> j) & 1) === 1)).join("");
+		const all = Array.from({ length: 2 ** BLOCKS }, (_, bits) => colliding(bits));
+
+		it("造出来的值确实互不相同、长度相同、开头相同、整段的哈希相同", () => {
+			expect(new Set(all).size).toBe(all.length);
+			expect(all[0]?.length).toBeGreaterThan(1024);
+			for (const text of all) {
+				expect(text.length).toBe(all[0]?.length);
+				expect(text.startsWith(head)).toBe(true);
+				expect(literalHashOf(text)).toBe(literalHashOf(all[0] as string));
+			}
+		});
+
+		it("集合里有哈希相同的 31 个值：文字里出现的才盖住，哈希相同但不在集合里的第 32 个不盖", () => {
+			const set = setOf(...all.slice(0, 31));
+			expect(set.matching().literals).toBe(31);
+			const absent = all[31] as string;
+			expect(set.mask(`<${absent}>`)).toBe(`<${absent}>`);
+			const text = `<${absent}> ${all[7]} ${all[30]} ${absent}`;
+			expect(set.mask(text)).toBe(`<${absent}> ${MASK} ${MASK} ${absent}`);
+			// 和逐个 indexOf 的参照实现一致
+			expect(set.mask(`${all[0]}${all[1]}`)).toBe(reference(`${all[0]}${all[1]}`, all.slice(0, 31)));
+		});
+
+		it("每个位置都撞上一桶 31 个值：核对按长度计入预算，一页用完预算之后整段盖住，耗时有上限；预算够的时候原样放过", () => {
+			const set = setOf(...all.slice(0, 31));
+			const absent = all[31] as string;
+			// 一行 20 次不在集合里的那个值：每次出现要核对 31 个，每个按 1332 个字符计
+			const line = absent.repeat(20);
+			const small = new WorkBudget();
+			expect(set.withBudget(small).mask(line)).toBe(line);
+			const spent = READ_WORK_BUDGET - small.remaining;
+			expect(spent, "核对按长度计入").toBeGreaterThan(20 * 31 * absent.length * 5);
+			// 一页 2000 行：用不了的预算在中途用完，之后的行整段盖住；总耗时有上限
+			const budget = new WorkBudget();
+			const view = set.withBudget(budget);
+			const started = performance.now();
+			let masked = 0;
+			for (let i = 0; i < 2000; i++) if (view.mask(line) === MASK) masked += 1;
+			expect(performance.now() - started, "一页").toBeLessThan(5000);
+			expect(budget.remaining).toBe(0);
+			expect(masked).toBeGreaterThan(0);
+			expect(masked).toBeLessThan(2000);
+		});
+	});
+
+	describe("文字比一个窗口长：窗口交界处的出现也认", () => {
+		const value = (n: number) => `V${junk(n - 1)}`;
+		const STEP = 1 << 20;
+
+		it("值在文字里的各个位置（第一个窗口的末尾、两个窗口的交界、文字的末尾）：每一处都盖住，和参照实现一致", () => {
+			const long = value(1100);
+			const set = setOf(long);
+			const total = 2 * STEP + 5000;
+			for (const at of [0, STEP - 1100, STEP - 1099, STEP - 1, STEP, STEP + 1, 2 * STEP - 1, total - 1100]) {
+				const text = `${"x".repeat(at)}${long}${"x".repeat(total - at - long.length)}`;
+				const out = set.mask(text);
+				expect(out.length, `at ${at}`).toBe(total - long.length + MASK.length);
+				expect(out.slice(at, at + MASK.length), `at ${at}`).toBe(MASK);
+			}
+			// 两处、中间隔着交界
+			const two = `${"x".repeat(STEP - 50)}${long}${"y".repeat(STEP)}${long}z`;
+			expect(set.mask(two)).toBe(`${"x".repeat(STEP - 50)}${MASK}${"y".repeat(STEP)}${MASK}z`);
+		});
+
+		it("窗口比常驻的缓冲还大（一个 220 万个字符的值，文字 420 万个字符）：用一次性的缓冲，结果照样对，也不抛错", () => {
+			const huge = value(2_200_000);
+			const set = setOf(huge);
+			const filler = "y".repeat(2_100_000);
+			const text = `x${huge}${filler}${huge.slice(0, 100)}`;
+			expect(text.length).toBeGreaterThan(1 << 22);
+			expect(set.mask(text)).toBe(`x${MASK}${filler}${huge.slice(0, 100)}`);
+			const again = `${huge}${huge}`;
+			expect(set.mask(again)).toBe(`${MASK}${MASK}`);
+		});
+	});
+
 	it("650 个各 1500 个字符、开头相同、长度相同的值：一页 1000 行（每行 4096 个同样的字符）每个位置只算一次整段的哈希，一页用不完预算、一行也不盖", () => {
 		const values = Array.from(
 			{ length: 650 },
@@ -1349,9 +1442,31 @@ describe("读取的工作量预算：一次读取共用一份，扫描和找到�
 		seed = (seed * 1664525 + 1013904223) % 4294967296;
 		return Math.floor((seed / 4294967296) * n);
 	};
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
 	const word = (n: number) =>
-		Array.from({ length: n }, () => "bcdefghijklmnopqrstuvwxyz"[random(25)]).join("");
+		Array.from({ length: n }, () => alphabet[random(alphabet.length)]).join("");
 	const rep = (c: string, n: number) => c.repeat(n);
+	/** 几千个键的保密对象：一个值约 25 个字符（假值）。 */
+	const bigObject = (keys: number) =>
+		Object.fromEntries(
+			Array.from({ length: keys }, (_, i) => [`key_${i}`, `fake-value-${word(14)}`]),
+		);
+	const detail = (reason: string) => ({
+		id: 1,
+		parent: null,
+		depth: 0,
+		name: rep("n", 64),
+		fields: Object.fromEntries(
+			Array.from({ length: 8 }, (_, f) => [`${rep("k", 60)}${f}`, word(256)]),
+		),
+		reason,
+		started_at: "2026-01-01T00:00:01.000Z",
+		agent_started_at: "2026-01-01T00:00:01.000Z",
+		ended_at: "2026-01-01T00:00:02.000Z",
+		agent_ended_at: "2026-01-01T00:00:02.000Z",
+		duration_ms: 1000,
+		result: "failed" as const,
+	});
 
 	it("字符数不分配数组：和 Array.from 的码点数一致（emoji、孤立的代理项、空串）", () => {
 		const units = ["a", "😀", "\ud83d", "\ude00", "中", "\u0000", "é"];
@@ -1389,83 +1504,160 @@ describe("读取的工作量预算：一次读取共用一份，扫描和找到�
 		expect(budgetA.remaining).toBeLessThan(READ_WORK_BUDGET);
 		// 另一个视图没动：同一个集合的两个视图不共用
 		expect(other.mask("a 00 b")).toBe(`a ${MASK} b`);
-		// 共用：一个用掉的，另一个看得到。`0000`：扫描 1 + 4 份，三个出现位置各 2 + 64
-		const shared = new WorkBudget(300);
-		const x = setOf("00").withBudget(shared);
-		const y = setOf("11").withBudget(shared);
-		expect(x.mask("0000")).toBe(MASK);
-		expect(shared.remaining).toBe(300 - 5 - 198);
-		// y 的 `1111` 同样要 203，剩下的不够：整段盖住，预算归零
-		expect(y.mask("1111")).toBe(MASK);
+		// 共用：一个用掉的，另一个看得到。预算刚好够 x 扫一遍 `0000`、再够 y 扫一遍 `1111` 的一半
+		const x = setOf("00");
+		const y = setOf("11");
+		const shared = new WorkBudget(x.scanCost(4) + y.scanCost(4) / 2);
+		expect(x.withBudget(shared).mask("0000")).toBe(MASK);
+		expect(shared.remaining).toBeLessThan(y.scanCost(4));
+		// y 要扫的比剩下的多：整段盖住，预算归零
+		expect(y.withBudget(shared).mask("1111")).toBe(MASK);
 		expect(shared.remaining).toBe(0);
 		// 对照：各自一份预算时都照常算完
-		expect(setOf("00").withBudget(new WorkBudget(300)).mask("a0000")).toBe(`a${MASK}`);
+		expect(setOf("00").withBudget(new WorkBudget()).mask("a0000")).toBe(`a${MASK}`);
 	});
 
-	it("预算用完之后：要扫描、要找出现位置的文字整段盖住（不论哪条路径）；不用扫的照常", () => {
-		const spent = () => new WorkBudget(0);
-		// 周期性的值（`00`）：合并位置的路径
-		const periodic = setOf("00");
-		expect(periodic.matching().plain).toBe(false);
-		expect(periodic.withBudget(spent()).mask("hello")).toBe(MASK);
-		expect(periodic.withBudget().mask("a 00 b")).toBe(`a ${MASK} b`);
-		// 不会部分重叠的值：一次 replace 的路径，扫描同样计入
-		const plain = setOf("abcdefgh");
-		expect(plain.matching().plain).toBe(true);
-		expect(plain.withBudget(spent()).mask("hello abcdefgh")).toBe(MASK);
-		expect(plain.withBudget().mask("hello abcdefgh")).toBe(`hello ${MASK}`);
-		// 只有长值：文字比最短的长值还短时没有东西要扫，预算用完了也照常
-		const longOnly = setOf(`${"L".repeat(40)}${word(1100)}`);
-		expect(longOnly.matching().regexes).toBe(0);
-		expect(longOnly.withBudget(spent()).mask("hello")).toBe("hello");
-	});
-
-	it("一次调用花的工作量超过预算剩下的：整段盖住，不用等到单次的上限", () => {
-		// 周期性的值 `00`：40 万个 0 要 2640 万的出现位置工作量，在单次的上限（3200 万）以内，但超过一份预算（800 万）
-		const periodic = setOf("00");
-		const text = `${"0".repeat(400_000)} tail`;
-		expect(periodic.mask(text)).toBe(`${MASK} tail`);
+	it("扫描的工作量只取决于文字的长度和值集合的形状：没有命中的文字也要花预算，花的就是 scanCost", () => {
+		const set = setOf("zz");
 		const budget = new WorkBudget();
-		expect(periodic.withBudget(budget).mask(text)).toBe(MASK);
-		expect(budget.remaining).toBe(0);
-		expect(READ_WORK_BUDGET).toBeLessThanOrEqual(MAX_MASK_WORK);
-	});
-
-	it("扫描也计入：没有命中的文字也要花预算，预算归零之前每段花多少只和长度、正则个数有关", () => {
-		const budget = new WorkBudget();
-		const view = setOf("zz").withBudget(budget);
-		// 一个正则：每段 1 + 长度 份
+		const view = set.withBudget(budget);
 		view.mask("x".repeat(80));
-		expect(budget.remaining).toBe(READ_WORK_BUDGET - 81);
+		expect(budget.remaining).toBe(READ_WORK_BUDGET - set.scanCost(80));
 		view.mask("");
-		expect(budget.remaining).toBe(READ_WORK_BUDGET - 82);
-		// 只有长值（索引）：文字不比最短的长值短时扫一遍，每个字符一份；更短的文字不用扫
+		expect(budget.remaining).toBe(READ_WORK_BUDGET - set.scanCost(80) - set.scanCost(0));
+		// 只有长值（索引）：文字不比最短的长值短时扫一遍，更短的文字不用扫
 		const longOnly = setOf(`${"L".repeat(40)}${word(1100)}`);
+		expect(longOnly.scanCost(100)).toBe(0);
 		const indexBudget = new WorkBudget();
 		const indexView = longOnly.withBudget(indexBudget);
 		indexView.mask("x".repeat(2000));
-		expect(indexBudget.remaining).toBe(READ_WORK_BUDGET - 2001);
+		expect(indexBudget.remaining).toBe(READ_WORK_BUDGET - longOnly.scanCost(2000));
+		const afterLong = indexBudget.remaining;
 		indexView.mask("x".repeat(100));
-		expect(indexBudget.remaining).toBe(READ_WORK_BUDGET - 2001);
+		expect(indexBudget.remaining).toBe(afterLong);
+		// 两遍：文字越长花得越多
+		expect(set.scanCost(160)).toBeGreaterThan(set.scanCost(80));
 	});
 
-	it("正则路径的病态：1000 个各 1000 个字符、开头相同的值，一页 1000 行（每行 4096 个同样的字符）总耗时有上限", () => {
-		const values = Array.from(
-			{ length: 1000 },
-			(_, i) => `${rep("a", 990)}${i.toString(36).padStart(10, "0")}`,
+	it("预算刚好够和差一份：刚好够的照常，差一份的整段盖住（不论哪条路径）", () => {
+		const text = "hello abcdefgh";
+		const plain = setOf("abcdefgh");
+		expect(plain.matching().plain).toBe(true);
+		expect(plain.withBudget(new WorkBudget(plain.scanCost(text.length) - 1)).mask(text)).toBe(MASK);
+		expect(plain.withBudget(new WorkBudget(plain.scanCost(text.length))).mask(text)).toBe(
+			`hello ${MASK}`,
 		);
-		const set = setOf(...values);
-		expect(set.matching().regexes).toBeGreaterThan(50);
+		// 周期性的值：合并位置的路径
+		const periodic = setOf("00");
+		expect(periodic.matching().plain).toBe(false);
+		expect(periodic.withBudget(new WorkBudget(periodic.scanCost(5) - 1)).mask("hello")).toBe(MASK);
+		expect(periodic.withBudget(new WorkBudget(periodic.scanCost(5))).mask("hello")).toBe("hello");
+		// 只有长值：文字比最短的长值还短时没有东西要扫，预算用完了也照常
+		const longOnly = setOf(`${"L".repeat(40)}${word(1100)}`);
+		expect(longOnly.withBudget(new WorkBudget(0)).mask("hello")).toBe("hello");
+	});
+
+	it("找到的出现位置也计入：周期性的值，一次读取里花的工作量超过预算剩下的就整段盖住", () => {
+		const periodic = setOf("00");
+		// 45 万个 0：一次调用在单次的上限以内（{@link MAX_MASK_WORK}），但两次就超过一份预算
+		const text = `${rep("0", 450_000)} tail`;
+		expect(periodic.mask(text)).toBe(`${MASK} tail`);
 		const budget = new WorkBudget();
-		const view = set.withBudget(budget);
-		const line = rep("a", 4096);
-		const started = performance.now();
-		for (let i = 0; i < 1000; i++) view.mask(line);
-		expect(performance.now() - started, "一页").toBeLessThan(2000);
+		const view = periodic.withBudget(budget);
+		expect(view.mask(text)).toBe(`${MASK} tail`);
+		expect(budget.remaining).toBeLessThan(READ_WORK_BUDGET / 2);
+		expect(view.mask(text)).toBe(MASK);
 		expect(budget.remaining).toBe(0);
 	});
 
-	it("正常的读取不会用到预算的边：50 个各 4 KB 的证书（长值），一页 1000 行普通日志加 20 个证书、一页 40 行各 64 KB 的日志，都用不到预算的一半", () => {
+	it("没有命中的文字不会把预算用光：一页 1000 行普通日志、行里有几个 secret 值也不盖", () => {
+		const values = Array.from({ length: 100 }, (_, i) => `fake-secret-${i}-value`);
+		const view = setOf(...values).withBudget();
+		for (let i = 0; i < 1000; i++) {
+			const text = `request ${i} used ${values[i % 100]} and finished ${word(60)}`;
+			expect(view.mask(text)).toBe(text.replace(values[i % 100] as string, MASK));
+		}
+	});
+
+	describe("正常但大的值集合：读取一页不整段盖住", () => {
+		// 回退的来源：计价按每个正则每个字符一份，正则的个数随值的总长增长，实际每份的代价差几十倍，
+		// 几千个键的保密对象一页日志就把预算用光，正常的内容被整段盖住（dev 上读日志、读动作不打码）。
+		const object = bigObject(5000);
+
+		it("5000 个键的保密对象：日志一页 300 行各 4000 个字符、一页 1000 行各 2000 个字符，一行不盖", () => {
+			const set = secretSetOf([object]);
+			for (const [lines, chars] of [
+				[300, 4000],
+				[1000, 2000],
+				[1000, 1000],
+			] as const) {
+				const budget = new WorkBudget();
+				const view = set.withBudget(budget);
+				const text = word(chars);
+				let masked = 0;
+				for (let i = 0; i < lines; i++) if (view.mask(text) === MASK) masked += 1;
+				expect(masked, `${lines} 行 × ${chars} 个字符`).toBe(0);
+				expect(budget.remaining, `${lines} 行 × ${chars} 个字符`).toBeGreaterThan(0);
+			}
+		});
+
+		it("5000 个键的保密对象：动作一页 200 条、失败原因各 4000 个字符（名称、字段也都在），一条不盖", () => {
+			const view = secretSetOf([object]).withBudget();
+			const reason = word(4000);
+			let masked = 0;
+			for (let i = 0; i < 200; i++) {
+				const out = maskedAction(detail(reason), view);
+				if (out.reason === MASK || out.name === MASK) masked += 1;
+			}
+			expect(masked).toBe(0);
+		});
+
+		it("5000 个键的保密对象：一个运行 200 个任务、每个输出一段 5000 个字符的报告，一个不盖", () => {
+			const view = secretSetOf([object]).withBudget();
+			let masked = 0;
+			for (let i = 0; i < 200; i++) {
+				const out = maskRecord({ report: word(5000) }, view);
+				if (out.report === MASK) masked += 1;
+			}
+			expect(masked).toBe(0);
+		});
+
+		it("证书量级：50 个各 4 KB 的证书加 100 个字符串，一页 1000 行各 4000 个字符也一行不盖", () => {
+			const certs = Array.from({ length: 50 }, () => word(4000));
+			const tokens = Array.from({ length: 100 }, (_, i) => `fake-token-${i}-${word(20)}`);
+			const budget = new WorkBudget();
+			const view = setOf(...certs, ...tokens).withBudget(budget);
+			const text = word(4000);
+			for (let i = 0; i < 1000; i++) expect(view.mask(text)).toBe(text);
+			expect(budget.remaining).toBeGreaterThan(0);
+		});
+
+		it("病态的值集合仍然有上限：同样大小的一页，用完预算之后整段盖住", () => {
+			const periodic = Array.from({ length: 1000 }, () => `${rep("a", 990)}${word(10)}`);
+			const budget = new WorkBudget();
+			const view = setOf(...periodic).withBudget(budget);
+			const line = rep("a", 4096);
+			const started = performance.now();
+			let masked = 0;
+			for (let i = 0; i < 1000; i++) if (view.mask(line) === MASK) masked += 1;
+			expect(performance.now() - started, "一页").toBeLessThan(5000);
+			expect(budget.remaining).toBe(0);
+			expect(masked).toBeGreaterThan(900);
+		});
+	});
+
+	it("正则路径的病态：1000 个各 300 个字符、开头相同的值，一页 1000 行总耗时有上限", () => {
+		const values = Array.from({ length: 1000 }, () => `${rep("a", 290)}${word(10)}`);
+		const budget = new WorkBudget();
+		const view = setOf(...values).withBudget(budget);
+		const line = rep("a", 4096);
+		const started = performance.now();
+		for (let i = 0; i < 1000; i++) view.mask(line);
+		expect(performance.now() - started, "一页").toBeLessThan(5000);
+		expect(budget.remaining).toBe(0);
+	});
+
+	it("50 个各 4 KB 的证书（长值），一页 1000 行普通日志加 20 个证书、一页 40 行各 64 KB 的日志，都用不到预算的一半", () => {
 		const certs = Array.from(
 			{ length: 50 },
 			(_, i) => `-----BEGIN TEST CERT-----\n${word(4000)}${i}\n-----END TEST CERT-----`,
@@ -1483,9 +1675,112 @@ describe("读取的工作量预算：一次读取共用一份，扫描和找到�
 		const big = new WorkBudget();
 		const bigView = set.withBudget(big);
 		const line = `${rep("log ", 16_000)}${certs[3]}`; // 64 KB 的一行，里面有一个证书
-		const started = performance.now();
 		for (let i = 0; i < 40; i++) expect(bigView.mask(line)).toBe(`${rep("log ", 16_000)}${MASK}`);
 		expect(big.remaining, "40 行各 64 KB").toBeGreaterThan(READ_WORK_BUDGET * 0.5);
-		expect(performance.now() - started).toBeLessThan(2000);
+	});
+});
+
+describe("预算只取决于文字的长度、值集合的形状和完整的出现：部分匹配不改变输出，也不改变用掉的预算", () => {
+	let seed = 21;
+	const random = (n: number): number => {
+		seed = (seed * 1664525 + 1013904223) % 4294967296;
+		return Math.floor((seed / 4294967296) * n);
+	};
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+	const word = (n: number) =>
+		Array.from({ length: n }, () => alphabet[random(alphabet.length)]).join("");
+	/** 字母表的一个排列：把一组值逐个字符换一遍，得到形状（长度、开头的分叉、循环）完全相同、内容不同的另一组。 */
+	const permutation = (() => {
+		const letters = [...alphabet];
+		for (let i = letters.length - 1; i > 0; i--) {
+			const j = random(i + 1);
+			[letters[i], letters[j]] = [letters[j] as string, letters[i] as string];
+		}
+		return new Map([...alphabet].map((c, i) => [c, letters[i] as string]));
+	})();
+	const rep = (c: string, n: number) => c.repeat(n);
+	const permute = (text: string) => [...text].map((c) => permutation.get(c) ?? c).join("");
+
+	/** 两组形状相同、内容不同的值：一组短值（一个正则）和一组长值（索引，开头 32 个码元相同的、长度相同的、长度不同的）。 */
+	const shortValues = [
+		"tok-alpha-0123",
+		"tok-alpha-0987",
+		"tok-beta-4567",
+		"abcdefgh",
+		`${"a".repeat(40)}z9`,
+	];
+	const longValues = [
+		`${word(40)}${word(1500)}`,
+		`${word(40)}${word(1500)}`,
+		`${word(32)}${word(1800)}`,
+	];
+	// 开头 32 个码元相同、长度不同的一组
+	const head = word(32);
+	longValues.push(`${head}${word(1200)}`, `${head}${word(1300)}`, `${head}${word(1301)}`);
+	const first = [...shortValues, ...longValues];
+	const second = first.map(permute);
+
+	/** 文字：没有任何完整出现，但有各个值的各种开头、结尾、中间的一段。 */
+	const partials = (values: readonly string[]) =>
+		values.flatMap((value) => [
+			value.slice(0, 5),
+			value.slice(0, 31),
+			value.slice(0, 32),
+			value.slice(0, 33),
+			value.slice(0, -1),
+			value.slice(1),
+			value.slice(3, -3),
+		]);
+	const candidates = [...partials(first), ...partials(second)].flatMap((piece) => [
+		`${word(40)}${piece}${word(40)}`,
+		`${piece}${rep(piece.slice(0, 32), 40)}x`,
+		`${rep(piece.slice(0, 32), 60)}${word(5)}`,
+		rep("a", 1800) + piece.slice(0, 32),
+	]);
+	// 短的值的「开头」可能就是整个值：去掉含有完整出现的行（要的是只有部分匹配的）
+	const lines = candidates.filter(
+		(text) => ![...first, ...second].some((value) => text.includes(value)),
+	);
+
+	it("对没有完整出现的文字，换一组形状相同、内容不同的值：输出相同，用掉的预算也相同", () => {
+		const a = secretSetOf(first);
+		const b = secretSetOf(second);
+		expect(b.texts.map((t) => t.length).sort()).toEqual(a.texts.map((t) => t.length).sort());
+		const budgetA = new WorkBudget();
+		const budgetB = new WorkBudget();
+		const viewA = a.withBudget(budgetA);
+		const viewB = b.withBudget(budgetB);
+		let withPartials = 0;
+		for (const text of lines) {
+			// 文字里没有任何一个值的完整出现
+			expect(
+				[...first, ...second].some((value) => text.includes(value)),
+				text.slice(0, 40),
+			).toBe(false);
+			const outA = viewA.mask(text);
+			const outB = viewB.mask(text);
+			expect(outA, text.slice(0, 40)).toBe(text);
+			expect(outB, text.slice(0, 40)).toBe(text);
+			expect(budgetA.remaining, text.slice(0, 40)).toBe(budgetB.remaining);
+			withPartials += 1;
+		}
+		expect(withPartials).toBeGreaterThan(100);
+		expect(budgetA.remaining).toBeGreaterThan(0);
+		// 扫描的价钱本身也只取决于形状
+		for (const chars of [10, 100, 1500, 4096]) expect(a.scanCost(chars)).toBe(b.scanCost(chars));
+	});
+
+	it("预算在哪里用完也和部分匹配无关：预算只够扫一部分行时，哪些行被盖住两组一样", () => {
+		const a = secretSetOf(first);
+		const b = secretSetOf(second);
+		const total = lines.reduce((sum, text) => sum + a.scanCost(text.length), 0);
+		const run = (set: SecretSet) => {
+			const view = set.withBudget(new WorkBudget(Math.floor(total / 3)));
+			return lines.map((text) => view.mask(text) === MASK);
+		};
+		const maskedA = run(a);
+		expect(maskedA).toEqual(run(b));
+		expect(maskedA.filter(Boolean).length).toBeGreaterThan(0);
+		expect(maskedA.filter((m) => !m).length).toBeGreaterThan(0);
 	});
 });

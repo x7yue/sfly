@@ -15,9 +15,10 @@ import { clipChars } from "../util/text.js";
  * 这里兜底的是被改过的 SDK（规格 #345 故事 49）。先打码再截断，截断不会留下半个 secret 值。字符数按 Unicode 码点算，
  * 和 Python 的 `len` 一致。字段的键 SDK 不限长，这里按名称的上限兜底，免得被改过的 SDK 用超长的键写爆数据库。
  *
- * SDK 是在控制面看到之前截断的：一个 secret 值跨在 SDK 的截断处时，控制面收到的只是它的前半截，按整个值打码认不出，
- * 这里和读取时都不认（打不打码只看完整的出现，见 docs/SEMANTICS.md §2.1）；根本的办法是 SDK 先打码再截断（#583）。
- * 读取时（下面的 `masked…`）再按此刻的 secret 值打一遍：之后才创建的子流程带来的 secret 值也算。
+ * 一个 secret 值跨在截断处、控制面只收到前半截时，按整个值打码认不出，这里和读取时都不认（打不打码只看完整的出现，
+ * 见 docs/SEMANTICS.md §2.1）。写入时已经知道的值：SDK 在控制面看到文字之前先截断，留下前半截，在源头改成先打码再截断（#583）；
+ * 后来才成为 secret 的值：写入时它还不是 secret，不论谁截断，已经存下的前半截一直读得出来（已知的边界）。
+ * 读取时（下面的 `masked…`）再按此刻的 secret 值打一遍：之后才创建的子流程带来的完整的值也算。
  */
 
 const { nameChars, valueChars, reasonChars, fields: maxFields } = ACTION_LIMITS;

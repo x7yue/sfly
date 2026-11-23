@@ -185,7 +185,7 @@ async function failedActionsOf(db: Db | Tx, read: RunReadFull): Promise<RunRepor
 	// 稳定排序：同一时刻结束的保持任务在运行里的先后。
 	found.sort((a, b) => endedAt(b) - endedAt(a));
 	return found.slice(0, RUN_REPORT_LIMITS.failedActions).map(({ taskId, place, action }) => ({
-		// 名称、字段、失败原因和动作的读取接口是同一个口径（含截断处留下的半截，action-text.ts 的 `maskedAction`）。
+		// 名称、字段、失败原因和动作的读取接口是同一个口径（action-text.ts 的 `maskedAction`）。
 		...maskedAction(action, read.secrets),
 		chain_instance_id: place.chain.id,
 		node_id: place.node.node_id,
@@ -218,7 +218,7 @@ async function attentionItemsOf(
 							source,
 							latest,
 							// 说明取自读取结果（日志类异常的 `logIssues`、失败和重试的错误信息），读取运行时已经按此刻的 secret 值
-							// 打过码（`readRuns`，含截断处留下的半截），和关注项接口是同一份，这里不再另打一遍。
+							// 打过码（`readRuns`），和关注项接口是同一份，这里不再另打一遍。
 							anomaly,
 						},
 					]
