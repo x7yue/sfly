@@ -350,6 +350,46 @@ describe("会话事件的落库和发布顺序", () => {
 			stop();
 		});
 
+		it("推送指针的清理只清闲置的、不清还在用的：指针多到上限时，有已提交、还没推送的事件的会话，它的指针还在，后到的推送仍然从库里补齐", async () => {
+			const sweeping = new SessionStore({
+				db: database.db,
+				clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+				cursorSweepSize: 2,
+			});
+			const { id } = await newSession("running", await newProject());
+			const out: SessionEvent[] = [];
+			const stop = sweeping.follow(
+				id,
+				0,
+				{ emit: (event) => out.push(event), drained: () => Promise.resolve() },
+				(error) => {
+					throw error;
+				},
+			);
+			await settle();
+			const recordIn = (sessionId: string, n: number) =>
+				database.db.transaction((tx) =>
+					sweeping.recordPlatform(tx, sessionId, {
+						kind: "run",
+						run_id: randomUUID(),
+						scenario_name: `场景${n}`,
+					}),
+				);
+			const first = await recordIn(id, 1);
+			const second = await recordIn(id, 2);
+			// 别的会话的写把指针数推过上限（2）：清理这时跑，只清闲置的，这个会话的指针刚用过，不能清。
+			for (let i = 0; i < 3; i++) {
+				const other = await newSession("running", await newProject());
+				await sweeping.append(other.id, userBody(i));
+			}
+			sweeping.announce(id, second);
+			await eventually(() => expect(shape(out)).toEqual([1, 2]));
+			sweeping.announce(id, first);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(shape(out)).toEqual([1, 2]);
+			stop();
+		});
+
 		it("会话那一行的锁强度是 FOR NO KEY UPDATE：和外键检查加的共享锁（FOR KEY SHARE）不冲突，写事件的事务和插入带会话引用的行的事务互不等待", async () => {
 			const { id } = await newSession("running", await newProject());
 			const locker = await database.pool.connect();

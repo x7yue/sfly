@@ -19,9 +19,9 @@ import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
 import { type FollowSink, follow, REPLAY_BATCH } from "./follow.js";
 
-/** 推送指针（{@link SessionStore.#cursors}）多到这个数时，顺手清掉闲置的。 */
+/** 推送指针（{@link SessionStore.#cursors}）多到这个数时，顺手清掉闲置的（{@link SessionStoreDeps.cursorSweepSize}）。 */
 const CURSOR_SWEEP_SIZE = 1_000;
-/** 闲置多久（毫秒）的推送指针可以清掉：写事务最长也只等 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}，远小于它。 */
+/** 闲置多久（毫秒）的推送指针可以清掉：写事务最长也只等 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}，远小于它（{@link SessionStoreDeps.cursorIdleMs}）。 */
 const CURSOR_IDLE_MS = 10 * 60_000;
 
 /** 库里的一个会话。 */
@@ -152,6 +152,10 @@ export interface SessionStoreDeps {
 	onError?: (what: string, error: unknown) => void;
 	/** 会话令牌的写的事务里等行锁最多等多久（毫秒），默认 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}；测试里调小。 */
 	writeLockTimeoutMs?: number;
+	/** 推送指针多到这个数时顺手清掉闲置的，默认 1000；测试里调小，验证清理只清闲置的、不清还在用的。 */
+	cursorSweepSize?: number;
+	/** 推送指针闲置多久（毫秒）可以清掉，默认 10 分钟（写事务最长也只等锁等待的上限，远小于它）；测试里调小。 */
+	cursorIdleMs?: number;
 	/**
 	 * 测试用的缝：{@link SessionStore.detail} 读到会话那一行之后、读事件之前调用（并等它），用来在这两步之间让这个会话
 	 * 提交别的事件，验证读到的三样东西来自同一个快照。生产里不传。
@@ -643,10 +647,14 @@ export class SessionStore {
 		if (cursor === undefined) this.#cursors.set(sessionId, { published: seq - 1, usedAt: now });
 		else cursor.usedAt = now;
 		// 多了才清，而且至多每分钟扫一遍（写路径上不为它多花时间）。
-		if (this.#cursors.size > CURSOR_SWEEP_SIZE && now - this.#sweptAt > 60_000) {
+		if (
+			this.#cursors.size > (this.deps.cursorSweepSize ?? CURSOR_SWEEP_SIZE) &&
+			now - this.#sweptAt > 60_000
+		) {
 			this.#sweptAt = now;
+			const idleMs = this.deps.cursorIdleMs ?? CURSOR_IDLE_MS;
 			for (const [id, c] of this.#cursors) {
-				if (now - c.usedAt > CURSOR_IDLE_MS) this.#cursors.delete(id);
+				if (now - c.usedAt > idleMs) this.#cursors.delete(id);
 			}
 		}
 	}
@@ -662,7 +670,7 @@ export class SessionStore {
 	/**
 	 * 推送一条已经提交的持久事件，**推送的顺序等于序号的顺序，不漏、不重**。每个会话记着「已经推送到的序号」（`published`）：
 	 * - 序号正好是 `published + 1`：直接推；
-	 * - 序号不大于 `published`：已经被前面的一次补推推过了，不再推；
+	 * - 序号不大于 `published`：已经被前面的一次补推推过了，不再推（下面的循环不执行）；
 	 * - 序号更大：比它小的别的事件已经提交（会话那一行的行锁保证：提交的先后就是序号的先后）、还没推——比如先提交的平台记录
 	 *   还没轮到推送——从库里读 `published` 之后已经提交的事件，按序号推到这一条为止。
 	 * 事件流的实时阶段按 `seq` 去重，先推了大的序号，后到的小序号就被当作「已经发过」丢掉，所以顺序不能乱。
@@ -673,7 +681,6 @@ export class SessionStore {
 		const cursor = this.#cursors.get(sessionId) ?? { published: event.seq - 1, usedAt: Date.now() };
 		this.#cursors.set(sessionId, cursor);
 		cursor.usedAt = Date.now();
-		if (event.seq <= cursor.published) return;
 		if (event.seq === cursor.published + 1) {
 			this.#live.publish(sessionId, event);
 			cursor.published = event.seq;
