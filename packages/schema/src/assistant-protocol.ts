@@ -63,6 +63,8 @@ import {
  * - **轮次不大于记号的 `prompt` 一律回 202、以 `stopped` 结束、不起 pi**（`turn_end.reason` 写这一轮到之前已经要求停止了）。
  *   **收到 `prompt` 不会清掉记号**，也不改任何别的状态：控制面已经放弃的轮次（轮次不大于某次 `abort` 带的 N 的，轮次只增），
  *   它们的 `prompt` 在任何先后下都不会再跑，晚到多久、记号被用过几次都一样。轮次比记号大的 `prompt` 不受记号影响。
+ *   **控制面保证两件事，记号才起作用**：`prompt` 的轮次总比它之前发过的 `prompt` 都大；放弃一轮（`prompt` 超时、用户停止）时，带着这一轮的
+ *   轮次发过 `abort`（这次 `abort` 是尽力而为的：没送到时记号不在，晚到的 `prompt` 会照常做，控制面靠之后点停止时再补发一次兜底）。
  * - 十分钟没有被提高就过期，过期的记号当作没有；助手服务重启之后不记得，当作没有；`end` 不动它。助手服务可以限制同时记着记号的
  *   会话数，满了丢最早的：对控制面没有区别。
  *
@@ -104,7 +106,7 @@ import {
  *    这一轮还没有把 `prompt` 交给 pi 的（在等旧的一轮、起进程、准备 skill），没有可清的、可中止的，也没有 `agent_settled` 要等：这一步什么也不写，
  *    不再交给 pi，直接进入第 5 步（有旧的一轮在停止的话，第 5 步在旧的一轮的 `turn_end` 之后）。
  * 3. T0：开始计 {@link ASSISTANT_ABORT_SETTLE_MS}。**起点是 T0，不是 `abort` 写出去或者得到回应的那一刻；`clear_queue` 有没有回应
- *    也不等。** 在这段时间内 pi 报告了 `agent_settled`：进入第 5 步，**pi 进程留着**，下一轮接着用。到了时间还没有 `agent_settled`
+ *    也不等。** 在 T0 加这段时间之内 pi 报告了 `agent_settled`：进入第 5 步，**pi 进程留着**，下一轮接着用。到了 T0 加这段时间还没有 `agent_settled`
  *    （pi 卡住时，`clear_queue`、`abort` 都可能不回应）：结束 pi 进程，先关 stdin、发 SIGTERM，{@link ASSISTANT_PROCESS_KILL_GRACE_MS}
  *    之后还没有退出就 SIGKILL，进程退出之后进入第 5 步。pi 中止正在跑的命令、工作台上命令的进程树随连接断开结束，
  *    #539 第 6 题的实测：`abort` 0.04 到 0.08 秒回应，工作台上的命令 0.1 秒内消失。
@@ -196,7 +198,7 @@ import {
  * | 状态和命令的回应 | dev 上现在没有「在停止」这个状态：撞上记号的 `prompt` 除外（见「中止记号」一行），有一轮在（不论在做还是在停止，`abort` 之后进程还在退出时也一样）都回 409 `turn_running`。要做：按「一轮的状态」的表 | 假助手服务（`apps/server/test/support/fake-assistant.ts`）现在先判 409、后看记号，和助手服务相反；要做：照表，包括「旧的一轮过一会儿才结束」 |
  * | `steer` | dev 上现在没有这条路由（404）。要做：接受、留着、送到、`steer_queue`、`no_turn_running` | dev 上现在在做时发话回 409 `turn_running`。要做：写 `user_message`（`steer: true`）、转发（带 `turn`）、没有送到时的 `steer_dropped` |
  * | `end` | dev 上现在没有这条路由（404）。要做 | 要做：`POST /sessions/:id/end` 和上面的先后。dev 上没有 |
- * | 停止 | dev 上现在 `abort` 直接结束 pi 进程（先关 stdin、SIGTERM，{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 之后 SIGKILL，进程退出之后发 `turn_end`）。要做：按「停止一轮」（`clear_queue`、`abort`、等 `agent_settled`、不行才结束进程；到了上限走同一条路） | dev 上现在等结局的时间是 `STOP_GRACE_MS`（13 秒，{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 加 {@link ASSISTANT_STOP_MARGIN_MS}），从收到 `abort` 的 202 起算。要做：换成 {@link ASSISTANT_STOP_WAIT_MS}（23 秒）、从发出 `abort` 起算；自己补结局时补 `steer_dropped` |
+ * | 停止 | dev 上现在 `abort` 直接结束 pi 进程（先关 stdin、SIGTERM，{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 之后 SIGKILL，进程退出之后发 `turn_end`）。要做：按「停止一轮」（`clear_queue`、`abort`、等 `agent_settled`、不行才结束进程；到了上限走同一条路） | dev 上现在等结局的时间是 `STOP_GRACE_MS`（13 秒，{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 加 {@link ASSISTANT_STOP_MARGIN_MS}），从 `abort` 命令返回（收到 202，或者超时、连接断开这类结果未知）之后起算。要做：换成 {@link ASSISTANT_STOP_WAIT_MS}（23 秒）、从发出 `abort` 起算；自己补结局时补 `steer_dropped` |
  * | 中止记号 | dev 上现在：每个会话一个记号，留轮次最大的，10 分钟过期，总数 1000；`prompt` 先看记号，**轮次等于记号**的才挡住并取走记号，轮次比记号小的照常做（有一条测试固定了它：先中止第 5 轮、再中止第 3 轮，第 3 轮照常做完）；轮次比记号大的清掉记号；`abort` 只在轮次比助手服务记得的最近一轮大时才记（助手服务重启之后还没见过这个会话的轮次时也记）。要做：只增不减，轮次不大于记号的 `prompt` 都挡住、不取走记号，`abort` 一律提到 N（过期、总数上限不变）；那条测试跟着改 | 假助手服务要和这里一致 |
  * | 旧的一轮还在停止时来了新的一轮 | dev 上现在先看记号，再有一轮在（包括在停止）就回 409 `turn_running`。要做：登记、202、等旧的一轮结束再起，等不到以 `failed` 结束 | 不用为此多等 |
  * | 排队 | 不知道项目，不排队 | 要做：同一个项目一次只把一轮交给助手服务，其余在控制面排队 |
