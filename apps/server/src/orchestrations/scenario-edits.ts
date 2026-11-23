@@ -1,10 +1,12 @@
 import {
+	type AgentDevReport,
 	applyEditOperations,
-	compareVersions,
+	compareReleases,
 	type EditContext,
 	type NodeTypeIo,
 	newestVersion,
 	packageKey,
+	devNodeTypes as pickDevNodeTypes,
 } from "@sfly/orchestration";
 import {
 	DEV_VERSION,
@@ -15,7 +17,7 @@ import {
 	removedNodesMessage,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { asc, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { z } from "zod";
 import type { Db } from "../db/database.js";
 import { agents, nodePackages, orchestrations as orchestrationRows } from "../db/schema.js";
@@ -88,25 +90,11 @@ export async function prepareEdits(
 	return { kind: "edited", document: parsed.data, before: head.document, base: head.number };
 }
 
-/** 开发包的元信息（Agent 上报的，没有经过发布时的校验）里的节点类型；读不出来时 undefined。 */
-function devNodeTypes(metadata: Record<string, unknown> | null): NodeTypeIo[] | undefined {
-	const nodes = metadata?.nodes;
-	if (!Array.isArray(nodes)) return undefined;
-	const valid = nodes.every(
-		(n) =>
-			typeof n === "object" &&
-			n !== null &&
-			typeof n.name === "string" &&
-			typeof n.inputs === "object" &&
-			n.inputs !== null &&
-			typeof n.inputs.properties === "object",
-	);
-	return valid ? (nodes as NodeTypeIo[]) : undefined;
-}
-
 /**
  * 加节点要用到的节点包信息：文档里锁定的包和操作里提到的包，各自已发布的版本（最新的那个是默认版本）和用到的版本的节点类型。
- * 开发版本的节点类型取在线的 Agent 上报的（按 Agent 名称取第一台；画布上的添加节点菜单也是这样）；没有在线的 Agent 加载时不知道。
+ * 开发版本的节点类型和保存时的检查（document-checks.ts）、画布同一套取法（`@sfly/orchestration` 的 `devNodeTypes`）：
+ * 只看用到这个包的节点派发到的 Agent——文档里已有的节点，加上这组操作加的节点和改了 Agent 的节点——都在线、都加载了、
+ * 内容相同才用，否则当作不知道（相关检查跳过）。只看这个场景所在项目的 Agent：别的项目的 Agent 上报的东西不进报错。
  */
 async function editContext(
 	db: Db,
@@ -121,20 +109,21 @@ async function editContext(
 	const projects = scenario ? readableProjects(scenario.projectId) : [];
 	const adds = operations.flatMap((op) => (op.op === "add_node" ? [op] : []));
 	const names = new Set([...Object.keys(doc.packages), ...adds.map((op) => op.package)]);
-	const dev = new Map<string, NodeTypeIo[] | undefined>();
-	const online = await db
-		.select({ info: agents.info, projectId: agents.projectId })
-		.from(agents)
-		.where(eq(agents.status, "online"))
-		.orderBy(asc(agents.name));
-	// 包名写错时只从这个场景读得到的包里找相近的（本项目的、公共项目的；开发版本只看本项目的 Agent），不列出别的项目的包名。
-	const devHere = new Set<string>();
-	for (const { info, projectId } of online) {
-		for (const p of info.dev_packages ?? []) {
-			if (!dev.has(p.name)) dev.set(p.name, devNodeTypes(p.metadata));
-			if (projects.includes(projectId)) devHere.add(p.name);
-		}
-	}
+	const projectAgents = scenario
+		? await db
+				.select({ name: agents.name, status: agents.status, info: agents.info })
+				.from(agents)
+				.where(eq(agents.projectId, scenario.projectId))
+		: [];
+	const reports: AgentDevReport[] = projectAgents.map((row) => ({
+		name: row.name,
+		online: row.status === "online",
+		devPackages: new Map((row.info.dev_packages ?? []).map((p) => [p.name, p.metadata?.nodes])),
+	}));
+	// 本项目在线的 Agent 加载着的开发包：没锁定时默认用 dev 的依据，也是包名写错时的线索（不列出别的项目的包名）。
+	const devHere = new Set(
+		reports.filter((r) => r.online).flatMap((r) => [...r.devPackages.keys()]),
+	);
 	// 这个场景读得到的已发布版本（版本写错时列出来）：一次读完，行数是已发布的版本数。
 	const releases = new Map<string, string[]>();
 	for (const row of await db
@@ -143,7 +132,8 @@ async function editContext(
 		.where(inArray(nodePackages.projectId, projects))) {
 		releases.set(row.name, [...(releases.get(row.name) ?? []), row.version]);
 	}
-	for (const versions of releases.values()) versions.sort((a, b) => compareVersions(b, a));
+	for (const versions of releases.values()) versions.sort((a, b) => compareReleases(b, a));
+	const devTypes = pickDevNodeTypes(dispatchView(doc, operations), reports);
 	const catalog = new Map<string, readonly NodeTypeIo[] | null>();
 	const defaults = new Map<string, string | undefined>();
 	for (const name of names) {
@@ -154,7 +144,7 @@ async function editContext(
 				.from(nodePackages)
 				.where(eq(nodePackages.name, name))
 		).map((r) => r.version);
-		const fallback = newestVersion(published) ?? (dev.has(name) ? DEV_VERSION : undefined);
+		const fallback = newestVersion(published) ?? (devHere.has(name) ? DEV_VERSION : undefined);
 		defaults.set(name, fallback);
 		const wanted = new Set(
 			[
@@ -165,7 +155,7 @@ async function editContext(
 		);
 		for (const version of wanted) {
 			if (version === DEV_VERSION) {
-				const types = dev.get(name);
+				const types = devTypes.get(name);
 				if (types) catalog.set(packageKey(name, version), types);
 				continue;
 			}
@@ -181,4 +171,34 @@ async function editContext(
 		packageNames: [...new Set([...releases.keys(), ...devHere])].sort(),
 		publishedVersions: (name) => releases.get(name) ?? [],
 	};
+}
+
+/**
+ * 算开发版本的派发目标用的文档：每个包都当作锁定了开发版本（用不用 dev 由调用方按版本决定），节点是文档里已有的，
+ * 加上这组操作要加的节点（`agent` 没写就用默认 Agent）和改了 Agent 的节点（改之前、改之后的 Agent 都算：
+ * 两台的声明不一样时当作不知道）。只用来定「派发到哪几台」，不保存。
+ */
+function dispatchView(
+	doc: StoredOrchestrationDocument,
+	operations: readonly EditOperation[],
+): StoredOrchestrationDocument {
+	type Dispatch = { kind: "package"; package: string; agent?: string };
+	const nodes: Dispatch[] = doc.nodes.flatMap((n) =>
+		n.kind === "package" ? [{ kind: "package", package: n.package, agent: n.agent }] : [],
+	);
+	// 节点 ID → 包名（已有的包节点，和这组操作里写了 ID 的新节点）：改 Agent 的操作要知道节点用的是哪个包。
+	const packageOf = new Map<string, string>();
+	for (const n of doc.nodes) if (n.kind === "package") packageOf.set(n.id, n.package);
+	const packages: Record<string, string> = {};
+	for (const op of operations) {
+		if (op.op === "add_node") {
+			nodes.push({ kind: "package", package: op.package, agent: op.agent });
+			if (op.id) packageOf.set(op.id, op.package);
+		} else if (op.op === "set" && op.field === "agent" && typeof op.value === "string") {
+			const pkg = packageOf.get(op.node);
+			if (pkg) nodes.push({ kind: "package", package: pkg, agent: op.value });
+		}
+	}
+	for (const n of nodes) packages[n.package] = DEV_VERSION;
+	return { ...doc, packages, nodes: nodes as never };
 }

@@ -382,6 +382,26 @@ describe("场景的局部编辑", () => {
 							packageMetadata({ name: "hidden-dev", version: "dev", nodes: [] }),
 						),
 					},
+					// 和本项目同名的开发包，别的项目里上报的节点类型不一样。
+					{
+						name: "local-probe",
+						source: "/src/local-probe",
+						metadataJson: JSON.stringify(
+							packageMetadata({
+								name: "local-probe",
+								version: "dev",
+								nodes: [
+									{
+										name: "alpha_secret_node",
+										title: "x",
+										entry: "local_probe.x:x",
+										inputs: { type: "object", properties: {} },
+										outputs: { type: "object", properties: {} },
+									},
+								],
+							}),
+						),
+					},
 				],
 			});
 			const pool = new pg.Pool({ connectionString: cp.database.url, max: 1 });
@@ -404,6 +424,17 @@ describe("场景的局部编辑", () => {
 					);
 					expect(JSON.stringify(error)).not.toMatch(/secret-kit|hidden-dev/);
 				}
+				// 别的项目里只在那边加载的开发包，这边加不上，报错里也没有它的东西。
+				const onlyThere = await problemOf(
+					await edit(id, [{ op: "add_node", package: "hidden-dev", node: "x" }]),
+				);
+				expect(JSON.stringify(onlyThere)).not.toMatch(/hidden-dev@dev/);
+				// 同名的开发包：节点类型只看本项目里节点派到的 Agent（agent-a），别的项目上报的节点类型不出现在报错里。
+				const sameName = await problemOf(
+					await edit(id, [{ op: "add_node", package: "local-probe", node: "nope" }]),
+				);
+				expect(sameName.message).toContain("stats");
+				expect(JSON.stringify(sameName)).not.toContain("alpha_secret_node");
 				// 对照：同样的写错在本项目的包上给出线索。
 				const here = await problemOf(
 					await edit(id, [{ op: "add_node", package: "local-prob", node: "stats" }]),

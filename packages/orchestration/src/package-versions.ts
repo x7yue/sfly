@@ -1,7 +1,7 @@
 /** 节点包版本号的比较：画布（升级提示、节点包页的版本排序、添加节点时的默认版本）和控制面（局部编辑加节点时的默认版本）共用。 */
 
 /**
- * 比较两个版本号（PEP 440 的核心规则）：release 段逐段数值比较（缺的段当 0，1.0 与 1.0.0 相等）；
+ * 比较两个版本号（不是 PEP 440 的完整规则，只取它的核心）：release 段逐段数值比较（缺的段当 0，1.0 与 1.0.0 相等）；
  * 字母段是预发布标记，排在同号正式版之前（1.0rc1 < 1.0）；都是字母时按字典序。
  * 返回值 < 0 表示 a 更旧。
  */
@@ -44,9 +44,18 @@ function versionTokens(version: string): Array<number | string> {
 	return tokens;
 }
 
-/** 一组版本号里最新的（按版本号比较，不是发布时间）；没有版本时 undefined。 */
+/**
+ * 两个版本号谁更新，按版本号相等时（`1.0` 和 `1.0.0`）再按字符串（码位）比，结果总是确定的：排序、取最新都用它。
+ * 小于 0 表示 a 更旧。命令行（sdk/python/src/sfly/cli/scenario_ops.py）同一个规则，用例表在
+ * testdata/version-order-cases.json。
+ */
+export function compareReleases(a: string, b: string): number {
+	return compareVersions(a, b) || (a < b ? -1 : a > b ? 1 : 0);
+}
+
+/** 一组版本号里最新的（按版本号比较，不是发布时间；相等时见 {@link compareReleases}）；没有版本时 undefined。 */
 export const newestVersion = (versions: readonly string[]): string | undefined =>
 	versions.reduce<string | undefined>(
-		(a, b) => (a === undefined || compareVersions(b, a) > 0 ? b : a),
+		(a, b) => (a === undefined || compareReleases(b, a) > 0 ? b : a),
 		undefined,
 	);

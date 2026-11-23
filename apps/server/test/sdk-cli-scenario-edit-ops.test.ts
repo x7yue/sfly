@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
-import { publishPackage } from "./support/package-archive.js";
+import { eventually } from "./support/eventually.js";
+import { FakeAgent } from "./support/fake-agent.js";
+import { packageMetadata, publishPackage } from "./support/package-archive.js";
 import { startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -213,6 +215,136 @@ describe("sfly scenario edit → 控制面", () => {
 				host: "1.10",
 				count: -5,
 			});
+		});
+
+		it("开发版本的值按节点派发到的那台 Agent 的声明解析（两台声明不同时），和控制面的检查一个口径", async () => {
+			// 两台在线的 Agent 都加载着开发包 devkit：build1 声明 tag 是整数，build-2 声明是字符串。名字按字符排
+			// build-2 在前，按数据库的排序 build1 在前：取声明不能看名字的顺序，要看节点派发到哪台。
+			const agents = await Promise.all(
+				[
+					["build1", { type: "integer" }],
+					["build-2", { type: "string" }],
+				].map(([name, tag]) =>
+					FakeAgent.connect(cp.grpcUrl, {
+						name: name as string,
+						devPackages: [
+							{
+								name: "devkit",
+								source: "/src/devkit",
+								metadataJson: JSON.stringify(
+									packageMetadata({
+										name: "devkit",
+										version: "dev",
+										nodes: [
+											{
+												name: "t",
+												title: "t",
+												entry: "devkit.nodes:t",
+												inputs: { type: "object", properties: { tag: tag as object } },
+												outputs: { type: "object", properties: {} },
+											},
+											...(name === "build1"
+												? [
+														{
+															name: "only_b1",
+															title: "only_b1",
+															entry: "devkit.nodes:only_b1",
+															inputs: { type: "object", properties: {} },
+															outputs: { type: "object", properties: {} },
+														},
+													]
+												: []),
+										],
+									}),
+								),
+							},
+						],
+					}),
+				),
+			);
+			try {
+				await eventually(async () => {
+					const { agents: listed } = await api.getJson<{
+						agents: Array<{ name: string; status: string }>;
+					}>("/agents");
+					for (const name of ["build1", "build-2"]) {
+						expect(listed.find((a) => a.name === name)?.status).toBe("online");
+					}
+				});
+				const id = await api.orchestrationWith(
+					{ ...baseDocument(), default_agent: "build-2" },
+					"编辑-开发版本按派发目标",
+				);
+				// 派到默认 Agent build-2（字符串）：3 存成 "3"，没有警告。
+				const onDefault = await cli(
+					"scenario",
+					"edit",
+					id,
+					"add",
+					"devkit/t",
+					"--after",
+					"report",
+					"--id",
+					"a",
+					"--input",
+					"tag=3",
+				);
+				expect(onDefault.code, onDefault.stdout + onDefault.stderr).toBe(0);
+				expect(onDefault.stdout).not.toContain("警告");
+				// 另选 build1（整数）：3 存成 3，没有警告。场景里已有的 devkit 节点派到 build-2、声明不同，
+				// 控制面当作不知道（不检查），命令行也一样（按 JSON 解析）。
+				const onOther = await cli(
+					"scenario",
+					"edit",
+					id,
+					"add",
+					"devkit/t",
+					"--after",
+					"a",
+					"--id",
+					"b",
+					"--agent",
+					"build1",
+					"--input",
+					"tag=3",
+				);
+				expect(onOther.code, onOther.stdout + onOther.stderr).toBe(0);
+				expect(onOther.stdout).not.toContain("警告");
+				const nodes = (await headDoc(id)).nodes;
+				expect(nodes.find((n) => n.id === "a")?.inputs).toEqual({ tag: "3" });
+				expect(nodes.find((n) => n.id === "b")?.inputs).toEqual({ tag: 3 });
+				// 控制面加节点时按派发目标认节点类型：只有 build1 上报的 only_b1，派到默认 Agent build-2 时加不上，
+				// 另选 build1 时加得上。
+				const fresh = await api.orchestrationWith(
+					{ ...baseDocument(), default_agent: "build-2" },
+					"编辑-开发版本的节点类型按派发目标",
+				);
+				const onB2 = await cli(
+					"scenario",
+					"edit",
+					fresh,
+					"add",
+					"devkit/only_b1",
+					"--after",
+					"report",
+				);
+				expect(onB2.code).toBe(2);
+				expect(onB2.stderr).toContain("没有节点类型 only_b1");
+				const onB1 = await cli(
+					"scenario",
+					"edit",
+					fresh,
+					"add",
+					"devkit/only_b1",
+					"--after",
+					"report",
+					"--agent",
+					"build1",
+				);
+				expect(onB1.code, onB1.stdout + onB1.stderr).toBe(0);
+			} finally {
+				await Promise.all(agents.map((a) => a.disconnect()));
+			}
 		});
 
 		it("结果和原来相同：不存出新版本，写明没有改动", async () => {

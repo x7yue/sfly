@@ -139,7 +139,7 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         parents=nested,
         help="改一个节点的字段：inputs.<输入名>、agent、display_name、note、always、timeout……",
         description="改一个节点的一个字段：包节点能改 inputs.<输入名>、agent、display_name、note、"
-        "always、timeout、retries、queue_timeout；异步任务节点能改 display_name、note，"
+        "always、timeout、retries、queue_timeout；入口节点、异步任务节点能改 display_name、note，"
         "停止子流程节点还能改 always，子流程入口节点只能改 note。"
         "不写值就是去掉这个字段。",
     )
@@ -207,12 +207,17 @@ def _needs_types(texts: list[str]) -> bool:
 
 
 def _node_inputs(
-    client: Client, document: dict[str, Any], package: str, node: str, version: str | None
+    client: Client,
+    document: dict[str, Any],
+    package: str,
+    node: str,
+    version: str | None,
+    agent: str | None = None,
 ) -> dict[str, Any]:
     """节点类型的输入声明（输入名 → schema）；查不到时是空的（值照常按 JSON 解析）。
 
     版本和控制面加节点时一样取：给了用给的，场景锁定了用锁定的，否则最新发布的（按版本号比较），
-    没有发布过（`GET /packages/<名>` 是 404）时取在线的 Agent 上报的开发版本。"""
+    没有发布过（`GET /packages/<名>` 是 404）时用开发版本。`agent` 是这个节点另选的 Agent。"""
     version = version or document.get("packages", {}).get(package)
     try:
         if version is None:
@@ -224,7 +229,7 @@ def _node_inputs(
                 published = []
             version = _newest_version([str(v["version"]) for v in published]) or "dev"
         if version == "dev":
-            nodes = _dev_nodes(client, package)
+            nodes = _dev_nodes(client, document, package, agent)
         else:
             detail = client.get(f"/packages/{segment(package)}/versions/{segment(version)}")
             nodes = _field(detail.get("metadata"), "nodes")
@@ -241,31 +246,85 @@ def _field(value: Any, name: str) -> Any:
     return value.get(name) if isinstance(value, dict) else None
 
 
-def _dev_nodes(client: Client, package: str) -> Any:
-    """在线的 Agent 上报的开发版本的节点类型（按 Agent 名字取第一个上报了这个包的）。"""
-    agents = sorted(client.get("/agents")["agents"], key=lambda a: str(a.get("name")))
-    for agent in agents:
-        if agent.get("status") != "online":
-            continue
-        for dev in agent.get("dev_packages") or []:
-            if isinstance(dev, dict) and dev.get("name") == package:
-                return _field(dev.get("metadata"), "nodes")
-    return None
+def _dev_nodes(client: Client, document: dict[str, Any], package: str, agent: str | None) -> Any:
+    """开发版本的节点类型，和控制面同一套取法（`@sfly/orchestration` 的 `devNodeTypes`）：
+    只看用到这个包的节点派发到的 Agent（节点的 Agent，没写就用场景的默认 Agent）——
+    场景里已有的（包锁定了开发版本时），加上这一个——都在线、都加载了、上报的内容合法且相同才用，
+    否则当作不知道（None）。"""
+    default = document.get("default_agent")
+    targets = {agent or default}
+    if document.get("packages", {}).get(package) == "dev":
+        for n in document.get("nodes") or []:
+            if isinstance(n, dict) and n.get("kind") == "package" and n.get("package") == package:
+                targets.add(n.get("agent") or default)
+    if None in targets or "" in targets:
+        return None
+    by_name = {a.get("name"): a for a in client.get("/agents")["agents"] if isinstance(a, dict)}
+    reported = []
+    for name in targets:
+        found = by_name.get(name)
+        if not found or found.get("status") != "online":
+            return None
+        dev = next(
+            (
+                d
+                for d in found.get("dev_packages") or []
+                if isinstance(d, dict) and d.get("name") == package
+            ),
+            None,
+        )
+        nodes = _reported_node_types(_field(dev.get("metadata"), "nodes")) if dev else None
+        if nodes is None:
+            return None
+        reported.append(nodes)
+    first = reported[0]
+    return first if all(r == first for r in reported) else None
+
+
+def _reported_node_types(raw: Any) -> list[Any] | None:
+    """上报的节点类型列表合不合法（和控制面的 `reportedNodeTypes` 同一条规则：每项有名字，
+    输入、输出是 `type: object` 加 `properties`（名字 → 对象）的声明）；合法时原样返回。"""
+    if not isinstance(raw, list):
+        return None
+    for node in raw:
+        if not isinstance(node, dict) or not isinstance(node.get("name"), str):
+            return None
+        for io in (node.get("inputs"), node.get("outputs")):
+            if not isinstance(io, dict) or io.get("type") != "object":
+                return None
+            props = io.get("properties")
+            if not isinstance(props, dict) or not all(isinstance(v, dict) for v in props.values()):
+                return None
+            required = io.get("required")
+            if required is not None and not (
+                isinstance(required, list) and all(isinstance(r, str) for r in required)
+            ):
+                return None
+        description = node.get("description")
+        if description is not None and not isinstance(description, str):
+            return None
+    return raw
 
 
 def _newest_version(versions: list[str]) -> str | None:
-    """一组版本号里最新的，和控制面一个口径（packages/orchestration 的 compareVersions）：
-    按版本号比较，不是按发布时间。"""
+    """一组版本号里最新的，和控制面一个口径（packages/orchestration 的 newestVersion）：
+    按版本号比较，不是按发布时间；按版本号相等（1.0 和 1.0.0）时取字符串排在后面的那个。
+    用例表在 testdata/version-order-cases.json。"""
     newest: str | None = None
     for version in versions:
-        if newest is None or _compare_versions(version, newest) > 0:
+        if newest is None or _compare_releases(version, newest) > 0:
             newest = version
     return newest
 
 
+def _compare_releases(a: str, b: str) -> int:
+    """先按版本号比，相等时按字符串（码位）比：结果总是确定的。"""
+    return _compare_versions(a, b) or (-1 if a < b else 1 if a > b else 0)
+
+
 def _compare_versions(a: str, b: str) -> int:
-    """PEP 440 的核心规则：数字段逐段比较（缺的段当 0），字母段是预发布标记、排在同号正式版之前，
-    都是字母时按字典序。小于 0 表示 a 更旧。"""
+    """不是 PEP 440 的完整规则，只取它的核心：数字段逐段比较（缺的段当 0），字母段是预发布标记、
+    排在同号正式版之前，都是字母时按字典序。小于 0 表示 a 更旧。"""
     ta, tb = _version_tokens(a), _version_tokens(b)
     for i in range(max(len(ta), len(tb))):
         x = ta[i] if i < len(ta) else None
@@ -361,11 +420,13 @@ def _types_for(client: Client, scenario_id: str, args: argparse.Namespace) -> di
         return {}
     if args.edit_op == "add":
         package, _, node = args.type.partition("/")
-        return _node_inputs(client, document, package, node, args.version)
+        return _node_inputs(client, document, package, node, args.version, args.agent)
     target = next((n for n in document.get("nodes", []) if n.get("id") == args.node), None)
     if not target or target.get("kind") != "package":
         return {}
-    return _node_inputs(client, document, target["package"], target["node"], None)
+    return _node_inputs(
+        client, document, target["package"], target["node"], None, target.get("agent")
+    )
 
 
 def _read_operations(path: str) -> list[dict[str, Any]]:

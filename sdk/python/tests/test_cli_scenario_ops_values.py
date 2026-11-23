@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from sfly.cli.client import ApiError, Client
-from sfly.cli.scenario_ops import _accepts, _needs_types, _newest_version, _node_inputs, _value
+from sfly.cli.scenario_ops import (
+    _accepts,
+    _compare_versions,
+    _needs_types,
+    _newest_version,
+    _node_inputs,
+    _value,
+)
 
 STRING: dict[str, Any] = {"type": "string"}
 INTEGER: dict[str, Any] = {"type": "integer"}
@@ -70,6 +79,7 @@ NOT_FOUND = ApiError(404, "not_found", "节点包 devkit 不存在")
 
 
 def _agent(name: str, metadata: Any, status: str = "online") -> dict[str, Any]:
+    """一台 Agent：加载着开发包 devkit，上报的元信息是 `metadata`。"""
     return {
         "name": name,
         "status": status,
@@ -77,8 +87,20 @@ def _agent(name: str, metadata: Any, status: str = "online") -> dict[str, Any]:
     }
 
 
-def _dev_nodes(inputs: dict[str, Any]) -> dict[str, Any]:
-    return {"nodes": [{"name": "t", "inputs": {"type": "object", "properties": inputs}}]}
+def _dev_nodes(inputs: Any) -> dict[str, Any]:
+    return {
+        "nodes": [
+            {
+                "name": "t",
+                "inputs": {"type": "object", "properties": inputs},
+                "outputs": {"type": "object", "properties": {}},
+            }
+        ]
+    }
+
+
+INTEGER_TAG = {"tag": INTEGER}
+DEFAULT_A = {"default_agent": "a"}
 
 
 def test_unpublished_package_reads_the_dev_version_from_online_agents() -> None:
@@ -90,7 +112,7 @@ def test_unpublished_package_reads_the_dev_version_from_online_agents() -> None:
             "/agents": {"agents": [_agent("b", _dev_nodes(TAG)), _agent("a", None, "offline")]},
         }
     )
-    schemas = _node_inputs(cast(Client, client), {}, "devkit", "t", None)
+    schemas = _node_inputs(cast(Client, client), {"default_agent": "b"}, "devkit", "t", None)
     assert schemas == TAG
     assert _value("1.10", schemas["tag"]) == "1.10"
 
@@ -101,12 +123,64 @@ def test_dev_metadata_that_is_missing_or_malformed_means_no_types(metadata: Any)
     client = _FakeClient(
         {"/packages/devkit": NOT_FOUND, "/agents": {"agents": [_agent("a", metadata)]}}
     )
-    assert _node_inputs(cast(Client, client), {}, "devkit", "t", None) == {}
+    assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
+
+
+@pytest.mark.parametrize("properties", ["x", [1], {"tag": "string"}, None])
+def test_dev_properties_that_are_malformed_mean_no_types(properties: Any) -> None:
+    """属性一层格式不对（照控制面的 reportedNodeTypes 规则）：当作不知道，不抛异常。"""
+    client = _FakeClient(
+        {
+            "/packages/devkit": NOT_FOUND,
+            "/agents": {"agents": [_agent("a", _dev_nodes(properties))]},
+        }
+    )
+    assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
+
+
+def _two_agents() -> _FakeClient:
+    """两台在线的 Agent 都加载着 devkit：a 声明 tag 是整数，b 声明是字符串
+    （名字的顺序和声明无关）。"""
+    return _FakeClient(
+        {
+            "/packages/devkit": NOT_FOUND,
+            "/agents": {
+                "agents": [_agent("b", _dev_nodes(TAG)), _agent("a", _dev_nodes(INTEGER_TAG))]
+            },
+        }
+    )
+
+
+def test_dev_types_come_from_the_agent_the_node_is_dispatched_to() -> None:
+    """和控制面一样按派发目标取：节点的 Agent，没写就用场景的默认 Agent。"""
+    client = cast(Client, _two_agents())
+    default_a = _node_inputs(client, DEFAULT_A, "devkit", "t", None)
+    assert default_a == INTEGER_TAG
+    assert _value("3", default_a["tag"]) == 3
+    on_b = _node_inputs(client, DEFAULT_A, "devkit", "t", None, agent="b")
+    assert on_b == TAG
+    assert _value("3", on_b["tag"]) == "3"
+    # 没有派发目标（没写 Agent，也没有默认 Agent）、目标不在线或没加载：不知道。
+    assert _node_inputs(client, {}, "devkit", "t", None) == {}
+    assert _node_inputs(client, DEFAULT_A, "devkit", "t", None, agent="nobody") == {}
+
+
+def test_dev_types_are_unknown_when_nodes_of_the_package_go_to_agents_that_disagree() -> None:
+    """场景里已经有用这个包的节点派到另一台、声明不同：和控制面一样当作不知道。"""
+    document = {
+        "default_agent": "a",
+        "packages": {"devkit": "dev"},
+        "nodes": [{"id": "x", "kind": "package", "package": "devkit", "node": "t", "agent": "b"}],
+    }
+    client = cast(Client, _two_agents())
+    assert _node_inputs(client, document, "devkit", "t", None) == {}
+    # 都派到 b：用 b 的。
+    assert _node_inputs(client, document, "devkit", "t", None, agent="b") == TAG
 
 
 def test_other_errors_reading_the_package_still_fall_back_to_no_types() -> None:
     client = _FakeClient({"/packages/devkit": ApiError(500, "internal", "出错了")})
-    assert _node_inputs(cast(Client, client), {}, "devkit", "t", None) == {}
+    assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
     assert client.paths == ["/packages/devkit"]
 
 
@@ -127,17 +201,25 @@ def test_latest_published_version_is_by_version_number_like_the_control_plane() 
     assert client.paths[-1] == "/packages/kit/versions/1.10.0"
 
 
-@pytest.mark.parametrize(
-    ("older", "newer"),
-    [
-        ("1.2.0", "1.10.0"),
-        ("1.0rc1", "1.0"),
-        ("1.0", "1.0.1"),
-        ("1.0a1", "1.0b1"),
-        ("0.9", "1"),
-    ],
+VERSION_CASES = json.loads(
+    (Path(__file__).resolve().parents[3] / "testdata" / "version-order-cases.json").read_text(
+        encoding="utf-8"
+    )
 )
-def test_newest_version_follows_the_control_plane_order(older: str, newer: str) -> None:
-    assert _newest_version([older, newer]) == newer
-    assert _newest_version([newer, older]) == newer
-    assert _newest_version(["1.0", "1.0.0"]) in ("1.0", "1.0.0")
+
+
+@pytest.mark.parametrize(("older", "newer"), VERSION_CASES["older_newer"])
+def test_version_order_follows_the_shared_table(older: str, newer: str) -> None:
+    """共用用例表 testdata/version-order-cases.json：和控制面、画布的 compareVersions 一个口径。"""
+    assert _compare_versions(older, newer) < 0
+    assert _compare_versions(newer, older) > 0
+
+
+@pytest.mark.parametrize(("a", "b"), VERSION_CASES["equal"])
+def test_equal_versions_follow_the_shared_table(a: str, b: str) -> None:
+    assert _compare_versions(a, b) == 0
+
+
+@pytest.mark.parametrize("case", VERSION_CASES["newest"])
+def test_newest_version_follows_the_shared_table(case: dict[str, Any]) -> None:
+    assert _newest_version(case["versions"]) == case["newest"]
