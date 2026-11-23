@@ -68,6 +68,7 @@ import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
+import { installProcessGuards } from "./process-guards.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
 declare const SFLY_BUNDLED: boolean | undefined;
@@ -178,6 +179,10 @@ const controlPlane = await startControlPlane({
 console.log(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
 );
+
+// 进程级的未捕获异常和未处理的拒绝：记错误日志、有序关闭、退出码 1 退出，由部署的重启策略拉起来（#563，
+// docs/ARCHITECTURE.md §6.9）；数据库连接断了不走这里，在出错的地方处理，进程不退出。
+installProcessGuards({ shutdown: () => controlPlane.close() });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
 	process.once(signal, () => {

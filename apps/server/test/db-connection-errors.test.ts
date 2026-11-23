@@ -30,15 +30,21 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("数据库连接在事务进行中被结束", () => {
 	let database: TestDatabase;
 	let cp: ControlPlaneProcess;
+	let agent: FakeAgent | undefined;
 
 	beforeEach(async () => {
 		database = await createTestDatabase("sfly_dbconn");
 		cp = await ControlPlaneProcess.start(database.url);
 	}, 90_000);
 	afterEach(async () => {
+		await agent?.disconnect();
+		agent = undefined;
 		await cp.stop();
 		await database.drop();
 	});
+
+	const runStatus = async (runId: string) =>
+		((await (await cp.request("GET", `/runs/${runId}`)).json()) as { status: string }).status;
 
 	/** 进程还活着、能回答请求。 */
 	const expectAlive = async () => {
@@ -78,33 +84,50 @@ describe("数据库连接在事务进行中被结束", () => {
 		expect(retried.status).toBe(201);
 	}, 90_000);
 
-	it("引擎结束运行的事务：进程不退出，等数据库恢复正常之后运行由已有的恢复逻辑接手，走到结束", async () => {
+	it("引擎写任务结果的事务：进程不退出，这次尝试以明确的错误（控制面无法保存任务结果）结束，之后的运行正常", async () => {
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
 		const id = await createScenario("连接被结束-引擎");
 		expect(
 			(
 				await cp.request("POST", `/orchestrations/${id}/versions`, {
 					base_version: 0,
-					document: ENTRY_ONLY,
+					document: ECHO,
 				})
 			).status,
 		).toBe(201);
-		await slowDown(database.url, "runs", "update");
-		const trigger = cp.request("POST", `/orchestrations/${id}/runs`, { params: {} });
-		expect(await terminateActive(database.url, 'update "runs"')).toBeGreaterThanOrEqual(1);
-		await trigger.catch(() => undefined);
+		const trigger = async () => {
+			const res = await cp.request("POST", `/orchestrations/${id}/runs`, { params: {} });
+			expect(res.status).toBe(201);
+			return ((await res.json()) as { id: string }).id;
+		};
+		const runId = await trigger();
+		const task = await agent.nextAssign();
+		await agent.started(task);
+
+		// 控制面写这个任务的结果（update "tasks"）时，结束它的连接。
+		await slowDown(database.url, "tasks", "update", 4);
+		const reporting = agent.succeed(task, { v: 1 }).catch(() => undefined);
+		expect(await terminateActive(database.url, 'update "tasks"')).toBeGreaterThanOrEqual(1);
+		await reporting;
 
 		await expectAlive();
-		await speedUp(database.url, "runs", "update");
-		const runs = async () =>
-			(
-				(await (await cp.request("GET", `/orchestrations/${id}/runs`)).json()) as {
-					runs: Array<{ id: string; status: string }>;
-				}
-			).runs;
+		// 已有的「数据库出错」的路径（#207）：结果写不进去，这次尝试以明确的错误结束，不是悬着、也不是进程退出。
 		await eventually(async () => {
-			const [run] = await runs();
-			expect(run?.status).toMatch(/success|failed/);
+			const run = (await (await cp.request("GET", `/runs/${runId}`)).json()) as { status: string };
+			expect(run.status).toBe("failed");
+			expect(JSON.stringify(run)).toContain("控制面无法保存任务结果");
 		}, 30_000);
+		await expectAlive();
+
+		// 之后的运行正常：Agent 重连（假 Agent 不会自己重连），新的运行派发、执行、成功。
+		await speedUp(database.url, "tasks", "update");
+		await agent.disconnect();
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		const second = await trigger();
+		await agent.succeed(await agent.nextAssign(), { v: 2 });
+		await eventually(async () => expect(await runStatus(second)).toBe("success"), 30_000);
+		await expectAlive();
 	}, 120_000);
 
 	it("普通请求（单条语句，不在事务里）：这次请求以 5xx 结束，进程不退出", async () => {
@@ -150,14 +173,12 @@ describe("数据库整体不可用一小段时间再恢复", () => {
 		await database.drop();
 	});
 
-	it("控制面自己恢复：进程不退出、Agent 的连接不断，不需要人工重连；断开时在跑的任务和之后的运行都能走完", async () => {
+	it("控制面自己恢复：进程不退出，不可用期间读接口返回 503、恢复后自己好；Agent 重连之后断开时在跑的任务和之后的运行都能走完", async () => {
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
 		const created = (await (
 			await cp.request("POST", "/orchestrations", { name: "不可用" })
-		).json()) as {
-			id: string;
-		};
+		).json()) as { id: string };
 		await cp.request("POST", `/orchestrations/${created.id}/versions`, {
 			base_version: 0,
 			document: ECHO,
@@ -171,8 +192,9 @@ describe("数据库整体不可用一小段时间再恢复", () => {
 			((await (await cp.request("GET", `/runs/${runId}`)).json()) as { status: string }).status;
 		const firstRun = await trigger();
 		const task = await agent.nextAssign();
+		await agent.started(task);
 
-		// 数据库不可用：现有的连接全断，新连接被拒绝。
+		// 数据库不可用：现有的连接全断，新连接被拒绝。Agent 的心跳在这时落到数据库出错的路径上。
 		await proxy.outage();
 		await agent.heartbeat([task]).catch(() => undefined);
 		await sleep(2500);
@@ -180,12 +202,18 @@ describe("数据库整体不可用一小段时间再恢复", () => {
 		expect(cp.exit, cp.log.slice(-1500)).toBeUndefined();
 		expect((await cp.request("GET", "/health")).status).toBe(503);
 
-		// 数据库恢复：不重启控制面、不重连 Agent，请求和 Agent 都回到正常。
+		// 数据库恢复：控制面不重启，自己回到正常。
 		await proxy.recover();
 		await eventually(
 			async () => expect((await cp.request("GET", "/health")).status).toBe(200),
 			30_000,
 		);
+		// 真实的 Agent 在流断开后自己重连、带着手上的任务（见 agent/ 的重连测试）；假 Agent 不会自己重连，这里照做。
+		await agent.disconnect();
+		agent = await FakeAgent.connect(cp.grpcUrl, {
+			name: "agent-a",
+			runningTasks: [{ taskId: task.taskId, attempt: task.attempt, started: true }],
+		});
 		await agent.succeed(task, { v: 1 });
 		await eventually(async () => expect(await runStatus(firstRun)).toBe("success"), 30_000);
 

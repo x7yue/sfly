@@ -230,7 +230,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	};
 	const database = openDatabase(
 		options.databaseUrl,
-		(error) => logError("postgres pool error:", error),
+		(error) => logError("postgres connection error:", error),
 		options.migrationsDir,
 	);
 

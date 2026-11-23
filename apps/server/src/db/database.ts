@@ -27,8 +27,15 @@ export function openDatabase(
 	migrationsFolder: string = defaultMigrationsDir,
 ): Database {
 	const pool = new pg.Pool({ connectionString: url, max: 10 });
-	// 空闲连接被服务器断开时 pool 会触发 error；不处理会让进程崩溃。
-	pool.on("error", onError);
+	// 连接断了（数据库重启、被 `pg_terminate_backend` 结束、网络中断），pg 在这个连接上触发 `error` 事件；没人接的 `error` 事件
+	// 是未捕获的异常，进程会退出（#563）。连接池只在**空闲**的连接上挂了处理：借出去的连接（事务里、一条语句执行中）上没有，
+	// 所以在每个连接建好的时候就自己挂一个，空闲和借出的都有人接。出错的那次操作自己的 promise 会以错误结束，走已有的错误处理
+	// （请求返回 5xx、引擎按「数据库出错」处理）；断了的连接 pg-pool 在归还时丢弃，之后取到的是新连接。
+	pool.on("connect", (client) => {
+		client.on("error", onError);
+	});
+	// 空闲连接出错时连接池还会在它自己身上再触发一次 `error`：上面的处理已经记过了，这里只是不让它成为没人接的事件。
+	pool.on("error", () => {});
 	const db = drizzle(pool, { schema });
 	return {
 		db,
