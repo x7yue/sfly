@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
-import { inspector, nodeCard, openEditor } from "./editor-support";
+import { headOf, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { createScenario } from "./support";
 
@@ -143,9 +143,47 @@ test("只有离线的 agent-a 加载过（旧源码），节点派到它：画�
 	// 不能看不见：列成中性的一行（声明查不到，没有检查），可以移除。
 	await expectNoUndeclaredNotes(page, panel, ["extra"]);
 	await expect(panel.locator("label", { hasText: "extra" })).toHaveCount(0);
+	// 表单取的就是节点派发到的 agent-a 的声明：没有「表单按 … 生成」的说明。
+	await expect(panel.getByText(/表单按 .* 上报的声明生成/)).toHaveCount(0);
 	await panel.getByRole("button", { name: "移除" }).click();
 	await expect(uncheckedRow(panel, "extra")).toHaveCount(0);
 	await expect(nodeCard(page, "t")).not.toContainText("警告");
+	// 移除真的写进了保存的版本：保存后读回，t 只剩 host。
+	await page.keyboard.press("Control+s");
+	await expect(page.getByText("已保存为版本 2")).toBeVisible();
+	const head = await headOf(controlPlane, id);
+	expect(head.number).toBe(2);
+	expect(head.document.nodes.find((n) => n.id === "t")?.inputs).toEqual({ host: "h" });
+});
+
+test("Agent 列表还没拿到时：参数页不列「没有检查」（节点上的每个输入都会被列出来，还带「移除」），拿到之后才列", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const a = await connectAgent({ name: "agent-a", devPackages: loaded(OLD) });
+	await a.disconnect();
+	await offline(controlPlane, "agent-a");
+	const id = await createScenario(controlPlane, "列表加载中", scenario());
+	// Agent 列表的请求挂住，等检查了再放行。
+	let release: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route("**/api/agents", async (route) => {
+		await held;
+		await route.continue();
+	});
+	const panel = await openNode(page, id);
+
+	await expect(panel.getByText("加载中")).toBeVisible();
+	await expect(panel.getByText(/没有检查/)).toHaveCount(0);
+	await expect(panel.getByRole("button", { name: "移除" })).toHaveCount(0);
+	release();
+	// 拿到之后：表单有 host 字段，extra 列成「没有检查」，只有这一行有「移除」。
+	await expect(uncheckedRow(panel, "extra")).toBeVisible();
+	await expect(panel.getByText("加载中")).toHaveCount(0);
+	await expect(panel.getByRole("button", { name: "移除" })).toHaveCount(1);
 });
 
 test("对照：节点派到的在线 agent-a 确实没有声明 extra：警告、「移除」都在，说明写明是哪台 Agent", async ({
@@ -191,78 +229,96 @@ test("目标（离线）上次加载的源码里还没有这个节点类型，�
 	await expect(panel.locator("label", { hasText: "host" })).toBeVisible();
 	await expect(panel.locator("label", { hasText: "extra" })).toBeVisible();
 	await expect(nodeCard(page, "t")).not.toContainText("警告");
+	// 字段取自 agent-a、而「Agent」一栏选的是 agent-b：说明字段是哪台上报的、agent-b 的声明为什么没有检查。
+	await expect(
+		panel.getByText("表单按 agent-a 上报的声明生成；节点派发到的 agent-b 的声明查不到，没有检查。"),
+	).toBeVisible();
 });
 
-/** 两个节点：t 派到 agent-b（离线，声明了输出 out），u 派到在线的 agent-a（旧源码，没有输出）；内容不同，检查整包跳过。 */
-const withOutput = (): { scenario: Record<string, unknown>; agentA: string; agentB: string } => ({
-	scenario: {
-		default_agent: "agent-a",
-		nodes: [
-			{ id: "entry", kind: "entry", position: { x: 0, y: 0 } },
-			{
-				id: "t",
-				kind: "package",
-				package: "tuner-dev",
-				node: "tune",
-				position: { x: 300, y: 0 },
-				inputs: { host: "h" },
-				agent: "agent-b",
-			},
-			{
-				id: "u",
-				kind: "package",
-				package: "tuner-dev",
-				node: "tune",
-				position: { x: 600, y: 0 },
-				inputs: { host: "h" },
-				agent: "agent-a",
-			},
-		],
-		edges: [
-			{ from: "entry", to: "t", kind: "chain" },
-			{ from: "t", to: "u", kind: "chain" },
-		],
-		packages: { "tuner-dev": "dev" },
-	},
-	agentA: metadata({ host: HOST }),
-	agentB: metadata({ host: HOST }, { outputs: { out: { type: "string" } } }),
-});
+/**
+ * 同一个包、同一个节点类型的三个节点，链是 entry → t → u → w：t 派到 agent-b（离线，声明了输出 out），u、w 派到在线的
+ * agent-a（旧源码，没有输出）；内容不同，检查整包跳过。`nodes` 数组里 t、u 的先后由 `order` 决定（「下游的节点先建」时 u 在前）。
+ */
+const withOutput = (
+	order: "t-first" | "u-first",
+): { scenario: Record<string, unknown>; agentA: string; agentB: string } => {
+	const pkg = (id: string, x: number, agent: string) => ({
+		id,
+		kind: "package",
+		package: "tuner-dev",
+		node: "tune",
+		position: { x, y: 0 },
+		inputs: { host: "h" },
+		agent,
+	});
+	const t = pkg("t", 300, "agent-b");
+	const u = pkg("u", 600, "agent-a");
+	const w = pkg("w", 900, "agent-a");
+	return {
+		scenario: {
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry", position: { x: 0, y: 0 } },
+				...(order === "t-first" ? [t, u] : [u, t]),
+				w,
+			],
+			edges: [
+				{ from: "entry", to: "t", kind: "chain" },
+				{ from: "t", to: "u", kind: "chain" },
+				{ from: "u", to: "w", kind: "chain" },
+			],
+			packages: { "tuner-dev": "dev" },
+		},
+		agentA: metadata({ host: HOST }),
+		agentB: metadata({ host: HOST }, { outputs: { out: { type: "string" } } }),
+	};
+};
 
-test("检查跳过的开发版本包：引用补全列得出上游节点的输出，「复制输出引用」也列得出（不拦东西，用表单那份）", async ({
-	page,
-	controlPlane,
-	connectAgent,
-}) => {
-	const fixture = withOutput();
-	await connectAgent({ name: "agent-a", devPackages: loaded(fixture.agentA) });
-	const b = await connectAgent({ name: "agent-b", devPackages: loaded(fixture.agentB) });
-	await b.disconnect();
-	await offline(controlPlane, "agent-b");
-	const id = await createScenario(controlPlane, "补全", fixture.scenario);
-	await openEditor(page, id, "t");
+for (const order of ["t-first", "u-first"] as const) {
+	test(`检查跳过的开发版本包，同一个节点类型的节点派到不同的 Agent：引用补全和「复制输出引用」各列各的输出，和 nodes 的顺序无关（${order}）`, async ({
+		page,
+		controlPlane,
+		connectAgent,
+	}) => {
+		const fixture = withOutput(order);
+		await connectAgent({ name: "agent-a", devPackages: loaded(fixture.agentA) });
+		const b = await connectAgent({ name: "agent-b", devPackages: loaded(fixture.agentB) });
+		await b.disconnect();
+		await offline(controlPlane, "agent-b");
+		const id = await createScenario(controlPlane, "补全", fixture.scenario);
+		await openEditor(page, id, "w");
 
-	// 节点 u 的输入里输入 $：补全里有 t 的输出 out。
-	await nodeCard(page, "u").click();
-	const panel = inspector(page);
-	await panel.getByRole("tab", { name: "参数" }).click();
-	const host = panel.getByRole("combobox", { name: "输入 host" });
-	await host.click();
-	await page.keyboard.press("End");
-	await page.keyboard.type("$");
-	const list = page.getByRole("listbox", { name: "可引用的值" });
-	await expect(list.getByRole("option").filter({ hasText: "nodes.t.outputs.out" })).toBeVisible();
-	await page.keyboard.press("Escape");
+		// 节点 w 的输入里输入 $：补全里有 t（agent-b 的声明）的输出 out，没有 u（agent-a 的声明，没有输出）的。
+		await nodeCard(page, "w").click();
+		const panel = inspector(page);
+		await panel.getByRole("tab", { name: "参数" }).click();
+		const host = panel.getByRole("combobox", { name: "输入 host" });
+		await host.click();
+		await page.keyboard.press("End");
+		await page.keyboard.type("$");
+		const list = page.getByRole("listbox", { name: "可引用的值" });
+		await expect(list.getByRole("option").filter({ hasText: "nodes.t.outputs.out" })).toBeVisible();
+		await expect(list.getByRole("option").filter({ hasText: "nodes.u.outputs" })).toHaveCount(0);
+		await page.keyboard.press("Escape");
 
-	// t 的节点菜单：「复制输出引用」列出 out。
-	await nodeCard(page, "t").click({ button: "right" });
-	const menu = page.getByRole("menu").first();
-	await expect(menu).toBeVisible();
-	await expect(menu.getByRole("menuitem", { name: /复制输出引用/ })).toBeEnabled();
-	await menu.getByRole("menuitem", { name: /复制输出引用/ }).click();
-	await expect(page.getByRole("menu", { name: "复制输出引用" }).getByRole("menuitem")).toHaveText([
-		"out",
-	]);
-});
+		// t 的节点菜单：「复制输出引用」列出 out。
+		await nodeCard(page, "t").click({ button: "right" });
+		const menu = page.getByRole("menu").first();
+		await expect(menu).toBeVisible();
+		await expect(menu.getByRole("menuitem", { name: /复制输出引用/ })).toBeEnabled();
+		await menu.getByRole("menuitem", { name: /复制输出引用/ }).click();
+		await expect(page.getByRole("menu", { name: "复制输出引用" }).getByRole("menuitem")).toHaveText(
+			["out"],
+		);
+		await page.keyboard.press("Escape");
+
+		// u 的节点菜单：agent-a 的声明里没有输出，「复制输出引用」不能点。
+		await nodeCard(page, "u").click({ button: "right" });
+		const uMenu = page.getByRole("menu").first();
+		await expect(uMenu).toBeVisible();
+		await expect(uMenu.getByRole("menuitem", { name: /复制输出引用/ })).toBeDisabled();
+	});
+}
 
 test("保存之后马上刷新 Agent 列表：编辑器打开之后 agent-b 才上线并加载了新源码，保存后不用等下一轮轮询（十秒），参数页就取到它的声明", async ({
 	page,

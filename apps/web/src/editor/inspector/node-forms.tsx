@@ -55,6 +55,7 @@ export function PackageParams({
 	type,
 	undeclared,
 	unchecked,
+	formNote,
 	choices,
 	problemsOf,
 	defaultAgent,
@@ -76,6 +77,8 @@ export function PackageParams({
 	 * 也不在 `undeclared` 里（检查没做），列成中性的一行，可以移除（值保留着，保存不会丢）。
 	 */
 	unchecked: readonly string[];
+	/** 表单的声明取自别的 Agent（不是节点派发到的那台）时的一句说明：字段是哪台上报的。 */
+	formNote: string | undefined;
 	choices: ReferenceChoice[];
 	problemsOf: ProblemsOf;
 	defaultAgent: string | undefined;
@@ -97,6 +100,7 @@ export function PackageParams({
 					找不到这个节点类型的元信息，不能生成参数表单。
 				</p>
 			)}
+			{formNote && <p className="m-0 mb-3 text-xs text-fg-3">{formNote}</p>}
 			{type && properties.length === 0 && (
 				<p className="m-0 mb-3 text-xs text-fg-3">这个节点类型没有输入。</p>
 			)}

@@ -230,10 +230,14 @@ describe("formNodeTypes：参数表单用的尽力而为的类型（不是检查
 			edges: [],
 			packages: {},
 		});
-		expect(formNodeTypes(d, { package: "tuner", node: "tune", agent: "agent-b" }, agents)).toEqual(
-			NEW,
-		);
-		expect(formNodeTypes(d, { package: "tuner", node: "tune" }, agents)).toEqual(OLD);
+		expect(formNodeTypes(d, { package: "tuner", node: "tune", agent: "agent-b" }, agents)).toEqual({
+			agent: "agent-b",
+			nodes: NEW,
+		});
+		expect(formNodeTypes(d, { package: "tuner", node: "tune" }, agents)).toEqual({
+			agent: "agent-a",
+			nodes: OLD,
+		});
 	});
 
 	it("目标没有加载时：在线的第一台，再其次是加载过的第一台；都没有是 undefined", () => {
@@ -250,13 +254,13 @@ describe("formNodeTypes：参数表单用的尽力而为的类型（不是检查
 				report("agent-b", false, { tuner: OLD }),
 				report("agent-c", true, { tuner: NEW }),
 			]),
-		).toEqual(NEW);
+		).toEqual({ agent: "agent-c", nodes: NEW });
 		expect(
 			formNodeTypes(d, { package: "tuner", node: "tune" }, [
 				target,
 				report("agent-b", false, { tuner: OLD }),
 			]),
-		).toEqual(OLD);
+		).toEqual({ agent: "agent-b", nodes: OLD });
 		expect(formNodeTypes(d, { package: "tuner", node: "tune" }, [target])).toBeUndefined();
 		// 目标上报的不合法：退到下一台。
 		const bad = report("agent-a", true, { tuner: "坏了" });
@@ -265,7 +269,7 @@ describe("formNodeTypes：参数表单用的尽力而为的类型（不是检查
 				bad,
 				report("agent-c", true, { tuner: NEW }),
 			]),
-		).toEqual(NEW);
+		).toEqual({ agent: "agent-c", nodes: NEW });
 	});
 
 	it("目标的上报合法、但里面没有这个节点类型（上次加载的源码里还没有这个新节点）：接着找下一台，别的 Agent 上有就用它的", () => {
@@ -283,21 +287,21 @@ describe("formNodeTypes：参数表单用的尽力而为的类型（不是检查
 				report("agent-a", true, { tuner: NEW }),
 				report("agent-b", false, { tuner: other }),
 			]),
-		).toEqual(NEW);
+		).toEqual({ agent: "agent-a", nodes: NEW });
 		// 目标在线、上报合法但没有这个节点类型：同样接着找，离线的也找。
 		expect(
 			formNodeTypes(d, node, [
 				report("agent-b", true, { tuner: other }),
 				report("agent-c", false, { tuner: OLD }),
 			]),
-		).toEqual(OLD);
+		).toEqual({ agent: "agent-c", nodes: OLD });
 		// 目标上报里有，就用目标的，不去看别人的。
 		expect(
 			formNodeTypes(d, node, [
 				report("agent-a", true, { tuner: OLD }),
 				report("agent-b", false, { tuner: NEW }),
 			]),
-		).toEqual(NEW);
+		).toEqual({ agent: "agent-b", nodes: NEW });
 	});
 
 	it("所有合法的上报里都没有这个节点类型：返回第一份合法的上报（「找不到这个节点类型」和「还在加载」分得开）；上报都不合法是 undefined", () => {
@@ -314,7 +318,7 @@ describe("formNodeTypes：参数表单用的尽力而为的类型（不是检查
 				report("agent-a", true, { tuner: other }),
 				report("agent-b", true, { tuner: [{ name: "third", inputs: io({}), outputs: io({}) }] }),
 			]),
-		).toEqual(other);
+		).toEqual({ agent: "agent-a", nodes: other });
 		expect(
 			formNodeTypes(d, node, [
 				report("agent-a", true, { tuner: "坏了" }),

@@ -1,8 +1,10 @@
 import {
 	type AgentDevReport,
 	devNodeTypes,
+	dispatchAgentOf,
 	formNodeTypes,
 	type NodeTypeIo,
+	type NodeTypeLookup,
 	nodeTypeOf,
 	type PackageCatalog,
 	packageKey,
@@ -44,6 +46,36 @@ export function devNodes(agents: AgentView[], name: string): NodeTypeIo[] | unde
 	return reportedNodeTypes(agent?.dev_packages.find((d) => d.name === name)?.metadata?.nodes);
 }
 
+/** 画布上按节点取节点类型要的节点字段。 */
+type TypedNode = { package: string; node: string; agent?: string | undefined };
+
+/**
+ * 一个包节点参数表单用的节点类型（尽力而为）：检查用的（`catalog` 里的）有就用它；开发版本检查跳过时，取这个节点派发到的
+ * Agent 上报的，再退到别的 Agent 的（{@link formNodeTypes}）。**每个节点按自己的派发目标取**：同一个包、同一个节点类型的
+ * 几个节点派发到不同的 Agent 时，各自用各自的声明，不合并。
+ * `from`：表单的声明取自哪台 Agent，只在取自别的 Agent（不是节点派发到的那台）时有值。
+ */
+function formTypeOf(
+	doc: StoredOrchestrationDocument,
+	node: TypedNode,
+	catalog: PackageCatalog,
+	reports: readonly AgentDevReport[],
+): {
+	checked: NodeTypeIo | null | undefined;
+	form: NodeTypeIo | null | undefined;
+	from: string | undefined;
+} {
+	const checked = nodeTypeOf(doc, node, catalog);
+	if (checked !== undefined || doc.packages[node.package] !== DEV_VERSION) {
+		return { checked, form: checked, from: undefined };
+	}
+	const reported = formNodeTypes(doc, node, reports);
+	if (!reported) return { checked, form: undefined, from: undefined };
+	const form = reported.nodes.find((n) => n.name === node.node) ?? null;
+	const from = form && reported.agent !== dispatchAgentOf(doc, node) ? reported.agent : undefined;
+	return { checked, form, from };
+}
+
 /**
  * 检查器里一个包节点的节点类型，两份：
  * - `checked`：检查用的，和控制面是同一套取法（`catalog` 里的：开发版本只按节点派发到的 Agent 取，查不到、对不齐时是
@@ -51,19 +83,35 @@ export function devNodes(agents: AgentView[], name: string): NodeTypeIo[] | unde
  * - `form`：参数表单、执行设置、指标声明用的，尽力而为：检查用的有就用它，开发版本查不到时优先取这个节点派发到的
  *   Agent 上报的，再退到别的 Agent 的（{@link formNodeTypes}），表单不会因为检查跳过了就一直显示「加载中」。
  * null：找不到这个节点类型；undefined：还在加载（或没有 Agent 加载这个开发包）。
+ * `from`：`form` 取自别的 Agent（不是节点派发到的那台）时是那台的名字，界面据此说明字段取自哪台（{@link formSourceNote}）。
  */
 export function inspectorNodeType(
 	doc: StoredOrchestrationDocument,
-	node: { package: string; node: string; agent?: string | undefined },
+	node: TypedNode,
 	catalog: PackageCatalog,
 	agents: readonly AgentView[],
-): { checked: NodeTypeIo | null | undefined; form: NodeTypeIo | null | undefined } {
-	const checked = nodeTypeOf(doc, node, catalog);
-	if (checked !== undefined || doc.packages[node.package] !== DEV_VERSION) {
-		return { checked, form: checked };
-	}
-	const nodes = formNodeTypes(doc, node, devReports(agents));
-	return { checked, form: nodes ? (nodes.find((n) => n.name === node.node) ?? null) : undefined };
+): {
+	checked: NodeTypeIo | null | undefined;
+	form: NodeTypeIo | null | undefined;
+	from: string | undefined;
+} {
+	return formTypeOf(doc, node, catalog, devReports(agents));
+}
+
+/**
+ * 参数表单的声明取自别的 Agent 时，参数页上的一句中性的说明：字段是哪台上报的，节点派发到的那台为什么没有检查。
+ * 取自节点派发到的 Agent（或检查用的）时没有，返回 undefined。
+ */
+export function formSourceNote(
+	doc: Pick<StoredOrchestrationDocument, "default_agent">,
+	node: { agent?: string | undefined },
+	from: string | undefined,
+): string | undefined {
+	if (from === undefined) return undefined;
+	const target = dispatchAgentOf(doc, node);
+	return target === undefined
+		? `表单按 ${from} 上报的声明生成；这个节点没有确定的 Agent，没有检查。`
+		: `表单按 ${from} 上报的声明生成；节点派发到的 ${target} 的声明查不到，没有检查。`;
 }
 
 /**
@@ -71,6 +119,7 @@ export function inspectorNodeType(
  * 没有的输入：这些输入在参数页上没有字段，也不在「没有声明」里（检查没做），要列成中性的一行（说明声明查不到、没有检查）、
  * 可以移除，不然它们完全看不到、也删不掉。已发布的版本、检查做了的开发版本没有这回事，返回空。
  * `form` 是 null（找不到这个节点类型）或 undefined（没有 Agent 加载它）时，节点上填的每个输入都算。
+ * Agent 列表还没拿到时（`form` 同样是 undefined，但不是「没有 Agent 加载」）调用方不要调它：这时什么都不知道，不该说「没有检查」。
  */
 export function uncheckedInputs(
 	doc: Pick<StoredOrchestrationDocument, "packages">,
@@ -83,28 +132,18 @@ export function uncheckedInputs(
 }
 
 /**
- * 引用补全和「复制输出引用」用的节点类型目录：检查用的目录（{@link usePackageCatalog}）里有的用它；开发版本的包检查跳过时，
- * 目录里没有它，补全就列不出上游节点的输出，所以用表单那份（{@link formNodeTypes}，尽力而为：节点派发到的 Agent 上报的、
- * 找不到再取别的 Agent 的）补上。补全不拦东西，只是列出可以引用的输出，检查用的目录不受影响（警告和控制面一致）。
+ * 引用补全和「复制输出引用」按节点取节点类型：每个上游节点用**它自己**的表单那份声明（检查用的目录里有就用目录的；开发版本检查
+ * 跳过时，取节点派发到的 Agent 上报的、找不到再取别的 Agent 的），和参数页同一个取法（{@link inspectorNodeType} 的 `form`）。
+ * 不并成一份以包为键的目录：同一个包、同一个节点类型的几个节点派发到不同的 Agent 时，声明可能不同，各列各的输出，
+ * 和 `nodes` 数组里谁排在前面无关。补全不拦东西，只是列出可以引用的输出；检查用的目录不受影响（警告和控制面一致）。
  */
-export function completionCatalog(
+export function completionTypes(
 	doc: StoredOrchestrationDocument,
 	catalog: PackageCatalog,
 	agents: readonly AgentView[],
-): PackageCatalog {
+): NodeTypeLookup {
 	const reports = devReports(agents);
-	let filled: Map<string, readonly NodeTypeIo[] | null> | undefined;
-	for (const node of doc.nodes) {
-		if (node.kind !== "package" || doc.packages[node.package] !== DEV_VERSION) continue;
-		const key = packageKey(node.package, DEV_VERSION);
-		if (catalog.get(key)) continue;
-		const type = formNodeTypes(doc, node, reports)?.find((n) => n.name === node.node);
-		if (!type) continue;
-		filled ??= new Map(catalog);
-		const have = filled.get(key) ?? [];
-		if (!have.some((n) => n.name === type.name)) filled.set(key, [...have, type]);
-	}
-	return filled ?? catalog;
+	return (node) => formTypeOf(doc, node, catalog, reports).form;
 }
 
 /**

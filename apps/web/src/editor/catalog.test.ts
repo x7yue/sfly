@@ -1,13 +1,20 @@
-import { packageKey } from "@sfly/orchestration";
-import { type AgentView, DEV_VERSION, StoredOrchestrationDocument } from "@sfly/schema";
+import { declaredOutputs, packageKey } from "@sfly/orchestration";
+import {
+	type AgentView,
+	DEV_VERSION,
+	type StoredNode,
+	StoredOrchestrationDocument,
+} from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
-	completionCatalog,
+	completionTypes,
 	devNodes,
 	devReports,
+	formSourceNote,
 	inspectorNodeType,
 	uncheckedInputs,
 } from "./catalog";
+import { referenceChoices } from "./inspector/reference-completion";
 
 // 画布上开发版本的节点类型：检查用的（和控制面同一套取法，按节点派发到的 Agent）和参数表单用的（尽力而为）是两份：
 // 检查跳过时表单也要有字段，而「没有声明 / 移除」只按检查用的，不会让人删掉目标 Agent 其实声明了的输入。
@@ -158,52 +165,147 @@ describe("uncheckedInputs：检查跳过时，节点上填了、表单那份里�
 	});
 });
 
-describe("completionCatalog：引用补全和「复制输出引用」用的目录", () => {
+describe("completionTypes：引用补全和「复制输出引用」按每个上游节点自己的声明取", () => {
 	const withOut = (outputs: Record<string, unknown>) => [
 		{ name: "tune", inputs: io({ host: {} }), outputs: io(outputs) },
 	];
-	/** 节点 t 派发到 agent-b（离线，声明了输出 out），u 派发到 agent-a（在线，旧源码，没有输出）：内容不同，检查整包跳过。 */
-	const twoNodes = StoredOrchestrationDocument.parse({
-		default_agent: "agent-a",
-		nodes: [
-			{ id: "entry", kind: "entry" },
-			{ id: "t", kind: "package", package: "tuner", node: "tune", inputs: {}, agent: "agent-b" },
-			{ id: "u", kind: "package", package: "tuner", node: "tune", inputs: {}, agent: "agent-a" },
-		],
-		edges: [
-			{ from: "entry", to: "t", kind: "chain" },
-			{ from: "t", to: "u", kind: "chain" },
-		],
-		packages: { tuner: DEV_VERSION },
+	const pkgNode = (id: string, agentName: string) => ({
+		id,
+		kind: "package",
+		package: "tuner",
+		node: "tune",
+		inputs: {},
+		agent: agentName,
 	});
+	/**
+	 * 同一个包、同一个节点类型的三个节点：t 派发到 agent-b（离线，声明了输出 out），u 派发到 agent-a（在线，旧源码，没有输出），
+	 * 链是 entry → t → u → w（w 派发到 agent-a）。两台内容不同，检查整包跳过。`nodes` 数组的顺序由调用方决定。
+	 */
+	const chainDoc = (order: readonly string[]) => {
+		const byId: Record<string, unknown> = {
+			entry: { id: "entry", kind: "entry" },
+			t: pkgNode("t", "agent-b"),
+			u: pkgNode("u", "agent-a"),
+			w: pkgNode("w", "agent-a"),
+		};
+		return StoredOrchestrationDocument.parse({
+			default_agent: "agent-a",
+			nodes: order.map((id) => byId[id]),
+			edges: [
+				{ from: "entry", to: "t", kind: "chain" },
+				{ from: "t", to: "u", kind: "chain" },
+				{ from: "u", to: "w", kind: "chain" },
+			],
+			packages: { tuner: DEV_VERSION },
+		});
+	};
 	const agents = [
 		agent("agent-a", "online", withOut({})),
 		agent("agent-b", "offline", withOut({ out: { type: "string" } })),
 	];
+	const ORDERS = [
+		["entry", "t", "u", "w"],
+		["entry", "u", "t", "w"], // 下游的节点先建
+		["w", "u", "t", "entry"],
+	] as const;
+	const outputsOfChoices = (d: StoredOrchestrationDocument, at: string) =>
+		referenceChoices(d, at, completionTypes(d, new Map(), agents))
+			.filter((c) => c.kind === "output")
+			.map((c) => c.expression);
+	const menuOutputs = (d: StoredOrchestrationDocument, id: string) =>
+		declaredOutputs(
+			d,
+			d.nodes.find((n) => n.id === id) as StoredNode,
+			completionTypes(d, new Map(), agents),
+		);
 
-	it("检查跳过的开发版本包：用表单那份补上，上游节点 t 的输出（out）列得出来；检查用的目录本身不变", () => {
-		const catalog = new Map();
-		const filled = completionCatalog(twoNodes, catalog, agents);
-		const types = filled.get(packageKey("tuner", "dev")) ?? [];
-		expect(types.map((n) => n.name)).toEqual(["tune"]);
-		// t 派发到 agent-b：它声明的输出在补上的那份里（同一个节点类型名，先到先得，取 t 的）。
-		expect(Object.keys(types[0]?.outputs.properties ?? {})).toEqual(["out"]);
-		expect(catalog.size).toBe(0);
+	it.each(
+		ORDERS,
+	)("同一个节点类型的两个节点派发到不同的 Agent：各列各的输出（nodes 顺序 %s %s %s %s）", (...order) => {
+		const d = chainDoc(order);
+		// w 的补全：t 用 agent-b 的声明（有 out），u 用 agent-a 的（没有输出）。
+		expect(outputsOfChoices(d, "w")).toEqual(["nodes.t.outputs.out"]);
+		// u 的补全只能看到上游的 t。
+		expect(outputsOfChoices(d, "u")).toEqual(["nodes.t.outputs.out"]);
+		// 「复制输出引用」同理：t 有输出，u 没有。
+		expect(menuOutputs(d, "t")).toEqual(["out"]);
+		expect(menuOutputs(d, "u")).toEqual([]);
 	});
 
-	it("检查用的目录里已经有这个包：原样返回（同一个对象），不重算", () => {
-		const catalog = new Map([[packageKey("tuner", "dev"), NEW]]);
-		expect(completionCatalog(twoNodes, catalog as never, agents)).toBe(catalog);
-	});
-
-	it("没有 Agent 加载它、或不是开发版本：原样返回", () => {
-		const catalog = new Map();
-		expect(completionCatalog(twoNodes, catalog, [agent("agent-a", "online")])).toBe(catalog);
-		const published = StoredOrchestrationDocument.parse({
-			...twoNodes,
-			packages: { tuner: "1.0.0" },
+	it("nodes 数组顺序倒过来，每个节点列出的输出不变", () => {
+		const results = ORDERS.map((order) => {
+			const d = chainDoc(order);
+			return [outputsOfChoices(d, "w"), menuOutputs(d, "t"), menuOutputs(d, "u")];
 		});
-		expect(completionCatalog(published, catalog, agents)).toBe(catalog);
+		expect(results[1]).toEqual(results[0]);
+		expect(results[2]).toEqual(results[0]);
+	});
+
+	it("补全不改检查：检查用的目录不变，节点类型查不到时 checked 仍是 undefined（警告和控制面一致）", () => {
+		const d = chainDoc(ORDERS[0]);
+		const t = d.nodes.find((n) => n.id === "t") as { package: string; node: string; agent: string };
+		expect(inspectorNodeType(d, t, new Map(), agents).checked).toBeUndefined();
+	});
+
+	it("检查用的目录里有这个包：用目录的（同 checked）", () => {
+		const d = chainDoc(ORDERS[0]);
+		const catalog = new Map([[packageKey("tuner", "dev"), withOut({ other: {} })]]);
+		const lookup = completionTypes(d, catalog as never, agents);
+		expect(
+			Object.keys(lookup({ package: "tuner", node: "tune" })?.outputs.properties ?? {}),
+		).toEqual(["other"]);
+	});
+
+	it("没有 Agent 加载它：查不到（undefined）；不是开发版本：按目录（目录里没有也是 undefined）", () => {
+		const d = chainDoc(ORDERS[0]);
+		expect(
+			completionTypes(d, new Map(), [agent("agent-a", "online")])({
+				package: "tuner",
+				node: "tune",
+			}),
+		).toBeUndefined();
+		const published = StoredOrchestrationDocument.parse({ ...d, packages: { tuner: "1.0.0" } });
+		expect(
+			completionTypes(published, new Map(), agents)({ package: "tuner", node: "tune" }),
+		).toBeUndefined();
+	});
+});
+
+describe("formSourceNote：表单的声明取自别的 Agent 时说明字段是哪台上报的", () => {
+	it("inspectorNodeType 的 from：表单取自别的 Agent 才有值；取自节点派发到的那台、取自检查用的目录时没有", () => {
+		const other = [{ name: "other", inputs: io({ x: {} }), outputs: io({}) }];
+		const target = { ...node, agent: "agent-b" };
+		// 目标 agent-b（离线）上次加载的源码里没有 tune：表单取自 agent-a。
+		const fallback = inspectorNodeType(doc("agent-b"), target, new Map(), [
+			agent("agent-a", "online", NEW),
+			agent("agent-b", "offline", other),
+		]);
+		expect(fallback.from).toBe("agent-a");
+		// 目标自己上报了：不用说明。
+		const own = inspectorNodeType(doc("agent-b"), target, new Map(), [
+			agent("agent-a", "online", OLD),
+			agent("agent-b", "offline", NEW),
+		]);
+		expect(own.from).toBeUndefined();
+		// 检查用的目录里有：不用说明。
+		const catalog = new Map([[packageKey("tuner", "dev"), NEW]]);
+		expect(inspectorNodeType(doc(), node, catalog as never, []).from).toBeUndefined();
+		// 找不到这个节点类型（form 是 null）：没有字段可说明。
+		const missing = inspectorNodeType(doc(), node, new Map(), [agent("agent-a", "online", other)]);
+		expect(missing.form).toBeNull();
+		expect(missing.from).toBeUndefined();
+	});
+
+	it("说明写明字段取自哪台、节点派发到的是哪台；没有确定的 Agent 时说没有确定的 Agent；from 没有值时没有说明", () => {
+		const d = doc("agent-b");
+		expect(formSourceNote(d, { agent: "agent-b" }, "agent-a")).toBe(
+			"表单按 agent-a 上报的声明生成；节点派发到的 agent-b 的声明查不到，没有检查。",
+		);
+		const noDefault = StoredOrchestrationDocument.parse({ ...d, default_agent: undefined });
+		expect(formSourceNote(noDefault, {}, "agent-a")).toBe(
+			"表单按 agent-a 上报的声明生成；这个节点没有确定的 Agent，没有检查。",
+		);
+		expect(formSourceNote(d, { agent: "agent-b" }, undefined)).toBeUndefined();
 	});
 });
 

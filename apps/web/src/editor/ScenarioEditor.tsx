@@ -117,7 +117,7 @@ import {
 	withNode,
 } from "./annotations";
 import {
-	completionCatalog,
+	completionTypes,
 	publishedNodeInputs,
 	usePackageCatalog,
 	useRegisteredAgents,
@@ -263,13 +263,8 @@ function Editor({
 	useShortcut("canvas-mode-run", () => setMode("run"));
 
 	const packages = useQuery(apiQuery(packagesApi.list));
-	// 开发版本的声明取自 Agent 上报的元信息：画布比控制面慢的那一轮轮询（BACKGROUND_POLL_MS）不能等，保存时和窗口获得焦点时
-	// 各刷新一次（`refetchOnWindowFocus: "always"`：不管有没有过期都刷新）。
-	const agents = useQuery({
-		...apiQuery(agentsApi.list),
-		refetchInterval: BACKGROUND_POLL_MS,
-		refetchOnWindowFocus: "always",
-	});
+	// 开发版本的声明取自 Agent 上报的元信息：保存成功后再刷新一次（下面的 onSuccess），不等下一轮轮询（BACKGROUND_POLL_MS）。
+	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
 	const agentList = agents.data?.agents ?? [];
 	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), refetchInterval: BACKGROUND_POLL_MS });
 	const botList = bots.data?.bots ?? [];
@@ -288,9 +283,9 @@ function Editor({
 	const regionBoxes = useMemo(() => subflowRegions(doc).map((r) => r.box), [doc]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(doc, agentList);
-	// 「复制输出引用」列输出用的目录：开发版本检查跳过时用参数表单那份补上（不影响检查用的 catalog）。
-	const menuCatalog = useMemo(
-		() => completionCatalog(doc, catalog, agentList),
+	// 「复制输出引用」列输出用的：每个节点按自己的表单那份声明取（开发版本检查跳过时也有，不影响检查用的 catalog）。
+	const menuTypes = useMemo(
+		() => completionTypes(doc, catalog, agentList),
 		[doc, catalog, agentList],
 	);
 	const registered = useRegisteredAgents(agents.data?.agents);
@@ -337,8 +332,8 @@ function Editor({
 	const readyRun = runState.status === "ready" ? runState : undefined;
 	// 运行绑定的版本锁定的节点包（节点菜单「复制输出引用」按它列出输出）。
 	const runCatalog = usePackageCatalog(readyRun?.doc, agentList);
-	const runMenuCatalog = useMemo(
-		() => (readyRun?.doc ? completionCatalog(readyRun.doc, runCatalog, agentList) : runCatalog),
+	const runMenuTypes = useMemo(
+		() => (readyRun?.doc ? completionTypes(readyRun.doc, runCatalog, agentList) : runCatalog),
 		[readyRun?.doc, runCatalog, agentList],
 	);
 	const runNow = useNow(readyRun?.run.status === "running");
@@ -1004,6 +999,7 @@ function Editor({
 		info,
 		packages: packages.data?.packages,
 		agents: agentList,
+		agentsLoaded: agents.data !== undefined,
 		bots: botList,
 		warnings,
 		shownFieldErrors: shownErrors,
@@ -1135,8 +1131,8 @@ function Editor({
 							target={target}
 							outputsOf={(node) =>
 								running && readyRun?.doc
-									? declaredOutputs(readyRun.doc, node as StoredNode, runMenuCatalog)
-									: declaredOutputs(doc, node as StoredNode, menuCatalog)
+									? declaredOutputs(readyRun.doc, node as StoredNode, runMenuTypes)
+									: declaredOutputs(doc, node as StoredNode, menuTypes)
 							}
 							edit={
 								running
