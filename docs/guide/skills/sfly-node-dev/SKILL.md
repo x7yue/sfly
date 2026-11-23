@@ -5,7 +5,7 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 
 # sfly 节点开发
 
-本项目是一个 sfly 节点包：用 `@node` 声明的 Python 函数，发布到控制面后由 sfly Agent 在测试机的共享 venv 里执行。SDK 接口见 [reference.md](reference.md)；命令参数以 `uv run sfly <命令> --help` 为准。
+这个目录（节点包目录）是一个 sfly 节点包：用 `@node` 声明的 Python 函数，发布到控制面后由 sfly Agent 在测试机的共享 venv 里执行。SDK 接口见 [reference.md](reference.md)；命令参数以 `uv run sfly <命令> --help` 为准。
 
 ## 步骤
 
