@@ -929,7 +929,7 @@ describe("契约路由的访问检查", () => {
 			expect(
 				outcome(await run(route("POST /auth/logout-all"), personal(disabled))),
 				"个人令牌",
-			).toBe(401);
+			).toBe(403);
 		});
 
 		it("登出什么凭据都不拒绝（幂等，总是清 Cookie），但令牌登不了出：带令牌的登出没有身份，不注销任何登录", async () => {
