@@ -192,7 +192,8 @@ def _accepts(schema: dict[str, Any], value: Any) -> bool:
     kinds = [kind] if isinstance(kind, str) else kind if isinstance(kind, list) else None
     if not kinds:
         return True
-    return any(_JSON_TYPES.get(k, lambda _v: True)(value) for k in kinds)
+    # 认不出的类型（包括不是字符串的，比如数组里套着数组）什么都收，和控制面的 matchesType 一样。
+    return any(not isinstance(k, str) or _JSON_TYPES.get(k, lambda _v: True)(value) for k in kinds)
 
 
 def _needs_types(texts: list[str]) -> bool:
@@ -278,12 +279,28 @@ def _dev_nodes(client: Client, document: dict[str, Any], package: str, agent: st
             return None
         reported.append(nodes)
     first = reported[0]
-    return first if all(r == first for r in reported) else None
+    return first if all(_same_json(r, first) for r in reported) else None
+
+
+def _same_json(a: Any, b: Any) -> bool:
+    """两份 JSON 内容是否相同，和控制面的 `sameJson` 一样：`true` 和 `1` 不相同（Python 的 `==`
+    认为相同），`1` 和 `1.0` 相同，对象不看键的顺序。"""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_same_json(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_same_json(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, dict | list) or isinstance(b, dict | list):
+        return False
+    return bool(a == b)
 
 
 def _reported_node_types(raw: Any) -> list[Any] | None:
-    """上报的节点类型列表合不合法（和控制面的 `reportedNodeTypes` 同一条规则：每项有名字，
-    输入、输出是 `type: object` 加 `properties`（名字 → 对象）的声明）；合法时原样返回。"""
+    """上报的节点类型列表合不合法（和控制面的 `reportedNodeTypes` 同一条规则，按 `IoSchema`
+    逐条照搬：每项有名字；输入、输出是 `type: object` 加 `properties`（名字 → 对象），
+    `required`、`order` 有的话是字符串的数组；`description` 有的话是字符串。写了 `null`
+    也不合法）；合法时原样返回。"""
     if not isinstance(raw, list):
         return None
     for node in raw:
@@ -295,15 +312,16 @@ def _reported_node_types(raw: Any) -> list[Any] | None:
             props = io.get("properties")
             if not isinstance(props, dict) or not all(isinstance(v, dict) for v in props.values()):
                 return None
-            required = io.get("required")
-            if required is not None and not (
-                isinstance(required, list) and all(isinstance(r, str) for r in required)
-            ):
-                return None
-        description = node.get("description")
-        if description is not None and not isinstance(description, str):
+            for key in ("required", "order"):
+                if key in io and not _strings(io[key]):
+                    return None
+        if "description" in node and not isinstance(node["description"], str):
             return None
     return raw
+
+
+def _strings(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
 
 
 def _newest_version(versions: list[str]) -> str | None:

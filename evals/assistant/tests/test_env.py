@@ -116,7 +116,9 @@ def test_up_and_fresh_slots_use_what_was_given_or_the_default(
     )
 
 
-def test_commands_after_up_isolated_follow_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_commands_after_up_isolated_follow_the_network(
+    monkeypatch: pytest.MonkeyPatch, fake: FakeDocker
+) -> None:
     """`up --isolated` 之后的命令不带 --isolated：照网络的实际情况，
     重建控制面时不在断网的网络上发布端口。"""
     import argparse

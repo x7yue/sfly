@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +16,8 @@ from sfly.cli.scenario_ops import (
     _needs_types,
     _newest_version,
     _node_inputs,
+    _reported_node_types,
+    _types_for,
     _value,
 )
 
@@ -223,3 +226,89 @@ def test_equal_versions_follow_the_shared_table(a: str, b: str) -> None:
 @pytest.mark.parametrize("case", VERSION_CASES["newest"])
 def test_newest_version_follows_the_shared_table(case: dict[str, Any]) -> None:
     assert _newest_version(case["versions"]) == case["newest"]
+
+
+def test_dev_types_are_unknown_when_the_target_is_offline() -> None:
+    """派发目标离线（上报过合法的元信息）：和控制面一样当作不知道。"""
+    client = _FakeClient(
+        {
+            "/packages/devkit": NOT_FOUND,
+            "/agents": {"agents": [_agent("a", _dev_nodes(INTEGER_TAG), "offline")]},
+        }
+    )
+    assert _node_inputs(cast(Client, client), DEFAULT_A, "devkit", "t", None) == {}
+
+
+def test_set_reads_the_types_of_the_agent_on_the_node() -> None:
+    """`set <节点> inputs.<名>`：按节点上另选的 Agent 取开发版本的声明，不是默认 Agent 的。"""
+    client = _two_agents()
+    client.answers["/orchestrations/s/head"] = {
+        "document": {
+            "default_agent": "a",
+            "packages": {"devkit": "dev"},
+            "nodes": [
+                {"id": "n0", "kind": "package", "package": "devkit", "node": "t", "agent": "b"}
+            ],
+        }
+    }
+    args = argparse.Namespace(edit_op="set", node="n0")
+    schemas = _types_for(cast(Client, client), "s", args)
+    assert schemas == TAG
+    assert _value("3", schemas["tag"]) == "3"
+
+
+@pytest.mark.parametrize("kind", [[["integer"]], [{"x": 1}], 3])
+def test_type_that_is_not_a_string_accepts_anything(kind: Any) -> None:
+    """声明里的 type 不是字符串（数组里套着数组、对象）：和控制面一样当作什么都收，不抛异常。"""
+    assert _accepts({"type": kind}, 3)
+    assert _value("3", {"type": kind}) == 3
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"inputs": {"type": "object", "properties": {}, "required": None}},
+        {"inputs": {"type": "object", "properties": {}, "order": None}},
+        {"inputs": {"type": "object", "properties": {}, "order": [1]}},
+        {"inputs": {"type": "object", "properties": {}, "order": "tag"}},
+        {"description": None},
+    ],
+)
+def test_reported_node_types_follow_the_control_plane_schema(node: dict[str, Any]) -> None:
+    """和控制面的 `reportedNodeTypes`（`IoSchema`）同一条规则：`null` 和格式不对的字段不合法。"""
+    base: dict[str, Any] = {
+        "name": "t",
+        "inputs": {"type": "object", "properties": {}},
+        "outputs": {"type": "object", "properties": {}},
+    }
+    assert _reported_node_types([base]) == [base]
+    assert _reported_node_types([{**base, **node}]) is None
+
+
+def test_agents_that_report_true_and_1_disagree() -> None:
+    """比较几台上报的内容和控制面的 `sameJson` 一样：`true` 和 `1` 不相同，1 和 1.0 相同。"""
+    document = {
+        "default_agent": "a",
+        "packages": {"devkit": "dev"},
+        "nodes": [{"id": "x", "kind": "package", "package": "devkit", "node": "t", "agent": "b"}],
+    }
+
+    def client(left: Any, right: Any) -> Client:
+        nodes = [{"tag": {**STRING, "default": v}} for v in (left, right)]
+        return cast(
+            Client,
+            _FakeClient(
+                {
+                    "/packages/devkit": NOT_FOUND,
+                    "/agents": {
+                        "agents": [
+                            _agent("a", _dev_nodes(nodes[0])),
+                            _agent("b", _dev_nodes(nodes[1])),
+                        ]
+                    },
+                }
+            ),
+        )
+
+    assert _node_inputs(client(True, 1), document, "devkit", "t", None) == {}
+    assert _node_inputs(client(1, 1.0), document, "devkit", "t", None) != {}

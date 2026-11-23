@@ -354,6 +354,115 @@ describe("场景的局部编辑", () => {
 		});
 	});
 
+	describe("开发版本的节点类型按这组操作之后的派发目标取", () => {
+		/** 加载着开发包 `name` 的 Agent：节点类型 t 声明了输入 `inputs`。 */
+		const devAgent = (agentName: string, name: string, inputs: string[]) =>
+			FakeAgent.connect(cp.grpcUrl, {
+				name: agentName,
+				devPackages: [
+					{
+						name,
+						source: `/src/${name}`,
+						metadataJson: JSON.stringify(
+							packageMetadata({
+								name,
+								version: "dev",
+								nodes: [
+									{
+										name: "t",
+										title: "t",
+										entry: `${name}.nodes:t`,
+										inputs: {
+											type: "object",
+											properties: Object.fromEntries(inputs.map((i) => [i, { type: "string" }])),
+										},
+										outputs: { type: "object", properties: {} },
+									},
+								],
+							}),
+						),
+					},
+				],
+			});
+		const statusOf = async (name: string) =>
+			(
+				await api.getJson<{ agents: Array<{ name: string; status: string }> }>("/agents")
+			).agents.find((a) => a.name === name)?.status;
+
+		it("一组操作里改了节点的 Agent：按改之后的 Agent 检查（改成别的、去掉、改不写 id 的新节点）", async () => {
+			// 两台在线的 Agent 都加载着 devkit：pa 上的 t 声明了 tag、extra，pb 上的只声明了 tag。
+			const agents = await Promise.all([
+				devAgent("pa", "devkit", ["tag", "extra"]),
+				devAgent("pb", "devkit", ["tag"]),
+			]);
+			try {
+				await eventually(async () => {
+					expect(await statusOf("pa")).toBe("online");
+					expect(await statusOf("pb")).toBe("online");
+				});
+				const onPb = (defaultAgent: string, name: string) =>
+					api.orchestrationWith(
+						{
+							...baseDocument(),
+							default_agent: defaultAgent,
+							nodes: [
+								...baseDocument().nodes,
+								{ id: "n0", kind: "package", package: "devkit", node: "t", agent: "pb" },
+							],
+							packages: { http: "1.0.0", devkit: "dev" },
+						},
+						name,
+					);
+				const extra = (node: string) => ({
+					op: "set",
+					node,
+					field: "inputs.extra",
+					value: "x",
+				});
+				// 对照：只在 pb 上时，pb 的 t 没有 extra，拒绝。
+				const plain = await onPb("pa", "派发-对照");
+				expect((await problemOf(await edit(plain, [extra("n0")]))).message).toContain("extra");
+				// 改成 pa：之后派到 pa，有 extra。
+				const toPa = await onPb("pa", "派发-改成别的");
+				await editOk(toPa, [{ op: "set", node: "n0", field: "agent", value: "pa" }, extra("n0")]);
+				// 去掉节点的 Agent：之后派到默认的 pa。
+				const removed = await onPb("pa", "派发-去掉");
+				await editOk(removed, [{ op: "set", node: "n0", field: "agent" }, extra("n0")]);
+				// 不写 id 加的节点（默认 Agent pb），接着改它的 Agent：ID 是应用操作时生成的，也要算上。
+				const added = await onPb("pb", "派发-新节点");
+				await editOk(added, [
+					{ op: "add_node", package: "devkit", node: "t" },
+					{ op: "set", node: "t_1", field: "agent", value: "pa" },
+					extra("t_1"),
+				]);
+				// 保存时的检查也没有警告：两边是同一个结论。
+				for (const id of [toPa, removed, added]) {
+					const check = await api.post(`/orchestrations/${id}/edits/check`, {
+						operations: [{ op: "set", node: "report", field: "note", value: "看一眼" }],
+					});
+					expect(check.status).toBe(200);
+					const body = (await check.json()) as { warnings: Array<{ code: string }> };
+					expect(body.warnings.map((w) => w.code)).not.toContain("input_not_declared");
+				}
+			} finally {
+				await Promise.all(agents.map((a) => a.disconnect()));
+			}
+		});
+
+		it("没锁定的包默认用开发版本，只看在线的 Agent：只有离线的 Agent 加载过时加不上", async () => {
+			const gone = await devAgent("agent-gone", "offkit", ["tag"]);
+			await eventually(async () => expect(await statusOf("agent-gone")).toBe("online"));
+			await gone.disconnect();
+			await eventually(async () => expect(await statusOf("agent-gone")).not.toBe("online"));
+			const id = await scenario("派发-离线");
+			const problem = await problemOf(
+				await edit(id, [{ op: "add_node", package: "offkit", node: "t", after: "report" }]),
+			);
+			expect(problem.code).toBe("invalid_operation");
+			expect(await versionCount(id)).toBe(1);
+		});
+	});
+
 	describe("让调用方自己改对的报错", () => {
 		it("包名、版本写错：列出相近的包名、这个包已发布的版本", async () => {
 			const id = await scenario("报错-包名");

@@ -176,7 +176,8 @@ async function editContext(
 /**
  * 算开发版本的派发目标用的文档：每个包都当作锁定了开发版本（用不用 dev 由调用方按版本决定），节点是文档里已有的，
  * 加上这组操作要加的节点（`agent` 没写就用默认 Agent）和改了 Agent 的节点（改之前、改之后的 Agent 都算：
- * 两台的声明不一样时当作不知道）。只用来定「派发到哪几台」，不保存。
+ * 两台的声明不一样时当作不知道；去掉 Agent 按默认 Agent 算；不写 ID 加的节点认不出，改它的 Agent 时算进每个
+ * 不写 ID 加的包）。只用来定「派发到哪几台」，不保存。
  */
 function dispatchView(
 	doc: StoredOrchestrationDocument,
@@ -189,14 +190,21 @@ function dispatchView(
 	// 节点 ID → 包名（已有的包节点，和这组操作里写了 ID 的新节点）：改 Agent 的操作要知道节点用的是哪个包。
 	const packageOf = new Map<string, string>();
 	for (const n of doc.nodes) if (n.kind === "package") packageOf.set(n.id, n.package);
+	// 这组操作里不写 ID 加的节点的包：它们的 ID 应用操作时才生成，这里认不出。
+	const unnamed = new Set<string>();
 	const packages: Record<string, string> = {};
 	for (const op of operations) {
 		if (op.op === "add_node") {
 			nodes.push({ kind: "package", package: op.package, agent: op.agent });
 			if (op.id) packageOf.set(op.id, op.package);
-		} else if (op.op === "set" && op.field === "agent" && typeof op.value === "string") {
+			else unnamed.add(op.package);
+		} else if (op.op === "set" && op.field === "agent") {
+			// 不写值（或写 null）是去掉节点的 Agent：之后派到场景的默认 Agent（dispatchAgentOf 落到 default_agent）。
+			const agent = typeof op.value === "string" ? op.value : undefined;
+			// 认不出的节点可能是不写 ID 加的：新的 Agent 算进每个这样加的包。多算只会让检查更宽（几台声明不同时当作
+			// 不知道），保存时的检查看的是改完之后的文档，兜得住。
 			const pkg = packageOf.get(op.node);
-			if (pkg) nodes.push({ kind: "package", package: pkg, agent: op.value });
+			for (const p of pkg ? [pkg] : unnamed) nodes.push({ kind: "package", package: p, agent });
 		}
 	}
 	for (const n of nodes) packages[n.package] = DEV_VERSION;
