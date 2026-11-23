@@ -167,14 +167,12 @@ export class SessionManager {
 	/** `POST /sessions/:id/prompt`：先回应，再在后台拉起 pi、发 `prompt`。 */
 	prompt(sessionId: string, body: PromptCommandBody): PromptResult {
 		const session = this.#session(sessionId);
-		if (session.turn) {
-			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
-		}
-		session.redactor.add(Object.values(body.secret_env));
-		if (this.#takeAbortMark(sessionId, body.turn)) {
+		if (this.#hitsAbortMark(sessionId, body.turn)) {
 			// 这一轮登记之前就收到了针对它的中止：先回 202（回 409、503 控制面会记成失败），再发这一轮「已停止」的结局，
-			// 不拉起 pi。
-			const turn = this.#register(session, body.turn);
+			// 不拉起 pi。更早的一轮还在退出（停止之后 pi 还没走）时也一样：先看记号、再看在做的那一轮，这一轮不登记成
+			// 在做的，不影响更早的那一轮在进程退出时发它的结局。
+			const turn = this.#newTurn(session, body.turn);
+			session.lastTurn = Math.max(session.lastTurn ?? 0, body.turn);
 			this.options.log(
 				`会话 ${session.id} 第 ${body.turn} 轮：到之前已经收到针对它的中止，直接结束`,
 			);
@@ -183,6 +181,12 @@ export class SessionManager {
 			);
 			return { ok: true };
 		}
+		if (session.turn) {
+			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
+		}
+		session.redactor.add(Object.values(body.secret_env));
+		// 更大的轮次到了：比它小的记号对应的那一轮不会再来了，清掉。
+		this.#dropStaleAbortMark(sessionId, body.turn);
 		if (!session.process || session.process.exited) {
 			if (this.activeProcesses >= this.#maxProcesses && !this.#evictIdle()) {
 				return {
@@ -220,7 +224,15 @@ export class SessionManager {
 
 	/** 登记这一轮（还没有拉起 pi）。 */
 	#register(session: Session, number: number): Turn {
-		const turn: Turn = {
+		const turn = this.#newTurn(session, number);
+		session.turn = turn;
+		session.lastTurn = number;
+		session.lastActive = Date.now();
+		return turn;
+	}
+
+	#newTurn(session: Session, number: number): Turn {
+		return {
 			number,
 			startedAt: Date.now(),
 			translator: new TurnTranslator(session.redactor),
@@ -231,26 +243,25 @@ export class SessionManager {
 			probing: false,
 			settled: undefined,
 		};
-		session.turn = turn;
-		session.lastTurn = number;
-		session.lastActive = Date.now();
-		return turn;
 	}
 
-	/**
-	 * 这一轮的 `prompt` 到了，看有没有针对它的记号：轮次相同就是（取走）；轮次更大的 `prompt` 也清掉记号（那一轮
-	 * 不会再来了）；更小的不动。过期的记号当作没有。
-	 */
-	#takeAbortMark(sessionId: string, number: number): boolean {
+	/** 这一轮的 `prompt` 撞上了针对它的记号（同一轮、没过期）：取走记号。过期的记号清掉。 */
+	#hitsAbortMark(sessionId: string, number: number): boolean {
 		const mark = this.#abortMarks.get(sessionId);
 		if (!mark) return false;
 		if (Date.now() - mark.at > ABORT_MARK_TTL_MS) {
 			this.#abortMarks.delete(sessionId);
 			return false;
 		}
-		if (number < mark.turn) return false;
+		if (number !== mark.turn) return false;
 		this.#abortMarks.delete(sessionId);
-		return number === mark.turn;
+		return true;
+	}
+
+	/** 轮次更大的 `prompt` 到了：记号对应的那一轮不会再来了，清掉；更小的不动。 */
+	#dropStaleAbortMark(sessionId: string, number: number): void {
+		const mark = this.#abortMarks.get(sessionId);
+		if (mark && number > mark.turn) this.#abortMarks.delete(sessionId);
 	}
 
 	/** 记下「第 `turn` 轮已被中止」：每个会话只留轮次最大的那一个，总数有上限（满了丢最早的）。 */
@@ -589,9 +600,12 @@ export class SessionManager {
 			...(end.limit && { limit_kind: end.limit }),
 			...(end.errorClass && { error_class: end.errorClass }),
 		});
-		rmSync(this.#paths(session).turnConfig, { force: true });
-		// 这一轮命令的完整输出已经传到工作台上了：助手容器里的临时文件清掉（不占所有会话共用的磁盘）。
-		if (session.tmpDir) emptyDir(session.tmpDir);
+		// 撞上记号直接结束的那一轮没有登记成在做的：更早的一轮可能还在退出，它的配置和临时文件留给它。
+		if (session.turn === turn || session.turn === undefined) {
+			rmSync(this.#paths(session).turnConfig, { force: true });
+			// 这一轮命令的完整输出已经传到工作台上了：助手容器里的临时文件清掉（不占所有会话共用的磁盘）。
+			if (session.tmpDir) emptyDir(session.tmpDir);
+		}
 		if (session.turn === turn) session.turn = undefined;
 		session.lastActive = Date.now();
 	}

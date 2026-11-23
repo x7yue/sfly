@@ -11,10 +11,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { PromptCommandBody } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { connectAgent } from "../src/agent.js";
 import { EventBus } from "../src/bus.js";
-import { ABORT_MARK_LIMIT, SessionManager } from "../src/sessions.js";
+import { ABORT_MARK_LIMIT, ABORT_MARK_TTL_MS, SessionManager } from "../src/sessions.js";
 import { mirrorSkillsLocally } from "../src/skills.js";
 import { eventually } from "./support/eventually.js";
 import { silentPort } from "./support/fake-workbench.js";
@@ -32,6 +33,17 @@ const start = async (options: HarnessOptions = {}) => {
 	h = await Harness.start({ piArgv: FAKE_PI, ...options });
 	return h;
 };
+
+/** 直接交给 SessionManager 的第 1 轮（不经 HTTP）。 */
+const promptBody = (harness: Harness, text: string): PromptCommandBody => ({
+	turn: 1,
+	message_id: crypto.randomUUID(),
+	text,
+	session: { title: "测试", created_by: "tester" },
+	workbench: { name: "fake-workbench", address: harness.workbench.address, workdir: harness.workdir },
+	env: {},
+	secret_env: {},
+});
 
 /** 这个会话的 pi 原始事件（`events.jsonl`）。 */
 const rawEvents = (harness: Harness, id: string): Array<Record<string, unknown>> => {
@@ -376,13 +388,88 @@ describe("中止带轮次：按这一轮的状态，不按时间猜", () => {
 		expect(await harness.turnEnd(first)).toMatchObject({ outcome: "completed" });
 	});
 
-	it("中止的请求体要有轮次：没有时 400", async () => {
+	it("中止的请求体要有轮次：没有、不是 JSON、轮次不合法时 400，不记记号", async () => {
 		const harness = await start();
-		const res = await fetch(`${harness.url}/sessions/${crypto.randomUUID()}/abort`, {
-			method: "POST",
-			headers: { authorization: `Bearer ${SECRET}` },
-		});
-		expect(res.status).toBe(400);
+		const send = (body?: string) =>
+			fetch(`${harness.url}/sessions/${crypto.randomUUID()}/abort`, {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${SECRET}`,
+					...(body === undefined ? {} : { "content-type": "application/json" }),
+				},
+				body,
+			});
+		for (const body of [undefined, "{}", '{"turn":0}', '{"turn":"1"}', '{"turn":1.5}']) {
+			expect((await send(body)).status, String(body)).toBe(400);
+		}
+		expect(harness.sessions.abortMarks).toBe(0);
+		expect((await send('{"turn":1}')).status).toBe(202);
+	});
+
+	it("撞上记号：先回 202，这一轮的结局在回应之后才发", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		harness.sessions.abort(id, 1);
+		const lines: string[] = [];
+		const unsubscribe = harness.bus.subscribe((line) => lines.push(line));
+		try {
+			// prompt 同步返回（服务器据此回 202）的那一刻，结局还没有发出去。
+			const result = harness.sessions.prompt(id, promptBody(harness, "settle"));
+			expect(result).toEqual({ ok: true });
+			expect(lines.filter((l) => l.includes('"turn_end"'))).toEqual([]);
+		} finally {
+			unsubscribe();
+		}
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+	});
+
+	it("记号十分钟过期：过期之后这一轮照常做", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		const realNow = Date.now;
+		try {
+			// 记号是十分钟多以前记下的：只在这一次同步调用里把时间往前拨（不经 HTTP：fetch 自己也用 Date.now）。
+			Date.now = () => realNow() - ABORT_MARK_TTL_MS - 1_000;
+			harness.sessions.abort(id, 1);
+		} finally {
+			Date.now = realNow;
+		}
+		expect(harness.sessions.abortMarks).toBe(1);
+		expect((await harness.prompt(id, { text: "settle" })).status).toBe(202);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		expect(harness.sessions.abortMarks).toBe(0);
+	});
+
+	it("每个会话只留轮次最大的记号：先中止第 5 轮、再中止第 3 轮，第 3 轮照常做，第 5 轮到了被停下", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.abort(id, 5);
+		await harness.abort(id, 3);
+		expect(harness.sessions.abortMarks).toBe(1);
+		await harness.prompt(id, { turn: 3, text: "settle" });
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+		await harness.prompt(id, { turn: 5, text: "settle" });
+		expect(await harness.turnEnd(id, 5)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+	});
+
+	it("撞上记号时更早的一轮还在退出：仍回 202、这一轮以 stopped 结束，更早的那一轮退出后也有结局", async () => {
+		const harness = await start({ killGraceMs: 1_500 });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "ignore-term" });
+		await eventually(() =>
+			expect(rawEvents(harness, id).some((r) => r.type === "turn_start")).toBe(true),
+		);
+		// 停第 1 轮：pi 不理 SIGTERM，要等宽限到了才退出。这时控制面已经把轮次加了一、补发第 2 轮的中止。
+		expect((await harness.abort(id, 1)).status).toBe(202);
+		expect((await harness.abort(id, 2)).status).toBe(202);
+		const res = await harness.prompt(id, { turn: 2, text: "settle" });
+		expect(res.status, await res.clone().text()).toBe(202);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+		expect(await harness.turnEnd(id, 1)).toMatchObject({ outcome: "stopped" });
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
+		// 之后照常：第 3 轮起新的 pi、做完。
+		await harness.prompt(id, { turn: 3, text: "settle" });
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
 	});
 });
 
