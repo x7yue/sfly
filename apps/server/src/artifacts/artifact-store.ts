@@ -62,6 +62,13 @@ export function artifactLimitForWire(limit: number): bigint {
 /** 名称（产物目录内的相对路径）的最大长度。 */
 const MAX_NAME_LENGTH = 1024;
 
+/**
+ * 上传读请求体时，这么久没有收到任何数据就以明确的错误结束（408 `upload_idle_timeout`，不存、不留临时文件、放开这个任务的队列）：
+ * 60 秒。一份上传卡住（连着、不发数据，网络断了而断开的信号没传到）时，同一个任务别的上传排在它后面；没有这个时限，Agent
+ * 自己的重试就排在后面永远没有响应，任务收不了尾（#588）。是常量，不做成配置；排队的不另设时限：轮到哪一份，哪一份开始计时。
+ */
+export const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
+
 export interface ArtifactRow {
 	taskId: string;
 	name: string;
@@ -79,8 +86,13 @@ export type SaveOutcome =
 	| { ok: true; artifact: ArtifactRow }
 	| {
 			ok: false;
-			status: 400 | 404 | 409 | 413;
-			code: "invalid_artifact_name" | "not_found" | "task_not_running" | "artifact_too_large";
+			status: 400 | 404 | 408 | 409 | 413;
+			code:
+				| "invalid_artifact_name"
+				| "not_found"
+				| "task_not_running"
+				| "artifact_too_large"
+				| "upload_idle_timeout";
 			message: string;
 			/** 请求体一个字节也没读就拒绝了（按声明的长度）：调用方不用也不该把它读完，回响应后关掉连接。 */
 			unread?: true;
@@ -99,16 +111,33 @@ export type SaveOutcome =
  * - 文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`，按运行分目录，保留期清理整目录删除（src/retention）。
  * - **同一个任务的上传一个接一个做**（#588）：「这个任务的合计还剩多少」的检查和写入、记账在同一段互斥里，并发上传时合计不会
  *   超过上限，超出的那一份得到和顺序上传时同样的拒绝。互斥在进程里：控制面是单进程设计（同一个数据库只能运行一个实例）。
- *   不同任务互不影响；中途断开的上传出错结束，轮到下一份，它没有记账，不占额度。代价：同一个任务有一份上传卡住（连着、不发数据）
- *   时，这个任务别的上传排在它后面，直到它发完或者连接断开。
+ *   **任务状态也是轮到时才查**：同一个任务排在别的上传后面的那一份，轮到它时任务已经成功或失败结束了，被拒绝（409），和任务
+ *   结束之后才到的上传一样；取消的任务（已经开始执行）仍然收下。真实的 Agent 先传完再报结果，碰不到。
+ *   不同任务互不影响；中途断开的上传出错结束，轮到下一份，它没有记账，不占额度。**请求体发完了、没等响应就断开的上传**，
+ *   以前会存下来，现在轮到它时请求已经断开、不存（客户端已经不要结果了）。
+ * - **卡住的上传有空闲时限**（{@link UPLOAD_IDLE_TIMEOUT_MS}，60 秒）：读请求体时这么久没有收到任何数据，以 408
+ *   `upload_idle_timeout` 结束（不存、不留临时文件），放开这个任务的队列；排在后面的不另设时限，轮到哪一份、哪一份开始计时。
+ *   一直在慢慢发数据的上传（每次间隔小于时限）不受影响。没有它，同一个任务排在卡住的那份后面的 Agent 重试永远没有响应。
  */
 export class ArtifactStore {
 	/** 每个任务一条队列：队尾是最后一份排队的上传结束时才完成的 promise；队列空了就删掉。 */
 	readonly #queues = new Map<string, Promise<void>>();
 
 	constructor(
-		private readonly deps: { db: Db; clock: Clock; dataDir: string; limitBytes?: number },
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			dataDir: string;
+			limitBytes?: number;
+			/** 上传的空闲时限（毫秒），默认 {@link UPLOAD_IDLE_TIMEOUT_MS}；部署者不能改，只有测试和嵌入时给。 */
+			uploadIdleMs?: number;
+		},
 	) {}
+
+	/** 现在有几个任务的上传在做或者排队（队列用完就删，空闲时是 0）：给测试看队列的条目有没有删干净。 */
+	get pendingTasks(): number {
+		return this.#queues.size;
+	}
 
 	/** 校验产物名称；合法时返回 undefined，否则返回原因。 */
 	static invalidName(name: string): string | undefined {
@@ -223,19 +252,39 @@ export class ArtifactStore {
 		const hash = createHash("sha256");
 		let size = 0;
 		let tooLarge = false;
+		let idle = false;
+		const idleMs = this.deps.uploadIdleMs ?? UPLOAD_IDLE_TIMEOUT_MS;
 		try {
 			await mkdir(dirname(tmp), { recursive: true });
 			await pipeline(
 				body,
 				async function* (source: AsyncIterable<Buffer>) {
-					for await (const chunk of source) {
-						size += chunk.length;
-						if (size > allowed) {
-							tooLarge = true;
-							throw new Error("artifact too large");
+					// 每读一块之前起一个计时器：idleMs 毫秒还没有数据就以空闲超时结束；写盘的时间不算（计时器只在等客户端发数据时开着）。
+					const iterator = source[Symbol.asyncIterator]();
+					let timer: NodeJS.Timeout | undefined;
+					try {
+						for (;;) {
+							const timeout = new Promise<"idle">((resolve) => {
+								timer = setTimeout(() => resolve("idle"), idleMs);
+							});
+							const next = await Promise.race([iterator.next(), timeout]);
+							clearTimeout(timer);
+							if (next === "idle") {
+								idle = true;
+								throw new Error("upload idle timeout");
+							}
+							if (next.done) return;
+							const chunk = next.value as Buffer;
+							size += chunk.length;
+							if (size > allowed) {
+								tooLarge = true;
+								throw new Error("artifact too large");
+							}
+							hash.update(chunk);
+							yield chunk;
 						}
-						hash.update(chunk);
-						yield chunk;
+					} finally {
+						clearTimeout(timer);
 					}
 				},
 				createWriteStream(tmp),
@@ -244,6 +293,15 @@ export class ArtifactStore {
 			await rename(tmp, file);
 		} catch (error) {
 			await rm(tmp, { force: true });
+			if (idle) {
+				return {
+					ok: false,
+					status: 408,
+					code: "upload_idle_timeout",
+					message: `产物 ${name} 的上传 ${idleMs / 1000} 秒没有收到数据，已经放弃（没有存）；重新上传`,
+					unread: true,
+				};
+			}
 			if (tooLarge) {
 				return {
 					ok: false,

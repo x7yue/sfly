@@ -67,6 +67,7 @@ export async function startTestControlPlane(
 		| "logScanBytes"
 		| "metricLimitBytes"
 		| "artifactLimitBytes"
+		| "artifactUploadIdleMs"
 		| "retentionDays"
 		| "metricRetentionDays"
 		| "leaseMs"
@@ -118,6 +119,7 @@ export async function startTestControlPlane(
 			// 指标写入扫描（#29）同样调快。
 			metricFlushIntervalMs: 20,
 			artifactLimitBytes: options.artifactLimitBytes,
+			artifactUploadIdleMs: options.artifactUploadIdleMs,
 			retentionDays: options.retentionDays,
 			metricRetentionDays: options.metricRetentionDays,
 			leaseMs: options.leaseMs,
