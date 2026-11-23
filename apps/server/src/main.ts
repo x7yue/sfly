@@ -18,7 +18,8 @@
 //   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
 //   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30），整天超过保留期的指标分区自动删除
 //   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断
-//   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024）
+//   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024；可以带小数，换算成字节后要在 1 到 2^53 − 1 之间，
+//                    不是数、Infinity 或太大的值启动时就报错退出，随任务下发给 Agent，#477）
 //   SFLY_METRIC_LIMIT_MB  单个任务指标数据的上限（默认 50，按点数折算），超出后停止写入
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
@@ -60,6 +61,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentArch } from "@sfly/schema";
 import packageJson from "../package.json" with { type: "json" };
 import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
+import { artifactLimitBytesFromMb } from "./artifacts/artifact-store.js";
 import { parseInitialAdmin } from "./auth/bootstrap.js";
 import { runResetPassword } from "./auth/reset-password-cli.js";
 import { startControlPlane } from "./control-plane.js";
@@ -154,7 +156,7 @@ const controlPlane = await startControlPlane({
 	retentionDays: positive("SFLY_RETENTION_DAYS"),
 	metricRetentionDays: positive("SFLY_METRIC_RETENTION_DAYS"),
 	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
-	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
+	artifactLimitBytes: artifactLimitBytesFromMb(env.SFLY_ARTIFACT_LIMIT_MB),
 	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
 	clientPackageDir: env.SFLY_CLIENT_DIR || defaults.clientDir,

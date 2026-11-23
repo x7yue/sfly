@@ -529,6 +529,13 @@ export class SessionStore {
 			parsed.type === "turn_end" &&
 			session.status === "running" &&
 			parsed.turn === effectiveTurn(session);
+		// 结束的是「此刻在做的那一轮」：会话回到空闲，`current_turn` 也抬到这一轮。在做、但一条 `turn_started` 都没有的
+		// 旧数据（迁移回填成 0，`effectiveTurn` 当作第 1 轮）不抬的话，下一轮又是第 1 轮，那一轮真正的 `turn_end`
+		// 会被当作第 1 轮的重复吞掉。
+		const endsTurn = {
+			status: "idle" as const,
+			currentTurn: sql`greatest(${sessions.currentTurn}, ${parsed.type === "turn_end" ? parsed.turn : 0})`,
+		};
 		if (parsed.type === "turn_end") {
 			const [existing] = await tx
 				.select()
@@ -543,7 +550,7 @@ export class SessionStore {
 				.limit(1);
 			if (existing) {
 				if (endsCurrent) {
-					await tx.update(sessions).set({ status: "idle" }).where(eq(sessions.id, session.id));
+					await tx.update(sessions).set(endsTurn).where(eq(sessions.id, session.id));
 				}
 				return { event: toEvent(existing), duplicate: true };
 			}
@@ -564,7 +571,7 @@ export class SessionStore {
 			.returning();
 		await tx
 			.update(sessions)
-			.set({ lastActivityAt: touched, ...(endsCurrent && { status: "idle" as const }) })
+			.set({ lastActivityAt: touched, ...(endsCurrent && endsTurn) })
 			.where(eq(sessions.id, session.id));
 		return { event: toEvent(row as EventRow), duplicate: false };
 	}
