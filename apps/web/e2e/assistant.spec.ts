@@ -392,7 +392,7 @@ test("历史：工具行默认折叠，展开看结果；命令写 $、读写改
 	await expect(first).toHaveAttribute("aria-expanded", "false");
 	await first.click();
 	await expect(first).toHaveAttribute("aria-expanded", "true");
-	await expect(row.getByTestId("tool-command")).toHaveText("$ sfly package list");
+	await expect(rows.nth(0).getByTestId("tool-command")).toHaveText("$ sfly package list");
 	await expect(page.getByTestId("tool-result")).toHaveText("http_check 0.3.0");
 	await first.click();
 	await expect(page.getByTestId("tool-result")).toHaveCount(0);
@@ -827,7 +827,7 @@ test("工具行里很长的命令：标题一行放不下，悬停给全文；�
 			.evaluate((el) => el.scrollWidth > el.clientWidth);
 		expect(clipped, `${name}：命令应该放不下`).toBe(true);
 		await row.getByRole("button").hover();
-		await expect(page.getByRole("tooltip")).toHaveText(line);
+		await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(line);
 		await page.mouse.move(5, 5);
 		// 展开：先写完整的命令（折行，不横向溢出）。
 		await row.getByRole("button").click();
