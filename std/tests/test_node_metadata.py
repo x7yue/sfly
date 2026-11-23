@@ -11,6 +11,12 @@
 `python -m sfly.cli.scan <src 的绝对路径> sfly_std`，只留上面三个节点的条目，写成
 `std/tests/node_metadata.json`，再用 `pnpm exec biome format --write std/tests/node_metadata.json`
 按仓库的格式整理（比对的是内容）。
+
+照这个办法扫出来的 `start_process` 有三处说明和现在的夹具不同：节点的说明（结尾「用 wait_port、
+wait_log_line 等节点等它就绪」）、输出 `pid` 和 `log_file` 的说明（指向 0.4.0 已经删除的节点）。
+#575 有意把这三处改成指向留下的 `stop_process` 和辅助函数，夹具跟着改了：生成之后把这三处换成
+`std/src/sfly_std/start_process.py` 里现在的写法。以后改说明，夹具和「标准节点」页
+（`docs/guide/standard-nodes.md`）一起改。
 """
 
 from __future__ import annotations

@@ -24,7 +24,7 @@ class StartProcessOutputs(TypedDict):
         str,
         Doc(
             "日志文件的绝对路径：交给自己节点里的 wait_for_log_line、follow_log_file，"
-            "或者 ctx.artifacts.save"
+            "或者转成 Path 后交给 ctx.artifacts.save(名称, Path(log_file))"
         ),
     ]
 

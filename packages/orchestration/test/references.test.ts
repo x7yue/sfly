@@ -345,6 +345,39 @@ describe("节点包版本锁定", () => {
 		expect(documentWarnings(std("shell"), stdCatalog)).toEqual([]);
 	});
 
+	it("标准节点包 0.4.0 删掉的 14 个节点：每一个都带替换办法的指引（名单不看源码里的那份，少一个名字就红）", () => {
+		const removed = [
+			"system_monitor",
+			"process_monitor",
+			"wait_port",
+			"wait_file",
+			"wait_log_line",
+			"follow_log",
+			"collect_artifacts",
+			"pull_files",
+			"watch_files",
+			"http_request",
+			"assert",
+			"file_assert",
+			"process_assert",
+			"port_assert",
+		];
+		const emptyStd: PackageCatalog = new Map([[packageKey("sfly-std", "0.4.0"), []]]);
+		for (const name of removed) {
+			const d = doc({
+				packages: { "sfly-std": "0.4.0" },
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "a", kind: "package", package: "sfly-std", node: name, inputs: {} },
+				],
+				edges: chain("entry", "a"),
+			});
+			expect(documentWarnings(d, emptyStd)[0]?.message, name).toBe(
+				`节点包 sfly-std@0.4.0 中没有节点类型 ${name}（0.4.0 起删除了：替换办法见开发文档「标准节点」页的「从 0.3.0 升级」一节）`,
+			);
+		}
+	});
+
 	it("结构警告排在前面，然后是包版本和引用的警告", () => {
 		const d = doc({
 			packages: {},

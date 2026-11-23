@@ -297,7 +297,7 @@ def process(ctx: Context, pid: int) -> None:
 | 输出 | 说明 |
 |---|---|
 | `pid` | 进程号：交给 stop_process，或者自己节点里的 monitor_processes 等 |
-| `log_file` | 日志文件的绝对路径：交给自己节点里的 wait_for_log_line、follow_log_file，或者 ctx.artifacts.save |
+| `log_file` | 日志文件的绝对路径：交给自己节点里的 wait_for_log_line、follow_log_file，或者转成 Path 后交给 ctx.artifacts.save(名称, Path(log_file)) |
 
 - 进程在新的会话和进程组里，不属于任务的进程树：节点结束、任务被取消或超时都不会终止它，运行结束后也不会自动停止，**一定要配一个 `stop_process`**（见下一节的例子）。
 - 进程的输出不转为任务日志，只写进 `log_file`。默认位置不在任务目录里：任务目录被清理时不受影响，和任务目录按同一个保留期清理（运行还有任务在这个 Agent 上时不动，后台进程还在写日志时不会被删，见 [安装 Agent](install-agent.md)）。同一个节点重试时追加到同一个文件。
@@ -364,9 +364,29 @@ def process(ctx: Context, pid: int) -> None:
 | `http_request` | 自己的节点里直接用 `httpx`（写进节点包自己的依赖）；要重试到成功用 `sfly_std.waiting.poll_until` |
 | `assert` | 阈值和判断写在自己的节点代码里，不满足就抛异常 |
 | `file_assert` | 自己的节点里读文件、判断后抛异常（等文件写完用 `sfly_std.waiting.wait_for_file`） |
-| `process_assert` | 自己的节点里用 `sfly_std.processes.find_processes(…, include_children=False)` 数进程（`include_children` 默认 True，会连子进程一起找出来）、判断后抛异常。注意：`find_processes` 的 `pid`、`name`、`match` 是**满足其中任意一个就算**，0.3.0 的 `process_assert` 同时给几个时要求**全部满足**；要全部满足，就按一个条件找、再自己过滤，例如 `[p for p in find_processes(name="python", include_children=False) if re.search(r"server\.py", " ".join(p.cmdline()))]` |
+| `process_assert` | 自己的节点里用 `sfly_std.processes.find_processes(…, include_children=False)` 数进程（`include_children` 默认 True，会连子进程一起找出来）、判断后抛异常。注意：`find_processes` 的 `pid`、`name`、`match` 是**满足其中任意一个就算**，0.3.0 的 `process_assert` 同时给几个时要求**全部满足**；要全部满足，就按一个条件找、再自己过滤，写法见表后面的示例：`p.cmdline()` 可能抛 `psutil.NoSuchProcess`（进程刚退出）或 `psutil.AccessDenied`（macOS 上读别的用户的进程），0.3.0 把它们当作不匹配，过滤时同样接住 `psutil.Error` |
 | `port_assert` | 自己的节点里用标准库 `socket.create_connection` 检查端口（等端口出现用 `sfly_std.waiting.wait_for_port`） |
+
+`process_assert` 同时要求名字和命令行都满足时的写法（0.3.0 的 `name` 加 `match`）：
+
+```python
+import re
+
+import psutil
+from sfly_std.processes import find_processes
+
+
+def runs_server(p: psutil.Process) -> bool:
+    """命令行里有 server.py；进程刚退出（NoSuchProcess）、读不了命令行（AccessDenied）当作不匹配。"""
+    try:
+        return re.search(r"server\.py", " ".join(p.cmdline())) is not None
+    except psutil.Error:
+        return False
+
+
+matched = [p for p in find_processes(name="python", include_children=False) if runs_server(p)]
+```
 
 依赖的变化：0.4.0 只依赖 `psutil`；`httpx` 随 `http_request` 一起去掉了，要用的节点包自己依赖它。
 
-**两个版本不能在同一台 Agent 上共存。** 一台 Agent 的环境里只能有一个 `sfly-std`（一台 Agent 上所有节点包共用一个环境，见 [安装 Agent](install-agent.md)），所以锁定 0.3.0 的场景和依赖 `sfly-std>=0.4` 的节点包（上表替换办法里「写进依赖」的那种）不能在同一台 Agent 上并存：这台 Agent 装过依赖 `sfly-std>=0.4` 的节点包之后，锁定 0.3.0 的场景在它上面执行 `sfly-std` 的节点，任务以 `env_error` 失败；反过来，先装了 0.3.0、后来又装依赖 `>=0.4` 的节点包，环境里的 0.3.0 会被换成 0.4.0，之后锁定 0.3.0 的任务同样失败。撞上时看到的是 uv 的原话，写着 `No solution found when resolving dependencies` 和 `Because only sfly-std<0.4.0 is available and you require sfly-std>=0.4.0`，不会指出是哪个节点包要求 `>=0.4`。怎么安排：同一台 Agent 上的场景一起升到 0.4.0（先把会派到这台 Agent 上的场景都升级，再装依赖 0.4 的节点包）；还要用 0.3.0 的场景留在别的 Agent 上，那些 Agent 上不装依赖 0.4 的节点包。
+**两个版本不能在同一台 Agent 上共存。** 一台 Agent 的环境里只能有一个 `sfly-std`（一台 Agent 上所有节点包共用一个环境，见 [安装 Agent](install-agent.md)），所以锁定 0.3.0 的场景和依赖 `sfly-std>=0.4` 的节点包（上表替换办法里「写进依赖」的那种）不能在同一台 Agent 上并存：这台 Agent 装过依赖 `sfly-std>=0.4` 的节点包之后，锁定 0.3.0 的场景在它上面执行 `sfly-std` 的节点，任务以 `env_error` 失败；反过来，先装了 0.3.0、后来又装依赖 `>=0.4` 的节点包，环境里的 0.3.0 会被换成 0.4.0，之后锁定 0.3.0 的任务同样失败。撞上时看到的是 uv 的原话，写着 `No solution found when resolving dependencies` 和 `Because only sfly-std<0.4 is available and you require sfly-std>=0.4`（版本号照抄依赖它的节点包里写的下限：写 `>=0.4.0` 就是 `<0.4.0` 和 `>=0.4.0`），不会指出是哪个节点包要求 `>=0.4`。怎么安排：同一台 Agent 上的场景一起升到 0.4.0（先把会派到这台 Agent 上的场景都升级，再装依赖 0.4 的节点包）；还要用 0.3.0 的场景留在别的 Agent 上，那些 Agent 上不装依赖 0.4 的节点包。
