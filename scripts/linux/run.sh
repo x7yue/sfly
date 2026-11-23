@@ -18,6 +18,10 @@
 #   没有记录路径的，SFLY_LINUX_STALE_DAYS 天（默认 14）没用过的），见 prune.sh；运行开始时这个工作区的编译结果超过
 #   SFLY_LINUX_TARGET_LIMIT_MB（默认 4096）先删增量编译的缓存、还超就整个删，见 trim-target.sh；uv 的缓存超过
 #   SFLY_LINUX_UV_CACHE_LIMIT_MB（默认 1024）让 uv 清掉不再被引用的部分（entry.sh）。
+# - cargo 的调试信息只留行号表（CARGO_PROFILE_DEV_DEBUG、CARGO_PROFILE_TEST_DEBUG 默认 line-tables-only，#587，见
+#   cargo-env.sh）：编译结果小一半多；宿主上设了这两个变量就用设的（想要完整的调试信息设成 true）。只在这里，CI 不动。
+# - 同步只写内容变了的文件，写过的文件修改时间是现在、没变的不动（sync-copy.sh，#589）：cargo 按修改时间判断要不要重编，
+#   不能让同步把修改时间改回更早的值，不然在容器里改过源码（变异）还原之后，测试跑的还是改过的那份二进制。
 # - SFLY_LINUX_VOLUME 改卷的名字（测试用）。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -99,5 +103,6 @@ docker run --rm --init ${tty[@]+"${tty[@]}"} --cpus "${SFLY_LINUX_CPUS:-4}" --ne
 	-v "$root:/src:ro" -v "$sync:/sync:ro" -v "$volume:/vol" \
 	-e SFLY_LINUX_ID="$id" -e SFLY_LINUX_ROOT="$root" -e DATABASE_URL=postgres://sfly:sfly@127.0.0.1:5432/sfly \
 	-e SFLY_LINUX_TARGET_LIMIT_MB -e SFLY_LINUX_UV_CACHE_LIMIT_MB \
+	-e CARGO_PROFILE_DEV_DEBUG -e CARGO_PROFILE_TEST_DEBUG \
 	"$image" bash /src/scripts/linux/entry.sh "$@" || status=$?
 exit "$status"
