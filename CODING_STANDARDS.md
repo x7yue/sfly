@@ -54,6 +54,12 @@
   SQL 文件和快照、没有多余的文件、快照的 `prevId` 接成一条链，报错写明哪两条不对、怎么改；
   `apps/server/test/migration-upgrade.test.ts` 先迁到倒数第二个、再执行全部，确认最后一个被执行了。
 
+## 日志与错误
+
+- **控制面往终端写东西只走 `apps/server/src/util/output.ts`**（`printError`、`printWarning`、`printInfo`、`writeStdout`；给操作者看的一行说明用 `describeError`）。错误一律先过 `safeError`，数据库错误里的查询参数（密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址）不会进日志。`apps/server/src` 里直接碰 `console`、`process.stdout`、`process.stderr` 的写法由 lint 规则 `no-direct-output` 拦，**这条规则是方便，不是保证**：它认的是规则文件开头清单里的写法（每一种有名字、有样例），清单之外的不保证拦住（存进变量的 `process`、再导出、拼出来的名字……），靠审查。出口文件自己加函数要登记（`test/error-log.test.ts` 的 `REGISTERED`，那条测试用同一条规则查出口文件的副本）。`printWarning`、`printInfo`、`writeStdout` 收字符串：不要把错误拼进去，要打印错误用 `printError`。
+- **Fastify 的日志（`app.log`、`request.log`）是另一条出口，错误一律用 `err` 这个键传**：`log.error({ err: error }, "说明")`，或者第一个参数就是错误。日志入口（`hooks.logMethod` 的 `sanitizeLogArgs`）会把所有参数里的错误去掉查询参数——别的键（`{ error }`）、后面的参数、嵌套的对象和数组里的也处理——但**不要把错误拼进字符串或先 `util.inspect` 再交给日志**：那时它已经是字符串，认不出来；**不要用 `log.child({ error })` 的绑定放错误**：绑定不经过日志入口，处理不到。**错误自己的属性里放着的错误**（`Object.assign(new Error("外层"), { original: 查询错误 })`）只在 `err` 键下（或第一个参数就是它）、而且直接放在属性上时才处理；`{ error: 外层 }`、`"%o"`、`printError("…", 外层)`、属性里套着数组或对象的都不处理：错误一律用 `err` 键直接传，不要把错误包进别的错误的属性里。
+- **新加的 lint 规则（`biome-plugins/*.grit`）如果有好几种拦的写法，给每一种起名字**（`$form = "名字"`，诊断以 `[名字]` 开头）并在 `hit/` 里各配至少一个样例：`biome-plugins.test.ts` 要求规则里的每个名字至少有一个样例命中它，规则里新加一种没配样例、或某个名字的样例全删了，测试会红（同一个名字下少几个样例它看不出来，所以名字分得细一点：写法不同就起不同的名字）。规则认的写法是一个封闭的清单，写在规则文件开头；清单之外的写法不保证拦住，规则是方便，不是保证。
+
 ## 文档
 
 - **已接受的 ADR 是当时的决定记录，改名或换做法时不回头改它的正文。** 命令、接口、术语改名后，ADR 里的旧名照旧保留：读者要能看到当时决定的是什么。
