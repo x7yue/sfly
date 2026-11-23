@@ -33,6 +33,13 @@ function agentModifiedAt(header: string | string[] | undefined): Date | null {
 	return new Date(recordableAgentTimeMs(Number(header)));
 }
 
+/** 请求声明的请求体长度（Content-Length）；没带或不是整数时为 undefined（分块传输等）。 */
+function declaredLength(header: string | string[] | undefined): number | undefined {
+	if (typeof header !== "string" || !/^\d+$/.test(header)) return undefined;
+	const length = Number(header);
+	return Number.isSafeInteger(length) ? length : undefined;
+}
+
 export function registerArtifactRoutes(
 	app: FastifyInstance,
 	deps: { artifacts: ArtifactStore; agentToken?: string; publicHttpUrl: () => string },
@@ -68,9 +75,12 @@ export function registerArtifactRoutes(
 				params["*"],
 				body,
 				agentModifiedAt(request.headers[AGENT_MODIFIED_MS_HEADER]),
+				declaredLength(request.headers["content-length"]),
 			);
 			if (!outcome.ok) {
-				body.resume();
+				// 按声明的长度在读请求体之前就拒绝的：不把几百 MB 的请求体读完，回了响应就关掉连接。
+				if (outcome.unread) reply.header("connection", "close");
+				else body.resume();
 				return sendError(reply, outcome.status, outcome.code, outcome.message);
 			}
 			reply.code(201);

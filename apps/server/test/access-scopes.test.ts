@@ -52,12 +52,23 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"PATCH /feishu-bots/:name": "manage",
 	"DELETE /feishu-bots/:name": "manage",
 	"POST /feishu-bots/:name/test": "manage",
+	// 项目令牌的签发、吊销（项目，写）→ 管理
+	"POST /projects/:project/tokens": "manage",
+	"DELETE /projects/:project/tokens/:id": "manage",
 	// 上传产物（任务，写）→ 不给人和程序：只有 Agent 凭据，限派给这台 Agent 的任务
 	"PUT /tasks/:id/artifacts/*": null,
 	// 建会话、对它说话、停止它（会话，写）→ 编辑：都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）
 	"POST /projects/:project/sessions": "edit",
 	"POST /sessions/:id/messages": "edit",
 	"POST /sessions/:id/stop": "edit",
+};
+
+/**
+ * 读也不是「读」的接口：项目的管理面（成员、项目令牌、项目密钥）的列表要「管理」，只读和编辑者看不到
+ * （ADR 0029 的范围表里「列出项目令牌（项目，读）」一行）。其余只读接口都是「读」。
+ */
+const MANAGED_READS: Record<string, Scope> = {
+	"GET /projects/:project/tokens": "manage",
 };
 
 describe("范围表：接口 × 范围", () => {
@@ -68,7 +79,7 @@ describe("范围表：接口 × 范围", () => {
 			// 账号类接口不属于项目，不走范围表：见下面「账号类接口」。
 			if (def.resource.kind === "account") continue;
 			if (def.effect === "read") {
-				expect(requiredScope(def), key).toBe("read");
+				expect(requiredScope(def), key).toBe(MANAGED_READS[key] ?? "read");
 				continue;
 			}
 			seen.add(key);
@@ -94,6 +105,22 @@ describe("范围表：接口 × 范围", () => {
 		expect(requiredScope({ effect: "read", resource: { kind: "session" } })).toBe("read");
 		expect(requiredScope({ effect: "write", resource: { kind: "task" } })).toBeNull();
 		expect(requiredScope({ effect: "read", resource: { kind: "task" } })).toBe("read");
+		// 项目的管理面：读和写都要管理。
+		expect(requiredScope({ effect: "read", resource: { kind: "project" } })).toBe("manage");
+		expect(requiredScope({ effect: "write", resource: { kind: "project" } })).toBe("manage");
+	});
+
+	it("读也要管理的类别只有项目的管理面（project）：别的类别的读都是「读」", () => {
+		const managed = (Object.entries(SCOPE_TABLE) as [string, { read?: string }][])
+			.filter(([, row]) => (row.read ?? "read") !== "read")
+			.map(([kind]) => kind);
+		expect(managed).toEqual(["project"]);
+		// MANAGED_READS 里的每一行都在契约里，且都是 project 的读接口。
+		for (const key of Object.keys(MANAGED_READS)) {
+			const def = httpContract.find((d) => routeKey(d) === key);
+			expect(def?.resource.kind, key).toBe("project");
+			expect(def?.effect, key).toBe("read");
+		}
 	});
 
 	it("每个资源类别在范围表里都有一行", () => {
@@ -254,7 +281,7 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 		expect(accountRoutes.map(routeKey).sort()).toEqual(Object.keys(ACCOUNT_ROUTES).sort());
 	});
 
-	it("登录、初始化、状态不要凭据；登出什么凭据都不拒绝；当前用户、注销全部登录、改密码只认登录；管理账号只认平台管理员", () => {
+	it("登录、初始化、状态不要凭据；登出什么凭据都不拒绝；当前用户、注销全部登录、改密码只认登录；管理账号只认平台管理员；个人令牌的接口各有各的认法", () => {
 		expect(ACCOUNT_ROUTES).toEqual({
 			"GET /auth/status": "anonymous",
 			"POST /auth/setup": "anonymous",
@@ -268,6 +295,10 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 			"POST /users/:id/disable": "platform_admin",
 			"POST /users/:id/enable": "platform_admin",
 			"POST /users/:id/password": "platform_admin",
+			// 个人令牌：列出认登录或个人令牌；签发认登录，或者账号密码（令牌不能签发令牌）；吊销认登录，个人令牌只能吊销它自己。
+			"GET /account/tokens": "login_or_personal",
+			"POST /account/tokens": "login_or_password",
+			"DELETE /account/tokens/:id": "login_or_personal",
 		});
 	});
 

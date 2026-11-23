@@ -80,17 +80,19 @@ export const sdkApi = {
 		client: false,
 	}),
 	/**
-	 * `sfly init` 写进新项目 `pyproject.toml` 的配置：`sfly[cli]` 锁定的控制面版本、sfly 简单索引，
-	 * 以及控制面统一配置的镜像（ADR 0012，未配置时为 null，项目用 uv 的默认来源）。
+	 * `sfly init` 写进新节点包目录 `pyproject.toml` 的配置：`sfly[cli]` 锁定的控制面版本、sfly 简单索引，
+	 * 以及控制面统一配置的镜像（ADR 0012，未配置时为 null，节点包目录用 uv 的默认来源）。
+	 * 路径 `/sdk/project-settings` 保留：旧版 `sfly init` 在用，改了路径旧版命令行就初始化不了；
+	 * 里面的「项目」指节点包目录（ADR 0029：「项目」这个词留给租户），只改了说明和内部的名字。
 	 */
-	projectSettings: endpoint({
+	packageDirSettings: endpoint({
 		method: "GET",
 		path: "/sdk/project-settings",
-		summary: "sfly init 写进新项目的配置：控制面版本、sfly 索引和镜像",
+		summary: "sfly init 写进新节点包目录的配置：控制面版本、sfly 索引和镜像",
 		effect: "read",
 		resource: { kind: "system", target: "global" },
 		client: false,
-		key: ["sdk", "project-settings"],
+		key: ["sdk", "package-dir-settings"],
 		response: z.object({
 			version: z.string(),
 			/** sfly 简单索引的完整地址（带末尾 `/`）。 */
@@ -102,23 +104,23 @@ export const sdkApi = {
 		}),
 	}),
 	/**
-	 * 索引的项目页（项目名按 PEP 503 规范化）：`sfly` 是与控制面同版本的 SDK wheel，`sfly-std` 是公共项目里已发布的标准节点包的
+	 * 索引里一个包的页面（包名按 PEP 503 规范化）：`sfly` 是与控制面同版本的 SDK wheel，`sfly-std` 是公共项目里已发布的标准节点包的
 	 * wheel（还没有发布时是没有版本的页面，不是 404）；链接带 `#sha256=`。别的名字 404：索引只提供平台自己的这两个包。
 	 */
 	indexProject: download({
 		path: "/simple/:package/",
-		summary: "控制面的包索引的项目页：sfly 的 SDK wheel、sfly-std 的 wheel 的下载链接",
+		summary: "控制面的包索引里一个包的页面：sfly 的 SDK wheel、sfly-std 的 wheel 的下载链接",
 		effect: "read",
 		resource: { kind: "system", target: "global" },
 		client: false,
 		raw: true,
 		params: z.object({
-			/** 索引里的包名（PEP 503 里叫项目）；只有 `sfly` 和 `sfly-std`。 */
+			/** 索引里的包名（PEP 503 里叫 project）；只有 `sfly` 和 `sfly-std`。 */
 			package: z.string(),
 		}),
 		contentType: "text/html; charset=utf-8",
 	}),
-	/** 下载索引里的一个 sfly-std wheel（项目页的链接指向这里）；文件名不在索引里时 404。 */
+	/** 下载索引里的一个 sfly-std wheel（包的页面的链接指向这里）；文件名不在索引里时 404。 */
 	stdWheel: download({
 		path: "/simple/sfly-std/files/:filename",
 		summary: "下载控制面的包索引里的一个 sfly-std wheel",

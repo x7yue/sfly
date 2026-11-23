@@ -10,6 +10,8 @@ import {
 	type NodeStatus,
 	type RunNotificationState,
 	type RunStatus,
+	SCOPE_LABELS,
+	type Scope,
 } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
@@ -234,11 +236,45 @@ export const PAGE = {
 	agents: "Agent 管理",
 	packages: "节点包管理",
 	feishuBots: "飞书机器人",
+	tokens: "令牌",
+	projectTokens: "项目令牌",
 	editor: "编排画布",
 	monitor: "运行监控",
 	versions: "版本历史",
 	docs: "开发文档",
 } as const;
+
+/**
+ * 令牌页（ADR 0029「凭据」，术语见 GLOSSARY「令牌」）。范围的中文名在契约里（`SCOPE_LABELS`），这里是每个范围一句话的说明：
+ * 签发时让人知道勾了它能做什么，写法和 ADR 0029 的范围表一致。
+ */
+export const TOKEN_SCOPE_HELP = {
+	read: "查看项目里的一切",
+	run: "触发、取消运行",
+	edit: "编辑场景、版本和场景设置",
+	session_build: "登记会话构建",
+	publish: "发布节点包的正式版本",
+	manage: "管理成员、令牌、Agent 和飞书机器人",
+} as const satisfies Record<Scope, string>;
+
+export const TOKEN_STATE_LABEL = {
+	active: "有效",
+	expired: "已过期",
+	revoked: "已吊销",
+} as const;
+
+/** 签发令牌时的有效期选项：天数（null 是不过期）和文字。控制台默认 90 天：长期有效的令牌要人明确选。 */
+export const TOKEN_EXPIRY_OPTIONS = [
+	{ value: "30", days: 30, label: "30 天" },
+	{ value: "90", days: 90, label: "90 天" },
+	{ value: "365", days: 365, label: "1 年" },
+	{ value: "never", days: null, label: "不过期" },
+] as const;
+export const TOKEN_DEFAULT_EXPIRY = "90";
+
+/** 列表里范围的写法：「读、运行、编辑」。 */
+export const scopesText = (scopes: readonly string[]): string =>
+	scopes.map((scope) => SCOPE_LABELS[scope as Scope] ?? scope).join("、");
 
 /** 开发文档里被界面引用的页：slug → 页名（docs/guide/pages.json 里的标题，有单测对着它检查）。 */
 export const DOC_PAGE = {
