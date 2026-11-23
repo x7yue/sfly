@@ -398,32 +398,9 @@ export function scanSpans(a: Automaton, text: string, limit: number): number {
 }
 
 /**
- * 只输出 `text` 的 `[from, to)` 这一块（一段超长行加上前后的上下文之后，只显示中间那一段）：{@link scanSpans}（或 {@link mergeSpans}）
- * 刚找到的 `count` 段里，开头落在这一块里的整个换成一个 `mask`（超出 `to` 的部分不输出），开头在 `from` 之前的，落在这一块里的部分去掉
- * （前一段已经用一个掩码盖住了）。一个跨在拆分处的值因此只出现一个掩码，读的人拼起来看到的和不拆时一样。
- */
-export function maskedRegion(
-	text: string,
-	count: number,
-	from: number,
-	to: number,
-	mask: string,
-): string {
-	let out = "";
-	let cursor = from;
-	for (let k = 0; k < count; k++) {
-		const start = spanStarts[k] as number;
-		const end = spanEnds[k] as number;
-		if (end <= from) continue;
-		if (start >= to) break;
-		if (start >= from) out += text.slice(cursor, start) + mask;
-		cursor = Math.min(end, to);
-	}
-	return out + text.slice(cursor, to);
-
- * 把 @link scanSpans刚找到的 `count` 段和另一组段（`extraStarts` / `extraEnds`：按开头排好、互相不重叠，例如令牌原值的出现）
- * 合并成一组：重叠的合成一段，相邻但不重叠的各是一段（和 @link scanSpans同一个规则）。合并之后的段放回模块里的数组
- * （用 @link maskedByAutomaton取），返回段数。`count` 为 0 时只有另一组段（不需要先扫描）。线性，一遍。
+ * 把 {@link scanSpans} 刚找到的 `count` 段和另一组段（`extraStarts` / `extraEnds`：按开头排好、互相不重叠，例如令牌原值的出现）
+ * 合并成一组：重叠的合成一段，相邻但不重叠的各是一段（和 {@link scanSpans} 同一个规则）。合并之后的段放回模块里的数组
+ * （用 {@link maskedByAutomaton} 取），返回段数。`count` 为 0 时只有另一组段（不需要先扫描）。线性，一遍。
  */
 export function mergeSpans(
 	count: number,
@@ -476,6 +453,31 @@ export function mergeSpans(
 	spanStarts.set(starts.subarray(0, out));
 	spanEnds.set(ends.subarray(0, out));
 	return out;
+}
+
+/**
+ * 只输出 `text` 的 `[from, to)` 这一块（一段超长行加上前后的上下文之后，只显示中间那一段）：{@link scanSpans}（或 {@link mergeSpans}）
+ * 刚找到的 `count` 段里，开头落在这一块里的整个换成一个 `mask`（超出 `to` 的部分不输出），开头在 `from` 之前的，落在这一块里的部分去掉
+ * （前一段已经用一个掩码盖住了）。一个跨在拆分处的值因此只出现一个掩码，读的人拼起来看到的和不拆时一样。
+ */
+export function maskedRegion(
+	text: string,
+	count: number,
+	from: number,
+	to: number,
+	mask: string,
+): string {
+	let out = "";
+	let cursor = from;
+	for (let k = 0; k < count; k++) {
+		const start = spanStarts[k] as number;
+		const end = spanEnds[k] as number;
+		if (end <= from) continue;
+		if (start >= to) break;
+		if (start >= from) out += text.slice(cursor, start) + mask;
+		cursor = Math.min(end, to);
+	}
+	return out + text.slice(cursor, to);
 }
 
 /** 把 {@link scanSpans} 刚找到的 `count` 段换成 `mask`（同步，紧接着扫描用）。 */
