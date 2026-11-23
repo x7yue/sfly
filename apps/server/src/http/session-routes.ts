@@ -3,6 +3,7 @@ import {
 	type SessionDetailResponse,
 	type SessionView,
 	sessionsApi,
+	type TurnOutcome,
 } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { parseProjectId } from "../projects/project-id.js";
@@ -39,11 +40,18 @@ export interface SessionRouteDeps {
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
 	const { sessions, service, sse } = deps;
 
-	/** 会话的视图：列表项的字段加项目、就绪状态和在等谁（排队中时有排第几和在等谁）。 */
-	const view = async (row: SessionRow): Promise<SessionView> => {
+	/**
+	 * 会话的视图：列表项的字段加项目、就绪状态和在等谁（排队中时有排第几和在等谁）；`lastOutcome` 不给时现读
+	 * （读会话那一个接口给它：状态、事件、上一轮的结局取自同一个快照）。
+	 */
+	const view = async (row: SessionRow, lastOutcome?: TurnOutcome | null): Promise<SessionView> => {
 		const queue = await service.queueInfo(row);
 		return {
-			...toListItem(row, await sessions.lastOutcome(row.id), queue.position),
+			...toListItem(
+				row,
+				lastOutcome === undefined ? await sessions.lastOutcome(row.id) : lastOutcome,
+				queue.position,
+			),
 			project: row.projectId,
 			readiness: await service.readiness(row.projectId),
 			waiting_for: queue.waitingFor,
@@ -72,10 +80,17 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 	});
 
 	contractRoute(app, sessionsApi.get, async ({ params, query }, reply) => {
-		const row = await sessions.find(params.id);
-		if (!row) return sessionNotFound(reply);
-		const { events, hasMore } = await sessions.page(row.id, query.before);
-		const detail: SessionDetailResponse = { ...(await view(row)), events, has_more: hasMore };
+		const found = await sessions.find(params.id);
+		if (!found) return sessionNotFound(reply);
+		// 状态、事件、上一轮的结局取自同一个快照（`SessionStore.detail`）：分开读，读的当中这一轮结束了，响应是「状态在做、
+		// 事件里已经有 turn_end」，页面就永远停在「在做」。
+		const snapshot = await sessions.detail(found.id, query.before);
+		if (!snapshot) return sessionNotFound(reply);
+		const detail: SessionDetailResponse = {
+			...(await view(snapshot.row, snapshot.lastOutcome)),
+			events: snapshot.events,
+			has_more: snapshot.hasMore,
+		};
 		return detail;
 	});
 

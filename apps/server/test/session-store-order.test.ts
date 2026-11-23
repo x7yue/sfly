@@ -41,6 +41,8 @@ describe("会话事件的落库和发布顺序", () => {
 	let database: ReturnType<typeof openDatabase>;
 	/** 每个用例换一个：afterCommit 在构造时给。 */
 	let hold: ((sessionId: string, event: PersistedSessionEvent) => Promise<void>) | undefined;
+	/** 每个用例换一个：afterDetailRow 在构造时给。 */
+	let holdDetail: ((sessionId: string) => Promise<void>) | undefined;
 	let store: SessionStore;
 	const clock = new ManualClock(new Date("2026-01-01T00:00:00.000Z"));
 
@@ -52,6 +54,7 @@ describe("会话事件的落库和发布顺序", () => {
 			db: database.db,
 			clock,
 			afterCommit: (sessionId, event) => hold?.(sessionId, event) ?? Promise.resolve(),
+			afterDetailRow: (sessionId) => holdDetail?.(sessionId) ?? Promise.resolve(),
 		});
 	});
 	afterAll(async () => {
@@ -239,6 +242,31 @@ describe("会话事件的落库和发布顺序", () => {
 			"fulfilled",
 		]);
 		expect((await store.after(id, 0, 10)).map((e) => e.seq)).toEqual([1, 2]);
+	});
+
+	it("读一个会话（detail）：状态、事件的一页、上一轮的结局取自同一个快照；读的当中这一轮结束了，三样都还是读之前的样子，不会是「状态在做、事件里已经有 turn_end」", async () => {
+		const project = await newProject();
+		const { id } = await newSession("idle", project);
+		await store.beginTurn(id, project, userBody(1));
+		// 读到会话那一行之后、读事件之前，这一轮的 turn_end 在另一个连接上提交了。
+		holdDetail = async (sessionId) => {
+			await store.append(sessionId, turnEnd(1));
+		};
+		try {
+			const during = await store.detail(id);
+			expect(during?.row.status).toBe("running");
+			expect(during?.events.map((e) => e.type)).toEqual(["user_message", "turn_started"]);
+			expect(during?.lastOutcome).toBeNull();
+		} finally {
+			holdDetail = undefined;
+		}
+		// 之后再读：三样都是结束之后的样子。
+		const after = await store.detail(id);
+		expect(after?.row.status).toBe("idle");
+		expect(after?.events.map((e) => e.type)).toEqual(["user_message", "turn_started", "turn_end"]);
+		expect(after?.lastOutcome).toBe("completed");
+		// 不存在的会话：undefined。
+		expect(await store.detail(randomUUID())).toBeUndefined();
 	});
 
 	it("同一轮的 turn_end 只记一条：后到的不记、不发布，返回已有的；不会把下一轮改回空闲", async () => {

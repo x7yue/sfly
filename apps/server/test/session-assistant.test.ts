@@ -17,7 +17,7 @@ import {
 } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ASSISTANT_REJECTION_TEXT } from "../src/sessions/assistant-client.js";
+import { ASSISTANT_REJECTION_TEXT, AssistantClient } from "../src/sessions/assistant-client.js";
 import { STOP_GRACE_MS } from "../src/sessions/session-service.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -235,6 +235,123 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		} finally {
 			sse.close();
 		}
+	});
+
+	it("读会话（GET /sessions/:id）：读的当中这一轮结束了，响应里的状态、事件、上一轮的结局是同一个时刻的（不会是「在做」加上已经有 turn_end 的事件，页面据此停在在做，事件流又从这条之后接）", async () => {
+		const view = await json<SessionView>(await create());
+		const store = cp.current.sessions;
+		const real = store.find.bind(store);
+		const spy = vi.spyOn(store, "find");
+		// 路由先查会话在不在；这一轮的 turn_end 恰好在这之后提交。
+		spy.mockImplementationOnce(async (id) => {
+			const found = await real(id);
+			await store.append(view.id, turnEndBody(1, "completed"));
+			return found;
+		});
+		try {
+			const detail = await json<SessionDetailResponse>(await api.get(`/sessions/${view.id}`));
+			const ended = detail.events.some((e) => e.type === "turn_end");
+			// 事件里有 turn_end 就得是空闲、有上一轮的结局；没有就得是在做、没有结局。
+			expect({
+				status: detail.status,
+				ended,
+				outcome: detail.last_turn_outcome,
+			}).toEqual(
+				ended
+					? { status: "idle", ended: true, outcome: "completed" }
+					: { status: "running", ended: false, outcome: null },
+			);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	describe("一轮的 turn_end 比这一轮 prompt 的回应先到控制面（事件和回应走两条连接，先后没有保证）", () => {
+		it("助手服务收到 prompt 之后先发这一轮的 turn_end、过一会儿才回 202：结局照常落库、会话回到空闲，回应回来之后不会把它写回在做", async () => {
+			assistant.promptDelayMs = 400;
+			try {
+				const creating = create("很快就做完的事");
+				await eventually(() => expect(assistant.prompts).toHaveLength(1));
+				const prompt = assistant.prompts[0];
+				assistant.emit(prompt?.sessionId as string, 1, turnEnd(1));
+				// 建会话的响应还没有回来（助手服务还没回 202），结局已经落库、会话已经空闲。
+				await eventually(async () =>
+					expect((await sessionRow(cp, prompt?.sessionId as string))?.status).toBe("idle"),
+				);
+				const res = await creating;
+				expect(res.status).toBe(201);
+				const created = await json<SessionView>(res);
+				expect(created.status).toBe("idle");
+				expect(created.last_turn_outcome).toBe("completed");
+				expect((await sessionRow(cp, created.id))?.status).toBe("idle");
+				expect((await events(created.id)).map((e) => e.type)).toEqual([
+					"user_message",
+					"turn_started",
+					"turn_end",
+				]);
+			} finally {
+				assistant.promptDelayMs = 0;
+			}
+		});
+
+		it("发话也一样：第 2 轮的 turn_end 先于 prompt 的回应到，会话回到空闲，响应照常返回这句话的序号", async () => {
+			const first = await json<SessionView>(await create());
+			assistant.emit(first.id, 1, turnEnd(1));
+			await eventually(async () => expect((await sessionRow(cp, first.id))?.status).toBe("idle"));
+			assistant.prompts.length = 0;
+			assistant.promptDelayMs = 400;
+			try {
+				const saying = api.post(`/sessions/${first.id}/messages`, { text: "再做一件事" });
+				await eventually(() => expect(assistant.prompts).toHaveLength(1));
+				assistant.emit(first.id, 2, turnEnd(2));
+				await eventually(async () => expect((await sessionRow(cp, first.id))?.status).toBe("idle"));
+				const res = await saying;
+				expect(res.status).toBe(200);
+				expect((await sessionRow(cp, first.id))?.status).toBe("idle");
+				expect(
+					(await events(first.id)).filter((e) => e.type === "turn_end").map((e) => e.turn),
+				).toEqual([1, 2]);
+			} finally {
+				assistant.promptDelayMs = 0;
+			}
+		});
+
+		it("控制面发 prompt 的请求还没有发出，这一轮的 turn_end 已经到了：落库、会话回到空闲；请求之后照常发出、建会话的响应是空闲", async () => {
+			let release = () => {};
+			const held = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			const real = AssistantClient.prototype.prompt;
+			const spy = vi
+				.spyOn(AssistantClient.prototype, "prompt")
+				.mockImplementationOnce(async function (this: AssistantClient, ...args) {
+					await held;
+					return real.apply(this, args);
+				});
+			try {
+				const creating = create("还没发出去就结束了");
+				// 会话已经建好（在做，第 1 轮），prompt 的请求被扣住了；这时助手服务的事件流里先来了这一轮的 turn_end。
+				let sessionId = "";
+				await eventually(async () => {
+					const list = await json<SessionListResponse>(await api.get("/projects/default/sessions"));
+					sessionId = list.sessions[0]?.id ?? "";
+					expect(sessionId).not.toBe("");
+				});
+				expect(assistant.prompts).toHaveLength(0);
+				assistant.emit(sessionId, 1, turnEnd(1));
+				await eventually(async () =>
+					expect((await sessionRow(cp, sessionId))?.status).toBe("idle"),
+				);
+				release();
+				const res = await creating;
+				expect(res.status).toBe(201);
+				expect((await json<SessionView>(res)).status).toBe("idle");
+				expect((await events(sessionId)).filter((e) => e.type === "turn_end")).toHaveLength(1);
+			} finally {
+				release();
+				spy.mockRestore();
+			}
+		});
 	});
 
 	it("一轮结束（turn_end）：会话回到空闲，上一轮的结局进了列表，可以开始下一轮（第 2 轮）", async () => {
