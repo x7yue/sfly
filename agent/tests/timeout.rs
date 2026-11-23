@@ -7,7 +7,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use sfly_agent::proto::{ErrorKind, TaskStatus};
+use sfly_agent::proto::{CancelTask, ErrorKind, TaskStatus, server_message};
+use support::calls::{open_call, read_reply, referenced, request, silent_peer, socket_of};
 use support::{
     AgentOptions, FakeControlPlane, assert_quiet_termination, capture_stderr, spawn_agent,
     stub_task, wait_until,
@@ -240,4 +241,150 @@ async fn task_finishing_within_its_timeout_succeeds() {
 
     let (result, _) = cp.result("task-in-time").await;
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+}
+
+async fn cancel(cp: &FakeControlPlane, task_id: &str, force: bool) {
+    cp.send(server_message::Body::Cancel(CancelTask {
+        task_id: task_id.into(),
+        attempt: 1,
+        force,
+    }))
+    .await;
+}
+
+#[tokio::test]
+async fn a_forced_cancel_during_the_grace_period_after_a_timeout_kills_the_process_tree_at_once() {
+    // #617：超时进入收尾时间（已经向进程树发了 SIGTERM）之后又收到强制取消：立即杀掉进程树，不等收尾时间用完。
+    // 结局仍然是超时：它由先发生的原因决定，控制面按运行是否已经取消记任务的状态。
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-timeout-force");
+    options.args = vec!["--terminate-grace".into(), "60".into()];
+    let agent = spawn_agent(options);
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pids");
+
+    let mut task = stub_task(
+        "task-timeout-force",
+        "process_tree",
+        json!({ "pid_file": pid_file, "ignore_term": true }),
+    );
+    task.timeout_seconds = 2;
+    cp.assign(task).await;
+    wait_for_report(&pid_file).await;
+    let pids = pids(&pid_file);
+    // 取消标记出现了：超时已经进入收尾时间，进程树理会不了 SIGTERM，还活着。
+    let marker = agent.work_dir.path().join("task-timeout-force/cancel");
+    wait_until("the cancel marker", || marker.exists()).await;
+    assert!(pids.iter().all(|&p| alive(p)), "SIGTERM is ignored");
+
+    let forced = Instant::now();
+    cancel(&cp, "task-timeout-force", true).await;
+    let (result, _) = cp.result("task-timeout-force").await;
+    assert!(
+        forced.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        forced.elapsed()
+    );
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    let error = result.error.expect("error");
+    assert_eq!(error.kind(), ErrorKind::Timeout, "{error:?}");
+    assert!(error.message.contains("2 秒"), "{}", error.message);
+    assert!(
+        error.message.contains("收到强制取消，已强制杀掉进程树"),
+        "{}",
+        error.message
+    );
+    assert_all_gone(&pids).await;
+}
+
+#[tokio::test]
+async fn a_graceful_cancel_during_the_grace_period_after_a_timeout_does_not_cut_it_short() {
+    // #617：优雅取消不用做什么（进程树已经在终止），收尾时间照常用满，结局仍然是超时。
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-timeout-graceful");
+    options.args = vec!["--terminate-grace".into(), "3".into()];
+    let agent = spawn_agent(options);
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pids");
+
+    let mut task = stub_task(
+        "task-timeout-graceful",
+        "process_tree",
+        json!({ "pid_file": pid_file, "ignore_term": true }),
+    );
+    task.timeout_seconds = 2;
+    cp.assign(task).await;
+    wait_for_report(&pid_file).await;
+    let pids = pids(&pid_file);
+    let marker = agent.work_dir.path().join("task-timeout-graceful/cancel");
+    wait_until("the cancel marker", || marker.exists()).await;
+
+    let cancelled = Instant::now();
+    cancel(&cp, "task-timeout-graceful", false).await;
+    let (result, _) = cp.result("task-timeout-graceful").await;
+    assert!(
+        cancelled.elapsed() >= Duration::from_secs(2),
+        "the grace period was cut short: {:?}",
+        cancelled.elapsed()
+    );
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    let error = result.error.expect("error");
+    assert_eq!(error.kind(), ErrorKind::Timeout, "{error:?}");
+    assert!(!error.message.contains("强制取消"), "{}", error.message);
+    assert_all_gone(&pids).await;
+}
+
+#[tokio::test]
+async fn an_agent_call_in_flight_ends_when_the_task_times_out_while_the_node_is_still_cleaning_up()
+{
+    // #617：超时进入收尾时间时，这个任务正在进行的 Agent 能力调用和取消一样立即结束（以 cancelled 回复，SDK 抛
+    // `Cancelled`），不等进程退出；任务的结局仍然是超时。后台线程里的调用走的是同一条路。
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-timeout-call");
+    options.args = vec!["--terminate-grace".into(), "60".into()];
+    let agent = spawn_agent(options);
+    cp.hello(0).await;
+    let (port, _peer) = silent_peer().await;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pids");
+
+    let mut task = stub_task(
+        "task-timeout-call",
+        "process_tree",
+        json!({ "pid_file": pid_file, "ignore_term": true }),
+    );
+    task.referenced_agents = vec![referenced("silent", "127.0.0.1", port)];
+    task.timeout_seconds = 3;
+    cp.assign(task).await;
+    wait_for_report(&pid_file).await;
+    let pids = pids(&pid_file);
+
+    // 不限调用的超时：只有任务进入收尾时间能结束它。
+    let mut ask = request(
+        "task-timeout-call",
+        "silent",
+        "files.stat",
+        json!({ "path": "/" }),
+    );
+    ask["timeout_ms"] = json!(0);
+    let mut open = open_call(&socket_of(&agent), &ask).await;
+    let reply = tokio::spawn(async move { read_reply(&mut open).await });
+    let reply = tokio::time::timeout(Duration::from_secs(10), reply)
+        .await
+        .expect("the call did not end when the task timed out")
+        .unwrap();
+    assert_eq!(reply.error().0, "cancelled");
+    // 调用是在进程还活着的时候结束的：节点理会不了 SIGTERM，收尾时间有 60 秒。
+    assert!(
+        pids.iter().all(|&p| alive(p)),
+        "the call waited for the process to exit"
+    );
+
+    cancel(&cp, "task-timeout-call", true).await;
+    let (result, _) = cp.result("task-timeout-call").await;
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    assert_eq!(result.error.expect("error").kind(), ErrorKind::Timeout);
+    assert_all_gone(&pids).await;
 }

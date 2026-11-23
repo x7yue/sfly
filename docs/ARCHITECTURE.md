@@ -313,7 +313,7 @@ flowchart TD
 | `SFLY_PROCS` | 这次运行的后台进程目录 `$SFLY_HOME/procs/<运行 ID>/`（`--procs-dir`，不预先创建），即 `ctx.procs_dir`；0.0.4 起设置，旧 Agent 不设置时 SDK 取同样的默认位置 |
 | `SFLY_AGENT_SOCKET` | Agent 的本地 socket（与 `sfly dev` 共用，`<work_dir>/agent.sock`）：节点调用 Agent 能力（`ctx.agent()`）时经它交给自己所在的 Agent（`agent/src/calls/`）。本地调试时不设置，改设 `SFLY_LOCAL_AGENTS`（「Agent」类型的输入引用的 Agent → 本地目录的映射表，没有映射的为 null） |
 
-- Agent 能力的调用（ADR 0019）：每次调用一个连接，SDK 发一行 JSON（任务 ID、attempt、目标 Agent、方法、参数、超时），Agent 回复若干行 JSON（流式的项、最后是结果或错误）后关闭连接。Agent 按任务的 `referenced_agents` 检查目标，对自己直接调用本机服务的实现，对另一台 Agent 用 gRPC 客户端连到它的端口（连接复用，调用前用 `Describe` 确认名称和能力）。任务被取消、节点进程退出（连接关闭）时 Agent 放弃调用。协议见 `agent/src/calls/mod.rs`。
+- Agent 能力的调用（ADR 0019）：每次调用一个连接，SDK 发一行 JSON（任务 ID、attempt、目标 Agent、方法、参数、超时），Agent 回复若干行 JSON（流式的项、最后是结果或错误）后关闭连接。Agent 按任务的 `referenced_agents` 检查目标，对自己直接调用本机服务的实现，对另一台 Agent 用 gRPC 客户端连到它的端口（连接复用，调用前用 `Describe` 确认名称和能力）。任务被取消、超时进入收尾时间（执行器 `Running::time_out` 向这个任务的取消信号发一次优雅取消，只有调用和执行器自己看它，任务的结局不受影响）、节点进程退出（连接关闭）时 Agent 放弃调用。协议见 `agent/src/calls/mod.rs`。
 - 建立在 Agent 能力之上的标准节点（`std/src/sfly_std/`，下载、删除源文件共用 `_pull.py`）：`pull_files` 列出后逐个下载；`watch_files` 在后台线程里读 `files.watch` 的快照和事件、放进本地队列，主线程逐个下载（节点下载大文件时事件不在 Agent 上堆积溢出）。它按「文件标识 + 大小」去重、每份快照（包括重连后 `missed` 的）为准，「至少 N 秒没有修改」用本机的单调时钟计时、下载前再 `stat` 一次比较，不拿另一台 Agent 的修改时间和本机时间比；监听的连接中断、重连超时后隔一会儿重新开始监听，只有第一次就连不上时失败。
 
 - 事件管道：Agent 先以非阻塞方式打开读端、自己持有一个写端（没有写者时读端读到 EOF），再启动执行器；容量调到 `/proc/sys/fs/pipe-max-size`。数据只在内核缓冲区里，有数据时立即读取；写满时 SDK 的写入阻塞等待，不丢事件。执行器退出后 Agent 关掉自己的写端，把剩余数据读完（后台子进程还持有写端时最多等 2 秒）。本地调试（`sfly debug`、`sfly.testing`）用同样的做法。
