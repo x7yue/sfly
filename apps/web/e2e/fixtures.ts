@@ -62,6 +62,8 @@ export interface E2eFixtures {
 		initialAdmin?: { loginName: string; password: string; displayName?: string };
 		/** 打开着的事件流多久重新检查一次凭据（毫秒，默认 30 秒）：登录失效之后流多久被关掉。 */
 		streamRecheckMs?: number;
+		/** 登录闲置多久失效（毫秒，默认 12 小时）：测试要让控制面时钟走过几天又不想被登录失效打断时放长。 */
+		loginIdleMs?: number;
 	};
 }
 

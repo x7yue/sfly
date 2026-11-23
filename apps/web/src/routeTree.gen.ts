@@ -18,6 +18,7 @@ import { Route as ShellFeishuBotsRouteImport } from './routes/_shell/feishu-bots
 import { Route as ShellPackagesRouteImport } from './routes/_shell/packages'
 import { Route as OrchestrationsIdRouteImport } from './routes/orchestrations/$id'
 import { Route as RunsIdRouteImport } from './routes/runs/$id'
+import { Route as ShellAccountTokensRouteImport } from './routes/_shell/account/tokens'
 import { Route as ShellDocsIndexRouteImport } from './routes/_shell/docs/index'
 import { Route as ShellDocsPageRouteImport } from './routes/_shell/docs/$page'
 import { Route as ShellOrchestrationsIndexRouteImport } from './routes/_shell/orchestrations/index'
@@ -25,6 +26,7 @@ import { Route as ShellRunsIndexRouteImport } from './routes/_shell/runs/index'
 import { Route as ShellSessionsIndexRouteImport } from './routes/_shell/sessions/index'
 import { Route as ShellSessionsIdRouteImport } from './routes/_shell/sessions/$id'
 import { Route as ShellOrchestrationsIdVersionsRouteImport } from './routes/_shell/orchestrations/$id_.versions'
+import { Route as ShellProjectsProjectTokensRouteImport } from './routes/_shell/projects/$project/tokens'
 
 const ShellRoute = ShellRouteImport.update({
   id: '/_shell',
@@ -70,6 +72,11 @@ const RunsIdRoute = RunsIdRouteImport.update({
   path: '/runs/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShellAccountTokensRoute = ShellAccountTokensRouteImport.update({
+  id: '/account/tokens',
+  path: '/account/tokens',
+  getParentRoute: () => ShellRoute,
+} as any)
 const ShellDocsIndexRoute = ShellDocsIndexRouteImport.update({
   id: '/docs/',
   path: '/docs/',
@@ -107,6 +114,12 @@ const ShellOrchestrationsIdVersionsRoute =
     path: '/orchestrations/$id/versions',
     getParentRoute: () => ShellRoute,
   } as any)
+const ShellProjectsProjectTokensRoute =
+  ShellProjectsProjectTokensRouteImport.update({
+    id: '/projects/$project/tokens',
+    path: '/projects/$project/tokens',
+    getParentRoute: () => ShellRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
@@ -117,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/packages': typeof ShellPackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/runs/$id': typeof RunsIdRoute
+  '/account/tokens': typeof ShellAccountTokensRoute
   '/docs/$page': typeof ShellDocsPageRoute
   '/sessions/$id': typeof ShellSessionsIdRoute
   '/docs/': typeof ShellDocsIndexRoute
@@ -124,6 +138,7 @@ export interface FileRoutesByFullPath {
   '/runs/': typeof ShellRunsIndexRoute
   '/sessions/': typeof ShellSessionsIndexRoute
   '/orchestrations/$id/versions': typeof ShellOrchestrationsIdVersionsRoute
+  '/projects/$project/tokens': typeof ShellProjectsProjectTokensRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -134,6 +149,7 @@ export interface FileRoutesByTo {
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/runs/$id': typeof RunsIdRoute
   '/': typeof ShellIndexRoute
+  '/account/tokens': typeof ShellAccountTokensRoute
   '/docs/$page': typeof ShellDocsPageRoute
   '/sessions/$id': typeof ShellSessionsIdRoute
   '/docs': typeof ShellDocsIndexRoute
@@ -141,6 +157,7 @@ export interface FileRoutesByTo {
   '/runs': typeof ShellRunsIndexRoute
   '/sessions': typeof ShellSessionsIndexRoute
   '/orchestrations/$id/versions': typeof ShellOrchestrationsIdVersionsRoute
+  '/projects/$project/tokens': typeof ShellProjectsProjectTokensRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -153,6 +170,7 @@ export interface FileRoutesById {
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/runs/$id': typeof RunsIdRoute
   '/_shell/': typeof ShellIndexRoute
+  '/_shell/account/tokens': typeof ShellAccountTokensRoute
   '/_shell/docs/$page': typeof ShellDocsPageRoute
   '/_shell/sessions/$id': typeof ShellSessionsIdRoute
   '/_shell/docs/': typeof ShellDocsIndexRoute
@@ -160,6 +178,7 @@ export interface FileRoutesById {
   '/_shell/runs/': typeof ShellRunsIndexRoute
   '/_shell/sessions/': typeof ShellSessionsIndexRoute
   '/_shell/orchestrations/$id_/versions': typeof ShellOrchestrationsIdVersionsRoute
+  '/_shell/projects/$project/tokens': typeof ShellProjectsProjectTokensRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -172,6 +191,7 @@ export interface FileRouteTypes {
     | '/packages'
     | '/orchestrations/$id'
     | '/runs/$id'
+    | '/account/tokens'
     | '/docs/$page'
     | '/sessions/$id'
     | '/docs/'
@@ -179,6 +199,7 @@ export interface FileRouteTypes {
     | '/runs/'
     | '/sessions/'
     | '/orchestrations/$id/versions'
+    | '/projects/$project/tokens'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -189,6 +210,7 @@ export interface FileRouteTypes {
     | '/orchestrations/$id'
     | '/runs/$id'
     | '/'
+    | '/account/tokens'
     | '/docs/$page'
     | '/sessions/$id'
     | '/docs'
@@ -196,6 +218,7 @@ export interface FileRouteTypes {
     | '/runs'
     | '/sessions'
     | '/orchestrations/$id/versions'
+    | '/projects/$project/tokens'
   id:
     | '__root__'
     | '/_shell'
@@ -207,6 +230,7 @@ export interface FileRouteTypes {
     | '/orchestrations/$id'
     | '/runs/$id'
     | '/_shell/'
+    | '/_shell/account/tokens'
     | '/_shell/docs/$page'
     | '/_shell/sessions/$id'
     | '/_shell/docs/'
@@ -214,6 +238,7 @@ export interface FileRouteTypes {
     | '/_shell/runs/'
     | '/_shell/sessions/'
     | '/_shell/orchestrations/$id_/versions'
+    | '/_shell/projects/$project/tokens'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -289,6 +314,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RunsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_shell/account/tokens': {
+      id: '/_shell/account/tokens'
+      path: '/account/tokens'
+      fullPath: '/account/tokens'
+      preLoaderRoute: typeof ShellAccountTokensRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/docs/': {
       id: '/_shell/docs/'
       path: '/docs'
@@ -338,6 +370,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellOrchestrationsIdVersionsRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/projects/$project/tokens': {
+      id: '/_shell/projects/$project/tokens'
+      path: '/projects/$project/tokens'
+      fullPath: '/projects/$project/tokens'
+      preLoaderRoute: typeof ShellProjectsProjectTokensRouteImport
+      parentRoute: typeof ShellRoute
+    }
   }
 }
 
@@ -346,6 +385,7 @@ interface ShellRouteChildren {
   ShellFeishuBotsRoute: typeof ShellFeishuBotsRoute
   ShellPackagesRoute: typeof ShellPackagesRoute
   ShellIndexRoute: typeof ShellIndexRoute
+  ShellAccountTokensRoute: typeof ShellAccountTokensRoute
   ShellDocsPageRoute: typeof ShellDocsPageRoute
   ShellSessionsIdRoute: typeof ShellSessionsIdRoute
   ShellDocsIndexRoute: typeof ShellDocsIndexRoute
@@ -353,6 +393,7 @@ interface ShellRouteChildren {
   ShellRunsIndexRoute: typeof ShellRunsIndexRoute
   ShellSessionsIndexRoute: typeof ShellSessionsIndexRoute
   ShellOrchestrationsIdVersionsRoute: typeof ShellOrchestrationsIdVersionsRoute
+  ShellProjectsProjectTokensRoute: typeof ShellProjectsProjectTokensRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
@@ -360,6 +401,7 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellFeishuBotsRoute: ShellFeishuBotsRoute,
   ShellPackagesRoute: ShellPackagesRoute,
   ShellIndexRoute: ShellIndexRoute,
+  ShellAccountTokensRoute: ShellAccountTokensRoute,
   ShellDocsPageRoute: ShellDocsPageRoute,
   ShellSessionsIdRoute: ShellSessionsIdRoute,
   ShellDocsIndexRoute: ShellDocsIndexRoute,
@@ -367,6 +409,7 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellRunsIndexRoute: ShellRunsIndexRoute,
   ShellSessionsIndexRoute: ShellSessionsIndexRoute,
   ShellOrchestrationsIdVersionsRoute: ShellOrchestrationsIdVersionsRoute,
+  ShellProjectsProjectTokensRoute: ShellProjectsProjectTokensRoute,
 }
 
 const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)

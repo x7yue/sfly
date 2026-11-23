@@ -8,7 +8,7 @@
 //
 // 每个接口、每种凭据都从路由清单和 test/support/credentials.ts 生成：新加接口自动进来，新加一种凭据在 ATTACKERS 里登记一次。
 // 会话令牌在 #495 登记；任务凭据、Agent 凭据的签发在 #492，这里直接写库。
-import { httpContract, type RouteDef } from "@sfly/schema";
+import { httpContract, RESOURCE_KINDS, type RouteDef } from "@sfly/schema";
 import Fastify from "fastify";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -21,6 +21,8 @@ import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import {
 	expectedForAgent,
 	expectedForTask,
+	ID_PARAM_VALUES,
+	NAME_PARAM_VALUES,
 	projectRoutes,
 	requestFor,
 	systemRoutes,
@@ -124,6 +126,9 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			pkg: "stub",
 			bot: "bot-victim",
 			project: "default",
+			token: await accounts.tokenId(
+				await accounts.projectToken("default", { name: "victim-token" }),
+			),
 		};
 
 		// 项目甲 alpha 里的凭据：每一种都是它能有的最大权限（项目管理员、全部范围）。
@@ -454,10 +459,11 @@ describe("新加接口自动覆盖", () => {
 			pkg: "k",
 			bot: "b",
 			project: "default",
+			token: "k",
 		};
 		const get = { ...fake, method: "GET", effect: "read" };
 		const other = { ...get, resource: { kind: "package", target: { params: "id" } } } as RouteDef;
-		expect(() => requestFor(other, victim)).toThrow(/paramValue/);
+		expect(() => requestFor(other, victim)).toThrow(/没有取值办法/);
 		for (const kind of ["scenario", "run", "task", "session"] as const) {
 			const def = { ...get, resource: { kind, target: { params: "id" } } } as RouteDef;
 			expect(requestFor(def, victim).path).toBe(
@@ -482,7 +488,61 @@ describe("新加接口自动覆盖", () => {
 				pkg: "k",
 				bot: "b",
 				project: "default",
+				token: "k",
 			}),
 		).toThrow(/请求样本/);
+	});
+});
+
+describe("生成的请求打的是那一类资源（资源类别穷举，#554）", () => {
+	/** 每个字段一个不同的值：请求路径里出现的是哪一个，就说明请求打的是哪一类资源。 */
+	const sample: Victim = {
+		scenario: "sample-scenario",
+		run: "sample-run",
+		task: "sample-task",
+		session: "sample-session",
+		preset: "sample-preset",
+		agent: "sample-agent",
+		pkg: "sample-package",
+		bot: "sample-bot",
+		project: "sample-project",
+		token: "sample-token",
+	};
+
+	it("每个资源类别在生成器里都有自己的取值办法：加了类别而没有补，类型检查和这条测试都会失败", () => {
+		expect(Object.keys(ID_PARAM_VALUES).sort()).toEqual([...RESOURCE_KINDS].sort());
+		expect(Object.keys(NAME_PARAM_VALUES).sort()).toEqual([...RESOURCE_KINDS].sort());
+	});
+
+	it("路径里有 :id 或 :name 的接口，请求打的是它声明的那一类资源，不是场景（也不是别的）", () => {
+		let checked = 0;
+		for (const def of projectRoutes()) {
+			const { kind } = def.resource;
+			const { path } = requestFor(def, sample);
+			if (/:id\b/.test(def.path)) {
+				const expected = ID_PARAM_VALUES[kind](sample);
+				expect(expected, `${routeKey(def)}：${kind} 没有 :id 的取值办法`).not.toBeNull();
+				expect(path, routeKey(def)).toContain(`/${expected}`);
+				// 别的类别的值不该出现在路径里（场景的 ID 出现在运行的路径里，说明请求打错了资源）。
+				for (const other of ["scenario", "run", "task", "token"] as const) {
+					if (sample[other] !== expected) expect(path, routeKey(def)).not.toContain(sample[other]);
+				}
+				checked++;
+			}
+			if (/:name\b/.test(def.path)) {
+				const expected = NAME_PARAM_VALUES[kind](sample);
+				expect(expected, `${routeKey(def)}：${kind} 没有 :name 的取值办法`).not.toBeNull();
+				expect(path, routeKey(def)).toContain(`/${expected}`);
+				checked++;
+			}
+		}
+		expect(checked).toBeGreaterThan(30);
+	});
+
+	it("项目令牌的接口：项目写进路径，令牌 ID 是项目乙里的令牌", () => {
+		const revoke = httpContract.find((d) => routeKey(d) === "DELETE /projects/:project/tokens/:id");
+		expect(revoke && requestFor(revoke, sample).path).toBe(
+			"/projects/sample-project/tokens/sample-token",
+		);
 	});
 });

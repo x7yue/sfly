@@ -16,6 +16,7 @@ from sfly import __version__
 from sfly.cli import (
     agent,
     api,
+    login,
     package,
     run_artifacts,
     run_exec,
@@ -37,7 +38,7 @@ def _init(args: argparse.Namespace) -> int:
     except InitError as error:
         print(f"初始化失败：{error}", file=sys.stderr)
         return 2 if error.usage else 1
-    print(f"已创建节点包项目 {project}")
+    print(f"已创建节点包目录 {project}")
     print(f"下一步：cd {project} && uv sync && uv run pytest")
     return 0
 
@@ -47,7 +48,7 @@ def _build(args: argparse.Namespace) -> int:
 
     try:
         archive = build(
-            Path(args.project).resolve(), Path(args.out).resolve() if args.out else None
+            Path(args.package_dir).resolve(), Path(args.out).resolve() if args.out else None
         )
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
@@ -58,12 +59,13 @@ def _build(args: argparse.Namespace) -> int:
 
 def _publish(args: argparse.Namespace) -> int:
     from sfly.cli.build import BuildError, build
+    from sfly.cli.client import Client
     from sfly.cli.publish import PublishError, publish
 
     path = Path(args.path).resolve()
     try:
         archive = build(path) if path.is_dir() else path
-        result = publish(archive, control_plane_url(args.server, DEFAULT_SERVER))
+        result = publish(archive, Client.from_options(args.server, None))
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1
@@ -79,7 +81,7 @@ def _dev(args: argparse.Namespace) -> int:
     from sfly.cli.dev import DevError, dev
 
     try:
-        reply = dev(Path(args.project).resolve(), dev_socket(args.socket))
+        reply = dev(Path(args.package_dir).resolve(), dev_socket(args.socket))
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1
@@ -106,7 +108,7 @@ def _debug(args: argparse.Namespace) -> int:
                 raise DebugError(f"参数不合法：--agent 的格式是 <名称>=<目录>，收到 {spec!r}")
             agents[name] = Path(root).absolute()
         return debug(
-            Path(args.project).resolve(),
+            Path(args.package_dir).resolve(),
             args.node,
             args.params,
             args.grace,
@@ -125,7 +127,7 @@ def _skill_update(args: argparse.Namespace) -> int:
     from sfly.cli.skill import SkillError, update
 
     try:
-        result = update(Path(args.project).resolve(), force=args.force)
+        result = update(Path(args.package_dir).resolve(), force=args.force)
     except SkillError as error:
         print(error, file=sys.stderr)
         return 2 if error.usage else 1
@@ -134,6 +136,44 @@ def _skill_update(args: argparse.Namespace) -> int:
     for message in result.refused:
         print(message, file=sys.stderr)
     return 1 if result.refused else 0
+
+
+class _DeprecatedProjectOption(argparse.Action):
+    """`--project` 是 `--package-dir` 的旧名：「项目」这个词留给多项目的租户（ADR 0029），
+    旧名保留一个版本，用到时在 stderr 提示一次（stdout 不受影响）。
+    之后 `--project` 用来选项目，所以这个版本里它不能表示别的意思。"""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[str] | None,
+        option_string: str | None = None,
+    ) -> None:
+        if not getattr(namespace, "_warned_project_option", False):
+            print(
+                "提示：--project 已改名为 --package-dir（指节点包所在的目录）；"
+                "旧名这个版本还能用，下个版本起 --project 用来选多项目里的项目。",
+                file=sys.stderr,
+            )
+            namespace._warned_project_option = True
+        setattr(namespace, self.dest, values)
+
+
+def _add_package_dir_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--package-dir",
+        default=".",
+        metavar="节点包目录",
+        help="节点包目录（默认当前目录）",
+    )
+    parser.add_argument(
+        "--project",
+        dest="package_dir",
+        action=_DeprecatedProjectOption,
+        metavar="节点包目录",
+        help="--package-dir 的旧名，这个版本还能用（会提示），下个版本起 --project 用来选项目",
+    )
 
 
 def _run_group_hint(first: str) -> str:
@@ -152,15 +192,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     p_init = sub.add_parser(
         "init",
-        help="创建节点包项目（uv 项目 + 控制面的镜像与 sfly 索引配置 + 示例节点 + 两份 skill）",
-        description="用 uv init --lib --python 3.13 创建项目，"
+        help="创建节点包目录（uv 工程 + 控制面的镜像与 sfly 索引配置 + 示例节点 + 两份 skill）",
+        description="用 uv init --lib --python 3.13 创建节点包目录，"
         "写入控制面的 PyPI 镜像、Python 下载镜像和 sfly 索引，"
         "加开发依赖（sfly[cli]、pytest、ruff）、一个示例节点及其单元测试，"
         "以及给 AI 编程助手的两份 skill：节点开发 sfly-node-dev、操作平台 sfly-platform"
         "（.agents/skills/<名称>/，.claude/skills/ 下是软链接）。"
         "退出码：成功 0，失败 1，包名不合法或目录非空 2。",
     )
-    p_init.add_argument("directory", help="项目目录（不存在或为空）")
+    p_init.add_argument("directory", help="节点包目录（不存在或为空）")
     p_init.add_argument(
         "--name",
         help="包名（默认为目录名）：小写字母、数字、- 和 _，以字母或数字开头",
@@ -173,8 +213,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_init.set_defaults(func=_init)
 
     p_build = sub.add_parser("build", help="扫描 @node，构建 .sflypkg 节点包")
-    p_build.add_argument("project", nargs="?", default=".", help="项目目录（默认当前目录）")
-    p_build.add_argument("--out", help="输出目录（默认 <项目>/dist）")
+    p_build.add_argument(
+        "package_dir",
+        nargs="?",
+        default=".",
+        metavar="节点包目录",
+        help="节点包目录（默认当前目录）",
+    )
+    p_build.add_argument("--out", help="输出目录（默认 <节点包目录>/dist）")
     p_build.set_defaults(func=_build)
 
     p_publish = sub.add_parser("publish", help="把节点包发布到控制面")
@@ -182,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "path",
         nargs="?",
         default=".",
-        help=".sflypkg 文件，或项目目录（先构建再发布，默认当前目录）",
+        help=".sflypkg 文件，或节点包目录（先构建再发布，默认当前目录）",
     )
     p_publish.add_argument(
         "--server",
@@ -194,7 +240,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_dev = sub.add_parser(
         "dev", help="让本机 sfly Agent 以可编辑方式加载本地源码目录，注册为 包名@dev"
     )
-    p_dev.add_argument("project", nargs="?", default=".", help="项目目录（默认当前目录）")
+    p_dev.add_argument(
+        "package_dir",
+        nargs="?",
+        default=".",
+        metavar="节点包目录",
+        help="节点包目录（默认当前目录）",
+    )
     p_dev.add_argument(
         "--socket",
         help="本机 sfly Agent 的本地 socket（默认与 Agent 相同：SFLY_DEV_SOCKET，"
@@ -205,9 +257,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     p_debug = sub.add_parser(
         "debug",
-        help="本地调试：在当前项目环境里执行一个节点，打印输出、日志和指标",
-        description="在当前项目环境里用 sfly Agent 同一个执行器执行一个节点"
-        "（不经过控制面和 Agent）。产物和工作文件放在 <项目>/.sfly/runs/<时间>-<节点>/。"
+        help="本地调试：在当前节点包目录的环境里执行一个节点，打印输出、日志和指标",
+        description="在当前节点包目录的环境里用 sfly Agent 同一个执行器执行一个节点"
+        "（不经过控制面和 Agent）。产物和工作文件放在 <节点包目录>/.sfly/runs/<时间>-<节点>/。"
         "Ctrl-C 取消，再按一次立即杀掉。"
         "退出码：成功 0，节点失败 1，参数不合法 2，取消 130。",
     )
@@ -218,7 +270,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="JSON 或 @文件",
         help="节点的输入，JSON 对象（默认 {}）：JSON 文本，或 @文件 从文件读（@- 从标准输入读）",
     )
-    p_debug.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    _add_package_dir_option(p_debug)
     p_debug.add_argument(
         "--download",
         nargs=2,
@@ -256,7 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_results.register(run_sub)
 
     p_skill = sub.add_parser(
-        "skill", help="管理项目里给 AI 编程助手的 skill（sfly-node-dev、sfly-platform）"
+        "skill", help="管理节点包目录里给 AI 编程助手的 skill（sfly-node-dev、sfly-platform）"
     )
     skill_sub = p_skill.add_subparsers(dest="skill_command", required=True)
     p_skill_update = skill_sub.add_parser(
@@ -264,16 +316,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="把两份 skill 换成当前 SDK 版本的内容",
         description="用当前 SDK 版本带的内容整个替换 .agents/skills/sfly-node-dev/ 和 "
         ".agents/skills/sfly-platform/（.claude/skills/ 下同名的软链接不存在时一并创建；"
-        "项目里还没有的 skill 直接写入）。每份 skill 单独检查：目录内容和上次写入的不同时"
+        "节点包目录里还没有的 skill 直接写入）。每份 skill 单独检查：目录内容和上次写入的不同时"
         "不覆盖这一份，加 --force 才覆盖。"
-        "退出码：成功 0，有 skill 因改动过没有更新 1，不是项目目录 2。",
+        "退出码：成功 0，有 skill 因改动过没有更新 1，不是节点包目录 2。",
     )
     p_skill_update.add_argument(
         "--force", action="store_true", help="目录改动过也覆盖（改动会丢失）"
     )
-    p_skill_update.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    _add_package_dir_option(p_skill_update)
     p_skill_update.set_defaults(func=_skill_update)
 
+    login.register(sub)
     scenario.register(sub)
     agent.register(sub)
     package.register(sub)
