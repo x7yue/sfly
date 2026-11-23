@@ -52,6 +52,14 @@ export function agentNotRegistered(node: string, input: string, agent: string): 
 }
 
 /**
+ * 节点派发到的 Agent 没有注册过时的说明（预检和派发时共用）：`node` 是节点的写法「显示名称（节点 ID）」
+ * （{@link nodeNameWithId}）。别的项目里注册的 Agent 在这个项目里和没有注册过一样，说明相同。
+ */
+export function nodeAgentNotRegistered(node: string, agent: string): string {
+	return `节点 ${node} 派发到的 Agent ${agent} 还没有注册过`;
+}
+
+/**
  * 「Agent」类型的输入的静态检查：常量必须是已注册的 Agent（`agents`，不要求在线）。
  * 含引用的值在触发、派发时才知道；节点类型未知时跳过（包版本检查会指出）。
  */

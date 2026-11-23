@@ -17,12 +17,13 @@ import {
 	removedNodesMessage,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { eq, inArray } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import type { z } from "zod";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Db } from "../db/database.js";
-import { agents, nodePackages, orchestrations as orchestrationRows } from "../db/schema.js";
+import { nodePackages } from "../db/schema.js";
 import { findPackageVersion } from "../packages/package-repository.js";
-import { readableProjects } from "../projects/project-id.js";
+import { type ProjectId, readableProjects } from "../projects/project-id.js";
 import type { OrchestrationStore, VersionSummary } from "./orchestration-store.js";
 
 /**
@@ -54,7 +55,8 @@ export async function prepareEdits(
 	baseVersion: number | undefined,
 ): Promise<PreparedEdits> {
 	const head = await orchestrations.head(orchestrationId);
-	if (!head) return { kind: "not_found" };
+	const project = await orchestrations.projectOf(orchestrationId);
+	if (!head || project === undefined) return { kind: "not_found" };
 	if (baseVersion !== undefined && baseVersion !== head.number) {
 		return {
 			kind: "conflict",
@@ -72,7 +74,7 @@ export async function prepareEdits(
 	const outcome = applyEditOperations(
 		head.document,
 		operations,
-		await editContext(db, orchestrationId, head.document, operations),
+		await editContext(db, project, head.document, operations),
 	);
 	if (!outcome.ok) return { kind: "invalid_operation", problem: outcome.problem };
 	const parsed = OrchestrationDocument.safeParse(outcome.doc);
@@ -98,23 +100,14 @@ export async function prepareEdits(
  */
 async function editContext(
 	db: Db,
-	orchestrationId: string,
+	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 	operations: readonly EditOperation[],
 ): Promise<EditContext> {
-	const [scenario] = await db
-		.select({ projectId: orchestrationRows.projectId })
-		.from(orchestrationRows)
-		.where(eq(orchestrationRows.id, orchestrationId));
-	const projects = scenario ? readableProjects(scenario.projectId) : [];
+	const projects = readableProjects(project);
 	const adds = operations.flatMap((op) => (op.op === "add_node" ? [op] : []));
 	const names = new Set([...Object.keys(doc.packages), ...adds.map((op) => op.package)]);
-	const projectAgents = scenario
-		? await db
-				.select({ name: agents.name, status: agents.status, info: agents.info })
-				.from(agents)
-				.where(eq(agents.projectId, scenario.projectId))
-		: [];
+	const projectAgents = await agentsInProject(db, project);
 	const reports: AgentDevReport[] = projectAgents.map((row) => ({
 		name: row.name,
 		online: row.status === "online",
@@ -137,13 +130,9 @@ async function editContext(
 	const catalog = new Map<string, readonly NodeTypeIo[] | null>();
 	const defaults = new Map<string, string | undefined>();
 	for (const name of names) {
-		// 默认版本和节点类型照旧按名字找（名字全局唯一，见 findPackageVersion）；只是线索按项目收窄。
-		const published = (
-			await db
-				.select({ version: nodePackages.version })
-				.from(nodePackages)
-				.where(eq(nodePackages.name, name))
-		).map((r) => r.version);
+		// 默认版本、版本写错时的线索和节点类型都在这个场景读得到的范围里找（本项目的和公共项目的包），
+		// 和保存时的检查（document-checks.ts）、预检是同一个范围（`findPackageVersion`）。
+		const published = releases.get(name) ?? [];
 		const fallback = newestVersion(published) ?? (devHere.has(name) ? DEV_VERSION : undefined);
 		defaults.set(name, fallback);
 		const wanted = new Set(
@@ -160,7 +149,7 @@ async function editContext(
 				continue;
 			}
 			const found = published.includes(version)
-				? await findPackageVersion(db, name, version)
+				? await findPackageVersion(db, project, name, version)
 				: undefined;
 			catalog.set(packageKey(name, version), found ? found.metadata.nodes : null);
 		}

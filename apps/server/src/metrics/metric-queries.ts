@@ -15,15 +15,10 @@ import {
 	sortedLabels,
 } from "@sfly/schema";
 import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
-import {
-	agents as agentsTable,
-	metricSeries,
-	orchestrationVersions,
-	runs,
-	tasks,
-} from "../db/schema.js";
+import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { isPlaceholderAttempt } from "../runs/run-read.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf, nodeTypeView } from "./node-types.js";
@@ -141,7 +136,13 @@ export class MetricQueries {
 		const nodes: CatalogNode[] = [];
 		for (const attempts of groups) {
 			const latest = attempts[attempts.length - 1] as TaskRow;
-			const ref = await nodeTypeOf(this.deps.db, run.document, latest.nodeId, latest.agentName);
+			const ref = await nodeTypeOf(
+				this.deps.db,
+				run.run.projectId,
+				run.document,
+				latest.nodeId,
+				latest.agentName,
+			);
 			if (!ref) continue;
 			const type = nodeTypeView(ref.type);
 			nodes.push({
@@ -194,7 +195,13 @@ export class MetricQueries {
 				: attempts.find((t) => t.attempt === query.attempt);
 		if (!task) return { ok: false, status: 404, code: "not_found", message: "attempt not found" };
 
-		const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
+		const ref = await nodeTypeOf(
+			this.deps.db,
+			run.run.projectId,
+			run.document,
+			task.nodeId,
+			task.agentName,
+		);
 		const declared = ref?.type?.metrics ?? [];
 		const names = query.metrics ?? declared.map((m) => m.name);
 		// 已过保留期（#32）：数据已清理，不再查询，每个序列都没有桶。
@@ -609,13 +616,8 @@ export class MetricQueries {
 		const agentNames = [
 			...new Set(rows.filter(executing).map((t) => t.agentName as string)),
 		].sort();
-		const agentRows =
-			agentNames.length === 0
-				? []
-				: await this.deps.db
-						.select({ name: agentsTable.name, info: agentsTable.info })
-						.from(agentsTable)
-						.where(inArray(agentsTable.name, agentNames));
+		// 槽位数取运行所在的项目里的 Agent：别的项目的 Agent 和没有注册过一样（ADR 0029）。
+		const agentRows = await agentsInProject(this.deps.db, run.projectId, agentNames);
 		const onAgents =
 			agentNames.length === 0
 				? []
