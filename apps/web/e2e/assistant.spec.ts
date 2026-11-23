@@ -842,6 +842,8 @@ test("工具行里很长的命令：标题一行放不下，悬停给全文；�
 		await row.getByRole("button").hover();
 		await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(line);
 		await page.mouse.move(5, 5);
+		// 提示收起之后再点：它还在时可能压在按钮上，点击会一直等到用例超时。
+		await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0);
 		// 展开：先写完整的命令（折行，不横向溢出）。
 		await row.getByRole("button").click();
 		const command = row.getByTestId("tool-command");
