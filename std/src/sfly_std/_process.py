@@ -1,20 +1,15 @@
-"""涉及进程的节点（`shell`、`start_process`、`stop_process`、`process_assert`、`process_monitor`）
-共用的工具：启动命令的参数、按 pid / 进程名 / 命令行找进程、判断进程是否还活着、
-读看护进程记下的退出码。"""
+"""涉及进程的函数（`run_command`、`start_background_process`、`stop_background_process`、
+`monitor_processes`）共用的工具：启动命令的参数、判断进程是否还活着、读看护进程记下的退出码。
+按 pid / 进程名 / 命令行找进程在 `_finder.py`（`find_processes` 用它）。"""
 
 from __future__ import annotations
 
-import json
 import os
-import re
-from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Literal, TypeVar
 
 import psutil
 
-from sfly_std import _params, _supervise
-from sfly_std._waiting import poll_until
+from sfly_std import _supervise
+from sfly_std.waiting import poll_until
 
 #: 日志和错误信息里命令、命令行的最大字符数。
 PREVIEW_CHARS = 200
@@ -22,8 +17,6 @@ PREVIEW_CHARS = 200
 EXIT_CODE_WAIT = 2.0
 #: 检查进程状态的间隔（秒）。
 POLL_INTERVAL = 0.1
-
-T = TypeVar("T", int, str)
 
 
 def preview(text: str) -> str:
@@ -34,7 +27,7 @@ def preview(text: str) -> str:
 # ---- 启动命令（shell、start_process）----
 
 
-def check_cwd(cwd: str | None) -> None:
+def check_cwd(cwd: str | os.PathLike[str] | None) -> None:
     """`cwd` 给出时必须是已有的目录。"""
     if cwd is not None and not os.path.isdir(cwd):
         raise NotADirectoryError(f"工作目录不存在：{cwd}")
@@ -72,79 +65,29 @@ def cmdline(proc: psutil.Process) -> str:
         return ""
 
 
-def exit_code(procs_dir: str | os.PathLike[str], pid: int, wait: float) -> int | None:
-    """`start_process` 的看护进程记下的退出码；不是它启动的进程、或还没退出时为 None。
+def exit_status(
+    procs_dir: str | os.PathLike[str], pid: int, wait: float
+) -> _supervise.Status | None:
+    """`start_process` 的看护进程记下的状态；不是它启动的进程（没有记录）时为 None。
 
-    进程刚退出时看护进程可能还没写下退出码：最多等 `wait` 秒。
+    还没有退出码的（还在运行）最多等 `wait` 秒：进程刚退出时看护进程可能还没写下退出码；等不到时
+    返回最后一次读到的状态（`exit_code` 为 None）。
     """
+    last: _supervise.Status | None = None
 
-    def check() -> tuple[int | None] | None:
-        status = _supervise.read_status(procs_dir, pid)
-        if status is None or status.exit_code is not None:
-            return (status.exit_code if status is not None else None,)
-        return None
+    def check() -> tuple[None] | None:
+        nonlocal last
+        last = _supervise.read_status(procs_dir, pid)
+        return (None,) if last is None or last.exit_code is not None else None
 
     try:
-        (code,), _ = poll_until(check, what="退出码", wait=wait, poll=POLL_INTERVAL)
+        poll_until(check, what="退出码", wait=wait, poll=POLL_INTERVAL)
     except TimeoutError:
-        return None
-    return code
+        pass
+    return last
 
 
-# ---- 按 pid / 进程名 / 命令行找进程（process_assert、process_monitor）----
-
-
-@dataclass(frozen=True)
-class Target:
-    """一个找进程的条件：`pid`（进程号）、`name`（进程名，完全相同）
-    或 `match`（命令行正则，部分匹配）。"""
-
-    kind: Literal["pid", "name", "match"]
-    pid: int = 0
-    text: str = ""
-    pattern: re.Pattern[str] | None = None
-
-    @property
-    def label(self) -> str:
-        """日志和错误信息里的写法，例如 `pid 123`、`name "nginx"`、`match "server\\.py"`。"""
-        if self.kind == "pid":
-            return f"pid {self.pid}"
-        return f"{self.kind} {json.dumps(self.text, ensure_ascii=False)}"
-
-    def matches(self, proc: psutil.Process, name: str, command: str) -> bool:
-        """进程 `proc`（进程名 `name`、命令行 `command`）是否满足这个条件。"""
-        if self.kind == "pid":
-            return proc.pid == self.pid
-        if self.kind == "name":
-            return name == self.text
-        assert self.pattern is not None
-        return self.pattern.search(command) is not None
-
-
-def targets(
-    pid: int | Sequence[int] | None,
-    name: str | Sequence[str] | None,
-    match: str | Sequence[str] | None,
-) -> list[Target]:
-    """把 `pid`、`name`、`match` 参数（单个值或列表）变成条件，按这个顺序；
-    写法不对时抛出 ValueError。"""
-    pids, names, patterns = as_list(pid), as_list(name), as_list(match)
-    if not (pids or names or patterns):
-        raise ValueError("至少要给出 pid、name、match 中的一个")
-    for p in pids:
-        if p <= 0:
-            raise ValueError(f"pid 必须是正整数，实际为 {p}")
-    return (
-        [Target("pid", pid=p) for p in pids]
-        + [Target("name", text=n) for n in names]
-        + [Target("match", text=m, pattern=_params.regex("match", m)) for m in patterns]
-    )
-
-
-def as_list(value: T | Sequence[T] | None) -> list[T]:
-    """单个值或列表（JSON 数组）统一成列表。"""
-    if value is None:
-        return []
-    if isinstance(value, (int, str)):
-        return [value]
-    return list(value)
+def exit_code(procs_dir: str | os.PathLike[str], pid: int, wait: float) -> int | None:
+    """看护进程记下的退出码；不是它启动的进程、或还没退出时为 None（见 `exit_status`）。"""
+    status = exit_status(procs_dir, pid, wait)
+    return status.exit_code if status is not None else None

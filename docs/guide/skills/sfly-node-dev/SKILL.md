@@ -5,7 +5,7 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 
 # sfly 节点开发
 
-本项目是一个 sfly 节点包：用 `@node` 声明的 Python 函数，发布到控制面后由 sfly Agent 在测试机的共享 venv 里执行。SDK 接口见 [reference.md](reference.md)；命令参数以 `uv run sfly <命令> --help` 为准。
+这个目录（节点包目录）是一个 sfly 节点包：用 `@node` 声明的 Python 函数，发布到控制面后由 sfly Agent 在测试机的共享 venv 里执行。SDK 接口见 [reference.md](reference.md)；命令参数以 `uv run sfly <命令> --help` 为准。
 
 ## 步骤
 
@@ -51,10 +51,16 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 - 失败了通知谁、按结果发什么：节点自己失败就抛异常，不要为了通知在失败的地方当场发告警；要按整个运行的结果发一条通知，写一个**汇总节点**：把一个输入声明成 `RunState` 类型（`from sfly import RunState`），场景里把它接到 `${{ run.state }}`，节点收到整个运行此刻的状态（每个链实例上每个节点的 `status`、`attempts`、`error`（`headline` 是失败原因一行，`message` 不含堆栈），运行级的 `result_so_far`、`cancel`、`failures`），再用 `ctx.notify` 发。放法：放在链尾、设为 always 节点（前面失败或被取消时它仍然执行）；要看到某个子流程的最终结果，放在停止这个子流程的节点之后（主链不等待的子流程在汇总节点派发时可能还在进行）。`${{ run.state }}` 只能整值写在包节点的输入里，不能夹在文字里，也不能写在异步任务节点的参数映射里；`RunState` 类型的必填输入没接 `${{ run.state }}` 保存时会警告。单元测试用 `sfly.testing.run_state(nodes={...})` 造状态，断言 `run_node(...).notifications`；用一次真实运行的状态调试：`uv run sfly run show <运行> --state` 存成文件，放进输入文件，`uv run sfly debug <节点> --params @文件`。用到 `RunState` 就把 `[tool.sfly]` 的 `requires-sdk` 调到 `>=0.6.0`。
 - 往飞书群发通知用 `ctx.notify(机器人, 文本)`，要带格式用 `ctx.notify(机器人, message=sfly.feishu.card(标题, Markdown 正文, 颜色))`（完整的飞书请求体也能直接给 `message=`）；机器人声明成 `FeishuBot` 类型的参数传进来，不要自己请求 Webhook 地址：消息由控制面发出，投递失败不会抛异常，也不会让节点变慢。单元测试里断言 `run_node(...).notifications`。
 
+### 用 sfly-std 的辅助函数
+- 节点里要起停后台进程、跑命令、采样整机或进程的资源、跟随日志、等端口、文件或日志行、从另一台 Agent 拉文件时，先用 `sfly-std` 的辅助函数（`sfly_std.commands`、`processes`、`resources`、`logs`、`waiting`、`agent_files`，函数、参数和完整示例见开发文档「标准节点」页，每个函数的文档字符串写明了抛出什么异常），在自己的节点里导入、组合，不要重写进程组的起停、日志轮转、判断文件写完这类逻辑；业务本身的逻辑（调用被测系统的协议、判断结果对不对）仍然写在自己的节点里。
+- 用到它就把 `sfly-std` 写进 `[project].dependencies`（只写下限，例如 `sfly-std>=0.4`）。它不在 PyPI 上：这是下面「依赖必须能从 PyPI 镜像安装」的例外，由控制面的包索引提供（`sfly init` 生成的项目已经绑定它，开发机上 `uv add sfly-std` 就能装上，Agent 装依赖时也从它取）；索引里的是公共项目里已发布的版本，要先由平台管理员发布（这个办法在 #573 合入之后才有；用户文档「标准节点」页写了现状）。只导入文档里列出的模块和名字，下划线开头的模块（`sfly_std._process` 这类）是内部实现，不要导入。
+- 启动后台进程的节点：要么在 `try`/`finally` 里用 `stop_background_process` 停掉，要么在场景里加一个停止它的节点（设为 always 节点）。在 `finally` 里停要在平台给的收尾时间（默认 10 秒）内做完：`stop_background_process` 的 `grace` 默认 5 秒、被取消时最多 3 秒，别把它调到接近 10 秒；这些是每次调用的上限，不是整个收尾的预算，任务超时（不是取消）时每停一个忽略 SIGTERM 的服务就要用掉约 `grace` 秒，所以在 `finally` 里停两个及以上服务时把 `grace` 给小（各 2 秒）；服务退出慢、要更长的宽限期就用单独的 always 节点停。保存文件为产物时 `ctx.artifacts.save(名称, 路径)` 要传 `Path`（`start_background_process` 返回的 `log_path` 就是 `Path`），传字符串保存的是这段字符串本身。
+- 同一个节点里多次调用辅助函数是正常用法：默认的产物名、日志文件名每次调用不同，前一次的不会被覆盖；要自己决定名字就传 `stdout_artifact`、`csv_artifact`、`log_path` 这类参数。字段后缀：`*_path` 是本地路径、`*_artifact` 是产物名称、`*_ref` 是产物引用（下载地址，不是本地路径，别拿去 `open`）。
+
 ### 取消与清理
 - 取消或超时时，节点里会抛出 `sfly.Cancelled`（`BaseException` 的子类）。捕获异常时写 `except Exception` 或更具体的类型，让 `Cancelled` 继续往外传；清理代码放在 `finally` / `with` 里，宽限期 10 秒内要做完。后台线程轮询 `ctx.cancelled()`。
 - 节点结束后还要存活的资源（启动的进程、造的测试数据）：由创建它的节点输出句柄，清理写成另一个节点，并提醒用户在场景里把它设为 always 节点。
 
 ### 状态与依赖
 - 状态只放在函数的局部变量里：每个任务是一个新进程，同一节点的多个任务可能并发。临时文件用 `tempfile`；路径从参数或 `ctx` 取得。
-- 依赖写进 `[project].dependencies`，只写宽松的下限（如 `requests>=2.28`）：Agent 上所有节点包共用一个 venv，钉死版本最容易和别的节点包冲突。依赖必须能从 PyPI 镜像安装。`sfly` 只放在 dev 依赖组里，因为 Agent 自带 SDK 运行时。
+- 依赖写进 `[project].dependencies`，只写宽松的下限（如 `requests>=2.28`）：Agent 上所有节点包共用一个 venv，钉死版本最容易和别的节点包冲突。依赖必须能从 PyPI 镜像安装（`sfly-std` 除外，见上）。`sfly` 只放在 dev 依赖组里，因为 Agent 自带 SDK 运行时。

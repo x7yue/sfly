@@ -365,6 +365,39 @@ describe("会话事件的落库和发布顺序", () => {
 			expect(await store.find(id)).toMatchObject({ status: "running", currentTurn: 2 });
 		});
 
+		it("在做、但一条 turn_started 都没有的旧数据（回填成 0）：控制面结束它之后 current_turn 抬到这一轮，下一轮是第 2 轮，那一轮真正的 turn_end 照常记", async () => {
+			const project = await newProject();
+			const { id } = await newSession("running", project);
+			expect(await store.find(id)).toMatchObject({ status: "running", currentTurn: 0 });
+			await store.append(id, turnEnd(1, "stopped"));
+			expect(await store.find(id)).toMatchObject({ status: "idle", currentTurn: 1 });
+			// 重复的第 1 轮结局：不再记，也不动 current_turn。
+			await store.append(id, turnEnd(1, "completed"));
+			expect(await store.find(id)).toMatchObject({ status: "idle", currentTurn: 1 });
+			const begun = await store.beginTurn(id, project, opening);
+			expect(begun).toMatchObject({ started: true, turn: 2 });
+			const at = new Date("2026-01-01T00:00:00.000Z");
+			// 第 2 轮真正的结局不会被当成重复吞掉。
+			expect(await store.appendFromAssistant(id, 2, turnEnd(2), at)).toMatchObject({
+				stored: { type: "turn_end", turn: 2 },
+			});
+			expect(await store.find(id)).toMatchObject({ status: "idle", currentTurn: 2 });
+		});
+
+		it("同样的旧数据，这一轮已经有 turn_end（旧版本留下的不一致）：回到空闲的同时 current_turn 也抬到这一轮", async () => {
+			const project = await newProject();
+			const { id } = await newSession("running", project);
+			await database.pool.query(
+				`insert into session_events (session_id, seq, type, payload, created_at)
+				values ($1, 1, 'turn_end', '{"turn":1,"outcome":"failed","reason":"x","duration_ms":1}', now())`,
+				[id],
+			);
+			const again = await store.append(id, turnEnd(1, "stopped"));
+			expect(again).toMatchObject({ seq: 1, outcome: "failed" });
+			expect(await store.find(id)).toMatchObject({ status: "idle", currentTurn: 1 });
+			expect(await store.beginTurn(id, project, opening)).toMatchObject({ started: true, turn: 2 });
+		});
+
 		it("助手服务发来的事件：会话不存在、不在做、不是此刻在做的那一轮都丢掉，不落库、不发布、不改状态；对的那一轮才收", async () => {
 			const project = await newProject();
 			const { id } = await newSession("idle", project);

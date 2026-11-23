@@ -24,6 +24,16 @@ export interface Footprint {
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
+/**
+ * 访问检查给每个带凭据的请求记下的「用过」的痕迹：不算接口的写。令牌的最后使用时间在访问检查里写（一个令牌每分钟最多一次，
+ * `TOKEN_TOUCH_INTERVAL_MS`），不论接口是读还是写、是哪一个接口，所以「只读接口不写库」「别的项目的凭据没有改动任何东西」
+ * 这类比较要把它排除：这几列不进比较，这几张表也不用 `xmin`（更新这几列会换 `xmin`）。别的列照常比较：
+ * 令牌被吊销、改了范围，仍然看得见。表 → 不比较的列。
+ */
+const ACCESS_TRACES: Readonly<Record<string, readonly string[]>> = {
+	api_tokens: ["last_used_at"],
+};
+
 async function listFiles(root: string, dir = root, found = new Map<string, string>()) {
 	for (const entry of await readdir(dir, { withFileTypes: true })) {
 		const path = join(dir, entry.name);
@@ -48,8 +58,11 @@ export async function takeFootprint(databaseUrl: string, dataDir: string): Promi
 		);
 		const tables = new Map<string, string[]>();
 		for (const { tablename } of names.rows) {
+			const traces = ACCESS_TRACES[tablename];
 			const rows = await client.query<{ row: string }>(
-				`SELECT t.xmin::text || '|' || to_jsonb(t)::text AS row FROM ${quote(tablename)} t`,
+				traces === undefined
+					? `SELECT t.xmin::text || '|' || to_jsonb(t)::text AS row FROM ${quote(tablename)} t`
+					: `SELECT '-|' || (to_jsonb(t)${traces.map((column) => ` - '${column}'`).join("")})::text AS row FROM ${quote(tablename)} t`,
 			);
 			tables.set(tablename, rows.rows.map((r) => r.row).sort());
 		}

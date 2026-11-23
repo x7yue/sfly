@@ -167,7 +167,7 @@ def check_dependencies(project: Project) -> None:
             raise BuildError(
                 f"依赖里不能有 sfly（{requirement!r}）：Agent 自带 SDK 运行时，"
                 "把 sfly 打进节点包会和它冲突。把 sfly 放进开发依赖组"
-                "（[dependency-groups] dev，sfly init 生成的项目已经这样配置）"
+                "（[dependency-groups] dev，sfly init 生成的节点包目录已经这样配置）"
             )
 
 

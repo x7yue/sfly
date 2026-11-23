@@ -14,7 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from sfly.cli.init import RUFF_GROUPS, RUFF_SELECT, NewProject, ProjectSettings, configure_pyproject
+from sfly.cli.init import (
+    RUFF_GROUPS,
+    RUFF_SELECT,
+    NewProject,
+    PackageDirSettings,
+    configure_pyproject,
+)
 
 GUIDE = Path(__file__).resolve().parents[3] / "docs" / "guide"
 RUFF = str(Path(sys.executable).parent / "ruff")
@@ -79,7 +85,7 @@ def test_guide_shows_the_same_select_for_existing_projects() -> None:
 
 def generated_select(tmp_path: Path) -> str:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n', encoding="utf-8")
-    settings = ProjectSettings("1.0.0", "http://cp.test/simple/", None, None)
+    settings = PackageDirSettings("1.0.0", "http://cp.test/simple/", None, None)
     configure_pyproject(NewProject(tmp_path, "demo", "demo", settings))
     found = _SELECT_BLOCK.search((tmp_path / "pyproject.toml").read_text(encoding="utf-8"))
     assert found
