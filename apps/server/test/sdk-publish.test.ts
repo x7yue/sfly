@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TestAccounts } from "./support/credentials.js";
 import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -90,5 +91,54 @@ describe("sfly publish → 控制面", () => {
 			"发布失败：控制面拒绝发布（HTTP 409 conflict）：" +
 				"节点包 demo-e2e@0.1.0 已存在，不能覆盖已发布的版本",
 		);
+	}, 120_000);
+
+	it("发布到公共项目：平台管理员的个人令牌（SFLY_API_TOKEN）通过，不带令牌 401，项目管理员的令牌 403，信息写明原因", async () => {
+		const publicProject = await mkdtemp(join(tmpdir(), "sfly-public-project-"));
+		const accounts = new TestAccounts(cp.database.url);
+		try {
+			await mkdir(join(publicProject, "src", "demo_public"), { recursive: true });
+			await writeFile(
+				join(publicProject, "pyproject.toml"),
+				'[project]\nname = "demo-public"\nversion = "0.3.0"\ndependencies = []\n',
+			);
+			await writeFile(join(publicProject, "src", "demo_public", "__init__.py"), "");
+			await writeFile(
+				join(publicProject, "src", "demo_public", "echo.py"),
+				[
+					"from sfly import Context, node",
+					"",
+					'@node(title="回显")',
+					"def echo(ctx: Context, text: str) -> None:",
+					"    ctx.log.info(text)",
+					"",
+				].join("\n"),
+			);
+			const admin = await accounts.user("root", { admin: true });
+			const adminToken = await accounts.personalToken(admin, { name: "发布 sfly-std" });
+			const boss = await accounts.user("boss");
+			await accounts.member("default", boss, "project_admin");
+			const bossToken = await accounts.personalToken(boss);
+			const args = ["publish", publicProject, "--server", cp.httpUrl, "--project", "public"];
+
+			const noToken = await sfly(args);
+			const notAdmin = await sfly(args, { env: { SFLY_API_TOKEN: bossToken } });
+			const ok = await sfly(args, { env: { SFLY_API_TOKEN: adminToken } });
+
+			expect(noToken.code, noToken.stdout).toBe(1);
+			expect(noToken.stderr).toContain("HTTP 401");
+			expect(noToken.stderr).toContain("公共项目只有平台管理员能写");
+			expect(notAdmin.code, notAdmin.stdout).toBe(1);
+			expect(notAdmin.stderr).toContain("HTTP 403");
+			expect(notAdmin.stderr).toContain("公共项目只有平台管理员能写");
+			expect(ok.code, ok.stderr).toBe(0);
+			expect(ok.stdout).toContain("已发布 demo-public@0.3.0 到项目 public");
+			// 发布在公共项目里（任何项目都读得到），不在默认项目里。
+			const row = await cp.fetch("/packages/demo-public/versions/0.3.0");
+			expect(row.status).toBe(200);
+		} finally {
+			await accounts.close();
+			await rm(publicProject, { recursive: true, force: true });
+		}
 	}, 120_000);
 });

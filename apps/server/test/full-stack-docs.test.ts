@@ -16,6 +16,7 @@ import { docsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { TestAccounts } from "./support/credentials.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { type BlockResult, DocShell, shellBlocks } from "./support/doc-commands.js";
 import { eventually } from "./support/eventually.js";
@@ -295,6 +296,16 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 			await copyFile(std.path, join(downloads, std.file));
 			const sum = (await run("sha256sum", [std.file], { cwd: downloads })).stdout;
 			await writeFile(join(downloads, "SHA256SUMS"), sum);
+			// 发布到公共项目要平台管理员的个人令牌（文档里写作 $SFLY_ADMIN_TOKEN）：读者在控制台账号菜单的「令牌」页
+			// 签发（或 `sfly login`）；这里像别的访问检查的测试一样直接写库造一个，放进读者终端的环境变量。
+			const accounts = new TestAccounts(cp.database.url);
+			try {
+				const admin = await accounts.user("root", { displayName: "平台管理员", admin: true });
+				const token = await accounts.personalToken(admin, { name: "发布 sfly-std" });
+				await shell.run(`export SFLY_ADMIN_TOKEN=${token}`);
+			} finally {
+				await accounts.close();
+			}
 		}
 
 		/** 读者在场景里用上传的 sfly-std 的 shell 节点（本机 Agent）。 */
