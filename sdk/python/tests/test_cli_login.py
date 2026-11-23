@@ -629,7 +629,8 @@ class TestLogout:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         assert login(capsys, monkeypatch)[0] == 0
-        server.revoke_status = 401  # 令牌已经失效了（账号被停用时令牌照样能吊销它自己，不是这个原因）
+        # 令牌已经失效了（账号被停用时令牌照样能吊销它自己，不是这个原因）
+        server.revoke_status = 401
         code, out, err = run(capsys, monkeypatch, "logout")
         assert code == 0, err
         assert credentials.load(server.url) is None

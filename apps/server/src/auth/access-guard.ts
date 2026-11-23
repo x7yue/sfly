@@ -21,10 +21,10 @@ import {
 	AGENT_CREDENTIAL_ROUTES,
 	exhaustive,
 	LOGIN_ONLY_ROUTES,
-	REVOKE_OWN_ROUTES,
 	locatorOf,
 	type ProjectLocator,
 	REQUIRES_CREDENTIAL,
+	REVOKE_OWN_ROUTES,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "./access-rules.js";
