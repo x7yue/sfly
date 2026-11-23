@@ -32,6 +32,7 @@ import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
+import type { StdIndex } from "../packages/std-index.js";
 import type { PresetStore } from "../presets/preset-store.js";
 import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
@@ -98,6 +99,8 @@ export interface HttpApiDeps {
 	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 控制面的包索引里的标准节点包 sfly-std（公共项目里已发布的版本）。 */
+	stdIndex: StdIndex;
 	clientTarballs: readonly ClientTarball[];
 	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
 	agentBinaries: AgentBinaries;
@@ -166,6 +169,7 @@ export function buildHttpApi({
 	agentToken,
 	publicConfig,
 	sdkWheels,
+	stdIndex,
 	clientTarballs,
 	agentBinaries,
 	installScript,
@@ -324,7 +328,7 @@ export function buildHttpApi({
 	registerSessionRoutes(app, { sessions, service: sessionService, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
-	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });
+	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig, stdIndex });
 	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });
 	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });
 	registerDocsRoutes(app, {

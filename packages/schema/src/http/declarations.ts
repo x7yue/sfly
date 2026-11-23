@@ -125,12 +125,17 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/simple/": {
 		kind: "system",
 		exact: true,
-		why: "sfly 简单索引（PEP 503）的根页面：uv 从这里装 sfly，与具体场景无关",
+		why: "控制面的包索引（PEP 503）的根页面：uv 从这里装 sfly 和 sfly-std，与具体场景无关",
 	},
 	"/simple/:package/": {
 		kind: "system",
 		exact: true,
-		why: "sfly 简单索引的项目页：SDK wheel 的下载链接，与具体场景无关",
+		why: "控制面的包索引的项目页：SDK wheel、sfly-std wheel 的下载链接，与具体场景无关",
+	},
+	"/simple/sfly-std/files/:filename": {
+		kind: "system",
+		exact: true,
+		why: "下载包索引里的一个 sfly-std wheel：Agent 和开发机装 sfly-std 用的，与具体场景无关",
 	},
 	"/install.sh": {
 		kind: "system",

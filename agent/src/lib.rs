@@ -702,6 +702,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             venv: SharedVenv::new(venv),
             scratch: scratch.clone(),
             index_url: std::sync::Mutex::new(config.mirrors.pypi.clone()),
+            package_index: std::sync::Mutex::new(None),
             uv: config.uv.clone(),
             http: http.clone(),
         },
@@ -785,6 +786,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                 let mirrors = Mirrors::new(&connection.welcome, &config.mirrors);
                 *runtime.installer.index_url.lock().unwrap() =
                     mirrors.pypi().map(|(url, _)| url.to_string());
+                // 控制面的包索引（#556）：平台自己的包（标准节点包 sfly-std）只从这里取；旧版本控制面不带这个字段。
+                *runtime.installer.package_index.lock().unwrap() =
+                    environment::package_index(&connection.welcome);
                 if let Err(error) = prepare_environment(&config, &runtime, &mirrors).await {
                     // 试用中的新版本：计一次失败，以 systemd 会重启的退出码退出，连续失败后回滚；
                     // 否则以固定退出码退出，systemd 不再重启。
