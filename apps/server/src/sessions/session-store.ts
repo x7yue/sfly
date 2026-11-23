@@ -176,6 +176,8 @@ export class SessionStore {
 	 * 在事务里拿到会话那一行的锁、分配序号的那一刻登记（{@link SessionStore.#begin}），闲置很久的由 `#begin` 顺手清掉。
 	 */
 	readonly #cursors = new Map<string, { published: number; usedAt: number }>();
+	/** 上一次清理闲置推送指针的时间（毫秒）。 */
+	#sweptAt = 0;
 
 	constructor(private readonly deps: SessionStoreDeps) {}
 
@@ -640,7 +642,9 @@ export class SessionStore {
 		// 第一次登记：比它小的事件要么已经推送过，要么就是这一条之前的写（它们登记过，指针已经在）。
 		if (cursor === undefined) this.#cursors.set(sessionId, { published: seq - 1, usedAt: now });
 		else cursor.usedAt = now;
-		if (this.#cursors.size > CURSOR_SWEEP_SIZE) {
+		// 多了才清，而且至多每分钟扫一遍（写路径上不为它多花时间）。
+		if (this.#cursors.size > CURSOR_SWEEP_SIZE && now - this.#sweptAt > 60_000) {
+			this.#sweptAt = now;
 			for (const [id, c] of this.#cursors) {
 				if (now - c.usedAt > CURSOR_IDLE_MS) this.#cursors.delete(id);
 			}
