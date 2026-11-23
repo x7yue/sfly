@@ -1550,26 +1550,35 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		assistant.aborts.length = 0;
 		assistant.abortRequests.length = 0;
 		assistant.abortMarks.clear();
-		// 503：确定没开始。
-		assistant.promptReply = () => ({ status: 503, code: "start_failed", message: "起不来" });
-		expect((await api.post(`/sessions/${view.id}/messages`, { text: "第二句" })).status).toBe(503);
-		expect((await sessionRow(cp, view.id))?.status).toBe("idle");
-		expect(assistant.abortAttempts).toBe(0);
-		// 500：结果未知。
-		assistant.promptReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
-		expect((await api.post(`/sessions/${view.id}/messages`, { text: "第三句" })).status).toBe(503);
-		expect((await sessionRow(cp, view.id))?.status).toBe("running");
-		await eventually(() =>
-			expect(assistant.abortRequests).toEqual([{ sessionId: view.id, turn: 3 }]),
-		);
-		await settled();
-		expect((await sessionRow(cp, view.id))?.status).toBe("idle");
-		expect((await eventsOf(api, view.id)).at(-1)).toMatchObject({
-			type: "turn_end",
-			turn: 3,
-			outcome: "failed",
-		});
-		assistant.promptReply = () => undefined;
+		assistant.abortAttempts = 0;
+		try {
+			// 503：确定没开始。
+			assistant.promptReply = () => ({ status: 503, code: "start_failed", message: "起不来" });
+			expect((await api.post(`/sessions/${view.id}/messages`, { text: "第二句" })).status).toBe(
+				503,
+			);
+			expect((await sessionRow(cp, view.id))?.status).toBe("idle");
+			expect(assistant.abortAttempts).toBe(0);
+			// 500：结果未知。
+			assistant.promptReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
+			expect((await api.post(`/sessions/${view.id}/messages`, { text: "第三句" })).status).toBe(
+				503,
+			);
+			expect((await sessionRow(cp, view.id))?.status).toBe("running");
+			await eventually(() =>
+				expect(assistant.abortRequests).toEqual([{ sessionId: view.id, turn: 3 }]),
+			);
+			await settled();
+			expect((await sessionRow(cp, view.id))?.status).toBe("idle");
+			expect((await eventsOf(api, view.id)).at(-1)).toMatchObject({
+				type: "turn_end",
+				turn: 3,
+				outcome: "failed",
+			});
+		} finally {
+			assistant.promptReply = () => undefined;
+			await settled();
+		}
 	});
 
 	it("补发的中止先于这一轮到助手服务（它那时还没登记这一轮）也不会落空，助手服务记下记号；控制面补完结局之后，用户点停止时仍向助手服务发一次按会话的中止，会话本身不变", async () => {
