@@ -249,6 +249,8 @@ test.describe("项目令牌页", () => {
 		await expect(page).toHaveURL(/\/projects\/default\/tokens$/);
 		await expect(page.getByRole("heading", { name: "项目令牌", exact: true })).toBeVisible();
 		await expect(page.getByText("这个项目还没有项目令牌")).toBeVisible();
+		// 项目令牌页写明项目名，并能回到个人令牌页。
+		await expect(page.getByRole("link", { name: "个人令牌", exact: true })).toBeVisible();
 
 		await page.getByRole("button", { name: "签发令牌" }).click();
 		const dialog = dialogOf(page, "签发项目令牌");
