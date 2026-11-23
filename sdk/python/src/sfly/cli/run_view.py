@@ -353,21 +353,22 @@ def resolve_run(client: Client, ref: str, *, allow_latest: bool = True) -> str:
 
 
 def _latest_run(client: Client) -> str:
-    # 「自己」现在按昵称认：昵称不校验，谁都能写别人的昵称。控制面开始校验身份
-    # （强制鉴权，#489、#494）之后，要改成按凭据里的用户，这里的 `triggered_by` 换成它。
-    listing = client.get("/runs", {"triggered_by": client.nickname, "limit": 1})
-    mine = [r for r in listing["runs"] if r["triggered_by"] == client.nickname]
+    # 「自己」是 `client.owner_name()`：有令牌时是令牌所属用户的显示名（控制面记在运行上的触发人），
+    # 没有令牌时是昵称（昵称不校验，谁都能写别人的昵称；强制鉴权之后只剩令牌，#494）。
+    owner = client.owner_name()
+    listing = client.get("/runs", {"triggered_by": owner, "limit": 1})
+    mine = [r for r in listing["runs"] if r["triggered_by"] == owner]
     if listing["runs"] and not mine:
         # 控制面不认 `triggered_by`（比命令行旧），返回的是别人的最近一次：
         # 退回到按关键字取一批再筛。
         # `q` 是包含匹配（昵称是别人昵称的一部分时也会返回），只要触发人就是自己的。
-        listing = client.get("/runs", {"q": client.nickname, "limit": _RUN_LOOKUP_LIMIT})
-        mine = [r for r in listing["runs"] if r["triggered_by"] == client.nickname]
+        listing = client.get("/runs", {"q": owner, "limit": _RUN_LOOKUP_LIMIT})
+        mine = [r for r in listing["runs"] if r["triggered_by"] == owner]
     if not mine:
         raise CliError(
             "no_recent_run",
-            f"没有找到 {client.nickname} 触发过的运行（latest 指自己触发的最近一次，"
-            "昵称用 --nickname 或 SFLY_NICKNAME 指定）",
+            f"没有找到 {owner} 触发过的运行（latest 指自己触发的最近一次；"
+            "没有登录时「自己」是昵称，用 --nickname 或 SFLY_NICKNAME 指定，登录之后是登录的用户）",
             next="sfly run list",
         )
     return str(mine[0]["id"])

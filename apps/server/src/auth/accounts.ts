@@ -18,6 +18,7 @@ import {
 	verifyPassword,
 } from "./password.js";
 import { PasswordGate, PasswordGateBusy } from "./password-gate.js";
+import { type Revocation, RevocationBus } from "./revocations.js";
 import type { SetupCode } from "./setup-code.js";
 
 /** 一个用户（不含密码哈希）。 */
@@ -38,14 +39,6 @@ export interface LoggedIn {
 	maxAgeSeconds: number;
 }
 
-/**
- * 一批登录或令牌被注销、用户被停用：打开着的事件流要跟着关掉（单进程，按登录和用户登记即可）。
- * `user`：这个用户的一切（停用：登录和令牌）；`logins`：这个用户的登录（`only` 只这一个，`except` 除了这一个）。
- */
-export type Revocation =
-	| { type: "user"; userId: string }
-	| { type: "logins"; userId: string; only?: string; except?: string };
-
 export interface AccountServiceOptions {
 	db: Db;
 	clock: Clock;
@@ -65,6 +58,8 @@ export interface AccountServiceOptions {
 	verify?: (password: string, stored: string) => Promise<boolean>;
 	/** 算「假哈希」的函数（登录名不存在时拿它验证一次，对齐耗时），默认按 `scrypt` 参数算；测试里换成会失败的。 */
 	dummyHash?: (password: string) => Promise<string>;
+	/** 吊销的广播；令牌服务共用同一个，路由层订阅它关掉打开的事件流。默认自己建一个。 */
+	revocations?: RevocationBus;
 }
 
 /** 登录名重复。 */
@@ -101,7 +96,7 @@ export class AccountService {
 	readonly #setupCode: SetupCode | undefined;
 	readonly #gate: PasswordGate;
 	readonly #verifyFn: (password: string, stored: string) => Promise<boolean>;
-	readonly #listeners = new Set<(revocation: Revocation) => void>();
+	readonly #revocations: RevocationBus;
 	readonly #dummyFn: (password: string) => Promise<string>;
 	#dummy: Promise<string> | undefined;
 
@@ -115,6 +110,7 @@ export class AccountService {
 		this.#gate = options.passwordGate ?? new PasswordGate();
 		this.#verifyFn = options.verify ?? verifyPassword;
 		this.#dummyFn = options.dummyHash ?? ((password) => hashPassword(password, this.#scrypt));
+		this.#revocations = options.revocations ?? new RevocationBus();
 	}
 
 	/**
@@ -135,14 +131,13 @@ export class AccountService {
 		return Math.floor(this.#idleMs / 1000);
 	}
 
-	/** 登录被注销、用户被停用时调用（路由层据此关掉打开的事件流）。返回取消订阅的函数。 */
+	/** 登录被注销、用户被停用、令牌被吊销时调用（路由层据此关掉打开的事件流）。返回取消订阅的函数。 */
 	onRevoked(listener: (revocation: Revocation) => void): () => void {
-		this.#listeners.add(listener);
-		return () => this.#listeners.delete(listener);
+		return this.#revocations.subscribe(listener);
 	}
 
 	#revoked(revocation: Revocation): void {
-		for (const listener of this.#listeners) listener(revocation);
+		this.#revocations.emit(revocation);
 	}
 
 	// ---- 状态与初始化 ----
@@ -258,16 +253,19 @@ export class AccountService {
 	}
 
 	/**
-	 * 登录。`signal` 是请求的中止信号（客户端断开）：排队等着验证时断开，就不去验证，抛 `PasswordGateAborted`，
+	 * 用登录名和密码验证一个人（登录、`sfly login` 换令牌共用）：登录名不区分大小写；密码不对、没有这个用户、
+	 * 账号停用都是 `invalid`（不告诉对方是哪一种，响应时间也一样）；按「登录名 + 来源地址」限速，登录和换令牌共用同一份计数。
+	 * 成功时返回用户；参数调高之后，旧哈希在这次成功时按新参数重新存。
+	 * `signal` 是请求的中止信号（客户端断开）：排队等着验证时断开，就不去验证，抛 `PasswordGateAborted`，
 	 * 占的限速名额还回去（不是这个人的失败）；已经在算的不打断。
 	 */
-	async login(
+	async authenticate(
 		loginName: string,
 		password: string,
 		address: string,
 		signal?: AbortSignal,
 	): Promise<
-		| { ok: true; login: LoggedIn }
+		| { ok: true; user: UserRecord }
 		| { ok: false; reason: "invalid" }
 		| { ok: false; reason: "throttled"; retryAfterMs: number }
 	> {
@@ -303,7 +301,22 @@ export class AccountService {
 				if (!(error instanceof PasswordGateBusy)) throw error;
 			}
 		}
-		return { ok: true, login: await this.#startLogin(toRecord(row)) };
+		return { ok: true, user: toRecord(row) };
+	}
+
+	async login(
+		loginName: string,
+		password: string,
+		address: string,
+		signal?: AbortSignal,
+	): Promise<
+		| { ok: true; login: LoggedIn }
+		| { ok: false; reason: "invalid" }
+		| { ok: false; reason: "throttled"; retryAfterMs: number }
+	> {
+		const result = await this.authenticate(loginName, password, address, signal);
+		if (!result.ok) return result;
+		return { ok: true, login: await this.#startLogin(result.user) };
 	}
 
 	async #startLogin(user: UserRecord): Promise<LoggedIn> {

@@ -570,7 +570,17 @@ describe("控制台统计", () => {
 		const [run] = running_runs;
 		const listed = runListApi.list.response.parse(await (await cp.fetch("/runs")).json()).runs;
 		expect(run?.id).toBe(runId);
-		expect(run?.active_nodes).toEqual(listed.find((r) => r.id === runId)?.active_nodes);
+		// 和运行列表一致：控制台的进行中的节点只多 queue_wait、queued_at（排队中的节点写明在等什么，#601）。
+		expect(
+			run?.active_nodes.map(({ queue_wait: _wait, queued_at: _queuedAt, ...rest }) => rest),
+		).toEqual(listed.find((r) => r.id === runId)?.active_nodes);
+		const [executing, queued] = [
+			run?.active_nodes.find((n) => n.status === "running"),
+			run?.active_nodes.find((n) => n.status === "queued"),
+		];
+		expect(executing).toMatchObject({ queue_wait: null, queued_at: null });
+		expect(queued?.queue_wait).toMatchObject({ agent: "agent-a", state: "slots_full", slots: 1 });
+		expect(queued?.queued_at).toEqual(expect.any(String));
 		expect(run?.active_nodes.map((n) => [n.status, n.agent, n.attempt])).toEqual(
 			expect.arrayContaining([
 				["running", "agent-a", 1],

@@ -25,6 +25,16 @@ else:
     RunState = getattr(sfly, "RunState", dict)
 
 
+class _NeverRaised(Exception):
+    """旧 SDK 没有 `ArtifactLimitExceeded` 时 `artifact_limit` 节点接的类：永远不会抛出。"""
+
+
+# `ArtifactLimitExceeded`、`ctx.artifacts.limit_bytes` 从 SDK 0.6.0 起才有（#477）：
+# bundle-self-update 用上一个 Release 的 SDK 加载本包，导入时不能直接引用它们，
+# 否则整个包都加载不了。
+ArtifactLimitExceeded: type[Exception] = getattr(sfly, "ArtifactLimitExceeded", _NeverRaised)
+
+
 @node(title="回显", outputs=["text"])
 def echo(ctx: Context, text: Any) -> dict[str, Any]:
     """原样返回 text（任意 JSON 值，例如上游输出的产物引用表）。"""
@@ -469,6 +479,42 @@ def artifacts(
     if fail:
         raise RuntimeError("保存产物后失败")
     return {"refs": refs}
+
+
+@node(title="产物上限", outputs=["refs", "limit", "refused", "limit_env"])
+def artifact_limit(
+    ctx: Context,
+    files: dict[str, str] | None = None,
+    direct: dict[str, int] | None = None,
+    catch_limit: bool = False,
+    fail: bool = False,
+) -> dict[str, Any]:
+    """产物上限测试用（#477）：把 files（名称 → 文本内容）保存为产物，direct（名称 → 字节数）
+    不经过 `save`、直接往产物目录里写这么大的文件（兜住不检查上限的写法）；fail 时保存后抛出异常。
+    catch_limit 时接住 `ArtifactLimitExceeded`，把没保存的名称放进输出的 refused。
+    输出的 limit 是节点里读到的 `ctx.artifacts.limit_bytes`（上一个 Release 的 SDK 没有它：None）。
+    """
+    refs: dict[str, str] = {}
+    refused: list[str] = []
+    for name, content in (files or {}).items():
+        try:
+            refs[name] = ctx.artifacts.save(name, content)
+        except ArtifactLimitExceeded:
+            if not catch_limit:
+                raise
+            refused.append(name)
+    for name, size in (direct or {}).items():
+        ctx.artifacts.path(name).write_bytes(b"x" * size)
+    if fail:
+        raise RuntimeError("保存产物后失败")
+    return {
+        "refs": refs,
+        "limit": getattr(ctx.artifacts, "limit_bytes", None),
+        "refused": refused,
+        # 执行器的环境变量原文：Agent 在上限是 0（旧版本控制面没带）时不设置它
+        # （SDK 把 "0" 也当作没有上限，看不出区别）。
+        "limit_env": os.environ.get("SFLY_ARTIFACT_LIMIT_BYTES"),
+    }
 
 
 @node(title="大输出", outputs=["text"])

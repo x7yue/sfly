@@ -246,8 +246,19 @@ export function diffDocuments(before: DiffableDocument, after: DiffableDocument)
 	};
 }
 
-/** 没有任何差异；ignoreLayout 时忽略只移动了位置的节点。 */
-export function isEmptyDiff(diff: DocumentDiff, options: { ignoreLayout?: boolean } = {}): boolean {
+type Items = readonly unknown[];
+
+/** 没有任何差异；ignoreLayout 时忽略只移动了位置的节点。接受结构相同的差异（例如接口响应里的 DocumentDiffView）。 */
+export function isEmptyDiff(
+	diff: {
+		settings: Items;
+		nodes: { added: Items; removed: Items; changed: Items };
+		edges: { added: Items; removed: Items };
+		moved: Items;
+		annotations: { added: Items; removed: Items; changed: Items };
+	},
+	options: { ignoreLayout?: boolean } = {},
+): boolean {
 	return (
 		diff.settings.length === 0 &&
 		diff.nodes.added.length === 0 &&

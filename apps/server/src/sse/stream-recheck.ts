@@ -20,17 +20,29 @@ export interface StreamRecheckOptions {
 	onError?: (error: unknown) => void;
 }
 
-/** 立即检查一次，返回关了几条流（测试用；定期检查就是反复调它）。 */
+/**
+ * 立即检查一次，返回关了几条流（测试用；定期检查就是反复调它）。
+ *
+ * **只关「这次查过的」凭据里查出已经失效的**：查询是异步的，等它回来的这段时间里可能有新的流打开（用的凭据不在这次查的名单里）；
+ * 这些流不能按「不在有效名单里」关掉，它们等下一次检查。否则一条刚打开的、凭据完全有效的流会被误关
+ * （CI 上偶发失败的原因：#596）。
+ */
 export async function recheckStreams({ sse, store, clock }: StreamRecheckOptions): Promise<number> {
 	const identities = sse.identities();
 	const loginIds = [...new Set(identities.flatMap((i) => (i.loginId === null ? [] : [i.loginId])))];
 	const tokenIds = [...new Set(identities.flatMap((i) => (i.tokenId === null ? [] : [i.tokenId])))];
 	if (loginIds.length === 0 && tokenIds.length === 0) return 0;
 	const live = await store.liveCredentials({ loginIds, tokenIds }, clock.now());
+	const checkedLogins = new Set(loginIds);
+	const checkedTokens = new Set(tokenIds);
 	return sse.closeWhere(
 		(stream) =>
-			(stream.loginId !== null && !live.loginIds.has(stream.loginId)) ||
-			(stream.tokenId !== null && !live.tokenIds.has(stream.tokenId)),
+			(stream.loginId !== null &&
+				checkedLogins.has(stream.loginId) &&
+				!live.loginIds.has(stream.loginId)) ||
+			(stream.tokenId !== null &&
+				checkedTokens.has(stream.tokenId) &&
+				!live.tokenIds.has(stream.tokenId)),
 	);
 }
 

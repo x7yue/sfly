@@ -8,8 +8,11 @@
   - 失败：`{"status": "failed", "error": {"type", "message", "traceback"}}`，退出码 1；
     输入有节点没有声明的名字时，在调用节点之前就失败：
     `{"status": "failed", "error": {"kind": "config_error", "message"}}`（没有 `type` 和
-    `traceback`）。`kind` 是读取端记的错误类型，没有这个键的失败是 `node_error`。
-- `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_EVENTS`、`SFLY_CANCEL`：产物目录、产物下载地址前缀、
+    `traceback`）。节点没接住 `ctx.artifacts.save` 抛出的 `ArtifactLimitExceeded` 时，失败照常带
+    `type`、`message`、`traceback`，另外有 `"kind": "env_error"`。`kind` 是读取端记的错误类型，
+    没有这个键的失败是 `node_error`。
+- `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_ARTIFACT_LIMIT_BYTES`、`SFLY_EVENTS`、
+  `SFLY_CANCEL`：产物目录、产物下载地址前缀、这个任务的产物合计上限（字节，没有时不检查）、
   事件文件、取消标记（由 Context 使用）。
 
 收到 SIGTERM（Agent 取消或超时时的优雅终止）时，在节点代码里抛出 `sfly.Cancelled`，
@@ -33,6 +36,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from sfly.context import (
+    ArtifactLimitExceeded,
     Cancelled,
     Context,
     describe_non_finite,
@@ -427,6 +431,17 @@ def _info(message: str) -> None:
     _log("info", message)
 
 
+def _is_artifact_limit(error: BaseException) -> bool:
+    """失败是不是只因为产物超限：就是 `ArtifactLimitExceeded`，或者异常组（`asyncio.TaskGroup`
+    里几个任务都没接住）里每一个叶子都是它；混着别的异常的组不算（有别的原因，照常按节点出错重试）。"""
+    import builtins
+
+    group = getattr(builtins, "BaseExceptionGroup", ())
+    if isinstance(error, group):
+        return bool(error.exceptions) and all(_is_artifact_limit(e) for e in error.exceptions)
+    return isinstance(error, ArtifactLimitExceeded)
+
+
 def run(task: Mapping[str, Any]) -> tuple[int, str]:
     """执行任务，返回 (退出码, output.json 内容)。"""
     importing = True  # 还在导入节点模块：失败的堆栈里全是导入机制的帧时一并去掉
@@ -475,6 +490,10 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
         }
         if place:
             failure_error["location"] = place
+        if _is_artifact_limit(error):
+            # 没接住 `ctx.artifacts.save` 抛出的超限：和 Agent 上传前发现产物超限同一个类型
+            # env_error，不按 retries 重试（重跑一遍产物还是这么大，#477）。
+            failure_error["kind"] = "env_error"
         failure = {"status": "failed", "error": failure_error}
         return 1, json.dumps(failure, ensure_ascii=False)
 

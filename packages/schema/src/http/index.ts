@@ -17,6 +17,7 @@ import { runSummaryApi } from "./run-summary.js";
 import { artifactsApi, logsApi, runsApi } from "./runs.js";
 import { sessionsApi } from "./sessions.js";
 import { sdkApi, systemApi } from "./system.js";
+import { tokensApi } from "./tokens.js";
 
 export * from "./accounts.js";
 export * from "./actions.js";
@@ -39,6 +40,7 @@ export * from "./run-summary.js";
 export * from "./runs.js";
 export * from "./sessions.js";
 export * from "./system.js";
+export * from "./tokens.js";
 
 export const httpApis = {
 	actions: actionsApi,
@@ -59,6 +61,7 @@ export const httpApis = {
 	sdk: sdkApi,
 	sessions: sessionsApi,
 	system: systemApi,
+	tokens: tokensApi,
 	users: usersApi,
 } satisfies Record<string, Record<string, RouteDef>>;
 

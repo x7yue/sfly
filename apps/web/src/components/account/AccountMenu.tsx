@@ -1,10 +1,11 @@
 import { authApi, type CurrentUser } from "@sfly/schema";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { KeyRoundIcon, LogOutIcon } from "lucide-react";
+import { KeyRoundIcon, LogOutIcon, TicketIcon } from "lucide-react";
 import { useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
+import { PAGE } from "#/lib/copy";
 import { setCurrentUser } from "#/lib/identity";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -19,7 +20,7 @@ import {
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
 
 /**
- * 顶栏右上角的账号菜单（登录之后代替昵称按钮）：显示名、登录名，修改密码、登出。
+ * 顶栏右上角的账号菜单（登录之后代替昵称按钮）：显示名、登录名，令牌页、修改密码、登出。
  * 登出之后回到登录页：没有登录的页面在 #494 之前仍然能用，但登出是用户明确要换身份。
  */
 export function AccountMenu({ user }: { user: CurrentUser }) {
@@ -68,6 +69,10 @@ export function AccountMenu({ user }: { user: CurrentUser }) {
 						</DropdownMenuLabel>
 					</DropdownMenuGroup>
 					<DropdownMenuSeparator />
+					<DropdownMenuItem onClick={() => void navigate({ to: "/account/tokens" })}>
+						<TicketIcon />
+						{PAGE.tokens}
+					</DropdownMenuItem>
 					<DropdownMenuItem onClick={() => setPasswordOpen(true)}>
 						<KeyRoundIcon />
 						修改密码…

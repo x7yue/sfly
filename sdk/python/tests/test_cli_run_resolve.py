@@ -42,6 +42,10 @@ class FakeClient:
         self.old = old
         self.requests: list[tuple[str, dict[str, Any]]] = []
 
+    def owner_name(self) -> str:
+        """「自己」在运行记录里的名字：没有令牌时就是昵称（和 `Client.owner_name` 一样）。"""
+        return self.nickname
+
     def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
         query = query or {}
         self.requests.append((path, query))

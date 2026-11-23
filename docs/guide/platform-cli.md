@@ -1,8 +1,8 @@
 # 用命令行操作平台
 
-`sfly` 命令行除了开发节点包，也能操作平台：查看场景、运行、sfly Agent 和节点包，触发、等待、取消运行，读运行日志、下载产物，创建、复制、编辑场景。人和 AI 编程助手用同一套命令；AI 编程助手按项目里的 `sfly-platform` skill 用这些命令自己完成 [联调](integration.md)，不用打开浏览器。
+`sfly` 命令行除了开发节点包，也能操作平台：查看场景、运行、sfly Agent 和节点包，触发、等待、取消运行，读运行日志、下载产物，创建、复制、编辑场景。人和 AI 编程助手用同一套命令；AI 编程助手按节点包目录里的 `sfly-platform` skill 用这些命令自己完成 [联调](integration.md)，不用打开浏览器。
 
-在项目里用 `uv run sfly <组> <命令>` 运行；用 `install.sh --dev` 装好的开发机上也可以直接运行 `sfly …`。每个命令的完整参数见 `uv run sfly <组> <命令> --help`。先看看平台上有什么：
+在节点包目录里用 `uv run sfly <组> <命令>` 运行；用 `install.sh --dev` 装好的开发机上也可以直接运行 `sfly …`。每个命令的完整参数见 `uv run sfly <组> <命令> --help`。先看看平台上有什么：
 
 ```sh
 uv run sfly agent list
@@ -18,9 +18,10 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注） |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent、生效的超时和它从哪来，节点表下面是这条链的备注）、默认 Agent、场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码），最后是注释框（标题、成员、备注）；`--json` 里包节点还带 `inputs`、异步任务节点带 `params`（原样） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存；secret 参数的默认值在文件里是占位符 `******` |
+| `sfly scenario edit <场景> <操作> [--dry-run]` / `sfly scenario edit <场景> --file <文件>` | 局部编辑：加节点（`add 包/节点 [--after 节点]`）、删节点（`remove`）、连线（`connect`）、断开（`disconnect`）、改节点的字段（`set`），存成一个新版本；`--dry-run` 只检查 |
 | `sfly scenario check <文件>` | 检查改过的文件，不保存：列出 `push` 时会有的错误和警告（分成这次改动带进来的和改动之前就有的），以及保存之后相对最新版本的改动；这次改动带进来了警告时退出码 4 |
 | `sfly scenario push <文件> [--strict]` | 本地校验后保存成新的场景版本；`--strict` 这次改动带进来了警告时不保存（退出码 4） |
 | `sfly scenario diff <场景> [版本A] [版本B]` / `sfly scenario diff <场景> --file <文件>` | 对比两个版本（默认最新的两个，只写一个时和最新版本比），或者最新版本和本地文件：设置、新增和删除的节点（显示名称和节点 ID）、改动字段的前后值、连线、注释框 |
@@ -39,6 +40,8 @@ uv run sfly api --list runs
 | `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
 | `sfly package list` / `sfly package show <包>[@版本] [--agent Agent]` | 节点包和它们的版本；一个版本里每个节点类型的标题、声明了默认超时的写出默认超时、输入（类型、默认值、是否必填）和输出。`<包>@dev` 看用 `sfly dev` 加载在 Agent 上的开发版本的节点定义（它不在已发布的节点包列表里）；只算在线的 Agent（和触发运行时的检查一致，离线的 Agent 上次上报的定义不算）；同一个开发包加载在不止一台在线的 Agent 上时用 `--agent` 指定看哪一台的，没有加载在任何在线的 Agent 上时报错并提示 `sfly dev` |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` / `sfly api --describe <METHOD> <路径>` | 直接调用上面没有覆盖的接口；`--list` 列出全部接口；`--describe` 说明一个接口：它做什么、会不会改东西、请求和响应的字段 |
+| `sfly login [--server 地址] [--login-name 登录名] [--password-stdin] [--name 令牌名称] [--scope 范围]… [--expires-in-days 天数]` | 登录：问控制面地址、登录名和密码（终端里不回显；脚本里用 `--password-stdin` 从标准输入读一行，密码不能写在命令行参数里），换一个个人令牌，存进 `$SFLY_HOME/credentials.json`（权限 0600）；之后平台命令都带着它。令牌的原值不打印；这台控制面已经存过令牌时，先换到新的、存好，再吊销旧的（密码输错时原来的登录不受影响） |
+| `sfly logout [--server 地址] [--local]` | 登出：让本机存的令牌吊销它自己（控制面上立即失效），再删掉本机的凭据；连不上控制面时不删，`--local` 只删本机的 |
 
 本地调试是 `sfly debug <节点>`（见 [本地调试](local-debug.md)）。原来的写法 `sfly run <节点>` 已经失效：它报错并提示改用 `sfly debug`，退出码 2。
 
@@ -46,23 +49,24 @@ uv run sfly api --list runs
 
 所有操作平台的命令共用下面这些约定。
 
-### 控制面地址和昵称
+### 控制面地址、令牌和昵称
 
 - **地址**按 `--server` > 环境变量 `SFLY_SERVER` > `$SFLY_HOME/agent.env`（默认 `~/.sfly/agent.env`）里的 `SFLY_CONTROL_PLANE_URL` > 默认地址 `http://127.0.0.1:8080` 的顺序取值，`sfly publish` 用同样的顺序。`install.sh --dev` 装好的开发机不用传 `--server`。
-- **昵称**按 `--nickname` > 环境变量 `SFLY_NICKNAME` > 系统用户名的顺序取值。保存场景版本、触发和取消运行时，控制面把它记为作者、触发人、取消人；只读命令也会带上它，控制面不依赖它。
+- **令牌**按环境变量 `SFLY_API_TOKEN` > 凭据文件 `$SFLY_HOME/credentials.json` 里这台控制面的令牌（`sfly login` 写的）的顺序取值，放在请求头 `Authorization: Bearer` 里。脚本、CI 直接设 `SFLY_API_TOKEN`，不用登录；不用 `SFLY_TOKEN`：它是安装脚本和 `agent.env` 里 Agent 的共享令牌，在同一台机器上会混。令牌的范围不会超过签发人此刻的角色；个人令牌在控制台账号菜单的「令牌」页也能签发、查看和吊销。收到 401（没有登录，或令牌已失效、被吊销）时，错误信息的下一步写明 `sfly login`。令牌只发给控制面：请求被重定向到另一个源（协议、主机、端口任一不同）时不再带；在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码是明文）；凭据文件的权限别人也读得到时提示一次。`sfly logout` 收到 401 时本机的凭据照样删，但会说明令牌没有被这次登出吊销（账号被停用时令牌其实还在，启用之后又能用：去控制台的「令牌」页吊销）。`sfly publish` 也带令牌（发布要「发布」范围）。
+- **昵称**：有令牌时身份由令牌决定，保存场景版本、触发和取消运行时，控制面把令牌所属用户的显示名记为作者、触发人、取消人；`--nickname` 和 `SFLY_NICKNAME` 被忽略，并在 stderr 提示一次。没有令牌时（过渡期，强制鉴权之前）按 `--nickname` > 环境变量 `SFLY_NICKNAME` > 系统用户名的顺序取值，控制面同样把它记为作者、触发人、取消人；只读命令也会带上它，控制面不依赖它。
 
 ### 「经 …」只是标注
 
 命令行检测到自己在 AI 编程助手里运行时，在每个请求的 `x-sfly-client` 请求头里带上它的名称：`AI_AGENT` 环境变量有值时用它作名称，`CLAUDECODE` 表示 `claude-code`，`CODEX_` 开头的环境变量表示 `codex`。控制面把名称记在触发的运行、取消请求和保存的场景版本上，界面和命令输出在昵称旁边写「经 Claude Code」（`claude-code` → Claude Code，`codex` → Codex，其他名称原样显示）。人在浏览器里的操作没有这个标注。
 
-昵称仍然是人的名字，「经 …」说明这次操作是 AI 编程助手代他做的。它和昵称一样不做校验：平台没有鉴权，任何人都能伪造请求头，所以它只用来回溯「这个版本、这次运行是谁的 AI 编程助手做的」，不是安全措施。检测结果只影响这个请求头，不改变输出的格式：文档和 skill 里的示例，和 AI 编程助手实际拿到的输出一样。
+「经 …」说明这次操作是 AI 编程助手代他做的（用个人令牌时，名字是令牌所属用户的显示名）。这个请求头不做校验，任何人都能伪造，所以它只用来回溯「这个版本、这次运行是谁的 AI 编程助手做的」，不是安全措施。检测结果只影响这个请求头，不改变输出的格式：文档和 skill 里的示例，和 AI 编程助手实际拿到的输出一样。
 
 ### 运行的写法
 
 所有 `sfly run` 命令里的 `<运行>` 都可以不写整段 UUID（抄错一段就是 404）：
 
 - 完整的运行 id，或它的**前缀**（至少 4 个字符，不分大小写，可以带 `-`），例如 `3f9a1c2e`。前缀只对应一个运行时用它；对应几个运行时报 `run_ambiguous`，列出每个候选的 id、场景、状态和开始时间，多写几位再试；一个也没有时报 `run_not_found`；不到 4 个字符时报 `run_prefix_too_short`，写明至少要几个字符。前缀只按运行编号找，昵称里有这几个字的人的运行不算。
-- **`latest`**（也可以写 `最近`）：自己触发的、开始得最晚的一次运行。「自己」按昵称（`--nickname`、`SFLY_NICKNAME`，默认是系统用户名）认，昵称整个相等才算（别人的昵称里含有你的昵称不算），由控制面按触发人筛，不受「最近 500 个运行」的限制；没有自己触发过的运行时报 `no_recent_run`。昵称不校验，所以这只是「同一个昵称」，不是登录的身份。
+- **`latest`**（也可以写 `最近`）：自己触发的、开始得最晚的一次运行。「自己」有令牌时是令牌所属用户的显示名（向控制面问一次），没有令牌时按昵称（`--nickname`、`SFLY_NICKNAME`，默认是系统用户名）认，整个相等才算（别人的名字里含有你的名字不算），由控制面按触发人筛，不受「最近 500 个运行」的限制；没有自己触发过的运行时报 `no_recent_run`。
 - **取消**（`sfly run cancel`）不接受 `latest`：要写明是哪一次，用 id 或前缀，免得取消了不想取消的运行。
 
 之后提示里出现的命令（继续读日志、读完整的输出……）都写完整的 id。
@@ -88,7 +92,7 @@ uv run sfly api --list runs
 | 1 | 运行失败（`run start --wait`、`run wait`） |
 | 2 | 命令本身出错：参数不对、连不上控制面、场景或运行不存在、预检没通过、运行预设不存在或已失效、保存版本冲突…… |
 | 3 | 运行被取消（`run start --wait`、`run wait`） |
-| 4 | 这次改动带进来了警告、没有错误（`scenario check`、`scenario push --strict`）：`check` 照常输出结果，`push --strict` 没有保存。改动之前就有的警告不算；有错误时是 2 |
+| 4 | 这次改动带进来了警告、没有错误（`scenario check`、`scenario push --strict`、`scenario edit --dry-run`）：`check` 照常输出结果，`push --strict` 没有保存。改动之前就有的警告不算；有错误时是 2 |
 | 124 | 等待超时（`--timeout`）：运行仍在继续，没有被取消 |
 | 130 | 等待时按了 Ctrl-C：运行仍在继续，没有被取消 |
 
@@ -199,7 +203,7 @@ sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集
 
 ## 编辑场景
 
-编辑场景是「pull 下载文件 → 改 → check 检查 → push 上传」：
+增删节点和连线、改节点的字段用 `scenario edit`（见下面的「局部编辑」），不用拉下整份文档。其余的改动（入口参数、注释框、子流程、默认 Agent、锁定的包版本）是「pull 下载文件 → 改 → check 检查 → push 上传」：
 
 ```text
 sfly scenario pull 回归 -o 回归.json
@@ -222,10 +226,36 @@ sfly scenario push 回归.json
 - `scenario show` 的最后一段「注释框」列出每个注释框：第一行是 `<标题>（<ID>）`，下一行是成员（节点写「显示名称（节点 ID）」，没有显示名称时只写节点 ID；子流程写名称，例如 `节点：创建测试用户（create_user_1）、pause；子流程：report`，没有成员时写 `成员：无`），再下面是备注，多行备注的后面几行缩进到第一行备注文字的位置；成员 ID 在场景里不存在时原样写出。没有注释框的场景没有这一段。`--json` 里 `annotations` 一直在（没有时是空数组），每项是文档里的 `id`、`title`、`note`（没有备注时不出现）、`color`（没写颜色时不出现）、`nodes`、`subflows`。
 - 新加的节点不用写 `position`：控制面保存时按画布「整理布局」的算法给没有坐标的节点排好位置（压住已有节点时挪到附近的空位），已经有坐标的节点不动。
 - 节点的 `agent` 指定执行它的 Agent，不写就用场景的 `default_agent`（例如分析放在别的机器上、只有某台机器上有被测系统时单独写）。
-- 新加一个节点并接在已有节点后面：往 `nodes` 里加一项（`id`、`kind: "package"`、`package`、`node`、`display_name`、`inputs`），往 `edges` 里加一条 `{"from": <前一个节点的 id>, "to": <新节点的 id>, "kind": "chain"}`；`packages` 里要有这个节点包锁定的版本。接在链的中间时，把原来从前一个节点连出去的那条线的 `from` 改成新节点。
+- 新加一个节点并接在已有节点后面，用 `scenario edit <场景> add 包/节点 --after <节点>` 更省事（见下面的「局部编辑」）；在文件里手写时：往 `nodes` 里加一项（`id`、`kind: "package"`、`package`、`node`、`display_name`、`inputs`），往 `edges` 里加一条 `{"from": <前一个节点的 id>, "to": <新节点的 id>, "kind": "chain"}`；`packages` 里要有这个节点包锁定的版本。接在链的中间时，把原来从前一个节点连出去的那条线的 `from` 改成新节点。
 - 新加的节点另起一个注释框或者不放进注释框；已有注释框的标题和备注是场景作者写的，不因为加了节点就改，除非这次改动让它说的不对了。
 - 别人在你 pull 之后保存了新版本时，push 报版本冲突（退出码 2），写明最新版本号、作者和保存时间，提示重新 pull、把你的改动合并进去再 push。没有强制覆盖的选项。浏览器里正在编辑同一个场景的人保存时，会收到界面已有的冲突提示。
 - `scenario copy` 复制场景（说明、运行通知设置和关注项一并复制）。联调副本的说明要改成讲联调：`scenario rename <副本> --description …`，第一行写「联调 <包名>，由 <昵称> 的 AI 编程助手创建」，后面接原场景的说明；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。
+
+### 局部编辑
+
+`sfly scenario edit <场景> <操作>` 对场景的最新版本做一个操作，存成一个新版本：
+
+```text
+sfly scenario edit 回归 add http-kit/probe --after fetch_data --display-name "探测接口" --input host=api.test --input count=3 --dry-run
+sfly scenario edit 回归 add http-kit/probe --after fetch_data --display-name "探测接口" --input host=api.test --input count=3
+sfly scenario edit 回归 set probe_1 inputs.count 5
+sfly scenario edit 回归 remove report
+sfly scenario edit 回归 --file 改动.json
+```
+
+- 操作：
+  - `add <包名>/<节点名>`：加一个包节点。`--after <节点>` 接在那个节点后面，它是链尾时追加，后面还有节点时插在它和下一个节点之间（和画布上「在后面添加」一样）；不写时只加节点、不连线。`--id` 给节点 ID（只能用字母、数字、下划线和连字符；不写时是节点名加序号，例如 `probe_1`）；`--input 名=值` 给输入，可以重复，必填的输入都要给；`--display-name`、`--note`、`--agent`、`--always`、`--timeout`、`--retries`、`--queue-timeout` 和场景文档里的同名字段一样。包还没有锁定时一起锁定：`--version` 写了用它，不写时用最新发布的版本，只有在线的 Agent 加载着开发版本时用 `dev`；已经锁定的包只能用锁定的版本。新节点不用写坐标，保存时按整理布局放好。
+  - `remove <节点>`：删一个节点，连同它的连线；它恰好一进一出时前后两个节点接上，注释框里的成员一起去掉。入口节点不能删；子流程入口节点也不能删（局部编辑不改子流程的结构，用 pull / push）。
+  - `connect <起点> <终点>`、`disconnect <起点> <终点>`：连一条线、断开一条线，默认是链上的连线，`--dispatch` 是调度连线。连线的规则和画布一样（链不分叉、不汇合、不成环）。
+  - `set <节点> <字段> [值]`：改一个节点的一个字段。包节点能改 `inputs.<输入名>`、`agent`、`display_name`、`note`、`always`、`timeout`、`retries`、`queue_timeout`，入口节点、异步任务节点能改 `display_name`、`note`，停止子流程节点还能改 `always`，子流程入口节点只能改 `note`。不写值就是去掉这个字段；写 `null` 就是 null（输入可以是 null）。
+- 值（`--input`、`set` 的值）按 JSON 解析，不是 JSON 的当字符串：`3` 是数字，`true` 是布尔。节点类型声明这个输入是字符串时按原样存字符串（`--input tag=1.10` 存的是 `"1.10"`，不会变成数字 1.1）；查不到节点类型时（开发版本没有在线的 Agent 上报）要字符串就写成 JSON 字符串，例如 `'"1.10"'`。值以 `-` 开头时在它前面加 `--`：`set probe_1 inputs.offset -- -5`。
+- 引用有三种写法，和场景文档里节点的 `inputs` 一样，在 shell 里用单引号括起来，免得被 shell 展开：入口参数写 `--input 'base_url=${{ params.base_url }}'`；同一条链上前面节点的输出写 `--input 'body=${{ nodes.fetch_data.outputs.body }}'`（`nodes.` 后面是节点 ID，不是显示名称）；「运行状态」类型的输入写 `--input 'state=${{ run.state }}'`（新节点会自动填好）。已有节点的输入用 `scenario show <场景> --json` 看：包节点带 `inputs`，异步任务节点带 `params`，都是原样的。
+- `--file <文件>` 一次提交一组操作：JSON 文件，操作的数组或 `{"operations": [...]}`；每个操作是 `{"op": "add_node", "package": …, "node": …, "after": …, "inputs": {…}}`、`{"op": "remove_node", "node": …}`、`{"op": "connect" 或 "disconnect", "from": …, "to": …, "kind": "chain"}`、`{"op": "set", "node": …, "field": …, "value": …}`（和接口 `POST /orchestrations/:id/edits` 的 `operations` 相同，`sfly api --describe POST /orchestrations/:id/edits` 列出全部字段）。一组操作按顺序执行，后面的操作看得到前面加的节点；有一个不合法时都不生效。
+- 操作由控制面执行，用的是画布上做同样的事的那几个函数：和在画布上做同样的事得到同样的文档。保存之后的检查和 `push` 一样：输出新版本号、警告（和 `push` 时相同）和这次的改动（写法和 `scenario diff` 一样）。`--json` 是 `{scenario, saved, version, base_version, author, author_via, created_at, warnings, diff}`。这组操作的结果和最新版本相同时（字段改成原来的值；同一组里先加、再删掉，只要加的时候没有把后面的节点挪开）不存出新版本，输出「没有改动，没有存出新版本」，`--json` 是 `{scenario, saved: false, unchanged: true, version, base_version, warnings, diff}`；整份文档原样 `push` 仍会存出新版本。节点的位置也是文档的一部分：用 `--after` 插在两个节点中间、再删掉，插入时往右挪的那些节点删掉后不挪回来，会存出新版本，改动里只有「位置变了的节点」；接在链尾（后面没有节点）再删掉没有改动。
+- `--dry-run` 只检查不保存：输出这组操作会造成的改动和警告，不产生版本。警告和 `scenario check` 一样分成这次改动带进来的和改动之前就有的（后者单独一段）；这次改动没有带进来警告时退出码 0，带进来了时 4。`--json` 是 `{scenario, saved: false, base_version, warnings, diff}`，每条警告带 `existing`。保存成功时警告也分两段列出。
+- 操作不合法时什么都不保存，退出码 2，错误写明是第几个操作、为什么（`--json` 时错误对象的 `details` 是控制面给的结构化线索：`index`、`similar`、`missing`、`from`、`to`、`choices`）：节点 ID 不存在时列出相近的 ID（写的是某个节点的显示名称时直接给出它的 ID；没有相近的就列出场景里全部的节点，写成「显示名称（节点 ID）」），包名写错时列出相近的包名，版本写错时列出这个包已发布的版本，包节点缺必填输入时列出缺哪几个和各自的类型，连线接不上时写明两端各是什么（种类、包节点的节点类型），节点类型、输入名、能改的字段写错时列出可选的；`timeout`、`queue_timeout` 超过上限（4294967295 秒）也在这一步拒绝，写明是第几个操作，和保存时同一句话。
+- 编辑基于命令读到的最新版本；`--base-version N` 指定编辑基于的版本。在那之后有人保存了新版本时报版本冲突（退出码 2），写明最新版本号、作者和保存时间，下一步是 `sfly scenario diff` 看那个版本改了什么；确认这次编辑仍然要做之后再执行一次（写了 `--base-version` 的去掉它）。
+- 入口参数、注释框、子流程的结构和场景的设置不能用 `scenario edit` 改，用 pull / push。
 
 下面是一份写全了说明的场景文档：显示名称、备注、注释框，入口参数和子流程入口参数的说明。保存成文件，用 `scenario create --name 下单回归 --from 文件` 就能新建场景；这份文件只有 `document`，`scenario push` 用的文件还要带 pull 写出的 `scenario` 和 `base_version`。示例里的节点包 `shop-test` 是虚构的，用在自己的场景里时换成控制面上有的节点包和版本。
 
