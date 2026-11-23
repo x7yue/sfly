@@ -278,18 +278,19 @@ export class SessionManager {
 
 	/**
 	 * `POST /sessions/:id/abort`：结束第 `turn` 轮（竖切版直接结束 pi 进程，#544 改成先中止）。按这一轮的状态，不按时间猜：
-	 * - 这一轮在做：结束它，这一轮以 `stopped` 结束；
-	 * - 这一轮已经结束（或者是更早的轮次）：什么也不做；
-	 * - 这一轮还没登记（控制面等 `prompt` 的回应超时后补发的中止，那句 `prompt` 还在路上）：记下记号，它的 `prompt` 到了
-	 *   直接以 `stopped` 结束。助手服务重启之后分不清「已经结束」和「还没登记」时也记下：记号只和同一轮的 `prompt` 对得上。
-	 * 别的轮次不受影响；重复调用无害。
+	 * - 在做的那一轮的轮次不大于 `turn`：结束它，以 `stopped` 结束。不只是同一轮：回过一次 409 之后控制面那次发话已经把
+	 *   轮次加了一，用户之后在空闲的会话上点停止带的是新轮次，真正还在跑的是上一轮；
+	 * - 第 `turn` 轮还没登记（控制面等 `prompt` 的回应超时后补发的中止，那句 `prompt` 还在路上；或者上面那种情况）：记下
+	 *   记号，它的 `prompt` 到了直接以 `stopped` 结束。可以和上一条同时发生。助手服务重启之后分不清「已经结束」和「还没
+	 *   登记」时也记下：记号只和同一轮的 `prompt` 对得上；
+	 * - 都不是（这一轮已经结束、或者是更早的轮次）：什么也不做。
+	 * 在做的轮次比 `turn` 大时不动它；重复调用无害。
 	 */
 	abort(sessionId: string, turn: number): void {
 		const session = this.#sessions.get(sessionId);
 		const current = session?.turn;
-		if (session && current?.number === turn) {
+		if (session && current && current.number <= turn) {
 			this.#stop(session, current, { outcome: "stopped", reason: "用户停止了这一轮" });
-			return;
 		}
 		const known = Math.max(session?.lastTurn ?? 0, current?.number ?? 0);
 		if (session?.lastTurn !== undefined && turn <= known) return;

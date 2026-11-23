@@ -333,6 +333,23 @@ describe("中止带轮次：按这一轮的状态，不按时间猜", () => {
 		expect(harness.events.of(id).filter((r) => r.event.type === "turn_end")).toHaveLength(2);
 	});
 
+	it("第 1 轮还在做，收到带第 2 轮的中止（回过 409 之后控制面的轮次已经加了一）：第 1 轮被结束，第 2 轮的记号也在", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "hang" });
+		await eventually(() =>
+			expect(rawEvents(harness, id).filter((r) => r.type === "turn_start")).toHaveLength(1),
+		);
+		expect((await harness.abort(id, 2)).status).toBe(202);
+		expect(await harness.turnEnd(id, 1)).toMatchObject({ outcome: "stopped" });
+		expect(harness.sessions.abortMarks).toBe(1);
+		expect((await harness.prompt(id, { turn: 2, text: "settle" })).status).toBe(202);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+		expect(harness.sessions.abortMarks).toBe(0);
+		await harness.prompt(id, { turn: 3, text: "settle" });
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+	});
+
 	it("助手服务重启后（不知道这个会话的轮次）收到中止：记下，只和同一轮的 prompt 对得上，更大的轮次照常、记号随之清掉", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();

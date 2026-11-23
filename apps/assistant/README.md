@@ -87,7 +87,7 @@ docker logs sfly-aeval-1-assistant      # 「助手服务在 :8090（pi 1.6.0）
 ### 4. 不经控制面，直接驱动一轮
 
 协议是 HTTP：`POST /sessions/<会话 ID>/prompt` 开始一轮（202，先回应再拉起 pi），`POST /sessions/<会话 ID>/abort`
-停止，`GET /events` 是 NDJSON 的事件流（第一行 `hello`，之后是事件记录），`GET /health` 看版本和进程数；
+停止（请求体带轮次），`GET /events` 是 NDJSON 的事件流（第一行 `hello`，之后是事件记录），`GET /health` 看版本和进程数；
 每个请求带 `Authorization: Bearer <共享密钥>`。在助手容器里用 node 发（它有 `fetch`）：
 
 ```sh
@@ -117,7 +117,7 @@ for (let buf = ""; ; ) {
   `/data/sessions/<会话 ID>/` 下是 pi 的原始事件 `events.jsonl`、`pi-stderr.log`、pi 的会话文件 `pi-session/`。
 - 发给模型的请求：`docker exec sfly-aeval-1-dev ls /tmp/fm/dump`。
 
-停止：一轮在做时 `POST /sessions/<会话 ID>/abort`，这一轮以 `stopped` 结束，工作台上正在跑的命令随连接断开结束；
+停止：一轮在做时 `POST /sessions/<会话 ID>/abort`，请求体带要结束的轮次 `{"turn": 1}`（没有时 400），轮次不大于它的、在做的那一轮以 `stopped` 结束，工作台上正在跑的命令随连接断开结束；那一轮还没到时记下，它到了直接以 `stopped` 结束；
 同一个会话 ID、`turn` 加一再发一句就是接着说。
 
 ### 5. 接控制面
