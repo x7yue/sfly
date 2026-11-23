@@ -3,6 +3,8 @@ import { useEffect } from "react";
 /**
  * 焦点所在的元素被移走时（归档、恢复、删除了它所在的列表项，空状态被列表替换），焦点不留在 body 上：
  *
+ * - 它自己带着 `data-focus-successor`（一个 CSS 选择器）：交给选择器选中的元素，选不到再往下走。点了就会消失的按钮用它
+ *   （会话页的「停止」：这一轮结束后焦点交给输入框，不交给标题）；
  * - 它在列表项（`data-list-item`，见 list-navigation）里：交给下一项的主链接，没有下一项交给上一项；
  * - 列表空了，或它不在列表项里：交给页面标题（`PageHeader` 的 h1）。
  *
@@ -26,7 +28,12 @@ function snapshot(element: HTMLElement, main: HTMLElement): Focused {
 	return { element, items, index: item ? items.indexOf(item) : -1 };
 }
 
-function recoveryTarget({ items, index }: Focused): HTMLElement | null {
+function recoveryTarget({ element, items, index }: Focused): HTMLElement | null {
+	const successor = element.dataset.focusSuccessor;
+	if (successor) {
+		const target = document.querySelector<HTMLElement>(successor);
+		if (target) return target;
+	}
 	if (index !== -1) {
 		const next = items.slice(index + 1).find((item) => item.isConnected);
 		const previous = items

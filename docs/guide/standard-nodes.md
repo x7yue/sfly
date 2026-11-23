@@ -129,8 +129,8 @@ def service_check(
     """起服务，等它就绪，采样它的资源，收集日志，最后停掉服务。
 
     副作用：启动的服务在节点结束前会被停掉，包括节点失败、被取消的时候：先发 SIGTERM，服务
-    没有退出就在 5 秒后发 SIGKILL（被取消时最多等 3 秒）。服务日志在服务停掉之后存成产物，
-    节点失败时也存。
+    没有退出就在 5 秒后发 SIGKILL（取消或超时进入收尾时间时最多等 3 秒）。服务日志在服务
+    停掉之后存成产物，节点失败时也存。
 
     失败：服务 60 秒内没有就绪，或者采样期间服务退出了。
     """
@@ -142,7 +142,7 @@ def service_check(
             monitor = monitor_processes(ctx, pid=service.pid, duration=observe)
         finally:
             # 在 finally 里清理要在平台给的收尾时间（默认 10 秒）内做完：stop_background_process
-            # 的宽限期默认 5 秒，被取消时最多 3 秒，来得及发 SIGKILL。
+            # 的宽限期默认 5 秒，取消或超时进入收尾时间时最多 3 秒，来得及发 SIGKILL。
             stopped = stop_background_process(ctx, service.pid)
     finally:
         # 服务停掉之后再存：日志里有它停止时的输出；节点失败时（最需要日志的时候）也存。
@@ -153,7 +153,7 @@ def service_check(
 几个要点：
 
 - `start_background_process` 启动的进程不属于任务的进程树，节点结束后它继续运行：要么像上面这样在 `finally` 里停，要么由场景里另一个节点（设为 always 节点）停止，用 `start_process` 和 `stop_process` 这两个节点就是这种做法。
-- **在 `finally` 里清理，要在平台给节点的收尾时间内做完**：任务被取消或超时时，平台向节点发 SIGTERM，10 秒（Agent 的 `--terminate-grace`，默认 10 秒）后强制杀掉整棵进程树，节点自己也在其中。`stop_background_process` 的 `grace`（从 SIGTERM 到 SIGKILL）默认只有 5 秒，所以**一个**忽略 SIGTERM 的服务也来得及发 SIGKILL；任务已经被取消（`ctx.cancelled()`）时再压到最多 3 秒。这些上限是**每次调用**的，不是整个收尾的预算：任务**超时**时平台不写取消标记（`ctx.cancelled()` 为假，宽限期不会压短），每停一个忽略 SIGTERM 的服务要用掉约 `grace` 秒，两个这样的服务用默认值就是 10 秒，第二个来不及 SIGKILL，它和它的看护进程会留下来，日志也存不了；取消时每个最多约 3 秒（三个服务的收尾约 9.4 秒）。所以**在 `finally` 里停两个及以上服务时，把 `grace` 给小**（各 2 秒，总和留在 10 秒以内），或者用单独的 always 节点停。你自己的清理里等的时间加起来不能超过这个时间；服务退出得慢、需要更长的宽限期时不要在 `finally` 里停，用单独的 always 节点（`stop_process`，它是一个单独的任务，有自己的时间）。
+- **在 `finally` 里清理，要在平台给节点的收尾时间内做完**：任务被取消或超时时，平台向节点发 SIGTERM，10 秒（Agent 的 `--terminate-grace`，默认 10 秒）后强制杀掉整棵进程树，节点自己也在其中。`stop_background_process` 的 `grace`（从 SIGTERM 到 SIGKILL）默认只有 5 秒，所以**一个**忽略 SIGTERM 的服务也来得及发 SIGKILL；任务进入收尾时间（`ctx.cancelled()` 为真）时再压到最多 3 秒：被取消、超时、被停止子流程节点停止时，Agent 都先写取消标记再发 SIGTERM，所以这三种情况一样。这些上限是**每次调用**的，不是整个收尾的预算：每停一个忽略 SIGTERM 的服务要用掉约 3 秒，停三个就要约 9.3 秒（实测），10 秒里只剩不到 1 秒给 `finally` 里别的清理（比如下面存服务日志），再多就来不及了，后面的服务和它们的看护进程会留下来，日志也存不了。所以**在 `finally` 里停三个及以上服务时，把 `grace` 给小**（总和留在 10 秒以内，还要给别的清理留时间），或者用单独的 always 节点停。你自己的清理里等的时间加起来不能超过这个时间；服务退出得慢、需要更长的宽限期时不要在 `finally` 里停，用单独的 always 节点（`stop_process`，它是一个单独的任务，有自己的时间）。另外，取消标记出现之后（取消、超时、被停止子流程节点停止都一样），新的 Agent 能力调用（`pull_files_from_agent` 这类）和产物下载在这个节点里会抛出 `sfly.Cancelled`（见 [开发节点](sdk-reference.md#取消与超时)）：超时之后要留证据（从别的 Agent 拉日志、存现场），放在 always 节点里做，不要放在节点自己的 `finally` 里。
 - 保存服务日志放在 `finally` 里、停服务之后：服务没有就绪、采样失败的时候最需要日志，停止时服务打的最后几行也在里面。
 - `monitor_processes` 的指标要在 `@node` 里声明：`metrics=PROCESS_METRICS, charts=PROCESS_CHARTS`；不设置 `duration` 时它一直采样到任务被取消，所以要和压测同时跑的监控放在子流程里。
 - `ctx.artifacts.save(名称, 数据)`：数据是 `str` 或 `bytes` 时保存的是这段内容；要保存一个文件，传 `Path`。`service.log_path` 是 `Path`，直接传就是存这个文件；传成字符串（`str(service.log_path)`）会把路径当成内容存进去。

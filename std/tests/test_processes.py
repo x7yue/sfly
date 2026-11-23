@@ -274,7 +274,8 @@ def test_a_cancelled_task_shortens_the_grace_period_to_what_the_platform_leaves(
     elapsed = time.monotonic() - started
     assert (stopped.was_running, stopped.exit_code) == (True, 137)
     assert 2.5 <= elapsed < 5, f"取消时宽限期最多 3 秒，实际 {elapsed:.1f} 秒"
-    assert any("宽限期从 30 秒缩短为 3 秒" in m for m in run.logs("info"))
+    # 超时的任务也会打这一行：不说原因，不写「已取消」。
+    assert "任务正在收尾，平台留给收尾的时间不多，宽限期从 30 秒缩短为 3 秒" in run.logs("info")
 
 
 def test_a_grace_period_shorter_than_the_cap_is_kept_when_cancelled(

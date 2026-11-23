@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { createWriteStream, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type {
 	AssistantErrorCode,
 	AssistantEvent,
@@ -71,8 +72,9 @@ export interface SessionManagerOptions {
 	maxProcesses?: number;
 	killGraceMs?: number;
 	/**
-	 * pi 进程的临时目录建在这下面（每个进程一个，`TMPDIR`），默认容器自己的临时目录下的 `sfly-assistant/`：截断输出的全文
-	 * 按「两边路径相同」传到工作台上同一个路径，工作台上 `/tmp` 一定在、谁都能写；它也不该占数据卷。
+	 * pi 进程的临时目录建在这下面（每个进程一个，`TMPDIR`），默认容器自己的临时目录下的 `sfly-assistant-<数据目录的哈希>/`：
+	 * 截断输出的全文按「两边路径相同」传到工作台上同一个路径，工作台上 `/tmp` 一定在、谁都能写；它也不该占数据卷。
+	 * 按数据目录分开：本机起两个助手服务时，后起的启动清理不删先起的那个的；同一个数据目录重启后认得出上次留下的。
 	 */
 	tmpRoot?: string;
 }
@@ -137,15 +139,17 @@ export class SessionManager {
 	#cleanLeftovers(): void {
 		const { dataDir } = this.options;
 		rmSync(join(dataDir, "agents"), { recursive: true, force: true });
-		rmSync(this.#tmpRoot, { recursive: true, force: true });
+		rmSync(this.tmpRoot, { recursive: true, force: true });
 		for (const id of readdirSync(join(dataDir, "sessions"))) {
 			rmSync(join(dataDir, "sessions", id, "turn.json"), { force: true });
 		}
 	}
 
-	/** pi 进程的临时目录都在这下面（每个进程一个，`TMPDIR`）。 */
-	get #tmpRoot(): string {
-		return this.options.tmpRoot ?? join(tmpdir(), "sfly-assistant");
+	/** pi 进程的临时目录都在这下面（每个进程一个，`TMPDIR`）；见 {@link SessionManagerOptions.tmpRoot}。 */
+	get tmpRoot(): string {
+		if (this.options.tmpRoot) return this.options.tmpRoot;
+		const instance = createHash("sha256").update(resolve(this.options.dataDir)).digest("hex");
+		return join(tmpdir(), `sfly-assistant-${instance.slice(0, 12)}`);
 	}
 
 	/**
@@ -167,14 +171,12 @@ export class SessionManager {
 	/** `POST /sessions/:id/prompt`：先回应，再在后台拉起 pi、发 `prompt`。 */
 	prompt(sessionId: string, body: PromptCommandBody): PromptResult {
 		const session = this.#session(sessionId);
-		if (session.turn) {
-			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
-		}
-		session.redactor.add(Object.values(body.secret_env));
-		if (this.#takeAbortMark(sessionId, body.turn)) {
+		if (this.#hitsAbortMark(sessionId, body.turn)) {
 			// 这一轮登记之前就收到了针对它的中止：先回 202（回 409、503 控制面会记成失败），再发这一轮「已停止」的结局，
-			// 不拉起 pi。
-			const turn = this.#register(session, body.turn);
+			// 不拉起 pi。更早的一轮还在退出（停止之后 pi 还没走）时也一样：先看记号、再看在做的那一轮，这一轮不登记成
+			// 在做的，不影响更早的那一轮在进程退出时发它的结局。
+			const turn = this.#newTurn(session, body.turn);
+			session.lastTurn = Math.max(session.lastTurn ?? 0, body.turn);
 			this.options.log(
 				`会话 ${session.id} 第 ${body.turn} 轮：到之前已经收到针对它的中止，直接结束`,
 			);
@@ -183,6 +185,12 @@ export class SessionManager {
 			);
 			return { ok: true };
 		}
+		if (session.turn) {
+			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
+		}
+		session.redactor.add(Object.values(body.secret_env));
+		// 更大的轮次到了：比它小的记号对应的那一轮不会再来了，清掉。
+		this.#dropStaleAbortMark(sessionId, body.turn);
 		if (!session.process || session.process.exited) {
 			if (this.activeProcesses >= this.#maxProcesses && !this.#evictIdle()) {
 				return {
@@ -220,7 +228,15 @@ export class SessionManager {
 
 	/** 登记这一轮（还没有拉起 pi）。 */
 	#register(session: Session, number: number): Turn {
-		const turn: Turn = {
+		const turn = this.#newTurn(session, number);
+		session.turn = turn;
+		session.lastTurn = number;
+		session.lastActive = Date.now();
+		return turn;
+	}
+
+	#newTurn(session: Session, number: number): Turn {
+		return {
 			number,
 			startedAt: Date.now(),
 			translator: new TurnTranslator(session.redactor),
@@ -231,26 +247,25 @@ export class SessionManager {
 			probing: false,
 			settled: undefined,
 		};
-		session.turn = turn;
-		session.lastTurn = number;
-		session.lastActive = Date.now();
-		return turn;
 	}
 
-	/**
-	 * 这一轮的 `prompt` 到了，看有没有针对它的记号：轮次相同就是（取走）；轮次更大的 `prompt` 也清掉记号（那一轮
-	 * 不会再来了）；更小的不动。过期的记号当作没有。
-	 */
-	#takeAbortMark(sessionId: string, number: number): boolean {
+	/** 这一轮的 `prompt` 撞上了针对它的记号（同一轮、没过期）：取走记号。过期的记号清掉。 */
+	#hitsAbortMark(sessionId: string, number: number): boolean {
 		const mark = this.#abortMarks.get(sessionId);
 		if (!mark) return false;
 		if (Date.now() - mark.at > ABORT_MARK_TTL_MS) {
 			this.#abortMarks.delete(sessionId);
 			return false;
 		}
-		if (number < mark.turn) return false;
+		if (number !== mark.turn) return false;
 		this.#abortMarks.delete(sessionId);
-		return number === mark.turn;
+		return true;
+	}
+
+	/** 轮次更大的 `prompt` 到了：记号对应的那一轮不会再来了，清掉；更小的不动。 */
+	#dropStaleAbortMark(sessionId: string, number: number): void {
+		const mark = this.#abortMarks.get(sessionId);
+		if (mark && number > mark.turn) this.#abortMarks.delete(sessionId);
 	}
 
 	/** 记下「第 `turn` 轮已被中止」：每个会话只留轮次最大的那一个，总数有上限（满了丢最早的）。 */
@@ -374,11 +389,12 @@ export class SessionManager {
 			// 被关掉的进程退出之前不起新的：两个 pi 不同时写同一个会话文件。
 			await session.closing;
 			if (!session.process || session.process.exited) {
-				await writeSkillsToWorkbench(
-					this.options.connect(body.workbench.address),
-					this.options.skillsDir,
-					body.workbench.workdir,
-				);
+				const agent = this.options.connect(body.workbench.address);
+				try {
+					await writeSkillsToWorkbench(agent, this.options.skillsDir, body.workbench.workdir);
+				} finally {
+					agent.close();
+				}
 				if (turn.ended || turn.ending) return;
 				this.#spawn(session, wanted);
 				spawned = true;
@@ -425,7 +441,7 @@ export class SessionManager {
 			model: this.options.model,
 			piArgv: this.options.piArgv,
 			hostEnv: this.options.hostEnv,
-			tmpRoot: this.#tmpRoot,
+			tmpRoot: this.tmpRoot,
 		});
 		session.startedFor = startedFor;
 		session.tmpDir = launch.tmpDir;
@@ -478,23 +494,25 @@ export class SessionManager {
 			// 工具结果里有「工作台连不上」：可能是扩展写的，也可能是命令自己打出来的、读到的文件路径里带的。只看文字定不下来，
 			// 助手服务自己探一次这一轮的工作台：探不通才不等到上限、以失败结束这一轮；探得通就是普通的工具错误，照常往下走。
 			turn.probing = true;
-			void this.options
-				.connect(turn.address)
-				.reachable()
-				.then((ok) => {
-					turn.probing = false;
-					const settled = turn.settled;
-					turn.settled = undefined;
-					if (turn.ended || turn.ending) return;
-					if (!ok) {
-						this.#stop(session, turn, {
-							outcome: "failed",
-							reason: session.redactor.redact(unreachable),
-						});
-					} else if (settled) {
-						this.#settle(session, turn, settled);
-					}
-				});
+			const address = turn.address;
+			const probe = this.options.connect(address);
+			void probe.reachable().then((ok) => {
+				// 探完就关：每探一次是一条新连接，留着它会空闲 15 分钟、其间一直 ping。
+				probe.close();
+				turn.probing = false;
+				const settled = turn.settled;
+				turn.settled = undefined;
+				if (turn.ended || turn.ending) return;
+				if (!ok) {
+					// 原因用助手服务自己的说法：工具结果里那一行可能是命令自己的输出。
+					this.#stop(session, turn, {
+						outcome: "failed",
+						reason: `${WORKBENCH_UNREACHABLE}：${address}（工具报了连不上，助手服务又探了一次，还是连不上）`,
+					});
+				} else if (settled) {
+					this.#settle(session, turn, settled);
+				}
+			});
 		}
 		if (record.type === "turn_start" && turn.translator.modelCalls > this.#limits.modelCalls) {
 			this.#stop(session, turn, {
@@ -589,9 +607,12 @@ export class SessionManager {
 			...(end.limit && { limit_kind: end.limit }),
 			...(end.errorClass && { error_class: end.errorClass }),
 		});
-		rmSync(this.#paths(session).turnConfig, { force: true });
-		// 这一轮命令的完整输出已经传到工作台上了：助手容器里的临时文件清掉（不占所有会话共用的磁盘）。
-		if (session.tmpDir) emptyDir(session.tmpDir);
+		// 撞上记号直接结束的那一轮没有登记成在做的：更早的一轮可能还在退出，它的配置和临时文件留给它。
+		if (session.turn === turn || session.turn === undefined) {
+			rmSync(this.#paths(session).turnConfig, { force: true });
+			// 这一轮命令的完整输出已经传到工作台上了：助手容器里的临时文件清掉（不占所有会话共用的磁盘）。
+			if (session.tmpDir) emptyDir(session.tmpDir);
+		}
 		if (session.turn === turn) session.turn = undefined;
 		session.lastActive = Date.now();
 	}
