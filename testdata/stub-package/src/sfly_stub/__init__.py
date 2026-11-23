@@ -313,6 +313,22 @@ def actions(ctx: Context, unfinished: bool = False, release_file: str = "") -> N
                     time.sleep(0.05)
 
 
+@node(title="带 secret 值的动作文字", outputs=[])
+def actions_with_secret_texts(ctx: Context, token: str) -> None:
+    """名称、字段的键和值、失败原因里，secret 值正好跨在各自的上限处（#583）：SDK 不能把它切成两半，
+    控制面才能先打码再截断。一个动作以失败结束（失败原因），一个动作留着不结束（摘要里「正在做」）。
+
+    ctx.action 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    from sfly import actions
+
+    key = "k" * (actions.MAX_NAME_CHARS - 10) + token
+    value = "v" * (actions.MAX_VALUE_CHARS - 10) + token
+    with ctx.action("n" * (actions.MAX_NAME_CHARS - 10) + token, **{key: value}) as order:
+        order.fail("r" * (actions.MAX_REASON_CHARS - 10) + token)
+    ctx.action.start("m" * (actions.MAX_NAME_CHARS - 10) + token)
+
+
 @node(title="上报数值", outputs=[])
 def report_numbers(ctx: Context, current: str, total: str, price: str) -> None:
     """数值经过 Agent 保持不变的测试用（#450）：把 current、total 读成浮点数交给 ctx.progress，

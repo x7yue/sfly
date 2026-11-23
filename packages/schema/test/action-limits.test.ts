@@ -13,6 +13,7 @@ const SDK_NAME: Record<keyof typeof ACTION_LIMITS, string> = {
 	nameChars: "MAX_NAME_CHARS",
 	valueChars: "MAX_VALUE_CHARS",
 	reasonChars: "MAX_REASON_CHARS",
+	transportMargin: "TRANSPORT_MARGIN_CHARS",
 	fields: "MAX_FIELDS",
 	perName: "MAX_PER_NAME",
 	total: "MAX_TOTAL",

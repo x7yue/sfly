@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Literal
 
+from sfly.actions import MAX_NAME_CHARS, MAX_REASON_CHARS, MAX_VALUE_CHARS
 from sfly.context import ACTION_RESULTS, ActionResult, monotonic_ms
 from sfly.feishu import raw_message_problem, text_message
 
@@ -414,8 +415,22 @@ def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
 
 
+def _name(value: Any) -> str:
+    """动作、标记的名称：和控制面一样截到上限（SDK 发出来的可以比上限长，见 `sfly.actions`）。"""
+    return str(value)[:MAX_NAME_CHARS]
+
+
 def _fields(value: Any) -> dict[str, str]:
-    return {str(k): str(v) for k, v in (value or {}).items()}
+    """动作的字段：值和控制面一样截到上限。"""
+    return {str(k): str(v)[:MAX_VALUE_CHARS] for k, v in (value or {}).items()}
+
+
+def _reason(value: Any) -> str | None:
+    """失败的原因：和控制面一样，超过上限时留前 `MAX_REASON_CHARS - 1` 个字符、末尾加「…」。"""
+    if value is None:
+        return None
+    text = str(value)
+    return text if len(text) <= MAX_REASON_CHARS else text[: MAX_REASON_CHARS - 1] + "…"
 
 
 def _result(value: Any) -> ActionResult:
@@ -435,7 +450,7 @@ def _action_record(
     return ActionRecord(
         id=int(entry["id"]),
         kind=kind,
-        name=str(entry["name"]),
+        name=_name(entry["name"]),
         parent=_optional_int(entry.get("parent")),
         depth=int(entry.get("depth") or 0),
         fields=_fields(entry.get("fields")),
@@ -452,7 +467,7 @@ def _summary_record(entry: Mapping[str, Any]) -> ActionRecord:
     return dataclasses.replace(
         record,
         result=_result(entry["result"]),
-        reason=entry.get("reason"),
+        reason=_reason(entry.get("reason")),
         duration_ms=max(0, int(entry["end_mono"]) - record.mono),
     )
 
@@ -466,7 +481,7 @@ def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
         capped_ts=_optional_int(event.get("capped_ts")),
         names=[
             ActionCount(
-                str(n["name"]),
+                _name(n["name"]),
                 int(n["total"]),
                 int(n["failed"]),
                 int(n["reported"]),
@@ -669,7 +684,7 @@ class _Pump:
             started,
             fields={**started.fields, **_fields(event.get("fields"))},
             result=_result(event["result"]),
-            reason=None if reason is None else str(reason),
+            reason=_reason(reason),
             duration_ms=max(0, int(event["mono"]) - started.mono),
         )
         actions[index] = ended
