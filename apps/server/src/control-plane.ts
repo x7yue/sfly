@@ -354,10 +354,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		}),
 	});
 	// 重启恢复：状态都在 PG，给租约和排队超时留出 Agent 重连的时间（#15）；升级前停在已移除的等待节点上的任务
-	// 按配置错误失败（ADR 0028），某个历史运行出错时记日志、跳过，不挡住启动。
+	// （ADR 0028）、目标 Agent 属于别的项目的任务（#610）按配置错误失败，某个历史运行出错时记日志、跳过，不挡住启动。
 	await engine.recover((error, task) => {
 		logError(
-			`recover: 运行 ${task.runId} 的任务 ${task.id} 停在已移除的等待节点上，按配置错误失败时出错，已跳过:`,
+			`recover: 运行 ${task.runId} 的任务 ${task.id} 在启动恢复时按配置错误失败出错，已跳过:`,
 			error,
 		);
 	});

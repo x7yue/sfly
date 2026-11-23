@@ -1388,7 +1388,7 @@ export class Engine implements AgentSessionHandler {
 		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
 		// 任务只派发给注册在这次运行所在的项目里的 Agent：别的项目的 Agent 和没有注册过一样，任务按配置错误失败
 		// （不重试），说明和入队时、预检时的一样。入队时已经核对过；这里是升级前已经入队的，和入队之后 Agent
-		// 才换了项目的。
+		// 才换了项目的。Agent 的项目改从凭据得出之后（#492），这里要以连接的项目为准，不是库里登记记录的项目。
 		if (agentProject !== run.projectId) {
 			await this.#failTask(
 				step,

@@ -497,6 +497,25 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
 		});
 
+		it("场景和 Agent 都在另一个项目（alpha）里：照常入队、派发、完成（对照：不是只有默认项目的场景能跑）", async () => {
+			const entry = await connect({ name: `entry-alpha-${++entries}` }, "alpha");
+			const second = await connect({ name: `second-alpha-${entries}` }, "alpha");
+			const doc = chain(
+				entry.name,
+				[node("a", "logs-alpha", "pick"), node("b", "logs-alpha", "pick", { agent: second.name })],
+				{ "logs-alpha": "1.0.0" },
+			);
+			const { id, warnings } = await scenario(doc, "alpha");
+			expect(warnings).toEqual([]);
+			expect((await preflight(id)).problems).toEqual([]);
+			const runId = await api.triggerOk(id);
+			await entry.succeed(await entry.nextAssign(), { agent: "x" });
+			const assign = await second.nextAssign();
+			expect(assign.nodeId).toBe("b");
+			await second.succeed(assign, { agent: "y" });
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+		});
+
 		it("已经在排队的任务：目标 Agent 之后换了项目，它上线派发时任务按配置错误失败，不卡在队里，Agent 没有收到任务", async () => {
 			await registerOffline("late");
 			const { id } = await scenario(chain("late", [node("a", "logs", "pick")], { logs: "1.0.0" }));

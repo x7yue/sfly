@@ -15,15 +15,10 @@ import {
 	sortedLabels,
 } from "@sfly/schema";
 import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
-import {
-	agents as agentsTable,
-	metricSeries,
-	orchestrationVersions,
-	runs,
-	tasks,
-} from "../db/schema.js";
+import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { isPlaceholderAttempt } from "../runs/run-read.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf, nodeTypeView } from "./node-types.js";
@@ -621,13 +616,8 @@ export class MetricQueries {
 		const agentNames = [
 			...new Set(rows.filter(executing).map((t) => t.agentName as string)),
 		].sort();
-		const agentRows =
-			agentNames.length === 0
-				? []
-				: await this.deps.db
-						.select({ name: agentsTable.name, info: agentsTable.info })
-						.from(agentsTable)
-						.where(inArray(agentsTable.name, agentNames));
+		// 槽位数取运行所在的项目里的 Agent：别的项目的 Agent 和没有注册过一样（ADR 0029）。
+		const agentRows = await agentsInProject(this.deps.db, run.projectId, agentNames);
 		const onAgents =
 			agentNames.length === 0
 				? []
