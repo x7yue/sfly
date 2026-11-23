@@ -2,31 +2,60 @@ language js
 
 // 控制面往终端写东西只能走统一的出口（apps/server/src/util/output.ts，#578）：错误在那里先去掉数据库查询的参数
 // （密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
-// 拦的是「碰到能写终端的东西」这件事本身，不是某一种写法。每一种拦的写法有一个名字（`$form`，报出的诊断以 `[名字]` 开头），
-// biome-plugins/fixtures/no-direct-output/hit/ 里每一种都有样例，自测要求每个名字都被样例命中过（biome-plugins.test.ts）：
-//   console                 用到 `console` 这个名字：`console.error`、`console.log`、`const log = console.error`、
-//                           把 console 交给别人、`globalThis.console`、`global.console`、`const { error } = console`
-//   process-stream          `process.stdout`、`process.stderr`（`process["stderr"]` 会先被 useLiteralKeys 报出来，改成点号写法就命中这里）
-//   process-destructure     从 process 解构出 stdout、stderr（`const { stderr } = process`，也认 `globalThis.process`、`global.process`）
-//   stream-module-import    导入 `node:process`、`process`、`node:console`、`console`（具名、默认、`* as`、动态 `import()`、`require()`）：
-//                           导入本身就报，所以 `import { stderr } from "node:process"` 之后再怎么用都不用另外看
-//   write-sync              `fs.writeSync(1|2, …)`、`writeSync(1|2, …)`（直接写文件描述符 1、2）
+// 规则拦的是「碰到能写终端的东西」，一般的写法都拦得住，但不是所有写法：它只看源码里写出来的名字，不跟踪值的去向。
+// 每一种拦的写法有一个名字（`$form`，报出的诊断以 `[名字]` 开头），biome-plugins/fixtures/no-direct-output/hit/ 里每个名字
+// 至少有一个样例命中它，自测要求这一点（biome-plugins.test.ts）：名字分得细，样例删掉哪一种，那个名字就没人命中、测试红。
+//   console                       用到 `console` 这个名字：`console.error`、`console.log`、`const log = console.error`、
+//                                 把 console 交给别人、`globalThis.console`、`global.console`、`const { error } = console`
+//   process-stream                `process.stdout`、`process.stderr`（`process["stderr"]` 会先被 useLiteralKeys 报出来，改成点号写法就命中这里）
+//   process-stream-global         `globalThis.process.stdout`、`global.process.stderr`
+//   process-emit-warning          `process.emitWarning(…)`、`globalThis.process.emitWarning(…)`：Node 默认把警告打到标准错误，传进去查询错误时
+//                                 message 里的参数整段打出来
+//   process-destructure           从 process 解构出 stdout、stderr：`const { stderr } = process`（初始值本身是 `process` 才算，
+//                                 `const { stdout } = spawnSync(process.execPath, …)` 这类子进程的结果不报）
+//   process-destructure-global    同上，初始值是 `globalThis.process`、`global.process`
+//   module-import-static          静态导入 `node:process`、`process`、`node:console`、`console`（具名、默认、`* as`）：导入本身就报，
+//                                 所以 `import { stderr } from "node:process"` 之后再怎么用都不用另外看
+//   module-import-dynamic         `import("node:process")` 这样的动态导入
+//   module-require                `require("console")`
+//   write-fd                      往文件描述符 1、2 写：`writeSync`、`writevSync`、`writeFileSync`、`appendFileSync`（任何接收者），
+//                                 `fs.write`、`fs.writev`、`fs.writeFile`、`fs.appendFile`（只认字面量 1、2）
+//   create-write-stream-fd        `createWriteStream("", { fd: 2 })`（fd 只认字面量 1、2）
 //
-// 范围：apps/server/src（控制面的源码）；统一的出口 apps/server/src/util/output.ts 本身除外。测试、前端、别的工作区不管。
+// 范围：apps/server/src（控制面的源码）；统一的出口 apps/server/src/util/output.ts 本身除外（那个文件由 test/error-log.test.ts 里
+// 「统一的出口文件自己」守，认同一批写法）。测试、前端、别的工作区不管。
 // `$filename` 是绝对路径，规则不知道仓库根在哪，所以按目录名认。
 //
-// 拦不住的（规则只看源码里写出来的名字，不跟踪值的去向）：把 `process` 存进变量再取 stdout、stderr（`const p = process; p.stderr.write`）、
-// 把 `process` 传给别的函数、`Reflect.get(process, "stderr")`、`globalThis["con" + "sole"]` 这类拼出来的名字、
-// 用变量当文件描述符的 `writeSync(fd, …)`、`fs.createWriteStream("/dev/stderr")`、`tty`、`util.debuglog`、子进程和工作线程继承来的标准输出、
-// 第三方日志库自己的输出。这些都得是有意写出来的绕法，靠审查；Fastify 的日志是另一条出口，由 `sanitizeLogArgs` 处理（见 CODING_STANDARDS.md）。
+// 拦不住的（没写进规则，靠审查；ARCHITECTURE.md 里同样列着）：
+//   - 把 `process` 存进变量再取 stdout、stderr（`const p = process; p.stderr.write`）、传给别的函数、`Reflect.get(process, "stderr")`；
+//   - 赋值解构（`({ stderr } = process)`）、参数默认值里的解构（`function f({ stderr } = process) {}`）；
+//   - 再导出（`export { stderr } from "node:process"`、`export * from "node:console"`）；
+//   - 模块名不是字符串字面量的导入（模板字符串 ``import(`node:process`)``）、`createRequire(import.meta.url)("node:process")`；
+//   - 拼出来的名字（`globalThis["con" + "sole"]`）、用变量当文件描述符的写（`writeSync(fd, …)`）、写 `/dev/stderr` 的文件流；
+//   - `tty`、`util.debuglog`、`diagnostics_channel`、子进程和工作线程继承来的标准输出、第三方日志库自己的输出。
+// Fastify 的日志是另一条出口，由 `sanitizeLogArgs` 处理（见 CODING_STANDARDS.md「日志与错误」）。
 or {
 	`console` as $span where { $form = "console" },
 	or {
 		`process.stdout`,
 		`process.stderr`
 	} as $span where { $form = "process-stream" },
+	or {
+		`$g.process.stdout`,
+		`$g.process.stderr`
+	} as $span where {
+		$g <: or {
+			`globalThis`,
+			`global`
+		},
+		$form = "process-stream-global"
+	},
+	or {
+		`process.emitWarning`,
+		`$g.process.emitWarning`
+	} as $span where { $form = "process-emit-warning" },
 	JsVariableDeclarator() as $span where {
-		$span <: contains `process`,
+		$span <: r"(?s)^\s*\{.*\}\s*(?::[^=]*)?=\s*process\s*$",
 		$span <: contains JsObjectBindingPattern() as $pattern where {
 			$pattern <: contains or {
 				`stdout`,
@@ -35,24 +64,60 @@ or {
 		},
 		$form = "process-destructure"
 	},
-	or {
-		`import $_ from $source`,
-		`import * as $_ from $source`,
-		`import($source)`,
-		`require($source)`
-	} as $span where {
-		$source <: r"[\"'](?:node:)?(?:process|console)[\"']",
-		$form = "stream-module-import"
+	JsVariableDeclarator() as $span where {
+		$span <: r"(?s)^\s*\{.*\}\s*(?::[^=]*)?=\s*(?:globalThis|global)\.process\s*$",
+		$span <: contains JsObjectBindingPattern() as $pattern where {
+			$pattern <: contains or {
+				`stdout`,
+				`stderr`
+			}
+		},
+		$form = "process-destructure-global"
 	},
 	or {
-		`$_.writeSync($fd, $_)`,
-		`writeSync($fd, $_)`
+		`import $_ from $source`,
+		`import * as $_ from $source`
+	} as $span where {
+		$source <: r"[\"'](?:node:)?(?:process|console)[\"']",
+		$form = "module-import-static"
+	},
+	`import($source)` as $span where {
+		$source <: r"[\"'](?:node:)?(?:process|console)[\"']",
+		$form = "module-import-dynamic"
+	},
+	`require($source)` as $span where {
+		$source <: r"[\"'](?:node:)?(?:process|console)[\"']",
+		$form = "module-require"
+	},
+	or {
+		`$_.writeSync($fd, $...)`,
+		`writeSync($fd, $...)`,
+		`$_.writevSync($fd, $...)`,
+		`writevSync($fd, $...)`,
+		`$_.writeFileSync($fd, $...)`,
+		`writeFileSync($fd, $...)`,
+		`$_.appendFileSync($fd, $...)`,
+		`appendFileSync($fd, $...)`,
+		`fs.write($fd, $...)`,
+		`fs.writev($fd, $...)`,
+		`fs.writeFile($fd, $...)`,
+		`fs.appendFile($fd, $...)`
 	} as $span where {
 		$fd <: or {
 			`1`,
 			`2`
 		},
-		$form = "write-sync"
+		$form = "write-fd"
+	},
+	or {
+		`createWriteStream($_, { fd: $fd })`,
+		`$_.createWriteStream($_, { fd: $fd })`
+	} as $span where {
+		$fd <: or {
+			`1`,
+			`2`
+		},
+		$form = "create-write-stream-fd"
 	}
 } where {
 	$filename <: r".*/apps/server/src/.*",

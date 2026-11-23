@@ -101,6 +101,16 @@ describe("safeError", () => {
 		expect(sanitizeLogArgs(plain)).toBe(plain);
 	});
 
+	it("错误自己别的属性里的错误也去掉参数（放在 err 或 error 键下，序列化时不原样抄进日志）", () => {
+		const original = new DrizzleQueryError("insert into users values ($1)", [SECRET], pgError());
+		const outer = Object.assign(new Error("外层"), { original });
+		const shown = JSON.stringify(serializeError(outer));
+		expect(shown).not.toContain(SECRET);
+		expect(shown).not.toContain("xiaoming");
+		expect(shown).toContain("外层");
+		expect(shown).toContain("insert into users values ($1)");
+	});
+
 	it("cause 链有环也不死循环", () => {
 		const a = new Error("a");
 		const b = new Error("b", { cause: a });
@@ -203,21 +213,22 @@ describe("safeError 的两类遗漏（#578）", () => {
 		expect(safeError(clean)).toBe(clean);
 	});
 
-	it("数据库把值直接写进错误信息本身的那类（类别 22：类型不对的输入）：值去掉，说明留着", () => {
+	it("数据库把值直接写进错误信息本身的那类（类别 22：类型不对的输入）：message 整句换成错误码加报错的函数，不解析信息", () => {
 		const uuid = Object.assign(
 			new Error('invalid input syntax for type uuid: "7f3-secret-value\\"with-quote"'),
 			{ severity: "ERROR", code: "22P02", routine: "string_to_uuid" },
 		);
-		const safe = safeError(uuid) as Error & { code: string };
-		expect(safe.message).toBe('invalid input syntax for type uuid: "…"');
+		const safe = safeError(uuid) as Error & { code: string; routine: string };
+		expect(safe.message).toBe("Database data exception [22P02] in string_to_uuid");
 		expect(safe.stack).not.toContain("secret-value");
 		expect(safe.code).toBe("22P02");
+		expect(safe.routine).toBe("string_to_uuid");
+		// 没有 routine 时只有错误码。
 		const bytes = Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00'), {
 			severity: "ERROR",
 			code: "22021",
 		});
-		// 引号以后的都是值或和值挨着的说明：一起去掉，只留引号之前的说明。
-		expect((safeError(bytes) as Error).message).toBe('invalid byte sequence for encoding "…"');
+		expect((safeError(bytes) as Error).message).toBe("Database data exception [22021]");
 		// 经 drizzle 包着时（外层是查询错误、cause 是 pg 的错误）里面的也处理。
 		const wrapped = new DrizzleQueryError(
 			"select * from t where id = $1",
@@ -228,48 +239,43 @@ describe("safeError 的两类遗漏（#578）", () => {
 			inspect(safeError(wrapped), { depth: 10 }) + JSON.stringify(serializeError(wrapped));
 		expect(printed).not.toContain("secret-value");
 		expect(printed).toContain("22P02");
+		// 给操作者的一行说明里带着报错的函数，排查时看得出是哪一步。
+		expect(describeError(wrapped)).toContain("string_to_uuid");
+		expect(describeError(wrapped)).not.toContain("secret-value");
 	});
 
-	it("值里自己带着引号：从值开始的地方一直去到信息的末尾，不是只去掉前一段引号里的", () => {
-		const shapes: [string, string, string][] = [
-			// 数据库不给值里的引号转义：值是 a"b-secret-v1，引号对着数就断在 a 上。
-			[
-				'invalid input syntax for type uuid: "a"b-secret-v1"',
-				"22P02",
-				'invalid input syntax for type uuid: "…"',
-			],
-			[
-				'invalid input syntax for type json: "{"k": "secret-v2"}"',
-				"22P02",
-				'invalid input syntax for type json: "…"',
-			],
-			['invalid value "x"y-secret-v3" for "YYYY"', "22007", 'invalid value "…"'],
-			['malformed array literal: "{"secret-v4","b"}"', "22P02", 'malformed array literal: "…"'],
+	it("类别 22 去值和数据库的消息语言、值的括法无关：换了语言、引号怎么写、值里有引号换行、根本不括的，一个字都不留", () => {
+		// 数据库的消息是翻译过的：德语 »值«、法语 « 值 »、日语 「値」、中文 “值”，也有不括的；值里可以有引号、换行、反斜杠。
+		const messages = [
+			'invalid input syntax for type uuid: "a"b-secret-v1"',
+			'invalid input syntax for type json: "{"k": "secret-v2"}"',
+			'invalid value "x"y-secret-v3" for "YYYY"',
+			'malformed array literal: "{"secret-v4","b"}"',
+			'ungültige Eingabesyntax für Typ uuid: »ab"secret-v5"cd«',
+			"ungültige Eingabesyntax für Typ uuid: »ab\nsecret-v6\nzz«",
+			"syntaxe en entrée invalide pour le type uuid : « secret-v7 »",
+			"型uuidの入力構文が不正です: 「secret-v8」",
+			"类型 uuid 的输入语法无效: “secret-v9”",
+			"Wert »secret-v10« ist außerhalb des gültigen Bereichs für Typ integer",
+			"invalid input syntax for type integer: secret-v11",
+			"character with byte sequence 0xc3 0xa9 secret-v12 in encoding UTF8",
 		];
-		for (const [message, code, expected] of shapes) {
-			const error = Object.assign(new Error(message), { severity: "ERROR", code });
+		for (const message of messages) {
+			const error = Object.assign(new Error(message), {
+				severity: "ERROR",
+				code: "22P02",
+				routine: "string_to_uuid",
+			});
 			const safe = safeError(error) as Error;
-			expect(safe.message).toBe(expected);
-			expect(safe.stack).not.toContain("secret-v");
-			expect(JSON.stringify(serializeError(error))).not.toContain("secret-v");
+			expect(safe.message, message).toBe("Database data exception [22P02] in string_to_uuid");
+			const shown = [
+				safe.stack,
+				inspect(safe, { depth: 5 }),
+				JSON.stringify(serializeError(error)),
+				describeError(error),
+			].join("\n");
+			expect(shown, message).not.toMatch(/secret-v|0xc3|0xa9/);
 		}
-		// 十六进制的值（字节序列）。
-		const bytes = Object.assign(
-			new Error(
-				'character with byte sequence 0xc3 0xa9 in encoding "UTF8" has no equivalent in encoding "LATIN1"',
-			),
-			{ severity: "ERROR", code: "22P05" },
-		);
-		const out = (safeError(bytes) as Error).message;
-		expect(out).not.toContain("0xc3");
-		expect(out).not.toContain("0xa9");
-		expect(out.startsWith("character with byte sequence 0x… 0x… in encoding")).toBe(true);
-		// 没有引号和十六进制的类别 22 的信息原样（只有说明）。
-		const plain = Object.assign(new Error("division by zero"), {
-			severity: "ERROR",
-			code: "22012",
-		});
-		expect((safeError(plain) as Error).message).toBe("division by zero");
 	});
 
 	it("别的类别的数据库错误（约束、列不存在……）的 message 里只有名字，不动", () => {

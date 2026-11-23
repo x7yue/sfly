@@ -30,17 +30,19 @@ const TRUNCATED = "（错误套得太深，这一层以及更里面的原因没�
 
 /**
  * 数据库把值直接写进错误的 message（`detail` 之外的另一条路）：类别 22（数据异常）的错误，
- * 例如 `invalid input syntax for type uuid: "<值>"`、`date/time field value out of range: "<值>"`、
- * `invalid byte sequence for encoding "UTF8": 0x00`。数据库不给值里的引号转义，值里可以有引号，所以不能按「一对引号」去：
- * 从第一个引号开始（值就从那里开始）一直到信息的末尾都换成 `"…"`，引号之前的说明（类型、原因）留着；引号之前的十六进制
- * （字节序列的值）也换成 `0x…`。别的类别（约束、列不存在……）的 message 里只有名字，不动。
+ * 例如 `invalid input syntax for type uuid: "<值>"`、`date/time field value out of range: "<值>"`。
+ * **不解析 message**：值怎么括、括不括、用哪种引号都取决于数据库的消息语言（德语是 `»值«`，有的语言根本不括），按引号去值
+ * 在换了语言的数据库上会一个字也去不掉。所以类别 22 的 message 整句换掉，只留数据库给的错误码和报错的函数（`routine`，如
+ * `string_to_uuid`、`pg_strtoint32_safe`，排查时看得出是哪一步）：见 {@link dataExceptionMessage}。
+ * 别的类别（约束、列不存在……）的 message 里只有名字，不动。
  */
 const embedsValues = (error: Error): boolean =>
 	String((error as { code?: unknown }).code).startsWith("22");
-const scrubValues = (message: string): string => {
-	const quote = message.indexOf('"');
-	const head = quote === -1 ? message : message.slice(0, quote);
-	return `${head.replace(/\b0x[0-9a-fA-F]+\b/g, "0x…")}${quote === -1 ? "" : '"…"'}`;
+
+/** 类别 22 的错误去掉值之后的说明：错误码，加上报错的函数（有的话）。 */
+const dataExceptionMessage = (error: Error): string => {
+	const { code, routine } = error as { code?: unknown; routine?: unknown };
+	return `Database data exception [${String(code)}]${typeof routine === "string" ? ` in ${routine}` : ""}`;
 };
 
 const isQueryError = (error: Error): error is DrizzleLike =>
@@ -53,7 +55,7 @@ const isPgError = (error: Error): boolean =>
 
 /**
  * 去掉参数之后的错误：drizzle 的查询错误只留 SQL，pg 的数据库错误只留数据库给的原因（类别 22 的数据异常，message 里直接带着
- * 值的，把值去掉）；沿着 `cause` 链一路处理，聚合的错误（`AggregateError`，里面包着几个错误）把里面的每一个也处理。
+ * 值的，整句换成错误码和报错的函数）；沿着 `cause` 链一路处理，聚合的错误（`AggregateError`，里面包着几个错误）把里面的每一个也处理。
  * 别的错误原样返回（不改它的内容）；不是 Error 的值原样返回；套得比 {@link MAX_DEPTH} 还深的那一层换成占位的错误。
  */
 export function safeError(error: unknown, depth = 0): unknown {
@@ -71,7 +73,7 @@ export function safeError(error: unknown, depth = 0): unknown {
 	const message = query
 		? `Failed query: ${(error as DrizzleLike).query as string}`
 		: pg && embedsValues(error)
-			? scrubValues(error.message)
+			? dataExceptionMessage(error)
 			: error.message;
 	const options = safeCause === undefined ? undefined : { cause: safeCause };
 	const safe =
@@ -150,7 +152,9 @@ export function serializeError(error: unknown, depth = 0): SerializedError {
 		stack: safe.stack ?? "",
 	};
 	for (const [key, value] of Object.entries(safe)) {
-		if (key !== "cause" && !(key in out)) out[key] = value;
+		if (key === "cause" || key in out) continue;
+		// 错误自己别的属性里放着错误（`Object.assign(new Error("外层"), { original: 查询错误 })`）：一样处理，不原样抄进日志。
+		out[key] = value instanceof Error ? serializeError(value, depth + 1) : value;
 	}
 	const cause = (safe as { cause?: unknown }).cause;
 	if (cause !== undefined && depth < MAX_DEPTH) out.cause = serializeError(cause, depth + 1);

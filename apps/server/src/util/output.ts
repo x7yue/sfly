@@ -1,7 +1,10 @@
-// 控制面往终端写东西的唯一出口（#578）：`apps/server/src` 里除了这个文件，不能直接用 `console`、`process.stdout`、
-// `process.stderr`（lint 规则 no-direct-output 拦着，换函数、起别名、直接写标准错误都拦）。要打印就走这里：
-// 错误一律过 {@link safeError}，数据库错误里的参数（密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址）
-// 不会进日志，也不会打在操作者的终端上。想绕开它的代码过不了 lint，所以「某一处忘了去掉参数」不会再悄悄发生。
+// 控制面往终端写东西的唯一出口（#578）：`apps/server/src` 里除了这个文件，要打印就走这里，不直接用 `console`、`process.stdout`、
+// `process.stderr`：lint 规则 no-direct-output 拦着一般的写法（换打印的函数、起别名、`globalThis.process`、`fs.writeSync(2, …)`、
+// `process.emitWarning` 等，完整的清单在 biome-plugins/no-direct-output.grit 开头和 docs/ARCHITECTURE.md），但它只看源码里写出来的名字，
+// 有意写出来的绕法（存进变量的 `process`、拼出来的名字……）它拦不住，那些靠审查。
+// 错误一律过 {@link safeError}，数据库错误里的参数（密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址）不会进日志，
+// 也不会打在操作者的终端上。**只有 {@link printError} 收错误**：{@link printWarning}、{@link printInfo}、{@link writeStdout} 收的是
+// 字符串，把错误拼进去（`` printWarning(`失败：${error}`) ``）时已经是字符串，认不出来、去不了参数——要打印错误就用 printError。
 import { safeError } from "./safe-error.js";
 
 /** 错误日志（标准错误）：`what` 是说明，`error` 先去掉数据库参数再打印。 */
@@ -10,12 +13,12 @@ export function printError(what: string, error?: unknown): void {
 	else console.error(what, safeError(error));
 }
 
-/** 提醒（标准错误）：不带错误对象的一行话。 */
+/** 提醒（标准错误）：不带错误对象的一行话；不要把错误拼进去（那时它已经是字符串，认不出来），要打印错误用 {@link printError}。 */
 export function printWarning(message: string): void {
 	console.warn(message);
 }
 
-/** 一般信息（标准输出）：启动时的一行话。 */
+/** 一般信息（标准输出）：启动时的一行话；同样不要把错误拼进去。 */
 export function printInfo(message: string): void {
 	console.log(message);
 }
@@ -65,7 +68,11 @@ function innerReasons(error: Error, depth = 0): string[] {
 	if (cause !== undefined) return [String(cause)];
 	// 最里面的一个：自己的 message；数据库的错误码（`23505`）不在 message 里时带上。
 	if (depth === 0) return [];
-	const code = (error as { code?: unknown }).code;
+	const { code, routine } = error as { code?: unknown; routine?: unknown };
 	const message = error.message;
-	return [typeof code === "string" && !message.includes(code) ? `${message} [${code}]` : message];
+	// 数据库的错误码和报错的函数不在 message 里时带上（类别 22 的 message 已经是「错误码加函数」）。
+	const tags = [code, routine].filter(
+		(tag): tag is string => typeof tag === "string" && !message.includes(tag),
+	);
+	return [tags.length > 0 ? `${message} [${tags.join(", ")}]` : message];
 }
