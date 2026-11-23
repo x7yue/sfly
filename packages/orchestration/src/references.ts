@@ -59,16 +59,34 @@ export function nodeTypeOf(
 	return types?.find((t) => t.name === node.node) ?? null;
 }
 
+/**
+ * 按节点查节点类型（返回值的含义同 {@link nodeTypeOf}）。目录只能按「包 + 版本」一份：同一个开发版本的包，几个节点派发到
+ * 不同的 Agent 时各自的声明可能不同，画布上的引用补全要按每个节点自己的声明列输出，传这个，不要把它们并成目录里的一份。
+ */
+export type NodeTypeLookup = (node: {
+	package: string;
+	node: string;
+	agent?: string | undefined;
+}) => NodeTypeIo | null | undefined;
+
+/** 目录或按节点查的函数 → 按节点查的函数（目录按编排锁定的版本查，{@link nodeTypeOf}）。 */
+export function nodeTypeLookup(
+	doc: Pick<StoredOrchestrationDocument, "packages">,
+	types: PackageCatalog | NodeTypeLookup,
+): NodeTypeLookup {
+	return typeof types === "function" ? types : (node) => nodeTypeOf(doc, node, types);
+}
+
 /** 节点已声明的输出键；节点类型未知时为 undefined（不能补全，也不检查）。 */
 export function declaredOutputs(
 	doc: StoredOrchestrationDocument,
 	node: StoredNode,
-	catalog: PackageCatalog,
+	catalog: PackageCatalog | NodeTypeLookup,
 ): string[] | undefined {
 	// 已移除种类的节点不知道有哪些输出：不检查对它的引用，节点本身有 node_kind_removed 警告。
 	if (isRemovedNodeKind(node.kind)) return undefined;
 	if (node.kind !== "package") return BUILTIN_OUTPUTS[node.kind];
-	const type = nodeTypeOf(doc, node, catalog);
+	const type = nodeTypeLookup(doc, catalog)(node);
 	return type ? Object.keys(type.outputs.properties) : undefined;
 }
 
@@ -124,7 +142,7 @@ export const referenceText = (expression: string) => `\${{ ${expression} }}`;
 export function referenceOptions(
 	doc: StoredOrchestrationDocument,
 	nodeId: string,
-	catalog: PackageCatalog,
+	catalog: PackageCatalog | NodeTypeLookup,
 ): ReferenceOption[] {
 	const { start, earlier } = referenceScope(doc, nodeId);
 	if (!start) return [];
