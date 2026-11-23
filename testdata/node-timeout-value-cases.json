@@ -1,0 +1,72 @@
+{
+	"_comment": "场景里节点的 timeout、queue_timeout 写了不合格的值（#576）：保存、检查（TypeScript，packages/schema 的 invalidDocumentMessage）和 sfly scenario push/check 的本地检查（Python，sdk/python 的 _document_problems）说同一句话，共用这张表。句子是：节点 <label>：<字段> 必须是 1 到 <max_seconds> 之间的正整数（秒），实际是 <actual>。values 里 value 是文档里写的值，actual 是句子里「实际是」后面的文字：数字按 JavaScript 的 Number#toString 写（两端的 JSON 解析器把同一个字面量读成不同的类型，写出来必须一样），其余的按 JSON.stringify 写（字符串带引号，所以 \"30\" 和 30 看得出区别；容器里的非有限数是 null，像整数的键排在前面，孤立的代理项转义）。json_text_only 的用例只在 JSON 文本里才是那个值，不经 HTTP 发；有 string_from_code_units 的用例没有 value，值是用这些 UTF-16 码元造的字符串（孤立的代理项写不进 JSON 文件，有的解析器不收）。odd_labels：节点没有 id、id 不是字符串时句子里的节点写 ?，显示名称是空串时只写 id。",
+	"max_seconds": 4294967295,
+	"fields": ["timeout", "queue_timeout"],
+	"labels": [
+		{ "node": { "id": "a" }, "label": "a" },
+		{ "node": { "id": "a", "display_name": "等槽位" }, "label": "等槽位（a）" }
+	],
+	"values": [
+		{ "name": "零", "value": 0, "actual": "0" },
+		{ "name": "负数", "value": -5, "actual": "-5" },
+		{ "name": "小数", "value": 1.5, "actual": "1.5" },
+		{ "name": "不到 1 的小数", "value": 0.5, "actual": "0.5" },
+		{ "name": "字符串里写的数字", "value": "30", "actual": "\"30\"" },
+		{ "name": "字符串", "value": "abc", "actual": "\"abc\"" },
+		{ "name": "空字符串", "value": "", "actual": "\"\"" },
+		{ "name": "true", "value": true, "actual": "true" },
+		{ "name": "false", "value": false, "actual": "false" },
+		{ "name": "null", "value": null, "actual": "null" },
+		{ "name": "空数组", "value": [], "actual": "[]" },
+		{ "name": "对象", "value": { "a": 1 }, "actual": "{\"a\":1}" },
+		{ "name": "比上限大 1", "value": 4294967296, "actual": "4294967296" },
+		{ "name": "多打了几位", "value": 9000000000000, "actual": "9000000000000" },
+		{ "name": "科学计数法写的整数", "value": 5e9, "actual": "5000000000" },
+		{ "name": "1e21 以上 JavaScript 用指数写", "value": 1e21, "actual": "1e+21" },
+		{ "name": "很大的小数", "value": 1.5e300, "actual": "1.5e+300" },
+		{
+			"name": "超过 2 的 53 次方的整数按双精度写",
+			"value": 12345678901234567890,
+			"actual": "12345678901234567000"
+		},
+		{ "name": "很小的负数", "value": -1e-7, "actual": "-1e-7" },
+		{ "name": "小数点后五个零", "value": 0.000001, "actual": "0.000001" },
+		{
+			"name": "顶层的非有限数写成 Infinity（JSON 文本里的 1e400 两端都读成无穷大；经 JSON.stringify 发出去会变成 null，所以不走 HTTP）",
+			"value": 1e400,
+			"actual": "Infinity",
+			"json_text_only": true
+		},
+		{ "name": "数组里的非有限数写成 null", "value": [1e400], "actual": "[null]" },
+		{ "name": "对象里的非有限数写成 null", "value": { "a": 1e400 }, "actual": "{\"a\":null}" },
+		{
+			"name": "对象里像整数的键排在前面、按数值从小到大，其余的按出现的顺序（JavaScript 的键顺序）",
+			"value": { "b": 1, "2": 2, "a": 3, "1": 4 },
+			"actual": "{\"1\":4,\"2\":2,\"b\":1,\"a\":3}"
+		},
+		{
+			"name": "带前导零的键不是下标，不提前",
+			"value": { "b": 1, "01": 2, "10": 3, "9": 4 },
+			"actual": "{\"9\":4,\"10\":3,\"b\":1,\"01\":2}"
+		},
+		{
+			"name": "孤立的代理项转义，写成小写十六进制（JSON 解析器不收孤立的代理项，所以用 UTF-16 码元造这个字符串）",
+			"string_from_code_units": [55296],
+			"actual": "\"\\ud800\""
+		},
+		{ "name": "成对的代理项（一个字符）原样", "value": "\ud83d\ude00", "actual": "\"😀\"" },
+		{ "name": "控制字符转义", "value": "a\tb\u0001", "actual": "\"a\\tb\\u0001\"" }
+	],
+	"odd_labels": [
+		{ "node": { "kind": "package", "package": "p", "node": "n" }, "label": "?" },
+		{ "node": { "id": 5, "kind": "package", "package": "p", "node": "n" }, "label": "?" },
+		{
+			"node": { "kind": "package", "package": "p", "node": "n", "display_name": "没有 ID 的" },
+			"label": "没有 ID 的（?）"
+		},
+		{
+			"node": { "id": "a", "kind": "package", "package": "p", "node": "n", "display_name": "" },
+			"label": "a"
+		}
+	]
+}
