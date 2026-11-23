@@ -118,7 +118,7 @@ def test_a_cancelled_node_does_not_leave_a_service_that_ignores_sigterm_behind(
     [terminated] = [log.message for log in result.logs if log.message.startswith("任务被终止")]
     assert re.fullmatch(
         r"任务被终止（SIGTERM），执行到 service_example\.service_check 第 \d+ 行"
-        r"（正在 sfly_std\.\w+\.\w+ 第 \d+ 行）",
+        r"（正在 sfly_std\.[a-z]+\.[a-z][a-z_]* 第 \d+ 行）",
         terminated,
     ), terminated
 
