@@ -1,9 +1,9 @@
-// 切入点 A：`sfly init` 从控制面读取写进新项目 pyproject.toml 的配置——控制面版本、sfly 简单索引地址，
-// 以及控制面统一配置的镜像（ADR 0012：改一处对所有 Agent 和新项目生效）。
+// 切入点 A：`sfly init` 从控制面读取写进新节点包目录 pyproject.toml 的配置——控制面版本、sfly 简单索引地址，
+// 以及控制面统一配置的镜像（ADR 0012：改一处对所有 Agent 和新节点包目录生效）。
 import { afterEach, describe, expect, it } from "vitest";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe("新项目配置", () => {
+describe("新节点包目录的配置", () => {
 	let cp: TestControlPlane | undefined;
 
 	afterEach(async () => {

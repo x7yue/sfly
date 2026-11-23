@@ -73,7 +73,7 @@ function PackagesPage() {
 						<EmptyState
 							icon={<BoxIcon />}
 							title={MESSAGE.noPackages}
-							description="用 sfly init 创建项目、写好节点后，在项目目录里发布。"
+							description="用 sfly init 创建节点包目录、写好节点后，在节点包目录里发布。"
 						>
 							<CodeBlock code="uv run sfly publish" className="mx-auto w-fit" />
 							<p className="m-0 mt-4 text-sm">
