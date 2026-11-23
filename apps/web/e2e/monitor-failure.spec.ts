@@ -12,6 +12,7 @@ import {
 	openFailedOverview,
 	PRESET_NAME,
 } from "./monitor-failure-scenario";
+import { fits, nothingClipped, overlaps } from "./monitor-layout-support";
 import { metricPackage, openMonitor, runningScenario } from "./monitor-scenario";
 import { viewTab } from "./overview-support";
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
@@ -26,53 +27,6 @@ const VIEWPORTS = [
 ] as const;
 
 const NODE_LABEL = `${FAILED_NAME}（${FAILED_NODE}）`;
-
-/**
- * 元素里的文字（包括里面的元素）有几处被截断：文字排出来的宽度超过了元素内容区的宽度。读的是排版后的实际宽度：
- * 元素带内边距时 `scrollWidth` 看不出差几个像素的截断（省略号已经出现了）。
- */
-const clippedCount = (locator: Locator) =>
-	locator.evaluate((root) => {
-		const clipped = (el: Element) => {
-			const style = getComputedStyle(el);
-			const range = document.createRange();
-			range.selectNodeContents(el);
-			const content =
-				el.getBoundingClientRect().width -
-				Number.parseFloat(style.paddingLeft) -
-				Number.parseFloat(style.paddingRight) -
-				Number.parseFloat(style.borderLeftWidth) -
-				Number.parseFloat(style.borderRightWidth);
-			const clips = style.overflowX !== "visible" || style.textOverflow === "ellipsis";
-			// 内容超出一个像素以上才算（亚像素的取整不算）。
-			return clips && range.getBoundingClientRect().width > content + 1;
-		};
-		return [root, ...root.querySelectorAll("*")].filter(clipped).length;
-	});
-
-/** 元素里的文字没有被截断。 */
-const fits = async (locator: Locator) => (await clippedCount(locator)) === 0;
-
-/** 元素和它里面的每个元素都没有被截断，也没有伸出所在的块。 */
-const nothingClipped = clippedCount;
-
-/**
- * 一行（按钮）里从左到右的每一项互不重叠，也没有伸出这一行：返回压在前一项上的项的文字，没有就是空数组。
- * （只量名称有没有被自己的方框截断看不出名称是不是压在后面的标签和耗时上。）
- */
-const overlaps = (row: Locator) =>
-	row.evaluate((button) => {
-		const box = button.getBoundingClientRect();
-		let previous = box.left;
-		const pressed: string[] = [];
-		for (const el of button.children) {
-			const { left, right } = el.getBoundingClientRect();
-			if (left < previous - 0.5) pressed.push(el.textContent ?? "");
-			previous = Math.max(previous, right);
-		}
-		if (previous > box.right + 0.5) pressed.push("（伸出了这一行）");
-		return pressed;
-	});
 
 /**
  * 时间线名称列里「（节点 ID）」有没有显示出来：和名称一行放得下才跟在名称后面，放不下时换到被裁掉的第二行
@@ -246,10 +200,12 @@ for (const viewport of VIEWPORTS) {
 			await expect(header(page).getByTestId("run-status")).toHaveText("失败");
 			await expect(header(page).getByTestId("focus-freshness")).toHaveCount(0);
 			await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
-			// 标题行和「设置关注项」还在，下面没有框。
-			const focus = page.getByRole("region", { name: "执行中节点的主指标" });
+			// 标题不再写「执行中节点的主指标」，是「关注项」：下面一句说明（没有框），「设置关注项」还在。
+			await expect(page.getByRole("region", { name: "执行中节点的主指标" })).toHaveCount(0);
+			const focus = page.getByRole("region", { name: "关注项", exact: true });
 			await expect(focus.getByRole("link", { name: "设置关注项" })).toBeVisible();
-			expect((await focus.boundingBox())?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(40);
+			await expect(focus).toContainText("运行结束后不再显示执行中节点的主指标");
+			expect((await focus.boundingBox())?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(80);
 		});
 
 		test("运行还在进行：顶栏写「数据更新于」", async ({
@@ -444,15 +400,19 @@ for (const viewport of VIEWPORTS) {
 				"发布压测结果（publish）",
 				"清理压测环境（cleanup）",
 			]);
-			// 每个名称至少有 120px（以前每站只有约 85px，几乎全被截断），不长的名称整个看得见。
-			for (const [i, expected] of [1, 2, 4, 5, 6].entries()) {
-				const name = names.nth(expected);
+			// 站名各取自己的宽度，短站名让出的宽度给长站名：七个名称（包括最长的失败节点）在这个窗口里都整个看得见
+			// （以前每站平分同样的宽度，约 85px，几乎全被截断）。
+			for (const [i, name] of (await names.all()).entries()) {
 				expect(await fits(name), `第 ${i} 个名称被截断了`).toBe(true);
-				expect(await name.evaluate((el) => el.clientWidth)).toBeGreaterThan(120);
 			}
-			// 太长的那个截断在末尾（省略号），悬停显示全名。
+			for (const index of [1, 2, 4, 5, 6]) {
+				expect(await names.nth(index).evaluate((el) => el.clientWidth)).toBeGreaterThan(120);
+			}
+
+			// 窗口再窄、站名放不下时：最长的那个截断在末尾（省略号），悬停显示全名。
+			await page.setViewportSize({ width: 1024, height: viewport.height });
 			const long = names.nth(3);
-			expect(await fits(long)).toBe(false);
+			await expect.poll(() => fits(long)).toBe(false);
 			expect(await long.evaluate((el) => getComputedStyle(el).textOverflow)).toBe("ellipsis");
 			await long.hover();
 			await expect(tooltips(page)).toHaveText(NODE_LABEL);
