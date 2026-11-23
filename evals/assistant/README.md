@@ -38,11 +38,57 @@
 | `cp` | 控制面，HTTP 映射到宿主机 `127.0.0.1:<18100 + 槽位>`，可以在浏览器里看 |
 | `dev` | 开发环境容器（以后的工作台的雏形）：按用户文档 `install.sh --dev` 装的 Agent（`dev-root-dev`）、uv、`sfly` 命令行，加上 git、ripgrep、Node 和锁定版本的 pi |
 | `sut` | 被测机：普通的 Agent（`sut-01`），上面常驻一个通用的 HTTP 被测服务（`http://sut:9000`，见 `container/demo_svc.py`） |
+| `assistant` | 只有 `up --assistant` 时：平台的助手服务，见下面「平台的助手」 |
 
 两个槽位互不影响，可以同时跑会话；这台机器的内存紧时只用一个。
 
 评测目录不挂进 `dev` 和 `sut`（助手的命令够得着这两台）：里面有参考答案和看不到的断言。
 容器里要运行的几个脚本复制到 `/opt/aeval/`，题目的文件在准备初始状态时复制进去，看不到的断言等会话结束、判分时才复制进去。
+
+## 平台的助手（竖切，#543）
+
+上面的评测是单独跑 pi，量的是模型和 skill。这一节起的是平台本身：控制面把会话交给助手服务，助手服务拉起 pi，
+pi 的读、写、编辑、命令经 `dev` 上 Agent 的能力端口落到工作台上，过程回到控制面，在浏览器里看得到。
+
+要两个从源码构建的镜像（在仓库根目录运行）：控制面（见「前提」，会话模块在 0.5.0 之后），和助手：
+
+```sh
+pnpm bundle:assistant
+docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" -t sfly-assistant:dev out/assistant
+```
+
+然后一条命令起好（在 `evals/assistant/` 下）：
+
+```sh
+./aeval.sh up --server-image sfly-server:dev --assistant                          # 假的模型端点
+./aeval.sh up --server-image sfly-server:dev --assistant --assistant-model <模型名>  # 真实模型，经宿主机的转发口
+```
+
+- 多一个容器 `sfly-aeval-<槽位>-assistant`（网络别名 `assistant.internal`），助手镜像用 `--assistant-image` 换。
+  控制面配上 `SFLY_ASSISTANT_URL`、`SFLY_ASSISTANT_SECRET`、`SFLY_WORKBENCH_AGENT=dev-root-dev`（工作台是 `dev` 上的 Agent，
+  竖切的桩，#549 换掉）。共用的密钥每次 `up` 随机生成，只经环境变量带进两个容器，不打印、不写文件。
+- `up` 完 Agent 在线、控制面说助手能用（`GET /projects/default/sessions` 的 `readiness.ready`）才结束。
+  之后这个槽位的 `reset`、`seed`、`e2e` 重建控制面时照着助手容器接着用（镜像、模型、密钥），`reset` 也重建助手容器
+  （上一次的会话和 pi 进程不留下）；`up` 不带 `--assistant` 会删掉以前留下的助手容器。
+- **模型**：默认 `fake`，网络里的假的模型端点认出题目（第一句话里有 `tasks/<题目>/prompt.md` 的原文）就照剧本执行这道题的
+  参考答案，不花钱，只验证这条路走得通。`--assistant-model` 写模型配置里的名字（见下面「模型」），助手容器挂的模型文件指向
+  宿主机的转发口，里面的 `apiKey` 是占位值，凭据由转发口加上：转发口要先起好（Linux 上照「模型」一节监听 docker0 的地址）。
+  断网的环境（`--isolated`）只能用 `fake`。
+- **浏览器**：打开 `http://127.0.0.1:<18100 + 槽位>`（槽位 1 是 `http://127.0.0.1:18101`）。第一次打开时页面让你填一个昵称（不用登录，
+  会话和操作记在这个昵称下），之后在「助手」页说话。在被测机上起着的被测服务、`seed` 准备好的节点包和场景都照常在。
+
+### 端到端测试
+
+```sh
+./aeval.sh e2e           # 默认题目「写」；./aeval.sh e2e <题目>
+```
+
+重置环境、准备题目（假的模型端点时把参考答案放进 `dev`），经控制面的接口 `POST /projects/default/sessions` 发这道题的那句话，
+跟着 `GET /sessions/:id/events`（SSE）等到这一轮的 `turn_end`，检查持久的事件依次是 `user_message`、`turn_started`、
+工具调用和对应的结果、助手的话、`turn_end`（`completed`），再用评测的判分给这道题判分。两样都对才通过（退出码 0）。
+记录在 `~/.local/share/sfly/evals/<日期>-e2e/<题目>-<时间>/`（`events.jsonl`、`e2e.json`）。
+和 `selfcheck` 一样要 Docker、手动跑，不进 `pnpm test`（#552 扩成四道题、进 CI）。会话的工作目录是工作区 `/work`，
+题目的节点包在它下面：假的模型端点照 `/tmp/aeval-reference/workdir` 进节点包目录再执行参考答案。
 
 ## 模型
 
