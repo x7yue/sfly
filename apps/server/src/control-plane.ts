@@ -14,13 +14,21 @@ import { loadInstallScript } from "./agent-binaries/install-script.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
-import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
+import {
+	ArtifactStore,
+	artifactBaseUrl,
+	artifactLimitMessage,
+	DEFAULT_ARTIFACT_LIMIT_BYTES,
+	isArtifactLimitBytes,
+} from "./artifacts/artifact-store.js";
 import { AccountService } from "./auth/accounts.js";
 import { bootstrapFirstAdmin, type InitialAdmin } from "./auth/bootstrap.js";
 import { LoginThrottle, type LoginThrottleOptions } from "./auth/login-throttle.js";
 import type { ScryptParams } from "./auth/password.js";
 import { PasswordGate, type PasswordGateOptions } from "./auth/password-gate.js";
+import { RevocationBus } from "./auth/revocations.js";
 import { SetupCode } from "./auth/setup-code.js";
+import { TokenService } from "./auth/tokens.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
@@ -42,6 +50,7 @@ import { MetricRetention } from "./metrics/metric-retention.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
+import { createStdIndex } from "./packages/std-index.js";
 import { PresetStore } from "./presets/preset-store.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
@@ -200,6 +209,13 @@ export interface ControlPlane {
 
 /** 启动控制面：执行迁移，然后启动 HTTP API 和 Agent 网关。 */
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
+	// 产物合计的上限随任务下发给 Agent（uint64）：`Infinity`、超过 2^53 − 1 的值下发时让派发出错，启动时就拒绝（#477）。
+	if (
+		options.artifactLimitBytes !== undefined &&
+		!isArtifactLimitBytes(options.artifactLimitBytes)
+	) {
+		throw new Error(artifactLimitMessage("artifactLimitBytes", options.artifactLimitBytes));
+	}
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
 	/**
@@ -309,6 +325,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			packageArchiveUrl: (name, version) =>
 				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 			artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
+			artifactLimitBytes: options.artifactLimitBytes ?? DEFAULT_ARTIFACT_LIMIT_BYTES,
 		}),
 		admitTrigger: createTriggerAdmission({ preflight, paramsCheck: createParamsCheck() }),
 		notifications: new EngineNotifications({
@@ -326,6 +343,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 				return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
 			},
 			mirrors,
+			packageIndexUrl: () => `${publicHttpUrl}/simple/`,
 			agentBinary: async (arch) => {
 				const binary = await agentBinaries.find(version, arch);
 				return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
@@ -360,6 +378,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 本地账号与登录（ADR 0029）：第一个管理员由初始管理员环境变量或一次性的初始化码建出。
 	const setupCode = new SetupCode(options.dataDir);
+	// 登录注销、用户停用、令牌吊销都从同一个广播出去：路由层据此关掉受影响的事件流。
+	const revocations = new RevocationBus();
 	const accounts = new AccountService({
 		db: database.db,
 		clock,
@@ -369,9 +389,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		loginIdleMs: options.loginIdleMs,
 		throttle: new LoginThrottle(clock, options.loginThrottle),
 		passwordGate: new PasswordGate(options.passwordGate),
+		revocations,
 	});
 	// 假哈希提前算好（不等第一个不存在的登录名）；算不出来不挡启动，用到时再算。
 	void accounts.warmUp().catch(() => {});
+	const tokens = new TokenService({ db: database.db, clock, revocations });
 	try {
 		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({
@@ -438,6 +460,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			mirrors,
 		},
 		sdkWheels,
+		stdIndex: createStdIndex({
+			packages,
+			onSkipped: (version, reason) => {
+				logError(`package index: sfly-std ${version} is not listed:`, reason);
+			},
+		}),
 		clientTarballs,
 		agentBinaries,
 		installScript,
@@ -449,6 +477,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		webApp,
 		corsOrigins: options.corsOrigins,
 		accounts,
+		tokens,
 		loginIdleMs: options.loginIdleMs,
 		// 登录 Cookie 的跨站检查：配置的公开地址（反向代理后面是浏览器看到的地址），加上开发时 vite 的地址；
 		// 没有配置公开地址时用请求的 Host 兜底。

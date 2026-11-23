@@ -18,6 +18,7 @@ import { DbAccessStore } from "../auth/access-store.js";
 import type { AccountService } from "../auth/accounts.js";
 import type { OriginRules } from "../auth/cross-site.js";
 import { PasswordGateAborted, PasswordGateBusy } from "../auth/password-gate.js";
+import type { TokenService } from "../auth/tokens.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
@@ -31,6 +32,7 @@ import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
+import type { StdIndex } from "../packages/std-index.js";
 import type { PresetStore } from "../presets/preset-store.js";
 import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
@@ -59,12 +61,14 @@ import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
+import { serializeRequest } from "./request-log.js";
 import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerRunSummaryRoutes } from "./run-summary-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
 import { registerSessionRoutes } from "./session-routes.js";
+import { registerTokenRoutes } from "./token-routes.js";
 import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
 
 export interface HttpApiDeps {
@@ -95,6 +99,8 @@ export interface HttpApiDeps {
 	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 控制面的包索引里的标准节点包 sfly-std（公共项目里已发布的版本）。 */
+	stdIndex: StdIndex;
 	clientTarballs: readonly ClientTarball[];
 	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
 	agentBinaries: AgentBinaries;
@@ -110,6 +116,8 @@ export interface HttpApiDeps {
 	corsOrigins?: readonly string[];
 	/** 本地账号与登录（src/auth/accounts.ts）。 */
 	accounts: AccountService;
+	/** 个人令牌和项目令牌（src/auth/tokens.ts）。 */
+	tokens: TokenService;
 	/** 登录的空闲期限（毫秒）；默认 12 小时，要和 `accounts` 里的一致（下发和续期 Cookie 用它）。 */
 	loginIdleMs?: number;
 	/** 哪些来源算同源（登录 Cookie 的跨站检查，src/auth/cross-site.ts）。 */
@@ -161,6 +169,7 @@ export function buildHttpApi({
 	agentToken,
 	publicConfig,
 	sdkWheels,
+	stdIndex,
 	clientTarballs,
 	agentBinaries,
 	installScript,
@@ -170,6 +179,7 @@ export function buildHttpApi({
 	webApp,
 	corsOrigins,
 	accounts,
+	tokens,
 	loginIdleMs,
 	origins,
 	publicHttps,
@@ -187,7 +197,9 @@ export function buildHttpApi({
 				? false
 				: {
 						...(logger === true ? {} : logger),
-						serializers: { err: serializeError },
+						// 请求日志记的是完整地址：客户端写错、把令牌放进查询参数时，原值会进日志。长得像我们令牌的值（前缀加一串
+						// 字母数字）在写进日志之前盖住（和任务日志、运行视图是同一条规则，{@link maskTokens}）；请求头不记。
+						serializers: { err: serializeError, req: serializeRequest },
 						hooks: {
 							logMethod(args, method) {
 								(method as (...parts: unknown[]) => void).apply(this, sanitizeLogArgs(args));
@@ -231,9 +243,10 @@ export function buildHttpApi({
 		heartbeatMs: sseHeartbeatMs,
 	});
 
-	// 登录被注销、用户被停用时，关掉受影响的事件流（ADR 0029「SSE」）。
+	// 登录被注销、用户被停用、令牌被吊销时，关掉受影响的事件流（ADR 0029「SSE」）。
 	const stopWatching = accounts.onRevoked((revocation) => {
 		sse.closeWhere((stream) => {
+			if (revocation.type === "token") return stream.tokenId === revocation.tokenId;
 			if (stream.userId !== revocation.userId) return false;
 			if (revocation.type === "user") return true;
 			if (stream.loginId === null) return false;
@@ -284,6 +297,7 @@ export function buildHttpApi({
 	});
 
 	registerAccountRoutes(app, { accounts, publicHttps, publicUrl });
+	registerTokenRoutes(app, { tokens, accounts });
 	registerAgentRoutes(app, { hub, engine, orchestrations });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
@@ -314,7 +328,7 @@ export function buildHttpApi({
 	registerSessionRoutes(app, { sessions, service: sessionService, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
-	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });
+	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig, stdIndex });
 	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });
 	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });
 	registerDocsRoutes(app, {

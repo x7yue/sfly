@@ -31,7 +31,8 @@ const userView = (user: UserRecord): UserView => ({
 	created_at: user.createdAt.toISOString(),
 });
 
-function tooManyAttempts(reply: FastifyReply, retryAfterMs: number): FastifyReply {
+/** 失败太多：429，带 `Retry-After`（登录、初始化、改密码、用账号密码换令牌共用）。 */
+export function tooManyAttempts(reply: FastifyReply, retryAfterMs: number): FastifyReply {
 	const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
 	reply.header("retry-after", seconds);
 	return sendError(reply, 429, "too_many_attempts", `失败次数太多，请 ${seconds} 秒之后再试`);

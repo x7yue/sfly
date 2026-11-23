@@ -1,11 +1,14 @@
-// 密码、登录 Cookie、初始化码、密码哈希不进任何响应、不进报错（ADR 0029「认证的几处细节」，规格 #490）。
-// 「按契约遍历每个出口」：契约里每个账号类接口都被请求过（成功的和失败的），所有响应的正文里找不到这些值；
-// 登录 Cookie 只出现在登录和初始化响应的 Set-Cookie 头里，正文里也没有。新加的账号类接口没有被请求过，测试失败。
+// 密码、登录 Cookie、初始化码、密码哈希不进任何响应、不进报错（ADR 0029「认证的几处细节」，规格 #490）；
+// 令牌原值只出现在签发它的那一次响应里，别的响应（列出、吊销、失败的请求）里都没有，库里的哈希也不出现（规格 #491）。
+// 「按契约遍历每个出口」：契约里每个账号类接口和项目的管理面接口（令牌）都被请求过（成功的和失败的），所有响应的正文里找不到这些值；
+// 登录 Cookie 只出现在登录和初始化响应的 Set-Cookie 头里，正文里也没有。新加的这类接口没有被请求过，测试失败。
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { httpContract } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { hashCredential } from "../src/auth/credential-hash.js";
 import { SETUP_CODE_FILE } from "../src/auth/setup-code.js";
+import { TestAccounts } from "./support/credentials.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const JSON_HEADERS = { "content-type": "application/json" };
@@ -18,6 +21,8 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 	const bodies: { what: string; status: number; text: string }[] = [];
 	/** 这些值一旦出现在响应正文里就是泄露。 */
 	const secrets = new Map<string, string>();
+	/** 令牌原值：只有签发它的那一次响应（`what` 相同的那条）里可以有，别处都是泄露。 */
+	const tokens = new Map<string, string>();
 
 	const templateOf = (method: string, path: string): string | undefined => {
 		const bare = path.split("?")[0] ?? path;
@@ -33,13 +38,14 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 		what: string,
 		method: string,
 		path: string,
-		options: { cookie?: string; body?: unknown } = {},
+		options: { cookie?: string; bearer?: string; body?: unknown } = {},
 	) => {
 		const res = await control.fetch(path, {
 			method,
 			headers: {
 				...(options.body === undefined ? {} : JSON_HEADERS),
 				...(options.cookie ? { cookie: `sfly_login=${options.cookie}` } : {}),
+				...(options.bearer ? { authorization: `Bearer ${options.bearer}` } : {}),
 				"sec-fetch-site": "same-origin",
 			},
 			...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
@@ -150,6 +156,107 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 			body: { password: "ResetSecret-6hhhii" },
 		});
 
+		// 令牌：个人令牌（Cookie 签发、账号密码换）、项目令牌；列出、吊销、各种失败。令牌原值只出现在签发它的响应里。
+		const issue = async (what: string, path: string, options: Parameters<typeof send>[4]) => {
+			const res = await send(cp, what, "POST", path, options);
+			const issued = (await res.clone().json()) as { token?: string; id?: string };
+			if (issued.token) tokens.set(what, issued.token);
+			return issued;
+		};
+		const t1 = await issue("签发个人令牌", "/account/tokens", {
+			cookie: adminCookie,
+			body: { name: "笔记本" },
+		});
+		secrets.set("账号密码换令牌时的密码", "ExchangeSecret-2lllmm");
+		const exchange = await send(cp, "建用户：换令牌用", "POST", "/users", {
+			cookie: adminCookie,
+			body: { login_name: "exchange", display_name: "换", password: "ExchangeSecret-2lllmm" },
+		});
+		// 他是默认项目的编辑者（有项目的角色才有范围可以签发）。
+		const roles = new TestAccounts(cp.database.url);
+		await roles.member("default", ((await exchange.json()) as { id: string }).id, "editor");
+		await roles.close();
+		const t2 = await issue("账号密码换个人令牌", "/account/tokens", {
+			body: { name: "sfly login", login_name: "exchange", password: "ExchangeSecret-2lllmm" },
+		});
+		secrets.set("换令牌时猜的密码", "ExchangeGuess-3nnnoo");
+		await send(cp, "换令牌：密码不对", "POST", "/account/tokens", {
+			body: { name: "x", login_name: "exchange", password: "ExchangeGuess-3nnnoo" },
+		});
+		await send(cp, "签发个人令牌：请求不合格", "POST", "/account/tokens", {
+			cookie: adminCookie,
+			body: { name: "", scopes: ["nonsense"] },
+		});
+		await send(cp, "签发个人令牌：重名", "POST", "/account/tokens", {
+			cookie: adminCookie,
+			body: { name: "笔记本" },
+		});
+		// 还不是任何项目的成员：没有范围可以签发（no_scopes）；编辑者要管理范围：超过角色（scope_exceeds_role）。
+		const xiaomingLogin = await send(cp, "小明用重置的密码登录", "POST", "/auth/login", {
+			body: { login_name: "xiaoming", password: "ResetSecret-6hhhii" },
+		});
+		await send(cp, "签发个人令牌：没有任何项目的角色", "POST", "/account/tokens", {
+			cookie: cookieOf(xiaomingLogin),
+			body: { name: "想要更多" },
+		});
+		const editor = await send(cp, "编辑者登录", "POST", "/auth/login", {
+			body: { login_name: "exchange", password: "ExchangeSecret-2lllmm" },
+		});
+		await send(cp, "签发个人令牌：范围超过角色", "POST", "/account/tokens", {
+			cookie: cookieOf(editor),
+			body: { name: "想要更多", scopes: ["manage"] },
+		});
+		await send(cp, "令牌签发令牌", "POST", "/account/tokens", {
+			bearer: t1.token ?? "",
+			body: { name: "套娃" },
+		});
+		await send(cp, "列出个人令牌（Cookie）", "GET", "/account/tokens", { cookie: adminCookie });
+		await send(cp, "列出个人令牌（令牌）", "GET", "/account/tokens", { bearer: t1.token ?? "" });
+		await send(cp, "个人令牌吊销别的令牌", "DELETE", `/account/tokens/${t2.id}`, {
+			bearer: t1.token ?? "",
+		});
+		await send(cp, "个人令牌吊销它自己", "DELETE", `/account/tokens/${t2.id}`, {
+			bearer: t2.token ?? "",
+		});
+		await send(cp, "再吊销一次", "DELETE", `/account/tokens/${t2.id}`, { cookie: adminCookie });
+		await send(cp, "吊销：没有这个令牌", "DELETE", `/account/tokens/${crypto.randomUUID()}`, {
+			cookie: adminCookie,
+		});
+		const p1 = await issue("签发项目令牌", "/projects/default/tokens", {
+			cookie: adminCookie,
+			body: { name: "ci", scopes: ["read", "run"], expires_in_days: 30 },
+		});
+		await send(cp, "签发项目令牌：带管理", "POST", "/projects/default/tokens", {
+			cookie: adminCookie,
+			body: { name: "想管理", scopes: ["manage"] },
+		});
+		await send(cp, "签发项目令牌：项目不存在", "POST", "/projects/no-such-project/tokens", {
+			cookie: adminCookie,
+			body: { name: "x", scopes: ["read"] },
+		});
+		await send(cp, "令牌签发项目令牌", "POST", "/projects/default/tokens", {
+			bearer: t1.token ?? "",
+			body: { name: "套娃", scopes: ["read"] },
+		});
+		await send(cp, "项目令牌列出项目令牌", "GET", "/projects/default/tokens", {
+			bearer: p1.token ?? "",
+		});
+		await send(cp, "没有凭据列出项目令牌", "GET", "/projects/default/tokens");
+		await send(cp, "列出项目令牌", "GET", "/projects/default/tokens", { cookie: adminCookie });
+		await send(cp, "吊销项目令牌", "DELETE", `/projects/default/tokens/${p1.id}`, {
+			cookie: adminCookie,
+		});
+		await send(
+			cp,
+			"吊销项目令牌：没有这个令牌",
+			"DELETE",
+			`/projects/default/tokens/${crypto.randomUUID()}`,
+			{
+				cookie: adminCookie,
+			},
+		);
+		await send(cp, "用已吊销的令牌请求", "GET", "/account/tokens", { bearer: t2.token ?? "" });
+
 		// 初始化：另起一个空库，初始化码、新管理员的密码。
 		setupCp = await startTestControlPlane();
 		const code = (await readFile(join(setupCp.dataDir, SETUP_CODE_FILE), "utf8")).trim();
@@ -204,6 +311,45 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 		}
 	});
 
+	it("令牌原值只出现在签发它的那一次响应里：列出、吊销、失败的请求、别的签发的响应里都没有；库里的哈希也不出现", () => {
+		expect(tokens.size).toBe(3);
+		for (const [issuedBy, token] of tokens) {
+			const found = bodies.filter(({ text }) => text.includes(token)).map(({ what }) => what);
+			expect(found, `令牌原值出现在了签发它的响应之外（${issuedBy}）`).toEqual([issuedBy]);
+			expect(
+				bodies.filter(({ text }) => text.includes(hashCredential(token))).map(({ what }) => what),
+				`令牌的哈希出现在了响应里（${issuedBy}）`,
+			).toEqual([]);
+		}
+	});
+
+	it("令牌的响应只有约定的字段（没有哈希、没有用户 ID）", async () => {
+		const res = await cp.fetch("/account/tokens", {
+			headers: {
+				cookie: `sfly_login=${secrets.get("管理员的 Cookie") ?? ""}`,
+				"sec-fetch-site": "same-origin",
+			},
+		});
+		const { tokens: listed } = (await res.json()) as { tokens: object[] };
+		expect(listed.length).toBeGreaterThan(0);
+		for (const token of listed) {
+			expect(Object.keys(token).sort()).toEqual([
+				"created_at",
+				"current",
+				"expires_at",
+				"id",
+				"issued_by",
+				"kind",
+				"last_used_at",
+				"name",
+				"prefix",
+				"project",
+				"revoked_at",
+				"scopes",
+			]);
+		}
+	});
+
 	it("所有响应的正文里没有密码哈希（scrypt 存储串）、盐、哈希的字段名", () => {
 		for (const { what, text } of bodies) {
 			expect(text, what).not.toMatch(/scrypt\$/);
@@ -225,9 +371,9 @@ describe("账号类接口的出口里没有密码、Cookie、初始化码、哈�
 		]);
 	});
 
-	it("契约里每个账号类接口都被请求过（新加的账号类接口要在上面造它的成功和失败请求）", () => {
+	it("契约里每个账号类接口和项目管理面的接口都被请求过（新加的要在上面造它的成功和失败请求）", () => {
 		const accountRoutes = httpContract
-			.filter((def) => def.resource.kind === "account")
+			.filter((def) => def.resource.kind === "account" || def.resource.kind === "project")
 			.map((def) => `${def.method} ${def.path}`);
 		expect(accountRoutes.filter((key) => !requested.has(key))).toEqual([]);
 	});

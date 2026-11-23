@@ -1,7 +1,7 @@
-"""`sfly init`：创建一个开箱即用的节点包项目。
+"""`sfly init`：创建一个开箱即用的节点包目录。
 
 1. 校验包名（节点包的全局命名规则，与 package-metadata schema 相同），目标目录不存在或为空。
-2. 从控制面读取新项目的配置（`GET /sdk/project-settings`：控制面版本、sfly 简单索引、镜像）；
+2. 从控制面读取新节点包目录的配置（`GET /sdk/project-settings`：控制面版本、sfly 简单索引、镜像）；
    镜像按本机的覆盖（与 Agent 相同的环境变量和 `agent.env` 键，sfly/cli/home.py）改写，本地优先。
 3. 在目标目录旁的临时目录里 `uv init --lib --python 3.13`（src 布局、`.python-version`、
    `.gitignore`、git 仓库；已在 git 仓库里时 uv 不再建仓库），再依次执行 `STEPS`：
@@ -42,13 +42,14 @@ PYTHON_VERSION = "3.13"
 #: 开发依赖：`sfly[cli]` 锁定为控制面版本（ADR 0010：SDK 与控制面同版本），其余只写下限。
 DEV_DEPENDENCIES = ("pytest>=8", "ruff>=0.6")
 
-#: 生成的项目里 ruff 的规则集（#472），按族分组（族名、写在这组前面的注释、编号）。
+#: 生成的节点包目录里 ruff 的规则集（#472），按族分组（族名、写在这组前面的注释、编号）。
 #: pyflakes（F）和 pycodestyle 里语句级、运行时错误的那几组（E4、E7、E9），
 #: 也就是 ruff 长期以来的默认规则，逐条写出确切的编号。
 #: 不写前缀：选了前缀，ruff 以后在这个前缀下转正的新规则会自动生效，同一份代码换个 ruff 版本
 #: 就多出新的报告；新版 ruff 的默认规则集也比这大得多。
 #: 这些编号在 ruff 0.6 以前就都有了，`ruff>=0.6` 的哪个版本都认得。
-#: docs/guide/init-project.md 里有同样的一段给已有项目抄（tests/test_init_ruff.py 核对两者一致）。
+#: docs/guide/init-project.md 里有同样的一段给已有节点包目录抄
+#: （tests/test_init_ruff.py 核对两者一致）。
 RUFF_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("F", "pyflakes（F）：没用到的 import 和变量、未定义的名字、格式字符串写错……", (
         "F401", "F402", "F403", "F404", "F405", "F406", "F407",
@@ -79,8 +80,8 @@ class InitError(Exception):
 
 
 @dataclass(frozen=True)
-class ProjectSettings:
-    """控制面给新项目的配置（`GET /sdk/project-settings`）。"""
+class PackageDirSettings:
+    """控制面给新节点包目录的配置（`GET /sdk/project-settings`：路径沿用旧名，旧版命令行在用）。"""
 
     version: str
     sfly_index_url: str
@@ -90,12 +91,12 @@ class ProjectSettings:
 
 @dataclass(frozen=True)
 class NewProject:
-    """正在生成的项目：`root` 是临时目录（成功后才移到目标位置）。"""
+    """正在生成的节点包目录：`root` 是临时目录（成功后才移到目标位置）。"""
 
     root: Path
     name: str
     module: str
-    settings: ProjectSettings
+    settings: PackageDirSettings
 
 
 def validate_name(name: str) -> str:
@@ -117,7 +118,7 @@ def validate_name(name: str) -> str:
     return module
 
 
-def fetch_settings(server: str) -> ProjectSettings:
+def fetch_settings(server: str) -> PackageDirSettings:
     url = f"{server.rstrip('/')}/sdk/project-settings"
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
@@ -131,7 +132,7 @@ def fetch_settings(server: str) -> ProjectSettings:
         ) from None
     except ValueError:
         raise InitError(f"读取控制面配置失败（{url}：响应不是 JSON）") from None
-    return ProjectSettings(
+    return PackageDirSettings(
         version=body["version"],
         sfly_index_url=body["sfly_index_url"],
         pypi_mirror=body.get("pypi_mirror") or None,
@@ -139,7 +140,7 @@ def fetch_settings(server: str) -> ProjectSettings:
     )
 
 
-def with_local_mirrors(settings: ProjectSettings, local: LocalMirrors) -> ProjectSettings:
+def with_local_mirrors(settings: PackageDirSettings, local: LocalMirrors) -> PackageDirSettings:
     """本机覆盖优先（与 Agent 相同）：PyPI 镜像用 `SFLY_INDEX_URL`；Python 下载镜像用
     `SFLY_PYTHON_INSTALL_MIRROR`，否则从本机的 `SFLY_GITHUB_RELEASE_MIRROR` 推导，
     都没有时用控制面的。"""
@@ -167,9 +168,9 @@ def configure_pyproject(project: NewProject) -> None:
     lines += [f"    {_toml(d)}," for d in dev]
     lines += ["]", ""]
     lines += [
-        "# 镜像与 sfly 索引来自控制面（sfly init 生成；本机覆盖了镜像时用覆盖的值）。",
-        "# sfly 不在 PyPI 上：它只从控制面的 sfly 索引解析（explicit，",
-        "# 不会装到 PyPI 上同名的其他包），其余依赖照常走 PyPI 镜像。",
+        "# 镜像与控制面的包索引来自控制面（sfly init 生成；本机覆盖了镜像时用覆盖的值）。",
+        "# sfly（SDK）和 sfly-std（标准节点包的辅助函数）不在 PyPI 上：它们只从控制面的包索引解析",
+        "# （explicit，不会装到 PyPI 上同名的其他包），其余依赖照常走 PyPI 镜像。",
         "[tool.uv]",
     ]
     if s.python_install_mirror:
@@ -191,6 +192,7 @@ def configure_pyproject(project: NewProject) -> None:
         "",
         "[tool.uv.sources]",
         'sfly = { index = "sfly" }',
+        'sfly-std = { index = "sfly" }',
         "",
         "# 节点包需要的最低 SDK 版本（即 Agent 版本）：更旧的 Agent 上任务会以 env_error 失败。",
         "# 用到新版 SDK 的接口时调高它。",
@@ -257,12 +259,14 @@ STEPS: tuple[Callable[[NewProject], None], ...] = (configure_pyproject, write_ex
 def _uv() -> str:
     uv = os.environ.get("UV") or shutil.which("uv")
     if not uv:
-        raise InitError("找不到 uv：sfly init 用 uv 创建项目，先安装 uv（install.sh --dev 会装好）")
+        raise InitError(
+            "找不到 uv：sfly init 用 uv 创建节点包目录，先安装 uv（install.sh --dev 会装好）"
+        )
     return uv
 
 
 def init(target: Path, name: str | None, server: str) -> Path:
-    """在 target 创建节点包项目，返回项目目录。"""
+    """在 target 创建节点包目录，返回它的路径。"""
     target = Path(os.path.abspath(target))
     name = name or target.name
     module = validate_name(name)

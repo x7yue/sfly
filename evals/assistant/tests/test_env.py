@@ -69,3 +69,17 @@ def test_source_hash_changes_with_content_and_is_none_when_missing(tmp_path: Any
     (tmp_path / "Dockerfile").write_text("FROM b\n")
     assert source_hash([tmp_path]) != first
     assert source_hash([tmp_path / "missing"]) is None
+
+
+def test_commands_after_up_isolated_follow_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`up --isolated` 之后的命令不带 --isolated：照网络的实际情况，
+    重建控制面时不在断网的网络上发布端口。"""
+    import argparse
+
+    from aeval.cli import _stack
+
+    monkeypatch.setattr(Stack, "network_internal", lambda self: True)
+    assert _stack(argparse.Namespace(command="reset", slot=3)).internal is True
+    assert _stack(argparse.Namespace(command="up", slot=3, isolated=False)).internal is False
+    monkeypatch.setattr(Stack, "network_internal", lambda self: None)
+    assert _stack(argparse.Namespace(command="rpcprobe", slot=3)).internal is False
