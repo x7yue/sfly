@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import getpass
+import ipaddress
 import json
 import os
 import re
@@ -63,7 +64,18 @@ UNAUTHORIZED_TIP = (
 # 读响应（下载、事件流、接口原样输出）时每次读多少字节。
 READ_CHUNK = 64 * 1024
 
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+def is_local_host(host: str) -> bool:
+    """主机名是不是「本机」：`localhost`，和环回地址（`127.0.0.0/8` 整段、`::1`）。
+    `0.0.0.0` 不算：它不是一个能连的地址，写成它多半是配错了，照旧提示。
+    主机名不解析（本机的主机名、局域网地址照旧提示：多一行提示没有害处）。"""
+    host = host.lower().rstrip(".")
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def origin_of(url: str) -> tuple[str, str, int | None]:
@@ -257,16 +269,18 @@ class Client:
             file=self._stderr or sys.stderr,
         )
 
-    def _note_plain_http(self) -> None:
+    def note_plain_http(self) -> None:
         """带着令牌、或者要发账号密码（`sfly login`）往不是本机的 `http://` 地址发请求：提示一次
-        （令牌和密码在网络上是明文）。第一次 `sfly login` 还没有令牌，发出去的是密码，也要提示。"""
+        （令牌和密码在网络上是明文）。第一次 `sfly login` 还没有令牌，发出去的是密码，也要提示。
+        每个请求发出之前都会调用；`sfly login` 在读密码**之前**先调用一次，
+        想放弃的人不用输完密码才看到（提示只出一次）。"""
         if self._warned_plain_http:
             return
         what = "令牌" if self.token else "密码" if self.sends_password else None
         if what is None:
             return
         scheme, host, _ = origin_of(self.server)
-        if scheme != "http" or host in _LOCAL_HOSTS:
+        if scheme != "http" or is_local_host(host):
             return
         self._warned_plain_http = True
         print(
@@ -330,7 +344,7 @@ class Client:
         失败时抛 `CliError`（连不上）或 `ApiError`（错误响应）。"""
         data = raw
         self._note_nickname_ignored()
-        self._note_plain_http()
+        self.note_plain_http()
         send = {**self.headers(), **(headers or {})}
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")

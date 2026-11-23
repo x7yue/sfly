@@ -159,6 +159,10 @@ def _login(args: argparse.Namespace, out: Output) -> int:
         login_name = _ask("登录名：")
         if not login_name:
             raise CliError("missing_login_name", "登录名不能为空")
+    # 这次换令牌发出去的是账号密码：地址是不是明文的 `http://`，在读密码之前就告诉他（交互时先出提示、再问密码，
+    # 想放弃的人不用输完密码才知道）；客户端记着已经提示过，发请求时不再重复。
+    client = _anonymous(url)
+    client.note_plain_http()
     password = _read_password(args)
     name = (args.name or f"sfly-cli@{socket.gethostname()}")[:_NAME_MAX]
 
@@ -173,7 +177,7 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     if args.expires_in_days is not None:
         body["expires_in_days"] = args.expires_in_days
     try:
-        issued = _issue(url, body, retry_suffix=previous is not None)
+        issued = _issue(client, body, retry_suffix=previous is not None)
     except ApiError as error:
         raise _login_error(error) from None
     path = credentials.save(
@@ -214,10 +218,9 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     return 0
 
 
-def _issue(url: str, body: dict[str, Any], *, retry_suffix: bool) -> dict[str, Any]:
+def _issue(client: Client, body: dict[str, Any], *, retry_suffix: bool) -> dict[str, Any]:
     """用账号密码换一个令牌。已经有同名的有效令牌（`token_name_taken`）、而且本机原来存着一个（多半就是它占着默认名称）时，
     带一个后缀再换一次：旧的要等新的存好才吊销，这时两个同时存在。"""
-    client = _anonymous(url)
     try:
         issued: dict[str, Any] = client.request("POST", "/account/tokens", body=body)
         return issued

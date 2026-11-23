@@ -2,6 +2,7 @@
 // （打印在日志里，写进数据目录下只有属主可读的文件），用它在 `/setup` 页建第一个平台管理员；
 // 自动化部署和测试可以改用环境变量直接给出初始管理员（只在没有任何用户时生效）。
 import {
+	AccountDisplayName,
 	LOGIN_NAME_PATTERN,
 	LOGIN_NAME_RULE,
 	PASSWORD_MAX_LENGTH,
@@ -18,7 +19,8 @@ export interface InitialAdmin {
 
 /**
  * 环境变量 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`（可选 `SFLY_ADMIN_DISPLAY_NAME`，默认同登录名）：
- * 两个都没设置时没有初始管理员；只设置了一个，或者值不合规矩，都报错退出，不让一个写错的配置悄悄变成「走初始化码」。
+ * 两个都没设置时没有初始管理员；只设置了一个，或者值不合规矩（含显示名：和建用户、改显示名同一个检查，
+ * `AccountDisplayName`），都报错退出，不让一个写错的配置悄悄变成「走初始化码」。
  */
 export function parseInitialAdmin(
 	env: Record<string, string | undefined>,
@@ -39,7 +41,18 @@ export function parseInitialAdmin(
 			`SFLY_ADMIN_PASSWORD 不合规矩：密码要 ${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`,
 		);
 	}
-	return { loginName, password, displayName: env.SFLY_ADMIN_DISPLAY_NAME || undefined };
+	const rawDisplayName = env.SFLY_ADMIN_DISPLAY_NAME || undefined;
+	let displayName: string | undefined;
+	if (rawDisplayName !== undefined) {
+		const parsed = AccountDisplayName.safeParse(rawDisplayName);
+		if (!parsed.success) {
+			throw new Error(
+				`SFLY_ADMIN_DISPLAY_NAME 不合规矩：${parsed.error.issues.map((issue) => issue.message).join("；")}`,
+			);
+		}
+		displayName = parsed.data;
+	}
+	return { loginName, password, displayName };
 }
 
 /**

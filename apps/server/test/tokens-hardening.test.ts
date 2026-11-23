@@ -183,7 +183,7 @@ describe("令牌的几处收紧", () => {
 	});
 
 	describe("令牌名称", () => {
-		it("换行、制表符、转义序列（ESC）、DEL、NUL、行分隔符都拒绝（400），没有签出令牌；正常的名字（含中文、空格、emoji）可以", async () => {
+		it("控制字符（换行、制表、ESC、DEL、NUL、NEL）、行分隔符、双向控制字符、零宽空格等看不见的字符拒绝（400），没有签出令牌；正常的名字（含中文、空格、emoji、组合表情、波斯文）可以", async () => {
 			for (const name of [
 				"带\n换行",
 				"带\r回车",
@@ -191,13 +191,13 @@ describe("令牌的几处收紧", () => {
 				"\u001b[31m红色\u001b[0m",
 				"带\u007fDEL",
 				"带\u0000NUL",
-				"带 行分隔符",
+				"带\u2028行分隔符",
 				"带\u0085下一行",
-				// 看不见的格式字符（#606 审查）：两个看起来一样的名字能同时有效、名字还能倒着显示。
-				"带\u200b零宽空格",
-				"带\u200d零宽连接符",
+				"带\u200e方向标记",
 				"带\u202e倒着显示",
 				"带\u2067双向隔离",
+				"带\u200b零宽空格",
+				"带\u2060词连接符",
 				"带\ufeff字节序标记",
 				"带\u00ad软连字符",
 			]) {
@@ -210,15 +210,24 @@ describe("令牌的几处收紧", () => {
 				expect(project.status, JSON.stringify(name)).toBe(400);
 			}
 			expect((await db.query("select count(*)::int as n from api_tokens")).rows[0].n).toBe(0);
-			for (const name of ["我的电脑 2", "ci-main", "笔记本 💻", "a·b"]) {
+			for (const name of [
+				"我的电脑 2",
+				"ci-main",
+				"笔记本 💻",
+				"a·b",
+				"👩\u200d💻",
+				"🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+				"می\u200cخواهم",
+				"ශ්\u200dරී",
+			]) {
 				const res = await call(loginCookie(adminCookie), "POST", "/account/tokens", { name });
 				expect(res.status, name).toBe(201);
 			}
 		});
 	});
 
-	describe("显示名和昵称同样不能有控制字符和看不见的格式字符", () => {
-		it("建用户的显示名、写操作的昵称：拒绝（400）；正常的名字照常", async () => {
+	describe("显示名和昵称：同一张表", () => {
+		it("建用户的显示名、写操作的昵称：表里的拒绝（400）；零宽连接符的文字和表情、子区域旗照常", async () => {
 			for (const display_name of ["带\u200b零宽", "带\u202e倒着", "带\n换行", "带\u0000NUL"]) {
 				const res = await call(loginCookie(adminCookie), "POST", "/users", {
 					login_name: "someone",
@@ -227,12 +236,14 @@ describe("令牌的几处收紧", () => {
 				});
 				expect(res.status, JSON.stringify(display_name)).toBe(400);
 			}
-			const ok = await call(loginCookie(adminCookie), "POST", "/users", {
-				login_name: "someone",
-				display_name: "小明 💻",
-				password: "a-long-enough-password-1",
-			});
-			expect(ok.status).toBe(201);
+			for (const [i, display_name] of ["小明 💻", "👩\u200d💻 程序员", "می\u200cخواهم"].entries()) {
+				const ok = await call(loginCookie(adminCookie), "POST", "/users", {
+					login_name: `someone${i}`,
+					display_name,
+					password: "a-long-enough-password-1",
+				});
+				expect(ok.status, display_name).toBe(201);
+			}
 			for (const nickname of ["带\u200b零宽", "带\u202e倒着", "带\n换行"]) {
 				const res = await call(
 					{ "x-sfly-nickname": encodeURIComponent(nickname) },
@@ -242,6 +253,49 @@ describe("令牌的几处收紧", () => {
 				);
 				expect(res.status, JSON.stringify(nickname)).toBe(400);
 			}
+			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
+		});
+
+		it("升级前能用的昵称升级后仍然能用：对着改之前的校验（只拒绝 NUL），这些昵称都被当时放行，现在也放行（昵称是每个写请求都带的请求头，不是存好的数据）", async () => {
+			// 改之前的校验：昵称里只有 NUL 被拒绝。
+			const beforeAccepts = (nickname: string) => !nickname.includes("\u0000");
+			const nicknames = [
+				"小明",
+				"田中",
+				"김철수",
+				"ci-bot",
+				"Zoë",
+				"笔记本 💻",
+				"👩\u200d💻",
+				"🏳\ufe0f\u200d🌈",
+				"🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+				"می\u200cخواهم",
+				"ශ්\u200dරී",
+				"क्\u200dष",
+				"aㅤb",
+			];
+			for (const nickname of nicknames) {
+				expect(
+					beforeAccepts(nickname),
+					`${JSON.stringify(nickname)} 改之前就不被放行：这条用例的名单写错了`,
+				).toBe(true);
+				const res = await call(
+					{ "x-sfly-nickname": encodeURIComponent(nickname) },
+					"POST",
+					"/orchestrations",
+					{ name: `昵称 ${nickname}` },
+				);
+				expect(res.status, JSON.stringify(nickname)).toBe(201);
+			}
+		});
+
+		it("昵称请求头没按契约编码（直接写 UTF-8，字节被读成 U+0080–U+009F 的控制字符）：400，报错写明要按 encodeURIComponent 编码", async () => {
+			const raw = Buffer.from("小明", "utf8").toString("latin1");
+			const res = await call({ "x-sfly-nickname": raw }, "POST", "/orchestrations", {
+				name: "不该建出来",
+			});
+			expect(res.status).toBe(400);
+			expect((await errorOf(res)).message).toContain("encodeURIComponent");
 			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 	});

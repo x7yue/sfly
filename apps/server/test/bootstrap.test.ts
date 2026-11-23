@@ -40,6 +40,22 @@ describe("初始管理员的环境变量", () => {
 			}),
 		).toMatchObject({ displayName: "管理员" });
 	});
+
+	it("显示名和建用户、改显示名同一个检查：带零宽空格、双向控制字符、换行的启动时报错（不启动）；零宽连接符的文字和表情放行", () => {
+		const env = (name: string) => ({
+			SFLY_ADMIN_LOGIN: "root",
+			SFLY_ADMIN_PASSWORD: "long-enough-1",
+			SFLY_ADMIN_DISPLAY_NAME: name,
+		});
+		for (const bad of ["老\u200b板", "老\u202e板", "老\n板", "x".repeat(200)]) {
+			expect(() => parseInitialAdmin(env(bad)), JSON.stringify(bad)).toThrow(
+				/SFLY_ADMIN_DISPLAY_NAME 不合规矩/,
+			);
+		}
+		for (const good of ["👩\u200d💻 程序员", "می\u200cخواهم"]) {
+			expect(parseInitialAdmin(env(good))).toMatchObject({ displayName: good });
+		}
+	});
 });
 
 describe("启动时建第一个管理员（bootstrapFirstAdmin）", () => {

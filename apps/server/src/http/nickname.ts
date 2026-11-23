@@ -1,4 +1,4 @@
-import { hasUnsafeNameCharacter, NICKNAME_HEADER } from "@sfly/schema";
+import { hasUnsafeNameCharacter, NICKNAME_HEADER, unsafeNameMessage } from "@sfly/schema";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { sendError } from "./errors.js";
 
@@ -31,14 +31,15 @@ export function requireNickname(request: FastifyRequest, reply: FastifyReply): s
 		sendError(reply, 400, "invalid_request", "昵称里不能含 NUL 字符（\\u0000）");
 		return undefined;
 	}
-	// 昵称会记成作者、触发人，出现在「经 …」和命令行的输出里：控制字符和看不见的格式字符（零宽字符、双向文字的控制字符）
-	// 会把终端弄乱、让看起来一样的名字不一样。
+	// 昵称会记成作者、触发人，出现在「经 …」和命令行的输出里：用和令牌名称、显示名同一张表（`text-safety.ts`），不比它更严。
+	// 请求头的值要按 encodeURIComponent 编码（契约）：直接写 UTF-8 的调用方，中文、日文、韩文的字节被读成 U+0080–U+009F
+	// 的控制字符，报错要说明原因，不然看不出为什么「普通的名字」被拒绝。
 	if (hasUnsafeNameCharacter(nickname)) {
 		sendError(
 			reply,
 			400,
 			"invalid_request",
-			"昵称里不能有控制字符（换行、转义序列等）和看不见的格式字符（零宽字符、双向文字的控制字符）",
+			`${unsafeNameMessage("昵称")}；请求头 ${NICKNAME_HEADER} 的值要按 encodeURIComponent 编码（直接写 UTF-8 的中文、日文、韩文会被读成控制字符）`,
 		);
 		return undefined;
 	}

@@ -202,8 +202,10 @@ export function checkAccessRules(contract: readonly RouteDef[]): string[] {
 				`${routeKey(def)}：账号类接口要在 ACCOUNT_ROUTES（src/auth/access-rules.ts）里写明认哪种凭据：没有写明的账号类接口不能上线`,
 			);
 		}
-		// 吊销自己的凭据的例外清单（REVOKE_OWN_ROUTES）只能放账号类、认登录或个人令牌的接口：写进别的接口既不生效也不报错，
-		// 写进别的账号类接口会悄悄放宽那个接口（启动时检查，#606）。
+		// 吊销自己的凭据的例外清单（REVOKE_OWN_ROUTES）只能放账号类、认登录或个人令牌的接口（启动时检查，#606）：写进不是账号类的接口
+		// （不生效）、认别的凭据的账号类接口（例如平台管理员的 `POST /users`，会悄悄放宽它）都让控制面起不来。**写进别的只认登录或个人令牌的
+		// 账号接口（当前用户、改密码、列出令牌）这里不报**：它们满足上面的条件，由行为测试拦住（停用的用户在这些接口上仍然是 401，
+		// `test/disabled-revoke.test.ts`、`test/access-guard.test.ts`）。
 		if (REVOKE_OWN_ROUTES.has(routeKey(def))) {
 			const rule = (ACCOUNT_ROUTES as Record<string, string>)[routeKey(def)];
 			if (def.resource.kind !== "account" || (rule !== "login" && rule !== "login_or_personal")) {

@@ -1,3 +1,4 @@
+import { hasUnsafeNameCharacter, unsafeNameMessage } from "@sfly/schema";
 import { useSyncExternalStore } from "react";
 import { getCurrentUser, subscribeIdentity } from "./identity";
 
@@ -19,6 +20,15 @@ export function getStoredNickname(): string | null {
 /** 写操作和页面上显示的昵称：登录了是用户的显示名，否则是浏览器里存的昵称。 */
 export function getNickname(): string | null {
 	return getCurrentUser()?.display_name ?? getStoredNickname();
+}
+
+/**
+ * 昵称填得不合格的原因（没有问题时为 undefined）：空的，或者有控制字符、双向控制字符、零宽空格这类名字里不能有的字符
+ * （和控制面同一张表：`@sfly/schema` 的 `hasUnsafeNameCharacter`）。弹窗里先挡一下、说明原因，不等每个写请求都被服务端 400。
+ */
+export function nicknameProblem(value: string): string | undefined {
+	if (!value.trim()) return "填写昵称";
+	return hasUnsafeNameCharacter(value) ? unsafeNameMessage("昵称") : undefined;
 }
 
 export function setNickname(nickname: string): void {

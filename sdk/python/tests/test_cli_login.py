@@ -899,9 +899,56 @@ class TestPlainHttpPasswordNote:
     ) -> None:
         code, _, err = login(capsys, monkeypatch)  # 本机的假控制面
         assert code == 0 and "明文" not in err
-        for url in ("http://localhost:1", "http://127.0.0.1:1", "https://cp.example.test:1"):
+        for url in (
+            "http://localhost:1",
+            "http://127.0.0.1:1",
+            "http://127.0.0.2:1",
+            "http://127.255.255.254:1",
+            "http://[::1]:1",
+            "https://cp.example.test:1",
+        ):
             _, _, err = login(capsys, monkeypatch, "--server", url)
             assert "明文" not in err, url
+
+    def test_zero_address_and_non_loopback_addresses_are_still_noted(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for url in ("http://0.0.0.0:1", "http://192.168.1.2:1", "http://10.0.0.5:1"):
+            _, _, err = login(capsys, monkeypatch, "--server", url)
+            assert err.count("明文") == 1, url
+
+    def test_interactive_login_shows_the_note_before_asking_for_the_password(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """在终端里运行：先提示、再问密码（想放弃的人不用输完密码才看到）；发请求时不再重复。"""
+        import getpass
+
+        asked: list[str] = []
+
+        def fake_getpass(prompt: str = "") -> str:
+            asked.append(capsys.readouterr().err)  # 问密码的这一刻，标准错误里已经有什么
+            return PASSWORD
+
+        monkeypatch.setattr("sfly.cli.login._interactive", lambda: True)
+        monkeypatch.setattr(getpass, "getpass", fake_getpass)
+        code, _, err = run(
+            capsys,
+            monkeypatch,
+            "login",
+            "--server",
+            "http://cp.example.test:1",
+            "--login-name",
+            "alice",
+        )
+        assert code == 2  # 连不上
+        assert len(asked) == 1 and asked[0].count("明文") == 1 and "密码" in asked[0]
+        assert "明文" not in err  # 问完密码之后发请求，不再重复提示
 
 
 class TestCredentialsFilePermissions:
