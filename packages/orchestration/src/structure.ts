@@ -1,5 +1,6 @@
 import type { StoredNode, StoredOrchestrationDocument } from "@sfly/schema";
 import { subflowName } from "./chain-label.js";
+import { dispatchAgentOf } from "./dev-node-types.js";
 import { nodeTimeoutProblem, queueTimeoutProblem } from "./node-config.js";
 import { nodeNameWithId } from "./node-display.js";
 
@@ -392,7 +393,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	}
 
 	for (const node of doc.nodes) {
-		if (node.kind === "package" && !node.agent && !doc.default_agent) {
+		if (node.kind === "package" && !dispatchAgentOf(doc, node)) {
 			warn(
 				"missing_agent",
 				`节点 ${nodeNameWithId(node)} 没有选择 Agent，场景也没有默认 Agent`,

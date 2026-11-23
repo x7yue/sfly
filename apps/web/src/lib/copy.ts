@@ -242,6 +242,101 @@ export const PAGE = {
 	monitor: "运行监控",
 	versions: "版本历史",
 	docs: "开发文档",
+	assistant: "助手",
+	session: "会话",
+} as const;
+
+/**
+ * 助手页和会话页（#542，GLOSSARY「助手」「会话」「一轮」「工作台」「助手服务」）。页面只认平台的会话事件，
+ * 文字里不出现底层的名字。
+ */
+export const SESSION = {
+	/** 助手页顶部的就绪一行：就绪时写工作台在线；不就绪时逐条写缺什么（原因来自就绪状态的 `problems`）。 */
+	ready: (workbench: string | null) =>
+		workbench === null ? "可以用" : `可以用 · 工作台 ${workbench} 在线`,
+	notReady: "现在不能用：",
+	workbenchOffline: (workbench: string) => `工作台 ${workbench} 不在线`,
+	/** 「开始」不可用时按钮旁边写的原因的开头。 */
+	cannotStart: "助手现在不能用，不能开始会话",
+	input: {
+		label: "要做什么？",
+		placeholder: "要做什么？例如：给 http_check 加一个超时参数",
+		start: "开始",
+		starting: "正在开始…",
+	},
+	list: {
+		heading: "会话",
+		label: "会话列表",
+		empty: "在上面说一句话，助手就会开始。",
+		emptyTitle: "还没有会话",
+		loadFailed: "无法加载会话",
+		title: "会话",
+		author: "发起人",
+		status: "状态",
+		activity: "最近活动",
+		/** 会话多于接口一次给的个数（`truncated`）时，列表上面的一句提示。 */
+		truncated: (limit: number) => `只显示了最近活动的 ${limit} 个会话`,
+	},
+	status: {
+		idle: "空闲",
+		running: "在做",
+		queued: "排队中",
+		ended: "已结束",
+	},
+	/** 新建会话失败。 */
+	busy: "同一个项目里另一个会话正在做，等它做完，或者到那个会话里停止它",
+	busyLink: "打开正在做的会话",
+	createFailed: "无法开始会话",
+	/** 会话页。 */
+	page: {
+		loadFailed: "无法加载这个会话",
+		timeline: "会话的时间线",
+		loadOlder: "加载更早的",
+		loadingOlder: "正在加载…",
+		loadOlderFailed: "无法加载更早的内容",
+		stop: "停止",
+		stopTitle: "停止这一轮",
+		stopFailed: "无法停止这一轮",
+		thinking: "思考中",
+		sendLabel: "接着说",
+		sendPlaceholder: "接着说",
+		send: "发送",
+		sending: "正在发送…",
+		running: "助手正在做这一轮；要改方向先停止",
+		queued: "这个会话在排队，轮到它之后才能接着说",
+		sendFailed: "无法发送",
+		turnRunning: "助手正在做这一轮；要改方向先停止",
+		ended: "这个会话已经结束，不能再说话",
+	},
+	tool: {
+		read: "读",
+		write: "写",
+		edit: "改",
+		command: "$",
+		unknown: "工具",
+		running: "在做",
+		/** 一轮已经有了结局、这个调用却一直没有结果（被停止、到了上限、中断）。 */
+		abandoned: "已中止",
+		failed: "出错",
+		exitCode: (code: number) => `退出码 ${code}`,
+		duration: (text: string) => `用时 ${text}`,
+		truncated: "输出太长，只显示了头尾",
+		noOutput: "（没有输出）",
+		expand: "展开",
+		collapse: "收起",
+	},
+	turnEnd: {
+		completed: "这一轮完成",
+		steps: (n: number) => `${n} 步`,
+		duration: (text: string) => `用时 ${text}`,
+		stopped: "已停止",
+		limit: (what: string) => `到了上限：${what}`,
+		modelCalls: (n: number | undefined) => (n === undefined ? "模型调用次数" : `${n} 次模型调用`),
+		limitDuration: (text: string) => `用时 ${text}`,
+		interrupted: (reason: string) => `中断：${reason}`,
+		modelUnavailable: (reason: string) => `模型不可用：${reason}`,
+		failed: (reason: string) => `出错：${reason}`,
+	},
 } as const;
 
 /**

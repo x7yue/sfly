@@ -60,7 +60,10 @@ describe("复制场景时复制关注项", () => {
 			updated_at: "2026-01-01T01:00:00.000Z",
 			summary: "复制自「撮合浸泡」",
 		});
-		expect(await orchestrationView(api, copied.id)).toEqual(copied);
+		// 复制的响应比读场景多一项 `warnings`（第 1 版的警告，#576）；其余和读出来的一样。
+		const { warnings, ...copiedView } = copied;
+		expect(warnings).toEqual([]);
+		expect(await orchestrationView(api, copied.id)).toEqual(copiedView);
 		expect(await orchestrationView(api, source)).toEqual(before);
 	});
 
