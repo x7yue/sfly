@@ -44,7 +44,13 @@ def download(
     local: Mapping[str, str],
     cancelled: Callable[[], bool],
 ) -> Path:
-    """把产物引用 `ref` 的内容写到 `dest`，返回 `dest`。见 `Artifacts.download`。"""
+    """把产物引用 `ref` 的内容写到 `dest`，返回 `dest`。见 `Artifacts.download`。
+
+    任务已经进入收尾时间（取消标记在）时一开头就抛出 `Cancelled`，不检查引用、不发请求、不写文件：
+    和 `AgentSocket.call` 同一个口径。
+    """
+    if cancelled():
+        raise cancelled_error("任务正在收尾，下载中止")
     if not isinstance(ref, str) or not ref.strip():
         raise ArtifactDownloadError(f"产物引用无效：应为非空字符串，实际是 {ref!r}")
     target = Path(dest)
@@ -85,7 +91,7 @@ def _write(
         with part.open("wb") as out:
             for chunk in chunks():
                 if cancelled():
-                    raise cancelled_error("任务已取消，下载中止")
+                    raise cancelled_error("任务正在收尾，下载中止")
                 out.write(chunk)
         os.replace(part, target)
     finally:
@@ -117,7 +123,7 @@ def _sleep(seconds: float, cancelled: Callable[[], bool]) -> None:
     deadline = time.monotonic() + seconds
     while (left := deadline - time.monotonic()) > 0:
         if cancelled():
-            raise cancelled_error("任务已取消，下载中止")
+            raise cancelled_error("任务正在收尾，下载中止")
         time.sleep(min(left, _CANCEL_POLL))
 
 

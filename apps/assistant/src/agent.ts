@@ -4,7 +4,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
-import { createGrpcTransport } from "@connectrpc/connect-node";
+import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-node";
 import {
 	AgentExec,
 	AgentFileRead,
@@ -25,6 +25,9 @@ const CHUNK = 256 * 1024;
  * SIGKILL，再等管道最多 2 秒，然后才回复（agent/src/capabilities/exec.rs）；命令自己退出、留下不理 SIGTERM 的子进程时
  * 退出码也要晚这么久。所以余量是宽限加管道再留几秒：过了它还没有回应，才当作工作台没有回话。
  * （Agent 自己做节点调用时用的是「超时 + 宽限 + REPLY_SLACK」，和这里的算法一样。）
+ * 宽限是 Agent 的 `--terminate-grace`（`SFLY_TERMINATE_GRACE`），能力端口不告诉调用方，这里按默认的 10 秒算：配得超过约
+ * 18 秒时，不理 SIGTERM 的命令超时之后先到的是这里的期限，模型看到的是「工作台没有回应这次命令（还连得上）」，
+ * 这一轮照常往下走。
  */
 export const REPLY_SLACK_MS = 20_000;
 /** 读、写、查文件属性的期限。 */
@@ -86,11 +89,16 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 	const replySlack = deadlines.replySlackMs ?? REPLY_SLACK_MS;
 	const fileDeadline = deadlines.fileDeadlineMs ?? FILE_DEADLINE_MS;
 	const probeDeadline = deadlines.probeDeadlineMs ?? PROBE_DEADLINE_MS;
-	const transport = createGrpcTransport({
-		baseUrl: `http://${address}`,
+	// 自己管这条 HTTP/2 连接：用完的客户端（助手服务探一次工作台、一轮开头写 skill）要能关掉它，不然它空闲 15 分钟
+	// 才关、其间每 15 秒 ping 一次。
+	const connection = new Http2SessionManager(`http://${address}`, {
 		pingIntervalMs: deadlines.pingIntervalMs ?? PING_INTERVAL_MS,
 		pingTimeoutMs: deadlines.pingTimeoutMs ?? PING_TIMEOUT_MS,
 		pingIdleConnection: true,
+	});
+	const transport = createGrpcTransport({
+		baseUrl: `http://${address}`,
+		sessionManager: connection,
 	});
 	const exec = createClient(AgentExec, transport);
 	const read = createClient(AgentFileRead, transport);
@@ -151,6 +159,8 @@ export function connectAgent(address: string, deadlines: AgentDeadlines = {}) {
 	return {
 		describe: () => peer.describe({}, { signal: AbortSignal.timeout(probeDeadline) }),
 		reachable,
+		/** 关掉这条连接（连同上面还开着的调用）。用完就丢的客户端用它。 */
+		close: () => connection.abort(),
 
 		/** 执行一条命令（argv 不经 shell），返回退出码；超时抛 TimeoutError，调用方放弃时抛 "aborted"。 */
 		async run(argv: string[], options: ExecOptions): Promise<number> {
