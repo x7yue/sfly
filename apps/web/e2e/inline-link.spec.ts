@@ -1,6 +1,9 @@
 import { fileURLToPath } from "node:url";
 import type { Locator } from "@playwright/test";
+import { IDS, seedRemovedKindScenario } from "../../server/test/support/removed-kind-scenario.js";
+import { createEditorScenario, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
+import { openMonitor, runningScenario } from "./monitor-scenario";
 import {
 	createFeishuBot,
 	createScenario,
@@ -148,5 +151,63 @@ test.describe("开发文档", () => {
 		for (const name of ["安装 Agent", "节点包管理", "Python 文档"]) {
 			await expectInlineLink(article.getByRole("link", { name }), { dimmerAround: false });
 		}
+	});
+});
+
+test.describe("昵称弹窗", () => {
+	test.use({ nickname: null });
+
+	test("「已有账号，去登录」是行内链接的样式", async ({ page }) => {
+		await page.goto("/");
+		const dialog = page.getByRole("dialog", { name: "欢迎使用 sfly" });
+		await expectInlineLink(dialog.getByRole("link", { name: "已有账号，去登录" }), {
+			dimmerAround: false,
+		});
+	});
+});
+
+test("检查器的警告框：「前往」是行内链接的样式（黄色警告框里文字和周围不同色）", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	await nodeCard(page, "sub_entry").click();
+	await inspector(page).getByRole("textbox", { name: "子流程名称" }).fill("");
+	const warning = inspector(page).getByRole("listitem").filter({ hasText: "没有填写名称" });
+	await expectInlineLink(warning.getByRole("button", { name: "前往" }));
+});
+
+test("检查器的错误框：「前往」是行内链接的样式（红色错误框里文字和周围不同色）", async ({
+	page,
+	controlPlane,
+}) => {
+	await seedRemovedKindScenario(controlPlane);
+	await openEditor(page, IDS.scenario, "notify");
+	await nodeCard(page, "notify").click();
+	// 保存被拦下：字段错误出现在检查器里，带「前往」。
+	await page.keyboard.press("Control+s");
+	const error = inspector(page).getByRole("listitem").filter({ hasText: "已不再支持，不能保存" });
+	await expectInlineLink(error.getByRole("button", { name: "前往" }));
+});
+
+test("运行监控底部面板：输入输出里的产物引用是行内链接的样式", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const probe = tasks.probe as NonNullable<typeof tasks.probe>;
+	await agent.succeed(probe, {
+		report: `http://127.0.0.1:9/tasks/${probe.taskId}/artifacts/report.html`,
+	});
+	await openMonitor(page, clock, runId, "probe");
+	await page
+		.getByRole("region", { name: "底部面板" })
+		.getByRole("tab", { name: "输入输出" })
+		.click();
+	await expectInlineLink(page.getByRole("link", { name: /artifacts\/report\.html/ }), {
+		dimmerAround: false,
 	});
 });
