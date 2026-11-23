@@ -67,6 +67,47 @@ export function inspectorNodeType(
 }
 
 /**
+ * 检查跳过时（开发版本节点派发到的 Agent 的声明查不到：离线、没加载、几台内容不同），节点上已经填了、而参数表单那份节点类型里
+ * 没有的输入：这些输入在参数页上没有字段，也不在「没有声明」里（检查没做），要列成中性的一行（说明声明查不到、没有检查）、
+ * 可以移除，不然它们完全看不到、也删不掉。已发布的版本、检查做了的开发版本没有这回事，返回空。
+ * `form` 是 null（找不到这个节点类型）或 undefined（没有 Agent 加载它）时，节点上填的每个输入都算。
+ */
+export function uncheckedInputs(
+	doc: Pick<StoredOrchestrationDocument, "packages">,
+	node: { package: string; inputs: Record<string, unknown> },
+	types: { checked: NodeTypeIo | null | undefined; form: NodeTypeIo | null | undefined },
+): string[] {
+	if (doc.packages[node.package] !== DEV_VERSION || types.checked !== undefined) return [];
+	const shown = types.form?.inputs.properties ?? {};
+	return Object.keys(node.inputs).filter((name) => !Object.hasOwn(shown, name));
+}
+
+/**
+ * 引用补全和「复制输出引用」用的节点类型目录：检查用的目录（{@link usePackageCatalog}）里有的用它；开发版本的包检查跳过时，
+ * 目录里没有它，补全就列不出上游节点的输出，所以用表单那份（{@link formNodeTypes}，尽力而为：节点派发到的 Agent 上报的、
+ * 找不到再取别的 Agent 的）补上。补全不拦东西，只是列出可以引用的输出，检查用的目录不受影响（警告和控制面一致）。
+ */
+export function completionCatalog(
+	doc: StoredOrchestrationDocument,
+	catalog: PackageCatalog,
+	agents: readonly AgentView[],
+): PackageCatalog {
+	const reports = devReports(agents);
+	let filled: Map<string, readonly NodeTypeIo[] | null> | undefined;
+	for (const node of doc.nodes) {
+		if (node.kind !== "package" || doc.packages[node.package] !== DEV_VERSION) continue;
+		const key = packageKey(node.package, DEV_VERSION);
+		if (catalog.get(key)) continue;
+		const type = formNodeTypes(doc, node, reports)?.find((n) => n.name === node.node);
+		if (!type) continue;
+		filled ??= new Map(catalog);
+		const have = filled.get(key) ?? [];
+		if (!have.some((n) => n.name === type.name)) filled.set(key, [...have, type]);
+	}
+	return filled ?? catalog;
+}
+
+/**
  * 场景锁定的节点包版本的元信息，用来生成参数表单、引用补全和静态检查（与控制面同一套规则）。
  * 还在加载的版本不在目录里，相关检查暂时跳过；开发版本（dev）按节点派发到的 Agent 上报的元信息取
  * （`@sfly/orchestration` 的 `devNodeTypes`，控制面用的是同一个函数：派发目标都在线、都加载了、内容相同才用），

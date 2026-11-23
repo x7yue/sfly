@@ -54,6 +54,7 @@ export function PackageParams({
 	node,
 	type,
 	undeclared,
+	unchecked,
 	choices,
 	problemsOf,
 	defaultAgent,
@@ -70,6 +71,11 @@ export function PackageParams({
 	 * 对不齐时是空的，不会让人删掉目标 Agent 其实声明了的输入）。
 	 */
 	undeclared: readonly string[];
+	/**
+	 * 检查被跳过时（开发版本节点派发到的 Agent 的声明查不到），节点上写了、表单那份节点类型里没有的输入：没有字段可显示，
+	 * 也不在 `undeclared` 里（检查没做），列成中性的一行，可以移除（值保留着，保存不会丢）。
+	 */
+	unchecked: readonly string[];
 	choices: ReferenceChoice[];
 	problemsOf: ProblemsOf;
 	defaultAgent: string | undefined;
@@ -109,6 +115,17 @@ export function PackageParams({
 					help={schemaDescription(schema)}
 					onChange={(v) => set(name, v)}
 				/>
+			))}
+			{unchecked.map((name) => (
+				<div key={name} className="mb-3 flex items-center gap-2 text-xs text-fg-3">
+					<span className="min-w-0 flex-1">
+						输入 <code className="font-mono">{name}</code>：节点派发到的 Agent
+						的声明查不到，没有检查
+					</span>
+					<Button size="sm" variant="ghost" onClick={() => set(name, undefined)}>
+						移除
+					</Button>
+				</div>
 			))}
 			{undeclared.map((name) => (
 				<div key={name} className="mb-3 flex items-center gap-2 text-xs text-warn-fg">

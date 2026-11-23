@@ -112,11 +112,13 @@ export function devNodeTypes(
 /**
  * 参数表单用的开发版本节点类型（尽力而为，不是检查用的）：检查跳过时表单也得有字段可以填，不能一直显示「加载中」。
  * 优先取这个节点自己派发到的 Agent 上报的（在线与否都用），其次是在线的 Agent 里第一台加载了这个包的，再其次是
- * 加载过的第一台；都没有时是 undefined（没有 Agent 加载它，表单没有字段可生成）。
+ * 加载过的第一台。**上报的内容里没有这个节点类型（例如目标上次加载的源码里还没有这个新节点）时接着找下一台**，
+ * 别的 Agent 上有就用它的；所有合法的上报里都没有时，返回第一份合法的上报（调用方据此知道「找不到这个节点类型」，
+ * 和「还在加载」分开）；没有 Agent 加载它、或者上报的内容都不合法时是 undefined。
  */
 export function formNodeTypes(
 	doc: Pick<StoredOrchestrationDocument, "default_agent">,
-	node: DispatchNode & { package: string },
+	node: DispatchNode & { package: string; node: string },
 	agents: readonly AgentDevReport[],
 ): readonly NodeTypeIo[] | undefined {
 	const target = dispatchAgentOf(doc, node);
@@ -126,11 +128,14 @@ export function formNodeTypes(
 		...loaders.filter((agent) => agent.name !== target && agent.online),
 		...loaders.filter((agent) => agent.name !== target && !agent.online),
 	];
+	let firstValid: readonly NodeTypeIo[] | undefined;
 	for (const agent of ordered) {
 		const nodes = reportedNodeTypes(agent.devPackages.get(node.package));
-		if (nodes) return nodes;
+		if (!nodes) continue;
+		if (nodes.some((n) => n.name === node.node)) return nodes;
+		firstValid ??= nodes;
 	}
-	return undefined;
+	return firstValid;
 }
 
 /**

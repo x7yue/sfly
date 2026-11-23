@@ -11,19 +11,22 @@ import { createScenario } from "./support";
 const HOST = { type: "string" };
 const EXTRA = { type: "string" };
 
-/** 开发包 tuner-dev 的节点类型 tune：旧源码只有 host，新源码多了 extra。 */
-const metadata = (properties: Record<string, unknown>) =>
+/** 开发包 tuner-dev 的节点类型（默认 tune）：旧源码只有 host，新源码多了 extra；`outputs` 是声明的输出。 */
+const metadata = (
+	properties: Record<string, unknown>,
+	{ node = "tune", outputs = {} }: { node?: string; outputs?: Record<string, unknown> } = {},
+) =>
 	JSON.stringify({
 		name: "tuner-dev",
 		version: "dev",
 		requires_python: ">=3.10",
 		nodes: [
 			{
-				name: "tune",
+				name: node,
 				title: "调参",
-				entry: "tuner_dev:tune",
+				entry: `tuner_dev:${node}`,
 				inputs: { type: "object", properties, required: ["host"], order: Object.keys(properties) },
-				outputs: { type: "object", properties: {} },
+				outputs: { type: "object", properties: outputs },
 			},
 		],
 	});
@@ -72,14 +75,26 @@ async function openNode(page: Page, id: string) {
 	return panel;
 }
 
-/** 检查器的参数页：没有「没有声明」的提示和「移除」，节点卡片上没有警告，表单也没有停在「加载中」。 */
-async function expectNoUndeclaredNotes(page: Page, panel: ReturnType<typeof inspector>) {
+/**
+ * 检查器的参数页：没有「没有声明」的警告，节点卡片上没有警告，表单也没有停在「加载中」。
+ * `unchecked`：检查跳过、表单那份里没有的输入，列成中性的「没有检查」行（每行一个「移除」）；默认没有。
+ */
+async function expectNoUndeclaredNotes(
+	page: Page,
+	panel: ReturnType<typeof inspector>,
+	unchecked: string[] = [],
+) {
 	await expect(panel.locator("label", { hasText: "host" })).toBeVisible();
 	await expect(panel.getByText("加载中")).toHaveCount(0);
 	await expect(panel.getByText("没有在节点类型中声明")).toHaveCount(0);
-	await expect(panel.getByRole("button", { name: "移除" })).toHaveCount(0);
+	for (const name of unchecked) await expect(uncheckedRow(panel, name)).toBeVisible();
+	await expect(panel.getByRole("button", { name: "移除" })).toHaveCount(unchecked.length);
 	await expect(nodeCard(page, "t")).not.toContainText("警告");
 }
+
+/** 检查跳过时节点上填了、表单里没有的输入：参数页上中性的一行。 */
+const uncheckedRow = (panel: ReturnType<typeof inspector>, name: string) =>
+	panel.getByText(`输入 ${name}：节点派发到的 Agent 的声明查不到，没有检查`);
 
 test("节点派到离线的 agent-b（新源码声明了 extra），在线的 agent-a 是旧源码：画布没有警告，参数页没有「移除」", async ({
 	page,
@@ -124,9 +139,13 @@ test("只有离线的 agent-a 加载过（旧源码），节点派到它：画�
 	const id = await createScenario(controlPlane, "只有离线的", scenario());
 	const panel = await openNode(page, id);
 
-	// 检查跳过：没有警告、没有「移除」；表单有字段（旧源码只有 host，extra 没有表单字段，也不提示没声明）。
-	await expectNoUndeclaredNotes(page, panel);
+	// 检查跳过：没有警告、不说「没有声明」；表单有字段（旧源码只有 host，extra 没有表单字段）；节点上填了的 extra
+	// 不能看不见：列成中性的一行（声明查不到，没有检查），可以移除。
+	await expectNoUndeclaredNotes(page, panel, ["extra"]);
 	await expect(panel.locator("label", { hasText: "extra" })).toHaveCount(0);
+	await panel.getByRole("button", { name: "移除" }).click();
+	await expect(uncheckedRow(panel, "extra")).toHaveCount(0);
+	await expect(nodeCard(page, "t")).not.toContainText("警告");
 });
 
 test("对照：节点派到的在线 agent-a 确实没有声明 extra：警告、「移除」都在，说明写明是哪台 Agent", async ({
@@ -150,4 +169,125 @@ test("对照：节点派到的在线 agent-a 确实没有声明 extra：警告�
 	await panel.getByRole("button", { name: "移除" }).click();
 	await expect(panel.getByText("输入 extra 没有在节点类型中声明")).toHaveCount(0);
 	await expect(nodeCard(page, "t")).not.toContainText("警告");
+});
+
+test("目标（离线）上次加载的源码里还没有这个节点类型，别的 agent 上有：表单用别的 agent 的，不停在「找不到这个节点类型的元信息」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	// agent-b（节点派到它）上次加载的源码里只有 other；在线的 agent-a 上有 tune（新源码，多了 extra）。
+	await connectAgent({ name: "agent-a", devPackages: loaded(NEW) });
+	const b = await connectAgent({
+		name: "agent-b",
+		devPackages: loaded(metadata({ host: HOST }, { node: "other" })),
+	});
+	await b.disconnect();
+	await offline(controlPlane, "agent-b");
+	const id = await createScenario(controlPlane, "目标没有这个节点", scenario("agent-b"));
+	const panel = await openNode(page, id);
+
+	await expect(panel.getByText("找不到这个节点类型的元信息")).toHaveCount(0);
+	await expect(panel.locator("label", { hasText: "host" })).toBeVisible();
+	await expect(panel.locator("label", { hasText: "extra" })).toBeVisible();
+	await expect(nodeCard(page, "t")).not.toContainText("警告");
+});
+
+/** 两个节点：t 派到 agent-b（离线，声明了输出 out），u 派到在线的 agent-a（旧源码，没有输出）；内容不同，检查整包跳过。 */
+const withOutput = (): { scenario: Record<string, unknown>; agentA: string; agentB: string } => ({
+	scenario: {
+		default_agent: "agent-a",
+		nodes: [
+			{ id: "entry", kind: "entry", position: { x: 0, y: 0 } },
+			{
+				id: "t",
+				kind: "package",
+				package: "tuner-dev",
+				node: "tune",
+				position: { x: 300, y: 0 },
+				inputs: { host: "h" },
+				agent: "agent-b",
+			},
+			{
+				id: "u",
+				kind: "package",
+				package: "tuner-dev",
+				node: "tune",
+				position: { x: 600, y: 0 },
+				inputs: { host: "h" },
+				agent: "agent-a",
+			},
+		],
+		edges: [
+			{ from: "entry", to: "t", kind: "chain" },
+			{ from: "t", to: "u", kind: "chain" },
+		],
+		packages: { "tuner-dev": "dev" },
+	},
+	agentA: metadata({ host: HOST }),
+	agentB: metadata({ host: HOST }, { outputs: { out: { type: "string" } } }),
+});
+
+test("检查跳过的开发版本包：引用补全列得出上游节点的输出，「复制输出引用」也列得出（不拦东西，用表单那份）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const fixture = withOutput();
+	await connectAgent({ name: "agent-a", devPackages: loaded(fixture.agentA) });
+	const b = await connectAgent({ name: "agent-b", devPackages: loaded(fixture.agentB) });
+	await b.disconnect();
+	await offline(controlPlane, "agent-b");
+	const id = await createScenario(controlPlane, "补全", fixture.scenario);
+	await openEditor(page, id, "t");
+
+	// 节点 u 的输入里输入 $：补全里有 t 的输出 out。
+	await nodeCard(page, "u").click();
+	const panel = inspector(page);
+	await panel.getByRole("tab", { name: "参数" }).click();
+	const host = panel.getByRole("combobox", { name: "输入 host" });
+	await host.click();
+	await page.keyboard.press("End");
+	await page.keyboard.type("$");
+	const list = page.getByRole("listbox", { name: "可引用的值" });
+	await expect(list.getByRole("option").filter({ hasText: "nodes.t.outputs.out" })).toBeVisible();
+	await page.keyboard.press("Escape");
+
+	// t 的节点菜单：「复制输出引用」列出 out。
+	await nodeCard(page, "t").click({ button: "right" });
+	const menu = page.getByRole("menu").first();
+	await expect(menu).toBeVisible();
+	await expect(menu.getByRole("menuitem", { name: /复制输出引用/ })).toBeEnabled();
+	await menu.getByRole("menuitem", { name: /复制输出引用/ }).click();
+	await expect(page.getByRole("menu", { name: "复制输出引用" }).getByRole("menuitem")).toHaveText([
+		"out",
+	]);
+});
+
+test("保存之后马上刷新 Agent 列表：编辑器打开之后 agent-b 才上线并加载了新源码，保存后不用等下一轮轮询（十秒），参数页就取到它的声明", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a", devPackages: loaded(OLD) });
+	// agent-b 先加载旧源码再离线：编辑器打开时它是离线的、声明里没有 extra。
+	const before = await connectAgent({ name: "agent-b", devPackages: loaded(OLD) });
+	await before.disconnect();
+	await offline(controlPlane, "agent-b");
+	const id = await createScenario(controlPlane, "保存刷新", scenario("agent-b"));
+	const panel = await openNode(page, id);
+	await expect(panel.locator("label", { hasText: "extra" })).toHaveCount(0);
+	await expect(uncheckedRow(panel, "extra")).toBeVisible();
+
+	// agent-b 上线、加载了新源码（编辑器的 Agent 列表要等下一轮轮询，这里不等）。
+	await connectAgent({ name: "agent-b", devPackages: loaded(NEW) });
+	// 改一个输入、保存：保存成功后刷新一次 Agent 列表，agent-b 的新声明马上取到，extra 有了表单字段，「没有检查」的行没了。
+	const host = panel.getByRole("combobox", { name: "输入 host" });
+	await host.click();
+	await page.keyboard.press("End");
+	await page.keyboard.type("1");
+	await page.keyboard.press("Control+s");
+	await expect(page.getByText("已保存为版本 2")).toBeVisible();
+	await expect(panel.locator("label", { hasText: "extra" })).toBeVisible({ timeout: 5_000 });
+	await expect(uncheckedRow(panel, "extra")).toHaveCount(0);
 });

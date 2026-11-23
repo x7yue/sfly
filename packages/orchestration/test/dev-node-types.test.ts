@@ -230,8 +230,10 @@ describe("formNodeTypes：参数表单用的尽力而为的类型（不是检查
 			edges: [],
 			packages: {},
 		});
-		expect(formNodeTypes(d, { package: "tuner", agent: "agent-b" }, agents)).toEqual(NEW);
-		expect(formNodeTypes(d, { package: "tuner" }, agents)).toEqual(OLD);
+		expect(formNodeTypes(d, { package: "tuner", node: "tune", agent: "agent-b" }, agents)).toEqual(
+			NEW,
+		);
+		expect(formNodeTypes(d, { package: "tuner", node: "tune" }, agents)).toEqual(OLD);
 	});
 
 	it("目标没有加载时：在线的第一台，再其次是加载过的第一台；都没有是 undefined", () => {
@@ -243,20 +245,81 @@ describe("formNodeTypes：参数表单用的尽力而为的类型（不是检查
 		});
 		const target = report("agent-a", true);
 		expect(
-			formNodeTypes(d, { package: "tuner" }, [
+			formNodeTypes(d, { package: "tuner", node: "tune" }, [
 				target,
 				report("agent-b", false, { tuner: OLD }),
 				report("agent-c", true, { tuner: NEW }),
 			]),
 		).toEqual(NEW);
 		expect(
-			formNodeTypes(d, { package: "tuner" }, [target, report("agent-b", false, { tuner: OLD })]),
+			formNodeTypes(d, { package: "tuner", node: "tune" }, [
+				target,
+				report("agent-b", false, { tuner: OLD }),
+			]),
 		).toEqual(OLD);
-		expect(formNodeTypes(d, { package: "tuner" }, [target])).toBeUndefined();
+		expect(formNodeTypes(d, { package: "tuner", node: "tune" }, [target])).toBeUndefined();
 		// 目标上报的不合法：退到下一台。
 		const bad = report("agent-a", true, { tuner: "坏了" });
 		expect(
-			formNodeTypes(d, { package: "tuner" }, [bad, report("agent-c", true, { tuner: NEW })]),
+			formNodeTypes(d, { package: "tuner", node: "tune" }, [
+				bad,
+				report("agent-c", true, { tuner: NEW }),
+			]),
 		).toEqual(NEW);
+	});
+
+	it("目标的上报合法、但里面没有这个节点类型（上次加载的源码里还没有这个新节点）：接着找下一台，别的 Agent 上有就用它的", () => {
+		const d = OrchestrationDocument.parse({
+			default_agent: "agent-a",
+			nodes: [],
+			edges: [],
+			packages: {},
+		});
+		const other = [{ name: "other", inputs: io({ x: { type: "string" } }), outputs: io({}) }];
+		const node = { package: "tuner", node: "tune", agent: "agent-b" };
+		// 目标 agent-b（离线）上次加载的源码里只有 other；在线的 agent-a 上有 tune。
+		expect(
+			formNodeTypes(d, node, [
+				report("agent-a", true, { tuner: NEW }),
+				report("agent-b", false, { tuner: other }),
+			]),
+		).toEqual(NEW);
+		// 目标在线、上报合法但没有这个节点类型：同样接着找，离线的也找。
+		expect(
+			formNodeTypes(d, node, [
+				report("agent-b", true, { tuner: other }),
+				report("agent-c", false, { tuner: OLD }),
+			]),
+		).toEqual(OLD);
+		// 目标上报里有，就用目标的，不去看别人的。
+		expect(
+			formNodeTypes(d, node, [
+				report("agent-a", true, { tuner: OLD }),
+				report("agent-b", false, { tuner: NEW }),
+			]),
+		).toEqual(NEW);
+	});
+
+	it("所有合法的上报里都没有这个节点类型：返回第一份合法的上报（「找不到这个节点类型」和「还在加载」分得开）；上报都不合法是 undefined", () => {
+		const d = OrchestrationDocument.parse({
+			default_agent: "agent-a",
+			nodes: [],
+			edges: [],
+			packages: {},
+		});
+		const other = [{ name: "other", inputs: io({}), outputs: io({}) }];
+		const node = { package: "tuner", node: "tune" };
+		expect(
+			formNodeTypes(d, node, [
+				report("agent-a", true, { tuner: other }),
+				report("agent-b", true, { tuner: [{ name: "third", inputs: io({}), outputs: io({}) }] }),
+			]),
+		).toEqual(other);
+		expect(
+			formNodeTypes(d, node, [
+				report("agent-a", true, { tuner: "坏了" }),
+				report("agent-b", true, { tuner: 3 }),
+			]),
+		).toBeUndefined();
 	});
 });

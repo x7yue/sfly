@@ -40,7 +40,7 @@ import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { inspectorNodeType } from "../catalog";
+import { completionCatalog, inspectorNodeType, uncheckedInputs } from "../catalog";
 import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError } from "../validation";
@@ -247,7 +247,11 @@ function NodeInspector({
 	const types =
 		node.kind === "package" ? inspectorNodeType(doc, node, catalog, context.agents) : undefined;
 	const type = types?.form;
-	const choices = useMemo(() => referenceChoices(doc, id, catalog), [doc, id, catalog]);
+	// 引用补全不拦东西：开发版本检查跳过时，用参数表单那份补上，上游节点的输出也列得出来。
+	const choices = useMemo(
+		() => referenceChoices(doc, id, completionCatalog(doc, catalog, context.agents)),
+		[doc, id, catalog, context.agents],
+	);
 	const warnings = context.warnings.filter((w) => w.node_id === id);
 	const fieldErrors = context.shownFieldErrors.filter((e) => e.nodeId === id);
 	const problemsOf = (input: string) =>
@@ -370,6 +374,7 @@ function NodeInspector({
 							node={node}
 							type={type}
 							undeclared={types?.checked ? undeclaredInputs(types.checked.inputs, node.inputs) : []}
+							unchecked={types ? uncheckedInputs(doc, node, types) : []}
 							choices={choices}
 							problemsOf={problemsOf}
 							defaultAgent={doc.default_agent}
