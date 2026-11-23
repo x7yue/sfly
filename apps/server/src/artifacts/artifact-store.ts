@@ -260,7 +260,11 @@ export class ArtifactStore {
 				body,
 				async function* (source: AsyncIterable<Buffer>) {
 					// 每读一块之前起一个计时器：idleMs 毫秒还没有数据就以空闲超时结束；写盘的时间不算（计时器只在等客户端发数据时开着）。
-					const iterator = source[Symbol.asyncIterator]();
+					// `source` 可以是流（异步可迭代），也可以是 Fastify 的文本解析器（Content-Type: text/plain）读成的字符串（同步可迭代）：
+					// 包一层异步生成器，两种都能按同一个办法一块一块读。
+					const iterator = (async function* () {
+						yield* source;
+					})();
 					let timer: NodeJS.Timeout | undefined;
 					try {
 						for (;;) {

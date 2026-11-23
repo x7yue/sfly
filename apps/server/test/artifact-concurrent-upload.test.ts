@@ -192,6 +192,21 @@ describe("同一个任务并发上传产物", () => {
 		}
 	}, 60_000);
 
+	// Content-Type 是 text/plain 时 Fastify 自带的文本解析器已经把请求体读成了字符串（不是流）：`ArtifactStore.save` 收到的是一个字符串。
+	// e2e 里用 `fetch(url, { method: "PUT", body: "<html>…" })` 上传就是这样（undici 给字符串请求体加 text/plain）。
+	it("请求体被解析成字符串（Content-Type: text/plain）也能存", async () => {
+		const { task } = await setup();
+
+		const res = await cp.fetch(`/tasks/${task.taskId}/artifacts/report.html`, {
+			method: "PUT",
+			body: "<html>report</html>",
+		});
+
+		expect(res.status).toBe(201);
+		const downloaded = await (await cp.fetch(`/tasks/${task.taskId}/artifacts/report.html`)).text();
+		expect(downloaded).toBe("<html>report</html>");
+	}, 60_000);
+
 	it("中途断开的上传不占额度，也不占着别人的位置：断开之后同一个任务的下一份照常存", async () => {
 		const { task } = await setup();
 		// 声明 800 字节，只发 600 就断开。
