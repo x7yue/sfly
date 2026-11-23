@@ -346,12 +346,12 @@ for (const viewport of VIEWPORTS) {
 			const box = await rectOf(dialog);
 			expect(box.x, size).toBeGreaterThanOrEqual(0);
 			expect(box.x + box.width, size).toBeLessThanOrEqual(viewport.width);
-			// 窗口宽到放得下四列（1100px 起）时排四列：1440×900 整个面板放得下。
+			// 窗口宽到 1100px 起排四列、1300px 起排五列：1440×900 五列、整个面板放得下（四列还差 43px）；1280×800 四列、放不下。
 			const columns = await dialog
 				.locator("dl")
 				.first()
 				.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-			expect(columns, `${size}：列数`).toBe(4);
+			expect(columns, `${size}：列数`).toBe(viewport.width >= 1300 ? 5 : 4);
 			// 刚打开时（还没滚过）：放得下就没有滚动；放不下时底边渐隐、提示还能往下滚，不让一行被滚动区的底边从文字中间切开。
 			const area = dialog.locator("div.overflow-y-auto");
 			const overflow = await area.evaluate((el) => el.scrollHeight - el.clientHeight);

@@ -353,7 +353,7 @@ test("命令面板", async ({ page, controlPlane }) => {
 });
 
 test("快捷键面板", async ({ page }) => {
-	// 1440×900（默认的视口）：宽到排四列，整个面板放得下、不需要滚动。
+	// 1440×900（默认的视口）：宽到排五列，整个面板放得下、不需要滚动。
 	await page.goto("/agents");
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 	await page.keyboard.press("?");
