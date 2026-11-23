@@ -110,7 +110,8 @@ export function ShortcutsDialog({
 }) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="w-[740px]">
+			{/* 宽度跟着内容走（至少 740px）：名称不折行，最宽的一行（名称加按键）放得下。 */}
+			<DialogContent className="w-fit min-w-[740px]">
 				<DialogHeader>
 					<DialogTitle>快捷键</DialogTitle>
 				</DialogHeader>
@@ -121,13 +122,13 @@ export function ShortcutsDialog({
 						return (
 							<section key={group} aria-label={group}>
 								<h4 className="mt-1 mb-1 text-xs font-semibold text-fg-3">{group}</h4>
-								<dl className="m-0 grid grid-cols-3 gap-x-6">
+								<dl className="m-0 grid grid-cols-[repeat(3,minmax(max-content,1fr))] gap-x-6">
 									{items.map((s) => (
 										<div
 											key={s.id}
 											className="flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm"
 										>
-											<dt className="min-w-0">{s.label}</dt>
+											<dt className="whitespace-nowrap">{s.label}</dt>
 											<dd className="m-0 flex-none">
 												<Keys shortcut={s.id} />
 											</dd>

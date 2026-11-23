@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import {
 	AgentUpdateState,
 	type AssignedTask,
@@ -353,10 +353,18 @@ test("命令面板", async ({ page, controlPlane }) => {
 });
 
 test("快捷键面板", async ({ page }) => {
+	// 够高，整个面板放得下、不需要滚动：基线里没有被滚动区的底边切在文字中间的一行。
+	await page.setViewportSize({ width: 1440, height: 1100 });
 	await page.goto("/agents");
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 	await page.keyboard.press("?");
-	await expect(page.getByRole("dialog", { name: "快捷键" })).toBeVisible();
+	const dialog = page.getByRole("dialog", { name: "快捷键" });
+	await expect(dialog).toBeVisible();
+	await expect
+		.poll(() =>
+			dialog.locator("div.overflow-y-auto").evaluate((el) => el.scrollHeight - el.clientHeight),
+		)
+		.toBeLessThanOrEqual(0);
 	await expect(page).toHaveScreenshot("shortcuts.png");
 });
 
@@ -710,15 +718,49 @@ async function chartsLoaded(page: Page) {
 	await expect(ws.getByText("加载中")).toHaveCount(0);
 }
 
-/** 运行 ID 是随机的：截图时遮住显示运行编号与子流程实例编号的地方。 */
-const runIds = (page: Page) => [
-	// 弹窗打开时页面其余部分对辅助技术隐藏，这里用 CSS 选择器而不是 role。
-	page.locator('button[aria-label^="切换运行"]'),
-	page.locator('ul[aria-label="各链状态"]'),
-	page.locator('[data-chain-row] button:has-text("子流程")'),
-	page.getByRole("dialog").getByRole("heading"),
-	page.getByRole("dialog").locator("label .font-mono"),
-];
+/**
+ * 这个元素是不是被滚动区裁掉了（整个在某个祖先的可视范围之外）：遮罩画在元素原来的位置，不管它有没有被裁掉，
+ * 滚出可视范围的元素的遮罩会盖住别的东西（时间线里滚出去的子流程行，遮罩落在图表工具栏上），所以只遮看得见的。
+ */
+const clippedOut = (el: Element): boolean => {
+	const r = el.getBoundingClientRect();
+	if (r.width === 0 || r.height === 0) return true;
+	for (let p = el.parentElement; p; p = p.parentElement) {
+		const style = getComputedStyle(p);
+		if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+		const q = p.getBoundingClientRect();
+		if (r.bottom <= q.top || r.top >= q.bottom || r.right <= q.left || r.left >= q.right)
+			return true;
+	}
+	return false;
+};
+
+/** 定位到的元素里没有被裁掉的那几个（逐个判断，用在 `mask` 上）。 */
+async function shown(locator: Locator): Promise<Locator[]> {
+	const result: Locator[] = [];
+	for (const item of await locator.all()) {
+		if (!(await item.evaluate(clippedOut))) result.push(item);
+	}
+	return result;
+}
+
+/** 失败的节点出错之前写的一行 WARN（概览的「其他警告与错误」里留下的那一行）。 */
+const WARN_LINE = "重试间隔偏长，已放宽到 5s";
+
+/** 运行 ID 是随机的：截图时遮住显示运行编号与子流程实例编号的地方（只遮看得见的，见 {@link clippedOut}）。 */
+const runIds = async (page: Page): Promise<Locator[]> =>
+	(
+		await Promise.all(
+			[
+				// 弹窗打开时页面其余部分对辅助技术隐藏，这里用 CSS 选择器而不是 role。
+				page.locator('button[aria-label^="切换运行"]'),
+				page.locator('ul[aria-label="各链状态"]'),
+				page.locator('[data-chain-row] button:has-text("子流程")'),
+				page.getByRole("dialog").getByRole("heading"),
+				page.getByRole("dialog").locator("label .font-mono"),
+			].map(shown),
+		)
+	).flat();
 
 test("运行监控：运行中（时间线、选中节点的日志）", async ({
 	page,
@@ -731,7 +773,7 @@ test("运行监控：运行中（时间线、选中节点的日志）", async ({
 	await expect(page.getByRole("log", { name: "日志" })).toContainText("batch committed");
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870); // 不停在时间线上，避免截到悬停竖线
-	await expect(page).toHaveScreenshot("monitor-running.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-running.png", { mask: await runIds(page) });
 });
 
 test("运行监控：失败的运行（尝试页签）", async ({ page, controlPlane, connectAgent, clock }) => {
@@ -746,7 +788,7 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await expect(page.getByRole("article", { name: "verify 第 2 次尝试" })).toBeVisible();
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
-	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: await runIds(page) });
 });
 
 test("运行监控：详情的「动作」页签（正在做的按层级缩进、最近 20 个）", async ({
@@ -761,7 +803,7 @@ test("运行监控：详情的「动作」页签（正在做的按层级缩进�
 	await expect(actionTable(page).locator('tbody[data-group="recent"]')).toBeVisible();
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
-	await expect(page).toHaveScreenshot("monitor-actions.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-actions.png", { mask: await runIds(page) });
 });
 
 test("运行监控：概览（关注项的读数和图表，没有异常）", async ({
@@ -776,7 +818,7 @@ test("运行监控：概览（关注项的读数和图表，没有异常）", as
 	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(3);
 	await page.mouse.move(20, 880);
 	await expect(page).toHaveScreenshot("monitor-overview.png", {
-		mask: [...runIds(page), page.locator("[data-chain-id]")],
+		mask: [...(await runIds(page)), page.locator("[data-chain-id]")],
 	});
 });
 
@@ -793,7 +835,7 @@ test("运行监控：概览（有异常：「需要注意」、WARN 的读数、
 	await expect(page.locator("[data-stale-gap]")).toHaveCount(1);
 	await page.mouse.move(20, 880);
 	await expect(page).toHaveScreenshot("monitor-overview-attention.png", {
-		mask: [...runIds(page), page.locator("[data-chain-id]")],
+		mask: [...(await runIds(page)), page.locator("[data-chain-id]")],
 	});
 });
 
@@ -809,16 +851,24 @@ for (const viewport of [
 		connectAgent,
 		clock,
 	}) => {
-		const { runId } = await failedRun(controlPlane, connectAgent, clock);
+		// 失败的节点在出错之前写了一行 WARN：「其他警告与错误」里只剩它（失败区域写了的 ERROR 和出错位置不再列一遍），
+		// 基线里看得到节点名一列。
+		const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+			cleanupDone: true,
+			warn: WARN_LINE,
+		});
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
 		await expect(page.getByTestId("failure-area")).toBeVisible();
+		await expect(
+			page.getByRole("region", { name: "其他警告与错误" }).getByRole("button"),
+		).toHaveCount(1);
 		// 运行已经结束：读数不再刷新，顶栏不写「数据更新于」；失败区域已经写着失败，顶栏也不重复摘要。
 		await expect(page.getByTestId("focus-freshness")).toHaveCount(0);
 		await expect(page.getByRole("banner").getByTestId("run-failure")).toHaveCount(0);
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-${viewport.width}.png`, {
-			mask: runIds(page),
+			mask: await runIds(page),
 		});
 	});
 
@@ -828,14 +878,20 @@ for (const viewport of [
 		connectAgent,
 		clock,
 	}) => {
-		const { runId } = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: false });
+		const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+			cleanupDone: false,
+			warn: WARN_LINE,
+		});
 		await page.setViewportSize(viewport);
 		await openFailedOverview(page, clock, runId);
 		await expect(page.getByTestId("failure-area")).toBeVisible();
 		await expect(page.getByTestId("focus-freshness")).toBeVisible();
+		await expect(
+			page.getByRole("region", { name: "其他警告与错误" }).getByRole("button"),
+		).toHaveCount(1);
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-failed-running-${viewport.width}.png`, {
-			mask: runIds(page),
+			mask: await runIds(page),
 		});
 	});
 
@@ -851,7 +907,7 @@ for (const viewport of [
 		await expect(page.getByRole("region", { name: "图表工作区" })).toBeVisible();
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-failure-timeline-${viewport.width}.png`, {
-			mask: runIds(page),
+			mask: await runIds(page),
 		});
 	});
 }
@@ -873,7 +929,7 @@ for (const viewport of [
 		await expect(page.getByTestId("waiting-nodes")).toBeVisible();
 		await page.mouse.move(20, viewport.height - 20);
 		await expect(page).toHaveScreenshot(`monitor-overview-queued-offline-${viewport.width}.png`, {
-			mask: runIds(page),
+			mask: await runIds(page),
 		});
 	});
 }
@@ -890,7 +946,7 @@ test("运行监控：概览（节点在排队，Agent 在线但槽位占满，�
 	await page.mouse.move(20, 880);
 	await expect(page).toHaveScreenshot("monitor-overview-queued-slots.png", {
 		// 占着槽位的任务写着运行编号（随机的）：和别处的运行编号一样遮住。
-		mask: [...runIds(page), page.getByTestId("queue-wait-holders").getByRole("link")],
+		mask: [...(await runIds(page)), page.getByTestId("queue-wait-holders").getByRole("link")],
 	});
 });
 
@@ -905,7 +961,7 @@ test("运行监控：详情（选中排队中的节点，尝试卡片写明在�
 	await expect(page.getByRole("article", { name: "准备环境（a） 第 1 次尝试" })).toBeVisible();
 	await expect(page.getByRole("region", { name: "图表工作区" })).toBeVisible();
 	await page.mouse.move(20, 880);
-	await expect(page).toHaveScreenshot("monitor-queued-attempt.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-queued-attempt.png", { mask: await runIds(page) });
 });
 
 test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({
@@ -929,7 +985,7 @@ test("运行监控：图表工作区（小型运行，全部展开，悬停联�
 	if (!box) throw new Error("没有绘图区");
 	await page.mouse.move(box.x + box.width * (4.5 / 8), box.y + box.height / 2);
 	await expect(page.locator("[data-hover-reading]").first()).toBeVisible();
-	await expect(page).toHaveScreenshot("monitor-charts.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-charts.png", { mask: await runIds(page) });
 });
 
 test("运行监控：多序列图表（超过 10 个序列时置灰的图例、悬停提示）", async ({
@@ -975,7 +1031,7 @@ test("运行监控：多序列图表（超过 10 个序列时置灰的图例、�
 	if (!box) throw new Error("没有绘图区");
 	await page.mouse.move(box.x + box.width * (6.5 / 9), box.y + box.height / 2);
 	await expect(page.locator("[data-hover-values]")).toBeVisible();
-	await expect(page).toHaveScreenshot("monitor-charts-series.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-charts-series.png", { mask: await runIds(page) });
 });
 
 test("运行监控：图表工作区（大型运行，定位到失败的组）", async ({
@@ -992,7 +1048,7 @@ test("运行监控：图表工作区（大型运行，定位到失败的组）",
 	await chartsLoaded(page);
 	await expect(failed.getByRole("figure", { name: "level", exact: true })).toContainText("8");
 	await page.mouse.move(700, 870);
-	await expect(page).toHaveScreenshot("monitor-charts-large.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-charts-large.png", { mask: await runIds(page) });
 });
 
 test("运行监控：取消确认弹窗", async ({ page, controlPlane, connectAgent, clock }) => {
@@ -1001,7 +1057,7 @@ test("运行监控：取消确认弹窗", async ({ page, controlPlane, connectAg
 	await chartsLoaded(page);
 	await page.getByRole("banner").getByRole("button", { name: "取消运行" }).click();
 	await expect(page.getByRole("dialog", { name: /取消运行/ })).toBeVisible();
-	await expect(page).toHaveScreenshot("monitor-cancel.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-cancel.png", { mask: await runIds(page) });
 });
 
 test("命令面板：运行监控页的「当前页面」", async ({ page, controlPlane, connectAgent, clock }) => {
@@ -1019,7 +1075,7 @@ test("命令面板：运行监控页的「当前页面」", async ({ page, contr
 	await expect(palette.getByRole("group", { name: "运行", exact: true })).toBeVisible();
 	await expect(page).toHaveScreenshot("command-palette-monitor.png", {
 		mask: [
-			...runIds(page),
+			...(await runIds(page)),
 			palette.getByRole("group", { name: "运行", exact: true }).locator(".font-mono"),
 		],
 	});
@@ -1669,7 +1725,7 @@ test("运行监控：子流程被停止（停止子流程节点的尝试）", as
 	await expect(page.getByRole("article", { name: "stop 第 1 次尝试" })).toBeVisible();
 	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("成功");
 	await page.mouse.move(700, 870);
-	await expect(page).toHaveScreenshot("monitor-stopped.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-stopped.png", { mask: await runIds(page) });
 });
 
 test("运行监控：显示名称与备注图标（名称放不下时截断显示名称，节点 ID 完整）", async ({
@@ -1688,7 +1744,7 @@ test("运行监控：显示名称与备注图标（名称放不下时截断显�
 	await expect(page.getByRole("article", { name: /第 2 次尝试$/ })).toBeVisible();
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
-	await expect(page).toHaveScreenshot("monitor-display-names.png", { mask: runIds(page) });
+	await expect(page).toHaveScreenshot("monitor-display-names.png", { mask: await runIds(page) });
 });
 
 test("编排画布：运行状态（子流程被停止）", async ({ page, controlPlane, connectAgent, clock }) => {

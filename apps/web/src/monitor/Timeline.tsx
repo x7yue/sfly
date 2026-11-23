@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionLegend, ActionTracks } from "./ActionTracks";
 import type { PreparedTracks, TrackView } from "./action-tracks";
+import { TIMELINE_BODY_MAX, TIMELINE_BODY_MAX_PX } from "./detail-layout";
 import { useMonitor, useMonitorActions, useScope, useTimeAxis } from "./monitor-state";
 import { type NodeRef, nodeKey, sameNode } from "./node-ref";
 import {
@@ -61,10 +62,6 @@ const LABEL_W = "var(--label-w)";
 const BRUSH_MIN = 0.004;
 /** 拖选范围小于轨道宽度的这个比例时不缩放。 */
 const ZOOM_MIN = 0.01;
-/** 时间线主体最高的高度（px）：默认的上限，拖动调高也不超过它。 */
-const TIMELINE_MAX_PX = 420;
-/** 主体默认最高占视口的约 22%（至少 120px、最多 420px），图表和底部面板总有地方；行不多时按内容的高度，行多了在里面滚动。 */
-const BODY_MAX_HEIGHT = `clamp(120px, 22dvh, ${TIMELINE_MAX_PX}px)`;
 
 /** 区段种类对应的状态（docs/DESIGN-SYSTEM.md §6.1）。执行中的段不用实心青（只有段尾的脉冲头是实心）：长时间的运行里最大的几块不能全是饱和青。 */
 const SEGMENT_STATUS: Record<SegmentKind, StatusKind> = {
@@ -110,9 +107,15 @@ const spanOf = (segments: Segment[]) =>
 export function Timeline({
 	run,
 	doc,
+	bodyMax,
 }: {
 	run: RunView;
 	doc: StoredOrchestrationDocument | undefined;
+	/**
+	 * 窗口矮时主体最高的高度（px，`detail-layout.ts` 的 `timelineBodyMax`）：默认的上限是视口的 30%，窗口矮的时候再受这个限制，
+	 * 图表和底部面板的位置才留得出来；还没量到详情的高度时不给，窗口高时它比 30% 大，不起作用。
+	 */
+	bodyMax?: number;
 }) {
 	const { range, extent, live, following, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
@@ -346,7 +349,11 @@ export function Timeline({
 				)}
 				style={
 					height === null
-						? { maxHeight: `min(${contentHeight + 2}px, ${BODY_MAX_HEIGHT})` }
+						? {
+								maxHeight: `min(${contentHeight + 2}px, ${TIMELINE_BODY_MAX}${
+									bodyMax === undefined ? "" : `, ${bodyMax}px`
+								})`,
+							}
 						: { height }
 				}
 			>
@@ -380,7 +387,7 @@ export function Timeline({
 					size={height}
 					measure={() => body.current?.clientHeight ?? 0}
 					min={56}
-					max={() => Math.min(window.innerHeight * 0.62, TIMELINE_MAX_PX)}
+					max={() => Math.min(window.innerHeight * 0.62, TIMELINE_BODY_MAX_PX)}
 					onResize={setHeight}
 					onReset={() => setHeight(null)}
 				/>

@@ -10,6 +10,7 @@ import { apiQuery } from "#/lib/api";
 import { DURATION_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { formatDuration, shortId } from "#/lib/format";
+import { useElementHeight } from "#/lib/use-element-height";
 import { useNow } from "#/lib/use-now";
 import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import { Truncate } from "@/components/ui/truncate";
 import { BottomPanel } from "./BottomPanel";
 import { CHARTS_MIN_HEIGHT, CHARTS_RESERVED_HEIGHT, ChartWorkspace } from "./ChartWorkspace";
 import { chartsCompact } from "./chart-groups";
+import { timelineBodyMax } from "./detail-layout";
 import { useLiveRun } from "./live-run";
 import { MonitorTopBar } from "./MonitorTopBar";
 import { openedScope } from "./monitor-scope";
@@ -205,12 +207,22 @@ function DetailView({
 		CHARTS_MIN_HEIGHT,
 		Math.min(CHARTS_RESERVED_HEIGHT, chartsContent),
 	);
+	// 详情的可用高度（失败横幅以下，时间线、图表工作区、底部面板共用）：窗口矮的时候时间线主体最高是剩下的高度，
+	// 图表和底部面板的位置才留得出来（`timelineBodyMax`）；窗口高时它比视口的 30% 大，不起作用。
+	const [rootRef, rootHeight] = useElementHeight<HTMLDivElement>();
+	const [bannerRef, bannerHeight] = useElementHeight<HTMLDivElement>();
+	const bodyMax =
+		rootHeight === 0 ? undefined : timelineBodyMax(rootHeight - bannerHeight, chartsReserved);
 	useEscapeClearsSelection();
 	useNextFailureShortcut(run);
 	return (
-		<>
-			{failureBanner && <FailureBanner run={run} onClose={onCloseBanner} />}
-			<Timeline run={run} doc={doc} />
+		<div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+			{failureBanner && (
+				<div ref={bannerRef}>
+					<FailureBanner run={run} onClose={onCloseBanner} />
+				</div>
+			)}
+			<Timeline run={run} doc={doc} {...(bodyMax === undefined ? {} : { bodyMax })} />
 			{/* 时间线下面的高度由图表工作区和底部面板分：底部面板最高到这里减去图表要留的高度，图表不被压扁、面板不被挤出窗口。 */}
 			<div className="flex min-h-0 flex-1 flex-col">
 				<ChartWorkspace
@@ -222,7 +234,7 @@ function DetailView({
 				/>
 				<BottomPanel run={run} doc={doc} chartsReserved={chartsReserved} />
 			</div>
-		</>
+		</div>
 	);
 }
 

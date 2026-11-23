@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { ERROR_LOCATION_LABEL } from "@sfly/schema";
 import {
 	type AssignedTask,
 	ErrorKind,
@@ -143,9 +144,17 @@ export async function failedRun(
 	}
 	const failed = await agent.nextAssign();
 	expect(failed.nodeId).toBe(FAILED_NODE);
+	const location = options.location ?? FAILURE_LOCATION;
+	// 和真的执行器一样：节点出错时先写一行 ERROR「出错位置：…」（有位置时），再写异常（堆栈）本身；它不是失败原因全文的一部分。
+	const errorLines = [
+		...(location === "" ? [] : [`${ERROR_LOCATION_LABEL}：${location}`]),
+		"成功率 97.2% 低于阈值 99%",
+	];
 	agent.logs(failed, [
 		...(options.warn ? [logLine(clock, 1, options.warn, LogLevel.WARN)] : []),
-		logLine(clock, options.warn ? 2 : 1, "成功率 97.2% 低于阈值 99%", LogLevel.ERROR),
+		...errorLines.map((text, i) =>
+			logLine(clock, (options.warn ? 2 : 1) + i, text, LogLevel.ERROR),
+		),
 	]);
 	clock.advance(5000);
 	await agent.fail(
@@ -153,7 +162,7 @@ export async function failedRun(
 		options.message ?? FAILURE_MESSAGE,
 		ErrorKind.NODE_ERROR,
 		undefined,
-		options.location ?? FAILURE_LOCATION,
+		location,
 	);
 	const cleanup = await agent.nextAssign();
 	if (options.cleanupDone) {

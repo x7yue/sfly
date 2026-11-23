@@ -162,10 +162,10 @@ test("1280×800：版面分成几段，首屏就能看到动作表；收起时�
 	const table = actionTable(page);
 	await expect(table.getByRole("columnheader", { name: "开始" })).toBeInViewport();
 	await expect(table.locator("tr[data-action-id]").first()).toBeInViewport();
-	// 时间线主体最高是视口的 22%（800 的 22% 是 176px），刻度吸在主体顶端。
+	// 时间线主体最高是视口的 30%（800 的 30% 是 240px），刻度吸在主体顶端。
 	await expect
 		.poll(async () => (await timelineBody(page).boundingBox())?.height)
-		.toBeLessThanOrEqual(176);
+		.toBeLessThanOrEqual(240);
 
 	const bp = panel(page);
 	const bottom = async () => {
@@ -193,8 +193,7 @@ test("1280×800：版面分成几段，首屏就能看到动作表；收起时�
 		"aria-expanded",
 		"false",
 	);
-	// 让出的就是时间线主体（最高 176px）。
-	await expect.poll(below).toBeGreaterThan(belowBefore + 150);
+	await expect.poll(below).toBeGreaterThan(belowBefore + 200);
 	await expect.poll(bottom).toBeLessThanOrEqual(800);
 	await timeline(page).getByRole("button", { name: "展开时间线" }).click();
 	await expect(nodeRow(page, "verify")).toBeInViewport({ ratio: 1 });

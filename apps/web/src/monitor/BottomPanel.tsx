@@ -48,6 +48,7 @@ import { Truncate } from "@/components/ui/truncate";
 import { ActionsTab } from "./ActionsTab";
 import { attemptAgentTimes } from "./attempt-clock";
 import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
+import { PANEL_FLOOR } from "./detail-layout";
 import { Hint } from "./Hint";
 import { LogList, type LogPaging, type LogReveal } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
@@ -98,10 +99,10 @@ const levelsFrom = (min: MinLevel): LogLineView["level"][] =>
 	min === "all" ? [] : LOG_LEVELS.slice(LOG_LEVELS.indexOf(min));
 
 /**
- * 默认高度：监控页（窗口减去顶栏）高度的 28%，限制在 160–320px，矮窗口里给图表工作区留出空间。
+ * 默认高度：监控页（窗口减去顶栏）高度的 28%，限制在 190–320px（`PANEL_FLOOR`），矮窗口里给图表工作区留出空间。
  * 拖动调整后用拖动的高度。
  */
-const DEFAULT_HEIGHT = `clamp(160px, calc((100dvh - ${MONITOR_TOPBAR_HEIGHT}px) * 0.28), 320px)`;
+const DEFAULT_HEIGHT = `clamp(${PANEL_FLOOR}px, calc((100dvh - ${MONITOR_TOPBAR_HEIGHT}px) * 0.28), 320px)`;
 const COLLAPSED_HEIGHT = 37;
 
 const ERROR_KIND_LABEL: Record<string, string> = {

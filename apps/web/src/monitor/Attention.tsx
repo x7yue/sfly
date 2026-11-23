@@ -8,7 +8,7 @@ import {
 } from "@sfly/schema";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { anomalyText, readingValue, sourceNodeName } from "#/focus/focus-format";
-import { FOCUS, LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
+import { ERROR_LOCATION_LABEL, FOCUS, LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
 import { formatClock, formatClockMs, formatElapsed } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -147,19 +147,20 @@ function inAttention(focus: RunFocus | undefined, line: RunLogLine): boolean {
 }
 
 /**
- * 这一行是不是失败区域已经写了的那条错误：失败的那次尝试自己的 ERROR 日志，正文是失败原因的全文里的一段
- * （节点出错时执行器把异常写成 ERROR 日志，再把同一个异常作为失败原因上报）。失败区域写了的，这里不再列一遍。
+ * 这一行是不是失败区域已经写了的那条错误：失败的那次尝试自己的 ERROR 日志，两种：正文是失败原因的全文里的一段
+ * （节点出错时执行器把异常写成 ERROR 日志，再把同一个异常作为失败原因上报），或者执行器在堆栈之前写的一行
+ * 「出错位置：<位置>」（它不在失败原因的全文里，失败区域把同一个位置写在失败原因下面）。失败区域写了的，这里不再列一遍。
  */
 function inFailureArea(failures: readonly RunFailure[], line: RunLogLine): boolean {
-	return (
-		line.level === "error" &&
-		failures.some(
-			(f) =>
-				f.ref.chainInstanceId === line.chain_instance_id &&
-				f.ref.nodeId === line.node_id &&
-				f.attempt === line.attempt &&
-				f.detail.includes(line.text.trim()),
-		)
+	if (line.level !== "error") return false;
+	const text = line.text.trim();
+	return failures.some(
+		(f) =>
+			f.ref.chainInstanceId === line.chain_instance_id &&
+			f.ref.nodeId === line.node_id &&
+			f.attempt === line.attempt &&
+			(f.detail.includes(text) ||
+				(f.location !== null && text === `${ERROR_LOCATION_LABEL}：${f.location}`)),
 	);
 }
 

@@ -5,6 +5,7 @@ import {
 	FAILED_NAME,
 	FAILED_NODE,
 	FAILURE_HEADLINE,
+	FAILURE_LOCATION,
 	failedRun,
 	openFailedOverview,
 } from "./monitor-failure-scenario";
@@ -21,10 +22,12 @@ const VIEWPORTS = [
 
 /** 图表工作区预留的高度（`CHARTS_RESERVED_HEIGHT`）：1280×800 带失败横幅时图表区至少有这么高。 */
 const CHARTS_RESERVED = 300;
-/** 底部面板的默认高度下限（`DEFAULT_HEIGHT` 的 clamp 下限）：窗口矮时面板让出高度，也不低于它。 */
-const PANEL_DEFAULT_MIN = 160;
+/** 底部面板的下限（`PANEL_FLOOR`）：窗口矮时面板让出高度，也不低于它。 */
+const PANEL_DEFAULT_MIN = 190;
 /** 能看清曲线的图表高度：一张图表的绘图区（136px）至少露出这么多。 */
 const VISIBLE_FIGURE = 120;
+/** 时间线标题行的高度（`TIMELINE_HEADER_HEIGHT`）：时间线区域的高度减去它就是主体的高度。 */
+const TIMELINE_HEADER = 40;
 
 const header = (page: Page) => page.getByRole("banner");
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
@@ -37,7 +40,7 @@ for (const viewport of VIEWPORTS) {
 	test.describe(size, () => {
 		test.use({ viewport });
 
-		test("详情的竖直分配：失败横幅一行高，图表工作区至少 300px、图表露出能看清曲线的高度，面板不低于 160px，都在窗口里", async ({
+		test("详情的竖直分配：失败横幅一行高，图表工作区至少 300px、图表露出能看清曲线的高度，面板不低于 190px，时间线只在窗口矮时让，都在窗口里", async ({
 			page,
 			controlPlane,
 			connectAgent,
@@ -71,8 +74,29 @@ for (const viewport of VIEWPORTS) {
 			const visible =
 				Math.min(plot.y + plot.height, charts.y + charts.height) - Math.max(plot.y, charts.y);
 			expect(visible, note).toBeGreaterThanOrEqual(VISIBLE_FIGURE);
-			// 底部面板不低于默认高度的下限（日志和尝试够用）。
+			// 底部面板不低于下限（日志、尝试和动作表的第一行够用）。
 			expect(logs.height, note).toBeGreaterThanOrEqual(PANEL_DEFAULT_MIN);
+			// 时间线主体：窗口高（900）时上限是视口的 30%，这个运行的 8 行放得下（主体按内容的高度，没有滚动，也不低于 30%
+			// 以下很多）；窗口矮（800）时才受剩下的高度限制——窗口减顶栏、横幅、时间线标题行、图表预留的 300px 和面板的
+			// 190px 之后剩下的（175px）。矮窗口里时间线正好是这个高度，不挤掉面板和图表。
+			const body = line.height - TIMELINE_HEADER;
+			if (viewport.height >= 900) {
+				expect(body, note).toBeLessThanOrEqual(viewport.height * 0.3 + 3);
+				const scrolls = await page
+					.locator("#timeline-body")
+					.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+				expect(scrolls, `${note}：时间线主体要滚动（8 行没有放下）`).toBe(false);
+			} else {
+				const left =
+					viewport.height -
+					bar.height -
+					banner.height -
+					TIMELINE_HEADER -
+					CHARTS_RESERVED -
+					PANEL_DEFAULT_MIN;
+				expect(body, note).toBeGreaterThanOrEqual(left - 3);
+				expect(body, note).toBeLessThanOrEqual(left + 3);
+			}
 			// 各区域首尾相接、正好排满窗口：没有溢出窗口，也没有空白。
 			expect(Math.abs(logs.y + logs.height - viewport.height), note).toBeLessThanOrEqual(1);
 			expect(
@@ -94,10 +118,15 @@ for (const viewport of VIEWPORTS) {
 			await openFailedOverview(page, clock, runId);
 			const others = page.getByRole("region", { name: "其他警告与错误" });
 			const rows = others.getByRole("button");
-			// 失败节点自己的 ERROR 日志就是失败区域里的那条错误：这里只剩那一行 WARN。
+			// 失败节点自己的 ERROR 日志就是失败区域里的那条错误：这里只剩那一行 WARN。真的执行器还会在堆栈之前写一行 ERROR
+			// 「出错位置：…」（场景里也写了），它不在失败原因的全文里，失败区域把同一个位置写在失败原因下面：也不再列一遍。
 			await expect(rows).toHaveCount(1);
 			await expect(rows.first()).toContainText("重试间隔偏长，已放宽到 5s");
 			await expect(others).not.toContainText("成功率 97.2% 低于阈值 99%");
+			await expect(others).not.toContainText("出错位置");
+			await expect(page.getByTestId("failure-location")).toHaveText(
+				`出错位置：${FAILURE_LOCATION}`,
+			);
 			// 失败区域里仍写着这条错误。
 			await expect(page.getByTestId("failure-reason")).toHaveText(FAILURE_HEADLINE);
 			// 节点名（「显示名称（节点 ID）」）整个看得见。
@@ -264,33 +293,70 @@ for (const viewport of VIEWPORTS) {
 			).toBe(false);
 		});
 
-		test("快捷键面板：每一行的名称和按键之间至少隔 12px", async ({ page }) => {
+		test("快捷键面板：每一行的名称不折行、和按键之间至少隔 12px，每一行一样高；滚到底最后一行完整露出", async ({
+			page,
+		}) => {
 			await page.goto("/");
 			await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 			await page.keyboard.press("?");
 			const dialog = page.getByRole("dialog", { name: "快捷键" });
 			await expect(dialog).toBeVisible();
 			const rows = dialog.locator("dl > div");
-			const gaps = await rows.evaluateAll((items) =>
+			const measured = await rows.evaluateAll((items) =>
 				items.map((row) => {
 					const label = row.querySelector("dt");
 					const keys = row.querySelector("dd");
 					if (!label || !keys) throw new Error("这一行没有名称或按键");
 					const range = document.createRange();
 					range.selectNodeContents(label);
+					const box = row.getBoundingClientRect();
 					return {
 						text: label.textContent ?? "",
+						// 名称占几行（折行的名称有不止一个矩形）。
+						lines: range.getClientRects().length,
+						height: Math.round(box.height * 10) / 10,
 						gap:
 							Math.round(
 								(keys.getBoundingClientRect().left - range.getBoundingClientRect().right) * 10,
 							) / 10,
+						// 按键伸出这一行（压到下一列）。
+						overflow: Math.round((keys.getBoundingClientRect().right - box.right) * 10) / 10,
 					};
 				}),
 			);
-			const tight = gaps.filter((g) => g.gap < 12);
-			expect(tight, `${size}：名称和按键靠得太近的行`).toEqual([]);
+			expect(
+				measured.filter((m) => m.lines !== 1).map((m) => m.text),
+				`${size}：折成几行的名称`,
+			).toEqual([]);
+			// 12px 的间距（`gap-3`）；排版的亚像素误差允许 0.5px。
+			expect(
+				measured.filter((m) => m.gap < 11.5).map((m) => `${m.text}（${m.gap}px）`),
+				`${size}：名称和按键靠得太近的行`,
+			).toEqual([]);
+			expect(
+				measured.filter((m) => m.overflow > 0.5).map((m) => m.text),
+				`${size}：按键伸出这一行的行`,
+			).toEqual([]);
+			// 每一行一样高：没有哪一行因为折行比别的高。
+			const heights = new Set(measured.map((m) => m.height));
+			expect([...heights], `${size}：各行高度`).toHaveLength(1);
 			// 「删除选中的注释框」（Ctrl Shift G，按键最长的一行）也在里面。
-			expect(gaps.map((g) => g.text)).toContain("删除选中的注释框");
+			expect(measured.map((m) => m.text)).toContain("删除选中的注释框");
+			// 整个面板在窗口里（宽度跟着内容走，也不伸出窗口）。
+			const box = await rectOf(dialog);
+			expect(box.x, size).toBeGreaterThanOrEqual(0);
+			expect(box.x + box.width, size).toBeLessThanOrEqual(viewport.width);
+			// 窗口矮时面板自己滚动：滚到底，最后一行完整露出（不被滚动区的底边切在文字中间）。
+			const area = dialog.locator("div.overflow-y-auto");
+			await area.evaluate((el) => {
+				el.scrollTop = el.scrollHeight;
+			});
+			const last = await rectOf(rows.last());
+			const areaBox = await rectOf(area);
+			expect(
+				last.y + last.height,
+				`${size}：最后一行 ${JSON.stringify(last)}、滚动区 ${JSON.stringify(areaBox)}`,
+			).toBeLessThanOrEqual(areaBox.y + areaBox.height + 1);
 		});
 	});
 }
