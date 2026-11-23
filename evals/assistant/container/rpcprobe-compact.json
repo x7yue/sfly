@@ -1,0 +1,26 @@
+{
+	"说明": "544-B 第 7 题（一轮中途压缩上下文）：两条命令各输出约 60 KB（pi 截到 50 KB），第三次请求回「上下文超长」，pi 压缩上下文再重试；压缩之后回收尾的文字。",
+	"steps": [
+		{
+			"id": "big-1",
+			"tool": "bash",
+			"args": {
+				"command": "sleep 3; head -c 60000 /dev/zero | tr '\\0' a | fold -w 100",
+				"timeout": 60
+			}
+		},
+		{
+			"id": "big-2",
+			"tool": "bash",
+			"args": {
+				"command": "head -c 60000 /dev/zero | tr '\\0' b | fold -w 100",
+				"timeout": 60
+			}
+		},
+		{
+			"id": "overflow",
+			"overflow": true
+		}
+	],
+	"after_compaction": "压缩之后做完了。"
+}

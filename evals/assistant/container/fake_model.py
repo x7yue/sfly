@@ -60,6 +60,11 @@ PROBE = "AEVAL-PROBE"
 _SCRIPT = re.compile(r"AEVAL-SCRIPT:([a-z0-9-]+)")
 _FULL_OUTPUT = re.compile(r"Full output: (/[^\]\s]+)\]")
 _TOKEN = re.compile(r"AEVAL_SESSION_TOKEN=([A-Za-z0-9_-]+)")
+# 压缩上下文（544-B 的探针）：pi 请求摘要时系统提示的开头，和假的摘要里的记号（压缩之后的请求里认它）。
+SUMMARIZATION = "You are a context summarization assistant"
+COMPACTED = "AEVAL-COMPACTED"
+# 上下文超长时回的错误：pi 认得这句（pi-ai 的 overflow 规则），会压缩上下文再重试。
+OVERFLOW_MESSAGE = "This request exceeds the context window of this model"
 
 
 def toolcheck_steps(name: str = "toolcheck.json") -> list[dict[str, Any]]:
@@ -84,9 +89,19 @@ def _substitute(args: str, messages: list[dict[str, Any]]) -> str:
     return args
 
 
+def _all_text(messages: list[dict[str, Any]]) -> str:
+    return "\n".join(_text(m.get("content")) for m in messages)
+
+
 def next_reply(body: dict[str, Any], tasks_dir: Path) -> dict[str, Any]:
     """下一步：要调用的工具，或者最后的文字。"""
     messages = body.get("messages") or []
+    system = next((_text(m.get("content")) for m in messages if m.get("role") == "system"), "")
+    if system.startswith(SUMMARIZATION):
+        # pi 压缩上下文时请求摘要：摘要里带上剧本的名字（压缩之后第一条用户消息就是摘要）和记号。
+        named = _SCRIPT.search(_all_text(messages))
+        script_name = f"AEVAL-SCRIPT:{named.group(1)}" if named else ""
+        return {"text": f"{COMPACTED} 前面的对话：照剧本做。{script_name}"}
     prompt = next((_text(m.get("content")) for m in messages if m.get("role") == "user"), "")
     done = sum(1 for m in messages if m.get("role") == "tool")
     named = _SCRIPT.search(prompt)
@@ -100,13 +115,29 @@ def next_reply(body: dict[str, Any], tasks_dir: Path) -> dict[str, Any]:
         else None
     )
     if script_file:
-        steps = toolcheck_steps(script_file)
+        data = json.loads((Path(__file__).parent / script_file).read_text())
+        steps = data["steps"]
+        if COMPACTED in _all_text(messages) and "after_compaction" in data:
+            # 压缩过了：剧本按工具结果的条数走不下去了（前面的结果进了摘要），回剧本给的收尾。
+            return {"text": data["after_compaction"]}
         if done >= len(steps):
             return {"text": "完成。"}
         step = steps[done]
+        if step.get("overflow"):
+            return {"error": 400, "message": OVERFLOW_MESSAGE}
         if "text" in step:
-            # 只回一段文字（不调工具）；delay 是回复之前等几秒（探针在这时插话）。
-            return {"text": step["text"], "delay": float(step.get("delay", 0))}
+            # 只回一段文字（不调工具）；delay 是回复之前等几秒（探针在这时插话）；
+            # pieces、interval 是把文字分成几段、每段之间隔几秒地流出来（探针在输出到一半时中止）；
+            # prompt_tokens 是这次回复报的用量（探针让 pi 觉得上下文快满了）。
+            return {
+                "text": step["text"],
+                "delay": float(step.get("delay", 0)),
+                "pieces": int(step.get("pieces", 1)),
+                "interval": float(step.get("interval", 0)),
+                **(
+                    {"prompt_tokens": int(step["prompt_tokens"])} if "prompt_tokens" in step else {}
+                ),
+            }
         args = _substitute(json.dumps(step["args"], ensure_ascii=False), messages)
         return {"tool": step["tool"], "arguments": args, "call_id": f"call_{done + 1}"}
     commands = script(find_task(prompt, tasks_dir))
@@ -128,7 +159,12 @@ def chunks(reply: dict[str, Any], model: str) -> list[dict[str, Any]]:
         "created": int(time.time()),
         "model": model,
     }
-    usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
+    prompt_tokens = int(reply.get("prompt_tokens", 100))
+    usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": 10,
+        "total_tokens": prompt_tokens + 10,
+    }
     if "tool" in reply:
         call = {
             "index": 0,
@@ -139,8 +175,33 @@ def chunks(reply: dict[str, Any], model: str) -> list[dict[str, Any]]:
         delta: dict[str, Any] = {"role": "assistant", "content": None, "tool_calls": [call]}
         finish = "tool_calls"
     else:
-        delta = {"role": "assistant", "content": reply["text"]}
-        finish = "stop"
+        text = str(reply["text"])
+        pieces = max(1, int(reply.get("pieces", 1)))
+        size = -(-len(text) // pieces)
+        parts = [text[i : i + size] for i in range(0, len(text), size)] or [""]
+        first = {
+            **base,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": parts[0]},
+                    "finish_reason": None,
+                }
+            ],
+        }
+        rest = [
+            {**base, "choices": [{"index": 0, "delta": {"content": part}, "finish_reason": None}]}
+            for part in parts[1:]
+        ]
+        return [
+            first,
+            *rest,
+            {
+                **base,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "usage": usage,
+            },
+        ]
     return [
         {**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
         {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}], "usage": usage},
@@ -171,6 +232,12 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write(f"回复：{json.dumps(reply, ensure_ascii=False)}\n")
         if reply.get("delay"):
             time.sleep(float(reply["delay"]))
+        if "error" in reply:
+            self._json(
+                int(reply["error"]),
+                {"error": {"message": reply["message"], "type": "invalid_request_error"}},
+            )
+            return
         events = chunks(reply, str(body.get("model", "fake")))
         if not body.get("stream"):
             self._json(200, events[-1])
@@ -180,8 +247,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("cache-control", "no-cache")
         self.send_header("connection", "close")
         self.end_headers()
-        for event in events:
+        interval = float(reply.get("interval", 0))
+        for index, event in enumerate(events):
+            if index > 0 and interval > 0:
+                time.sleep(interval)
             self.wfile.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode())
+            self.wfile.flush()
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
         self.close_connection = True

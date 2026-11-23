@@ -960,6 +960,325 @@ def q10() -> Record:
     return result
 
 
+# ---- 544-B 先测的七题（第 11 到 17 题）----
+# 助手服务停止一轮时接连写 clear_queue 和 abort、插话设成「一次全送」、按顺序认「送到」：动手之前先在真的 pi 上看。
+
+STEER_A = "插话一：先别改测试"
+STEER_B = "插话二：顺便看一下日志"
+HANDLED_EXTENSION = str(Path(__file__).resolve().parent / "rpcprobe-handled.ts")
+
+
+def send_together(pi: RpcPi, commands: list[Record]) -> list[str]:
+    """几条命令在同一次写里写出（不等前一条的回应）：助手服务停止一轮时就是这样写的。"""
+    ids = []
+    lines = b""
+    for command in commands:
+        pi.next_id += 1
+        cid = f"probe-{pi.next_id}"
+        ids.append(cid)
+        lines += (json.dumps({"id": cid, **command}, ensure_ascii=False) + "\n").encode()
+    assert pi.proc.stdin is not None
+    pi.proc.stdin.write(lines)
+    pi.proc.stdin.flush()
+    return ids
+
+
+def response_of(pi: RpcPi, cid: str, timeout: float = 60) -> Record:
+    return pi.wait_for(lambda r: r.get("type") == "response" and r.get("id") == cid, timeout)
+
+
+def _settled(pi: RpcPi, start: int, timeout: float = 120) -> Record:
+    return pi.wait_for(lambda r: r.get("type") == "agent_settled", timeout, start=start)
+
+
+def _user_texts_sent(requests: list[list[Record]]) -> list[str]:
+    return [m["text"] for request in requests for m in request if m.get("role") == "user"]
+
+
+def _assistant_ends(pi: RpcPi, start: int = 0) -> list[Record]:
+    return [
+        {
+            "t": r["_t"],
+            "stop_reason": (r.get("message") or {}).get("stopReason"),
+            "text": _text((r.get("message") or {}).get("content"))[:300],
+        }
+        for r in pi.events()[start:]
+        if r.get("type") == "message_end" and (r.get("message") or {}).get("role") == "assistant"
+    ]
+
+
+def q11() -> Record:
+    """模型输出到一半时 abort：这一轮怎么结束，之后同一个进程再发一轮是不是照常做完、发给模型的请求是什么样。"""
+    pi = RpcPi(rpc_command("q11"))
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-midstream")})
+    pi.wait_for(
+        lambda r: (
+            r.get("type") == "message_update"
+            and (r.get("assistantMessageEvent") or {}).get("type") == "text_delta"
+        ),
+        60,
+    )
+    time.sleep(1.5)
+    mark = len(pi.events())
+    deltas = sum(
+        1
+        for r in pi.events()
+        if r.get("type") == "message_update"
+        and (r.get("assistantMessageEvent") or {}).get("type") == "text_delta"
+    )
+    sent_at = pi.now()
+    response = pi.call({"type": "abort"}, timeout=60)
+    settled = _settled(pi, mark, 60)
+    ends = _assistant_ends(pi, mark)
+    next_turn = _after_abort(pi)
+    exit_seconds = pi.close()
+    return {
+        "deltas_before_abort": deltas,
+        "abort_ok": bool(response.get("success")),
+        "abort_response_seconds": round(response["_t"] - sent_at, 3),
+        "settled_seconds": round(settled["_t"] - sent_at, 3),
+        "settled_aborted": settled.get("aborted"),
+        "aborted_message": ends[-1] if ends else None,
+        "next_turn": next_turn,
+        "exit_seconds": exit_seconds,
+    }
+
+
+def _clear_then_abort(together: bool, steers: list[str], round_no: int) -> Record:
+    """命令执行中插话（等 steer 的回应回来），然后写 clear_queue 和 abort（同一次写，或者接连两次写），
+    看插话有没有漏出去：之后发给模型的请求、会话里、同一个进程的下一轮。"""
+    pi = RpcPi(rpc_command(f"q12-{'together' if together else 'apart'}-{round_no}"))
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-abort")})
+    wait_tool_started(pi)
+    for text in steers:
+        pi.call({"type": "steer", "message": text})
+    mark = len(pi.events())
+    if together:
+        clear_id, abort_id = send_together(pi, [{"type": "clear_queue"}, {"type": "abort"}])
+    else:
+        clear_id = pi.send({"type": "clear_queue"})
+        abort_id = pi.send({"type": "abort"})
+    cleared = response_of(pi, clear_id)
+    aborted = response_of(pi, abort_id, 60)
+    _settled(pi, mark)
+    time.sleep(1)
+    during = requests_text(dumped_requests(before))
+    next_turn = _after_abort(pi)
+    pi.close()
+    return {
+        "together": together,
+        "clear_queue": cleared.get("data"),
+        "clear_before_abort": cleared["_t"] <= aborted["_t"],
+        "abort_ok": bool(aborted.get("success")),
+        "user_messages": _user_messages(pi, mark),
+        "sent_during_turn": _user_texts_sent(during),
+        "next_turn_request": next_turn["request"],
+        "next_turn_settled": next_turn["settled"],
+        "messages_after": next_turn["messages_after"],
+    }
+
+
+def q12() -> Record:
+    """abort 紧跟在 clear_queue 后面写出：没有插话漏出去（各五遍，一句和两句；同一次写和接连两次写）。"""
+    rounds = []
+    for round_no in range(5):
+        for together in (True, False):
+            steers = [STEER_A] if round_no % 2 == 0 else [STEER_A, STEER_B]
+            rounds.append(_clear_then_abort(together, steers, round_no))
+    return {"rounds": rounds}
+
+
+def _race(pre_clear: bool, round_no: int) -> Record:
+    """steer 和紧跟着的 clear_queue、abort 在同一次写里写出（steer 的回应还没回来时 clear_queue 已经写出）：
+    这句话是不是在清空之后才进队列；下一轮交 prompt 之前先 clear_queue 一次（pre_clear）时兜不兜得住。"""
+    pi = RpcPi(rpc_command(f"q13-{'pre' if pre_clear else 'bare'}-{round_no}"))
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-abort")})
+    wait_tool_started(pi)
+    mark = len(pi.events())
+    steer_id, clear_id, abort_id = send_together(
+        pi, [{"type": "steer", "message": STEER_B}, {"type": "clear_queue"}, {"type": "abort"}]
+    )
+    steer = response_of(pi, steer_id)
+    cleared = response_of(pi, clear_id)
+    aborted = response_of(pi, abort_id, 60)
+    _settled(pi, mark)
+    time.sleep(1)
+    during = requests_text(dumped_requests(before))
+    queue_after = _queue_updates(pi, mark)
+    state = pi.call({"type": "get_state"}).get("data") or {}
+    pre = pi.call({"type": "clear_queue"}).get("data") if pre_clear else None
+    next_turn = _after_abort(pi)
+    pi.close()
+    return {
+        "pre_clear": pre_clear,
+        "order": [
+            r.get("id")
+            for r in pi.events()[mark:]
+            if r.get("type") == "response" and r.get("id") in (steer_id, clear_id, abort_id)
+        ],
+        "ids": {"steer": steer_id, "clear_queue": clear_id, "abort": abort_id},
+        "steer_response": {k: steer.get(k) for k in ("success", "data", "error")},
+        "clear_queue": cleared.get("data"),
+        "abort_ok": bool(aborted.get("success")),
+        "queue_updates": queue_after,
+        "pending_after_settle": state.get("pendingMessageCount"),
+        "pre_clear_got": pre,
+        "user_messages": _user_messages(pi, mark),
+        "sent_during_turn": _user_texts_sent(during),
+        "next_turn_request": next_turn["request"],
+        "next_turn_settled": next_turn["settled"],
+    }
+
+
+def q13() -> Record:
+    """steer 的回应还没回来时 clear_queue 已经写出：各五遍，下一轮之前先 clear_queue 一次和不清。"""
+    return {"rounds": [_race(pre, n) for n in range(5) for pre in (True, False)]}
+
+
+def _two_steers(mode: str | None) -> Record:
+    """命令执行中连着发两句插话：之后的请求里它们是不是在同一次请求里、各是一条用户消息。"""
+    pi = RpcPi(rpc_command(f"q14-{mode or 'default'}"))
+    if mode is not None:
+        pi.call({"type": "set_steering_mode", "mode": mode})
+    state = pi.call({"type": "get_state"}).get("data") or {}
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-steer")})
+    wait_tool_started(pi)
+    mark = len(pi.events())
+    first = pi.call({"type": "steer", "message": STEER_A})
+    second = pi.call({"type": "steer", "message": STEER_B})
+    _settled(pi, mark)
+    sent = requests_text(dumped_requests(before))
+    pi.close()
+    return {
+        "mode": mode,
+        "steering_mode": state.get("steeringMode"),
+        "steer_responses": [
+            {k: r.get(k) for k in ("success", "data", "error")} for r in (first, second)
+        ],
+        "queue_updates": _queue_updates(pi, mark),
+        "user_messages": _user_messages(pi, mark),
+        "requests": sent,
+    }
+
+
+def q14() -> Record:
+    """插话设成「一次全送」（set_steering_mode all）时连着发的两句是不是一次送完；对照 pi 的默认模式。"""
+    return {"all": _two_steers("all"), "default": _two_steers(None)}
+
+
+def q15() -> Record:
+    """两句连发（一次全送）：是不是各一条用户消息；两句文字相同时也是。"""
+    result = {"different": _two_steers("all")}
+    pi = RpcPi(rpc_command("q15-same"))
+    pi.call({"type": "set_steering_mode", "mode": "all"})
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-steer")})
+    wait_tool_started(pi)
+    mark = len(pi.events())
+    pi.call({"type": "steer", "message": STEER_A})
+    pi.call({"type": "steer", "message": STEER_A})
+    _settled(pi, mark)
+    result["same"] = {
+        "user_messages": _user_messages(pi, mark),
+        "requests": requests_text(dumped_requests(before)),
+    }
+    pi.close()
+    return result
+
+
+def q16() -> Record:
+    """steer 的回应里 disposition 的实际取值：普通的一句（queued），被扩展的输入处理器吃掉的一句（handled）。"""
+    pi = RpcPi(rpc_command("q16", add=("-e", HANDLED_EXTENSION)))
+    before = dump_count()
+    pi.call({"type": "prompt", "message": script_prompt("rpcprobe-steer")})
+    wait_tool_started(pi)
+    mark = len(pi.events())
+    handled = pi.call({"type": "steer", "message": "AEVAL-HANDLE 这句被扩展处理掉"})
+    queued = pi.call({"type": "steer", "message": STEER_B})
+    _settled(pi, mark)
+    sent = requests_text(dumped_requests(before))
+    # 没有一轮在做时的 steer（助手服务不会这样发，记下来对照）。
+    idle = pi.call({"type": "steer", "message": "空闲时的插话"})
+    pi.close()
+    return {
+        "handled": {k: handled.get(k) for k in ("success", "data", "error")},
+        "queued": {k: queued.get(k) for k in ("success", "data", "error")},
+        "idle": {k: idle.get(k) for k in ("success", "data", "error")},
+        "queue_updates": _queue_updates(pi, mark),
+        "user_messages": _user_messages(pi, mark),
+        "sent": _user_texts_sent(sent),
+    }
+
+
+def _compaction_turn(script: str, steer_when: str) -> Record:
+    """一轮里压缩上下文：这一轮出现的每条用户消息（message_end，role=user）和压缩的事件，按先后。"""
+    pi = RpcPi(rpc_command(f"q17-{script}"))
+    pi.call({"type": "set_steering_mode", "mode": "all"})
+    before = dump_count()
+    prompt = script_prompt(script)
+    pi.call({"type": "prompt", "message": prompt})
+    if steer_when == "tool":
+        wait_tool_started(pi)
+    else:
+        # 第三次请求（两条命令之后，那一步回复之前等 3 秒）
+        pi.wait_for(
+            lambda r: (
+                r.get("type") == "tool_execution_end"
+                and sum(1 for x in pi.events() if x.get("type") == "tool_execution_end") >= 2
+            ),
+            60,
+        )
+        time.sleep(1)
+    pi.call({"type": "steer", "message": STEER_B})
+    _settled(pi, 0, 180)
+    kinds = (
+        "message_end",
+        "compaction_start",
+        "compaction_end",
+        "auto_retry_start",
+        "agent_settled",
+    )
+    timeline = []
+    for r in pi.events():
+        if r.get("type") not in kinds:
+            continue
+        item: Record = {"type": r.get("type")}
+        if r.get("type") == "message_end":
+            message = r.get("message") or {}
+            item["role"] = message.get("role")
+            item["text"] = _text(message.get("content"))[:120]
+            item["stop_reason"] = message.get("stopReason")
+        elif r.get("type") == "compaction_end":
+            item["reason"] = r.get("reason")
+            item["will_retry"] = r.get("willRetry")
+            item["error"] = r.get("errorMessage")
+            item["aborted"] = r.get("aborted")
+        timeline.append(item)
+    sent = requests_text(dumped_requests(before))
+    messages = _messages(pi)
+    pi.close()
+    return {
+        "prompt": prompt,
+        "steer": STEER_B,
+        "timeline": timeline,
+        "requests": sent,
+        "messages": messages,
+    }
+
+
+def q17() -> Record:
+    """一轮里除了这一轮的 prompt，pi 产生的 role=user 的消息是不是都是插话：没有压缩、中途因为上下文超长压缩
+    （压缩之后重试）、这一轮收尾时到了阈值压缩。"""
+    return {
+        "plain": _compaction_turn("rpcprobe-steer", "tool"),
+        "overflow": _compaction_turn("rpcprobe-compact", "tool"),
+        "threshold": _compaction_turn("rpcprobe-threshold", "reply"),
+    }
+
+
 QUESTIONS: dict[str, Callable[[], Record]] = {
     "q1": q1,
     "q2": q2,
@@ -971,6 +1290,13 @@ QUESTIONS: dict[str, Callable[[], Record]] = {
     "q8": q8,
     "q9": q9,
     "q10": q10,
+    "q11": q11,
+    "q12": q12,
+    "q13": q13,
+    "q14": q14,
+    "q15": q15,
+    "q16": q16,
+    "q17": q17,
 }
 
 
