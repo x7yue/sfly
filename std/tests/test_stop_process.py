@@ -15,10 +15,12 @@ from pathlib import Path
 
 import psutil
 import pytest
+from direct_context import DirectRun
 
 from sfly.testing import Execution, run_node
+from sfly_std import processes
 from sfly_std.start_process import start_process
-from sfly_std.stop_process import stop_process
+from sfly_std.stop_process import StopFailed, stop_process
 
 
 def alive(pid: int) -> bool:
@@ -151,3 +153,27 @@ def test_an_unknown_or_missing_pid_succeeds_without_an_exit_code(tmp_path: Path)
 
         assert result.status == "success", result.error
         assert result.outputs == {"was_running": False, "exit_code": None}
+
+
+def test_a_process_that_survives_sigkill_fails_with_the_error_type_of_the_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SIGKILL 之后进程仍然没有退出（真的卡在不可中断的磁盘读写里没法在测试里造出来）：节点失败信息里
+    # 的错误类型名是 `sfly_std.stop_process.StopFailed`，和 0.3.0 一致；辅助函数的异常换成节点模块
+    # 里的同名子类，用户在运行监控页看到、按类型名处理的写法不变。
+    refused = processes.StopFailed("发送 SIGKILL 后 5 秒，进程 123 仍未退出：[123]")
+
+    def stuck(ctx: object, pid: int | None, *, grace: float) -> None:
+        raise refused
+
+    monkeypatch.setattr("sfly_std.stop_process.stop_background_process", stuck)
+
+    with pytest.raises(StopFailed) as caught:
+        stop_process(DirectRun(tmp_path).ctx, pid=123, grace=1)
+
+    error = caught.value
+    assert (
+        f"{type(error).__module__}.{type(error).__qualname__}" == "sfly_std.stop_process.StopFailed"
+    )
+    assert isinstance(error, processes.StopFailed)
+    assert error.args == refused.args
