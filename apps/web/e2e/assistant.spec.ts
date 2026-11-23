@@ -1115,6 +1115,80 @@ test("接着说：发送失败时焦点在输入框里，写好的话还在，�
 	await expect(page.getByRole("button", { name: "发送" })).toBeEnabled();
 });
 
+// 发送的请求还在路上时（控制面先写 user_message、turn_started，再等助手服务接住这一轮：事件比响应先到），焦点在输入框里，
+// 用户可以接着写；请求成功时只去掉发出去的那一句，这时写的字留着；请求失败时两段都在。
+const IN_FLIGHT_WAYS = {
+	"点「发送」": (page: Page) => page.getByRole("button", { name: "发送" }).click(),
+	"Ctrl/⌘+Enter": (page: Page) => composer(page).press("ControlOrMeta+Enter"),
+};
+
+async function openInFlight(page: Page, outcome: "ok" | "fail") {
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const posts: unknown[] = [];
+	await openIdleSession(page, async (route) => {
+		posts.push(route.request().postDataJSON());
+		await gate;
+		if (outcome === "ok") await fulfillJson(route, 200, { seq: 4 });
+		else await apiError(route, 503, "assistant_unavailable", "助手服务连不上");
+	});
+	return { posts, release };
+}
+
+for (const [way, send] of Object.entries(IN_FLIGHT_WAYS)) {
+	test(`接着说：${way}发出之后请求还在路上，用户接着写的字在请求成功时不被清掉；途中再按 Ctrl/⌘+Enter 不会重复发`, async ({
+		page,
+	}) => {
+		const { posts, release } = await openInFlight(page, "ok");
+		await composer(page).fill("第一句");
+		await send(page);
+		await expect.poll(() => posts.length).toBe(1);
+		await expect(composer(page)).toBeFocused();
+		await pushEvent(page, userMessage(4, "第一句"));
+		await pushEvent(page, { ...turnStarted(5), turn: 2 });
+		await expect(page.getByTestId("session-status")).toHaveText("在做");
+		await page.keyboard.type("，再补一句");
+		await page.keyboard.press("ControlOrMeta+Enter");
+		// biome-ignore lint/plugin/e2e-fixed-wait: 确认一件事没有发生（途中再按没有发出第二个请求），没有可以等的信号
+		await page.waitForTimeout(300);
+		expect(posts).toHaveLength(1);
+		release();
+		await expect(page.getByRole("button", { name: "正在发送…" })).toHaveCount(0);
+		// 发出去的「第一句」去掉了，请求在路上时写的留着。
+		await expect(composer(page)).toHaveValue("，再补一句");
+		expect(posts).toEqual([{ text: "第一句" }]);
+	});
+}
+
+test("接着说：请求在路上时接着写了字，请求失败：发出去的话和接着写的字都在，写明原因", async ({
+	page,
+}) => {
+	const { posts, release } = await openInFlight(page, "fail");
+	await composer(page).fill("第一句");
+	await page.getByRole("button", { name: "发送" }).click();
+	await expect.poll(() => posts.length).toBe(1);
+	await page.keyboard.type("，再补一句");
+	release();
+	await expect(page.getByRole("alert").filter({ hasText: "助手服务连不上" })).toBeVisible();
+	await expect(composer(page)).toHaveValue("第一句，再补一句");
+	await expect(composer(page)).toBeFocused();
+});
+
+test("助手页：「开始」失败时焦点在输入框里，写好的话还在，写明原因", async ({ page }) => {
+	await stubSessionList(page, READY, [], async (route) => {
+		await apiError(route, 503, "assistant_unavailable", "助手服务连不上");
+	});
+	await page.goto("/sessions");
+	await assistantInput(page).fill("要做的事");
+	await page.getByRole("button", { name: "开始" }).click();
+	await expect(page.getByRole("alert").filter({ hasText: "助手服务连不上" })).toBeVisible();
+	await expect(assistantInput(page)).toHaveValue("要做的事");
+	await expect(assistantInput(page)).toBeFocused();
+	await expect(page.getByRole("button", { name: "开始" })).toBeEnabled();
+});
+
 test("输入法选字时的 Ctrl/⌘+Enter 不发送（isComposing，或 Safari 在组字结束那次按键上 isComposing 已经是 false 的 keyCode 229）：会话页和助手页", async ({
 	page,
 	controlPlane,

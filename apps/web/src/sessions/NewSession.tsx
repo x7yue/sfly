@@ -7,7 +7,7 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { ApiError, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
@@ -47,8 +47,13 @@ export function NewSession({
 	const reason = cannotStartReason(readiness);
 	const empty = text.trim() === "";
 	const busy = busySession(sessions);
+	const field = useRef<HTMLTextAreaElement>(null);
 	const start = () => {
-		if (reason === null && !empty && !create.isPending) create.mutate(text);
+		if (reason !== null || empty || create.isPending) return;
+		// 开始的这一刻就把焦点交给输入框：「开始」随即不可用，浏览器会让被禁用的按钮失去焦点、落到 body 上
+		// （和会话页的「发送」一样）；失败时焦点在输入框、写好的话还在。成功后跳到会话页，输入框随之没有。
+		field.current?.focus();
+		create.mutate(text);
 	};
 	return (
 		<form
@@ -60,6 +65,7 @@ export function NewSession({
 			}}
 		>
 			<Textarea
+				ref={field}
 				aria-label={SESSION.input.label}
 				aria-describedby={reason === null ? undefined : reasonId}
 				placeholder={SESSION.input.placeholder}

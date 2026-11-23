@@ -135,8 +135,12 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const send = useMutation({
 		mutationFn: (message: string) =>
 			callApi(sessionsApi.message, { params: { id }, body: { text: message } }),
-		onSuccess: () => {
-			setText("");
+		onSuccess: (_session, message) => {
+			// 只去掉发出去的那一句：请求在路上时输入框还能写（焦点就在里面），这时接着写的字不能一起清掉。输入框里开头已经
+			// 不是发出去的那一句（用户改过它）时不动：宁可留着，也不删用户的字。
+			setText((current) =>
+				current.startsWith(message) ? current.slice(message.length).trimStart() : current,
+			);
 			void client.invalidateQueries({ queryKey: domainKey(sessionsApi.list) });
 		},
 	});
