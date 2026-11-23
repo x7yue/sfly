@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sfly_agent::proto::{ErrorKind, TaskStatus};
-use support::{AgentOptions, FakeControlPlane, assert_quiet_termination, spawn_agent, stub_task};
+use support::{
+    AgentOptions, FakeControlPlane, assert_quiet_termination, capture_stderr, spawn_agent,
+    stub_task, wait_until,
+};
 
 fn alive(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -129,6 +132,61 @@ async fn cleaning_up_two_services_that_ignore_sigterm_finishes_within_the_grace_
     let pids = pids(&pid_file);
     assert_eq!(pids.len(), 2);
     assert_all_gone(&pids).await;
+}
+
+#[tokio::test]
+async fn a_cancel_marker_that_cannot_be_written_does_not_stop_the_timeout_from_terminating_the_process_tree()
+ {
+    // 写取消标记失败（路径上已经有一个叫 `cancel` 的目录，EISDIR）：Agent 只在标准错误里写一行，
+    // 照常终止进程树，任务仍然以超时失败；不 panic，也不因为标记写不出来就不终止。
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-timeout-marker-fails");
+    options.pipe_stderr = true;
+    let mut agent = spawn_agent(options);
+    let stderr = capture_stderr(&mut agent);
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pids");
+
+    let mut task = stub_task(
+        "task-marker-fails",
+        "process_tree",
+        json!({ "pid_file": pid_file, "seconds": 60, "block_cancel_marker": true }),
+    );
+    // 给节点留够建目录、写 PID 的时间：超时来得太早的话标记写得进去，下面「写失败」那一行就没有，测试会红。
+    task.timeout_seconds = 3;
+    let started = Instant::now();
+    cp.assign(task).await;
+
+    let (result, _) = cp.result("task-marker-fails").await;
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    assert_eq!(result.error.expect("error").kind(), ErrorKind::Timeout);
+    // 进程树在宽限期（默认 10 秒）之内被终止：节点收到 SIGTERM 就退出，不需要等到强制杀掉。
+    assert!(started.elapsed() < Duration::from_secs(9));
+    assert_all_gone(&pids(&pid_file)).await;
+    assert!(
+        agent
+            .work_dir
+            .path()
+            .join("task-marker-fails/cancel")
+            .is_dir()
+    );
+
+    wait_until("the failed marker write to be logged", || {
+        let lines = stderr.lock().unwrap();
+        lines
+            .iter()
+            .any(|l| l.contains("cannot write cancel marker"))
+    })
+    .await;
+    let lines = stderr.lock().unwrap().clone();
+    let failed: Vec<_> = lines
+        .iter()
+        .filter(|l| l.contains("cannot write cancel marker"))
+        .collect();
+    assert_eq!(failed.len(), 1, "{lines:?}");
+    assert!(failed[0].contains("task-marker-fails/cancel"), "{failed:?}");
+    assert!(lines.iter().all(|l| !l.contains("panicked")), "{lines:?}");
 }
 
 /// 等节点在 `finally` 里写出报告（超时的任务结果和节点收尾的先后不保证）。

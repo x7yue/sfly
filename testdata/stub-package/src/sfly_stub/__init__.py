@@ -145,12 +145,20 @@ def sleep(ctx: Context, seconds: float) -> dict[str, Any]:
 
 @node(title="进程树", outputs=["pids"])
 def process_tree(
-    ctx: Context, pid_file: str, seconds: float = 3600, ignore_term: bool = False
+    ctx: Context,
+    pid_file: str,
+    seconds: float = 3600,
+    ignore_term: bool = False,
+    block_cancel_marker: bool = False,
 ) -> dict[str, Any]:
     """启动一个子进程后一起等待，把自己和子进程的 PID 写到 pid_file（超时、取消杀进程树的测试用）。
 
     ignore_term 时两个进程都忽略 SIGTERM，只能被强制杀掉。
+    block_cancel_marker 时先在取消标记的路径（`SFLY_CANCEL`）上建一个目录：Agent 写取消标记会失败
+    （EISDIR），测试看写失败时任务还是照常被终止。
     """
+    if block_cancel_marker:
+        os.mkdir(os.environ["SFLY_CANCEL"])
     prelude = "import signal, time\n"
     if ignore_term:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)

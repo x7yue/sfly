@@ -193,15 +193,16 @@ def stop_background_process(
 
     在 `finally` 里清理要在平台给节点的收尾时间内做完：任务被取消或超时时，平台向节点发 SIGTERM，
     10 秒（Agent 的 `--terminate-grace`，默认 10 秒）后强制杀掉整棵进程树，来不及发 SIGKILL 时
-    服务和它的看护进程都会留下。所以 `grace` 默认只有 5 秒，比平台的收尾时间短；任务已经被取消
-    （`ctx.cancelled()`）时再收紧：宽限期最多 3 秒，SIGKILL 之后最多等 2 秒（给的 `grace` 更小时
-    用更小的）。服务退出得慢、需要更长的宽限期时，不要在 `finally` 里停，用单独的 always 节点
+    服务和它的看护进程都会留下。所以 `grace` 默认只有 5 秒，比平台的收尾时间短；任务已经进入收尾
+    时间（`ctx.cancelled()` 为真）时再收紧：宽限期最多 3 秒，SIGKILL 之后最多等 2 秒（给的 `grace`
+    更小时用更小的）。服务退出得慢、需要更长的宽限期时，不要在 `finally` 里停，用单独的 always 节点
     （`stop_process`，它有自己的时间）。
 
     这些上限是按每次调用算的，不是整个收尾的预算：每停一个不响应 SIGTERM 的服务要用掉约 `grace`
     秒。取消和超时一样，Agent 都先写取消标记再发 SIGTERM（`ctx.cancelled()` 在收尾时间里为真），所以
-    两种情况下每个最多约 3 秒，三个这样的服务的收尾约 9.4 秒；停四个及以上这样的服务时，要把
-    `grace` 给小（总和留在 10 秒以内），或者用 always 节点停。
+    两种情况下每个最多约 3 秒；停三个这样的服务就要约 9.3 秒，10 秒里只剩不到 1 秒给 `finally`
+    里别的清理。停三个及以上这样的服务时，要把 `grace` 给小（总和留在 10 秒以内，还要给别的清理
+    留时间），或者用 always 节点停。
 
     SIGKILL 之后进程仍然没有退出（例如卡在不可中断的磁盘读写里）时抛出 `StopFailed`；`pid` 不是
     正整数、`grace` 是布尔值时抛出 `ValueError`。
@@ -216,7 +217,7 @@ def stop_background_process(
     kill_wait = CANCELLED_KILL_WAIT if cancelled else KILL_WAIT
     if cancelled and grace > CANCELLED_GRACE:
         ctx.log.info(
-            "任务已被取消，平台留给收尾的时间不多，宽限期从 %g 秒缩短为 %g 秒",
+            "任务正在收尾，平台留给收尾的时间不多，宽限期从 %g 秒缩短为 %g 秒",
             grace,
             CANCELLED_GRACE,
         )
