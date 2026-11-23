@@ -273,6 +273,12 @@ export function buildHttpApi({
 		sendError(reply, 404, "not_found", `route ${request.method} ${request.url} not found`),
 	);
 	app.setErrorHandler((error: FastifyError, request, reply) => {
+		// 路由在出错之前设好的内容类型、长度和下载文件名不属于错误响应（流式下载时文件打开或读到一半出错：路由已经按那个文件设了头）：
+		// 错误是 JSON，不是那个文件；留着的话错误体发不出去（内容类型不是 JSON 时 Fastify 拒绝序列化），退成 Fastify 自己的错误体。
+		reply
+			.removeHeader("content-type")
+			.removeHeader("content-length")
+			.removeHeader("content-disposition");
 		// 同时验证密码的请求太多（src/auth/password-gate.ts）：没有去算哈希，让对方稍后再试。
 		if (error instanceof PasswordGateBusy) {
 			reply.header("retry-after", Math.max(1, Math.ceil(error.retryAfterMs / 1000)));

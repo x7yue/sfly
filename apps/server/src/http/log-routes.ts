@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { Readable, Transform, type TransformCallback } from "node:stream";
+import { pipeline, Readable, Transform, type TransformCallback } from "node:stream";
 import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
@@ -184,9 +184,7 @@ export function registerLogRoutes(
 		if (size === undefined || size === 0) return reply.send("");
 		// 只发送此刻的内容（文件可能还在追加）。每行都带两种时间：升级之前写入的行在这里补齐，
 		// 所以长度事先不知道，不带 content-length。
-		return reply.send(
-			createReadStream(info.file, { start: 0, end: size - 1 }).pipe(new LogRowNormalizer()),
-		);
+		return reply.send(normalizeLogStream(createReadStream(info.file, { start: 0, end: size - 1 })));
 	});
 
 	contractStream(app, deps.sse, logsApi.events, async ({ params, query }, open, reply, request) => {
@@ -248,6 +246,19 @@ async function* jsonRows(batches: AsyncIterable<RunLogLine[]>): AsyncGenerator<s
 	for await (const lines of batches) {
 		yield lines.map((l) => `${JSON.stringify(l, DOWNLOAD_FIELDS)}\n`).join("");
 	}
+}
+
+/**
+ * 日志文件的字节流经 {@link LogRowNormalizer} 补齐时间，返回的流交给 `reply.send`。**源文件流出错（文件读不了：权限、被清理到
+ * 一半）时，错误要落到返回的流上**：`source.pipe(transform)` 不转发源的错误，也没有人听源的 `error` 事件，没人接的 `error` 事件会让
+ * 整个控制面进程退出（#647）；`pipeline` 出错时把两头一起销毁、错误落到返回的流上，由 Fastify 按响应开始发送了没有处理：
+ * 还没开始是 500，已经开始是断开连接并记一条日志。别的请求不受影响。
+ */
+export function normalizeLogStream(source: Readable): Readable {
+	const normalized = new LogRowNormalizer();
+	// 回调不用：错误已经落在 `normalized` 上，`pipeline` 给两头各接了一个 error 监听，不会有没人接的 `error` 事件。
+	pipeline(source, normalized, () => {});
+	return normalized;
 }
 
 /**

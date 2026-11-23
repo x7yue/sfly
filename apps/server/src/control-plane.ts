@@ -589,27 +589,34 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	// 重启前还在排队的消息接着投递。
 	feishuDelivery.wake();
 
+	/** 关闭只做一次：重复调用（收到几个停止信号）拿到同一个结果，不再去关已经关了的东西（第二次关连接池会拒绝）。 */
+	let closing: Promise<void> | undefined;
+	const close = async (): Promise<void> => {
+		await assistantConnection?.close();
+		await Promise.all(sweeps.map((s) => s.stop()));
+		await retention.idle();
+		await metricRetention.idle();
+		hub.closeAll();
+		await gateway.close();
+		// 正常关闭时写入内存里尚未写库的指标。
+		await metrics.close().catch(fail("metric flush"));
+		// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
+		await mutex.run(async () => {});
+		// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
+		feishuDelivery.close();
+		await feishu.close();
+		await feishuDelivery.idle();
+		await api.close();
+		await database.close();
+	};
+
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
 		sessions,
-		async close() {
-			await assistantConnection?.close();
-			await Promise.all(sweeps.map((s) => s.stop()));
-			await retention.idle();
-			await metricRetention.idle();
-			hub.closeAll();
-			await gateway.close();
-			// 正常关闭时写入内存里尚未写库的指标。
-			await metrics.close().catch(fail("metric flush"));
-			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
-			await mutex.run(async () => {});
-			// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
-			feishuDelivery.close();
-			await feishu.close();
-			await feishuDelivery.idle();
-			await api.close();
-			await database.close();
+		close: () => {
+			closing ??= close();
+			return closing;
 		},
 	};
 }
