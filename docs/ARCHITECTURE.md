@@ -422,6 +422,8 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 别的项目的资源和不存在一样；按场景或运行的 ID 取、再确认它在某个项目里用 `getInProject`、`getRunViewInProject`。节点包例外地多读公共项目：任何项目都读得到公共项目里的包（`readableProjects`），
 升级后标准节点包 `sfly-std` 在公共项目里，接口和 Agent 下载归档仍然找得到它。接口的路径还不带项目，调用点先传 `DEFAULT_PROJECT`（#488 起从路径取）。
 
+**保存时的检查、局部编辑、预检、触发时的参数检查和派发按名字找 Agent 和节点包，都只看场景（运行）所在的项目**（#610）：Agent 只看本项目的（`agentsInProject`，所有按名字找 Agent 的地方都用它，没有第二份实现），节点包是本项目加公共项目（`findPackageVersion`）。别的项目的 Agent 和没有注册过一样，别的项目发布的节点包和没有发布过一样，说明是同一句话，不透露它在别的项目里存在；预检响应里引用到的 Agent，别的项目的状态是 `unknown`。派发时同样按项目判断：任务入队前核对派发到的 Agent 在运行所在的项目里，不在的任务不入队，以 `config_error` 失败；派发前再核对一次（升级前已经排上队的，和入队之后 Agent 才换了项目的）；「Agent」类型的输入在派发时才知道值的，解析时也只在运行所在的项目里找；控制面启动时（`Engine.recover`，`src/engine/foreign-agent-tasks.ts`），升级前排上队、已经派出去的任务，目标 Agent 注册在别的项目的，同样以 `config_error` 失败，不留在队里。核对只多读一次库、失败走已有的 `config_error` 路径，不改派发、结果、心跳、租约和重试的时序。立即更新（`updateNow`）、工作台的 Agent 按 `projectId` 加名字找，本来就看项目。
+
 运行的项目恒等于它的场景的项目，由数据库约束保证（`runs_orchestration_project_fk`，组合外键 `(orchestration_id, project_id)` 引用 `orchestrations (id, project_id)`，更新和删除都不级联）：直接写入项目不一致的运行会被拒绝，有运行的场景也不能改项目。场景不能换项目；ADR 0029 和现有任务都没有「搬场景」的功能，以后要做时另行设计：把这条约束改成 `DEFERRABLE`（改约束的属性不用重扫 `runs`），在同一个事务里显式地改场景和运行，并处理任务凭据、项目密钥这些带着自己 `project_id` 的相关行。
 ### 6.3 日志、进度与产物
 

@@ -141,7 +141,13 @@ export class MetricQueries {
 		const nodes: CatalogNode[] = [];
 		for (const attempts of groups) {
 			const latest = attempts[attempts.length - 1] as TaskRow;
-			const ref = await nodeTypeOf(this.deps.db, run.document, latest.nodeId, latest.agentName);
+			const ref = await nodeTypeOf(
+				this.deps.db,
+				run.run.projectId,
+				run.document,
+				latest.nodeId,
+				latest.agentName,
+			);
 			if (!ref) continue;
 			const type = nodeTypeView(ref.type);
 			nodes.push({
@@ -194,7 +200,13 @@ export class MetricQueries {
 				: attempts.find((t) => t.attempt === query.attempt);
 		if (!task) return { ok: false, status: 404, code: "not_found", message: "attempt not found" };
 
-		const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
+		const ref = await nodeTypeOf(
+			this.deps.db,
+			run.run.projectId,
+			run.document,
+			task.nodeId,
+			task.agentName,
+		);
 		const declared = ref?.type?.metrics ?? [];
 		const names = query.metrics ?? declared.map((m) => m.name);
 		// 已过保留期（#32）：数据已清理，不再查询，每个序列都没有桶。

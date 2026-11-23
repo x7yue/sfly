@@ -14,9 +14,10 @@ import { DEV_VERSION, type PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import { artifactLimitForWire } from "../artifacts/artifact-store.js";
 import type { Tx } from "../db/database.js";
-import { type AgentInfo, nodePackages } from "../db/schema.js";
+import { type AgentInfo, nodePackages, runs } from "../db/schema.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
+import type { ProjectId } from "../projects/project-id.js";
 import type { PackageNode } from "./chain.js";
 import { isAlways } from "./failures.js";
 import { resolveReferencedAgents } from "./referenced-agents.js";
@@ -63,6 +64,13 @@ export type AssignContent =
  * 回答这次尝试的派发内容。只读：任务的状态、租约和失败都由调用方在同一个事务里写。
  */
 export type AssignContentOf = (tx: Tx, request: AssignRequest) => Promise<AssignContent>;
+
+/** 运行所在的项目：每个运行属于它的场景所在的项目（`runs.project_id`）。 */
+async function projectOfRun(tx: Tx, runId: string): Promise<ProjectId> {
+	const [run] = await tx.select({ projectId: runs.projectId }).from(runs).where(eq(runs.id, runId));
+	if (!run) throw new Error(`run ${runId} not found`);
+	return run.projectId;
+}
 
 /** `urls` 是 Agent 下载节点包归档、上传任务产物的地址（Agent 通过 HTTP 访问），和每个任务的产物合计上限。 */
 export function createAssignContent(urls: {
@@ -114,11 +122,19 @@ export function createAssignContent(urls: {
 		const timeoutProblem = nodeTimeoutProblem(nodeNameWithId(node), node.timeout);
 		if (timeoutProblem) return { ok: false, kind: "config_error", message: timeoutProblem, inputs };
 		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
+		// 在运行所在的项目里找这些 Agent：别的项目的 Agent 和没有注册过一样，它的地址不会下发给这个任务。
 		const referenced = type
-			? await resolveReferencedAgents(tx, node.id, type.inputs, inputs, {
-					metadata: metadata ?? {},
-					pkg,
-				})
+			? await resolveReferencedAgents(
+					tx,
+					await projectOfRun(tx, task.runId),
+					node.id,
+					type.inputs,
+					inputs,
+					{
+						metadata: metadata ?? {},
+						pkg,
+					},
+				)
 			: { agents: [] };
 		if ("problems" in referenced) {
 			return { ok: false, kind: referenced.kind, message: referenced.problems.join("; "), inputs };
