@@ -183,7 +183,7 @@ describe("仓库里的用户文档", () => {
 			expect(pages.map((p) => [p.slug, p.title])).toEqual([
 				["quickstart", "快速开始"],
 				["install-agent", "安装 Agent"],
-				["init-project", "初始化项目"],
+				["init-project", "初始化节点包"],
 				["sdk-reference", "开发节点（SDK 参考）"],
 				["local-debug", "本地调试"],
 				["integration", "联调"],

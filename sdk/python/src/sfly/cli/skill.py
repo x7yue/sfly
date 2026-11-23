@@ -32,7 +32,7 @@ MANIFEST = ".sfly-skill.json"
 
 
 class SkillError(Exception):
-    """失败原因；`usage` 为 True 表示参数问题（不是项目目录），退出码 2。"""
+    """失败原因；`usage` 为 True 表示参数问题（不是节点包目录），退出码 2。"""
 
     def __init__(self, message: str, *, usage: bool = False) -> None:
         super().__init__(message)
@@ -146,7 +146,7 @@ def update(project: Path, *, force: bool) -> UpdateResult:
     其余的换成当前版本（项目里还没有的也写进去）。"""
     if not (project / "pyproject.toml").is_file():
         raise SkillError(
-            f"找不到 {project / 'pyproject.toml'}：在节点包项目的根目录运行，或用 --project 指定",
+            f"找不到 {project / 'pyproject.toml'}：在节点包目录里运行，或用 --package-dir 指定",
             usage=True,
         )
     result = UpdateResult()

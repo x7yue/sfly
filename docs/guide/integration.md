@@ -6,13 +6,13 @@
 
 ## 加载开发版本
 
-在项目目录里运行：
+在节点包目录里运行：
 
 ```sh
 uv run sfly dev
 ```
 
-`sfly dev` 通过本机 Agent 的本地 socket（默认 `~/.sfly/work/agent.sock`；`agent.env` 里改了 `SFLY_WORK_DIR` 或 `SFLY_DEV_SOCKET` 时按同样的配置找）让 Agent 以可编辑方式安装项目的源码，注册为 `<包名>@dev`。Agent 管理页面里这个 Agent 的已安装节点包会列出它。
+`sfly dev` 通过本机 Agent 的本地 socket（默认 `~/.sfly/work/agent.sock`；`agent.env` 里改了 `SFLY_WORK_DIR` 或 `SFLY_DEV_SOCKET` 时按同样的配置找）让 Agent 以可编辑方式安装节点包目录里的源码，注册为 `<包名>@dev`。Agent 管理页面里这个 Agent 的已安装节点包会列出它。
 
 ## 在场景里运行
 
@@ -24,7 +24,7 @@ uv run sfly dev
 
 ## 用命令行联调
 
-不打开浏览器也能联调：复制场景、改成开发版本、运行并读结果都是命令。AI 编程助手按项目里的 `sfly-platform` skill 自己做完这些，不用你去浏览器里点；你自己也可以照着做。各命令的用法、输出和退出码见 [用命令行操作平台](platform-cli.md)。
+不打开浏览器也能联调：复制场景、改成开发版本、运行并读结果都是命令。AI 编程助手按节点包目录里的 `sfly-platform` skill 自己做完这些，不用你去浏览器里点；你自己也可以照着做。各命令的用法、输出和退出码见 [用命令行操作平台](platform-cli.md)。
 
 1. 复制一份场景作为**联调副本**，名称写成 `<原名>-联调-<昵称>`，改动都在这份副本上，不影响别人在用的原场景；以后联调沿用这一份。昵称按 `--nickname` > 环境变量 `SFLY_NICKNAME` > 系统用户名取值。没有现成的场景可以复制时，用 `sfly scenario create --name <名称> --description <说明> --from <文件>` 新建一个。
 
