@@ -586,22 +586,22 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);
 		});
 
-		it("别的只有人能做的写（项目令牌的签发和吊销）：带着管理范围的会话令牌也是 403，说明说「会话令牌不能做这件事」，不说成「对会话」", async () => {
+		it("别的只有人能做的写（项目令牌的吊销）：带着管理范围的会话令牌也是 403，说明说「会话令牌不能做这件事」，不说成「对会话」；签发另有「令牌不能签发令牌」那一条", async () => {
 			const session = token({
 				kind: "session",
 				user: USERS.admin,
 				projectId: DEFAULT,
 				name: "会话",
 			});
-			for (const key of [
-				"POST /projects/:project/tokens",
-				"DELETE /projects/:project/tokens/:id",
-			]) {
-				const result = await run(route(key), session);
-				expect(result, key).toMatchObject({ ok: false, status: 403 });
-				expect((result as { message: string }).message, key).toContain("会话令牌不能做这件事");
-				expect((result as { message: string }).message, key).not.toContain("对会话");
-			}
+			// 签发：先于范围检查的「只认登录」那一条（#572），说的是令牌不能签发令牌。
+			const issue = await run(route("POST /projects/:project/tokens"), session);
+			expect(issue).toMatchObject({ ok: false, status: 403 });
+			expect((issue as { message: string }).message).toContain("令牌不能签发令牌");
+			// 吊销：走「只有人能做的写」，说明按凭据和做的事写准。
+			const revoke = await run(route("DELETE /projects/:project/tokens/:id"), session);
+			expect(revoke).toMatchObject({ ok: false, status: 403 });
+			expect((revoke as { message: string }).message).toContain("会话令牌不能做这件事");
+			expect((revoke as { message: string }).message).not.toContain("对会话");
 		});
 	});
 
