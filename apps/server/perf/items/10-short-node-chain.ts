@@ -1,15 +1,17 @@
 // 负载：30 个节点的单链，每个节点只做一点点事，看「一个任务一个进程」的固定开销（docs/ARCHITECTURE.md §7.6「短节点链路」，#76）。
 // 三类节点各一条链（同样的编排，只换节点）：
 // - 空节点：sfly-short 的 empty（testdata/short-package），除了 SDK 什么都不导入，测出的是执行器进程本身的开销；
-// - sfly-std 的 http_request：请求本机的 HTTP 桩（不访问外网），sfly-std 的依赖从 PyPI 镜像桩安装；
+// - sfly-std 的 shell：执行 `true`（什么都不做的命令），sfly-std 的依赖从 PyPI 镜像桩安装（0.4.0 以前用的是 http_request，
+//   它在 0.4.0 删除了，ADR 0030：每节点的固定开销是执行器进程加导入 sfly_std，shell 同样能测出来）。
+//   换成 shell 有两点要知道：它不再含第三方库（httpx）的导入，所以 ≤ 120 ms 的目标比以前宽松很多（0.5.0 发版报告里
+//   http_request 是 202 ms、空节点 73 ms；shell 在同类机器上是 60～97 ms、比空节点多出约 20 ms）；数值的标识从 std_http
+//   改成 std_shell，报告里当作新数值，下一份报告里这一行没有「上一次」也没有发版基线可比；
 // - 重依赖节点：sfly-short 的 heavy，模块顶层把整个标准库导入一遍，模拟顶层导入 pandas 这类大库的节点
 //   （不从 PyPI 下载 pandas，理由见 testdata/short-package/src/sfly_short/heavy.py）。
 // 每类先跑一次预热（Agent 安装节点包、写 .pyc），不计入；之后三类轮流各跑 RUNS 次，机器上别的负载均摊到三类上。
 // 不加任何打点，只用控制面已有的运行与任务时间戳（算法见 perf/chain.ts）。
 // 只记录：每类的每节点端到端耗时（相邻节点开始时间之差的中位数）、整条链用时等；sfly-std 的与目标比较，与上一次对比。
 import { readFile } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { startPypiStub } from "../../test/support/pypi-stub.js";
 import { buildStdPackage, wheelhouse } from "../../test/support/std-package.js";
@@ -55,7 +57,6 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 	]);
 	const pypi = await startPypiStub(wheels);
 	ctx.defer(() => pypi.close());
-	const httpUrl = await startHttpTarget(ctx);
 	const { agentName, api } = await startStack(ctx, {
 		agentArgs: ["--index-url", pypi.indexUrl],
 	});
@@ -72,12 +73,12 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 			inputs: {},
 		},
 		{
-			id: "std_http",
-			label: "sfly-std http_request",
+			id: "std_shell",
+			label: "sfly-std shell",
 			package: "sfly-std",
 			version: std.version,
-			node: "http_request",
-			inputs: { url: httpUrl },
+			node: "shell",
+			inputs: { command: "true" },
 			target: SHORT_NODE_MS,
 		},
 		{
@@ -221,15 +222,4 @@ async function runChain(api: PerfApi, orchestrationId: string, signal: AbortSign
 		chain: { startedMs: Date.parse(view.started_at), endedMs: Date.parse(view.ended_at), tasks },
 		outputs: attempts.map((a) => a?.outputs),
 	} satisfies Finished;
-}
-
-/** 本机的 HTTP 桩（http_request 节点请求它），返回请求地址。 */
-async function startHttpTarget(ctx: PerfContext): Promise<string> {
-	const server = createServer((_req, res) => {
-		res.writeHead(200, { "content-type": "application/json" });
-		res.end('{"ok":true}');
-	});
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	ctx.defer(() => new Promise((resolve) => server.close(resolve)));
-	return `http://127.0.0.1:${(server.address() as AddressInfo).port}/health`;
 }
