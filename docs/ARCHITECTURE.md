@@ -314,7 +314,7 @@ flowchart TD
 | `SFLY_AGENT_SOCKET` | Agent 的本地 socket（与 `sfly dev` 共用，`<work_dir>/agent.sock`）：节点调用 Agent 能力（`ctx.agent()`）时经它交给自己所在的 Agent（`agent/src/calls/`）。本地调试时不设置，改设 `SFLY_LOCAL_AGENTS`（「Agent」类型的输入引用的 Agent → 本地目录的映射表，没有映射的为 null） |
 
 - Agent 能力的调用（ADR 0019）：每次调用一个连接，SDK 发一行 JSON（任务 ID、attempt、目标 Agent、方法、参数、超时），Agent 回复若干行 JSON（流式的项、最后是结果或错误）后关闭连接。Agent 按任务的 `referenced_agents` 检查目标，对自己直接调用本机服务的实现，对另一台 Agent 用 gRPC 客户端连到它的端口（连接复用，调用前用 `Describe` 确认名称和能力）。任务被取消、节点进程退出（连接关闭）时 Agent 放弃调用。协议见 `agent/src/calls/mod.rs`。
-- 建立在 Agent 能力之上的标准节点（`std/src/sfly_std/`，下载、删除源文件共用 `_pull.py`）：`pull_files` 列出后逐个下载；`watch_files` 在后台线程里读 `files.watch` 的快照和事件、放进本地队列，主线程逐个下载（节点下载大文件时事件不在 Agent 上堆积溢出）。它按「文件标识 + 大小」去重、每份快照（包括重连后 `missed` 的）为准，「至少 N 秒没有修改」用本机的单调时钟计时、下载前再 `stat` 一次比较，不拿另一台 Agent 的修改时间和本机时间比；监听的连接中断、重连超时后隔一会儿重新开始监听，只有第一次就连不上时失败。
+- 建立在 Agent 能力之上的辅助函数（`std/src/sfly_std/agent_files.py`，下载、删除源文件共用 `_pull.py`，ADR 0030）：`pull_files_from_agent` 列出后逐个下载；`watch_agent_files` 在后台线程里读 `files.watch` 的快照和事件、放进本地队列，主线程逐个下载（节点下载大文件时事件不在 Agent 上堆积溢出）。它按「文件标识 + 大小」去重、每份快照（包括重连后 `missed` 的）为准，「至少 N 秒没有修改」用本机的单调时钟计时、下载前再 `stat` 一次比较，不拿另一台 Agent 的修改时间和本机时间比；监听的连接中断、重连超时后隔一会儿重新开始监听，只有第一次就连不上时失败。
 
 - 事件管道：Agent 先以非阻塞方式打开读端、自己持有一个写端（没有写者时读端读到 EOF），再启动执行器；容量调到 `/proc/sys/fs/pipe-max-size`。数据只在内核缓冲区里，有数据时立即读取；写满时 SDK 的写入阻塞等待，不丢事件。执行器退出后 Agent 关掉自己的写端，把剩余数据读完（后台子进程还持有写端时最多等 2 秒）。本地调试（`sfly debug`、`sfly.testing`）用同样的做法。
 - 事件管道里的事件：每行一个 JSON 对象，`type` 是 `log`、`progress`、`metric`、`notify`、`action_start`、`action_end`、`mark`、`action_summary` 之一；Agent 不认识的内容原样记成一行 SDK 日志。动作和标记（`ctx.action`、`ctx.mark`，规格 #345）用后四种，字段和规则以 `sdk/python/src/sfly/context.py` 的模块说明为准，这里只写概要：
@@ -636,7 +636,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | 运行监控页的图表 | 1 小时范围、一张图表最多 100 个序列时，降采样查询 p95 < 500 ms |
 | 端到端延迟 | `ctx.metric()` 后运行页面 3 秒内收到 SSE 推送 |
 | Agent 断线 | 断线 5 分钟内存不超过排队上限，重连后补发 |
-| 短节点链路 | 30 个节点的单链里，sfly-std 的短节点（`http_request`）每节点端到端 ≤ 120 ms |
+| 短节点链路 | 30 个节点的单链里，sfly-std 的短节点（`shell`）每节点端到端 ≤ 120 ms |
 | 两台 Agent 之间传输大文件 | 只记录吞吐（ADR 0019，作为以后的对照基线），不设目标；内容必须与源文件一致 |
 
 负载测试测不到的地方（报告里对应项的说明也写明）：
