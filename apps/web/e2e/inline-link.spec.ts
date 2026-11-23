@@ -174,6 +174,8 @@ test("检查器的警告框：「前往」是行内链接的样式（黄色警�
 	await openEditor(page, id);
 	await nodeCard(page, "sub_entry").click();
 	await inspector(page).getByRole("textbox", { name: "子流程名称" }).fill("");
+	// 顶栏的检查结果打开场景的检查列表，警告在这里带「前往」。
+	await page.getByRole("button", { name: "1 条警告" }).click();
 	const warning = inspector(page).getByRole("listitem").filter({ hasText: "没有填写名称" });
 	await expectInlineLink(warning.getByRole("button", { name: "前往" }));
 });
@@ -187,6 +189,7 @@ test("检查器的错误框：「前往」是行内链接的样式（红色错�
 	await nodeCard(page, "notify").click();
 	// 保存被拦下：字段错误出现在检查器里，带「前往」。
 	await page.keyboard.press("Control+s");
+	await page.getByRole("button", { name: /处字段错误/ }).click();
 	const error = inspector(page).getByRole("listitem").filter({ hasText: "已不再支持，不能保存" });
 	await expectInlineLink(error.getByRole("button", { name: "前往" }));
 });
