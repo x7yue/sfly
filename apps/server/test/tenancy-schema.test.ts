@@ -28,13 +28,27 @@ const hex = () => randomUUID().replaceAll("-", "").repeat(2);
 
 /** 项目里的一个会话（`sessions`）；返回会话 ID。 */
 async function addSession(
-	fields: { project?: string; status?: string; user?: string | null } = {},
+	fields: {
+		project?: string;
+		status?: string;
+		user?: string | null;
+		/** 排队时间：排队中（queued）的会话有，其余没有（库里的约束 `sessions_queued_at`）；默认按状态给。 */
+		queuedAt?: string | null;
+	} = {},
 ): Promise<string> {
 	const id = randomUUID();
+	const status = fields.status ?? "idle";
 	await client.query(
-		`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at)
-		values ($1, $2, '会话', $3, '昵称', $4, $5, $5)`,
-		[id, fields.project ?? "default", fields.status ?? "idle", fields.user ?? null, AT],
+		`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at, queued_at)
+		values ($1, $2, '会话', $3, '昵称', $4, $5, $5, $6)`,
+		[
+			id,
+			fields.project ?? "default",
+			status,
+			fields.user ?? null,
+			AT,
+			fields.queuedAt === undefined ? (status === "queued" ? AT : null) : fields.queuedAt,
+		],
 	);
 	return id;
 }
@@ -468,6 +482,20 @@ describe("助手会话和它的事件（ADR 0027）", () => {
 		await expect(addSession({ project: "no-such-project" })).rejects.toThrow(
 			/sessions_project_id_projects_id_fk/,
 		);
+	});
+
+	it("排队时间：排队中（queued）的会话要有，其余状态不能有（#544，sessions_queued_at）", async () => {
+		const project = await addProject("queued-at");
+		await expect(addSession({ project, status: "queued", queuedAt: null })).rejects.toThrow(
+			/sessions_queued_at/,
+		);
+		for (const status of ["idle", "running", "ended"]) {
+			await expect(
+				addSession({ project: await addProject(`qa-${status}`), status, queuedAt: AT }),
+				status,
+			).rejects.toThrow(/sessions_queued_at/);
+		}
+		await expect(addSession({ project, status: "queued" })).resolves.toBeTypeOf("string");
 	});
 
 	it("发起人的用户可以为空（#494 之前的请求没有用户），有的话要是存在的用户", async () => {
