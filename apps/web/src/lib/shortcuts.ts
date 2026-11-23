@@ -14,7 +14,7 @@
 
 import { ACTION } from "./copy";
 
-export type ShortcutGroup = "全局" | "编排画布" | "运行监控" | "列表页";
+export type ShortcutGroup = "全局" | "助手" | "编排画布" | "运行监控" | "列表页";
 
 export interface ShortcutDef {
 	id: string;
@@ -60,6 +60,14 @@ export const SHORTCUTS = [
 	{ id: "go-docs", group: "全局", label: "开发文档", keys: "G H" },
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
 	{ id: "new-scenario", group: "全局", label: "新建场景", keys: "N" },
+	// 助手页和会话页（sessions/）的输入框：Ctrl/⌘+Enter 发出（助手页是开始，会话页是接着说）；Enter 是换行。
+	{
+		id: "assistant-send",
+		group: "助手",
+		label: "发送（输入框里）",
+		keys: "Ctrl+Enter",
+		inInputs: true,
+	},
 	// 编排画布（全屏页）：方向键、Enter、Esc 由画布组件自己处理（components/canvas/FlowCanvas.tsx）。
 	{
 		id: "canvas-save",

@@ -270,7 +270,7 @@ export const SESSION = {
 		author: "发起人",
 		status: "状态",
 		activity: "最近活动",
-		/** 会话多于接口一次给的个数（`truncated`）时，列表下面的一句提示。 */
+		/** 会话多于接口一次给的个数（`truncated`）时，列表上面的一句提示。 */
 		truncated: (limit: number) => `只显示了最近活动的 ${limit} 个会话`,
 	},
 	status: {
@@ -316,7 +316,7 @@ export const SESSION = {
 		failed: "出错",
 		exitCode: (code: number) => `退出码 ${code}`,
 		duration: (text: string) => `用时 ${text}`,
-		truncated: "只显示了头尾",
+		truncated: "输出太长，只显示了头尾",
 		noOutput: "（没有输出）",
 		expand: "展开",
 		collapse: "收起",

@@ -20,7 +20,7 @@ import { SESSION_STATUS } from "./session-text";
 /**
  * 助手页的会话列表：本项目的会话，最近活动在前（接口给的顺序）：标题（第一句话截断）、发起人、状态、
  * 最近活动时间；点标题进会话页。没有会话时一句说明；会话多到接口只给了最近的一批（`truncated`）时，
- * 列表下面写一句，免得读的人以为这就是全部。
+ * 列表上面写一句，免得读的人以为这就是全部。
  */
 export function SessionList({
 	sessions,
@@ -42,6 +42,12 @@ export function SessionList({
 	}
 	return (
 		<>
+			{/* 提示放在列表上面：一进页面就看得到，不用滚到底；和标题左对齐。 */}
+			{truncated && (
+				<p data-testid="list-truncated" className="m-0 mb-2 text-sm text-fg-2">
+					{SESSION.list.truncated(SESSION_LIST_LIMIT)}
+				</p>
+			)}
 			<Panel>
 				<Table aria-label={SESSION.list.label}>
 					<TableHeader>
@@ -86,11 +92,6 @@ export function SessionList({
 					</TableBody>
 				</Table>
 			</Panel>
-			{truncated && (
-				<p data-testid="list-truncated" className="m-0 mt-2 text-sm text-fg-3">
-					{SESSION.list.truncated(SESSION_LIST_LIMIT)}
-				</p>
-			)}
 		</>
 	);
 }

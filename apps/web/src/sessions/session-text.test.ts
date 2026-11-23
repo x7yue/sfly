@@ -45,7 +45,7 @@ describe("会话页的文字", () => {
 		);
 		expect(toolResultSummary("command", base)).toBe("用时 420ms");
 		expect(toolResultSummary("edit", { ...base, durationMs: 12_300, truncated: true })).toBe(
-			"用时 12.3s · 只显示了头尾",
+			"用时 12.3s · 输出太长，只显示了头尾",
 		);
 	});
 

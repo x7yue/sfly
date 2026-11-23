@@ -7,14 +7,16 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
 import { Page, PageHeader } from "#/components/page";
+import { useShortcut } from "#/components/shortcuts";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
+import { shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -113,10 +115,15 @@ function StopButton({ id }: { id: string }) {
 	);
 }
 
-/** 底部的输入框：空闲时「接着说」，在做时不可用并写明原因，已结束时不显示。 */
+/**
+ * 底部的输入框：空闲时「接着说」；在做时照常可以写下一句、只是不能发（「发送」不可用并写明原因，Ctrl/⌘+Enter 同样不发），
+ * 和助手页的输入框一致；一轮结束时焦点回到输入框（点「停止」的按钮随这一轮消失，焦点不落在 body 上）；已结束时不显示。
+ */
 function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const client = useQueryClient();
 	const [text, setText] = useState("");
+	const field = useRef<HTMLTextAreaElement>(null);
+	const blockedId = useId();
 	const send = useMutation({
 		mutationFn: (message: string) =>
 			callApi(sessionsApi.message, { params: { id }, body: { text: message } }),
@@ -125,40 +132,57 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 			void client.invalidateQueries({ queryKey: domainKey(sessionsApi.list) });
 		},
 	});
-	if (status === "ended") {
-		return <p className="mt-4 text-sm text-fg-3">{SESSION.page.ended}</p>;
-	}
 	const blocked =
 		status === "running" ? SESSION.page.running : status === "queued" ? SESSION.page.queued : null;
 	const empty = text.trim() === "";
+	const canSend = blocked === null && !empty && !send.isPending;
+	const submit = () => {
+		if (canSend) send.mutate(text);
+	};
+	useShortcut("assistant-send", submit, status !== "ended");
+	// 一轮结束（在做 → 空闲）：焦点在 body 上（点过「停止」，那个按钮已经没了）时放回输入框；用户在别处就不抢。
+	const before = useRef(status);
+	useEffect(() => {
+		const was = before.current;
+		before.current = status;
+		if (status === "idle" && (was === "running" || was === "queued")) {
+			const active = document.activeElement;
+			if (!active || active === document.body) field.current?.focus();
+		}
+	}, [status]);
+	if (status === "ended") {
+		return <p className="mt-4 text-sm text-fg-3">{SESSION.page.ended}</p>;
+	}
 	return (
 		<form
 			aria-label={SESSION.page.sendLabel}
 			className="sticky bottom-0 mt-4 flex flex-col gap-2 bg-bg pt-2 pb-3"
 			onSubmit={(event) => {
 				event.preventDefault();
-				if (blocked === null && !empty && !send.isPending) send.mutate(text);
+				submit();
 			}}
 		>
 			<Textarea
+				ref={field}
 				aria-label={SESSION.page.sendLabel}
+				aria-describedby={blocked === null ? undefined : blockedId}
 				placeholder={SESSION.page.sendPlaceholder}
 				value={text}
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={2}
-				disabled={blocked !== null}
 				onChange={(event) => setText(event.target.value)}
 			/>
 			<div className="flex items-center gap-3">
 				<Button
 					type="submit"
 					variant="primary"
+					title={`${SESSION.page.send}（${shortcutText("assistant-send")}）`}
 					disabled={blocked !== null || empty || send.isPending}
 				>
 					{send.isPending ? SESSION.page.sending : SESSION.page.send}
 				</Button>
 				{blocked !== null && (
-					<span data-testid="composer-blocked" className="text-sm text-fg-3">
+					<span id={blockedId} data-testid="composer-blocked" className="text-sm text-fg-3">
 						{blocked}
 					</span>
 				)}

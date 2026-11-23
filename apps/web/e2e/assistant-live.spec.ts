@@ -246,8 +246,9 @@ test("一轮到了上限、最后一次工具调用只有调用没有结果：�
 	await expect(row).toHaveAttribute("data-state", "abandoned");
 	await expect(row).toContainText("已中止");
 	await expect(row).not.toContainText("在做");
-	// 没有结果，所以不能展开，也没有空的结果块。
-	await expect(row.getByRole("button")).toBeDisabled();
+	// 没有结果：可以展开看完整的命令，没有空的结果块。
+	await row.getByRole("button").click();
+	await expect(row.getByTestId("tool-command")).toHaveText("$ sleep 600");
 	await expect(row.getByTestId("tool-result")).toHaveCount(0);
 	await expect(page.getByTestId("session-status")).toHaveText("空闲");
 	// 刷新（历史重放）后还是一样。
@@ -335,7 +336,9 @@ test("接着说：一轮结束后发一句，助手服务收到第 2 轮；会�
 	await expect.poll(() => assistant.prompts.length).toBe(2);
 	expect(assistant.prompts[1]?.body).toMatchObject({ turn: 2, text: "再做第二件事" });
 	await expect(page.getByTestId("session-status")).toHaveText("在做");
-	await expect(page.getByRole("textbox", { name: "接着说" })).toBeDisabled();
+	// 在做时输入框照常可以写下一句，只是不能发。
+	await expect(page.getByRole("textbox", { name: "接着说" })).toBeEnabled();
+	await expect(page.getByRole("button", { name: "发送" })).toBeDisabled();
 
 	const view = (await (await page.request.get(`/api/sessions/${id}`)).json()) as SessionView;
 	expect(view.status).toBe("running");

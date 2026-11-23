@@ -8,9 +8,11 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useId, useState } from "react";
+import { useShortcut } from "#/components/shortcuts";
 import { ApiError, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
+import { shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
@@ -46,13 +48,18 @@ export function NewSession({
 	const reason = cannotStartReason(readiness);
 	const empty = text.trim() === "";
 	const busy = busySession(sessions);
+	const start = () => {
+		if (reason === null && !empty && !create.isPending) create.mutate(text);
+	};
+	// Ctrl/⌘+Enter 开始（和会话页的「接着说」同一个快捷键）；Enter 是换行。
+	useShortcut("assistant-send", start);
 	return (
 		<form
 			aria-label={SESSION.input.label}
 			className="flex flex-col gap-2"
 			onSubmit={(event) => {
 				event.preventDefault();
-				if (reason === null && !empty && !create.isPending) create.mutate(text);
+				start();
 			}}
 		>
 			<Textarea
@@ -68,6 +75,7 @@ export function NewSession({
 				<Button
 					type="submit"
 					variant="primary"
+					title={`${SESSION.input.start}（${shortcutText("assistant-send")}）`}
 					disabled={reason !== null || empty || create.isPending}
 				>
 					{create.isPending ? SESSION.input.starting : SESSION.input.start}
