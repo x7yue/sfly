@@ -2,7 +2,13 @@
 // 有时只改正文，行里其余字段和顺序不变。
 import { describe, expect, it } from "vitest";
 import { logMask, NO_LOG_MASK } from "../src/logs/log-mask.js";
-import { SECRET_MASK as MASK, NO_SECRETS, secretSetOf } from "../src/logs/secrets.js";
+import {
+	SECRET_MASK as MASK,
+	NO_SECRETS,
+	secretLimits,
+	secretSetOf,
+	WorkBudget,
+} from "../src/logs/secrets.js";
 import { allForms } from "./support/secret-forms.js";
 
 const rowOf = (fields: Record<string, unknown>) => Buffer.from(JSON.stringify(fields));
@@ -159,39 +165,59 @@ describe("文件里的一行：每种写法读出来都和写入时打码的结�
 	});
 });
 
-describe("读日志的工作量预算：一页、一块、一批共用一份（#517）", () => {
-	// 周期性的值碰上整行都是 0 的长行：每行要花几百万的工作量，一页几百行不带预算要几秒
-	const zeros = "0".repeat(65536);
-	const periodic = secretSetOf(["00"]);
+describe("读日志的预算：一页、一块、一批共用一份（#517）", () => {
+	// 读取预算的上限调小（只给测试用）：用几十 KB 的行就能用完预算；真实的上限是 32 Mi 个字符
+	const LINE = "z".repeat(65536);
+	const set = secretSetOf(["fake-secret-value-00"]);
+	const withLimits = (chars: number, run: () => void) => {
+		const saved = secretLimits.readChars;
+		secretLimits.readChars = chars;
+		try {
+			run();
+		} finally {
+			secretLimits.readChars = saved;
+		}
+	};
 
-	it("按页读取（line）：一页 600 行很快读完，用完预算之后剩下的行整行盖住；换一份新的（fresh）照常", () => {
-		const mask = logMask(periodic);
-		const started = performance.now();
-		const out = Array.from({ length: 600 }, (_, i) => mask.line({ seq: i, text: zeros }).text);
-		expect(performance.now() - started, "一页的同步耗时").toBeLessThan(3000);
-		expect(out.every((text) => text === MASK)).toBe(true);
-		// 预算用完之后，连没有 secret 值的行也整行盖住（宁可多盖，不漏）
-		expect(mask.line({ text: "clean line" }).text).toBe(MASK);
-		// 下一页、下一块、下一批：新的预算
-		const next = mask.fresh();
-		expect(next).not.toBe(mask);
-		expect(next.active).toBe(true);
-		expect(next.line({ text: "clean line" }).text).toBe("clean line");
-		expect(next.line({ text: "a 00 b" }).text).toBe(`a ${MASK} b`);
+	it("按页读取（line）：一页的行共用一份预算，用完之后剩下的行整行盖住；换一份新的（fresh）照常", () => {
+		withLimits(3 * 65536 + 100, () => {
+			const mask = logMask(set);
+			const out = Array.from({ length: 6 }, (_, i) => mask.line({ seq: i, text: LINE }).text);
+			expect(out.map((text) => text === MASK)).toEqual([false, false, false, true, true, true]);
+			// 预算用完之后，连没有 secret 值的行也整行盖住（宁可多盖，不漏）
+			expect(mask.line({ text: "clean line" }).text).toBe(MASK);
+			// 下一页、下一块、下一批：新的预算
+			const next = mask.fresh();
+			expect(next).not.toBe(mask);
+			expect(next.active).toBe(true);
+			expect(next.line({ text: "clean line" }).text).toBe("clean line");
+			expect(next.line({ text: "a fake-secret-value-00 b" }).text).toBe(`a ${MASK} b`);
+		});
 	});
 
 	it("下载（row）：同样，一块里的行共用一份预算，每一块（fresh）一份新的", () => {
-		const mask = logMask(periodic);
-		const started = performance.now();
-		for (let i = 0; i < 600; i++) {
-			const masked = mask.row(rowOf({ ...row, seq: i, text: zeros }));
-			expect(JSON.parse(masked.toString("utf8")).text).toBe(MASK);
-		}
-		expect(performance.now() - started, "一块的同步耗时").toBeLessThan(3000);
-		const clean = rowOf({ ...row, text: "clean line" });
-		expect(JSON.parse(mask.row(clean).toString("utf8")).text).toBe(MASK);
-		expect(mask.fresh().row(clean)).toBe(clean);
-		expect(NO_LOG_MASK.fresh()).toBe(NO_LOG_MASK);
+		withLimits(3 * 65536 + 4096, () => {
+			const mask = logMask(set);
+			const texts = Array.from(
+				{ length: 6 },
+				(_, i) => JSON.parse(mask.row(rowOf({ ...row, seq: i, text: LINE })).toString("utf8")).text,
+			);
+			// 一行的字节比正文多一点（别的字段），所以前面三行还够，后面的整行盖住
+			expect(texts.map((text) => text === MASK)).toEqual([false, false, false, true, true, true]);
+			const clean = rowOf({ ...row, text: "clean line" });
+			expect(JSON.parse(mask.row(clean).toString("utf8")).text).toBe(MASK);
+			expect(mask.fresh().row(clean)).toBe(clean);
+			expect(NO_LOG_MASK.fresh()).toBe(NO_LOG_MASK);
+		});
+	});
+
+	it("一页的预算可以由调用方给（共用同一份预算的两个读取）", () => {
+		const budget = new WorkBudget(70_000, 10);
+		const first = logMask(set, budget);
+		const second = logMask(set, budget);
+		expect(first.line({ text: LINE }).text).toBe(LINE);
+		expect(second.line({ text: LINE }).text).toBe(MASK);
+		expect(budget.chars).toBe(0);
 	});
 
 	it("正常的读取不会用光预算：一页 1000 行，每行出现一个 secret 值", () => {

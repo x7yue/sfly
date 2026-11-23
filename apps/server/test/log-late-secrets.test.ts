@@ -13,6 +13,7 @@ import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import { formsOf } from "./support/secret-forms.js";
+import { withSecretLimits } from "./support/secret-limits.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -334,20 +335,20 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		expect(texts(mergedPage.lines)).toEqual(expected);
 	});
 
-	it("下载按块、按批读：病态的值（00）碰上整行都是 0 的长行，每一块（按任务）、每一批（按运行）一份新的预算，后面的正常行不会因为前面用掉了预算被整行盖住（#517）", async () => {
+	it("下载按块、按批读：一块（按任务）、一批（按运行）里的长行用光预算，每一块、每一批一份新的预算，后面的正常行不会因为前面用掉了预算被整行盖住（#517）", async () => {
 		const id = await api.orchestrationWith(LATE_SECRET);
-		const runId = await api.triggerOk(id, { user: "00" });
+		const runId = await api.triggerOk(id, { user: LATE });
 		const first = await agent.nextAssign();
 		const second = await agent.nextAssign();
 		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
-		// 6 行各 4 万个 0（写入时 `00` 还不是 secret 值，文件里是原文），后面跟 1500 行正常的（约 250 KB，按任务下载要读好几块，
-		// 按运行下载一批 1000 行，要读两批）；序号写成字母：数字里的 `00` 会被打码
-		const zeros = "0".repeat(40_000);
+		// 6 行各 25 万个字符（读取预算调成 20 万个字符，一行就用光；一块、一批里正常的行加起来不到 20 万个字符），后面跟 1500 行正常的（约 250 KB，按任务下载要读好几块，
+		// 按运行下载一批 1000 行，要读两批）；写入时 LATE 还不是 secret 值，文件里是原文
+		const long = "z".repeat(250_000);
 		const letters = (i: number) =>
 			i.toString(26).replace(/\d/g, (d) => "qrstuvwxyz"[Number(d)] ?? d);
 		const clean = Array.from({ length: 1500 }, (_, i) => `clean line ${letters(i)}`);
 		agent.logs(sa, [
-			...Array.from({ length: 6 }, (_, i) => line(i + 1, zeros)),
+			...Array.from({ length: 6 }, (_, i) => line(i + 1, long)),
 			...clean.map((text, i) => line(i + 7, text)),
 		]);
 		await eventually(async () => {
@@ -361,18 +362,18 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
 		);
 
-		for (const path of [`/tasks/${sa.taskId}/logs/download`, `/runs/${runId}/logs/download`]) {
-			const started = performance.now();
-			const rows = texts(jsonl(await (await cp.fetch(path)).text()));
-			expect(performance.now() - started, path).toBeLessThan(30_000);
-			expect(rows, path).toHaveLength(1506);
-			// 长行都盖住；整个下载共用一份预算的话，前面就把它用光，后面的行也都被整行盖住。每一块、每一批各一份，后面是原样的
-			expect(rows.slice(0, 6), path).toEqual(Array(6).fill(MASK));
-			expect(rows.slice(-400), path).toEqual(clean.slice(-400));
-		}
-		// 按页读（最近 100 行）：一页一份预算，正常行原样
-		const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs?limit=100`);
-		expect(texts(page.lines)).toEqual(clean.slice(-100));
+		await withSecretLimits({ readChars: 200_000 }, async () => {
+			for (const path of [`/tasks/${sa.taskId}/logs/download`, `/runs/${runId}/logs/download`]) {
+				const rows = texts(jsonl(await (await cp.fetch(path)).text()));
+				expect(rows, path).toHaveLength(1506);
+				// 长行都盖住（超过预算）；整个下载共用一份预算的话，前面就把它用光，后面的行也都被整行盖住。每一块、每一批各一份，后面是原样的
+				expect(rows.slice(0, 6), path).toEqual(Array(6).fill(MASK));
+				expect(rows.slice(-400), path).toEqual(clean.slice(-400));
+			}
+			// 按页读（最近 100 行）：一页一份预算，正常行原样
+			const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs?limit=100`);
+			expect(texts(page.lines)).toEqual(clean.slice(-100));
+		});
 	}, 90_000);
 
 	it("没有 secret 参数的运行：读出来的日志和文件里逐字相同（下载是文件的原样，分页是同样的行）", async () => {
