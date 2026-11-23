@@ -1319,6 +1319,29 @@ mod splitter_tests {
     }
 
     #[test]
+    fn nothing_carries_over_from_one_line_to_the_next() {
+        // 两条超长行挨着：第二条的第一段没有 before（不带上一条的结尾），第一条的最后一段没有 after
+        let first: String = (0..2 * MAX_LINE_BYTES)
+            .map(|i| char::from(b'a' + (i % 26) as u8))
+            .collect();
+        let second: String = (0..2 * MAX_LINE_BYTES)
+            .map(|i| char::from(b'A' + (i % 26) as u8))
+            .collect();
+        let input = format!("{first}\n{second}\nshort\n");
+        let lines = split(input.as_bytes());
+        let split_at = lines
+            .iter()
+            .position(|(t, _, _)| t.starts_with('A'))
+            .unwrap();
+        check_pieces(&first, &lines[..split_at]);
+        check_pieces(&second, &lines[split_at..lines.len() - 1]);
+        assert_eq!(
+            lines.last().unwrap(),
+            &("short".to_string(), String::new(), String::new())
+        );
+    }
+
+    #[test]
     fn where_a_line_is_split_does_not_depend_on_how_much_is_read_at_a_time() {
         let original: String = (0..3 * MAX_LINE_BYTES + 777)
             .map(|i| char::from(b'a' + (i % 26) as u8))

@@ -325,8 +325,8 @@ impl Lines {
             _ => ("stdout", &mut self.stdout),
         };
         let mut lines = Vec::new();
-        splitter.push(data, |text| {
-            lines.push(json!({ key: format!("{}{text}", self.tag) }));
+        splitter.push(data, |line| {
+            lines.push(json!({ key: format!("{}{}", self.tag, line.text) }));
         });
         lines
     }
@@ -335,8 +335,8 @@ impl Lines {
     fn finish(self) -> Vec<Value> {
         let mut lines = Vec::new();
         for (key, splitter) in [("stdout", self.stdout), ("stderr", self.stderr)] {
-            splitter.finish(|text| {
-                lines.push(json!({ key: format!("{}{text}", self.tag) }));
+            splitter.finish(|line| {
+                lines.push(json!({ key: format!("{}{}", self.tag, line.text) }));
             });
         }
         lines
