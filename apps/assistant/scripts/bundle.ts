@@ -9,7 +9,7 @@
 //
 // 产物与 CPU 架构无关：pi 的依赖里按平台分发的原生文件（pi-tui 的 prebuilds）各平台的都带着，助手服务不用它们。
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { build } from "esbuild";
 import packageJson from "../package.json" with { type: "json" };
@@ -58,4 +58,15 @@ await cp(join(deployed, "node_modules"), join(outDir, "node_modules"), {
 	verbatimSymlinks: true,
 });
 await rm(deployed, { recursive: true, force: true });
+// pnpm 的元数据文件和 .bin 下的启动脚本里有构建机器上的绝对路径（带用户名），运行时用不到（pi 用
+// `node <命令行入口>` 拉起），不进镜像。
+await rm(join(outDir, "node_modules", ".modules.yaml"), { force: true });
+for (const entry of await readdir(join(outDir, "node_modules"), {
+	recursive: true,
+	withFileTypes: true,
+})) {
+	if (entry.isDirectory() && entry.name === ".bin") {
+		await rm(join(entry.parentPath, entry.name), { recursive: true, force: true });
+	}
+}
 console.log(outDir);

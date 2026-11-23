@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import http2 from "node:http2";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { Code, ConnectError, type ConnectRouter } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import {
@@ -28,6 +28,12 @@ export class FakeWorkbench {
 	readonly reads: string[] = [];
 	readonly writes: Array<{ path: string; content: Buffer }> = [];
 	hostile: Hostile | undefined;
+	/**
+	 * 命令里有这段文字时，这条命令一直不回话（像工作台卡住）；`thenSilent` 时从这以后所有调用都不回话
+	 * （连 `describe` 也不回：像容器被暂停、网络断了却没关连接）。
+	 */
+	hang: { marker: string; thenSilent: boolean } | undefined;
+	silent = false;
 
 	private constructor(
 		private readonly server: http2.Http2Server,
@@ -62,15 +68,30 @@ export class FakeWorkbench {
 	}
 }
 
+/** 一直不回话，直到调用方放弃。 */
+function never(signal: AbortSignal): Promise<never> {
+	return new Promise((_, reject) => {
+		signal.addEventListener("abort", () => reject(new ConnectError("canceled", Code.Canceled)));
+	});
+}
+
 function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 	router.service(AgentPeer, {
-		describe: () => ({ name: "fake-workbench", agentVersion: "0.0.0", capabilities: [] }),
+		async describe(_req, ctx) {
+			if (workbench().silent) await never(ctx.signal);
+			return { name: "fake-workbench", agentVersion: "0.0.0", capabilities: [] };
+		},
 	});
 	router.service(AgentExec, {
 		async *run(req, ctx) {
 			const wb = workbench();
 			const env = Object.fromEntries(Object.entries(req.env));
 			wb.runs.push({ argv: [...req.argv], cwd: req.cwd, env });
+			if (wb.silent) await never(ctx.signal);
+			if (wb.hang && req.argv.join(" ").includes(wb.hang.marker)) {
+				if (wb.hang.thenSilent) wb.silent = true;
+				await never(ctx.signal);
+			}
 			if (wb.hostile) {
 				yield output(Buffer.from(wb.hostile.output));
 				yield { part: { case: "exit" as const, value: { exitCode: 0 } } };
@@ -126,9 +147,10 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 		},
 	});
 	router.service(AgentFileRead, {
-		async *read(req) {
+		async *read(req, ctx) {
 			const wb = workbench();
 			wb.reads.push(req.path);
+			if (wb.silent) await never(ctx.signal);
 			if (wb.hostile) {
 				yield { data: Buffer.from(wb.hostile.content) };
 				return;
@@ -144,7 +166,8 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 		},
 	});
 	router.service(AgentFileWrite, {
-		async write(requests) {
+		async write(requests, ctx) {
+			if (workbench().silent) await never(ctx.signal);
 			let path = "";
 			const parts: Buffer[] = [];
 			for await (const req of requests) {
@@ -164,8 +187,9 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 	});
 	router.service(AgentFiles, {
 		async *list() {},
-		async stat(req) {
+		async stat(req, ctx) {
 			const wb = workbench();
+			if (wb.silent) await never(ctx.signal);
 			if (wb.hostile) return { file: { path: req.path, size: 1n } };
 			try {
 				const info = await stat(req.path);
@@ -179,4 +203,21 @@ function routes(router: ConnectRouter, workbench: () => FakeWorkbench): void {
 
 function output(data: Buffer, stream: OutputStream = OutputStream.STDOUT) {
 	return { part: { case: "output" as const, value: { stream, data } } };
+}
+
+/** 一个只接受连接、从不回话的端口（不说 HTTP/2，也不关连接）：返回地址和关掉它的函数。 */
+export async function silentPort(): Promise<{ address: string; close: () => Promise<void> }> {
+	const sockets = new Set<Socket>();
+	const server = createServer((socket) => {
+		sockets.add(socket);
+		socket.on("close", () => sockets.delete(socket));
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	return {
+		address: `127.0.0.1:${(server.address() as AddressInfo).port}`,
+		close: async () => {
+			for (const socket of sockets) socket.destroy();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		},
+	};
 }

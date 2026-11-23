@@ -1,8 +1,23 @@
 // 看管 pi 进程和一轮：用照 RPC 协议说话的假 pi（support/fake-pi.mjs），按 prompt 的文字决定这一轮怎么走。
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { connectAgent } from "../src/agent.js";
+import { EventBus } from "../src/bus.js";
+import { SessionManager } from "../src/sessions.js";
+import { mirrorSkillsLocally } from "../src/skills.js";
 import { eventually } from "./support/eventually.js";
+import { silentPort } from "./support/fake-workbench.js";
 import { Harness, type HarnessOptions } from "./support/harness.js";
 
 const FAKE_PI = [process.execPath, join(import.meta.dirname, "support", "fake-pi.mjs")];
@@ -56,7 +71,10 @@ describe("拉起 pi", () => {
 			"PI_CODING_AGENT_DIR",
 			"PI_TELEMETRY",
 			"SFLY_ASSISTANT_TURN_CONFIG",
+			"TMPDIR",
 		]);
+		// 临时目录每个进程一个，在数据目录下（一轮结束时清空、进程退出时删掉）。
+		expect(started.env.TMPDIR?.startsWith(join(harness.dataDir, "tmp"))).toBe(true);
 		expect(started.env.PI_TELEMETRY).toBe("0");
 		// 设置目录每次启动新建，里面只有模型文件；进程退出后删掉。
 		const agentDir = started.env.PI_CODING_AGENT_DIR as string;
@@ -363,6 +381,183 @@ describe("看管进程的边界", () => {
 	});
 });
 
+/** 一个起得很慢的假 pi：先等 `seconds` 秒再起来。 */
+const slowPi = (harness: { root: string } | string, seconds: number): string[] => {
+	const dir = typeof harness === "string" ? harness : harness.root;
+	const path = join(dir, `slow-pi-${seconds}.sh`);
+	writeFileSync(
+		path,
+		`#!/bin/sh\nsleep ${seconds}\nexec ${FAKE_PI.map((a) => JSON.stringify(a)).join(" ")} "$@"\n`,
+		{
+			mode: 0o755,
+		},
+	);
+	return [path];
+};
+
+describe("审查补的守护", () => {
+	it("先回应 prompt（202），再拉起 pi：pi 起得很慢时 202 照样马上回来", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "sfly-slowpi-"));
+		const harness = await start({ piArgv: slowPi(dir, 3) });
+		const id = crypto.randomUUID();
+		const sent = Date.now();
+		expect((await harness.prompt(id, { text: "settle" })).status).toBe(202);
+		expect(Date.now() - sent).toBeLessThan(1_000);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("进程数的上限算上正在起的：上限 1，一个还在起时另一个会话 503", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "sfly-slowpi-"));
+		const harness = await start({ piArgv: slowPi(dir, 2), maxProcesses: 1 });
+		expect((await harness.prompt(crypto.randomUUID(), { text: "settle" })).status).toBe(202);
+		const second = await harness.prompt(crypto.randomUUID(), { text: "settle" });
+		expect(second.status).toBe(503);
+		expect(await second.json()).toMatchObject({ code: "process_limit" });
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("进程数的上限算上正在关的：被回收的空闲进程退出之前，它的位置还占着", async () => {
+		const harness = await start({ maxProcesses: 2 });
+		const a = crypto.randomUUID();
+		await harness.prompt(a, { text: "settle-slow-close" });
+		await harness.turnEnd(a);
+		const b = crypto.randomUUID();
+		await harness.prompt(b, { text: "hang" });
+		// 满了：c 要回收 a（关 stdin，a 要 0.8 秒才退出）；a 退出之前 a 关着、b 在做、c 在起 = 3 > 2。
+		const c = crypto.randomUUID();
+		expect((await harness.prompt(c, { text: "settle" })).status).toBe(202);
+		const d = await harness.prompt(crypto.randomUUID(), { text: "settle" });
+		expect(d.status).toBe(503);
+		await harness.abort(b);
+	});
+
+	it("同一个会话不同时有两个 pi：换了工作区时，旧进程退出之后才起新的；设置目录每次新建", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle-slow-close" });
+		await harness.turnEnd(id);
+		const other = join(harness.root, "workbench", "other");
+		mkdirSync(other, { recursive: true });
+		await harness.prompt(id, {
+			turn: 2,
+			text: "settle",
+			workbench: { name: "fake-workbench", address: harness.workbench.address, workdir: other },
+		});
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+		const raw = rawEvents(harness, id);
+		const exiting = raw.find((r) => r.type === "fake_exiting") as { t: number };
+		const starts = raw.filter((r) => r.type === "fake_env") as Array<{
+			t: number;
+			env: Record<string, string>;
+		}>;
+		expect(starts).toHaveLength(2);
+		expect(starts[1]?.t).toBeGreaterThanOrEqual(exiting.t);
+		expect(starts[1]?.env.PI_CODING_AGENT_DIR).not.toBe(starts[0]?.env.PI_CODING_AGENT_DIR);
+		expect(starts[1]?.env.TMPDIR).not.toBe(starts[0]?.env.TMPDIR);
+	});
+
+	it("决定结束这一轮之后，pi 还在吐的事件不外传", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "chatty-term" });
+		await eventually(() =>
+			expect(rawEvents(harness, id).some((r) => r.type === "turn_start")).toBe(true),
+		);
+		await harness.abort(id);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+		// pi 确实吐了（原始事件里有），但没有发出去。
+		await eventually(() =>
+			expect(rawEvents(harness, id).some((r) => r.toolCallId === "late")).toBe(true),
+		);
+		const events = harness.events.of(id).map((r) => r.event);
+		expect(events.some((e) => e.type === "tool_call")).toBe(false);
+		expect(events.some((e) => e.type === "assistant_message")).toBe(false);
+	});
+
+	it("最后一条助手消息出错（没有重试）：model_unavailable", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "error-once" });
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "model_unavailable",
+			error_class: "other",
+			reason: expect.stringContaining("401 unauthorized"),
+		});
+	});
+
+	it("工具结果里的 NUL、不成对的代理字符：发出之前换成看得见的占位（控制面存得进去）", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "nul" });
+		await harness.turnEnd(id);
+		const line = harness.events.lines.find((l) => l.includes('"tool_result"')) as string;
+		expect(line).not.toMatch(/\\u0000|\\ud800/i);
+		const result = harness.events.of(id).find((r) => r.event.type === "tool_result");
+		expect(result?.event).toMatchObject({ text: "a␀b\ufffdc" });
+	});
+
+	it("工作台接了连接却不回话：这一轮开头写 skill 时在期限内以「工作台连不上」失败，不等到用时上限", async () => {
+		const port = await silentPort();
+		try {
+			const harness = await start({
+				agentDeadlines: { replySlackMs: 200, fileDeadlineMs: 300, probeDeadlineMs: 300 },
+			});
+			const id = crypto.randomUUID();
+			await harness.prompt(id, {
+				text: "settle",
+				workbench: { name: "silent", address: port.address, workdir: harness.workdir },
+			});
+			const end = await harness.turnEnd(id, 1, 40_000);
+			expect(end).toMatchObject({ outcome: "failed" });
+			expect(end.reason).toContain("工作台连不上");
+		} finally {
+			await port.close();
+		}
+	}, 60_000);
+
+	it("工作台上没有工作区目录：一轮开始时建好", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		const missing = join(harness.root, "workbench", "not-yet");
+		await harness.prompt(id, {
+			text: "settle",
+			workbench: { name: "fake-workbench", address: harness.workbench.address, workdir: missing },
+		});
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		expect(existsSync(join(missing, ".agents", "skills"))).toBe(true);
+	});
+});
+
+describe("启动时清掉上次留下的东西", () => {
+	it("设置目录、每一轮的配置文件（有保密值的原文）、pi 的临时目录", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "sfly-leftover-"));
+		const session = join(dataDir, "sessions", crypto.randomUUID());
+		mkdirSync(session, { recursive: true });
+		writeFileSync(join(session, "turn.json"), "{}");
+		writeFileSync(join(session, "events.jsonl"), "");
+		mkdirSync(join(dataDir, "agents", "old"), { recursive: true });
+		mkdirSync(join(dataDir, "tmp", "old"), { recursive: true });
+		new SessionManager({
+			dataDir,
+			modelsFile: "/nonexistent",
+			model: undefined,
+			piArgv: FAKE_PI,
+			extension: "/nonexistent",
+			skillsDir: "/nonexistent",
+			hostEnv: {},
+			bus: new EventBus(),
+			connect: connectAgent,
+			log: () => {},
+		});
+		expect(existsSync(join(session, "turn.json"))).toBe(false);
+		expect(existsSync(join(session, "events.jsonl"))).toBe(true);
+		expect(existsSync(join(dataDir, "agents"))).toBe(false);
+		expect(existsSync(join(dataDir, "tmp"))).toBe(false);
+		rmSync(dataDir, { recursive: true, force: true });
+	});
+});
+
 describe("事件流", () => {
 	it("持久的事件带纪元内递增的序号，不持久的不带；每条带会话、轮次和产生的时间", async () => {
 		const harness = await start();
@@ -386,5 +581,27 @@ describe("事件流", () => {
 		expect(readdirSync(join(harness.dataDir, "sessions", id)).sort()).toEqual(
 			expect.arrayContaining(["context.md", "events.jsonl", "pi-stderr.log"]),
 		);
+	});
+});
+
+describe("助手容器里放 skill 的目录（所有会话共用）", () => {
+	it("内容已经一样时不动；不一样时换上镜像里的那份，不留镜像之外的东西，也不留中间目录", async () => {
+		const root = mkdtempSync(join(tmpdir(), "sfly-skills-"));
+		try {
+			const image = join(root, "image");
+			mkdirSync(join(image, "a"), { recursive: true });
+			writeFileSync(join(image, "a", "SKILL.md"), "A\n");
+			const workdir = join(root, "work");
+			const target = mirrorSkillsLocally(image, workdir);
+			const first = statSync(join(target, "a", "SKILL.md")).ino;
+			mirrorSkillsLocally(image, workdir);
+			expect(statSync(join(target, "a", "SKILL.md")).ino).toBe(first);
+			writeFileSync(join(target, "stale.md"), "x");
+			mirrorSkillsLocally(image, workdir);
+			expect(readdirSync(target).sort()).toEqual(["a"]);
+			expect(readdirSync(join(workdir, ".agents")).sort()).toEqual(["skills"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

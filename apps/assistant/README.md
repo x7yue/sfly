@@ -32,19 +32,16 @@ docker exec sfly-aeval-1-dev bash -c '(echo > /dev/tcp/127.0.0.1/50052) && echo 
 ```
 
 不通时再 `./aeval.sh --slot 1 reset` 一次。助手服务按「两边路径相同」工作：工作区在工作台上和助手容器里
-是同一个路径。控制面给的工作区是 `/work`；手动驱动时可以用它下面的一个目录，先在工作台上建好：
-
-```sh
-docker exec sfly-aeval-1-dev mkdir -p /work/proj
-```
+是同一个路径。控制面给的工作区是 `/work`；手动驱动时可以用它下面的一个目录（例如 `/work/proj`）。工作台上还没有
+这个目录时，助手服务在一轮开始时建好；建不了（工作台上的用户没有权限）时这一轮以 `failed` 结束，原因里写明要建哪个目录。
 
 ### 2. 模型
 
-模型文件是 pi 的格式（`models.json`），密钥写成 `"$变量名"`，值经同名环境变量交给助手容器；助手服务只把模型文件
-引用到的变量传给 pi。不想花钱时用评测集的假模型端点 `evals/assistant/container/fake_model.py`：它照剧本回复，
+模型文件是 pi 的格式（`models.json`），`apiKey`、`headers` 里写 `$变量名` 或 `${变量名}`（可以夹在文字里，
+`"Bearer $KEY"`），值经同名环境变量交给助手容器；助手服务只把模型文件引用到的变量传给 pi。没有模型文件、写了要执行的
+命令（`!` 开头）时助手服务拒绝启动，引用的变量没有带进来时启动日志里有一句提醒。不想花钱时用评测集的假模型端点 `evals/assistant/container/fake_model.py`：它照剧本回复，
 提示里写 `AEVAL-SCRIPT:<名字>` 时用和它同目录的 `<名字>.json`，`--dump <目录>` 把收到的每个请求存下来
-（看发给模型的系统提示和消息；这两样在 #580 里加的，合入之前用
-`git show origin/impl/539-rpcprobe:evals/assistant/container/fake_model.py` 取那一版）。在网络里随便一个有 python3 的容器里起它，例如工作台容器：
+（看发给模型的系统提示和消息）。在网络里随便一个有 python3 的容器里起它，例如工作台容器：
 
 ```sh
 docker exec sfly-aeval-1-dev mkdir -p /tmp/fm

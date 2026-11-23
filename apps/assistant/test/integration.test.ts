@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { OUTPUT_LIMIT_BYTES } from "../src/extension/extension.js";
 import { piPackage } from "../src/launch.js";
 import { skillFiles } from "../src/skills.js";
 import { eventually } from "./support/eventually.js";
@@ -103,18 +104,19 @@ describe("真的 pi：四个工具经扩展落到工作台上", () => {
 });
 
 describe("真的 pi：只加载给的扩展，系统提示里只有给的东西", () => {
-	it("设置目录里有一个会写标记文件的扩展（拉起时放进去的）：--no-extensions 下它不加载", async () => {
+	// pi 只自动发现 extensions/ 下的 *.ts、*.js（.mjs 带不带 --no-extensions 都不加载，放它测不到东西）。
+	it("设置目录里有会写标记文件的扩展（.ts、.js，拉起时放进去的）：--no-extensions 下它们不加载", async () => {
 		const planted = join(tmpdir(), `sfly-planted-${crypto.randomUUID()}`);
 		mkdirSync(planted);
 		const marker = join(planted, "loaded.marker");
 		writeFileSync(
-			join(planted, "planted.mjs"),
+			join(planted, "planted.ts"),
 			`import { writeFileSync } from "node:fs";\nexport default function () { writeFileSync(${JSON.stringify(marker)}, "x"); }\n`,
 		);
 		const wrapper = join(planted, "pi.sh");
 		writeFileSync(
 			wrapper,
-			`#!/bin/sh\nmkdir -p "$PI_CODING_AGENT_DIR/extensions"\ncp ${JSON.stringify(join(planted, "planted.mjs"))} "$PI_CODING_AGENT_DIR/extensions/"\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(piPackage().cli)} "$@"\n`,
+			`#!/bin/sh\nmkdir -p "$PI_CODING_AGENT_DIR/extensions"\ncp ${JSON.stringify(join(planted, "planted.ts"))} "$PI_CODING_AGENT_DIR/extensions/"\ncp ${JSON.stringify(join(planted, "planted.ts"))} "$PI_CODING_AGENT_DIR/extensions/planted2.js"\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(piPackage().cli)} "$@"\n`,
 			{ mode: 0o755 },
 		);
 		const h = await Harness.start({ piArgv: [wrapper] });
@@ -131,13 +133,21 @@ describe("真的 pi：只加载给的扩展，系统提示里只有给的东西"
 
 	it("别处放的 SYSTEM.md、AGENTS.md、扩展（模型文件旁边、数据目录、上一个进程的设置目录、pi 的工作目录）：都进不来", async () => {
 		const h = await Harness.start();
+		const markers: string[] = [];
 		try {
 			const plant = (dir: string) => {
 				mkdirSync(join(dir, "extensions"), { recursive: true });
 				writeFileSync(join(dir, "SYSTEM.md"), "PLANTED-SYSTEM\n");
 				writeFileSync(join(dir, "APPEND_SYSTEM.md"), "PLANTED-APPEND\n");
 				writeFileSync(join(dir, "AGENTS.md"), "PLANTED-AGENTS\n");
-				writeFileSync(join(dir, "extensions", "x.mjs"), "throw new Error('PLANTED-EXTENSION');\n");
+				for (const ext of ["ts", "js"]) {
+					const marker = join(h.root, `loaded-${markers.length}.marker`);
+					markers.push(marker);
+					writeFileSync(
+						join(dir, "extensions", `x.${ext}`),
+						`import { writeFileSync } from "node:fs";\nexport default function () { writeFileSync(${JSON.stringify(marker)}, "x"); }\n`,
+					);
+				}
 			};
 			plant(join(h.root, "config"));
 			plant(h.dataDir);
@@ -152,10 +162,85 @@ describe("真的 pi：只加载给的扩展，系统提示里只有给的东西"
 			const prompt = h.model.systemPrompt(0);
 			expect(prompt).not.toMatch(/PLANTED-/);
 			expect(prompt.startsWith("You are")).toBe(true);
+			for (const marker of markers) expect(existsSync(marker), marker).toBe(false);
 		} finally {
 			await h.close();
 		}
 	}, 120_000);
+
+	it("--no-prompt-templates：设置目录里的提示模板不展开，以 /名字 开头的话原样发给模型", async () => {
+		const planted = realpathSync(mkdtempSync(join(tmpdir(), "sfly-tpl-")));
+		const wrapper = join(planted, "pi.sh");
+		writeFileSync(
+			wrapper,
+			`#!/bin/sh\nmkdir -p "$PI_CODING_AGENT_DIR/prompts"\nprintf -- '---\\ndescription: x\\n---\\nPLANTED-TEMPLATE-BODY\\n' > "$PI_CODING_AGENT_DIR/prompts/planted.md"\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(piPackage().cli)} "$@"\n`,
+			{ mode: 0o755 },
+		);
+		const h = await Harness.start({ piArgv: [wrapper] });
+		try {
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "/planted" });
+			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed" });
+			const users = (h.model.requests[0]?.messages ?? []).filter((m) => m.role === "user");
+			expect(JSON.stringify(users)).not.toContain("PLANTED-TEMPLATE-BODY");
+			expect(JSON.stringify(users)).toContain("/planted");
+		} finally {
+			await h.close();
+			rmSync(planted, { recursive: true, force: true });
+		}
+	}, 120_000);
+});
+
+describe("真的 pi：工作台不回话、输出很大", () => {
+	it("命令进行中工作台不回话（之后连 describe 也不回）：这一轮在期限内以「工作台连不上」失败，不等到用时上限", async () => {
+		const h = await Harness.start();
+		try {
+			h.workbench.hang = { marker: "SILENT-NOW", thenSilent: true };
+			h.model.scripts.set("剧本：工作台不回话", [
+				{ tool: "bash", args: { command: "echo SILENT-NOW", timeout: 1 } },
+				{ text: "不该走到这里" },
+			]);
+			const id = crypto.randomUUID();
+			const started = Date.now();
+			await h.prompt(id, { text: "剧本：工作台不回话" });
+			const end = await h.turnEnd(id, 1, 60_000);
+			expect(end).toMatchObject({ outcome: "failed" });
+			expect(end.reason).toContain("工作台连不上");
+			// 命令的超时 1 秒 + 余量 10 秒 + 探测 5 秒，远小于 20 分钟的上限。
+			expect(Date.now() - started).toBeLessThan(40_000);
+		} finally {
+			h.workbench.silent = false;
+			await h.close();
+		}
+	}, 90_000);
+
+	it("输出超过上限：结果写明丢了多少；events.jsonl 不存每一次的输出快照；一轮结束时助手容器里的临时文件清掉", async () => {
+		const h = await Harness.start();
+		try {
+			const bytes = OUTPUT_LIMIT_BYTES + 2 * 1024 * 1024;
+			h.model.scripts.set("剧本：大输出", [
+				{
+					tool: "bash",
+					args: { command: `head -c ${bytes} /dev/zero | tr '\\0' a; echo`, timeout: 120 },
+				},
+				{ text: "看完了。" },
+			]);
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "剧本：大输出" });
+			expect(await h.turnEnd(id, 1, 120_000)).toMatchObject({ outcome: "completed" });
+			const result = h.events.of(id).find((r) => r.event.type === "tool_result");
+			expect(result?.event).toMatchObject({ text: expect.stringContaining("字节丢掉了") });
+			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
+			expect(raw).not.toContain('"tool_execution_update"');
+			expect(raw.length).toBeLessThan(2 * 1024 * 1024);
+			const tmp = join(h.dataDir, "tmp");
+			for (const dir of readdirSync(tmp)) expect(readdirSync(join(tmp, dir))).toEqual([]);
+			const uploaded = h.workbench.writes.find((w) => /pi-bash-[0-9a-f]+\.log$/.test(w.path));
+			expect(uploaded?.content.length).toBeLessThan(OUTPUT_LIMIT_BYTES + 4096);
+		} finally {
+			await h.close();
+		}
+	}, 180_000);
 });
 
 describe("真的 pi：设置目录里没有 SYSTEM.md 时（默认系统提示，助手服务走的路径）", () => {
@@ -390,7 +475,13 @@ describe("真的 pi：保密环境变量不出助手服务", () => {
 			// 命令确实拿到了它（在工作台上），模型也看到了（工具结果原样交给模型）。
 			expect(h.workbench.runs.some((r) => r.env.SFLY_API_TOKEN === value)).toBe(true);
 			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
-			for (const text of [h.events.lines.join("\n"), raw, h.logs.join("\n")]) {
+			// 扩展在源头打码：pi 自己的会话文件里也是打过码的。
+			const sessionDir = join(h.dataDir, "sessions", id, "pi-session");
+			const piSession = readdirSync(sessionDir)
+				.map((f) => readFileSync(join(sessionDir, f), "utf8"))
+				.join("\n");
+			expect(piSession).toContain("******");
+			for (const text of [h.events.lines.join("\n"), raw, h.logs.join("\n"), piSession]) {
 				expect(text).not.toContain(value);
 			}
 			const results = h.events

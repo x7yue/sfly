@@ -5,6 +5,7 @@ import { connectAgent } from "./agent.js";
 import { EventBus } from "./bus.js";
 import { ASSISTANT_PORT, ConfigError, readConfig } from "./config.js";
 import { piPackage } from "./launch.js";
+import { checkModelsFile } from "./models.js";
 import { createAssistantServer } from "./server.js";
 import { SessionManager } from "./sessions.js";
 
@@ -20,6 +21,7 @@ function main(): void {
 	let config: ReturnType<typeof readConfig>;
 	try {
 		config = readConfig(process.env);
+		for (const warning of checkModelsFile(config.modelsFile, process.env)) log(`提醒：${warning}`);
 	} catch (error) {
 		if (error instanceof ConfigError) {
 			log(`拒绝启动：${error.message}`);

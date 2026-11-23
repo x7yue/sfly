@@ -17,6 +17,8 @@ import { SECRET_MASK } from "@sfly/schema";
  */
 export class Redactor {
 	#forms: string[] = [];
+	#formBytes: Buffer[] = [];
+	readonly #mask = Buffer.from(SECRET_MASK);
 	readonly #values = new Set<string>();
 
 	/** 加进要打码的值（会话里每一轮的 `secret_env` 都加进来：pi 进程跨轮存活，模型可能在后面的轮里复述）。 */
@@ -31,6 +33,12 @@ export class Redactor {
 		const forms = new Set<string>();
 		for (const value of this.#values) writtenForms(value, forms);
 		this.#forms = [...forms].filter((f) => f !== "").sort((a, b) => b.length - a.length);
+		this.#formBytes = this.#forms.map((f) => Buffer.from(f)).sort((a, b) => b.length - a.length);
+	}
+
+	/** 加进来过的值（交给扩展：它在源头打码）。 */
+	get values(): string[] {
+		return [...this.#values];
 	}
 
 	/** 有没有要打码的值。 */
@@ -70,6 +78,71 @@ export class Redactor {
 
 	stream(): StreamRedactor {
 		return new StreamRedactor(this);
+	}
+
+	/** 最长的一种写法的字节数（UTF-8）。 */
+	get longestBytes(): number {
+		return this.#formBytes[0]?.length ?? 0;
+	}
+
+	/** 字节里每一处要打码的写法的位置 `[开始, 结束)`。 */
+	byteMatches(data: Buffer): Array<[number, number]> {
+		const spans: Array<[number, number]> = [];
+		for (const form of this.#formBytes) {
+			for (let i = data.indexOf(form); i !== -1; i = data.indexOf(form, i + 1)) {
+				spans.push([i, i + form.length]);
+			}
+		}
+		return spans.sort((a, b) => a[0] - b[0]);
+	}
+
+	/**
+	 * 按字节打码（工作台返回的原始内容：命令的输出、读到的文件，可能不是 UTF-8 文字）：每种写法的 UTF-8 字节换成
+	 * {@link SECRET_MASK}，长的写法先换；别的字节原样。
+	 */
+	redactBytes(data: Buffer): Buffer {
+		let out = data;
+		for (const form of this.#formBytes) {
+			if (out.indexOf(form) === -1) continue;
+			const parts: Buffer[] = [];
+			let from = 0;
+			for (let i = out.indexOf(form); i !== -1; i = out.indexOf(form, from)) {
+				parts.push(out.subarray(from, i), this.#mask);
+				from = i + form.length;
+			}
+			parts.push(out.subarray(from));
+			out = Buffer.concat(parts);
+		}
+		return out;
+	}
+
+	byteStream(): ByteStreamRedactor {
+		return new ByteStreamRedactor(this);
+	}
+}
+
+/** 一条字节流（命令的输出、按块读的文件）的打码：和 {@link StreamRedactor} 同样留尾巴，按字节。 */
+export class ByteStreamRedactor {
+	#pending = Buffer.alloc(0);
+
+	constructor(private readonly redactor: Redactor) {}
+
+	push(chunk: Uint8Array): Buffer {
+		if (this.redactor.empty) return Buffer.from(chunk);
+		const combined = Buffer.concat([this.#pending, chunk]);
+		const hold = Math.max(this.redactor.longestBytes - 1, 0);
+		let cut = Math.max(combined.length - hold, 0);
+		for (const [start, end] of this.redactor.byteMatches(combined)) {
+			if (start < cut && end > cut) cut = end;
+		}
+		this.#pending = Buffer.from(combined.subarray(cut));
+		return this.redactor.redactBytes(combined.subarray(0, cut));
+	}
+
+	flush(): Buffer {
+		const rest = this.#pending;
+		this.#pending = Buffer.alloc(0);
+		return this.redactor.redactBytes(rest);
 	}
 }
 

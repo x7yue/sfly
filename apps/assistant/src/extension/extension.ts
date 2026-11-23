@@ -12,7 +12,7 @@
 // 写的工作目录、skill 的位置就是工作台上的，扩展不改系统提示（#539 第 10 题只证明了工作目录能改，skill 的位置和
 // 工具的工作目录换不过来）。
 
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { createReadStream, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
@@ -29,10 +29,25 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type AgentClient, asFsError, connectAgent, TimeoutError } from "../agent.js";
 import { TURN_CONFIG_ENV } from "../launch-env.js";
+import { Redactor } from "../redact.js";
 import { readTurnConfig, type TurnConfig } from "../turn-config.js";
 
 /** 建目录、查文件这类短命令的超时。 */
 const SHORT_TIMEOUT_MS = 30_000;
+
+/**
+ * 一条命令交给 pi 的输出最多这么多字节（打过码的）：超过的丢掉，结果末尾写明丢了多少。pi 把截断之前的全部输出
+ * 写进它的临时文件、扩展再把这个文件传到工作台上，不设上限的话一条输出几百 MB 的命令就能让 pi 的内存和
+ * 助手容器的磁盘（所有会话共用）跟着涨。
+ */
+export const OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
+
+/** 这一轮要打码的值（保密的环境变量，会话里到现在为止的都算）。 */
+function redactorFor(config: TurnConfig): Redactor {
+	const redactor = new Redactor();
+	redactor.add(config.secrets ?? []);
+	return redactor;
+}
 
 /** pi 命令工具的临时文件：`<临时目录>/pi-bash-<16 位十六进制>.log`（pi 的 output-files）。 */
 const PI_TEMP_FILE = /^pi-bash-[0-9a-f]{16}\.log$/;
@@ -44,6 +59,8 @@ export interface ExtensionDeps {
 	connect: (address: string) => AgentClient;
 	/** pi 的临时目录（默认系统的临时目录）。 */
 	tempDir?: string;
+	/** 建目录这类短命令的超时（默认 {@link SHORT_TIMEOUT_MS}，测试里改短）。 */
+	shortTimeoutMs?: number;
 }
 
 /**
@@ -63,6 +80,7 @@ export function isPiTempFile(path: unknown, tempDir: string = tmpdir()): path is
 
 export function createRemoteTools(pi: ExtensionAPI, deps: ExtensionDeps): void {
 	const tempDir = deps.tempDir ?? tmpdir();
+	const short = deps.shortTimeoutMs ?? SHORT_TIMEOUT_MS;
 	const clients = new Map<string, AgentClient>();
 	const agent = (): AgentClient => {
 		const { address } = deps.config();
@@ -76,22 +94,30 @@ export function createRemoteTools(pi: ExtensionAPI, deps: ExtensionDeps): void {
 	const { workdir } = deps.config();
 
 	pi.registerTool(
-		atWorkdir(createReadToolDefinition(workdir, { operations: readOps(agent) }), workdir),
-	);
-	pi.registerTool(
 		atWorkdir(
-			createWriteToolDefinition(workdir, { operations: writeOps(agent, workdir) }),
+			createWriteToolDefinition(workdir, { operations: writeOps(agent, workdir, short) }),
 			workdir,
 		),
 	);
 	pi.registerTool(
-		atWorkdir(createEditToolDefinition(workdir, { operations: editOps(agent, workdir) }), workdir),
+		atWorkdir(
+			createEditToolDefinition(workdir, {
+				operations: editOps(agent, workdir, deps.config, short),
+			}),
+			workdir,
+		),
 	);
 	// 命令在工作台上执行，环境是这一轮的配置给的：pi 的 PI_* 会话变量不在那边，不让系统提示说「可以看 PI_* 变量」。
 	const bash = createBashToolDefinition(workdir, {
 		operations: bashOps(agent, deps.config),
 		exposeSessionEnvironment: false,
 	});
+	pi.registerTool(
+		atWorkdir(
+			createReadToolDefinition(workdir, { operations: readOps(agent, deps.config) }),
+			workdir,
+		),
+	);
 	pi.registerTool({
 		...bash,
 		async execute(id, params, signal, onUpdate, ctx) {
@@ -100,7 +126,15 @@ export function createRemoteTools(pi: ExtensionAPI, deps: ExtensionDeps): void {
 			const path = (result.details as { fullOutputPath?: unknown } | undefined)?.fullOutputPath;
 			if (isPiTempFile(path, tempDir)) {
 				try {
-					await agent().writeFile(path, readFileSync(path));
+					// 工作台上建同名的父目录（两边路径相同），按块读、按块传，不把整份读进内存
+					// （文件里是打过码、不超过 OUTPUT_LIMIT_BYTES 的输出）。
+					const code = await agent().run(["mkdir", "-p", dirname(path)], {
+						cwd: "/",
+						timeoutMs: short,
+					});
+					if (code === 0) {
+						await agent().writeFile(path, createReadStream(path, { highWaterMark: 256 * 1024 }));
+					}
 				} catch {
 					// 传不上去时模型读那个路径会得到「文件不存在」，照常往下走。
 				}
@@ -130,20 +164,27 @@ function atWorkdir<T extends ToolDefinition<any, any, any>>(tool: T, workdir: st
 	};
 }
 
-function readOps(agent: () => AgentClient): ReadOperations {
+function readOps(agent: () => AgentClient, config: () => TurnConfig): ReadOperations {
 	return {
+		// 读到的内容交给 pi 之前就按值打码：pi 的截断、会话文件里都是打过码的。
 		readFile: async (path) => {
 			try {
-				return await agent().readFile(path);
+				return redactorFor(config()).redactBytes(await agent().readFile(path));
 			} catch (error) {
 				throw asFsError(error, "open", path);
 			}
 		},
 		createReadStream: (path, { signal }) => {
 			const chunks = agent().readChunks(path, signal);
+			const redact = redactorFor(config()).byteStream();
 			return (async function* () {
 				try {
-					yield* chunks;
+					for await (const chunk of chunks) {
+						const out = redact.push(chunk);
+						if (out.length > 0) yield out;
+					}
+					const rest = redact.flush();
+					if (rest.length > 0) yield rest;
 				} catch (error) {
 					throw asFsError(error, "open", path);
 				}
@@ -158,9 +199,7 @@ function readOps(agent: () => AgentClient): ReadOperations {
 		},
 		detectImageMimeType: async (path) => {
 			try {
-				const parts: Uint8Array[] = [];
-				for await (const chunk of agent().readChunks(path, undefined, 16)) parts.push(chunk);
-				return sniffImage(Buffer.concat(parts));
+				return sniffImage(await agent().readHead(path, 16));
 			} catch {
 				return null;
 			}
@@ -183,7 +222,7 @@ function sniffImage(head: Buffer): string | null {
 	return null;
 }
 
-function writeOps(agent: () => AgentClient, cwd: string): WriteOperations {
+function writeOps(agent: () => AgentClient, cwd: string, short: number): WriteOperations {
 	return {
 		writeFile: async (path, content) => {
 			try {
@@ -194,15 +233,20 @@ function writeOps(agent: () => AgentClient, cwd: string): WriteOperations {
 		},
 		// 能力端口没有建目录的接口，写文件又要求父目录已经存在：经命令建（在工作台上）。
 		mkdir: async (dir) => {
-			const code = await agent().run(["mkdir", "-p", dir], { cwd, timeoutMs: SHORT_TIMEOUT_MS });
+			const code = await agent().run(["mkdir", "-p", dir], { cwd, timeoutMs: short });
 			if (code !== 0) throw new Error(`EACCES: mkdir -p '${dir}' 退出码 ${code}`);
 		},
 	};
 }
 
-function editOps(agent: () => AgentClient, cwd: string): EditOperations {
-	const read = readOps(agent);
-	const write = writeOps(agent, cwd);
+function editOps(
+	agent: () => AgentClient,
+	cwd: string,
+	config: () => TurnConfig,
+	short: number,
+): EditOperations {
+	const read = readOps(agent, config);
+	const write = writeOps(agent, cwd, short);
 	return { readFile: read.readFile, access: read.access, writeFile: write.writeFile };
 }
 
@@ -210,9 +254,33 @@ function bashOps(agent: () => AgentClient, config: () => TurnConfig): BashOperat
 	return {
 		exec: async (command, cwd, { onData, signal, timeout }) => {
 			// pi 给的环境（它自己进程的环境）不传过去：命令只带这一轮配置里的环境变量。
-			const { env, defaultTimeoutSeconds } = config();
+			const current = config();
+			const { env, defaultTimeoutSeconds } = current;
 			// 能力端口的命令必须有超时：模型没给时用这一轮的默认值。
 			const seconds = timeout ?? defaultTimeoutSeconds;
+			// 输出交给 pi 之前就按值打码（值跨两块也认得出），并且有上限：pi 的截断、临时文件、会话文件里
+			// 都是打过码的，也不会先截断、后打码留下半截。
+			const redact = redactorFor(current).byteStream();
+			let passed = 0;
+			let dropped = 0;
+			const give = (data: Buffer) => {
+				const room = OUTPUT_LIMIT_BYTES - passed;
+				if (data.length > room) dropped += data.length - room;
+				const taken = data.length > room ? data.subarray(0, room) : data;
+				passed += taken.length;
+				if (taken.length > 0) onData(taken);
+			};
+			const finish = () => {
+				give(redact.flush());
+				if (dropped > 0) {
+					onData(
+						Buffer.from(
+							`\n[输出超过 ${OUTPUT_LIMIT_BYTES / 1024 / 1024} MiB，后面的 ${dropped} 字节丢掉了：` +
+								"没有交给模型，也没有保存。要看完整的输出，把它重定向到工作台上的文件再分段读]\n",
+						),
+					);
+				}
+			};
 			try {
 				// argv 不经 shell：包一层登录 shell，PATH 和人在工作台上用的一样（~/.local/bin 里的 sfly）。
 				// 取消信号传给能力端口的调用，Agent 随之结束命令的整棵进程树。
@@ -221,10 +289,18 @@ function bashOps(agent: () => AgentClient, config: () => TurnConfig): BashOperat
 					env,
 					timeoutMs: Math.round(seconds * 1000),
 					signal,
-					onData: (data) => onData(Buffer.from(data)),
+					onData: (data) => {
+						if (passed >= OUTPUT_LIMIT_BYTES) {
+							dropped += data.length;
+							return;
+						}
+						give(redact.push(data));
+					},
 				});
+				finish();
 				return { exitCode };
 			} catch (error) {
+				finish();
 				if (error instanceof TimeoutError) {
 					// pi 约定的超时格式：命令工具据此写「Command timed out after N seconds」。
 					throw new Error(`timeout:${seconds}`);

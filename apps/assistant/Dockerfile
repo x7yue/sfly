@@ -3,7 +3,7 @@
 #   docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" \
 #     -t sfly-assistant out/assistant
 #
-# 只复制文件，另建一个空的 /work（不装任何东西）。运行：
+# 只复制文件，没有 RUN（arm64 镜像不需要 QEMU，见 .github/workflows/release.yml）。运行：
 #
 #   docker run --init -e SFLY_ASSISTANT_SECRET=<至少 32 个字符> -e SFLY_ASSISTANT_MODEL=<提供方>/<模型> \
 #     -v <模型文件>:/config/models.json:ro -v sfly-assistant-data:/data sfly-assistant
@@ -20,11 +20,11 @@ ENV NODE_ENV=production \
 # 程序文件归 root 所有，运行用户只读。
 COPY . /app/
 
-# 工作区在助手容器里的同名目录（两边路径相同）：空的，助手服务用户可写；pi 在这里运行，只放助手服务复制的 skill。
-RUN mkdir /work && chown node:node /work
-
-# 数据目录（每个会话一个目录、pi 的设置目录）在 USER 之后创建，归 node 用户所有；命名卷首次挂载时沿用这个属主。
+# 数据目录（每个会话一个目录、pi 的设置目录）和 /work 在 USER 之后由 WORKDIR 创建，归 node 用户所有；
+# 命名卷首次挂载时沿用这个属主。/work 是工作区在助手容器里的同名目录（两边路径相同）：空的，pi 在这里运行，
+# 只放助手服务复制的 skill。
 USER node
+WORKDIR /work
 WORKDIR /data
 VOLUME /data
 

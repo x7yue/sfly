@@ -1,4 +1,4 @@
-import { createWriteStream, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
 	AssistantErrorCode,
@@ -8,7 +8,7 @@ import type {
 	TurnLimit,
 	TurnOutcome,
 } from "@sfly/schema";
-import type { AgentClient } from "./agent.js";
+import { type AgentClient, WORKBENCH_UNREACHABLE } from "./agent.js";
 import type { EventBus } from "./bus.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
@@ -90,6 +90,8 @@ interface Session {
 	startedFor: { workbench: string; workdir: string } | undefined;
 	/** 被关掉的进程退出之前：新进程等它。 */
 	closing: Promise<void> | undefined;
+	/** 现在这个 pi 进程的临时目录（`TMPDIR`）。 */
+	tmpDir: string | undefined;
 	turn: Turn | undefined;
 	lastActive: number;
 	/** 这个助手服务进程里，这个会话最近一轮的轮次（重启之后不知道）。 */
@@ -113,6 +115,25 @@ export class SessionManager {
 		this.#limits = options.limits ?? TURN_LIMITS;
 		this.#maxProcesses = options.maxProcesses ?? MAX_PROCESSES;
 		mkdirSync(join(options.dataDir, "sessions"), { recursive: true });
+		this.#cleanLeftovers();
+	}
+
+	/**
+	 * 上次（被强行结束时）留下的东西：每个 pi 进程的设置目录（里面有模型文件的副本）、每一轮的配置文件（里面有
+	 * 保密值的原文）、pi 的临时目录。正常退出时这些都已经删了；被 SIGKILL、容器被杀时会留下，启动时清掉。
+	 */
+	#cleanLeftovers(): void {
+		const { dataDir } = this.options;
+		rmSync(join(dataDir, "agents"), { recursive: true, force: true });
+		rmSync(this.#tmpRoot, { recursive: true, force: true });
+		for (const id of readdirSync(join(dataDir, "sessions"))) {
+			rmSync(join(dataDir, "sessions", id, "turn.json"), { force: true });
+		}
+	}
+
+	/** pi 进程的临时目录都在这下面（每个进程一个，`TMPDIR`）。 */
+	get #tmpRoot(): string {
+		return join(this.options.dataDir, "tmp");
 	}
 
 	/**
@@ -257,6 +278,7 @@ export class SessionManager {
 				process: undefined,
 				startedFor: undefined,
 				closing: undefined,
+				tmpDir: undefined,
 				turn: undefined,
 				lastActive: Date.now(),
 				lastTurn: undefined,
@@ -286,6 +308,7 @@ export class SessionManager {
 			workdir: body.workbench.workdir,
 			env: { ...body.env, ...body.secret_env },
 			defaultTimeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS,
+			secrets: session.redactor.values,
 		};
 		const path = this.#paths(session).turnConfig;
 		rmSync(path, { force: true });
@@ -359,8 +382,10 @@ export class SessionManager {
 			model: this.options.model,
 			piArgv: this.options.piArgv,
 			hostEnv: this.options.hostEnv,
+			tmpRoot: this.#tmpRoot,
 		});
 		session.startedFor = startedFor;
+		session.tmpDir = launch.tmpDir;
 		const raw = createWriteStream(join(session.dir, "events.jsonl"), { flags: "a", mode: 0o600 });
 		raw.on("error", (error) =>
 			this.options.log(`会话 ${session.id}：写 events.jsonl 失败：${error.message}`),
@@ -377,13 +402,17 @@ export class SessionManager {
 				this.options.log(`会话 ${session.id}：写 pi-stderr.log 失败：${error.message}`),
 			killGraceMs: this.options.killGraceMs,
 			onRecord: (record, line) => {
-				raw.write(`${session.redactor.redact(line)}\n`);
+				// 命令输出的每一次更新都是到这一刻为止的全部输出：不再整份存一遍（工具结束时的结果里有）。
+				if (record?.type !== "tool_execution_update") {
+					raw.write(`${session.redactor.redact(line)}\n`);
+				}
 				this.#onRecord(session, process, record);
 			},
 			onExit: (code, signal) => {
 				raw.end();
-				// 这次启动新建的设置目录用完就删（不和别的进程、别的会话共用）。
+				// 这次启动新建的设置目录、临时目录用完就删（不和别的进程、别的会话共用）。
 				rmSync(launch.agentDir, { recursive: true, force: true });
+				rmSync(launch.tmpDir, { recursive: true, force: true });
 				this.#onExit(session, process, code, signal);
 			},
 		});
@@ -401,6 +430,15 @@ export class SessionManager {
 		const { events, unknown } = turn.translator.translate(record);
 		if (unknown) this.options.log(`会话 ${session.id}：认不出的 pi 事件 ${unknown}`);
 		for (const event of events) this.#emit(session, turn, event);
+		const unreachable = workbenchUnreachable(record);
+		if (unreachable !== undefined) {
+			// 工作台连不上（一次调用过了期限、之后也探不通）：不等到上限，这一轮以失败结束，写明原因。
+			this.#stop(session, turn, {
+				outcome: "failed",
+				reason: session.redactor.redact(unreachable),
+			});
+			return;
+		}
 		if (record.type === "turn_start" && turn.translator.modelCalls > this.#limits.modelCalls) {
 			this.#stop(session, turn, {
 				outcome: "limit",
@@ -485,12 +523,15 @@ export class SessionManager {
 			...(end.errorClass && { error_class: end.errorClass }),
 		});
 		rmSync(this.#paths(session).turnConfig, { force: true });
+		// 这一轮命令的完整输出已经传到工作台上了：助手容器里的临时文件清掉（不占所有会话共用的磁盘）。
+		if (session.tmpDir) emptyDir(session.tmpDir);
 		if (session.turn === turn) session.turn = undefined;
 		session.lastActive = Date.now();
 	}
 
 	#emit(session: Session, turn: Turn, event: AssistantEvent): void {
-		this.options.bus.emit(session.id, turn.number, session.redactor.redactValue(event));
+		// 先打码，再把 NUL 和不成对的代理字符换掉（控制面的数据库存不进去，存不进去这条事件就丢了）。
+		this.options.bus.emit(session.id, turn.number, storable(session.redactor.redactValue(event)));
 	}
 
 	/** 关掉最久没用的空闲 pi 进程（没有在做的一轮，关 stdin 安全）；关了一个返回 true。 */
@@ -517,4 +558,48 @@ export class SessionManager {
 			if (session.closing === closed) session.closing = undefined;
 		});
 	}
+}
+
+/** 工具结果说工作台连不上（扩展的 `DeadlineError`）时返回那句话；否则 undefined。 */
+function workbenchUnreachable(record: Record<string, unknown>): string | undefined {
+	if (record.type !== "tool_execution_end" || record.isError !== true) return undefined;
+	const content = (record.result as { content?: unknown } | undefined)?.content;
+	const text = Array.isArray(content)
+		? content
+				.map((c) =>
+					c && typeof c === "object" ? String((c as { text?: unknown }).text ?? "") : "",
+				)
+				.join("")
+		: "";
+	const at = text.indexOf(WORKBENCH_UNREACHABLE);
+	return at === -1 ? undefined : text.slice(at).split("\n")[0];
+}
+
+/** 清空一个目录（目录本身留着）。 */
+function emptyDir(dir: string): void {
+	try {
+		for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true });
+	} catch {
+		// 目录已经没了（进程退出时删掉了）。
+	}
+}
+
+/**
+ * 事件里的字符串换成控制面存得进去的：NUL（U+0000）换成「␀」，不成对的代理字符换成 U+FFFD。
+ * PostgreSQL 的 jsonb 不收 `\u0000`，也不收不成对的代理字符。
+ */
+export function storable<T>(value: T): T {
+	if (typeof value === "string") {
+		return value
+			.replaceAll(String.fromCharCode(0), "␀")
+			.replace(
+				/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,
+				"\ufffd",
+			) as T;
+	}
+	if (Array.isArray(value)) return value.map((item) => storable(item)) as T;
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, storable(v)])) as T;
+	}
+	return value;
 }

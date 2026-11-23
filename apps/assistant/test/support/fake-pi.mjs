@@ -8,6 +8,7 @@ out({
 	env: process.env,
 	argv: process.argv.slice(2),
 	agentDir: readdirSync(process.env.PI_CODING_AGENT_DIR),
+	t: Date.now(),
 });
 
 let pending = "";
@@ -23,8 +24,17 @@ process.stdin.on("data", (chunk) => {
 });
 // `ignore-term`：stdin 被关、收到 SIGTERM 都不退出（只有 SIGKILL 结束得了它）。
 let stubborn = false;
+// `slow-close`：stdin 被关之后过一会儿才退出（退出之前写一条带时间的记录）。
+let slowClose = false;
 process.stdin.on("end", () => {
 	out({ type: "fake_stdin_closed" });
+	if (slowClose) {
+		setTimeout(() => {
+			out({ type: "fake_exiting", t: Date.now() });
+			setTimeout(() => process.exit(0), 20);
+		}, 800);
+		return;
+	}
 	if (!stubborn) process.exit(0);
 });
 
@@ -62,7 +72,48 @@ function handle(command) {
 	});
 	out({ type: "agent_start" });
 	out({ type: "turn_start" });
-	if (text.startsWith("settle")) {
+	if (text.startsWith("settle-slow-close")) {
+		slowClose = true;
+		out(assistant("好的"));
+		settle();
+	} else if (text.startsWith("settle")) {
+		out(assistant("好的"));
+		settle();
+	} else if (text.startsWith("chatty-term")) {
+		// 收到 SIGTERM 之后还在吐事件（一条新的工具调用），过一会儿才退出。
+		stubborn = true;
+		process.on("SIGTERM", () => {
+			out({
+				type: "tool_execution_start",
+				toolCallId: "late",
+				toolName: "bash",
+				args: { command: "late" },
+			});
+			out({
+				type: "message_end",
+				message: { role: "assistant", content: [{ type: "text", text: "后来的话" }] },
+			});
+			setTimeout(() => process.exit(0), 50);
+		});
+		setInterval(() => {}, 60_000);
+	} else if (text.startsWith("error-once")) {
+		// 最后一条助手消息出错，没有重试（不是重试用尽）。
+		out(assistant("", { stopReason: "error", errorMessage: "401 unauthorized" }));
+		settle();
+	} else if (text.startsWith("nul")) {
+		out({
+			type: "tool_execution_start",
+			toolCallId: "n1",
+			toolName: "read",
+			args: { path: "bin" },
+		});
+		out({
+			type: "tool_execution_end",
+			toolCallId: "n1",
+			toolName: "read",
+			result: { content: [{ type: "text", text: "a\u0000b\ud800c" }] },
+			isError: false,
+		});
 		out(assistant("好的"));
 		settle();
 	} else if (text.startsWith("loop")) {

@@ -15,10 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { connectAgent } from "../src/agent.js";
-import { createRemoteTools, isPiTempFile } from "../src/extension/extension.js";
+import { connectAgent, WORKBENCH_UNREACHABLE } from "../src/agent.js";
+import { createRemoteTools, isPiTempFile, OUTPUT_LIMIT_BYTES } from "../src/extension/extension.js";
 import type { TurnConfig } from "../src/turn-config.js";
-import { FakeWorkbench } from "./support/fake-workbench.js";
+import { FakeWorkbench, silentPort } from "./support/fake-workbench.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: 测试里按名字取注册的工具，参数各不相同。
 type AnyTool = ToolDefinition<any, any, any>;
@@ -42,6 +42,8 @@ beforeEach(() => {
 	workdir = join(root, "work");
 	mkdirSync(workdir);
 	workbench.hostile = undefined;
+	workbench.hang = undefined;
+	workbench.silent = false;
 	workbench.runs.length = 0;
 	workbench.reads.length = 0;
 	workbench.writes.length = 0;
@@ -50,6 +52,7 @@ beforeEach(() => {
 		workdir,
 		env: { SFLY_NICKNAME: "tester" },
 		defaultTimeoutSeconds: 7,
+		secrets: [],
 	};
 	tools = new Map();
 	handlers = new Map();
@@ -131,8 +134,15 @@ describe("要求 1：不根据工具结果里的文字决定读本机的哪个�
 describe("要求 2：不根据工作台返回的内容在本机写任何文件", () => {
 	it("扩展打包进去的模块里，本机文件只读不写", () => {
 		const src = join(import.meta.dirname, "..", "src");
-		const modules = ["extension/extension.ts", "agent.ts", "turn-config.ts", "launch-env.ts"];
-		const allowed = new Set(["readFileSync", "realpathSync", "statSync"]);
+		const modules = [
+			"extension/extension.ts",
+			"agent.ts",
+			"turn-config.ts",
+			"launch-env.ts",
+			"redact.ts",
+		];
+		// 只读的：读这一轮的配置（readFileSync），判断临时文件（realpathSync、statSync），按块读它传到工作台上（createReadStream）。
+		const allowed = new Set(["createReadStream", "readFileSync", "realpathSync", "statSync"]);
 		for (const file of modules) {
 			const text = readFileSync(join(src, file), "utf8");
 			expect(text, file).not.toMatch(/from "node:fs\/promises"|from "fs"|require\(/);
@@ -192,4 +202,97 @@ describe("保留下来的适配", () => {
 		const { text } = await call("read", { path: "missing.txt" });
 		expect(text).toContain(`ENOENT: no such file or directory`);
 	});
+});
+
+/** 一套期限很短的工具（测试工作台不回话）。 */
+function quickTools(address: string): Map<string, AnyTool> {
+	const quick = new Map<string, AnyTool>();
+	const pi = {
+		registerTool: (tool: AnyTool) => quick.set(tool.name, tool),
+		on: () => {},
+	} as unknown as ExtensionAPI;
+	createRemoteTools(pi, {
+		shortTimeoutMs: 300,
+		config: () => ({ ...config, address }),
+		connect: (a) =>
+			connectAgent(a, { replySlackMs: 200, fileDeadlineMs: 400, probeDeadlineMs: 300 }),
+	});
+	return quick;
+}
+
+const run = async (set: Map<string, AnyTool>, name: string, params: Record<string, unknown>) => {
+	try {
+		const result = await (set.get(name) as AnyTool).execute("c", params, undefined, undefined, {
+			cwd: "/x",
+		} as never);
+		return result.content.map((c: { type: string; text?: string }) => c.text ?? "").join("");
+	} catch (error) {
+		return (error as Error).message;
+	}
+};
+
+describe("工作台接了连接却不回话：每次调用都有期限", () => {
+	it("整个端口不回话：四个工具都在期限内以「工作台连不上」结束", async () => {
+		const port = await silentPort();
+		try {
+			const quick = quickTools(port.address);
+			for (const [name, params] of [
+				["bash", { command: "echo hi", timeout: 1 }],
+				["read", { path: "a.txt" }],
+				["write", { path: "a.txt", content: "x" }],
+				["edit", { path: "a.txt", edits: [{ oldText: "a", newText: "b" }] }],
+			] as const) {
+				const started = Date.now();
+				const text = await run(quick, name, params);
+				expect(text, name).toContain(WORKBENCH_UNREACHABLE);
+				expect(Date.now() - started, name).toBeLessThan(3_000);
+			}
+		} finally {
+			await port.close();
+		}
+	});
+
+	it("只有这一条命令卡住、工作台还连得上：这次调用以明确的错误结束，不说连不上", async () => {
+		workbench.hang = { marker: "STUCK", thenSilent: false };
+		const text = await run(quickTools(workbench.address), "bash", {
+			command: "echo STUCK",
+			timeout: 1,
+		});
+		expect(text).toContain("没有回应这次命令");
+		expect(text).toContain("还连得上");
+		expect(text).not.toContain(WORKBENCH_UNREACHABLE);
+	});
+});
+
+describe("保密值在源头打码：交给 pi 之前", () => {
+	const secret = "sekret-value-0123";
+
+	it("命令的输出（值被拆在两块里也认得出）、读到的文件：交给 pi 的都是打过码的", async () => {
+		config = { ...config, secrets: [secret] };
+		const { text } = await call("bash", {
+			command: "printf 'a sekret-'; sleep 0.3; printf 'value-0123 b'",
+		});
+		expect(text).toBe("a ****** b");
+		writeFileSync(join(workdir, "s.txt"), `token=${secret}\n`);
+		const read = await call("read", { path: "s.txt" });
+		expect(read.text).toContain("token=******");
+		expect(read.text).not.toContain(secret);
+	});
+});
+
+describe("命令的输出有上限", () => {
+	it("超过上限的丢掉，结果写明丢了多少；传到工作台上的完整输出也不超过上限", async () => {
+		const extra = 1024 * 1024;
+		const { text, result } = await call("bash", {
+			command: `head -c ${OUTPUT_LIMIT_BYTES + extra} /dev/zero | tr '\\0' a`,
+			timeout: 60,
+		});
+		expect(text).toContain(`后面的 ${extra} 字节丢掉了`);
+		const full = (result?.details as { fullOutputPath?: string } | undefined)?.fullOutputPath;
+		expect(full).toBeDefined();
+		const uploaded = workbench.writes.find((w) => w.path === full);
+		expect(uploaded).toBeDefined();
+		expect(uploaded?.content.length).toBeLessThan(OUTPUT_LIMIT_BYTES + 4096);
+		rmSync(full as string, { force: true });
+	}, 60_000);
 });

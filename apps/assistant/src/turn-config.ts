@@ -14,6 +14,11 @@ export interface TurnConfig {
 	env: Record<string, string>;
 	/** 模型没给超时的命令用多少秒（能力端口要求命令必须有超时）。 */
 	defaultTimeoutSeconds: number;
+	/**
+	 * 要打码的值：这个会话到现在为止每一轮的保密环境变量的值。扩展拿到工作台返回的命令输出、文件内容之后、交给 pi
+	 * 之前就按值打码。
+	 */
+	secrets: string[];
 }
 
 export function readTurnConfig(path: string): TurnConfig {
