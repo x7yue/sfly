@@ -165,7 +165,10 @@ export interface ControlPlaneOptions {
 	workbenchAgent?: string;
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
-	/** 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 5 秒；超过由控制面结束这一轮。测试里调小。 */
+	/**
+	 * 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 `STOP_GRACE_MS`（13 秒：助手服务强制结束
+	 * 进程的宽限 10 秒加 3 秒余量，不能短于它）；超过由控制面结束这一轮。测试里调小。
+	 */
 	sessionStopGraceMs?: number;
 	/** 发给助手服务的命令（不含事件流和 `/health`）最多等多久（毫秒），默认 10 秒；测试里调小。 */
 	assistantCommandTimeoutMs?: number;
@@ -432,6 +435,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		client: assistantClient,
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
+		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
 	const api = buildHttpApi({
 		database,

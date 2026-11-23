@@ -1,4 +1,5 @@
 import {
+	type AbortCommandBody,
 	ASSISTANT_STREAM_HEARTBEAT_MS,
 	ASSISTANT_STREAM_IDLE_INTERVALS,
 	AssistantErrorBody,
@@ -7,21 +8,56 @@ import {
 	AssistantStreamLine,
 	type PromptCommandBody,
 } from "@sfly/schema";
+import type { z } from "zod";
 import type { AssistantConfig } from "./assistant-config.js";
 
-/** 助手服务拒绝了请求：状态码，和它给的错误码（回应体不是约定的形状时没有）。 */
+/** 助手服务拒绝时，它自己写的那句话进日志的最大长度（字符）。 */
+export const MAX_REJECTION_DETAIL_CHARS = 500;
+
+/** 助手服务拒绝时回给人的固定说明，按错误码：助手服务自己写的那句话（`detail`）可能带内部的地址和路径，只进日志。 */
+export const ASSISTANT_REJECTION_TEXT: Record<AssistantErrorCode, string> = {
+	unauthorized: "助手服务拒绝了共享密钥（两边的 SFLY_ASSISTANT_SECRET 不一致）",
+	invalid_request: "助手服务认为这个请求不合法（控制面和助手服务的协议版本可能不一致）",
+	turn_running: "助手服务说这个会话已经有一轮在做：先点「停止」，再说一次",
+	no_turn_running: "助手服务说这个会话没有在做的一轮",
+	model_not_configured: "助手服务没有配置模型",
+	model_unreachable: "助手服务连不上模型",
+	process_limit: "助手服务的进程数到了上限：等别的会话停下来再试",
+	start_failed: "助手服务起不了这一轮的进程",
+};
+
+/**
+ * 助手服务拒绝了请求：状态码，和它给的错误码（回应体不是约定的形状时没有）。
+ * `message` 是按错误码给的固定说明（{@link ASSISTANT_REJECTION_TEXT}），会回给请求的人、写进就绪状态和 `turn_end` 的原因；
+ * 助手服务自己写的那句话在 `detail` 里，只进日志（它可能带内部的地址、路径和文件系统错误的原文）。
+ */
 export class AssistantError extends Error {
 	constructor(
 		readonly status: number,
 		readonly code: AssistantErrorCode | undefined,
-		message: string,
+		readonly detail: string | undefined,
 	) {
-		super(message);
+		super(code === undefined ? `助手服务回应了 ${status}` : ASSISTANT_REJECTION_TEXT[code]);
 	}
 }
 
-/** 连不上助手服务（网络出错、超时），或它回的不是约定的东西：命令没有送到，或送到了没有收到确认。 */
-export class AssistantUnreachableError extends Error {}
+/**
+ * 连不上助手服务（网络出错、超时），或它回的不是约定的东西：命令没有送到，或送到了没有收到确认。
+ * `message` 是稳定的一句说明（只有原因的种类，见 {@link reasonOf}），会回给请求的人、写进就绪状态和 `turn_end` 的原因；
+ * 底层错误的原文（带着助手服务的地址和端口）在 `cause` 里，只进日志。
+ */
+export class AssistantUnreachableError extends Error {
+	/**
+	 * 命令有没有可能已经送到：请求超时、连接在发出请求之后被对端关闭时，助手服务可能已经收下了命令只是没来得及回应（结果未知）；
+	 * 连接被拒绝、域名解析不了、网络不通、建立连接就超时，命令一定没有送到。停止时据此决定要不要等助手服务带回结局。
+	 */
+	readonly outcomeUnknown: boolean;
+
+	constructor(message: string, options?: ErrorOptions & { outcomeUnknown?: boolean }) {
+		super(message, options);
+		this.outcomeUnknown = options?.outcomeUnknown ?? false;
+	}
+}
 
 /**
  * Node 的 `fetch`（undici）对响应体的默认超时：连接上 300 秒没有数据就断开。事件流靠心跳（15 秒一行）不静默，
@@ -81,9 +117,10 @@ export class AssistantClient {
 		await this.#command("POST", `/sessions/${sessionId}/prompt`, body);
 	}
 
-	/** 停止这一轮；重复调用无害。 */
-	async abort(sessionId: string): Promise<void> {
-		await this.#command("POST", `/sessions/${sessionId}/abort`);
+	/** 结束会话里的第 `turn` 轮（在做就中止，还没登记就记下，已经结束就什么也不做，见 {@link AbortCommandBody}）；重复调用无害。 */
+	async abort(sessionId: string, turn: number): Promise<void> {
+		const body: AbortCommandBody = { turn };
+		await this.#command("POST", `/sessions/${sessionId}/abort`, body);
 	}
 
 	/** 助手服务和它的模型、进程的状态。 */
@@ -127,7 +164,8 @@ export class AssistantClient {
 				});
 			} catch (error) {
 				throw new AssistantUnreachableError(
-					idled ? idleMessage() : `连不上助手服务：${describe(error)}`,
+					idled ? idleMessage() : `连不上助手服务：${reasonOf(error)}`,
+					{ cause: error },
 				);
 			}
 			await rejectUnlessOk(res);
@@ -145,14 +183,16 @@ export class AssistantClient {
 				}
 				const parsed = AssistantStreamLine.safeParse(json);
 				if (!parsed.success) {
-					onSkipped(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；"));
+					onSkipped(describeSkippedLine(json, parsed.error.issues));
 					return undefined;
 				}
 				return parsed.data;
 			};
 			try {
 				for await (const chunk of res.body) {
-					arm();
+					// 计时只算「没有收到字节」的时间：处理这一块（包括调用方处理每一行，`yield` 出去等它）的时候停表，
+					// 处理完、回去等下一块时再重新计时。对端一直在写，调用方处理得慢，不能被当成连接死了。
+					clearTimeout(timer);
 					buffer += decoder.decode(chunk, { stream: true });
 					for (;;) {
 						const end = buffer.indexOf("\n");
@@ -161,11 +201,13 @@ export class AssistantClient {
 						buffer = buffer.slice(end + 1);
 						if (line) yield line;
 					}
+					arm();
 				}
 			} catch (error) {
 				if (signal.aborted) return;
 				throw new AssistantUnreachableError(
-					idled ? idleMessage() : `助手服务的事件流断了：${describe(error)}`,
+					idled ? idleMessage() : `助手服务的事件流断了：${reasonOf(error)}`,
+					{ cause: error },
 				);
 			}
 		} finally {
@@ -192,7 +234,10 @@ export class AssistantClient {
 				signal: AbortSignal.timeout(timeoutMs),
 			});
 		} catch (error) {
-			throw new AssistantUnreachableError(`连不上助手服务：${describe(error)}`);
+			throw new AssistantUnreachableError(`连不上助手服务：${reasonOf(error)}`, {
+				cause: error,
+				outcomeUnknown: outcomeUnknown(error),
+			});
 		}
 	}
 }
@@ -207,13 +252,121 @@ async function rejectUnlessOk(res: Response): Promise<void> {
 	} catch {
 		body = undefined;
 	}
-	throw new AssistantError(res.status, body?.code, body?.message ?? `助手服务回应了 ${res.status}`);
+	// 进日志的原文：助手服务自己写的那句话（有长度上限）；回应体不是约定的形状时**不写内容**（它可能带着会话的内容），只写
+	// 状态码和长度。
+	const detail = body
+		? body.message.slice(0, MAX_REJECTION_DETAIL_CHARS)
+		: `回应体不是约定的形状（状态码 ${res.status}，${text.length} 个字符）`;
+	throw new AssistantError(res.status, body?.code, detail);
 }
 
-function describe(error: unknown): string {
-	if (error instanceof Error) {
-		const cause = error.cause instanceof Error ? `（${error.cause.message}）` : "";
-		return `${error.message}${cause}`;
+/** 命令有没有可能已经送到（见 {@link AssistantUnreachableError.outcomeUnknown}）：超时、发出请求之后连接断了是未知。 */
+export function outcomeUnknown(error: unknown): boolean {
+	const codes = new Set<string>();
+	let current: unknown = error;
+	for (let depth = 0; current instanceof Error && depth < 5; depth++) {
+		const code = (current as { code?: unknown }).code;
+		if (typeof code === "string") codes.add(code);
+		codes.add(current.name);
+		current = current.cause;
 	}
-	return String(error);
+	return [
+		"TimeoutError",
+		"ECONNRESET",
+		"EPIPE",
+		"UND_ERR_SOCKET",
+		"UND_ERR_HEADERS_TIMEOUT",
+		"UND_ERR_BODY_TIMEOUT",
+	].some((name) => codes.has(name));
 }
+
+/**
+ * 连不上的原因，写给人看：只有原因的种类，不带助手服务的地址、端口和底层错误的原文（那些在错误的 `cause` 里进日志，
+ * 响应和就绪状态所有能读的人都看得到）。
+ */
+export function reasonOf(error: unknown): string {
+	const codes = new Set<string>();
+	let current: unknown = error;
+	for (let depth = 0; current instanceof Error && depth < 5; depth++) {
+		const code = (current as { code?: unknown }).code;
+		if (typeof code === "string") codes.add(code);
+		codes.add(current.name);
+		current = current.cause;
+	}
+	const has = (...names: string[]) => names.some((name) => codes.has(name));
+	if (has("TimeoutError")) return "没有及时回应（超时）";
+	if (has("ECONNREFUSED")) return "连接被拒绝";
+	if (has("ENOTFOUND", "EAI_AGAIN")) return "域名解析不了";
+	if (has("ECONNRESET", "EPIPE", "UND_ERR_SOCKET")) return "连接被对端关闭";
+	if (has("EHOSTUNREACH", "ENETUNREACH")) return "网络不通";
+	if (
+		has("ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT")
+	)
+		return "连接超时";
+	return "网络出错";
+}
+
+/**
+ * 事件流里一行过不了 schema 时写进日志的说明：这一行说的是哪个会话、哪一轮、什么类型，以及是哪个字段不对
+ * （联合类型的整体失败只有「Invalid input」，要钻进最像的那个分支）。只写标识和字段路径，不写内容。
+ */
+export function describeSkippedLine(json: unknown, issues: readonly z.core.$ZodIssue[]): string {
+	const record =
+		typeof json === "object" && json !== null ? (json as Record<string, unknown>) : undefined;
+	const event = record?.event;
+	const eventType =
+		typeof event === "object" && event !== null ? (event as { type?: unknown }).type : undefined;
+	const label = (value: unknown): string | undefined =>
+		typeof value === "string" || typeof value === "number" ? String(value).slice(0, 80) : undefined;
+	// 会话 ID 只在它合 UUID 时写：不合法的原样写进日志没有意义，也可能是别的东西。
+	const sessionId =
+		typeof record?.session_id === "string" && UUID.test(record.session_id)
+			? record.session_id
+			: undefined;
+	const who = [
+		label(record?.type) && `行类型 ${label(record?.type)}`,
+		sessionId && `会话 ${sessionId}`,
+		record?.session_id !== undefined && sessionId === undefined && "会话 ID 不合法",
+		label(record?.turn) && `轮次 ${label(record?.turn)}`,
+		label(eventType) && `事件类型 ${label(eventType)}`,
+	].filter(Boolean);
+	const fields = flattenIssues(issues).map(({ path, message }) =>
+		path === "" ? message : `${path}: ${message}`,
+	);
+	return `${who.length > 0 ? `${who.join("，")}：` : ""}${fields.join("；")}`;
+}
+
+function flattenIssues(
+	issues: readonly z.core.$ZodIssue[],
+): Array<{ path: string; message: string }> {
+	const out: Array<{ path: string; message: string }> = [];
+	for (const issue of issues) {
+		if (issue.code === "invalid_union") {
+			// 分支里第一个字段就是判别字段（`type`）对不上的，是别的类型的分支：去掉，剩下的才是这一行像的那个。
+			const branches = issue.errors.filter(
+				(branch) => !branch.some((i) => i.code === "invalid_value" && i.path.join(".") === "type"),
+			);
+			const best = branches.length > 0 ? branches : issue.errors;
+			const inner = best.flatMap((branch) => flattenIssues(branch));
+			if (inner.length === 0) {
+				// 判别字段对不上（不认识的类型）、或者没有分支可钻：写这一条 issue 本身（zod 在 `note` 里写原因，例如
+				// 「No matching discriminator」），不能让冒号后面是空的。
+				const note = (issue as { note?: string }).note;
+				out.push({ path: issue.path.join("."), message: note ?? issue.message });
+				continue;
+			}
+			const prefix = issue.path.join(".");
+			for (const item of inner) {
+				out.push({
+					path: prefix === "" ? item.path : `${prefix}.${item.path}`,
+					message: item.message,
+				});
+			}
+			continue;
+		}
+		out.push({ path: issue.path.join("."), message: issue.message });
+	}
+	return out;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
