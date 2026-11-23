@@ -111,7 +111,7 @@ def wait_for_port(
     从执行节点的 Agent 所在的机器上连接 `host`:`port`（`host` 是主机名或 IP 地址）。超时时抛出
     `TimeoutError`，信息写明等的是哪个地址、等了多久和最后一次连接的错误；`port` 不在 1–65535
     之间时抛出 `ValueError`。端口能连上只说明进程在监听，不一定已经能处理请求：服务有健康检查
-    接口时，自己用 `poll_until` 配 `httpx` 等它返回成功。
+    接口时，自己用 `poll_until` 配 `httpx`（写进节点包自己的依赖）等它返回成功。
     """
     _params.port(port)
     target = f"{host}:{port}"

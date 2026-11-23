@@ -439,14 +439,18 @@ test("场景没设关注项，执行中的节点都没声明主指标：写明�
 	await expect(page.getByText("执行中的节点都没有声明主指标。")).toBeVisible();
 	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
 
-	// 运行结束了：主指标是执行中节点的，不会再有读数，说明的空框不画（标题行和「设置关注项」还在）。
+	// 运行结束了：主指标是执行中节点的，不会再有读数。不画写着「没有执行中的节点」的空框，标题也不再写「执行中节点的主指标」：
+	// 标题是「关注项」，下面一句说明为什么没有读数、怎么才会有，「设置关注项」还在。
 	await agent.succeed(task);
 	await expect(page.getByTestId("run-status")).toHaveText("成功");
 	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
 	await expect(page.getByText("执行中的节点都没有声明主指标。")).toHaveCount(0);
-	const section = page.getByRole("region", { name: "执行中节点的主指标" });
+	await expect(page.getByRole("region", { name: "执行中节点的主指标" })).toHaveCount(0);
+	const section = page.getByRole("region", { name: "关注项", exact: true });
 	await expect(section.getByRole("link", { name: "设置关注项" })).toBeVisible();
-	expect((await section.boundingBox())?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(40);
+	await expect(section).toContainText(
+		"运行结束后不再显示执行中节点的主指标。设置关注项后，这里会显示它们的最终值。",
+	);
 });
 
 test("场景没设关注项，节点还在准备中（安装节点包）：显示它的主指标读数，写明还没有开始执行，不说没声明主指标", async ({

@@ -126,6 +126,46 @@ describe("自定义 lint 规则（biome-plugins/）", () => {
 		).toEqual(expected);
 	});
 
+	it("no-direct-output：规则里的名字、规则文件开头的清单、ARCHITECTURE 里的名字三处一致", () => {
+		// 清单是封闭的：规则认哪几种写法，就是文档列的那几种，每一种有名字（样例要求每个名字至少命中一次，见下）。
+		// 新加一种写法没写进清单、或者文档里列了规则里没有的名字，这里红。
+		const grit = readFileSync(join(pluginsDir, "no-direct-output.grit"), "utf8");
+		const declared = [
+			...new Set([...grit.matchAll(/\$form = "([\w-]+)"/g)].map((m) => m[1])),
+		].sort();
+		expect(
+			declared.length,
+			"规则里没有读到 $form 的名字：这条测试的读法和规则的写法对不上",
+		).toBeGreaterThan(20);
+		// 规则文件开头的清单：每一种写法一行，行首是 `[名字]`。按行首取、整个比，两个方向都查：清单里多列了规则里没有的名字、
+		// 或者少列了规则里有的名字，这里都红（按子串找「名字出现在注释的哪一行」会被别的写法的说明里的同样的字挡住）。
+		const listed = grit
+			.split("\n")
+			.flatMap((line) => /^\/\/\s+`\[([a-z][a-z-]*)\]`/.exec(line)?.[1] ?? []);
+		expect(new Set(listed).size, "规则文件开头的清单里有重复的名字：每一种写法只写一行。").toBe(
+			listed.length,
+		);
+		expect(
+			[...listed].sort(),
+			"规则文件开头的清单（行首的 `[名字]`）和规则里的 $form 名字不一致：规则认的写法要在清单里列全，清单里不能有规则里没有的名字。",
+		).toEqual(declared);
+		const architecture = readFileSync(join(repoRoot, "docs", "ARCHITECTURE.md"), "utf8");
+		const paragraph = architecture
+			.split("\n")
+			.find((line) => line.includes("no-direct-output.grit"));
+		expect(
+			paragraph,
+			"docs/ARCHITECTURE.md 里找不到讲 no-direct-output 规则的那一段",
+		).toBeDefined();
+		const documented = [
+			...new Set([...(paragraph ?? "").matchAll(/`\[([a-z][a-z-]*)\]`/g)].map((m) => m[1])),
+		].sort();
+		expect(
+			documented,
+			"docs/ARCHITECTURE.md 里写的 `[名字]` 和规则里的 $form 名字不一致：规则认的写法要在文档里列全，文档里不能有规则里没有的名字。",
+		).toEqual(declared);
+	});
+
 	it("fixtures/ 里没有找不到规则的样例目录", () => {
 		const orphans = subdirs(fixturesDir).filter((name) => !plugins.includes(name));
 		expect(
@@ -175,6 +215,26 @@ describe("自定义 lint 规则（biome-plugins/）", () => {
 				placesOf(diagnostics, hitDir),
 				`biome-plugins/${plugin}.grit 报出的位置和样例里 // @hit 标出的不一致：规则匹配的写法改了、匹配条件写坏了，或样例没跟上规则；多报的位置说明规则拦了不该拦的写法。`,
 			).toEqual(expected);
+
+			// 规则里每一种写法有名字（`$form = "名字"`，诊断以 `[名字]` 开头）：样例要把每一种都命中过。只看位置，
+			// 样例删掉一半、或者规则里新加了一种写法没配样例，这条测试照样绿，哪一种写法没有被守住也看不出来。
+			const grit = readFileSync(join(pluginsDir, `${plugin}.grit`), "utf8");
+			const declared = [
+				...new Set([...grit.matchAll(/\$form = "([\w-]+)"/g)].map((m) => m[1])),
+			].sort();
+			if (declared.length > 0) {
+				const reported = [
+					...new Set(
+						diagnostics.map(
+							(d) => /^\[([\w-]+)\]/.exec(d.message)?.[1] ?? `（没有名字）${d.message}`,
+						),
+					),
+				].sort();
+				expect(
+					reported,
+					`biome-plugins/${plugin}.grit 里的每一种写法（$form 的名字）都要在 fixtures/${plugin}/hit/ 里有样例命中它：样例少了哪一种，或者规则里新加的写法没配样例，这里会不一致；报出的名字不在规则里说明诊断的写法和规则对不上。`,
+				).toEqual(declared);
+			}
 		});
 
 		it("不应命中的样例，一个诊断也没有", () => {

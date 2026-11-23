@@ -1,9 +1,9 @@
 import { nodeNameWithId } from "@sfly/orchestration";
 import { DEV_VERSION, type StoredOrchestrationDocument } from "@sfly/schema";
-import { eq } from "drizzle-orm";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Db, Tx } from "../db/database.js";
-import { agents } from "../db/schema.js";
 import { agentFor } from "../engine/chain.js";
+import type { ProjectId } from "../projects/project-id.js";
 import type { PreflightProblem } from "./preflight.js";
 
 /** 「已经加载它的 Agent」最多列出几台，多出来的写台数。 */
@@ -52,12 +52,12 @@ export function devPackageProblems(
 	return problems;
 }
 
-/** 在线的 Agent 当前加载的开发版本（读库一次）；文档没有锁定开发版本时不读。 */
-async function loadedDevPackages(db: Db | Tx): Promise<Map<string, Set<string>>> {
-	const rows = await db
-		.select({ name: agents.name, info: agents.info })
-		.from(agents)
-		.where(eq(agents.status, "online"));
+/** 这个项目里在线的 Agent 当前加载的开发版本（读库一次）；文档没有锁定开发版本时不读。 */
+async function loadedDevPackages(
+	db: Db | Tx,
+	project: ProjectId,
+): Promise<Map<string, Set<string>>> {
+	const rows = (await agentsInProject(db, project)).filter((r) => r.status === "online");
 	return new Map(
 		rows.map((r) => [r.name, new Set((r.info.dev_packages ?? []).map((p) => p.name))]),
 	);
@@ -66,8 +66,9 @@ async function loadedDevPackages(db: Db | Tx): Promise<Map<string, Set<string>>>
 /** {@link devPackageProblems}：读在线 Agent 的开发版本。`db` 由调用方传，触发准入在事务里传事务对象。 */
 export async function checkDevPackagesLoaded(
 	db: Db | Tx,
+	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 ): Promise<PreflightProblem[]> {
 	if (!Object.values(doc.packages).includes(DEV_VERSION)) return [];
-	return devPackageProblems(doc, await loadedDevPackages(db));
+	return devPackageProblems(doc, await loadedDevPackages(db, project));
 }

@@ -1,5 +1,5 @@
 import type { QueueWaitView } from "@sfly/schema";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { agents } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
@@ -25,7 +25,7 @@ export interface QueueWaitHub {
 
 /**
  * 一批 Agent 此刻的等待状态，按 Agent 名称作键。Agent 的在线、准备环境、槽位占用都是读取这一刻的状态，
- * 不在数据库里记着；不在线的 Agent 最后在线的时间取自 agents 表。`db` 可以是事务（只读，一个接一个地查）。
+ * 不在数据库里记着；不在线的 Agent 最后在线的时间取自 agents 表（只看读运行的人所在的项目里的 Agent）。`db` 可以是事务（只读，一个接一个地查）。
  */
 export async function agentWaits(
 	db: Db | Tx,
@@ -43,7 +43,7 @@ export async function agentWaits(
 					await db
 						.select({ name: agents.name, lastSeenAt: agents.lastSeenAt })
 						.from(agents)
-						.where(inArray(agents.name, offline))
+						.where(and(eq(agents.projectId, projectId), inArray(agents.name, offline)))
 				).map((row) => [row.name, row.lastSeenAt.toISOString()]),
 	);
 	const waits = new Map<string, AgentWait>();
