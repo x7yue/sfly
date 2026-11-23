@@ -182,7 +182,7 @@ export async function enqueueRunNotification(
 			.update(runs)
 			.set({ notificationBot: bot, notificationNotSent: notSent })
 			.where(eq(runs.id, run.id));
-	if (!(await registeredBots(step.tx, [bot])).has(bot)) {
+	if (!(await registeredBots(step.tx, run.projectId, [bot])).has(bot)) {
 		// 「未发送：机器人已删除」是规格定下的说法（运行抽屉写成「「<机器人>」机器人已删除」），不用任务日志里的整句。
 		await record("机器人已删除");
 		return;

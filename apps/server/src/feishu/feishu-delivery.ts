@@ -1,8 +1,9 @@
 import { and, asc, count, eq, inArray, type SQLWrapper } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { type FeishuMessageStatus, feishuBots, feishuMessages } from "../db/schema.js";
+import { type FeishuMessageStatus, feishuBots, feishuMessages, runs } from "../db/schema.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import type { ProjectId } from "../projects/project-id.js";
 import {
 	BACKLOG_LIMIT,
 	isRetryDue,
@@ -103,17 +104,18 @@ export class FeishuDelivery {
 	async #drain(botName: string): Promise<void> {
 		while (!this.#closed) {
 			await this.#discardOverflow(botName);
-			const [message] = await this.deps.db
-				.select()
+			const [head] = await this.deps.db
+				.select({ message: feishuMessages, project: runs.projectId })
 				.from(feishuMessages)
+				.leftJoin(runs, eq(runs.id, feishuMessages.runId))
 				.where(and(eq(feishuMessages.botName, botName), eq(feishuMessages.status, "queued")))
 				.orderBy(asc(feishuMessages.seq))
 				.limit(1);
-			if (!message) {
+			if (!head) {
 				if (this.#again.delete(botName)) continue;
 				return;
 			}
-			if (!(await this.#deliver(message))) return;
+			if (!(await this.#deliver(head.message, head.project ?? undefined))) return;
 		}
 	}
 
@@ -149,11 +151,22 @@ export class FeishuDelivery {
 		await logDiscards(this.deps.logs, discarded, reason, botName);
 	}
 
-	/** 投递队首的消息；返回 false 表示现在还不能发（在等退避或限速），投递循环先结束。 */
-	async #deliver(message: MessageRow): Promise<boolean> {
-		const bot = await this.deps.bots.getForDelivery(message.botName);
+	/**
+	 * 投递队首的消息；返回 false 表示现在还不能发（在等退避或限速），投递循环先结束。
+	 * `project` 是发起这条消息的运行所在的项目：发给别的项目的机器人的消息（升级前排上队的，和入队之后机器人才换了项目的）
+	 * 和机器人不存在一样处理，只丢弃这一条（这个名字的机器人自己项目里的消息照常发）。
+	 */
+	async #deliver(message: MessageRow, project?: ProjectId): Promise<boolean> {
+		const bot = await this.deps.bots.getForDelivery(message.botName, project);
 		if (!bot) {
-			await this.#discard(message.botName, "bot_removed");
+			const own =
+				project === undefined ? undefined : await this.deps.bots.getForDelivery(message.botName);
+			// 机器人根本不存在：这个名字排队的消息都丢弃；只是别的项目的：只丢弃这一条。
+			await this.#discard(
+				message.botName,
+				"bot_removed",
+				own === undefined ? undefined : eq(feishuMessages.seq, message.seq),
+			);
 			return true;
 		}
 		const now = this.deps.clock.now().getTime();
@@ -236,6 +249,7 @@ export class FeishuDelivery {
 				.where(and(eq(feishuMessages.seq, message.seq), eq(feishuMessages.status, "queued")))
 				.returning({ seq: feishuMessages.seq });
 			if (!updated) return false;
+			// 按名字回写：投递前已经按运行所在的项目取到了这个机器人，名字现在全局唯一；改成项目内唯一时（#502）带上项目。
 			await tx
 				.update(feishuBots)
 				.set({
