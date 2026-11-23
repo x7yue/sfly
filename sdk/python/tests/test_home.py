@@ -86,6 +86,23 @@ def test_publish_uses_the_control_plane_from_agent_env(
     assert planes[0].paths == ["/packages"]
 
 
+def test_publish_project_public_goes_to_the_public_project(
+    home: Path, tmp_path: Path, planes: list[FakeControlPlane], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 发布到公共项目（#565）：查询参数 project=public，控制面只允许平台管理员；不写时和以前一样。
+    archive = tmp_path / "demo-1.0.0.sflypkg"
+    archive.write_bytes(b"archive")
+    write_agent_env(home, planes[0].url)
+
+    assert main(["publish", str(archive)]) == 0
+    assert main(["publish", str(archive), "--project", "public"]) == 0
+
+    assert planes[0].paths == ["/packages", "/packages?project=public"]
+    output = capsys.readouterr().out.splitlines()
+    assert output[0].startswith("已发布 demo@1.0.0（sha256")
+    assert output[1].startswith("已发布 demo@1.0.0 到项目 public（sha256")
+
+
 def test_server_option_and_environment_override_agent_env(
     home: Path, tmp_path: Path, planes: list[FakeControlPlane], monkeypatch: pytest.MonkeyPatch
 ) -> None:
