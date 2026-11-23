@@ -261,7 +261,7 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 					kind: "scenario_version",
 				}),
 			],
-		])("推送排在这个会话「落库加发布」的链上（%s）：推送被拖住时，助手服务的事件排在它后面，订阅的一方看到的序号一直递增、一条不少（先推送大的序号，小的就被当作已经发过而丢掉）", async (_name, request) => {
+		])("推送被拖住（%s）：助手服务的事件先提交先推送时，订阅的一方看到的序号仍然一直递增、一条不少（先推送大的序号，小的就被当作已经发过而丢掉，所以推送大的之前先从库里补上小的）", async (_name, request) => {
 			const id = await scenario();
 			const { path, body, kind } = request(id);
 			const sse = await SseClient.open(cp, `/sessions/${sessionId}/events`, bearer(token));
@@ -818,22 +818,39 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			).toEqual({ n: 0 });
 		});
 
-		it("推送失败只记日志：已提交的运行是 201、任务照样派发；记录在库里，订阅的一方重连能补上", async () => {
+		it("推送失败只记日志：已提交的运行是 201、任务照样派发；记录在库里，下一条事件推送的时候补上（订阅的一方看到的序号连续），重连的读库补发", async () => {
 			const id = await scenario();
-			// 发布这一步抛异常（测试缝 afterCommit）：announce 吞掉、只记日志，已提交的运行照常 201，后面的派发照做。
-			const store = cp.current.sessions as unknown as {
-				deps: { afterCommit?: () => Promise<void> };
-			};
-			store.deps.afterCommit = async () => {
-				throw new Error("推送坏了");
-			};
-			const created = await json<{ id: string }>(
-				await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } }),
-				201,
-			);
-			expect((await platform())[0]?.payload).toMatchObject({ run_id: created.id });
-			// 任务派发给了 Agent。
-			await agent.nextAssign();
+			const sse = await SseClient.open(cp, `/sessions/${sessionId}/events`, bearer(token));
+			try {
+				await sse.next("turn_started");
+				// 推送这一步抛异常（测试缝 afterCommit）：announce 吞掉、只记日志，已提交的运行照常 201，后面的派发照做。
+				const store = cp.current.sessions as unknown as {
+					deps: { afterCommit?: () => Promise<void> };
+				};
+				store.deps.afterCommit = async () => {
+					throw new Error("推送坏了");
+				};
+				const created = await json<{ id: string }>(
+					await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } }),
+					201,
+				);
+				expect((await platform())[0]?.payload).toMatchObject({ run_id: created.id });
+				// 任务派发给了 Agent。
+				await agent.nextAssign();
+				// 没推出去的那一条：下一条事件推送的时候从库里补上，先收到平台记录、再收到后来的提示。
+				store.deps.afterCommit = undefined;
+				await cp.current.sessions.append(sessionId, {
+					type: "notice",
+					kind: "compaction",
+					message: "后来的",
+				});
+				const pushed = await sse.next<{ kind: string; run_id: string }>("platform");
+				expect(pushed.data).toMatchObject({ kind: "run", run_id: created.id });
+				const later = await sse.next("notice");
+				expect(Number(pushed.id)).toBeLessThan(Number(later.id));
+			} finally {
+				sse.close();
+			}
 		});
 	});
 
