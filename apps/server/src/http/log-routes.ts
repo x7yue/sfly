@@ -267,7 +267,7 @@ class LogRowNormalizer extends Transform {
 	}
 
 	override _transform(chunk: Buffer, _encoding: BufferEncoding, done: TransformCallback): void {
-		// 每一块一份新的工作量预算：一块的同步耗时有上限，块与块之间回到事件循环（文件是一块一块异步读出来的）。
+		// 每一块一份新的预算（完整的出现的段数）：不会因为前面的块用掉了预算，让后面的行都被整行盖住；块与块之间回到事件循环（文件是一块一块异步读出来的）。
 		const mask = this.mask.fresh();
 		const bytes = this.#partial.length ? Buffer.concat([this.#partial, chunk]) : chunk;
 		const out: Buffer[] = [];

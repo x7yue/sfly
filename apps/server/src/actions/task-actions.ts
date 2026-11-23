@@ -287,7 +287,7 @@ export class TaskActions {
 			.where(eq(tasks.id, taskId));
 		if (!row) return undefined;
 		// 存下的摘要是写入时按那一刻已知的 secret 值打过码的；读取时再按此刻的打一遍（之后才创建的子流程带来的 secret 值也算）。
-		// 这一次读取共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
+		// 这一次读取共用一份打码的预算（完整的出现的段数，{@link SecretSet.withBudget}）。
 		return maskedSummary(
 			summaryOfTask(row, row.summary),
 			(await this.deps.logs.runSecrets(row.runId)).withBudget(),
@@ -354,7 +354,7 @@ export class TaskActions {
 		const earliest = rows.length > limit ? shown.at(-1) : undefined;
 		const end = taskEndOf(task);
 		// 明细是写入时打过码的；读取时再按此刻的 secret 值打一遍。
-		// 这一页共用一份打码的工作量预算（{@link SecretSet.withBudget}）。
+		// 这一页共用一份打码的预算（完整的出现的段数，{@link SecretSet.withBudget}）。
 		const secrets = (await this.deps.logs.runSecrets(task.runId)).withBudget();
 		return {
 			...empty,

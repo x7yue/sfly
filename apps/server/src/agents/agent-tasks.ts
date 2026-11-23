@@ -77,7 +77,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 		db,
 		[...occupied].flatMap(([runId, document]) => (document ? [{ runId, document }] : [])),
 	);
-	// 每个运行一份工作量预算（{@link SecretSet.withBudget}）：一个运行的值集合再病态，也只盖住它自己的内容，不牵连别的运行
+	// 每个运行一份预算（完整的出现的段数，{@link SecretSet.withBudget}）：一个运行用光了预算，也只盖住它自己的内容，不牵连别的运行
 	// （Agent 列表里可能是别的项目的运行）。
 	const views = new Map<string, SecretSet>();
 	const secretsOf = (runId: string): SecretSet => {

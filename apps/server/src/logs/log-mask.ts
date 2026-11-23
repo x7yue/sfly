@@ -15,9 +15,9 @@ export interface LogMask {
 	/** 日志文件里的一行（不含换行符，JSON）：正文里没有 secret 值时返回同一个 Buffer；有时返回正文打了码、重新序列化的行。 */
 	row(row: Buffer): Buffer;
 	/**
-	 * 另一次读取用的打码：同样的值集合、新的工作量预算（{@link SecretSet.withBudget}）。一个 LogMask 的预算是创建它的那次读取
+	 * 另一次读取用的打码：同样的值集合、新的预算（完整的出现的段数，{@link SecretSet.withBudget}）。一个 LogMask 的预算是创建它的那次读取
 	 * （一页、一次读取运行的日志）的；一次下载、一条流要分块、分批读很久，每一块、每一批开始时取一个新的，
-	 * 每一块的同步耗时才有上限，也不会因为前面用掉了预算让后面的行都被整行盖住。
+	 * 不会因为前面用掉了预算让后面的行都被整行盖住。
 	 */
 	fresh(): LogMask;
 }
@@ -31,7 +31,7 @@ export const NO_LOG_MASK: LogMask = {
 
 /**
  * 按这个值集合（{@link secretValues} 的结果）做一个 {@link LogMask}；没有要打码的文本时是 {@link NO_LOG_MASK}。
- * 它带着自己的工作量预算（`budget` 给了就共用它）：一次读取里所有行的打码共用一份，用完之后剩下的行整行盖住。
+ * 它带着自己的预算（完整的出现的段数，`budget` 给了就共用它）：一次读取里所有行的打码共用一份，用完之后有完整出现的行整行盖住，没有的原样。
  *
  * 文件里的行是 JSON，值里的引号、反斜杠、换行、控制字符在文件里是转义过的。一行里没有反斜杠时，正文在文件里就是它本来的样子，
  * 整行按文本查等于在查正文（还带着别的字段，只会多查、不会少查），没有 secret 值就原样返回，不解析：绝大多数行是这样，
@@ -49,8 +49,8 @@ export function logMask(secrets: SecretSet, budget?: WorkBudget): LogMask {
 		},
 		row: (row) => {
 			const raw = row.toString("utf8");
-			// 没有 secret 值时 `mask` 返回的是同一个字符串（没有分配）。
-			if (!raw.includes("\\") && view.mask(raw) === raw) return row;
+			// 没有要盖的就原样返回；这一步只问有没有，不计入预算（有要盖的，下面在正文上打码时才计入，一处完整的出现只记一次）。
+			if (!raw.includes("\\") && !view.wouldChange(raw)) return row;
 			let parsed: { text?: unknown };
 			try {
 				parsed = JSON.parse(raw) as { text?: unknown };

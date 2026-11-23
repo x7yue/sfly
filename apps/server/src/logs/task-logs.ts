@@ -23,7 +23,13 @@ import { Topics } from "../sse/topics.js";
 import { clipChars } from "../util/text.js";
 import { type LogMask, logMask, NO_LOG_MASK } from "./log-mask.js";
 import { readLogPage } from "./log-pages.js";
-import { declaresSecrets, NO_SECRETS, type SecretSet, secretValues } from "./secrets.js";
+import {
+	declaresSecrets,
+	NO_SECRETS,
+	OVERSIZE_NOTICE,
+	type SecretSet,
+	secretValues,
+} from "./secrets.js";
 
 /**
  * 任务日志与进度（docs/ARCHITECTURE.md §6.3）。
@@ -189,6 +195,8 @@ interface TaskState {
 	/** 已写入的 WARN / ERROR（`tasks.log_issues`）；还没有时为 null。 */
 	issues: TaskLogIssues | null;
 	secrets: SecretSet;
+	/** 这个任务的日志里是不是已经写过「值集合太大」的说明（{@link OVERSIZE_NOTICE}）；控制面重启之后重新算，会再写一行。 */
+	oversizeNoted: boolean;
 }
 
 /**
@@ -349,9 +357,26 @@ export class TaskLogs {
 	 * 放不下的第一行换成截断标记，之后的行全部丢弃（#18）。写完按任务和按运行各发布一次。
 	 * 调用方在 {@link TaskLogs.#serial} 里调用。
 	 */
-	async #write(taskId: string, state: TaskState, entries: readonly NewLine[]): Promise<void> {
+	async #write(taskId: string, state: TaskState, written: readonly NewLine[]): Promise<void> {
 		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
 		state.secrets = await this.runSecrets(state.runId);
+		// 这次运行的值集合大到认不出每一处出现，所有文字都整段盖住（SecretSet.oversize）：在这个任务的日志里留一行平台写的说明
+		// （不含值），用户才知道为什么全是掩码；每个任务写一次，写在这一批的最前面，打码时只有它原样放行。
+		const notice = state.secrets.oversize && !state.oversizeNoted;
+		let entries = written;
+		if (notice) {
+			entries = [
+				{
+					agentSeq: null,
+					timeMs: this.deps.clock.now().getTime(),
+					agent_time: null,
+					source: "system",
+					level: "warn",
+					text: OVERSIZE_NOTICE,
+				},
+				...entries,
+			];
+		}
 		const file = join(this.deps.dataDir, state.path);
 		if (state.lastTimeMs === undefined) state.lastTimeMs = await lastLineTimeMs(file);
 		const lines: LogLineView[] = [];
@@ -413,6 +438,7 @@ export class TaskLogs {
 		state.agentSeq = agentSeq;
 		state.lastTimeMs = lastTimeMs;
 		state.truncated = truncated;
+		if (notice) state.oversizeNoted = true;
 		const issuesChanged = issues !== state.issues;
 		state.issues = issues;
 		await this.deps.db
@@ -613,6 +639,7 @@ export class TaskLogs {
 			issues: task.logIssues,
 			// 占位：写入前总会先经 runSecrets 刷新。
 			secrets: NO_SECRETS,
+			oversizeNoted: false,
 		};
 	}
 }

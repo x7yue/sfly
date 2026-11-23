@@ -1,6 +1,7 @@
 import { SECRET_MASK, type StoredOrchestrationDocument, TOKEN_VALUE_PATTERN } from "@sfly/schema";
 import {
 	type Automaton,
+	automatonBytes,
 	buildAutomaton,
 	MAX_AUTOMATON_CHARS,
 	MAX_SPANS,
@@ -38,49 +39,51 @@ export const MIN_LEAF_CHARS = 4;
 
 /**
  * 一次读取（一页、一个下载块、流上的一批、一次运行的读取）里所有打码共用的预算（{@link SecretSet.withBudget}）。
- * 单次调用只管一次调用，一页有上千行日志、几百条动作，每条都要扫，同步执行的时间是它们的总和，控制面期间不响应：
- * 所以一次读取共用一份预算，用完之后这次读取里剩下的、还要扫描才能打码的文字整段盖住（宁可多盖，不漏）。
+ * 预算只记一样东西：**完整的出现的次数**（`masks`，合并重叠之后的段数）。每段输出多一个掩码，限住它，输出才不会被撑大
+ * （一个字符的保密值，文字里每个位置都是它，每个位置换成六个字符的掩码）；用完之后，这次读取里还有完整的出现的文字整段盖住
+ * （宁可多盖，不漏），没有完整的出现的文字原样。它和保密值的内容无关（完整的出现本身除外），所以 docs/SEMANTICS.md §2.1 的规矩没有例外。
  *
- * 预算只记两样，都和保密值的内容无关（完整的出现本身除外），所以 docs/SEMANTICS.md §2.1 的规矩没有例外：
- * - **扫过的字符数**（`chars`）：每段要打码的文字，每个字符一份，没有命中也一样。扫描是线性的（{@link scanSpans}），
- *   每个字符的代价由构造保证，和值的个数、形状无关；
- * - **完整的出现的次数**（`masks`）：合并重叠之后的段数，每段输出多一个掩码。限住它，输出才不会被撑大
- *   （一个字符的保密值，文字里每个位置都是它，每个位置换成六个字符的掩码）。
- *
- * 上限按「一次读取最多会扫多少」定，正常的读取不论值集合多大都碰不到：{@link READ_SCAN_CHARS}。
- */
-export const READ_SCAN_CHARS = 16 * 1024 * 1024;
-
-/**
- * 一次读取里完整的出现（合并重叠之后）最多这么多段，一次不带预算的调用（写入）也是这个上限：超过时那段文字整段盖住。
- * 正常的读取远在它下面：一页日志上千行，每行出现几次；一页里的每一段都是 6 个字符的掩码，上限内最多多出 6 M 个字符的输出。
+ * 没有「扫过的字符数」的预算：扫描的耗时和读到的文字成正比，每个字符最坏是总长上限（{@link MAX_AUTOMATON_CHARS}）处最刁钻的形状下
+ * 的耗时，每个读取出口读多少由它自己的上限管（一页日志的字节上限、单个输入输出的 1 MiB）；再设一个会把正常的内容整段盖住的数，
+ * 比读得慢更糟。
  */
 export const READ_MASKS = MAX_SPANS;
 
 /**
+ * 值集合的缓存（{@link secretSetOf}）最多占这么多字节：值集合的文本，加上建好的自动机（{@link automatonBytes}）。
+ * 至少放得下 8 份总长到上限（{@link MAX_AUTOMATON_CHARS}）的值集合：实测最大的一份（一个 100 万字符的值）自动机 16 MiB、加文本 18 MiB，
+ * 8 份 143 MiB；同时在读的运行最多几份大的，交替读不会每次都重建。自动机的数组在堆外。
+ */
+export const SET_CACHE_MAX_BYTES = 160 * 1024 * 1024;
+
+/**
  * 这几个上限，是可以改的对象，只给测试用：测试把它们调小，用几十 KB 的文字就能让一次读取用完预算、让一份值集合大到建不了自动机，
- * 验证每个读取出口都取了预算、一个运行的值集合太大只盖住它自己（真实的上限要几千万个字符才碰得到）。
+ * 验证每个读取出口都取了预算、一个运行的值集合太大只盖住它自己（真实的上限要上百万个字符才碰得到）。改它之前要清掉值集合的缓存
+ * （{@link clearSecretSetCache}）：缓存里的值集合是按旧的上限建的。
  */
 export const secretLimits = {
-	/** 一次读取最多扫多少个字符（{@link READ_SCAN_CHARS}）。 */
-	readChars: READ_SCAN_CHARS,
 	/** 一次读取（一次写入）里完整的出现最多多少段（{@link READ_MASKS}）。 */
 	readMasks: READ_MASKS,
 	/** 一份值集合所有写法的总长最多多少（{@link MAX_AUTOMATON_CHARS}）。 */
 	automatonChars: MAX_AUTOMATON_CHARS,
+	/** 值集合的缓存最多占多少字节（{@link SET_CACHE_MAX_BYTES}）。 */
+	cacheBytes: SET_CACHE_MAX_BYTES,
 };
 
 /** 一份读取的预算：剩多少。一次读取里打码用到的这个运行的值集合的视图共用同一份（每个运行各一份）。 */
 export class WorkBudget {
-	/** 还能扫多少个字符（UTF-16 码元）。 */
-	chars: number;
 	/** 还能有多少段完整的出现（合并重叠之后）。 */
 	masks: number;
-	constructor(chars: number = secretLimits.readChars, masks: number = secretLimits.readMasks) {
-		this.chars = chars;
+	constructor(masks: number = secretLimits.readMasks) {
 		this.masks = masks;
 	}
 }
+
+/**
+ * 值集合太大（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）的运行，在它的任务日志里写的一行说明（平台写的，不含任何值）。
+ * 这个运行里所有要打码的文字都整段盖住，这一行是用户知道为什么的地方：打码时只有它自己原样放行（{@link SecretSet.mask}）。
+ */
+export const OVERSIZE_NOTICE = `这次运行的 secret 参数的值太多或太长（所有写法合计超过 ${MAX_AUTOMATON_CHARS} 个字符），无法逐个认出，这次运行里日志、动作、运行视图里的文字全部显示为 ${SECRET_MASK}。缩短或减少 secret 参数的值之后重新运行。`;
 
 /** 值的 JSON 文本（`JSON.stringify` 返回不了文本的值，例如 undefined，退回 `String`）。 */
 export const jsonText = (value: unknown): string => JSON.stringify(value) ?? String(value);
@@ -378,8 +381,8 @@ export function secretPartsOf(value: unknown): SecretParts {
 /**
  * 一次运行此刻的全部 secret 值要打码的东西（{@link secretPartsOf} 汇总）。不可变：运行里有了新的 secret 值（子流程实例创建）
  * 就是另一个值集合，匹配用的自动机（{@link buildAutomaton}）按值集合建一次、跟着这份集合缓存：一批日志、动作经过它时，每一段文字
- * 只是线性的一遍扫描，代价和值的个数、形状无关。所有写法的总长超过 {@link MAX_AUTOMATON_CHARS} 的值集合建不了自动机，
- * 这个运行里要打码的文字（写入和读取）整段盖住，只影响它自己。
+ * 只是线性的一遍扫描。所有写法的总长超过 {@link MAX_AUTOMATON_CHARS} 的值集合建不了自动机（总长有上限，每一步的耗时才有上限），
+ * 这个运行里要打码的文字（写入和读取）整段盖住，只影响它自己；这次运行的任务日志里有一行说明（{@link OVERSIZE_NOTICE}）。
  */
 export class SecretSet {
 	/** 在文字里按子串换成掩码的文本，长的在前（整段的 JSON 先于它里面的叶子）。 */
@@ -390,7 +393,7 @@ export class SecretSet {
 	readonly containers: ReadonlySet<string>;
 	/** 延迟建好的自动机：同一份值集合的各个视图（{@link withBudget}）共用。 */
 	readonly #lazy: Lazy;
-	/** 这个视图的预算；没有时只受单次的上限（{@link MAX_SPANS}）约束（写入、测试）。 */
+	/** 这个视图的预算；没有时只受单次的上限（{@link READ_MASKS}）约束（写入、测试）。 */
 	readonly #budget: WorkBudget | undefined;
 	/** 保密对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
 	readonly #arraySizes: Set<number>;
@@ -447,8 +450,8 @@ export class SecretSet {
 	}
 
 	/**
-	 * 同一份值集合的一个带工作量预算的视图（{@link WorkBudget}）：一次读取（一页、一个下载块、流上的一批、一次运行的读取）
-	 * 开始时取一个，这次读取里的所有打码经过它，共用一份预算；用完之后还要花工作量才能打码的文字整段盖住。
+	 * 同一份值集合的一个带预算的视图（{@link WorkBudget}）：一次读取（一页、一个下载块、流上的一批、一次运行的读取）
+	 * 开始时取一个，这次读取里的所有打码经过它，共用一份预算；用完之后还有完整的出现的文字整段盖住。
 	 * 值集合本身不可变、可以按值缓存和共用（{@link secretSetOf}），预算是每次读取自己的，所以放在视图上，不放在缓存的集合上。
 	 * `budget` 给了就用它（一次读取涉及几个运行的值集合时，几个视图共用一份）。没有要打码的东西时返回自己。
 	 */
@@ -487,11 +490,18 @@ export class SecretSet {
 		if (!this.#lazy.built) {
 			this.#lazy.automaton = buildAutomaton(this.texts, secretLimits.automatonChars);
 			this.#lazy.built = true;
+			this.#lazy.watch?.(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
 		}
 		return this.#lazy.automaton;
 	}
 
-	/** 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住。 */
+	/** 自动机建好时通知一次（建好的字节数）：值集合的缓存按字节数限大小，只给 {@link secretSetOf} 用。已经建好的立刻通知。 */
+	watchBuild(watch: (bytes: number) => void): void {
+		this.#lazy.watch = watch;
+		if (this.#lazy.built) watch(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
+	}
+
+	/** 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。 */
 	get oversize(): boolean {
 		return this.texts.length > 0 && this.#automaton() === undefined;
 	}
@@ -503,10 +513,27 @@ export class SecretSet {
 	 * 输出是「所有完整的出现，重叠的合成一段，每段一个掩码（相邻但不重叠的各是一段）」。打不打码只取决于文字里有没有某个
 	 * secret 值的某种写法的**完整**出现；任何「部分匹配」（文字的结尾是某个值的前缀、开头是某个值的后缀）都不影响输出，
 	 * 也不影响用掉的预算、走的步数：输出里有没有掩码不能成为猜 secret 值的依据（docs/SEMANTICS.md §2.1）。
-	 * 带预算的视图（{@link withBudget}）上，扫过的字符数和完整的出现的段数计入预算，不够时整段盖住。
+	 * 带预算的视图（{@link withBudget}）上，完整的出现的段数计入预算，不够时整段盖住。
+	 * 值集合太大（{@link oversize}）时每段文字整段盖住，只有一行平台写的说明（{@link OVERSIZE_NOTICE}，不含值）原样放行。
 	 */
 	mask(text: string): string {
 		return maskTokens(this.#maskValues(text));
+	}
+
+	/**
+	 * {@link mask} 会不会改动这段文字（令牌原值也算），不看预算、不计入预算：只回答「有没有要盖的」，
+	 * 用来在没有要盖的时候省掉后面的处理（日志下载的一行里没有要盖的就原样返回）。值集合太大时总是会（整段盖住）。
+	 */
+	wouldChange(text: string): boolean {
+		if (maskTokens(text) !== text) return true;
+		if (this.texts.length === 0 || text === "") return false;
+		try {
+			const automaton = this.#automaton();
+			if (!automaton) return text !== OVERSIZE_NOTICE || this.texts.includes(text);
+			return scanSpans(automaton, text, 1) !== 0;
+		} catch {
+			return true;
+		}
 	}
 
 	/** 按值打码（不含令牌原值）。 */
@@ -514,15 +541,9 @@ export class SecretSet {
 		if (this.texts.length === 0 || text === "") return text;
 		try {
 			const automaton = this.#automaton();
-			if (!automaton) return SECRET_MASK;
+			if (!automaton)
+				return text === OVERSIZE_NOTICE && !this.texts.includes(text) ? text : SECRET_MASK;
 			const budget = this.#budget;
-			if (budget) {
-				if (text.length > budget.chars) {
-					budget.chars = 0;
-					return SECRET_MASK;
-				}
-				budget.chars -= text.length;
-			}
 			const count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
 			if (count < 0) {
 				if (budget) budget.masks = 0;
@@ -541,6 +562,8 @@ export class SecretSet {
 interface Lazy {
 	automaton?: Automaton | undefined;
 	built?: boolean;
+	/** 建好时通知（{@link SecretSet.watchBuild}）。 */
+	watch?: (bytes: number) => void;
 }
 
 /** 对象里值不是 undefined 的键的个数（标准写法不写 undefined 的键）。 */
@@ -558,19 +581,35 @@ export const NO_SECRETS: SecretSet = new SecretSet();
 /**
  * 值集合的缓存：键是这些值本身（JSON），所以运行里多了一个子流程实例带来的 secret 值，键就变了，另算一份；值一样就是同一份。
  * 写日志的每一批、读取运行的每一次都要问「这次运行此刻的 secret 值」，值没变时不用把每个值的各种写法再写一遍
- * （保密对象有几千个键时，一批要多花十几毫秒），编译好的匹配也跟着复用。
+ * （保密对象有几千个键时，一批要多花十几毫秒），建好的自动机也跟着复用。
+ *
+ * 按占用的字节数限大小（{@link SET_CACHE_MAX_BYTES}）：一份值集合占它的文本（每个字符按 2 字节算），加上建好的自动机
+ * （{@link automatonBytes}，建好之后才计入）。自动机每个节点约 11 字节，另有最多 4 MB 的转移表和 256 KB 的字符类表，和总长无关，
+ * 所以按文本总长限不住：64 份各 6 万个字符的小集合，自动机合计占堆外 340 MB。超过时从最早的开始丢（不做 LRU：一次运行用到的
+ * 集合很快就被新的运行替换，丢掉的只是重算一次），最新的这一份总是留着；至多缓存 {@link SET_CACHE_LIMIT} 份。
  */
-const setCache = new Map<string, { set: SecretSet; chars: number }>();
+const setCache = new Map<string, { set: SecretSet; bytes: number }>();
 /** 最多缓存这么多份。 */
 const SET_CACHE_LIMIT = 64;
-/**
- * 缓存里所有值集合的文本总长（字符数）的上限。一份集合的大小主要是它的文本的总长：保密对象有几千个键时一份约 0.3 M 个字符，
- * 40 KB 的字符串约 4 万个；只按条数限制的话，64 份大集合会占到几十 MB。V8 的字符串每个字符 1–2 个字节，8 M 个字符
- * 最多占 16 MB。这个数是按字符数推出来的（量堆内存受垃圾回收影响，数字不稳，没有当依据）；超过时从最早的开始丢（不做 LRU：
- * 一次运行用到的集合很快就被新的运行替换，丢掉的只是重算一次），最新的这一份总是留着。
- */
-const SET_CACHE_MAX_CHARS = 4_000_000;
-let setCacheChars = 0;
+let setCacheBytes = 0;
+
+function trimSetCache(): void {
+	while (
+		setCache.size > 1 &&
+		(setCache.size > SET_CACHE_LIMIT || setCacheBytes > secretLimits.cacheBytes)
+	) {
+		const oldest = setCache.entries().next().value;
+		if (!oldest) break;
+		setCache.delete(oldest[0]);
+		setCacheBytes -= oldest[1].bytes;
+	}
+}
+
+/** 清掉值集合的缓存（只给测试用：改了 {@link secretLimits} 之后，缓存里按旧的上限建的值集合不能再用）。 */
+export function clearSecretSetCache(): void {
+	setCache.clear();
+	setCacheBytes = 0;
+}
 
 /** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）；值相同的是同一个对象（不可变，可以共用）。 */
 export function secretSetOf(values: Iterable<unknown>): SecretSet {
@@ -585,19 +624,17 @@ export function secretSetOf(values: Iterable<unknown>): SecretSet {
 	const found = setCache.get(key);
 	if (found) return found.set;
 	const set = new SecretSet(list.map(secretPartsOf));
-	const chars = set.texts.reduce((n, t) => n + t.length, 0);
-	setCache.set(key, { set, chars });
-	setCacheChars += chars;
-	// 条数或总长超了，从最早的开始丢，最新的这一份留着。
-	while (
-		setCache.size > 1 &&
-		(setCache.size > SET_CACHE_LIMIT || setCacheChars > SET_CACHE_MAX_CHARS)
-	) {
-		const oldest = setCache.entries().next().value;
-		if (!oldest) break;
-		setCache.delete(oldest[0]);
-		setCacheChars -= oldest[1].chars;
-	}
+	const entry = { set, bytes: 2 * set.texts.reduce((n, t) => n + t.length, 0) };
+	setCache.set(key, entry);
+	setCacheBytes += entry.bytes;
+	// 自动机是用到的时候才建的：建好之后把它的字节数计入，再看要不要丢旧的（这份已经被丢了的就不计）。
+	set.watchBuild((bytes) => {
+		if (setCache.get(key) !== entry) return;
+		entry.bytes += bytes;
+		setCacheBytes += bytes;
+		trimSetCache();
+	});
+	trimSetCache();
 	return set;
 }
 

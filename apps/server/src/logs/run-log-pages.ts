@@ -176,7 +176,7 @@ export class RunLogs {
 		let lanes = streams.map((stream) => newLane(stream, 0));
 		while (lanes.length > 0) {
 			const lines: RunLogLine[] = [];
-			// 每一批一份新的工作量预算：一批的同步耗时有上限，批与批之间回到事件循环（交给下载响应、等它消费）。
+			// 每一批一份新的预算（完整的出现的段数）：前面的批用掉了预算，不影响后面的批；批与批之间回到事件循环（交给下载响应、等它消费）。
 			const batchMask = mask.fresh();
 			for (
 				let blocked = take(lanes, lines, DOWNLOAD_BATCH, true);

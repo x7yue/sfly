@@ -7,7 +7,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type LogLineView, type RunFocus, runFocusApi, runSummaryApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { secretSetOf } from "../src/logs/secrets.js";
+import { OVERSIZE_NOTICE, secretSetOf } from "../src/logs/secrets.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
@@ -60,6 +60,12 @@ const NO_SECRET = {
 interface RunLogLineView extends LogLineView {
 	task_id: string;
 }
+const texts = (lines: ReadonlyArray<{ text: string }>) => lines.map((l) => l.text);
+const jsonl = (body: string) =>
+	body
+		.trim()
+		.split("\n")
+		.map((l) => JSON.parse(l) as RunLogLineView);
 interface Page {
 	lines: LogLineView[];
 }
@@ -122,12 +128,6 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		});
 	}
 
-	const texts = (lines: ReadonlyArray<{ text: string }>) => lines.map((l) => l.text);
-	const jsonl = (body: string) =>
-		body
-			.trim()
-			.split("\n")
-			.map((l) => JSON.parse(l) as RunLogLineView);
 	/** 流里已经收到的日志行（按序号去重）。 */
 	const collect = (sse: SseClient): LogLineView[] => {
 		const bySeq = new Map<number, LogLineView>();
@@ -335,21 +335,21 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		expect(texts(mergedPage.lines)).toEqual(expected);
 	});
 
-	it("下载按块、按批读：一块（按任务）、一批（按运行）里的长行用光预算，每一块、每一批一份新的预算，后面的正常行不会因为前面用掉了预算被整行盖住（#517）", async () => {
+	it("下载按块、按批读：一块（按任务）、一批（按运行）里的长行用光预算（完整的出现太多），每一块、每一批一份新的预算，后面的行不会因为前面用掉了预算被整行盖住（#517）", async () => {
 		const id = await api.orchestrationWith(LATE_SECRET);
 		const runId = await api.triggerOk(id, { user: LATE });
 		const first = await agent.nextAssign();
 		const second = await agent.nextAssign();
 		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
-		// 6 行各 25 万个字符（读取预算调成 20 万个字符，一行就用光；一块、一批里正常的行加起来不到 20 万个字符），后面跟 1500 行正常的（约 250 KB，按任务下载要读好几块，
-		// 按运行下载一批 1000 行，要读两批）；写入时 LATE 还不是 secret 值，文件里是原文
-		const long = "z".repeat(250_000);
+		// 读取预算调成 800 段：6 行各有 900 处完整的出现，一行就用光；后面 1500 行各一处（约 250 KB，按任务下载要读好几块，每块几百行，
+		// 按运行下载一批 1000 行，要读两批），一块、一批里加起来不到 800 段；写入时 LATE 还不是 secret 值，文件里是原文
+		const long = `${LATE} `.repeat(900);
 		const letters = (i: number) =>
 			i.toString(26).replace(/\d/g, (d) => "qrstuvwxyz"[Number(d)] ?? d);
-		const clean = Array.from({ length: 1500 }, (_, i) => `clean line ${letters(i)}`);
+		const tail = Array.from({ length: 1500 }, (_, i) => `${LATE} line ${letters(i)}`);
 		agent.logs(sa, [
 			...Array.from({ length: 6 }, (_, i) => line(i + 1, long)),
-			...clean.map((text, i) => line(i + 7, text)),
+			...tail.map((text, i) => line(i + 7, text)),
 		]);
 		await eventually(async () => {
 			const page = await api.getJson<Page & { last_seq: number }>(
@@ -362,17 +362,18 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 			expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
 		);
 
-		await withSecretLimits({ readChars: 200_000 }, async () => {
+		await withSecretLimits({ readMasks: 800 }, async () => {
 			for (const path of [`/tasks/${sa.taskId}/logs/download`, `/runs/${runId}/logs/download`]) {
 				const rows = texts(jsonl(await (await cp.fetch(path)).text()));
 				expect(rows, path).toHaveLength(1506);
-				// 长行都盖住（超过预算）；整个下载共用一份预算的话，前面就把它用光，后面的行也都被整行盖住。每一块、每一批各一份，后面是原样的
+				// 长行都整行盖住（超过预算）；整个下载共用一份预算的话，前面就把它用光，后面的行也都被整行盖住。每一块、每一批各一份，后面的行只盖 secret 值
 				expect(rows.slice(0, 6), path).toEqual(Array(6).fill(MASK));
-				expect(rows.slice(-400), path).toEqual(clean.slice(-400));
+				expect(rows.slice(-400), path).toEqual(tail.slice(-400).map((t) => t.replace(LATE, MASK)));
 			}
-			// 按页读（最近 100 行）：一页一份预算，正常行原样
+			// 按页读（最近 100 行）：一页一份预算，后面的行只盖 secret 值
 			const page = await api.getJson<Page>(`/tasks/${sa.taskId}/logs?limit=100`);
-			expect(texts(page.lines)).toEqual(clean.slice(-100));
+			expect(texts(page.lines)).toEqual(tail.slice(-100).map((t) => t.replace(LATE, MASK)));
+			// 没有完整出现的行不花预算，再多也原样：这一页的预算是 800，读 1000 行没有 secret 值的行不受影响（见 log-mask 的用例）
 		});
 	}, 90_000);
 
@@ -393,4 +394,71 @@ describe("读日志时按运行此刻的 secret 值再打一遍码", () => {
 		const merged = await api.getJson<{ lines: LogLineView[] }>(`/runs/${runId}/logs`);
 		expect(texts(merged.lines)).toEqual([`user ${LATE} logged in`, `failed for ${LATE}`]);
 	});
+});
+
+describe("值集合太大的运行：任务日志里有一行平台写的说明，其余的文字整段盖住（#517）", () => {
+	let cp: TestControlPlane;
+	let api: ApiClient;
+	let agent: FakeAgent;
+
+	beforeEach(async () => {
+		cp = await startTestControlPlane();
+		api = new ApiClient(cp);
+		await publishBench(cp);
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
+	});
+	afterEach(async () => {
+		await agent.disconnect();
+		await cp.close();
+	});
+
+	const line = (seq: number, text: string) => ({
+		seq: BigInt(seq),
+		timeUnixMs: BigInt(Date.UTC(2026, 0, 1)),
+		source: LogSource.STDOUT,
+		level: LogLevel.INFO,
+		text,
+	});
+
+	it("总长超过上限的 secret 参数：第一批写入时在最前面写一行说明（系统写的 WARN，不含值），每个任务一行；读出来（分页、下载、按运行合并读）说明原样，其余整段是掩码", async () => {
+		await withSecretLimits({ automatonChars: 300 }, async () => {
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry", params: [{ name: "cfg", type: "json", secret: true }] },
+					{ id: "sa", kind: "package", package: "bench", node: "load" },
+				],
+				edges: [{ from: "entry", to: "sa", kind: "chain" }],
+				packages: { bench: "1.0.0" },
+			});
+			const values = Array.from({ length: 20 }, (_, i) => `fake-oversize-${i}-${"p".repeat(40)}`);
+			const runId = await api.triggerOk(id, { cfg: values });
+			const task = await agent.nextAssign();
+			agent.logs(task, [line(1, "first line"), line(2, `uses ${values[3]} here`)]);
+			await eventually(async () => {
+				const page = await api.getJson<Page>(`/tasks/${task.taskId}/logs`);
+				expect(page.lines).toHaveLength(3);
+			});
+			// 第二批：不再写说明
+			agent.logs(task, [line(3, "third line")]);
+			await eventually(async () => {
+				const page = await api.getJson<Page>(`/tasks/${task.taskId}/logs`);
+				expect(page.lines).toHaveLength(4);
+			});
+
+			const expected = [OVERSIZE_NOTICE, MASK, MASK, MASK];
+			const page = await api.getJson<Page>(`/tasks/${task.taskId}/logs`);
+			expect(texts(page.lines)).toEqual(expected);
+			expect(page.lines[0]).toMatchObject({ source: "system", level: "warn" });
+			expect(page.lines.map((l) => l.seq)).toEqual([1, 2, 3, 4]);
+			const download = await (await cp.fetch(`/tasks/${task.taskId}/logs/download`)).text();
+			expect(texts(jsonl(download))).toEqual(expected);
+			const merged = await (await cp.fetch(`/runs/${runId}/logs/download`)).text();
+			expect(texts(jsonl(merged))).toEqual(expected);
+			const mergedPage = await api.getJson<{ lines: LogLineView[] }>(`/runs/${runId}/logs`);
+			expect(texts(mergedPage.lines)).toEqual(expected);
+			// 说明里没有值
+			expect(download).not.toContain("fake-oversize");
+		});
+	}, 60_000);
 });

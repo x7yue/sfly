@@ -1,22 +1,30 @@
 /**
  * 多模式匹配（Aho–Corasick）：把一批文本放进一个自动机，扫一遍文字就找出全部文本的全部完整的出现。
  * 打码（{@link SecretSet.mask}）用它，取代原来的「正则的多选一加长值的索引」：正则的多选一是回溯式的，每个字符的代价取决于
- * 值的形状（开头怎么分叉、有没有重复的结构），所以要给扫描定价，而价格怎么调都有反例；这里每个字符的代价由构造保证。
+ * 值的形状（开头怎么分叉、有没有重复的结构），所以要给扫描定价，而价格怎么调都有反例；这里的代价和值的形状无关。
  *
- * - **扫描是线性的**：每个字符前进一步，沿失败链退的步数合计不超过前进的步数（总数不超过 2n），与文本的个数、形状无关；
+ * - **步数是线性的**：每个字符前进一步，沿失败链退的步数合计不超过前进的步数（总数不超过 2n），与文本的个数、形状无关；
  *   前进和退回的每一步是 O(1) 的数组下标或哈希表的查找。
+ * - **每一步的耗时有上限，靠总长有上限**：步数是构造保证的，每一步的耗时不是——自动机放不进缓存时，每一步可能是一次缓存外的
+ *   内存访问（总长 2 M 个字符以上、最刁钻的形状下每个字符 140 纳秒上下，是随机的值集合的 18 到 21 倍）。所以所有文本的总长有上限
+ *   （{@link MAX_AUTOMATON_CHARS}，1 M 个字符），自动机最多十几 MB，放得进缓存；同样的形状这时是 18 到 23 纳秒。
+ *   打码不是常数时间的：耗时随文字和值的关系变化（例如文字里的字符能不能作某个文本的开头，见根状态的跳过），
+ *   规矩（docs/SEMANTICS.md §2.1）保证的是输出只取决于完整的出现。
  * - **找到什么**：每个位置只看以它结尾的最长的那个文本（更短的出现被它包含，合并之后是同一段），所以不沿输出链走，
  *   一个位置上有多少个文本以它结尾不影响代价。重叠的出现合成一段（相邻但不重叠的各是一段），边扫边合成，最后一共有多少段
  *   是「完整的出现」的次数，调用方据此设上限（{@link scanSpans} 的 `limit`）。
- * - **大小和所有文本的总长成正比**（{@link MAX_AUTOMATON_CHARS} 给上限）：每个节点约 11 字节，另有最浅的几层的完整转移表。
+ * - **大小和所有文本的总长成正比**：每个节点约 11 字节，另有最浅的几层的完整转移表（最多 4 MB）和字符类表（256 KB）。
  *
  * 表示：节点按插入的顺序编号，**一个文本里新建的节点连续编号**，所以链上的孩子就是 `s + 1`，不用存；只有分叉出去的孩子
  * （每个文本最多一个）放哈希表。最浅的若干层（按广度优先，最多 {@link DENSE_ENTRIES} 项）另存完整的转移表，编号在前，
  * 随机的文字绝大多数时间停在这几层里，每个字符是一次表的查找；更深的节点走「链上的孩子、哈希表、失败链」。
  */
 
-/** 所有文本的总长（UTF-16 码元）超过这个数就不建自动机：节点数不超过它，约 11 字节一个节点。 */
-export const MAX_AUTOMATON_CHARS = 4_000_000;
+/**
+ * 所有文本的总长（UTF-16 码元）超过这个数就不建自动机：节点数不超过它，约 11 字节一个节点，自动机最多十几 MB。
+ * 这个数是每一步耗时的上限的来源（见文件头）：再大，自动机放不进缓存，最刁钻的形状下每个字符的耗时是现在的 6 到 8 倍。
+ */
+export const MAX_AUTOMATON_CHARS = 1 << 20;
 
 /** 完整转移表最多这么多项（每项 4 字节）：每个字符类一项，一行一个节点。 */
 const DENSE_ENTRIES = 1 << 20;
@@ -29,8 +37,8 @@ export interface Automaton {
 	readonly dense: number;
 	/** 字符类的个数（含类 0：所有文本里都没有的字符，转移到根）。 */
 	readonly width: number;
-	/** 码元 → 字符类（0 表示所有文本里都没有这个码元）。 */
-	readonly classOf: Uint16Array;
+	/** 码元 → 字符类（0 表示所有文本里都没有这个码元）；65536 个码元都出现时有 65536 个类，所以不是 16 位。 */
+	readonly classOf: Uint32Array;
 	/** 每个字符类：能不能是某个文本的第一个字符（根状态下直接跳过不能开头的字符，只加快扫描，不改变结果）。 */
 	readonly canStart: Uint8Array;
 	/** 稠密节点的转移表：`delta[节点 * width + 字符类]`。 */
@@ -62,7 +70,7 @@ function slotOf(parent: number, ch: number, seedA: number, seedB: number, mask: 
 
 /**
  * 建自动机。`texts` 里的空串忽略；总长超过 `maxChars`（默认 {@link MAX_AUTOMATON_CHARS}）时返回 undefined（调用方把文字整段盖住）。
- * 建的时间和总长成正比（几十万个字符几十毫秒）。
+ * 建的时间和总长成正比，是同步的：总长到上限时 0.1 到 0.25 秒（同一份值集合只建一次，缓存放得下几份）。
  */
 export function buildAutomaton(
 	texts: readonly string[],
@@ -152,7 +160,7 @@ export function buildAutomaton(
 	branchO[n] = 1; // 哨兵
 
 	// ---- 2. 字符类 ----
-	const classOf = new Uint16Array(65536);
+	const classOf = new Uint32Array(65536);
 	let width = 1;
 	for (const text of texts) {
 		for (let i = 0; i < text.length; i++) {
@@ -289,6 +297,21 @@ export function buildAutomaton(
 	};
 }
 
+/** 自动机占的内存（字节）：所有数组的大小之和。值集合的缓存按它限大小（{@link secretSetOf}）。 */
+export function automatonBytes(a: Automaton): number {
+	return (
+		a.classOf.byteLength +
+		a.canStart.byteLength +
+		a.delta.byteLength +
+		a.ch.byteLength +
+		a.branch.byteLength +
+		a.fail.byteLength +
+		a.out.byteLength +
+		a.hParent.byteLength +
+		a.hChild.byteLength
+	);
+}
+
 /** 找到的段（合并之后）的起止：`scanSpans` 返回的个数以内有效，下一次扫描会覆盖。同步使用，不会同时有两处在用。 */
 let spanStarts = new Int32Array(1024);
 let spanEnds = new Int32Array(1024);
@@ -305,7 +328,8 @@ function growSpans(): void {
 /**
  * 扫一遍 `text`，把所有文本的完整的出现合并成段，起止在模块里的两个数组里（用 {@link maskedByAutomaton} 取）；返回段数，超过 `limit`
  * 时放弃，返回 -1。重叠的出现（后一个的开头在前一个的结尾之前）合成一段，相邻但不重叠的各是一段。
- * 每个字符的代价是常数（摊销），只取决于文字的长度：文字里有没有某个文本的开头、半截不影响它走多少步以外的任何东西。
+ * 走的步数是线性的（摊销，每个字符前进一步、退回的步数合计不超过前进的步数），每一步的耗时有上限（总长有上限，见文件头）。
+ * 文字里有没有某个文本的开头、半截不影响输出和段数，只影响走的步数。
  */
 export function scanSpans(a: Automaton, text: string, limit: number): number {
 	const { dense, width, classOf, canStart, delta, ch, branch, fail, out, hParent, hChild, hMask } =

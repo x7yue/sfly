@@ -490,7 +490,7 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 	for (const { run, version, scenario } of rows) {
 		const { document } = version;
 		const runChains = chainsOf.get(run.id) ?? [];
-		// 每个运行一份工作量预算（{@link SecretSet.withBudget}）：一个运行的值集合再病态，也只盖住它自己的内容，不牵连同一次读取里别的运行。
+		// 每个运行一份预算（完整的出现的段数，{@link SecretSet.withBudget}）：一个运行用光了预算，也只盖住它自己的内容，不牵连同一次读取里别的运行。
 		const mask = masker(document, secretValues(document, runChains).withBudget());
 		const nodesOf = planOf(version);
 		const chains = runChains.map(

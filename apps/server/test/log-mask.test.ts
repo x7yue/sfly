@@ -5,11 +5,12 @@ import { logMask, NO_LOG_MASK } from "../src/logs/log-mask.js";
 import {
 	SECRET_MASK as MASK,
 	NO_SECRETS,
-	secretLimits,
+	OVERSIZE_NOTICE,
 	secretSetOf,
 	WorkBudget,
 } from "../src/logs/secrets.js";
 import { allForms } from "./support/secret-forms.js";
+import { withSecretLimitsSync } from "./support/secret-limits.js";
 
 const rowOf = (fields: Record<string, unknown>) => Buffer.from(JSON.stringify(fields));
 /** 一组 secret 值（每个值是一个 secret 参数的值）的读日志打码。 */
@@ -165,27 +166,29 @@ describe("文件里的一行：每种写法读出来都和写入时打码的结�
 	});
 });
 
-describe("读日志的预算：一页、一块、一批共用一份（#517）", () => {
-	// 读取预算的上限调小（只给测试用）：用几十 KB 的行就能用完预算；真实的上限是 16 Mi 个字符
-	const LINE = "z".repeat(65536);
-	const set = secretSetOf(["fake-secret-value-00"]);
-	const withLimits = (chars: number, run: () => void) => {
-		const saved = secretLimits.readChars;
-		secretLimits.readChars = chars;
-		try {
-			run();
-		} finally {
-			secretLimits.readChars = saved;
-		}
-	};
+describe("读日志的预算：一页、一块、一批共用一份（完整的出现的段数）（#517）", () => {
+	// 读取预算调小（只给测试用）：用几行就能用完预算；真实的上限是 2^20 段
+	const VALUE = "fake-secret-value-00";
+	const line = (i: number) => `line ${i} ${VALUE} end`;
+	const set = secretSetOf([VALUE]);
 
-	it("按页读取（line）：一页的行共用一份预算，用完之后剩下的行整行盖住；换一份新的（fresh）照常", () => {
-		withLimits(3 * 65536 + 100, () => {
+	it("按页读取（line）：一页的行共用一份预算，用完之后剩下有完整出现的行整行盖住，没有的原样；换一份新的（fresh）照常", () => {
+		withSecretLimitsSync({ readMasks: 3 }, () => {
 			const mask = logMask(set);
-			const out = Array.from({ length: 6 }, (_, i) => mask.line({ seq: i, text: LINE }).text);
-			expect(out.map((text) => text === MASK)).toEqual([false, false, false, true, true, true]);
-			// 预算用完之后，连没有 secret 值的行也整行盖住（宁可多盖，不漏）
-			expect(mask.line({ text: "clean line" }).text).toBe(MASK);
+			const out = Array.from({ length: 6 }, (_, i) => mask.line({ seq: i, text: line(i) }).text);
+			expect(out).toEqual([
+				`line 0 ${MASK} end`,
+				`line 1 ${MASK} end`,
+				`line 2 ${MASK} end`,
+				MASK,
+				MASK,
+				MASK,
+			]);
+			// 预算用完之后，没有 secret 值的行原样（再长也是）；有的整行盖住
+			expect(mask.line({ text: "clean line" }).text).toBe("clean line");
+			const long = "z".repeat(1_000_000);
+			expect(mask.line({ text: long }).text).toBe(long);
+			expect(mask.line({ text: line(9) }).text).toBe(MASK);
 			// 下一页、下一块、下一批：新的预算
 			const next = mask.fresh();
 			expect(next).not.toBe(mask);
@@ -195,32 +198,47 @@ describe("读日志的预算：一页、一块、一批共用一份（#517）", 
 		});
 	});
 
-	it("下载（row）：同样，一块里的行共用一份预算，每一块（fresh）一份新的", () => {
-		withLimits(3 * 65536 + 4096, () => {
+	it("下载（row）：同样，一块里的行共用一份预算，每一块（fresh）一份新的；一行里的一处完整的出现只记一次", () => {
+		withSecretLimitsSync({ readMasks: 3 }, () => {
 			const mask = logMask(set);
 			const texts = Array.from(
 				{ length: 6 },
-				(_, i) => JSON.parse(mask.row(rowOf({ ...row, seq: i, text: LINE })).toString("utf8")).text,
+				(_, i) =>
+					JSON.parse(mask.row(rowOf({ ...row, seq: i, text: line(i) })).toString("utf8")).text,
 			);
-			// 一行的字节比正文多一点（别的字段），所以前面三行还够，后面的整行盖住
-			expect(texts.map((text) => text === MASK)).toEqual([false, false, false, true, true, true]);
+			// 一行里只有一处：预算 3 正好够前面三行，后面的整行盖住（记两次的话只够一行半）
+			expect(texts).toEqual([
+				`line 0 ${MASK} end`,
+				`line 1 ${MASK} end`,
+				`line 2 ${MASK} end`,
+				MASK,
+				MASK,
+				MASK,
+			]);
+			// 用完之后：没有 secret 值的行原样返回同一个 Buffer
 			const clean = rowOf({ ...row, text: "clean line" });
-			expect(JSON.parse(mask.row(clean).toString("utf8")).text).toBe(MASK);
-			expect(mask.fresh().row(clean)).toBe(clean);
+			expect(mask.row(clean)).toBe(clean);
+			// 有反斜杠的行（正文里有换行）：解析之后在正文上打码，同样只记一次
+			const escaped = rowOf({ ...row, text: `a\n${VALUE}` });
+			expect(JSON.parse(mask.row(escaped).toString("utf8")).text).toBe(MASK);
+			const fresh = mask.fresh();
+			expect(fresh.row(clean)).toBe(clean);
+			expect(JSON.parse(fresh.row(escaped).toString("utf8")).text).toBe(`a\n${MASK}`);
 			expect(NO_LOG_MASK.fresh()).toBe(NO_LOG_MASK);
 		});
 	});
 
 	it("一页的预算可以由调用方给（共用同一份预算的两个读取）", () => {
-		const budget = new WorkBudget(70_000, 10);
+		const budget = new WorkBudget(2);
 		const first = logMask(set, budget);
 		const second = logMask(set, budget);
-		expect(first.line({ text: LINE }).text).toBe(LINE);
-		expect(second.line({ text: LINE }).text).toBe(MASK);
-		expect(budget.chars).toBe(0);
+		expect(first.line({ text: line(1) }).text).toBe(`line 1 ${MASK} end`);
+		expect(second.line({ text: line(2) }).text).toBe(`line 2 ${MASK} end`);
+		expect(first.line({ text: line(3) }).text).toBe(MASK);
+		expect(budget.masks).toBe(0);
 	});
 
-	it("正常的读取不会用光预算：一页 1000 行，每行出现一个 secret 值", () => {
+	it("正常的读取不会用光预算：一页 1000 行，每行出现一个 secret 值；任意长的行没有 secret 值也一个字不盖", () => {
 		const values = Array.from({ length: 100 }, (_, i) => `fake-secret-${i}-value`);
 		const mask = logMask(secretSetOf(values));
 		for (let i = 0; i < 1000; i++) {
@@ -228,5 +246,22 @@ describe("读日志的预算：一页、一块、一批共用一份（#517）", 
 			expect(masked.text).toBe(`request ${i} used ${MASK} and finished`);
 		}
 		expect(mask.line({ text: "still clean" }).text).toBe("still clean");
+		const huge = "y".repeat(1024 * 1024);
+		for (let i = 0; i < 40; i++) expect(mask.line({ text: huge }).text).toBe(huge);
+	});
+
+	it("值集合太大（建不了自动机）：每行整行盖住，只有平台写的那一行说明（OVERSIZE_NOTICE）原样，读取（line、row）一样", () => {
+		withSecretLimitsSync({ automatonChars: 50 }, () => {
+			const big = secretSetOf([`fake-oversize-${"v".repeat(100)}`]);
+			expect(big.oversize).toBe(true);
+			const mask = logMask(big);
+			expect(mask.line({ text: "clean line" }).text).toBe(MASK);
+			expect(mask.line({ text: OVERSIZE_NOTICE }).text).toBe(OVERSIZE_NOTICE);
+			expect(
+				JSON.parse(mask.row(rowOf({ ...row, text: "clean line" })).toString("utf8")).text,
+			).toBe(MASK);
+			const notice = rowOf({ ...row, source: "system", level: "warn", text: OVERSIZE_NOTICE });
+			expect(mask.row(notice)).toBe(notice);
+		});
 	});
 });
