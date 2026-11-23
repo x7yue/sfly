@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { runs } from "../db/schema.js";
 import { getRunView } from "../runs/run-read.js";
+import type { LogMask } from "./log-mask.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
 import type { LogLineView, TaskLogInfo, TaskLogs } from "./task-logs.js";
@@ -120,6 +121,7 @@ export class RunLogs {
 	async page(runId: string, request: RunLogRequest): Promise<RunLogPageResult | undefined> {
 		const streams = await this.#streams(runId, request.scope);
 		if (!streams) return undefined;
+		const mask = await this.deps.logs.logMask(runId);
 		const forward = request.direction === "forward";
 		const lanes = streams.map((stream) => {
 			const { order, bytes } = stream.log;
@@ -140,6 +142,7 @@ export class RunLogs {
 				limit: request.limit - lines.length,
 				filter: request.filter,
 				scanLimit: first ? Math.min(FIRST_SLICE, share) : share,
+				mask,
 			});
 		}
 		if (!forward) lines.reverse();
@@ -165,20 +168,27 @@ export class RunLogs {
 		scope: RunLogScope | undefined,
 	): Promise<AsyncGenerator<RunLogLine[], void> | undefined> {
 		const streams = await this.#streams(runId, scope);
-		return streams && this.#batches(streams);
+		return streams && this.#batches(streams, await this.deps.logs.logMask(runId));
 	}
 
-	async *#batches(streams: TaskStream[]): AsyncGenerator<RunLogLine[], void> {
+	async *#batches(streams: TaskStream[], mask: LogMask): AsyncGenerator<RunLogLine[], void> {
 		const scanLimit = Math.max(1, Math.floor((this.deps.scanBytes ?? SCAN_LIMIT) / streams.length));
 		let lanes = streams.map((stream) => newLane(stream, 0));
 		while (lanes.length > 0) {
 			const lines: RunLogLine[] = [];
+			// 每一批一份新的预算（完整的出现的段数）：前面的批用掉了预算，不影响后面的批；批与批之间回到事件循环（交给下载响应、等它消费）。
+			const batchMask = mask.fresh();
 			for (
 				let blocked = take(lanes, lines, DOWNLOAD_BATCH, true);
 				blocked.length > 0;
 				blocked = take(lanes, lines, DOWNLOAD_BATCH, true)
 			) {
-				await extend(blocked, true, { limit: DOWNLOAD_BATCH, filter: {}, scanLimit });
+				await extend(blocked, true, {
+					limit: DOWNLOAD_BATCH,
+					filter: {},
+					scanLimit,
+					mask: batchMask,
+				});
 			}
 			if (lines.length > 0) yield lines;
 			for (const lane of lanes) {
@@ -235,7 +245,9 @@ export class RunLogs {
 				emit({ kind: "reload", at: new Map(sent) });
 				return;
 			}
-			const read = await mapOpenFiles(behind, (s) => linesAfterSeq(s, sentSeq(s)));
+			// 补发的是文件里已经写下的行：按此刻的 secret 值再打一遍（订阅之后新写的行写入时就是按新名单打的码）。
+			const mask = await this.deps.logs.logMask(runId);
+			const read = await mapOpenFiles(behind, (s) => linesAfterSeq(s, sentSeq(s), mask));
 			const lines: RunLogLine[] = [];
 			behind.forEach((s, i) => {
 				for (const line of read[i] ?? []) if (shown(line)) lines.push(runLogLine(s, line));
@@ -285,7 +297,11 @@ const runLogLine = (stream: TaskStream, line: LogLineView): RunLogLine => ({
 });
 
 /** 一个任务在列出它那一刻已写入的、序号大于 afterSeq 的行，按序号；从文件尾部往前读到序号不大于 afterSeq 为止。 */
-async function linesAfterSeq(stream: TaskStream, afterSeq: number): Promise<LogLineView[]> {
+async function linesAfterSeq(
+	stream: TaskStream,
+	afterSeq: number,
+	mask: LogMask,
+): Promise<LogLineView[]> {
 	const lines: LogLineView[] = [];
 	const { file, bytes, seq } = stream.log;
 	for (let before = bytes; before > 0; ) {
@@ -295,6 +311,7 @@ async function linesAfterSeq(stream: TaskStream, afterSeq: number): Promise<LogL
 			until: bytes,
 			limit: seq - afterSeq + 1,
 			filter: {},
+			mask,
 		});
 		const fresh = window.lines.filter((l) => l.seq > afterSeq);
 		lines.unshift(...fresh.map(({ offset: _, ...line }) => line));
@@ -377,7 +394,7 @@ function take(lanes: Lane[], lines: RunLogLine[], limit: number, forward: boolea
 async function extend(
 	lanes: Lane[],
 	forward: boolean,
-	request: { limit: number; filter: LogFilter; scanLimit: number },
+	request: { limit: number; filter: LogFilter; scanLimit: number; mask: LogMask },
 ): Promise<number> {
 	const scanned = await mapOpenFiles(lanes, async (lane) => {
 		const { stream, until } = lane;

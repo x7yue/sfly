@@ -5,6 +5,7 @@ import type {
 	StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Db } from "../db/database.js";
 import { agents, orchestrations, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
@@ -34,24 +35,24 @@ export function referencedAgents(
 	];
 }
 
-/** 文档引用的 Agent 与在线状态（还没有注册过的为 unknown），顺序同 referencedAgents。 */
+/**
+ * 文档引用的 Agent 与在线状态（还没有注册过的为 unknown），顺序同 referencedAgents。只看场景所在项目的 Agent：
+ * 别的项目的 Agent 和没有注册过一样，是 unknown。
+ */
 export async function referencedAgentStatus(
 	db: Db,
+	project: ProjectId,
 	doc: StoredOrchestrationDocument,
 ): Promise<ReferencedAgent[]> {
 	const refs = referencedAgents(doc);
 	if (refs.length === 0) return [];
 	const status = new Map(
 		(
-			await db
-				.select({ name: agents.name, status: agents.status })
-				.from(agents)
-				.where(
-					inArray(
-						agents.name,
-						refs.map((a) => a.name),
-					),
-				)
+			await agentsInProject(
+				db,
+				project,
+				refs.map((a) => a.name),
+			)
 		).map((a) => [a.name, a.status]),
 	);
 	return refs.map((a) => ({ ...a, status: status.get(a.name) ?? "unknown" }));

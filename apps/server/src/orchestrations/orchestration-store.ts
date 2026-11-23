@@ -431,6 +431,11 @@ export class OrchestrationStore {
 		return row && this.#view(row, this.deps.db);
 	}
 
+	/** 场景所在的项目（场景不存在时 undefined）：检查和预检要按它找包和 Agent。 */
+	async projectOf(id: string): Promise<ProjectId | undefined> {
+		return (await this.#row(id))?.projectId;
+	}
+
 	/** 按 ID 取这个项目里的场景；不存在或属于别的项目时返回 undefined（和不存在一样）。 */
 	async getInProject(project: ProjectId, id: string): Promise<OrchestrationView | undefined> {
 		const row = await this.#row(id, project);
@@ -476,6 +481,7 @@ export class OrchestrationStore {
 				// 在同一个事务（同一个行锁）里检查：检查和追加之间，别的请求改不了这次判断用到的东西。
 				const check = await versionCheck(
 					tx,
+					orchestration.projectId,
 					orchestrationId,
 					maskSecretDefaults(prepared.document),
 					masked,
@@ -519,6 +525,7 @@ export class OrchestrationStore {
 			kind: "checked",
 			check: await versionCheck(
 				this.deps.db,
+				orchestration.projectId,
 				orchestrationId,
 				checked,
 				masked,
