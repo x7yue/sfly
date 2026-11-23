@@ -91,7 +91,8 @@ function retentionDaysFromEnv(name: string, raw: string | undefined): number | u
 function loginIdleMsFromEnv(name: string, raw: string | undefined): number | undefined {
 	if (isUnset(raw)) return undefined;
 	const hours = decimalOf(raw);
-	// 按最近的毫秒算：2 分钟是 1/30 小时，写不成有限的小数，向下取整会让「0.03333333333333333」差 1 毫秒不够下限。
+	// 按最近的毫秒算：小时的小数乘 3600000 有浮点误差（0.29 小时乘出来是 1043999.9999999999），向下取整会少 1 毫秒；
+	// 2 分钟是 1/30 小时，写成 0.0333333333333333（四舍五入过的）时向下取整是 119999 毫秒，差 1 毫秒不够下限。
 	const ms = Math.round(hours * HOUR_MS);
 	if (!isLoginIdleMs(ms)) {
 		throw new Error(loginIdleHoursMessage(name, JSON.stringify(raw), !Number.isFinite(hours)));
