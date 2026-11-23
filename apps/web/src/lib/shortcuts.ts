@@ -219,6 +219,27 @@ export const shortcutById = (id: ShortcutId): ShortcutDef => {
 	return def;
 };
 
+/**
+ * 快捷键面板里一个分组的行：名称相同的登记（一个键一条，如删除节点的 Delete 和 Backspace）合成一行，名称写一次，
+ * 按键依次列出；行的先后按各自第一条登记在注册表里的位置。
+ */
+export interface ShortcutRow {
+	label: string;
+	/** 这一行的快捷键，注册表顺序；至少一个。 */
+	ids: ShortcutId[];
+}
+
+export function shortcutRows(group: ShortcutGroup): ShortcutRow[] {
+	const rows: ShortcutRow[] = [];
+	for (const def of SHORTCUTS) {
+		if (def.group !== group) continue;
+		const row = rows.find((r) => r.label === def.label);
+		if (row) row.ids.push(def.id);
+		else rows.push({ label: def.label, ids: [def.id] });
+	}
+	return rows;
+}
+
 /** 一次按键（KeyboardEvent 的子集）；editable 表示焦点在可输入的元素里。 */
 export interface KeyInput {
 	key: string;

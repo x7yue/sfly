@@ -1,11 +1,14 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { cn } from "cn";
+import { Fragment, useEffect, useRef, useSyncExternalStore } from "react";
 import { dialogOpen, inCanvasArea, isEditable } from "#/lib/focus";
+import { MORE_BELOW_FADE, trackMoreBelow } from "#/lib/scroll-more";
 import {
 	type PaletteShortcut,
 	SHORTCUTS,
 	type ShortcutGroup,
 	type ShortcutId,
 	ShortcutMatcher,
+	shortcutRows,
 } from "#/lib/shortcuts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Keys } from "./page";
@@ -114,22 +117,27 @@ export function ShortcutsDialog({
 				<DialogHeader>
 					<DialogTitle>快捷键</DialogTitle>
 				</DialogHeader>
-				<div className="overflow-y-auto">
+				<div ref={trackMoreBelow} className={cn("overflow-y-auto", MORE_BELOW_FADE)}>
 					{GROUPS.map((group) => {
-						const items = SHORTCUTS.filter((s) => s.group === group);
-						if (items.length === 0) return null;
+						const rows = shortcutRows(group);
+						if (rows.length === 0) return null;
 						return (
 							<section key={group} aria-label={group}>
 								<h4 className="mt-1 mb-1 text-xs font-semibold text-fg-3">{group}</h4>
 								<dl className="m-0 grid grid-cols-3 gap-x-6">
-									{items.map((s) => (
+									{rows.map((row) => (
 										<div
-											key={s.id}
+											key={row.ids[0]}
 											className="flex items-center justify-between border-b border-border-soft py-1.25 text-sm"
 										>
-											<dt>{s.label}</dt>
-											<dd className="m-0">
-												<Keys shortcut={s.id} />
+											<dt>{row.label}</dt>
+											<dd className="m-0 inline-flex items-center gap-1.5">
+												{row.ids.map((id, i) => (
+													<Fragment key={id}>
+														{i > 0 && <span className="text-xs text-fg-3">或</span>}
+														<Keys shortcut={id} />
+													</Fragment>
+												))}
 											</dd>
 										</div>
 									))}
