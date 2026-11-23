@@ -138,7 +138,12 @@ describe("动作的字段的值、失败原因：结尾是 secret 值的前缀�
 				result: "failed" as const,
 			};
 		});
-		const zero = { reported: tails.length, capped_ts: null, capped_mono: null, failed: tails.length };
+		const zero = {
+			reported: tails.length,
+			capped_ts: null,
+			capped_mono: null,
+			failed: tails.length,
+		};
 		agent.actionSummary(sa, {
 			total: tails.length,
 			reported: tails.length,

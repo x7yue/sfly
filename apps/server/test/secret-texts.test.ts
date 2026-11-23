@@ -16,7 +16,6 @@ import {
 	charCount,
 	compareUtf8,
 	literalHashOf,
-	MAX_MASK_WORK,
 	MIN_LEAF_CHARS,
 	maskParams,
 	maskRecord,
@@ -1349,7 +1348,9 @@ describe("长值的索引：扫一遍就查全，结果和逐个 indexOf 的参�
 			const text = `<${absent}> ${all[7]} ${all[30]} ${absent}`;
 			expect(set.mask(text)).toBe(`<${absent}> ${MASK} ${MASK} ${absent}`);
 			// 和逐个 indexOf 的参照实现一致
-			expect(set.mask(`${all[0]}${all[1]}`)).toBe(reference(`${all[0]}${all[1]}`, all.slice(0, 31)));
+			expect(set.mask(`${all[0]}${all[1]}`)).toBe(
+				reference(`${all[0]}${all[1]}`, all.slice(0, 31)),
+			);
 		});
 
 		it("每个位置都撞上一桶 31 个值：核对按长度计入预算，一页用完预算之后整段盖住，耗时有上限；预算够的时候原样放过", () => {
@@ -1382,7 +1383,16 @@ describe("长值的索引：扫一遍就查全，结果和逐个 indexOf 的参�
 			const long = value(1100);
 			const set = setOf(long);
 			const total = 2 * STEP + 5000;
-			for (const at of [0, STEP - 1100, STEP - 1099, STEP - 1, STEP, STEP + 1, 2 * STEP - 1, total - 1100]) {
+			for (const at of [
+				0,
+				STEP - 1100,
+				STEP - 1099,
+				STEP - 1,
+				STEP,
+				STEP + 1,
+				2 * STEP - 1,
+				total - 1100,
+			]) {
 				const text = `${"x".repeat(at)}${long}${"x".repeat(total - at - long.length)}`;
 				const out = set.mask(text);
 				expect(out.length, `at ${at}`).toBe(total - long.length + MASK.length);
