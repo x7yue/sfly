@@ -88,7 +88,7 @@ docker compose up -d
   - 运行通知卡片上的「查看运行」按钮用 `SFLY_PUBLIC_URL` 拼出链接（`<SFLY_PUBLIC_URL>/runs/<运行 ID>`），所以要让用户在群里点得开，就把 `SFLY_PUBLIC_URL` 配成浏览器能访问的控制面地址；没有配置时卡片不显示按钮。
   - Webhook 地址相当于一个凭据：数据库里明文保存，界面和日志里只露出开头和结尾。平台没有认证（ADR 0004），能打开页面的人可以新增、替换、删除机器人，也能让它往群里发测试消息。
 - 跨域（ADR 0022）：用户自建的页面托管在别的来源，浏览器调用控制面前先预检。控制面默认允许所有来源（不带凭据）；设置 `SFLY_CORS_ORIGINS`（逗号分隔的来源，例如 `https://dash.example.com,http://localhost:5173`）后只允许名单里的来源，名单外的页面被浏览器拦下。没有登录时，「允许所有来源」意味着内网用户在浏览器里打开的任何网页都能调用他访问得到的控制面，包括触发和取消运行；不放心时收窄成名单。控制台自己的页面同源，命令行和 Agent 不经浏览器，都不受影响。自建页面托管在公网、控制面在内网时 Chrome 另有限制（页面要是 HTTPS，用户要允许访问本地网络），见用户文档「用 API 客户端做自己的页面」。
-- 其余配置见 `apps/server/src/main.ts` 顶部注释（保留天数与大小上限等）。
+- 保留期、大小上限和登录的空闲期限（`SFLY_RETENTION_DAYS`、`SFLY_METRIC_RETENTION_DAYS`、`SFLY_LOG_LIMIT_MB`、`SFLY_ARTIFACT_LIMIT_MB`、`SFLY_METRIC_LIMIT_MB`、`SFLY_LOGIN_IDLE_HOURS`）在 `deploy/.env.example` 里写明了取值范围，docker compose 会把它们传给控制面：保留天数大于 0、最大 36500（约 100 年，**不想清理就填 36500**，没有别的「永不清理」的写法），大小上限换算成字节后在 1 到 2^53 − 1 之间，登录的空闲期限大于 0、最大 876000 小时。不是数、不是有限的数、超出范围的值在控制面启动时就报错退出（写明变量名、填的原文和范围，几个一起报），不会启动之后才悄悄出错。其余配置见 `apps/server/src/main.ts` 顶部注释。
 - 需要 TLS 或统一入口时，按 Fastify 官方建议在前面加反向代理。SSE 要关闭代理缓冲；Agent 网关是 gRPC（HTTP/2），要么单独开放 50051，要么用 `grpc_pass` 转发。nginx 示例：
 
   ```nginx
