@@ -19,9 +19,7 @@ import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
 import {
 	ArtifactStore,
 	artifactBaseUrl,
-	artifactLimitMessage,
 	DEFAULT_ARTIFACT_LIMIT_BYTES,
-	isArtifactLimitBytes,
 } from "./artifacts/artifact-store.js";
 import { AccountService } from "./auth/accounts.js";
 import { bootstrapFirstAdmin, type InitialAdmin } from "./auth/bootstrap.js";
@@ -32,6 +30,7 @@ import { RevocationBus } from "./auth/revocations.js";
 import { SetupCode } from "./auth/setup-code.js";
 import { TokenService } from "./auth/tokens.js";
 import { type Clock, systemClock } from "./clock.js";
+import { EnvSettingsError, numericOptionProblems } from "./config/env-settings.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { loadClientTarballs } from "./downloads/client-tarballs.js";
@@ -216,13 +215,10 @@ export interface ControlPlane {
 
 /** 启动控制面：执行迁移，然后启动 HTTP API 和 Agent 网关。 */
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
-	// 产物合计的上限随任务下发给 Agent（uint64）：`Infinity`、超过 2^53 − 1 的值下发时让派发出错，启动时就拒绝（#477）。
-	if (
-		options.artifactLimitBytes !== undefined &&
-		!isArtifactLimitBytes(options.artifactLimitBytes)
-	) {
-		throw new Error(artifactLimitMessage("artifactLimitBytes", options.artifactLimitBytes));
-	}
+	// 数值选项在启动时就检查，不合法的不启动，不留到运行时（#477、#577）：产物合计的上限随任务下发给 Agent（uint64），
+	// `Infinity`、超过 2^53 − 1 的值下发时让派发出错；保留天数很大时清理的截止时间不是有效的时间，清理任务每分钟报错。
+	const optionProblems = numericOptionProblems(options);
+	if (optionProblems.length > 0) throw new EnvSettingsError(optionProblems, "选项");
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
 	/**

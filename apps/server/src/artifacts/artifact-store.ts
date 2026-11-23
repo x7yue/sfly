@@ -6,6 +6,12 @@ import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { and, eq, ne, sum } from "drizzle-orm";
 import type { Clock } from "../clock.js";
+import {
+	byteLimitBytesFromMb,
+	byteLimitMessage,
+	isByteLimit,
+	MAX_BYTE_LIMIT,
+} from "../config/byte-limit.js";
 import type { Db } from "../db/database.js";
 import { artifacts, runs, tasks } from "../db/schema.js";
 
@@ -17,18 +23,14 @@ export const DEFAULT_ARTIFACT_LIMIT_BYTES = 1024 * 1024 * 1024;
  * 而且 `Infinity` 和超过 uint64 的值下发给 Agent 时会让派发出错（`BigInt(Infinity)` 抛异常；序列化 `AssignTask` 时
  * `invalid uint64` 让 gRPC 流断开，#477 的审查），所以启动时就拒绝，不留到派发时。
  */
-export const MAX_ARTIFACT_LIMIT_BYTES = Number.MAX_SAFE_INTEGER;
+export const MAX_ARTIFACT_LIMIT_BYTES = MAX_BYTE_LIMIT;
 
 /** 上限（字节）合不合格：1 到 {@link MAX_ARTIFACT_LIMIT_BYTES} 之间的整数。 */
-export const isArtifactLimitBytes = (value: unknown): value is number =>
-	typeof value === "number" &&
-	Number.isInteger(value) &&
-	value >= 1 &&
-	value <= MAX_ARTIFACT_LIMIT_BYTES;
+export const isArtifactLimitBytes = isByteLimit;
 
 /** 上限不合格的说明；`source` 是它的来源（环境变量名、选项名），`actual` 是写的值。 */
 export const artifactLimitMessage = (source: string, actual: unknown): string =>
-	`${source} 不合法：产物合计的上限换算成字节后必须是 1 到 ${MAX_ARTIFACT_LIMIT_BYTES} 之间的整数，实际是 ${String(actual)}`;
+	byteLimitMessage(source, "产物合计的上限", actual);
 
 /**
  * 把 `SFLY_ARTIFACT_LIMIT_MB` 的原文（MB，可以带小数）换算成字节。没设置（或空串）时是 undefined（用默认值）；
@@ -38,12 +40,7 @@ export function artifactLimitBytesFromMb(
 	raw: string | undefined,
 	name = "SFLY_ARTIFACT_LIMIT_MB",
 ): number | undefined {
-	if (raw === undefined || raw === "") return undefined;
-	const bytes = Math.floor(Number(raw) * 1024 * 1024);
-	if (!isArtifactLimitBytes(bytes)) {
-		throw new Error(`${artifactLimitMessage(name, JSON.stringify(raw))}（换算后 ${bytes} 字节）`);
-	}
-	return bytes;
+	return byteLimitBytesFromMb(name, "产物合计的上限", raw);
 }
 
 /**
