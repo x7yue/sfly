@@ -1,6 +1,7 @@
 import { type RunView, runsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { cn } from "cn";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
 import { NodeNameInline } from "#/components/node-name";
@@ -48,6 +49,11 @@ import { ViewTabs } from "./ViewTabs";
 const MAX_CHAIN_BADGES = 4;
 
 /**
+ * 失败摘要最窄的宽度：1280 及以上 288px，1400 及以上 320px（别的内容再挤也给它留这么多；1280 宽时再多顶栏就放不下了）。
+ */
+const SUMMARY_MIN = "min-[1280px]:min-w-72 min-[1400px]:min-w-80";
+
+/**
  * 概览的「数据更新于 10:59:17」：关注项读数的生成时间（控制面时间，`generated_at`）。与概览读同一份读数
  * （同一个查询，不多发请求），盯运行的人看得出页面本身还在刷新；所以只在运行还在进行时显示（已结束的运行读数不再刷新，
  * 写「更新于」没有意义）。还没读到时不显示。
@@ -69,8 +75,9 @@ function FocusFreshness({ run }: { run: RunView }) {
  * 页面里已经有失败区域（概览）或失败横幅（详情）时不重复，只在它们看不到的地方出现，同一屏上同一件事只说一次）、各链状态、
  * 在画布中打开、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。失败摘要只用别的内容占完之后剩下的宽度
- * （最窄 96px，全文在悬停提示里）：预设名、场景名和耗时在宽的窗口里原样显示，窄的窗口里
- * 才按各链状态（整个收起，不留半截）、预设名、场景名与触发信息的顺序让位；耗时、状态、视图标签页和按钮不让位。
+ * （全文在悬停提示里）：显示失败摘要时各链状态整个收起（失败的节点和各链的状态在概览、时间线里都有，顶栏把宽度先让给失败原因），
+ * 摘要最窄 96px、1280 及以上最窄 {@link SUMMARY_MIN}（288–320px，够写出异常类型和原因的开头，不只剩「TimeoutErr…」），
+ * 预设名、场景名和耗时在宽的窗口里原样显示，窄的窗口里才按预设名、场景名与触发信息的顺序让位；耗时、状态、视图标签页和按钮不让位。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
  */
 export function MonitorTopBar({
@@ -98,6 +105,7 @@ export function MonitorTopBar({
 	// 顶栏不再写一遍：同一屏上同一件事只说一次；看不到它们的地方（详情里收起了横幅、运行还在进行时的详情）顶栏照常显示。
 	const failure = runFailure(run);
 	const elapsed = (run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at);
+	const summaryShown = failure !== null && !failureShown;
 
 	return (
 		<header
@@ -141,10 +149,13 @@ export function MonitorTopBar({
 			{view === "overview" && run.status === "running" && <FocusFreshness run={run} />}
 			{run.preset && <RunPresetInfo preset={run.preset} />}
 			<ViewTabs view={view} onChange={onViewChange} />
-			{failure && !failureShown && <FailureSummary failure={failure} />}
+			{failure && summaryShown && <FailureSummary failure={failure} />}
 			<ul
 				aria-label="各链状态"
-				className="m-0 flex min-w-0 shrink-1000 list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
+				className={cn(
+					"m-0 flex min-w-0 shrink-1000 list-none gap-1.5 overflow-hidden p-0 max-xl:hidden",
+					summaryShown && "hidden",
+				)}
 			>
 				{chains.slice(0, MAX_CHAIN_BADGES).map((chain) => {
 					const s = chainRunStatus(chain, run.cancel !== null);
@@ -243,7 +254,10 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 					aria-description="点击查看这个节点的尝试"
 					data-testid="run-failure"
 					onClick={() => actions.report({ type: "failure", node: failure.ref })}
-					className="block h-6.5 min-w-24 max-w-max flex-[100_1_0%] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
+					className={cn(
+						"block h-6.5 min-w-24 max-w-max flex-[100_1_0%] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1",
+						SUMMARY_MIN,
+					)}
 				/>
 			}
 		>

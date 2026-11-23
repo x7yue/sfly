@@ -1,4 +1,5 @@
 import { type FileHandle, open } from "node:fs/promises";
+import type { LogMask } from "./log-mask.js";
 import { type LogLineView, logLineView } from "./task-logs.js";
 
 /**
@@ -28,6 +29,11 @@ interface PageLimits {
 	scanLimit?: number;
 	/** 只读这个字节偏移之前的完整行（例如列出任务那一刻已写入的字节数），之后写入的不读。 */
 	until?: number;
+	/**
+	 * 读到的行的正文按它打码（运行此刻的 secret 值，log-mask.ts）。必填：读日志的人要明确地交一个，
+	 * 不会因为忘了而把后来才成为 secret 的值原样读出去（#517）；确实不需要时传 `NO_LOG_MASK`。
+	 */
+	mask: LogMask;
 }
 
 export type PageRequest =
@@ -60,6 +66,8 @@ export interface LocateRequest {
 	limit: number;
 	filter: LogFilter;
 	scanLimit?: number;
+	/** 同 {@link PageLimits.mask}。 */
+	mask: LogMask;
 }
 
 /**
@@ -125,12 +133,12 @@ export function readLogPage(file: string, request: PageRequest): Promise<LogPage
 export function readLogPageAt(file: string, request: LocateRequest): Promise<LocatedPage> {
 	const missing = { lines: [], start: 0, end: 0, size: 0, atOffset: 0, exactSeq: null };
 	return withReader(file, request, missing, async (reader) => {
-		const { limit, filter } = request;
+		const { limit, filter, mask } = request;
 		const atOffset = await momentOffset(reader, request.at);
 		const readSide = (direction: "backward" | "forward", count: number) =>
 			direction === "forward"
-				? forward(reader, { direction, after: atOffset, limit: count, filter })
-				: backward(reader, { direction, before: atOffset, limit: count, filter });
+				? forward(reader, { direction, after: atOffset, limit: count, filter, mask })
+				: backward(reader, { direction, before: atOffset, limit: count, filter, mask });
 		let older = await readSide("backward", Math.floor(limit / 2));
 		const newer = await readSide("forward", limit - older.lines.length);
 		const short = limit - older.lines.length - newer.lines.length;
@@ -251,7 +259,9 @@ async function forward(
 			const nl = pending.indexOf(0x0a);
 			if (nl < 0) break;
 			const line = parse(pending.subarray(0, nl));
-			if (matches(line, request.filter)) lines.push({ offset: pendingAt, ...line });
+			if (matches(line, request.filter)) {
+				lines.push({ offset: pendingAt, ...request.mask.line(line) });
+			}
 			pendingAt += nl + 1;
 			pending = pending.subarray(nl + 1);
 			if (full()) break;
@@ -288,7 +298,9 @@ async function backward(
 			const lineFrom = nl + 1;
 			const line = parse(pending.subarray(lineFrom, lineEnd - 1));
 			start = pos + lineFrom;
-			if (matches(line, request.filter)) found.push({ offset: start, ...line });
+			if (matches(line, request.filter)) {
+				found.push({ offset: start, ...request.mask.line(line) });
+			}
 			lineEnd = lineFrom;
 			if (lineEnd === 0 || full()) break;
 		}
