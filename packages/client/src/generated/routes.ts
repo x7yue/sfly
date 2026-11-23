@@ -1282,8 +1282,9 @@ export interface Api {
 					/** 重试的原因按什么分；#548 起有值。 */
 					error_class?: ErrorClass;
 					/**
-					 * 没有送到的那句话（`user_message.message_id`）：只有 `steer_dropped`（插话因停止、结束或这一轮已经结束没有送到模型）和
-					 * `queue_cancelled`（排队中的话因停止没有交给助手）。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字。#544 起。
+					 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
+					 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
+					 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
 					 */
 					message_id?: string;
 					seq: number;
