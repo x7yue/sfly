@@ -16,7 +16,13 @@ from sfly.capabilities import (
     FileInfo,
     WatchSnapshot,
 )
-from sfly.context import ArtifactDownloadError, Cancelled, Context, TaskInfo
+from sfly.context import (
+    ArtifactDownloadError,
+    ArtifactLimitExceeded,
+    Cancelled,
+    Context,
+    TaskInfo,
+)
 from sfly.nodes import AgentName, Chart, Doc, FeishuBot, Metric, node
 from sfly.run_state import (
     RunState,
@@ -42,6 +48,7 @@ __all__ = [
     "AgentUnreachable",
     "AgentUnsupported",
     "ArtifactDownloadError",
+    "ArtifactLimitExceeded",
     "Cancelled",
     "Chart",
     "Context",
