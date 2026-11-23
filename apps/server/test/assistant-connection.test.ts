@@ -14,11 +14,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/database.js";
 import type { ProjectId } from "../src/projects/project-id.js";
 import {
+	ASSISTANT_REJECTION_TEXT,
 	AssistantClient,
 	AssistantUnreachableError,
+	describeSkippedLine,
 	FETCH_BODY_TIMEOUT_MS,
+	MAX_REJECTION_DETAIL_CHARS,
+	outcomeUnknown,
+	reasonOf,
 } from "../src/sessions/assistant-client.js";
 import { AssistantConnection } from "../src/sessions/assistant-connection.js";
+import { SessionService } from "../src/sessions/session-service.js";
 import { SessionStore } from "../src/sessions/session-store.js";
 import { eventually } from "./support/eventually.js";
 import { ManualClock } from "./support/manual-clock.js";
@@ -163,6 +169,143 @@ describe("事件流：心跳和死连接检测", () => {
 		const { error } = await reading;
 		clearInterval(timer);
 		expect(error).toBeUndefined();
+	});
+
+	it("判别字段对不上的行（助手服务发了只该控制面产生的类型、或不认识的类型）：说明里写明是哪个字段、没有匹配的类型，冒号后面不是空的；session_id 不合法时不写原值", async () => {
+		const sessionId = randomUUID();
+		const record = (event: unknown, extra: Record<string, unknown> = {}) =>
+			JSON.stringify({
+				epoch: "e1",
+				session_id: sessionId,
+				turn: 1,
+				at: "2026-01-01T00:00:00.000Z",
+				event,
+				...extra,
+			});
+		const client = new AssistantClient(config, {
+			fetch: streamFetch((push, close) => {
+				push(hello);
+				// 只该由控制面产生的类型。
+				push(record({ type: "user_message", text: "伪造的话 hunter2" }, { seq: 1 }));
+				// 不认识的类型。
+				push(record({ type: "no_such_event" }));
+				// session_id 不合法：原值（可能是任何东西）不写进日志。
+				push(
+					JSON.stringify({
+						epoch: "e1",
+						session_id: "不是UUID-hunter2-也不该出现",
+						turn: 1,
+						at: "2026-01-01T00:00:00.000Z",
+						event: { type: "assistant_delta", text: "好" },
+					}),
+				);
+				close();
+			}),
+		});
+		const { skipped } = await drain(client, new AbortController().signal);
+		expect(skipped).toHaveLength(3);
+		const [forged, unknown, badSession] = skipped as [string, string, string];
+		for (const line of [forged, unknown]) {
+			expect(line).toContain(sessionId);
+			expect(line).toContain("event");
+			expect(line).not.toMatch(/：\s*$/);
+			expect(line).not.toContain("hunter2");
+		}
+		expect(forged).toContain("事件类型 user_message");
+		expect(unknown).toContain("事件类型 no_such_event");
+		expect(forged).toMatch(/No matching discriminator/i);
+		expect(badSession).toContain("会话 ID 不合法");
+		expect(badSession).not.toContain("hunter2");
+		expect(badSession).not.toContain("不是UUID");
+	});
+
+	it("describeSkippedLine：联合类型没有可钻的分支时，写这一条 issue 本身（note 或 message），不留空", () => {
+		const issues = [
+			{
+				code: "invalid_union",
+				errors: [],
+				note: "No matching discriminator",
+				path: ["event"],
+				message: "Invalid input",
+			},
+		] as never;
+		expect(describeSkippedLine({ event: { type: "x" } }, issues)).toBe(
+			"事件类型 x：event: No matching discriminator",
+		);
+		const noNote = [
+			{ code: "invalid_union", errors: [], path: [], message: "Invalid input" },
+		] as never;
+		expect(describeSkippedLine({}, noNote)).toBe("Invalid input");
+	});
+
+	it("调用方处理得慢不算连接死了：对端一直在写，单行处理超过空闲上限也不断；处理完之后对端不再写，照样被发现", async () => {
+		let beat: NodeJS.Timeout | undefined;
+		const client = new AssistantClient(config, {
+			eventsIdleMs: 150,
+			fetch: streamFetch((push) => {
+				push(hello);
+				beat = setInterval(() => push(heartbeat), 30);
+			}),
+		});
+		const seen: string[] = [];
+		let slowed = false;
+		const reading = (async () => {
+			try {
+				for await (const line of client.events(new AbortController().signal, () => {})) {
+					seen.push("type" in line ? line.type : "record");
+					if (!slowed) {
+						slowed = true;
+						// 处理这一行比空闲上限（150 毫秒）慢得多：这段时间对端一直在写，不算「没有收到字节」。
+						await new Promise((resolve) => setTimeout(resolve, 500));
+					}
+				}
+			} catch (error) {
+				return error;
+			}
+			return undefined;
+		})();
+		await new Promise((resolve) => setTimeout(resolve, 900));
+		// 处理完之后还在读：慢的那一行之后的心跳也收到了，没有报错。
+		expect(seen.length).toBeGreaterThan(5);
+		expect(await Promise.race([reading, Promise.resolve("still-open")])).toBe("still-open");
+		// 对端不再写：处理完、回去等下一块之后，超过上限照样发现。
+		clearInterval(beat);
+		const error = await reading;
+		expect(error).toBeInstanceOf(AssistantUnreachableError);
+		expect((error as Error).message).toContain("没有收到任何内容");
+	});
+
+	it("一行过不了 schema：日志写这一行的会话、轮次、事件类型和哪个字段不对（不是只有「Invalid input」），不写内容", async () => {
+		const sessionId = randomUUID();
+		const bad = JSON.stringify({
+			epoch: "e1",
+			seq: 3,
+			session_id: sessionId,
+			turn: 2,
+			at: "2026-01-01T00:00:00.000Z",
+			event: { type: "assistant_message", text: 5, extra: "不该出现在日志里的内容" },
+		});
+		const client = new AssistantClient(config, {
+			fetch: streamFetch((push, close) => {
+				push(hello);
+				push(bad);
+				push(JSON.stringify({ type: "hello", epoch: "e1" }));
+				push(JSON.stringify([1, 2]));
+				close();
+			}),
+		});
+		const { skipped } = await drain(client, new AbortController().signal);
+		expect(skipped).toHaveLength(3);
+		const [record, brokenHello, notObject] = skipped as [string, string, string];
+		expect(record).toContain(sessionId);
+		expect(record).toContain("轮次 2");
+		expect(record).toContain("事件类型 assistant_message");
+		expect(record).toContain("event.text");
+		expect(record).toContain("event.usage");
+		expect(record).not.toContain("不该出现在日志里的内容");
+		expect(brokenHello).toContain("行类型 hello");
+		expect(brokenHello).toContain("gap");
+		expect(notObject.length).toBeGreaterThan(0);
 	});
 
 	it("只该由控制面产生的事件类型（用户的话、一轮开始、平台记录、会话结束、快照……）助手服务发来整行跳过，不交给调用方", async () => {
@@ -450,5 +593,218 @@ describe("事件连接：核对会话和轮次", () => {
 		// 持久的一条，不持久的三条合成一条。
 		expect(lines).toHaveLength(2);
 		expect(lines.every((l) => l.includes("控制面不认识这个会话"))).toBe(true);
+	});
+});
+
+describe("连不上助手服务的说明：只有原因的种类，不带地址和端口；原文进日志", () => {
+	const refused = () =>
+		Object.assign(new TypeError("fetch failed"), {
+			cause: Object.assign(new Error("connect ECONNREFUSED 10.1.2.3:7000"), {
+				code: "ECONNREFUSED",
+			}),
+		});
+
+	it("reasonOf：按错误码和名字分类，说明里没有地址、端口和底层错误的原文", () => {
+		expect(reasonOf(refused())).toBe("连接被拒绝");
+		expect(
+			reasonOf(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
+		).toBe("没有及时回应（超时）");
+		expect(
+			reasonOf(
+				Object.assign(new Error("getaddrinfo ENOTFOUND assistant.internal"), { code: "ENOTFOUND" }),
+			),
+		).toBe("域名解析不了");
+		expect(reasonOf(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }))).toBe(
+			"连接被对端关闭",
+		);
+		expect(reasonOf(new Error("留着 10.1.2.3:7000 的什么错误"))).toBe("网络出错");
+		expect(reasonOf("不是 Error")).toBe("网络出错");
+		for (const error of [refused(), new Error("留着 10.1.2.3:7000 的什么错误")]) {
+			expect(reasonOf(error)).not.toMatch(/10\.1\.2\.3|7000/);
+		}
+	});
+
+	it("命令、/health 连不上：AssistantUnreachableError 的说明是稳定的一句，原错误在 cause 里", async () => {
+		const raw = refused();
+		const client = new AssistantClient(config, {
+			fetch: (async () => {
+				throw raw;
+			}) as typeof fetch,
+		});
+		for (const call of [() => client.health(), () => client.abort(randomUUID(), 1)]) {
+			const error = await call().catch((e: unknown) => e);
+			expect(error).toBeInstanceOf(AssistantUnreachableError);
+			expect((error as Error).message).toBe("连不上助手服务：连接被拒绝");
+			expect((error as Error).cause).toBe(raw);
+		}
+	});
+
+	it("中止的请求体是 { turn }：要结束的是第几轮，路径里是会话 ID", async () => {
+		const sent: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+		const client = new AssistantClient(config, {
+			fetch: (async (url: unknown, init?: RequestInit) => {
+				sent.push({
+					url: String(url),
+					method: init?.method,
+					body: JSON.parse(String(init?.body)),
+				});
+				return new Response(null, { status: 202 });
+			}) as typeof fetch,
+		});
+		const sessionId = randomUUID();
+		await client.abort(sessionId, 3);
+		expect(sent).toEqual([
+			{
+				url: `http://assistant.test/sessions/${sessionId}/abort`,
+				method: "POST",
+				body: { turn: 3 },
+			},
+		]);
+	});
+
+	it("助手服务的拒绝：它自己写的那句话进 detail（有长度上限）；回应体不是约定的形状时 detail 不写内容，只写状态码和长度", async () => {
+		const reply = (status: number, body: string) =>
+			new AssistantClient(config, {
+				fetch: (async () => new Response(body, { status })) as typeof fetch,
+			});
+		// 约定形状、说明很长：截到上限。
+		const long = JSON.stringify({ code: "start_failed", message: "x".repeat(5_000) });
+		const rejected = (await reply(503, long)
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as {
+			message: string;
+			detail: string;
+			code: string;
+		};
+		expect(rejected.code).toBe("start_failed");
+		expect(rejected.detail).toHaveLength(MAX_REJECTION_DETAIL_CHARS);
+		expect(rejected.message).toBe("助手服务起不了这一轮的进程");
+		// 不是约定的形状（比如反向代理的 HTML 错误页，可能带着会话的内容）：不写内容。
+		const html = "<html>网关错误：我的私密的话 hunter2</html>";
+		const odd = (await reply(502, html)
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as {
+			message: string;
+			detail: string;
+		};
+		expect(odd.message).toBe("助手服务回应了 502");
+		expect(odd.detail).toBe(`回应体不是约定的形状（状态码 502，${html.length} 个字符）`);
+		expect(odd.detail).not.toContain("hunter2");
+	});
+
+	it("两句固定的说明告诉用户该怎么办：上一轮还在做（先停止再说）、进程数到了上限（等别的会话停下来）", () => {
+		expect(ASSISTANT_REJECTION_TEXT.turn_running).toContain("停止");
+		expect(ASSISTANT_REJECTION_TEXT.process_limit).toContain("再试");
+	});
+
+	it("命令有没有可能已经送到：超时、发出请求之后连接被关是未知；连接被拒绝、域名解析不了、网络不通一定没送到", () => {
+		const coded = (code: string) =>
+			Object.assign(new TypeError("fetch failed"), {
+				cause: Object.assign(new Error(code), { code }),
+			});
+		expect(outcomeUnknown(new DOMException("timeout", "TimeoutError"))).toBe(true);
+		for (const code of ["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"]) {
+			expect(outcomeUnknown(coded(code)), code).toBe(true);
+		}
+		for (const code of ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH"]) {
+			expect(outcomeUnknown(coded(code)), code).toBe(false);
+		}
+		expect(outcomeUnknown("不是 Error")).toBe(false);
+	});
+
+	it("命令的 AssistantUnreachableError 带着 outcomeUnknown：超时是 true，连接被拒绝是 false", async () => {
+		const timeout = new AssistantClient(config, {
+			fetch: (async () => {
+				throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+			}) as typeof fetch,
+		});
+		const refused = new AssistantClient(config, {
+			fetch: (async () => {
+				throw Object.assign(new TypeError("fetch failed"), {
+					cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+				});
+			}) as typeof fetch,
+		});
+		const a = (await timeout
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as AssistantUnreachableError;
+		const b = (await refused
+			.abort(randomUUID(), 1)
+			.catch((e: unknown) => e)) as AssistantUnreachableError;
+		expect(a).toBeInstanceOf(AssistantUnreachableError);
+		expect(a.outcomeUnknown).toBe(true);
+		expect(b.outcomeUnknown).toBe(false);
+	});
+
+	it("事件流连不上：同样只有原因的种类，原错误在 cause 里（事件连接的日志打印它）", async () => {
+		const raw = refused();
+		const client = new AssistantClient(config, {
+			fetch: (async () => {
+				throw raw;
+			}) as typeof fetch,
+		});
+		const { error } = await drain(client, new AbortController().signal);
+		expect(error).toBeInstanceOf(AssistantUnreachableError);
+		expect((error as Error).message).toBe("连不上助手服务：连接被拒绝");
+		expect((error as Error).cause).toBe(raw);
+	});
+
+	it("就绪状态里的说明和写进日志的：说明里没有地址和端口，日志里有原错误", async () => {
+		const raw = refused();
+		const logs: Array<{ message: string; error: unknown }> = [];
+		const client = new AssistantClient(config, {
+			fetch: (async () => {
+				throw raw;
+			}) as typeof fetch,
+		});
+		const service = new SessionService({
+			sessions: undefined as never,
+			db: undefined as never,
+			hub: undefined as never,
+			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+			setup: { configured: true, config },
+			client,
+			workbenchAgent: undefined,
+			log: (message, error) => logs.push({ message, error }),
+		});
+		const readiness = await service.readiness("default" as ProjectId);
+		expect(readiness.problems).toContainEqual({
+			kind: "assistant_unreachable",
+			message: "连不上助手服务：连接被拒绝",
+		});
+		expect(JSON.stringify(readiness)).not.toMatch(/10\.1\.2\.3|7000/);
+		expect(logs).toHaveLength(1);
+		expect(logs[0]?.error).toBeInstanceOf(AssistantUnreachableError);
+		expect((logs[0]?.error as Error).cause).toBe(raw);
+	});
+
+	it("意外的错误（不是连不上、也不是助手服务的拒绝）：说明只有「助手服务出错」，原文只进日志", async () => {
+		const logs: unknown[] = [];
+		const service = new SessionService({
+			sessions: undefined as never,
+			db: undefined as never,
+			hub: undefined as never,
+			clock: new ManualClock(new Date("2026-01-01T00:00:00.000Z")),
+			setup: { configured: true, config },
+			client: {
+				health: async () => {
+					throw new Error("内部细节 10.1.2.3:7000 password=hunter2");
+				},
+			} as unknown as AssistantClient,
+			workbenchAgent: undefined,
+			log: (_message, error) => logs.push(error),
+		});
+		const readiness = await service.readiness("default" as ProjectId);
+		expect(readiness.problems).toContainEqual({
+			kind: "assistant_unreachable",
+			message: "助手服务出错",
+		});
+		expect(JSON.stringify(readiness)).not.toMatch(/10\.1\.2\.3|hunter2/);
+		expect((logs[0] as Error).message).toContain("hunter2");
+	});
+
+	it("describeSkippedLine：认得出不是对象的行，也不写内容", () => {
+		expect(describeSkippedLine([1, 2], [])).toBe("");
+		expect(describeSkippedLine("a string", [])).toBe("");
 	});
 });
