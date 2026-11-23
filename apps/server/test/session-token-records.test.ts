@@ -4,7 +4,7 @@
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./support/api-client.js";
-import { bearer, TestAccounts } from "./support/credentials.js";
+import { bearer, loginCookie, TestAccounts } from "./support/credentials.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
@@ -649,18 +649,22 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			}
 		});
 
+		type Request = [method: string, path: string, body: unknown];
 		it.each([
 			[
 				"保存",
-				(id: string) => [
+				(id: string): Request => [
 					"POST",
 					`/orchestrations/${id}/versions`,
 					{ base_version: 1, document: document() },
 				],
 			],
-			["恢复", (id: string) => ["POST", `/orchestrations/${id}/versions/1/restore`, undefined]],
-			["复制", (id: string) => ["POST", `/orchestrations/${id}/copy`, { name: "副本" }]],
-		] as const)("记录和版本在同一个事务里（%s）：提交失败时版本和记录都没有", async (_name, request) => {
+			[
+				"恢复",
+				(id: string): Request => ["POST", `/orchestrations/${id}/versions/1/restore`, undefined],
+			],
+			["复制", (id: string): Request => ["POST", `/orchestrations/${id}/copy`, { name: "副本" }]],
+		])("记录和版本在同一个事务里（%s）：提交失败时版本和记录都没有", async (_name, request) => {
 			const id = await scenario();
 			await failAtCommit("orchestration_versions");
 			const [method, path, body] = request(id);
