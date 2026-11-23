@@ -943,6 +943,12 @@ export const apiTokens = pgTable(
 			.references(() => projects.id),
 		sessionId: uuid("session_id").references(() => sessions.id),
 		taskId: uuid("task_id"),
+		/**
+		 * 签发人（项目令牌记它，个人令牌的签发人就是所属用户，不另记）：项目令牌是项目的服务账号，**不随签发人失效**
+		 * （签发人被停用、移出项目之后照样有效，ADR 0029「用户、项目与角色」），但要记下是谁签发的，列表和审计里看得到。
+		 * 空：不是项目令牌，或者是这一列加进来之前签发的。
+		 */
+		issuedByUserId: uuid("issued_by_user_id").references(() => users.id),
 		scopes: text("scopes").array().notNull(),
 		createdAt: timestamptz("created_at").notNull(),
 		expiresAt: timestamptz("expires_at"),

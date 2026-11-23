@@ -520,6 +520,36 @@ export interface CurrentAction {
 	started_at: Timestamp;
 }
 
+/**
+ * 控制台运行块里进行中的节点：运行列表的 `active_nodes` 一项，排队中的节点多两个字段，写明它在等什么
+ * （运行监控概览里同一件事的写法，#457）。其余状态的节点两个字段都是 null。
+ */
+export interface DashboardActiveNode {
+	chain_instance_id: string;
+	node_id: string;
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
+	status: string;
+	/** 最后一次尝试的尝试号（从 1 开始）。 */
+	attempt: number;
+	/** 任务所在的 Agent（排队中的任务是它在等的 Agent）；不在 Agent 上执行的节点（停止子流程节点）为 null。 */
+	agent: string | null;
+	/** 最后一次尝试开始的时间；还没开始执行（排队中、准备中）时为 null。 */
+	started_at: Timestamp | null;
+	/** 最新进度；没有上报过时为 null。 */
+	progress: {
+		current: number;
+		total: number | null;
+	} | null;
+	/**
+	 * 排队中的节点：它在等什么（同运行视图里排队中的尝试的 `queue_wait`，控制面读取这一刻按派发的条件判断）；
+	 * 排队中但没有可等的 Agent（没有指定 Agent）时和其余状态一样为 null。
+	 */
+	queue_wait: QueueWaitView | null;
+	/** 最后一次尝试进入排队的时间（「排了多久」用它）；只有 `queue_wait` 有值时有值。 */
+	queued_at: Timestamp | null;
+}
+
 export interface DashboardAgentStats {
 	online: number;
 	offline: number;
@@ -634,8 +664,8 @@ export interface DashboardRunningRun {
 	cancelling: boolean;
 	/** 主链在前，子流程按深度、开始时间。 */
 	chains: DashboardChain[];
-	/** 进行中的节点（与运行列表的 `active_nodes` 相同）。 */
-	active_nodes: RunListActiveNode[];
+	/** 进行中的节点（运行列表的 `active_nodes`，排队中的多写明在等什么）。 */
+	active_nodes: DashboardActiveNode[];
 }
 
 /**

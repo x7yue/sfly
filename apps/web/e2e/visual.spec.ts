@@ -1830,6 +1830,125 @@ test.describe("账号与登录", () => {
 			await expect(dialog.getByLabel("旧密码")).toHaveAccessibleDescription("填写旧密码");
 			await expect(page).toHaveScreenshot("account-change-password.png");
 		});
+
+		/**
+		 * 令牌页的数据：一个已过期（1 天有效期，控制面时钟走过 2 天多）、一个用过的、一个限定项目只要部分范围的、一个已吊销的。
+		 * 签发走页面里的同源请求（登录 Cookie 带着浏览器自己的来源信息），时间都是手动时钟给的，每次一样。
+		 */
+		/** 令牌的前缀里有随机字符（前缀加原值开头的几位），每次不一样：基线里打码。 */
+		const tokenPrefixes = (page: Page) => page.locator('[data-slot="token-prefix"]');
+
+		const seedTokens = async (page: Page, clock: E2eFixtures["clock"]) => {
+			const issue = (body: object) =>
+				page.evaluate(async (payload) => {
+					const response = await fetch("/api/account/tokens", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(payload),
+					});
+					return (await response.json()) as { id: string; token: string };
+				}, body);
+			await issue({ name: "试用", expires_in_days: 1 });
+			// 登录的空闲期限是 12 小时：分几步走，每步之后用一次登录（续期），走过 2 天。
+			for (let hours = 0; hours < 50; hours += 10) {
+				clock.advance(10 * 3600 * 1000);
+				await page.evaluate(() => fetch("/api/auth/me"));
+			}
+			// 每个令牌隔一分钟签发：列表按创建时间倒排，同一时刻的几个靠随机的 ID 排先后，基线就不稳定了。
+			const laptop = await issue({ name: "laptop", expires_in_days: 90 });
+			clock.advance(60_000);
+			await issue({
+				name: "ci-bot",
+				scopes: ["read", "run"],
+				project: "default",
+				expires_in_days: 30,
+			});
+			clock.advance(60_000);
+			const old = await issue({ name: "old-script" });
+			// 用一下 laptop：「最后使用」有了时间。
+			await page.request.get("/api/account/tokens", {
+				headers: { authorization: `Bearer ${laptop.token}` },
+			});
+			await page.evaluate(async (id) => {
+				await fetch(`/api/account/tokens/${id}`, { method: "DELETE" });
+			}, old.id);
+		};
+
+		test("令牌页：个人令牌的各种状态（有效、已过期、已吊销，最后使用）", async ({
+			page,
+			clock,
+		}) => {
+			await signIn(page);
+			await seedTokens(page, clock);
+			await page.goto("/account/tokens");
+			await expect(page.locator('[data-token="laptop"]')).toBeVisible();
+			await expect(page.locator('[data-token="试用"]')).toContainText("已过期");
+			await expect(page.locator('[data-token="old-script"]')).toContainText("已吊销");
+			await expect(page).toHaveScreenshot("tokens.png", { mask: [tokenPrefixes(page)] });
+		});
+
+		test("令牌页：空状态", async ({ page }) => {
+			await signIn(page);
+			await page.goto("/account/tokens");
+			await expect(page.getByText("还没有个人令牌")).toBeVisible();
+			await expect(page).toHaveScreenshot("tokens-empty.png");
+		});
+
+		test("签发个人令牌弹窗：只要部分范围", async ({ page }) => {
+			await signIn(page);
+			await page.goto("/account/tokens");
+			await page.getByRole("button", { name: "签发令牌" }).click();
+			const dialog = page.getByRole("dialog", { name: "签发个人令牌" });
+			await dialog.getByLabel("名称").fill("ci-bot");
+			await dialog.getByLabel("只要部分范围").check();
+			await dialog.getByLabel("运行", { exact: false }).first().check();
+			await dialog.getByLabel("限定项目").fill("Bad_Project");
+			await dialog.getByRole("button", { name: "签发" }).click();
+			await expect(dialog.getByLabel("限定项目")).toHaveAccessibleDescription(/小写字母/);
+			await expect(page).toHaveScreenshot("tokens-issue.png");
+		});
+
+		test("令牌签发之后：原值只显示这一次（原值打码，每次不一样）", async ({ page }) => {
+			await signIn(page);
+			await page.goto("/account/tokens");
+			await page.getByRole("button", { name: "签发令牌" }).click();
+			const dialog = page.getByRole("dialog", { name: "签发个人令牌" });
+			await dialog.getByLabel("名称").fill("laptop");
+			await dialog.getByRole("button", { name: "签发" }).click();
+			const issued = page.getByRole("dialog", { name: "令牌「laptop」已签发" });
+			await expect(issued.getByLabel("令牌原值")).toHaveValue(/^sfly_pat_/);
+			await expect(page).toHaveScreenshot("tokens-issued.png", {
+				mask: [issued.getByLabel("令牌原值"), tokenPrefixes(page)],
+			});
+		});
+
+		test("吊销令牌确认弹窗", async ({ page, clock }) => {
+			await signIn(page);
+			await seedTokens(page, clock);
+			await page.goto("/account/tokens");
+			await page.locator('[data-token="laptop"]').getByRole("button", { name: "吊销" }).click();
+			await expect(page.getByRole("dialog", { name: "吊销令牌「laptop」？" })).toBeVisible();
+			await expect(page).toHaveScreenshot("tokens-revoke.png", { mask: [tokenPrefixes(page)] });
+		});
+
+		test("项目令牌页", async ({ page, clock }) => {
+			await signIn(page);
+			const issue = (body: object) =>
+				page.evaluate(async (payload) => {
+					await fetch("/api/projects/default/tokens", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(payload),
+					});
+				}, body);
+			await issue({ name: "nightly", scopes: ["read", "run"], expires_in_days: 365 });
+			// 隔一分钟：列表按创建时间倒排，同一时刻的靠随机的 ID 排先后。
+			clock.advance(60_000);
+			await issue({ name: "docs-publisher", scopes: ["read", "publish"] });
+			await page.goto("/projects/default/tokens");
+			await expect(page.locator('[data-token="nightly"]')).toBeVisible();
+			await expect(page).toHaveScreenshot("tokens-project.png", { mask: [tokenPrefixes(page)] });
+		});
 	});
 
 	test.describe("公开地址对不上", () => {

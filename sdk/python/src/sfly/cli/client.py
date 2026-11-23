@@ -3,12 +3,20 @@
 所有操作平台的命令都经 `Client` 发请求，不各自拼请求头、不各自处理错误：
 - 地址：`--server` > `SFLY_SERVER` > `$SFLY_HOME/agent.env` 的 `SFLY_CONTROL_PLANE_URL` > 默认地址，
   和 `sfly publish` 共用 `home.control_plane_url`；
-- 昵称：`--nickname` > `SFLY_NICKNAME` > 系统登录用户名，放进 `x-sfly-nickname`（URL 编码）；
+- 令牌：`SFLY_API_TOKEN` > 凭据文件里这台控制面的（`sfly login` 写的，见 `credentials.py`），
+  放进 `Authorization: Bearer`；有令牌时身份由令牌决定，不再发昵称，`--nickname`、`SFLY_NICKNAME`
+  被忽略并提示一次；
+- 昵称（没有令牌时）：`--nickname` > `SFLY_NICKNAME` > 系统登录用户名，放进
+  `x-sfly-nickname`（URL 编码）；
 - 每个请求都带 `x-sfly-client: sfly-cli/<版本>`；在 AI 编程助手里运行时再追加 ` agent/<名称>`；
 - 控制面在所有响应上带 `x-sfly-time`（控制面的当前时间，ADR 0018）；
   `Client.control_plane_time` 是最近一次响应带来的，命令里要算「已多久」时用它，不用本机时间；
 - 控制面在所有响应上带 `x-sfly-version`；与命令行版本不一致时在 stderr 告警一次，命令照常执行；
-- 连不上控制面抛 `CliError("unreachable", …)`，控制面返回错误抛 `ApiError`（沿用控制面的错误码）。
+- 令牌不跟着重定向走：重定向到不同的源（协议、主机、端口任一不同）时去掉 `Authorization`
+  （控制面前面的反向代理、单点登录网关、任何一处开放重定向都不该把令牌转给别的主机）；
+- 在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码在网络上是明文）；
+- 连不上控制面抛 `CliError("unreachable", …)`，控制面返回错误抛 `ApiError`（沿用控制面的错误码）；
+  401（没有登录、令牌失效或被吊销）的错误信息写明 `sfly login`，下一步也是它。
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ from http.client import HTTPException, HTTPResponse
 from typing import IO, Any
 
 from sfly import __version__
+from sfly.cli import credentials
 from sfly.cli.errors import CliError
 from sfly.cli.home import control_plane_url
 
@@ -43,8 +52,49 @@ ADDRESS_HELP = (
 
 _AGENT_NAME_MAX = 64
 
+# 401 的提示：没有登录、令牌失效或被吊销时都是它。
+LOGIN_HINT = "sfly login"
+UNAUTHORIZED_TIP = (
+    "没有登录，或者令牌已失效、已被吊销：运行 sfly login 登录"
+    "（脚本、CI 里设置环境变量 SFLY_API_TOKEN）"
+)
+
 # 读响应（下载、事件流、接口原样输出）时每次读多少字节。
 READ_CHUNK = 64 * 1024
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def origin_of(url: str) -> tuple[str, str, int | None]:
+    """地址的源：（协议, 主机, 端口）；端口没写时按协议的默认端口。大小写不敏感。"""
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    port = parts.port or {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), port
+
+
+class _KeepTokenOnSameOrigin(urllib.request.HTTPRedirectHandler):
+    """跟随重定向，但重定向到不同的源时去掉 `Authorization`：urllib 默认把请求头原样带到新地址。"""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and origin_of(new.full_url) != origin_of(req.full_url):
+            for name in [k for k in new.headers if k.lower() == "authorization"]:
+                del new.headers[name]
+            for name in [k for k in new.unredirected_hdrs if k.lower() == "authorization"]:
+                del new.unredirected_hdrs[name]
+        return new
+
+
+_OPENER = urllib.request.build_opener(_KeepTokenOnSameOrigin)
 
 
 def detect_ai_agent(environ: Mapping[str, str]) -> str | None:
@@ -113,16 +163,24 @@ class Client:
         server: str,
         nickname: str,
         *,
+        token: str | None = None,
+        nickname_ignored: bool = False,
         ai_agent: str | None = None,
         stderr: IO[str] | None = None,
         timeout: float = 30.0,
     ) -> None:
         self.server = server.rstrip("/")
         self.nickname = nickname
+        self.token = token
+        """有令牌时身份由它决定：请求带 `Authorization: Bearer`，不再带昵称。"""
         self.ai_agent = ai_agent
         self.timeout = timeout
         self._stderr = stderr
         self._warned_version = False
+        self._warned_plain_http = False
+        # 用户明确给了昵称（`--nickname`、`SFLY_NICKNAME`），而这次用的是令牌：提示一次「被忽略」。
+        self._nickname_ignored_pending = nickname_ignored and token is not None
+        self._owner_name: str | None = None
         self.control_plane_time: datetime | None = None
         """最近一次响应的 `x-sfly-time`（控制面时间）；还没有响应或响应不带它时为 None。"""
 
@@ -134,20 +192,80 @@ class Client:
         *,
         environ: Mapping[str, str] = os.environ,
     ) -> Client:
-        """按命令行选项、环境变量和 `agent.env` 创建（取值顺序见模块说明）。"""
+        """按命令行选项、环境变量、凭据文件和 `agent.env` 创建（取值顺序见模块说明）。"""
+        url = control_plane_url(server)
+        resolved = credentials.resolve_token(url, environ)
+        if resolved is not None and resolved.source == "file":
+            # 凭据文件被改成别人可读（备份、拷贝、手工 chmod）：令牌可能已经被别人看到，提示一次。
+            if loose := credentials.loose_permissions():
+                print(
+                    f"警告：凭据文件 {credentials.credentials_path()} 的权限是 {loose}，"
+                    "别人也读得到里面的令牌："
+                    f"运行 chmod 600 {credentials.credentials_path()}；"
+                    "令牌可能已经泄露的话，sfly logout 后重新 sfly login",
+                    file=sys.stderr,
+                )
+        given_nickname = bool((nickname or "").strip() or environ.get("SFLY_NICKNAME", "").strip())
         return cls(
-            control_plane_url(server),
+            url,
             resolve_nickname(nickname, environ),
+            token=resolved.token if resolved else None,
+            nickname_ignored=given_nickname,
             ai_agent=detect_ai_agent(environ),
         )
 
     def headers(self) -> dict[str, str]:
-        """每个请求都带的请求头。"""
-        return {
-            CLIENT_HEADER: client_tag(self.ai_agent),
-            NICKNAME_HEADER: urllib.parse.quote(self.nickname, safe=""),
-            "Accept": "application/json",
-        }
+        """每个请求都带的请求头：有令牌时是 `Authorization: Bearer`，
+        身份由令牌决定、不发昵称；没有令牌时是昵称。"""
+        headers = {CLIENT_HEADER: client_tag(self.ai_agent), "Accept": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        else:
+            headers[NICKNAME_HEADER] = urllib.parse.quote(self.nickname, safe="")
+        return headers
+
+    def owner_name(self) -> str:
+        """「自己」在运行记录里的名字（`latest` 用它找自己触发的最近一次运行）：没有令牌时是昵称，
+        有令牌时是令牌所属用户的显示名（问控制面一次，之后记着）；
+        项目令牌没有用户，抛 `CliError`。"""
+        if not self.token:
+            return self.nickname
+        if self._owner_name is None:
+            try:
+                listing = self.get("/account/tokens")
+            except ApiError as error:
+                if error.status == 403:
+                    raise CliError(
+                        "token_without_user",
+                        "这个令牌没有所属的用户（项目令牌），没有「自己触发的运行」可言："
+                        "给出运行的 id，或用 sfly login 换成个人令牌",
+                    ) from None
+                raise
+            self._owner_name = str(listing["user"]["display_name"])
+        return self._owner_name
+
+    def _note_nickname_ignored(self) -> None:
+        if not self._nickname_ignored_pending:
+            return
+        self._nickname_ignored_pending = False
+        print(
+            "提示：身份由令牌决定，--nickname 和 SFLY_NICKNAME 被忽略。",
+            file=self._stderr or sys.stderr,
+        )
+
+    def _note_plain_http(self) -> None:
+        """带着令牌往不是本机的 `http://` 地址发请求：提示一次（令牌在网络上是明文）。"""
+        if self._warned_plain_http or not self.token:
+            return
+        scheme, host, _ = origin_of(self.server)
+        if scheme != "http" or host in _LOCAL_HOSTS:
+            return
+        self._warned_plain_http = True
+        print(
+            f"警告：{self.server} 是 http 地址，令牌会以明文发送，网络上的人看得到："
+            "有条件的话用 https 地址访问控制面",
+            file=self._stderr or sys.stderr,
+        )
 
     def url(self, path: str, query: Mapping[str, Any] | None = None) -> str:
         """控制面上 `path`（以 `/` 开头，参数已编码）加查询参数的完整地址；值为 None 的参数省略。"""
@@ -162,9 +280,14 @@ class Client:
         *,
         query: Mapping[str, Any] | None = None,
         body: Any = None,
+        raw: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
     ) -> Any:
-        """发一个 JSON 请求，返回解析后的响应体（没有响应体时为 None）。"""
-        with self.open(method, path, query=query, body=body) as response:
+        """发一个 JSON 请求（`raw` 给了就发原样的字节），返回解析后的响应体（没有时为 None）。"""
+        with self.open(
+            method, path, query=query, body=body, raw=raw, headers=headers, timeout=timeout
+        ) as response:
             try:
                 raw = response.read()
             except (OSError, HTTPException) as error:
@@ -190,12 +313,16 @@ class Client:
         *,
         query: Mapping[str, Any] | None = None,
         body: Any = None,
+        raw: bytes | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> HTTPResponse:
         """发请求并返回打开的响应（调用方负责关闭），给流式读取（SSE、下载）用；
+        `body` 是 JSON 请求体，`raw` 是原样的字节（上传归档，Content-Type 由 `headers` 给）；
         失败时抛 `CliError`（连不上）或 `ApiError`（错误响应）。"""
-        data = None
+        data = raw
+        self._note_nickname_ignored()
+        self._note_plain_http()
         send = {**self.headers(), **(headers or {})}
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -204,12 +331,10 @@ class Client:
             self.url(path, query), data=data, method=method, headers=send
         )
         try:
-            response: HTTPResponse = urllib.request.urlopen(
-                request, timeout=timeout or self.timeout
-            )
+            response: HTTPResponse = _OPENER.open(request, timeout=timeout or self.timeout)
         except urllib.error.HTTPError as error:
             self._observe(error.headers)
-            raise self._api_error(error) from None
+            raise self._unauthorized(self._api_error(error)) from None
         except (urllib.error.URLError, OSError, HTTPException, ValueError) as error:
             reason = error.reason if isinstance(error, urllib.error.URLError) else error
             raise self._unreachable(reason) from None
@@ -253,6 +378,14 @@ class Client:
         return ApiError(
             status, f"http_{status}", f"控制面返回 HTTP {status}{detail}", None, next_command
         )
+
+    def _unauthorized(self, error: ApiError) -> ApiError:
+        """401：没有登录、令牌失效或被吊销，错误信息和下一步都写明 `sfly login`。
+        登录名或密码不对（`invalid_credentials`）是另一回事，`sfly login` 自己处理，
+        不加这条提示。"""
+        if error.status != 401 or error.code == "invalid_credentials":
+            return error
+        return error.replace(message=f"{error.message}。{UNAUTHORIZED_TIP}", next=LOGIN_HINT)
 
 
 def parse_error_body(text: str) -> tuple[str, str, Any] | None:

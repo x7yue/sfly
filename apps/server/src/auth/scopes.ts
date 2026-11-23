@@ -1,20 +1,9 @@
 // 范围与角色（ADR 0029「用户、项目与角色」「一处检查」）。不依赖 Fastify，鉴权模块和它的测试都从这里取。
-import type { Effect, ResourceKind } from "@sfly/schema";
+import { type Effect, type ResourceKind, SCOPE_LABELS, SCOPES, type Scope } from "@sfly/schema";
 import type { ProjectRole } from "../db/schema.js";
 
-/** 范围：检查只看范围，不看角色名（以后加「只能触发运行」这类角色，只是多一组范围）。 */
-export const SCOPES = ["read", "run", "edit", "session_build", "publish", "manage"] as const;
-export type Scope = (typeof SCOPES)[number];
-
-/** 范围的中文名（GLOSSARY「令牌」里的词），写进拒绝的说明。 */
-export const SCOPE_LABELS = {
-	read: "读",
-	run: "运行",
-	edit: "编辑",
-	session_build: "会话构建",
-	publish: "发布",
-	manage: "管理",
-} as const satisfies Record<Scope, string>;
+// 范围的名字和中文名在契约里（@sfly/schema 的 http/tokens.ts）：控制台的令牌页和签发令牌的接口也要用它们。
+export { SCOPE_LABELS, SCOPES, type Scope };
 
 /** 每种角色是固定的一组范围（ADR 0029 的范围表）。 */
 export const ROLE_SCOPES = {
@@ -25,7 +14,7 @@ export const ROLE_SCOPES = {
 
 /**
  * 项目令牌能带的范围：没有「管理」。成员和角色的管理、Agent 和它的凭据、飞书机器人的管理只能由人做；
- * 令牌行里写了 `manage` 也不认（签发令牌的接口在 #491，它不该签出带管理的项目令牌，这里是第二道防线）。
+ * 令牌行里写了 `manage` 也不认（签发令牌的接口不会签出带管理的项目令牌，这里是第二道防线）。
  */
 export const PROJECT_TOKEN_SCOPES: readonly Scope[] = SCOPES.filter((scope) => scope !== "manage");
 
@@ -33,29 +22,45 @@ export const PROJECT_TOKEN_SCOPES: readonly Scope[] = SCOPES.filter((scope) => s
 export const PLATFORM_ADMIN_SCOPES: readonly Scope[] = ROLE_SCOPES.project_admin;
 
 /**
+ * 范围表的一行：这类资源的写要什么范围（`write` 是 null 表示没有任何人和程序能写）；读几乎都是「读」，
+ * 例外写在 `read` 里（项目的管理面：列表也要「管理」）。
+ */
+interface ScopeRow {
+	read?: Scope;
+	write: Scope | null;
+	/** 写是不是只有人能做（只有登录的用户和个人令牌算人，{@link writeNeedsPerson}）：每一行都要写，漏写过不了类型检查。 */
+	humanOnly: boolean;
+}
+
+/**
  * 「接口作用在哪类资源上 × 只读或写」查出范围（ADR 0029「一处检查」的范围表）。`write` 是 null 的类别，
- * 没有任何人和程序（令牌、登录）能写：只有 Agent 凭据能写，走它自己的接口清单（./credential-routes.ts）。
+ * 没有任何人和程序（令牌、登录）能写：只有 Agent 凭据能写，走它自己的接口清单（`AGENT_CREDENTIAL_ROUTES`，./access-rules.ts）。
+ * 读几乎都是「读」；例外是项目的管理面（`project`：成员、项目令牌、项目密钥）：列表也要「管理」，只读和编辑者看不到。
  * 写成 `Record<ResourceKind, …>`：契约里加一个资源类别，这里不加一行就过不了类型检查，不会悄悄没人管。
  */
 export const SCOPE_TABLE = {
-	scenario: { write: "edit" },
-	run: { write: "run" },
-	task: { write: null },
-	package: { write: "publish" },
-	agent: { write: "manage" },
-	feishu_bot: { write: "manage" },
+	scenario: { write: "edit", humanOnly: false },
+	run: { write: "run", humanOnly: false },
+	task: { write: null, humanOnly: false },
+	package: { write: "publish", humanOnly: false },
+	agent: { write: "manage", humanOnly: false },
+	feishu_bot: { write: "manage", humanOnly: false },
 	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）；
-	// 而且只有人能做：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
+	// 而且只有人能做（ADR 0032）：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
 	session: { write: "edit", humanOnly: true },
-	system: { write: null },
+	system: { write: null, humanOnly: false },
 	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
-	account: { write: null },
-} as const satisfies Record<ResourceKind, { write: Scope | null; humanOnly?: true }>;
+	account: { write: null, humanOnly: false },
+	// 项目令牌、（以后的）成员和项目密钥：是项目的管理面，读和写都要管理；写只有人能做（ADR 0032 的白名单）。
+	project: { read: "manage", write: "manage", humanOnly: true },
+} as const satisfies Record<ResourceKind, ScopeRow>;
 
 /**
- * 这个接口的写是不是只有人能做（范围表里的 `humanOnly`）：在「范围够」之上再加一道「凭据必须是人」——登录的用户和
- * 个人令牌（它是用户本人的凭据，命令行和 API 客户端用）。项目令牌是服务账号，没有用户，不行；会话令牌是助手干活用的，
- * 不行；Agent 凭据和任务凭据走自己的接口清单，不在这里。只读不受影响。
+ * 这个接口的写是不是只有人能做（范围表里的 `humanOnly`，ADR 0032）：在「范围够」之上再加一道「凭据必须是人」——
+ * 只有登录的用户和个人令牌（它是用户本人的凭据，命令行和 API 客户端用）算人，别的凭据一律不行（项目令牌是服务账号，
+ * 没有用户；会话令牌是助手干活用的；新种类的凭据默认也不行）。`humanOnly` 每一行都要写（布尔），新的资源类别漏写过不了
+ * 类型检查。接口作用在 `resource.kind` 上或新建出 `creates` 时，任何一个是 `humanOnly` 就算。只读不受影响。
+ * Agent 凭据和任务凭据走自己的接口清单，不经这里。
  */
 export function writeNeedsPerson(route: {
 	effect: Effect;
@@ -63,13 +68,15 @@ export function writeNeedsPerson(route: {
 	creates?: ResourceKind | undefined;
 }): boolean {
 	if (route.effect === "read") return false;
-	const entry: { write: Scope | null; humanOnly?: true } =
-		SCOPE_TABLE[route.creates ?? route.resource.kind];
-	return entry.humanOnly === true;
+	return (
+		SCOPE_TABLE[route.resource.kind].humanOnly ||
+		(route.creates !== undefined && SCOPE_TABLE[route.creates].humanOnly)
+	);
 }
 
 /**
- * 一个接口要什么范围：只读都是「读」；写看「作用在哪类资源上」：声明了 `creates` 取它，否则取 `resource.kind`。
+ * 一个接口要什么范围：只读看定位到的资源那一类（几乎都是「读」，项目的管理面是「管理」）；
+ * 写看「作用在哪类资源上」：声明了 `creates` 取它，否则取 `resource.kind`。
  * 返回 null 表示没有人和程序能调用它（任务的写）。
  */
 export function requiredScope(route: {
@@ -77,7 +84,10 @@ export function requiredScope(route: {
 	resource: { kind: ResourceKind };
 	creates?: ResourceKind | undefined;
 }): Scope | null {
-	if (route.effect === "read") return "read";
+	if (route.effect === "read") {
+		const row: ScopeRow = SCOPE_TABLE[route.resource.kind];
+		return row.read ?? "read";
+	}
 	return SCOPE_TABLE[route.creates ?? route.resource.kind].write;
 }
 

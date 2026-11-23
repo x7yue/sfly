@@ -7,15 +7,17 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
 
 场景、运行、Agent、节点包都用 `uv run sfly <组> <命令>` 操作，全程不用浏览器。参数以 `uv run sfly <组> <命令> --help` 为准；输出约定、退出码和各命令的用法见 [reference.md](reference.md)。
 
+身份由令牌决定：命令返回 401（没有登录，或令牌失效、被吊销）时，停下来请用户在终端里运行 `sfly login`（密码只输入给 `sfly login`，不要让用户把密码或令牌告诉你，也不要读取、打印凭据文件和 `SFLY_API_TOKEN`）；脚本和 CI 里令牌放在环境变量 `SFLY_API_TOKEN` 里。没有令牌时（过渡期）命令用昵称，`--nickname`、`$SFLY_NICKNAME` 有令牌时被忽略。
+
 ## 联调
 
 用户要在真实场景里验证节点包时（「联调」「在场景里跑一下」），自己用命令行做完下面的步骤。节点开发 skill 的「联调」一步就是这套流程。
 
 1. **确认本机 Agent**：`uv run sfly agent list`。
    完成：本机 Agent（默认名称 `dev-<用户名>-<主机名>`）在线，「与控制面一致」是「是」。状态写「在线（准备环境中，已 N 分 N 秒）」说明它刚连上、还在准备环境，这期间触发的运行会排队，等状态变成「在线」再继续（`sfly agent list --json` 里 `preparing_since` 为 null）。没有这台 Agent 时，请用户按开发文档「安装 Agent」的 `--dev` 方式装好，令牌向用户索取。
-2. **加载开发版本**：在节点包项目里 `uv run sfly dev`。
+2. **加载开发版本**：在节点包目录里 `uv run sfly dev`。
    完成：输出里有 `<包名>@dev`，`sfly agent list` 的「开发包」列里有这个包。
-3. **准备联调副本**：名称是 `<原名>-联调-<昵称>`（昵称取 `$SFLY_NICKNAME`，没设置时取系统用户名），改动都落在它上面，以后每次联调沿用同一份。先 `uv run sfly scenario list --search <原名>-联调`：
+3. **准备联调副本**：名称是 `<原名>-联调-<昵称>`（昵称取 `$SFLY_NICKNAME`，没设置时取系统用户名；它只用来给副本起名），改动都落在它上面，以后每次联调沿用同一份。先 `uv run sfly scenario list --search <原名>-联调`：
    - 已有这份副本：沿用。说明第一行不是「联调 <包名>，由 <昵称> 的 AI 编程助手创建」时，照下一条复制之后的做法改：取出现有的 `description` 全文，用 `uv run sfly scenario rename <副本> --description` 把用途写在第一行、原来的说明全文接在后面。
    - 没有，用户指定了原场景：`uv run sfly scenario copy <原名> --name <原名>-联调-<昵称>`。`copy` 会把原场景的说明一起复制过来，副本的说明讲的是原场景：复制后先 `uv run sfly scenario show <副本> --json`，取 `description` 字段（多行说明要完整取到），再 `uv run sfly scenario rename <副本> --description $'联调 <包名>，由 <昵称> 的 AI 编程助手创建\n<原场景的说明>'`。第一行写用途，`description` 的全文原样接在后面；原场景没有说明就只写第一行。
    - 没有可复制的场景（节点包第一次联调）：把下面的文档存成文件，`uv run sfly scenario create --name <包名>-联调-<昵称> --description "联调 <包名>，由 <昵称> 的 AI 编程助手创建" --from <文件>`；它已经是开发版本和本机 Agent，直接做第 5 步。
