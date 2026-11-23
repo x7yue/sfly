@@ -32,7 +32,7 @@ process.stdin.on("end", () => {
 		setTimeout(() => {
 			out({ type: "fake_exiting", t: Date.now() });
 			setTimeout(() => process.exit(0), 20);
-		}, 800);
+		}, 2000);
 		return;
 	}
 	if (!stubborn) process.exit(0);

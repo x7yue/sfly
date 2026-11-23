@@ -277,6 +277,14 @@ describe("保密值在源头打码：交给 pi 之前", () => {
 		const read = await call("read", { path: "s.txt" });
 		expect(read.text).toContain("token=******");
 		expect(read.text).not.toContain(secret);
+		// 编辑工具也是先读（readFile）：结果里的差异是打过码的。
+		writeFileSync(join(workdir, "e.txt"), `a\ntoken=${secret}\nb\n`);
+		const edit = await call("edit", { path: "e.txt", edits: [{ oldText: "b", newText: "c" }] });
+		const diff = (edit.result?.details as { diff?: string } | undefined)?.diff ?? "";
+		expect(diff).toContain("+");
+		expect(JSON.stringify(edit.result)).not.toContain(secret);
+		// 文件里的值还是原样的：编辑读原样的内容再写回去，不把值换成 ******。
+		expect(readFileSync(join(workdir, "e.txt"), "utf8")).toBe(`a\ntoken=${secret}\nc\n`);
 	});
 });
 

@@ -424,12 +424,22 @@ describe("审查补的守护", () => {
 		await harness.turnEnd(a);
 		const b = crypto.randomUUID();
 		await harness.prompt(b, { text: "hang" });
-		// 满了：c 要回收 a（关 stdin，a 要 0.8 秒才退出）；a 退出之前 a 关着、b 在做、c 在起 = 3 > 2。
+		// 满了：c 回收空闲的 a（关 stdin，a 要 2 秒才退出），c 照常开始。
 		const c = crypto.randomUUID();
-		expect((await harness.prompt(c, { text: "settle" })).status).toBe(202);
+		expect((await harness.prompt(c, { text: "hang" })).status).toBe(202);
+		// b 结束、退出了：活着的只有 c，但 a 还没退出，它的位置还占着。
+		await harness.abort(b);
+		await harness.turnEnd(b);
+		expect(rawEvents(harness, a).some((r) => r.type === "fake_exiting")).toBe(false);
 		const d = await harness.prompt(crypto.randomUUID(), { text: "settle" });
 		expect(d.status).toBe(503);
-		await harness.abort(b);
+		// a 退出之后就有位置了。
+		await eventually(() =>
+			expect(rawEvents(harness, a).some((r) => r.type === "fake_exiting")).toBe(true),
+		);
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(1));
+		expect((await harness.prompt(crypto.randomUUID(), { text: "settle" })).status).toBe(202);
+		await harness.abort(c);
 	});
 
 	it("同一个会话不同时有两个 pi：换了工作区时，旧进程退出之后才起新的；设置目录每次新建", async () => {

@@ -99,12 +99,15 @@ export function createRemoteTools(pi: ExtensionAPI, deps: ExtensionDeps): void {
 			workdir,
 		),
 	);
+	// 编辑要读到文件的原样内容再写回去（读到打过码的内容写回去，就把文件里的值换成了 ******）：读的时候不打码，
+	// 工具的结果（差异、说明）交给 pi 之前再按值打码。
 	pi.registerTool(
-		atWorkdir(
-			createEditToolDefinition(workdir, {
-				operations: editOps(agent, workdir, deps.config, short),
-			}),
-			workdir,
+		redactedResult(
+			atWorkdir(
+				createEditToolDefinition(workdir, { operations: editOps(agent, workdir, short) }),
+				workdir,
+			),
+			deps.config,
 		),
 	);
 	// 命令在工作台上执行，环境是这一轮的配置给的：pi 的 PI_* 会话变量不在那边，不让系统提示说「可以看 PI_* 变量」。
@@ -239,15 +242,24 @@ function writeOps(agent: () => AgentClient, cwd: string, short: number): WriteOp
 	};
 }
 
-function editOps(
-	agent: () => AgentClient,
-	cwd: string,
-	config: () => TurnConfig,
-	short: number,
-): EditOperations {
-	const read = readOps(agent, config);
+function editOps(agent: () => AgentClient, cwd: string, short: number): EditOperations {
+	// 读原样的内容（编辑完要写回去），不打码；结果由 redactedResult 打码。
+	const read = readOps(agent, () => ({ secrets: [] }) as unknown as TurnConfig);
 	const write = writeOps(agent, cwd, short);
 	return { readFile: read.readFile, access: read.access, writeFile: write.writeFile };
+}
+
+/** 工具的结果交给 pi 之前，里面的字符串都按值打码。 */
+// biome-ignore lint/suspicious/noExplicitAny: 工具的参数、结果各不相同，这里只处理结果里的字符串。
+function redactedResult<T extends ToolDefinition<any, any, any>>(
+	tool: T,
+	config: () => TurnConfig,
+): T {
+	return {
+		...tool,
+		execute: async (id, params, signal, onUpdate, ctx) =>
+			redactorFor(config()).redactValue(await tool.execute(id, params, signal, onUpdate, ctx)),
+	};
 }
 
 function bashOps(agent: () => AgentClient, config: () => TurnConfig): BashOperations {
