@@ -45,10 +45,11 @@ export const TURN_LIMITS = {
 export const MAX_PROCESSES = 8;
 
 /**
- * 中止到得比这一轮早（控制面等 `prompt` 的回应超时，补发一次中止；那句 `prompt` 还在路上）：中止记下来，这么久之内
- * 到的下一轮直接以 `stopped` 结束，不拉起 pi。控制面等回应只等 10 秒，补发的中止紧跟着发出，留足余量。
+ * 「这一轮已被中止」的记号（中止比这一轮的 `prompt` 先到）：留多久、最多留几个（每个会话只留轮次最大的那一个）。
+ * 只认轮次，不看时间；过期和上限只为不让记号无限增长。
  */
-export const EARLY_ABORT_WINDOW_MS = 30_000;
+export const ABORT_MARK_TTL_MS = 10 * 60 * 1000;
+export const ABORT_MARK_LIMIT = 1000;
 
 /** 模型没给超时的命令用多少秒：和一轮的时间上限一样（到了上限这一轮反正要结束）。 */
 const DEFAULT_COMMAND_TIMEOUT_SECONDS = TURN_LIMITS.durationMs / 1000;
@@ -67,7 +68,6 @@ export interface SessionManagerOptions {
 	log: (message: string) => void;
 	limits?: { modelCalls: number; durationMs: number };
 	maxProcesses?: number;
-	earlyAbortWindowMs?: number;
 	killGraceMs?: number;
 }
 
@@ -94,10 +94,8 @@ interface Session {
 	tmpDir: string | undefined;
 	turn: Turn | undefined;
 	lastActive: number;
-	/** 这个助手服务进程里，这个会话最近一轮的轮次（重启之后不知道）。 */
+	/** 这个助手服务进程里，这个会话登记过的最大轮次（重启之后不知道）。 */
 	lastTurn: number | undefined;
-	/** 没有在做的一轮时收到的中止：{@link EARLY_ABORT_WINDOW_MS} 之内到的下一轮直接结束。 */
-	earlyAbort: { at: number; afterTurn: number | undefined } | undefined;
 }
 
 export type PromptResult =
@@ -110,6 +108,8 @@ export class SessionManager {
 	readonly #maxProcesses: number;
 	/** 正在关的 pi 进程（关 stdin 之后、退出之前）。 */
 	readonly #closing = new Set<PiProcess>();
+	/** 「这一轮已被中止」的记号：会话 ID → 轮次（见 {@link abort}）。按记下的先后排，满了丢最早的。 */
+	readonly #abortMarks = new Map<string, { turn: number; at: number }>();
 
 	constructor(private readonly options: SessionManagerOptions) {
 		this.#limits = options.limits ?? TURN_LIMITS;
@@ -159,14 +159,16 @@ export class SessionManager {
 			return { ok: false, status: 409, code: "turn_running", message: "这个会话已有一轮在做" };
 		}
 		session.redactor.add(Object.values(body.secret_env));
-		if (this.#abortedEarly(session, body.turn)) {
-			// 控制面在这一轮登记下来之前就要求停止了：不拉起 pi，直接结束。
+		if (this.#takeAbortMark(sessionId, body.turn)) {
+			// 这一轮登记之前就收到了针对它的中止：先回 202（回 409、503 控制面会记成失败），再发这一轮「已停止」的结局，
+			// 不拉起 pi。
 			const turn = this.#register(session, body.turn);
-			this.options.log(`会话 ${session.id} 第 ${body.turn} 轮：到之前已经收到中止，直接结束`);
-			this.#end(session, turn, {
-				outcome: "stopped",
-				reason: "这一轮到之前已经要求停止了",
-			});
+			this.options.log(
+				`会话 ${session.id} 第 ${body.turn} 轮：到之前已经收到针对它的中止，直接结束`,
+			);
+			queueMicrotask(() =>
+				this.#end(session, turn, { outcome: "stopped", reason: "这一轮到之前已经要求停止了" }),
+			);
 			return { ok: true };
 		}
 		if (!session.process || session.process.exited) {
@@ -220,16 +222,36 @@ export class SessionManager {
 	}
 
 	/**
-	 * 这一轮到之前是不是已经收到过中止：中止在 {@link EARLY_ABORT_WINDOW_MS} 之内，并且这一轮紧接着中止时最近的那一轮
-	 * （控制面没接住的那一轮，下一次是新的轮次；不知道最近一轮时只看时间）。看过就清掉：只作用于一轮。
+	 * 这一轮的 `prompt` 到了，看有没有针对它的记号：轮次相同就是（取走）；轮次更大的 `prompt` 也清掉记号（那一轮
+	 * 不会再来了）；更小的不动。过期的记号当作没有。
 	 */
-	#abortedEarly(session: Session, number: number): boolean {
-		const early = session.earlyAbort;
-		session.earlyAbort = undefined;
-		if (!early) return false;
-		const window = this.options.earlyAbortWindowMs ?? EARLY_ABORT_WINDOW_MS;
-		if (Date.now() - early.at > window) return false;
-		return early.afterTurn === undefined || number === early.afterTurn + 1;
+	#takeAbortMark(sessionId: string, number: number): boolean {
+		const mark = this.#abortMarks.get(sessionId);
+		if (!mark) return false;
+		if (Date.now() - mark.at > ABORT_MARK_TTL_MS) {
+			this.#abortMarks.delete(sessionId);
+			return false;
+		}
+		if (number < mark.turn) return false;
+		this.#abortMarks.delete(sessionId);
+		return number === mark.turn;
+	}
+
+	/** 记下「第 `turn` 轮已被中止」：每个会话只留轮次最大的那一个，总数有上限（满了丢最早的）。 */
+	#markAborted(sessionId: string, turn: number): void {
+		const known = this.#abortMarks.get(sessionId);
+		if (known && known.turn >= turn && Date.now() - known.at <= ABORT_MARK_TTL_MS) return;
+		this.#abortMarks.delete(sessionId);
+		this.#abortMarks.set(sessionId, { turn, at: Date.now() });
+		while (this.#abortMarks.size > ABORT_MARK_LIMIT) {
+			const oldest = this.#abortMarks.keys().next().value as string;
+			this.#abortMarks.delete(oldest);
+		}
+	}
+
+	/** 现在留着的记号数（测试用）。 */
+	get abortMarks(): number {
+		return this.#abortMarks.size;
 	}
 
 	/** 这个会话现在的 pi 进程号（诊断和测试用）；没有活着的进程时 undefined。 */
@@ -239,18 +261,23 @@ export class SessionManager {
 	}
 
 	/**
-	 * `POST /sessions/:id/abort`：竖切版，直接结束 pi 进程，这一轮以 `stopped` 结束（#544 改成先中止）。
-	 * 没有在做的一轮时不当成没这回事：控制面等 `prompt` 的回应超时之后会补发中止，那句 `prompt` 可能还没到。
-	 * 记下来，紧接着到的那一轮直接结束（{@link EARLY_ABORT_WINDOW_MS}）。
+	 * `POST /sessions/:id/abort`：结束第 `turn` 轮（竖切版直接结束 pi 进程，#544 改成先中止）。按这一轮的状态，不按时间猜：
+	 * - 这一轮在做：结束它，这一轮以 `stopped` 结束；
+	 * - 这一轮已经结束（或者是更早的轮次）：什么也不做；
+	 * - 这一轮还没登记（控制面等 `prompt` 的回应超时后补发的中止，那句 `prompt` 还在路上）：记下记号，它的 `prompt` 到了
+	 *   直接以 `stopped` 结束。助手服务重启之后分不清「已经结束」和「还没登记」时也记下：记号只和同一轮的 `prompt` 对得上。
+	 * 别的轮次不受影响；重复调用无害。
 	 */
-	abort(sessionId: string): void {
-		const session = this.#session(sessionId);
-		const turn = session.turn;
-		if (!turn) {
-			session.earlyAbort = { at: Date.now(), afterTurn: session.lastTurn };
+	abort(sessionId: string, turn: number): void {
+		const session = this.#sessions.get(sessionId);
+		const current = session?.turn;
+		if (session && current?.number === turn) {
+			this.#stop(session, current, { outcome: "stopped", reason: "用户停止了这一轮" });
 			return;
 		}
-		this.#stop(session, turn, { outcome: "stopped", reason: "用户停止了这一轮" });
+		const known = Math.max(session?.lastTurn ?? 0, current?.number ?? 0);
+		if (session?.lastTurn !== undefined && turn <= known) return;
+		this.#markAborted(sessionId, turn);
 	}
 
 	/** 助手服务退出：结束全部一轮和 pi 进程。 */
@@ -282,7 +309,6 @@ export class SessionManager {
 				turn: undefined,
 				lastActive: Date.now(),
 				lastTurn: undefined,
-				earlyAbort: undefined,
 			};
 			this.#sessions.set(id, session);
 		}

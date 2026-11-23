@@ -11,6 +11,7 @@ import {
 	SessionId,
 } from "@sfly/schema";
 import type { EventBus } from "./bus.js";
+import { AbortCommandBody } from "./protocol-pending.js";
 import type { SessionManager } from "./sessions.js";
 
 /**
@@ -65,16 +66,19 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		if (!command) return sendError(res, 404, "invalid_request", `没有 ${route}`);
 		const id = SessionId.safeParse(command[1]);
 		if (!id.success) return sendError(res, 400, "invalid_request", "会话 ID 不是 UUID");
-		if (command[2] === "abort") {
-			deps.sessions.abort(id.data);
-			return send(res, 202);
-		}
 		let json: unknown;
 		try {
 			json = JSON.parse(await readBody(req));
 		} catch {
 			// 不带解析器的报错：它会引用请求体的一段（里面可能有保密的环境变量）。
 			return sendError(res, 400, "invalid_request", "请求体不是 JSON（或太大）");
+		}
+		if (command[2] === "abort") {
+			const abort = AbortCommandBody.safeParse(json);
+			if (!abort.success)
+				return sendError(res, 400, "invalid_request", "请求体要有要结束的轮次 turn");
+			deps.sessions.abort(id.data, abort.data.turn);
+			return send(res, 202);
 		}
 		const body = PromptCommandBody.safeParse(json);
 		if (!body.success) {

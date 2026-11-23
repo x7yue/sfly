@@ -42,7 +42,6 @@ export interface HarnessOptions {
 	maxProcesses?: number;
 	killGraceMs?: number;
 	hostEnv?: NodeJS.ProcessEnv;
-	earlyAbortWindowMs?: number;
 	heartbeatMs?: number;
 	/** 助手服务连工作台时的期限（测试里改短）。 */
 	agentDeadlines?: AgentDeadlines;
@@ -96,7 +95,6 @@ export class Harness {
 			limits: options.limits,
 			maxProcesses: options.maxProcesses,
 			killGraceMs: options.killGraceMs,
-			earlyAbortWindowMs: options.earlyAbortWindowMs,
 		});
 		const server = createAssistantServer({
 			secret: SECRET,
@@ -147,10 +145,12 @@ export class Harness {
 		});
 	}
 
-	abort(sessionId: string): Promise<Response> {
+	/** 结束第 `turn` 轮（默认第 1 轮）。 */
+	abort(sessionId: string, turn = 1): Promise<Response> {
 		return fetch(`${this.url}/sessions/${sessionId}/abort`, {
 			method: "POST",
-			headers: { authorization: `Bearer ${SECRET}` },
+			headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },
+			body: JSON.stringify({ turn }),
 		});
 	}
 

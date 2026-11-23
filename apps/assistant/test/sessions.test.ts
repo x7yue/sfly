@@ -14,11 +14,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { connectAgent } from "../src/agent.js";
 import { EventBus } from "../src/bus.js";
-import { SessionManager } from "../src/sessions.js";
+import { ABORT_MARK_LIMIT, SessionManager } from "../src/sessions.js";
 import { mirrorSkillsLocally } from "../src/skills.js";
 import { eventually } from "./support/eventually.js";
 import { silentPort } from "./support/fake-workbench.js";
-import { Harness, type HarnessOptions } from "./support/harness.js";
+import { Harness, type HarnessOptions, SECRET } from "./support/harness.js";
 
 const FAKE_PI = [process.execPath, join(import.meta.dirname, "support", "fake-pi.mjs")];
 
@@ -281,14 +281,25 @@ describe("保密环境变量按值打码", () => {
 	});
 });
 
-describe("中止比这一轮先到（控制面等 prompt 的回应超时后补发的中止）", () => {
+describe("中止带轮次：按这一轮的状态，不按时间猜", () => {
 	const piStarted = (harness: Harness, id: string) =>
 		rawEvents(harness, id).some((r) => r.type === "fake_env");
 
-	it("没有在做的一轮时收到中止：记下来，紧接着到的那一轮直接以 stopped 结束，不拉起 pi", async () => {
+	it("空闲时收到针对上一轮的中止（用户在空闲的会话上点了停止），紧接着来的下一轮照常做", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
-		expect((await harness.abort(id)).status).toBe(202);
+		await harness.prompt(id, { text: "settle" });
+		await harness.turnEnd(id);
+		expect((await harness.abort(id, 1)).status).toBe(202);
+		expect(harness.sessions.abortMarks).toBe(0);
+		await harness.prompt(id, { turn: 2, text: "settle" });
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+	});
+
+	it("针对还没到的那一轮的中止先到：那一轮到了先回 202、再以 stopped 结束，不拉起 pi；下一轮照常", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		expect((await harness.abort(id, 1)).status).toBe(202);
 		expect((await harness.prompt(id, { text: "hang" })).status).toBe(202);
 		expect(await harness.turnEnd(id)).toMatchObject({
 			outcome: "stopped",
@@ -297,29 +308,61 @@ describe("中止比这一轮先到（控制面等 prompt 的回应超时后补�
 		});
 		expect(piStarted(harness, id)).toBe(false);
 		expect(harness.sessions.activeProcesses).toBe(0);
-		// 只作用于一轮：下一轮照常。
 		await harness.prompt(id, { turn: 2, text: "settle" });
 		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
 	});
 
-	it("中止之后、知道最近一轮时：只作用于紧接着的那一轮（那一轮没到，下一次是新的轮次，照常做）", async () => {
+	it("在做时收到针对别的轮次的中止：这一轮不受影响；针对它的中止才结束它；重复的中止不出错", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "settle" });
 		await harness.turnEnd(id);
-		await harness.abort(id);
-		// 第 2 轮没到（丢了），控制面记了失败，用户再说的是第 3 轮。
-		await harness.prompt(id, { turn: 3, text: "settle" });
-		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+		await harness.prompt(id, { turn: 2, text: "hang" });
+		await eventually(() =>
+			expect(rawEvents(harness, id).filter((r) => r.type === "turn_start")).toHaveLength(2),
+		);
+		expect((await harness.abort(id, 1)).status).toBe(202);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(harness.events.of(id).filter((r) => r.event.type === "turn_end")).toHaveLength(1);
+		for (let i = 0; i < 3; i += 1) expect((await harness.abort(id, 2)).status).toBe(202);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped" });
+		expect((await harness.abort(id, 2)).status).toBe(202);
+		expect(harness.events.of(id).filter((r) => r.event.type === "turn_end")).toHaveLength(2);
 	});
 
-	it("中止之后过了时间窗才到的一轮照常做；一轮结束之后的重复中止不影响下一轮", async () => {
-		const harness = await start({ earlyAbortWindowMs: 50 });
+	it("助手服务重启后（不知道这个会话的轮次）收到中止：记下，只和同一轮的 prompt 对得上，更大的轮次照常、记号随之清掉", async () => {
+		const harness = await start();
 		const id = crypto.randomUUID();
-		await harness.abort(id);
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		await harness.prompt(id, { text: "settle" });
-		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		await harness.abort(id, 4);
+		expect(harness.sessions.abortMarks).toBe(1);
+		// 更早的轮次不受影响，记号还在。
+		await harness.prompt(id, { turn: 3, text: "settle" });
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+		expect(harness.sessions.abortMarks).toBe(1);
+		// 更大的轮次照常做，记号清掉（那一轮不会再来了）。
+		await harness.prompt(id, { turn: 5, text: "settle" });
+		expect(await harness.turnEnd(id, 5)).toMatchObject({ outcome: "completed" });
+		expect(harness.sessions.abortMarks).toBe(0);
+	});
+
+	it("记号有上限：针对还没到的轮次的中止再多，留着的记号也不超过上限（满了丢最早的）", async () => {
+		const harness = await start();
+		const first = crypto.randomUUID();
+		await harness.abort(first, 1);
+		for (let i = 0; i < ABORT_MARK_LIMIT; i += 1) harness.sessions.abort(crypto.randomUUID(), 1);
+		expect(harness.sessions.abortMarks).toBe(ABORT_MARK_LIMIT);
+		// 最早的那个被丢掉了：它的第 1 轮照常做。
+		await harness.prompt(first, { text: "settle" });
+		expect(await harness.turnEnd(first)).toMatchObject({ outcome: "completed" });
+	});
+
+	it("中止的请求体要有轮次：没有时 400", async () => {
+		const harness = await start();
+		const res = await fetch(`${harness.url}/sessions/${crypto.randomUUID()}/abort`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${SECRET}` },
+		});
+		expect(res.status).toBe(400);
 	});
 });
 
@@ -363,7 +406,7 @@ describe("看管进程的边界", () => {
 			argv: string[];
 		}>;
 		expect(started).toHaveLength(2);
-		await harness.abort(id);
+		await harness.abort(id, 2);
 		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped" });
 	});
 

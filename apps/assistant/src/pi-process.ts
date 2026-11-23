@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { LineSplitter } from "./jsonl.js";
+import { ASSISTANT_PROCESS_KILL_GRACE_MS } from "./protocol-pending.js";
 
 /**
  * 一个 RPC 模式的 pi 进程（pi `docs/rpc.md`）：写命令（照顾 stdin 的背压），按 LF 切读 stdout 的记录，
@@ -17,7 +18,8 @@ import { LineSplitter } from "./jsonl.js";
  *   两样都发，不靠其中哪一样单独起作用。
  */
 
-export const KILL_GRACE_MS = 10_000;
+/** 协议里的停止宽限（控制面等停止的时间引用同一个数）。 */
+export const KILL_GRACE_MS = ASSISTANT_PROCESS_KILL_GRACE_MS;
 
 export interface PiProcessOptions {
 	/** 要执行的命令（`[node, <pi 的命令行入口>, ...参数]`；测试里换成假的 pi）。 */
