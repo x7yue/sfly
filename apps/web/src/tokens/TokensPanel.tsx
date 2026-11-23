@@ -60,7 +60,7 @@ export function TokensPage({
 			<Panel>
 				<QueryView
 					query={tokens}
-					loading={<TableSkeleton columns={personal ? 8 : 7} />}
+					loading={<TableSkeleton columns={8} />}
 					errorTitle="无法加载令牌"
 					isEmpty={(d) => d.tokens.length === 0}
 					empty={
@@ -99,6 +99,7 @@ function TokenTable({ owner, tokens }: { owner: TokenOwner; tokens: TokenView[] 
 					<TableHead width="fit">前缀</TableHead>
 					<TableHead>范围</TableHead>
 					{personal && <TableHead width="fit">限定项目</TableHead>}
+					{!personal && <TableHead width="fit">签发人</TableHead>}
 					<TableHead width="fit">创建时间</TableHead>
 					<TableHead width="fit">最后使用</TableHead>
 					<TableHead width="fit">过期时间</TableHead>
@@ -143,6 +144,12 @@ function TokenRow({
 			{owner.kind === "personal" && (
 				<TableCell width="fit" className="font-mono text-xs text-fg-2">
 					{token.project ?? <span className="font-sans text-fg-3">不限定</span>}
+				</TableCell>
+			)}
+			{owner.kind === "project" && (
+				// 项目令牌属于项目，不随签发人失效（他被停用、移出项目之后照样有效）：这一列记着是谁签发的。
+				<TableCell width="fit" data-slot="token-issuer" className="text-xs text-fg-2">
+					{token.issued_by ?? <span className="text-fg-3">未记录</span>}
 				</TableCell>
 			)}
 			<TableCell width="fit" className="font-mono text-xs text-fg-3">

@@ -79,6 +79,14 @@ export async function startTestControlPlane(
 		| "githubReleaseMirror"
 		| "migrationsDir"
 		| "logger"
+		| "assistantUrl"
+		| "assistantSecret"
+		| "workbenchAgent"
+		| "assistantReconnectMs"
+		| "assistantEventsIdleMs"
+		| "assistantCommandTimeoutMs"
+		| "sessionSweepIntervalMs"
+		| "sessionStopGraceMs"
 		| "initialAdmin"
 		| "loginIdleMs"
 		| "sameOrigins"
@@ -123,6 +131,17 @@ export async function startTestControlPlane(
 			githubReleaseMirror: options.githubReleaseMirror,
 			migrationsDir,
 			logger: options.logger,
+			assistantUrl: options.assistantUrl,
+			assistantSecret: options.assistantSecret,
+			workbenchAgent: options.workbenchAgent,
+			assistantReconnectMs: options.assistantReconnectMs,
+			assistantEventsIdleMs: options.assistantEventsIdleMs,
+			assistantCommandTimeoutMs: options.assistantCommandTimeoutMs,
+			// 兜底收拾「一直在做」的会话（超过 30 分钟没有持久事件）：测试里默认不扫（用例里手动推进时钟、直接写库造会话，
+			// 不该被它收拾掉），要测它的用例自己传间隔。
+			sessionSweepIntervalMs: options.sessionSweepIntervalMs ?? 3_600_000,
+			// 停止之后等助手服务带回结局的宽限：测试里短一点（要测它的用例自己传）。
+			sessionStopGraceMs: options.sessionStopGraceMs ?? 300,
 			initialAdmin: options.initialAdmin,
 			loginIdleMs: options.loginIdleMs,
 			sameOrigins: options.sameOrigins,

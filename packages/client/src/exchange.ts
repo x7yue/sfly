@@ -48,6 +48,21 @@ export interface ExchangeConfig {
 	nickname?: Nickname;
 	onControlPlaneTime: (time: string) => void;
 	onVersionMismatch: (mismatch: VersionMismatch) => void;
+	/** 带着令牌往不是本机的 `http://` 地址发请求（令牌在网络上是明文）：每个客户端实例调用一次，请求照常进行。 */
+	onInsecureToken: (message: string) => void;
+}
+
+/** 不是本机的 `http://` 地址：令牌发过去是明文，路上的人看得到。 */
+function isInsecureRemote(baseUrl: string): boolean {
+	let url: URL;
+	try {
+		url = new URL(baseUrl);
+	} catch {
+		return false; // 只有路径（同源页面的 `/api`）：地址由页面所在的源决定，这里看不出来。
+	}
+	if (url.protocol !== "http:") return false;
+	const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+	return !(host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host));
 }
 
 export interface SendInit extends CallOptions {
@@ -65,6 +80,7 @@ export function createExchange(config: ExchangeConfig): Exchange {
 	const baseUrl = normalizeBaseUrl(config.baseUrl);
 
 	let versionWarned = false;
+	let insecureWarned = false;
 
 	const tokenNow = (): string | undefined => {
 		const value = typeof config.token === "function" ? config.token() : config.token;
@@ -89,6 +105,12 @@ export function createExchange(config: ExchangeConfig): Exchange {
 		// 有令牌时身份由令牌决定：带 Authorization，不发昵称，写操作也不再要昵称。
 		const token = tokenNow();
 		if (token !== undefined) {
+			if (!insecureWarned && isInsecureRemote(baseUrl)) {
+				insecureWarned = true;
+				config.onInsecureToken(
+					`警告：${baseUrl} 是 http 地址，令牌会以明文发送，网络上的人看得到：有条件的话用 https 地址访问控制面。`,
+				);
+			}
 			headers.authorization = `Bearer ${token}`;
 			return headers;
 		}

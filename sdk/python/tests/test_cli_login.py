@@ -37,7 +37,14 @@ class FakeServer:
         self.requests: list[dict[str, Any]] = []
         # POST /account/tokens 的回答：(状态码, 响应体)；None 表示发出令牌。
         self.issue_error: tuple[int, dict[str, Any]] | None = None
+        # 按顺序用掉的错误（每次 POST /account/tokens 取一个，用完了再看 issue_error）。
+        self.issue_errors: list[tuple[int, dict[str, Any]]] = []
+        # POST /packages 的回答状态码（201 是成功）。
+        self.publish_status = 201
+        # 非空时 GET /redirect 返回 302 跳到这个地址。
+        self.redirect_to: str | None = None
         self.revoke_status = 204
+        self.revoke_error_code = "unauthorized"
         self.runs_status = 200
         self.runs_error_code = "unauthorized"
         self.issued = 0
@@ -70,9 +77,22 @@ class FakeServer:
                 )
 
             def do_POST(self) -> None:
+                if self.path == "/packages":
+                    length = int(self.headers.get("content-length") or 0)
+                    raw = self.rfile.read(length)
+                    self._record(raw)
+                    if outer.publish_status != 201:
+                        return self._send(
+                            outer.publish_status,
+                            {"error": {"code": "unauthorized", "message": "需要登录或令牌"}},
+                        )
+                    return self._send(201, {"name": "demo", "version": "1.0.0", "sha256": "0" * 64})
                 body = self._read()
                 self._record(body)
                 if self.path == "/account/tokens":
+                    if outer.issue_errors:
+                        status, payload = outer.issue_errors.pop(0)
+                        return self._send(status, payload)
                     if outer.issue_error:
                         status, payload = outer.issue_error
                         return self._send(status, payload)
@@ -101,12 +121,21 @@ class FakeServer:
                 if outer.revoke_status == 204:
                     return self._send(204)
                 self._send(
-                    outer.revoke_status, {"error": {"code": "unauthorized", "message": "凭据无效"}}
+                    outer.revoke_status,
+                    {"error": {"code": outer.revoke_error_code, "message": "凭据无效"}},
                 )
 
             def do_GET(self) -> None:
                 self._record()
                 path = self.path.split("?")[0]
+                if path == "/redirect" and outer.redirect_to:
+                    self.send_response(302)
+                    self.send_header("location", outer.redirect_to)
+                    self.send_header("content-length", "0")
+                    self.end_headers()
+                    return
+                if path == "/landing":
+                    return self._send(200, {"landed": True})
                 if path == "/account/tokens":
                     return self._send(
                         200,
@@ -408,7 +437,7 @@ class TestLogin:
         code, _, err = login(capsys, monkeypatch)
         assert code == 2 and "sfly login --name" in err
 
-    def test_logging_in_again_revokes_the_previous_token_with_itself_before_issuing_a_new_one(
+    def test_logging_in_again_issues_the_new_token_first_then_revokes_the_previous_with_itself(
         self,
         server: FakeServer,
         home: Path,
@@ -419,12 +448,13 @@ class TestLogin:
         server.requests.clear()
         assert login(capsys, monkeypatch)[0] == 0
         methods = [(r["method"], r["path"]) for r in server.requests]
+        # 先换到新的（存好），再吊销旧的：反过来的话密码输错时旧登录没了、新的又没签出来。
         assert methods == [
-            ("DELETE", "/account/tokens/00000000-0000-4000-8000-000000000001"),
             ("POST", "/account/tokens"),
+            ("DELETE", "/account/tokens/00000000-0000-4000-8000-000000000001"),
         ]
         # 旧令牌用它自己吊销它自己；新令牌换进了凭据文件。
-        assert server.requests[0]["headers"]["authorization"] == f"Bearer {TOKEN}"
+        assert server.requests[1]["headers"]["authorization"] == f"Bearer {TOKEN}"
         stored = credentials.load(server.url)
         assert stored and stored.token == OTHER_TOKEN
 
@@ -440,6 +470,104 @@ class TestLogin:
         assert login(capsys, monkeypatch)[0] == 0
         stored = credentials.load(server.url)
         assert stored and stored.token == OTHER_TOKEN
+
+    def test_a_wrong_password_on_a_second_login_leaves_the_working_login_alone(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        server.requests.clear()
+        server.issue_error = (
+            401,
+            {"error": {"code": "invalid_credentials", "message": "登录名或密码不对"}},
+        )
+        code, _, err = login(capsys, monkeypatch, password="wrong-password-1")
+        assert code == 2 and "登录名或密码不对" in err
+        # 没有吊销任何令牌，凭据文件里原来的令牌原封不动，之后的命令照常。
+        assert [(r["method"], r["path"]) for r in server.requests] == [("POST", "/account/tokens")]
+        stored = credentials.load(server.url)
+        assert stored and stored.token == TOKEN
+        assert run(capsys, monkeypatch, "run", "list")[0] == 0
+
+    def test_rate_limited_or_unreachable_second_login_also_keeps_the_old_one(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        server.requests.clear()
+        server.issue_error = (429, {"error": {"code": "too_many_attempts", "message": "太快了"}})
+        assert login(capsys, monkeypatch)[0] == 2
+        assert [r["method"] for r in server.requests] == ["POST"]
+        stored = credentials.load(server.url)
+        assert stored and stored.token == TOKEN
+
+    def test_the_old_token_holding_the_default_name_does_not_block_the_new_one(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        server.requests.clear()
+        # 旧令牌还有效，占着这个名字：第一次换新的撞上同名，带后缀再换一次；成功之后才吊销旧的。
+        server.issue_errors = [
+            (409, {"error": {"code": "token_name_taken", "message": "已经有一个同名的有效令牌"}})
+        ]
+        code, _, err = login(capsys, monkeypatch, "--name", "我的电脑")
+        assert code == 0, err
+        posts = [r for r in server.requests if r["method"] == "POST"]
+        assert [r["body"]["name"] for r in posts] == ["我的电脑", "我的电脑·新"]
+        assert [r["method"] for r in server.requests] == ["POST", "POST", "DELETE"]
+        stored = credentials.load(server.url)
+        assert stored and stored.token == OTHER_TOKEN and stored.name == "我的电脑·新"
+
+    def test_a_name_taken_without_a_previous_login_is_not_retried(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        server.issue_errors = [
+            (409, {"error": {"code": "token_name_taken", "message": "已经有一个同名的有效令牌"}})
+        ]
+        code, _, err = login(capsys, monkeypatch)
+        assert code == 2 and "sfly login --name" in err
+        assert [r["method"] for r in server.requests] == ["POST"]
+
+    def test_the_password_prompt_is_hidden_getpass_not_input(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        asked: list[str] = []
+
+        def fake_getpass(prompt: str = "") -> str:
+            asked.append(prompt)
+            return PASSWORD
+
+        def no_input(prompt: str = "") -> str:
+            raise AssertionError(f"密码不能用会回显的 input 读：{prompt!r}")
+
+        monkeypatch.setattr("sfly.cli.login._interactive", lambda: True)
+        monkeypatch.setattr("getpass.getpass", fake_getpass)
+        monkeypatch.setattr("builtins.input", no_input)
+        code, _, err = run(
+            capsys, monkeypatch, "login", "--server", server.url, "--login-name", "alice"
+        )
+        assert code == 0, err
+        assert asked == ["密码："]
+        request = next(r for r in server.requests if r["method"] == "POST")
+        assert request["body"]["password"] == PASSWORD
 
 
 class TestLogout:
@@ -492,6 +620,51 @@ class TestLogout:
         code, _, err = run(capsys, monkeypatch, "logout", "--local")
         assert code == 0, err
         assert credentials.load("http://127.0.0.1:1") is None
+
+    def test_a_401_deletes_the_local_entry_but_says_the_token_was_not_revoked_by_this_logout(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        server.revoke_status = 401  # 令牌失效了，或者账号被停用了：控制面都只说 401
+        code, out, err = run(capsys, monkeypatch, "logout")
+        assert code == 0, err
+        assert credentials.load(server.url) is None
+        # 如实说：这次登出没有吊销令牌；账号被停用时令牌还在，启用之后又能用；去哪里吊销。
+        assert "本机的凭据已删除" in out and "令牌已吊销" not in out
+        assert "401" in out and "账号被停用" in out and "没有被吊销" in out and "令牌」页" in out
+        assert TOKEN not in out + err
+        # --json 里分得清：没有吊销，被控制面拒绝了。
+        assert login(capsys, monkeypatch)[0] == 0
+        code, out, _ = run(capsys, monkeypatch, "logout", "--json")
+        summary = json.loads(out)
+        assert (summary["logged_out"], summary["revoked"], summary["rejected"]) == (
+            True,
+            False,
+            True,
+        )
+
+    @pytest.mark.parametrize("status", [403, 500])
+    def test_a_failed_revoke_that_is_not_a_401_keeps_the_local_entry(
+        self,
+        status: int,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        server.revoke_status = status
+        server.revoke_error_code = "forbidden" if status == 403 else "internal"
+        code, _, err = run(capsys, monkeypatch, "logout")
+        assert code == 2
+        assert "sfly logout --local" in err
+        # 令牌没有被吊销，本机的凭据保留着：不能让本机以为登出了、令牌还有效。
+        stored = credentials.load(server.url)
+        assert stored and stored.token == TOKEN
 
     def test_not_logged_in_says_so_and_the_env_token_is_not_ours_to_remove(
         self,
@@ -630,3 +803,147 @@ class TestPlatformCommandsUseTheToken:
         with pytest.raises(CliError) as caught:
             Forbidden(server.url, "x", token=TOKEN).owner_name()
         assert caught.value.code == "token_without_user"
+
+
+class TestTokenNeverLeavesTheControlPlane:
+    """令牌只发给控制面：重定向到别的源（协议、主机、端口任一不同）时不带 `Authorization`。"""
+
+    @pytest.fixture
+    def other(self) -> Iterator[FakeServer]:
+        fake = FakeServer()
+        yield fake
+        fake.close()
+
+    def test_a_redirect_to_another_host_or_port_drops_the_token(
+        self,
+        server: FakeServer,
+        other: FakeServer,
+        home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 另一个端口的同一台机器也是另一个源。
+        server.redirect_to = f"{other.url}/landing"
+        client = Client(server.url, "alice", token=TOKEN)
+        assert client.request("GET", "/redirect") == {"landed": True}
+        assert "authorization" not in other.headers_of("GET", "/landing")
+        # 控制面自己收到的是带令牌的。
+        assert server.headers_of("GET", "/redirect")["authorization"] == f"Bearer {TOKEN}"
+
+    def test_a_redirect_within_the_same_origin_keeps_the_token(
+        self, server: FakeServer, home: Path
+    ) -> None:
+        server.redirect_to = f"{server.url}/landing"
+        client = Client(server.url, "alice", token=TOKEN)
+        assert client.request("GET", "/redirect") == {"landed": True}
+        assert server.headers_of("GET", "/landing")["authorization"] == f"Bearer {TOKEN}"
+
+    def test_a_redirect_to_a_different_scheme_is_a_different_origin(self) -> None:
+        from sfly.cli.client import origin_of
+
+        assert origin_of("http://cp.example:8080/a") == origin_of("HTTP://CP.example:8080/b")
+        assert origin_of("http://cp.example/a") == origin_of("http://cp.example:80/b")
+        assert origin_of("http://cp.example/a") != origin_of("https://cp.example/a")
+        assert origin_of("http://cp.example:8080/a") != origin_of("http://cp.example:8081/a")
+        assert origin_of("http://cp.example/a") != origin_of("http://cp2.example/a")
+
+
+class TestPlainHttpNote:
+    def test_a_token_over_non_local_http_is_noted_once(self) -> None:
+        err = io.StringIO()
+        client = Client("http://cp.example.test:1", "alice", token=TOKEN, stderr=err, timeout=0.2)
+        for _ in range(2):
+            with pytest.raises(CliError):
+                client.get("/runs")
+        text = err.getvalue()
+        assert text.count("明文") == 1 and "https" in text
+        assert TOKEN not in text
+
+    def test_no_note_for_localhost_https_or_without_a_token(self) -> None:
+        for server, token in (
+            ("http://127.0.0.1:1", TOKEN),
+            ("http://localhost:1", TOKEN),
+            ("https://cp.example.test:1", TOKEN),
+            ("http://cp.example.test:1", None),
+        ):
+            err = io.StringIO()
+            client = Client(server, "alice", token=token, stderr=err, timeout=0.2)
+            with pytest.raises(CliError):
+                client.get("/runs")
+            assert "明文" not in err.getvalue(), (server, token)
+
+
+class TestCredentialsFilePermissions:
+    def test_a_world_readable_file_is_noted(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        path = home / "credentials.json"
+        assert credentials.loose_permissions(path) is None
+        code, _, err = run(capsys, monkeypatch, "run", "list")
+        assert code == 0 and "权限" not in err
+
+        path.chmod(0o644)
+        assert credentials.loose_permissions(path) == "0644"
+        code, _, err = run(capsys, monkeypatch, "run", "list")
+        assert code == 0
+        assert "0644" in err and "chmod 600" in err
+        assert TOKEN not in err
+
+    def test_the_environment_token_does_not_trigger_it(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        (home / "credentials.json").chmod(0o644)
+        monkeypatch.setenv("SFLY_API_TOKEN", OTHER_TOKEN)
+        _, _, err = run(capsys, monkeypatch, "run", "list")
+        assert "权限" not in err
+
+
+class TestPublishUsesTheToken:
+    def test_publish_sends_the_token_and_the_archive_bytes(
+        self,
+        server: FakeServer,
+        home: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        assert login(capsys, monkeypatch)[0] == 0
+        archive = tmp_path / "demo-1.0.0.sflypkg"
+        archive.write_bytes(b"archive-bytes")
+        code, out, err = run(capsys, monkeypatch, "publish", str(archive))
+        assert code == 0, err
+        assert "已发布 demo@1.0.0" in out
+        request = next(r for r in server.requests if r["path"] == "/packages")
+        assert request["headers"]["authorization"] == f"Bearer {TOKEN}"
+        assert request["headers"]["content-type"] == "application/octet-stream"
+        assert request["body"] == b"archive-bytes"
+        assert TOKEN not in out + err
+
+    def test_publish_without_a_token_still_works_and_a_401_says_to_log_in(
+        self,
+        server: FakeServer,
+        home: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        archive = tmp_path / "demo-1.0.0.sflypkg"
+        archive.write_bytes(b"archive-bytes")
+        code, out, err = run(capsys, monkeypatch, "publish", str(archive))
+        assert code == 0, err
+        request = next(r for r in server.requests if r["path"] == "/packages")
+        assert "authorization" not in request["headers"]
+
+        server.publish_status = 401
+        code, _, err = run(capsys, monkeypatch, "publish", str(archive))
+        assert code == 1
+        assert "401" in err and "sfly login" in err

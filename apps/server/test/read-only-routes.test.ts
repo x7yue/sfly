@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { httpContract, NICKNAME_HEADER, NON_GET_READS, type RouteDef } from "@sfly/schema";
 import Ajv2020 from "ajv/dist/2020.js";
+import { strToU8 } from "fflate";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
@@ -32,6 +33,7 @@ import { packageArchive, packageMetadata, publishInit } from "./support/package-
 import { createPresetOk } from "./support/presets.js";
 import { persistedBodies, seedSession } from "./support/sessions.js";
 import { SseClient, type SseEvent } from "./support/sse-client.js";
+import { publishIntoPublicProject } from "./support/std-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import {
 	diffFootprints,
@@ -43,6 +45,8 @@ import {
 const VERSION = packageJson.version;
 const WHEEL = `sfly-${VERSION}-py3-none-any.whl`;
 const TARBALL = `sfly-client-${VERSION}.tgz`;
+/** 公共项目里的 sfly-std（种数据时发布），包索引里它的 wheel（#556）。 */
+const STD_WHEEL = "sfly_std-0.0.1-py3-none-any.whl";
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 
 interface Manifest {
@@ -469,13 +473,17 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		name: { package: "probe", feishu_bot: s.botName, agent: "agent-a" }[kind as string],
 		version: kind === "system" ? VERSION : "1.0.0",
 		arch: "x86_64",
-		filename: def.path.startsWith("/sdk/") ? WHEEL : TARBALL,
+		filename: def.path.startsWith("/sdk/")
+			? WHEEL
+			: def.path.startsWith("/simple/")
+				? STD_WHEEL
+				: TARBALL,
 		page: s.docSlug,
 		skill: "sfly-platform",
 		file: "SKILL.md",
-		// 简单索引里的包（PEP 503 的 project）。
-		package: "sfly",
-		// 路径里的项目（`/projects/:project/…`）：默认项目，管理员在里面是项目管理员。
+		// 简单索引里的包（PEP 503 的 project）：sfly-std 和 sfly 一样可以读。
+		package: "sfly-std",
+		// 路径里的项目（`/projects/:project/…`）：默认项目，管理员在里面是项目管理员（会话的列表在 `/projects/:project/sessions`）。
 		project: "default",
 	};
 	const value = samples[name];
@@ -696,6 +704,14 @@ async function publishProbe(cp: TestControlPlane): Promise<void> {
 async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: FakeAgent }> {
 	const api = new ApiClient(cp);
 	await publishProbe(cp);
+	// 包索引里的 sfly-std：公共项目里发布的版本（索引的项目页和 wheel 下载读到真实的内容）。
+	await publishIntoPublicProject(
+		cp,
+		packageArchive(packageMetadata({ name: "sfly-std", version: "0.0.1" }), {
+			[STD_WHEEL]: strToU8("wheel"),
+		}),
+		{ name: "sfly-std", version: "0.0.1" },
+	);
 	const scenario = (name: string) => api.orchestrationWith(documentFor(), name);
 	const checked = await scenario("巡检");
 	const pressure = await scenario("压测");

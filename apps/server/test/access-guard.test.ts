@@ -636,6 +636,55 @@ describe("契约路由的访问检查", () => {
 			});
 		});
 
+		it("会话的写（建、发话、停止）只有人能做：项目令牌范围再够也是 403，登录的用户和个人令牌走范围表；读照常", async () => {
+			const writes = [
+				"POST /projects/:project/sessions",
+				"POST /sessions/:id/messages",
+				"POST /sessions/:id/stop",
+			];
+			// 项目令牌（服务账号，没有用户）带着全部范围：范围表里会话的写要「编辑」，它有，但凭据不是人。
+			const projectToken = token({ kind: "project", projectId: DEFAULT, name: "ci" });
+			for (const key of writes) {
+				expect(await run(route(key), projectToken), `项目令牌 ${key}`).toMatchObject({
+					ok: false,
+					status: 403,
+					message: expect.stringContaining("项目令牌不能做这件事"),
+				});
+			}
+			// 同一个项目令牌的读：按范围，照常。
+			for (const key of ["GET /projects/:project/sessions", "GET /sessions/:id"]) {
+				expect(outcome(await run(route(key), projectToken)), `项目令牌 ${key}`).toBe("ok");
+			}
+			// 项目令牌在别的项目：404，不是 403（不泄露）。
+			expect(outcome(await run(route("POST /sessions/:id/stop"), projectToken, "alpha"))).toBe(404);
+			// 人：登录和个人令牌，编辑者放行；只读成员没有「编辑」范围，403 是范围表的那一条。
+			for (const key of writes) {
+				expect(outcome(await run(route(key), login(USERS.editor))), `登录 ${key}`).toBe("ok");
+				expect(outcome(await run(route(key), personal(USERS.editor))), `个人令牌 ${key}`).toBe(
+					"ok",
+				);
+				expect(outcome(await run(route(key), login(USERS.reader))), `只读 ${key}`).toBe(403);
+			}
+			// 令牌只给了读范围的个人令牌：范围不够，403。
+			const readOnlyToken = personal(USERS.editor, { scopes: ["read"] });
+			for (const key of writes) {
+				expect(outcome(await run(route(key), readOnlyToken)), `只读令牌 ${key}`).toBe(403);
+			}
+			// Agent 凭据（接口清单里没有会话的任何接口）：读和写都是 403。
+			const secret = `sfly_agt_${++counter}`;
+			store.agentCredentials.set(hashCredential(secret), {
+				kind: "agent",
+				projectId: DEFAULT,
+				agentName: "agent-a",
+				user: null,
+				revokedAt: null,
+			});
+			const agent = { authorization: `Bearer ${secret}` };
+			for (const key of [...writes, "GET /sessions/:id", "GET /projects/:project/sessions"]) {
+				expect(outcome(await run(route(key), agent)), `Agent 凭据 ${key}`).toBe(403);
+			}
+		});
+
 		it("会话令牌对会话只有读（ADR 0027）：建会话、发话、停止是 403，读照常；这条规则不靠「写一律 403」的临时总闸", async () => {
 			const session = token({
 				kind: "session",

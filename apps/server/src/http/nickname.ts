@@ -22,7 +22,14 @@ export function nicknameOf(request: FastifyRequest): string | undefined {
 export function requireNickname(request: FastifyRequest, reply: FastifyReply): string | undefined {
 	if (request.access) return request.access.name;
 	const nickname = nicknameOf(request);
-	if (!nickname)
+	if (!nickname) {
 		sendError(reply, 400, "nickname_required", `${NICKNAME_HEADER} header is required`);
+		return undefined;
+	}
+	// 昵称会被写进数据库（jsonb 拒收 NUL）：挡在任何写之前，不让它在改了状态之后才失败。
+	if (nickname.includes("\u0000")) {
+		sendError(reply, 400, "invalid_request", "昵称里不能含 NUL 字符（\\u0000）");
+		return undefined;
+	}
 	return nickname;
 }

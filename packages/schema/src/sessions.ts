@@ -590,7 +590,10 @@ export const SessionMessageText = z
 	.string()
 	.min(1, "不能为空")
 	.max(SESSION_MESSAGE_MAX_CHARS, `不能超过 ${SESSION_MESSAGE_MAX_CHARS} 个字符`)
-	.refine((text) => text.trim().length > 0, "不能只有空白");
+	.refine((text) => text.trim().length > 0, "不能只有空白")
+	// 会存进数据库的 jsonb：NUL 和不成对的代理字符（`\ud800` 这类）它拒收。挡在写之前，不能等到改了状态再失败。
+	.refine((text) => !text.includes("\u0000"), "不能含 NUL 字符")
+	.refine((text) => !/\p{Surrogate}/u.test(text), "不能含不成对的代理字符");
 
 /** `POST /projects/:project/sessions`：新建会话，`text` 是它的第一句话，作为第一轮。 */
 export const CreateSessionBody = z.object({ text: SessionMessageText });
@@ -667,6 +670,8 @@ export type SessionView = z.infer<typeof SessionView>;
 export const SessionListResponse = z.object({
 	readiness: Readiness,
 	sessions: z.array(SessionListItem).max(SESSION_LIST_LIMIT),
+	/** 会话超过 {@link SESSION_LIST_LIMIT} 个，更早的没有列出来（页面据此提示）。 */
+	truncated: z.boolean(),
 });
 export type SessionListResponse = z.infer<typeof SessionListResponse>;
 

@@ -128,3 +128,59 @@ describe("API 客户端带令牌", () => {
 		expect(sent()?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("小红"));
 	});
 });
+
+describe("API 客户端在 http 地址上带令牌时提示", () => {
+	const TOKEN = `sfly_pat_${"0123456789abcdef".repeat(3)}`;
+	const okFetch = async () => Response.json([]);
+
+	const calls = async (baseUrl: string, options: { token?: string } = { token: TOKEN }) => {
+		const messages: string[] = [];
+		const client = createClient({
+			baseUrl,
+			fetch: okFetch,
+			onInsecureToken: (message) => messages.push(message),
+			...options,
+		});
+		await client.orchestrations.list();
+		await client.orchestrations.list();
+		return messages;
+	};
+
+	it("不是本机的 http 地址：每个客户端实例提示一次，写明令牌是明文，消息里没有令牌", async () => {
+		const messages = await calls("http://sfly.internal:8080");
+		expect(messages).toHaveLength(1);
+		expect(messages[0]).toContain("http://sfly.internal:8080");
+		expect(messages[0]).toContain("明文");
+		expect(messages[0]).not.toContain(TOKEN);
+	});
+
+	it("本机（localhost、127.0.0.1、::1）、https、只有路径的同源地址、没有令牌：不提示", async () => {
+		for (const url of [
+			"http://localhost:8080",
+			"http://127.0.0.1:8080",
+			"http://127.1.2.3:8080",
+			"http://[::1]:8080",
+			"https://sfly.internal",
+			"/api",
+		]) {
+			expect(await calls(url), url).toEqual([]);
+		}
+		expect(await calls("http://sfly.internal:8080", {} as { token?: string })).toEqual([]);
+	});
+
+	it("令牌是函数、第一次取到的是空：之后取到令牌的那次请求才提示", async () => {
+		const messages: string[] = [];
+		let current: string | undefined;
+		const client = createClient({
+			baseUrl: "http://sfly.internal:8080",
+			fetch: okFetch,
+			token: () => current,
+			onInsecureToken: (message) => messages.push(message),
+		});
+		await client.orchestrations.list();
+		expect(messages).toEqual([]);
+		current = TOKEN;
+		await client.orchestrations.list();
+		expect(messages).toHaveLength(1);
+	});
+});

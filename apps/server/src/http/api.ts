@@ -2,7 +2,6 @@ import {
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
 	httpContract,
-	type Readiness,
 	systemApi,
 } from "@sfly/schema";
 import Fastify, {
@@ -33,11 +32,13 @@ import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
+import type { StdIndex } from "../packages/std-index.js";
 import type { PresetStore } from "../presets/preset-store.js";
 import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
+import type { SessionService } from "../sessions/session-service.js";
 import type { SessionStore } from "../sessions/session-store.js";
 import { registerSse } from "../sse/sse.js";
 import { watchStreamCredentials } from "../sse/stream-recheck.js";
@@ -60,6 +61,7 @@ import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
+import { serializeRequest } from "./request-log.js";
 import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
@@ -85,8 +87,8 @@ export interface HttpApiDeps {
 	actions: TaskActions;
 	/** 助手会话和它的事件（src/sessions/，ADR 0027）。 */
 	sessions: SessionStore;
-	/** 助手此刻能不能用（src/sessions/readiness.ts）。 */
-	assistantReadiness: () => Promise<Readiness>;
+	/** 会话的写和助手此刻能不能用（src/sessions/session-service.ts）。 */
+	sessionService: SessionService;
 	metrics: TaskMetrics;
 	metricQueries: MetricQueries;
 	retention: Retention;
@@ -97,6 +99,8 @@ export interface HttpApiDeps {
 	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 控制面的包索引里的标准节点包 sfly-std（公共项目里已发布的版本）。 */
+	stdIndex: StdIndex;
 	clientTarballs: readonly ClientTarball[];
 	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
 	agentBinaries: AgentBinaries;
@@ -157,7 +161,7 @@ export function buildHttpApi({
 	logs,
 	actions,
 	sessions,
-	assistantReadiness,
+	sessionService,
 	metrics,
 	metricQueries,
 	retention,
@@ -165,6 +169,7 @@ export function buildHttpApi({
 	agentToken,
 	publicConfig,
 	sdkWheels,
+	stdIndex,
 	clientTarballs,
 	agentBinaries,
 	installScript,
@@ -192,7 +197,9 @@ export function buildHttpApi({
 				? false
 				: {
 						...(logger === true ? {} : logger),
-						serializers: { err: serializeError },
+						// 请求日志记的是完整地址：客户端写错、把令牌放进查询参数时，原值会进日志。长得像我们令牌的值（前缀加一串
+						// 字母数字）在写进日志之前盖住（和任务日志、运行视图是同一条规则，{@link maskTokens}）；请求头不记。
+						serializers: { err: serializeError, req: serializeRequest },
 						hooks: {
 							logMethod(args, method) {
 								(method as (...parts: unknown[]) => void).apply(this, sanitizeLogArgs(args));
@@ -318,10 +325,10 @@ export function buildHttpApi({
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerActionRoutes(app, { actions, sse });
-	registerSessionRoutes(app, { sessions, sse, readiness: assistantReadiness });
+	registerSessionRoutes(app, { sessions, service: sessionService, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
-	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });
+	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig, stdIndex });
 	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });
 	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });
 	registerDocsRoutes(app, {

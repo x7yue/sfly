@@ -4,7 +4,7 @@
 // 这一步只对带了凭据的请求生效（规格 #489）：不带凭据的请求照旧放行，到 #494 才改成 401；带共享令牌的 HTTP 请求
 // 和不带凭据的走同一套（共享令牌不对应任何一台 Agent）。带了凭据就一定检查：库里没有的、过期的、吊销的、用户停用的，
 // 一律 401，不会退回到「不带凭据」的放行。
-import type { RouteDef } from "@sfly/schema";
+import { type RouteDef, TOKEN_PREFIXES } from "@sfly/schema";
 import type { Clock } from "../clock.js";
 import type { ProjectRole } from "../db/schema.js";
 import {
@@ -46,6 +46,7 @@ import {
 	SCOPE_LABELS,
 	type Scope,
 	SESSION_TOKEN_SCOPES,
+	writeNeedsPerson,
 } from "./scopes.js";
 
 /** 控制台登录的 Cookie 名（签发在 #490）。 */
@@ -157,6 +158,25 @@ function presentedCredential(request: AccessRequest): Presented | undefined {
 	return undefined;
 }
 
+const OUR_TOKEN_PREFIX = new RegExp(
+	`(?:${Object.values(TOKEN_PREFIXES).join("|")})[A-Za-z0-9_-]{8,}`,
+);
+
+/**
+ * `Authorization` 头里有我们的令牌（认得出前缀），却不是 `Bearer <令牌>` 的写法（`Authorization: <令牌>`、`token <令牌>`、
+ * `Bearer: <令牌>`……）：写错了请求头的脚本，不能被当作没带凭据而以匿名身份继续写。别的方案（`Basic …`，前面有反向代理做
+ * 基本认证的部署）里没有我们的令牌前缀，不在这里，照旧当作没带。放在别的头里（`X-Api-Key`）的管不了。
+ */
+function malformedAuthorization(request: AccessRequest): boolean {
+	const header = (request.authorization ?? "").trim();
+	if (header === "" || /^Bearer(?:\s+(.*))?$/is.test(header)) return false;
+	return OUR_TOKEN_PREFIX.test(header);
+}
+
+const MALFORMED_AUTHORIZATION_MESSAGE =
+	"Authorization 头里有 sfly 令牌，但写法不对：要写成 `Authorization: Bearer <令牌>`" +
+	"（不是 `Authorization: <令牌>`，也不是 `token <令牌>`）";
+
 /** 解析出的凭据：有用户的（登录、个人令牌、会话令牌）、项目令牌、Agent 凭据、任务凭据；共享令牌单独一种。 */
 type Principal =
 	| {
@@ -221,6 +241,16 @@ export class AccessGuard {
 		}
 		// 不属于项目的接口不需要凭据，带了也不看（过期的 Cookie 不该让健康检查和下载安装脚本失败）。
 		if (locator.from === "none") return { ok: true, access: null };
+		// 写错了写法的令牌：401 并说明正确的写法（登录、初始化、状态、登出本来就不看凭据，照旧）。
+		if (malformedAuthorization(request)) {
+			const rule =
+				locator.from === "account"
+					? (ACCOUNT_ROUTES as Record<string, AccountCredential>)[routeKey(request.route)]
+					: undefined;
+			if (rule !== "anonymous" && rule !== "logout") {
+				return denied(401, "unauthorized", MALFORMED_AUTHORIZATION_MESSAGE);
+			}
+		}
 		const offered = presentedCredential(request);
 		// 登录 Cookie 是浏览器自动带上的：跨站的请求（有副作用的，或者不是页面导航的）不认它，当作没有登录。
 		const crossSite = offered?.from === "cookie" && !this.#sameSite(request);
@@ -581,6 +611,11 @@ export class AccessGuard {
 				"forbidden",
 				`缺少「${SCOPE_LABELS[needed]}」范围：${routeKey(route)} 需要它`,
 			);
+		}
+		// 会话的写（建、发话、停止）只有人能做（`writeNeedsPerson`，范围表里的 `humanOnly`）：范围够也不行。
+		// 项目令牌没有用户，建出来的会话没有发起人；会话令牌的情况在下面单独写死。
+		if (principal.kind === "project" && writeNeedsPerson(route)) {
+			return denied(403, "forbidden", "项目令牌不能做这件事：它只有人能做（登录的用户或个人令牌）");
 		}
 		// ADR 0027「凭据」：会话令牌对会话这一类只有读——它是助手在会话里干活用的凭据，不能用来建会话、替人发话、
 		// 停掉会话。这一条是独立的：「编辑」范围让它能改场景，不会让它能写会话。

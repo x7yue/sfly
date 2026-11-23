@@ -12,6 +12,9 @@
 - 控制面在所有响应上带 `x-sfly-time`（控制面的当前时间，ADR 0018）；
   `Client.control_plane_time` 是最近一次响应带来的，命令里要算「已多久」时用它，不用本机时间；
 - 控制面在所有响应上带 `x-sfly-version`；与命令行版本不一致时在 stderr 告警一次，命令照常执行；
+- 令牌不跟着重定向走：重定向到不同的源（协议、主机、端口任一不同）时去掉 `Authorization`
+  （控制面前面的反向代理、单点登录网关、任何一处开放重定向都不该把令牌转给别的主机）；
+- 在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码在网络上是明文）；
 - 连不上控制面抛 `CliError("unreachable", …)`，控制面返回错误抛 `ApiError`（沿用控制面的错误码）；
   401（没有登录、令牌失效或被吊销）的错误信息写明 `sfly login`，下一步也是它。
 """
@@ -58,6 +61,40 @@ UNAUTHORIZED_TIP = (
 
 # 读响应（下载、事件流、接口原样输出）时每次读多少字节。
 READ_CHUNK = 64 * 1024
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def origin_of(url: str) -> tuple[str, str, int | None]:
+    """地址的源：（协议, 主机, 端口）；端口没写时按协议的默认端口。大小写不敏感。"""
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    port = parts.port or {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), port
+
+
+class _KeepTokenOnSameOrigin(urllib.request.HTTPRedirectHandler):
+    """跟随重定向，但重定向到不同的源时去掉 `Authorization`：urllib 默认把请求头原样带到新地址。"""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and origin_of(new.full_url) != origin_of(req.full_url):
+            for name in [k for k in new.headers if k.lower() == "authorization"]:
+                del new.headers[name]
+            for name in [k for k in new.unredirected_hdrs if k.lower() == "authorization"]:
+                del new.unredirected_hdrs[name]
+        return new
+
+
+_OPENER = urllib.request.build_opener(_KeepTokenOnSameOrigin)
 
 
 def detect_ai_agent(environ: Mapping[str, str]) -> str | None:
@@ -140,6 +177,7 @@ class Client:
         self.timeout = timeout
         self._stderr = stderr
         self._warned_version = False
+        self._warned_plain_http = False
         # 用户明确给了昵称（`--nickname`、`SFLY_NICKNAME`），而这次用的是令牌：提示一次「被忽略」。
         self._nickname_ignored_pending = nickname_ignored and token is not None
         self._owner_name: str | None = None
@@ -157,6 +195,16 @@ class Client:
         """按命令行选项、环境变量、凭据文件和 `agent.env` 创建（取值顺序见模块说明）。"""
         url = control_plane_url(server)
         resolved = credentials.resolve_token(url, environ)
+        if resolved is not None and resolved.source == "file":
+            # 凭据文件被改成别人可读（备份、拷贝、手工 chmod）：令牌可能已经被别人看到，提示一次。
+            if loose := credentials.loose_permissions():
+                print(
+                    f"警告：凭据文件 {credentials.credentials_path()} 的权限是 {loose}，"
+                    "别人也读得到里面的令牌："
+                    f"运行 chmod 600 {credentials.credentials_path()}；"
+                    "令牌可能已经泄露的话，sfly logout 后重新 sfly login",
+                    file=sys.stderr,
+                )
         given_nickname = bool((nickname or "").strip() or environ.get("SFLY_NICKNAME", "").strip())
         return cls(
             url,
@@ -205,6 +253,20 @@ class Client:
             file=self._stderr or sys.stderr,
         )
 
+    def _note_plain_http(self) -> None:
+        """带着令牌往不是本机的 `http://` 地址发请求：提示一次（令牌在网络上是明文）。"""
+        if self._warned_plain_http or not self.token:
+            return
+        scheme, host, _ = origin_of(self.server)
+        if scheme != "http" or host in _LOCAL_HOSTS:
+            return
+        self._warned_plain_http = True
+        print(
+            f"警告：{self.server} 是 http 地址，令牌会以明文发送，网络上的人看得到："
+            "有条件的话用 https 地址访问控制面",
+            file=self._stderr or sys.stderr,
+        )
+
     def url(self, path: str, query: Mapping[str, Any] | None = None) -> str:
         """控制面上 `path`（以 `/` 开头，参数已编码）加查询参数的完整地址；值为 None 的参数省略。"""
         url = f"{self.server}{path}"
@@ -218,9 +280,14 @@ class Client:
         *,
         query: Mapping[str, Any] | None = None,
         body: Any = None,
+        raw: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
     ) -> Any:
-        """发一个 JSON 请求，返回解析后的响应体（没有响应体时为 None）。"""
-        with self.open(method, path, query=query, body=body) as response:
+        """发一个 JSON 请求（`raw` 给了就发原样的字节），返回解析后的响应体（没有时为 None）。"""
+        with self.open(
+            method, path, query=query, body=body, raw=raw, headers=headers, timeout=timeout
+        ) as response:
             try:
                 raw = response.read()
             except (OSError, HTTPException) as error:
@@ -246,13 +313,16 @@ class Client:
         *,
         query: Mapping[str, Any] | None = None,
         body: Any = None,
+        raw: bytes | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> HTTPResponse:
         """发请求并返回打开的响应（调用方负责关闭），给流式读取（SSE、下载）用；
+        `body` 是 JSON 请求体，`raw` 是原样的字节（上传归档，Content-Type 由 `headers` 给）；
         失败时抛 `CliError`（连不上）或 `ApiError`（错误响应）。"""
-        data = None
+        data = raw
         self._note_nickname_ignored()
+        self._note_plain_http()
         send = {**self.headers(), **(headers or {})}
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -261,9 +331,7 @@ class Client:
             self.url(path, query), data=data, method=method, headers=send
         )
         try:
-            response: HTTPResponse = urllib.request.urlopen(
-                request, timeout=timeout or self.timeout
-            )
+            response: HTTPResponse = _OPENER.open(request, timeout=timeout or self.timeout)
         except urllib.error.HTTPError as error:
             self._observe(error.headers)
             raise self._unauthorized(self._api_error(error)) from None

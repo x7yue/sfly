@@ -7322,9 +7322,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -7882,9 +7882,9 @@
                           "maximum": 9007199254740991
                         },
                         "queue_timeout": {
+                          "maximum": 4294967295,
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "exclusiveMinimum": 0
                         }
                       },
                       "required": [
@@ -8410,9 +8410,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -9039,9 +9039,9 @@
                           "maximum": 9007199254740991
                         },
                         "queue_timeout": {
+                          "maximum": 4294967295,
                           "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
+                          "exclusiveMinimum": 0
                         }
                       },
                       "required": [
@@ -10334,9 +10334,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -10935,9 +10935,9 @@
                               "maximum": 9007199254740991
                             },
                             "queue_timeout": {
+                              "maximum": 4294967295,
                               "type": "integer",
-                              "exclusiveMinimum": 0,
-                              "maximum": 9007199254740991
+                              "exclusiveMinimum": 0
                             }
                           },
                           "required": [
@@ -19931,7 +19931,7 @@
       "path": "/simple/",
       "key": null,
       "kind": "download",
-      "summary": "sfly 简单索引（PEP 503）的根页面",
+      "summary": "控制面的包索引（PEP 503）的根页面：sfly 和 sfly-std",
       "effect": "read",
       "resource": {
         "kind": "system",
@@ -19993,7 +19993,7 @@
       "path": "/simple/:package/",
       "key": null,
       "kind": "download",
-      "summary": "sfly 简单索引的项目页：SDK wheel 的下载链接",
+      "summary": "控制面的包索引里一个包的页面：sfly 的 SDK wheel、sfly-std 的 wheel 的下载链接",
       "effect": "read",
       "resource": {
         "kind": "system",
@@ -20005,11 +20005,37 @@
         "properties": {
           "package": {
             "type": "string",
-            "description": "索引里的包名（PEP 503 里叫 project）；只有 `sfly`。"
+            "description": "索引里的包名（PEP 503 里叫 project）；只有 `sfly` 和 `sfly-std`。"
           }
         },
         "required": [
           "package"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/simple/sfly-std/files/:filename",
+      "key": null,
+      "kind": "download",
+      "summary": "下载控制面的包索引里的一个 sfly-std wheel",
+      "effect": "read",
+      "resource": {
+        "kind": "system",
+        "target": "global"
+      },
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "wheel 的文件名（`/simple/sfly-std/` 列出的）。"
+          }
+        },
+        "required": [
+          "filename"
         ]
       },
       "notes": []
@@ -20165,11 +20191,16 @@
                 "last_turn_outcome"
               ]
             }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "会话超过 `SESSION_LIST_LIMIT` 个，更早的没有列出来（页面据此提示）。"
           }
         },
         "required": [
           "readiness",
-          "sessions"
+          "sessions",
+          "truncated"
         ]
       },
       "notes": []
@@ -20372,6 +20403,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
@@ -22203,6 +22244,16 @@
           "part": "body",
           "path": "text",
           "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能只有空白"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含 NUL 字符"
+        },
+        {
+          "part": "body",
+          "path": "text",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：不能含不成对的代理字符"
         }
       ]
     },
@@ -22531,6 +22582,12 @@
                     }
                   ]
                 },
+                "issued_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "current": {
                   "type": "boolean"
                 }
@@ -22546,6 +22603,7 @@
                 "expires_at",
                 "revoked_at",
                 "last_used_at",
+                "issued_by",
                 "current"
               ]
             }
@@ -22724,6 +22782,13 @@
             ],
             "description": "最后一次使用的时间，精确到分钟（为了不在每个请求上写库，一分钟内的多次使用只记一次）；从没用过为 null。"
           },
+          "issued_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "项目令牌的签发人（显示名）：项目令牌属于项目，不随签发人失效（签发人被停用、移出项目之后照样有效），但记着是谁签发的。\n个人令牌（签发人就是所属用户）和这一项记录加进来之前签发的为 null。"
+          },
           "current": {
             "type": "boolean"
           },
@@ -22742,11 +22807,18 @@
           "expires_at",
           "revoked_at",
           "last_used_at",
+          "issued_by",
           "current",
           "token"
         ]
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）"
+        }
+      ]
     },
     {
       "method": "DELETE",
@@ -22886,6 +22958,12 @@
                     }
                   ]
                 },
+                "issued_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "current": {
                   "type": "boolean"
                 }
@@ -22901,6 +22979,7 @@
                 "expires_at",
                 "revoked_at",
                 "last_used_at",
+                "issued_by",
                 "current"
               ]
             }
@@ -23052,6 +23131,13 @@
             ],
             "description": "最后一次使用的时间，精确到分钟（为了不在每个请求上写库，一分钟内的多次使用只记一次）；从没用过为 null。"
           },
+          "issued_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "项目令牌的签发人（显示名）：项目令牌属于项目，不随签发人失效（签发人被停用、移出项目之后照样有效），但记着是谁签发的。\n个人令牌（签发人就是所属用户）和这一项记录加进来之前签发的为 null。"
+          },
           "current": {
             "type": "boolean"
           },
@@ -23070,11 +23156,18 @@
           "expires_at",
           "revoked_at",
           "last_used_at",
+          "issued_by",
           "current",
           "token"
         ]
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：令牌的名称里不能有控制字符（换行、转义序列等）"
+        }
+      ]
     },
     {
       "method": "DELETE",

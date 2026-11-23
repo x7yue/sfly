@@ -132,6 +132,7 @@ def hold_connection(ctx: Context, host: str) -> dict:
 - 有默认值的参数是可选输入，默认值必须能序列化为 JSON；没有默认值的是必填输入。
 - 派发任务前按 schema 校验：缺少必填输入、或声明了的输入类型不符时，任务以 `config_error` 失败，节点不会执行。
 - 输入里有节点没有声明的名字（多半是参数名写错了）时，执行器在调用节点函数之前就拒绝，任务同样以 `config_error` 失败，信息里写出多出来的名字和这个节点声明的输入，例如 `节点 http_load 没有声明输入 duraton，它声明的输入有：url、duration、concurrency`。`config_error` 不按 `retries` 重试；`sfly debug`、`sfly.testing` 和在 Agent 上执行一样。有 `**kwargs` 的函数（`sfly build` 不接受这样的节点）什么名字都收。
+- 场景里给节点写了没有声明的输入名，平台在更早的地方就指出来，不用等任务派发到 Agent 上：保存场景时给出警告（`input_not_declared`，仍然保存），触发前的预检阻断；警告写明节点、写错的名字、这个节点类型声明了哪些输入（按参数顺序），名字和某个声明的输入只差一两个字符（含大小写、相邻字符颠倒）时问「是不是想写 …」。`sfly build` 不接受 `**kwargs`，所以元信息里没有「接收任意输入」的节点，不会误报。锁定开发版本（`包名@dev`）的节点同样检查：用在线 Agent 上 `sfly dev` 加载时上报的元信息，只看节点派发到的 Agent：它不在线、没有加载，或者这个包的几个节点派发到的几台 Agent 上报的内容不一样时不检查（照常触发，运行时仍会拦）。节点参数改过之后要重新运行 `sfly dev`，平台才知道新的声明。
 - 不支持的注解（例如自定义类）让 `sfly build` 报错。
 
 ### 输入的说明：`Doc`
@@ -537,6 +538,43 @@ return {"report": ref}
 - 名称是产物目录内的相对路径，可以用 `/` 分隔子目录；不能有空段、`.`、`..` 或反斜杠。
 - 任务结束后 Agent 把产物上传到控制面，运行视图里可以下载。
 - **产物引用**：在 Agent 上是产物在控制面上的下载地址，写进输出交给后续节点，后续节点用 `ctx.artifacts.download` 下载；本地调试时是本地文件路径。
+
+### 大小上限：大文件怎么办
+
+一个任务的产物合计有上限：默认 1 GB，部署者用控制面的 `SFLY_ARTIFACT_LIMIT_MB` 调整。它是每个任务的合计（这个任务已经保存的产物都算在里面），不是单个文件的上限。上限随任务一起交给节点，不用等任务结束、传了很多之后才发现：
+
+```python
+from pathlib import Path
+
+from sfly import ArtifactLimitExceeded, Context, node
+
+
+@node(title="导出数据", outputs=["export", "export_path"])
+def export_data(ctx: Context, rows: int, keep_dir: str) -> dict[str, str | None]:
+    """导出一份数据：放得下就存成产物，放不下就留在本机的 keep_dir 里。"""
+    # 导出的文件可能很大：先写在本机固定的目录里，不要写在任务目录里（任务目录按保留期清理，
+    # 过期后输出里给出的路径就找不到文件了）。文件名带上任务 ID：同一台 Agent 上并发的任务、
+    # 或者下一次运行，都不会覆盖这次输出里给出的那个文件。
+    path = Path(keep_dir) / f"export-{ctx.task.task_id}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{i},{i * i}\n" for i in range(rows)), encoding="utf-8")
+    try:
+        return {"export": ctx.artifacts.save("export.csv", path), "export_path": None}
+    except ArtifactLimitExceeded:
+        # 放不下：文件留在这台机器上，输出里给出它在哪里，要用它的节点用 Agent 的文件能力取。
+        return {"export": None, "export_path": str(path)}
+```
+
+两条分支返回同样的两个键（用不到的给 `None`），`outputs` 里都声明了：下游引用其中一个时，不管这次走了哪条分支，引用的输出都在。
+
+- `ctx.artifacts.limit_bytes` 是这个任务的产物合计最多能有多少字节（`int`），**已经保存的产物也算在里面**，不是「还能再存多少」。本地调试（`sfly debug`、`sfly.testing`）和旧版本的控制面没有上限，是 `None`，不检查。保存之前可以先和它比（估计的大小超过时直接留在本机），但最稳的写法是接住 `save` 抛出的异常：估计的大小和实际的差一点，或者别的线程同时在保存，都靠它兜住。
+- `ctx.artifacts.save` 发现这个文件加上这个任务已经保存的会超过上限时，不写这个文件，抛出 `sfly.ArtifactLimitExceeded`：之前保存的产物不受影响，同名的旧文件也不动。多个线程同时 `save` 时，检查和写入是一起做的，不会都通过检查、合起来超限（锁只管一个进程，多进程见下面）。**不要在信号处理函数里调用 `save`**：信号落在主线程正在 `save` 的时候，处理函数里再 `save` 要等同一把锁，会死锁，连终止信号都收不掉；取消时要存的东西放在 `except Cancelled` 或 `finally` 里（见「取消与清理」）。属性：`name`（要保存的产物名称）、`size`（它的字节数）、`saved`（已保存的合计字节数，同名的旧文件不算）、`limit`（上限的字节数）。
+- **没接住这个异常，任务就在 `save` 那一行以 `env_error` 失败，不按 `retries` 重试**（重试一遍产物还是这么大）：错误信息写明这个文件多大、已保存多少、上限多少，以及上限怎么调。节点自己接住、继续往下跑的不受影响。
+- **多进程**：节点用 `multiprocessing`、`subprocess` 另起进程存产物时，上限是这样算的：每个进程各自检查、各自写，合起来可以超过上限，最后由 Agent 上传前的检查兜住（任务以 `env_error` 失败，说明里写明合计和没上传的文件）；想在节点里就拦住，让存产物的都在一个进程里（子进程把内容交回来，由主进程 `save`）。子进程继承上限，在它里面 `save` 超限同样抛出 `ArtifactLimitExceeded`：`multiprocessing.Pool`、`ProcessPoolExecutor` 会把它原样传回父进程，可以在父进程里接住；用 `subprocess` 另起的解释器，父进程只看得到退出码（`CalledProcessError`），要把原因传回来得靠节点自己（写进它的输出、或用退出码约定）。
+- 大文件留在这台机器上，在节点的输出里给出它在哪台 Agent 的哪个路径；要用它的节点把这台 Agent 声明成「Agent」类型的参数，用 `ctx.agent(名称).files.download(...)` 取（见下文「`ctx.agent()`：Agent 能力」）。路径要放在任务目录之外（任务目录按 `SFLY_TASK_DIR_RETENTION` 清理，默认 7 天，见 [安装 Agent](install-agent.md)）。
+- 直接写进 `ctx.artifacts.path(...)` 的文件，`save` 不经手：任务结束后 Agent 把产物目录里的文件加一遍。合计没超过上限时照常上传。超过时，放得下的文件（从小到大）照常上传，放不下的不传：任务同样以 `env_error` 失败、不重试，错误信息写明合计、上限，和没上传的文件（最大的优先列出）。任务本来就失败时，保留原来的错误类型和信息，没上传的文件附在后面。
+- 控制面的上传接口同样检查上限：请求带了长度时，在读请求体之前就以 HTTP 413 拒绝，错误信息写明是哪个产物、这个任务已上传多少。
+- `limit_bytes` 和 `ArtifactLimitExceeded` 从 SDK 0.6.0 起可用。用到它们的节点包把 `requires-sdk` 调到 `>=0.6.0`；更旧的 SDK 上 `save` 不检查，超限时由上面 Agent 的检查兜住。
 
 ### 下载产物
 
@@ -977,7 +1015,7 @@ def test_count_lines(tmp_path: Path) -> None:
 |---|---|
 | `status` | `success`、`failed` 或 `cancelled` |
 | `outputs` | 输出（仅成功时），否则 None |
-| `error` | `NodeError(kind, message, type, traceback, location)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled`；`location` 是出错的位置（`模块.函数 第 N 行`，见上文「失败」），没有时为 `None` |
+| `error` | `NodeError(kind, message, type, traceback, location)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）、`env_error`（没接住 `ctx.artifacts.save` 抛出的 `ArtifactLimitExceeded`，见「大小上限」）或 `cancelled`；`location` 是出错的位置（`模块.函数 第 N 行`，见上文「失败」），没有时为 `None` |
 | `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr、sdk，或 system（平台写的提示，例如 `ctx.notify` 发给了不在名单里的机器人） |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |

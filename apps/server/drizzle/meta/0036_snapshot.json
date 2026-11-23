@@ -1,5 +1,5 @@
 {
-  "id": "ce805835-f4bc-46c7-825f-7705815577f1",
+  "id": "c13dc045-f608-4475-acd7-b80dc04524ff",
   "prevId": "13ce5d7c-d64e-4463-90dd-4d3e883ed643",
   "version": "7",
   "dialect": "postgresql",
@@ -1279,12 +1279,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "session_id": {
-          "name": "session_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1313,19 +1307,6 @@
           "tableTo": "users",
           "columnsFrom": [
             "author_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "orchestration_versions_session_id_sessions_id_fk": {
-          "name": "orchestration_versions_session_id_sessions_id_fk",
-          "tableFrom": "orchestration_versions",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
           ],
           "columnsTo": [
             "id"
@@ -1886,12 +1867,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "session_id": {
-          "name": "session_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "params": {
           "name": "params",
           "type": "jsonb",
@@ -2093,19 +2068,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "runs_session_id_sessions_id_fk": {
-          "name": "runs_session_id_sessions_id_fk",
-          "tableFrom": "runs",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "runs_cancel_requested_by_user_id_users_id_fk": {
           "name": "runs_cancel_requested_by_user_id_users_id_fk",
           "tableFrom": "runs",
@@ -2285,6 +2247,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "current_turn": {
+          "name": "current_turn",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         }
       },
       "indexes": {
@@ -2358,6 +2327,10 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "sessions_current_turn": {
+          "name": "sessions_current_turn",
+          "value": "\"sessions\".\"current_turn\" >= 0"
+        },
         "sessions_status": {
           "name": "sessions_status",
           "value": "\"sessions\".\"status\" in ('idle', 'running', 'queued', 'ended')"

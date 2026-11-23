@@ -125,12 +125,17 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 	"/simple/": {
 		kind: "system",
 		exact: true,
-		why: "sfly 简单索引（PEP 503）的根页面：uv 从这里装 sfly，与具体场景无关",
+		why: "控制面的包索引（PEP 503）的根页面：uv 从这里装 sfly 和 sfly-std，与具体场景无关",
 	},
 	"/simple/:package/": {
 		kind: "system",
 		exact: true,
-		why: "sfly 简单索引的项目页：SDK wheel 的下载链接，与具体场景无关",
+		why: "控制面的包索引的项目页：SDK wheel、sfly-std wheel 的下载链接，与具体场景无关",
+	},
+	"/simple/sfly-std/files/:filename": {
+		kind: "system",
+		exact: true,
+		why: "下载包索引里的一个 sfly-std wheel：Agent 和开发机装 sfly-std 用的，与具体场景无关",
 	},
 	"/install.sh": {
 		kind: "system",
@@ -267,7 +272,14 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 		}
 		// `/projects/:project/…` 的路径里 :project 只限定项目，定位用的是它之后的第一个参数。
 		const located = paramsBesidesProject(def.path);
-		if (isProjectScoped(def.path) && located.length > 0) {
+		if (isProjectScoped(def.path) && ID_LOCATED_KINDS.includes(kind)) {
+			// 用 ID 定位的类别在这类路径上只接受 collection：写 { params }（不论 :project 还是别的参数）都拒绝。
+			problems.push(
+				`${kind} 用 ID 定位，路径带 :${PROJECT_PARAM}（/projects/:${PROJECT_PARAM}/…）时只能写 collection（列表和新建）：` +
+					`访问检查对这类路径只按路径里的项目判断，不会核对 { params: "${target.params}" } 指的资源属于哪个项目。` +
+					`要按 ID 定位，路径写成不带 /projects/:${PROJECT_PARAM} 的写法（例如 /sessions/:id/…），定位写 { params: "id" }`,
+			);
+		} else if (isProjectScoped(def.path) && located.length > 0) {
 			if (kind === "project") {
 				// 项目本身和它的管理面（项目令牌，以后的成员、项目密钥）：定位的就是路径里的 :project（要的范围、检查的项目都是它），
 				// 它之后的参数（令牌 ID…）是项目名下的子项，不算在定位。
@@ -276,13 +288,6 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 						`project 定位的是项目本身，resource.target 写 { params: "${PROJECT_PARAM}" }：访问检查只认路径里的 :${PROJECT_PARAM}，:${located[0]} 是它名下的子项`,
 					);
 				}
-			} else if (ID_LOCATED_KINDS.includes(kind)) {
-				problems.push(
-					`${kind} 用 ID 定位，路径里不带 :${PROJECT_PARAM}（ADR 0029「项目从请求的哪里来」）：项目从那个资源所在的项目得出，` +
-						`访问检查只核对路径里的项目、不会核对 :${located[0]} 属于它，再带一份还多出「两者不一致」。` +
-						`把路径改成不带 /projects/:${PROJECT_PARAM} 的写法（例如 /sessions/:id/…），定位写 { params: "${located[0]}" }；` +
-						`只有列表和新建（collection）的路径带项目`,
-				);
 			} else if (target.params === PROJECT_PARAM) {
 				problems.push(
 					`resource.target 写了 { params: "${PROJECT_PARAM}" }，但路径里还有 :${located[0]}：它定位的是项目下的那一个资源，不是项目本身；` +
@@ -305,6 +310,16 @@ function checkTarget(def: RouteDef, kind: ResourceKind, target: ResourceTarget):
 	if (!("query" in target) && !("body" in target)) {
 		problems.push(
 			"resource.target 要写 { params }、{ query }、{ body }、collection、upload 或 global",
+		);
+		return problems;
+	}
+	// `/projects/:project/…` 下用 ID 定位的类别只接受 collection（列表和新建）：访问检查看到路径里有 :project 就按路径的项目
+	// 查，不会去核对 query 或 body 里的那个 ID 属于哪个项目——写成 { query }、{ body } 就等于绕过了「ID 决定项目」。
+	if (isProjectScoped(def.path) && ID_LOCATED_KINDS.includes(kind)) {
+		problems.push(
+			`${kind} 用 ID 定位，路径带 :${PROJECT_PARAM}（/projects/:${PROJECT_PARAM}/…）时只能写 collection（列表和新建）：` +
+				`访问检查只按路径里的项目判断，不会核对 ${"query" in target ? "query" : "body"} 里的 ID 属于哪个项目。` +
+				`要按 ID 定位，路径写成不带 /projects/:${PROJECT_PARAM} 的写法（例如 /sessions/:id/…），定位写 { params: "id" }`,
 		);
 		return problems;
 	}

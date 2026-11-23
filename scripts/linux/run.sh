@@ -5,6 +5,7 @@
 #   pnpm linux pnpm lint:rust
 #   pnpm linux bash -c 'cargo test --locked -p sfly-agent --test file_write'
 #   pnpm linux --clean            # 删掉这个工作区在容器卷里的副本和编译结果
+#   pnpm linux --prune [--dry-run] # 删掉卷里已经没有主人的工作区副本（工作区已经删了的）；--dry-run 只列出来
 #
 # - 镜像（scripts/linux/Dockerfile）按需构建，Dockerfile、版本或镜像源变了自动重建；Node、pnpm、Python 的版本取自仓库。
 #   官方源访问不了时，在 ~/.config/sfly/linux.env 里每行写一个 `键=地址`，键是 Dockerfile 里带默认值的 ARG。
@@ -13,11 +14,20 @@
 # - 测试用的 PostgreSQL 是单独的容器 sfly-linux-pg（与 CI 相同的 postgres:18 和账号）。命令和它共用网络，
 #   DATABASE_URL 是 postgres://sfly:sfly@127.0.0.1:5432/sfly，与 CI 一致。
 # - 默认限制在 4 个 CPU（与 CI 的 runner 相同），用 SFLY_LINUX_CPUS 改。
+# - 卷不会一直涨（#579）：每次运行前自动清掉已经没有主人的工作区副本（记在副本里的路径在本机不存在了；旧版本脚本建的、
+#   没有记录路径的，SFLY_LINUX_STALE_DAYS 天（默认 14）没用过的），见 prune.sh；运行开始时这个工作区的编译结果超过
+#   SFLY_LINUX_TARGET_LIMIT_MB（默认 4096）先删增量编译的缓存、还超就整个删，见 trim-target.sh；uv 的缓存超过
+#   SFLY_LINUX_UV_CACHE_LIMIT_MB（默认 1024）让 uv 清掉不再被引用的部分（entry.sh）。
+# - cargo 的调试信息只留行号表（CARGO_PROFILE_DEV_DEBUG、CARGO_PROFILE_TEST_DEBUG 默认 line-tables-only，#587，见
+#   cargo-env.sh）：编译结果小一半多；宿主上设了这两个变量就用设的（想要完整的调试信息设成 true）。只在这里，CI 不动。
+# - 同步只写内容变了的文件，写过的文件修改时间是现在、没变的不动（sync-copy.sh，#589）：cargo 按修改时间判断要不要重编，
+#   不能让同步把修改时间改回更早的值，不然在容器里改过源码（变异）还原之后，测试跑的还是改过的那份二进制。
+# - SFLY_LINUX_VOLUME 改卷的名字（测试用）。
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 
-volume=sfly-linux
+volume=${SFLY_LINUX_VOLUME:-sfly-linux}
 pg=sfly-linux-pg
 pg_image=postgres:18
 # 每个工作区（worktree）一份副本。
@@ -31,6 +41,10 @@ if [[ $1 == --clean ]]; then
 	docker run --rm -v "$volume:/vol" --entrypoint rm "$pg_image" -rf "/vol/$id"
 	echo "pnpm linux：已删除 $root 在卷 $volume 里的副本" >&2
 	exit 0
+fi
+
+if [[ $1 == --prune ]]; then
+	exec "$root/scripts/linux/prune.sh" "$volume" "$pg_image" "${@:2}"
 fi
 
 node_major=$(tr -d '[:space:]' <.node-version)
@@ -56,6 +70,9 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
 	echo "pnpm linux：构建镜像 $image（第一次要几分钟）" >&2
 	docker build -t "$image" "${args[@]}" - <scripts/linux/Dockerfile >&2
 fi
+
+# 先清掉已经没有主人的工作区副本（出错也不挡这次运行：清不掉只是多占点磁盘）。
+"$root/scripts/linux/prune.sh" "$volume" "$pg_image" --quiet --keep "$id" || true
 
 if ! docker container inspect "$pg" >/dev/null 2>&1; then
 	docker run -d --name "$pg" -e POSTGRES_USER=sfly -e POSTGRES_PASSWORD=sfly -e POSTGRES_DB=sfly "$pg_image" >/dev/null
@@ -84,6 +101,8 @@ tty=()
 status=0
 docker run --rm --init ${tty[@]+"${tty[@]}"} --cpus "${SFLY_LINUX_CPUS:-4}" --network "container:$pg" \
 	-v "$root:/src:ro" -v "$sync:/sync:ro" -v "$volume:/vol" \
-	-e SFLY_LINUX_ID="$id" -e DATABASE_URL=postgres://sfly:sfly@127.0.0.1:5432/sfly \
+	-e SFLY_LINUX_ID="$id" -e SFLY_LINUX_ROOT="$root" -e DATABASE_URL=postgres://sfly:sfly@127.0.0.1:5432/sfly \
+	-e SFLY_LINUX_TARGET_LIMIT_MB -e SFLY_LINUX_UV_CACHE_LIMIT_MB \
+	-e CARGO_PROFILE_DEV_DEBUG -e CARGO_PROFILE_TEST_DEBUG \
 	"$image" bash /src/scripts/linux/entry.sh "$@" || status=$?
 exit "$status"

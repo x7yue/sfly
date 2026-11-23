@@ -34,6 +34,8 @@ export const PLATFORM_ADMIN_SCOPES: readonly Scope[] = ROLE_SCOPES.project_admin
 interface ScopeRow {
 	read?: Scope;
 	write: Scope | null;
+	/** 写只有人能做：登录的用户和个人令牌，不是项目令牌、会话令牌（{@link writeNeedsPerson}）。 */
+	humanOnly?: true;
 }
 
 /**
@@ -49,14 +51,30 @@ export const SCOPE_TABLE = {
 	package: { write: "publish" },
 	agent: { write: "manage" },
 	feishu_bot: { write: "manage" },
-	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）。
-	session: { write: "edit" },
+	// 建会话、对它说话、停止它，都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）；
+	// 而且只有人能做：项目令牌（服务账号）和会话令牌不行，会话是一个人和助手的对话，要有发起人。
+	session: { write: "edit", humanOnly: true },
 	system: { write: null },
 	// 账号不属于项目，不走范围表：各接口认哪种凭据由 `ACCOUNT_ROUTES`（./access-rules.ts）规定。
 	account: { write: null },
 	// 项目令牌、（以后的）成员和项目密钥：是项目的管理面，读和写都要管理。
 	project: { read: "manage", write: "manage" },
 } as const satisfies Record<ResourceKind, ScopeRow>;
+
+/**
+ * 这个接口的写是不是只有人能做（范围表里的 `humanOnly`）：在「范围够」之上再加一道「凭据必须是人」——登录的用户和
+ * 个人令牌（它是用户本人的凭据，命令行和 API 客户端用）。项目令牌是服务账号，没有用户，不行；会话令牌是助手干活用的，
+ * 不行；Agent 凭据和任务凭据走自己的接口清单，不在这里。只读不受影响。
+ */
+export function writeNeedsPerson(route: {
+	effect: Effect;
+	resource: { kind: ResourceKind };
+	creates?: ResourceKind | undefined;
+}): boolean {
+	if (route.effect === "read") return false;
+	const entry: ScopeRow = SCOPE_TABLE[route.creates ?? route.resource.kind];
+	return entry.humanOnly === true;
+}
 
 /**
  * 一个接口要什么范围：只读看定位到的资源那一类（几乎都是「读」，项目的管理面是「管理」）；
