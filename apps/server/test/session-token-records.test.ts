@@ -461,6 +461,30 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 			expect("session" in (records.runs.find((run) => run.id === byPerson) ?? {})).toBe(false);
 		});
 
+		it("运行摘要、看板里在跑的运行也带 session（它们显示「谁、经什么触发」）；人触发的没有；节点里读到的运行状态（run.state）不带它", async () => {
+			const id = await scenario();
+			const mine = await json<{ id: string }>(
+				await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } }),
+				201,
+			);
+			const byPerson = await api.triggerOk(id, { host: "h" });
+			await db.query("update sessions set title = '改完的标题' where id = $1", [sessionId]);
+			const ref = { id: sessionId, title: "改完的标题" };
+
+			const summary = (runId: string) =>
+				api.getJson<{ session?: unknown; triggered_via: string | null }>(`/runs/${runId}/summary`);
+			expect((await summary(mine.id)).session).toEqual(ref);
+			expect("session" in (await summary(byPerson))).toBe(false);
+
+			const dashboard = await api.getJson<{
+				running_runs: Array<{ id: string; session?: unknown }>;
+			}>("/dashboard");
+			expect(dashboard.running_runs.find((run) => run.id === mine.id)?.session).toEqual(ref);
+			expect("session" in (dashboard.running_runs.find((run) => run.id === byPerson) ?? {})).toBe(
+				false,
+			);
+		});
+
 		it("版本历史、单个版本、保存的响应里，会话保存的版本带 session；人保存的没有", async () => {
 			const id = await scenario();
 			const saved = await json<{ number: number; session?: unknown }>(

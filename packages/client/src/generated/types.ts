@@ -682,6 +682,8 @@ export interface DashboardRunningRun {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（与运行列表的 `session` 相同）。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
@@ -2513,6 +2515,11 @@ export interface RunReport {
 	truncated: boolean;
 	/** 运行里已经创建的全部链实例，按层数、开始时间排序；还没被触发的子流程不在里面，看触发它的异步任务节点的状态。 */
 	chains: RunStateChain[];
+	/**
+	 * 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（和运行视图的 `session` 相同）。
+	 * 只在运行摘要里：`RunState` 也是节点里 `${{ run.state }}` 看到的东西，不带它。
+	 */
+	session?: SessionRef;
 	/** 耗时（毫秒，控制面时间）；运行还没结束时为 null。 */
 	duration_ms: number | null;
 	/**
