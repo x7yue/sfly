@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from sfly.cli.client import ApiError, Client, segment
+from sfly.cli.value_text import value_text
 
 #: 平台默认的超时（秒）。
 PLATFORM_TIMEOUT_SECONDS = 3600
@@ -32,14 +33,19 @@ def _is_timeout(value: Any) -> bool:
     )
 
 
+#: 场景里这个节点没写超时（文档里没有 `timeout` 这个键）：和写了 `null` 不是一回事。
+ABSENT: Any = object()
+
+
 def node_timeout_problem(label: str, written: Any) -> str | None:
     """场景里这个节点写的超时不合格时的说明（和控制面派发、保存、预检的 `nodeTimeoutProblem`
-    同一句话），没写或合格时是 None。`label` 是节点（`显示名称（节点 ID）`、节点 ID）。"""
-    if written is None or _is_timeout(written):
+    同一句话），没写（`ABSENT`）或合格时是 None；写了 `null` 和别的不合格的值一样报出来
+    （保存时 `null` 同样被拒绝，#576）。`label` 是节点（`显示名称（节点 ID）`、节点 ID）。"""
+    if written is ABSENT or _is_timeout(written):
         return None
     return (
         f"节点 {label}：timeout 必须是 1 到 {MAX_TIMEOUT_SECONDS} 之间的正整数（秒），"
-        f"实际是 {written}"
+        f"实际是 {value_text(written)}"
     )
 
 
@@ -66,7 +72,7 @@ def effective_timeout(node: dict[str, Any], declared: Any) -> dict[str, Any]:
 def timeout_view(node: dict[str, Any], label: str, declared: Any) -> dict[str, Any]:
     """`sfly scenario show` 里包节点的 `timeout`：生效的值和来源；场景里写的值派发时会被拒绝
     （升级前保存的版本里可能有）时，`source` 是 `invalid`，带着说明（`problem`）。"""
-    problem = node_timeout_problem(label, node.get("timeout"))
+    problem = node_timeout_problem(label, node.get("timeout", ABSENT))
     if problem is not None:
         return {"seconds": None, "source": "invalid", "problem": problem}
     return effective_timeout(node, declared)

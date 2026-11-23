@@ -14,6 +14,8 @@ Agent 回复若干行 JSON：
 
 超时由 Agent 负责（`timeout_ms`，等对方回应的上限）；SDK 这边多等 `REPLY_MARGIN` 秒兜底，
 Agent 自己卡住时也不会永远等下去。任务被取消时：Agent 回复 `cancelled`，调用抛出 `Cancelled`；
+任务进入收尾时间（取消标记出现：取消、超时、被停止子流程节点停止都一样）之后新发起的调用
+一开始就抛出 `Cancelled`，不连 Agent；
 主线程里的调用同时会被 SIGTERM 打断（执行器把它变成 `Cancelled`），两者谁先到都只抛一次
 （`sfly.context.cancelled_error`）。关掉连接（`close()`、提前停止迭代）即放弃调用，Agent 随之放弃。
 """
@@ -69,7 +71,7 @@ class AgentSocket:
         import socket
 
         if self._cancelled():
-            raise cancelled_error("任务已取消")
+            raise cancelled_error("任务正在收尾，不再发起新的调用")
         if margin is None:
             margin = REPLY_MARGIN
         request = {

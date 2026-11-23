@@ -1,13 +1,15 @@
+import { dispatchAgentOf } from "@sfly/orchestration";
 import {
 	DEV_VERSION,
 	NodeTypeMetadata,
 	type PackageMetadata,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { and, eq } from "drizzle-orm";
+import { agentsInProject } from "../agents/project-agents.js";
 import type { Db, Tx } from "../db/database.js";
-import { agents, nodePackages } from "../db/schema.js";
 import { type NodeTypeView, withDefaultCharts } from "../packages/default-charts.js";
+import { findPackageMetadata } from "../packages/package-repository.js";
+import type { ProjectId } from "../projects/project-id.js";
 
 /** 包节点引用的节点类型。 */
 export interface NodeTypeRef {
@@ -22,9 +24,13 @@ export interface NodeTypeRef {
 	type: PackageMetadata["nodes"][number] | undefined;
 }
 
-/** 场景中 nodeId 这个包节点的节点类型；不是包节点时为 undefined。 */
+/**
+ * 场景中 nodeId 这个包节点的节点类型；不是包节点时为 undefined。按场景（运行）所在的项目找：节点包是本项目的和公共项目里的，
+ * 开发版本取本项目的 Agent 上报的；别的项目里的和不存在一样。
+ */
 export async function nodeTypeOf(
 	db: Db | Tx,
+	project: ProjectId,
 	document: StoredOrchestrationDocument,
 	nodeId: string,
 	agentName: string | null,
@@ -35,20 +41,13 @@ export async function nodeTypeOf(
 	let metadata: PackageMetadata | undefined;
 	if (version === DEV_VERSION) {
 		if (agentName) {
-			const [agent] = await db
-				.select({ info: agents.info })
-				.from(agents)
-				.where(eq(agents.name, agentName));
+			const [agent] = await agentsInProject(db, project, [agentName]);
 			metadata = agent?.info.dev_packages?.find((p) => p.name === node.package)?.metadata as
 				| PackageMetadata
 				| undefined;
 		}
 	} else {
-		const [pkg] = await db
-			.select({ metadata: nodePackages.metadata })
-			.from(nodePackages)
-			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, version)));
-		metadata = pkg?.metadata;
+		metadata = await findPackageMetadata(db, project, node.package, version);
 	}
 	const type = metadata?.nodes?.find((n) => n.name === node.node);
 	return { package: node.package, node: node.node, version, type };
@@ -70,6 +69,7 @@ export function nodeTypeView(type: NodeTypeRef["type"]): NodeTypeView | undefine
  */
 export async function declaredNodeType(
 	db: Db | Tx,
+	project: ProjectId,
 	document: StoredOrchestrationDocument,
 	nodeId: string,
 	agentName?: string | null,
@@ -78,9 +78,11 @@ export async function declaredNodeType(
 	if (node?.kind !== "package") return undefined;
 	const ref = await nodeTypeOf(
 		db,
+		project,
 		document,
 		nodeId,
-		agentName ?? node.agent ?? document.default_agent ?? null,
+		// 节点派发到哪台 Agent 只在 `dispatchAgentOf` 里定义一次（引擎、预检、画布都用它）。
+		agentName ?? dispatchAgentOf(document, node) ?? null,
 	);
 	return nodeTypeView(ref?.type);
 }

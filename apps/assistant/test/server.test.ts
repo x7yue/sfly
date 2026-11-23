@@ -64,8 +64,11 @@ describe("请求", () => {
 		expect(await broken.text()).not.toContain("do-not-echo-me");
 	});
 
-	it("没有在做的一轮时停止：202，什么都不做", async () => {
+	it("没有在做的一轮时停止：202，不结束什么，只记下这一轮的记号（它的 prompt 到了直接停下）", async () => {
+		const before = h.sessions.abortMarks;
 		expect((await h.abort(crypto.randomUUID())).status).toBe(202);
+		expect(h.sessions.abortMarks).toBe(before + 1);
+		expect(h.sessions.activeProcesses).toBe(0);
 	});
 });
 

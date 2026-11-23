@@ -180,7 +180,7 @@ async function sourcesOf(
 			displayName: nodeNameIn(document, nodeId),
 			attempt,
 			previousError: tried.at(-2)?.errorMessage ?? null,
-			type: await declaredNodeType(db, document, nodeId, attempt?.agent),
+			type: await declaredNodeType(db, read.run.projectId, document, nodeId, attempt?.agent),
 		});
 	}
 	return sources;

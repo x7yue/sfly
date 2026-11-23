@@ -14,7 +14,7 @@
 
 import { ACTION } from "./copy";
 
-export type ShortcutGroup = "全局" | "编排画布" | "运行监控" | "列表页";
+export type ShortcutGroup = "全局" | "助手" | "编排画布" | "运行监控" | "列表页";
 
 export interface ShortcutDef {
 	id: string;
@@ -51,6 +51,7 @@ export const SHORTCUTS = [
 	// Alt+T 是 sonner 自带的热键，不是我们绑定的。
 	{ id: "focus-notifications", group: "全局", label: "跳到通知", keys: "Alt+T", displayOnly: true },
 	{ id: "go-dashboard", group: "全局", label: "控制台", keys: "G D" },
+	{ id: "go-assistant", group: "全局", label: "助手", keys: "G I" },
 	{ id: "go-scenarios", group: "全局", label: "场景编排", keys: "G S" },
 	{ id: "go-runs", group: "全局", label: "运行记录", keys: "G R" },
 	{ id: "go-agents", group: "全局", label: "Agent 管理", keys: "G A" },
@@ -59,6 +60,14 @@ export const SHORTCUTS = [
 	{ id: "go-docs", group: "全局", label: "开发文档", keys: "G H" },
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
 	{ id: "new-scenario", group: "全局", label: "新建场景", keys: "N" },
+	// 助手页和会话页（sessions/）的输入框：Ctrl/⌘+Enter 发出（助手页是开始，会话页是接着说）；Enter 是换行。
+	{
+		id: "assistant-send",
+		group: "助手",
+		label: "发送（输入框里）",
+		keys: "Ctrl+Enter",
+		inInputs: true,
+	},
 	// 编排画布（全屏页）：方向键、Enter、Esc 由画布组件自己处理（components/canvas/FlowCanvas.tsx）。
 	{
 		id: "canvas-save",

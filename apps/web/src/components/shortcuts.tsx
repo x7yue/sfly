@@ -101,7 +101,7 @@ export function ShortcutListener() {
 	return null;
 }
 
-const GROUPS: ShortcutGroup[] = ["全局", "编排画布", "运行监控", "列表页"];
+const GROUPS: ShortcutGroup[] = ["全局", "助手", "编排画布", "运行监控", "列表页"];
 
 /** 快捷键面板（?）：内容全部来自注册表。 */
 export function ShortcutsDialog({
@@ -113,7 +113,10 @@ export function ShortcutsDialog({
 }) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="w-[740px]">
+			{/* 宽度跟着内容走（至少 740px）：名称不折行，最宽的一行（名称加按键）放得下。窗口宽到放得下四列（1100px 起）时
+			    排四列，放得下五列（1300px 起）时排五列：1440×900 里五列整个面板放得下、不用滚（四列还差 43px：「助手」
+			    一组加进来之后）；放不下的窗口（1280×800 等）面板自己滚，下面还有内容时底边渐隐。 */}
+			<DialogContent className="w-fit min-w-[740px]">
 				<DialogHeader>
 					<DialogTitle>快捷键</DialogTitle>
 				</DialogHeader>
@@ -124,14 +127,14 @@ export function ShortcutsDialog({
 						return (
 							<section key={group} aria-label={group}>
 								<h4 className="mt-1 mb-1 text-xs font-semibold text-fg-3">{group}</h4>
-								<dl className="m-0 grid grid-cols-3 gap-x-6">
+								<dl className="m-0 grid grid-cols-[repeat(3,minmax(max-content,1fr))] gap-x-6 min-[1100px]:grid-cols-[repeat(4,minmax(max-content,1fr))] min-[1300px]:grid-cols-[repeat(5,minmax(max-content,1fr))]">
 									{rows.map((row) => (
 										<div
 											key={row.ids[0]}
-											className="flex items-center justify-between border-b border-border-soft py-1.25 text-sm"
+											className="flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm"
 										>
-											<dt>{row.label}</dt>
-											<dd className="m-0 inline-flex items-center gap-1.5">
+											<dt className="whitespace-nowrap">{row.label}</dt>
+											<dd className="m-0 flex flex-none items-center gap-1.5">
 												{row.ids.map((id, i) => (
 													<Fragment key={id}>
 														{i > 0 && <span className="text-xs text-fg-3">或</span>}
