@@ -21,11 +21,17 @@ language js
 // 第三方日志库自己的输出。这些都得是有意写出来的绕法，靠审查；Fastify 的日志是另一条出口，由 `sanitizeLogArgs` 处理（见 CODING_STANDARDS.md）。
 or {
 	`console` as $span where { $form = "console" },
-	or { `process.stdout`, `process.stderr` } as $span where { $form = "process-stream" },
+	or {
+		`process.stdout`,
+		`process.stderr`
+	} as $span where { $form = "process-stream" },
 	JsVariableDeclarator() as $span where {
 		$span <: contains `process`,
 		$span <: contains JsObjectBindingPattern() as $pattern where {
-			$pattern <: contains or { `stdout`, `stderr` }
+			$pattern <: contains or {
+				`stdout`,
+				`stderr`
+			}
 		},
 		$form = "process-destructure"
 	},
@@ -38,8 +44,14 @@ or {
 		$source <: r"[\"'](?:node:)?(?:process|console)[\"']",
 		$form = "stream-module-import"
 	},
-	or { `$_.writeSync($fd, $_)`, `writeSync($fd, $_)` } as $span where {
-		$fd <: or { `1`, `2` },
+	or {
+		`$_.writeSync($fd, $_)`,
+		`writeSync($fd, $_)`
+	} as $span where {
+		$fd <: or {
+			`1`,
+			`2`
+		},
 		$form = "write-sync"
 	}
 } where {

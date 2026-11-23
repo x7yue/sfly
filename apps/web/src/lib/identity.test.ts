@@ -153,7 +153,12 @@ describe("请求拿到 401（noteUnauthorized）", () => {
 		setCurrentUser(USER);
 		noteUnauthorized();
 		await vi.waitFor(() => expect(asked).toHaveLength(1));
-		const other = { id: "u2", login_name: "alice", display_name: "爱丽丝", is_platform_admin: false };
+		const other = {
+			id: "u2",
+			login_name: "alice",
+			display_name: "爱丽丝",
+			is_platform_admin: false,
+		};
 		setCurrentUser(other);
 		release();
 		await new Promise((resolve) => setTimeout(resolve, 20));
@@ -170,7 +175,12 @@ describe("请求拿到 401（noteUnauthorized）", () => {
 		setCurrentUser(USER);
 		noteUnauthorized();
 		await vi.waitFor(() => expect(asked).toHaveLength(1));
-		const other = { id: "u2", login_name: "alice", display_name: "爱丽丝", is_platform_admin: false };
+		const other = {
+			id: "u2",
+			login_name: "alice",
+			display_name: "爱丽丝",
+			is_platform_admin: false,
+		};
 		setCurrentUser(other);
 		release();
 		await new Promise((resolve) => setTimeout(resolve, 20));
