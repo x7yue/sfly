@@ -295,13 +295,15 @@ function FocusSection({
 }) {
 	const data = focus.data;
 	const primary = data?.mode === "primary";
+	// 运行已经结束、没设关注项：主指标是执行中节点的，不会再有读数，标题不再写「执行中节点的主指标」，下面一句说明。
+	const emptyEnded = primary && run.status !== "running" && data?.items.length === 0;
 	const open = (item: RunFocusItem) =>
 		onOpenNode({ chainInstanceId: item.source.chain_instance_id, nodeId: item.node_id });
 	return (
 		<section aria-labelledby="overview-focus" className="flex flex-col gap-3">
 			<div className="flex items-baseline gap-2.5">
 				<h2 id="overview-focus" className="m-0 text-base font-semibold">
-					{primary ? RUNNING_PRIMARY_LABEL : TERM.focusItem}
+					{primary && !emptyEnded ? RUNNING_PRIMARY_LABEL : TERM.focusItem}
 				</h2>
 				{data && !primary && (
 					<span className="font-mono text-xs text-fg-3" data-testid="focus-count">
@@ -357,8 +359,11 @@ function FocusBody({
 	if (data.items.length === 0 && data.mode === "primary" && !executing && waiting.length > 0) {
 		return <WaitingNodes nodes={waiting} />;
 	}
-	// 运行已经结束、没设关注项：主指标是执行中节点的，不会再有读数；不画一个只写「没有执行中的节点」的空框。
-	if (data.items.length === 0 && data.mode === "primary" && runEnded) return null;
+	// 运行已经结束、没设关注项：主指标是执行中节点的，不会再有读数；不画一个只写「没有执行中的节点」的空框，
+	// 一句说明写清为什么这里没有读数、怎么才会有（标题也不再写「执行中节点的主指标」，见 FocusSection）。
+	if (data.items.length === 0 && data.mode === "primary" && runEnded) {
+		return <p className="m-0 text-sm text-fg-3">{FOCUS.endedNoneSet}</p>;
+	}
 	if (data.items.length === 0) {
 		return (
 			<p className="m-0 rounded-lg border border-dashed border-border-soft px-4 py-6 text-center text-sm text-fg-3">

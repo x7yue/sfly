@@ -2,6 +2,7 @@ import { effectiveTimeout } from "@sfly/orchestration";
 import type { StoredOrchestrationDocument } from "@sfly/schema";
 import type { Db, Tx } from "../db/database.js";
 import { nodeTypeOf } from "../metrics/node-types.js";
+import type { ProjectId } from "../projects/project-id.js";
 
 /** 用了平台默认的超时而超时失败时，接在 Agent 报的错误信息后面的一句（docs/SEMANTICS.md §3.3，#476）。 */
 export const PLATFORM_TIMEOUT_HINT =
@@ -14,13 +15,14 @@ export const PLATFORM_TIMEOUT_HINT =
  */
 export async function platformTimeoutHint(
 	db: Db | Tx,
+	project: ProjectId,
 	document: StoredOrchestrationDocument,
 	nodeId: string,
 	agentName: string | null,
 ): Promise<string> {
 	const node = document.nodes.find((n) => n.id === nodeId);
 	if (node?.kind !== "package") return "";
-	const ref = await nodeTypeOf(db, document, nodeId, agentName);
+	const ref = await nodeTypeOf(db, project, document, nodeId, agentName);
 	if (!ref?.type) return "";
 	return effectiveTimeout(node, ref.type).source === "platform" ? PLATFORM_TIMEOUT_HINT : "";
 }

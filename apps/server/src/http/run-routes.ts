@@ -9,6 +9,7 @@ import { referencedAgentStatus } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PresetStore } from "../presets/preset-store.js";
 import { entryParams } from "../presets/preset-validity.js";
+import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { type Preflight, preflightWarnings } from "../runs/preflight.js";
 import { listRuns } from "../runs/run-list.js";
 import { getRunView } from "../runs/run-read.js";
@@ -47,6 +48,8 @@ export function registerRunRoutes(
 		const head = isUuid(params.id) ? await deps.orchestrations.head(params.id) : undefined;
 		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
 		const orchestration = await deps.orchestrations.get(params.id);
+		// 包和 Agent 都按场景所在的项目找：别的项目的当作不存在（预检响应里的 `agents` 也只有本项目的）。
+		const project = (await deps.orchestrations.projectOf(params.id)) ?? DEFAULT_PROJECT;
 		const declarations = entryParams(head.document);
 		const presets = await deps.presets.viewsFor(params.id, declarations);
 		if (orchestration?.archived_at) {
@@ -74,13 +77,13 @@ export function registerRunRoutes(
 		return {
 			version: head.number,
 			params: declarations,
-			problems: await deps.preflight(deps.db, head.document),
+			problems: await deps.preflight(deps.db, project, head.document),
 			warnings: [
 				...preflightWarnings(head.document),
 				...(await secretLeafWarnings(deps.db, params.id)),
 			],
 			packages: head.document.packages,
-			agents: (await referencedAgentStatus(deps.db, head.document)).map((agent) => ({
+			agents: (await referencedAgentStatus(deps.db, project, head.document)).map((agent) => ({
 				...agent,
 				preparing_since: deps.hub.preparingSince(agent.name)?.toISOString() ?? null,
 			})),

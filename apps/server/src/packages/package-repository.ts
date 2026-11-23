@@ -339,24 +339,39 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 export type PackageRepository = ReturnType<typeof createPackageRepository>;
 
 /**
- * 一个节点包版本，不看它属于哪个项目：场景文档里按名字引用的包（保存时的静态检查、预检、派发）只带名字和版本，
- * 名字现在全局唯一，按名字找就够；改成「本项目、再公共项目」的解析之后（#501、#502）这里要带项目。
+ * 这个项目读得到的一个节点包版本（本项目发布的，或公共项目里的）；别的项目里发布的和不存在一样。
+ * 场景文档里按名字引用的包（保存时的静态检查、局部编辑、触发前的预检）只带名字和版本，解析它们用的是
+ * 和包的列表、详情、归档下载同一个范围（{@link readableProjects}）：这一个函数，不另写。
  * 数据库由调用方传：在事务里读时传事务对象，不要另从连接池取连接。
  */
 export async function findPackageVersion(
 	db: Db | Tx,
+	project: ProjectId,
 	name: string,
 	version: string,
 ): Promise<PackageVersion | undefined> {
-	const row = await findRow(db, name, version);
+	const row = await findRow(db, name, version, project);
 	return row && toVersion(row);
+}
+
+/**
+ * 同 {@link findPackageVersion}（同一个范围），返回库里存的原始元信息，没有加平台生成的默认图表：
+ * 节点类型的声明（指标、图表、超时）读它，默认图表由读它的人按需加（`nodeTypeView`）。
+ */
+export async function findPackageMetadata(
+	db: Db | Tx,
+	project: ProjectId,
+	name: string,
+	version: string,
+): Promise<PackageMetadata | undefined> {
+	return (await findRow(db, name, version, project))?.metadata;
 }
 
 async function findRow(
 	db: Db | Tx,
 	name: string,
 	version: string,
-	project?: ProjectId,
+	project: ProjectId,
 ): Promise<Row | undefined> {
 	const [row] = await db
 		.select()
@@ -365,9 +380,7 @@ async function findRow(
 			and(
 				eq(nodePackages.name, name),
 				eq(nodePackages.version, version),
-				...(project === undefined
-					? []
-					: [inArray(nodePackages.projectId, readableProjects(project))]),
+				inArray(nodePackages.projectId, readableProjects(project)),
 			),
 		);
 	return row;

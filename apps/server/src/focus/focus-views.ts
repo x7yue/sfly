@@ -3,11 +3,14 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { orchestrationVersions } from "../db/schema.js";
 import { declaredNodeType } from "../metrics/node-types.js";
+import type { ProjectId } from "../projects/project-id.js";
 import type { FocusItem } from "./focus-list.js";
 
 /** 场景和它的最新版本号（0 表示还没有保存过版本）。 */
 interface HeadRef {
 	id: string;
+	/** 场景所在的项目：节点类型的声明只在这个项目里找。 */
+	projectId: ProjectId;
 	headVersion: number;
 }
 
@@ -28,10 +31,11 @@ async function headDocument(db: Db | Tx, { id, headVersion }: HeadRef) {
 /** 文档里 `nodeId` 这个节点的节点类型声明的图表，含默认图表；见 {@link declaredNodeType}。 */
 export async function declaredCharts(
 	db: Db | Tx,
+	project: ProjectId,
 	document: StoredOrchestrationDocument,
 	nodeId: string,
 ): Promise<ChartView[] | undefined> {
-	const type = await declaredNodeType(db, document, nodeId);
+	const type = await declaredNodeType(db, project, document, nodeId);
 	return type && (type.charts ?? []);
 }
 
@@ -78,7 +82,7 @@ export async function focusItemViews(
 			continue;
 		}
 		if (!chartsByNode.has(node_id)) {
-			chartsByNode.set(node_id, await declaredCharts(db, head, node_id));
+			chartsByNode.set(node_id, await declaredCharts(db, orchestration.projectId, head, node_id));
 		}
 		const declared = chartsByNode.get(node_id)?.find((c) => c.title === chart);
 		views.push(
