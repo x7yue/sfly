@@ -30,7 +30,7 @@ export interface OpenDatabaseOptions {
 	 * **借出去的连接**（事务里，连接池在借出时没有给它挂任何处理）出错时调用：给了它，这个连接上的错误就当作进程要有序退出的
 	 * 理由（#563，docs/ARCHITECTURE.md §6.10）。不给：只记日志（测试里的控制面是这样，进程不由控制面管）。
 	 * 调用之前连接池已经结束（`pool.end()`）：之后**新的**拿连接、执行语句的请求立刻以错误结束，不再碰数据库
-	 * （已经在排队等连接的请求、已经借出连接正在执行的请求不受影响：见 `docs/ARCHITECTURE.md` §6.10）。
+	 * （已经在排队等连接的请求、已经借出连接正在执行的请求不受影响：见 docs/ARCHITECTURE.md §6.10）。
 	 */
 	onInUseError?: (error: Error) => void;
 	/**
