@@ -9,10 +9,13 @@ import type {
 	AgentView,
 	ArtifactView,
 	AssistantDeltaEvent,
+	CheckedWarningView,
 	CommitFile,
+	CopiedOrchestrationView,
 	CreateSessionBody,
 	DashboardView,
 	DocumentDiffView,
+	EditOperations,
 	ErrorClass,
 	FeishuBotName,
 	FeishuBotScenario,
@@ -72,10 +75,12 @@ import type {
 	SessionDetailResponse,
 	SessionEventsQuery,
 	SessionListResponse,
+	SessionRef,
 	SessionTool,
 	SessionView,
 	SnapshotEvent,
 	SteerQueueEvent,
+	StoredOrchestrationDocument,
 	ThinkingEvent,
 	Timestamp,
 	TokenUsage,
@@ -619,6 +624,64 @@ export interface Api {
 			}
 		>;
 		/**
+		 * `POST /orchestrations/:id/edits`
+		 *
+		 * 对场景做一组局部编辑（#470），存成一个新版本，返回 201：和保存相同的响应，再加上这组操作造成的差异（`diff`，相对 base_version）。
+		 * 需要昵称请求头。操作见
+		 */
+		edit: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					/** 编辑起点的版本号；不是最新版本时 409 `version_conflict`。 */
+					base_version: number;
+					/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+					operations: EditOperations;
+				};
+			},
+			{
+				id: string;
+				orchestration_id: string;
+				number: number;
+				/** 保存这个版本的人的昵称。 */
+				author: string;
+				author_via: string | null;
+				/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+				session?: SessionRef;
+				created_at: Timestamp;
+				document: StoredOrchestrationDocument;
+				/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
+				warnings: CheckedWarningView[];
+				/** 这组操作造成的差异：从 base_version 到新版本。 */
+				diff: DocumentDiffView;
+				/** true：这组操作没有改动，没有存出新版本，返回的是当前版本（状态码 200）；存出了新版本时没有这个字段。 */
+				unchanged?: true;
+			}
+		>;
+		/**
+		 * `POST /orchestrations/:id/edits/check`
+		 *
+		 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
+		 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+		 * 没有给 base_version 时对照最新版本，不报冲突。
+		 */
+		checkEdits: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+					base_version?: number;
+					/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+					operations: EditOperations;
+				};
+			},
+			VersionCheckView
+		>;
+		/**
 		 * `GET /orchestrations/:id/versions`
 		 *
 		 * 版本历史：按版本号从新到旧列出版本号、作者和时间。
@@ -655,6 +718,8 @@ export interface Api {
 		 *
 		 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
 		 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
+		 * 恢复也不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样恢复（#576），响应的 `warnings` 里每个这样的字段一条
+		 * （`timeout_out_of_range`、`queue_timeout_out_of_range`）；要保存任何改动之前先把它们改成合格的值。
 		 */
 		restoreVersion: Endpoint<
 			{
@@ -723,7 +788,8 @@ export interface Api {
 		 *
 		 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
 		 * 源场景最新版本的内容作为第 1 版。有关注项时，副本的关注项最后修改记为复制的人，说明写「复制自「源场景名」」。
-		 * 联调副本也走这个接口。
+		 * 联调副本也走这个接口。第 1 版是原样复制，不过保存时的检查（升级前保存的版本里超限的超时、排队超时照样复制，#576），
+		 * 响应的 `warnings` 是第 1 版的警告，和保存、恢复版本的响应同一套。
 		 */
 		copy: Endpoint<
 			{
@@ -734,7 +800,7 @@ export interface Api {
 					name: string;
 				};
 			},
-			OrchestrationView
+			CopiedOrchestrationView
 		>;
 		/**
 		 * `POST /orchestrations/:id/archive`
@@ -1367,6 +1433,8 @@ export const routes = {
 		saveVersion: { method: "POST", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		check: { method: "POST", path: "/orchestrations/:id/check", kind: "endpoint" },
 		versionDiff: { method: "GET", path: "/orchestrations/:id/versions/:a/diff/:b", kind: "endpoint" },
+		edit: { method: "POST", path: "/orchestrations/:id/edits", kind: "endpoint" },
+		checkEdits: { method: "POST", path: "/orchestrations/:id/edits/check", kind: "endpoint" },
 		versions: { method: "GET", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		version: { method: "GET", path: "/orchestrations/:id/versions/:number", kind: "endpoint" },
 		restoreVersion: { method: "POST", path: "/orchestrations/:id/versions/:number/restore", kind: "endpoint" },

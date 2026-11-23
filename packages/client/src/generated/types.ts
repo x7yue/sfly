@@ -143,6 +143,31 @@ export interface ActionSummaryView {
 	recent_failed: EndedActionView[];
 }
 
+/**
+ * 加一个包节点。`id` 不写时按画布的规则生成（节点名加序号，例如 `check_1`）。`after` 写了就接在那个节点后面：
+ * 它是链尾时追加，后面还有节点时插在它和下一个节点之间（和画布上「在后面添加」一样）。
+ * 包还没有锁定时一起锁定：`version` 写了用它，不写时用最新发布的版本，没有发布过、只有在线的 Agent 加载着开发版本时用 `dev`；
+ * 已经锁定的包只能用锁定的版本。
+ */
+export interface AddNodeOperation {
+	op: "add_node";
+	/** 只能用字母、数字、下划线和连字符（输出的引用里要写它）。 */
+	id?: string;
+	package: PackageName;
+	node: NodeName;
+	version?: string;
+	after?: string;
+	/** 节点的输入：常量或含 `${{ ... }}` 引用的字符串。必填的输入要给出。 */
+	inputs?: Record<string, unknown>;
+	display_name?: string;
+	note?: string;
+	agent?: string;
+	always?: boolean;
+	timeout?: number;
+	retries?: number;
+	queue_timeout?: number;
+}
+
 /** 其它 Agent 连接这台 Agent、调用它的能力用的地址（ADR 0019），按最近一次连接上报的。 */
 export interface AgentEndpointView {
 	/**
@@ -458,6 +483,37 @@ export interface CommitFile {
 	deletions: number | null;
 }
 
+/** 加一条连线，规则和画布上连线一样（链不分叉、不汇合、不成环；调度连线从异步任务节点连到子流程入口）。 */
+export interface ConnectOperation {
+	op: "connect";
+	from: string;
+	to: string;
+	kind?: "chain" | "dispatch";
+}
+
+/**
+ * 复制场景的响应（#576）：新场景，加上第 1 版的警告，和保存、恢复版本的响应里的 `warnings` 同一套。复制把源场景最新版本的
+ * 文档原样写成新场景的第 1 版，不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样复制，问题在这里带出来。
+ * 源场景还没有版本（`head_version` 为 0）时为空。
+ */
+export interface CopiedOrchestrationView {
+	id: string;
+	name: string;
+	description: string;
+	/** 最新版本号；0 表示还没有保存过版本。 */
+	head_version: number;
+	created_at: Timestamp;
+	/** 归档时间；没有归档时为 null。 */
+	archived_at: Timestamp | null;
+	/** 运行结束时发给飞书机器人的通知设置（`bot` 为 null 即关闭）。 */
+	run_notification: RunNotificationSettings;
+	/** 关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。 */
+	focus_items: FocusItemView[];
+	/** 关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。 */
+	focus_edit: FocusEditView | null;
+	warnings: DocumentWarningView[];
+}
+
 /**
  * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
  *
@@ -492,6 +548,36 @@ export interface CurrentAction {
 	name: string;
 	/** 开始的控制面时间。 */
 	started_at: Timestamp;
+}
+
+/**
+ * 控制台运行块里进行中的节点：运行列表的 `active_nodes` 一项，排队中的节点多两个字段，写明它在等什么
+ * （运行监控概览里同一件事的写法，#457）。其余状态的节点两个字段都是 null。
+ */
+export interface DashboardActiveNode {
+	chain_instance_id: string;
+	node_id: string;
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
+	status: string;
+	/** 最后一次尝试的尝试号（从 1 开始）。 */
+	attempt: number;
+	/** 任务所在的 Agent（排队中的任务是它在等的 Agent）；不在 Agent 上执行的节点（停止子流程节点）为 null。 */
+	agent: string | null;
+	/** 最后一次尝试开始的时间；还没开始执行（排队中、准备中）时为 null。 */
+	started_at: Timestamp | null;
+	/** 最新进度；没有上报过时为 null。 */
+	progress: {
+		current: number;
+		total: number | null;
+	} | null;
+	/**
+	 * 排队中的节点：它在等什么（同运行视图里排队中的尝试的 `queue_wait`，控制面读取这一刻按派发的条件判断）；
+	 * 排队中但没有可等的 Agent（没有指定 Agent）时和其余状态一样为 null。
+	 */
+	queue_wait: QueueWaitView | null;
+	/** 最后一次尝试进入排队的时间（「排了多久」用它）；只有 `queue_wait` 有值时有值。 */
+	queued_at: Timestamp | null;
 }
 
 export interface DashboardAgentStats {
@@ -608,8 +694,8 @@ export interface DashboardRunningRun {
 	cancelling: boolean;
 	/** 主链在前，子流程按深度、开始时间。 */
 	chains: DashboardChain[];
-	/** 进行中的节点（与运行列表的 `active_nodes` 相同）。 */
-	active_nodes: RunListActiveNode[];
+	/** 进行中的节点（运行列表的 `active_nodes`，排队中的多写明在等什么）。 */
+	active_nodes: DashboardActiveNode[];
 }
 
 /**
@@ -676,6 +762,14 @@ export interface DiffNodeView {
 	id: string;
 	kind: string;
 	display_name?: string;
+}
+
+/** 断开一条连线；没有这条连线时这个操作不合法。 */
+export interface DisconnectOperation {
+	op: "disconnect";
+	from: string;
+	to: string;
+	kind?: "chain" | "dispatch";
 }
 
 /**
@@ -752,6 +846,10 @@ export interface Edge {
 	/** chain：链上的顺序连线；dispatch：异步任务节点 → 子流程入口节点的调度连线。 */
 	kind: "chain" | "dispatch";
 }
+
+export type EditOperation = AddNodeOperation | RemoveNodeOperation | ConnectOperation | DisconnectOperation | SetFieldOperation;
+
+export type EditOperations = EditOperation[];
 
 /** 一个已经结束的动作。 */
 export interface EndedActionView {
@@ -1986,6 +2084,12 @@ export interface ReferencedAgent {
 	status: "online" | "offline" | "unknown";
 }
 
+/** 删一个节点，连同它的连线；它恰好一进一出时前后接上（和画布上删除一样），注释框里的成员一起去掉。入口节点不能删。 */
+export interface RemoveNodeOperation {
+	op: "remove_node";
+	node: string;
+}
+
 /**
  * 已移除种类的节点（ADR 0028，种类见 removed-nodes.ts）：读取历史版本时认得它，只读显示，不能保存。
  * 只描述所有节点共有的字段；控制面读库时把它当时的其余配置原样带着（`keepRemovedNodeConfig`），
@@ -2847,6 +2951,17 @@ export interface SessionView {
 	project: string;
 	readiness: Readiness;
 	waiting_for: WaitingFor | null;
+}
+
+/**
+ * 改一个节点的一个字段：`field` 是 SETTABLE_NODE_FIELDS 之一或 `inputs.<输入名>`；`value` 不写就是去掉这个字段，
+ * 去掉的字段按没有写处理（`always` 为 false、Agent 用场景的默认 Agent）；写 null 就是 null（输入可以是 null）。
+ */
+export interface SetFieldOperation {
+	op: "set";
+	node: string;
+	field: string;
+	value?: unknown;
 }
 
 /** 占着槽位的任务：哪个场景的哪个运行里哪个节点的第几次尝试（排队的尝试在等的槽位被它们占着）。 */

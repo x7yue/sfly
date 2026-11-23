@@ -1,15 +1,16 @@
 import { z } from "zod";
 import { optionalLine } from "../display-text.js";
-import { NODE_TIMEOUT_MAX_SECONDS, nodeTimeoutMessage } from "../node-timeout.js";
+import { isNodeTimeout, nodeTimeoutMessage } from "../node-timeout.js";
 import {
 	OrchestrationDocument,
 	STORED_NODE_KINDS,
 	StoredOrchestrationDocument,
 } from "../orchestration-document.js";
 import { ChartDeclaration } from "../package-metadata.js";
-import { QUEUE_TIMEOUT_MAX_SECONDS, queueTimeoutMessage } from "../queue-timeout.js";
+import { isQueueTimeout, queueTimeoutMessage } from "../queue-timeout.js";
 import { removedFieldsMessage, removedFieldsWithContent } from "../removed-document-fields.js";
 import { removedNodesIn, removedNodesMessage } from "../removed-nodes.js";
+import { EditOperations } from "../scenario-edits.js";
 import { SessionRef } from "../sessions.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
@@ -33,8 +34,8 @@ import { FeishuBotName } from "./feishu-bots.js";
  */
 
 /**
- * 保存的文档里节点写的超时、排队超时超过上限的说明（每个这样的节点和字段一句，写明是哪个节点、范围、实际是多少，
- * #476、#559）。
+ * 保存的文档里节点写的超时、排队超时不合格的说明（每个这样的节点和字段一句，写明是哪个节点、字段、范围、实际的值，
+ * #476、#559、#576）：超过上限的、0、负数、小数、字符串……都是同一种说明，不只说「文档不符合 schema」。
  */
 function timeoutMessages(nodes: unknown): string[] {
 	if (!Array.isArray(nodes)) return [];
@@ -46,10 +47,10 @@ function timeoutMessages(nodes: unknown): string[] {
 		const timeout = "timeout" in n ? n.timeout : undefined;
 		const queueTimeout = "queue_timeout" in n ? n.queue_timeout : undefined;
 		return [
-			...(typeof timeout === "number" && timeout > NODE_TIMEOUT_MAX_SECONDS
+			...(timeout !== undefined && !isNodeTimeout(timeout)
 				? [nodeTimeoutMessage(label, timeout)]
 				: []),
-			...(typeof queueTimeout === "number" && queueTimeout > QUEUE_TIMEOUT_MAX_SECONDS
+			...(queueTimeout !== undefined && !isQueueTimeout(queueTimeout)
 				? [queueTimeoutMessage(label, queueTimeout)]
 				: []),
 		];
@@ -58,7 +59,7 @@ function timeoutMessages(nodes: unknown): string[] {
 
 /**
  * 保存的文档不合法时的说明：含已移除种类的节点，或已移除的顶层字段（便签）里有内容时，写明是哪些、怎么办（ADR 0028）；
- * 节点写的超时、排队超时超过上限时写明是哪个节点、上限多少（#476、#559）。
+ * 节点写的超时、排队超时不合格（超过上限、0、负数、小数、字符串……）时写明是哪个节点、字段、范围和实际的值（#476、#559、#576）。
  */
 function invalidDocumentMessage(body: object): string {
 	const document = "document" in body ? body.document : undefined;
@@ -283,6 +284,16 @@ export const CheckedWarningView = DocumentWarningView.extend({
 export const SavedVersionView = z.object({
 	...OrchestrationVersionView.shape,
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
+	warnings: z.array(DocumentWarningView),
+});
+
+/**
+ * 复制场景的响应（#576）：新场景，加上第 1 版的警告，和保存、恢复版本的响应里的 `warnings` 同一套。复制把源场景最新版本的
+ * 文档原样写成新场景的第 1 版，不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样复制，问题在这里带出来。
+ * 源场景还没有版本（`head_version` 为 0）时为空。
+ */
+export const CopiedOrchestrationView = z.object({
+	...OrchestrationView.shape,
 	warnings: z.array(DocumentWarningView),
 });
 
@@ -611,6 +622,78 @@ export const orchestrationsApi = {
 		}),
 		response: z.object({ diff: DocumentDiffView }),
 	}),
+	/**
+	 * 对场景做一组局部编辑（#470），存成一个新版本，返回 201：和保存相同的响应，再加上这组操作造成的差异（`diff`，相对 base_version）。
+	 * 需要昵称请求头。操作见 @sfly/schema 的 EditOperation：加节点、删节点、连线、断开、改一个节点的字段，
+	 * 由控制面按顺序作用在最新版本上，用的是画布的编辑函数（@sfly/orchestration 的 applyEditOperations）。
+	 *
+	 * 要么全部生效，要么都不生效：
+	 * - 有一个操作不合法时 400 `invalid_operation`，details 是 EditOperationProblem（第几个、为什么，以及相近的节点 ID、
+	 *   缺的必填输入和类型、连线两端的节点这些线索）；
+	 * - base_version 不是最新版本时 409 `version_conflict`（和保存一样，details 见 VersionConflictDetails）；
+	 *   缺 base_version 时 400 `base_version_required`；
+	 * - 编辑之后的文档不合法时 400 `invalid_document`（例如最新版本里还有已移除种类的节点），
+	 *   secret 参数默认值的占位符沿用不了时 400 `secret_default_placeholder`，和保存一样。
+	 *
+	 * 之后的检查和保存完全一样：`warnings` 和保存时相同，每条带 `existing`（改动之前就有，见 CheckedWarningView），
+	 * 新节点没有坐标时按整理布局补上（接在节点后面的放在它右侧一列，和画布一样）。
+	 * 这组操作的结果和最新版本相同时（例如把字段改成原来的值；同一组里先加再删、加的时候没有把后面的节点挪开。插在两个节点中间的话，插入时往右挪的节点删掉后不挪回来，是改动；接在链尾再删没有改动）不存出新版本：返回 200、当前版本，
+	 * `unchanged` 为 true，`diff` 为空。（整份文档原样保存仍会存出新版本，那是保存接口的既有行为。）
+	 * 只检查不保存用 checkEdits。
+	 */
+	edit: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/edits",
+		summary: "对场景做一组局部编辑（增删节点和连线、改节点的字段），保存成新版本",
+		effect: "write",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "edit"],
+		params: IdParams,
+		body: z.object({
+			/** 编辑起点的版本号；不是最新版本时 409 `version_conflict`。 */
+			base_version: z.number().int().nonnegative(),
+			/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+			operations: EditOperations,
+		}),
+		requestError: ({ body }) =>
+			typeof body === "object" && body !== null && !Object.hasOwn(body, "base_version")
+				? {
+						code: "base_version_required",
+						message: "base_version is required (use 0 for the first version)",
+					}
+				: undefined,
+		response: SavedVersionView.extend({
+			/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
+			warnings: z.array(CheckedWarningView),
+			/** 这组操作造成的差异：从 base_version 到新版本。 */
+			diff: DocumentDiffView,
+			/** true：这组操作没有改动，没有存出新版本，返回的是当前版本（状态码 200）；存出了新版本时没有这个字段。 */
+			unchanged: z.literal(true).optional(),
+		}),
+	}),
+	/**
+	 * 检查一组局部编辑，不保存（#470）：和 edit 走同一段代码，返回同样的错误；200 时是 VersionCheckView：
+	 * `warnings` 和真正保存时一样（每条带 `existing`），`diff` 是这组操作会造成的差异。不产生版本，什么都不写，不需要昵称请求头。
+	 * 没有给 base_version 时对照最新版本，不报冲突。
+	 */
+	checkEdits: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/edits/check",
+		summary: "检查一组局部编辑：返回保存时会有的错误、警告和这组操作造成的差异，不保存",
+		effect: "read",
+		resource: { kind: "scenario", target: { params: "id" } },
+		client: true,
+		key: ["orchestrations", "check-edits"],
+		params: IdParams,
+		body: z.object({
+			/** 编辑起点的版本号；给了且不是最新版本时 409 `version_conflict`，不给时对照最新版本。 */
+			base_version: z.number().int().nonnegative().optional(),
+			/** 按顺序作用的操作，1 到 EDIT_OPERATIONS_MAX 个。 */
+			operations: EditOperations,
+		}),
+		response: VersionCheckView,
+	}),
 	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */
 	versions: endpoint({
 		method: "GET",
@@ -641,6 +724,8 @@ export const orchestrationsApi = {
 	/**
 	 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
 	 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
+	 * 恢复也不过保存时的检查：升级前保存的版本里超限的超时、排队超时照样恢复（#576），响应的 `warnings` 里每个这样的字段一条
+	 * （`timeout_out_of_range`、`queue_timeout_out_of_range`）；要保存任何改动之前先把它们改成合格的值。
 	 */
 	restoreVersion: endpoint({
 		method: "POST",
@@ -724,7 +809,8 @@ export const orchestrationsApi = {
 	/**
 	 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
 	 * 源场景最新版本的内容作为第 1 版。有关注项时，副本的关注项最后修改记为复制的人，说明写「复制自「源场景名」」。
-	 * 联调副本也走这个接口。
+	 * 联调副本也走这个接口。第 1 版是原样复制，不过保存时的检查（升级前保存的版本里超限的超时、排队超时照样复制，#576），
+	 * 响应的 `warnings` 是第 1 版的警告，和保存、恢复版本的响应同一套。
 	 */
 	copy: endpoint({
 		method: "POST",
@@ -737,7 +823,7 @@ export const orchestrationsApi = {
 		key: ["orchestrations", "copy"],
 		params: IdParams,
 		body: z.strictObject({ name: Name }),
-		response: OrchestrationView,
+		response: CopiedOrchestrationView,
 	}),
 	/** 归档；有运行中的运行时返回 409 run_in_progress。 */
 	archive: endpoint({
@@ -768,6 +854,7 @@ export const orchestrationsApi = {
 
 export type OrchestrationBase = z.infer<typeof OrchestrationBase>;
 export type OrchestrationView = z.infer<typeof OrchestrationView>;
+export type CopiedOrchestrationView = z.infer<typeof CopiedOrchestrationView>;
 export type FocusItemInput = z.output<typeof FocusItemInput>;
 export type FocusItemView = z.infer<typeof FocusItemView>;
 export type FocusEditView = z.infer<typeof FocusEditView>;

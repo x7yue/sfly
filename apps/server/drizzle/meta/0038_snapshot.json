@@ -1,5 +1,5 @@
 {
-  "id": "7e250073-adad-4ba5-a661-e0a8607c40e4",
+  "id": "b20c2ee1-51ca-4dcb-a4c7-fa8d1e20d32c",
   "prevId": "1b4d1b14-d376-44df-832c-751bb22eeb74",
   "version": "7",
   "dialect": "postgresql",
@@ -405,19 +405,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "api_tokens_session_id_sessions_id_fk": {
-          "name": "api_tokens_session_id_sessions_id_fk",
-          "tableFrom": "api_tokens",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "api_tokens_issued_by_user_id_users_id_fk": {
           "name": "api_tokens_issued_by_user_id_users_id_fk",
           "tableFrom": "api_tokens",
@@ -429,6 +416,21 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "api_tokens_session_project_fk": {
+          "name": "api_tokens_session_project_fk",
+          "tableFrom": "api_tokens",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id",
+            "project_id"
+          ],
+          "columnsTo": [
+            "id",
+            "project_id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -1311,7 +1313,24 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "orchestration_versions_session": {
+          "name": "orchestration_versions_session",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"orchestration_versions\".\"session_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "orchestration_versions_orchestration_id_orchestrations_id_fk": {
           "name": "orchestration_versions_orchestration_id_orchestrations_id_fk",
@@ -1349,7 +1368,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -2083,6 +2102,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "runs_session": {
+          "name": "runs_session",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"runs\".\"session_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2122,7 +2157,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "runs_cancel_requested_by_user_id_users_id_fk": {
@@ -2381,7 +2416,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "sessions_id_project": {
+          "name": "sessions_id_project",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "project_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "sessions_current_turn": {

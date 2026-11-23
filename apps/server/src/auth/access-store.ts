@@ -1,6 +1,7 @@
 // 访问检查读的数据（凭据、用户、成员、资源所在的项目）。接口和实现分开：鉴权模块（./access-guard.ts）只认接口，
 // 可以不连数据库单独测试；数据库实现在这个文件里。
 import { randomUUID } from "node:crypto";
+import type { SessionStatus } from "@sfly/schema";
 import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import { taskIsActive } from "../agents/task-credentials.js";
 import type { Db } from "../db/database.js";
@@ -50,6 +51,11 @@ export interface StoredToken {
 	 * 凭据随之失效（src/agents/task-credentials.ts）；其余令牌为 null。
 	 */
 	taskActive: boolean | null;
+	/**
+	 * 会话令牌所属的会话（取令牌时联表读出）：所在的项目、发起人、状态。访问检查核对令牌行上的项目、发起人和它们对得上、
+	 * 会话没有结束（对不上、已结束的当作不认识的令牌）。不是会话令牌，或者会话不存在（库里的外键不让这样）为 null。
+	 */
+	session: { projectId: ProjectId; createdByUserId: string | null; status: SessionStatus } | null;
 }
 
 /** 库里的登录（控制台的 Cookie）。 */
@@ -117,6 +123,11 @@ export interface AccessStore {
 	projectOfSession(id: string): Promise<ProjectId | undefined>;
 	/** 运行是哪个会话触发的（`runs.session_id`）：不是会话触发的为 null，运行不存在为 undefined。 */
 	sessionOfRun(id: string): Promise<string | null | undefined>;
+	/**
+	 * 运行所在的项目和它是哪个会话触发的：一次读出（访问检查得出项目和核对「只能取消自己触发的运行」是同一行，
+	 * 分两次读是白白多一次）；运行不存在为 undefined。
+	 */
+	runOwner(id: string): Promise<{ projectId: ProjectId; sessionId: string | null } | undefined>;
 	/** 任务所在的项目，以及派给了哪台 Agent（排队中、内置节点的任务没有）。 */
 	taskAssignment(
 		id: string,
@@ -151,11 +162,15 @@ export class DbAccessStore implements AccessStore {
 				lastUsedAt: apiTokens.lastUsedAt,
 				sessionId: apiTokens.sessionId,
 				taskStatus: tasks.status,
+				sessionProjectId: sessions.projectId,
+				sessionCreatedBy: sessions.createdByUserId,
+				sessionStatus: sessions.status,
 				user: userColumns,
 			})
 			.from(apiTokens)
 			.leftJoin(users, eq(users.id, apiTokens.userId))
 			.leftJoin(tasks, eq(tasks.id, apiTokens.taskId))
+			.leftJoin(sessions, eq(sessions.id, apiTokens.sessionId))
 			.where(eq(apiTokens.tokenHash, hash));
 		return (
 			row && {
@@ -170,6 +185,14 @@ export class DbAccessStore implements AccessStore {
 				lastUsedAt: row.lastUsedAt,
 				sessionId: row.sessionId,
 				taskActive: row.taskStatus === null ? null : taskIsActive(row.taskStatus),
+				session:
+					row.sessionProjectId === null || row.sessionStatus === null
+						? null
+						: {
+								projectId: row.sessionProjectId,
+								createdByUserId: row.sessionCreatedBy,
+								status: row.sessionStatus,
+							},
 			}
 		);
 	}
@@ -300,6 +323,17 @@ export class DbAccessStore implements AccessStore {
 			.from(runs)
 			.where(eq(runs.id, id));
 		return row?.projectId;
+	}
+
+	async runOwner(
+		id: string,
+	): Promise<{ projectId: ProjectId; sessionId: string | null } | undefined> {
+		if (!isUuid(id)) return undefined;
+		const [row] = await this.db
+			.select({ projectId: runs.projectId, sessionId: runs.sessionId })
+			.from(runs)
+			.where(eq(runs.id, id));
+		return row;
 	}
 
 	async sessionOfRun(id: string): Promise<string | null | undefined> {

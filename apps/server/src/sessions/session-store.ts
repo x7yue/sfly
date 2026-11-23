@@ -124,6 +124,8 @@ export interface SessionStoreDeps {
 	 * 「补发不会读到提交了但还没发布的事件」。生产里不传。
 	 */
 	afterCommit?: (sessionId: string, event: PersistedSessionEvent) => Promise<void>;
+	/** 不该抛出去、只记日志的错误（平台记录发布失败）。 */
+	onError?: (what: string, error: unknown) => void;
 }
 
 /**
@@ -505,19 +507,28 @@ export class SessionStore {
 	}
 
 	/**
-	 * 在这个会话的链上做一件事（{@link SessionStore.#serial}，「落库加发布」排的那条链）。控制面在记下一条记录（运行、场景版本）的
-	 * 同一个事务里给会话写平台记录（{@link recordPlatform}），提交之后发布（{@link announce}）：这**整件事**要放在链上做，
-	 * 事务期间这个会话别的「落库加发布」排在它后面，发布的顺序才等于提交的顺序。实时阶段的 `follow` 按 `seq` 去重，
-	 * 先发布了大的序号，后到的小序号就被当作「已经发过」丢掉（页面上少一条记录，刷新才补回来）。
+	 * 排到这个会话的「落库加发布」链上，并占着它，直到调用返回的 `release`。控制面在记下一条记录（运行、场景版本）的
+	 * 同一个事务里给会话写平台记录（{@link recordPlatform}），提交之后发布（{@link announce}）：**从写记录到发布完**这一段
+	 * 要占着链，这个会话别的「落库加发布」排在它后面，发布的顺序才等于提交的顺序。实时阶段的 `follow` 按 `seq` 去重，先发布了
+	 * 大的序号，后到的小序号就被当作「已经发过」丢掉。
+	 * **只占这一小段**：调用之前要把慢的东西都做完（引擎的锁、场景那一行的锁、运行的推进、版本的写入），再来 `hold`，然后
+	 * `recordPlatform`、提交、`announce`、`release`。链上排着助手服务的事件（连接一行处理完才读下一行，所有会话共用），占得久，
+	 * 所有会话的事件一起晚到。
+	 * 必须调用 `release`（放在 `finally` 里）：不放，这个会话的链就永远堵着。
+	 * 锁的先后（全仓库一个顺序，docs/ARCHITECTURE.md「会话令牌」）：引擎的锁 → 场景那一行 → 会话的链 → 会话那一行；
+	 * 链上的任务只碰会话和它的事件，不会反过来等前面的锁。
 	 */
-	serial<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
-		return this.#serial(sessionId, run);
+	hold(sessionId: string): Promise<() => void> {
+		return new Promise((resolve) => {
+			void this.#serial(sessionId, () => new Promise<void>((release) => resolve(() => release())));
+		});
 	}
 
 	/**
-	 * 在调用方的事务里给会话记一条平台记录：助手用会话令牌触发了运行、保存了场景版本（#547）。`turn` 是会话此刻在做的那一轮
-	 * （`current_turn`，会话令牌只在一轮之内有效，所以总有；没记过轮次的按第 1 轮）。会话那一行在事务里锁住，规则同
-	 * {@link append}。返回的事件在事务提交之后交给 {@link announce}；**整个事务和发布要在 {@link serial} 里做**。
+	 * 在调用方的事务里给会话记一条平台记录：助手用会话令牌触发了运行、保存了场景版本（#547）。`turn` 是会话最近的一轮
+	 * （`current_turn`）：会话在做时就是正在做的那一轮；空闲时记在最近一轮的结局之后；从没开始过一轮的（`current_turn` 为 0，
+	 * 产品里造不出带令牌的这种会话）按第 1 轮。已结束的会话，它的令牌无效，到不了这里。会话那一行在事务里锁住，规则同
+	 * {@link append}。返回的事件在事务提交之后交给 {@link announce}；**从这里到发布完要占着链**（{@link hold}）。
 	 */
 	async recordPlatform(
 		tx: Tx,
@@ -535,9 +546,20 @@ export class SessionStore {
 		return (await this.#insert(tx, session, parsed, this.deps.clock.now())).event;
 	}
 
-	/** 把已经提交的平台记录发布给订阅这个会话的连接（{@link recordPlatform} 的收尾）；在 {@link serial} 里调用。 */
+	/**
+	 * 把已经提交的平台记录发布给订阅这个会话的连接（{@link recordPlatform} 的收尾）；在 {@link hold} 占着链的时候调用。
+	 * **发布失败只记日志，不抛出去**：记录已经提交了，订阅的一方按 `Last-Event-ID` 重连能补上；不能让它把已经提交的运行
+	 * 变成 500、挡住后面的派发。
+	 */
 	async announce(sessionId: string, event: PersistedSessionEvent): Promise<void> {
-		await this.#publishCommitted(sessionId, [event]);
+		try {
+			await this.#publishCommitted(sessionId, [event]);
+		} catch (error) {
+			this.deps.onError?.(
+				`session ${sessionId}: platform record ${event.seq} not published:`,
+				error,
+			);
+		}
 	}
 
 	/** 提交之后按顺序发布（测试缝 `afterCommit` 在每条发布之前）。 */
@@ -565,6 +587,13 @@ export class SessionStore {
 			parsed.type === "turn_end" &&
 			session.status === "running" &&
 			parsed.turn === effectiveTurn(session);
+		// 结束的是「此刻在做的那一轮」：会话回到空闲，`current_turn` 也抬到这一轮。在做、但一条 `turn_started` 都没有的
+		// 旧数据（迁移回填成 0，`effectiveTurn` 当作第 1 轮）不抬的话，下一轮又是第 1 轮，那一轮真正的 `turn_end`
+		// 会被当作第 1 轮的重复吞掉。
+		const endsTurn = {
+			status: "idle" as const,
+			currentTurn: sql`greatest(${sessions.currentTurn}, ${parsed.type === "turn_end" ? parsed.turn : 0})`,
+		};
 		if (parsed.type === "turn_end") {
 			const [existing] = await tx
 				.select()
@@ -579,7 +608,7 @@ export class SessionStore {
 				.limit(1);
 			if (existing) {
 				if (endsCurrent) {
-					await tx.update(sessions).set({ status: "idle" }).where(eq(sessions.id, session.id));
+					await tx.update(sessions).set(endsTurn).where(eq(sessions.id, session.id));
 				}
 				return { event: toEvent(existing), duplicate: true };
 			}
@@ -600,7 +629,7 @@ export class SessionStore {
 			.returning();
 		await tx
 			.update(sessions)
-			.set({ lastActivityAt: touched, ...(endsCurrent && { status: "idle" as const }) })
+			.set({ lastActivityAt: touched, ...(endsCurrent && endsTurn) })
 			.where(eq(sessions.id, session.id));
 		return { event: toEvent(row as EventRow), duplicate: false };
 	}

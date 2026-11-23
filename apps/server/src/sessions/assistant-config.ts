@@ -41,10 +41,18 @@ export function assistantSetup(options: { url?: string; secret?: string }): Assi
 	try {
 		parsed = new URL(url);
 	} catch {
-		return { configured: false, reason: `${ASSISTANT_URL_ENV} 不是一个地址：${url}` };
+		// 原因会进就绪状态和写接口的 503（所有能读的人都看得到）：不回显配置的地址（可能带着用户名和密码），只说是哪一类问题。
+		return { configured: false, reason: `${ASSISTANT_URL_ENV} 不是一个合法的地址` };
 	}
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-		return { configured: false, reason: `${ASSISTANT_URL_ENV} 要写 http 或 https 地址：${url}` };
+		return { configured: false, reason: `${ASSISTANT_URL_ENV} 要写 http 或 https 地址` };
+	}
+	if (parsed.username !== "" || parsed.password !== "") {
+		// 地址里带用户名和密码：fetch 不让请求带它，每个请求都会失败，出错的原文还会把这段地址带进日志；共享密钥有自己的变量。
+		return {
+			configured: false,
+			reason: `${ASSISTANT_URL_ENV} 不能带用户名和密码（共享密钥写在 ${ASSISTANT_SECRET_ENV} 里）`,
+		};
 	}
 	return { configured: true, config: { url: parsed, secret } };
 }

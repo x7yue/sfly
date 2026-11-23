@@ -262,19 +262,6 @@ export class Engine implements AgentSessionHandler {
 	 * （src/runs/trigger-admission.ts，在这个事务里读）；可以时在同一个事务里创建运行和主链实例并开始推进。
 	 */
 	trigger(orchestrationId: string, request: TriggerRequest, actor: Actor): Promise<TriggerOutcome> {
-		// 会话令牌触发的运行要在同一个事务里给会话写平台记录、提交之后发布：整件事放在这个会话的链上做
-		// （SessionStore.serial），这个会话别的「落库加发布」排在它后面，发布的顺序才等于提交的顺序。
-		const { sessionId } = actor;
-		return sessionId === null
-			? this.#trigger(orchestrationId, request, actor)
-			: this.deps.sessions.serial(sessionId, () => this.#trigger(orchestrationId, request, actor));
-	}
-
-	#trigger(
-		orchestrationId: string,
-		request: TriggerRequest,
-		actor: Actor,
-	): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
 			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
 			if (!admitted.ok) return admitted;
@@ -314,17 +301,19 @@ export class Engine implements AgentSessionHandler {
 					startedAt: step.now,
 				})
 				.returning();
+			await this.#advance(step, run as RunRow, chain as ChainRow, 0);
 			if (actor.sessionId !== null) {
-				// 同一个事务里给会话写一条平台记录（成果栏只读这些记录）；提交之后再推送。
-				const event = await this.deps.sessions.recordPlatform(step.tx, actor.sessionId, {
+				// 会话令牌触发的：同一个事务里给会话写一条平台记录（成果栏只读这些记录），提交之后再推送。慢的都做完了（引擎的锁、
+				// 场景的锁、运行的写入和推进）：现在才排到会话的链上，从写记录到推送完占着它，别的会话的事件不被拖住。
+				const { sessionId } = actor;
+				step.releases.push(await this.deps.sessions.hold(sessionId));
+				const event = await this.deps.sessions.recordPlatform(step.tx, sessionId, {
 					kind: "run",
 					run_id: runId,
 					scenario_name: admitted.scenarioName,
 				});
-				const { sessionId } = actor;
 				step.afterCommit.push(() => this.deps.sessions.announce(sessionId, event));
 			}
-			await this.#advance(step, run as RunRow, chain as ChainRow, 0);
 			return { ok: true, runId };
 		});
 	}
@@ -630,10 +619,18 @@ export class Engine implements AgentSessionHandler {
 			assigns: [],
 			notifications: noPendingNotifications(),
 			afterCommit: [],
+			releases: [],
 		};
-		const result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
-		this.#publish(step.touchedRuns);
-		for (const after of step.afterCommit) await after();
+		let result: T;
+		try {
+			result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
+			this.#publish(step.touchedRuns);
+			// 提交之后的收尾（推送会话里的平台记录；推送失败只记日志，不抛出来，后面的取消、派发照做）。
+			for (const after of step.afterCommit) await after();
+		} finally {
+			// 会话的链只占到这里：写记录、提交、推送这一小段。
+			for (const release of step.releases) release();
+		}
 		for (const order of step.cancels) this.#sendCancel(order);
 		for (const { conn, message } of step.assigns) conn.send(message);
 		await this.deps.notifications.committed(step.notifications);

@@ -757,6 +757,34 @@ describe("场景版本里 secret 参数的默认值", () => {
 				"检查：占位符沿用不了",
 				tracked.post(`/orchestrations/${id}/check`, { document: renamed }),
 			);
+			// 局部编辑（#470）：保存、检查各自的成功和失败（不合法的操作、编辑起点过期）；改的是引用 secret 参数的输入。
+			const edits = [{ op: "set", node: "a", field: "inputs.token", value: "${{ params.token }}" }];
+			await record(
+				"局部编辑：检查",
+				tracked.post(`/orchestrations/${id}/edits/check`, { operations: edits }),
+			);
+			await record(
+				"局部编辑：检查不合法的操作",
+				tracked.post(`/orchestrations/${id}/edits/check`, {
+					operations: [{ op: "set", node: "entry", field: "params", value: SECRET }],
+				}),
+			);
+			const editBase = await headVersionOf(id);
+			await record(
+				"局部编辑",
+				tracked.post(`/orchestrations/${id}/edits`, { base_version: editBase, operations: edits }),
+			);
+			await record(
+				"局部编辑：冲突",
+				tracked.post(`/orchestrations/${id}/edits`, { base_version: editBase, operations: edits }),
+			);
+			await record(
+				"局部编辑：不合法的操作",
+				tracked.post(`/orchestrations/${id}/edits`, {
+					base_version: editBase + 1,
+					operations: [{ op: "remove_node", node: "entry" }],
+				}),
+			);
 			// 恢复、复制。
 			await record("恢复", tracked.postEmpty(`/orchestrations/${id}/versions/1/restore`));
 			await record(
@@ -924,6 +952,21 @@ describe("场景版本里 secret 参数的默认值", () => {
 			const v2 = await storedDocument(cp, id, 2);
 			expect(v2.default_agent).toBe("agent-b");
 			expect(paramsOf(v2)[0]).toMatchObject({ default: SECRET, description: "访问令牌" });
+		});
+
+		it("局部编辑（#470）存出的新版本：secret 默认值沿用原值（逐项相同），不因为占位符被拒绝", async () => {
+			const id = await scenario();
+			const res = await api.post(`/orchestrations/${id}/edits`, {
+				base_version: 1,
+				operations: [
+					{ op: "set", node: "entry", field: "display_name", value: "开始" },
+					{ op: "set", node: "a", field: "inputs.token", value: "${{ params.token }}" },
+				],
+			});
+			expect(res.status, await res.clone().text()).toBe(201);
+			const [v1, v2] = [await storedDocument(cp, id, 1), await storedDocument(cp, id, 2)];
+			expect(paramsOf(v2)).toEqual(paramsOf(v1));
+			expect(paramsOf(v2)[0]?.default).toBe(SECRET);
 		});
 
 		it("改成新的值再保存：存的是新值；读出来仍是占位符", async () => {
