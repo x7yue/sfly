@@ -731,6 +731,27 @@ describe("很长的值：不能让打码本身失败，也不能把值带进错�
 		expect(setOf(OVERSIZE_NOTICE).mask(OVERSIZE_NOTICE)).toBe(MASK);
 	});
 
+	it("说明那一行出现多少次都不用再扫一遍所有的值：「说明是不是恰好是某个值」每份值集合只算一次（节点可以写任意多行一样的）", () => {
+		const set = setOf(
+			`oversize-${"s".repeat(MAX_AUTOMATON_CHARS)}`,
+			...Array.from({ length: 200 }, (_, i) => `v-${i}`),
+		);
+		expect(set.oversize).toBe(true);
+		const includes = vi.spyOn(Array.prototype, "includes");
+		try {
+			for (let i = 0; i < 50; i++) {
+				expect(set.mask(OVERSIZE_NOTICE)).toBe(OVERSIZE_NOTICE);
+				expect(set.withBudget().mask(OVERSIZE_NOTICE)).toBe(OVERSIZE_NOTICE);
+				expect(set.wouldChange(OVERSIZE_NOTICE)).toBe(false);
+			}
+			// 别的文字不用问
+			for (let i = 0; i < 50; i++) expect(set.mask(`line ${i}`)).toBe(MASK);
+			expect(includes.mock.contexts.filter((c) => c === set.texts).length).toBeLessThanOrEqual(1);
+		} finally {
+			includes.mockRestore();
+		}
+	});
+
 	it("总长刚好在上限以内：照常建、照常打码；多一个字符就整段盖住", () => {
 		const secret = "t".repeat(MAX_AUTOMATON_CHARS - 10);
 		const set = setOf(secret);

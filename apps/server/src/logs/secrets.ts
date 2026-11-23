@@ -501,6 +501,12 @@ export class SecretSet {
 		if (this.#lazy.built) watch(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
 	}
 
+	/** 值集合的某个写法恰好就是 {@link OVERSIZE_NOTICE}：是的话那句话也是值，照样整段盖住。每份值集合只算一次。 */
+	#noticeIsValue(): boolean {
+		this.#lazy.noticeIsValue ??= this.texts.includes(OVERSIZE_NOTICE);
+		return this.#lazy.noticeIsValue;
+	}
+
 	/** 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。 */
 	get oversize(): boolean {
 		return this.texts.length > 0 && this.#automaton() === undefined;
@@ -529,7 +535,7 @@ export class SecretSet {
 		if (this.texts.length === 0 || text === "") return false;
 		try {
 			const automaton = this.#automaton();
-			if (!automaton) return text !== OVERSIZE_NOTICE || this.texts.includes(text);
+			if (!automaton) return text !== OVERSIZE_NOTICE || this.#noticeIsValue();
 			return scanSpans(automaton, text, 1) !== 0;
 		} catch {
 			return true;
@@ -542,7 +548,7 @@ export class SecretSet {
 		try {
 			const automaton = this.#automaton();
 			if (!automaton)
-				return text === OVERSIZE_NOTICE && !this.texts.includes(text) ? text : SECRET_MASK;
+				return text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK;
 			const budget = this.#budget;
 			const count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
 			if (count < 0) {
@@ -564,6 +570,8 @@ interface Lazy {
 	built?: boolean;
 	/** 建好时通知（{@link SecretSet.watchBuild}）。 */
 	watch?: (bytes: number) => void;
+	/** 值集合的某个写法恰好就是 {@link OVERSIZE_NOTICE}（算一次：说明那一行每出现一次都要问，不能每次扫一遍所有的值）。 */
+	noticeIsValue?: boolean;
 }
 
 /** 对象里值不是 undefined 的键的个数（标准写法不写 undefined 的键）。 */
