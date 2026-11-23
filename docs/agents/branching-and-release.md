@@ -133,7 +133,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 2. 等 `main` 上这个提交的 CI 通过，打 tag 并推送：`git tag std-vX.Y.Z <提交> && git push origin std-vX.Y.Z`。
 3. `.github/workflows/std-release.yml` 接手：确认提交在 `main` 上且 CI 已通过，运行 `scripts/release/std.sh pack`
    （tag 与版本号一致、节点包元信息检查、构建 `.sflypkg`、`SHA256SUMS` 和含最低 Agent 版本的发布说明），上传到草稿 Release
-   后发布。不标为 Latest，不推镜像，不自动登记到控制面。发布说明后面附上与上一个 `std-vX.Y.Z` 相比的变更列表，
+   后发布。不标为 Latest，不推镜像，不自动登记到控制面（部署者以平台管理员的身份发布到公共项目，`POST /packages?project=public`，步骤见开发文档「标准节点」页）。发布说明后面附上与上一个 `std-vX.Y.Z` 相比的变更列表，
    首次发布不附。
 
 - 发布前在本地 dry-run：`bash scripts/release/std.sh pack std-vX.Y.Z`，产物在 `out/std/`，与 Release 附件相同，只是不上传。

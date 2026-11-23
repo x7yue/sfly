@@ -45,6 +45,16 @@ export const PackageSummary = z.object({
 	versions: z.array(PackageVersionSummary),
 });
 
+// 校验（只认 public、谁能写公共项目）在访问检查里（apps/server/src/auth/access-guard.ts），处理函数只用它得出的项目。
+/** `POST /packages` 的查询参数。 */
+const PublishQuery = z.object({
+	/**
+	 * 过渡参数（#565）：发布到公共项目写 `public`，只有平台管理员能这样做（别的凭据 403、不带凭据 401）；
+	 * 写别的项目名 400；不写发布到默认项目。路径带项目（#488）之后由路径里的项目替代，这个参数随之去掉。
+	 */
+	project: z.literal("public").optional(),
+});
+
 const VersionParams = z.object({
 	/** 节点包名。 */
 	name: PackageName,
@@ -109,6 +119,8 @@ export const packagesApi = {
 	/**
 	 * 发布：请求体是 .sflypkg 原始字节（application/octet-stream，不在契约里），返回 201；
 	 * 其他 content-type 返回 415，元信息不合法 400 `invalid_package`，`包名@版本` 已存在 409 `conflict`。
+	 * 查询参数 `project=public` 发布到公共项目（过渡参数，见 `PublishQuery`）：只有平台管理员能这样做，
+	 * 别的凭据 403、不带凭据 401，写了别的项目名 400。
 	 */
 	publish: endpoint({
 		method: "POST",
@@ -119,6 +131,7 @@ export const packagesApi = {
 		client: false,
 		key: ["packages", "publish"],
 		upload: true,
+		query: PublishQuery,
 		response: PackageVersionView,
 	}),
 	/** 下载归档（Agent 安装用；`x-sfly-sha256` 响应头是归档的 sha256）。 */

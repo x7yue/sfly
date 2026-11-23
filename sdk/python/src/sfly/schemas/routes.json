@@ -15026,6 +15026,16 @@
         "kind": "package",
         "target": "upload"
       },
+      "query": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "const": "public",
+            "description": "过渡参数（#565）：发布到公共项目写 `public`，只有平台管理员能这样做（别的凭据 403、不带凭据 401）；\n写别的项目名 400；不写发布到默认项目。路径带项目（#488）之后由路径里的项目替代，这个参数随之去掉。"
+          }
+        }
+      },
       "response": {
         "type": "object",
         "properties": {

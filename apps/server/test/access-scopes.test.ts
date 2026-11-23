@@ -253,6 +253,7 @@ describe("契约和访问检查的规则对得上", () => {
 			"account",
 			"none",
 			"path",
+			"query",
 			"run",
 			"scenario",
 			"session",
@@ -268,7 +269,6 @@ describe("契约和访问检查的规则对得上", () => {
 				"GET /orchestrations",
 				"POST /orchestrations",
 				"GET /packages",
-				"POST /packages",
 				"GET /packages/:name/versions/:version/archive",
 				"GET /feishu-bots",
 				"DELETE /feishu-bots/:name",
@@ -277,6 +277,8 @@ describe("契约和访问检查的规则对得上", () => {
 				"POST /projects/:project/sessions",
 			]),
 		);
+		// 发布节点包：路径里没有项目，过渡的查询参数 project=public（#565；#488 之后由路径替代）。
+		expect(classes.get("query")).toEqual(["POST /packages"]);
 		expect(classes.get("scenario")).toContain("POST /orchestrations/:id/runs");
 		expect(classes.get("run")).toContain("POST /runs/:id/cancel");
 		expect(classes.get("task")).toContain("PUT /tasks/:id/artifacts/*");
