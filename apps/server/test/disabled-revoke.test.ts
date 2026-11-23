@@ -89,6 +89,7 @@ describe("停用期间吊销自己的凭据", () => {
 
 	it("个人令牌吊销它自己（sfly logout）：停用期间也行，启用之后它不能用；同一个人的别的令牌不动", async () => {
 		const alice = await accounts.user("alice");
+		await accounts.member("default", alice, "editor");
 		const token = await accounts.personalToken(alice);
 		const other = await accounts.personalToken(alice);
 		const id = await accounts.tokenId(token);
