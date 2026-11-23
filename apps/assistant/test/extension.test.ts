@@ -11,12 +11,13 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { type AddressInfo, createServer } from "node:net";
+import { type AddressInfo, connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Code } from "@connectrpc/connect";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { connectAgent, WORKBENCH_UNREACHABLE } from "../src/agent.js";
+import { type AgentOptions, connectAgent, WORKBENCH_UNREACHABLE } from "../src/agent.js";
 import {
 	createRemoteTools,
 	isPiTempFile,
@@ -24,7 +25,14 @@ import {
 	readOps,
 } from "../src/extension/extension.js";
 import type { TurnConfig } from "../src/turn-config.js";
-import { FakeWorkbench, freezableProxy, silentPort } from "./support/fake-workbench.js";
+import {
+	FakeWorkbench,
+	failingConnection,
+	freezableProxy,
+	resettingPort,
+	silentPort,
+	systemError,
+} from "./support/fake-workbench.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: 测试里按名字取注册的工具，参数各不相同。
 type AnyTool = ToolDefinition<any, any, any>;
@@ -51,6 +59,7 @@ beforeEach(() => {
 	workbench.hang = undefined;
 	workbench.silent = false;
 	workbench.timeoutReplyDelayMs = 0;
+	workbench.fail = undefined;
 	workbench.runs.length = 0;
 	workbench.reads.length = 0;
 	workbench.writes.length = 0;
@@ -293,6 +302,142 @@ describe("工作台接了连接却不回话：每次调用都有期限", () => {
 		expect(text).toContain("没有回应这次命令");
 		expect(text).toContain("还连得上");
 		expect(text).not.toContain(WORKBENCH_UNREACHABLE);
+		expect(text).not.toContain(workbench.address);
+	});
+});
+
+/** 四个工具各调一次（编辑先读）。 */
+const FOUR = [
+	["bash", { command: "echo hi", timeout: 1 }],
+	["read", { path: "a.txt" }],
+	["write", { path: "a.txt", content: "x" }],
+	["edit", { path: "a.txt", edits: [{ oldText: "a", newText: "b" }] }],
+] as const;
+
+/** 一套期限很短的工具，建连接用给的选项；认不出、不放行的原文记进 `logs`。 */
+function toolsWith(address: string, extra: AgentOptions = {}) {
+	const logs: string[] = [];
+	const set = new Map<string, AnyTool>();
+	const pi = {
+		registerTool: (tool: AnyTool) => set.set(tool.name, tool),
+		on: () => {},
+	} as unknown as ExtensionAPI;
+	createRemoteTools(pi, {
+		shortTimeoutMs: 300,
+		config: () => ({ ...config, address }),
+		connect: (a) =>
+			connectAgent(a, {
+				replySlackMs: 200,
+				fileDeadlineMs: 400,
+				probeDeadlineMs: 300,
+				log: (line) => logs.push(line),
+				...extra,
+			}),
+	});
+	return { tools: set, logs };
+}
+
+describe("工作台这条连接上的错误：认得的才放行，原文只进日志（#640）", () => {
+	const remote = "10.9.8.7:50052";
+	const local = "10.1.2.3:53118";
+
+	it.each([
+		["主机不可达", "EHOSTUNREACH"],
+		["网络不可达", "ENETUNREACH"],
+	])("%s：四个工具都以「工作台连不上」结束，结果里没有两端的地址、没有连接层的原文", async (_name, code) => {
+		const { tools: set, logs } = toolsWith(remote, {
+			http2: { createConnection: failingConnection(systemError(code, remote, local)) },
+		});
+		for (const [name, params] of FOUR) {
+			const text = await run(set, name, params);
+			expect(text, name).toContain(`${WORKBENCH_UNREACHABLE}：连接断了，之后也探不通`);
+			for (const part of ["10.9.8.7", "10.1.2.3", code, "connect"]) {
+				expect(text, name).not.toContain(part);
+			}
+		}
+		expect(logs.join("\n")).toContain(`connect ${code} ${remote} - Local (${local})`);
+	});
+
+	it("连接被重置：四个工具都以「工作台连不上」结束，结果里没有地址、没有连接层的原文", async () => {
+		const port = await resettingPort();
+		try {
+			const { tools: set, logs } = toolsWith(port.address);
+			for (const [name, params] of FOUR) {
+				const text = await run(set, name, params);
+				expect(text, name).toContain(`${WORKBENCH_UNREACHABLE}：连接断了，之后也探不通`);
+				expect(text, name).not.toContain(port.address);
+				expect(text, name).not.toMatch(/ECONNRESET|socket|stream/i);
+			}
+			expect(logs.join("\n")).toContain(port.address);
+		} finally {
+			await port.close();
+		}
+	});
+
+	it("连接上来了一个认不出的错误、工作台还探得通：这次调用以自己的说法结束，特征串不出现", async () => {
+		const [host, port] = workbench.address.split(":") as [string, string];
+		const marker = "MARKER-plain-88 via 10.9.8.7";
+		const fail = failingConnection(new Error(marker));
+		// 读、写的工具第一步出错也照常往下走（探文件类型、建父目录），之后的调用用上探过的那条连接：只看命令和编辑。
+		const logs: string[] = [];
+		for (const [name, params] of FOUR.filter(([name]) => name === "bash" || name === "edit")) {
+			// 第一条连接报一个不是系统错误的错，之后的（探一下工作台）照常连上。
+			let opened = 0;
+			const quick = toolsWith(workbench.address, {
+				http2: {
+					createConnection: () => {
+						opened += 1;
+						return opened === 1 ? fail() : connect(Number(port), host);
+					},
+				},
+			});
+			const text = await run(quick.tools, name, params);
+			logs.push(...quick.logs);
+			expect(text, name).toContain("连接出了问题（工作台还连得上");
+			expect(text, name).not.toContain(WORKBENCH_UNREACHABLE);
+			expect(text, name).not.toContain("MARKER");
+			expect(text, name).not.toContain("10.9.8.7");
+		}
+		expect(logs.join("\n")).toContain(marker);
+	});
+
+	it.each([
+		["内部错误", Code.Internal],
+		["输出在命令退出之前中断了", Code.Unavailable],
+		["数据不全", Code.DataLoss],
+		["没有实现", Code.Unimplemented],
+	])("Agent 回了认不出的状态（%s）：不放行原话，工作台连得上，不说连不上", async (_name, code) => {
+		workbench.fail = { code, message: "MARKER-wire-77 at 10.9.8.7:50052" };
+		const { tools: set, logs } = toolsWith(workbench.address);
+		for (const [name, params] of FOUR) {
+			const text = await run(set, name, params);
+			expect(text, name).toContain("它回了一个错误（工作台还连得上");
+			expect(text, name).not.toContain(WORKBENCH_UNREACHABLE);
+			expect(text, name).not.toContain("MARKER");
+			expect(text, name).not.toContain("10.9.8.7");
+		}
+		expect(logs.join("\n")).toContain("MARKER-wire-77");
+	});
+
+	it("Agent 应用层的回答原样给模型：不存在、没有权限、是目录、已经不是原来的文件", async () => {
+		const { tools: set, logs } = toolsWith(workbench.address);
+		for (const [fail, expected] of [
+			[{ code: Code.NotFound, message: "a.txt 不存在" }, "ENOENT: no such file or directory"],
+			[{ code: Code.PermissionDenied, message: "没有权限" }, "EACCES: permission denied"],
+			[{ code: Code.InvalidArgument, message: "a.txt 是目录，不能读取" }, "EISDIR"],
+			[
+				{ code: Code.FailedPrecondition, message: "a.txt 已经不是原来的文件" },
+				"a.txt 已经不是原来的文件",
+			],
+		] as const) {
+			workbench.fail = fail;
+			expect(await run(set, "read", { path: "a.txt" }), fail.message).toContain(expected);
+		}
+		workbench.fail = { code: Code.InvalidArgument, message: "工作目录 /nope 不是目录" };
+		expect(await run(set, "bash", { command: "echo hi", timeout: 1 })).toContain(
+			"工作目录 /nope 不是目录",
+		);
+		expect(logs).toEqual([]);
 	});
 });
 

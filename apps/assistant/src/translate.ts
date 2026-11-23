@@ -23,8 +23,13 @@ export interface Translated {
 	events: AssistantEvent[];
 	/** 认不出的 pi 事件（只记日志）。 */
 	unknown?: string;
-	/** 上游模型出错时 pi 给的原文（没打码）：不进事件，由调用方打码后写进日志（#640）。 */
+	/**
+	 * 上游模型出错时 pi 给的原文（没打码）：不进事件，由调用方打码后写进日志（#640）。一次模型调用失败只给一次
+	 * （在它的 `message_end`）：之后的重试提示、重试用尽带的是同一段原文。
+	 */
 	upstreamError?: string;
+	/** 压缩上下文失败时 pi 给的原文（没打码）：同上，只进日志。 */
+	compactionError?: string;
 }
 
 /** pi 的工具名 → 平台的叫法（`SessionTool`）。 */
@@ -96,14 +101,15 @@ export class TurnTranslator {
 			case "tool_execution_end":
 				return { events: this.#toolEnd(event) };
 			case "auto_retry_start":
-				return { events: [this.#retry(event)], upstreamError: String(event.errorMessage ?? "") };
+				return { events: [this.#retry(event)] };
 			case "auto_retry_end":
-				return {
-					events: [this.#retryEnd(event)],
-					...(event.success !== true && { upstreamError: String(event.finalError ?? "") }),
-				};
+				return { events: [this.#retryEnd(event)] };
 			case "compaction_end":
-				return { events: this.#compaction(event) };
+				return {
+					events: this.#compaction(event),
+					...(typeof event.errorMessage === "string" &&
+						event.errorMessage !== "" && { compactionError: event.errorMessage }),
+				};
 			case "agent_settled":
 				return { events: [] };
 			default:

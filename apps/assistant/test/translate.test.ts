@@ -104,6 +104,34 @@ describe("pi 的事件 → 会话事件", () => {
 		});
 	});
 
+	it("上游的原文交给调用方记日志：一次模型调用失败只交一次（重试的提示、重试用尽带的是同一段原文）", () => {
+		const translator = new TurnTranslator(new Redactor());
+		const raws = fixture("pi-retry.jsonl").flatMap((record) => {
+			const { upstreamError } = translator.translate(record);
+			return upstreamError === undefined ? [] : [upstreamError];
+		});
+		// 剧本：第一次调用和三次重试都连不上，共四次模型调用失败。
+		expect(raws).toEqual(Array(4).fill("Connection error.: connect ECONNREFUSED 127.0.0.1:8177"));
+	});
+
+	it("压缩上下文失败：原文交给调用方记日志，不进事件", () => {
+		const translator = new TurnTranslator(new Redactor());
+		const out = translator.translate({
+			type: "compaction_end",
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+			errorMessage: 'Auto-compaction failed: 500: {"request_id":"req-9"}',
+		});
+		expect(out).toEqual({
+			events: [],
+			compactionError: 'Auto-compaction failed: 500: {"request_id":"req-9"}',
+		});
+		expect(
+			translator.translate({ type: "compaction_end", reason: "threshold", aborted: true }),
+		).toEqual({ events: [] });
+	});
+
 	it("认不出的 pi 事件：不抛错、不外传，交给调用方记日志", () => {
 		const translator = new TurnTranslator(new Redactor());
 		expect(translator.translate({ type: "something_new", x: 1 })).toEqual({

@@ -46,7 +46,7 @@ function main(): void {
 			: join(appDir, "..", "..", "docs", "guide", "skills"),
 		hostEnv: process.env,
 		bus,
-		connect: connectAgent,
+		connect: (address, agentLog = log) => connectAgent(address, { log: agentLog }),
 		log,
 	});
 	const version = (

@@ -14,7 +14,7 @@ import {
 } from "@sfly/schema";
 import type { z } from "zod";
 import { buildExtension } from "../../scripts/build-extension.js";
-import { type AgentDeadlines, connectAgent } from "../../src/agent.js";
+import { type AgentOptions, connectAgent } from "../../src/agent.js";
 import { EventBus } from "../../src/bus.js";
 import { piPackage } from "../../src/launch.js";
 import { createAssistantServer } from "../../src/server.js";
@@ -44,7 +44,7 @@ export interface HarnessOptions {
 	hostEnv?: NodeJS.ProcessEnv;
 	heartbeatMs?: number;
 	/** 助手服务连工作台时的期限（测试里改短）。 */
-	agentDeadlines?: AgentDeadlines;
+	agentDeadlines?: AgentOptions;
 }
 
 export class Harness {
@@ -93,8 +93,8 @@ export class Harness {
 				UNRELATED: "not-for-pi",
 			},
 			bus,
-			connect: (address) => {
-				const client = connectAgent(address, options.agentDeadlines);
+			connect: (address, log) => {
+				const client = connectAgent(address, { ...options.agentDeadlines, log });
 				counts.opened += 1;
 				return {
 					...client,

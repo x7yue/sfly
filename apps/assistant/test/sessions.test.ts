@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Code } from "@connectrpc/connect";
 import type { PromptCommandBody } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { connectAgent } from "../src/agent.js";
@@ -18,7 +19,7 @@ import { EventBus } from "../src/bus.js";
 import { ABORT_MARK_LIMIT, ABORT_MARK_TTL_MS, SessionManager } from "../src/sessions.js";
 import { mirrorSkillsLocally } from "../src/skills.js";
 import { eventually } from "./support/eventually.js";
-import { silentPort } from "./support/fake-workbench.js";
+import { failingConnection, silentPort, systemError } from "./support/fake-workbench.js";
 import { Harness, type HarnessOptions, SECRET } from "./support/harness.js";
 
 const FAKE_PI = [process.execPath, join(import.meta.dirname, "support", "fake-pi.mjs")];
@@ -253,6 +254,22 @@ describe("一轮的结局", () => {
 			.flatMap((r) => (r.event.type === "notice" ? [r.event] : []));
 		expect(notices.map((n) => n.kind)).toEqual(["retry", "retry_end"]);
 		expect(notices[0]).toMatchObject({ attempt: 1, max_attempts: 1, retry_delay_ms: 10 });
+		// 两次模型调用失败，各记一次；重试的提示、重试用尽带的是同一段原文，不再记。
+		expect(harness.logs.filter((line) => line.endsWith("上游模型出错：503 upstream"))).toHaveLength(
+			2,
+		);
+	});
+
+	it("压缩上下文失败：原文打码后记进日志，不进事件", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "compact-fail" });
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		expect(harness.logs.join("\n")).toContain(
+			"压缩上下文失败：Auto-compaction failed: 401: Authorization: ******",
+		);
+		expect(harness.logs.join("\n")).not.toContain("sk-compact-1");
+		expect(JSON.stringify(harness.events.of(id))).not.toContain("Auto-compaction");
 	});
 
 	it("一轮在做时再开始一轮：409 turn_running", async () => {
@@ -318,10 +335,18 @@ describe("保密环境变量按值打码", () => {
 		const output = events.flatMap((e) => (e.type === "tool_output" ? [e.text] : [])).join("");
 		expect(output).toContain("TOKEN=******");
 		expect(events.find((e) => e.type === "tool_call")).toMatchObject({ title: "echo ******" });
-		// 上游的错误原文（里面有这个值）不进提示，只进日志，进日志之前打码（#640）。
+		// 上游的错误原文（里面有这个值）不进提示，只进日志，进日志之前打码（#640）：保密值、模型文件引用的环境变量的值、
+		// 请求头和地址里的凭据都打码，截到上限；同一次失败（模型调用出错，接着是重试的提示）只记一次。
 		expect(events.find((e) => e.type === "notice")?.type).toBe("notice");
 		expect(JSON.stringify(events)).not.toContain("bad key");
-		expect(harness.logs.join("\n")).toContain("上游模型出错：bad key ******");
+		const logged = harness.logs.filter((line) => line.includes("上游模型出错："));
+		expect(logged).toHaveLength(1);
+		expect(logged[0]).toContain(
+			"上游模型出错：bad key ****** (******) Authorization: ******\nvia https://******@proxy.example/ xxx",
+		);
+		for (const part of ["fake-key", "sk-shape-123", "pw-shape"])
+			expect(logged[0]).not.toContain(part);
+		expect(logged[0]).toMatch(/x…（后面截掉了 \d+ 个字符）$/);
 	});
 });
 
@@ -705,7 +730,8 @@ describe("审查补的守护", () => {
 			const end = await harness.turnEnd(id, 1, 40_000);
 			expect(end).toMatchObject({ outcome: "failed" });
 			expect(end.reason).toContain("工作台连不上");
-			// 给人看的原因里没有工作台的地址（#640）；地址在日志里。
+			// 给人看的原因里写工作台的名字，没有它的地址（#640）；地址在日志里。
+			expect(end.reason).toContain("往工作台 silent 上写 skill 失败");
 			expect(end.reason).not.toContain(port.address);
 			expect(end.reason).not.toContain("127.0.0.1");
 			expect(harness.logs.join("\n")).toContain(port.address);
@@ -713,6 +739,51 @@ describe("审查补的守护", () => {
 			await port.close();
 		}
 	}, 60_000);
+
+	it("一轮开头写 skill 时工作台主机不可达：原因里有工作台的名字，没有两端的地址和连接层的原文，原文进日志", async () => {
+		const remote = "10.9.8.7:50052";
+		const harness = await start({
+			agentDeadlines: {
+				probeDeadlineMs: 300,
+				http2: {
+					createConnection: failingConnection(
+						systemError("EHOSTUNREACH", remote, "10.1.2.3:53118"),
+					),
+				},
+			},
+		});
+		const id = crypto.randomUUID();
+		await harness.prompt(id, {
+			text: "settle",
+			workbench: { name: "dev-root-dev", address: remote, workdir: harness.workdir },
+		});
+		const end = await harness.turnEnd(id);
+		expect(end).toMatchObject({
+			outcome: "failed",
+			reason:
+				"开始这一轮失败：往工作台 dev-root-dev 上写 skill 失败：工作台连不上：连接断了，之后也探不通",
+		});
+		const events = JSON.stringify(harness.events.of(id));
+		for (const part of ["10.9.8.7", "10.1.2.3", "EHOSTUNREACH"]) expect(events).not.toContain(part);
+		expect(harness.logs.join("\n")).toContain(
+			`connect EHOSTUNREACH ${remote} - Local (10.1.2.3:53118)`,
+		);
+	});
+
+	it("一轮开头写 skill 时工作台回了认不出的错误：特征串不出现在任何事件里，只进日志", async () => {
+		const harness = await start();
+		harness.workbench.fail = { code: Code.Internal, message: "MARKER-start-55 at 10.9.8.7" };
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		const end = await harness.turnEnd(id);
+		expect(end).toMatchObject({
+			outcome: "failed",
+			reason:
+				"开始这一轮失败：往工作台 fake-workbench 上写 skill 失败：工作台没能完成这次命令：它回了一个错误（工作台还连得上；原文只记在日志里）",
+		});
+		expect(JSON.stringify(harness.events.of(id))).not.toContain("MARKER");
+		expect(harness.logs.join("\n")).toContain("MARKER-start-55");
+	});
 
 	it("工作台上没有工作区目录：一轮开始时建好", async () => {
 		const harness = await start();
@@ -746,7 +817,7 @@ describe("启动时清掉上次留下的东西", () => {
 			skillsDir: "/nonexistent",
 			hostEnv: {},
 			bus: new EventBus(),
-			connect: connectAgent,
+			connect: (address) => connectAgent(address),
 			log: () => {},
 			tmpRoot,
 		});
@@ -768,7 +839,7 @@ describe("启动时清掉上次留下的东西", () => {
 				skillsDir: "/nonexistent",
 				hostEnv: {},
 				bus: new EventBus(),
-				connect: connectAgent,
+				connect: (address) => connectAgent(address),
 				log: () => {},
 			});
 		const first = mkdtempSync(join(tmpdir(), "sfly-two-a-"));
