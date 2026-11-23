@@ -6,18 +6,22 @@
 
 ## 上传 sfly-std
 
-在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验并上传到控制面：
+`sfly-std` 要发布到**公共项目**：平台自己维护的节点包放在那里，任何凭据都能读，只有**平台管理员**能发布；控制面的包索引也只列公共项目里的 `sfly-std`，依赖它的节点包装依赖时从那里取（见 [安装 Agent](install-agent.md) 的「控制面的包索引」）。
+
+在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验，再用平台管理员的个人令牌（从哪里来见下面的第二条）上传到公共项目（发布请求加查询参数 `project=public`）：
 
 ```sh
 cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
-curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.3.0.sflypkg {{SFLY_URL}}/packages
+curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer $SFLY_ADMIN_TOKEN" \
+  --data-binary @sfly-std-0.3.0.sflypkg '{{SFLY_URL}}/packages?project=public'
 ```
 
-- 上传成功时返回节点包的版本信息（JSON）；装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.3.0.sflypkg`。
-- 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里。Agent 第一次执行时从控制面安装它，依赖（`psutil`、`httpx`）从 PyPI 镜像安装。**注意**：这样上传的 `sfly-std` 在默认项目里，不会出现在控制面的包索引 `{{SFLY_URL}}/simple/sfly-std/` 里。依赖 `sfly-std` 的节点包装依赖时从这个索引取（不用往自己的 PyPI 镜像里放），索引只列公共项目里的 `sfly-std`；现在上传接口只往默认项目发，所以新部署里依赖 `sfly-std` 的节点包装依赖时通常无解（见 [安装 Agent](install-agent.md) 的「控制面的包索引」）。平台管理员把 `sfly-std` 发布进公共项目的办法随 #565 提供，那时这里的步骤再更新。
+- 上传成功时返回节点包的版本信息（JSON）。装了 sfly 命令行时，平台管理员先 `sfly login`（令牌存在本机的凭据文件里），再 `sfly publish sfly-std-0.3.0.sflypkg --project public`，命令自己带着令牌；脚本里设环境变量 `SFLY_API_TOKEN`（见 [用命令行操作平台](platform-cli.md)）。
+- **需要平台管理员的凭据**（登录，或 `Authorization: Bearer <个人令牌>`）：项目管理员、项目令牌、会话令牌、Agent 凭据、不带凭据都不行，不带凭据是 401，其余是 403，信息写明原因；`project` 现在只能写 `public`，写别的值是 400；不写 `project` 就是发布到默认项目，和以前一样（`sfly-std` 在默认项目里不会出现在包索引里）。发布记录里有发布人（用户和令牌的名称），也在平台管理员的写记录里。平台管理员的个人令牌从哪里来：第一个管理员在控制台的 `/setup` 页用初始化码建；之后他在控制台账号菜单的「令牌」页签发一个个人令牌，放进上面的 `SFLY_ADMIN_TOKEN`（`curl` 用这个）。用命令行时不用自己拿令牌：`sfly login` 把令牌存在本机，`sfly publish … --project public` 自己带着它；`sfly login` 不打印令牌，所以它换来的令牌放不进 `SFLY_ADMIN_TOKEN`。令牌的范围不会超过签发人此刻的角色，要用平台管理员本人的令牌（项目管理员的令牌发布不进公共项目）。这是过渡的写法，路径带项目（#488）之后改成 `/projects/public/packages`。
+- 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里，`{{SFLY_URL}}/simple/sfly-std/` 也提供它的 wheel。Agent 第一次执行时从控制面安装它，依赖（`psutil`、`httpx`）从 PyPI 镜像安装。
 - Release 说明写明了需要的**最低 Agent 版本**。Agent 版本更旧时任务以 `env_error` 失败并提示升级（见 [需要的 SDK 版本](publish.md#需要的-sdk-版本)）；Agent 跟随控制面的版本，升级控制面即可。
-- 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。
+- 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。发布到公共项目时，和已有版本按 PEP 440 规范化之后相同的版本（已有 `0.9.0` 再发 `0.9`、`0.9.0.0`）也会被拒绝：409，信息写明已有的是哪个。同名同版本已经在默认项目里（以前不带 `project=public` 上传过）时发布到公共项目同样是 409，信息写明它在默认项目里、不在包索引里：换一个版本号发布到公共项目（默认项目里的那个不能覆盖，也不会出现在包索引里）。
 
 ## 安全说明
 
@@ -44,7 +48,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 标准节点包的主体是**节点代码里可以直接调用的辅助函数**（从 `sfly-std` 0.4.0 起提供，0.3.0 里没有）。这些能力里难写对的是逻辑，不是节点的外壳：进程组的启动、停止和看护，采样整机与进程的资源，跟随会轮转的日志，判断文件写完了没有，经 Agent 能力从另一台机器拉文件，等端口、文件、日志行。把它们做成函数，你在自己的业务节点里导入、组合，行为由你的代码决定：函数有参数可以调（例如「进程重启之后按名字重新找到它」的 `refind_within`），`poll_until` 还收回调，不像上面的标准节点那样固定。
 
-用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`），然后从下面的模块导入。**依赖怎么装上**：`sfly-std` 不在 PyPI 上，由控制面的包索引提供（见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节）：`sfly init` 生成的项目已经把 `sfly-std` 绑到它（见 [创建节点包项目](init-project.md)，开发机上 `uv add sfly-std` 就能装上），Agent 装节点包的依赖时也从它取，不用往自己的 PyPI 镜像里放。索引里的是**公共项目**里已发布的 `sfly-std`，上传接口现在只往默认项目发（见上面「上传 sfly-std」），所以新部署里要先让平台管理员把它发布进公共项目（这个办法在 #573 合入之后才有，在那之前新部署里没有办法发布进去），依赖它的节点包才装得上。
+用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`），然后从下面的模块导入。**依赖怎么装上**：`sfly-std` 不在 PyPI 上，由控制面的包索引提供（见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节）：`sfly init` 生成的项目已经把 `sfly-std` 绑到它（见 [创建节点包项目](init-project.md)，开发机上 `uv add sfly-std` 就能装上），Agent 装节点包的依赖时也从它取，不用往自己的 PyPI 镜像里放。索引里的是**公共项目**里已发布的 `sfly-std`，所以新部署里要先让平台管理员把它发布进公共项目（办法见上面「上传 sfly-std」），依赖它的节点包才装得上。
 
 | 模块 | 函数 | 做什么 |
 |---|---|---|
@@ -129,8 +133,8 @@ def service_check(
     """起服务，等它就绪，采样它的资源，收集日志，最后停掉服务。
 
     副作用：启动的服务在节点结束前会被停掉，包括节点失败、被取消的时候：先发 SIGTERM，服务
-    没有退出就在 5 秒后发 SIGKILL（被取消时最多等 3 秒）。服务日志在服务停掉之后存成产物，
-    节点失败时也存。
+    没有退出就在 5 秒后发 SIGKILL（取消或超时进入收尾时间时最多等 3 秒）。服务日志在服务
+    停掉之后存成产物，节点失败时也存。
 
     失败：服务 60 秒内没有就绪，或者采样期间服务退出了。
     """
@@ -142,7 +146,7 @@ def service_check(
             monitor = monitor_processes(ctx, pid=service.pid, duration=observe)
         finally:
             # 在 finally 里清理要在平台给的收尾时间（默认 10 秒）内做完：stop_background_process
-            # 的宽限期默认 5 秒，被取消时最多 3 秒，来得及发 SIGKILL。
+            # 的宽限期默认 5 秒，取消或超时进入收尾时间时最多 3 秒，来得及发 SIGKILL。
             stopped = stop_background_process(ctx, service.pid)
     finally:
         # 服务停掉之后再存：日志里有它停止时的输出；节点失败时（最需要日志的时候）也存。
@@ -153,7 +157,7 @@ def service_check(
 几个要点：
 
 - `start_background_process` 启动的进程不属于任务的进程树，节点结束后它继续运行：要么像上面这样在 `finally` 里停，要么由场景里另一个节点（设为 always 节点）停止，用 `start_process` 和 `stop_process` 这两个节点就是这种做法。
-- **在 `finally` 里清理，要在平台给节点的收尾时间内做完**：任务被取消或超时时，平台向节点发 SIGTERM，10 秒（Agent 的 `--terminate-grace`，默认 10 秒）后强制杀掉整棵进程树，节点自己也在其中。`stop_background_process` 的 `grace`（从 SIGTERM 到 SIGKILL）默认只有 5 秒，所以**一个**忽略 SIGTERM 的服务也来得及发 SIGKILL；任务已经被取消（`ctx.cancelled()`）时再压到最多 3 秒。这些上限是**每次调用**的，不是整个收尾的预算：任务**超时**时平台不写取消标记（`ctx.cancelled()` 为假，宽限期不会压短），每停一个忽略 SIGTERM 的服务要用掉约 `grace` 秒，两个这样的服务用默认值就是 10 秒，第二个来不及 SIGKILL，它和它的看护进程会留下来，日志也存不了；取消时每个最多约 3 秒（三个服务的收尾约 9.4 秒）。所以**在 `finally` 里停两个及以上服务时，把 `grace` 给小**（各 2 秒，总和留在 10 秒以内），或者用单独的 always 节点停。你自己的清理里等的时间加起来不能超过这个时间；服务退出得慢、需要更长的宽限期时不要在 `finally` 里停，用单独的 always 节点（`stop_process`，它是一个单独的任务，有自己的时间）。
+- **在 `finally` 里清理，要在平台给节点的收尾时间内做完**：任务被取消或超时时，平台向节点发 SIGTERM，10 秒（Agent 的 `--terminate-grace`，默认 10 秒）后强制杀掉整棵进程树，节点自己也在其中。`stop_background_process` 的 `grace`（从 SIGTERM 到 SIGKILL）默认只有 5 秒，所以**一个**忽略 SIGTERM 的服务也来得及发 SIGKILL；任务进入收尾时间（`ctx.cancelled()` 为真）时再压到最多 3 秒：被取消、超时、被停止子流程节点停止时，Agent 都先写取消标记再发 SIGTERM，所以这三种情况一样。这些上限是**每次调用**的，不是整个收尾的预算：每停一个忽略 SIGTERM 的服务要用掉约 3 秒，停三个就要约 9.3 秒（实测），10 秒里只剩不到 1 秒给 `finally` 里别的清理（比如下面存服务日志），再多就来不及了，后面的服务和它们的看护进程会留下来，日志也存不了。所以**在 `finally` 里停三个及以上服务时，把 `grace` 给小**（总和留在 10 秒以内，还要给别的清理留时间），或者用单独的 always 节点停。你自己的清理里等的时间加起来不能超过这个时间；服务退出得慢、需要更长的宽限期时不要在 `finally` 里停，用单独的 always 节点（`stop_process`，它是一个单独的任务，有自己的时间）。另外，取消标记出现之后（取消、超时、被停止子流程节点停止都一样），新的 Agent 能力调用（`pull_files_from_agent` 这类）和产物下载在这个节点里会抛出 `sfly.Cancelled`（见 [开发节点](sdk-reference.md#取消与超时)）：超时之后要留证据（从别的 Agent 拉日志、存现场），放在 always 节点里做，不要放在节点自己的 `finally` 里。
 - 保存服务日志放在 `finally` 里、停服务之后：服务没有就绪、采样失败的时候最需要日志，停止时服务打的最后几行也在里面。
 - `monitor_processes` 的指标要在 `@node` 里声明：`metrics=PROCESS_METRICS, charts=PROCESS_CHARTS`；不设置 `duration` 时它一直采样到任务被取消，所以要和压测同时跑的监控放在子流程里。
 - `ctx.artifacts.save(名称, 数据)`：数据是 `str` 或 `bytes` 时保存的是这段内容；要保存一个文件，传 `Path`。`service.log_path` 是 `Path`，直接传就是存这个文件；传成字符串（`str(service.log_path)`）会把路径当成内容存进去。

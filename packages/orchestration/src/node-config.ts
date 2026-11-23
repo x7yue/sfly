@@ -36,12 +36,13 @@ export function effectiveTimeout(
 }
 
 /**
- * 场景里这个节点写的超时不合格（不是 1 到 4294967295 之间的整数）时的说明，没写或合格时为 undefined。
+ * 场景里这个节点写的超时不合格（不是 1 到 4294967295 之间的整数）时的说明，没写（`undefined`）或合格时为 undefined；
+ * 写了 `null` 和别的不合格的值一样报出来（保存时 `null` 同样被拒绝，保存、预检、派发是同一个口径，#576）。
  * 派发时以配置错误失败（不重试）、触发前的预检阻断、画布的警告用同一句；保存时更早被拒绝，
  * 这里管的是升级前保存的、已经在库里的值。`label` 是节点（`显示名称（节点 ID）`）。
  */
 export function nodeTimeoutProblem(label: string, written: unknown): string | undefined {
-	if (written === undefined || written === null || isNodeTimeout(written)) return undefined;
+	if (written === undefined || isNodeTimeout(written)) return undefined;
 	return nodeTimeoutMessage(label, written);
 }
 
@@ -56,12 +57,13 @@ export function effectiveQueueTimeout(node: { queue_timeout?: number | undefined
 }
 
 /**
- * 场景里这个节点写的排队超时不合格（不是 1 到 4294967295 之间的整数）时的说明，没写或合格时为 undefined。
+ * 场景里这个节点写的排队超时不合格（不是 1 到 4294967295 之间的整数）时的说明，没写（`undefined`）或合格时为 undefined；
+ * 写了 `null` 和别的不合格的值一样报出来（口径同 {@link nodeTimeoutProblem}）。
  * 排队时以配置错误失败（不重试）、触发前的预检阻断、画布的警告用同一句；保存时更早被拒绝，
  * 这里管的是升级前保存的、已经在库里的值。`label` 是节点（`显示名称（节点 ID）`）。
  */
 export function queueTimeoutProblem(label: string, written: unknown): string | undefined {
-	if (written === undefined || written === null || isQueueTimeout(written)) return undefined;
+	if (written === undefined || isQueueTimeout(written)) return undefined;
 	return queueTimeoutMessage(label, written);
 }
 

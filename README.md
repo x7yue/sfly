@@ -54,7 +54,7 @@
 CI 用上一个 Release 的 Agent 验证它能在当前控制面上跑完任务并自更新，含义与失败时的处理见 `docs/agents/branching-and-release.md`「跨版本自更新测试」。
 
 标准节点包 `sfly-std`（`std/`，ADR 0017）版本号独立，推送 `std-vX.Y.Z` tag 后由 `.github/workflows/std-release.yml` 发布：
-Release 附件 `sfly-std-X.Y.Z.sflypkg` 与 `SHA256SUMS`，部署者下载后上传到控制面（开发文档「标准节点」页）。步骤见 `docs/agents/branching-and-release.md`「发布 sfly-std」。
+Release 附件 `sfly-std-X.Y.Z.sflypkg` 与 `SHA256SUMS`，部署者下载后以平台管理员的身份发布到控制面的公共项目（开发文档「标准节点」页）。步骤见 `docs/agents/branching-and-release.md`「发布 sfly-std」。
 
 ## 部署与运维
 
@@ -88,7 +88,15 @@ docker compose up -d
   - 运行通知卡片上的「查看运行」按钮用 `SFLY_PUBLIC_URL` 拼出链接（`<SFLY_PUBLIC_URL>/runs/<运行 ID>`），所以要让用户在群里点得开，就把 `SFLY_PUBLIC_URL` 配成浏览器能访问的控制面地址；没有配置时卡片不显示按钮。
   - Webhook 地址相当于一个凭据：数据库里明文保存，界面和日志里只露出开头和结尾。平台没有认证（ADR 0004），能打开页面的人可以新增、替换、删除机器人，也能让它往群里发测试消息。
 - 跨域（ADR 0022）：用户自建的页面托管在别的来源，浏览器调用控制面前先预检。控制面默认允许所有来源（不带凭据）；设置 `SFLY_CORS_ORIGINS`（逗号分隔的来源，例如 `https://dash.example.com,http://localhost:5173`）后只允许名单里的来源，名单外的页面被浏览器拦下。没有登录时，「允许所有来源」意味着内网用户在浏览器里打开的任何网页都能调用他访问得到的控制面，包括触发和取消运行；不放心时收窄成名单。控制台自己的页面同源，命令行和 Agent 不经浏览器，都不受影响。自建页面托管在公网、控制面在内网时 Chrome 另有限制（页面要是 HTTPS，用户要允许访问本地网络），见用户文档「用 API 客户端做自己的页面」。
-- 其余配置见 `apps/server/src/main.ts` 顶部注释（保留天数与大小上限等）。
+- 保留期、大小上限和登录的空闲期限（`SFLY_RETENTION_DAYS`、`SFLY_METRIC_RETENTION_DAYS`、`SFLY_LOG_LIMIT_MB`、`SFLY_ARTIFACT_LIMIT_MB`、`SFLY_METRIC_LIMIT_MB`、`SFLY_LOGIN_IDLE_HOURS`）在 `deploy/.env.example` 里写明了取值范围，docker compose 会把它们传给控制面：保留天数大于 0、最大 36500（约 100 年，**不想清理就填 36500**，没有别的「永不清理」的写法），大小上限换算成字节后在 1 到 2^53 − 1 之间，登录的空闲期限 2 分钟（写 0.0334 小时或更大）到 876000 小时。不是数、不是有限的数、超出范围的值在控制面启动时就报错退出（写明变量名、填的原文和范围，几个一起报），不会启动之后才悄悄出错。其余配置见 `apps/server/src/main.ts` 顶部注释。
+- **升级前检查 `.env`**（这几个变量以前不在 `docker-compose.yml` 里，换上新的 compose 之后行为会变）：
+  - **以前写了也不生效的，换上新的 compose 之后会生效（这一条最要紧）。** `SFLY_RETENTION_DAYS`、`SFLY_METRIC_RETENTION_DAYS`、`SFLY_LOG_LIMIT_MB`、`SFLY_ARTIFACT_LIMIT_MB`、`SFLY_METRIC_LIMIT_MB`、`SFLY_LOGIN_IDLE_HOURS` 以前不在 compose 的 `environment` 里，`.env` 里写了控制面也读不到，一直是默认值。例如 `.env` 里一直放着 `SFLY_RETENTION_DAYS=7`：升级之后保留期从 30 天变成 7 天，运行结束超过 7 天的日志和产物会被清理（不可恢复）。升级前先看一眼 `.env` 里有没有这几项、值是不是你现在想要的，不想要的删掉或留空。
+  - **以前能启动、现在启动失败的写法**（按部署方式分开看）：
+    - **用 compose 部署的**：这六个变量以前根本没传进容器（见上一条），所以 `.env` 里这六项现在不合法的**任何**写法（`10MB`、`30d`、`0`、`abc`、保留天数超过 36500、登录的空闲期限不到 2 分钟……）以前都能启动，升级后控制面启动失败。
+    - **直接给进程设环境变量的**（`docker run -e`、从源码起）：以前能启动、现在失败的有——`Infinity`、`1e400`（保留天数、日志和指标的上限、登录的空闲期限都受影响；保留天数写 `Infinity` 正是以前「清理每分钟报错、悄悄不清理」的那种）；保留天数超过 36500（想「永不清理」而填了很大的数的，改填 36500；36501 到约 247 万这一段以前真的能用，效果就是不清理）；十六进制（`0x1E`）；日志和指标的上限换算成字节后不到 1 字节（`0.0000001`，以前上限就是 0 字节）或超过 2^53 − 1（`8589934592`、`1e300`：这两个上限以前不检查范围，只有产物的上限检查）；登录的空闲期限超过 876000 小时或不到 2 分钟；端口写成 `+8080`、`8080.0`、`1e3`、`0x1F90`、`-0`。（`10MB` 这种带单位的写法以前直接设环境变量就启动不了，不在这一类。）
+    - **端口的空串**是行为变化，不是启动失败：以前读成 0（让系统随机选端口），现在用默认端口，仍然能启动。
+    - compose 里 `.env` 的 `SFLY_HTTP_PORT`、`SFLY_GRPC_PORT` 只是宿主机端口的映射，控制面看不到，不受影响。
+  - **启动失败时**：`restart: unless-stopped` 会让容器反复重启，页面和 Agent 一直连不上。看控制面的启动日志（`docker compose logs sfly`）：第一行是「sfly: 控制面没有启动，…」，写明是哪个变量、填的原文和允许的范围，几个不合法的一次报完。改 `.env` 里对应的值，再 `docker compose up -d`。
 - 需要 TLS 或统一入口时，按 Fastify 官方建议在前面加反向代理。SSE 要关闭代理缓冲；Agent 网关是 gRPC（HTTP/2），要么单独开放 50051，要么用 `grpc_pass` 转发。nginx 示例：
 
   ```nginx
