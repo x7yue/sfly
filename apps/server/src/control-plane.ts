@@ -201,6 +201,8 @@ export interface ControlPlaneOptions {
 	passwordGate?: PasswordGateOptions;
 	/** 打开着的事件流多久重新检查一次它的凭据（毫秒，src/http/api.ts），默认 30 秒；测试里调小。 */
 	streamRecheckMs?: number;
+	/** 会话令牌的写（触发、保存、恢复、复制）的事务里等行锁最多等多久（毫秒，src/sessions/session-store.ts），默认 5 秒；测试里调小。 */
+	sessionWriteLockTimeoutMs?: number;
 }
 
 export interface ControlPlane {
@@ -279,6 +281,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		db: database.db,
 		clock,
 		onError: (what, error) => logError(`sfly: ${what}`, error),
+		...(options.sessionWriteLockTimeoutMs !== undefined && {
+			writeLockTimeoutMs: options.sessionWriteLockTimeoutMs,
+		}),
 	});
 	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";

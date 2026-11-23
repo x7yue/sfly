@@ -2,7 +2,7 @@
 // 可以不连数据库单独测试；数据库实现在这个文件里。
 import { randomUUID } from "node:crypto";
 import type { SessionStatus } from "@sfly/schema";
-import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { taskIsActive } from "../agents/task-credentials.js";
 import type { Db } from "../db/database.js";
 import {
@@ -273,6 +273,7 @@ export class DbAccessStore implements AccessStore {
 						.select({ id: apiTokens.id })
 						.from(apiTokens)
 						.leftJoin(users, eq(users.id, apiTokens.userId))
+						.leftJoin(sessions, eq(sessions.id, apiTokens.sessionId))
 						.where(
 							and(
 								inArray(apiTokens.id, [...ids.tokenIds]),
@@ -280,6 +281,12 @@ export class DbAccessStore implements AccessStore {
 								or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, now)),
 								// 项目令牌没有用户（左连接出来是空）；有用户的，用户没停用。
 								isNull(users.disabledAt),
+								// 会话令牌：会话没有结束、发起人和令牌的用户一致（取令牌时的核对，`tokenByHash`）；已打开的事件流也一样，
+								// 会话结束之后它的令牌从此无效，不等令牌被吊销。别的令牌没有会话，不受影响。
+								or(
+									isNull(apiTokens.sessionId),
+									and(ne(sessions.status, "ended"), eq(sessions.createdByUserId, apiTokens.userId)),
+								),
 							),
 						),
 		]);

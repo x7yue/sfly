@@ -263,6 +263,8 @@ export class Engine implements AgentSessionHandler {
 	 */
 	trigger(orchestrationId: string, request: TriggerRequest, actor: Actor): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
+			// 会话令牌的触发：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
+			if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(step.tx);
 			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
 			if (!admitted.ok) return admitted;
 			const { projectId, version, plan, params, runPreset } = admitted;
@@ -304,9 +306,8 @@ export class Engine implements AgentSessionHandler {
 			await this.#advance(step, run as RunRow, chain as ChainRow, 0);
 			if (actor.sessionId !== null) {
 				// 会话令牌触发的：同一个事务里给会话写一条平台记录（成果栏只读这些记录），提交之后再推送。慢的都做完了（引擎的锁、
-				// 场景的锁、运行的写入和推进）：现在才排到会话的链上，从写记录到推送完占着它，别的会话的事件不被拖住。
+				// 场景的锁、运行的写入和推进）：记录是事务的最后一件事（会话那一行的锁是最后拿的一把），事务里不等任何进程里的锁。
 				const { sessionId } = actor;
-				step.releases.push(await this.deps.sessions.hold(sessionId));
 				const event = await this.deps.sessions.recordPlatform(step.tx, sessionId, {
 					kind: "run",
 					run_id: runId,
@@ -619,18 +620,11 @@ export class Engine implements AgentSessionHandler {
 			assigns: [],
 			notifications: noPendingNotifications(),
 			afterCommit: [],
-			releases: [],
 		};
-		let result: T;
-		try {
-			result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
-			this.#publish(step.touchedRuns);
-			// 提交之后的收尾（推送会话里的平台记录；推送失败只记日志，不抛出来，后面的取消、派发照做）。
-			for (const after of step.afterCommit) await after();
-		} finally {
-			// 会话的链只占到这里：写记录、提交、推送这一小段。
-			for (const release of step.releases) release();
-		}
+		const result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
+		this.#publish(step.touchedRuns);
+		// 提交之后的收尾（推送会话里的平台记录：交给会话的链、不等它；推送失败只记日志，后面的取消、派发照做）。
+		for (const after of step.afterCommit) after();
 		for (const order of step.cancels) this.#sendCancel(order);
 		for (const { conn, message } of step.assigns) conn.send(message);
 		await this.deps.notifications.committed(step.notifications);

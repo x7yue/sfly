@@ -17,7 +17,12 @@ import { projects, sessionEvents, sessions } from "../db/schema.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
-import { type FollowSink, follow } from "./follow.js";
+import { type FollowSink, follow, REPLAY_BATCH } from "./follow.js";
+
+/** 推送指针（{@link SessionStore.#cursors}）多到这个数时，顺手清掉闲置的（{@link SessionStoreDeps.cursorSweepSize}）。 */
+const CURSOR_SWEEP_SIZE = 1_000;
+/** 闲置多久（毫秒）的推送指针可以清掉：写事务最长也只等 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}，远小于它（{@link SessionStoreDeps.cursorIdleMs}）。 */
+const CURSOR_IDLE_MS = 10 * 60_000;
 
 /** 库里的一个会话。 */
 export type SessionRow = typeof sessions.$inferSelect;
@@ -98,15 +103,34 @@ function dropReason(
 	return turn === effectiveTurn(session) ? undefined : "other_turn";
 }
 
-/** 事务里锁住会话那一行并取出它；不存在时抛 {@link SessionNotFoundError}。 */
+/**
+ * 事务里锁住会话那一行并取出它；不存在时抛 {@link SessionNotFoundError}。**锁的强度是 `FOR NO KEY UPDATE`**，不是 `FOR UPDATE`：
+ * 记着会话引用的行（`runs.session_id`、`orchestration_versions.session_id`、`api_tokens` 的组合外键）插入时，外键检查给会话那一行
+ * 加 `FOR KEY SHARE`，一直持有到事务结束；`FOR UPDATE` 和它冲突，`FOR NO KEY UPDATE` 不冲突，同一个会话的事件之间仍然互斥
+ * （序号靠它串行）。这一把是每条路径上最后拿的一把数据库锁（docs/ARCHITECTURE.md「会话令牌」的锁顺序）。
+ */
 async function lockSession(tx: Tx, sessionId: string): Promise<SessionRow> {
 	const [session] = await tx
 		.select()
 		.from(sessions)
 		.where(eq(sessions.id, sessionId))
-		.for("update");
+		.for("no key update");
 	if (!session) throw new SessionNotFoundError(sessionId);
 	return session;
+}
+
+/**
+ * 会话令牌的写（触发、保存、恢复、复制）的事务里，等行锁最多等多久（毫秒）：超时这一次请求以明确的错误结束、事务回滚
+ * （{@link isLockTimeout}，HTTP 503），不让任何一种没想到的等待变成永远卡住。正常时这些路径只等别的事务提交，毫秒级。
+ */
+export const DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS = 5_000;
+
+/** 这个错误是不是「等锁超时」（PostgreSQL 的 `lock_not_available`，沿着 `cause` 找：drizzle 把数据库错误包了一层）。 */
+export function isLockTimeout(error: unknown): boolean {
+	for (let e: unknown = error; e instanceof Error; e = e.cause) {
+		if ((e as { code?: unknown }).code === "55P03") return true;
+	}
+	return false;
 }
 
 /** 写事件时会话不存在。 */
@@ -126,6 +150,12 @@ export interface SessionStoreDeps {
 	afterCommit?: (sessionId: string, event: PersistedSessionEvent) => Promise<void>;
 	/** 不该抛出去、只记日志的错误（平台记录发布失败）。 */
 	onError?: (what: string, error: unknown) => void;
+	/** 会话令牌的写的事务里等行锁最多等多久（毫秒），默认 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}；测试里调小。 */
+	writeLockTimeoutMs?: number;
+	/** 推送指针多到这个数时顺手清掉闲置的，默认 1000；测试里调小，验证清理只清闲置的、不清还在用的。 */
+	cursorSweepSize?: number;
+	/** 推送指针闲置多久（毫秒）可以清掉，默认 10 分钟（写事务最长也只等锁等待的上限，远小于它）；测试里调小。 */
+	cursorIdleMs?: number;
 	/**
 	 * 测试用的缝：{@link SessionStore.detail} 读到会话那一行之后、读事件之前调用（并等它），用来在这两步之间让这个会话
 	 * 提交别的事件，验证读到的三样东西来自同一个快照。生产里不传。
@@ -145,13 +175,22 @@ export class SessionStore {
 	readonly #live = new Topics<SessionEvent>();
 	/** 每个会话一条 Promise 链：这个会话的「落库加发布」和事件流补发的读库依次执行，见 {@link SessionStore.append}。 */
 	readonly #chains = new Map<string, Promise<unknown>>();
+	/**
+	 * 每个会话「已经推送到的持久事件序号」，见 {@link SessionStore.#publishInOrder}。只在这个会话有写在途时才有意义：
+	 * 在事务里拿到会话那一行的锁、分配序号的那一刻登记（{@link SessionStore.#begin}），闲置很久的由 `#begin` 顺手清掉。
+	 */
+	readonly #cursors = new Map<string, { published: number; usedAt: number }>();
+	/** 上一次清理闲置推送指针的时间（毫秒）。 */
+	#sweptAt = 0;
 
 	constructor(private readonly deps: SessionStoreDeps) {}
 
 	/**
-	 * 在这个会话的链上依次执行：前一个（不论成败）结束了才开始。进程内的这个会话，「落库加发布」一次一个，
-	 * 发布的先后就是提交的先后（也就是 `seq` 的先后）；补发读库也排在这条链上，所以读到的不会有「已经提交、
-	 * 但还没发布」的事件。控制面只有一个进程（不是多副本）时成立；多副本要换成数据库的通知（那时再说）。
+	 * 在这个会话的链上依次执行：前一个（不论成败）结束了才开始。助手事件的路径（{@link append}、{@link appendFromAssistant}、
+	 * 不持久事件的发布、补发读库……）在上面依次执行：一件的「落库加发布」做完，下一件才开始，不持久的增量和持久的事件在事件流里的先后
+	 * 就是它们到的先后。**不要在拿着数据库连接或开着事务的时候等这条链**（docs/ARCHITECTURE.md「会话令牌」）：链上的任务要
+	 * 自己去拿连接、拿行锁，等链的一方又占着连接或行锁，就是数据库看不见的死锁。持久事件**推送的顺序**不靠这条链保证，靠
+	 * {@link SessionStore.#publishInOrder}（见那里）。控制面只有一个进程（不是多副本）时成立；多副本要换成数据库的通知（那时再说）。
 	 */
 	#serial<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
 		const previous = this.#chains.get(sessionId) ?? Promise.resolve();
@@ -163,6 +202,15 @@ export class SessionStore {
 			if (this.#chains.get(sessionId) === tail) this.#chains.delete(sessionId);
 		});
 		return result;
+	}
+
+	/**
+	 * 会话令牌的写（触发、保存、恢复、复制）的事务里设置等行锁的上限（`SET LOCAL lock_timeout`，只在这个事务里有效）：超时这一次
+	 * 请求以明确的错误结束、事务回滚（{@link isLockTimeout}，HTTP 503）。放在事务的第一条语句。
+	 */
+	async limitWriteLockWait(tx: Tx): Promise<void> {
+		const ms = this.deps.writeLockTimeoutMs ?? DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS;
+		await tx.execute(sql`select set_config('lock_timeout', ${`${ms}ms`}, true)`);
 	}
 
 	/** 项目存不存在（路径里的项目标识）。 */
@@ -512,7 +560,7 @@ export class SessionStore {
 						.select()
 						.from(sessions)
 						.where(eq(sessions.id, sessionId))
-						.for("update");
+						.for("no key update");
 					if (!session) return { dropped: "unknown_session" };
 					const dropped = dropReason(session, turn);
 					if (dropped !== undefined) return { dropped };
@@ -548,28 +596,14 @@ export class SessionStore {
 	}
 
 	/**
-	 * 排到这个会话的「落库加发布」链上，并占着它，直到调用返回的 `release`。控制面在记下一条记录（运行、场景版本）的
-	 * 同一个事务里给会话写平台记录（{@link recordPlatform}），提交之后发布（{@link announce}）：**从写记录到发布完**这一段
-	 * 要占着链，这个会话别的「落库加发布」排在它后面，发布的顺序才等于提交的顺序。实时阶段的 `follow` 按 `seq` 去重，先发布了
-	 * 大的序号，后到的小序号就被当作「已经发过」丢掉。
-	 * **只占这一小段**：调用之前要把慢的东西都做完（引擎的锁、场景那一行的锁、运行的推进、版本的写入），再来 `hold`，然后
-	 * `recordPlatform`、提交、`announce`、`release`。链上排着助手服务的事件（连接一行处理完才读下一行，所有会话共用），占得久，
-	 * 所有会话的事件一起晚到。
-	 * 必须调用 `release`（放在 `finally` 里）：不放，这个会话的链就永远堵着。
-	 * 锁的先后（全仓库一个顺序，docs/ARCHITECTURE.md「会话令牌」）：引擎的锁 → 场景那一行 → 会话的链 → 会话那一行；
-	 * 链上的任务只碰会话和它的事件，不会反过来等前面的锁。
-	 */
-	hold(sessionId: string): Promise<() => void> {
-		return new Promise((resolve) => {
-			void this.#serial(sessionId, () => new Promise<void>((release) => resolve(() => release())));
-		});
-	}
-
-	/**
 	 * 在调用方的事务里给会话记一条平台记录：助手用会话令牌触发了运行、保存了场景版本（#547）。`turn` 是会话最近的一轮
 	 * （`current_turn`）：会话在做时就是正在做的那一轮；空闲时记在最近一轮的结局之后；从没开始过一轮的（`current_turn` 为 0，
-	 * 产品里造不出带令牌的这种会话）按第 1 轮。已结束的会话，它的令牌无效，到不了这里。会话那一行在事务里锁住，规则同
-	 * {@link append}。返回的事件在事务提交之后交给 {@link announce}；**从这里到发布完要占着链**（{@link hold}）。
+	 * 产品里造不出带令牌的这种会话）按第 1 轮。已结束的会话，它的令牌无效，到不了这里。
+	 *
+	 * **调用方的事务里，这是最后一件事**：先做慢的（引擎的锁、场景那一行的锁、运行和版本的写入），最后才来这里——给会话那一行
+	 * 加锁（`FOR NO KEY UPDATE`）、在锁下分配序号、写记录，然后立即提交。这是这条路径上最后拿的一把数据库锁，占着它的时间是毫秒级，
+	 * 别的会话的事件、同一个会话的助手事件都不被拖住。**这里不等任何进程里的锁**：事务开着、拿着连接的时候不去排会话的链。
+	 * 返回的事件在事务提交之后交给 {@link announce}。
 	 */
 	async recordPlatform(
 		tx: Tx,
@@ -588,26 +622,83 @@ export class SessionStore {
 	}
 
 	/**
-	 * 把已经提交的平台记录发布给订阅这个会话的连接（{@link recordPlatform} 的收尾）；在 {@link hold} 占着链的时候调用。
-	 * **发布失败只记日志，不抛出去**：记录已经提交了，订阅的一方按 `Last-Event-ID` 重连能补上；不能让它把已经提交的运行
-	 * 变成 500、挡住后面的派发。
+	 * 把已经提交的平台记录推送给订阅这个会话的连接（{@link recordPlatform} 的收尾），在事务提交**之后**调用。排到这个会话的链上
+	 * 推送，但**不等它**：调用方（引擎的锁里、请求的处理函数里）不被链上的事件拖住，推送在后台做。推送的顺序等于序号的顺序
+	 * （{@link SessionStore.#publishInOrder}），不论它和助手事件谁先提交、谁先排到链上。
+	 * 推送失败只记日志，不抛出去：记录已经提交了，不能让它把已经提交的运行变成 500、挡住后面的派发；没有推出去的这一条，
+	 * 下一条持久事件推送的时候会从库里补上（订阅的一方看到的序号仍然连续），重连的订阅从库里补发。
 	 */
-	async announce(sessionId: string, event: PersistedSessionEvent): Promise<void> {
-		try {
-			await this.#publishCommitted(sessionId, [event]);
-		} catch (error) {
-			this.deps.onError?.(
-				`session ${sessionId}: platform record ${event.seq} not published:`,
-				error,
-			);
+	announce(sessionId: string, event: PersistedSessionEvent): void {
+		void this.#serial(sessionId, () => this.#publishCommitted(sessionId, [event])).catch(
+			(error) => {
+				this.deps.onError?.(
+					`session ${sessionId}: platform record ${event.seq} not published:`,
+					error,
+				);
+			},
+		);
+	}
+
+	/** 登记：这个会话有一条序号为 `seq` 的持久事件在事务里（会话那一行已经锁住）。 */
+	#begin(sessionId: string, seq: number): void {
+		const now = Date.now();
+		const cursor = this.#cursors.get(sessionId);
+		// 第一次登记：比它小的事件要么已经推送过，要么就是这一条之前的写（它们登记过，指针已经在）。
+		if (cursor === undefined) this.#cursors.set(sessionId, { published: seq - 1, usedAt: now });
+		else cursor.usedAt = now;
+		// 多了才清，而且至多每分钟扫一遍（写路径上不为它多花时间）。
+		if (
+			this.#cursors.size > (this.deps.cursorSweepSize ?? CURSOR_SWEEP_SIZE) &&
+			now - this.#sweptAt > 60_000
+		) {
+			this.#sweptAt = now;
+			const idleMs = this.deps.cursorIdleMs ?? CURSOR_IDLE_MS;
+			for (const [id, c] of this.#cursors) {
+				if (now - c.usedAt > idleMs) this.#cursors.delete(id);
+			}
 		}
 	}
 
-	/** 提交之后按顺序发布（测试缝 `afterCommit` 在每条发布之前）。 */
+	/** 提交之后按顺序推送（测试缝 `afterCommit` 在每条推送之前）。要在这个会话的链上调用。 */
 	async #publishCommitted(sessionId: string, events: PersistedSessionEvent[]): Promise<void> {
 		for (const event of events) {
 			await this.deps.afterCommit?.(sessionId, event);
+			await this.#publishInOrder(sessionId, event);
+		}
+	}
+
+	/**
+	 * 推送一条已经提交的持久事件，**推送的顺序等于序号的顺序，不漏、不重**。每个会话记着「已经推送到的序号」（`published`）：
+	 * - 序号正好是 `published + 1`：直接推；
+	 * - 序号不大于 `published`：已经被前面的一次补推推过了，不再推（下面的循环不执行）；
+	 * - 序号更大：比它小的别的事件已经提交（会话那一行的行锁保证：提交的先后就是序号的先后）、还没推——比如先提交的平台记录
+	 *   还没轮到推送——从库里读 `published` 之后已经提交的事件，按序号推到这一条为止。
+	 * 事件流的实时阶段按 `seq` 去重，先推了大的序号，后到的小序号就被当作「已经发过」丢掉，所以顺序不能乱。
+	 * 推送中途失败时指针不前进：下一条事件推送的时候从库里补上没推出去的。进程停了，没推出去的事件已经在库里，
+	 * 订阅的一方重连读库补发。要在这个会话的链上调用（同一个会话的推送一次一个）。
+	 */
+	async #publishInOrder(sessionId: string, event: PersistedSessionEvent): Promise<void> {
+		const cursor = this.#cursors.get(sessionId) ?? { published: event.seq - 1, usedAt: Date.now() };
+		this.#cursors.set(sessionId, cursor);
+		cursor.usedAt = Date.now();
+		if (event.seq === cursor.published + 1) {
 			this.#live.publish(sessionId, event);
+			cursor.published = event.seq;
+			return;
+		}
+		while (cursor.published < event.seq) {
+			const batch = await this.after(sessionId, cursor.published, REPLAY_BATCH);
+			if (batch.length === 0) {
+				// 已经提交的事件读不到：不该发生。不空转，把这一条推出去（序号有跳跃，客户端按 seq 去重不受影响）。
+				this.#live.publish(sessionId, event);
+				cursor.published = event.seq;
+				return;
+			}
+			for (const found of batch) {
+				if (found.seq > event.seq) return;
+				this.#live.publish(sessionId, found);
+				cursor.published = found.seq;
+			}
 		}
 	}
 
@@ -658,6 +749,8 @@ export class SessionStore {
 			.select({ seq: sql<number>`coalesce(max(${sessionEvents.seq}), 0)::int` })
 			.from(sessionEvents)
 			.where(eq(sessionEvents.sessionId, session.id));
+		// 序号是在会话那一行的行锁下取的：提交的先后就是序号的先后。登记之后，这条事件的推送从指针算起。
+		this.#begin(session.id, (last?.seq ?? 0) + 1);
 		const [row] = await tx
 			.insert(sessionEvents)
 			.values({
