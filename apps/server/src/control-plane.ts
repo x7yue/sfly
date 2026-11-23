@@ -414,6 +414,14 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		onRevoked: (ids) => hub.closeByCredentials(ids),
 	});
+	// 用户被停用：他名下的开发 Agent 的凭据停止有效（Hello 拒绝，见 agent-auth.ts），已连着的连接断开。凭据不吊销：启用之后恢复。
+	const stopClosingDevAgents = accounts.onRevoked((revocation) => {
+		if (revocation.type !== "user") return;
+		agentCredentials
+			.liveIdsOfUser(revocation.userId)
+			.then((ids) => hub.closeByCredentials(ids))
+			.catch((error) => logError("sfly: 用户停用时断开他的开发 Agent 失败", error));
+	});
 	try {
 		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({
@@ -616,6 +624,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		sessions,
 		agentCredentials,
 		async close() {
+			stopClosingDevAgents();
 			await assistantConnection?.close();
 			await Promise.all(sweeps.map((s) => s.stop()));
 			await retention.idle();

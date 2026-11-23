@@ -139,11 +139,15 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 					agentClockReading(hello),
 					helloReceivedAt,
 					outcome.auth,
+					() => options.authenticator.recheck(outcome.auth, hello.name),
 				);
 			} catch (error) {
-				// 同名的、带 Agent 凭据的连接还活着：以旧方式连接的不能顶掉它（原连接不受影响）。
+				// 同名的、带 Agent 凭据的连接还活着（以旧方式连接的不能顶掉它，原连接不受影响），或者登记之前再看一遍时已经没有资格。
 				if (error instanceof AgentConnectionRefused) {
-					throw new ConnectError(error.message, Code.PermissionDenied);
+					throw new ConnectError(
+						error.message,
+						error.code === "unauthenticated" ? Code.Unauthenticated : Code.PermissionDenied,
+					);
 				}
 				throw error;
 			}

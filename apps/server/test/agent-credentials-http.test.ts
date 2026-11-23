@@ -268,6 +268,16 @@ describe("Agent 凭据和开发 Agent", () => {
 			expect((await rows("worker-1"))[0]?.revoked_at).toBeNull();
 		});
 
+		it("所属用户被停用：他自己吊销不了（401，停用的用户只能吊销自己的登录和个人令牌）；项目管理员可以吊销", async () => {
+			await json(await create("laptop"), 201);
+			const target = "/projects/default/dev-agents/dev-alice-laptop";
+			await db.query("update users set disabled_at = now() where id = $1", [editorId]);
+			expect((await send("DELETE", target, editor)).status).toBe(401);
+			expect((await rows("dev-alice-laptop"))[0]?.revoked_at).toBeNull();
+			expect((await send("DELETE", target, boss)).status).toBe(204);
+			expect((await rows("dev-alice-laptop"))[0]?.revoked_at).not.toBeNull();
+		});
+
 		it("不是这个项目的成员：404（不透露）；别的项目不存在也是 404", async () => {
 			await accounts.project("alpha");
 			expect(

@@ -4,6 +4,7 @@
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
+import { loginCookie, TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -13,7 +14,8 @@ describe("Agent 连接时的身份", () => {
 	let db: pg.Client;
 	const agents: FakeAgent[] = [];
 
-	const start = async (options: { agentToken?: string } = {}) => {
+	let accounts: TestAccounts | undefined;
+	const start = async (options: NonNullable<Parameters<typeof startTestControlPlane>[0]> = {}) => {
 		cp = await startTestControlPlane(options);
 		db = new pg.Client({ connectionString: cp.database.url });
 		await db.connect();
@@ -21,6 +23,8 @@ describe("Agent 连接时的身份", () => {
 	afterEach(async () => {
 		await Promise.all(agents.splice(0).map((agent) => agent.disconnect()));
 		await db?.end();
+		await accounts?.close();
+		accounts = undefined;
 		await cp?.close();
 	});
 
@@ -202,6 +206,73 @@ describe("Agent 连接时的身份", () => {
 			await eventually(async () => expect(agent.ended).toBe(true));
 			await eventually(async () => expect((await row("worker-1")).status).toBe("offline"));
 			expect((await row("worker-1")).disabled_at).not.toBeNull();
+		});
+	});
+
+	describe("开发 Agent 的凭据：所属用户被停用", () => {
+		const ADMIN = { loginName: "root", password: "admin-password-1" };
+
+		it("停用用户：他的开发 Agent 立即断开、连不上（凭据没有吊销）；别的用户的、按台签发的不受影响；启用之后同一个凭据照常", async () => {
+			await start({ initialAdmin: ADMIN });
+			accounts = new TestAccounts(cp.database.url);
+			const alice = await accounts.user("alice");
+			const bob = await accounts.user("bob");
+			const aliceCred = await cp.current.agentCredentials.issue(
+				DEFAULT_PROJECT,
+				"dev-alice-laptop",
+				{
+					userId: alice,
+				},
+			);
+			const bobCred = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "dev-bob-laptop", {
+				userId: bob,
+			});
+			const login = await cp.fetch("/auth/login", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ login_name: ADMIN.loginName, password: ADMIN.password }),
+			});
+			const cookie = /sfly_login=([^;]*)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
+			const post = (path: string) =>
+				cp.fetch(path, { method: "POST", headers: loginCookie(cookie) });
+
+			const mine = await connect("dev-alice-laptop", aliceCred.token);
+			const his = await connect("dev-bob-laptop", bobCred.token);
+			const machine = await connect("worker-1", await issue("worker-1"));
+
+			expect((await post(`/users/${alice}/disable`)).status).toBe(200);
+			await eventually(async () => expect(mine.ended).toBe(true));
+			await eventually(async () => expect((await row("dev-alice-laptop")).status).toBe("offline"));
+			expect(his.ended).toBe(false);
+			expect(machine.ended).toBe(false);
+			// 停用期间连不上；凭据没有被吊销。
+			await expect(connect("dev-alice-laptop", aliceCred.token)).rejects.toThrow(
+				/所属的用户已被停用/,
+			);
+			expect(
+				(
+					await db.query("select revoked_at from agent_credentials where id = $1", [
+						aliceCred.credential.id,
+					])
+				).rows[0].revoked_at,
+			).toBeNull();
+			expect((await row("dev-alice-laptop")).status).toBe("offline");
+
+			expect((await post(`/users/${alice}/enable`)).status).toBe(200);
+			await connect("dev-alice-laptop", aliceCred.token);
+			expect((await row("dev-alice-laptop")).status).toBe("online");
+		});
+
+		it("所属用户在库里被停用（没有经过停用接口）：新的连接同样被拒绝", async () => {
+			await start();
+			accounts = new TestAccounts(cp.database.url);
+			const carol = await accounts.user("carol");
+			const cred = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "dev-carol-box", {
+				userId: carol,
+			});
+			await db.query("update users set disabled_at = now() where id = $1", [carol]);
+			await expect(connect("dev-carol-box", cred.token)).rejects.toThrow(/所属的用户已被停用/);
+			expect(await registered()).toEqual([]);
 		});
 	});
 });

@@ -2,6 +2,8 @@
 //
 // - **Agent 凭据**（`sfly_agt_` 前缀，按台签发）：项目和名字从凭据得出，`Hello.name` 和它不一致就拒绝；吊销的拒绝。
 // - **共享令牌**（`SFLY_AGENT_TOKEN`，默认项目的旧式凭据，控制面启动时登记）：照旧可以连，界面上标出「用共享令牌连接」。
+//   开发 Agent 的凭据（记在一个用户名下）还要所属用户没有被停用：停用期间拒绝连接、已连着的断开（`control-plane.ts` 订阅用户
+//   停用的广播），启用之后同一个凭据照常——停用是可撤回的暂停，不吊销凭据；停用的用户自己吊销不了（访问检查 401），项目管理员可以。
 // - **没有凭据**：控制面没有配置共享令牌时，只接受默认项目里已经登记过的名字（过渡版本，下一个版本起拒绝）；配了共享令牌的部署
 //   不带令牌照旧被拒绝。
 // 停用的 Agent 不论带不带凭据都不能连接。「以旧方式连接」（共享令牌和没有凭据）的连接不能顶掉带 Agent 凭据的同名连接，
@@ -11,7 +13,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { hashCredential } from "../auth/credential-hash.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { agentCredentials, agents } from "../db/schema.js";
+import { agentCredentials, agents, users } from "../db/schema.js";
 import { DEFAULT_PROJECT, type ProjectId } from "../projects/project-id.js";
 
 /** 一条连接是怎么认的身份（记在连接上，也写进 `agents.last_auth_kind`）。 */
@@ -20,15 +22,25 @@ export type AgentAuth =
 	| { kind: "shared" }
 	| { kind: "none" };
 
+export interface Refusal {
+	code: "unauthenticated" | "permission_denied";
+	message: string;
+}
+
 export type AuthOutcome =
 	| { ok: true; auth: AgentAuth; project: ProjectId }
-	| { ok: false; code: "unauthenticated" | "permission_denied"; message: string };
+	| ({ ok: false } & Refusal);
 
-const refuse = (code: "unauthenticated" | "permission_denied", message: string): AuthOutcome => ({
+const refuse = (code: Refusal["code"], message: string): AuthOutcome & { ok: false } => ({
 	ok: false,
 	code,
 	message,
 });
+
+const REVOKED = "invalid agent token: Agent 凭据已被吊销";
+const OWNER_DISABLED =
+	"invalid agent token: 这个开发 Agent 所属的用户已被停用，恢复用户之后才能连接";
+const agentDisabled = (name: string) => `Agent「${name}」已被停用：让项目管理员恢复它`;
 
 export class AgentAuthenticator {
 	constructor(private readonly deps: { db: Db; clock: Clock }) {}
@@ -54,10 +66,11 @@ export class AgentAuthenticator {
 				.from(agentCredentials)
 				.where(eq(agentCredentials.tokenHash, hashCredential(presented)));
 			if (credential) {
-				if (credential.revokedAt !== null) {
-					return refuse("unauthenticated", "invalid agent token: Agent 凭据已被吊销");
-				}
+				if (credential.revokedAt !== null) return refuse("unauthenticated", REVOKED);
 				if (credential.kind === "agent") {
+					if (credential.userId !== null && (await this.#ownerDisabled(credential.userId))) {
+						return refuse("unauthenticated", OWNER_DISABLED);
+					}
 					if (credential.agentName !== name) {
 						return refuse(
 							"permission_denied",
@@ -86,7 +99,7 @@ export class AgentAuthenticator {
 			.from(agents)
 			.where(eq(agents.name, name));
 		if (existing?.disabledAt) {
-			return refuse("permission_denied", `Agent「${name}」已被停用：让项目管理员恢复它`);
+			return refuse("permission_denied", agentDisabled(name));
 		}
 		if (existing && existing.projectId !== project) {
 			// 名字第一步全局唯一：别的项目已经登记了这个名字。
@@ -105,5 +118,40 @@ export class AgentAuthenticator {
 				.where(eq(agentCredentials.id, used));
 		}
 		return { ok: true, auth, project };
+	}
+
+	/**
+	 * 连接登记进连接表之前、在引擎的锁里再看一遍（{@link AgentHub.attach} 的 `verify`）：认身份之后、登记之前，凭据可能被吊销、
+	 * 所属用户可能被停用、这台 Agent 可能被停用；吊销和停用时断开已登记的连接也在同一把锁里（`closeByCredentials`、`setDisabled`），
+	 * 所以不论谁先，不会有一条已经被取消资格的连接留在连接表里。返回 undefined 表示没有问题。
+	 */
+	async recheck(auth: AgentAuth, name: string): Promise<Refusal | undefined> {
+		const { db } = this.deps;
+		if (auth.kind === "agent") {
+			const [credential] = await db
+				.select({ revokedAt: agentCredentials.revokedAt, userId: agentCredentials.userId })
+				.from(agentCredentials)
+				.where(eq(agentCredentials.id, auth.credentialId));
+			if (credential === undefined || credential.revokedAt !== null) {
+				return { code: "unauthenticated", message: REVOKED };
+			}
+			if (credential.userId !== null && (await this.#ownerDisabled(credential.userId))) {
+				return { code: "unauthenticated", message: OWNER_DISABLED };
+			}
+		}
+		const [existing] = await db
+			.select({ disabledAt: agents.disabledAt })
+			.from(agents)
+			.where(eq(agents.name, name));
+		if (existing?.disabledAt) return { code: "permission_denied", message: agentDisabled(name) };
+		return undefined;
+	}
+
+	async #ownerDisabled(userId: string): Promise<boolean> {
+		const [owner] = await this.deps.db
+			.select({ disabledAt: users.disabledAt })
+			.from(users)
+			.where(eq(users.id, userId));
+		return owner?.disabledAt !== null;
 	}
 }

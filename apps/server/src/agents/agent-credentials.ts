@@ -54,7 +54,7 @@ export class AgentCredentialService {
 			db: Db;
 			clock: Clock;
 			/** 凭据被吊销：用它连着的 Agent 连接要断开（AgentHub.closeByCredentials）。 */
-			onRevoked?: (credentialIds: string[]) => void;
+			onRevoked?: (credentialIds: string[]) => Promise<void> | void;
 		},
 	) {}
 
@@ -73,6 +73,21 @@ export class AgentCredentialService {
 			)
 			.orderBy(desc(agentCredentials.createdAt), desc(agentCredentials.id));
 		return rows.map((row) => view(row.credential, row.user));
+	}
+
+	/** 记在这个用户名下的有效凭据（开发 Agent 的）：用户被停用时，用它们连着的连接要断开。 */
+	async liveIdsOfUser(userId: string): Promise<string[]> {
+		const rows = await this.deps.db
+			.select({ id: agentCredentials.id })
+			.from(agentCredentials)
+			.where(
+				and(
+					eq(agentCredentials.kind, "agent"),
+					eq(agentCredentials.userId, userId),
+					isNull(agentCredentials.revokedAt),
+				),
+			);
+		return rows.map((row) => row.id);
 	}
 
 	/** 为「项目 + Agent 名字」签发一个凭据；`userId` 是开发 Agent 的所属用户（按台签发的没有）。 */
@@ -121,7 +136,7 @@ export class AgentCredentialService {
 			.update(agentCredentials)
 			.set({ revokedAt: this.deps.clock.now() })
 			.where(and(eq(agentCredentials.id, id), isNull(agentCredentials.revokedAt)));
-		this.deps.onRevoked?.([id]);
+		await this.deps.onRevoked?.([id]);
 		return "revoked";
 	}
 
@@ -230,7 +245,7 @@ export class AgentCredentialService {
 			.update(agentCredentials)
 			.set({ revokedAt: this.deps.clock.now() })
 			.where(and(inArray(agentCredentials.id, ids), isNull(agentCredentials.revokedAt)));
-		this.deps.onRevoked?.(ids);
+		await this.deps.onRevoked?.(ids);
 		return { kind: "revoked" };
 	}
 }

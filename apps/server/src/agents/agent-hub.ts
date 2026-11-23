@@ -87,8 +87,15 @@ type ConnectionPhase =
 	| { readonly name: "ready" };
 
 /** 一个已完成握手的 Agent 连接。 */
-/** 同名连接的顶掉规则不允许这次连接。 */
-export class AgentConnectionRefused extends Error {}
+/** 这次连接不被允许：同名连接的顶掉规则，或者登记之前再看一遍时凭据已被吊销、用户或 Agent 已被停用。 */
+export class AgentConnectionRefused extends Error {
+	constructor(
+		message: string,
+		readonly code: "unauthenticated" | "permission_denied" = "permission_denied",
+	) {
+		super(message);
+	}
+}
 
 export class AgentConnection {
 	constructor(
@@ -257,8 +264,14 @@ export class AgentHub {
 		helloClock?: AgentClockReading,
 		receivedAt: Date = this.deps.clock.now(),
 		auth: AgentAuth = { kind: "none" },
+		/** 登记之前、在锁里再看一遍这次连接还有没有资格（认身份和登记之间凭据、用户、Agent 可能变了）；返回原因表示拒绝。 */
+		verify?: () => Promise<
+			{ code: "unauthenticated" | "permission_denied"; message: string } | undefined
+		>,
 	): Promise<AgentConnection> {
 		return this.deps.mutex.run(async () => {
+			const refusal = await verify?.();
+			if (refusal !== undefined) throw new AgentConnectionRefused(refusal.message, refusal.code);
 			const clock = new ConnectionClock(this.deps.clock, helloClock, receivedAt);
 			const conn = new AgentConnection(name, info, outbox, clock, auth);
 			const old = this.#connections.get(name);
@@ -450,11 +463,17 @@ export class AgentHub {
 		);
 	}
 
-	/** 凭据被吊销：断开用它连着的 Agent 连接（Agent 手上的任务走失联处理：租约到期后 `agent_lost`）。 */
-	closeByCredentials(credentialIds: readonly string[]): void {
-		for (const conn of this.#connections.values()) {
-			if (conn.credentialId !== null && credentialIds.includes(conn.credentialId)) conn.close();
-		}
+	/**
+	 * 凭据被吊销（或所属用户被停用）：断开用它连着的 Agent 连接（Agent 手上的任务走失联处理：租约到期后 `agent_lost`）。
+	 * 在引擎的锁里做，和 {@link attach} 的再确认（`verify`）互斥：吊销的写库在先，所以要么新连接的再确认看到已吊销，
+	 * 要么它已经登记、这里把它断开。
+	 */
+	closeByCredentials(credentialIds: readonly string[]): Promise<void> {
+		return this.deps.mutex.run(async () => {
+			for (const conn of this.#connections.values()) {
+				if (conn.credentialId !== null && credentialIds.includes(conn.credentialId)) conn.close();
+			}
+		});
 	}
 
 	/**
