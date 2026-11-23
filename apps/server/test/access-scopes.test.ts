@@ -157,9 +157,10 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 
 	it("会话的写（建、发话、停止）只有人能做：范围表里 session 是 humanOnly，别的类别不是", () => {
 		expect(writeNeedsPerson(writeOf("session"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("project"))).toBe(true);
 		// 看新建出来的是什么（和范围同一个取法）：新建会话的接口声明 creates 时也算。
 		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
-		for (const kind of RESOURCE_KINDS.filter((k) => k !== "session")) {
+		for (const kind of RESOURCE_KINDS.filter((k) => k !== "session" && k !== "project")) {
 			expect(writeNeedsPerson(writeOf(kind)), kind).toBe(false);
 		}
 		// 只读不受影响。
@@ -171,10 +172,28 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 				.map(routeKey)
 				.sort(),
 		).toEqual([
+			"DELETE /projects/:project/tokens/:id",
 			"POST /projects/:project/sessions",
+			"POST /projects/:project/tokens",
 			"POST /sessions/:id/messages",
 			"POST /sessions/:id/stop",
 		]);
+	});
+
+	it("范围表每一行都写了 humanOnly（布尔）：新的资源类别漏写过不了类型检查，这里运行时也核对一遍", () => {
+		for (const kind of RESOURCE_KINDS) {
+			expect(typeof SCOPE_TABLE[kind].humanOnly, kind).toBe("boolean");
+		}
+		expect(RESOURCE_KINDS.filter((kind) => SCOPE_TABLE[kind].humanOnly)).toEqual([
+			"session",
+			"project",
+		]);
+	});
+
+	it("作用在 humanOnly 的类别上、或新建出的是它，任何一个都算（不能靠写成别的 creates 绕过）", () => {
+		expect(writeNeedsPerson(writeOf("session", "scenario"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("scenario", "run"))).toBe(false);
 	});
 
 	it("在「范围够」之上再加一层：humanOnly 的写，范围表里的范围仍是「编辑」", () => {

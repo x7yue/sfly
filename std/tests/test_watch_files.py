@@ -279,7 +279,7 @@ def test_losing_the_connection_while_checking_why_a_download_failed_retries_late
     tmp_path: Path,
 ) -> None:
     # 连不上来源 Agent 时节点不失败（standard-nodes 的 watch_files 一节），之后再拉这个文件。
-    from sfly_std.watch_files import RETRY_DELAY, _Files, _LocalNames, _Puller, _Stats
+    from sfly_std.agent_files import RETRY_DELAY, _Files, _LocalNames, _Puller, _Stats
 
     ctx = Context(events_path=None, cancel_path=None, artifacts_dir=None, artifacts_url=None)
     agent = SimpleNamespace(files=_ChangedThenUnreachable())
