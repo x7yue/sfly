@@ -346,7 +346,8 @@ describe("会话事件的落库和发布顺序", () => {
 			// a 这一轮结束，项目的位置空出来了；b 排着队、还没被开始。
 			await store.append(a.id, turnEnd(1));
 			expect(await store.running(project)).toBeUndefined();
-			// c 这时来了：不能插到 b 前面。
+			// c 这时来了（时钟走了一秒，排队的先后分得出来）：不能插到 b 前面。
+			clock.advance(1000);
 			expect(await store.beginTurn(c.id, project, userBody(3))).toMatchObject({
 				outcome: "queued",
 			});

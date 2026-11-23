@@ -102,7 +102,7 @@ describe("停止、插话、结束会话、排队", () => {
 		assistant.prompts.length = 0;
 		assistant.aborts.length = 0;
 		assistant.abortRequests.length = 0;
-		assistant.abortedTurns.clear();
+		assistant.abortMarks.clear();
 		assistant.abortAttempts = 0;
 		assistant.steers.length = 0;
 		assistant.ends.length = 0;

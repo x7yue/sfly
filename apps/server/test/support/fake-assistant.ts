@@ -48,10 +48,11 @@ export class FakeAssistant {
 	/** 收到的中止：会话和它要结束的轮次（过了协议的 schema）。 */
 	readonly abortRequests: Array<{ sessionId: string; turn: number }> = [];
 	/**
-	 * 「已被中止」的轮次（`会话:轮次`）：和协议一致（{@link AbortCommandBody}），中止先于这一轮的 `prompt` 到达时记在这里，
-	 * 这一轮的 `prompt` 到了就直接以 `stopped` 结束，不去做；别的轮次不受影响。
+	 * 「已被中止」的记号（会话 → 轮次，每个会话只留轮次最大的那一个）：和协议一致（{@link AbortCommandBody}），中止到达时记下；
+	 * 之后**轮次不大于记号的 `prompt`**（过时的一轮：控制面已经在更晚的轮次上了）回 202、直接以 `stopped` 结束，不去做，也不回
+	 * 409（更早的一轮还在做、还在停止时也一样）；轮次比记号大的 `prompt` 把记号清掉。
 	 */
-	readonly abortedTurns = new Set<string>();
+	readonly abortMarks = new Map<string, number>();
 	/** 每个 prompt 的回应；默认全部 202。 */
 	promptReply: (prompt: ReceivedPrompt) => Reply | undefined = () => undefined;
 	/** 收到的插话（`steer`），按到达的先后。 */
@@ -201,7 +202,7 @@ export class FakeAssistant {
 		const turn = this.#pending.get(sessionId);
 		if (turn === undefined) return;
 		this.#pending.delete(sessionId);
-		if (this.abortedTurns.has(`${sessionId}:${turn}`)) {
+		if ((this.abortMarks.get(sessionId) ?? 0) >= turn) {
 			this.#emitEnd(sessionId, turn, "这一轮在开始之前就被中止了");
 			return;
 		}
@@ -354,7 +355,7 @@ export class FakeAssistant {
 				!this.#running.has(sessionId) &&
 				!(
 					this.#pending.has(sessionId) &&
-					!this.abortedTurns.has(`${sessionId}:${this.#pending.get(sessionId)}`)
+					(this.abortMarks.get(sessionId) ?? 0) < (this.#pending.get(sessionId) as number)
 				)
 			) {
 				return this.#error(res, {
@@ -384,7 +385,7 @@ export class FakeAssistant {
 			const { turn } = abort.data;
 			this.aborts.push(sessionId);
 			this.abortRequests.push({ sessionId, turn });
-			this.abortedTurns.add(`${sessionId}:${turn}`);
+			this.abortMarks.set(sessionId, Math.max(this.abortMarks.get(sessionId) ?? 0, turn));
 			if (this.abortDelayMs > 0) await new Promise((r) => setTimeout(r, this.abortDelayMs));
 			const reply = this.abortReply(sessionId, turn);
 			if (reply) return this.#error(res, reply);
@@ -431,9 +432,18 @@ export class FakeAssistant {
 		if (this.promptDelayMs > 0) await new Promise((r) => setTimeout(r, this.promptDelayMs));
 		const reply = this.promptReply(prompt);
 		if (reply) return this.#error(res, reply);
+		// 轮次不大于中止记号的 `prompt`（过时的一轮）：先于「在做的回 409」判断，回 202、以 stopped 结束，不去做；
+		// 更早的一轮还在做、还在停止时也一样（协议「一轮的状态」第 2 条）。轮次比记号大的 `prompt` 把记号清掉。
+		const mark = this.abortMarks.get(sessionId);
+		const stale = mark !== undefined && parsed.data.turn <= mark;
+		if (mark !== undefined && !stale) this.abortMarks.delete(sessionId);
 		// 在做（正常地，包括登记着的新一轮）才回 409；旧的一轮在停止时不回（协议「一轮的状态」第 1 条）：
 		// 登记这一轮、回 202，旧的一轮结束之后才开始。
-		if (this.strictTurns && (this.#running.has(sessionId) || this.#pending.has(sessionId))) {
+		if (
+			!stale &&
+			this.strictTurns &&
+			(this.#running.has(sessionId) || this.#pending.has(sessionId))
+		) {
 			return this.#error(res, {
 				status: 409,
 				code: "turn_running",
@@ -441,14 +451,15 @@ export class FakeAssistant {
 			});
 		}
 		this.#send(res, 202);
-		const aborted = this.abortedTurns.has(`${sessionId}:${parsed.data.turn}`);
+		if (stale) {
+			this.#emitEnd(sessionId, parsed.data.turn, "这一轮在开始之前就被中止了");
+			return;
+		}
 		if (this.strictTurns && this.#stopping.has(sessionId)) {
 			this.#pending.set(sessionId, parsed.data.turn);
 			return;
 		}
-		if (this.strictTurns && !aborted) this.#running.set(sessionId, parsed.data.turn);
-		// 这一轮已经被中止过（中止先到）：直接以 stopped 结束，不去做。
-		if (aborted) this.#emitEnd(sessionId, parsed.data.turn, "这一轮在开始之前就被中止了");
+		if (this.strictTurns) this.#running.set(sessionId, parsed.data.turn);
 	}
 }
 

@@ -137,7 +137,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		assistant.prompts.length = 0;
 		assistant.aborts.length = 0;
 		assistant.abortRequests.length = 0;
-		assistant.abortedTurns.clear();
+		assistant.abortMarks.clear();
 		assistant.abortAttempts = 0;
 		assistant.steers.length = 0;
 		assistant.ends.length = 0;
@@ -394,14 +394,14 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		await eventually(() =>
 			expect(assistant.abortRequests).toEqual([{ sessionId: view.id, turn: 1 }]),
 		);
-		expect(assistant.abortedTurns.has(`${view.id}:1`)).toBe(true);
+		expect(assistant.abortMarks.get(view.id)).toBe(1);
 		// 紧接着说一句话：第 2 轮的 prompt 到了助手服务，它认得第 2 轮没有被中止过，照常做（不会被当成晚到的第 1 轮结束掉）。
 		expect((await api.post(`/sessions/${view.id}/messages`, { text: "再来一句" })).status).toBe(
 			200,
 		);
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		expect(assistant.prompts.at(-1)?.body.turn).toBe(2);
-		expect(assistant.abortedTurns.has(`${view.id}:2`)).toBe(false);
+		expect(assistant.abortMarks.get(view.id) ?? 0).toBeLessThan(2);
 		expect((await sessionRow(cp, view.id))?.status).toBe("running");
 		expect((await events(view.id)).filter((e) => e.type === "turn_end")).toHaveLength(1);
 		// 第 2 轮在做时点停止：中止带的是第 2 轮；助手服务这边什么也不带回，宽限之后由控制面结束它。
@@ -1330,7 +1330,7 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
 		assistant.aborts.length = 0;
 		assistant.abortRequests.length = 0;
-		assistant.abortedTurns.clear();
+		assistant.abortMarks.clear();
 		assistant.promptDelayMs = 600;
 		try {
 			const res = await api.post(`/sessions/${view.id}/messages`, { text: "第二句" });
@@ -1361,7 +1361,7 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
 		assistant.aborts.length = 0;
 		assistant.abortRequests.length = 0;
-		assistant.abortedTurns.clear();
+		assistant.abortMarks.clear();
 		assistant.promptDelayMs = 600;
 		try {
 			expect((await api.post(`/sessions/${view.id}/messages`, { text: "第二句" })).status).toBe(
