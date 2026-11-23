@@ -218,37 +218,50 @@ async function sessionOfVersion(db: Db | Tx, row: VersionRow): Promise<SessionRe
  * 和列最新版本文档（`rawHeadDocuments`）要传项目。按场景 ID 的其余方法不传项目：ID 全库唯一，项目从场景本身得出
  * （契约路由的检查，#489），场景属于哪个项目由检查负责。
  */
+/** 会话令牌的写在提交之后要做的：发布平台记录，然后放掉会话的链。 */
+interface AfterCommit {
+	announce: Array<() => Promise<void>>;
+	releases: Array<() => void>;
+}
+
 export class OrchestrationStore {
 	constructor(private readonly deps: { db: Db; clock: Clock; sessions: SessionStore }) {}
 
 	/**
-	 * 会话令牌保存的版本要在记下版本的同一个事务里给会话写平台记录、提交之后发布：整件事放在这个会话的链上做
-	 * （{@link SessionStore.serial}），发布的顺序才等于提交的顺序；不是会话保存的（`sessionId` 为 null）直接做。
+	 * 会话令牌保存的版本要在记下版本的同一个事务里给会话写平台记录、提交之后发布。事务里先做慢的（场景那一行的锁、版本的写入），
+	 * 最后才排到会话的链上（{@link SessionStore.hold}）：从写记录到推送完占着它，这一小段之外别的会话的事件不被拖住。
+	 * 不论事务成败，`run` 结束时放掉链。
 	 */
-	#inSessionChain<T>(actor: Actor, run: () => Promise<T>): Promise<T> {
-		return actor.sessionId === null ? run() : this.deps.sessions.serial(actor.sessionId, run);
+	async #releasing<T>(after: AfterCommit, run: () => Promise<T>): Promise<T> {
+		try {
+			return await run();
+		} finally {
+			for (const release of after.releases) release();
+		}
 	}
 
 	/**
-	 * 会话令牌保存的版本：在记下版本的同一个事务里给会话写一条平台记录（`scenario_version`，#547）。
-	 * `pending` 里放的收尾在事务提交之后调用（发布）；不是会话保存的什么都不做。
+	 * 会话令牌保存的版本：在记下版本的同一个事务里给会话写一条平台记录（`scenario_version`，#547）。**要放在事务的最后**：
+	 * 先 `hold` 会话的链（等链上别的落库加发布做完），再记。`after.announce` 里放的收尾在事务提交之后调用（发布），
+	 * `after.releases` 里放的在发布之后放掉链；不是会话保存的什么都不做。
 	 */
 	async #recordForSession(
 		tx: Tx,
 		actor: Actor,
 		scenario: { id: string; name: string },
 		version: number,
-		pending: Array<() => Promise<void>>,
+		after: AfterCommit,
 	): Promise<void> {
 		const { sessionId } = actor;
 		if (sessionId === null) return;
+		after.releases.push(await this.deps.sessions.hold(sessionId));
 		const event = await this.deps.sessions.recordPlatform(tx, sessionId, {
 			kind: "scenario_version",
 			scenario_id: scenario.id,
 			name: scenario.name,
 			version,
 		});
-		pending.push(() => this.deps.sessions.announce(sessionId, event));
+		after.announce.push(() => this.deps.sessions.announce(sessionId, event));
 	}
 
 	/**
@@ -385,8 +398,8 @@ export class OrchestrationStore {
 	 * 关注项的最后修改记为复制的人（{@link copiedFocus}）。源编排不存在时返回 undefined。
 	 */
 	async copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
-		const pending: Array<() => Promise<void>> = [];
-		const copied = await this.#inSessionChain(actor, async () => {
+		const pending: AfterCommit = { announce: [], releases: [] };
+		const copied = await this.#releasing(pending, async () => {
 			const done = await this.deps.db.transaction(async (tx) => {
 				const [source] = await tx
 					.select()
@@ -435,12 +448,13 @@ export class OrchestrationStore {
 						sessionId: actor.sessionId,
 						createdAt: now,
 					});
-					await this.#recordForSession(tx, actor, { id, name }, 1, pending);
 				}
 				await copyPresets(tx, sourceId, id, actor, now);
+				// 平台记录放在事务的最后：先 hold 会话的链，再记。
+				if (head) await this.#recordForSession(tx, actor, { id, name }, 1, pending);
 				return row as OrchestrationRow;
 			});
-			for (const after of pending) await after();
+			for (const announce of pending.announce) await announce();
 			return done;
 		});
 		return copied && this.#view(copied, this.deps.db);
@@ -505,8 +519,8 @@ export class OrchestrationStore {
 		baseVersion: number,
 		options: { strict?: boolean } = {},
 	): Promise<SaveVersionResult> {
-		const pending: Array<() => Promise<void>> = [];
-		return this.#inSessionChain(actor, async () => {
+		const pending: AfterCommit = { announce: [], releases: [] };
+		return this.#releasing(pending, async () => {
 			const result = await this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
 				const [orchestration] = await tx
 					.select()
@@ -543,7 +557,7 @@ export class OrchestrationStore {
 					previous: masked,
 				};
 			});
-			for (const after of pending) await after();
+			for (const announce of pending.announce) await announce();
 			return result;
 		});
 	}
@@ -621,8 +635,8 @@ export class OrchestrationStore {
 		| { version: OrchestrationVersionView; previous: StoredOrchestrationDocument | undefined }
 		| undefined
 	> {
-		const pending: Array<() => Promise<void>> = [];
-		return this.#inSessionChain(actor, async () => {
+		const pending: AfterCommit = { announce: [], releases: [] };
+		return this.#releasing(pending, async () => {
 			const result = await this.deps.db.transaction(async (tx) => {
 				const [orchestration] = await tx
 					.select()
@@ -638,7 +652,7 @@ export class OrchestrationStore {
 					previous: previous && maskSecretDefaults(previous.document),
 				};
 			});
-			for (const after of pending) await after();
+			for (const announce of pending.announce) await announce();
 			return result;
 		});
 	}
@@ -649,7 +663,7 @@ export class OrchestrationStore {
 		orchestration: OrchestrationRow,
 		document: StoredOrchestrationDocument,
 		actor: Actor,
-		pending: Array<() => Promise<void>>,
+		pending: AfterCommit,
 	): Promise<OrchestrationVersionView> {
 		const number = orchestration.headVersion + 1;
 		const [row] = await tx
@@ -671,8 +685,10 @@ export class OrchestrationStore {
 			.update(orchestrations)
 			.set({ headVersion: number })
 			.where(eq(orchestrations.id, orchestration.id));
+		const view = toVersionView(row as VersionRow, await sessionOfVersion(tx, row as VersionRow));
+		// 平台记录放在事务的最后：先 hold 会话的链，再记。
 		await this.#recordForSession(tx, actor, orchestration, number, pending);
-		return toVersionView(row as VersionRow, await sessionOfVersion(tx, row as VersionRow));
+		return view;
 	}
 
 	async getVersion(

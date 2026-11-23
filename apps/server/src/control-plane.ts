@@ -275,7 +275,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
 	// 会话令牌触发的运行、保存的场景版本，在同一个事务里给会话写平台记录（#547）：引擎和场景存储都用它。
-	const sessions = new SessionStore({ db: database.db, clock });
+	const sessions = new SessionStore({
+		db: database.db,
+		clock,
+		onError: (what, error) => logError(`sfly: ${what}`, error),
+	});
 	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };

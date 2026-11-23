@@ -332,9 +332,10 @@ export class AccessGuard {
 		if (principal.kind === "agent" || principal.kind === "task") {
 			return this.#checkProgram(principal, request, locator);
 		}
-		const project = queried ?? (await this.#projectOf(locator, request.params));
+		const memo: Memo = {};
+		const project = queried ?? (await this.#projectOf(locator, request.params, memo));
 		if (project === undefined) return notFound();
-		return this.#checkScoped(principal, request, project);
+		return this.#checkScoped(principal, request, project, memo);
 	}
 
 	#sameSite(request: AccessRequest): boolean {
@@ -487,6 +488,7 @@ export class AccessGuard {
 	async #projectOf(
 		locator: Exclude<ProjectLocator, { from: "none" | "account" }>,
 		params: AccessRequest["params"],
+		memo: Memo = {},
 	): Promise<ProjectId | undefined> {
 		// 查询参数里的项目在 check() 里先得出（写错了要拒绝，不是「找不到」）。
 		if (locator.from === "query") return DEFAULT_PROJECT;
@@ -503,8 +505,12 @@ export class AccessGuard {
 		switch (locator.from) {
 			case "scenario":
 				return store.projectOfScenario(id);
-			case "run":
-				return store.projectOfRun(id);
+			case "run": {
+				// 项目和「这个运行是哪个会话触发的」是同一行：一次读出，会话令牌取消运行时核对用（#checkScoped），不再读第二次。
+				const owner = await store.runOwner(id);
+				memo.runSession = owner === undefined ? undefined : owner.sessionId;
+				return owner?.projectId;
+			}
 			case "task":
 				return store.projectOfTask(id);
 			case "session":
@@ -582,6 +588,7 @@ export class AccessGuard {
 		principal: Exclude<Principal, { kind: "agent" | "task" | "shared" }>,
 		request: AccessRequest,
 		project: ProjectId,
+		memo: Memo = {},
 	): Promise<AccessResult> {
 		const { route } = request;
 		const needed = requiredScope(route);
@@ -696,7 +703,11 @@ export class AccessGuard {
 				typeof target === "object" &&
 				"params" in target
 			) {
-				const owner = await this.deps.store.sessionOfRun(request.params[target.params] ?? "");
+				// 运行是哪个会话触发的：得出项目时已经和项目一起读过（`memo.runSession`，同一行），没有才另读。
+				const owner =
+					memo.runSession !== undefined
+						? memo.runSession
+						: await this.deps.store.sessionOfRun(request.params[target.params] ?? "");
 				if (owner === undefined) return notFound();
 				if (owner !== principal.sessionId) {
 					return denied(403, "forbidden", "会话令牌只能取消这个会话自己触发的运行");
@@ -751,6 +762,12 @@ function queriedProject(
 	};
 }
 
+/** 一次检查里先读到、后面还要用的东西（同一行不读两次）。 */
+interface Memo {
+	/** 按运行 ID 定位时，运行是哪个会话触发的（和项目一起读出）：不是会话触发的为 null，运行不存在为 undefined。 */
+	runSession?: string | null | undefined;
+}
+
 const requestTaskId = (request: AccessRequest): string => {
 	const target = request.route.resource.target;
 	const name = typeof target === "object" && "params" in target ? target.params : "id";
@@ -795,7 +812,15 @@ function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
 		case "session":
 			// 会话令牌要有用户、项目和会话（库里的约束保证；缺哪个都不放行）。范围的上限是
 			// {@link SESSION_TOKEN_SCOPES}：令牌行里写了发布、管理也不认。
-			return token.user === null || token.projectId === null || token.sessionId === null
+			// 取令牌时联表核对（#547）：令牌的项目、发起人和它所属的会话对得上、会话没有结束；对不上、已结束的当作不认识的
+			// 令牌（401）。已结束的会话，它的令牌从此无效。
+			return token.user === null ||
+				token.projectId === null ||
+				token.sessionId === null ||
+				token.session === null ||
+				token.session.projectId !== token.projectId ||
+				token.session.createdByUserId !== token.user.id ||
+				token.session.status === "ended"
 				? undefined
 				: {
 						kind: "session",

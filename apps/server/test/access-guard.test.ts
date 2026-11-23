@@ -115,6 +115,11 @@ describe("契约路由的访问检查", () => {
 			projectId: null,
 			scopes: [...SCOPES],
 			sessionId: fields.kind === "session" ? MY_SESSION : null,
+			// 会话令牌所属的会话：和令牌的项目、发起人对得上、没有结束（联表读出的，#547）；个别用例改它。
+			session:
+				fields.kind === "session" && fields.projectId && fields.user
+					? { projectId: fields.projectId, createdByUserId: fields.user.id, status: "running" }
+					: null,
 			expiresAt: null,
 			revokedAt: null,
 			lastUsedAt: null,

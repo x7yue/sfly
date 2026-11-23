@@ -113,6 +113,13 @@ export class FakeAccessStore implements AccessStore {
 		this.reads++;
 		return this.runs.get(id);
 	}
+	async runOwner(id: string) {
+		this.reads++;
+		const projectId = this.runs.get(id);
+		return projectId === undefined
+			? undefined
+			: { projectId, sessionId: this.runSessions.get(id) ?? null };
+	}
 	async sessionOfRun(id: string) {
 		this.reads++;
 		if (!this.runs.has(id)) return undefined;
