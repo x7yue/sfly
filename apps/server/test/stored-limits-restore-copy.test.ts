@@ -69,7 +69,7 @@ describe("节点的超时、排队超时：保存、检查、恢复历史版本�
 			actual: string;
 			json_text_only?: boolean;
 		}
-		const valueOf = (c: ValueCase): unknown =>
+		const caseValue = (c: ValueCase): unknown =>
 			c.string_from_code_units ? String.fromCharCode(...c.string_from_code_units) : c.value;
 		const values = (cases.values as ValueCase[]).filter((v) => !v.json_text_only);
 		const fields = cases.fields as Array<"timeout" | "queue_timeout">;
@@ -77,7 +77,7 @@ describe("节点的超时、排队超时：保存、检查、恢复历史版本�
 		for (const field of fields) {
 			it.each(values.map((v) => [v.name, v] as const))(`${field}：%s`, async (_, v) => {
 				const id = await api.createOrchestration(`值-${field}`);
-				const document = scenario({ display_name: "等槽位", [field]: valueOf(v) });
+				const document = scenario({ display_name: "等槽位", [field]: caseValue(v) });
 
 				const saved = await api.post(`/orchestrations/${id}/versions`, {
 					base_version: 0,
@@ -225,6 +225,28 @@ describe("节点的超时、排队超时：保存、检查、恢复历史版本�
 					})
 				).status,
 			).toBe(201);
+		});
+
+		it("局部编辑（scenario edit，POST …/edits）也是保存：库里存着超限值时改这个节点的别的字段同样 400，指出是第几个操作，句子是同一句，什么都没有保存", async () => {
+			const id = await withOverLimitVersion();
+			await api.postEmpty(`/orchestrations/${id}/versions/1/restore`);
+			const versions = async () =>
+				(await api.getJson<{ versions: unknown[] }>(`/orchestrations/${id}/versions`)).versions
+					.length;
+			const before = await versions();
+
+			const res = await api.post(`/orchestrations/${id}/edits`, {
+				base_version: await api.headVersion(id),
+				operations: [{ op: "set", node: "a", field: "note", value: "改别的字段" }],
+			});
+
+			expect(res.status).toBe(400);
+			const error = await errorOf(res);
+			expect(error.code).toBe("invalid_operation");
+			expect(error.message).toBe(
+				`第 1 个操作（set）：${sentence("等槽位（a）", "timeout", TIMEOUT_TOO_LARGE)}`,
+			);
+			expect(await versions()).toBe(before);
 		});
 
 		it("恢复出来的版本和库里已有的超限版本一样：触发前的预检阻断，触发被拒绝", async () => {

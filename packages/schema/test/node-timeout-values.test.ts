@@ -15,7 +15,7 @@ interface ValueCase {
 	actual: string;
 }
 /** 用例里写的值。 */
-const valueOf = (c: ValueCase): unknown =>
+const caseValue = (c: ValueCase): unknown =>
 	c.string_from_code_units ? String.fromCharCode(...c.string_from_code_units) : c.value;
 const values = cases.values as ValueCase[];
 const fields = cases.fields as Array<"timeout" | "queue_timeout">;
@@ -47,7 +47,7 @@ describe("保存和检查：节点的超时、排队超时不合格", () => {
 			)(`${endpoint === "check" ? "检查" : "保存"} ${field}：%s`, (_, v) => {
 				const body = {
 					base_version: 0,
-					document: document({ id: "a", [field]: valueOf(v) }),
+					document: document({ id: "a", [field]: caseValue(v) }),
 				};
 
 				expect(messageOf(endpoint, body)).toBe(sentence("a", field, v.actual));
@@ -109,9 +109,9 @@ describe("保存和检查：节点的超时、排队超时不合格", () => {
 
 describe("预检、派发时同一句话（库里已有的值）", () => {
 	it.each(
-		values.filter((v) => typeof valueOf(v) === "number").map((v) => [v.name, v] as const),
+		values.filter((v) => typeof caseValue(v) === "number").map((v) => [v.name, v] as const),
 	)("nodeTimeoutMessage、queueTimeoutMessage：%s", (_, v) => {
-		expect(nodeTimeoutMessage("a", valueOf(v))).toBe(sentence("a", "timeout", v.actual));
-		expect(queueTimeoutMessage("a", valueOf(v))).toBe(sentence("a", "queue_timeout", v.actual));
+		expect(nodeTimeoutMessage("a", caseValue(v))).toBe(sentence("a", "timeout", v.actual));
+		expect(queueTimeoutMessage("a", caseValue(v))).toBe(sentence("a", "queue_timeout", v.actual));
 	});
 });
