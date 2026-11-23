@@ -718,7 +718,7 @@ describe("契约路由的访问检查", () => {
 			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);
 		});
 
-		it("别的只有人能做的写（项目令牌的吊销）：带着管理范围的会话令牌也是 403，说明说「会话令牌不能做这件事」，不说成「对会话」；签发另有「令牌不能签发令牌」那一条", async () => {
+		it("别的只有人能做的写（项目令牌的吊销）：会话令牌是 403：它的范围上限里没有「管理」（令牌行里写了也不认），说明是缺少范围，不说成「对会话」；签发另有「令牌不能签发令牌」那一条", async () => {
 			const session = token({
 				kind: "session",
 				user: USERS.admin,
@@ -729,10 +729,11 @@ describe("契约路由的访问检查", () => {
 			const issue = await run(route("POST /projects/:project/tokens"), session);
 			expect(issue).toMatchObject({ ok: false, status: 403 });
 			expect((issue as { message: string }).message).toContain("令牌不能签发令牌");
-			// 吊销：走「只有人能做的写」，说明按凭据和做的事写准。
+			// 吊销：要「管理」，会话令牌的范围上限（SESSION_TOKEN_SCOPES）里没有它，令牌行里写了也不认：缺少范围，
+			// 不会走到「只有人能做的写」那一条（#547）；说明也不说成「对会话」。
 			const revoke = await run(route("DELETE /projects/:project/tokens/:id"), session);
 			expect(revoke).toMatchObject({ ok: false, status: 403 });
-			expect((revoke as { message: string }).message).toContain("会话令牌不能做这件事");
+			expect((revoke as { message: string }).message).toContain("缺少「管理」范围");
 			expect((revoke as { message: string }).message).not.toContain("对会话");
 		});
 	});
