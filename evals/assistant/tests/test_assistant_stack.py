@@ -7,8 +7,11 @@ docker 调用都换成记录，不起容器。
 from __future__ import annotations
 
 import argparse
+import http.server
 import json
 import subprocess
+import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -383,3 +386,57 @@ def test_old_control_plane_without_sessions_fails_at_once(monkeypatch: pytest.Mo
     with pytest.raises(d.DockerError, match="源码构建的控制面镜像"):
         Stack(slot=9, assistant=True).wait_assistant_ready(timeout=60)
     assert len(calls) == 1
+
+
+class _SseServer:
+    """在本机端口上给一段 SSE（几条事件），之后要么断开、要么一直不说话。"""
+
+    def __init__(self, events: list[dict[str, Any]], then: str) -> None:
+        payload = "".join(f"data: {json.dumps(e)}\n\n" for e in events).encode()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(payload)
+                self.wfile.flush()
+                if then == "silent":
+                    time.sleep(3)
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("then", "reason"), [("close", "没有等到 turn_end"), ("silent", "事件流断了")]
+)
+def test_follow_brings_back_what_it_got_when_the_turn_does_not_end(
+    monkeypatch: pytest.MonkeyPatch, then: str, reason: str
+) -> None:
+    server = _SseServer(GOOD[:3], then)
+    try:
+        stack = Stack(slot=9)
+        monkeypatch.setattr(Stack, "cp_url", f"http://127.0.0.1:{server.port}")
+        events, error = e2e.follow(stack, "s1", time.monotonic() + 1)
+        assert events == GOOD[:3]
+        assert error and reason in error and "收到 3 个事件" in error
+    finally:
+        server.close()
+
+
+def test_follow_stops_at_the_turn_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _SseServer([*GOOD, _event(9, "assistant_message")], "close")
+    try:
+        monkeypatch.setattr(Stack, "cp_url", f"http://127.0.0.1:{server.port}")
+        events, error = e2e.follow(Stack(slot=9), "s1", time.monotonic() + 5)
+        assert (events, error) == (GOOD, None)
+    finally:
+        server.close()
