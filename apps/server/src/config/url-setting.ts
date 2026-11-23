@@ -83,18 +83,15 @@ export const DEFAULT_DATABASE_URL = "postgres://sfly:sfly@127.0.0.1:5432/sfly";
  * 连接库（pg）认不认这个连接串：用它自己解析连接串的那个函数（`new pg.Client` 构造时就解析，不连接）。**检查不能比真正用这个值的
  * 一方更严**：pg 认的写法（Unix 套接字的三种：`postgres://用户:密码@/库名?host=/var/run/postgresql`、`/var/run/postgresql 库名`、
  * `socket:/var/run/postgresql?db=库名`，多个参数、`sslmode`……）都过，它也解析不了的才拒。
- * 解析时 pg 会为 `sslmode=require` 之类发一条警告，真正连接时还会发一次：这里不让它发两遍。
+ * 解析时 pg 会读 `sslcert`、`sslkey`、`sslrootcert` 指的文件（连接时它读的是同一回事：读不到就是解析不了），为 `sslmode=require`
+ * 之类发一条一次性的警告（它自己只发一次，这里不去压它：压掉等于吞掉部署者唯一会看到的那条安全提醒）。
  */
 function pgParses(connectionString: string): boolean {
-	const emitWarning = process.emitWarning;
-	process.emitWarning = () => {};
 	try {
 		new pg.Client({ connectionString });
 		return true;
 	} catch {
 		return false;
-	} finally {
-		process.emitWarning = emitWarning;
 	}
 }
 
@@ -108,7 +105,7 @@ export function databaseUrlFromEnv(raw: string | undefined): string {
 	const text = raw.trim();
 	if (!pgParses(text)) {
 		throw new Error(
-			"DATABASE_URL 不合法：连接库（pg）解析不了这个连接串。写成 postgres://用户:密码@主机:端口/库名；走 Unix 套接字写成 postgres://用户:密码@/库名?host=/var/run/postgresql；主机、端口里不能有不该有的字符，也不能写多个主机。没有回显填的值（里面有密码）",
+			"DATABASE_URL 不合法：连接库（pg）解析不了这个连接串。写成 postgres://用户:密码@主机:端口/库名；走 Unix 套接字写成 postgres://用户:密码@/库名?host=/var/run/postgresql；主机、端口里不能有不该有的字符，也不能写多个主机；sslcert、sslkey、sslrootcert 指的文件要读得到，uselibpqcompat=true 加 sslmode=verify-ca 要同时给 sslrootcert。没有回显填的值（里面有密码）",
 		);
 	}
 	return text;

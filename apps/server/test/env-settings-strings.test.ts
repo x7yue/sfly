@@ -3,8 +3,13 @@
 // main-env-settings.test.ts）。启动检查不比真正用这个值的一方更严（数据库地址：连接库认的写法都过；镜像：uv 认的
 // `file://` 和绝对路径都过）；报错里回显什么只有一处决定（echo.ts，认得的才回显）：这里每个变量单独断言说明里写了什么，
 // 「每个变量 × 各种带凭据的形状」的总表在 main-env-settings.test.ts（走真的 main.ts）和 echo.test.ts。
+import { execFile } from "node:child_process";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { EnvSettingsError, readEnvSettings } from "../src/config/env-settings.js";
+
+const run = promisify(execFile);
 
 /** 会出现在密码、地址里的凭据位置的记号：说明里不能有它（哪怕是一部分）。 */
 const SECRET = "Hunter2-secret-9f3a";
@@ -406,18 +411,26 @@ describe("DATABASE_URL", () => {
 		expect(problem).not.toContain("db:abc");
 	});
 
-	it("解析时不重复发 sslmode 的警告（连接时 pg 还会发一次）", () => {
-		const warnings: unknown[] = [];
-		const onWarning = (warning: unknown) => warnings.push(warning);
-		process.on("warning", onWarning);
-		try {
-			readEnvSettings({ DATABASE_URL: "postgres://u:p@db/sfly?sslmode=require" });
-		} finally {
-			process.off("warning", onWarning);
-		}
+	it("检查不吞掉连接库的一次性警告（sslmode=require）：整个进程里它只发一次，部署者看得到", async () => {
+		// 新进程里跑：这条警告 pg 每个进程只发一次，在测试进程里别的用例可能已经触发过。
+		const script = `
+			const { databaseUrlFromEnv } = await import("./src/config/url-setting.ts");
+			const pg = (await import("pg")).default;
+			let warnings = 0;
+			process.on("warning", (warning) => { if (warning.message.includes("SSL modes")) warnings += 1; });
+			const url = databaseUrlFromEnv("postgres://u:p@db.internal/sfly?sslmode=require");
+			new pg.Pool({ connectionString: url }).end();
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			console.log("WARNINGS=" + warnings);
+		`;
+		const { stdout } = await run(
+			process.execPath,
+			["--import", "tsx", "--input-type=module", "-e", script],
+			{ cwd: join(import.meta.dirname, ".."), timeout: 60_000 },
+		);
 
-		expect(warnings).toEqual([]);
-	});
+		expect(stdout).toContain("WARNINGS=1");
+	}, 90_000);
 });
 
 describe("镜像：SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR", () => {
@@ -497,6 +510,29 @@ describe("镜像：SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR", () => {
 		expect(problem).toContain('实际是 "ftp://mirror.internal:2121"');
 		expect(problem).not.toContain(SECRET);
 		expect(problem).not.toContain("x=1");
+	});
+});
+
+describe("数值类的说明里回显什么（echo.ts：像数的才回显）", () => {
+	it.each([
+		["SFLY_LOG_LIMIT_MB"],
+		["SFLY_ARTIFACT_LIMIT_MB"],
+		["SFLY_METRIC_LIMIT_MB"],
+		["SFLY_RETENTION_DAYS"],
+		["SFLY_METRIC_RETENTION_DAYS"],
+		["SFLY_LOGIN_IDLE_HOURS"],
+		["SFLY_HTTP_PORT"],
+		["SFLY_GRPC_PORT"],
+	])("%s：很长的数（可能是一串数字的令牌）、别的变量的值都不回显", (name) => {
+		const long = "9".repeat(40);
+		const tooLong = oneProblem({ [name]: long });
+		expect(tooLong).toContain(name);
+		expect(tooLong).toContain("（认不出，没有回显）");
+		expect(tooLong).not.toContain(long);
+
+		const other = oneProblem({ [name]: `postgres://u:${SECRET}@db/sfly` });
+		expect(other).toContain("（认不出，没有回显）");
+		expect(other).not.toContain(SECRET);
 	});
 });
 
