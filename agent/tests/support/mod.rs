@@ -731,6 +731,21 @@ pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
     }
 }
 
+/// 把 Agent 的标准错误（[`AgentOptions::pipe_stderr`]）一行一行收进一个列表，一直读到 Agent 退出：
+/// 不读的话管道写满会让 Agent 卡住。
+pub fn capture_stderr(agent: &mut AgentProcess) -> Arc<Mutex<Vec<String>>> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&lines);
+    let mut reader = BufReader::new(agent.child.stderr.take().expect("pipe_stderr")).lines();
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = reader.next_line().await {
+            sink.lock().unwrap().push(line);
+        }
+    });
+    lines
+}
+
 /// 派发给桩节点包的任务。
 pub fn stub_task(task_id: &str, node: &str, inputs: serde_json::Value) -> AssignTask {
     AssignTask {
