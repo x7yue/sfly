@@ -7,7 +7,12 @@ import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
-import { type ProjectId, PUBLIC_PROJECT, readableProjects } from "../projects/project-id.js";
+import {
+	DEFAULT_PROJECT,
+	type ProjectId,
+	PUBLIC_PROJECT,
+	readableProjects,
+} from "../projects/project-id.js";
 import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
 import { sameVersion } from "./pep440.js";
 
@@ -167,6 +172,32 @@ async function rejectEquivalentVersion(
 }
 
 /**
+ * `名字@版本` 已经有了（不论哪个项目里）：说明已有的那个在哪个项目——只说公共项目和默认项目，不透露别的项目
+ * 的 ID。要紧的是平台管理员往公共项目发布、而默认项目里先有了同名同版本：它不在包索引里，只写「已存在」看不出原因。
+ */
+async function existingMessage(
+	tx: Tx,
+	project: ProjectId,
+	name: string,
+	version: string,
+): Promise<string> {
+	const base = `节点包 ${name}@${version} 已存在`;
+	const [existing] = await tx
+		.select({ projectId: nodePackages.projectId })
+		.from(nodePackages)
+		.where(and(eq(nodePackages.name, name), eq(nodePackages.version, version)));
+	if (existing === undefined || existing.projectId === project) {
+		return `${base}，不能覆盖已发布的版本`;
+	}
+	if (existing.projectId === DEFAULT_PROJECT) {
+		const hint = project === PUBLIC_PROJECT ? "，它不在包索引里；换一个版本号发布到公共项目" : "";
+		return `${base}（在默认项目里），不能覆盖已发布的版本${hint}`;
+	}
+	if (existing.projectId === PUBLIC_PROJECT) return `${base}（在公共项目里），不能覆盖已发布的版本`;
+	return `${base}，不能覆盖已发布的版本`;
+}
+
+/**
  * 节点包仓库：元信息存 PostgreSQL，归档文件存控制面磁盘。每个节点包版本属于一个项目（ADR 0029）：
  * 发布、列表、按名字取、取归档都要传项目，别的项目的包和不存在一样；公共项目里的包（标准节点包）任何项目都读得到
  * （{@link readableProjects}）。`名字@版本` 仍然全局唯一（主键不变，第二步改成项目内唯一，#502），所以磁盘上的路径
@@ -209,7 +240,7 @@ export function createPackageRepository({ db, clock, dataDir }: PackageRepositor
 				if (!row) {
 					throw new PackageError(
 						"conflict",
-						`节点包 ${metadata.name}@${metadata.version} 已存在，不能覆盖已发布的版本`,
+						await existingMessage(tx, project, metadata.name, metadata.version),
 					);
 				}
 				// 先写临时文件再改名；事务提交前失败会回滚记录。

@@ -379,6 +379,68 @@ describe("带凭据的请求", () => {
 			expect(await versionsOf("racing")).toHaveLength(1);
 		});
 
+		it("默认项目里不做规范化比较：先发 x@1.0 再发 x@1.0.0 都是 201（规则只对公共项目）", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = bearer(await accounts.personalToken(admin));
+
+			const first = await publish(token, "plain", "", "1.0");
+			const second = await publish(token, "plain", "", "1.0.0");
+			const third = await publish({}, "plain", "", "1.0.0.0");
+
+			expect([first.status, second.status, third.status]).toEqual([201, 201, 201]);
+			expect(await versionsOf("plain")).toEqual(["1.0", "1.0.0", "1.0.0.0"]);
+		});
+
+		it("同名同版本已经在另一个项目里：409 的说明写明在哪个项目（公共或默认），平台管理员往公共项目发时说明它不在包索引里", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = bearer(await accounts.personalToken(admin));
+
+			// 默认项目里先有了 x@2.0，平台管理员再往公共项目发同一个版本。
+			expect((await publish({}, "elsewhere", "", "2.0")).status).toBe(201);
+			const toPublic = await publish(token, "elsewhere", "?project=public", "2.0");
+			expect(toPublic.status).toBe(409);
+			expect((await error(toPublic)).message).toBe(
+				"节点包 elsewhere@2.0 已存在（在默认项目里），不能覆盖已发布的版本，它不在包索引里；换一个版本号发布到公共项目",
+			);
+			expect(await projectOf("elsewhere")).toEqual(["default"]);
+
+			// 反过来：公共项目里先有，默认项目再发同一个版本。
+			expect((await publish(token, "shared-first", "?project=public", "3.0")).status).toBe(201);
+			const toDefault = await publish({}, "shared-first", "", "3.0");
+			expect(toDefault.status).toBe(409);
+			expect((await error(toDefault)).message).toBe(
+				"节点包 shared-first@3.0 已存在（在公共项目里），不能覆盖已发布的版本",
+			);
+
+			// 同一个项目里重发：说明和以前一样，不多说项目。
+			const again = await publish(token, "shared-first", "?project=public", "3.0");
+			expect((await error(again)).message).toBe(
+				"节点包 shared-first@3.0 已存在，不能覆盖已发布的版本",
+			);
+		});
+
+		it("同名同版本在一个无关的项目里：409 的说明不写那个项目的名字，也不说它在哪里（只有公共和默认两个项目会写明）", async () => {
+			const admin = await accounts.user("root", { admin: true });
+			const token = bearer(await accounts.personalToken(admin));
+			await accounts.project("secret-team");
+			await db.query(
+				`insert into node_packages (name, version, project_id, metadata, file_path, sha256, size, published_at)
+				 values ('hidden', '4.0', 'secret-team', '{}'::jsonb, 'packages/hidden/4.0.sflypkg', 'x', 1, now())`,
+			);
+
+			for (const [where, headers, query] of [
+				["往公共项目发", token, "?project=public"],
+				["往默认项目发", {}, ""],
+			] as const) {
+				const res = await publish(headers, "hidden", query, "4.0");
+				expect(res.status, where).toBe(409);
+				const { message } = await error(res);
+				expect(message, where).toBe("节点包 hidden@4.0 已存在，不能覆盖已发布的版本");
+				expect(message, where).not.toContain("secret-team");
+			}
+			expect(await projectOf("hidden")).toEqual(["secret-team"]);
+		});
+
 		it("发布时先取这个名字的咨询锁：另一条连接正在发布同名的包时，等它提交了再比较，看到它写的版本（没有锁两个都会通过检查）", async () => {
 			const admin = await accounts.user("root", { admin: true });
 			const token = bearer(await accounts.personalToken(admin));

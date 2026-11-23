@@ -33,13 +33,21 @@ import {
  * |---|---|---|---|
  * | `POST /sessions/:id/prompt` | {@link PromptCommandBody} | 202；这个会话已有一轮在做 409 `turn_running`；起不了 503 | #540 |
  * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；没有在做的一轮 409 `no_turn_running` | #544 |
- * | `POST /sessions/:id/abort` | — | 202（重复调用无害） | #540、#544 |
+ * | `POST /sessions/:id/abort` | {@link AbortCommandBody} | 202（重复调用无害，三种情况见 {@link AbortCommandBody}） | #540、#544 |
  * | `POST /sessions/:id/end` | — | 202（重复调用无害） | #544 |
  * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳** | #540；续传 #545 |
  * | `GET /health` | — | 200 {@link AssistantHealth} | #540；模型 #548；进程数 #545 |
  *
  * 失败的回应体是 {@link AssistantErrorBody}。
  */
+
+/**
+ * 助手服务停止一轮时的宽限（毫秒）：先关 pi 的输入、发 SIGTERM，等进程自己退出，**宽限到了还没退出才 SIGKILL**；
+ * 这一轮的 `turn_end`（`stopped`）在进程退出**之后**才发。所以收到 `abort` 之后，结局最晚在这么久（外加命令往返）之后带回；
+ * 控制面停止一轮时等的时间不能短于它（见控制面的 `STOP_GRACE_MS`），否则控制面先补一条 `stopped`、会话回到空闲，
+ * 用户马上再说一句，助手服务那边上一轮还挂着，回 409 `turn_running`，新的一轮被记成失败。**助手服务和控制面引用同一个数**。
+ */
+export const ASSISTANT_PROCESS_KILL_GRACE_MS = 10_000;
 
 /** 共享密钥放在助手服务和控制面各自的这个环境变量里。 */
 export const ASSISTANT_SECRET_ENV = "SFLY_ASSISTANT_SECRET";
@@ -101,6 +109,10 @@ export type WorkbenchTarget = z.infer<typeof WorkbenchTarget>;
  *   作者（发起人）要用，#546；
  * - `env`：这一轮在工作台上执行命令时要加的**普通**环境变量，由控制面的一个函数生成，每一轮可以不同：竖切里是
  *   `SFLY_NICKNAME`（发起这句话的人的昵称）和 `AI_AGENT=pi`；
+ * - **收到 `prompt` 先登记这一轮（`turn`、有一轮在做），再做慢的事**（起 pi 进程、准备 skill、连模型）：控制面等回应最多
+ *   10 秒，超时的结果是未知的，控制面会补发一次带这一轮轮次的 `abort`（{@link AbortCommandBody}）；登记得早，`abort`
+ *   到达时就能直接结束它。`abort` 先于这一轮的 `prompt` 到达也不要紧：助手服务记下「这一轮已被中止」，这一轮的 `prompt`
+ *   到了就直接以 `stopped` 结束。
  * - `secret_env`：要加的**保密**环境变量，#547 起里面有 `SFLY_API_TOKEN`（会话令牌）。工作台上的命令读得到它，模型一执行
  *   列环境变量的命令，它就会进工具的输出和持久的 `tool_result`，所以单独成一份：**它不进任何事件、不进助手服务的日志；
  *   助手服务在发出事件之前，要把事件里出现的这些值按值打码**（#540 的要求）。
@@ -122,6 +134,32 @@ export type PromptCommandBody = z.infer<typeof PromptCommandBody>;
  */
 export const SteerCommandBody = z.object({ message_id: z.uuid(), text: SessionMessageText });
 export type SteerCommandBody = z.infer<typeof SteerCommandBody>;
+
+/**
+ * `POST /sessions/:id/abort`：结束会话里的**某一轮**（`turn`，控制面给的轮次，和 `prompt` 里的 `turn` 是同一个）。
+ * 不按「会话里有没有在做」、更不按时间去猜（不按时间判断「是哪一轮」），按轮次，四种情况：
+ *
+ * - **这一轮在做**：中止它，带回它的 `turn_end`（`stopped`）；
+ * - **还在做的那一轮，轮次比 N 小**：也结束它。控制面看来比 N 早的轮次都已经结束了（它们的结局是控制面补的，或者助手服务回过一次
+ *   409 `turn_running` 之后控制面已经把那次发话的轮次记成失败、轮次加了一）：助手服务那边还在跑的更早的轮次是没人管的，最多
+ *   跑到上限（二十分钟）。这样定是安全的：不会碰到比 N 更新的轮次；
+ * - **这一轮还没登记**（它的 `prompt` 还没处理完、或者还没到）：记下「这一轮已被中止」，这一轮的 `prompt` 到了就直接以 `stopped`
+ *   结束，不去做；
+ * - **这一轮已经结束**，也没有更早的还在做：什么也不做，202。
+ *
+ * 助手服务重启之后不知道最近一轮是哪一轮，分不清「已经结束」和「还没登记」时，**当作还没登记记下**：记号只和同一轮的 `prompt`
+ * 对得上（只认轮次，不看时间），轮次只增，记错了也不会误伤别的轮次。这一轮的 `prompt` 撞上记号时，**先回 202、再发这一轮
+ * `stopped` 的 `turn_end`**（回 409 或 503，控制面会把这一轮记成失败）。每个会话只留轮次最大的那个记号就够：收到轮次不小于它的
+ * `prompt` 时清掉。记号可以过期、可以设个上限（这和「不按时间判断」不矛盾：说的是不能靠「刚刚才结束」这类时间关系去猜一个
+ * 中止是给哪一轮的，不是说记号不能清理）。收到中止之后，pi 进程不自己退出的话，宽限（{@link ASSISTANT_PROCESS_KILL_GRACE_MS}）
+ * 到了才强制结束，这一轮的结局在进程退出之后才发。
+ *
+ * 别的轮次不受影响：用户在空闲的会话上点了停止、紧接着说一句话，新的一轮（轮次更大）照常做。控制面带的轮次：用户点停止时
+ * 是此刻在做的那一轮；`prompt` 超时之后补发的是那一轮；会话空闲时点停止是最近的那一轮（它已经结束的话什么也不会发生）。
+ * 重复调用无害。
+ */
+export const AbortCommandBody = z.object({ turn: z.int().min(1) });
+export type AbortCommandBody = z.infer<typeof AbortCommandBody>;
 
 /**
  * 助手服务产生的会话事件：{@link SessionEventBody} 里由它产生的几种（`notice` 只有它产生的几种，`platform` 只有

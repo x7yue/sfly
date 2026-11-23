@@ -585,6 +585,24 @@ describe("契约路由的访问检查", () => {
 			// 别的项目的会话令牌：不是它的项目，404（不是 403），读和写一样。
 			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);
 		});
+
+		it("别的只有人能做的写（项目令牌的吊销）：带着管理范围的会话令牌也是 403，说明说「会话令牌不能做这件事」，不说成「对会话」；签发另有「令牌不能签发令牌」那一条", async () => {
+			const session = token({
+				kind: "session",
+				user: USERS.admin,
+				projectId: DEFAULT,
+				name: "会话",
+			});
+			// 签发：先于范围检查的「只认登录」那一条（#572），说的是令牌不能签发令牌。
+			const issue = await run(route("POST /projects/:project/tokens"), session);
+			expect(issue).toMatchObject({ ok: false, status: 403 });
+			expect((issue as { message: string }).message).toContain("令牌不能签发令牌");
+			// 吊销：走「只有人能做的写」，说明按凭据和做的事写准。
+			const revoke = await run(route("DELETE /projects/:project/tokens/:id"), session);
+			expect(revoke).toMatchObject({ ok: false, status: 403 });
+			expect((revoke as { message: string }).message).toContain("会话令牌不能做这件事");
+			expect((revoke as { message: string }).message).not.toContain("对会话");
+		});
 	});
 
 	describe("别的项目的资源和不存在一样：404，不是 403", () => {
@@ -932,6 +950,83 @@ describe("契约路由的访问检查", () => {
 			});
 			expect(outcome(await guard.check(at(personal(USERS.boss))))).toBe(403);
 			expect(outcome(await guard.check(at(personal(USERS.admin))))).toBe("ok");
+		});
+
+		it("不带凭据、共享令牌写公共项目：项目写在路径里的接口也一样（401、403），不止查询参数那一个", async () => {
+			// 现在的 `POST /projects/:project/sessions`，和 #488 之后的 `POST /projects/:project/packages`
+			// （用 #488 的写法构造的接口）：项目都在路径里，这条规则对这类接口的每个请求成立（按 ID 定位的写不带凭据时读库之前没有项目，不在这里，由 #494 关上）。
+			store.agentCredentials.set(hashCredential("shared-secret"), {
+				kind: "shared",
+				projectId: DEFAULT,
+				agentName: null,
+				user: null,
+				revokedAt: null,
+			});
+			const shared = { authorization: "Bearer shared-secret" };
+			const routes: [string, RouteDef][] = [
+				["POST /projects/:project/sessions", route("POST /projects/:project/sessions")],
+				[
+					"#488 之后的 POST /projects/:project/packages",
+					{ ...route("POST /packages"), path: "/projects/:project/packages" },
+				],
+				[
+					"#488 之后的 POST /projects/:project/orchestrations",
+					{ ...route("POST /orchestrations"), path: "/projects/:project/orchestrations" },
+				],
+			];
+			for (const [name, def] of routes) {
+				const at = (project: string, credentials: Credentials = {}) => ({
+					route: def,
+					params: { project },
+					fetchSite: "same-origin",
+					...credentials,
+				});
+				expect(await guard.check(at("public")), `${name}：不带凭据`).toMatchObject({
+					ok: false,
+					status: 401,
+					code: "unauthorized",
+					message: expect.stringContaining(DENIED),
+				});
+				expect(await guard.check(at("public", shared)), `${name}：共享令牌`).toMatchObject({
+					ok: false,
+					status: 403,
+					code: "forbidden",
+					message: expect.stringContaining(DENIED),
+				});
+				// 对照：同样的两种凭据写默认项目，和以前一样（到 #494 才拒绝；会话这一类的接口本来就要凭据，所以不在这里对照）。
+				if (!name.includes("sessions")) {
+					expect(await guard.check(at("default")), `${name}：默认项目不带凭据`).toEqual({
+						ok: true,
+						access: null,
+					});
+					expect(await guard.check(at("default", shared)), `${name}：默认项目共享令牌`).toEqual({
+						ok: true,
+						access: null,
+					});
+				}
+				// 平台管理员的个人令牌照常通过。
+				expect(
+					await guard.check(at("public", personal(USERS.admin))),
+					`${name}：平台管理员`,
+				).toMatchObject({ ok: true });
+			}
+			// 读公共项目不受影响：不带凭据的读照旧放行。
+			const read: RouteDef = {
+				...route("GET /orchestrations"),
+				path: "/projects/:project/orchestrations",
+			};
+			expect(await guard.check({ route: read, params: { project: "public" } })).toEqual({
+				ok: true,
+				access: null,
+			});
+		});
+
+		it("拒绝的说明不带具体的操作：建会话、发布、建场景被拒时是同一句", async () => {
+			const session = route("POST /projects/:project/sessions");
+			const result = await guard.check({ route: session, params: { project: "public" } });
+
+			expect(result).toMatchObject({ ok: false, status: 401 });
+			expect((result as { message: string }).message).not.toContain("发布节点包");
 		});
 	});
 

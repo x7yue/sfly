@@ -8,7 +8,7 @@
 
 `sfly-std` 要发布到**公共项目**：平台自己维护的节点包放在那里，任何凭据都能读，只有**平台管理员**能发布；控制面的包索引也只列公共项目里的 `sfly-std`，依赖它的节点包装依赖时从那里取（见 [安装 Agent](install-agent.md) 的「控制面的包索引」）。
 
-在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验，再用平台管理员的个人令牌上传到公共项目（发布请求加查询参数 `project=public`）：
+在本仓库的 GitHub Release 里找到 tag 为 `std-vX.Y.Z` 的版本，下载附件 `sfly-std-X.Y.Z.sflypkg` 和 `SHA256SUMS`。在下载目录里校验，再用平台管理员的个人令牌（从哪里来见下面的第二条）上传到公共项目（发布请求加查询参数 `project=public`）：
 
 ```sh
 cd ~/Downloads
@@ -17,11 +17,11 @@ curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer 
   --data-binary @sfly-std-0.4.0.sflypkg '{{SFLY_URL}}/packages?project=public'
 ```
 
-- 上传成功时返回节点包的版本信息（JSON）。装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.4.0.sflypkg --project public`（命令行带令牌随 API 令牌那部分提供，见下一条）。
-- **需要平台管理员的凭据**（登录，或 `Authorization: Bearer <个人令牌>`）：项目管理员、项目令牌、会话令牌、Agent 凭据、不带凭据都不行，不带凭据是 401，其余是 403，信息写明原因；`project` 现在只能写 `public`，写别的值是 400；不写 `project` 就是发布到默认项目，和以前一样（`sfly-std` 在默认项目里不会出现在包索引里）。发布记录里有发布人（用户和令牌的名称），也在平台管理员的写记录里。平台管理员的凭据怎么得到：第一个管理员和登录已经有了（#490：控制台的 `/setup` 页用初始化码建第一个管理员），个人令牌的签发和命令行的 `sfly login` 在 #491，还没有合入；在那之前拿不到个人令牌，上面的命令行写法还不能照着用。这是过渡的写法，路径带项目（#488）之后改成 `/projects/public/packages`。
+- 上传成功时返回节点包的版本信息（JSON）。装了 sfly 命令行时，平台管理员先 `sfly login`（令牌存在本机的凭据文件里），再 `sfly publish sfly-std-0.4.0.sflypkg --project public`，命令自己带着令牌；脚本里设环境变量 `SFLY_API_TOKEN`（见 [用命令行操作平台](platform-cli.md)）。
+- **需要平台管理员的凭据**（登录，或 `Authorization: Bearer <个人令牌>`）：项目管理员、项目令牌、会话令牌、Agent 凭据、不带凭据都不行，不带凭据是 401，其余是 403，信息写明原因；`project` 现在只能写 `public`，写别的值是 400；不写 `project` 就是发布到默认项目，和以前一样（`sfly-std` 在默认项目里不会出现在包索引里）。发布记录里有发布人（用户和令牌的名称），也在平台管理员的写记录里。平台管理员的个人令牌从哪里来：第一个管理员在控制台的 `/setup` 页用初始化码建；之后他在控制台账号菜单的「令牌」页签发一个个人令牌，放进上面的 `SFLY_ADMIN_TOKEN`（`curl` 用这个）。用命令行时不用自己拿令牌：`sfly login` 把令牌存在本机，`sfly publish … --project public` 自己带着它；`sfly login` 不打印令牌，所以它换来的令牌放不进 `SFLY_ADMIN_TOKEN`。令牌的范围不会超过签发人此刻的角色，要用平台管理员本人的令牌（项目管理员的令牌发布不进公共项目）。这是过渡的写法，路径带项目（#488）之后改成 `/projects/public/packages`。
 - 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里，`{{SFLY_URL}}/simple/sfly-std/` 也提供它的 wheel。Agent 第一次执行时从控制面安装它，依赖（`psutil`）从 PyPI 镜像安装。
 - Release 说明写明了需要的**最低 Agent 版本**。Agent 版本更旧时任务以 `env_error` 失败并提示升级（见 [需要的 SDK 版本](publish.md#需要的-sdk-版本)）；Agent 跟随控制面的版本，升级控制面即可。
-- 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。发布到公共项目时，和已有版本按 PEP 440 规范化之后相同的版本（已有 `0.9.0` 再发 `0.9`、`0.9.0.0`）也会被拒绝：409，信息写明已有的是哪个。
+- 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。发布到公共项目时，和已有版本按 PEP 440 规范化之后相同的版本（已有 `0.9.0` 再发 `0.9`、`0.9.0.0`）也会被拒绝：409，信息写明已有的是哪个。同名同版本已经在默认项目里（以前不带 `project=public` 上传过）时发布到公共项目同样是 409，信息写明它在默认项目里、不在包索引里：换一个版本号发布到公共项目（默认项目里的那个不能覆盖，也不会出现在包索引里）。
 
 ## 安全说明
 
@@ -44,7 +44,7 @@ curl -fsS -H 'content-type: application/octet-stream' -H "authorization: Bearer 
 
 标准节点包的主体是**节点代码里可以直接调用的辅助函数**（从 `sfly-std` 0.4.0 起提供，0.3.0 里没有）。这些能力里难写对的是逻辑，不是节点的外壳：进程组的启动、停止和看护，采样整机与进程的资源，跟随会轮转的日志，判断文件写完了没有，经 Agent 能力从另一台机器拉文件，等端口、文件、日志行。把它们做成函数，你在自己的业务节点里导入、组合，行为由你的代码决定：函数有参数可以调（例如「进程重启之后按名字重新找到它」的 `refind_within`），`poll_until` 还收回调，不像上面的标准节点那样固定。
 
-用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`），然后从下面的模块导入。**依赖怎么装上**：`sfly-std` 不在 PyPI 上，由控制面的包索引提供（见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节）：`sfly init` 生成的项目已经把 `sfly-std` 绑到它（见 [创建节点包项目](init-project.md)，开发机上 `uv add sfly-std` 就能装上），Agent 装节点包的依赖时也从它取，不用往自己的 PyPI 镜像里放。索引里的是**公共项目**里已发布的 `sfly-std`，上传接口现在只往默认项目发（见上面「上传 sfly-std」），所以新部署里要先让平台管理员把它发布进公共项目（这个办法在 #573 合入之后才有，在那之前新部署里没有办法发布进去），依赖它的节点包才装得上。
+用法：节点包把 `sfly-std` 写进依赖（只写下限，例如 `sfly-std>=0.4`），然后从下面的模块导入。**依赖怎么装上**：`sfly-std` 不在 PyPI 上，由控制面的包索引提供（见 [安装 Agent](install-agent.md) 的「控制面的包索引」一节）：`sfly init` 生成的项目已经把 `sfly-std` 绑到它（见 [创建节点包项目](init-project.md)，开发机上 `uv add sfly-std` 就能装上），Agent 装节点包的依赖时也从它取，不用往自己的 PyPI 镜像里放。索引里的是**公共项目**里已发布的 `sfly-std`，所以新部署里要先让平台管理员把它发布进公共项目（办法见上面「上传 sfly-std」），依赖它的节点包才装得上。
 
 | 模块 | 函数 | 做什么 |
 |---|---|---|
