@@ -21,7 +21,7 @@ import { type FollowSink, follow, REPLAY_BATCH } from "./follow.js";
 
 /** 推送指针（{@link SessionStore.#cursors}）多到这个数时，顺手清掉闲置的。 */
 const CURSOR_SWEEP_SIZE = 1_000;
-/** 闲置多久（毫秒）的推送指针可以清掉：写事务最长也只等 {@link SESSION_WRITE_LOCK_TIMEOUT_MS}，远小于它。 */
+/** 闲置多久（毫秒）的推送指针可以清掉：写事务最长也只等 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}，远小于它。 */
 const CURSOR_IDLE_MS = 10 * 60_000;
 
 /** 库里的一个会话。 */
@@ -123,14 +123,7 @@ async function lockSession(tx: Tx, sessionId: string): Promise<SessionRow> {
  * 会话令牌的写（触发、保存、恢复、复制）的事务里，等行锁最多等多久（毫秒）：超时这一次请求以明确的错误结束、事务回滚
  * （{@link isLockTimeout}，HTTP 503），不让任何一种没想到的等待变成永远卡住。正常时这些路径只等别的事务提交，毫秒级。
  */
-export const SESSION_WRITE_LOCK_TIMEOUT_MS = 5_000;
-
-/** 在事务里设置会话令牌的写的锁等待上限（`SET LOCAL`，只在这个事务里有效）；放在事务的第一条语句。 */
-export async function limitSessionWriteLockWait(tx: Tx): Promise<void> {
-	await tx.execute(
-		sql`select set_config('lock_timeout', ${`${SESSION_WRITE_LOCK_TIMEOUT_MS}ms`}, true)`,
-	);
-}
+export const DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS = 5_000;
 
 /** 这个错误是不是「等锁超时」（PostgreSQL 的 `lock_not_available`，沿着 `cause` 找：drizzle 把数据库错误包了一层）。 */
 export function isLockTimeout(error: unknown): boolean {
@@ -157,6 +150,8 @@ export interface SessionStoreDeps {
 	afterCommit?: (sessionId: string, event: PersistedSessionEvent) => Promise<void>;
 	/** 不该抛出去、只记日志的错误（平台记录发布失败）。 */
 	onError?: (what: string, error: unknown) => void;
+	/** 会话令牌的写的事务里等行锁最多等多久（毫秒），默认 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}；测试里调小。 */
+	writeLockTimeoutMs?: number;
 	/**
 	 * 测试用的缝：{@link SessionStore.detail} 读到会话那一行之后、读事件之前调用（并等它），用来在这两步之间让这个会话
 	 * 提交别的事件，验证读到的三样东西来自同一个快照。生产里不传。
@@ -201,6 +196,15 @@ export class SessionStore {
 			if (this.#chains.get(sessionId) === tail) this.#chains.delete(sessionId);
 		});
 		return result;
+	}
+
+	/**
+	 * 会话令牌的写（触发、保存、恢复、复制）的事务里设置等行锁的上限（`SET LOCAL lock_timeout`，只在这个事务里有效）：超时这一次
+	 * 请求以明确的错误结束、事务回滚（{@link isLockTimeout}，HTTP 503）。放在事务的第一条语句。
+	 */
+	async limitWriteLockWait(tx: Tx): Promise<void> {
+		const ms = this.deps.writeLockTimeoutMs ?? DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS;
+		await tx.execute(sql`select set_config('lock_timeout', ${`${ms}ms`}, true)`);
 	}
 
 	/** 项目存不存在（路径里的项目标识）。 */

@@ -59,7 +59,7 @@ import type {
 	TriggerRejection,
 	TriggerRequest,
 } from "../runs/trigger-admission.js";
-import { limitSessionWriteLockWait, type SessionStore } from "../sessions/session-store.js";
+import type { SessionStore } from "../sessions/session-store.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
@@ -263,7 +263,7 @@ export class Engine implements AgentSessionHandler {
 	trigger(orchestrationId: string, request: TriggerRequest, actor: Actor): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
 			// 会话令牌的触发：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
-			if (actor.sessionId !== null) await limitSessionWriteLockWait(step.tx);
+			if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(step.tx);
 			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
 			if (!admitted.ok) return admitted;
 			const { projectId, version, plan, params, runPreset } = admitted;

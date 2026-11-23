@@ -22,7 +22,7 @@ import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-sett
 import { copyPresets } from "../presets/preset-store.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { sessionRefs, withSession } from "../sessions/session-ref.js";
-import { limitSessionWriteLockWait, type SessionStore } from "../sessions/session-store.js";
+import type { SessionStore } from "../sessions/session-store.js";
 import { maskSecretDefaults, restoreSecretDefaults } from "./secret-defaults.js";
 import { newWarnings, versionCheck } from "./version-check.js";
 
@@ -231,7 +231,7 @@ export class OrchestrationStore {
 	 * 放在事务的第一条语句。不是会话令牌的写什么都不做。
 	 */
 	async #limitLockWait(tx: Tx, actor: Actor): Promise<void> {
-		if (actor.sessionId !== null) await limitSessionWriteLockWait(tx);
+		if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(tx);
 	}
 
 	/**
