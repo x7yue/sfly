@@ -127,11 +127,16 @@ export function ShortcutsDialog({
 						return (
 							<section key={group} aria-label={group}>
 								<h4 className="mt-1 mb-1 text-xs font-semibold text-fg-3">{group}</h4>
-								<dl className="m-0 grid grid-cols-[repeat(3,minmax(max-content,1fr))] gap-x-6 min-[1100px]:grid-cols-[repeat(4,minmax(max-content,1fr))] min-[1300px]:grid-cols-[repeat(5,minmax(max-content,1fr))]">
+								<dl className="m-0 grid grid-flow-dense grid-cols-[repeat(3,minmax(max-content,1fr))] gap-x-6 min-[1100px]:grid-cols-[repeat(4,minmax(max-content,1fr))] min-[1300px]:grid-cols-[repeat(5,minmax(max-content,1fr))]">
 									{rows.map((row) => (
 										<div
 											key={row.ids[0]}
-											className="flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm"
+											className={cn(
+												"flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm",
+												// 合成的行（名称加两个键）比别的行宽出一截：占一列的话五列都要跟着加宽，面板撑到铺满窗口；占两列，
+												// 别的行的宽度不变。dense：一行放不下两列时让后面的行补上空位。
+												row.ids.length > 1 && "col-span-2",
+											)}
 										>
 											<dt className="whitespace-nowrap">{row.label}</dt>
 											<dd className="m-0 flex flex-none items-center gap-1.5">
