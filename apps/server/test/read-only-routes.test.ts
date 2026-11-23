@@ -113,6 +113,8 @@ const ARTIFACT = "报告/结果 1.json";
  * 值是为什么做不到。新的数组字段出现时先在 seed 里补数据，补不了再来这里写。
  */
 const UNVERIFIED_ARRAYS: Record<string, string> = {
+	"POST /orchestrations/:id/edits/check response diff.annotations.added[]":
+		"局部编辑没有加注释框的操作（#470 这一版不做），这组操作造成的差异里不会有新增的注释框",
 	"GET /dashboard response recent_ended[].focus[].series[]":
 		"控制台汇总只要关注项的最新值：读数用 points=0，序列按设计就是空的（序列的元素由 GET /runs/:id/focus 对照）",
 	"GET /dashboard response recent_ended[].focus[].series[].points[]":
@@ -125,6 +127,8 @@ function fixtureKeys(def: RouteDef): Array<FixtureKey | undefined> {
 	if (typeof target === "string") return [undefined];
 	// 没有版本的场景没有第 1 版：读版本只在有版本的场景上走得到成功的路径。
 	if (kind === "scenario") {
+		// 检查局部编辑的样本操作要删掉 check 节点：没有版本的场景里没有它。
+		if (def.path.endsWith("/edits/check")) return ["done", "live", "archived", "rich", "diffed"];
 		return def.path.includes("/versions/:")
 			? ["done", "live", "archived", "rich", "diffed"]
 			: ["done", "live", "empty", "archived", "rich", "diffed"];
@@ -170,6 +174,22 @@ describe("声明为只读的接口真的不写库", () => {
 		});
 		expect(login.status).toBe(200);
 		adminCookie = /sfly_login=([^;]+)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
+		// 令牌列表里要有内容（响应里的数组元素才对得上清单里的 schema）：一个个人令牌、一个项目令牌。
+		for (const [path, body] of [
+			["/account/tokens", { name: "笔记本" }],
+			["/projects/default/tokens", { name: "ci", scopes: ["read"] }],
+		] as const) {
+			const issued = await cp.fetch(path, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie: `sfly_login=${adminCookie}`,
+					"sec-fetch-site": "same-origin",
+				},
+				body: JSON.stringify(body),
+			});
+			expect(issued.status, await issued.clone().text()).toBe(201);
+		}
 	}, 120_000);
 
 	afterAll(async () => {
@@ -394,9 +414,9 @@ describe("声明为只读的接口真的不写库", () => {
 			}
 		}
 		const body = sampleBody(def);
-		// 账号类的只读接口只认登录 Cookie（同源的请求）。
+		// 账号类的只读接口只认登录 Cookie（同源的请求）；项目的管理面（项目令牌的列表）要「管理」，管理员的登录有。
 		const credentials =
-			def.resource.kind === "account"
+			def.resource.kind === "account" || def.resource.kind === "project"
 				? { cookie: `sfly_login=${adminCookie}`, "sec-fetch-site": "same-origin" }
 				: undefined;
 		const res = await cp.fetch(url, {
@@ -465,8 +485,9 @@ function sampleParam(def: RouteDef, name: string, s: Seeded, fixture?: Fixture):
 		page: s.docSlug,
 		skill: "sfly-platform",
 		file: "SKILL.md",
+		// 简单索引里的包（PEP 503 的 project）：sfly-std 和 sfly 一样可以读。
 		package: "sfly-std",
-		// 会话的列表在 `/projects/:project/sessions`，项目是真实存在的默认项目；PEP 503 索引的包名参数是 `:package`。
+		// 路径里的项目（`/projects/:project/…`）：默认项目，管理员在里面是项目管理员（会话的列表在 `/projects/:project/sessions`）。
 		project: "default",
 	};
 	const value = samples[name];
@@ -492,6 +513,32 @@ function sampleBody(def: RouteDef): unknown {
 			inputs: {},
 		});
 		return { document };
+	}
+	// 检查局部编辑：加一个开发版本的包节点接在 check 后面（多锁定一个包；在有后续节点的场景里后面的节点让位），
+	// 删掉 check（前后接上；它所在的注释框跟着变或删掉），改入口节点的显示名称，再加一个不连线的节点（有警告）
+	if (def.path === "/orchestrations/:id/edits/check") {
+		return {
+			operations: [
+				{
+					op: "add_node",
+					id: "extra_ping",
+					package: "dev-probe",
+					node: "ping",
+					after: "check",
+					inputs: { host: "h" },
+				},
+				{ op: "remove_node", node: "check" },
+				{ op: "set", node: "entry", field: "display_name", value: "开始（改过）" },
+				// 不连线的节点：保存时的警告（响应里的 warnings 有内容）
+				{
+					op: "add_node",
+					id: "loose_ping",
+					package: "dev-probe",
+					node: "ping",
+					inputs: { host: "h" },
+				},
+			],
+		};
 	}
 	throw new Error(
 		`${def.method} ${def.path}：没有请求体的样本值，在 read-only-routes.test.ts 的 sampleBody 里补上`,
@@ -636,7 +683,7 @@ function diffedDocument(version: 1 | 2) {
 			id: "annotation_1",
 			title: "汇报（改过）",
 			note: "跑完后异步汇报",
-			nodes: ["extra"],
+			nodes: ["extra", "check"],
 			subflows: ["report"],
 		},
 		{ id: "annotation_2", title: "新的", note: "", nodes: ["check"], subflows: [] },

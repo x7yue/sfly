@@ -15,13 +15,13 @@ curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 安装脚本识别 CPU 架构，从控制面下载 sfly Agent {{SFLY_VERSION}} 并校验 sha256，写好配置，注册并启动 systemd 服务。
 
 - `--name`：Agent 名称，全局唯一，场景按名称选择 Agent。上面的命令用主机名，也可以换成别的名称。
-- `--token '<令牌>'`：控制面配置了注册令牌时必填，向平台管理员索取。令牌不对时 Agent 打印 `invalid agent token` 后退出。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
+- `--token '<令牌>'`：控制面配置了共享令牌时必填，向平台管理员索取（这是 Agent 连控制面用的共享令牌，不是个人令牌；命令行登录用的个人令牌见「用命令行操作平台」）。令牌不对时 Agent 打印 `invalid agent token` 后退出。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
 - `--slots <数量>`：同时执行的任务上限，默认 4。
 - `--listen-port <端口>`、`--public-address <地址>`：供其它 Agent 连接的端口（默认 50052）和对外地址，见下面的「供其它 Agent 连接的端口」。
 - `--no-auto-update`：不自动更新（见「版本与自动更新」）。
 - 完整参数：`curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --help`。
 
-用环境变量传令牌：先读入令牌（粘贴后回车，输入不显示），再运行安装命令：
+用环境变量传共享令牌：先读入令牌（粘贴后回车，输入不显示），再运行安装命令：
 
 ```text
 read -rs SFLY_TOKEN && export SFLY_TOKEN
@@ -37,7 +37,7 @@ curl -fsSL {{SFLY_URL}}/install.sh | sudo sh -s -- --name "$(uname -n)"
 ```
 
 - Agent 以 root 运行，文件在 root 的家目录下（通常是 `/root/.sfly`，以安装脚本最后打印的路径为准），下面写的 `~/.sfly` 都指这个目录。之后升级、改配置也要用 `sudo`。
-- `sudo` 默认不传递环境变量：用环境变量传令牌、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
+- `sudo` 默认不传递环境变量：用环境变量传共享令牌、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
 - 同一台机器上之前用普通用户装过时，先停掉那个 Agent（`systemctl --user disable --now sfly-agent`，或结束前台进程），否则两个同名的 Agent 会同时连接控制面。
 
 Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动时它会准备运行环境，需要一两分钟：
@@ -103,7 +103,7 @@ sfly --version
 |---|---|
 | `bin/sfly-agent` | Agent 二进制 |
 | `bin/uv` | Agent 管理的 uv |
-| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、令牌、槽位数、是否自动更新、本机的镜像覆盖 |
+| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、共享令牌、槽位数、是否自动更新、本机的镜像覆盖 |
 | `venv/` | 共享 venv：SDK 运行时和所有节点包都装在这里 |
 | `work/` | 任务工作目录（每个任务一个子目录），以及 `sfly dev` 连接的本地 socket `agent.sock` |
 | `procs/` | 后台进程目录（每次运行一个子目录）：节点启动的、节点结束后继续运行的进程（例如标准节点 `start_process`）的日志 |
@@ -179,7 +179,7 @@ Agent 和控制面必须是同一个版本。控制面升级（或回滚）后�
 - 配置了不自动更新：安装时加 `--no-auto-update`（`agent.env` 里写入 `SFLY_NO_AUTO_UPDATE=1`；也可以自己写这一行再重启 Agent，值可以是 `1`/`true`/`yes`）。需要严格控制版本的机器这样设置，升级时自己重新运行安装命令，这个设置会保留；要恢复自动更新，删掉 `agent.env` 里的这一行再重启 Agent。
 - Agent 二进制不在 `$SFLY_HOME/bin`（默认 `~/.sfly/bin`）下（不是安装脚本安装的），或者这个目录不可写。
 
-手动升级就是重新运行安装命令，名称、令牌和原来一样。
+手动升级就是重新运行安装命令，名称、共享令牌和原来一样。
 
 **旧 Agent 首次升级**：在有安装脚本之前部署的 Agent（从 GitHub Release 下载、自己写启动参数或 systemd 服务）没有自动更新能力，需要手动升级一次：停掉旧的进程或服务，在同一台机器上用原来的名称运行上面的安装命令。之后的版本都会自动更新。旧的 venv 和工作目录不再使用，可以删除。
 
@@ -209,7 +209,7 @@ SFLY_GITHUB_RELEASE_MIRROR=https://mirrors.ustc.edu.cn/github-release
 - **开发机**：`sfly init` 生成的项目把 `sfly` 和 `sfly-std` 都指向它（见 [创建节点包项目](init-project.md)）。
 - 不需要凭据，和 SDK、Agent 二进制的下载一样；索引只提供这两个包，别的名字一律 404，也不会列出任何项目里用户自己发布的节点包。
 - **Agent 装依赖之前先检查这个地址**：`<对外地址>/simple/sfly-std/` 必须**直接**返回 200（不跟随重定向），**并且带控制面的标记头 `x-sfly-package-index`**（值是控制面的版本，索引的每个成功的响应都带），不满足就不装，任务以 `env_error` 失败，错误信息写明请求的地址、得到的状态码（或重定向到了哪、或「回了 200 但不是 sfly 控制面的包索引，或者中间的反向代理去掉了这个响应头」）和该检查什么。原因：uv 对一个名字只看第一个有回应的索引，这个地址回 404 或重定向到别处时它会转去 PyPI 镜像，装上那里的同名包，安装照样成功、没有任何报错；对外地址指到了一个 PyPI 风格的索引、那里恰好有同名包而回 200 时，也会装上它。控制面自己的代码不会这样回答，但对外地址指到了别的 HTTP 服务、或者反向代理把 `/simple/` 转给了别处时就会。所以**控制面的对外地址（`SFLY_PUBLIC_URL`）要指向这个控制面，反向代理要把 `/simple/` 转发给控制面**（连同路径前缀，并且不能去掉响应头）。标记头防的是配错，不是有意伪造：能控制这个地址的人本来就能直接给出假包。每次装节点包的依赖都检查，不管这个节点包有没有直接依赖 `sfly-std`（它多半是传递依赖，装之前看不出来）；检查多一次很小的请求。控制面发下这个地址的同时一定带标记头；旧版本控制面没有下发这个地址，Agent 不检查，依赖只来自 PyPI 镜像，和以前一样（只有命令行上总是写明索引策略这一点不同，见下）。
-- `sfly-std` 的内容是**公共项目**里已发布的版本。现在 `POST /packages` 只往默认项目发布，所以新部署里照 [标准节点](standard-nodes.md#上传-sfly-std) 上传的 `sfly-std` **不会**出现在这个索引里；索引里只有升级时迁移进公共项目的 `sfly-std` 版本。平台管理员把 `sfly-std` 发布进公共项目的办法随 #565 提供，那时上传步骤再更新。在那之前，新部署里依赖 `sfly-std` 的节点包装依赖时通常无解：任务以 `env_error` 失败，uv 的输出里是 `Because there are no versions of sfly-std and <节点包>==<版本> depends on sfly-std>=<要求>…`（前面是 `No solution found when resolving dependencies`）。公共项目里已有 `sfly-std` 但还没有满足要求的版本时同样无解，输出里写明要求的版本范围。（`Because sfly-std was not found in the package registry` 是另一种情形：没有控制面的包索引——旧版本控制面——而且 PyPI 镜像里也没有它。）
+- `sfly-std` 的内容是**公共项目**里已发布的版本：平台管理员用 `POST /packages?project=public` 上传（要他本人的个人令牌，令牌从哪里来、命令行的写法见 [标准节点](standard-nodes.md#上传-sfly-std)）；不加 `project=public` 上传的在默认项目里，不会出现在这个索引里。升级时迁移进公共项目的 `sfly-std` 版本也在索引里。公共项目里还没有发布 `sfly-std` 时，依赖它的节点包装依赖时通常无解：任务以 `env_error` 失败，uv 的输出里是 `Because there are no versions of sfly-std and <节点包>==<版本> depends on sfly-std>=<要求>…`（前面是 `No solution found when resolving dependencies`）；这时先发布 `sfly-std`。（`Because sfly-std was not found in the package registry` 是另一种情形：没有控制面的包索引——旧版本控制面——而且 PyPI 镜像里也没有它。）公共项目里已有 `sfly-std` 但还没有满足要求的版本时同样无解，输出里写明要求的版本范围。
 - **「只会来自这个索引」指 Agent 解析依赖的时候**：Agent 的共享环境里已经装着 `sfly-std`、并且装着的版本满足要求时，uv 保留装着的版本，不重新从索引解析。例如这台 Agent 先执行过默认项目里 `sfly-std` 自己的节点（那个节点包归档里的 wheel 被装进了共享环境），再执行依赖 `sfly-std` 的节点包，就会用已经装着的那个版本装上，不报无解。这是「一台 Agent 一个共享环境」（ADR 0012）的既有边界，不是包索引能改变的；要让它换成索引里的版本，先把共享环境里那个版本换掉：在这台 Agent 上执行一次公共项目里那个版本的 `sfly-std` 自己的节点（它的归档里的 wheel 会被装进共享环境），装上的才是索引里的那个版本；装一个别的、满足要求的版本不算。
 - **不要给 Agent 的环境配 uv 的 find-links**（`UV_FIND_LINKS` 或 uv 配置文件里的 `find-links`）：那里的同名包不受「一个名字只看第一个有回应的索引」约束，会和控制面索引里的版本一起按版本比较，高版本的同名包会顶替平台自己的 `sfly-std`。Agent 不会替你去掉它们，也不检查装好的包来自哪里；只有部署者自己配置了才会出现。
 - 命令行上索引参数总是写明：`uv pip install --index <控制面的包索引> --default-index <PyPI 镜像> --index-strategy first-index`（没有控制面的包索引时只有 `--default-index`，没有 PyPI 镜像时没有它）。命令行的值优先于环境变量和 uv 配置文件，所以部署者自己在环境变量或 uv 配置里换了索引策略（例如 `unsafe-best-match`）的机器，现在会被命令行盖掉；这是有意的。

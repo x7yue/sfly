@@ -2,11 +2,11 @@
 
 节点包里的每个节点都是一个用 `@node` 声明的 Python 函数。发布后，sfly Agent 每执行一个任务就启动一个新的 Python 进程，导入节点函数，把输入作为关键字参数传进去，把返回值作为输出。
 
-本页是 `sfly` SDK 的完整参考，也随 SDK 打进 `sfly init` 生成的项目（`.agents/skills/sfly-node-dev/reference.md`）。
+本页是 `sfly` SDK 的完整参考，也随 SDK 打进 `sfly init` 生成的节点包目录（`.agents/skills/sfly-node-dev/reference.md`）。
 
-## 项目结构
+## 节点包目录的结构
 
-`sfly init` 生成的项目已经符合下面的约定：
+`sfly init` 生成的节点包目录已经符合下面的约定：
 
 | 位置 | 内容 |
 |---|---|
@@ -19,7 +19,7 @@
 - `sfly build` 导入模块及其全部子模块，收集其中的 `@node`。节点名在一个节点包里不能重复。
 - 依赖只写在 `[project].dependencies`（pyproject 没有声明 dependencies 时读 `requirements.txt`）。Agent 上所有节点包共用一个 venv，只写宽松的下限。
 - `sfly` 不能写进 `[project].dependencies`：Agent 自带 SDK 运行时，`sfly build` 遇到它直接报错。
-- Agent 上 SDK 运行时的版本就是 Agent 的版本。`requires-sdk` 声明节点包需要的 SDK 版本，`sfly build` 把它写进节点包元信息的 `requires_sdk`；没写时用构建时 SDK 的版本作为下限（`>=<版本>`），`sfly init` 生成的项目写的是当时控制面的版本。格式是逗号分隔的比较符加数字版本号（`>=`、`>`、`<=`、`<`、`==`、`!=`、`~=`），例如 `>=0.0.4`。用到新版 SDK 才有的接口时调高它：派发到版本不满足的 Agent 时任务以 `env_error` 失败，错误信息写明需要的 SDK 版本和 Agent 的版本，提示升级 Agent。触发前检查比较的是控制面的版本（Agent 会先自更新到控制面的版本再执行任务），不满足时提示升级控制面。
+- Agent 上 SDK 运行时的版本就是 Agent 的版本。`requires-sdk` 声明节点包需要的 SDK 版本，`sfly build` 把它写进节点包元信息的 `requires_sdk`；没写时用构建时 SDK 的版本作为下限（`>=<版本>`），`sfly init` 生成的节点包写的是当时控制面的版本。格式是逗号分隔的比较符加数字版本号（`>=`、`>`、`<=`、`<`、`==`、`!=`、`~=`），例如 `>=0.0.4`。用到新版 SDK 才有的接口时调高它：派发到版本不满足的 Agent 时任务以 `env_error` 失败，错误信息写明需要的 SDK 版本和 Agent 的版本，提示升级 Agent。触发前检查比较的是控制面的版本（Agent 会先自更新到控制面的版本再执行任务），不满足时提示升级控制面。
 - `requires-agent` 声明节点包需要的 Agent 版本，格式同 `requires-sdk`，`sfly build` 把它写进元信息的 `requires_agent`；没写时不检查。它同时约束节点所在的 Agent 和节点通过「Agent」类型的参数访问的 Agent，用到 Agent 能力（见下文「`ctx.agent()`：Agent 能力」）时声明（例如 `>=0.2.0`），见那一节的「版本」。从 SDK 0.2.0 起可用。
 
 ## `@node`
@@ -317,7 +317,7 @@ class CheckOutputs(TypedDict):
 节点抛出的任何异常都让任务以 `node_error` 失败：错误消息形如 `ValueError: steps 必须大于 0，收到 0`，并附带 traceback。`node_error` 按场景里配置的重试次数重试，每次重试是一个新任务。消息里写清原因和相关参数值。
 
 - **堆栈从节点代码开始**：执行器自己调用节点的那几帧（`sfly/runner.py`，导入节点模块时还有 Python 的导入机制）已经去掉，第一帧就是你的节点函数。只去开头连续的那几帧：异常是在 SDK 里抛出的（例如 `ctx.agent(...).files.download` 失败）时，节点代码之后的 SDK 帧保留，它们说明是哪一次调用失败；异常链（`raise ... from ...`、处理异常时又抛出的）的每一段都这样处理。
-- **出错位置**：失败的错误里（运行视图和接口的 `error.location`、`sfly run show`、运行结束时的摘要、飞书运行通知的卡片、`sfly debug`、`sfly.testing` 的 `error.location`、节点收到的 `RunState` 里失败节点的 `error["location"]`）有一个 `location`，写成 `模块.函数 第 N 行`（和被终止时「执行到」那一行的写法一样），不用翻堆栈就知道改哪一行；日志里也先有一行 ERROR 级的 `出错位置：模块.函数 第 N 行`，`sfly run logs --failed` 看得到。位置是异常经过的栈里**最里面的一帧你自己的代码**（入口模块所在的包，和项目里的辅助模块）：异常从辅助模块里抛出，位置是辅助模块里那一行；异常从 SDK、Python 标准库或**第三方库**里抛出，位置是调用它的那一行节点代码（库里的位置你改不了，不是要找的地方；和被终止时不同，那里停在第三方库里写的是库里的位置）。有的帧没有文件（`exec` 出来的函数、冻结的 dataclass 被赋值时生成的方法），位置是调用它们的那一行节点代码；`asyncio.TaskGroup` 里的子任务抛出的异常组，位置是第一个子任务里出错的那一行（不是 `async with` 那一行）。导入节点模块时失败：导入错误，位置是写了那条 `import` 的一行；语法错误，位置是出错的模块和行（`mypkg.nodes 第 3 行`，包的 `__init__.py` 写成包名 `mypkg`），节点包装在 site-packages 里（Agent 上）和从源码目录运行（本地调试）一样。没有位置的：不是节点自己出错的失败（超时、Agent 失联、返回值不合格等）、取位置时出了错、旧版本的 Agent 或 SDK 上报的、升级之前的任务，`location` 是 `null`。
+- **出错位置**：失败的错误里（运行视图和接口的 `error.location`、`sfly run show`、运行结束时的摘要、飞书运行通知的卡片、`sfly debug`、`sfly.testing` 的 `error.location`、节点收到的 `RunState` 里失败节点的 `error["location"]`）有一个 `location`，写成 `模块.函数 第 N 行`（和被终止时「执行到」那一行的写法一样），不用翻堆栈就知道改哪一行；日志里也先有一行 ERROR 级的 `出错位置：模块.函数 第 N 行`，`sfly run logs --failed` 看得到。位置是异常经过的栈里**最里面的一帧你自己的代码**（入口模块所在的包，和项目里的辅助模块）：异常从辅助模块里抛出，位置是辅助模块里那一行；异常从 SDK、Python 标准库、标准节点包 `sfly_std`（不管它装在 site-packages 里还是可编辑安装）或**第三方库**里抛出，位置是调用它的那一行节点代码（库里的位置你改不了，不是要找的地方；和被终止时不同，那里你自己的代码直接停在第三方库里写的是库里的位置）。被终止时和失败时认「节点自己的代码」用的是同一个判断（`runner.py` 的 `_is_node_code`）。有的帧没有文件（`exec` 出来的函数、冻结的 dataclass 被赋值时生成的方法），位置是调用它们的那一行节点代码；`asyncio.TaskGroup` 里的子任务抛出的异常组，位置是第一个子任务里出错的那一行（不是 `async with` 那一行）。导入节点模块时失败：导入错误，位置是写了那条 `import` 的一行；语法错误，位置是出错的模块和行（`mypkg.nodes 第 3 行`，包的 `__init__.py` 写成包名 `mypkg`），节点包装在 site-packages 里（Agent 上）和从源码目录运行（本地调试）一样。没有位置的：不是节点自己出错的失败（超时、Agent 失联、返回值不合格等）、取位置时出了错、旧版本的 Agent 或 SDK 上报的、升级之前的任务，`location` 是 `null`。
 
 ## `ctx.log`：日志
 
@@ -539,6 +539,43 @@ return {"report": ref}
 - 任务结束后 Agent 把产物上传到控制面，运行视图里可以下载。
 - **产物引用**：在 Agent 上是产物在控制面上的下载地址，写进输出交给后续节点，后续节点用 `ctx.artifacts.download` 下载；本地调试时是本地文件路径。
 
+### 大小上限：大文件怎么办
+
+一个任务的产物合计有上限：默认 1 GB，部署者用控制面的 `SFLY_ARTIFACT_LIMIT_MB` 调整。它是每个任务的合计（这个任务已经保存的产物都算在里面），不是单个文件的上限。上限随任务一起交给节点，不用等任务结束、传了很多之后才发现：
+
+```python
+from pathlib import Path
+
+from sfly import ArtifactLimitExceeded, Context, node
+
+
+@node(title="导出数据", outputs=["export", "export_path"])
+def export_data(ctx: Context, rows: int, keep_dir: str) -> dict[str, str | None]:
+    """导出一份数据：放得下就存成产物，放不下就留在本机的 keep_dir 里。"""
+    # 导出的文件可能很大：先写在本机固定的目录里，不要写在任务目录里（任务目录按保留期清理，
+    # 过期后输出里给出的路径就找不到文件了）。文件名带上任务 ID：同一台 Agent 上并发的任务、
+    # 或者下一次运行，都不会覆盖这次输出里给出的那个文件。
+    path = Path(keep_dir) / f"export-{ctx.task.task_id}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{i},{i * i}\n" for i in range(rows)), encoding="utf-8")
+    try:
+        return {"export": ctx.artifacts.save("export.csv", path), "export_path": None}
+    except ArtifactLimitExceeded:
+        # 放不下：文件留在这台机器上，输出里给出它在哪里，要用它的节点用 Agent 的文件能力取。
+        return {"export": None, "export_path": str(path)}
+```
+
+两条分支返回同样的两个键（用不到的给 `None`），`outputs` 里都声明了：下游引用其中一个时，不管这次走了哪条分支，引用的输出都在。
+
+- `ctx.artifacts.limit_bytes` 是这个任务的产物合计最多能有多少字节（`int`），**已经保存的产物也算在里面**，不是「还能再存多少」。本地调试（`sfly debug`、`sfly.testing`）和旧版本的控制面没有上限，是 `None`，不检查。保存之前可以先和它比（估计的大小超过时直接留在本机），但最稳的写法是接住 `save` 抛出的异常：估计的大小和实际的差一点，或者别的线程同时在保存，都靠它兜住。
+- `ctx.artifacts.save` 发现这个文件加上这个任务已经保存的会超过上限时，不写这个文件，抛出 `sfly.ArtifactLimitExceeded`：之前保存的产物不受影响，同名的旧文件也不动。多个线程同时 `save` 时，检查和写入是一起做的，不会都通过检查、合起来超限（锁只管一个进程，多进程见下面）。**不要在信号处理函数里调用 `save`**：信号落在主线程正在 `save` 的时候，处理函数里再 `save` 要等同一把锁，会死锁，连终止信号都收不掉；取消时要存的东西放在 `except Cancelled` 或 `finally` 里（见「取消与清理」）。属性：`name`（要保存的产物名称）、`size`（它的字节数）、`saved`（已保存的合计字节数，同名的旧文件不算）、`limit`（上限的字节数）。
+- **没接住这个异常，任务就在 `save` 那一行以 `env_error` 失败，不按 `retries` 重试**（重试一遍产物还是这么大）：错误信息写明这个文件多大、已保存多少、上限多少，以及上限怎么调。节点自己接住、继续往下跑的不受影响。
+- **多进程**：节点用 `multiprocessing`、`subprocess` 另起进程存产物时，上限是这样算的：每个进程各自检查、各自写，合起来可以超过上限，最后由 Agent 上传前的检查兜住（任务以 `env_error` 失败，说明里写明合计和没上传的文件）；想在节点里就拦住，让存产物的都在一个进程里（子进程把内容交回来，由主进程 `save`）。子进程继承上限，在它里面 `save` 超限同样抛出 `ArtifactLimitExceeded`：`multiprocessing.Pool`、`ProcessPoolExecutor` 会把它原样传回父进程，可以在父进程里接住；用 `subprocess` 另起的解释器，父进程只看得到退出码（`CalledProcessError`），要把原因传回来得靠节点自己（写进它的输出、或用退出码约定）。
+- 大文件留在这台机器上，在节点的输出里给出它在哪台 Agent 的哪个路径；要用它的节点把这台 Agent 声明成「Agent」类型的参数，用 `ctx.agent(名称).files.download(...)` 取（见下文「`ctx.agent()`：Agent 能力」）。路径要放在任务目录之外（任务目录按 `SFLY_TASK_DIR_RETENTION` 清理，默认 7 天，见 [安装 Agent](install-agent.md)）。
+- 直接写进 `ctx.artifacts.path(...)` 的文件，`save` 不经手：任务结束后 Agent 把产物目录里的文件加一遍。合计没超过上限时照常上传。超过时，放得下的文件（从小到大）照常上传，放不下的不传：任务同样以 `env_error` 失败、不重试，错误信息写明合计、上限，和没上传的文件（最大的优先列出）。任务本来就失败时，保留原来的错误类型和信息，没上传的文件附在后面。
+- 控制面的上传接口同样检查上限：请求带了长度时，在读请求体之前就以 HTTP 413 拒绝，错误信息写明是哪个产物、这个任务已上传多少。
+- `limit_bytes` 和 `ArtifactLimitExceeded` 从 SDK 0.6.0 起可用。用到它们的节点包把 `requires-sdk` 调到 `>=0.6.0`；更旧的 SDK 上 `save` 不检查，超限时由上面 Agent 的检查兜住。
+
 ### 下载产物
 
 ```python
@@ -597,7 +634,7 @@ log.parent.mkdir(parents=True, exist_ok=True)
 
 - `ctx.procs_dir` 是这次运行的**后台进程目录**：节点启动的、节点结束后还要继续运行的进程，把日志等文件放在这里。它不在任务目录里，任务目录被清理或任务重试时不受影响；同一次运行的任务共用一个目录（用节点 ID 区分文件名）。目录不一定已经存在，使用前自己创建。
 - 在 Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`，和任务目录按同一个保留期清理（运行还有任务在 Agent 上时不动），见「安装 Agent」。0.0.4 之前的 Agent 不提供这个目录，SDK 取同样的位置，但旧 Agent 不会清理它。
-- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly debug` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
+- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly debug` 的运行 ID 是运行目录名，后台进程目录是节点包目录下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
 
 ## `ctx.agent()`：Agent 能力
 
@@ -919,7 +956,7 @@ def compress_rotated_logs(
 
 - 用户取消运行、任务超时（场景里这个节点写的超时，没有写就是节点类型用 `@node(timeout=…)` 声明的，都没有时是平台默认的 1 小时），或任务所在的子流程被场景里的停止子流程节点停止时，Agent 先写取消标记，再向任务的进程树发 SIGTERM。执行器把 SIGTERM 变成节点里抛出的 `sfly.Cancelled`。
 - `Cancelled` 是 `BaseException` 的子类：`except Exception` 不会捕获它。清理代码写在 `finally` / `with` 里，会照常执行。
-- 被终止不是节点出错：`Cancelled` 一直抛到执行器时，执行器不往标准错误写堆栈（标准错误来源的日志是 ERROR 级），只在日志里留一行 INFO，写明停在哪，例如 `任务被终止（SIGTERM），执行到 my_pkg.monitor.watch 第 57 行`（停在 SDK 或 Python 标准库里时，例如 `Event.wait`、`subprocess.run`、`Thread.join`、`asyncio.run`，写调用它的节点代码那一行；停在第三方库里时，写的是库里的位置）。被终止已经由任务状态（已停止、已取消、超时）表达，所以这一行不是 WARN，运行监控概览的「其他警告与错误」里不会出现它。节点自己捕获 `Cancelled` 后做的清理、自己写的日志照常；清理时又抛出别的异常，那个异常照常写完整的堆栈。
+- 被终止不是节点出错：`Cancelled` 一直抛到执行器时，执行器不往标准错误写堆栈（标准错误来源的日志是 ERROR 级），只在日志里留一行 INFO，写明停在哪，例如 `任务被终止（SIGTERM），执行到 my_pkg.monitor.watch 第 57 行`（停在 SDK 或 Python 标准库里时，例如 `Event.wait`、`subprocess.run`、`Thread.join`、`asyncio.run`，写调用它的节点代码那一行；停在标准节点包 `sfly_std` 的辅助函数里（`wait_for_port`、`monitor_processes`、`run_command` 等，包括它们调到的 `psutil` 这类依赖）时同样写调用它的那一行节点代码，你直接调用的那个辅助函数（不是它里面再调的内部函数）写在后面：`任务被终止（SIGTERM），执行到 my_pkg.check.run 第 12 行（正在 sfly_std.waiting.wait_for_port 第 130 行）`，括号里的行号是那个函数里调用内部函数的那一行（随 `sfly-std` 的版本变）；你把辅助函数再包一层自己的工具模块时，写的是工具模块里调用它的那一行（最近的一帧你自己的代码）；你传给辅助函数的回调（`poll_until(回调)`）是你自己的代码，停在回调里就报回调那一行；标准节点（`shell` 这类）自己被终止时仍然指向包里；你自己的代码直接停在第三方库里时，写的是库里的位置）。被终止已经由任务状态（已停止、已取消、超时）表达，所以这一行不是 WARN，运行监控概览的「其他警告与错误」里不会出现它。节点自己捕获 `Cancelled` 后做的清理、自己写的日志照常；清理时又抛出别的异常，那个异常照常写完整的堆栈。
 - 宽限期 10 秒，过后整棵进程树被强制杀掉。
 - 后台线程里收不到异常，用 `ctx.cancelled()` 轮询任务是否已取消。
 - 节点结束后还要存活的资源，由创建它的节点输出句柄，清理写成另一个节点，在场景里设为 always 节点（前面的节点失败或运行被取消时仍然执行）。
@@ -978,7 +1015,7 @@ def test_count_lines(tmp_path: Path) -> None:
 |---|---|
 | `status` | `success`、`failed` 或 `cancelled` |
 | `outputs` | 输出（仅成功时），否则 None |
-| `error` | `NodeError(kind, message, type, traceback, location)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled`；`location` 是出错的位置（`模块.函数 第 N 行`，见上文「失败」），没有时为 `None` |
+| `error` | `NodeError(kind, message, type, traceback, location)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）、`env_error`（没接住 `ctx.artifacts.save` 抛出的 `ArtifactLimitExceeded`，见「大小上限」）或 `cancelled`；`location` 是出错的位置（`模块.函数 第 N 行`，见上文「失败」），没有时为 `None` |
 | `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr、sdk，或 system（平台写的提示，例如 `ctx.notify` 发给了不在名单里的机器人） |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
@@ -1038,16 +1075,16 @@ def test_summary_names_the_failed_node() -> None:
 
 ## 命令行 `sfly`
 
-在项目里用 `uv run sfly <命令>` 运行；每个命令的完整参数见 `uv run sfly <命令> --help`。需要控制面地址的命令按 `--server` > 环境变量 `SFLY_SERVER` > `~/.sfly/agent.env`（`SFLY_HOME`）里的 `SFLY_CONTROL_PLANE_URL` 取值，`install.sh --dev` 安装的开发机不用传 `--server`。
+在节点包目录里用 `uv run sfly <命令>` 运行；每个命令的完整参数见 `uv run sfly <命令> --help`。需要控制面地址的命令按 `--server` > 环境变量 `SFLY_SERVER` > `~/.sfly/agent.env`（`SFLY_HOME`）里的 `SFLY_CONTROL_PLANE_URL` 取值，`install.sh --dev` 安装的开发机不用传 `--server`。
 
 | 命令 | 作用 |
 |---|---|
-| `sfly init <目录> [--name <包名>]` | 创建节点包项目：uv 项目、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、两份给 AI 编程助手的 skill（节点开发、操作平台）。包名默认是目录名 |
-| `sfly debug <节点> [--params '<JSON>']` | 本地调试：在当前项目环境里执行一个节点，不经过控制面和 Agent |
-| `sfly dev [项目目录]` | 联调：把项目以 `<包名>@dev` 装到本机 Agent（通过本机 Agent 的本地 socket） |
-| `sfly build [项目目录]` | 扫描 `@node`，构建节点包 `dist/<包名>-<版本>.sflypkg` |
-| `sfly publish [项目目录或 .sflypkg]` | 发布到控制面；给项目目录时先构建 |
-| `sfly skill update [--force]` | 把项目里的两份 skill（节点开发、操作平台）换成当前 SDK 版本的内容 |
+| `sfly init <目录> [--name <包名>]` | 创建节点包目录：uv 工程、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、两份给 AI 编程助手的 skill（节点开发、操作平台）。包名默认是目录名 |
+| `sfly debug <节点> [--params '<JSON>'] [--package-dir 节点包目录]` | 本地调试：在当前节点包目录的环境里执行一个节点，不经过控制面和 Agent |
+| `sfly dev [节点包目录]` | 联调：把节点包目录以 `<包名>@dev` 装到本机 Agent（通过本机 Agent 的本地 socket） |
+| `sfly build [节点包目录]` | 扫描 `@node`，构建节点包 `dist/<包名>-<版本>.sflypkg` |
+| `sfly publish [节点包目录或 .sflypkg]` | 发布到控制面；给节点包目录时先构建 |
+| `sfly skill update [--force] [--package-dir 节点包目录]` | 把节点包目录里的两份 skill（节点开发、操作平台）换成当前 SDK 版本的内容 |
 | `sfly scenario`、`sfly run`、`sfly agent`、`sfly package`、`sfly api` | 操作平台：查看场景、运行、Agent、节点包，触发、等待、取消运行，读日志，pull / push 编辑场景，直接调用接口。见 [用命令行操作平台](platform-cli.md) |
 
 ### `sfly debug`
@@ -1079,5 +1116,5 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 
 ### `sfly skill update`
 
-- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/` 和 `.agents/skills/sfly-platform/`（`.claude/skills/` 下同名的软链接不存在时一并创建；项目里还没有的 skill 直接写入）。
+- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/` 和 `.agents/skills/sfly-platform/`（`.claude/skills/` 下同名的软链接不存在时一并创建；节点包目录里还没有的 skill 直接写入）。
 - 每份 skill 单独检查：目录内容和上次写入的不同时不覆盖这一份，列出改动过的文件，最后以 1 退出，另一份照常更新；确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。

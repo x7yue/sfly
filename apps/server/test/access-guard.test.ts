@@ -12,7 +12,9 @@ import {
 import {
 	ACCOUNT_ROUTES,
 	AGENT_CREDENTIAL_ROUTES,
+	LOGIN_ONLY_ROUTES,
 	locatorOf,
+	REQUIRES_CREDENTIAL,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "../src/auth/access-rules.js";
@@ -112,6 +114,7 @@ describe("契约路由的访问检查", () => {
 			scopes: [...SCOPES],
 			expiresAt: null,
 			revokedAt: null,
+			lastUsedAt: null,
 			...fields,
 		});
 		return { authorization: `Bearer ${secret}` };
@@ -132,8 +135,8 @@ describe("契约路由的访问检查", () => {
 		for (const name of route.path.matchAll(/:([A-Za-z_]+)|\*$/g)) {
 			filled[name[1] ?? "*"] = "x";
 		}
-		// 路径带项目的接口（`/projects/:project/…`）：路径里的项目就是请求作用的项目。
-		if (route.path.startsWith("/projects/:project/")) filled.project = project;
+		// 路径里的项目（`/projects/:project/…`）：指向这次请求作用的项目。
+		if ("project" in filled) filled.project = project;
 		const target = route.resource.target;
 		if (typeof target === "object" && "params" in target) {
 			const kind = route.resource.kind;
@@ -159,6 +162,10 @@ describe("契约路由的访问检查", () => {
 		return from !== "none" && from !== "account";
 	});
 	const SYSTEM = httpContract.filter((def) => locatorOf(def)?.from === "none");
+	/** 现在就要求凭据的接口（项目的管理面）：不走「不带凭据照旧放行」的过渡。 */
+	const needsCredential = (def: RouteDef) => REQUIRES_CREDENTIAL.has(def.resource.kind);
+	/** 只认人的登录的接口：令牌（含带管理范围的个人令牌）是 403。 */
+	const loginOnly = (def: RouteDef) => routeKey(def) in LOGIN_ONLY_ROUTES;
 	const route = (key: string): RouteDef => {
 		const found = httpContract.find((def) => routeKey(def) === key);
 		if (!found) throw new Error(`契约里没有 ${key}`);
@@ -169,11 +176,39 @@ describe("契约路由的访问检查", () => {
 		it("不带凭据的请求每个接口都放行，不读库，没有身份（账号类接口除外：它们需要登录，见 accounts-http.test.ts）", async () => {
 			for (const def of httpContract) {
 				// 登录、初始化、状态本来就不要凭据，登出什么凭据都不拒绝，其余账号类接口不带登录是 401：这是新接口，没有「照旧」可言。
-				if (locatorOf(def)?.from === "account") continue;
+				if (locatorOf(def)?.from === "account" || needsCredential(def)) continue;
 				const result = await run(def, {});
 				expect(result, routeKey(def)).toEqual({ ok: true, access: null });
 			}
 			expect(store.reads).toBe(0);
+		});
+
+		it("项目的管理面（项目令牌）是新接口，没有「照旧」可言：不带凭据是 401，带共享令牌是 403，不读库", async () => {
+			store.agentCredentials.set(hashCredential("shared-secret"), {
+				kind: "shared",
+				projectId: DEFAULT,
+				agentName: null,
+				user: null,
+				revokedAt: null,
+			});
+			const covered = httpContract.filter(needsCredential);
+			expect(covered.map(routeKey)).toEqual(
+				expect.arrayContaining([
+					"GET /projects/:project/tokens",
+					"POST /projects/:project/tokens",
+					"DELETE /projects/:project/tokens/:id",
+				]),
+			);
+			for (const def of covered) {
+				expect(outcome(await run(def, {})), routeKey(def)).toBe(401);
+			}
+			expect(store.reads).toBe(0);
+			for (const def of covered) {
+				expect(
+					outcome(await run(def, { authorization: "Bearer shared-secret" })),
+					routeKey(def),
+				).toBe(403);
+			}
 		});
 
 		it("账号类接口：登录、初始化、状态不要凭据（带什么都不看）；其余需要登录，不带凭据是 401，不读库", async () => {
@@ -181,9 +216,12 @@ describe("契约路由的访问检查", () => {
 				if (locatorOf(def)?.from !== "account") continue;
 				const rule = ACCOUNT_ROUTES[routeKey(def) as keyof typeof ACCOUNT_ROUTES];
 				const result = await run(def, {});
-				if (rule === "anonymous" || rule === "logout") {
+				// 登录、初始化、状态、登出、签发个人令牌（请求体里是账号密码，处理函数验证）可以不带凭据。
+				if (rule === "anonymous" || rule === "logout" || rule === "login_or_password") {
 					expect(result, routeKey(def)).toEqual({ ok: true, access: null });
-				} else expect(outcome(result), routeKey(def)).toBe(401);
+				} else {
+					expect(outcome(result), routeKey(def)).toBe(401);
+				}
 			}
 			expect(store.reads).toBe(0);
 		});
@@ -197,6 +235,7 @@ describe("契约路由的访问检查", () => {
 				revokedAt: null,
 			});
 			for (const def of OUTSIDE_PROJECT) {
+				if (needsCredential(def)) continue;
 				const result = await run(def, { authorization: "Bearer shared-secret" });
 				expect(result, routeKey(def)).toEqual({ ok: true, access: null });
 			}
@@ -345,10 +384,12 @@ describe("契约路由的访问检查", () => {
 							? "ok"
 							: 403;
 					for (const [i, c] of credentials.entries()) {
+						// 令牌不能签发令牌：签发项目令牌只认登录，个人令牌即使带「管理」范围也是 403。
+						const result = i === 1 && loginOnly(def) ? 403 : expected;
 						expect(
 							outcome(await run(def, c)),
 							`${routeKey(def)}（${i === 0 ? "登录" : "令牌"}）`,
-						).toBe(expected);
+						).toBe(result);
 					}
 				}
 			});
@@ -544,6 +585,24 @@ describe("契约路由的访问检查", () => {
 			// 别的项目的会话令牌：不是它的项目，404（不是 403），读和写一样。
 			expect(outcome(await run(route("POST /sessions/:id/stop"), session, "alpha"))).toBe(404);
 		});
+
+		it("别的只有人能做的写（项目令牌的吊销）：带着管理范围的会话令牌也是 403，说明说「会话令牌不能做这件事」，不说成「对会话」；签发另有「令牌不能签发令牌」那一条", async () => {
+			const session = token({
+				kind: "session",
+				user: USERS.admin,
+				projectId: DEFAULT,
+				name: "会话",
+			});
+			// 签发：先于范围检查的「只认登录」那一条（#572），说的是令牌不能签发令牌。
+			const issue = await run(route("POST /projects/:project/tokens"), session);
+			expect(issue).toMatchObject({ ok: false, status: 403 });
+			expect((issue as { message: string }).message).toContain("令牌不能签发令牌");
+			// 吊销：走「只有人能做的写」，说明按凭据和做的事写准。
+			const revoke = await run(route("DELETE /projects/:project/tokens/:id"), session);
+			expect(revoke).toMatchObject({ ok: false, status: 403 });
+			expect((revoke as { message: string }).message).toContain("会话令牌不能做这件事");
+			expect((revoke as { message: string }).message).not.toContain("对会话");
+		});
 	});
 
 	describe("别的项目的资源和不存在一样：404，不是 403", () => {
@@ -700,13 +759,20 @@ describe("契约路由的访问检查", () => {
 			}
 		});
 
-		it("只是节点包的读：写、别的资源、别的项目都照旧", async () => {
+		it("只是节点包的读：别的资源、别的项目都照旧；公共项目的写只有平台管理员（403，说明原因）", async () => {
 			const c = personal(USERS.stranger);
-			expect(outcome(await guard.check(at(publish, "public", c)))).toBe(404);
 			expect(outcome(await guard.check(at(scenarios, "public", c)))).toBe(404);
 			expect(outcome(await guard.check(at(publicPackage, "alpha", c)))).toBe(404);
-			// 公共项目的发布要平台管理员（#501 再加「只有平台管理员」的规则；这里只看范围）。
-			expect(outcome(await guard.check(at(publish, "public", personal(USERS.boss))))).toBe(404);
+			// 公共项目的发布只有平台管理员（#565）：不是成员的、项目管理员都是 403，不是 404。
+			for (const who of [c, personal(USERS.boss)]) {
+				expect(await guard.check(at(publish, "public", who))).toMatchObject({
+					ok: false,
+					status: 403,
+					code: "forbidden",
+					message: expect.stringContaining("公共项目只有平台管理员能写"),
+				});
+			}
+			expect(outcome(await guard.check(at(publish, "public", personal(USERS.admin))))).toBe("ok");
 		});
 
 		it("路径里的项目写得不对、项目不存在：404", async () => {
@@ -716,6 +782,251 @@ describe("契约路由的访问检查", () => {
 					404,
 				);
 			}
+		});
+	});
+
+	describe("发布节点包时指明公共项目：过渡的查询参数 project=public（#565）", () => {
+		const publish = route("POST /packages");
+		const check = (credentials: Credentials & { fetchSite?: string }, project?: unknown) =>
+			guard.check({
+				route: publish,
+				params: {},
+				...(project === undefined ? {} : { query: { project } }),
+				// 登录 Cookie 要同源的请求才认（./cross-site.ts）：这些测试默认是控制台自己发的请求。
+				fetchSite: "same-origin",
+				...credentials,
+			});
+		const DENIED = "公共项目只有平台管理员能写";
+
+		it("发布的项目从查询参数得出：不写是默认项目，写 public 是公共项目", () => {
+			expect(locatorOf(publish)).toEqual({ from: "query", param: "project" });
+		});
+
+		it("不写 project：和以前一样发布到默认项目，不带凭据放行、没有身份", async () => {
+			expect(await check({})).toEqual({ ok: true, access: null });
+			const result = await check(personal(USERS.boss));
+			expect(result).toMatchObject({ ok: true, access: { project: "default" } });
+		});
+
+		it("平台管理员（登录或个人令牌）指明 public：通过，项目是公共项目，写一条平台管理员的记录", async () => {
+			clock.set("2026-06-02T03:04:05.000Z");
+			for (const credentials of [login(USERS.admin), personal(USERS.admin, { name: "发布令牌" })]) {
+				const result = await check(credentials, "public");
+				expect(result).toMatchObject({ ok: true, access: { project: "public" } });
+			}
+			expect(
+				store.adminWrites.map((w) => [w.projectId, w.route, w.resourceKind, w.resourceId]),
+			).toEqual([
+				["public", "POST /packages", "package", null],
+				["public", "POST /packages", "package", null],
+			]);
+			expect(store.adminWrites[1]).toMatchObject({ tokenName: "发布令牌", userId: USERS.admin.id });
+		});
+
+		it("限定了公共项目的平台管理员个人令牌可以；限定了别的项目的不行", async () => {
+			expect(
+				outcome(await check(personal(USERS.admin, { projectId: p("public") }), "public")),
+			).toBe("ok");
+			expect(await check(personal(USERS.admin, { projectId: DEFAULT }), "public")).toMatchObject({
+				ok: false,
+				status: 403,
+				message: expect.stringContaining(DENIED),
+			});
+		});
+
+		it("别的凭据指明 public：403，写明原因（项目管理员、编辑者、只读成员、不是成员的人、项目令牌、会话令牌）", async () => {
+			const cases: [string, Credentials][] = [
+				["项目管理员的登录", login(USERS.boss)],
+				["项目管理员的个人令牌", personal(USERS.boss)],
+				["编辑者", personal(USERS.editor)],
+				["只读成员", personal(USERS.reader)],
+				["不是成员的人", personal(USERS.stranger)],
+				["项目令牌（默认项目）", token({ kind: "project", projectId: DEFAULT })],
+				["项目令牌（公共项目）", token({ kind: "project", projectId: p("public") })],
+				["平台管理员的会话令牌", token({ kind: "session", user: USERS.admin, projectId: DEFAULT })],
+				// 限定了公共项目也不行：会话令牌是助手用的，发布本来就不给它（限定项目的检查拦不住它，要靠凭据种类）。
+				[
+					"平台管理员的会话令牌（限定公共项目）",
+					token({ kind: "session", user: USERS.admin, projectId: p("public") }),
+				],
+			];
+			for (const [name, credentials] of cases) {
+				expect(await check(credentials, "public"), name).toMatchObject({
+					ok: false,
+					status: 403,
+					code: "forbidden",
+					message: expect.stringContaining(DENIED),
+				});
+			}
+			expect(store.adminWrites).toEqual([]);
+		});
+
+		it("Agent 凭据、任务凭据：403（这个接口不在它们的清单里）；共享令牌：403；不带凭据：401", async () => {
+			store.agentCredentials.set(hashCredential("agent-secret"), {
+				kind: "agent",
+				projectId: DEFAULT,
+				agentName: "agent-a",
+				user: null,
+				revokedAt: null,
+			});
+			store.agentCredentials.set(hashCredential("shared-secret"), {
+				kind: "shared",
+				projectId: DEFAULT,
+				agentName: null,
+				user: null,
+				revokedAt: null,
+			});
+			expect(outcome(await check({ authorization: "Bearer agent-secret" }, "public"))).toBe(403);
+			expect(outcome(await check(token({ kind: "task", projectId: DEFAULT }), "public"))).toBe(403);
+			expect(await check({ authorization: "Bearer shared-secret" }, "public")).toMatchObject({
+				ok: false,
+				status: 403,
+				message: expect.stringContaining(DENIED),
+			});
+			expect(await check({}, "public")).toMatchObject({
+				ok: false,
+				status: 401,
+				code: "unauthorized",
+				message: expect.stringContaining(DENIED),
+			});
+		});
+
+		it("失效的凭据指明 public：仍然是 401，不会退回到放行", async () => {
+			expect(outcome(await check(personal(USERS.admin, { revokedAt: BEFORE }), "public"))).toBe(
+				401,
+			);
+			expect(outcome(await check({ authorization: "Bearer unknown" }, "public"))).toBe(401);
+		});
+
+		it("跨站的请求带着平台管理员的登录 Cookie 指明 public：Cookie 不算（和不带凭据一样 401），不写平台管理员的记录；不指明 project 时和不带凭据一样放行", async () => {
+			const { cookie } = login(USERS.admin);
+			for (const fetchSite of ["cross-site", "same-site"]) {
+				const result = await check({ cookie, fetchSite }, "public");
+				expect(result, fetchSite).toMatchObject({
+					ok: false,
+					status: 401,
+					code: "unauthorized",
+					message: expect.stringContaining(DENIED),
+				});
+				expect(await check({ cookie, fetchSite })).toEqual({ ok: true, access: null });
+			}
+			expect(store.adminWrites).toEqual([]);
+			// 对照：同源的同一个 Cookie 通过（上一条用例）。
+			expect(await check({ cookie, fetchSite: "same-origin" }, "public")).toMatchObject({
+				ok: true,
+			});
+		});
+
+		it("指明 public 以外的值：400，写明现在只能写 public；有没有凭据、是谁都一样", async () => {
+			for (const value of [
+				"alpha",
+				"default",
+				"Public",
+				"public ",
+				"",
+				["public", "public"],
+				"public\u0000",
+			]) {
+				for (const credentials of [{}, personal(USERS.admin), personal(USERS.boss)]) {
+					expect(await check(credentials, value), JSON.stringify(value)).toMatchObject({
+						ok: false,
+						status: 400,
+						code: "invalid_request",
+						message: expect.stringContaining("现在只能写 public"),
+					});
+				}
+			}
+		});
+
+		it("指明 public 不影响别的写：公共项目只有平台管理员能写这条规则对每个写接口都一样", async () => {
+			const future: RouteDef = {
+				...route("POST /orchestrations"),
+				path: "/projects/:project/orchestrations",
+			};
+			const at = (credentials: Credentials) => ({
+				route: future,
+				params: { project: "public" },
+				...credentials,
+			});
+			expect(outcome(await guard.check(at(personal(USERS.boss))))).toBe(403);
+			expect(outcome(await guard.check(at(personal(USERS.admin))))).toBe("ok");
+		});
+
+		it("不带凭据、共享令牌写公共项目：项目写在路径里的接口也一样（401、403），不止查询参数那一个", async () => {
+			// 现在的 `POST /projects/:project/sessions`，和 #488 之后的 `POST /projects/:project/packages`
+			// （用 #488 的写法构造的接口）：项目都在路径里，这条规则对这类接口的每个请求成立（按 ID 定位的写不带凭据时读库之前没有项目，不在这里，由 #494 关上）。
+			store.agentCredentials.set(hashCredential("shared-secret"), {
+				kind: "shared",
+				projectId: DEFAULT,
+				agentName: null,
+				user: null,
+				revokedAt: null,
+			});
+			const shared = { authorization: "Bearer shared-secret" };
+			const routes: [string, RouteDef][] = [
+				["POST /projects/:project/sessions", route("POST /projects/:project/sessions")],
+				[
+					"#488 之后的 POST /projects/:project/packages",
+					{ ...route("POST /packages"), path: "/projects/:project/packages" },
+				],
+				[
+					"#488 之后的 POST /projects/:project/orchestrations",
+					{ ...route("POST /orchestrations"), path: "/projects/:project/orchestrations" },
+				],
+			];
+			for (const [name, def] of routes) {
+				const at = (project: string, credentials: Credentials = {}) => ({
+					route: def,
+					params: { project },
+					fetchSite: "same-origin",
+					...credentials,
+				});
+				expect(await guard.check(at("public")), `${name}：不带凭据`).toMatchObject({
+					ok: false,
+					status: 401,
+					code: "unauthorized",
+					message: expect.stringContaining(DENIED),
+				});
+				expect(await guard.check(at("public", shared)), `${name}：共享令牌`).toMatchObject({
+					ok: false,
+					status: 403,
+					code: "forbidden",
+					message: expect.stringContaining(DENIED),
+				});
+				// 对照：同样的两种凭据写默认项目，和以前一样（到 #494 才拒绝；会话这一类的接口本来就要凭据，所以不在这里对照）。
+				if (!name.includes("sessions")) {
+					expect(await guard.check(at("default")), `${name}：默认项目不带凭据`).toEqual({
+						ok: true,
+						access: null,
+					});
+					expect(await guard.check(at("default", shared)), `${name}：默认项目共享令牌`).toEqual({
+						ok: true,
+						access: null,
+					});
+				}
+				// 平台管理员的个人令牌照常通过。
+				expect(
+					await guard.check(at("public", personal(USERS.admin))),
+					`${name}：平台管理员`,
+				).toMatchObject({ ok: true });
+			}
+			// 读公共项目不受影响：不带凭据的读照旧放行。
+			const read: RouteDef = {
+				...route("GET /orchestrations"),
+				path: "/projects/:project/orchestrations",
+			};
+			expect(await guard.check({ route: read, params: { project: "public" } })).toEqual({
+				ok: true,
+				access: null,
+			});
+		});
+
+		it("拒绝的说明不带具体的操作：建会话、发布、建场景被拒时是同一句", async () => {
+			const session = route("POST /projects/:project/sessions");
+			const result = await guard.check({ route: session, params: { project: "public" } });
+
+			expect(result).toMatchObject({ ok: false, status: 401 });
+			expect((result as { message: string }).message).not.toContain("发布节点包");
 		});
 	});
 
@@ -783,12 +1094,178 @@ describe("契约路由的访问检查", () => {
 		});
 	});
 
+	describe("个人令牌的接口认哪种凭据（ADR 0029「凭据」的表）", () => {
+		const list = route("GET /account/tokens");
+		const issue = route("POST /account/tokens");
+		const revoke = route("DELETE /account/tokens/:id");
+		const projectToken = () =>
+			token({ kind: "project", projectId: DEFAULT, scopes: ["read", "run"] });
+
+		it("列出自己的令牌、吊销令牌：登录和个人令牌都认；项目令牌、共享令牌、会话令牌是 403；不带凭据是 401；失效的是 401", async () => {
+			for (const def of [list, revoke]) {
+				expect(outcome(await run(def, login(USERS.reader))), routeKey(def)).toBe("ok");
+				expect(outcome(await run(def, personal(USERS.reader))), routeKey(def)).toBe("ok");
+				expect(outcome(await run(def, projectToken())), routeKey(def)).toBe(403);
+				expect(
+					outcome(
+						await run(def, token({ kind: "session", user: USERS.editor, projectId: DEFAULT })),
+					),
+					routeKey(def),
+				).toBe(403);
+				expect(outcome(await run(def, {})), routeKey(def)).toBe(401);
+				expect(
+					outcome(await run(def, personal(USERS.reader, { revokedAt: BEFORE }))),
+					routeKey(def),
+				).toBe(401);
+				expect(
+					outcome(await run(def, personal(USERS.reader, { expiresAt: BEFORE }))),
+					routeKey(def),
+				).toBe(401);
+				// 停用的用户的令牌失效。
+				expect(
+					outcome(await run(def, personal(user(50, { disabledAt: BEFORE })))),
+					routeKey(def),
+				).toBe(401);
+			}
+		});
+
+		it("通过时身份里带着用户和令牌的 ID：处理函数据此判断「个人令牌只能吊销它自己」", async () => {
+			const bearer = personal(USERS.reader, { name: "我的" });
+			const result = await run(revoke, bearer);
+			expect(result).toMatchObject({
+				ok: true,
+				access: {
+					credential: "personal",
+					userId: USERS.reader.id,
+					tokenName: "我的",
+					tokenId: expect.stringMatching(/^token-/),
+					loginId: null,
+					project: null,
+				},
+			});
+			const viaLogin = await run(revoke, login(USERS.reader));
+			expect(viaLogin).toMatchObject({
+				ok: true,
+				access: { credential: "login", tokenId: null, loginId: expect.stringMatching(/^login-/) },
+			});
+		});
+
+		it("签发个人令牌：登录认；不带凭据放行（请求体里是账号密码，处理函数验证）；任何令牌都是 403：令牌不能签发令牌", async () => {
+			expect(outcome(await run(issue, login(USERS.reader)))).toBe("ok");
+			expect(await run(issue, {})).toEqual({ ok: true, access: null });
+			for (const credentials of [
+				personal(USERS.boss),
+				projectToken(),
+				token({ kind: "session", user: USERS.editor, projectId: DEFAULT }),
+			]) {
+				expect(outcome(await run(issue, credentials))).toBe(403);
+			}
+			// 失效的令牌是 401，不是放行也不是 403。
+			expect(outcome(await run(issue, personal(USERS.boss, { revokedAt: BEFORE })))).toBe(401);
+			// 过期的登录 Cookie 是 401。
+			expect(outcome(await run(issue, login(USERS.reader, { idleExpiresAt: BEFORE })))).toBe(401);
+		});
+
+		it("个人令牌不能用在只认登录的账号接口上：改密码、当前用户、注销全部登录都是 403", async () => {
+			for (const key of ["POST /auth/password", "GET /auth/me", "POST /auth/logout-all"]) {
+				expect(outcome(await run(route(key), personal(USERS.boss))), key).toBe(403);
+			}
+		});
+
+		it("登出什么凭据都不拒绝（幂等，总是清 Cookie），但令牌登不了出：带令牌的登出没有身份，不注销任何登录", async () => {
+			const result = await run(route("POST /auth/logout"), personal(USERS.boss));
+			expect(outcome(result)).toBe("ok");
+			expect((result as { access: unknown }).access).toBeNull();
+		});
+	});
+
+	describe("项目令牌的签发只认登录", () => {
+		const issue = route("POST /projects/:project/tokens");
+		const listTokens = route("GET /projects/:project/tokens");
+		const revoke = route("DELETE /projects/:project/tokens/:id");
+
+		it("项目管理员用登录签发通过；个人令牌（哪怕带管理范围）、项目令牌都是 403；列出和吊销令牌可以用带管理范围的个人令牌", async () => {
+			expect(outcome(await run(issue, login(USERS.boss)))).toBe("ok");
+			const withManage = personal(USERS.boss, { scopes: ["read", "manage"] });
+			expect(outcome(await run(issue, withManage))).toBe(403);
+			expect((await run(issue, withManage)) as { message: string }).toMatchObject({
+				message: LOGIN_ONLY_ROUTES["POST /projects/:project/tokens"],
+			});
+			// 令牌可以吊销、列出令牌：那只会收窄权限。
+			expect(outcome(await run(listTokens, withManage))).toBe("ok");
+			expect(outcome(await run(revoke, withManage))).toBe("ok");
+			// 没有「管理」范围：403（缺范围）。
+			expect(outcome(await run(listTokens, personal(USERS.boss, { scopes: ["read"] })))).toBe(403);
+			// 项目令牌没有管理：列出、吊销、签发都是 403。
+			const projectScoped = token({ kind: "project", projectId: DEFAULT, scopes: [...SCOPES] });
+			for (const def of [issue, listTokens, revoke]) {
+				expect(outcome(await run(def, projectScoped)), routeKey(def)).toBe(403);
+			}
+		});
+
+		it("编辑者、只读不能列出、签发、吊销（管理范围）；别的项目的管理员是 404", async () => {
+			for (const who of [USERS.reader, USERS.editor]) {
+				for (const def of [issue, listTokens, revoke]) {
+					expect(outcome(await run(def, login(who))), routeKey(def)).toBe(403);
+				}
+			}
+			for (const def of [issue, listTokens, revoke]) {
+				expect(outcome(await run(def, login(USERS.outsider))), routeKey(def)).toBe(404);
+			}
+		});
+
+		it("路径里的项目写得不对、项目不存在：404；限定在别的项目的令牌：404", async () => {
+			const at = (project: string, credentials: Credentials) =>
+				guard.check({
+					...request(listTokens, credentials),
+					params: { project },
+				});
+			for (const project of ["Bad_Project", "-x", "", "no-such-project"]) {
+				expect(outcome(await at(project, login(USERS.boss))), JSON.stringify(project)).toBe(404);
+			}
+			const limited = personal(USERS.boss, { projectId: ALPHA });
+			expect(outcome(await at("default", limited))).toBe(404);
+		});
+	});
+
+	describe("令牌的最后使用时间：按令牌节流，一分钟最多写一次", () => {
+		it("第一次使用写；一分钟内不再写；满一分钟再写；失效的令牌不写；登录不走这条", async () => {
+			const bearer = personal(USERS.boss);
+			const get = route("GET /orchestrations");
+			expect(outcome(await run(get, bearer))).toBe("ok");
+			expect(store.tokenTouches).toHaveLength(1);
+			clock.advance(59_999);
+			await run(get, bearer);
+			expect(store.tokenTouches).toHaveLength(1);
+			clock.advance(1);
+			await run(get, bearer);
+			expect(store.tokenTouches).toHaveLength(2);
+			expect(store.tokenTouches[1]?.at).toEqual(clock.now());
+			// 失效的令牌：401，不写。
+			const revoked = personal(USERS.boss, { revokedAt: BEFORE });
+			clock.advance(600_000);
+			expect(outcome(await run(get, revoked))).toBe(401);
+			expect(store.tokenTouches).toHaveLength(2);
+			// 登录有自己的续期，不记令牌的使用时间。
+			await run(get, login(USERS.boss));
+			expect(store.tokenTouches).toHaveLength(2);
+		});
+
+		it("不带凭据的请求不读库、不写", async () => {
+			await run(route("GET /orchestrations"), {});
+			expect(store.reads).toBe(0);
+			expect(store.tokenTouches).toEqual([]);
+		});
+	});
+
 	describe("平台管理员", () => {
 		it("在每个项目里都有项目管理员的权限，读写都通过", async () => {
 			for (const c of [login(USERS.admin), personal(USERS.admin)]) {
 				for (const def of OUTSIDE_PROJECT) {
 					if (requiredScope(def) === null) continue;
-					expect(outcome(await run(def, c, "alpha")), routeKey(def)).toBe("ok");
+					// 签发项目令牌只认登录：个人令牌（哪怕是平台管理员的）是 403。
+					const expected = loginOnly(def) && "authorization" in c ? 403 : "ok";
+					expect(outcome(await run(def, c, "alpha")), routeKey(def)).toBe(expected);
 				}
 			}
 		});

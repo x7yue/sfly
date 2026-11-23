@@ -8,8 +8,11 @@
   - 失败：`{"status": "failed", "error": {"type", "message", "traceback"}}`，退出码 1；
     输入有节点没有声明的名字时，在调用节点之前就失败：
     `{"status": "failed", "error": {"kind": "config_error", "message"}}`（没有 `type` 和
-    `traceback`）。`kind` 是读取端记的错误类型，没有这个键的失败是 `node_error`。
-- `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_EVENTS`、`SFLY_CANCEL`：产物目录、产物下载地址前缀、
+    `traceback`）。节点没接住 `ctx.artifacts.save` 抛出的 `ArtifactLimitExceeded` 时，失败照常带
+    `type`、`message`、`traceback`，另外有 `"kind": "env_error"`。`kind` 是读取端记的错误类型，
+    没有这个键的失败是 `node_error`。
+- `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_ARTIFACT_LIMIT_BYTES`、`SFLY_EVENTS`、
+  `SFLY_CANCEL`：产物目录、产物下载地址前缀、这个任务的产物合计上限（字节，没有时不检查）、
   事件文件、取消标记（由 Context 使用）。
 
 收到 SIGTERM（Agent 取消或超时时的优雅终止）时，在节点代码里抛出 `sfly.Cancelled`，
@@ -29,10 +32,11 @@ import re
 import signal
 import sys
 import typing
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Container, Mapping, Sequence
 from typing import Any
 
 from sfly.context import (
+    ArtifactLimitExceeded,
     Cancelled,
     Context,
     describe_non_finite,
@@ -217,12 +221,45 @@ def _is_runtime_frame(filename: str, dirs: tuple[list[str], list[str], list[str]
     return not in_site and any(_under(path, d) for d in stdlib)
 
 
-def _terminated_at(error: BaseException) -> str | None:
+#: 平台自带的、在用户的业务节点里被调用的包（标准节点包的辅助函数）。取「执行到哪」和「出错位置」时
+#: 它们的栈帧和 SDK、Python 标准库一样不算：报调用它们的那一行用户代码；被终止时，用户直接调用的
+#: 那个辅助函数写在后面作补充。节点自己就是这个包里的节点（标准节点 `shell` 等：它的顶层模块在
+#: `_node_packages` 里）时不跳过：它们的代码就在包里，位置仍然指向包里。
+PLATFORM_PACKAGES = frozenset({"sfly_std"})
+
+
+def _is_platform_module(module: str, own: Container[str]) -> bool:
+    """这个模块是平台自带的包、而节点不是它里面的节点（节点自己的包不在这里跳过）。"""
+    top = module.partition(".")[0]
+    return top in PLATFORM_PACKAGES and top not in own
+
+
+def _frame_place(frame: Any, lineno: int) -> str:
+    code = frame.f_code
+    module = frame.f_globals.get("__name__") or os.path.basename(code.co_filename)
+    function = getattr(code, "co_qualname", code.co_name)
+    place = module if function == "<module>" else f"{module}.{function}"
+    return f"{place} 第 {lineno} 行"
+
+
+def _terminated_at(error: BaseException, entry: str = "", package: str | None = None) -> str | None:
     """任务被终止时执行到哪：节点代码里被打断的那一行，写成「模块.函数 第 N 行」。
 
-    取异常经过的栈里最里面、不是 SDK 也不是 Python 标准库的一帧：停在 SDK 里（等待 Agent、下载产物）
-    或标准库里（`Event.wait`、`subprocess.run`、`Thread.join`、`asyncio.run`）时报调用它的节点代码，
-    停在第三方库里时报库里的位置。整条栈都在 SDK 和标准库里时报最里面一帧；没有栈信息时是 None。
+    取异常经过的栈里最里面、不是辅助函数内部的一帧。辅助函数内部指：SDK、Python 标准库、平台自带的
+    包（`PLATFORM_PACKAGES`，标准节点包 `sfly_std`）的帧，以及从 `sfly_std` 的帧往里调到的、不是
+    节点自己代码的帧（它依赖的 `psutil` 之类：被终止时正好停在那里也算 `sfly_std` 里的事）。节点
+    自己的代码用 `_is_node_code` 认：用户传给 `poll_until` 的回调仍然报回调那一行。
+
+    所以停在 SDK、标准库、标准节点包的辅助函数（`wait_for_port`、`monitor_processes`、
+    `run_command`）或它调到的第三方库里时，报调用它们的那一行节点代码；用户把辅助函数包进自己的工具模块时，报工具
+    模块里调用它的那一行（它是用户的代码，是最近的一帧）；用户自己的代码直接停在第三方库里时，报库里
+    的位置。
+
+    停在辅助函数里时，用户直接调用的那个辅助函数（报出的那一帧之后第一个 `sfly_std` 的帧）写在后面
+    作补充：`biz.check.run 第 12 行（正在 sfly_std.waiting.wait_for_port 第 130 行）`。节点自己就是
+    标准节点（`entry` 的顶层模块是 `sfly_std`）时不跳过它的帧，没有补充。整条栈都是辅助函数内部时，
+    报最里面一帧 `sfly_std` 的帧（没有补充），没有 `sfly_std` 的帧时报最里面一帧；没有栈信息时
+    是 None。
     """
     import traceback
 
@@ -230,15 +267,37 @@ def _terminated_at(error: BaseException) -> str | None:
     if not frames:
         return None
     dirs = _runtime_dirs()
-    frame, lineno = next(
-        ((f, n) for f, n in reversed(frames) if not _is_runtime_frame(f.f_code.co_filename, dirs)),
-        frames[-1],
+    own = _OwnPackages(entry, package)  # 栈里出现 `sfly_std` 的帧时才算：这一步发生在收尾时间里
+    inside = False  # 正在 sfly_std 调用的栈段里
+    platform: list[bool] = []
+    internal: list[bool] = []
+    for frame, _ in frames:
+        filename = frame.f_code.co_filename
+        module = str(frame.f_globals.get("__name__") or "")
+        is_platform = _is_platform_module(module, own)
+        runtime = _is_runtime_frame(filename, dirs)
+        if is_platform:
+            inside = True
+        elif (
+            inside
+            and not runtime
+            and not _is_unreal_file(filename)
+            and _is_node_code(filename, module, own, dirs)
+        ):
+            inside = (
+                False  # 用户传进去的回调：节点自己的代码（有真的文件的帧：`<string>` 这类留在段里）
+            )
+        platform.append(is_platform)
+        internal.append(runtime or is_platform or inside)
+    index = next(
+        (i for i in range(len(frames) - 1, -1, -1) if not internal[i]),
+        next((i for i in range(len(frames) - 1, -1, -1) if platform[i]), len(frames) - 1),
     )
-    code = frame.f_code
-    module = frame.f_globals.get("__name__") or os.path.basename(code.co_filename)
-    function = getattr(code, "co_qualname", code.co_name)
-    place = module if function == "<module>" else f"{module}.{function}"
-    return f"{place} 第 {lineno} 行"
+    place = _frame_place(*frames[index])
+    if internal[index]:
+        return place
+    caller = next((i for i in range(index + 1, len(frames)) if platform[i]), None)
+    return f"{place}（正在 {_frame_place(*frames[caller])}）" if caller is not None else place
 
 
 def _in_site_packages(filename: str, dirs: tuple[list[str], list[str], list[str]]) -> bool:
@@ -270,19 +329,36 @@ def _node_packages(entry: str, package: str | None) -> set[str]:
     return names
 
 
+class _OwnPackages:
+    """节点包自己的顶层模块名（`_node_packages`），第一次问到时才算：算它要读全部发行版的元信息，
+    被终止时在收尾时间里做这件事，栈里没有 `sfly_std` 的帧（用不上它）时不该花这个时间。"""
+
+    def __init__(self, entry: str, package: str | None) -> None:
+        self._entry = entry
+        self._package = package
+        self._names: set[str] | None = None
+
+    def __contains__(self, name: object) -> bool:
+        if self._names is None:
+            self._names = _node_packages(self._entry, self._package)
+        return name in self._names
+
+
 def _is_node_code(
     filename: str,
     module: str,
-    own: set[str],
+    own: Container[str],
     dirs: tuple[list[str], list[str], list[str]],
 ) -> bool:
     """这一帧是节点项目自己的代码：不是 SDK 或标准库，也不是第三方库。
 
     没有文件的帧（`<string>`）看不出来历，按节点代码算。装在 site-packages 里的帧，只有顶层模块是
     节点包自己的才算（节点包装在 Agent 的共享 venv 里，和第三方库在同一个目录）；不在 site-packages
-    里的（本地调试从源码目录运行、`sfly dev` 的可编辑安装）都是节点自己的。
+    里的（本地调试从源码目录运行、`sfly dev` 的可编辑安装）都是节点自己的。平台自带的包
+    （`PLATFORM_PACKAGES`，`sfly_std`）不算节点自己的代码，不管它装在哪里（本仓库的可编辑安装也一样），除非节点就是它里面的标准节点。
+    被终止时的「执行到哪」（`_terminated_at`）和失败时的出错位置（`_failed_at`）用的是同一个判断。
     """
-    if _is_runtime_frame(filename, dirs):
+    if _is_runtime_frame(filename, dirs) or _is_platform_module(module, own):
         return False
     if not filename or filename.startswith("<") or not _in_site_packages(filename, dirs):
         return True
@@ -404,11 +480,11 @@ def _format_failure(error: BaseException, *, importing: bool = False) -> str:
     return "".join(exc.format())
 
 
-def _termination_message(error: BaseException) -> str:
+def _termination_message(error: BaseException, entry: str = "", package: str | None = None) -> str:
     """被终止时写进日志的那一行。找不到执行到哪时只写原因：这条路径在信号处理之后，不能再抛异常。"""
     text = str(error) or "任务被终止"
     try:
-        place = _terminated_at(error)
+        place = _terminated_at(error, entry, package)
     except Exception:  # noqa: BLE001 - 位置只是附带的信息，取不到不能影响结果
         place = None
     return f"{text}，执行到 {place}" if place else text
@@ -425,6 +501,17 @@ def _log(level: str, message: str) -> None:
 
 def _info(message: str) -> None:
     _log("info", message)
+
+
+def _is_artifact_limit(error: BaseException) -> bool:
+    """失败是不是只因为产物超限：就是 `ArtifactLimitExceeded`，或者异常组（`asyncio.TaskGroup`
+    里几个任务都没接住）里每一个叶子都是它；混着别的异常的组不算（有别的原因，照常按节点出错重试）。"""
+    import builtins
+
+    group = getattr(builtins, "BaseExceptionGroup", ())
+    if isinstance(error, group):
+        return bool(error.exceptions) and all(_is_artifact_limit(e) for e in error.exceptions)
+    return isinstance(error, ArtifactLimitExceeded)
 
 
 def run(task: Mapping[str, Any]) -> tuple[int, str]:
@@ -450,7 +537,7 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             # ERROR 级，不往那里写堆栈；只在事件管道里留一行 INFO，写明停在哪。被终止已经由任务状态
             # （已停止、已取消、超时）表达，这一行只是记录，不是需要处理的问题，所以不用 WARN。
             tb = traceback.format_exc()
-            _info(_termination_message(error))
+            _info(_termination_message(error, str(task.get("entry") or ""), task.get("package")))
         else:
             # 堆栈从节点代码那一帧开始。出错的位置先于堆栈写进日志（一行 ERROR）：
             # `sfly run logs --failed` 只看日志也看得到，不用翻堆栈。整理堆栈、取位置都不能让失败
@@ -475,6 +562,10 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
         }
         if place:
             failure_error["location"] = place
+        if _is_artifact_limit(error):
+            # 没接住 `ctx.artifacts.save` 抛出的超限：和 Agent 上传前发现产物超限同一个类型
+            # env_error，不按 retries 重试（重跑一遍产物还是这么大，#477）。
+            failure_error["kind"] = "env_error"
         failure = {"status": "failed", "error": failure_error}
         return 1, json.dumps(failure, ensure_ascii=False)
 

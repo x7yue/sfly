@@ -1,7 +1,7 @@
 // 「项目甲的凭据请求项目乙的资源，每个接口一条」的生成器（ADR 0029「一处检查」最后一条，规格 #489）。
 // 从契约（路由清单）生成：新加的接口自动进来；新接口是写接口、又没有请求样本时测试失败，要在这里补一个，不会悄悄没人测。
 // 每加一种凭据，在测试里的凭据清单里登记一次（login、个人令牌、项目令牌…；会话令牌在 #495，等）。
-import { httpContract, type RouteDef } from "@sfly/schema";
+import { httpContract, type ResourceKind, type RouteDef } from "@sfly/schema";
 import {
 	AGENT_CREDENTIAL_ROUTES,
 	locatorOf,
@@ -32,33 +32,61 @@ export interface Victim {
 	agent: string;
 	pkg: string;
 	bot: string;
-	/** 项目乙的标识：路径里写项目时（#488）填它。 */
+	/** 项目乙的标识：路径里写项目时（`/projects/:project/…`）填它。 */
 	project: string;
+	/** 项目乙里一个项目令牌的 ID：项目令牌的接口（`/projects/:project/tokens/:id`）填它。 */
+	token: string;
 }
 
 const PATH_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)|\*$/g;
 
+/**
+ * 路径参数 `:id` 在每类资源上指什么：定位用 ID 的类别填项目乙里真实存在的那一个；这一类的接口不用 `:id` 的写 null。
+ * 写成 `Record<ResourceKind, …>`：契约里加一个资源类别，这里不加一行就过不了类型检查，不会让它悄悄落进场景的 ID
+ * （跨项目的测试看着通过，请求打的却不是那类资源，#554）。
+ */
+export const ID_PARAM_VALUES = {
+	scenario: (v) => v.scenario,
+	run: (v) => v.run,
+	task: (v) => v.task,
+	session: (v) => v.session,
+	project: (v) => v.token,
+	package: () => null,
+	agent: () => null,
+	feishu_bot: () => null,
+	system: () => null,
+	account: () => null,
+} as const satisfies Record<ResourceKind, (victim: Victim) => string | null>;
+
+/** 路径参数 `:name` 在每类资源上指什么：按名字定位的类别填项目乙里的那一个，其余写 null。同样对资源类别穷举。 */
+export const NAME_PARAM_VALUES = {
+	scenario: () => null,
+	run: () => null,
+	task: () => null,
+	session: () => null,
+	project: () => null,
+	package: (v) => v.pkg,
+	agent: (v) => v.agent,
+	feishu_bot: (v) => v.bot,
+	system: () => null,
+	account: () => null,
+} as const satisfies Record<ResourceKind, (victim: Victim) => string | null>;
+
 function paramValue(def: RouteDef, name: string, victim: Victim): string {
 	const kind = def.resource.kind;
+	const required = (value: string | null): string => {
+		if (value === null) {
+			throw new Error(
+				`${routeKey(def)}：路径参数 :${name} 在 ${kind} 上没有取值办法：在 test/support/cross-project.ts 的 ID_PARAM_VALUES、NAME_PARAM_VALUES 里补上`,
+			);
+		}
+		return value;
+	};
 	switch (name) {
 		case "id":
-			// 没有认出的类别不能悄悄落到场景上：那会让新类别的接口请求一个不存在的资源，测试看着通过其实什么也没测。
-			switch (kind) {
-				case "run":
-					return victim.run;
-				case "task":
-					return victim.task;
-				case "session":
-					return victim.session;
-				case "scenario":
-					return victim.scenario;
-				default:
-					throw new Error(
-						`${def.method} ${def.path}：路径参数 :id 的资源类别 ${kind} 没有样本，在 test/support/cross-project.ts 的 paramValue 里补上`,
-					);
-			}
+			return required(ID_PARAM_VALUES[kind](victim));
 		case "name":
-			return kind === "agent" ? victim.agent : kind === "package" ? victim.pkg : victim.bot;
+			return required(NAME_PARAM_VALUES[kind](victim));
 		case "project":
 			return victim.project;
 		case "presetId":
@@ -93,8 +121,17 @@ const JSON_BODIES: Record<string, unknown> = {
 	"POST /orchestrations/:id/check": {
 		document: { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} },
 	},
+	// 局部编辑（#470）：保存和只检查
+	"POST /orchestrations/:id/edits": {
+		base_version: 1,
+		operations: [{ op: "set", node: "entry", field: "display_name", value: "开始" }],
+	},
+	"POST /orchestrations/:id/edits/check": {
+		operations: [{ op: "set", node: "entry", field: "display_name", value: "开始" }],
+	},
 	"POST /feishu-bots": { name: "bot-new", webhook_url: "http://127.0.0.1:9/new" },
 	"PATCH /feishu-bots/:name": { webhook_url: "http://127.0.0.1:9/changed" },
+	"POST /projects/:project/tokens": { name: "新令牌", scopes: ["read"] },
 	"POST /orchestrations/:id/presence": { session_id: "s1" },
 	"POST /orchestrations/:id/presence/leave": { session_id: "s1" },
 	"POST /projects/:project/sessions": { text: "你好" },
@@ -111,6 +148,7 @@ const NO_BODY = new Set([
 	"POST /agents/:name/update-now",
 	"DELETE /feishu-bots/:name",
 	"POST /feishu-bots/:name/test",
+	"DELETE /projects/:project/tokens/:id",
 	"POST /sessions/:id/stop",
 ]);
 

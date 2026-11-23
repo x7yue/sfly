@@ -780,7 +780,8 @@ export const artifactsApi = {
 	/**
 	 * Agent 上传一个产物（201）：请求体是文件内容（原始字节，不在契约里）；`*` 是产物目录内的相对路径，
 	 * 每个路径段单独百分号编码。`x-sfly-agent-modified-ms` 请求头是文件在 Agent 上的修改时间，可以不带。配置了注册令牌时需要 `Authorization: Bearer <token>`，否则 401 `unauthorized`；
-	 * 超过单个任务的产物上限时 413。
+	 * 这个任务已上传的加上这个文件超过单个任务的产物合计上限（`SFLY_ARTIFACT_LIMIT_MB`，随任务下发给 Agent）时 413，
+	 * 请求带了 `Content-Length` 的在读请求体之前就拒绝；错误信息写明这个文件多大、这个任务已上传多少、上限多少（#477）。
 	 */
 	upload: endpoint({
 		method: "PUT",

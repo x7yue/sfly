@@ -32,13 +32,17 @@ import { createClient } from "@sfly/client";
 
 const client = createClient({
 	baseUrl: "{{SFLY_URL}}",
-	nickname: () => localStorage.getItem("sfly-nickname"),
+	token: () => localStorage.getItem("sfly-token"),
 });
 ```
 
 - `baseUrl` 是控制面地址。API 客户端直接调用控制面根路径上的接口，地址后面不加 `/api`。
-- `nickname` 是昵称，控制面把它记为触发人、作者、取消人。可以给固定的字符串，也可以给一个函数，每次请求时取值，中文也可以。平台没有登录，昵称不做校验。
-- 创建客户端时可以不给昵称，只读的页面用不到它。但每个不是 GET 的请求（触发、取消运行，保存场景版本，增删飞书机器人……）都要昵称，包括 `agents.updateNow` 这类控制面本身不检查昵称的接口。没有昵称（函数返回空值或空白）时，这些调用在发请求之前就失败，错误码 `nickname_required`。
+- `token` 是 API 令牌，每个请求（含事件流）都带上它：`Authorization: Bearer <令牌>`，身份由令牌决定，控制面把令牌所属的用户记为触发人、作者、取消人。可以给固定的字符串，也可以给一个函数，每次请求时取值（轮换令牌时用），空值或空白算没有。令牌在网络上就是它的原值：给的 `baseUrl` 是不是本机的 `http://` 地址（令牌会以明文发送）时，每个客户端实例提示一次（默认 `console.warn`，也可以用 `onInsecureToken` 接收），请求照常进行；有条件的话用 https 地址。客户端不会把令牌带到别的主机：浏览器和 Node 的 `fetch` 在跨源重定向时自己去掉 `Authorization`。
+  - 令牌在控制台里签发：**个人令牌**（账号菜单里的「令牌」页）代表你自己，权限是令牌的范围和你此刻的角色取交集；**项目令牌**（项目的「项目令牌」页，要「管理」范围）属于项目，给自动化和自建页面用，不能带「管理」范围，触发人记的是令牌的名称。令牌的原值只在签发的那一刻显示一次，要保存好；丢了只能吊销重签。
+  - 令牌是凭据，别写进页面的源码或提交进仓库：放在环境变量、部署平台的密钥里，或者让用户在页面里自己填。令牌的范围不够时控制面回 403，令牌过期、被吊销时回 401。
+  - 命令行里用 `sfly login` 登录，脚本里设环境变量 `SFLY_API_TOKEN`，见 [用命令行操作平台](platform-cli.md)。
+- `nickname`（已弃用）是昵称，只给没有令牌时用：控制台里没有登录的人还在用它，强制鉴权（#494）之后所有请求都要令牌，昵称参数一并删除。给了 `token` 就不再发昵称。昵称不做校验。
+- 创建客户端时可以不给令牌，只读的页面用不到它。但每个不是 GET 的请求（触发、取消运行，保存场景版本，增删飞书机器人……）都要令牌（过渡期里没有令牌时要昵称），包括 `agents.updateNow` 这类控制面本身不检查昵称的接口。两者都没有（函数返回空值或空白）时，这些调用在发请求之前就失败，错误码 `nickname_required`（名字是旧的，错误码保持不变）。
 - `fetch` 可选：换成自己的实现，例如测试替身，或者经过自己的代理。默认用全局的 `fetch`。
 - 每个请求都带请求头 `x-sfly-client: sfly-client/<版本>`。
 
@@ -46,7 +50,7 @@ const client = createClient({
 
 | 领域 | 方法 |
 |---|---|
-| `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`check`、`versionDiff`、`create`、`update`、`copy`、`archive`、`unarchive` |
+| `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`check`、`versionDiff`、`edit`、`checkEdits`、`create`、`update`、`copy`、`archive`、`unarchive` |
 | `presets`（运行预设） | `list`、`create`、`update`、`copy`、`remove` |
 | `runs`（运行） | `list`、`listForOrchestration`、`focus`、`summary`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
@@ -83,6 +87,7 @@ for (const item of runs) {
 - `orchestrations.list` 列出没有归档的场景，按新建时间从新到旧。`q` 按名称、说明或引用的 Agent 搜索，`status` 按最近一次运行的状态筛选，`agent` 只看引用了这个 Agent 的场景。每一项带着最近一次运行和各节点的状态（`last_run`）、引用的 Agent 和它们是否在线（`agents`），看板画场景卡片只要这一次请求。
 - `orchestrations.head` 读最新版本（编辑起点），`orchestrations.version` 读某个版本，`orchestrations.saveVersion` 和 `orchestrations.restoreVersion` 的响应也带版本的 `document`：入口节点和子流程入口节点里，声明为 `secret` 的参数的默认值（`default`）读出来一律是占位符 `"******"`（和运行的参数、运行预设里的 secret 值是同一个掩码，不论参数的类型），原值任何接口都读不到；没有默认值的不动，普通参数的默认值照常返回。认占位符看 `secret` 为 `true` 且 `default` 是 `"******"`，TypeScript 里用 `@sfly/schema` 的 `SECRET_MASK` 和 `isSecretDefaultPlaceholder`。把读出来的文档原样 `saveVersion` 存回去时，占位符表示「沿用上一个版本里同名参数的默认值」（按入口节点 ID 和参数名对应，`base_version` 仍要是最新版本，不是时照常返回 409 `version_conflict`）；给新值就换成新值，删掉 `default` 就去掉默认值；沿用不了（新场景的第一个版本、新增或改了名的参数、类型变了、参数从 secret 改成了普通参数）时返回 400 `secret_default_placeholder`，`details` 是 `{ node_id, param, reason }` 的列表，什么都不保存。所以 secret 参数的默认值写不成 `******` 本身。`runs.trigger` 的 `params` 里 secret 参数的值是 `"******"` 时同样被拒绝（400 `invalid_params`，不产生运行）：这是读取时打的码，不是值，不传这个参数就用默认值；运行预设里 secret 参数的值写 `"******"` 也被拒绝（沿用原值写 `keep`）。触发被拒绝时的 `message` 和 `details` 不回显 secret 参数的值（写成 `******`）。保存时响应的 `warnings` 里，每个写了默认值的 secret 参数有一条 `secret_param_default`：版本不能修改，默认值会一直留在这个版本里，建议改用运行预设或触发时再给出。
 - `orchestrations.check` 检查一份场景文档，不保存：请求体和 `saveVersion` 一样（`base_version` 可以不给，不给时对照最新版本），返回的错误（400 `invalid_document`、400 `secret_default_placeholder`、409 `version_conflict`）和 `warnings` 与用同样的请求体保存时完全一样，每条警告多一个 `existing`（改动之前、最新版本里就有同一条：按种类和它指向的节点、输入、注释框判断，不看文字），另有 `diff`：保存之后相对最新版本的差异。`saveVersion` 带 `strict: true` 时，这次改动新带进来了警告（`existing` 为 false 的）就不保存，返回 400 `strict_warnings`，`details` 和 `check` 的响应一样；在保存的同一个事务里判断。`orchestrations.versionDiff` 对比两个版本（`params` 是 `{ id, a, b }`，从版本 `a` 到版本 `b`），返回 `{ diff }`。差异列出新增、删除、改动的节点（带 `display_name`，有显示名称时）和连线、改动字段的前后值（`path` 例如 `inputs.url`、`params.env`、`packages.http`）、注释框的变化；没有差异时每个列表都是空的。
+- `orchestrations.edit` 对场景做一组局部编辑（`operations`：加节点、删节点、连线、断开、改一个节点的字段，格式见 `EditOperation`），带 `base_version`，全部生效存成一个新版本（201，和 `saveVersion` 相同的响应，另有这组操作造成的 `diff`）或都不生效：有一个操作不合法时 400 `invalid_operation`，`details` 写明第几个、为什么（相近的节点 ID `similar`、缺的必填输入 `missing`、连线两端的节点 `from` / `to`、可选的 `choices`）；`base_version` 不是最新版本时 409 `version_conflict`。`orchestrations.checkEdits` 只检查不保存，返回 `{ warnings, diff }`，错误和 `edit` 相同。操作由控制面用画布的编辑函数执行，和在画布上做同样的事得到同样的文档。
 - **把读到的文档原样存回去前，先去掉已移除的节点。** 场景里可能还留着已移除种类的节点（飞书通知、定时、Sleep，ADR 0028）：读到的文档（`StoredOrchestrationDocument`）里它们是 `RemovedNode`，保存请求的文档（`OrchestrationDocument`）不收，直接传回去既编译不过，运行时也会被拒绝（400 `invalid_document`，写明是哪些节点、怎么替换）。要先按替换办法改写、再删掉它们；只是想存回其余的内容时，用显式的类型谓词过滤，不要按种类名的字面量过滤（TS 推不出类型谓词，编译不过）：
 
   ```ts
@@ -334,7 +339,7 @@ try {
 | 错误码 | 含义 |
 |---|---|
 | `network_error` | 没有收到响应，`status` 为 0：控制面不可达、连接断开，或者浏览器拦下了跨域请求 |
-| `nickname_required` | 不是 GET 的请求没有昵称，请求没有发出去，`status` 是 400（和控制面对这种请求的回复一致） |
+| `nickname_required` | 不是 GET 的请求既没有令牌也没有昵称，请求没有发出去，`status` 是 400（和控制面对这种请求的回复一致）；错误码是旧名字，信息里写明要给 `token` |
 | `http_error` | 错误响应不是控制面的格式，例如中间的代理返回的页面；`details` 是响应体 |
 | `invalid_response` | 成功的响应格式不对，例如 JSON 接口返回的不是 JSON |
 | 其他 | 控制面返回的错误码，例如 `not_found`、`invalid_params`、`invalid_orchestration`、`run_not_running`；每个方法的说明里写着它会返回哪些 |
@@ -369,7 +374,7 @@ for (const item of running) console.log(item.id, `已运行 ${Math.round(elapsed
 - 每个请求都带 `x-sfly-client` 请求头，所以跨域时浏览器先发一个预检请求（`OPTIONS`）。控制面让浏览器把预检的结果缓存 10 分钟。
 - 页面能读到控制面的版本和时间两个响应头，版本警告和控制面时间在浏览器里同样生效。
 
-**「允许所有来源」意味着什么。** 平台没有登录。内网用户在浏览器里打开的任何网页，都能调用他访问得到的控制面，包括触发和取消运行、增删飞书机器人；写操作的昵称也可以随便填。飞书机器人的 Webhook 地址在接口里本来就是打码的。
+**「允许所有来源」意味着什么。** 现在不带令牌的请求照旧放行（强制鉴权在 #494）。在那之前，内网用户在浏览器里打开的任何网页，都能不带凭据调用他访问得到的控制面，包括触发和取消运行、增删飞书机器人；写操作的昵称也可以随便填。带令牌的请求按令牌的范围检查，不受这条影响；控制台的登录 Cookie 只认同源的请求，别的网页借不到。飞书机器人的 Webhook 地址在接口里本来就是打码的。
 
 **收窄成名单。** 部署控制面的人设置环境变量 `SFLY_CORS_ORIGINS`，写逗号分隔的来源，每一项是「协议://主机[:端口]」，例如 `https://dash.example.com,http://localhost:5173`，重启控制面后生效。
 
@@ -390,7 +395,7 @@ for (const item of running) console.log(item.id, `已运行 ${Math.round(elapsed
 ```ts
 const intranetClient = createClient({
 	baseUrl: "http://sfly.corp:8080",
-	nickname: "张三",
+	token: "sfly_pat_…",
 	fetch: (url, init) => fetch(url, { ...init, targetAddressSpace: "local" } as RequestInit),
 });
 ```
@@ -431,4 +436,4 @@ API 客户端只开放平台现有的接口，下面这些没有：
 - **运行列表不能按时间范围查询，也不能翻页。** `runs.list` 只返回最新的最多 500 条，`runs.listForOrchestration` 最多 200 条。
 - 入口参数没有说明和可选项。
 - 不能上传：发布节点包用 `sfly publish`，见 [发布](publish.md)。
-- 没有登录和权限，身份只是昵称。
+- 强制鉴权之前，不带令牌的请求仍然放行，身份只是昵称（已弃用）；带了令牌，身份和权限由令牌决定。

@@ -190,8 +190,9 @@ class ActionSummary:
 @dataclass(frozen=True)
 class NodeError:
     """失败原因。`kind` 与平台的错误类型相同：`node_error`（节点抛出异常、执行器异常退出）、
-    `config_error`（参数校验失败、输入里有节点没有声明的名字）；`type` 是节点抛出的异常类名
-    （只有 node_error 有）。"""
+    `config_error`（参数校验失败、输入里有节点没有声明的名字）、`env_error`（节点没接住
+    `ctx.artifacts.save` 抛出的 `ArtifactLimitExceeded`，带 `type`、`traceback`、`location`）；
+    `type` 是节点抛出的异常类名（node_error 和这种 env_error 有）。"""
 
     kind: str
     message: str
@@ -923,9 +924,11 @@ def execute(
     elif isinstance(result, dict) and result.get("status") == "failed":
         failure = result.get("error") or {}
         execution.status = "failed"
-        # 执行器在调用节点之前就拒绝了输入（没有声明的名字）时写 kind: config_error；
-        # 没有 kind、或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
-        kind = "config_error" if failure.get("kind") == "config_error" else "node_error"
+        # 执行器在调用节点之前就拒绝了输入（没有声明的名字）时写 kind: config_error，
+        # 节点没接住产物超限（ArtifactLimitExceeded）时写 kind: env_error；没有 kind、
+        # 或是别的值，都是节点出错（共用用例表 testdata/local-protocol-cases.json）。
+        failed_kind = failure.get("kind")
+        kind = failed_kind if failed_kind in ("config_error", "env_error") else "node_error"
         location = failure.get("location")
         execution.error = NodeError(
             kind,
