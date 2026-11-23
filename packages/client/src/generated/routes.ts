@@ -1277,6 +1277,11 @@ export interface Api {
 					retry_delay_ms?: number;
 					/** 重试的原因按什么分；#548 起有值。 */
 					error_class?: ErrorClass;
+					/**
+					 * 没有送到的那句话（`user_message.message_id`）：只有 `steer_dropped`（插话因停止、结束或这一轮已经结束没有送到模型）和
+					 * `queue_cancelled`（排队中的话因停止没有交给助手）。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字。#544 起。
+					 */
+					message_id?: string;
 					seq: number;
 					at: Timestamp;
 				};

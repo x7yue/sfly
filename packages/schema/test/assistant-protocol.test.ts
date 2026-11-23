@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	AbortCommandBody,
+	ASSISTANT_ABORT_SETTLE_MS,
+	ASSISTANT_PROCESS_KILL_GRACE_MS,
 	ASSISTANT_SECRET_ENV,
 	ASSISTANT_SECRET_MIN_LENGTH,
+	ASSISTANT_STOP_MARGIN_MS,
+	ASSISTANT_STOP_WAIT_MS,
 	AssistantErrorBody,
 	AssistantErrorCode,
 	AssistantEvent,
@@ -78,6 +82,30 @@ describe("助手服务产生的事件（AssistantEvent）", () => {
 				expect(AssistantEvent.safeParse(sample.body).success, sample.name).toBe(false);
 			}
 		}
+	});
+
+	it("没有送到的插话：steer_dropped 带这句话的 message_id（可以不带），message_id 不是 UUID 被拒绝；带上它的提示也是合法的会话事件", () => {
+		const dropped = {
+			type: "notice",
+			kind: "steer_dropped",
+			message: "这句插话没有送到助手：「先别改测试」",
+			message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000002",
+		};
+		expect(AssistantEvent.parse(dropped)).toEqual(dropped);
+		expect(SessionEventBody.parse(dropped)).toEqual(dropped);
+		const { message_id: _id, ...bare } = dropped;
+		expect(AssistantEvent.parse(bare)).toEqual(bare);
+		expect(AssistantEvent.safeParse({ ...dropped, message_id: "m2" }).success).toBe(false);
+		expect(AssistantEvent.safeParse({ ...dropped, message_id: 2 }).success).toBe(false);
+		// 排队中的话被取消：控制面写，同样带 message_id，不是助手服务产生的。
+		const cancelled = {
+			type: "notice",
+			kind: "queue_cancelled",
+			message: "这句话排队时被取消了，没有交给助手",
+			message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000005",
+		};
+		expect(SessionEventBody.parse(cancelled)).toEqual(cancelled);
+		expect(AssistantEvent.safeParse(cancelled).success).toBe(false);
 	});
 
 	it("控制面才有的提示（queue_cancelled、events_lost）和平台记录（scenario_version、run）被拒绝，助手服务的提示和提交通过", () => {
@@ -188,6 +216,18 @@ describe("命令", () => {
 		});
 		expect(AssistantErrorBody.safeParse({ code: "teapot", message: "x" }).success).toBe(false);
 		expect(AssistantErrorBody.safeParse({ code: "unauthorized" }).success).toBe(false);
+	});
+
+	it("停止一轮的时间：等 abort 的 10 秒、结束进程的宽限 10 秒、余量 3 秒，合起来 23 秒（控制面等结局和助手服务等旧的一轮用同一个数）", () => {
+		expect(ASSISTANT_ABORT_SETTLE_MS).toBe(10_000);
+		expect(ASSISTANT_PROCESS_KILL_GRACE_MS).toBe(10_000);
+		expect(ASSISTANT_STOP_MARGIN_MS).toBe(3_000);
+		expect(ASSISTANT_STOP_WAIT_MS).toBe(23_000);
+		// 最坏的一条路：pi 不理 abort（等满 ABORT_SETTLE），也不理 SIGTERM（等满宽限才 SIGKILL）；余量不能是零。
+		expect(ASSISTANT_STOP_WAIT_MS).toBe(
+			ASSISTANT_ABORT_SETTLE_MS + ASSISTANT_PROCESS_KILL_GRACE_MS + ASSISTANT_STOP_MARGIN_MS,
+		);
+		expect(ASSISTANT_STOP_MARGIN_MS).toBeGreaterThan(0);
 	});
 
 	it("共享密钥：环境变量名和最短长度", () => {

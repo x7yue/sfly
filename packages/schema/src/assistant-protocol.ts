@@ -31,23 +31,106 @@ import {
  *
  * | 命令 | 请求体 | 回应 | 由哪条任务做 |
  * |---|---|---|---|
- * | `POST /sessions/:id/prompt` | {@link PromptCommandBody} | 202；这个会话已有一轮在做 409 `turn_running`；起不了 503 | #540 |
- * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；没有在做的一轮 409 `no_turn_running` | #544 |
- * | `POST /sessions/:id/abort` | {@link AbortCommandBody} | 202（重复调用无害，三种情况见 {@link AbortCommandBody}） | #540、#544 |
- * | `POST /sessions/:id/end` | — | 202（重复调用无害） | #544 |
+ * | `POST /sessions/:id/prompt` | {@link PromptCommandBody} | 202（旧的一轮还在退出时也是 202，见「一轮的状态」）；这个会话有一轮在正常地做 409 `turn_running`；起不了 503 | #540、#544 |
+ * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；没有可以送到的一轮 409 `no_turn_running` | #544 |
+ * | `POST /sessions/:id/abort` | {@link AbortCommandBody} | 202（重复调用无害，四种情况见 {@link AbortCommandBody}；一轮怎么停见「停止一轮」） | #540、#544 |
+ * | `POST /sessions/:id/end` | — | 202（重复调用无害，见「结束会话」） | #544 |
  * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳** | #540；续传 #545 |
  * | `GET /health` | — | 200 {@link AssistantHealth} | #540；模型 #548；进程数 #545 |
  *
  * 失败的回应体是 {@link AssistantErrorBody}。
+ *
+ * ## 一轮的状态（#544 起）
+ *
+ * 助手服务对一个会话只记一件事：这个会话的这一轮此刻处在哪个状态（不记项目，不排队：同一个项目同一时刻只把一轮交给助手服务
+ * 是控制面的事）。
+ *
+ * - **没有一轮**：没有登记过，或者上一轮已经发出了 `turn_end`。
+ * - **在做**：`prompt` 登记了这一轮，还没有开始停止。包括 pi 还没有拿到 `prompt` 的时候（在等旧的进程退出、起进程、准备 skill、
+ *   连模型）。`prompt` 回 409 `turn_running`、`steer` 回 202，都只看这个状态。
+ * - **在停止**：这一轮已经决定结束（收到 `abort`、到了上限、收到 `end`），还没有发出 `turn_end`。分两段：先等 pi 报告
+ *   `agent_settled`，最多 {@link ASSISTANT_ABORT_SETTLE_MS}；没等到就结束 pi 进程（先 SIGTERM，{@link ASSISTANT_PROCESS_KILL_GRACE_MS}
+ *   之后 SIGKILL），进程退出之后才发 `turn_end`。从决定结束到发出 `turn_end`，最晚 {@link ASSISTANT_STOP_WAIT_MS}。
+ *
+ * 命令在各状态下的回应：
+ *
+ * | 状态 | `prompt` | `steer` | `abort` |
+ * |---|---|---|---|
+ * | 没有一轮 | 登记这一轮、202、再去起 | 409 `no_turn_running` | 记下记号（{@link AbortCommandBody}）、202 |
+ * | 在做 | 409 `turn_running` | 202 | 进入「在停止」、202 |
+ * | 在停止 | 登记新的一轮、202、**等这一轮结束再起**（下面第 1 条） | 409 `no_turn_running` | 202，什么也不加 |
+ *
+ * 1. **旧的一轮还在停止、或者它的 pi 进程还在退出时来了新的一轮（`prompt`）**：不回 409。助手服务登记新的一轮、回 202，
+ *    等旧的一轮发出 `turn_end`（需要结束进程的，等进程退出）之后再起新的一轮：旧的进程还活着就用它（会话文件在，不重起），
+ *    已经退出了就按启动命令起一个。**等的时间从旧的一轮决定结束那一刻算，最多 {@link ASSISTANT_STOP_WAIT_MS}**；旧的进程
+ *    在这么久之内还没有退出（SIGKILL 之后也没有），新的一轮不开始，以 `failed` 结束，`turn_end.reason` 写明原因
+ *    （上一轮的进程没有退出，所以这一轮没有开始），`error_class` 不写。旧的一轮发出的事件带旧的轮次，控制面按轮次核对，
+ *    不属于此刻这一轮的丢掉，所以两轮的事件不会混。等着的这段时间新的一轮已经是「在做」：再来 `prompt` 回 409，`steer` 回 202
+ *    （见 {@link SteerCommandBody}），`abort` 带它的轮次时按「在做」处理（还没有开始的话，等于它从没开始就结束，不起 pi）。
+ *    控制面不用为这件事多等，也不会因此看到 409。
+ * 2. **`prompt` 撞上中止的记号**（{@link AbortCommandBody}）：回 202、再发这一轮 `stopped` 的 `turn_end`，不起 pi。
+ *    更早的一轮还在停止、或者进程还在退出时也是这样：**不回 409**（记号比「旧的一轮还没完」优先）。
+ * 3. **只有同一个会话真的有一轮在正常地做（「在做」）时，`prompt` 才回 409 `turn_running`。**
+ *
+ * ## 停止一轮（#544 起）
+ *
+ * 用户停止、一轮到了上限（40 次模型调用或 20 分钟，结局是 `limit`）、结束会话，三件事走同一条路，模型够不着：
+ *
+ * 1. 决定结束：进入「在停止」；
+ * 2. 取回还没送到模型的插话：先发 pi 的 `clear_queue`，加上助手服务自己还留着、没有交给 pi 的插话（{@link SteerCommandBody}），
+ *    **各发一条 `notice`（`kind` 是 `steer_dropped`，`message_id` 是这句话的 ID，`message` 写明是哪句：引用原文，太长的截断）**，
+ *    这些话不送到模型。必须先于 `abort`：`abort` 之后 pi 可能已经把它们送出去了；
+ * 3. 发 pi 的 `abort`，等 `agent_settled`，最多 {@link ASSISTANT_ABORT_SETTLE_MS}；pi 中止正在跑的命令，工作台上命令的进程树随
+ *    连接断开结束（#539 第 6 题：实测 0.08 秒）；
+ * 4. 等到了就发这一轮的 `turn_end`（`stopped` 或 `limit`），**pi 进程留着**，下一轮接着用（#539：`abort` 之后同一个进程再发一轮照常做）；
+ *    没等到就结束 pi 进程：先关 stdin、SIGTERM，{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 之后 SIGKILL，进程退出之后再发 `turn_end`
+ *    （这一轮的结局不变，还是 `stopped` 或 `limit`）。
+ *
+ * 决定结束之后 pi 还在吐的事件不外传。**`steer_dropped` 的 `notice` 都排在这一轮的 `turn_end` 前面**。控制面收到 `abort` 之后
+ * 等这一轮的结局最多 {@link ASSISTANT_STOP_WAIT_MS}（它引用同一个常量）。助手服务不知道项目，也不管这一轮停下之后哪个会话接着做。
+ *
+ * ## 结束会话（#544 起）
+ *
+ * `POST /sessions/:id/end`：这个会话不会再有新的一轮。如果有一轮在做，先照「停止一轮」处理（控制面通常已经先停止了，所以这里多半
+ * 只是一个空闲的会话）；等这一轮的 `turn_end` 发出之后，**关闭这个会话的 pi 进程**（关 stdin，宽限 {@link ASSISTANT_PROCESS_KILL_GRACE_MS}），
+ * 忘掉它在内存里记着的东西（中止的记号、没送到的插话）、释放进程槽位。回应是 202，不等进程退出；重复调用无害；助手服务不认识的会话也是 202。
+ * **不删任何东西**：会话目录（pi 的会话文件、`events.jsonl`）和工作台上的工作区都留着。助手服务不记得会话已经结束（重启之后更不会知道）：
+ * 控制面保证结束之后不再发这个会话的命令。
+ * 失败的回应体是 {@link AssistantErrorBody}。
  */
 
 /**
- * 助手服务停止一轮时的宽限（毫秒）：先关 pi 的输入、发 SIGTERM，等进程自己退出，**宽限到了还没退出才 SIGKILL**；
- * 这一轮的 `turn_end`（`stopped`）在进程退出**之后**才发。所以收到 `abort` 之后，结局最晚在这么久（外加命令往返）之后带回；
- * 控制面停止一轮时等的时间不能短于它（见控制面的 `STOP_GRACE_MS`），否则控制面先补一条 `stopped`、会话回到空闲，
- * 用户马上再说一句，助手服务那边上一轮还挂着，回 409 `turn_running`，新的一轮被记成失败。**助手服务和控制面引用同一个数**。
+ * 助手服务结束 pi 进程时的宽限（毫秒）：先关 pi 的输入、发 SIGTERM，等进程自己退出，**宽限到了还没退出才 SIGKILL**；
+ * 这一轮的 `turn_end` 在进程退出**之后**才发。#544 之前停止一轮就是直接走这一步，收到 `abort` 之后结局最晚在这么久
+ * （外加命令往返）之后带回；#544 起停止先用 pi 的 `abort`，等 {@link ASSISTANT_ABORT_SETTLE_MS} 没有结果才走这一步
+ * （最晚的时间见 {@link ASSISTANT_STOP_WAIT_MS}）。**助手服务和控制面引用同一个数**。
  */
 export const ASSISTANT_PROCESS_KILL_GRACE_MS = 10_000;
+
+/**
+ * #544 起：停止一轮时发了 pi 的 `abort` 之后，等 `agent_settled` 的最长时间（毫秒）；没等到就结束 pi 进程
+ * （{@link ASSISTANT_PROCESS_KILL_GRACE_MS}）。实测 `abort` 0.08 秒就回（#539 第 6 题），这个数是兜底：pi 不理 `abort` 时
+ * 用户最多多等这么久。一轮到了上限走同一条路，用同一个数。
+ */
+export const ASSISTANT_ABORT_SETTLE_MS = 10_000;
+
+/**
+ * 停止一轮时，在 {@link ASSISTANT_ABORT_SETTLE_MS} 和 {@link ASSISTANT_PROCESS_KILL_GRACE_MS} 之外多留的余量（毫秒）：
+ * 盖过助手服务内部的命令往返（经能力端口结束工作台上的命令、取回插话、写结局）。
+ */
+export const ASSISTANT_STOP_MARGIN_MS = 3_000;
+
+/**
+ * 助手服务从决定结束一轮（收到 `abort`、到了上限、收到 `end`）到发出这一轮的 `turn_end`，最晚的时间（毫秒）：
+ * 等 `agent_settled` 的 {@link ASSISTANT_ABORT_SETTLE_MS}，加结束进程的宽限 {@link ASSISTANT_PROCESS_KILL_GRACE_MS}，
+ * 加余量 {@link ASSISTANT_STOP_MARGIN_MS}。**两处引用它，必须是同一个数**：
+ * - 控制面停止一轮时等这一轮的结局（控制面的 `STOP_GRACE_MS`，#544 起换成它）：短了的话控制面先补一条 `stopped`、会话回到空闲，
+ *   用户马上再说一句，助手服务那边上一轮还挂着；
+ * - 助手服务里，旧的一轮还在停止时来了新的一轮，新的一轮最多等旧的一轮结束这么久，等不到就以 `failed` 结束
+ *   （见「一轮的状态」第 1 条）。
+ */
+export const ASSISTANT_STOP_WAIT_MS =
+	ASSISTANT_ABORT_SETTLE_MS + ASSISTANT_PROCESS_KILL_GRACE_MS + ASSISTANT_STOP_MARGIN_MS;
 
 /** 共享密钥放在助手服务和控制面各自的这个环境变量里。 */
 export const ASSISTANT_SECRET_ENV = "SFLY_ASSISTANT_SECRET";
@@ -59,7 +142,8 @@ export const ASSISTANT_SECRET_MIN_LENGTH = 32;
  * 助手服务命令的错误码（{@link AssistantErrorBody}）：
  * - 401 `unauthorized`：缺了密钥或不对；
  * - 400 `invalid_request`：请求体或路径不合 schema；
- * - 409 `turn_running`：开始一轮时这个会话已有一轮在做；409 `no_turn_running`：插话时没有在做的一轮；
+ * - 409 `turn_running`：开始一轮时这个会话有一轮在正常地做（「一轮的状态」里的「在做」；旧的一轮还在停止或进程还在退出时不是，
+ *   那种情况回 202）；409 `no_turn_running`：插话时没有可以送到的一轮（没有一轮、在停止、已经结束）；
  * - 503 `model_not_configured`、`model_unreachable`：模型没有配置或连不上，起不了（#548）；
  * - 503 `process_limit`：活着的 pi 进程数到了上限（#545）；
  * - 503 `start_failed`：其他原因起不了 pi 进程，`message` 写原因。
@@ -131,6 +215,28 @@ export type PromptCommandBody = z.infer<typeof PromptCommandBody>;
 /**
  * `POST /sessions/:id/steer`：插话，助手服务发 pi 的 `steer`。`message_id` 是这句话的 ID（`user_message.message_id`）：
  * 助手服务在 `steer_queue` 里原样带回它，页面不靠文字对应。
+ *
+ * **什么时候接受**：会话处在「在做」（见「一轮的状态」）就回 202，包括 pi 还没有拿到 `prompt` 的时候（在等旧的进程退出、
+ * 起进程、准备 skill）：助手服务先自己留着，`prompt` 交给 pi 之后按收到的顺序依次发 `steer`；这几句话在 `steer_queue` 里照常
+ * 显示。没有一轮、在停止、已经结束时回 409 `no_turn_running`：控制面（它在这句话到之前写过 `user_message`，`steer: true`）
+ * **为这句话写一条 `notice`（`steer_dropped`，`message_id` 是这句话的 ID），不重试，也不当作新的一轮**：用户在时间线上看到
+ * 这句话没有送到，可以再说一次。
+ *
+ * **什么时候送到**（#539 第 7 题的实测，和 pi 的文档一致）：在当前这一步的工具调用做完之后、下一次调用模型之前。当前这一步是
+ * `sfly run wait` 这类长命令时，要等它做完，所以页面写明「要马上停下用停止」。不做 pi 的 `follow_up`：进行中只有插话一种。
+ * 助手服务不改 pi 的设置，**不依赖 pi 一次送一句还是几句一起送**：每一句各自以「出现了这句话的用户消息」（pi 的 `message_end`，
+ * `role` 是 `user`）为准算送到，不看 `queue_update` 的 `steering` 变空（`clear_queue` 之后它也会变空，两件事分不清）。
+ *
+ * **三种边界**：
+ * - **最后一次模型回复不带工具调用时发的插话**：这次回复照常结束，pi 带着插话再请求一次模型，这一轮接着做，插话不丢，也不等到下一次
+ *   `prompt`（实测假模型先等 4 秒才开始输出，所以测的是「模型还没开始输出」，不是「输出到一半」）。助手服务看到 pi 报告 `agent_settled`
+ *   而插话还没有送到时（不该发生），在发 `turn_end` 之前为每一句各发一条 `steer_dropped` 的 `notice`；
+ * - **停止时还没送到的插话**：不送到模型，各发一条 `steer_dropped` 的 `notice`（「停止一轮」第 2 步），排在 `turn_end` 前面；
+ * - **连着发两句**：都留着，按收到的顺序送，每一句各有自己的 `message_id`，各是一条用户消息；相同的两句话靠顺序区分。
+ *
+ * **送到时助手服务不发 `user_message`**（控制面收到这句话时已经写了）：它只发 `steer_queue`，这句话从列表里去掉。`steer_queue` 是
+ * 还没送到的完整列表，每次变化发一条取代上一条（空列表也发，表示都送到或都丢了），不持久。pi 的队列里没有 `message_id`：助手服务
+ * 自己按收到的顺序记着每句话的 ID，用 pi 的 `queue_update` 和用户消息的出现按顺序对上。
  */
 export const SteerCommandBody = z.object({ message_id: z.uuid(), text: SessionMessageText });
 export type SteerCommandBody = z.infer<typeof SteerCommandBody>;
@@ -151,8 +257,8 @@ export type SteerCommandBody = z.infer<typeof SteerCommandBody>;
  * 对得上（只认轮次，不看时间），轮次只增，记错了也不会误伤别的轮次。这一轮的 `prompt` 撞上记号时，**先回 202、再发这一轮
  * `stopped` 的 `turn_end`**（回 409 或 503，控制面会把这一轮记成失败）。每个会话只留轮次最大的那个记号就够：收到轮次不小于它的
  * `prompt` 时清掉。记号可以过期、可以设个上限（这和「不按时间判断」不矛盾：说的是不能靠「刚刚才结束」这类时间关系去猜一个
- * 中止是给哪一轮的，不是说记号不能清理）。收到中止之后，pi 进程不自己退出的话，宽限（{@link ASSISTANT_PROCESS_KILL_GRACE_MS}）
- * 到了才强制结束，这一轮的结局在进程退出之后才发。
+ * 中止是给哪一轮的，不是说记号不能清理）。收到中止之后怎么停、最晚多久带回结局，见「停止一轮」
+ * （{@link ASSISTANT_ABORT_SETTLE_MS}、{@link ASSISTANT_PROCESS_KILL_GRACE_MS}、{@link ASSISTANT_STOP_WAIT_MS}）。
  *
  * 别的轮次不受影响：用户在空闲的会话上点了停止、紧接着说一句话，新的一轮（轮次更大）照常做。控制面带的轮次：用户点停止时
  * 是此刻在做的那一轮；`prompt` 超时之后补发的是那一轮；会话空闲时点停止是最近的那一轮（它已经结束的话什么也不会发生）。
@@ -164,7 +270,8 @@ export type AbortCommandBody = z.infer<typeof AbortCommandBody>;
 /**
  * 助手服务产生的会话事件：{@link SessionEventBody} 里由它产生的几种（`notice` 只有它产生的几种，`platform` 只有
  * `commit`），事件流里的 `event` 就是它。用户的话、一轮开始、排队、会话结束、`snapshot` 由控制面产生，不在其中；
- * 控制面补的 `interrupted` 的 `turn_end`、`events_lost`、`queue_cancelled` 也由控制面直接写，不经助手服务。
+ * 控制面补的 `interrupted` 的 `turn_end`、`events_lost`、`queue_cancelled`，以及插话被助手服务回 409 `no_turn_running` 时那句话的
+ * `steer_dropped`，也由控制面直接写，不经助手服务。
  */
 export const AssistantEvent = z.discriminatedUnion("type", [
 	ThinkingEvent,
