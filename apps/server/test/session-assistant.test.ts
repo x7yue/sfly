@@ -1532,6 +1532,9 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			await eventually(() =>
 				expect(assistant.prompts.at(-1)?.body).toMatchObject({ turn: 3, text: "停止期间说的话" }),
 			);
+			// 第 3 轮做完：这个测试文件的几个用例共用一个项目，不留在做的会话堵住后面的用例。
+			assistant.emit(view.id, 3, turnEnd(3));
+			await eventually(async () => expect((await sessionRow(cp, view.id))?.status).toBe("idle"));
 		} finally {
 			assistant.promptDelayMs = 0;
 			await settled();

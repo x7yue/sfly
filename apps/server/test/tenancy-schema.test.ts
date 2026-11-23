@@ -32,7 +32,10 @@ async function addSession(
 		project?: string;
 		status?: string;
 		user?: string | null;
-		/** 排队时间：排队中（queued）的会话有，其余没有（库里的约束 `sessions_queued_at`）；默认按状态给。 */
+		/**
+		 * 排队时间：排队中（queued）的会话一定有；在做（running）的会话停止途中又说了话、排在这一轮后面时也有；空闲和已结束的没有
+		 * （库里的约束 `sessions_queued_at`）；默认只有排队中的有。
+		 */
 		queuedAt?: string | null;
 	} = {},
 ): Promise<string> {
@@ -484,18 +487,25 @@ describe("助手会话和它的事件（ADR 0027）", () => {
 		);
 	});
 
-	it("排队时间：排队中（queued）的会话要有，其余状态不能有（#544，sessions_queued_at）", async () => {
+	it("排队时间：排队中（queued）的会话要有；在做（running）的可以有（停止途中说了话，排在这一轮后面）；空闲、已结束的不能有（#544，sessions_queued_at）", async () => {
 		const project = await addProject("queued-at");
 		await expect(addSession({ project, status: "queued", queuedAt: null })).rejects.toThrow(
 			/sessions_queued_at/,
 		);
-		for (const status of ["idle", "running", "ended"]) {
+		for (const status of ["idle", "ended"]) {
 			await expect(
 				addSession({ project: await addProject(`qa-${status}`), status, queuedAt: AT }),
 				status,
 			).rejects.toThrow(/sessions_queued_at/);
 		}
 		await expect(addSession({ project, status: "queued" })).resolves.toBeTypeOf("string");
+		// 在做的：有没有排队时间都行。
+		await expect(
+			addSession({ project: await addProject("qa-running"), status: "running", queuedAt: AT }),
+		).resolves.toBeTypeOf("string");
+		await expect(
+			addSession({ project: await addProject("qa-running-plain"), status: "running" }),
+		).resolves.toBeTypeOf("string");
 	});
 
 	it("发起人的用户可以为空（#494 之前的请求没有用户），有的话要是存在的用户", async () => {

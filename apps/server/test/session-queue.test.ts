@@ -714,24 +714,6 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 	});
 
-	describe("排队时间和会话状态的约束（sessions_queued_at）", () => {
-		it("排队中的一定有排队时间；在做的可以有（停止途中说了话，排在这一轮后面）；空闲、已结束的不能有", async () => {
-			const idle = await idleSession();
-			await expect(
-				database_query(cp, "update sessions set queued_at = now() where id = $1", [idle.id]),
-			).rejects.toThrow(/sessions_queued_at/);
-			await expect(
-				database_query(cp, "update sessions set status = 'queued' where id = $1", [idle.id]),
-			).rejects.toThrow(/sessions_queued_at/);
-			// 在做的可以有排队时间；之后不能直接改成已结束（已结束的没有排队时间）。
-			const running = await json<SessionView>(await create("在做的"));
-			await database_query(cp, "update sessions set queued_at = now() where id = $1", [running.id]);
-			await expect(
-				database_query(cp, "update sessions set status = 'ended' where id = $1", [running.id]),
-			).rejects.toThrow(/sessions_queued_at/);
-		});
-	});
-
 	describe("同一个项目一次只跑一轮，其余排队", () => {
 		it("第一个会话在做时，新建的会话排队：queued、记下排队时间、这句话写了 user_message、没有交给助手服务；事件流里有 turn_queued（排第 1、在等谁）", async () => {
 			const a = await json<SessionView>(await create("甲的事", "alice"));
