@@ -4,6 +4,7 @@ import type { OrchestrationView } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OrchestrationStore } from "../src/orchestrations/orchestration-store.js";
 import { ApiClient } from "./support/api-client.js";
+import { FakeAgent } from "./support/fake-agent.js";
 import {
 	benchDocument,
 	type FocusItemBody,
@@ -14,6 +15,7 @@ import {
 	putFocusItemsOk,
 } from "./support/focus-items.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { packageMetadata } from "./support/package-archive.js";
 import { type SingleConnection, singleConnection } from "./support/single-connection.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -39,7 +41,9 @@ describe("关注项的设置", () => {
 		api = new ApiClient(cp);
 		await publishBench(cp);
 	});
+	const agents: FakeAgent[] = [];
 	afterEach(async () => {
+		await Promise.all(agents.splice(0).map((a) => a.disconnect()));
 		await cp.close();
 	});
 
@@ -201,6 +205,58 @@ describe("关注项的设置", () => {
 				expect((await errorOf(res)).code).toBe("focus_item_unknown_chart");
 			}
 			expect((await orchestrationView(api, id)).focus_items).toEqual([]);
+		});
+
+		it("开发版本的节点另选了 Agent：图表按它派发到的 Agent 当前加载的源码判断，不按默认 Agent 的", async () => {
+			// 两台 Agent 加载的 bench-dev 声明了不同标题的图表；场景的默认 Agent 是 agent-a，节点 load 另选了 agent-b。
+			const metadataJson = (chart: string) =>
+				JSON.stringify(
+					packageMetadata({
+						name: "bench-dev",
+						version: "dev",
+						nodes: [
+							{
+								name: "load",
+								title: "load",
+								entry: "bench_dev:load",
+								inputs: { type: "object", properties: {} },
+								outputs: { type: "object", properties: {} },
+								metrics: [{ name: "tps", unit: "req/s", kind: "gauge" }],
+								charts: [{ title: chart, type: "line", metrics: ["tps"] }],
+							},
+						],
+					}),
+				);
+			for (const [name, chart] of [
+				["agent-a", "默认 Agent 的图表"],
+				["agent-b", "节点另选的 Agent 的图表"],
+			] as const) {
+				agents.push(
+					await FakeAgent.connect(cp.grpcUrl, {
+						name,
+						devPackages: [{ name: "bench-dev", source: "/src", metadataJson: metadataJson(chart) }],
+					}),
+				);
+			}
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "load", kind: "package", package: "bench-dev", node: "load", agent: "agent-b" },
+				],
+				edges: [{ from: "entry", to: "load", kind: "chain" }],
+				packages: { "bench-dev": "dev" },
+			});
+
+			const theirs = await putFocusItems(api, id, [
+				{ node_id: "load", chart: "节点另选的 Agent 的图表" },
+			]);
+			expect(theirs.status, await theirs.clone().text()).toBe(200);
+			const defaults = await putFocusItems(api, id, [
+				{ node_id: "load", chart: "默认 Agent 的图表" },
+			]);
+			expect(defaults.status).toBe(400);
+			expect((await errorOf(defaults)).code).toBe("focus_item_unknown_chart");
 		});
 
 		it("还没有保存过版本的场景没有节点可以引用", async () => {

@@ -10,6 +10,7 @@ import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
 import { paramsOf, storedDocument } from "./support/stored-document.js";
+import { storeNodeField } from "./support/stored-over-limit.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const SAVED_AT = "2026-03-04T05:06:07.000Z";
@@ -810,6 +811,40 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				head_version: 1,
 				source: source,
 			});
+		});
+
+		it("源场景里存着超限的超时、排队超时（升级前保存的）：照样复制，警告写明是哪个节点的哪个字段，--json 里也有", async () => {
+			const source = await createScenario("复制-超限来源", echoDocument());
+			await storeNodeField(cp.database.url, source, "pause", "timeout", 5_000_000_000);
+			await storeNodeField(cp.database.url, source, "pause", "queue_timeout", 9_000_000_000_000);
+
+			const result = await cli("scenario", "copy", source, "--name", "复制-超限副本");
+
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain("已把场景「复制-超限来源」复制为「复制-超限副本」");
+			expect(result.stdout).toContain("警告（2）：");
+			expect(result.stdout).toContain(
+				"节点 pause：timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 5000000000",
+			);
+			expect(result.stdout).toContain(
+				"节点 pause：queue_timeout 必须是 1 到 4294967295 之间的正整数（秒），实际是 9000000000000",
+			);
+			const json = await cli("scenario", "copy", source, "--name", "复制-超限副本-json", "--json");
+			expect(json.code, json.stderr).toBe(0);
+			const { warnings } = JSON.parse(json.stdout) as { warnings: Array<{ code: string }> };
+			expect(warnings.map((w) => w.code).sort()).toEqual([
+				"queue_timeout_out_of_range",
+				"timeout_out_of_range",
+			]);
+		});
+
+		it("源场景没有问题时复制的输出里没有警告", async () => {
+			await createScenario("复制-干净来源", echoDocument());
+
+			const result = await cli("scenario", "copy", "复制-干净来源", "--name", "复制-干净副本");
+
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).not.toContain("警告");
 		});
 
 		it("源场景指定不明确或不存在时报错", async () => {

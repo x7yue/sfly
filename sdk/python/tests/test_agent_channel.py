@@ -244,7 +244,7 @@ def test_a_sigterm_after_the_cancel_marker_stopped_a_call_does_not_interrupt_the
     (short_dir / "cancel").touch()
     cleaned = False
 
-    with pytest.raises(sfly.Cancelled, match="任务已取消"):
+    with pytest.raises(sfly.Cancelled, match="任务正在收尾"):
         try:
             ctx.agent("fs-source").files.stat("/x")
         except sfly.Cancelled:
