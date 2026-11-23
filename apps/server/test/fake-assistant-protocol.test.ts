@@ -48,6 +48,14 @@ describe("假助手服务按协议的状态表回应", () => {
 			return e.type;
 		});
 	const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+	/** 等到条件成立（事件流是异步到的，固定睡一段时间在慢的机器上会不够）。 */
+	const until = async (ok: () => boolean, timeoutMs = 5000) => {
+		const deadline = Date.now() + timeoutMs;
+		while (!ok()) {
+			if (Date.now() > deadline) throw new Error(`等不到：${JSON.stringify(seen())}`);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	};
 	const turnEnd = (turn: number) =>
 		assistant.emit(SESSION, turn, {
 			type: "turn_end",
@@ -166,7 +174,7 @@ describe("假助手服务按协议的状态表回应", () => {
 	});
 
 	it("在停止：steer 409；新的一轮 prompt 登记着（202）等旧的一轮结束；这时再来 prompt 是 409；abort 带旧轮次不动新的一轮", async () => {
-		assistant.stopSettleMs = 150;
+		assistant.stopSettleMs = 500;
 		expect(await prompt(1)).toBe(202);
 		expect(await abort(1)).toBe(202); // 在做 -> 在停止，不等 turn_end
 		await settle();
@@ -181,7 +189,7 @@ describe("假助手服务按协议的状态表回应", () => {
 		expect(await steer(2, pendingSteer)).toBe(202); // 第 2 轮在做（还没开始）
 		expect(await abort(1)).toBe(202); // 旧的轮次：不动第 2 轮
 		expect(assistant.pendingTurn(SESSION)).toBe(2);
-		await new Promise((resolve) => setTimeout(resolve, 250));
+		await until(() => seen().includes("turn_end:1:stopped"));
 		// 第 1 轮的 turn_end 之后第 2 轮开始（没有被中止），它的插话仍在队列里。
 		expect(seen()).toContain("turn_end:1:stopped");
 		expect(assistant.pendingTurn(SESSION)).toBeUndefined();
@@ -189,14 +197,14 @@ describe("假助手服务按协议的状态表回应", () => {
 	});
 
 	it("在停止、第 k 轮在等：abort 带的 N 不小于 k，第 k 轮不再开始，旧的一轮的 turn_end 之后发它的 steer_dropped 和 stopped", async () => {
-		assistant.stopSettleMs = 150;
+		assistant.stopSettleMs = 500;
 		expect(await prompt(1)).toBe(202);
 		expect(await abort(1)).toBe(202);
 		expect(await prompt(2)).toBe(202);
 		const id = randomUUID();
 		expect(await steer(2, id)).toBe(202);
 		expect(await abort(2)).toBe(202);
-		await new Promise((resolve) => setTimeout(resolve, 250));
+		await until(() => seen().includes("turn_end:2:stopped"));
 		const tail = seen();
 		expect(tail.indexOf("turn_end:1:stopped")).toBeGreaterThanOrEqual(0);
 		// 第 2 轮：它的插话各一条 steer_dropped，之后才是它的 stopped；都在第 1 轮的 turn_end 之后。
@@ -222,7 +230,7 @@ describe("假助手服务按协议的状态表回应", () => {
 	});
 
 	it("end：202 收到就回；在做的一轮照停止结束、turn_end 照常发；登记着没开始的一轮不再开始；不动中止记号", async () => {
-		assistant.stopSettleMs = 120;
+		assistant.stopSettleMs = 500;
 		expect(await prompt(1)).toBe(202);
 		expect(await end()).toBe(202);
 		await settle();
@@ -230,7 +238,7 @@ describe("假助手服务按协议的状态表回应", () => {
 		expect(seen()).toEqual([]); // 在停止：还没发 turn_end
 		expect(assistant.abortMarks.get(SESSION)).toBeUndefined(); // end 不动记号
 		expect(await prompt(2)).toBe(202); // 在停止、第 2 轮在等
-		await new Promise((resolve) => setTimeout(resolve, 200));
+		await until(() => seen().length >= 2);
 		expect(seen()).toEqual(["turn_end:1:stopped", "turn_end:2:stopped"]);
 		// 没有一轮时 end 也是 202（重复调用无害）。
 		expect(await end()).toBe(202);

@@ -339,6 +339,45 @@ describe("停止、插话、结束会话、排队", () => {
 			);
 		});
 
+		it("补结局只管这一轮的插话：更早的一轮里确认送到的插话，下一轮由控制面补结局时不会被补成没有送到", async () => {
+			assistant.strictTurns = false;
+			const first = await json<SessionView>(await create("做第一件事"));
+			expect((await say(first.id, "第一轮的插话")).status).toBe(200);
+			const [early] = await steerIds(first.id);
+			// 第一轮：这句话出现在助手服务的队列里、之后又不在了（确认送到），助手服务带回结局。
+			queue(first.id, 1, [early as string], ["第一轮的插话"]);
+			queue(first.id, 1, [], []);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assistant.emit(first.id, 1, turnEnd(1));
+			await eventually(async () => expect(await statusOf(cp, first.id)).toBe("idle"));
+			// 第二轮：新的一句插话没有确认送到，停止、控制面补结局。
+			expect((await say(first.id, "接着做")).status).toBe(200);
+			expect((await say(first.id, "第二轮的插话")).status).toBe(200);
+			const ids = await steerIds(first.id);
+			expect(ids).toHaveLength(2);
+			expect((await api.postEmpty(`/sessions/${first.id}/stop`)).status).toBe(200);
+			const dropped = (await detail(first.id)).events.filter(
+				(e) => e.type === "notice" && e.kind === "steer_dropped",
+			);
+			expect(dropped.map((e) => (e as { message_id: string }).message_id)).toEqual([ids[1]]);
+		});
+
+		it("同一个会话上同时点两次停止，助手服务都没有带回结局：每句没有确认送到的插话只有一条 steer_dropped，结局只有一条", async () => {
+			assistant.strictTurns = false;
+			const first = await json<SessionView>(await create("做第一件事"));
+			expect((await say(first.id, "没人理的话")).status).toBe(200);
+			const [id] = await steerIds(first.id);
+			const stops = await Promise.all([
+				api.postEmpty(`/sessions/${first.id}/stop`),
+				api.postEmpty(`/sessions/${first.id}/stop`),
+			]);
+			expect(stops.map((r) => r.status)).toEqual([200, 200]);
+			const events = (await detail(first.id)).events;
+			const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
+			expect(dropped.map((e) => (e as { message_id: string }).message_id)).toEqual([id]);
+			expect(events.filter((e) => e.type === "turn_end")).toHaveLength(1);
+		});
+
 		it("助手服务带回了结局：控制面不替它补 steer_dropped（它自己发的在 turn_end 前面）", async () => {
 			const first = await json<SessionView>(await create("做第一件事"));
 			expect((await say(first.id, "甲")).status).toBe(200);
