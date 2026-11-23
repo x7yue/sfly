@@ -610,6 +610,14 @@ def spew(ctx: Context, stdout_mib: float = 0, stderr_mib: float = 0) -> None:
         stream.flush()
 
 
+@node(title="一长行", outputs=[])
+def long_line(ctx: Context, head: int, value: str, tail: int, stream: str = "stdout") -> None:
+    """超长行拆分测试用（#622）：往标准输出（stream 是 stderr 时往标准错误）写一行：head 个 a、value、tail 个 b。"""
+    out = sys.stderr if stream == "stderr" else sys.stdout
+    out.write("a" * head + value + "b" * tail + "\n")
+    out.flush()
+
+
 @node(title="写盘失败", outputs=[])
 def write_failure(ctx: Context, message: str = "OSError: [Errno 122] Disk quota exceeded") -> None:
     """错误摘要测试用（#70）：往标准错误打一行 message，然后模拟磁盘写满——

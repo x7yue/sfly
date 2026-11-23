@@ -67,6 +67,9 @@ const EVENT_CHUNKS: usize = 16;
 const LINE_CHUNKS: usize = 16;
 /// 标准输出 / 标准错误一行的最大字节数；更长的行被拆成多行。事件管道的一行不受它限制。
 const MAX_LINE_BYTES: usize = 64 * 1024;
+/// 一行被拆开时，每一段带的上下文（前一段的结尾、后一段的开头，只用来打码，见 `LogLine.before` / `after`）最多这么多字节。
+/// 长度不超过它的 secret 值，跨在拆分处也认得出。
+pub const SPLIT_CONTEXT_BYTES: usize = 16 * 1024;
 /// 一批最多的行数。
 const MAX_BATCH_LINES: usize = 1000;
 /// 一批最多的动作明细事件数。
@@ -394,6 +397,9 @@ impl Pump {
 
 /// 尚未编号的一行。
 struct Pending {
+    /// 上下文（`LogLine.before` / `after`）：只有被拆开的超长行的每一段才有，其余是空串。
+    before: String,
+    after: String,
     /// Agent 时间。
     time_unix_ms: i64,
     /// 读到这一行（所在的那一块）时的单调时钟读数；控制面按它折算出控制面时间（ADR 0018）。
@@ -434,13 +440,15 @@ async fn read_pipe(
     let mut buf = vec![0u8; 16 * 1024];
     let mut chunk = Vec::new();
     // 两个时钟每次读取各读一次，这次读取拆出的行共用（一次读取里的行本来就是同时到的）。
-    let emit = |chunk: &mut Vec<Pending>, at: clock::Reading, text: String| {
+    let emit = |chunk: &mut Vec<Pending>, at: clock::Reading, line: Line| {
         chunk.push(Pending {
+            before: line.before,
+            after: line.after,
             time_unix_ms: at.agent_time_ms,
             monotonic_ms: at.monotonic_ms,
             source,
             level,
-            text,
+            text: line.text,
         });
     };
     loop {
@@ -453,13 +461,13 @@ async fn read_pipe(
             tail.push(&buf[..n]);
         }
         copy.write(&buf[..n]).await;
-        splitter.push(&buf[..n], |text| emit(&mut chunk, at, text));
+        splitter.push(&buf[..n], |line| emit(&mut chunk, at, line));
         if !chunk.is_empty() {
             let _ = lines.send(std::mem::take(&mut chunk)).await;
         }
     }
     let at = clock::Reading::now();
-    splitter.finish(|text| emit(&mut chunk, at, text));
+    splitter.finish(|line| emit(&mut chunk, at, line));
     if !chunk.is_empty() {
         let _ = lines.send(chunk).await;
     }
@@ -521,47 +529,125 @@ impl LogCopy {
     }
 }
 
-/// 按换行拆分字节流；去掉行尾的 `\r`，过长的行拆开。公开只是为了基准测试（benches/telemetry.rs）。
+/// [`LineSplitter`] 切出的一行（或超长行的一段）。
+pub struct Line {
+    /// 这一行（这一段）的文字，不含换行符，不超过 [`MAX_LINE_BYTES`] 字节。
+    pub text: String,
+    /// 超长行被拆开时：同一行里前一段结尾的最多 [`SPLIT_CONTEXT_BYTES`] 字节（第一段和没有拆开的行是空串）。
+    pub before: String,
+    /// 超长行被拆开时：同一行里后一段开头的最多 [`SPLIT_CONTEXT_BYTES`] 字节（最后一段和没有拆开的行是空串）。
+    pub after: String,
+}
+
+/// 按换行拆分字节流；去掉行尾的 `\r`，过长（超过 [`MAX_LINE_BYTES`] 字节）的行拆开。公开只是为了基准测试（benches/telemetry.rs）。
+///
+/// 拆开的位置落在字符（UTF-8）边界上，每一段多带两小段只用来打码的上下文（[`Line::before`]、[`Line::after`]），所以一个 secret 值
+/// 正好跨在拆分处时，控制面看任何一段都认得出它。为了带上后一段的开头，一段要等到这一行又读到 [`SPLIT_CONTEXT_BYTES`]
+/// 字节（或这一行结束）才交出去；拆在哪里只取决于这一行的内容，和每次读到多少字节无关。
 #[derive(Default)]
 pub struct LineSplitter {
+    /// 当前这一行还没有交出去的字节（包括向后看的那一段）。
     partial: Vec<u8>,
+    /// 当前这一行前一段结尾的最多 [`SPLIT_CONTEXT_BYTES`] 字节（落在字符边界上）；这一行还没有拆开时为空。
+    before: Vec<u8>,
+}
+
+/// `bytes[pos]` 是不是 UTF-8 的后续字节（不是一个字符的开头）。
+fn is_continuation(byte: u8) -> bool {
+    byte & 0xC0 == 0x80
+}
+
+/// 不大于 `pos` 的最近的字符边界（`pos` 超出 `bytes` 时是末尾）；最多往回退 3 字节（一个字符最多 4 字节），
+/// 连续的后续字节不是合法的 UTF-8 时不再退（有损转换时每个坏字节各自换成替换字符），免得退到头。
+fn boundary_at_or_before(bytes: &[u8], pos: usize) -> usize {
+    if pos >= bytes.len() {
+        return bytes.len();
+    }
+    let mut pos = pos;
+    for _ in 0..3 {
+        if pos > 0 && is_continuation(bytes[pos]) {
+            pos -= 1;
+        }
+    }
+    pos
+}
+
+/// 不小于 `pos` 的最近的字符边界；最多往前进 3 字节。
+fn boundary_at_or_after(bytes: &[u8], pos: usize) -> usize {
+    let mut pos = pos;
+    for _ in 0..3 {
+        if pos < bytes.len() && is_continuation(bytes[pos]) {
+            pos += 1;
+        }
+    }
+    pos
+}
+
+fn lossy(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 impl LineSplitter {
     /// 追加一段字节，每切出一个完整的行（或过长被拆开的一段）调用一次 `emit`。
-    pub fn push(&mut self, mut bytes: &[u8], mut emit: impl FnMut(String)) {
+    pub fn push(&mut self, mut bytes: &[u8], mut emit: impl FnMut(Line)) {
         while !bytes.is_empty() {
             match bytes.iter().position(|&b| b == b'\n') {
                 Some(i) => {
                     self.partial.extend_from_slice(&bytes[..i]);
                     bytes = &bytes[i + 1..];
-                    self.emit_partial(&mut emit);
+                    self.end_line(&mut emit);
                 }
                 None => {
                     self.partial.extend_from_slice(bytes);
                     bytes = &[];
+                    // 这一行已经比一段加上后面的上下文还长：前面的一段可以交出去了。
+                    while self.partial.len() >= MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES {
+                        self.emit_piece(&mut emit);
+                    }
                 }
-            }
-            while self.partial.len() >= MAX_LINE_BYTES {
-                let rest = self.partial.split_off(MAX_LINE_BYTES);
-                emit(String::from_utf8_lossy(&self.partial).into_owned());
-                self.partial = rest;
             }
         }
     }
 
-    fn emit_partial(&mut self, emit: &mut impl FnMut(String)) {
+    /// 交出当前这一行的第一段（`partial` 比一段长）：文字不超过 [`MAX_LINE_BYTES`] 字节、落在字符边界上，
+    /// 带上前一段的结尾和后面的开头。
+    fn emit_piece(&mut self, emit: &mut impl FnMut(Line)) {
+        let cut = boundary_at_or_before(&self.partial, MAX_LINE_BYTES);
+        let after_end = boundary_at_or_before(&self.partial, cut + SPLIT_CONTEXT_BYTES);
+        emit(Line {
+            text: lossy(&self.partial[..cut]),
+            before: lossy(&self.before),
+            after: lossy(&self.partial[cut..after_end]),
+        });
+        let tail_start = boundary_at_or_after(
+            &self.partial[..cut],
+            cut.saturating_sub(SPLIT_CONTEXT_BYTES),
+        );
+        self.before = self.partial[tail_start..cut].to_vec();
+        self.partial.drain(..cut);
+    }
+
+    /// 一行结束（读到换行，或流结束）：去掉行尾的 `\r`，把剩下的交出去；还比一段长就先一段一段拆。
+    fn end_line(&mut self, emit: &mut impl FnMut(Line)) {
         if self.partial.last() == Some(&b'\r') {
             self.partial.pop();
         }
-        emit(String::from_utf8_lossy(&self.partial).into_owned());
+        while self.partial.len() > MAX_LINE_BYTES {
+            self.emit_piece(emit);
+        }
+        emit(Line {
+            text: lossy(&self.partial),
+            before: lossy(&self.before),
+            after: String::new(),
+        });
         self.partial.clear();
+        self.before.clear();
     }
 
     /// 流结束：剩下没有换行结尾的内容作为最后一行。
-    pub fn finish(mut self, mut emit: impl FnMut(String)) {
+    pub fn finish(mut self, mut emit: impl FnMut(Line)) {
         if !self.partial.is_empty() {
-            self.emit_partial(&mut emit);
+            self.end_line(&mut emit);
         }
     }
 }
@@ -896,7 +982,9 @@ impl Forwarder {
     /// 处理标准输出 / 标准错误的一块行。
     async fn lines(&mut self, chunk: Vec<Pending>) {
         for line in chunk {
-            self.throttle.pace(line.text.len()).await;
+            self.throttle
+                .pace(line.text.len() + line.before.len() + line.after.len())
+                .await;
             self.pending.push(line);
             self.flush_full_batch();
         }
@@ -915,6 +1003,8 @@ impl Forwarder {
     fn event(&mut self, line: &[u8], monotonic_ms: i64) {
         match serde_json::from_slice::<Event>(line) {
             Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
+                before: String::new(),
+                after: String::new(),
                 time_unix_ms: sdk_time_ms(ts),
                 monotonic_ms,
                 source: LogSource::Sdk,
@@ -1018,6 +1108,8 @@ impl Forwarder {
             )),
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
+                before: String::new(),
+                after: String::new(),
                 time_unix_ms: clock::agent_time_ms(),
                 monotonic_ms,
                 source: LogSource::Sdk,
@@ -1035,6 +1127,8 @@ impl Forwarder {
         };
         self.flush_lines();
         self.pending.push(Pending {
+            before: String::new(),
+            after: String::new(),
             time_unix_ms: jump.after_ms,
             monotonic_ms: clock::monotonic_ms(),
             source: LogSource::Agent,
@@ -1091,6 +1185,8 @@ impl Forwarder {
                     source: p.source.into(),
                     level: p.level.into(),
                     text: p.text,
+                    before: p.before,
+                    after: p.after,
                 }
             })
             .collect();
@@ -1121,3 +1217,219 @@ impl Forwarder {
 #[cfg(test)]
 #[path = "local_protocol_tests.rs"]
 mod local_protocol_tests;
+
+/// 超长行的拆分（[`LineSplitter`]）：拆开的位置、每一段带的上下文。
+#[cfg(test)]
+mod splitter_tests {
+    use super::*;
+
+    fn split_with(input: &[u8], chunk: usize) -> Vec<(String, String, String)> {
+        let mut lines = Vec::new();
+        let mut splitter = LineSplitter::default();
+        for piece in input.chunks(chunk) {
+            splitter.push(piece, |line| {
+                lines.push((line.text, line.before, line.after))
+            });
+        }
+        splitter.finish(|line| lines.push((line.text, line.before, line.after)));
+        lines
+    }
+
+    fn split(input: &[u8]) -> Vec<(String, String, String)> {
+        split_with(input, input.len().max(1))
+    }
+
+    /// 一行被拆成几段之后的不变量：每段不超过一段的最大字节数；文字接起来就是原来的行；前后的上下文和相邻的段对得上；
+    /// 两端都落在字符边界上（原来的行是合法的 UTF-8 时，每一段、每个上下文也是，没有替换字符）。
+    fn check_pieces(original: &str, pieces: &[(String, String, String)]) {
+        assert!(pieces.len() >= 2, "没有拆开");
+        let joined: String = pieces.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert_eq!(joined, original);
+        let mut seen = String::new();
+        for (i, (text, before, after)) in pieces.iter().enumerate() {
+            assert!(
+                text.len() <= MAX_LINE_BYTES,
+                "第 {i} 段 {} 字节",
+                text.len()
+            );
+            assert!(
+                !text.contains('\u{FFFD}')
+                    && !before.contains('\u{FFFD}')
+                    && !after.contains('\u{FFFD}')
+            );
+            assert!(before.len() <= SPLIT_CONTEXT_BYTES && after.len() <= SPLIT_CONTEXT_BYTES);
+            // before：前面所有段接起来的结尾，最多 SPLIT_CONTEXT_BYTES 字节，从字符边界开始
+            let mut start = seen.len().saturating_sub(SPLIT_CONTEXT_BYTES);
+            while !seen.is_char_boundary(start) {
+                start += 1;
+            }
+            assert_eq!(before, &seen[start..], "第 {i} 段的 before");
+            seen.push_str(text);
+            // after：后面所有段接起来的开头，最多 SPLIT_CONTEXT_BYTES 字节，到字符边界结束
+            let rest = &original[seen.len()..];
+            let mut end = rest.len().min(SPLIT_CONTEXT_BYTES);
+            while !rest.is_char_boundary(end) {
+                end -= 1;
+            }
+            assert_eq!(after, &rest[..end], "第 {i} 段的 after");
+        }
+        assert_eq!(pieces[0].1, "");
+        assert_eq!(pieces[pieces.len() - 1].2, "");
+    }
+
+    #[test]
+    fn short_lines_carry_no_context_and_empty_lines_are_lines() {
+        let lines = split(b"a\nbb\r\n\nlast");
+        let texts: Vec<_> = lines.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert_eq!(texts, ["a", "bb", "", "last"]);
+        assert!(lines.iter().all(|(_, b, a)| b.is_empty() && a.is_empty()));
+    }
+
+    #[test]
+    fn a_line_of_exactly_the_maximum_is_one_piece_and_one_byte_more_is_two() {
+        let exact = "x".repeat(MAX_LINE_BYTES);
+        assert_eq!(
+            split(format!("{exact}\n").as_bytes()),
+            [(exact.clone(), String::new(), String::new())]
+        );
+        let over = format!("{exact}y");
+        let pieces = split(format!("{over}\n").as_bytes());
+        check_pieces(&over, &pieces);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(pieces[1].0, "y");
+        assert_eq!(pieces[0].2, "y");
+    }
+
+    #[test]
+    fn long_ascii_lines_split_with_context_that_matches_the_neighbours() {
+        for len in [
+            MAX_LINE_BYTES + 1,
+            MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES - 1,
+            MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES,
+            MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES + 1,
+            2 * MAX_LINE_BYTES,
+            2 * MAX_LINE_BYTES + 5,
+            5 * MAX_LINE_BYTES + 12345,
+        ] {
+            let original: String = (0..len)
+                .map(|i| char::from(b'a' + (i % 26) as u8))
+                .collect();
+            check_pieces(&original, &split(format!("{original}\n").as_bytes()));
+        }
+    }
+
+    #[test]
+    fn where_a_line_is_split_does_not_depend_on_how_much_is_read_at_a_time() {
+        let original: String = (0..3 * MAX_LINE_BYTES + 777)
+            .map(|i| char::from(b'a' + (i % 26) as u8))
+            .collect();
+        let input = format!("short\n{original}\ntail\r\n{original}");
+        let whole = split(input.as_bytes());
+        for chunk in [
+            1,
+            7,
+            4096,
+            16 * 1024,
+            MAX_LINE_BYTES,
+            MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES,
+        ] {
+            assert_eq!(
+                split_with(input.as_bytes(), chunk),
+                whole,
+                "每次读 {chunk} 字节"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_byte_characters_are_never_cut_in_the_middle() {
+        // 3 字节的字符，65536 不是 3 的倍数；4 字节的字符；混着 1、2、3、4 字节的
+        let sets: [&[char]; 3] = [&['中'], &['😀'], &['a', 'é', '中', '😀']];
+        for chars in sets {
+            let original: String = (0..(2 * MAX_LINE_BYTES) / 2)
+                .map(|i| chars[i % chars.len()])
+                .collect();
+            for offset in 0..5 {
+                let line = format!("{}{original}", "z".repeat(offset));
+                check_pieces(&line, &split(format!("{line}\n").as_bytes()));
+            }
+        }
+    }
+
+    #[test]
+    fn carriage_return_at_the_end_of_a_long_line_is_dropped_and_not_part_of_the_context() {
+        let original = "q".repeat(MAX_LINE_BYTES + 100);
+        let pieces = split(format!("{original}\r\n").as_bytes());
+        check_pieces(&original, &pieces);
+        let last = pieces.last().unwrap();
+        assert!(!last.0.ends_with('\r') && !last.1.contains('\r'));
+    }
+
+    #[test]
+    fn a_long_line_without_a_final_newline_is_still_split_at_the_end_of_the_stream() {
+        let original = "w".repeat(MAX_LINE_BYTES * 2 + 3);
+        check_pieces(&original, &split(original.as_bytes()));
+    }
+
+    #[test]
+    fn invalid_utf8_does_not_loop_and_every_piece_is_within_the_maximum() {
+        // 连续的后续字节（不是合法的 UTF-8）：不能因为往回找字符边界而退到头
+        let bytes = vec![0x80u8; 3 * MAX_LINE_BYTES];
+        let pieces = split(&bytes);
+        assert!(pieces.len() >= 3);
+        assert!(
+            pieces
+                .iter()
+                .all(|(t, _, _)| t.chars().count() <= MAX_LINE_BYTES)
+        );
+        // 有损转换：每个坏字节一个替换字符，总数不变
+        let total: usize = pieces.iter().map(|(t, _, _)| t.chars().count()).sum();
+        assert_eq!(total, bytes.len());
+    }
+
+    /// 旧版本的控制面不认识 before / after：它们是 protobuf 的新字段，旧的消息定义解码时忽略，其余的字段照旧。
+    #[test]
+    fn a_log_line_with_context_decodes_with_the_old_message_definition() {
+        #[derive(Clone, PartialEq, prost::Message)]
+        struct OldLogLine {
+            #[prost(uint64, tag = "1")]
+            seq: u64,
+            #[prost(int64, tag = "2")]
+            time_unix_ms: i64,
+            #[prost(int32, tag = "3")]
+            source: i32,
+            #[prost(int32, tag = "4")]
+            level: i32,
+            #[prost(string, tag = "5")]
+            text: String,
+            #[prost(int64, tag = "6")]
+            monotonic_ms: i64,
+        }
+        let line = LogLine {
+            seq: 7,
+            time_unix_ms: 1_000,
+            monotonic_ms: 2_000,
+            source: LogSource::Stdout.into(),
+            level: LogLevel::Info.into(),
+            text: "text".into(),
+            before: "before".into(),
+            after: "after".into(),
+        };
+        let old = OldLogLine::decode(line.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(
+            (
+                old.seq,
+                old.time_unix_ms,
+                old.monotonic_ms,
+                old.text.as_str()
+            ),
+            (7, 1_000, 2_000, "text")
+        );
+        // 反过来：旧版本 Agent 发的行（没有这两个字段）解码成空串
+        let from_old = LogLine::decode(old.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(
+            (from_old.before.as_str(), from_old.after.as_str()),
+            ("", "")
+        );
+    }
+}
