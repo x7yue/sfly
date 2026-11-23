@@ -12,6 +12,7 @@ import {
 import type { AssignTaskSchema } from "@sfly/proto";
 import { DEV_VERSION, type PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
+import { artifactLimitForWire } from "../artifacts/artifact-store.js";
 import type { Tx } from "../db/database.js";
 import { type AgentInfo, nodePackages } from "../db/schema.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
@@ -63,11 +64,15 @@ export type AssignContent =
  */
 export type AssignContentOf = (tx: Tx, request: AssignRequest) => Promise<AssignContent>;
 
-/** `urls` 是 Agent 下载节点包归档、上传任务产物的地址（Agent 通过 HTTP 访问）。 */
+/** `urls` 是 Agent 下载节点包归档、上传任务产物的地址（Agent 通过 HTTP 访问），和每个任务的产物合计上限。 */
 export function createAssignContent(urls: {
 	packageArchiveUrl: (name: string, version: string) => string;
 	artifactUploadUrl: (taskId: string) => string;
+	/** 每个任务的产物合计上限（字节），随任务下发给 Agent（AssignTask.artifact_limit_bytes，#477）。 */
+	artifactLimitBytes: number;
 }): AssignContentOf {
+	// 造这个函数时就换算（不合格的值在这里抛出，不留到派发时）：每个任务下发同一个上限。
+	const artifactLimit = artifactLimitForWire(urls.artifactLimitBytes);
 	return async (tx, { task, node, packageVersion, scope, target }) => {
 		let inputs: Record<string, unknown>;
 		try {
@@ -142,6 +147,7 @@ export function createAssignContent(urls: {
 				packageSha256: archive?.sha256 ?? "",
 				packageUrl: archive ? urls.packageArchiveUrl(node.package, packageVersion) : "",
 				artifactUploadUrl: urls.artifactUploadUrl(task.id),
+				artifactLimitBytes: artifactLimit,
 				referencedAgents: referenced.agents,
 				referencedFeishuBots: bots,
 			},
