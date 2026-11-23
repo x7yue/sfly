@@ -22,7 +22,7 @@ import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-sett
 import { copyPresets } from "../presets/preset-store.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { sessionRefs, withSession } from "../sessions/session-ref.js";
-import type { SessionStore } from "../sessions/session-store.js";
+import { limitSessionWriteLockWait, type SessionStore } from "../sessions/session-store.js";
 import { maskSecretDefaults, restoreSecretDefaults } from "./secret-defaults.js";
 import { newWarnings, versionCheck } from "./version-check.js";
 
@@ -218,32 +218,27 @@ async function sessionOfVersion(db: Db | Tx, row: VersionRow): Promise<SessionRe
  * 和列最新版本文档（`rawHeadDocuments`）要传项目。按场景 ID 的其余方法不传项目：ID 全库唯一，项目从场景本身得出
  * （契约路由的检查，#489），场景属于哪个项目由检查负责。
  */
-/** 会话令牌的写在提交之后要做的：发布平台记录，然后放掉会话的链。 */
+/** 会话令牌的写在提交之后要做的：发布平台记录（交给会话的链，不等它）。 */
 interface AfterCommit {
-	announce: Array<() => Promise<void>>;
-	releases: Array<() => void>;
+	announce: Array<() => void>;
 }
 
 export class OrchestrationStore {
 	constructor(private readonly deps: { db: Db; clock: Clock; sessions: SessionStore }) {}
 
 	/**
-	 * 会话令牌保存的版本要在记下版本的同一个事务里给会话写平台记录、提交之后发布。事务里先做慢的（场景那一行的锁、版本的写入），
-	 * 最后才排到会话的链上（{@link SessionStore.hold}）：从写记录到推送完占着它，这一小段之外别的会话的事件不被拖住。
-	 * 不论事务成败，`run` 结束时放掉链。
+	 * 会话令牌的写（保存、恢复、复制）：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
+	 * 放在事务的第一条语句。不是会话令牌的写什么都不做。
 	 */
-	async #releasing<T>(after: AfterCommit, run: () => Promise<T>): Promise<T> {
-		try {
-			return await run();
-		} finally {
-			for (const release of after.releases) release();
-		}
+	async #limitLockWait(tx: Tx, actor: Actor): Promise<void> {
+		if (actor.sessionId !== null) await limitSessionWriteLockWait(tx);
 	}
 
 	/**
 	 * 会话令牌保存的版本：在记下版本的同一个事务里给会话写一条平台记录（`scenario_version`，#547）。**要放在事务的最后**：
-	 * 先 `hold` 会话的链（等链上别的落库加发布做完），再记。`after.announce` 里放的收尾在事务提交之后调用（发布），
-	 * `after.releases` 里放的在发布之后放掉链；不是会话保存的什么都不做。
+	 * 先做慢的（场景那一行的锁、版本的写入），最后才给会话那一行加锁、分配序号、写记录，然后提交；事务里不等任何进程里的锁
+	 * （{@link SessionStore.recordPlatform}）。`after.announce` 里放的收尾在事务提交之后调用（推送，不等它）；
+	 * 不是会话保存的什么都不做。
 	 */
 	async #recordForSession(
 		tx: Tx,
@@ -254,7 +249,6 @@ export class OrchestrationStore {
 	): Promise<void> {
 		const { sessionId } = actor;
 		if (sessionId === null) return;
-		after.releases.push(await this.deps.sessions.hold(sessionId));
 		const event = await this.deps.sessions.recordPlatform(tx, sessionId, {
 			kind: "scenario_version",
 			scenario_id: scenario.id,
@@ -398,65 +392,63 @@ export class OrchestrationStore {
 	 * 关注项的最后修改记为复制的人（{@link copiedFocus}）。源编排不存在时返回 undefined。
 	 */
 	async copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
-		const pending: AfterCommit = { announce: [], releases: [] };
-		const copied = await this.#releasing(pending, async () => {
-			const done = await this.deps.db.transaction(async (tx) => {
-				const [source] = await tx
-					.select()
-					.from(orchestrations)
-					.where(eq(orchestrations.id, sourceId));
-				if (!source) return undefined;
-				const [head] = await tx
-					.select()
-					.from(orchestrationVersions)
-					.where(
-						and(
-							eq(orchestrationVersions.orchestrationId, sourceId),
-							eq(orchestrationVersions.number, source.headVersion),
-						),
-					);
-				const now = this.deps.clock.now();
-				const id = randomUUID();
-				const [row] = await tx
-					.insert(orchestrations)
-					.values({
-						id,
-						// 副本和源场景在同一个项目里。
-						projectId: source.projectId,
-						name,
-						description: source.description,
-						headVersion: head ? 1 : 0,
-						createdAt: now,
-						// 运行通知设置跟着场景走：复制到另一个环境后只需要改机器人、标题和说明。
-						runNotifyBot: source.runNotifyBot,
-						runNotifyTrigger: source.runNotifyTrigger,
-						runNotifyTitle: source.runNotifyTitle,
-						runNotifyNote: source.runNotifyNote,
-						...copiedFocus(source, actor, now),
-					})
-					.returning();
-				if (head) {
-					await tx.insert(orchestrationVersions).values({
-						id: randomUUID(),
-						orchestrationId: id,
-						number: 1,
-						document: head.document,
-						author: actor.nickname,
-						authorUserId: actor.userId,
-						authorVia: actor.via,
-						authorToken: actor.token,
-						sessionId: actor.sessionId,
-						createdAt: now,
-					});
-				}
-				await copyPresets(tx, sourceId, id, actor, now);
-				// 平台记录放在事务的最后：先 hold 会话的链，再记。
-				if (head) await this.#recordForSession(tx, actor, { id, name }, 1, pending);
-				return row as OrchestrationRow;
-			});
-			for (const announce of pending.announce) await announce();
-			return done;
+		const pending: AfterCommit = { announce: [] };
+		const copied = await this.deps.db.transaction(async (tx) => {
+			await this.#limitLockWait(tx, actor);
+			const [source] = await tx
+				.select()
+				.from(orchestrations)
+				.where(eq(orchestrations.id, sourceId));
+			if (!source) return undefined;
+			const [head] = await tx
+				.select()
+				.from(orchestrationVersions)
+				.where(
+					and(
+						eq(orchestrationVersions.orchestrationId, sourceId),
+						eq(orchestrationVersions.number, source.headVersion),
+					),
+				);
+			const now = this.deps.clock.now();
+			const id = randomUUID();
+			const [row] = await tx
+				.insert(orchestrations)
+				.values({
+					id,
+					// 副本和源场景在同一个项目里。
+					projectId: source.projectId,
+					name,
+					description: source.description,
+					headVersion: head ? 1 : 0,
+					createdAt: now,
+					// 运行通知设置跟着场景走：复制到另一个环境后只需要改机器人、标题和说明。
+					runNotifyBot: source.runNotifyBot,
+					runNotifyTrigger: source.runNotifyTrigger,
+					runNotifyTitle: source.runNotifyTitle,
+					runNotifyNote: source.runNotifyNote,
+					...copiedFocus(source, actor, now),
+				})
+				.returning();
+			if (head) {
+				await tx.insert(orchestrationVersions).values({
+					id: randomUUID(),
+					orchestrationId: id,
+					number: 1,
+					document: head.document,
+					author: actor.nickname,
+					authorUserId: actor.userId,
+					authorVia: actor.via,
+					authorToken: actor.token,
+					sessionId: actor.sessionId,
+					createdAt: now,
+				});
+			}
+			await copyPresets(tx, sourceId, id, actor, now);
+			// 平台记录放在事务的最后（会话那一行的锁是最后拿的一把）。
+			if (head) await this.#recordForSession(tx, actor, { id, name }, 1, pending);
+			return row as OrchestrationRow;
 		});
+		for (const announce of pending.announce) announce();
 		return copied && this.#view(copied, this.deps.db);
 	}
 
@@ -519,47 +511,46 @@ export class OrchestrationStore {
 		baseVersion: number,
 		options: { strict?: boolean } = {},
 	): Promise<SaveVersionResult> {
-		const pending: AfterCommit = { announce: [], releases: [] };
-		return this.#releasing(pending, async () => {
-			const result = await this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
-				const [orchestration] = await tx
-					.select()
-					.from(orchestrations)
-					.where(eq(orchestrations.id, orchestrationId))
-					.for("update");
-				if (!orchestration) return { kind: "not_found" };
-				if (baseVersion !== orchestration.headVersion) {
-					return conflict(tx, orchestration);
-				}
-				const previous =
-					orchestration.headVersion > 0
-						? await versionRow(tx, orchestrationId, orchestration.headVersion)
-						: undefined;
-				const prepared = prepareDocument(previous?.document, document);
-				if ("problems" in prepared) {
-					return { kind: "secret_default_unresolved", problems: prepared.problems };
-				}
-				const masked = previous && maskSecretDefaults(previous.document);
-				if (options.strict) {
-					// 在同一个事务（同一个行锁）里检查：检查和追加之间，别的请求改不了这次判断用到的东西。
-					const check = await versionCheck(
-						tx,
-						orchestrationId,
-						maskSecretDefaults(prepared.document),
-						masked,
-						masked ?? initialDocument(),
-					);
-					if (newWarnings(check).length > 0) return { kind: "strict_rejected", check };
-				}
-				return {
-					kind: "saved",
-					version: await this.#append(tx, orchestration, prepared.document, actor, pending),
-					previous: masked,
-				};
-			});
-			for (const announce of pending.announce) await announce();
-			return result;
+		const pending: AfterCommit = { announce: [] };
+		const result = await this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
+			await this.#limitLockWait(tx, actor);
+			const [orchestration] = await tx
+				.select()
+				.from(orchestrations)
+				.where(eq(orchestrations.id, orchestrationId))
+				.for("update");
+			if (!orchestration) return { kind: "not_found" };
+			if (baseVersion !== orchestration.headVersion) {
+				return conflict(tx, orchestration);
+			}
+			const previous =
+				orchestration.headVersion > 0
+					? await versionRow(tx, orchestrationId, orchestration.headVersion)
+					: undefined;
+			const prepared = prepareDocument(previous?.document, document);
+			if ("problems" in prepared) {
+				return { kind: "secret_default_unresolved", problems: prepared.problems };
+			}
+			const masked = previous && maskSecretDefaults(previous.document);
+			if (options.strict) {
+				// 在同一个事务（同一个行锁）里检查：检查和追加之间，别的请求改不了这次判断用到的东西。
+				const check = await versionCheck(
+					tx,
+					orchestrationId,
+					maskSecretDefaults(prepared.document),
+					masked,
+					masked ?? initialDocument(),
+				);
+				if (newWarnings(check).length > 0) return { kind: "strict_rejected", check };
+			}
+			return {
+				kind: "saved",
+				version: await this.#append(tx, orchestration, prepared.document, actor, pending),
+				previous: masked,
+			};
 		});
+		for (const announce of pending.announce) announce();
+		return result;
 	}
 
 	/**
@@ -635,26 +626,25 @@ export class OrchestrationStore {
 		| { version: OrchestrationVersionView; previous: StoredOrchestrationDocument | undefined }
 		| undefined
 	> {
-		const pending: AfterCommit = { announce: [], releases: [] };
-		return this.#releasing(pending, async () => {
-			const result = await this.deps.db.transaction(async (tx) => {
-				const [orchestration] = await tx
-					.select()
-					.from(orchestrations)
-					.where(eq(orchestrations.id, orchestrationId))
-					.for("update");
-				if (!orchestration) return undefined;
-				const source = await versionRow(tx, orchestrationId, number);
-				if (!source) return undefined;
-				const previous = await versionRow(tx, orchestrationId, orchestration.headVersion);
-				return {
-					version: await this.#append(tx, orchestration, source.document, actor, pending),
-					previous: previous && maskSecretDefaults(previous.document),
-				};
-			});
-			for (const announce of pending.announce) await announce();
-			return result;
+		const pending: AfterCommit = { announce: [] };
+		const result = await this.deps.db.transaction(async (tx) => {
+			await this.#limitLockWait(tx, actor);
+			const [orchestration] = await tx
+				.select()
+				.from(orchestrations)
+				.where(eq(orchestrations.id, orchestrationId))
+				.for("update");
+			if (!orchestration) return undefined;
+			const source = await versionRow(tx, orchestrationId, number);
+			if (!source) return undefined;
+			const previous = await versionRow(tx, orchestrationId, orchestration.headVersion);
+			return {
+				version: await this.#append(tx, orchestration, source.document, actor, pending),
+				previous: previous && maskSecretDefaults(previous.document),
+			};
 		});
+		for (const announce of pending.announce) announce();
+		return result;
 	}
 
 	/** 在已加行锁的编排上追加下一个版本，并更新最新版本号。 */
@@ -686,7 +676,7 @@ export class OrchestrationStore {
 			.set({ headVersion: number })
 			.where(eq(orchestrations.id, orchestration.id));
 		const view = toVersionView(row as VersionRow, await sessionOfVersion(tx, row as VersionRow));
-		// 平台记录放在事务的最后：先 hold 会话的链，再记。
+		// 平台记录放在事务的最后（会话那一行的锁是最后拿的一把）。
 		await this.#recordForSession(tx, actor, orchestration, number, pending);
 		return view;
 	}

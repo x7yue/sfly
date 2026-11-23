@@ -28,10 +28,8 @@ export interface Step {
 	assigns: Array<{ conn: AgentConnection; message: ServerMessage }>;
 	/** 飞书通知在事务里留下的、提交后才能做的收尾（唤醒投递；src/feishu/engine-notifications.ts）。 */
 	notifications: PendingNotifications;
-	/** 事务提交之后才能做的收尾（推送会话里的平台记录：订阅的一方收到时库里要读得到它）。 */
-	afterCommit: Array<() => Promise<void>>;
-	/** 收尾之后放掉的东西（会话的链，{@link SessionStore.hold}）：事务不论成败，提交、收尾做完之后都放。 */
-	releases: Array<() => void>;
+	/** 事务提交之后才能做的收尾（推送会话里的平台记录：订阅的一方收到时库里要读得到它）；不等它们，不抛出。 */
+	afterCommit: Array<() => void>;
 }
 
 export interface CancelOrder {

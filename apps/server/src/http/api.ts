@@ -278,6 +278,18 @@ export function buildHttpApi({
 			reply.header("retry-after", Math.max(1, Math.ceil(error.retryAfterMs / 1000)));
 			return sendError(reply, 503, "server_busy", error.message);
 		}
+		// 会话令牌的写等行锁超过上限（src/sessions/session-store.ts 的 SESSION_WRITE_LOCK_TIMEOUT_MS）：事务已经回滚，这一次没有生效，
+		// 让对方稍后重试；不是控制面出错，不写错误日志里的堆栈，只记一行警告。
+		if (isLockTimeout(error)) {
+			request.log.warn("session write: lock wait timed out");
+			reply.header("retry-after", 1);
+			return sendError(
+				reply,
+				503,
+				"server_busy",
+				"这一次请求等锁超时（同一个会话或场景上有别的写没有做完），没有生效，请稍后重试",
+			);
+		}
 		// 客户端在排队等着验证密码时断开了（src/auth/password-gate.ts）：没有去验证，响应也没人收，不是错误，不写错误日志。
 		if (error instanceof PasswordGateAborted) return reply.code(499).send();
 		const status = error.statusCode ?? 500;
