@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sfly_agent::proto::{CancelTask, TaskStatus, server_message};
-use support::{AgentOptions, FakeControlPlane, assert_quiet_termination, spawn_agent, stub_task};
+use support::{
+    AgentOptions, FakeControlPlane, assert_quiet_termination, capture_stderr, spawn_agent,
+    stub_task, wait_until,
+};
 
 fn alive(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -88,6 +91,60 @@ async fn cancelled_task_sees_the_cancel_marker_and_terminates_gracefully() {
     assert_all_gone(&[pid]).await;
     // 取消是正常终止：日志里没有 ERROR 级的堆栈，只有一行 INFO 写明被终止。
     assert_quiet_termination(&cp.task_logs("task-cancel"));
+}
+
+#[tokio::test]
+async fn a_cancel_marker_that_cannot_be_written_does_not_stop_the_cancel_from_terminating_the_process_tree()
+ {
+    // 写取消标记失败（路径上已经有一个叫 `cancel` 的目录，EISDIR）：Agent 只在标准错误里写一行，
+    // 照常终止进程树，任务仍然以取消结束；不 panic，也不因为标记写不出来就不终止。
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-cancel-marker-fails");
+    options.pipe_stderr = true;
+    let mut agent = spawn_agent(options);
+    let stderr = capture_stderr(&mut agent);
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pids");
+
+    cp.assign(stub_task(
+        "task-marker-fails",
+        "process_tree",
+        json!({ "pid_file": pid_file, "block_cancel_marker": true }),
+    ))
+    .await;
+    let pids = pids(&wait_for_file(&pid_file).await);
+    let started = Instant::now();
+    cancel(&cp, "task-marker-fails", false).await;
+
+    let (result, _) = cp.result("task-marker-fails").await;
+    assert_eq!(result.status(), TaskStatus::Cancelled, "{result:?}");
+    // 进程树在宽限期（默认 10 秒）之内被终止：节点收到 SIGTERM 就退出，不需要等到强制杀掉。
+    assert!(started.elapsed() < Duration::from_secs(9));
+    assert_all_gone(&pids).await;
+    assert!(
+        agent
+            .work_dir
+            .path()
+            .join("task-marker-fails/cancel")
+            .is_dir()
+    );
+
+    wait_until("the failed marker write to be logged", || {
+        let lines = stderr.lock().unwrap();
+        lines
+            .iter()
+            .any(|l| l.contains("cannot write cancel marker"))
+    })
+    .await;
+    let lines = stderr.lock().unwrap().clone();
+    let failed: Vec<_> = lines
+        .iter()
+        .filter(|l| l.contains("cannot write cancel marker"))
+        .collect();
+    assert_eq!(failed.len(), 1, "{lines:?}");
+    assert!(failed[0].contains("task-marker-fails/cancel"), "{failed:?}");
+    assert!(lines.iter().all(|l| !l.contains("panicked")), "{lines:?}");
 }
 
 #[tokio::test]

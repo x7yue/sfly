@@ -8,11 +8,12 @@ const sidebar = (page: import("@playwright/test").Page) =>
 const breadcrumb = (page: import("@playwright/test").Page) =>
 	page.getByRole("navigation", { name: "面包屑" });
 
-test("侧边栏在七个一级页面之间切换，当前页高亮，面包屑跟随", async ({ page }) => {
+test("侧边栏在八个一级页面之间切换，当前页高亮，面包屑跟随", async ({ page }) => {
 	await page.goto("/");
 	await expect(breadcrumb(page)).toHaveText(/控制台/);
 
 	for (const [label, url] of [
+		["助手", /\/sessions\/?$/],
 		["场景编排", /\/orchestrations$/],
 		["运行记录", /\/runs$/],
 		["Agent 管理", /\/agents$/],
@@ -221,6 +222,7 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"关闭浮层",
 		"跳到通知",
 		"控制台",
+		"助手",
 		"场景编排",
 		"运行记录",
 		"Agent 管理",
@@ -246,6 +248,7 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		["g h", /\/docs$/],
 		["g r", /\/runs$/],
 		["g s", /\/orchestrations$/],
+		["g i", /\/sessions\/?$/],
 		["g d", /\/$/],
 	] as const) {
 		for (const key of keys.split(" ")) await page.keyboard.press(key);
