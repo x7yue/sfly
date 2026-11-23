@@ -356,19 +356,17 @@ export class SessionService {
 		if (!steered.steered) return "retry";
 		const seq = steered.event.seq;
 		try {
-			await client.steer(session.id, { message_id: messageId, text });
+			await client.steer(session.id, { turn: steered.turn, message_id: messageId, text });
 		} catch (error) {
 			this.deps.log?.(`会话 ${session.id} 的插话没有送到助手服务`, error);
 			const noTurn = error instanceof AssistantError && error.code === "no_turn_running";
-			const unknown = error instanceof AssistantUnreachableError && error.outcomeUnknown;
+			// 协议「插话」：409 写「没有送到」；超时、连不上、5xx 之类结果未知（助手服务可能已经收下了），写「没有确认送到」。
 			await sessions.append(session.id, {
 				type: "notice",
 				kind: "steer_dropped",
 				message: noTurn
 					? "这句插话没有送到：这一轮刚好结束了（或者正在停止），需要的话再说一次"
-					: unknown
-						? "这句插话可能没有送到（助手服务没有及时回应），需要的话再说一次"
-						: "这句插话没有送到助手服务，需要的话再说一次",
+					: "这句插话没有确认送到助手（助手服务没有及时回应或者出错了），需要的话再说一次",
 				message_id: messageId,
 			});
 			if (noTurn) return { ok: true, value: { seq } };
@@ -493,7 +491,7 @@ export class SessionService {
 					// 尽力而为：连不上就算了。
 				});
 			}
-			await sessions.append(session.id, failureEnd(turn, failure));
+			await sessions.appendTurnEnd(session.id, failureEnd(turn, failure));
 			return rejected(failure.status, failure.code, failure.message);
 		}
 		return { ok: true, value: { seq: 0 } };
@@ -524,9 +522,10 @@ export class SessionService {
 	 *   后面的会话的位置随之更新（各推一条 `turn_queued`）；不需要助手服务；
 	 * - **空闲、已结束**：不改会话（助手没有配置时仍是 503，和别的写一样）；空闲的会话仍向助手服务补发一次带轮次的中止，
 	 *   见下面；
-	 * - **在做**：先把这一轮的中止发给助手服务，它会带回这一轮的 `turn_end`（等的时间 {@link STOP_GRACE_MS}，23 秒：
-	 *   助手服务先用 pi 的 `abort` 等 10 秒、不行才结束进程）；助手服务没有配置、连不上、不认识这一轮、或者没有及时带回结局时，
-	 *   **由控制面自己补一条结局为 `stopped` 的 `turn_end`**，会话回到空闲：助手服务不回话，用户也停得下来，项目不会因此一直
+	 * - **在做**：先把这一轮的中止发给助手服务，它会带回这一轮的 `turn_end`（等的时间 {@link STOP_GRACE_MS}，23 秒，
+	 *   **从发出中止的那一刻起算**：助手服务先用 pi 的 `abort` 等 10 秒、不行才结束进程）；助手服务没有配置、连不上、不认识这一轮、
+	 *   或者没有及时带回结局时，**由控制面自己补一条结局为 `stopped` 的 `turn_end`**（之前为这一轮里没有确认送到的插话各补一条
+	 *   `steer_dropped`，{@link SessionStore.appendTurnEnd}），会话回到空闲：助手服务不回话，用户也停得下来，项目不会因此一直
 	 *   开不了新的一轮。**结束的是「此刻在做的那一轮」**：停止一开始就记下是第几轮，结束时按它核对
 	 *   （`SessionStore.append`）——这一轮已经结束、会话开始了下一轮，就不会把新的一轮结束掉。助手服务晚到的同一轮的结局不再记
 	 *   （同一轮的 `turn_end` 只记一条）。这一轮结束时项目的位置空出来，排队的最早一个开始（`SessionStore.onTurnEnd`）。
@@ -557,6 +556,8 @@ export class SessionService {
 		// 中止送到了，或者结果未知（命令超时、连接在发出请求之后断了：助手服务可能已经收下了、只是没来得及回应）：都要等助手服务
 		// 带回结局；一定没送到（连接被拒绝、域名解析不了……）或者被拒绝才由控制面马上结束这一轮。
 		let aborted = false;
+		// 协议「停止一轮」：等结局的时间从**发出 `abort` 的那一刻**起算，不是收到 202 的那一刻（余量盖住两边起点的差）。
+		const sentAt = Date.now();
 		if (client) {
 			try {
 				await client.abort(current.id, turn);
@@ -571,7 +572,8 @@ export class SessionService {
 				);
 			}
 		}
-		if (aborted && (await this.#settled(current.id, turn))) return { ok: true, value: null };
+		if (aborted && (await this.#settled(current.id, turn, sentAt)))
+			return { ok: true, value: null };
 		await this.#endTurn(
 			current,
 			turn,
@@ -586,8 +588,9 @@ export class SessionService {
 	/**
 	 * 结束会话：之后不再接受消息（409 `session_ended`），工作区、提交、场景版本、运行都留着，不删除任何东西。
 	 * 在做的一轮先停止（{@link SessionService.stop}，等它的结局），排队的移出队列（`queue_cancelled`），然后会话改成
-	 * `ended` 并写 `session_ended`（一个事务，{@link SessionStore.end}），再把 `end` 发给助手服务（它结束这个会话的进程；
-	 * 尽力而为：连不上时会话照样已经结束，进程由助手服务自己回收，#545）。已经结束的再调用无害（什么也不写）。
+	 * `ended` 并写 `session_ended`（一个事务，{@link SessionStore.end}）；**先把 `end` 发给助手服务**（它结束这个会话的进程；
+	 * 尽力而为：连不上时会话照样结束，进程由助手服务自己回收，#545），**再写 `session_ended`**（协议「结束会话」的先后）。
+	 * 已经结束的再调用无害（什么也不写）。
 	 * 助手没有配置时 503（和别的写一样）。结束之后调用 `onEnded`（会话令牌合入之后在那里吊销）。
 	 * 停止到结束之间会话又开始了一轮（别人刚好说了话）就再停一次，最多三次，还不行是 409 `turn_running`。
 	 */
@@ -607,13 +610,15 @@ export class SessionService {
 				if (cancelled.cancelled) await this.#announceQueue(current.projectId);
 				continue;
 			}
-			const ended = await sessions.end(current.id, actor.nickname);
-			if (!ended.ended) continue;
+			// 协议「结束会话」的先后：这一轮的结局已经有了（上面停止、等到），**再发 `end`**，再写 `session_ended`。`end`
+			// 收到就回 202，尽力而为：连不上时会话照样结束，进程由助手服务自己回收（#545）。
 			try {
 				await configured.value.end(current.id);
 			} catch (error) {
-				this.deps.log?.(`会话 ${current.id} 已经结束，但没能通知助手服务结束它的进程`, error);
+				this.deps.log?.(`会话 ${current.id} 要结束了，但没能通知助手服务结束它的进程`, error);
 			}
+			const ended = await sessions.end(current.id, actor.nickname);
+			if (!ended.ended) continue;
 			try {
 				await this.deps.onEnded?.(current);
 			} catch (error) {
@@ -624,9 +629,12 @@ export class SessionService {
 		return rejected(409, "turn_running", "会话又开始了一轮，先停止再结束");
 	}
 
-	/** 等第 `turn` 轮结束（会话离开「在做」，或已经在做下一轮），最多等宽限那么久；返回等到了没有。 */
-	async #settled(sessionId: string, turn: number): Promise<boolean> {
-		const deadline = Date.now() + (this.deps.stopGraceMs ?? STOP_GRACE_MS);
+	/**
+	 * 等第 `turn` 轮结束（会话离开「在做」，或已经在做下一轮），最多等到 `since`（发出中止的那一刻）之后的宽限；
+	 * 返回等到了没有。
+	 */
+	async #settled(sessionId: string, turn: number, since: number): Promise<boolean> {
+		const deadline = since + (this.deps.stopGraceMs ?? STOP_GRACE_MS);
 		for (;;) {
 			const row = await this.deps.sessions.find(sessionId);
 			if (!row || row.status !== "running" || effectiveTurn(row) !== turn) return true;
@@ -644,7 +652,7 @@ export class SessionService {
 		reason: string,
 	): Promise<void> {
 		const { sessions, clock } = this.deps;
-		await sessions.append(session.id, {
+		await sessions.appendTurnEnd(session.id, {
 			type: "turn_end",
 			turn,
 			outcome,

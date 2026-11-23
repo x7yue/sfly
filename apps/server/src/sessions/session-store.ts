@@ -10,7 +10,7 @@ import {
 	type SessionStatus,
 	TurnOutcome,
 } from "@sfly/schema";
-import { and, asc, desc, eq, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import { projects, sessionEvents, sessions } from "../db/schema.js";
@@ -84,6 +84,12 @@ function parsePersistent(body: SessionEventBody): SessionEventBody {
 /** 会话此刻在做的那一轮：在做的会话没有记过轮次（旧数据、测试里直接写库造的）时当作第 1 轮。 */
 export const effectiveTurn = (session: Pick<SessionRow, "currentTurn">): number =>
 	Math.max(1, session.currentTurn);
+
+/** 提示里引用一句话的原文：太长的截断（按字符，不切开代理对）。 */
+function clip(text: string, max = 40): string {
+	const chars = [...text];
+	return chars.length <= max ? text : `${chars.slice(0, max).join("")}…`;
+}
 
 /** 事务里记一条持久事件的结果：落库（或已有）的事件，以及是不是重复的（这一轮已经有 `turn_end`）。 */
 interface Inserted {
@@ -167,6 +173,16 @@ export class SessionStore {
 
 	/** 一轮结束、项目的位置空出来之后调用（见 {@link SessionStore.onTurnEnd}）。 */
 	#turnEndListener: ((project: ProjectId) => void) | undefined;
+
+	/**
+	 * 每个会话此刻这一轮里「确认送到」的插话（协议「插话」一节）：助手服务的 `steer_queue`（还没送到的完整列表）里出现过，
+	 * 之后又收到过一份不含它的。助手服务决定结束一轮之后不再发 `steer_queue`，所以「不含它」只可能是送到了。只放内存：
+	 * 控制面重启之后这一轮由兜底结束，没有确认的都按没有确认送到处理（保守）。
+	 */
+	readonly #steerSeen = new Map<
+		string,
+		{ turn: number; listed: Set<string>; delivered: Set<string> }
+	>();
 
 	constructor(private readonly deps: SessionStoreDeps) {}
 
@@ -765,7 +781,10 @@ export class SessionStore {
 				return this.#insert(tx, session, parsed, at);
 			});
 			if (!stored.duplicate) await this.#publishCommitted(sessionId, [stored.event]);
-			if (stored.endedTurn) this.#turnEnded(stored.project);
+			if (stored.endedTurn) {
+				this.#steerSeen.delete(sessionId);
+				this.#turnEnded(stored.project);
+			}
 			return stored.event;
 		});
 	}
@@ -798,7 +817,10 @@ export class SessionStore {
 			);
 			if ("dropped" in result) return { dropped: result.dropped };
 			if (!result.stored.duplicate) await this.#publishCommitted(sessionId, [result.stored.event]);
-			if (result.stored.endedTurn) this.#turnEnded(result.stored.project);
+			if (result.stored.endedTurn) {
+				this.#steerSeen.delete(sessionId);
+				this.#turnEnded(result.stored.project);
+			}
 			return { stored: result.stored.event };
 		});
 	}
@@ -820,9 +842,124 @@ export class SessionStore {
 				.where(eq(sessions.id, sessionId));
 			const dropped = session ? dropReason(session, turn) : "unknown_session";
 			if (dropped !== undefined) return { dropped };
+			if (parsed.type === "steer_queue") this.#trackSteerQueue(sessionId, turn, parsed);
 			this.#live.publish(sessionId, parsed);
 			return { published: true as const };
 		});
+	}
+
+	/** 记下一份 `steer_queue`：里面的都算「出现过」，出现过又不在这一份里的算「确认送到」。 */
+	#trackSteerQueue(sessionId: string, turn: number, event: SessionEvent): void {
+		if (event.type !== "steer_queue") return;
+		let seen = this.#steerSeen.get(sessionId);
+		if (!seen || seen.turn !== turn) {
+			seen = { turn, listed: new Set(), delivered: new Set() };
+			this.#steerSeen.set(sessionId, seen);
+		}
+		const now = new Set(event.messages.map((m) => m.message_id));
+		for (const id of seen.listed) if (!now.has(id)) seen.delivered.add(id);
+		for (const id of now) seen.listed.add(id);
+	}
+
+	/**
+	 * 控制面自己补一轮的结局（助手服务没有回话、停止等不到结局、兜底、这一轮没有交到助手服务手上）：和一般的 {@link append}
+	 * 一样写这条 `turn_end`，**之前**先为这一轮里没有确认送到、也还没有 `steer_dropped` 的每一句插话各写一条 `steer_dropped`
+	 * （`message` 写「没有确认送到」），全部在一个事务里。助手服务的结局晚到时这一轮已经结束，它的 `steer_dropped` 和 `turn_end`
+	 * 被丢掉，所以每句插话要么确认送到、要么恰有控制面或助手服务写的 `steer_dropped`（协议的不变式）。「这一轮里的插话」是这一轮
+	 * `turn_started` 之后写的 `user_message`（`steer` 为 true）；这一轮已经有 `turn_end` 的（重复）不补。
+	 */
+	async appendTurnEnd(
+		sessionId: string,
+		body: SessionEventBody,
+		at: Date = this.deps.clock.now(),
+	): Promise<PersistedSessionEvent> {
+		const parsed = parsePersistent(body);
+		if (parsed.type !== "turn_end") throw new Error("appendTurnEnd 只记 turn_end");
+		const turn = parsed.turn;
+		return this.#serial(sessionId, async () => {
+			const stored = await this.deps.db.transaction(async (tx) => {
+				const session = await lockSession(tx, sessionId);
+				const drops: Inserted[] = [];
+				for (const message of await this.#unconfirmedSteers(tx, session, turn)) {
+					const dropped = {
+						type: "notice" as const,
+						kind: "steer_dropped" as const,
+						message: `这句插话没有确认送到（这一轮由控制面结束，助手服务没有带回结局）：「${clip(message.text)}」，需要的话再说一次`,
+						message_id: message.message_id,
+					};
+					drops.push(await this.#insert(tx, session, parsePersistent(dropped), at));
+				}
+				return { drops, end: await this.#insert(tx, session, parsed, at) };
+			});
+			for (const drop of stored.drops) await this.#publishCommitted(sessionId, [drop.event]);
+			if (!stored.end.duplicate) await this.#publishCommitted(sessionId, [stored.end.event]);
+			if (stored.end.endedTurn) this.#turnEnded(stored.end.project);
+			this.#steerSeen.delete(sessionId);
+			return stored.end.event;
+		});
+	}
+
+	/** 这一轮里还没有确认送到、也还没有 `steer_dropped` 的插话（按说的先后）；这一轮已经有 `turn_end` 时没有。 */
+	async #unconfirmedSteers(
+		tx: Tx,
+		session: SessionRow,
+		turn: number,
+	): Promise<Array<{ message_id: string; text: string }>> {
+		const [ended] = await tx
+			.select({ seq: sessionEvents.seq })
+			.from(sessionEvents)
+			.where(
+				and(
+					eq(sessionEvents.sessionId, session.id),
+					sql`${sessionEvents.type} = 'turn_end'`,
+					sql`${sessionEvents.payload}->>'turn' = ${String(turn)}`,
+				),
+			)
+			.limit(1);
+		if (ended) return [];
+		const [started] = await tx
+			.select({ seq: sessionEvents.seq })
+			.from(sessionEvents)
+			.where(
+				and(
+					eq(sessionEvents.sessionId, session.id),
+					sql`${sessionEvents.type} = 'turn_started'`,
+					sql`${sessionEvents.payload}->>'turn' = ${String(turn)}`,
+				),
+			)
+			.limit(1);
+		const rows = await tx
+			.select()
+			.from(sessionEvents)
+			.where(
+				and(
+					eq(sessionEvents.sessionId, session.id),
+					gt(sessionEvents.seq, started?.seq ?? 0),
+					or(
+						and(
+							sql`${sessionEvents.type} = 'user_message'`,
+							sql`${sessionEvents.payload}->>'steer' = 'true'`,
+						),
+						and(
+							sql`${sessionEvents.type} = 'notice'`,
+							sql`${sessionEvents.payload}->>'kind' = 'steer_dropped'`,
+						),
+					),
+				),
+			)
+			.orderBy(asc(sessionEvents.seq));
+		const seen = this.#steerSeen.get(session.id);
+		const delivered = seen?.turn === turn ? seen.delivered : new Set<string>();
+		const dropped = new Set<string>();
+		const steers: Array<{ message_id: string; text: string }> = [];
+		for (const row of rows) {
+			const payload = row.payload as { message_id?: string; text?: string };
+			if (row.type === "notice" && payload.message_id) dropped.add(payload.message_id);
+			if (row.type === "user_message" && payload.message_id) {
+				steers.push({ message_id: payload.message_id, text: payload.text ?? "" });
+			}
+		}
+		return steers.filter((m) => !dropped.has(m.message_id) && !delivered.has(m.message_id));
 	}
 
 	/** 提交之后按顺序发布（测试缝 `afterCommit` 在每条发布之前）。 */

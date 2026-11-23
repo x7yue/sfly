@@ -171,8 +171,9 @@ export interface ControlPlaneOptions {
 	 */
 	onSessionEnded?: (session: SessionRow) => Promise<void>;
 	/**
-	 * 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 `STOP_GRACE_MS`（13 秒：助手服务强制结束
-	 * 进程的宽限 10 秒加 3 秒余量，不能短于它）；超过由控制面结束这一轮。测试里调小。
+	 * 停止会话时，从发出中止的那一刻起最多等多久助手服务把这一轮的结局带回来（毫秒），默认 `STOP_GRACE_MS`（协议里的
+	 * `ASSISTANT_STOP_WAIT_MS`，23 秒：等 `agent_settled` 10 秒、结束进程的宽限 10 秒、加 3 秒余量，不能短于它）；超过由控制面
+	 * 结束这一轮（并为没有确认送到的插话补 `steer_dropped`）。测试里调小。
 	 */
 	sessionStopGraceMs?: number;
 	/** 发给助手服务的命令（不含事件流和 `/health`）最多等多久（毫秒），默认 10 秒；测试里调小。 */
