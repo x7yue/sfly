@@ -7,7 +7,7 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
 import { Page, PageHeader } from "#/components/page";
@@ -118,7 +118,7 @@ function StopButton({ id }: { id: string }) {
 			// 这一轮结束时这个按钮随之消失：焦点交给输入框（components/focus-recovery）。
 			data-focus-successor={COMPOSER_SELECTOR}
 		>
-			{SESSION.page.stop}
+			{stop.isPending ? SESSION.page.stopping : SESSION.page.stop}
 		</Button>
 	);
 }
@@ -130,6 +130,7 @@ function StopButton({ id }: { id: string }) {
 function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const client = useQueryClient();
 	const [text, setText] = useState("");
+	const field = useRef<HTMLTextAreaElement>(null);
 	const blockedId = useId();
 	const send = useMutation({
 		mutationFn: (message: string) =>
@@ -144,7 +145,13 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const empty = text.trim() === "";
 	const canSend = blocked === null && !empty && !send.isPending;
 	const submit = () => {
-		if (canSend) send.mutate(text);
+		if (!canSend) return;
+		// 发出的这一刻就把焦点交给输入框：「发送」随即不可用，浏览器会让被禁用的按钮失去焦点、落到 body 上
+		// （点「发送」或 Tab 到「发送」按 Enter；Safari 里点按钮本来就拿不到焦点，焦点也已经在 body 上），
+		// 之后没有人再把它放回来。输入框一直在、写完下一句可以接着写；发送失败时焦点在输入框、写好的话还在。
+		// 之后用户自己把焦点移到别处就不再动它。
+		field.current?.focus();
+		send.mutate(text);
 	};
 	if (status === "ended") {
 		return <p className="mt-4 text-sm text-fg-3">{SESSION.page.ended}</p>;
@@ -159,6 +166,7 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 			}}
 		>
 			<Textarea
+				ref={field}
 				data-session-composer
 				aria-label={SESSION.page.sendLabel}
 				aria-describedby={blocked === null ? undefined : blockedId}
@@ -168,8 +176,12 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 				rows={2}
 				onChange={(event) => setText(event.target.value)}
 				onKeyDown={(event) => {
-					// Ctrl/⌘+Enter 只在输入框里发送（登记在快捷键面板里，但不是全局快捷键）；输入法选字时的 Enter 不算。
-					if (isShortcut("assistant-send", event) && !event.nativeEvent.isComposing) {
+					// Ctrl/⌘+Enter 只在输入框里发送（登记在快捷键面板里，但不是全局快捷键）；输入法选字时的 Enter 不算
+					// （keyCode 229：Safari 在组字结束的那次按键上 isComposing 已经是 false）。
+					if (
+						isShortcut("assistant-send", event) &&
+						!(event.nativeEvent.isComposing || event.keyCode === 229)
+					) {
 						event.preventDefault();
 						submit();
 					}

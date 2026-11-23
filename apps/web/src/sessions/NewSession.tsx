@@ -68,8 +68,12 @@ export function NewSession({
 				rows={3}
 				onChange={(event) => setText(event.target.value)}
 				onKeyDown={(event) => {
-					// Ctrl/⌘+Enter 开始（和会话页的「接着说」同一个快捷键），只在输入框里；Enter 是换行。
-					if (isShortcut("assistant-send", event) && !event.nativeEvent.isComposing) {
+					// Ctrl/⌘+Enter 开始（和会话页的「接着说」同一个快捷键），只在输入框里；Enter 是换行；输入法选字时的 Enter 不算
+					// （keyCode 229：Safari 在组字结束的那次按键上 isComposing 已经是 false）。
+					if (
+						isShortcut("assistant-send", event) &&
+						!(event.nativeEvent.isComposing || event.keyCode === 229)
+					) {
 						event.preventDefault();
 						start();
 					}

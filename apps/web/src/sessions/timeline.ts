@@ -375,10 +375,8 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 }
 
 /**
- * 会话页打开时的状态：最近一页持久事件（序号升序），状态由这一页里最后一条状态性的事件推出来（`turn_started` 在做、
- * `turn_end` 空闲、`session_ended` 结束，见 `applyEvent`）；这一页里没有状态性的事件（没有事件，或一页全是工具行）时才用
- * 会话视图里的状态。事件流是从这一页最大的序号之后接的：页面显示的状态要和它收下的事件对得上，视图里的状态是另一次读取的，
- * 万一和事件不一致（读到「在做」之后这一轮结束了），不能让页面停在一个不会再有事件来改的状态上。`hasMore` 是接口的 `has_more`。
+ * 会话页打开时的状态：会话视图里的状态，加上最近一页持久事件（序号升序）。状态以会话视图为准（那是读取这一刻的），
+ * 不由这一页历史推出来；`hasMore` 是接口的 `has_more`。
  */
 export function initialTimeline(
 	status: SessionStatus,
@@ -386,7 +384,7 @@ export function initialTimeline(
 	hasMore: boolean,
 ): TimelineState {
 	const built = events.reduce(applyEvent, emptyTimeline(status));
-	return { ...built, thinking: false, hasMore };
+	return { ...built, status, thinking: false, hasMore };
 }
 
 /**

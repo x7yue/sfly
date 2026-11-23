@@ -365,42 +365,15 @@ describe("会话时间线：由事件序列算出", () => {
 });
 
 describe("会话页打开：最近一页历史、接着事件流、往前翻页", () => {
-	it("序号和翻页的游标取自历史", () => {
+	it("状态以会话视图为准，不由这一页历史推出来；序号和翻页的游标取自历史", () => {
 		const state = initialTimeline("running", [user(5), started(6)], true);
+		expect(state.status).toBe("running");
 		expect(state.lastSeq).toBe(6);
 		expect(state.oldestSeq).toBe(5);
 		expect(state.hasMore).toBe(true);
-		expect(state.thinking).toBe(false);
-	});
-
-	it("状态由这一页里最后一条状态性的事件推出来（turn_started 在做、turn_end 空闲、session_ended 结束），视图里的状态不算", () => {
-		// 读到视图里的「在做」之后这一轮结束了：响应带着状态「在做」和已经带着 turn_end 的事件。事件流从这一页最大的序号之后接，
-		// 这条结局不会再来，页面不能停在「在做」。
-		const raced = initialTimeline("running", [user(1), started(2), end(3, "completed")], false);
-		expect(raced.status).toBe("idle");
-		// 反过来：视图说空闲，事件里最后是 turn_started。
-		expect(initialTimeline("idle", [user(1), started(2)], false).status).toBe("running");
-		// 一页里有几轮：看最后一条。
-		expect(
-			initialTimeline(
-				"idle",
-				[started(1, 1), end(2, "completed", { turn: 1 }), started(3, 2)],
-				false,
-			).status,
-		).toBe("running");
-		expect(
-			initialTimeline("running", [{ type: "session_ended", seq: 4, at: at(), by: "alice" }], false)
-				.status,
-		).toBe("ended");
-	});
-
-	it("这一页里没有状态性的事件时用会话视图里的状态：没有事件、或一页全是工具行", () => {
-		expect(initialTimeline("idle", [], false).status).toBe("idle");
-		expect(initialTimeline("running", [], false).status).toBe("running");
-		expect(initialTimeline("ended", [], false).status).toBe("ended");
-		const tools = [call(7, "c", "command", "make"), result(8, "c")];
-		expect(initialTimeline("running", tools, true).status).toBe("running");
-		expect(initialTimeline("idle", tools, true).status).toBe("idle");
+		const idle = initialTimeline("idle", [user(1), started(2)], false);
+		expect(idle.status).toBe("idle");
+		expect(idle.thinking).toBe(false);
 	});
 
 	it("事件流从最大序号之后接上；重叠的事件不重复", () => {
