@@ -152,6 +152,11 @@ test.describe("开发文档", () => {
 			await expectInlineLink(article.getByRole("link", { name }), { dimmerAround: false });
 		}
 	});
+
+	test("文档页底部「Markdown 原文」的链接是行内链接的样式（周围是灰色小字）", async ({ page }) => {
+		await page.goto("/docs/quickstart");
+		await expectInlineLink(page.getByRole("link", { name: "/docs/quickstart.md" }));
+	});
 });
 
 test.describe("昵称弹窗", () => {
@@ -213,5 +218,20 @@ test("运行监控底部面板：输入输出里的产物引用是行内链接�
 		.click();
 	await expectInlineLink(page.getByRole("link", { name: /artifacts\/report\.html/ }), {
 		dimmerAround: false,
+	});
+});
+
+test.describe("令牌页", () => {
+	const ADMIN = { loginName: "root", password: "admin-password-1", displayName: "管理员" };
+	test.use({ nickname: null, controlPlaneOptions: { initialAdmin: ADMIN } });
+
+	test("个人令牌页说明里指向项目令牌页的链接是行内链接的样式", async ({ page }) => {
+		await page.goto("/login");
+		await page.getByLabel("登录名").fill(ADMIN.loginName);
+		await page.getByLabel("密码").fill(ADMIN.password);
+		await page.getByRole("button", { name: "登录" }).click();
+		await expect(page.getByRole("banner").getByRole("button", { name: /管理员/ })).toBeVisible();
+		await page.goto("/account/tokens");
+		await expectInlineLink(page.getByRole("link", { name: "项目令牌" }));
 	});
 });
