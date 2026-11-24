@@ -79,7 +79,7 @@ export function installProcessGuards(options: ProcessGuardsOptions): ProcessGuar
 		exit(1);
 	};
 
-	/** 往终端写东西只走 `util/output.ts` 的 `printError`（它先去掉数据库的参数：错误带着语句的参数，原样打印会把保密的值带进日志）。 */
+	/** 往终端写东西只走 `util/output.ts` 的 `printError`（它先去掉数据库的参数：错误带着语句的参数，原样打印会把 secret 值带进日志）。 */
 	const print = (what: string, error: unknown): void => {
 		printError(what, error === undefined ? undefined : describeThrown(error));
 	};

@@ -43,7 +43,7 @@ export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
 	onLocate?: (nodeId: string) => void;
 	/**
-	 * 「再次运行」的来源运行：入口参数用它的值预填（敏感参数不沿用，需要重新填写），预设选中它用的预设
+	 * 「再次运行」的来源运行：入口参数用它的值预填（secret 参数不沿用，需要重新填写），预设选中它用的预设
 	 * （预设用不了时在表单上方写明原因），不看浏览器里记住的预设。不给时是直接运行。
 	 */
 	rerunOf?: RerunSource;

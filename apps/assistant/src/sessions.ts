@@ -39,7 +39,7 @@ import type { UpstreamError } from "./upstream-error.js";
  * - 同时活着的 pi 进程数有上限（{@link MAX_PROCESSES}）。到了上限时，先关掉最久没用的**空闲**进程（关 stdin：
  *   它没有在做的一轮，#539 第 8 题）；没有空闲的就拒绝（503 `process_limit`，控制面把这一轮记成 `failed`）。
  *   为了回收而关 stdin 只对空闲的进程做（一轮进行中关了，pi 不等这一轮做完）；停止、上限走结束进程。
- * - 保密环境变量的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（redact.ts）。
+ * - secret 环境变量的值在发出事件、写下 pi 的原始事件、写日志之前按值打码（redact.ts）。
  */
 
 export const TURN_LIMITS = {
@@ -150,7 +150,7 @@ export class SessionManager {
 
 	/**
 	 * 上次（被强行结束时）留下的东西：每个 pi 进程的设置目录（里面有模型文件的副本）、每一轮的配置文件（里面有
-	 * 保密值的原文）、pi 的临时目录。正常退出时这些都已经删了；被 SIGKILL、容器被杀时会留下，启动时清掉。
+	 * secret 值的原文）、pi 的临时目录。正常退出时这些都已经删了；被 SIGKILL、容器被杀时会留下，启动时清掉。
 	 */
 	#cleanLeftovers(): void {
 		const { dataDir } = this.options;
@@ -162,7 +162,7 @@ export class SessionManager {
 	}
 
 	/**
-	 * 一段原文（上游的错误、工作台连接上的报错）写进日志之前：按这个会话的保密值和模型文件引用的环境变量的值打码，
+	 * 一段原文（上游的错误、工作台连接上的报错）写进日志之前：按这个会话的 secret 值和模型文件引用的环境变量的值打码，
 	 * 再按形状打码（`Authorization`、`Bearer`、地址里的用户名密码），截到上限（redact.ts 的 `forLog`）。
 	 */
 	#forLog(session: Session, text: string): string {

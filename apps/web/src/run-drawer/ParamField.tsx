@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { type FieldValue, hasHiddenDefault } from "./trigger-form";
 
-/** 敏感参数临时显示的时长。 */
+/** secret 参数临时显示的时长。 */
 const REVEAL_MS = 5000;
 
 /** 只在下划线后断行，不在单词中间断开；用 <wbr>，它不进读屏名称与复制的文字。 */
@@ -34,7 +34,7 @@ const defaultHelp = (param: ParamDeclView): string | null =>
 			: null;
 
 /**
- * 一个入口参数的表单行：标签（名称、类型、是否敏感）与按类型渲染的控件，下面依次是错误、参数的说明和帮助文字。
+ * 一个入口参数的表单行：标签（名称、类型、是否 secret）与按类型渲染的控件，下面依次是错误、参数的说明和帮助文字。
  * 运行抽屉和运行预设的编辑表单共用。外层是网格，这一行占满整行（subgrid）：标签列、控件列，
  * 给了 `leading` 时最前面再多一列，外层网格要按列数排好。
  */
@@ -69,9 +69,9 @@ export function ParamField({
 	kept?: boolean;
 	onReplace?: () => void;
 	/**
-	 * 留空时由控制面按默认值填入（运行抽屉）：敏感参数的默认值读不回来，输入框里用占位文字说明已设置，
+	 * 留空时由控制面按默认值填入（运行抽屉）：secret 参数的默认值读不回来，输入框里用占位文字说明已设置，
 	 * 布尔参数是三选一的下拉（使用默认值 / true / false），看得出「没动过」和「选了关」的区别。
-	 * 运行预设的编辑表单不是这样：预设固定一个值，敏感的布尔参数要选 true 或 false。
+	 * 运行预设的编辑表单不是这样：预设固定一个值，secret 的布尔参数要选 true 或 false。
 	 */
 	blankUsesDefault?: boolean;
 }) {
@@ -114,12 +114,12 @@ export function ParamField({
 	const change = (next: FieldValue) => onChange?.(next);
 	const blur = () => onBlur?.();
 	const hidden = param.secret && !revealed;
-	// 敏感参数的默认值读不回来（控制面给的是占位符），表单里留空：留空就由控制面按默认值填入。
+	// secret 参数的默认值读不回来（控制面给的是占位符），表单里留空：留空就由控制面按默认值填入。
 	const keptDefault =
 		blankUsesDefault && hasHiddenDefault(param) && !locked ? "已设置默认值，留空使用" : undefined;
 	// 锁定的 secret 参数拿到的已经是打码后的值，不论类型都显示成一个只读的密码框。
 	const masked = locked && param.secret;
-	// 敏感的布尔参数没有可显示的值：开关只有开和关，没有「没选」，所以用下拉（见 blankUsesDefault）。
+	// secret 的布尔参数没有可显示的值：开关只有开和关，没有「没选」，所以用下拉（见 blankUsesDefault）。
 	const choice =
 		param.type === "boolean" &&
 		param.secret &&
@@ -235,7 +235,7 @@ export function ParamField({
 				{locked && <LockIcon aria-hidden className="ml-1 inline size-3 align-baseline text-fg-3" />}
 				<span className="block font-mono text-xs text-fg-3">
 					{param.type}
-					{param.secret && " · 敏感"}
+					{param.secret && " · secret"}
 				</span>
 			</label>
 			<div className="flex min-w-0 flex-col gap-1.25">

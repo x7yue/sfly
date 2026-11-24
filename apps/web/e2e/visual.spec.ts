@@ -1156,7 +1156,7 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-zoom.png");
 	});
 
-	test("入口参数与敏感参数", async ({ page }) => {
+	test("入口参数与 secret 参数", async ({ page }) => {
 		await nodeCard(page, "entry").click();
 		await idle(page);
 		await expect(page.getByRole("group", { name: "参数 api_token" })).toBeVisible();

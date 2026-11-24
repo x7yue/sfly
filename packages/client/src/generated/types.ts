@@ -1706,7 +1706,7 @@ export interface ParamDeclView {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
-	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	/** 搭场景的人写的一行说明；secret 参数的说明照常给出，只有值打码。 */
 	description?: string;
 }
 
@@ -2638,7 +2638,7 @@ export interface RunReportFailedTask {
 		kind: string;
 		/** 失败原因的一行（同 `RunStateError` 的 `headline`）。 */
 		headline: string;
-		/** 完整的错误信息：异常信息加堆栈，原文（已按保密参数的值打码）。 */
+		/** 完整的错误信息：异常信息加堆栈，原文（已按 secret 参数的值打码）。 */
 		detail: string;
 		/** 节点代码里出错的位置，同 `RunStateError` 的 `location`；没有时为 null。 */
 		location: string | null;
@@ -2682,7 +2682,7 @@ export interface RunStateChain {
 	nodes: RunStateNode[];
 }
 
-/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的保密参数的值打码，和运行视图里看到的一样。 */
+/** 一个失败节点的错误（最近一次尝试的）。错误信息按这次运行的 secret 参数的值打码，和运行视图里看到的一样。 */
 export interface RunStateError {
 	/** 错误类型：node_error（节点代码抛出异常）、timeout、agent_lost、env_error、config_error。 */
 	kind: string;

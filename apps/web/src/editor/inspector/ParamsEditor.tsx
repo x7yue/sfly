@@ -21,14 +21,14 @@ import { ZoomEditor } from "./ZoomEditor";
 type Param = Extract<OrchestrationNode, { kind: "entry" }>["params"][number];
 type ParamType = Param["type"];
 
-/** 敏感参数的默认值临时显示的时长（用户故事 31）。 */
+/** secret 参数的默认值临时显示的时长（用户故事 31）。 */
 export const REVEAL_MS = 5000;
 
 /**
- * 入口节点 / 子流程入口节点的参数声明：名称、类型、说明、默认值、必填、敏感。
+ * 入口节点 / 子流程入口节点的参数声明：名称、类型、说明、默认值、必填、secret。
  * 说明是一行文字，触发表单、子流程参数映射表单和命令行的参数表里显示；不影响执行。
- * 敏感参数的默认值默认隐藏，可以临时显示 5 秒；取消「敏感」需要二次确认。
- * 已保存的敏感默认值读不回来：控制面给的是占位符（SECRET_MASK），这里显示成「已设置」，可以整个替换，和运行预设里的敏感值一致；
+ * secret 参数的默认值默认隐藏，可以临时显示 5 秒；取消「secret」需要二次确认。
+ * 已保存的 secret 默认值读不回来：控制面给的是占位符（SECRET_MASK），这里显示成「已设置」，可以整个替换，和运行预设里的 secret 值一致；
  * 不动它保存，新版本沿用原来的值。
  * 名称不合法、重复（errors）与默认值解析失败（字段草稿）都会阻止保存。
  */
@@ -142,7 +142,7 @@ export function ParamsEditor({
 								onCheckedChange={(required) => update(index, { required })}
 							/>
 							<Switch
-								label="敏感"
+								label="secret"
 								checked={param.secret}
 								onCheckedChange={(secret) =>
 									secret ? update(index, { secret }) : setConfirming(index)
@@ -168,7 +168,7 @@ export function ParamsEditor({
 			<Dialog open={pending !== undefined} onOpenChange={(open) => !open && setConfirming(null)}>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>取消参数 {pending?.name} 的「敏感」标记？</DialogTitle>
+						<DialogTitle>取消参数 {pending?.name} 的「secret」标记？</DialogTitle>
 						<DialogDescription>
 							取消后，它的默认值和每次运行传入的值会在编辑器、触发表单、运行监控和日志里明文显示。
 							{pending &&
@@ -178,7 +178,7 @@ export function ParamsEditor({
 					</DialogHeader>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => setConfirming(null)}>
-							保持敏感
+							保持 secret
 						</Button>
 						<Button
 							variant="danger"
@@ -195,7 +195,7 @@ export function ParamsEditor({
 								setConfirming(null);
 							}}
 						>
-							取消敏感标记
+							取消 secret 标记
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -218,7 +218,7 @@ const parseDefault =
 	(type: ParamType, secret: boolean) =>
 	(raw: string): { value: unknown } | { error: string } => {
 		const parsed = parseDefaultText(type, raw);
-		// 敏感参数的默认值写成 ****** 本身：它是「已设置」的占位符，保存时会被当成沿用原值。
+		// secret 参数的默认值写成 ****** 本身：它是「已设置」的占位符，保存时会被当成沿用原值。
 		if (secret && "value" in parsed && parsed.value === SECRET_MASK) {
 			return { error: `不能是 ${SECRET_MASK}：它表示已设置的默认值` };
 		}
@@ -242,7 +242,7 @@ const parseDefaultText = (type: ParamType, raw: string): { value: unknown } | { 
 /**
  * 默认值：留空表示没有默认值。和参数输入用同一个输入框（ReferenceEditor），但默认值是字面量、不能写引用，
  * 所以没有补全和引用高亮；字符串和 JSON 可以放大编辑。
- * 敏感参数仍然是密码输入框（ReferenceEditor 不能打码）：默认隐藏，点眼睛图标临时显示 5 秒。
+ * secret 参数仍然是密码输入框（ReferenceEditor 不能打码）：默认隐藏，点眼睛图标临时显示 5 秒。
  */
 function DefaultValue({
 	fieldKey,
@@ -268,7 +268,7 @@ function DefaultValue({
 		onChange,
 	});
 
-	// 已保存的敏感默认值：读不回来，只显示「已设置」，点「替换」才重新输入（清空后输入新值，留空就是去掉默认值）。
+	// 已保存的 secret 默认值：读不回来，只显示「已设置」，点「替换」才重新输入（清空后输入新值，留空就是去掉默认值）。
 	if (isSecretDefaultPlaceholder(param)) {
 		return (
 			<div className="flex gap-1.5">

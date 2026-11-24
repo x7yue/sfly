@@ -38,7 +38,7 @@ const PARAM_ITEM: Record<string, string> = {
 	description: "说明",
 	default: "默认值",
 	required: "必填",
-	secret: "敏感",
+	secret: "secret",
 };
 
 /** 节点上的单个字段：名称与检查器里的字段标签一致。 */

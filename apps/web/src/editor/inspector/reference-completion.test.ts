@@ -64,10 +64,10 @@ const catalog: PackageCatalog = new Map([
 describe("引用补全", () => {
 	const choices = referenceChoices(doc, "ping", catalog);
 
-	it("列出本链的入口参数、运行状态与前序节点的输出，带上类型与来源（敏感参数标出）", () => {
+	it("列出本链的入口参数、运行状态与前序节点的输出，带上类型与来源（secret 参数标出）", () => {
 		expect(choices.map((c) => [c.expression, c.kind, c.detail])).toEqual([
 			["params.url", "param", "string"],
-			["params.token", "param", "string · 敏感"],
+			["params.token", "param", "string · secret"],
 			["run.state", "run_state", "object · 这次运行"],
 			["nodes.fetch.outputs.status", "output", "integer · fetch"],
 			["nodes.fetch.outputs.body", "output", "string · fetch"],
@@ -111,7 +111,7 @@ describe("引用补全", () => {
 		};
 		expect(referenceChoices(named, "ping", catalog).map((c) => [c.expression, c.detail])).toEqual([
 			["params.url", "string"],
-			["params.token", "string · 敏感"],
+			["params.token", "string · secret"],
 			["run.state", "object · 这次运行"],
 			["nodes.fetch.outputs.status", "integer · 探测站点（fetch）"],
 			["nodes.fetch.outputs.body", "string · 探测站点（fetch）"],

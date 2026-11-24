@@ -4,11 +4,11 @@ import { type E2eFixtures, expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createScenario, publishPackage } from "./support";
 
-// 保密值太多的运行（#657）：运行抽屉的摘要里写明为什么这次运行里的内容全是掩码；正常的运行没有这句话。
-// 真实的上限（保密参数所有写法合计 100 多万个字符）在 e2e 里碰不到：控制面和测试在同一个进程里，
+// secret 值太多的运行（#657）：运行抽屉的摘要里写明为什么这次运行里的内容全是掩码；正常的运行没有这句话。
+// 真实的上限（secret 参数所有写法合计 100 多万个字符）在 e2e 里碰不到：控制面和测试在同一个进程里，
 // 用测试基建的 `withSecretLimits` 把上限调小，走真实的触发、控制面的读取和前端的显示。
 
-/** 保密参数 `api_token`（8 个字符）所有写法的总长超过它（要超过，不是等于），值集合就太大。 */
+/** secret 参数 `api_token`（8 个字符）所有写法的总长超过它（要超过，不是等于），值集合就太大。 */
 const TINY = { automatonChars: 4 };
 
 async function triggerWithSecret({

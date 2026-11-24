@@ -728,7 +728,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 		});
 	}, 60_000);
 
-	it("规则 5：预检时，保密的对象里有短于 4 个字符的字符串或数字叶子：给一条警告，写明是哪个参数（入口节点还是子流程入口节点）、有几个，不写出值", async () => {
+	it("规则 5：预检时，secret 的对象里有短于 4 个字符的字符串或数字叶子：给一条警告，写明是哪个参数（入口节点还是子流程入口节点）、有几个，不写出值", async () => {
 		await withPlane(async ({ api }) => {
 			const main = chainScenario([
 				{
@@ -738,11 +738,11 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 					default: { env: "test-env-value", region: "a", n: 1, big: 123456, off: false },
 				},
 				{ name: "fine", type: "json", secret: true, default: { env: "test-env-value" } },
-				// 不是对象的保密参数，再短也按值打码，没有警告；没有声明保密的对象参数也没有。
+				// 不是对象的 secret 参数，再短也按值打码，没有警告；没有声明 secret 的对象参数也没有。
 				{ name: "token", type: "string", secret: true, default: "ab" },
 				{ name: "plain", type: "json", default: { a: "x" } },
 			]);
-			// 子流程入口节点上的保密参数同样检查，警告里写「子流程入口节点」，不写成「入口节点」。
+			// 子流程入口节点上的 secret 参数同样检查，警告里写「子流程入口节点」，不写成「入口节点」。
 			const id = await api.orchestrationWith({
 				...main,
 				nodes: [
@@ -782,9 +782,9 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			);
 			const short = preflight.warnings.filter((w) => w.code === "secret_short_leaf");
 			expect(short.map((w) => w.message)).toEqual([
-				"参数 cfg（入口节点 entry）是保密的对象，默认值里有 2 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要保密的短值请单独做成一个保密参数",
-				"参数 deep（子流程入口节点 sub）是保密的对象，默认值里有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要保密的短值请单独做成一个保密参数",
-				"运行预设「预设一」里保密参数 cfg 的值有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要保密的短值请单独做成一个保密参数",
+				"参数 cfg（入口节点 entry）是 secret 的对象，默认值里有 2 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
+				"参数 deep（子流程入口节点 sub）是 secret 的对象，默认值里有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
+				"运行预设「预设一」里 secret 参数 cfg 的值有 1 个短于 4 个字符的字符串或数字：它们单独出现在日志、输出里时不会被打码（整个对象被原样写出时才会）；要打码的短值请单独做成一个 secret 参数",
 			]);
 			expect(short.map((w) => w.node_id)).toEqual(["entry", "sub", undefined]);
 			// 警告里没有值：不论是长的叶子、短的叶子还是整个对象。
@@ -903,7 +903,7 @@ describe("值是对象或数组的 json 类型 secret 参数", () => {
 			expect(texts[2]).toBe(`mixed=${MASK}`);
 			expect(texts[3]).toBe(`list=${MASK}`);
 			expect(texts[4]).toBe(`rate=${MASK}`);
-			// 整个任务文件：里面每个保密值都盖住，没有留下任何一个值或短叶子的明文
+			// 整个任务文件：里面每个 secret 值都盖住，没有留下任何一个值或短叶子的明文
 			const whole = texts[0] ?? "";
 			for (const leak of [
 				"1e-6",

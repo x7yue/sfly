@@ -265,7 +265,7 @@ export function cancelImpact(run: RunView, doc: StoredOrchestrationDocument | un
 	};
 }
 
-/** 入口参数和子流程入口参数中标记为敏感的参数名。 */
+/** 入口参数和子流程入口参数中标记为 secret 的参数名。 */
 export function secretParams(doc: StoredOrchestrationDocument | undefined): Set<string> {
 	return new Set(
 		(doc?.nodes ?? [])
@@ -277,8 +277,8 @@ export function secretParams(doc: StoredOrchestrationDocument | undefined): Set<
 }
 
 /**
- * 输入里引用了敏感参数的键：控制面已把 secret 的值替换成掩码，这里再把整个值打码
- * （值可能是由敏感参数拼出来的）。
+ * 输入里引用了 secret 参数的键：控制面已把 secret 的值替换成掩码，这里再把整个值打码
+ * （值可能是由 secret 参数拼出来的）。
  */
 export function secretInputKeys(
 	decl: StoredNode | undefined,

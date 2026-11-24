@@ -45,7 +45,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 	const oversizeValues = (tag: string) =>
 		Array.from({ length: 50 }, (_, i) => `fake-oversize-${tag}-${i}-${"p".repeat(100)}`);
 
-	/** 保密值后来才知道的场景：cfg 不是 secret，经参数映射传给子流程 subB 的 secret 参数 k 之后，它的值才是 secret 值。 */
+	/** secret 值后来才知道的场景：cfg 不是 secret，经参数映射传给子流程 subB 的 secret 参数 k 之后，它的值才是 secret 值。 */
 	const lateDoc = () => ({
 		default_agent: "agent-a",
 		nodes: [
@@ -160,7 +160,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 		expect(names.filter((n) => n !== MASK).length, "摘要里前面的只盖 secret 值").toBeGreaterThan(0);
 	};
 
-	it("保密值从一开始就知道：写入时已经盖住，存下来的没有完整的出现，读一页动作、读摘要，预算调得再小也一个字不多盖", async () => {
+	it("secret 值从一开始就知道：写入时已经盖住，存下来的没有完整的出现，读一页动作、读摘要，预算调得再小也一个字不多盖", async () => {
 		const id = await api.orchestrationWith({
 			default_agent: "agent-a",
 			nodes: [
@@ -185,7 +185,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 		});
 	}, 120_000);
 
-	it("保密值后来才知道（子流程创建之后）：动作已经原样写下，读一页、读摘要，用完预算之后剩下有完整出现的整段盖住", async () => {
+	it("secret 值后来才知道（子流程创建之后）：动作已经原样写下，读一页、读摘要，用完预算之后剩下有完整出现的整段盖住", async () => {
 		const id = await api.orchestrationWith(lateDoc());
 		const runId = await api.triggerOk(id, {
 			cfg: [SECRET, "fake-secret-value-two", "fake-secret-value-3"],
@@ -274,7 +274,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 					dashboard.recent_ended.find((r) => r.id === runId)?.failure?.error?.message;
 				expect(messageOf(exhausted.runId)).toBe(MASK);
 				expect(messageOf(oversize.runId)).toBe(MASK);
-				// 别的运行：只有它们自己的保密值被盖住，周围的文字都在
+				// 别的运行：只有它们自己的 secret 值被盖住，周围的文字都在
 				for (const { runId } of normal) {
 					expect(messageOf(runId), runId).toBe(`boom ${MASK} ${MASK} ${MASK}`);
 				}
@@ -295,7 +295,7 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 			};
 			const progressOf = (tasks: Awaited<ReturnType<typeof read>>, runId: string) =>
 				tasks.find((t) => t.run_id === runId)?.progress?.message;
-			/** 一个后来才知道保密值的运行：进度说明在保密值已知之前写下，存下来的是原文，读的时候才打码。 */
+			/** 一个后来才知道 secret 值的运行：进度说明在 secret 值已知之前写下，存下来的是原文，读的时候才打码。 */
 			const lateRun = async (values: unknown[], message: string) => {
 				const run = await startLateRun(values);
 				agent.progress(run.sa, 1, 2, message);

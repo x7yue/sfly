@@ -70,7 +70,7 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		try {
 			json = JSON.parse(await readBody(req));
 		} catch {
-			// 不带解析器的报错：它会引用请求体的一段（里面可能有保密的环境变量）。
+			// 不带解析器的报错：它会引用请求体的一段（里面可能有 secret 环境变量）。
 			return sendError(res, 400, "invalid_request", "请求体不是 JSON（或太大）");
 		}
 		if (command[2] === "abort") {
@@ -82,7 +82,7 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		}
 		const body = PromptCommandBody.safeParse(json);
 		if (!body.success) {
-			// 不把请求体的内容写进回应（里面有保密的环境变量）。
+			// 不把请求体的内容写进回应（里面有 secret 环境变量）。
 			const where = body.error.issues.map((i) => i.path.join(".")).join("、");
 			return sendError(res, 400, "invalid_request", `请求体不对：${where}`);
 		}

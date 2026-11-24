@@ -247,7 +247,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const logger = options.logger ?? false;
 	/**
 	 * 控制面自己往标准错误写错误日志的唯一出口：错误先过 `safeError`，数据库错误里的参数（密码的哈希、令牌的哈希、
-	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
+	 * secret 参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
 	 */
 	const logError = (what: string, error?: unknown): void => {
 		if (logger) printError(what, error);

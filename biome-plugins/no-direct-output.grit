@@ -1,7 +1,7 @@
 language js
 
 // 控制面往终端写东西只能走统一的出口（apps/server/src/util/output.ts，#578）：错误在那里先去掉数据库查询的参数
-// （密码的哈希、令牌的哈希、保密参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
+// （密码的哈希、令牌的哈希、secret 参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
 //
 // **这条规则是方便，不是保证。** 它认的是下面这个清单里的写法（每一种有名字，报出的诊断以 `[名字]` 开头）；清单之外的写法
 // 不保证拦得住：它只看源码里写出来的名字，不跟踪值的去向，写法是开放的，清单不求列全（认不出的几种典型写法列在这段注释的末尾）。
@@ -201,5 +201,5 @@ or {
 } where {
 	$filename <: r".*/apps/server/src/.*",
 	$filename <: not r".*/apps/server/src/util/output\.ts",
-	register_diagnostic(span=$span, message=`[$form] 控制面往终端写东西只能走统一的出口 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout）：错误在那里先去掉数据库查询的参数，别处直接用 console、process.stdout、process.stderr（或者换个写法拿到它们）可能把密码的哈希、令牌的哈希、保密参数的值带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。`)
+	register_diagnostic(span=$span, message=`[$form] 控制面往终端写东西只能走统一的出口 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout）：错误在那里先去掉数据库查询的参数，别处直接用 console、process.stdout、process.stderr（或者换个写法拿到它们）可能把密码的哈希、令牌的哈希、secret 参数的值带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。`)
 }

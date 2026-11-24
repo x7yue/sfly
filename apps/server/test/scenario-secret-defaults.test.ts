@@ -184,7 +184,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 	const headVersionOf = async (id: string) =>
 		(await api.getJson<{ head_version: number }>(`/orchestrations/${id}`)).head_version;
 	/** 一个场景：入口参数 PARAMS。 */
-	const scenario = (params: Array<Record<string, unknown>> = PARAMS(), name = "保密默认值") =>
+	const scenario = (params: Array<Record<string, unknown>> = PARAMS(), name = "secret 默认值") =>
 		api.orchestrationWith(presetScenario(params), name);
 
 	describe("读取：secret 参数的默认值是占位符", () => {
@@ -631,7 +631,7 @@ describe("场景版本里 secret 参数的默认值", () => {
 		}, 90_000);
 
 		/**
-		 * 保密值要等后面的子流程创建时才带进来（#517）：user 不是 secret，x2 把它传给 subB 的 secret 参数 k，subB 创建之后它才是
+		 * secret 值要等后面的子流程创建时才带进来（#517）：user 不是 secret，x2 把它传给 subB 的 secret 参数 k，subB 创建之后它才是
 		 * secret 值。`write` 在子流程创建之前往 sa 里写东西（日志、动作），返回之后等子流程创建，再让 b 结束。
 		 */
 		const lateRun = async (

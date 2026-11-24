@@ -113,7 +113,7 @@ describe("拉起 pi", () => {
 		await harness.sessions.shutdown();
 		await eventually(() => expect(existsSync(agentDir)).toBe(false));
 		await eventually(() => expect(existsSync(tmpDir)).toBe(false));
-		// 这一轮的配置（里面有保密的环境变量）在这一轮结束时删掉。
+		// 这一轮的配置（里面有 secret 环境变量）在这一轮结束时删掉。
 		expect(existsSync(join(harness.dataDir, "sessions", id, "turn.json"))).toBe(false);
 	});
 
@@ -313,7 +313,7 @@ describe("同时活着的 pi 进程数的上限", () => {
 	});
 });
 
-describe("保密环境变量按值打码", () => {
+describe("secret 环境变量按值打码", () => {
 	it("模型的话、工具的输出和结果、提示里出现的值（含跨两条增量、JSON 转义的）：事件、pi 原始事件、日志里都没有", async () => {
 		const harness = await start();
 		const value = 'tok-"9f3a\\b7c1-secret-value';
@@ -335,7 +335,7 @@ describe("保密环境变量按值打码", () => {
 		const output = events.flatMap((e) => (e.type === "tool_output" ? [e.text] : [])).join("");
 		expect(output).toContain("TOKEN=******");
 		expect(events.find((e) => e.type === "tool_call")).toMatchObject({ title: "echo ******" });
-		// 上游的错误原文（里面有这个值）不进提示，只进日志，进日志之前打码（#640）：保密值、模型文件引用的环境变量的值、
+		// 上游的错误原文（里面有这个值）不进提示，只进日志，进日志之前打码（#640）：secret 值、模型文件引用的环境变量的值、
 		// 请求头和地址里的凭据都打码，截到上限；同一次失败（模型调用出错，接着是重试的提示）只记一次。
 		expect(events.find((e) => e.type === "notice")?.type).toBe("notice");
 		expect(JSON.stringify(events)).not.toContain("bad key");
@@ -835,7 +835,7 @@ describe("审查补的守护", () => {
 });
 
 describe("启动时清掉上次留下的东西", () => {
-	it("设置目录、每一轮的配置文件（有保密值的原文）、pi 的临时目录", async () => {
+	it("设置目录、每一轮的配置文件（有 secret 值的原文）、pi 的临时目录", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "sfly-leftover-"));
 		const session = join(dataDir, "sessions", crypto.randomUUID());
 		mkdirSync(session, { recursive: true });

@@ -27,8 +27,8 @@ const document = (): OrchestrationDocument => ({
 	annotations: [],
 });
 
-describe("文档里「已设置」的敏感默认值（读取接口给的占位符）", () => {
-	it("数出来：只有敏感参数的默认值是 ****** 才算，包括子流程入口", () => {
+describe("文档里「已设置」的 secret 默认值（读取接口给的占位符）", () => {
+	it("数出来：只有 secret 参数的默认值是 ****** 才算，包括子流程入口", () => {
 		expect(countSecretPlaceholders(document())).toBe(2);
 	});
 

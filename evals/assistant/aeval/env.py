@@ -379,7 +379,7 @@ class Stack:
         ports: list[str] | None = None,
         extra: list[str] | None = None,
     ) -> None:
-        """`secret_env`：保密的环境变量，参数里只写名字（`-e 名字`），
+        """`secret_env`：secret 环境变量，参数里只写名字（`-e 名字`），
         值经 docker 命令行进程的环境带进去。"""
         name = self.name(role)
         d.docker("rm", "-f", name, check=False)
