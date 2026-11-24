@@ -81,12 +81,19 @@ export const CHARTS_RESERVED_HEIGHT = 300;
 export const CHARTS_VISIBLE_FIGURE = 120;
 
 /**
- * 图表工作区要预留的高度（px）：{@link CHARTS_RESERVED_HEIGHT} 是宽窗口里的数；窄窗口里工具栏折成几行、节点摘要折行，
- * 第一张图表的上沿被推下去，300px 里只露出一小截（1024×768 里露出 72/136px），所以预留的高度至少是
- * 第一张图表的上沿加 {@link CHARTS_VISIBLE_FIGURE}：第一张图表在哪里都露出能看清曲线的高度。宽窗口里这个数不超过 300px，不变。
+ * 图表工作区要预留的高度（px）：{@link CHARTS_RESERVED_HEIGHT} 是 1280px 及以上窗口里的数。窗口窄于 1280px 时工具栏折成
+ * 几行、节点摘要折行，第一张图表的上沿被推下去，300px 里只露出一小截（1024×768 里露出 72/136px），所以预留的高度至少是
+ * 第一张图表的上沿加 {@link CHARTS_VISIBLE_FIGURE}：第一张图表露出能看清曲线的高度。宽窗口里仍是 300px，不随内容变：
+ * 选中节点时它的摘要在图表上面，也会把图表推下去，这时加预留会让底部面板在常用的窗口里变矮（面板的下限是 190px，
+ * 1440×900、1280×800 里的分配是量过的）。
  */
-export const chartsReservedHeight = (firstChartTop: number): number =>
-	Math.max(CHARTS_RESERVED_HEIGHT, firstChartTop + CHARTS_VISIBLE_FIGURE);
+export const chartsReservedHeight = (firstChartTop: number, narrow: boolean): number =>
+	narrow
+		? Math.max(CHARTS_RESERVED_HEIGHT, firstChartTop + CHARTS_VISIBLE_FIGURE)
+		: CHARTS_RESERVED_HEIGHT;
+
+/** 窄窗口的界限：和运行监控页别处（`max-xl`）一样，窄于 1280px。 */
+export const NARROW_WINDOW = "(max-width: 1279.98px)";
 
 /** 第一张图表的上沿离内容顶部（滚动区域的内边距上沿）的距离（px）；没有图表时为 0。 */
 function firstChartTop(inner: HTMLElement, outer: HTMLElement): number {
