@@ -102,8 +102,10 @@ describe("契约里全部接口的声明", () => {
 			.map((def) => `${def.method} ${def.path}`);
 		expect(removing.sort()).toEqual([
 			"DELETE /account/tokens/:id",
+			"DELETE /agents/:name/credentials/:id",
 			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
+			"DELETE /projects/:project/dev-agents/:name",
 			"DELETE /projects/:project/tokens/:id",
 			"POST /orchestrations/:id/archive",
 		]);

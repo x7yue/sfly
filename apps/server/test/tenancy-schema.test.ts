@@ -28,13 +28,30 @@ const hex = () => randomUUID().replaceAll("-", "").repeat(2);
 
 /** 项目里的一个会话（`sessions`）；返回会话 ID。 */
 async function addSession(
-	fields: { project?: string; status?: string; user?: string | null } = {},
+	fields: {
+		project?: string;
+		status?: string;
+		user?: string | null;
+		/**
+		 * 排队时间：排队中（queued）的会话一定有；在做（running）的会话停止途中又说了话、排在这一轮后面时也有；空闲和已结束的没有
+		 * （库里的约束 `sessions_queued_at`）；默认只有排队中的有。
+		 */
+		queuedAt?: string | null;
+	} = {},
 ): Promise<string> {
 	const id = randomUUID();
+	const status = fields.status ?? "idle";
 	await client.query(
-		`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at)
-		values ($1, $2, '会话', $3, '昵称', $4, $5, $5)`,
-		[id, fields.project ?? "default", fields.status ?? "idle", fields.user ?? null, AT],
+		`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at, queued_at)
+		values ($1, $2, '会话', $3, '昵称', $4, $5, $5, $6)`,
+		[
+			id,
+			fields.project ?? "default",
+			status,
+			fields.user ?? null,
+			AT,
+			fields.queuedAt === undefined ? (status === "queued" ? AT : null) : fields.queuedAt,
+		],
 	);
 	return id;
 }
@@ -224,6 +241,46 @@ describe("令牌", () => {
 		await expect(
 			insert({ kind: "task", project: "default", task: randomUUID(), user: owner }),
 		).rejects.toThrow(/api_tokens_shape/);
+	});
+
+	it("任务凭据记派发时连接用的那个 Agent 凭据（#492）：只有任务凭据能记，凭据要存在，凭据行删除时任务凭据随它删除（不认）", async () => {
+		const owner = await user();
+		const credential = randomUUID();
+		await client.query(
+			`insert into agent_credentials (id, kind, project_id, agent_name, prefix, token_hash, created_at)
+			values ($1, 'agent', 'default', 'agent-a', 'sfly_agt_ab12', $2, $3)`,
+			[credential, hex(), AT],
+		);
+		const withCredential = (fields: { kind: string; credential: string; hash?: string }) =>
+			client.query(
+				`insert into api_tokens (id, kind, name, prefix, token_hash, user_id, project_id, task_id, agent_credential_id, scopes, created_at)
+				values ($1, $2, '令牌', 'sfly_xxx_ab12', $3, $4, $5, $6, $7, '{}', $8)`,
+				[
+					randomUUID(),
+					fields.kind,
+					fields.hash ?? hex(),
+					fields.kind === "personal" ? owner : null,
+					fields.kind === "task" ? "default" : null,
+					fields.kind === "task" ? randomUUID() : null,
+					fields.credential,
+					AT,
+				],
+			);
+		const hash = hex();
+		await withCredential({ kind: "task", credential, hash });
+		// 别的种类的令牌不能记 Agent 凭据。
+		await expect(withCredential({ kind: "personal", credential })).rejects.toThrow(
+			/api_tokens_agent_credential_task/,
+		);
+		// 凭据要存在。
+		await expect(withCredential({ kind: "task", credential: randomUUID() })).rejects.toThrow(
+			/api_tokens_agent_credential_id_agent_credentials_id_fk/,
+		);
+		// 凭据行删除：任务凭据随它删除。
+		await client.query("delete from agent_credentials where id = $1", [credential]);
+		expect(
+			(await client.query("select 1 from api_tokens where token_hash = $1", [hash])).rowCount,
+		).toBe(0);
 	});
 
 	it("种类只能是个人、项目、会话、任务；哈希唯一；项目和用户必须存在", async () => {
@@ -482,6 +539,27 @@ describe("助手会话和它的事件（ADR 0027）", () => {
 		await expect(addSession({ project: "no-such-project" })).rejects.toThrow(
 			/sessions_project_id_projects_id_fk/,
 		);
+	});
+
+	it("排队时间：排队中（queued）的会话要有；在做（running）的可以有（停止途中说了话，排在这一轮后面）；空闲、已结束的不能有（#544，sessions_queued_at）", async () => {
+		const project = await addProject("queued-at");
+		await expect(addSession({ project, status: "queued", queuedAt: null })).rejects.toThrow(
+			/sessions_queued_at/,
+		);
+		for (const status of ["idle", "ended"]) {
+			await expect(
+				addSession({ project: await addProject(`qa-${status}`), status, queuedAt: AT }),
+				status,
+			).rejects.toThrow(/sessions_queued_at/);
+		}
+		await expect(addSession({ project, status: "queued" })).resolves.toBeTypeOf("string");
+		// 在做的：有没有排队时间都行。
+		await expect(
+			addSession({ project: await addProject("qa-running"), status: "running", queuedAt: AT }),
+		).resolves.toBeTypeOf("string");
+		await expect(
+			addSession({ project: await addProject("qa-running-plain"), status: "running" }),
+		).resolves.toBeTypeOf("string");
 	});
 
 	it("发起人的用户可以为空（#494 之前的请求没有用户），有的话要是存在的用户", async () => {

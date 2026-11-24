@@ -624,10 +624,16 @@ describe("会话令牌的请求：运行和场景版本记着会话", () => {
 		it("已结束的会话，它的令牌从此无效（401）：读、写都是；会话空闲、在做都有效", async () => {
 			const id = await scenario();
 			for (const status of ["idle", "running", "queued"]) {
-				await db.query("update sessions set status = $2 where id = $1", [sessionId, status]);
+				// 排队中的会话一定有排队时间（库里的约束 `sessions_queued_at`），别的状态没有。
+				await db.query(
+					"update sessions set status = $2::text, queued_at = case when $2::text = 'queued' then now() else null end where id = $1",
+					[sessionId, status],
+				);
 				expect((await asSession("GET", `/orchestrations/${id}`)).status, status).toBe(200);
 			}
-			await db.query("update sessions set status = 'ended' where id = $1", [sessionId]);
+			await db.query("update sessions set status = 'ended', queued_at = null where id = $1", [
+				sessionId,
+			]);
 			expect((await asSession("GET", `/orchestrations/${id}`)).status).toBe(401);
 			expect(
 				(await asSession("POST", `/orchestrations/${id}/runs`, { params: { host: "h" } })).status,

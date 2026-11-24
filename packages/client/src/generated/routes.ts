@@ -1182,8 +1182,9 @@ export interface Api {
 		 * `POST /projects/:project/sessions`
 		 *
 		 * 新建一个会话，`text` 是它的第一句话，作为第一轮：写 `user_message` 和 `turn_started`，把这一轮交给助手服务。
-		 * 返回 201 和新会话。助手没有配置时 503 `assistant_not_configured`；这个项目已有一个会话在做 409 `project_busy`；
-		 * 助手服务连不上 503 `assistant_unavailable`，不留下会话。
+		 * 返回 201 和新会话。助手没有配置时 503 `assistant_not_configured`；这个项目里已有别的会话在做（或在排队）时，新会话
+		 * 排队（`status` 是 `queued`，`queue_position` 是排第几，`waiting_for` 是在等谁），这句话照常写 `user_message`，
+		 * 轮到它时才交给助手服务；助手服务连不上 503 `assistant_unavailable`，不留下会话。
 		 */
 		create: Endpoint<
 			{
@@ -1347,8 +1348,11 @@ export interface Api {
 		/**
 		 * `POST /sessions/:id/messages`
 		 *
-		 * 对会话说一句话：空闲时开始新的一轮，返回这句话的 `user_message` 的序号。在做时 409 `turn_running`
-		 * （#544 起改成插话）；已结束 409 `session_ended`。
+		 * 对会话说一句话，返回这句话的 `user_message` 的序号：空闲时开始新的一轮（这个项目里别的会话在做时，这个会话排队，
+		 * 这句话轮到它时才交给助手服务）；**在做时是插话**（`user_message` 的 `steer` 为 true，交给助手服务的 `steer`，在当前这一步
+		 * 的工具调用做完之后、下一次调用模型之前送到；响应类型不变）；**但控制面已经发出了中止、这一轮的结局还没有写下时（正在停止）
+		 * 不是插话**：这句话是新的一轮的开头（`steer` 为 false），按说话的时刻排进项目里已有的队列、不插队，会话仍是在做、
+		 * `queue_position` 有值，这一轮的结局写下之后开始它；排队中（包括这种）再说话 409 `session_queued`；已结束或者正在结束 409 `session_ended`。
 		 */
 		message: Endpoint<
 			{
@@ -1362,9 +1366,31 @@ export interface Api {
 		/**
 		 * `POST /sessions/:id/stop`
 		 *
-		 * 停止会话正在做的这一轮（把中止发给助手服务，这一轮的 `turn_end` 由助手服务的事件带回来）；不在做时什么也不做。
+		 * 停止会话正在做的这一轮：把中止发给助手服务，这一轮的 `turn_end` 由助手服务的事件带回来；中止有没有得到确认都等到同一个期限
+		 * （23 秒，从发出中止起算），到期还没有结局才由控制面补一条 `stopped`；这期间用户又说的话是新的一轮的开头，排在这一轮后面。
+		 * **停止 = 这个会话在做的一轮停掉、排着的话移出队列**（`queue_cancelled` 的提示，带那句话的 `message_id`）：排队中的会话移出队列、
+		 * 回到空闲；在做、而且停止途中又说了话排在后面的会话，再点一次停止就是撤掉那句话（只撤这次停止之前就排着的，这次停止的等待期间
+		 * 说的话照旧排在后面）；空闲的会话不改（向助手服务补发一次带最近那一轮轮次的中止，兜底「`prompt` 超时之后补发的中止没送到」），
+		 * 已结束的什么也不做。会话的状态一直在变、重试三次都没有做成时 409 `turn_running`。
 		 */
 		stop: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			SessionView
+		>;
+		/**
+		 * `POST /sessions/:id/end`
+		 *
+		 * 结束会话：在做的一轮先停止、等到这一轮的结局，排队的移出队列；然后会话变成已结束并写 `session_ended`，**写下之后**才把 `end` 发给
+		 * 助手服务（它结束这个会话的进程；助手服务不记得会话结束了，所以先写下结束，之后控制面不再为这个会话发命令）。之后发话 409 `session_ended`。工作区、提交、场景版本、运行都留着，不删除任何东西。
+		 * 已经结束的会话再调用无害（返回会话，不再写事件）。助手没有配置时 503 `assistant_not_configured`。停止之后又开始了一轮（说话和
+		 * 结束同时到）会再停一次，重试三次还不行时 409 `turn_running`。**结束一开始就记成「正在结束」**：写下 `session_ended` 之前对它说话回
+		 * 409 `session_ended`，也不会为它开始新的一轮。
+		 */
+		end: Endpoint<
 			{
 				params: {
 					id: string;
@@ -1481,6 +1507,7 @@ export const routes = {
 		events: { method: "GET", path: "/sessions/:id/events", kind: "stream" },
 		message: { method: "POST", path: "/sessions/:id/messages", kind: "endpoint" },
 		stop: { method: "POST", path: "/sessions/:id/stop", kind: "endpoint" },
+		end: { method: "POST", path: "/sessions/:id/end", kind: "endpoint" },
 	},
 	system: {
 		health: { method: "GET", path: "/health", kind: "endpoint" },

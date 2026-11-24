@@ -485,19 +485,23 @@ describe("真的 pi：一轮进行中被结束，工作台上的命令不留下�
 		expect(empty).toEqual([]);
 	};
 
-	it("停止（先关 stdin，再 SIGTERM）：命令结束之前在跑、之后不在了；下一轮发给模型的请求里没有空的助手消息", async () => {
+	it("停止（先 clear_queue、abort，pi 停下，进程留着）：命令结束之前在跑、之后不在了；下一轮用同一个 pi 进程，发给模型的请求里没有空的助手消息", async () => {
 		const h = await Harness.start();
 		try {
 			longCommand(h, "剧本：长命令");
 			const id = crypto.randomUUID();
 			await h.prompt(id, { text: "剧本：长命令" });
 			const pid = await running(h);
+			const pi = h.sessions.pid(id);
+			expect(pi).toBeDefined();
 			expect((await h.abort(id)).status).toBe(202);
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "stopped" });
 			await eventually(() => expect(alive(pid)).toBe(false), 10_000);
+			expect(h.sessions.pid(id)).toBe(pi);
 			const before = h.model.requests.length;
 			await h.prompt(id, { turn: 2, text: "接着说" });
 			expect(await h.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+			expect(h.sessions.pid(id)).toBe(pi);
 			expectResumed(h, "剧本：长命令", before);
 		} finally {
 			await h.close();

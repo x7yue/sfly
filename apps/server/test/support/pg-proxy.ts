@@ -47,6 +47,11 @@ export class PgProxy {
 	#port = 0;
 	#arms: Arm[] = [];
 	readonly fired: Fired[] = [];
+	/**
+	 * `terminate-backend` 没做成的原因（这条连接还没收到后端进程号、管理连接连不上……）：不是没人接的拒绝（vitest 会把它报成
+	 * 整个文件失败，而且看不出是哪条用例）；要求「做成了」的用例自己检查它是空的。
+	 */
+	readonly failures: Error[] = [];
 
 	private constructor(
 		private readonly target: { host: string; port: number },
@@ -177,7 +182,9 @@ export class PgProxy {
 							}
 							if (arm.action === "terminate-backend") {
 								// 这条语句不转发（客户端在等它的结果）；数据库结束这条连接的后端，先发 FATAL 再关连接。
-								void this.#terminateBackend(backendPid);
+								this.#terminateBackend(backendPid).catch((error: unknown) => {
+									this.failures.push(error instanceof Error ? error : new Error(String(error)));
+								});
 								continue;
 							}
 							marked = arm;

@@ -57,6 +57,8 @@ function agent(name: string, overrides: Partial<AgentView> = {}): AgentView {
 			port: 50052,
 			unavailable_reason: null,
 		},
+		auth_kind: "agent",
+		disabled_at: null,
 		...overrides,
 	};
 }

@@ -10,14 +10,16 @@ import {
 	type AssistantStreamHeartbeat,
 	PromptCommandBody,
 	SessionId,
+	SteerCommandBody,
 } from "@sfly/schema";
 import type { EventBus } from "./bus.js";
+import { describeError } from "./output.js";
 import type { SessionManager } from "./sessions.js";
 
 /**
- * 助手服务协议（`@sfly/schema` 的 assistant-protocol.ts）的 HTTP 一侧：`POST /sessions/:id/prompt`、
- * `POST /sessions/:id/abort`、`GET /events`（每 15 秒一行心跳）、`GET /health`。每个请求先校验 `Authorization: Bearer <共享密钥>`
- * （常量时间比较），不对返回 401。插话、结束会话是 #544。
+ * 助手服务协议（`@sfly/schema` 的 assistant-protocol.ts）的 HTTP 一侧：`POST /sessions/:id/prompt`、`/steer`、`/abort`、
+ * `/end`，`GET /events`（每 15 秒一行心跳）、`GET /health`。每个请求先校验 `Authorization: Bearer <共享密钥>`
+ * （常量时间比较），不对返回 401。命令都是收到并决定了怎么办就回，不等命令引起的事做完。
  */
 
 /** 请求体的上限：一句话最多 2 万个字符，加上环境变量也远到不了。 */
@@ -48,9 +50,7 @@ export function createAssistantServer(deps: ServerDeps): Server {
 	const server = createServer((req, res) => {
 		void handle(req, res).catch((error: unknown) => {
 			// 回应里不带原因（可能引用请求的内容），原因写日志。
-			deps.log(
-				`处理 ${req.method} ${req.url} 出错：${error instanceof Error ? error.message : String(error)}`,
-			);
+			deps.log(`处理 ${req.method} ${req.url} 出错：${describeError(error)}`);
 			if (!res.headersSent) sendError(res, 500, "start_failed", "助手服务内部出错，原因见它的日志");
 			else res.destroy();
 		});
@@ -62,10 +62,15 @@ export function createAssistantServer(deps: ServerDeps): Server {
 		const route = `${req.method} ${url.pathname}`;
 		if (route === "GET /health") return send(res, 200, health());
 		if (route === "GET /events") return events(req, res);
-		const command = /^POST \/sessions\/([^/]+)\/(prompt|abort)$/.exec(route);
+		const command = /^POST \/sessions\/([^/]+)\/(prompt|steer|abort|end)$/.exec(route);
 		if (!command) return sendError(res, 404, "invalid_request", `没有 ${route}`);
 		const id = SessionId.safeParse(command[1]);
 		if (!id.success) return sendError(res, 400, "invalid_request", "会话 ID 不是 UUID");
+		if (command[2] === "end") {
+			// 没有请求体；不认识的会话也是 202。
+			deps.sessions.end(id.data);
+			return send(res, 202);
+		}
 		let json: unknown;
 		try {
 			json = JSON.parse(await readBody(req));
@@ -78,6 +83,16 @@ export function createAssistantServer(deps: ServerDeps): Server {
 			if (!abort.success)
 				return sendError(res, 400, "invalid_request", "请求体要有要结束的轮次 turn");
 			deps.sessions.abort(id.data, abort.data.turn);
+			return send(res, 202);
+		}
+		if (command[2] === "steer") {
+			const steer = SteerCommandBody.safeParse(json);
+			if (!steer.success) {
+				const where = steer.error.issues.map((i) => i.path.join(".")).join("、");
+				return sendError(res, 400, "invalid_request", `请求体不对：${where}`);
+			}
+			const result = deps.sessions.steer(id.data, steer.data);
+			if (!result.ok) return sendError(res, result.status, result.code, result.message);
 			return send(res, 202);
 		}
 		const body = PromptCommandBody.safeParse(json);

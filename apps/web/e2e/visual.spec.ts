@@ -1942,6 +1942,19 @@ test.describe("账号与登录", () => {
 			await expect(page).toHaveScreenshot("tokens.png", { mask: [tokenPrefixes(page)] });
 		});
 
+		test("令牌页：1280 宽（用过的令牌、过期时间、六个范围：时间折成两行，表格不超出面板）", async ({
+			page,
+			clock,
+		}) => {
+			await page.setViewportSize({ width: 1280, height: 800 });
+			await signIn(page);
+			await seedTokens(page, clock);
+			await page.goto("/account/tokens");
+			await expect(page.locator('[data-token="laptop"]')).toBeVisible();
+			await expect(page.locator('[data-token="laptop"]')).not.toContainText("从未使用");
+			await expect(page).toHaveScreenshot("tokens-1280.png", { mask: [tokenPrefixes(page)] });
+		});
+
 		test("令牌页：空状态", async ({ page }) => {
 			await signIn(page);
 			await page.goto("/account/tokens");
@@ -1986,19 +1999,20 @@ test.describe("账号与登录", () => {
 			await page.locator('[data-token="laptop"]').getByRole("button", { name: "吊销" }).click();
 			const dialog = page.getByRole("dialog", { name: "吊销令牌「laptop」？" });
 			await expect(dialog).toBeVisible();
-			// 遮罩只盖值：表格里的前缀（弹窗和遮罩下面的那几行）在弹窗底下看不见，遮罩画在它原来的位置、会盖到弹窗上的字
-			// （表格的列右移之后，盖住了弹窗那一行开头的「前缀」两个字）：和弹窗重叠的不遮，弹窗里的只遮前缀的值。
+			// 遮罩只盖值：表格里的前缀在弹窗底下的看不见，遮罩画在它原来的位置、会盖到弹窗上的字（表格的列右移之后，盖住了弹窗那一行
+			// 开头的「前缀」两个字）：整个在弹窗里面的不遮；跨在弹窗边缘上、露出一截的要遮（行高一变，露出的就是随机的字符，
+			// 基线不稳）；弹窗里自己的只遮前缀的值。
 			await page.evaluate(() => {
 				const box = document.querySelector('[role="dialog"]')?.getBoundingClientRect();
 				for (const el of document.querySelectorAll('[data-slot="token-prefix"]')) {
 					const r = el.getBoundingClientRect();
-					const covered =
+					const inside =
 						box !== undefined &&
-						r.left < box.right &&
-						r.right > box.left &&
-						r.top < box.bottom &&
-						r.bottom > box.top;
-					if (!covered || el.closest('[role="dialog"]')) el.setAttribute("data-mask", "");
+						r.left >= box.left &&
+						r.right <= box.right &&
+						r.top >= box.top &&
+						r.bottom <= box.bottom;
+					if (!inside || el.closest('[role="dialog"]')) el.setAttribute("data-mask", "");
 				}
 			});
 			await expect(page).toHaveScreenshot("tokens-revoke.png", {

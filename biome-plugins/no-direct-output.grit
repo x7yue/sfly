@@ -2,6 +2,8 @@ language js
 
 // 控制面往终端写东西只能走统一的出口（apps/server/src/util/output.ts，#578）：错误在那里先去掉数据库查询的参数
 // （密码的哈希、令牌的哈希、secret 参数的值、飞书 Webhook 的地址），别处直接打印就可能把它们带进日志、带到操作者的终端上。
+// 助手服务同一个规矩（apps/assistant/src/output.ts，#693）：错误在那里换成一行说明（只取 message，按形状打码、截断），
+// 别处直接打印就可能把它拿到的凭据、会话里的内容、上游的错误原文带进日志。
 //
 // **这条规则是方便，不是保证。** 它认的是下面这个清单里的写法（每一种有名字，报出的诊断以 `[名字]` 开头）；清单之外的写法
 // 不保证拦得住：它只看源码里写出来的名字，不跟踪值的去向，写法是开放的，清单不求列全（认不出的几种典型写法列在这段注释的末尾）。
@@ -43,8 +45,10 @@ language js
 //   `[create-write-stream]`              `fs.createWriteStream(path, { fd: 2, … })`：选项里有 `fd: 1|2`，别的选项不碍事
 //   `[create-write-stream-direct]`       直接调用的 `createWriteStream(path, { fd: 1, … })`
 //
-// 范围：apps/server/src（控制面的源码）；统一的出口 apps/server/src/util/output.ts 本身除外（那个文件由 test/error-log.test.ts 里
-// 「统一的出口文件自己」守，认同一批写法）。测试、前端、别的工作区不管。
+// 范围：apps/server/src（控制面的源码）和 apps/assistant/src（助手服务的源码，含跑在 pi 进程里的远程工具扩展）；两个统一的出口
+// apps/server/src/util/output.ts、apps/assistant/src/output.ts 本身除外（各自由 apps/server/test/error-log.test.ts、
+// apps/assistant/test/output.test.ts 里「统一的出口文件自己」守，认同一批写法）。测试、前端、构建脚本、别的工作区不管
+// （packages/ 下没有会进生产服务的打印：@sfly/client 的 console.warn 是给使用方的默认回调，不在服务端跑）。
 // `$filename` 是绝对路径，规则不知道仓库根在哪，所以按目录名认。
 //
 // 清单之外认不出的（几种典型的，不求列全；ARCHITECTURE.md 里是同一份）：
@@ -199,7 +203,8 @@ or {
 		}
 	}
 } where {
-	$filename <: r".*/apps/server/src/.*",
+	$filename <: r".*/apps/(?:server|assistant)/src/.*",
 	$filename <: not r".*/apps/server/src/util/output\.ts",
-	register_diagnostic(span=$span, message=`[$form] 控制面往终端写东西只能走统一的出口 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout）：错误在那里先去掉数据库查询的参数，别处直接用 console、process.stdout、process.stderr（或者换个写法拿到它们）可能把密码的哈希、令牌的哈希、secret 参数的值带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。`)
+	$filename <: not r".*/apps/assistant/src/output\.ts",
+	register_diagnostic(span=$span, message=`[$form] 往终端写东西只能走统一的出口：控制面是 apps/server/src/util/output.ts（printError、printWarning、printInfo、writeStdout），错误在那里先去掉数据库查询的参数；助手服务是 apps/assistant/src/output.ts（writeLog、printError、describeError），错误在那里换成打过码、截断的一行。别处直接用 console、process.stdout、process.stderr（或者换个写法拿到它们）可能把密码的哈希、令牌的哈希、secret 参数的值、会话里的内容带进日志。要打印就调用那里的函数；它们不够用就在那个文件里加一个。`)
 }

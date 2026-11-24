@@ -6,6 +6,7 @@
     "task": "任务",
     "package": "节点包",
     "agent": "Agent",
+    "dev_agent": "开发 Agent",
     "feishu_bot": "飞书机器人",
     "session": "会话",
     "system": "系统",
@@ -2061,6 +2062,33 @@
                     "port",
                     "unavailable_reason"
                   ]
+                },
+                "auth_kind": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "agent",
+                        "shared",
+                        "none"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "disabled_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2079,7 +2107,9 @@
                 "clock_offset",
                 "referencing_orchestrations",
                 "capabilities",
-                "endpoint"
+                "endpoint",
+                "auth_kind",
+                "disabled_at"
               ]
             }
           },
@@ -2287,6 +2317,314 @@
         },
         "required": [
           "terminated_tasks"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/agents/:name/credentials",
+      "key": [
+        "agents",
+        "credentials"
+      ],
+      "kind": "endpoint",
+      "summary": "列出一台 Agent 的凭据（前缀、状态、最后使用时间，不含原值）",
+      "effect": "read",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "prefix": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "last_used_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revoked_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "user": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "prefix",
+                "created_at",
+                "last_used_at",
+                "revoked_at",
+                "user"
+              ]
+            }
+          }
+        },
+        "required": [
+          "credentials"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/agents/:name/credentials",
+      "key": [
+        "agents",
+        "issue-credential"
+      ],
+      "kind": "endpoint",
+      "summary": "为一台 Agent 签发凭据（原值只在这次响应里出现一次）",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "last_used_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "prefix",
+              "created_at",
+              "last_used_at",
+              "revoked_at",
+              "user"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential",
+          "token"
+        ]
+      },
+      "notes": [
+        {
+          "part": "params",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
+        },
+        {
+          "part": "params",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称不能超过 64 个字符"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/agents/:name/credentials/:id",
+      "key": [
+        "agents",
+        "revoke-credential"
+      ],
+      "kind": "endpoint",
+      "summary": "吊销一台 Agent 的凭据（连着的连接断开）",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "removes": true,
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "name",
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/agents/:name/disable",
+      "key": [
+        "agents",
+        "disable"
+      ],
+      "kind": "endpoint",
+      "summary": "停用一台 Agent（断开连接，不再派发）",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/agents/:name/enable",
+      "key": [
+        "agents",
+        "enable"
+      ],
+      "kind": "endpoint",
+      "summary": "恢复一台停用的 Agent",
+      "effect": "write",
+      "resource": {
+        "kind": "agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent 名称。"
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "notes": []
@@ -3980,6 +4318,158 @@
           "recent_ended",
           "agents",
           "setup"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/projects/:project/dev-agents",
+      "key": [
+        "dev-agents",
+        "create"
+      ],
+      "kind": "endpoint",
+      "summary": "在开发机上注册我的开发 Agent（名字由控制面生成）",
+      "effect": "write",
+      "resource": {
+        "kind": "dev_agent",
+        "target": "collection"
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "description": "主机那一段：小写字母、数字、连字符。"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "credential": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "last_used_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "prefix",
+              "created_at",
+              "last_used_at",
+              "revoked_at",
+              "user"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "credential",
+          "token"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/projects/:project/dev-agents/:name",
+      "key": [
+        "dev-agents",
+        "revoke"
+      ],
+      "kind": "endpoint",
+      "summary": "吊销我的开发 Agent 的凭据",
+      "effect": "write",
+      "resource": {
+        "kind": "dev_agent",
+        "target": {
+          "params": "name"
+        }
+      },
+      "removes": true,
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "project",
+          "name"
         ]
       },
       "notes": []
@@ -24190,6 +24680,190 @@
       ],
       "kind": "endpoint",
       "summary": "停止会话正在做的这一轮；排队中的移出队列",
+      "effect": "write",
+      "resource": {
+        "kind": "session",
+        "target": {
+          "params": "id"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "running",
+              "queued",
+              "ended"
+            ]
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "最近一次活动（新建、发话、事件落库）的时间。"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_turn_outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "stopped",
+                  "limit",
+                  "model_unavailable",
+                  "interrupted",
+                  "failed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "type": "string"
+          },
+          "readiness": {
+            "type": "object",
+            "properties": {
+              "ready": {
+                "type": "boolean"
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "assistant_not_configured",
+                        "assistant_unreachable",
+                        "workbench_not_set",
+                        "workbench_offline",
+                        "model_not_configured",
+                        "model_unreachable"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "message"
+                  ]
+                }
+              },
+              "workbench": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "ready",
+              "problems",
+              "workbench"
+            ]
+          },
+          "waiting_for": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "created_by": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "title",
+                  "created_by"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "created_by",
+          "created_at",
+          "last_activity_at",
+          "queue_position",
+          "last_turn_outcome",
+          "project",
+          "readiness",
+          "waiting_for"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/:id/end",
+      "key": [
+        "sessions",
+        "end"
+      ],
+      "kind": "endpoint",
+      "summary": "结束会话：之后不再接受消息，工作区和运行都留着",
       "effect": "write",
       "resource": {
         "kind": "session",

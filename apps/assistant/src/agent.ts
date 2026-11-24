@@ -17,6 +17,7 @@ import {
 	type WriteFileRequest,
 	WriteFileRequestSchema,
 } from "@sfly/proto";
+import { writeLog } from "./output.js";
 
 /** 写文件时每条消息带多少字节。 */
 const CHUNK = 256 * 1024;
@@ -116,8 +117,9 @@ export interface AgentOptions {
 	pingIntervalMs?: number;
 	pingTimeoutMs?: number;
 	/**
-	 * 认不出、不放行的错误的原文写到哪里（带工作台的地址）。默认标准错误：在 pi 里（远程工具扩展）它进 pi 的标准错误，
-	 * 助手服务打码后存下；助手服务自己用时传它的日志出口。
+	 * 认不出、不放行的错误的原文写到哪里（带工作台的地址）。默认整行写到标准错误（output.ts 的 `writeLog`，不截断）：
+	 * 在 pi 里（远程工具扩展）它进 pi 的标准错误，助手服务按这个会话的 secret 值打码后存下（先截断会把一个值切成认不出的
+	 * 半截）；助手服务自己用时传它的日志出口（会话里先过 `#forLog`，别处是 `writeRawLog`）。
 	 */
 	log?: (line: string) => void;
 	/** 建 HTTP/2 连接的选项（测试里换掉建连接的办法，造主机不可达这类连接层的失败）。 */
@@ -128,7 +130,7 @@ export function connectAgent(address: string, options: AgentOptions = {}) {
 	const replySlack = options.replySlackMs ?? REPLY_SLACK_MS;
 	const fileDeadline = options.fileDeadlineMs ?? FILE_DEADLINE_MS;
 	const probeDeadline = options.probeDeadlineMs ?? PROBE_DEADLINE_MS;
-	const log = options.log ?? ((line: string) => console.error(line));
+	const log = options.log ?? writeLog;
 	// 自己管这条 HTTP/2 连接：用完的客户端（助手服务探一次工作台、一轮开头写 skill）要能关掉它，不然它空闲 15 分钟
 	// 才关、其间每 15 秒 ping 一次。
 	const connection = new Http2SessionManager(
