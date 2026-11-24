@@ -63,6 +63,12 @@ def huge_integer_progress(ctx: Context) -> dict[str, Any]:
     return {}
 
 
+@node(outputs=[])
+def huge_integer_with_recognizable_digits(ctx: Context) -> dict[str, Any]:
+    ctx.progress(int("7" * 400), 10, "位数很多的整数，数字里没有别的内容")
+    return {}
+
+
 @node(outputs=[], metrics=[Metric("tps")])
 def huge_integer_metric(ctx: Context) -> dict[str, Any]:
     ctx.metric("tps", 10**400)

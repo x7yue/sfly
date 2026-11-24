@@ -25,15 +25,6 @@ export function readinessProblems(readiness: Readiness): string[] {
 	);
 }
 
-/** 「开始」不可用时按钮旁边写的原因：就绪状态里的原因连在一起。就绪时没有。 */
-export function cannotStartReason(readiness: Readiness): string | null {
-	if (readiness.ready) return null;
-	const problems = readinessProblems(readiness);
-	return problems.length === 0
-		? SESSION.cannotStart
-		: `${SESSION.cannotStart}：${problems.join("；")}`;
-}
-
 /** 工具调用那一行的文字：命令写成 `$ <命令>`，读、写、编辑写成「读 / 写 / 改 <路径>」。 */
 export function toolLine(tool: SessionTool | null, title: string): string {
 	switch (tool) {
