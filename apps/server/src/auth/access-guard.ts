@@ -3,7 +3,8 @@
 //
 // 这一步只对带了凭据的请求生效（规格 #489）：不带凭据的请求照旧放行，到 #494 才改成 401；带共享令牌的 HTTP 请求
 // 和不带凭据的走同一套（共享令牌不对应任何一台 Agent）。带了凭据就一定检查：库里没有的、过期的、吊销的、用户停用的，
-// 一律 401，不会退回到「不带凭据」的放行。
+// 一律 401，不会退回到「不带凭据」的放行。一处例外：吊销自己的凭据的三个接口，停用的用户的登录和个人令牌也认
+// （{@link REVOKE_OWN_ROUTES}，#578），只能用来吊销自己的凭据。
 import { type RouteDef, TOKEN_PREFIXES } from "@sfly/schema";
 import type { Clock } from "../clock.js";
 import type { ProjectRole } from "../db/schema.js";
@@ -23,6 +24,7 @@ import {
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
 	type ProjectLocator,
+	REVOKE_OWN_ROUTES,
 	requiresCredential,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
@@ -372,11 +374,18 @@ export class AccessGuard {
 		// 签发个人令牌可以不带凭据：请求体里是账号密码（`sfly login`），由处理函数验证，和登录一样限速。
 		if (rule === "login_or_password" && presented === undefined) return { ok: true, access: null };
 		if (presented === undefined) return denied(401, "unauthorized", "需要登录");
-		const resolved = await this.#resolve(presented);
+		// 吊销自己的凭据的接口，停用的用户也认他自己的登录和个人令牌（REVOKE_OWN_ROUTES）。
+		const resolved = await this.#resolve(presented, REVOKE_OWN_ROUTES.has(key));
 		const { principal } = resolved;
 		const refused = (status: 401 | 403, code: string, message: string): AccessResult =>
 			withCookie(denied(status, code, message), resolved, request, this.#idleMs);
 		if (principal === undefined) return refused(401, "unauthorized", "凭据无效、已过期或已吊销");
+		// 停用的用户的个人令牌（走 REVOKE_OWN_ROUTES 才解析得出来）：只有吊销它自己通过，别的一律 401——和已吊销的令牌
+		// 分不出来，持有令牌的人不能借状态码看出它是「停用中、仍然有效」。
+		if (principal.kind === "personal" && principal.user.disabledAt !== null) {
+			const own = key === "DELETE /account/tokens/:id" && request.params.id === principal.tokenId;
+			if (!own) return refused(401, "unauthorized", "凭据无效、已过期或已吊销");
+		}
 		// 登录一直可以；个人令牌只有 `login_or_personal` 认。
 		const person =
 			principal.kind === "login" || (rule === "login_or_personal" && principal.kind === "personal")
@@ -428,7 +437,8 @@ export class AccessGuard {
 	 */
 	async #checkLogout(presented: Presented | undefined): Promise<AccessResult> {
 		if (presented?.from !== "cookie") return { ok: true, access: null };
-		const { principal } = await this.#resolve(presented);
+		// 停用的用户的登录也要能注销（REVOKE_OWN_ROUTES）：不然启用之后这个登录又能用了。
+		const { principal } = await this.#resolve(presented, true);
 		if (principal?.kind !== "login") return { ok: true, access: null };
 		return {
 			ok: true,
@@ -450,14 +460,19 @@ export class AccessGuard {
 
 	// ---- 解析凭据 ----
 
-	async #resolve(presented: Presented): Promise<Resolved> {
+	/**
+	 * `allowDisabled`：所有者被停用的登录和个人令牌也解析出身份（只有吊销自己的凭据的接口这样用，{@link REVOKE_OWN_ROUTES}）；
+	 * 这样解析出的身份不续期、不记最后使用时间。
+	 */
+	async #resolve(presented: Presented, allowDisabled = false): Promise<Resolved> {
 		const hash = hashCredential(presented.secret);
 		const now = this.deps.clock.now();
 		if (presented.from === "cookie") {
 			const login = await this.deps.store.loginByCookieHash(hash);
-			const principal = login && loginPrincipal(login, now);
+			const principal = login && loginPrincipal(login, now, allowDisabled);
 			if (login === undefined || principal === undefined)
 				return { principal: undefined, clear: true };
+			if (login.user.disabledAt !== null) return { principal };
 			// 用了一段时间之后才写一次库：最后使用时间、空闲期限顺延，浏览器上的 Cookie 也跟着续。
 			if (now.getTime() - login.lastUsedAt.getTime() >= LOGIN_TOUCH_INTERVAL_MS) {
 				await this.deps.store.touchLogin(login.id, now, new Date(now.getTime() + this.#idleMs));
@@ -467,10 +482,11 @@ export class AccessGuard {
 		}
 		const token = await this.deps.store.tokenByHash(hash);
 		if (token) {
-			const principal = tokenPrincipal(token, now);
+			const principal = tokenPrincipal(token, now, allowDisabled);
 			// 用着才记（失效的令牌不记）；一分钟内只写一次，先在内存里判断一下，省得每个请求都发一条更新。
 			if (
 				principal !== undefined &&
+				token.user?.disabledAt == null &&
 				(token.lastUsedAt === null ||
 					now.getTime() - token.lastUsedAt.getTime() >= TOKEN_TOUCH_INTERVAL_MS)
 			) {
@@ -783,10 +799,13 @@ const requestTaskId = (request: AccessRequest): string => {
 	return request.params[name] ?? "";
 };
 
-function loginPrincipal(login: StoredLogin, now: Date): Principal | undefined {
-	if (login.revokedAt !== null || login.idleExpiresAt <= now || login.user.disabledAt !== null) {
-		return undefined;
-	}
+function loginPrincipal(
+	login: StoredLogin,
+	now: Date,
+	allowDisabled = false,
+): Principal | undefined {
+	if (login.revokedAt !== null || login.idleExpiresAt <= now) return undefined;
+	if (login.user.disabledAt !== null && !allowDisabled) return undefined;
 	return {
 		kind: "login",
 		user: login.user,
@@ -799,11 +818,18 @@ function loginPrincipal(login: StoredLogin, now: Date): Principal | undefined {
 	};
 }
 
-function tokenPrincipal(token: StoredToken, now: Date): Principal | undefined {
+function tokenPrincipal(
+	token: StoredToken,
+	now: Date,
+	allowDisabled = false,
+): Principal | undefined {
 	if (token.revokedAt !== null || (token.expiresAt !== null && token.expiresAt <= now)) {
 		return undefined;
 	}
-	if (token.user !== null && token.user.disabledAt !== null) return undefined;
+	// 所有者被停用：拒绝；只有吊销自己的凭据的接口认他的个人令牌（会话令牌等别的种类仍然拒绝）。
+	if (token.user !== null && token.user.disabledAt !== null) {
+		if (!(allowDisabled && token.kind === "personal")) return undefined;
+	}
 	switch (token.kind) {
 		case "personal":
 			return token.user === null
