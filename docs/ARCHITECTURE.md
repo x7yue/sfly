@@ -413,7 +413,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 | 表 | 主要字段 |
 |---|---|
-| `sessions` | id, project_id（所属项目，外键；竖切里都是 `default`）, title（第一句话的前 60 个字）, status（idle 空闲 / running 在做 / queued 排队中 / ended 已结束：约束里一次写全，竖切只用前两个）, created_by（发起人的昵称）, created_by_user_id（发起人的用户，可空：#494 之前的请求没有用户）, created_at, last_activity_at；索引 `(project_id, last_activity_at)`；每个项目至多一个 `running` 的会话（部分唯一索引 `sessions_one_running_per_project`）：同一个项目同一时刻只跑一轮，并发的两个「开始一轮」只有一个写得成 |
+| `sessions` | id, project_id（所属项目，外键；竖切里都是 `default`）, title（第一句话的前 60 个字；超过时末尾加「…」，截的位置不切开网址）, status（idle 空闲 / running 在做 / queued 排队中 / ended 已结束：约束里一次写全，竖切只用前两个）, created_by（发起人的昵称）, created_by_user_id（发起人的用户，可空：#494 之前的请求没有用户）, created_at, last_activity_at；索引 `(project_id, last_activity_at)`；每个项目至多一个 `running` 的会话（部分唯一索引 `sessions_one_running_per_project`）：同一个项目同一时刻只跑一轮，并发的两个「开始一轮」只有一个写得成 |
 | `session_events` | (session_id, seq) 主键, type, payload（JSONB：事件里除 `type` 以外的字段）, created_at；只存持久的那几类事件（`PERSISTED_SESSION_EVENT_TYPES`）；`seq` 是会话内序号，从 1 起，严格递增；`created_at` 是事件产生的时间，不是落库的时间；部分索引 `session_events_turn_end`（`(session_id, seq desc) where type = 'turn_end'`）给「上一轮的结局」；会话删除时事件一起删 |
 
 `api_tokens.session_id`（会话令牌属于一个会话）是指向 `sessions` 的外键，不级联（no action）：令牌只吊销、不删除，所以签发过会话令牌的会话删不掉；骨架里没有删除会话的接口，做会话的删除和保留期时要一起处理令牌。`session_events` 的外键是级联的。迁移 0035 加这个外键时，库里不能已经有 `kind = 'session'` 的令牌行（外键会让迁移失败并整体回滚）；还没有任何代码签发会话令牌，真实的库里不会有。

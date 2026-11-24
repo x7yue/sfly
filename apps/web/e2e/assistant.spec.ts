@@ -62,7 +62,12 @@ test("没有配置助手：就绪状态写明原因，「开始」不可用，�
 	await input.fill("给 http_check 加一个超时参数");
 	await expect(input).toHaveValue("给 http_check 加一个超时参数");
 	await expect(page.getByRole("button", { name: "开始" })).toBeDisabled();
-	await expect(page.getByTestId("cannot-start")).toContainText("助手现在不能用，不能开始会话");
+	// 不能用的原因只在上面的就绪状态里写一处：按钮旁边没有再写一遍，按钮和输入框用 aria-describedby 指向那一块。
+	await expect(page.getByText("助手没有开启")).toHaveCount(1);
+	await expect(page.getByTestId("cannot-start")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "开始" })).toHaveAccessibleDescription(
+		/现在不能用：.*助手没有开启/s,
+	);
 
 	await expect(page.getByRole("heading", { name: "还没有会话" })).toBeVisible();
 	await expect(page.getByText("在上面说一句话，助手就会开始。")).toBeVisible();

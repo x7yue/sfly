@@ -50,10 +50,27 @@ const rejected = (status: 409 | 503, code: SessionErrorCode, message: string): O
 /** 工作区在工作台上的路径。 */
 const WORKDIR = "/work";
 
-/** 会话的标题：第一句话的前 60 个字（空白压成一个空格）。 */
+/**
+ * 会话的标题：第一句话的前 60 个字（空白压成一个空格）。超过 60 个字时截短并在末尾加「…」，让人看得出后面还有；
+ * 截的位置不切开网址：第 60 个字落在一个网址（`http://` 或 `https://` 开头、到下一个空白为止）里时，截在网址之前
+ * （网址从第一个字开始、前面没有内容可留时，只好截在网址里）。网址切断了既没有用、又像是完整的网址。
+ * 在这之前创建的会话的标题没有改（没有省略号），页面照原样显示。
+ */
 export const TITLE_CHARS = 60;
 export function titleOf(text: string): string {
-	return [...text.trim().replace(/\s+/g, " ")].slice(0, TITLE_CHARS).join("");
+	const chars = [...text.trim().replace(/\s+/g, " ")];
+	if (chars.length <= TITLE_CHARS) return chars.join("");
+	let cut = TITLE_CHARS;
+	const flat = chars.join("");
+	for (const match of flat.matchAll(/https?:\/\/\S+/gu)) {
+		const start = [...flat.slice(0, match.index)].length;
+		const end = start + [...match[0]].length;
+		if (start < cut && cut < end) {
+			if (start > 0) cut = start;
+			break;
+		}
+	}
+	return `${chars.slice(0, cut).join("").trimEnd()}…`;
 }
 
 /**
