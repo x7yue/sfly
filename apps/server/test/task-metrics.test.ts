@@ -538,6 +538,9 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["runs", "triggered_token", "text"],
 	["runs", "cancel_requested_by_user_id", "uuid"],
 	["runs", "cancel_requested_token", "text"],
+	// 0036（经哪个会话，#547）：运行和场景版本记着会话。当前代码触发运行、保存版本时都写 session_id。
+	["runs", "session_id", "uuid"],
+	["orchestration_versions", "session_id", "uuid"],
 ];
 
 /**

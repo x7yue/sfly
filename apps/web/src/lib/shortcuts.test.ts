@@ -12,6 +12,7 @@ import {
 	type ShortcutDef,
 	ShortcutMatcher,
 	shortcutKeys,
+	shortcutRows,
 	shortcutText,
 } from "./shortcuts";
 
@@ -188,6 +189,26 @@ describe("组件自己处理的快捷键（displayOnly）", () => {
 		expect(matcher.handle(key("Enter", { ctrlKey: true, editable: true }), 0, () => true)).not.toBe(
 			"assistant-send",
 		);
+	});
+});
+
+describe("快捷键面板的行", () => {
+	it("名称相同的登记（一个键一条）合成一行：名称一次，按键按注册表顺序；其余每条自成一行", () => {
+		const rows = shortcutRows("编排画布");
+		const remove = rows.filter((row) => row.label === "删除节点 / 断开连线");
+		expect(remove).toEqual([
+			{ label: "删除节点 / 断开连线", ids: ["canvas-delete", "canvas-delete-backspace"] },
+		]);
+		expect(rows.flatMap((row) => row.ids)).toEqual(
+			SHORTCUTS.filter((s) => s.group === "编排画布").map((s) => s.id),
+		);
+	});
+
+	it("每个分组里没有两行同名", () => {
+		for (const group of new Set(SHORTCUTS.map((s) => s.group))) {
+			const labels = shortcutRows(group).map((row) => row.label);
+			expect(new Set(labels).size, group).toBe(labels.length);
+		}
 	});
 });
 
