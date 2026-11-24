@@ -556,7 +556,9 @@ test("日志里从右到左的文字（希伯来文开头的混排、纯希伯�
 		const bdi = logs.locator("bdi", { hasText: text }).first();
 		await expect(bdi, `「${text}」应当在 <bdi> 里`).toBeVisible();
 		expect(await bdi.getAttribute("dir"), `「${text}」的 <bdi> 的 dir`).toBe("ltr");
-		const line = bdi.locator("xpath=..");
+		// 元素句柄：拆开 <bdi> 之后，按「<bdi> 的上一级」找的定位器就找不到了。
+		const line = await bdi.locator("xpath=..").elementHandle();
+		if (!line) throw new Error(`「${text}」那一行没有找到`);
 		const withIsolation = await line.screenshot({ animations: "disabled" });
 		await line.evaluate((element) => {
 			for (const inner of element.querySelectorAll("bdi")) inner.replaceWith(...inner.childNodes);
