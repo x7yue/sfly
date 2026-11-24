@@ -191,8 +191,9 @@ def _invalid_params_message(error: ApiError, declared: Sequence[Declaration]) ->
     值接到类型不符的节点输入（`param_input_type_mismatch`，例如 `--param n=8.5` 接到整数输入）时，
     参数本身没问题（声明过、值也合法），问题是值和它接到的节点输入的类型不符：标题说这个，
     说明里已经写明哪个参数、哪个节点的哪个输入、怎么改，不再把声明的参数列一遍。
-    secret 参数的值合计太大（`secret_params_too_large`）时，问题也不在参数的声明：说明里已经写明合计多少、
-    上限多少、占得最多的是哪几个参数、怎么办，原样给出，不再把声明的参数列一遍。
+    secret 参数的值合计太大（`secret_params_too_large`）时，问题也不在参数的声明：
+    说明里已经写明合计多少、上限多少、占得最多的是哪几个参数、怎么办，原样给出，
+    不再把声明的参数列一遍。
     其余（缺必填、类型不对、没声明……）仍是「入口参数不对」。
     """
     details = error.details if isinstance(error.details, list) else []
