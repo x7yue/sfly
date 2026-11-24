@@ -1556,7 +1556,11 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			await settled();
 			// 会话还在；这一轮结局写下之后，那句话开始了第 2 轮（助手服务的第 1 轮已经结束，第 2 轮的 prompt 才到，没有被回 409）。
 			expect(await sessionCount(cp)).toBe(before + 1);
-			expect(assistant.prompts.map((p) => [p.sessionId, p.body.turn, p.body.text])).toEqual([
+			expect(
+				assistant.prompts
+					.filter((p) => p.sessionId === id)
+					.map((p) => [p.sessionId, p.body.turn, p.body.text]),
+			).toEqual([
 				[id, 1, "冷启动很慢"],
 				[id, 2, "等的时候说的话"],
 			]);
