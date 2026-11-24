@@ -1,7 +1,8 @@
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
-import { orchestrations, orchestrationVersions, runPresets } from "../db/schema.js";
+import { runPresets } from "../db/schema.js";
 import { MIN_LEAF_CHARS, shortLeafCount } from "../logs/secrets.js";
+import { rawHeadDocument } from "./head-document.js";
 import type { PreflightProblem } from "./preflight.js";
 
 /**
@@ -17,21 +18,11 @@ export async function secretLeafWarnings(
 	db: Db | Tx,
 	orchestrationId: string,
 ): Promise<PreflightProblem[]> {
-	const [head] = await db
-		.select({ document: orchestrationVersions.document })
-		.from(orchestrations)
-		.innerJoin(
-			orchestrationVersions,
-			and(
-				eq(orchestrationVersions.orchestrationId, orchestrations.id),
-				eq(orchestrationVersions.number, orchestrations.headVersion),
-			),
-		)
-		.where(eq(orchestrations.id, orchestrationId));
-	if (!head) return [];
+	const document = await rawHeadDocument(db, orchestrationId);
+	if (!document) return [];
 	const warnings: PreflightProblem[] = [];
 	const mainSecrets = new Set<string>();
-	for (const node of head.document.nodes) {
+	for (const node of document.nodes) {
 		if (node.kind !== "entry" && node.kind !== "subflow_entry") continue;
 		for (const param of node.params) {
 			if (!param.secret) continue;

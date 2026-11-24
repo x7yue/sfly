@@ -22,6 +22,7 @@ import type { ProjectId } from "../projects/project-id.js";
 import { checkDevPackagesLoaded } from "./dev-package-loaded.js";
 import { knownParams, resolved, secretTexts } from "./known-params.js";
 import { type ParamOrigins, paramInputTypeProblems } from "./param-input-type.js";
+import { secretSizeProblem } from "./secret-size.js";
 import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
 
 /**
@@ -250,6 +251,7 @@ export function createParamsCheck(): ParamsCheck {
 				}
 			}
 		}
+		const tooLarge = secretSizeProblem(chains, { kind: "trigger" }, secrets);
 		return [
 			...(await checkReferencedAgents(db, project, wanted)).problems,
 			...(await checkFeishuBots(db, project, bots)),
@@ -259,6 +261,7 @@ export function createParamsCheck(): ParamsCheck {
 				await withDevNodeTypes(db, project, doc, locked),
 				origins,
 			),
+			...(tooLarge ? [tooLarge] : []),
 		];
 	};
 }

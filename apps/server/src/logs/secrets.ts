@@ -541,6 +541,13 @@ export class SecretSet {
 		return this.texts.length > 0 && this.#automaton() === undefined;
 	}
 
+	/** 所有写法的总长（UTF-16 码元个数，每种写法只算一次）：{@link oversize} 比的就是它和 {@link secretLimits} 的 `automatonChars`。 */
+	get chars(): number {
+		let total = 0;
+		for (const text of this.texts) total += text.length;
+		return total;
+	}
+
 	/**
 	 * 把文本中出现的 secret 值和令牌原值（{@link maskTokens}）替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入
 	 * （尤其是写日志）不能因为打码失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；
@@ -708,6 +715,16 @@ export function secretSetOf(values: Iterable<unknown>): SecretSet {
 	});
 	trimSetCache();
 	return set;
+}
+
+/**
+ * 一个 secret 参数的值单独算，所有写法的总长（{@link SecretSet.chars} 里这个值占的那部分；
+ * 几个参数里有相同的写法时，值集合里只算一次，所以各参数的和可以比值集合的总长大）。预检写明哪个参数占得多时用。
+ */
+export function secretValueChars(value: unknown): number {
+	let total = 0;
+	for (const text of secretPartsOf(value).texts) total += text.length;
+	return total;
 }
 
 /** 一个链实例起点声明为 secret 的参数的值（有值的）。 */

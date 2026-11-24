@@ -14,6 +14,7 @@ import { type Preflight, preflightWarnings } from "../runs/preflight.js";
 import { listRuns } from "../runs/run-list.js";
 import { getRunView } from "../runs/run-read.js";
 import { secretLeafWarnings } from "../runs/secret-leaf-warnings.js";
+import { secretSizeWarnings } from "../runs/secret-size-warnings.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
@@ -81,6 +82,7 @@ export function registerRunRoutes(
 			warnings: [
 				...preflightWarnings(head.document),
 				...(await secretLeafWarnings(deps.db, params.id)),
+				...(await secretSizeWarnings(deps.db, params.id)),
 			],
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, project, head.document)).map((agent) => ({

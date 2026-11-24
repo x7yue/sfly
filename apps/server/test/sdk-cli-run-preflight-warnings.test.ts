@@ -8,6 +8,7 @@ import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
+import { withSecretLimits } from "./support/secret-limits.js";
 import { sfly } from "./support/sfly-cli.js";
 import { type SflyProcess, spawnSfly } from "./support/sfly-process.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -221,6 +222,47 @@ describe("sfly run start 的预检警告 → 控制面", { timeout: 60_000 }, ()
 			const whole = await cli("run", "start", name, "--param", "n=8.0");
 			expect(whole.code, whole.stderr).toBe(0);
 			expect(await runsOf(id)).toHaveLength(1);
+		});
+
+		it("secret 参数的值合计太大（#632）：说明原样给出（合计、上限、占得最多的参数、怎么办），不再列参数的声明，不回显值，不触发运行；值小一点就照常触发", async () => {
+			const name = `大保密值场景-${++scenes}`;
+			const id = await api.orchestrationWith(
+				{
+					default_agent: "agent-a",
+					nodes: [
+						{
+							id: "entry",
+							kind: "entry",
+							params: [param("token", { secret: true, required: true })],
+						},
+						echo("t"),
+					],
+					edges: [{ from: "entry", to: "t", kind: "chain" }],
+					packages: { stub: "1.0.0" },
+				},
+				name,
+			);
+
+			await withSecretLimits({ automatonChars: 50 }, async () => {
+				const big = "fake-big-".padEnd(80, "x");
+				const bad = await cli("run", "start", name, "--param", `token=${big}`);
+				expect(bad.code).toBe(2);
+				expect(bad.stderr).toContain(
+					"错误：这次触发的 secret 参数的值太多或太长：所有写法合计 80 个字符，超过上限 50 个字符。",
+				);
+				expect(bad.stderr).toContain("占得最多的是 参数 token（80 个字符）");
+				expect(bad.stderr).toContain("怎么办：缩短这些值");
+				// 问题不在参数的声明：不报「入口参数不对」、不列声明的参数，也不回显值
+				expect(bad.stderr).not.toContain("入口参数不对");
+				expect(bad.stderr).not.toMatch(/参数\s+类型\s+说明/);
+				expect(bad.stderr).not.toContain("fake-big-");
+				expect(bad.stderr).toContain(`下一步：sfly scenario show ${id}`);
+				expect(await runsOf(id)).toEqual([]);
+
+				const ok = await cli("run", "start", name, "--param", "token=fake-small");
+				expect(ok.code, ok.stderr).toBe(0);
+				expect(await runsOf(id)).toHaveLength(1);
+			});
 		});
 	});
 });
