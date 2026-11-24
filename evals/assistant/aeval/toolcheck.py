@@ -86,6 +86,8 @@ EXPECT_P: dict[str, tuple[bool, str]] = {
     "bash_truncated": (False, "Full output:"),
     "read_full_output": (False, "5000"),
     "read_missing": (True, "ENOENT"),
+    # 平台不把工作区里的 skill 放进系统提示，但它还在工作台上，模型读得到。
+    "read_skill": (False, "这份 skill 只在开发环境里"),
 }
 
 # 系统提示里的东西：臂 A 的 pi 加载工作目录里的 skill 和 AGENTS.md；平台的 pi 只加载平台自带的 skill
