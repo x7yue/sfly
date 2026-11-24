@@ -174,11 +174,15 @@ const LABEL_COLUMN_MAX = "10rem";
  */
 export const LINE_CELL = "12rem";
 
+/** `labelColumnWidth` 的估算里为「估少了」多留的 0.375rem：算「放不放得下」时减掉它，让这一项也只往小里估。 */
+const LABEL_ESTIMATE_MARGIN = "0.375rem";
+
 /**
- * 计数那一列预留的宽度，算「放不放得下」（`--line-room`）用：个位数的「3 / 3」加左边距，只往小里估（计数更宽时线路本来就按内容取宽，
- * 只是放得下的界限差几十像素）。估大了的话，放得下时多出来的宽度会摊到每一站的格子上，格子就超过 {@link LINE_CELL}。
+ * 计数那一列预留的宽度，算「放不放得下」（`--line-room`）用：最短的「1/1」加左边距（等宽 12px 三个字符加 0.5rem），只往小里估
+ * （计数更宽时线路本来就按内容取宽，只是放得下的界限差几十像素）。估大了的话，放得下时多出来的宽度会摊到每一站的格子上，
+ * 格子就超过 {@link LINE_CELL}。
  */
-const COUNT_COLUMN = "2.75rem";
+const COUNT_COLUMN = "1.75rem";
 
 /** 链名在 `text-xs`（0.75rem）里大概有多宽（rem）：全角字一个字宽，其余按 0.6 个字宽估。 */
 const labelRem = (text: string) =>
@@ -224,7 +228,7 @@ export function RunLines({
 						...(labelWidth ? { "--line-label": labelWidth } : {}),
 						// 链名那一列的宽度（给了 `labelWidth` 就是它，没给时按链名估一个，只用来算这一块要多宽才算放得下）。
 						"--line-label-est": labelColumnWidth(chains.map((c) => c.label)),
-						"--line-room": `calc(var(--line-columns) * var(--line-cell) + var(--line-label, var(--line-label-est)) + ${COUNT_COLUMN})`,
+						"--line-room": `calc(var(--line-columns) * var(--line-cell) + var(--line-label, var(--line-label-est)) - ${LABEL_ESTIMATE_MARGIN} + ${COUNT_COLUMN})`,
 					} as CSSProperties
 				}
 				className={cn(

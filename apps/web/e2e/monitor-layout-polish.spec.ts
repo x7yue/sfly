@@ -321,22 +321,23 @@ for (const viewport of [
 				expect(m.line, `${note}：线路比容器宽`).toBeLessThanOrEqual(m.container + 0.5);
 				// 计数紧挨着最后一站。
 				expect(m.countGap, `${note}：计数离最后一站太远`).toBeLessThanOrEqual(8);
-				// 站的格子：站名都不长时不超过上限（再多的宽度留在行尾）；有一个很长的节点 ID 时，它的列最宽 18rem 加两侧留白，别的列仍不超过上限。
-				const widest = Math.max(...m.cells);
-				const others = longId ? m.cells.filter((c) => c !== widest) : m.cells;
-				for (const cell of others) {
-					expect(cell, `${note}：站的格子超过了上限`).toBeLessThanOrEqual(
-						LINE_CELL_PX + CELL_SLACK,
-					);
-				}
-				if (longId) expect(widest, `${note}：长 ID 的列`).toBeLessThanOrEqual(288 + 14 + 1);
-				// 行尾空着（多出来的宽度）时，每一站都已经取满上限：站少时不是「挤在左边」；没有空着时整行被站分掉了。
 				if (m.rowEnd > 1) {
+					// 行尾空着（放得下，多出来的宽度留在行尾）：每一站的格子正好是上限（站名都不长时），再多的宽度不摊给站；
+					// 有一个很长的节点 ID 时，它的列取站名的宽度（最宽 18rem 加两侧留白），别的列仍是上限。
+					const widest = Math.max(...m.cells);
+					const others = longId ? m.cells.filter((c) => c !== widest) : m.cells;
 					for (const cell of others) {
+						expect(cell, `${note}：行尾空着，站的格子超过了上限`).toBeLessThanOrEqual(
+							LINE_CELL_PX + CELL_SLACK,
+						);
 						expect(cell, `${note}：行尾空着，但站的格子没有取满`).toBeGreaterThanOrEqual(
 							LINE_CELL_PX - 1,
 						);
 					}
+					if (longId) expect(widest, `${note}：长 ID 的列`).toBeLessThanOrEqual(288 + 14 + 1);
+				} else {
+					// 放不下：线路占满容器、按站名的宽度分整行（站名长的列比上限宽、短的窄），没有行尾的空白。
+					expect(m.line, `${note}：放不下时线路占满容器`).toBeGreaterThanOrEqual(m.container - 1);
 				}
 				console.log(`线路 ${name} ${note}`);
 			}
