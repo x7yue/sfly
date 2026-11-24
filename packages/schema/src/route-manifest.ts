@@ -224,7 +224,14 @@ export function buildRouteManifest(
 		if ("contentType" in def) entry.content_type = def.contentType;
 		/** 字段说明：zod 的 `.describe()` 已经在里面，没有的用契约源码里字段上的注释（`docs`）。 */
 		const annotated = <T extends Record<string, unknown>>(json: T, part: RouteDocPart): T => {
-			if (docs) annotateSchema(json, (path) => docs(def, part, path));
+			if (!docs) return json;
+			const seen = new Set<string>();
+			annotateSchema(
+				json,
+				(path) => docs(def, part, path),
+				(path) => seen.add(path.join(".")),
+			);
+			docs.checkMembers?.(def, part, seen);
 			return json;
 		};
 		if (def.params) entry.params = annotated(exportPart("params", def.params, notes), "params");
