@@ -48,9 +48,12 @@ interface PgErrorMessage {
 }
 
 /**
- * 数据库发来的这条错误消息之后它会关掉这条连接：`FATAL`、`PANIC`；`severity` 是数据库按它的语言设置发来的（`lc_messages`，可能被
- * 翻译），所以再看 SQLSTATE：`57P01`（管理员命令结束连接、数据库正在关闭）、`57P02`（崩溃关闭）、`57P03`（现在不能连接）、
- * `57P04`（库被删了）、`57P05`（空闲会话超时）。
+ * 数据库发来的这条错误消息之后它会关掉这条连接：`FATAL`、`PANIC`；`severity` 是数据库按它的语言设置发来的（`lc_messages`，会被
+ * 翻译：中文的数据库发的是「致命错误」，实测，PostgreSQL 18、`lc_messages=zh_CN.UTF-8`；`pg-protocol` 只留下这个翻译过的字段，
+ * 没有不翻译的那个），所以再看 SQLSTATE：`57P01`（管理员命令结束连接、数据库正在关闭）、`57P02`（崩溃关闭）、`57P03`（现在不能连接）、
+ * `57P04`（库被删了）、`57P05`（空闲会话超时）、`25P03`（事务里空闲超时，`idle_in_transaction_session_timeout`）、
+ * `25P04`（事务超时，`transaction_timeout`，PostgreSQL 17 起）。后两个数据库发的也是 FATAL、随后关掉连接（实测）。
+ * 连接数用完（`53300`）、认证失败这类只在**建立连接时**出现，不会落在借出去的连接上，不在这里。
  */
 const CONNECTION_ENDING_CODES: ReadonlySet<string> = new Set([
 	"57P01",
@@ -58,6 +61,8 @@ const CONNECTION_ENDING_CODES: ReadonlySet<string> = new Set([
 	"57P03",
 	"57P04",
 	"57P05",
+	"25P03",
+	"25P04",
 ]);
 const endsConnection = (message: PgErrorMessage): boolean =>
 	message.severity === "FATAL" ||
@@ -90,12 +95,12 @@ export function openDatabase(
 	// 「这条借出去的连接完了」有两个信号，都按上面的办法处理（只交给 `onInUseError` 一次，之后的只记日志）：
 	// 1. 连接的 `error` 事件：连接被掐断（网络中断、数据库进程被杀）时，pg 先让这次操作的 promise 以错误结束、再同步触发 `error`；
 	//    promise 的后续处理要等当前调用栈走完，所以连接池一定先结束。
-	// 2. 数据库发来的**致命错误消息**（`FATAL`、`PANIC`：`pg_terminate_backend`、数据库正常关闭、连接数用完……）：数据库先发这条消息、
+	// 2. 数据库发来的**致命错误消息**（`FATAL`、`PANIC`：`pg_terminate_backend`、数据库正常关闭、事务里空闲超时……）：数据库先发这条消息、
 	//    再关连接。这时 pg 的行为是：连接上有正在执行的语句，只让这条语句以错误结束、**不发 `error`**，`error` 要等连接真的关闭才来；
 	//    没有正在执行的语句才立刻发 `error`。ORM 把 `begin` 放在 `try` 外面，`begin` 收到这条消息时事务立刻拒绝，引擎的失败处理
 	//    于是先跑、从池里借到另一条好的连接开始写（把 Agent 报来的成功记成节点出错，配了重试的还会再执行一遍）；连接池要等连接
 	//    关闭的 `error` 才结束，那时已经晚了：它只挡新的借出，有序关闭又正好等这个已经借出的事务提交完。所以这条消息一到就当作
-	//    连接完了（`onFatalMessage`），不等连接关闭。
+	//    连接完了（下面 `errorMessage` 的钩子），不等连接关闭。
 	//    **这依赖 pg 的内部**（`pg` 8.23.1 / `pg-protocol` 1.16.1，`test/database-pool.test.ts` 守着）：连接对象 `client.connection` 在
 	//    收到错误消息时触发 `errorMessage`、带着 `severity`（`pg-protocol` 取的是数据库发来的、可能被本地化的那个字段）和 `code`
 	//    （SQLSTATE）；pg 自己的 `errorMessage` 处理先注册、先运行（它让语句以错误结束），我们的在它之后、同一个 emit 里。升级之后
