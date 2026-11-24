@@ -695,19 +695,57 @@ describe("连不上助手服务的说明：只有原因的种类，不带地址�
 		expect(ASSISTANT_REJECTION_TEXT.process_limit).toContain("再试");
 	});
 
-	it("命令有没有可能已经送到：超时、发出请求之后连接被关是未知；连接被拒绝、域名解析不了、网络不通一定没送到", () => {
-		const coded = (code: string) =>
+	it("命令有没有可能已经送到：只有请求一个字节都没发出去（连接被拒绝、域名解析不了、没有路由、建立连接就超时）才是一定没送到；超时、发出请求之后连接被重置或关闭是未知；认不出的错也是未知", () => {
+		const coded = (code: string, extra: Record<string, unknown> = {}) =>
 			Object.assign(new TypeError("fetch failed"), {
-				cause: Object.assign(new Error(code), { code }),
+				cause: Object.assign(new Error(code), { code, ...extra }),
 			});
 		expect(outcomeUnknown(new DOMException("timeout", "TimeoutError"))).toBe(true);
-		for (const code of ["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"]) {
+		for (const code of [
+			"ECONNRESET",
+			"EPIPE",
+			"UND_ERR_SOCKET",
+			"UND_ERR_HEADERS_TIMEOUT",
+			"UND_ERR_BODY_TIMEOUT",
+		]) {
 			expect(outcomeUnknown(coded(code)), code).toBe(true);
 		}
-		for (const code of ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH"]) {
+		for (const code of [
+			"ECONNREFUSED",
+			"ENOTFOUND",
+			"EAI_AGAIN",
+			"EHOSTUNREACH",
+			"ENETUNREACH",
+			"UND_ERR_CONNECT_TIMEOUT",
+		]) {
 			expect(outcomeUnknown(coded(code)), code).toBe(false);
 		}
-		expect(outcomeUnknown("不是 Error")).toBe(false);
+		// `ETIMEDOUT`：建立连接时（系统调用 connect）是没连上；别的时候（已经连上的连接上重传超时）是发出之后。
+		expect(outcomeUnknown(coded("ETIMEDOUT", { syscall: "connect" }))).toBe(false);
+		expect(outcomeUnknown(coded("ETIMEDOUT", { syscall: "read" }))).toBe(true);
+		expect(outcomeUnknown(coded("ETIMEDOUT"))).toBe(true);
+		// 认不出的错落在保守的一边：未知。
+		for (const code of [
+			"ECONNABORTED",
+			"UND_ERR_ABORTED",
+			"UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
+			"EWHATEVER",
+		]) {
+			expect(outcomeUnknown(coded(code)), code).toBe(true);
+		}
+		expect(outcomeUnknown(new Error("没有码的错"))).toBe(true);
+		expect(outcomeUnknown("不是 Error")).toBe(true);
+		// 同时有「发出之后」的码和「没连上」的码：未知。
+		expect(
+			outcomeUnknown(
+				Object.assign(new TypeError("fetch failed"), {
+					cause: Object.assign(new Error("x"), {
+						code: "UND_ERR_SOCKET",
+						cause: Object.assign(new Error("y"), { code: "ECONNREFUSED" }),
+					}),
+				}),
+			),
+		).toBe(true);
 	});
 
 	it("命令的 AssistantUnreachableError 带着 outcomeUnknown：超时是 true，连接被拒绝是 false", async () => {

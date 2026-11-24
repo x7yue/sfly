@@ -824,8 +824,9 @@ interface Failure {
 
 /**
  * `prompt` 没有得到 202 时，这一轮有没有可能已经在助手服务那边开始（协议：503 在登记之前判断，是确定没开始；助手服务明确拒绝的
- * 409、4xx 也是）：别的 5xx、超时、连接在发出请求之后断了是结果未知；连接没建起来（被拒绝、域名解析不了）请求没有发出去，
- * 一定没有开始（{@link AssistantUnreachableError.outcomeUnknown}）。
+ * 409、4xx 也是）：别的 5xx、超时、连接在发出请求之后断了是结果未知；**只有请求一个字节都没发出去**（连接没建起来：被拒绝、
+ * 域名解析不了、没有路由、建立连接就超时）才是一定没有开始，认不出的错也算未知（白名单，
+ * {@link AssistantUnreachableError.outcomeUnknown}、`outcomeUnknown()`）。
  */
 function promptMayHaveStarted(error: unknown): boolean {
 	if (error instanceof AssistantError) return error.status >= 500 && error.status !== 503;
