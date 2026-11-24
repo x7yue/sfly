@@ -83,6 +83,8 @@ export interface ControlPlaneOptions {
 	clock?: Clock;
 	http?: ListenOptions;
 	grpc?: ListenOptions;
+	/** Agent 网关收一条消息最多多少字节（默认 `AGENT_MESSAGE_MAX_BYTES`，80 MiB）：测试用小的上限试超限。 */
+	agentMessageMaxBytes?: number;
 	/**
 	 * 打开 Fastify 的日志和控制面自己的控制台输出；给 `{ stream }` 时 Fastify 的日志写进这个流（测试用它检查日志里
 	 * 没有哈希、令牌这类不该出现的内容），控制台输出照常。
@@ -586,6 +588,12 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		gateway = await startAgentGateway({
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
+			readMaxBytes: options.agentMessageMaxBytes,
+			// 只写是哪台 Agent（握手之前是来源地址）、声明的大小和上限，不带消息的任何内容。
+			onMessageTooLarge: ({ agent, source, size, limit }) =>
+				logError(
+					`sfly: ${agent === undefined ? `来源地址 ${source} 的连接（握手之前）` : `Agent ${agent}`}发来的消息超过上限（声明 ${size ?? "?"} 字节，上限 ${limit} 字节），关闭这条连接`,
+				),
 			hub,
 			// 日志、进度、指标、ctx.notify 的通知、动作摘要和安装状态不改变运行状态，不经过引擎（src/logs/task-logs.ts、
 			// src/metrics/task-metrics.ts、src/feishu/task-notifications.ts、src/actions/task-actions.ts、src/agents/agent-hub.ts）。

@@ -58,6 +58,29 @@ export interface RunningTaskRef {
 	started: boolean;
 }
 
+/**
+ * Agent 发来的单条消息的大小上限（连接库的 `readMaxBytes`）：80 MiB。
+ *
+ * 这是防止内存被一条消息占满的兜底，不是正常路径上的限制。要高过还没升级的 Agent 能发出的最大的一条：一批日志（`LogBatch`）条数
+ * 上限 1000、每行最多 64 KiB，但 Agent 自己的排队上限是 64 MiB，超过的整批在 Agent 那边就丢掉了（#663），所以它真正发得出的最大
+ * 一条是 64 MiB 多一点；80 MiB 比它高一截，升级途中的 Agent 不会被拒。升级之后（#663）一批最多 2 MiB 加最后一条（日志一条
+ * 约 0.3 MiB、动作明细约 128 KiB），节点输出结果限在 1 MB（`MAX_OUTPUT_BYTES`），指标一批 1 万个点：Agent 都升过 #663 之后可以降到
+ * 16 MiB（docs/ARCHITECTURE.md）。
+ */
+export const AGENT_MESSAGE_MAX_BYTES = 80 * 1024 * 1024;
+
+/** 一条消息超过上限、这条连接被关闭：只有哪台 Agent、来源地址、声明的大小和上限，没有消息的任何内容。 */
+export interface MessageTooLarge {
+	/** 哪台 Agent；握手（Hello）之前还不知道。 */
+	agent: string | undefined;
+	/** 连接的来源地址。 */
+	source: string;
+	/** 消息声明的大小（字节）；读不出来时为 undefined。 */
+	size: number | undefined;
+	/** 当时的上限（字节）。 */
+	limit: number;
+}
+
 export interface AgentGatewayOptions {
 	host: string;
 	port: number;
@@ -66,12 +89,30 @@ export interface AgentGatewayOptions {
 	/** Hello 里的凭据怎么认（Agent 凭据、共享令牌、没有凭据的过渡规则，src/agents/agent-auth.ts）。 */
 	authenticator: AgentAuthenticator;
 	onError?: (error: unknown) => void;
+	/**
+	 * Agent 发来的单条消息最多多少字节（默认 {@link AGENT_MESSAGE_MAX_BYTES}）。超过的这一台 Agent 的流以 `resource_exhausted`
+	 * 结束（别的 Agent 的流不受影响）：库读到 5 字节的长度前缀、发现声明的长度超过上限就拒绝，不会先把整条收齐。
+	 */
+	readMaxBytes?: number;
+	/** 一条消息超过上限、这条连接被关闭时调用（写一行日志用）。 */
+	onMessageTooLarge?: (event: MessageTooLarge) => void;
 }
 
 /** 这次连接的来源地址（ADR 0019：没有显式配置对外地址的 Agent 以它为对外地址）。 */
 const remoteAddressKey = createContextKey<string | undefined>(undefined, {
 	description: "agent connection source address",
 });
+
+/**
+ * 连接库读请求流时遇到的「消息超过 `readMaxBytes`」：是的话返回声明的大小（读不出来时 undefined），不是返回 null。
+ * 库的错误文字是 `message size <声明的大小> is larger than configured readMaxBytes <上限>`，错误码 `resource_exhausted`。
+ */
+function tooLargeSize(error: unknown): { size: number | undefined } | null {
+	if (!(error instanceof ConnectError) || error.code !== Code.ResourceExhausted) return null;
+	if (!error.rawMessage.includes("larger than configured readMaxBytes")) return null;
+	const size = /message size (\d+)/.exec(error.rawMessage)?.[1];
+	return { size: size === undefined ? undefined : Number(size) };
+}
 
 /** proto 的 RunningTask（Hello、Heartbeat 里 Agent 手上的任务）。 */
 export const runningTaskRef = (t: { taskId: string; attempt: number; started: boolean }) => ({
@@ -91,7 +132,19 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			context: HandlerContext,
 		): AsyncIterable<ServerMessage> {
 			const inbound = requests[Symbol.asyncIterator]();
-			const first = await inbound.next();
+			const source = sourceAddress(context.values.get(remoteAddressKey));
+			const limit = options.readMaxBytes ?? AGENT_MESSAGE_MAX_BYTES;
+			/** 读请求流时遇到消息超过上限：报告（只有哪台 Agent、来源地址、大小和上限）；是返回 true。 */
+			const reportTooLarge = (error: unknown, agent?: string): boolean => {
+				const found = tooLargeSize(error);
+				if (found) options.onMessageTooLarge?.({ agent, source, size: found.size, limit });
+				return found !== null;
+			};
+			// 握手之前的第一条消息就超过上限：还不知道是哪台 Agent，写来源地址；这个错误本身就让流以 resource_exhausted 结束。
+			const first = await inbound.next().catch((error: unknown) => {
+				reportTooLarge(error);
+				throw error;
+			});
 			const greeting = first.done ? undefined : storable(first.value);
 			if (greeting?.body.case !== "hello") {
 				throw new ConnectError("first message must be Hello", Code.InvalidArgument);
@@ -133,7 +186,7 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 								listen_error: hello.peer.listenError,
 							},
 						}),
-						source_address: sourceAddress(context.values.get(remoteAddressKey)),
+						source_address: source,
 					},
 					outbox,
 					agentClockReading(hello),
@@ -153,7 +206,9 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			}
 			context.signal.addEventListener("abort", () => conn.close());
 
-			// 入站消息在后台逐条处理；请求流结束或断线时注销连接。
+			// 入站消息在后台逐条处理；请求流结束或断线时注销连接。消息超过上限时记下这个错误：注销连接、出站队列结束之后，
+			// 这条流以它（resource_exhausted）结束，Agent 看得到明确的错误，不是悄悄断开。
+			let tooLarge: unknown;
 			void (async () => {
 				try {
 					const running = hello.runningTasks.map(runningTaskRef);
@@ -182,13 +237,15 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 						}
 					}
 				} catch (error) {
-					if (!conn.closed) options.onError?.(error);
+					if (reportTooLarge(error, hello.name)) tooLarge = error;
+					else if (!conn.closed) options.onError?.(error);
 				} finally {
 					await options.hub.detach(conn).catch((error) => options.onError?.(error));
 				}
 			})();
 
 			yield* outbox;
+			if (tooLarge) throw tooLarge;
 		},
 	};
 }
@@ -199,7 +256,15 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
  * 与 HTTP API 分开监听，因为 HTTP API 需要服务浏览器的 HTTP/1.1 请求。
  */
 export async function startAgentGateway(options: AgentGatewayOptions): Promise<AgentGatewayServer> {
+	const readMaxBytes = options.readMaxBytes ?? AGENT_MESSAGE_MAX_BYTES;
+	// 消息的长度前缀是 4 个字节：上限不能是 0、小数，也不能比它能表示的还大。
+	if (!Number.isSafeInteger(readMaxBytes) || readMaxBytes < 1 || readMaxBytes > 0xffffffff) {
+		throw new RangeError(
+			`Agent 网关的 readMaxBytes 要是 1 到 4294967295 的整数，不是 ${readMaxBytes}`,
+		);
+	}
 	const handler = connectNodeAdapter({
+		readMaxBytes,
 		routes(router) {
 			router.service(AgentGateway, gatewayService(options));
 		},

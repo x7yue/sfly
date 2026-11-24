@@ -110,6 +110,7 @@ export async function startTestControlPlane(
 		| "trustProxy"
 		| "streamRecheckMs"
 		| "sessionWriteLockTimeoutMs"
+		| "agentMessageMaxBytes"
 	> = {},
 ): Promise<TestControlPlane> {
 	if (options.template !== undefined && options.migrationsDir !== undefined) {
@@ -175,6 +176,7 @@ export async function startTestControlPlane(
 			trustProxy: options.trustProxy,
 			streamRecheckMs: options.streamRecheckMs,
 			sessionWriteLockTimeoutMs: options.sessionWriteLockTimeoutMs,
+			agentMessageMaxBytes: options.agentMessageMaxBytes,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 飞书发送队列的周期扫描同样调快。
