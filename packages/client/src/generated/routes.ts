@@ -75,6 +75,7 @@ import type {
 	SessionDetailResponse,
 	SessionEventsQuery,
 	SessionListResponse,
+	SessionRef,
 	SessionTool,
 	SessionView,
 	SnapshotEvent,
@@ -647,6 +648,8 @@ export interface Api {
 				/** 保存这个版本的人的昵称。 */
 				author: string;
 				author_via: string | null;
+				/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+				session?: SessionRef;
 				created_at: Timestamp;
 				document: StoredOrchestrationDocument;
 				/** 和保存时相同的警告，每条带 `existing`：改动之前（base_version 里）就有（见 CheckedWarningView）。 */
@@ -1279,7 +1282,7 @@ export interface Api {
 					max_attempts?: number;
 					/** 多久（毫秒）之后重试；只有 `retry`。 */
 					retry_delay_ms?: number;
-					/** 重试的原因按什么分；#548 起有值。 */
+					/** 重试的原因按什么分（#640 起有值）。 */
 					error_class?: ErrorClass;
 					/**
 					 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）

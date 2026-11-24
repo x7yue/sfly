@@ -61,12 +61,13 @@ export const SHORTCUTS = [
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
 	{ id: "new-scenario", group: "全局", label: "新建场景", keys: "N" },
 	// 助手页和会话页（sessions/）的输入框：Ctrl/⌘+Enter 发出（助手页是开始，会话页是接着说）；Enter 是换行。
+	// 只在输入框里生效，由输入框自己的 onKeyDown 处理（`isShortcut`）：全局绑定的话，焦点在别处时也会把输入框里的半句话发出去。
 	{
 		id: "assistant-send",
 		group: "助手",
 		label: "发送（输入框里）",
 		keys: "Ctrl+Enter",
-		inInputs: true,
+		displayOnly: true,
 	},
 	// 编排画布（全屏页）：方向键、Enter、Esc 由画布组件自己处理（components/canvas/FlowCanvas.tsx）。
 	{
@@ -228,6 +229,27 @@ export const shortcutById = (id: ShortcutId): ShortcutDef => {
 	return def;
 };
 
+/**
+ * 快捷键面板里一个分组的行：名称相同的登记（一个键一条，如删除节点的 Delete 和 Backspace）合成一行，名称写一次，
+ * 按键依次列出；行的先后按各自第一条登记在注册表里的位置。
+ */
+export interface ShortcutRow {
+	label: string;
+	/** 这一行的快捷键，注册表顺序；至少一个。 */
+	ids: ShortcutId[];
+}
+
+export function shortcutRows(group: ShortcutGroup): ShortcutRow[] {
+	const rows: ShortcutRow[] = [];
+	for (const def of SHORTCUTS) {
+		if (def.group !== group) continue;
+		const row = rows.find((r) => r.label === def.label);
+		if (row) row.ids.push(def.id);
+		else rows.push({ label: def.label, ids: [def.id] });
+	}
+	return rows;
+}
+
 /** 一次按键（KeyboardEvent 的子集）；editable 表示焦点在可输入的元素里。 */
 export interface KeyInput {
 	key: string;
@@ -311,6 +333,20 @@ function chordMatches(chord: Chord, input: KeyInput): boolean {
 	// 字母键区分 Shift；符号键（? ! …）本身就要按 Shift，不比较。
 	const isLetter = /^[a-z]$/.test(chord.key);
 	return !isLetter || input.shiftKey === chord.shift;
+}
+
+/**
+ * 这一次按键是不是注册表里这个快捷键（单个组合键，不含序列）：不由全局监听处理、而由组件自己的 onKeyDown 处理的
+ * （`displayOnly`）快捷键用它判断，Ctrl 同时匹配 ⌘，写法和全局监听一致。
+ */
+export function isShortcut(
+	id: ShortcutId,
+	event: Pick<KeyInput, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+): boolean {
+	const [chord, ...rest] = parseKeys(shortcutById(id).keys);
+	return (
+		chord !== undefined && rest.length === 0 && chordMatches(chord, { ...event, editable: true })
+	);
 }
 
 /** 按键序列的超时（毫秒）。 */

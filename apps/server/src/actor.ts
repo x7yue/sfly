@@ -7,10 +7,13 @@
  * - `userId`：用户的 ID；凭据没有用户（项目令牌）或没有带凭据时为 null。
  * - `token`：经哪个令牌（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 或没有带凭据时为 null。它是检查过的，
  *   和不经校验的 `via` 分开记。
+ * - `sessionId`：经哪个会话（会话令牌属于的会话，ADR 0029「经 …」记令牌和会话）；不是会话令牌的请求为 null。
+ *   同样是检查过的：依据是请求带的会话令牌，不是模型在对话里怎么说，也不是 `via`。
  */
 export interface Actor {
 	nickname: string;
 	via: string | null;
 	userId: string | null;
 	token: string | null;
+	sessionId: string | null;
 }

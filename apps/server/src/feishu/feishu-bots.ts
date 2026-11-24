@@ -107,11 +107,20 @@ export class FeishuBots {
 	}
 
 	/**
-	 * 投递用：发送队列里的消息只记机器人的名字，没有项目，所以按名字取（第一步名字全局唯一）。
-	 * 发送队列改成「项目 + 机器人名字」之后（#502）去掉它。
+	 * 投递用：发送队列里的消息只记机器人的名字，项目是发起它的运行所在的项目（`project`；没有运行的消息是机器人自己
+	 * 的项目发的，不给）。给了项目时别的项目的机器人和不存在一样，消息不会发给它的 Webhook。
+	 * 发送队列改成「项目 + 机器人名字」之后（#502）去掉按名字取。
 	 */
-	async getForDelivery(name: string): Promise<FeishuBot | undefined> {
-		const [row] = await this.deps.db.select().from(feishuBots).where(eq(feishuBots.name, name));
+	async getForDelivery(name: string, project?: ProjectId): Promise<FeishuBot | undefined> {
+		const [row] = await this.deps.db
+			.select()
+			.from(feishuBots)
+			.where(
+				and(
+					eq(feishuBots.name, name),
+					...(project === undefined ? [] : [eq(feishuBots.projectId, project)]),
+				),
+			);
 		return row && toBot(row);
 	}
 

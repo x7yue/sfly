@@ -682,6 +682,8 @@ export interface DashboardRunningRun {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（与运行列表的 `session` 相同）。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
@@ -897,11 +899,20 @@ export interface EntryNodeInput {
 }
 
 /**
- * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
- * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
- * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
- * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
- * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
+ * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`）。#640 起助手服务按上游的错误分好再写（`turn_end`
+ * 模型不可用时、重试的 `notice`），上游的错误原文不进事件，只进助手服务的日志。落库之后改不了，所以宁可分到 `other`，
+ * 不能分错：
+ * - 状态码只从结构上取：pi 只给一句话，只认这句话开头的固定写法（`502: …`、`<提供方> API error (502): …`、SDK 的
+ *   `502 …`），不在全文里找；取不到就是没有状态码。
+ * - 有状态码时由它定类别，正文里的词只能在这个范围里细分：401、403 是 `auth`（正文说额度时是 `quota`）；402 是 `quota`；
+ *   429 是 `rate_limit`（正文说额度时是 `quota`）；408、504 是 `timeout`；其余 5xx 是 `upstream`；其余 4xx 是 `other`
+ *   （上游拒绝了这次请求；正文说上下文超长时是 `context_overflow`）。
+ * - 没有状态码时只按连接层的失败分：连不上、连接断开、证书验不过是 `unreachable`，超时是 `timeout`（认 Node 的错误码、
+ *   SDK 固定的那一句），别的都是 `other`；不看正文里的词。
+ * - 边界（按写法认，不看意思）：以登记过的状态码加空格开头的消息按 SDK 的写法取状态码，所以正文恰好以这样的数字开头的错误
+ *   （`404 packages were …`）会被认成那个状态码；没有状态码时，以括号里的连接层错误码结尾的消息（`… (ECONNRESET)`）算连不上。
+ * 各项：`unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝，`quota` 额度不足，`rate_limit` 限流，
+ * `upstream` 对方出错，`context_overflow` 上下文超长，`other` 其他。
  */
 export type ErrorClass = "unreachable" | "timeout" | "auth" | "quota" | "rate_limit" | "upstream" | "context_overflow" | "other";
 
@@ -1567,6 +1578,8 @@ export interface OrchestrationVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 }
@@ -1784,7 +1797,7 @@ export type PersistedSessionEvent = {
 	max_attempts?: number;
 	/** 多久（毫秒）之后重试；只有 `retry`。 */
 	retry_delay_ms?: number;
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	/**
 	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
@@ -1804,7 +1817,7 @@ export type PersistedSessionEvent = {
 	duration_ms: number;
 	usage?: TokenUsage;
 	limit_kind?: TurnLimit;
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	seq: number;
 	at: Timestamp;
@@ -2254,6 +2267,8 @@ export interface RunListItem {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunListPreset | null;
 	started_at: Timestamp;
@@ -2522,6 +2537,11 @@ export interface RunReport {
 	truncated: boolean;
 	/** 运行里已经创建的全部链实例，按层数、开始时间排序；还没被触发的子流程不在里面，看触发它的异步任务节点的状态。 */
 	chains: RunStateChain[];
+	/**
+	 * 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（和运行视图的 `session` 相同）。
+	 * 只在运行摘要里：`RunState` 也是节点里 `${{ run.state }}` 看到的东西，不带它。
+	 */
+	session?: SessionRef;
 	/** 耗时（毫秒，控制面时间）；运行还没结束时为 null。 */
 	duration_ms: number | null;
 	/**
@@ -2542,6 +2562,12 @@ export interface RunReport {
 	 * 摘要只给最新值，要曲线用 `GET /runs/:id/focus`。
 	 */
 	attention_items: RunReportAttentionItem[];
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，
+	 * 所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；
+	 * 旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 }
 
 /** 有异常的关注项：关注项读数（`GET /runs/:id/focus`）里的一项，只留下认出它是哪一项、最新值和异常的字段。 */
@@ -2724,6 +2750,8 @@ export interface RunSummary {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
@@ -2741,6 +2769,8 @@ export interface RunView {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	params: Record<string, unknown>;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunPresetView | null;
@@ -2759,6 +2789,12 @@ export interface RunView {
 	 * 或者投递记录已过保留期被清理时为 null。
 	 */
 	run_notification: RunNotificationState | null;
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、
+	 * 输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，
+	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 	/** 按深度、开始时间排序。 */
 	chains: ChainRunView[];
 }
@@ -2825,6 +2861,8 @@ export interface SavedVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
@@ -2907,6 +2945,16 @@ export interface SessionListResponse {
 
 /** 会话里的一句话：新建会话的第一句、发话、插话。非空（不能只有空白），不超过 `SESSION_MESSAGE_MAX_CHARS` 个字符。 */
 export type SessionMessageText = string;
+
+/**
+ * 运行、场景版本上的「经哪个会话」（ADR 0029「经 …」：会话令牌记会话，#547）：会话的 ID 和标题，页面上显示成
+ * 会话「<标题>」并链到会话页。依据是控制面收到的请求带着哪个会话的令牌，不是模型在对话里怎么说，也不是可以伪造的
+ * `x-sfly-client` 标注。不是会话做的，响应里没有这个字段。
+ */
+export interface SessionRef {
+	id: string;
+	title: string;
+}
 
 /**
  * 会话的状态：`idle` 空闲、`running` 在做（有一轮在进行）、`queued` 排队中（同一个项目另一个会话在做，#544）、
@@ -3158,7 +3206,7 @@ export type TurnLimit = "model_calls" | "duration";
  * - `stopped` 已停止：用户停止；
  * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，`TurnLimit`；默认 40 次模型调用、
  *   20 分钟，#540）；
- * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#640 起按下面 `ErrorClass` 的规则分）；
  * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
  * - `failed` 其他错误。
  * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
@@ -3191,6 +3239,8 @@ export interface VersionSummaryView {
 	author: string;
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 }
 

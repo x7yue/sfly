@@ -15,6 +15,7 @@ import { taskActionSummaries, tasks } from "../db/schema.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { readLogPage } from "../logs/log-pages.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import { withSession } from "../sessions/session-ref.js";
 import { type RunReadFull, readRuns } from "./run-read.js";
 import { runStateSource } from "./run-state-source.js";
 
@@ -49,11 +50,13 @@ export async function buildRunReport(
 	const { run } = read;
 	return {
 		...projectRunState(runStateSource(read)),
+		...withSession(read.session),
 		duration_ms: run.endedAt ? Math.max(0, run.endedAt.getTime() - run.startedAt.getTime()) : null,
 		failed_tasks: listed.map((task) => failedTaskView(read, task, logs)),
 		failed_tasks_total: failed.length,
 		failed_actions: await failedActionsOf(deps.db, read),
 		attention_items: await attentionItemsOf(deps, read),
+		secrets_oversize: read.secrets.oversize,
 	};
 }
 

@@ -3,6 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { shellOverEmpty } from "../perf/items/10-short-node-chain.js";
 import {
 	defaultResultsDir,
 	displayPath,
@@ -11,6 +12,7 @@ import {
 	secondsFromEnv,
 } from "../perf/options.js";
 import { loadItems, selectItems } from "../perf/registry.js";
+import { judgeMeasurement } from "../perf/report.js";
 import {
 	AGENT_RSS_GROWTH_MB,
 	AGENT_SLOTS,
@@ -24,6 +26,7 @@ import {
 	INGEST_SECONDS,
 	parseTargets,
 	QUERY_P95_MS,
+	SHELL_OVER_EMPTY_MS,
 	SHORT_NODE_MS,
 	STDOUT_LOG_MAX_MIB,
 	STDOUT_MIB_PER_SECOND,
@@ -111,7 +114,46 @@ describe("docs/ARCHITECTURE.md §7.6 目标里的数量", () => {
 		expect(quantities("短节点链路")).toEqual([
 			{ value: CHAIN_NODES, unit: "个" },
 			{ value: SHORT_NODE_MS, unit: "ms" },
+			{ value: SHELL_OVER_EMPTY_MS, unit: "ms" },
 		]);
+	});
+});
+
+describe("短节点链路的相对目标：shell 比空节点多出来的", () => {
+	it("值是两条链每节点端到端中位数之差，带 ≤ 50 ms 的目标；差值大告警、绝对值大差值小不告警", () => {
+		const m = shellOverEmpty(
+			new Map([
+				["std_shell", 95],
+				["empty", 73],
+				["heavy", 200],
+			]),
+		);
+		expect(m).toMatchObject({
+			id: "std_shell_over_empty_ms",
+			value: 22,
+			unit: "ms",
+			check: { kind: "target", op: "<=", value: SHELL_OVER_EMPTY_MS },
+		});
+		expect(judgeMeasurement(m)).toBe("pass");
+		// 目标的口径和别的目标一样：两倍（100 ms）以内算通过，再多告警。
+		const slower = (shell: number, empty: number) =>
+			judgeMeasurement(
+				shellOverEmpty(
+					new Map([
+						["std_shell", shell],
+						["empty", empty],
+					]),
+				),
+			);
+		expect(slower(173, 73)).toBe("pass");
+		expect(slower(200, 73)).toBe("warn");
+		// 机器慢（绝对值大）而 shell 没有多出来多少：不告警，这一条不随机器快慢变。
+		expect(slower(400, 380)).toBe("pass");
+	});
+
+	it("缺一条链的数时报错，不悄悄给一个值", () => {
+		expect(() => shellOverEmpty(new Map([["std_shell", 95]]))).toThrow("空节点");
+		expect(() => shellOverEmpty(new Map([["empty", 73]]))).toThrow("shell");
 	});
 });
 

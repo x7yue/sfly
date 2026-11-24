@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SessionRef } from "../sessions.js";
 import { EndedActionView } from "./actions.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FocusAnomaly, RunFocusItem } from "./run-focus.js";
@@ -241,6 +242,11 @@ export const RUN_REPORT_LIMITS = {
  * 错误信息不截断。
  */
 export const RunReport = RunState.extend({
+	/**
+	 * 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（和运行视图的 `session` 相同）。
+	 * 只在运行摘要里：`RunState` 也是节点里 `${{ run.state }}` 看到的东西，不带它。
+	 */
+	session: SessionRef.optional(),
 	/** 耗时（毫秒，控制面时间）；运行还没结束时为 null。 */
 	duration_ms: z.number().int().nonnegative().nullable(),
 	/**
@@ -261,6 +267,12 @@ export const RunReport = RunState.extend({
 	 * 摘要只给最新值，要曲线用 `GET /runs/:id/focus`。
 	 */
 	attention_items: z.array(RunReportAttentionItem),
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，
+	 * 所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；
+	 * 旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize: z.boolean().optional(),
 });
 
 export const runSummaryApi = {
