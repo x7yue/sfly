@@ -13,9 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr as _;
 
+use pep440_rs::{Version, VersionSpecifiers};
 use sha2::{Digest, Sha256};
-use uv_pep508::uv_pep440::Version;
-use uv_pep508::{MarkerEnvironment, MarkerEnvironmentBuilder, Requirement, VersionOrUrl};
 
 use crate::proto::AssignTask;
 use crate::venv::SharedVenv;
@@ -207,19 +206,12 @@ impl Installer {
             Ok(text)
         } else {
             // uv 的报错只说「你要求 sfly-std<0.4」，不说是哪个包要求的：另外写明是哪几个包、各要什么版本（#556）。
-            // 带环境标记的要求（`; python_version < "3.12"`）要按共享 venv 里实际的解释器判断，只在要补说明时才去问。
-            let environment = if text.contains(UV_NO_SOLUTION) {
-                self.marker_environment().await
-            } else {
-                None
-            };
             let note = conflict_note(
                 label,
                 &wheel_requires(wheel_path),
                 package,
                 wheel_version(wheel_path).as_deref(),
                 others,
-                environment.as_ref(),
                 &text,
             )
             .map(|note| format!("\n\n{note}"))
@@ -237,26 +229,6 @@ impl Installer {
 }
 
 impl Installer {
-    /// 共享 venv 里解释器的环境标记取值（PEP 508 的 `python_version`、`sys_platform` 等）；问不到（解释器跑不起来、
-    /// 超时、输出读不懂）时为 None，带环境标记的要求就当作不适用。
-    async fn marker_environment(&self) -> Option<MarkerEnvironment> {
-        let output = tokio::time::timeout(
-            MARKER_ENVIRONMENT_TIMEOUT,
-            self.venv
-                .python_command()
-                .args(["-c", MARKER_ENVIRONMENT_SCRIPT])
-                .stdin(Stdio::null())
-                .output(),
-        )
-        .await
-        .ok()?
-        .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        parse_marker_environment(&output.stdout)
-    }
-
     /// 装依赖之前确认：控制面的包索引对 `sfly-std` 的项目页**直接**回答 200（不跟随重定向）**并且带标记头**
     /// [`PACKAGE_INDEX_MARKER`]（值是控制面的版本），否则不装，任务以 `env_error` 失败（#556）。
     ///
@@ -386,59 +358,10 @@ const UV_NO_SOLUTION: &str = "No solution found";
 /// 补的说明最多列这么多对（节点包，要求）：已安装的节点包很多时说明能到几十 KB，再多的只写个数。
 const NOTE_LIMIT: usize = 20;
 
-/// 问共享 venv 的解释器要环境标记取值的时限（解释器只是启动一下）。
-const MARKER_ENVIRONMENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-/// 在共享 venv 的解释器里取 PEP 508 的环境标记取值，只用标准库，打印成一个 JSON 对象（取法同 `packaging` 的
-/// `default_environment()`）。
-const MARKER_ENVIRONMENT_SCRIPT: &str = r#"
-import json, os, platform, sys
-
-def version(info):
-    text = "{0.major}.{0.minor}.{0.micro}".format(info)
-    if info.releaselevel != "final":
-        text += info.releaselevel[0] + str(info.serial)
-    return text
-
-print(json.dumps({
-    "implementation_name": sys.implementation.name,
-    "implementation_version": version(sys.implementation.version),
-    "os_name": os.name,
-    "platform_machine": platform.machine(),
-    "platform_python_implementation": platform.python_implementation(),
-    "platform_release": platform.release(),
-    "platform_system": platform.system(),
-    "platform_version": platform.version(),
-    "python_full_version": platform.python_version(),
-    "python_version": ".".join(platform.python_version_tuple()[:2]),
-    "sys_platform": sys.platform,
-}))
-"#;
-
-/// 解释器打印的环境标记取值；缺哪一项、读不懂（版本写法不合 PEP 440）都当作取不到。
-fn parse_marker_environment(output: &[u8]) -> Option<MarkerEnvironment> {
-    let values: BTreeMap<String, String> = serde_json::from_slice(output).ok()?;
-    let get = |key: &str| values.get(key).map(String::as_str);
-    MarkerEnvironment::try_from(MarkerEnvironmentBuilder {
-        implementation_name: get("implementation_name")?,
-        implementation_version: get("implementation_version")?,
-        os_name: get("os_name")?,
-        platform_machine: get("platform_machine")?,
-        platform_python_implementation: get("platform_python_implementation")?,
-        platform_release: get("platform_release")?,
-        platform_system: get("platform_system")?,
-        platform_version: get("platform_version")?,
-        python_full_version: get("python_full_version")?,
-        python_version: get("python_version")?,
-        sys_platform: get("sys_platform")?,
-    })
-    .ok()
-}
-
 /// uv 没能解析出依赖（版本要求互相矛盾）时，在 uv 的输出后面补一段：共享 venv 里一个包只能有一个版本，
 /// 哪几个节点包对同一个包的版本要求不一样、各要什么。`label` 是这次要装的节点包（`名字@版本`），`requires` 是它的
-/// Requires-Dist，`version` 是它自己的版本，`others` 是共享 venv 里其他节点包的依赖，`environment` 是共享 venv 里
-/// 解释器的环境标记取值（None：没取到）。没有这样的包、或者失败不是依赖解析造成的时返回 None。
+/// Requires-Dist，`version` 是它自己的版本，`others` 是共享 venv 里其他节点包的依赖。没有这样的包、或者失败不是
+/// 依赖解析造成的时返回 None。
 ///
 /// 补这一段是因为 uv 只写「你要求 sfly-std<0.4」：其他已装节点包的依赖是作为一份要求清单交给 uv 的，uv 不知道
 /// 它们来自哪个包。正在装的这个包本身也是清单里的一条要求（wheel 文件把它钉在这一个版本上，写成 `名字==版本`）：
@@ -447,8 +370,9 @@ fn parse_marker_environment(output: &[u8]) -> Option<MarkerEnvironment> {
 ///
 /// 什么时候把正在装的版本也算一条，不看 uv 的文字（交给 uv 的命令行里就有这个包的名字，它自己的依赖卷进失败时 uv
 /// 也会写到它，文字分不开这些情况）：按 PEP 440 算，别的已装节点包对它的要求里，正在装的版本**不满足**的才列，
-/// 和它自己的那一条配成一对；都满足时不列这一包，失败是别的原因造成的。带环境标记的要求按共享 venv 里实际的解释器
-/// 判断，判断不了的当作不适用。整段说明里一对都没有时返回 None，不写「怎么办」。
+/// 和它自己的那一条配成一对；都满足时不列这一包，失败是别的原因造成的。要求的写法只认「包名、可选的方括号、版本限制」
+/// （`version_requirement`），带环境标记的、URL 形式的、没有版本限制的、拆不出来的都当作不适用，不列。整段说明里一对都没有时
+/// 返回 None，不写「怎么办」。
 ///
 /// uv 提示的 `--index-strategy unsafe-best-match` 不能用（它让 PyPI 上同名的包顶替平台自己的包），
 /// 输出里有这个提示时一并说明。
@@ -458,7 +382,6 @@ fn conflict_note(
     package: &str,
     version: Option<&str>,
     others: &BTreeMap<String, Vec<String>>,
-    environment: Option<&MarkerEnvironment>,
     uv_output: &str,
 ) -> Option<String> {
     if !uv_output.contains(UV_NO_SOLUTION) {
@@ -470,7 +393,7 @@ fn conflict_note(
     // 每一组是一个包和要求它的各方；正在装的包自己的那一组放在最前面，它是最常见的原因，也不会被下面的上限截掉。
     let mut groups: Vec<(String, Vec<(String, String)>)> = Vec::new();
     if let Some(version) = version {
-        let blockers = blockers(package, version, others, environment);
+        let blockers = blockers(package, version, others);
         if !blockers.is_empty() {
             let mut list = vec![(installing.clone(), format!("{package}=={version}"))];
             list.extend(blockers);
@@ -549,41 +472,26 @@ fn conflict_note(
 }
 
 /// 别的已装节点包对 `package` 的要求里，正在装的 `version` 不满足的（按 PEP 440，本地版本标签照规矩忽略），
-/// 每条是（`名字（已安装）`，要求原文）。读不懂的要求、写成 URL 的要求、没有版本限制的要求、环境标记不适用的要求都不算：
-/// 判断不了的不列。
+/// 每条是（`名字（已安装）`，要求原文）。只认能拆出「包名、版本限制」的要求（`version_requirement`），判断不了的不列。
 fn blockers(
     package: &str,
     version: &str,
     others: &BTreeMap<String, Vec<String>>,
-    environment: Option<&MarkerEnvironment>,
 ) -> Vec<(String, String)> {
-    let (Ok(version), Some(wanted)) = (Version::from_str(version), parse_requirement(package))
-    else {
+    let Ok(version) = Version::from_str(version) else {
         return Vec::new();
     };
+    let wanted = canonical_name(package);
     let mut found = Vec::new();
     for (name, list) in others {
         if same_name(name, package) {
             continue;
         }
         for text in list {
-            let Some(requirement) = parse_requirement(text) else {
+            let Some((required, specifiers)) = version_requirement(text) else {
                 continue;
             };
-            if requirement.name != wanted.name {
-                continue;
-            }
-            let Some(VersionOrUrl::VersionSpecifier(specifiers)) = &requirement.version_or_url
-            else {
-                continue;
-            };
-            if specifiers.contains(&version) {
-                continue;
-            }
-            // 没有环境标记的总是适用；有标记的按共享 venv 的解释器判断（不带 extra：`extra == "x"` 的要求 uv 也不装）。
-            let applies = requirement.marker.is_true()
-                || environment.is_some_and(|env| requirement.evaluate_markers(env, &[]));
-            if applies {
+            if required == wanted && !specifiers.contains(&version) {
                 found.push((format!("{name}（已安装）"), text.clone()));
             }
         }
@@ -591,9 +499,52 @@ fn blockers(
     found
 }
 
-/// 一条要求（PEP 508）；读不懂时为 None。
-fn parse_requirement(text: &str) -> Option<Requirement> {
-    text.parse().ok()
+/// 包名按 PEP 503 规范化：小写，连续的 `-`、`_`、`.` 合成一个 `-`。
+fn canonical_name(name: &str) -> String {
+    let mut canonical = String::with_capacity(name.len());
+    let mut separator = false;
+    for c in name.chars() {
+        if matches!(c, '-' | '_' | '.') {
+            separator = true;
+            continue;
+        }
+        if separator && !canonical.is_empty() {
+            canonical.push('-');
+        }
+        separator = false;
+        canonical.push(c.to_ascii_lowercase());
+    }
+    canonical
+}
+
+/// 一条要求（PEP 508）里的包名（规范化之后）和版本限制：`名字`、可选的 `[extras]`、版本限制（可以写在括号里，
+/// 多个限制用逗号隔开）。带环境标记的（`; python_version < "3.12"`）、URL 形式的（`名字 @ 地址`）、没有版本限制的、
+/// 拆不出来的、限制读不懂的返回 None：这些判断不了，当作不适用。带标记和 URL 的写法在名字后面跟的不是版本限制，
+/// 下面读版本限制时读不懂，自然是 None。
+fn version_requirement(text: &str) -> Option<(String, VersionSpecifiers)> {
+    let text = text.trim();
+    let name_end = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        .unwrap_or(text.len());
+    let name = &text[..name_end];
+    if !name.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let mut rest = text[name_end..].trim_start();
+    if let Some(after) = rest.strip_prefix('[') {
+        rest = after.split_once(']')?.1.trim_start();
+    }
+    let specifiers = match rest.strip_prefix('(') {
+        Some(inner) => inner.strip_suffix(')')?.trim(),
+        None => rest,
+    };
+    if specifiers.is_empty() {
+        return None;
+    }
+    Some((
+        canonical_name(name),
+        VersionSpecifiers::from_str(specifiers).ok()?,
+    ))
 }
 
 /// 要求（PEP 508）里的包名，按 PEP 503 规范化：到第一个版本比较符、`[`、`;`、`@`、括号或空白为止。
@@ -715,11 +666,9 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use uv_pep508::MarkerEnvironment;
-
     use super::{
-        IndexAnswer, conflict_note, index_args, index_check_failure, parse_marker_environment,
-        requirement_name, std_project_url, wheel_requires, wheel_version,
+        IndexAnswer, conflict_note, index_args, index_check_failure, requirement_name,
+        std_project_url, wheel_requires, wheel_version,
     };
 
     fn args(pypi: Option<&str>, package_index: Option<&str>) -> Vec<String> {
@@ -805,28 +754,6 @@ mod tests {
         )
     }
 
-    /// Python 3.12 的 Linux 环境，给带环境标记的要求用。
-    fn environment(python_version: &str) -> MarkerEnvironment {
-        parse_marker_environment(
-            serde_json::json!({
-                "implementation_name": "cpython",
-                "implementation_version": format!("{python_version}.1"),
-                "os_name": "posix",
-                "platform_machine": "x86_64",
-                "platform_python_implementation": "CPython",
-                "platform_release": "6.1.0",
-                "platform_system": "Linux",
-                "platform_version": "#1 SMP",
-                "python_full_version": format!("{python_version}.1"),
-                "python_version": python_version,
-                "sys_platform": "linux",
-            })
-            .to_string()
-            .as_bytes(),
-        )
-        .expect("environment")
-    }
-
     #[test]
     fn the_note_names_both_packages_and_what_each_requires() {
         let others = requires(&[
@@ -839,7 +766,6 @@ mod tests {
             "sfly-c",
             None,
             &others,
-            None,
             NO_SOLUTION,
         )
         .expect("note");
@@ -869,7 +795,6 @@ mod tests {
                 "sfly-c",
                 None,
                 &others,
-                None,
                 "error: failed to download"
             ),
             None
@@ -882,7 +807,6 @@ mod tests {
                 "sfly-c",
                 None,
                 &others,
-                None,
                 NO_SOLUTION
             ),
             None
@@ -895,7 +819,6 @@ mod tests {
                 "sfly-a",
                 None,
                 &others,
-                None,
                 NO_SOLUTION
             ),
             None
@@ -912,7 +835,6 @@ mod tests {
             "sfly-c",
             None,
             &others,
-            None,
             &output,
         )
         .expect("note");
@@ -937,7 +859,6 @@ mod tests {
             "sfly-std",
             Some("0.3.0"),
             &others,
-            None,
             &output,
         )
         .expect("note");
@@ -976,7 +897,6 @@ mod tests {
                     "sfly-std",
                     Some("0.4.0"),
                     &others,
-                    None,
                     &output
                 ),
                 None,
@@ -1003,7 +923,6 @@ mod tests {
             "sfly-base",
             Some("1.0.0"),
             &others,
-            None,
             &output,
         )
         .expect("note");
@@ -1026,6 +945,26 @@ mod tests {
     }
 
     #[test]
+    fn requirements_on_other_packages_and_the_replaced_copy_do_not_count() {
+        // 别的包的要求（httpx>=2）和这个版本无关；已装的同名包自己（它就要被换掉）的要求也不算。
+        let others = requires(&[
+            ("sfly-user", &["httpx>=2", "sfly-base-extra>=2"]),
+            ("sfly-base", &["sfly-base>=2"]),
+        ]);
+        assert_eq!(
+            conflict_note(
+                "sfly-base@1.0.0",
+                &[],
+                "sfly-base",
+                Some("1.0.0"),
+                &others,
+                &uv_output("sfly-base", "1.0.0", "")
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn versions_are_compared_by_pep_440_not_by_text() {
         let blocked = |version: &str, requirement: &str| {
             let others = requires(&[("sfly-user", &[requirement])]);
@@ -1035,7 +974,6 @@ mod tests {
                 "sfly-base",
                 Some(version),
                 &others,
-                None,
                 &uv_output("sfly-base", version, ""),
             )
             .is_some()
@@ -1077,7 +1015,6 @@ mod tests {
             "sfly-base",
             Some("1.0.0"),
             &others,
-            None,
             &uv_output("sfly-base", "1.0.0", ""),
         )
         .expect("note");
@@ -1097,7 +1034,6 @@ mod tests {
                 "sfly-base",
                 Some("not a version"),
                 &others,
-                None,
                 &uv_output("sfly-base", "x", "")
             ),
             None
@@ -1105,35 +1041,110 @@ mod tests {
     }
 
     #[test]
-    fn a_requirement_with_a_marker_is_judged_by_the_environment_of_the_shared_venv() {
+    fn requirements_with_a_marker_are_not_listed_even_when_they_would_apply() {
+        // 环境标记不判断（不去问解释器）：带标记的要求当作不适用，不列。
         let others = requires(&[
-            ("sfly-old", &["sfly-base>=2 ; python_version < '3.9'"]),
+            ("sfly-plain", &["sfly-base>=2"]),
             ("sfly-new", &["sfly-base>=2 ; python_version >= '3.9'"]),
+            ("sfly-old", &["sfly-base>=2 ; python_version < '3.9'"]),
             ("sfly-extra", &["sfly-base>=2 ; extra == 'dev'"]),
-            ("sfly-win", &["sfly-base>=2 ; sys_platform == 'win32'"]),
+            ("sfly-nospace", &["sfly-base>=2;sys_platform=='linux'"]),
         ]);
-        let listed = |environment: Option<&MarkerEnvironment>| {
+        let note = conflict_note(
+            "sfly-base@1.0.0",
+            &[],
+            "sfly-base",
+            Some("1.0.0"),
+            &others,
+            &uv_output("sfly-base", "1.0.0", ""),
+        )
+        .expect("note");
+        assert!(note.contains("sfly-plain（已安装）"), "{note}");
+        for not_listed in ["sfly-new", "sfly-old", "sfly-extra", "sfly-nospace"] {
+            assert!(!note.contains(not_listed), "{note}");
+        }
+        // 只有带标记的要求时没有可列的：不写说明。
+        let only_marked = requires(&[("sfly-new", &["sfly-base>=2 ; python_version >= '3.9'"])]);
+        assert_eq!(
             conflict_note(
                 "sfly-base@1.0.0",
                 &[],
                 "sfly-base",
                 Some("1.0.0"),
-                &others,
-                environment,
-                &uv_output("sfly-base", "1.0.0", ""),
-            )
-        };
+                &only_marked,
+                &uv_output("sfly-base", "1.0.0", "")
+            ),
+            None
+        );
+    }
 
-        let note = listed(Some(&environment("3.12"))).expect("note");
-        assert!(note.contains("sfly-new（已安装）"), "{note}");
-        for not_applicable in ["sfly-old", "sfly-extra", "sfly-win"] {
-            assert!(!note.contains(not_applicable), "{note}");
+    #[test]
+    fn a_requirement_line_is_split_into_the_name_and_the_version_limits() {
+        let specifiers = |text: &str| version_requirement(text).map(|(n, s)| (n, s.to_string()));
+        let some = |name: &str, spec: &str| Some((name.to_string(), spec.to_string()));
+        // 名字规范化：大小写、`-` `_` `.`、连续的分隔符。
+        assert_eq!(specifiers("sfly-base>=2"), some("sfly-base", ">=2"));
+        assert_eq!(specifiers("Sfly_Base>=2"), some("sfly-base", ">=2"));
+        assert_eq!(specifiers("sfly.base==1.0"), some("sfly-base", "==1.0"));
+        assert_eq!(specifiers("Sfly__-.Base>=2"), some("sfly-base", ">=2"));
+        // 空白和括号。
+        assert_eq!(specifiers("  sfly-base  >= 2  "), some("sfly-base", ">=2"));
+        assert_eq!(specifiers("sfly-base (>=2)"), some("sfly-base", ">=2"));
+        assert_eq!(specifiers("sfly-base(>=2)"), some("sfly-base", ">=2"));
+        assert_eq!(specifiers("sfly-base ( >=2 )"), some("sfly-base", ">=2"));
+        // 方括号（extras）。
+        assert_eq!(specifiers("httpx[http2]>=0.25"), some("httpx", ">=0.25"));
+        assert_eq!(
+            specifiers("httpx [http2, brotli] (>=0.25)"),
+            some("httpx", ">=0.25")
+        );
+        // 多个限制用逗号隔开（读出来的次序不要紧：只用来判断满不满足）。
+        let (_, many) = version_requirement("sfly-base>=1.0, <2").expect("split");
+        assert!(many.contains(&"1.5".parse().unwrap()));
+        assert!(!many.contains(&"2.0".parse().unwrap()));
+        assert!(!many.contains(&"0.9".parse().unwrap()));
+        // 各种运算符。
+        for spec in ["~=1.4", "==1.4.*", "!=1.4.1", "<=2", "<2", ">1", "===1.4"] {
+            assert!(
+                version_requirement(&format!("sfly-base{spec}")).is_some(),
+                "{spec}"
+            );
         }
-        let note = listed(Some(&environment("3.8"))).expect("note");
-        assert!(note.contains("sfly-old（已安装）"), "{note}");
-        assert!(!note.contains("sfly-new"), "{note}");
-        // 没取到环境：带标记的要求判断不了，不列；没有别的可列时不写说明。
-        assert_eq!(listed(None), None);
+        // 当作不适用的：带环境标记、URL、没有版本限制、拆不出来、限制读不懂。
+        for text in [
+            "sfly-base>=2 ; python_version < '3.9'",
+            "sfly-base>=2;sys_platform=='linux'",
+            "sfly-base @ https://example.com/sfly_base-1.0-py3-none-any.whl",
+            "sfly-base@https://example.com/sfly_base-1.0-py3-none-any.whl",
+            "sfly-base",
+            "sfly-base[extra]",
+            "sfly-base ()",
+            "",
+            "   ",
+            ">=2",
+            "-sfly-base>=2",
+            "this is not a requirement",
+            "sfly-base>=",
+            "sfly-base>=not.a.version",
+            "sfly-base[extra>=2",
+            "sfly-base (>=2",
+        ] {
+            assert_eq!(specifiers(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn package_names_are_compared_after_pep_503_normalization() {
+        for (name, canonical) in [
+            ("sfly-base", "sfly-base"),
+            ("Sfly_Base", "sfly-base"),
+            ("SFLY.BASE", "sfly-base"),
+            ("sfly--base", "sfly-base"),
+            ("sfly_-.base", "sfly-base"),
+            ("Friendly-Bard", "friendly-bard"),
+        ] {
+            assert_eq!(canonical_name(name), canonical, "{name}");
+        }
     }
 
     #[test]
@@ -1147,15 +1158,7 @@ mod tests {
         );
 
         assert_eq!(
-            conflict_note(
-                "sfly-std@dev",
-                &[],
-                "sfly-std",
-                None,
-                &others,
-                None,
-                &output
-            ),
+            conflict_note("sfly-std@dev", &[], "sfly-std", None, &others, &output),
             None
         );
     }
@@ -1170,7 +1173,6 @@ mod tests {
             "sfly-base",
             Some("1.0.0+dev"),
             &others,
-            None,
             &uv_output("sfly-base", "dev", ""),
         )
         .expect("note");
@@ -1199,7 +1201,6 @@ mod tests {
             "sfly-zeta",
             Some("1.0.0"),
             &others,
-            None,
             &uv_output("sfly-zeta", "1.0.0", ""),
         )
         .expect("note");
@@ -1226,7 +1227,6 @@ mod tests {
             "sfly-base",
             Some("1.0.0"),
             &others,
-            None,
             &uv_output("sfly-base", "1.0.0", ""),
         )
         .expect("note");
@@ -1246,32 +1246,11 @@ mod tests {
             "sfly-base",
             Some("1.0.0"),
             &few,
-            None,
             &uv_output("sfly-base", "1.0.0", ""),
         )
         .expect("note");
         assert!(!note.contains("没有列出"), "{note}");
         assert_eq!(note.lines().filter(|l| l.contains(" 要求 ")).count(), 20);
-    }
-
-    #[test]
-    fn the_marker_environment_is_read_from_what_the_interpreter_prints() {
-        let env = environment("3.12");
-        let requirement: uv_pep508::Requirement =
-            "x ; python_version >= '3.12' and sys_platform == 'linux'"
-                .parse()
-                .unwrap();
-        assert!(requirement.evaluate_markers(&env, &[]));
-        // 缺一项、版本写法读不懂：取不到。
-        assert!(parse_marker_environment(b"{}").is_none());
-        assert!(parse_marker_environment(b"not json").is_none());
-        let broken = serde_json::json!({
-            "implementation_name": "cpython", "implementation_version": "zzz", "os_name": "posix",
-            "platform_machine": "x", "platform_python_implementation": "CPython",
-            "platform_release": "1", "platform_system": "Linux", "platform_version": "1",
-            "python_full_version": "3.12.1", "python_version": "3.12", "sys_platform": "linux",
-        });
-        assert!(parse_marker_environment(broken.to_string().as_bytes()).is_none());
     }
 
     /// 在 `dir` 里写一个 wheel（zip），`entries` 是（zip 里的路径，内容）。

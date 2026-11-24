@@ -131,12 +131,13 @@ async fn only_the_requirements_that_exclude_the_version_being_installed_are_list
     assert!(n.contains("怎么办"), "{n}");
 }
 
-/// 带环境标记的要求按共享 venv 里实际的解释器判断：这台解释器是 Python 3，`python_version < "3"` 的要求不适用
-/// （uv 也不会算它），不列；`python_version >= "3"` 的要求适用，挡路，要列。
+/// 带环境标记的要求（`; python_version >= '3'`）不判断：当作不适用，不列，即使在这台解释器上它其实适用、也确实挡路
+/// （uv 的原话里照样看得到）。没有标记的、同样挡路的要求照常列出。
 #[tokio::test]
-async fn a_requirement_with_a_marker_is_judged_by_the_interpreter_of_the_shared_venv() {
+async fn requirements_with_an_environment_marker_are_not_listed() {
     let fixture = HttpFixture::start().await;
     add_to_index(&fixture, "sfly-base", "3.0", &[]);
+    let plain = publish(&fixture, "sfly-plain", "1.0.0", &["sfly-base>=2"]);
     let applies = publish(
         &fixture,
         "sfly-applies",
@@ -154,17 +155,17 @@ async fn a_requirement_with_a_marker_is_judged_by_the_interpreter_of_the_shared_
     let cp = FakeControlPlane::start().await;
     let _agent = agent(&cp, "agent-marker", &venv, &fixture);
     cp.hello(0).await;
+    install_ok(&cp, task("t-plain", "sfly-plain", "1.0.0", &plain)).await;
     install_ok(&cp, task("t-applies", "sfly-applies", "1.0.0", &applies)).await;
     install_ok(&cp, task("t-never", "sfly-never", "1.0.0", &never)).await;
 
     let message = install_fails(&cp, task("t-base", "sfly-base", "1.0.0", &base)).await;
 
     let n = note(&message);
-    assert!(
-        n.contains("sfly-applies（已安装） 要求 sfly-base>=2 ; python_version >= '3'"),
-        "{n}"
-    );
+    assert!(n.contains("sfly-plain（已安装） 要求 sfly-base>=2"), "{n}");
+    assert!(!n.contains("sfly-applies"), "{n}");
     assert!(!n.contains("sfly-never"), "{n}");
+    assert_eq!(listed(n), 2, "{n}");
 }
 
 /// 两个已装的节点包之间本来就互相矛盾（绕过 Agent 用 --no-deps 装进来的），正在装的包和这场冲突无关，但有一个已装

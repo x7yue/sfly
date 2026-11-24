@@ -13,6 +13,7 @@ workspace = true
 anyhow = "1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive", "env"] }
+pep440_rs = "0.7.3"
 prost = "0.14"
 reqwest = { version = "0.13", default-features = false, features = ["stream"] }
 serde = { version = "1", features = ["derive"] }
@@ -25,7 +26,6 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process"
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = "0.14"
 tonic-prost = "0.14"
-uv-pep508 = "0.0.101"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
