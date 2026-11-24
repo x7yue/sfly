@@ -33,6 +33,7 @@ from sfly.cli.run_view import (
     run_not_found,
 )
 from sfly.cli.run_wait import WaitTimeout, wait_for_run
+from sfly.cli.safe_text import printable
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
 
@@ -295,7 +296,7 @@ def _finish(session: Session, run: dict[str, Any]) -> int:
 
 
 def _progress(session: Session, line: str) -> None:
-    print(line, file=session.out.stderr, flush=True)
+    print(printable(line), file=session.out.stderr, flush=True)
 
 
 def _run_error(error: ApiError, run_id: str) -> CliError:
