@@ -204,9 +204,16 @@ impl Installer {
             Ok(text)
         } else {
             // uv 的报错只说「你要求 sfly-std<0.4」，不说是哪个包要求的：另外写明是哪几个包、各要什么版本（#556）。
-            let note = conflict_note(label, &wheel_requires(wheel_path), package, others, &text)
-                .map(|note| format!("\n\n{note}"))
-                .unwrap_or_default();
+            let note = conflict_note(
+                label,
+                &wheel_requires(wheel_path),
+                package,
+                wheel_version(wheel_path).as_deref(),
+                others,
+                &text,
+            )
+            .map(|note| format!("\n\n{note}"))
+            .unwrap_or_default();
             Err(InstallError {
                 message: format!(
                     "安装节点包 {label} 失败（uv {}）\n\n{}{note}",
@@ -345,27 +352,37 @@ fn index_args(pypi: Option<&str>, package_index: Option<&str>) -> Vec<String> {
 
 /// uv 没能解析出依赖（版本要求互相矛盾）时，在 uv 的输出后面补一段：共享 venv 里一个包只能有一个版本，
 /// 哪几个节点包对同一个包的版本要求不一样、各要什么。`label` 是这次要装的节点包（`名字@版本`），`requires` 是它的
-/// Requires-Dist，`others` 是共享 venv 里其他节点包的依赖。没有这样的包、或者失败不是依赖解析造成的时返回 None。
+/// Requires-Dist，`version` 是它自己的版本，`others` 是共享 venv 里其他节点包的依赖。没有这样的包、或者失败不是
+/// 依赖解析造成的时返回 None。
 ///
 /// 补这一段是因为 uv 只写「你要求 sfly-std<0.4」：其他已装节点包的依赖是作为一份要求清单交给 uv 的，uv 不知道
-/// 它们来自哪个包。uv 提示的 `--index-strategy unsafe-best-match` 不能用（它让 PyPI 上同名的包顶替平台自己的包），
-/// 输出里有这个提示时一并说明。
+/// 它们来自哪个包。正在装的这个包本身也是清单里的一条要求（wheel 文件把它钉在这一个版本上，写成 `名字==版本`）：
+/// 别的已装节点包要求它的另一个版本时（典型的是标准节点包 `sfly-std` 的 0.3.0 和依赖 `sfly-std>=0.4` 的节点包），
+/// 冲突的就是这条，要写出来，不然这一包只剩一条要求、说明不出现（#637、#653）。只在 uv 的输出提到这个包时才加这一条：
+/// 失败是别的依赖造成的时候，不拿它去和别人的要求凑一对。uv 提示的 `--index-strategy unsafe-best-match` 不能用
+/// （它让 PyPI 上同名的包顶替平台自己的包），输出里有这个提示时一并说明。
 fn conflict_note(
     label: &str,
     requires: &[String],
     package: &str,
+    version: Option<&str>,
     others: &BTreeMap<String, Vec<String>>,
     uv_output: &str,
 ) -> Option<String> {
     if !uv_output.contains("No solution found") {
         return None;
     }
+    // 正在装的包的名字和版本：它的要求和钉住自己的那一条都写成「<label>（正在装）」。
+    let installing = format!("{label}（正在装）");
+    let own_pin = version
+        .filter(|_| mentioned(uv_output, package))
+        .map(|version| format!("{package}=={version}"));
     let mut by_name: BTreeMap<String, Vec<(String, &str)>> = BTreeMap::new();
-    for requirement in requires {
+    for requirement in requires.iter().chain(own_pin.as_ref()) {
         by_name
             .entry(requirement_name(requirement))
             .or_default()
-            .push((label.to_string(), requirement));
+            .push((installing.clone(), requirement));
     }
     for (name, list) in others {
         if same_name(name, package) {
@@ -396,7 +413,9 @@ fn conflict_note(
         return None;
     }
     let mut note = format!(
-        "依赖冲突：共享 venv 里一个包只能有一个版本，下面这些节点包对同一个包的版本要求不一样：\n{}",
+        "依赖冲突：共享 venv 里一个包只能有一个版本，下面这些节点包对同一个包的版本要求不一样：\n{}\n\
+         怎么办：让这些节点包要求的版本一致（把它们和锁定了它们的场景一起升级），\
+         或者把互相冲突的节点包分到不同的 Agent 上：一台 Agent 上所有节点包共用一个环境",
         lines.join("\n")
     );
     if uv_output.contains("unsafe-best-match") {
@@ -420,35 +439,47 @@ fn requirement_name(requirement: &str) -> String {
         .replace(['_', '.'], "-")
 }
 
-/// wheel 声明的依赖（METADATA 里的 Requires-Dist，不含只在某个 extra 下才要的）；读不出来时为空。
-fn wheel_requires(wheel: &Path) -> Vec<String> {
-    let Ok(file) = std::fs::File::open(wheel) else {
-        return Vec::new();
-    };
-    let Ok(mut zip) = zip::ZipArchive::new(file) else {
-        return Vec::new();
-    };
-    let Some(name) = zip
+/// wheel 的 METADATA 文本；读不出来时为 None。
+fn wheel_metadata(wheel: &Path) -> Option<String> {
+    let file = std::fs::File::open(wheel).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let name = zip
         .file_names()
         .filter_map(Result::ok)
         .find(|n| n.ends_with(".dist-info/METADATA") && n.matches('/').count() == 1)
-        .map(|n| n.into_owned())
-    else {
-        return Vec::new();
-    };
+        .map(|n| n.into_owned())?;
     let mut text = String::new();
-    if zip
-        .by_name(&name)
+    zip.by_name(&name)
         .and_then(|mut f| f.read_to_string(&mut text).map_err(Into::into))
-        .is_err()
-    {
-        return Vec::new();
-    }
-    text.lines()
+        .ok()?;
+    Some(text)
+}
+
+/// wheel 声明的依赖（METADATA 里的 Requires-Dist，不含只在某个 extra 下才要的）；读不出来时为空。
+fn wheel_requires(wheel: &Path) -> Vec<String> {
+    wheel_metadata(wheel)
+        .unwrap_or_default()
+        .lines()
         .filter_map(|line| line.strip_prefix("Requires-Dist:"))
         .map(|r| r.trim().to_string())
         .filter(|r| !r.contains("extra =="))
         .collect()
+}
+
+/// wheel 自己的版本（METADATA 里的 Version）；读不出来时为 None。
+fn wheel_version(wheel: &Path) -> Option<String> {
+    wheel_metadata(wheel)?
+        .lines()
+        .find_map(|line| line.strip_prefix("Version:"))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// uv 的输出里提到了这个包（包名按 PEP 503 规范化，`-` 和 `_` 两种写法都认）。
+fn mentioned(uv_output: &str, package: &str) -> bool {
+    let output = uv_output.to_ascii_lowercase();
+    let name = package.to_ascii_lowercase().replace(['_', '.'], "-");
+    output.contains(&name) || output.contains(&name.replace('-', "_"))
 }
 
 /// 包名按 PEP 503 规范化后比较。
@@ -580,7 +611,10 @@ mod tests {
         )
         .expect("note");
         assert!(note.contains("sfly-std："), "{note}");
-        assert!(note.contains("sfly-c@1.0.0 要求 sfly-std>=0.4"), "{note}");
+        assert!(
+            note.contains("sfly-c@1.0.0（正在装） 要求 sfly-std>=0.4"),
+            "{note}"
+        );
         assert!(
             note.contains("sfly-a（已安装） 要求 sfly-std<0.4"),
             "{note}"
@@ -600,6 +634,7 @@ mod tests {
                 "sfly-c@1",
                 &new,
                 "sfly-c",
+                None,
                 &others,
                 "error: failed to download"
             ),
@@ -611,6 +646,7 @@ mod tests {
                 "sfly-c@1",
                 &["sfly-std<0.4".to_string()],
                 "sfly-c",
+                None,
                 &others,
                 NO_SOLUTION
             ),
@@ -622,6 +658,7 @@ mod tests {
                 "sfly-a@2",
                 &["sfly-std>=0.4".to_string()],
                 "sfly-a",
+                None,
                 &others,
                 NO_SOLUTION
             ),
@@ -637,11 +674,86 @@ mod tests {
             "sfly-c@1",
             &["sfly-std>=0.4".to_string()],
             "sfly-c",
+            None,
             &others,
             &output,
         )
         .expect("note");
         assert!(note.contains("不要照 uv 的提示"), "{note}");
+    }
+
+    #[test]
+    fn the_package_being_installed_counts_as_a_requirement_on_itself() {
+        // 锁定 sfly-std 0.3.0 的场景要装 0.3.0，共享环境里另一个节点包依赖 sfly-std>=0.4：冲突的就是
+        // 「正在装的这一版」和那个节点包的要求，不写出来的话 sfly-std 只剩一条要求，用户看不出是谁要的（#637、#653）。
+        let others = requires(&[("sfly-user", &["sfly-std>=0.4", "httpx>=0.25"])]);
+        let output = format!(
+            "{NO_SOLUTION}\n  ╰─▶ Because only sfly-std<0.4 is available and you require sfly-std>=0.4, \
+             we can conclude that your requirements are unsatisfiable."
+        );
+
+        let note = conflict_note(
+            "sfly-std@0.3.0",
+            &["httpx>=0.25".to_string()],
+            "sfly-std",
+            Some("0.3.0"),
+            &others,
+            &output,
+        )
+        .expect("note");
+
+        assert!(note.contains("sfly-std："), "{note}");
+        assert!(
+            note.contains("sfly-std@0.3.0（正在装） 要求 sfly-std==0.3.0"),
+            "{note}"
+        );
+        assert!(
+            note.contains("sfly-user（已安装） 要求 sfly-std>=0.4"),
+            "{note}"
+        );
+        assert!(note.contains("怎么办"), "{note}");
+        // 要求相同的包（httpx>=0.25）不是冲突，不写。
+        assert!(!note.contains("httpx"), "{note}");
+    }
+
+    #[test]
+    fn the_own_version_is_not_paired_with_other_requirements_when_the_failure_is_about_something_else()
+     {
+        // 另一个节点包要求 sfly-std>=0.4、正在装的恰好是 0.4.0：它们不冲突。失败是 httpx 造成的，uv 的输出里没有
+        // sfly-std，不拿正在装的版本去和别人的要求凑成「冲突」。
+        let others = requires(&[("sfly-user", &["sfly-std>=0.4"])]);
+        let output = format!("{NO_SOLUTION}\n  ╰─▶ Because httpx>=0.30 is unavailable ...");
+
+        assert_eq!(
+            conflict_note(
+                "sfly-std@0.4.0",
+                &[],
+                "sfly-std",
+                Some("0.4.0"),
+                &others,
+                &output
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_own_version_is_only_added_when_it_is_known() {
+        // 开发版本（`sfly dev`）读不到版本时，不写这一条。
+        let others = requires(&[("sfly-user", &["sfly-std>=0.4"])]);
+        let output = format!("{NO_SOLUTION}\n  ╰─▶ Because only sfly-std<0.4 is available");
+
+        assert_eq!(
+            conflict_note("sfly-std@dev", &[], "sfly-std", None, &others, &output),
+            None
+        );
+    }
+
+    #[test]
+    fn a_package_is_found_in_the_uv_output_by_either_spelling() {
+        assert!(mentioned("you require Sfly_Std>=0.4", "sfly-std"));
+        assert!(mentioned("you require sfly-std>=0.4", "sfly_std"));
+        assert!(!mentioned("Because httpx is unavailable", "sfly-std"));
     }
 
     #[test]
