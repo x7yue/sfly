@@ -65,6 +65,7 @@ import { AssistantConnection } from "./sessions/assistant-connection.js";
 import { SessionService } from "./sessions/session-service.js";
 import type { SessionRow } from "./sessions/session-store.js";
 import { SessionStore } from "./sessions/session-store.js";
+import { listening } from "./util/listen-error.js";
 import { Mutex } from "./util/mutex.js";
 import { printError, printInfo } from "./util/output.js";
 import { periodic } from "./util/periodic.js";
@@ -572,7 +573,10 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		streamRecheckMs: options.streamRecheckMs,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
-	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
+	// 监听不了时的说明只有变量名、端口和错误码（util/listen-error.ts）：Node 的报错会把监听地址原样带出来。
+	await listening("http", options.http?.port ?? 0, () =>
+		api.listen({ host: httpHost, port: options.http?.port ?? 0 }),
+	);
 	const httpPort = (api.server.address() as AddressInfo).port;
 	const httpUrl = `http://${formatHost(httpHost)}:${httpPort}`;
 	publicHttpUrl = (

@@ -12,10 +12,13 @@ export const DEFAULT_LISTEN_HOST = "0.0.0.0";
 /** 主机名的一段（RFC 1123 的字母数字和连字符，另外认下划线：docker 的服务名常带它）。 */
 const LABEL = /^[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$/;
 
+/** 主机名的长度上限（RFC 1035）；监听地址整体不超过它（IPv6 带区域标识时区域标识也算在里面：它后面能跟任意长的字母数字）。 */
+const MAX_HOST_CHARS = 253;
+
 /** 是不是 IP 地址（IPv4、不带方括号的 IPv6）或主机名。 */
 const isHost = (text: string): boolean => {
+	if (text.length > MAX_HOST_CHARS) return false;
 	if (isIP(text) !== 0) return true;
-	if (text.length > 253) return false;
 	return text
 		.replace(/\.$/, "")
 		.split(".")

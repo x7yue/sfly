@@ -2,10 +2,12 @@
 //   DATABASE_URL     PostgreSQL 连接串（默认 postgres://sfly:sfly@127.0.0.1:5432/sfly；空串当作没设置）。启动时用连接库（pg）
 //                    自己解析连接串的函数检查，只拒它也解析不了的：Unix 套接字的写法（postgres://用户:密码@/库名?host=/var/run/postgresql）也行；
 //                    带 @ 而没有 ://（用户:密码@主机/库名）也拒绝：连接库不会把它当地址，而是把整串当库名
-//   SFLY_DATA_DIR    数据目录：节点包文件、任务日志、产物等（默认 ./data；空串当作没设置）。启动时检查（#651）：写成地址（带 ://）不合法；
-//                    目录要写得了（不存在就建，里面试写一个文件，下面已有的 logs、artifacts、packages 各试写一次），写不了的
-//                    写明目录、当前用户和怎么改，退出码 1
-//   SFLY_HTTP_HOST   HTTP API 监听地址（默认 0.0.0.0；只认 IP 地址或主机名，写错了启动失败，说明不回显填的值，#651）
+//   SFLY_DATA_DIR    数据目录：节点包文件、任务日志、产物等（默认 ./data；空串当作没设置）。启动时检查（#651）：写成地址（带 ://）、
+//                    ~ 开头的不合法（环境变量里的 ~ 没有人展开；写绝对路径）；目录要写得了（不存在就建，里面试写一个文件，下面已有的
+//                    logs、artifacts、packages 各试写一次），写不了的写明目录（完整的路径：这是「不回显填的值」的一个写明的例外，
+//                    见下面的 echo.ts）、原因、当前用户和怎么改，退出码 1
+//   SFLY_HTTP_HOST   HTTP API 监听地址（默认 0.0.0.0；只认 IP 地址或主机名，写错了启动失败，说明不回显填的值，#651）。
+//                    检查认的写法监听时仍可能失败（解析不了、本机没有这个地址）：说明只有变量名、端口、错误码，也不带地址
 //   SFLY_HTTP_PORT   HTTP API 端口（默认 8080）
 //   SFLY_GRPC_HOST   Agent 网关监听地址（默认 0.0.0.0；写法同上）
 //   SFLY_GRPC_PORT   Agent 网关端口（默认 50051）
@@ -30,10 +32,11 @@
 //                    三个上限都是 MB（可以带小数），换算成字节后要在 1 到 2^53 − 1 之间
 //   数值类的变量都在启动时检查：不是数、不是有限的数、超出范围的，写明变量名、填的原文和范围，一次报完，不启动（#577）；
 //   端口（SFLY_HTTP_PORT、SFLY_GRPC_PORT）是 0 到 65535 的整数，0 让系统选一个空闲端口。
-//   字符串类的变量也在启动时和它们一起检查（#619）：SFLY_TRUST_PROXY、SFLY_CORS_ORIGINS、SFLY_DEV_ORIGINS、
+//   字符串类的变量也在启动时和它们一起检查（#619、#651）：SFLY_TRUST_PROXY、SFLY_CORS_ORIGINS、SFLY_DEV_ORIGINS、
 //   SFLY_ADMIN_LOGIN 和 SFLY_ADMIN_PASSWORD（要一起给）、SFLY_PUBLIC_URL、SFLY_PUBLIC_GRPC_URL、DATABASE_URL、
-//   SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR。报错里不出现密码、密钥和地址里的凭据：回显填的值只经过 src/config/echo.ts，
-//   只有数值类回显（最多 12 个字符），地址、名单、代理、数据库地址、密码一律不回显；报错的顺序是读的顺序（稳定）。
+//   SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR、SFLY_DATA_DIR、SFLY_HTTP_HOST、SFLY_GRPC_HOST。
+//   报错里不出现密码、密钥和地址里的凭据：回显填的值只经过 src/config/echo.ts，只有数值类回显（最多 12 个字符），地址、名单、代理、
+//   数据库地址、密码、监听地址一律不回显（数据目录的路径是写明的例外，见 echo.ts）；报错的顺序是读的顺序（稳定）。
 //   哪些检查、哪些留给第一次用到，见 docs/ARCHITECTURE.md「启动时检查哪些环境变量」
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
@@ -84,6 +87,7 @@ import { type ControlPlane, startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { installProcessGuards } from "./process-guards.js";
 import { installShutdown } from "./shutdown.js";
+import { ListenError } from "./util/listen-error.js";
 import { printError, printInfo, printWarning, terminalStreams } from "./util/output.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
@@ -152,8 +156,9 @@ if (process.argv[2] === "reset-password") {
 }
 // 数值类的环境变量（端口、保留天数、各种上限、登录的空闲期限，#577）和字符串类的（代理信任、跨域来源、初始管理员、对外地址、
 // 数据库地址、镜像地址，#619；监听地址、数据目录，#651）在启动时就检查：不合法的写明变量名和要求，一次报完，不启动，不留到运行时才
-// 出错。数据目录还要试写一次（目录写不了：Docker 卷的属主不对最常见）：这是唯一碰文件系统的检查，在这里读完环境变量之后做，
-// 结果和环境变量的问题一起报；它在控制面的任何启动动作之前（包括启动时清理上传的临时文件）：先看写不写得了，再清。
+// 出错。数据目录还要试写一次（目录写不了：Docker 卷的属主不对最常见）：这是 readEnvSettings 之外碰文件系统的检查（readEnvSettings
+// 里数据库地址交给连接库解析时也会读 sslcert 等指的文件），在这里读完环境变量之后做，结果和环境变量的问题一起报；它在控制面的任何
+// 启动动作之前（包括启动时清理上传的临时文件）：先看写不写得了，再清。
 const { httpPort, grpcPort, httpHost, grpcHost, ...settings } =
 	await (async (): Promise<EnvSettings> => {
 		const problems: string[] = [];
@@ -213,7 +218,9 @@ const controlPlane = await startControlPlane({
 	// 把它盖掉的（test/main-env-settings.test.ts 的结构检查守着）。
 	...settings,
 }).catch((error: unknown) => {
-	printError("sfly: 控制面没有启动：", error);
+	// 监听失败：说明只有变量名、端口和错误码，不带监听地址、不打印底层错误的原文（里面有填的值，#651 的审查）。
+	if (error instanceof ListenError) printError(`sfly: 控制面没有启动：${error.message}`);
+	else printError("sfly: 控制面没有启动：", error);
 	process.exit(1);
 });
 printInfo(
