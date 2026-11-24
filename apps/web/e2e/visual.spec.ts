@@ -17,6 +17,7 @@ import {
 	steerDropped,
 	steerMessage,
 	steerQueue,
+	streamOpens,
 	stubSessionDetail,
 	stubSessionList,
 	turnEnd,
@@ -2099,7 +2100,8 @@ test("会话页：插话的三种状态（等待送达、已送到、没有送�
 		userMessage(8, "停下来之后的话", { author: "bob" }),
 	]);
 	await page.goto(`/sessions/${view.id}`);
-	// 打开页面时在做的这一轮里的插话不知道送到了没有：之后的 steer_queue 告诉页面。
+	// 打开页面时在做的这一轮里的插话不知道送到了没有：之后的 steer_queue 告诉页面。事件流订阅上了再推（订阅之前推的事件就丢了）。
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
 	await pushEvent(page, steerQueue(STEER_A, STEER_B));
 	await pushEvent(page, steerQueue(STEER_B));
 	const rows = page.getByTestId("user-message");
@@ -2156,6 +2158,7 @@ test("会话页：会话已结束", async ({ page }) => {
 		assistantMessage(3, "我先看一下现有的节点。"),
 	]);
 	await page.goto(`/sessions/${view.id}`);
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
 	await pushEvent(page, turnEnd(4, "stopped", { reason: "会话结束了" }));
 	await pushEvent(page, sessionEnded(5, "bob"));
 	await expect(page.getByTestId("session-ended")).toHaveText("会话已结束（bob）");
