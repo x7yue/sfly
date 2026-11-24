@@ -476,7 +476,9 @@ describe("已经过了保留期的运行：下载的说明还是「保留期清�
 		await agent.succeed(task, { text: "ok" });
 		(cp.clock as unknown as { advance(ms: number): void }).advance(8 * DAY);
 		await eventually(async () => {
-			const page = (await (await cp.fetch(`/tasks/${task.taskId}/logs`)).json()) as { expired: boolean };
+			const page = (await (await cp.fetch(`/tasks/${task.taskId}/logs`)).json()) as {
+				expired: boolean;
+			};
 			expect(page.expired).toBe(true);
 		}, 30_000);
 
