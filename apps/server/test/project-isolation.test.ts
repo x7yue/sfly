@@ -21,6 +21,7 @@ import { createPackageRepository, PackageError } from "../src/packages/package-r
 import { DEFAULT_PROJECT, type ProjectId, PUBLIC_PROJECT } from "../src/projects/project-id.js";
 import { getRunViewInProject } from "../src/runs/run-in-project.js";
 import { listAllRuns } from "../src/runs/run-list.js";
+import { SessionStore } from "../src/sessions/session-store.js";
 import { AsyncQueue } from "../src/util/async-queue.js";
 import { Mutex } from "../src/util/mutex.js";
 import { ApiClient } from "./support/api-client.js";
@@ -31,7 +32,7 @@ import { createTestDatabase, type TestDatabase } from "./support/test-database.j
 
 /** 项目乙：测试里直接写库建（建项目的接口在 #499）。 */
 const OTHER = "other-team" as ProjectId;
-const ACTOR = { nickname: "测试", via: null, userId: null, token: null };
+const ACTOR = { nickname: "测试", via: null, userId: null, token: null, sessionId: null };
 const AT = "2026-01-01T00:00:00Z";
 const DOCUMENT = {
 	default_agent: "agent-a",
@@ -98,7 +99,7 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 		);
 		dataDir = await mkdtemp(join(tmpdir(), "sfly-isolation-"));
 		const { db } = database;
-		scenarios = new OrchestrationStore({ db, clock });
+		scenarios = new OrchestrationStore({ db, clock, sessions: new SessionStore({ db, clock }) });
 		hub = new AgentHub({ db, clock, mutex: new Mutex(), version: "1.0.0" });
 		packages = createPackageRepository({ db, clock, dataDir });
 		bots = new FeishuBots({

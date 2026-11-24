@@ -21,8 +21,12 @@ import { chainMembers, subflowTree } from "./structure.js";
 /** 节点卡片尺寸：矮胶囊，左边一盏站点灯，两行字（docs/DESIGN-SYSTEM.md §2.3）。 */
 export const NODE_SIZE = { width: 256, height: 60 } as const;
 
-/** 子流程区域在成员节点外接框之外的留白；上方留出标题行。 */
-export const REGION_PADDING = { left: 24, top: 44, right: 24, bottom: 20 } as const;
+/**
+ * 子流程区域在成员节点外接框之外的留白；上方留出标题行，标题行和卡片之间再留出卡片上边线外面的标签（always、关注项）
+ * 的位置：标签贴在卡片上边线外面，缩小到刚显示标签的缩放（LOD_THRESHOLD）时屏幕上约 20px 高，
+ * 不留够的话它会压在标题行右边的运行状态上（#595）。
+ */
+export const REGION_PADDING = { left: 24, top: 66, right: 24, bottom: 20 } as const;
 
 /** 注释框在成员外接框之外的留白：标题写在框外上方（ANNOTATION_TITLE_SPACE），框里四周只留一圈空。 */
 export const ANNOTATION_PADDING = { left: 24, top: 20, right: 24, bottom: 20 } as const;

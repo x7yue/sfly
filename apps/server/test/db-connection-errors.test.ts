@@ -8,13 +8,20 @@
 //   这次操作的失败处理什么都写不进去（不会把 Agent 报来的成功记成节点出错）。
 // - **空闲的连接**、**`pool.query` 的单条语句**出错：进程不退出（以前也不退出）。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ControlPlaneProcess, StartupExitError } from "./support/control-plane-process.js";
-import { slowDown, sql, terminateIdle } from "./support/db-sabotage.js";
+import { slowDown, sql, terminateActive, terminateIdle } from "./support/db-sabotage.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { PgProxy } from "./support/pg-proxy.js";
+import { type SourceServer, StartupExitError, startSourceServer } from "./support/source-server.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
+
+/** 起一个真实的控制面进程（生产环境变量、初始管理员 root 已登录）：`dataDir` 给了就用它（同一个数据目录和库重新起一个，模拟重启策略把退出的控制面拉起来）。 */
+const startProcess = (
+	databaseUrl: string,
+	env: Record<string, string> = {},
+	options: { dataDir?: string; ports?: { http: number; grpc: number } } = {},
+) => startSourceServer({ databaseUrl, env, admin: true, production: true, ...options });
 
 const ENTRY_ONLY = { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} };
 const node = (id: string) => ({ id, kind: "package", package: "stub", node: "echo", inputs: {} });
@@ -38,27 +45,27 @@ const DISPATCH_UPDATE = /^update "tasks" set .*"referenced_feishu_bots" = /s;
 describe("借出去的连接（事务里）出错：有序退出，由重启恢复", () => {
 	let database: TestDatabase;
 	let proxy: PgProxy;
-	let cp: ControlPlaneProcess;
-	let restarted: ControlPlaneProcess | undefined;
+	let cp: SourceServer;
+	let restarted: SourceServer | undefined;
 	let agents: FakeAgent[];
 
 	beforeEach(async () => {
 		database = await createTestDatabase("sfly_dbconn");
 		proxy = await PgProxy.start(database.url);
-		cp = await ControlPlaneProcess.start(proxy.urlFor(database.url));
+		cp = await startProcess(proxy.urlFor(database.url));
 		agents = [];
 	}, 90_000);
 	afterEach(async () => {
 		await Promise.all(agents.map((a) => a.disconnect().catch(() => undefined)));
-		await restarted?.stop();
+		await restarted?.kill();
 		restarted = undefined;
-		await cp.stop();
+		await cp.kill();
 		await proxy.close();
 		await database.drop();
 	});
 
 	const connectAgent = async (
-		target: ControlPlaneProcess,
+		target: SourceServer,
 		held: { taskId: string; attempt: number }[] = [],
 	) => {
 		const agent = await FakeAgent.connect(target.grpcUrl, {
@@ -79,9 +86,9 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 		expect(saved.status).toBe(201);
 		return created.id;
 	};
-	const trigger = async (target: ControlPlaneProcess, scenarioId: string) =>
+	const trigger = async (target: SourceServer, scenarioId: string) =>
 		target.request("POST", `/orchestrations/${scenarioId}/runs`, { params: {} });
-	const runStatus = async (target: ControlPlaneProcess, runId: string) =>
+	const runStatus = async (target: SourceServer, runId: string) =>
 		((await (await target.request("GET", `/runs/${runId}`)).json()) as { status: string }).status;
 
 	/** 进程有序退出：退出码 1、在时限内，日志里有那句明确的话，没有数据库地址和语句的参数。 */
@@ -98,7 +105,7 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 	};
 	/** 同一个库（不经转发）和同一个数据目录重新起一个：部署的重启策略做的事。 */
 	const restart = async () => {
-		restarted = await ControlPlaneProcess.start(database.url, {}, { dataDir: cp.dataDir });
+		restarted = await startProcess(database.url, {}, { dataDir: cp.dataDir });
 		expect((await restarted.request("GET", "/health")).status).toBe(200);
 		return restarted;
 	};
@@ -209,6 +216,61 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 		}, 120_000);
 	});
 
+	// 因错误而有序退出（上面）和停止信号（`src/shutdown.ts`）是两条都会调用 `close()`、都会退出的路径：已经因为错误在退出时，退出码不能被
+	// 停止信号那一条变成 0（按失败才重启的部署不会把状态不可信的进程拉起来）；停止信号先到、关闭途中又出致命错误，退出码也是 1。
+	describe("有序退出和停止信号一起来：退出码都是 1", () => {
+		it("致命错误先到、有序退出途中来了两个停止信号：退出码仍是 1，不是 0", async () => {
+			const created = (await (
+				await cp.request("POST", "/orchestrations", { name: "致命错误后来停止信号" })
+			).json()) as { id: string };
+			// BEGIN 上断开：借出去的连接永远不还，有序关闭要等连接池的 3 秒上限，这段时间里停止信号到。
+			proxy.arm(/^begin/i, "drop");
+			void cp
+				.request("POST", `/orchestrations/${created.id}/versions`, {
+					base_version: 0,
+					document: ENTRY_ONLY,
+				})
+				.catch(() => undefined);
+			await eventually(async () => expect(cp.log).toContain("数据库连接在使用中断开"), 10_000);
+
+			cp.child.kill("SIGTERM");
+			cp.child.kill("SIGTERM");
+
+			const exit = await cp.waitForExit(15_000);
+			expect(exit, `控制面没有退出：\n${cp.log.slice(-2000)}`).toEqual({ code: 1, signal: null });
+			// 停止信号那条路径确实走了（收到、第二个被忽略）：退出码 1 是因为已经在因错误退出，不是因为它没走。
+			expect(cp.log).toContain("收到 SIGTERM，正在关闭");
+			expect(cp.log).toContain("已经在关闭，忽略 SIGTERM");
+		}, 120_000);
+
+		it("停止信号先到、关闭途中借出去的连接收到致命错误：退出码是 1（关闭没写完的东西没有人补，如实说明这次退出不干净）", async () => {
+			const created = (await (
+				await cp.request("POST", "/orchestrations", { name: "停止信号后来致命错误" })
+			).json()) as { id: string };
+			// 保存版本的那条语句在数据库里「进行中」6 秒：有序关闭等进行中的请求，这段时间里结束它的连接。
+			await slowDown(database.url, "orchestration_versions", "insert", 6);
+			const inFlight = cp
+				.request("POST", `/orchestrations/${created.id}/versions`, {
+					base_version: 0,
+					document: ENTRY_ONLY,
+				})
+				.then((r) => r.status)
+				.catch(() => "没有响应");
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+
+			cp.child.kill("SIGTERM");
+			await eventually(async () => expect(cp.log).toContain("收到 SIGTERM，正在关闭"), 10_000);
+			expect(await terminateActive(database.url, "orchestration_versions")).toBeGreaterThanOrEqual(
+				1,
+			);
+			await inFlight;
+
+			const exit = await cp.waitForExit(15_000);
+			expect(exit, `控制面没有退出：\n${cp.log.slice(-2000)}`).toEqual({ code: 1, signal: null });
+			expect(cp.log).toContain("数据库连接在使用中断开");
+		}, 120_000);
+	});
+
 	describe("引擎的事务", () => {
 		const startRun = async (document: unknown, name: string) => {
 			await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
@@ -224,11 +286,7 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 				database.url,
 				"select node_id, status, error_kind from tasks order by seq",
 			);
-		const finishRemaining = async (
-			target: ControlPlaneProcess,
-			agent: FakeAgent,
-			runId: string,
-		) => {
+		const finishRemaining = async (target: SourceServer, agent: FakeAgent, runId: string) => {
 			for (let i = 0; i < 2; i++) {
 				const assigned = await agent.nextAssign({ timeoutMs: 15_000 }).catch(() => undefined);
 				if (assigned) await agent.succeed(assigned, { v: i });
@@ -357,14 +415,10 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 			await expectOrderlyExit();
 			// 数据库还没回来：新进程连不上、启动时就退出。
 			await expect(
-				ControlPlaneProcess.start(proxy.urlFor(database.url), {}, { dataDir: cp.dataDir }),
+				startProcess(proxy.urlFor(database.url), {}, { dataDir: cp.dataDir }),
 			).rejects.toBeInstanceOf(StartupExitError);
 			await proxy.recover();
-			restarted = await ControlPlaneProcess.start(
-				proxy.urlFor(database.url),
-				{},
-				{ dataDir: cp.dataDir },
-			);
+			restarted = await startProcess(proxy.urlFor(database.url), {}, { dataDir: cp.dataDir });
 			expect((await restarted.request("GET", "/health")).status).toBe(200);
 		}, 150_000);
 	});
@@ -373,15 +427,15 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 describe("没有借出去的连接出错：进程不退出（以前也不退出）", () => {
 	let database: TestDatabase;
 	let proxy: PgProxy;
-	let cp: ControlPlaneProcess;
+	let cp: SourceServer;
 
 	beforeEach(async () => {
 		database = await createTestDatabase("sfly_dbconn");
 		proxy = await PgProxy.start(database.url);
-		cp = await ControlPlaneProcess.start(proxy.urlFor(database.url));
+		cp = await startProcess(proxy.urlFor(database.url));
 	}, 90_000);
 	afterEach(async () => {
-		await cp.stop();
+		await cp.kill();
 		await proxy.close();
 		await database.drop();
 	});

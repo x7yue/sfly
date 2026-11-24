@@ -3,7 +3,8 @@ import { useEffect } from "react";
 /**
  * 焦点所在的元素被移走时（归档、恢复、删除了它所在的列表项，空状态被列表替换），焦点不留在 body 上：
  *
- * - 它自己带着 `data-focus-successor`（一个 CSS 选择器）：交给选择器选中的元素，选不到再往下走。点了就会消失的按钮用它
+ * - 它自己带着 `data-focus-successor`（一个 CSS 选择器）：交给选择器选中的元素。**选中的元素必须能获得焦点**（输入框、按钮、
+ *   链接，或带 `tabindex` 的元素）；选不到、或选到了却聚焦不上（被禁用、被隐藏）时退回下面的规则。点了就会消失的按钮用它
  *   （会话页的「停止」：这一轮结束后焦点交给输入框，不交给标题）；
  * - 它在列表项（`data-list-item`，见 list-navigation）里：交给下一项的主链接，没有下一项交给上一项；
  * - 列表空了，或它不在列表项里：交给页面标题（`PageHeader` 的 h1）。
@@ -28,11 +29,12 @@ function snapshot(element: HTMLElement, main: HTMLElement): Focused {
 	return { element, items, index: item ? items.indexOf(item) : -1 };
 }
 
-function recoveryTarget({ element, items, index }: Focused): HTMLElement | null {
+/** 焦点的去向，按优先顺序：声明的接班元素、相邻的列表项、页面标题。 */
+function* recoveryTargets({ element, items, index }: Focused): Generator<HTMLElement> {
 	const successor = element.dataset.focusSuccessor;
 	if (successor) {
 		const target = document.querySelector<HTMLElement>(successor);
-		if (target) return target;
+		if (target) yield target;
 	}
 	if (index !== -1) {
 		const next = items.slice(index + 1).find((item) => item.isConnected);
@@ -41,9 +43,20 @@ function recoveryTarget({ element, items, index }: Focused): HTMLElement | null 
 			.reverse()
 			.find((item) => item.isConnected);
 		const item = next ?? previous;
-		if (item) return item.matches(PRIMARY) ? item : (item.querySelector(PRIMARY) ?? item);
+		if (item)
+			yield item.matches(PRIMARY) ? item : (item.querySelector<HTMLElement>(PRIMARY) ?? item);
 	}
-	return document.querySelector<HTMLElement>("#main h1");
+	const heading = document.querySelector<HTMLElement>("#main h1");
+	if (heading) yield heading;
+}
+
+/** 按顺序试，第一个真的拿到了焦点的为止（聚焦不上的元素 `focus()` 什么也不做）。 */
+export function focusFirst(targets: Iterable<HTMLElement>): HTMLElement | null {
+	for (const target of targets) {
+		target.focus();
+		if (document.activeElement === target) return target;
+	}
+	return null;
 }
 
 export function useFocusRecovery() {
@@ -66,9 +79,9 @@ export function useFocusRecovery() {
 		};
 		const observer = new MutationObserver(() => {
 			if (!last || last.element.isConnected || document.activeElement !== document.body) return;
-			const target = recoveryTarget(last);
+			const targets = recoveryTargets(last);
 			last = null;
-			target?.focus();
+			focusFirst(targets);
 		});
 		document.addEventListener("focusin", onFocusIn);
 		document.addEventListener("focusout", onFocusOut);

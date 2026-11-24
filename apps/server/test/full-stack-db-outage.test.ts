@@ -9,13 +9,20 @@ import { createServer } from "node:net";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
-import { ControlPlaneProcess } from "./support/control-plane-process.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { PgProxy } from "./support/pg-proxy.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
+import { type SourceServer, startSourceServer } from "./support/source-server.js";
 import { publishStubPackage } from "./support/stub-package.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
+
+/** 起一个真实的控制面进程（生产环境变量、初始管理员 root 已登录）：`dataDir` 给了就用它（同一个数据目录和库重新起一个，模拟重启策略把退出的控制面拉起来）。 */
+const startProcess = (
+	databaseUrl: string,
+	env: Record<string, string> = {},
+	options: { dataDir?: string; ports?: { http: number; grpc: number } } = {},
+) => startSourceServer({ databaseUrl, env, admin: true, production: true, ...options });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -35,10 +42,10 @@ describeWithAgent("全栈：数据库出问题，真实的 Agent 不需要人工
 	let proxy: PgProxy;
 	let ports: { http: number; grpc: number };
 	/** 第一个控制面进程（请求都经它发：重启之后端口不变、登录凭据在库里，它的 `fetch` 照样能用）。 */
-	let first: ControlPlaneProcess;
+	let first: SourceServer;
 	/** 现在在跑的控制面进程（重启之后是新的）。 */
-	let current: ControlPlaneProcess;
-	const restarts: ControlPlaneProcess[] = [];
+	let current: SourceServer;
+	const restarts: SourceServer[] = [];
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;
 	let api: ApiClient;
@@ -49,7 +56,7 @@ describeWithAgent("全栈：数据库出问题，真实的 Agent 不需要人工
 		proxy = await PgProxy.start(database.url);
 		ports = { http: await freePort(), grpc: await freePort() };
 		[first, venv] = await Promise.all([
-			ControlPlaneProcess.start(proxy.urlFor(database.url), {}, { ports }),
+			startProcess(proxy.urlFor(database.url), {}, { ports }),
 			createStubVenv(),
 		]);
 		current = first;
@@ -65,8 +72,8 @@ describeWithAgent("全栈：数据库出问题，真实的 Agent 不需要人工
 
 	afterAll(async () => {
 		await agent?.close();
-		for (const process of restarts) await process.stop();
-		await first?.stop();
+		for (const process of restarts) await process.kill();
+		await first?.kill();
 		await proxy?.close();
 		await database?.drop();
 		await venv?.remove();
@@ -91,7 +98,7 @@ describeWithAgent("全栈：数据库出问题，真实的 Agent 不需要人工
 		});
 	/** 部署的重启策略：同一个库、同一个数据目录、同样的端口再起一个控制面（测试里自己做）。 */
 	const restart = async () => {
-		const next = await ControlPlaneProcess.start(
+		const next = await startProcess(
 			proxy.urlFor(database.url),
 			{},
 			{ dataDir: first.dataDir, ports },

@@ -32,6 +32,8 @@ export interface AdmittedTrigger {
 	ok: true;
 	/** 场景所在的项目：运行属于它（`runs.project_id` 冗余存这一份）。 */
 	projectId: ProjectId;
+	/** 场景此刻的名称：会话令牌触发的运行，会话里的平台记录写它（#547）。 */
+	scenarioName: string;
 	/** 场景的最新版本。 */
 	version: { id: string; document: StoredOrchestrationDocument };
 	plan: RunPlan;
@@ -196,6 +198,7 @@ export function createTriggerAdmission(checks: {
 		return {
 			ok: true,
 			projectId: orchestration.projectId,
+			scenarioName: orchestration.name,
 			version: { id: version.id, document: version.document },
 			plan,
 			params: filled.params,

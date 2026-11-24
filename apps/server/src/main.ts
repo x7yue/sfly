@@ -73,6 +73,7 @@ import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
 import { installProcessGuards } from "./process-guards.js";
+import { installShutdown } from "./shutdown.js";
 import { printError, printInfo, printWarning, terminalStreams } from "./util/output.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
@@ -191,8 +192,14 @@ printInfo(
 
 running = controlPlane;
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-	process.once(signal, () => {
-		void controlPlane.close().then(() => process.exit(0));
-	});
-}
+// 停止信号：关闭只做一次，重复的信号只记一句（`src/shutdown.ts`）。和因错误而有序退出（`guards`）是两条都会调用 `close()`、都会退出的
+// 路径（`close()` 可以重复调用，拿到同一个结果）：**已经因为致命错误在退出时，退出码一定是 1**，停止信号的关闭先完成也一样，
+// 否则按失败才重启的部署不会把它拉起来；停止信号先到、关闭途中又出致命错误的也是 1（见 `process-guards.ts` 文件头）。
+installShutdown({
+	emitter: process,
+	signals: ["SIGINT", "SIGTERM"],
+	close: () => controlPlane.close(),
+	exit: (code) => process.exit(guards.exiting ? 1 : code),
+	log: (message) => printInfo(message),
+	logError: (message, error) => printError(message, error),
+});

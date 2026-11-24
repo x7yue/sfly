@@ -18,6 +18,8 @@ export class FakeAccessStore implements AccessStore {
 	readonly projects = new Set<string>(["default", "public"]);
 	readonly scenarios = new Map<string, ProjectId>();
 	readonly runs = new Map<string, ProjectId>();
+	/** 运行是哪个会话触发的（没有会话为 null）；没登记的运行视为人触发的。 */
+	readonly runSessions = new Map<string, string | null>();
 	readonly sessions = new Map<string, ProjectId>();
 	readonly tasks = new Map<string, { projectId: ProjectId; agentName: string | null }>();
 	readonly adminWrites: AdminWrite[] = [];
@@ -110,6 +112,18 @@ export class FakeAccessStore implements AccessStore {
 	async projectOfRun(id: string) {
 		this.reads++;
 		return this.runs.get(id);
+	}
+	async runOwner(id: string) {
+		this.reads++;
+		const projectId = this.runs.get(id);
+		return projectId === undefined
+			? undefined
+			: { projectId, sessionId: this.runSessions.get(id) ?? null };
+	}
+	async sessionOfRun(id: string) {
+		this.reads++;
+		if (!this.runs.has(id)) return undefined;
+		return this.runSessions.get(id) ?? null;
 	}
 	async projectOfTask(id: string) {
 		this.reads++;

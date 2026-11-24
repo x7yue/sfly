@@ -77,4 +77,32 @@ describe("会话事件流定期重新检查凭据", () => {
 		keep.close();
 		await accounts.close();
 	});
+
+	it("会话令牌：会话结束了（直接改库，没有吊销令牌）：用它打开的事件流在间隔内被关，别的会话的令牌的流不受影响", async () => {
+		const { accounts, users, sql } = await setup();
+		const mine = await accounts.session(users.xiaoming as string, "default", {
+			title: "会被结束的会话",
+		});
+		const keep = await accounts.session(users.xiaohong as string, "default", {
+			title: "不动的会话",
+		});
+		const openFor = async (sid: string, user: string) => {
+			const token = await accounts.sessionTokenIn(sid, user, "default");
+			const stream = await SseClient.open(
+				cp as TestControlPlane,
+				`/sessions/${sid}/events`,
+				bearer(token),
+			);
+			await stream.next("time");
+			return stream;
+		};
+		const ended = await openFor(mine, users.xiaoming as string);
+		const kept = await openFor(keep, users.xiaohong as string);
+		await sql("update sessions set status = 'ended' where id = $1", [mine]);
+		await waitEnded(ended);
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(kept.ended).toBe(false);
+		kept.close();
+		await accounts.close();
+	});
 });
