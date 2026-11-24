@@ -286,13 +286,15 @@ describe("运行视图里的输入和输出：大的只给大小，合计有上�
 		expect(nodeOf(view, "n200").outputs_omitted_bytes).toBe(VALUE_LIMIT);
 	}, 60_000);
 
-	it("大的输入、输出不离开数据库：读运行视图时数据库发给控制面的字节数远小于存着的（60 个任务各存 2 × 100 KB）", async () => {
-		const value = storedAs(100_000);
+	it("大的输入、输出不离开数据库：读运行视图时数据库发给控制面的字节数远小于存着的（100 个任务各存 100 KB 的输入和刚过 16 KiB 的多字节输出）", async () => {
+		// 输出是 10000 个 2 字节的字符：字符数不到 16384，字节数（20012）超过它：大小要按字节在 SQL 里判。
+		const outputs = { text: "é".repeat(10_000) };
+		const inputs = storedAs(100_000);
 		const { run } = await seedRunIo(
 			cp,
-			Array.from({ length: 60 }, (_, i) => ({
+			Array.from({ length: 100 }, (_, i) => ({
 				id: `n${i + 1}`,
-				attempts: [{ inputs: value, outputs: value }],
+				attempts: [{ inputs, outputs }],
 			})),
 		);
 		const proxy = await countingProxy(cp.database.url);
@@ -305,7 +307,9 @@ describe("运行视图里的输入和输出：大的只给大小，合计有上�
 
 			// 存着 12 MB，读视图时数据库只发来大小和状态那些列（远不到 1 MiB）。
 			expect(proxy.received() - before).toBeLessThan(TOTAL_LIMIT);
-			expect(view?.chains[0]?.nodes[59]?.attempts[0]?.outputs_omitted_bytes).toBe(98 * KIB);
+			const last = view?.chains[0]?.nodes[99]?.attempts[0];
+			expect(last?.inputs_omitted_bytes).toBe(98 * KIB);
+			expect(last?.outputs_omitted_bytes).toBe(20 * KIB);
 		} finally {
 			await opened.close();
 			await proxy.close();
