@@ -354,7 +354,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **方向隔离**：文字放在 `<bdi>` 里（隔离，方向跟着文字自己的字母走）：从右到左书写的文字自己按自己的方向排，不影响旁边的文字；写出来的那一小块自己是从左到右的。
 - **只在显示时处理**：判断、比较、`id`、`href`、`value`、`data-*`、复制到剪贴板的内容都用原文（不改数据）；`Truncate` 带 `keepEnd` 时放不了组件，写出来的字符是 `⟨U+202E⟩` 这样的一小段字。
 - **量大的地方**：日志（虚拟列表，最多 5000 行）、动作表每行过一遍：没有要处理的字符时是快路径（一次正则匹配，原样返回），所以只多一个 `<bdi>`。
-- **检查**：`lib/untrusted-sites.test.ts` 是「哪些地方显示这类文字」的完整清单：每个文件里经过组件的表达式都在，有人去掉包装就红；用了这套办法的文件都要记在清单里，**新加显示这类文字的地方要把它记进去**。`lib/untrusted-text.test.ts` 检查规则本身（和 `nameProblem` 对着 4000 个随机字符串逐个比，是同一套规则）；`e2e/untrusted-text.spec.ts` 用带方向控制字符、零宽字符、转义字符的值走一遍每个区域，整页的文字节点和属性值里不能有一个原样留下（`e2e/untrusted-support.ts` 的 `expectNoUnsafeText`）。
+- **检查**：`lib/untrusted-sites.test.ts` 是「哪些地方显示这类文字」的完整清单：每个文件里经过组件的表达式都在，有人去掉包装就红；用了这套办法的文件都要记在清单里，**新加显示这类文字的地方要把它记进去**。`lib/untrusted-text.test.ts` 检查规则本身（和 `nameProblem` 对着 4000 个随机字符串逐个比，是同一套规则）；`e2e/untrusted-text.spec.ts` 用带方向控制字符、零宽字符、转义字符的值走一遍每个区域，整页的文字节点和显示给人看的属性（`title`、`aria-label`、`placeholder`……）里不能有一个原样留下（`e2e/untrusted-support.ts` 的 `expectNoUnsafeText`）。
 
 ## 7. 键盘、焦点与快捷键
 

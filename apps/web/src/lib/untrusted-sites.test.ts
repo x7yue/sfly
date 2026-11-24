@@ -172,10 +172,19 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				wrapped: ["`${g.name} @${g.version}`", "item.title", "summary", "item.title", "detail"],
 			},
 			"components/canvas/NodeCard.tsx": {
-				wrapped: ["title", "shownSlot.text", "shownCaption", "title", "caption", "title"],
+				wrapped: [
+					"nodeDefaultTitle(node, info)",
+					"title",
+					"shownSlot.text",
+					"shownCaption",
+					"title",
+					"caption",
+					"title",
+				],
 			},
 			"editor/inspector/Inspector.tsx": {
 				wrapped: [
+					"nodeDefaultTitle(node, info)",
 					"`${node.package}/${node.node}`",
 					'`@${version ?? "未锁定"}`',
 					"paragraph",
