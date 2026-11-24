@@ -659,6 +659,43 @@ describe("SFLY_HTTP_HOST、SFLY_GRPC_HOST：只认 IP 地址或主机名（#651�
 		expect(message).not.toContain((value as string).slice(0, 12));
 	});
 
+	/** 63 个字符的一段、总长刚好 253 的主机名（63.63.63.61）、IPv6 带区域标识总长刚好 253。 */
+	const LABEL_63 = "a".repeat(63);
+	const HOST_253 = [LABEL_63, LABEL_63, LABEL_63, "b".repeat(61)].join(".");
+	const ZONE_253 = `fe80::1%${"z".repeat(245)}`;
+
+	it.each([
+		["一段 63 个字符", LABEL_63],
+		["四段、总长 253 个字符", HOST_253],
+		["IPv6 带区域标识、总长 253 个字符", ZONE_253],
+		["IPv6 带区域标识（网卡名）", "fe80::1%eth0"],
+	])("长度刚好在上限：%s 合法，两个变量都认", (_, host) => {
+		expect(host.length).toBeLessThanOrEqual(253);
+		expect(readEnvSettings({ SFLY_HTTP_HOST: host, SFLY_GRPC_HOST: host })).toMatchObject({
+			httpHost: host,
+			grpcHost: host,
+		});
+	});
+
+	it.each(
+		HOSTS.flatMap(([name, port]) =>
+			[
+				["一段 64 个字符", "a".repeat(64)],
+				["一段 64 个字符、在中间", `sfly.${"a".repeat(64)}.example.com`],
+				["四段、总长 254 个字符", [LABEL_63, LABEL_63, LABEL_63, "b".repeat(62)].join(".")],
+				["IPv6 带区域标识、总长 254 个字符", `${ZONE_253}z`],
+				["IPv6 带区域标识、区域标识 1000 个字符", `fe80::1%${"z".repeat(1000)}`],
+			].map(([label, value]) => [name, port, label, value] as const),
+		),
+	)("%s（端口用 %s）超过长度上限：%s：不合法，说明里没有填的值", (name, port, _, value) => {
+		const message = oneProblem({ [name]: value as string });
+
+		expect(message).toContain(name);
+		expect(message).toContain(port);
+		expect(message).not.toContain("aaaaaaaa");
+		expect(message).not.toContain("zzzzzzzz");
+	});
+
 	it("两个都写错：各一条，一次报完", () => {
 		const problems = problemsOf({
 			SFLY_HTTP_HOST: `postgres://u:${SECRET}@db/x`,
@@ -679,6 +716,34 @@ describe("SFLY_DATA_DIR：没设置用 ./data，写成地址不合法（#651）"
 		expect(readEnvSettings({ SFLY_DATA_DIR: "relative/dir" }).dataDir).toBe("relative/dir");
 		// 带 @ 和 : 的路径也是合法的路径（不是地址）。
 		expect(readEnvSettings({ SFLY_DATA_DIR: "/mnt/a:b@c/data" }).dataDir).toBe("/mnt/a:b@c/data");
+	});
+
+	it.each([
+		"~",
+		"~/data",
+		"~root/data",
+		"  ~/data  ",
+		`~/${SECRET}`,
+	])("以 ~ 开头（%s）：不合法（环境变量里的 ~ 没有人展开），说明要写绝对路径，不回显填的值", (value) => {
+		const message = oneProblem({ SFLY_DATA_DIR: value });
+
+		expect(message).toContain("SFLY_DATA_DIR 不合法");
+		expect(message).toContain("没有人展开");
+		expect(message).toContain("绝对路径");
+		expect(message).toContain("没有回显填的值");
+		expect(message).not.toContain(SECRET);
+		expect(message).not.toContain("~/");
+		expect(message).not.toContain("~root");
+	});
+
+	it.each([
+		"/srv/~",
+		"./~",
+		"/home/me/~backup",
+		"a~b",
+		"/srv/sfly~data",
+	])("~ 不在开头（%s）：合法的路径，原样用", (value) => {
+		expect(readEnvSettings({ SFLY_DATA_DIR: value }).dataDir).toBe(value);
 	});
 
 	it.each([

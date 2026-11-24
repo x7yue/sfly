@@ -57,9 +57,26 @@ describe("main.ts：数据目录写不了", () => {
 			expect(result.output).toContain("SFLY_DATA_DIR 指的数据目录不可写");
 			expect(result.output).toContain(root);
 			expect(result.output).toContain(userInfo().username);
-			expect(result.output).toContain("chown");
+			expect(result.output).toContain(`chown -R ${userInfo().uid}:${userInfo().gid} ${root}`);
 			expect(result.output).not.toMatch(/\n\s+at /);
 			expect(result.output).not.toContain("ECONNREFUSED");
+		},
+		90_000,
+	);
+
+	it.skipIf(isRoot)(
+		"填的值前后有空白、指向只读的目录：去掉空白之后照样检查，说明里是去掉空白的完整路径；没有在当前目录下建出名字带空白的目录",
+		async () => {
+			await chmod(root, 0o555);
+			const before = await readdir(serverDir);
+
+			const result = await startMain({ SFLY_DATA_DIR: `  ${root}\t ` });
+
+			expect(result.code, result.output).toBe(1);
+			expect(result.output).toContain("SFLY_DATA_DIR 指的数据目录不可写");
+			expect(result.output).toContain(`在这个目录里写不了文件（${root}）`);
+			expect(result.output).not.toContain("ECONNREFUSED");
+			expect(await readdir(serverDir)).toEqual(before);
 		},
 		90_000,
 	);
@@ -91,6 +108,23 @@ describe("main.ts：数据目录写不了", () => {
 		expect(result.output).toContain("SFLY_DATA_DIR 不合法");
 		expect(result.output).not.toContain("Hunter2");
 		expect(result.output).not.toContain("postgres");
+		expect(await readdir(serverDir)).toEqual(before);
+	}, 90_000);
+
+	it.each([
+		"~",
+		"~/sfly-data",
+	])("数据目录以 ~ 开头（%s）：环境变量里的 ~ 没有人展开，不合法，说明要写绝对路径，没有在当前目录下建出叫 ~ 的目录", async (value) => {
+		const before = await readdir(serverDir);
+
+		const result = await startMain({ SFLY_DATA_DIR: value });
+
+		expect(result.code, result.output).toBe(1);
+		expect(result.output).toContain("SFLY_DATA_DIR 不合法");
+		expect(result.output).toContain("没有人展开");
+		expect(result.output).toContain("绝对路径");
+		expect(result.output).not.toContain("sfly-data");
+		expect(result.output).not.toContain("ECONNREFUSED");
 		expect(await readdir(serverDir)).toEqual(before);
 	}, 90_000);
 

@@ -3,6 +3,8 @@
 // 信息写着环境变量的名字和范围（数值类的回显填的值，最多 12 个字符；别的不回显），几个变量都不合法时一次报完。逐个变量的取值范围在 env-settings.test.ts，
 // 这里守的是 `main.ts` 的接线：每个变量都经过检查，把任何一个改回原来的读法（`positive()`、`Number(...)`），对应那一行就红；
 // 还有报错回显的总表（每个变量 × 带凭据的各种形状，走真的 main.ts，输出全文里没有凭据）、检查过的设置真的传给了控制面。
+// 总表里的形状都是检查不认的（数据库地址连不上，走不到监听）；两个监听地址里检查认、监听时才失败的写法（令牌像主机名、IPv6 的区域标识）
+// 要连真的数据库才走得到监听那一步，在 main-startup-with-database.test.ts（输出全文里没有填的值的任何一段）。
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
