@@ -140,7 +140,10 @@ describe("运行通知", () => {
 			?.slice(prefix.length);
 	};
 
-	/** 触发一次运行并让它以指定的结果结束（单个包节点 a）。 */
+	/**
+	 * 触发一次运行并让它以指定的结果结束（单个包节点 a）。返回时运行已经是这个状态，但通知是提交之后才由
+	 * 投递循环发出去的：要看飞书收到了什么，先等（`onlyCard`，或 `eventually` 等请求数到位）。
+	 */
 	async function runEnding(id: string, ending: Ending): Promise<string> {
 		const runId = await api.triggerOk(id);
 		const a = await agent.nextAssign();
@@ -742,7 +745,7 @@ describe("运行通知", () => {
 			// 之后的运行照常：改回认识的值，通知又能发出去。
 			await notification(id, { trigger: "failed" });
 			const next = await runEnding(id, "failed");
-			expect(feishu.requests).toHaveLength(1);
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
 			expect((await api.run(next)).run_notification).toMatchObject({ bot: "ops" });
 		});
 
