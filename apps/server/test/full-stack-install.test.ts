@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { describeWithAgent } from "./support/describe-with-agent.js";
@@ -68,6 +69,9 @@ describeWithAgent("全栈：install.sh 安装的 Agent", () => {
 	it("安装、启动、从镜像桩准备环境，跑通一条链", async () => {
 		const home = join(dir, "home");
 		const sflyHome = join(home, ".sfly");
+		// 没有凭据的 Agent 只接受已登记过的名字（#492）：像真实的部署一样，先向控制面签发这台 Agent 的凭据，
+		// 经环境变量交给安装脚本（它写进 agent.env 的 SFLY_TOKEN）。
+		const { token } = await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "installed-agent");
 		await run(
 			"sh",
 			[
@@ -75,7 +79,7 @@ describeWithAgent("全栈：install.sh 安装的 Agent", () => {
 				'curl -fsSL "$0/install.sh" | sh -s -- --name installed-agent --no-service',
 				cp.httpUrl,
 			],
-			{ env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir() } },
+			{ env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir(), SFLY_TOKEN: token } },
 		);
 
 		// 共享 venv 用测试机上 uv 管理的 Python（Python 从镜像下载的路径由 agent/tests/environment.rs 覆盖）。

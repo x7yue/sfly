@@ -4,6 +4,7 @@ import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
+	apiTokens,
 	artifacts,
 	feishuMessages,
 	runs,
@@ -22,7 +23,8 @@ const BATCH = 100;
 /**
  * 日志和产物的保留期清理（#18）：运行结束超过保留期后，删除它的日志目录 `logs/<run_id>/`、
  * 产物目录 `artifacts/<run_id>/` 和产物记录，这个运行的飞书投递记录（ADR 0020），以及它的任务的动作明细、每种名称的
- * 计数和动作摘要（规格 #345），并在 `runs.purged_at` 记下清理时间。
+ * 计数和动作摘要（规格 #345），它的任务的任务凭据（`api_tokens` 里种类为 `task` 的行，任务早已结束，凭据早就无效，#492），
+ * 并在 `runs.purged_at` 记下清理时间。
  * 运行本身、任务状态和输出都保留。是否到期只按注入的时钟判断，测试推进手动时钟即可。
  */
 export class Retention {
@@ -73,17 +75,32 @@ export class Retention {
 			.where(and(isNull(runs.purgedAt), lt(runs.endedAt, cutoff)))
 			.limit(BATCH);
 		for (const { id } of due) {
-			// 先删文件再标记：中途出错时下一次扫描会重新处理（删除是幂等的）。
-			await Promise.all(
-				["logs", "artifacts"].map((dir) =>
-					rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),
-				),
-			);
 			await this.deps.db.transaction(async (tx) => {
+				// 先锁住这个运行的行（`FOR UPDATE`），再删文件、删产物行、标记已清理，一起提交（#649 的审查）：产物上传
+				// （`ArtifactStore`）在 `FOR KEY SHARE` 的锁下核对运行没有被清理、改名、记账，两边不会交错：上传在改名中时这里等它
+				// 提交，之后删文件和行时连它存下的一起删；这里拿到锁之后上传的核对要等这个事务提交、读到「已清理」，不改名也不记账。
+				// 不然上传进行中运行被清理时，文件会落进已经清理过的目录、库里多一行，没有人再删。
+				// 次序没变：先删文件、再标记，在同一个事务里：中途出错或进程被杀，事务回滚、没有标记，下一次扫描重新处理（删除是
+				// 幂等的）。代价是删文件期间事务开着、持着这一个运行行的锁（一个运行一把，批次里顺序做）：大目录要几秒；这个运行
+				// 结束已经超过保留期，没有别的事务要更新它。
+				const [locked] = await tx
+					.select({ purgedAt: runs.purgedAt })
+					.from(runs)
+					.where(eq(runs.id, id))
+					.for("update");
+				if (!locked || locked.purgedAt !== null) return; // 选出来之后别处已经清理了
+				await Promise.all(
+					["logs", "artifacts"].map((dir) =>
+						rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),
+					),
+				);
 				const runTasks = tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.runId, id));
 				await tx.delete(taskActions).where(inArray(taskActions.taskId, runTasks));
 				await tx.delete(taskActionNames).where(inArray(taskActionNames.taskId, runTasks));
 				await tx.delete(taskActionSummaries).where(inArray(taskActionSummaries.taskId, runTasks));
+				await tx
+					.delete(apiTokens)
+					.where(and(eq(apiTokens.kind, "task"), inArray(apiTokens.taskId, runTasks)));
 				await tx.delete(artifacts).where(eq(artifacts.runId, id));
 				await tx.delete(feishuMessages).where(eq(feishuMessages.runId, id));
 				await tx.update(runs).set({ purgedAt: now }).where(eq(runs.id, id));

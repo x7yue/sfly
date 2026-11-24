@@ -27,6 +27,9 @@ const DOC = {
 	packages: { stub: "1.0.0" },
 };
 
+/** Agent 要带凭据才能连（ADR 0029：没有登记过的名字、没有凭据一律拒绝）：这里用共享令牌，不是这个测试要查的东西。 */
+const AGENT_TOKEN = "process-stream-errors-agent-token";
+
 describe("真实的控制面进程", () => {
 	let database: TestDatabase | undefined;
 	let dataDir: string | undefined;
@@ -44,7 +47,11 @@ describe("真实的控制面进程", () => {
 	const start = async () => {
 		database = await createTestDatabase();
 		dataDir = await mkdtemp(join(tmpdir(), "sfly-proc-"));
-		server = await startSourceServer({ databaseUrl: database.url, dataDir });
+		server = await startSourceServer({
+			databaseUrl: database.url,
+			dataDir,
+			env: { SFLY_AGENT_TOKEN: AGENT_TOKEN },
+		});
 		return server;
 	};
 
@@ -55,7 +62,7 @@ describe("真实的控制面进程", () => {
 		const cp = await start();
 		const api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
-		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", token: AGENT_TOKEN });
 		const runId = await api.triggerOk(await api.orchestrationWith(DOC));
 		const task = await agent.nextAssign();
 		agent.logs(task, [
@@ -104,7 +111,7 @@ describe("真实的控制面进程", () => {
 		const cp = await start();
 		const api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
-		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", token: AGENT_TOKEN });
 		const runId = await api.triggerOk(await api.orchestrationWith(DOC));
 		const task = await agent.nextAssign();
 		agent.logs(task, [[1, "第一行"]]);

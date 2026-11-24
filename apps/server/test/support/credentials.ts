@@ -140,6 +140,16 @@ export class TestAccounts {
 		return token;
 	}
 
+	/** Agent 凭据行的 ID（`agent_credentials.id`）：按原值的哈希找。 */
+	async agentCredentialId(token: string): Promise<string> {
+		const { rows } = await this.#pool.query(
+			"select id from agent_credentials where token_hash = $1",
+			[hashCredential(token)],
+		);
+		if (rows[0] === undefined) throw new Error("没有这个 Agent 凭据");
+		return rows[0].id as string;
+	}
+
 	/** 令牌行的 ID（`api_tokens.id`）：按原值的哈希找。 */
 	async tokenId(token: string): Promise<string> {
 		const { rows } = await this.#pool.query("select id from api_tokens where token_hash = $1", [

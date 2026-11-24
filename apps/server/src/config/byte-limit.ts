@@ -1,4 +1,5 @@
 import { decimalOf, isUnset } from "./decimal.js";
+import { echoNumber, wasEchoed } from "./echo.js";
 
 export const MB = 1024 * 1024;
 
@@ -30,12 +31,16 @@ export function byteLimitBytesFromMb(
 	if (!Number.isFinite(mb)) {
 		// 不是（有限的）数：`10MB`、`Infinity`……说单位和怎么写，不写「换算后 NaN 字节」。
 		throw new Error(
-			`${name} 不合法：${what}要写成数字，单位是 MB（可以带小数，例如 512、0.5）。只写数字，不要带单位，也不要写 Infinity，实际是 ${JSON.stringify(raw)}。换算成字节后要是 1 到 ${MAX_BYTE_LIMIT} 之间的整数`,
+			`${name} 不合法：${what}要写成数字，单位是 MB（可以带小数，例如 512、0.5）。只写数字，不要带单位，也不要写 Infinity，实际是 ${echoNumber(raw)}。换算成字节后要是 1 到 ${MAX_BYTE_LIMIT} 之间的整数`,
 		);
 	}
 	const bytes = Math.floor(mb * MB);
 	if (!isByteLimit(bytes)) {
-		throw new Error(`${byteLimitMessage(name, what, JSON.stringify(raw))}（换算后 ${bytes} 字节）`);
+		// 换算后的字节数只在填的值已经回显时才写：值没回显（太长、不像数）时，换算后的数除以 1048576 就是填的数，写出来等于把它带出来。
+		const shown = echoNumber(raw);
+		throw new Error(
+			`${byteLimitMessage(name, what, shown)}${wasEchoed(shown) ? `（换算后 ${bytes} 字节）` : ""}`,
+		);
 	}
 	return bytes;
 }

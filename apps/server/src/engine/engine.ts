@@ -34,6 +34,7 @@ import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
 import { loadAgentTasks } from "../agents/agent-tasks.js";
 import { connectionBlock, freeSlots } from "../agents/dispatch-gate.js";
 import { agentsInProject } from "../agents/project-agents.js";
+import { mintTaskCredential } from "../agents/task-credentials.js";
 import type { Clock } from "../clock.js";
 import type { Db, Tx } from "../db/database.js";
 import {
@@ -1373,11 +1374,6 @@ export class Engine implements AgentSessionHandler {
 				.orderBy(asc(tasks.queuedAt), asc(tasks.seq))
 				.for("update");
 			if (queued.length === 0) return;
-			// 这台 Agent 注册在哪个项目里：只派发这个项目的运行的任务（见 #prepareAssign）。
-			const [registered] = await step.tx
-				.select({ projectId: agents.projectId })
-				.from(agents)
-				.where(eq(agents.name, agentName));
 			for (const task of queued) {
 				if (free <= 0) break;
 				// 周期扫描还没来得及处理的排队超时任务不再派发。
@@ -1386,7 +1382,7 @@ export class Engine implements AgentSessionHandler {
 					await queueTimedOut(this.#driver, step, task, "unavailable");
 					continue;
 				}
-				const message = await this.#prepareAssign(step, conn, task, registered?.projectId);
+				const message = await this.#prepareAssign(step, conn, task);
 				if (!message) continue;
 				step.assigns.push({ conn, message });
 				free--;
@@ -1399,18 +1395,14 @@ export class Engine implements AgentSessionHandler {
 	 * （assign-content.ts）；它说不能派发、或者准备它的过程中出错时，任务以 config_error 或 env_error 失败（不重试），
 	 * 返回 undefined：一个任务准备不好不能卡住这台 Agent 上排在它后面的任务（见 {@link Engine.#assignContent}）。
 	 */
-	async #prepareAssign(
-		step: Step,
-		conn: AgentConnection,
-		task: TaskRow,
-		agentProject: ProjectId | undefined,
-	) {
+	async #prepareAssign(step: Step, conn: AgentConnection, task: TaskRow) {
 		const { run, chain, plan, index, node } = await this.#locate(step.tx, task);
 		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
-		// 任务只派发给注册在这次运行所在的项目里的 Agent：别的项目的 Agent 和没有注册过一样，任务按配置错误失败
+		// 任务只派发给连接在这次运行所在的项目里的 Agent：别的项目的 Agent 和没有注册过一样，任务按配置错误失败
 		// （不重试），说明和入队时、预检时的一样。入队时已经核对过；这里是升级前已经入队的，和入队之后 Agent
-		// 才换了项目的。Agent 的项目改从凭据得出之后（#492），这里要以连接的项目为准，不是库里登记记录的项目。
-		if (agentProject !== run.projectId) {
+		// 才换了项目的。Agent 的项目从凭据得出（#492），所以**以连接的项目为准**，不是库里登记记录的项目：
+		// 连接的项目和登记一致由 `AgentHub.attach` 在锁里保证，这里是派发前的最后一道核对。
+		if (conn.project !== run.projectId) {
 			await this.#failTask(
 				step,
 				task,
@@ -1447,7 +1439,16 @@ export class Engine implements AgentSessionHandler {
 			})
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
-		return create(ServerMessageSchema, { body: { case: "assign", value: content.assign } });
+		// 任务凭据：只在这次尝试有效，SDK 下载产物用（ADR 0029「凭据」）；和「派发中」的状态在同一个事务里。
+		const taskToken = await mintTaskCredential(
+			step.tx,
+			{ id: task.id, projectId: run.projectId },
+			conn.credentialId,
+			step.now,
+		);
+		return create(ServerMessageSchema, {
+			body: { case: "assign", value: { ...content.assign, taskToken } },
+		});
 	}
 
 	/**

@@ -156,6 +156,7 @@ describe("要求 2：不根据工作台返回的内容在本机写任何文件",
 			"turn-config.ts",
 			"launch-env.ts",
 			"redact.ts",
+			"output.ts",
 		];
 		// 只读的：读这一轮的配置（readFileSync），判断临时文件（realpathSync、statSync），按块读它传到工作台上（createReadStream）。
 		const allowed = new Set(["createReadStream", "readFileSync", "realpathSync", "statSync"]);

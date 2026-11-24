@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AGENT_NAME_MAX_LENGTH, nameProblem, nameRefinement } from "../text-safety.js";
 import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { endpoint, Timestamp } from "./contract.js";
@@ -161,6 +162,54 @@ export const AgentView = z.object({
 	/** 支持的 Agent 能力及版本，按上报的顺序；不上报能力的旧版本 Agent 为空。 */
 	capabilities: z.array(CapabilityView),
 	endpoint: AgentEndpointView,
+	/**
+	 * 最近一次连接用的凭据（ADR 0029「迁移与过渡」，#492）：`agent` 是这台 Agent 自己的凭据，`shared` 是共享令牌
+	 * （`SFLY_AGENT_TOKEN`，控制台提示换成 Agent 凭据），`none` 没带凭据（只在过渡版本里被接受）；还没有记过（升级之前连接的）为 null。
+	 */
+	auth_kind: z.enum(["agent", "shared", "none"]).nullable(),
+	/** 停用这台 Agent 的时间；没有停用为 null。停用的 Agent 不能连接、不参与派发。 */
+	disabled_at: Timestamp.nullable(),
+});
+
+/**
+ * 一个 Agent 凭据（不含原值）：`prefix` 是展示用的前缀（`sfly_agt_` 加原值开头的几个字符），认得出是哪一个，不够用来连接；
+ * `user` 是开发 Agent 的凭据所属的用户的显示名（按台签发的没有用户，为 null）。
+ */
+export const AgentCredentialView = z.object({
+	id: z.uuid(),
+	prefix: z.string(),
+	created_at: Timestamp,
+	last_used_at: Timestamp.nullable(),
+	revoked_at: Timestamp.nullable(),
+	user: z.string().nullable(),
+});
+
+/** 刚签发的 Agent 凭据：`token` 是原值，只在这一次响应里出现，之后任何接口都读不回。 */
+export const IssuedAgentCredential = z.object({
+	credential: AgentCredentialView,
+	token: z.string(),
+});
+
+const AgentNameParams = z.object({
+	/** Agent 名称。 */
+	name: z.string().min(1),
+});
+const AgentCredentialParams = AgentNameParams.extend({ id: z.uuid() });
+/**
+ * 签发 Agent 凭据时的 Agent 名称：和 Agent 在 Hello 里报的名称同一个规则（#670）——不含 `text-safety.ts` 里那张明确的表里的字符，
+ * 最多 {@link AGENT_NAME_MAX_LENGTH} 个字符（按字符数）。名称是身份，会显示在命令行、控制台和场景里，凭据签发之后 Agent
+ * 才连得上来，所以在签发这一步就拦住；不合格的说明带第几个字符、哪个码位，不回显名称。
+ */
+const NewAgentNameParams = z.object({
+	/** Agent 名称。 */
+	name: z
+		.string()
+		.min(1)
+		.refine((name) => nameProblem(name) === undefined, nameRefinement("Agent 的名称"))
+		.refine(
+			(name) => [...name].length <= AGENT_NAME_MAX_LENGTH,
+			`Agent 的名称不能超过 ${AGENT_NAME_MAX_LENGTH} 个字符`,
+		),
 });
 
 export const agentsApi = {
@@ -203,9 +252,125 @@ export const agentsApi = {
 			terminated_tasks: z.array(RunningTaskView),
 		}),
 	}),
+	/** 列出一台 Agent 的凭据（含已吊销的，带状态；不含原值）。 */
+	listCredentials: endpoint({
+		method: "GET",
+		path: "/agents/:name/credentials",
+		summary: "列出一台 Agent 的凭据（前缀、状态、最后使用时间，不含原值）",
+		effect: "read",
+		resource: { kind: "agent", target: { params: "name" } },
+		client: false,
+		key: ["agents", "credentials"],
+		params: AgentNameParams,
+		response: z.object({ credentials: z.array(AgentCredentialView) }),
+	}),
+	/**
+	 * 为「项目 + Agent 名字」签发一个 Agent 凭据（`sfly_agt_` 前缀，库里只存哈希），响应里的 `token` 是原值，只此一次。
+	 * 要「管理」范围（项目管理员）；同一台 Agent 可以同时有几个有效的凭据（轮换：先签发新的、换上之后吊销旧的）。
+	 * 开发机上的开发 Agent 不走这里，走 devAgentsApi。
+	 */
+	issueCredential: endpoint({
+		method: "POST",
+		path: "/agents/:name/credentials",
+		summary: "为一台 Agent 签发凭据（原值只在这次响应里出现一次）",
+		effect: "write",
+		resource: { kind: "agent", target: { params: "name" } },
+		client: false,
+		key: ["agents", "issue-credential"],
+		params: NewAgentNameParams,
+		response: IssuedAgentCredential,
+	}),
+	/** 吊销一台 Agent 的凭据，立即失效，用它连着的 Agent 连接被断开。要「管理」范围；已经吊销的再吊销是 204。 */
+	revokeCredential: endpoint({
+		method: "DELETE",
+		path: "/agents/:name/credentials/:id",
+		summary: "吊销一台 Agent 的凭据（连着的连接断开）",
+		effect: "write",
+		resource: { kind: "agent", target: { params: "name" } },
+		removes: true,
+		client: false,
+		key: ["agents", "revoke-credential"],
+		params: AgentCredentialParams,
+		response: z.undefined(),
+	}),
+	/**
+	 * 停用一台 Agent（ADR 0029「迁移与过渡」）：停用的 Agent 不能连接（不论带不带凭据）、不参与派发（预检阻断并写明原因）、
+	 * 不计入「登记工作台之前都要换成 Agent 凭据」的检查。正连着的立即断开，它手上的任务按 Agent 失联处理（`agent_lost`，
+	 * 租约到期后重试）。要「管理」范围；已经停用的再停用是 204。
+	 */
+	disable: endpoint({
+		method: "POST",
+		path: "/agents/:name/disable",
+		summary: "停用一台 Agent（断开连接，不再派发）",
+		effect: "write",
+		resource: { kind: "agent", target: { params: "name" } },
+		client: false,
+		key: ["agents", "disable"],
+		params: AgentNameParams,
+		response: z.undefined(),
+	}),
+	/** 恢复一台停用的 Agent：之后同名的连接照常判断。要「管理」范围；没有停用的再恢复是 204。 */
+	enable: endpoint({
+		method: "POST",
+		path: "/agents/:name/enable",
+		summary: "恢复一台停用的 Agent",
+		effect: "write",
+		resource: { kind: "agent", target: { params: "name" } },
+		client: false,
+		key: ["agents", "enable"],
+		params: AgentNameParams,
+		response: z.undefined(),
+	}),
+};
+
+/** 开发 Agent 名字里「主机」那一段：小写字母、数字、连字符，不以连字符开头或结尾；整个名字另有总长上限。 */
+export const DEV_AGENT_HOST_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+export const DEV_AGENT_HOST_MAX = 32;
+/** 开发 Agent 的名字（`dev-<登录名>-<主机>`）的总长上限。 */
+export const DEV_AGENT_NAME_MAX = 64;
+
+/**
+ * 「我的开发 Agent」（ADR 0029「凭据」，资源类别 `dev_agent`）：在项目下新建和吊销。名字由控制面生成，请求里不能带
+ * （`dev-<登录名>-<主机>`：登录名的字符集不含连字符，所以 `dev-` 之后到下一个连字符之前就是登录名，来自凭据，冒用不了别人的）；
+ * 只认有用户的人的凭据（登录 Cookie、个人令牌），会话令牌和项目令牌都不行；要「编辑」范围；凭据记在这个用户名下。
+ */
+export const devAgentsApi = {
+	/** 注册我的开发 Agent：返回控制面生成的名字和凭据（原值只此一次）；同一个人在同一个项目里重名是 409 `dev_agent_exists`。 */
+	create: endpoint({
+		method: "POST",
+		path: "/projects/:project/dev-agents",
+		summary: "在开发机上注册我的开发 Agent（名字由控制面生成）",
+		effect: "write",
+		resource: { kind: "dev_agent", target: "collection" },
+		client: false,
+		key: ["dev-agents", "create"],
+		params: z.object({ project: z.string().min(1) }),
+		body: z
+			.object({
+				/** 主机那一段：小写字母、数字、连字符。 */
+				host: z.string().min(1).max(DEV_AGENT_HOST_MAX).regex(DEV_AGENT_HOST_PATTERN),
+			})
+			.strict(),
+		response: z.object({ name: z.string(), credential: AgentCredentialView, token: z.string() }),
+	}),
+	/** 吊销一台开发 Agent 的凭据：要是自己的，或者有「管理」范围；已经吊销的再吊销是 204。 */
+	revoke: endpoint({
+		method: "DELETE",
+		path: "/projects/:project/dev-agents/:name",
+		summary: "吊销我的开发 Agent 的凭据",
+		effect: "write",
+		resource: { kind: "dev_agent", target: { params: "name" } },
+		removes: true,
+		client: false,
+		key: ["dev-agents", "revoke"],
+		params: z.object({ project: z.string().min(1), name: z.string().min(1) }),
+		response: z.undefined(),
+	}),
 };
 
 export type AgentView = z.infer<typeof AgentView>;
+export type AgentCredentialView = z.infer<typeof AgentCredentialView>;
+export type IssuedAgentCredential = z.infer<typeof IssuedAgentCredential>;
 export type AgentUpdateState = z.infer<typeof AgentUpdateState>;
 export type AgentUpdateView = z.infer<typeof AgentUpdateView>;
 export type DevPackageView = z.infer<typeof DevPackageView>;

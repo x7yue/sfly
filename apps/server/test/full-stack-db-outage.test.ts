@@ -24,6 +24,16 @@ const startProcess = (
 	options: { dataDir?: string; ports?: { http: number; grpc: number } } = {},
 ) => startSourceServer({ databaseUrl, env, admin: true, production: true, ...options });
 
+/**
+ * 经控制面的接口给一台 Agent 签发凭据（初始管理员 root 已登录）：Agent 要带凭据才能连（#492）。凭据在库里，控制面按同一个库
+ * 重启之后照样有效，真实的 Agent 重连时带的还是它。
+ */
+const issueAgentCredential = async (target: SourceServer, name: string): Promise<string> => {
+	const res = await target.request("POST", `/agents/${name}/credentials`, {});
+	if (res.status !== 201) throw new Error(`签发 Agent 凭据失败：${res.status} ${await res.text()}`);
+	return ((await res.json()) as { token: string }).token;
+};
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 一个现在空闲的端口（取到之后立刻放掉）：控制面重启要在同样的端口上，Agent 才能按原来的地址重连。 */
@@ -67,6 +77,7 @@ describeWithAgent("全栈：数据库出问题，真实的 Agent 不需要人工
 			name: "outage-agent",
 			venv: venv.path,
 			bin,
+			credential: await issueAgentCredential(first, "outage-agent"),
 		});
 	}, 600_000);
 

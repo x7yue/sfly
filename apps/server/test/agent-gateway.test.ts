@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -61,6 +62,31 @@ describe("Agent 网关", () => {
 			expect(agent.received.map((m) => m.body.case)).toEqual(["welcome"]);
 			await agent.disconnect();
 		}
+	});
+
+	it("名称的检查在凭据的检查之前：不合格的名称不经认证拒绝连接的报错原样回显（凭据属于别的名字、没有凭据的旧方式、名字太长）", async () => {
+		const code = (...points: number[]) => String.fromCodePoint(...points);
+		const worker = (await cp.current.agentCredentials.issue(DEFAULT_PROJECT, "worker-1")).token;
+		const bads = [`a${code(0x1b)}[2Jb`, `x${code(0x202e)}y`, "n".repeat(65)];
+		for (const bad of bads) {
+			for (const token of [worker, "", "no-such-credential"]) {
+				const error = await FakeAgent.connect(cp.grpcUrl, { name: bad, token }).then(
+					() => undefined,
+					(caught: unknown) => caught as Error,
+				);
+				const label = JSON.stringify({ bad, token });
+				expect(error, label).toBeInstanceOf(Error);
+				// 报的是名称不合格（InvalidArgument），不是认证的报错；报错里没有原样的名称。
+				expect(error?.message, label).toContain("Hello.name 不合格");
+				expect(error?.message, label).not.toContain(bad);
+				expect(error?.message, label).not.toContain("属于");
+				expect(error?.message, label).not.toContain("没有登记");
+			}
+		}
+		// 合格的名字照旧走认证：凭据属于别的名字时认证拒绝。
+		await expect(
+			FakeAgent.connect(cp.grpcUrl, { name: "worker-2", token: worker }),
+		).rejects.toThrow("这个 Agent 凭据属于「worker-1」");
 	});
 
 	it("多个 Agent 可以同时连接", async () => {

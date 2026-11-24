@@ -764,6 +764,14 @@ describe("场景版本里 secret 参数的默认值", () => {
 		 */
 		const NOT_EXERCISED: Record<string, string> = {
 			"POST /agents/:name/update-now": "只让 Agent 自更新，响应是被终止的任务数",
+			"POST /agents/:name/credentials":
+				"签发 Agent 凭据：原值只在响应里出现一次，另见 agent-credentials-http.test.ts",
+			"DELETE /agents/:name/credentials/:id": "同上",
+			"POST /agents/:name/disable": "停用 Agent，不带场景和参数",
+			"POST /agents/:name/enable": "同上",
+			"POST /projects/:project/dev-agents":
+				"注册开发 Agent：名字由控制面生成，凭据另见 agent-credentials-http.test.ts",
+			"DELETE /projects/:project/dev-agents/:name": "同上",
 			"PUT /tasks/:id/artifacts/*": "上传产物的字节，不带场景和参数",
 			"POST /feishu-bots": "登记 Webhook 地址（地址里的令牌另有打码，ADR 0020）",
 			"PATCH /feishu-bots/:name": "同上",
