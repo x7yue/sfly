@@ -1,7 +1,8 @@
 import { feishuBotNotRegistered } from "@sfly/orchestration";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db, Tx } from "../db/database.js";
 import { feishuBots } from "../db/schema.js";
+import type { ProjectId } from "../projects/project-id.js";
 
 /** 节点的输入选择的一个飞书机器人（触发时按实际值检查）。 */
 export interface BotToCheck {
@@ -20,13 +21,25 @@ export interface BotToCheck {
 	source?: string;
 }
 
-/** 这些名称里已登记的飞书机器人。触发时的检查、`ctx.notify` 和运行通知都用它查，不各写一份。 */
-export async function registeredBots(db: Db | Tx, names: readonly string[]): Promise<Set<string>> {
-	if (names.length === 0) return new Set();
+/**
+ * 这个项目里已登记的飞书机器人（给了 `names` 时只看这些名称里的）。保存和触发时的检查、`ctx.notify`、运行通知
+ * 按名字找机器人都用它，不各写一份：别的项目的机器人和没有登记过一样（ADR 0029），说明也是同一句。
+ */
+export async function registeredBots(
+	db: Db | Tx,
+	project: ProjectId,
+	names?: readonly string[],
+): Promise<Set<string>> {
+	if (names !== undefined && names.length === 0) return new Set();
 	const rows = await db
 		.select({ name: feishuBots.name })
 		.from(feishuBots)
-		.where(inArray(feishuBots.name, [...names]));
+		.where(
+			and(
+				eq(feishuBots.projectId, project),
+				...(names === undefined ? [] : [inArray(feishuBots.name, [...names])]),
+			),
+		);
 	return new Set(rows.map((r) => r.name));
 }
 
@@ -46,9 +59,10 @@ export interface FeishuBotProblem {
  */
 export async function checkFeishuBots(
 	db: Db | Tx,
+	project: ProjectId,
 	references: readonly BotToCheck[],
 ): Promise<FeishuBotProblem[]> {
-	const registered = await registeredBots(db, [...new Set(references.map((r) => r.bot))]);
+	const registered = await registeredBots(db, project, [...new Set(references.map((r) => r.bot))]);
 	return references
 		.filter((r) => !registered.has(r.bot))
 		.map(({ nodeId, node, input, bot, shown = bot, source }) => ({
