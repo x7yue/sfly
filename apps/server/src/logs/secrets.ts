@@ -6,6 +6,7 @@ import {
 	MAX_AUTOMATON_CHARS,
 	MAX_SPANS,
 	maskedByAutomaton,
+	maskedRegion,
 	mergeSpans,
 	scanSpans,
 } from "./aho-corasick.js";
@@ -106,6 +107,12 @@ export class WorkBudget {
  * 这个运行里所有要打码的文字都整段盖住，这一行是用户知道为什么的地方：打码时只有它自己原样放行（{@link SecretSet.mask}）。
  */
 export const OVERSIZE_NOTICE = `这次运行的 secret 参数的值太多或太长（所有写法合计超过 ${MAX_AUTOMATON_CHARS} 个字符），无法逐个认出，这次运行里日志、动作、运行视图里的文字全部显示为 ${SECRET_MASK}。缩短或减少 secret 参数的值之后重新运行。`;
+
+/**
+ * 被拆开的超长行的每一段带的上下文（`LogLine.before` / `after`）最多这么多个字符：Agent 一端最多 16 KiB 字节
+ * （agent/src/logs.rs 的 `SPLIT_CONTEXT_BYTES`），字符数不会比字节数多。超过的（不是正常的 Agent 发的）按没带处理，不报错。
+ */
+export const SPLIT_CONTEXT_MAX_CHARS = 16 * 1024;
 
 /** 值的 JSON 文本（`JSON.stringify` 返回不了文本的值，例如 undefined，退回 `String`）。 */
 export const jsonText = (value: unknown): string => JSON.stringify(value) ?? String(value);
@@ -570,6 +577,35 @@ export class SecretSet {
 				budget.masks -= count;
 			}
 			return maskedByAutomaton(text, count, SECRET_MASK);
+		} catch {
+			return SECRET_MASK;
+		}
+	}
+
+	/**
+	 * 被 Agent 拆开的超长行的一段（`LogLine.before` / `after`，docs/SEMANTICS.md §2.1）：`text` 是这一段，`before`、`after` 是同一行里
+	 * 前一段的结尾和后一段的开头，只用来打码，不显示。在 `before + text + after` 上认完整的出现（secret 值和令牌原值，规则同 {@link mask}），
+	 * 只输出 `text` 那一段：开头落在 `text` 里的出现整个换成一个掩码（超出 `text` 末尾的部分不输出），开头在 `before` 里的出现落在 `text`
+	 * 里的部分去掉（前一段已经盖住了）。一个跨在拆分处的值因此只出现一个掩码，几段接起来和不拆时一样。结果只取决于这三段文字，
+	 * 不取决于别的段有没有到、先后、重发。每种写法的长度都不超过上下文的值保证认得出；更长的不保证（不论跨几段：拆分处附近可能露出一部分，也可能只去掉而不留掩码），但不出错，每一段露出的位置不比不带上下文时多。
+	 * 只用在写入（不带预算）；两段上下文都是空串时就是 {@link mask}。值集合太大时同 {@link mask}：整段盖住。
+	 */
+	maskInContext(text: string, before: string, after: string): string {
+		if (before === "" && after === "") return this.mask(text);
+		if (text === "") return text;
+		try {
+			const window = before + text + after;
+			let count = 0;
+			if (this.texts.length > 0) {
+				const automaton = this.#automaton();
+				if (!automaton) return this.mask(text);
+				count = scanSpans(automaton, window, MAX_SPANS);
+				if (count < 0) return SECRET_MASK;
+			}
+			const tokens = tokenSpans(window);
+			if (tokens) count = mergeSpans(count, tokens.starts, tokens.ends);
+			if (count === 0) return text;
+			return maskedRegion(window, count, before.length, before.length + text.length, SECRET_MASK);
 		} catch {
 			return SECRET_MASK;
 		}

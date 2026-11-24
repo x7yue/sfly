@@ -950,6 +950,69 @@ def test_a_cancelled_raised_by_the_node_itself_is_also_quiet(
     assert (event["level"], event["message"]) == ("info", "下载被取消，执行到 giveup.stop 第 5 行")
 
 
+def test_a_cancelled_that_nobody_catches_in_a_background_thread_is_quiet_too(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """取消或超时进入收尾时，后台线程里正在进行的调用抛 `Cancelled`，节点没有接住：和主线程一样是
+    正常终止，只在事件管道里留一行 INFO，标准错误里没有 ERROR 级的堆栈（#678）。"""
+    write_module(
+        code_dir,
+        "bgcancel",
+        """
+        import threading
+        from sfly import Cancelled
+
+        def work() -> dict:
+            def waiting() -> None:
+                raise Cancelled("任务正在收尾，调用已放弃")
+
+            thread = threading.Thread(target=waiting, name="bg-wait")
+            thread.start()
+            thread.join()
+            return {"done": True}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "bgcancel:work")
+
+    assert run.returncode == 0
+    assert run.stderr == ""
+    infos = [e for e in events_of(tmp_path) if e.get("level") == "info"]
+    assert [e["message"] for e in infos] == [
+        "后台线程 bg-wait：任务正在收尾，调用已放弃，执行到 bgcancel.work.<locals>.waiting 第 7 行"
+    ]
+
+
+def test_any_other_exception_in_a_background_thread_still_writes_its_stack(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "bgerror",
+        """
+        import threading
+
+        def work() -> dict:
+            def broken() -> None:
+                raise ValueError("后台线程自己的错")
+
+            thread = threading.Thread(target=broken, name="bg-broken")
+            thread.start()
+            thread.join()
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "bgerror:work")
+
+    assert run.returncode == 0
+    assert "Exception in thread bg-broken" in run.stderr
+    assert "ValueError: 后台线程自己的错" in run.stderr
+    # 没有被当作正常终止：事件管道里没有 INFO（节点没有写过日志，事件文件可能都没有）。
+    events = tmp_path / "work" / "events.jsonl"
+    assert not events.exists() or [e for e in events_of(tmp_path) if e.get("level") == "info"] == []
+
+
 def test_cleanup_after_cancelled_and_the_nodes_own_logs_are_not_affected(
     tmp_path: Path, code_dir: Path
 ) -> None:
