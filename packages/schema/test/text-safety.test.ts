@@ -321,14 +321,23 @@ describe("名字里不能有的字符", () => {
 		]) {
 			expect(escapeUnsafeCharacters(ok), ok).toBe(ok);
 		}
-		// 每个码位：结果里不再有表里的字符（保留的换行和制表符除外）。
-		for (let c = 0; c <= 0x10ffff; c++) {
-			if (c >= 0xd800 && c <= 0xdfff) continue;
-			const out = escapeUnsafeCharacters(`a${chars(c)}b`);
-			const leftover = [...out].filter(
-				(x) => REJECTED_NAME_CHARACTER.test(x) && x !== "\t" && x !== "\n",
-			);
-			expect(leftover, codePointLabel(c)).toEqual([]);
+		// 每个码位：结果里不再有表里的字符（保留的换行和制表符除外）。把全部码位拼成一个字符串、过一遍函数、再扫一遍结果
+		// （一个码位一次调用要一百多万次，CI 的机器上超过 5 秒的默认时限）。
+		const parts: string[] = [];
+		for (let start = 0; start <= 0x10ffff; start += 4096) {
+			const codePoints: number[] = [];
+			for (let c = start; c < Math.min(start + 4096, 0x110000); c++) {
+				if (c < 0xd800 || c > 0xdfff) codePoints.push(c);
+			}
+			parts.push(chars(...codePoints));
 		}
+		const everything = parts.join("");
+		const escaped = escapeUnsafeCharacters(everything);
+		const leftover = [...escaped.matchAll(new RegExp(REJECTED_NAME_CHARACTER.source, "gu"))]
+			.map((match) => codePointLabel(match[0].codePointAt(0) as number))
+			.filter((label) => label !== "U+0009" && label !== "U+000A");
+		expect(leftover).toEqual([]);
+		// 不在表里的字符一个都没动：去掉所有写出来的转义之后，长度只多不少（表里的码位变长，别的不变）。
+		expect([...escaped].length).toBeGreaterThan([...everything].length);
 	});
 });
