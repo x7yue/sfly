@@ -11,10 +11,11 @@ import type { PresetStore } from "../presets/preset-store.js";
 import { entryParams } from "../presets/preset-validity.js";
 import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { type Preflight, preflightWarnings } from "../runs/preflight.js";
+import { rawScenario } from "../runs/raw-scenario.js";
 import { listRuns } from "../runs/run-list.js";
 import { getRunView } from "../runs/run-read.js";
 import { secretLeafWarnings } from "../runs/secret-leaf-warnings.js";
-import { secretSizeWarnings } from "../runs/secret-size-warnings.js";
+import { secretSizePreflight } from "../runs/secret-size-preflight.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
@@ -75,14 +76,20 @@ export function registerRunRoutes(
 				presets,
 			};
 		}
+		// 默认值和运行预设的原始值，一次预检只读一次，传给要看它们的几项检查。
+		const raw = await rawScenario(deps.db, params.id);
+		const secretSize = raw ? await secretSizePreflight(raw) : { problems: [], warnings: [] };
 		return {
 			version: head.number,
 			params: declarations,
-			problems: await deps.preflight(deps.db, project, head.document),
+			problems: [
+				...(await deps.preflight(deps.db, project, head.document)),
+				...secretSize.problems,
+			],
 			warnings: [
 				...preflightWarnings(head.document),
-				...(await secretLeafWarnings(deps.db, params.id)),
-				...(await secretSizeWarnings(deps.db, params.id)),
+				...(raw ? secretLeafWarnings(raw) : []),
+				...secretSize.warnings,
 			],
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, project, head.document)).map((agent) => ({

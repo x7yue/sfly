@@ -9,7 +9,9 @@ import {
 	maskedByAutomaton,
 	maskedRegion,
 	mergeSpans,
+	overAutomatonLimit,
 	scanSpans,
+	totalChars,
 } from "./aho-corasick.js";
 
 /**
@@ -518,7 +520,10 @@ export class SecretSet {
 	 */
 	#automaton(): Automaton | undefined {
 		if (!this.#lazy.built) {
-			this.#lazy.automaton = buildAutomaton(this.texts, secretLimits.automatonChars);
+			// 总长超过上限的不建（{@link oversize} 按当时的上限定下来的，建自动机用的是同一个判断）。
+			this.#lazy.automaton = this.oversize
+				? undefined
+				: buildAutomaton(this.texts, secretLimits.automatonChars);
 			this.#lazy.built = true;
 			this.#lazy.watch?.(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
 		}
@@ -537,16 +542,23 @@ export class SecretSet {
 		return this.#lazy.noticeIsValue;
 	}
 
-	/** 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。 */
+	/**
+	 * 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。
+	 * 只比总长（{@link overAutomatonLimit}，建自动机时用的就是它），**不建自动机**：预检、触发时的检查问它，
+	 * 不能为了回答「太不太大」去建一个十几 MB 的自动机。
+	 */
 	get oversize(): boolean {
-		return this.texts.length > 0 && this.#automaton() === undefined;
+		// 第一次问（或第一次要自动机）时按当时的上限定下来，之后不变：和自动机建一次是同一个说法
+		// （上限只有测试会改，改之前要清缓存，{@link clearSecretSetCache}）。
+		this.#lazy.oversize ??=
+			this.texts.length > 0 && overAutomatonLimit(this.chars, secretLimits.automatonChars);
+		return this.#lazy.oversize;
 	}
 
-	/** 所有写法的总长（UTF-16 码元个数，每种写法只算一次）：{@link oversize} 比的就是它和 {@link secretLimits} 的 `automatonChars`。 */
+	/** 所有写法的总长（UTF-16 码元个数，每种写法只算一次）；每份值集合只算一次。 */
 	get chars(): number {
-		let total = 0;
-		for (const text of this.texts) total += text.length;
-		return total;
+		this.#lazy.chars ??= totalChars(this.texts);
+		return this.#lazy.chars;
 	}
 
 	/**
@@ -690,6 +702,10 @@ interface Lazy {
 	built?: boolean;
 	/** 建好时通知（{@link SecretSet.watchBuild}）。 */
 	watch?: (bytes: number) => void;
+	/** 所有写法的总长（{@link SecretSet.chars}，算一次）。 */
+	chars?: number;
+	/** 总长超过上限（{@link SecretSet.oversize}，第一次问的时候按当时的上限定下来）。 */
+	oversize?: boolean;
 	/** 值集合的某个写法恰好就是 {@link OVERSIZE_NOTICE}（算一次：说明那一行每出现一次都要问，不能每次扫一遍所有的值）。 */
 	noticeIsValue?: boolean;
 }
@@ -733,10 +749,24 @@ function trimSetCache(): void {
 	}
 }
 
+/** 值集合的缓存里现在有几份、占多少字节（只给测试用：预检不能往运行共用的缓存里放东西，#632）。 */
+export function secretSetCacheStats(): { entries: number; bytes: number } {
+	return { entries: setCache.size, bytes: setCacheBytes };
+}
+
 /** 清掉值集合的缓存（只给测试用：改了 {@link secretLimits} 之后，缓存里按旧的上限建的值集合不能再用）。 */
 export function clearSecretSetCache(): void {
 	setCache.clear();
 	setCacheBytes = 0;
+}
+
+/**
+ * 同 {@link secretSetOf}，但**不进值集合的缓存**：预检按场景里的默认值、运行预设算大小用（`runs/secret-size*.ts`）。
+ * 它们不是哪个运行用的值集合，进了缓存会把正在跑的运行的值集合（和它的自动机）挤掉；只用来数总长（{@link SecretSet.chars}），
+ * 不要拿它打码。
+ */
+export function secretSetUncached(values: Iterable<unknown>): SecretSet {
+	return new SecretSet([...values].map(secretPartsOf));
 }
 
 /** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）；值相同的是同一个对象（不可变，可以共用）。 */

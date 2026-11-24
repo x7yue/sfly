@@ -1,9 +1,6 @@
-import { asc, eq } from "drizzle-orm";
-import type { Db, Tx } from "../db/database.js";
-import { runPresets } from "../db/schema.js";
 import { MIN_LEAF_CHARS, shortLeafCount } from "../logs/secrets.js";
-import { rawHeadDocument } from "./head-document.js";
 import type { PreflightProblem } from "./preflight.js";
+import type { RawScenario } from "./raw-scenario.js";
 
 /**
  * 预检的警告：值是对象或数组的 secret 参数，里面有太短的字符串或数字叶子（不到 {@link MIN_LEAF_CHARS} 个字符）。
@@ -12,14 +9,9 @@ import type { PreflightProblem } from "./preflight.js";
  *
  * 看的是预检时已经知道的值：场景最新版本里 secret 参数的默认值，和运行预设里 secret 参数的值（原值，只在这里读，
  * 响应里只有个数，不写出值）。触发请求里临时给的值预检时还不知道，不在这里。
- * 读原始文档和预设值，所以在这里读库，不经过打码的读取函数（路由层拿不到原始文档，biome-plugins/raw-version-document.grit）。
+ * 读原始文档和预设值（{@link RawScenario}，路由读一次传进来），不经过打码的读取函数。
  */
-export async function secretLeafWarnings(
-	db: Db | Tx,
-	orchestrationId: string,
-): Promise<PreflightProblem[]> {
-	const document = await rawHeadDocument(db, orchestrationId);
-	if (!document) return [];
+export function secretLeafWarnings({ document, presets }: RawScenario): PreflightProblem[] {
 	const warnings: PreflightProblem[] = [];
 	const mainSecrets = new Set<string>();
 	for (const node of document.nodes) {
@@ -37,11 +29,6 @@ export async function secretLeafWarnings(
 			}
 		}
 	}
-	const presets = await db
-		.select({ name: runPresets.name, values: runPresets.values })
-		.from(runPresets)
-		.where(eq(runPresets.orchestrationId, orchestrationId))
-		.orderBy(asc(runPresets.name));
 	for (const preset of presets) {
 		for (const [name, value] of Object.entries(preset.values)) {
 			const count = mainSecrets.has(name) ? shortLeafCount(value) : 0;

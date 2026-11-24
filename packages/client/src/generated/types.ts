@@ -1915,6 +1915,19 @@ export interface PreflightProblem {
 	code: string;
 	message: string;
 	node_id?: string;
+	/**
+	 * `secret_params_too_large` 的警告说的是哪一组值：场景里的默认值（`defaults`），或某个运行预设（`preset`，`preset_id` 是它的 ID）。
+	 * 触发表单据此只显示和当前选择有关的那一条（没选预设是默认值的，选了预设是这个预设的）。别的问题没有这个字段。
+	 * 默认值的这一条的 `preset_ids` 是 secret 值和只用默认值时完全相同的运行预设（它们没有改变 secret 值）：
+	 * 选了其中一个预设触发，用的也是这些默认值，这一条对它们同样适用。
+	 */
+	origin?: {
+		kind: "defaults";
+		preset_ids: string[];
+	} | {
+		kind: "preset";
+		preset_id: string;
+	};
 }
 
 /**

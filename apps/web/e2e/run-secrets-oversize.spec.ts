@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { withSecretLimits } from "../../server/test/support/secret-limits.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
+import { createRunPreset } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
 // 保密值太多的运行（#657）：运行抽屉的摘要里写明为什么这次运行里的内容全是掩码；正常的运行没有这句话。
@@ -107,10 +108,87 @@ test("触发时 secret 参数的值已经太多：触发被拒绝，抽屉里写
 		const alert = drawer.getByRole("alert");
 		await expect(alert).toContainText("触发失败：这次触发的 secret 参数的值太多或太长");
 		await expect(alert).toContainText("超过上限 4 个字符");
-		await expect(alert).toContainText("参数 api_token（8 个字符）");
+		await expect(alert).toContainText("参数 api_token（约 1000 个字符）");
 		await expect(alert).toContainText("怎么办");
 		await expect(alert).not.toContainText("tok-live");
 		// 没有运行摘要：运行没有产生
 		await expect(drawer.getByRole("region", { name: "运行摘要" })).toHaveCount(0);
+	});
+});
+
+test("检查清单里 secret 参数太大的一行按当前的选择显示：没选预设是默认值的，选了超限的预设是这个预设的，选了不超限的预设没有；单独一行，不在「不阻止触发」里", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	// api_token 有默认值（超限）；三个预设：把 api_token 固定成超限的值、固定成不超限的值、只固定主机（secret 值和默认值一样）
+	const document = {
+		...PARAM_SCENARIO,
+		nodes: PARAM_SCENARIO.nodes.map((node) =>
+			node.kind === "entry"
+				? {
+						...node,
+						params: (node.params as Array<Record<string, unknown>>).map((p) =>
+							p.name === "api_token" ? { ...p, required: false, default: "tok-default-value" } : p,
+						),
+					}
+				: node,
+		),
+	};
+	const id = await createScenario(controlPlane, "巡检", document);
+	await createRunPreset(controlPlane, id, {
+		name: "大预设",
+		params: [{ name: "api_token", value: "tok-preset-value" }],
+	});
+	await createRunPreset(controlPlane, id, {
+		name: "小预设",
+		params: [{ name: "api_token", value: "ab" }],
+	});
+	await createRunPreset(controlPlane, id, {
+		name: "只有主机",
+		params: [{ name: "host", value: "10.0.0.9" }],
+	});
+
+	await withSecretLimits(TINY, async () => {
+		await page.goto("/orchestrations");
+		await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+		const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+		const checks = drawer.getByRole("list", { name: "触发前检查" });
+		// 检查清单的一行是 `li[data-state]`（说明列表里的 li 嵌在它里面，不算一行）；Agent 在线，没有别的提醒行
+		const row = checks.locator("li[data-state=warn]");
+		const select = drawer.getByRole("combobox", { name: "运行预设" });
+		await expect(checks).toContainText("结构与引用检查通过");
+
+		// 没选预设：默认值的那一条，写明后果和怎么办；单独一行，不在「不阻止触发」里
+		await expect(row).toHaveCount(1);
+		await expect(row).toContainText("照默认值触发会被拒绝");
+		await expect(row).toContainText("怎么办：缩短这些值");
+		await expect(checks).not.toContainText("值得留意，不阻止触发");
+		await expect(row).not.toContainText("tok-default-value");
+		// 不阻止提交：给 secret 参数一个小的值就能触发
+		await expect(drawer.getByRole("button", { name: "触发运行" })).toBeEnabled();
+
+		// 选了超限的预设：这个预设的那一条，默认值的不再显示
+		await select.selectOption({ label: "大预设" });
+		await expect(row).toHaveCount(1);
+		await expect(row).toContainText("用运行预设「大预设」触发会被拒绝");
+		await expect(row).not.toContainText("照默认值触发会被拒绝");
+		await expect(row).not.toContainText("tok-preset-value");
+
+		// 选了不超限的预设：没有这一行（用的不是默认值）
+		await select.selectOption({ label: "小预设" });
+		await expect(row).toHaveCount(0);
+
+		// 选了没有改 secret 值的预设：用的还是默认值，默认值的那一条同样适用，标题写明这一点
+		await select.selectOption({ label: "只有主机" });
+		await expect(row).toHaveCount(1);
+		await expect(row).toContainText("用运行预设「只有主机」触发会被拒绝");
+		await expect(row).toContainText("它没有改 secret 参数");
+
+		// 不选预设：回到默认值的那一条
+		await select.selectOption({ label: "不使用预设" });
+		await expect(row).toContainText("照默认值触发会被拒绝");
 	});
 });

@@ -150,12 +150,13 @@ function ParamsForm({
 	const queryClient = useQueryClient();
 	const nickname = useNickname();
 	const decls = preflight.params;
-	const checks = preflightChecks(preflight, options);
 	const [presetId, setPresetId] = useState<string | null>(() =>
 		initialPresetId(preflight.presets, readLastPreset(orchestrationId), options.rerunOf),
 	);
 	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）或被删除时，当作没有选。
 	const preset = usablePreset(preflight.presets, presetId);
+	// 检查清单按现在的选择显示（默认值或选中的预设有没有 secret 参数太大的问题）。
+	const checks = preflightChecks(preflight, options, { presetId: preset?.id ?? null });
 	// 选中预设时，预设参数取预设的值、不能修改，只提交其余参数和预设（控制面填入预设的值）。
 	const lockedParams = (p: PresetView | undefined) =>
 		new Map(p?.params.map((q) => [q.name, q.value]));
@@ -365,7 +366,7 @@ function ProblemList({
 		<ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0 text-xs text-fg-2">
 			{problems.map((p) => (
 				<li key={`${p.code}:${p.node_id ?? ""}:${p.message}`} className="flex items-baseline gap-2">
-					<span className="min-w-0 flex-1">{p.message}</span>
+					<span className="min-w-0 flex-1 whitespace-pre-line">{p.message}</span>
 					{p.node_id && onLocate && (
 						<Button
 							variant="link"
@@ -392,7 +393,7 @@ function TriggerError({ error, onLocate }: { error: Error; onLocate?: (nodeId: s
 	return (
 		<div
 			role="alert"
-			className="mb-3.5 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-fg"
+			className="mb-3.5 whitespace-pre-line rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-fg"
 		>
 			触发失败：{problems ? "预检没有通过（场景刚刚被修改过）" : error.message}
 			{problems && <ProblemList problems={problems} onLocate={onLocate} />}

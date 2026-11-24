@@ -135,11 +135,12 @@ def _start(session: Session, args: argparse.Namespace) -> int:
     preflight = client.get(f"/orchestrations/{segment(scenario_id)}/preflight")
     if preflight["problems"]:
         problems = preflight["problems"]
-        listed = "\n".join(f"  - {p['code']}：{p['message']}" for p in problems)
+        listed = "\n".join(_problem_lines(p) for p in problems)
         raise CliError(
             "invalid_orchestration",
             f"场景「{scenario['name']}」现在不能触发，有 {len(problems)} 个问题：\n{listed}",
-            next=show,
+            next=_problems_next_step(problems, scenario_id, show),
+            hints=problems,
         )
     warning_lines = _warning_lines(preflight.get("warnings") or [])
     declared = preflight["params"]
@@ -157,8 +158,12 @@ def _start(session: Session, args: argparse.Namespace) -> int:
         run = client.request("POST", f"/orchestrations/{segment(scenario_id)}/runs", body=body)
     except ApiError as error:
         if error.code == "invalid_params":
+            details = error.details if isinstance(error.details, list) else []
             raise CliError(
-                "invalid_params", _invalid_params_message(error, declared), next=show
+                "invalid_params",
+                _invalid_params_message(error, declared),
+                next=_problems_next_step(details, scenario_id, show),
+                hints=error.details,
             ) from None
         raise with_next_step(error, scenario_id) from None
 
@@ -209,13 +214,32 @@ def _invalid_params_message(error: ApiError, declared: Sequence[Declaration]) ->
     return f"入口参数不对：{error.message}\n{describe_declared(declared)}"
 
 
+def _problem_lines(problem: dict[str, Any]) -> str:
+    """一个问题（或警告）的文字：说明有几行时，后面的行缩进，和第一行对齐。"""
+    first, *rest = str(problem["message"]).split("\n")
+    return "\n".join([f"  - {problem['code']}：{first}", *(f"    {line}" for line in rest)])
+
+
+def _problems_next_step(problems: Sequence[Any], scenario_id: str, show: str) -> str:
+    """被拒绝时「下一步」写什么：secret 参数的值合计太大（`secret_params_too_large`）时，
+    触发时改不了的值（问题带着节点，说明里写「改场景」）要改场景，其余的换一个更短的值触发；别的问题看场景。"""
+    too_large = [
+        p for p in problems if isinstance(p, dict) and p.get("code") == "secret_params_too_large"
+    ]
+    if not too_large:
+        return show
+    if any(p.get("node_id") for p in too_large):
+        return f"sfly scenario pull {scenario_id}"
+    return f"sfly run start {scenario_id} --param <名称>=<更短的值>"
+
+
 def _warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
     """预检的警告：不阻断触发，写在触发之后的输出里。没有警告时没有行。"""
     if not warnings:
         return []
     return [
         f"警告（{len(warnings)}）：不影响触发，运行已经触发",
-        *(f"  - {w['code']}：{w['message']}" for w in warnings),
+        *(_problem_lines(w) for w in warnings),
     ]
 
 
