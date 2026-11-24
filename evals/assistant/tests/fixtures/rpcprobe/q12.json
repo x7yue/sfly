@@ -1,0 +1,237 @@
+{
+	"ok": true,
+	"rounds": [
+		{
+			"together": true,
+			"script": "rpcprobe-abort",
+			"clear_queue": { "steering": ["插话一：先别改测试"], "followUp": [] },
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.504, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": false,
+			"script": "rpcprobe-abort",
+			"clear_queue": { "steering": ["插话一：先别改测试"], "followUp": [] },
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.454, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": true,
+			"script": "rpcprobe-abort",
+			"clear_queue": {
+				"steering": ["插话一：先别改测试", "插话二：顺便看一下日志"],
+				"followUp": []
+			},
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.482, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": false,
+			"script": "rpcprobe-abort",
+			"clear_queue": {
+				"steering": ["插话一：先别改测试", "插话二：顺便看一下日志"],
+				"followUp": []
+			},
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.416, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": true,
+			"script": "rpcprobe-abort",
+			"clear_queue": { "steering": ["插话一：先别改测试"], "followUp": [] },
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.413, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": false,
+			"script": "rpcprobe-abort",
+			"clear_queue": { "steering": ["插话一：先别改测试"], "followUp": [] },
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.386, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": true,
+			"script": "rpcprobe-abort",
+			"clear_queue": {
+				"steering": ["插话一：先别改测试", "插话二：顺便看一下日志"],
+				"followUp": []
+			},
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.416, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": false,
+			"script": "rpcprobe-abort",
+			"clear_queue": {
+				"steering": ["插话一：先别改测试", "插话二：顺便看一下日志"],
+				"followUp": []
+			},
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.41, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": true,
+			"script": "rpcprobe-abort",
+			"clear_queue": { "steering": ["插话一：先别改测试"], "followUp": [] },
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.427, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": false,
+			"script": "rpcprobe-abort",
+			"clear_queue": { "steering": ["插话一：先别改测试"], "followUp": [] },
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 1.558, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": true,
+			"script": "rpcprobe-midstream",
+			"clear_queue": { "steering": ["插话一：先别改测试"], "followUp": [] },
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 2.391, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		},
+		{
+			"together": true,
+			"script": "rpcprobe-midstream",
+			"clear_queue": {
+				"steering": ["插话一：先别改测试", "插话二：顺便看一下日志"],
+				"followUp": []
+			},
+			"clear_before_abort": true,
+			"abort_ok": true,
+			"user_messages": [{ "t": 2.44, "text": "接着说" }],
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true,
+			"messages_after": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			]
+		}
+	],
+	"seconds": 38.2
+}

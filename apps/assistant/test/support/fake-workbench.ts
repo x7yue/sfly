@@ -70,6 +70,11 @@ export class FakeWorkbench {
 		return self;
 	}
 
+	/** 此刻开着的 HTTP/2 连接数（助手服务用完关掉之后回到 0）。 */
+	get openConnections(): number {
+		return this.sessions.size;
+	}
+
 	async close(): Promise<void> {
 		const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
 		for (const session of this.sessions) session.destroy();

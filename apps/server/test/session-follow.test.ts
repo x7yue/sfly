@@ -18,6 +18,20 @@ const persistent = (seq: number): PersistedSessionEvent => ({
 	at: AT,
 });
 const delta = (text: string): SessionEvent => ({ type: "assistant_delta", text });
+/** 助手的一条完整消息（取代它之前的文字增量）、用户的插话、工具的输出和结果：只带这里用到的字段。 */
+const persistentOf = (seq: number, body: Record<string, unknown>): PersistedSessionEvent =>
+	({ ...body, seq, at: AT }) as unknown as PersistedSessionEvent;
+const message = (seq: number) =>
+	persistentOf(seq, { type: "assistant_message", text: "完整的消息" });
+const steerMessage = (seq: number) =>
+	persistentOf(seq, { type: "user_message", text: "先别改测试", steer: true });
+const toolResult = (seq: number, callId: string) =>
+	persistentOf(seq, { type: "tool_result", call_id: callId, text: "结果" });
+const toolOutput = (callId: string, text: string): SessionEvent => ({
+	type: "tool_output",
+	call_id: callId,
+	text,
+});
 
 /** 一个可以停住的点：`hold()` 在 `release()` 之前不返回。 */
 function gate() {
@@ -66,8 +80,7 @@ class FakeSource implements FollowSource {
 		for (const listener of [...this.listeners]) listener(event);
 	}
 
-	append(seq: number): PersistedSessionEvent {
-		const event = persistent(seq);
+	append(seq: number, event: PersistedSessionEvent = persistent(seq)): PersistedSessionEvent {
 		this.db.push(event);
 		this.publish(event);
 		return event;
@@ -104,12 +117,12 @@ class FakeSink implements FollowSink {
 		return lock.release;
 	}
 
-	/** 出口收到的东西，持久的写序号、其余写类型（和增量的文字）。 */
+	/** 出口收到的东西，持久的写序号、其余写类型（增量和工具输出写文字）。 */
 	get shape(): string[] {
 		return this.out.map((event) =>
 			"seq" in event
 				? String(event.seq)
-				: event.type === "assistant_delta"
+				: event.type === "assistant_delta" || event.type === "tool_output"
 					? event.text
 					: event.type,
 		);
@@ -140,13 +153,95 @@ describe("补发和实时重叠：持久的事件不重不漏，不持久的事�
 		// 补发读完前两批（1、2 和 3、4）停在第三次读库：这时才有实时事件进来。
 		await third.started;
 		expect(sink.shape).toEqual(["1", "2", "3", "4"]);
-		source.publish(delta("过时的增量")); // 在 5 之前：5 的完整内容里已经有它
-		source.append(5); // 落库、发布；第三次读库会读到它
+		source.publish(delta("过时的增量")); // 在 5（完整的消息）之前：5 的完整内容里已经有它
+		source.append(5, message(5)); // 落库、发布；第三次读库会读到它
 		source.publish(delta("新的增量")); // 在 5 之后：还没有落库的完整内容，要留下
 		third.release();
 		await settle();
 		expect(source.reads).toEqual([0, 2, 4]);
 		expect(sink.shape).toEqual(["1", "2", "3", "4", "5", "新的增量"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("一条进行中的消息的增量前后夹着一条插话（user_message）：前半截增量不能丢，页面上这条消息要是完整的（#544）", async () => {
+		const source = new FakeSource([1, 2, 3, 4]);
+		const sink = new FakeSink();
+		const third = source.hold(3);
+		const { errors } = run(source, sink);
+		await third.started;
+		source.publish(delta("前半截，"));
+		source.append(5, steerMessage(5)); // 用户插话：落在这条消息的增量中间；第三次读库会读到它
+		source.publish(delta("后半截"));
+		third.release();
+		await settle();
+		// 插话不带这条消息的内容，取代不了增量：两段增量都留下，按到达的先后。
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "5", "前半截，", "后半截"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("别的不带这条消息内容的持久事件也一样：提示、一轮的开始都取代不了增量", async () => {
+		const source = new FakeSource([1, 2]);
+		const sink = new FakeSink();
+		const second = source.hold(2);
+		const { errors } = run(source, sink);
+		await second.started;
+		source.publish(delta("前半截，"));
+		source.append(3, persistentOf(3, { type: "notice", kind: "steer_dropped", message: "x" }));
+		source.publish(delta("后半截"));
+		source.append(4); // turn_started
+		source.publish(delta("接着"));
+		second.release();
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "前半截，", "后半截", "接着"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("完整的消息已经补发：它之前的增量和思考丢掉，它之后的留下；夹着插话时只丢完整的消息前面的", async () => {
+		const source = new FakeSource([1, 2]);
+		const sink = new FakeSink();
+		const second = source.hold(2);
+		const { errors } = run(source, sink);
+		await second.started;
+		source.publish({ type: "thinking" });
+		source.publish(delta("A"));
+		source.append(3, steerMessage(3)); // 插话夹在 A 和 B 之间
+		source.publish(delta("B"));
+		source.append(4, message(4)); // 完整的消息 AB 落库
+		source.publish(delta("下一条的开头"));
+		second.release();
+		await settle();
+		// A、B、思考都已经在 4 里：丢掉；下一条消息的增量留下。
+		expect(sink.shape).toEqual(["1", "2", "3", "4", "下一条的开头"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("工具输出：同一次调用的结果已经补发就丢，别的调用的输出和还没有结果的留下", async () => {
+		const source = new FakeSource([1, 2]);
+		const sink = new FakeSink();
+		const second = source.hold(2);
+		const { errors } = run(source, sink);
+		await second.started;
+		source.publish(toolOutput("call_a", "a 的输出"));
+		source.publish(toolOutput("call_b", "b 的输出"));
+		source.append(3, toolResult(3, "call_a"));
+		second.release();
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "b 的输出"]);
+		expect(errors).toEqual([]);
+	});
+
+	it("每条都是完整的当前状态的事件（steer_queue、turn_queued）按到达先后放出，不判断过时", async () => {
+		const source = new FakeSource([1, 2]);
+		const sink = new FakeSink();
+		const second = source.hold(2);
+		const { errors } = run(source, sink);
+		await second.started;
+		source.publish({ type: "steer_queue", messages: [] });
+		source.append(3, message(3));
+		source.publish({ type: "steer_queue", messages: [] });
+		second.release();
+		await settle();
+		expect(sink.shape).toEqual(["1", "2", "3", "steer_queue", "steer_queue"]);
 		expect(errors).toEqual([]);
 	});
 

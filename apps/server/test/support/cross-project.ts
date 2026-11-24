@@ -160,6 +160,7 @@ const NO_BODY = new Set([
 	"POST /agents/:name/enable",
 	"DELETE /projects/:project/dev-agents/:name",
 	"POST /sessions/:id/stop",
+	"POST /sessions/:id/end",
 ]);
 
 /** 上传：请求体是原始字节。 */
