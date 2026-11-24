@@ -88,10 +88,11 @@ def test_parse_hwm() -> None:
     assert parse_hwm("") == 0
 
 
-def test_the_sampler_finds_the_pi_process_by_an_env_var_not_its_own_command_line() -> None:
-    # 会话 ID 经环境变量进取样脚本：脚本自己的命令行里没有它，不会把自己算成 pi。
-    assert "AEVAL_SID" in PeakSampler.SCRIPT
-    assert "$AEVAL_SID" in PeakSampler.SCRIPT and "VmHWM" in PeakSampler.SCRIPT
+def test_the_sampler_matches_pi_by_an_env_var_not_its_own_command_line() -> None:
+    # 认 pi 的字样经环境变量进取样脚本：脚本自己的命令行里没有它，不会把自己算成 pi。
+    assert "--session-id" not in PeakSampler.SCRIPT
+    assert "$AEVAL_MATCH" in PeakSampler.SCRIPT and "VmHWM" in PeakSampler.SCRIPT
+    assert PeakSampler.STOP_FILE in PeakSampler.SCRIPT
 
 
 def test_turn_json_is_not_copied_out_of_the_assistant() -> None:

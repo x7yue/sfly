@@ -51,7 +51,8 @@ def _arm(records: list[dict[str, Any]], model: str, arm: str) -> list[dict[str, 
 
 
 def turns_within(turns_b: float, turns_a: float) -> bool:
-    """远程那一臂的轮数中位数不超过臂 A 的 1.3 倍。中位数是整数或 .5，乘 10 后是整数，比较是精确的。"""
+    """远程那一臂的轮数中位数不超过臂 A 的 1.3 倍。
+    中位数是整数或 .5，乘 10 后是整数，比较是精确的。"""
     return round(10 * turns_b) <= 13 * turns_a
 
 

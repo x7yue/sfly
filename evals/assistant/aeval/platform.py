@@ -132,30 +132,34 @@ def driver_summary(
 
 
 class PeakSampler:
-    """在助手容器里每秒读一次这个会话的 pi 进程的 `VmHWM`（常驻内存峰值，kB），记下最大值。
+    """在助手容器里每秒读一次 pi 进程的 `VmHWM`（常驻内存峰值，kB），记下最大值。
 
-    按命令行里的会话 ID 找进程（助手服务起 pi 时带 `--session-id <ID>`）；会话 ID 经环境变量传进去，
-    不在取样脚本自己的命令行里，不会把自己算进去。停的时候在容器里放一个标记文件，取样的循环看到就退出。
+    每次会话之前 `reset` 重建了助手容器，里面只有这一次会话的 pi。按命令行里的 `--session-id` 认
+    pi 进程（助手服务起 pi 时带它）；要认的字样经环境变量传进去，不在取样脚本自己的命令行里，
+    不会把自己算进去。建会话之前就开始取样：假的模型端点一轮只要一两秒，
+    拿到会话 ID 再开始就量不到了。
+    停的时候在容器里放一个标记文件，取样的循环看到就退出（结束宿主机上的 docker exec
+    停不掉容器里的循环）。
     """
 
+    STOP_FILE = "/tmp/aeval-hwm.stop"
     SCRIPT = (
-        'stop="/tmp/aeval-hwm-$AEVAL_SID.stop"; rm -f "$stop"; '
+        f'stop="{STOP_FILE}"; rm -f "$stop"; '
         'while [ ! -e "$stop" ]; do '
         "for p in /proc/[0-9]*; do "
-        'if tr "\\0" " " < "$p/cmdline" 2>/dev/null | grep -qF -- "$AEVAL_SID"; then '
+        'if tr "\\0" " " < "$p/cmdline" 2>/dev/null | grep -qF -- "$AEVAL_MATCH"; then '
         'grep "^VmHWM:" "$p/status" 2>/dev/null; fi; done; sleep 1; done'
     )
 
-    def __init__(self, container: str, session_id: str) -> None:
+    def __init__(self, container: str) -> None:
         self.container = container
-        self.session_id = session_id
         self.peak_kib = 0
         self._proc = subprocess.Popen(
             [
                 "docker",
                 "exec",
                 "-e",
-                f"AEVAL_SID={session_id}",
+                "AEVAL_MATCH=--session-id",
                 container,
                 "sh",
                 "-c",
@@ -178,7 +182,7 @@ class PeakSampler:
             "exec",
             self.container,
             "touch",
-            f"/tmp/aeval-hwm-{self.session_id}.stop",
+            self.STOP_FILE,
             check=False,
         )
         try:
@@ -198,7 +202,8 @@ def parse_hwm(line: str) -> int:
 
 
 def use_model(stack: Stack, model: Model) -> None:
-    """平台臂用的模型是助手容器上配的：和这次要跑的不一样时换过来（之后的 reset 照它重建助手容器）。"""
+    """平台臂用的模型是助手容器上配的：和这次要跑的不一样时换过来
+    （之后的 reset 照它重建助手容器）。"""
     if not stack.assistant:
         raise d.DockerError("平台臂要 ./aeval.sh up --assistant（见 README.md「平台的助手」）")
     if model.name == stack.assistant_model:
@@ -292,9 +297,9 @@ def run_platform_session(
         "--out",
         run_dir,
     ]
-    sampler: PeakSampler | None = None
     platform: dict[str, Any] = {}
     log: list[str] = []
+    sampler = PeakSampler(stack.assistant_container)
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert proc.stdout is not None
     try:
@@ -304,15 +309,13 @@ def run_platform_session(
                 said = json.loads(line)
             except ValueError:
                 continue
-            if said.get("event") == "created" and sampler is None:
-                sampler = PeakSampler(stack.assistant_container, str(said["session"]))
-            elif said.get("event") == "done":
+            if said.get("event") == "done":
                 platform = said
         proc.wait(timeout=budget + 120)
     finally:
         if proc.poll() is None:
             proc.kill()
-        peak = sampler.stop() if sampler else 0
+        peak = sampler.stop()
     host_seconds = time.monotonic() - started
     (out / "driver-stdout.log").write_text("".join(log))
     d.copy_out(mirror, f"{run_dir}/.", str(out), check=False)
