@@ -2918,8 +2918,9 @@ export interface SessionEventsQuery {
 export type SessionId = string;
 
 /**
- * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 只在排队中（`status` 为 `queued`）时有值，
- * 从 1 起；`last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
+ * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 在排队中（`status` 为 `queued`）时有值，停止途中又说了话、
+ * 排在这一轮后面的在做的会话（`status` 为 `running`）也有，从 1 起，按说话的时刻排（和轮到谁开始的顺序一致）；
+ * `last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
  */
 export interface SessionListItem {
 	id: SessionId;
@@ -2970,7 +2971,8 @@ export type SessionStatus = "idle" | "running" | "queued" | "ended";
 export type SessionTool = "read" | "write" | "edit" | "command";
 
 /**
- * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；
+ * 一个会话：列表项的字段，加它所在的项目（标识）、此刻的就绪状态，和排队中在等谁（`waiting_for`，不在排队时为 null；停止途中说了话的
+ * 在做的会话在等的是它自己正在停止的这一轮；
  * `turn_queued` 不持久，刷新页面后靠它拿回在等谁，#544）。
  */
 export interface SessionView {
@@ -3217,7 +3219,7 @@ export type TurnOutcome = "completed" | "stopped" | "limit" | "model_unavailable
 
 /**
  * 这个会话在排队：同一个项目同一时刻只跑一轮，另一个会话在做。控制面产生。`position` 从 1 起，
- * `waiting_for` 是正在做的那个会话。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
+ * `waiting_for` 是正在做的那个会话（停止途中说了话、排在这一轮后面的在做的会话也推：它在等自己正在停止的这一轮）。不存：排队的状态记在会话的 `status`、`queue_position` 上，在等谁也在会话视图
  * （`SessionView`）和快照（`SnapshotEvent`）里，刷新页面后拿得回来。#544 起。
  */
 export interface TurnQueuedEvent {

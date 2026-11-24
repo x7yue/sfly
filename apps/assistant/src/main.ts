@@ -18,6 +18,16 @@ import { SessionManager } from "./sessions.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const log = writeLog;
 
+/**
+ * 兜底：一个没人接的拒绝不该带走所有会话在做的轮（Node 默认结束进程）。记下来、照常跑。这不是修法：往 pi 写命令的地方
+ * 都接住了失败（`PiProcess.request` 不拒绝，#677 审查），碰到这一行说明又有一处漏了。
+ */
+process.on("unhandledRejection", (reason) => {
+	// 带堆栈（截到上限）：要看出是哪一处漏了接。没有会话可以按值打码，按形状打码（writeRawLog）。
+	const text = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+	writeRawLog(`没人接的拒绝（已兜住，助手服务照常运行）：${text}`);
+});
+
 function main(): void {
 	let config: ReturnType<typeof readConfig>;
 	try {
@@ -65,7 +75,14 @@ function main(): void {
 	server.listen(ASSISTANT_PORT, () => log(`助手服务在 :${ASSISTANT_PORT}（pi ${pi.version}）`));
 	const stop = () => {
 		server.close();
-		void sessions.shutdown().then(() => process.exit(0));
+		// shutdown 不该拒绝（结束进程的每一步都接住了失败）；万一拒绝，HTTP 已经关了，不能留着一个不干活的进程：记一行、以 1 退出。
+		sessions.shutdown().then(
+			() => process.exit(0),
+			(error: unknown) => {
+				printError("退出时结束会话出错", error);
+				process.exit(1);
+			},
+		);
 	};
 	process.on("SIGTERM", stop);
 	process.on("SIGINT", stop);

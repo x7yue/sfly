@@ -188,11 +188,8 @@ describe("升级：会话表加 current_turn，按 turn_started 的条数回填"
 			duration_ms: 1,
 		});
 		expect(await turnOf("running_no_events")).toMatchObject({ status: "idle", current_turn: 1 });
-		const begun = await store.beginTurn(id, "p-legacy" as never, (turn) => [
-			user(9),
-			started(turn),
-		]);
-		expect(begun).toMatchObject({ started: true, turn: 2 });
+		const begun = await store.beginTurn(id, "p-legacy" as never, user(9));
+		expect(begun).toMatchObject({ outcome: "started", turn: 2 });
 		const stored = await store.appendFromAssistant(
 			id,
 			2,
