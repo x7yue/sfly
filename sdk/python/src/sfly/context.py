@@ -198,16 +198,27 @@ class _Sigterm:
 
 def _handling_cancelled() -> bool:
     """主线程此刻是不是正在处理一个 `Cancelled`（在 `except Cancelled` 或因它而进入的
-    `finally` 里）。
+    `finally` 里，包括里面又嵌着的 `except`）。
 
     后台线程里的 `Cancelled` 经队列、`Future.result()` 交给主线程重新抛出时，不经过
     `cancelled_error`（它只在主线程里记「已经抛出过」），`_Sigterm.raised` 还是 False：随后
     送达的 SIGTERM 会在节点清理到一半时再抛一次（#678）。看当前正在处理的异常，不管这个
     `Cancelled` 是谁抛的、怎么到的主线程。
+
+    清理里常常逐个停东西、每个外面包一层 `except Exception: 记一句`：执行到里面那个块时，最里面
+    正在处理的是停东西时出的错。它是在处理 `Cancelled` 的过程中抛出的，所以顺着 `__context__`
+    往外找，链上有 `Cancelled` 就算。
     """
     import sys
 
-    return isinstance(sys.exc_info()[1], Cancelled)
+    error = sys.exc_info()[1]
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, Cancelled):
+            return True
+        seen.add(id(error))
+        error = error.__context__
+    return False
 
 
 def cancelled_error(message: str) -> Cancelled:
