@@ -29,8 +29,13 @@ export const END_TO_END_MS = 3000;
 export const DISCONNECT_SECONDS = 300;
 /** 短节点链路：30 个节点的单链。 */
 export const CHAIN_NODES = 30;
-/** 短节点链路：sfly-std 的短节点每节点端到端 ≤ 120 ms。 */
+/** 短节点链路：sfly-std 的短节点（`shell`）每节点端到端 ≤ 120 ms（绝对值，兜底）。 */
 export const SHORT_NODE_MS = 120;
+/**
+ * 短节点链路：`shell` 比空节点多出来的不超过 50 ms（同一次运行里两条链每节点端到端的中位数之差）。
+ * 限制的是 sfly-std 自己在执行器进程之上多出来的部分，不随机器的快慢变。
+ */
+export const SHELL_OVER_EMPTY_MS = 50;
 
 /** 读出 docs/ARCHITECTURE.md §7.6 目标表：范围 → 目标原文。 */
 export function parseTargets(architecture: string): Map<string, string> {

@@ -36,6 +36,7 @@ import { FocusListPage } from "#/focus/FocusList";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
 import { ACTION, ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE } from "#/lib/copy";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -216,7 +217,7 @@ function WarningList({
 						{locate && (
 							<button
 								type="button"
-								className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
+								className={cn("flex-none cursor-pointer", INLINE_LINK)}
 								onClick={locate}
 							>
 								前往
@@ -689,7 +690,7 @@ function ScenarioOverview({ context }: { context: InspectorContext }) {
 								{(nodeId || annotationId) && (
 									<button
 										type="button"
-										className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
+										className={cn("flex-none cursor-pointer", INLINE_LINK)}
 										onClick={() =>
 											annotationId
 												? context.onLocateAnnotation(annotationId)
