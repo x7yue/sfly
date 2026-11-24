@@ -1477,12 +1477,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			expect((await sessionRow(cp, sent))?.status).toBe("running");
 			await eventually(() => expect(assistant.aborts).toContain(sent));
 			expect(assistant.abortRequests.at(-1)).toEqual({ sessionId: sent, turn: 1 });
-			// 这个窗口里助手服务发来的事件：这一轮还在做，照常记。
-			assistant.emit(sent, 1, assistantMessage("迟来的"));
-			await eventually(async () =>
-				expect((await eventsOf(api, sent)).map((e) => e.type)).toContain("assistant_message"),
-			);
-			// 到期（测试里 300 毫秒）助手服务没有带回结局：控制面补结局，会话删掉。
+			// 到期（测试里 300 毫秒）助手服务没有带回结局：控制面补结局，会话（没有被碰过：只有最初的一句话和控制面写的事件）删掉。
+			// 这个窗口里助手服务发来了事件的会话不删，见下面「做了事但没有带回结局」那条。
 			await settled();
 			expect(await sessionCount(cp)).toBe(0);
 			// 之后助手服务发来的事件：会话已经不存在，丢掉，连接不断。
@@ -1704,7 +1700,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			"assistant_message",
 			"turn_end",
 		]);
-		expect(String((events.at(-1) as { reason: string }).reason)).toContain("没有及时带回");
+		// 结局是控制面补的（失败的结局，原因是助手服务没接住这一轮），不是助手服务带回的：这一轮里有助手服务的事件，照样不删。
+		expect(events.at(-1)).toMatchObject({ type: "turn_end", outcome: "failed" });
 	});
 
 	it("新建会话 prompt 结果未知、等结局期间有人结束它：会话不被删（让结束做完），/end 回 200，助手服务收到 end", async () => {

@@ -1242,17 +1242,23 @@ describe("停止、插话、结束会话、排队", () => {
 			expect(await statusOf(cp, a.id)).toBe("running");
 		});
 
-		it("交给助手服务没接住：排队的那一轮以失败结束，会话回到空闲，下一个排队的接着开始", async () => {
+		it("交给助手服务没接住（503）：排队的那一轮以失败结束，会话回到空闲；这个项目不接着开始下一个，等兜底再开始", async () => {
 			const a = await json<SessionView>(await create("甲", "alice"));
 			const b = await json<SessionView>(await create("乙", "bob"));
 			const c = await json<SessionView>(await create("丙", "carol"));
 			assistant.promptReply = (prompt) =>
 				prompt.sessionId === b.id ? { status: 503, code: "start_failed" } : undefined;
 			assistant.emit(a.id, 1, turnEnd(1));
-			// 乙没接住：失败的结局，回到空闲；丙接着开始。
+			// 乙没接住：失败的结局，回到空闲；助手服务这一刻起不了新的一轮（503），丙不跟着开始，留在队里。
 			await eventually(async () => expect(await statusOf(cp, b.id)).toBe("idle"));
 			const end = (await detail(b.id)).events.find((e) => e.type === "turn_end");
 			expect(end).toMatchObject({ turn: 1, outcome: "failed" });
+			await cp.current.sessionService.idle();
+			expect(await statusOf(cp, c.id)).toBe("queued");
+			expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]);
+			// 兜底（每分钟）：助手服务能用了，丙开始。
+			assistant.promptReply = () => undefined;
+			await cp.current.sessionService.startWaiting();
 			await eventually(() => expect(assistant.prompts.map((p) => p.sessionId)).toContain(c.id));
 			expect(await statusOf(cp, c.id)).toBe("running");
 		});
