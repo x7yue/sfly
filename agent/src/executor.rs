@@ -35,6 +35,20 @@ use crate::proto::{
 };
 use crate::venv::SharedVenv;
 
+/// 节点输出（JSON 序列化之后）的大小上限：1 MB。执行器（`sdk/python/src/sfly/runner.py` 的 `MAX_OUTPUT_BYTES`）本地检查过，
+/// 控制面（`apps/server/src/engine/output-limit.ts`）收到之后再检查一次；Agent 自己也检查：超过的结果不发出去，直接判失败
+/// （#723：结果超过控制面一条消息的上限会被拒绝，没确认的结果每次重连都重发，一直被拒）。
+pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+/// 失败结果里文字（`TaskError.message`）的大小上限：1 MiB，和节点输出的上限一样。更长的把中间省掉，开头（异常的类型和消息）
+/// 和末尾（堆栈最里面的几帧）各留一半，写明省掉了多少（[`bound_error_text`]）。
+pub const MAX_ERROR_TEXT_BYTES: usize = 1024 * 1024;
+/// 出错位置（`TaskError.location`，「模块.函数 第 N 行」）的大小上限。
+const MAX_LOCATION_BYTES: usize = 1024;
+/// 读执行器写的 `output.json` 最多读这么多字节：失败时异常的文字同时写进 `message` 和 `traceback`，一份 8 MiB 的异常文字
+/// 写出 16 MiB。更大的不读，按执行器异常退出处理，附上标准错误的尾部（那里有堆栈的末尾）。读之前不知道多大，
+/// 整份读进内存再解析，所以这个数也是一个任务结束时 Agent 在这件事上最多占的内存的量级。
+const MAX_OUTPUT_FILE_BYTES: usize = 16 * 1024 * 1024;
+
 #[derive(Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 enum Output {
@@ -79,11 +93,20 @@ impl RunnerError {
 }
 
 pub fn success(task: &AssignTask, outputs: &Value) -> TaskResult {
+    let outputs_json = outputs.to_string();
+    // 和控制面（output-limit.ts）同一个判断、同一句话：超过 1 MB 的输出不发出去，直接判失败。
+    if outputs_json.len() > MAX_OUTPUT_BYTES {
+        return failure(
+            task,
+            ErrorKind::NodeError,
+            format!("节点输出超过 1 MB 上限（{} 字节）", outputs_json.len()),
+        );
+    }
     TaskResult {
         task_id: task.task_id.clone(),
         attempt: task.attempt,
         status: TaskStatus::Success.into(),
-        outputs_json: outputs.to_string(),
+        outputs_json,
         error: None,
         // 结束时的 Agent 时间与单调时钟读数在交出结果时统一打上（[`stamp_end`]）。
         ..Default::default()
@@ -108,11 +131,48 @@ pub fn failure_at(
         outputs_json: String::new(),
         error: Some(Box::new(TaskError {
             kind: kind.into(),
-            message: message.into(),
-            location,
+            message: bound_error_text(message.into()),
+            location: truncate_at_boundary(location, MAX_LOCATION_BYTES),
         })),
         ..Default::default()
     }
+}
+
+/// 不超过 `max` 字节、落在字符边界上的开头。
+fn truncate_at_boundary(mut text: String, max: usize) -> String {
+    if text.len() > max {
+        let mut cut = max;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+    }
+    text
+}
+
+/// 失败文字超过 [`MAX_ERROR_TEXT_BYTES`] 时把中间省掉：开头和末尾各留一半（落在字符边界上），中间写明省掉了多少字节。
+/// 失败结果在没收到 Ack 之前每次重连都重发，太大的会被控制面拒绝（一条消息的上限，#674）；节点抛出一条几十 MiB 文字的
+/// 异常，不加这一道就能让这台 Agent 被卡住。
+pub fn bound_error_text(text: String) -> String {
+    if text.len() <= MAX_ERROR_TEXT_BYTES {
+        return text;
+    }
+    let keep = MAX_ERROR_TEXT_BYTES / 2;
+    let mut head = keep;
+    while !text.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = text.len() - keep;
+    while !text.is_char_boundary(tail) {
+        tail += 1;
+    }
+    format!(
+        "{}\n\n…（失败的文字有 {} 字节，超过 {MAX_ERROR_TEXT_BYTES} 字节：中间 {} 字节没有保留）…\n\n{}",
+        &text[..head],
+        text.len(),
+        tail - head,
+        &text[tail..]
+    )
 }
 
 /// 给结果打上任务结束这一刻的 Agent 时间与单调时钟读数（ADR 0018）：控制面据此记下结束时的时钟偏差。
@@ -386,10 +446,19 @@ impl Running {
             }
         };
 
-        let output = tokio::fs::read(&paths.output)
-            .await
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Output>(&bytes).ok());
+        let bytes = read_output(&paths.output).await;
+        if let Some(bytes) = bytes.as_ref().filter(|b| b.len() > MAX_OUTPUT_FILE_BYTES) {
+            return failure(
+                task,
+                ErrorKind::NodeError,
+                format!(
+                    "执行器写出的 output.json 超过 {MAX_OUTPUT_FILE_BYTES} 字节（至少 {} 字节），没有读\n\n{}",
+                    bytes.len(),
+                    String::from_utf8_lossy(&stderr).trim_end()
+                ),
+            );
+        }
+        let output = bytes.and_then(|bytes| serde_json::from_slice::<Output>(&bytes).ok());
         match output {
             Some(Output::Success { outputs }) if status.success() => success(task, &outputs),
             Some(Output::Failed { error }) => {
@@ -412,6 +481,19 @@ impl Running {
             ),
         }
     }
+}
+
+/// 读执行器写的 `output.json`，最多读 [`MAX_OUTPUT_FILE_BYTES`] 加一个字节：返回的比上限长就是文件超过了上限。
+/// 读不了（文件不存在、读出错）是 None。
+async fn read_output(path: &Path) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_OUTPUT_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    Some(bytes)
 }
 
 /// 写取消标记：节点里 `ctx.cancelled()` 之后为真。取消和超时进入收尾时间时都先写它：
@@ -515,5 +597,120 @@ impl Running {
             ErrorKind::Timeout,
             format!("任务执行超过 {seconds} 秒，{killed}"),
         )
+    }
+}
+
+#[cfg(test)]
+mod bound_tests {
+    use prost::Message as _;
+
+    use super::*;
+
+    fn task() -> AssignTask {
+        AssignTask {
+            task_id: "t".into(),
+            attempt: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn error_text_that_fits_is_unchanged() {
+        let exactly = "e".repeat(MAX_ERROR_TEXT_BYTES);
+        assert_eq!(bound_error_text(exactly.clone()), exactly);
+        assert_eq!(bound_error_text(String::new()), "");
+    }
+
+    #[test]
+    fn long_error_text_keeps_the_start_and_the_end_and_says_how_much_was_left_out() {
+        let text = format!(
+            "ValueError: 开头的消息{}堆栈最里面的一帧",
+            "中".repeat(MAX_ERROR_TEXT_BYTES)
+        );
+        let total = text.len();
+        let bounded = bound_error_text(text);
+        assert!(bounded.starts_with("ValueError: 开头的消息"));
+        assert!(bounded.ends_with("堆栈最里面的一帧"));
+        assert!(
+            bounded.len() < MAX_ERROR_TEXT_BYTES + 300,
+            "{} 字节",
+            bounded.len()
+        );
+        assert!(
+            bounded.contains(&format!("失败的文字有 {total} 字节")),
+            "{}",
+            &bounded[bounded.len() / 2 - 100..bounded.len() / 2 + 100]
+        );
+        // 3 字节的字符：省掉的部分两端都落在字符边界上（String 本身保证合法，这里看写出的数和实际一致）
+        let omitted: usize = bounded
+            .split("中间 ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .expect("写明了省掉多少字节");
+        // 留下的（开头加末尾）是上限那么多字节，落在字符边界上最多差几个字节
+        let kept = total - omitted;
+        assert!(
+            (MAX_ERROR_TEXT_BYTES - 8..=MAX_ERROR_TEXT_BYTES).contains(&kept),
+            "留下 {kept} 字节"
+        );
+    }
+
+    #[test]
+    fn every_failure_result_is_bounded_whatever_built_it() {
+        let result = failure_at(
+            &task(),
+            ErrorKind::NodeError,
+            "m".repeat(5 * MAX_ERROR_TEXT_BYTES),
+            "位".repeat(5000),
+        );
+        assert!(result.encoded_len() < MAX_ERROR_TEXT_BYTES + 4000);
+        let error = result.error.expect("失败带着原因");
+        assert!(error.message.len() < MAX_ERROR_TEXT_BYTES + 300);
+        assert!(error.location.len() <= MAX_LOCATION_BYTES);
+    }
+
+    /// 读 output.json 最多读上限加一个字节：文件再大也不全读进内存；返回的比上限长，就是文件超过了上限。
+    #[tokio::test]
+    async fn output_json_is_read_at_most_one_byte_past_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big.json");
+        std::fs::write(&big, vec![b'x'; MAX_OUTPUT_FILE_BYTES + 5000]).unwrap();
+        assert_eq!(
+            read_output(&big).await.unwrap().len(),
+            MAX_OUTPUT_FILE_BYTES + 1
+        );
+        let exact = dir.path().join("exact.json");
+        std::fs::write(&exact, vec![b'x'; MAX_OUTPUT_FILE_BYTES]).unwrap();
+        assert_eq!(
+            read_output(&exact).await.unwrap().len(),
+            MAX_OUTPUT_FILE_BYTES
+        );
+        assert!(
+            read_output(&dir.path().join("missing.json"))
+                .await
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn outputs_over_one_megabyte_are_a_node_error_with_the_control_planes_words() {
+        // 序列化之后正好 1 MiB 的收下，多一个字节的判失败
+        let fits = Value::String("x".repeat(MAX_OUTPUT_BYTES - 2));
+        let ok = success(&task(), &fits);
+        assert_eq!(ok.status(), TaskStatus::Success);
+        assert_eq!(ok.outputs_json.len(), MAX_OUTPUT_BYTES);
+
+        let too_big = Value::String("x".repeat(MAX_OUTPUT_BYTES - 1));
+        let failed = success(&task(), &too_big);
+        assert_eq!(failed.status(), TaskStatus::Failed);
+        assert_eq!(failed.outputs_json, "");
+        let error = failed.error.expect("失败带着原因");
+        assert_eq!(error.kind(), ErrorKind::NodeError);
+        // 和 apps/server/src/engine/output-limit.ts 同一句话
+        assert_eq!(
+            error.message,
+            format!("节点输出超过 1 MB 上限（{} 字节）", MAX_OUTPUT_BYTES + 1)
+        );
     }
 }

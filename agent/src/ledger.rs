@@ -28,7 +28,9 @@ use std::sync::Mutex;
 
 use tokio::sync::{Notify, watch};
 
-use crate::proto::{AssignTask, ReferencedAgent, RunningTask, TaskResult};
+use prost::Message as _;
+
+use crate::proto::{AssignTask, ErrorKind, ReferencedAgent, RunningTask, TaskResult};
 use crate::{calls, executor};
 
 /// 任务 ID 和尝试。
@@ -295,6 +297,43 @@ impl Ledger {
                 _ => None,
             })
             .collect()
+    }
+
+    /// 控制面用「消息超过上限」拒绝了这条连接（上限 `limit` 字节，#674）：还没收到 Ack 的结果里，编码之后超过上限的换成失败
+    /// （`node_error`，写明原来多大、上限多大），不再原样重发——原样重发每次都被拒，Agent 一直重连，任务一直 running，
+    /// 排在后面的结果和心跳也过不去（#723）。没超过上限的不动：被拒的是别的消息（遥测）时，不能把成功的结果换成失败。
+    /// 返回换掉了几个。
+    pub(crate) fn replace_results_over(&self, limit: usize) -> usize {
+        let mut state = self.state.lock().unwrap();
+        let mut replaced = 0;
+        for stage in state.attempts.values_mut() {
+            let finished = match stage {
+                Stage::Handed { finished, .. } | Stage::Unacked(finished) => finished,
+                Stage::Running(_) => continue,
+            };
+            let size = finished.result.encoded_len();
+            if size <= limit {
+                continue;
+            }
+            let old = &finished.result;
+            let message = format!(
+                "任务的结果有 {size} 字节，超过控制面接收一条消息的上限 {limit} 字节，没有送到：结果已丢弃，任务按失败处理"
+            );
+            let mut result = executor::failure(
+                &AssignTask {
+                    task_id: old.task_id.clone(),
+                    attempt: old.attempt,
+                    ..Default::default()
+                },
+                ErrorKind::NodeError,
+                message,
+            );
+            result.agent_time_unix_ms = old.agent_time_unix_ms;
+            result.monotonic_ms = old.monotonic_ms;
+            finished.result = result;
+            replaced += 1;
+        }
+        replaced
     }
 
     /// 控制面在 Welcome 里放弃了这个任务：结果还没 Ack 的直接删掉；还在执行的立即强制取消，结果不再上报；
@@ -856,6 +895,68 @@ mod tests {
         ledger.finish(result("a", 1));
         assert!(ledger.calls_of("a", 1).is_none());
         assert!(ledger.calls_of("unknown", 1).is_none());
+    }
+
+    /// 控制面用「消息超过上限」拒绝之后：编码之后超过上限的结果（待发的、待 Ack 的）换成失败，别的不动（#723）。
+    #[tokio::test]
+    async fn results_over_the_message_limit_are_replaced_by_a_failure_and_the_rest_are_kept() {
+        let ledger = Ledger::default();
+        for id in ["big-sent", "big-unsent", "small", "running"] {
+            start(&ledger, id, 1, "run");
+        }
+        let big = |id: &str| TaskResult {
+            outputs_json: "x".repeat(10_000),
+            agent_time_unix_ms: 111,
+            monotonic_ms: 222,
+            ..result(id, 1)
+        };
+        ledger.finish(big("big-sent"));
+        ledger.finish(result("small", 1));
+        // big-sent 已经发出（待 Ack），big-unsent 还没发出
+        assert_eq!(ledger.next_result().await.task_id, "big-sent");
+        ledger.finish(big("big-unsent"));
+
+        assert_eq!(ledger.replace_results_over(5_000), 2);
+        // 发出的顺序不变：先是没超过的 small（原样），再是换过的 big-unsent（还没发出的也换）
+        let next = ledger.next_result().await;
+        assert_eq!(
+            next,
+            result("small", 1),
+            "没超过的不动（成功的结果不能因为被拒的是别的消息就变成失败）"
+        );
+        let next = ledger.next_result().await;
+        assert_eq!(next.task_id, "big-unsent");
+        assert_eq!(next.status(), crate::proto::TaskStatus::Failed);
+
+        let unacked: HashMap<String, TaskResult> = ledger
+            .unacked()
+            .into_iter()
+            .map(|r| (r.task_id.clone(), r))
+            .collect();
+        let replaced = &unacked["big-sent"];
+        assert_eq!(replaced.status(), crate::proto::TaskStatus::Failed);
+        assert_eq!(replaced.outputs_json, "");
+        assert_eq!(
+            (replaced.agent_time_unix_ms, replaced.monotonic_ms),
+            (111, 222)
+        );
+        let error = replaced.error.as_ref().expect("失败带着原因");
+        assert_eq!(error.kind(), ErrorKind::NodeError);
+        assert!(
+            error
+                .message
+                .contains("超过控制面接收一条消息的上限 5000 字节")
+        );
+        assert!(
+            error
+                .message
+                .contains(&format!("{} 字节", big("big-sent").encoded_len()))
+        );
+        assert!(replaced.encoded_len() < 5_000);
+        // 执行中的任务也不动
+        assert_eq!(held(&ledger).len(), 4);
+        // 已经够小的再换一遍：没有要换的
+        assert_eq!(ledger.replace_results_over(5_000), 0);
     }
 
     /// 保留期扫描：不再在手上的任务忘掉它属于哪次运行，在手上的（含结果已交出的）保留。

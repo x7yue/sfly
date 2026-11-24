@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use prost::Message as _;
 use sfly_agent::proto::agent_gateway_server::{AgentGateway, AgentGatewayServer};
 use sfly_agent::proto::{
     Ack, AgentMessage, AgentUpdate, AssignTask, Hello, InstallState, InstallStatus, LogLevel,
@@ -120,6 +121,11 @@ struct State {
     agent_binary: Mutex<(String, String)>,
     /// 这些会话（序号从 0 开始）里的 Hello 不回 Welcome，直接结束会话（握手失败）。
     reject_sessions: Mutex<HashSet<usize>>,
+    /// 这些会话（序号从 0 开始）里 Hello 回了 Welcome 之后马上结束会话（握手成功、马上被断开）。
+    end_after_welcome: Mutex<HashSet<usize>>,
+    /// 收到的一条消息编码之后超过这么多字节（0 = 不限）：这一条不记，会话以 `resource_exhausted` 结束，
+    /// 状态说明和真实控制面的网关一样（`message size <大小> is larger than configured readMaxBytes <上限>`，#674）。
+    message_limit: AtomicUsize,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -356,6 +362,20 @@ impl FakeControlPlane {
     }
 
     /// 第 `sessions` 个会话（从 0 开始）里的 Hello 不回 Welcome、直接结束会话（连得上却握手失败）。
+    /// 之后收到的消息编码之后超过 `bytes` 字节时：这一条不记，会话以 `resource_exhausted` 结束（0 = 不限）。
+    pub fn set_message_limit(&self, bytes: usize) {
+        self.state.message_limit.store(bytes, Ordering::SeqCst);
+    }
+
+    /// 这些会话（序号从 0 开始）里 Hello 回了 Welcome 之后马上结束会话：握手成功、马上被断开。
+    pub fn end_sessions_after_welcome(&self, sessions: impl IntoIterator<Item = usize>) {
+        self.state
+            .end_after_welcome
+            .lock()
+            .unwrap()
+            .extend(sessions);
+    }
+
     pub fn reject_hellos_in(&self, sessions: impl IntoIterator<Item = usize>) {
         self.state.reject_sessions.lock().unwrap().extend(sessions);
     }
@@ -425,6 +445,19 @@ impl AgentGateway for Gateway {
         let tx = tx.downgrade();
         tokio::spawn(async move {
             while let Some(Ok(message)) = inbound.next().await {
+                let limit = state.message_limit.load(Ordering::SeqCst);
+                let size = message.encoded_len();
+                if limit > 0 && size > limit {
+                    if let Some(tx) = tx.upgrade() {
+                        let _ = tx
+                            .send(Err(Status::resource_exhausted(format!(
+                                "message size {size} is larger than configured readMaxBytes {limit}"
+                            ))))
+                            .await;
+                    }
+                    state.current.lock().unwrap().take();
+                    return;
+                }
                 if let Some(agent_message::Body::Hello(_)) = &message.body
                     && state.reject_sessions.lock().unwrap().contains(&session)
                 {
@@ -489,6 +522,7 @@ impl AgentGateway for Gateway {
                     }
                     _ => None,
                 };
+                let is_hello = matches!(&message.body, Some(agent_message::Body::Hello(_)));
                 state.received.lock().unwrap().push(Received {
                     session,
                     message,
@@ -496,6 +530,10 @@ impl AgentGateway for Gateway {
                 });
                 if let (Some(body), Some(tx)) = (reply, tx.upgrade()) {
                     let _ = tx.send(Ok(ServerMessage { body: Some(body) })).await;
+                }
+                if is_hello && state.end_after_welcome.lock().unwrap().contains(&session) {
+                    state.current.lock().unwrap().take();
+                    return;
                 }
             }
         });

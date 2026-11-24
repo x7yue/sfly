@@ -71,6 +71,10 @@ pub const DEFAULT_TERMINATE_GRACE: Duration = Duration::from_secs(10);
 /// 重连等待：从 MIN 开始翻倍，最多 MAX；成功连上后重置。
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(10);
+/// 连上之后至少撑过这么久才算连得稳：重连的等待只在连得稳之后才回到 [`RECONNECT_MIN`]。握手一成功就重置的话，
+/// 握手成功、马上又被断开（比如重发的结果超过控制面一条消息的上限，每次都被拒）的 Agent 会每半秒重连一次，
+/// 控制面每次都要为它走一遍握手、续约（#723）。
+pub const STABLE_CONNECTION: Duration = Duration::from_secs(30);
 
 /// Welcome 没有给出心跳间隔时的默认值（控制面默认租约 30 秒的三分之一）。
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
@@ -120,6 +124,8 @@ pub struct Config {
     pub metric_queue_points: usize,
     /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制，[`logs::Pump::start`]）。
     pub log_forward_rate: u64,
+    /// 连上之后撑过这么久才算连得稳、重连的等待才回到最短（默认 [`STABLE_CONNECTION`]，测试里改短）。
+    pub stable_connection: Duration,
     /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
     pub update_read_timeout: Duration,
     /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
@@ -162,6 +168,7 @@ impl Config {
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
             metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
             log_forward_rate: 0,
+            stable_connection: STABLE_CONNECTION,
             update_read_timeout: update::DEFAULT_READ_TIMEOUT,
             version: AGENT_VERSION.to_string(),
             agent_time_offset_file: None,
@@ -782,7 +789,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         }
         match connected {
             Ok(connection) => {
-                delay = RECONNECT_MIN;
+                // 握手成功不重置重连的等待：连得稳了才重置（[`STABLE_CONNECTION`]，见下面 serve 结束之后）。
                 // uv 和共享 venv 在收到 Welcome 之后才准备：控制面在 Welcome 里下发镜像配置（ADR 0012）。
                 // 准备失败时 Agent 退出，不带着坏环境继续连接。
                 // 本机的覆盖优先。节点包依赖（`uv pip install`）是 Agent 唯一访问 PyPI 的 uv 调用：
@@ -824,9 +831,25 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
                 };
+                let served_at = tokio::time::Instant::now();
                 match serve(connection, &runtime, channels, &updater, &mut sweep).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
-                    Err(error) => eprintln!("connection lost: {error:#}"),
+                    Err(error) => {
+                        eprintln!("connection lost: {error:#}");
+                        // 控制面用「消息超过上限」拒绝了这条连接：超过上限的结果不能再原样重发（每次重连都先重发
+                        // 没 Ack 的结果，每次都被拒），换成失败再发（#723）。被拒的是遥测时没有结果超过上限，不动。
+                        if let Some(limit) = message_limit_exceeded(&error) {
+                            let replaced = runtime.ledger.replace_results_over(limit);
+                            if replaced > 0 {
+                                eprintln!(
+                                    "控制面收一条消息最多 {limit} 字节：{replaced} 个任务的结果超过它，已换成失败，重连后发出"
+                                );
+                            }
+                        }
+                    }
+                }
+                if served_at.elapsed() >= config.stable_connection {
+                    delay = RECONNECT_MIN;
                 }
             }
             Err(error) => {
@@ -841,6 +864,18 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RECONNECT_MAX);
     }
+}
+
+/// 控制面因为一条消息超过它的上限（`readMaxBytes`，#674）结束了这条连接：返回它说的上限（字节）。
+/// 控制面回的状态是 `resource_exhausted`，说明是 `message size <声明的大小> is larger than configured readMaxBytes <上限>`。
+fn message_limit_exceeded(error: &anyhow::Error) -> Option<usize> {
+    let status = error
+        .chain()
+        .find_map(|e| e.downcast_ref::<tonic::Status>())
+        .filter(|status| status.code() == tonic::Code::ResourceExhausted)?;
+    let (_, after) = status.message().split_once("readMaxBytes ")?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// 任务目录的定期扫描（[`Runtime::sweep`]）。
@@ -1061,5 +1096,40 @@ async fn serve(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    fn exhausted(message: &str) -> anyhow::Error {
+        anyhow::Error::from(tonic::Status::resource_exhausted(message)).context("wrapped")
+    }
+
+    #[test]
+    fn the_limit_is_read_from_the_control_planes_status() {
+        let error =
+            exhausted("message size 83886081 is larger than configured readMaxBytes 83886080");
+        assert_eq!(message_limit_exceeded(&error), Some(83_886_080));
+        let at_the_end = exhausted("larger than configured readMaxBytes 4194304");
+        assert_eq!(message_limit_exceeded(&at_the_end), Some(4_194_304));
+    }
+
+    #[test]
+    fn other_errors_are_not_a_message_limit() {
+        assert_eq!(
+            message_limit_exceeded(&exhausted("too many requests")),
+            None
+        );
+        assert_eq!(
+            message_limit_exceeded(&exhausted("readMaxBytes unknown")),
+            None
+        );
+        let other_code = anyhow::Error::from(tonic::Status::internal(
+            "message size 9 is larger than configured readMaxBytes 8",
+        ));
+        assert_eq!(message_limit_exceeded(&other_code), None);
+        assert_eq!(message_limit_exceeded(&anyhow::anyhow!("plain")), None);
     }
 }
