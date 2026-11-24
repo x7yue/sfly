@@ -219,7 +219,9 @@ struct Paths {
     artifacts: PathBuf,
 }
 
-/// 任务的取消请求：None 表示没有取消，`Some(false)` 优雅取消，`Some(true)` 强制取消。
+/// 任务的取消信号：None 表示没有；`Some(false)` 优雅取消，**也是超时进入收尾时间**（`run_task` 在超时时通过
+/// `Ledger::cancel` 发一次，让正在进行的能力调用放弃；只有能力调用和 `Running::time_out` 读它，任务的结局不看它）；
+/// `Some(true)` 强制取消（也是控制面放弃任务时）。
 pub type CancelSignal = watch::Receiver<Option<bool>>;
 
 /// 正在运行的执行器子进程。
@@ -343,7 +345,14 @@ impl Running {
 
     /// 等待执行器退出并读取结果。超过 `timeout_seconds`（0 表示不限制）时终止进程树，以 timeout 失败；
     /// 收到取消请求时先写取消标记再终止进程树，以 cancelled 上报（[`Running::cancel`]）。
-    pub async fn wait(mut self, mut cancel: CancelSignal) -> TaskResult {
+    ///
+    /// `winding_down` 在超时进入收尾时间时调用一次：让这个任务正在进行的 Agent 能力调用放弃（和取消同一个口径），
+    /// 不影响任务的结局（[`Running::time_out`]）。
+    pub async fn wait(
+        mut self,
+        mut cancel: CancelSignal,
+        winding_down: impl FnOnce(),
+    ) -> TaskResult {
         let seconds = self.task.timeout_seconds;
         let deadline = (seconds > 0)
             .then(|| tokio::time::Instant::now() + Duration::from_secs(seconds.into()));
@@ -355,7 +364,9 @@ impl Running {
             }
             tokio::select! {
                 status = self.process.wait() => break status,
-                () = sleep_until(deadline) => return self.time_out(seconds).await,
+                () = sleep_until(deadline) => {
+                    return self.time_out(seconds, cancel, winding_down).await;
+                }
                 changed = cancel.changed(), if cancellable => cancellable = changed.is_ok(),
             }
         };
@@ -466,12 +477,36 @@ impl Running {
     }
 
     /// 超时（docs/SEMANTICS.md §3.3）：和取消一样先写取消标记，节点进入收尾时间（宽限期）时
-    /// `ctx.cancelled()` 就是真的；任务的结局不受影响，仍然记成超时，不是取消。
-    async fn time_out(mut self, seconds: u32) -> TaskResult {
+    /// `ctx.cancelled()` 就是真的，这个任务正在进行的 Agent 能力调用也在这一刻放弃（`winding_down`：给任务的
+    /// 取消信号发一次优雅取消，只有调用和这里看它）；收尾时间里收到强制取消立即杀掉进程树，不等收尾时间用完。
+    /// 任务的结局都不受影响，仍然记成超时，不是取消：结局由先发生的原因决定，控制面按运行是否已经取消记任务的状态。
+    async fn time_out(
+        mut self,
+        seconds: u32,
+        mut cancel: CancelSignal,
+        winding_down: impl FnOnce(),
+    ) -> TaskResult {
         write_cancel_marker(&self.paths.cancel).await;
-        let killed = match self.process.terminate(self.grace).await {
-            Ok(_) => "已终止进程树".to_string(),
-            Err(error) => format!("终止进程树时出错：{error}"),
+        winding_down();
+        let escalate = async {
+            if cancel.wait_for(|c| *c == Some(true)).await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        };
+        let graceful = tokio::select! {
+            status = self.process.terminate(self.grace) => Some(status),
+            () = escalate => None,
+        };
+        let killed = match graceful {
+            Some(Ok(_)) => "已终止进程树".to_string(),
+            Some(Err(error)) => format!("终止进程树时出错：{error}"),
+            None => {
+                self.process.kill();
+                match self.process.wait().await {
+                    Ok(_) => "收到强制取消，已强制杀掉进程树".to_string(),
+                    Err(error) => format!("收到强制取消，终止进程树时出错：{error}"),
+                }
+            }
         };
         // 进程树被杀后管道关闭：把已经产生的日志和最后一次进度发完再报告超时。
         self.pump.finish().await;

@@ -17,6 +17,8 @@ export class FakeModel {
 	/** 每个请求按第一条用户消息选剧本；没有对上的用 `default`。 */
 	scripts = new Map<string, Step[]>();
 	fallback: Step[] = [{ text: "好的。" }];
+	/** 接下来的请求依次回这些 HTTP 错误（用完了照常回剧本）：看上游出错时助手服务怎么说。 */
+	failures: Array<{ status: number; body: string }> = [];
 
 	private constructor(
 		private readonly server: Server,
@@ -37,6 +39,12 @@ export class FakeModel {
 			for await (const chunk of req) text += chunk;
 			const body = JSON.parse(text) as RecordedRequest & { stream?: boolean };
 			model.requests.push(body);
+			const failure = model.failures.shift();
+			if (failure) {
+				res.writeHead(failure.status, { "content-type": "application/json" });
+				res.end(failure.body);
+				return;
+			}
 			const reply = model.#next(body);
 			res.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
 			for (const chunk of chunks(reply)) res.write(`data: ${JSON.stringify(chunk)}\n\n`);

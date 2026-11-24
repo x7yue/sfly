@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import argparse
+import io
+import json
 from typing import Any
 
 import pytest
 
 from sfly.cli.client import ApiError, Client
 from sfly.cli.errors import CliError
-from sfly.cli.run_query import run_state
+from sfly.cli.output import Output
+from sfly.cli.run_query import _show, run_state
 from sfly.cli.run_summary import (
+    SECRETS_OVERSIZE_NOTE,
     SummaryUnavailable,
     fetch_report,
     minimal_summary,
@@ -17,6 +22,7 @@ from sfly.cli.run_summary import (
     summary_of,
     summary_unavailable_note,
 )
+from sfly.cli.session import Session
 
 ASSERTION = (
     "sfly_std.assert_.AssertionFailed: 1 条断言中 1 条不通过：\n"
@@ -503,3 +509,78 @@ def test_an_error_from_an_older_control_plane_has_no_location_and_looks_as_befor
 
     assert "出错位置" not in older
     assert render_summary(null) == older
+
+
+def test_a_run_whose_secret_values_are_too_many_says_why_everything_is_masked() -> None:
+    """保密值太多的运行（#657）：摘要的 JSON 多一个 `secrets_oversize`，文本里多一行提示，
+    不含任何值；正常的摘要没有这个键、没有这一行，和以前一字不差。"""
+    plain = summary_of(CLIENT, report())
+    assert "secrets_oversize" not in plain
+    oversize = summary_of(CLIENT, report(secrets_oversize=True))
+    assert oversize.pop("secrets_oversize") is True
+    assert oversize == plain
+    text = render_summary(summary_of(CLIENT, report(secrets_oversize=True)))
+    assert SECRETS_OVERSIZE_NOTE in text.split("\n")
+    assert SECRETS_OVERSIZE_NOTE not in render_summary(plain)
+    # 旧版本的控制面没有这个字段：读不到时当作没有
+    assert "secrets_oversize" not in summary_of(CLIENT, report(secrets_oversize=False))
+
+
+SHOW_RUN_ID = "00000000-0000-4000-8000-000000000001"
+
+
+class ShowClient:
+    """`sfly run show` 读的三个接口：运行视图、运行摘要、场景（取名称）。"""
+
+    def __init__(self, rep: dict[str, Any]) -> None:
+        self.rep = rep
+
+    def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
+        if path == f"/runs/{SHOW_RUN_ID}":
+            return {
+                "id": SHOW_RUN_ID,
+                "orchestration_id": "s-1",
+                "orchestration_version": 3,
+                "status": "failed",
+                "triggered_by": "alice",
+                "triggered_via": None,
+                "preset": None,
+                "params": {},
+                "started_at": "2026-01-01T00:00:00.000Z",
+                "ended_at": "2026-01-01T00:00:03.000Z",
+                "cancel": None,
+                "chains": [],
+            }
+        if path == f"/runs/{SHOW_RUN_ID}/summary":
+            return self.rep
+        if path == "/orchestrations/s-1":
+            return {"name": "巡检"}
+        raise AssertionError(path)
+
+
+def run_show(rep: dict[str, Any], *, json_mode: bool) -> str:
+    stdout = io.StringIO()
+    session = Session(ShowClient(rep), Output(json_mode=json_mode, stdout=stdout))  # type: ignore[arg-type]
+    args = argparse.Namespace(run=SHOW_RUN_ID, node=None, outputs=False, state=False)
+    _show(session, args)
+    return stdout.getvalue()
+
+
+def test_run_show_says_why_everything_is_masked_only_for_a_run_with_too_many_secret_values() -> (
+    None
+):
+    """`sfly run show`（#657）：提示一行、`--json` 里的 `secrets_oversize` 只在这样的运行上有；
+    正常的运行和旧控制面（摘要里没有这个键）的输出里没有。"""
+    text = run_show(report(secrets_oversize=True), json_mode=False)
+    assert SECRETS_OVERSIZE_NOTE in text.split("\n")
+    assert (
+        json.loads(run_show(report(secrets_oversize=True), json_mode=True))["secrets_oversize"]
+        is True
+    )
+    for rep in (report(), report(secrets_oversize=False)):
+        assert SECRETS_OVERSIZE_NOTE not in run_show(rep, json_mode=False)
+        assert "secrets_oversize" not in json.loads(run_show(rep, json_mode=True))
+    # 其余的输出一字不差：去掉提示和它前面的空行，就是正常的运行的输出
+    lines = run_show(report(secrets_oversize=True), json_mode=False).split("\n")
+    at = lines.index(SECRETS_OVERSIZE_NOTE)
+    assert "\n".join(lines[: at - 1] + lines[at + 1 :]) == run_show(report(), json_mode=False)
