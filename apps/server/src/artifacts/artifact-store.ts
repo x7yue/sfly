@@ -260,11 +260,9 @@ export class ArtifactStore {
 				body,
 				async function* (source: AsyncIterable<Buffer>) {
 					// 每读一块之前起一个计时器：idleMs 毫秒还没有数据就以空闲超时结束；写盘的时间不算（计时器只在等客户端发数据时开着）。
-					// `source` 可以是流（异步可迭代），也可以是 Fastify 的文本解析器（Content-Type: text/plain）读成的字符串（同步可迭代）：
-					// 包一层异步生成器，两种都能按同一个办法一块一块读。
-					const iterator = (async function* () {
-						yield* source;
-					})();
+					// 请求体只能是字节流（上传的路由只按原始字节收，#665）：记的大小、哈希、写进磁盘的是同一份字节；
+					// 不是字节的块（字符串）按字符数记会和写盘的字节数不一致，守不住上限，所以拒绝，不悄悄接受。
+					const iterator = source[Symbol.asyncIterator]();
 					let timer: NodeJS.Timeout | undefined;
 					try {
 						for (;;) {
@@ -278,7 +276,10 @@ export class ArtifactStore {
 								throw new Error("upload idle timeout");
 							}
 							if (next.done) return;
-							const chunk = next.value as Buffer;
+							const chunk = next.value as unknown;
+							if (!(chunk instanceof Uint8Array)) {
+								throw new TypeError("artifact body must be a byte stream");
+							}
 							size += chunk.length;
 							if (size > allowed) {
 								tooLarge = true;

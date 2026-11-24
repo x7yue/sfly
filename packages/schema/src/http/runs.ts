@@ -248,6 +248,12 @@ export const RunView = z.object({
 	 * 或者投递记录已过保留期被清理时为 null。
 	 */
 	run_notification: RunNotificationState.nullable(),
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、
+	 * 输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，
+	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize: z.boolean().optional(),
 	/** 按深度、开始时间排序。 */
 	chains: z.array(ChainRunView),
 });
@@ -786,6 +792,9 @@ export const artifactsApi = {
 	 * 每个路径段单独百分号编码。`x-sfly-agent-modified-ms` 请求头是文件在 Agent 上的修改时间，可以不带。配置了注册令牌时需要 `Authorization: Bearer <token>`，否则 401 `unauthorized`；
 	 * 这个任务已上传的加上这个文件超过单个任务的产物合计上限（`SFLY_ARTIFACT_LIMIT_MB`，随任务下发给 Agent）时 413，
 	 * 请求带了 `Content-Length` 的在读请求体之前就拒绝；错误信息写明这个文件多大、这个任务已上传多少、上限多少（#477）。
+	 * 请求体一律按原始字节存，不看 `Content-Type`（`text/plain`、JSON、没写、写得不成样子的都一样，存下的字节逐字等于发来的）。
+	 * 同一个任务的上传一个接一个做；轮到的这一份连着但 60 秒没有收到数据时 408 `upload_idle_timeout`（不存、不留临时文件，
+	 * 回了响应就关掉连接，重新上传；只在等客户端发数据时计时，服务端写盘、记账的时间不算，排着队的也不算）。
 	 */
 	upload: endpoint({
 		method: "PUT",

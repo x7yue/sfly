@@ -6,6 +6,7 @@ import {
 	MAX_AUTOMATON_CHARS,
 	MAX_SPANS,
 	maskedByAutomaton,
+	mergeSpans,
 	scanSpans,
 } from "./aho-corasick.js";
 
@@ -26,7 +27,28 @@ export { SECRET_MASK };
  * 它是 {@link SecretSet.mask} 的一部分，读取和写入走的是同一处，不另有一套。
  */
 export function maskTokens(text: string): string {
-	return text.includes("sfly_") ? text.replace(TOKEN_VALUE_PATTERN, SECRET_MASK) : text;
+	const tokens = tokenSpans(text);
+	if (!tokens) return text;
+	return maskedByAutomaton(text, mergeSpans(0, tokens.starts, tokens.ends), SECRET_MASK);
+}
+
+/**
+ * 认令牌用的正则：自己的一份（从 {@link TOKEN_VALUE_PATTERN} 复制，不导出）。`TOKEN_VALUE_PATTERN` 是 `@sfly/schema` 导出的带 `g` 标志的
+ * 共享对象，`matchAll` 从它当时的 `lastIndex` 开始找：别处只要对它调过一次 `test()`、`exec()`，打码就会漏掉文字开头的令牌。
+ * 打码不能靠「别人不碰」，所以这里用不对外的一份，`lastIndex` 永远是 0。
+ */
+const TOKEN_SCAN = new RegExp(TOKEN_VALUE_PATTERN.source, TOKEN_VALUE_PATTERN.flags);
+
+/** 文字里令牌原值的出现（{@link TOKEN_VALUE_PATTERN}）：起止位置，按开头排好、互相不重叠；没有时为 undefined。只在文字里有 `sfly_` 时才扫。 */
+function tokenSpans(text: string): { starts: number[]; ends: number[] } | undefined {
+	if (!text.includes("sfly_")) return undefined;
+	const starts: number[] = [];
+	const ends: number[] = [];
+	for (const match of text.matchAll(TOKEN_SCAN)) {
+		starts.push(match.index);
+		ends.push(match.index + match[0].length);
+	}
+	return starts.length > 0 ? { starts, ends } : undefined;
 }
 
 /**
@@ -513,17 +535,44 @@ export class SecretSet {
 	}
 
 	/**
-	 * 把文本中出现的 secret 值替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入（尤其是写日志）不能因为打码
-	 * 失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；错误本身不往外带，它的消息里可能有值。
+	 * 把文本中出现的 secret 值和令牌原值（{@link maskTokens}）替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入
+	 * （尤其是写日志）不能因为打码失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；
+	 * 错误本身不往外带，它的消息里可能有值。
 	 *
-	 * 输出是「所有完整的出现，重叠的合成一段，每段一个掩码（相邻但不重叠的各是一段）」。打不打码只取决于文字里有没有某个
-	 * secret 值的某种写法的**完整**出现；任何「部分匹配」（文字的结尾是某个值的前缀、开头是某个值的后缀）都不影响输出，
-	 * 也不影响用掉的预算、走的步数：输出里有没有掩码不能成为猜 secret 值的依据（docs/SEMANTICS.md §2.1）。
-	 * 带预算的视图（{@link withBudget}）上，完整的出现的段数计入预算，不够时整段盖住。
+	 * 输出是「所有完整的出现，重叠的合成一段，每段一个掩码（相邻但不重叠的各是一段）」。两种出现（secret 值的各种写法、令牌原值）
+	 * 都在**原文**上找，合成一组、一次换掉：不分先后，一种的结果不会成为另一种的输入（先换一种再换另一种，前一遍留下的掩码
+	 * 会让后一遍认不出挨着、重叠的那一半）。打不打码只取决于文字里有没有完整的出现；任何「部分匹配」（文字的结尾是某个值的前缀、
+	 * 开头是某个值的后缀）都不影响输出，也不影响用掉的预算、走的步数：输出里有没有掩码不能成为猜 secret 值的依据
+	 * （docs/SEMANTICS.md §2.1）。带预算的视图（{@link withBudget}）上，合并之后的段数（两种出现一起）计入预算，不够时整段盖住。
 	 * 值集合太大（{@link oversize}）时每段文字整段盖住，只有一行平台写的说明（{@link OVERSIZE_NOTICE}，不含值）原样放行。
 	 */
 	mask(text: string): string {
-		return maskTokens(this.#maskValues(text));
+		if (text === "") return text;
+		if (this.texts.length === 0) return maskTokens(text);
+		try {
+			const automaton = this.#automaton();
+			if (!automaton)
+				return text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK;
+			const budget = this.#budget;
+			let count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
+			if (count < 0) {
+				if (budget) budget.masks = 0;
+				return SECRET_MASK;
+			}
+			const tokens = tokenSpans(text);
+			if (tokens) count = mergeSpans(count, tokens.starts, tokens.ends);
+			if (count === 0) return text;
+			if (budget) {
+				if (count > budget.masks) {
+					budget.masks = 0;
+					return SECRET_MASK;
+				}
+				budget.masks -= count;
+			}
+			return maskedByAutomaton(text, count, SECRET_MASK);
+		} catch {
+			return SECRET_MASK;
+		}
 	}
 
 	/**
@@ -531,7 +580,7 @@ export class SecretSet {
 	 * 用来在没有要盖的时候省掉后面的处理（日志下载的一行里没有要盖的就原样返回）。值集合太大时总是会（整段盖住）。
 	 */
 	wouldChange(text: string): boolean {
-		if (maskTokens(text) !== text) return true;
+		if (tokenSpans(text) !== undefined) return true;
 		if (this.texts.length === 0 || text === "") return false;
 		try {
 			const automaton = this.#automaton();
@@ -539,27 +588,6 @@ export class SecretSet {
 			return scanSpans(automaton, text, 1) !== 0;
 		} catch {
 			return true;
-		}
-	}
-
-	/** 按值打码（不含令牌原值）。 */
-	#maskValues(text: string): string {
-		if (this.texts.length === 0 || text === "") return text;
-		try {
-			const automaton = this.#automaton();
-			if (!automaton)
-				return text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK;
-			const budget = this.#budget;
-			const count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
-			if (count < 0) {
-				if (budget) budget.masks = 0;
-				return SECRET_MASK;
-			}
-			if (count === 0) return text;
-			if (budget) budget.masks -= count;
-			return maskedByAutomaton(text, count, SECRET_MASK);
-		} catch {
-			return SECRET_MASK;
 		}
 	}
 }

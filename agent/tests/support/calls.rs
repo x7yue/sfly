@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use sfly_agent::proto::{ReferencedAgent, agent_message};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
-use tokio::net::UnixStream;
+use tokio::net::{TcpListener, UnixStream};
 
 use super::{AgentOptions, AgentProcess, FakeControlPlane, spawn_agent, stub_task, wait_until};
 
@@ -104,6 +104,19 @@ pub fn referenced(name: &str, address: &str, port: u16) -> ReferencedAgent {
         port: port.into(),
         unavailable_reason: String::new(),
     }
+}
+
+/// 接受连接但从不回应的「另一台 Agent」。
+pub async fn silent_peer() -> (u16, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    (port, handle)
 }
 
 /// 在 `cp` 连着的 Agent 上派发一个一直运行的任务（引用 `agents`），等到它启动。

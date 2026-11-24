@@ -166,6 +166,16 @@ function LoadedMonitor({ run, address }: { run: RunView; address: MonitorSearch 
 					view={view}
 					onViewChange={changeView}
 				/>
+				{/* 这次运行的 secret 参数的值太多、内容整段显示为掩码：整个运行的状态，概览和详情都在顶栏下面写明原因，不能收起。 */}
+				{run.secrets_oversize && (
+					<div data-testid="secrets-oversize" className="flex-none">
+						<Banner
+							tone="warn"
+							title={MESSAGE.secretsOversize}
+							className="rounded-none border-x-0 border-t-0 py-2"
+						/>
+					</div>
+				)}
 				<main className="flex min-h-0 flex-1 flex-col">
 					<div
 						role="tabpanel"

@@ -160,7 +160,7 @@ async fn run(case: &Value) -> Observed {
     )
     .await
     .unwrap_or_else(|result| panic!("执行器没有启动：{result:?}"));
-    let result = running.wait(signal).await;
+    let result = running.wait(signal, || {}).await;
     let after = now_ms();
 
     // 转发器已经结束，丢掉自己手上的发送端之后，通道读完就关闭。
