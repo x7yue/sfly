@@ -52,7 +52,7 @@ const client = createClient({
 |---|---|
 | `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`check`、`versionDiff`、`edit`、`checkEdits`、`create`、`update`、`copy`、`archive`、`unarchive` |
 | `presets`（运行预设） | `list`、`create`、`update`、`copy`、`remove` |
-| `runs`（运行） | `list`、`listForOrchestration`、`focus`、`summary`、`preflight`、`trigger`、`get`、`cancel`、`events` |
+| `runs`（运行） | `list`、`listForOrchestration`、`focus`、`summary`、`preflight`、`trigger`、`taskIo`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
 | `actions`（动作） | `summary`、`page`、`events` |
