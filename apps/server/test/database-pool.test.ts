@@ -17,6 +17,11 @@ import { PgProxy } from "./support/pg-proxy.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** 等 `read()` 变成 `expected`（最多 10 秒）。 */
+async function eventuallyEqual(read: () => number, expected: number): Promise<void> {
+	const until = Date.now() + 10_000;
+	while (read() !== expected && Date.now() < until) await sleep(25);
+}
 
 describe("openDatabase：连接出错", () => {
 	let database: TestDatabase;
@@ -64,7 +69,7 @@ describe("openDatabase：连接出错", () => {
 		await sleep(300);
 
 		expect(fatal).toHaveLength(1);
-		// 连接池已经结束：之后任何取连接、执行语句的请求立刻以错误结束，不再碰数据库。
+		// 连接池已经结束：之后新的取连接、执行语句的请求立刻以错误结束，不再碰数据库（已经借出去的连接不受影响，有序关闭等它们做完）。
 		// drizzle 把语句的错误包了一层（Failed query），原因在 cause 里。
 		const reason = (error: Error & { cause?: Error }) => error.cause?.message ?? error.message;
 		expect(await db.db.select().from(orchestrations).catch(reason)).toMatch(/after calling end/);
@@ -131,6 +136,41 @@ describe("openDatabase：连接出错", () => {
 			// 连接真的关闭时 `error` 又来一次：只记日志，不再交给 onInUseError。
 			await sleep(300);
 			expect(fatal).toHaveLength(1);
+			await db.close();
+		}, 30_000);
+
+		it("借出去的事务里空闲超过 idle_in_transaction_session_timeout：数据库发 FATAL 25P03、关连接，onInUseError 一次（真的数据库实测的 SQLSTATE）", async () => {
+			const db = open(true);
+			await db.ping();
+			const client = await borrowInTransaction(db);
+			await client.query("set local idle_in_transaction_session_timeout = 300");
+
+			await eventuallyEqual(() => fatal.length, 1);
+
+			expect((fatal[0] as Error & { code?: string }).code).toBe("25P03");
+			await sleep(300);
+			expect(fatal).toHaveLength(1);
+			await db.close();
+		}, 30_000);
+
+		it("借出去的事务超过 transaction_timeout（PostgreSQL 17 起）：数据库发 FATAL 25P04、关连接，onInUseError 一次", async (context) => {
+			const db = open(true);
+			const version = Number((await db.pool.query("show server_version_num")).rows[0]?.server_version_num);
+			if (version < 170_000) {
+				await db.close();
+				context.skip();
+			}
+			const client = await borrowInTransaction(db);
+			await client.query("set local transaction_timeout = 300");
+			const outcome = client.query("select pg_sleep(5)").then(
+				() => "ok",
+				() => "failed",
+			);
+
+			expect(await outcome).toBe("failed");
+			await eventuallyEqual(() => fatal.length, 1);
+
+			expect((fatal[0] as Error & { code?: string }).code).toBe("25P04");
 			await db.close();
 		}, 30_000);
 
@@ -221,6 +261,20 @@ describe("openDatabase：连接出错", () => {
 			],
 			["57P02（崩溃关闭）", { severity: "ERROR", code: "57P02" }, true],
 			["57P03（现在不能连接）", { severity: "ERROR", code: "57P03" }, true],
+			["57P04（库被删了）", { severity: "ERROR", code: "57P04" }, true],
+			["57P05（空闲会话超时）", { severity: "ERROR", code: "57P05" }, true],
+			// 数据库用中文报的：severity 是「致命错误」（实测，PostgreSQL 18、lc_messages=zh_CN.UTF-8），不认得，只能靠 SQLSTATE。
+			// 事务里空闲超时、事务超时数据库发的也是 FATAL，然后关掉这条连接。
+			[
+				"事务里空闲超时 25P03（中文的 severity）",
+				{ severity: "致命错误", code: "25P03" },
+				true,
+			],
+			["事务超时 25P04（中文的 severity）", { severity: "致命错误", code: "25P04" }, true],
+			["事务里空闲超时 25P03（英文的 severity）", { severity: "FATAL", code: "25P03" }, true],
+			// 不是连接完了的：语句超时只取消这一条语句，连接还在。
+			["语句超时（中文的 severity，57014）", { severity: "错误", code: "57014" }, false],
+			["事务里的另一种错误 25P02（事务已中止，中文的 severity）", { severity: "错误", code: "25P02" }, false],
 			["普通的错误（唯一约束）", { severity: "ERROR", code: "23505" }, false],
 			["语句被取消（57014 不是连接完了）", { severity: "ERROR", code: "57014" }, false],
 			["没有 severity 和 code", {}, false],
@@ -347,7 +401,7 @@ describe("openDatabase：连接出错", () => {
 		expect(took).toBeGreaterThanOrEqual(POOL_END_TIMEOUT_MS - 200);
 		expect(took).toBeLessThan(POOL_END_TIMEOUT_MS + 2_000);
 		expect(errors.map((e) => e.message).join("\n")).toContain("没有关完");
-		// 给了 onCloseTimeout 时这条说明走它（日志里是自己的前缀，不是连接出错的前缀）：见下面一条。
+		// 给了 onCloseTimeout 时这条说明走它（日志里是自己的前缀，不是连接出错的前缀）：控制面给的就是它，见 db-connection-errors.test.ts。
 		// 再关一次不抛（收到两次停止信号、或者有序退出和停止信号撞上）。
 		await expect(db.close()).resolves.toBeUndefined();
 	}, 30_000);
