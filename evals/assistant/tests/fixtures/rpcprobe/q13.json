@@ -1,1 +1,691 @@
-{"ok": true, "rounds": [{"gap": null, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.381, "settled_aborted": true, "turn_user_messages": [{"t": 0.38, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.402, "settled_aborted": true, "turn_user_messages": [{"t": 0.402, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.375, "settled_aborted": true, "turn_user_messages": [{"t": 0.374, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.36, "settled_aborted": true, "turn_user_messages": [{"t": 0.36, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.403, "settled_aborted": true, "turn_user_messages": [{"t": 0.403, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.0, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.368, "settled_aborted": true, "turn_user_messages": [{"t": 0.368, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.0, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.382, "settled_aborted": true, "turn_user_messages": [{"t": 0.381, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.0, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.334, "settled_aborted": true, "turn_user_messages": [{"t": 0.333, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.0, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.381, "settled_aborted": true, "turn_user_messages": [{"t": 0.38, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.0, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.358, "settled_aborted": true, "turn_user_messages": [{"t": 0.358, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.001, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.352, "settled_aborted": true, "turn_user_messages": [{"t": 0.352, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.001, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.359, "settled_aborted": true, "turn_user_messages": [{"t": 0.358, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.001, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.372, "settled_aborted": true, "turn_user_messages": [{"t": 0.371, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.001, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.484, "settled_aborted": true, "turn_user_messages": [{"t": 0.483, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.001, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.312, "settled_aborted": true, "turn_user_messages": [{"t": 0.311, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.002, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.358, "settled_aborted": true, "turn_user_messages": [{"t": 0.358, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.002, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.37, "settled_aborted": true, "turn_user_messages": [{"t": 0.369, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.002, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.361, "settled_aborted": true, "turn_user_messages": [{"t": 0.36, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.002, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.39, "settled_aborted": true, "turn_user_messages": [{"t": 0.39, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.002, "script": "rpcprobe-abort", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 0.379, "settled_aborted": true, "turn_user_messages": [{"t": 0.378, "text": "插话二：顺便看一下日志"}], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "插话二：顺便看一下日志"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-abort", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 0.411, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-abort", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 0.372, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-abort", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 0.328, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-abort", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 0.373, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-abort", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 0.366, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-midstream", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 1.356, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 1, "pre_clear_got": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-midstream", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 1.384, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 1, "pre_clear_got": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-midstream", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 1.407, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 1, "pre_clear_got": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-midstream", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 1.492, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 1, "pre_clear_got": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": null, "script": "rpcprobe-midstream", "order": ["clear_queue", "steer", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": [], "followUp": []}, "abort_ok": true, "settled_t": 1.449, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 1, "pre_clear_got": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-midstream", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 1.45, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-midstream", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 1.418, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-midstream", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 1.593, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-midstream", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 1.441, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}, {"gap": 0.005, "script": "rpcprobe-midstream", "order": ["steer", "clear_queue", "abort"], "steer_response": {"success": true, "data": {"disposition": "queued"}, "error": null}, "clear_queue": {"steering": ["插话二：顺便看一下日志"], "followUp": []}, "abort_ok": true, "settled_t": 1.5, "settled_aborted": true, "turn_user_messages": [], "pending_after_settle": 0, "pre_clear_got": {"steering": [], "followUp": []}, "sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"], "next_turn_request": [{"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "next_turn_settled": true}], "seconds": 151.8}
+{
+	"ok": true,
+	"rounds": [
+		{
+			"gap": null,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.381,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.38, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.402,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.402, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.375,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.374, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.36,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.36, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.403,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.403, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.0,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.368,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.368, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.0,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.382,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.381, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.0,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.334,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.333, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.0,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.381,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.38, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.0,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.358,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.358, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.001,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.352,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.352, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.001,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.359,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.358, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.001,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.372,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.371, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.001,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.484,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.483, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.001,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.312,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.311, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.002,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.358,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.358, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.002,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.37,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.369, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.002,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.361,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.36, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.002,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.39,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.39, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.002,
+			"script": "rpcprobe-abort",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.379,
+			"settled_aborted": true,
+			"turn_user_messages": [{ "t": 0.378, "text": "插话二：顺便看一下日志" }],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-abort",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.411,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-abort",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.372,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-abort",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.328,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-abort",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.373,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-abort",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 0.366,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-abort 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-abort 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-midstream",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.356,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 1,
+			"pre_clear_got": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-midstream",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.384,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 1,
+			"pre_clear_got": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-midstream",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.407,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 1,
+			"pre_clear_got": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-midstream",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.492,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 1,
+			"pre_clear_got": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": null,
+			"script": "rpcprobe-midstream",
+			"order": ["clear_queue", "steer", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": [], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.449,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 1,
+			"pre_clear_got": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-midstream",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.45,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-midstream",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.418,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-midstream",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.593,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-midstream",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.441,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		},
+		{
+			"gap": 0.005,
+			"script": "rpcprobe-midstream",
+			"order": ["steer", "clear_queue", "abort"],
+			"steer_response": { "success": true, "data": { "disposition": "queued" }, "error": null },
+			"clear_queue": { "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+			"abort_ok": true,
+			"settled_t": 1.5,
+			"settled_aborted": true,
+			"turn_user_messages": [],
+			"pending_after_settle": 0,
+			"pre_clear_got": { "steering": [], "followUp": [] },
+			"sent_during_turn": ["AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"],
+			"next_turn_request": [
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+				{ "role": "user", "text": "接着说" }
+			],
+			"next_turn_settled": true
+		}
+	],
+	"seconds": 151.8
+}

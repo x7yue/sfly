@@ -1,1 +1,51 @@
-{"ok": true, "deltas_before_abort": 5, "abort_ok": true, "abort_response_seconds": 0.013, "settled_seconds": 0.013, "settled_aborted": true, "aborted_message": {"t": 2.549, "stop_reason": "aborted", "text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。"}, "next_turn": {"messages_before": [{"role": "system", "text": ""}, {"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "assistant", "text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。"}], "prompt_ok": true, "prompt_error": null, "settled": true, "stop_reason": "stop", "error": null, "request": [{"role": "system", "text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"}, {"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "user", "text": "接着说"}], "messages_after": [{"role": "system", "text": ""}, {"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。"}, {"role": "assistant", "text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。"}, {"role": "user", "text": "接着说"}, {"role": "assistant", "text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。第八段说明。第九段说明。第十段说明。第十一段说明。第十二段说明。第十三段说明。第十四段说明。第十五段说明。第十六段说明。第十七段说明。第十八段说明。第十九段"}]}, "exit_seconds": 0.032, "seconds": 11.7}
+{
+	"ok": true,
+	"deltas_before_abort": 5,
+	"abort_ok": true,
+	"abort_response_seconds": 0.013,
+	"settled_seconds": 0.013,
+	"settled_aborted": true,
+	"aborted_message": {
+		"t": 2.549,
+		"stop_reason": "aborted",
+		"text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。"
+	},
+	"next_turn": {
+		"messages_before": [
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+			{
+				"role": "assistant",
+				"text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。"
+			}
+		],
+		"prompt_ok": true,
+		"prompt_error": null,
+		"settled": true,
+		"stop_reason": "stop",
+		"error": null,
+		"request": [
+			{
+				"role": "system",
+				"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+			},
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+			{ "role": "user", "text": "接着说" }
+		],
+		"messages_after": [
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-midstream 照剧本做。" },
+			{
+				"role": "assistant",
+				"text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。"
+			},
+			{ "role": "user", "text": "接着说" },
+			{
+				"role": "assistant",
+				"text": "第一段说明。第二段说明。第三段说明。第四段说明。第五段说明。第六段说明。第七段说明。第八段说明。第九段说明。第十段说明。第十一段说明。第十二段说明。第十三段说明。第十四段说明。第十五段说明。第十六段说明。第十七段说明。第十八段说明。第十九段"
+			}
+		]
+	},
+	"exit_seconds": 0.032,
+	"seconds": 11.7
+}

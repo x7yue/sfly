@@ -1,1 +1,18 @@
-{"ok": true, "handled": {"success": true, "data": {"disposition": "handled"}, "error": null}, "queued": {"success": true, "data": {"disposition": "queued"}, "error": null}, "idle": {"success": true, "data": {"disposition": "queued"}, "error": null}, "queue_updates": [{"t": 0.445, "steering": ["插话二：顺便看一下日志"], "followUp": []}, {"t": 6.456, "steering": [], "followUp": []}, {"t": 6.466, "steering": ["空闲时的插话"], "followUp": []}], "user_messages": [{"t": 6.456, "text": "插话二：顺便看一下日志"}], "sent": ["AEVAL-SCRIPT:rpcprobe-steer 照剧本做。", "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。", "插话二：顺便看一下日志"], "seconds": 6.5}
+{
+	"ok": true,
+	"handled": { "success": true, "data": { "disposition": "handled" }, "error": null },
+	"queued": { "success": true, "data": { "disposition": "queued" }, "error": null },
+	"idle": { "success": true, "data": { "disposition": "queued" }, "error": null },
+	"queue_updates": [
+		{ "t": 0.445, "steering": ["插话二：顺便看一下日志"], "followUp": [] },
+		{ "t": 6.456, "steering": [], "followUp": [] },
+		{ "t": 6.466, "steering": ["空闲时的插话"], "followUp": [] }
+	],
+	"user_messages": [{ "t": 6.456, "text": "插话二：顺便看一下日志" }],
+	"sent": [
+		"AEVAL-SCRIPT:rpcprobe-steer 照剧本做。",
+		"AEVAL-SCRIPT:rpcprobe-steer 照剧本做。",
+		"插话二：顺便看一下日志"
+	],
+	"seconds": 6.5
+}
