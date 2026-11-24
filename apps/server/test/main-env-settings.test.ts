@@ -238,7 +238,7 @@ const U = USER_MARK;
 const M = PASSWORD_MARK;
 const H = HOST_MARK;
 
-/** 每个变量填的形状：第 j 次启动时每个变量都填它的第 j 项（每个变量 11 项，都是该变量不认的写法；最后三项放在主机、端口位置）。 */
+/** 每个变量填的形状：第 j 次启动时每个变量都填它的第 j 项（每个变量 11 项，代理信任 12 项，都是该变量不认的写法；后面几项放在主机、端口位置）。 */
 const SHAPES: Record<EnvName, readonly string[]> = {
 	// 对外地址（严格：不带用户名密码、? 和 #）和网关地址（再加不带路径）。
 	SFLY_PUBLIC_URL: [
@@ -334,6 +334,7 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`10.0.0.1,${H}`, // 标记是一项代理的名字
 		`10.0.0.1:${M}`, // 标记在端口的位置
 		`${H}.proxy.internal:3128`,
+		NUMBER_MARK, // 13 个数字：当作代理的层数（上限 10），说明里不回显
 	],
 	// 数据库地址：连接库也解析不了的写法（端口写错、多个主机、全角的 ＠、括号不成对）；其中有不带 @ 的。
 	DATABASE_URL: [
@@ -402,8 +403,8 @@ interface Scenario {
 	rejects: readonly string[];
 }
 
-/** 11 次启动，每个变量在第 j 次填它的第 j 项。 */
-const SHAPE_COUNT = 11;
+/** 12 次启动，每个变量在第 j 次填它的第 j 项（项数不足 12 的变量从头再来）。 */
+const SHAPE_COUNT = 12;
 const JOINT: Scenario[] = Array.from({ length: SHAPE_COUNT }, (_, j) => {
 	const env = Object.fromEntries(
 		Object.entries(SHAPES).map(([name, shapes]) => [name, shapes[j % shapes.length] as string]),
