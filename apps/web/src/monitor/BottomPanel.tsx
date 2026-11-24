@@ -38,6 +38,7 @@ import {
 	formatMetric,
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { NODE_STATUS } from "#/lib/node-status";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { shortcutText } from "#/lib/shortcuts";
@@ -827,13 +828,7 @@ function JsonBlock({ value }: { value: unknown }) {
 		if (!path) continue;
 		parts.push(text.slice(last, m.index));
 		parts.push(
-			<a
-				key={m.index}
-				href={path}
-				download
-				className="underline underline-offset-2"
-				title="下载产物"
-			>
+			<a key={m.index} href={path} download className={INLINE_LINK} title="下载产物">
 				{m[0]}
 			</a>,
 		);

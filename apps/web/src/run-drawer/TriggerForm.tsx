@@ -18,6 +18,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { useNickname } from "#/lib/nickname";
 import { writeRunView } from "#/monitor/live-run";
 import { unusablePresetNotice } from "#/presets/invalid-preset";
@@ -312,11 +313,7 @@ function RunningNotice({ orchestrationId }: { orchestrationId: string }) {
 				该场景已有 {runs.length} 个运行中的运行{" "}
 				<span className="font-mono">{shortId(first.id)}</span>
 			</span>
-			<Link
-				to="/runs/$id"
-				params={{ id: first.id }}
-				className="ml-auto underline underline-offset-2"
-			>
+			<Link to="/runs/$id" params={{ id: first.id }} className={cn("ml-auto", INLINE_LINK)}>
 				查看
 			</Link>
 		</output>
