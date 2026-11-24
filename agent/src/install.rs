@@ -1354,7 +1354,8 @@ mod tests {
 
         // 头的名字不分大小写，续行不是新的头，只在某个 extra 下才要的依赖不算。
         let wheel = metadata(
-            "name: x\nversion: 1.0.0\nREQUIRES-DIST: a>=1\n  continued\nRequires-Dist: b>=2 ; extra == 'dev'\n\
+            "name: x\nsummary: a long one\n  Version: 9.9\nversion: 1.0.0\nREQUIRES-DIST: a>=1\n  \
+             Requires-Dist: evil>=1\nRequires-Dist: b>=2 ; extra == 'dev'\n\
              Requires-Dist: c>=3 ; python_version >= '3'\n\nbody\n",
         );
         assert_eq!(wheel_version(&wheel).as_deref(), Some("1.0.0"));
