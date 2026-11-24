@@ -65,6 +65,16 @@ fn note(message: &str) -> &str {
     message.find("依赖冲突：").map_or("", |i| &message[i..])
 }
 
+/// 错误信息里 uv 自己的话（去掉 Agent 自己写的第一行命令行和补的那一段说明）。
+fn uv_words(message: &str) -> String {
+    let end = message.find("依赖冲突：").unwrap_or(message.len());
+    message[..end]
+        .lines()
+        .filter(|l| !l.starts_with("$ "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// 说明里列出的「<谁> 要求 <什么>」的个数。
 fn listed(note: &str) -> usize {
     note.lines().filter(|l| l.contains(" 要求 ")).count()
@@ -165,6 +175,105 @@ async fn requirements_with_an_environment_marker_are_not_listed() {
     assert!(n.contains("sfly-plain（已安装） 要求 sfly-base>=2"), "{n}");
     assert!(!n.contains("sfly-applies"), "{n}");
     assert!(!n.contains("sfly-never"), "{n}");
+    assert_eq!(listed(n), 2, "{n}");
+}
+
+/// 只有带环境标记的要求挡路：没有可列的，不补说明、不写「怎么办」；uv 的原话里通常看得到那个版本范围
+/// （`you require sfly-base>=2`；看不到是谁要的）。
+#[tokio::test]
+async fn a_blocking_requirement_with_a_marker_alone_gets_no_note_and_uv_still_names_the_range() {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-base", "3.0", &[]);
+    let applies = publish(
+        &fixture,
+        "sfly-applies",
+        "1.0.0",
+        &["sfly-base>=2 ; python_version >= '3'"],
+    );
+    let base = publish(&fixture, "sfly-base", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-marker-alone", &venv, &fixture);
+    cp.hello(0).await;
+    install_ok(&cp, task("t-applies", "sfly-applies", "1.0.0", &applies)).await;
+
+    let message = install_fails(&cp, task("t-base", "sfly-base", "1.0.0", &base)).await;
+
+    assert!(!message.contains("依赖冲突："), "{message}");
+    assert!(!message.contains("怎么办"), "{message}");
+    let words = uv_words(&message);
+    assert!(words.contains("sfly-base>=2"), "{words}");
+}
+
+/// 两个已装节点包本来就矛盾（`sfly-dep`），另一个已装节点包对正在装的包写的要求，uv 认为满足、pep440_rs 认为不满足
+/// （`===` 它按字符串比，uv 按版本比；`!=X.*` 的前缀比版本的段数多，它只比到较短的那一段）：说明里只写 `sfly-dep` 那一组，
+/// 不出现 `sfly-base` 的要求。
+async fn unrelated_failure_with(case: &str, requirement: &str, version: &str) -> String {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-dep", "1.0", &[]);
+    let base = publish(&fixture, "sfly-base", version, &[]);
+    let venv = fresh_venv(true);
+    install_without_dependencies(
+        &venv,
+        &[
+            ("sfly-a", &["sfly-dep>=2"]),
+            ("sfly-b", &["sfly-dep<2"]),
+            ("sfly-u", &[requirement]),
+        ],
+    );
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, &format!("agent-{case}"), &venv, &fixture);
+    cp.hello(0).await;
+    install_fails(&cp, task("t-base", "sfly-base", version, &base)).await
+}
+
+#[tokio::test]
+async fn an_arbitrary_equality_that_uv_accepts_is_not_paired_with_the_version() {
+    let message = unrelated_failure_with("arbitrary-equality", "sfly-base===1.0", "1.0.0").await;
+
+    let n = note(&message);
+    assert!(n.contains("sfly-a（已安装） 要求 sfly-dep>=2"), "{n}");
+    assert!(n.contains("sfly-b（已安装） 要求 sfly-dep<2"), "{n}");
+    assert!(!n.contains("sfly-u"), "{n}");
+    assert_eq!(listed(n), 2, "{n}");
+}
+
+#[tokio::test]
+async fn a_not_equal_wildcard_longer_than_the_version_that_uv_accepts_is_not_paired() {
+    let message = unrelated_failure_with("not-equal-wildcard", "sfly-base!=1.0.1.*", "1.0").await;
+
+    let n = note(&message);
+    assert!(n.contains("sfly-a（已安装） 要求 sfly-dep>=2"), "{n}");
+    assert!(!n.contains("sfly-u"), "{n}");
+    assert_eq!(listed(n), 2, "{n}");
+}
+
+/// 别的已装节点包把对正在装的包的要求写成 `sfly__base`（连续的分隔符），5.0.0 都满足：没有 `sfly-base` 的任何一组，
+/// 不会落回「写法不一样就列」的规则、列出两条其实都满足的要求。
+#[tokio::test]
+async fn requirements_written_with_doubled_separators_that_are_satisfied_are_not_listed() {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-dep", "1.0", &[]);
+    let base = publish(&fixture, "sfly-base", "5.0.0", &[]);
+    let venv = fresh_venv(true);
+    install_without_dependencies(
+        &venv,
+        &[
+            ("sfly-a", &["sfly-dep>=2"]),
+            ("sfly-b", &["sfly-dep<2"]),
+            ("sfly-u1", &["sfly__base>=2"]),
+            ("sfly-u2", &["sfly__base>=3"]),
+        ],
+    );
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-doubled", &venv, &fixture);
+    cp.hello(0).await;
+
+    let message = install_fails(&cp, task("t-base", "sfly-base", "5.0.0", &base)).await;
+
+    let n = note(&message);
+    assert!(n.contains("sfly-a（已安装） 要求 sfly-dep>=2"), "{n}");
+    assert!(!n.contains("sfly-u1") && !n.contains("sfly-u2"), "{n}");
     assert_eq!(listed(n), 2, "{n}");
 }
 

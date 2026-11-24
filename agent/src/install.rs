@@ -519,7 +519,7 @@ fn canonical_name(name: &str) -> String {
 
 /// 一条要求（PEP 508）里的包名（规范化之后）和版本限制：`名字`、可选的 `[extras]`、版本限制（可以写在括号里，
 /// 多个限制用逗号隔开）。带环境标记的（`; python_version < "3.12"`）、URL 形式的（`名字 @ 地址`）、没有版本限制的、
-/// 拆不出来的、限制读不懂的返回 None：这些判断不了，当作不适用。带标记和 URL 的写法在名字后面跟的不是版本限制，
+/// 拆不出来的、限制读不懂的、限制里有 `===` 或 `!=…*` 的（见下面）返回 None：这些判断不了，当作不适用。带标记和 URL 的写法在名字后面跟的不是版本限制，
 /// 下面读版本限制时读不懂，自然是 None。
 fn version_requirement(text: &str) -> Option<(String, VersionSpecifiers)> {
     let text = text.trim();
@@ -541,6 +541,16 @@ fn version_requirement(text: &str) -> Option<(String, VersionSpecifiers)> {
     if specifiers.is_empty() {
         return None;
     }
+    // `===`（任意相等）和 `!=X.*`（通配的不等）：pep440_rs 的判断和 uv 的不一样（`===` 它按字符串比，uv 按版本比；
+    // `!=X.*` 的前缀比版本的段数多时它只比到较短的那一段），会列出 uv 并不认为冲突的一对。判断不一致时宁可不列，
+    // 当作不适用。`==X.*` 方向相反，只会少列，不动。
+    if specifiers
+        .split(',')
+        .map(str::trim)
+        .any(|limit| limit.starts_with("===") || (limit.starts_with("!=") && limit.contains('*')))
+    {
+        return None;
+    }
     Some((
         canonical_name(name),
         VersionSpecifiers::from_str(specifiers).ok()?,
@@ -554,9 +564,7 @@ fn requirement_name(requirement: &str) -> String {
             matches!(c, '<' | '>' | '=' | '!' | '~' | '[' | ';' | '@' | '(') || c.is_whitespace()
         })
         .unwrap_or(requirement.len());
-    requirement[..end]
-        .to_ascii_lowercase()
-        .replace(['_', '.'], "-")
+    canonical_name(&requirement[..end])
 }
 
 /// wheel 文件名里的包名和版本（`{包名}-{版本}-{python}-{abi}-{平台}.whl`，包名和版本里的 `-` 已经写成 `_`）。
@@ -631,8 +639,7 @@ fn wheel_version(wheel: &Path) -> Option<String> {
 
 /// 包名按 PEP 503 规范化后比较。
 fn same_name(a: &str, b: &str) -> bool {
-    let normalize = |s: &str| s.to_ascii_lowercase().replace(['_', '.'], "-");
-    normalize(a) == normalize(b)
+    canonical_name(a) == canonical_name(b)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -726,6 +733,9 @@ mod tests {
             ("httpx[http2]>=0.25 ; python_version >= '3.10'", "httpx"),
             ("psutil", "psutil"),
             ("pkg @ https://example.com/pkg.whl", "pkg"),
+            // 连续的分隔符合成一个。
+            ("sfly__base>=2", "sfly-base"),
+            ("Sfly_-.Base>=2", "sfly-base"),
         ] {
             assert_eq!(requirement_name(requirement), name, "{requirement}");
         }
@@ -974,11 +984,119 @@ mod tests {
     }
 
     #[test]
+    fn requirements_that_uv_judges_differently_from_the_library_are_not_listed() {
+        // 用真 uv 对照过：正在装的版本 × 别的节点包的要求，pep440_rs 说不满足、uv 却解得出来的就这两类，
+        // 共 7 种：`===`（库按字符串比，uv 按版本比）、`!=X.*` 的前缀比版本的段数多（库只比到较短的那一段）。
+        // 判断不一致时宁可不列。
+        for (version, requirement) in [
+            ("1.0.0", "sfly-base===1.0"),
+            ("1.0", "sfly-base===1.0.0"),
+            ("1.0.0+dev", "sfly-base===1.0.0"),
+            ("1", "sfly-base!=1.1.*"),
+            ("1.0", "sfly-base!=1.0.0.1.*"),
+            ("1.0.0", "sfly-base!=1.0.0.1.*"),
+            ("1.0", "sfly-base!=1.0.1.*"),
+            ("0.4", "sfly-base!=0.4.1.*"),
+            // 同类的别的写法：照样不判断。
+            ("2.0", "sfly-base===1.0"),
+            ("1.1", "sfly-base!=1.1.*"),
+        ] {
+            let others = requires(&[("sfly-user", &[requirement])]);
+            assert_eq!(
+                conflict_note(
+                    &format!("sfly-base@{version}"),
+                    &[],
+                    "sfly-base",
+                    Some(version),
+                    &others,
+                    &uv_output("sfly-base", version, "")
+                ),
+                None,
+                "{version} {requirement}"
+            );
+        }
+        // 方向相反、只会少列的 `==X.*` 不在其中，照常判断；`!=` 不带通配也照常判断。
+        for (version, requirement) in [("1.5.0", "sfly-base==1.4.*"), ("1.4.1", "sfly-base!=1.4.1")]
+        {
+            let others = requires(&[("sfly-user", &[requirement])]);
+            assert!(
+                conflict_note(
+                    &format!("sfly-base@{version}"),
+                    &[],
+                    "sfly-base",
+                    Some(version),
+                    &others,
+                    &uv_output("sfly-base", version, "")
+                )
+                .is_some(),
+                "{version} {requirement}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_requirement_with_doubled_separators_is_a_requirement_on_the_package_itself() {
+        // 别的节点包把对正在装的包的要求写成 `sfly__base`（连续的分隔符）：照样认得出是同一个包。5.0.0 都满足，
+        // 没有凑出来的一对，也不会落回「写法不一样就列」的规则、列出两条其实都满足的要求。失败是 sfly-dep 的矛盾。
+        let others = requires(&[
+            ("sfly-a", &["sfly-dep>=2"]),
+            ("sfly-b", &["sfly-dep<2"]),
+            ("sfly-u1", &["sfly__base>=2"]),
+            ("sfly-u2", &["sfly__base>=3"]),
+        ]);
+
+        let note = conflict_note(
+            "sfly-base@5.0.0",
+            &[],
+            "sfly-base",
+            Some("5.0.0"),
+            &others,
+            &uv_output(
+                "sfly-base",
+                "5.0.0",
+                "  ╰─▶ Because you require sfly-dep>=2 and sfly-dep<2, we can conclude that your requirements are unsatisfiable.",
+            ),
+        )
+        .expect("note");
+
+        assert!(note.contains("sfly-a（已安装） 要求 sfly-dep>=2"), "{note}");
+        assert!(
+            !note.contains("sfly-u1") && !note.contains("sfly-u2"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("sfly-base") && !note.contains("sfly--base"),
+            "{note}"
+        );
+        // 它们真的挡路时（要求的版本比正在装的高）照常列出，写成什么样的名字都一样。
+        let note = conflict_note(
+            "sfly-base@1.0.0",
+            &[],
+            "sfly-base",
+            Some("1.0.0"),
+            &others,
+            &uv_output("sfly-base", "1.0.0", ""),
+        )
+        .expect("note");
+        assert!(
+            note.contains("sfly-u1（已安装） 要求 sfly__base>=2"),
+            "{note}"
+        );
+        assert!(
+            note.contains("sfly-u2（已安装） 要求 sfly__base>=3"),
+            "{note}"
+        );
+        assert_eq!(note.matches("sfly-base：").count(), 1, "{note}");
+    }
+
+    #[test]
     fn requirements_on_other_packages_and_the_replaced_copy_do_not_count() {
-        // 别的包的要求（httpx>=2）和这个版本无关；已装的同名包自己（它就要被换掉）的要求也不算。
+        // 别的包的要求（httpx>=2）和这个版本无关；已装的同名包自己（它就要被换掉）的要求也不算，不管它登记的名字
+        // 是哪种写法。
         let others = requires(&[
             ("sfly-user", &["httpx>=2", "sfly-base-extra>=2"]),
             ("sfly-base", &["sfly-base>=2"]),
+            ("Sfly__Base", &["sfly-base>=2"]),
         ]);
         assert_eq!(
             conflict_note(
@@ -1133,7 +1251,15 @@ mod tests {
         assert!(!many.contains(&"2.0".parse().unwrap()));
         assert!(!many.contains(&"0.9".parse().unwrap()));
         // 各种运算符。
-        for spec in ["~=1.4", "==1.4.*", "!=1.4.1", "<=2", "<2", ">1", "===1.4"] {
+        for spec in [
+            "~=1.4",
+            "==1.4.*",
+            "!=1.4.1",
+            "<=2",
+            "<2",
+            ">1",
+            ">=1,!=1.4.1",
+        ] {
             assert!(
                 version_requirement(&format!("sfly-base{spec}")).is_some(),
                 "{spec}"
@@ -1155,6 +1281,14 @@ mod tests {
             "this is not a requirement",
             "sfly-base>=",
             "sfly-base>=not.a.version",
+            // uv 和库判断不一样的两种写法：`===`、`!=X.*`（任何一个限制是就算）。
+            "sfly-base===1.0",
+            "sfly-base === 1.0",
+            "sfly-base (===1.0)",
+            "sfly-base>=1,===1.2",
+            "sfly-base!=1.0.1.*",
+            "sfly-base != 1.0.*",
+            "sfly-base>=1,!=1.5.*",
             "sfly-base[extra>=2",
             "sfly-base (>=2",
         ] {
