@@ -1,6 +1,14 @@
 // 在测试进程里起一个助手服务：真的 SessionManager 和 HTTP 服务，pi 用真的（或假的，`piArgv`），
 // 模型是 FakeModel，工作台是 FakeWorkbench。事件流由 {@link EventsClient} 收着。
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -202,6 +210,23 @@ export class Harness {
 			method: "POST",
 			headers: { authorization: `Bearer ${SECRET}` },
 		});
+	}
+
+	/**
+	 * 等这个会话的 pi 原始事件（`events.jsonl`）写到这一轮的 `agent_settled`：它是异步写的，`turn_end` 不等它落盘（#684），
+	 * 一轮结束的那一刻文件里可能还缺最后几条。只用于以 `agent_settled` 结束的一轮（真的 pi 在它之后不再写这一轮的东西）。
+	 */
+	async rawSettled(sessionId: string, timeoutMs = 10_000): Promise<string> {
+		const path = join(this.dataDir, "sessions", sessionId, "events.jsonl");
+		let text = "";
+		await eventually(() => {
+			text = existsSync(path) ? readFileSync(path, "utf8") : "";
+			const last = text.trimEnd().split("\n").at(-1) ?? "";
+			if (!text.endsWith("\n") || !last.includes('"type":"agent_settled"')) {
+				throw new Error("events.jsonl 还没写到 agent_settled");
+			}
+		}, timeoutMs);
+		return text;
 	}
 
 	/** 等这个会话的第 `turn` 轮结束，返回 `turn_end`。 */
