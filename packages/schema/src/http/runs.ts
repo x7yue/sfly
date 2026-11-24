@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ParamType, STORED_NODE_KINDS } from "../orchestration-document.js";
 import { RunLogNodesParam } from "../run-log-scope.js";
+import { SessionRef } from "../sessions.js";
 import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
@@ -225,6 +226,8 @@ export const RunView = z.object({
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: z.string().nullable(),
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session: SessionRef.optional(),
 	params: z.record(z.string(), z.unknown()),
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunPresetView.nullable(),
@@ -245,6 +248,12 @@ export const RunView = z.object({
 	 * 或者投递记录已过保留期被清理时为 null。
 	 */
 	run_notification: RunNotificationState.nullable(),
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、
+	 * 输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，
+	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize: z.boolean().optional(),
 	/** 按深度、开始时间排序。 */
 	chains: z.array(ChainRunView),
 });
@@ -257,6 +266,7 @@ export const RunSummary = RunView.pick({
 	status: true,
 	triggered_by: true,
 	triggered_via: true,
+	session: true,
 	started_at: true,
 	ended_at: true,
 }).extend({

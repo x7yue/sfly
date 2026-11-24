@@ -7,12 +7,12 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useId, useState } from "react";
-import { useShortcut } from "#/components/shortcuts";
+import { useId, useRef, useState } from "react";
 import { ApiError, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
-import { shortcutText } from "#/lib/shortcuts";
+import { INLINE_LINK } from "#/lib/inline-link";
+import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
@@ -48,11 +48,14 @@ export function NewSession({
 	const reason = cannotStartReason(readiness);
 	const empty = text.trim() === "";
 	const busy = busySession(sessions);
+	const field = useRef<HTMLTextAreaElement>(null);
 	const start = () => {
-		if (reason === null && !empty && !create.isPending) create.mutate(text);
+		if (reason !== null || empty || create.isPending) return;
+		// 开始的这一刻就把焦点交给输入框：「开始」随即不可用，浏览器会让被禁用的按钮失去焦点、落到 body 上
+		// （和会话页的「发送」一样）；失败时焦点在输入框、写好的话还在。成功后跳到会话页，输入框随之没有。
+		field.current?.focus();
+		create.mutate(text);
 	};
-	// Ctrl/⌘+Enter 开始（和会话页的「接着说」同一个快捷键）；Enter 是换行。
-	useShortcut("assistant-send", start);
 	return (
 		<form
 			aria-label={SESSION.input.label}
@@ -63,6 +66,7 @@ export function NewSession({
 			}}
 		>
 			<Textarea
+				ref={field}
 				aria-label={SESSION.input.label}
 				aria-describedby={reason === null ? undefined : reasonId}
 				placeholder={SESSION.input.placeholder}
@@ -70,6 +74,17 @@ export function NewSession({
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={3}
 				onChange={(event) => setText(event.target.value)}
+				onKeyDown={(event) => {
+					// Ctrl/⌘+Enter 开始（和会话页的「接着说」同一个快捷键），只在输入框里；Enter 是换行；输入法选字时的 Enter 不算
+					// （keyCode 229：Safari 在组字结束的那次按键上 isComposing 已经是 false）。
+					if (
+						isShortcut("assistant-send", event) &&
+						!(event.nativeEvent.isComposing || event.keyCode === 229)
+					) {
+						event.preventDefault();
+						start();
+					}
+				}}
 			/>
 			<div className="flex items-center gap-3">
 				<Button
@@ -94,11 +109,7 @@ export function NewSession({
 							{busy && (
 								<>
 									{"："}
-									<Link
-										to="/sessions/$id"
-										params={{ id: busy.id }}
-										className="text-fg-1 underline underline-offset-2"
-									>
+									<Link to="/sessions/$id" params={{ id: busy.id }} className={INLINE_LINK}>
 										{SESSION.busyLink}
 									</Link>
 								</>

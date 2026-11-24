@@ -682,6 +682,8 @@ export interface DashboardRunningRun {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（与运行列表的 `session` 相同）。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
@@ -1567,6 +1569,8 @@ export interface OrchestrationVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 }
@@ -2254,6 +2258,8 @@ export interface RunListItem {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunListPreset | null;
 	started_at: Timestamp;
@@ -2522,6 +2528,11 @@ export interface RunReport {
 	truncated: boolean;
 	/** 运行里已经创建的全部链实例，按层数、开始时间排序；还没被触发的子流程不在里面，看触发它的异步任务节点的状态。 */
 	chains: RunStateChain[];
+	/**
+	 * 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（和运行视图的 `session` 相同）。
+	 * 只在运行摘要里：`RunState` 也是节点里 `${{ run.state }}` 看到的东西，不带它。
+	 */
+	session?: SessionRef;
 	/** 耗时（毫秒，控制面时间）；运行还没结束时为 null。 */
 	duration_ms: number | null;
 	/**
@@ -2542,6 +2553,12 @@ export interface RunReport {
 	 * 摘要只给最新值，要曲线用 `GET /runs/:id/focus`。
 	 */
 	attention_items: RunReportAttentionItem[];
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，
+	 * 所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；
+	 * 旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 }
 
 /** 有异常的关注项：关注项读数（`GET /runs/:id/focus`）里的一项，只留下认出它是哪一项、最新值和异常的字段。 */
@@ -2724,6 +2741,8 @@ export interface RunSummary {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
@@ -2741,6 +2760,8 @@ export interface RunView {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	params: Record<string, unknown>;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunPresetView | null;
@@ -2759,6 +2780,12 @@ export interface RunView {
 	 * 或者投递记录已过保留期被清理时为 null。
 	 */
 	run_notification: RunNotificationState | null;
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、
+	 * 输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，
+	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 	/** 按深度、开始时间排序。 */
 	chains: ChainRunView[];
 }
@@ -2825,6 +2852,8 @@ export interface SavedVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
@@ -2907,6 +2936,16 @@ export interface SessionListResponse {
 
 /** 会话里的一句话：新建会话的第一句、发话、插话。非空（不能只有空白），不超过 `SESSION_MESSAGE_MAX_CHARS` 个字符。 */
 export type SessionMessageText = string;
+
+/**
+ * 运行、场景版本上的「经哪个会话」（ADR 0029「经 …」：会话令牌记会话，#547）：会话的 ID 和标题，页面上显示成
+ * 会话「<标题>」并链到会话页。依据是控制面收到的请求带着哪个会话的令牌，不是模型在对话里怎么说，也不是可以伪造的
+ * `x-sfly-client` 标注。不是会话做的，响应里没有这个字段。
+ */
+export interface SessionRef {
+	id: string;
+	title: string;
+}
 
 /**
  * 会话的状态：`idle` 空闲、`running` 在做（有一轮在进行）、`queued` 排队中（同一个项目另一个会话在做，#544）、
@@ -3191,6 +3230,8 @@ export interface VersionSummaryView {
 	author: string;
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 }
 

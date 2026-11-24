@@ -61,6 +61,7 @@ import type {
 	TriggerRejection,
 	TriggerRequest,
 } from "../runs/trigger-admission.js";
+import type { SessionStore } from "../sessions/session-store.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
@@ -227,6 +228,8 @@ export class Engine implements AgentSessionHandler {
 			admitTrigger: TriggerAdmission;
 			/** 运行通知：在 step 的事务里入队，提交后唤醒投递（src/feishu/engine-notifications.ts）。 */
 			notifications: EngineNotifications;
+			/** 会话：会话令牌触发的运行，在同一个事务里给会话写一条平台记录（#547）。 */
+			sessions: SessionStore;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
 			/** Welcome 里和调度无关的部分：目标版本、SDK wheel、镜像、Agent 二进制（src/agents/agent-environment.ts）。 */
@@ -262,6 +265,8 @@ export class Engine implements AgentSessionHandler {
 	 */
 	trigger(orchestrationId: string, request: TriggerRequest, actor: Actor): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
+			// 会话令牌的触发：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
+			if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(step.tx);
 			const admitted = await this.deps.admitTrigger(step.tx, orchestrationId, request);
 			if (!admitted.ok) return admitted;
 			const { projectId, version, plan, params, runPreset } = admitted;
@@ -280,6 +285,8 @@ export class Engine implements AgentSessionHandler {
 					triggeredByUserId: actor.userId,
 					triggeredVia: actor.via,
 					triggeredToken: actor.token,
+					// 经哪个会话触发：依据是请求带的会话令牌（访问检查给出），不是模型在对话里怎么说。
+					sessionId: actor.sessionId,
 					params,
 					...runPreset,
 					status: "running",
@@ -299,6 +306,17 @@ export class Engine implements AgentSessionHandler {
 				})
 				.returning();
 			await this.#advance(step, run as RunRow, chain as ChainRow, 0);
+			if (actor.sessionId !== null) {
+				// 会话令牌触发的：同一个事务里给会话写一条平台记录（成果栏只读这些记录），提交之后再推送。慢的都做完了（引擎的锁、
+				// 场景的锁、运行的写入和推进）：记录是事务的最后一件事（会话那一行的锁是最后拿的一把），事务里不等任何进程里的锁。
+				const { sessionId } = actor;
+				const event = await this.deps.sessions.recordPlatform(step.tx, sessionId, {
+					kind: "run",
+					run_id: runId,
+					scenario_name: admitted.scenarioName,
+				});
+				step.afterCommit.push(() => this.deps.sessions.announce(sessionId, event));
+			}
 			return { ok: true, runId };
 		});
 	}
@@ -603,9 +621,12 @@ export class Engine implements AgentSessionHandler {
 			cancels: [],
 			assigns: [],
 			notifications: noPendingNotifications(),
+			afterCommit: [],
 		};
 		const result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
 		this.#publish(step.touchedRuns);
+		// 提交之后的收尾（推送会话里的平台记录：交给会话的链、不等它；推送失败只记日志，后面的取消、派发照做）。
+		for (const after of step.afterCommit) after();
 		for (const order of step.cancels) this.#sendCancel(order);
 		for (const { conn, message } of step.assigns) conn.send(message);
 		await this.deps.notifications.committed(step.notifications);

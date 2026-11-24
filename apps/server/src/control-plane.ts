@@ -202,6 +202,8 @@ export interface ControlPlaneOptions {
 	passwordGate?: PasswordGateOptions;
 	/** 打开着的事件流多久重新检查一次它的凭据（毫秒，src/http/api.ts），默认 30 秒；测试里调小。 */
 	streamRecheckMs?: number;
+	/** 会话令牌的写（触发、保存、恢复、复制）的事务里等行锁最多等多久（毫秒，src/sessions/session-store.ts），默认 5 秒；测试里调小。 */
+	sessionWriteLockTimeoutMs?: number;
 }
 
 export interface ControlPlane {
@@ -209,6 +211,11 @@ export interface ControlPlane {
 	readonly grpcUrl: string;
 	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
 	readonly sessions: SessionStore;
+	/**
+	 * 关闭控制面。**可以重复调用，第二次起拿到的是同一个 promise**（和第一次同时落定，不会比它先完成）：只关一次，不再去关已经关了的东西
+	 * （第二次关连接池会拒绝）。调用方不止一个（停止信号、致命错误之后的有序退出），谁先谁后都是同一个结果，不会有一方在另一方还没关完时
+	 * 就当作「关完了」去退出进程。
+	 */
 	close(): Promise<void>;
 }
 
@@ -284,7 +291,16 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
-	const orchestrations = new OrchestrationStore({ db: database.db, clock });
+	// 会话令牌触发的运行、保存的场景版本，在同一个事务里给会话写平台记录（#547）：引擎和场景存储都用它。
+	const sessions = new SessionStore({
+		db: database.db,
+		clock,
+		onError: (what, error) => logError(`sfly: ${what}`, error),
+		...(options.sessionWriteLockTimeoutMs !== undefined && {
+			writeLockTimeoutMs: options.sessionWriteLockTimeoutMs,
+		}),
+	});
+	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
@@ -334,6 +350,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		clock,
 		mutex,
 		hub,
+		sessions,
 		assignContent: createAssignContent({
 			packageArchiveUrl: (name, version) =>
 				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
@@ -423,7 +440,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		throw error;
 	}
 	const publicUrl = options.publicHttpUrl?.replace(/\/+$/, "");
-	const sessions = new SessionStore({ db: database.db, clock });
 	// 助手默认关闭：没配好时写明原因（日志里一行，就绪状态里也写）。
 	const assistant = assistantSetup({ url: options.assistantUrl, secret: options.assistantSecret });
 	if (!assistant.configured && logger) printInfo(`sfly: 助手没有开启：${assistant.reason}`);
@@ -604,27 +620,34 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 重启前还在排队的消息接着投递。
 	feishuDelivery.wake();
 
+	/** 关闭只做一次：重复调用（收到几个停止信号）拿到同一个结果，不再去关已经关了的东西（第二次关连接池会拒绝）。 */
+	let closing: Promise<void> | undefined;
+	const close = async (): Promise<void> => {
+		await assistantConnection?.close();
+		await Promise.all(sweeps.map((s) => s.stop()));
+		await retention.idle();
+		await metricRetention.idle();
+		hub.closeAll();
+		await gateway.close();
+		// 正常关闭时写入内存里尚未写库的指标。
+		await metrics.close().catch(fail("metric flush"));
+		// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
+		await mutex.run(async () => {});
+		// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
+		feishuDelivery.close();
+		await feishu.close();
+		await feishuDelivery.idle();
+		await api.close();
+		await database.close();
+	};
+
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
 		sessions,
-		async close() {
-			await assistantConnection?.close();
-			await Promise.all(sweeps.map((s) => s.stop()));
-			await retention.idle();
-			await metricRetention.idle();
-			hub.closeAll();
-			await gateway.close();
-			// 正常关闭时写入内存里尚未写库的指标。
-			await metrics.close().catch(fail("metric flush"));
-			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
-			await mutex.run(async () => {});
-			// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
-			feishuDelivery.close();
-			await feishu.close();
-			await feishuDelivery.idle();
-			await api.close();
-			await database.close();
+		close: () => {
+			closing ??= close();
+			return closing;
 		},
 	};
 }

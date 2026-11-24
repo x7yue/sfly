@@ -28,5 +28,6 @@ export function requireActor(request: FastifyRequest, reply: FastifyReply): Acto
 		via: viaOf(request),
 		userId: access?.userId ?? null,
 		token: access?.tokenName ?? null,
+		sessionId: access?.sessionId ?? null,
 	};
 }
