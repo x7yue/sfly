@@ -2,7 +2,7 @@
 //
 // 以前这些变量原样往下传：`SFLY_PUBLIC_URL=sfly.internal:8080`（少了协议）时控制面照常启动，告诉 Agent 的网关地址是残缺的；
 // 协议写错（`http//sfly:8080`）时要等 HTTP 已经开始监听才在算网关地址的 `new URL` 里崩溃，带着堆栈。现在启动时和别的环境变量
-// 一起检查（env-settings.ts 的 `readEnvSettings`），写错的写明变量名、填的值和要求，一次报完。
+// 一起检查（env-settings.ts 的 `readEnvSettings`），写错的写明变量名和要求（不回显填的值），一次报完。
 import pg from "pg";
 import { isUnset } from "./decimal.js";
 

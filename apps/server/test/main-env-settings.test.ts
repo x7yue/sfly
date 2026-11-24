@@ -242,12 +242,12 @@ const H = HOST_MARK;
 const SHAPES: Record<EnvName, readonly string[]> = {
 	// 对外地址（严格：不带用户名密码、? 和 #）和网关地址（再加不带路径）。
 	SFLY_PUBLIC_URL: [
-		`https://${U}:${M}@host.example.com/p`, // 用户名和密码
+		`https://${U}:${M}@${H}.example.com/p`, // 用户名和密码（解析得了，主机是标记）
 		`https://${U}:${M}＠host.example.com/p`, // 全角的 ＠
 		`host.example.com/${M}`, // 令牌在路径里、没有协议
 		`host.example.com/p?token=${M}`, // 令牌在查询串里、没有协议
 		`${U}:${M}@host.example.com`, // 用户名密码、没有协议
-		`https://host.example.com/${M}?token=${M}#${M}`, // 路径、查询串、片段
+		`https://${H}.example.com/${M}?token=${M}#${M}`, // 路径、查询串、片段（解析得了，主机是标记）
 		`ftp://${U}:${M}@host.example.com:2121/${M}`, // 别的协议
 		`/${M}/path`, // 一个路径
 		`https://${H}.example.com/p?x=1`, // 标记在主机的位置（带了查询串）
@@ -255,12 +255,12 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`${H}.example.com:8443`, // 没有协议的「主机:端口」，标记在主机
 	],
 	SFLY_PUBLIC_GRPC_URL: [
-		`https://${U}:${M}@host.example.com:443`,
+		`https://${U}:${M}@${H}.example.com:443`,
 		`https://${U}:${M}＠host.example.com:443`,
 		`host.example.com:443/${M}`,
 		`host.example.com:443?token=${M}`,
 		`${U}:${M}@host.example.com:443`,
-		`https://host.example.com/${M}`,
+		`https://${H}.example.com/${M}`,
 		`ftp://${U}:${M}@host.example.com:2121/${M}`,
 		`/${M}/grpc`,
 		`https://${H}.example.com:443/p`, // 标记在主机，带了路径
@@ -274,7 +274,7 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`host.example.com/${M}`,
 		`host.example.com/p?token=${M}`,
 		`${U}:${M}@host.example.com`,
-		`ftp://${U}:${M}@host.example.com:2121/p?x=${M}`,
+		`ftp://${U}:${M}@${H}.example.com:2121/p?x=${M}`,
 		`http//${U}:${M}@host.example.com/${M}`,
 		`https://host.example.com:${M}/p`,
 		`ftp://${H}.example.com/p`, // 标记在主机，别的协议
@@ -287,7 +287,7 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`host.example.com/${M}`,
 		`host.example.com/p?token=${M}`,
 		`${U}:${M}@host.example.com`,
-		`ftp://${U}:${M}@host.example.com:2121/p?x=${M}`,
+		`ftp://${U}:${M}@${H}.example.com:2121/p?x=${M}`,
 		`http//${U}:${M}@host.example.com/${M}`,
 		`/${M}/mirror`, // GitHub Release 镜像不认裸的绝对路径
 		`ftp://${H}.example.com/p`,
@@ -301,7 +301,7 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`https://ok.example.com,host.example.com/${M}`,
 		`host.example.com/p?token=${M}`,
 		`${U}:${M}@host.example.com`,
-		`postgres://${U}:${M}@db.internal:5432/sfly?x=${M}`,
+		`postgres://${U}:${M}@${H}:5432/sfly?x=${M}`,
 		`file://host.example.com/${M}?token=${M}`,
 		`/${M}/origin`,
 		`https://ok.example.com,${H}.example.com`, // 标记在主机，没有协议
@@ -314,7 +314,7 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`http://localhost:3000,host.example.com/${M}`,
 		`host.example.com/p?token=${M}`,
 		`${U}:${M}@host.example.com`,
-		`postgres://${U}:${M}@db.internal:5432/sfly?x=${M}`,
+		`postgres://${U}:${M}@${H}:5432/sfly?x=${M}`,
 		`file://host.example.com/${M}?token=${M}`,
 		`/${M}/origin`,
 		`http://localhost:3000,${H}.example.com`,
