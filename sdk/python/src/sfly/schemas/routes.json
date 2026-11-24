@@ -2516,7 +2516,18 @@
           "token"
         ]
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "params",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称里不能有控制字符（换行、转义序列等）、双向文字的控制字符和零宽空格这类看不见的字符；零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面；要有至少一个看得见的字符"
+        },
+        {
+          "part": "params",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Agent 的名称不能超过 64 个字符"
+        }
+      ]
     },
     {
       "method": "DELETE",

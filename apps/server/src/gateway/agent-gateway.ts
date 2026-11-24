@@ -16,6 +16,7 @@ import {
 	type ServerMessage,
 	ServerMessageSchema,
 } from "@sfly/proto";
+import { AGENT_NAME_MAX_LENGTH, describeNameProblem, nameProblem } from "@sfly/schema";
 import type { AgentAuthenticator } from "../agents/agent-auth.js";
 import { agentClockReading } from "../agents/agent-clock.js";
 import { sourceAddress } from "../agents/agent-endpoint.js";
@@ -27,6 +28,7 @@ import {
 	devPackageInfo,
 } from "../agents/agent-hub.js";
 import { AsyncQueue } from "../util/async-queue.js";
+import { listening } from "../util/listen-error.js";
 import { storable } from "./storable.js";
 
 export interface AgentGatewayServer {
@@ -100,6 +102,22 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			const helloReceivedAt = options.hub.now();
 			const hello = greeting.body.value;
 			if (!hello.name) throw new ConnectError("Hello.name is required", Code.InvalidArgument);
+			// Agent 的名称是身份，显示在命令行、控制台和场景里：和令牌的名称、显示名同一个检查（#670），不合格的连接不让上来。
+			// 这一步在认证之前：认证拒绝连接的报错里带着 Hello 的名称（回给 Agent、Agent 每次重连都打到自己的标准错误上），
+			// 不合格的名称不能经它们原样回显出去；报错本身只说是哪一类问题，不带名称。
+			const nameIssue = nameProblem(hello.name);
+			if (nameIssue !== undefined) {
+				throw new ConnectError(
+					`Hello.name 不合格：${describeNameProblem("Agent 的名称", nameIssue)}`,
+					Code.InvalidArgument,
+				);
+			}
+			if ([...hello.name].length > AGENT_NAME_MAX_LENGTH) {
+				throw new ConnectError(
+					`Hello.name 不合格：Agent 的名称不能超过 ${AGENT_NAME_MAX_LENGTH} 个字符`,
+					Code.InvalidArgument,
+				);
+			}
 			// 项目和名字从凭据得出：Agent 凭据按台签发，Hello.name 和它不一致、吊销的、停用的 Agent 都在这里拒绝。
 			const outcome = await options.authenticator.authenticate(hello.token, hello.name);
 			if (!outcome.ok) {
@@ -212,13 +230,19 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
 		session.on("close", () => sessions.delete(session));
 	});
 
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(options.port, options.host, () => {
-			server.off("error", reject);
-			resolve();
-		});
-	});
+	// 监听不了时的说明只有变量名、端口和错误码（util/listen-error.ts）：Node 的报错会把监听地址原样带出来。
+	await listening(
+		"grpc",
+		options.port,
+		() =>
+			new Promise<void>((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(options.port, options.host, () => {
+					server.off("error", reject);
+					resolve();
+				});
+			}),
+	);
 	const { port } = server.address() as AddressInfo;
 
 	return {

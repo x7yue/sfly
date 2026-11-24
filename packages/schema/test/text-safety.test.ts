@@ -1,11 +1,14 @@
 // 名字里能有哪些字符（src/text-safety.ts，#606）：令牌的名称、用户的显示名、写操作的昵称、初始管理员的显示名共用一个函数。
 // 目标：名字不能在控制台和终端里倒着显示、藏字（往 AI 助手的上下文里塞看不见的话）、换行；不是「看起来一样的名字不能并存」。
 // 字符都用码位造出来，不把看不见的字符直接写在源码里。
+import { readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AccountDisplayName } from "../src/http/accounts.js";
+import { agentsApi } from "../src/http/agents.js";
 import { TokenName } from "../src/http/tokens.js";
 import {
 	codePointLabel,
+	escapeUnsafeCharacters,
 	nameProblem,
 	nameRefinement,
 	nameRule,
@@ -296,6 +299,140 @@ describe("名字里不能有的字符", () => {
 		// 三种例外不在「一个字符就拒绝」的表里，由位置规则管。
 		for (const c of [ZWNJ, ZWJ, ...Array.from({ length: 16 }, (_, i) => 0xfe00 + i)]) {
 			expect(rejected.has(c), codePointLabel(c)).toBe(false);
+		}
+	});
+
+	// 长的自由文字（给人读的说明、原因）里表里的字符写成看得见的 \\uXXXX（#670）：说明还看得懂，不整段丢。
+	it("escapeUnsafeCharacters：表里的字符写成 \\uXXXX（补充平面的写成 \\u{…}），换行和制表符默认保留，正常的文字、表情、零宽连接符原样；结果里不再有表里的字符（除了保留的）", () => {
+		expect(escapeUnsafeCharacters(`a${chars(0x1b)}[2J${chars(0x85)}${chars(0x202e)}b`)).toBe(
+			"a\\u001b[2J\\u0085\\u202eb",
+		);
+		expect(
+			escapeUnsafeCharacters(`标签${chars(0xe0067)}孤立${chars(0xd800)}盲文${chars(0x2800)}`),
+		).toBe("标签\\u{e0067}孤立\\ud800盲文\\u2800");
+		expect(escapeUnsafeCharacters("第一行\n第二行\t缩进")).toBe("第一行\n第二行\t缩进");
+		expect(escapeUnsafeCharacters(`a${chars(0xd)}b`)).toBe("a\\u000db");
+		expect(escapeUnsafeCharacters("a\nb", "")).toBe("a\\u000ab");
+		// 正常的原样：中日韩、成对的代理码元、零宽连接符的组合表情、变体选择符、波斯文。
+		for (const ok of [
+			"王小明",
+			chars(0x1f600),
+			chars(0x1f469, ZWJ, 0x1f4bb),
+			chars(0x2764, VS16),
+			`می${chars(ZWNJ)}خواهم`,
+		]) {
+			expect(escapeUnsafeCharacters(ok), ok).toBe(ok);
+		}
+		// 每个码位：结果里不再有表里的字符（保留的换行和制表符除外）。把全部码位拼成一个字符串、过一遍函数、再扫一遍结果
+		// （一个码位一次调用要一百多万次，CI 的机器上超过 5 秒的默认时限）。
+		const parts: string[] = [];
+		for (let start = 0; start <= 0x10ffff; start += 4096) {
+			const codePoints: number[] = [];
+			for (let c = start; c < Math.min(start + 4096, 0x110000); c++) {
+				if (c < 0xd800 || c > 0xdfff) codePoints.push(c);
+			}
+			parts.push(chars(...codePoints));
+		}
+		const everything = parts.join("");
+		const escaped = escapeUnsafeCharacters(everything);
+		const leftover = [...escaped.matchAll(new RegExp(REJECTED_NAME_CHARACTER.source, "gu"))]
+			.map((match) => codePointLabel(match[0].codePointAt(0) as number))
+			.filter((label) => label !== "U+0009" && label !== "U+000A");
+		expect(leftover).toEqual([]);
+		// 不在表里的字符一个都没动：去掉所有写出来的转义之后，长度只多不少（表里的码位变长，别的不变）。
+		expect([...escaped].length).toBeGreaterThan([...everything].length);
+	});
+});
+
+// 三个例外字符（零宽连接符、零宽不连字符、变体选择符）的位置规则，两头对照：这里的 `nameProblem` 是出处，`name-position-cases.json`
+// 里是它对一批名字（全部短组合加几条表情序列）得出的结果；命令行（Python 的 `safe_text.py`）的测试读同一个文件，两头的规则不会各改各的。
+// 重新生成：`UPDATE_NAME_POSITION_CASES=1 pnpm --filter @sfly/schema exec vitest run test/text-safety.test.ts`。
+describe("位置规则的对照用例", () => {
+	const fixtureUrl = new URL("./name-position-cases.json", import.meta.url);
+	const legend: Record<string, number> = {
+		a: 0x61,
+		s: 0x20,
+		b: 0xa0,
+		i: 0x3000,
+		J: 0x200d,
+		N: 0x200c,
+		V: 0xfe0f,
+		T: 0xfe0e,
+		W: 0xfe00,
+		E: 0x1f600,
+		c: 0x301,
+	};
+	const decode = (symbols: string): string =>
+		chars(...[...symbols].map((symbol) => legend[symbol] as number));
+	const product = (alphabet: string[], length: number): string[] => {
+		let out = [""];
+		for (let i = 0; i < length; i++) out = out.flatMap((prefix) => alphabet.map((a) => prefix + a));
+		return out;
+	};
+	const names = (): string[] => {
+		const all = Object.keys(legend);
+		const list: string[] = [];
+		for (let n = 0; n <= 3; n++) list.push(...product(all, n));
+		list.push(...product(["a", "s", "J", "N", "V", "E"], 4));
+		list.push(
+			...["EJE", "EVJE", "aVJVa", "aEVJE", "aVJJ", "asVJ", "aJ", "aV", "aVJ", "aJV", "aNV", "aVN"],
+			...["abJ", `${"a".repeat(30)}JJ`, "NaN", "sJ", "bJ", "iVJ"],
+		);
+		return [...new Set(list)];
+	};
+	const firstMisplaced = (symbols: string): number | null => {
+		const problem = nameProblem(decode(symbols));
+		return problem?.kind === "misplaced" ? problem.position : null;
+	};
+
+	it("`name-position-cases.json` 里每一条：第一个位置不对的字符的序号和 nameProblem 现在的结果一样", () => {
+		if (process.env.UPDATE_NAME_POSITION_CASES) {
+			const previous = JSON.parse(readFileSync(fixtureUrl, "utf8")) as { about: string };
+			const cases = names().map((t) => ({ t, m: firstMisplaced(t) }));
+			writeFileSync(fixtureUrl, `${JSON.stringify({ about: previous.about, legend, cases })}\n`);
+		}
+		const fixture = JSON.parse(readFileSync(fixtureUrl, "utf8")) as {
+			legend: Record<string, number>;
+			cases: Array<{ t: string; m: number | null }>;
+		};
+		expect(fixture.legend).toEqual(legend);
+		expect(fixture.cases.length).toBeGreaterThan(2000);
+		const wrong = fixture.cases.filter((c) => firstMisplaced(c.t) !== c.m).map((c) => c.t);
+		expect(wrong).toEqual([]);
+		// 文件里的就是这里生成的那一批：改了规则要重新生成，不能留着旧的。
+		expect(fixture.cases.map((c) => c.t).sort()).toEqual(names().sort());
+	});
+});
+
+describe("签发 Agent 凭据的名称（agentsApi.issueCredential 的路径参数，#670）", () => {
+	const params = agentsApi.issueCredential.params;
+	const parse = (name: string) => params?.safeParse({ name });
+	const messageOf = (name: string): string =>
+		parse(name)
+			?.error?.issues.map((issue) => issue.message)
+			.join("\n") ?? "";
+
+	it("和 Hello 里的名称同一个规则：表里的字符、看起来是空的不合格，说第几个字符、哪个码位，不回显名称", () => {
+		for (const [bad, expected] of [
+			[`a${chars(0x1b)}[2Jb`, "Agent 的名称的第 2 个字符是 U+001B"],
+			[`a${chars(0x202e)}b`, "Agent 的名称的第 2 个字符是 U+202E"],
+			[`${chars(ZWJ)}a`, "Agent 的名称的第 1 个字符是 U+200D"],
+			["   ", "Agent 的名称里没有看得见的字符"],
+		] as const) {
+			expect(parse(bad)?.success, JSON.stringify(bad)).toBe(false);
+			expect(messageOf(bad), JSON.stringify(bad)).toContain(expected);
+			expect(messageOf(bad), JSON.stringify(bad)).not.toContain(bad);
+		}
+	});
+
+	it("上限 64 个字符，按字符数（一个 emoji 是一个字符，不是两个 UTF-16 码元）；正好 64 个通过", () => {
+		for (const ok of ["n".repeat(64), chars(0x1f600).repeat(64), "测".repeat(64)]) {
+			expect(parse(ok)?.success, ok.slice(0, 8)).toBe(true);
+		}
+		for (const long of ["n".repeat(65), chars(0x1f600).repeat(65), "测".repeat(65)]) {
+			expect(parse(long)?.success, long.slice(0, 8)).toBe(false);
+			expect(messageOf(long)).toContain("Agent 的名称不能超过 64 个字符");
+			expect(messageOf(long)).not.toContain(long.slice(0, 20));
 		}
 	});
 });
