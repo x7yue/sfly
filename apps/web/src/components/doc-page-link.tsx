@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { DOC_PAGE, type DocPage } from "#/lib/copy";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { buttonVariants } from "@/components/ui/button";
 
 const LOOK = {
 	/** 正文里的行内链接。 */
-	inline: "text-fg-1 underline decoration-fg-3 underline-offset-2 hover:decoration-fg-1",
+	inline: INLINE_LINK,
 	/** 面板标题行和步骤右侧的链接，外观是 ghost 小按钮（同 `PanelLink`）。 */
 	button: buttonVariants({ variant: "ghost", size: "sm" }),
 } as const;

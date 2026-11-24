@@ -298,6 +298,7 @@ export const SESSION = {
 		loadOlderFailed: "无法加载更早的内容",
 		stop: "停止",
 		stopTitle: "停止这一轮",
+		stopping: "正在停止…",
 		stopFailed: "无法停止这一轮",
 		thinking: "思考中",
 		sendLabel: "接着说",

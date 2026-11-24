@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ParamType, STORED_NODE_KINDS } from "../orchestration-document.js";
 import { RunLogNodesParam } from "../run-log-scope.js";
+import { SessionRef } from "../sessions.js";
 import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
@@ -225,6 +226,8 @@ export const RunView = z.object({
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: z.string().nullable(),
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session: SessionRef.optional(),
 	params: z.record(z.string(), z.unknown()),
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunPresetView.nullable(),
@@ -263,6 +266,7 @@ export const RunSummary = RunView.pick({
 	status: true,
 	triggered_by: true,
 	triggered_via: true,
+	session: true,
 	started_at: true,
 	ended_at: true,
 }).extend({

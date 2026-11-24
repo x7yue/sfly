@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import {
 	clipboard,
@@ -26,6 +26,42 @@ const LONG_NOTE = Array.from(
 const noteIcon = (page: Page, id: string) => nodeCard(page, id).locator('[data-slot="note-icon"]');
 const noteBox = (page: Page) => inspector(page).getByRole("textbox", { name: "备注" });
 const tooltip = (page: Page) => page.getByRole("tooltip");
+
+/**
+ * 悬停图标，等提示显示全文。提示没有出现时，错误信息里带上悬停那一刻的现场（#623：CI 里偶发「放大回来后悬停，提示一直不
+ * 出现」，本机镜像里限 CPU、加负载连跑几百遍没有复现过，原因没有查出来；下一次红的时候要能直接看到是图标没被悬停到、
+ * 被别的元素盖住、画布还在动，还是提示出现了又关了）。
+ */
+async function hoverShowsNote(page: Page, icon: Locator, text: string) {
+	await icon.hover();
+	try {
+		await expect(tooltip(page)).toHaveText(text);
+	} catch (error) {
+		const scene = await icon
+			.evaluate(async (el) => {
+				const rect = () => el.getBoundingClientRect();
+				const before = rect();
+				await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				const after = rect();
+				const at = document.elementFromPoint(
+					before.x + before.width / 2,
+					before.y + before.height / 2,
+				);
+				return {
+					hovered: el.matches(":hover"),
+					popupOpen: el.hasAttribute("data-popup-open"),
+					hitIsIcon: at !== null && el.contains(at),
+					hit: at ? `${at.tagName}[${at.getAttribute("data-slot") ?? ""}]` : null,
+					movedWithin2Frames: [after.x - before.x, after.y - before.y],
+					box: [before.x, before.y, before.width, before.height].map(Math.round),
+					lod: document.querySelector("[data-lod]")?.getAttribute("data-lod") ?? null,
+					tooltips: document.querySelectorAll('[role="tooltip"]').length,
+				};
+			})
+			.catch((reason: unknown) => `（取现场失败：${String(reason)}）`);
+		throw new Error(`${(error as Error).message}\n悬停时的现场：${JSON.stringify(scene)}`);
+	}
+}
 
 async function save(page: Page, version: number) {
 	await page.getByRole("button", { name: /保存/ }).click();
@@ -242,8 +278,7 @@ test("缩放：缩小到只留关键信息时图标隐藏（每个写了备注�
 		await dock(page).getByRole("button", { name: "放大" }).click();
 	}
 	await expect(noteIcon(page, "fetch")).toBeVisible();
-	await noteIcon(page, "fetch").hover();
-	await expect(tooltip(page)).toHaveText(NOTE);
+	await hoverShowsNote(page, noteIcon(page, "fetch"), NOTE);
 	expect(await tooltip(page).evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
 });
 
@@ -382,6 +417,5 @@ test("版本对比：列出备注的新增和修改，字段标签是「备注�
 		await pane.getByRole("button", { name: "放大" }).click();
 	}
 	await expect(pane.locator('[data-slot="note-icon"]')).toHaveCount(1);
-	await icon.hover();
-	await expect(tooltip(page)).toHaveText(edited);
+	await hoverShowsNote(page, icon, edited);
 });
