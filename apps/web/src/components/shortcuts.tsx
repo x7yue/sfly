@@ -132,10 +132,11 @@ export function ShortcutsDialog({
 										<div
 											key={row.ids[0]}
 											className={cn(
-												"flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm",
+												"flex items-center gap-3 border-b border-border-soft py-1.25 text-sm",
 												// 合成的行（名称加两个键）比别的行宽出一截：占一列的话五列都要跟着加宽，面板撑到铺满窗口；占两列，
-												// 别的行的宽度不变。dense：一行放不下两列时让后面的行补上空位。
-												row.ids.length > 1 && "col-span-2",
+												// 别的行的宽度不变。dense：一行放不下两列时让后面的行补上空位。占两列的行里按键紧跟在名称后面
+												// （别的行名称在左、按键顶到右端；这一行宽出一倍，顶到右端会在中间空出一大截）。
+												row.ids.length > 1 ? "col-span-2" : "justify-between",
 											)}
 										>
 											<dt className="whitespace-nowrap">{row.label}</dt>

@@ -77,6 +77,32 @@ export const CHARTS_MIN_HEIGHT = 48;
  */
 export const CHARTS_RESERVED_HEIGHT = 300;
 
+/**
+ * 图表工作区要预留的高度（px）：{@link CHARTS_RESERVED_HEIGHT} 是工具栏一行时的数（窗口宽到放得下一行）；窄窗口里工具栏折成
+ * 几行，多出来的高度一并预留，第一个图表组的图表才和一行时露出一样多（1024×768 里原来只露出 70/136px）。
+ */
+export const chartsReservedHeight = (toolbarExtra: number): number =>
+	CHARTS_RESERVED_HEIGHT + toolbarExtra;
+
+/** 工具栏比一行时多出来的高度（px）：整个工具栏的高度减去内边距、下描边和第一行（和第一个控件同一行的控件里最高的）的高度。 */
+function toolbarExtraHeight(bar: HTMLElement | null): number {
+	const first = bar?.firstElementChild;
+	if (!bar || !(first instanceof HTMLElement)) return 0;
+	const style = getComputedStyle(bar);
+	const chrome =
+		Number.parseFloat(style.paddingTop) +
+		Number.parseFloat(style.paddingBottom) +
+		Number.parseFloat(style.borderBottomWidth);
+	const row = Math.max(
+		...[...bar.children]
+			.filter(
+				(el): el is HTMLElement => el instanceof HTMLElement && el.offsetTop === first.offsetTop,
+			)
+			.map((el) => el.offsetHeight),
+	);
+	return Math.max(0, Math.ceil(bar.offsetHeight - chrome - row));
+}
+
 /** 分组内外的水平留白（px）：工作区 12×2、分组 10×2、描边。 */
 const GROUP_INSET = 48;
 
@@ -101,8 +127,11 @@ export function ChartWorkspace({
 	doc: StoredOrchestrationDocument | undefined;
 	catalog: ReturnType<typeof useMetricCatalog>;
 	compact: boolean;
-	/** 报告内容（含工作区自己的内边距）排出来的高度（px）：底部面板据此留出图表需要的那一截，见 {@link CHARTS_RESERVED_HEIGHT}。 */
-	onContentHeight?: (height: number) => void;
+	/**
+	 * 报告内容（含工作区自己的内边距）排出来的高度（px），和工具栏比一行时多出来的高度（px，工具栏在窄窗口里折成几行时才有）：
+	 * 底部面板据此留出图表需要的那一截，见 {@link CHARTS_RESERVED_HEIGHT}、{@link chartsReservedHeight}。
+	 */
+	onContentHeight?: (height: number, toolbarExtra: number) => void;
 }) {
 	const { range, live, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
@@ -143,7 +172,7 @@ export function ChartWorkspace({
 		const report = () => {
 			const style = getComputedStyle(outer);
 			const padding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
-			onContentHeight(Math.ceil(inner.offsetHeight + padding));
+			onContentHeight(Math.ceil(inner.offsetHeight + padding), toolbarExtraHeight(toolbar.current));
 		};
 		report();
 		const observer = new ResizeObserver(report);
@@ -260,7 +289,14 @@ export function ChartWorkspace({
 		const el = box?.querySelector<HTMLElement>(`[data-group="${CSS.escape(scrollTo)}"]`);
 		if (!box || !el) return;
 		const top = el.offsetTop - (toolbar.current?.offsetHeight ?? 0) - 8;
-		const visible = top >= box.scrollTop && el.offsetTop + 40 <= box.scrollTop + box.clientHeight;
+		// 看得见：组的上沿在工具栏下面，第一张图表露出大半（组标题和节点摘要在图表上面，只露出它们看不到曲线）。
+		// 图表还没有渲染出来时（组刚展开）只要求露出组标题那一截。
+		const chart = el.querySelector<HTMLElement>("[data-chart]");
+		const boxTop = box.getBoundingClientRect().top;
+		const needed = chart
+			? chart.getBoundingClientRect().top - boxTop + box.scrollTop + chart.offsetHeight * 0.75
+			: el.offsetTop + 40;
+		const visible = top >= box.scrollTop && needed <= box.scrollTop + box.clientHeight;
 		if (!visible) box.scrollTop = Math.max(0, top);
 	}, [scrollTo]);
 
