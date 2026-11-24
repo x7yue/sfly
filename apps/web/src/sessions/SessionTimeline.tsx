@@ -113,7 +113,7 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 							tone === "danger" && "text-danger-fg",
 						)}
 					>
-						<UntrustedText text={turnEndText(item)} />
+						<UntrustedText dir="ltr" text={turnEndText(item)} />
 					</span>
 					<span aria-hidden className="h-px flex-1 bg-border-soft" />
 				</li>

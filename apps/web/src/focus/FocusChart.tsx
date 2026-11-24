@@ -71,7 +71,7 @@ export function FocusChart({
 			)}
 			{item.unavailable ? (
 				<p className="m-0 grid h-24 place-items-center text-xs text-fg-3">
-					<UntrustedText text={FOCUS.chartMissing(item.chart)} />
+					<UntrustedText dir="ltr" text={FOCUS.chartMissing(item.chart)} />
 				</p>
 			) : (
 				<FocusPlot

@@ -125,7 +125,7 @@ export function Attention({
 									)}
 								</p>
 								<p className="m-0 mt-0.5 wrap-anywhere text-fg-2">
-									<UntrustedText text={why} mode="text" />
+									<UntrustedText dir="ltr" text={why} mode="text" />
 								</p>
 							</div>
 							<Button size="sm" onClick={() => onOpen(target)}>

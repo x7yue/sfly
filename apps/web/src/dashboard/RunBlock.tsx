@@ -291,7 +291,7 @@ function ActiveNodes({
 								</span>
 							) : (
 								<span className="whitespace-nowrap text-fg-3">
-									<UntrustedText text={activeDetail(node, now)} />
+									<UntrustedText dir="ltr" text={activeDetail(node, now)} />
 								</span>
 							)}
 						</li>

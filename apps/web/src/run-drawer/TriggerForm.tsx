@@ -348,11 +348,11 @@ function CheckItem({ row, onLocate }: { row: CheckRow; onLocate?: (nodeId: strin
 			</span>
 			<div className="min-w-0 flex-1">
 				<div>
-					<UntrustedText text={row.title} />
+					<UntrustedText dir="ltr" text={row.title} />
 				</div>
 				{row.detail && (
 					<div className="text-xs text-fg-3">
-						<UntrustedText text={row.detail} />
+						<UntrustedText dir="ltr" text={row.detail} />
 					</div>
 				)}
 				{row.problems.length > 0 && <ProblemList problems={row.problems} onLocate={onLocate} />}
@@ -373,7 +373,7 @@ function ProblemList({
 			{problems.map((p) => (
 				<li key={`${p.code}:${p.node_id ?? ""}:${p.message}`} className="flex items-baseline gap-2">
 					<span className="min-w-0 flex-1">
-						<UntrustedText text={p.message} />
+						<UntrustedText dir="ltr" text={p.message} />
 					</span>
 					{p.node_id && onLocate && (
 						<Button

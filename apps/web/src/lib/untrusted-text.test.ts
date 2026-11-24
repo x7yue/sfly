@@ -2,6 +2,7 @@ import { nameProblem, REJECTED_NAME_CHARACTER } from "@sfly/schema";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { Truncate } from "../components/ui/truncate";
 import { UntrustedText } from "../components/untrusted-text";
 import { hasHidden, type UntrustedMode, untrustedPlain, untrustedSegments } from "./untrusted-text";
 
@@ -277,7 +278,46 @@ describe("UntrustedText 组件", () => {
 		expect(html).toContain("文字方向控制字符");
 	});
 
+	it('dir="ltr"（一整句里夹着控制台自己的文案时）：整句按从左到右排，名字里从右到左的字母自己成一段', () => {
+		const html = renderToStaticMarkup(
+			createElement(UntrustedText, { text: "Agent مرحبا 不在线", dir: "ltr" }),
+		);
+		expect(html).toBe('<bdi dir="ltr">Agent مرحبا 不在线</bdi>');
+	});
+
 	it("多行（text）：换行原样留在文字里", () => {
 		expect(render("第一行\n第二行", "text")).toBe("<bdi>第一行\n第二行</bdi>");
+	});
+});
+
+describe("Truncate 的 untrusted 选项", () => {
+	const render = (text: string, props: Record<string, unknown> = {}) =>
+		renderToStaticMarkup(createElement(Truncate, { untrusted: true, ...props } as never, text));
+
+	it("文字里没有要写出来的字符：原样，方向隔离（dir=auto 加 unicode-bidi: isolate）", () => {
+		const html = render("my-agent");
+		expect(html).toContain("my-agent");
+		expect(html).toContain('dir="auto"');
+		expect(html).toContain("[unicode-bidi:isolate]");
+	});
+
+	it("方向控制字符和零宽字符写成一小块，输出里没有那两个字符", () => {
+		const html = render("admin\u202Egpj.exe\u200B");
+		expect(html).toContain('data-slot="hidden-character"');
+		expect(html).toContain(">U+202E<");
+		expect(html).toContain(">U+200B<");
+		expect(html).not.toContain("\u202E");
+		expect(html).not.toContain("\u200B");
+	});
+
+	it("带 keepEnd（按字符数拆成两段，放不了组件）：写成纯文字的 ⟨U+202E⟩，读屏读的一段里也是", () => {
+		const html = render("pkg\u202E/node@1.0.0", { keepEnd: 6 });
+		expect(html).toContain("⟨U+202E⟩");
+		expect(html).not.toContain("\u202E");
+	});
+
+	it("没传 untrusted 的 Truncate 不处理文字（只有别人写的文字才传）", () => {
+		const html = renderToStaticMarkup(createElement(Truncate, {} as never, "a\u200Bb"));
+		expect(html).toContain("\u200B");
 	});
 });

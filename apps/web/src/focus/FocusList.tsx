@@ -248,7 +248,7 @@ export function FocusListPage({
 										</div>
 										{reason && (
 											<div className="px-2.25 text-xs text-fg-3">
-												<UntrustedText text={reason} />
+												<UntrustedText dir="ltr" text={reason} />
 											</div>
 										)}
 									</div>

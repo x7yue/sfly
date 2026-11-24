@@ -215,7 +215,7 @@ export function NodeCharts({
 											/>
 										</header>
 										<p className="m-0 text-xs text-fg-3">
-											<UntrustedText text={FOCUS.chartMissing(row.title)} />
+											<UntrustedText dir="ltr" text={FOCUS.chartMissing(row.title)} />
 										</p>
 									</>
 								)}

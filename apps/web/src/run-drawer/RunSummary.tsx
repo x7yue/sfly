@@ -174,7 +174,7 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 				{view.label}
 			</StatusPill>
 			<span className="min-w-48 flex-1 text-fg-2">
-				<UntrustedText text={text} />
+				<UntrustedText dir="ltr" text={text} />
 			</span>
 		</fieldset>
 	);

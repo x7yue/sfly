@@ -55,7 +55,7 @@ export function FocusReadout({
 						</span>
 						{item.unavailable ? (
 							<span className="text-xs text-fg-3">
-								<UntrustedText text={FOCUS.chartMissing(item.chart)} />
+								<UntrustedText dir="ltr" text={FOCUS.chartMissing(item.chart)} />
 							</span>
 						) : (
 							<FocusValue item={item} className="truncate" />
