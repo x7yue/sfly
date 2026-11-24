@@ -22,19 +22,19 @@ describe("Agent 网关", () => {
 	it("名称里有控制字符、8 位的控制序列、双向控制字符、零宽空格、标签字符、盲文空白、孤立的代理码元，或看起来是空的：Hello 被拒绝（InvalidArgument），说出第几个字符、哪个码位，连接不进连接表", async () => {
 		const code = (...points: number[]) => String.fromCodePoint(...points);
 		for (const [bad, expected] of [
-			[`a${code(0x1b)}[2Jb`, "第 2 个字符是 U+001B"],
-			[`a${code(0x9b)}b`, "第 2 个字符是 U+009B"],
-			[`a${code(0x202e)}b`, "第 2 个字符是 U+202E"],
-			[`a${code(0x200b)}b`, "第 2 个字符是 U+200B"],
-			[`a${code(0xe0067)}`, "第 2 个字符是 U+E0067"],
-			[`a${code(0x2800)}`, "第 2 个字符是 U+2800"],
-			[`a${code(0xd800)}`, "第 2 个字符是 U+D800"],
-			["   ", "没有看得见的字符"],
+			[`a${code(0x1b)}[2Jb`, "Agent 的名称的第 2 个字符是 U+001B"],
+			[`a${code(0x9b)}b`, "Agent 的名称的第 2 个字符是 U+009B"],
+			[`a${code(0x202e)}b`, "Agent 的名称的第 2 个字符是 U+202E"],
+			[`a${code(0x200b)}b`, "Agent 的名称的第 2 个字符是 U+200B"],
+			[`a${code(0xe0067)}`, "Agent 的名称的第 2 个字符是 U+E0067"],
+			[`a${code(0x2800)}`, "Agent 的名称的第 2 个字符是 U+2800"],
+			[`a${code(0xd800)}`, "Agent 的名称的第 2 个字符是 U+D800"],
+			["   ", "Agent 的名称里没有看得见的字符"],
 		] as const) {
 			await expect(
 				FakeAgent.connect(cp.grpcUrl, { name: bad }),
 				JSON.stringify(bad),
-			).rejects.toThrow(new RegExp(`Agent 的名称.*${expected}|Agent 的名称里${expected}`));
+			).rejects.toThrow(expected);
 		}
 		// 正常的名字（含中文、组合表情）照常连。
 		for (const ok of ["agent-ok", "测试机", `dev-${code(0x1f469, 0x200d, 0x1f4bb)}`]) {
