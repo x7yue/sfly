@@ -92,13 +92,14 @@ export class FakeAssistant {
 	/** `steer` 处理完（收下了）、回应之前先等这么久（毫秒）：让测试在插话命令的回应还在路上时让别的事发生。 */
 	steerDelayMs = 0;
 	/**
-	 * 按协议「一轮的状态」的表记每个会话的状态（没有一轮 / 在做 / 在停止 / 在停止且有一轮在等）。默认关（多数用例自己用 `emit` 和
-	 * `abortReply` 控制；非严格的模式不回 409、不发 `steer_queue`、`abort` 和 `end` 不带回结局，不是协议）。开着时，会话已经有一轮在做（包括登记着、在等的）时收到别的轮次的 `prompt` 回 409 `turn_running`；
-	 * 收到 `emit` 的这一轮的 `turn_end`，这一轮就不在做了（**`emit` 直接发的 `turn_end` 也守插话的不变式**：这一轮没送到的插话先各发
-	 * 一条 `steer_dropped`）；收到轮次是 N 的中止（回应是 202 的话），**还在做的、轮次不大于 N 的那一轮也结束**
-	 * （协议 {@link AbortCommandBody}），记在 {@link endedByAbort}。
+	 * 按协议「一轮的状态」的表记每个会话的状态（没有一轮 / 在做 / 在停止 / 在停止且有一轮在等），**默认开**：假助手服务只照协议的表，
+	 * 不照对实现的猜测（544-B 的助手服务要拿它做对照）。会话已经有一轮在做（包括登记着、在等的）时收到别的轮次的 `prompt` 回 409
+	 * `turn_running`；收到 `emit` 的这一轮的 `turn_end`，这一轮就不在做了（**`emit` 直接发的 `turn_end` 也守插话的不变式**：这一轮没送到的
+	 * 插话先各发一条 `steer_dropped`）；收到轮次是 N 的中止（回应是 202 的话），**还在做的、轮次不大于 N 的那一轮也结束**
+	 * （协议 {@link AbortCommandBody}），记在 {@link endedByAbort}。关掉（非严格）时不回 409、不发 `steer_queue`、`abort` 和 `end`
+	 * 不带回结局：不是协议，只给确实要它这样的用例用，用例里写明为什么。
 	 */
-	strictTurns = false;
+	strictTurns = true;
 	/** `strictTurns` 开着时，被中止结束的轮次（会话和轮次，按结束的先后）。 */
 	readonly endedByAbort: Array<{ sessionId: string; turn: number }> = [];
 	readonly #running = new Map<string, number>();

@@ -546,7 +546,6 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 	});
 
 	it("助手服务回过一次 409 之后：控制面的轮次已经加一，空闲时点停止带新轮次，助手服务把还在跑的上一轮也结束，再发话照常做", async () => {
-		assistant.strictTurns = true;
 		try {
 			const view = await json<SessionView>(await create("第一句"));
 			// 第 1 轮正常结束；第 2 轮：用户点停止，但助手服务拒绝了中止（那一轮其实还在跑），控制面自己结束它（stopped）。
@@ -580,7 +579,6 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 			expect(assistant.prompts.at(-1)?.body.turn).toBe(4);
 			expect((await sessionRow(cp, view.id))?.status).toBe("running");
 		} finally {
-			assistant.strictTurns = false;
 			assistant.endedByAbort.length = 0;
 		}
 	});
@@ -1542,7 +1540,6 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("新建会话时 prompt 结果未知、等结局期间别人对它说了话：会话不删（那句话不跟着没了），结局写下之后那句话开始第 2 轮；助手服务那边任何时刻只有一轮", async () => {
-		assistant.strictTurns = true;
 		assistant.stopSettleMs = 800; // 这一轮在中止之后 800 毫秒才结束
 		assistant.promptDelayMs = 600;
 		let id: string | undefined;
@@ -1572,7 +1569,6 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 				expect((await sessionRow(cp, id as string))?.status).toBe("idle"),
 			);
 		} finally {
-			assistant.strictTurns = false;
 			assistant.stopSettleMs = 0;
 			assistant.promptDelayMs = 0;
 			await settled();
@@ -1580,7 +1576,6 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("prompt 被收下（这一轮真的开始了）却回了 500：控制面按结果未知处理——补发带轮次的 abort，用助手服务带回的结局，不是自己补的", async () => {
-		assistant.strictTurns = true;
 		try {
 			const view = await json<SessionView>(
 				await api.post("/projects/default/sessions", { text: "第一句" }),
@@ -1610,7 +1605,6 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			});
 		} finally {
 			assistant.promptAcceptedThenReply = () => undefined;
-			assistant.strictTurns = false;
 			await settled();
 		}
 	});
