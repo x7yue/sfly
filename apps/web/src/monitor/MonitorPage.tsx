@@ -1,7 +1,7 @@
 import { orchestrationsApi, type RunView, type StoredOrchestrationDocument } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Banner } from "#/components/feedback/banner";
 import { notify } from "#/components/feedback/notify";
 import { ErrorState } from "#/components/feedback/states";
@@ -11,13 +11,19 @@ import { DURATION_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { formatDuration, shortId } from "#/lib/format";
 import { useElementHeight } from "#/lib/use-element-height";
+import { useMediaQuery } from "#/lib/use-media-query";
 import { useNow } from "#/lib/use-now";
 import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
 import { BottomPanel } from "./BottomPanel";
-import { CHARTS_MIN_HEIGHT, CHARTS_RESERVED_HEIGHT, ChartWorkspace } from "./ChartWorkspace";
+import {
+	CHARTS_MIN_HEIGHT,
+	ChartWorkspace,
+	chartsReservedHeight,
+	NARROW_WINDOW,
+} from "./ChartWorkspace";
 import { chartsCompact } from "./chart-groups";
 import { timelineBodyMax } from "./detail-layout";
 import { useLiveRun } from "./live-run";
@@ -211,11 +217,22 @@ function DetailView({
 }) {
 	const catalog = useMetricCatalog(run.id, attemptsSignature(run));
 	const compact = chartsCompact(run, catalog.data);
-	// 图表工作区内容排出来的高度：留给它的是 CHARTS_RESERVED_HEIGHT 和内容高度里小的那个（内容少时不留空白）。
-	const [chartsContent, setChartsContent] = useState(0);
+	// 图表工作区内容排出来的高度：留给它的是预留的高度（`chartsReservedHeight`：宽窗口里 300px，窄窗口里第一张图表被推下去时
+	// 跟着加）和内容高度里小的那个（内容少时不留空白）。
+	const narrow = useMediaQuery(NARROW_WINDOW);
+	const [charts, setCharts] = useState({ content: 0, firstChartTop: 0 });
+	const setChartsHeights = useCallback(
+		(content: number, firstChartTop: number) =>
+			setCharts((was) =>
+				was.content === content && was.firstChartTop === firstChartTop
+					? was
+					: { content, firstChartTop },
+			),
+		[],
+	);
 	const chartsReserved = Math.max(
 		CHARTS_MIN_HEIGHT,
-		Math.min(CHARTS_RESERVED_HEIGHT, chartsContent),
+		Math.min(chartsReservedHeight(charts.firstChartTop, narrow), charts.content),
 	);
 	// 详情的可用高度（失败横幅以下，时间线、图表工作区、底部面板共用）：窗口矮的时候时间线主体最高是剩下的高度，
 	// 图表和底部面板的位置才留得出来（`timelineBodyMax`）；窗口高时它比视口的 30% 大，不起作用。
@@ -240,7 +257,7 @@ function DetailView({
 					doc={doc}
 					catalog={catalog}
 					compact={compact}
-					onContentHeight={setChartsContent}
+					onContentHeight={setChartsHeights}
 				/>
 				<BottomPanel run={run} doc={doc} chartsReserved={chartsReserved} />
 			</div>
