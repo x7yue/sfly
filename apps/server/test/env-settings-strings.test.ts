@@ -618,6 +618,8 @@ describe("三个 MB 上限：说明里不能经过运算把没回显的值带出
 		expect(message).not.toContain((value as string).replace(/^-/, ""));
 		for (const form of convertedForms(value as string)) expect(message).not.toContain(form);
 		expect(message).not.toContain("换算后");
+		// 别的运算（除以一千、取整、换成别的单位……）也不行：除了上限常数，说明里不该有连续 6 位以上的数字。
+		expect(message.replaceAll(String(Number.MAX_SAFE_INTEGER), "")).not.toMatch(/\d{6,}/);
 	});
 
 	it.each(LIMITS)("%s 填 12 个字符以内的数（已经回显）：换算后的字节数照旧写", (name) => {
