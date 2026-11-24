@@ -5,6 +5,7 @@ import {
 	type TokenUsage,
 } from "@sfly/schema";
 import type { Redactor, StreamRedactor } from "./redact.js";
+import { describeUpstreamError, type UpstreamError } from "./upstream-error.js";
 
 /**
  * 把 pi 的事件（RPC 模式的 stdout，pi `docs/json.md`）翻成平台的会话事件（#538 第 3.1 节的表）。一轮一个
@@ -22,6 +23,13 @@ export interface Translated {
 	events: AssistantEvent[];
 	/** 认不出的 pi 事件（只记日志）。 */
 	unknown?: string;
+	/**
+	 * 上游模型出错时 pi 给的原文（没打码）：不进事件，由调用方打码后写进日志（#640）。一次模型调用失败只给一次
+	 * （在它的 `message_end`）：之后的重试提示、重试用尽带的是同一段原文。
+	 */
+	upstreamError?: string;
+	/** 压缩上下文失败时 pi 给的原文（没打码）：同上，只进日志。 */
+	compactionError?: string;
 }
 
 /** pi 的工具名 → 平台的叫法（`SessionTool`）。 */
@@ -58,10 +66,13 @@ export class TurnTranslator {
 	/** 工具调用次数（`tool_execution_end`）。 */
 	steps = 0;
 	usage: TokenUsage = { ...ZERO_USAGE };
-	/** 最后一条助手消息是不是模型出错（`stopReason: error`）：一轮结束时据此判 `model_unavailable`。 */
-	lastModelError: string | undefined;
-	/** pi 报告重试用尽（`auto_retry_end` 的 `success: false`）。 */
-	retriesExhausted: string | undefined;
+	/**
+	 * 最后一条助手消息是不是模型出错（`stopReason: error`）：一轮结束时据此判 `model_unavailable`。
+	 * 只有助手服务自己的说法（类别、状态码），上游的原文不在这里（#640）。
+	 */
+	lastModelError: UpstreamError | undefined;
+	/** pi 报告重试用尽（`auto_retry_end` 的 `success: false`）：最后一次的错误，同样只有自己的说法。 */
+	retriesExhausted: UpstreamError | undefined;
 
 	readonly #redactor: Redactor;
 	#text: StreamRedactor | undefined;
@@ -82,7 +93,7 @@ export class TurnTranslator {
 			case "message_update":
 				return { events: this.#update(event) };
 			case "message_end":
-				return { events: this.#messageEnd(event) };
+				return { events: this.#messageEnd(event), ...this.#modelError(event) };
 			case "tool_execution_start":
 				return { events: this.#toolStart(event) };
 			case "tool_execution_update":
@@ -94,7 +105,11 @@ export class TurnTranslator {
 			case "auto_retry_end":
 				return { events: [this.#retryEnd(event)] };
 			case "compaction_end":
-				return { events: this.#compaction(event) };
+				return {
+					events: this.#compaction(event),
+					...(typeof event.errorMessage === "string" &&
+						event.errorMessage !== "" && { compactionError: event.errorMessage }),
+				};
 			case "agent_settled":
 				return { events: [] };
 			default:
@@ -134,7 +149,9 @@ export class TurnTranslator {
 		const usage = usageOf(message.usage);
 		this.usage = addUsage(this.usage, usage);
 		this.lastModelError =
-			message.stopReason === "error" ? String(message.errorMessage ?? "模型出错") : undefined;
+			message.stopReason === "error"
+				? describeUpstreamError(String(message.errorMessage ?? ""))
+				: undefined;
 		const text = this.#redactor.redact(textOf(message.content));
 		if (text.trim() !== "") out.push({ type: "assistant_message", text, usage });
 		return out;
@@ -210,14 +227,23 @@ export class TurnTranslator {
 		return out;
 	}
 
+	/** 助手消息以模型出错结束：原文交给调用方记日志。 */
+	#modelError(event: PiEvent): { upstreamError?: string } {
+		const message = (event.message ?? {}) as Record<string, unknown>;
+		if (message.role !== "assistant" || message.stopReason !== "error") return {};
+		return { upstreamError: String(message.errorMessage ?? "") };
+	}
+
 	#retry(event: PiEvent): AssistantEvent {
 		const attempt = positiveInt(event.attempt);
 		const max = positiveInt(event.maxAttempts);
 		const delay = Number(event.delayMs);
+		const error = describeUpstreamError(String(event.errorMessage ?? ""));
 		return {
 			type: "notice",
 			kind: "retry",
-			message: this.#redactor.redact(`模型调用出错，正在重试：${String(event.errorMessage ?? "")}`),
+			message: `${error.text}，正在重试${attempt ? `第 ${attempt} 次` : ""}`,
+			error_class: error.errorClass,
 			...(attempt && { attempt }),
 			...(max && { max_attempts: max }),
 			...(Number.isFinite(delay) && delay >= 0 && { retry_delay_ms: Math.round(delay) }),
@@ -228,11 +254,12 @@ export class TurnTranslator {
 		if (event.success === true) {
 			return { type: "notice", kind: "retry_end", message: "重试成功" };
 		}
-		this.retriesExhausted = String(event.finalError ?? "重试用尽");
+		this.retriesExhausted = describeUpstreamError(String(event.finalError ?? ""));
 		return {
 			type: "notice",
 			kind: "retry_end",
-			message: this.#redactor.redact(`重试用尽：${this.retriesExhausted}`),
+			message: `重试用尽：${this.retriesExhausted.text}`,
+			error_class: this.retriesExhausted.errorClass,
 		};
 	}
 

@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { createWriteStream, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	createWriteStream,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type {
@@ -10,14 +17,16 @@ import type {
 	TurnLimit,
 	TurnOutcome,
 } from "@sfly/schema";
-import { type AgentClient, WORKBENCH_UNREACHABLE } from "./agent.js";
+import { type AgentClient, WORKBENCH_UNREACHABLE, WorkbenchError } from "./agent.js";
 import type { EventBus } from "./bus.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
+import { modelEnvRefs } from "./models.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
-import { Redactor } from "./redact.js";
+import { forLog, Redactor } from "./redact.js";
 import { mirrorSkillsLocally, workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
 import { TurnTranslator } from "./translate.js";
 import type { TurnConfig } from "./turn-config.js";
+import type { UpstreamError } from "./upstream-error.js";
 
 /**
  * 看管 pi 进程和一轮（#540）：一个会话一个 pi 进程（RPC 模式），一轮从 `prompt` 开始，到 pi 报告 `agent_settled`、
@@ -66,7 +75,9 @@ export interface SessionManagerOptions {
 	skillsDir: string;
 	hostEnv: NodeJS.ProcessEnv;
 	bus: EventBus;
-	connect: (address: string) => AgentClient;
+	/** 连到一台 Agent 的能力端口；`log` 是认不出的错误的原文的去处（带工作台的地址）。 */
+	connect: (address: string, log?: (line: string) => void) => AgentClient;
+	/** 助手服务的日志。写进去的原文（上游的错误、连接上的报错）先经 `#forLog`。 */
 	log: (message: string) => void;
 	limits?: { modelCalls: number; durationMs: number };
 	maxProcesses?: number;
@@ -89,6 +100,8 @@ interface Turn {
 	ended: boolean;
 	/** 这一轮的工作台（能力端口的地址）：工具结果说工作台连不上时，助手服务自己探它。 */
 	address: string | undefined;
+	/** 这一轮的工作台的名字：给人看的原因里写它，不写地址。 */
+	workbenchName: string;
 	/** 正在探工作台（不重复探）。 */
 	probing: boolean;
 	/** 探的时候 pi 报告停下来了：探完再定结局。 */
@@ -125,6 +138,9 @@ export class SessionManager {
 	/** 「这一轮已被中止」的记号：会话 ID → 轮次（见 {@link abort}）。按记下的先后排，满了丢最早的。 */
 	readonly #abortMarks = new Map<string, { turn: number; at: number }>();
 
+	/** 模型文件引用的环境变量的值（模型的密钥）：写日志时也打码。第一次用到时读。 */
+	#modelSecrets: Redactor | undefined;
+
 	constructor(private readonly options: SessionManagerOptions) {
 		this.#limits = options.limits ?? TURN_LIMITS;
 		this.#maxProcesses = options.maxProcesses ?? MAX_PROCESSES;
@@ -143,6 +159,23 @@ export class SessionManager {
 		for (const id of readdirSync(join(dataDir, "sessions"))) {
 			rmSync(join(dataDir, "sessions", id, "turn.json"), { force: true });
 		}
+	}
+
+	/**
+	 * 一段原文（上游的错误、工作台连接上的报错）写进日志之前：按这个会话的保密值和模型文件引用的环境变量的值打码，
+	 * 再按形状打码（`Authorization`、`Bearer`、地址里的用户名密码），截到上限（redact.ts 的 `forLog`）。
+	 */
+	#forLog(session: Session, text: string): string {
+		if (!this.#modelSecrets) {
+			this.#modelSecrets = new Redactor();
+			try {
+				const { names } = modelEnvRefs(readFileSync(this.options.modelsFile, "utf8"));
+				this.#modelSecrets.add(names.map((name) => this.options.hostEnv[name] ?? ""));
+			} catch {
+				// 读不了模型文件（启动时已经检查过，这里不会发生）：只按形状打码。
+			}
+		}
+		return forLog(text, [session.redactor, this.#modelSecrets]);
 	}
 
 	/** pi 进程的临时目录都在这下面（每个进程一个，`TMPDIR`）；见 {@link SessionManagerOptions.tmpRoot}。 */
@@ -213,6 +246,7 @@ export class SessionManager {
 		}
 		const turn = this.#register(session, body.turn);
 		turn.address = body.workbench.address;
+		turn.workbenchName = body.workbench.name;
 		turn.timer = setTimeout(
 			() =>
 				this.#stop(session, turn, {
@@ -244,6 +278,7 @@ export class SessionManager {
 			ending: undefined,
 			ended: false,
 			address: undefined,
+			workbenchName: "工作台",
 			probing: false,
 			settled: undefined,
 		};
@@ -389,9 +424,19 @@ export class SessionManager {
 			// 被关掉的进程退出之前不起新的：两个 pi 不同时写同一个会话文件。
 			await session.closing;
 			if (!session.process || session.process.exited) {
-				const agent = this.options.connect(body.workbench.address);
+				const { name, address } = body.workbench;
+				const agent = this.options.connect(address, (line) =>
+					this.options.log(
+						`会话 ${session.id} 第 ${turn.number} 轮：${this.#forLog(session, line)}`,
+					),
+				);
 				try {
 					await writeSkillsToWorkbench(agent, this.options.skillsDir, body.workbench.workdir);
+				} catch (error) {
+					// 原因里写工作台的名字（#640）；工作台这条连接上的错误已经换成能给人看的（agent.ts），别的不放行原文。
+					const why =
+						error instanceof WorkbenchError ? error.message : "助手服务内部出错（原文记在日志里）";
+					throw new StartError(`往工作台 ${name} 上写 skill 失败：${why}`, error);
 				} finally {
 					agent.close();
 				}
@@ -416,13 +461,17 @@ export class SessionManager {
 			}
 		} catch (error) {
 			if (turn.ended) return;
-			const message = error instanceof Error ? error.message : String(error);
+			const raw = error instanceof StartError ? error.cause : error;
 			this.options.log(
-				`会话 ${session.id} 第 ${turn.number} 轮开始失败：${session.redactor.redact(message)}`,
+				`会话 ${session.id} 第 ${turn.number} 轮开始失败（工作台 ${body.workbench.name}，${body.workbench.address}）：${this.#forLog(session, raw instanceof Error ? raw.message : String(raw))}`,
 			);
+			// 认得的才放行（#640）：写 skill 的那一步换好了说法（StartError），别的步骤（建工作区、镜像 skill、准备启动、
+			// 给 pi 发请求）的原文是助手容器本机的错误、带容器里的路径，只进上面的日志。
+			const shown =
+				error instanceof StartError ? error.message : "助手服务内部出错（原文记在日志里）";
 			this.#end(session, turn, {
 				outcome: "failed",
-				reason: `开始这一轮失败：${session.redactor.redact(message)}`,
+				reason: `开始这一轮失败：${session.redactor.redact(shown)}`,
 			});
 		}
 	}
@@ -486,8 +535,19 @@ export class SessionManager {
 		const turn = session.turn;
 		// 决定结束这一轮之后（停止、上限）pi 还在吐的事件不再外传：一轮的事件到此为止。
 		if (!record || !turn || turn.ended || turn.ending || session.process !== process) return;
-		const { events, unknown } = turn.translator.translate(record);
+		const { events, unknown, upstreamError, compactionError } = turn.translator.translate(record);
 		if (unknown) this.options.log(`会话 ${session.id}：认不出的 pi 事件 ${unknown}`);
+		if (upstreamError !== undefined) {
+			// 上游的错误原文只进日志：事件里是助手服务自己的说法（#640）。
+			this.options.log(
+				`会话 ${session.id} 第 ${turn.number} 轮：上游模型出错：${this.#forLog(session, upstreamError)}`,
+			);
+		}
+		if (compactionError !== undefined) {
+			this.options.log(
+				`会话 ${session.id} 第 ${turn.number} 轮：压缩上下文失败：${this.#forLog(session, compactionError)}`,
+			);
+		}
 		for (const event of events) this.#emit(session, turn, event);
 		const unreachable = workbenchUnreachable(record);
 		if (unreachable !== undefined && turn.address !== undefined && !turn.probing) {
@@ -495,6 +555,7 @@ export class SessionManager {
 			// 助手服务自己探一次这一轮的工作台：探不通才不等到上限、以失败结束这一轮；探得通就是普通的工具错误，照常往下走。
 			turn.probing = true;
 			const address = turn.address;
+			const name = turn.workbenchName;
 			const probe = this.options.connect(address);
 			void probe.reachable().then((ok) => {
 				// 探完就关：每探一次是一条新连接，留着它会空闲 15 分钟、其间一直 ping。
@@ -507,7 +568,8 @@ export class SessionManager {
 					// 原因用助手服务自己的说法：工具结果里那一行可能是命令自己的输出。
 					this.#stop(session, turn, {
 						outcome: "failed",
-						reason: `${WORKBENCH_UNREACHABLE}：${address}（工具报了连不上，助手服务又探了一次，还是连不上）`,
+						// 写工作台的名字，不写它能力端口的内部地址（#640）。
+						reason: `${WORKBENCH_UNREACHABLE}：${name}（工具报了连不上，助手服务又探了一次，还是连不上）`,
 					});
 				} else if (settled) {
 					this.#settle(session, turn, settled);
@@ -538,11 +600,12 @@ export class SessionManager {
 		if (record.aborted === true) {
 			this.#end(session, turn, { outcome: "stopped", reason: "这一轮被中止了" });
 		} else if (t.retriesExhausted !== undefined || t.lastModelError !== undefined) {
-			const detail = t.retriesExhausted ?? t.lastModelError ?? "";
+			const error = (t.retriesExhausted ?? t.lastModelError) as UpstreamError;
+			// 原因不带「模型不可用」：页面按结局加这个前缀（和「出错」「中断」一样）。
 			this.#end(session, turn, {
 				outcome: "model_unavailable",
-				reason: `模型不可用：${session.redactor.redact(detail)}`,
-				errorClass: "other",
+				reason: error.text,
+				errorClass: error.errorClass,
 			});
 		} else {
 			this.#end(session, turn, { outcome: "completed", reason: "这一轮做完了" });
@@ -648,7 +711,7 @@ export class SessionManager {
 	}
 }
 
-/** 工具结果说工作台连不上（扩展的 `DeadlineError`）时返回那句话；否则 undefined。 */
+/** 工具结果说工作台连不上（扩展的 `UnreachableError`、`DeadlineError`）时返回那句话；否则 undefined。 */
 function workbenchUnreachable(record: Record<string, unknown>): string | undefined {
 	if (record.type !== "tool_execution_end" || record.isError !== true) return undefined;
 	const content = (record.result as { content?: unknown } | undefined)?.content;
@@ -661,6 +724,16 @@ function workbenchUnreachable(record: Record<string, unknown>): string | undefin
 		: "";
 	const at = text.indexOf(WORKBENCH_UNREACHABLE);
 	return at === -1 ? undefined : text.slice(at).split("\n")[0];
+}
+
+/** 一轮开头出错：消息能给人看，`cause` 是原来的错误（原文只进日志）。 */
+class StartError extends Error {
+	constructor(
+		message: string,
+		readonly cause: unknown,
+	) {
+		super(message);
+	}
 }
 
 /** 清空一个目录（目录本身留着）。 */

@@ -353,7 +353,11 @@ impl Runtime {
             Ok(running) => {
                 self.ledger.started(&task.task_id, task.attempt);
                 let dir = running.artifacts_dir();
-                let result = running.wait(cancel).await;
+                // 超时进入收尾时间时，这个任务正在进行的能力调用也放弃（和取消同一个口径，结局不变）。
+                let wind_down = || {
+                    self.ledger.cancel(&task.task_id, task.attempt, false);
+                };
+                let result = running.wait(cancel, wind_down).await;
                 // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
                 self.uploader.finish(&task, &dir, result).await
             }

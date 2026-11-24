@@ -20,7 +20,9 @@
 //!
 //! - **超时**：`timeout_ms`（0 为不限）是等对方回应的上限：一次性的方法是整个调用，流式方法是相邻两次回应之间
 //!   （[`Call::within`]）。超时后 Agent 放弃调用（丢掉 gRPC 请求，目标 Agent 随之结束处理），以 `timeout` 回复。
-//! - **取消**：任务被取消（或已经结束）时立即放弃调用，以 `cancelled` 回复；SDK 抛出 `sfly.Cancelled`。
+//! - **收尾或结束**：任务被取消、超时进入收尾时间、被停止子流程节点停止、立即更新，或者已经结束时立即放弃调用，
+//!   以 `cancelled` 回复（消息不说是哪一种原因：超时的任务结局仍是超时）；SDK 抛出 `sfly.Cancelled`。
+//!   Agent 自己退出（收到 SIGTERM 或 Ctrl-C）时不经过这一条：调用随 Agent 退出、连接关闭而断开，没有最后一帧。
 //! - **调用方断开**：SDK 关掉连接（节点进程退出、提前停止迭代、写入时出错）时 Agent 放弃调用。
 //!
 //! 方法的实现在各项能力里（[`crate::capabilities`]）：[`Method`] 拿到 [`Call`]，用 [`on_target!`] 直接调用本机服务的实现
@@ -82,7 +84,8 @@ pub enum ErrorKind {
     NotReferenced,
     /// 参数不合法（例如路径不是绝对路径、要列出的不是目录）。
     Invalid,
-    /// 任务被取消或已经结束。
+    /// 任务正在收尾（被取消、超时进入收尾时间、被停止子流程节点停止、立即更新）或已经结束：调用被放弃。
+    /// 不说是哪一种原因；SDK 抛出 `sfly.Cancelled`。
     Cancelled,
     /// 下载续传时源文件已经不在原来的路径上：路径上换成了另一个文件，原来的文件在同一目录里也找不到
     /// （被移到了别的目录或被删除）。
@@ -111,7 +114,8 @@ impl CallError {
 pub struct TaskCalls {
     /// 任务通过「Agent」类型的输入引用的 Agent：只能调用它们和自己。
     pub referenced: Vec<ReferencedAgent>,
-    /// 任务的取消请求（[`crate::executor::CancelSignal`]）：有值或发送端已丢弃（任务已结束）时放弃调用。
+    /// 任务的取消信号（[`crate::executor::CancelSignal`]）：有值（取消、超时进入收尾时间、控制面放弃、立即更新）或
+    /// 发送端已丢弃（任务已结束）时放弃调用；不看是优雅还是强制，也不看是哪一种原因。
     pub cancel: watch::Receiver<Option<bool>>,
 }
 
@@ -293,7 +297,12 @@ pub async fn serve(
         let gone = input::pump(BufReader::new(&mut reader), input_tx);
         tokio::select! {
             outcome = call => outcome,
-            () = cancelled => Err(CallError::new(ErrorKind::Cancelled, "任务已取消，调用已放弃")),
+            () = cancelled => Err(CallError::new(
+                ErrorKind::Cancelled,
+                // 不说原因：被取消、超时进入收尾时间、被停止子流程节点停止、立即更新、任务已经结束都走这里，
+                // 超时的任务结局仍是超时，不能让节点里看到「任务已取消」。
+                "任务正在收尾或已结束，调用已放弃",
+            )),
             // 调用方已经断开：没有人收回复。
             () = gone => return,
         }
