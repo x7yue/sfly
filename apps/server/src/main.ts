@@ -2,10 +2,12 @@
 //   DATABASE_URL     PostgreSQL 连接串（默认 postgres://sfly:sfly@127.0.0.1:5432/sfly；空串当作没设置）。启动时用连接库（pg）
 //                    自己解析连接串的函数检查，只拒它也解析不了的：Unix 套接字的写法（postgres://用户:密码@/库名?host=/var/run/postgresql）也行；
 //                    带 @ 而没有 ://（用户:密码@主机/库名）也拒绝：连接库不会把它当地址，而是把整串当库名
-//   SFLY_DATA_DIR    数据目录：节点包文件等（默认 ./data）
-//   SFLY_HTTP_HOST   HTTP API 监听地址（默认 0.0.0.0）
+//   SFLY_DATA_DIR    数据目录：节点包文件、任务日志、产物等（默认 ./data；空串当作没设置）。启动时检查（#651）：写成地址（带 ://）不合法；
+//                    目录要写得了（不存在就建，里面试写一个文件，下面已有的 logs、artifacts、packages 各试写一次），写不了的
+//                    写明目录、当前用户和怎么改，退出码 1
+//   SFLY_HTTP_HOST   HTTP API 监听地址（默认 0.0.0.0；只认 IP 地址或主机名，写错了启动失败，说明不回显填的值，#651）
 //   SFLY_HTTP_PORT   HTTP API 端口（默认 8080）
-//   SFLY_GRPC_HOST   Agent 网关监听地址（默认 0.0.0.0）
+//   SFLY_GRPC_HOST   Agent 网关监听地址（默认 0.0.0.0；写法同上）
 //   SFLY_GRPC_PORT   Agent 网关端口（默认 50051）
 //   SFLY_AGENT_TOKEN Agent 共享注册令牌（可选；设置后令牌不对的 Agent 被拒绝）
 //   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包；也用来拼运行通知卡片里
@@ -75,7 +77,8 @@ import type { AgentArch } from "@sfly/schema";
 import packageJson from "../package.json" with { type: "json" };
 import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
 import { runResetPassword } from "./auth/reset-password-cli.js";
-import { EnvSettingsError, readEnvSettings } from "./config/env-settings.js";
+import { dataDirFromEnv, dataDirProblems } from "./config/data-dir.js";
+import { type EnvSettings, EnvSettingsError, readEnvSettings } from "./config/env-settings.js";
 import { databaseUrlFromEnv } from "./config/url-setting.js";
 import { type ControlPlane, startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
@@ -148,18 +151,36 @@ if (process.argv[2] === "reset-password") {
 	process.exit(code);
 }
 // 数值类的环境变量（端口、保留天数、各种上限、登录的空闲期限，#577）和字符串类的（代理信任、跨域来源、初始管理员、对外地址、
-// 数据库地址、镜像地址，#619）在启动时就检查：不合法的写明变量名、填的值和要求，一次报完，不启动，不留到运行时才出错。
-const { httpPort, grpcPort, ...settings } = (() => {
-	try {
-		return readEnvSettings(env);
-	} catch (error) {
-		if (!(error instanceof EnvSettingsError)) throw error;
-		// 往终端写东西只走统一的出口（lint 规则 no-direct-output 拦着直接用 console）：这个错误只有变量名、填的原文和范围，
-		// 没有数据库的参数，说明拼成字符串交给 printError。
-		printError(`sfly: 控制面没有启动，${error.message}`);
+// 数据库地址、镜像地址，#619；监听地址、数据目录，#651）在启动时就检查：不合法的写明变量名和要求，一次报完，不启动，不留到运行时才
+// 出错。数据目录还要试写一次（目录写不了：Docker 卷的属主不对最常见）：这是唯一碰文件系统的检查，在这里读完环境变量之后做，
+// 结果和环境变量的问题一起报；它在控制面的任何启动动作之前（包括启动时清理上传的临时文件）：先看写不写得了，再清。
+const { httpPort, grpcPort, httpHost, grpcHost, ...settings } =
+	await (async (): Promise<EnvSettings> => {
+		const problems: string[] = [];
+		let read: EnvSettings | undefined;
+		try {
+			read = readEnvSettings(env);
+		} catch (error) {
+			if (!(error instanceof EnvSettingsError)) throw error;
+			problems.push(...error.problems);
+		}
+		const envProblems = problems.length;
+		// 数据目录写得了吗：别的环境变量写错了也照样试（一次报完）；数据目录自己写成地址的不去试（上面已经报了，不碰文件系统）。
+		const dataDir = (() => {
+			try {
+				return dataDirFromEnv(env.SFLY_DATA_DIR);
+			} catch {
+				return undefined;
+			}
+		})();
+		if (dataDir !== undefined) problems.push(...(await dataDirProblems(dataDir)));
+		if (problems.length === 0 && read) return read;
+		// 往终端写东西只走统一的出口（lint 规则 no-direct-output 拦着直接用 console）：这些说明只有变量名、要求、目录和当前用户，
+		// 没有数据库的参数，也没有填的值（地址类的不回显），拼成字符串交给 printError。
+		const subject = problems.length === envProblems ? "环境变量" : "启动检查";
+		printError(`sfly: 控制面没有启动，${new EnvSettingsError(problems, subject).message}`);
 		process.exit(1);
-	}
-})();
+	})();
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
 if (!webDir) printWarning(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
 // 进程级的未捕获异常和未处理的拒绝、借出去的数据库连接出错：记错误日志、有序关闭、退出码 1 退出，由部署的重启策略拉起来
@@ -173,9 +194,8 @@ const guards = installProcessGuards({
 // 启动失败（写库失败、端口被占……）也走统一的出口：数据库错误里的参数不会随未捕获的异常打到终端上。
 const controlPlane = await startControlPlane({
 	onFatalDatabaseError: (error) => guards.fatal("数据库连接在使用中断开", error),
-	dataDir: env.SFLY_DATA_DIR ?? "./data",
-	http: { host: env.SFLY_HTTP_HOST ?? "0.0.0.0", port: httpPort },
-	grpc: { host: env.SFLY_GRPC_HOST ?? "0.0.0.0", port: grpcPort },
+	http: { host: httpHost, port: httpPort },
+	grpc: { host: grpcHost, port: grpcPort },
 	logger: true,
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
