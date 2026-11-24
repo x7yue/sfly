@@ -187,6 +187,13 @@ describe("storable", () => {
 				),
 			);
 			expect(long.peer?.listenError).toBe(`${"错".repeat(2048)}…`);
+			// 正好 2048 个字符（按字符数，补充平面的一个算一个）不截断。
+			for (const exact of ["错".repeat(2048), code(0x1f600).repeat(2048)]) {
+				const same = valueOf(
+					storable(helloWith({ peer: { port: 1, publicAddress: "h:1", listenError: exact } })),
+				);
+				expect(same.peer?.listenError).toBe(exact);
+			}
 		});
 
 		it("开发包的元信息（JSON 文本）里的字符串（键和值）按长的自由文字处理；没变化时原样返回；不是合法 JSON 时原样返回", () => {
