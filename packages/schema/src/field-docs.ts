@@ -1,4 +1,4 @@
-import { ITEM, VALUE } from "./client-emit.js";
+import { ITEM, unionMembers, VALUE } from "./client-emit.js";
 import type { RouteDef } from "./http/contract.js";
 
 /**
@@ -16,7 +16,9 @@ export type FieldDocs = (
 
 /**
  * 把字段说明写进导出的 JSON Schema：每个字段没有自己的 `description` 时用注释。
- * 路径的走法和 client-docs 一致：对象字段名、数组元素 `[]`、字典的值 `{}`，几选一的分支共用路径。
+ * 路径的走法和 client-docs 一致：对象字段名、数组元素 `[]`、字典的值 `{}`；几选一（`anyOf`、`oneOf`）里内联的对象分支不止一个时
+ * 各多一段（`|` 开头，按分支里取值固定的字段认，见 client-emit.ts 的 `unionMembers`），同名的字段在不同分支里说明可以不同；
+ * 其他分支（`$ref`、字面量、数组……）和 `allOf` 的成员共用路径。
  */
 export function annotateSchema(
 	schema: Record<string, unknown>,
@@ -40,10 +42,13 @@ export function annotateSchema(
 		visit(json.items, [...path, ITEM]);
 		if (typeof json.additionalProperties === "object")
 			visit(json.additionalProperties, [...path, VALUE]);
-		for (const key of ["anyOf", "oneOf", "allOf"]) {
-			const branches = json[key];
-			if (Array.isArray(branches)) for (const branch of branches) visit(branch, path);
+		const branches = [json.anyOf, json.oneOf].find(Array.isArray);
+		if (branches) {
+			for (const { member, segment } of unionMembers(branches)) {
+				visit(member, segment === undefined ? path : [...path, segment]);
+			}
 		}
+		if (Array.isArray(json.allOf)) for (const branch of json.allOf) visit(branch, path);
 	};
 	visit(schema, []);
 }
