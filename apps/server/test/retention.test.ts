@@ -2,6 +2,7 @@
 // 是否到期只按注入的时钟判断：测试推进 ManualClock，周期扫描很快就会处理。
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -67,6 +68,20 @@ describe("日志和产物的保留期", () => {
 			artifacts: unknown[];
 			expired: boolean;
 		};
+	/** 这个任务的任务凭据在库里还有几行（派发时签发，保留期清理时和日志、产物一起删）。 */
+	const taskCredentialRows = async (task: AssignedTask) => {
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			return (
+				await client.query("select count(*)::int as n from api_tokens where task_id = $1", [
+					task.taskId,
+				])
+			).rows[0].n as number;
+		} finally {
+			await client.end();
+		}
+	};
 	/** 等几轮扫描（间隔 20ms），用来断言"没有被清理"。 */
 	const fewSweeps = () => new Promise((r) => setTimeout(r, 150));
 
@@ -79,9 +94,11 @@ describe("日志和产物的保留期", () => {
 		expect((await logPage(task)).lines).toHaveLength(1);
 		expect((await artifactList(task)).artifacts).toHaveLength(1);
 		expect((await cp.fetch(`/tasks/${task.taskId}/artifacts/report.txt`)).status).toBe(200);
+		expect(await taskCredentialRows(task)).toBe(1);
 
 		clock().advance(2000);
 		await eventually(async () => expect((await logPage(task)).expired).toBe(true));
+		expect(await taskCredentialRows(task)).toBe(0);
 		expect((await logPage(task)).lines).toEqual([]);
 		expect(await artifactList(task)).toMatchObject({ artifacts: [], expired: true });
 		const download = await cp.fetch(`/tasks/${task.taskId}/artifacts/report.txt`);
@@ -114,6 +131,7 @@ describe("日志和产物的保留期", () => {
 		expect(await logPage(running.task)).toMatchObject({ expired: false, last_seq: 1 });
 		expect((await artifactList(running.task)).artifacts).toHaveLength(1);
 		expect(existsSync(join(cp.dataDir, "logs", running.runId))).toBe(true);
+		expect(await taskCredentialRows(running.task)).toBe(1);
 	});
 
 	it("控制面重启后，按数据库里的结束时间照常清理", async () => {

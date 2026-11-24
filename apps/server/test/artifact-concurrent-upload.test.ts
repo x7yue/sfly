@@ -5,7 +5,6 @@
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import { Agent, request as httpRequest } from "node:http";
-import { join } from "node:path";
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -292,13 +291,17 @@ describe("卡住的上传（连着、不发数据）", () => {
 			};
 			next();
 		});
-	const tmpFiles = async (runId: string, taskId: string) =>
-		(await readdir(join(cp.dataDir, "artifacts", runId, taskId))).filter((n) =>
-			n.startsWith(".upload-"),
+	/**
+	 * 数据目录里（任何一层）名字以 `.upload-` 开头的文件。临时文件在 `artifacts/.uploading/` 里（#649），不在任务的产物目录里：
+	 * 只看任务的产物目录的话，这条检查永远找不到东西，去掉出错时删临时文件那一行它也照样绿。
+	 */
+	const tmpFiles = async () =>
+		(await readdir(cp.dataDir, { recursive: true })).filter((path) =>
+			(path.split("/").pop() ?? "").startsWith(".upload-"),
 		);
 
 	it("发了一部分就不再发数据：到空闲时限之后它得到明确的错误（408，不存、不留临时文件），同一个任务排着的那一份随即被处理", async () => {
-		const { task, runId } = await setup(600);
+		const { task } = await setup(600);
 		const stalled = stall(`${task.artifactUploadUrl}stuck.bin`, 100);
 		await new Promise((resolve) => setTimeout(resolve, 150));
 
@@ -327,7 +330,7 @@ describe("卡住的上传（连着、不发数据）", () => {
 		if ("status" in outcome) {
 			expect(JSON.parse(outcome.body).error.code).toBe("upload_idle_timeout");
 		}
-		expect(await tmpFiles(runId, task.taskId)).toEqual([]);
+		expect(await tmpFiles()).toEqual([]);
 		const listed = (await (await cp.fetch(`/tasks/${task.taskId}/artifacts`)).json()) as {
 			artifacts: Array<{ name: string }>;
 		};

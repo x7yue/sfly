@@ -7,6 +7,7 @@ import {
 	AssistantHealth,
 	AssistantStreamLine,
 	type PromptCommandBody,
+	type SteerCommandBody,
 } from "@sfly/schema";
 import type { z } from "zod";
 import type { AssistantConfig } from "./assistant-config.js";
@@ -121,6 +122,19 @@ export class AssistantClient {
 	async abort(sessionId: string, turn: number): Promise<void> {
 		const body: AbortCommandBody = { turn };
 		await this.#command("POST", `/sessions/${sessionId}/abort`, body);
+	}
+
+	/**
+	 * 插话（`POST /sessions/:id/steer`）：助手服务收下了就返回（202）；这个会话没有可以送到的一轮时它回 409 `no_turn_running`
+	 * （抛 {@link AssistantError}），连不上抛 {@link AssistantUnreachableError}。协议见 {@link SteerCommandBody}。
+	 */
+	async steer(sessionId: string, body: SteerCommandBody): Promise<void> {
+		await this.#command("POST", `/sessions/${sessionId}/steer`, body);
+	}
+
+	/** 结束会话（`POST /sessions/:id/end`）：助手服务结束这个会话的进程；重复调用、不认识的会话都是 202。 */
+	async end(sessionId: string): Promise<void> {
+		await this.#command("POST", `/sessions/${sessionId}/end`);
 	}
 
 	/** 助手服务和它的模型、进程的状态。 */
@@ -260,24 +274,48 @@ async function rejectUnlessOk(res: Response): Promise<void> {
 	throw new AssistantError(res.status, body?.code, detail);
 }
 
-/** 命令有没有可能已经送到（见 {@link AssistantUnreachableError.outcomeUnknown}）：超时、发出请求之后连接断了是未知。 */
+/**
+ * 命令有没有可能已经送到（见 {@link AssistantUnreachableError.outcomeUnknown}）。**只有「请求一个字节都没有发出去」才是确定没送到**：
+ * 连接没建起来（被拒绝、域名解析不了、没有路由、建立连接就超时）；别的都是未知，认不出来的错也是：请求超时、发出请求之后连接被重置或
+ * 关闭、响应读到一半断了……助手服务可能已经收下了命令。这样写（白名单，不是认出「未知」的才算未知）是为了认不出的错落在保守的一边：
+ * 控制面把 `prompt` 的未知结果当作这一轮可能已经开始，补发中止、等到结局才空出项目的位置。
+ */
 export function outcomeUnknown(error: unknown): boolean {
 	const codes = new Set<string>();
+	let connecting = false;
 	let current: unknown = error;
 	for (let depth = 0; current instanceof Error && depth < 5; depth++) {
-		const code = (current as { code?: unknown }).code;
+		const { code, syscall } = current as { code?: unknown; syscall?: unknown };
 		if (typeof code === "string") codes.add(code);
+		if (syscall === "connect") connecting = true;
 		codes.add(current.name);
 		current = current.cause;
 	}
-	return [
-		"TimeoutError",
-		"ECONNRESET",
-		"EPIPE",
-		"UND_ERR_SOCKET",
-		"UND_ERR_HEADERS_TIMEOUT",
-		"UND_ERR_BODY_TIMEOUT",
-	].some((name) => codes.has(name));
+	// 发出请求之后才会有的：有一个就是未知（哪怕同时有连接没建起来的码）。
+	if (
+		[
+			"TimeoutError",
+			"ECONNRESET",
+			"EPIPE",
+			"UND_ERR_SOCKET",
+			"UND_ERR_HEADERS_TIMEOUT",
+			"UND_ERR_BODY_TIMEOUT",
+		].some((name) => codes.has(name))
+	) {
+		return true;
+	}
+	const notSent =
+		[
+			"ECONNREFUSED",
+			"ENOTFOUND",
+			"EAI_AGAIN",
+			"EHOSTUNREACH",
+			"ENETUNREACH",
+			"UND_ERR_CONNECT_TIMEOUT",
+		].some((name) => codes.has(name)) ||
+		// `ETIMEDOUT` 在建立连接时是没连上，在已经连上的连接上（重传超时）是发出之后：看是不是 `connect` 的系统调用。
+		(codes.has("ETIMEDOUT") && connecting);
+	return !notSent;
 }
 
 /**

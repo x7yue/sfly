@@ -18,6 +18,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:?在 .env 里设置 DATABASE_URL}
       # Agent 下载节点包和 SDK 用的地址，必须是 Agent 能访问到的地址。
       SFLY_PUBLIC_URL: ${SFLY_PUBLIC_URL:?在 .env 里设置 SFLY_PUBLIC_URL}
+      # Agent 网关（gRPC）对 Agent 可见的地址；留空时取 SFLY_PUBLIC_URL 的主机加容器里的 50051。改了宿主机端口 SFLY_GRPC_PORT
+      # 时要设它（控制面看不到端口映射）；写法见 .env.example。
+      SFLY_PUBLIC_GRPC_URL: ${SFLY_PUBLIC_GRPC_URL:-}
       SFLY_AGENT_TOKEN: ${SFLY_AGENT_TOKEN:-}
       # 下发给 Agent 的镜像（ADR 0012）：PyPI 镜像用于安装节点包依赖，GitHub Release 镜像用于安装 uv、下载 Python。
       # 留空时 Agent 用 uv 的官方来源；中科大镜像的写法见 .env.example。
@@ -25,6 +28,8 @@ services:
       SFLY_GITHUB_RELEASE_MIRROR: ${SFLY_GITHUB_RELEASE_MIRROR:-}
       # 允许跨域调用 API 的来源（ADR 0022）；留空时允许所有来源，写法见 .env.example。
       SFLY_CORS_ORIGINS: ${SFLY_CORS_ORIGINS:-}
+      # 登录限速用的来源地址（控制面在反向代理后面时设置）；留空时不看 X-Forwarded-For，来源地址是 TCP 对端。取值和写法见 .env.example。
+      SFLY_TRUST_PROXY: ${SFLY_TRUST_PROXY:-}
       # 助手（会话功能，ADR 0027）：三项都留空时助手关闭，会话的写接口返回 503；写法和不写时的表现见 .env.example。
       SFLY_ASSISTANT_URL: ${SFLY_ASSISTANT_URL:-}
       SFLY_ASSISTANT_SECRET: ${SFLY_ASSISTANT_SECRET:-}

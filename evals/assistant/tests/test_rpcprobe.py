@@ -496,9 +496,9 @@ def test_rpcprobe_rejects_an_unknown_question_before_touching_the_environment(
     from aeval import cli
 
     with pytest.raises(SystemExit) as raised:
-        cli.main(["rpcprobe", "q11"])
+        cli.main(["rpcprobe", "q99"])
     assert raised.value.code == 2
-    assert "q11" in capsys.readouterr().err
+    assert "q99" in capsys.readouterr().err
 
 
 def test_verdict_only_gets_worse() -> None:
@@ -517,3 +517,98 @@ def test_fake_model_follows_a_named_script(tmp_path: Path) -> None:
     assert fake_model.next_reply(body, tmp_path) == {"text": "命令执行完了。", "delay": 0.0}
     slow = {"messages": [{"role": "user", "content": "AEVAL-SCRIPT:rpcprobe-slow-text"}]}
     assert fake_model.next_reply(slow, tmp_path)["delay"] == 4.0
+
+
+# ---- 544-B 先测的七题（第 11 到 17 题）----
+
+
+def test_recorded_544b_run_holds() -> None:
+    questions = ("q11", "q12", "q13", "q14", "q15", "q16", "q17")
+    assert {q: judge(q, fixture(q)).verdict for q in questions} == dict.fromkeys(questions, HOLDS)
+
+
+def test_q11_fails_when_the_next_turn_does_not_finish() -> None:
+    raw = fixture("q11")
+    raw["next_turn"]["stop_reason"] = "error"
+    assert judge("q11", raw).verdict == FAILS
+
+
+def test_q11_unfinished_when_aborted_before_any_output() -> None:
+    raw = fixture("q11")
+    raw["deltas_before_abort"] = 0
+    assert judge("q11", raw).verdict == UNFINISHED
+
+
+def test_q12_fails_when_a_steer_reaches_the_next_turn() -> None:
+    raw = fixture("q12")
+    raw["rounds"][3]["next_turn_request"].append({"role": "user", "text": rpcprobe.STEER_A})
+    verdict = judge("q12", raw)
+    assert verdict.verdict == FAILS
+    assert any("第 4 遍" in fact for fact in verdict.facts)
+
+
+def test_q12_fails_when_clear_queue_misses_a_steer() -> None:
+    raw = fixture("q12")
+    raw["rounds"][0]["clear_queue"]["steering"] = []
+    assert judge("q12", raw).verdict == FAILS
+
+
+def test_q13_fates() -> None:
+    raw = fixture("q13")
+    fates = [rpcprobe.q13_fate(r) for r in raw["rounds"]]
+    assert set(fates) <= {"这一轮里送到", "清掉", "留在队列里"}
+    # 命令执行中、同一次写：abort 收尾时成了这一轮的一条用户消息。
+    assert fates[0] == "这一轮里送到"
+    # 模型输出到一半、同一次写：留在 pi 的队列里，下一轮之前的 clear_queue 取回。
+    assert fates[25] == "留在队列里"
+
+
+def test_q13_leak_when_the_steer_left_in_the_queue_reaches_the_next_turn() -> None:
+    raw = fixture("q13")
+    left = raw["rounds"][25]
+    left["pre_clear_got"]["steering"] = []
+    left["next_turn_request"].append({"role": "user", "text": rpcprobe.STEER_B})
+    assert rpcprobe.q13_fate(left) == "漏"
+    assert judge("q13", raw).verdict == FAILS
+
+
+def test_q13_leak_when_the_steer_shows_up_after_agent_settled() -> None:
+    raw = fixture("q13")
+    first = raw["rounds"][0]
+    first["settled_t"] = min(m["t"] for m in first["turn_user_messages"]) - 1
+    assert rpcprobe.q13_fate(first) == "漏"
+
+
+def test_q14_fails_when_the_two_steers_go_out_separately() -> None:
+    raw = fixture("q14")
+    prompt = {"role": "user", "text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。"}
+    a = {"role": "user", "text": rpcprobe.STEER_A}
+    b = {"role": "user", "text": rpcprobe.STEER_B}
+    reply = {"role": "assistant", "text": "好"}
+    raw["all"]["requests"] = [[prompt], [prompt, a], [prompt, a, reply, b]]
+    assert judge("q14", raw).verdict == FAILS
+
+
+def test_q15_fails_when_two_steers_are_merged_into_one_message() -> None:
+    raw = fixture("q15")
+    raw["same"]["user_messages"] = raw["same"]["user_messages"][:1]
+    assert judge("q15", raw).verdict == FAILS
+
+
+def test_q16_fails_when_the_handled_steer_is_queued() -> None:
+    raw = fixture("q16")
+    raw["handled"]["data"]["disposition"] = "queued"
+    assert judge("q16", raw).verdict == FAILS
+
+
+def test_q17_fails_on_an_extra_user_message_and_is_unfinished_without_compaction() -> None:
+    raw = fixture("q17")
+    extra = copy.deepcopy(raw)
+    timeline = extra["overflow"]["timeline"]
+    timeline.insert(-1, {"type": "message_end", "role": "user", "text": "别的"})
+    assert judge("q17", extra).verdict == FAILS
+    missing = copy.deepcopy(raw)
+    missing["threshold"]["timeline"] = [
+        e for e in missing["threshold"]["timeline"] if e["type"] != "compaction_end"
+    ]
+    assert judge("q17", missing).verdict == UNFINISHED

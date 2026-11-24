@@ -9,13 +9,14 @@
 from __future__ import annotations
 
 import argparse
-import json
+import re
 import sys
 import unicodedata
 from collections.abc import Sequence
 from typing import IO, Any, TypeVar
 
 from sfly.cli.errors import CliError
+from sfly.cli.safe_text import dump_json_safe, printable
 
 T = TypeVar("T")
 
@@ -45,9 +46,10 @@ class Output:
         if self.json_mode:
             print(dump_json(value), file=self.stdout)
             if note:
-                print(note, file=self.stderr)
+                print(printable(note), file=self.stderr)
             return
-        print(text if note is None else f"{text}\n{note}", file=self.stdout)
+        # 服务端的文字（名称、昵称、日志、错误信息……）打到终端之前先过一遍（safe_text.py，#670）。
+        print(printable(text if note is None else f"{text}\n{note}"), file=self.stdout)
 
     def error(self, error: CliError) -> None:
         """输出错误（写到 stderr）。"""
@@ -58,24 +60,31 @@ class Output:
                 body["details"] = hints
             print(dump_json({"error": body}), file=self.stderr)
             return
-        print(f"错误：{error.message}", file=self.stderr)
+        print(printable(f"错误：{error.message}"), file=self.stderr)
         if error.next:
-            print(f"下一步：{error.next}", file=self.stderr)
+            print(printable(f"下一步：{error.next}"), file=self.stderr)
 
 
 def dump_json(value: Any) -> str:
-    """精简 JSON：一行，不转义中文。"""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    """精简 JSON：一行，不转义中文；不该到终端的字符（C1 控制字符、双向控制字符、看不见的字符、
+    孤立的代理码元）写成 JSON 的转义，解析回来不变（#670，见 safe_text.py）。"""
+    return dump_json_safe(value)
 
 
 _VIA_LABELS = {"claude-code": "Claude Code", "codex": "Codex"}
+# 「经 …」的名称合格的写法（和 `packages/schema/src/text-safety.ts` 的 `VIA_NAME_PATTERN` 一样）：
+# 控制面写入时只收这样的名称，库里升级之前存下的旧值不合格的显示成「未知」。
+_VIA_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
 
 
 def via_label(name: str | None) -> str | None:
-    """「经哪个 AI 编程助手」的显示名：`claude-code` → Claude Code，`codex` → Codex，其他原样；
-    没有（None）时为 None。界面上的显示和这里一致。"""
+    """「经哪个 AI 编程助手」的显示名：`claude-code` → Claude Code，`codex` → Codex，
+    不合格的名称（含请求头里有 agent/ 但名称不合格时控制面存下的占位值 `?`，和库里升级之前存下的
+    旧值）→ 未知，其他合格的原样；没有（None）时为 None。界面上的显示和这里一致。"""
     if name is None:
         return None
+    if _VIA_NAME.fullmatch(name) is None:
+        return "未知"
     return _VIA_LABELS.get(name, name)
 
 

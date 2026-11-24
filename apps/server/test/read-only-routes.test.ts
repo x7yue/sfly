@@ -23,9 +23,11 @@ import { strToU8 } from "fflate";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
+import { requiresCredential } from "../src/auth/access-rules.js";
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { ArrayCoverage } from "./support/array-coverage.js";
+import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { putFocusItemsOk } from "./support/focus-items.js";
@@ -416,7 +418,7 @@ describe("声明为只读的接口真的不写库", () => {
 		const body = sampleBody(def);
 		// 账号类的只读接口只认登录 Cookie（同源的请求）；项目的管理面（项目令牌的列表）要「管理」，管理员的登录有。
 		const credentials =
-			def.resource.kind === "account" || def.resource.kind === "project"
+			def.resource.kind === "account" || requiresCredential(def)
 				? { cookie: `sfly_login=${adminCookie}`, "sec-fetch-site": "same-origin" }
 				: undefined;
 		const res = await cp.fetch(url, {
@@ -768,6 +770,14 @@ async function seed(cp: TestControlPlane): Promise<{ seeded: Seeded; agent: Fake
 	await api.saveVersion(rich, richDocument("stage"));
 	const diffed = await api.orchestrationWith(diffedDocument(1), "增删改");
 	await api.saveVersion(diffed, diffedDocument(2));
+
+	// Agent 的凭据：列出凭据的接口（只读）响应里的数组要对过数据。
+	const accounts = new TestAccounts(cp.database.url);
+	try {
+		await accounts.agentCredential("default", "agent-a");
+	} finally {
+		await accounts.close();
+	}
 
 	// Agent：一个槽位（还在跑的运行占着它，下一次运行就排队）、有能力、装了节点包、加载了开发版本
 	const agent = await FakeAgent.connect(

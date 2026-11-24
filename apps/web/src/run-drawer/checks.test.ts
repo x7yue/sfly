@@ -125,6 +125,24 @@ describe("触发前检查清单", () => {
 		]);
 	});
 
+	it("节点派发到的 Agent 被停用时归到 Agent 一行，不能触发", () => {
+		const p: Preflight = {
+			...passed,
+			problems: [
+				{
+					code: "agent_disabled",
+					message: "节点 b 派发到的 Agent agent-b 已被停用：让项目管理员恢复它",
+					node_id: "b",
+				},
+			],
+		};
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows.find((r) => r.key === "agents")?.problems.map((x) => x.node_id)).toEqual([
+			"b",
+		]);
+	});
+
 	it("控制面版本（即 Agent 执行时的版本）不满足节点包需要的 SDK 版本时归到 Agent 一行，不能触发", () => {
 		const p: Preflight = {
 			...passed,

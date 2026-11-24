@@ -16,17 +16,19 @@ import {
 	type ServerMessage,
 	ServerMessageSchema,
 } from "@sfly/proto";
+import { AGENT_NAME_MAX_LENGTH, describeNameProblem, nameProblem } from "@sfly/schema";
+import type { AgentAuthenticator } from "../agents/agent-auth.js";
 import { agentClockReading } from "../agents/agent-clock.js";
 import { sourceAddress } from "../agents/agent-endpoint.js";
 import {
 	type AgentConnection,
+	AgentConnectionRefused,
 	type AgentHub,
 	DEFAULT_SLOTS,
 	devPackageInfo,
 } from "../agents/agent-hub.js";
-import { agentTokenMatches } from "../agents/agent-token.js";
-import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { AsyncQueue } from "../util/async-queue.js";
+import { listening } from "../util/listen-error.js";
 import { storable } from "./storable.js";
 
 export interface AgentGatewayServer {
@@ -63,8 +65,8 @@ export interface AgentGatewayOptions {
 	port: number;
 	hub: AgentHub;
 	handler?: AgentSessionHandler;
-	/** 共享注册令牌；未设置（或为空串）时不校验。 */
-	agentToken?: string;
+	/** Hello 里的凭据怎么认（Agent 凭据、共享令牌、没有凭据的过渡规则，src/agents/agent-auth.ts）。 */
+	authenticator: AgentAuthenticator;
 	onError?: (error: unknown) => void;
 }
 
@@ -100,39 +102,73 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			const helloReceivedAt = options.hub.now();
 			const hello = greeting.body.value;
 			if (!hello.name) throw new ConnectError("Hello.name is required", Code.InvalidArgument);
-			if (!agentTokenMatches(options.agentToken, hello.token)) {
-				throw new ConnectError("invalid agent token", Code.Unauthenticated);
+			// Agent 的名称是身份，显示在命令行、控制台和场景里：和令牌的名称、显示名同一个检查（#670），不合格的连接不让上来。
+			// 这一步在认证之前：认证拒绝连接的报错里带着 Hello 的名称（回给 Agent、Agent 每次重连都打到自己的标准错误上），
+			// 不合格的名称不能经它们原样回显出去；报错本身只说是哪一类问题，不带名称。
+			const nameIssue = nameProblem(hello.name);
+			if (nameIssue !== undefined) {
+				throw new ConnectError(
+					`Hello.name 不合格：${describeNameProblem("Agent 的名称", nameIssue)}`,
+					Code.InvalidArgument,
+				);
+			}
+			if ([...hello.name].length > AGENT_NAME_MAX_LENGTH) {
+				throw new ConnectError(
+					`Hello.name 不合格：Agent 的名称不能超过 ${AGENT_NAME_MAX_LENGTH} 个字符`,
+					Code.InvalidArgument,
+				);
+			}
+			// 项目和名字从凭据得出：Agent 凭据按台签发，Hello.name 和它不一致、吊销的、停用的 Agent 都在这里拒绝。
+			const outcome = await options.authenticator.authenticate(hello.token, hello.name);
+			if (!outcome.ok) {
+				throw new ConnectError(
+					outcome.message,
+					outcome.code === "unauthenticated" ? Code.Unauthenticated : Code.PermissionDenied,
+				);
 			}
 
 			const outbox = new AsyncQueue<ServerMessage>();
-			// 项目还不从凭据得出（#492）：所有 Agent 都登记在默认项目里。
-			const conn = await options.hub.attach(
-				DEFAULT_PROJECT,
-				hello.name,
-				{
-					agent_version: hello.agentVersion,
-					os: hello.os,
-					arch: hello.arch,
-					slots: hello.slots > 0 ? hello.slots : DEFAULT_SLOTS,
-					installed_packages: hello.installedPackages.map((p) => ({
-						name: p.name,
-						version: p.version,
-					})),
-					dev_packages: hello.devPackages.map(devPackageInfo),
-					capabilities: hello.capabilities.map((c) => ({ name: c.name, version: c.version })),
-					...(hello.peer && {
-						peer: {
-							port: hello.peer.port,
-							public_address: hello.peer.publicAddress,
-							listen_error: hello.peer.listenError,
-						},
-					}),
-					source_address: sourceAddress(context.values.get(remoteAddressKey)),
-				},
-				outbox,
-				agentClockReading(hello),
-				helloReceivedAt,
-			);
+			let conn: AgentConnection;
+			try {
+				conn = await options.hub.attach(
+					outcome.project,
+					hello.name,
+					{
+						agent_version: hello.agentVersion,
+						os: hello.os,
+						arch: hello.arch,
+						slots: hello.slots > 0 ? hello.slots : DEFAULT_SLOTS,
+						installed_packages: hello.installedPackages.map((p) => ({
+							name: p.name,
+							version: p.version,
+						})),
+						dev_packages: hello.devPackages.map(devPackageInfo),
+						capabilities: hello.capabilities.map((c) => ({ name: c.name, version: c.version })),
+						...(hello.peer && {
+							peer: {
+								port: hello.peer.port,
+								public_address: hello.peer.publicAddress,
+								listen_error: hello.peer.listenError,
+							},
+						}),
+						source_address: sourceAddress(context.values.get(remoteAddressKey)),
+					},
+					outbox,
+					agentClockReading(hello),
+					helloReceivedAt,
+					outcome.auth,
+					() => options.authenticator.recheck(outcome.auth, hello.name, outcome.project),
+				);
+			} catch (error) {
+				// 同名的、带 Agent 凭据的连接还活着（以旧方式连接的不能顶掉它，原连接不受影响），或者登记之前再看一遍时已经没有资格。
+				if (error instanceof AgentConnectionRefused) {
+					throw new ConnectError(
+						error.message,
+						error.code === "unauthenticated" ? Code.Unauthenticated : Code.PermissionDenied,
+					);
+				}
+				throw error;
+			}
 			context.signal.addEventListener("abort", () => conn.close());
 
 			// 入站消息在后台逐条处理；请求流结束或断线时注销连接。
@@ -194,13 +230,19 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
 		session.on("close", () => sessions.delete(session));
 	});
 
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(options.port, options.host, () => {
-			server.off("error", reject);
-			resolve();
-		});
-	});
+	// 监听不了时的说明只有变量名、端口和错误码（util/listen-error.ts）：Node 的报错会把监听地址原样带出来。
+	await listening(
+		"grpc",
+		options.port,
+		() =>
+			new Promise<void>((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(options.port, options.host, () => {
+					server.off("error", reject);
+					resolve();
+				});
+			}),
+	);
 	const { port } = server.address() as AddressInfo;
 
 	return {
