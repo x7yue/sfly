@@ -1,7 +1,7 @@
 // 测试库从已迁移的模板库复制（#613）：e2e 里每个用例都要一个测试库，迁移只在整个运行开始前跑一次。
 import { readFileSync } from "node:fs";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startTestControlPlane } from "./support/test-control-plane.js";
 import {
 	ADMIN_DATABASE_URL,
@@ -156,5 +156,61 @@ describe("测试库的模板", () => {
 		await expect(
 			startTestControlPlane({ template: template.name, migrationsDir: "/nonexistent" }),
 		).rejects.toThrow(/template 和 migrationsDir/);
+	});
+});
+
+describe("删库（#679）", () => {
+	const connectClient = async (database: TestDatabase) => {
+		const client = new pg.Client({ connectionString: database.url });
+		const errors: Error[] = [];
+		client.on("error", (error) => errors.push(error));
+		await client.connect();
+		return { client, errors };
+	};
+
+	// 连接池的 end() 不等连接真的断开，随后的 FORCE 删库会杀掉还没退出的后台进程，它们给还在关的连接发 57P01，连接池把它当 error
+	// 事件抛出，池上没有监听时就是一个没人接的异常（CI 里偶发，#679）。这里用一个晚一点才断开的连接把这个窗口拉大。
+	it("删库前先等库上的连接自己退出：晚一点才断开的连接没有被服务器终止，没有收到 57P01，库删掉了", async () => {
+		const database = await createTestDatabase();
+		const { client, errors } = await connectClient(database);
+		const ended = new Promise<number>((resolve) => {
+			setTimeout(() => {
+				void client.end().then(() => resolve(Date.now()));
+			}, 400);
+		});
+		const startedAt = Date.now();
+		await database.drop();
+		const droppedAt = Date.now();
+		const endedAt = await ended;
+
+		expect(errors.map((e) => e.message)).toEqual([]);
+		// 是等它退出之后才删的，不是一开始就删。
+		expect(droppedAt - startedAt).toBeGreaterThanOrEqual(300);
+		expect(droppedAt).toBeGreaterThanOrEqual(endedAt);
+		expect(await databaseExists(database.name)).toBe(false);
+	});
+
+	it("连接一直不退出（忘了关）：等到上限之后 FORCE 保底，库照样删掉", async () => {
+		const database = await createTestDatabase("sfly_test", { dropWaitMs: 300 });
+		const { client, errors } = await connectClient(database);
+
+		const startedAt = Date.now();
+		await database.drop();
+
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
+		expect(await databaseExists(database.name)).toBe(false);
+		// 被强行终止的连接收到 57P01（这里有监听，没有变成没人接的异常）。
+		// 先是服务器的 FATAL（57P01），随后是连接断了的错误：至少有一个，第一个是 57P01。
+		await vi.waitFor(() => expect(errors.length).toBeGreaterThanOrEqual(1));
+		expect((errors[0] as Error & { code?: string }).code).toBe("57P01");
+		await client.end().catch(() => {});
+	});
+
+	it("库上没有连接时不多等", async () => {
+		const database = await createTestDatabase();
+		const startedAt = Date.now();
+		await database.drop();
+		expect(Date.now() - startedAt).toBeLessThan(2000);
+		expect(await databaseExists(database.name)).toBe(false);
 	});
 });
