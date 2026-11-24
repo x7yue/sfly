@@ -2,7 +2,7 @@ import type { TokenView } from "@sfly/schema";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { cn } from "cn";
 import { KeyRoundIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
@@ -43,9 +43,11 @@ export function TokensPage({
 }) {
 	const personal = owner.kind === "personal";
 	const [issuing, setIssuing] = useState(false);
+	// 「签发令牌」按钮：弹窗关掉时焦点交还给它（空列表里是空状态里的那个，签发之后列表有了内容就是页头的那个，同一时刻只有一个）。
+	const issueButtonRef = useRef<HTMLButtonElement>(null);
 	const list = tokens.data?.tokens;
 	const issueButton = (
-		<Button variant="primary" onClick={() => setIssuing(true)}>
+		<Button ref={issueButtonRef} variant="primary" onClick={() => setIssuing(true)}>
 			签发令牌
 		</Button>
 	);
@@ -82,10 +84,18 @@ export function TokensPage({
 					{(data) => <TokenTable owner={owner} tokens={data.tokens} />}
 				</QueryView>
 			</Panel>
-			<IssueTokenDialog owner={owner} open={issuing} onOpenChange={setIssuing} />
+			<IssueTokenDialog
+				owner={owner}
+				open={issuing}
+				onOpenChange={setIssuing}
+				returnFocus={issueButtonRef}
+			/>
 		</Page>
 	);
 }
+
+/** 名称列最窄 11rem（十来个汉字）：名称是认令牌的主要依据，其他列放不下时让它们折行，不压名称。 */
+const NAME_COLUMN = "min-w-44";
 
 const STATE_KIND = { active: "ok", expired: "warn", revoked: "stopped" } as const;
 
@@ -97,7 +107,9 @@ function TokenTable({ owner, tokens }: { owner: TokenOwner; tokens: TokenView[] 
 		<Table aria-label={personal ? "个人令牌列表" : "项目令牌列表"}>
 			<TableHeader>
 				<TableRow>
-					<TableHead width="grow">名称</TableHead>
+					<TableHead width="grow" className={NAME_COLUMN}>
+						名称
+					</TableHead>
 					<TableHead width="fit">前缀</TableHead>
 					<TableHead width="fit">范围</TableHead>
 					{personal && <TableHead width="fit">限定项目</TableHead>}
@@ -134,14 +146,17 @@ function TokenRow({
 	const live = state === "active";
 	return (
 		<TableRow data-token={token.name} data-state={state}>
-			<TableCell width="grow" className={cn("font-semibold", !live && "text-fg-3")}>
+			<TableCell width="grow" className={cn(NAME_COLUMN, "font-semibold", !live && "text-fg-3")}>
 				<Truncate>{token.name}</Truncate>
 			</TableCell>
 			<TableCell width="fit" data-slot="token-prefix" className="font-mono text-xs text-fg-2">
 				{token.prefix}…
 			</TableCell>
 			<TableCell width="fit" className={cn("text-xs", live ? "text-fg-1" : "text-fg-3")}>
-				{scopesText(token.scopes)}
+				{/* 范围最宽 7rem：写得长（六个范围）时折成两行，不靠挤名称来放（1280 宽下名称列原来只剩七八十像素；名称列要 176px，其他列加起来不能让表格比面板宽）。 */}
+				<span className="inline-block w-max max-w-28 whitespace-normal align-middle">
+					{scopesText(token.scopes)}
+				</span>
 			</TableCell>
 			{owner.kind === "personal" && (
 				<TableCell width="fit" className="font-mono text-xs text-fg-2">

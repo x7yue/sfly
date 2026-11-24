@@ -63,10 +63,13 @@ export function IssueTokenDialog({
 	owner,
 	open,
 	onOpenChange,
+	returnFocus,
 }: {
 	owner: TokenOwner;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	/** 关掉之后焦点回到的元素（Esc、取消、完成都一样）；不写时落到页面上。 */
+	returnFocus?: React.RefObject<HTMLElement | null>;
 }) {
 	const project = owner.kind === "project";
 	const [name, setName] = useState("");
@@ -79,6 +82,7 @@ export function IssueTokenDialog({
 	const [issued, setIssued] = useState<IssuedToken | null>(null);
 	const nameInput = useRef<HTMLInputElement>(null);
 	const projectInput = useRef<HTMLInputElement>(null);
+	const scopeList = useRef<HTMLUListElement>(null);
 	const invalidate = useInvalidateTokens();
 	const issue = useMutation({
 		mutationFn: (body: {
@@ -138,7 +142,8 @@ export function IssueTokenDialog({
 	const submit = () => {
 		setSubmitted(true);
 		if (problems.name) return nameInput.current?.focus();
-		if (problems.scopes) return;
+		// 范围有问题时焦点放到第一个勾选框（和名称、限定项目一样）：提交之后「签发」随即不可用，焦点还留在它上面的话会落到页面上。
+		if (problems.scopes) return scopeList.current?.querySelector("input")?.focus();
 		if (problems.project) return projectInput.current?.focus();
 		const days = TOKEN_EXPIRY_OPTIONS.find((option) => option.value === expiry)?.days ?? null;
 		issue.mutate({
@@ -165,7 +170,7 @@ export function IssueTokenDialog({
 			}}
 		>
 			{/* 显示原值的时候没有右上角的关闭按钮：和 Esc、点遮罩一样，只能点「我已保存，完成」关掉，免得手滑把只显示一次的原值丢了。 */}
-			<DialogContent showCloseButton={!issued}>
+			<DialogContent showCloseButton={!issued} finalFocus={returnFocus}>
 				{issued ? (
 					<IssuedView issued={issued} onDone={() => onOpenChange(false)} />
 				) : (
@@ -233,7 +238,10 @@ export function IssueTokenDialog({
 									<p className="m-0 text-xs text-fg-3">只有勾上的范围；令牌不能做勾选之外的事。</p>
 								)}
 								{chooseScopes && (
-									<ul className="m-0 grid list-none grid-cols-2 gap-x-4 gap-y-2 p-0">
+									<ul
+										ref={scopeList}
+										className="m-0 grid list-none grid-cols-2 gap-x-4 gap-y-2 p-0"
+									>
 										{choices.map((scope) => (
 											<li key={scope}>
 												<CheckRow

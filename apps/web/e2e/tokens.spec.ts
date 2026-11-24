@@ -73,6 +73,8 @@ test.describe("个人令牌页", () => {
 		await expect(issued.getByRole("button", { name: "关闭" })).toHaveCount(0);
 		await issued.getByRole("button", { name: "我已保存，完成" }).click();
 		await expect(issued).toBeHidden();
+		// 点「完成」关掉之后焦点回到「签发令牌」（签发前列表是空的，按钮在空状态里；签发之后在页头，同一时刻只有一个）。
+		await expect(page.getByRole("button", { name: "签发令牌" })).toBeFocused();
 
 		// 列表里只有前缀，没有原值：页面的 HTML 里找不到它，刷新之后也找不到。
 		const tokenRow = row(page, "ci-bot");
@@ -163,8 +165,9 @@ test.describe("个人令牌页", () => {
 		await dialog.getByLabel("读", { exact: false }).first().uncheck();
 		await issue.click();
 		await expect(dialog.getByRole("alert")).toContainText("至少选一个范围");
-		// 标着问题的时候「签发」不可用（看起来不该能点），改好之后恢复。
+		// 标着问题的时候「签发」不可用（看起来不该能点），改好之后恢复；焦点在第一个勾选框上，不落到页面上。
 		await expect(issue).toBeDisabled();
+		await expect(dialog.getByRole("checkbox").first()).toBeFocused();
 
 		await dialog.getByLabel("读", { exact: false }).first().check();
 		await expect(issue).toBeEnabled();
@@ -239,6 +242,78 @@ test.describe("个人令牌页", () => {
 });
 
 test.describe("项目令牌页", () => {
+	test("「只选一部分」一个都不勾：在「签发」上按 Enter，焦点到第一个勾选框（不落到页面上），用键盘勾上之后「签发」恢复", async ({
+		page,
+	}) => {
+		await signIn(page);
+		await page.goto("/account/tokens");
+		await page.getByRole("button", { name: "签发令牌" }).click();
+		const dialog = dialogOf(page, "签发个人令牌");
+		const issue = dialog.getByRole("button", { name: "签发", exact: true });
+		await dialog.getByLabel("名称").fill("keyboard-user");
+		await dialog.getByRole("button", { name: "只选一部分" }).click();
+		await dialog.getByLabel("读", { exact: false }).first().uncheck();
+		// 键盘：焦点在「签发」上按 Enter。提交之后「签发」不可用，焦点不能留在它上面。
+		await issue.focus();
+		await page.keyboard.press("Enter");
+		await expect(dialog.getByRole("alert")).toContainText("至少选一个范围");
+		await expect(issue).toBeDisabled();
+		const first = dialog.getByRole("checkbox").first();
+		await expect(first).toBeFocused();
+		// 空格勾上它：「签发」恢复，焦点还在勾选框上。
+		await page.keyboard.press("Space");
+		await expect(first).toBeChecked();
+		await expect(issue).toBeEnabled();
+		await expect(first).toBeFocused();
+	});
+
+	test("Esc 关掉签发弹窗之后，焦点回到打开它的「签发令牌」按钮", async ({ page }) => {
+		await signIn(page);
+		await page.goto("/account/tokens");
+		await page.getByRole("button", { name: "签发令牌" }).click();
+		await expect(dialogOf(page, "签发个人令牌")).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(dialogOf(page, "签发个人令牌")).toBeHidden();
+		await expect(page.getByRole("button", { name: "签发令牌" })).toBeFocused();
+	});
+
+	test("1280×800：有六个范围都勾上的令牌、名称很长时，名称列不被挤没（不窄于 11rem），表格不超出面板，范围折成两行", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await signIn(page);
+		const longName = "夜间批量回归和发布前检查用的自动化脚本-第二套环境";
+		await page.evaluate(async (name) => {
+			await fetch("/api/account/tokens", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name, project: "default", expires_in_days: 90 }),
+			});
+		}, longName);
+		await page.goto("/account/tokens");
+		const tokenRow = row(page, longName);
+		await expect(tokenRow).toBeVisible();
+		await expect(tokenRow).toContainText("读、运行、编辑、会话构建、发布、管理");
+		const measured = await page.evaluate((name) => {
+			const table = document.querySelector("table") as HTMLElement;
+			const head = [...table.querySelectorAll("th")].find((th) => th.textContent === "名称");
+			const scopes = document.querySelector(`[data-token="${name}"] td:nth-child(3) span`);
+			const fence = table.parentElement as HTMLElement;
+			return {
+				name: Math.round((head as HTMLElement).getBoundingClientRect().width),
+				scopeLines: Math.round(
+					(scopes as HTMLElement).getBoundingClientRect().height /
+						Number.parseFloat(getComputedStyle(scopes as HTMLElement).lineHeight),
+				),
+				overflow: Math.round(table.getBoundingClientRect().width - fence.clientWidth),
+			};
+		}, longName);
+		// 名称列不窄于 11rem（176px，已含内边距）；表格没有比面板宽（1280 宽下其他列加起来要给名称留够这 176px）；六个范围写不下一行（7rem 的上限），折成两行。
+		expect(measured.name, JSON.stringify(measured)).toBeGreaterThanOrEqual(176);
+		expect(measured.overflow, JSON.stringify(measured)).toBeLessThanOrEqual(0);
+		expect(measured.scopeLines, JSON.stringify(measured)).toBe(2);
+	});
+
 	test("按路径里的项目显示：签发的范围里没有「管理」；列表、吊销；个人令牌页指向它", async ({
 		page,
 		request,
