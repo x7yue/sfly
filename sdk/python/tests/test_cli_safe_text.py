@@ -350,6 +350,29 @@ def test_api_json_on_a_terminal_applies_the_position_rule_inside_strings() -> No
     assert "\\u200da" in shown and chr(0x1F469) + chr(0x200D) + chr(0x1F4BB) in shown
 
 
+def test_api_json_is_recognized_by_its_content_too_and_keeps_its_trailing_newline() -> None:
+    """内容类型不是 JSON 但正文是 JSON（`{`、`[` 开头且解析得了）：照样走 JSON 的转义；末尾有换行的
+    JSON 输出也是一个换行。补充平面的字符是区分的办法：JSON 的写法是代理对，`printable` 的写法
+    不是合法的 JSON。"""
+    value = {"a": f"{TAG_G}x"}
+    for content_type in ("application/json", "text/plain", "application/octet-stream"):
+        for suffix in ("", "\n"):
+            terminal = _Terminal()
+            body = (json.dumps(value, ensure_ascii=False) + suffix).encode()
+            api._copy_body(_session(terminal), _Response(body, content_type))
+            shown = terminal.getvalue()
+            assert json.loads(shown) == value, (content_type, suffix)
+            assert shown.count("\n") == (1 if suffix or content_type == "application/json" else 0)
+
+
+def test_api_body_nested_too_deep_for_the_json_parser_is_still_plain_text() -> None:
+    """解析不了的 JSON（嵌套深得连标准库都读不了）不让命令崩掉：按普通文字处理，文字都在。"""
+    body = ("[" * 100_000 + "]" * 100_000).encode()
+    terminal = _Terminal()
+    api._copy_body(_session(terminal), _Response(body))
+    assert terminal.getvalue().startswith("[" * 1000)
+
+
 def test_api_body_that_is_not_json_is_still_plain_text_on_a_terminal() -> None:
     """不是 JSON 的正文（下载的文件、解析不了的）按普通文字处理：去掉颜色，别的写成转义，
     文字都留着。"""
@@ -382,7 +405,8 @@ def test_api_event_stream_json_on_a_terminal_keeps_every_field_between_openers()
             {"node": "a", "error": f"失败{chr(0x9D)}"},
             {"node": "b", "error": "别的节点的原因：磁盘满"},
             {"node": "c", "error": f"x{ST8}"},
-            {"node": "d", "error": "最后"},
+            # 补充平面的字符：JSON 的写法是代理对，`printable` 的写法不是合法的 JSON。
+            {"node": "d", "error": f"最后{TAG_G}"},
         ]
     }
     line = ("data: " + json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
