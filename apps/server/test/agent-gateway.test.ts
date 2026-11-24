@@ -19,7 +19,7 @@ describe("Agent 网关", () => {
 	});
 
 	// Agent 的名称是身份，显示在命令行、控制台和场景里：和令牌的名称、显示名同一个检查（#670）。字符都用码位造出来。
-	it("名称里有控制字符、8 位的控制序列、双向控制字符、零宽空格、标签字符、盲文空白、孤立的代理码元，或看起来是空的：Hello 被拒绝（InvalidArgument），说出第几个字符、哪个码位，连接不进连接表", async () => {
+	it("名称里有控制字符、8 位的控制序列、双向控制字符、零宽空格、标签字符、盲文空白，或看起来是空的：Hello 被拒绝（InvalidArgument），说出第几个字符、哪个码位，连接不进连接表", async () => {
 		const code = (...points: number[]) => String.fromCodePoint(...points);
 		for (const [bad, expected] of [
 			[`a${code(0x1b)}[2Jb`, "Agent 的名称的第 2 个字符是 U+001B"],
@@ -28,7 +28,6 @@ describe("Agent 网关", () => {
 			[`a${code(0x200b)}b`, "Agent 的名称的第 2 个字符是 U+200B"],
 			[`a${code(0xe0067)}`, "Agent 的名称的第 2 个字符是 U+E0067"],
 			[`a${code(0x2800)}`, "Agent 的名称的第 2 个字符是 U+2800"],
-			[`a${code(0xd800)}`, "Agent 的名称的第 2 个字符是 U+D800"],
 			["   ", "Agent 的名称里没有看得见的字符"],
 		] as const) {
 			await expect(
@@ -36,6 +35,7 @@ describe("Agent 网关", () => {
 				JSON.stringify(bad),
 			).rejects.toThrow(expected);
 		}
+		// 孤立的代理码元到不了这里：protobuf 的字符串编成 UTF-8 时把它换成 U+FFFD（看得见的字符），这一层不会收到（storable.test.ts 直接测）。
 		// 正常的名字（含中文、组合表情）照常连。
 		for (const ok of ["agent-ok", "测试机", `dev-${code(0x1f469, 0x200d, 0x1f4bb)}`]) {
 			const agent = await FakeAgent.connect(cp.grpcUrl, { name: ok });
