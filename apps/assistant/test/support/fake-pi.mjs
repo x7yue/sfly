@@ -123,6 +123,26 @@ function handle(command) {
 	}
 	if (command.type !== "prompt") return respond(command);
 	const text = String(command.message);
+	if (text.startsWith("reject-late")) {
+		// `reject-late:<毫秒>`：收下这句话过这么久才拒绝，其间不理 stdin 被关和 SIGTERM（只有 SIGKILL 结束得了它）：
+		// 拒绝到的时候助手服务已经在结束进程（#677 复审的探测 R）。
+		out({ type: "fake_prompt_received" });
+		stubborn = true;
+		setInterval(() => {}, 60_000);
+		process.on("SIGTERM", () => out({ type: "fake_ignored_sigterm" }));
+		setTimeout(
+			() =>
+				out({
+					id: command.id,
+					type: "response",
+					command: "prompt",
+					success: false,
+					error: "不接受",
+				}),
+			Number(text.split(":")[1] ?? 900),
+		);
+		return;
+	}
 	if (text.startsWith("reject-slow")) {
 		// 收下这句话 300 毫秒之后才拒绝（这中间可以停止）。
 		out({ type: "fake_prompt_received" });
@@ -189,6 +209,14 @@ function handle(command) {
 			out({ type: "fake_stdin_destroyed" });
 			setTimeout(() => process.exit(0), 20);
 		}, 50);
+	} else if (text.startsWith("hold-stdout")) {
+		// `hold-stdout:<秒>`：不理 abort、SIGTERM；留一个子进程拿着标准输出这么久：SIGKILL 之后助手服务仍认为它没退出，
+		// 直到子进程退出（#677 复审的探测 S-a、S-b：卡死的旧进程）。
+		onAbort = () => {};
+		stubborn = true;
+		process.on("SIGTERM", () => out({ type: "fake_ignored_sigterm" }));
+		spawn("sleep", [text.split(":")[1] ?? "6"], { stdio: ["ignore", "inherit", "ignore"] }).unref();
+		setInterval(() => {}, 60_000);
 	} else if (text.startsWith("settle-stubborn")) {
 		// 做完这一轮；之后 stdin 被关也不退出（只有 SIGKILL 结束得了它）。
 		stubborn = true;

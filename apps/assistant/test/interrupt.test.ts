@@ -571,13 +571,14 @@ describe("#677 审查补的", () => {
 		expect(rawTypes(harness, id)).toContain("fake_stdin_closed");
 	});
 
-	it("中止记号十分钟没有被提高就过期：不提高的 abort 不续期，提高的续期", async () => {
+	it("中止记号十分钟没有被提高就过期：不提高的 abort（更小的、相等的）不续期，提高的续期", async () => {
 		const clock = new ManualClock();
 		const harness = await start({ clock });
 		const id = crypto.randomUUID();
 		harness.sessions.abort(id, 5);
 		clock.advance(9 * 60_000);
 		harness.sessions.abort(id, 3); // 不提高
+		harness.sessions.abort(id, 5); // 相等，也不提高
 		clock.advance(60_000 + 1_000);
 		await harness.prompt(id, { turn: 4, text: "settle" });
 		expect(await harness.turnEnd(id, 4)).toMatchObject({ outcome: "completed" });
@@ -624,14 +625,52 @@ describe("#677 审查补的", () => {
 			});
 		});
 
-		it("abort（写 clear_queue、abort）：202，这一轮 stopped", async () => {
+		it("abort（写 clear_queue、abort）：202，这一轮 stopped；clear_queue 写不进去不算清过，之前的插话写「没有确认送到」", async () => {
 			const harness = await start({ abortSettleMs: 300, killGraceMs: 300 });
 			const id = crypto.randomUUID();
 			await harness.prompt(id, { text: "close-stdin" });
 			await destroyed(harness, id);
 			await new Promise((resolve) => setTimeout(resolve, 200));
+			const steer = crypto.randomUUID();
+			expect((await harness.steer(id, "写不进去", 1, steer)).status).toBe(202);
 			expect((await harness.abort(id)).status).toBe(202);
 			expect(await harness.turnEnd(id, 1, 15_000)).toMatchObject({ outcome: "stopped" });
+			expect(eventsOf(harness, id, 1).at(-2)).toMatchObject({
+				message_id: steer,
+				message: "插话「写不进去」没有确认送到",
+			});
+		});
+
+		it("end：202，这一轮 stopped，只有一条 turn_end，之前的插话写「没有确认送到」，之后进程数归零", async () => {
+			const harness = await start({ abortSettleMs: 300, killGraceMs: 300 });
+			const id = crypto.randomUUID();
+			await harness.prompt(id, { text: "close-stdin" });
+			await destroyed(harness, id);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			const steer = crypto.randomUUID();
+			expect((await harness.steer(id, "写不进去", 1, steer)).status).toBe(202);
+			expect((await harness.end(id)).status).toBe(202);
+			expect(await harness.turnEnd(id, 1, 15_000)).toMatchObject({ outcome: "stopped" });
+			await eventually(() => expect(harness.sessions.activeProcesses).toBe(0), 10_000);
+			const events = eventsOf(harness, id, 1);
+			expect(events.filter((e) => e.type === "turn_end")).toHaveLength(1);
+			expect(droppedIds(events)).toEqual([steer]);
+			expect(events.at(-2)).toMatchObject({ message: "插话「写不进去」没有确认送到" });
+		});
+
+		it("新起的 pi 一起动就退出：set_steering_mode、prompt 都写不进去，这一轮 interrupted，不记「设插话的模式失败」", async () => {
+			const harness = await start({
+				piArgv: [process.execPath, join(import.meta.dirname, "support", "fake-pi-dies.mjs")],
+			});
+			const id = crypto.randomUUID();
+			const steer = crypto.randomUUID();
+			expect((await harness.prompt(id, { text: "随便" })).status).toBe(202);
+			expect((await harness.steer(id, "先到的插话", 1, steer)).status).toBe(202);
+			expect(await harness.turnEnd(id, 1, 15_000)).toMatchObject({ outcome: "interrupted" });
+			const events = eventsOf(harness, id, 1);
+			expect(events.filter((e) => e.type === "turn_end")).toHaveLength(1);
+			expect(droppedIds(events)).toEqual([steer]);
+			expect(harness.logs.filter((l) => l.includes("设插话的模式失败"))).toEqual([]);
 		});
 
 		it("下一轮交 prompt 之前的 clear_queue：202，这一轮 interrupted", async () => {
@@ -698,4 +737,71 @@ describe("#677 审查补的", () => {
 		const starts = rawEvents(harness, id).filter((r) => r.type === "fake_env");
 		expect(starts).toHaveLength(2);
 	});
+});
+
+describe("#677 复审补的", () => {
+	it("已经在结束进程（SIGTERM 发了、还没退出）时 pi 才拒绝 prompt：这一轮等进程退出时结束，在等的下一轮起新进程做完", async () => {
+		const harness = await start({ abortSettleMs: 300, killGraceMs: 2_500 });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "reject-late:900" });
+		await eventually(() => expect(rawTypes(harness, id)).toContain("fake_prompt_received"));
+		const old = harness.sessions.pid(id);
+		expect((await harness.abort(id, 1)).status).toBe(202);
+		expect((await harness.prompt(id, { turn: 2, text: "settle" })).status).toBe(202);
+		expect(await harness.turnEnd(id, 1, 20_000)).toMatchObject({ outcome: "stopped" });
+		// 第 1 轮的 turn_end 在进程退出之后：拒绝到的时候（0.9 秒）进程还活着，SIGKILL 在 T0 加 2.8 秒。
+		await eventually(() => expect(rawTypes(harness, id)).toContain("fake_ignored_sigterm"));
+		expect(await harness.turnEnd(id, 2, 20_000)).toMatchObject({ outcome: "completed" });
+		expect(harness.sessions.pid(id)).not.toBe(old);
+		expect(harness.logs.filter((l) => l.includes("照样结束这一轮"))).toEqual([]);
+	}, 30_000);
+
+	it("硬上限到了、SIGKILL 之后还没退出的进程算在活着的进程里；之后才来的一轮等它退出，最多 23 秒（从这一轮算起），等不到以 failed 结束；退出之后接着用", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "hold-stdout:8" });
+		await started(harness, id);
+		await harness.abort(id);
+		clock.advance(ASSISTANT_ABORT_SETTLE_MS);
+		await eventually(() => expect(rawTypes(harness, id)).toContain("fake_ignored_sigterm"));
+		clock.advance(ASSISTANT_STOP_WAIT_MS - ASSISTANT_ABORT_SETTLE_MS);
+		expect(await harness.turnEnd(id, 1)).toMatchObject({ outcome: "stopped" });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(harness.sessions.activeProcesses).toBe(1);
+		expect(harness.sessions.pid(id)).toBeUndefined();
+		expect((await harness.prompt(id, { turn: 2, text: "settle" })).status).toBe(202);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		clock.advance(ASSISTANT_STOP_WAIT_MS - 1);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(eventsOf(harness, id, 2).some((e) => e.type === "turn_end")).toBe(false);
+		clock.advance(1);
+		const end = await harness.turnEnd(id, 2, 5_000);
+		expect(end).toMatchObject({
+			outcome: "failed",
+			reason: "上一轮的 pi 进程没有退出，所以这一轮没有开始",
+		});
+		expect(end.error_class).toBeUndefined();
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0), 15_000);
+		await harness.prompt(id, { turn: 3, text: "settle" });
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+	}, 60_000);
+
+	it("进程数到了上限：SIGKILL 之后还没退出的进程照样算进去，别的会话 503；它退出之后 202", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock, maxProcesses: 1 });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "hold-stdout:5" });
+		await started(harness, id);
+		await harness.abort(id);
+		clock.advance(ASSISTANT_ABORT_SETTLE_MS);
+		await eventually(() => expect(rawTypes(harness, id)).toContain("fake_ignored_sigterm"));
+		clock.advance(ASSISTANT_STOP_WAIT_MS - ASSISTANT_ABORT_SETTLE_MS);
+		await harness.turnEnd(id, 1);
+		const res = await harness.prompt(crypto.randomUUID(), { text: "settle" });
+		expect(res.status).toBe(503);
+		expect(await res.json()).toMatchObject({ code: "process_limit" });
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0), 15_000);
+		expect((await harness.prompt(crypto.randomUUID(), { text: "settle" })).status).toBe(202);
+	}, 60_000);
 });

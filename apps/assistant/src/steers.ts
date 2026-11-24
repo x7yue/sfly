@@ -77,11 +77,6 @@ export class SteerBook {
 		return rest.map((s, i) => ({ ...s, state: states[i] as SteerState }));
 	}
 
-	/** 交给了 pi、还没送到的条数（和 `clear_queue` 取回的条数核对）。 */
-	get inPi(): number {
-		return this.#steers.filter((s) => s.state === "sent").length;
-	}
-
 	/** `steer_queue` 的内容：还没送到、也没有 `steer_dropped` 的，按收到的顺序。 */
 	pending(): SteerEntry[] {
 		return this.#steers

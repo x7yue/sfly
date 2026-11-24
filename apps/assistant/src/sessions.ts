@@ -578,7 +578,8 @@ export class SessionManager {
 				spawned = true;
 				// 连着发的几句插话一次送完（协议「插话」，rpcprobe 第 14 题）。
 				const mode = await session.process?.request({ type: "set_steering_mode", mode: "all" });
-				if (mode && mode.success !== true) {
+				// 写不进去（进程没了）不记：读着像 pi 拒绝了；进程退出的那条路自己会记、会收尾。
+				if (mode && mode.success !== true && mode.gone !== true) {
 					this.options.log(
 						`会话 ${session.id}：设插话的模式失败：${this.#forLog(session, String(mode.error ?? ""))}`,
 					);
@@ -605,9 +606,12 @@ export class SessionManager {
 			// 进程没了（写不进去、已经退出）：这一轮按进程退出的那条路收尾（interrupted）。
 			if (turn.ended || response.gone === true) return;
 			if (response.success !== true) {
-				// 停止时 pi 恰好拒绝了这句话：pi 是空闲的，不用等 agent_settled、更不用结束进程，直接发结局。
-				if (turn.stop) {
-					this.#finish(session, turn);
+				// 停止时 pi 恰好拒绝了这句话：pi 是空闲的，不用等 agent_settled、更不用结束进程，直接发结局。已经在结束进程
+				// （等 agent_settled 超时、SIGTERM 发了）时不走这里：这一轮等进程退出时结束，在等的下一轮等它退出再开始（#677 复审）。
+				// 等回应的时候这一轮可能已经进了停止（上面的判断在 await 之前，类型收窄不知道它会变）。
+				const stop = turn.stop as Stopping | undefined;
+				if (stop) {
+					if (!stop.killing) this.#finish(session, turn);
 					return;
 				}
 				this.#end(session, turn, {
@@ -625,7 +629,7 @@ export class SessionManager {
 				`会话 ${session.id} 第 ${turn.number} 轮开始失败（工作台 ${body.workbench.name}，${body.workbench.address}）：${this.#forLog(session, raw instanceof Error ? raw.message : String(raw))}`,
 			);
 			if (turn.stop) {
-				this.#finish(session, turn);
+				if (!turn.stop.killing) this.#finish(session, turn);
 				return;
 			}
 			// 认得的才放行（#640）：写 skill 的那一步换好了说法（StartError），别的步骤（建工作区、镜像 skill、准备启动、

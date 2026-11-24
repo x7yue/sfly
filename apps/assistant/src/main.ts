@@ -73,7 +73,16 @@ function main(): void {
 	server.listen(ASSISTANT_PORT, () => log(`助手服务在 :${ASSISTANT_PORT}（pi ${pi.version}）`));
 	const stop = () => {
 		server.close();
-		void sessions.shutdown().then(() => process.exit(0));
+		// shutdown 不该拒绝（结束进程的每一步都接住了失败）；万一拒绝，HTTP 已经关了，不能留着一个不干活的进程：记一行、以 1 退出。
+		sessions.shutdown().then(
+			() => process.exit(0),
+			(error: unknown) => {
+				log(
+					`退出时结束会话出错：${forLog(error instanceof Error ? error.message : String(error), [])}`,
+				);
+				process.exit(1);
+			},
+		);
 	};
 	process.on("SIGTERM", stop);
 	process.on("SIGINT", stop);
