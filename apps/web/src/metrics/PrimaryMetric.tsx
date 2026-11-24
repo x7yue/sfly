@@ -2,7 +2,9 @@ import { bucketStartMs, type CatalogNode, isOnAgentStatus, type MetricBucket } f
 import { cn } from "cn";
 import { useMemo } from "react";
 import { Sparkline } from "#/components/sparkline";
+import { UntrustedText } from "#/components/untrusted-text";
 import { formatMetric } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { usePrimaryMetric } from "./use-primary-metric";
 
 /**
@@ -89,16 +91,22 @@ export function PrimaryMetric({
 	if (variant === "chip") {
 		return (
 			<span
-				title={`主指标：${name}`}
+				title={`主指标：${untrustedPlain(name)}`}
 				data-primary-metric={name}
 				className={cn(
 					"ml-2 inline-flex h-5.5 flex-none items-center gap-1.5 rounded-md bg-sunk px-2 text-xs",
 					className,
 				)}
 			>
-				<span className="text-fg-3">{name}</span>
+				<span className="text-fg-3">
+					<UntrustedText text={name} />
+				</span>
 				<b className="font-mono font-semibold">{valueText(last)}</b>
-				{unit && <span className="text-fg-3">{unit}</span>}
+				{unit && (
+					<span className="text-fg-3">
+						<UntrustedText text={unit} />
+					</span>
+				)}
 				{spark(16, "w-14 flex-none")}
 			</span>
 		);
@@ -106,15 +114,22 @@ export function PrimaryMetric({
 	if (variant === "inline") {
 		return (
 			<span
-				title={`主指标：${name}`}
+				title={`主指标：${untrustedPlain(name)}`}
 				data-primary-metric={name}
 				className={cn("flex min-w-0 flex-1 items-center gap-2", className)}
 			>
 				{/* 位置不够时只截断指标名，数值与单位总是完整显示。 */}
 				<span className="flex min-w-0 items-baseline gap-1">
-					<span className="min-w-0 truncate text-fg-3">{name}</span>{" "}
+					<span className="min-w-0 truncate text-fg-3">
+						<UntrustedText text={name} />
+					</span>{" "}
 					<b className="flex-none font-mono font-semibold text-fg-1">{valueText(last)}</b>
-					{unit && <span className="flex-none text-fg-3"> {unit}</span>}
+					{unit && (
+						<span className="flex-none text-fg-3">
+							{" "}
+							<UntrustedText text={unit} />
+						</span>
+					)}
 				</span>
 				{spark(14, "ml-auto w-13.5 flex-none")}
 			</span>
@@ -123,10 +138,17 @@ export function PrimaryMetric({
 	return (
 		<div data-primary-metric={name} className={cn("flex items-end gap-3", className)}>
 			<div className="min-w-0 flex-none">
-				<div className="text-xs text-fg-3">{name}（主指标）</div>
+				<div className="text-xs text-fg-3">
+					<UntrustedText text={name} />
+					（主指标）
+				</div>
 				<div className="font-mono text-lg font-semibold">
 					{valueText(last)}
-					{unit && <small className="ml-1 text-xs font-normal text-fg-3">{unit}</small>}
+					{unit && (
+						<small className="ml-1 text-xs font-normal text-fg-3">
+							<UntrustedText text={unit} />
+						</small>
+					)}
 				</div>
 			</div>
 			{spark(34, "min-w-0 flex-1")}

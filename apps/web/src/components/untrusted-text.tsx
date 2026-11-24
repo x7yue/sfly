@@ -11,21 +11,25 @@ import { type UntrustedMode, untrustedSegments } from "#/lib/untrusted-text";
  *   终端的转义字符都不再生效，也藏不了内容。字符表是 `@sfly/schema` 的 `text-safety.ts` 里那一张（见 `lib/untrusted-text`）。
  *
  * `mode`：`line`（默认）单行的名字，所有控制字符都写出来；`text` 可以多行的正文（失败原因、日志、输出），换行和制表符照常。
+ * `dir`：默认 `auto`（方向跟着文字自己的字母走：整段都是别人写的文字时用）；一整句里夹着控制台自己的文案和别人写的名字时
+ * （「Agent 某某 不在线」）传 `ltr`：整句按控制台的方向排，名字里从右到左的字母自己成一段，不把整句的顺序带反。
  * 属性里（`title`、`aria-label`）和按文字截断的地方放不了组件：用 `lib/untrusted-text` 的 `untrustedPlain`，或 `Truncate` 的 `untrusted`。
  * 没有要写出来的字符时只多一个 `<bdi>`，一行日志多一次正则匹配。
  */
 export function UntrustedText({
 	text,
 	mode = "line",
+	dir = "auto",
 	className,
 }: {
 	text: string;
 	mode?: UntrustedMode;
+	dir?: "auto" | "ltr";
 	className?: string;
 }) {
 	const segments = untrustedSegments(text, mode);
 	return (
-		<bdi className={className}>
+		<bdi dir={dir === "ltr" ? "ltr" : undefined} className={className}>
 			{segments.map((segment, index) =>
 				segment.kind === "text" ? (
 					// biome-ignore lint/suspicious/noArrayIndexKey: 段按顺序切出来，文字变了整个重排

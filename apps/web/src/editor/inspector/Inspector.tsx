@@ -32,12 +32,14 @@ import {
 	soleNode,
 } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FocusListPage } from "#/focus/FocusList";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
 import { ACTION, ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
 import { descriptionParagraphs } from "#/lib/node-description";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -285,7 +287,7 @@ function NodeInspector({
 		<>
 			<Header
 				onCollapse={onCollapse}
-				title={nodeCardText(node, info).title}
+				title={untrustedPlain(nodeCardText(node, info).title)}
 				row={
 					<>
 						<span className="font-mono text-fg-2">{id}</span>
@@ -295,12 +297,14 @@ function NodeInspector({
 								{node.kind === "package" && (
 									<span className="font-mono">
 										{" "}
-										· {node.package}/{node.node}
+										· <UntrustedText text={`${node.package}/${node.node}`} />
 									</span>
 								)}
 							</span>
 							{node.kind === "package" && (
-								<span className="flex-none font-mono">@{version ?? "未锁定"}</span>
+								<span className="flex-none font-mono">
+									<UntrustedText text={`@${version ?? "未锁定"}`} />
+								</span>
 							)}
 						</span>
 					</>
@@ -488,7 +492,7 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 				).map((paragraph, i) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: 静态文本，同一段话可能重复，只能按位置区分
 					<p key={i} className="m-0">
-						{paragraph}
+						<UntrustedText text={paragraph} />
 					</p>
 				))}
 			</div>
@@ -499,7 +503,7 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 					<>
 						<dt className="text-fg-3">节点类型</dt>
 						<dd className="m-0 min-w-0 truncate font-mono">
-							{node.package}/{node.node}
+							<UntrustedText text={`${node.package}/${node.node}`} />
 						</dd>
 						<dt className="pt-1.5 text-fg-3">版本</dt>
 						<dd className="m-0 min-w-0">

@@ -1,5 +1,7 @@
 import { cn } from "cn";
 import { type ComponentProps, Fragment, type ReactNode, useId } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import type { FieldControlProps } from "@/components/ui/form-field";
 import { useTouchFields } from "../field-drafts";
 
@@ -39,17 +41,19 @@ function Breakable({ text }: { text: string }) {
 	});
 }
 
+/** 名称可能是节点包的输入键（别人写的）：先写出看不见的字符再拆，方向隔离在 `<bdi>` 里，不影响旁边的星号和类型。 */
 function LabelText({ text, required }: { text: string; required: boolean | undefined }) {
-	const head = text.slice(0, -CHARS_KEPT_WITH_STAR);
-	const tail = text.slice(-CHARS_KEPT_WITH_STAR);
+	const safe = untrustedPlain(text);
+	const head = safe.slice(0, -CHARS_KEPT_WITH_STAR);
+	const tail = safe.slice(-CHARS_KEPT_WITH_STAR);
 	return (
-		<>
+		<bdi>
 			<Breakable text={head} />
 			<span className="whitespace-nowrap">
 				{tail}
 				{required && <span className="ml-0.5 text-fg-2">*</span>}
 			</span>
-		</>
+		</bdi>
 	);
 }
 
@@ -120,7 +124,11 @@ export function Field({
 			>
 				<LabelText text={label} required={required} />
 				{/* 类型说明最多撑到 96px：它不该把名称列撑宽、把控件挤窄 */}
-				{type && <span className="block max-w-24 font-mono text-2xs text-fg-3">{type}</span>}
+				{type && (
+					<span className="block max-w-24 font-mono text-2xs text-fg-3">
+						<UntrustedText text={type} />
+					</span>
+				)}
 			</label>
 			<div className={cn("min-w-0", !aside && "col-span-2")}>
 				{typeof children === "function" ? children(control) : children}
@@ -135,7 +143,7 @@ export function Field({
 					)}
 					{help && (
 						<p id={helpId} className="m-0 text-xs wrap-anywhere whitespace-pre-line text-fg-3">
-							{help}
+							{typeof help === "string" ? <UntrustedText text={help} mode="text" /> : help}
 						</p>
 					)}
 				</div>

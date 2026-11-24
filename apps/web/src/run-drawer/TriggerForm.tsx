@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import { Banner } from "#/components/feedback/banner";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
@@ -346,8 +347,14 @@ function CheckItem({ row, onLocate }: { row: CheckRow; onLocate?: (nodeId: strin
 				<span className="sr-only">{icon.label}：</span>
 			</span>
 			<div className="min-w-0 flex-1">
-				<div>{row.title}</div>
-				{row.detail && <div className="text-xs text-fg-3">{row.detail}</div>}
+				<div>
+					<UntrustedText text={row.title} />
+				</div>
+				{row.detail && (
+					<div className="text-xs text-fg-3">
+						<UntrustedText text={row.detail} />
+					</div>
+				)}
 				{row.problems.length > 0 && <ProblemList problems={row.problems} onLocate={onLocate} />}
 			</div>
 		</li>
@@ -365,7 +372,9 @@ function ProblemList({
 		<ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0 text-xs text-fg-2">
 			{problems.map((p) => (
 				<li key={`${p.code}:${p.node_id ?? ""}:${p.message}`} className="flex items-baseline gap-2">
-					<span className="min-w-0 flex-1">{p.message}</span>
+					<span className="min-w-0 flex-1">
+						<UntrustedText text={p.message} />
+					</span>
 					{p.node_id && onLocate && (
 						<Button
 							variant="link"

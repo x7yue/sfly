@@ -6,10 +6,12 @@ import {
 	type RunLogLine,
 	type RunView,
 } from "@sfly/schema";
+import { UntrustedText } from "#/components/untrusted-text";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { anomalyText, readingValue, sourceNodeName } from "#/focus/focus-format";
 import { ERROR_LOCATION_LABEL, FOCUS, LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
 import { formatClock, formatClockMs, formatElapsed } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MAX_OTHER_FAILURES } from "./FailureArea";
@@ -107,18 +109,24 @@ export function Attention({
 					return (
 						<li
 							key={`${item.node_id}\n${item.chart}\n${item.position}`}
-							aria-label={`${item.title}，${anomalyText(item, focus.generated_at)}`}
+							aria-label={untrustedPlain(`${item.title}，${anomalyText(item, focus.generated_at)}`)}
 							className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 border-t border-border-soft px-3.5 py-2.5 first:border-t-0"
 						>
 							<AnomalyMark className="mt-1.5" />
 							<div className="min-w-0 text-sm">
 								<p className="m-0">
-									<span className="font-semibold text-fg-1">{item.title}</span>
+									<span className="font-semibold text-fg-1">
+										<UntrustedText text={item.title} />
+									</span>
 									{!item.unavailable && item.latest && (
-										<span className="ml-2 font-mono text-xs text-fg-3">{readingValue(item)}</span>
+										<span className="ml-2 font-mono text-xs text-fg-3">
+											<UntrustedText text={readingValue(item)} />
+										</span>
 									)}
 								</p>
-								<p className="m-0 mt-0.5 wrap-anywhere text-fg-2">{why}</p>
+								<p className="m-0 mt-0.5 wrap-anywhere text-fg-2">
+									<UntrustedText text={why} mode="text" />
+								</p>
 							</div>
 							<Button size="sm" onClick={() => onOpen(target)}>
 								{label}
@@ -230,7 +238,9 @@ export function OtherWarnings({
 								<span>{line.time === null ? "—" : formatClockMs(line.time)}</span>
 								<span className={LOG_LEVEL_STYLE[line.level]}>{LOG_LEVEL_LABEL[line.level]}</span>
 								<span className="max-w-80 truncate">{logOrigin(run, line)}</span>
-								<span className="truncate">{line.text}</span>
+								<span className="truncate">
+									<UntrustedText text={line.text} />
+								</span>
 							</button>
 						</li>
 					))}

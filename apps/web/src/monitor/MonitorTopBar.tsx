@@ -7,6 +7,7 @@ import { useState } from "react";
 import { NodeNameInline } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { TriggeredAt } from "#/components/via-tag";
 import { useRunFocus } from "#/focus/use-run-focus";
 import { apiQuery } from "#/lib/api";
@@ -14,6 +15,7 @@ import { ACTION, DURATION_LABEL, ELAPSED_LABEL, FOCUS, MESSAGE } from "#/lib/cop
 import { formatClock, formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { shortcutText } from "#/lib/shortcuts";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { runViewTransition } from "#/lib/view-transition";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -248,7 +250,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 	const actions = useMonitorActions();
 	return (
 		<Truncate
-			label={`${failureSummary(failure)}\n点击查看这个节点的尝试`}
+			label={`${untrustedPlain(failureSummary(failure))}\n点击查看这个节点的尝试`}
 			render={
 				<button
 					type="button"
@@ -270,7 +272,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 			{failure.message && (
 				<span className="text-danger-fg">
 					{failureMessageSeparator(failure)}
-					{failure.message}
+					<UntrustedText text={failure.message} />
 				</span>
 			)}
 		</Truncate>

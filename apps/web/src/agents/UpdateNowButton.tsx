@@ -13,9 +13,11 @@ import { useEffect, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { NodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { callApi } from "#/lib/api";
 import { attemptLabel } from "#/lib/copy";
 import { shortId } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -68,7 +70,7 @@ export function UpdateNowButton({
 				void queryClient.invalidateQueries({ queryKey: key });
 			}
 			setOpen(false);
-			notify.info(`已通知 ${agent.name} 立即更新`, {
+			notify.info(`已通知 ${untrustedPlain(agent.name)} 立即更新`, {
 				description:
 					terminated_tasks.length > 0
 						? `终止了 ${terminated_tasks.length} 个任务，它们以 agent_lost 失败。`
@@ -89,7 +91,11 @@ export function UpdateNowButton({
 				<DialogContent className="w-[480px]">
 					<DialogHeader>
 						<DialogTitle>
-							立即更新 <span className="font-mono">{agent.name}</span>？
+							立即更新{" "}
+							<span className="font-mono">
+								<UntrustedText text={agent.name} />
+							</span>
+							？
 						</DialogTitle>
 						<DialogDescription>
 							不再等手上的任务结束：Agent

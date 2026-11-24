@@ -5,6 +5,8 @@ import { cn } from "cn";
 import { type CSSProperties, useCallback, useId, useRef } from "react";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusDot, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { ActivityLine } from "./ActivityLine";
@@ -151,7 +153,13 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			// 名称：「节点 ID，种类，标题」（aria-label，由自己的 id 引用）接上右侧的状态（运行状态和数字、警告、差异标记），
 			// 执行中再接上「正在做 X」，有关注项时最后是关注项的个数（有异常时写几项需要注意、为什么）。
 			id={cardId}
-			aria-label={[`节点 ${id}`, caption, title !== id && title].filter(Boolean).join("，")}
+			aria-label={[
+				`节点 ${id}`,
+				caption && untrustedPlain(caption),
+				title !== id && untrustedPlain(title),
+			]
+				.filter(Boolean)
+				.join("，")}
 			aria-labelledby={[cardId, statusId, activity && activityId, focus && focusId]
 				.filter(Boolean)
 				.join(" ")}
@@ -247,7 +255,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 							title={named ? title : undefined}
 							className={cn("min-w-0 flex-1 leading-[1.45] tracking-[0.01em]", ZOOM_TEXT_TITLE)}
 						>
-							{title}
+							<UntrustedText text={title} />
 						</BaseNodeHeaderTitle>
 					)}
 					{/* 右侧：运行时的状态（读屏读到，看得见的是站点灯）和数字；编辑时的警告、版本对比的差异。 */}
@@ -317,7 +325,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 												shownSlot.empty ? "text-fg-3" : "font-mono text-fg-2",
 											)}
 										>
-											{shownSlot.text}
+											<UntrustedText text={shownSlot.text} />
 										</span>
 									)}
 									{shownCaption && (
@@ -327,7 +335,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 											aria-hidden
 											className="max-w-[5.2em] shrink-0 truncate in-data-[compact=true]:hidden"
 										>
-											{shownCaption}
+											<UntrustedText text={shownCaption} />
 										</span>
 									)}
 								</>
@@ -387,7 +395,9 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 						"in-data-[lod-far=true]:left-[18px] in-data-[lod-far=true]:border-x-[length:max(1px,calc(2px/var(--canvas-zoom)))] in-data-[lod-far=true]:border-b-[length:max(1px,calc(2px/var(--canvas-zoom)))]",
 					)}
 				>
-					<span className="hidden font-semibold in-data-[lod-far=true]:inline">{title} </span>
+					<span className="hidden font-semibold in-data-[lod-far=true]:inline">
+						<UntrustedText text={title} />{" "}
+					</span>
 					<span className="in-data-[lod-far=true]:text-fg-2">{decoration.overview}</span>
 				</span>
 			)}

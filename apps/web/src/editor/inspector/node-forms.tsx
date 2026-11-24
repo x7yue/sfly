@@ -20,6 +20,7 @@ import { useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { MESSAGE, subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -639,7 +640,7 @@ export function PackageVersionField({
 	return (
 		<div className="flex min-w-0 items-center gap-1.5">
 			<NativeSelect
-				aria-label={`${name} 的版本`}
+				aria-label={`${untrustedPlain(name)} 的版本`}
 				className="w-36 flex-none [&_select]:font-mono [&_select]:text-xs"
 				value={locked ?? ""}
 				onChange={(e) => e.target.value && onLock(name, e.target.value)}

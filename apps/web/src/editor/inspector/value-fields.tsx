@@ -2,6 +2,7 @@
 import { describeSchema, isWholeRunState, RUN_STATE_REFERENCE } from "@sfly/orchestration";
 import type { AgentView, FeishuBotView } from "@sfly/schema";
 import { useEffect, useId, useRef } from "react";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { draftKey, useDropFieldDraft, useFieldErrors, useParsedField } from "../field-drafts";
@@ -65,19 +66,21 @@ export function ValueField({
 	onChange(value: unknown): void;
 }) {
 	const id = useId();
+	// 输入名、默认值来自节点包的元信息（别人写的），下面的控件只拿它们当文字显示：在这里写出看不见的字符。
+	const shownName = untrustedPlain(name);
 	const kind = valueKind(schema);
 	const placeholder =
 		schema.default !== undefined
-			? `默认 ${JSON.stringify(schema.default)}`
+			? `默认 ${untrustedPlain(JSON.stringify(schema.default))}`
 			: required
 				? "必填"
 				: "可选";
-	const fieldLabel = label ?? `输入 ${name}`;
+	const fieldLabel = label ?? `输入 ${shownName}`;
 	const key = draftKey(nodeId, `value.${name}`);
 	const errors = useFieldErrors(key, problems);
 	const common = {
 		id,
-		name,
+		name: shownName,
 		label: fieldLabel,
 		placeholder,
 		errors,
@@ -302,7 +305,7 @@ function TypedValue({
 					<NativeSelectOption value="">（{placeholder}）</NativeSelectOption>
 					{(kind === "boolean" ? [true, false] : (schema.enum as unknown[])).map((c) => (
 						<NativeSelectOption key={JSON.stringify(c)} value={JSON.stringify(c)}>
-							{JSON.stringify(c)}
+							{untrustedPlain(JSON.stringify(c))}
 						</NativeSelectOption>
 					))}
 				</NativeSelect>

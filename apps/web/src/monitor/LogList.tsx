@@ -2,6 +2,7 @@ import type { LogLineView } from "@sfly/schema";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
 import {
 	formatClockMs,
@@ -407,7 +408,7 @@ export function LogList<L extends LogLineView>({
 								{line.source}
 							</span>
 							<span className={locatable ? LOG_LEVEL_STYLE[line.level] : "text-fg-3"}>
-								{line.text}
+								<UntrustedText mode="text" text={line.text} />
 							</span>
 						</div>
 					);
