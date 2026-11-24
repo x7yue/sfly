@@ -63,6 +63,7 @@ import { AssistantClient } from "./sessions/assistant-client.js";
 import { assistantSetup } from "./sessions/assistant-config.js";
 import { AssistantConnection } from "./sessions/assistant-connection.js";
 import { SessionService } from "./sessions/session-service.js";
+import type { SessionRow } from "./sessions/session-store.js";
 import { SessionStore } from "./sessions/session-store.js";
 import { Mutex } from "./util/mutex.js";
 import { printError, printInfo } from "./util/output.js";
@@ -177,8 +178,14 @@ export interface ControlPlaneOptions {
 	/** 兜底收拾「一直在做」的会话的扫描间隔，默认 1 分钟；是否过期只按注入的时钟判断。 */
 	sessionSweepIntervalMs?: number;
 	/**
-	 * 停止会话时，把中止发给助手服务之后最多等多久它把这一轮的结局带回来（毫秒），默认 `STOP_GRACE_MS`（13 秒：助手服务强制结束
-	 * 进程的宽限 10 秒加 3 秒余量，不能短于它）；超过由控制面结束这一轮。测试里调小。
+	 * 会话结束之后调用（会话令牌合入之后在这里吊销这个会话的令牌，#544 留好的接口）：抛的错只进日志，不影响结束。
+	 * 主要给测试用；生产里由令牌那条任务接上。
+	 */
+	onSessionEnded?: (session: SessionRow) => Promise<void>;
+	/**
+	 * 停止会话时，从发出中止的那一刻起最多等多久助手服务把这一轮的结局带回来（毫秒），默认 `STOP_GRACE_MS`（协议里的
+	 * `ASSISTANT_STOP_WAIT_MS`，23 秒：等 `agent_settled` 10 秒、结束进程的宽限 10 秒、加 3 秒余量，不能短于它）；超过由控制面
+	 * 结束这一轮（并为没有确认送到的插话补 `steer_dropped`）。测试里调小。
 	 */
 	sessionStopGraceMs?: number;
 	/** 发给助手服务的命令（不含事件流和 `/health`）最多等多久（毫秒），默认 10 秒；测试里调小。 */
@@ -220,6 +227,8 @@ export interface ControlPlane {
 	readonly grpcUrl: string;
 	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
 	readonly sessions: SessionStore;
+	/** 会话的写和后台（测试用：`idle()` 等排队中的会话开始完）。 */
+	readonly sessionService: SessionService;
 	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts）：测试用它给假 Agent 签发凭据。 */
 	readonly agentCredentials: AgentCredentialService;
 	/**
@@ -499,6 +508,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		client: assistantClient,
 		workbenchAgent: options.workbenchAgent || undefined,
 		...(options.sessionStopGraceMs !== undefined && { stopGraceMs: options.sessionStopGraceMs }),
+		...(options.onSessionEnded && { onEnded: options.onSessionEnded }),
 		log: (message, error) => logError(`sfly: ${message}`, error),
 	});
 	const api = buildHttpApi({
@@ -626,13 +636,21 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	await sessionService
 		.expireStale()
 		.catch((error) => logError("sfly: 收拾一直在做的会话失败：", error));
+	// 重启前有会话在排队、项目里却没有会话在做的：开始排队最早的那个（#544）。
+	await sessionService
+		.startWaiting()
+		.catch((error) => logError("sfly: 开始排队中的会话失败：", error));
 
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
 	const fail = (what: string) => (error: unknown) => logError(`${what} failed:`, error);
 	const sweeps = [
 		periodic(
 			options.sessionSweepIntervalMs ?? 60_000,
-			() => sessionService.expireStale(),
+			async () => {
+				await sessionService.expireStale();
+				// 兜底：有会话排队、却没有会话在做的项目，开始排队最早的那个（开始它的那一次没做完时）。
+				await sessionService.startWaiting();
+			},
 			fail("session sweep"),
 		),
 		// 任务租约过期与排队超时（#15）。
@@ -664,6 +682,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		stopClosingDevAgents();
 		await assistantConnection?.close();
 		await Promise.all(sweeps.map((s) => s.stop()));
+		// 后台「补发中止、等结局」「开始排队中的会话」：放弃等待（不为它们延长关闭的上限，也不在关闭时自己补结局）；重启之后这些会话
+		// 还是在做的：中止已经发出，助手服务带回结局就照常收下，带不回来由兜底结束（#545）。
+		await sessionService.close();
 		await retention.idle();
 		await metricRetention.idle();
 		hub.closeAll();
@@ -684,6 +705,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		httpUrl,
 		grpcUrl: gateway.url,
 		sessions,
+		sessionService,
 		agentCredentials,
 		close: () => {
 			closing ??= close();
