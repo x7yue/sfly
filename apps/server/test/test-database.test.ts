@@ -200,7 +200,8 @@ describe("删库（#679）", () => {
 		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
 		expect(await databaseExists(database.name)).toBe(false);
 		// 被强行终止的连接收到 57P01（这里有监听，没有变成没人接的异常）。
-		await vi.waitFor(() => expect(errors).toHaveLength(1));
+		// 先是服务器的 FATAL（57P01），随后是连接断了的错误：至少有一个，第一个是 57P01。
+		await vi.waitFor(() => expect(errors.length).toBeGreaterThanOrEqual(1));
 		expect((errors[0] as Error & { code?: string }).code).toBe("57P01");
 		await client.end().catch(() => {});
 	});
