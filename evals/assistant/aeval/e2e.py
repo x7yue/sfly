@@ -76,7 +76,7 @@ def check_sequence(persisted: list[dict[str, Any]]) -> list[str]:
         if end_at != len(types) - 1:
             problems.append(f"turn_end 之后还有事件：{types[end_at + 1 :]}")
     calls: list[str] = []
-    answered: set[str] = set()
+    answered: list[str] = []
     for event in persisted:
         if event.get("type") == "tool_call":
             calls.append(str(event.get("call_id")))
@@ -84,11 +84,13 @@ def check_sequence(persisted: list[dict[str, Any]]) -> list[str]:
             call = str(event.get("call_id"))
             if call not in calls:
                 problems.append(f"工具结果 {call} 之前没有对应的工具调用")
-            answered.add(call)
+            elif call in answered:
+                problems.append(f"工具调用 {call} 有 {answered.count(call) + 1} 个结果，只该有一个")
+            answered.append(call)
     if not calls:
         problems.append("没有工具调用")
-    if set(calls) - answered:
-        problems.append(f"这些工具调用没有结果：{sorted(set(calls) - answered)}")
+    if set(calls) - set(answered):
+        problems.append(f"这些工具调用没有结果：{sorted(set(calls) - set(answered))}")
     last_tool = max(
         (i for i, t in enumerate(types) if t in ("tool_call", "tool_result")), default=-1
     )
@@ -117,7 +119,7 @@ def follow(
     stack: Stack, session_id: str, deadline: float
 ) -> tuple[list[dict[str, Any]], str | None]:
     """跟着 `GET /sessions/:id/events`（从头补发、再接实时）收事件，到这一轮的 `turn_end` 为止。
-    返回收到的事件，和没等到时的原因（超时、断开）：没等到时已经收到的事件也带回来。
+    返回收到的事件，和没等到时的原因（过了时限、事件流提前结束、断开）：没等到时已经收到的事件也带回来。
 
     时限的粒度是控制面的心跳（15 秒一次）：没有事件时最多晚这么久才发现过了时限。"""
     request = urllib.request.Request(
@@ -134,10 +136,13 @@ def follow(
                 if event.get("type") == "turn_end" and "seq" in event:
                     return events, None
                 if time.monotonic() > deadline:
-                    break
+                    return events, f"在时限内没有等到 turn_end（收到 {len(events)} 个事件）"
+    except TimeoutError:
+        # 读的时候等满了剩下的时间：没有事件，也没有心跳。
+        return events, f"在时限内没有等到 turn_end（收到 {len(events)} 个事件）"
     except (OSError, ValueError) as error:
         return events, f"事件流断了（收到 {len(events)} 个事件）：{error}"
-    return events, f"在时限内没有等到 turn_end（收到 {len(events)} 个事件）"
+    return events, f"事件流在 turn_end 之前就结束了（收到 {len(events)} 个事件）"
 
 
 def persisted_events(stack: Stack, session_id: str) -> list[dict[str, Any]]:
