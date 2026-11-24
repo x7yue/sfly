@@ -203,7 +203,7 @@ export default definePerfItem({
 				`运行视图里有 ${attempts.length} 个任务，种进去的是 ${TASKS} 个：种的场景文档读不出链`,
 			);
 		}
-		const omitted = attempts.filter((a) => a.outputs_omitted_bytes !== null);
+		const omitted = attempts.filter((a) => typeof a.outputs_omitted_bytes === "number");
 		let mismatched = 0;
 		for (const attempt of [omitted[0], omitted.at(-1)]) {
 			if (!attempt) {
