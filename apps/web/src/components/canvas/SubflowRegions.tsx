@@ -1,9 +1,4 @@
-import {
-	type LayoutDocument,
-	REGION_PADDING,
-	type SubflowRegion,
-	subflowRegions,
-} from "@sfly/orchestration";
+import { type LayoutDocument, type SubflowRegion, subflowRegions } from "@sfly/orchestration";
 import { useStore, ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
 import { useMemo } from "react";
@@ -33,9 +28,9 @@ function namedRegions(layout: LayoutDocument, nodes: SfNode[], edges: SfEdge[]):
 const HEADER_INSET = 14;
 /**
  * 标题行底边离区域顶边的距离：标题行按底边放在区域上方的留白里，缩小视图时文字变大往上长，
- * 不被下面的卡片挡住（和注释框的标题带一样）。
+ * 不被下面的卡片挡住（和注释框的标题带一样）。标题行和卡片（REGION_PADDING.top 处）之间的空隙留给卡片上的标签。
  */
-const HEADER_BOTTOM = REGION_PADDING.top - 14;
+const HEADER_BOTTOM = 30;
 
 /** 默认的元信息（谁触发、几个节点）放得下需要多宽，单位是标题栏的字号：窄于它就整段去掉，把空间留给名字。 */
 const META_FITS_EM = 24;

@@ -12,6 +12,8 @@ const visual = process.env.SFLY_VISUAL === "1";
 
 export default defineConfig({
 	testDir: "e2e",
+	// 整个运行开始前建一个已迁移的模板库，每个用例的测试库从它复制，迁移只跑一次（#613）。
+	globalSetup: "./e2e/global-setup.ts",
 	testIgnore: visual ? [] : ["**/visual.spec.ts"],
 	outputDir: "test-results",
 	snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",

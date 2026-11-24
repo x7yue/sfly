@@ -187,6 +187,11 @@ def _without(kind: str) -> list[dict[str, Any]]:
         ),
         # 中间多一个 turn_started。
         (_renumber([*GOOD[:4], _event(0, "turn_started"), *GOOD[4:]]), "turn_started 出现了 2 次"),
+        # 同一个调用来了两个结果。
+        (
+            _renumber([*GOOD[:4], _event(0, "tool_result", call_id="c1"), *GOOD[4:]]),
+            "c1 有 2 个结果",
+        ),
         # 序号跳号（少了一个）。
         ([*GOOD[:4], *GOOD[5:]], "不跳号"),
         # turn_end 之后还有事件。
@@ -238,8 +243,14 @@ class FakeControlPlane:
                 raise e2e.ControlPlaneError(self.create_error)
             return {"id": "s1"}
         if method == "GET" and path.startswith("/sessions/s1"):
-            return {"events": self.persisted, "has_more": False}
+            # 和控制面一样分页：没有 before 时是最新的一页，before 是序号，往前翻。
+            before = int(path.split("before=")[1]) if "before=" in path else None
+            older = [e for e in self.persisted if before is None or e["seq"] < before]
+            page = older[-self.page_size :]
+            return {"events": page, "has_more": len(older) > len(page)}
         return None
+
+    page_size = 200
 
 
 def _run(tmp_path: Path, task: Task) -> tuple[int, dict[str, Any], Path]:
@@ -258,6 +269,18 @@ def test_e2e_passes_only_with_the_right_sequence_and_a_full_score(
     assert record["problems"] == [] and record["session"] == "s1"
     assert json.loads((out / "persisted.json").read_text()) == GOOD
     assert len((out / "events.jsonl").read_text().splitlines()) == len(GOOD)
+
+
+def test_e2e_reads_every_page_of_the_persisted_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """持久事件多于一页时往前翻页读全：只读最新的一页会少了开头，检查就不对了。"""
+    control = FakeControlPlane(monkeypatch, (GOOD, None), GOOD)
+    control.page_size = 3
+    code, record, out = _run(tmp_path, FakeTask())
+    assert code == 0, record["problems"]
+    assert json.loads((out / "persisted.json").read_text()) == GOOD
+    assert ("GET", "/sessions/s1?before=3") in control.calls
 
 
 def test_e2e_fails_when_the_score_is_not_full(
@@ -416,7 +439,8 @@ class _SseServer:
 
 
 @pytest.mark.parametrize(
-    ("then", "reason"), [("close", "没有等到 turn_end"), ("silent", "事件流断了")]
+    ("then", "reason"),
+    [("close", "事件流在 turn_end 之前就结束了"), ("silent", "在时限内没有等到 turn_end")],
 )
 def test_follow_brings_back_what_it_got_when_the_turn_does_not_end(
     monkeypatch: pytest.MonkeyPatch, then: str, reason: str

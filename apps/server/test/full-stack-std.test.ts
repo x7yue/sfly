@@ -1,12 +1,11 @@
-// 全栈：标准节点包 sfly-std（ADR 0017）像用户的节点包一样单独上传到真实的控制面，场景锁定它的版本，
-// 真实的 Agent 从控制面安装它（依赖从 PyPI 镜像桩安装，不访问外网）并执行标准节点。
-// 新增标准节点的全栈场景加在这个文件里（各自一个 it）。
+// 全栈：标准节点包 sfly-std（ADR 0017、0030）由平台管理员发布到公共项目（POST /packages?project=public，#565），
+// 场景锁定它的版本，真实的 Agent 从控制面安装它（依赖从 PyPI 镜像桩安装，不访问外网）并执行三个标准节点
+// （shell、start_process、stop_process）。辅助函数在业务节点里的用法在 full-stack-std-helpers.test.ts。
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { type AddressInfo, createServer } from "node:net";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logsApi, metricsApi } from "@sfly/schema";
+import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { systemClock } from "../src/clock.js";
 import { agentBinary } from "./support/agent-binary.js";
@@ -18,15 +17,14 @@ import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-a
 import {
 	buildStdPackage,
 	buildStdPackageVariant,
+	publishIntoPublicProject,
 	type StdPackage,
 	wheelhouse,
 } from "./support/std-package.js";
-import { publishArchive, publishTestPackage } from "./support/stub-package.js";
+import { publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const AGENT = "std-agent";
-
-const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
 describeWithAgent("全栈：标准节点包 sfly-std", () => {
 	let dir: string;
@@ -48,7 +46,10 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 			wheelhouse(join(dir, "wheels"), [], { withStdDependencies: true }),
 		]);
 		pypi = await startPypiStub(wheels);
-		await publishArchive(cp, await readFile(std.path));
+		await publishIntoPublicProject(cp, new Uint8Array(await readFile(std.path)), {
+			name: "sfly-std",
+			version: std.version,
+		});
 		agent = await startRealAgent({
 			grpcUrl: cp.grpcUrl,
 			name: AGENT,
@@ -154,56 +155,6 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 		);
 	}, 180_000);
 
-	it("assert 引用 shell 的输出并断言通过；断言不通过时运行失败，错误信息逐条列出", async () => {
-		const count = {
-			id: "count",
-			node: "shell",
-			inputs: { command: "printf '%s\\n' a b c | wc -l" },
-		};
-		const actual = {
-			exit_code: "${{ nodes.count.outputs.exit_code }}",
-			stdout: "${{ nodes.count.outputs.stdout }}",
-		};
-		const passing = await runChain([
-			count,
-			{
-				id: "check",
-				node: "assert",
-				inputs: {
-					actual,
-					assertions: [
-						{ path: "$.exit_code", op: "eq", value: 0 },
-						{ path: "$.stdout", op: "ge", value: 3 },
-						{ path: "$.stdout", op: "matches", value: "^\\s*3$" },
-					],
-				},
-			},
-		]);
-		expect((await passing.api.run(passing.runId)).status).toBe("success");
-		expect((await passing.api.node(passing.runId, "check")).outputs).toEqual({ passed: true });
-
-		const failing = await runChain([
-			count,
-			{
-				id: "check",
-				node: "assert",
-				inputs: {
-					actual,
-					assertions: [
-						{ path: "$.exit_code", op: "eq", value: 0 },
-						{ path: "$.stdout", op: "gt", value: 10 },
-					],
-				},
-			},
-		]);
-		expect((await failing.api.run(failing.runId)).status).toBe("failed");
-		const check = await failing.api.node(failing.runId, "check");
-		expect(check.error?.kind).toBe("node_error");
-		expect(check.error?.message).toMatch(
-			/^sfly_std\.assert_\.AssertionFailed: 2 条断言中 1 条不通过：\n- 第 2 条：\$\.stdout 应 gt 10，实际是 "\s*3\\n"\n/,
-		);
-	}, 300_000);
-
 	it("start_process 启动的进程在节点结束后继续运行，日志在后台进程目录；always 的 stop_process 在前面失败后停止它", async () => {
 		const { api, runId } = await runChain([
 			{ id: "server", node: "start_process", inputs: { command: "echo 已启动; exec sleep 300" } },
@@ -234,236 +185,6 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 			outputs: { was_running: true, exit_code: 143 },
 		});
 		expect(() => process.kill(pid, 0)).toThrow();
-	}, 180_000);
-
-	it("http_request 用 until_ok 等服务就绪并断言响应 JSON，assert 引用它的输出", async () => {
-		const { createServer } = await import("node:http");
-		let requests = 0;
-		const server = createServer((_req, res) => {
-			requests += 1;
-			if (requests < 3) {
-				res.writeHead(503).end("starting");
-				return;
-			}
-			res.writeHead(200, { "content-type": "application/json" });
-			res.end(JSON.stringify({ status: "ok", version: "1.2.3" }));
-		});
-		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-		const { port } = server.address() as { port: number };
-		try {
-			const { api, runId } = await runChain([
-				{
-					id: "ready",
-					node: "http_request",
-					inputs: {
-						url: `http://127.0.0.1:${port}/health`,
-						expect_json: [{ path: "$.status", op: "eq", value: "ok" }],
-						until_ok: true,
-						wait: 60,
-						poll: 0.2,
-					},
-				},
-				{
-					id: "check",
-					node: "assert",
-					inputs: {
-						actual: "${{ nodes.ready.outputs.json }}",
-						assertions: [{ path: "$.version", op: "eq", value: "1.2.3" }],
-					},
-				},
-			]);
-
-			expect((await api.run(runId)).status).toBe("success");
-			const ready = await api.node(runId, "ready");
-			expect(ready.outputs).toMatchObject({
-				status: 200,
-				json: { status: "ok", version: "1.2.3" },
-			});
-			expect(requests).toBe(3);
-		} finally {
-			server.close();
-		}
-	}, 180_000);
-
-	/** 运行里唯一一个节点的指标目录：声明的图表标题、第一次尝试的各序列（不带标签的序列只有名字）。 */
-	async function monitorCatalog(api: ApiClient, runId: string) {
-		const catalog = metricsApi.catalog.response.parse(await api.getJson(`/runs/${runId}/metrics`));
-		const node = catalog.nodes.find((n) => n.node_id === "monitor");
-		const metrics = node?.attempts[0]?.metrics ?? [];
-		return {
-			node,
-			charts: node?.charts.map((c) => c.title),
-			totals: metrics.filter((m) => Object.keys(m.labels).length === 0),
-			labelled: (name: string) => metrics.filter((m) => m.name === name).map((m) => m.labels),
-			metrics,
-		};
-	}
-
-	it("system_monitor 在 Agent 上按间隔上报声明的系统指标，另按每块网卡、每块磁盘各一个序列，duration 到期后成功", async () => {
-		const { api, runId } = await runChain([
-			{ id: "monitor", node: "system_monitor", inputs: { interval: 0.5, duration: 3 } },
-		]);
-
-		expect((await api.run(runId)).status).toBe("success");
-		const { node, charts, totals, labelled, metrics } = await monitorCatalog(api, runId);
-		expect(node).toMatchObject({
-			node_id: "monitor",
-			package: "sfly-std",
-			node: "system_monitor",
-			primary_metric: "cpu_percent",
-		});
-		expect(charts).toEqual([
-			"CPU 使用率",
-			"内存使用率",
-			"已用内存",
-			"负载",
-			"磁盘空间使用率",
-			"磁盘读写",
-			"网络收发",
-			"磁盘读写（按磁盘）",
-			"网络收发（按网卡）",
-		]);
-		expect(totals.map((m) => m.name).sort()).toEqual([
-			"cpu_percent",
-			"disk_read_bytes_per_s",
-			"disk_used_percent",
-			"disk_write_bytes_per_s",
-			"load1",
-			"mem_used_bytes",
-			"mem_used_percent",
-			"net_rx_bytes_per_s",
-			"net_tx_bytes_per_s",
-		]);
-		// 全部网卡（含回环网卡 lo），每块各一个序列，标签 nic。
-		for (const name of ["net_rx_bytes_per_s_by_nic", "net_tx_bytes_per_s_by_nic"]) {
-			const nics = labelled(name);
-			expect(nics.every((l) => Object.keys(l).join() === "nic")).toBe(true);
-			expect(nics.map((l) => l.nic)).toContain("lo");
-		}
-		// 整块磁盘，标签 disk；按磁盘的读、写覆盖同一组磁盘。
-		const disks = labelled("disk_read_bytes_per_s_by_disk");
-		expect(disks.every((l) => Object.keys(l).join() === "disk")).toBe(true);
-		expect(labelled("disk_write_bytes_per_s_by_disk")).toEqual(disks);
-		// Agent 按秒合并：3 秒的监控至少落在 2 个秒桶里。
-		for (const metric of metrics) expect(metric.points, metric.name).toBeGreaterThanOrEqual(2);
-	}, 180_000);
-
-	it("process_monitor 上报目标进程的合计，另按每个进程各一个序列（标签 pid、name），合计与 processes.csv 不变", async () => {
-		const { api, runId } = await runChain([
-			{
-				id: "server",
-				node: "start_process",
-				inputs: { command: "sleep 300 & exec sleep 300" },
-			},
-			{
-				id: "monitor",
-				node: "process_monitor",
-				inputs: { pid: "${{ nodes.server.outputs.pid }}", interval: 0.5, duration: 3 },
-			},
-			{
-				id: "stop",
-				node: "stop_process",
-				always: true,
-				inputs: { pid: "${{ nodes.server.outputs.pid }}", grace: 5 },
-			},
-		]);
-
-		expect((await api.run(runId)).status).toBe("success");
-		const { pid } = (await api.node(runId, "server")).outputs as { pid: number };
-		const monitor = await api.node(runId, "monitor");
-		expect(Object.keys(monitor.outputs ?? {}).sort()).toEqual(["processes_csv", "samples"]);
-		const { node, charts, totals, labelled, metrics } = await monitorCatalog(api, runId);
-		expect(node?.primary_metric).toBe("cpu_percent");
-		expect(charts).toEqual([
-			"CPU",
-			"内存",
-			"线程与文件描述符",
-			"磁盘读写",
-			"CPU（按进程）",
-			"内存（按进程）",
-			"线程数（按进程）",
-			"文件描述符（按进程）",
-			"磁盘读写（按进程）",
-		]);
-		expect(totals.map((m) => m.name).sort()).toEqual([
-			"cpu_percent",
-			"io_read_bytes_per_s",
-			"io_write_bytes_per_s",
-			"open_fds",
-			"rss_bytes",
-			"threads",
-		]);
-		// start_process 启动的 sleep 和它的子进程 sleep：每个进程一个序列。
-		for (const name of [
-			"cpu_percent_by_process",
-			"rss_bytes_by_process",
-			"threads_by_process",
-			"open_fds_by_process",
-			"io_read_bytes_per_s_by_process",
-			"io_write_bytes_per_s_by_process",
-		]) {
-			const processes = labelled(name);
-			expect(processes, name).toHaveLength(2);
-			expect(
-				processes.map((l) => l.name),
-				name,
-			).toEqual(["sleep", "sleep"]);
-			expect(
-				processes.map((l) => l.pid),
-				name,
-			).toContain(String(pid));
-		}
-		for (const metric of metrics) expect(metric.points, metric.name).toBeGreaterThanOrEqual(2);
-	}, 180_000);
-
-	it("shell 写出结果文件，file_assert 检查后 collect_artifacts 收集为产物；refs 交给后面的节点，可以下载", async () => {
-		const out = join(dir, "collect-out");
-		const { api, runId } = await runChain([
-			{
-				id: "bench",
-				node: "shell",
-				inputs: {
-					command: `mkdir -p '${out}/logs' && printf 'p99=12ms\\n' > '${out}/report.txt' && echo 启动完成 > '${out}/logs/app.log'`,
-				},
-			},
-			{
-				id: "report_ok",
-				node: "file_assert",
-				inputs: { path: `${out}/report.txt`, min_lines: 1, matches: "^p99=\\d+ms$" },
-			},
-			{
-				id: "collect",
-				node: "collect_artifacts",
-				inputs: { paths: ["*.txt", "logs"], base_dir: out },
-			},
-			{
-				id: "check",
-				node: "assert",
-				inputs: {
-					actual: "${{ nodes.collect.outputs.refs }}",
-					assertions: [
-						{ path: '$["report.txt"]', op: "matches", value: "^https?://" },
-						{ path: '$["logs/app.log"]', op: "exists" },
-						{ path: "$", op: "len_eq", value: 2 },
-					],
-				},
-			},
-		]);
-
-		expect((await api.run(runId)).status).toBe("success");
-		const collect = await api.node(runId, "collect");
-		const refs = collect.outputs?.refs as Record<string, string>;
-		const taskId = collect.attempts[0]?.task_id as string;
-		const listed = (await (
-			await cp.fetch(`/tasks/${encodeURIComponent(taskId)}/artifacts`)
-		).json()) as {
-			artifacts: Array<{ name: string; url: string }>;
-		};
-		expect(refs).toEqual(Object.fromEntries(listed.artifacts.map((a) => [a.name, a.url])));
-		expect(Object.keys(refs).sort()).toEqual(["logs/app.log", "report.txt"]);
-		expect(await (await fetch(refs["report.txt"] as string)).text()).toBe("p99=12ms\n");
-		expect(await (await fetch(refs["logs/app.log"] as string)).text()).toBe("启动完成\n");
-		expect((await api.node(runId, "check")).outputs).toEqual({ passed: true });
 	}, 180_000);
 
 	it("shell 打开 save_output 保存的完整输出，另一台 Agent 上的节点用 ctx.artifacts.download 下载，内容一致", async () => {
@@ -533,294 +254,21 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 		}
 	}, 300_000);
 
-	it("pull_files 把另一台 Agent 上匹配的文件拉到本地目录，内容一致，拉完后删除源文件", async () => {
-		// 来源是另一台真实 Agent（ADR 0019）：std-agent 上的 pull_files 用 Agent 能力直接连到它，数据不经过控制面。
-		// 两台 Agent 在同一台机器上，所以「std-source 上的文件」就是这里建的临时文件，绝对路径相同。
-		const SOURCE = "std-source";
-		const sourceVenv = await createStubVenv({ sdkOnly: true });
-		const source = await startRealAgent({
-			grpcUrl: cp.grpcUrl,
-			name: SOURCE,
-			venv: sourceVenv.path,
-		});
-		try {
-			const logs = join(dir, "pull-source");
-			const local = join(dir, "pull-local");
-			await mkdir(logs, { recursive: true });
-			// 轮转下来的旧日志（几 MB，分多块传输）和正在写入的 app.log（不匹配通配符，不拉取也不删除）。
-			const rotated = {
-				"app.log.1": Buffer.alloc(3 * 1024 * 1024 + 7, "第一轮的日志\n"),
-				"app.log.2": Buffer.from("第二轮的日志\n"),
-			};
-			for (const [name, data] of Object.entries(rotated)) await writeFile(join(logs, name), data);
-			await writeFile(join(logs, "app.log"), "还在写\n");
-
-			const { api, runId } = await runChain([
-				{
-					id: "pull",
-					node: "pull_files",
-					inputs: {
-						source: SOURCE,
-						directory: logs,
-						pattern: "app.log.*",
-						local_dir: local,
-						delete_source: true,
-					},
-				},
-			]);
-
-			const pull = await api.node(runId, "pull");
-			expect(pull.status, JSON.stringify(pull.error)).toBe("success");
-			expect(pull.agent).toBe(AGENT);
-			expect(pull.outputs).toEqual({
-				files: [join(local, "app.log.1"), join(local, "app.log.2")],
-				count: 2,
-				total_bytes: 3 * 1024 * 1024 + 7 + Buffer.byteLength("第二轮的日志\n"),
-			});
-			// 目标目录里只有完整的文件（临时文件已改名），内容与源文件一致。
-			expect((await readdir(local)).sort()).toEqual(["app.log.1", "app.log.2"]);
-			for (const [name, data] of Object.entries(rotated)) {
-				expect(sha256(await readFile(join(local, name))), name).toBe(sha256(data));
-			}
-			expect(await readdir(logs)).toEqual(["app.log"]);
-		} finally {
-			await source.close();
-			await sourceVenv.remove();
-		}
-	}, 300_000);
-
-	/** 一个空闲的 TCP 端口（让 Agent 重启后仍在同一个端口上等其它 Agent 连接）。 */
-	async function freePort() {
-		const server = createServer();
-		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-		const { port } = server.address() as AddressInfo;
-		await new Promise((resolve) => server.close(resolve));
-		return port;
-	}
-
-	/** 一个任务的全部日志行的文本。 */
-	async function taskLogs(api: ApiClient, taskId: string) {
-		const page = logsApi.page.response.parse(
-			await api.getJson(`/tasks/${encodeURIComponent(taskId)}/logs`),
-		);
-		return page.lines.map((l) => l.text);
-	}
-
-	it("watch_files 放在子流程里：主链在 A 上产生并轮转日志，B 上的子流程持续拉取并删除源文件，被停止子流程节点停止时记为已停止", async () => {
-		// 日志清洗的场景（ADR 0019，用户文档「跨 Agent 处理文件」）：A 是被测机器（std-watch-a），B 是 std-agent。
-		// 两台 Agent 在同一台机器上，所以「A 上的日志目录」就是这里建的临时目录，绝对路径相同。
-		const A = "std-watch-a";
-		const aVenv = await createStubVenv({ sdkOnly: true });
-		// A 上要运行主链的 shell：从 PyPI 镜像桩安装 sfly-std 的依赖。
-		const a = await startRealAgent({
-			grpcUrl: cp.grpcUrl,
-			name: A,
-			venv: aVenv.path,
-			args: ["--index-url", pypi.indexUrl],
-		});
-		try {
-			const logs = join(dir, "watch-source");
-			const local = join(dir, "watch-local");
-			await mkdir(logs, { recursive: true });
-			const id = await new ApiClient(cp).orchestrationWith({
-				default_agent: AGENT,
-				nodes: [
-					{ id: "entry", kind: "entry" },
-					{ id: "spawn", kind: "async", params: {} },
-					// 被测系统写日志并轮转两次：app.log 写满后改名为 app.log.<n>，再新建 app.log 接着写。
-					{
-						id: "produce",
-						kind: "package",
-						package: "sfly-std",
-						node: "shell",
-						agent: A,
-						inputs: {
-							command: [
-								"set -e",
-								`cd ${logs}`,
-								"printf '第一轮的日志\\n' > app.log",
-								"mv app.log app.log.1",
-								"printf '第二轮的日志\\n' > app.log",
-								"sleep 0.5",
-								"mv app.log app.log.2",
-								"printf '还在写\\n' > app.log",
-							].join("\n"),
-						},
-					},
-					// 等 B 把轮转出来的文件拉走（拉完才删除源文件），再停止子流程。
-					{
-						id: "drained",
-						kind: "package",
-						package: "sfly-std",
-						node: "shell",
-						agent: A,
-						inputs: {
-							command: `cd ${logs}; while [ -e app.log.1 ] || [ -e app.log.2 ]; do sleep 0.2; done`,
-						},
-					},
-					{ id: "stop", kind: "stop_subflow", subflow: "pull", always: true },
-					{ id: "pull", kind: "subflow_entry", name: "拉取日志", params: [] },
-					{
-						id: "watch",
-						kind: "package",
-						package: "sfly-std",
-						node: "watch_files",
-						inputs: {
-							source: A,
-							directory: logs,
-							pattern: "app.log.*",
-							stable: 1,
-							local_dir: local,
-							delete_source: true,
-						},
-					},
-				],
-				edges: [
-					{ from: "entry", to: "spawn", kind: "chain" },
-					{ from: "spawn", to: "produce", kind: "chain" },
-					{ from: "produce", to: "drained", kind: "chain" },
-					{ from: "drained", to: "stop", kind: "chain" },
-					{ from: "pull", to: "watch", kind: "chain" },
-					{ from: "spawn", to: "pull", kind: "dispatch" },
-				],
-				packages: { "sfly-std": std.version },
-			});
-			const { api, runId } = await runToEnd(id);
-
-			const run = await api.run(runId);
-			const main = run.chains.find((c) => c.chain_id === "entry");
-			const pull = run.chains.find((c) => c.chain_id === "pull");
-			const watch = pull?.nodes.find((n) => n.node_id === "watch");
-			expect(watch?.status, JSON.stringify(watch?.attempts.at(-1)?.error)).toBe("stopped");
-			expect(watch?.agent).toBe(AGENT);
-			expect(main?.nodes.find((n) => n.node_id === "produce")?.agent).toBe(A);
-			expect(main?.nodes.find((n) => n.node_id === "stop")).toMatchObject({
-				status: "success",
-				outputs: { status: "success" },
-			});
-			expect(run.status).toBe("success");
-			// 目标目录里只有完整的文件（临时文件已改名），A 上只剩还在写的 app.log。
-			expect((await readdir(local)).sort()).toEqual(["app.log.1", "app.log.2"]);
-			expect(await readFile(join(local, "app.log.1"), "utf8")).toBe("第一轮的日志\n");
-			expect(await readFile(join(local, "app.log.2"), "utf8")).toBe("第二轮的日志\n");
-			expect(await readdir(logs)).toEqual(["app.log"]);
-
-			// 指标在运行页面上可见：已拉取的文件数、字节数和速率。
-			const catalog = metricsApi.catalog.response.parse(
-				await api.getJson(`/runs/${runId}/metrics`),
-			);
-			const node = catalog.nodes.find((n) => n.node_id === "watch");
-			expect(node?.primary_metric).toBe("bytes_per_s");
-			expect(node?.attempts[0]?.metrics.map((m) => m.name).sort()).toEqual([
-				"bytes_per_s",
-				"pulled_bytes",
-				"pulled_files",
-			]);
-		} finally {
-			await a.close();
-			await aVenv.remove();
-		}
-	}, 300_000);
-
-	it("watch_files 在来源 Agent 重启（连接中断）后继续拉取：断线期间轮转出来的文件也拉到，拉过的不再拉", async () => {
-		const SOURCE = "std-watch-restart";
-		const sourceVenv = await createStubVenv({ sdkOnly: true });
-		// 固定端口：重启后还在同一个地址上，派发时下发的地址仍然有效。
-		const port = String(await freePort());
-		const start = () =>
-			startRealAgent({
-				grpcUrl: cp.grpcUrl,
-				name: SOURCE,
-				venv: sourceVenv.path,
-				env: { SFLY_LISTEN_PORT: port },
-			});
-		let source = await start();
-		try {
-			const logs = join(dir, "restart-source");
-			const local = join(dir, "restart-local");
-			await mkdir(logs, { recursive: true });
-			await writeFile(join(logs, "app.log.1"), "断线之前\n");
-			const api = new ApiClient(cp);
-			const runId = await api.triggerOk(
-				await saveChain([
-					{
-						id: "watch",
-						node: "watch_files",
-						inputs: { source: SOURCE, directory: logs, pattern: "app.log.*", local_dir: local },
-					},
-				]),
-			);
-			await eventually(
-				async () => expect(await readFile(join(local, "app.log.1"), "utf8")).toBe("断线之前\n"),
-				120_000,
-			);
-
-			// A 突然退出（连接中断），断线期间又轮转出一个文件，之后 A 在同一个端口上重新启动。
-			await source.close();
-			await writeFile(join(logs, "app.log.2"), "断线期间\n");
-			source = await start();
-			await eventually(
-				async () => expect(await readFile(join(local, "app.log.2"), "utf8")).toBe("断线期间\n"),
-				120_000,
-			);
-			await writeFile(join(logs, "app.log.3"), "重连之后\n");
-			await eventually(
-				async () => expect(await readFile(join(local, "app.log.3"), "utf8")).toBe("重连之后\n"),
-				60_000,
-			);
-			await api.cancelOk(runId);
-			await eventually(async () => expect((await api.run(runId)).status).toBe("cancelled"), 60_000);
-
-			// 每个文件只拉了一次：重连后的快照里仍有 app.log.1，没有再拉。
-			const watch = await api.node(runId, "watch");
-			const lines = await taskLogs(api, watch.attempts[0]?.task_id as string);
-			for (const name of ["app.log.1", "app.log.2", "app.log.3"]) {
-				const pulled = lines.filter((l) => l.startsWith(`拉取了 ${join(logs, name)}（`));
-				expect(pulled, name).toHaveLength(1);
-			}
-			expect((await readdir(local)).sort()).toEqual(["app.log.1", "app.log.2", "app.log.3"]);
-		} finally {
-			await source.close();
-			await sourceVenv.remove();
-		}
-	}, 300_000);
-
-	it("单独上传新版本后，锁定旧版本的场景行为不变：shell → assert → collect_artifacts 在 Agent 上按锁定的版本执行，产物可以下载", async () => {
+	it("单独发布新版本后，锁定旧版本的场景行为不变：shell 在 Agent 上按锁定的版本执行", async () => {
 		// 新版本把 shell 的默认解释器改成 /bin/bash：同一条命令在两个版本上的结果不同，能看出 Agent 执行的是哪个版本。
 		const next = await buildStdPackageVariant(join(dir, "dist-next"), {
 			version: "99.0.0",
 			edits: [["src/sfly_std/shell.py", '= "/bin/sh"', '= "/bin/bash"']],
 		});
 		// $0 是实际执行命令的解释器：不用 $BASH_VERSION 区分，有的系统上 /bin/sh 就是 bash。
-		const chain = (interpreter: string) => {
-			const out = join(dir, `locked${interpreter.replaceAll("/", "-")}`);
-			return [
-				{
-					id: "probe",
-					node: "shell",
-					inputs: {
-						command: `mkdir -p '${out}' && echo "interpreter=$0" > '${out}/report.txt' && echo "$0"`,
-					},
-				},
-				{
-					id: "check",
-					node: "assert",
-					inputs: {
-						actual: "${{ nodes.probe.outputs.stdout }}",
-						assertions: [{ op: "eq", value: `${interpreter}\n` }],
-					},
-				},
-				{
-					id: "collect",
-					node: "collect_artifacts",
-					inputs: { paths: ["report.txt"], base_dir: out },
-				},
-			];
-		};
-		// 场景先锁定已上传的版本，之后才上传新版本。
-		const locked = await saveChain(chain("/bin/sh"));
-		await publishArchive(cp, await readFile(next.path));
-		const upgraded = await saveChain(chain("/bin/bash"), next.version);
+		const chain = [{ id: "probe", node: "shell", inputs: { command: 'echo "$0"' } }];
+		// 场景先锁定已发布的版本，之后才发布新版本。
+		const locked = await saveChain(chain);
+		await publishIntoPublicProject(cp, new Uint8Array(await readFile(next.path)), {
+			name: "sfly-std",
+			version: next.version,
+		});
+		const upgraded = await saveChain(chain, next.version);
 
 		const installed = async () =>
 			(
@@ -828,29 +276,16 @@ describeWithAgent("全栈：标准节点包 sfly-std", () => {
 					agents: Array<{ installed_packages: Array<{ name: string; version: string }> }>;
 				}>("/agents")
 			).agents[0]?.installed_packages;
-		const download = async (api: ApiClient, runId: string) => {
-			const collect = await api.node(runId, "collect");
-			const refs = collect.outputs?.refs as Record<string, string>;
-			expect(Object.keys(refs)).toEqual(["report.txt"]);
-			return (await fetch(refs["report.txt"] as string)).text();
+		const outputOf = async ({ api, runId }: { api: ApiClient; runId: string }) => {
+			expect((await api.run(runId)).status).toBe("success");
+			return (await api.node(runId, "probe")).outputs;
 		};
+		const rest = { exit_code: 0, stderr: "", stdout_file: null, stderr_file: null };
 
-		const onNext = await runToEnd(upgraded);
-		expect((await onNext.api.run(onNext.runId)).status).toBe("success");
+		expect(await outputOf(await runToEnd(upgraded))).toEqual({ ...rest, stdout: "/bin/bash\n" });
 		expect(await installed()).toEqual([{ name: "sfly-std", version: next.version }]);
-		expect(await download(onNext.api, onNext.runId)).toBe("interpreter=/bin/bash\n");
 
-		const onLocked = await runToEnd(locked);
-		expect((await onLocked.api.run(onLocked.runId)).status).toBe("success");
+		expect(await outputOf(await runToEnd(locked))).toEqual({ ...rest, stdout: "/bin/sh\n" });
 		expect(await installed()).toEqual([{ name: "sfly-std", version: std.version }]);
-		expect((await onLocked.api.node(onLocked.runId, "probe")).outputs).toEqual({
-			exit_code: 0,
-			stdout: "/bin/sh\n",
-			stderr: "",
-			stdout_file: null,
-			stderr_file: null,
-		});
-		expect((await onLocked.api.node(onLocked.runId, "check")).outputs).toEqual({ passed: true });
-		expect(await download(onLocked.api, onLocked.runId)).toBe("interpreter=/bin/sh\n");
 	}, 300_000);
 });

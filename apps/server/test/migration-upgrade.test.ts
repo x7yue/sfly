@@ -93,3 +93,88 @@ it("先迁到倒数第二个迁移，再执行全部：最后一个迁移被执�
 		`${last.tag} 没有被执行：它的 when（${last.when}）比 ${previous.tag} 的小？`,
 	).toEqual(entries.map((entry) => entry.when));
 });
+
+it("会话令牌组合外键的迁移（#547）：项目和所属会话对不上的旧令牌行在加约束之前被清掉，一致的留下，升级不失败", async () => {
+	const upgradeDb = await createTestDatabase("sfly_migrate_tokens");
+	try {
+		const { entries } = await readJournal(defaultMigrationsDir);
+		const target = entries.find((entry) => entry.tag === "0038_session_provenance");
+		expect(target, "找不到 0038_session_provenance：迁移改了编号，这条测试跟着改").toBeDefined();
+		const before = (target as JournalEntry).idx - 1;
+
+		// 只含 0038 之前的迁移的目录：旧版控制面的库。
+		const partial = join(workDir, "before-0038");
+		await cp(defaultMigrationsDir, partial, { recursive: true });
+		const journal = await readJournal(partial);
+		journal.entries = journal.entries.filter((entry) => entry.idx <= before);
+		await writeFile(join(partial, "meta", "_journal.json"), JSON.stringify(journal));
+		const run = async (dir: string) => {
+			const db = openDatabase(
+				upgradeDb.url,
+				(error) => {
+					throw error;
+				},
+				dir,
+			);
+			try {
+				await db.migrate();
+			} finally {
+				await db.close();
+			}
+		};
+		await run(partial);
+
+		const client = new pg.Client({ connectionString: upgradeDb.url });
+		await client.connect();
+		try {
+			const user = "11111111-1111-4111-8111-111111111111";
+			const session = "22222222-2222-4222-8222-222222222222";
+			await client.query(
+				`insert into users (id, login_name, display_name, password_hash, created_at)
+				values ($1, 'alice', 'Alice', 'x', now())`,
+				[user],
+			);
+			await client.query(
+				"insert into projects (id, display_name, created_at) values ('beta', 'beta', now())",
+			);
+			await client.query(
+				`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at)
+				values ($1, 'default', 's', 'idle', 'alice', $2, now(), now())`,
+				[session, user],
+			);
+			// 旧约束只看会话在不在，不看项目：一行一致（默认项目），一行对不上（令牌说是 beta，会话在默认项目）。
+			const token = (id: string, project: string, hash: string) =>
+				client.query(
+					`insert into api_tokens (id, kind, name, prefix, token_hash, user_id, project_id, session_id, scopes, created_at)
+					values ($1, 'session', 't', 'sfly_ses_', $2, $3, $4, $5, '{read}', now())`,
+					[id, hash, user, project, session],
+				);
+			await token("33333333-3333-4333-8333-333333333333", "default", "hash-consistent");
+			await token("44444444-4444-4444-8444-444444444444", "beta", "hash-mismatched");
+		} finally {
+			await client.end();
+		}
+
+		await run(defaultMigrationsDir);
+
+		const after = new pg.Client({ connectionString: upgradeDb.url });
+		await after.connect();
+		try {
+			const rows = await after.query<{ token_hash: string }>(
+				"select token_hash from api_tokens order by token_hash",
+			);
+			expect(rows.rows.map((r) => r.token_hash)).toEqual(["hash-consistent"]);
+			// 约束在，对不上的行写不进去。
+			await expect(
+				after.query(
+					`insert into api_tokens (id, kind, name, prefix, token_hash, user_id, project_id, session_id, scopes, created_at)
+					values (gen_random_uuid(), 'session', 't', 'sfly_ses_', 'again', '11111111-1111-4111-8111-111111111111', 'beta', '22222222-2222-4222-8222-222222222222', '{read}', now())`,
+				),
+			).rejects.toThrow(/api_tokens_session_project_fk/);
+		} finally {
+			await after.end();
+		}
+	} finally {
+		await upgradeDb.drop();
+	}
+}, 120_000);

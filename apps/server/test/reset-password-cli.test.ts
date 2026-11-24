@@ -128,6 +128,26 @@ describe("reset-password 命令", () => {
 		expect((await accounts.login("root", "first-attempt-1", "127.0.0.1")).ok).toBe(false);
 	});
 
+	it("写库失败（#578）：退出码 1、没有改动，操作者的终端上只有去掉参数的说明：没有新密码，也没有它的哈希", async () => {
+		// 让更新 users 的语句出错（触发器抛异常）：drizzle 的错误里带着这条语句的参数，新密码的 scrypt 哈希在里面。
+		await database.pool.query(
+			`create function refuse_user_update() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$`,
+		);
+		await database.pool.query(
+			"create trigger refuse_user_update before update on users for each row execute function refuse_user_update()",
+		);
+		const run = io("brand-new-pass-1\n");
+		expect(await runResetPassword(["root", "--password-stdin"], run)).toBe(1);
+		const shown = run.out.join("") + run.err.join("");
+		expect(shown).toContain("重置密码失败（没有改动）");
+		// 去掉参数之后还留着语句和数据库给的原因。
+		expect(shown).toContain("Failed query");
+		expect(shown).not.toContain("scrypt$");
+		expect(shown).not.toContain("brand-new-pass-1");
+		await database.pool.query("drop trigger refuse_user_update on users");
+		expect((await accounts.login("root", "old-password-1", "127.0.0.1")).ok).toBe(true);
+	});
+
 	it("连不上数据库：退出码 1，说明原因，不抛未处理的错误", async () => {
 		const run = io("brand-new-pass-1\n", {
 			databaseUrl: "postgres://nobody:nobody@127.0.0.1:1/nothing",

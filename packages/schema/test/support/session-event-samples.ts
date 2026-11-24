@@ -174,7 +174,12 @@ export const eventSamples: readonly EventSample[] = [
 	},
 	{
 		name: "notice：steer_dropped",
-		body: { type: "notice", kind: "steer_dropped", message: "停止时有 1 条插话没有送到" },
+		body: {
+			type: "notice",
+			kind: "steer_dropped",
+			message: "这句插话没有送到助手：「先别改测试」",
+			message_id: messageId(2),
+		},
 		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: true,
 	},
@@ -186,7 +191,12 @@ export const eventSamples: readonly EventSample[] = [
 	},
 	{
 		name: "notice：queue_cancelled（控制面产生）",
-		body: { type: "notice", kind: "queue_cancelled", message: "停止时排队中的话没有交给助手" },
+		body: {
+			type: "notice",
+			kind: "queue_cancelled",
+			message: "这句话排队时被取消了，没有交给助手",
+			message_id: messageId(5),
+		},
 		optional: ["attempt", "max_attempts", "retry_delay_ms", "error_class"],
 		inAssistantStream: false,
 	},
