@@ -158,6 +158,12 @@ export interface ControlPlaneOptions {
 	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
 	migrationsDir?: string;
 	/**
+	 * 借出去的数据库连接（事务里）出错时调用（#563，docs/ARCHITECTURE.md §6.10）：`main.ts` 给的是有序退出进程。
+	 * 这样的连接上的错误以前是没人接的 `error` 事件、进程当场退出；之后的状态不可信（任务结果没写进去、提交之后的派发没人补），
+	 * 靠重启恢复。调用之前连接池已经结束：之后拿连接的请求立刻以错误结束，不再碰数据库。不给：只记日志（测试里的控制面）。
+	 */
+	onFatalDatabaseError?: (error: Error) => void;
+	/**
 	 * 助手服务的地址（`SFLY_ASSISTANT_URL`，ADR 0027）。助手默认关闭：地址和共享密钥（`assistantSecret`）都配好了才开，
 	 * 没配时会话的写接口返回 503 `assistant_not_configured`，读接口照常。
 	 */
@@ -248,8 +254,13 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	};
 	const database = openDatabase(
 		options.databaseUrl,
-		(error) => logError("postgres pool error:", error),
+		(error) => logError("postgres connection error:", error),
 		options.migrationsDir,
+		{
+			...(options.onFatalDatabaseError ? { onInUseError: options.onFatalDatabaseError } : {}),
+			// 连接池没有关完不是又断了一条连接：自己的前缀。
+			onCloseTimeout: (error) => logError("database pool shutdown:", error),
+		},
 	);
 
 	try {
