@@ -1,7 +1,8 @@
 //! 任务日志与进度的转发（docs/ARCHITECTURE.md §5.4）。
 //!
 //! 执行器的标准输出、标准错误（包括继承了它们的子进程）和 SDK 写入的事件管道 `events.fifo`（[`EventsPipe`]，ADR 0015）
-//! 合并成同一条日志流：每行分配任务内递增的序号，批量（约每 100 毫秒一批）以 `LogBatch` 发往控制面。
+//! 合并成同一条日志流：每行分配任务内递增的序号，批量（约每 100 毫秒一批，一批最多 [`MAX_BATCH_LINES`] 行、[`MAX_BATCH_BYTES`] 字节）
+//! 以 `LogBatch` 发往控制面。
 //!
 //! - 标准输出 → 来源 stdout、级别 info；标准错误 → 来源 stderr、级别 error；
 //! - 事件管道里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
@@ -16,7 +17,8 @@
 //!   任务结束前补发最后一份；断线期间每个任务只排队最新的一份（[`Telemetry::send_action_summary`]）。
 //!   事件管道的一行不限长度（[`read_events`] 读到换行为止），摘要再长也整行转发；
 //! - `{"type":"action_start"}`、`{"type":"action_end"}`、`{"type":"mark"}`（动作和标记的明细，规格 #345）：解析成
-//!   `ActionEvent`，和日志一样约每 100 毫秒一批（一批最多 [`MAX_BATCH_ACTIONS`] 个）以 `ActionBatch` 转发，任务结束前发完；
+//!   `ActionEvent`，和日志一样约每 100 毫秒一批（一批最多 [`MAX_BATCH_ACTIONS`] 个、[`MAX_BATCH_BYTES`] 字节）以 `ActionBatch` 转发，
+//!   任务结束前发完；
 //!   同一批内按事件管道里的先后排列，不按单调时钟重排（补发的 `action_start` 时间早，但紧挨着它的 `action_end`），
 //!   `fields` 保持 SDK 写的先后（[`Fields`]）；缺必需字段、`result` 不认识的行和别的不认识的内容一样记成一行 SDK 日志。
 //!   断线期间排队的批次和日志一样有字节数上限（[`Telemetry::send`]）。
@@ -74,6 +76,15 @@ pub const SPLIT_CONTEXT_BYTES: usize = 16 * 1024;
 const MAX_BATCH_LINES: usize = 1000;
 /// 一批最多的动作明细事件数。
 const MAX_BATCH_ACTIONS: usize = 1000;
+/// 一批日志（或一批动作明细）攒到这么多字节就发出，不等条数、也不等下一个 [`TICK`]。只按条数限批的话，每个事件都在上限以内，
+/// 一批也能比 Agent 自己的排队上限（[`DEFAULT_TELEMETRY_QUEUE_BYTES`]）还大，连接正常、队列是空的时候也被整批丢掉
+/// （[`Telemetry::send`]）。这个数是队列上限的 1/32：一批的大小最多是它加上最后一条（日志一条不超过 [`MAX_LINE_BYTES`]
+/// 加两段上下文，输出不是合法的 UTF-8 时有损转换最坏是 3 倍，约 300 KiB；动作明细一条最多约 128 KiB），远在队列上限以内，队列是空的时候没有一批因为大小被丢掉，
+/// 断线时队列里也能排下几十批；也让控制面一次处理的一批、网关一次收的一条消息有个上界（几 MiB），不随节点写得多快而变大。
+/// 再小的话批太碎（一个节点每秒写几百 MiB 时每秒上百批），再大就接近队列上限。
+const MAX_BATCH_BYTES: usize = 2 * 1024 * 1024;
+/// 一行日志编码之后除了文字之外大约占的字节数（序号、两个时间、来源、级别和各字段的标签）：估算一批的大小用。
+const LOG_LINE_OVERHEAD: usize = 64;
 /// 执行器退出后，等待仍持有标准输出（或事件管道）的后台子进程关闭管道的最长时间。
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -155,9 +166,12 @@ impl Telemetry {
         );
         if limited && self.queued.load(Ordering::SeqCst) + size > self.limit {
             if !self.dropping.swap(true, Ordering::SeqCst) {
+                // 不说「断线」：连接正常时也会走到这里（转发比发送快、或者一条消息比剩下的空间大），说的是队列满了。
                 eprintln!(
-                    "log queue is full ({} bytes queued while disconnected): dropping new log lines, action details and notifications",
-                    self.queued.load(Ordering::SeqCst)
+                    "telemetry queue is full ({} of {} bytes queued, next message {} bytes): dropping new log lines, action details and notifications until it has room",
+                    self.queued.load(Ordering::SeqCst),
+                    self.limit,
+                    size
                 );
             }
             return;
@@ -369,9 +383,11 @@ impl Pump {
             telemetry,
             seq: 0,
             pending: Vec::new(),
+            pending_bytes: 0,
             progress: Latest::default(),
             action_summary: Latest::default(),
             actions: Vec::new(),
+            actions_bytes: 0,
             metrics: Merger::default(),
             throttle: Throttle::new(forward_rate),
             time_jumps: time_jump::Watch::start(),
@@ -407,6 +423,13 @@ struct Pending {
     source: LogSource,
     level: LogLevel,
     text: String,
+}
+
+impl Pending {
+    /// 编码成 `LogLine` 之后大约的字节数（文字、两段上下文加固定的开销）。
+    fn size(&self) -> usize {
+        self.text.len() + self.before.len() + self.after.len() + LOG_LINE_OVERHEAD
+    }
 }
 
 /// 事件管道里读出的一块完整内容（若干行事件）。
@@ -531,7 +554,8 @@ impl LogCopy {
 
 /// [`LineSplitter`] 切出的一行（或超长行的一段）。
 pub struct Line {
-    /// 这一行（这一段）的文字，不含换行符，不超过 [`MAX_LINE_BYTES`] 字节。
+    /// 这一行（这一段）的文字，不含换行符。原始字节不超过 [`MAX_LINE_BYTES`]；不是合法的 UTF-8 时有损转换（每个坏字节换成
+    /// 3 字节的替换字符），转换之后的字节数可以到 [`MAX_LINE_BYTES`] 的 3 倍，上下文（[`Line::before`]、[`Line::after`]）也一样。
     pub text: String,
     /// 超长行被拆开时：同一行里前一段结尾的最多 [`SPLIT_CONTEXT_BYTES`] 字节（第一段和没有拆开的行是空串）。
     pub before: String,
@@ -600,8 +624,10 @@ impl LineSplitter {
                 None => {
                     self.partial.extend_from_slice(bytes);
                     bytes = &[];
-                    // 这一行已经比一段加上后面的上下文还长：前面的一段可以交出去了。
-                    while self.partial.len() >= MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES {
+                    // 这一行已经比一段加上后面的上下文还长：前面的一段可以交出去了。要**比**它长，不能等于：正好等于时，
+                    // 向后看的那一段的终点是读到的末尾，下一个字节还没有到（可能是半个字符的后续字节，或者行尾的 `\r`），
+                    // 这时落在字符边界上的判断和整行一次给时不一样，拆在哪里就和每次读到多少字节有关了。
+                    while self.partial.len() > MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES {
                         self.emit_piece(&mut emit);
                     }
                 }
@@ -848,11 +874,15 @@ struct Forwarder {
     telemetry: Telemetry,
     seq: u64,
     pending: Vec<Pending>,
+    /// `pending` 编码之后大约的字节数（[`Pending::size`] 之和），到 [`MAX_BATCH_BYTES`] 就发出。
+    pending_bytes: usize,
     progress: Latest<Progress>,
     /// 动作摘要那一行的原文。
     action_summary: Latest<String>,
     /// 还没发出的动作明细，按事件管道里的先后。
     actions: Vec<ActionEvent>,
+    /// `actions` 编码之后的字节数，到 [`MAX_BATCH_BYTES`] 就发出。
+    actions_bytes: usize,
     /// 还没发出的指标点。
     metrics: Merger,
     throttle: Throttle,
@@ -970,11 +1000,22 @@ impl Forwarder {
         self.poll(true);
     }
 
+    fn push_pending(&mut self, line: Pending) {
+        self.pending_bytes += line.size();
+        self.pending.push(line);
+    }
+
+    fn push_action(&mut self, event: ActionEvent) {
+        self.actions_bytes += event.encoded_len();
+        self.actions.push(event);
+    }
+
+    /// 一批攒满了（条数或字节数）就发出，不等下一个 [`TICK`]。
     fn flush_full_batch(&mut self) {
-        if self.pending.len() >= MAX_BATCH_LINES {
+        if self.pending.len() >= MAX_BATCH_LINES || self.pending_bytes >= MAX_BATCH_BYTES {
             self.flush_lines();
         }
-        if self.actions.len() >= MAX_BATCH_ACTIONS {
+        if self.actions.len() >= MAX_BATCH_ACTIONS || self.actions_bytes >= MAX_BATCH_BYTES {
             self.flush_actions();
         }
     }
@@ -985,7 +1026,7 @@ impl Forwarder {
             self.throttle
                 .pace(line.text.len() + line.before.len() + line.after.len())
                 .await;
-            self.pending.push(line);
+            self.push_pending(line);
             self.flush_full_batch();
         }
     }
@@ -1002,7 +1043,7 @@ impl Forwarder {
     /// 处理事件管道里的一行；`monotonic_ms` 是读到它所在的那一块时的单调时钟读数，日志、进度和指标都用它。
     fn event(&mut self, line: &[u8], monotonic_ms: i64) {
         match serde_json::from_slice::<Event>(line) {
-            Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
+            Ok(Event::Log { ts, level, message }) => self.push_pending(Pending {
                 before: String::new(),
                 after: String::new(),
                 time_unix_ms: sdk_time_ms(ts),
@@ -1055,7 +1096,7 @@ impl Forwarder {
                 name,
                 fields,
                 late,
-            }) => self.actions.push(detail(
+            }) => self.push_action(detail(
                 ts,
                 mono,
                 monotonic_ms,
@@ -1075,7 +1116,7 @@ impl Forwarder {
                 result,
                 reason,
                 fields,
-            }) => self.actions.push(detail(
+            }) => self.push_action(detail(
                 ts,
                 mono,
                 monotonic_ms,
@@ -1094,7 +1135,7 @@ impl Forwarder {
                 depth,
                 name,
                 fields,
-            }) => self.actions.push(detail(
+            }) => self.push_action(detail(
                 ts,
                 mono,
                 monotonic_ms,
@@ -1107,7 +1148,7 @@ impl Forwarder {
                 }),
             )),
             // 不认识的内容原样记成一行 SDK 日志。
-            Err(_) => self.pending.push(Pending {
+            Err(_) => self.push_pending(Pending {
                 before: String::new(),
                 after: String::new(),
                 time_unix_ms: clock::agent_time_ms(),
@@ -1126,7 +1167,7 @@ impl Forwarder {
             return;
         };
         self.flush_lines();
-        self.pending.push(Pending {
+        self.push_pending(Pending {
             before: String::new(),
             after: String::new(),
             time_unix_ms: jump.after_ms,
@@ -1172,6 +1213,7 @@ impl Forwarder {
             return;
         }
         let mut pending = std::mem::take(&mut self.pending);
+        self.pending_bytes = 0;
         // 按读到的先后（单调时钟）排，不按 Agent 时间：Agent 时间往回跳时，跳变之后的行不会排到之前的行前面。
         pending.sort_by_key(|p| p.monotonic_ms);
         let lines = pending
@@ -1202,6 +1244,7 @@ impl Forwarder {
             return;
         }
         let events = std::mem::take(&mut self.actions);
+        self.actions_bytes = 0;
         self.send(agent_message::Body::Actions(ActionBatch {
             task_id: self.task_id.clone(),
             attempt: self.attempt,
@@ -1364,6 +1407,51 @@ mod splitter_tests {
         }
     }
 
+    /// 分块读取：每次读到的字节数不影响拆在哪里、上下文是什么，也不影响上下文的两端：多字节的字符、行尾的 `\r` 正好落在
+    /// 一段加上下文的结尾时，和整行一次给的结果相同，没有半个字符（替换字符），也没有 `\r`。
+    #[test]
+    fn chunked_reading_gives_the_same_pieces_for_multi_byte_characters_and_a_trailing_carriage_return()
+     {
+        let cjk: String = std::iter::once('z')
+            .chain(std::iter::repeat_n('中', 60_000))
+            .collect();
+        let emoji: String = std::iter::repeat_n('😀', 50_000).collect();
+        // 行尾的 `\r\n` 正好在一段加上下文的最后一个字节上
+        let carriage = "q".repeat(MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES - 1);
+        let ascii = "x".repeat(3 * MAX_LINE_BYTES + 5);
+        for (name, line, ending) in [
+            ("cjk", &cjk, "\n"),
+            ("emoji", &emoji, "\n"),
+            ("carriage return", &carriage, "\r\n"),
+            ("ascii", &ascii, "\n"),
+        ] {
+            let input = format!("{line}{ending}");
+            let whole = split(input.as_bytes());
+            for piece in &whole {
+                assert!(
+                    ![&piece.0, &piece.1, &piece.2]
+                        .iter()
+                        .any(|t| t.contains('\u{FFFD}') || t.contains('\r')),
+                    "{name}: 一次给整行时就有半个字符或 \\r"
+                );
+            }
+            for chunk in [
+                1,
+                7,
+                4096,
+                16 * 1024,
+                MAX_LINE_BYTES,
+                MAX_LINE_BYTES + SPLIT_CONTEXT_BYTES,
+            ] {
+                assert_eq!(
+                    split_with(input.as_bytes(), chunk),
+                    whole,
+                    "{name}：每次读 {chunk} 字节"
+                );
+            }
+        }
+    }
+
     #[test]
     fn multi_byte_characters_are_never_cut_in_the_middle() {
         // 3 字节的字符，65536 不是 3 的倍数；4 字节的字符；混着 1、2、3、4 字节的
@@ -1454,5 +1542,167 @@ mod splitter_tests {
             (from_old.before.as_str(), from_old.after.as_str()),
             ("", "")
         );
+    }
+}
+
+/// 一批日志、一批动作明细按字节数发出（[`MAX_BATCH_BYTES`]）：每个事件、每行都在各自的上限以内时，连接正常、队列是空的情况下
+/// 没有一批因为大小被 [`Telemetry::send`] 整批丢掉。
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+
+    /// 一个 Forwarder，和一个把它发出的消息一条条收走的任务（相当于连接正常，队列不积压）。
+    fn forwarder() -> (Forwarder, JoinHandle<Vec<AgentMessage>>) {
+        let (telemetry, mut rx) = telemetry(DEFAULT_TELEMETRY_QUEUE_BYTES, 1000);
+        let drain = tokio::spawn(async move {
+            let mut got = Vec::new();
+            while let Some(message) = rx.recv().await {
+                got.push(message);
+            }
+            got
+        });
+        let forwarder = Forwarder {
+            task_id: "task".into(),
+            attempt: 1,
+            telemetry,
+            seq: 0,
+            pending: Vec::new(),
+            pending_bytes: 0,
+            progress: Latest::default(),
+            action_summary: Latest::default(),
+            actions: Vec::new(),
+            actions_bytes: 0,
+            metrics: Merger::default(),
+            throttle: Throttle::new(0),
+            time_jumps: time_jump::Watch::start(),
+        };
+        (forwarder, drain)
+    }
+
+    /// 日志：每行都取最长（一段 [`MAX_LINE_BYTES`] 加上两段上下文）。
+    fn full_line(i: usize) -> Pending {
+        Pending {
+            before: "b".repeat(SPLIT_CONTEXT_BYTES),
+            after: "c".repeat(SPLIT_CONTEXT_BYTES),
+            time_unix_ms: 1_790_000_000_000,
+            monotonic_ms: i as i64,
+            source: LogSource::Stdout,
+            level: LogLevel::Info,
+            text: "a".repeat(MAX_LINE_BYTES),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_thousand_full_log_lines_are_not_dropped_as_one_batch_that_is_too_big() {
+        let (mut forwarder, drain) = forwarder();
+        // 1000 行 × (64 KiB + 2 × 16 KiB) 约 98 MB：按条数一批发出的话比队列上限（64 MiB）还大，队列是空的时候也整批被丢掉。
+        let lines = 1000;
+        for i in 0..lines {
+            forwarder.lines(vec![full_line(i)]).await;
+            tokio::task::yield_now().await;
+        }
+        forwarder.poll(true);
+        drop(forwarder);
+        let messages = drain.await.unwrap();
+        let batches: Vec<&LogBatch> = messages
+            .iter()
+            .filter_map(|m| match &m.body {
+                Some(agent_message::Body::Logs(batch)) => Some(batch),
+                _ => None,
+            })
+            .collect();
+        let seqs: Vec<u64> = batches
+            .iter()
+            .flat_map(|b| b.lines.iter().map(|l| l.seq))
+            .collect();
+        assert_eq!(
+            seqs,
+            (1..=lines as u64).collect::<Vec<_>>(),
+            "每一行都送到了，序号没有缺口"
+        );
+        // 一批最多是 MAX_BATCH_BYTES 加上最后一行；整体约 98 MB，所以至少几十批
+        let one_line = full_line(0).size();
+        assert!(batches.len() >= lines * one_line / MAX_BATCH_BYTES);
+        for (i, message) in messages.iter().enumerate() {
+            assert!(
+                message.encoded_len() <= MAX_BATCH_BYTES + 2 * one_line,
+                "第 {i} 批 {} 字节",
+                message.encoded_len()
+            );
+        }
+    }
+
+    /// 动作明细：每个事件都取最长（名称、8 个字段，全是 3 字节的字符，约 117 KiB）。
+    fn full_action(i: usize) -> Vec<u8> {
+        let name = "名".repeat(4160);
+        let value = "值".repeat(4352);
+        let fields: serde_json::Map<String, serde_json::Value> = (0..8)
+            .map(|f| (format!("字段{f}"), serde_json::Value::String(value.clone())))
+            .collect();
+        let line = serde_json::json!({
+            "type": "action_start",
+            "id": i,
+            "depth": 0,
+            "name": name,
+            "fields": fields,
+        });
+        let mut bytes = serde_json::to_vec(&line).unwrap();
+        bytes.push(b'\n');
+        bytes
+    }
+
+    #[tokio::test]
+    async fn a_thousand_full_action_events_are_not_dropped_as_one_batch_that_is_too_big() {
+        let (mut forwarder, drain) = forwarder();
+        let events = 1000;
+        for i in 0..events {
+            let chunk = EventChunk {
+                bytes: full_action(i),
+                monotonic_ms: i as i64,
+            };
+            forwarder.events(&chunk).await;
+            tokio::task::yield_now().await;
+        }
+        forwarder.poll(true);
+        drop(forwarder);
+        let messages = drain.await.unwrap();
+        let batches: Vec<&ActionBatch> = messages
+            .iter()
+            .filter_map(|m| match &m.body {
+                Some(agent_message::Body::Actions(batch)) => Some(batch),
+                _ => None,
+            })
+            .collect();
+        let received: usize = batches.iter().map(|b| b.events.len()).sum();
+        assert_eq!(received, events, "每个事件都送到了");
+        let one = full_action(0).len();
+        assert!(batches.len() >= events * one / MAX_BATCH_BYTES);
+        for message in &messages {
+            assert!(message.encoded_len() <= MAX_BATCH_BYTES + 2 * one);
+        }
+    }
+
+    #[tokio::test]
+    async fn small_lines_still_go_out_in_batches_of_a_thousand_lines() {
+        let (mut forwarder, drain) = forwarder();
+        for i in 0..2500 {
+            let mut line = full_line(i);
+            line.text = "x".into();
+            line.before.clear();
+            line.after.clear();
+            forwarder.lines(vec![line]).await;
+        }
+        forwarder.poll(true);
+        drop(forwarder);
+        let sizes: Vec<usize> = drain
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|m| match &m.body {
+                Some(agent_message::Body::Logs(batch)) => Some(batch.lines.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sizes, vec![1000, 1000, 500]);
     }
 }

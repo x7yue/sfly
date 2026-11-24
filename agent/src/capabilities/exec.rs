@@ -342,3 +342,39 @@ impl Lines {
         lines
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 输出里的长行：回复给节点的是每一段的文字（加上标明来自哪台 Agent 的前缀），不带拆分器给打码用的上下文，
+    /// 接起来就是原来的行；一段要等后面又读到一些才发出，没有换行结尾的剩余内容在 `finish` 里发出。
+    #[test]
+    fn a_long_line_is_returned_as_pieces_of_text_without_the_masking_context() {
+        let max = 64 * 1024;
+        let original: String = (0..3 * max + 500)
+            .map(|i| char::from(b'a' + (i % 26) as u8))
+            .collect();
+        let mut lines = Lines::new("[T] ".into());
+        let mut items = Vec::new();
+        // 还不够一段加上后面的上下文：没有换行，什么都不发
+        items.extend(lines.push(OutputStream::Stdout, original[..max + 100].as_bytes()));
+        assert!(items.is_empty());
+        items.extend(lines.push(OutputStream::Stdout, original[max + 100..].as_bytes()));
+        assert!(
+            !items.is_empty(),
+            "读到的比一段加上上下文还长，前面的段发出"
+        );
+        items.extend(lines.push(OutputStream::Stdout, b"\n"));
+        items.extend(lines.finish());
+        let texts: Vec<&str> = items
+            .iter()
+            .map(|item| item["stdout"].as_str().unwrap())
+            .collect();
+        assert!(texts.iter().all(|t| t.starts_with("[T] ")));
+        assert!(texts.iter().all(|t| t.len() - 4 <= max));
+        let joined: String = texts.iter().map(|t| &t[4..]).collect();
+        assert_eq!(joined, original);
+        assert!(texts.len() >= 4);
+    }
+}

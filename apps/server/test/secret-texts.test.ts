@@ -2307,7 +2307,27 @@ describe("被 Agent 拆开的超长行：每一段带上下文，跨在拆分处
 		expect(set.maskInContext(OVERSIZE_NOTICE, "", "")).toBe(OVERSIZE_NOTICE);
 	});
 
-	it("值比上下文长（跨三段以上）：不保证认得出，但不出错，别的出现照常盖住", () => {
+	it("值比上下文长、只跨一个拆分处：不保证认得出，但不出错，每一段露出的字符都是不带上下文时本来就露出的", () => {
+		const value = `V-${"y".repeat(12)}`; // 14 个字符，上下文只有 8
+		const set = setOf(value);
+		const line = `${"p".repeat(43)}${value}${"q".repeat(40)}`;
+		const pieces = splitLikeAgent(line, 50, 8);
+		expect(pieces.length).toBe(2);
+		const isSubsequence = (small: string, big: string): boolean => {
+			let at = 0;
+			for (const ch of big) if (ch === small[at]) at += 1;
+			return at === small.length;
+		};
+		for (const p of pieces) {
+			const out = set.maskInContext(p.text, p.before, p.after);
+			// 不带上下文时这一段里没有完整的出现，原样露出；有上下文时只会去掉、换成掩码，不会多出别的字符
+			expect(set.mask(p.text)).toBe(p.text);
+			expect(isSubsequence(out.replaceAll(MASK, ""), p.text)).toBe(true);
+			expect(out).not.toContain(value);
+		}
+	});
+
+	it("值比上下文长（不论跨几段）：不保证认得出，但不出错，别的出现照常盖住", () => {
 		const long = `LONG-${"x".repeat(60)}`;
 		const set = setOf(long, "short-secret");
 		const line = `a short-secret b ${long} c short-secret d`;
