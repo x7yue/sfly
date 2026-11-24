@@ -28,6 +28,7 @@ import {
 	NO_SECRETS,
 	OVERSIZE_NOTICE,
 	type SecretSet,
+	SPLIT_CONTEXT_MAX_CHARS,
 	secretValues,
 } from "./secrets.js";
 
@@ -322,6 +323,7 @@ export class TaskLogs {
 					source: SOURCES[line.source] ?? "stdout",
 					level: LEVELS[line.level] ?? "info",
 					text: line.text,
+					context: contextOf(line),
 				})),
 			);
 		});
@@ -362,14 +364,17 @@ export class TaskLogs {
 		const secrets = await this.runSecrets(state.runId);
 		// 这次运行的值集合大到认不出每一处出现，所有文字都整段盖住（SecretSet.oversize）：在这个任务的日志里留一行平台写的说明
 		// （不含值），用户才知道为什么全是掩码。写在「值集合变大之后这个任务第一次写日志」的那一批的最前面，每个任务一次，
-		// 时间取这一批第一行的时间（不比后面的行晚）；打码时只有它原样放行。在那之前写下的行、从不写日志的任务没有这一行。
-		const notice = secrets.oversize && !state.oversizeNoted;
+		// 时间取这一批里第一行**真正写入**的行的时间（Agent 序号不大于已写入的最大序号的是重发的旧行，会被丢掉，不算；
+		// 取了旧行的时间，说明这一行的时间会倒退）；这一批没有要写入的行（全是重发的旧行）就等下一批。打码时只有它原样放行。
+		// 在那之前写下的行、从不写日志的任务没有这一行。
+		const firstWritten = written.find((e) => e.agentSeq === null || e.agentSeq > state.agentSeq);
+		const notice = secrets.oversize && !state.oversizeNoted && firstWritten !== undefined;
 		let entries = written;
 		if (notice) {
 			entries = [
 				{
 					agentSeq: null,
-					timeMs: written[0]?.timeMs ?? this.deps.clock.now().getTime(),
+					timeMs: firstWritten.timeMs,
 					agent_time: null,
 					source: "system",
 					level: "warn",
@@ -388,7 +393,7 @@ export class TaskLogs {
 		let lastTimeMs = state.lastTimeMs;
 		let issues = state.issues;
 		let truncated = false;
-		for (const { agentSeq: lineAgentSeq, timeMs: converted, ...entry } of entries) {
+		for (const { agentSeq: lineAgentSeq, timeMs: converted, context, ...entry } of entries) {
 			if (lineAgentSeq === null) seq += 1;
 			else if (lineAgentSeq <= agentSeq) continue;
 			else {
@@ -406,7 +411,9 @@ export class TaskLogs {
 				seq,
 				time: new Date(timeMs).toISOString(),
 				...entry,
-				text: secrets.mask(entry.text),
+				text: context
+					? secrets.maskInContext(entry.text, context.before, context.after)
+					: secrets.mask(entry.text),
 			};
 			let row = `${JSON.stringify(view)}\n`;
 			if (bytes + Buffer.byteLength(row) > this.#limit) {
@@ -647,7 +654,25 @@ export class TaskLogs {
  * 要写进文件的一行（还没有序号）：`agentSeq` 是 Agent 上报的序号，控制面自己写的行为 null；
  * `timeMs` 是折算出（或控制面取到）的控制面时间，写入时再按 2 秒规则与上一行比较。
  */
-type NewLine = Omit<LogLineView, "seq" | "time"> & { agentSeq: number | null; timeMs: number };
+type NewLine = Omit<LogLineView, "seq" | "time"> & {
+	agentSeq: number | null;
+	timeMs: number;
+	/** 被拆开的超长行的一段带的上下文（只用来打码，不显示、不保存）；没有拆开的行没有。 */
+	context?: { before: string; after: string };
+};
+
+/**
+ * 一行日志带的上下文（`LogLine.before` / `after`）：都是空串时没有；任何一段超过上限（不是正常的 Agent 发的）按没带处理，
+ * 不报错、不断流。上下文只在这一次写入里用来打码，不进文件、不进任何日志和错误信息。
+ */
+function contextOf(line: { before: string; after: string }): NewLine["context"] {
+	const { before, after } = line;
+	if (before === "" && after === "") return undefined;
+	if (before.length > SPLIT_CONTEXT_MAX_CHARS || after.length > SPLIT_CONTEXT_MAX_CHARS) {
+		return undefined;
+	}
+	return { before, after };
+}
 
 /** 日志文件最后一行的控制面时间（毫秒）；没有行或最后一行是旧行时为 null。 */
 async function lastLineTimeMs(file: string): Promise<number | null> {

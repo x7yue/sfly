@@ -899,11 +899,20 @@ export interface EntryNodeInput {
 }
 
 /**
- * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
- * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
- * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
- * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
- * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
+ * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`）。#640 起助手服务按上游的错误分好再写（`turn_end`
+ * 模型不可用时、重试的 `notice`），上游的错误原文不进事件，只进助手服务的日志。落库之后改不了，所以宁可分到 `other`，
+ * 不能分错：
+ * - 状态码只从结构上取：pi 只给一句话，只认这句话开头的固定写法（`502: …`、`<提供方> API error (502): …`、SDK 的
+ *   `502 …`），不在全文里找；取不到就是没有状态码。
+ * - 有状态码时由它定类别，正文里的词只能在这个范围里细分：401、403 是 `auth`（正文说额度时是 `quota`）；402 是 `quota`；
+ *   429 是 `rate_limit`（正文说额度时是 `quota`）；408、504 是 `timeout`；其余 5xx 是 `upstream`；其余 4xx 是 `other`
+ *   （上游拒绝了这次请求；正文说上下文超长时是 `context_overflow`）。
+ * - 没有状态码时只按连接层的失败分：连不上、连接断开、证书验不过是 `unreachable`，超时是 `timeout`（认 Node 的错误码、
+ *   SDK 固定的那一句），别的都是 `other`；不看正文里的词。
+ * - 边界（按写法认，不看意思）：以登记过的状态码加空格开头的消息按 SDK 的写法取状态码，所以正文恰好以这样的数字开头的错误
+ *   （`404 packages were …`）会被认成那个状态码；没有状态码时，以括号里的连接层错误码结尾的消息（`… (ECONNRESET)`）算连不上。
+ * 各项：`unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝，`quota` 额度不足，`rate_limit` 限流，
+ * `upstream` 对方出错，`context_overflow` 上下文超长，`other` 其他。
  */
 export type ErrorClass = "unreachable" | "timeout" | "auth" | "quota" | "rate_limit" | "upstream" | "context_overflow" | "other";
 
@@ -1736,11 +1745,6 @@ export type ParamType = "string" | "number" | "boolean" | "json";
 /** 一个持久的会话事件：`PERSISTED_SESSION_EVENT_TYPES` 里的类型，带 `seq` 和 `at`（历史接口返回它）。 */
 export type PersistedSessionEvent = {
 	type: "user_message";
-	/**
-	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
-	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
-	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
-	 */
 	message_id: string;
 	text: string;
 	steer: boolean;
@@ -1788,7 +1792,7 @@ export type PersistedSessionEvent = {
 	max_attempts?: number;
 	/** 多久（毫秒）之后重试；只有 `retry`。 */
 	retry_delay_ms?: number;
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	/**
 	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
@@ -1808,7 +1812,6 @@ export type PersistedSessionEvent = {
 	duration_ms: number;
 	usage?: TokenUsage;
 	limit_kind?: TurnLimit;
-	/** 重试的原因按什么分；#548 起有值。 */
 	error_class?: ErrorClass;
 	seq: number;
 	at: Timestamp;
@@ -2553,6 +2556,12 @@ export interface RunReport {
 	 * 摘要只给最新值，要曲线用 `GET /runs/:id/focus`。
 	 */
 	attention_items: RunReportAttentionItem[];
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限），要打码的内容（日志、动作、输入输出、错误信息）整段盖住，
+	 * 所以上面的错误信息、日志尾部、失败的动作看到的可能全是 `******`（不含任何值，#657）。和运行视图（`RunView`）的同名字段一样；
+	 * 旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 }
 
 /** 有异常的关注项：关注项读数（`GET /runs/:id/focus`）里的一项，只留下认出它是哪一项、最新值和异常的字段。 */
@@ -2774,6 +2783,12 @@ export interface RunView {
 	 * 或者投递记录已过保留期被清理时为 null。
 	 */
 	run_notification: RunNotificationState | null;
+	/**
+	 * 这次运行的 secret 参数的值太多或太长（所有写法的总长超过上限）：控制面认不出每一处出现，这次运行里要打码的内容（日志、动作、
+	 * 输入输出、错误信息）整段盖住，显示为 `******`（#517、#657）。不含任何值。控制台、命令行据此告诉使用者为什么看到的全是掩码，
+	 * 缩短或减少 secret 参数的值之后重新运行。旧版本的控制面没有这个字段，读不到时当作 false。
+	 */
+	secrets_oversize?: boolean;
 	/** 按深度、开始时间排序。 */
 	chains: ChainRunView[];
 }
@@ -3185,7 +3200,7 @@ export type TurnLimit = "model_calls" | "duration";
  * - `stopped` 已停止：用户停止；
  * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，`TurnLimit`；默认 40 次模型调用、
  *   20 分钟，#540）；
- * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#640 起按下面 `ErrorClass` 的规则分）；
  * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
  * - `failed` 其他错误。
  * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
