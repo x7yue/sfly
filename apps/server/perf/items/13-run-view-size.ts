@@ -97,14 +97,17 @@ export default definePerfItem({
 		ctx.log("启动被测对象：独立的数据库与以 main.ts 运行的控制面");
 		const database = await createTestDatabase("sfly_perf");
 		ctx.defer(() => database.drop());
-		const server = await startSourceServer({ databaseUrl: database.url });
+		// 带初始管理员并登录：没有登录读不了运行视图（401），那时响应体很小，「有上界」的断言会白白通过。
+		const server = await startSourceServer({ databaseUrl: database.url, admin: true });
 		ctx.defer(() => server.stop());
 		const big = await seedRun(database.url, TASKS, VALUE_CHARS);
 		const small = await seedRun(database.url, 1, 100);
 		ctx.log(`种了一个运行：${TASKS} 个任务，输入、输出各 ${VALUE_CHARS} 个字符`);
 
 		// 预热。
-		await (await server.fetch(`/runs/${big}`)).arrayBuffer();
+		const warmup = await server.fetch(`/runs/${big}`);
+		if (!warmup.ok) throw new Error(`读运行视图：HTTP ${warmup.status}`);
+		await warmup.arrayBuffer();
 		const serverSampler = sampleProcess(server.child.pid as number);
 
 		const times: number[] = [];
@@ -123,7 +126,9 @@ export default definePerfItem({
 				}
 			})();
 			const started = performance.now();
-			const body = await (await server.fetch(`/runs/${big}`)).arrayBuffer();
+			const response = await server.fetch(`/runs/${big}`);
+			if (!response.ok) throw new Error(`读运行视图：HTTP ${response.status}`);
+			const body = await response.arrayBuffer();
 			times.push(performance.now() - started);
 			reading = false;
 			await prober;
