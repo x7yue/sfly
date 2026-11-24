@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { NodeNameInline } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Truncate } from "@/components/ui/truncate";
 import { CancelRunButton } from "./CancelRunDialog";
+import { useChainsFit } from "./chains-fit";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
 import type { MonitorView } from "./monitor-view";
 import { RunPresetInfo } from "./RunPresetInfo";
@@ -75,7 +76,7 @@ function FocusFreshness({ run }: { run: RunView }) {
  * 页面里已经有失败区域（概览）或失败横幅（详情）时不重复，只在它们看不到的地方出现，同一屏上同一件事只说一次）、各链状态、
  * 在画布中打开、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。失败摘要只用别的内容占完之后剩下的宽度
- * （全文在悬停提示里）：显示失败摘要时各链状态在窄于 1920px 的窗口里整个收起（失败的节点和各链的状态在概览、时间线里都有，顶栏把宽度先让给失败原因；1920px 起两样都放得下，一起显示），
+ * （全文在悬停提示里）：显示失败摘要时，各链状态放得下摘要旁边（摘要始终有它的最窄宽度，各链状态排成一行要的宽度放得进剩下的）才显示，放不下整个收起（失败的节点和各链的状态在概览、时间线里都有，顶栏把宽度先让给失败原因；界限按实际放不放得下定，见 `useChainsFit`，不写死窗口宽度），
  * 摘要最窄 96px、1280 及以上最窄 {@link SUMMARY_MIN}（288–320px，够写出异常类型和原因的开头，不只剩「TimeoutErr…」），
  * 预设名、场景名和耗时在宽的窗口里原样显示，窄的窗口里才按预设名、场景名与触发信息的顺序让位；耗时、状态、视图标签页和按钮不让位。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
@@ -106,9 +107,13 @@ export function MonitorTopBar({
 	const failure = runFailure(run);
 	const elapsed = (run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at);
 	const summaryShown = failure !== null && !failureShown;
+	const bar = useRef<HTMLElement>(null);
+	// 显示失败摘要时，各链状态放得下才显示（量出来的，不是按窗口宽度）；没有摘要时照常显示。
+	const chainsFit = useChainsFit(bar, summaryShown, chains.map((c) => c.id).join());
 
 	return (
 		<header
+			ref={bar}
 			style={{ height: MONITOR_TOPBAR_HEIGHT }}
 			className="flex flex-none items-center gap-2.5 border-b border-border-soft bg-surface px-3"
 		>
@@ -152,10 +157,13 @@ export function MonitorTopBar({
 			{failure && summaryShown && <FailureSummary failure={failure} />}
 			<ul
 				aria-label="各链状态"
+				data-fit-chains
+				// 放不下摘要旁边时收起：宽度 0、不可见、不进辅助技术，但仍留在页面里（才量得出它要多宽，放得下了再显示）；
+				// 负的左外边距抵掉它和前一项之间的间距。
+				{...(chainsFit ? {} : { "aria-hidden": true, inert: true })}
 				className={cn(
 					"m-0 flex min-w-0 shrink-1000 list-none gap-1.5 overflow-hidden p-0 max-xl:hidden",
-					// 顶栏写着失败摘要时，各链的状态只在放得下两样的宽屏（1920px 起）里一起显示；窄一些的窗口里让给摘要。
-					summaryShown && "max-[1919px]:hidden",
+					!chainsFit && "invisible -ml-2.5 w-0 shrink-0",
 				)}
 			>
 				{chains.slice(0, MAX_CHAIN_BADGES).map((chain) => {
@@ -182,7 +190,7 @@ export function MonitorTopBar({
 					</li>
 				)}
 			</ul>
-			<span className="min-w-0 flex-1" />
+			<span data-fit-spacer className="min-w-0 flex-1" />
 			{(live || paused) && (
 				<Button
 					variant="ghost"
@@ -254,6 +262,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 					type="button"
 					aria-description="点击查看这个节点的尝试"
 					data-testid="run-failure"
+					data-fit-summary
 					onClick={() => actions.report({ type: "failure", node: failure.ref })}
 					className={cn(
 						"block h-6.5 min-w-24 max-w-max flex-[100_1_0%] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1",
