@@ -362,6 +362,29 @@ describe("停止、插话、结束会话、排队", () => {
 			expect(dropped.map((e) => (e as { message_id: string }).message_id)).toEqual([ids[1]]);
 		});
 
+		it("插话命令的回应晚到、而且是失败：这句话其实已经确认送到、这一轮已经有助手服务带回的 turn_end，这时也不写 steer_dropped（不是「已经有 steer_dropped」挡住的，是这一轮已经有结局）", async () => {
+			assistant.strictTurns = false;
+			const first = await json<SessionView>(await create("做第一件事"));
+			assistant.steerDelayMs = 500;
+			assistant.steerReply = () => ({ status: 500, code: "start_failed", message: "回应出错了" });
+			const saying = say(first.id, "已经送到的话");
+			await eventually(async () => expect(assistant.steers).toHaveLength(1));
+			const [id] = await steerIds(first.id);
+			// 助手服务那边其实收下并送到了：出现过、之后又不在了；然后带回这一轮的结局（它没有为这句话发 steer_dropped）。
+			queue(first.id, 1, [id as string], ["已经送到的话"]);
+			queue(first.id, 1, [], []);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			assistant.emit(first.id, 1, turnEnd(1));
+			await eventually(async () => expect(await statusOf(cp, first.id)).toBe("idle"));
+			// 之后插话命令的回应才到，是失败：这一轮已经有 turn_end，不再为它写 steer_dropped。
+			expect((await saying).status).toBe(503);
+			assistant.steerDelayMs = 0;
+			assistant.steerReply = () => undefined;
+			const events = (await detail(first.id)).events;
+			expect(events.filter((e) => e.type === "notice" && e.kind === "steer_dropped")).toEqual([]);
+			expect(events.at(-1)).toMatchObject({ type: "turn_end", outcome: "completed" });
+		});
+
 		it("控制面写更早一轮的重复结局，不清掉当前这一轮「确认送到」的记录：之后由控制面补当前这一轮的结局时，已经确认送到的话不会被补成没有确认送到", async () => {
 			assistant.strictTurns = false;
 			const first = await idleSession();
