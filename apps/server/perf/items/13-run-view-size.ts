@@ -23,6 +23,47 @@ const VALUE_CHARS = 1_000_000;
 const READS = 5;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
+/**
+ * 读事件流，量第一条 `event: run` 那一块的字节数（含结尾的空行）。边读边量，不把整条留在内存里
+ * （改之前这一块有一百多 MB，对整个字符串反复查找会慢到读不完）。
+ */
+async function runEventBytes(stream: Response): Promise<number> {
+	const reader = (stream.body as ReadableStream<Uint8Array>).getReader();
+	const decoder = new TextDecoder();
+	const deadline = Date.now() + 30_000;
+	const START = "event: run\n";
+	let tail = ""; // 还没找到起点时，上一段的末尾（起点可能跨两段）
+	let counting = false;
+	let previous = ""; // 开始数以后，上一段的最后一个字符（结尾的空行可能跨两段）
+	let bytes = 0;
+	try {
+		while (Date.now() < deadline) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			let piece = decoder.decode(value, { stream: true });
+			if (!counting) {
+				const text = tail + piece;
+				const start = text.indexOf(START);
+				if (start < 0) {
+					tail = text.slice(-(START.length - 1));
+					continue;
+				}
+				counting = true;
+				piece = text.slice(start);
+			}
+			const end = (previous + piece).indexOf("\n\n");
+			if (end >= 0) {
+				return bytes + Buffer.byteLength(piece.slice(0, end + 2 - previous.length));
+			}
+			bytes += Buffer.byteLength(piece);
+			previous = piece.slice(-1);
+		}
+	} finally {
+		await reader.cancel();
+	}
+	throw new Error("事件流里没有读到完整的 run 事件");
+}
+
 /** 种一个已经结束的运行：`tasks` 个节点各有一次成功的尝试，输入、输出各是 `chars` 个字符。 */
 async function seedRun(databaseUrl: string, tasks: number, chars: number): Promise<string> {
 	const scenario = randomUUID();
@@ -137,25 +178,11 @@ export default definePerfItem({
 			stalls.push(Math.max(...probes));
 		}
 
-		// 事件流里的第一条 `run`：连上时推送一整份视图（前面可能有 `retry:` 之类的行，按空行分块，找 `event: run` 的那一块）。
+		// 事件流里的第一条 `run`：连上时推送一整份视图（前面有 `retry:`、`time` 等块，按空行分块，量 `event: run` 的那一块）。
 		const stream = await server.fetch(`/runs/${big}/events`, {
 			headers: { accept: "text/event-stream" },
 		});
-		const reader = (stream.body as ReadableStream<Uint8Array>).getReader();
-		const decoder = new TextDecoder();
-		const deadline = Date.now() + 30_000;
-		let streamed = "";
-		let firstEvent = "";
-		while (Date.now() < deadline && !firstEvent) {
-			const { value, done } = await reader.read();
-			if (done) break;
-			streamed += decoder.decode(value, { stream: true });
-			const blocks = streamed.split("\n\n");
-			blocks.pop(); // 最后一块还没有读完
-			firstEvent = blocks.find((block) => /^event: run$/m.test(block)) ?? "";
-		}
-		await reader.cancel();
-		if (!firstEvent) throw new Error("事件流里没有读到 run 事件");
+		const firstEventBytes = await runEventBytes(stream);
 
 		// 被省略的内容取回来和种进去的一样（第一个、最后一个任务）。
 		const view = (await (await server.fetch(`/runs/${big}`)).json()) as {
@@ -205,7 +232,7 @@ export default definePerfItem({
 			{
 				id: "first_event_bytes",
 				label: "事件流连上时的第一条 run 事件",
-				value: Buffer.byteLength(`${firstEvent}\n\n`),
+				value: firstEventBytes,
 				unit: "B",
 				check: hard("<=", MAX_BODY_BYTES),
 			},
