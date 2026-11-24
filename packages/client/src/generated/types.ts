@@ -1752,11 +1752,6 @@ export type ParamType = "string" | "number" | "boolean" | "json";
 /** 一个持久的会话事件：`PERSISTED_SESSION_EVENT_TYPES` 里的类型，带 `seq` 和 `at`（历史接口返回它）。 */
 export type PersistedSessionEvent = {
 	type: "user_message";
-	/**
-	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
-	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
-	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
-	 */
 	message_id: string;
 	text: string;
 	steer: boolean;
@@ -1824,7 +1819,6 @@ export type PersistedSessionEvent = {
 	duration_ms: number;
 	usage?: TokenUsage;
 	limit_kind?: TurnLimit;
-	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	seq: number;
 	at: Timestamp;

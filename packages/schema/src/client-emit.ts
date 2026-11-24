@@ -46,6 +46,77 @@ const STRUCTURAL = new Set([
 
 export const ITEM = "[]";
 export const VALUE = "{}";
+/**
+ * 说明路径里「几选一的哪个成员」这一段的开头（`|`）：联合里内联的对象成员各有自己的字段说明，同名的字段在不同成员里
+ * 说明可以不同，所以路径要认成员。成员用它里面取值固定的字段（字面量，如 `type: "notice"`）来认，见 {@link memberSegment}。
+ * 生成类型、导出的 JSON Schema、读契约注释三处用同一套写法，路径才对得上。
+ */
+export const MEMBER = "|";
+
+/** 联合里的一个对象成员在路径里的一段：取值固定的字段（`名=值`）合起来认它，排序之后连起来；没有取值固定的字段就是 `|`。 */
+export function memberSegment(fixed: readonly string[]): string {
+	return `${MEMBER}${[...fixed].sort().join(",")}`;
+}
+
+/** JSON Schema 里一个字段取值固定（`const`，或只有一项的 `enum`）时的值（JSON 写法），否则 undefined。 */
+function fixedValue(schema: unknown): string | undefined {
+	if (typeof schema !== "object" || schema === null) return undefined;
+	const json = schema as Json;
+	const value =
+		"const" in json
+			? json.const
+			: Array.isArray(json.enum) && json.enum.length === 1
+				? json.enum[0]
+				: undefined;
+	return ["string", "number", "boolean"].includes(typeof value) ? JSON.stringify(value) : undefined;
+}
+
+/** 一个对象的 JSON Schema 在联合里的路径段（按它的 `properties` 里取值固定的字段）。 */
+function objectMember(json: Json): string {
+	const fixed: string[] = [];
+	for (const [name, sub] of Object.entries((json.properties ?? {}) as Record<string, unknown>)) {
+		const value = fixedValue(sub);
+		if (value !== undefined) fixed.push(`${name}=${value}`);
+	}
+	return memberSegment(fixed);
+}
+
+const isInlineObject = (member: unknown): member is Json =>
+	typeof member === "object" && member !== null && (member as Json).type === "object";
+
+/** 一个 JSON Schema 里的联合（`anyOf`，没有就 `oneOf`）的成员；不是联合返回 undefined。 */
+function combinerOf(json: Json): readonly unknown[] | undefined {
+	for (const combiner of ["anyOf", "oneOf"] as const) {
+		const members = json[combiner];
+		if (Array.isArray(members)) return members;
+	}
+	return undefined;
+}
+
+/**
+ * 联合的成员（成员自己又是联合的展开，和 TypeScript 的联合一样是平的），以及每个成员在说明路径里的一段 `segment`：
+ * 内联的对象成员（不是 `$ref`，`$ref` 指向的类型自己有一份说明）在这个联合里**不止一个**时，每个各带一段，
+ * 同名的字段在不同成员里说明可以不同；只有一个（可空、可选的对象）时和没有联合一样，路径不变。
+ */
+export function unionMembers(
+	members: readonly unknown[],
+): Array<{ member: unknown; segment?: string }> {
+	const flat: unknown[] = [];
+	const spread = (list: readonly unknown[]) => {
+		for (const member of list) {
+			const nested =
+				typeof member === "object" && member !== null ? combinerOf(member as Json) : undefined;
+			if (nested) spread(nested);
+			else flat.push(member);
+		}
+	};
+	spread(members);
+	const several = flat.filter(isInlineObject).length >= 2;
+	return flat.map((member) => ({
+		member,
+		segment: several && isInlineObject(member) ? objectMember(member) : undefined,
+	}));
+}
 
 export class UnsupportedSchema extends Error {
 	constructor(where: string, reason: string) {
@@ -57,6 +128,8 @@ export class UnsupportedSchema extends Error {
 export interface EmitOptions {
 	refName: (id: string) => string;
 	doc?: (path: readonly string[]) => string | undefined;
+	/** 走进联合的一个内联的对象成员时调用（路径含这个成员的一段）：生成之后和读到的注释核对，两边认出的成员要一样。 */
+	member?: (path: readonly string[]) => void;
 }
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -117,9 +190,15 @@ export function typeText(
 	}
 	if ("const" in json) return literal(json.const, where);
 	if (Array.isArray(json.enum)) return union(json.enum.map((v) => literal(v, where)));
-	for (const combiner of ["anyOf", "oneOf"] as const) {
-		const members = json[combiner];
-		if (Array.isArray(members)) return union(members.map((member) => recur(member)));
+	const members = combinerOf(json);
+	if (members) {
+		return union(
+			unionMembers(members).map(({ member, segment }) => {
+				if (segment === undefined) return recur(member);
+				options.member?.([...path, segment]);
+				return recur(member, [...path, segment]);
+			}),
+		);
 	}
 	if (Array.isArray(json.allOf)) {
 		return json.allOf.map((member) => parenthesize(recur(member), /[|]|=>/)).join(" & ");
