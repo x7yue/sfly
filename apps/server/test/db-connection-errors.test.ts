@@ -233,14 +233,15 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 				.catch(() => undefined);
 			await eventually(async () => expect(cp.log).toContain("数据库连接在使用中断开"), 10_000);
 
+			// 间隔着发：连着发的两个同样的信号在 Node 里可能合成一个，只触发一次处理函数。
 			cp.child.kill("SIGTERM");
+			await eventually(async () => expect(cp.log).toContain("收到 SIGTERM，正在关闭"), 10_000);
 			cp.child.kill("SIGTERM");
+			await eventually(async () => expect(cp.log).toContain("已经在关闭，忽略 SIGTERM"), 10_000);
 
 			const exit = await cp.waitForExit(15_000);
 			expect(exit, `控制面没有退出：\n${cp.log.slice(-2000)}`).toEqual({ code: 1, signal: null });
 			// 停止信号那条路径确实走了（收到、第二个被忽略）：退出码 1 是因为已经在因错误退出，不是因为它没走。
-			expect(cp.log).toContain("收到 SIGTERM，正在关闭");
-			expect(cp.log).toContain("已经在关闭，忽略 SIGTERM");
 		}, 120_000);
 
 		it("停止信号先到、关闭途中借出去的连接收到致命错误：退出码是 1（关闭没写完的东西没有人补，如实说明这次退出不干净）", async () => {
