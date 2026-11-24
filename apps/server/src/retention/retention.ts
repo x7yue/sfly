@@ -73,13 +73,25 @@ export class Retention {
 			.where(and(isNull(runs.purgedAt), lt(runs.endedAt, cutoff)))
 			.limit(BATCH);
 		for (const { id } of due) {
-			// 先删文件再标记：中途出错时下一次扫描会重新处理（删除是幂等的）。
-			await Promise.all(
-				["logs", "artifacts"].map((dir) =>
-					rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),
-				),
-			);
 			await this.deps.db.transaction(async (tx) => {
+				// 先锁住这个运行的行（`FOR UPDATE`），再删文件、删产物行、标记已清理，一起提交（#649 的审查）：产物上传
+				// （`ArtifactStore`）在 `FOR KEY SHARE` 的锁下核对运行没有被清理、改名、记账，两边不会交错：上传在改名中时这里等它
+				// 提交，之后删文件和行时连它存下的一起删；这里拿到锁之后上传的核对要等这个事务提交、读到「已清理」，不改名也不记账。
+				// 不然上传进行中运行被清理时，文件会落进已经清理过的目录、库里多一行，没有人再删。
+				// 次序没变：先删文件、再标记，在同一个事务里：中途出错或进程被杀，事务回滚、没有标记，下一次扫描重新处理（删除是
+				// 幂等的）。代价是删文件期间事务开着、持着这一个运行行的锁（一个运行一把，批次里顺序做）：大目录要几秒；这个运行
+				// 结束已经超过保留期，没有别的事务要更新它。
+				const [locked] = await tx
+					.select({ purgedAt: runs.purgedAt })
+					.from(runs)
+					.where(eq(runs.id, id))
+					.for("update");
+				if (!locked || locked.purgedAt !== null) return; // 选出来之后别处已经清理了
+				await Promise.all(
+					["logs", "artifacts"].map((dir) =>
+						rm(join(this.deps.dataDir, dir, id), { recursive: true, force: true }),
+					),
+				);
 				const runTasks = tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.runId, id));
 				await tx.delete(taskActions).where(inArray(taskActions.taskId, runTasks));
 				await tx.delete(taskActionNames).where(inArray(taskActionNames.taskId, runTasks));

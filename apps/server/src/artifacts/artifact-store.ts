@@ -162,10 +162,9 @@ export class ArtifactStore {
 	 */
 	async sweepUploadTemp(): Promise<number> {
 		const dir = join(this.deps.dataDir, "artifacts", UPLOAD_TEMP_DIR);
-		const names = await readdir(dir).catch((error: NodeJS.ErrnoException) => {
-			if (error.code === "ENOENT") return [] as string[];
-			throw error;
-		});
+		// 数个数只是为了写日志：读不了（不存在、这个位置上是个文件、没有权限……）就当作 0 个，**照样删这个路径**：这个位置上不是目录的话，
+		// 留着它，之后每次上传都在建临时目录时失败（500）。`rm` 不跟着符号链接走：目录里的符号链接只删链接本身。
+		const names = await readdir(dir).catch(() => [] as string[]);
 		await rm(dir, { recursive: true, force: true });
 		return names.length;
 	}
@@ -281,6 +280,12 @@ export class ArtifactStore {
 		const file = join(this.deps.dataDir, relative);
 		const tmp = join(this.deps.dataDir, "artifacts", UPLOAD_TEMP_DIR, `.upload-${randomUUID()}`);
 		let out: Writable | undefined;
+		/** 改名（临时文件换成产物）做过了、事务里的记账还没成：出错时要把已经放到产物位置的文件删掉。 */
+		let renamed = false;
+		/** 这个产物名以前上传过：改名是覆盖。覆盖过的文件出错时删不得（旧的已经没了，删掉等于什么都没有）。 */
+		let replaced = false;
+		/** 事务里核对到这个运行已经被保留期清理了：不改名、不记账。 */
+		let purged = false;
 		const hash = createHash("sha256");
 		let size = 0;
 		let tooLarge = false;
@@ -327,13 +332,75 @@ export class ArtifactStore {
 				},
 				out,
 			);
-			await mkdir(dirname(file), { recursive: true });
-			await rename(tmp, file);
+			// 改名和记账在同一个事务里，事务先锁住运行这一行（`FOR KEY SHARE`）并核对它没有被保留期清理（#649 的审查）：
+			// 保留期清理（`Retention`）在 `FOR UPDATE` 的锁下删文件、删产物行、标记已清理，所以两边不会交错——要么上传先拿到锁、
+			// 改名和记账提交之后清理才删（文件和行一起没了），要么清理先拿到锁、提交之后这里读到「已清理」、不改名也不记账。
+			// 不然上传进行中运行被清理时，文件会落进已经清理过的运行目录、库里多一行，之后没有人再删。
+			// `KEY SHARE` 只和 `FOR UPDATE` 冲突：引擎对运行行的普通更新（`UPDATE`、`FOR NO KEY UPDATE`）不等它，插产物行的外键本来就要
+			// 在运行行和任务行上拿这把锁，所以没有新增的等待关系。
+			const row = {
+				id: randomUUID(),
+				taskId,
+				runId: task.runId,
+				name,
+				path: relative,
+				size,
+				sha256: hash.digest("hex"),
+				createdAt: this.deps.clock.now(),
+				agentModifiedAt,
+			};
+			await this.deps.db.transaction(async (tx) => {
+				const [run] = await tx
+					.select({ purgedAt: runs.purgedAt })
+					.from(runs)
+					.where(eq(runs.id, task.runId))
+					.for("key share");
+				if (!run || run.purgedAt !== null) {
+					purged = true;
+					return;
+				}
+				const [previous] = await tx
+					.select({ id: artifacts.id })
+					.from(artifacts)
+					.where(and(eq(artifacts.taskId, taskId), eq(artifacts.name, name)));
+				replaced = previous !== undefined;
+				await mkdir(dirname(file), { recursive: true });
+				await rename(tmp, file);
+				renamed = true;
+				await tx
+					.insert(artifacts)
+					.values(row)
+					.onConflictDoUpdate({
+						target: [artifacts.taskId, artifacts.name],
+						set: {
+							path: row.path,
+							size: row.size,
+							sha256: row.sha256,
+							createdAt: row.createdAt,
+							agentModifiedAt: row.agentModifiedAt,
+						},
+					});
+			});
+			if (purged) {
+				await rm(tmp, { force: true });
+				return {
+					ok: false,
+					status: 409,
+					code: "task_not_running",
+					message:
+						"artifacts can only be uploaded while the task is running (or after it was cancelled)",
+				};
+			}
+			return { ok: true, artifact: { ...row, file } };
 		} catch (error) {
 			// 先等写入流关闭、再删临时文件（#649）：文件是写入流异步 open 出来的，出错得早（第一块就超限、空闲超时）时流被销毁了它
 			// 还没建出文件，这时先删就删了个不存在的文件，open 随后完成、文件才出现，留下一个零字节的临时文件。
+			// 等关闭要等 open 返回：open 慢（文件系统慢）时被拒绝的请求也跟着慢，排在它后面的同一个任务的上传更慢；open 一直不返回时这个任务
+			// 的上传队列一直卡着，但那时文件系统已经不能用了，成功的路径同样卡在它上面，所以不另设时限。
 			if (out) await closed(out);
 			await rm(tmp, { force: true });
+			// 改名之后事务没成（记账失败、提交失败）：已经放到产物位置的文件没有行，删掉；覆盖的不删（见 replaced）。
+			if (renamed && !replaced) await rm(file, { force: true });
 			if (idle) {
 				return {
 					ok: false,
@@ -362,31 +429,6 @@ export class ArtifactStore {
 			}
 			throw error;
 		}
-		const row = {
-			id: randomUUID(),
-			taskId,
-			runId: task.runId,
-			name,
-			path: relative,
-			size,
-			sha256: hash.digest("hex"),
-			createdAt: this.deps.clock.now(),
-			agentModifiedAt,
-		};
-		await this.deps.db
-			.insert(artifacts)
-			.values(row)
-			.onConflictDoUpdate({
-				target: [artifacts.taskId, artifacts.name],
-				set: {
-					path: row.path,
-					size: row.size,
-					sha256: row.sha256,
-					createdAt: row.createdAt,
-					agentModifiedAt: row.agentModifiedAt,
-				},
-			});
-		return { ok: true, artifact: { ...row, file } };
 	}
 
 	/** 任务的产物（按名称排序）；任务不存在时为 undefined。 */
