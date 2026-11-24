@@ -21,7 +21,8 @@ from __future__ import annotations
 import re
 
 # 和 text-safety.ts 同一张表的码位范围：C0、DEL、C1，行分隔符和段分隔符，默认可忽略的码位
-# （去掉零宽连接符、零宽不连字符、变体选择符），盲文空白，孤立的代理码元。
+# （去掉零宽连接符、零宽不连字符、变体选择符），盲文空白，行间注释的锚点和埃及象形文字的格式控制，
+# 孤立的代理码元。
 UNSAFE_RANGES: tuple[tuple[int, int], ...] = (
     (0x00, 0x1F),
     (0x7F, 0x9F),
@@ -39,7 +40,8 @@ UNSAFE_RANGES: tuple[tuple[int, int], ...] = (
     (0x3164, 0x3164),
     (0xFEFF, 0xFEFF),
     (0xFFA0, 0xFFA0),
-    (0xFFF0, 0xFFF8),
+    (0xFFF0, 0xFFFB),
+    (0x13430, 0x1343F),
     (0x1BCA0, 0x1BCA3),
     (0x1D173, 0x1D17A),
     (0xE0000, 0xE0FFF),
