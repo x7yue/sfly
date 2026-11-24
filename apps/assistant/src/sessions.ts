@@ -723,10 +723,7 @@ export class SessionManager {
 			);
 		}
 		for (const event of events) this.#emit(session, turn, event);
-		if (userMessage) {
-			this.#delivered(session, turn);
-			this.#emitQueue(session, turn);
-		}
+		if (userMessage && this.#delivered(session, turn)) this.#emitQueue(session, turn);
 		const unreachable = workbenchUnreachable(record);
 		if (unreachable !== undefined && !turn.probing) {
 			// 工具结果里有「工作台连不上」：可能是扩展写的，也可能是命令自己打出来的、读到的文件路径里带的。只看文字定不下来，
@@ -775,16 +772,16 @@ export class SessionManager {
 	 * pi 出现了一条用户消息：这一轮的第一条是它自己的 `prompt`，之后的每一条按交出的顺序对上一句插话，算送到
 	 * （协议「怎么认『送到』」，rpcprobe 第 15、17 题：一轮里别的用户消息只有插话，连发的两句各一条）。
 	 */
-	#delivered(session: Session, turn: Turn): void {
+	#delivered(session: Session, turn: Turn): boolean {
 		if (!turn.promptSeen) {
 			turn.promptSeen = true;
-			return;
+			return false;
 		}
-		if (!turn.steers.deliverNext()) {
-			this.options.log(
-				`会话 ${session.id} 第 ${turn.number} 轮：pi 出现了一条用户消息，但没有交出去还没送到的插话`,
-			);
-		}
+		if (turn.steers.deliverNext()) return true;
+		this.options.log(
+			`会话 ${session.id} 第 ${turn.number} 轮：pi 出现了一条用户消息，但没有交出去还没送到的插话`,
+		);
+		return false;
 	}
 
 	/** pi 报告这一轮停下来了（`agent_settled`）：定结局。 */

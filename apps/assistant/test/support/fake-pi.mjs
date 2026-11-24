@@ -183,10 +183,22 @@ function handle(command) {
 			clearInterval(timer);
 			settle(true);
 		};
-	} else if (text.startsWith("settle-on-steer")) {
+	} else if (text.startsWith("quit-on-steer")) {
+		// 插话进了队列之后 pi 进程退出了（还没送到它）。
+		onSteer = () => setTimeout(() => process.exit(7), 20);
+	} else if (text.startsWith("done-on-steer")) {
 		// 插话进了队列就停下（这一轮做完了），没有送到它。
 		onSteer = () => {
 			out(assistant("好的"));
+			settle();
+		};
+	} else if (text.startsWith("deliver-two")) {
+		// 两句插话都进了队列之后一次送完，再说一句话、做完。
+		onSteer = () => {
+			if (queue.length < 2) return;
+			onSteer = undefined;
+			deliver();
+			out(assistant("看到了"));
 			settle();
 		};
 	} else if (text.startsWith("deliver-then-settle")) {
