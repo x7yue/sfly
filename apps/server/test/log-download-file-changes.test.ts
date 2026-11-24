@@ -89,7 +89,8 @@ describe("下载日志时日志文件变了", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
-		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 16 });
+		// 每个 newTask 占一个槽位、任务一直不结束（日志文件要留着）：槽位要比整个文件里造的任务总数多，不然最后几个用例等不到 assign。
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 64 });
 		api = new ApiClient(cp);
 		scenario = await api.orchestrationWith(DOC);
 	}, 60_000);
