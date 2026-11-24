@@ -150,8 +150,26 @@ function handle(command) {
 		setInterval(() => {}, 60_000);
 	} else if (text.startsWith("exit")) {
 		setTimeout(() => process.exit(7), 20);
+	} else if (text.startsWith("compact-fail")) {
+		out({
+			type: "compaction_end",
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+			errorMessage: "Auto-compaction failed: 401: Authorization: Bearer sk-compact-1",
+		});
+		out(assistant("好的。"));
+		settle();
 	} else if (text.startsWith("error")) {
-		out({ type: "auto_retry_start", attempt: 1, maxAttempts: 1, delayMs: 10, errorMessage: "503" });
+		// pi 的先后：这次模型调用以出错结束，再是重试的提示；重试用尽带的是最后一次的原文。
+		out(assistant("", { stopReason: "error", errorMessage: "503 upstream" }));
+		out({
+			type: "auto_retry_start",
+			attempt: 1,
+			maxAttempts: 1,
+			delayMs: 10,
+			errorMessage: "503 upstream",
+		});
 		out(assistant("", { stopReason: "error", errorMessage: "503 upstream" }));
 		out({ type: "auto_retry_end", success: false, attempt: 1, finalError: "503 upstream" });
 		settle();
@@ -205,12 +223,17 @@ function handle(command) {
 			isError: false,
 			durationMs: 3,
 		});
+		// 上游把保密值、模型的密钥（FAKE_MODEL_KEY 的值）、请求头和带凭据的地址回显在错误里，还很长。
+		const upstream =
+			`bad key ${value} (fake-key) Authorization: Bearer sk-shape-123\n` +
+			`via https://user:pw-shape@proxy.example/ ${"x".repeat(600)}`;
+		out(assistant("", { stopReason: "error", errorMessage: upstream }));
 		out({
 			type: "auto_retry_start",
 			attempt: 1,
 			maxAttempts: 2,
 			delayMs: 5,
-			errorMessage: `bad key ${value}`,
+			errorMessage: upstream,
 		});
 		settle();
 	}

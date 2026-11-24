@@ -18,7 +18,9 @@
 //! [`Ledger::accept`] 是 `AgentRecv` 的 assign，[`Ledger::started`] 是 `AgentStart`，[`Ledger::finish`] 是 `AgentFinish`，
 //! [`Ledger::next_result`] 是 `AgentSendResult`，[`Ledger::ack`] 是 `AgentRecv` 的 ack，
 //! [`Ledger::hello`] 是 `AgentConnect`，[`Ledger::abandon`] 是 `AgentWelcome` 里的 ABANDON，
-//! [`Ledger::cancel`] 是 `AgentRecv` 的 cancel，[`Ledger::held`] 是 `AgentHeartbeat` 和 `AgentWelcome` 里的心跳。
+//! [`Ledger::cancel`] 是 `AgentRecv` 的 cancel（超时进入收尾时间时 `run_task` 也调用它，给这个任务的取消信号发一次
+//! 优雅取消、让正在进行的能力调用放弃：这个调用方不是协议消息，在模型里只相当于在任务结束前把它加进 `stopSig`），
+//! [`Ledger::held`] 是 `AgentHeartbeat` 和 `AgentWelcome` 里的心跳。
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
