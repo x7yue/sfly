@@ -117,6 +117,19 @@ export class ApiClient {
 		return node;
 	}
 
+	/**
+	 * 主链上某个节点的输出的全文：运行视图里被省略的（#633，单个超过 16 KiB 或整份视图合计用完）用 `GET /tasks/:id/io` 取，
+	 * 取的是最后一次尝试的。没有输出时是 null。
+	 */
+	async nodeOutputs(runId: string, nodeId: string): Promise<Record<string, unknown> | null> {
+		const node = await this.node(runId, nodeId);
+		if (node.outputs_omitted_bytes === null) return node.outputs as Record<string, unknown> | null;
+		const task = node.attempts.at(-1)?.task_id;
+		if (!task) throw new Error(`node ${nodeId} of run ${runId} has no attempt`);
+		const io = await this.getJson<{ outputs: Record<string, unknown> | null }>(`/tasks/${task}/io`);
+		return io.outputs;
+	}
+
 	/** 编排当前的最新版本号（0 = 还没有版本），保存时作为 base_version。 */
 	async headVersion(orchestrationId: string): Promise<number> {
 		return (await this.getJson<{ head_version: number }>(`/orchestrations/${orchestrationId}`))
