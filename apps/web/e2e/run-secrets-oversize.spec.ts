@@ -48,8 +48,12 @@ async function summaryWith(
 	return summary;
 }
 
-test("运行视图带 secrets_oversize: true：运行摘要里写明原因，没有任何值", async (fixtures) => {
-	const summary = await summaryWith(fixtures, true);
+test("运行视图带 secrets_oversize: true：运行摘要里写明原因，没有任何值", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const summary = await summaryWith({ page, controlPlane, connectAgent }, true);
 	const note = summary.getByTestId("secrets-oversize");
 	await expect(note).toBeVisible();
 	await expect(note).toHaveAttribute("role", "note");
@@ -58,14 +62,22 @@ test("运行视图带 secrets_oversize: true：运行摘要里写明原因，没
 	await expect(note).toContainText("缩短或减少保密参数的值之后重新运行");
 });
 
-test("运行视图里 secrets_oversize 是 false：运行摘要里没有这句话", async (fixtures) => {
-	const summary = await summaryWith(fixtures, false);
+test("运行视图里 secrets_oversize 是 false：运行摘要里没有这句话", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const summary = await summaryWith({ page, controlPlane, connectAgent }, false);
 	await expect(summary.getByTestId("secrets-oversize")).toHaveCount(0);
 	await expect(summary).not.toContainText("保密参数的值太多或太长");
 });
 
-test("运行视图里没有 secrets_oversize 这个键（绝大多数运行）：运行摘要里没有这句话", async (fixtures) => {
-	const summary = await summaryWith(fixtures, "absent");
+test("运行视图里没有 secrets_oversize 这个键（绝大多数运行）：运行摘要里没有这句话", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const summary = await summaryWith({ page, controlPlane, connectAgent }, "absent");
 	await expect(summary.getByTestId("secrets-oversize")).toHaveCount(0);
 	await expect(summary).not.toContainText("保密参数的值太多或太长");
 });
