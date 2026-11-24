@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr as _;
 
-use pep440_rs::{Version, VersionSpecifiers};
+use pep440_rs::{Operator, Version, VersionSpecifiers};
 use sha2::{Digest, Sha256};
 
 use crate::proto::AssignTask;
@@ -359,7 +359,7 @@ const UV_NO_SOLUTION: &str = "No solution found";
 const NOTE_LIMIT: usize = 20;
 
 /// uv 没能解析出依赖（版本要求互相矛盾）时，在 uv 的输出后面补一段：共享 venv 里一个包只能有一个版本，
-/// 哪几个节点包对同一个包的版本要求不一样、各要什么。`label` 是这次要装的节点包（`名字@版本`），`requires` 是它的
+/// 哪几个节点包对同一个包的版本要求互相不能同时满足、各要什么。`label` 是这次要装的节点包（`名字@版本`），`requires` 是它的
 /// Requires-Dist，`version` 是它自己的版本，`others` 是共享 venv 里其他节点包的依赖。没有这样的包、或者失败不是
 /// 依赖解析造成的时返回 None。
 ///
@@ -373,6 +373,10 @@ const NOTE_LIMIT: usize = 20;
 /// 和它自己的那一条配成一对；都满足时不列这一包，失败是别的原因造成的。要求的写法只认「包名、可选的方括号、版本限制」
 /// （`version_requirement`），带环境标记的、URL 形式的、没有版本限制的、拆不出来的都当作不适用，不列。整段说明里一对都没有时
 /// 返回 None，不写「怎么办」。
+///
+/// 别的包（节点包共同依赖的第三方库、别的节点包）的分组也一样（#703）：只列确实不能同时满足的要求
+/// （`conflicting_requirements`，按版本区间算）；彼此相容的（`>=0.25` 和 `>=0.20`）不列，判断不了的（带标记的、
+/// URL 形式的、`===`、`!=X.*`、算不了的写法）不列，说明里只留 uv 的原话。
 ///
 /// uv 提示的 `--index-strategy unsafe-best-match` 不能用（它让 PyPI 上同名的包顶替平台自己的包），
 /// 输出里有这个提示时一并说明。
@@ -423,15 +427,18 @@ fn conflict_note(
         if name == own_name {
             continue;
         }
-        let mut distinct: Vec<&str> = list.iter().map(|(_, r)| *r).collect();
-        distinct.sort_unstable();
-        distinct.dedup();
-        if distinct.len() < 2 {
+        // 别的包：只列确实不能同时满足的那几条（#703）。
+        let requirements: Vec<&str> = list.iter().map(|(_, r)| *r).collect();
+        let conflicting = conflicting_requirements(&requirements);
+        if conflicting.is_empty() {
             continue;
         }
         groups.push((
             name,
-            list.into_iter().map(|(o, r)| (o, r.to_string())).collect(),
+            conflicting
+                .into_iter()
+                .map(|i| (list[i].0.clone(), list[i].1.to_string()))
+                .collect(),
         ));
     }
     if groups.is_empty() {
@@ -497,6 +504,173 @@ fn blockers(
         }
     }
     found
+}
+
+/// 一条要求对版本的限制，只留下判断「几条要求有没有共同能满足的版本」要用的：下界、上界、钉死的版本、排除的版本。
+#[derive(Default)]
+struct Limits {
+    /// 下界（版本，含不含这个版本）。
+    lower: Option<(Version, bool)>,
+    /// 上界（版本，含不含这个版本）。
+    upper: Option<(Version, bool)>,
+    /// `==X` 钉死的版本。
+    points: Vec<Version>,
+    /// `!=X` 排除的版本。
+    excluded: Vec<Version>,
+}
+
+impl Limits {
+    fn tighten_lower(&mut self, version: Version, inclusive: bool) {
+        self.lower = Some(match self.lower.take() {
+            None => (version, inclusive),
+            Some((v, i)) => match v.cmp(&version) {
+                std::cmp::Ordering::Less => (version, inclusive),
+                std::cmp::Ordering::Greater => (v, i),
+                // 同一个版本：不含的更严。
+                std::cmp::Ordering::Equal => (v, i && inclusive),
+            },
+        });
+    }
+
+    fn tighten_upper(&mut self, version: Version, inclusive: bool) {
+        self.upper = Some(match self.upper.take() {
+            None => (version, inclusive),
+            Some((v, i)) => match v.cmp(&version) {
+                std::cmp::Ordering::Greater => (version, inclusive),
+                std::cmp::Ordering::Less => (v, i),
+                std::cmp::Ordering::Equal => (v, i && inclusive),
+            },
+        });
+    }
+
+    fn merge(&mut self, other: &Limits) {
+        if let Some((v, i)) = &other.lower {
+            self.tighten_lower(v.clone(), *i);
+        }
+        if let Some((v, i)) = &other.upper {
+            self.tighten_upper(v.clone(), *i);
+        }
+        self.points.extend(other.points.iter().cloned());
+        self.excluded.extend(other.excluded.iter().cloned());
+    }
+
+    /// 这些限制合起来有没有可能一个版本也满足不了：只在**确定**满足不了时才是 true，拿不准的当作能满足。
+    /// 按版本的先后次序算，不管预发布、后发布的细则（那些只会让能满足的版本更少，不会更多），所以「满足不了」
+    /// 的判断总是对的，漏掉的只是少列。
+    fn unsatisfiable(&self) -> bool {
+        let above_lower = |v: &Version| match &self.lower {
+            Some((l, inclusive)) => v > l || (v == l && *inclusive),
+            None => true,
+        };
+        let below_upper = |v: &Version| match &self.upper {
+            Some((u, inclusive)) => v < u || (v == u && *inclusive),
+            None => true,
+        };
+        if let Some(point) = self.points.first() {
+            return self.points.iter().any(|p| p != point)
+                || !above_lower(point)
+                || !below_upper(point)
+                || self.excluded.contains(point);
+        }
+        match (&self.lower, &self.upper) {
+            (Some((l, l_inclusive)), Some((u, u_inclusive))) => match l.cmp(u) {
+                std::cmp::Ordering::Greater => true,
+                // 下界和上界是同一个版本：只剩这一个版本，要含在内、也没被排除。
+                std::cmp::Ordering::Equal => {
+                    !(*l_inclusive && *u_inclusive) || self.excluded.contains(l)
+                }
+                std::cmp::Ordering::Less => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+/// 版本前缀（`X.Y.*`、`~=X.Y.Z` 的 `X.Y`）里最小的版本 `X.Y.dev0`，和最后一段加一的版本 `X.(Y+1).dev0`
+/// （前缀的版本都在这两个之间，下界含、上界不含）。
+fn prefix_bounds(prefix: &Version) -> (Version, Version) {
+    let release = prefix.release();
+    let version = |release: Vec<u64>| {
+        Version::new(release)
+            .with_epoch(prefix.epoch())
+            .with_dev(Some(0))
+    };
+    let mut next = release.to_vec();
+    if let Some(last) = next.last_mut() {
+        *last += 1;
+    }
+    (version(release.to_vec()), version(next))
+}
+
+/// 一条要求的版本限制换成 [`Limits`]；有判断不了的写法（`===`、`!=X.*`、带本地标签的版本）时为 None。
+fn limits(specifiers: &VersionSpecifiers) -> Option<Limits> {
+    let mut limits = Limits::default();
+    for specifier in specifiers.iter() {
+        let version = specifier.version();
+        if !version.local().is_empty() {
+            return None;
+        }
+        match specifier.operator() {
+            Operator::GreaterThanEqual => limits.tighten_lower(version.clone(), true),
+            Operator::GreaterThan => limits.tighten_lower(version.clone(), false),
+            Operator::LessThanEqual => limits.tighten_upper(version.clone(), true),
+            Operator::LessThan => limits.tighten_upper(version.clone(), false),
+            Operator::Equal => limits.points.push(version.clone()),
+            Operator::NotEqual => limits.excluded.push(version.clone()),
+            Operator::EqualStar => {
+                let (low, high) = prefix_bounds(version);
+                limits.tighten_lower(low, true);
+                limits.tighten_upper(high, false);
+            }
+            Operator::TildeEqual => {
+                // `~=X.Y.Z` 就是 `>=X.Y.Z, ==X.Y.*`（至少两段，读的时候已经查过）。
+                let release = version.release();
+                let prefix = Version::new(&release[..release.len().checked_sub(1)?])
+                    .with_epoch(version.epoch());
+                let (_, high) = prefix_bounds(&prefix);
+                limits.tighten_lower(version.clone(), true);
+                limits.tighten_upper(high, false);
+            }
+            _ => return None,
+        }
+    }
+    Some(limits)
+}
+
+/// 同一个包的几条要求里，彼此不能同时满足的那些，返回它们在 `requirements` 里的位置（从小到大）。判断不了的要求
+/// （读不懂、带环境标记、URL 形式、没有版本限制、`===`、`!=X.*`）不参与，当作不适用。先找两两不能同时满足的，
+/// 把涉及的都列出来；两两都能满足、但三条以上合起来满足不了时（`>=2`、`<=2`、`!=2`），列出所有判断得了的。
+fn conflicting_requirements(requirements: &[&str]) -> Vec<usize> {
+    let judged: Vec<(usize, Limits)> = requirements
+        .iter()
+        .enumerate()
+        .filter_map(|(i, text)| {
+            let (_, specifiers) = version_requirement(text)?;
+            Some((i, limits(&specifiers)?))
+        })
+        .collect();
+    let mut conflicting = std::collections::BTreeSet::new();
+    for (a, (i, first)) in judged.iter().enumerate() {
+        for (j, second) in &judged[a + 1..] {
+            let mut together = Limits::default();
+            together.merge(first);
+            together.merge(second);
+            if together.unsatisfiable() {
+                conflicting.insert(*i);
+                conflicting.insert(*j);
+            }
+        }
+    }
+    if conflicting.is_empty() && judged.len() > 2 {
+        let mut together = Limits::default();
+        for (_, limit) in &judged {
+            together.merge(limit);
+        }
+        if together.unsatisfiable() {
+            conflicting.extend(judged.iter().map(|(i, _)| *i));
+        }
+    }
+    conflicting.into_iter().collect()
 }
 
 /// 包名按 PEP 503 规范化：小写，连续的 `-`、`_`、`.` 合成一个 `-`。
@@ -1504,6 +1678,317 @@ mod tests {
         assert_eq!(
             wheel_requires(&wheel),
             ["a>=1", "c>=3 ; python_version >= '3'"]
+        );
+    }
+
+    /// 两条要求（同一个包）能不能同时满足：确定不能时为 true。
+    fn conflict(a: &str, b: &str) -> bool {
+        !conflicting_requirements(&[&format!("x{a}"), &format!("x{b}")]).is_empty()
+    }
+
+    #[test]
+    fn requirements_that_cannot_be_met_together_conflict_and_the_others_do_not() {
+        for (a, b) in [
+            (">=2", "<1"),
+            (">=2", "<2"),
+            (">2", "<=2"),
+            (">=2,<3", ">=3"),
+            ("==1.0", "==2.0"),
+            ("==1.0", ">=2"),
+            ("==1.0", "!=1.0"),
+            ("==1.0", "<1.0"),
+            ("==2.0", ">2.0"),
+            (">=2,<=2", "!=2"),
+            ("==1.4.*", ">=2"),
+            ("==1.4.*", "<1.4"),
+            ("==1.4.*", "==1.5.*"),
+            ("~=1.4", ">=2"),
+            ("~=1.4", "<1.4"),
+            ("~=1.4.2", "<1.4.2"),
+            ("<1", ">=1"),
+            // 纪元排在一切之前。
+            (">=1!1.0", "<2.0"),
+            ("==1!1.0", "<2"),
+            // 括号和空白的写法、包名的另一种写法。
+            (">= 2", "< 1"),
+        ] {
+            assert!(conflict(a, b), "{a} 和 {b} 不能同时满足");
+            assert!(conflict(b, a), "{b} 和 {a} 不能同时满足");
+        }
+        for (a, b) in [
+            (">=0.25", ">=0.20"),
+            (">=1", "<2"),
+            (">=2", "<=2"),
+            ("==1.0", ">=1.0,<2"),
+            ("==1.0", "==1.0.0"),
+            ("==1.0", "<1.0.post1"),
+            ("==1.0", ">=1.0rc1"),
+            ("==1.4.*", ">=1.4.2"),
+            ("~=1.4", ">=1.4.2"),
+            ("!=1.0", "!=2.0"),
+            (">=1,<=3", "!=2"),
+            ("<1", "<2"),
+            (">1", ">2"),
+            ("<=2", ">=2.0rc1"),
+            (">=1!1.0", ">=2.0"),
+        ] {
+            assert!(!conflict(a, b), "{a} 和 {b} 可以同时满足");
+            assert!(!conflict(b, a), "{b} 和 {a} 可以同时满足");
+        }
+    }
+
+    #[test]
+    fn requirements_that_cannot_be_judged_never_conflict() {
+        // `===`、`!=X.*`、带本地标签的版本、带标记的、URL 形式的、没有版本限制的、读不懂的：不参与。
+        for other in [
+            "===1.0",
+            "!=1.0.*",
+            "==1.0+local",
+            ">=2 ; python_version >= '3'",
+            "@ https://example.com/x-1.0-py3-none-any.whl",
+            "",
+            ">=not.a.version",
+        ] {
+            assert!(
+                conflicting_requirements(&["x<1", &format!("x{other}")]).is_empty(),
+                "{other}"
+            );
+        }
+        // 一边判断不了，别的判断得了的两条照常比较。
+        assert_eq!(
+            conflicting_requirements(&["x>=2", "x<1 ; python_version >= '3'", "x<1"]),
+            [0, 2]
+        );
+    }
+
+    #[test]
+    fn three_requirements_that_only_conflict_together_are_all_listed() {
+        // 两两都能满足（`>=2,<=2` 是 2、`!=2` 排除它的话要另一条），三条合起来就剩不下版本。
+        assert_eq!(
+            conflicting_requirements(&["x>=2", "x<=2", "x!=2"]),
+            [0, 1, 2]
+        );
+        // 两两都能满足、三条也能满足：不列。
+        assert!(conflicting_requirements(&["x>=1", "x<=3", "x!=2"]).is_empty());
+    }
+
+    /// 比较两条要求的几十种限制用的：写法各异的版本限制。
+    const LIMITS: [&str; 27] = [
+        ">=0.25",
+        ">=0.20",
+        ">=2",
+        "<1",
+        "<2",
+        "<=2",
+        ">2",
+        ">=2,<3",
+        ">=3",
+        "==1.0",
+        "==2.0",
+        "!=1.0",
+        "==1.4.*",
+        "==1.5.*",
+        "~=1.4",
+        "~=1.4.2",
+        "<1.4.2",
+        ">=1.4.2",
+        "<1.0.post1",
+        ">=1.0rc1",
+        ">=1,<=3",
+        "!=2",
+        "<=2.0rc1",
+        ">=2.0rc1",
+        "==1!1.0",
+        "<2.0",
+        ">=1!1.0",
+    ];
+
+    /// 一张版本表：各种发布段、预发布、后发布、开发版本、纪元。
+    fn version_grid() -> Vec<String> {
+        let mut grid = Vec::new();
+        for release in [
+            "0.1", "0.5", "0.9", "1", "1.0", "1.0.0.1", "1.1", "1.4", "1.4.1", "1.4.2", "1.5",
+            "1.9", "1.10", "2", "2.0.1", "2.5", "3", "3.0.1", "4", "10",
+        ] {
+            for suffix in ["", "a1", "rc1", ".dev1", ".post1"] {
+                grid.push(format!("{release}{suffix}"));
+            }
+        }
+        grid.extend(["1!1.0".to_string(), "1!2.0".to_string()]);
+        grid
+    }
+
+    #[test]
+    fn a_conflict_is_only_reported_when_no_version_in_the_grid_meets_both() {
+        // 判断的是「确定满足不了」：版本表里只要有一个版本同时满足两条，就不能说它们冲突（用库自己的 `contains` 查）。
+        let grid: Vec<Version> = version_grid().iter().map(|v| v.parse().unwrap()).collect();
+        let specifiers: Vec<VersionSpecifiers> =
+            LIMITS.iter().map(|l| l.parse().unwrap()).collect();
+        let mut conflicts = 0;
+        for (a, first) in LIMITS.iter().enumerate() {
+            for (b, second) in LIMITS.iter().enumerate().skip(a + 1) {
+                if conflict(first, second) {
+                    conflicts += 1;
+                    let both = grid
+                        .iter()
+                        .find(|v| specifiers[a].contains(v) && specifiers[b].contains(v));
+                    assert_eq!(
+                        both, None,
+                        "{first} 和 {second} 被判断成冲突，却有版本都满足"
+                    );
+                }
+            }
+        }
+        // 不是什么都判断成能满足：这几十种限制两两配对，一半左右是冲突的。
+        assert!(conflicts > 50, "{conflicts}");
+    }
+
+    #[test]
+    fn a_conflict_that_is_reported_is_a_conflict_for_uv_too() {
+        // 对照真的 uv：版本表里每个版本做一个 wheel（find-links 目录），两条要求交给 `uv pip compile`；
+        // 我们判断成冲突的，uv 必须也解不出来（uv 因为别的原因解不出来而我们判断成能满足的，是少列，不算错）。
+        let dir = tempfile::tempdir().unwrap();
+        let links = dir.path().join("links");
+        std::fs::create_dir(&links).unwrap();
+        for version in version_grid() {
+            let info = format!("sfly_dep-{version}.dist-info");
+            wheel_file(
+                &links,
+                &format!("sfly_dep-{version}-py3-none-any.whl"),
+                &[
+                    ("sfly_dep/__init__.py", ""),
+                    (
+                        &format!("{info}/METADATA"),
+                        &format!("Metadata-Version: 2.1\nName: sfly-dep\nVersion: {version}\n"),
+                    ),
+                    (
+                        &format!("{info}/WHEEL"),
+                        "Wheel-Version: 1.0\nGenerator: t\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+                    ),
+                    (&format!("{info}/RECORD"), ""),
+                ],
+            );
+        }
+        let uv_solves = |name: &str, a: &str, b: &str| -> bool {
+            let requirements = dir.path().join(format!("{name}.in"));
+            std::fs::write(&requirements, format!("sfly-dep{a}\nsfly-dep{b}\n")).unwrap();
+            std::process::Command::new("uv")
+                .args(["pip", "compile", "--no-index", "--find-links"])
+                .arg(&links)
+                .args(["--python-version", "3.12", "--python-platform", "linux"])
+                .args(["--no-header", "--no-cache", "-q"])
+                .arg(&requirements)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        let mut reported: Vec<(usize, &str, &str)> = Vec::new();
+        for (a, first) in LIMITS.iter().enumerate() {
+            for second in &LIMITS[a + 1..] {
+                if conflict(first, second) {
+                    reported.push((reported.len(), first, second));
+                }
+            }
+        }
+        // 几个线程并行：每次调用要读一百多个 wheel 的元数据。
+        let wrong: Vec<(&str, &str)> = std::thread::scope(|scope| {
+            let handles: Vec<_> = reported
+                .chunks(reported.len().div_ceil(6))
+                .map(|chunk| {
+                    let uv_solves = &uv_solves;
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .filter(|(i, a, b)| uv_solves(&format!("pair-{i}"), a, b))
+                            .map(|(_, a, b)| (*a, *b))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap())
+                .collect()
+        });
+        assert_eq!(wrong, [], "判断成冲突、uv 却解得出来");
+        // 对照：uv 解得出来的、我们也说能满足的两条（这张表是通的，不是 uv 什么都解不出来）。
+        assert!(uv_solves("sanity-compatible", ">=0.25", ">=0.20"));
+        assert!(!uv_solves("sanity-conflict", ">=2", "<1"));
+    }
+
+    #[test]
+    fn requirements_on_other_packages_are_listed_only_when_they_cannot_be_met_together() {
+        // 彼此相容的要求（`>=0.25` 和 `>=0.20`）不是冲突：失败是别的原因（这里 uv 的话里没有 httpx）。
+        let others = requires(&[
+            ("sfly-a", &["httpx>=0.25", "sfly-std<0.4"]),
+            ("sfly-b", &["httpx>=0.20", "sfly-std>=0.4"]),
+            ("sfly-c", &["rich~=13.1", "rich>=13", "rich<14"]),
+        ]);
+        let note = conflict_note(
+            "sfly-c@1.0.0",
+            &["httpx>=0.25".to_string()],
+            "sfly-c",
+            None,
+            &others,
+            &uv_output("sfly-c", "1.0.0", ""),
+        )
+        .expect("note");
+        // 只有真正矛盾的 sfly-std 那一组。
+        assert!(note.contains("sfly-std："), "{note}");
+        assert!(
+            note.contains("sfly-a（已安装） 要求 sfly-std<0.4"),
+            "{note}"
+        );
+        assert!(
+            note.contains("sfly-b（已安装） 要求 sfly-std>=0.4"),
+            "{note}"
+        );
+        assert!(!note.contains("httpx") && !note.contains("rich"), "{note}");
+
+        // 只有相容的要求时没有可列的：不写说明，也不写「怎么办」。
+        let compatible = requires(&[
+            ("sfly-a", &["httpx>=0.25"]),
+            ("sfly-b", &["httpx>=0.20"]),
+            ("sfly-c", &["httpx<1", "httpx!=0.9"]),
+        ]);
+        assert_eq!(
+            conflict_note(
+                "sfly-d@1.0.0",
+                &["httpx>=0.22".to_string()],
+                "sfly-d",
+                None,
+                &compatible,
+                &uv_output("sfly-d", "1.0.0", "")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn requirements_that_cannot_be_judged_are_not_listed_in_the_groups_of_other_packages() {
+        // 带标记的、URL 形式的、`===`、`!=X.*`、读不懂的写法：不参与；剩下判断得了的一条只有自己，没有冲突。
+        let others = requires(&[
+            ("sfly-a", &["sfly-dep>=2"]),
+            ("sfly-b", &["sfly-dep<1 ; python_version >= '3'"]),
+            (
+                "sfly-c",
+                &["sfly-dep @ https://example.com/sfly_dep-0.5-py3-none-any.whl"],
+            ),
+            ("sfly-d", &["sfly-dep===0.5"]),
+            ("sfly-e", &["sfly-dep!=2.*"]),
+            ("sfly-f", &["sfly-dep (not a requirement"]),
+        ]);
+        assert_eq!(
+            conflict_note(
+                "sfly-g@1.0.0",
+                &[],
+                "sfly-g",
+                None,
+                &others,
+                &uv_output("sfly-g", "1.0.0", "")
+            ),
+            None
         );
     }
 
