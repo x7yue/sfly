@@ -37,7 +37,7 @@ async function triggerWithSecret({
 	return summary;
 }
 
-test("保密参数的值太多：运行摘要里写明原因，没有任何值", async ({
+test("secret 参数的值太多：运行抽屉的摘要和运行监控页都写明原因，没有任何值", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -47,19 +47,39 @@ test("保密参数的值太多：运行摘要里写明原因，没有任何值",
 		const note = summary.getByTestId("secrets-oversize");
 		await expect(note).toBeVisible();
 		await expect(note).toHaveAttribute("role", "note");
-		await expect(note).toContainText("保密参数的值太多或太长");
+		await expect(note).toContainText("secret 参数的值太多或太长");
 		await expect(note).toContainText("整段显示为 ******");
-		await expect(note).toContainText("缩短或减少保密参数的值之后重新运行");
+		await expect(note).toContainText("缩短或减少 secret 参数的值之后重新运行");
 		await expect(note).not.toContainText("tok-live");
+
+		// 之后从运行记录或通知的链接进来看这次运行的人，在运行监控页也看得到原因（同一句话，概览和详情都有）
+		await page
+			.getByRole("dialog", { name: "运行 · 巡检" })
+			.getByRole("link", { name: "打开运行监控" })
+			.click();
+		const banner = page.getByTestId("secrets-oversize");
+		await expect(banner).toBeVisible();
+		await expect(banner).toContainText("secret 参数的值太多或太长");
+		await expect(banner).toContainText("整段显示为 ******");
+		await expect(banner).not.toContainText("tok-live");
+		await page.getByRole("tab", { name: "详情", exact: true }).click();
+		await expect(banner).toBeVisible();
 	});
 });
 
-test("正常的运行（保密参数的值不多）：运行摘要里没有这句话", async ({
+test("正常的运行（secret 参数的值不多）：运行抽屉的摘要和运行监控页里都没有这句话", async ({
 	page,
 	controlPlane,
 	connectAgent,
 }) => {
 	const summary = await triggerWithSecret({ page, controlPlane, connectAgent });
 	await expect(summary.getByTestId("secrets-oversize")).toHaveCount(0);
-	await expect(summary).not.toContainText("保密参数的值太多或太长");
+	await expect(summary).not.toContainText("secret 参数的值太多或太长");
+	await page
+		.getByRole("dialog", { name: "运行 · 巡检" })
+		.getByRole("link", { name: "打开运行监控" })
+		.click();
+	// 监控页已经画出来了（有顶栏的运行状态），再断言没有，不会在加载之前就当作「没有」
+	await expect(page.getByRole("tab", { name: "详情", exact: true })).toBeVisible();
+	await expect(page.getByTestId("secrets-oversize")).toHaveCount(0);
 });

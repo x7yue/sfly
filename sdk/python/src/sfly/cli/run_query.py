@@ -205,7 +205,7 @@ def _show(session: Session, args: argparse.Namespace) -> None:
         report = fetch_report(client, run_id)
     except SummaryUnavailable:
         # 控制面比命令行旧、没有摘要接口：照旧显示状态和每次尝试，
-        # 少「失败的动作」「有异常的关注项」两段。
+        # 少「提示」「失败的动作」「有异常的关注项」三段。
         session.out.emit(view, render(view), note=summary_unavailable_note(run_id))
         return
     labels = chain_labels(report)

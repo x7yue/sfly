@@ -521,8 +521,12 @@ describe("值集合太大的运行：任务日志里有一行平台写的说明�
 			await eventually(async () =>
 				expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
 			);
-			// 只有重发的旧行（序号不大于已写入的）：没有要写入的行，不写说明，文件不变
+			// 只有重发的旧行（序号不大于已写入的）：没有要写入的行，不写说明，文件不变（先等这一批处理完，再查）
 			agent.logs(sa, [at(2, 20_000, "second")]);
+			await agent.sync();
+			const unchanged = await pageOf();
+			expect(texts(unchanged.lines)).toEqual([MASK, MASK]);
+			expect(unchanged.lines.map((l) => l.seq)).toEqual([1, 2]);
 			// 重发的旧行开头（时间比文件里最后一行早得多）、后面是新行：说明取新行的时间
 			agent.logs(sa, [at(2, 20_000, "second"), at(3, 1000, "third")]);
 			await eventually(async () => expect((await pageOf()).lines).toHaveLength(4));
