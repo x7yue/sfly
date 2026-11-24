@@ -111,6 +111,8 @@ export interface ControlPlaneOptions {
 	metricFlushIntervalMs?: number;
 	/** 单个任务产物的总大小上限（字节），默认 1 GB（#18）。 */
 	artifactLimitBytes?: number;
+	/** 产物上传的空闲时限（毫秒），默认 60 秒（#588）：不是部署者的配置，只有测试和嵌入时给。 */
+	artifactUploadIdleMs?: number;
 	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
 	retentionDays?: number;
 	/** 指标的保留天数，默认 30 天，与日志和产物分开配置；整天超过保留期的分区被删除（#32）。 */
@@ -380,6 +382,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		clock,
 		dataDir: options.dataDir,
 		limitBytes: options.artifactLimitBytes,
+		uploadIdleMs: options.artifactUploadIdleMs,
 	});
 	const retention = new Retention({
 		db: database.db,
