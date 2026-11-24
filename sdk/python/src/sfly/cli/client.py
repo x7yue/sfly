@@ -41,6 +41,7 @@ from sfly import __version__
 from sfly.cli import credentials
 from sfly.cli.errors import CliError
 from sfly.cli.home import control_plane_url
+from sfly.cli.safe_text import printable
 
 CLIENT_HEADER = "x-sfly-client"
 NICKNAME_HEADER = "x-sfly-nickname"
@@ -382,9 +383,9 @@ class Client:
             return
         self._warned_version = True
         print(
-            f"警告：sfly 命令行（{__version__}）与控制面（{server_version}）版本不一致，"
+            f"警告：sfly 命令行（{__version__}）与控制面（{printable(server_version)}）版本不一致，"
             "可能不兼容。升级：重新运行 install.sh --dev，"
-            f'或在项目里 uv add --dev "sfly[cli]=={server_version}"',
+            f'或在项目里 uv add --dev "sfly[cli]=={printable(server_version)}"',
             file=self._stderr or sys.stderr,
         )
 

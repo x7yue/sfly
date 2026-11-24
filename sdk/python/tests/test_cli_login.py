@@ -41,6 +41,10 @@ class FakeServer:
         self.issue_errors: list[tuple[int, dict[str, Any]]] = []
         # POST /packages 的回答状态码（201 是成功）。
         self.publish_status = 201
+        # 失败时的错误信息、成功时回的包名和版本（服务端的文字，什么都可能有）。
+        self.publish_message = "需要登录或令牌"
+        self.publish_name = "demo"
+        self.publish_version = "1.0.0"
         # 非空时 GET /redirect 返回 302 跳到这个地址。
         self.redirect_to: str | None = None
         self.revoke_status = 204
@@ -84,9 +88,16 @@ class FakeServer:
                     if outer.publish_status != 201:
                         return self._send(
                             outer.publish_status,
-                            {"error": {"code": "unauthorized", "message": "需要登录或令牌"}},
+                            {"error": {"code": "unauthorized", "message": outer.publish_message}},
                         )
-                    return self._send(201, {"name": "demo", "version": "1.0.0", "sha256": "0" * 64})
+                    return self._send(
+                        201,
+                        {
+                            "name": outer.publish_name,
+                            "version": outer.publish_version,
+                            "sha256": "0" * 64,
+                        },
+                    )
                 body = self._read()
                 self._record(body)
                 if self.path == "/account/tokens":
@@ -1006,6 +1017,34 @@ class TestPublishUsesTheToken:
         assert request["headers"]["content-type"] == "application/octet-stream"
         assert request["body"] == b"archive-bytes"
         assert TOKEN not in out + err
+
+    def test_publish_prints_the_servers_text_through_the_filter(
+        self,
+        server: FakeServer,
+        home: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """发布失败的错误信息、发布成功回的包名和版本是服务端的文字：CSI 这类转义序列去掉，
+        别的控制字符（含串序列的开头和结尾）写成 `\\uXXXX`（#670）。"""
+        archive = tmp_path / "demo-1.0.0.sflypkg"
+        archive.write_bytes(b"archive-bytes")
+        server.publish_status = 409
+        server.publish_message = "冲突\x1b[2J\x1b]0;标题\x07\u202e结尾"
+        code, out, err = run(capsys, monkeypatch, "publish", str(archive))
+        assert code == 1
+        assert "\x1b" not in out + err and "\x07" not in out + err
+        # CSI 整段去掉，串序列（OSC）的开头和结尾写成转义、正文留着。
+        assert "（HTTP 409 unauthorized）：冲突\\u001b]0;标题\\u0007\\u202e结尾" in err
+
+        server.publish_status = 201
+        server.publish_name = "demo\x1b[31m\u200b"
+        server.publish_version = "1.0.0\x1b]0;t\x07\x85"
+        code, out, err = run(capsys, monkeypatch, "publish", str(archive))
+        assert code == 0, err
+        assert "\x1b" not in out + err and "\x07" not in out + err
+        assert out.startswith("已发布 demo\\u200b@1.0.0\\u001b]0;t\\u0007\\u0085（sha256 ")
 
     def test_publish_without_a_token_still_works_and_a_401_says_to_log_in(
         self,

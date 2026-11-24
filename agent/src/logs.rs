@@ -1789,3 +1789,33 @@ mod batch_tests {
         assert_eq!(sizes, vec![1000, 1000, 500]);
     }
 }
+
+/// 进度和动作摘要的「只留最新一份、每秒最多一次」（[`Latest`]）。集成测试（tests/logs.rs、tests/action_summary.rs）
+/// 量得到间隔和「最后一份先于结果」，量不准「第一份是哪一份」：转发只在 [`TICK`] 上发生，节点写得和它一样快时，第一次
+/// 转发之前节点可能已经写了第二份（机器忙时更常见，#706）。第一份不等间隔这一条在这里按状态断言。
+#[cfg(test)]
+mod latest_tests {
+    use super::*;
+
+    #[test]
+    fn the_first_value_is_due_at_once_later_ones_wait_for_the_interval_and_the_last_is_always_due()
+    {
+        let mut latest = Latest::default();
+        assert_eq!(latest.take_due(false), None::<u32>, "没有值时什么也不发");
+        latest.set(1);
+        latest.set(2);
+        assert_eq!(
+            latest.take_due(false),
+            Some(2),
+            "第一份不等间隔，发的是最新的一份"
+        );
+        latest.set(3);
+        assert_eq!(latest.take_due(false), None, "距上一次不满间隔：不发");
+        latest.set(4);
+        assert_eq!(latest.take_due(true), Some(4), "任务结束时不受间隔限制");
+        latest.set(5);
+        latest.sent_at = Some(Instant::now() - LATEST_INTERVAL);
+        assert_eq!(latest.take_due(false), Some(5), "满了间隔：发最新的一份");
+        assert_eq!(latest.take_due(true), None, "发过的不再发");
+    }
+}
