@@ -4,11 +4,12 @@
 //    是读的时候才出错，而且不依赖测试是不是以 root 运行。
 // 2. 收到停止信号时关闭被调用两次，第二次的拒绝没有人接；重复的信号只记一句，关闭只做一次。
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
+import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -135,6 +136,8 @@ describe("真实的控制面进程", () => {
 	}, 120_000);
 
 	it("收到几个停止信号（SIGINT、SIGTERM、SIGTERM）：只关闭一次，退出码是 0，没有未处理的拒绝", async () => {
+		// `start()` 返回时已经看到了启动行：main.ts 在装好停止信号的处理之后才打印它（见文件末尾的结构检查），所以这里的第一个信号
+		// 不会落在处理装上之前（那样会按系统默认的动作直接结束进程，退出码是 null、信号是 SIGINT，#710）。
 		const cp = await start();
 		for (const signal of ["SIGINT", "SIGTERM", "SIGTERM"] as const) cp.child.kill(signal);
 		const exit = await cp.exited();
@@ -195,4 +198,35 @@ describe("真实的控制面进程", () => {
 			socket.destroy();
 		}
 	}, 60_000);
+});
+
+// 启动行是等进程「起来了」的唯一标记（`startSourceServer` 等它、部署脚本和 `docker logs` 也看它）：它要在停止信号的处理装好之后才打印，
+// 否则看到这一行就发信号的人（上面的用例）会偶尔赶在处理装上之前，信号按系统默认的动作直接结束进程（#710）。行写出去和处理装上
+// 之间只隔几个同步的语句，需要进程恰好在那里被调度走才会出错，所以不靠时间测，读 main.ts 的语法树看语句的先后。
+describe("main.ts：启动行在装好停止信号的处理之后才打印", () => {
+	it("顶层语句里 `installShutdown(...)` 在打印「sfly control plane …」那一行的 `printInfo(...)` 之前", async () => {
+		const source = await readFile(join(import.meta.dirname, "..", "src/main.ts"), "utf8");
+		const file = ts.createSourceFile("main.ts", source, ts.ScriptTarget.Latest, true);
+		const calls = file.statements.flatMap((statement, index) =>
+			ts.isExpressionStatement(statement) &&
+			ts.isCallExpression(statement.expression) &&
+			ts.isIdentifier(statement.expression.expression)
+				? [{ index, name: statement.expression.expression.text, call: statement.expression }]
+				: [],
+		);
+		const install = calls.filter((c) => c.name === "installShutdown");
+		const started = calls.filter(
+			(c) =>
+				c.name === "printInfo" && c.call.arguments[0]?.getText().includes("sfly control plane"),
+		);
+		expect(install, "main.ts 的顶层要有一处 installShutdown(...)").toHaveLength(1);
+		expect(
+			started,
+			"main.ts 的顶层要有一处打印「sfly control plane …」的 printInfo(...)",
+		).toHaveLength(1);
+		expect(
+			install[0]?.index,
+			"启动行要在 installShutdown(...) 之后打印：看到启动行就发停止信号的人，信号不能落在处理装上之前",
+		).toBeLessThan(started[0]?.index ?? -1);
+	});
 });
