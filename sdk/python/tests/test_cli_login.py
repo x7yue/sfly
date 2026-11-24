@@ -1026,8 +1026,8 @@ class TestPublishUsesTheToken:
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """发布失败的错误信息、发布成功回的包名和版本是服务端的文字：转义序列去掉，别的控制字符
-        写成 `\\uXXXX`（#670）。"""
+        """发布失败的错误信息、发布成功回的包名和版本是服务端的文字：CSI 这类转义序列去掉，
+        别的控制字符（含串序列的开头和结尾）写成 `\\uXXXX`（#670）。"""
         archive = tmp_path / "demo-1.0.0.sflypkg"
         archive.write_bytes(b"archive-bytes")
         server.publish_status = 409
@@ -1035,7 +1035,8 @@ class TestPublishUsesTheToken:
         code, out, err = run(capsys, monkeypatch, "publish", str(archive))
         assert code == 1
         assert "\x1b" not in out + err and "\x07" not in out + err
-        assert "发布失败：控制面拒绝发布（HTTP 409 unauthorized）：冲突\\u202e结尾" in err
+        # CSI 整段去掉，串序列（OSC）的开头和结尾写成转义、正文留着。
+        assert "（HTTP 409 unauthorized）：冲突\\u001b]0;标题\\u0007\\u202e结尾" in err
 
         server.publish_status = 201
         server.publish_name = "demo\x1b[31m\u200b"
@@ -1043,7 +1044,7 @@ class TestPublishUsesTheToken:
         code, out, err = run(capsys, monkeypatch, "publish", str(archive))
         assert code == 0, err
         assert "\x1b" not in out + err and "\x07" not in out + err
-        assert out.startswith("已发布 demo\\u200b@1.0.0\\u0085（sha256 ")
+        assert out.startswith("已发布 demo\\u200b@1.0.0\\u001b]0;t\\u0007\\u0085（sha256 ")
 
     def test_publish_without_a_token_still_works_and_a_401_says_to_log_in(
         self,

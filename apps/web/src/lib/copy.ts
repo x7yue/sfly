@@ -13,7 +13,6 @@ import {
 	SCOPE_LABELS,
 	type Scope,
 	VIA_NAME_PATTERN,
-	VIA_UNKNOWN,
 } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
@@ -462,8 +461,6 @@ export const ACTION = {
 const ASSISTANT_NAME = new Map([
 	["claude-code", "Claude Code"],
 	["codex", "Codex"],
-	// 请求头里有 agent/ 但名称不合格时控制面存的固定值（VIA_UNKNOWN），和不合格的旧值一样显示「未知」。
-	[VIA_UNKNOWN, "未知"],
 ]);
 
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */

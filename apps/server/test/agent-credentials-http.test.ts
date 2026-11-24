@@ -124,18 +124,22 @@ describe("Agent 凭据和开发 Agent", () => {
 			const tooLong = await rejected("n".repeat(65));
 			expect(tooLong).toContain("Agent 的名称不能超过 64 个字符");
 			expect(tooLong).not.toMatch(/n{20}/);
-			// 64 个字符、中文、组合表情照常签发。（路径参数写成百分号编码后超过 100 个字符的，路由层就是 414，
-			// 到不了这一步：所以这里的非 ASCII 名字都不长；按字符数而不是 UTF-16 码元数算上限的用例在
-			// packages/schema/test/text-safety.test.ts。）
+			// 64 个字符照常签发，不论是几个码元：64 个 emoji 是 128 个 UTF-16 码元，路由的路径参数上限是 128
+			// （解码之后的长度，默认的 100 放不下它，#691 复审）；汉字、组合表情也一样。
 			for (const ok of [
 				"n".repeat(64),
-				code(0x1f600).repeat(8),
+				code(0x1f600).repeat(64),
+				"测".repeat(64),
 				"测试机",
 				`dev-${code(0x1f469, 0x200d, 0x1f4bb)}`,
 			]) {
 				await json<Issued>(await issue(encodeURIComponent(ok)), 201);
 				expect((await rows(ok)).length, ok).toBe(1);
 			}
+			// 65 个 emoji（130 个码元）：超过路径参数的上限，在进校验之前就是 414，不签发。
+			const tooManyEmoji = code(0x1f600).repeat(65);
+			expect((await issue(encodeURIComponent(tooManyEmoji))).status).toBe(414);
+			expect(await rows(tooManyEmoji)).toEqual([]);
 		});
 
 		it("同一台 Agent 可以有几个有效的凭据（轮换）；列出带状态、不带原值，从新到旧", async () => {

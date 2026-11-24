@@ -724,8 +724,9 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("别的怪值能走到访问检查：控制字符、emoji、换行、接近上限的长度都照常记下，不是 500", async () => {
-		// 路径参数的长度上限是 100 个字符（Fastify 的 maxParamLength），再长的在进访问检查之前就被 Fastify 拒绝。
-		const names = ["a\u0001b", "机器人😀", "line\nbreak", "n".repeat(100)];
+		// 路径参数的长度上限是 128 个码元（解码之后，Fastify 的 maxParamLength，`src/http/api.ts` 的 `MAX_PATH_PARAM_LENGTH`），
+		// 再长的在进访问检查之前就被 Fastify 拒绝。
+		const names = ["a\u0001b", "机器人😀", "line\nbreak", "n".repeat(128)];
 		for (const name of names) {
 			const res = await call("DELETE", `/feishu-bots/${encodeURIComponent(name)}`);
 			expect(res.status, JSON.stringify(name)).toBe(404);
@@ -737,7 +738,7 @@ describe("平台管理员的写记录：结果、成员角色和请求里的怪�
 	});
 
 	it("非法的 UTF-8（%FF）和超长的参数在进访问检查之前就被 Fastify 拒绝（400、414）：这条守的是「不会是 500」，测到的是框架", async () => {
-		for (const path of ["/feishu-bots/%FF", `/feishu-bots/${"n".repeat(300)}`]) {
+		for (const path of ["/feishu-bots/%FF", `/feishu-bots/${"n".repeat(129)}`]) {
 			const res = await call("DELETE", path);
 			expect(res.status, path).toBeGreaterThanOrEqual(400);
 			expect(res.status, path).toBeLessThan(500);

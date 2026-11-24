@@ -71,7 +71,7 @@ def dump_json(value: Any) -> str:
     return dump_json_safe(value)
 
 
-_VIA_LABELS = {"claude-code": "Claude Code", "codex": "Codex", "unknown": "未知"}
+_VIA_LABELS = {"claude-code": "Claude Code", "codex": "Codex"}
 # 「经 …」的名称合格的写法（和 `packages/schema/src/text-safety.ts` 的 `VIA_NAME_PATTERN` 一样）：
 # 控制面写入时只收这样的名称，库里升级之前存下的旧值不合格的显示成「未知」。
 _VIA_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
@@ -79,12 +79,12 @@ _VIA_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
 
 def via_label(name: str | None) -> str | None:
     """「经哪个 AI 编程助手」的显示名：`claude-code` → Claude Code，`codex` → Codex，
-    `unknown`（请求头里有 agent/ 但名称不合格，控制面存下的固定值）和不合格的旧值 → 未知，
-    其他合格的原样；没有（None）时为 None。界面上的显示和这里一致。"""
+    不合格的名称（含请求头里有 agent/ 但名称不合格时控制面存下的占位值 `?`，和库里升级之前存下的
+    旧值）→ 未知，其他合格的原样；没有（None）时为 None。界面上的显示和这里一致。"""
     if name is None:
         return None
     if _VIA_NAME.fullmatch(name) is None:
-        return _VIA_LABELS["unknown"]
+        return "未知"
     return _VIA_LABELS.get(name, name)
 
 

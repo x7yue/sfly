@@ -18,7 +18,7 @@ import {
 } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
-import { sfly } from "./support/sfly-cli.js";
+import { sfly, sflyInTerminal } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 主链 entry → spawn → z（失败时重试 1 次）→ a；spawn 派发子流程「回放」sub → s（在 agent-b 上执行）。 */
@@ -190,7 +190,8 @@ describe("sfly run logs / artifacts → 控制面", () => {
 			expect(text.code, text.stderr).toBe(0);
 			expect(text.stdout).not.toMatch(unsafe);
 			expect(text.stdout).toContain("红色文字");
-			expect(text.stdout).toContain("改标题正文");
+			// 串序列（OSC）不整段去掉：开头和结尾写成转义，标题的文字留着（整段去掉能删别人的记录，#691 复审）。
+			expect(text.stdout).toContain("改标题\\u001b]0;被改的标题\\u0007正文");
 			expect(text.stdout).toContain("清屏八位的");
 			expect(text.stdout).toContain("下一行\\u0085倒着\\u202e显示\\u200b零宽");
 
@@ -244,6 +245,58 @@ describe("sfly run logs / artifacts → 控制面", () => {
 			const json = await cli("run", "logs", runId, "--json");
 			expect(json.code, json.stderr).toBe(0);
 			expect(json.stdout.trim().split("\n")).toHaveLength(lines.length);
+		});
+	});
+
+	// `sfly api` 在终端上显示控制面回的 JSON：一行，记录之间没有换行，JSON 不转义 C1 字符。一条日志里有串序列的开头
+	// （U+009D）、后面另一条里有结尾（U+009C）时，夹在中间的别人的日志不能被删掉（#691 复审，真的命令行在伪终端里复现过：
+	// 5 行只剩 3 行，JSON 仍然合法）。管道里原样。
+	describe("sfly api：终端上的 JSON 只转义，不删夹在中间的记录", () => {
+		const c = (...points: number[]) => String.fromCodePoint(...points);
+		const texts = [
+			"第一行",
+			`第二行${c(0x9d)}标题`,
+			"第三行 别的节点的 ERROR 设备 3 校准失败",
+			`第四行${c(0x9c)}尾巴`,
+			"第五行",
+		];
+
+		it("GET /runs/<id>/logs：伪终端里五条日志都在、文字和原来一样；管道里原样（带着原来的 C1 字符）", async () => {
+			const { a, runId } = await setup();
+			const z = await a.nextAssign();
+			a.logs(
+				z,
+				texts.map((t, i) =>
+					line(a, i + 1, 1_000 + 10 * (i + 1), t, i === 2 ? LogLevel.ERROR : LogLevel.INFO),
+				),
+			);
+			await settled(runId, texts.length);
+
+			const terminal = await sflyInTerminal([
+				"api",
+				"GET",
+				`/runs/${runId}/logs`,
+				"--server",
+				cp.httpUrl,
+			]);
+			expect(terminal.code, terminal.stderr).toBe(0);
+			const shown = terminal.stdout.split(/\r?\n/).filter((l) => l !== "");
+			expect(shown, terminal.stdout).toHaveLength(1);
+			const page = JSON.parse(shown[0] as string) as { lines: Array<{ text: string }> };
+			expect(page.lines.map((l) => l.text)).toEqual(texts);
+			// 屏幕上没有表里的字符：C1 字符写成了 JSON 的转义。
+			expect(terminal.stdout).not.toMatch(
+				new RegExp(
+					`[${c(0x00)}-${c(0x08)}${c(0x0b)}-${c(0x0c)}${c(0x0e)}-${c(0x1f)}${c(0x7f)}-${c(0x9f)}]`,
+				),
+			);
+			expect(terminal.stdout).toContain("第三行 别的节点的 ERROR 设备 3 校准失败");
+
+			const piped = await cli("api", "GET", `/runs/${runId}/logs`);
+			expect(piped.code, piped.stderr).toBe(0);
+			expect(piped.stdout).toContain(c(0x9d));
+			expect(piped.stdout).toContain(c(0x9c));
+			expect(piped.stdout).toContain("第三行");
 		});
 	});
 

@@ -5,11 +5,19 @@
 改写屏幕上已经显示的内容、改窗口标题、藏起一段话；读命令行输出的 AI 助手读到的是同一段
 文字，看不见的字符能往它的上下文里塞话。所以这里统一处理：
 
-- 完整的转义序列（CSI、OSC、DCS、SOS、PM、APC 和两个字节的 ESC 序列，含 8 位的写法
-  U+009B 等）整段去掉；
+- **只整段去掉两种序列：CSI（颜色、光标移动、清屏……，`ESC [` 或 U+009B 开头）和两个字节的
+  ESC 序列。** 它们的参数只能是数字和标点，吃不了任意文字：一个没写完的 CSI 最多带走紧跟着的一小段
+  数字和标点再加一个字符，而且只在同一行里（`[0-?]*[ -/]*[@-~]?` 不含换行）。
+- **串序列（OSC、DCS、SOS、PM、APC，7 位 `ESC ]` 等和 8 位 U+009D 等的写法）不整段去掉。** 它们的
+  正文可以是任意文字：整段去掉就等于给了写的人一把删别人文字的工具（在 JSON 里记录之间没有换行，
+  一个节点写一个开头、另一个节点写一个结尾，夹在中间的别人的记录就没了）。开头和结尾像别的不该到
+  终端的字符一样写成看得见的 `\\uXXXX`，正文留着：终端收不到能用的序列，没有东西被藏掉；日志里合法的
+  超链接、改标题会显示成带转义的原文，难看但没有东西被藏掉；
 - 剩下的控制字符、双向文字的控制字符、零宽空格这类看不见的字符、孤立的代理码元，写成
   看得见的 `\\uXXXX`（不悄悄吞掉，读的人看得出这里原来有东西）；换行和制表符保留
-  （多行的文字要用）。
+  （多行的文字要用）；
+- 正文是 JSON 的（`sfly api` 在终端上显示的响应和事件流里 `data:` 的内容）走 `dump_json_safe`：
+  只转义、不删任何东西，解析回来和原文相等（见 `json_text_safe`）。
 
 字符表和 `packages/schema/src/text-safety.ts` 的 `REJECTED_NAME_CHARACTER` 是同一张（名字
 写入时拒绝的就是这些），测试从那个文件里读出来逐个码位对照，不会各改各的。零宽连接符、
@@ -54,21 +62,14 @@ _KEEP = frozenset("\t\n")
 
 _UNSAFE = re.compile("[" + "".join(f"\\U{lo:08x}-\\U{hi:08x}" for lo, hi in UNSAFE_RANGES) + "]")
 
-# 串序列（OSC、DCS、SOS、PM、APC）的正文里不会有的字符：换行、ESC、各个 C1 引导字符和结尾符。
-# 正文只能是这些以外的字符，所以一个没有结尾的开头只会「吃」到下一个这样的字符为止，
-# 不会越过换行把后面的日志行吃掉（#670 复审）。
-_STRING_BODY_STOP = r"\x1b\x90\x98\x9c\x9d\x9e\x9f\n\r"
-
-# 完整的转义序列，7 位（ESC 开头）和 8 位（U+0080–U+009F 开头）的写法都认。
-# **串序列必须有结尾才整段去掉**，没有结尾的不删：留给第二遍写成 `\\uXXXX`，
-# 后面的文字一个字也不能少。
+# 整段去掉的转义序列，7 位（ESC 开头）和 8 位（U+009B）的写法都认，只有两种（#691 复审）：
+# 串序列（OSC、DCS、SOS、PM、APC）的正文可以是任意文字，整段去掉能删别人的记录，不在这里，
+# 留给第二遍写成 `\\uXXXX`。下面两种的参数只能是数字和标点：一个没写完的 CSI 最多带走后面紧跟的
+# 一小段（`0-?` 的数字和标点、` -/` 的中间字节）再加一个字符，不含换行，所以只在同一行里；
+# 两个字节的 ESC 序列只带走一个字符。
 _ESCAPE_SEQUENCE = re.compile(
     "|".join(
         [
-            # OSC（改窗口标题、写剪贴板、超链接……）：到 BEL 或 ST 结束。
-            rf"(?:\x1b\]|\x9d)[^\x07{_STRING_BODY_STOP}]*(?:\x07|\x1b\\|\x9c)",
-            # DCS、SOS、PM、APC：到 ST 结束。
-            rf"(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[^{_STRING_BODY_STOP}]*(?:\x1b\\|\x9c)",
             # CSI（光标移动、清屏、颜色……）：参数和中间字节有界，结尾字节可以缺。
             r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?",
             # 其它 ESC 序列（两个字节，或带中间字节）；
@@ -158,8 +159,9 @@ def _escaped(match: re.Match[str]) -> str:
 
 
 def printable(text: str) -> str:
-    """服务端的文字打到终端之前：去掉完整的转义序列，其余不该到终端的字符（含位置不对的零宽连接符这类）
-    写成 `\\uXXXX`。"""
+    """服务端的文字打到终端之前：整段去掉的只有 CSI 和两个字节的 ESC 序列（颜色、光标移动、清屏），
+    其余不该到终端的字符（含串序列的开头和结尾、位置不对的零宽连接符这类）写成 `\\uXXXX`，
+    文字都留着。"""
     return _UNSAFE.sub(_escaped, _escape_misplaced(_ESCAPE_SEQUENCE.sub("", text)))
 
 
@@ -224,18 +226,62 @@ def _json_key(key: object) -> str:
     raise TypeError(f"keys must be str, int, float, bool or None, not {type(key).__name__}")
 
 
-def _json_value(value: object) -> str:
-    if isinstance(value, str):
-        return _json_string(value)
-    if isinstance(value, dict):
-        return (
-            "{"
-            + ",".join(f"{_json_string(_json_key(k))}:{_json_value(v)}" for k, v in value.items())
-            + "}"
-        )
-    if isinstance(value, (list, tuple)):
-        return "[" + ",".join(_json_value(item) for item in value) + "]"
-    return json.dumps(value)
+class _Raw:
+    """已经写好的一段 JSON 文本（括号、逗号、键）。"""
+
+    __slots__ = ("text",)
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _Leave:
+    """一个容器写完了：从「正在写的容器」里去掉它（查循环引用用）。"""
+
+    __slots__ = ("container",)
+
+    def __init__(self, container: int) -> None:
+        self.container = container
+
+
+def _json_text(value: object) -> str:
+    """把一个值写成精简 JSON，字符串走 `_json_string`。不递归（嵌套多深都行，标准库那条路也是）：
+    用一个栈，先进后出，所以按相反的顺序压。"""
+    pieces: list[str] = []
+    stack: list[object] = [value]
+    open_containers: set[int] = set()
+    while stack:
+        item = stack.pop()
+        if isinstance(item, _Raw):
+            pieces.append(item.text)
+        elif isinstance(item, _Leave):
+            open_containers.discard(item.container)
+        elif isinstance(item, str):
+            pieces.append(_json_string(item))
+        elif isinstance(item, (dict, list, tuple)):
+            if id(item) in open_containers:
+                raise ValueError("Circular reference detected")
+            open_containers.add(id(item))
+            entries: list[tuple[_Raw | None, object]]
+            if isinstance(item, dict):
+                opening, closing = "{", "}"
+                entries = [(_Raw(f"{_json_string(_json_key(k))}:"), v) for k, v in item.items()]
+            else:
+                opening, closing = "[", "]"
+                entries = [(None, v) for v in item]
+            pieces.append(opening)
+            stack.append(_Raw(closing))
+            stack.append(_Leave(id(item)))
+            for index in range(len(entries) - 1, -1, -1):
+                key, entry = entries[index]
+                stack.append(entry)
+                if key is not None:
+                    stack.append(key)
+                if index > 0:
+                    stack.append(_Raw(","))
+        else:
+            pieces.append(json.dumps(item))
+    return "".join(pieces)
 
 
 def dump_json_safe(value: object) -> str:
@@ -243,9 +289,22 @@ def dump_json_safe(value: object) -> str:
     解析回来和原来一模一样。
 
     先用标准库写；没有零宽连接符这类（绝大多数输出）时只过一遍 `json_safe`，快；有的时候
-    才自己写，因为它们该不该转义要看在字符串里的位置，在已经写好的 JSON 文本里分不出
+    才自己写（不递归），因为它们该不该转义要看在字符串里的位置，在已经写好的 JSON 文本里分不出
     哪个引号是字符串的开头。"""
     dumped = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     if _EXCEPTION.search(dumped) is None:
         return json_safe(dumped)
-    return _json_value(value)
+    return _json_text(value)
+
+
+def json_text_safe(text: str) -> str | None:
+    """正文是一段 JSON 文本时，写成安全的 JSON：表里的字符和位置不对的零宽连接符这类写成
+    JSON 的转义，**不删任何东西**（不去掉任何转义序列，包括颜色），输出解析回来和原文相等。
+    `sfly api` 在终端上显示控制面的响应和事件流里的 `data:` 用它：这些 JSON 是一行，记录之间没有
+    换行，任何「整段去掉」都能删掉夹在中间的别人的记录。不是合法的 JSON（解析不了，或者嵌套
+    太深）时返回 None，调用方按普通文字处理（`printable`）。"""
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+    return dump_json_safe(value)

@@ -198,7 +198,8 @@ const AgentCredentialParams = AgentNameParams.extend({ id: z.uuid() });
 /**
  * 签发 Agent 凭据时的 Agent 名称：和 Agent 在 Hello 里报的名称同一个规则（#670）——不含 `text-safety.ts` 里那张明确的表里的字符，
  * 最多 {@link AGENT_NAME_MAX_LENGTH} 个字符（按字符数）。名称是身份，会显示在命令行、控制台和场景里，凭据签发之后 Agent
- * 才连得上来，所以在签发这一步就拦住；不合格的说明带第几个字符、哪个码位，不回显名称。
+ * 才连得上来，所以在签发这一步就拦住；不合格的说明带第几个字符、哪个码位，不回显名称。名称在路径里：路径参数的长度上限
+ * 是 128 个 UTF-16 码元（解码之后，控制面的路由设置），放得下 64 个 emoji 的名称。
  */
 const NewAgentNameParams = z.object({
 	/** Agent 名称。 */
