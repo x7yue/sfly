@@ -91,6 +91,9 @@ export async function createTestDatabase(
  * 建一个已经迁移到最新的库，给 {@link createTestDatabase} 的 `template` 选项复制；调用方在所有复制都做完之后 `drop()` 它。
  * 迁移用的是控制面自己的迁移（`openDatabase().migrate()`，源码里的迁移目录）。返回前等它上面的连接都断开：
  * `CREATE DATABASE … TEMPLATE` 要求模板上没有连接，而连接池关闭之后服务器上的进程还要一会儿才退出。
+ * PostgreSQL 在 `CREATE DATABASE … TEMPLATE` 里自己也会等模板上别的会话，最多 5 秒（每 100 毫秒看一次），超过才报 55006
+ * 「source database … is being accessed by other users」；平时关掉连接池之后连接立刻就没有了，下面这个循环是给机器忙的时候
+ * 留的余量（把能容忍的时长从 5 秒拉到 10 秒再加 5 秒），没有测试能稳定地抓住它。
  */
 export async function createMigratedTemplate(prefix = "sfly_template"): Promise<TestDatabase> {
 	const database = await createTestDatabase(prefix);
