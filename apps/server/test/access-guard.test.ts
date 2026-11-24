@@ -14,7 +14,8 @@ import {
 	AGENT_CREDENTIAL_ROUTES,
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
-	REQUIRES_CREDENTIAL,
+	REQUIRES_CREDENTIAL_ROUTES,
+	requiresCredential,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "../src/auth/access-rules.js";
@@ -115,6 +116,8 @@ describe("契约路由的访问检查", () => {
 			projectId: null,
 			scopes: [...SCOPES],
 			sessionId: fields.kind === "session" ? MY_SESSION : null,
+			// 任务凭据默认是「这次任务尝试还在 Agent 手上」。
+			taskActive: fields.kind === "task" ? true : null,
 			// 会话令牌所属的会话：和令牌的项目、发起人对得上、没有结束（联表读出的，#547）；个别用例改它。
 			session:
 				fields.kind === "session" && fields.projectId && fields.user
@@ -171,7 +174,7 @@ describe("契约路由的访问检查", () => {
 	});
 	const SYSTEM = httpContract.filter((def) => locatorOf(def)?.from === "none");
 	/** 现在就要求凭据的接口（项目的管理面）：不走「不带凭据照旧放行」的过渡。 */
-	const needsCredential = (def: RouteDef) => REQUIRES_CREDENTIAL.has(def.resource.kind);
+	const needsCredential = (def: RouteDef) => requiresCredential(def);
 	/** 只认人的登录的接口：令牌（含带管理范围的个人令牌）是 403。 */
 	const loginOnly = (def: RouteDef) => routeKey(def) in LOGIN_ONLY_ROUTES;
 	const route = (key: string): RouteDef => {
@@ -191,7 +194,7 @@ describe("契约路由的访问检查", () => {
 			expect(store.reads).toBe(0);
 		});
 
-		it("项目的管理面（项目令牌）是新接口，没有「照旧」可言：不带凭据是 401，带共享令牌是 403，不读库", async () => {
+		it("项目的管理面（项目令牌）和 Agent 凭据的签发、列出、吊销、Agent 的停用、恢复是新这一套信任的根，没有「照旧」可言：不带凭据是 401，带共享令牌是 403，不读库", async () => {
 			store.agentCredentials.set(hashCredential("shared-secret"), {
 				kind: "shared",
 				projectId: DEFAULT,
@@ -205,6 +208,13 @@ describe("契约路由的访问检查", () => {
 					"GET /projects/:project/tokens",
 					"POST /projects/:project/tokens",
 					"DELETE /projects/:project/tokens/:id",
+					// 不带任何凭据的请求能给任意名字签发 Agent 凭据、再用它连上来顶掉用共享令牌连着的那一台（#638 审查）。
+					"GET /agents/:name/credentials",
+					"POST /agents/:name/credentials",
+					"DELETE /agents/:name/credentials/:id",
+					"POST /agents/:name/disable",
+					"POST /agents/:name/enable",
+					...REQUIRES_CREDENTIAL_ROUTES,
 				]),
 			);
 			for (const def of covered) {
@@ -1304,9 +1314,25 @@ describe("契约路由的访问检查", () => {
 					outcome(await run(def, personal(USERS.reader, { expiresAt: BEFORE }))),
 					routeKey(def),
 				).toBe(401);
-				// 停用的用户的令牌失效。
+				// 停用的用户的令牌失效；吊销自己的凭据的接口例外（REVOKE_OWN_ROUTES）：停用期间也认他自己的登录和个人令牌。
+				const disabled = user(50, { disabledAt: BEFORE });
+				const refusedWhenDisabled = def === revoke ? "ok" : 401;
+				// 停用的用户的个人令牌：只有吊销它自己通过（路径里的 ID 是它自己的），吊销别的令牌、别的接口一律 401。
+				const own = personal(disabled);
+				const ownId = [...store.tokens.values()].at(-1)?.id ?? "";
 				expect(
-					outcome(await run(def, personal(user(50, { disabledAt: BEFORE })))),
+					outcome(
+						await guard.check(request(def, own, "default", def === revoke ? { id: ownId } : {})),
+					),
+					routeKey(def),
+				).toBe(refusedWhenDisabled);
+				expect(outcome(await run(def, personal(disabled))), `${routeKey(def)}（别的令牌）`).toBe(
+					401,
+				);
+				expect(outcome(await run(def, login(disabled))), routeKey(def)).toBe(refusedWhenDisabled);
+				// 例外只给登录和个人令牌：停用的用户的会话令牌照旧 401（不是 403）。
+				expect(
+					outcome(await run(def, token({ kind: "session", user: disabled, projectId: DEFAULT }))),
 					routeKey(def),
 				).toBe(401);
 			}
@@ -1353,6 +1379,42 @@ describe("契约路由的访问检查", () => {
 			for (const key of ["POST /auth/password", "GET /auth/me", "POST /auth/logout-all"]) {
 				expect(outcome(await run(route(key), personal(USERS.boss))), key).toBe(403);
 			}
+		});
+
+		it("已注销或空闲期限已到的登录，在吊销自己的凭据的三个接口上仍然无效：停用或没停用都一样（401；登出没有身份，没有登录可注销）", async () => {
+			for (const who of [USERS.editor, user(52, { disabledAt: BEFORE })]) {
+				for (const extra of [{ revokedAt: BEFORE }, { idleExpiresAt: BEFORE }]) {
+					for (const key of ["POST /auth/logout-all", "DELETE /account/tokens/:id"]) {
+						expect(outcome(await run(route(key), login(who, extra))), `${who.id} ${key}`).toBe(401);
+					}
+					const out = await run(route("POST /auth/logout"), login(who, extra));
+					expect(outcome(out)).toBe("ok");
+					expect((out as { access: unknown }).access).toBeNull();
+				}
+			}
+		});
+
+		it("停用的用户：登出、注销全部登录认他自己的登录（身份里有登录的 ID，处理函数据此注销）；别的账号接口照旧 401；个人令牌在注销全部登录上是 401（只有吊销它自己通过）", async () => {
+			const disabled = user(51, { disabledAt: BEFORE });
+			for (const key of ["POST /auth/logout", "POST /auth/logout-all"]) {
+				const result = await run(route(key), login(disabled));
+				expect(outcome(result), key).toBe("ok");
+				expect(result, key).toMatchObject({
+					access: { credential: "login", userId: disabled.id },
+				});
+			}
+			for (const key of [
+				"GET /auth/me",
+				"POST /auth/password",
+				"GET /account/tokens",
+				"POST /account/tokens",
+			]) {
+				expect(outcome(await run(route(key), login(disabled))), key).toBe(401);
+			}
+			expect(
+				outcome(await run(route("POST /auth/logout-all"), personal(disabled))),
+				"个人令牌",
+			).toBe(401);
 		});
 
 		it("登出什么凭据都不拒绝（幂等，总是清 Cookie），但令牌登不了出：带令牌的登出没有身份，不注销任何登录", async () => {

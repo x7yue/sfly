@@ -70,9 +70,13 @@ describe("路由清单里每个接口的声明和响应", () => {
 		);
 		expect(noBody.map((e) => `${e.method} ${e.path}`).sort()).toEqual([
 			"DELETE /account/tokens/:id",
+			"DELETE /agents/:name/credentials/:id",
 			"DELETE /feishu-bots/:name",
 			"DELETE /orchestrations/:id/presets/:presetId",
+			"DELETE /projects/:project/dev-agents/:name",
 			"DELETE /projects/:project/tokens/:id",
+			"POST /agents/:name/disable",
+			"POST /agents/:name/enable",
 			"POST /auth/logout",
 			"POST /auth/logout-all",
 			"POST /auth/password",

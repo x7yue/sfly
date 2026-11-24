@@ -243,6 +243,46 @@ describe("令牌", () => {
 		).rejects.toThrow(/api_tokens_shape/);
 	});
 
+	it("任务凭据记派发时连接用的那个 Agent 凭据（#492）：只有任务凭据能记，凭据要存在，凭据行删除时任务凭据随它删除（不认）", async () => {
+		const owner = await user();
+		const credential = randomUUID();
+		await client.query(
+			`insert into agent_credentials (id, kind, project_id, agent_name, prefix, token_hash, created_at)
+			values ($1, 'agent', 'default', 'agent-a', 'sfly_agt_ab12', $2, $3)`,
+			[credential, hex(), AT],
+		);
+		const withCredential = (fields: { kind: string; credential: string; hash?: string }) =>
+			client.query(
+				`insert into api_tokens (id, kind, name, prefix, token_hash, user_id, project_id, task_id, agent_credential_id, scopes, created_at)
+				values ($1, $2, '令牌', 'sfly_xxx_ab12', $3, $4, $5, $6, $7, '{}', $8)`,
+				[
+					randomUUID(),
+					fields.kind,
+					fields.hash ?? hex(),
+					fields.kind === "personal" ? owner : null,
+					fields.kind === "task" ? "default" : null,
+					fields.kind === "task" ? randomUUID() : null,
+					fields.credential,
+					AT,
+				],
+			);
+		const hash = hex();
+		await withCredential({ kind: "task", credential, hash });
+		// 别的种类的令牌不能记 Agent 凭据。
+		await expect(withCredential({ kind: "personal", credential })).rejects.toThrow(
+			/api_tokens_agent_credential_task/,
+		);
+		// 凭据要存在。
+		await expect(withCredential({ kind: "task", credential: randomUUID() })).rejects.toThrow(
+			/api_tokens_agent_credential_id_agent_credentials_id_fk/,
+		);
+		// 凭据行删除：任务凭据随它删除。
+		await client.query("delete from agent_credentials where id = $1", [credential]);
+		expect(
+			(await client.query("select 1 from api_tokens where token_hash = $1", [hash])).rowCount,
+		).toBe(0);
+	});
+
 	it("种类只能是个人、项目、会话、任务；哈希唯一；项目和用户必须存在", async () => {
 		const owner = await user();
 		await expect(insert({ kind: "agent", user: owner })).rejects.toThrow(/api_tokens_kind/);

@@ -1,7 +1,6 @@
 import type { Readiness } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
-	cannotStartReason,
 	readinessProblems,
 	SESSION_STATUS,
 	toolLine,
@@ -130,9 +129,5 @@ describe("会话页的文字", () => {
 			],
 		};
 		expect(readinessProblems(none)).toEqual(["没有配置助手", "没有设置工作台"]);
-		expect(cannotStartReason(none)).toBe(
-			"助手现在不能用，不能开始会话：没有配置助手；没有设置工作台",
-		);
-		expect(cannotStartReason({ ready: true, workbench: "bench-1", problems: [] })).toBeNull();
 	});
 });

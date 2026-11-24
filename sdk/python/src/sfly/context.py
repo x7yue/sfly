@@ -64,8 +64,11 @@
     （超过上限时不上报它的 `action_start`；`start()` 的父动作也可能已经结束），所以读取方不能要求
     `parent` 指向一个已有的动作。
   - `depth`：整数，祖先的个数，最外层是 0，由 SDK 按 `parent` 算出（父动作没有明细时也准确）。
-  - `name`：字符串，1 到 64 个字符。`fields`：对象，最多 8 个键，键是字符串，值一律是字符串（
-    SDK 已转成字符串），每个不超过 256 个字符；没有字段时是 `{}`。
+  - `name`：字符串，至少 1 个字符。`fields`：对象，最多 8 个键，键是字符串，值一律是字符串
+    （SDK 已转成字符串）；没有字段时是 `{}`。名称、字段的键最长 64 个字符，字段值最长 256 个字符，
+    由读取事件的一方（控制面、本地调试）截到这个上限，截断之前先把 secret 值打码：
+    SDK 不知道哪些值是 secret，所以不在上限处截断，只在比上限多 4096 个字符处截断
+    （传输的保护，`sfly.actions` 的 `TRANSPORT_MARGIN_CHARS`）。
   - `late`：只在补发的 `action_start` 上有，值是 `true`；平时没有这个字段。有它说明这个动作
     超过了每种名称的上限、没有在开始时上报，因为失败才补上（见下面「补发」）；读取方收到它就知道
     这个动作已经失败了，它的 `action_end` 紧跟在后面（中间不会有别的动作和标记的事件）。
@@ -75,8 +78,9 @@
     `Cancelled`（已经调用过 `fail()` 的除外，那是 `failed`）；还有一种来源见下面「没有结束的动作」。
   - `reason`：失败的原因，其他结果是 null。有两种格式：`with` 里抛出的异常导致的失败是
     `<异常类型>: <消息>`（异常没有消息时只有 `<异常类型>`；先调用过 `fail()` 的也以异常为准）；
-    调用 `fail()` 导致的失败是 `fail()` 给的文字原样（不是字符串的先转成字符串）。两种都最多
-    4096 个字符，超过的截断，末尾是「…」。
+    调用 `fail()` 导致的失败是 `fail()` 给的文字原样（不是字符串的先转成字符串）。
+    两种都最长 4096 个字符，由读取事件的一方截断（末尾是「…」），
+    SDK 只在比它多 4096 个字符处截断，末尾同样是「…」（理由同 `name`）。
   - `fields`：这个动作上 `note()` 补充的字段，没有时是 `{}`。动作最终的字段是 `action_start` 的
     `fields` 再用它覆盖同名的键，合计仍不超过 8 个键。
   - 没有结束的动作不发 `action_end`：节点进程被强制终止、或者任务结束时还没结束的动作，由读取事件
@@ -196,6 +200,31 @@ class _Sigterm:
     raised = False
 
 
+def _handling_cancelled() -> bool:
+    """主线程此刻是不是正在处理一个 `Cancelled`（在 `except Cancelled` 或因它而进入的
+    `finally` 里，包括里面又嵌着的 `except`）。
+
+    后台线程里的 `Cancelled` 经队列、`Future.result()` 交给主线程重新抛出时，不经过
+    `cancelled_error`（它只在主线程里记「已经抛出过」），`_Sigterm.raised` 还是 False：随后
+    送达的 SIGTERM 会在节点清理到一半时再抛一次（#678）。看当前正在处理的异常，不管这个
+    `Cancelled` 是谁抛的、怎么到的主线程。
+
+    清理里常常逐个停东西、每个外面包一层 `except Exception: 记一句`：执行到里面那个块时，最里面
+    正在处理的是停东西时出的错。它是在处理 `Cancelled` 的过程中抛出的，所以顺着 `__context__`
+    往外找，链上有 `Cancelled` 就算。
+    """
+    import sys
+
+    error = sys.exc_info()[1]
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, Cancelled):
+            return True
+        seen.add(id(error))
+        error = error.__context__
+    return False
+
+
 def cancelled_error(message: str) -> Cancelled:
     """SDK 自己发现任务该收尾了（取消标记出现：取消、超时、被停止子流程节点停止；Agent 回复
     `cancelled`）时要抛出的 `Cancelled`。
@@ -218,6 +247,9 @@ def on_sigterm(signum: int, frame: object) -> None:
         _Sigterm.pending = True
         return
     _Sigterm.raised = True
+    if _handling_cancelled():
+        # 主线程已经在处理一个 Cancelled（后台线程的交给它重新抛出的）：清理在执行，不再抛第二次。
+        return
     raise Cancelled("任务被终止（SIGTERM）")
 
 
@@ -252,7 +284,8 @@ class DeferCancel:
             _Sigterm.pending = False
             if not _Sigterm.raised:
                 _Sigterm.raised = True
-                raise Cancelled("任务被终止（SIGTERM）")
+                if not _handling_cancelled():
+                    raise Cancelled("任务被终止（SIGTERM）")
 
 
 class ArtifactLimitExceeded(Exception):
@@ -352,12 +385,15 @@ def _is_finite(value: object) -> bool:
 
 
 def _shown(value: object) -> str:
-    """错误信息里引用的值：很长的（`10**400`）截短，位数超过解释器限制转不成文字的也不抛异常。"""
+    """警告里引用的值：不长的原样（完整的 secret 值由控制面打码）；很长的（`10**400`、
+    写错了类型的长字符串）
+    只写类型和长度，不写截断后的内容（截断会把 secret 值切成两半，前半截认不出来）；
+    位数超过解释器限制转不成文字的也不抛异常。"""
     try:
         text = repr(value)
     except ValueError:
         return f"<{type(value).__name__}，位数太多>"
-    return text if len(text) <= 60 else text[:57] + "..."
+    return text if len(text) <= 60 else f"<{type(value).__name__}，{len(text)} 个字符>"
 
 
 class _EventWriter:

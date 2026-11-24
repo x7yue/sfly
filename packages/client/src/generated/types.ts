@@ -244,6 +244,13 @@ export interface AgentView {
 	/** 支持的 Agent 能力及版本，按上报的顺序；不上报能力的旧版本 Agent 为空。 */
 	capabilities: CapabilityView[];
 	endpoint: AgentEndpointView;
+	/**
+	 * 最近一次连接用的凭据（ADR 0029「迁移与过渡」，#492）：`agent` 是这台 Agent 自己的凭据，`shared` 是共享令牌
+	 * （`SFLY_AGENT_TOKEN`，控制台提示换成 Agent 凭据），`none` 没带凭据（只在过渡版本里被接受）；还没有记过（升级之前连接的）为 null。
+	 */
+	auth_kind: "agent" | "shared" | "none" | null;
+	/** 停用这台 Agent 的时间；没有停用为 null。停用的 Agent 不能连接、不参与派发。 */
+	disabled_at: Timestamp | null;
 }
 
 /**
@@ -1745,11 +1752,6 @@ export type ParamType = "string" | "number" | "boolean" | "json";
 /** 一个持久的会话事件：`PERSISTED_SESSION_EVENT_TYPES` 里的类型，带 `seq` 和 `at`（历史接口返回它）。 */
 export type PersistedSessionEvent = {
 	type: "user_message";
-	/**
-	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
-	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
-	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
-	 */
 	message_id: string;
 	text: string;
 	steer: boolean;
@@ -1817,7 +1819,6 @@ export type PersistedSessionEvent = {
 	duration_ms: number;
 	usage?: TokenUsage;
 	limit_kind?: TurnLimit;
-	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	seq: number;
 	at: Timestamp;

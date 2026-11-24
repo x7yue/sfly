@@ -1,5 +1,5 @@
 {
-  "id": "995e1842-b32e-4110-ae72-b5b938fe9ae4",
+  "id": "7f1ea567-e70e-4191-b698-83ee8baa6692",
   "prevId": "b20c2ee1-51ca-4dcb-a4c7-fa8d1e20d32c",
   "version": "7",
   "dialect": "postgresql",
@@ -299,6 +299,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "agent_credential_id": {
+          "name": "agent_credential_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "scopes": {
           "name": "scopes",
           "type": "text[]",
@@ -418,6 +424,19 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
+        "api_tokens_agent_credential_id_agent_credentials_id_fk": {
+          "name": "api_tokens_agent_credential_id_agent_credentials_id_fk",
+          "tableFrom": "api_tokens",
+          "tableTo": "agent_credentials",
+          "columnsFrom": [
+            "agent_credential_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "api_tokens_session_project_fk": {
           "name": "api_tokens_session_project_fk",
           "tableFrom": "api_tokens",
@@ -449,6 +468,10 @@
         "api_tokens_kind": {
           "name": "api_tokens_kind",
           "value": "\"api_tokens\".\"kind\" in ('personal', 'project', 'session', 'task')"
+        },
+        "api_tokens_agent_credential_task": {
+          "name": "api_tokens_agent_credential_task",
+          "value": "\"api_tokens\".\"agent_credential_id\" is null or \"api_tokens\".\"kind\" = 'task'"
         },
         "api_tokens_shape": {
           "name": "api_tokens_shape",
@@ -2346,43 +2369,9 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
-        },
-        "queued_at": {
-          "name": "queued_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "sessions_project_queue": {
-          "name": "sessions_project_queue",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "queued_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"sessions\".\"queued_at\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "sessions_project_activity": {
           "name": "sessions_project_activity",
           "columns": [
@@ -2465,10 +2454,6 @@
         "sessions_current_turn": {
           "name": "sessions_current_turn",
           "value": "\"sessions\".\"current_turn\" >= 0"
-        },
-        "sessions_queued_at": {
-          "name": "sessions_queued_at",
-          "value": "(\"sessions\".\"queued_at\" is null and \"sessions\".\"status\" <> 'queued') or (\"sessions\".\"queued_at\" is not null and \"sessions\".\"status\" in ('queued', 'running'))"
         },
         "sessions_status": {
           "name": "sessions_status",

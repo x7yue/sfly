@@ -862,7 +862,7 @@ export const projectMembers = pgTable(
  * 助手会话（GLOSSARY「会话」，ADR 0027）：用户和助手围绕一件事的一次对话，属于一个项目（竖切里都是 `default`）。
  * `status` 一次写全（`idle` 空闲、`running` 在做、`queued` 排队中、`ended` 已结束），骨架的竖切只用前两个；
  * 同一个项目同一时刻只跑一轮：每个项目至多一个 `running` 的会话（`sessions_one_running_per_project`），
- * 并发的两个「开始一轮」只有一个能写成功。`title` 是第一句话的前 60 个字；`created_by` 是发起人的昵称，
+ * 并发的两个「开始一轮」只有一个能写成功。`title` 是第一句话的前 60 个字（看起来的字，超过时末尾加「…」，截法见 `titleOf`；之前创建的会话不迁移）；`created_by` 是发起人的昵称，
  * `created_by_user_id` 是发起人的用户（#494 之前的请求可能没有用户，#547 起建会话要有用户）。
  * `last_activity_at` 是最近一次活动（新建、发话、事件落库）。
  */
@@ -982,6 +982,15 @@ export const apiTokens = pgTable(
 		 * 空：不是项目令牌，或者是这一列加进来之前签发的。
 		 */
 		issuedByUserId: uuid("issued_by_user_id").references(() => users.id),
+		/**
+		 * 任务凭据派发时这条连接用的那一个 Agent 凭据（#492）：任务凭据只在**它**没被吊销时有效，不看「这个名字此刻有没有别的
+		 * 有效凭据」（全部吊销之后再给同名的 Agent 签发一个新的，旧连接上发出去的任务凭据不能因此又被认）。空：不是任务凭据，
+		 * 或者连接用的是旧方式（共享令牌、没有凭据）的，或者是这一列加进来之前派发的；这几种只看这台 Agent 有没有停用。
+		 * 凭据行删除时任务凭据随它删除（不认）。
+		 */
+		agentCredentialId: uuid("agent_credential_id").references(() => agentCredentials.id, {
+			onDelete: "cascade",
+		}),
 		scopes: text("scopes").array().notNull(),
 		createdAt: timestamptz("created_at").notNull(),
 		expiresAt: timestamptz("expires_at"),
@@ -1003,6 +1012,10 @@ export const apiTokens = pgTable(
 		// 任务结束时吊销它的凭据。
 		index("api_tokens_task").on(t.taskId).where(sql`${t.taskId} is not null`),
 		check("api_tokens_kind", sql`${t.kind} in ('personal', 'project', 'session', 'task')`),
+		check(
+			"api_tokens_agent_credential_task",
+			sql`${t.agentCredentialId} is null or ${t.kind} = 'task'`,
+		),
 		check(
 			"api_tokens_shape",
 			sql`(${t.kind} = 'personal' and ${t.userId} is not null and ${t.sessionId} is null and ${t.taskId} is null)

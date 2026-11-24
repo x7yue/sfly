@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { agentsApi } from "@sfly/schema";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { AgentHub } from "../src/agents/agent-hub.js";
+import { AgentConnectionRefused, AgentHub } from "../src/agents/agent-hub.js";
 import { dashboardView } from "../src/dashboard/dashboard-stats.js";
 import { setupSummary } from "../src/dashboard/setup-summary.js";
 import { type Database, openDatabase } from "../src/db/database.js";
@@ -299,12 +299,15 @@ describe("存储层按项目查询：项目甲看不到项目乙", () => {
 		).rejects.toBeInstanceOf(PackageError);
 	});
 
-	it("Agent 重连只更新信息，不改它所属的项目", async () => {
-		await hub.attach(OTHER, "agent-a", AGENT_INFO, new AsyncQueue());
+	it("名字已经登记在一个项目里：别的项目的连接登记不进来（拒绝，登记不变，不改它所属的项目）；本项目的重连只更新信息", async () => {
+		await expect(hub.attach(OTHER, "agent-a", AGENT_INFO, new AsyncQueue())).rejects.toBeInstanceOf(
+			AgentConnectionRefused,
+		);
 		const { rows } = await database.pool.query<{ project_id: string }>(
 			"select project_id from agents where name = 'agent-a'",
 		);
 		expect(rows).toEqual([{ project_id: DEFAULT_PROJECT }]);
+		await hub.attach(DEFAULT_PROJECT, "agent-a", AGENT_INFO, new AsyncQueue());
 	});
 });
 

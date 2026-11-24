@@ -379,6 +379,22 @@ def actions(ctx: Context, unfinished: bool = False, release_file: str = "") -> N
                     time.sleep(0.05)
 
 
+@node(title="带 secret 值的动作文字", outputs=[])
+def actions_with_secret_texts(ctx: Context, token: str) -> None:
+    """名称、字段的键和值、失败原因里，secret 值正好跨在各自的上限处（#583）：SDK 不能把它切成两半，
+    控制面才能先打码再截断。一个动作以失败结束（失败原因），一个动作留着不结束（摘要里「正在做」）。
+
+    ctx.action 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    from sfly import actions
+
+    key = "k" * (actions.MAX_NAME_CHARS - 10) + token
+    value = "v" * (actions.MAX_VALUE_CHARS - 10) + token
+    with ctx.action("n" * (actions.MAX_NAME_CHARS - 10) + token, **{key: value}) as order:
+        order.fail("r" * (actions.MAX_REASON_CHARS - 10) + token)
+    ctx.action.start("m" * (actions.MAX_NAME_CHARS - 10) + token)
+
+
 @node(title="上报数值", outputs=[])
 def report_numbers(ctx: Context, current: str, total: str, price: str) -> None:
     """数值经过 Agent 保持不变的测试用（#450）：把 current、total 读成浮点数交给 ctx.progress，
@@ -608,6 +624,15 @@ def spew(ctx: Context, stdout_mib: float = 0, stderr_mib: float = 0) -> None:
             stream.write(line)
         stream.write("最后一行\n")
         stream.flush()
+
+
+@node(title="一长行", outputs=[])
+def long_line(ctx: Context, head: int, value: str, tail: int, stream: str = "stdout") -> None:
+    """超长行拆分测试用（#622）：往标准输出（stream 是 stderr 时往标准错误）写一行：
+    head 个 a、value、tail 个 b。"""
+    out = sys.stderr if stream == "stderr" else sys.stdout
+    out.write("a" * head + value + "b" * tail + "\n")
+    out.flush()
 
 
 @node(title="写盘失败", outputs=[])

@@ -34,12 +34,15 @@ export function Page({ className, ...props }: React.ComponentProps<"div">) {
 export function PageHeader({
 	title,
 	count,
+	countClassName,
 	description,
 	actions,
 }: {
 	title: string;
 	/** 标题旁的数量（等宽、三级文字）。 */
 	count?: number;
+	/** 数量的文字色（缺省三级文字）：标题旁的数量或说明是页面要读的信息时（令牌页的项目名）换亮一档。 */
+	countClassName?: string;
 	description?: React.ReactNode;
 	/** 右侧操作；白色主操作每屏最多一个。 */
 	actions?: React.ReactNode;
@@ -51,7 +54,9 @@ export function PageHeader({
 			<h1 tabIndex={-1} className="m-0 text-lg font-semibold">
 				{title}
 			</h1>
-			{count !== undefined && <span className="font-mono text-xs text-fg-3">{count}</span>}
+			{count !== undefined && (
+				<span className={cn("font-mono text-xs", countClassName ?? "text-fg-3")}>{count}</span>
+			)}
 			{description && <span className="text-sm text-fg-3">{description}</span>}
 			<span className="flex-1" />
 			{actions}

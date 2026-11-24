@@ -46,10 +46,58 @@ const rejected = (status: 409 | 503, code: SessionErrorCode, message: string): O
 /** 工作区在工作台上的路径。 */
 const WORKDIR = "/work";
 
-/** 会话的标题：第一句话的前 60 个字（空白压成一个空格）。 */
+/**
+ * 会话的标题：第一句话的前 60 个字（空白压成一个空格）。超过 60 个字时截短并在末尾加「…」，让人看得出后面还有。
+ *
+ * **「字」是看起来的字**（字形簇，`Intl.Segmenter`）：一个表情（含带零宽连接符的、带肤色的）、一面国旗、带变音符号的字母
+ * 都是一个字，截点不落在它们中间；只取前 61 个字判断（够知道放不放得下、截在哪里，不必把整句话切完）。
+ *
+ * **截的位置不切开网址**：第 60 个字落在一个网址里时，截在网址之前——网址切断了既没有用、又像是完整的网址。
+ * 网址是 `http://` 或 `https://`（不分大小写）开头、后面连着的 ASCII 可见字符：中文里网址后面常常直接跟中文或全角标点、
+ * 没有空格，遇到它们网址就结束了（不然网址后面的话也被当成网址、一起丢掉）。例外：截在网址之前之后，前面剩下的内容
+ * （去掉首尾空白和标点）不到 {@link TITLE_MIN_BEFORE_URL} 个字时（「看 https://很长的网址」只剩「看…」），
+ * 不躲网址，照常截在第 60 个字（网址被切开）。截点之后的网址不用看。
+ *
+ * 在这之前创建的会话的标题没有改（没有省略号、按旧的规则截），页面照原样显示。
+ */
 export const TITLE_CHARS = 60;
+/** 截在网址之前时，前面至少要留下这么多个字（去掉首尾空白和标点之后），否则不躲网址。 */
+export const TITLE_MIN_BEFORE_URL = 10;
+const TITLE_URL = /https?:\/\/[\x21-\x7e]+/giu;
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** 文字里前 `limit` 个字（字形簇）各自的起点（字符串下标）；不足 `limit` 个时就是全部。 */
+function graphemeStarts(text: string, limit: number): number[] {
+	const starts: number[] = [];
+	for (const { index } of GRAPHEMES.segment(text)) {
+		starts.push(index);
+		if (starts.length >= limit) break;
+	}
+	return starts;
+}
+
+/** 网址前面的内容去掉首尾的空白和标点之后，够不够 {@link TITLE_MIN_BEFORE_URL} 个字。 */
+function worthKeeping(before: string): boolean {
+	const content = before.replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "");
+	return graphemeStarts(content, TITLE_MIN_BEFORE_URL).length >= TITLE_MIN_BEFORE_URL;
+}
+
 export function titleOf(text: string): string {
-	return [...text.trim().replace(/\s+/g, " ")].slice(0, TITLE_CHARS).join("");
+	const flat = text.trim().replace(/\s+/g, " ");
+	const starts = graphemeStarts(flat, TITLE_CHARS + 1);
+	if (starts.length <= TITLE_CHARS) return flat;
+	let cut = starts[TITLE_CHARS] as number;
+	for (const match of flat.matchAll(TITLE_URL)) {
+		const start = match.index;
+		// 截点之后的网址不用看。
+		if (start >= cut) break;
+		// 网址在截点之前就结束了：不用躲，看下一个。
+		if (start + match[0].length <= cut) continue;
+		// 截点落在这个网址里：前面留得下足够的内容就截在网址之前，留不下就只好截在网址里。
+		if (worthKeeping(flat.slice(0, start))) cut = start;
+		break;
+	}
+	return `${flat.slice(0, cut).trimEnd()}…`;
 }
 
 /**

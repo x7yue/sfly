@@ -21,6 +21,7 @@ import { type AgentClient, WORKBENCH_UNREACHABLE, WorkbenchError } from "./agent
 import type { EventBus } from "./bus.js";
 import { type LaunchPaths, prepareLaunch, writeContextFile } from "./launch.js";
 import { modelEnvRefs } from "./models.js";
+import { describeError } from "./output.js";
 import { KILL_GRACE_MS, PiProcess } from "./pi-process.js";
 import { forLog, Redactor } from "./redact.js";
 import { mirrorSkillsLocally, workbenchSkillsDir, writeSkillsToWorkbench } from "./skills.js";
@@ -494,9 +495,11 @@ export class SessionManager {
 		});
 		session.startedFor = startedFor;
 		session.tmpDir = launch.tmpDir;
+		// pi 原始事件的副本（打过码，排查用）：异步写，`turn_end` 不等它落盘（#684）。它不在协议里、没有谁据它做决定，
+		// 等它会让每一轮的结局多一次磁盘往返、多一种失败；要读它的（测试、排查）等它写完再读。
 		const raw = createWriteStream(join(session.dir, "events.jsonl"), { flags: "a", mode: 0o600 });
 		raw.on("error", (error) =>
-			this.options.log(`会话 ${session.id}：写 events.jsonl 失败：${error.message}`),
+			this.options.log(`会话 ${session.id}：写 events.jsonl 失败：${describeError(error)}`),
 		);
 		const stderr = session.redactor.stream();
 		const process = new PiProcess({
@@ -507,7 +510,7 @@ export class SessionManager {
 			// pi 的标准错误也是日志：写下之前打码。
 			filterStderr: { push: (text) => stderr.push(text), flush: () => stderr.flush() },
 			onStderrError: (error) =>
-				this.options.log(`会话 ${session.id}：写 pi-stderr.log 失败：${error.message}`),
+				this.options.log(`会话 ${session.id}：写 pi-stderr.log 失败：${describeError(error)}`),
 			killGraceMs: this.options.killGraceMs,
 			onRecord: (record, line) => {
 				// 命令输出的每一次更新都是到这一刻为止的全部输出：不再整份存一遍（工具结束时的结果里有）。

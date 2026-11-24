@@ -1,7 +1,7 @@
 import { authApi, usersApi } from "./accounts.js";
 import { actionsApi } from "./actions.js";
 import { agentBinariesApi } from "./agent-binaries.js";
-import { agentsApi } from "./agents.js";
+import { agentsApi, devAgentsApi } from "./agents.js";
 import { clientPackageApi } from "./client-package.js";
 import type { RouteDef } from "./contract.js";
 import { dashboardApi } from "./dashboard.js";
@@ -50,6 +50,7 @@ export const httpApis = {
 	auth: authApi,
 	clientPackage: clientPackageApi,
 	dashboard: dashboardApi,
+	devAgents: devAgentsApi,
 	docs: docsApi,
 	feishuBots: feishuBotsApi,
 	logs: logsApi,

@@ -455,6 +455,34 @@ export function mergeSpans(
 	return out;
 }
 
+/**
+ * 只输出 `text` 的 `[from, to)` 这一块（一段超长行加上前后的上下文之后，只显示中间那一段）：{@link scanSpans}（或 {@link mergeSpans}）
+ * 刚找到的 `count` 段里，开头落在这一块里的整个换成一个 `mask`（超出 `to` 的部分不输出），开头在 `from` 之前的，落在这一块里的部分去掉
+ * （前一段已经用一个掩码盖住了）。一个跨在拆分处的值因此只出现一个掩码，读的人拼起来看到的和不拆时一样。
+ *
+ * `from` 是 0 时就是「只输出原文 `[0, to)`，起点在 `to` 之前的出现整个换成掩码（跨在 `to` 上的也是一个掩码），`to` 及之后的一律不输出」：
+ * 上限说的是原文的位置时（{@link SecretSet.maskClipped}）这样用，不另有一份。
+ */
+export function maskedRegion(
+	text: string,
+	count: number,
+	from: number,
+	to: number,
+	mask: string,
+): string {
+	let out = "";
+	let cursor = from;
+	for (let k = 0; k < count; k++) {
+		const start = spanStarts[k] as number;
+		const end = spanEnds[k] as number;
+		if (end <= from) continue;
+		if (start >= to) break;
+		if (start >= from) out += text.slice(cursor, start) + mask;
+		cursor = Math.min(end, to);
+	}
+	return out + text.slice(cursor, to);
+}
+
 /** 把 {@link scanSpans} 刚找到的 `count` 段换成 `mask`（同步，紧接着扫描用）。 */
 export function maskedByAutomaton(text: string, count: number, mask: string): string {
 	let out = "";

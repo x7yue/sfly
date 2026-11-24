@@ -14,7 +14,8 @@
 - 控制面在所有响应上带 `x-sfly-version`；与命令行版本不一致时在 stderr 告警一次，命令照常执行；
 - 令牌不跟着重定向走：重定向到不同的源（协议、主机、端口任一不同）时去掉 `Authorization`
   （控制面前面的反向代理、单点登录网关、任何一处开放重定向都不该把令牌转给别的主机）；
-- 在不是本机的 `http://` 地址上带令牌时提示一次（令牌和密码在网络上是明文）；
+- 在不是本机的 `http://` 地址上带令牌、或者（`sfly login`）要发账号密码时，
+  发之前提示一次（令牌和密码在网络上是明文）；
 - 连不上控制面抛 `CliError("unreachable", …)`，控制面返回错误抛 `ApiError`（沿用控制面的错误码）；
   401（没有登录、令牌失效或被吊销）的错误信息写明 `sfly login`，下一步也是它。
 """
@@ -22,6 +23,7 @@
 from __future__ import annotations
 
 import getpass
+import ipaddress
 import json
 import os
 import re
@@ -62,7 +64,18 @@ UNAUTHORIZED_TIP = (
 # 读响应（下载、事件流、接口原样输出）时每次读多少字节。
 READ_CHUNK = 64 * 1024
 
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+def is_local_host(host: str) -> bool:
+    """主机名是不是「本机」：`localhost`，和环回地址（`127.0.0.0/8` 整段、`::1`）。
+    `0.0.0.0` 不算：它不是一个能连的地址，写成它多半是配错了，照旧提示。
+    主机名不解析（本机的主机名、局域网地址照旧提示：多一行提示没有害处）。"""
+    host = host.lower().rstrip(".")
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def origin_of(url: str) -> tuple[str, str, int | None]:
@@ -164,6 +177,7 @@ class Client:
         nickname: str,
         *,
         token: str | None = None,
+        sends_password: bool = False,
         nickname_ignored: bool = False,
         ai_agent: str | None = None,
         stderr: IO[str] | None = None,
@@ -173,6 +187,8 @@ class Client:
         self.nickname = nickname
         self.token = token
         """有令牌时身份由它决定：请求带 `Authorization: Bearer`，不再带昵称。"""
+        self.sends_password = sends_password
+        """要把账号密码发给控制面（`sfly login` 换令牌，不带令牌）：往明文地址发之前也提示。"""
         self.ai_agent = ai_agent
         self.timeout = timeout
         self._stderr = stderr
@@ -253,16 +269,22 @@ class Client:
             file=self._stderr or sys.stderr,
         )
 
-    def _note_plain_http(self) -> None:
-        """带着令牌往不是本机的 `http://` 地址发请求：提示一次（令牌在网络上是明文）。"""
-        if self._warned_plain_http or not self.token:
+    def note_plain_http(self) -> None:
+        """带着令牌、或者要发账号密码（`sfly login`）往不是本机的 `http://` 地址发请求：提示一次
+        （令牌和密码在网络上是明文）。第一次 `sfly login` 还没有令牌，发出去的是密码，也要提示。
+        每个请求发出之前都会调用；`sfly login` 在读密码**之前**先调用一次，
+        想放弃的人不用输完密码才看到（提示只出一次）。"""
+        if self._warned_plain_http:
+            return
+        what = "令牌" if self.token else "密码" if self.sends_password else None
+        if what is None:
             return
         scheme, host, _ = origin_of(self.server)
-        if scheme != "http" or host in _LOCAL_HOSTS:
+        if scheme != "http" or is_local_host(host):
             return
         self._warned_plain_http = True
         print(
-            f"警告：{self.server} 是 http 地址，令牌会以明文发送，网络上的人看得到："
+            f"警告：{self.server} 是 http 地址，{what}会以明文发送，网络上的人看得到："
             "有条件的话用 https 地址访问控制面",
             file=self._stderr or sys.stderr,
         )
@@ -322,7 +344,7 @@ class Client:
         失败时抛 `CliError`（连不上）或 `ApiError`（错误响应）。"""
         data = raw
         self._note_nickname_ignored()
-        self._note_plain_http()
+        self.note_plain_http()
         send = {**self.headers(), **(headers or {})}
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")

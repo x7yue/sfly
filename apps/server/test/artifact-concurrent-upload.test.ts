@@ -4,8 +4,7 @@
 // 上传的请求体分两次发（先发一半、隔一会儿再发另一半），让并发的几份在时间上重叠。
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
-import { join } from "node:path";
+import { Agent, request as httpRequest } from "node:http";
 import pg from "pg";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -192,9 +191,9 @@ describe("同一个任务并发上传产物", () => {
 		}
 	}, 60_000);
 
-	// Content-Type 是 text/plain 时 Fastify 自带的文本解析器已经把请求体读成了字符串（不是流）：`ArtifactStore.save` 收到的是一个字符串。
-	// e2e 里用 `fetch(url, { method: "PUT", body: "<html>…" })` 上传就是这样（undici 给字符串请求体加 text/plain）。
-	it("请求体被解析成字符串（Content-Type: text/plain）也能存", async () => {
+	// e2e 里用 `fetch(url, { method: "PUT", body: "<html>…" })` 上传就是这样：运行时（undici）给字符串请求体自动加 `text/plain;charset=UTF-8`。
+	// 这是唯一一条用 `fetch` 传字符串的真实写法；上传的路由不管 Content-Type 是什么都按原始字节收（#665），存下的和发来的逐字节一致。
+	it("`fetch` 传字符串（运行时自动加 Content-Type: text/plain）也按原始字节存", async () => {
 		const { task } = await setup();
 
 		const res = await cp.fetch(`/tasks/${task.taskId}/artifacts/report.html`, {
@@ -292,13 +291,17 @@ describe("卡住的上传（连着、不发数据）", () => {
 			};
 			next();
 		});
-	const tmpFiles = async (runId: string, taskId: string) =>
-		(await readdir(join(cp.dataDir, "artifacts", runId, taskId))).filter((n) =>
-			n.startsWith(".upload-"),
+	/**
+	 * 数据目录里（任何一层）名字以 `.upload-` 开头的文件。临时文件在 `artifacts/.uploading/` 里（#649），不在任务的产物目录里：
+	 * 只看任务的产物目录的话，这条检查永远找不到东西，去掉出错时删临时文件那一行它也照样绿。
+	 */
+	const tmpFiles = async () =>
+		(await readdir(cp.dataDir, { recursive: true })).filter((path) =>
+			(path.split("/").pop() ?? "").startsWith(".upload-"),
 		);
 
 	it("发了一部分就不再发数据：到空闲时限之后它得到明确的错误（408，不存、不留临时文件），同一个任务排着的那一份随即被处理", async () => {
-		const { task, runId } = await setup(600);
+		const { task } = await setup(600);
 		const stalled = stall(`${task.artifactUploadUrl}stuck.bin`, 100);
 		await new Promise((resolve) => setTimeout(resolve, 150));
 
@@ -327,11 +330,66 @@ describe("卡住的上传（连着、不发数据）", () => {
 		if ("status" in outcome) {
 			expect(JSON.parse(outcome.body).error.code).toBe("upload_idle_timeout");
 		}
-		expect(await tmpFiles(runId, task.taskId)).toEqual([]);
+		expect(await tmpFiles()).toEqual([]);
 		const listed = (await (await cp.fetch(`/tasks/${task.taskId}/artifacts`)).json()) as {
 			artifacts: Array<{ name: string }>;
 		};
 		expect(listed.artifacts.map((a) => a.name)).toEqual(["next.bin"]);
+	}, 60_000);
+
+	// 408 之后客户端还在往连接里写（它以为还在上传）：控制面回了响应就关掉连接，不留着一条没有读完请求体的连接
+	// （keep-alive 的连接上，下一个请求会被读成这份没读完的请求体的后半截）。
+	// **客户端要用 keep-alive 的连接**（不带 `Connection: close`）：`agent: false` 时 Node 自己带上 `Connection: close`，
+	// 服务端标没标「没读完」连接都会被关，这条用例就守不住它的名字（#667 的审查）。
+	it("408 之后连接被关掉：响应带 connection: close，服务端随即关闭这条 keep-alive 的连接", async () => {
+		const { task } = await setup(300);
+		const agent = new Agent({ keepAlive: true });
+
+		try {
+			const outcome = await new Promise<{
+				status: number;
+				requestConnection: string | undefined;
+				connection: string | undefined;
+				closed: boolean;
+			}>((resolve, reject) => {
+				const req = httpRequest(`${task.artifactUploadUrl}stuck-close.bin`, {
+					method: "PUT",
+					agent,
+					headers: { "content-type": "application/octet-stream", "content-length": "1000" },
+				});
+				req.on("response", (res) => {
+					res.resume();
+					const socket = res.socket;
+					const report = (closed: boolean) =>
+						resolve({
+							status: res.statusCode ?? 0,
+							requestConnection: req.getHeader("connection")?.toString(),
+							connection: res.headers.connection,
+							closed,
+						});
+					// 响应收完之后最多再等 3 秒，看服务端有没有关掉这条连接（keep-alive 的连接服务端默认还会留 5 秒）。
+					const timer = setTimeout(() => report(false), 3_000);
+					socket.once("close", () => {
+						clearTimeout(timer);
+						report(true);
+					});
+					if (socket.destroyed) {
+						clearTimeout(timer);
+						report(true);
+					}
+				});
+				req.on("error", reject);
+				req.write(Buffer.alloc(100, 1));
+			});
+
+			expect(outcome.status).toBe(408);
+			// 请求自己没有要求关闭连接：连接是服务端关的。
+			expect(outcome.requestConnection).not.toBe("close");
+			expect(outcome.connection).toBe("close");
+			expect(outcome.closed).toBe(true);
+		} finally {
+			agent.destroy();
+		}
 	}, 60_000);
 
 	it("一直在慢慢发数据的上传（总时长远超空闲时限）不被误杀", async () => {

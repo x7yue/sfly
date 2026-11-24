@@ -45,10 +45,12 @@ describe("SFLY_ARTIFACT_LIMIT_MB 换算成字节", () => {
 		["超过 uint64 的量级", "1e14"],
 		["很大的有限数", "1e300"],
 		["换算后不到 1 字节", "0.0000001"],
-	])("%s：报错，写明是哪个设置和填的原文", (_, raw) => {
+	])("%s：报错，写明是哪个设置和填的原文（不像数的不回显，只说认不出）", (_, raw) => {
+		// echo.ts：认得的才回显，`abc` 这样不像数的不回显。
+		const shown = raw === "abc" ? "（认不出，没有回显）" : JSON.stringify(raw);
 		expect(() => artifactLimitBytesFromMb(raw)).toThrow(
 			new RegExp(
-				`SFLY_ARTIFACT_LIMIT_MB 不合法[\\s\\S]*${JSON.stringify(raw).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+				`SFLY_ARTIFACT_LIMIT_MB 不合法[\\s\\S]*${shown.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
 			),
 		);
 	});

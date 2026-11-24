@@ -8,10 +8,10 @@
   令牌的原值不打印。这台控制面已经存过令牌时，**先换到新的、存好，再把旧的吊销**（重新登录不会越攒越多；
   密码输错或换令牌失败时，原来有效的登录原封不动）。旧令牌占着默认名称时，新令牌的名称带一个后缀。
 - `sfly logout`：让令牌吊销它自己（个人令牌只能吊销它自己），再删掉本机的这一条凭据。
-  吊销没成功（连不上控制面、403、500……）就不删，免得本机以为登出了、令牌还有效；
-  `--local` 只删本机的。控制面说 401 时（令牌已失效、已被吊销，**或者账号被停用**）
-  本机的凭据照样删，但如实说「令牌没有被这次登出吊销」：
-  账号被停用时令牌其实还在，启用之后又能用，要到控制台的「令牌」页吊销。
+  吊销没成功（连不上控制面、403、500……）就不删，免得本机以为登出了、令牌还有效，并说明
+  令牌没有被吊销、本机的凭据保留着；`--local` 只删本机的。控制面说 401 时（令牌已失效：
+  别处吊销了、过期了）本机的凭据照样删，但如实说「令牌没有被这次登出吊销」。账号被停用时令牌照样能吊销它自己
+  （停用期间别的请求都拒绝，吊销自己的凭据例外），所以 401 不是因为账号被停用。
   `SFLY_API_TOKEN` 环境变量里的令牌不归它管。
 
 控制面上令牌的范围不超过登录人此刻的角色；这里不限定项目（选项目的 `--project`
@@ -85,12 +85,16 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="登出：让本机存的令牌吊销它自己，并删掉本机的凭据",
         description="让 sfly login 存下的令牌吊销它自己（控制面上立即失效），"
         "再删掉本机凭据文件里这台控制面的那一条。"
-        "吊销没成功（连不上控制面）时不删，加 --local 只删本机的。"
+        "吊销没成功（连不上控制面、控制面回 403、500……）时不删本机的凭据，并说明令牌没有被吊销、"
+        "本机的凭据保留着；控制面回 401（令牌已经失效）时照样删本机的，并说明这次没有吊销。"
+        "加 --local 只删本机的。"
         "SFLY_API_TOKEN 环境变量里的令牌不归它管。退出码：成功 0，失败 2。",
     )
     logout.add_argument("--server", help=_server_help())
     logout.add_argument(
-        "--local", action="store_true", help="只删本机的凭据，不去控制面吊销（控制面不可达时用）"
+        "--local",
+        action="store_true",
+        help="只删本机的凭据，不去控制面吊销（控制面不可达、或者吊销一直失败时用）",
     )
     logout.add_argument("--json", action="store_true", help="输出 JSON，不输出文本")
     logout.set_defaults(func=_run(_logout))
@@ -137,8 +141,9 @@ def _read_password(args: argparse.Namespace) -> str:
 
 
 def _anonymous(url: str) -> Client:
-    """换令牌用的客户端：不带令牌（`SFLY_API_TOKEN` 不该被发给控制面去换令牌）。"""
-    return Client(url, resolve_nickname(None))
+    """换令牌用的客户端：不带令牌（`SFLY_API_TOKEN` 不该被发给控制面去换令牌）；发出去的是账号密码，
+    往不是本机的 `http://` 地址发之前提示一次（明文）。"""
+    return Client(url, resolve_nickname(None), sends_password=True)
 
 
 def _login(args: argparse.Namespace, out: Output) -> int:
@@ -154,6 +159,10 @@ def _login(args: argparse.Namespace, out: Output) -> int:
         login_name = _ask("登录名：")
         if not login_name:
             raise CliError("missing_login_name", "登录名不能为空")
+    # 这次换令牌发出去的是账号密码：地址是不是明文的 `http://`，在读密码之前就告诉他（交互时先出提示、再问密码，
+    # 想放弃的人不用输完密码才知道）；客户端记着已经提示过，发请求时不再重复。
+    client = _anonymous(url)
+    client.note_plain_http()
     password = _read_password(args)
     name = (args.name or f"sfly-cli@{socket.gethostname()}")[:_NAME_MAX]
 
@@ -168,7 +177,7 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     if args.expires_in_days is not None:
         body["expires_in_days"] = args.expires_in_days
     try:
-        issued = _issue(url, body, retry_suffix=previous is not None)
+        issued = _issue(client, body, retry_suffix=previous is not None)
     except ApiError as error:
         raise _login_error(error) from None
     path = credentials.save(
@@ -209,10 +218,9 @@ def _login(args: argparse.Namespace, out: Output) -> int:
     return 0
 
 
-def _issue(url: str, body: dict[str, Any], *, retry_suffix: bool) -> dict[str, Any]:
+def _issue(client: Client, body: dict[str, Any], *, retry_suffix: bool) -> dict[str, Any]:
     """用账号密码换一个令牌。已经有同名的有效令牌（`token_name_taken`）、而且本机原来存着一个（多半就是它占着默认名称）时，
     带一个后缀再换一次：旧的要等新的存好才吊销，这时两个同时存在。"""
-    client = _anonymous(url)
     try:
         issued: dict[str, Any] = client.request("POST", "/account/tokens", body=body)
         return issued
@@ -255,15 +263,16 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
             )
             revoked = True
         except ApiError as error:
-            # 401：令牌已经失效（别处吊销了、过期了）——或者账号被停用了（停用是可撤回的暂停，
-            # 令牌没有被吊销，启用之后又能用）。两种情况控制面都只说 401，这里分不出来：
-            # 本机的凭据照样删，但如实说令牌没有被这次登出吊销。
-            # 别的错误（403、500……）照实说，不删本机的。
+            # 401：令牌已经失效（别处吊销了、过期了）。账号被停用时令牌也能吊销它自己
+            # （控制面对吊销自己的凭据不看停用），所以不是这个原因。本机的凭据照样删，
+            # 但如实说令牌没有被这次登出吊销。别的错误（403、500……）照实说，不删本机的。
             if error.status == 401:
                 rejected = True
             else:
                 raise CliError(
-                    error.code, error.message, next="sfly logout --local（只删本机的凭据）"
+                    error.code,
+                    f"{error.message}\n令牌没有被吊销，本机的凭据保留着",
+                    next="sfly logout --local（只删本机的凭据，令牌之后在控制台的「令牌」页吊销）",
                 ) from None
         except CliError as error:
             raise CliError(
@@ -280,9 +289,8 @@ def _logout(args: argparse.Namespace, out: Output) -> int:
     text = f"已登出 {url}：" + ("令牌已吊销，" if revoked else "") + "本机的凭据已删除" + note
     if rejected:
         text += (
-            "\n注意：控制面拒绝了这次吊销（401）：令牌可能已经失效或被吊销了，也可能是你的账号被停用了——"
-            "账号被停用时令牌并没有被吊销，启用之后它还能用。"
-            "不放心的话，到控制台的「令牌」页（账号菜单里）吊销它，或者请管理员处理"
+            "\n注意：控制面拒绝了这次吊销（401）：令牌已经失效，或者已经被吊销了，这次登出没有吊销它。"
+            "不放心的话，到控制台的「令牌」页（账号菜单里）核对，或者请管理员处理"
         )
     out.emit({"server": url, "logged_out": True, "revoked": revoked, "rejected": rejected}, text)
     return 0

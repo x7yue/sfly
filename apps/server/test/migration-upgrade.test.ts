@@ -179,14 +179,14 @@ it("会话令牌组合外键的迁移（#547）：项目和所属会话对不上
 	}
 }, 120_000);
 
-it("排队时间的迁移（0039，#544）：从 0038 带着数据升级——排队中而没有排队时间的行补上最近活动的时间，别的状态的行不受影响，之后约束在", async () => {
+it("排队时间的迁移（0040，#544）：从 0039 带着数据升级——排队中而没有排队时间的行补上最近活动的时间，别的状态的行不受影响，之后约束在", async () => {
 	const upgradeDb = await createTestDatabase("sfly_migrate_queued");
 	try {
 		const { entries } = await readJournal(defaultMigrationsDir);
-		const target = entries.find((entry) => entry.tag === "0039_session_queued_at");
-		expect(target, "找不到 0039_session_queued_at：迁移改了编号，这条测试跟着改").toBeDefined();
+		const target = entries.find((entry) => entry.tag === "0040_session_queued_at");
+		expect(target, "找不到 0040_session_queued_at：迁移改了编号，这条测试跟着改").toBeDefined();
 		const before = (target as JournalEntry).idx - 1;
-		const partial = join(workDir, "before-0039");
+		const partial = join(workDir, "before-0040");
 		await cp(defaultMigrationsDir, partial, { recursive: true });
 		const journal = await readJournal(partial);
 		journal.entries = journal.entries.filter((entry) => entry.idx <= before);
@@ -217,7 +217,7 @@ it("排队时间的迁移（0039，#544）：从 0038 带着数据升级——�
 		const client = new pg.Client({ connectionString: upgradeDb.url });
 		await client.connect();
 		try {
-			// 这一列在 0038 里还不存在：升级之前的库里没有「有排队时间」的行，只有「排队中」的状态（0035 的状态约束允许 `queued`）。
+			// 这一列在 0039 里还不存在：升级之前的库里没有「有排队时间」的行，只有「排队中」的状态（0035 的状态约束允许 `queued`）。
 			for (const project of ["p-idle", "p-running", "p-queued", "p-ended"]) {
 				await client.query(
 					"insert into projects (id, display_name, created_at) values ($1, $1, now())",
