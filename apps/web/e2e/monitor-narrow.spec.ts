@@ -218,7 +218,7 @@ for (const viewport of VIEWPORTS) {
 			expect(text, `${size}：文字 ${text}px，放文字的宽度 ${room}px`).toBeLessThanOrEqual(room);
 		});
 
-		test("顶栏：显示失败摘要时各链状态收起，摘要至少 288px（1400 宽以上 320px），不只剩「TimeoutErr…」，顶栏不被撑出屏幕", async ({
+		test("顶栏：显示失败摘要时各链状态放不下就收起（放得下完整显示，不裁掉半个徽标），摘要至少 288px（1400 宽以上 320px），不只剩「TimeoutErr…」，顶栏不被撑出屏幕", async ({
 			page,
 			controlPlane,
 			connectAgent,
@@ -230,7 +230,12 @@ for (const viewport of VIEWPORTS) {
 			const bar = header(page);
 			const summary = bar.getByTestId("run-failure");
 			await expect(summary).toBeVisible();
-			await expect(bar.getByRole("list", { name: "各链状态" })).toBeHidden();
+			// 各链状态放得下才显示（界限按实际放不放得下定，整体的验证在 monitor-layout-polish）：显示着的完整露出。
+			const chains = bar.getByRole("list", { name: "各链状态" });
+			if (await chains.isVisible()) {
+				const clipped = await chains.evaluate((el) => el.scrollWidth - el.clientWidth);
+				expect(clipped, `${size}：各链状态被裁掉了 ${clipped}px`).toBeLessThanOrEqual(0.5);
+			}
 			const width = (await rectOf(summary)).width;
 			const least = viewport.width >= 1400 ? 320 : 288;
 			expect(width, `${size}：摘要 ${width}px`).toBeGreaterThanOrEqual(least);

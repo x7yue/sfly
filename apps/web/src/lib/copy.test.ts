@@ -1,6 +1,6 @@
-import { VIA_NAME_PATTERN, VIA_UNKNOWN } from "@sfly/schema";
+import { SCOPES, VIA_NAME_PATTERN, VIA_UNKNOWN } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { viaLabel } from "./copy";
+import { SCOPE_SEPARATOR, scopeLabels, scopesText, viaLabel } from "./copy";
 
 describe("viaLabel", () => {
 	it("已知的 AI 编程助手显示名称，其他名称原样显示", () => {
@@ -43,5 +43,17 @@ describe("viaLabel", () => {
 describe("VIA_UNKNOWN", () => {
 	it("不可能是合格的名称：和请求头里合格的名称分得开（#691 复审）", () => {
 		expect(VIA_NAME_PATTERN.test(VIA_UNKNOWN)).toBe(false);
+	});
+});
+
+describe("范围的写法（令牌列表）", () => {
+	it("scopeLabels 是每个范围的中文名，scopesText 是用顿号连起来的同一串（列表里按范围分段排，换行只在顿号处）", () => {
+		const scopes = SCOPES;
+		const labels = scopeLabels(scopes);
+		expect(labels).toHaveLength(scopes.length);
+		expect(scopesText(scopes)).toBe(labels.join(SCOPE_SEPARATOR));
+		expect(SCOPE_SEPARATOR).toBe("、");
+		expect(scopesText(scopes.slice(0, 1))).toBe(scopeLabels(scopes.slice(0, 1))[0]);
+		expect(scopesText([])).toBe("");
 	});
 });

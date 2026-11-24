@@ -28,6 +28,7 @@ import {
 	devPackageInfo,
 } from "../agents/agent-hub.js";
 import { AsyncQueue } from "../util/async-queue.js";
+import { listening } from "../util/listen-error.js";
 import { storable } from "./storable.js";
 
 export interface AgentGatewayServer {
@@ -294,13 +295,19 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
 		session.on("close", () => sessions.delete(session));
 	});
 
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(options.port, options.host, () => {
-			server.off("error", reject);
-			resolve();
-		});
-	});
+	// 监听不了时的说明只有变量名、端口和错误码（util/listen-error.ts）：Node 的报错会把监听地址原样带出来。
+	await listening(
+		"grpc",
+		options.port,
+		() =>
+			new Promise<void>((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(options.port, options.host, () => {
+					server.off("error", reject);
+					resolve();
+				});
+			}),
+	);
 	const { port } = server.address() as AddressInfo;
 
 	return {

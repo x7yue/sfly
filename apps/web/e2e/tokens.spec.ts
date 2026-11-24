@@ -277,29 +277,86 @@ test.describe("项目令牌页", () => {
 		await expect(page.getByRole("button", { name: "签发令牌" })).toBeFocused();
 	});
 
-	test("1280×800：有六个范围都勾上的令牌、名称很长时，名称列不被挤没（不窄于 11rem），表格不超出面板，范围折成两行", async ({
+	test("1280×800：令牌用过、有过期时间、六个范围都勾上、名称很长，这几样同时成立时：表格不超出面板、「吊销」看得见，名称列不窄于 11rem，范围折成两行、只在顿号处换行，三个时间折成两行", async ({
 		page,
 	}) => {
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await signIn(page);
 		const longName = "夜间批量回归和发布前检查用的自动化脚本-第二套环境";
-		await page.evaluate(async (name) => {
-			await fetch("/api/account/tokens", {
+		const issued = await page.evaluate(async (name) => {
+			const response = await fetch("/api/account/tokens", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name, project: "default", expires_in_days: 90 }),
 			});
+			return (await response.json()) as { token: string };
 		}, longName);
+		// 用过：用它自己请求一次接口，「最后使用」成了一个时间（没用过时只是「从未使用」，列窄得多）。
+		const used = await page.request.get("/api/account/tokens", {
+			headers: { authorization: `Bearer ${issued.token}` },
+		});
+		expect(used.ok()).toBe(true);
 		await page.goto("/account/tokens");
 		const tokenRow = row(page, longName);
 		await expect(tokenRow).toBeVisible();
 		await expect(tokenRow).toContainText("读、运行、编辑、会话构建、发布、管理");
+		await expect(tokenRow).not.toContainText("从未使用");
 		const measured = await page.evaluate((name) => {
 			const table = document.querySelector("table") as HTMLElement;
 			const head = [...table.querySelectorAll("th")].find((th) => th.textContent === "名称");
 			const scopes = document.querySelector(`[data-token="${name}"] td:nth-child(3) span`);
 			const fence = table.parentElement as HTMLElement;
+			// 范围按顿号分成一段一段（每段是连着顿号的一个范围）：按排出来的行数把每一行的字拼出来。
+			const lines: string[] = [];
+			let top = Number.NaN;
+			for (const unit of [...(scopes as HTMLElement).children] as HTMLElement[]) {
+				const at = Math.round(unit.getBoundingClientRect().top);
+				if (at !== top) {
+					lines.push("");
+					top = at;
+				}
+				lines[lines.length - 1] += unit.textContent ?? "";
+			}
+			// 「吊销」按钮：右边缘在面板里面（不被推到面板外面看不到）；三个时间格：按文字排出来的行（每个字符的矩形分行）数，
+			// 不按格子的高度猜：每格最多两行，第一行是完整的日期，第二行（有的话）是时间，不能在日期里面断开。
+			const revoke = document.querySelector(`[data-token="${name}"] button`) as HTMLElement;
+			const rowCells = [...document.querySelectorAll(`[data-token="${name}"] td`)] as HTMLElement[];
+			const dateCells = rowCells.filter((td) =>
+				/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(td.textContent ?? ""),
+			);
+			const linesOf = (cell: HTMLElement) => {
+				const out: string[] = [];
+				let top = Number.NaN;
+				const range = document.createRange();
+				const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+					const text = node.textContent ?? "";
+					for (let i = 0; i < text.length; i++) {
+						range.setStart(node, i);
+						range.setEnd(node, i + 1);
+						const rect = range.getClientRects()[0];
+						// 断行处的空格没有宽度：不算在哪一行里。
+						if (!rect || rect.width === 0) continue;
+						const at = Math.round(rect.top);
+						if (at !== top) {
+							out.push("");
+							top = at;
+						}
+						out[out.length - 1] = `${out[out.length - 1]}${text[i]}`;
+					}
+				}
+				return out.map((line) => line.trim());
+			};
+			const dates = dateCells.map((td) => ({
+				lines: linesOf(td),
+				width: Math.round(td.getBoundingClientRect().width * 10) / 10,
+				height: Math.round(td.getBoundingClientRect().height),
+			}));
 			return {
+				lines,
+				revokeRight: Math.round(revoke.getBoundingClientRect().right),
+				fenceRight: Math.round(fence.getBoundingClientRect().right),
+				dates,
 				name: Math.round((head as HTMLElement).getBoundingClientRect().width),
 				scopeLines: Math.round(
 					(scopes as HTMLElement).getBoundingClientRect().height /
@@ -308,10 +365,26 @@ test.describe("项目令牌页", () => {
 				overflow: Math.round(table.getBoundingClientRect().width - fence.clientWidth),
 			};
 		}, longName);
-		// 名称列不窄于 11rem（176px，已含内边距）；表格没有比面板宽（1280 宽下其他列加起来要给名称留够这 176px）；六个范围写不下一行（7rem 的上限），折成两行。
+		console.log(`令牌页 1280×800：${JSON.stringify(measured)}`);
+		// 名称列不窄于 11rem（176px，已含内边距）；表格没有比面板宽（1280 宽下其他列加起来要给名称留够这 176px）；
+		// 六个范围写不下一行（7.5rem 的上限），折成两行，换行只在顿号处（不在词中间断开）。
 		expect(measured.name, JSON.stringify(measured)).toBeGreaterThanOrEqual(176);
 		expect(measured.overflow, JSON.stringify(measured)).toBeLessThanOrEqual(0);
 		expect(measured.scopeLines, JSON.stringify(measured)).toBe(2);
+		expect(measured.lines, JSON.stringify(measured)).toEqual([
+			"读、运行、编辑、",
+			"会话构建、发布、管理",
+		]);
+		// 创建、最后使用、过期三个时间都有：每格最多两行，第一行是完整的日期、第二行是时间（只在日期和时间之间的空格处折行，
+		// 不在日期里面断开：浏览器在连字符后面也能断行，那样一格会折成「2026-」「01-03」「10:02」三行）。
+		expect(measured.dates, JSON.stringify(measured)).toHaveLength(3);
+		for (const { lines } of measured.dates) {
+			expect(lines.length, JSON.stringify(measured)).toBe(2);
+			expect(lines[0] ?? "", JSON.stringify(measured)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+			expect(lines[1] ?? "", JSON.stringify(measured)).toMatch(/^\d{2}:\d{2}$/);
+		}
+		expect(measured.revokeRight, JSON.stringify(measured)).toBeLessThanOrEqual(measured.fenceRight);
+		await expect(tokenRow.getByRole("button", { name: "吊销" })).toBeInViewport({ ratio: 1 });
 	});
 
 	test("按路径里的项目显示：签发的范围里没有「管理」；列表、吊销；个人令牌页指向它", async ({

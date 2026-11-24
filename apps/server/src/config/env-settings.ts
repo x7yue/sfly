@@ -2,7 +2,7 @@
 // 启动时就检查，不合法的写明变量名、填的值和要求，控制面不启动，不留到运行时才出错；全部收集起来一次报完。
 // 报错里不回显填的值，只有数值类的回显（最多 12 个字符，echo.ts）：地址类、名单类、代理类的写变量名、第几项、哪里不对和一个例子，数据库地址、
 // 管理员密码是固定的文字，管理员登录名、显示名的说明里从不出现填的值；所以凭据不会进启动输出和容器日志。
-// 报错的顺序是读的顺序（稳定）：先是网关端口、对外地址、网关地址（网关的对外地址要用它们算），再是保留天数……端口、数据库地址、
+// 报错的顺序是读的顺序（稳定）：先是网关端口、对外地址、网关地址（网关的对外地址要用它们算），再是数据目录、保留天数……端口、两个监听地址、数据库地址、
 // 代理信任、来源名单、初始管理员、镜像。
 //
 // 以前只要求「大于 0」：`Infinity`、很大的数都能通过。保留天数填得很大时，清理用它算的截止时间早于数据库能表示的下限
@@ -18,8 +18,10 @@ import type { ControlPlaneOptions } from "../control-plane.js";
 import { parseCorsOrigins } from "../http/cors.js";
 import { parseTrustProxy } from "../http/trust-proxy.js";
 import { byteLimitBytesFromMb, byteLimitMessage, isByteLimit } from "./byte-limit.js";
+import { DEFAULT_DATA_DIR, dataDirFromEnv } from "./data-dir.js";
 import { decimalOf, isUnset } from "./decimal.js";
 import { echoNumber } from "./echo.js";
+import { DEFAULT_LISTEN_HOST, hostFromEnv } from "./host-setting.js";
 import {
 	databaseUrlFromEnv,
 	gatewayUrlFrom,
@@ -165,6 +167,9 @@ const GITHUB_MIRROR_RULE: HttpUrlRule = {
 
 /** 这一份检查读的字符串类环境变量（报错回显的测试按它逐个检查，新加的变量要进这张清单，也要进测试里的表）。 */
 export const STRING_ENV_NAMES = [
+	"SFLY_DATA_DIR",
+	"SFLY_HTTP_HOST",
+	"SFLY_GRPC_HOST",
 	"DATABASE_URL",
 	"SFLY_TRUST_PROXY",
 	"SFLY_CORS_ORIGINS",
@@ -192,6 +197,7 @@ type StringEnvName = (typeof STRING_ENV_NAMES)[number];
 
 /** 环境变量换成、直接交给控制面的设置：键和类型取自 {@link ControlPlaneOptions}，键名写错、类型对不上编译不过。 */
 type PassedSettingKey =
+	| "dataDir"
 	| "retentionDays"
 	| "metricRetentionDays"
 	| "logLimitBytes"
@@ -216,6 +222,9 @@ type PassedSettingKey =
 export type EnvSettings = { [K in PassedSettingKey]: ControlPlaneOptions[K] } & {
 	httpPort: number;
 	grpcPort: number;
+	/** 监听地址（`SFLY_HTTP_HOST`、`SFLY_GRPC_HOST`，#651）：和端口一起放进 `http`、`grpc` 选项。 */
+	httpHost: string;
+	grpcHost: string;
 };
 
 /**
@@ -225,12 +234,12 @@ export type EnvSettings = { [K in PassedSettingKey]: ControlPlaneOptions[K] } & 
 export class EnvSettingsError extends Error {
 	constructor(
 		readonly problems: readonly string[],
-		subject: "环境变量" | "选项" = "环境变量",
+		subject: "环境变量" | "选项" | "启动检查" = "环境变量",
 	) {
 		super(
 			problems.length === 1
 				? (problems[0] as string)
-				: `${problems.length} 个${subject}不合法：\n${problems.map((p) => `  - ${p}`).join("\n")}`,
+				: `${problems.length} 个${subject === "启动检查" ? "启动检查没通过" : `${subject}不合法`}：\n${problems.map((p) => `  - ${p}`).join("\n")}`,
 		);
 		this.name = "EnvSettingsError";
 	}
@@ -271,6 +280,7 @@ export function readEnvSettings(env: Readonly<Record<string, string | undefined>
 			? gatewayUrlFrom(publicHttpUrl, grpcPort)
 			: undefined);
 	const settings: EnvSettings = {
+		dataDir: read(() => dataDirFromEnv(text("SFLY_DATA_DIR")), DEFAULT_DATA_DIR),
 		retentionDays: read(
 			() => retentionDaysFromEnv("SFLY_RETENTION_DAYS", env.SFLY_RETENTION_DAYS),
 			undefined,
@@ -306,6 +316,14 @@ export function readEnvSettings(env: Readonly<Record<string, string | undefined>
 			undefined,
 		),
 		httpPort: read(() => portFromEnv("SFLY_HTTP_PORT", env.SFLY_HTTP_PORT, 8080), 8080),
+		httpHost: read(
+			() => hostFromEnv("SFLY_HTTP_HOST", text("SFLY_HTTP_HOST"), "SFLY_HTTP_PORT"),
+			DEFAULT_LISTEN_HOST,
+		),
+		grpcHost: read(
+			() => hostFromEnv("SFLY_GRPC_HOST", text("SFLY_GRPC_HOST"), "SFLY_GRPC_PORT"),
+			DEFAULT_LISTEN_HOST,
+		),
 		grpcPort,
 		databaseUrl: read(
 			() => databaseUrlFromEnv(text("DATABASE_URL")),
