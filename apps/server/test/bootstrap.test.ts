@@ -40,6 +40,25 @@ describe("初始管理员的环境变量", () => {
 			}),
 		).toMatchObject({ displayName: "管理员" });
 	});
+
+	it("显示名在读环境变量这一步不检查（升级前设过不合格的值的部署，库里已经有用户时不该因此起不来）：原样带出去，到建初始管理员时才查", () => {
+		const env = (name: string) => ({
+			SFLY_ADMIN_LOGIN: "root",
+			SFLY_ADMIN_PASSWORD: "long-enough-1",
+			SFLY_ADMIN_DISPLAY_NAME: name,
+		});
+		for (const name of [
+			"老\u200b板",
+			"老\u202e板",
+			"老\n板",
+			"x".repeat(200),
+			"👩\u200d💻 程序员",
+		]) {
+			expect(parseInitialAdmin(env(name)), JSON.stringify(name)).toMatchObject({
+				displayName: name,
+			});
+		}
+	});
 });
 
 describe("启动时建第一个管理员（bootstrapFirstAdmin）", () => {
@@ -110,6 +129,38 @@ describe("启动时建第一个管理员（bootstrapFirstAdmin）", () => {
 		await run();
 		expect(existsSync(join(dataDir, SETUP_CODE_FILE))).toBe(false);
 		expect(setupCode.active).toBe(false);
+	});
+
+	it("没有用户、显示名不合格（和建用户、改显示名同一个检查）：不启动，没有建出用户；合格的（零宽连接符拼出的表情、波斯文）照常", async () => {
+		for (const displayName of [
+			"老\u200b板",
+			"老\u202e板",
+			"老\n板",
+			"x".repeat(200),
+			"老\u{e0067}板",
+			"\u200d板",
+		]) {
+			await expect(
+				run({ loginName: "root", password: "long-enough-1", displayName }),
+				JSON.stringify(displayName),
+			).rejects.toThrow(/SFLY_ADMIN_DISPLAY_NAME 不合规矩/);
+			expect(await users()).toEqual([]);
+		}
+		// 报错说出第几个字符、哪个码位。
+		await expect(
+			run({ loginName: "root", password: "long-enough-1", displayName: "老\u200b板" }),
+		).rejects.toThrow(/显示名的第 2 个字符是 U\+200B/);
+		await run({ loginName: "root", password: "long-enough-1", displayName: "👩\u200d💻 程序员" });
+		expect(await users()).toEqual(["root"]);
+	});
+
+	it("已经有用户时显示名不检查：升级前设过不合格的 SFLY_ADMIN_DISPLAY_NAME 的部署照常起来，日志里说忽略了环境变量", async () => {
+		await run({ loginName: "root", password: "long-enough-1" });
+		await expect(
+			run({ loginName: "root", password: "long-enough-1", displayName: "老\u200b板" }),
+		).resolves.toBeUndefined();
+		expect(await users()).toEqual(["root"]);
+		expect(logged.join("\n")).toContain("忽略 SFLY_ADMIN_LOGIN");
 	});
 
 	it("初始化码：大小写、连字符、空白不敏感；换新码后旧码作废；discard 之后一律不对", async () => {
