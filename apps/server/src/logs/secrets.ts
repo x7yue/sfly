@@ -7,7 +7,6 @@ import {
 	MAX_AUTOMATON_CHARS,
 	MAX_SPANS,
 	maskedByAutomaton,
-	maskedPrefixByAutomaton,
 	maskedRegion,
 	mergeSpans,
 	scanSpans,
@@ -601,7 +600,7 @@ export class SecretSet {
 				const tokens = tokenSpans(text);
 				if (!tokens) return clipChars(text, limit);
 				const count = mergeSpans(0, tokens.starts, tokens.ends);
-				return clipChars(maskedPrefixByAutomaton(text, count, cut, SECRET_MASK), limit);
+				return clipChars(maskedRegion(text, count, 0, cut, SECRET_MASK), limit);
 			}
 			const automaton = this.#automaton();
 			if (!automaton) {
@@ -626,7 +625,7 @@ export class SecretSet {
 				}
 				budget.masks -= count;
 			}
-			return clipChars(maskedPrefixByAutomaton(text, count, cut, SECRET_MASK), limit);
+			return clipChars(maskedRegion(text, count, 0, cut, SECRET_MASK), limit);
 		} catch {
 			return clipChars(SECRET_MASK, limit);
 		}
