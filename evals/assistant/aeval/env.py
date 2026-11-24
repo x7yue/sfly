@@ -45,7 +45,9 @@ SUT_AGENT = "sut-01"
 # 初始管理员：给 Agent 签发凭据要登录（不带凭据是 401，#492）。登录名固定，
 # 密码每次建库随机生成，只放在内存里，
 # 经环境变量名（不在命令行参数里）交给控制面，经标准输入交给 curl。
-ADMIN_LOGIN = "aeval-admin"
+# 登录名的规则（`packages/schema` 的 `LOGIN_NAME_PATTERN`）：小写字母、数字、下划线，
+# 不能含连字符；不合规矩控制面起不来。
+ADMIN_LOGIN = "aeval_admin"
 ADMIN_PASSWORD_ENV = "SFLY_ADMIN_PASSWORD"
 # 两台 Agent 的配置文件（install.sh 写的）：凭据换了要改这里的 SFLY_TOKEN。
 AGENT_ENV_FILE = "/root/.sfly/agent.env"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import re
 import subprocess
 import threading
 import time
@@ -21,7 +22,7 @@ from aeval import docker as d
 from aeval import e2e
 from aeval.cli import _stack
 from aeval.e2e import check_sequence, sse_events
-from aeval.env import ASSISTANT_MODEL_LABEL, DEV_AGENT, Stack
+from aeval.env import ADMIN_LOGIN, ASSISTANT_MODEL_LABEL, DEV_AGENT, Stack
 from aeval.tasks import Check, Task
 
 SECRET = "0123456789abcdef" * 3
@@ -79,6 +80,20 @@ def test_control_plane_without_the_assistant_has_none_of_it(recorder: Recorder) 
     assert env is not None and set(env) == {"SFLY_ADMIN_PASSWORD"}
 
 
+def test_initial_admin_login_obeys_the_control_planes_login_name_rule() -> None:
+    """控制面按 `LOGIN_NAME_PATTERN` 检查 `SFLY_ADMIN_LOGIN`，不合规矩就起不来（第一次在真实
+    容器里跑才发现 `aeval-admin` 不行：登录名不能含连字符）。规则从 TypeScript 的源码里读，
+    不在这里抄一份。"""
+    source = (
+        Path(__file__).resolve().parents[3] / "packages/schema/src/http/accounts.ts"
+    ).read_text()
+    pattern = re.search(r"LOGIN_NAME_PATTERN\s*=\s*/(.+)/;", source)
+    assert pattern, "accounts.ts 里找不到 LOGIN_NAME_PATTERN"
+    assert re.fullmatch(pattern.group(1), ADMIN_LOGIN), (
+        f"{ADMIN_LOGIN!r} 不符合登录名的规则 {pattern.group(1)}"
+    )
+
+
 def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
     recorder: Recorder,
 ) -> None:
@@ -87,7 +102,7 @@ def test_control_plane_gets_an_initial_admin_whose_password_is_passed_by_name(
     stack = Stack(slot=9)
     stack._start_control_plane()
     [(args, env)] = recorder.runs("cp")
-    assert "SFLY_ADMIN_LOGIN=aeval-admin" in args
+    assert "SFLY_ADMIN_LOGIN=aeval_admin" in args
     assert "SFLY_ADMIN_PASSWORD" in args
     password = stack.admin_password
     assert password and len(password) >= 32
@@ -129,7 +144,7 @@ def test_agent_credentials_are_issued_by_the_admin_and_secrets_go_by_stdin(
     login, issue = shell.calls
     # 登录：密码经标准输入，不在脚本（命令行参数）里。
     assert "p" * 32 not in login["script"]
-    assert json.loads(login["input_text"]) == {"login_name": "aeval-admin", "password": "p" * 32}
+    assert json.loads(login["input_text"]) == {"login_name": "aeval_admin", "password": "p" * 32}
     # 签发：登录 Cookie 经 `-H @-` 从标准输入读，带 same-origin（Cookie 只认同源的有副作用请求）。
     assert "COOKIE123" not in issue["script"]
     assert "-H @-" in issue["script"]
