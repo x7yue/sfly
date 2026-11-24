@@ -485,10 +485,9 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		// 只有一条 turn_end，是助手服务的（原因是它写的）。
 		const ends = (await events(view.id)).filter((e) => e.type === "turn_end");
 		expect(ends).toHaveLength(1);
-		expect(ends[0]).toMatchObject({
-			outcome: "stopped",
-			reason: "助手服务按中止结束了这一轮",
-		});
+		expect(ends[0]).toMatchObject({ outcome: "stopped" });
+		// 不是控制面补的（控制面补的那句写着「由控制面结束」）。
+		expect(String((ends[0] as { reason: string }).reason)).not.toContain("由控制面结束");
 
 		// 不在做：不改会话，返回当前状态；空闲的会话向助手服务补发一次按会话的中止（`prompt` 超时后补发的中止可能落空，
 		// 这一次让用户有办法把它停下来）。
@@ -617,7 +616,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		});
 		const [end] = (await events(first.id)).filter((e) => e.type === "turn_end");
 		expect(end).toMatchObject({ type: "turn_end", turn: 1, outcome: "stopped" });
-		expect(String((end as { reason: string }).reason)).toContain("没有及时带回");
+		expect(String((end as { reason: string }).reason)).toContain("由控制面结束");
 		expect(assistant.aborts).toEqual([first.id]);
 
 		// 项目能开始新的一轮，不被这个会话卡住。
@@ -634,7 +633,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		expect(quiet.status).toBe(200);
 		expect(await json<SessionView>(quiet)).toMatchObject({ status: "idle" });
 		const [quietEnd] = (await events(second.id)).filter((e) => e.type === "turn_end");
-		expect(String((quietEnd as { reason: string }).reason)).toContain("没有及时带回");
+		expect(String((quietEnd as { reason: string }).reason)).toContain("由控制面结束");
 		expect((await create("第三个")).status).toBe(201);
 	});
 
@@ -1642,12 +1641,11 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			);
 			await settled();
 			expect((await sessionRow(cp, view.id))?.status).toBe("idle");
-			// 结局是助手服务带回的（假助手服务写的原因），不是控制面补的。
+			// 结局是助手服务带回的（中止结束的，`stopped`），不是控制面补的（控制面补的是失败的结局，`failed`）。
 			expect((await eventsOf(api, view.id)).at(-1)).toMatchObject({
 				type: "turn_end",
 				turn: 2,
 				outcome: "stopped",
-				reason: "助手服务按中止结束了这一轮",
 			});
 		} finally {
 			assistant.promptAcceptedThenReply = () => undefined;
@@ -1695,7 +1693,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		expect(await sessionCount(cp)).toBe(1);
 		const events = await eventsOf(api, id);
 		expect(events.map((e) => e.type)).toEqual(["user_message", "turn_started", "turn_end"]);
-		expect(events.at(-1)).toMatchObject({ reason: "助手服务按中止结束了这一轮" });
+		// 结局是助手服务带回的（`stopped`），不是控制面补的（控制面补的是失败的结局，`failed`）。
+		expect(events.at(-1)).toMatchObject({ outcome: "stopped" });
 	});
 
 	it("新建会话 prompt 结果未知、助手服务做了事但没有带回结局（控制面到期自己补）：会话也不删，这一轮里有助手服务的事件就算碰过", async () => {
@@ -1961,7 +1960,7 @@ describe("停止的等待和助手服务的强制结束对齐", () => {
 			// 结局是助手服务带回来的，不是控制面先补的。
 			const ends = (await eventsOf(api, view.id)).filter((e) => e.type === "turn_end");
 			expect(ends).toHaveLength(1);
-			expect(ends[0]).toMatchObject({ reason: "助手服务按中止结束了这一轮" });
+			expect(String((ends[0] as { reason: string }).reason)).not.toContain("由控制面结束");
 			// 马上再说一句：新的一轮照常开始。
 			assistant.stopSettleMs = 0;
 			expect((await api.post(`/sessions/${view.id}/messages`, { text: "再来一句" })).status).toBe(
@@ -2084,10 +2083,8 @@ describe("停止时中止的命令超时（结果未知）：照样等助手服�
 			expect(await json<SessionView>(stopped)).toMatchObject({ status: "idle" });
 			const ends = (await eventsOf(api, view.id)).filter((e) => e.type === "turn_end");
 			expect(ends).toHaveLength(1);
-			expect(ends[0]).toMatchObject({
-				outcome: "stopped",
-				reason: "助手服务按中止结束了这一轮",
-			});
+			expect(ends[0]).toMatchObject({ outcome: "stopped" });
+			expect(String((ends[0] as { reason: string }).reason)).not.toContain("由控制面结束");
 		} finally {
 			assistant.abortDelayMs = 0;
 			assistant.stopSettleMs = 0;

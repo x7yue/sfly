@@ -257,6 +257,24 @@ export class FakeAssistant {
 		this.emit(sessionId, target, { type: "steer_queue", messages: [] });
 	}
 
+	/**
+	 * 模拟助手服务**在一轮中途**把一句插话处理掉了（pi 没收下、被清掉……）：这句话发一条 `steer_dropped`（协议的不变式：没送到的
+	 * 插话各有一条），再发不含它的 `steer_queue`；之后这一轮的 `turn_end` 前不会再为它发（`strictTurns` 开着时）。
+	 */
+	dropSteer(sessionId: string, turn: number, messageId: string): void {
+		const queue = this.#steerQueues.get(sessionId)?.get(turn);
+		const index = queue?.findIndex((m) => m.message_id === messageId) ?? -1;
+		if (!queue || index < 0) return;
+		const [message] = queue.splice(index, 1);
+		this.emit(sessionId, turn, {
+			type: "notice",
+			kind: "steer_dropped",
+			message: `这句插话没有送到：「${message?.text ?? ""}」`,
+			message_id: messageId,
+		});
+		this.emit(sessionId, turn, { type: "steer_queue", messages: [...queue] });
+	}
+
 	/** 这一轮的 `turn_end` 之前：没送到的插话各发一条 `steer_dropped`（协议的不变式），之后这一轮没有待送的插话。 */
 	#dropSteers(sessionId: string, turn: number): void {
 		const queues = this.#steerQueues.get(sessionId);
@@ -424,7 +442,7 @@ export class FakeAssistant {
 			if (this.strictTurns) {
 				const pending = this.#pending.get(sessionId);
 				if (pending !== undefined) {
-					this.#endPending(sessionId, pending, "会话结束了，这一轮没有开始");
+					this.#endPending(sessionId, pending, "会话结束了");
 				}
 				const running = this.#running.get(sessionId);
 				if (running !== undefined) this.#stopTurn(sessionId, running, "会话结束了");
@@ -476,10 +494,11 @@ export class FakeAssistant {
 				if (!queue.some((m) => m.message_id === steer.data.message_id)) {
 					queue.push({ message_id: steer.data.message_id, text: steer.data.text });
 				}
-				await wait(this.steerDelayMs);
-				this.#send(res, 202);
+				// 真的助手服务**先**发含这句话的 `steer_queue`、**再**回 202（收下、排进 pi 的队列、发队列、回应）：控制面先在事务里写
+				// `user_message` 再发命令、认 `steer_queue` 时不看 202，所以接得上；这里照真的来，回应慢（`steerDelayMs`）时队列早就到了。
 				this.emit(sessionId, turn, { type: "steer_queue", messages: [...queue] });
-				return;
+				await wait(this.steerDelayMs);
+				return this.#send(res, 202);
 			}
 			await wait(this.steerDelayMs);
 			return this.#send(res, 202);
@@ -517,12 +536,12 @@ export class FakeAssistant {
 			if (this.strictTurns) {
 				const pending = this.#pending.get(sessionId);
 				if (pending !== undefined && pending <= turn) {
-					this.#endPending(sessionId, pending, "这一轮在开始之前就被中止了");
+					this.#endPending(sessionId, pending, "用户停止了这一轮");
 				}
 				const running = this.#running.get(sessionId);
 				if (running !== undefined && running <= turn) {
 					this.endedByAbort.push({ sessionId, turn: running });
-					this.#stopTurn(sessionId, running, "助手服务按中止结束了这一轮");
+					this.#stopTurn(sessionId, running, "用户停止了这一轮");
 				}
 			}
 			await wait(this.abortDelayMs);
@@ -589,7 +608,7 @@ export class FakeAssistant {
 		} else {
 			this.#send(res, 202);
 		}
-		if (stale) this.#emitEnd(sessionId, parsed.data.turn, "这一轮在开始之前就被中止了");
+		if (stale) this.#emitEnd(sessionId, parsed.data.turn, "这一轮到之前已经要求停止了");
 	}
 }
 

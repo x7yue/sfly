@@ -22,11 +22,15 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 const json = async <T>(res: Response): Promise<T> => (await res.json()) as T;
 const WORKBENCH = "workbench-a";
 const USAGE = { input: 10, output: 5, cache_read: 0, cache_write: 0 };
-const turnEnd = (turn: number, outcome: "completed" | "stopped" = "completed"): AssistantEvent => ({
+const turnEnd = (
+	turn: number,
+	outcome: "completed" | "stopped" | "failed" = "completed",
+	reason = "测试",
+): AssistantEvent => ({
 	type: "turn_end",
 	turn,
 	outcome,
-	reason: "测试",
+	reason,
 	steps: 1,
 	model_calls: 1,
 	duration_ms: 1000,
@@ -455,11 +459,71 @@ describe("停止、插话、结束会话、排队", () => {
 			const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
 			expect(dropped).toHaveLength(2);
 			expect(events.at(-1)).toMatchObject({ type: "turn_end", outcome: "stopped" });
-			expect((events.at(-1) as { reason: string }).reason).toContain("助手服务按中止结束");
-			// 控制面没有补：每句话只有一条 steer_dropped，没有写「没有确认送到」。
-			for (const e of dropped) {
-				expect((e as { message: string }).message).not.toContain("没有确认送到");
-			}
+			// 结局是助手服务带回的，不是控制面补的（控制面补的那句写着「由控制面结束」）。
+			expect((events.at(-1) as { reason: string }).reason).not.toContain("由控制面结束");
+			// 控制面没有补：每句话只有一条 steer_dropped（只数条数，不看措辞：真的助手服务自己也会写「没有确认送到」）。
+			expect(new Set(dropped.map((e) => (e as { message_id: string }).message_id)).size).toBe(2);
+		});
+
+		it("真的助手服务先发含这句话的 steer_queue、再回 202：控制面先写 user_message、认送到不看 202；回应还在路上时队列已经到了，之后控制面补结局不为这句话写 steer_dropped", async () => {
+			assistant.stopSettleMs = 1_500; // 严格模式：收下中止之后 1.5 秒才结束，比控制面的期限（300 毫秒）长：结局由控制面补
+			const first = await json<SessionView>(await create("做第一件事"));
+			assistant.steerDelayMs = 600;
+			const saying = say(first.id, "插话");
+			await eventually(async () => expect(assistant.steers).toHaveLength(1));
+			// 回应还没到，含这句话的 `steer_queue` 已经发了（假助手服务照真的来：先发事件、再回应）：库里已经有这句话的 user_message。
+			const [id] = await steerIds(first.id);
+			expect(id).toBeDefined();
+			assistant.deliverSteers(first.id);
+			expect((await saying).status).toBe(200);
+			assistant.steerDelayMs = 0;
+			// 停止：助手服务比控制面的期限晚结束，结局由控制面补；这句话出现过、之后又不在队列里（确认送到），不补 steer_dropped。
+			expect((await api.postEmpty(`/sessions/${first.id}/stop`)).status).toBe(200);
+			const events = (await detail(first.id)).events;
+			expect(events.filter((e) => e.type === "notice" && e.kind === "steer_dropped")).toEqual([]);
+			expect(String((events.at(-1) as { reason: string }).reason)).toContain("由控制面结束");
+		});
+
+		it("一轮中途助手服务把一句插话处理掉了（先发 steer_dropped，再发不含它的 steer_queue）：控制面补结局时不再为它写，只有助手服务写的那一条", async () => {
+			assistant.stopSettleMs = 1_500; // 比控制面的期限（300 毫秒）长：结局由控制面补
+			const first = await json<SessionView>(await create("做第一件事"));
+			expect((await say(first.id, "被处理掉的话")).status).toBe(200);
+			const [id] = await steerIds(first.id);
+			assistant.dropSteer(first.id, 1, id as string);
+			await eventually(async () =>
+				expect(
+					(await detail(first.id)).events.some(
+						(e) => e.type === "notice" && e.kind === "steer_dropped",
+					),
+				).toBe(true),
+			);
+			expect((await api.postEmpty(`/sessions/${first.id}/stop`)).status).toBe(200);
+			const events = (await detail(first.id)).events;
+			const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
+			expect(dropped.map((e) => (e as { message_id: string }).message_id)).toEqual([id]);
+			expect(String((events.at(-1) as { reason: string }).reason)).toContain("由控制面结束");
+		});
+
+		it("在等的一轮直接以 failed 结束、此前没有任何事件（上一轮的 pi 进程没有退出，这一轮没有开始）：回 202 之后收到 failed 的结局，会话回到空闲，排队的下一个开始", async () => {
+			assistant.stopSettleMs = 1_500; // 上一轮停得很慢（比控制面的期限长）：新的一轮登记着、等它
+			const a = await json<SessionView>(await create("甲"));
+			expect((await api.postEmpty(`/sessions/${a.id}/stop`)).status).toBe(200); // 控制面补了第 1 轮的结局
+			expect((await say(a.id, "再来")).status).toBe(200);
+			expect(assistant.pendingTurn(a.id)).toBe(2);
+			const b = await json<SessionView>(await create("乙", "bob"));
+			expect(b.status).toBe("queued");
+			// 助手服务：第 2 轮回了 202 之后几秒内以 failed 结束，原因是上一轮的进程没有退出；此前没有任何事件，不带 error_class。
+			assistant.emit(a.id, 2, turnEnd(2, "failed", "上一轮的 pi 进程没有退出，所以这一轮没有开始"));
+			await eventually(async () => expect(await statusOf(cp, a.id)).toBe("idle"));
+			const ends = (await detail(a.id)).events
+				.filter((e) => e.type === "turn_end")
+				.map((e) => [(e as { turn: number }).turn, (e as { outcome: string }).outcome]);
+			expect(ends).toEqual([
+				[1, "stopped"],
+				[2, "failed"],
+			]);
+			await eventually(() => expect(assistant.prompts.map((p) => p.sessionId)).toContain(b.id));
+			expect(await statusOf(cp, b.id)).toBe("running");
 		});
 
 		it("这一轮的 prompt 还没有得到 202 时，这期间说的插话先留着、不转发（user_message 照常写）；prompt 被明确拒绝（503）：留着的话各写一条「没有送到」的 steer_dropped，排在失败的 turn_end 前面，助手服务没有收到过插话", async () => {
@@ -485,9 +549,9 @@ describe("停止、插话、结束会话、排队", () => {
 				.map((e) => (e as { message_id: string }).message_id);
 			const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
 			expect(dropped.map((e) => (e as { message_id: string }).message_id)).toEqual([a, b]);
-			// 一定没有开始：写「没有送到」，不是「没有确认送到」。
+			// 一定没有开始：控制面写的是「没有送到（这一轮没有交到助手服务手上）」。
 			for (const e of dropped) {
-				expect((e as { message: string }).message).not.toContain("没有确认送到");
+				expect((e as { message: string }).message).toContain("这一轮没有交到助手服务手上");
 			}
 			expect(events.at(-1)).toMatchObject({
 				type: "turn_end",
@@ -569,8 +633,8 @@ describe("停止、插话、结束会话、排队", () => {
 			}
 			const ends = (await detail(first.id)).events.filter((e) => e.type === "turn_end");
 			expect(ends).toHaveLength(1);
-			// 是控制面补的，不是助手服务带回的（助手服务的 reason 是「助手服务按中止结束了这一轮」）。
-			expect((ends[0] as { reason: string }).reason).toContain("没有及时带回");
+			// 是控制面补的，不是助手服务带回的（控制面补的那句写着「由控制面结束」）。
+			expect((ends[0] as { reason: string }).reason).toContain("由控制面结束");
 			expect(await statusOf(cp, first.id)).toBe("idle");
 		});
 
@@ -581,7 +645,7 @@ describe("停止、插话、结束会话、排队", () => {
 			expect((await stopping).status).toBe(200);
 			const ends = (await detail(first.id)).events.filter((e) => e.type === "turn_end");
 			expect(ends).toHaveLength(1);
-			expect((ends[0] as { reason: string }).reason).toBe("助手服务按中止结束了这一轮");
+			expect((ends[0] as { reason: string }).reason).not.toContain("由控制面结束");
 		});
 	});
 
