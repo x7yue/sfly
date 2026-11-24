@@ -1582,6 +1582,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			const res = await api.post("/projects/default/sessions", { text: "冷启动很慢" });
 			expect(res.status).toBe(503);
 			id = assistant.prompts.at(-1)?.sessionId as string;
+			// 慢只慢第一个 `prompt`：之后那句话开始的第 2 轮的 `prompt` 照常回应（不然它也超时，又补发一次中止）。
+			assistant.promptDelayMs = 0;
 			expect((await sessionRow(cp, id))?.status).toBe("running");
 			// 别人对它说话：新的一轮的开头，排在后面（200）。
 			const said = await api.post(`/sessions/${id}/messages`, { text: "等的时候说的话" }, "bob");
