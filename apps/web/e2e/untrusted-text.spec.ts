@@ -477,11 +477,14 @@ test("从右到左的文字（希伯来文开头的混排、纯希伯来文、�
 	const probe = await agent.nextAssign({ start: false });
 	clock.advance(2000);
 	await agent.started(probe);
+	// 最后一条很长（比进度说明那一格的最大宽度还宽，被截断）：截断的那一侧也和不隔离时一样（省略号在末尾，不在开头）。
+	const long = `${"שלום עולם 拉取完成 🎉 ".repeat(8)}结束`;
 	const samples = [
 		"שלום עולם 拉取完成 👩‍💻 🎉",
 		"שלום עולם",
 		"مرحبا بالعالم",
 		"Result: مرحبا (تم) — done 100%",
+		long,
 	];
 	for (const [index, text] of samples.entries()) {
 		agent.progress(probe, index + 1, samples.length, text);
