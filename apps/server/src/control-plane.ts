@@ -160,7 +160,7 @@ export interface ControlPlaneOptions {
 	/**
 	 * 借出去的数据库连接（事务里）出错时调用（#563，docs/ARCHITECTURE.md §6.10）：`main.ts` 给的是有序退出进程。
 	 * 这样的连接上的错误以前是没人接的 `error` 事件、进程当场退出；之后的状态不可信（任务结果没写进去、提交之后的派发没人补），
-	 * 靠重启恢复。调用之前连接池已经结束：之后拿连接的请求立刻以错误结束，不再碰数据库。不给：只记日志（测试里的控制面）。
+	 * 靠重启恢复。调用之前连接池已经结束：之后新的拿连接的请求立刻以错误结束，不再碰数据库（已经借出去的连接不受影响，有序关闭等它们做完）。不给：只记日志（测试里的控制面）。
 	 */
 	onFatalDatabaseError?: (error: Error) => void;
 	/**
@@ -413,6 +413,13 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		limitBytes: options.artifactLimitBytes,
 		uploadIdleMs: options.artifactUploadIdleMs,
 	});
+	// 上次进程被杀、断电时留下的上传临时文件：开始监听之前清掉（这时没有上传在做）；清不掉不挡住启动。
+	await artifacts
+		.sweepUploadTemp()
+		.then((count) => {
+			if (count > 0 && logger) printInfo(`sfly: 清掉了上次留下的 ${count} 个上传临时文件`);
+		})
+		.catch((error) => logError("sfly: 清理上次留下的上传临时文件失败：", error));
 	const retention = new Retention({
 		db: database.db,
 		clock,

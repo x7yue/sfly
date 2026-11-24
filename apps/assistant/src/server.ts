@@ -13,6 +13,7 @@ import {
 	SteerCommandBody,
 } from "@sfly/schema";
 import type { EventBus } from "./bus.js";
+import { describeError } from "./output.js";
 import type { SessionManager } from "./sessions.js";
 
 /**
@@ -49,9 +50,7 @@ export function createAssistantServer(deps: ServerDeps): Server {
 	const server = createServer((req, res) => {
 		void handle(req, res).catch((error: unknown) => {
 			// 回应里不带原因（可能引用请求的内容），原因写日志。
-			deps.log(
-				`处理 ${req.method} ${req.url} 出错：${error instanceof Error ? error.message : String(error)}`,
-			);
+			deps.log(`处理 ${req.method} ${req.url} 出错：${describeError(error)}`);
 			if (!res.headersSent) sendError(res, 500, "start_failed", "助手服务内部出错，原因见它的日志");
 			else res.destroy();
 		});

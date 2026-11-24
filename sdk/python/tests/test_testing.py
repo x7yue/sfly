@@ -910,6 +910,19 @@ def test_progress_with_nan_or_infinity_is_dropped_with_one_warning_like_a_metric
     assert "有限数值" in warning.message
 
 
+def test_a_warning_does_not_quote_the_start_of_a_very_long_value() -> None:
+    """很长的值只写类型和长度：截断后的内容里如果有 secret 值，前半截控制面认不出来。"""
+    import number_nodes
+
+    result = run_node(number_nodes.huge_integer_with_recognizable_digits)
+
+    assert result.status == "success", result.error
+    [warning] = [line for line in result.logs if line.level == "warn"]
+    assert "ctx.progress" in warning.message
+    assert "7777" not in warning.message
+    assert "<int，400 个字符>" in warning.message
+
+
 def test_a_raw_message_with_nan_is_not_sent_and_a_warning_names_the_place() -> None:
     import number_nodes
 
