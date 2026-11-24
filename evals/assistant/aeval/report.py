@@ -119,7 +119,33 @@ def render(results: Path) -> str:
     for remote in REMOTE_ARMS:
         for model in sorted({r["model"] for r in counted if arm_of(r) == remote}):
             body += "\n" + render_decision(decide(all_for_decision, model, remote)) + "\n"
+            body += "".join(f"- {note}\n" for note in comparison_notes(counted, model, remote))
     return body
+
+
+def comparison_notes(records: list[dict[str, Any]], model: str, remote: str) -> list[str]:
+    """臂 A 和远程那一臂比时要说明的：两臂的上限不一样（判定照算，但轮数、超时不可比）；
+    平台臂的内存峰值和臂 A 的量法。"""
+    notes = []
+    limits: dict[str, set[str]] = {}
+    for record in records:
+        if record["model"] == model and arm_of(record) in ("a", remote):
+            given = (record.get("driver") or {}).get("limits") or {}
+            text = f"{given.get('max_turns', '?')} 轮、{given.get('max_seconds', '?')} 秒"
+            limits.setdefault(arm_of(record), set()).add(text)
+    if len(limits) == 2 and limits["a"] != limits[remote]:
+        notes.append(
+            f"注意：两臂的上限不一样（臂 A：{'、'.join(sorted(limits['a']))}；"
+            f"{ARM_NAMES[remote]}：{'、'.join(sorted(limits[remote]))}），轮数和超时不可比，"
+            "上面的判定只作参考"
+        )
+    if remote == "p":
+        notes.append(
+            "内存峰值：两臂都是 pi 进程的 VmHWM、每秒取一次；臂 A 是开发环境里的 JSON 模式、"
+            "本地工具，平台臂是助手容器里的 RPC 模式、加载远程工具扩展，进程按会话常驻，"
+            "量的是同一种东西，但不是同一个配置下的 pi"
+        )
+    return notes
 
 
 def endpoint_table(records: list[dict[str, Any]]) -> str:
@@ -148,7 +174,10 @@ def endpoint_table(records: list[dict[str, Any]]) -> str:
 
 def _reason(record: dict[str, Any]) -> str:
     error = str(
-        record.get("endpoint_error") or (record.get("failure") or {}).get("endpoint_error") or ""
+        record.get("platform_error")
+        or record.get("endpoint_error")
+        or (record.get("failure") or {}).get("endpoint_error")
+        or ""
     )
     return error[:60].replace("|", "\\|") or "未记录"
 

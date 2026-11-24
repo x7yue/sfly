@@ -72,6 +72,28 @@ def exit_reason(turn_end: dict[str, Any] | None, deadline_passed: bool) -> str:
     return EXIT_REASONS.get(outcome, outcome)
 
 
+# 平台以这两种结局结束一轮，是平台这一侧的问题（连不上工作台、开始这一轮失败、旧的 pi 进程没有退出；
+# pi 进程在这一轮里退出了、助手服务重启了），不是助手没把题做出来。
+PLATFORM_OUTCOMES = ("failed", "interrupted")
+
+
+def platform_error(platform: dict[str, Any]) -> str | None:
+    """这次会话是不是因为平台这一侧的问题没能做完，是的话返回原因：建会话被拒、事件流断了或者
+    停止之后没有结局（都没有 `turn_end`），平台以 `failed`、`interrupted` 结束。评测这一侧过了
+    时限、停下的那一轮（`stopped`）和到了上限（`limit`）是助手的事，不算；模型端点的故障由
+    `classify` 从 pi 的事件里认。"""
+    problems = "；".join(str(p) for p in platform.get("problems") or []) or "会话驱动没有给出结果"
+    if not platform.get("session"):
+        return f"没有建成会话：{problems}"
+    turn_end = platform.get("turn_end")
+    if not isinstance(turn_end, dict):
+        return f"没有等到这一轮的结局：{problems}"
+    outcome = turn_end.get("outcome")
+    if outcome in PLATFORM_OUTCOMES:
+        return f"平台以 {outcome} 结束了这一轮：{turn_end.get('reason')}"
+    return None
+
+
 def driver_summary(
     turn_end: dict[str, Any] | None,
     raw_events: list[dict[str, Any]],
@@ -345,6 +367,7 @@ def run_platform_session(
         seeded_at=seeded_at,
         host_seconds=host_seconds,
         driver_summary=summary,
+        platform_error=platform_error(platform),
         extra={
             "platform": {
                 "session": platform_id,

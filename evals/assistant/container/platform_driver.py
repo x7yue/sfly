@@ -133,7 +133,10 @@ def run(
     with (out / "platform-events.jsonl").open("w") as sink:
         try:
             session = client.request("POST", f"/projects/{project}/sessions", {"text": prompt})
-            record["session"] = session_id = str(session["id"])
+            created = session.get("id") if isinstance(session, dict) else None
+            if not isinstance(created, str) or not created:
+                raise ControlPlaneError(f"建会话的回应里没有会话 ID：{json.dumps(session)[:200]}")
+            record["session"] = session_id = created
             say({"event": "created", "session": session_id})
             waited = client.follow(session_id, 0, started + max_seconds, sink, events)
             if waited is not None:

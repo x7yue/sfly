@@ -99,3 +99,51 @@ def test_turn_json_is_not_copied_out_of_the_assistant() -> None:
     # turn.json 是这一轮的配置，带着环境变量（含保密的）：结果目录里不能有它。
     assert "turn.json" not in SESSION_FILES
     assert "events.jsonl" in SESSION_FILES
+
+
+def test_platform_error_tells_environment_problems_from_not_doing_the_task() -> None:
+    from aeval.platform import platform_error
+
+    end = {"type": "turn_end", "seq": 9}
+    assert platform_error({"session": None, "problems": ["POST … 返回 503"]}) == (
+        "没有建成会话：POST … 返回 503"
+    )
+    assert platform_error({"session": "s", "turn_end": None, "problems": ["事件流断了"]}) == (
+        "没有等到这一轮的结局：事件流断了"
+    )
+    assert platform_error({"session": "s", "turn_end": {**end, "outcome": "failed", "reason": "x"}})
+    assert platform_error({"session": "s", "turn_end": {**end, "outcome": "interrupted"}})
+    # 助手自己的事：做完了、到了上限、评测这一侧过了时限停下的，都不算平台的问题。
+    for outcome in ("completed", "limit", "stopped"):
+        assert platform_error({"session": "s", "turn_end": {**end, "outcome": outcome}}) is None
+    assert platform_error({}) == "没有建成会话：会话驱动没有给出结果"
+
+
+def test_a_platform_problem_voids_the_session_instead_of_counting_as_a_failure() -> None:
+    from aeval.classify import INFRA
+    from aeval.session import judge
+
+    classified = {"primary": "超时", "invalid": False, "signals": {"超时": 1}}
+    failed = {"passed": False}
+    assert judge(classified, failed, None) == (False, classified)
+    invalid, failure = judge(classified, failed, "没有等到这一轮的结局：事件流断了")
+    assert invalid is True and failure is not None and failure["primary"] == INFRA
+    # 判分通过了也作废：平台这一侧出了问题的会话不计入。
+    assert judge(classified, {"passed": True}, "平台以 failed 结束了这一轮")[0] is True
+    assert judge(classified, {"passed": True}, None) == (False, None)
+
+
+def test_report_notes_different_limits_and_how_memory_is_measured() -> None:
+    from aeval.report import comparison_notes
+
+    def rec(arm: str, turns: int) -> dict[str, Any]:
+        limits = {"max_turns": turns, "max_seconds": 1200.0}
+        return {"model": "m", "arm": arm, "driver": {"limits": limits}}
+
+    same = comparison_notes([rec("a", 40), rec("p", 40)], "m", "p")
+    assert not any("上限不一样" in n for n in same)
+    assert any("VmHWM" in n for n in same)
+    differ = comparison_notes([rec("a", 20), rec("p", 40)], "m", "p")
+    assert any("上限不一样" in n and "20 轮" in n for n in differ)
+    # 臂 B 的对比不说平台臂的内存。
+    assert not any("VmHWM" in n for n in comparison_notes([rec("a", 40), rec("b", 40)], "m", "b"))

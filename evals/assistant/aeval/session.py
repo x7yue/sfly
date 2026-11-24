@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from aeval import docker as d
-from aeval.classify import classify, is_assistant_run
+from aeval.classify import INFRA, classify, is_assistant_run
 from aeval.env import OPT, Stack
 from aeval.models import PROVIDER, Model
 from aeval.tasks import Check, Task, stage_reference, summarize
@@ -213,10 +213,14 @@ def finish_record(
     host_seconds: float,
     driver_summary: dict[str, Any],
     extra: dict[str, Any] | None = None,
+    platform_error: str | None = None,
 ) -> dict[str, Any]:
     """一次会话结束之后（各臂一样）：存工作区的改动和控制面上的运行，判分、分类失败，
-    写 `session.json`。
-    `out` 里已经有这次的 `events.jsonl`（pi 的原始事件）。"""
+    写 `session.json`。`out` 里已经有这次的 `events.jsonl`（pi 的原始事件）。
+
+    `platform_error`（只有平台臂有）：平台这一侧出的问题（建会话被拒、事件流断了、没等到结局、
+    平台以 `failed`、`interrupted` 结束这一轮），不是助手没把题做出来。和模型端点的故障一样
+    作废、要重跑，不算进失败，原因记下来。"""
     diff = d.sh(
         stack.dev,
         "git add -A -N . && git diff --stat HEAD && git diff HEAD",
@@ -231,8 +235,7 @@ def finish_record(
     events = out / "events.jsonl"
     classified = classify(events, driver_summary, runs)
     # 因为端点故障没能做完的会话作废（不论判分结果）：重跑，不计入结果。重试成功的照常算。
-    invalid = bool(classified["invalid"])
-    failure = classified if invalid or not graded["passed"] else None
+    invalid, failure = judge(classified, graded, platform_error)
     record = {
         "session": session_id,
         "task": task.id,
@@ -249,6 +252,7 @@ def finish_record(
         "failure": failure,
         "invalid": invalid,
         "endpoint_error": classified["endpoint_error"],
+        "platform_error": platform_error,
         "endpoint_retries": classified["endpoint_retries"],
         "assistant_runs": len([r for r in runs if is_assistant_run(r)]),
         "tool_versions": tools,
@@ -256,6 +260,17 @@ def finish_record(
     }
     (out / "session.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
     return record
+
+
+def judge(
+    classified: dict[str, Any], graded: dict[str, Any], platform_error: str | None
+) -> tuple[bool, dict[str, Any] | None]:
+    """这次会话作不作废、失败记成什么。作废：模型端点的故障（`classify`）或平台这一侧的问题
+    （`platform_error`），不论判分；作废的失败分类是「环境故障」。没作废又没通过的照 `classify`。"""
+    if platform_error is not None:
+        classified = {**classified, "primary": INFRA, "invalid": True}
+    invalid = bool(classified["invalid"])
+    return invalid, classified if invalid or not graded["passed"] else None
 
 
 def tool_versions(stack: Stack, workspace: str) -> dict[str, str]:

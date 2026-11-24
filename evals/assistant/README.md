@@ -154,8 +154,12 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
 - 上限是平台自己的（每一轮 40 次模型调用、20 分钟），和评测的默认值一样；`--max-turns`、`--max-seconds` 对平台臂不起作用，
   只提醒。
 - 模型：`--model` 和助手容器现在的模型不一样时，这次会话之前的 `reset` 把助手容器换成这个模型（假的模型端点要在 up 时起着）。
+- **平台这一侧的问题不算做题失败**：建会话被拒、事件流断了或停止之后没有结局（都没有 `turn_end`）、平台以 `failed`、
+  `interrupted` 结束这一轮（连不上工作台、pi 进程退出了……），这次会话和模型端点的故障一样作废（`session.json` 的
+  `platform_error` 写明原因），`run` 停下，用 `--fill` 重跑。评测这一侧过了时限停下的（`stopped`）和到了上限的算「超时」。
 - `report` 有平台臂时给出臂 A 对平台臂的判定，三条标准和臂 B 的一样（`aeval/decide.py`），结论是「平台臂没有明显变差」或
-  「明显变差」。
+  「明显变差」。判定下面说明内存峰值的量法（两臂都是 pi 进程的 `VmHWM`，但臂 A 是 JSON 模式、本地工具，平台臂是 RPC 模式、
+  加载远程工具扩展）；两臂的上限不一样时（臂 A 传了别的 `--max-turns`、`--max-seconds`）提醒判定只作参考。
 
 ## 模型
 

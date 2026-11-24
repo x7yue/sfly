@@ -21,7 +21,10 @@ class FakeControlPlane:
     """假的控制面。`mode`：
     - `ok`：事件流补发三个事件和 turn_end；
     - `silent`：事件流只发心跳，收到 stop 之后下一条事件流发 `stopped` 的 turn_end；
-    - `down`：建会话回 503。"""
+    - `down`：建会话回 503；
+    - `no-id`：建会话回 201，但回应里没有 `id`；
+    - `ephemeral-end`：先来一个不带序号（不持久）的 turn_end，再来带序号的；
+    - `broken`：事件流发了一个事件就断开，之后不再有结局。"""
 
     def __init__(self, mode: str) -> None:
         self.mode = mode
@@ -51,7 +54,7 @@ class FakeControlPlane:
                     if owner.mode == "down":
                         return self._json(503, {"code": "assistant_unavailable"})
                     assert json.loads(body or "{}") == {"text": "写一个节点"}
-                    return self._json(201, {"id": "s1"})
+                    return self._json(201, {} if owner.mode == "no-id" else {"id": "s1"})
                 if self.path.endswith("/stop"):
                     owner.stopped.set()
                 self._json(202, None)
@@ -77,6 +80,14 @@ class FakeControlPlane:
         def event(body: dict[str, Any]) -> str:
             return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
+        if self.mode == "ephemeral-end":
+            yield event({"type": "turn_end", "turn": 1, "outcome": "completed", "reason": "不持久"})
+            yield event({"type": "user_message", "seq": 1})
+            yield event({**TURN_END, "seq": 2})
+            return
+        if self.mode == "broken":
+            yield event({"type": "user_message", "seq": 1})
+            return
         if self.mode == "ok":
             yield event({"type": "user_message", "seq": 1})
             yield event({"type": "turn_started", "seq": 2})
@@ -161,3 +172,31 @@ def test_when_the_session_cannot_be_created_nothing_is_stopped_or_ended(
     assert "返回 503" in record["problems"][0]
     assert [c[:2] for c in cp.calls] == [("POST", "/projects/default/sessions")]
     assert [s["event"] for s in said] == ["done"]
+
+
+def test_a_session_response_without_an_id_is_a_problem_not_a_crash(
+    tmp_path: Path, said: list[Any]
+) -> None:
+    cp = FakeControlPlane("no-id")
+    record = run(Client(cp.url, "eval"), "default", "写一个节点", 30, tmp_path, said.append)
+    assert record["session"] is None
+    assert record["problems"][0].startswith("建会话的回应里没有会话 ID")
+    assert [c[:2] for c in cp.calls] == [("POST", "/projects/default/sessions")]
+    assert [s["event"] for s in said] == ["done"]
+
+
+def test_only_a_persistent_turn_end_ends_the_wait(tmp_path: Path, said: list[Any]) -> None:
+    cp = FakeControlPlane("ephemeral-end")
+    record = run(Client(cp.url, "eval"), "default", "写一个节点", 30, tmp_path, said.append)
+    assert record["turn_end"] == {**TURN_END, "seq": 2}
+    assert record["problems"] == []
+
+
+def test_a_stream_that_breaks_before_turn_end_stops_and_still_ends_the_session(
+    tmp_path: Path, said: list[Any]
+) -> None:
+    cp = FakeControlPlane("broken")
+    record = run(Client(cp.url, "eval"), "default", "写一个节点", 30, tmp_path, said.append)
+    assert record["turn_end"] is None
+    assert record["problems"][0] == "事件流在 turn_end 之前就结束了"
+    assert [c[:2] for c in cp.calls][-1] == ("POST", "/sessions/s1/end")
