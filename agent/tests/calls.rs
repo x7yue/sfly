@@ -13,7 +13,7 @@ use sfly_agent::proto::{
     CancelTask, DescribeRequest, DescribeResponse, ReferencedAgent, TaskStatus, server_message,
 };
 use support::calls::{
-    AgentPair, call, hold_task, open_call, read_reply, referenced, request, socket_of,
+    AgentPair, call, hold_task, open_call, read_reply, referenced, request, silent_peer, socket_of,
 };
 use support::{AgentOptions, FakeControlPlane, spawn_agent};
 use tokio::net::TcpListener;
@@ -216,19 +216,6 @@ async fn an_agent_without_the_capability_or_the_method_is_unsupported() {
         message,
         "Agent runner-unsupported 不支持 files.teleport：这台 Agent 的版本没有这个方法"
     );
-}
-
-/// 接受连接但从不回应的「另一台 Agent」。
-async fn silent_peer() -> (u16, tokio::task::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let handle = tokio::spawn(async move {
-        let mut held = Vec::new();
-        while let Ok((stream, _)) = listener.accept().await {
-            held.push(stream);
-        }
-    });
-    (port, handle)
 }
 
 #[tokio::test]
