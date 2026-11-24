@@ -1546,6 +1546,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		assistant.stopSettleMs = 800; // 这一轮在中止之后 800 毫秒才结束
 		assistant.promptDelayMs = 600;
 		let id: string | undefined;
+		// 这个 describe 里的用例共用一个库，前面的用例留下的会话还在：比较前后的差。
+		const before = await sessionCount(cp);
 		try {
 			const res = await api.post("/projects/default/sessions", { text: "冷启动很慢" });
 			expect(res.status).toBe(503);
@@ -1556,7 +1558,7 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 			expect(said.status).toBe(200);
 			await settled();
 			// 会话还在；这一轮结局写下之后，那句话开始了第 2 轮（助手服务的第 1 轮已经结束，第 2 轮的 prompt 才到，没有被回 409）。
-			expect(await sessionCount(cp)).toBe(1);
+			expect(await sessionCount(cp)).toBe(before + 1);
 			expect(assistant.prompts.map((p) => [p.sessionId, p.body.turn, p.body.text])).toEqual([
 				[id, 1, "冷启动很慢"],
 				[id, 2, "等的时候说的话"],
