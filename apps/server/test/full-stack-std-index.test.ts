@@ -1,6 +1,6 @@
 // 全栈：控制面的包索引里的标准节点包 sfly-std（#556）。一个依赖 sfly-std 的节点包，场景里没有任何 sfly-std 的节点：
 // 真实的 Agent（共享 venv 里只有 SDK，没有 sfly-std）从控制面下载这个节点包，装它的依赖时 sfly-std 来自控制面的包索引
-// （`Welcome.package_index_url`，公共项目里已发布的 sfly-std），httpx、psutil 这些依赖来自 PyPI 镜像桩。
+// （`Welcome.package_index_url`，公共项目里已发布的 sfly-std），psutil 这个依赖来自 PyPI 镜像桩。
 // PyPI 镜像桩里没有 sfly-std（它不在 PyPI 上），另一台 Agent 的镜像里放一个同名、版本更高的假包：装上的仍是控制面的那个。
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,7 +40,7 @@ describeWithAgent("全栈：节点包依赖 sfly-std，sfly-std 来自控制面�
 		[cp, std, wheels] = await Promise.all([
 			startTestControlPlane({ clock: systemClock }),
 			buildStdPackage(join(dir, "dist")),
-			// sfly-std 的依赖（httpx、psutil 及它们的依赖），没有 sfly-std 本身。
+			// sfly-std 的依赖（psutil），没有 sfly-std 本身。
 			wheelhouse(join(dir, "wheels"), [], { withStdDependencies: true }),
 		]);
 		expect(wheels.map(([project]) => project)).not.toContain("sfly_std");
@@ -111,7 +111,7 @@ describeWithAgent("全栈：节点包依赖 sfly-std，sfly-std 来自控制面�
 		expect((node.outputs as { std_module: string }).std_module).toContain("site-packages");
 		// sfly-std 是从控制面的索引装的，没有去 PyPI 镜像里找它；它的依赖照常来自镜像。
 		expect(pypi.requests).not.toContain("/simple/sfly-std/");
-		expect(pypi.requests).toContain("/simple/httpx/");
+		expect(pypi.requests).toContain("/simple/psutil/");
 	}, 300_000);
 
 	it("PyPI 镜像上有同名、版本更高的假 sfly-std：装上的仍是控制面里的那个，假包一次也没有被下载", async () => {
