@@ -34,7 +34,7 @@ import {
  * | `POST /sessions/:id/prompt` | {@link PromptCommandBody} | 202；这个会话有一轮在做、而且 `prompt` 带的轮次比中止记号大：409 `turn_running`；**登记之前**就知道起不了（容量满、助手服务正在关闭等）：503，这样的 `prompt` 没有登记、不会有任何事件（旧的一轮还在停止时是 202） | #540、#544 |
  * | `POST /sessions/:id/steer` | {@link SteerCommandBody} | 202；`turn` 那一轮没有在做：409 `no_turn_running` | #544 |
  * | `POST /sessions/:id/abort` | {@link AbortCommandBody} | 202，总是；重复调用无害 | #540、#544 |
- * | `POST /sessions/:id/end` | — | 202，总是；重复调用无害，不认识的会话也是 202 | #544 |
+ * | `POST /sessions/:id/end` | — | 会话 ID 格式对的总是 202（不认识的会话也是）；重复调用无害；会话 ID 不合格式是 400 `invalid_request`，和别的命令一样 | #544 |
  * | `GET /events?after=<纪元>:<序号>` | {@link AssistantEventsQuery} | 200，NDJSON 长连接（{@link AssistantStreamLine}），**每 {@link ASSISTANT_STREAM_HEARTBEAT_MS} 写一行心跳** | #540；续传 #545 |
  * | `GET /health` | — | 200 {@link AssistantHealth} | #540；模型 #548；进程数 #545 |
  *
@@ -238,16 +238,16 @@ import {
  * 3. 然后发 `end`。`end` 是尽力而为的收拾：发不出去（连不上、超时、5xx）时会话照样已经结束。这时助手服务那边这个会话的 pi 进程由什么收掉，照 dev 上实际的：
  *    进程数到了上限时关掉最久没有用的空闲进程（#545 会加空闲回收），除此之外留到助手服务重启（**标给 544-B / #545**：没有收到 `end` 的会话，进程留着不影响正确性，只占一个进程槽位）。
  *
- * ## 各部分的进度（#544 拆成几个 PR；写在这里的「dev 上现在」是 #618 合入之后的实现）
+ * ## 各部分的进度（#544 拆成几个 PR；助手服务那一栏是 544-B 合入之后的实现，控制面那一栏的「dev 上现在」是 #618 合入之后的实现）
  *
  * | 说明 | 助手服务（#544 的助手服务那一半） | 控制面（#544 的控制面那一半） |
  * |---|---|---|
- * | 状态和命令的回应 | dev 上现在没有「在停止」这个状态：撞上记号的 `prompt` 除外（见「中止记号」一行），有一轮在（不论在做还是在停止，`abort` 之后进程还在退出时也一样）都回 409 `turn_running`。要做：按「一轮的状态」的表 | 假助手服务（`apps/server/test/support/fake-assistant.ts`）现在先判 409、后看记号，和助手服务相反；要做：照表，包括「旧的一轮过一会儿才结束」 |
- * | `steer` | dev 上现在没有这条路由（404）。要做：接受、留着、送到、`steer_queue`、`no_turn_running` | dev 上现在在做时发话回 409 `turn_running`。要做：写 `user_message`（`steer: true`）、转发（带 `turn`）、没有送到时的 `steer_dropped` |
- * | `end` | dev 上现在没有这条路由（404）。要做 | 要做：`POST /sessions/:id/end` 和「结束会话」里的先后（先停止并等到结局、再写 `session_ended`、再发 `end`）。dev 上没有 |
- * | 停止 | dev 上现在 `abort` 直接结束 pi 进程（先关 stdin、SIGTERM，{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 之后 SIGKILL，进程退出之后发 `turn_end`）。要做：按「停止一轮」（`clear_queue`、`abort`、等 `agent_settled`、不行才结束进程；到了上限走同一条路） | dev 上现在等结局的时间是 `STOP_GRACE_MS`（13 秒：{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 加控制面自己的 `STOP_MARGIN_MS`，数和协议里的 {@link ASSISTANT_STOP_MARGIN_MS} 不是同一个常量），从 `abort` 命令返回（收到 202，或者超时、连接断开这类结果未知）之后起算。要做：换成 {@link ASSISTANT_STOP_WAIT_MS}（23 秒）、从发出 `abort` 起算；自己补结局时补 `steer_dropped` |
- * | 中止记号 | dev 上现在：每个会话一个记号，留轮次最大的，10 分钟过期，总数 1000；`prompt` 先看记号，**轮次等于记号**的才挡住并取走记号，轮次比记号小的照常做（有一条测试固定了它：先中止第 5 轮、再中止第 3 轮，第 3 轮照常做完）；轮次比记号大、而且没有回 409 的才清掉记号（`#dropStaleAbortMark` 在判断 409 之后）；`abort` 只在轮次比助手服务记得的最近一轮大时才记（助手服务重启之后还没见过这个会话的轮次时也记）。要做：只增不减，轮次不大于记号的 `prompt` 都挡住、不取走记号，`abort` 一律提到 N（过期、总数上限不变）；那条测试跟着改 | 假助手服务要和这里一致 |
- * | 旧的一轮还在停止时来了新的一轮 | dev 上现在先看记号，再有一轮在（包括在停止）就回 409 `turn_running`。要做：登记、202、等旧的一轮结束再起，等不到以 `failed` 结束 | 不用为此多等 |
+ * | 状态和命令的回应 | 已做（544-B）：按「一轮的状态」的表，用例逐格对着它（`apps/assistant/test/interrupt.test.ts`） | 假助手服务（`apps/server/test/support/fake-assistant.ts`）现在先判 409、后看记号，和助手服务相反；要做：照表，包括「旧的一轮过一会儿才结束」 |
+ * | `steer` | 已做（544-B）：接受、留着、按顺序认送到、`steer_queue`、`steer_dropped`、`no_turn_running`；起 pi 时设成一次全送 | dev 上现在在做时发话回 409 `turn_running`。要做：写 `user_message`（`steer: true`）、转发（带 `turn`）、没有送到时的 `steer_dropped` |
+ * | `end` | 已做（544-B） | 要做：`POST /sessions/:id/end` 和「结束会话」里的先后（先停止并等到结局、再写 `session_ended`、再发 `end`）。dev 上没有 |
+ * | 停止 | 已做（544-B）：按「停止一轮」（`clear_queue`、`abort`、等 `agent_settled`、不行才结束进程，硬上限 {@link ASSISTANT_STOP_WAIT_MS}；到了上限、结束会话走同一条路；进程留着时下一轮之前 `clear_queue`）。依赖 pi 的几条是 rpcprobe 第 11 到 17 题测过的（`evals/assistant/README.md`） | dev 上现在等结局的时间是 `STOP_GRACE_MS`（13 秒：{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 加控制面自己的 `STOP_MARGIN_MS`，数和协议里的 {@link ASSISTANT_STOP_MARGIN_MS} 不是同一个常量），从 `abort` 命令返回（收到 202，或者超时、连接断开这类结果未知）之后起算。要做：换成 {@link ASSISTANT_STOP_WAIT_MS}（23 秒）、从发出 `abort` 起算；自己补结局时补 `steer_dropped` |
+ * | 中止记号 | 已做（544-B）：只增不减，轮次不大于记号的 `prompt` 都挡住、不取走记号，`abort` 一律提到 N（过期、总数上限不变）；#618 固定旧行为的那条测试跟着改了 | 假助手服务要和这里一致 |
+ * | 旧的一轮还在停止时来了新的一轮 | 已做（544-B）：登记、202、等旧的一轮结束再起，等不到以 `failed` 结束 | 不用为此多等 |
  * | 排队 | 不知道项目，不排队 | 要做：同一个项目一次只把一轮交给助手服务，其余在控制面排队 |
  */
 
