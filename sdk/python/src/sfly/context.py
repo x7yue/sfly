@@ -196,6 +196,20 @@ class _Sigterm:
     raised = False
 
 
+def _handling_cancelled() -> bool:
+    """主线程此刻是不是正在处理一个 `Cancelled`（在 `except Cancelled` 或因它而进入的
+    `finally` 里）。
+
+    后台线程里的 `Cancelled` 经队列、`Future.result()` 交给主线程重新抛出时，不经过
+    `cancelled_error`（它只在主线程里记「已经抛出过」），`_Sigterm.raised` 还是 False：随后
+    送达的 SIGTERM 会在节点清理到一半时再抛一次（#678）。看当前正在处理的异常，不管这个
+    `Cancelled` 是谁抛的、怎么到的主线程。
+    """
+    import sys
+
+    return isinstance(sys.exc_info()[1], Cancelled)
+
+
 def cancelled_error(message: str) -> Cancelled:
     """SDK 自己发现任务该收尾了（取消标记出现：取消、超时、被停止子流程节点停止；Agent 回复
     `cancelled`）时要抛出的 `Cancelled`。
@@ -218,6 +232,9 @@ def on_sigterm(signum: int, frame: object) -> None:
         _Sigterm.pending = True
         return
     _Sigterm.raised = True
+    if _handling_cancelled():
+        # 主线程已经在处理一个 Cancelled（后台线程的交给它重新抛出的）：清理在执行，不再抛第二次。
+        return
     raise Cancelled("任务被终止（SIGTERM）")
 
 
@@ -252,7 +269,8 @@ class DeferCancel:
             _Sigterm.pending = False
             if not _Sigterm.raised:
                 _Sigterm.raised = True
-                raise Cancelled("任务被终止（SIGTERM）")
+                if not _handling_cancelled():
+                    raise Cancelled("任务被终止（SIGTERM）")
 
 
 class ArtifactLimitExceeded(Exception):
