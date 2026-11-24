@@ -301,8 +301,9 @@ test("同一个项目另一个会话在做时开始：新会话排队，会话�
 	await expect(page.getByTestId("composer-blocked")).toContainText("第一个会话（tester）正在做");
 	// 列表：在做的和排队的在前，排队的写排在第几位。
 	await page.goto("/sessions");
-	const rows = page.getByTestId("list-status");
-	await expect(rows).toHaveText(["在做", "排队中 · 排在第 1 位"]);
+	const listed = (id: string) => page.locator(`[data-session="${id}"]`).getByTestId("list-status");
+	await expect(listed(first)).toHaveText("在做");
+	await expect(listed(second)).toHaveText("排队中 · 排在第 1 位");
 	// 第一个会话的这一轮做完：第二个自动开始。回到它的页面，看到它在做。
 	assistant.emit(first, 1, completed(1), eventAt());
 	await expect.poll(() => assistant.prompts.map((p) => p.sessionId)).toEqual([first, second]);
