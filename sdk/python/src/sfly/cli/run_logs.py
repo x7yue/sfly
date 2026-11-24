@@ -432,11 +432,14 @@ def _complete_lines(response: BinaryIO, args: argparse.Namespace) -> Iterator[by
         if getattr(response, "length", None):
             raise IncompleteRead(b"")
     except (HTTPException, OSError) as error:
+        flags = _flags(args, with_level=False)
         raise CliError(
             "download_incomplete",
             "日志没有下载完：连接在下载中途断开了（控制面发现日志文件在下载时被删除或截短了，或者网络断了）。"
             f"没有写出文件（{error.__class__.__name__}）",
-            next=f"重新下载：sfly run logs {args.run} --all {args.all}",
+            # 带着原来的范围选项和路径：只带 --all 重下，下到的是整个运行，还写进同一个文件。
+            next="重新下载：sfly run logs "
+            f"{shlex.quote(args.run)}{' ' + flags if flags else ''} --all {shlex.quote(args.all)}",
         ) from None
     if pending:
         yield pending

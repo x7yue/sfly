@@ -1,9 +1,10 @@
+import { once } from "node:events";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { pipeline, Readable, Transform, type TransformCallback } from "node:stream";
 import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { LogFilesGoneError, logFileProblem } from "../logs/log-files.js";
+import { LOG_FILE_GONE_CAUSES, LogFilesGoneError, logFileProblem } from "../logs/log-files.js";
 import type { LogMask } from "../logs/log-mask.js";
 import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
 import {
@@ -20,11 +21,18 @@ import { attachment } from "./content-disposition.js";
 import { contractDownload, contractRoute, contractStream } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
-/** 下载时日志文件已经不全了（#669）：410 `expired`，和保留期清理之后同一个状态码、错误码，说明写明是文件不见了或者变短了。 */
+/**
+ * 下载时日志文件已经不全了（#669）：410 `expired`，和保留期清理之后同一个状态码、错误码；保留期清理的说明不变（先判断），
+ * 这里的说明写明是文件不见了或者变短了、可能的来路，`details` 写明是哪几个任务、各是什么情况（{@link LogFilesGoneError.details}）。
+ */
 const GONE_TASK =
-	"the log file of this task is gone or shorter than recorded (removed after retention, or deleted or truncated)";
+	`the log file of this task is missing or shorter than the database records (${LOG_FILE_GONE_CAUSES}); ` +
+	"the download of this task stays unavailable, the log pages show what is left";
 const GONE_RUN =
-	"a log file of this run is gone or shorter than recorded (removed after retention, or deleted or truncated)";
+	`the log file of at least one task of this run is missing or shorter than the database records (${LOG_FILE_GONE_CAUSES}); ` +
+	"the download of this run stays unavailable while that holds, the log pages show what is left";
+/** 保留期清理之后的下载（不是异常）。 */
+const PURGED = "logs of this run were removed after retention";
 
 /**
  * 任务日志（契约见 @sfly/schema 的 logsApi）。实时推送（#10）：`GET /tasks/:id/logs/events`，事件 `logs`，data 为 {@link LogChunk}，id 为最后一行的序号。
@@ -39,11 +47,18 @@ const GONE_RUN =
  *   `at`（#347）：按控制面时间定位，返回包含那一刻的一页和 `locate`（那一刻的位置、正好对应的行）。
  * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（升级之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
- * - **下载不能悄悄少了内容**（#669）：有行写入过的任务，日志文件不见了或者比数据库记的短（保留期清理删到一半、人为删除、截短）：
- *   响应开始之前认出来的是 410 `expired`（说明里写明是文件不见了或变短了）；读的过程中被截短的（任务日志读到的字节数不到请求开始时的大小、
- *   按运行下载时某个任务的文件下一批读不到了），响应已经开始，**错误落到响应流上、连接被断开**：下载的是 JSONL，给读它的程序和命令行
- *   看，响应里插一行平台写的说明会和日志行混在一起（每一行都是日志），断开连接每一种 HTTP 客户端都看得出没下完。
- *   读的过程中文件被删除（还开着的文件不受影响）任务日志照常读完。从没有日志的任务（没有行写入过）下载是空的。
+ * - **下载不能悄悄少了内容**（#669）：有行写入过的任务，日志文件不见了或者比数据库记的短（被删除、截短，保留期清理删到一半，主机掉电——
+ *   追加文件不 fsync、数据库提交了，数据库和数据目录分开恢复）：响应开始之前认出来的是 410 `expired`（`details` 写明是哪几个任务、
+ *   各是不见了还是变短了，服务端日志也写出任务；已经过了保留期的运行是原来的「保留期清理」说明）；读的过程中被截短的（任务日志读到的字节数
+ *   不到请求开始时的大小、按运行下载时某个任务的文件下一批读不到了），响应已经开始，**错误落到响应流上、连接被断开**：下载的是 JSONL，
+ *   给读它的程序和命令行看，响应里插一行平台写的说明会和日志行混在一起（每一行都是日志）。
+ *   **断开连接看不看得出没下完取决于传输**：直连、或者反向代理用 HTTP/1.1 连控制面（响应分块，没有结尾的 0 长度块）时，curl（退出码 18）、
+ *   `fetch`、`@sfly/client`、浏览器的下载都看得出；反向代理用 HTTP/1.0 连控制面时（nginx 1.29.7 之前 `proxy_http_version` 的默认值就是 1.0）
+ *   响应靠关闭连接来结束，断开和正常结束分不出来，客户端拿到半截文件、不报错（HTTP/1.0 的客户端直连也一样）；所以反向代理要配
+ *   `proxy_http_version 1.1`（README「反向代理」）。不靠传输层的核对办法见 #721。
+ *   读的过程中文件被删除：任务日志已经打开的文件不受影响，照常读完；按运行下载每一批都重新打开文件，所以会断开。两种都说得通
+ *   （判断的时刻是请求开始那一刻）。文件比数据库记的长（任务正在写，或者进程在追加文件之后、更新库之前退出）不是问题。
+ *   从没有日志的任务（没有行写入过）下载是空的。
  *
  * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取（`before` / `after` 游标，#223），
  * 见 run-log-pages.ts 与 run-log-cursor.ts；游标不是这里返回的格式时 400 `invalid_request`。
@@ -96,23 +111,30 @@ export function registerLogRoutes(
 		};
 	});
 
-	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply) => {
-		let batches: Awaited<ReturnType<typeof deps.runLogs.readAll>>;
+	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply, request) => {
+		let rows: AsyncGenerator<string> | undefined;
+		let first: IteratorResult<string> | undefined;
 		try {
-			batches = isUuid(params.id) ? await deps.runLogs.readAll(params.id, query.nodes) : undefined;
+			const batches = isUuid(params.id)
+				? await deps.runLogs.readAll(params.id, query.nodes)
+				: undefined;
+			if (!batches) return sendError(reply, 404, "not_found", "run not found");
+			rows = jsonRows(batches);
+			// 第一批在响应开始之前读：检查通过之后、读第一批之前文件被删了，也是 410，不是响应还没开始就报错的 500（#669）。
+			first = await rows.next();
 		} catch (error) {
-			// 范围内有任务的日志文件不见了、变短了（保留期清理、被删除、被截短）：不能照常 200 给一份缺内容的下载（#669）。
-			if (error instanceof LogFilesGoneError) return sendError(reply, 410, "expired", GONE_RUN);
-			throw error;
+			if (!(error instanceof LogFilesGoneError)) throw error;
+			// 过了保留期的运行文件本来就被清理了：这是「保留期清理」，说明不变，不是异常，先判断。
+			if (await deps.isPurged(params.id)) return sendError(reply, 410, "expired", PURGED);
+			// 范围内有任务的日志文件不见了、变短了：不能照常 200 给一份缺内容的下载（#669）。
+			request.log.warn({ run: params.id, tasks: error.tasks }, error.message);
+			return sendError(reply, 410, "expired", GONE_RUN, error.details);
 		}
-		if (!batches) return sendError(reply, 404, "not_found", "run not found");
-		if (await deps.isPurged(params.id)) {
-			return sendError(reply, 410, "expired", "logs of this run were removed after retention");
-		}
+		if (await deps.isPurged(params.id)) return sendError(reply, 410, "expired", PURGED);
 		return reply
 			.header("content-type", `${logsApi.runDownload.contentType}; charset=utf-8`)
 			.header("content-disposition", attachment(`run-${params.id}.log.jsonl`))
-			.send(Readable.from(jsonRows(batches)));
+			.send(Readable.from(resumed(first, rows)));
 	});
 
 	contractStream(
@@ -187,31 +209,47 @@ export function registerLogRoutes(
 		};
 	});
 
-	contractDownload(app, logsApi.download, async ({ params }, reply) => {
+	contractDownload(app, logsApi.download, async ({ params }, reply, request) => {
 		const taskId = params.id;
 		const info = isUuid(taskId) ? await deps.logs.describe(taskId) : undefined;
 		if (!info) return sendError(reply, 404, "not_found", "task not found");
-		if (await deps.isPurged(info.runId)) {
-			return sendError(reply, 410, "expired", "logs of this run were removed after retention");
-		}
+		if (await deps.isPurged(info.runId)) return sendError(reply, 410, "expired", PURGED);
 		const stats = await stat(info.file).catch(() => undefined);
 		const size = stats?.size;
-		// 有行写入过、文件却不见了或者比记录的短（被删除、截短，保留期清理删到一半）：410，不是 200 加空正文或缺了一截的正文（#669）。
-		// 从没有日志的任务（没有行写入过）没有文件，下载是空的，不在这里。
-		if (logFileProblem(info, stats) !== undefined) {
-			return sendError(reply, 410, "expired", GONE_TASK);
+		const gone = (reason: "missing" | "short") => {
+			const error = new LogFilesGoneError([
+				{ taskId, nodeId: info.nodeId, attempt: info.attempt, reason },
+			]);
+			request.log.warn({ task: taskId, tasks: error.tasks }, error.message);
+			return sendError(reply, 410, "expired", GONE_TASK, error.details);
+		};
+		// 有行写入过、文件却不见了或者比记录的短（被删除、截短，保留期清理删到一半，掉电，分开恢复）：410，不是 200 加空正文或缺了一截的
+		// 正文（#669）。从没有日志的任务（没有行写入过）没有文件，下载是空的，不在这里。
+		const problem = logFileProblem(info, stats);
+		if (problem !== undefined) return gone(problem);
+		const headers = () =>
+			reply
+				.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
+				.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
+		if (size === undefined || size === 0) {
+			headers();
+			return reply.send("");
 		}
-		reply
-			.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
-			.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
-		if (size === undefined || size === 0) return reply.send("");
 		// 只发送此刻的内容（文件可能还在追加）。每行都带两种时间：升级之前写入的行在这里补齐，
 		// 所以长度事先不知道，不带 content-length。
 		const mask = await deps.logs.logMask(info.runId);
 		// 读的过程中文件被截短（读到的字节数不到 `size`）：错误落到响应流上，响应已经开始时连接被断开，客户端看得出没下完（#669）。
-		return reply.send(
-			normalizeLogStream(createReadStream(info.file, { start: 0, end: size - 1 }), mask, size),
-		);
+		const source = createReadStream(info.file, { start: 0, end: size - 1 });
+		// 打开文件在响应开始之前：检查通过之后、打开之前文件被删了，也是 410，不是响应还没开始就出错的 500。
+		try {
+			await once(source, "open");
+		} catch (error) {
+			source.destroy();
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return gone("missing");
+			throw error;
+		}
+		headers();
+		return reply.send(normalizeLogStream(source, mask, size, taskId));
 	});
 
 	contractStream(app, deps.sse, logsApi.events, async ({ params, query }, open, reply, request) => {
@@ -269,6 +307,15 @@ const levelFilter = ({ level }: { level?: LogLineView["level"][] | undefined }):
 /** 下载文件里每行的字段：契约里 RunLogDownloadRow 声明的，顺序也一样。 */
 const DOWNLOAD_FIELDS = Object.keys(RunLogDownloadRow.shape);
 
+/** 已经取走第一批（`first`）的生成器接着往后：先给第一批，再给剩下的。 */
+async function* resumed(
+	first: IteratorResult<string>,
+	rest: AsyncGenerator<string>,
+): AsyncGenerator<string> {
+	if (!first.done) yield first.value;
+	yield* rest;
+}
+
 async function* jsonRows(batches: AsyncIterable<RunLogLine[]>): AsyncGenerator<string> {
 	for await (const lines of batches) {
 		yield lines.map((l) => `${JSON.stringify(l, DOWNLOAD_FIELDS)}\n`).join("");
@@ -286,8 +333,10 @@ export function normalizeLogStream(
 	mask: LogMask,
 	/** 源应该给出的字节数：源读完时不到这么多（文件在读的过程中被截短），错误落到返回的流上（#669）；不给不检查。 */
 	expectedBytes?: number,
+	/** 任务 ID：错误（和服务端的日志）里写出是哪个任务。 */
+	taskId?: string,
 ): Readable {
-	const normalized = new LogRowNormalizer(mask, expectedBytes);
+	const normalized = new LogRowNormalizer(mask, expectedBytes, taskId);
 	// 回调不用：错误已经落在 `normalized` 上，`pipeline` 给两头各接了一个 error 监听，不会有没人接的 `error` 事件。
 	pipeline(source, normalized, () => {});
 	return normalized;
@@ -307,6 +356,7 @@ class LogRowNormalizer extends Transform {
 	constructor(
 		private readonly mask: LogMask,
 		private readonly expectedBytes?: number,
+		private readonly taskId?: string,
 	) {
 		super();
 	}
@@ -338,7 +388,7 @@ class LogRowNormalizer extends Transform {
 		if (this.expectedBytes !== undefined && this.#received < this.expectedBytes) {
 			done(
 				new Error(
-					`日志文件在下载时被截短：读到 ${this.#received} 字节，请求开始时有 ${this.expectedBytes} 字节`,
+					`日志文件在下载时被截短：读到 ${this.#received} 字节，请求开始时有 ${this.expectedBytes} 字节${this.taskId ? `（任务 ${this.taskId}）` : ""}`,
 				),
 			);
 			return;

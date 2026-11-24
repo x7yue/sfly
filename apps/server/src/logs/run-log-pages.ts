@@ -14,7 +14,7 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { runs } from "../db/schema.js";
 import { getRunView } from "../runs/run-read.js";
-import { LogFilesGoneError, logFileProblem } from "./log-files.js";
+import { type GoneTask, LogFilesGoneError, logFileProblem } from "./log-files.js";
 import type { LogMask } from "./log-mask.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
@@ -93,6 +93,14 @@ interface TaskStream {
 	task: RunLogTask;
 	log: TaskLogInfo;
 }
+
+/** 日志文件不全的任务（下载的 410 说明和日志里写出是哪个）。 */
+const goneTask = (task: RunLogTask, reason: GoneTask["reason"]): GoneTask => ({
+	taskId: task.origin.task_id,
+	nodeId: task.origin.node_id,
+	attempt: task.origin.attempt,
+	reason,
+});
 
 const OPEN_FILES = 32;
 /** 第一轮每个任务最多扫描的字节数：一次读取的量，够看出每个任务排在最前的几行。 */
@@ -176,12 +184,15 @@ export class RunLogs {
 	): Promise<AsyncGenerator<RunLogLine[], void> | undefined> {
 		const streams = await this.#streams(runId, scope);
 		if (!streams) return undefined;
-		const gone = await mapOpenFiles(streams, async ({ log }) => {
-			const stats = await stat(log.file).catch(() => undefined);
-			return logFileProblem(log, stats) !== undefined;
-		});
-		const count = gone.filter(Boolean).length;
-		if (count > 0) throw new LogFilesGoneError(count);
+		const found = await mapOpenFiles(
+			streams,
+			async ({ task, log }): Promise<GoneTask | undefined> => {
+				const reason = logFileProblem(log, await stat(log.file).catch(() => undefined));
+				return reason === undefined ? undefined : goneTask(task, reason);
+			},
+		);
+		const gone = found.filter((g): g is GoneTask => g !== undefined);
+		if (gone.length > 0) throw new LogFilesGoneError(gone);
 		return this.#batches(streams, await this.deps.logs.logMask(runId));
 	}
 
@@ -430,7 +441,10 @@ async function extend(
 				: { direction: "backward", before: lane.start, until, ...request },
 		);
 		// 文件只追加，读到的完整行的字节数不会比数据库记的少：少了就是读的过程中文件被删了或截短了，不能当作读到了末尾。
-		if (strict && window.size < stream.log.recordedBytes) throw new LogFilesGoneError(1);
+		if (strict && window.size < stream.log.recordedBytes) {
+			// 读的过程中分不出文件是被删了还是截短到了 0：都是「比记的短」。
+			throw new LogFilesGoneError([goneTask(stream.task, "short")]);
+		}
 		const read = window.lines.map(({ offset, ...rest }) => {
 			const line = runLogLine(stream, rest);
 			return { offset, line, key: runLogKey(line) };

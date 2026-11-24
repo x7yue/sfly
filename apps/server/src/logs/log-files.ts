@@ -19,17 +19,56 @@ export function logFileProblem(
 	return stats.size < info.recordedBytes ? "short" : undefined;
 }
 
+/** 日志文件不全的两种：不见了、比数据库记的短。 */
+export type LogFileProblemKind = NonNullable<ReturnType<typeof logFileProblem>>;
+
+/** 日志文件不全的一个任务：下载的 410 说明里写出是哪几个、各是什么情况（运维要知道去看哪个文件）。 */
+export interface GoneTask {
+	taskId: string;
+	nodeId: string;
+	attempt: number;
+	reason: LogFileProblemKind;
+}
+
+/** 说明里写出的来路：文件比数据库记的短不只是「被删了、被截短了」。保留期清理不在这里（先判断，说明不同）。 */
+export const LOG_FILE_GONE_CAUSES =
+	"it was deleted or truncated, or the host lost power (appended lines are not fsynced, the database is), " +
+	"or the database was restored from a newer backup than the data directory";
+
+/** 410 `details` 里最多列出几个任务（总数在 `total`）。 */
+const DETAILS_TASKS = 20;
+
 /**
  * 下载要读的日志文件已经不全了（不见了、变短了）：下载之前认出来的，路由回 410 `expired`；下载过程中认出来的（响应已经开始），
- * 错误落到响应流上，连接被断开（客户端看得出没下完）。`tasks` 是有问题的任务的数目。
+ * 错误落到响应流上，连接被断开（直连或者代理用 HTTP/1.1 时客户端看得出没下完）。`tasks` 是有问题的任务。
  */
 export class LogFilesGoneError extends Error {
-	constructor(readonly tasks: number) {
-		super(
-			tasks === 1
-				? "一个任务的日志文件不见了或者比记录的短（被删除或截短了）"
-				: `${tasks} 个任务的日志文件不见了或者比记录的短（被删除或截短了）`,
-		);
+	constructor(readonly tasks: readonly GoneTask[]) {
+		const shown = tasks
+			.slice(0, 5)
+			.map(
+				(t) =>
+					`${t.reason === "missing" ? "missing" : "shorter than recorded"}: task ${t.taskId} (${t.nodeId}#${t.attempt})`,
+			)
+			.join("; ");
+		const more = tasks.length > 5 ? `; and ${tasks.length - 5} more` : "";
+		super(`log file of ${tasks.length} task(s) missing or shorter than recorded (${shown}${more})`);
 		this.name = "LogFilesGoneError";
+	}
+
+	/** 410 `details`：哪几个任务、各是不见了还是变短了。 */
+	get details(): {
+		tasks: Array<{ task_id: string; node_id: string; attempt: number; reason: LogFileProblemKind }>;
+		total: number;
+	} {
+		return {
+			tasks: this.tasks.slice(0, DETAILS_TASKS).map((t) => ({
+				task_id: t.taskId,
+				node_id: t.nodeId,
+				attempt: t.attempt,
+				reason: t.reason,
+			})),
+			total: this.tasks.length,
+		};
 	}
 }
