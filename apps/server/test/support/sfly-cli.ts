@@ -52,6 +52,30 @@ export async function sfly(args: string[], options: SflyOptions = {}): Promise<S
 	}
 }
 
+/**
+ * 在伪终端里运行真实的 `sfly`（它的 stdout 是终端：`isatty()` 为真）。命令行在终端上和在管道里的输出不一样
+ * （终端上先过滤，#670），要看终端上的就用它。终端把换行写成 `\r\n`：按行拆时用 `/\r?\n/`。
+ */
+export async function sflyInTerminal(
+	args: string[],
+	options: SflyOptions = {},
+): Promise<SflyResult> {
+	const env = { ...cleanEnv(), ...options.env };
+	for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
+	const runner = join(import.meta.dirname, "pty-run.py");
+	try {
+		const { stdout, stderr } = await execFileAsync(
+			"python3",
+			[runner, "uv", "run", "--locked", "sfly", ...args],
+			{ cwd: options.cwd ?? repoRoot, env: env as NodeJS.ProcessEnv },
+		);
+		return { code: 0, stdout, stderr: withoutUvNoise(stderr) };
+	} catch (error) {
+		const e = error as { code?: number; stdout?: string; stderr?: string };
+		return { code: e.code ?? -1, stdout: e.stdout ?? "", stderr: withoutUvNoise(e.stderr ?? "") };
+	}
+}
+
 /** 并发跑测试时 uv 可能在 stderr 打等待锁的提示，那不是命令行的输出。 */
 export function withoutUvNoise(stderr: string): string {
 	return stderr

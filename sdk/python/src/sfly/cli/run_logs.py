@@ -22,7 +22,7 @@ from typing import Any
 from sfly.cli.client import Client, segment
 from sfly.cli.errors import CliError
 from sfly.cli.files import part_file
-from sfly.cli.output import candidate_list, dump_json, positive_int
+from sfly.cli.output import Output, candidate_list, dump_json, positive_int
 from sfly.cli.run_view import (
     RUN_HELP,
     NodeRef,
@@ -32,6 +32,7 @@ from sfly.cli.run_view import (
     format_log_line,
     resolve_run,
 )
+from sfly.cli.safe_text import printable
 from sfly.cli.session import Session, command, common_options
 
 DEFAULT_TAIL = 200
@@ -381,16 +382,23 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
     if out.json_mode:
         for line in read.lines:
             print(dump_json(line), file=out.stdout)
-        for note in notes:
-            print(note, file=out.stderr)
+        print_notes(out, notes)
         return
     rendered = [format_line(index, line) for line in read.lines]
     if not rendered and not notes:
         rendered = ["没有日志" if not args.level else "没有符合条件的日志"]
-    print("\n".join([*rendered, *notes]), file=out.stdout)
+    # 日志是节点写的、没有人看过的文字：转义序列和不该到终端的字符过一遍（#670）。
+    print(printable("\n".join([*rendered, *notes])), file=out.stdout)
 
 
 # ---------------------------------------------------------------- 下载
+
+
+def print_notes(out: Output, notes: Sequence[str]) -> None:
+    """`--json` 时的提示写到 stderr（stdout 保持纯 JSON）；提示里有节点名（服务端的文字），
+    过一遍。"""
+    for note in notes:
+        print(printable(note), file=out.stderr)
 
 
 def _download_all(session: Session, args: argparse.Namespace, selection: Selection) -> None:
