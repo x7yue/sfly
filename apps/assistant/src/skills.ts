@@ -10,7 +10,7 @@ import {
 	statSync,
 } from "node:fs";
 import { dirname, join, posix, relative, sep } from "node:path";
-import type { AgentClient } from "./agent.js";
+import { type AgentClient, WorkbenchError } from "./agent.js";
 
 /**
  * skill 由助手服务从自己的镜像写到两边（#540 要求 2：不从工作台往回复制任何东西）。镜像里的那份是
@@ -94,7 +94,9 @@ export async function writeSkillsToWorkbench(
 	// 工作区本身也建：工作台上还没有这个目录时，命令的工作目录不能是它（Agent 会报工作目录不存在）。
 	const code = await agent.run(["mkdir", "-p", workdir, ...dirs], { cwd: "/", timeoutMs: 10_000 });
 	if (code !== 0) {
-		throw new Error(`在工作台上建工作区 ${workdir} 和 skill 目录失败（mkdir 退出码 ${code}）`);
+		throw new WorkbenchError(
+			`在工作台上建工作区 ${workdir} 和 skill 目录失败（mkdir 退出码 ${code}）`,
+		);
 	}
 	for (const file of files) {
 		await agent.writeFile(posix.join(target, file), readFileSync(join(skillsDir, file)));
