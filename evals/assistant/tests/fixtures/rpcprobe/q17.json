@@ -1,0 +1,324 @@
+{
+	"ok": true,
+	"plain": {
+		"prompt": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。",
+		"steer": "插话二：顺便看一下日志",
+		"timeline": [
+			{ "type": "message_end", "role": "system", "text": "", "stop_reason": null },
+			{
+				"type": "message_end",
+				"role": "user",
+				"text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。",
+				"stop_reason": null
+			},
+			{ "type": "message_end", "role": "assistant", "text": "", "stop_reason": "toolUse" },
+			{ "type": "message_end", "role": "toolResult", "text": "slept\n", "stop_reason": null },
+			{
+				"type": "message_end",
+				"role": "user",
+				"text": "插话二：顺便看一下日志",
+				"stop_reason": null
+			},
+			{
+				"type": "message_end",
+				"role": "assistant",
+				"text": "命令执行完了。",
+				"stop_reason": "stop"
+			},
+			{ "type": "agent_settled" }
+		],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。" }
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+				{ "role": "tool", "text": "slept\n", "tool_call_id": "call_1" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" }
+			]
+		],
+		"messages": [
+			{ "role": "system", "text": "" },
+			{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-steer 照剧本做。" },
+			{ "role": "assistant", "text": "" },
+			{ "role": "toolResult", "text": "slept\n" },
+			{ "role": "user", "text": "插话二：顺便看一下日志" },
+			{ "role": "assistant", "text": "命令执行完了。" }
+		]
+	},
+	"overflow": {
+		"prompt": "AEVAL-SCRIPT:rpcprobe-compact 照剧本做。",
+		"steer": "插话二：顺便看一下日志",
+		"timeline": [
+			{ "type": "message_end", "role": "system", "text": "", "stop_reason": null },
+			{
+				"type": "message_end",
+				"role": "user",
+				"text": "AEVAL-SCRIPT:rpcprobe-compact 照剧本做。",
+				"stop_reason": null
+			},
+			{ "type": "message_end", "role": "assistant", "text": "", "stop_reason": "toolUse" },
+			{
+				"type": "message_end",
+				"role": "toolResult",
+				"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaa",
+				"stop_reason": null
+			},
+			{
+				"type": "message_end",
+				"role": "user",
+				"text": "插话二：顺便看一下日志",
+				"stop_reason": null
+			},
+			{ "type": "message_end", "role": "assistant", "text": "", "stop_reason": "toolUse" },
+			{
+				"type": "message_end",
+				"role": "toolResult",
+				"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb",
+				"stop_reason": null
+			},
+			{ "type": "message_end", "role": "assistant", "text": "", "stop_reason": "error" },
+			{ "type": "compaction_start" },
+			{
+				"type": "compaction_end",
+				"reason": "overflow",
+				"will_retry": true,
+				"error": null,
+				"aborted": false
+			},
+			{
+				"type": "message_end",
+				"role": "assistant",
+				"text": "压缩之后做完了。",
+				"stop_reason": "stop"
+			},
+			{ "type": "agent_settled" }
+		],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-compact 照剧本做。" }
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-compact 照剧本做。" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+				{
+					"role": "tool",
+					"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaa",
+					"tool_call_id": "call_1"
+				},
+				{ "role": "user", "text": "插话二：顺便看一下日志" }
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-compact 照剧本做。" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+				{
+					"role": "tool",
+					"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaa",
+					"tool_call_id": "call_1"
+				},
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_2"] },
+				{
+					"role": "tool",
+					"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb",
+					"tool_call_id": "call_2"
+				}
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then "
+				},
+				{
+					"role": "user",
+					"text": "<conversation>\n[User]: AEVAL-SCRIPT:rpcprobe-compact 照剧本做。\n\n[Assistant tool calls]: bash(command=\"sleep 3; head -c 60000"
+				}
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{
+					"role": "user",
+					"text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nAEVAL-COMPACTED 前面的对话：照剧"
+				},
+				{ "role": "user", "text": "插话二：顺便看一下日志" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_2"] },
+				{
+					"role": "tool",
+					"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb",
+					"tool_call_id": "call_2"
+				}
+			]
+		],
+		"messages": [
+			{ "role": "system", "text": "" },
+			{ "role": "compactionSummary", "text": "" },
+			{ "role": "user", "text": "插话二：顺便看一下日志" },
+			{ "role": "assistant", "text": "" },
+			{
+				"role": "toolResult",
+				"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb"
+			},
+			{ "role": "assistant", "text": "压缩之后做完了。" }
+		]
+	},
+	"threshold": {
+		"prompt": "AEVAL-SCRIPT:rpcprobe-threshold 照剧本做。",
+		"steer": "插话二：顺便看一下日志",
+		"timeline": [
+			{ "type": "message_end", "role": "system", "text": "", "stop_reason": null },
+			{
+				"type": "message_end",
+				"role": "user",
+				"text": "AEVAL-SCRIPT:rpcprobe-threshold 照剧本做。",
+				"stop_reason": null
+			},
+			{ "type": "message_end", "role": "assistant", "text": "", "stop_reason": "toolUse" },
+			{
+				"type": "message_end",
+				"role": "toolResult",
+				"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaa",
+				"stop_reason": null
+			},
+			{ "type": "message_end", "role": "assistant", "text": "", "stop_reason": "toolUse" },
+			{
+				"type": "message_end",
+				"role": "toolResult",
+				"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb",
+				"stop_reason": null
+			},
+			{
+				"type": "message_end",
+				"role": "assistant",
+				"text": "上下文快满了。",
+				"stop_reason": "stop"
+			},
+			{ "type": "compaction_start" },
+			{
+				"type": "compaction_end",
+				"reason": "threshold",
+				"will_retry": false,
+				"error": null,
+				"aborted": false
+			},
+			{
+				"type": "message_end",
+				"role": "user",
+				"text": "插话二：顺便看一下日志",
+				"stop_reason": null
+			},
+			{
+				"type": "message_end",
+				"role": "assistant",
+				"text": "压缩之后做完了。",
+				"stop_reason": "stop"
+			},
+			{ "type": "agent_settled" }
+		],
+		"requests": [
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-threshold 照剧本做。" }
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-threshold 照剧本做。" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+				{
+					"role": "tool",
+					"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaa",
+					"tool_call_id": "call_1"
+				}
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{ "role": "user", "text": "AEVAL-SCRIPT:rpcprobe-threshold 照剧本做。" },
+				{ "role": "assistant", "text": "", "tool_calls": ["call_1"] },
+				{
+					"role": "tool",
+					"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaaa",
+					"tool_call_id": "call_1"
+				},
+				{ "role": "assistant", "text": "", "tool_calls": ["call_2"] },
+				{
+					"role": "tool",
+					"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb",
+					"tool_call_id": "call_2"
+				}
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then "
+				},
+				{
+					"role": "user",
+					"text": "# Conversation\n[User]: AEVAL-SCRIPT:rpcprobe-threshold 照剧本做。\n\n[Assistant tool calls]: bash(command=\"head -c 60000 /dev/z"
+				}
+			],
+			[
+				{
+					"role": "system",
+					"text": "You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify"
+				},
+				{
+					"role": "user",
+					"text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nNo prior history.\n\n---\n\n"
+				},
+				{ "role": "assistant", "text": "", "tool_calls": ["call_2"] },
+				{
+					"role": "tool",
+					"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb",
+					"tool_call_id": "call_2"
+				},
+				{ "role": "assistant", "text": "上下文快满了。" },
+				{ "role": "user", "text": "插话二：顺便看一下日志" }
+			]
+		],
+		"messages": [
+			{ "role": "system", "text": "" },
+			{ "role": "compactionSummary", "text": "" },
+			{ "role": "assistant", "text": "" },
+			{
+				"role": "toolResult",
+				"text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbbbbbbbbbbbbbbbbbbb"
+			},
+			{ "role": "assistant", "text": "上下文快满了。" },
+			{ "role": "user", "text": "插话二：顺便看一下日志" },
+			{ "role": "assistant", "text": "压缩之后做完了。" }
+		]
+	},
+	"seconds": 13.4
+}

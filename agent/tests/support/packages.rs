@@ -353,18 +353,28 @@ pub fn build_node_package(name: &str, version: &str, dependencies: &[&str]) -> V
 
 /// 一个只含空模块的纯 Python wheel（第三方依赖的桩），返回 (文件名, 内容)。
 pub fn dependency_wheel(name: &str, version: &str) -> (String, Vec<u8>) {
+    dependency_wheel_requiring(name, version, &[])
+}
+
+/// 同 [`dependency_wheel`]，METADATA 里再写上 `Requires-Dist`（这个第三方库自己的依赖）。
+pub fn dependency_wheel_requiring(
+    name: &str,
+    version: &str,
+    requires: &[&str],
+) -> (String, Vec<u8>) {
     let dist = name.replace('-', "_");
     let filename = format!("{dist}-{version}-py3-none-any.whl");
     let info = format!("{dist}-{version}.dist-info");
+    let mut metadata = format!("Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n");
+    for requirement in requires {
+        metadata.push_str(&format!("Requires-Dist: {requirement}\n"));
+    }
     let files = [
         (
             format!("{dist}/__init__.py"),
             format!("VERSION = {version:?}\n"),
         ),
-        (
-            format!("{info}/METADATA"),
-            format!("Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"),
-        ),
+        (format!("{info}/METADATA"), metadata),
         (
             format!("{info}/WHEEL"),
             "Wheel-Version: 1.0\nGenerator: sfly-tests\nRoot-Is-Purelib: true\nTag: py3-none-any\n"

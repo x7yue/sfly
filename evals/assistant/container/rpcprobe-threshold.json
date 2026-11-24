@@ -1,0 +1,28 @@
+{
+	"说明": "544-B 第 7 题（一轮结束时到了阈值压缩上下文）：两条命令各输出约 60 KB，之后一段文字报的用量接近上下文的上限（回复之前等 3 秒，探针在这时插话），pi 在这一轮收尾时压缩上下文。",
+	"steps": [
+		{
+			"id": "big-1",
+			"tool": "bash",
+			"args": {
+				"command": "head -c 60000 /dev/zero | tr '\\0' a | fold -w 100",
+				"timeout": 60
+			}
+		},
+		{
+			"id": "big-2",
+			"tool": "bash",
+			"args": {
+				"command": "head -c 60000 /dev/zero | tr '\\0' b | fold -w 100",
+				"timeout": 60
+			}
+		},
+		{
+			"id": "near-full",
+			"text": "上下文快满了。",
+			"delay": 3,
+			"prompt_tokens": 120000
+		}
+	],
+	"after_compaction": "压缩之后做完了。"
+}

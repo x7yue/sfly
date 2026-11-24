@@ -260,6 +260,71 @@ async fn dependency_conflict_fails_with_env_error_and_full_uv_output_leaving_the
 }
 
 #[tokio::test]
+async fn a_conflict_with_the_package_being_installed_names_the_package_that_requires_the_other_version()
+ {
+    // #637、#653：另一个节点包依赖 sfly-base>=2，共享环境里已经是 2.0；现在要装 sfly-base 自己的 1.0.0
+    // （锁定旧版本的场景，和标准节点包 sfly-std 0.3.0 遇到依赖 sfly-std>=0.4 的节点包是同一种情形）。
+    // uv 只写「你要求 sfly-base==1.0.0 和 sfly-base>=2」，不知道后者是哪个包要的：Agent 补的说明写出来。
+    let fixture = HttpFixture::start().await;
+    let (filename, wheel) = dependency_wheel("sfly-base", "2.0");
+    fixture.add_to_index("sfly-base", &filename, wheel, Duration::ZERO);
+    let user = publish(&fixture, "sfly-user", "1.0.0", &["sfly-base>=2"]);
+    let base = publish(&fixture, "sfly-base", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-self-conflict", &venv, &fixture);
+    cp.hello(0).await;
+
+    cp.assign(package_task(
+        "task-user",
+        "sfly-user",
+        "1.0.0",
+        "about",
+        json!({}),
+        user.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-user").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+
+    cp.assign(package_task(
+        "task-base",
+        "sfly-base",
+        "1.0.0",
+        "about",
+        json!({}),
+        base.archive(),
+    ))
+    .await;
+    let (result, _) = cp.result("task-base").await;
+
+    assert_eq!(result.status(), TaskStatus::Failed, "{result:?}");
+    let error = result.error.expect("error");
+    assert_eq!(error.kind(), ErrorKind::EnvError);
+    assert!(
+        error.message.contains("No solution found"),
+        "{}",
+        error.message
+    );
+    assert!(error.message.contains("依赖冲突："), "{}", error.message);
+    assert!(
+        error
+            .message
+            .contains("sfly-base@1.0.0（正在装） 要求 sfly-base==1.0.0"),
+        "{}",
+        error.message
+    );
+    assert!(
+        error
+            .message
+            .contains("sfly-user（已安装） 要求 sfly-base>=2"),
+        "{}",
+        error.message
+    );
+    assert!(error.message.contains("怎么办"), "{}", error.message);
+}
+
+#[tokio::test]
 async fn no_new_task_starts_while_installing_but_running_tasks_keep_running() {
     let fixture = HttpFixture::start().await;
     // 依赖下载很慢，安装会持续一段时间。

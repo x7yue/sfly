@@ -51,3 +51,40 @@ def test_toolcheck_substitutes_the_full_output_path(tmp_path: Path) -> None:
     reply = next_reply({"messages": [user, *tools, last]}, tmp_path)
     assert reply["tool"] == "read"
     assert "/tmp/pi-bash-1.log" in reply["arguments"]
+
+
+# ---- 544-B 的探针用到的几样 ----
+
+
+def _script(name: str) -> dict[str, str]:
+    return {"role": "user", "content": f"AEVAL-SCRIPT:{name} 照剧本做。"}
+
+
+def test_text_streams_in_pieces_with_the_given_usage(tmp_path: Path) -> None:
+    reply = next_reply({"messages": [_script("rpcprobe-midstream")]}, tmp_path)
+    assert (reply["pieces"], reply["interval"]) == (30, 0.3)
+    events = chunks(reply, "fake")
+    texts = [e["choices"][0]["delta"].get("content") for e in events[:-1]]
+    assert len(texts) == 30
+    assert "".join(texts) == reply["text"]
+    assert events[-1]["choices"][0]["finish_reason"] == "stop"
+    near_full = {**reply, "pieces": 1, "prompt_tokens": 120000}
+    assert chunks(near_full, "fake")[-1]["usage"]["prompt_tokens"] == 120000
+
+
+def test_overflow_then_summary_then_the_scripts_ending(tmp_path: Path) -> None:
+    from fake_model import COMPACTED, OVERFLOW_MESSAGE, SUMMARIZATION
+
+    tool = {"role": "tool", "content": "aaa"}
+    prompt = _script("rpcprobe-compact")
+    assert next_reply({"messages": [prompt, tool, tool]}, tmp_path) == {
+        "error": 400,
+        "message": OVERFLOW_MESSAGE,
+    }
+    summary = next_reply(
+        {"messages": [{"role": "system", "content": f"{SUMMARIZATION}. Do it."}, prompt]}, tmp_path
+    )
+    assert COMPACTED in summary["text"]
+    assert "AEVAL-SCRIPT:rpcprobe-compact" in summary["text"]
+    after = {"role": "user", "content": summary["text"]}
+    assert next_reply({"messages": [after, tool]}, tmp_path) == {"text": "压缩之后做完了。"}

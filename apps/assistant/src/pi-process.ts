@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { ASSISTANT_PROCESS_KILL_GRACE_MS } from "@sfly/schema";
+import { type Clock, realClock } from "./clock.js";
 import { LineSplitter } from "./jsonl.js";
 
 /**
@@ -10,10 +11,10 @@ import { LineSplitter } from "./jsonl.js";
  * 标准错误另存成文件（不当协议解析）。不用 pi 自带的 `RpcClient`：它把宿主进程的环境整个带给子进程。
  *
  * 结束的两种做法（#539 第 8 题）：
- * - {@link PiProcess.close}：关 stdin，pi 有序退出。**只在空闲时用**：一轮进行中关 stdin，pi 不等这一轮做完，
- *   正在跑的命令被中止；
+ * - {@link PiProcess.close}：关 stdin，pi 有序退出，宽限之后还没退出就 SIGKILL（协议「结束会话」）。**只在空闲时用**：
+ *   一轮进行中关 stdin，pi 不等这一轮做完，正在跑的命令被中止；
  * - {@link PiProcess.terminate}：先关 stdin，再 SIGTERM，{@link KILL_GRACE_MS} 之后还没退出就 SIGKILL（pi
- *   「Shutdown」：第二个信号立即退出）。到了上限、停止、会话结束用它。#539 第 8 题实测：一轮进行中关 stdin、
+ *   「Shutdown」：第二个信号立即退出）。停止一轮等不到 `agent_settled`、助手服务退出时用它。#539 第 8 题实测：一轮进行中关 stdin、
  *   关 stdin 同时 SIGTERM、stdin 开着只发 SIGTERM，pi 都中止正在跑的命令、很快退出，会话文件的最后一行完整；
  *   两样都发，不靠其中哪一样单独起作用。
  */
@@ -35,16 +36,27 @@ export interface PiProcessOptions {
 	onExit: (code: number | null, signal: NodeJS.Signals | null) => void;
 	/** 结束时等 SIGTERM 生效的时间，默认 {@link KILL_GRACE_MS}（测试里改短）。 */
 	killGraceMs?: number;
+	/** 宽限的计时（测试里换成手动推进的时钟）。 */
+	clock?: Clock;
 	/** 标准错误写下之前过一遍（打码）；`flush` 在进程退出时调用。 */
 	filterStderr?: { push: (text: string) => string; flush: () => string };
 	/** 写标准错误的文件出错（磁盘满）：不让它变成未处理的异常。 */
 	onStderrError?: (error: Error) => void;
 }
 
+/** 进程没了（已经退出，或者写不进去）时 {@link PiProcess.request} 的回应。 */
+export const GONE: Record<string, unknown> = Object.freeze({
+	type: "response",
+	success: false,
+	error: "pi 进程已退出",
+	gone: true,
+});
+
 export class PiProcess {
 	readonly #child: ChildProcess;
 	readonly #stderr: WriteStream;
 	readonly #grace: number;
+	readonly #clock: Clock;
 	readonly #exited: Promise<void>;
 	readonly #waiting = new Map<string, (response: Record<string, unknown>) => void>();
 	#nextId = 0;
@@ -52,6 +64,7 @@ export class PiProcess {
 
 	constructor(options: PiProcessOptions) {
 		this.#grace = options.killGraceMs ?? KILL_GRACE_MS;
+		this.#clock = options.clock ?? realClock;
 		this.#stderr = createWriteStream(options.stderrPath, { flags: "a", mode: 0o600 });
 		this.#stderr.on("error", (error) => options.onStderrError?.(error));
 		const [command, ...args] = options.argv;
@@ -96,9 +109,7 @@ export class PiProcess {
 				const tail = splitter.end();
 				if (tail !== undefined) handle(tail);
 				this.#exit = { code, signal };
-				for (const resolveWaiting of this.#waiting.values()) {
-					resolveWaiting({ type: "response", success: false, error: "pi 进程已退出" });
-				}
+				for (const resolveWaiting of this.#waiting.values()) resolveWaiting(GONE);
 				this.#waiting.clear();
 				this.#stderr.end(filter ? filter.push(decoder.end()) + filter.flush() : "");
 				options.onExit(code, signal);
@@ -130,26 +141,38 @@ export class PiProcess {
 		}
 	}
 
-	/** 写一条命令并等它的回应（`response`，按 ID 对应）。进程先退出时回应是失败。 */
+	/**
+	 * 写一条命令并等它的回应（`response`，按 ID 对应）。**不会拒绝**：进程先退出、或者写不进去（pi 刚退出、助手服务还没收到
+	 * 它退出的那一小段，写会同步抛错或者碰上管道已断）时，回应是失败、带 `gone: true`（#677 审查：没人接的拒绝会带走整个
+	 * 助手服务）。这一轮怎么收尾由进程退出的那条路定（{@link PiProcessOptions.onExit}）。
+	 */
 	async request(command: Record<string, unknown>): Promise<Record<string, unknown>> {
 		const id = `sfly-${++this.#nextId}`;
 		const response = new Promise<Record<string, unknown>>((resolve) =>
 			this.#waiting.set(id, resolve),
 		);
-		await this.send({ ...command, id });
+		try {
+			await this.send({ ...command, id });
+		} catch {
+			this.#waiting.delete(id);
+			return GONE;
+		}
 		return response;
 	}
 
 	/**
-	 * 关 stdin，等 pi 有序退出。**只在空闲时调用**（见类的说明）。`graceMs` 之后还没退出就 {@link terminate}。
+	 * 关 stdin，等 pi 有序退出。**只在空闲时调用**（见类的说明）。`graceMs` 之后还没退出就 SIGKILL。
 	 */
 	async close(graceMs = this.#grace): Promise<void> {
+		if (this.exited) return;
 		this.#child.stdin?.end();
-		const timer = setTimeout(() => void this.terminate(), graceMs);
+		const timer = this.#clock.setTimeout(() => {
+			if (!this.exited) this.#child.kill("SIGKILL");
+		}, graceMs);
 		try {
 			await this.#exited;
 		} finally {
-			clearTimeout(timer);
+			this.#clock.clearTimeout(timer);
 		}
 	}
 
@@ -158,13 +181,13 @@ export class PiProcess {
 		if (this.exited) return;
 		this.#child.stdin?.end();
 		this.#child.kill("SIGTERM");
-		const timer = setTimeout(() => {
+		const timer = this.#clock.setTimeout(() => {
 			if (!this.exited) this.#child.kill("SIGKILL");
 		}, this.#grace);
 		try {
 			await this.#exited;
 		} finally {
-			clearTimeout(timer);
+			this.#clock.clearTimeout(timer);
 		}
 	}
 }
