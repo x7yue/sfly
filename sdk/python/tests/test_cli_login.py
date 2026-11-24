@@ -629,13 +629,15 @@ class TestLogout:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         assert login(capsys, monkeypatch)[0] == 0
-        server.revoke_status = 401  # 令牌失效了，或者账号被停用了：控制面都只说 401
+        # 令牌已经失效了（账号被停用时令牌照样能吊销它自己，不是这个原因）
+        server.revoke_status = 401
         code, out, err = run(capsys, monkeypatch, "logout")
         assert code == 0, err
         assert credentials.load(server.url) is None
-        # 如实说：这次登出没有吊销令牌；账号被停用时令牌还在，启用之后又能用；去哪里吊销。
+        # 如实说：这次登出没有吊销令牌；去哪里核对。
         assert "本机的凭据已删除" in out and "令牌已吊销" not in out
-        assert "401" in out and "账号被停用" in out and "没有被吊销" in out and "令牌」页" in out
+        assert "401" in out and "没有吊销" in out and "令牌」页" in out
+        assert "账号被停用" not in out
         assert TOKEN not in out + err
         # --json 里分得清：没有吊销，被控制面拒绝了。
         assert login(capsys, monkeypatch)[0] == 0
@@ -662,6 +664,8 @@ class TestLogout:
         code, _, err = run(capsys, monkeypatch, "logout")
         assert code == 2
         assert "sfly logout --local" in err
+        # 说明令牌没有被吊销、本机的凭据保留着（和连不上时一样），不只是给下一步。
+        assert "令牌没有被吊销" in err and "本机的凭据保留着" in err
         # 令牌没有被吊销，本机的凭据保留着：不能让本机以为登出了、令牌还有效。
         stored = credentials.load(server.url)
         assert stored and stored.token == TOKEN
@@ -870,6 +874,81 @@ class TestPlainHttpNote:
             with pytest.raises(CliError):
                 client.get("/runs")
             assert "明文" not in err.getvalue(), (server, token)
+
+
+class TestPlainHttpPasswordNote:
+    """第一次 `sfly login`（还没有令牌）往不是本机的 `http://` 地址发密码：发之前也提示。"""
+
+    def test_login_over_non_local_http_notes_that_the_password_is_sent_in_the_clear(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, out, err = login(capsys, monkeypatch, "--server", "http://cp.example.test:1")
+        assert code == 2  # 连不上：提示在发之前
+        assert err.count("明文") == 1 and "密码" in err and "https" in err
+        assert PASSWORD not in out + err
+
+    def test_no_note_for_localhost_or_https(
+        self,
+        server: FakeServer,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, _, err = login(capsys, monkeypatch)  # 本机的假控制面
+        assert code == 0 and "明文" not in err
+        for url in (
+            "http://localhost:1",
+            "http://127.0.0.1:1",
+            "http://127.0.0.2:1",
+            "http://127.255.255.254:1",
+            "http://[::1]:1",
+            "https://cp.example.test:1",
+        ):
+            _, _, err = login(capsys, monkeypatch, "--server", url)
+            assert "明文" not in err, url
+
+    def test_zero_address_and_non_loopback_addresses_are_still_noted(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for url in ("http://0.0.0.0:1", "http://192.168.1.2:1", "http://10.0.0.5:1"):
+            _, _, err = login(capsys, monkeypatch, "--server", url)
+            assert err.count("明文") == 1, url
+
+    def test_interactive_login_shows_the_note_before_asking_for_the_password(
+        self,
+        home: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """在终端里运行：先提示、再问密码（想放弃的人不用输完密码才看到）；发请求时不再重复。"""
+        import getpass
+
+        asked: list[str] = []
+
+        def fake_getpass(prompt: str = "") -> str:
+            asked.append(capsys.readouterr().err)  # 问密码的这一刻，标准错误里已经有什么
+            return PASSWORD
+
+        monkeypatch.setattr("sfly.cli.login._interactive", lambda: True)
+        monkeypatch.setattr(getpass, "getpass", fake_getpass)
+        code, _, err = run(
+            capsys,
+            monkeypatch,
+            "login",
+            "--server",
+            "http://cp.example.test:1",
+            "--login-name",
+            "alice",
+        )
+        assert code == 2  # 连不上
+        assert len(asked) == 1 and asked[0].count("明文") == 1 and "密码" in asked[0]
+        assert "明文" not in err  # 问完密码之后发请求，不再重复提示
 
 
 class TestCredentialsFilePermissions:

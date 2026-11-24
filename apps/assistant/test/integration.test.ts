@@ -306,7 +306,7 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 				// 页面靠它写明只显示了一部分。
 				truncated: true,
 			});
-			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
+			const raw = await h.rawSettled(id);
 			expect(raw).not.toContain('"tool_execution_update"');
 			expect(raw.length).toBeLessThan(2 * 1024 * 1024);
 			const tmp = join(h.root, "tmp");
@@ -390,6 +390,8 @@ describe("真的 pi：工作台返回的内容带不偏扩展（要求 2）", ()
 			const other = crypto.randomUUID();
 			await h.prompt(other, { text: "你好" });
 			await h.turnEnd(other);
+			// events.jsonl 是异步写的，turn_end 不等它落盘（#684）：等它写完再拍「之前」的快照，不然它自己会在两张快照之间变。
+			await h.rawSettled(other);
 			const id = crypto.randomUUID();
 			const targets = [
 				join(h.dataDir, "sessions", other, "events.jsonl"),
@@ -550,7 +552,7 @@ describe("真的 pi：保密环境变量不出助手服务", () => {
 			expect(await h.turnEnd(id)).toMatchObject({ outcome: "completed" });
 			// 命令确实拿到了它（在工作台上），模型也看到了（工具结果原样交给模型）。
 			expect(h.workbench.runs.some((r) => r.env.SFLY_API_TOKEN === value)).toBe(true);
-			const raw = readFileSync(join(h.dataDir, "sessions", id, "events.jsonl"), "utf8");
+			const raw = await h.rawSettled(id);
 			// 扩展在源头打码：pi 自己的会话文件里也是打过码的。
 			const sessionDir = join(h.dataDir, "sessions", id, "pi-session");
 			const piSession = readdirSync(sessionDir)
