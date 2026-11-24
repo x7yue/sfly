@@ -50,6 +50,23 @@ export const REJECTED_NAME_CHARACTER =
 	// biome-ignore lint/suspicious/noMisleadingCharacterClass: 表里是一个一个的码位（含组合用的 U+034F），每个单独就拒绝，不是想匹配「字符加组合符」
 	/[\p{Cc}\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F\u200B\u200E-\u200F\u2028-\u2029\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0\uFFF0-\uFFFB\u{13430}-\u{1343F}\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}\uD800-\uDFFF]/u;
 
+/**
+ * `x-sfly-client` 里 `agent/<名称>` 的名称（经哪个 AI 编程助手）：客户端自己报的、存下来、之后显示给别人（命令行、控制台）的标注，
+ * 所以只留字母、数字和 `.` `_` `+` `-`，最多 64 个字符；别的不存（整段丢掉，不让请求失败）。库里已有的旧值显示时也按它判断。
+ * 比名字的那张表更严：它是工具的名字，不是人写的话，不需要中日韩的文字。
+ */
+export const VIA_NAME_PATTERN = /^[A-Za-z0-9._+-]{1,64}$/;
+
+/**
+ * 请求头里有 `agent/` 但名称不合格时，控制面存下的固定值：不可能是合格的名称（`?` 不在 {@link VIA_NAME_PATTERN} 里），
+ * 所以控制台和命令行「不合格的显示未知」的判断自然覆盖它，和库里升级之前存下的不合格旧值显示一样；
+ * 请求头里没有 `agent/` 的照旧没有标注（null）。
+ */
+export const VIA_UNKNOWN = "?";
+
+/** Agent 的名称的长度上限（字符数）：和令牌的名称一样；Hello 里的名称和给 Agent 签发凭据时的名称都用它。 */
+export const AGENT_NAME_MAX_LENGTH = 64;
+
 const ZERO_WIDTH_JOINER = 0x200d;
 const ZERO_WIDTH_NON_JOINER = 0x200c;
 const isVariationSelector = (codePoint: number): boolean =>
@@ -159,6 +176,22 @@ export function nameProblem(text: string): NameProblem | undefined {
 
 /** 「第几个字符」怎么数，跟在每一条说出位置的报错后面（带零宽连接符的表情会算成好几个字符）。 */
 const POSITION_NOTE = "（第几个字符按码位数，从去掉首尾空白之后的第一个算起）";
+
+const REJECTED_NAME_CHARACTERS_GLOBAL = new RegExp(REJECTED_NAME_CHARACTER.source, "gu");
+
+/**
+ * 长的自由文字（给人读的说明、原因这一类，不是名字）里的表里的字符，写成看得见的 `\uXXXX`（补充平面的写成 `\u{XXXXX}`）再存，
+ * 不整段丢掉：说明还看得懂，读的人看得出这里原来有东西。`keep` 里的字符保留（默认换行和制表符：多行的说明要用）。
+ * 成对的代理码元是一个字符，不受影响；零宽连接符、零宽不连字符、变体选择符不在表里，原样。
+ */
+export function escapeUnsafeCharacters(text: string, keep = "\t\n"): string {
+	return text.replace(REJECTED_NAME_CHARACTERS_GLOBAL, (character) => {
+		if (keep.includes(character)) return character;
+		const codePoint = character.codePointAt(0) as number;
+		const hex = codePoint.toString(16).padStart(4, "0");
+		return codePoint > 0xffff ? `\\u{${hex}}` : `\\u${hex}`;
+	});
+}
 
 /** `U+200B` 这样写的码位。 */
 export const codePointLabel = (codePoint: number): string =>

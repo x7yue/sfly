@@ -12,9 +12,9 @@ import {
 	type RunStatus,
 	SCOPE_LABELS,
 	type Scope,
+	VIA_NAME_PATTERN,
 } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
-import { untrustedPlain } from "#/lib/untrusted-text";
 
 /**
  * 界面文案（故事 79：文案集中管理，不引入 i18n 框架；规则见 docs/DESIGN-SYSTEM.md「文案」一节）。
@@ -463,8 +463,9 @@ const ASSISTANT_NAME = new Map([
 	["codex", "Codex"],
 ]);
 
-/** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称是请求头里的原文（不可信，看不见的字符写出来）。只是标注，不是鉴权（ADR 0004）。 */
-export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? untrustedPlain(via)}`;
+/** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
+export const viaLabel = (via: string) =>
+	`经 ${ASSISTANT_NAME.get(via) ?? (VIA_NAME_PATTERN.test(via) ? via : "未知")}`;
 
 /** 「已新建场景「巡检」」：新建弹窗成功后的提示，控制台「开始使用」里做完的那一步也写这一句。 */
 export const scenarioCreatedLabel = (name: string) => `已新建场景「${name}」`;

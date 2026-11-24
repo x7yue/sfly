@@ -41,7 +41,6 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			"scenarios/ScenarioList.tsx": { wrapped: ["a.name", "a.name"] },
 			"run-drawer/TriggerForm.tsx": { wrapped: ["row.title", "row.detail", "p.message"] },
 			"components/via-tag.tsx": { wrapped: ["viaLabel(via)"] },
-			"lib/copy.ts": { wrapped: ["via"] },
 			"monitor/QueueWaitNote.tsx": {
 				wrapped: ["wait.agent", "holder.orchestration_name", "holderNodeLabel(holder)"],
 			},
