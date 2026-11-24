@@ -1702,6 +1702,82 @@ describe("停止、插话、结束会话、排队", () => {
 		}, 30_000);
 	});
 
+	describe("控制面关闭之后的在途的事", () => {
+		/** 单独起一个控制面（关闭用）：工作台是它自己的 Agent。 */
+		const startClosable = async (name: string, port: number, address: string) => {
+			const closeCp = await startTestControlPlane({
+				assistantUrl: assistant.url,
+				assistantSecret: assistant.secret,
+				workbenchAgent: name,
+				assistantReconnectMs: { min: 20, max: 100 },
+				assistantCommandTimeoutMs: 5_000,
+			});
+			const closeWorkbench = await FakeAgent.connect(
+				closeCp.grpcUrl,
+				{ name, peer: { port, publicAddress: address } },
+				{ clock: closeCp.clock },
+			);
+			await assistant.connected(2);
+			return { closeCp, closeWorkbench, closeApi: new ApiClient(closeCp) };
+		};
+
+		it("关闭时在路上的插话（命令的回应关闭之后才到、是失败）：不写 steer_dropped（连接池已经关了）", async () => {
+			const { closeCp, closeWorkbench, closeApi } = await startClosable(
+				"workbench-close3",
+				7008,
+				"10.0.0.12",
+			);
+			try {
+				const a = await json<SessionView>(
+					await closeApi.post("/projects/default/sessions", { text: "甲" }, "alice"),
+				);
+				assistant.steerDelayMs = 1_500;
+				assistant.steerReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
+				const saying = closeApi
+					.post(`/sessions/${a.id}/messages`, { text: "在路上的插话" }, "bob")
+					.catch(() => undefined);
+				await eventually(() => expect(assistant.steers).toHaveLength(1));
+				const dropped = vi.spyOn(closeCp.current.sessions, "appendSteerDropped");
+				await closeCp.close();
+				await saying;
+				await new Promise((resolve) => setTimeout(resolve, 2_000));
+				expect(dropped).not.toHaveBeenCalled();
+			} finally {
+				assistant.steerDelayMs = 0;
+				assistant.steerReply = () => undefined;
+				await closeWorkbench.disconnect();
+			}
+		}, 30_000);
+
+		it("关闭开始之后到的结局不再让排队的开始：关闭期间助手服务带回了在做的那一轮的结局，排队的不开始（不发 prompt）", async () => {
+			const { closeCp, closeWorkbench, closeApi } = await startClosable(
+				"workbench-close4",
+				7009,
+				"10.0.0.13",
+			);
+			try {
+				const a = await json<SessionView>(
+					await closeApi.post("/projects/default/sessions", { text: "甲" }, "alice"),
+				);
+				(closeCp.clock as ManualClock).advance(1_000);
+				const b = await json<SessionView>(
+					await closeApi.post("/projects/default/sessions", { text: "乙" }, "bob"),
+				);
+				expect(b.status).toBe("queued");
+				// 关闭开始了（会话服务不再开始排队的），连接还开着：甲的结局这时到。
+				await closeCp.current.sessionService.close();
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(async () => expect(await statusOf(closeCp, a.id)).toBe("idle"));
+				await new Promise((resolve) => setTimeout(resolve, 500));
+				expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id]);
+				expect(await statusOf(closeCp, b.id)).toBe("queued");
+			} finally {
+				await closeCp.close();
+				await closeWorkbench.disconnect();
+			}
+		}, 30_000);
+	});
+
 	describe("结束会话：POST /sessions/:id/end", () => {
 		it("空闲的会话：改成 ended、写 session_ended（by 是结束它的人），助手服务收到 end；之后发话 409 session_ended；重复调用无害（不再写事件、不再发 end）", async () => {
 			const a = await idleSession();

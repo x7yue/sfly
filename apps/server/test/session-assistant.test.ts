@@ -1682,6 +1682,22 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		expect((await sessionRow(cp, id))?.status).toBe("idle");
 	});
 
+	it("新建会话 prompt 结果未知、助手服务收下了这一轮、没做什么事就带回了结局（它的 turn_end）：会话也不删，结局是助手服务带回的就算碰过", async () => {
+		assistant.promptAcceptedThenReply = () => ({
+			status: 500,
+			code: "start_failed",
+			message: "回应出错了",
+		});
+		const res = await api.post("/projects/default/sessions", { text: "做点事" });
+		expect(res.status).toBe(503);
+		const id = assistant.prompts.at(-1)?.sessionId as string;
+		await settled();
+		expect(await sessionCount(cp)).toBe(1);
+		const events = await eventsOf(api, id);
+		expect(events.map((e) => e.type)).toEqual(["user_message", "turn_started", "turn_end"]);
+		expect(events.at(-1)).toMatchObject({ reason: "助手服务按中止结束了这一轮" });
+	});
+
 	it("新建会话 prompt 结果未知、助手服务做了事但没有带回结局（控制面到期自己补）：会话也不删，这一轮里有助手服务的事件就算碰过", async () => {
 		// 非严格：助手服务收下中止却不带回结局，到期由控制面补；期限放长一点，让助手服务的事件在期限之内到。
 		assistant.strictTurns = false;
@@ -1712,8 +1728,20 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		expect(res.status).toBe(503);
 		const id = assistant.prompts.at(-1)?.sessionId as string;
 		assistant.promptReply = () => undefined;
-		const ended = await api.post(`/sessions/${id}/end`, {}, "bob");
-		await settled();
+		// 写 `session_ended` 慢一点：控制面补的结局之后「删没被碰过的会话」先到，看它让不让结束做完。
+		const store = cp.current.sessions;
+		const realEnd = store.end.bind(store);
+		const spy = vi.spyOn(store, "end").mockImplementation(async (...args) => {
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			return realEnd(...args);
+		});
+		let ended: Response;
+		try {
+			ended = await api.post(`/sessions/${id}/end`, {}, "bob");
+			await settled();
+		} finally {
+			spy.mockRestore();
+		}
 		expect(ended.status).toBe(200);
 		expect((await sessionRow(cp, id))?.status).toBe("ended");
 		expect(assistant.ends).toContain(id);
