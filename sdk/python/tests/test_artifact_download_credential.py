@@ -163,6 +163,9 @@ def test_nothing_is_sent_without_a_token_or_without_a_control_plane_address(
         ("https://example.com:443/a", "https://example.com/b", True),
         ("http://user:pw@example.com/a", "http://example.com/b", True),
         ("http://example.com/a", "https://example.com/a", False),
+        # 端口写成同一个数字、协议不同：也是别的地址（比的是协议、主机、端口三样）。
+        ("http://example.com:443/a", "https://example.com/a", False),
+        ("https://example.com:80/a", "http://example.com/a", False),
         ("http://example.com:8080/a", "http://example.com:8081/a", False),
         ("http://example.com/a", "http://example.org/a", False),
         ("http://example.com/a", "http://sub.example.com/a", False),

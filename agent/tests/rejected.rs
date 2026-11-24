@@ -122,10 +122,19 @@ async fn the_reason_is_printed_once_and_again_only_when_it_changes() {
     .await;
     assert!(agent.child.try_wait().unwrap().is_none());
 
-    // 之后又因为同一个原因被拒绝：连上过一次，原因重新打一行；凭据的任何部分都不在输出里。
-    cp.reject_every_connection(Code::Unauthenticated, "这个 Agent 凭据已被吊销");
+    // 之后又因为和上一次打印的同一个原因被拒绝：连上过一次，原因重新打一行（不是因为原因变了，是因为这次又是
+    // 从「已经连上」变成「被拒绝」）；凭据的任何部分都不在输出里。
+    cp.reject_every_connection(
+        Code::PermissionDenied,
+        "Agent「agent-reason」已被停用：让项目管理员恢复它",
+    );
     cp.end_session();
     wait_until("又被拒绝", || reported().len() == 3).await;
+    assert!(
+        reported()[2].contains("PermissionDenied") && reported()[2].contains("已被停用"),
+        "{:?}",
+        reported()
+    );
     let everything = stderr.lock().unwrap().join("\n");
     assert!(!everything.contains(SECRET), "{everything}");
     assert!(!everything.contains("sfly_agt_"), "{everything}");
