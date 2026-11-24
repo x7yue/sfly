@@ -145,7 +145,10 @@ export interface AttemptView {
 	status: string;
 	agent: string | null;
 	inputs: Record<string, unknown> | null;
+	/** 输入被省略时存着的大小（向上取整到 KiB）；只在内容被省略时不是 null（#633）。 */
+	inputs_omitted_bytes: number | null;
 	outputs: Record<string, unknown> | null;
+	outputs_omitted_bytes: number | null;
 	error: { kind: string; message: string; location: string | null } | null;
 	queued_at: string;
 	started_at: string | null;
@@ -173,6 +176,7 @@ export interface NodeView {
 	status: string;
 	agent: string | null;
 	outputs: Record<string, unknown> | null;
+	outputs_omitted_bytes: number | null;
 	error: { kind: string; message: string; location: string | null } | null;
 	attempts: AttemptView[];
 }
