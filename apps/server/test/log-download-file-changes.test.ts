@@ -12,7 +12,7 @@
 // 文件还没打开）截短文件，或者在文件打开之后删除它；按运行下载在第二次打开这个文件时（第一批已经发出去、第二批要读）删除或截短它。
 // 文件都是真的，动文件的也是真的 `unlink`、`truncate`。
 import { truncateSync, unlinkSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -201,6 +201,17 @@ describe("下载日志时日志文件变了", () => {
 			expect(res.body).toBe("");
 		}, 60_000);
 
+		it("日志文件被换成同名的目录（读不了）：不是「日志没了」的 410，是读文件出错（500 或连接断开，#647），控制面不退出", async () => {
+			const { task, file } = await newTask(5);
+			await rm(file);
+			await mkdir(file);
+
+			const res = await download(url(task.taskId)).catch(() => undefined);
+
+			expect(res?.status === 410).toBe(false);
+			expect((await cp.fetch("/health")).status).toBe(200);
+		}, 60_000);
+
 		it("读的过程中文件被截短（stat 之后、打开之前）：响应已经开始，连接被断开，不是正常结束", async () => {
 			const { task, file } = await newTask(5);
 			// 留下前两行：读到的是完整的两行，然后文件到头了，比请求开始时少了三行。
@@ -266,6 +277,17 @@ describe("下载日志时日志文件变了", () => {
 
 			expect(res.status).toBe(410);
 			expect(JSON.parse(res.body)).toMatchObject({ error: { code: "expired" } });
+		}, 60_000);
+
+		it("某个任务的日志文件被换成同名的目录（读不了）：不是 410，是读文件出错（500 或连接断开），控制面不退出", async () => {
+			const { runId, file } = await newTask(5);
+			await rm(file);
+			await mkdir(file);
+
+			const res = await download(url(runId)).catch(() => undefined);
+
+			expect(res?.status === 410).toBe(false);
+			expect((await cp.fetch("/health")).status).toBe(200);
 		}, 60_000);
 
 		it("运行里的任务从没有日志：下载是空的，200（不是 410）", async () => {
