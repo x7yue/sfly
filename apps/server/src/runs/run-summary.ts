@@ -9,11 +9,13 @@ import {
 	type RunReportFailedTask,
 } from "@sfly/schema";
 import { eq, sql } from "drizzle-orm";
+import { maskedAction } from "../actions/action-text.js";
 import type { Db, Tx } from "../db/database.js";
 import { taskActionSummaries, tasks } from "../db/schema.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { readLogPage } from "../logs/log-pages.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import { withSession } from "../sessions/session-ref.js";
 import { type RunReadFull, readRuns } from "./run-read.js";
 import { runStateSource } from "./run-state-source.js";
 
@@ -29,7 +31,7 @@ import { runStateSource } from "./run-state-source.js";
 
 export interface RunReportDeps extends RunFocusDeps {
 	/** 一次运行全部任务的日志文件概况（一次查询）。 */
-	logs: Pick<TaskLogs, "describeRun">;
+	logs: Pick<TaskLogs, "describeRun" | "logMask">;
 }
 
 type ReadChain = RunReadFull["chains"][number];
@@ -48,6 +50,7 @@ export async function buildRunReport(
 	const { run } = read;
 	return {
 		...projectRunState(runStateSource(read)),
+		...withSession(read.session),
 		duration_ms: run.endedAt ? Math.max(0, run.endedAt.getTime() - run.startedAt.getTime()) : null,
 		failed_tasks: listed.map((task) => failedTaskView(read, task, logs)),
 		failed_tasks_total: failed.length,
@@ -94,6 +97,8 @@ async function taskLogTails(
 		return tails;
 	}
 	const infos = await deps.logs.describeRun(read.run.id);
+	// 读日志时的打码（log-mask.ts）：每个读日志的出口都按这次运行此刻的 secret 值打码，这里和其他读日志的地方是同一个口径。
+	const mask = await deps.logs.logMask(read.run.id);
 	for (const { taskId } of attempts) {
 		const info = infos.get(taskId);
 		const page = info
@@ -102,16 +107,17 @@ async function taskLogTails(
 					limit: RUN_REPORT_LIMITS.logLines,
 					filter: {},
 					until: info.bytes,
+					mask,
 				})
 			: undefined;
-		// 读取时再打一遍码（和错误信息、失败的动作同一个口径）。
+		// 读出来的行已经按此刻的 secret 值打过码，不再另打一遍。
 		const lines = (page?.lines ?? []).map(({ seq, time, agent_time, source, level, text }) => ({
 			seq,
 			time,
 			agent_time,
 			source,
 			level,
-			text: read.maskText(text),
+			text,
 		}));
 		tails.set(taskId, {
 			lines,
@@ -181,15 +187,8 @@ async function failedActionsOf(db: Db | Tx, read: RunReadFull): Promise<RunRepor
 	// 稳定排序：同一时刻结束的保持任务在运行里的先后。
 	found.sort((a, b) => endedAt(b) - endedAt(a));
 	return found.slice(0, RUN_REPORT_LIMITS.failedActions).map(({ taskId, place, action }) => ({
-		...action,
-		name: read.maskText(action.name),
-		fields: Object.fromEntries(
-			Object.entries(action.fields).map(([key, value]) => [
-				read.maskText(key),
-				read.maskText(value),
-			]),
-		),
-		reason: action.reason === null ? null : read.maskText(action.reason),
+		// 名称、字段、失败原因和动作的读取接口是同一个口径（action-text.ts 的 `maskedAction`）。
+		...maskedAction(action, read.secrets),
 		chain_instance_id: place.chain.id,
 		node_id: place.node.node_id,
 		display_name: place.node.display_name ?? null,
@@ -220,8 +219,9 @@ async function attentionItemsOf(
 							unit,
 							source,
 							latest,
-							// 日志类异常的说明读取时再打一遍码。
-							anomaly: { ...anomaly, message: read.maskText(anomaly.message) },
+							// 说明取自读取结果（日志类异常的 `logIssues`、失败和重试的错误信息），读取运行时已经按此刻的 secret 值
+							// 打过码（`readRuns`），和关注项接口是同一份，这里不再另打一遍。
+							anomaly,
 						},
 					]
 				: [],

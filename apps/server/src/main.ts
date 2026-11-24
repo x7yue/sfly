@@ -72,7 +72,8 @@ import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
-import { safeError } from "./util/safe-error.js";
+import { installShutdown } from "./shutdown.js";
+import { printError, printInfo, printWarning, terminalStreams } from "./util/output.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
 declare const SFLY_BUNDLED: boolean | undefined;
@@ -124,8 +125,7 @@ if (process.argv[2] === "reset-password") {
 		databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 		stdin: process.stdin,
 		stdinIsTty: process.stdin.isTTY === true,
-		stdout: process.stdout,
-		stderr: process.stderr,
+		...terminalStreams(),
 	});
 	process.exit(code);
 }
@@ -136,13 +136,15 @@ const { httpPort, grpcPort, ...limits } = (() => {
 		return readEnvSettings(env);
 	} catch (error) {
 		if (!(error instanceof EnvSettingsError)) throw error;
-		// 错误日志都过 safeError（test/error-log.test.ts 守着这条）：这里的错误只有变量名、填的原文和范围，原样返回。
-		console.error(`sfly: 控制面没有启动，${(safeError(error) as EnvSettingsError).message}`);
+		// 往终端写东西只走统一的出口（lint 规则 no-direct-output 拦着直接用 console）：这个错误只有变量名、填的原文和范围，
+		// 没有数据库的参数，说明拼成字符串交给 printError。
+		printError(`sfly: 控制面没有启动，${error.message}`);
 		process.exit(1);
 	}
 })();
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
-if (!webDir) console.warn(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
+if (!webDir) printWarning(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
+// 启动失败（写库失败、端口被占……）也走统一的出口：数据库错误里的参数不会随未捕获的异常打到终端上。
 const controlPlane = await startControlPlane({
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
@@ -170,13 +172,20 @@ const controlPlane = await startControlPlane({
 	assistantUrl: env.SFLY_ASSISTANT_URL || undefined,
 	assistantSecret: env.SFLY_ASSISTANT_SECRET || undefined,
 	workbenchAgent: env.SFLY_WORKBENCH_AGENT || undefined,
+}).catch((error: unknown) => {
+	printError("sfly: 控制面没有启动：", error);
+	process.exit(1);
 });
-console.log(
+printInfo(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
 );
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-	process.once(signal, () => {
-		void controlPlane.close().then(() => process.exit(0));
-	});
-}
+// 停止信号：关闭只做一次，重复的信号只记一句（`src/shutdown.ts`）。
+installShutdown({
+	emitter: process,
+	signals: ["SIGINT", "SIGTERM"],
+	close: () => controlPlane.close(),
+	exit: (code) => process.exit(code),
+	log: (message) => printInfo(message),
+	logError: (message, error) => printError(message, error),
+});

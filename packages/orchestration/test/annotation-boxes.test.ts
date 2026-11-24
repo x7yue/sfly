@@ -72,12 +72,12 @@ describe("由成员算出注释框的范围", () => {
 	});
 
 	it("只有子流程成员：它和它下级子流程的区域合起来，外面再加一圈留白", () => {
-		// 子流程 sub 的区域：x 810 → 1414，y 160 → 284；下级子流程 deep 的区域：x 1344 → 1948，y 324 → 448。
+		// 子流程 sub 的区域：x 810 → 1414，y 138 → 284；下级子流程 deep 的区域：x 1344 → 1948，y 302 → 448。
 		expect(boxOf({ subflows: ["sub"] })).toEqual([
 			{
 				id: "annotation_1",
 				members: ["sub", "spawn2", "deep", "deep_ping"],
-				box: { x: 810 - 24, y: 160 - 20, w: 1948 + 24 - 786, h: 448 + 20 - 140 },
+				box: { x: 810 - 24, y: 138 - 20, w: 1948 + 24 - 786, h: 448 + 20 - 118 },
 			},
 		]);
 	});
@@ -87,14 +87,14 @@ describe("由成员算出注释框的范围", () => {
 		expect(framed?.members).toEqual(["deep", "deep_ping"]);
 		expect(framed?.box).toEqual({
 			x: 1344 - 24,
-			y: 324 - 20,
+			y: 302 - 20,
 			w: 1948 - 1344 + 48,
-			h: 448 - 324 + 40,
+			h: 448 - 302 + 40,
 		});
 	});
 
 	it("节点成员和子流程成员混合：卡片和子流程区域合起来的外接框加留白", () => {
-		// fetch 的卡片：x 300 → 556，y 0 → 60；子流程 deep 的区域：x 1344 → 1948，y 324 → 448。
+		// fetch 的卡片：x 300 → 556，y 0 → 60；子流程 deep 的区域：x 1344 → 1948，y 302 → 448。
 		expect(boxOf({ nodes: ["fetch"], subflows: ["deep"] })).toEqual([
 			{
 				id: "annotation_1",
@@ -130,13 +130,13 @@ describe("由成员算出注释框的范围", () => {
 		const [region] = subflowRegions(grown);
 		expect(region?.box).toEqual({
 			x: 834 - 24,
-			y: 204 - 44,
+			y: 204 - 66,
 			w: 1134 + 256 - 834 + 48,
-			h: 300 + 64,
+			h: 300 + 86,
 		});
 		const [box] = annotationBoxes({ ...grown, annotations: [annotation({ subflows: ["sub"] })] });
 		// 注释框上下各留 20。
-		expect(box?.box.h).toBe(300 + 64 + 20 + 20);
+		expect(box?.box.h).toBe(300 + 86 + 20 + 20);
 	});
 
 	it("按 annotations 的顺序给出（后面的画在上层）", () => {

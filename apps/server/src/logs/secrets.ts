@@ -1,4 +1,14 @@
 import { SECRET_MASK, type StoredOrchestrationDocument, TOKEN_VALUE_PATTERN } from "@sfly/schema";
+import {
+	type Automaton,
+	automatonBytes,
+	buildAutomaton,
+	MAX_AUTOMATON_CHARS,
+	MAX_SPANS,
+	maskedByAutomaton,
+	mergeSpans,
+	scanSpans,
+} from "./aho-corasick.js";
 
 /**
  * secret 参数的值在日志和运行视图里替换成的掩码（docs/SEMANTICS.md §2.1：secret 参数在界面和日志中打码显示）。
@@ -17,7 +27,28 @@ export { SECRET_MASK };
  * 它是 {@link SecretSet.mask} 的一部分，读取和写入走的是同一处，不另有一套。
  */
 export function maskTokens(text: string): string {
-	return text.includes("sfly_") ? text.replace(TOKEN_VALUE_PATTERN, SECRET_MASK) : text;
+	const tokens = tokenSpans(text);
+	if (!tokens) return text;
+	return maskedByAutomaton(text, mergeSpans(0, tokens.starts, tokens.ends), SECRET_MASK);
+}
+
+/**
+ * 认令牌用的正则：自己的一份（从 {@link TOKEN_VALUE_PATTERN} 复制，不导出）。`TOKEN_VALUE_PATTERN` 是 `@sfly/schema` 导出的带 `g` 标志的
+ * 共享对象，`matchAll` 从它当时的 `lastIndex` 开始找：别处只要对它调过一次 `test()`、`exec()`，打码就会漏掉文字开头的令牌。
+ * 打码不能靠「别人不碰」，所以这里用不对外的一份，`lastIndex` 永远是 0。
+ */
+const TOKEN_SCAN = new RegExp(TOKEN_VALUE_PATTERN.source, TOKEN_VALUE_PATTERN.flags);
+
+/** 文字里令牌原值的出现（{@link TOKEN_VALUE_PATTERN}）：起止位置，按开头排好、互相不重叠；没有时为 undefined。只在文字里有 `sfly_` 时才扫。 */
+function tokenSpans(text: string): { starts: number[]; ends: number[] } | undefined {
+	if (!text.includes("sfly_")) return undefined;
+	const starts: number[] = [];
+	const ends: number[] = [];
+	for (const match of text.matchAll(TOKEN_SCAN)) {
+		starts.push(match.index);
+		ends.push(match.index + match[0].length);
+	}
+	return starts.length > 0 ? { starts, ends } : undefined;
 }
 
 /**
@@ -28,11 +59,75 @@ export function maskTokens(text: string): string {
  */
 export const MIN_LEAF_CHARS = 4;
 
+/**
+ * 一次读取（一页、一个下载块、流上的一批、一次运行的读取）里所有打码共用的预算（{@link SecretSet.withBudget}）。
+ * 预算只记一样东西：**完整的出现的次数**（`masks`，合并重叠之后的段数）。每段输出多一个掩码，限住它，输出才不会被撑大
+ * （一个字符的保密值，文字里每个位置都是它，每个位置换成六个字符的掩码）；用完之后，这次读取里还有完整的出现的文字整段盖住
+ * （宁可多盖，不漏），没有完整的出现的文字原样。它和保密值的内容无关（完整的出现本身除外），所以 docs/SEMANTICS.md §2.1 的规矩没有例外。
+ *
+ * 没有「扫过的字符数」的预算：扫描的耗时和读到的文字成正比，每个字符最坏是总长上限（{@link MAX_AUTOMATON_CHARS}）处最刁钻的形状下
+ * 的耗时，每个读取出口读多少由它自己的上限管（一页日志的字节上限、单个输入输出的 1 MiB）；再设一个会把正常的内容整段盖住的数，
+ * 比读得慢更糟。
+ */
+export const READ_MASKS = MAX_SPANS;
+
+/**
+ * 值集合的缓存（{@link secretSetOf}）最多占这么多字节：值集合的文本，加上建好的自动机（{@link automatonBytes}）。
+ * 至少放得下 8 份总长到上限（{@link MAX_AUTOMATON_CHARS}）的值集合：实测最大的一份（一个 100 万字符的值）自动机 16 MiB、加文本 18 MiB，
+ * 8 份 143 MiB；同时在读的运行最多几份大的，交替读不会每次都重建。自动机的数组在堆外。
+ */
+export const SET_CACHE_MAX_BYTES = 160 * 1024 * 1024;
+
+/**
+ * 这几个上限，是可以改的对象，只给测试用：测试把它们调小，用几十 KB 的文字就能让一次读取用完预算、让一份值集合大到建不了自动机，
+ * 验证每个读取出口都取了预算、一个运行的值集合太大只盖住它自己（真实的上限要上百万个字符才碰得到）。改它之前要清掉值集合的缓存
+ * （{@link clearSecretSetCache}）：缓存里的值集合是按旧的上限建的。
+ */
+export const secretLimits = {
+	/** 一次读取（一次写入）里完整的出现最多多少段（{@link READ_MASKS}）。 */
+	readMasks: READ_MASKS,
+	/** 一份值集合所有写法的总长最多多少（{@link MAX_AUTOMATON_CHARS}）。 */
+	automatonChars: MAX_AUTOMATON_CHARS,
+	/** 值集合的缓存最多占多少字节（{@link SET_CACHE_MAX_BYTES}）。 */
+	cacheBytes: SET_CACHE_MAX_BYTES,
+};
+
+/** 一份读取的预算：剩多少。一次读取里打码用到的这个运行的值集合的视图共用同一份（每个运行各一份）。 */
+export class WorkBudget {
+	/** 还能有多少段完整的出现（合并重叠之后）。 */
+	masks: number;
+	constructor(masks: number = secretLimits.readMasks) {
+		this.masks = masks;
+	}
+}
+
+/**
+ * 值集合太大（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）的运行，在它的任务日志里写的一行说明（平台写的，不含任何值）。
+ * 这个运行里所有要打码的文字都整段盖住，这一行是用户知道为什么的地方：打码时只有它自己原样放行（{@link SecretSet.mask}）。
+ */
+export const OVERSIZE_NOTICE = `这次运行的 secret 参数的值太多或太长（所有写法合计超过 ${MAX_AUTOMATON_CHARS} 个字符），无法逐个认出，这次运行里日志、动作、运行视图里的文字全部显示为 ${SECRET_MASK}。缩短或减少 secret 参数的值之后重新运行。`;
+
 /** 值的 JSON 文本（`JSON.stringify` 返回不了文本的值，例如 undefined，退回 `String`）。 */
 export const jsonText = (value: unknown): string => JSON.stringify(value) ?? String(value);
 
-/** 一个字符串的字符数（按码点，一个 emoji 算一个）。 */
-const charCount = (text: string): number => Array.from(text).length;
+/**
+ * 一个字符串的字符数（Unicode 码点，一个 emoji 算一个）：和 `Array.from(text).length`、Python 的 `len` 一致，孤立的代理项各算一个；
+ * 不分配数组（读取时每段到了上限的文字都要数一遍）。
+ */
+export function charCount(text: string): number {
+	let count = text.length;
+	for (let i = 0; i + 1 < text.length; i++) {
+		const unit = text.charCodeAt(i);
+		if (unit >= 0xd800 && unit <= 0xdbff) {
+			const next = text.charCodeAt(i + 1);
+			if (next >= 0xdc00 && next <= 0xdfff) {
+				count -= 1;
+				i += 1;
+			}
+		}
+	}
+	return count;
+}
 
 /**
  * 非 ASCII 字符和 DEL 写成 `\uXXXX`（小写十六进制，码元为单位，非 BMP 字符是一对代理）：Python 的 `json.dumps` 默认
@@ -306,213 +401,10 @@ export function secretPartsOf(value: unknown): SecretParts {
 }
 
 /**
- * 单个要打码的文本超过这么长（UTF-16 码元）就不放进正则，改成字面量查找。V8 编译一个太大的正则会抛
- * `Regular expression too large`（单个模式在 32 K 码元上下），报错信息里还带着整个正则的源码，也就是 secret 值本身。
- * 能到这个长度的有长的字符串值（证书链）、对象的整段 JSON、几千个汉字的值（`\uXXXX` 写法是原长的 6 倍）。
- */
-const MAX_REGEX_TEXT_CHARS = 1024;
-
-/** 一个正则的源码（转义之后）最长这么长，远低于 V8 的上限；值集合更大时分成几个正则。 */
-const MAX_REGEX_SOURCE_CHARS = 8192;
-
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
-
-/** 把一段源码编译成全局正则；测试里可以换成别的（让它失败），见 {@link SecretSet} 的 `compile` 选项。 */
-type Compile = (source: string) => RegExp;
-const compileGlobal: Compile = (source) => new RegExp(source, "g");
-
-/** 一份值集合的匹配：几个正则（每个是一批文本的候选），加上不进正则、直接做字面量查找的文本。 */
-interface Matcher {
-	regexes: readonly RegExp[];
-	literals: readonly string[];
-	/**
-	 * 只有一个正则、没有字面量，并且任何两个要打码的文本都不可能「部分重叠」（一个的结尾是另一个的开头，包括自己和自己：
-	 * 周期性的值）。这时一次 `replace` 的结果和「所有出现位置合并重叠」逐字相同，不用找全部位置、不分配：
-	 * 部分重叠以外的重叠都是嵌套（一个文本是另一个的子串），正则按长的在前，在最靠前的出现位置上总是取到最长的那个，
-	 * 嵌套在里面的随它一起被换掉。构建值集合的匹配时算一次（{@link mayPartiallyOverlap}）。
-	 */
-	plain: boolean;
-}
-
-/** 一批文本分成若干块，每块转义之后的源码不超过 {@link MAX_REGEX_SOURCE_CHARS}（文本已按长度从长到短排好）。 */
-function chunksOf(texts: readonly string[]): string[][] {
-	const chunks: string[][] = [];
-	let current: string[] = [];
-	let size = 0;
-	for (const text of texts) {
-		const escaped = escapeRegExp(text).length + 1;
-		if (current.length > 0 && size + escaped > MAX_REGEX_SOURCE_CHARS) {
-			chunks.push(current);
-			current = [];
-			size = 0;
-		}
-		current.push(text);
-		size += escaped;
-	}
-	if (current.length > 0) chunks.push(current);
-	return chunks;
-}
-
-/**
- * 能进正则的文本编译好的结果，按这批文本缓存；值集合变了就是另一个键，重新编译。读取运行每次都算一份新的 {@link SecretSet}，
- * 同样的值集合不重复编译。编译失败的块的文本（`failed`）退回字面量查找，失败的错误不往外抛、不记录：它的消息里带着正则源码，
- * 也就是 secret 值。
- */
-const compiled = new Map<string, { regexes: RegExp[]; failed: string[] }>();
-const COMPILED_LIMIT = 64;
-
-function compileInline(inline: readonly string[], compile: Compile | undefined) {
-	const build = () => {
-		const regexes: RegExp[] = [];
-		const failed: string[] = [];
-		for (const chunk of chunksOf(inline)) {
-			try {
-				regexes.push((compile ?? compileGlobal)(chunk.map(escapeRegExp).join("|")));
-			} catch {
-				failed.push(...chunk);
-			}
-		}
-		return { regexes, failed };
-	};
-	// 注入的编译器只用于测试，不进共享的缓存。
-	if (compile) return build();
-	const key = JSON.stringify(inline);
-	let found = compiled.get(key);
-	if (!found) {
-		found = build();
-		compiled.set(key, found);
-		if (compiled.size > COMPILED_LIMIT) {
-			const oldest = compiled.keys().next().value;
-			if (oldest !== undefined) compiled.delete(oldest);
-		}
-	}
-	return found;
-}
-
-function buildMatcher(texts: readonly string[], compile: Compile | undefined): Matcher {
-	const inline = texts.filter((t) => t.length <= MAX_REGEX_TEXT_CHARS);
-	const { regexes, failed } = compileInline(inline, compile);
-	const literals = [...texts.filter((t) => t.length > MAX_REGEX_TEXT_CHARS), ...failed];
-	return {
-		regexes,
-		literals,
-		plain: regexes.length === 1 && literals.length === 0 && !mayPartiallyOverlap(texts),
-	};
-}
-
-/** 判断「会不会部分重叠」最多做这么多步（字符比较）；超过时按「会」处理，走合并的路径，结果同样正确，只是慢一点。 */
-const OVERLAP_CHECK_STEPS = 2_000_000;
-
-/**
- * 有没有两个文本（可以是同一个）的出现位置会部分重叠：某个文本 X 的一个真后缀等于某个文本 Y 的真前缀。
- * 用所有文本建一棵前缀树，从 X 的每个后缀的开头往下走；走完整个后缀、而且停在还有下文的节点上，说明有更长的 Y 以它开头。
- * 停在没有下文的节点上是 Y 恰好等于这个后缀：Y 嵌套在 X 里，不算。步数超过 {@link OVERLAP_CHECK_STEPS}（很大的值集合、
- * 周期性很强的值）时放弃，按「会部分重叠」处理。
- */
-function mayPartiallyOverlap(texts: readonly string[]): boolean {
-	interface Node {
-		next: Map<number, Node>;
-	}
-	const root: Node = { next: new Map() };
-	let steps = 0;
-	for (const text of texts) {
-		let node = root;
-		for (let i = 0; i < text.length; i++) {
-			const unit = text.charCodeAt(i);
-			let child = node.next.get(unit);
-			if (!child) {
-				child = { next: new Map() };
-				node.next.set(unit, child);
-			}
-			node = child;
-			if (++steps > OVERLAP_CHECK_STEPS) return true;
-		}
-	}
-	for (const text of texts) {
-		for (let from = 1; from < text.length; from++) {
-			let node: Node | undefined = root;
-			for (let i = from; i < text.length && node; i++) {
-				node = node.next.get(text.charCodeAt(i));
-				if (++steps > OVERLAP_CHECK_STEPS) return true;
-			}
-			// 走完了整个后缀（node 还在树里），并且有更长的文本以它开头
-			if (node && node !== root && node.next.size > 0) return true;
-		}
-	}
-	return false;
-}
-
-/**
- * 一次打码的工作量上限（字符比较的数量，每个出现位置按它的长度加 {@link MASK_WORK_PER_MATCH} 算）：超过就把这段文字整个盖住
- * （宁可多盖，不能让同步的代码卡住控制面）。正常的输入远在它下面：一段 400 万字的输出里出现 100 次 4 万字的值，工作量是 400 万；
- * 取 32 M，最坏情况下（周期性的值和文字）大约 10 毫秒（见 PR 里的数字）。
- */
-const MAX_MASK_WORK = 32_000_000;
-
-/** 每个出现位置固定的一份工作量：它限制了 spans 最多有多少项（32 M / 64 = 50 万项）。 */
-const MASK_WORK_PER_MATCH = 64;
-
-/**
- * 打码：先找出每个正则和每个字面量在文字里的全部位置，重叠的合成一段，每段换成一个掩码（相邻但不重叠的各是一个掩码）。
- * 一个正则一次匹配就把匹配到的文字用掉了，从它后面接着找，会漏掉和它重叠的另一个值（`abcd` 和 `cdef` 在 `abcdef` 里重叠）：
- * 所以每找到一个匹配，下一次从它的开头的后一个字符再找。不论值是长是短、走正则还是字面量，重叠的结果都一样，
- * 不会留下一个值的尾巴。
- */
-function maskSpans(text: string, matcher: Matcher): string | undefined {
-	const spans: Array<[number, number]> = [];
-	// 工作量：每找到一个出现位置，记它的长度加上固定的一份（固定的一份限制 spans 占的内存）。周期性的值在周期性的文字里，
-	// 每个位置都是一个出现位置，一次打码的工作量是「文字长 × 值长」，值来自用户、文字来自节点，同步执行会让控制面卡住几秒：
-	// 超过 {@link MAX_MASK_WORK} 时放弃，返回 undefined，调用方把这段文字整个盖住。
-	let work = 0;
-	for (const regex of matcher.regexes) {
-		regex.lastIndex = 0;
-		for (let m = regex.exec(text); m; m = regex.exec(text)) {
-			// 要打码的文本都不是空的，所以不会有空匹配；以防万一，往前走一格，不让它死循环。
-			if (m[0].length === 0) regex.lastIndex += 1;
-			else {
-				spans.push([m.index, m.index + m[0].length]);
-				regex.lastIndex = m.index + 1;
-				work += m[0].length + MASK_WORK_PER_MATCH;
-				if (work > MAX_MASK_WORK) {
-					regex.lastIndex = 0;
-					return undefined;
-				}
-			}
-		}
-		regex.lastIndex = 0;
-	}
-	for (const literal of matcher.literals) {
-		for (let at = text.indexOf(literal); at >= 0; at = text.indexOf(literal, at + 1)) {
-			spans.push([at, at + literal.length]);
-			work += literal.length + MASK_WORK_PER_MATCH;
-			if (work > MAX_MASK_WORK) return undefined;
-		}
-	}
-	if (spans.length === 0) return text;
-	spans.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-	let out = "";
-	let cursor = 0;
-	let [from, to] = spans[0] as [number, number];
-	const flush = () => {
-		out += text.slice(cursor, from) + SECRET_MASK;
-		cursor = to;
-	};
-	for (const [start, end] of spans.slice(1)) {
-		if (start < to) {
-			to = Math.max(to, end);
-			continue;
-		}
-		flush();
-		[from, to] = [start, end];
-	}
-	flush();
-	return out + text.slice(cursor);
-}
-
-/**
  * 一次运行此刻的全部 secret 值要打码的东西（{@link secretPartsOf} 汇总）。不可变：运行里有了新的 secret 值（子流程实例创建）
- * 就是另一个值集合，匹配用的正则按值集合编译、缓存：一批日志、动作经过它时，每一段文字只是一次正则替换，不是每个值各扫一遍
- * （值多的时候逐个扫一遍的代价和值的个数成正比，日志每行都要付）。很长的文本不进正则（{@link MAX_REGEX_TEXT_CHARS}）。
+ * 就是另一个值集合，匹配用的自动机（{@link buildAutomaton}）按值集合建一次、跟着这份集合缓存：一批日志、动作经过它时，每一段文字
+ * 只是线性的一遍扫描。所有写法的总长超过 {@link MAX_AUTOMATON_CHARS} 的值集合建不了自动机（总长有上限，每一步的耗时才有上限），
+ * 这个运行里要打码的文字（写入和读取）整段盖住，只影响它自己；这次运行的任务日志里有一行说明（{@link OVERSIZE_NOTICE}）。
  */
 export class SecretSet {
 	/** 在文字里按子串换成掩码的文本，长的在前（整段的 JSON 先于它里面的叶子）。 */
@@ -521,16 +413,33 @@ export class SecretSet {
 	readonly scalars: ReadonlySet<string>;
 	/** 作为节点整个等于它就换成掩码的对象和数组：标准写法（{@link canonicalJson}）。 */
 	readonly containers: ReadonlySet<string>;
-	readonly #compile: Compile | undefined;
-	#matcher: Matcher | undefined;
+	/** 延迟建好的自动机：同一份值集合的各个视图（{@link withBudget}）共用。 */
+	readonly #lazy: Lazy;
+	/** 这个视图的预算；没有时只受单次的上限（{@link READ_MASKS}）约束（写入、测试）。 */
+	readonly #budget: WorkBudget | undefined;
 	/** 保密对象和数组的形状：数组的元素个数、对象的键个数、标准写法的长度。读取运行时每个对象和数组都要问「是不是等于它」，先用这些排除。 */
-	readonly #arraySizes = new Set<number>();
-	readonly #objectSizes = new Set<number>();
-	readonly #containerLengths = new Set<number>();
-	#shapesKnown = true;
+	readonly #arraySizes: Set<number>;
+	readonly #objectSizes: Set<number>;
+	readonly #containerLengths: Set<number>;
+	#shapesKnown: boolean;
 
-	/** `options.compile` 只给测试用：换掉编译正则的函数，验证它失败时打码照样完成、不抛错。 */
-	constructor(parts: Iterable<SecretParts> = [], options: { compile?: Compile } = {}) {
+	/** `parts` 是另一份 {@link SecretSet} 时是它的另一个视图（带 `options.budget`），见 {@link withBudget}。 */
+	constructor(
+		parts: Iterable<SecretParts> | SecretSet = [],
+		options: { budget?: WorkBudget } = {},
+	) {
+		this.#budget = options.budget;
+		if (parts instanceof SecretSet) {
+			this.texts = parts.texts;
+			this.scalars = parts.scalars;
+			this.containers = parts.containers;
+			this.#lazy = parts.#lazy;
+			this.#arraySizes = parts.#arraySizes;
+			this.#objectSizes = parts.#objectSizes;
+			this.#containerLengths = parts.#containerLengths;
+			this.#shapesKnown = parts.#shapesKnown;
+			return;
+		}
 		const texts = new Set<string>();
 		const scalars = new Set<string>();
 		const containers = new Set<string>();
@@ -542,7 +451,11 @@ export class SecretSet {
 		this.texts = [...texts].sort((a, b) => b.length - a.length);
 		this.scalars = scalars;
 		this.containers = containers;
-		this.#compile = options.compile;
+		this.#lazy = {};
+		this.#arraySizes = new Set();
+		this.#objectSizes = new Set();
+		this.#containerLengths = new Set();
+		this.#shapesKnown = true;
 		for (const text of containers) {
 			this.#containerLengths.add(text.length);
 			try {
@@ -556,6 +469,16 @@ export class SecretSet {
 				this.#shapesKnown = false;
 			}
 		}
+	}
+
+	/**
+	 * 同一份值集合的一个带预算的视图（{@link WorkBudget}）：一次读取（一页、一个下载块、流上的一批、一次运行的读取）
+	 * 开始时取一个，这次读取里的所有打码经过它，共用一份预算；用完之后还有完整的出现的文字整段盖住。
+	 * 值集合本身不可变、可以按值缓存和共用（{@link secretSetOf}），预算是每次读取自己的，所以放在视图上，不放在缓存的集合上。
+	 * `budget` 给了就用它（一次读取涉及几个运行的值集合时，几个视图共用一份）。没有要打码的东西时返回自己。
+	 */
+	withBudget(budget: WorkBudget = new WorkBudget()): SecretSet {
+		return this.isEmpty ? this : new SecretSet(this, { budget });
 	}
 
 	/**
@@ -582,35 +505,101 @@ export class SecretSet {
 	}
 
 	/**
-	 * 这份值集合是怎么匹配的（测试用：确认随机对比两条路径都走到了）：`plain` 是「一次 replace」的路径，否则是合并位置的路径。
+	 * 这份值集合的自动机；所有写法的总长超过 {@link MAX_AUTOMATON_CHARS} 时没有（调用方把文字整段盖住）。
+	 * 同一份值集合建一次，所有视图共用。
 	 */
-	matching(): { regexes: number; literals: number; plain: boolean } {
-		this.#matcher ??= buildMatcher(this.texts, this.#compile);
-		const { regexes, literals, plain } = this.#matcher;
-		return { regexes: regexes.length, literals: literals.length, plain };
+	#automaton(): Automaton | undefined {
+		if (!this.#lazy.built) {
+			this.#lazy.automaton = buildAutomaton(this.texts, secretLimits.automatonChars);
+			this.#lazy.built = true;
+			this.#lazy.watch?.(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
+		}
+		return this.#lazy.automaton;
+	}
+
+	/** 自动机建好时通知一次（建好的字节数）：值集合的缓存按字节数限大小，只给 {@link secretSetOf} 用。已经建好的立刻通知。 */
+	watchBuild(watch: (bytes: number) => void): void {
+		this.#lazy.watch = watch;
+		if (this.#lazy.built) watch(this.#lazy.automaton ? automatonBytes(this.#lazy.automaton) : 0);
+	}
+
+	/** 值集合的某个写法恰好就是 {@link OVERSIZE_NOTICE}：是的话那句话也是值，照样整段盖住。每份值集合只算一次。 */
+	#noticeIsValue(): boolean {
+		this.#lazy.noticeIsValue ??= this.texts.includes(OVERSIZE_NOTICE);
+		return this.#lazy.noticeIsValue;
+	}
+
+	/** 这份值集合是不是大到建不了自动机（所有写法的总长超过 {@link MAX_AUTOMATON_CHARS}）：打码时每段文字都整段盖住（{@link OVERSIZE_NOTICE}）。 */
+	get oversize(): boolean {
+		return this.texts.length > 0 && this.#automaton() === undefined;
 	}
 
 	/**
-	 * 把文本中出现的 secret 值替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入（尤其是写日志）不能因为打码
-	 * 失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；错误本身不往外带，它的消息里可能有值。
+	 * 把文本中出现的 secret 值和令牌原值（{@link maskTokens}）替换成掩码；里面没有时返回同一个字符串。**不抛错**：读取和写入
+	 * （尤其是写日志）不能因为打码失败而整个失败，万一出了意外（不应该发生），宁可把这段文字整个盖住，也不放行原文；
+	 * 错误本身不往外带，它的消息里可能有值。
+	 *
+	 * 输出是「所有完整的出现，重叠的合成一段，每段一个掩码（相邻但不重叠的各是一段）」。两种出现（secret 值的各种写法、令牌原值）
+	 * 都在**原文**上找，合成一组、一次换掉：不分先后，一种的结果不会成为另一种的输入（先换一种再换另一种，前一遍留下的掩码
+	 * 会让后一遍认不出挨着、重叠的那一半）。打不打码只取决于文字里有没有完整的出现；任何「部分匹配」（文字的结尾是某个值的前缀、
+	 * 开头是某个值的后缀）都不影响输出，也不影响用掉的预算、走的步数：输出里有没有掩码不能成为猜 secret 值的依据
+	 * （docs/SEMANTICS.md §2.1）。带预算的视图（{@link withBudget}）上，合并之后的段数（两种出现一起）计入预算，不够时整段盖住。
+	 * 值集合太大（{@link oversize}）时每段文字整段盖住，只有一行平台写的说明（{@link OVERSIZE_NOTICE}，不含值）原样放行。
 	 */
 	mask(text: string): string {
-		return maskTokens(this.#maskValues(text));
-	}
-
-	/** 按值打码（不含令牌原值）。 */
-	#maskValues(text: string): string {
-		if (this.texts.length === 0) return text;
+		if (text === "") return text;
+		if (this.texts.length === 0) return maskTokens(text);
 		try {
-			this.#matcher ??= buildMatcher(this.texts, this.#compile);
-			const matcher = this.#matcher;
-			// 不会部分重叠、只有一个正则：一次 replace，结果和合并的路径逐字相同（{@link Matcher.plain}）。
-			if (matcher.plain) return text.replace(matcher.regexes[0] as RegExp, SECRET_MASK);
-			return maskSpans(text, matcher) ?? SECRET_MASK;
+			const automaton = this.#automaton();
+			if (!automaton)
+				return text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK;
+			const budget = this.#budget;
+			let count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
+			if (count < 0) {
+				if (budget) budget.masks = 0;
+				return SECRET_MASK;
+			}
+			const tokens = tokenSpans(text);
+			if (tokens) count = mergeSpans(count, tokens.starts, tokens.ends);
+			if (count === 0) return text;
+			if (budget) {
+				if (count > budget.masks) {
+					budget.masks = 0;
+					return SECRET_MASK;
+				}
+				budget.masks -= count;
+			}
+			return maskedByAutomaton(text, count, SECRET_MASK);
 		} catch {
 			return SECRET_MASK;
 		}
 	}
+
+	/**
+	 * {@link mask} 会不会改动这段文字（令牌原值也算），不看预算、不计入预算：只回答「有没有要盖的」，
+	 * 用来在没有要盖的时候省掉后面的处理（日志下载的一行里没有要盖的就原样返回）。值集合太大时总是会（整段盖住）。
+	 */
+	wouldChange(text: string): boolean {
+		if (tokenSpans(text) !== undefined) return true;
+		if (this.texts.length === 0 || text === "") return false;
+		try {
+			const automaton = this.#automaton();
+			if (!automaton) return text !== OVERSIZE_NOTICE || this.#noticeIsValue();
+			return scanSpans(automaton, text, 1) !== 0;
+		} catch {
+			return true;
+		}
+	}
+}
+
+/** 一份值集合延迟建好的东西（自动机；`built` 为 true 而 `automaton` 没有，是太大建不了）。 */
+interface Lazy {
+	automaton?: Automaton | undefined;
+	built?: boolean;
+	/** 建好时通知（{@link SecretSet.watchBuild}）。 */
+	watch?: (bytes: number) => void;
+	/** 值集合的某个写法恰好就是 {@link OVERSIZE_NOTICE}（算一次：说明那一行每出现一次都要问，不能每次扫一遍所有的值）。 */
+	noticeIsValue?: boolean;
 }
 
 /** 对象里值不是 undefined 的键的个数（标准写法不写 undefined 的键）。 */
@@ -628,19 +617,35 @@ export const NO_SECRETS: SecretSet = new SecretSet();
 /**
  * 值集合的缓存：键是这些值本身（JSON），所以运行里多了一个子流程实例带来的 secret 值，键就变了，另算一份；值一样就是同一份。
  * 写日志的每一批、读取运行的每一次都要问「这次运行此刻的 secret 值」，值没变时不用把每个值的各种写法再写一遍
- * （保密对象有几千个键时，一批要多花十几毫秒），编译好的匹配也跟着复用。
+ * （保密对象有几千个键时，一批要多花十几毫秒），建好的自动机也跟着复用。
+ *
+ * 按占用的字节数限大小（{@link SET_CACHE_MAX_BYTES}）：一份值集合占它的文本（每个字符按 2 字节算），加上建好的自动机
+ * （{@link automatonBytes}，建好之后才计入）。自动机每个节点约 11 字节，另有最多 4 MB 的转移表和 256 KB 的字符类表，和总长无关，
+ * 所以按文本总长限不住：64 份各 6 万个字符的小集合，自动机合计占堆外 340 MB。超过时从最早的开始丢（不做 LRU：一次运行用到的
+ * 集合很快就被新的运行替换，丢掉的只是重算一次），最新的这一份总是留着；至多缓存 {@link SET_CACHE_LIMIT} 份。
  */
-const setCache = new Map<string, { set: SecretSet; chars: number }>();
+const setCache = new Map<string, { set: SecretSet; bytes: number }>();
 /** 最多缓存这么多份。 */
 const SET_CACHE_LIMIT = 64;
-/**
- * 缓存里所有值集合的文本总长（字符数）的上限。一份集合的大小主要是它的文本的总长：保密对象有几千个键时一份约 0.3 M 个字符，
- * 40 KB 的字符串约 4 万个；只按条数限制的话，64 份大集合会占到几十 MB。V8 的字符串每个字符 1–2 个字节，8 M 个字符
- * 最多占 16 MB。这个数是按字符数推出来的（量堆内存受垃圾回收影响，数字不稳，没有当依据）；超过时从最早的开始丢（不做 LRU：
- * 一次运行用到的集合很快就被新的运行替换，丢掉的只是重算一次），最新的这一份总是留着。
- */
-const SET_CACHE_MAX_CHARS = 8_000_000;
-let setCacheChars = 0;
+let setCacheBytes = 0;
+
+function trimSetCache(): void {
+	while (
+		setCache.size > 1 &&
+		(setCache.size > SET_CACHE_LIMIT || setCacheBytes > secretLimits.cacheBytes)
+	) {
+		const oldest = setCache.entries().next().value;
+		if (!oldest) break;
+		setCache.delete(oldest[0]);
+		setCacheBytes -= oldest[1].bytes;
+	}
+}
+
+/** 清掉值集合的缓存（只给测试用：改了 {@link secretLimits} 之后，缓存里按旧的上限建的值集合不能再用）。 */
+export function clearSecretSetCache(): void {
+	setCache.clear();
+	setCacheBytes = 0;
+}
 
 /** 把若干 secret 参数的值汇总成一份要打码的东西（{@link SecretSet}）；值相同的是同一个对象（不可变，可以共用）。 */
 export function secretSetOf(values: Iterable<unknown>): SecretSet {
@@ -655,19 +660,17 @@ export function secretSetOf(values: Iterable<unknown>): SecretSet {
 	const found = setCache.get(key);
 	if (found) return found.set;
 	const set = new SecretSet(list.map(secretPartsOf));
-	const chars = set.texts.reduce((n, t) => n + t.length, 0);
-	setCache.set(key, { set, chars });
-	setCacheChars += chars;
-	// 条数或总长超了，从最早的开始丢，最新的这一份留着。
-	while (
-		setCache.size > 1 &&
-		(setCache.size > SET_CACHE_LIMIT || setCacheChars > SET_CACHE_MAX_CHARS)
-	) {
-		const oldest = setCache.entries().next().value;
-		if (!oldest) break;
-		setCache.delete(oldest[0]);
-		setCacheChars -= oldest[1].chars;
-	}
+	const entry = { set, bytes: 2 * set.texts.reduce((n, t) => n + t.length, 0) };
+	setCache.set(key, entry);
+	setCacheBytes += entry.bytes;
+	// 自动机是用到的时候才建的：建好之后把它的字节数计入，再看要不要丢旧的（这份已经被丢了的就不计）。
+	set.watchBuild((bytes) => {
+		if (setCache.get(key) !== entry) return;
+		entry.bytes += bytes;
+		setCacheBytes += bytes;
+		trimSetCache();
+	});
+	trimSetCache();
 	return set;
 }
 

@@ -4,6 +4,7 @@ import { isValidElement } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "#/components/page";
+import { INLINE_LINK } from "#/lib/inline-link";
 import {
 	Table,
 	TableBody,
@@ -34,14 +35,12 @@ export function docHref(href: string): string | undefined {
 	return match ? `/docs/${match[1]}${match[2] ?? ""}` : undefined;
 }
 
-const LINK = "text-fg-1 underline decoration-fg-3 underline-offset-2 hover:decoration-fg-1";
-
 function DocLink({ href = "", children }: { href?: string; children?: React.ReactNode }) {
 	const router = useRouter();
 	const internal = docHref(href) ?? (href.startsWith("/") ? href : undefined);
 	if (internal === undefined) {
 		return (
-			<a href={href} target="_blank" rel="noreferrer" className={LINK}>
+			<a href={href} target="_blank" rel="noreferrer" className={INLINE_LINK}>
 				{children}
 			</a>
 		);
@@ -49,7 +48,7 @@ function DocLink({ href = "", children }: { href?: string; children?: React.Reac
 	return (
 		<a
 			href={internal}
-			className={LINK}
+			className={INLINE_LINK}
 			onClick={(event) => {
 				if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
 				event.preventDefault();

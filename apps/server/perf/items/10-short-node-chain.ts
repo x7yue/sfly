@@ -1,15 +1,20 @@
 // 负载：30 个节点的单链，每个节点只做一点点事，看「一个任务一个进程」的固定开销（docs/ARCHITECTURE.md §7.6「短节点链路」，#76）。
 // 三类节点各一条链（同样的编排，只换节点）：
 // - 空节点：sfly-short 的 empty（testdata/short-package），除了 SDK 什么都不导入，测出的是执行器进程本身的开销；
-// - sfly-std 的 http_request：请求本机的 HTTP 桩（不访问外网），sfly-std 的依赖从 PyPI 镜像桩安装；
+// - sfly-std 的 shell：执行 `true`（什么都不做的命令），sfly-std 的依赖从 PyPI 镜像桩安装（0.4.0 以前用的是 http_request，
+//   它在 0.4.0 删除了，ADR 0030：每节点的固定开销是执行器进程加导入 sfly_std，shell 同样能测出来）。
+//   换成 shell 有两点要知道：它不再含第三方库（httpx）的导入，所以 ≤ 120 ms 的绝对目标比以前宽松很多（0.5.0 发版报告里
+//   http_request 是 202 ms、空节点 73 ms；shell 在同类机器上是 60～97 ms、比空节点多出约 20 ms）；数值的标识从 std_http
+//   改成 std_shell，报告里当作新数值，下一份报告里这一行没有「上一次」也没有发版基线可比。因此另有一条相对的目标：
+//   shell 比空节点多出来的（同一次运行里两条链每节点端到端的中位数之差）不超过 50 ms，限制的是 sfly-std 自己多出来的部分，
+//   不随机器快慢变；绝对值留着兜底；
 // - 重依赖节点：sfly-short 的 heavy，模块顶层把整个标准库导入一遍，模拟顶层导入 pandas 这类大库的节点
 //   （不从 PyPI 下载 pandas，理由见 testdata/short-package/src/sfly_short/heavy.py）。
 // 每类先跑一次预热（Agent 安装节点包、写 .pyc），不计入；之后三类轮流各跑 RUNS 次，机器上别的负载均摊到三类上。
 // 不加任何打点，只用控制面已有的运行与任务时间戳（算法见 perf/chain.ts）。
-// 只记录：每类的每节点端到端耗时（相邻节点开始时间之差的中位数）、整条链用时等；sfly-std 的与目标比较，与上一次对比。
+// 只记录：每类的每节点端到端耗时（相邻节点开始时间之差的中位数）、整条链用时等；sfly-std 的与目标比较（绝对值，
+// 和比空节点多出来的），与上一次对比。
 import { readFile } from "node:fs/promises";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { startPypiStub } from "../../test/support/pypi-stub.js";
 import { buildStdPackage, wheelhouse } from "../../test/support/std-package.js";
@@ -17,7 +22,7 @@ import { type ChainRun, chainTimings, median } from "../chain.js";
 import { definePerfItem, type ItemRun, type PerfContext, target } from "../item.js";
 import type { Measurement } from "../report.js";
 import { type PerfApi, startStack } from "../stack.js";
-import { CHAIN_NODES, SHORT_NODE_MS } from "../targets.js";
+import { CHAIN_NODES, SHELL_OVER_EMPTY_MS, SHORT_NODE_MS } from "../targets.js";
 
 /** 每类计入结果的运行次数（预热之外）。 */
 const RUNS = 5;
@@ -55,7 +60,6 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 	]);
 	const pypi = await startPypiStub(wheels);
 	ctx.defer(() => pypi.close());
-	const httpUrl = await startHttpTarget(ctx);
 	const { agentName, api } = await startStack(ctx, {
 		agentArgs: ["--index-url", pypi.indexUrl],
 	});
@@ -72,12 +76,12 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 			inputs: {},
 		},
 		{
-			id: "std_http",
-			label: "sfly-std http_request",
+			id: "std_shell",
+			label: "sfly-std shell",
 			package: "sfly-std",
 			version: std.version,
-			node: "http_request",
-			inputs: { url: httpUrl },
+			node: "shell",
+			inputs: { command: "true" },
 			target: SHORT_NODE_MS,
 		},
 		{
@@ -106,10 +110,13 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 
 	const measurements: Measurement[] = [];
 	const notes: string[] = [];
+	/** 每类每节点端到端的中位数：算 shell 比空节点多出来的。 */
+	const perNodeMs = new Map<string, number>();
 	for (const c of classes) {
 		const finished = runs.get(c.id) ?? [];
 		const timings = chainTimings(finished.map((f) => f.chain));
 		if (!timings) throw new Error(`${c.label}：没有算出每节点耗时`);
+		perNodeMs.set(c.id, timings.perNodeMs);
 		measurements.push(
 			{
 				id: `${c.id}_per_node_ms`,
@@ -166,13 +173,32 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 			);
 		}
 	}
+	measurements.push(shellOverEmpty(perNodeMs));
 	notes.push(
+		`shell 比空节点多出来的 = 同一次运行里两条链每节点端到端中位数之差：两条链轮流各跑 ${RUNS} 次，机器上别的负载均摊到` +
+			"两条链上，所以差值比各自的绝对值稳；它测的是 sfly-std 在执行器进程之上多出来的部分（导入 sfly_std、执行命令、回报结果）。",
 		"每节点端到端 = 相邻两个节点的开始时间（Agent 上报执行器已启动、控制面记为 running）之差：一个节点从执行器启动、" +
 			"退出、回报结果，到控制面派发下一个节点、Agent 启动下一个执行器的完整周期；多次运行的差值合在一起取中位数。" +
 			"任务执行 + 节点之间 ≈ 每节点端到端。",
 		"预热的那次运行不计入：第一个节点包含 Agent 安装节点包、第一次写 .pyc 的时间（冷启动不在这一项里测）。",
 	);
 	return { measurements, notes };
+}
+
+/** `shell` 比空节点多出来的（每节点端到端的中位数之差）：和 docs/ARCHITECTURE.md §7.6 的相对目标比较。 */
+export function shellOverEmpty(perNodeMs: ReadonlyMap<string, number>): Measurement {
+	const shell = perNodeMs.get("std_shell");
+	const empty = perNodeMs.get("empty");
+	if (shell === undefined || empty === undefined)
+		throw new Error("没有算出 shell 或空节点的每节点耗时");
+	return {
+		id: "std_shell_over_empty_ms",
+		label: "sfly-std shell 比空节点多出来的（每节点端到端中位数之差，同一次运行里）",
+		value: shell - empty,
+		unit: "ms",
+		noise: 10,
+		check: target("<=", SHELL_OVER_EMPTY_MS),
+	};
 }
 
 /** 一次跑完的单链运行：时间戳与链上各节点的输出。 */
@@ -221,15 +247,4 @@ async function runChain(api: PerfApi, orchestrationId: string, signal: AbortSign
 		chain: { startedMs: Date.parse(view.started_at), endedMs: Date.parse(view.ended_at), tasks },
 		outputs: attempts.map((a) => a?.outputs),
 	} satisfies Finished;
-}
-
-/** 本机的 HTTP 桩（http_request 节点请求它），返回请求地址。 */
-async function startHttpTarget(ctx: PerfContext): Promise<string> {
-	const server = createServer((_req, res) => {
-		res.writeHead(200, { "content-type": "application/json" });
-		res.end('{"ok":true}');
-	});
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	ctx.defer(() => new Promise((resolve) => server.close(resolve)));
-	return `http://127.0.0.1:${(server.address() as AddressInfo).port}/health`;
 }

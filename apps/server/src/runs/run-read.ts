@@ -7,6 +7,7 @@ import {
 	type NodeStatus,
 	type RunListActiveNode,
 	type RunView,
+	type SessionRef,
 	type StoredNode,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
@@ -40,6 +41,7 @@ import {
 import { taskProgressView } from "../logs/task-logs.js";
 import { runPresetView } from "../presets/run-preset.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { sessionRefs, withSession } from "../sessions/session-ref.js";
 import { isUuid } from "../util/uuid.js";
 
 /*
@@ -140,11 +142,14 @@ export interface RunRead<A extends RunAttempt = RunAttempt> {
 	version: { id: string; number: number; document: StoredOrchestrationDocument };
 	/** 场景此刻的名称和关注项（不属于场景版本）。 */
 	scenario: Pick<typeof orchestrations.$inferSelect, "name" | "focusItems">;
+	/** 经哪个会话触发（会话令牌触发的，#547）：会话的 ID 和标题；不是会话触发的为 undefined。 */
+	session: SessionRef | undefined;
 	/**
-	 * 按这次运行此刻的 secret 值给一段文字打码：读取方在读取结果之外拿到用户内容（任务动作摘要里的失败的动作等）时，
-	 * 和读取结果里的用户内容用同一个口径。
+	 * 这次运行此刻的全部 secret 值：读取方在读取结果之外拿到用户内容（任务动作摘要里的失败的动作等）时，用它打码，
+	 * 和读取结果里的用户内容是同一个口径、同一个集合（`secrets.mask`，
+	 * 动作用 `actions/action-text.ts` 的 `maskedAction`）。
 	 */
-	maskText: (text: string) => string;
+	secrets: SecretSet;
 	chains: RunChain<A>[];
 	/** 进行中的节点（排队、准备中、执行中、等待），按链与链上的顺序。 */
 	activeNodes: RunListActiveNode[];
@@ -217,6 +222,10 @@ async function readByIds(
 		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
 		.where(inArray(runs.id, ids));
 	if (rows.length === 0) return new Map();
+	const refs = await sessionRefs(
+		db,
+		rows.map((r) => r.run.sessionId),
+	);
 	const found = rows.map((r) => r.run.id);
 	const chains = await db
 		.select()
@@ -244,7 +253,7 @@ async function readByIds(
 				.from(tasks)
 				.where(inArray(tasks.runId, found))
 				.orderBy(asc(tasks.attempt));
-			return assemble(rows, chains, taskRows, attemptOf, (read) => read);
+			return assemble(rows, refs, chains, taskRows, attemptOf, (read) => read);
 		}
 		const taskRows = await db
 			.select({
@@ -256,7 +265,7 @@ async function readByIds(
 			.from(tasks)
 			.where(inArray(tasks.runId, found))
 			.orderBy(asc(tasks.attempt));
-		return assemble(rows, chains, taskRows, attemptStateOf, (read) => read);
+		return assemble(rows, refs, chains, taskRows, attemptStateOf, (read) => read);
 	}
 
 	const taskRows = (
@@ -271,7 +280,7 @@ async function readByIds(
 		db,
 		rows.map((r) => r.run),
 	);
-	return assemble(rows, chains, taskRows, attemptDetailOf, (read) => ({
+	return assemble(rows, refs, chains, taskRows, attemptDetailOf, (read) => ({
 		...read,
 		runNotification: notifications.get(read.run.id) ?? null,
 	}));
@@ -280,7 +289,8 @@ async function readByIds(
 /**
  * 一个节点最后一次有错误的尝试的错误（打码后，同运行视图里尝试的 `error`）；没有时为 null。只查这个节点的任务行（一条查询），
  * 不读整个运行的输入和输出：运行通知在运行结束的事务里取第一个失败的节点的失败原因，要的只是这一条。
- * 打码用调用方手里同一次读取的 `maskText`（{@link RunRead.maskText}，运行绑定的版本里声明为 secret 的参数在各链里的值），
+ * 打码用调用方手里同一次读取的 `secrets`（{@link RunRead.secrets}，运行绑定的版本里声明为 secret 的参数在各链里的值），由调用方包成
+ * `(text) => read.secrets.mask(text)` 交进来（不要把 `read.secrets.mask` 这个方法直接传出去：它依赖 `this`），
  * 和运行视图里尝试的 `error` 同一个口径，不另查一遍链实例。
  */
 export async function readNodeError(
@@ -451,7 +461,11 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 		inputs: mask.record(row.inputs),
 		outputs: mask.record(row.outputs),
 		errorMessage: row.errorMessage === null ? null : mask.text(row.errorMessage),
-		logIssues: row.logIssues,
+		// 最近一条 WARN / ERROR 的正文写入时按那一刻的 secret 值打过码；读取时再按此刻的打一遍（后来才成为 secret 的值，#517）。
+		logIssues: row.logIssues && {
+			...row.logIssues,
+			text: mask.secrets.mask(row.logIssues.text),
+		},
 		startClockOffset: clockOffsetView(row.startClockOffsetMs, row.startClockOffsetMeasuredAt),
 		endClockOffset: clockOffsetView(row.endClockOffsetMs, row.endClockOffsetMeasuredAt),
 		currentAction: currentActionOfTask(row.status, row.currentAction, mask.secrets),
@@ -461,6 +475,7 @@ function attemptDetailOf(row: FullTaskRow, mask: Masker): RunAttemptDetail {
 
 function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead<A>>(
 	rows: ReadonlyArray<Pick<RunRead<A>, "run" | "version" | "scenario">>,
+	refs: ReadonlyMap<string, SessionRef>,
 	chainRows: readonly ChainRow[],
 	taskRows: readonly T[],
 	toAttempt: (row: T, mask: Masker) => A,
@@ -484,7 +499,8 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 	for (const { run, version, scenario } of rows) {
 		const { document } = version;
 		const runChains = chainsOf.get(run.id) ?? [];
-		const mask = masker(document, secretValues(document, runChains));
+		// 每个运行一份预算（完整的出现的段数，{@link SecretSet.withBudget}）：一个运行用光了预算，也只盖住它自己的内容，不牵连同一次读取里别的运行。
+		const mask = masker(document, secretValues(document, runChains).withBudget());
 		const nodesOf = planOf(version);
 		const chains = runChains.map(
 			(chain): RunChain<A> => ({
@@ -524,7 +540,8 @@ function assemble<T extends TaskRowBase, A extends RunAttempt, R extends RunRead
 				run: { ...run, params: mask.params(entryIdOf(document), run.params) },
 				version,
 				scenario,
-				maskText: mask.text,
+				session: run.sessionId === null ? undefined : refs.get(run.sessionId),
+				secrets: mask.secrets,
 				chains,
 				activeNodes: activeNodesOf(chains),
 				failures: failuresInOrder(
@@ -628,6 +645,7 @@ function runView(read: RunReadFull, waits: ReadonlyMap<string, AgentWait>): RunV
 		status: run.status,
 		triggered_by: run.triggeredBy,
 		triggered_via: run.triggeredVia,
+		...withSession(read.session),
 		params: run.params,
 		preset: runPresetView(run),
 		started_at: run.startedAt.toISOString(),

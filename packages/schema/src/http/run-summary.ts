@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SessionRef } from "../sessions.js";
 import { EndedActionView } from "./actions.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FocusAnomaly, RunFocusItem } from "./run-focus.js";
@@ -241,6 +242,11 @@ export const RUN_REPORT_LIMITS = {
  * 错误信息不截断。
  */
 export const RunReport = RunState.extend({
+	/**
+	 * 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（和运行视图的 `session` 相同）。
+	 * 只在运行摘要里：`RunState` 也是节点里 `${{ run.state }}` 看到的东西，不带它。
+	 */
+	session: SessionRef.optional(),
 	/** 耗时（毫秒，控制面时间）；运行还没结束时为 null。 */
 	duration_ms: z.number().int().nonnegative().nullable(),
 	/**

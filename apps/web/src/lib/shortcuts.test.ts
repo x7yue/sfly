@@ -4,6 +4,7 @@ import type { ToolButton } from "#/components/canvas/CanvasDock";
 import type { KeyHint, Keys } from "#/components/page";
 import type { Kbd } from "#/components/ui/kbd";
 import {
+	isShortcut,
 	type KeyInput,
 	keyChords,
 	keyLabels,
@@ -11,6 +12,7 @@ import {
 	type ShortcutDef,
 	ShortcutMatcher,
 	shortcutKeys,
+	shortcutRows,
 	shortcutText,
 } from "./shortcuts";
 
@@ -157,6 +159,55 @@ describe("快捷键注册表", () => {
 	it("同一分组内的键不重复（不同页面分组之间可以重复：它们是互斥的路由）", () => {
 		for (const group of new Set(live.map((s) => s.group))) {
 			expect(clashes(live.filter((s) => s.group === group))).toEqual([]);
+		}
+	});
+});
+
+describe("组件自己处理的快捷键（displayOnly）", () => {
+	it("发送（输入框里）：Ctrl 或 ⌘ 加 Enter 算，没有修饰键、多按了 Alt、按的是别的键不算", () => {
+		const event = (key: string, extra: Partial<Parameters<typeof isShortcut>[1]> = {}) => ({
+			key,
+			ctrlKey: false,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			...extra,
+		});
+		expect(isShortcut("assistant-send", event("Enter", { ctrlKey: true }))).toBe(true);
+		expect(isShortcut("assistant-send", event("Enter", { metaKey: true }))).toBe(true);
+		expect(isShortcut("assistant-send", event("Enter"))).toBe(false);
+		expect(isShortcut("assistant-send", event("Enter", { ctrlKey: true, altKey: true }))).toBe(
+			false,
+		);
+		expect(isShortcut("assistant-send", event("a", { ctrlKey: true }))).toBe(false);
+	});
+
+	it("发送（输入框里）不是全局快捷键：只展示，全局监听不会匹配它（焦点在别处时不会发出去）", () => {
+		const def = SHORTCUTS.find((s) => s.id === "assistant-send");
+		expect(def && "displayOnly" in def && def.displayOnly).toBe(true);
+		const matcher = new ShortcutMatcher(SHORTCUTS);
+		expect(matcher.handle(key("Enter", { ctrlKey: true, editable: true }), 0, () => true)).not.toBe(
+			"assistant-send",
+		);
+	});
+});
+
+describe("快捷键面板的行", () => {
+	it("名称相同的登记（一个键一条）合成一行：名称一次，按键按注册表顺序；其余每条自成一行", () => {
+		const rows = shortcutRows("编排画布");
+		const remove = rows.filter((row) => row.label === "删除节点 / 断开连线");
+		expect(remove).toEqual([
+			{ label: "删除节点 / 断开连线", ids: ["canvas-delete", "canvas-delete-backspace"] },
+		]);
+		expect(rows.flatMap((row) => row.ids)).toEqual(
+			SHORTCUTS.filter((s) => s.group === "编排画布").map((s) => s.id),
+		);
+	});
+
+	it("每个分组里没有两行同名", () => {
+		for (const group of new Set(SHORTCUTS.map((s) => s.group))) {
+			const labels = shortcutRows(group).map((row) => row.label);
+			expect(new Set(labels).size, group).toBe(labels.length);
 		}
 	});
 });
