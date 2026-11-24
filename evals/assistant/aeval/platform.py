@@ -134,9 +134,10 @@ def driver_summary(
 class PeakSampler:
     """在助手容器里每秒读一次 pi 进程的 `VmHWM`（常驻内存峰值，kB），记下最大值。
 
-    每次会话之前 `reset` 重建了助手容器，里面只有这一次会话的 pi。按命令行里的 `--session-id` 认
-    pi 进程（助手服务起 pi 时带它）；要认的字样经环境变量传进去，不在取样脚本自己的命令行里，
-    不会把自己算进去。建会话之前就开始取样：假的模型端点一轮只要一两秒，
+    每次会话之前 `reset` 重建了助手容器，里面只有这一次会话的 pi。按进程名认 pi：pi 启动时把
+    `process.title` 改成 `pi`，`/proc/<pid>/comm` 是 `pi`，命令行也被改写了，
+    按 `--session-id` 认不出来；
+    助手服务自己的进程名是 `node-MainThread`。建会话之前就开始取样：假的模型端点一轮只要一两秒，
     拿到会话 ID 再开始就量不到了。
     停的时候在容器里放一个标记文件，取样的循环看到就退出（结束宿主机上的 docker exec
     停不掉容器里的循环）。
@@ -147,7 +148,7 @@ class PeakSampler:
         f'stop="{STOP_FILE}"; rm -f "$stop"; '
         'while [ ! -e "$stop" ]; do '
         "for p in /proc/[0-9]*; do "
-        'if tr "\\0" " " < "$p/cmdline" 2>/dev/null | grep -qF -- "$AEVAL_MATCH"; then '
+        'if [ "$(cat "$p/comm" 2>/dev/null)" = "$AEVAL_MATCH" ]; then '
         'grep "^VmHWM:" "$p/status" 2>/dev/null; fi; done; sleep 1; done'
     )
 
@@ -159,7 +160,7 @@ class PeakSampler:
                 "docker",
                 "exec",
                 "-e",
-                "AEVAL_MATCH=--session-id",
+                "AEVAL_MATCH=pi",
                 container,
                 "sh",
                 "-c",

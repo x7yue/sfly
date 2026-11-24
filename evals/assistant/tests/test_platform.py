@@ -88,9 +88,9 @@ def test_parse_hwm() -> None:
     assert parse_hwm("") == 0
 
 
-def test_the_sampler_matches_pi_by_an_env_var_not_its_own_command_line() -> None:
-    # 认 pi 的字样经环境变量进取样脚本：脚本自己的命令行里没有它，不会把自己算成 pi。
-    assert "--session-id" not in PeakSampler.SCRIPT
+def test_the_sampler_matches_pi_by_its_process_name() -> None:
+    # pi 把 process.title 改成 pi：按 /proc/<pid>/comm 认，命令行（被改写了）不用。
+    assert '"$p/comm"' in PeakSampler.SCRIPT and "cmdline" not in PeakSampler.SCRIPT
     assert "$AEVAL_MATCH" in PeakSampler.SCRIPT and "VmHWM" in PeakSampler.SCRIPT
     assert PeakSampler.STOP_FILE in PeakSampler.SCRIPT
 
