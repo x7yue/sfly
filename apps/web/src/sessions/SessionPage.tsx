@@ -17,6 +17,7 @@ import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -72,6 +73,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 		<div className="mx-auto flex w-full max-w-208 flex-col">
 			<PageHeader
 				title={detail.title}
+				untrustedTitle
 				actions={
 					<>
 						<StatusPill kind={status.kind} pulse className="text-sm">
@@ -85,7 +87,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 			/>
 			{/* 一轮结束时读屏读一句（时间线是逐字更新的，不整个播报）。 */}
 			<output aria-live="polite" className="sr-only">
-				{lastEnd?.kind === "turn_end" ? turnEndText(lastEnd) : ""}
+				{lastEnd?.kind === "turn_end" ? untrustedPlain(turnEndText(lastEnd)) : ""}
 			</output>
 			<SessionTimeline
 				state={state}
