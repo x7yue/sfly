@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { harvestDocs } from "./client-docs.js";
+import { checkMembers, harvestDocs } from "./client-docs.js";
 import { declaration, docLines, type Json, refsOf, typeText } from "./client-emit.js";
 import {
 	CLIENT_HEADER,
@@ -193,6 +193,17 @@ export function buildClientExport(
 		const text = docs.field(root, path);
 		return text === undefined ? undefined : plain(text);
 	};
+	// 联合的成员：生成的一边（JSON Schema）和读注释的一边（TypeScript 的类型）各自认出来，最后核对两边认出的成员一样；
+	// 不一样时字段的说明会按错的路径查、悄悄丢掉或者挂错。
+	const emittedMembers = new Map<string, Set<string>>();
+	const docOptions = (root: string) => ({
+		doc: docFor(root),
+		member: (path: readonly string[]) => {
+			const seen = emittedMembers.get(root) ?? new Set<string>();
+			seen.add(path.join("."));
+			emittedMembers.set(root, seen);
+		},
+	});
 	const exportDoc = (id: string) => {
 		const text = docs.exports.get(id);
 		return text === undefined ? undefined : plain(text);
@@ -204,7 +215,7 @@ export function buildClientExport(
 		for (const [id, def] of Object.entries(defs)) {
 			const name = nameFor(io)(id);
 			if (declarations.has(name)) continue;
-			const options = { refName: nameFor(io), doc: docFor(name) };
+			const options = { refName: nameFor(io), ...docOptions(name) };
 			declarations.set(name, declaration(name, def, options, exportDoc(id)));
 		}
 	}
@@ -231,7 +242,7 @@ export function buildClientExport(
 							(p.io === "input" ? input : output).roots.get(partId(p)),
 							{
 								refName: tracked(p.io),
-								doc: docFor(partId(p)),
+								...docOptions(partId(p)),
 							},
 							indent,
 						);
@@ -260,6 +271,9 @@ export function buildClientExport(
 		}
 		apiLines.push("\t};");
 		tableLines.push("\t},");
+	}
+	for (const root of roots.keys()) {
+		checkMembers(root, docs.members(root), emittedMembers.get(root) ?? []);
 	}
 	const kindImports = [...new Set(routes.map((r) => kinds[r.kind]))];
 	const routesFile = [
