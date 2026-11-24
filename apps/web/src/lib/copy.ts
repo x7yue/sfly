@@ -298,6 +298,7 @@ export const SESSION = {
 		loadOlderFailed: "无法加载更早的内容",
 		stop: "停止",
 		stopTitle: "停止这一轮",
+		stopping: "正在停止…",
 		stopFailed: "无法停止这一轮",
 		thinking: "思考中",
 		sendLabel: "接着说",
@@ -707,6 +708,9 @@ export const MESSAGE = {
 	noPrimaryMetric: `${NODE_STATUS.running.label}的${TERM.node}都没有声明${TERM.primaryMetric}。`,
 	/** 运行中但没有进行中的节点：运行抽屉的摘要。 */
 	noActiveNodes: `没有${ACTIVE_LABEL}的${TERM.node}。`,
+	/** secret 参数的值太多的运行（`RunView.secrets_oversize`）：为什么这次运行里看到的内容全是掩码（#657）。运行抽屉的摘要和运行监控页都写它。不含任何值。 */
+	secretsOversize:
+		"这次运行的 secret 参数的值太多或太长，控制面认不出每一处出现，这次运行里日志、动作、输入输出、错误信息的内容整段显示为 ******。缩短或减少 secret 参数的值之后重新运行。",
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
 	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
 	/** 运行监控的日志页签和概览的「其他警告与错误」：运行的日志已过保留期。 */

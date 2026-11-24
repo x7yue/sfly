@@ -8,7 +8,7 @@ import {
 import { DEV_VERSION, type StoredOrchestrationDocument } from "@sfly/schema";
 import { agentsInProject } from "../agents/project-agents.js";
 import type { Db, Tx } from "../db/database.js";
-import { feishuBots } from "../db/schema.js";
+import { registeredBots } from "../feishu/bot-checks.js";
 import { findPackageVersion } from "../packages/package-repository.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { devNodeTypes } from "./dev-node-types.js";
@@ -41,11 +41,6 @@ export async function registeredAgents(db: Db | Tx, project: ProjectId): Promise
 	return new Set((await agentsInProject(db, project)).map((r) => r.name));
 }
 
-/** 已登记的全部飞书机器人（名称）。 */
-export async function registeredFeishuBots(db: Db | Tx): Promise<Set<string>> {
-	return new Set((await db.select({ name: feishuBots.name }).from(feishuBots)).map((r) => r.name));
-}
-
 /**
  * 文档的全部静态检查（结构、包版本锁定、引用、输入，「Agent」类型的输入选的是已注册的 Agent，
  * 「飞书机器人」类型的输入选的是已登记的飞书机器人，没有已移除种类的节点），规则与画布共用（@sfly/orchestration）。
@@ -59,6 +54,6 @@ export async function checkDocument(
 ): Promise<OrchestrationWarning[]> {
 	const catalog = await packageCatalogFor(db, project, doc);
 	const registered = await registeredAgents(db, project);
-	const bots = await registeredFeishuBots(db);
+	const bots = await registeredBots(db, project);
 	return documentWarnings(doc, catalog, { agents: registered, feishuBots: bots });
 }

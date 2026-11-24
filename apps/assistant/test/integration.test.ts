@@ -191,6 +191,52 @@ describe("真的 pi：只加载给的扩展，系统提示里只有给的东西"
 	}, 120_000);
 });
 
+describe("真的 pi：上游的错误原文不外传（#640）", () => {
+	// 上游返回的错误体里可能有供应商的名字、账户、请求 ID、内部主机名：事件（控制面存下、页面显示的就是它们）里
+	// 只有助手服务自己的说法，原文只在助手服务的日志里。
+	const MARKER = "UPSTREAM-ERROR-BODY-7f3c provider-acme account-42 host-internal-9";
+	const body = JSON.stringify({ error: { message: MARKER, type: "x", code: "y" } });
+
+	it("上游出错一次、重试后成了：重试提示是自己的说法，带类别和状态码；原文在日志里", async () => {
+		const h = await Harness.start();
+		try {
+			h.model.failures = [{ status: 502, body }];
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "说一句话" });
+			expect(await h.turnEnd(id, 1, 60_000)).toMatchObject({ outcome: "completed" });
+			const events = h.events.of(id).map((r) => r.event);
+			expect(events.find((e) => e.type === "notice" && e.kind === "retry")).toMatchObject({
+				message: "上游出错（上游返回 502），正在重试第 1 次",
+				error_class: "upstream",
+			});
+			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
+			expect(h.events.lines.join("\n")).not.toContain("provider-acme");
+			expect(h.logs.join("\n")).toContain(MARKER);
+		} finally {
+			await h.close();
+		}
+	}, 90_000);
+
+	it("上游拒绝了密钥：model_unavailable，原因是自己的说法、不带「模型不可用」前缀；原文在日志里", async () => {
+		const h = await Harness.start();
+		try {
+			h.model.failures = Array.from({ length: 5 }, () => ({ status: 401, body }));
+			const id = crypto.randomUUID();
+			await h.prompt(id, { text: "说一句话" });
+			const end = await h.turnEnd(id, 1, 60_000);
+			expect(end).toMatchObject({
+				outcome: "model_unavailable",
+				error_class: "auth",
+				reason: "上游拒绝了密钥（上游返回 401）",
+			});
+			expect(h.events.lines.join("\n")).not.toContain("UPSTREAM-ERROR-BODY");
+			expect(h.logs.join("\n")).toContain(MARKER);
+		} finally {
+			await h.close();
+		}
+	}, 90_000);
+});
+
 describe("真的 pi：工作台不回话、输出很大", () => {
 	it("命令进行中工作台不回话（之后连 describe 也不回）：这一轮在期限内以「工作台连不上」失败，不等到用时上限", async () => {
 		const h = await Harness.start();
@@ -208,6 +254,9 @@ describe("真的 pi：工作台不回话、输出很大", () => {
 			expect(end.reason).toContain("工作台连不上");
 			// 原因是助手服务自己的说法（工具结果里那一行可能是命令的输出），写明是它又探了一次。
 			expect(end.reason).toContain("助手服务又探了一次");
+			// 写工作台的名字，不写它的地址（#640）；工具结果里也没有地址。
+			expect(end.reason).toContain("fake-workbench");
+			expect(h.events.lines.join("\n")).not.toContain(h.workbench.address);
 			// 命令的超时 1 秒 + 余量 20 秒 + 探测 5 秒，远小于 20 分钟的上限。
 			expect(Date.now() - started).toBeLessThan(40_000);
 		} finally {
