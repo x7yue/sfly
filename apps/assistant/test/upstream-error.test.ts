@@ -211,6 +211,15 @@ const TABLE: Case[] = [
 		undefined,
 	],
 	["SDK 只说连不上", "Connection error.", "unreachable", undefined],
+	// 审查用真的 pi 录到的两种（reviews/rv641b）：上游接了连接就重置、流读到一半断开。
+	["上游接了连接就重置（真的 pi）", "Connection error.: write EPIPE", "unreachable", undefined],
+	[
+		"流读到一半断开（真的 pi）",
+		"terminated: other side closed (UND_ERR_SOCKET)",
+		"unreachable",
+		undefined,
+	],
+	["带前缀的写法不在开头不算", "upstream said: Foo API error (503): x", "other", undefined],
 	["正文里的数字不当成状态码", "model said 404 things went wrong", "other", undefined],
 	[
 		"正文里的 `NNN: ` 不算（不在开头）",
