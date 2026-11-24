@@ -216,10 +216,14 @@ describe("main.ts：启动行在装好停止信号的处理之后才打印", () 
 		);
 		const install = calls.filter((c) => c.name === "installShutdown");
 		const started = calls.filter(
-			(c) => c.name === "printInfo" && c.call.arguments[0]?.getText().includes("sfly control plane"),
+			(c) =>
+				c.name === "printInfo" && c.call.arguments[0]?.getText().includes("sfly control plane"),
 		);
 		expect(install, "main.ts 的顶层要有一处 installShutdown(...)").toHaveLength(1);
-		expect(started, "main.ts 的顶层要有一处打印「sfly control plane …」的 printInfo(...)").toHaveLength(1);
+		expect(
+			started,
+			"main.ts 的顶层要有一处打印「sfly control plane …」的 printInfo(...)",
+		).toHaveLength(1);
 		expect(
 			install[0]?.index,
 			"启动行要在 installShutdown(...) 之后打印：看到启动行就发停止信号的人，信号不能落在处理装上之前",
