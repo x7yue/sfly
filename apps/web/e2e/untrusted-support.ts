@@ -104,9 +104,42 @@ export async function expectNoUnsafeText(page: Page, scope?: Locator, message = 
 	}
 }
 
-/** 页面上（或 `scope` 里）写出来的字符（`U+202E` 一小块）有哪些，按出现的顺序。 */
+/**
+ * 页面上（或 `scope` 里）写出来的字符（`U+202E` 一小块）有哪些，按出现的顺序。小块里还有给复制用的尖括号（`sr-only`，
+ * 选中复制出去是 `⟨U+202E⟩`），这里只要里面的码位；复制出去的样子用 {@link copiedTextOf} 看。
+ */
 export async function writtenOutOn(page: Page, scope?: Locator): Promise<string[]> {
-	return (scope ?? page.locator("body"))
+	const chips = await (scope ?? page.locator("body"))
 		.locator('[data-slot="hidden-character"]')
 		.allTextContents();
+	return chips.map((chip) => chip.replace(/[⟨⟩]/g, ""));
+}
+
+/** 选中这个元素里的全部内容，浏览器复制出去的文字（`Selection.toString()`）。 */
+export async function copiedTextOf(locator: Locator): Promise<string> {
+	return locator.evaluate((element) => {
+		const selection = window.getSelection() as Selection;
+		selection.selectAllChildren(element);
+		const text = selection.toString();
+		selection.removeAllRanges();
+		return text;
+	});
+}
+
+/** 让接口返回错误：`{ error: { code, message } }`，状态 500；`message` 里带控制台要处理的字符。 */
+export async function failRequests(
+	page: Page,
+	pattern: string,
+	method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+	message: string,
+) {
+	await page.route(pattern, (route) =>
+		route.request().method() === method
+			? route.fulfill({
+					status: 500,
+					contentType: "application/json",
+					body: JSON.stringify({ error: { code: "boom", message } }),
+				})
+			: route.fallback(),
+	);
 }

@@ -5,7 +5,14 @@ import { expect, test } from "./fixtures";
 import { FAILED_NODE, failedRun } from "./monitor-failure-scenario";
 import { logLine, metricPackage, openMonitor } from "./monitor-scenario";
 import { createScenario, publishPackage, triggerRun } from "./support";
-import { expectNoUnsafeText, HOSTILE, hostile, writtenOutOn } from "./untrusted-support";
+import {
+	copiedTextOf,
+	expectNoUnsafeText,
+	failRequests,
+	HOSTILE,
+	hostile,
+	writtenOutOn,
+} from "./untrusted-support";
 
 // 控制台里显示「别人写的、平台不保证内容」的文字（#699）：Agent 报的、节点写的、节点包的元信息里带着改变文字方向的控制字符、
 // 零宽字符、转义字符，页面上不能有任何一个原样留下（文字节点和属性值里都不能有），都写成看得见的样子；正常的中文、表情、
@@ -293,4 +300,209 @@ test("节点包的元信息：节点包页、添加节点的菜单、检查器�
 	await expect(inspector(page)).toBeVisible();
 	await expectNoUnsafeText(page, inspector(page), "检查器：");
 	await expectNoUnsafeText(page, undefined, "编辑器整页：");
+});
+
+/** 节点包里的一个节点：标题、说明、输入和输出的键和说明里都带着有害字符（作者写的元信息，没有校验）。 */
+const hostilePackageNodes = () => {
+	const input = hostile("release_file");
+	const output = hostile("url", "zeroWidth");
+	return {
+		input,
+		output,
+		nodes: [
+			{
+				name: "upload",
+				title: hostile("上传"),
+				description: hostileText("上传发布包"),
+				entry: "demo_checks.upload:run",
+				inputs: {
+					type: "object",
+					properties: {
+						[input]: { type: "string", description: hostileText("要上传的发布包") },
+						mode: { enum: ["fast", "safe"], description: hostileText("模式") },
+					},
+					required: [input],
+					order: [input, "mode"],
+				},
+				outputs: {
+					type: "object",
+					properties: { [output]: { description: hostileText("上传之后的地址") } },
+					order: [output],
+				},
+			},
+		],
+	};
+};
+
+test("编辑器和画布：Agent 的名称（卡片的标签、检查器、下拉）、输入名、节点包的说明和检查警告（卡片徽标的提示、检查器）", async ({
+	page,
+	controlPlane,
+}) => {
+	const { nodes } = hostilePackageNodes();
+	await publishPackage(controlPlane, { nodes });
+	// 场景文档里存着的 Agent 名（写入时没有校验）：默认 Agent 和节点自己的 Agent；没有必填的输入，检查会有警告，
+	// 警告是控制面拼好的整句，里面有输入键、Agent 名。
+	const defaultAgent = hostile("agent-default");
+	const nodeAgent = hostile("agent-node", "zeroWidth");
+	const id = await createScenario(controlPlane, "上传发布", {
+		default_agent: defaultAgent,
+		nodes: [
+			{ id: "entry", kind: "entry", position: { x: 0, y: 0 }, params: [] },
+			{
+				id: "upload",
+				kind: "package",
+				package: "demo-checks",
+				node: "upload",
+				agent: nodeAgent,
+				position: { x: 300, y: 0 },
+				inputs: {},
+			},
+		],
+		edges: [{ from: "entry", to: "upload", kind: "chain" }],
+		packages: { "demo-checks": "1.2.0" },
+	});
+	await openEditor(page, id, "upload");
+	const card = nodeCard(page, "upload");
+
+	// 画布卡片：Agent 的标签、节点包里节点的标题；警告徽标的提示（提示：悬停打开一次）。
+	await expectNoUnsafeText(page, card, "卡片：");
+	expect(await writtenOutOn(page, card)).toContain(BIDI);
+	const badge = card.getByText(/警告/).first();
+	await expect(badge).toBeVisible();
+	await badge.hover();
+	const tip = page.getByRole("tooltip").first();
+	await expect(tip).toBeVisible();
+	await expectNoUnsafeText(page, tip, "卡片警告的提示：");
+	await page.mouse.move(5, 5);
+
+	// 检查器：参数页（输入名、说明、顶部的检查警告）、下拉里的 Agent 名（「跟随默认（…）」和每一项）。
+	await card.click();
+	await expect(inspector(page)).toBeVisible();
+	await expectNoUnsafeText(page, inspector(page), "检查器：");
+	const options = await inspector(page).locator("select option").allTextContents();
+	expect(options.join("\n"), "下拉里的选项").toContain("⟨U+202E⟩");
+	expect(
+		options.some((option) => option.startsWith("跟随默认") && option.includes("⟨U+202E⟩")),
+	).toBe(true);
+	await expectNoUnsafeText(page, undefined, "编辑器整页：");
+});
+
+test("提示、下拉、加载失败：节点包页的输入说明提示、运行切换的下拉、列表页的加载失败，各打开一次", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	// 提示：节点包页悬停有说明的输入名，提示里是说明的全文（多行的正文）。
+	const { nodes } = hostilePackageNodes();
+	await publishPackage(controlPlane, { nodes });
+	await page.goto("/packages?name=demo-checks");
+	const row = page.getByRole("table", { name: "节点类型" }).getByRole("row", { name: /上传/ });
+	await row.locator('[tabindex="0"]').first().hover();
+	const tip = page.locator('[data-slot="tooltip-content"]');
+	await expect(tip).toBeVisible();
+	await expectNoUnsafeText(page, tip, "输入说明的提示：");
+	expect(await writtenOutOn(page, tip)).toContain(BIDI);
+	await page.mouse.move(5, 5);
+
+	// 下拉：运行监控顶栏的运行切换，列表读不出来时（接口的错误信息里带着有害字符）下拉里写错误。
+	const { runId } = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: true });
+	await failRequests(page, "**/api/orchestrations/*/runs", "GET", hostileText("读运行列表失败"));
+	await openMonitor(page, clock, runId);
+	await page.getByRole("button", { name: /切换运行/ }).click();
+	const menu = page.getByRole("menu");
+	await expect(menu).toContainText("无法加载");
+	await expectNoUnsafeText(page, menu, "运行切换的下拉：");
+	expect(await writtenOutOn(page, menu)).toContain(BIDI);
+	await page.keyboard.press("Escape");
+
+	// 加载失败：列表页整页的错误状态（标题、原因、错误详情）。
+	await failRequests(page, "**/api/agents", "GET", hostileText("读 Agent 列表失败"));
+	await page.goto("/agents");
+	const alert = page.getByRole("alert").first();
+	await expect(alert).toBeVisible();
+	await expectNoUnsafeText(page, undefined, "加载失败的页面：");
+	expect(await writtenOutOn(page, alert)).toContain(BIDI);
+});
+
+test("小块选中复制出去是带尖括号的 ⟨U+202E⟩，和原文里本来就写着的「U+202E」分得开", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const message = `前面${HOSTILE.bidi}后面`;
+	const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+		cleanupDone: false,
+		message,
+		location: "原文就写着 U+202E",
+	});
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/runs/${runId}?view=overview`);
+	const chip = page.locator('[data-slot="hidden-character"]').first();
+	await expect(chip).toBeVisible();
+	// 显示的还是 U+202E（括号不占位置），复制出去的是带尖括号的。
+	const bracketWidths = await chip
+		.locator(".sr-only")
+		.evaluateAll((brackets) => brackets.map((bracket) => (bracket as HTMLElement).clientWidth));
+	expect(bracketWidths, "括号只给复制用，不占位置").toEqual([1, 1]);
+	const copied = await copiedTextOf(chip.locator("xpath=.."));
+	expect(copied).toContain("前面⟨U+202E⟩后面");
+	expect(await page.getByText("原文就写着 U+202E").count()).toBeGreaterThan(0);
+	expect(await copiedTextOf(page.getByText("原文就写着 U+202E").first())).toBe("原文就写着 U+202E");
+});
+
+test("从右到左的文字（希伯来文开头的混排、纯希伯来文、纯阿拉伯文、阿拉伯文夹英文）：和不经过方向隔离时逐像素一样", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane, metricPackage());
+	const scenarioId = await createScenario(controlPlane, "从右到左", {
+		default_agent: "agent-a",
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			{ id: "probe", kind: "package", package: "demo-checks", node: "ping", inputs: { host: "p" } },
+		],
+		edges: [{ from: "entry", to: "probe", kind: "chain" }],
+		packages: { "demo-checks": "1.2.0" },
+	});
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const probe = await agent.nextAssign({ start: false });
+	clock.advance(2000);
+	await agent.started(probe);
+	const samples = [
+		"שלום עולם 拉取完成 👩‍💻 🎉",
+		"שלום עולם",
+		"مرحبا بالعالم",
+		"Result: مرحبا (تم) — done 100%",
+	];
+	for (const [index, text] of samples.entries()) {
+		agent.progress(probe, index + 1, samples.length, text);
+		await agent.sync();
+		clock.advance(1000);
+		await page.clock.setFixedTime(clock.now());
+		await page.goto(`/runs/${runId}?view=overview`);
+		// 进度说明那一格：文字所在的截断层（`data-truncate-clip`）。
+		const clip = page.locator("[data-truncate-clip]", { hasText: text }).first();
+		await expect(clip).toBeVisible();
+		const withIsolation = await clip.screenshot({ animations: "disabled" });
+		// 去掉方向隔离（拆开 <bdi>、截断层的 dir 和 unicode-bidi）：剩下的就是没有这个功能时的 DOM。
+		await clip.evaluate((element) => {
+			for (const bdi of element.querySelectorAll("bdi")) bdi.replaceWith(...bdi.childNodes);
+			element.removeAttribute("dir");
+			(element as HTMLElement).style.unicodeBidi = "normal";
+		});
+		const without = await clip.screenshot({ animations: "disabled" });
+		expect(
+			Buffer.compare(withIsolation, without),
+			`「${text}」经过方向隔离之后和不隔离时的显示不一样`,
+		).toBe(0);
+	}
 });
