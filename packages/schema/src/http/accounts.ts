@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nameProblem, nameRefinement } from "../text-safety.js";
 import { endpoint, Timestamp } from "./contract.js";
 
 /**
@@ -29,12 +30,16 @@ export const NewPassword = z
 	.min(PASSWORD_MIN_LENGTH, `密码至少 ${PASSWORD_MIN_LENGTH} 个字符`)
 	.max(PASSWORD_MAX_LENGTH, `密码不能超过 ${PASSWORD_MAX_LENGTH} 个字符`);
 
-/** 显示名：去掉首尾空白后 1 到 {@link DISPLAY_NAME_MAX_LENGTH} 个字符，任何字符都可以。 */
+/**
+ * 显示名：去掉首尾空白后 1 到 {@link DISPLAY_NAME_MAX_LENGTH} 个字符，不含 `text-safety.ts` 里那张明确的表里的字符
+ * （控制字符、双向文字的控制字符、零宽空格这类看不见的字符：显示名会出现在「经 …」、作者和命令行的输出里）。
+ */
 export const AccountDisplayName = z
 	.string()
 	.trim()
 	.min(1, "显示名不能为空")
-	.max(DISPLAY_NAME_MAX_LENGTH, `显示名不能超过 ${DISPLAY_NAME_MAX_LENGTH} 个字符`);
+	.max(DISPLAY_NAME_MAX_LENGTH, `显示名不能超过 ${DISPLAY_NAME_MAX_LENGTH} 个字符`)
+	.refine((name) => nameProblem(name) === undefined, nameRefinement("显示名"));
 
 /** 当前登录的用户。 */
 export const CurrentUser = z.object({

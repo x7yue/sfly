@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { useIdentity } from "#/lib/identity";
 import { INLINE_LINK } from "#/lib/inline-link";
-import { setNickname, useNickname } from "#/lib/nickname";
+import { nicknameProblem, setNickname, useNickname } from "#/lib/nickname";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -48,7 +48,7 @@ export function NicknameDialog({
 			setSubmitted(false);
 		}
 	}, [visible, nickname]);
-	const problem = value.trim() ? undefined : "填写昵称";
+	const problem = nicknameProblem(value);
 
 	return (
 		<Dialog
