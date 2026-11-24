@@ -112,23 +112,28 @@ describe("按项目找 Agent 和节点包（保存、检查、局部编辑、预
 	let sql: pg.Client;
 	const agents: FakeAgent[] = [];
 
+	/** 别的项目里的 Agent 用那个项目的 Agent 凭据连接：项目从凭据得出，连接的项目和登记的项目一致（#492）。 */
+	const helloIn = async (hello: HelloInit, project: string): Promise<HelloInit> =>
+		project === "default"
+			? hello
+			: {
+					...hello,
+					token: (await cp.current.agentCredentials.issue(project as never, hello.name as string))
+						.token,
+				};
 	const connect = async (hello: HelloInit, project = "default") => {
-		const agent = await FakeAgent.connect(cp.grpcUrl, hello);
+		const agent = await FakeAgent.connect(cp.grpcUrl, await helloIn(hello, project));
 		agents.push(agent);
-		if (project !== "default") await moveAgent(hello.name, project);
 		return agent;
 	};
 	/** 注册过、现在离线的 Agent。 */
 	const registerOffline = async (name: string, project = "default") => {
-		const agent = await FakeAgent.connect(cp.grpcUrl, { name });
+		const agent = await FakeAgent.connect(cp.grpcUrl, await helloIn({ name }, project));
 		await agent.close();
 		await eventually(async () => {
-			const { agents: list } = await api.getJson<{ agents: { name: string; status: string }[] }>(
-				"/agents",
-			);
-			expect(list.find((a) => a.name === name)?.status).toBe("offline");
+			const { rows } = await sql.query("select status from agents where name = $1", [name]);
+			expect(rows[0]?.status).toBe("offline");
 		});
-		if (project !== "default") await moveAgent(name, project);
 	};
 	const moveAgent = (name: string, project: string) =>
 		sql.query("update agents set project_id = $2 where name = $1", [name, project]);

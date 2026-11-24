@@ -11,6 +11,8 @@ import {
 	agentBinaryUrl,
 } from "./agent-binaries/agent-binaries.js";
 import { loadInstallScript } from "./agent-binaries/install-script.js";
+import { AgentAuthenticator } from "./agents/agent-auth.js";
+import { AgentCredentialService } from "./agents/agent-credentials.js";
 import { createAgentEnvironment } from "./agents/agent-environment.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { registerSharedAgentToken } from "./agents/shared-agent-token.js";
@@ -160,7 +162,7 @@ export interface ControlPlaneOptions {
 	/**
 	 * 借出去的数据库连接（事务里）出错时调用（#563，docs/ARCHITECTURE.md §6.10）：`main.ts` 给的是有序退出进程。
 	 * 这样的连接上的错误以前是没人接的 `error` 事件、进程当场退出；之后的状态不可信（任务结果没写进去、提交之后的派发没人补），
-	 * 靠重启恢复。调用之前连接池已经结束：之后拿连接的请求立刻以错误结束，不再碰数据库。不给：只记日志（测试里的控制面）。
+	 * 靠重启恢复。调用之前连接池已经结束：之后新的拿连接的请求立刻以错误结束，不再碰数据库（已经借出去的连接不受影响，有序关闭等它们做完）。不给：只记日志（测试里的控制面）。
 	 */
 	onFatalDatabaseError?: (error: Error) => void;
 	/**
@@ -218,6 +220,8 @@ export interface ControlPlane {
 	readonly grpcUrl: string;
 	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
 	readonly sessions: SessionStore;
+	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts）：测试用它给假 Agent 签发凭据。 */
+	readonly agentCredentials: AgentCredentialService;
 	/**
 	 * 关闭控制面。**可以重复调用，第二次起拿到的是同一个 promise**（和第一次同时落定，不会比它先完成）：只关一次，不再去关已经关了的东西
 	 * （第二次关连接池会拒绝）。调用方不止一个（停止信号、致命错误之后的有序退出），谁先谁后都是同一个结果，不会有一方在另一方还没关完时
@@ -413,6 +417,13 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		limitBytes: options.artifactLimitBytes,
 		uploadIdleMs: options.artifactUploadIdleMs,
 	});
+	// 上次进程被杀、断电时留下的上传临时文件：开始监听之前清掉（这时没有上传在做）；清不掉不挡住启动。
+	await artifacts
+		.sweepUploadTemp()
+		.then((count) => {
+			if (count > 0 && logger) printInfo(`sfly: 清掉了上次留下的 ${count} 个上传临时文件`);
+		})
+		.catch((error) => logError("sfly: 清理上次留下的上传临时文件失败：", error));
 	const retention = new Retention({
 		db: database.db,
 		clock,
@@ -437,6 +448,20 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 假哈希提前算好（不等第一个不存在的登录名）；算不出来不挡启动，用到时再算。
 	void accounts.warmUp().catch(() => {});
 	const tokens = new TokenService({ db: database.db, clock, revocations });
+	// Agent 凭据吊销时，用它连着的 Agent 连接断开（#492）。
+	const agentCredentials = new AgentCredentialService({
+		db: database.db,
+		clock,
+		onRevoked: (ids) => hub.closeByCredentials(ids),
+	});
+	// 用户被停用：他名下的开发 Agent 的凭据停止有效（Hello 拒绝，见 agent-auth.ts），已连着的连接断开。凭据不吊销：启用之后恢复。
+	const stopClosingDevAgents = accounts.onRevoked((revocation) => {
+		if (revocation.type !== "user") return;
+		agentCredentials
+			.liveIdsOfUser(revocation.userId)
+			.then((ids) => hub.closeByCredentials(ids))
+			.catch((error) => logError("sfly: 用户停用时断开他的开发 Agent 失败", error));
+	});
 	try {
 		await mkdir(options.dataDir, { recursive: true });
 		await bootstrapFirstAdmin({
@@ -520,6 +545,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		corsOrigins: options.corsOrigins,
 		accounts,
 		tokens,
+		agentCredentials,
 		loginIdleMs: options.loginIdleMs,
 		// 登录 Cookie 的跨站检查：配置的公开地址（反向代理后面是浏览器看到的地址），加上开发时 vite 的地址；
 		// 没有配置公开地址时用请求的 Host 兜底。
@@ -569,7 +595,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 					return engine.onMessage(conn, limitOutputs(message));
 				},
 			},
-			agentToken: options.agentToken,
+			authenticator: new AgentAuthenticator({ db: database.db, clock }),
 			onError: sessionError,
 		});
 	} catch (error) {
@@ -635,6 +661,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	/** 关闭只做一次：重复调用（收到几个停止信号）拿到同一个结果，不再去关已经关了的东西（第二次关连接池会拒绝）。 */
 	let closing: Promise<void> | undefined;
 	const close = async (): Promise<void> => {
+		stopClosingDevAgents();
 		await assistantConnection?.close();
 		await Promise.all(sweeps.map((s) => s.stop()));
 		await retention.idle();
@@ -657,6 +684,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		httpUrl,
 		grpcUrl: gateway.url,
 		sessions,
+		agentCredentials,
 		close: () => {
 			closing ??= close();
 			return closing;
