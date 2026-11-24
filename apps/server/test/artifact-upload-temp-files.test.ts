@@ -116,7 +116,11 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 		const store = storeWith();
 
 		for (let i = 0; i < 11; i++) {
-			const outcome = await store.save(taskId, `big-${i}.bin`, Readable.from([Buffer.alloc(2_000)]));
+			const outcome = await store.save(
+				taskId,
+				`big-${i}.bin`,
+				Readable.from([Buffer.alloc(2_000)]),
+			);
 			expect(outcome).toMatchObject({ ok: false, status: 413, code: "artifact_too_large" });
 		}
 		await sleep(300);
@@ -178,21 +182,25 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 			],
 		];
 
-		it.each(cases)("%s：不留临时文件", async (_label, run, expected, idleMs) => {
-			slowOpen.ms = OPEN_MS;
-			const store = storeWith(idleMs);
+		it.each(cases)(
+			"%s：不留临时文件",
+			async (_label, run, expected, idleMs) => {
+				slowOpen.ms = OPEN_MS;
+				const store = storeWith(idleMs);
 
-			const outcome = await run(store).then(
-				(value) => value,
-				(error: unknown) => (expected === "throws" ? "throws" : error),
-			);
+				const outcome = await run(store).then(
+					(value) => value,
+					(error: unknown) => (expected === "throws" ? "throws" : error),
+				);
 
-			if (expected === "throws") expect(outcome).toBe("throws");
-			else expect(outcome).toMatchObject({ ok: false, ...expected });
-			// 出错时删除临时文件的那一步要等写入流关闭：这里等得比 open 久，文件要是晚一点才建出来就看得到。
-			await sleep(OPEN_MS * 3);
-			expect(await leftovers()).toEqual([]);
-		}, 60_000);
+				if (expected === "throws") expect(outcome).toBe("throws");
+				else expect(outcome).toMatchObject({ ok: false, ...expected });
+				// 出错时删除临时文件的那一步要等写入流关闭：这里等得比 open 久，文件要是晚一点才建出来就看得到。
+				await sleep(OPEN_MS * 3);
+				expect(await leftovers()).toEqual([]);
+			},
+			60_000,
+		);
 
 		it("名字和别的产物的目录冲突（400）：请求体收完了，改名那一步出错，也不留", async () => {
 			slowOpen.ms = OPEN_MS;
@@ -270,9 +278,9 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 			expect((await store.save(taskId, "real.bin", Readable.from([Buffer.alloc(40, 5)]))).ok).toBe(
 				true,
 			);
-			expect(
-				(await store.save(taskId, lookalike, Readable.from([Buffer.alloc(30, 6)]))).ok,
-			).toBe(true);
+			expect((await store.save(taskId, lookalike, Readable.from([Buffer.alloc(30, 6)]))).ok).toBe(
+				true,
+			);
 			// 上次进程留下的：被杀、断电时来不及删。（放在临时文件现在所在的目录。）
 			const dir = join(cp.dataDir, "artifacts", ".uploading");
 			await mkdir(dir, { recursive: true });
