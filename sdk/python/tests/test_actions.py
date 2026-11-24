@@ -613,7 +613,8 @@ def test_a_field_key_is_cut_only_at_the_transport_limit_and_the_warning_does_not
     key = "键" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS + 50)
     secret_key = "k" * (MAX_NAME_CHARS - 10) + SECRET
 
-    ctx.action.start("动作", **{key: "值", secret_key: "值"}).end()
+    # 字段的键是任意字符串：mypy 担心某个键恰好叫 parent，这里的键不是
+    ctx.action.start("动作", **{key: "值", secret_key: "值"}).end()  # type: ignore[arg-type]
 
     [start] = only(events(), "action_start")
     assert "键" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS) in start["fields"]
