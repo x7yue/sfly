@@ -89,6 +89,15 @@ async function database_query(cp: TestControlPlane, text: string, params: unknow
 	}
 }
 
+/**
+ * 停止等结局的期限（`SessionService` 的 `stopGraceMs`；这个文件里的控制面默认 300 毫秒）。要在「正在停止」的窗口里做好几个请求的
+ * 用例把它放长，结局什么时候到由用例自己决定：窗口的长短不靠 CI 机器的快慢。
+ */
+function setStopGrace(cp: TestControlPlane, ms: number): void {
+	(cp.current.sessionService as unknown as { deps: { stopGraceMs?: number } }).deps.stopGraceMs =
+		ms;
+}
+
 /** 一个会话的持久事件（读接口，最新的一页）。 */
 async function eventsOf(api: ApiClient, id: string): Promise<PersistedSessionEvent[]> {
 	return (await api.getJson<SessionDetailResponse>(`/sessions/${id}`)).events;
@@ -1447,6 +1456,7 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		assistant.strictTurns = true;
 		assistant.stopSettleMs = 0;
 		assistant.promptDelayMs = 0;
+		setStopGrace(cp, 300);
 		assistant.promptReply = () => undefined;
 		assistant.promptAcceptedThenReply = () => undefined;
 		assistant.abortReply = () => undefined;
@@ -1524,8 +1534,10 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("prompt 超时之后、等结局期间：助手服务带回了这一轮的结局就用它，不补；这期间用户又说的话是新的一轮的开头，排在这一轮后面，不是插话", async () => {
-		// 结局什么时候到由测试自己决定（`emit`）：在窗口里说完话再带回。守协议的假助手服务收下中止就带回结局，窗口关得太快。
+		// 结局什么时候到由测试自己决定（`emit`）：在窗口里说完话再带回。守协议的假助手服务收下中止就带回结局，窗口关得太快；
+		// 期限也放长（默认 300 毫秒），窗口里的几个请求不靠机器的快慢。
 		assistant.strictTurns = false;
+		setStopGrace(cp, 5_000);
 		const view = await json<SessionView>(
 			await api.post("/projects/default/sessions", { text: "第一句" }),
 		);

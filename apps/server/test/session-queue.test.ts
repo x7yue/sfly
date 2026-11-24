@@ -118,7 +118,17 @@ describe("停止、插话、结束会话、排队", () => {
 		assistant.log.length = 0;
 		assistant.strictTurns = true;
 		assistant.health = () => assistant.healthy();
+		stopGrace(300);
 	});
+
+	/**
+	 * 停止等结局的期限（`SessionService` 的 `stopGraceMs`，这个文件里的控制面默认 300 毫秒）。要在「正在停止」的窗口里做好几个请求的用例
+	 * 把它放长、让假助手服务的 `stopSettleMs` 决定结局什么时候到：窗口的长短不靠 CI 机器的快慢。每个用例开始时恢复。
+	 */
+	const stopGrace = (ms: number) => {
+		(cp.current.sessionService as unknown as { deps: { stopGraceMs?: number } }).deps.stopGraceMs =
+			ms;
+	};
 
 	/** 控制面的时钟是手动的：每次建会话、说话之后走一秒，排队的先后（`queued_at`）才分得出来。 */
 	const tick = () => (cp.clock as ManualClock).advance(1_000);
@@ -621,9 +631,9 @@ describe("停止、插话、结束会话、排队", () => {
 
 	describe("停止途中说的话（控制面发出 abort 之后、这一轮的结局写下之前）：是新的一轮的开头，排在这一轮后面，不是插话", () => {
 		it("写 user_message（steer 为 false）、不转发给助手服务，会话仍在做但有排队的位置；再说一句 409 session_queued；这一轮的结局写下之后开始它，交给助手服务的是这句话", async () => {
-			assistant.strictTurns = false;
+			stopGrace(5_000);
+			assistant.stopSettleMs = 1_500; // 严格模式：这一轮在中止之后 1.5 秒才结束，这段时间里做好几个请求
 			const first = await json<SessionView>(await create("第一件事"));
-			assistant.abortDelayMs = 150; // 中止还在路上
 			const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
 			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
 			const said = await say(first.id, "停下来之后的话");
@@ -660,10 +670,10 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("按说话的时刻排，不插队：项目里已经有别的会话在排，它排在那个会话后面；页面的排位也这样算", async () => {
-			assistant.strictTurns = false;
+			stopGrace(5_000);
+			assistant.stopSettleMs = 1_500; // 严格模式：甲这一轮在中止之后 1.5 秒才结束，这段时间里做好几个请求
 			const a = await json<SessionView>(await create("甲的事", "alice"));
 			const b = await json<SessionView>(await create("乙的事", "bob")); // 排队，第 1 位
-			assistant.abortDelayMs = 150;
 			const stopping = api.postEmpty(`/sessions/${a.id}/stop`);
 			await eventually(async () => expect(assistant.aborts).toEqual([a.id]));
 			expect((await say(a.id, "甲接着做", "alice")).status).toBe(200);
@@ -716,7 +726,8 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("停止途中说了话、又结束会话：这句话移出队列（queue_cancelled），不会在这一轮的结局写下之后被开成新的一轮，再写 session_ended", async () => {
-			assistant.stopSettleMs = 300; // 严格模式：这一轮在中止之后 300 毫秒才结束
+			stopGrace(5_000);
+			assistant.stopSettleMs = 1_500; // 严格模式：这一轮在中止之后 1.5 秒才结束
 			const first = await json<SessionView>(await create("第一件事"));
 			const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
 			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
@@ -739,7 +750,8 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("停止 = 在做的一轮停掉、排着的话移出队列：停止途中说了话、又点一次停止，就是撤掉那句话（queue_cancelled）；这一轮停完之后会话回到空闲，没有第 2 轮", async () => {
-			assistant.stopSettleMs = 300;
+			stopGrace(5_000);
+			assistant.stopSettleMs = 1_500;
 			const first = await json<SessionView>(await create("第一件事"));
 			const firstStop = api.postEmpty(`/sessions/${first.id}/stop`);
 			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
@@ -766,7 +778,8 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("只撤这次停止之前就排着的话：这次停止的等待期间说的话照旧排在后面，停完之后开始它（点一次停止不会撤掉停止途中说的话）", async () => {
-			assistant.stopSettleMs = 200;
+			stopGrace(5_000);
+			assistant.stopSettleMs = 1_500;
 			const first = await json<SessionView>(await create("第一件事"));
 			const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
 			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
