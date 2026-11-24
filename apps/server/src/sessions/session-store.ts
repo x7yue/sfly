@@ -40,6 +40,8 @@ const CURSOR_SWEEP_SIZE = 1_000;
 const CURSOR_PENDING_MS = 60 * 60_000;
 /** 闲置多久（毫秒）的推送指针可以清掉：写事务最长也只等 {@link DEFAULT_SESSION_WRITE_LOCK_TIMEOUT_MS}，远小于它（{@link SessionStoreDeps.cursorIdleMs}）。 */
 const CURSOR_IDLE_MS = 10 * 60_000;
+/** 开始排队的会话时一次最多看几个候选（跳过正在结束的）：队首的几个都被占着是不正常的，不为它多查。 */
+const PROMOTE_CANDIDATES = 20;
 
 /** 库里的一个会话。 */
 export type SessionRow = typeof sessions.$inferSelect;
@@ -238,7 +240,7 @@ export class SessionStore {
 	}
 
 	/** 一轮结束、项目的位置空出来之后调用（见 {@link SessionStore.onTurnEnd}）。 */
-	#turnEndListener: ((project: ProjectId) => void) | undefined;
+	#turnEndListener: ((project: ProjectId, sessionId: string) => void) | undefined;
 
 	/**
 	 * 每个会话此刻这一轮里「确认送到」的插话（协议「插话」一节）：助手服务的 `steer_queue`（还没送到的完整列表）里出现过，
@@ -254,16 +256,16 @@ export class SessionStore {
 
 	/**
 	 * 登记「一轮结束了」的监听（只有一个，会话服务用它让排队的会话开始）：`turn_end` 把会话从在做改回空闲、事务提交并发布
-	 * 之后调用，参数是项目；**不等它**（它在后台做事，抛的错自己处理）。不论这条 `turn_end` 是助手服务带回来的、控制面补的
+	 * 之后调用，参数是项目和会话；**不等它**（它在后台做事，抛的错自己处理）。不论这条 `turn_end` 是助手服务带回来的、控制面补的
 	 * （停止、兜底）还是重复的，只要这一刻会话是从「在做」改回空闲的，都算。
 	 */
-	onTurnEnd(listener: (project: ProjectId) => void): void {
+	onTurnEnd(listener: (project: ProjectId, sessionId: string) => void): void {
 		this.#turnEndListener = listener;
 	}
 
-	#turnEnded(project: ProjectId): void {
+	#turnEnded(project: ProjectId, sessionId: string): void {
 		try {
-			this.#turnEndListener?.(project);
+			this.#turnEndListener?.(project, sessionId);
 		} catch {
 			// 监听自己处理错误；这里不能因为它让落库的调用失败。
 		}
@@ -499,6 +501,7 @@ export class SessionStore {
 	async createWithTurn(
 		input: { project: ProjectId; title: string; createdBy: string; createdByUserId: string | null },
 		user: SessionEventBody,
+		started?: (sessionId: string, turn: number) => void,
 	): Promise<{ session: SessionRow; events: PersistedSessionEvent[]; queued: boolean }> {
 		const id = randomUUID();
 		return this.#serial(id, async () => {
@@ -538,6 +541,8 @@ export class SessionStore {
 				if (!violates(error, "sessions_one_running_per_project")) throw error;
 				created = await attempt(true);
 			}
+			// 事务提交的这一步之后、释放链之前：别的请求对这个会话的写排在链上，到它们执行时这个回调早就调过了。
+			if (!created.queued) started?.(id, 1);
 			await this.#publishCommitted(id, created.events);
 			return created;
 		});
@@ -634,6 +639,7 @@ export class SessionStore {
 		sessionId: string,
 		project: ProjectId,
 		user: SessionEventBody,
+		started?: (sessionId: string, turn: number) => void,
 	): Promise<
 		| { outcome: "started"; turn: number; events: PersistedSessionEvent[] }
 		| { outcome: "queued"; events: PersistedSessionEvent[] }
@@ -682,6 +688,8 @@ export class SessionStore {
 				if (!violates(error, "sessions_one_running_per_project")) throw error;
 				begun = await attempt(true);
 			}
+			// 事务提交的这一步之后、释放链之前（见 createWithTurn）：会话刚变成在做，调用方在这里设上「插话等 202」的门。
+			if (begun.outcome === "started") started?.(sessionId, begun.turn);
 			if (begun.outcome !== "refused") await this.#publishCommitted(sessionId, begun.events);
 			return begun;
 		});
@@ -812,7 +820,11 @@ export class SessionStore {
 	 * 写 `turn_started`，一个事务），返回它、这一轮的轮次和它排队时说的那句话（要交给助手服务的）。没有排队的、或者项目里
 	 * 有会话在做（撞上唯一约束）时为 undefined。重复调用无害：谁先开始、谁在做，都是数据库说了算。
 	 */
-	async promoteNext(project: ProjectId): Promise<
+	async promoteNext(
+		project: ProjectId,
+		held: (sessionId: string) => boolean = () => false,
+		started?: (sessionId: string, turn: number) => void,
+	): Promise<
 		| {
 				session: SessionRow;
 				turn: number;
@@ -826,14 +838,18 @@ export class SessionStore {
 		| undefined
 	> {
 		for (let tries = 0; tries < 5; tries++) {
-			const [next] = await this.deps.db
+			const candidates = await this.deps.db
 				.select({ id: sessions.id })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, project), eq(sessions.status, "queued")))
 				.orderBy(asc(sessions.queuedAt), asc(sessions.id))
-				.limit(1);
+				.limit(PROMOTE_CANDIDATES);
+			// 不开始 `held` 的会话（正在结束的）：跳过它们，排在后面的会话照常开始。
+			const next = candidates.find((candidate) => !held(candidate.id));
 			if (!next) return undefined;
 			const promoted = await this.#serial(next.id, async () => {
+				// 排到链上的这段时间里这个会话被记成「正在结束」了：不开始它，换下一个。
+				if (held(next.id)) return undefined;
 				const now = this.deps.clock.now();
 				let result: { session: SessionRow; event: PersistedSessionEvent } | undefined;
 				try {
@@ -864,6 +880,8 @@ export class SessionStore {
 					throw error;
 				}
 				if (!result) return undefined;
+				// 会话刚变成在做、释放链之前：调用方在这里设上「插话等 202」的门（见 createWithTurn）。
+				started?.(next.id, result.session.currentTurn);
 				await this.#publishCommitted(next.id, [result.event]);
 				return result;
 			});
@@ -889,8 +907,9 @@ export class SessionStore {
 	}
 
 	/**
-	 * 排队中的会话被停止：移出队列、回到空闲（`queued` → `idle`、清掉 `queued_at`），给排队时说的那句话写一条
-	 * `queue_cancelled` 的提示（带这句话的 `message_id`），一个事务。不在排队时什么也不改，返回当时的状态。
+	 * 把会话排着的那句话移出队列（停止、结束会话）：排队中的会话回到空闲（`queued` → `idle`、清掉 `queued_at`）；停止途中说了话、
+	 * 排在这一轮后面的在做的会话（`running`，有 `queued_at`）仍是在做，只清掉 `queued_at`、这一轮结束后回到空闲。给排队时说的那句话写一条
+	 * `queue_cancelled` 的提示（带这句话的 `message_id`），一个事务。没有话排着时什么也不改，返回当时的状态。
 	 */
 	async cancelQueued(
 		sessionId: string,
@@ -901,12 +920,14 @@ export class SessionStore {
 			const now = this.deps.clock.now();
 			const result = await this.deps.db.transaction(async (tx) => {
 				const session = await lockSession(tx, sessionId);
-				if (session.status !== "queued") {
+				// 有排队时间的才有话排着：排队中的（`queued`），和停止途中说了话、排在这一轮后面的在做的会话（`running`，这一轮照常
+				// 停下去，这句话不再排在后面）。
+				if (session.queuedAt === null) {
 					return { cancelled: false as const, status: session.status };
 				}
 				const [row] = await tx
 					.update(sessions)
-					.set({ status: "idle", queuedAt: null })
+					.set({ status: session.status === "queued" ? "idle" : session.status, queuedAt: null })
 					.where(eq(sessions.id, sessionId))
 					.returning();
 				const [said] = await tx
@@ -970,9 +991,53 @@ export class SessionStore {
 		});
 	}
 
-	/** 删除一个会话和它的事件（建会话时助手服务没接住第一轮：不留下会话）。 */
+	/** 删除一个会话和它的事件。 */
 	async delete(sessionId: string): Promise<void> {
 		await this.deps.db.delete(sessions).where(eq(sessions.id, sessionId));
+	}
+
+	/**
+	 * 建会话时助手服务没接住第一轮：不留下会话——**但只在会话没有被碰过时才删**，核对和删在锁着会话那一行的同一个事务里：
+	 * 会话是空闲（失败的这一轮已经有结局）、没有话排着、这一轮是它的第一轮、事件里只有最初的一句话（没有别人又说的话）、
+	 * 最后一条事件就是这一轮的 `turn_end`。等结局的那段时间（最长一个期限）会话是在做的、列表里看得见，别人对它说的话回了 200、排在
+	 * 后面，结局写下之后这句话已经被开始（会话在做第 2 轮）：这时删掉会话，说过的话没了，还会空出项目的位置、让助手服务那边同一个项目
+	 * 有两轮同时在做。不满足就留下（它带着一条失败的第一轮，照常能用）。会话已经不在时返回 false。返回有没有删。
+	 */
+	async deleteUntouched(sessionId: string, failedTurn: number): Promise<boolean> {
+		return this.#serial(sessionId, async () => {
+			return this.deps.db
+				.transaction(async (tx) => {
+					const session = await lockSession(tx, sessionId);
+					if (
+						session.status !== "idle" ||
+						session.queuedAt !== null ||
+						session.currentTurn !== failedTurn
+					) {
+						return false;
+					}
+					const events = await tx
+						.select({
+							seq: sessionEvents.seq,
+							type: sessionEvents.type,
+							payload: sessionEvents.payload,
+						})
+						.from(sessionEvents)
+						.where(eq(sessionEvents.sessionId, sessionId))
+						.orderBy(desc(sessionEvents.seq));
+					const last = events[0];
+					const lastTurnEnd =
+						last?.type === "turn_end" && (last.payload as { turn?: number }).turn === failedTurn;
+					const said = events.filter((event) => event.type === "user_message").length;
+					if (!lastTurnEnd || said !== 1) return false;
+					await tx.delete(sessions).where(eq(sessions.id, sessionId));
+					return true;
+				})
+				.catch((error: unknown) => {
+					// 会话已经不在了（别处删了）：没有什么可删的。
+					if (error instanceof SessionNotFoundError) return false;
+					throw error;
+				});
+		});
 	}
 
 	/**
@@ -1003,7 +1068,7 @@ export class SessionStore {
 			if (!stored.duplicate) await this.#publishCommitted(sessionId, [stored.event]);
 			if (stored.endedTurn) {
 				this.#steerSeen.delete(sessionId);
-				this.#turnEnded(stored.project);
+				this.#turnEnded(stored.project, sessionId);
 			}
 			return stored.event;
 		});
@@ -1039,7 +1104,7 @@ export class SessionStore {
 			if (!result.stored.duplicate) await this.#publishCommitted(sessionId, [result.stored.event]);
 			if (result.stored.endedTurn) {
 				this.#steerSeen.delete(sessionId);
-				this.#turnEnded(result.stored.project);
+				this.#turnEnded(result.stored.project, sessionId);
 			}
 			return { stored: result.stored.event };
 		});
@@ -1117,7 +1182,7 @@ export class SessionStore {
 				// 只有写的是**当前这一轮**的结局才清「确认送到」的记录：更早一轮的重复结局（比如第 t 轮的 `prompt` 超时时第 t+1 轮已经
 				// 开始）不动当前这一轮的。
 				this.#steerSeen.delete(sessionId);
-				this.#turnEnded(stored.end.project);
+				this.#turnEnded(stored.end.project, sessionId);
 			}
 			return stored.end.event;
 		});

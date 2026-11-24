@@ -643,6 +643,9 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const close = async (): Promise<void> => {
 		await assistantConnection?.close();
 		await Promise.all(sweeps.map((s) => s.stop()));
+		// 后台「补发中止、等结局」「开始排队中的会话」：放弃等待（不为它们延长关闭的上限，也不在关闭时自己补结局）；重启之后这些会话
+		// 还是在做的：中止已经发出，助手服务带回结局就照常收下，带不回来由兜底结束（#545）。
+		await sessionService.close();
 		await retention.idle();
 		await metricRetention.idle();
 		hub.closeAll();

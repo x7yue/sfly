@@ -10,7 +10,7 @@ import type {
 	SessionView,
 } from "@sfly/schema";
 import pg from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -715,6 +715,90 @@ describe("停止、插话、结束会话、排队", () => {
 			).toMatchObject({ steered: false, status: "running" });
 		});
 
+		it("停止途中说了话、又结束会话：这句话移出队列（queue_cancelled），不会在这一轮的结局写下之后被开成新的一轮，再写 session_ended", async () => {
+			assistant.stopSettleMs = 300; // 严格模式：这一轮在中止之后 300 毫秒才结束
+			const first = await json<SessionView>(await create("第一件事"));
+			const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
+			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
+			expect((await say(first.id, "停下来之后的话")).status).toBe(200);
+			expect(await view(first.id)).toMatchObject({ status: "running", queue_position: 1 });
+			const ending = api.post(`/sessions/${first.id}/end`, {});
+			expect([(await stopping).status, (await ending).status]).toEqual([200, 200]);
+			expect((await detail(first.id)).events.map((e) => e.type)).toEqual([
+				"user_message",
+				"turn_started",
+				"user_message",
+				"notice",
+				"turn_end",
+				"session_ended",
+			]);
+			expect((await detail(first.id)).events[3]).toMatchObject({ kind: "queue_cancelled" });
+			expect(await statusOf(cp, first.id)).toBe("ended");
+			// 没有为这句话开始新的一轮：助手服务只收到过一个 prompt。
+			expect(assistant.prompts).toHaveLength(1);
+		});
+
+		it("停止 = 在做的一轮停掉、排着的话移出队列：停止途中说了话、又点一次停止，就是撤掉那句话（queue_cancelled）；这一轮停完之后会话回到空闲，没有第 2 轮", async () => {
+			assistant.stopSettleMs = 300;
+			const first = await json<SessionView>(await create("第一件事"));
+			const firstStop = api.postEmpty(`/sessions/${first.id}/stop`);
+			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
+			expect((await say(first.id, "说错了的话")).status).toBe(200);
+			expect(await view(first.id)).toMatchObject({ status: "running", queue_position: 1 });
+			// 再点一次停止：撤掉那句话（会话仍在停止那一轮）。
+			const secondStop = await api.postEmpty(`/sessions/${first.id}/stop`);
+			expect(secondStop.status).toBe(200);
+			expect((await firstStop).status).toBe(200);
+			const events = (await detail(first.id)).events;
+			expect(events.map((e) => e.type)).toEqual([
+				"user_message",
+				"turn_started",
+				"user_message",
+				"notice",
+				"turn_end",
+			]);
+			expect(events[3]).toMatchObject({ kind: "queue_cancelled" });
+			expect(await view(first.id)).toMatchObject({ status: "idle", queue_position: null });
+			expect(assistant.prompts).toHaveLength(1);
+			// 再说话照常开始新的一轮（撤掉之后没有留下排队的状态）。
+			expect((await say(first.id, "重新说")).status).toBe(200);
+			expect(assistant.prompts.at(-1)?.body).toMatchObject({ turn: 2, text: "重新说" });
+		});
+
+		it("只撤这次停止之前就排着的话：这次停止的等待期间说的话照旧排在后面，停完之后开始它（点一次停止不会撤掉停止途中说的话）", async () => {
+			assistant.stopSettleMs = 200;
+			const first = await json<SessionView>(await create("第一件事"));
+			const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
+			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
+			expect((await say(first.id, "停下来之后的话")).status).toBe(200);
+			expect((await stopping).status).toBe(200);
+			await eventually(() =>
+				expect(assistant.prompts.at(-1)?.body).toMatchObject({ turn: 2, text: "停下来之后的话" }),
+			);
+			expect((await types(first.id)).filter((t) => t === "notice")).toHaveLength(0);
+		});
+
+		it("在做、却有排队时间的会话（停止途中说了话，控制面重启之后内存里「正在停止」的标记没了）：再说话仍是 409 session_queued，不是插话；也不收插话", async () => {
+			const first = await json<SessionView>(await create("第一件事"));
+			await database_query(cp, "update sessions set queued_at = now() where id = $1", [first.id]);
+			const again = await say(first.id, "再说一句");
+			expect(again.status).toBe(409);
+			expect((await json<{ error: { code: string } }>(again)).error.code).toBe("session_queued");
+			expect(assistant.steers).toHaveLength(0);
+			expect((await types(first.id)).filter((t) => t === "user_message")).toHaveLength(1);
+			// 存储层也不收插话：写在排着的话后面的话，下一轮取到的就是它。
+			expect(
+				await cp.current.sessions.steer(first.id, {
+					type: "user_message",
+					message_id: randomUUID(),
+					text: "插话",
+					steer: true,
+					author: "alice",
+					author_user_id: null,
+				}),
+			).toMatchObject({ steered: false, status: "running" });
+		});
+
 		it("停止途中说了话、又结束会话：这句话按排队中的话处理（queue_cancelled），再写 session_ended", async () => {
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("第一件事"));
@@ -734,6 +818,42 @@ describe("停止、插话、结束会话、排队", () => {
 			expect(await statusOf(cp, first.id)).toBe("ended");
 			// 没有为这句话开始新的一轮。
 			expect(assistant.prompts).toHaveLength(1);
+		});
+	});
+
+	describe("结束会话：写下 session_ended 之前不为它开始任何一轮", () => {
+		it("结束会话的中止还在路上时说话（助手服务马上带回结局）：回 409 session_ended，助手服务只收到一个 prompt，事件里没有第 2 轮", async () => {
+			const first = await json<SessionView>(await create("做第一件事"));
+			// 严格模式：中止处理完了（这一轮马上结束、turn_end 马上到），回应在路上。
+			assistant.abortDelayMs = 400;
+			const ending = api.post(`/sessions/${first.id}/end`, {}, "bob");
+			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
+			await eventually(async () => expect(await statusOf(cp, first.id)).toBe("idle"));
+			// 这一轮的结局已经写下、会话空闲，`end` 还没有写 `session_ended`：这时说话不能开始新的一轮。
+			const said = await say(first.id, "又说一句");
+			expect(said.status).toBe(409);
+			expect((await json<{ error: { code: string } }>(said)).error.code).toBe("session_ended");
+			expect((await ending).status).toBe(200);
+			expect(assistant.prompts).toHaveLength(1);
+			const events = (await detail(first.id)).events;
+			expect(events.filter((e) => e.type === "turn_started")).toHaveLength(1);
+			expect(events.filter((e) => e.type === "user_message")).toHaveLength(1);
+			expect(events.at(-1)).toMatchObject({ type: "session_ended" });
+			expect(assistant.log.filter((entry) => entry.startsWith("prompt:"))).toHaveLength(1);
+		});
+
+		it("结束会话没做成（出错）时摘掉「正在结束」：之后对这个会话说话照常", async () => {
+			const first = await idleSession();
+			const store = cp.current.sessions;
+			const spy = vi.spyOn(store, "end").mockRejectedValueOnce(new Error("库挂了"));
+			try {
+				expect((await api.post(`/sessions/${first.id}/end`, {})).status).toBe(500);
+			} finally {
+				spy.mockRestore();
+			}
+			expect(await statusOf(cp, first.id)).toBe("idle");
+			expect((await say(first.id, "还能说")).status).toBe(200);
+			expect(assistant.prompts.at(-1)?.body).toMatchObject({ turn: 2, text: "还能说" });
 		});
 	});
 
@@ -999,6 +1119,98 @@ describe("停止、插话、结束会话、排队", () => {
 				await restartCp.close();
 			}
 		}, 30_000);
+
+		describe("助手服务不能用时，排队的留在队里", () => {
+			it("助手服务连不上：停止之后两个排队的仍然排着、没有 turn_end（不一个个失败）；助手服务回来之后兜底按先后开始它们", async () => {
+				const a = await json<SessionView>(await create("甲", "alice"));
+				const b = await json<SessionView>(await create("乙", "bob"));
+				const c = await json<SessionView>(await create("丙", "carol"));
+				await assistant.stop();
+				try {
+					// 助手服务连不上：中止没有送到，等到期（测试里 300 毫秒）控制面补甲的结局，甲的位置空出来，排队的想开始但助手服务不能用。
+					expect((await api.postEmpty(`/sessions/${a.id}/stop`)).status).toBe(200);
+					await cp.current.sessionService.idle();
+					expect(await statusOf(cp, a.id)).toBe("idle");
+					for (const [id, position] of [
+						[b.id, 1],
+						[c.id, 2],
+					] as const) {
+						expect(await view(id)).toMatchObject({ status: "queued", queue_position: position });
+						expect((await types(id)).filter((t) => t !== "user_message")).toEqual([]);
+					}
+				} finally {
+					await assistant.resume();
+					await assistant.connected();
+				}
+				// 兜底（每分钟一次）：助手服务的 /health 的缓存按测试的时钟（5 秒）。
+				(cp.clock as ManualClock).advance(6_000);
+				await cp.current.sessionService.startWaiting();
+				await cp.current.sessionService.idle();
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]),
+				);
+				expect(await statusOf(cp, b.id)).toBe("running");
+				expect(await view(c.id)).toMatchObject({ status: "queued", queue_position: 1 });
+				// 乙的这一轮结束，丙接着开始（先后和排队的先后一致）。
+				assistant.emit(b.id, 1, turnEnd(1));
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id, c.id]),
+				);
+			});
+
+			it("助手服务的进程数到了上限：排队的留着，上限放开之后开始", async () => {
+				const a = await json<SessionView>(await create("甲", "alice"));
+				const b = await json<SessionView>(await create("乙", "bob"));
+				assistant.health = () => ({ ...assistant.healthy(), processes: { active: 4, limit: 4 } });
+				expect((await api.postEmpty(`/sessions/${a.id}/stop`)).status).toBe(200);
+				await cp.current.sessionService.idle();
+				expect(await statusOf(cp, a.id)).toBe("idle");
+				expect(await view(b.id)).toMatchObject({ status: "queued", queue_position: 1 });
+				expect(assistant.prompts).toHaveLength(1);
+				// 没到上限（limit 为 null 或者 active 小于 limit）：开始。
+				assistant.health = () => ({ ...assistant.healthy(), processes: { active: 3, limit: 4 } });
+				(cp.clock as ManualClock).advance(6_000);
+				await cp.current.sessionService.startWaiting();
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]),
+				);
+			});
+		});
+
+		it("排队的会话轮到它时，会话一变成在做就设上「插话等 202」的门：这个窗口里来的插话先留着，prompt 的 202 之后才转发（不是先于 prompt 发出、被助手服务回 409）", async () => {
+			const a = await json<SessionView>(await create("甲", "alice"));
+			const b = await json<SessionView>(await create("乙", "bob"));
+			const store = cp.current.sessions;
+			const real = store.lastUserMessage.bind(store);
+			// 开始排队的会话之后读它排队时说的那句话慢：以前的写法这时还没设上门。
+			const spy = vi.spyOn(store, "lastUserMessage").mockImplementation(async (id) => {
+				await new Promise((resolve) => setTimeout(resolve, 400));
+				return real(id);
+			});
+			try {
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(async () => expect(await statusOf(cp, b.id)).toBe("running"));
+				expect((await say(b.id, "插话", "carol")).status).toBe(200);
+				expect(assistant.steers).toHaveLength(0);
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]),
+				);
+				await eventually(() =>
+					expect(assistant.steers.map((x) => [x.sessionId, x.body.turn, x.body.text])).toEqual([
+						[b.id, 1, "插话"],
+					]),
+				);
+				const log = assistant.log.filter((entry) => entry.endsWith(b.id));
+				expect(log).toEqual([`prompt:${b.id}`, `steer:${b.id}`]);
+				expect(
+					(await detail(b.id)).events.filter(
+						(e) => e.type === "notice" && e.kind === "steer_dropped",
+					),
+				).toEqual([]);
+			} finally {
+				spy.mockRestore();
+			}
+		});
 	});
 
 	describe("停止：旧的一轮过一会儿才结束", () => {
@@ -1067,6 +1279,63 @@ describe("停止、插话、结束会话、排队", () => {
 			expect(await statusOf(cp, b.id)).toBe("running");
 			expect(await statusOf(cp, a.id)).toBe("idle");
 		});
+	});
+
+	describe("停止等结局不靠轮询、控制面关闭时放弃等待", () => {
+		it("等结局期间不轮询库：结局写下时被叫醒（这一轮 1 秒之后才结束，等的期间读库不超过几次）", async () => {
+			assistant.stopSettleMs = 1_000;
+			const first = await json<SessionView>(await create("第一件事"));
+			const find = vi.spyOn(cp.current.sessions, "find");
+			try {
+				const started = Date.now();
+				expect((await api.postEmpty(`/sessions/${first.id}/stop`)).status).toBe(200);
+				expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+				// 每 25 毫秒查一次的话这里要四十多次。
+				expect(find.mock.calls.length).toBeLessThan(12);
+			} finally {
+				find.mockRestore();
+			}
+			expect(await statusOf(cp, first.id)).toBe("idle");
+		});
+
+		it("控制面关闭时不等后台的「补发中止、等结局」（它们最长 23 秒），也不自己补结局", async () => {
+			const closeCp = await startTestControlPlane({
+				assistantUrl: assistant.url,
+				assistantSecret: assistant.secret,
+				workbenchAgent: "workbench-close",
+				assistantReconnectMs: { min: 20, max: 100 },
+				assistantCommandTimeoutMs: 150,
+				sessionStopGraceMs: 30_000,
+			});
+			const closeWorkbench = await FakeAgent.connect(
+				closeCp.grpcUrl,
+				{ name: "workbench-close", peer: { port: 7005, publicAddress: "10.0.0.9" } },
+				{ clock: closeCp.clock },
+			);
+			try {
+				await assistant.connected(2);
+				const closeApi = new ApiClient(closeCp);
+				// 第一轮的 prompt 超时（结果未知）：后台补发中止、等结局；中止被拒绝（没有效果），一直等不到结局。
+				assistant.promptDelayMs = 600;
+				assistant.abortReply = () => ({ status: 503, code: "start_failed", message: "没停住" });
+				const res = await closeApi.post(
+					"/projects/default/sessions",
+					{ text: "冷启动很慢" },
+					"alice",
+				);
+				expect(res.status).toBe(503);
+				await eventually(() => expect(assistant.aborts.length).toBeGreaterThan(0));
+				const ended = vi.spyOn(closeCp.current.sessions, "appendTurnEnd");
+				const started = Date.now();
+				await closeCp.close();
+				expect(Date.now() - started).toBeLessThan(5_000);
+				expect(ended).not.toHaveBeenCalled();
+			} finally {
+				assistant.promptDelayMs = 0;
+				assistant.abortReply = () => undefined;
+				await closeWorkbench.disconnect();
+			}
+		}, 30_000);
 	});
 
 	describe("结束会话：POST /sessions/:id/end", () => {
