@@ -1,12 +1,14 @@
 // 范围表（ADR 0029「一处检查」）：范围由「接口作用在哪类资源上 × 只读或写」查表得出，对着 ADR 里逐个接口的那张表，
 // 每一行一条；契约里的每个接口都要有一个期望的范围，新加的写接口不在表里就失败，不会悄悄没人管。
 import { httpContract, ID_LOCATED_KINDS, RESOURCE_KINDS, type RouteDef } from "@sfly/schema";
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import {
 	ACCOUNT_ROUTES,
 	checkAccessRules,
 	checkCredentialRoutes,
 	locatorOf,
+	REVOKE_OWN_ROUTES,
 	routeKey,
 } from "../src/auth/access-rules.js";
 import {
@@ -19,6 +21,7 @@ import {
 	type Scope,
 	writeNeedsPerson,
 } from "../src/auth/scopes.js";
+import { guardHttpContract } from "../src/http/contract-route.js";
 
 /**
  * ADR 0029 范围表里每一行对应的接口和它要的范围。只读接口都是「读」，不在这里列：
@@ -327,6 +330,55 @@ describe("账号类接口（ADR 0029「凭据」的表：不属于项目，不�
 		for (const def of accountRoutes) {
 			expect(def.path, routeKey(def)).not.toContain(":project");
 			expect(locatorOf(def), routeKey(def)).toEqual({ from: "account" });
+		}
+	});
+
+	it("吊销自己的凭据的例外清单（REVOKE_OWN_ROUTES）：契约里没有清单里的接口，契约测试报出它；清单里写进不是账号类的接口、或认别的凭据的账号类接口，启动检查报错", () => {
+		const without = httpContract.filter((def) => routeKey(def) !== "POST /auth/logout-all");
+		expect(
+			checkCredentialRoutes(without).filter((p) => p.includes("REVOKE_OWN_ROUTES")),
+		).toHaveLength(1);
+		const list = REVOKE_OWN_ROUTES as Set<string>;
+		const mentions = (problems: string[]) =>
+			problems.filter((p) => p.includes("REVOKE_OWN_ROUTES"));
+		try {
+			// 不是账号类的接口。
+			list.add("GET /orchestrations");
+			expect(mentions(checkAccessRules(httpContract))).toEqual([
+				expect.stringContaining("GET /orchestrations"),
+			]);
+			list.delete("GET /orchestrations");
+			// 账号类，但认的是平台管理员（写进去会悄悄放宽管理账号的接口）。
+			list.add("POST /users");
+			expect(mentions(checkAccessRules(httpContract))).toEqual([
+				expect.stringContaining("POST /users"),
+			]);
+		} finally {
+			list.delete("GET /orchestrations");
+			list.delete("POST /users");
+		}
+		// 现在的清单没有问题。
+		expect(mentions(checkAccessRules(httpContract))).toEqual([]);
+	});
+
+	it("启动时真的做了访问规则的检查（`guardHttpContract` 调用 `checkAccessRules`）：契约有问题，控制面起不来；去掉这次调用这条就红", () => {
+		const readOnly = httpContract.find(
+			(def) => def.resource.kind === "system",
+		) as (typeof httpContract)[number];
+		const write = {
+			...readOnly,
+			method: "POST",
+			effect: "write",
+		} as unknown as (typeof httpContract)[number];
+		// 声明本身（summary、effect、resource……）站得住，只有访问规则那一项不合格：报的一定是 checkAccessRules 的问题。
+		expect(() => guardHttpContract(Fastify(), [write])).toThrow(/只能是只读的/);
+		// 例外清单里写进不是账号类的接口：同样让控制面起不来。
+		const list = REVOKE_OWN_ROUTES as Set<string>;
+		try {
+			list.add("GET /orchestrations");
+			expect(() => guardHttpContract(Fastify(), httpContract)).toThrow(/REVOKE_OWN_ROUTES/);
+		} finally {
+			list.delete("GET /orchestrations");
 		}
 	});
 

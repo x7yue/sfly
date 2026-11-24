@@ -13,14 +13,17 @@
 //   用层数时控制面的端口只能经代理访问（防火墙、只监听内网地址），否则直连的客户端能伪造来源地址；有固定的代理地址就用地址段。
 import { isIP } from "node:net";
 import type { FastifyServerOptions } from "fastify";
+import { echoNumber } from "../config/echo.js";
 
-const KEYWORDS = new Set(["loopback", "linklocal", "uniquelocal"]);
+/** 认得的关键字（Fastify / proxy-addr 认的几个名字）。 */
+const PROXY_KEYWORDS: ReadonlySet<string> = new Set(["loopback", "linklocal", "uniquelocal"]);
+
 /** 层数的上限：再多就是写错了。 */
 const MAX_HOPS = 10;
 
 /** 一个 IP 或 CIDR（`10.0.0.0/8`、`fd00::/8`）或关键字合不合规矩。 */
 function validEntry(entry: string): boolean {
-	if (KEYWORDS.has(entry.toLowerCase())) return true;
+	if (PROXY_KEYWORDS.has(entry.toLowerCase())) return true;
 	const [address = "", prefix, ...rest] = entry.split("/");
 	const version = isIP(address);
 	if (version === 0 || rest.length > 0) return false;
@@ -40,15 +43,19 @@ export function parseTrustProxy(value: string | undefined): FastifyServerOptions
 	if (/^\d+$/.test(text)) {
 		const count = Number(text);
 		if (count > MAX_HOPS) {
-			throw new Error(`SFLY_TRUST_PROXY=${text}：代理的层数不会超过 ${MAX_HOPS}，是不是写错了`);
+			throw new Error(
+				`SFLY_TRUST_PROXY 不合法：代理的层数不会超过 ${MAX_HOPS}，实际是 ${echoNumber(text)}，是不是写错了`,
+			);
 		}
 		return hops(count);
 	}
 	const entries = text.split(",").map((entry) => entry.trim());
-	const bad = entries.filter((entry) => !validEntry(entry));
+	// 认不出的项只说是第几项，**不回显填的那一项**：误把带用户名和密码的地址填进这个变量时，凭据不进启动输出和日志
+	// （echo.ts：只有数值类的回显）。
+	const bad = entries.flatMap((entry, index) => (validEntry(entry) ? [] : [`第 ${index + 1} 项`]));
 	if (bad.length > 0) {
 		throw new Error(
-			`SFLY_TRUST_PROXY 认不出：${bad.join("、")}。写代理的层数（1），或者逗号分隔的代理地址段（127.0.0.1,10.0.0.0/8）`,
+			`SFLY_TRUST_PROXY 认不出：${bad.join("、")}不是 IP（10.0.0.1）、网段（10.0.0.0/8）或 loopback、linklocal、uniquelocal。写代理的层数（1），或者逗号分隔的代理地址段（127.0.0.1,10.0.0.0/8）`,
 		);
 	}
 	return entries.join(",");

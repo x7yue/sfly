@@ -1949,17 +1949,19 @@ test.describe("账号与登录", () => {
 			await expect(page).toHaveScreenshot("tokens-empty.png");
 		});
 
-		test("签发个人令牌弹窗：只要部分范围", async ({ page }) => {
+		test("签发个人令牌弹窗：只选一部分范围，项目标识写法不对时「签发」不可用", async ({ page }) => {
 			await signIn(page);
 			await page.goto("/account/tokens");
 			await page.getByRole("button", { name: "签发令牌" }).click();
 			const dialog = page.getByRole("dialog", { name: "签发个人令牌" });
 			await dialog.getByLabel("名称").fill("ci-bot");
-			await dialog.getByLabel("只要部分范围").check();
+			await dialog.getByRole("button", { name: "只选一部分" }).click();
 			await dialog.getByLabel("运行", { exact: false }).first().check();
 			await dialog.getByLabel("限定项目").fill("Bad_Project");
-			await dialog.getByRole("button", { name: "签发" }).click();
+			// 提交一次，标出问题之后「签发」不可用。
+			await dialog.getByRole("button", { name: "签发", exact: true }).click();
 			await expect(dialog.getByLabel("限定项目")).toHaveAccessibleDescription(/小写字母/);
+			await expect(dialog.getByRole("button", { name: "签发", exact: true })).toBeDisabled();
 			await expect(page).toHaveScreenshot("tokens-issue.png");
 		});
 
@@ -1982,8 +1984,26 @@ test.describe("账号与登录", () => {
 			await seedTokens(page, clock);
 			await page.goto("/account/tokens");
 			await page.locator('[data-token="laptop"]').getByRole("button", { name: "吊销" }).click();
-			await expect(page.getByRole("dialog", { name: "吊销令牌「laptop」？" })).toBeVisible();
-			await expect(page).toHaveScreenshot("tokens-revoke.png", { mask: [tokenPrefixes(page)] });
+			const dialog = page.getByRole("dialog", { name: "吊销令牌「laptop」？" });
+			await expect(dialog).toBeVisible();
+			// 遮罩只盖值：表格里的前缀（弹窗和遮罩下面的那几行）在弹窗底下看不见，遮罩画在它原来的位置、会盖到弹窗上的字
+			// （表格的列右移之后，盖住了弹窗那一行开头的「前缀」两个字）：和弹窗重叠的不遮，弹窗里的只遮前缀的值。
+			await page.evaluate(() => {
+				const box = document.querySelector('[role="dialog"]')?.getBoundingClientRect();
+				for (const el of document.querySelectorAll('[data-slot="token-prefix"]')) {
+					const r = el.getBoundingClientRect();
+					const covered =
+						box !== undefined &&
+						r.left < box.right &&
+						r.right > box.left &&
+						r.top < box.bottom &&
+						r.bottom > box.top;
+					if (!covered || el.closest('[role="dialog"]')) el.setAttribute("data-mask", "");
+				}
+			});
+			await expect(page).toHaveScreenshot("tokens-revoke.png", {
+				mask: [page.locator('[data-slot="token-prefix"][data-mask]')],
+			});
 		});
 
 		test("项目令牌页", async ({ page, clock }) => {
