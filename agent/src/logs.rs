@@ -1798,12 +1798,17 @@ mod latest_tests {
     use super::*;
 
     #[test]
-    fn the_first_value_is_due_at_once_later_ones_wait_for_the_interval_and_the_last_is_always_due() {
+    fn the_first_value_is_due_at_once_later_ones_wait_for_the_interval_and_the_last_is_always_due()
+    {
         let mut latest = Latest::default();
         assert_eq!(latest.take_due(false), None::<u32>, "没有值时什么也不发");
         latest.set(1);
         latest.set(2);
-        assert_eq!(latest.take_due(false), Some(2), "第一份不等间隔，发的是最新的一份");
+        assert_eq!(
+            latest.take_due(false),
+            Some(2),
+            "第一份不等间隔，发的是最新的一份"
+        );
         latest.set(3);
         assert_eq!(latest.take_due(false), None, "距上一次不满间隔：不发");
         latest.set(4);
