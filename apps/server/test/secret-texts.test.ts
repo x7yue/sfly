@@ -2223,7 +2223,7 @@ describe("保密值和令牌原值一次打码：两种出现都在原文上找�
 		expect(count).toBe(2);
 		// 令牌 [4,6)：和两边都相邻、不重叠，三段
 		let n = mergeSpans(count, [4], [6]);
-		expect(maskedByAutomaton(text, n, "#")).toBe("aa###ee".replace("###", "###"));
+		expect(maskedByAutomaton(text, n, "#")).toBe("aa###ee"); // 三段各一个掩码
 		expect(n).toBe(3);
 		// 令牌 [3,7)：和两边都重叠，合成一段
 		scanSpans(automaton, text, MAX_SPANS);

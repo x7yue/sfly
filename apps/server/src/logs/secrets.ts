@@ -32,12 +32,19 @@ export function maskTokens(text: string): string {
 	return maskedByAutomaton(text, mergeSpans(0, tokens.starts, tokens.ends), SECRET_MASK);
 }
 
+/**
+ * 认令牌用的正则：自己的一份（从 {@link TOKEN_VALUE_PATTERN} 复制，不导出）。`TOKEN_VALUE_PATTERN` 是 `@sfly/schema` 导出的带 `g` 标志的
+ * 共享对象，`matchAll` 从它当时的 `lastIndex` 开始找：别处只要对它调过一次 `test()`、`exec()`，打码就会漏掉文字开头的令牌。
+ * 打码不能靠「别人不碰」，所以这里用不对外的一份，`lastIndex` 永远是 0。
+ */
+const TOKEN_SCAN = new RegExp(TOKEN_VALUE_PATTERN.source, TOKEN_VALUE_PATTERN.flags);
+
 /** 文字里令牌原值的出现（{@link TOKEN_VALUE_PATTERN}）：起止位置，按开头排好、互相不重叠；没有时为 undefined。只在文字里有 `sfly_` 时才扫。 */
 function tokenSpans(text: string): { starts: number[]; ends: number[] } | undefined {
 	if (!text.includes("sfly_")) return undefined;
 	const starts: number[] = [];
 	const ends: number[] = [];
-	for (const match of text.matchAll(TOKEN_VALUE_PATTERN)) {
+	for (const match of text.matchAll(TOKEN_SCAN)) {
 		starts.push(match.index);
 		ends.push(match.index + match[0].length);
 	}
