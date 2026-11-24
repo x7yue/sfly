@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	AbortCommandBody,
+	ASSISTANT_ABORT_SETTLE_MS,
+	ASSISTANT_PROCESS_KILL_GRACE_MS,
 	ASSISTANT_SECRET_ENV,
 	ASSISTANT_SECRET_MIN_LENGTH,
+	ASSISTANT_STOP_MARGIN_MS,
+	ASSISTANT_STOP_WAIT_MS,
 	AssistantErrorBody,
 	AssistantErrorCode,
 	AssistantEvent,
@@ -80,8 +84,55 @@ describe("助手服务产生的事件（AssistantEvent）", () => {
 		}
 	});
 
+	it("没有送到的插话：steer_dropped 必须带这句话的 message_id（UUID），带上它的提示也是合法的会话事件", () => {
+		const dropped = {
+			type: "notice",
+			kind: "steer_dropped",
+			message: "这句插话没有送到助手：「先别改测试」",
+			message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000002",
+		};
+		expect(AssistantEvent.parse(dropped)).toEqual(dropped);
+		expect(SessionEventBody.parse(dropped)).toEqual(dropped);
+		// 必带：助手服务那一半漏写时，解析失败（助手服务的事件、控制面的会话事件、读的一方看到的形状都是）。
+		const { message_id: _id, ...bare } = dropped;
+		expect(AssistantEvent.safeParse(bare).success).toBe(false);
+		expect(SessionEventBody.safeParse(bare).success).toBe(false);
+		expect(AssistantEvent.safeParse({ ...dropped, message_id: "m2" }).success).toBe(false);
+		expect(AssistantEvent.safeParse({ ...dropped, message_id: 2 }).success).toBe(false);
+		// 排队中的话被取消：控制面写，同样必须带 message_id，不是助手服务产生的。
+		const cancelled = {
+			type: "notice",
+			kind: "queue_cancelled",
+			message: "这句话排队时被取消了，没有交给助手",
+			message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000005",
+		};
+		expect(SessionEventBody.parse(cancelled)).toEqual(cancelled);
+		expect(AssistantEvent.safeParse(cancelled).success).toBe(false);
+		const { message_id: _cid, ...cancelledBare } = cancelled;
+		expect(SessionEventBody.safeParse(cancelledBare).success).toBe(false);
+	});
+
+	it("其他种类的提示不能带 message_id：retry、retry_end、compaction、context_reset、events_lost", () => {
+		const id = "5d1c0a7e-3b2f-4c68-9a41-000000000002";
+		for (const kind of ["retry", "retry_end", "compaction", "context_reset"]) {
+			const bare = { type: "notice", kind, message: "x" };
+			expect(AssistantEvent.safeParse(bare).success, kind).toBe(true);
+			expect(AssistantEvent.safeParse({ ...bare, message_id: id }).success, kind).toBe(false);
+			expect(SessionEventBody.safeParse({ ...bare, message_id: id }).success, kind).toBe(false);
+		}
+		const lost = { type: "notice", kind: "events_lost", message: "x" };
+		expect(SessionEventBody.safeParse(lost).success).toBe(true);
+		expect(SessionEventBody.safeParse({ ...lost, message_id: id }).success).toBe(false);
+	});
+
 	it("控制面才有的提示（queue_cancelled、events_lost）和平台记录（scenario_version、run）被拒绝，助手服务的提示和提交通过", () => {
-		const notice = (kind: string) => ({ type: "notice", kind, message: "x" });
+		const id = "5d1c0a7e-3b2f-4c68-9a41-000000000002";
+		const notice = (kind: string) => ({
+			type: "notice",
+			kind,
+			message: "x",
+			...(kind === "steer_dropped" || kind === "queue_cancelled" ? { message_id: id } : {}),
+		});
 		for (const kind of ["queue_cancelled", "events_lost"]) {
 			expect(AssistantEvent.safeParse(notice(kind)).success, kind).toBe(false);
 		}
@@ -145,12 +196,22 @@ describe("命令", () => {
 		}
 	});
 
-	it("插话：这句话的 ID 和文字，文字非空", () => {
-		const steer = { message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000002", text: "先别改测试" };
+	it("插话：对第几轮说的（整数、从 1 起）、这句话的 ID 和文字，文字非空", () => {
+		const steer = {
+			turn: 3,
+			message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000002",
+			text: "先别改测试",
+		};
 		expect(SteerCommandBody.parse(steer)).toEqual(steer);
 		expect(SteerCommandBody.safeParse({ ...steer, text: "" }).success).toBe(false);
-		expect(SteerCommandBody.safeParse({ text: "先别改测试" }).success).toBe(false);
+		expect(SteerCommandBody.safeParse({ turn: 3, text: "先别改测试" }).success).toBe(false);
 		expect(SteerCommandBody.safeParse({ ...steer, message_id: "m2" }).success).toBe(false);
+		// 轮次：缺了（迟到的插话会落进下一轮）、为 0、小数、不是数字都被拒绝。
+		const { turn: _turn, ...withoutTurn } = steer;
+		expect(SteerCommandBody.safeParse(withoutTurn).success).toBe(false);
+		for (const turn of [0, -1, 1.5, "3", null]) {
+			expect(SteerCommandBody.safeParse({ ...steer, turn }).success, String(turn)).toBe(false);
+		}
 		expect(SteerCommandBody.safeParse({}).success).toBe(false);
 	});
 
@@ -190,6 +251,18 @@ describe("命令", () => {
 		expect(AssistantErrorBody.safeParse({ code: "unauthorized" }).success).toBe(false);
 	});
 
+	it("停止一轮的时间：等 abort 的 10 秒、结束进程的宽限 10 秒、余量 3 秒，合起来 23 秒（控制面等结局和助手服务等旧的一轮用同一个数）", () => {
+		expect(ASSISTANT_ABORT_SETTLE_MS).toBe(10_000);
+		expect(ASSISTANT_PROCESS_KILL_GRACE_MS).toBe(10_000);
+		expect(ASSISTANT_STOP_MARGIN_MS).toBe(3_000);
+		expect(ASSISTANT_STOP_WAIT_MS).toBe(23_000);
+		// 最坏的一条路：pi 不理 abort（等满 ABORT_SETTLE），也不理 SIGTERM（等满宽限才 SIGKILL）；余量不能是零。
+		expect(ASSISTANT_STOP_WAIT_MS).toBe(
+			ASSISTANT_ABORT_SETTLE_MS + ASSISTANT_PROCESS_KILL_GRACE_MS + ASSISTANT_STOP_MARGIN_MS,
+		);
+		expect(ASSISTANT_STOP_MARGIN_MS).toBeGreaterThan(0);
+	});
+
 	it("共享密钥：环境变量名和最短长度", () => {
 		expect(ASSISTANT_SECRET_ENV).toBe("SFLY_ASSISTANT_SECRET");
 		expect(ASSISTANT_SECRET_MIN_LENGTH).toBe(32);
@@ -218,6 +291,20 @@ describe("事件流", () => {
 			event: { type: "assistant_delta", text: "我先" },
 		};
 		expect(AssistantStreamLine.parse(transient)).toEqual(transient);
+	});
+
+	it("事件流里的 steer_dropped 要带 seq（持久）和 message_id（没有送到的那句话），缺了 message_id 被拒绝", () => {
+		const dropped = {
+			type: "notice",
+			kind: "steer_dropped",
+			message: "这句插话没有送到助手：「先别改测试」",
+			message_id: "5d1c0a7e-3b2f-4c68-9a41-000000000002",
+		};
+		expect(AssistantStreamRecord.safeParse({ ...record, event: dropped }).success).toBe(true);
+		const { message_id: _id, ...bare } = dropped;
+		expect(AssistantStreamRecord.safeParse({ ...record, event: bare }).success).toBe(false);
+		const { seq: _seq, ...withoutSeq } = { ...record, event: dropped };
+		expect(AssistantStreamRecord.safeParse(withoutSeq).success).toBe(false);
 	});
 
 	it("事件记录：缺字段、轮次不对、会话 ID 不是 UUID、事件是控制面才有的类型都被拒绝", () => {

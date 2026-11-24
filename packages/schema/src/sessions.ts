@@ -116,9 +116,11 @@ export type ErrorClass = z.infer<typeof ErrorClass>;
 
 /**
  * 提示（`notice`）的种类。助手服务产生的：`retry` 正在重试、`retry_end` 重试结束、`compaction` 压缩了上下文、
- * `steer_dropped` 插话因停止没有送到、`context_reset` 接不上之前的上下文，换成了一段摘要；
- * 控制面产生的：`queue_cancelled` 排队中的话因停止没有交给助手、`events_lost` 控制面和助手服务断开太久，
- * 这一段过程没有记下。
+ * `steer_dropped` 插话没有送到模型（停止、到了上限、结束会话时还没送到，或者这一轮因为别的原因结束了；每句各一条，**必须带**这句话的
+ * `message_id`；插话命令回 409 或者没有得到 202、控制面自己补这一轮的结局时，没有确认送到的话的 `steer_dropped` 由控制面写，规则见
+ * 助手服务协议「插话」一节）、`context_reset` 接不上之前的上下文，换成了一段摘要；
+ * 控制面产生的：`queue_cancelled` 排队中的话因停止没有交给助手（**必须带**这句话的 `message_id`；`message` 固定写「这句话排队时被取消了，
+ * 没有交给助手」）、`events_lost` 控制面和助手服务断开太久，这一段过程没有记下。
  * 产生：`retry`、`retry_end`、`compaction` #540；`steer_dropped`、`queue_cancelled` #544；
  * `events_lost`、`context_reset` #545。
  */
@@ -366,7 +368,7 @@ export const SteerQueueEvent = z.object({
 
 /**
  * 提示给人看的一句话的公共部分，见 {@link NoticeKind}：重试才有 `attempt`、`max_attempts`、`retry_delay_ms`、
- * `error_class`。
+ * `error_class`；`steer_dropped`、`queue_cancelled` 才有 `message_id`，而且这两种**必须带**（{@link checkNoticeMessageId}）。
  */
 const noticeFields = {
 	type: z.literal("notice"),
@@ -380,16 +382,50 @@ const noticeFields = {
 	retry_delay_ms: z.int().min(0).optional(),
 	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class: ErrorClass.optional(),
+	/**
+	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
+	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
+	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
+	 */
+	message_id: z.uuid().optional(),
 };
+
+/**
+ * `message_id` 的规则：`steer_dropped`、`queue_cancelled` 必须带，其余种类不能带。写在 schema 里，助手服务那一半漏写、
+ * 或者控制面给不该带的种类带上，测试和解析都会失败。
+ */
+function checkNoticeMessageId(
+	notice: { kind: NoticeKind; message_id?: string | undefined },
+	ctx: z.RefinementCtx,
+): void {
+	const needs = notice.kind === "steer_dropped" || notice.kind === "queue_cancelled";
+	if (needs && notice.message_id === undefined) {
+		ctx.addIssue({
+			code: "custom",
+			path: ["message_id"],
+			message: `${notice.kind} 要带 message_id（没有送到的那句话）`,
+		});
+	}
+	if (!needs && notice.message_id !== undefined) {
+		ctx.addIssue({
+			code: "custom",
+			path: ["message_id"],
+			message: "只有 steer_dropped、queue_cancelled 带 message_id",
+		});
+	}
+}
 
 /**
  * 一条提示。持久。`queue_cancelled`、`events_lost` 由控制面产生，其余由助手服务产生（助手服务只产生
  * {@link AssistantNoticeEvent} 那几种）。
  */
-export const NoticeEvent = z.object({ kind: NoticeKind, ...noticeFields });
+const noticeObject = z.object({ kind: NoticeKind, ...noticeFields });
+export const NoticeEvent = noticeObject.superRefine(checkNoticeMessageId);
 
 /** 助手服务产生的提示：{@link NoticeEvent} 里 `kind` 限定在 {@link AssistantNoticeKind}。 */
-export const AssistantNoticeEvent = z.object({ kind: AssistantNoticeKind, ...noticeFields });
+export const AssistantNoticeEvent = z
+	.object({ kind: AssistantNoticeKind, ...noticeFields })
+	.superRefine(checkNoticeMessageId);
 
 /**
  * 一轮结束（对应 pi 的 `agent_settled`、pi 进程退出、到了上限、模型错误），结局见 {@link TurnOutcome}。
@@ -545,7 +581,7 @@ export const sessionEventSchemas = {
 	tool_output: ToolOutputEvent,
 	tool_result: ToolResultEvent.extend(persisted),
 	steer_queue: SteerQueueEvent,
-	notice: NoticeEvent.extend(persisted),
+	notice: noticeObject.extend(persisted).superRefine(checkNoticeMessageId),
 	turn_end: TurnEndEvent.extend(persisted),
 	platform: PlatformEventItem,
 	session_ended: SessionEndedEvent.extend(persisted),
