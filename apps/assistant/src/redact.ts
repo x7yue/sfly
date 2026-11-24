@@ -205,3 +205,29 @@ function walk(value: unknown, fn: (s: string) => string): unknown {
 	}
 	return value;
 }
+
+/** 写进助手服务日志的一段原文（上游的错误、工作台连接上的报错）最多这么多个字符（UTF-16 码元）。 */
+export const LOG_TEXT_LIMIT = 500;
+
+/**
+ * 不靠值、靠形状认出的凭据：`Authorization` 头（含 JSON 里的写法）、`Bearer` 后面的串、`x-api-key` 一类的头、
+ * 地址里的用户名和密码。上游的错误体可能把请求头、带凭据的地址回显出来。
+ */
+const CREDENTIAL_SHAPES: Array<[RegExp, string]> = [
+	[/(authorization["']?\s*[:=]\s*["']?)[^"'\r\n,}]+/gi, `$1${SECRET_MASK}`],
+	[/((?:x-)?api[-_]?key["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, `$1${SECRET_MASK}`],
+	[/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${SECRET_MASK}`],
+	[/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi, `$1${SECRET_MASK}@`],
+];
+
+/**
+ * 一段原文写进助手服务的日志之前：按值打码（每个 `redactor`），再按形状打码，最后截到 {@link LOG_TEXT_LIMIT}
+ * （先打码再截：截断不会把一个值切成认不出的半截）。
+ */
+export function forLog(text: string, redactors: Iterable<Redactor>): string {
+	let out = text;
+	for (const redactor of redactors) out = redactor.redact(out);
+	for (const [shape, replacement] of CREDENTIAL_SHAPES) out = out.replace(shape, replacement);
+	if (out.length <= LOG_TEXT_LIMIT) return out;
+	return `${out.slice(0, LOG_TEXT_LIMIT)}…（后面截掉了 ${out.length - LOG_TEXT_LIMIT} 个字符）`;
+}
