@@ -230,7 +230,10 @@ test("节点包管理页：悬停或聚焦输出的名字显示说明，没有�
 	await expect(tip).toHaveCount(0);
 
 	// 键盘也拿得到：Tab 到名字上就显示。
-	await outputs.locator('[tabindex="0"]').filter({ hasText: /^body_file$/ }).focus();
+	await outputs
+		.locator('[tabindex="0"]')
+		.filter({ hasText: /^body_file$/ })
+		.focus();
 	await expect(tip).toHaveText(BODY_FILE);
 });
 
