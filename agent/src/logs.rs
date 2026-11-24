@@ -1622,7 +1622,10 @@ mod batch_tests {
         );
         // 一批最多是 MAX_BATCH_BYTES 加上最后一行；整体约 98 MB，所以至少几十批
         let one_line = full_line(0).size();
-        assert!(batches.len() >= lines * one_line / MAX_BATCH_BYTES);
+        // 一批攒满 2 MiB 才发：批数不少，也不多（字节数发出之后要清零重新数，不然每一行都发一批）
+        let expected = lines * one_line / MAX_BATCH_BYTES;
+        assert!(batches.len() >= expected, "{} 批", batches.len());
+        assert!(batches.len() <= expected + 2, "{} 批", batches.len());
         for (i, message) in messages.iter().enumerate() {
             assert!(
                 message.encoded_len() <= MAX_BATCH_BYTES + 2 * one_line,
@@ -1676,7 +1679,9 @@ mod batch_tests {
         let received: usize = batches.iter().map(|b| b.events.len()).sum();
         assert_eq!(received, events, "每个事件都送到了");
         let one = full_action(0).len();
-        assert!(batches.len() >= events * one / MAX_BATCH_BYTES);
+        let expected = events * one / MAX_BATCH_BYTES;
+        assert!(batches.len() >= expected, "{} 批", batches.len());
+        assert!(batches.len() <= expected + 2, "{} 批", batches.len());
         for message in &messages {
             assert!(message.encoded_len() <= MAX_BATCH_BYTES + 2 * one);
         }
