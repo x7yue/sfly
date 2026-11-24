@@ -945,6 +945,35 @@ mod tests {
     }
 
     #[test]
+    fn the_package_name_is_compared_after_normalization() {
+        // 要装的包的名字不一定是规范化之后的写法，别的节点包的要求里写的可能是另一种写法：照样认得出是同一个包。
+        let others = requires(&[
+            ("sfly-user", &["sfly-base>=2"]),
+            ("sfly-other", &["SFLY.base<0.5"]),
+        ]);
+
+        let note = conflict_note(
+            "Sfly_Base@1.0.0",
+            &[],
+            "Sfly_Base",
+            Some("1.0.0"),
+            &others,
+            &uv_output("Sfly_Base", "1.0.0", ""),
+        )
+        .expect("note");
+
+        assert!(note.contains("sfly-base："), "{note}");
+        assert!(
+            note.contains("sfly-user（已安装） 要求 sfly-base>=2"),
+            "{note}"
+        );
+        assert!(
+            note.contains("sfly-other（已安装） 要求 SFLY.base<0.5"),
+            "{note}"
+        );
+    }
+
+    #[test]
     fn requirements_on_other_packages_and_the_replaced_copy_do_not_count() {
         // 别的包的要求（httpx>=2）和这个版本无关；已装的同名包自己（它就要被换掉）的要求也不算。
         let others = requires(&[
