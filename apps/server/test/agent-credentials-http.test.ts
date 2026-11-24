@@ -119,7 +119,8 @@ describe("Agent 凭据和开发 Agent", () => {
 			expect(await rejected(`a${code(0x202e)}b`)).toContain("Agent 的名称的第 2 个字符是 U+202E");
 			expect(await rejected(`a${code(0x200b)}b`)).toContain("Agent 的名称的第 2 个字符是 U+200B");
 			expect(await rejected(`${code(0x200d)}a`)).toContain("Agent 的名称的第 1 个字符是 U+200D");
-			expect(await rejected(code(0x2800))).toContain("Agent 的名称里没有看得见的字符");
+			expect(await rejected(code(0x2800))).toContain("Agent 的名称的第 1 个字符是 U+2800");
+			expect(await rejected("   ")).toContain("Agent 的名称里没有看得见的字符");
 			const tooLong = await rejected("n".repeat(65));
 			expect(tooLong).toContain("Agent 的名称不能超过 64 个字符");
 			expect(tooLong).not.toMatch(/n{20}/);
