@@ -21,7 +21,7 @@ export class StartupExitError extends Error {
  */
 export function mergeHeaders(
 	auth: Readonly<Record<string, string>>,
-	extra: HeadersInit | undefined,
+	extra: RequestInit["headers"],
 ): Headers {
 	const merged = new Headers(auth);
 	for (const [name, value] of new Headers(extra)) merged.set(name, value);
