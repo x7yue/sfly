@@ -304,6 +304,17 @@ def test_unterminated_string_sequences_keep_the_text_after_them() -> None:
             assert _unsafe_in(out) == [] and ESC not in out
 
 
+@pytest.mark.parametrize("introducer", [0x90, 0x98, 0x9D, 0x9E, 0x9F])
+def test_an_unterminated_opener_stops_at_the_next_introducer(introducer: int) -> None:
+    """没有结尾的开头不能越过后面的引导字符去配后面那个序列的结尾，不然两个序列之间的文字都被吃掉
+    （#670 复审）：前一个开头写成转义，后一个完整的序列照常去掉。"""
+    out = printable(f"a{chr(0x9D)}中间{chr(introducer)}标题{ST8}b")
+    assert out == "a\\u009d中间b"
+    # 7 位的写法（ESC 开头）同理。
+    assert printable(f"a{ESC}]中间{chr(introducer)}标题{ST8}b") == "a\\u001b]中间b"
+    assert printable(f"a{chr(0x90)}中间{ESC}]标题{BEL}b") == "a\\u0090中间b"
+
+
 def test_a_terminated_string_sequence_must_not_span_a_line() -> None:
     """有结尾也不能跨行：正文里有换行的不算一个序列，开头写成转义，每一行都在。"""
     out = printable(f"a{ESC}]标题\n第二行{BEL}\n第三行")
@@ -331,6 +342,10 @@ def test_printing_many_unterminated_openers_is_linear() -> None:
         (f"a {chr(0xFE0F)}", "a \\ufe0f"),
         (f"a{chr(0xFE0F)}{chr(0x200C)}b", f"a{chr(0xFE0F)}\\u200cb"),
         (f"a{chr(0xFE0F)}{chr(0xFE0F)}", f"a{chr(0xFE0F)}\\ufe0f"),
+        # 零宽连接符接在位置不对的变体选择符后面（开头、连着、空白后）：不算表情序列，都转义。
+        (f"{chr(0xFE0F)}{chr(0x200D)}a", "\\ufe0f\\u200da"),
+        (f"a{chr(0xFE0F)}{chr(0xFE0F)}{chr(0x200D)}", f"a{chr(0xFE0F)}\\ufe0f\\u200d"),
+        (f"a {chr(0xFE0F)}{chr(0x200D)}b", "a \\ufe0f\\u200db"),
         # 结尾的零宽连接符照旧放行。
         (f"a{chr(0x200D)}", f"a{chr(0x200D)}"),
     ],
@@ -385,6 +400,15 @@ def test_json_output_escapes_misplaced_exceptions_and_parses_back_unchanged() ->
     # 位置对的原样（表情序列没有被转义）。
     assert chr(0x1F469) + chr(0x200D) + chr(0x1F4BB) in text
     assert "\n" not in text and _unsafe_in(text) == []
+
+
+def test_json_output_escapes_keys_too_when_a_misplaced_exception_forces_the_slow_path() -> None:
+    """有零宽连接符这类时自己写 JSON：键和值一样处理（表里的字符、位置不对的零宽连接符都转义）。"""
+    value = {f"键{NEL}": chr(0x200D), chr(0x200D) + "头": 1, f"{RLO}名": {f"内{ZWSP}层": [1]}}
+    text = dump_json(value)
+    assert json.loads(text) == value
+    assert text == '{"键\\u0085":"\\u200d","\\u200d头":1,"\\u202e名":{"内\\u200b层":[1]}}'
+    assert _unsafe_in(text) == []
 
 
 def test_json_output_keeps_chinese_and_emoji_unescaped() -> None:

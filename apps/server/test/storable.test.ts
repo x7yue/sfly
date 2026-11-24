@@ -339,14 +339,22 @@ describe("storable", () => {
 			expect(metadataOf(deepObject)).toBe("");
 			// 带转义的 NUL 又这么深：json() 也不能递归到栈溢出。
 			expect(metadataOf(`${'{"a":"\\u0000",'.repeat(10)}"b":${deep}${"}".repeat(10)}`)).toBe("");
+			// 深到不限制就会把调用栈用完（递归处理的话抛 RangeError，或者解析失败而原样存下）：照样记成空。
+			const veryDeep = `${"[".repeat(300_000)}"x${code(0x202e)}"${"]".repeat(300_000)}`;
+			expect(metadataOf(veryDeep)).toBe("");
+			const veryDeepWithNul = `${"[".repeat(300_000)}"\\u0000"${"]".repeat(300_000)}`;
+			expect(metadataOf(veryDeepWithNul)).toBe("");
 			// 字符串里的括号不算层数。
 			const inString = JSON.stringify({ d: "[".repeat(1000) });
 			expect(metadataOf(inString)).toBe(inString);
-			// 64 层以内照常处理。
-			const ok = `${"[".repeat(60)}"x${code(0x202e)}"${"]".repeat(60)}`;
-			expect((JSON.parse(metadataOf(ok)) as unknown[]).flat(Number.POSITIVE_INFINITY)).toEqual([
-				"x\\u202e",
-			]);
+			// 64 层以内照常处理，正好 64 层也处理，65 层记成空。
+			for (const levels of [60, 64]) {
+				const ok = `${"[".repeat(levels)}"x${code(0x202e)}"${"]".repeat(levels)}`;
+				expect((JSON.parse(metadataOf(ok)) as unknown[]).flat(Number.POSITIVE_INFINITY)).toEqual([
+					"x\\u202e",
+				]);
+			}
+			expect(metadataOf(`${"[".repeat(65)}"x${code(0x202e)}"${"]".repeat(65)}`)).toBe("");
 		});
 	});
 });

@@ -187,12 +187,11 @@ function jsonDepth(s: string): number {
 
 /**
  * 开发包元信息（JSON 文本）里的字符串（键和值）按长的自由文字处理：键或值任何一个变了都重新序列化（只有键有问题、
- * 值都正常时也算）；没有变化、不是合法 JSON 时原样返回；嵌套超过 {@link METADATA_MAX_DEPTH} 层的记成空。
+ * 值都正常时也算）；没有变化、不是合法 JSON 时原样返回。递归处理，嵌套的层数由调用方（{@link metadata}）先限制。
  * `__proto__` 这样的键也原样留着（用 `Object.fromEntries` 建对象，写 `out[key]` 会把它当成原型丢掉）。
  */
 function freeJson(s: string): string {
 	if (s === "") return s;
-	if (jsonDepth(s) > METADATA_MAX_DEPTH) return "";
 	let value: unknown;
 	try {
 		value = JSON.parse(s);
@@ -220,6 +219,11 @@ function freeJson(s: string): string {
 	};
 	const walked = walk(value);
 	return changed ? JSON.stringify(walked) : s;
+}
+
+/** 开发包元信息：嵌套超过 {@link METADATA_MAX_DEPTH} 层的记成空（后面的 `json()` 换掉转义的 NUL 和 `freeJson` 都要递归），其余照常处理。 */
+function metadata(s: string): string {
+	return jsonDepth(s) > METADATA_MAX_DEPTH ? "" : freeJson(json(s));
 }
 
 function hello(h: Hello): Hello {
@@ -278,9 +282,7 @@ function installed(p: InstalledPackage): InstalledPackage {
 function devPackage(p: DevPackage): DevPackage {
 	const name = shortId(text(p.name), SHORT_MAX.name);
 	const source = freeText(text(p.source));
-	// 嵌套太深的先记成空：后面的 json()（换掉转义的 NUL）和 freeJson 都要递归。
-	const metadataJson =
-		jsonDepth(p.metadataJson) > METADATA_MAX_DEPTH ? "" : freeJson(json(p.metadataJson));
+	const metadataJson = metadata(p.metadataJson);
 	return name === p.name && source === p.source && metadataJson === p.metadataJson
 		? p
 		: { ...p, name, source, metadataJson };
