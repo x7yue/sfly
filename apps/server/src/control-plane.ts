@@ -211,6 +211,11 @@ export interface ControlPlane {
 	readonly grpcUrl: string;
 	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
 	readonly sessions: SessionStore;
+	/**
+	 * 关闭控制面。**可以重复调用，第二次起拿到的是同一个 promise**（和第一次同时落定，不会比它先完成）：只关一次，不再去关已经关了的东西
+	 * （第二次关连接池会拒绝）。调用方不止一个（停止信号、致命错误之后的有序退出），谁先谁后都是同一个结果，不会有一方在另一方还没关完时
+	 * 就当作「关完了」去退出进程。
+	 */
 	close(): Promise<void>;
 }
 

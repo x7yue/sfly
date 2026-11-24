@@ -93,6 +93,12 @@ describe("下载文件时文件读不了", () => {
 		if (res) {
 			expect(res.status, path).toBe(500);
 			expect(await res.json(), path).toMatchObject({ error: { code: "internal_error" } });
+			// 路由为那个文件设的头不留在错误响应上：不是「下载一个文件」（浏览器不会把一段错误 JSON 当成要下载的文件），没有那个读不出来的
+			// 文件的哈希（节点包归档），也不能被缓存。
+			expect(res.headers.get("content-type"), path).toMatch(/^application\/json/);
+			expect(res.headers.get("content-disposition"), path).toBeNull();
+			expect(res.headers.get("x-sfly-sha256"), path).toBeNull();
+			expect(res.headers.get("cache-control"), path).toBe("no-store");
 		}
 		expect((await cp.fetch("/health")).status).toBe(200);
 		expect((await cp.fetch("/orchestrations")).status).toBe(200);
@@ -108,7 +114,8 @@ describe("下载文件时文件读不了", () => {
 	});
 
 	it("按运行下载日志", async () => {
-		// 上一条用例已经把这个任务的日志文件换成了目录：按运行下载读它时出错。
+		// 自己把这个任务的日志文件换成目录（不依赖上一条用例造的文件，单独跑也成立）：按运行下载读它时出错。
+		await breakFile(join(cp.dataDir, "logs", runId, `${task.taskId}.jsonl`));
 		await failsAlone(`/runs/${runId}/logs/download`);
 	});
 
@@ -168,11 +175,41 @@ describe("关闭控制面", () => {
 		try {
 			const first = cp.current.close();
 			const second = cp.current.close();
+			// 第二次拿到的是**同一个 promise**：和第一次同时落定，不会比它先完成（调用方不止一个时，一方不会在另一方还没关完时就当作
+			// 「关完了」去退出进程）。
+			expect(second).toBe(first);
 			await expect(Promise.all([first, second])).resolves.toBeDefined();
 			// 已经关完之后再调用也一样。
+			expect(cp.current.close()).toBe(first);
 			await expect(cp.current.close()).resolves.toBeUndefined();
 		} finally {
 			await cp.close();
+		}
+	}, 60_000);
+});
+
+describe("前端静态文件读不了", () => {
+	it("500 和统一的错误体；不带一年的 immutable 缓存头（浏览器和代理不能把一次 500 当成那个文件缓存下来），也不留文件的内容类型", async () => {
+		const webDir = await mkdtemp(join(tmpdir(), "sfly-web-err-"));
+		await mkdir(join(webDir, "assets"));
+		await writeFile(join(webDir, "index.html"), "<!doctype html><html></html>");
+		await writeFile(join(webDir, "assets", "app-abc123.js"), "console.log('sfly');");
+		const cp = await startTestControlPlane({ webDir });
+		try {
+			const ok = await cp.fetch("/assets/app-abc123.js");
+			expect(ok.status).toBe(200);
+			expect(ok.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+			// 启动时扫过的文件清单里有它，之后它被换成目录：读时出错。
+			await breakFile(join(webDir, "assets", "app-abc123.js"));
+			const res = await cp.fetch("/assets/app-abc123.js");
+			expect(res.status).toBe(500);
+			expect(await res.json()).toMatchObject({ error: { code: "internal_error" } });
+			expect(res.headers.get("cache-control")).toBe("no-store");
+			expect(res.headers.get("content-type")).toMatch(/^application\/json/);
+			expect((await cp.fetch("/health")).status).toBe(200);
+		} finally {
+			await cp.close();
+			await rm(webDir, { recursive: true, force: true });
 		}
 	}, 60_000);
 });

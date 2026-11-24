@@ -4,10 +4,10 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { installShutdown } from "../src/shutdown.js";
 
-function setup(close: () => Promise<void>) {
+function setup(close: () => Promise<void>, timeoutMs?: number) {
 	const emitter = new EventEmitter();
 	const logs: string[] = [];
-	const errors: Array<[string, unknown]> = [];
+	const errors: Array<[string, unknown?]> = [];
 	const exits: number[] = [];
 	let closes = 0;
 	installShutdown({
@@ -20,6 +20,7 @@ function setup(close: () => Promise<void>) {
 		exit: (code) => exits.push(code),
 		log: (message) => logs.push(message),
 		logError: (message, error) => errors.push([message, error]),
+		...(timeoutMs === undefined ? {} : { timeoutMs }),
 	});
 	return { emitter, logs, errors, exits, closes: () => closes };
 }
@@ -74,5 +75,56 @@ describe("收到停止信号时关闭", () => {
 		s.emitter.emit("SIGTERM");
 		expect(s.closes()).toBe(1);
 		expect(s.logs.at(-1)).toBe("sfly: 已经在关闭，忽略 SIGTERM");
+	});
+
+	it("关闭有上限：到时还没关完，记一句、以退出码 1 退出（不是 0）；期间重复的信号只记一句；之后关闭才完成也不再退出", async () => {
+		let finish: () => void = () => {};
+		const closing = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		const s = setup(() => closing, 60);
+		s.emitter.emit("SIGTERM");
+		s.emitter.emit("SIGINT");
+		s.emitter.emit("SIGINT");
+		expect(s.logs).toEqual([
+			"sfly: 收到 SIGTERM，正在关闭",
+			"sfly: 已经在关闭，忽略 SIGINT",
+			"sfly: 已经在关闭，忽略 SIGINT",
+		]);
+		// 上限之内：不退出。
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(s.exits).toEqual([]);
+		// 到时：记一句、退出码 1，退出只调用一次。
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(s.exits).toEqual([1]);
+		expect(s.errors).toHaveLength(1);
+		expect(s.errors[0]?.[0]).toContain("还没有完成");
+		// 到时之后关闭才完成：不再退出（进程已经退了；假的 exit 不会真的结束，这里确认没有第二次调用）。
+		finish();
+		await settle();
+		expect(s.exits).toEqual([1]);
+		expect(s.closes()).toBe(1);
+	});
+
+	it("在上限之内关完：退出码 0，不记超时，上限的计时器被清掉（之后不会再退出）", async () => {
+		const s = setup(() => new Promise((resolve) => setTimeout(resolve, 20)), 80);
+		s.emitter.emit("SIGINT");
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		expect(s.exits).toEqual([0]);
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		expect(s.exits).toEqual([0]);
+		expect(s.errors).toEqual([]);
+	});
+
+	it("关闭出错发生在上限之后：已经以 1 退出，不再记「关闭时出错」", async () => {
+		const s = setup(
+			() => new Promise((_resolve, reject) => setTimeout(() => reject(new Error("晚了")), 100)),
+			30,
+		);
+		s.emitter.emit("SIGINT");
+		await new Promise((resolve) => setTimeout(resolve, 160));
+		expect(s.exits).toEqual([1]);
+		expect(s.errors).toHaveLength(1);
+		expect(s.errors[0]?.[0]).toContain("还没有完成");
 	});
 });

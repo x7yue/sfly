@@ -3,7 +3,9 @@
 //    这里用「日志文件被换成了同名的目录」造读不了的文件：`stat` 能过、打开能过、读时 EISDIR，和权限、清理到一半一样，
 //    是读的时候才出错，而且不依赖测试是不是以 root 运行。
 // 2. 收到停止信号时关闭被调用两次，第二次的拒绝没有人接；重复的信号只记一句，关闭只做一次。
+import { once } from "node:events";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
@@ -139,4 +141,48 @@ describe("真实的控制面进程", () => {
 		// 没有未处理的拒绝、没有关两次的错误。
 		expect(output).not.toMatch(/unhandled|未处理|ERR_|Called end|Error:/i);
 	}, 120_000);
+
+	it("关闭卡住（有一个请求一直没发完）：SIGTERM 之后再按两次 SIGINT 只各记一句，进程在关闭开始 10 秒之后记一句、以退出码 1 退出，不是一直不退出也不是 0", async () => {
+		const cp = await start();
+		// 一个一直没发完的请求：请求头发完、声明了 1000 字节的请求体、只发了一个字节。HTTP 服务器关闭时要等进行中的请求做完，关闭卡住。
+		const url = new URL(cp.httpUrl);
+		const socket = connect({ host: url.hostname, port: Number(url.port) });
+		socket.on("error", () => {});
+		await once(socket, "connect");
+		socket.write(
+			"POST /orchestrations HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{",
+		);
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		try {
+			const startedAt = Date.now();
+			cp.child.kill("SIGTERM");
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+			cp.child.kill("SIGINT");
+			cp.child.kill("SIGINT");
+			// 关闭卡住：几秒之后进程还在。
+			await new Promise((resolve) => setTimeout(resolve, 3000));
+			expect(cp.exit, `关闭还没有到上限，进程不该退出：\n${outputOf(cp)}`).toBeUndefined();
+			const exit = await cp.exited(20_000);
+			const elapsed = Date.now() - startedAt;
+			const output = outputOf(cp);
+			expect(exit, output).toEqual({ code: 1, signal: null });
+			// 从关闭开始算 10 秒（SHUTDOWN_TIMEOUT_MS）：不早于 9.5 秒，也没有拖得很久。
+			expect(elapsed, output).toBeGreaterThanOrEqual(9_500);
+			expect(elapsed, output).toBeLessThan(16_000);
+			expect(
+				cp.output.filter((line) => line.includes("正在关闭")),
+				output,
+			).toHaveLength(1);
+			expect(
+				cp.output.filter((line) => line.includes("已经在关闭，忽略 SIGINT")),
+				output,
+			).toHaveLength(2);
+			expect(
+				cp.output.filter((line) => line.includes("关闭 10 秒还没有完成")),
+				output,
+			).toHaveLength(1);
+		} finally {
+			socket.destroy();
+		}
+	}, 60_000);
 });
