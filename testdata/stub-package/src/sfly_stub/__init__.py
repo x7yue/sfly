@@ -635,6 +635,27 @@ def long_line(ctx: Context, head: int, value: str, tail: int, stream: str = "std
     out.flush()
 
 
+@node(title="一条很长的 SDK 日志", outputs=[])
+def long_log(ctx: Context, head: int, value: str, tail: int) -> None:
+    """超长 SDK 日志拆分测试用（#674）：用 ctx.log 写一条消息（head 个 a、value、tail 个 b），
+    再写一条短的 "after"。"""
+    ctx.log("a" * head + value + "b" * tail)
+    ctx.log("after")
+
+
+@node(title="一行很长的事件", outputs=[])
+def long_event_line(ctx: Context, size: int, count: int = 1) -> None:
+    """事件管道一行超过上限的测试用（#674）：先写一条日志 "before"，再直接往事件管道写 count 行、
+    每行 size 个字节（不是 JSON；每行写完补一个换行），最后写一条日志 "after"。"""
+    ctx.log("before")
+    line = "x" * size + "\n"
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        for _ in range(count):
+            events.write(line)
+        events.flush()
+    ctx.log("after")
+
+
 @node(title="写盘失败", outputs=[])
 def write_failure(ctx: Context, message: str = "OSError: [Errno 122] Disk quota exceeded") -> None:
     """错误摘要测试用（#70）：往标准错误打一行 message，然后模拟磁盘写满——

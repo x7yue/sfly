@@ -11,7 +11,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use super::{DEFAULT_TELEMETRY_QUEUE_BYTES, DRAIN_TIMEOUT, Event, MAX_LINE_BYTES};
+use super::{
+    DEFAULT_TELEMETRY_QUEUE_BYTES, DRAIN_TIMEOUT, Event, MAX_EVENT_LINE_BYTES, MAX_LINE_BYTES,
+};
 use crate::executor::{self, Settings};
 use crate::metrics::DEFAULT_METRIC_QUEUE_POINTS;
 use crate::proto::{
@@ -597,6 +599,7 @@ fn constants_shared_with_the_local_debugging_end_are_the_ones_in_the_case_file()
     assert_eq!(
         json!({
             "max_line_bytes": MAX_LINE_BYTES,
+            "max_event_line_bytes": MAX_EVENT_LINE_BYTES,
             "drain_timeout_ms": millis(DRAIN_TIMEOUT),
             "stderr_tail_bytes": logs::STDERR_TAIL_BYTES,
             "terminate_grace_ms": millis(DEFAULT_TERMINATE_GRACE),

@@ -333,6 +333,7 @@ def test_constants_shared_with_the_agent_are_the_ones_in_the_case_file() -> None
     constants = FILE["constants"]
     assert {
         "max_line_bytes": local._MAX_LINE_BYTES,
+        "max_event_line_bytes": local._MAX_EVENT_LINE_BYTES,
         "drain_timeout_ms": round(local._DRAIN_TIMEOUT * 1000),
         "stderr_tail_bytes": local._STDERR_TAIL_BYTES,
         "terminate_grace_ms": round(local.DEFAULT_GRACE * 1000),
@@ -491,3 +492,35 @@ def test_a_long_line_is_split_on_character_boundaries_like_the_agent_does() -> N
     broken = b"\x80" * (3 * limit)
     assert all(len(p) <= limit for p in local._split_line(broken))
     assert b"".join(local._split_line(broken)) == broken
+
+
+def test_an_event_line_of_exactly_the_cap_is_read_and_one_byte_more_is_dropped(
+    tmp_path: Path,
+) -> None:
+    """正好 max_event_line_bytes 字节的一行照常读（是日志就拆成几条），多一个字节的整行丢弃、
+    写一行警告，后面的行照常（#674）。"""
+    cap = local._MAX_EVENT_LINE_BYTES
+    head = '{"type":"log","ts":1700000000000,"level":"info","message":"'
+    tail = '"}'
+    padding = cap - len(head) - len(tail)
+    exactly = head + "x" * padding + tail
+    assert len(exactly) == cap
+    after = '{"type":"log","ts":1700000000001,"level":"info","message":"after"}'
+    observed, _ = run({"events": [exactly, "y" * (cap + 1), after]}, tmp_path)
+    logs = observed.execution.logs
+    assert [line.source for line in logs[-2:]] == ["system", "sdk"]
+    assert logs[-1].message == "after"
+    assert f"{cap + 1} 字节" in logs[-2].message
+    assert logs[-2].level == "warn"
+    pieces = logs[:-2]
+    assert all(line.source == "sdk" for line in pieces)
+    assert all(len(line.message) <= local._MAX_LINE_BYTES for line in pieces)
+    assert sum(len(line.message) for line in pieces) == padding
+
+
+def test_a_short_sdk_message_is_not_changed_by_the_splitting(tmp_path: Path) -> None:
+    """不超过 max_line_bytes 的消息原样记下，包括 JSON 里写成转义的孤立代理项
+    （拆开时才需要转成字节）。"""
+    event = '{"type":"log","ts":1700000000000,"level":"info","message":"a\\ud800b\\n"}'
+    observed, _ = run({"events": [event]}, tmp_path)
+    assert [line.message for line in observed.execution.logs] == ["a\ud800b\n"]

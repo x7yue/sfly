@@ -64,7 +64,11 @@ DEFAULT_GRACE = 10.0
 #: 处理读到的日志与事件、检查取消和进程状态的间隔（秒）。
 _TICK = 0.05
 #: 一行日志的最大字节数；更长的行被拆成多行（与 Agent 相同）。
+#: 事件管道里的日志（SDK 日志的消息、不认识的内容）也一样。
 _MAX_LINE_BYTES = 64 * 1024
+#: 事件管道一行的最大字节数；更长的一行整行丢弃，写一行警告日志（与 Agent 相同，#674；
+#: Agent 写的来源是 agent，这里是 system）。
+_MAX_EVENT_LINE_BYTES = 4 * 1024 * 1024
 #: 执行器退出后，等待仍持有标准输出（或事件管道）的后台子进程关闭管道的最长时间（秒）。
 _DRAIN_TIMEOUT = 2.0
 #: 失败时附带的标准错误尾部的最大字节数。
@@ -543,7 +547,9 @@ class _Pump:
         self._events = events
         #: 读到的标准输出 / 标准错误的行和事件管道的行，各带读到它时的单调时钟读数（毫秒）。
         self._lines: queue.Queue[tuple[int, LogLine]] = queue.Queue()
-        self._event_lines: queue.Queue[tuple[int, bytes]] = queue.Queue()
+        #: 事件管道的行；超过 `_MAX_EVENT_LINE_BYTES` 被丢弃的行只留字节数（int），
+        #: 排在它原来的位置。
+        self._event_lines: queue.Queue[tuple[int, bytes | int]] = queue.Queue()
         self._readers: list[threading.Thread] = []
         self._on_log = on_log
         self._on_progress = on_progress
@@ -565,17 +571,35 @@ class _Pump:
         self._readers.append(thread)
 
     def _read_events(self) -> None:
-        partial = b""
+        partial = bytearray()
+        #: 正在丢弃的一行（已经超过上限）：到现在为止的字节数。
+        discarding: int | None = None
         fd = self._events.read_fd
         try:
             while data := os.read(fd, 64 * 1024):
                 read_at = monotonic_ms()
-                complete, sep, partial = (partial + data).rpartition(b"\n")
-                if not sep:
-                    continue
-                for line in complete.split(b"\n"):
-                    if line:
-                        self._event_lines.put((read_at, line))
+                pieces = data.split(b"\n")
+                for index, piece in enumerate(pieces):
+                    ended = index < len(pieces) - 1  # 最后一段后面没有换行，还没读完
+                    if discarding is not None:
+                        discarding += len(piece)
+                        if ended:
+                            self._event_lines.put((read_at, discarding))
+                            discarding = None
+                        continue
+                    partial += piece
+                    if len(partial) > _MAX_EVENT_LINE_BYTES:
+                        if ended:
+                            self._event_lines.put((read_at, len(partial)))
+                        else:
+                            discarding = len(partial)
+                        partial.clear()
+                    elif ended:
+                        if partial:
+                            self._event_lines.put((read_at, bytes(partial)))
+                        partial.clear()
+            if discarding is not None:
+                self._event_lines.put((monotonic_ms(), discarding))
         finally:
             os.close(fd)
 
@@ -632,8 +656,19 @@ class _Pump:
         self.poll()
         self._end_unfinished_actions()
 
-    def _event(self, raw: bytes, read_at: int) -> None:
-        """处理事件管道里的一行；`read_at` 是读到它时的单调时钟读数。"""
+    def _event(self, raw: bytes | int, read_at: int) -> None:
+        """处理事件管道里的一行；`read_at` 是读到它时的单调时钟读数。
+        `raw` 是整数时是一行因超过上限被丢弃了，值是它的字节数。"""
+        if isinstance(raw, int):
+            warning = LogLine(
+                _now_ms(),
+                "system",
+                "warn",
+                f"事件管道里的一行有 {raw} 字节，超过上限 {_MAX_EVENT_LINE_BYTES} 字节，"
+                "已丢弃（日志写得太长，请拆开写）",
+            )
+            self._changes.append((read_at, warning))
+            return
         try:
             event = _loads_strict(raw)
             handler = _EVENT_HANDLERS.get(event["type"])
@@ -642,14 +677,24 @@ class _Pump:
                 return
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
-        # 不认识的内容原样记成一行 SDK 日志。
-        line = LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace"))
-        self._changes.append((read_at, line))
+        # 不认识的内容原样记成一行 SDK 日志（太长就拆开，同下）。
+        self._sdk_log(read_at, _now_ms(), "info", raw.decode("utf-8", errors="replace"))
+
+    def _sdk_log(self, read_at: int, ts: int, level: str, text: str) -> None:
+        """一条 SDK 日志；超过 `_MAX_LINE_BYTES` 字节时和标准输出的超长行一样拆成几条
+        （与 Agent 相同，#674）：
+        消息里的换行不拆，只按字节拆在字符边界上。"""
+        encoded = text.encode("utf-8", errors="surrogatepass")
+        if len(encoded) <= _MAX_LINE_BYTES:
+            self._changes.append((read_at, LogLine(ts, "sdk", level, text)))
+            return
+        for piece in _split_line(encoded):
+            line = LogLine(ts, "sdk", level, piece.decode("utf-8", errors="replace"))
+            self._changes.append((read_at, line))
 
     def _log(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
         level = _SDK_LEVELS.get(str(event.get("level", "")), "info")
-        line = LogLine(ts, "sdk", level, str(event.get("message", "")))
-        self._changes.append((read_at, line))
+        self._sdk_log(read_at, ts, level, str(event.get("message", "")))
 
     def _progress(self, read_at: int, ts: int, event: Mapping[str, Any]) -> None:
         total = event.get("total")
