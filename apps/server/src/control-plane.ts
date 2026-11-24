@@ -62,6 +62,7 @@ import { AssistantConnection } from "./sessions/assistant-connection.js";
 import { SessionService } from "./sessions/session-service.js";
 import { SessionStore } from "./sessions/session-store.js";
 import { Mutex } from "./util/mutex.js";
+import { printError, printInfo } from "./util/output.js";
 import { periodic } from "./util/periodic.js";
 import { safeError } from "./util/safe-error.js";
 
@@ -110,6 +111,8 @@ export interface ControlPlaneOptions {
 	metricFlushIntervalMs?: number;
 	/** 单个任务产物的总大小上限（字节），默认 1 GB（#18）。 */
 	artifactLimitBytes?: number;
+	/** 产物上传的空闲时限（毫秒），默认 60 秒（#588）：不是部署者的配置，只有测试和嵌入时给。 */
+	artifactUploadIdleMs?: number;
 	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
 	retentionDays?: number;
 	/** 指标的保留天数，默认 30 天，与日志和产物分开配置；整天超过保留期的分区被删除（#32）。 */
@@ -199,6 +202,8 @@ export interface ControlPlaneOptions {
 	passwordGate?: PasswordGateOptions;
 	/** 打开着的事件流多久重新检查一次它的凭据（毫秒，src/http/api.ts），默认 30 秒；测试里调小。 */
 	streamRecheckMs?: number;
+	/** 会话令牌的写（触发、保存、恢复、复制）的事务里等行锁最多等多久（毫秒，src/sessions/session-store.ts），默认 5 秒；测试里调小。 */
+	sessionWriteLockTimeoutMs?: number;
 }
 
 export interface ControlPlane {
@@ -209,12 +214,23 @@ export interface ControlPlane {
 	close(): Promise<void>;
 }
 
-/** 启动控制面：执行迁移，然后启动 HTTP API 和 Agent 网关。 */
+/**
+ * 启动控制面：执行迁移，然后启动 HTTP API 和 Agent 网关。启动失败时抛出去的错误已经去掉数据库查询的参数
+ * （{@link safeError}）：用环境变量建第一个管理员时写库失败，错误里带着密码的哈希，谁拿到这个错误去打印都不会把它带出去。
+ */
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 数值选项在启动时就检查，不合法的不启动，不留到运行时（#477、#577）：产物合计的上限随任务下发给 Agent（uint64），
 	// `Infinity`、超过 2^53 − 1 的值下发时让派发出错；保留天数很大时清理的截止时间不是有效的时间，清理任务每分钟报错。
 	const optionProblems = numericOptionProblems(options);
 	if (optionProblems.length > 0) throw new EnvSettingsError(optionProblems, "选项");
+	try {
+		return await start(options);
+	} catch (error) {
+		throw safeError(error);
+	}
+}
+
+async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
 	/**
@@ -222,7 +238,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	 * 保密参数的值、飞书 Webhook 的地址）不会进日志。新加的错误日志都走它，默认就是安全的；不要在这个函数里直接 `console.error`。
 	 */
 	const logError = (what: string, error?: unknown): void => {
-		if (logger) console.error(what, ...(error === undefined ? [] : [safeError(error)]));
+		if (logger) printError(what, error);
 	};
 	const database = openDatabase(
 		options.databaseUrl,
@@ -270,7 +286,16 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
-	const orchestrations = new OrchestrationStore({ db: database.db, clock });
+	// 会话令牌触发的运行、保存的场景版本，在同一个事务里给会话写平台记录（#547）：引擎和场景存储都用它。
+	const sessions = new SessionStore({
+		db: database.db,
+		clock,
+		onError: (what, error) => logError(`sfly: ${what}`, error),
+		...(options.sessionWriteLockTimeoutMs !== undefined && {
+			writeLockTimeoutMs: options.sessionWriteLockTimeoutMs,
+		}),
+	});
+	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
@@ -320,6 +345,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		mutex,
 		hub,
+		sessions,
 		assignContent: createAssignContent({
 			packageArchiveUrl: (name, version) =>
 				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
@@ -368,6 +394,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		dataDir: options.dataDir,
 		limitBytes: options.artifactLimitBytes,
+		uploadIdleMs: options.artifactUploadIdleMs,
 	});
 	const retention = new Retention({
 		db: database.db,
@@ -400,7 +427,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			setupCode,
 			initialAdmin: options.initialAdmin,
 			log: (message) => {
-				if (logger) console.log(message);
+				if (logger) printInfo(message);
 			},
 		});
 	} catch (error) {
@@ -408,10 +435,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 	const publicUrl = options.publicHttpUrl?.replace(/\/+$/, "");
-	const sessions = new SessionStore({ db: database.db, clock });
 	// 助手默认关闭：没配好时写明原因（日志里一行，就绪状态里也写）。
 	const assistant = assistantSetup({ url: options.assistantUrl, secret: options.assistantSecret });
-	if (!assistant.configured && logger) console.log(`sfly: 助手没有开启：${assistant.reason}`);
+	if (!assistant.configured && logger) printInfo(`sfly: 助手没有开启：${assistant.reason}`);
 	const assistantClient = assistant.configured
 		? new AssistantClient(assistant.config, {
 				...(options.assistantCommandTimeoutMs !== undefined && {

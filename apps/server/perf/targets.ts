@@ -19,7 +19,7 @@ export const INGEST_POINTS_PER_SECOND = 10_000;
 export const INGEST_SECONDS = 3600;
 /** 控制面接收指标：1 小时范围的指标查询 p95 < 500 ms。 */
 export const QUERY_P95_MS = 500;
-/** 运行监控页的图表：一张图表最多 100 个序列（标准节点 process_monitor 按进程的图表最多引用 2 个指标 × 50 个进程）。 */
+/** 运行监控页的图表：一张图表最多 100 个序列（sfly-std 的辅助函数 monitor_processes 按进程的图表最多引用 2 个指标 × 50 个进程）。 */
 export const CHART_SERIES = 100;
 /** 运行监控页的图表：1 小时范围的降采样查询 p95 < 500 ms。 */
 export const CHART_QUERY_P95_MS = 500;
@@ -29,8 +29,13 @@ export const END_TO_END_MS = 3000;
 export const DISCONNECT_SECONDS = 300;
 /** 短节点链路：30 个节点的单链。 */
 export const CHAIN_NODES = 30;
-/** 短节点链路：sfly-std 的短节点每节点端到端 ≤ 120 ms。 */
+/** 短节点链路：sfly-std 的短节点（`shell`）每节点端到端 ≤ 120 ms（绝对值，兜底）。 */
 export const SHORT_NODE_MS = 120;
+/**
+ * 短节点链路：`shell` 比空节点多出来的不超过 50 ms（同一次运行里两条链每节点端到端的中位数之差）。
+ * 限制的是 sfly-std 自己在执行器进程之上多出来的部分，不随机器的快慢变。
+ */
+export const SHELL_OVER_EMPTY_MS = 50;
 
 /** 读出 docs/ARCHITECTURE.md §7.6 目标表：范围 → 目标原文。 */
 export function parseTargets(architecture: string): Map<string, string> {

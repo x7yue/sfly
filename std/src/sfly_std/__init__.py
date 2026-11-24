@@ -30,8 +30,8 @@ frozen 数据类（不返回裸的数字）；路径参数可以是 `str` 或 `o
 - 返回值（数据类的字段）只增不减，异常的类型名不变；`*_METRICS`、`*_CHARTS` 这类常量是元组，
   只在末尾增加；
 - 要改变已有行为、或不再兼容，就加一个新名字的函数，旧的继续留着；
-- 以下划线开头的模块（`_names`、`_params`、`_process`、`_supervise`、`_sampling`、`_assertions`、
-  `_pull`）和不在 `__all__` 里的名字是内部实现，随时可能改，不要导入；公开模块里本模块定义的
+- 以下划线开头的模块（`_names`、`_params`、`_process`、`_supervise`、`_sampling`、`_pull`）
+  和不在 `__all__` 里的名字是内部实现，随时可能改，不要导入；公开模块里本模块定义的
   函数和类，要么在 `__all__` 里，要么以下划线开头（`tests/test_public_api.py` 检查）；
 - 承诺的内容就是 `tests/public_api.txt` 里的快照（每个公开名字的参数名、种类、默认值、返回值、
   字段、基类）：`tests/test_public_api.py` 把当前的接口和它比对，改接口必须同时改快照，评审时一眼

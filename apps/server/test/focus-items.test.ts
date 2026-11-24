@@ -3,6 +3,7 @@
 import type { OrchestrationView } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OrchestrationStore } from "../src/orchestrations/orchestration-store.js";
+import { SessionStore } from "../src/sessions/session-store.js";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import {
@@ -527,7 +528,7 @@ describe("关注项的设置", () => {
 	});
 
 	describe("在事务里读关注项的状态", () => {
-		const ACTOR = { nickname: "测试", via: null, userId: null, token: null };
+		const ACTOR = { nickname: "测试", via: null, userId: null, token: null, sessionId: null };
 		let single: SingleConnection;
 		beforeEach(() => {
 			single = singleConnection(cp.database.url);
@@ -535,7 +536,12 @@ describe("关注项的设置", () => {
 		afterEach(async () => {
 			await single.end();
 		});
-		const store = () => new OrchestrationStore({ db: single.db, clock });
+		const store = () =>
+			new OrchestrationStore({
+				db: single.db,
+				clock,
+				sessions: new SessionStore({ db: single.db, clock }),
+			});
 
 		it("一次加两个来自不同节点的关注项：只用事务的连接、一条一条地对照最新版本", async () => {
 			const id = await scene();

@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { OriginNotice } from "./OriginNotice";
 
 /**
@@ -50,7 +51,7 @@ export function AuthPage({
 /** 卡片下面的指路链接。 */
 export function AuthLink({ to, children }: { to: "/login" | "/setup"; children: React.ReactNode }) {
 	return (
-		<Link to={to} className="text-fg-1 underline underline-offset-2 hover:text-primary-hover">
+		<Link to={to} className={INLINE_LINK}>
 			{children}
 		</Link>
 	);

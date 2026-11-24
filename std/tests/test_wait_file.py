@@ -8,9 +8,9 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from helper_nodes import wait_file
 
 from sfly.testing import run_node
-from sfly_std.wait_file import wait_file
 
 
 @pytest.fixture

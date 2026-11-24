@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from helper_nodes import pull_files
 
 from sfly.testing import Execution, run_node
-from sfly_std.pull_files import pull_files
 
 SOURCE = "a-01"
 #: 来源 Agent 上的目录（那台 Agent 上的绝对路径）。
