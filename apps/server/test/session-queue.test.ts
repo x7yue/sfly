@@ -287,7 +287,8 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("控制面自己补结局（助手服务收下了中止、却没有带回结局）：这一轮里没有确认送到、也没有 steer_dropped 的插话各补一条，排在补的 turn_end 前面；确认送到的不补", async () => {
-			// 非严格：要助手服务收下中止却一直不带回结局（控制面等到期自己补）；严格的假助手服务收下中止就带回结局。
+			// 非严格：自己 `emit` 助手服务的 `steer_queue`（四句里各是哪一份队列由用例定），而且这一轮的结局永远不来（控制面等到期自己补）；
+			// 严格的假助手服务自己发 `steer_queue`、收下中止就带回结局，和手发的混在一起。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			for (const text of ["甲", "乙", "丙", "丁"])
@@ -324,7 +325,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("已经有 steer_dropped 的插话（助手服务回 409 时控制面写过，或者助手服务发过）不再补第二条", async () => {
-			// 非严格：这条自己 `emit` 助手服务的 `steer_dropped`，之后要控制面等到期补结局（助手服务不带回）；严格的假助手服务收下中止就带回结局。
+			// 非严格：自己 `emit` 助手服务的 `steer_dropped`，而且这一轮的结局永远不来（控制面等到期补）；严格的假助手服务会自己发它的 `steer_queue`。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			assistant.steerReply = () => ({ status: 409, code: "no_turn_running", message: "刚好结束" });
@@ -356,7 +357,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("补结局只管这一轮的插话：更早的一轮里确认送到的插话，下一轮由控制面补结局时不会被补成没有送到", async () => {
-			// 非严格：自己 `emit` 助手服务的 `steer_queue` 和第 1 轮的结局，第 2 轮要控制面等到期补结局（助手服务不带回）。
+			// 非严格：自己 `emit` 助手服务的 `steer_queue` 和第 1 轮的结局，第 2 轮的结局永远不来（控制面等到期补）；严格的假助手服务自己发 `steer_queue`。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			expect((await say(first.id, "第一轮的插话")).status).toBe(200);
@@ -380,7 +381,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("插话命令的回应晚到、而且是失败：这句话其实已经确认送到、这一轮已经有助手服务带回的 turn_end，这时也不写 steer_dropped（不是「已经有 steer_dropped」挡住的，是这一轮已经有结局）", async () => {
-			// 非严格：自己 `emit` 助手服务的 `steer_queue` 和结局，造「插话命令的回应晚到」的先后；严格的假助手服务自己发 `steer_queue`，会和手发的混在一起。
+			// 非严格：自己 `emit` 助手服务的 `steer_queue` 和结局，造「插话命令的回应晚到」的先后；严格的假助手服务自己发 `steer_queue`，和手发的混在一起。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			assistant.steerDelayMs = 500;
@@ -404,7 +405,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("控制面写更早一轮的重复结局，不清掉当前这一轮「确认送到」的记录：之后由控制面补当前这一轮的结局时，已经确认送到的话不会被补成没有确认送到", async () => {
-			// 非严格：自己 `emit` 助手服务的 `steer_queue`，第 2 轮要控制面等到期补结局（助手服务不带回）。
+			// 非严格：自己 `emit` 助手服务的 `steer_queue`，第 2 轮的结局永远不来（控制面等到期补）；严格的假助手服务自己发 `steer_queue`。
 			assistant.strictTurns = false;
 			const first = await idleSession();
 			expect((await say(first.id, "接着做")).status).toBe(200); // 第 2 轮
@@ -433,8 +434,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("同一个会话上同时点两次停止，助手服务都没有带回结局：每句没有确认送到的插话只有一条 steer_dropped，结局只有一条", async () => {
-			// 非严格：助手服务收下中止却一直不带回结局，两次停止都等到期由控制面补。
-			assistant.strictTurns = false;
+			assistant.stopSettleMs = 1_500; // 比控制面的期限（300 毫秒）长：两次停止都等到期由控制面补
 			const first = await json<SessionView>(await create("做第一件事"));
 			expect((await say(first.id, "没人理的话")).status).toBe(200);
 			const [id] = await steerIds(first.id);
@@ -589,8 +589,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("一轮的 turn_end 写下之后不再为这一轮的插话写 steer_dropped：控制面补完结局之后，还在路上的插话命令失败了也不写（不会落在 turn_end 后面，更不会落进下一轮）", async () => {
-			// 非严格：助手服务收下中止却一直不带回结局，等到期由控制面补；严格的假助手服务收下中止就带回结局。
-			assistant.strictTurns = false;
+			assistant.stopSettleMs = 1_500; // 比控制面的期限（300 毫秒）长：结局由控制面到期补
 			const first = await json<SessionView>(await create("做第一件事"));
 			assistant.steerDelayMs = 700;
 			assistant.steerReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
@@ -1496,6 +1495,132 @@ describe("停止、插话、结束会话、排队", () => {
 				);
 				expect(await statusOf(cp, b.id)).toBe("idle");
 				expect(await statusOf(cp, c.id)).toBe("running");
+			});
+
+			for (const variant of ["all-503", "only-head-503"] as const) {
+				it(`一轮结束触发的开始和兜底扫描触发的开始同时在跑（${variant}）：队首的 prompt 回 503，后跑的那次看到项目暂停了，不照样开始下一个；队首最多失败一个`, async () => {
+					const a = await json<SessionView>(await create("甲", "alice"));
+					const b = await json<SessionView>(await create("乙", "bob"));
+					const c = await json<SessionView>(await create("丙", "carol"));
+					const d = await json<SessionView>(await create("丁", "dave"));
+					assistant.promptReply = (p) =>
+						variant === "all-503" || p.sessionId === b.id
+							? { status: 503, code: "process_limit", message: "全都在做" }
+							: undefined;
+					const store = cp.current.sessions;
+					const real = store.queued.bind(store);
+					let calls = 0;
+					// `#promote` 的第一步是 `queued()`：第一次（结局触发的）慢 150 毫秒，让兜底的扫描看得到「没有在做的」；第二次（扫描触发的）
+					// 慢 600 毫秒，落在队首没开始成、这个项目暂停之后。只是把两次开始的先后定下来（真实里是 /health、库的往返快慢不同）。
+					const spy = vi.spyOn(store, "queued").mockImplementation(async (project) => {
+						const n = ++calls;
+						await new Promise((resolve) => setTimeout(resolve, n === 1 ? 150 : n === 2 ? 600 : 0));
+						return real(project);
+					});
+					try {
+						assistant.emit(a.id, 1, turnEnd(1));
+						await eventually(async () => expect(await statusOf(cp, a.id)).toBe("idle"));
+						await cp.current.sessionService.startWaiting();
+						await new Promise((resolve) => setTimeout(resolve, 1_200));
+						await cp.current.sessionService.idle();
+					} finally {
+						spy.mockRestore();
+					}
+					// 只失败了队首一个；丙、丁没有被开始（也没有失败）。
+					const failed = async (id: string) =>
+						(await detail(id)).events.filter((e) => e.type === "turn_end" && e.outcome === "failed")
+							.length;
+					expect([await failed(b.id), await failed(c.id), await failed(d.id)]).toEqual([1, 0, 0]);
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]);
+					expect(await statusOf(cp, c.id)).toBe("queued");
+					expect(await statusOf(cp, d.id)).toBe("queued");
+				});
+			}
+
+			it("控制面关闭时，结局触发的开始正在问 /health（还在路上）：问完之后不开始排队的、不发 prompt", async () => {
+				const { closeCp, closeWorkbench, closeApi } = await (async () => {
+					const closeCp = await startTestControlPlane({
+						assistantUrl: assistant.url,
+						assistantSecret: assistant.secret,
+						workbenchAgent: "workbench-close5",
+						assistantReconnectMs: { min: 20, max: 100 },
+					});
+					const closeWorkbench = await FakeAgent.connect(
+						closeCp.grpcUrl,
+						{ name: "workbench-close5", peer: { port: 7010, publicAddress: "10.0.0.14" } },
+						{ clock: closeCp.clock },
+					);
+					await assistant.connected(2);
+					return { closeCp, closeWorkbench, closeApi: new ApiClient(closeCp) };
+				})();
+				try {
+					const a = await json<SessionView>(
+						await closeApi.post("/projects/default/sessions", { text: "甲" }, "alice"),
+					);
+					(closeCp.clock as ManualClock).advance(1_000);
+					const b = await json<SessionView>(
+						await closeApi.post("/projects/default/sessions", { text: "乙" }, "bob"),
+					);
+					expect(b.status).toBe("queued");
+					const before = assistant.healthRequests;
+					assistant.healthDelayMs = 400;
+					assistant.emit(a.id, 1, turnEnd(1));
+					await eventually(() => expect(assistant.healthRequests).toBeGreaterThan(before));
+					// 开始正在问 /health：这时开始关闭。问完之后看到在关闭，不再开始。
+					await closeCp.current.sessionService.close();
+					await new Promise((resolve) => setTimeout(resolve, 700));
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id]);
+					expect(await statusOf(closeCp, b.id)).toBe("queued");
+				} finally {
+					assistant.healthDelayMs = 0;
+					await closeCp.close();
+					await closeWorkbench.disconnect();
+				}
+			}, 30_000);
+
+			it("暂停按项目、不按全局：一个项目暂停着（队首没开始成），另一个项目里一轮结束之后照常开始它的下一个", async () => {
+				await database_query(
+					cp,
+					"insert into projects (id, display_name, created_at) values ('proj-b', 'proj-b', now()) on conflict do nothing",
+				);
+				const move = (project: string) =>
+					database_query(cp, "update agents set project_id = $1 where name = $2", [
+						project,
+						WORKBENCH,
+					]);
+				try {
+					// 工作台在哪个项目里，那个项目才能开始一轮（骨架期间）：先在乙项目里建两个会话（x 在做、y 排队），再回默认项目。
+					await move("proj-b");
+					const x = await json<SessionView>(
+						await api.post("/projects/proj-b/sessions", { text: "项目乙：甲" }, "xavier"),
+					);
+					tick();
+					const y = await json<SessionView>(
+						await api.post("/projects/proj-b/sessions", { text: "项目乙：乙" }, "yara"),
+					);
+					tick();
+					await move("default");
+					const a = await json<SessionView>(await create("甲", "alice"));
+					const b = await json<SessionView>(await create("乙", "bob"));
+					const c = await json<SessionView>(await create("丙", "carol"));
+					expect(y.status).toBe("queued");
+					assistant.promptReply = (p) =>
+						p.sessionId === b.id
+							? { status: 503, code: "process_limit", message: "全都在做" }
+							: undefined;
+					// 默认项目：甲结束，乙没开始成、这个项目暂停，丙留在队里。
+					assistant.emit(a.id, 1, turnEnd(1));
+					await eventually(async () => expect(await statusOf(cp, b.id)).toBe("idle"));
+					await cp.current.sessionService.idle();
+					expect(await statusOf(cp, c.id)).toBe("queued");
+					// 乙项目：x 结束，y 照常开始（默认项目的暂停不挡它）。
+					await move("proj-b");
+					assistant.emit(x.id, 1, turnEnd(1));
+					await eventually(async () => expect(await statusOf(cp, y.id)).toBe("running"));
+					expect(await statusOf(cp, c.id)).toBe("queued");
+				} finally {
+					await move("default");
+				}
 			});
 
 			it("暂停之后这个项目里有人说话（助手服务能用）：再试一次开始排队的", async () => {

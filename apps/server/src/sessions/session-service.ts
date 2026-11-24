@@ -207,7 +207,10 @@ export class SessionService {
 	 * 时，这一轮照协议以失败结束，但这个项目不因为这条结局接着开始下一个（不然助手服务这一刻起不了新的一轮，排着的一个接一个失败）：
 	 * 剩下的留在队里，等下一次兜底（{@link SessionService.startWaiting}，每分钟）或者这个项目里下一次有人说话。任何情况下一次最多失败队首
 	 * 一个。已知的情况：助手服务一直是「全都在做」（进程数到了上限、没有空闲的可以回收）时，排队的会话按兜底的节奏每分钟失败一个，
-	 * 原因写的是进程数到了上限；让助手服务报「在做的进程数」、控制面据此先不开始，是开放给用户之前要做的事（#544）。
+	 * 这个项目里每有人说一句话（新建会话、空闲的会话说话）也会再失败一个（说话解除暂停、再试一次），原因写的是进程数到了上限；
+	 * 让助手服务报「在做的进程数」、控制面据此先不开始，是开放给用户之前要做的事（#544）。
+	 * **`#promote` 自己也看暂停**（{@link SessionStore.promoteNext} 的 `held`）：一轮结束触发的开始和兜底扫描触发的开始可以同时在跑，
+	 * 后跑的那次走到开始时队首已经没开始成、项目已经暂停，不能照样开始下一个。
 	 */
 	readonly #paused = new Set<ProjectId>();
 
@@ -558,9 +561,10 @@ export class SessionService {
 	/**
 	 * 排队中的会话轮到它了（项目里在做的那一轮结束、控制面启动时和每分钟的兜底）：开始排队时间最早的那个会话
 	 * （{@link SessionStore.promoteNext}：`queued` → `running`、写 `turn_started`），把它排队时说的那句话交给助手服务；
-	 * 剩下的排队的位置前进了，各推一条 `turn_queued`。交给助手服务没接住的话，这一轮以失败结束（`turn_end` 又会让下一个
-	 * 开始）。没有排队的、项目里有会话在做、助手服务和工作台此刻不能用时什么也不做（排队的留在队里，兜底的扫描再来）；
-	 * 重复调用无害。
+	 * 剩下的排队的位置前进了，各推一条 `turn_queued`。交给助手服务没接住的话，这一轮以失败结束：确定没开始、原因是连不上助手服务
+	 * 或它回 503 时，这个项目先不接着开始下一个（{@link SessionService.#paused}，等兜底或者下一次有人说话）；回 409、4xx、结果未知
+	 * 时下一个照常开始。没有排队的、项目里有会话在做、这个项目暂停着、控制面在关闭、助手服务和工作台此刻不能用时什么也不做（排队的
+	 * 留在队里，兜底的扫描再来）；重复调用无害。
 	 */
 	async #promote(project: ProjectId): Promise<void> {
 		const { sessions } = this.deps;
@@ -586,10 +590,12 @@ export class SessionService {
 			);
 			return;
 		}
-		// 正在结束的会话不开始（{@link SessionService.#endings}），排在它后面的照常。
+		// 不开始的：控制面在关闭（这一次是关闭之前开始的、还在路上）、这个项目暂停着（队首刚没开始成：结局触发的开始和兜底扫描触发的开始
+		// 可以同时在跑，后跑的那次走到这里时项目已经暂停）、这个会话正在结束（{@link SessionService.#endings}，排在它后面的照常）。
+		// 在会话的串行链上、开始之前再看一次。
 		const promoted = await sessions.promoteNext(
 			project,
-			(id) => this.#endings.has(id),
+			(id) => this.#closing || this.#paused.has(project) || this.#endings.has(id),
 			(id, turn) => this.#openGate(id, turn),
 		);
 		if (!promoted) return;

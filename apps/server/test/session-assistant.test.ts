@@ -624,9 +624,8 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		const second = await json<SessionView>(await create("第二个"));
 		expect(second.status).toBe("running");
 
-		// 助手服务收到了中止（202）但没有带回结局：等过宽限（测试里 300 毫秒）之后由控制面结束。守协议的助手服务会带回结局，
-		// 所以这一段要非严格的假助手服务（`strictTurns` 在每个用例开始时重置）。
-		assistant.strictTurns = false;
+		// 助手服务收到了中止（202）但在期限之内没有带回结局（停得比控制面的期限 300 毫秒慢）：等过宽限之后由控制面结束。
+		assistant.stopSettleMs = 1_500;
 		const started = Date.now();
 		const quiet = await api.post(`/sessions/${second.id}/stop`, {});
 		expect(Date.now() - started).toBeGreaterThanOrEqual(250);
@@ -1461,8 +1460,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("新建会话时 prompt 超时（结果未知）：503 assistant_unavailable；会话先留着（项目的位置不空出来），补发一次中止、等到期由控制面补结局，之后才删掉", async () => {
-		// 助手服务收下了中止却一直不带回结局（控制面要等到期自己补）：守协议的助手服务会带回结局，这一条要非严格的假助手服务。
-		assistant.strictTurns = false;
+		// 助手服务收下中止之后停得比控制面的期限（300 毫秒）慢：控制面要等到期自己补结局。
+		assistant.stopSettleMs = 1_500;
 		assistant.promptDelayMs = 600;
 		try {
 			const res = await api.post("/projects/default/sessions", { text: "冷启动很慢" });
@@ -1491,8 +1490,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("已有的会话发话时 prompt 超时（结果未知）：响应 503，不马上补结局；补发带这一轮轮次的中止，等到结局或到期再补失败的结局、回到空闲；这一轮之后迟到的事件不落库", async () => {
-		// 同上：助手服务一直不带回结局，到期由控制面补。
-		assistant.strictTurns = false;
+		// 同上：助手服务停得比期限慢，到期由控制面补。
+		assistant.stopSettleMs = 1_500;
 		const view = await json<SessionView>(
 			await api.post("/projects/default/sessions", { text: "第一句" }).then((r) => r),
 		);
@@ -1528,8 +1527,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("prompt 超时之后、等结局期间：助手服务带回了这一轮的结局就用它，不补；这期间用户又说的话是新的一轮的开头，排在这一轮后面，不是插话", async () => {
-		// 结局什么时候到由测试自己决定（`emit`）：在窗口里说完话再带回。守协议的假助手服务收下中止就带回结局，窗口关得太快；
-		// 期限也放长（默认 300 毫秒），窗口里的几个请求不靠机器的快慢。
+		// 非严格：这条要在「正在停止」的窗口里说完话、再由测试自己 `emit` 助手服务带回的结局（原因是「助手服务停下来了」，要断言它被用上、
+		// 不是控制面补的）；严格的假助手服务的结局由它自己决定什么时候发。期限也放长（默认 300 毫秒），窗口里的几个请求不靠机器的快慢。
 		assistant.strictTurns = false;
 		setStopGrace(cp, 5_000);
 		const view = await json<SessionView>(
@@ -1698,8 +1697,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("新建会话 prompt 结果未知、助手服务做了事但没有带回结局（控制面到期自己补）：会话也不删，这一轮里有助手服务的事件就算碰过", async () => {
-		// 非严格：助手服务收下中止却不带回结局，到期由控制面补；期限放长一点，让助手服务的事件在期限之内到。
-		assistant.strictTurns = false;
+		// 助手服务收下中止之后停得比期限（放长到 1 秒）慢：到期由控制面补；让助手服务的事件在期限之内到。
+		assistant.stopSettleMs = 2_500;
 		setStopGrace(cp, 1_000);
 		assistant.promptReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
 		const res = await api.post("/projects/default/sessions", { text: "做点事" });
@@ -1720,8 +1719,8 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 	});
 
 	it("新建会话 prompt 结果未知、等结局期间有人结束它：会话不被删（让结束做完），/end 回 200，助手服务收到 end", async () => {
-		// 非严格：控制面到期（300 毫秒）自己补结局，结束和这条结局后面的「删没被碰过的会话」撞在一起。
-		assistant.strictTurns = false;
+		// 助手服务停得比期限（300 毫秒）慢：控制面到期自己补结局，结束和这条结局后面的「删没被碰过的会话」撞在一起。
+		assistant.stopSettleMs = 1_500;
 		assistant.promptReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
 		const res = await api.post("/projects/default/sessions", { text: "甲" });
 		expect(res.status).toBe(503);
