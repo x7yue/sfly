@@ -334,7 +334,7 @@ const hostilePackageNodes = () => {
 	};
 };
 
-test("编辑器和画布：Agent 的名称（卡片的标签、检查器、下拉）、输入名、节点包的说明和检查警告（卡片徽标的提示、检查器）", async ({
+test("编辑器和画布：Agent 的名称（卡片的标签、检查器、下拉）、输入名、节点包的说明和检查警告（卡片徽标的提示、检查器）、节点包页输入说明的提示", async ({
 	page,
 	controlPlane,
 }) => {
@@ -385,26 +385,24 @@ test("编辑器和画布：Agent 的名称（卡片的标签、检查器、下�
 		options.some((option) => option.startsWith("跟随默认") && option.includes("⟨U+202E⟩")),
 	).toBe(true);
 	await expectNoUnsafeText(page, undefined, "编辑器整页：");
+
+	// 提示：节点包页悬停有说明的输入名，提示里是说明的全文（多行的正文）。
+	await page.goto("/packages?name=demo-checks");
+	const row = page.getByRole("table", { name: "节点类型" }).getByRole("row", { name: /上传/ });
+	await row.locator('[tabindex="0"]').first().hover();
+	const description = page.locator('[data-slot="tooltip-content"]');
+	await expect(description).toBeVisible();
+	await expectNoUnsafeText(page, description, "输入说明的提示：");
+	expect(await writtenOutOn(page, description)).toContain(BIDI);
+	await page.mouse.move(5, 5);
 });
 
-test("提示、下拉、加载失败：节点包页的输入说明提示、运行切换的下拉、列表页的加载失败，各打开一次", async ({
+test("下拉、加载失败：运行切换的下拉里读不出运行列表的错误、列表页整页的加载失败，各打开一次", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
-	// 提示：节点包页悬停有说明的输入名，提示里是说明的全文（多行的正文）。
-	const { nodes } = hostilePackageNodes();
-	await publishPackage(controlPlane, { nodes });
-	await page.goto("/packages?name=demo-checks");
-	const row = page.getByRole("table", { name: "节点类型" }).getByRole("row", { name: /上传/ });
-	await row.locator('[tabindex="0"]').first().hover();
-	const tip = page.locator('[data-slot="tooltip-content"]');
-	await expect(tip).toBeVisible();
-	await expectNoUnsafeText(page, tip, "输入说明的提示：");
-	expect(await writtenOutOn(page, tip)).toContain(BIDI);
-	await page.mouse.move(5, 5);
-
 	// 下拉：运行监控顶栏的运行切换，列表读不出来时（接口的错误信息里带着有害字符）下拉里写错误。
 	const { runId } = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: true });
 	await failRequests(page, "**/api/orchestrations/*/runs", "GET", hostileText("读运行列表失败"));
@@ -448,8 +446,10 @@ test("小块选中复制出去是带尖括号的 ⟨U+202E⟩，和原文里本�
 	expect(bracketWidths, "括号只给复制用，不占位置").toEqual([1, 1]);
 	const copied = await copiedTextOf(chip.locator("xpath=.."));
 	expect(copied).toContain("前面⟨U+202E⟩后面");
-	expect(await page.getByText("原文就写着 U+202E").count()).toBeGreaterThan(0);
-	expect(await copiedTextOf(page.getByText("原文就写着 U+202E").first())).toBe("原文就写着 U+202E");
+	// 原文里本来就写着的「U+202E」：复制出去还是原样，没有尖括号。
+	const literal = await copiedTextOf(page.getByText("原文就写着 U+202E").first());
+	expect(literal).toContain("原文就写着 U+202E");
+	expect(literal).not.toContain("⟨");
 });
 
 test("从右到左的文字（希伯来文开头的混排、纯希伯来文、纯阿拉伯文、阿拉伯文夹英文）：和不经过方向隔离时逐像素一样", async ({
