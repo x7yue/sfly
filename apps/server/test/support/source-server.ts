@@ -15,6 +15,19 @@ export class StartupExitError extends Error {
 	}
 }
 
+/**
+ * 登录的头（`auth`）加上调用方给的头，调用方的同名头覆盖它。`fetch` 的 `headers` 可以是普通对象、`Headers` 实例、
+ * 键值对数组：全部认（`Headers` 实例、数组不能当普通对象展开，头会丢）。
+ */
+export function mergeHeaders(
+	auth: Readonly<Record<string, string>>,
+	extra: HeadersInit | undefined,
+): Headers {
+	const merged = new Headers(auth);
+	for (const [name, value] of new Headers(extra)) merged.set(name, value);
+	return merged;
+}
+
 /** 进程的退出信息。 */
 export interface ProcessExit {
 	code: number | null;
@@ -169,10 +182,7 @@ export async function startSourceServer(options: {
 		auth["sec-fetch-site"] = "same-origin";
 	}
 	const fetchWithAuth: SourceServer["fetch"] = (path, init = {}) =>
-		fetch(`${urls.http}${path}`, {
-			...init,
-			headers: { ...auth, ...(init.headers as Record<string, string> | undefined) },
-		});
+		fetch(`${urls.http}${path}`, { ...init, headers: mergeHeaders(auth, init.headers) });
 	return {
 		child,
 		httpUrl: urls.http,
