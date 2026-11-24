@@ -1008,6 +1008,8 @@ export class SessionStore {
 			return this.deps.db
 				.transaction(async (tx) => {
 					const session = await lockSession(tx, sessionId);
+					// `queuedAt !== null`：库里的约束 `sessions_queued_at` 已经保证空闲的会话没有排队时间，这里只是防御，
+					// 没有用例能让它红（变异检查里的等价变异）。
 					if (
 						session.status !== "idle" ||
 						session.queuedAt !== null ||

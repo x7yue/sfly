@@ -847,6 +847,108 @@ describe("停止、插话、结束会话、排队", () => {
 			expect((await say(first.id, "还能说")).status).toBe(200);
 			expect(assistant.prompts.at(-1)?.body).toMatchObject({ turn: 2, text: "还能说" });
 		});
+
+		it("排队中的会话正在结束（排着的话还没移出队列）：前面那个会话的结局这时写下，后台开始排队的不开始它；它之后照样结束、没有开始过任何一轮", async () => {
+			const a = await json<SessionView>(await create("甲", "alice"));
+			const b = await json<SessionView>(await create("乙", "bob"));
+			expect(b.status).toBe("queued");
+			const store = cp.current.sessions;
+			const real = store.cancelQueued.bind(store);
+			let entered = false;
+			// 结束乙时「把排着的话移出队列」这一步慢：这段时间乙已经记成正在结束、状态仍是排队中。
+			const spy = vi.spyOn(store, "cancelQueued").mockImplementation(async (id) => {
+				if (id === b.id) {
+					entered = true;
+					await new Promise((resolve) => setTimeout(resolve, 600));
+				}
+				return real(id);
+			});
+			try {
+				const ending = api.post(`/sessions/${b.id}/end`, {}, "bob");
+				await eventually(() => expect(entered).toBe(true));
+				// 甲的这一轮结束，项目的位置空出来：乙在排队、却正在结束，不开始它。
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(async () => expect(await statusOf(cp, a.id)).toBe("idle"));
+				await cp.current.sessionService.idle();
+				expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id]);
+				expect(await statusOf(cp, b.id)).toBe("queued");
+				expect((await ending).status).toBe(200);
+			} finally {
+				spy.mockRestore();
+			}
+			expect(await statusOf(cp, b.id)).toBe("ended");
+			expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id]);
+			expect((await types(b.id)).filter((t) => t !== "user_message")).toEqual([
+				"notice",
+				"session_ended",
+			]);
+		});
+	});
+
+	describe("新建会话时助手服务没接住第一轮：只删没被碰过的（SessionStore.deleteUntouched）", () => {
+		/** 新建一个会话（第 1 轮在做）；`ended` 为真时再写下第 1 轮失败的结局（会话回到空闲）。 */
+		const startedSession = async (ended: boolean) => {
+			const created = await json<SessionView>(await create("第一句"));
+			if (ended) {
+				await cp.current.sessions.appendTurnEnd(created.id, {
+					type: "turn_end",
+					turn: 1,
+					outcome: "failed",
+					reason: "助手服务没接住",
+					steps: 0,
+					model_calls: 0,
+					duration_ms: 0,
+				});
+			}
+			return created;
+		};
+		const exists = async (id: string) => (await row(cp, id)) !== undefined;
+
+		it("什么都没有被碰过（空闲、没有话排着、只有最初的一句话、最后一条事件是这一轮的 turn_end）：删掉", async () => {
+			const created = await startedSession(true);
+			expect(await cp.current.sessions.deleteUntouched(created.id, 1)).toBe(true);
+			expect(await exists(created.id)).toBe(false);
+		});
+
+		it("还在做（这一轮没有结局）：不删", async () => {
+			const created = await startedSession(false);
+			expect(await cp.current.sessions.deleteUntouched(created.id, 1)).toBe(false);
+			expect(await exists(created.id)).toBe(true);
+		});
+
+		it("失败的不是会话当前的这一轮（会话已经往下做了）：不删", async () => {
+			const created = await startedSession(true);
+			expect(await cp.current.sessions.deleteUntouched(created.id, 2)).toBe(false);
+			expect(await exists(created.id)).toBe(true);
+		});
+
+		it("别人在这一轮里又说了话（不止最初的一句）：不删，那句话不跟着没了", async () => {
+			const created = await json<SessionView>(await create("第一句"));
+			expect((await say(created.id, "又一句", "bob")).status).toBe(200); // 插话
+			await cp.current.sessions.appendTurnEnd(created.id, {
+				type: "turn_end",
+				turn: 1,
+				outcome: "failed",
+				reason: "助手服务没接住",
+				steps: 0,
+				model_calls: 0,
+				duration_ms: 0,
+			});
+			expect(await cp.current.sessions.deleteUntouched(created.id, 1)).toBe(false);
+			expect(await exists(created.id)).toBe(true);
+		});
+
+		it("这一轮的结局之后又有了别的事件：不删", async () => {
+			const created = await startedSession(true);
+			await cp.current.sessions.append(created.id, {
+				type: "notice",
+				kind: "steer_dropped",
+				message: "结局之后才到的提示",
+				message_id: randomUUID(),
+			});
+			expect(await cp.current.sessions.deleteUntouched(created.id, 1)).toBe(false);
+			expect(await exists(created.id)).toBe(true);
+		});
 	});
 
 	describe("同一个项目一次只跑一轮，其余排队", () => {
