@@ -11,7 +11,7 @@
 // 「读的过程中」靠两个钩子做出确定的次序（不靠碰运气的时序）：任务日志的下载在 `createReadStream` 被调用的那一刻（路由已经 stat 过、
 // 文件还没打开）截短文件，或者在文件打开之后删除它；按运行下载在第二次打开这个文件时（第一批已经发出去、第二批要读）删除或截短它。
 // 文件都是真的，动文件的也是真的 `unlink`、`truncate`。
-import { truncateSync, unlinkSync } from "node:fs";
+import { appendFileSync, truncateSync, unlinkSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
@@ -146,6 +146,20 @@ describe("下载日志时日志文件变了", () => {
 			.filter(Boolean)
 			.map((line) => JSON.parse(line) as { seq: number; text: string });
 
+	/** 追加到文件里的一行（不更新数据库：进程在追加文件之后、更新库之前退出时就是这样）。 */
+	const extraLine = (seq: number) =>
+		`${JSON.stringify({ seq, time: new Date().toISOString(), agent_time: null, source: "stdout", level: "info", text: `追加的第 ${seq} 行` })}\n`;
+	/** 410 的错误：`details` 写明是哪几个任务、各是什么情况（#716 的审查）。 */
+	const goneError = (res: Downloaded) =>
+		JSON.parse(res.body).error as {
+			code: string;
+			message: string;
+			details: {
+				tasks: Array<{ task_id: string; node_id: string; attempt: number; reason: string }>;
+				total: number;
+			};
+		};
+
 	/** 文件前 `count` 行（含换行）的字节数。 */
 	const bytesOfLines = async (file: string, count: number) => {
 		const bytes = await readFile(file);
@@ -175,7 +189,16 @@ describe("下载日志时日志文件变了", () => {
 
 			expect(res.status).toBe(410);
 			expect(JSON.parse(res.body)).toMatchObject({ error: { code: "expired" } });
-			expect(JSON.parse(res.body).error.message).toContain("gone");
+			// 说明写明文件不见了或变短了和各种来路（掉电、分开恢复也会让文件比库记的短）；`details` 写明是哪个任务、什么情况。
+			const error = goneError(res);
+			expect(error.message).toContain("missing or shorter");
+			expect(error.message).toContain("lost power");
+			expect(error.message).toContain("restored");
+			expect(error.message).not.toContain("removed after retention");
+			expect(error.details).toEqual({
+				tasks: [{ task_id: task.taskId, node_id: "a", attempt: 1, reason: "missing" }],
+				total: 1,
+			});
 			// 不是「下载一个文件」：没有文件名的头。
 			expect(res.headers["content-disposition"]).toBeUndefined();
 			expect((await cp.fetch("/health")).status).toBe(200);
@@ -189,7 +212,21 @@ describe("下载日志时日志文件变了", () => {
 
 			expect(res.status).toBe(410);
 			expect(JSON.parse(res.body)).toMatchObject({ error: { code: "expired" } });
-			expect(JSON.parse(res.body).error.message).toContain("shorter");
+			expect(goneError(res).message).toContain("shorter");
+			expect(goneError(res).details.tasks).toEqual([
+				{ task_id: task.taskId, node_id: "a", attempt: 1, reason: "short" },
+			]);
+		}, 60_000);
+
+		it("文件比数据库记的长（追加了文件、还没更新库就退出，或者任务正在写）不是问题：200，完整结束，长出来的一行也读到（#716 的审查）", async () => {
+			const { task, file } = await newTask(5);
+			appendFileSync(file, extraLine(6));
+
+			const res = await download(url(task.taskId));
+
+			expect(res.status).toBe(200);
+			expect(res.complete).toBe(true);
+			expect(rows(res.body).map((row) => row.seq)).toEqual([1, 2, 3, 4, 5, 6]);
 		}, 60_000);
 
 		it("从没有日志的任务（没有行写入过、没有文件）：下载是空的，200（不是 410）", async () => {
@@ -202,7 +239,7 @@ describe("下载日志时日志文件变了", () => {
 			expect(res.body).toBe("");
 		}, 60_000);
 
-		it("日志文件被换成同名的目录（读不了）：不是「日志没了」的 410，是读文件出错（500 或连接断开，#647），控制面不退出", async () => {
+		it("日志文件被换成同名的目录（读不了）：不是「日志没了」的 410，也不是成功的下载：读文件出错（500 或连接断开，#647），控制面不退出", async () => {
 			const { task, file } = await newTask(5);
 			await rm(file);
 			await mkdir(file);
@@ -210,7 +247,21 @@ describe("下载日志时日志文件变了", () => {
 			const res = await download(url(task.taskId)).catch(() => undefined);
 
 			expect(res?.status === 410).toBe(false);
+			// 把目录当成「没有文件」回 200 空正文、完整结束，不行：要么 500、要么连接断开。
+			expect(res?.status === 200 && res.complete).toBe(false);
 			expect((await cp.fetch("/health")).status).toBe(200);
+		}, 60_000);
+
+		it("检查通过之后、打开文件之前文件被删除：410（不是响应还没开始就出错的 500）", async () => {
+			const { task, file } = await newTask(5);
+			hooks.read = { path: file, before: () => unlinkSync(file) };
+
+			const res = await download(url(task.taskId));
+
+			expect(res.status).toBe(410);
+			expect(goneError(res).details.tasks).toEqual([
+				{ task_id: task.taskId, node_id: "a", attempt: 1, reason: "missing" },
+			]);
 		}, 60_000);
 
 		it("读的过程中文件被截短（stat 之后、打开之前）：响应已经开始，连接被断开，不是正常结束", async () => {
@@ -259,28 +310,62 @@ describe("下载日志时日志文件变了", () => {
 		}, 90_000);
 
 		it("请求之前某个任务的日志文件被删除：410 expired，不是只有别的任务的行、也不是 200 加空正文", async () => {
-			const { runId, file } = await newTask(5);
+			const { runId, task, file } = await newTask(5);
 			unlinkSync(file);
 
 			const res = await download(url(runId));
 
 			expect(res.status).toBe(410);
 			expect(JSON.parse(res.body)).toMatchObject({ error: { code: "expired" } });
-			expect(JSON.parse(res.body).error.message).toContain("gone");
+			const error = goneError(res);
+			expect(error.message).toContain("at least one task of this run is missing or shorter");
+			expect(error.message).toContain("lost power");
+			expect(error.message).not.toContain("removed after retention");
+			expect(error.details).toEqual({
+				tasks: [{ task_id: task.taskId, node_id: "a", attempt: 1, reason: "missing" }],
+				total: 1,
+			});
 			expect(res.headers["content-disposition"]).toBeUndefined();
 		}, 60_000);
 
-		it("请求之前某个任务的日志文件被截短：410 expired", async () => {
-			const { runId, file } = await newTask(5);
+		it("请求之前某个任务的日志文件被截短：410 expired，details 写明是哪个任务、变短了", async () => {
+			const { runId, task, file } = await newTask(5);
 			truncateSync(file, await bytesOfLines(file, 2));
 
 			const res = await download(url(runId));
 
 			expect(res.status).toBe(410);
 			expect(JSON.parse(res.body)).toMatchObject({ error: { code: "expired" } });
+			expect(goneError(res).details.tasks).toEqual([
+				{ task_id: task.taskId, node_id: "a", attempt: 1, reason: "short" },
+			]);
 		}, 60_000);
 
-		it("某个任务的日志文件被换成同名的目录（读不了）：不是 410，是读文件出错（500 或连接断开），控制面不退出", async () => {
+		it("文件比数据库记的长不是问题：200，完整结束（#716 的审查）", async () => {
+			const { runId, file } = await newTask(5);
+			appendFileSync(file, extraLine(6));
+
+			const res = await download(url(runId));
+
+			expect(res.status).toBe(200);
+			expect(res.complete).toBe(true);
+			expect(rows(res.body).length).toBeGreaterThanOrEqual(5);
+		}, 60_000);
+
+		it("检查通过之后、读第一批的时候文件被删除：410（不是响应还没开始就出错的 500）", async () => {
+			const { runId, task, file } = await newTask(5);
+			// 路由的检查用 stat；第一批读文件时（第一次打开它）文件没了。
+			hooks.open = { path: file, count: 0, at: 1, act: () => unlinkSync(file) };
+
+			const res = await download(url(runId));
+
+			expect(res.status).toBe(410);
+			expect(goneError(res).details.tasks).toEqual([
+				{ task_id: task.taskId, node_id: "a", attempt: 1, reason: "short" },
+			]);
+		}, 60_000);
+
+		it("某个任务的日志文件被换成同名的目录（读不了）：不是 410，也不是成功的下载：读文件出错（500 或连接断开），控制面不退出", async () => {
 			const { runId, file } = await newTask(5);
 			await rm(file);
 			await mkdir(file);
@@ -288,6 +373,8 @@ describe("下载日志时日志文件变了", () => {
 			const res = await download(url(runId)).catch(() => undefined);
 
 			expect(res?.status === 410).toBe(false);
+			// 把目录当成「没有日志文件」回 200 空正文、完整结束，不行。
+			expect(res?.status === 200 && res.complete).toBe(false);
 			expect((await cp.fetch("/health")).status).toBe(200);
 		}, 60_000);
 
@@ -331,6 +418,9 @@ describe("下载日志时日志文件变了", () => {
 			const gone = await newTask(5);
 			const cut = await newTask(5);
 			const intact = await newTask(4);
+			const longer = await newTask(3);
+			// 追加了文件、库里没记：重启之后从数据库和文件里读，也不是问题。
+			appendFileSync(longer.file, extraLine(4));
 			await agent.disconnect();
 			await cp.restart();
 			unlinkSync(gone.file);
@@ -349,6 +439,56 @@ describe("下载日志时日志文件变了", () => {
 			expect(rows(await taskIntact.text())).toHaveLength(4);
 			expect(runIntact.status).toBe(200);
 			expect(rows(await runIntact.text())).toHaveLength(4);
+			const taskLonger = await cp.fetch(`/tasks/${longer.task.taskId}/logs/download`);
+			const runLonger = await cp.fetch(`/runs/${longer.runId}/logs/download`);
+			expect(taskLonger.status).toBe(200);
+			expect(rows(await taskLonger.text())).toHaveLength(4);
+			expect(runLonger.status).toBe(200);
+			expect(rows(await runLonger.text()).length).toBeGreaterThanOrEqual(3);
 		}, 90_000);
 	});
+});
+
+describe("已经过了保留期的运行：下载的说明还是「保留期清理」，不是「日志文件不见了」（#716 的审查）", () => {
+	const DAY = 24 * 60 * 60 * 1000;
+	let cp: Awaited<ReturnType<typeof startTestControlPlane>>;
+	let agent: Awaited<ReturnType<typeof FakeAgent.connect>>;
+
+	beforeAll(async () => {
+		cp = await startTestControlPlane({ leaseMs: 400 * DAY, retentionDays: 7 });
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+	}, 60_000);
+	afterAll(async () => {
+		await agent?.disconnect();
+		await cp?.close();
+	});
+
+	it("两种下载都是 410 expired，说明是「removed after retention」，没有 details", async () => {
+		const api = new ApiClient(cp);
+		const runId = await api.triggerOk(await api.orchestrationWith(DOC));
+		const task = await agent.nextAssign();
+		agent.logs(task, [[1, "hello"]]);
+		await eventually(async () => {
+			const page = await (await cp.fetch(`/tasks/${task.taskId}/logs?limit=1`)).json();
+			expect(logsApi.page.response.parse(page).last_seq).toBe(1);
+		});
+		await agent.succeed(task, { text: "ok" });
+		(cp.clock as unknown as { advance(ms: number): void }).advance(8 * DAY);
+		await eventually(async () => {
+			const page = (await (await cp.fetch(`/tasks/${task.taskId}/logs`)).json()) as { expired: boolean };
+			expect(page.expired).toBe(true);
+		}, 30_000);
+
+		for (const path of [`/runs/${runId}/logs/download`, `/tasks/${task.taskId}/logs/download`]) {
+			const res = await cp.fetch(path);
+			const body = (await res.json()) as {
+				error: { code: string; message: string; details?: unknown };
+			};
+			expect(res.status, path).toBe(410);
+			expect(body.error.code, path).toBe("expired");
+			expect(body.error.message, path).toBe("logs of this run were removed after retention");
+			expect(body.error.details, path).toBeUndefined();
+		}
+	}, 90_000);
 });

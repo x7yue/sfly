@@ -20,7 +20,13 @@ from typing import Any
 import pytest
 
 from sfly.cli.errors import CliError
-from sfly.cli.run_logs import Selection, _complete_lines, _download_all, _write_download
+from sfly.cli.run_logs import (
+    DEFAULT_TAIL,
+    Selection,
+    _complete_lines,
+    _download_all,
+    _write_download,
+)
 
 ROW = b'{"seq":1,"text":"a"}\n'
 ROW2 = b'{"seq":2,"text":"b"}\n'
@@ -64,8 +70,17 @@ def _serve(mode: str) -> Iterator[str]:
         server.close()
 
 
-def _args(target: Path) -> argparse.Namespace:
-    return argparse.Namespace(run=RUN, all=str(target))
+def _args(target: Path, **over: Any) -> argparse.Namespace:
+    """`sfly run logs` 的选项：下载没下完时的提示要带着原来的 `--failed`、`--node`。"""
+    options: dict[str, Any] = {
+        "run": RUN,
+        "all": str(target),
+        "failed": False,
+        "node": None,
+        "level": None,
+        "tail": DEFAULT_TAIL,
+    }
+    return argparse.Namespace(**{**options, **over})
 
 
 def _download(mode: str, target: Path) -> int:
@@ -151,3 +166,35 @@ def test_the_command_reports_a_complete_download(tmp_path: Path) -> None:
 
     assert out.emitted == [({"path": str(target), "lines": 2}, f"已下载 2 行日志到 {target}")]
     assert target.read_bytes() == ROW + ROW2
+
+
+@pytest.mark.parametrize(
+    ("options", "flags"),
+    [
+        ({}, ""),
+        ({"failed": True}, " --failed"),
+        ({"node": ["main:a"]}, " --node main:a"),
+        (
+            {"failed": True, "node": ["main:a", "回放:b c"]},
+            " --failed --node main:a --node '回放:b c'",
+        ),
+        # `--level` 只对分页有意义（下载不带级别），不进提示。
+        ({"level": "error"}, ""),
+    ],
+)
+def test_the_retry_hint_keeps_the_scope_options_and_quotes_the_path(
+    options: dict[str, Any], flags: str, tmp_path: Path
+) -> None:
+    """用 `--failed`、`--node` 下载的人照着提示重下，范围要和原来一样；只带 `--all` 重下，
+    下到的是整个运行，还写进同一个文件（#716 的审查）。路径里有空格也要能直接用。"""
+    target = tmp_path / "my logs.jsonl"
+
+    for url in _serve("between"):
+        with pytest.raises(CliError) as caught:
+            _download_all(
+                _session(url, _Out()),
+                _args(target, **options),
+                Selection(nodes=None, task_ids=None),
+            )
+
+    assert caught.value.next == f"重新下载：sfly run logs {RUN}{flags} --all '{target}'"
