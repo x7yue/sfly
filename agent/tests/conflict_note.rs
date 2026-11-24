@@ -13,8 +13,8 @@ use std::time::Duration;
 use serde_json::json;
 use sfly_agent::proto::{AssignTask, ErrorKind, TaskStatus};
 use support::packages::{
-    HttpFixture, build_node_package, dependency_wheel, dependency_wheel_requiring, fresh_venv,
-    package_task, publish, sha256_hex, venv_of,
+    HttpFixture, build_node_package, dependency_wheel_requiring, fresh_venv, package_task, publish,
+    sha256_hex, venv_of,
 };
 use support::{AgentOptions, AgentProcess, FakeControlPlane, repo_root, spawn_agent};
 

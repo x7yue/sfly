@@ -1065,10 +1065,10 @@ mod tests {
     fn requirements_that_cannot_be_judged_are_not_listed() {
         let others = requires(&[
             (
-                "sfly-a",
+                "url-user",
                 &["sfly-base @ https://example.com/sfly_base-9.0-py3-none-any.whl"],
             ),
-            ("sfly-b", &["this is not a requirement"]),
+            ("garbage-user", &["this is not a requirement"]),
             ("sfly-c", &["sfly-base>=2"]),
         ]);
         let note = conflict_note(
@@ -1086,7 +1086,7 @@ mod tests {
             "{note}"
         );
         assert!(
-            !note.contains("sfly-a") && !note.contains("sfly-b"),
+            !note.contains("url-user") && !note.contains("garbage-user"),
             "{note}"
         );
         // 正在装的版本自己读不懂：没有可判断的。
