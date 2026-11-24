@@ -4,8 +4,14 @@
 //! 每个请求用 `x-sfly-agent-modified-ms` 头带上文件的修改时间（Agent 时间，Unix 毫秒；#171），
 //! 取不到修改时间时不带这个头。
 //!
-//! 上传失败时（网络错误重试几次；控制面拒绝时不重试）：成功的任务改为 `node_error` 失败，
+//! 上传失败时（网络错误、卡住、5xx 和 408 重试几次；控制面拒绝时不重试）：成功的任务改为 `node_error` 失败，
 //! 失败的任务保留原来的错误、在消息后附上上传失败的原因。`artifact_upload_url` 为空时不上传。
+//!
+//! 每个请求有「多久没有进展」的上限（`--upload-idle-timeout`，默认 60 秒，#648）：连接建立、请求体被对方收下的每一块、
+//! 发完之后等响应，各自这么久没有动静就算这次请求失败（照上面的规矩重试）。控制面接了连接却不回应、
+//! 不读请求体时，任务不会一直卡在上传、占着槽位；大文件只要还在被收下就不会超时。
+//! 上传期间任务收到新的取消请求（开始上传之后才到的取消，或者优雅取消之后又来的强制取消）时放弃上传，
+//! 以失败的上传上报；开始上传之前已经有的取消（取消、超时进入收尾时间、控制面放弃）不打断上传。
 //!
 //! 产物合计的上限（`AssignTask.artifact_limit_bytes`，每个任务的合计，#477）：上传前先把产物目录加一遍
 //! （兜住不经过 SDK 的 `save`、直接写进产物目录的文件，和旧版本 SDK）。合计没超限照常上传；超限时按文件从小到大
@@ -14,15 +20,27 @@
 //! 由控制面的上传接口拒绝。
 
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
+
+use tokio::io::{AsyncRead, ReadBuf};
+use tokio::time::Instant;
+use tokio_stream::Stream;
 
 use crate::clock;
 use crate::executor;
 use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
 
-/// 网络错误 / 5xx 时的上传尝试次数。
+/// 网络错误、卡住、5xx、408 时的上传尝试次数。
 const ATTEMPTS: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
+/// 一次上传请求没有任何进展这么久就算卡住（`--upload-idle-timeout` 改）。控制面一侧读请求体 60 秒没有数据就回 408
+/// （apps/server 的 `upload_idle_timeout`）：Agent 这一侧取同样的值，是对方不回应时自己的保证。
+pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// 每次从文件读多少字节交给请求体。
+const CHUNK_BYTES: usize = 64 * 1024;
 /// 文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。
 const MODIFIED_MS_HEADER: &str = "x-sfly-agent-modified-ms";
 /// 超限时错误信息里最多列出多少个没上传的文件（最大的优先），其余写个数。
@@ -121,15 +139,91 @@ fn plan(files: Vec<Found>, limit: u64) -> (Vec<Found>, Option<OverLimit>) {
 pub struct Uploader {
     pub http: reqwest::Client,
     pub token: Option<String>,
+    /// 一次上传请求没有进展多久算卡住（[`DEFAULT_IDLE_TIMEOUT`]）。
+    pub idle_timeout: Duration,
+}
+
+/// 一次请求的进展：请求开始、请求体每被取走一块、请求体读完时记一下时间；`stalled` 在这么久没有进展时返回。
+/// 请求体停止被取走说明对方不再读（TCP 的发送缓冲满了），读完之后等响应也算在内。
+struct Progress {
+    last: Mutex<Instant>,
+}
+
+impl Progress {
+    fn start() -> Arc<Self> {
+        Arc::new(Self {
+            last: Mutex::new(Instant::now()),
+        })
+    }
+
+    fn touch(&self) {
+        *self.last.lock().unwrap() = Instant::now();
+    }
+
+    async fn stalled(&self, idle: Duration) {
+        loop {
+            let deadline = *self.last.lock().unwrap() + idle;
+            if Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep_until(deadline).await;
+        }
+    }
+}
+
+/// 文件的请求体：每读出一块记一次进度，读完（文件结束）也记一次。
+struct FileBody {
+    file: tokio::fs::File,
+    progress: Arc<Progress>,
+    done: bool,
+}
+
+impl Stream for FileBody {
+    type Item = std::io::Result<Vec<u8>>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.done {
+            return Poll::Ready(None);
+        }
+        let mut chunk = vec![0u8; CHUNK_BYTES];
+        let mut buf = ReadBuf::new(&mut chunk);
+        match Pin::new(&mut self.file).poll_read(cx, &mut buf) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Some(Err(error))),
+            Poll::Ready(Ok(())) => {
+                let read = buf.filled().len();
+                self.progress.touch();
+                if read == 0 {
+                    self.done = true;
+                    return Poll::Ready(None);
+                }
+                chunk.truncate(read);
+                Poll::Ready(Some(Ok(chunk)))
+            }
+        }
+    }
+}
+
+/// 开始上传之后才到的取消请求（见模块文档）；任务的取消信号的发送端没有了（任务已结束）时永远不返回。
+async fn cancel_arrived(cancel: &mut executor::CancelSignal) {
+    if cancel.changed().await.is_err() {
+        std::future::pending::<()>().await;
+    }
 }
 
 impl Uploader {
     /// 上传任务的产物目录，返回最终要上报的结果。
-    pub async fn finish(&self, task: &AssignTask, dir: &Path, result: TaskResult) -> TaskResult {
+    pub async fn finish(
+        &self,
+        task: &AssignTask,
+        dir: &Path,
+        result: TaskResult,
+        cancel: executor::CancelSignal,
+    ) -> TaskResult {
         if task.artifact_upload_url.is_empty() {
             return result;
         }
-        let (over, sent, upload) = self.upload_all(task, dir).await;
+        let (over, sent, upload) = self.upload_all(task, dir, cancel).await;
         // 要上报的原因：超限的说明在前（重试没用的那个），上传失败的原因在后。
         let mut reasons = Vec::new();
         if let Some(over) = &over {
@@ -164,6 +258,7 @@ impl Uploader {
         &self,
         task: &AssignTask,
         dir: &Path,
+        mut cancel: executor::CancelSignal,
     ) -> (Option<OverLimit>, usize, Result<(), String>) {
         let files = match tokio::task::spawn_blocking({
             let dir = dir.to_path_buf();
@@ -182,9 +277,17 @@ impl Uploader {
             Err(e) => return (None, 0, Err(e.to_string())),
         };
         let (to_upload, over) = plan(files, task.artifact_limit_bytes);
+        // 开始上传之前已经有的取消请求不打断上传：取消的任务、超时进入收尾时间的任务照样上传它已经存下的产物。
+        cancel.borrow_and_update();
         let mut sent = 0;
         for file in to_upload {
-            if let Err(e) = self.upload(task, &file.name, &file.path).await {
+            let result = tokio::select! {
+                result = self.upload(task, &file.name, &file.path) => result,
+                () = cancel_arrived(&mut cancel) => {
+                    Err(format!("{}：任务被取消，上传已放弃", file.name))
+                }
+            };
+            if let Err(e) = result {
                 return (over, sent, Err(e));
             }
             sent += 1;
@@ -224,12 +327,18 @@ impl Uploader {
             .await
             .map_err(|e| (false, format!("读取 {} 失败：{e}", path.display())))?;
         let len = metadata.len();
+        let progress = Progress::start();
+        let body = reqwest::Body::wrap_stream(FileBody {
+            file,
+            progress: progress.clone(),
+            done: false,
+        });
         let mut request = self
             .http
             .put(url.clone())
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .header(reqwest::header::CONTENT_LENGTH, len)
-            .body(reqwest::Body::from(file));
+            .body(body);
         // 文件的修改时间是按系统时钟记的：换成 Agent 时间（测试用的偏移选项生效时加上偏移量）。
         let modified = metadata.modified().ok().map(clock::system_time_ms);
         if let Some(modified) = modified.map(clock::to_agent_time_ms) {
@@ -238,19 +347,34 @@ impl Uploader {
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|e| (true, format!("{url} ({e})")))?;
+        let idle = self.idle_timeout;
+        let response = tokio::select! {
+            response = request.send() => {
+                response.map_err(|e| (true, format!("{url} ({e})")))?
+            }
+            () = progress.stalled(idle) => {
+                return Err((
+                    true,
+                    format!(
+                        "{url} 超过 {} 秒没有进展（连接、发送请求体或等响应时对方没有动静）",
+                        idle.as_secs()
+                    ),
+                ));
+            }
+        };
         let status = response.status();
         if status.is_success() {
             return Ok(());
         }
-        let body = response.text().await.unwrap_or_default();
-        Err((
-            status.is_server_error(),
-            format!("控制面返回 {status} {}", body.trim()),
-        ))
+        // 错误响应的内容也只等一个空闲超时：读不到就只写状态码。
+        let body = tokio::time::timeout(idle, response.text())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
+        // 5xx 和 408（控制面读请求体 60 秒没有数据时回的 `upload_idle_timeout`）值得重试，别的拒绝（413、403 等）重试没有用。
+        let retry = status.is_server_error() || status == reqwest::StatusCode::REQUEST_TIMEOUT;
+        Err((retry, format!("控制面返回 {status} {}", body.trim())))
     }
 }
 

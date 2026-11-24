@@ -2,7 +2,8 @@
 //!
 //! - [`HttpFixture`]：本地 HTTP 服务（随机端口），既充当控制面的节点包下载地址，
 //!   也充当内网 PyPI 镜像（PEP 503 simple index，`<url>/simple/`）；可以给某个文件加延迟，并记录请求。
-//!   还接受 PUT（产物上传，#18）：记录路径、Authorization 头和请求体，默认回 201，可以改成别的状态码。
+//!   还接受 PUT（产物上传，#18）：记录路径、Authorization 头和请求体，默认回 201，可以改成别的状态码，
+//!   也可以按顺序先回几个指定的状态码，或者读完请求体之后一直不回应（#648）。
 //! - [`build_node_package`]：用 `sfly build` 把桩节点源码（testdata/stub-package）按指定的包名、版本、依赖构建成 `.sflypkg`。
 //! - [`dependency_wheel`]：手工生成一个只含空模块的纯 Python wheel，放进镜像当作第三方依赖。
 //! - [`fresh_venv`]：每个测试独立的共享 venv（安装测试会修改 venv）。
@@ -48,6 +49,10 @@ struct Files {
     uploads: Vec<Upload>,
     /// PUT 的响应状态码；None 为 201。
     upload_status: Option<u16>,
+    /// 先按顺序回这些状态码（每个 PUT 用掉一个），用完之后回 `upload_status`。
+    upload_script: Vec<u16>,
+    /// 读完请求体之后一直不回应（连接留着）。
+    upload_hang: bool,
     by_path: HashMap<String, File>,
     /// 镜像中的项目（规范化名）→ wheel 文件名。
     projects: HashMap<String, Vec<String>>,
@@ -197,6 +202,16 @@ impl HttpFixture {
     pub fn reject_uploads(&self, status: u16) {
         self.files.lock().unwrap().upload_status = Some(status);
     }
+
+    /// 之后的 PUT 先按顺序回这些状态码（每个用掉一个），用完之后回默认的 201。
+    pub fn reply_to_uploads_with(&self, statuses: &[u16]) {
+        self.files.lock().unwrap().upload_script = statuses.to_vec();
+    }
+
+    /// 之后的 PUT 读完请求体就不再回应：接了连接、收下内容，只是一直不说话（控制面卡住的样子）。
+    pub fn hang_uploads(&self) {
+        self.files.lock().unwrap().upload_hang = true;
+    }
 }
 
 fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
@@ -250,7 +265,17 @@ async fn serve(
                 body,
                 at: tokio::time::Instant::now(),
             });
-            files.upload_status.unwrap_or(201)
+            if files.upload_hang {
+                None
+            } else if files.upload_script.is_empty() {
+                Some(files.upload_status.unwrap_or(201))
+            } else {
+                Some(files.upload_script.remove(0))
+            }
+        };
+        let Some(status) = status else {
+            // 不回应：连接留着，直到测试结束、运行时关掉。
+            return std::future::pending().await;
         };
         let reply = format!(
             "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"

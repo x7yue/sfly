@@ -109,6 +109,10 @@ struct Args {
     /// 自更新下载新二进制时，连接建立后等待数据的超时秒数（每次读取）；超时算「更新失败」，下一次握手后重试。
     #[arg(long, env = "SFLY_UPDATE_READ_TIMEOUT", default_value_t = sfly_agent::update::DEFAULT_READ_TIMEOUT.as_secs(), hide = true)]
     update_read_timeout: u64,
+    /// 上传任务产物时，一个请求这么多秒没有进展（连接、请求体被对方收下、等响应）就算卡住：这次请求失败，
+    /// 照网络错误重试，用完重试之后任务以上传失败上报，不会一直占着槽位。
+    #[arg(long, env = "SFLY_UPLOAD_IDLE_TIMEOUT", default_value_t = sfly_agent::artifacts::DEFAULT_IDLE_TIMEOUT.as_secs(), hide = true)]
+    upload_idle_timeout: u64,
     /// 不自动更新：版本与控制面不一致时只连接、不接新任务，Agents 页提示需要手动升级。
     /// 环境变量和 `agent.env` 接受 1/0、true/false、yes/no（大小写不敏感）。
     #[arg(long, env = "SFLY_NO_AUTO_UPDATE", value_parser = clap::builder::BoolishValueParser::new())]
@@ -238,6 +242,7 @@ async fn main() -> anyhow::Result<()> {
         metric_queue_points: args.metric_queue_points,
         log_forward_rate: args.log_forward_rate,
         update_read_timeout: Duration::from_secs(args.update_read_timeout),
+        upload_idle_timeout: Duration::from_secs(args.upload_idle_timeout),
         version: args
             .version_override
             .unwrap_or_else(|| AGENT_VERSION.to_string()),
