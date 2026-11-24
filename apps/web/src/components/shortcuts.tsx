@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useRef, useSyncExternalStore } from "react";
 import { dialogOpen, inCanvasArea, isEditable } from "#/lib/focus";
 import { MORE_BELOW_FADE, trackMoreBelow } from "#/lib/scroll-more";
 import {
@@ -8,6 +8,7 @@ import {
 	type ShortcutGroup,
 	type ShortcutId,
 	ShortcutMatcher,
+	shortcutRows,
 } from "#/lib/shortcuts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Keys } from "./page";
@@ -121,20 +122,30 @@ export function ShortcutsDialog({
 				</DialogHeader>
 				<div ref={trackMoreBelow} className={cn("overflow-y-auto", MORE_BELOW_FADE)}>
 					{GROUPS.map((group) => {
-						const items = SHORTCUTS.filter((s) => s.group === group);
-						if (items.length === 0) return null;
+						const rows = shortcutRows(group);
+						if (rows.length === 0) return null;
 						return (
 							<section key={group} aria-label={group}>
 								<h4 className="mt-1 mb-1 text-xs font-semibold text-fg-3">{group}</h4>
-								<dl className="m-0 grid grid-cols-[repeat(3,minmax(max-content,1fr))] gap-x-6 min-[1100px]:grid-cols-[repeat(4,minmax(max-content,1fr))] min-[1300px]:grid-cols-[repeat(5,minmax(max-content,1fr))]">
-									{items.map((s) => (
+								<dl className="m-0 grid grid-flow-dense grid-cols-[repeat(3,minmax(max-content,1fr))] gap-x-6 min-[1100px]:grid-cols-[repeat(4,minmax(max-content,1fr))] min-[1300px]:grid-cols-[repeat(5,minmax(max-content,1fr))]">
+									{rows.map((row) => (
 										<div
-											key={s.id}
-											className="flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm"
+											key={row.ids[0]}
+											className={cn(
+												"flex items-center justify-between gap-3 border-b border-border-soft py-1.25 text-sm",
+												// 合成的行（名称加两个键）比别的行宽出一截：占一列的话五列都要跟着加宽，面板撑到铺满窗口；占两列，
+												// 别的行的宽度不变。dense：一行放不下两列时让后面的行补上空位。
+												row.ids.length > 1 && "col-span-2",
+											)}
 										>
-											<dt className="whitespace-nowrap">{s.label}</dt>
-											<dd className="m-0 flex-none">
-												<Keys shortcut={s.id} />
+											<dt className="whitespace-nowrap">{row.label}</dt>
+											<dd className="m-0 flex flex-none items-center gap-1.5">
+												{row.ids.map((id, i) => (
+													<Fragment key={id}>
+														{i > 0 && <span className="text-xs text-fg-3">或</span>}
+														<Keys shortcut={id} />
+													</Fragment>
+												))}
 											</dd>
 										</div>
 									))}

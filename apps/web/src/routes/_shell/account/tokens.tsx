@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { TokensPage } from "#/tokens/TokensPanel";
 
 export const Route = createFileRoute("/_shell/account/tokens")({
@@ -29,7 +30,7 @@ function PersonalTokensPage() {
 					<Link
 						to="/projects/$project/tokens"
 						params={{ project: "default" }}
-						className="text-fg-1 underline underline-offset-2"
+						className={INLINE_LINK}
 					>
 						{PAGE.projectTokens}
 					</Link>
