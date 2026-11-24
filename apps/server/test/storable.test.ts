@@ -122,13 +122,13 @@ describe("storable", () => {
 		const BAD = `x${code(0x9b)}2J${code(0x202e)}`;
 		const helloWith = (fields: Record<string, unknown>) =>
 			message({ case: "hello", value: { name: "agent-a", ...fields } } as never);
-		const valueOf = (m: ReturnType<typeof message>) => {
+		const helloOf = (m: ReturnType<typeof message>) => {
 			if (m.body.case !== "hello") throw new Error("not hello");
 			return m.body.value;
 		};
 
 		it("短的标识类：已安装节点包的名字和版本、开发包的名字、能力名、对外地址：含表里的字符整段换成空串，超长整段换成空串，正常的原样", () => {
-			const cleaned = valueOf(
+			const cleaned = helloOf(
 				storable(
 					helloWith({
 						installedPackages: [
@@ -165,7 +165,7 @@ describe("storable", () => {
 		});
 
 		it("长的自由文字：开发包的来源、对外监听失败的原因：表里的字符写成 \\uXXXX（换行和制表符保留），超长截断；不丢整段", () => {
-			const cleaned = valueOf(
+			const cleaned = helloOf(
 				storable(
 					helloWith({
 						devPackages: [
@@ -181,7 +181,7 @@ describe("storable", () => {
 			);
 			expect(cleaned.devPackages[0]?.source).toBe("/src/x\\u009b2J\\u202e\n第二行\t缩进");
 			expect(cleaned.peer?.listenError).toBe("端口被占用\\u001b[2J\\u{e0067}");
-			const long = valueOf(
+			const long = helloOf(
 				storable(
 					helloWith({ peer: { port: 1, publicAddress: "h:1", listenError: "错".repeat(3000) } }),
 				),
@@ -189,7 +189,7 @@ describe("storable", () => {
 			expect(long.peer?.listenError).toBe(`${"错".repeat(2048)}…`);
 			// 正好 2048 个字符（按字符数，补充平面的一个算一个）不截断。
 			for (const exact of ["错".repeat(2048), code(0x1f600).repeat(2048)]) {
-				const same = valueOf(
+				const same = helloOf(
 					storable(helloWith({ peer: { port: 1, publicAddress: "h:1", listenError: exact } })),
 				);
 				expect(same.peer?.listenError).toBe(exact);
@@ -201,7 +201,7 @@ describe("storable", () => {
 				nodes: [{ name: "n", description: `描述${code(0x202e)}倒着${code(0x200b)}零宽` }],
 				[`键${code(0x85)}`]: 1,
 			});
-			const cleaned = valueOf(
+			const cleaned = helloOf(
 				storable(
 					helloWith({ devPackages: [{ name: "dev-pkg", source: "/src", metadataJson: metadata }] }),
 				),
@@ -216,7 +216,7 @@ describe("storable", () => {
 			});
 			// JSON 转义写出来的也一样（解析之后才是那个字符）。
 			const escaped = '{"d":"x\\u202ey"}';
-			const again = valueOf(
+			const again = helloOf(
 				storable(
 					helloWith({ devPackages: [{ name: "dev-pkg", source: "/src", metadataJson: escaped }] }),
 				),
