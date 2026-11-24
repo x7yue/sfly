@@ -111,13 +111,14 @@ describe("ArtifactStore 的队列", () => {
 
 	describe("请求体只能是字节流（#665）", () => {
 		// 上传的路由只按原始字节收请求体；存储自己也不接受字符串块：按字符数记的大小和写进磁盘的字节数不一致，守不住上限。
-		it("有字符串块：抛出，不记账、不留临时文件，队列的条目照样删掉，同一个任务的下一份照常存", async () => {
+		it("有字符串块：抛出，不记账，队列的条目照样删掉，同一个任务的下一份照常存", async () => {
 			const store = storeWith();
 			const taskId = (tasks[first] as AssignedTask).taskId;
 
 			await expect(store.save(taskId, "text.txt", Readable.from(["中文"]))).rejects.toThrow(
 				"byte stream",
 			);
+			expect(store.pendingTasks).toBe(0);
 			const next = await store.save(taskId, "ok.bin", complete(100));
 
 			expect(next.ok).toBe(true);

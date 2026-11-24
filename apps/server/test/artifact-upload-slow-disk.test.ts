@@ -4,8 +4,8 @@
 import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-/** 每次写要多久（毫秒）；0 是不变慢。 */
-const slow = vi.hoisted(() => ({ writeMs: 0 }));
+/** 每次写要多久（毫秒）；0 是不变慢。`writes` 是假的写流收到了几次写：用来证明假的写流真的在起作用（不靠耗时）。 */
+const slow = vi.hoisted(() => ({ writeMs: 0, writes: 0 }));
 
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs")>();
@@ -16,6 +16,7 @@ vi.mock("node:fs", async (importOriginal) => {
 		return new SlowWritable({
 			highWaterMark: 1,
 			write(chunk, _encoding, callback) {
+				slow.writes += 1;
 				setTimeout(() => real.write(chunk, (error) => callback(error ?? null)), slow.writeMs);
 			},
 			final(callback) {
@@ -80,13 +81,13 @@ describe("写盘慢：空闲超时不算写盘的时间", () => {
 		// objectMode 的 Readable.from：一块一块给（不会把缓冲里的几块拼成一块）。
 		const body = Readable.from(Array.from({ length: 8 }, (_, i) => Buffer.alloc(100, i + 1)));
 		slow.writeMs = 150;
-		const started = Date.now();
+		slow.writes = 0;
 
 		const outcome = await store.save(taskId, "slow-disk.bin", body);
 
 		slow.writeMs = 0;
-		// 写盘一共花了 8 × 150 毫秒：每块都比空闲时限长，但客户端一直没有停过。
-		expect(Date.now() - started).toBeGreaterThan(800);
+		// 假的写流真的收到了这 8 块（每块写 150 毫秒，都比空闲时限长，但客户端一直没有停过）：不是普通的写流在起作用。
+		expect(slow.writes).toBe(8);
 		expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
 		if (outcome.ok) expect(outcome.artifact.size).toBe(800);
 	}, 30_000);

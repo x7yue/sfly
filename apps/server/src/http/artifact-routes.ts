@@ -58,8 +58,10 @@ export function registerArtifactRoutes(
 	// 上传在独立的作用域里：请求体不解析，按原始的字节流写到磁盘（不受全局 bodyLimit 限制，大小由 ArtifactStore 控制）。
 	// **不管 `Content-Type` 写的是什么**都按字节流收（#665）：框架自带的 `text/plain` 和 JSON 解析器会在到达存储之前把请求体读成字符串
 	// 或对象（按字符数记大小、按重新编码后的字节存，非法的 UTF-8 变成替换字符；JSON 是对象或数时回 500，`null` 存成空文件），
-	// 所以把它们和别的解析器都去掉，只留这一个「原样交出字节流」的；写得不成样子的 `Content-Type`（框架在解析之前就回 415）
-	// 在解析之前统一成字节流：`Content-Type` 对上传没有意义，内容是什么就存什么。
+	// 所以把它们和别的解析器都去掉，只留这一个「原样交出字节流」的（`removeAllContentTypeParsers`）；钩子再把请求里**带了的**
+	// `Content-Type`（不管写的是什么）在解析之前一律改成字节流：写得不成样子的（框架在解析之前就回 415）也一样放行。
+	// 两道各有各的用：单独去掉解析器这一道行为不变（钩子已经让所有请求落到 `*`），留着它是把意图写在代码里、钩子以后被改窄时还能兜住；
+	// 去掉钩子则写得不成样子的 `Content-Type` 回到 415。`Content-Type` 对上传没有意义，内容是什么就存什么。
 	app.register(async (scope) => {
 		scope.removeAllContentTypeParsers();
 		scope.addContentTypeParser("*", (_request, payload, done) => done(null, payload));
