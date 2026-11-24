@@ -573,6 +573,10 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		streamRecheckMs: options.streamRecheckMs,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
+	// 先让路由和插件登记完：Fastify 的 `listen` 里面会先做 `ready`，登记出错（重复的路由、schema 写错……）也从 `listen` 抛出来，
+	// 下面把 `listen` 的错误都换成「监听失败」会盖掉真正的原因（哪条路由、哪里不对），还把人指到 SFLY_HTTP_HOST。`ready` 在监听之前做，
+	// 登记的错误照原样出来；之后 `listen` 抛出的才都是监听失败。
+	await api.ready();
 	// 监听不了时的说明只有变量名、端口和错误码（util/listen-error.ts）：Node 的报错会把监听地址原样带出来。
 	await listening("http", options.http?.port ?? 0, () =>
 		api.listen({ host: httpHost, port: options.http?.port ?? 0 }),
