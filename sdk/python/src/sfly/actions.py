@@ -28,8 +28,10 @@ asyncio 任务比 with 活得久时，跳过已经结束的。`start()` 返回�
 需要时用 `parent=` 指定（`ctx.action.start(名称, parent=句柄)`、`ctx.mark(名称, parent=句柄)`）。
 
 校验：名称为空（或只有空白）抛 `ValueError`，不是字符串抛 `TypeError`，调用时立即报错。
-下面这些不报错，截断或丢弃，每种原因写一条 warn 日志：名称超过 64 个字符、字段超过 8 个
-（多出的丢弃）、字段值（转成字符串后）超过 256 个字符。同一个句柄结束两次，第二次忽略，警告一次；
+下面这些不报错，每种原因写一条 warn 日志（只写长度和上限，不写名称、字段值的内容）：
+名称超过 64 个字符、
+字段值（转成字符串后）超过 256 个字符（控制面先打码再截到上限，见下面的 `TRANSPORT_MARGIN_CHARS`）、
+字段名超过 64 个字符、字段超过 8 个（多出的丢弃）。同一个句柄结束两次，第二次忽略，警告一次；
 不同名称（动作和标记合计）超过 100 种时警告一次（名称里带了订单号这类每次都不同的内容，
 变化的内容放进字段）。
 
@@ -61,7 +63,14 @@ from typing import Any
 from sfly.context import ActionResult, Cancelled, _EventWriter, _now_ms, monotonic_ms
 
 # 下面的上限和 packages/schema/src/http/actions.ts 的 ACTION_LIMITS 一致
-# （控制面按同一组兜底），有测试检查。
+# （控制面按同一组执行），有测试检查。
+#
+# 名称、字段值、失败原因的上限由控制面执行：它先把 secret 值打码、
+# 再截到上限。SDK 不知道哪些值是 secret，
+# 也不知道节点开始之后才成为 secret 的值，在这里截断会把一个正好跨在截断处的 secret 值切成两半，
+# 控制面只收到前半截，认不出来。所以 SDK 只在比上限多 `TRANSPORT_MARGIN_CHARS` 个字符处截断
+# （传输的保护），
+# 本地执行（`sfly.local`）记下的是和控制面一样截到上限之后的样子。
 
 #: 名称最长的字符数，超过的截断。
 MAX_NAME_CHARS = 64
@@ -71,6 +80,11 @@ MAX_FIELDS = 8
 MAX_VALUE_CHARS = 256
 #: 失败原因最长的字符数，超过的截断：原因随摘要每秒发一次，不能无限长。
 MAX_REASON_CHARS = 4096
+#: SDK 发出的名称、字段的键和值、失败原因最多比上面的上限多这么多个字符（更长的才由 SDK 截断）：
+#: 控制面按原文的位置截到上限（先打码），所以每种写法（控制面认的原文、转义等，
+#: 转义的写法可以比值本身长）的长度不超过这个余量的 secret 值，不论落在哪里都能整个认出来；
+#: 某种写法比它还长的值，跨在传输上限处时可能留下这种写法开头的一段。
+TRANSPORT_MARGIN_CHARS = 4096
 #: 不同的名称超过这么多种时警告一次（不限制）。
 MAX_NAMES = 100
 #: 每种名称最多上报的明细个数。
@@ -83,6 +97,10 @@ RECENT_LIMIT = 20
 RECENT_FAILED_LIMIT = 5
 #: 摘要最短的发送间隔（秒）。
 SUMMARY_INTERVAL = 1.0
+
+_SENT_NAME_CHARS = MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS
+_SENT_VALUE_CHARS = MAX_VALUE_CHARS + TRANSPORT_MARGIN_CHARS
+_SENT_REASON_CHARS = MAX_REASON_CHARS + TRANSPORT_MARGIN_CHARS
 
 #: 当前上下文里最内层的、还在进行的 `with ctx.action(...)`（线程、asyncio 任务各有各的）。
 _CURRENT: ContextVar[ActionScope | None] = ContextVar("sfly_action", default=None)
@@ -98,9 +116,18 @@ def _stamp() -> tuple[int, int]:
 
 def _reason(message: object) -> str:
     text = message if isinstance(message, str) else str(message)
-    if len(text) > MAX_REASON_CHARS:
-        return text[: MAX_REASON_CHARS - 1] + "…"
+    if len(text) > _SENT_REASON_CHARS:
+        return text[: _SENT_REASON_CHARS - 1] + "…"
     return text
+
+
+def _label(name: str, noun: str = "名称") -> str:
+    """警告日志里引用的名称（`noun` 是它的叫法：名称、字段名）：不超过上限的原样
+    （完整的 secret 值由控制面打码），更长的只写长度，
+    不写截断后的内容（截断会把 secret 值切成两半，前半截认不出来）。"""
+    if len(name) <= MAX_NAME_CHARS:
+        return repr(name)
+    return f"（{len(name)} 个字符的{noun}）"
 
 
 def _exception_reason(exc_type: type[BaseException], exc: BaseException | None) -> str:
@@ -111,9 +138,11 @@ def _exception_reason(exc_type: type[BaseException], exc: BaseException | None) 
 class _NameStats:
     """一种名称的计数。"""
 
-    __slots__ = ("capped", "failed", "reported", "total")
+    __slots__ = ("capped", "display", "failed", "reported", "total")
 
-    def __init__(self) -> None:
+    def __init__(self, display: str) -> None:
+        #: 摘要里写的名称：这种名称第一次出现时完整的那个（控制面打码、截到上限之后显示）。
+        self.display = display
         self.total = 0
         self.failed = 0
         #: 已上报明细的个数，包括失败时补发的：`total` 减去它，就是只计数、没有明细的个数。
@@ -132,6 +161,7 @@ class _Record:
         "end_ts",
         "fields",
         "id",
+        "key",
         "mono",
         "name",
         "notes",
@@ -156,6 +186,9 @@ class _Record:
         self.parent = parent
         self.depth = depth
         self.name = name
+        #: 计数用的名称：同一种名称的计数、每种名称的上限都按它（
+        #: 名称的前 `MAX_NAME_CHARS` 个字符，和控制面一致）。
+        self.key = name[:MAX_NAME_CHARS]
         #: 动作开始（标记发生）时给的字段；`note()` 给动作补充的放在 `notes`。
         self.fields = fields
         self.notes: dict[str, str] = {}
@@ -375,13 +408,14 @@ class Actions:
         if not name.strip():
             raise ValueError(f"{what}的名称不能为空")
         if len(name) > MAX_NAME_CHARS:
+            # 警告里不写名称的内容：截断可能把里面的 secret 值切成两半。
             self._warn(
                 "name-too-long",
                 "",
-                f"{what}的名称超过 {MAX_NAME_CHARS} 个字符，已截断"
-                f"（名称写这件事是什么，细节放进字段）：{name[:MAX_NAME_CHARS]!r}…",
+                f"{what}的名称有 {len(name)} 个字符，超过 {MAX_NAME_CHARS} 个字符的部分会被截断"
+                "（名称写这件事是什么，细节放进字段）",
             )
-            return name[:MAX_NAME_CHARS]
+            return name[:_SENT_NAME_CHARS]
         return name
 
     def _check_fields(
@@ -394,6 +428,16 @@ class Actions:
             return clean
         keys = set(taken)
         for key, value in fields.items():
+            if len(key) > MAX_NAME_CHARS:
+                # 字段的键和名称一个做法：控制面先打码再按名称的上限截，
+                # SDK 只在多出余量处截断；警告只写长度。
+                self._warn(
+                    "key-too-long",
+                    "",
+                    f"{what}的字段名有 {len(key)} 个字符，"
+                    f"超过 {MAX_NAME_CHARS} 个字符的部分会被截断",
+                )
+                key = key[:_SENT_NAME_CHARS]
             if key not in keys:
                 if len(keys) >= MAX_FIELDS:
                     self._warn(
@@ -409,9 +453,11 @@ class Actions:
                 self._warn(
                     "value-too-long",
                     "",
-                    f"{what}的字段值超过 {MAX_VALUE_CHARS} 个字符，已截断（字段 {key!r}）",
+                    f"{what}的字段值有 {len(text)} 个字符，"
+                    f"超过 {MAX_VALUE_CHARS} 个字符的部分会被截断"
+                    f"（字段 {_label(key, '字段名')}）",
                 )
-                text = text[:MAX_VALUE_CHARS]
+                text = text[:_SENT_VALUE_CHARS]
             clean[key] = text
         return clean
 
@@ -448,9 +494,10 @@ class Actions:
         """动作开始，或标记发生（`mark=True`：记一个时刻，不进入「正在做」）。"""
         ts, mono = _stamp()
         with self._lock:
-            stats = self._names.get(name)
+            key = name[:MAX_NAME_CHARS]
+            stats = self._names.get(key)
             if stats is None:
-                stats = self._names[name] = _NameStats()
+                stats = self._names[key] = _NameStats(name)
                 if len(self._names) == MAX_NAMES + 1:
                     self._warn(
                         "too-many-names",
@@ -501,8 +548,9 @@ class Actions:
                     detail = f"。每一个都记成{what}会拖慢节点、也看不过来：按批记录{what}"
                 self._warn(
                     "name-cap",
-                    rec.name,
-                    f"{rec.name!r} 的明细已上报 {MAX_PER_NAME} 个，之后只计数、不再上报{detail}",
+                    rec.key,
+                    f"{_label(rec.name)} 的明细已上报 {MAX_PER_NAME} 个，"
+                    f"之后只计数、不再上报{detail}",
                 )
         if self._reported >= MAX_TOTAL and self._capped is None:
             self._capped = (rec.ts, rec.mono)
@@ -533,7 +581,7 @@ class Actions:
             rec.result, rec.reason, rec.end_ts, rec.end_mono = result, reason, ts, mono
             del self._running[rec.id]
             self._recent.append(rec)
-            stats = self._names[rec.name]
+            stats = self._names[rec.key]
             if result == "failed":
                 stats.failed += 1
                 self._recent_failed.append(rec)
@@ -554,8 +602,8 @@ class Actions:
     def _ignored(self, rec: _Record) -> None:
         self._warn(
             "already-ended",
-            rec.name,
-            f"动作 {rec.name!r} 已经结束，再次结束（或 note、fail）被忽略",
+            rec.key,
+            f"动作 {_label(rec.name)} 已经结束，再次结束（或 note、fail）被忽略",
         )
 
     # ---- 事件 ----
@@ -602,13 +650,13 @@ class Actions:
             **_capped(self._capped),
             "names": [
                 {
-                    "name": name,
+                    "name": s.display,
                     "total": s.total,
                     "failed": s.failed,
                     "reported": s.reported,
                     **_capped(s.capped),
                 }
-                for name, s in self._names.items()
+                for s in self._names.values()
             ],
             "running": [_entry(rec) for rec in running],
             "recent": [_entry(rec) for rec in reversed(self._recent)],

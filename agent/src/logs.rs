@@ -79,13 +79,15 @@ const MAX_BATCH_ACTIONS: usize = 1000;
 /// 一批日志（或一批动作明细）攒到这么多字节就发出，不等条数、也不等下一个 [`TICK`]。只按条数限批的话，每个事件都在上限以内，
 /// 一批也能比 Agent 自己的排队上限（[`DEFAULT_TELEMETRY_QUEUE_BYTES`]）还大，连接正常、队列是空的时候也被整批丢掉
 /// （[`Telemetry::send`]）。这个数是队列上限的 1/32：一批的大小最多是它加上最后一条（标准输出 / 标准错误的一行不超过
-/// [`MAX_LINE_BYTES`] 加两段上下文，输出不是合法的 UTF-8 时有损转换最坏是 3 倍，约 300 KiB；动作明细一条最多约 128 KiB，
-/// 全是 4 字节的字符时约 172 KiB），远在队列上限以内，队列是空的时候没有一批因为大小被丢掉，
+/// [`MAX_LINE_BYTES`] 加两段上下文，输出不是合法的 UTF-8 时有损转换最坏是 3 倍，约 300 KiB；动作明细一条最多约 224 KiB
+/// （SDK 能发出的最长的事件：名称、8 个字段的键和值、失败原因都取到传输上限，3 字节的字符；全是 4 字节的字符时约 298 KiB）），
+/// 远在队列上限以内，队列是空的时候没有一批因为大小被丢掉，
 /// 断线时队列里也能排下几十批；也让控制面一次处理的一批、网关一次收的一条消息有个上界（几 MiB），不随节点写得多快而变大。
 /// 再小的话批太碎（一个节点每秒写几百 MiB 时每秒上百批），再大就接近队列上限。
 ///
 /// 例外：SDK 通过事件管道写的日志（一行不限长，也不拆，原来就是这样，#674）一条就可以比这个数大；
-/// 那样的一条自己成一批，比队列上限还大时仍会被丢掉。
+/// 这样的一条和前面已经攒着的合成一批发出（不是自己成一批），这一批比队列剩下的空间还大时整批被丢掉，前面攒着的也跟着丢
+/// （不经 SDK 写事件才会有这么大的一条，SDK 发不出；这里不改，#694）。
 const MAX_BATCH_BYTES: usize = 2 * 1024 * 1024;
 /// 一行日志编码之后除了文字之外大约占的字节数（序号、两个时间、来源、级别和各字段的标签）：估算一批的大小用。
 const LOG_LINE_OVERHEAD: usize = 64;
@@ -1639,32 +1641,65 @@ mod batch_tests {
         }
     }
 
-    /// 动作明细：每个事件都取最长（名称、8 个字段，全是 3 字节的字符，约 117 KiB）。
-    fn full_action(i: usize) -> Vec<u8> {
-        let name = "名".repeat(4160);
-        let value = "值".repeat(4352);
-        let fields: serde_json::Map<String, serde_json::Value> = (0..8)
-            .map(|f| (format!("字段{f}"), serde_json::Value::String(value.clone())))
-            .collect();
-        let line = serde_json::json!({
-            "type": "action_start",
-            "id": i,
-            "depth": 0,
-            "name": name,
-            "fields": fields,
-        });
+    // SDK 能发出的最长的文字（`sdk/python/src/sfly/actions.py`：比控制面的上限多 `TRANSPORT_MARGIN_CHARS` = 4096 个字符才截断）：
+    // 名称、字段的键 64 + 4096，字段的值 256 + 4096，失败原因 4096 + 4096 个字符，字段最多 8 个。
+    const NAME_CHARS: usize = 64 + 4096;
+    const VALUE_CHARS: usize = 256 + 4096;
+    const REASON_CHARS: usize = 4096 + 4096;
+    const FIELDS: usize = 8;
+
+    /// 8 个字段，键互不相同、都取最长，值取最长；`ch` 是组成它们的字符。
+    fn longest_fields(ch: char) -> serde_json::Map<String, serde_json::Value> {
+        let one = ch.to_string();
+        (0..FIELDS)
+            .map(|f| {
+                (
+                    // 开头一个数字让键互不相同，其余取满
+                    format!("{f}{}", one.repeat(NAME_CHARS - 1)),
+                    serde_json::Value::String(one.repeat(VALUE_CHARS)),
+                )
+            })
+            .collect()
+    }
+
+    /// 一个动作事件，取 SDK 能发出的最长的：依次是开始（名称、8 个字段）、结束（失败原因、8 个补充的字段）、标记（名称、8 个字段）。
+    fn longest_action_event(i: usize, ch: char) -> Vec<u8> {
+        let one = ch.to_string();
+        let common = |kind: &str| {
+            serde_json::json!({
+                "type": kind,
+                "ts": 1_790_000_000_000_i64,
+                "mono": i,
+                "id": i,
+                "parent": i,
+                "depth": 0,
+                "fields": longest_fields(ch),
+            })
+        };
+        let mut line = match i % 3 {
+            0 => common("action_start"),
+            1 => common("action_end"),
+            _ => common("mark"),
+        };
+        match i % 3 {
+            1 => {
+                line["result"] = "failed".into();
+                line["reason"] = one.repeat(REASON_CHARS).into();
+            }
+            _ => line["name"] = one.repeat(NAME_CHARS).into(),
+        }
         let mut bytes = serde_json::to_vec(&line).unwrap();
         bytes.push(b'\n');
         bytes
     }
 
-    #[tokio::test]
-    async fn a_thousand_full_action_events_are_not_dropped_as_one_batch_that_is_too_big() {
+    /// `events` 个最长的事件（每个字符 `ch.len_utf8()` 个字节）一个个送进来：每个都送到、顺序不变，一批按字节数发出，
+    /// 没有一批大到被 [`Telemetry::send`] 整批丢掉。
+    async fn longest_action_events_are_all_sent(ch: char, events: usize) {
         let (mut forwarder, drain) = forwarder();
-        let events = 1000;
         for i in 0..events {
             let chunk = EventChunk {
-                bytes: full_action(i),
+                bytes: longest_action_event(i, ch),
                 monotonic_ms: i as i64,
             };
             forwarder.events(&chunk).await;
@@ -1680,15 +1715,54 @@ mod batch_tests {
                 _ => None,
             })
             .collect();
-        let received: usize = batches.iter().map(|b| b.events.len()).sum();
-        assert_eq!(received, events, "每个事件都送到了");
-        let one = full_action(0).len();
-        let expected = events * one / MAX_BATCH_BYTES;
-        assert!(batches.len() >= expected, "{} 批", batches.len());
-        assert!(batches.len() <= expected + 2, "{} 批", batches.len());
-        for message in &messages {
-            assert!(message.encoded_len() <= MAX_BATCH_BYTES + 2 * one);
+        let ids: Vec<(usize, u64)> = batches
+            .iter()
+            .flat_map(|b| &b.events)
+            .map(|e| match &e.kind {
+                Some(action_event::Kind::Start(s)) => (0, s.id),
+                Some(action_event::Kind::End(x)) => (1, x.id),
+                Some(action_event::Kind::Mark(m)) => (2, m.id),
+                None => panic!("事件没有内容"),
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            (0..events).map(|i| (i % 3, i as u64)).collect::<Vec<_>>(),
+            "每个事件都送到了，顺序没变"
+        );
+        let sizes: Vec<usize> = batches
+            .iter()
+            .flat_map(|b| &b.events)
+            .map(|e| e.encoded_len())
+            .collect();
+        let total: usize = sizes.iter().sum();
+        let longest = *sizes.iter().max().unwrap();
+        // 一次性发出的话会比队列上限还大（这个用例才说明得了问题）
+        assert!(total > DEFAULT_TELEMETRY_QUEUE_BYTES, "{total} 字节");
+        // 每一批攒到 MAX_BATCH_BYTES 才发，最后一个事件可以超出：批数既不会少（按条数发出），
+        // 也不会多（发出后字节数没有清零的话，每个事件都发一批）
+        let n = batches.len();
+        assert!(n * (MAX_BATCH_BYTES + longest) >= total, "{n} 批");
+        assert!((n - 1) * MAX_BATCH_BYTES <= total, "{n} 批");
+        for (i, message) in messages.iter().enumerate() {
+            assert!(
+                message.encoded_len() <= MAX_BATCH_BYTES + longest + 1024,
+                "第 {i} 批 {} 字节",
+                message.encoded_len()
+            );
         }
+    }
+
+    #[tokio::test]
+    async fn the_longest_action_events_of_three_byte_characters_are_not_dropped_as_one_batch_that_is_too_big()
+     {
+        longest_action_events_are_all_sent('名', 400).await;
+    }
+
+    #[tokio::test]
+    async fn the_longest_action_events_of_four_byte_characters_are_not_dropped_as_one_batch_that_is_too_big()
+     {
+        longest_action_events_are_all_sent('\u{20000}', 300).await;
     }
 
     #[tokio::test]
