@@ -3,15 +3,20 @@
 // 日志文件只追加，写入是先追加文件、再更新数据库（`tasks.log_bytes`、`tasks.log_seq`，每一批都是整行），所以文件不会比数据库记的短。
 // 比它短、或者有行写入过文件却不存在，就是文件被删了或截短了：保留期清理（先删文件、再标记运行已清理，中间有一小段时间运行还没有标记）、
 // 人为删除、磁盘出问题。从没有日志的任务（`seq` 是 0、没有文件）不算：它的日志本来就是空的。
+import type { Stats } from "node:fs";
 import type { TaskLogInfo } from "./task-logs.js";
 
-/** 文件现在的样子（`size` 是字节数，文件不存在时为 undefined）有什么不对：不见了、比记的短；没有问题时为 undefined。 */
+/**
+ * 文件现在的样子（`stats` 是它的 `stat`，文件不存在时为 undefined）有什么不对：不见了、比记的短；没有问题时为 undefined。
+ * 路径上不是普通文件（比如被换成了目录）的不在这里认：它读不了，读的时候出错（500 或者连接断开，#647），不是「日志没了」。
+ */
 export function logFileProblem(
 	info: Pick<TaskLogInfo, "recordedBytes" | "seq">,
-	size: number | undefined,
+	stats: Pick<Stats, "size" | "isFile"> | undefined,
 ): "missing" | "short" | undefined {
-	if (size === undefined) return info.seq > 0 || info.recordedBytes > 0 ? "missing" : undefined;
-	return size < info.recordedBytes ? "short" : undefined;
+	if (stats === undefined) return info.seq > 0 || info.recordedBytes > 0 ? "missing" : undefined;
+	if (!stats.isFile()) return undefined;
+	return stats.size < info.recordedBytes ? "short" : undefined;
 }
 
 /**

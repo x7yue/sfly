@@ -682,7 +682,10 @@ export const logsApi = {
 		}),
 		events: { logs: LogChunk },
 	}),
-	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
+	/**
+	 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`；有行写入过的任务日志文件不见了或者比记录的短
+	 * （被删除、截短）时同样 410 `expired`（#669）；下载进行中文件被截短时响应已经开始，连接被断开（没有下完）。
+	 */
 	download: download({
 		path: "/tasks/:id/logs/download",
 		summary: "下载一个任务的完整日志（文件）",
@@ -707,7 +710,8 @@ export const logsApi = {
 	}),
 	/**
 	 * 下载一次运行（范围内）合并后的日志：JSONL，每行是 {@link RunLogDownloadRow}，顺序与合并视图相同，
-	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`，运行不存在时 404。
+	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`，运行不存在时 404；范围内有任务的日志文件不见了或者
+	 * 比记录的短时同样 410 `expired`，下载进行中出现这种情况时响应已经开始，连接被断开（#669）。
 	 */
 	runDownload: download({
 		path: "/runs/:id/logs/download",

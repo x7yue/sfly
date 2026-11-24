@@ -194,13 +194,11 @@ export function registerLogRoutes(
 		if (await deps.isPurged(info.runId)) {
 			return sendError(reply, 410, "expired", "logs of this run were removed after retention");
 		}
-		const size = await stat(info.file).then(
-			(s) => s.size,
-			() => undefined,
-		);
+		const stats = await stat(info.file).catch(() => undefined);
+		const size = stats?.size;
 		// 有行写入过、文件却不见了或者比记录的短（被删除、截短，保留期清理删到一半）：410，不是 200 加空正文或缺了一截的正文（#669）。
 		// 从没有日志的任务（没有行写入过）没有文件，下载是空的，不在这里。
-		if (logFileProblem(info, size) !== undefined) {
+		if (logFileProblem(info, stats) !== undefined) {
 			return sendError(reply, 410, "expired", GONE_TASK);
 		}
 		reply

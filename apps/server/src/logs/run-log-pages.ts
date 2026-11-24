@@ -177,11 +177,8 @@ export class RunLogs {
 		const streams = await this.#streams(runId, scope);
 		if (!streams) return undefined;
 		const gone = await mapOpenFiles(streams, async ({ log }) => {
-			const size = await stat(log.file).then(
-				(s) => s.size,
-				() => undefined,
-			);
-			return logFileProblem(log, size) !== undefined;
+			const stats = await stat(log.file).catch(() => undefined);
+			return logFileProblem(log, stats) !== undefined;
 		});
 		const count = gone.filter(Boolean).length;
 		if (count > 0) throw new LogFilesGoneError(count);
