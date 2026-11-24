@@ -186,6 +186,7 @@ describe("一轮的结局", () => {
 		const results = harness.events.of(id).filter((r) => r.event.type === "tool_result");
 		expect(results.length).toBeLessThanOrEqual(40);
 		const raw = rawEvents(harness, id).map((r) => r.type);
+		expect(raw).toContain("fake_clear_queue");
 		expect(raw.indexOf("fake_clear_queue")).toBeLessThan(raw.indexOf("fake_abort"));
 		const pid = harness.sessions.pid(id);
 		expect(pid).toBeDefined();

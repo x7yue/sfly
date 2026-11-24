@@ -118,6 +118,22 @@ describe("没有一轮", () => {
 	});
 });
 
+describe("关闭空闲的进程", () => {
+	it("end：关 stdin 之后不退出的 pi，宽限到了被 SIGKILL", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle-stubborn" });
+		await harness.turnEnd(id);
+		await harness.end(id);
+		await eventually(() => expect(rawTypes(harness, id)).toContain("fake_stdin_closed"));
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(harness.sessions.activeProcesses).toBe(1);
+		clock.advance(ASSISTANT_PROCESS_KILL_GRACE_MS);
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
+	});
+});
+
 describe("在做", () => {
 	it("steer：收下（202），先发一份含它的 steer_queue；送到之后发不含它的 steer_queue；不发 steer_dropped", async () => {
 		const harness = await start();
@@ -157,13 +173,14 @@ describe("在做", () => {
 		const same = crypto.randomUUID();
 		expect((await harness.steer(id, "一句", 1, same)).status).toBe(202);
 		expect((await harness.steer(id, "一句", 1, same)).status).toBe(202);
-		await eventually(() =>
-			expect(rawEvents(harness, id).filter((r) => r.type === "queue_update").length).toBe(1),
-		);
-		const last = eventsOf(harness, id)
-			.filter((e) => e.type === "steer_queue")
-			.at(-1);
-		expect(last).toEqual({ type: "steer_queue", messages: [{ message_id: same, text: "一句" }] });
+		await eventually(() => expect(rawTypes(harness, id)).toContain("queue_update"));
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		// 只交给 pi 一次，只发过一份 steer_queue，里面只有一条。
+		expect(rawEvents(harness, id).filter((r) => r.type === "queue_update")).toHaveLength(1);
+		const queues = eventsOf(harness, id).filter((e) => e.type === "steer_queue");
+		expect(queues).toEqual([
+			{ type: "steer_queue", messages: [{ message_id: same, text: "一句" }] },
+		]);
 	});
 
 	it("abort：先 clear_queue、后 abort（接连写出），pi 报告 agent_settled 就以 stopped 结束、进程留着；没送到的插话各发 steer_dropped、在 turn_end 前面，决定结束之后不再发 steer_queue；下一轮交 prompt 之前先 clear_queue", async () => {
@@ -181,6 +198,7 @@ describe("在做", () => {
 			reason: "用户停止了这一轮",
 		});
 		const raw = rawTypes(harness, id);
+		expect(raw).toContain("fake_clear_queue");
 		expect(raw.indexOf("fake_clear_queue")).toBeLessThan(raw.indexOf("fake_abort"));
 		const events = eventsOf(harness, id, 1);
 		const dropped = events.filter((e) => e.type === "notice" && e.kind === "steer_dropped");
@@ -301,6 +319,13 @@ describe("插话的不变式：每句收下的插话在 turn_end 之前要么送
 			);
 			expect(events[at]).toMatchObject({ message: expect.stringContaining(why) });
 			// 它之后的那份 steer_queue 里没有它，之前的最后一份有它（消失之前先有 steer_dropped）。
+			const before = events
+				.slice(0, at)
+				.filter((e) => e.type === "steer_queue")
+				.at(-1);
+			expect(
+				before?.type === "steer_queue" && before.messages.some((m) => m.message_id === messageId),
+			).toBe(true);
 			const next = events.slice(at + 1).find((e) => e.type === "steer_queue");
 			expect(
 				next?.type === "steer_queue" && next.messages.some((m) => m.message_id === messageId),

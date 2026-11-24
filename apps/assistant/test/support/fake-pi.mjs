@@ -128,7 +128,13 @@ function handle(command) {
 	onSteer = undefined;
 	// 默认：收到 abort 就停下（agent_settled，aborted）。
 	onAbort = () => settle(true);
-	if (text.startsWith("settle-slow-close")) {
+	if (text.startsWith("settle-stubborn")) {
+		// 做完这一轮；之后 stdin 被关也不退出（只有 SIGKILL 结束得了它）。
+		stubborn = true;
+		setInterval(() => {}, 60_000);
+		out(assistant("好的"));
+		settle();
+	} else if (text.startsWith("settle-slow-close")) {
 		slowClose = true;
 		out(assistant("好的"));
 		settle();
