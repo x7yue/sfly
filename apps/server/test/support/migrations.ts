@@ -64,6 +64,7 @@ CREATE TABLE "api_tokens" (
 	"session_id" uuid,
 	"task_id" uuid,
 	"issued_by_user_id" uuid,
+	"agent_credential_id" uuid,
 	"scopes" text[] NOT NULL,
 	"created_at" timestamp with time zone NOT NULL,
 	"expires_at" timestamp with time zone,

@@ -2,7 +2,7 @@
 // 可以不连数据库单独测试；数据库实现在这个文件里。
 import { randomUUID } from "node:crypto";
 import type { SessionStatus } from "@sfly/schema";
-import { and, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { taskIsActive } from "../agents/task-credentials.js";
 import type { Db } from "../db/database.js";
 import {
@@ -164,14 +164,9 @@ export class DbAccessStore implements AccessStore {
 				sessionId: apiTokens.sessionId,
 				taskStatus: tasks.status,
 				taskAgentDisabledAt: agents.disabledAt,
-				taskAgentAuthKind: agents.lastAuthKind,
-				// 这台 Agent 有没有没被吊销的 Agent 凭据（任务凭据跟着它：凭据全部吊销之后立刻不认）。
-				taskAgentHasCredential: sql<boolean>`exists (
-					select 1 from ${agentCredentials}
-					where ${agentCredentials.kind} = 'agent'
-						and ${agentCredentials.agentName} = ${tasks.agentName}
-						and ${agentCredentials.revokedAt} is null
-				)`,
+				// 任务凭据派发时这条连接用的那个 Agent 凭据（任务凭据跟着它：它被吊销之后立刻不认；
+				// 不看这个名字有没有别的有效凭据，那样重新签发一个就让它又被认了）。
+				taskCredentialRevokedAt: agentCredentials.revokedAt,
 				sessionProjectId: sessions.projectId,
 				sessionCreatedBy: sessions.createdByUserId,
 				sessionStatus: sessions.status,
@@ -181,6 +176,7 @@ export class DbAccessStore implements AccessStore {
 			.leftJoin(users, eq(users.id, apiTokens.userId))
 			.leftJoin(tasks, eq(tasks.id, apiTokens.taskId))
 			.leftJoin(agents, eq(agents.name, tasks.agentName))
+			.leftJoin(agentCredentials, eq(agentCredentials.id, apiTokens.agentCredentialId))
 			.leftJoin(sessions, eq(sessions.id, apiTokens.sessionId))
 			.where(eq(apiTokens.tokenHash, hash));
 		return (
@@ -200,8 +196,7 @@ export class DbAccessStore implements AccessStore {
 						? null
 						: taskIsActive(row.taskStatus, {
 								agentDisabled: row.taskAgentDisabledAt !== null,
-								agentOnCredentials: row.taskAgentAuthKind === "agent",
-								agentHasCredential: row.taskAgentHasCredential,
+								credentialRevoked: row.taskCredentialRevokedAt !== null,
 							}),
 				session:
 					row.sessionProjectId === null || row.sessionStatus === null

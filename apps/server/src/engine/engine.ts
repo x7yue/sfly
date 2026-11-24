@@ -1443,6 +1443,7 @@ export class Engine implements AgentSessionHandler {
 		const taskToken = await mintTaskCredential(
 			step.tx,
 			{ id: task.id, projectId: run.projectId },
+			conn.credentialId,
 			step.now,
 		);
 		return create(ServerMessageSchema, {
