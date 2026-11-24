@@ -1,4 +1,5 @@
 import { SECRET_MASK, type StoredOrchestrationDocument, TOKEN_VALUE_PATTERN } from "@sfly/schema";
+import { clipChars, indexAfterChars } from "../util/text.js";
 import {
 	type Automaton,
 	automatonBytes,
@@ -586,6 +587,54 @@ export class SecretSet {
 			return maskedByAutomaton(text, count, SECRET_MASK);
 		} catch {
 			return SECRET_MASK;
+		}
+	}
+
+	/**
+	 * {@link mask}，输出只取原文的前 `limit` 个字符（Unicode 码点）的那一部分，再截到 `limit` 个字符：**上限说的是原文的位置，
+	 * 不是打码之后的长度**。打码会让文字变短（一个很长的 secret 值换成六个字符的掩码），按打码之后的长度截的话，
+	 * 原文里排在上限之后的内容（SDK 在传输上限处截断时留下的、另一个值的前半截）会被拉进上限以内。
+	 * 所以：起点在原文第 `limit` 个字符之前的完整出现照常换成掩码；跨在上限上的（起点在前、终点在后）整个换成一个掩码；
+	 * 原文上限之后的一律不输出。再把输出截到 `limit` 个字符（secret 值比掩码短时打码会让文字变长；掩码被切成半截无妨）。
+	 * 和 {@link mask} 一样只认完整的出现，打不打码、输出什么只取决于完整的出现和 `limit`，不做任何部分匹配的判断；
+	 * 一次扫描完成，不先整段打码再回头算位置。**不抛错**。没有 secret 值和令牌时和 {@link clipChars} 一样。
+	 */
+	maskClipped(text: string, limit: number): string {
+		if (text === "") return text;
+		try {
+			const cut = indexAfterChars(text, limit);
+			if (this.texts.length === 0) {
+				const tokens = tokenSpans(text);
+				if (!tokens) return clipChars(text, limit);
+				const count = mergeSpans(0, tokens.starts, tokens.ends);
+				return clipChars(maskedRegion(text, count, 0, cut, SECRET_MASK), limit);
+			}
+			const automaton = this.#automaton();
+			if (!automaton) {
+				return clipChars(
+					text === OVERSIZE_NOTICE && !this.#noticeIsValue() ? text : SECRET_MASK,
+					limit,
+				);
+			}
+			const budget = this.#budget;
+			let count = scanSpans(automaton, text, budget ? budget.masks : MAX_SPANS);
+			if (count < 0) {
+				if (budget) budget.masks = 0;
+				return clipChars(SECRET_MASK, limit);
+			}
+			const tokens = tokenSpans(text);
+			if (tokens) count = mergeSpans(count, tokens.starts, tokens.ends);
+			if (count === 0) return clipChars(text, limit);
+			if (budget) {
+				if (count > budget.masks) {
+					budget.masks = 0;
+					return clipChars(SECRET_MASK, limit);
+				}
+				budget.masks -= count;
+			}
+			return clipChars(maskedRegion(text, count, 0, cut, SECRET_MASK), limit);
+		} catch {
+			return clipChars(SECRET_MASK, limit);
 		}
 	}
 

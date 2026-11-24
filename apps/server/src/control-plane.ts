@@ -29,6 +29,7 @@ import { SetupCode } from "./auth/setup-code.js";
 import { TokenService } from "./auth/tokens.js";
 import { type Clock, systemClock } from "./clock.js";
 import { EnvSettingsError, numericOptionProblems } from "./config/env-settings.js";
+import { gatewayUrlFrom } from "./config/url-setting.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { loadClientTarballs } from "./downloads/client-tarballs.js";
@@ -159,7 +160,7 @@ export interface ControlPlaneOptions {
 	/**
 	 * 借出去的数据库连接（事务里）出错时调用（#563，docs/ARCHITECTURE.md §6.10）：`main.ts` 给的是有序退出进程。
 	 * 这样的连接上的错误以前是没人接的 `error` 事件、进程当场退出；之后的状态不可信（任务结果没写进去、提交之后的派发没人补），
-	 * 靠重启恢复。调用之前连接池已经结束：之后拿连接的请求立刻以错误结束，不再碰数据库。不给：只记日志（测试里的控制面）。
+	 * 靠重启恢复。调用之前连接池已经结束：之后新的拿连接的请求立刻以错误结束，不再碰数据库（已经借出去的连接不受影响，有序关闭等它们做完）。不给：只记日志（测试里的控制面）。
 	 */
 	onFatalDatabaseError?: (error: Error) => void;
 	/**
@@ -579,7 +580,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		throw error;
 	}
 	publicGrpcUrl = (
-		options.publicGrpcUrl ?? withPort(publicHttpUrl, new URL(gateway.url).port)
+		options.publicGrpcUrl ?? gatewayUrlFrom(publicHttpUrl, new URL(gateway.url).port)
 	).replace(/\/+$/, "");
 
 	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
@@ -661,12 +662,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			return closing;
 		},
 	};
-}
-
-/** 同一主机、另一个端口的 http 地址。 */
-function withPort(url: string, port: string): string {
-	const parsed = new URL(url);
-	return `http://${parsed.hostname}:${port}`;
 }
 
 function formatHost(host: string): string {
