@@ -1,7 +1,9 @@
 """探针（#539）：对着录下来的观察下结论，以及容器里那半边的 RPC 读写。
 
-夹具 `fixtures/rpcprobe/q*.json` 是 `./aeval.sh rpcprobe` 一次实跑的输出
-（q1 只留了工具结果，长输出截短了）。
+夹具 `fixtures/rpcprobe/q*.json` 是 `./aeval.sh rpcprobe` 实跑的输出。q1、q9 是 #552
+改用产品的远程工具扩展之后那次（2026-11-25）的，q1 对照是臂 A，
+只留了工具结果和系统提示里的工具清单，长输出截短了；其余是之前用原型扩展那几次的（判法没有变，
+换扩展之后各题的结论除第 8 题的探针时序外都没变，见 README「探针」一节）。
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ def test_recorded_run_verdicts() -> None:
     assert verdicts == {"q1": HOLDS, "q2": HOLDS, "q3": PARTLY, "q4": HOLDS}
 
 
-def test_q1_names_the_step_that_differs_from_json_mode() -> None:
+def test_q1_names_the_step_that_differs_from_arm_a() -> None:
     raw = fixture("q1")
     raw["rpc"][4]["result"]["content"][0]["text"] = "别的输出"
     verdict = judge("q1", raw)
@@ -44,15 +46,35 @@ def test_q1_names_the_step_that_differs_from_json_mode() -> None:
 
 def test_q1_ignores_the_random_name_of_the_full_output_file() -> None:
     raw = fixture("q1")
-    texts = [e["result"]["content"][0]["text"] for e in raw["json"]]
+    texts = [e["result"]["content"][0]["text"] for e in raw["arm_a"]]
     assert any("/tmp/pi-bash-" in t for t in texts)
     assert judge("q1", raw).verdict == HOLDS
 
 
-def test_q1_reports_the_tool_list_in_the_system_prompt() -> None:
+def test_q1_lists_the_known_differences_without_failing() -> None:
+    # 后台进程那两步：臂 A 本地是 200，远程的命令退出后后台进程被结束。
+    # 工具自检对它们没有预期，只记录。
     verdict = judge("q1", fixture("q1"))
-    assert verdict.numbers["prompt_tools"] == ["bash"]
-    assert any("系统提示的工具清单只列了 bash" in fact for fact in verdict.facts)
+    assert verdict.verdict == HOLDS
+    fact = next(f for f in verdict.facts if "已知差别" in f)
+    assert "bash_background_alive" in fact and "bash_setsid_alive" in fact
+
+
+def test_q1_fails_when_arm_a_is_missing_results() -> None:
+    raw = fixture("q1")
+    raw["arm_a"] = raw["arm_a"][:5]
+    verdict = judge("q1", raw)
+    assert verdict.verdict == FAILS
+    assert any("臂 A 只有 5 个工具结果" in fact for fact in verdict.facts)
+
+
+def test_q1_reports_the_tool_list_in_the_system_prompt() -> None:
+    # 产品的扩展替换的工具带着说明：系统提示的工具清单是全的。只列了一部分时另外说一句。
+    verdict = judge("q1", fixture("q1"))
+    assert sorted(verdict.numbers["prompt_tools"]) == ["bash", "edit", "read", "write"]
+    raw = fixture("q1")
+    raw["system_prompt"] = "<tools>\n- bash: Execute bash commands\n</tools>"
+    assert any("系统提示的工具清单只列了 bash" in fact for fact in judge("q1", raw).facts)
 
 
 def test_q1_fails_when_a_file_is_written_locally() -> None:
@@ -436,13 +458,13 @@ def test_q8_is_unfinished_without_the_sigterm_only_run() -> None:
 
 def test_q9_reports_the_slim_image() -> None:
     raw = fixture("q9")
-    assert any("slim" in fact and "能跑" in fact for fact in judge("q9", raw).facts)
+    assert any("助手镜像" in fact and "能跑" in fact for fact in judge("q9", raw).facts)
     raw["slim"] = {"ok": False, "error": "pi: not found"}
     assert judge("q9", raw).verdict == PARTLY
     raw["slim"] = None
     verdict = judge("q9", raw)
     assert verdict.verdict == HOLDS
-    assert "Node 26 的 slim 镜像：没有测" in verdict.facts
+    assert "助手镜像（Node 的 slim 镜像）：没有测" in verdict.facts
 
 
 def test_q10_fails_when_the_prompt_keeps_the_local_directory() -> None:

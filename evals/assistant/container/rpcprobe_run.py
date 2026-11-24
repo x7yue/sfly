@@ -1,7 +1,12 @@
 """探针（#539）在探针容器里的那一半：用助手服务的那套启动参数起 pi 的 RPC 模式，照问题做实验，
 把看到的原样写成 JSON（不下结论；结论由 aeval/rpcprobe.py 在宿主机上算）。
 
-`python3 rpcprobe_run.py <问题> --out <文件>`，问题是 q1…q10。模型是同一个容器里的假模型端点
+远程工具扩展是产品里的那一份（助手镜像里的 `dist/extension.mjs`，#552 起；以前是评测集臂 B 的原型）
+，
+配置照产品的做法：这一轮的配置文件（`turn.json`：工作台的地址、工作区、命令的环境变量、默认超时）的路径
+经环境变量 `SFLY_ASSISTANT_TURN_CONFIG` 交给扩展（apps/assistant/src/turn-config.ts）。
+
+`python3 rpcprobe_run.py <问题> --out <文件>`，问题是 q1…q17。模型是同一个容器里的假模型端点
 （fake_model.py，127.0.0.1:8101），它把收到的每个请求存进 `<根目录>/dump/`。
 
 RPC 的读法照 pi 的文档：stdout 只按 LF 切记录（JSON 字符串里的 U+2028、U+2029 不算换行），
@@ -29,7 +34,10 @@ ROOT = Path("/root/rpcprobe")
 AGENT_DIR = ROOT / "agent"
 SESSIONS = ROOT / "sessions"
 DUMP = ROOT / "dump"
-EXTENSION = "/opt/aeval-remote/extension.mjs"
+EXTENSION = "/opt/aeval-product/extension.mjs"
+# 产品的远程工具扩展读这一轮的配置的地方（apps/assistant/src/launch-env.ts 的 TURN_CONFIG_ENV）。
+TURN_CONFIG_ENV = "SFLY_ASSISTANT_TURN_CONFIG"
+TURN_CONFIG = ROOT / "turn.json"
 WORKSPACE = "/work/tc"
 PROVIDER = "aeval"
 MODEL = "fake"
@@ -53,18 +61,28 @@ def split_lines(stream: IO[bytes]) -> Iterator[bytes]:
         yield pending
 
 
+def turn_config(address: str = "dev:50052") -> Record:
+    """产品的这一轮的配置（apps/assistant/src/turn-config.ts 的 TurnConfig）：
+    工作台是开发环境里的 Agent。"""
+    return {
+        "address": address,
+        "workdir": WORKSPACE,
+        "env": {"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"},
+        "defaultTimeoutSeconds": 1200,
+        "secrets": [],
+    }
+
+
 def base_env() -> dict[str, str]:
-    """只给 PATH、HOME、PI_CODING_AGENT_DIR、PI_TELEMETRY 和交给扩展的几项
-    （issue 里定的启动环境）。"""
+    """只给 PATH、HOME、PI_CODING_AGENT_DIR、PI_TELEMETRY 和扩展的配置文件路径
+    （助手服务起 pi 时给的那几项，apps/assistant/src/launch.ts）。配置文件由宿主机准备探针容器时写好
+    （aeval/rpcprobe.py 的 `prepare`，内容同 `turn_config()`）。"""
     return {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/root"),
         "PI_CODING_AGENT_DIR": str(AGENT_DIR),
         "PI_TELEMETRY": "0",
-        "AEVAL_AGENT_ADDR": os.environ.get("AEVAL_AGENT_ADDR", "dev:50052"),
-        "AEVAL_REMOTE_ENV": json.dumps({"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"}),
-        "AEVAL_REMOTE_LOG": str(ROOT / "remote-tools.jsonl"),
-        "AEVAL_DEFAULT_TIMEOUT": "1200",
+        TURN_CONFIG_ENV: str(TURN_CONFIG),
     }
 
 
@@ -196,28 +214,6 @@ class RpcPi:
             return list(self.records)
 
 
-def run_json_mode(prompt: str, session_dir: Path) -> list[Record]:
-    """对照：评测集臂 B 的 JSON 模式（session_driver.py 的那组参数加远程工具扩展）。"""
-    cmd = [
-        "pi", "--mode", "json", "--no-approve", "--offline",
-        "--provider", PROVIDER, "--model", MODEL,
-        "--session-dir", str(session_dir), "--extension", EXTENSION, prompt,
-    ]  # fmt: skip
-    proc = subprocess.run(
-        cmd, cwd=WORKSPACE, env=base_env(), stdin=subprocess.DEVNULL, capture_output=True,
-        timeout=600, check=False,
-    )  # fmt: skip
-    events: list[Record] = []
-    for raw in proc.stdout.split(b"\n"):
-        try:
-            record = json.loads(raw)
-        except ValueError:
-            continue
-        if isinstance(record, dict):
-            events.append(record)
-    return events
-
-
 def dumped_requests(since: int = 0) -> list[Record]:
     files = sorted(DUMP.glob("*.json"))[since:]
     return [json.loads(f.read_text()) for f in files]
@@ -231,8 +227,9 @@ def dump_count() -> int:
 
 
 def q1() -> Record:
-    """四个工具：同一个剧本，JSON 模式（臂 B 的参数）和 RPC 模式（助手服务的参数）各跑一遍。"""
-    json_events = run_json_mode(TOOLCHECK_PROMPT, SESSIONS / "q1-json")
+    """四个工具：照工具自检的剧本，用助手服务的参数跑 RPC 模式。对照是臂 A（原版 pi、
+    工具在本地执行）的
+    同一个剧本，由宿主机在开发环境里跑（aeval/rpcprobe.py），这里只跑 RPC 模式这一半。"""
     local = Path(WORKSPACE) / "new"
     shutil.rmtree(local, ignore_errors=True)
     before = dump_count()
@@ -246,7 +243,6 @@ def q1() -> Record:
         else []
     )
     return {
-        "json": json_events,
         "rpc": pi.events(),
         "rpc_exit_seconds": exit_seconds,
         "declared_tools": declared,
@@ -321,7 +317,7 @@ def read_only_agent_dir() -> Record:
     for path in (base, sessions, home):
         os.chown(path, NOBODY, NOBODY)
     agent.chmod(0o755)
-    # 远程工具扩展启动时把工作台上的 skill 复制到本地同名目录，要能写。
+    # pi 的工作目录要 nobody 进得去（产品的扩展不在本地写文件）。
     subprocess.run(["chown", "-R", f"{NOBODY}:{NOBODY}", WORKSPACE], check=True)
     cmd = [
         "setpriv", f"--reuid={NOBODY}", f"--regid={NOBODY}", "--clear-groups",
@@ -336,10 +332,14 @@ def read_only_agent_dir() -> Record:
             ),
         ),
     ]  # fmt: skip
+    # 扩展的配置文件也要 nobody 读得到（/root 下的那份读不到）。
+    config = base / "turn.json"
+    config.write_text(json.dumps(turn_config()))
+    os.chown(config, NOBODY, NOBODY)
     env = {
         "HOME": str(home),
         "PI_CODING_AGENT_DIR": str(agent),
-        "AEVAL_REMOTE_LOG": str(base / "remote-tools.jsonl"),
+        TURN_CONFIG_ENV: str(config),
     }
     try:
         pi = RpcPi(cmd, env=env, stderr=base / "pi-stderr.log")
@@ -892,6 +892,9 @@ def q8() -> Record:
             "session_tool_result": tool_result_in_session(session_file(session)),
             "session_last_line_json": last_line_is_json(session_file(session)),
         }
+    # 宿主机在工作台上每 0.2 秒采样一次、这题做完就读：最后一种退出得快，
+    # 留 1 秒让采样看到之后的样子。
+    time.sleep(1.0)
     return result
 
 

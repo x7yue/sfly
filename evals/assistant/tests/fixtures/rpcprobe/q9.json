@@ -2,29 +2,29 @@
 	"ok": true,
 	"runs": [
 		{
-			"ready_seconds": 1.327,
-			"idle_rss_mib": 116.4,
-			"peak_hwm_mib": 135.1,
-			"after_turn_rss_mib": 135.1
+			"ready_seconds": 0.301,
+			"idle_rss_mib": 140.7,
+			"peak_hwm_mib": 161.9,
+			"after_turn_rss_mib": 156.6
 		},
 		{
-			"ready_seconds": 2.029,
-			"idle_rss_mib": 117.3,
-			"peak_hwm_mib": 136.1,
-			"after_turn_rss_mib": 136.1
+			"ready_seconds": 0.188,
+			"idle_rss_mib": 140.8,
+			"peak_hwm_mib": 162.5,
+			"after_turn_rss_mib": 156.9
 		},
 		{
-			"ready_seconds": 0.854,
-			"idle_rss_mib": 117.0,
-			"peak_hwm_mib": 136.3,
-			"after_turn_rss_mib": 136.3
+			"ready_seconds": 0.23,
+			"idle_rss_mib": 140.9,
+			"peak_hwm_mib": 162.0,
+			"after_turn_rss_mib": 156.1
 		}
 	],
 	"slim": {
 		"ok": true,
-		"base": "node:26-trixie-slim",
+		"image": "sfly-assistant:p552",
 		"pi": "1.6.0",
 		"node": "v26.13.1",
-		"image_mib": 551
+		"image_mib": 568
 	}
 }
