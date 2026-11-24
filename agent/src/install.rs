@@ -518,7 +518,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        IndexAnswer, conflict_note, index_args, index_check_failure, requirement_name,
+        IndexAnswer, conflict_note, index_args, index_check_failure, mentioned, requirement_name,
         std_project_url,
     };
 
@@ -606,6 +606,7 @@ mod tests {
             "sfly-c@1.0.0",
             &["sfly-std>=0.4".to_string(), "httpx>=0.25".to_string()],
             "sfly-c",
+            None,
             &others,
             NO_SOLUTION,
         )
