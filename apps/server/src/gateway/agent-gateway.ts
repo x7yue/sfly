@@ -65,11 +65,21 @@ export interface RunningTaskRef {
  *
  * 这是防止内存被一条消息占满的兜底，不是正常路径上的限制。要高过还没升级的 Agent 能发出的最大的一条：一批日志（`LogBatch`）条数
  * 上限 1000、每行最多 64 KiB，但 Agent 自己的排队上限是 64 MiB，超过的整批在 Agent 那边就丢掉了（#663），所以它真正发得出的最大
- * 一条是 64 MiB 多一点；80 MiB 比它高一截，升级途中的 Agent 不会被拒。升级之后（#663）一批最多 2 MiB 加最后一条（日志一条
- * 约 0.3 MiB、动作明细约 128 KiB），节点输出结果限在 1 MB（`MAX_OUTPUT_BYTES`），指标一批 1 万个点：Agent 都升过 #663 之后可以降到
- * 16 MiB（docs/ARCHITECTURE.md）。
+ * 一条是 64 MiB 多一点；80 MiB 比它高一截，升级途中的 Agent 不会被拒。
+ *
+ * **不能随便降**。超限的遥测（日志、指标、动作明细）只让这台 Agent 断一次：遥测断线时不重发。但有几种消息今天没有上界：
+ * 失败的结果（节点抛出的异常文字同时写进 `message` 和 `traceback`，Agent 再拼成一条，8 MiB 的异常文字变成 16 MiB 的结果，约
+ * 40 MiB 的异常文字就超过这个上限；没确认的结果每条新连接都先重发，被拒之后 Agent 一直重连、这台 Agent 接不到新任务，#723）、
+ * 动作摘要（列满时约 16 MiB）和进度的说明文字（也不限长，#694）。这几种有了上界之后才谈得上降低（16 MiB 之类），
+ * 现在降的话，一条 8 MiB 文字的异常就会卡住整台 Agent（docs/ARCHITECTURE.md）。
  */
 export const AGENT_MESSAGE_MAX_BYTES = 80 * 1024 * 1024;
+
+/**
+ * 一条连接上同时能开的流数（HTTP/2 的 `SETTINGS_MAX_CONCURRENT_STREAMS`）：4。真实 Agent 和测试里的假 Agent 每条连接只开一条
+ * Session 流；重连是新连接，旧连接上的流不占新连接的名额。留 3 条余量只是不让一个多开一条流的客户端立刻被拒。
+ */
+export const AGENT_MAX_CONCURRENT_STREAMS = 4;
 
 /** 一条消息超过上限、这条连接被关闭：只有哪台 Agent、来源地址、声明的大小和上限，没有消息的任何内容。 */
 export interface MessageTooLarge {
@@ -77,8 +87,8 @@ export interface MessageTooLarge {
 	agent: string | undefined;
 	/** 连接的来源地址。 */
 	source: string;
-	/** 消息声明的大小（字节）；读不出来时为 undefined。 */
-	size: number | undefined;
+	/** 消息声明的大小（字节）。 */
+	size: number;
 	/** 当时的上限（字节）。 */
 	limit: number;
 }
@@ -106,14 +116,16 @@ const remoteAddressKey = createContextKey<string | undefined>(undefined, {
 });
 
 /**
- * 连接库读请求流时遇到的「消息超过 `readMaxBytes`」：是的话返回声明的大小（读不出来时 undefined），不是返回 null。
+ * 连接库读请求流时遇到的「消息超过 `readMaxBytes`」：是的话返回声明的大小，不是返回 null。
  * 库的错误文字是 `message size <声明的大小> is larger than configured readMaxBytes <上限>`，错误码 `resource_exhausted`。
+ * 网关不接受压缩（`acceptCompression: []`），所以没有「解压之后才超限」这一种：大小总是线上的长度前缀声明的。
  */
-function tooLargeSize(error: unknown): { size: number | undefined } | null {
+function tooLargeSize(error: unknown): { size: number } | null {
 	if (!(error instanceof ConnectError) || error.code !== Code.ResourceExhausted) return null;
-	if (!error.rawMessage.includes("larger than configured readMaxBytes")) return null;
-	const size = /message size (\d+)/.exec(error.rawMessage)?.[1];
-	return { size: size === undefined ? undefined : Number(size) };
+	const size = /^message size (\d+) is larger than configured readMaxBytes /.exec(
+		error.rawMessage,
+	)?.[1];
+	return size === undefined ? null : { size: Number(size) };
 }
 
 /** proto 的 RunningTask（Hello、Heartbeat 里 Agent 手上的任务）。 */
@@ -283,12 +295,21 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
 	}
 	const handler = connectNodeAdapter({
 		readMaxBytes,
+		// 不接受压缩（库默认接受 gzip 和 br）：压缩让一条线上很小的消息就把内存真的写到接近上限，而且在握手之前就能做。
+		// 不压缩的时候，只发长度前缀的流按声明的长度留出的缓冲区没有写过，不占物理内存。Agent 从不压缩（tonic 没开压缩特性）。
+		// 带 `grpc-encoding` 的请求以 unimplemented 拒绝，不解压。
+		acceptCompression: [],
 		routes(router) {
 			router.service(AgentGateway, gatewayService(options));
 		},
 		contextValues: (req) => createContextValues().set(remoteAddressKey, req.socket.remoteAddress),
 	});
-	const server = http2.createServer(handler);
+	// 每条连接上同时能开的流数：一台 Agent 一条连接、一条 Session 流（重连是新连接），留一点余量。库和 Node 的默认是
+	// 4294967295：一个没有认证的连接可以同时开几百条流、每条各声明一个接近上限的长度，按声明的长度留出的缓冲区就是这么多。
+	const server = http2.createServer(
+		{ settings: { maxConcurrentStreams: AGENT_MAX_CONCURRENT_STREAMS } },
+		handler,
+	);
 	const sessions = new Set<http2.ServerHttp2Session>();
 	server.on("session", (session) => {
 		sessions.add(session);
