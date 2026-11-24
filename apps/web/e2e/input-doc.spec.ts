@@ -157,6 +157,6 @@ test("节点包管理页：悬停或聚焦输入的名字显示说明，没有�
 	await expect(tip).toHaveCount(0);
 
 	// 键盘也拿得到：Tab 到名字上就显示。
-	await row.getByText("mode", { exact: true }).focus();
+	await row.locator('[tabindex="0"]').filter({ hasText: /^mode$/ }).focus();
 	await expect(tip).toHaveText(MODE);
 });
