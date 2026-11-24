@@ -5,6 +5,13 @@
 产物引用是控制面上的下载地址 `GET <控制面>/tasks/<任务 ID>/artifacts/<名称>`
 （apps/server/src/http/artifact-routes.ts）：200 是文件内容，404 是产物不存在，
 410 是运行已过保留期、产物被清理。下载直接访问这个地址，不经过 Agent。
+
+任务凭据（#492）：Agent 把控制面随任务下发的任务凭据放进环境变量 `SFLY_TASK_TOKEN`，下载时带
+`Authorization: Bearer`。它只对**控制面的地址**带——和 `SFLY_ARTIFACTS_URL`（Agent 给的产物地址前缀，
+就是控制面）同一个协议、主机和端口的地址；产物引用可以是任何 http(s) 地址（节点输出里的引用来自
+上游节点，上游节点能写任何东西），别的地址一律不带；控制面的地址重定向到别的地方时，跟着去的请求里
+也不带（urllib 默认会把请求头带到重定向的新地址）。凭据只在这次任务尝试有效，
+任务结束之后下载是 401。
 """
 
 from __future__ import annotations
@@ -15,10 +22,14 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping
+from http.client import HTTPMessage
 from pathlib import Path
+from typing import IO
 from urllib.parse import urlsplit
 
 from sfly.context import ArtifactDownloadError, cancelled_error
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 #: 每次读写的块大小：内存占用与产物大小无关。
 _CHUNK = 64 * 1024
@@ -43,8 +54,14 @@ def download(
     timeout: float,
     local: Mapping[str, str],
     cancelled: Callable[[], bool],
+    task_token: str | None = None,
+    control_plane_url: str | None = None,
 ) -> Path:
     """把产物引用 `ref` 的内容写到 `dest`，返回 `dest`。见 `Artifacts.download`。
+
+    `task_token` 是任务凭据（`SFLY_TASK_TOKEN`），`control_plane_url` 是控制面的地址
+    （`SFLY_ARTIFACTS_URL`）：只对和它同一个协议、主机和端口的地址带凭据（见模块说明）；
+    任何一个没有（本地调试、旧版本控制面或 Agent 不下发）就不带。
 
     任务已经进入收尾时间（取消标记在）时一开头就抛出 `Cancelled`，不检查引用、不发请求、不写文件：
     和 `AgentSocket.call` 同一个口径。
@@ -65,7 +82,12 @@ def download(
     if url.scheme.lower() in ("http", "https"):
         if not url.hostname:
             raise ArtifactDownloadError(f"产物引用无效：下载地址里没有主机名（{ref}）")
-        return _fetch(ref, url.netloc, target, retries, timeout, cancelled)
+        credential = (
+            _Credential(task_token, control_plane_url)
+            if task_token and control_plane_url and _same_origin(ref, control_plane_url)
+            else None
+        )
+        return _fetch(ref, url.netloc, target, retries, timeout, cancelled, credential)
     # 本地调试时产物引用是产物的本地文件路径。
     if Path(ref).is_file():
         return _write(target, lambda: _read_file(Path(ref)), cancelled)
@@ -73,6 +95,63 @@ def download(
         f"产物引用无效：既不是 http(s) 下载地址，也不是已有的本地文件（{ref}）。"
         "产物引用来自 ctx.artifacts.save / ref 的返回值"
     )
+
+
+def _origin(url: str) -> tuple[str, str, int | None] | None:
+    """协议、主机（小写）和端口（没写的取协议的默认端口）；不是 http(s) 地址时为 None。"""
+    try:
+        parts = urlsplit(url)
+        scheme = parts.scheme.lower()
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return None
+    if scheme not in _DEFAULT_PORTS or not host:
+        return None
+    return scheme, host, port if port is not None else _DEFAULT_PORTS[scheme]
+
+
+def _same_origin(url: str, other: str) -> bool:
+    origin = _origin(url)
+    return origin is not None and origin == _origin(other)
+
+
+class _Credential:
+    """任务凭据和它可以发给的地址（控制面的地址）。"""
+
+    def __init__(self, token: str, control_plane_url: str) -> None:
+        self.token = token
+        self.control_plane_url = control_plane_url
+
+    def applies_to(self, url: str) -> bool:
+        return _same_origin(url, self.control_plane_url)
+
+
+class _KeepCredentialOnlyAtHome(urllib.request.HTTPRedirectHandler):
+    """重定向到别的主机（或端口、协议）时去掉 `Authorization`。
+
+    urllib 默认把原请求的头都带到重定向的新地址。"""
+
+    def __init__(self, credential: _Credential | None) -> None:
+        super().__init__()
+        self._credential = credential
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and (
+            self._credential is None or not self._credential.applies_to(newurl)
+        ):
+            new.headers.pop("Authorization", None)
+            new.unredirected_hdrs.pop("Authorization", None)
+        return new
 
 
 def _read_file(source: Path) -> Iterator[bytes]:
@@ -106,11 +185,12 @@ def _fetch(
     retries: int,
     timeout: float,
     cancelled: Callable[[], bool],
+    credential: _Credential | None = None,
 ) -> Path:
     attempts = max(0, retries) + 1
     for attempt in range(attempts):
         try:
-            return _write(target, lambda: _read_url(ref, host, timeout), cancelled)
+            return _write(target, lambda: _read_url(ref, host, timeout, credential), cancelled)
         except _Transient as error:
             if attempt + 1 == attempts:
                 tried = f"已重试 {attempts - 1} 次" if attempts > 1 else "未重试"
@@ -127,17 +207,26 @@ def _sleep(seconds: float, cancelled: Callable[[], bool]) -> None:
         time.sleep(min(left, _CANCEL_POLL))
 
 
-def _read_url(ref: str, host: str, timeout: float) -> Iterator[bytes]:
+def _read_url(
+    ref: str, host: str, timeout: float, credential: _Credential | None = None
+) -> Iterator[bytes]:
     """一次下载尝试：逐块产出响应体。
 
     可重试的失败抛 `_Transient`，其余抛 `ArtifactDownloadError`。
     """
-    request = urllib.request.Request(ref, headers={"accept-encoding": "identity"})
+    headers = {"accept-encoding": "identity"}
+    if credential is not None:
+        headers["Authorization"] = f"Bearer {credential.token}"
+    request = urllib.request.Request(ref, headers=headers)
     try:
-        response = urllib.request.urlopen(request, timeout=timeout)
+        response = urllib.request.build_opener(_KeepCredentialOnlyAtHome(credential)).open(
+            request, timeout=timeout
+        )
     except urllib.error.HTTPError as error:
         with error:
             status = error.code
+        if status in (401, 403):
+            raise ArtifactDownloadError(_refused(status, credential is not None, ref)) from None
         if status == 404:
             raise ArtifactDownloadError(
                 f"产物不存在（HTTP 404）：任务没有保存过这个产物，或产物还没有上传完"
@@ -173,6 +262,21 @@ def _read_url(ref: str, host: str, timeout: float) -> Iterator[bytes]:
             yield chunk
         if expected is not None and received != expected:
             raise _Transient(f"连接中断：只收到 {received} / {expected} 字节")
+
+
+def _refused(status: int, sent_credential: bool, ref: str) -> str:
+    """控制面拒绝了下载（401、403）：不是网络问题，重试没有用。消息不带凭据。"""
+    if sent_credential:
+        return (
+            f"下载产物被控制面拒绝（HTTP {status}）：任务凭据无效或已失效——"
+            f"它只在这次任务尝试有效，任务结束、被取消或租约过期之后不能再下载，"
+            f"也只能下载本项目任务的产物（{ref}）"
+        )
+    return (
+        f"下载产物被控制面拒绝（HTTP {status}）：这次请求没有带任务凭据——"
+        "产物地址不在控制面上，或者这台 Agent 没有下发任务凭据"
+        f"（旧版本的 Agent 或控制面不下发）（{ref}）"
+    )
 
 
 def _describe(error: BaseException) -> str:

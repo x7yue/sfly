@@ -503,10 +503,13 @@ class Artifacts:
         cancelled: Callable[[], bool] | None = None,
         downloads_path: str | os.PathLike[str] | None = None,
         limit_bytes: int | None = None,
+        task_token: str | None = None,
     ) -> None:
         from pathlib import Path
 
         self._limit = limit_bytes
+        # 任务凭据（`SFLY_TASK_TOKEN`，#492）：下载产物时只对控制面的地址（下载地址前缀 `url`）带。
+        self._task_token = task_token or None
         self._dir = Path(directory) if directory is not None else None
         self._url = url or None
         self._cancelled = cancelled
@@ -550,6 +553,8 @@ class Artifacts:
             timeout=timeout,
             local=self._local_downloads(),
             cancelled=self._cancelled or (lambda: False),
+            task_token=self._task_token,
+            control_plane_url=self._url,
         )
 
     def _local_downloads(self) -> dict[str, str]:
@@ -784,6 +789,7 @@ class Context:
             cancelled=self.cancelled,
             downloads_path=os.environ.get("SFLY_DOWNLOADS"),
             limit_bytes=artifact_limit_bytes,
+            task_token=os.environ.get("SFLY_TASK_TOKEN"),
         )
         # 指标名 → (类型, 声明的标签键)。
         self._metrics = (

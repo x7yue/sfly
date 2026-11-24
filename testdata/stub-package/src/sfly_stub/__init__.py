@@ -553,6 +553,32 @@ def artifacts(
     return {"refs": refs}
 
 
+@node(title="任务凭据", outputs=["token_env", "artifacts_url_env"])
+def task_credential(ctx: Context) -> dict[str, Any]:
+    """任务凭据测试用（#492）：输出执行器环境变量 `SFLY_TASK_TOKEN` 的原文（没有时为 None）。
+
+    测试用它确认 Agent 把任务凭据放进了环境变量，并拿它去核对任务目录和日志里没有原值。
+    """
+    return {
+        "token_env": os.environ.get("SFLY_TASK_TOKEN"),
+        "artifacts_url_env": os.environ.get("SFLY_ARTIFACTS_URL"),
+    }
+
+
+@node(title="用 SDK 下载产物", outputs=["texts", "token_reversed"])
+def artifact_download(ctx: Context, refs: dict[str, str]) -> dict[str, Any]:
+    """用 SDK 的 `ctx.artifacts.download` 下载产物引用（任务凭据由 SDK 带上，#492）。
+
+    输出下载到的文本，和环境变量里任务凭据**倒过来**的原文（控制面把输出和日志里长得像令牌的值盖成
+    `******`，原样输出会被盖住）：测试把它倒回来，在任务结束之后拿它再下载，应当是 401。
+    """
+    texts = {}
+    for name, ref in refs.items():
+        path = ctx.artifacts.download(ref, f"downloaded/{name}")
+        texts[name] = path.read_text(encoding="utf-8")
+    return {"texts": texts, "token_reversed": (os.environ.get("SFLY_TASK_TOKEN") or "")[::-1]}
+
+
 @node(title="产物上限", outputs=["refs", "limit", "refused", "limit_env"])
 def artifact_limit(
     ctx: Context,

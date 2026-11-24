@@ -120,6 +120,11 @@ struct State {
     agent_binary: Mutex<(String, String)>,
     /// 这些会话（序号从 0 开始）里的 Hello 不回 Welcome，直接结束会话（握手失败）。
     reject_sessions: Mutex<HashSet<usize>>,
+    /// 非空时每个新会话都以这个 gRPC 状态被拒绝（和真的控制面认证失败一样：流一打开就是错误，不读 Hello）。
+    /// 被拒绝的连接不占会话序号，也不记进 `received`。
+    reject_status: Mutex<Option<(tonic::Code, String)>>,
+    /// 被拒绝的每次连接的时间（[`FakeControlPlane::rejection_times`]）。
+    rejections: Mutex<Vec<tokio::time::Instant>>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -360,6 +365,22 @@ impl FakeControlPlane {
         self.state.reject_sessions.lock().unwrap().extend(sessions);
     }
 
+    /// 之后每个新连接都以 `code`（`Unauthenticated` 或 `PermissionDenied`）和说明 `message` 被拒绝，直到
+    /// [`stop_rejecting`](Self::stop_rejecting)；再调用一次可以换成别的原因。
+    pub fn reject_every_connection(&self, code: tonic::Code, message: &str) {
+        *self.state.reject_status.lock().unwrap() = Some((code, message.to_string()));
+    }
+
+    /// 不再拒绝，之后的连接照常回 Welcome。
+    pub fn stop_rejecting(&self) {
+        *self.state.reject_status.lock().unwrap() = None;
+    }
+
+    /// 被拒绝的每次连接的时间（按到达顺序）。
+    pub fn rejection_times(&self) -> Vec<tokio::time::Instant> {
+        self.state.rejections.lock().unwrap().clone()
+    }
+
     /// 等到一条带更新状态、且 `pick` 接受的 Heartbeat，返回其中的更新状态。
     pub async fn update_status(
         &self,
@@ -419,6 +440,15 @@ impl AgentGateway for Gateway {
     ) -> Result<Response<Self::SessionStream>, Status> {
         let mut inbound = request.into_inner();
         let state = self.state.clone();
+        let rejected = state.reject_status.lock().unwrap().clone();
+        if let Some((code, message)) = rejected {
+            state
+                .rejections
+                .lock()
+                .unwrap()
+                .push(tokio::time::Instant::now());
+            return Err(Status::new(code, message));
+        }
         let session = state.sessions.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel(16);
         *state.current.lock().unwrap() = Some(tx.clone());

@@ -134,6 +134,7 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 
 - Agent 的文件都在 `SFLY_HOME`（默认 `~/.sfly`）下：共享 venv 默认 `$SFLY_HOME/venv`，任务工作目录默认 `$SFLY_HOME/work`，`sfly dev` 用的本地 socket 默认 `$SFLY_HOME/work/agent.sock`，从哪个目录启动都一样。
 - 启动时读取 `$SFLY_HOME/agent.env`：每行一个 `KEY=VALUE`，键是参数对应的环境变量名（如 `SFLY_SERVER`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`），`#` 开头的行是注释；命令行参数和环境变量优先于它。`sfly publish` 在没有 `--server` 和 `SFLY_SERVER` 时使用其中的 `SFLY_CONTROL_PLANE_URL`（控制面 HTTP 地址）。
+- `--token`（`SFLY_TOKEN`，写在 `agent.env` 里）是 **Agent 凭据**（`sfly_agt_` 开头，管理员为这台 Agent 签发；过渡期里控制面还接受共享注册令牌）：放进 Hello，下载节点包归档和上传产物时带 `Authorization: Bearer`（只对控制面下发的地址带，重定向到别的主机时不带）。控制面派发任务时下发的**任务凭据**只放进执行器的环境变量 `SFLY_TASK_TOKEN`（不写日志和任务目录）。被控制面拒绝（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）时 Agent 不退出，按 30 秒起翻倍、5 分钟封顶的等待重试，原因只在第一次和变了的时候打一行到标准错误，管理员改好之后自己连上，不需要重启。
 - 连上控制面、收到 Welcome（带控制面配置的镜像）之后准备运行环境：
   - uv：没有 `--uv` 时使用 `$SFLY_HOME/bin/uv`，不存在时用 GitHub Release 镜像上 `astral-sh/uv/LatestRelease/uv-installer.sh` 安装到 `$SFLY_HOME/bin`（不修改 PATH；安装脚本需要 curl 或 wget，下载时带 `--user-agent` 的 User-Agent）。指定了 `--uv` 时 Agent 不管理 uv。
   - 共享 venv 不存在时用 `uv venv --python 3.13` 创建，Python 从 GitHub Release 镜像的 `astral-sh/python-build-standalone/` 下载；之后不主动升级 Python。`--python` 可以指定别的版本或解释器。

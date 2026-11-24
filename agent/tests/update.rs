@@ -1228,6 +1228,47 @@ async fn starts_failing_because_the_control_plane_is_unreachable_are_not_counted
     assert!(home.join("bin/sfly-agent.prev").exists());
 }
 
+/// 试用中的新版本被控制面明确拒绝（凭据无效、被停用……，#492）：不是新版本的错，换回旧版本也一样会被拒绝，所以不计入
+/// 失败次数、不回滚；Agent 也不退出，被拒绝很多次（超过 [`MAX_ATTEMPTS`] 次）之后管理员改好，新版本照常连上。
+#[tokio::test]
+async fn starts_rejected_by_the_control_plane_are_not_counted_and_do_not_roll_back() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let exe = install_into(&home);
+    let http = HttpFixture::start().await;
+    let cp = control_plane("").await;
+
+    // 旧版本更新到新版本，新版本第一次启动就退出（没有名称）：计 1 次。
+    write_config(&home);
+    let env = home.join("agent.env");
+    let mut old = upgrade_while_running(&cp, &http, real_agent(&exe, &home, &cp), || {
+        std::fs::remove_file(&env).unwrap();
+    })
+    .await;
+    assert_ne!(exit_code(&mut old).await, Some(0));
+    assert_eq!(std::fs::read(&exe).unwrap(), new_binary());
+    write_config(&home);
+
+    // 控制面拒绝每一条连接：新版本一直在重试（退避改成 50 毫秒），6 次被拒绝（失败次数的上限是 3）之后
+    // 没有回滚、没有退出。
+    let sessions = hello_versions(&cp).len();
+    cp.reject_every_connection(tonic::Code::PermissionDenied, "Agent 被停用");
+    let mut child = real_agent(&exe, &home, &cp)
+        .env("SFLY_REJECTED_RETRY_MIN_MS", "50")
+        .env("SFLY_REJECTED_RETRY_MAX_MS", "100")
+        .start();
+    support::wait_until("6 次被拒绝", || cp.rejection_times().len() >= 6).await;
+    assert!(child.try_wait().unwrap().is_none(), "没有退出");
+    assert_eq!(std::fs::read(&exe).unwrap(), new_binary(), "没有回滚");
+    assert!(home.join("bin/sfly-agent.prev").exists());
+
+    // 管理员改好：同一个进程连上，试用结束。
+    cp.stop_rejecting();
+    cp.hello(sessions).await;
+    assert_eq!(std::fs::read(&exe).unwrap(), new_binary(), "没有回滚");
+    assert!(child.try_wait().unwrap().is_none());
+}
+
 fn is_root() -> bool {
     let output = std::process::Command::new("id").arg("-u").output().unwrap();
     String::from_utf8_lossy(&output.stdout).trim() == "0"

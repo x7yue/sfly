@@ -407,3 +407,86 @@ async fn numbers_in_progress_and_action_fields_reach_the_control_plane_unchanged
         .collect();
     assert_eq!(fields, [("价格".to_string(), format!("{price:?}"))]);
 }
+
+/// 任务凭据（#492）：放进执行器的环境变量 `SFLY_TASK_TOKEN`；不写进 `task.json`、任务目录里的任何文件、日志、Agent 的输出。
+const TASK_TOKEN: &str = "sfly_tsk_0123456789abcdef0123456789abcdef";
+
+/// 目录树里（含子目录）有没有文件的内容里出现 `needle`。
+fn files_containing(dir: &Path, needle: &str) -> Vec<String> {
+    fn walk(dir: &Path, needle: &str, found: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, needle, found);
+            // 只读普通文件：任务目录里的 events.fifo 是命名管道，读它会一直等下去。
+            } else if path.is_file()
+                && std::fs::read(&path)
+                    .map(|bytes| bytes.windows(needle.len()).any(|w| w == needle.as_bytes()))
+                    .unwrap_or(false)
+            {
+                found.push(path.display().to_string());
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(dir, needle, &mut found);
+    found
+}
+
+#[tokio::test]
+async fn the_task_token_reaches_the_executor_only_as_an_environment_variable() {
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-task-token");
+    options.pipe_stderr = true;
+    let mut agent = spawn_agent(options);
+    let stderr = support::capture_stderr(&mut agent);
+    cp.hello(0).await;
+
+    let mut task = stub_task("task-token", "task_credential", json!({}));
+    task.task_token = TASK_TOKEN.into();
+    task.artifact_upload_url = "http://control-plane.invalid/tasks/task-token/artifacts/".into();
+    cp.assign(task).await;
+    let (result, _) = cp.result("task-token").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    // 节点读得到（SDK 用它下载产物）。
+    assert_eq!(outputs(&result)["token_env"], json!(TASK_TOKEN));
+    // 任务目录里（task.json、stdout.log、stderr.log、产物目录……）没有原值；只有 output.json 里有，那是节点自己
+    // 把环境变量的值写进了它的输出。
+    let task_dir = agent.work_dir.path().join("task-token");
+    assert!(task_dir.is_dir(), "{}", task_dir.display());
+    let output_json = task_dir.join("output.json").display().to_string();
+    assert_eq!(
+        files_containing(&task_dir, TASK_TOKEN),
+        vec![output_json.clone()]
+    );
+    assert_eq!(files_containing(&task_dir, "sfly_tsk_"), vec![output_json]);
+    // 回给控制面的日志、结果里没有。
+    let logs = cp.task_logs("task-token");
+    assert!(
+        logs.iter().all(|l| !l.text.contains("sfly_tsk_")),
+        "{logs:?}"
+    );
+    // Agent 自己的标准错误里没有。
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let everything = stderr.lock().unwrap().join("\n");
+    assert!(!everything.contains("sfly_tsk_"), "{everything}");
+}
+
+#[tokio::test]
+async fn without_a_task_token_the_environment_variable_is_not_set() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-no-task-token"));
+    cp.hello(0).await;
+
+    // 旧版本控制面不带这个字段：为空，不设置，不是设成空串。
+    cp.assign(stub_task("task-no-token", "task_credential", json!({})))
+        .await;
+    let (result, _) = cp.result("task-no-token").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    assert_eq!(outputs(&result)["token_env"], Value::Null);
+}

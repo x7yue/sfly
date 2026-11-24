@@ -40,8 +40,15 @@ pub struct Upload {
     pub at: tokio::time::Instant,
 }
 
-/// 收到的 GET 请求：(路径, User-Agent)。
-type Requests = Arc<Mutex<Vec<(String, Option<String>)>>>;
+/// 收到的一次 GET 请求。
+#[derive(Debug, Clone)]
+struct Request {
+    path: String,
+    user_agent: Option<String>,
+    authorization: Option<String>,
+}
+
+type Requests = Arc<Mutex<Vec<Request>>>;
 
 #[derive(Default)]
 struct Files {
@@ -171,7 +178,7 @@ impl HttpFixture {
     /// 收到的请求路径（按到达顺序）。
     pub fn requests(&self) -> Vec<String> {
         let requests = self.requests.lock().unwrap();
-        requests.iter().map(|(path, _)| path.clone()).collect()
+        requests.iter().map(|r| r.path.clone()).collect()
     }
 
     /// 对 `path` 的每次请求带的 User-Agent（没有这个头时为 None）。
@@ -179,8 +186,18 @@ impl HttpFixture {
         let requests = self.requests.lock().unwrap();
         requests
             .iter()
-            .filter(|(p, _)| p == path)
-            .map(|(_, ua)| ua.clone())
+            .filter(|r| r.path == path)
+            .map(|r| r.user_agent.clone())
+            .collect()
+    }
+
+    /// 对 `path` 的每次请求带的 `Authorization`（没有这个头时为 None）。
+    pub fn authorizations(&self, path: &str) -> Vec<Option<String>> {
+        let requests = self.requests.lock().unwrap();
+        requests
+            .iter()
+            .filter(|r| r.path == path)
+            .map(|r| r.authorization.clone())
             .collect()
     }
 
@@ -266,10 +283,11 @@ async fn serve(
         .next()
         .unwrap_or("/")
         .to_string();
-    requests.lock().unwrap().push((
-        path.clone(),
-        header(&head, "user-agent").map(str::to_string),
-    ));
+    requests.lock().unwrap().push(Request {
+        path: path.clone(),
+        user_agent: header(&head, "user-agent").map(str::to_string),
+        authorization: header(&head, "authorization").map(str::to_string),
+    });
     let redirect = files.lock().unwrap().redirects.get(&path).cloned();
     if let Some(location) = redirect {
         let reply = format!(

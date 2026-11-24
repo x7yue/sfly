@@ -6,7 +6,8 @@
 //! - 在启动最早期（读取 `agent.env`、解析参数之前，[`Trial::start`]）和每次连接控制面之前（[`Trial::begin`]）
 //!   计一次尝试；
 //! - 握手成功且环境准备完成时健康（[`Attempt::Healthy`]，删除状态文件）；连不上控制面时撤回这一次
-//!   （[`Attempt::Unreachable`]）；退出（崩溃、读取配置或解析参数失败、环境准备失败）或连上后握手失败都留在计数里；
+//!   （[`Attempt::Unreachable`]），握手被控制面明确拒绝（凭据、停用……）时也撤回（[`Attempt::Rejected`]，旧版本一样会被拒绝）；
+//!   退出（崩溃、读取配置或解析参数失败、环境准备失败）或连上后握手出错都留在计数里；
 //! - 已经失败 [`MAX_ATTEMPTS`] 次时，下一次尝试恢复 `.prev`、把这个版本记为坏版本（[`Record::bad`]），
 //!   然后 execve 恢复的旧版本。
 //!
@@ -177,6 +178,9 @@ pub enum Attempt {
     Healthy,
     /// 连不上控制面：不计入失败次数。
     Unreachable,
+    /// 控制面明确拒绝了这条连接（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）：换回旧版本也一样会被拒绝，
+    /// 不是新版本的错，处理同 [`Attempt::Unreachable`]：撤回这一次，不计入失败次数，不会因此回滚。
+    Rejected,
     /// 连上了控制面却握手失败，或环境准备失败。
     Failed,
 }
@@ -282,7 +286,7 @@ impl Trial {
                 }
                 *state = State::Off;
             }
-            (Attempt::Unreachable, Some(mut record)) => {
+            (Attempt::Unreachable | Attempt::Rejected, Some(mut record)) => {
                 record.attempts = record.attempts.saturating_sub(1);
                 write_record(&path, &record);
                 *state = State::Uncounted;

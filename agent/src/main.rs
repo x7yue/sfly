@@ -10,8 +10,12 @@ use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
 use sfly_agent::peer;
 use sfly_agent::retention;
+use sfly_agent::secret::Secret;
 use sfly_agent::update::{self, SelfUpdate, Trial, TrialFailed};
-use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
+use sfly_agent::{
+    AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, REJECTED_RETRY_MAX,
+    REJECTED_RETRY_MIN, run,
+};
 
 /// sfly Agent。
 ///
@@ -33,9 +37,17 @@ struct Args {
     /// Agent 名称，全局唯一。
     #[arg(long, env = "SFLY_AGENT_NAME")]
     name: String,
-    /// 共享注册令牌。
+    /// Agent 凭据（`sfly_agt_` 开头，管理员在控制台或用 `sfly agent credentials issue` 为这台 Agent 签发；
+    /// 安装脚本写进 `agent.env` 的 `SFLY_TOKEN`）。过渡期里控制面还接受共享注册令牌，或不带凭据的已登记的 Agent。
+    /// 用环境变量或 `agent.env` 传，不要写在命令行参数里（进程列表看得到）。
     #[arg(long, env = "SFLY_TOKEN")]
-    token: Option<String>,
+    token: Option<Secret>,
+    /// 被控制面拒绝（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）之后的重试等待：起点，毫秒（翻倍）。
+    #[arg(long, env = "SFLY_REJECTED_RETRY_MIN_MS", default_value_t = REJECTED_RETRY_MIN.as_millis() as u64, hide = true)]
+    rejected_retry_min_ms: u64,
+    /// 被控制面拒绝之后的重试等待：封顶，毫秒。
+    #[arg(long, env = "SFLY_REJECTED_RETRY_MAX_MS", default_value_t = REJECTED_RETRY_MAX.as_millis() as u64, hide = true)]
+    rejected_retry_max_ms: u64,
     /// 供其它 Agent 连接的端口（ADR 0019，在所有网卡上监听）；0 由系统分配。被占用时 Agent 照常执行任务，
     /// 只是它的能力不能被其它 Agent 调用。没有认证，只应在内网使用。
     #[arg(long, env = "SFLY_LISTEN_PORT", default_value_t = peer::DEFAULT_LISTEN_PORT)]
@@ -215,6 +227,12 @@ async fn main() -> anyhow::Result<()> {
         server: args.server,
         name: args.name,
         token: args.token,
+        rejected_retry_min: Duration::from_millis(args.rejected_retry_min_ms.max(1)),
+        rejected_retry_max: Duration::from_millis(
+            args.rejected_retry_max_ms
+                .max(args.rejected_retry_min_ms)
+                .max(1),
+        ),
         slots: args.slots,
         venv,
         work_dir,
