@@ -53,6 +53,14 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"POST /packages": "publish",
 	// Agent 立即更新、飞书机器人的增删改与测试消息（写）→ 管理
 	"POST /agents/:name/update-now": "manage",
+	// Agent 凭据的签发、吊销，停用和恢复（Agent，写）→ 管理
+	"POST /agents/:name/credentials": "manage",
+	"DELETE /agents/:name/credentials/:id": "manage",
+	"POST /agents/:name/disable": "manage",
+	"POST /agents/:name/enable": "manage",
+	// 我的开发 Agent 的注册、吊销（开发 Agent，写）→ 编辑（只认有用户的人的凭据）
+	"POST /projects/:project/dev-agents": "edit",
+	"DELETE /projects/:project/dev-agents/:name": "edit",
 	"POST /feishu-bots": "manage",
 	"PATCH /feishu-bots/:name": "manage",
 	"DELETE /feishu-bots/:name": "manage",
@@ -160,24 +168,28 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		...(creates === undefined ? {} : { creates }),
 	});
 
-	it("会话的写（建、发话、停止）只有人能做：范围表里 session 是 humanOnly，别的类别不是", () => {
+	it("会话的写（建、发话、停止）、项目令牌的签发和开发 Agent 的注册只有人能做：范围表里 session、project、dev_agent 是 humanOnly，别的类别不是", () => {
 		expect(writeNeedsPerson(writeOf("session"))).toBe(true);
 		expect(writeNeedsPerson(writeOf("project"))).toBe(true);
+		expect(writeNeedsPerson(writeOf("dev_agent"))).toBe(true);
 		// 看新建出来的是什么（和范围同一个取法）：新建会话的接口声明 creates 时也算。
 		expect(writeNeedsPerson(writeOf("scenario", "session"))).toBe(true);
-		for (const kind of RESOURCE_KINDS.filter((k) => k !== "session" && k !== "project")) {
+		const humanOnlyKinds = ["session", "project", "dev_agent"];
+		for (const kind of RESOURCE_KINDS.filter((k) => !humanOnlyKinds.includes(k))) {
 			expect(writeNeedsPerson(writeOf(kind)), kind).toBe(false);
 		}
 		// 只读不受影响。
 		expect(writeNeedsPerson({ effect: "read", resource: { kind: "session" } })).toBe(false);
-		// 契约里恰好是会话的三个写接口。
+		// 契约里恰好是会话的三个写接口、项目令牌的签发和吊销、开发 Agent 的注册和吊销。
 		expect(
 			httpContract
 				.filter((def) => def.effect === "write" && writeNeedsPerson(def))
 				.map(routeKey)
 				.sort(),
 		).toEqual([
+			"DELETE /projects/:project/dev-agents/:name",
 			"DELETE /projects/:project/tokens/:id",
+			"POST /projects/:project/dev-agents",
 			"POST /projects/:project/sessions",
 			"POST /projects/:project/tokens",
 			"POST /sessions/:id/messages",
@@ -190,6 +202,7 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 			expect(typeof SCOPE_TABLE[kind].humanOnly, kind).toBe("boolean");
 		}
 		expect(RESOURCE_KINDS.filter((kind) => SCOPE_TABLE[kind].humanOnly)).toEqual([
+			"dev_agent",
 			"session",
 			"project",
 		]);

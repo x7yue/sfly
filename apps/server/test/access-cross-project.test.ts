@@ -129,6 +129,9 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			token: await accounts.tokenId(
 				await accounts.projectToken("default", { name: "victim-token" }),
 			),
+			credential: await accounts.agentCredentialId(
+				await accounts.agentCredential("default", "agent-victim"),
+			),
 		};
 
 		// 项目甲 alpha 里的凭据：每一种都是它能有的最大权限（项目管理员、全部范围）。
@@ -179,7 +182,9 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			},
 			{
 				name: "任务凭据（项目甲）",
-				headers: bearer(await accounts.taskCredential("alpha", task)),
+				// 任务凭据只在那次尝试还在 Agent 手上时有效：用一个正在执行的任务（项目乙里的那个）；任务结束的凭据是 401，
+				// 测不到「项目不对」这一层。
+				headers: bearer(await accounts.taskCredential("alpha", runningTask)),
 				expected: expectedForTask,
 			},
 		];
@@ -219,6 +224,20 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 			return new Response(null, { status: res.status, headers: res.headers });
 		}
 		return res;
+	};
+
+	/**
+	 * 项目乙自己的管理员在「对照」里真的调了停用接口：停用的 Agent 手上任务的任务凭据立刻不认（#638），
+	 * 之后的用例（项目甲的任务凭据、项目乙自己的任务凭据）要的是 Agent 在线可用的状态，每个接口测完恢复。
+	 */
+	const restoreVictim = async () => {
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			await client.query("update agents set disabled_at = null where name = 'agent-victim'");
+		} finally {
+			await client.end();
+		}
 	};
 
 	for (const def of projectRoutes()) {
@@ -262,7 +281,7 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 					expect(await isAccessNotFound(res), insider.name).toBe(false);
 					continue;
 				}
-				// 会话的写只有人能做：项目令牌范围够也是 403（不是 404：它自己项目里的资源），别的人和程序走到了处理函数。
+				// 只有人能做的写（会话、我的开发 Agent）：项目令牌范围够也是 403（不是 404：它自己项目里的资源），别的人和程序走到了处理函数。
 				if (insider.name.includes("项目令牌") && writeNeedsPerson(def)) {
 					expect(res.status, insider.name).toBe(403);
 					expect(await isAccessNotFound(res), insider.name).toBe(false);
@@ -273,6 +292,7 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 				);
 				expect(await isAccessNotFound(res), insider.name).toBe(false);
 			}
+			await restoreVictim();
 		}, 30_000);
 	}
 
@@ -301,7 +321,8 @@ describe("项目甲的凭据请求项目乙的资源（每个属于项目的接�
 	it("对照：项目乙自己的 Agent 凭据、任务凭据能调用清单里的接口（上传产物、下载节点包归档、下载产物）", async () => {
 		const own = {
 			agent: bearer(await accounts.agentCredential("default", "agent-victim")),
-			task: bearer(await accounts.taskCredential("default", victim.task)),
+			// 任务凭据只在这次尝试还在 Agent 手上时有效：用执行中的那条任务签发。
+			task: bearer(await accounts.taskCredential("default", runningTask)),
 		};
 		const upload = projectRoutes().find(
 			(d) => routeKey(d) === "PUT /tasks/:id/artifacts/*",
@@ -470,6 +491,7 @@ describe("新加接口自动覆盖", () => {
 			bot: "b",
 			project: "default",
 			token: "k",
+			credential: "c",
 		};
 		const get = { ...fake, method: "GET", effect: "read" };
 		const other = { ...get, resource: { kind: "package", target: { params: "id" } } } as RouteDef;
@@ -499,6 +521,7 @@ describe("新加接口自动覆盖", () => {
 				bot: "b",
 				project: "default",
 				token: "k",
+				credential: "c",
 			}),
 		).toThrow(/请求样本/);
 	});
@@ -517,6 +540,7 @@ describe("生成的请求打的是那一类资源（资源类别穷举，#554）
 		bot: "sample-bot",
 		project: "sample-project",
 		token: "sample-token",
+		credential: "sample-credential",
 	};
 
 	it("每个资源类别在生成器里都有自己的取值办法：加了类别而没有补，类型检查和这条测试都会失败", () => {

@@ -162,4 +162,34 @@ describe("任务日志里的令牌原值", () => {
 		expect(await download.text()).not.toContain(HEX);
 		expect(await dataDirContains(cp.dataDir, HEX)).toBe(false);
 	});
+	it("任务凭据本身（AssignTask 带来的 sfly_tsk_ 原值，执行器里的 SFLY_TASK_TOKEN）：节点把它打印出来，日志文件、分页读取、下载里都只有掩码（按前缀认，不用先知道是哪个令牌）", async () => {
+		const api = new ApiClient(cp);
+		const scenario = await api.orchestrationWith({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "a", kind: "package", package: "stub", node: "echo" },
+			],
+			edges: [{ from: "entry", to: "a", kind: "chain" }],
+			packages: { stub: "1.0.0" },
+		});
+		await api.triggerOk(scenario);
+		const task = await agent.nextAssign();
+		expect(task.taskToken).toMatch(/^sfly_tsk_[0-9a-f]{48}$/);
+		agent.logs(task, [
+			[1, `env SFLY_TASK_TOKEN=${task.taskToken}`],
+			[2, "这一行没有令牌"],
+		]);
+		await eventually(async () => {
+			const res = await cp.fetch(`/tasks/${task.taskId}/logs?limit=100`);
+			const page = logsApi.page.response.parse(await res.json());
+			expect(page.lines.map((l) => l.text)).toEqual([
+				`env SFLY_TASK_TOKEN=${SECRET_MASK}`,
+				"这一行没有令牌",
+			]);
+		});
+		const download = await cp.fetch(`/tasks/${task.taskId}/logs/download`);
+		expect(await download.text()).not.toContain(task.taskToken.slice(TOKEN_PREFIXES.task.length));
+		expect(await dataDirContains(cp.dataDir, task.taskToken)).toBe(false);
+	});
 });
