@@ -35,6 +35,8 @@ describe("平台管理员的写记录：响应的状态码", () => {
 			user: ADMIN,
 			projectId: null,
 			scopes: ["read", "run", "edit", "session_build", "publish", "manage"],
+			sessionId: null,
+			session: null,
 			expiresAt: null,
 			revokedAt: null,
 			lastUsedAt: null,

@@ -19,6 +19,7 @@ import {
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import type { ProjectId } from "../projects/project-id.js";
 import { type RunRead, type RunReadFull, readRuns } from "../runs/run-read.js";
+import { withSession } from "../sessions/session-ref.js";
 import { withQueueWaits } from "./queued-waits.js";
 import { setupSummary } from "./setup-summary.js";
 
@@ -82,13 +83,14 @@ export async function dashboardView(
 			...current,
 			failed_subflows: failedSubflows,
 		},
-		running_runs: running.map(({ run, scenario, version, chains }) => ({
+		running_runs: running.map(({ run, scenario, version, chains, session }) => ({
 			id: run.id,
 			orchestration_id: run.orchestrationId,
 			orchestration_name: scenario.name,
 			orchestration_version: version.number,
 			triggered_by: run.triggeredBy,
 			triggered_via: run.triggeredVia,
+			...withSession(session),
 			started_at: run.startedAt.toISOString(),
 			cancelling: run.cancelRequestedAt !== null,
 			chains: chains.map((chain) => ({
