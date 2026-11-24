@@ -38,7 +38,7 @@ def test_failure_type_only_in_b_twice_picks_option_b() -> None:
         session("b", "write", False, 10, "超时")
     ] * 2
     result = decide(records, "m")
-    assert result["only_in_b"] == {"超时": 2}
+    assert result["only_in_remote"] == {"超时": 2}
     assert result["verdict"].startswith("方案乙")
 
 
@@ -108,3 +108,28 @@ def test_invalid_sessions_are_counted_but_not_judged() -> None:
     assert result["passed"]["b"] == 5
     assert "相差悬殊" in render_decision(result)
     assert "样本不足" in render_decision(result)
+
+
+def test_platform_arm_is_compared_with_arm_a_by_the_same_three_criteria() -> None:
+    from aeval.decide import OPTION_B_PREREQUISITE, render_decision
+
+    records = [session("a", "write", True, 10)] * 3 + [session("p", "write", True, 13)] * 3
+    result = decide(records, "m", "p")
+    assert result["passed"] == {"a": 3, "p": 3}
+    assert result["criteria"] == {
+        "通过的题数比臂 A 少不超过 1 题": True,
+        "轮数的中位数不超过臂 A 的 1.3 倍": True,
+        "没有只在平台臂出现两次以上的失败类型": True,
+    }
+    assert result["verdict"] == "平台臂没有明显变差"
+    text = render_decision(result)
+    assert "臂 A 对平台臂" in text and "| | 臂 A（本地） | 平台臂 |" in text
+    # 方案甲、乙和越权探测的前提只属于臂 B 的那次选择。
+    assert "方案" not in text and OPTION_B_PREREQUISITE not in text
+    records += [session("p", "write", False, 10, "超时")] * 2
+    records += [session("a", "write", True, 10)] * 2
+    assert decide(records, "m", "p")["verdict"].startswith("平台臂明显变差")
+    # 臂 B 的会话不算进平台臂的判定。
+    assert decide(records + [session("b", "write", False, 99)], "m", "p") == decide(
+        records, "m", "p"
+    )

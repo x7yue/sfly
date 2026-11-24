@@ -22,7 +22,7 @@ from aeval.env import (
 from aeval.models import Model, load_models
 from aeval.offline import pack
 from aeval.report import arm_of, load_records, render
-from aeval.session import EndpointDown, prepare_pi, run_session, versions
+from aeval.session import ARMS, EndpointDown, prepare_pi, run_session, versions
 from aeval.tasks import summarize
 from aeval.tasks.registry import TASKS
 
@@ -116,8 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--arm",
         action="append",
-        choices=["a", "b"],
-        help="对照实验的臂：a 工具在本地执行（默认），b 工具经能力端口在开发环境里执行；可以重复",
+        choices=list(ARMS),
+        help="对照实验的臂：a 工具在本地执行（默认），b 工具经能力端口在开发环境里执行，"
+        "p 平台（经控制面的会话接口交给平台内的助手，要 up --assistant）；可以重复",
     )
     run.add_argument("--max-turns", type=int, default=40)
     run.add_argument("--max-seconds", type=float, default=1200)
@@ -426,7 +427,7 @@ def run_plan(
                     )
                 capped = True
                 continue
-        label = f"{model_name}-b" if arm == "b" else model_name
+        label = model_name if arm == "a" else f"{model_name}-{arm}"
         try:
             record = run_session(
                 stack,

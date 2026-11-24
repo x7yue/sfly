@@ -12,6 +12,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from aeval.decide import ARM_NAMES as DECIDE_ARM_NAMES
 from aeval.decide import decide, render_decision
 from aeval.models import load_models
 
@@ -23,7 +24,8 @@ def load_records(results: Path) -> list[dict[str, Any]]:
     return records
 
 
-ARM_NAMES = {"a": "A 本地", "b": "B 远程"}
+ARM_NAMES = {"a": "A 本地", "b": "B 远程", "p": "平台"}
+REMOTE_ARMS = [arm for arm in DECIDE_ARM_NAMES if arm != "a"]
 
 
 def arm_of(record: dict[str, Any]) -> str:
@@ -113,9 +115,10 @@ def render(results: Path) -> str:
     body += "\n" + endpoint_table(records) + "\n"
     for model in sorted({r["model"] for r in counted if arm_of(r) == "a"}):
         body += "\n" + render_gate(counted, model) + "\n"
-    for model in sorted({r["model"] for r in counted if arm_of(r) == "b"}):
-        all_for_decision = [r for r in records if r.get("task") != "toolcheck"]
-        body += "\n" + render_decision(decide(all_for_decision, model)) + "\n"
+    all_for_decision = [r for r in records if r.get("task") != "toolcheck"]
+    for remote in REMOTE_ARMS:
+        for model in sorted({r["model"] for r in counted if arm_of(r) == remote}):
+            body += "\n" + render_decision(decide(all_for_decision, model, remote)) + "\n"
     return body
 
 

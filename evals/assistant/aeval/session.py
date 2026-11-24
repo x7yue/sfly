@@ -28,7 +28,10 @@ DRIVER = f"{OPT}/session_driver.py"
 SESSION_DIR = "/root/aeval-session"
 
 
-ARMS = ("a", "b")
+# 臂：a 工具在本地执行（原版 pi 在开发环境里）；b 工具经能力端口落到开发环境（#443 的原型，
+# #552 删）；
+# p 平台：经控制面的会话接口交给平台内的助手（aeval.platform，#552）。
+ARMS = ("a", "b", "p")
 REMOTE_EXTENSION = "/opt/aeval-remote/extension.mjs"
 # 助手的命令带上的环境变量：控制面把它的操作记成「eval 经 pi」，和判分（grader）的操作分开。
 ASSISTANT_ENV = {"SFLY_NICKNAME": "eval", "AI_AGENT": "pi"}
@@ -93,6 +96,18 @@ def run_session(
 ) -> dict[str, Any]:
     if arm not in ARMS:
         raise ValueError(f"没有臂 {arm}")
+    if arm == "p":
+        from aeval.platform import run_platform_session
+
+        return run_platform_session(
+            stack,
+            task,
+            model,
+            results,
+            max_turns=max_turns,
+            max_seconds=max_seconds,
+            session_id=session_id,
+        )
     if arm == "b":
         stack.ensure_pi_container()
     runner = pi_container(stack, arm)
@@ -168,6 +183,40 @@ def run_session(
     host_seconds = time.monotonic() - started
     d.copy_out(runner, f"{SESSION_DIR}/.", str(out), check=False)
     (out / "driver-stdout.log").write_text(driver_log)
+    driver_summary: dict[str, Any] = {}
+    if (out / "driver.json").exists():
+        driver_summary = json.loads((out / "driver.json").read_text())
+    if timed_out:
+        driver_summary["exit_reason"] = "time_limit"
+    return finish_record(
+        stack,
+        task,
+        model,
+        out,
+        session_id=session_id,
+        arm=arm,
+        seeded_at=seeded_at,
+        host_seconds=host_seconds,
+        driver_summary=driver_summary,
+    )
+
+
+def finish_record(
+    stack: Stack,
+    task: Task,
+    model: Model,
+    out: Path,
+    *,
+    session_id: str,
+    arm: str,
+    seeded_at: str,
+    host_seconds: float,
+    driver_summary: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """一次会话结束之后（各臂一样）：存工作区的改动和控制面上的运行，判分、分类失败，
+    写 `session.json`。
+    `out` 里已经有这次的 `events.jsonl`（pi 的原始事件）。"""
     diff = d.sh(
         stack.dev,
         "git add -A -N . && git diff --stat HEAD && git diff HEAD",
@@ -179,11 +228,6 @@ def run_session(
     (out / "runs.json").write_text(json.dumps(runs, ensure_ascii=False, indent=2))
     tools = tool_versions(stack, task.workspace)
     graded = summarize(grade_safely(task, stack))
-    driver_summary: dict[str, Any] = {}
-    if (out / "driver.json").exists():
-        driver_summary = json.loads((out / "driver.json").read_text())
-    if timed_out:
-        driver_summary["exit_reason"] = "time_limit"
     events = out / "events.jsonl"
     classified = classify(events, driver_summary, runs)
     # 因为端点故障没能做完的会话作废（不论判分结果）：重跑，不计入结果。重试成功的照常算。
@@ -208,6 +252,7 @@ def run_session(
         "endpoint_retries": classified["endpoint_retries"],
         "assistant_runs": len([r for r in runs if is_assistant_run(r)]),
         "tool_versions": tools,
+        **(extra or {}),
     }
     (out / "session.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
     return record
