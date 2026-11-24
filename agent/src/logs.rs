@@ -70,7 +70,7 @@ const LINE_CHUNKS: usize = 16;
 /// 标准输出 / 标准错误一行的最大字节数；更长的行被拆成多行。事件管道的一行不受它限制。
 const MAX_LINE_BYTES: usize = 64 * 1024;
 /// 一行被拆开时，每一段带的上下文（前一段的结尾、后一段的开头，只用来打码，见 `LogLine.before` / `after`）最多这么多字节。
-/// 长度不超过它的 secret 值，跨在拆分处也认得出。
+/// 每种写法的长度都不超过它的 secret 值，跨在拆分处也认得出。
 pub const SPLIT_CONTEXT_BYTES: usize = 16 * 1024;
 /// 一批最多的行数。
 const MAX_BATCH_LINES: usize = 1000;
@@ -78,17 +78,21 @@ const MAX_BATCH_LINES: usize = 1000;
 const MAX_BATCH_ACTIONS: usize = 1000;
 /// 一批日志（或一批动作明细）攒到这么多字节就发出，不等条数、也不等下一个 [`TICK`]。只按条数限批的话，每个事件都在上限以内，
 /// 一批也能比 Agent 自己的排队上限（[`DEFAULT_TELEMETRY_QUEUE_BYTES`]）还大，连接正常、队列是空的时候也被整批丢掉
-/// （[`Telemetry::send`]）。这个数是队列上限的 1/32：一批的大小最多是它加上最后一条（日志一条不超过 [`MAX_LINE_BYTES`]
-/// 加两段上下文，输出不是合法的 UTF-8 时有损转换最坏是 3 倍，约 300 KiB；动作明细一条最多约 128 KiB），远在队列上限以内，队列是空的时候没有一批因为大小被丢掉，
+/// （[`Telemetry::send`]）。这个数是队列上限的 1/32：一批的大小最多是它加上最后一条（标准输出 / 标准错误的一行不超过
+/// [`MAX_LINE_BYTES`] 加两段上下文，输出不是合法的 UTF-8 时有损转换最坏是 3 倍，约 300 KiB；动作明细一条最多约 128 KiB，
+/// 全是 4 字节的字符时约 172 KiB），远在队列上限以内，队列是空的时候没有一批因为大小被丢掉，
 /// 断线时队列里也能排下几十批；也让控制面一次处理的一批、网关一次收的一条消息有个上界（几 MiB），不随节点写得多快而变大。
 /// 再小的话批太碎（一个节点每秒写几百 MiB 时每秒上百批），再大就接近队列上限。
+///
+/// 例外：SDK 通过事件管道写的日志（一行不限长，也不拆，原来就是这样，#674）一条就可以比这个数大；
+/// 那样的一条自己成一批，比队列上限还大时仍会被丢掉。
 const MAX_BATCH_BYTES: usize = 2 * 1024 * 1024;
 /// 一行日志编码之后除了文字之外大约占的字节数（序号、两个时间、来源、级别和各字段的标签）：估算一批的大小用。
 const LOG_LINE_OVERHEAD: usize = 64;
 /// 执行器退出后，等待仍持有标准输出（或事件管道）的后台子进程关闭管道的最长时间。
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// 断开期间默认最多排队的日志字节数。
+/// 日志、通知和动作明细排队的字节数的默认上限：连接断开时它们排着等重连，连接正常时是发出之前的缓冲，同一个上限。
 pub const DEFAULT_TELEMETRY_QUEUE_BYTES: usize = 64 * 1024 * 1024;
 
 /// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress` / `MetricBatch` / `Notification` / `ActionSummary` /
@@ -566,7 +570,7 @@ pub struct Line {
 /// 按换行拆分字节流；去掉行尾的 `\r`，过长（超过 [`MAX_LINE_BYTES`] 字节）的行拆开。公开只是为了基准测试（benches/telemetry.rs）。
 ///
 /// 拆开的位置落在字符（UTF-8）边界上，每一段多带两小段只用来打码的上下文（[`Line::before`]、[`Line::after`]），所以一个 secret 值
-/// 正好跨在拆分处时，控制面看任何一段都认得出它。为了带上后一段的开头，一段要等到这一行又读到 [`SPLIT_CONTEXT_BYTES`]
+/// 正好跨在拆分处时（每种写法的长度不超过 [`SPLIT_CONTEXT_BYTES`]），控制面看任何一段都认得出它。为了带上后一段的开头，一段要等到这一行又读到 [`SPLIT_CONTEXT_BYTES`]
 /// 字节（或这一行结束）才交出去；拆在哪里只取决于这一行的内容，和每次读到多少字节无关。
 #[derive(Default)]
 pub struct LineSplitter {
