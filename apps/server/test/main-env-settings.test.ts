@@ -230,6 +230,8 @@ const MARK_PARTS = [
 	"q2w8",
 	NUMBER_MARK,
 	NUMBER_MARK.slice(0, 12),
+	// 三个 MB 上限换算成字节的数（填的数乘 1048576）：它除以 1048576 就是填的数，和填的值一样不能出现。
+	String(Math.floor(Number(NUMBER_MARK) * 1_048_576)),
 ].map((m) => m.toLowerCase());
 
 type EnvName = (typeof STRING_ENV_NAMES)[number] | (typeof NUMERIC_ENV_NAMES)[number];

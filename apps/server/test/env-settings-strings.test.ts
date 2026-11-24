@@ -591,6 +591,43 @@ describe("数值类的说明里回显什么（echo.ts：像数的、不超过 12
 	});
 });
 
+describe("三个 MB 上限：说明里不能经过运算把没回显的值带出来（#642 的复核）", () => {
+	const MB = 1_048_576;
+	const LIMITS = ["SFLY_LOG_LIMIT_MB", "SFLY_ARTIFACT_LIMIT_MB", "SFLY_METRIC_LIMIT_MB"] as const;
+	/** 换算成字节之后能写出来的几种写法：换算后除以 1048576 就是填的数，所以它和填的值一样不能出现。 */
+	const convertedForms = (value: string): string[] => {
+		const bytes = Math.floor(Number(value) * MB);
+		return [String(bytes), BigInt(bytes).toString(), bytes.toExponential()];
+	};
+
+	it.each(
+		LIMITS.flatMap((name) =>
+			[
+				["13 位的数", "1234567890123"],
+				["带负号的 13 位数", "-1234567890123"],
+				["16 位的数", "1234567890123456"],
+				["20 位的数", "12345678901234567890"],
+				["科学计数写的 16 位有效数字", "1.234567890123456e15"],
+			].map(([label, value]) => [name, label, value] as const),
+		),
+	)("%s 填%s（没有回显）：说明里没有填的值，也没有它换算成字节的数，不写「换算后」", (name, _, value) => {
+		const message = oneProblem({ [name]: value as string });
+
+		expect(message).toContain(name);
+		expect(message).toContain("个字符，没有回显");
+		expect(message).not.toContain((value as string).replace(/^-/, ""));
+		for (const form of convertedForms(value as string)) expect(message).not.toContain(form);
+		expect(message).not.toContain("换算后");
+	});
+
+	it.each(LIMITS)("%s 填 12 个字符以内的数（已经回显）：换算后的字节数照旧写", (name) => {
+		const message = oneProblem({ [name]: "999999999999" });
+
+		expect(message).toContain('"999999999999"');
+		expect(message).toContain(`换算后 ${Math.floor(999_999_999_999 * MB)} 字节`);
+	});
+});
+
 describe("字符串类和数值类一起：一次报完", () => {
 	const ALL_BAD = {
 		SFLY_RETENTION_DAYS: "Infinity",
