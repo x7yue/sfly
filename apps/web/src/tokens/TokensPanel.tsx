@@ -6,7 +6,7 @@ import { useRef, useState } from "react";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
-import { scopesText, TOKEN_STATE_LABEL } from "#/lib/copy";
+import { SCOPE_SEPARATOR, scopeLabels, TOKEN_STATE_LABEL } from "#/lib/copy";
 import { formatDateTimeWithYear } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { Button } from "@/components/ui/button";
@@ -94,7 +94,11 @@ export function TokensPage({
 	);
 }
 
-/** 名称列最窄 11rem（十来个汉字）：名称是认令牌的主要依据，其他列放不下时让它们折行，不压名称。 */
+/**
+ * 名称列最窄 11rem（十来个汉字）：名称是认令牌的主要依据，不让别的列把它挤没。**只在窄于 1280 的窗口里起作用**：
+ * 1280 宽下其他列加起来给名称留的宽度本来就不窄于它（范围列限宽折行，见下面），不靠这个下限；更窄的窗口里其他列放不下时表格
+ * 横向滚动、名称仍不窄于它。更窄宽度没有用例：「窄窗口要横向滚动」不是定下来的行为，只是名称不被挤没的代价。
+ */
 const NAME_COLUMN = "min-w-44";
 
 const STATE_KIND = { active: "ok", expired: "warn", revoked: "stopped" } as const;
@@ -153,9 +157,15 @@ function TokenRow({
 				{token.prefix}…
 			</TableCell>
 			<TableCell width="fit" className={cn("text-xs", live ? "text-fg-1" : "text-fg-3")}>
-				{/* 范围最宽 7rem：写得长（六个范围）时折成两行，不靠挤名称来放（1280 宽下名称列原来只剩七八十像素；名称列要 176px，其他列加起来不能让表格比面板宽）。 */}
-				<span className="inline-block w-max max-w-28 whitespace-normal align-middle">
-					{scopesText(token.scopes)}
+				{/* 范围最宽 7.5rem：写得长（六个范围）时折成两行，不靠挤名称来放（1280 宽下名称列原来只剩七八十像素）；
+				    换行只在顿号处：每个范围连着它后面的顿号是一个不拆开的单位（不在词中间断开）。7.5rem 是六个范围排成
+				    「读、运行、编辑、」「会话构建、发布、管理」两行里较长那一行的宽度（等宽 12px 的 10 个字），再窄就变三行。 */}
+				<span className="inline-block w-max max-w-30 whitespace-normal align-middle">
+					{scopeLabels(token.scopes).map((label, i, all) => (
+						<span key={label} className="inline-block whitespace-nowrap">
+							{i < all.length - 1 ? `${label}${SCOPE_SEPARATOR}` : label}
+						</span>
+					))}
 				</span>
 			</TableCell>
 			{owner.kind === "personal" && (

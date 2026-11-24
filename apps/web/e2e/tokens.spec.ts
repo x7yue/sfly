@@ -277,7 +277,7 @@ test.describe("项目令牌页", () => {
 		await expect(page.getByRole("button", { name: "签发令牌" })).toBeFocused();
 	});
 
-	test("1280×800：有六个范围都勾上的令牌、名称很长时，名称列不被挤没（不窄于 11rem），表格不超出面板，范围折成两行", async ({
+	test("1280×800：有六个范围都勾上的令牌、名称很长时，名称列不被挤没（不窄于 11rem），表格不超出面板，范围折成两行、只在顿号处换行", async ({
 		page,
 	}) => {
 		await page.setViewportSize({ width: 1280, height: 800 });
@@ -299,7 +299,19 @@ test.describe("项目令牌页", () => {
 			const head = [...table.querySelectorAll("th")].find((th) => th.textContent === "名称");
 			const scopes = document.querySelector(`[data-token="${name}"] td:nth-child(3) span`);
 			const fence = table.parentElement as HTMLElement;
+			// 范围按顿号分成一段一段（每段是连着顿号的一个范围）：按排出来的行数把每一行的字拼出来。
+			const lines: string[] = [];
+			let top = Number.NaN;
+			for (const unit of [...(scopes as HTMLElement).children] as HTMLElement[]) {
+				const at = Math.round(unit.getBoundingClientRect().top);
+				if (at !== top) {
+					lines.push("");
+					top = at;
+				}
+				lines[lines.length - 1] += unit.textContent ?? "";
+			}
 			return {
+				lines,
 				name: Math.round((head as HTMLElement).getBoundingClientRect().width),
 				scopeLines: Math.round(
 					(scopes as HTMLElement).getBoundingClientRect().height /
@@ -308,10 +320,15 @@ test.describe("项目令牌页", () => {
 				overflow: Math.round(table.getBoundingClientRect().width - fence.clientWidth),
 			};
 		}, longName);
-		// 名称列不窄于 11rem（176px，已含内边距）；表格没有比面板宽（1280 宽下其他列加起来要给名称留够这 176px）；六个范围写不下一行（7rem 的上限），折成两行。
+		// 名称列不窄于 11rem（176px，已含内边距）；表格没有比面板宽（1280 宽下其他列加起来要给名称留够这 176px）；
+		// 六个范围写不下一行（7.5rem 的上限），折成两行，换行只在顿号处（不在词中间断开）。
 		expect(measured.name, JSON.stringify(measured)).toBeGreaterThanOrEqual(176);
 		expect(measured.overflow, JSON.stringify(measured)).toBeLessThanOrEqual(0);
 		expect(measured.scopeLines, JSON.stringify(measured)).toBe(2);
+		expect(measured.lines, JSON.stringify(measured)).toEqual([
+			"读、运行、编辑、",
+			"会话构建、发布、管理",
+		]);
 	});
 
 	test("按路径里的项目显示：签发的范围里没有「管理」；列表、吊销；个人令牌页指向它", async ({
