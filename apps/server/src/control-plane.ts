@@ -413,6 +413,13 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		limitBytes: options.artifactLimitBytes,
 		uploadIdleMs: options.artifactUploadIdleMs,
 	});
+	// 上次进程被杀、断电时留下的上传临时文件：开始监听之前清掉（这时没有上传在做）；清不掉不挡住启动。
+	await artifacts
+		.sweepUploadTemp()
+		.then((count) => {
+			if (count > 0 && logger) printInfo(`sfly: 清掉了上次留下的 ${count} 个上传临时文件`);
+		})
+		.catch((error) => logError("sfly: 清理上次留下的上传临时文件失败：", error));
 	const retention = new Retention({
 		db: database.db,
 		clock,
