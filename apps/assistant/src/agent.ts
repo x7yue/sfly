@@ -224,7 +224,6 @@ export function connectAgent(address: string, options: AgentOptions = {}) {
 	}
 
 	return {
-		describe: () => peer.describe({}, { signal: AbortSignal.timeout(probeDeadline) }),
 		reachable,
 		/** 关掉这条连接（连同上面还开着的调用）。用完就丢的客户端用它。 */
 		close: () => connection.abort(),

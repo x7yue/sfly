@@ -598,10 +598,13 @@ export class SessionManager {
 				this.#finish(session, turn);
 				return;
 			}
-			const message = error instanceof Error ? error.message : String(error);
+			// 认得的才放行（#640）：写 skill 的那一步换好了说法（StartError），别的步骤（建工作区、镜像 skill、准备启动、
+			// 给 pi 发请求）的原文是助手容器本机的错误、带容器里的路径，只进上面的日志。
+			const shown =
+				error instanceof StartError ? error.message : "助手服务内部出错（原文记在日志里）";
 			this.#end(session, turn, {
 				outcome: "failed",
-				reason: `开始这一轮失败：${session.redactor.redact(message)}`,
+				reason: `开始这一轮失败：${session.redactor.redact(shown)}`,
 			});
 		}
 	}

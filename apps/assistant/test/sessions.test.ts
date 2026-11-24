@@ -803,6 +803,22 @@ describe("审查补的守护", () => {
 		expect(harness.logs.join("\n")).toContain("MARKER-local-31");
 	});
 
+	it("一轮开头写 skill 之外的步骤出错（这里是读不到模型文件）：原因不放行本机的原文，原文进日志", async () => {
+		const harness = await start();
+		const models = join(harness.root, "config", "models.json");
+		rmSync(models);
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "settle" });
+		expect(await harness.turnEnd(id)).toMatchObject({
+			outcome: "failed",
+			reason: "开始这一轮失败：助手服务内部出错（原文记在日志里）",
+		});
+		const events = JSON.stringify(harness.events.of(id));
+		expect(events).not.toContain("models.json");
+		expect(events).not.toContain(harness.root);
+		expect(harness.logs.join("\n")).toContain(models);
+	});
+
 	it("一轮开头写 skill 时工作台回了认不出的错误：特征串不出现在任何事件里，只进日志", async () => {
 		const harness = await start();
 		harness.workbench.fail = { code: Code.Internal, message: "MARKER-start-55 at 10.9.8.7" };

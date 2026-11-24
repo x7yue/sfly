@@ -99,6 +99,8 @@ export type TurnLimit = z.infer<typeof TurnLimit>;
  *   （上游拒绝了这次请求；正文说上下文超长时是 `context_overflow`）。
  * - 没有状态码时只按连接层的失败分：连不上、连接断开、证书验不过是 `unreachable`，超时是 `timeout`（认 Node 的错误码、
  *   SDK 固定的那一句），别的都是 `other`；不看正文里的词。
+ * - 边界（按写法认，不看意思）：以登记过的状态码加空格开头的消息按 SDK 的写法取状态码，所以正文恰好以这样的数字开头的错误
+ *   （`404 packages were …`）会被认成那个状态码；没有状态码时，以括号里的连接层错误码结尾的消息（`… (ECONNRESET)`）算连不上。
  * 各项：`unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝，`quota` 额度不足，`rate_limit` 限流，
  * `upstream` 对方出错，`context_overflow` 上下文超长，`other` 其他。
  */
@@ -671,6 +673,14 @@ export const Readiness = z
 	})
 	.refine((r) => r.ready === (r.problems.length === 0), "ready 为 true 当且仅当没有 problems");
 export type Readiness = z.infer<typeof Readiness>;
+
+/**
+ * 运行、场景版本上的「经哪个会话」（ADR 0029「经 …」：会话令牌记会话，#547）：会话的 ID 和标题，页面上显示成
+ * 会话「<标题>」并链到会话页。依据是控制面收到的请求带着哪个会话的令牌，不是模型在对话里怎么说，也不是可以伪造的
+ * `x-sfly-client` 标注。不是会话做的，响应里没有这个字段。
+ */
+export const SessionRef = z.object({ id: z.string(), title: z.string() });
+export type SessionRef = z.infer<typeof SessionRef>;
 
 /**
  * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 只在排队中（`status` 为 `queued`）时有值，

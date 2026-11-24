@@ -35,6 +35,9 @@ test("还没有机器人时显示空状态和登记入口；侧边栏、快捷�
 	await expect(empty).toContainText("不支持签名校验");
 
 	await page.goto("/");
+	// `goto` 在 load 事件就返回了，应用这时还没有渲染（#app 是空的，页面在等第一次渲染）；这时按的键没有人接，
+	// 「G F」要有两个键：等控制台页渲染出来再按（#623）。
+	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 	await page.keyboard.press("g");
 	await page.keyboard.press("f");
 	await expect(page).toHaveURL(/\/feishu-bots$/);
