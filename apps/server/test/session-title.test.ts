@@ -84,28 +84,30 @@ describe("会话的标题：不切开网址", () => {
 	});
 
 	describe("网址只认 ASCII 可见字符：后面紧跟中文也结束（不把后面的话当成网址）", () => {
-		const long = "，日志里说连接池满了，昨天还好好的，今天早上发布之后就这样了，麻烦看一下";
+		// 网址前面要留得下 10 个字以上：前面留不下时本来就不躲网址，这几条测不出网址认到哪里为止。
+		const before = "请帮我看看下面这个服务";
 		it("网址后面直接跟中文", () => {
-			const text = `帮我看看https://staging.example.test/api/v2/health为什么一直返回500${long}`;
+			const text = `${before}https://staging.example.test/api/v2/health为什么一直返回500，日志里说连接池满了，昨天还好好的，今天早上发布之后就这样了，麻烦看一下`;
 			const title = titleOf(text);
 			expect(
-				title.startsWith("帮我看看https://staging.example.test/api/v2/health为什么一直返回500"),
+				title.startsWith(`${before}https://staging.example.test/api/v2/health为什么一直`),
 			).toBe(true);
 			expect(graphemes(title)).toBe(TITLE_CHARS + 1);
 		});
 
 		it("网址后面直接跟全角标点", () => {
-			expect(titleOf(`请打开https://a.test/x。${pad(70)}`)).toBe(
-				`请打开https://a.test/x。${pad(TITLE_CHARS - "请打开https://a.test/x。".length)}…`,
-			);
+			const head = `${before}https://a.test/x。`;
+			expect(titleOf(`${head}${pad(70)}`)).toBe(`${head}${pad(TITLE_CHARS - graphemes(head))}…`);
 			expect(
-				titleOf(`探测https://s.test/x，然后${pad(70)}`).startsWith("探测https://s.test/x，然后"),
+				titleOf(`${before}https://s.test/x，然后${pad(70)}`).startsWith(
+					`${before}https://s.test/x，然后`,
+				),
 			).toBe(true);
 		});
 
 		it("网址被全角括号包着", () => {
-			const title = titleOf(`请参考（https://a.test/x）${pad(70)}`);
-			expect(title.startsWith("请参考（https://a.test/x）")).toBe(true);
+			const title = titleOf(`${before}（https://a.test/x）${pad(70)}`);
+			expect(title.startsWith(`${before}（https://a.test/x）`)).toBe(true);
 			expect(graphemes(title)).toBe(TITLE_CHARS + 1);
 		});
 
