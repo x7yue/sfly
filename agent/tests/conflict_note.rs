@@ -361,6 +361,35 @@ async fn only_the_group_that_really_contradicts_is_listed() {
     assert_eq!(listed(n), 2, "{n}");
 }
 
+/// 一条要求自己就满足不了（`sfly-dep>=2,<1`）：单独列出、写明它自己就满足不了，不拿它去和别的要求配对
+/// （`sfly-dep>=0` 和谁都相容，不该被一起列出来）。
+#[tokio::test]
+async fn a_requirement_that_cannot_be_met_by_itself_is_listed_alone() {
+    let fixture = HttpFixture::start().await;
+    add_to_index(&fixture, "sfly-dep", "1.0", &[]);
+    add_to_index(&fixture, "sfly-dep", "2.0", &[]);
+    let base = publish(&fixture, "sfly-base", "1.0.0", &[]);
+    let venv = fresh_venv(true);
+    install_without_dependencies(
+        &venv,
+        &[
+            ("sfly-a", &["sfly-dep>=2,<1"]),
+            ("sfly-b", &["sfly-dep>=0"]),
+        ],
+    );
+    let cp = FakeControlPlane::start().await;
+    let _agent = agent(&cp, "agent-703-alone", &venv, &fixture);
+    cp.hello(0).await;
+
+    let message = install_fails(&cp, task("t-base", "sfly-base", "1.0.0", &base)).await;
+
+    let n = note(&message);
+    assert!(n.contains("sfly-a（已安装） 要求 sfly-dep"), "{n}");
+    assert!(n.contains("（这一条自己就满足不了）"), "{n}");
+    assert!(!n.contains("sfly-b"), "{n}");
+    assert_eq!(listed(n), 1, "{n}");
+}
+
 /// 矛盾的两条里有一条带环境标记（`; python_version >= '3'`，在这台解释器上适用，uv 也解不出来）：这条判断不了，
 /// 不参与，说明里没有可列的，不补说明；uv 的原话里看得到 `sfly-dep`。
 #[tokio::test]
