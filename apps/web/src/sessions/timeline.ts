@@ -222,14 +222,26 @@ export function applyEvent(state: TimelineState, event: SessionEvent): TimelineS
 
 /**
  * 读到的这一段事件开头，有没有一轮已经在进行（它的 `turn_started` 在更早的一页里）：这一段里先出现的是 `turn_end`，就是有；先出现的是
- * `turn_started`，就没有；两个都没有（整段都在同一轮里）时问 `fallback`。用来分清这一段开头的话是开一轮的话，还是排在这一轮后面的话。
+ * `turn_started`，或者两个都没有，就没有。用来分清这一段开头的话是开一轮的话，还是排在这一轮后面的话。两个都没有（整段都在同一轮里、
+ * `turn_started` 在更早的一页）时分不出来，那时「有话排在这一轮后面」由会话视图的排位说了算（{@link initialTimeline}）。
  */
-function startsInTurn(events: readonly SessionEvent[], fallback: boolean): boolean {
+function startsInTurn(events: readonly SessionEvent[]): boolean {
 	for (const event of events) {
 		if (event.type === "turn_end") return true;
 		if (event.type === "turn_started") return false;
 	}
-	return fallback;
+	return false;
+}
+
+/** 最后一句开一轮的话（不是插话）改成排在这一轮后面的话。 */
+function markLastTurnWordsBehind(items: readonly TimelineItem[]): TimelineItem[] {
+	let last = -1;
+	items.forEach((item, index) => {
+		if (item.kind === "user" && item.role === "turn") last = index;
+	});
+	return items.map((item, index) =>
+		index === last && item.kind === "user" ? { ...item, role: "behind" } : item,
+	);
 }
 
 /** 有话排在这一轮后面（停止途中说的，还没有开始）。 */
@@ -610,10 +622,11 @@ export function initialTimeline(
 	hasMore: boolean,
 	queue: TimelineQueue | null = null,
 ): TimelineState {
-	const built = events.reduce(
-		applyEvent,
-		emptyTimeline(status, null, startsInTurn(events, status === "running")),
-	);
+	const built = events.reduce(applyEvent, emptyTimeline(status, null, startsInTurn(events)));
+	// 在做、而且视图里有排位：有话排在这一轮后面（停止途中说的）。这一页里没有这一轮的 `turn_started`（在更早的一页）时按事件认不出
+	// 它，那句话是最后一句不是插话的话。
+	const markBehind = status === "running" && queue !== null && !hasBehind(built.items);
+	const items = markBehind ? markLastTurnWordsBehind(built.items) : built.items;
 	return {
 		...built,
 		status,
@@ -621,10 +634,10 @@ export function initialTimeline(
 		hasMore,
 		// 有一轮在进行取自会话视图（读取这一刻的），不由这一页历史推出来；排位和在等谁也取自视图。
 		turnOpen: status === "running",
-		awaitingStart: status === "queued" || (status === "running" && hasBehind(built.items)),
+		awaitingStart: status === "queued" || (status === "running" && hasBehind(items)),
 		steerQueue: [],
 		queue,
-		items: resolveSteers(built.items),
+		items: resolveSteers(items),
 	};
 }
 
@@ -637,10 +650,7 @@ export function prependHistory(
 	events: readonly SessionEvent[],
 	hasMore: boolean,
 ): TimelineState {
-	const older = events.reduce(
-		applyEvent,
-		emptyTimeline(state.status, null, startsInTurn(events, false)),
-	);
+	const older = events.reduce(applyEvent, emptyTimeline(state.status, null, startsInTurn(events)));
 	// 这一页里没有结果的调用：结果在后面一页里（已经读进来了，是只有结果的那一行）就合上，否则不再算在做。
 	const orphans = new Map(
 		state.items.flatMap((item) =>

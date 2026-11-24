@@ -430,9 +430,11 @@ test("一轮从头到尾：这句话、思考中、逐字出现的助手的话�
 	);
 	await expect(page.getByTestId("session-status")).toHaveText("在做");
 	await expect(page.getByRole("button", { name: "停止" })).toBeVisible();
-	// 在做时输入框照常可以写下一句，只是不能发。
+	// 在做时输入框照常可以写，发出去的是插话：输入框下写插话什么时候送到。
 	await expect(composer(page)).toBeEnabled();
-	await expect(page.getByTestId("composer-blocked")).toHaveText("助手正在做这一轮；要改方向先停止");
+	await expect(page.getByTestId("composer-hint")).toHaveText(
+		"插话在当前这一步做完后送到；要马上停下用停止",
+	);
 	// 事件流从历史的最大序号之后接。
 	expect((await streamOpens(page)).urls[0]).toContain("after=2");
 
@@ -748,6 +750,9 @@ async function openSession(
 	await installSessionStream(page);
 	await stubSessionDetail(page, view, persisted);
 	await page.goto(`/sessions/${view.id}`);
+	// 事件流订阅上了再返回：订阅之前推的事件就丢了。
+	await expect(page.getByTestId("session-status")).toBeVisible();
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
 	return view;
 }
 
@@ -996,10 +1001,9 @@ test("结束会话：请求在路上（最长等到这一轮停下）时按钮�
 	await expect(dialog).toHaveCount(0);
 });
 
-test("会话已经没有了（新建会话等第一轮结局期间点了停止，没有被碰过的会话被删掉）：停止、结束、说话遇到 404 回到列表，写一句；事件流 404 也一样", async ({
+test("会话已经没有了（新建会话等第一轮结局期间点了停止，没有被碰过的会话被删掉）：停止遇到 404 回到列表，写一句", async ({
 	page,
 }) => {
-	// 停止遇到 404。
 	const view = await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
 	await page.route(new RegExp(`/api/sessions/${view.id}/stop$`), (route) =>
 		apiError(route, 404, "not_found", "session not found"),
@@ -1009,9 +1013,11 @@ test("会话已经没有了（新建会话等第一轮结局期间点了停止�
 	await expect(
 		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
 	).toBeVisible();
+});
 
-	// 事件流遇到 404（真的控制面里没有这个会话；详情是拦截的）。
-	await page.unrouteAll({ behavior: "ignoreErrors" });
+test("会话已经没有了：事件流遇到 404（真的控制面里没有这个会话，详情是拦截的）不再重连，回到列表", async ({
+	page,
+}) => {
 	const ghost = sessionView({ status: "idle" });
 	await stubSessionDetail(page, ghost, [userMessage(1), turnStarted(2), turnEnd(3, "completed")]);
 	await page.goto(`/sessions/${ghost.id}`);

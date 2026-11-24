@@ -468,6 +468,7 @@ const queued = (position: number): SessionEvent => ({
 	position,
 	waiting_for: WAITING_FOR,
 });
+const assistantMsg = (seq: number, text: string): SessionEvent => message(seq, text);
 const userItems = (state: TimelineState) =>
 	state.items.flatMap((item) => (item.kind === "user" ? [item] : []));
 const byId = (state: TimelineState, id: string) =>
@@ -655,6 +656,21 @@ describe("停止途中说的话、排队中的会话", () => {
 		});
 		expect(byId(state, ID_A)?.role).toBe("behind");
 		expect(state.queue?.position).toBe(1);
+	});
+
+	it("在做、视图里有排位，而这一页里没有这一轮的 turn_started（在更早的一页）：按视图的排位认出排在后面的话", () => {
+		const events = [assistantMsg(5, "做着"), plainMsg(6, ID_A, "停下来之后的话")];
+		const state = initialTimeline("running", events, true, {
+			position: 1,
+			waitingFor: WAITING_FOR,
+		});
+		expect(byId(state, ID_A)?.role).toBe("behind");
+		expect(state.awaitingStart).toBe(true);
+	});
+
+	it("在做、视图里没有排位，这一页里没有 turn_started：不当成排在后面的话（开一轮的话）", () => {
+		const state = initialTimeline("running", [plainMsg(1, ID_A, "第一句")], false);
+		expect(byId(state, ID_A)?.role).toBe("turn");
 	});
 
 	it("这一页历史从一轮中间开始（turn_started 在更早的一页）：先出现的是 turn_end，开头的话是排在后面的话还是插话按 steer 判断", () => {
