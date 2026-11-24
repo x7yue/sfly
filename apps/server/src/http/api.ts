@@ -142,6 +142,14 @@ export interface HttpApiDeps {
 	logScanBytes?: number;
 }
 
+/** 流式下载的路由在读文件之前为这个文件设好的头：出错时要去掉（见错误处理）。 */
+const FILE_RESPONSE_HEADERS = [
+	"content-type",
+	"content-length",
+	"content-disposition",
+	"x-sfly-sha256",
+] as const;
+
 const errorCode = (status: number): string =>
 	({
 		400: "invalid_request",
@@ -237,6 +245,9 @@ export function buildHttpApi({
 	app.addHook("onSend", async (_request, reply) => {
 		reply.header(CONTROL_PLANE_TIME_HEADER, clock.now().toISOString());
 		reply.header(CONTROL_PLANE_VERSION_HEADER, publicConfig.version);
+		// 出错的响应一律不缓存：路由在出错之前可能已经为文件设了缓存头（前端带哈希的静态文件读不了时，路由已经设了一年的 `immutable`），
+		// 浏览器和代理不能把一次 500 当成那个文件缓存下来。
+		if (reply.statusCode >= 400) reply.header("cache-control", "no-store");
 	});
 	if (webApp) registerWebApp(app, webApp);
 	registerCors(app, { origins: corsOrigins });
@@ -277,6 +288,12 @@ export function buildHttpApi({
 		sendError(reply, 404, "not_found", `route ${request.method} ${request.url} not found`),
 	);
 	app.setErrorHandler((error: FastifyError, request, reply) => {
+		// 路由在出错之前为文件设好的头不属于错误响应（流式下载时文件打开或读到一半出错：路由已经按那个文件设了头）：内容类型、长度、
+		// 下载文件名，和节点包归档的哈希（`x-sfly-sha256`，那个读不出来的文件的哈希）。错误是 JSON，不是那个文件；内容类型留着的话错误体
+		// 发不出去（不是 JSON 时 Fastify 拒绝序列化），退成 Fastify 自己的错误体。**只去这几个**：跨域头、`vary`、`set-cookie`（登录续期）
+		// 这些和文件无关、错误响应也要带的头不动（`test/error-response-headers.test.ts` 钉着边界）。缓存头由 `onSend` 对所有出错的响应统一设成
+		// `no-store`。
+		for (const name of FILE_RESPONSE_HEADERS) reply.removeHeader(name);
 		// 同时验证密码的请求太多（src/auth/password-gate.ts）：没有去算哈希，让对方稍后再试。
 		if (error instanceof PasswordGateBusy) {
 			reply.header("retry-after", Math.max(1, Math.ceil(error.retryAfterMs / 1000)));

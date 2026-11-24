@@ -3,7 +3,7 @@
 // （日志文件里没有原值），读取时也打码。
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { logsApi, SECRET_MASK, TOKEN_PREFIXES } from "@sfly/schema";
+import { logsApi, SECRET_MASK, TOKEN_PREFIXES, TOKEN_VALUE_PATTERN } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	maskParams,
@@ -52,6 +52,38 @@ describe("打码规则认得令牌的前缀", () => {
 		expect(NO_SECRETS.mask(`t=${TOKENS[0]}`)).toBe(`t=${SECRET_MASK}`);
 		const set = secretSetOf(["hunter2"]);
 		expect(set.mask(`s=hunter2 t=${TOKENS[0]}`)).toBe(`s=${SECRET_MASK} t=${SECRET_MASK}`);
+	});
+
+	it("@sfly/schema 导出的那个带 g 标志的正则被别处用脏（lastIndex 不是 0）：mask、maskTokens、wouldChange 的结果不变，文字开头的令牌照样认", () => {
+		const text = `${TOKENS[0]} 之后的文字 ${TOKENS[1]}`;
+		const masked = `${SECRET_MASK} 之后的文字 ${SECRET_MASK}`;
+		const set = secretSetOf(["hunter2"]);
+		const dirty = [
+			() => {
+				TOKEN_VALUE_PATTERN.lastIndex = 5;
+			},
+			() => {
+				// 别处对它调一次 test()：lastIndex 留在匹配的结尾
+				TOKEN_VALUE_PATTERN.lastIndex = 0;
+				TOKEN_VALUE_PATTERN.test(`xx ${TOKENS[2]}`);
+			},
+		];
+		try {
+			for (const spoil of dirty) {
+				spoil();
+				expect(maskTokens(text)).toBe(masked);
+				spoil();
+				expect(NO_SECRETS.mask(text)).toBe(masked);
+				spoil();
+				expect(set.mask(`${text} hunter2`)).toBe(`${masked} ${SECRET_MASK}`);
+				spoil();
+				expect(NO_SECRETS.wouldChange(text)).toBe(true);
+				spoil();
+				expect(set.wouldChange(text)).toBe(true);
+			}
+		} finally {
+			TOKEN_VALUE_PATTERN.lastIndex = 0;
+		}
 	});
 
 	it("maskValue、maskRecord、maskParams：对象、数组里的字符串都打码；没有变化的部分原样返回（不复制）", () => {

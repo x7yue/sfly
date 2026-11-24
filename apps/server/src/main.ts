@@ -72,6 +72,7 @@ import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
+import { installShutdown } from "./shutdown.js";
 import { printError, printInfo, printWarning, terminalStreams } from "./util/output.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
@@ -179,8 +180,12 @@ printInfo(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
 );
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-	process.once(signal, () => {
-		void controlPlane.close().then(() => process.exit(0));
-	});
-}
+// 停止信号：关闭只做一次，重复的信号只记一句（`src/shutdown.ts`）。
+installShutdown({
+	emitter: process,
+	signals: ["SIGINT", "SIGTERM"],
+	close: () => controlPlane.close(),
+	exit: (code) => process.exit(code),
+	log: (message) => printInfo(message),
+	logError: (message, error) => printError(message, error),
+});
