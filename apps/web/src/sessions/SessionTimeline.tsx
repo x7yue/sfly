@@ -6,14 +6,24 @@ import { StatusDot } from "#/components/status";
 import { SESSION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
-import { toolLine, toolResultSummary, turnEndText, turnEndTone } from "./session-text";
+import { PeerText } from "./peer-text";
+import {
+	steerDeliveryLabel,
+	toolLine,
+	toolResultSummary,
+	turnEndText,
+	turnEndTone,
+	userRoleLabel,
+} from "./session-text";
 import type { TimelineItem, TimelineState } from "./timeline";
 
 type ToolItem = Extract<TimelineItem, { kind: "tool" }>;
+type UserItem = Extract<TimelineItem, { kind: "user" }>;
 
 /**
  * 会话的时间线（#542，只认平台的会话事件）：用户的话、助手逐字出现的话、每个工具调用一行（默认折叠，展开看结果正文）、
- * 灰字的提示、一轮结束的分隔行；模型在思考时显示「思考中」。这一版是最薄的样式，统一的样式在 #550。
+ * 灰字的提示、一轮结束的分隔行、会话结束的一行；模型在思考时显示「思考中」。在做时说的话标「插话」，写着送到了没有（等待送达、已送到、
+ * 没有送到）；停止途中说的、排在这一轮后面的话标「排在这一轮后面」，被撤掉的标「已撤掉」。这一版是最薄的样式，统一的样式在 #550。
  */
 export function SessionTimeline({
 	state,
@@ -62,15 +72,7 @@ export function SessionTimeline({
 function TimelineRow({ item }: { item: TimelineItem }) {
 	switch (item.kind) {
 		case "user":
-			return (
-				<li
-					data-testid="user-message"
-					className="rounded-lg border border-border-soft bg-raised px-3 py-2 text-sm wrap-anywhere whitespace-pre-wrap text-fg-1"
-				>
-					<span className="text-fg-3">{item.author}：</span>
-					<span>{item.text}</span>
-				</li>
-			);
+			return <UserRow item={item} />;
 		case "assistant":
 			return (
 				<li
@@ -91,6 +93,18 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 					className="px-1 text-xs wrap-anywhere text-fg-3"
 				>
 					{item.message}
+				</li>
+			);
+		case "session_ended":
+			return (
+				<li data-testid="session-ended" className="flex items-center gap-3 py-1 text-xs text-fg-2">
+					<span aria-hidden className="h-px flex-1 bg-border-soft" />
+					<span>
+						{SESSION.sessionEnded.prefix}
+						<PeerText>{item.by}</PeerText>
+						{SESSION.sessionEnded.suffix}
+					</span>
+					<span aria-hidden className="h-px flex-1 bg-border-soft" />
 				</li>
 			);
 		case "turn_end": {
@@ -116,6 +130,60 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 			);
 		}
 	}
+}
+
+/**
+ * 用户的一句话：作者和文字；插话、排在这一轮后面的话、被撤掉的话下面一行小字写明是哪一种，插话再写送到了没有。
+ * 开一轮的话没有这一行（和以前一样）。送到了没有的状态由 `timeline.ts` 的纯函数算出，这里只显示。
+ */
+function UserRow({ item }: { item: UserItem }) {
+	const role = userRoleLabel(item.role);
+	const delivery = item.role === "steer" ? steerDeliveryLabel(item.delivery) : null;
+	return (
+		<li
+			data-testid="user-message"
+			data-role={item.role}
+			data-delivery={item.role === "steer" ? (item.delivery ?? undefined) : undefined}
+			className={cn(
+				"rounded-lg border border-border-soft bg-raised px-3 py-2 text-sm wrap-anywhere whitespace-pre-wrap text-fg-1",
+				item.role === "cancelled" && "text-fg-3 line-through",
+			)}
+		>
+			<span className="text-fg-3">
+				<PeerText>{item.author}</PeerText>：
+			</span>
+			<span>
+				<PeerText>{item.text}</PeerText>
+			</span>
+			{role !== null && (
+				<span className="mt-1 flex items-center gap-2 text-xs whitespace-normal text-fg-3 no-underline">
+					<span data-testid="message-role" className="font-medium">
+						{role}
+					</span>
+					{delivery !== null && (
+						<span
+							data-testid="message-delivery"
+							className={cn(
+								"flex items-center gap-1.5",
+								item.delivery === "dropped" && "font-medium text-warn-fg",
+							)}
+						>
+							<StatusDot
+								kind={
+									item.delivery === "waiting"
+										? "queued"
+										: item.delivery === "dropped"
+											? "warn"
+											: "ok"
+								}
+							/>
+							{delivery}
+						</span>
+					)}
+				</span>
+			)}
+		</li>
+	);
 }
 
 /**

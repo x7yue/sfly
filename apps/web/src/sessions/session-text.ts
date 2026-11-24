@@ -1,8 +1,16 @@
-import type { Readiness, SessionStatus, SessionTool } from "@sfly/schema";
+import type { Readiness, SessionStatus, SessionTool, WaitingFor } from "@sfly/schema";
 import type { StatusKind } from "#/components/status";
 import { SESSION } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
-import type { TimelineItem, ToolResultInfo } from "./timeline";
+import {
+	hasBehind,
+	type SteerDelivery,
+	type TimelineItem,
+	type TimelineQueue,
+	type TimelineState,
+	type ToolResultInfo,
+	type UserRole,
+} from "./timeline";
 
 /** 助手页和会话页写的文字：由事件和状态算出一句话，纯函数（`session-text.test.ts`）。 */
 
@@ -56,7 +64,11 @@ export function toolResultSummary(tool: SessionTool | null, result: ToolResultIn
 	return parts.join(" · ");
 }
 
-/** 一轮结束的分隔行：六种结局各一句；到了上限按 `limit_kind` 写是哪一种，不看 `reason` 的文字。 */
+/**
+ * 一轮结束的分隔行：六种结局各一句；到了上限按 `limit_kind` 写是哪一种，不看 `reason` 的文字。
+ * **「已停止」不写 `reason`**：结局的原因是助手服务写的「用户停止了这一轮」，而这一轮不一定是用户点了停止才停的（控制面发给助手服务的
+ * 中止命令超时、随后补发的中止让助手服务马上结束了这一轮，用户其实没有点过停止），页面不把它原样说成用户的操作。
+ */
 export function turnEndText(item: Extract<TimelineItem, { kind: "turn_end" }>): string {
 	const t = SESSION.turnEnd;
 	switch (item.outcome) {
@@ -99,3 +111,88 @@ export function turnEndTone(
 			return "danger";
 	}
 }
+
+/** 时间线上用户的一句话的标记：开一轮的话没有标记；插话、排在这一轮后面的话、被撤掉的话各一个。 */
+export function userRoleLabel(role: UserRole): string | null {
+	switch (role) {
+		case "turn":
+			return null;
+		case "steer":
+			return SESSION.message.steer;
+		case "behind":
+			return SESSION.message.behind;
+		case "cancelled":
+			return SESSION.message.cancelled;
+	}
+}
+
+/** 插话送到了没有：等待送达、已送到、没有送到各一个字样；不知道（刷新后读到在做的一轮里的插话）时没有。 */
+export function steerDeliveryLabel(delivery: SteerDelivery | null): string | null {
+	switch (delivery) {
+		case "waiting":
+			return SESSION.message.waiting;
+		case "delivered":
+			return SESSION.message.delivered;
+		case "dropped":
+			return SESSION.message.dropped;
+		case "unknown":
+		case null:
+			return null;
+	}
+}
+
+/** 会话的状态那一格：排队中（和停止途中说了话、排在这一轮后面的在做的会话）后面写排第几。 */
+export function statusWithQueue(status: SessionStatus, position: number | null): string {
+	const label = SESSION_STATUS[status].label;
+	return position === null ? label : `${label} · ${SESSION.list.queuePosition(position)}`;
+}
+
+/**
+ * 输入框此刻是什么样（只由状态算）：
+ * - `send` 空闲：接着说；
+ * - `steer` 在做：发出去的是插话；
+ * - `behind` 在做、而且停止途中说的话排在这一轮后面：不能再说，再点一次停止是撤掉它；
+ * - `queued` 排队中：不能说，写排在第几位、在等谁；
+ * - `ended` 已结束：不显示输入框。
+ */
+export type ComposerMode =
+	| { kind: "send" }
+	| { kind: "steer" }
+	| { kind: "behind"; position: number | null }
+	| { kind: "queued"; position: number | null; waitingFor: WaitingFor | null }
+	| { kind: "ended" };
+
+export function composerMode(
+	state: Pick<TimelineState, "status" | "queue" | "items">,
+): ComposerMode {
+	switch (state.status) {
+		case "idle":
+			return { kind: "send" };
+		case "ended":
+			return { kind: "ended" };
+		case "queued":
+			return {
+				kind: "queued",
+				position: state.queue?.position ?? null,
+				waitingFor: state.queue?.waitingFor ?? null,
+			};
+		case "running":
+			return hasBehind(state.items)
+				? { kind: "behind", position: state.queue?.position ?? null }
+				: { kind: "steer" };
+	}
+}
+
+/** 顶栏状态那一格的字：排队中写排第几。 */
+export function sessionStatusText(state: Pick<TimelineState, "status" | "queue">): string {
+	return statusWithQueue(
+		state.status,
+		state.status === "queued" ? (state.queue?.position ?? null) : null,
+	);
+}
+
+/** 排队的话在会话视图里是 `TimelineQueue`：列表项只有位置。 */
+export const queueOf = (
+	position: number | null,
+	waitingFor: WaitingFor | null,
+): TimelineQueue | null => (position === null ? null : { position, waitingFor });

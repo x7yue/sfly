@@ -276,6 +276,8 @@ export const SESSION = {
 		activity: "最近活动",
 		/** 会话多于接口一次给的个数（`truncated`）时，列表上面的一句提示。 */
 		truncated: (limit: number) => `只显示了最近活动的 ${limit} 个会话`,
+		/** 排队中的会话（和停止途中说了话、排在这一轮后面的在做的会话）在状态后面写排第几。 */
+		queuePosition: (position: number) => `排在第 ${position} 位`,
 	},
 	status: {
 		idle: "空闲",
@@ -284,8 +286,6 @@ export const SESSION = {
 		ended: "已结束",
 	},
 	/** 新建会话失败。 */
-	busy: "同一个项目里另一个会话正在做，等它做完，或者到那个会话里停止它",
-	busyLink: "打开正在做的会话",
 	createFailed: "无法开始会话",
 	/** 会话页。 */
 	page: {
@@ -296,19 +296,62 @@ export const SESSION = {
 		loadOlderFailed: "无法加载更早的内容",
 		stop: "停止",
 		stopTitle: "停止这一轮",
+		/** 排队中点「停止」是移出队列。 */
+		stopQueuedTitle: "移出队列：这句话不会交给助手",
 		stopping: "正在停止…",
+		/** 停止途中说了话、排在这一轮后面时，停止按钮的字：再点一次是撤掉那句话。 */
+		cancelBehind: "撤掉排着的话",
+		cancelBehindTitle: "撤掉排在这一轮后面的话，不开始新的一轮",
 		stopFailed: "无法停止这一轮",
 		thinking: "思考中",
 		sendLabel: "接着说",
 		sendPlaceholder: "接着说",
 		send: "发送",
 		sending: "正在发送…",
-		running: "助手正在做这一轮；要改方向先停止",
-		queued: "这个会话在排队，轮到它之后才能接着说",
+		/** 在做时输入框发出去的是插话。 */
+		steerLabel: "插话",
+		steerPlaceholder: "插话：助手在当前这一步做完后会看到",
+		sendSteer: "发送插话",
+		steerHint: "插话在当前这一步做完后送到；要马上停下用停止",
+		/** 排队中：排在第几位、在等谁（会话的标题和发起人是别人写的文字）。 */
+		queuedBefore: (position: number) => `排在第 ${position} 位：`,
+		queuedWaitingFor: (author: string) => `（${author}）正在做`,
+		queuedNobody: "等助手空出来",
+		queuedOpen: "打开它",
+		/** 停止途中说了话：这句话排在这一轮后面。 */
+		behind: (position: number | null) =>
+			position === null
+				? "这一轮正在停止，你说的话排在它后面；再点一次停止，撤掉它"
+				: `这一轮正在停止，你说的话排在第 ${position} 位；再点一次停止，撤掉它`,
 		sendFailed: "无法发送",
 		turnRunning: "助手正在做这一轮；要改方向先停止",
+		sessionQueued: "这个会话在排队，等它开始之后再说，或者先停止",
+		sessionEnded: "这个会话已经结束或者正在结束，不能再说话",
 		ended: "这个会话已经结束，不能再说话",
+		ending: "正在结束这个会话…",
+		/** 会话被删了（新建会话等第一轮结局期间点了停止，没有被碰过的会话会被删掉）：回到列表。 */
+		gone: "这个会话已经没有了",
+		end: "结束会话",
+		endTitle: "结束这个会话：之后不能再说话",
+		endDialogTitle: "结束这个会话？",
+		endDialogBody:
+			"在做的一轮会停下，排着的话会撤掉；结束之后不能再说话。工作区、提交、场景版本和运行都留着，不删除任何东西。",
+		endCancel: "取消",
+		endConfirm: "结束会话",
+		ending2: "正在结束…",
+		endFailed: "无法结束会话",
 	},
+	/** 时间线上的话的标记。 */
+	message: {
+		steer: "插话",
+		behind: "排在这一轮后面",
+		cancelled: "已撤掉",
+		waiting: "等待送达",
+		delivered: "已送到",
+		dropped: "没有送到",
+	},
+	/** 会话已结束的一行：「会话已结束（<谁>）」，谁是别人写的昵称，夹在两段文案中间。 */
+	sessionEnded: { prefix: "会话已结束（", suffix: "）" },
 	tool: {
 		read: "读",
 		write: "写",

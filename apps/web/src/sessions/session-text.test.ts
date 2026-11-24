@@ -1,14 +1,19 @@
 import type { Readiness } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	composerMode,
 	readinessProblems,
 	SESSION_STATUS,
+	sessionStatusText,
+	statusWithQueue,
+	steerDeliveryLabel,
 	toolLine,
 	toolResultSummary,
 	turnEndText,
 	turnEndTone,
+	userRoleLabel,
 } from "./session-text";
-import type { TimelineItem } from "./timeline";
+import type { TimelineItem, TimelineState } from "./timeline";
 
 type TurnEnd = Extract<TimelineItem, { kind: "turn_end" }>;
 const turnEnd = (over: Partial<TurnEnd> = {}): TurnEnd => ({
@@ -52,6 +57,9 @@ describe("会话页的文字", () => {
 		expect(turnEndText(turnEnd({ steps: 12 }))).toBe("这一轮完成 · 12 步 · 用时 1m 24s");
 		expect(turnEndText(turnEnd())).toBe("这一轮完成 · 用时 1m 24s");
 		expect(turnEndText(turnEnd({ outcome: "stopped" }))).toBe("已停止");
+		// 已停止不写原因：助手服务写的「用户停止了这一轮」不一定是用户点的（中止命令超时、补发的中止让它马上结束），不原样说成用户的操作。
+		expect(turnEndText(turnEnd({ outcome: "stopped", reason: "用户停止了这一轮" }))).toBe("已停止");
+		expect(turnEndText(turnEnd({ outcome: "stopped", reason: "会话结束了" }))).toBe("已停止");
 		expect(turnEndText(turnEnd({ outcome: "interrupted", reason: "助手服务重启了" }))).toBe(
 			"中断：助手服务重启了",
 		);
@@ -129,5 +137,81 @@ describe("会话页的文字", () => {
 			],
 		};
 		expect(readinessProblems(none)).toEqual(["没有配置助手", "没有设置工作台"]);
+	});
+});
+
+type UserItem = Extract<TimelineItem, { kind: "user" }>;
+const userItem = (over: Partial<UserItem> = {}): UserItem => ({
+	kind: "user",
+	key: "e1",
+	seq: 1,
+	at: "2026-01-01T00:00:00.000Z",
+	messageId: "5d1c0a7e-3b2f-4c68-9a41-000000000001",
+	author: "alice",
+	text: "好",
+	role: "turn",
+	delivery: null,
+	droppedNote: null,
+	queuedSeen: false,
+	...over,
+});
+const WAITING_FOR = {
+	session_id: "5d1c0a7e-3b2f-4c68-9a41-000000000009",
+	title: "别的会话",
+	created_by: "bob",
+};
+const modeOf = (
+	status: TimelineState["status"],
+	queue: TimelineState["queue"] = null,
+	items: TimelineItem[] = [],
+) => composerMode({ status, queue, items });
+
+describe("会话页：输入框、标记、排位的文字", () => {
+	it("输入框按会话的状态分：空闲接着说、在做是插话、排队中写排第几和在等谁、已结束没有输入框", () => {
+		expect(modeOf("idle")).toEqual({ kind: "send" });
+		expect(modeOf("running")).toEqual({ kind: "steer" });
+		expect(modeOf("queued", { position: 2, waitingFor: WAITING_FOR })).toEqual({
+			kind: "queued",
+			position: 2,
+			waitingFor: WAITING_FOR,
+		});
+		expect(modeOf("queued")).toEqual({ kind: "queued", position: null, waitingFor: null });
+		expect(modeOf("ended")).toEqual({ kind: "ended" });
+	});
+
+	it("在做、却有话排在这一轮后面（停止途中说的）：不是插话，输入框不能再说", () => {
+		expect(
+			modeOf("running", { position: 1, waitingFor: WAITING_FOR }, [userItem({ role: "behind" })]),
+		).toEqual({ kind: "behind", position: 1 });
+		// 排着的话被撤掉了：又是插话。
+		expect(modeOf("running", null, [userItem({ role: "cancelled" })])).toEqual({ kind: "steer" });
+	});
+
+	it("用户的话的标记：开一轮的话没有；插话、排在这一轮后面、已撤掉各一个", () => {
+		expect(userRoleLabel("turn")).toBeNull();
+		expect(userRoleLabel("steer")).toBe("插话");
+		expect(userRoleLabel("behind")).toBe("排在这一轮后面");
+		expect(userRoleLabel("cancelled")).toBe("已撤掉");
+	});
+
+	it("插话送到了没有：等待送达、已送到、没有送到；不知道（刷新后读到在做的一轮里的插话）和不是插话时不写", () => {
+		expect(steerDeliveryLabel("waiting")).toBe("等待送达");
+		expect(steerDeliveryLabel("delivered")).toBe("已送到");
+		expect(steerDeliveryLabel("dropped")).toBe("没有送到");
+		expect(steerDeliveryLabel("unknown")).toBeNull();
+		expect(steerDeliveryLabel(null)).toBeNull();
+	});
+
+	it("状态那一格：排队中写排第几；别的状态不写", () => {
+		expect(statusWithQueue("queued", 2)).toBe("排队中 · 排在第 2 位");
+		expect(statusWithQueue("running", 1)).toBe("在做 · 排在第 1 位");
+		expect(statusWithQueue("running", null)).toBe("在做");
+		expect(sessionStatusText({ status: "queued", queue: { position: 3, waitingFor: null } })).toBe(
+			"排队中 · 排在第 3 位",
+		);
+		expect(sessionStatusText({ status: "queued", queue: null })).toBe("排队中");
+		expect(sessionStatusText({ status: "idle", queue: { position: 3, waitingFor: null } })).toBe(
+			"空闲",
+		);
 	});
 });

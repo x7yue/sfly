@@ -5,8 +5,9 @@ import {
 	sessionsApi,
 } from "@sfly/schema";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { callApi } from "#/lib/api";
+import { ApiError, callApi } from "#/lib/api";
 import { openEventSource } from "#/lib/sse";
+import { queueOf } from "./session-text";
 import { applyEvent, initialTimeline, prependHistory, type TimelineState } from "./timeline";
 
 type Action =
@@ -31,18 +32,22 @@ const RENDERED: ReadonlySet<string> = new Set([
 	"notice",
 	"turn_end",
 	"session_ended",
+	"turn_queued",
+	"steer_queue",
 ]);
 
 /**
- * 会话页的时间线状态：先用 `GET /sessions/:id` 取到的最近一页事件算出来，再接 `GET /sessions/:id/events`
- * （从已有的最大序号之后），每条事件交给纯函数 `applyEvent`；往前翻页用 `before`。断线后事件流自动重连，
- * 重连带上最后收到的事件序号，补发断线期间的持久事件；重叠的事件按序号去重。
+ * 会话页的时间线状态：先用 `GET /sessions/:id` 取到的最近一页事件算出来（状态、排位和在等谁取自会话视图），再接
+ * `GET /sessions/:id/events`（从已有的最大序号之后），每条事件交给纯函数 `applyEvent`；往前翻页用 `before`。断线后事件流自动重连，
+ * 重连带上最后收到的事件序号，补发断线期间的持久事件；重叠的事件按序号去重。事件流不再重连（控制面回了 404：会话被删了，新建会话
+ * 等第一轮结局期间点了停止，没有被碰过的会话会被删掉）时 `gone` 为真，页面回到列表。
  */
 export function useSessionTimeline(detail: SessionDetailResponse) {
 	const id = detail.id;
 	const [state, dispatch] = useReducer(reduce, detail, (d) =>
-		initialTimeline(d.status, d.events, d.has_more),
+		initialTimeline(d.status, d.events, d.has_more, queueOf(d.queue_position, d.waiting_for)),
 	);
+	const [gone, setGone] = useState(false);
 	// 事件流从读到的历史之后开始：先读历史再接流，两边的重叠由序号去重。
 	const [after] = useState(() => state.lastSeq);
 	useEffect(() => {
@@ -61,6 +66,10 @@ export function useSessionTimeline(detail: SessionDetailResponse) {
 			sessionsApi.events,
 			{ params: { id }, query: { after } },
 			handlers as Parameters<typeof openEventSource<typeof sessionsApi.events>>[2],
+			undefined,
+			(error) => {
+				if (error instanceof ApiError && error.status === 404) setGone(true);
+			},
 		);
 	}, [id, after]);
 
@@ -83,5 +92,5 @@ export function useSessionTimeline(detail: SessionDetailResponse) {
 		}
 	}, [id]);
 
-	return { state, loadOlder, loadingOlder, olderError };
+	return { state, loadOlder, loadingOlder, olderError, gone };
 }

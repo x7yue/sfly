@@ -2,12 +2,11 @@ import {
 	domainKey,
 	SESSION_MESSAGE_MAX_CHARS,
 	type SessionDetailResponse,
-	type SessionStatus,
 	sessionsApi,
 } from "@sfly/schema";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { useId, useRef, useState } from "react";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
 import { Page, PageHeader } from "#/components/page";
@@ -21,14 +20,23 @@ import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { SESSION_PROJECT } from "./project";
+import { EndSession, endMutationKey } from "./EndSession";
+import { PeerText } from "./peer-text";
 import { SessionTimeline } from "./SessionTimeline";
-import { SESSION_STATUS, turnEndText } from "./session-text";
+import {
+	type ComposerMode,
+	composerMode,
+	SESSION_STATUS,
+	sessionStatusText,
+	turnEndText,
+} from "./session-text";
+import { hasBehind } from "./timeline";
 import { useSessionTimeline } from "./use-session-timeline";
 import { useStickToBottom } from "./use-stick-to-bottom";
 
 /**
- * 会话页（#542）：顶栏是标题、状态和（在做时的）「停止」，下面是时间线，底部是「接着说」的输入框。
+ * 会话页（#542、#544）：顶栏是标题、状态（排队中写排第几）和「停止」（在做、排队中时；排队中点它是移出队列）、「结束会话」，
+ * 下面是时间线，底部是输入框（空闲时接着说，在做时发出去的是插话，排队中不能说）。
  * 每次打开都重新读历史（不用缓存里的旧数据）：事件流只补打开之后的。
  */
 export function SessionPage({ id }: { id: string }) {
@@ -61,13 +69,31 @@ export function SessionPage({ id }: { id: string }) {
 }
 
 function LiveSession({ detail }: { detail: SessionDetailResponse }) {
-	const { state, loadOlder, loadingOlder, olderError } = useSessionTimeline(detail);
+	const { state, loadOlder, loadingOlder, olderError, gone } = useSessionTimeline(detail);
+	const navigate = useNavigate();
+	/** 会话已经没有了（新建会话等第一轮结局期间点了停止，没有被碰过的会话被删掉）：回到列表。是这个错误就返回 true。 */
+	const goBack = useCallback(() => {
+		notify.info(SESSION.page.gone);
+		void navigate({ to: "/sessions" });
+	}, [navigate]);
+	const onGone = useCallback(
+		(error: unknown) => {
+			if (!(error instanceof ApiError) || error.status !== 404) return false;
+			goBack();
+			return true;
+		},
+		[goBack],
+	);
+	useEffect(() => {
+		if (gone) goBack();
+	}, [gone, goBack]);
 	const last = state.items.at(-1);
 	useStickToBottom(
 		`${state.items.length}:${last?.kind === "assistant" ? last.text.length : ""}:${state.thinking}`,
 	);
 	const status = SESSION_STATUS[state.status];
 	const lastEnd = [...state.items].reverse().find((item) => item.kind === "turn_end");
+	const mode = composerMode(state);
 	return (
 		<div className="mx-auto flex w-full max-w-208 flex-col">
 			<PageHeader
@@ -76,10 +102,18 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 					<>
 						<StatusPill kind={status.kind} pulse className="text-sm">
 							<span data-testid="session-status" data-status={state.status}>
-								{status.label}
+								{sessionStatusText(state)}
 							</span>
 						</StatusPill>
-						{state.status === "running" && <StopButton id={detail.id} />}
+						{(state.status === "running" || state.status === "queued") && (
+							<StopButton
+								id={detail.id}
+								queued={state.status === "queued"}
+								behind={hasBehind(state.items)}
+								onGone={onGone}
+							/>
+						)}
+						{state.status !== "ended" && <EndSession id={detail.id} onGone={onGone} />}
 					</>
 				}
 			/>
@@ -93,7 +127,7 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 				loadingOlder={loadingOlder}
 				olderError={olderError}
 			/>
-			<Composer id={detail.id} status={state.status} />
+			<Composer id={detail.id} mode={mode} onGone={onGone} />
 		</div>
 	);
 }
@@ -101,40 +135,82 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 /** 会话页的输入框（「停止」的 data-focus-successor 指向它）。 */
 const COMPOSER_SELECTOR = "[data-session-composer]";
 
-function StopButton({ id }: { id: string }) {
+/**
+ * 「停止」：在做时停止这一轮；排队中是移出队列（这句话不会交给助手）；停止途中说了话、有话排在这一轮后面时，再点一次是撤掉那句话
+ * （按钮这时写「撤掉排着的话」，请求在路上也可点）。
+ */
+function StopButton({
+	id,
+	queued,
+	behind,
+	onGone,
+}: {
+	id: string;
+	queued: boolean;
+	behind: boolean;
+	onGone: (error: unknown) => boolean;
+}) {
 	const stop = useMutation({
 		mutationFn: () => callApi(sessionsApi.stop, { params: { id } }),
-		onError: (error) => notify.error(SESSION.page.stopFailed, { description: error.message }),
+		onError: (error) => {
+			if (onGone(error)) return;
+			notify.error(SESSION.page.stopFailed, { description: error.message });
+		},
 	});
+	const cancelBehind = behind && stop.isPending;
 	return (
 		<Button
 			size="sm"
-			title={SESSION.page.stopTitle}
+			title={
+				cancelBehind
+					? SESSION.page.cancelBehindTitle
+					: queued
+						? SESSION.page.stopQueuedTitle
+						: SESSION.page.stopTitle
+			}
 			// 请求在路上时不可点，但保留焦点（aria-disabled，不是 disabled 属性）：浏览器会让被禁用的按钮失去焦点，
-			// 之后按钮随这一轮消失时就没有焦点可交接了；停止失败后按钮恢复可点，焦点也还在它上面。
-			disabled={stop.isPending}
+			// 之后按钮随这一轮消失时就没有焦点可交接了；停止失败后按钮恢复可点，焦点也还在它上面。有话排在后面时请求在路上也可点
+			// （再点一次是撤掉那句话）。
+			disabled={stop.isPending && !cancelBehind}
 			focusableWhenDisabled
 			className="aria-disabled:cursor-not-allowed aria-disabled:opacity-40"
 			onClick={() => stop.mutate()}
 			// 这一轮结束时这个按钮随之消失：焦点交给输入框（components/focus-recovery）。
 			data-focus-successor={COMPOSER_SELECTOR}
 		>
-			{stop.isPending ? SESSION.page.stopping : SESSION.page.stop}
+			{cancelBehind
+				? SESSION.page.cancelBehind
+				: stop.isPending
+					? SESSION.page.stopping
+					: SESSION.page.stop}
 		</Button>
 	);
 }
 
 /**
- * 底部的输入框：空闲时「接着说」；在做时照常可以写下一句、只是不能发（「发送」不可用，Ctrl/⌘+Enter 同样不发；原因写在按钮旁边，
- * 输入框用 `aria-describedby` 指向它）。「输入框照常可以写」和助手页一致；原因的写法不同：助手页的原因是就绪状态里逐条的缺什么，
- * 只在页面上方写一处（按钮和输入框都指向那里，旁边不重复），这里的原因只有「在做」「排队中」一句，就写在「发送」旁边。
- * Ctrl/⌘+Enter 只在输入框里发送；点「停止」的按钮随这一轮消失时焦点交给输入框（`data-focus-successor`，不落在 body 上）；已结束时不显示。
+ * 底部的输入框，按 {@link composerMode} 分几种：
+ * - 空闲：「接着说」，开始新的一轮（项目里别的会话在做时它排队，状态由事件流推进）；
+ * - 在做：照常可以发，发出去的是**插话**（时间线上标「插话」，写着送到了没有），按钮写「发送插话」，输入框下写「插话在当前这一步做完后送到；
+ *   要马上停下用停止」；
+ * - 停止途中说了话、有话排在这一轮后面：不能再说，写明这一轮在停止、话排在第几位、再点停止是撤掉它；
+ * - 排队中：不能说，写「排在第 N 位：<会话标题>（<发起人>）正在做」，标题链到那个会话；
+ * - 正在结束（请求在路上）：不能说；已结束：不显示输入框。
+ * Ctrl/⌘+Enter 只在输入框里发送；点「停止」的按钮随这一轮消失时焦点交给输入框（`data-focus-successor`，不落在 body 上）。
  */
-function Composer({ id, status }: { id: string; status: SessionStatus }) {
+function Composer({
+	id,
+	mode,
+	onGone,
+}: {
+	id: string;
+	mode: ComposerMode;
+	onGone: (error: unknown) => boolean;
+}) {
 	const client = useQueryClient();
 	const [text, setText] = useState("");
 	const field = useRef<HTMLTextAreaElement>(null);
-	const blockedId = useId();
+	const noteId = useId();
+	const ending = useIsMutating({ mutationKey: endMutationKey(id) }) > 0;
 	const send = useMutation({
 		mutationFn: (message: string) =>
 			callApi(sessionsApi.message, { params: { id }, body: { text: message } }),
@@ -146,11 +222,13 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 			);
 			void client.invalidateQueries({ queryKey: domainKey(sessionsApi.list) });
 		},
+		onError: (error) => {
+			onGone(error);
+		},
 	});
-	const blocked =
-		status === "running" ? SESSION.page.running : status === "queued" ? SESSION.page.queued : null;
+	const canWrite = (mode.kind === "send" || mode.kind === "steer") && !ending;
 	const empty = text.trim() === "";
-	const canSend = blocked === null && !empty && !send.isPending;
+	const canSend = canWrite && !empty && !send.isPending;
 	const submit = () => {
 		if (!canSend) return;
 		// 发出的这一刻就把焦点交给输入框：「发送」随即不可用，浏览器会让被禁用的按钮失去焦点、落到 body 上
@@ -160,9 +238,19 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 		field.current?.focus();
 		send.mutate(text);
 	};
-	if (status === "ended") {
+	if (mode.kind === "ended") {
 		return <p className="mt-4 text-sm text-fg-3">{SESSION.page.ended}</p>;
 	}
+	const hint = mode.kind === "steer" && !ending;
+	const note = ending ? (
+		SESSION.page.ending
+	) : mode.kind === "steer" ? (
+		SESSION.page.steerHint
+	) : mode.kind === "behind" ? (
+		SESSION.page.behind(mode.position)
+	) : mode.kind === "queued" ? (
+		<QueuedNote position={mode.position} waitingFor={mode.waitingFor} />
+	) : null;
 	return (
 		<form
 			aria-label={SESSION.page.sendLabel}
@@ -176,9 +264,12 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 				ref={field}
 				data-session-composer
 				aria-label={SESSION.page.sendLabel}
-				aria-describedby={blocked === null ? undefined : blockedId}
-				placeholder={SESSION.page.sendPlaceholder}
+				aria-describedby={note === null ? undefined : noteId}
+				placeholder={
+					mode.kind === "steer" ? SESSION.page.steerPlaceholder : SESSION.page.sendPlaceholder
+				}
 				value={text}
+				disabled={!canWrite}
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={2}
 				onChange={(event) => setText(event.target.value)}
@@ -198,54 +289,72 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 				<Button
 					type="submit"
 					variant="primary"
-					title={`${SESSION.page.send}（${shortcutText("assistant-send")}）`}
-					disabled={blocked !== null || empty || send.isPending}
+					title={`${mode.kind === "steer" ? SESSION.page.sendSteer : SESSION.page.send}（${shortcutText("assistant-send")}）`}
+					disabled={!canSend}
 				>
-					{send.isPending ? SESSION.page.sending : SESSION.page.send}
+					{send.isPending
+						? SESSION.page.sending
+						: mode.kind === "steer"
+							? SESSION.page.sendSteer
+							: SESSION.page.send}
 				</Button>
-				{blocked !== null && (
-					<span id={blockedId} data-testid="composer-blocked" className="text-sm text-fg-3">
-						{blocked}
+				{note !== null && (
+					<span
+						id={noteId}
+						data-testid={hint ? "composer-hint" : "composer-blocked"}
+						className="text-sm text-fg-3"
+					>
+						{note}
 					</span>
 				)}
 			</div>
-			{send.isError && (
+			{send.isError && !(send.error instanceof ApiError && send.error.status === 404) && (
 				<FormAlert>
-					<SendError error={send.error} sessionId={id} />
+					<SendError error={send.error} />
 				</FormAlert>
 			)}
 		</form>
 	);
 }
 
-/**
- * 「接着说」失败的原因：这个会话有一轮在做（`turn_running`）；同一个项目另一个会话在做（`project_busy`，给出那个会话的链接）；
- * 其余（包括助手没有开启、连不上的 503）写接口给的那句话。
- */
-function SendError({ error, sessionId }: { error: Error; sessionId: string }) {
-	if (!(error instanceof ApiError)) return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
-	if (error.code === "turn_running") return <>{SESSION.page.turnRunning}</>;
-	if (error.code === "project_busy") return <ProjectBusy sessionId={sessionId} />;
-	return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
-}
-
-/** 同一个项目另一个会话在做：写明原因，找得到是哪一个时给出它的链接（列表只在这时才读）。 */
-function ProjectBusy({ sessionId }: { sessionId: string }) {
-	const list = useQuery(apiQuery(sessionsApi.list, { params: { project: SESSION_PROJECT } }));
-	const busy = list.data?.sessions.find(
-		(session) => session.status === "running" && session.id !== sessionId,
-	);
+/** 排队中：「排在第 N 位：<标题>（<发起人>）正在做」，标题链到正在做的那个会话；没有会话在做（等兜底开始）时写等助手空出来。 */
+function QueuedNote({
+	position,
+	waitingFor,
+}: {
+	position: number | null;
+	waitingFor: NonNullable<ComposerMode & { kind: "queued" }>["waitingFor"];
+}) {
 	return (
 		<>
-			{SESSION.busy}
-			{busy && (
+			{position === null ? "" : SESSION.page.queuedBefore(position)}
+			{waitingFor === null ? (
+				SESSION.page.queuedNobody
+			) : (
 				<>
-					{"："}
-					<Link to="/sessions/$id" params={{ id: busy.id }} className={INLINE_LINK}>
-						{SESSION.busyLink}
+					<Link
+						to="/sessions/$id"
+						params={{ id: waitingFor.session_id }}
+						className={INLINE_LINK}
+						title={SESSION.page.queuedOpen}
+					>
+						<PeerText>{waitingFor.title}</PeerText>
 					</Link>
+					<PeerText>{SESSION.page.queuedWaitingFor(waitingFor.created_by)}</PeerText>
 				</>
 			)}
 		</>
 	);
+}
+
+/**
+ * 「接着说」失败的原因：这个会话有一轮在做、而控制面看来已经结束了（`turn_running`）；会话在排队（`session_queued`）；会话已经结束
+ * 或者正在结束（`session_ended`）；其余（包括助手没有开启、连不上的 503）写接口给的那句话。
+ */
+function SendError({ error }: { error: Error }) {
+	if (!(error instanceof ApiError)) return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
+	if (error.code === "turn_running") return <>{SESSION.page.turnRunning}</>;
+	if (error.code === "session_queued") return <>{SESSION.page.sessionQueued}</>;
+	if (error.code === "session_ended") return <>{SESSION.page.sessionEnded}</>;
+	return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
 }
