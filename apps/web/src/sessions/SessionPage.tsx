@@ -7,17 +7,16 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
 import { Page, PageHeader } from "#/components/page";
-import { useShortcut } from "#/components/shortcuts";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
-import { shortcutText } from "#/lib/shortcuts";
+import { isShortcut, shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -111,19 +110,23 @@ function StopButton({ id }: { id: string }) {
 		<Button
 			size="sm"
 			title={SESSION.page.stopTitle}
+			// 请求在路上时不可点，但保留焦点（aria-disabled，不是 disabled 属性）：浏览器会让被禁用的按钮失去焦点，
+			// 之后按钮随这一轮消失时就没有焦点可交接了；停止失败后按钮恢复可点，焦点也还在它上面。
 			disabled={stop.isPending}
+			focusableWhenDisabled
+			className="aria-disabled:cursor-not-allowed aria-disabled:opacity-40"
 			onClick={() => stop.mutate()}
 			// 这一轮结束时这个按钮随之消失：焦点交给输入框（components/focus-recovery）。
 			data-focus-successor={COMPOSER_SELECTOR}
 		>
-			{SESSION.page.stop}
+			{stop.isPending ? SESSION.page.stopping : SESSION.page.stop}
 		</Button>
 	);
 }
 
 /**
  * 底部的输入框：空闲时「接着说」；在做时照常可以写下一句、只是不能发（「发送」不可用并写明原因，Ctrl/⌘+Enter 同样不发），
- * 和助手页的输入框一致；一轮结束时焦点回到输入框（点「停止」的按钮随这一轮消失，焦点不落在 body 上）；已结束时不显示。
+ * 和助手页的输入框一致；Ctrl/⌘+Enter 只在输入框里发送；点「停止」的按钮随这一轮消失时焦点交给输入框（`data-focus-successor`，不落在 body 上）；已结束时不显示。
  */
 function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const client = useQueryClient();
@@ -133,8 +136,12 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const send = useMutation({
 		mutationFn: (message: string) =>
 			callApi(sessionsApi.message, { params: { id }, body: { text: message } }),
-		onSuccess: () => {
-			setText("");
+		onSuccess: (_session, message) => {
+			// 只去掉发出去的那一句：请求在路上时输入框还能写（焦点就在里面），这时接着写的字不能一起清掉。输入框里开头已经
+			// 不是发出去的那一句（用户改过它）时不动：宁可留着，也不删用户的字。
+			setText((current) =>
+				current.startsWith(message) ? current.slice(message.length).trimStart() : current,
+			);
 			void client.invalidateQueries({ queryKey: domainKey(sessionsApi.list) });
 		},
 	});
@@ -143,19 +150,14 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const empty = text.trim() === "";
 	const canSend = blocked === null && !empty && !send.isPending;
 	const submit = () => {
-		if (canSend) send.mutate(text);
+		if (!canSend) return;
+		// 发出的这一刻就把焦点交给输入框：「发送」随即不可用，浏览器会让被禁用的按钮失去焦点、落到 body 上
+		// （点「发送」或 Tab 到「发送」按 Enter；Safari 里点按钮本来就拿不到焦点，焦点也已经在 body 上），
+		// 之后没有人再把它放回来。输入框一直在、写完下一句可以接着写；发送失败时焦点在输入框、写好的话还在。
+		// 之后用户自己把焦点移到别处就不再动它。
+		field.current?.focus();
+		send.mutate(text);
 	};
-	useShortcut("assistant-send", submit, status !== "ended");
-	// 一轮结束（在做 → 空闲）：焦点在 body 上（用户点了空白处）时放回输入框；用户在别处就不抢。点过「停止」的由焦点恢复交给输入框。
-	const before = useRef(status);
-	useEffect(() => {
-		const was = before.current;
-		before.current = status;
-		if (status === "idle" && (was === "running" || was === "queued")) {
-			const active = document.activeElement;
-			if (!active || active === document.body) field.current?.focus();
-		}
-	}, [status]);
 	if (status === "ended") {
 		return <p className="mt-4 text-sm text-fg-3">{SESSION.page.ended}</p>;
 	}
@@ -178,6 +180,17 @@ function Composer({ id, status }: { id: string; status: SessionStatus }) {
 				maxLength={SESSION_MESSAGE_MAX_CHARS}
 				rows={2}
 				onChange={(event) => setText(event.target.value)}
+				onKeyDown={(event) => {
+					// Ctrl/⌘+Enter 只在输入框里发送（登记在快捷键面板里，但不是全局快捷键）；输入法选字时的 Enter 不算
+					// （keyCode 229：Safari 在组字结束的那次按键上 isComposing 已经是 false）。
+					if (
+						isShortcut("assistant-send", event) &&
+						!(event.nativeEvent.isComposing || event.keyCode === 229)
+					) {
+						event.preventDefault();
+						submit();
+					}
+				}}
 			/>
 			<div className="flex items-center gap-3">
 				<Button

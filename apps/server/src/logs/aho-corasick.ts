@@ -397,6 +397,64 @@ export function scanSpans(a: Automaton, text: string, limit: number): number {
 	return top;
 }
 
+/**
+ * 把 {@link scanSpans} 刚找到的 `count` 段和另一组段（`extraStarts` / `extraEnds`：按开头排好、互相不重叠，例如令牌原值的出现）
+ * 合并成一组：重叠的合成一段，相邻但不重叠的各是一段（和 {@link scanSpans} 同一个规则）。合并之后的段放回模块里的数组
+ * （用 {@link maskedByAutomaton} 取），返回段数。`count` 为 0 时只有另一组段（不需要先扫描）。线性，一遍。
+ */
+export function mergeSpans(
+	count: number,
+	extraStarts: readonly number[],
+	extraEnds: readonly number[],
+): number {
+	const total = count + extraStarts.length;
+	const starts = new Int32Array(total);
+	const ends = new Int32Array(total);
+	let out = 0;
+	let i = 0;
+	let j = 0;
+	let open = false;
+	let curStart = 0;
+	let curEnd = 0;
+	while (i < count || j < extraStarts.length) {
+		let start: number;
+		let end: number;
+		if (
+			j >= extraStarts.length ||
+			(i < count && (spanStarts[i] as number) <= (extraStarts[j] as number))
+		) {
+			start = spanStarts[i] as number;
+			end = spanEnds[i] as number;
+			i += 1;
+		} else {
+			start = extraStarts[j] as number;
+			end = extraEnds[j] as number;
+			j += 1;
+		}
+		if (open && start < curEnd) {
+			if (end > curEnd) curEnd = end;
+			continue;
+		}
+		if (open) {
+			starts[out] = curStart;
+			ends[out] = curEnd;
+			out += 1;
+		}
+		curStart = start;
+		curEnd = end;
+		open = true;
+	}
+	if (open) {
+		starts[out] = curStart;
+		ends[out] = curEnd;
+		out += 1;
+	}
+	while (spanStarts.length < out) growSpans();
+	spanStarts.set(starts.subarray(0, out));
+	spanEnds.set(ends.subarray(0, out));
+	return out;
+}
+
 /** 把 {@link scanSpans} 刚找到的 `count` 段换成 `mask`（同步，紧接着扫描用）。 */
 export function maskedByAutomaton(text: string, count: number, mask: string): string {
 	let out = "";
