@@ -2,7 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { nameProblem, REJECTED_NAME_CHARACTER } from "@sfly/schema";
 
 // 显示不可信文字的端到端检查共用（#699）：别人写的文字（Agent 报的、节点写的、节点包的元信息）里带着改变方向的控制字符、
-// 零宽字符、转义字符，页面上不能有任何一个原样留下：**文字节点和属性值（`title`、`aria-label`……）里都不能有**，
+// 零宽字符、转义字符，页面上不能有任何一个原样留下：**文字节点和显示给人看的属性（`title`、`aria-label`、`placeholder`……）里都不能有**，
 // 只能是写出来的样子（`U+202E` 一小块、或纯文字的 `⟨U+202E⟩`）。字符表是 `@sfly/schema` 的 `text-safety.ts` 里那一张。
 
 /** 带进各处的「恶意」写法：每个只有一个有害字符，旁边是正常的字。 */
@@ -58,9 +58,20 @@ export async function unsafeTextOn(page: Page, scope?: Locator): Promise<Found[]
 			const value = node.textContent ?? "";
 			if (suspicious.test(value)) found.push({ where: `text ${describe(node)}`, value });
 		}
+		// 会显示给人看（或读给读屏听）的属性；`id`、`href`、`data-*`、`value` 这类不显示，不在这里查。
+		const shown = [
+			"title",
+			"aria-label",
+			"aria-description",
+			"aria-roledescription",
+			"aria-valuetext",
+			"alt",
+			"placeholder",
+			"label",
+		];
 		for (const el of [element, ...element.querySelectorAll("*")]) {
 			for (const attr of el.getAttributeNames()) {
-				if (attr === "class" || attr === "style" || attr === "d" || attr === "points") continue;
+				if (!shown.includes(attr)) continue;
 				const value = el.getAttribute(attr) ?? "";
 				if (suspicious.test(value)) found.push({ where: `attr ${attr} ${describe(el)}`, value });
 			}

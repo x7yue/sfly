@@ -328,7 +328,7 @@ function NodeInspector({
 						<DisplayNameField
 							id={id}
 							node={node}
-							placeholder={nodeDefaultTitle(node, info)}
+							placeholder={untrustedPlain(nodeDefaultTitle(node, info))}
 							error={displayNameError}
 							onChange={change}
 						/>

@@ -243,7 +243,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 						<NodeTitleEditor
 							id={id}
 							initial={nodeDisplayName(node) ?? ""}
-							placeholder={nodeDefaultTitle(node, info)}
+							placeholder={untrustedPlain(nodeDefaultTitle(node, info))}
 							onCommit={(text) => rename.commit(id, text)}
 							onCancel={rename.cancel}
 						/>
