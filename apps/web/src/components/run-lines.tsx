@@ -211,8 +211,10 @@ export function RunLines({
 			}
 			className={cn(
 				// 站名那几列：每列最宽 18rem、各取自己站名的宽度（`auto`），放不下时按各列缺的宽度均分：短站名让出的宽度给长站名，
-				// 长节点 ID 的站名（常常正好是失败的那个节点）不再和短站名平分同样的宽度。
-				"m-0 grid list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,auto))_minmax(0,1fr)_auto] gap-y-1.5 p-0",
+				// 长节点 ID 的站名（常常正好是失败的那个节点）不再和短站名平分同样的宽度。放得下时剩下的宽度由这几列均分
+				// （auto 的列在 `justify-content: normal` 下平均拉伸）：短链（2–4 站）不再挤在左边一两百像素、右边留一大片空白。
+				// 计数那一列是 `max-content`（不是 auto，不跟着拉伸），链名那一列也是。
+				"m-0 grid list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,auto))_max-content] gap-y-1.5 p-0",
 				className,
 			)}
 		>
@@ -227,7 +229,7 @@ export function RunLines({
 							</span>
 						)}
 					</span>
-					<ol className="col-[2/-3] m-0 grid list-none grid-cols-subgrid p-0">
+					<ol className="col-[2/-2] m-0 grid list-none grid-cols-subgrid p-0">
 						{row.stations.map((station, k) => (
 							<StationCell
 								key={station.kind === "node" ? station.node.node_id : `fold-${station.start}`}
@@ -279,7 +281,7 @@ function StationCell({
 	const status = node ? nodeStatusView(node.status) : undefined;
 	const kind = nodeStatusView(station.kind === "fold" ? station.status : station.node.status).kind;
 	return (
-		<li style={{ gridColumnStart: column + 1 }} className="relative min-w-0 max-w-72">
+		<li style={{ gridColumnStart: column + 1 }} className="relative min-w-0">
 			<span className="relative flex h-5 items-center">
 				{next && (
 					<span
@@ -304,8 +306,9 @@ function StationCell({
 				<StatusDot kind={kind} className="rounded-full bg-surface" />
 			</span>
 			<span
+				// 站名最宽 18rem（列取站名的宽度，不被一个很长的节点 ID 撑开）；列被拉伸之后站点的格子比站名宽，连着下一站的线画满整格。
 				className={cn(
-					"flex min-w-0 pr-1 pl-2.5 text-xs",
+					"flex min-w-0 max-w-72 pr-1 pl-2.5 text-xs",
 					station.kind === "fold"
 						? "text-fg-3"
 						: kind === "running"

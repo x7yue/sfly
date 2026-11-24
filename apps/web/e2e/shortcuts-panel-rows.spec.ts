@@ -3,7 +3,8 @@ import { expect, test } from "./fixtures";
 
 // 快捷键面板里名称相同的登记合成一行（#595）：「删除节点 / 断开连线」写一次，按键是 Delete 或 Backspace。
 // 这一行比别的行宽出一截（名称加两个键）：占一列的话五列（四列）都要跟着加宽，面板撑到铺满窗口（1440×900 里 1400px、
-// 1280×800 里 1240px，窗口宽减 40px 的上限）；占两列，别的行的宽度不变，面板仍跟着内容走。读元素的实际位置，不比像素。
+// 1280×800 里 1240px，窗口宽减 40px 的上限）；占两列，别的行的宽度不变，面板仍跟着内容走；占两列的行里按键紧跟在名称后面
+// （不顶到右端）。读元素的实际位置，不比像素。
 
 /** `width` 是排版宽度（offsetWidth），不受出场动画的缩放影响；`right` 是屏幕上的位置，只用来比较同一时刻的两个元素。 */
 const rect = (locator: Locator) =>
@@ -40,6 +41,16 @@ for (const viewport of [
 		expect(mergedBox.width).toBeGreaterThan(otherBox.width * 1.8);
 		const list = await rect(group.locator("dl"));
 		expect(mergedBox.right).toBeLessThanOrEqual(list.right + 0.5);
+
+		// 按键跟在名称后面（别的行名称在左、按键顶到右端；这一行宽出一倍，顶到右端会在中间空出一大截）。
+		const gap = await merged.evaluate((row) => {
+			const name = row.querySelector("dt")?.getBoundingClientRect();
+			const keys = row.querySelector("dd")?.getBoundingClientRect();
+			if (!name || !keys) throw new Error("没有 dt、dd");
+			return keys.left - name.right;
+		});
+		expect(gap).toBeGreaterThan(0);
+		expect(gap).toBeLessThanOrEqual(16);
 
 		// 面板跟着内容走：比窗口宽减 40px 的上限窄得多（不是被这一行撑到上限）。
 		const panel = await rect(dialog);

@@ -110,6 +110,33 @@ describe("第一个管理员", () => {
 		}
 	});
 
+	it("初始化页的显示名和建用户、改显示名同一个检查：带零宽空格、标签字符、位置不对的零宽连接符的 400，不建用户、不用掉初始化码；合格的照常", async () => {
+		cp = await startTestControlPlane();
+		const code = (await readFile(codeFile(cp), "utf8")).trim();
+		const withName = (display_name: string) =>
+			cp?.fetch("/auth/setup", {
+				method: "POST",
+				headers: JSON_HEADERS,
+				body: JSON.stringify({
+					setup_code: code,
+					login_name: "boss",
+					display_name,
+					password: "first-password-1",
+				}),
+			}) as Promise<Response>;
+		for (const bad of ["老\u200b板", "老\u202e板", "老\u{e0067}板", "\u200d老板", "老\n板"]) {
+			const res = await withName(bad);
+			expect(res.status, JSON.stringify(bad)).toBe(400);
+		}
+		const detail = await (await withName("老\u200b板")).text();
+		expect(detail).toContain("显示名的第 2 个字符是 U+200B");
+		// 没有建出用户，码还能用。
+		expect(await (await cp.fetch("/auth/status")).json()).toMatchObject({ setup_required: true });
+		expect(existsSync(codeFile(cp))).toBe(true);
+		const ok = await withName("👩\u200d💻 程序员");
+		expect(ok.status).toBe(201);
+	});
+
 	it("码不对是 403 invalid_setup_code，不建用户；连着猜错会被限速（429）", async () => {
 		cp = await startTestControlPlane();
 		const wrong = await setup(cp, "AAAA-BBBB-CCCC-DDDD-EEEE");
