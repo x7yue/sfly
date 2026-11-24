@@ -155,7 +155,9 @@ describe("openDatabase：连接出错", () => {
 
 		it("借出去的事务超过 transaction_timeout（PostgreSQL 17 起）：数据库发 FATAL 25P04、关连接，onInUseError 一次", async (context) => {
 			const db = open(true);
-			const version = Number((await db.pool.query("show server_version_num")).rows[0]?.server_version_num);
+			const version = Number(
+				(await db.pool.query("show server_version_num")).rows[0]?.server_version_num,
+			);
 			if (version < 170_000) {
 				await db.close();
 				context.skip();
@@ -265,16 +267,16 @@ describe("openDatabase：连接出错", () => {
 			["57P05（空闲会话超时）", { severity: "ERROR", code: "57P05" }, true],
 			// 数据库用中文报的：severity 是「致命错误」（实测，PostgreSQL 18、lc_messages=zh_CN.UTF-8），不认得，只能靠 SQLSTATE。
 			// 事务里空闲超时、事务超时数据库发的也是 FATAL，然后关掉这条连接。
-			[
-				"事务里空闲超时 25P03（中文的 severity）",
-				{ severity: "致命错误", code: "25P03" },
-				true,
-			],
+			["事务里空闲超时 25P03（中文的 severity）", { severity: "致命错误", code: "25P03" }, true],
 			["事务超时 25P04（中文的 severity）", { severity: "致命错误", code: "25P04" }, true],
 			["事务里空闲超时 25P03（英文的 severity）", { severity: "FATAL", code: "25P03" }, true],
 			// 不是连接完了的：语句超时只取消这一条语句，连接还在。
 			["语句超时（中文的 severity，57014）", { severity: "错误", code: "57014" }, false],
-			["事务里的另一种错误 25P02（事务已中止，中文的 severity）", { severity: "错误", code: "25P02" }, false],
+			[
+				"事务里的另一种错误 25P02（事务已中止，中文的 severity）",
+				{ severity: "错误", code: "25P02" },
+				false,
+			],
 			["普通的错误（唯一约束）", { severity: "ERROR", code: "23505" }, false],
 			["语句被取消（57014 不是连接完了）", { severity: "ERROR", code: "57014" }, false],
 			["没有 severity 和 code", {}, false],
