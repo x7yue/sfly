@@ -31,6 +31,7 @@ import { SetupCode } from "./auth/setup-code.js";
 import { TokenService } from "./auth/tokens.js";
 import { type Clock, systemClock } from "./clock.js";
 import { EnvSettingsError, numericOptionProblems } from "./config/env-settings.js";
+import { gatewayUrlFrom } from "./config/url-setting.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { loadClientTarballs } from "./downloads/client-tarballs.js";
@@ -598,7 +599,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		throw error;
 	}
 	publicGrpcUrl = (
-		options.publicGrpcUrl ?? withPort(publicHttpUrl, new URL(gateway.url).port)
+		options.publicGrpcUrl ?? gatewayUrlFrom(publicHttpUrl, new URL(gateway.url).port)
 	).replace(/\/+$/, "");
 
 	// 助手服务的事件连接：配置了助手服务的话打开，断了按退避重连（src/sessions/assistant-connection.ts）。
@@ -682,12 +683,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 			return closing;
 		},
 	};
-}
-
-/** 同一主机、另一个端口的 http 地址。 */
-function withPort(url: string, port: string): string {
-	const parsed = new URL(url);
-	return `http://${parsed.hostname}:${port}`;
 }
 
 function formatHost(host: string): string {
