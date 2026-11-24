@@ -1,11 +1,10 @@
-// 控制面读的地址类环境变量（对外地址、数据库地址、镜像地址）怎么检查（#619）。报错里回显填的值的办法在 echo.ts，只有那一处。
+// 控制面读的地址类环境变量（对外地址、数据库地址、镜像地址）怎么检查（#619）。报错里不回显填的值（echo.ts：只有数值类的回显）：写变量名、哪里不对和一个例子。
 //
 // 以前这些变量原样往下传：`SFLY_PUBLIC_URL=sfly.internal:8080`（少了协议）时控制面照常启动，告诉 Agent 的网关地址是残缺的；
 // 协议写错（`http//sfly:8080`）时要等 HTTP 已经开始监听才在算网关地址的 `new URL` 里崩溃，带着堆栈。现在启动时和别的环境变量
 // 一起检查（env-settings.ts 的 `readEnvSettings`），写错的写明变量名、填的值和要求，一次报完。
 import pg from "pg";
 import { isUnset } from "./decimal.js";
-import { echoUrl } from "./echo.js";
 
 const HTTP_PREFIX = /^https?:\/\//i;
 const FILE_PREFIX = /^file:\/\//i;
@@ -60,7 +59,7 @@ function httpUrlProblem(text: string, rule: HttpUrlRule): string | undefined {
 
 /**
  * 把环境变量 `name` 的原文变成地址（去掉前后空白）；没设置（或空串）时是 undefined。
- * 不合要求时抛出，写明变量名、要求、不合的原因和填的值（只回显协议、主机和端口，见 echo.ts 的 `echoUrl`）。
+ * 不合要求时抛出，写明变量名、要求（带一个正确写法的例子）和不合的原因；**不回显填的值**（里面可能是别的变量的值，带着凭据）。
  */
 export function httpUrlFromEnv(
 	name: string,
@@ -71,7 +70,7 @@ export function httpUrlFromEnv(
 	const text = raw.trim();
 	const problem = httpUrlProblem(text, rule);
 	if (problem !== undefined) {
-		throw new Error(`${name} 不合法：${rule.requirement}，${problem}，实际是 ${echoUrl(text)}`);
+		throw new Error(`${name} 不合法：${rule.requirement}，${problem}`);
 	}
 	return text;
 }
@@ -103,6 +102,13 @@ function pgParses(connectionString: string): boolean {
 export function databaseUrlFromEnv(raw: string | undefined): string {
 	if (isUnset(raw)) return DEFAULT_DATABASE_URL;
 	const text = raw.trim();
+	// 带 `@`（用户名和密码）而没有 `://`：连接库解析得了，但不是照人写的意思用它：把整串当成库名、主机取默认值，第一次连库时把这串
+	// （含密码）当库名发给那台默认的主机。不比连接库严：它用不了这种写法。别的没有 `://` 的写法（套接字的路径、单独一个库名）照旧放行。
+	if (text.includes("@") && !text.includes("://")) {
+		throw new Error(
+			"DATABASE_URL 不合法：看起来带了用户名和密码，但没有写协议（要写成 postgres://用户:密码@主机:端口/库名）。没有回显填的值（里面有密码）",
+		);
+	}
 	if (!pgParses(text)) {
 		throw new Error(
 			"DATABASE_URL 不合法：连接库（pg）解析不了这个连接串。写成 postgres://用户:密码@主机:端口/库名；走 Unix 套接字写成 postgres://用户:密码@/库名?host=/var/run/postgresql；主机、端口里不能有不该有的字符，也不能写多个主机；sslcert、sslkey、sslrootcert 指的文件要读得到，uselibpqcompat=true 加 sslmode=verify-ca 要同时给 sslrootcert。没有回显填的值（里面有密码）",

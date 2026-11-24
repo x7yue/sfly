@@ -1,6 +1,7 @@
 // 控制面入口。配置全部来自环境变量：
 //   DATABASE_URL     PostgreSQL 连接串（默认 postgres://sfly:sfly@127.0.0.1:5432/sfly；空串当作没设置）。启动时用连接库（pg）
-//                    自己解析连接串的函数检查，只拒它也解析不了的：Unix 套接字的写法（postgres://用户:密码@/库名?host=/var/run/postgresql）也行
+//                    自己解析连接串的函数检查，只拒它也解析不了的：Unix 套接字的写法（postgres://用户:密码@/库名?host=/var/run/postgresql）也行；
+//                    带 @ 而没有 ://（用户:密码@主机/库名）也拒绝：连接库不会把它当地址，而是把整串当库名
 //   SFLY_DATA_DIR    数据目录：节点包文件等（默认 ./data）
 //   SFLY_HTTP_HOST   HTTP API 监听地址（默认 0.0.0.0）
 //   SFLY_HTTP_PORT   HTTP API 端口（默认 8080）
@@ -30,7 +31,7 @@
 //   字符串类的变量也在启动时和它们一起检查（#619）：SFLY_TRUST_PROXY、SFLY_CORS_ORIGINS、SFLY_DEV_ORIGINS、
 //   SFLY_ADMIN_LOGIN 和 SFLY_ADMIN_PASSWORD（要一起给）、SFLY_PUBLIC_URL、SFLY_PUBLIC_GRPC_URL、DATABASE_URL、
 //   SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR。报错里不出现密码、密钥和地址里的凭据：回显填的值只经过 src/config/echo.ts，
-//   认得的才回显（地址只写协议、主机和端口，数据库地址、密码一律不写）；报错的顺序是读的顺序（稳定）。
+//   只有数值类回显（最多 12 个字符），地址、名单、代理、数据库地址、密码一律不回显；报错的顺序是读的顺序（稳定）。
 //   哪些检查、哪些留给第一次用到，见 docs/ARCHITECTURE.md「启动时检查哪些环境变量」
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv

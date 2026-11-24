@@ -13,6 +13,8 @@ const run = promisify(execFile);
 
 /** 会出现在密码、地址里的凭据位置的记号：说明里不能有它（哪怕是一部分）。 */
 const SECRET = "Hunter2-secret-9f3a";
+/** 放在主机、端口位置的标记：地址类、名单类、代理类的变量，说明里不能有它的任何一部分（回显收到只剩数值类，#619）。 */
+const HOST_MARK = "HOSTMARK-q2w8";
 
 /** 读环境变量，返回不合法的说明（没有问题时失败）。 */
 function problemsOf(env: Record<string, string>): string[] {
@@ -82,16 +84,16 @@ describe("SFLY_TRUST_PROXY", () => {
 	});
 
 	it.each([
-		// 层数写大了：是个数，原样回显；地址段里写错的项是认不出的字母（不是 IP、网段用得到的字符），只说第几项。
-		["banana", "第 1 项是 （认不出，没有回显）", "banana"],
+		["banana", "第 1 项", "banana"],
+		["10.0.0.0/33", "第 1 项", "10.0.0.0/33"],
+		["10.0.0.0/8,oops", "第 2 项", "oops"],
+		// 层数写大了：是个数（不超过 12 个字符才回显）。
 		["11", '实际是 "11"', undefined],
-		["10.0.0.0/33", '第 1 项是 "10.0.0.0/33"', undefined],
-		["10.0.0.0/8,oops", "第 2 项是 （认不出，没有回显）", "oops"],
-	])("写错了（%s）：报变量名和第几项，只回显认得的写法，不是带堆栈的未捕获错误", (value, shown, hidden) => {
+	])("写错了（%s）：报变量名和第几项，不回显填的那一项，不是带堆栈的未捕获错误", (value, where, hidden) => {
 		const problem = oneProblem({ SFLY_TRUST_PROXY: value });
 
 		expect(problem).toContain("SFLY_TRUST_PROXY");
-		expect(problem).toContain(shown);
+		expect(problem).toContain(where);
 		if (hidden !== undefined) expect(problem).not.toContain(hidden);
 	});
 
@@ -101,13 +103,18 @@ describe("SFLY_TRUST_PROXY", () => {
 		["令牌在路径里", `proxy.internal/${SECRET}`],
 		["令牌在查询串里", `10.0.0.1?token=${SECRET}`],
 		["地址段的其中一项带凭据", `10.0.0.0/8,admin:${SECRET}@proxy.internal`],
-	])("%s：说明里没有凭据，只说是第几项认不出", (_, value) => {
+		["主机位置是标记", `https://${HOST_MARK}.internal:8443`],
+		["像 IPv6 加网段的标记（十六进制字母、冒号、斜杠）", `dead:beef:${HOST_MARK}::/64`],
+		["一串很长的、只有十六进制字符的令牌", `${"abcdef0123456789".repeat(3)}:1`],
+	])("%s：说明里没有它的任何一部分，只说是第几项认不出", (_, value) => {
 		const problem = oneProblem({ SFLY_TRUST_PROXY: value });
 
-		expect(problem).toContain("SFLY_TRUST_PROXY 认不出");
-		expect(problem).toContain("（认不出，没有回显）");
+		expect(problem).toMatch(/SFLY_TRUST_PROXY 认不出：第 [12] 项/);
 		expect(problem).not.toContain(SECRET);
+		expect(problem).not.toContain(HOST_MARK);
 		expect(problem).not.toContain("proxy.internal");
+		expect(problem).not.toContain("abcdef0123456789");
+		expect(problem).not.toContain("8443");
 	});
 });
 
@@ -124,51 +131,43 @@ describe("SFLY_CORS_ORIGINS、SFLY_DEV_ORIGINS", () => {
 		]);
 	});
 
-	it("写错了：写明是哪个变量、第几项；SFLY_DEV_ORIGINS 写错说的是它自己，不是 SFLY_CORS_ORIGINS", () => {
-		// `dash.example.com` 被 URL 解析成协议 `dash.example.com:` 以外的东西（没有 `:`，解析不了）：没有回显。
-		const cors = oneProblem({ SFLY_CORS_ORIGINS: "https://ok.example.com, dash.example.com" });
-		expect(cors).toContain("SFLY_CORS_ORIGINS 里的第 2 项");
-		expect(cors).toContain("https://dash.example.com");
-		expect(cors).toContain("（解析不了，没有回显）");
+	it("写错了：写明是哪个变量、第几项，不回显填的那一项；SFLY_DEV_ORIGINS 写错说的是它自己，不是 SFLY_CORS_ORIGINS", () => {
+		const cors = oneProblem({ SFLY_CORS_ORIGINS: "https://ok.example.com, bad.internal" });
+		expect(cors).toContain("SFLY_CORS_ORIGINS 里的第 2 项不是来源");
+		expect(cors).toContain("https://dash.example.com"); // 说明里的正确写法的例子
+		expect(cors).not.toContain("bad.internal");
+		expect(cors).not.toContain("ok.example.com");
 
 		const dev = oneProblem({ SFLY_DEV_ORIGINS: "localhost:3000x y" });
 		expect(dev).toContain("SFLY_DEV_ORIGINS");
 		expect(dev).not.toContain("SFLY_CORS_ORIGINS");
-	});
-
-	it("写错的一项能解析、协议是认得的：只回显协议、主机和端口，路径、查询串、用户名密码不回显", () => {
-		// 非 http(s) 的协议解析出来的 origin 是 "null"：这一项不是来源。能解析、协议认得（file、postgres……）才回显协议、主机和端口。
-		const problem = oneProblem({
-			SFLY_CORS_ORIGINS: `postgres://admin:${SECRET}@db.internal:5432/sfly?token=${SECRET}#${SECRET}`,
-		});
-
-		expect(problem).toContain("SFLY_CORS_ORIGINS 里的第 1 项");
-		expect(problem).toContain('"postgres://db.internal:5432"');
-		expect(problem).not.toContain(SECRET);
-		expect(problem).not.toContain("admin");
-	});
-
-	it("写错的一项协议不是认得的（user:密码@主机 被解析成协议 user:）：不回显，不把用户名当协议写出来", () => {
-		const problem = oneProblem({ SFLY_CORS_ORIGINS: `admin:${SECRET}@dash.example.com` });
-
-		expect(problem).toContain("（协议不是认得的 http、https、file 等，没有回显）");
-		expect(problem).not.toContain("admin");
-		expect(problem).not.toContain(SECRET);
+		expect(dev).not.toContain("3000x");
 	});
 
 	it.each([
+		[
+			"能解析的地址（协议不是 http、https），主机、端口、路径、查询串、用户名密码都有",
+			`postgres://admin:${SECRET}@${HOST_MARK}.internal:5432/sfly?token=${SECRET}#${SECRET}`,
+		],
 		["用户名和密码、没有协议", `admin:${SECRET}@dash.example.com`],
-		["全角的 ＠", `https://admin:${SECRET}＠dash.example.com`],
+		["全角 ＠", `https://admin:${SECRET}＠dash.example.com`],
 		["令牌在路径里、没有协议", `dash.example.com/${SECRET}`],
 		["令牌在查询串里、没有协议", `dash.example.com?token=${SECRET}`],
 		["逗号分隔的其中一项带凭据", `https://ok.example.com,admin:${SECRET}@dash.example.com`],
-	])("名单里写错的一项带着凭据（%s）：说明里没有它们", (_, value) => {
-		// 没有协议、有 @：浏览器的来源不带用户名和密码，这一项本来就写错了。
+		["file 地址，主机位置是标记", `file://${HOST_MARK}/share?x=1`],
+		["非 http 的协议，端口位置是数字", "socket://admin:48151@host.example.com:2121/x"],
+	])("名单里写错的一项（%s）：说明里没有它的任何一部分", (_, value) => {
 		for (const name of ["SFLY_CORS_ORIGINS", "SFLY_DEV_ORIGINS"]) {
 			const problem = oneProblem({ [name]: value });
 
 			expect(problem).toContain(name);
 			expect(problem).not.toContain(SECRET);
+			expect(problem).not.toContain(HOST_MARK);
+			expect(problem).not.toContain("admin");
+			expect(problem).not.toContain("48151");
+			expect(problem).not.toContain("2121");
+			expect(problem).not.toContain("5432");
+			expect(problem).not.toContain("ok.example.com");
 		}
 	});
 });
@@ -220,29 +219,32 @@ describe("SFLY_PUBLIC_URL", () => {
 		);
 	});
 
-	it("少写了协议（sfly.internal:8080）：报错，不让控制面带着残缺的地址启动", () => {
+	it("少写了协议（sfly.internal:8080）：报错，不让控制面带着残缺的地址启动；不回显填的值", () => {
 		const problem = oneProblem({ SFLY_PUBLIC_URL: "sfly.internal:8080" });
 
 		expect(problem).toContain("SFLY_PUBLIC_URL");
-		// `sfly.internal:8080` 被解析成协议 `sfly.internal:`：不是认得的协议，没有回显（里面可能是别的变量的值）。
-		expect(problem).toContain("（协议不是认得的 http、https、file 等，没有回显）");
 		expect(problem).toContain("http 或 https");
+		expect(problem).not.toContain("sfly.internal");
+		expect(problem).not.toContain("8080");
 	});
 
 	it("协议写错（http//sfly:8080）：启动时就报错，不是 HTTP 已经开始监听之后才崩溃", () => {
 		const problem = oneProblem({ SFLY_PUBLIC_URL: "http//sfly:8080" });
 
 		expect(problem).toContain("SFLY_PUBLIC_URL");
-		expect(problem).toContain("（解析不了，没有回显）");
-		expect(problem).not.toContain("http//sfly:8080");
+		expect(problem).not.toContain("http//sfly");
 	});
 
-	it("写错但能解析的地址：只回显协议、主机和端口", () => {
-		const problem = oneProblem({ SFLY_PUBLIC_URL: "https://sfly.example.com:8443/path?x=1#top" });
+	it("写错但能解析的地址（带查询串）：说明里没有它的任何一部分，主机、端口、路径都不回显", () => {
+		const problem = oneProblem({
+			SFLY_PUBLIC_URL: `https://${HOST_MARK}.example.com:8443/path?x=1#top`,
+		});
 
-		expect(problem).toContain('"https://sfly.example.com:8443"');
-		expect(problem).not.toContain("/path");
-		expect(problem).not.toContain("x=1");
+		expect(problem).toContain("SFLY_PUBLIC_URL");
+		expect(problem).toContain("? 和 #");
+		for (const part of [HOST_MARK, "8443", "/path", "x=1", "top"]) {
+			expect(problem).not.toContain(part);
+		}
 	});
 
 	it.each([
@@ -268,6 +270,7 @@ describe("SFLY_PUBLIC_URL", () => {
 			const problem = oneProblem({ SFLY_PUBLIC_URL: value });
 			expect(problem, value).toContain("SFLY_PUBLIC_URL");
 			expect(problem, value).not.toContain(SECRET);
+			expect(problem, value).not.toContain("admin");
 		}
 	});
 });
@@ -365,10 +368,26 @@ describe("DATABASE_URL", () => {
 	});
 
 	it("连接库认不认只看连接库：它认的写法（哪怕不以 postgres:// 开头）检查都不拦，不另定前缀规则", () => {
-		// 没写协议、协议写错、别的协议：连接库都解析得了（照旧在连接时才失败）；检查不比它更严。
-		for (const url of ["sfly:p@db/sfly", "postgres//sfly:p@db/sfly", "mysql://sfly:p@db/sfly"]) {
+		// 别的协议、单独一个库名、套接字的路径：连接库解析得了（别的协议照旧在连接时才失败）；检查不比它更严。
+		for (const url of ["mysql://sfly:p@db/sfly", "sfly", "foo", "/var/run/postgresql sfly"]) {
 			expect(readEnvSettings({ DATABASE_URL: url }).databaseUrl, url).toBe(url);
 		}
+	});
+
+	// 带 `@`（用户名和密码）而没有 `://`：连接库解析得了，但不是照人写的意思用它（整串当库名、主机取默认值，第一次连库时把含密码的
+	// 串当库名发给默认的主机）：启动时拒绝，固定文字，不回显。
+	it.each([
+		["用户:密码@主机/库名（没有协议）", `sfly:${SECRET}@db/sfly`],
+		["协议的 :// 写成了 //", `postgres//sfly:${SECRET}@db/sfly`],
+		["协议后面只有一个冒号", `postgres:sfly:${SECRET}@${HOST_MARK}/sfly`],
+		["主机位置是标记", `sfly:p@${HOST_MARK}/sfly`],
+	])("%s：报错，说明是固定的文字「没有写协议」，没有填的原文", (_, value) => {
+		const problem = oneProblem({ DATABASE_URL: value });
+
+		expect(problem).toContain("DATABASE_URL 不合法：看起来带了用户名和密码，但没有写协议");
+		expect(problem).not.toContain(SECRET);
+		expect(problem).not.toContain(HOST_MARK);
+		expect(problem).not.toContain("sfly:");
 	});
 
 	// 连接库自己也解析不了的：照实拒。
@@ -377,6 +396,15 @@ describe("DATABASE_URL", () => {
 		["端口超出范围", `postgres://sfly:${SECRET}@db:99999/sfly`],
 		["多个主机（连接库不认）", `postgres://sfly:${SECRET}@h1:5432,h2:5432/sfly`],
 		["全角的 ＠", `postgres://sfly:${SECRET}＠db/sfly`],
+		// 连接库拒绝、通用的地址解析（`new URL`）却解析得了、主机位置是标记：把说明接上按地址回显的话，主机会被写出来。
+		[
+			"证书文件读不到（主机位置是标记）",
+			`postgres://u:p@${HOST_MARK}/sfly?sslcert=/nonexistent/x.crt`,
+		],
+		[
+			"uselibpqcompat 加 verify-ca 没给 sslrootcert（主机位置是标记）",
+			`postgres://u:p@${HOST_MARK}/sfly?uselibpqcompat=true&sslmode=verify-ca`,
+		],
 	])("%s：报错，说明是固定的文字，没有填的原文（里面有密码）", (_, value) => {
 		const problem = oneProblem({ DATABASE_URL: value });
 
@@ -384,8 +412,27 @@ describe("DATABASE_URL", () => {
 		expect(problem).toContain("postgres://");
 		expect(problem).toContain("Unix 套接字");
 		expect(problem).not.toContain(SECRET);
+		expect(problem).not.toContain(HOST_MARK);
 		expect(problem).not.toContain(value);
 		expect(problem).not.toContain("sfly:");
+	});
+
+	it("数据库地址的任何一部分都不出现在说明里：主机、端口、库名、参数（用通用的地址解析能拆出来的每一段逐个查）", () => {
+		const url = new URL(
+			`postgres://usermark-r5:passmark-t6@${HOST_MARK}/dbname-q9?sslcert=/nonexistent/x.crt&app=appmark`,
+		);
+		const problem = oneProblem({ DATABASE_URL: url.toString() });
+
+		for (const part of [
+			url.hostname,
+			url.username,
+			url.password,
+			"dbname-q9",
+			"appmark",
+			"nonexistent",
+		]) {
+			expect(problem, part).not.toContain(part);
+		}
 	});
 
 	it("说明是固定的一句：不同的值得到同样的说明（什么都不回显，不靠「有没有 @」「能不能解析」去挑）", () => {
@@ -395,6 +442,7 @@ describe("DATABASE_URL", () => {
 				`postgres://db:abc/${SECRET}`,
 				`postgres://db:${SECRET}/sfly`,
 				`postgres://sfly:${SECRET}@h1:5432,h2:5432/sfly`,
+				`postgres://u:p@${HOST_MARK}/sfly?sslcert=/nonexistent/x.crt`,
 				"postgres://db:abc/sfly",
 			].map((value) => oneProblem({ DATABASE_URL: value })),
 		);
@@ -460,11 +508,11 @@ describe("镜像：SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR", () => {
 				.githubReleaseMirror,
 		).toBe("file:///mnt/mirror/github-release");
 
-		const problem = oneProblem({ SFLY_GITHUB_RELEASE_MIRROR: "/mnt/mirror/github-release" });
+		const problem = oneProblem({ SFLY_GITHUB_RELEASE_MIRROR: "/mnt/pathmark-v3/github-release" });
 		expect(problem).toContain("SFLY_GITHUB_RELEASE_MIRROR");
 		expect(problem).toContain("file://");
 		expect(problem).not.toContain("绝对路径");
-		expect(problem).toContain("（一个路径，没有回显）");
+		expect(problem).not.toContain("pathmark-v3");
 	});
 
 	it.each([
@@ -502,18 +550,21 @@ describe("镜像：SFLY_PYPI_MIRROR、SFLY_GITHUB_RELEASE_MIRROR", () => {
 		}
 	});
 
-	it("写错但能解析的镜像地址（协议不对）：只回显协议、主机和端口", () => {
-		const problem = oneProblem({
-			SFLY_PYPI_MIRROR: `ftp://u:${SECRET}@mirror.internal:2121/simple?x=1`,
-		});
+	it("写错但能解析的镜像地址（协议不对）：说明里没有它的任何一部分，主机、端口、路径、用户名密码都不回显", () => {
+		for (const name of ["SFLY_PYPI_MIRROR", "SFLY_GITHUB_RELEASE_MIRROR"]) {
+			const problem = oneProblem({
+				[name]: `ftp://u:${SECRET}@${HOST_MARK}.internal:2121/simple?x=1`,
+			});
 
-		expect(problem).toContain('实际是 "ftp://mirror.internal:2121"');
-		expect(problem).not.toContain(SECRET);
-		expect(problem).not.toContain("x=1");
+			expect(problem).toContain(name);
+			for (const part of [SECRET, HOST_MARK, "2121", "x=1", "/simple?"]) {
+				expect(problem, part).not.toContain(part);
+			}
+		}
 	});
 });
 
-describe("数值类的说明里回显什么（echo.ts：像数的才回显）", () => {
+describe("数值类的说明里回显什么（echo.ts：像数的、不超过 12 个字符才回显）", () => {
 	it.each([
 		["SFLY_LOG_LIMIT_MB"],
 		["SFLY_ARTIFACT_LIMIT_MB"],
@@ -523,16 +574,20 @@ describe("数值类的说明里回显什么（echo.ts：像数的才回显）", 
 		["SFLY_LOGIN_IDLE_HOURS"],
 		["SFLY_HTTP_PORT"],
 		["SFLY_GRPC_PORT"],
-	])("%s：很长的数（可能是一串数字的令牌）、别的变量的值都不回显", (name) => {
-		const long = "9".repeat(40);
+	])("%s：超过 12 个字符的数（可能是一串数字的令牌）、别的变量的值都不回显，只说有多少个字符", (name) => {
+		const long = "9".repeat(13);
 		const tooLong = oneProblem({ [name]: long });
 		expect(tooLong).toContain(name);
-		expect(tooLong).toContain("（认不出，没有回显）");
+		expect(tooLong).toContain("（有 13 个字符，没有回显）");
 		expect(tooLong).not.toContain(long);
 
 		const other = oneProblem({ [name]: `postgres://u:${SECRET}@db/sfly` });
-		expect(other).toContain("（认不出，没有回显）");
+		expect(other).toContain("个字符，没有回显");
 		expect(other).not.toContain(SECRET);
+
+		// 12 个字符的数照常回显。
+		const twelve = oneProblem({ [name]: "999999999999" });
+		expect(twelve).toContain('"999999999999"');
 	});
 });
 

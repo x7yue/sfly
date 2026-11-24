@@ -1,6 +1,6 @@
 // 控制面读的数值类（#577）和字符串类（#619）环境变量在启动时就检查：用真实的 `src/main.ts`（和 `pnpm start` 一样用 tsx 运行）试。
 // 数据库地址故意填一个连不上的：过了检查的值会走到连数据库那一步才失败，没过的在那之前就退出（退出码 1），
-// 信息写着环境变量的名字、认得的填的值和范围，几个变量都不合法时一次报完。逐个变量的取值范围在 env-settings.test.ts，
+// 信息写着环境变量的名字和范围（数值类的回显填的值，最多 12 个字符；别的不回显），几个变量都不合法时一次报完。逐个变量的取值范围在 env-settings.test.ts，
 // 这里守的是 `main.ts` 的接线：每个变量都经过检查，把任何一个改回原来的读法（`positive()`、`Number(...)`），对应那一行就红；
 // 还有报错回显的总表（每个变量 × 带凭据的各种形状，走真的 main.ts，输出全文里没有凭据）、检查过的设置真的传给了控制面。
 import { execFile, spawn } from "node:child_process";
@@ -118,49 +118,37 @@ describe("main.ts 读数值类环境变量", () => {
 /** 会出现在密码、地址里的凭据位置的记号：输出里不能有它（哪怕是一部分）。 */
 const SECRET = "Hunter2-secret-9f3a";
 
-/** 回显写的说明（echo.ts 的 NOT_ECHOED）。 */
-const PROTOCOL_NOT_ECHOED = "（协议不是认得的 http、https、file 等，没有回显）";
-const UNPARSEABLE_NOT_ECHOED = "（解析不了，没有回显）";
-const UNKNOWN_NOT_ECHOED = "（认不出，没有回显）";
-
-/** 每个字符串类变量一个不合法的值：说明里要有变量名、回显的内容（认得的才回显，凭据不回显）和要求里的一句话。 */
-const BAD_STRINGS: Array<[name: string, value: string, shown: string, requirement: string]> = [
-	["SFLY_TRUST_PROXY", "banana", UNKNOWN_NOT_ECHOED, "代理的层数"],
-	["SFLY_CORS_ORIGINS", "dash.example.com", UNPARSEABLE_NOT_ECHOED, "协议://主机"],
-	["SFLY_DEV_ORIGINS", "localhost:3000x y", PROTOCOL_NOT_ECHOED, "协议://主机"],
+/** 每个字符串类变量一个不合法的值：说明里要有变量名、哪里不对（第几项……）和要求里的一句话；填的值（这些变量一律不回显）不能出现。 */
+const BAD_STRINGS: Array<[name: string, value: string, where: string, requirement: string]> = [
+	["SFLY_TRUST_PROXY", "banana", "第 1 项", "代理的层数"],
+	["SFLY_CORS_ORIGINS", "bad.internal", "里的第 1 项不是来源", "协议://主机"],
+	["SFLY_DEV_ORIGINS", "localhost:3000x y", "里的第 1 项不是来源", "协议://主机"],
 	["SFLY_ADMIN_LOGIN", "root", "", "要一起设置"],
 	["SFLY_ADMIN_PASSWORD", SECRET, "", "要一起设置"],
-	["SFLY_PUBLIC_URL", "sfly.internal:8080", PROTOCOL_NOT_ECHOED, "http 或 https"],
-	["SFLY_PUBLIC_URL", "http//sfly:8080", UNPARSEABLE_NOT_ECHOED, "http 或 https"],
-	[
-		"SFLY_PUBLIC_URL",
-		`https://admin:${SECRET}@sfly.example.com:8443/p?x=1`,
-		// 能解析、协议认得：只回显协议、主机和端口。
-		'"https://sfly.example.com:8443"',
-		"http 或 https",
-	],
-	["SFLY_PUBLIC_GRPC_URL", "grpc.example.com:50051", PROTOCOL_NOT_ECHOED, "http 或 https"],
+	["SFLY_PUBLIC_URL", "sfly.internal:8080", "", "http 或 https"],
+	["SFLY_PUBLIC_URL", "http//sfly:8080", "", "http 或 https"],
+	["SFLY_PUBLIC_URL", `https://admin:${SECRET}@sfly.example.com:8443/p?x=1`, "", "http 或 https"],
+	["SFLY_PUBLIC_GRPC_URL", "grpc.example.com:50051", "", "http 或 https"],
 	["DATABASE_URL", `postgres://sfly:${SECRET}@db:abc/sfly`, "没有回显填的值", "Unix 套接字"],
-	["SFLY_PYPI_MIRROR", "mirror.internal", UNPARSEABLE_NOT_ECHOED, "http 或 https"],
-	[
-		"SFLY_GITHUB_RELEASE_MIRROR",
-		"ftp://mirror.internal",
-		'"ftp://mirror.internal"',
-		"http 或 https",
-	],
+	["SFLY_PYPI_MIRROR", "mirror.internal", "", "http 或 https"],
+	["SFLY_GITHUB_RELEASE_MIRROR", "ftp://mirror.internal", "", "http 或 https"],
 ];
 
 describe("main.ts 读字符串类环境变量", () => {
 	it.each(BAD_STRINGS)(
 		"%s=%s：启动时就报错退出，说明里有变量名和要求，没有堆栈，没有密码",
-		async (name, value, shown, requirement) => {
+		async (name, value, where, requirement) => {
 			const result = await startMain({ [name]: value });
 
 			expect(result.code, result.output).toBe(1);
 			expect(result.output).toContain("控制面没有启动");
 			expect(result.output).toContain(name);
-			expect(result.output).toContain(shown);
+			expect(result.output).toContain(where);
 			expect(result.output).toContain(requirement);
+			// 这些变量一律不回显填的值（地址的主机、名单里的一项、代理的一项、数据库地址）。
+			if (!["SFLY_ADMIN_LOGIN", "SFLY_ADMIN_PASSWORD"].includes(name)) {
+				expect(result.output).not.toContain(value);
+			}
 			// 不是未捕获的错误：没有堆栈，也没有走到连数据库那一步。
 			expect(result.output).not.toMatch(/\n\s+at /);
 			expect(result.output).not.toContain("ECONNREFUSED");
@@ -219,7 +207,7 @@ describe("main.ts 读字符串类环境变量", () => {
 // ---- 报错回显的总表（#619 的审查）：每个字符串类和数值类变量 × 各种带凭据的形状，走真的 main.ts，输出全文里没有凭据 ----
 //
 // 误填是常有的事：把带密码的数据库地址填进了对外地址，把带用户名密码的地址填进了代理信任。报错会进启动输出和容器日志，
-// 谁都看得到，所以回显什么只有一处决定（src/config/echo.ts），而且是认得的才回显。这张表按变量清单（env-settings.ts 的
+// 谁都看得到，所以回显什么只有一处决定（src/config/echo.ts）：只有数值类回显、最多 12 个字符，别的都不回显。这张表按变量清单（env-settings.ts 的
 // `STRING_ENV_NAMES`、`NUMERIC_ENV_NAMES`）逐个变量填各种形状：新加一个变量没进表，类型和下面的覆盖检查都会红。
 
 /** 凭据的标记（用户名、密码、令牌）：输出里不能出现它们，哪怕一部分（大小写不论）。 */
@@ -227,17 +215,30 @@ const USER_MARK = "USERMARK_k3m8";
 const PASSWORD_MARK = "SECRET_MARK_x7q9";
 /** 密码太短时的标记（短于最小长度 8，才会被说「太短」）。 */
 const SHORT_MARK = "Zq7k";
+/** 放在**主机**位置的标记（地址、名单、代理、数据库地址的主机）：主机位置没有长度上限，什么都装得下。 */
+const HOST_MARK = "HOSTMARK_q2w8";
+/** 13 个数字的数值标记：比数值类回显的上限（12 个字符）多一个，整个、或者前 12 个都不能出现。 */
+const NUMBER_MARK = "7431985206137";
 /** 用来找标记的片段：整个标记，和各自末尾的一段（只回显一部分也抓得到）。 */
-const MARK_PARTS = [USER_MARK, PASSWORD_MARK, "k3m8", "x7q9", SHORT_MARK].map((m) =>
-	m.toLowerCase(),
-);
+const MARK_PARTS = [
+	USER_MARK,
+	PASSWORD_MARK,
+	"k3m8",
+	"x7q9",
+	SHORT_MARK,
+	HOST_MARK,
+	"q2w8",
+	NUMBER_MARK,
+	NUMBER_MARK.slice(0, 12),
+].map((m) => m.toLowerCase());
 
 type EnvName = (typeof STRING_ENV_NAMES)[number] | (typeof NUMERIC_ENV_NAMES)[number];
 
 const U = USER_MARK;
 const M = PASSWORD_MARK;
+const H = HOST_MARK;
 
-/** 每个变量填的形状：第 j 次启动时每个变量都填它的第 j 项（每个变量 8 项，都是该变量不认的写法）。 */
+/** 每个变量填的形状：第 j 次启动时每个变量都填它的第 j 项（每个变量 11 项，都是该变量不认的写法；最后三项放在主机、端口位置）。 */
 const SHAPES: Record<EnvName, readonly string[]> = {
 	// 对外地址（严格：不带用户名密码、? 和 #）和网关地址（再加不带路径）。
 	SFLY_PUBLIC_URL: [
@@ -249,6 +250,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`https://host.example.com/${M}?token=${M}#${M}`, // 路径、查询串、片段
 		`ftp://${U}:${M}@host.example.com:2121/${M}`, // 别的协议
 		`/${M}/path`, // 一个路径
+		`https://${H}.example.com/p?x=1`, // 标记在主机的位置（带了查询串）
+		`http://host.example.com:${M}/p`, // 标记在端口的位置
+		`${H}.example.com:8443`, // 没有协议的「主机:端口」，标记在主机
 	],
 	SFLY_PUBLIC_GRPC_URL: [
 		`https://${U}:${M}@host.example.com:443`,
@@ -259,6 +263,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`https://host.example.com/${M}`,
 		`ftp://${U}:${M}@host.example.com:2121/${M}`,
 		`/${M}/grpc`,
+		`https://${H}.example.com:443/p`, // 标记在主机，带了路径
+		`http://host.example.com:${M}`,
+		`${H}.example.com:50051`,
 	],
 	// 两个镜像：用户名密码、路径、查询串本身是允许的，所以这里是别的不合规矩的写法。
 	SFLY_PYPI_MIRROR: [
@@ -270,6 +277,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`ftp://${U}:${M}@host.example.com:2121/p?x=${M}`,
 		`http//${U}:${M}@host.example.com/${M}`,
 		`https://host.example.com:${M}/p`,
+		`ftp://${H}.example.com/p`, // 标记在主机，别的协议
+		`http://${H}.example.com:${M}/p`, // 主机和端口都是标记
+		`${H}.example.com:8080/simple`,
 	],
 	SFLY_GITHUB_RELEASE_MIRROR: [
 		`https://${U}:${M}@host.example.com:abc/p`,
@@ -280,6 +290,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`ftp://${U}:${M}@host.example.com:2121/p?x=${M}`,
 		`http//${U}:${M}@host.example.com/${M}`,
 		`/${M}/mirror`, // GitHub Release 镜像不认裸的绝对路径
+		`ftp://${H}.example.com/p`,
+		`http://${H}.example.com:${M}/p`,
+		`${H}.example.com:8080/github-release`,
 	],
 	// 来源名单（逗号分隔）：其中一项带凭据，或者整个是别的写法。
 	SFLY_CORS_ORIGINS: [
@@ -291,6 +304,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`postgres://${U}:${M}@db.internal:5432/sfly?x=${M}`,
 		`file://host.example.com/${M}?token=${M}`,
 		`/${M}/origin`,
+		`https://ok.example.com,${H}.example.com`, // 标记在主机，没有协议
+		`https://ok.example.com,https://host.example.com:${M}`, // 标记在端口
+		`${H}.example.com:3000`,
 	],
 	SFLY_DEV_ORIGINS: [
 		`http://localhost:3000,${U}:${M}@host.example.com`,
@@ -301,6 +317,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`postgres://${U}:${M}@db.internal:5432/sfly?x=${M}`,
 		`file://host.example.com/${M}?token=${M}`,
 		`/${M}/origin`,
+		`http://localhost:3000,${H}.example.com`,
+		`http://localhost:3000,https://host.example.com:${M}`,
+		`${H}.example.com:3000`,
 	],
 	// 代理信任：地址段、层数、关键字之外的写法，其中一项带凭据。
 	SFLY_TRUST_PROXY: [
@@ -312,6 +331,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		M,
 		`10.0.0.0/8,${M}`,
 		`${U}:${M}@10.0.0.1`,
+		`10.0.0.1,${H}`, // 标记是一项代理的名字
+		`10.0.0.1:${M}`, // 标记在端口的位置
+		`${H}.proxy.internal:3128`,
 	],
 	// 数据库地址：连接库也解析不了的写法（端口写错、多个主机、全角的 ＠、括号不成对）；其中有不带 @ 的。
 	DATABASE_URL: [
@@ -323,6 +345,10 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`postgres://${U}:${M}@db.internal:99999/sfly`,
 		`postgres://db.internal:${M}/sfly`, // 端口是令牌
 		`postgres://${U}:${M}@[::1/sfly`,
+		// 连接库拒绝、通用的地址解析却解析得了，标记在主机的位置（#642 复审：说明后面接上地址的任何一部分都得红）。
+		`postgres://${U}:${M}@${H}/sfly?sslcert=/nonexistent/${M}.crt`, // 证书文件不存在
+		`postgres://${U}:${M}@${H}/sfly?uselibpqcompat=true&sslmode=verify-ca`, // verify-ca 没有根证书
+		`${U}:${M}@${H}/sfly`, // 带用户名密码、没有 ://（连接库会把整串当库名）
 	],
 	// 初始管理员：登录名不合规矩（密码一并设置，才会检查登录名）；密码和显示名不会被回显。
 	SFLY_ADMIN_LOGIN: [
@@ -334,6 +360,9 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`${M}?token=${M}`,
 		M,
 		`${U} ${M}`,
+		`${H} ${M}`,
+		`${H}!`,
+		`${U}:${H}`,
 	],
 	SFLY_ADMIN_PASSWORD: [M],
 	SFLY_ADMIN_DISPLAY_NAME: [M],
@@ -359,6 +388,9 @@ function numberShapes(): string[] {
 		`30${M}`,
 		`${M}.example.com/p?token=${M}`,
 		`0x${M}`,
+		NUMBER_MARK, // 13 个数字：比回显的上限多一个，不回显
+		H,
+		`${H}.example.com:${M}`,
 	];
 }
 
@@ -370,8 +402,8 @@ interface Scenario {
 	rejects: readonly string[];
 }
 
-/** 8 次启动，每个变量在第 j 次填它的第 j 项。 */
-const SHAPE_COUNT = 8;
+/** 11 次启动，每个变量在第 j 次填它的第 j 项。 */
+const SHAPE_COUNT = 11;
 const JOINT: Scenario[] = Array.from({ length: SHAPE_COUNT }, (_, j) => {
 	const env = Object.fromEntries(
 		Object.entries(SHAPES).map(([name, shapes]) => [name, shapes[j % shapes.length] as string]),
@@ -471,6 +503,33 @@ describe("main.ts：报错回显的总表（每个变量 × 带凭据的各种�
 		for (const [name, shapes] of Object.entries(SHAPES)) {
 			expect(shapes.length, name).toBeGreaterThan(0);
 		}
+	});
+
+	it("地址类、名单类、代理类的变量都有标记放在主机位置的形状；数值类的有 13 位数的形状（回显的上限是 12 个字符）", () => {
+		const hostPosition = [
+			"SFLY_PUBLIC_URL",
+			"SFLY_PUBLIC_GRPC_URL",
+			"SFLY_PYPI_MIRROR",
+			"SFLY_GITHUB_RELEASE_MIRROR",
+			"SFLY_CORS_ORIGINS",
+			"SFLY_DEV_ORIGINS",
+			"SFLY_TRUST_PROXY",
+			"DATABASE_URL",
+		] as const;
+		for (const name of hostPosition) {
+			expect(
+				SHAPES[name].some((shape) => shape.includes(H)),
+				name,
+			).toBe(true);
+		}
+		for (const name of NUMERIC_ENV_NAMES) {
+			expect(SHAPES[name], name).toContain(NUMBER_MARK);
+		}
+		expect(NUMBER_MARK).toHaveLength(13);
+		// 数据库地址里「连接库拒绝、通用的地址解析却解析得了」的两种，和没有 :// 的一种。
+		const database = SHAPES.DATABASE_URL.join("\n");
+		expect(database).toContain(`${H}/sfly?sslcert=`);
+		expect(database).toContain("uselibpqcompat=true&sslmode=verify-ca");
 	});
 
 	it("读设置只读清单里的变量，清单里的变量也都读了：绕开清单读一个变量、或者清单里留着没读的变量都会红", () => {

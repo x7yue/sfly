@@ -1,76 +1,37 @@
-// 环境变量写错时，报错说明里回显什么（#619）：**所有**环境变量的报错回显填的值，都只经过这一个文件里的函数，
-// 而且是「认得的才回显」：不是「看起来像凭据的不回显」（全角的 `＠`、凭据放在路径里、放在 `proxy` 的某一项里……
-// 总有认不出的形状），而是只有确认是无害的写法才写出来，其余一律不写，只说是哪个变量（第几项）、要什么写法。
+// 环境变量写错时，报错说明里回显什么（#619）：**只有数值类的变量回显填的值，而且最多 12 个字符**；别的一律不回显。
 //
 // 报错会进启动输出和容器日志（`docker compose logs`），谁都看得到；填错的变量里常常是别的变量的值（把带密码的数据库地址
-// 填进了对外地址，把带用户名密码的地址填进了代理信任）。
-//
-// - 地址类（对外地址、网关地址、镜像、跨域和开发来源的每一项）：能解析、协议是认得的（http、https、file……）时只回显
-//   协议、主机和端口，路径、查询串、片段、用户名和密码一律不回显；解析不了、协议不认得的不回显。
-// - 数字类（端口、保留天数、各种上限、登录的空闲期限）：只有像一个数（带不带单位后缀）、或者认得的几个词
-//   （`Infinity`、`NaN`）才回显。
-// - 代理信任的每一项：只由 IP、网段用得到的字符组成、或者是认得的关键字才回显。
-// - 数据库地址、管理员密码：一律不回显（不经过这里，说明里是固定的文字）。
+// 填进了对外地址，把带用户名密码的地址填进了代理信任）。试过「看起来像凭据的不回显」（全角的 `＠`、凭据放在路径里……总有认不出的
+// 形状），也试过「认得的才回显」（地址只写协议、主机和端口；代理项只写 IP 用得到的字符）：它们认得的形状里仍然装得下任意内容
+// （主机的位置没有长度上限，代理项的字符集和令牌的重合）。每一种都要靠「没有人会把保密的东西写成这个样子」才安全，这个理由不该是
+// 打码的依据；回显只是省得人去看一眼自己的配置，不值得为它留口子。所以：
+// - 地址类（对外地址、网关地址、两个镜像）、名单类（跨域和开发来源）、代理信任、数据库地址：**不回显**。说明写变量名、第几项、哪里不对
+//   （没有写协议、带了用户名密码……）和一个正确写法的例子。
+// - 管理员的登录名、密码、显示名：不回显（说明里从不出现填的值）。
+// - 数值类（端口、保留天数、各种上限、登录的空闲期限、代理的层数）：只由写数用得到的字符组成、不超过 {@link MAX_ECHO_CHARS} 个字符的才回显
+//   （端口、天数、带单位的大小都够）；更长的只说有多少个字符。
 // 回显的值带引号（JSON 写法），没回显的是一句说明，用「（…）」括起来。
 
-/** 回显的地址里认得的协议：写错的地址（`user:密码@主机` 被解析成协议 `user:`）不会把用户名当协议写出来。 */
-const KNOWN_PROTOCOLS = /^(?:https?|file|ftps?|wss?|postgres(?:ql)?|socket):$/i;
+/** 数值类的值回显的字符数上限。 */
+export const MAX_ECHO_CHARS = 12;
 
 /** 没回显时写的说明。 */
 export const NOT_ECHOED = {
-	unparseable: "（解析不了，没有回显）",
-	protocol: "（协议不是认得的 http、https、file 等，没有回显）",
-	path: "（一个路径，没有回显）",
+	/** 不是数的样子（短的）。 */
 	unknown: "（认不出，没有回显）",
+	/** 太长：只说有多少个字符。 */
+	tooLong: (chars: number): string => `（有 ${chars} 个字符，没有回显）`,
 } as const;
-
-/** 地址类的值回显成什么：协议加主机和端口（`"https://host:8443"`）；解析不了、协议不认得、是路径的写说明。 */
-export function echoUrl(raw: string): string {
-	const text = raw.trim();
-	if (text.startsWith("/")) return NOT_ECHOED.path;
-	let url: URL;
-	try {
-		url = new URL(text);
-	} catch {
-		return NOT_ECHOED.unparseable;
-	}
-	if (!KNOWN_PROTOCOLS.test(url.protocol)) return NOT_ECHOED.protocol;
-	return JSON.stringify(`${url.protocol}//${url.host}`);
-}
 
 /** 像一个数：只由写数用得到的字符（数字、`.`、`,`、`_`、正负号、`e`、空格）组成，后面可以跟一个短的单位后缀（`10MB`、`30 天`）；或者十六进制。 */
 const NUMBER_LIKE = /^[\d.,_+\-eE ]+[A-Za-z%天小时分钟秒]{0,6}$|^[+-]?0[xX][0-9a-fA-F]+$/;
 /** 认得的几个词。 */
 const NUMBER_WORDS = /^[+-]?(?:infinity|inf|nan)$/i;
 
-/** 数字类的值回显成什么：像一个数、或者认得的词才回显原文（带引号），否则写说明。 */
+/** 数值类的值回显成什么：像一个数（或认得的词）、而且不超过 {@link MAX_ECHO_CHARS} 个字符才回显（带引号），否则写说明。 */
 export function echoNumber(raw: string): string {
 	const text = raw.trim();
-	if (text.length <= 32 && (NUMBER_LIKE.test(text) || NUMBER_WORDS.test(text))) {
-		return JSON.stringify(raw);
-	}
-	return NOT_ECHOED.unknown;
-}
-
-/** `SFLY_TRUST_PROXY` 里认得的关键字。 */
-export const PROXY_KEYWORDS: ReadonlySet<string> = new Set([
-	"loopback",
-	"linklocal",
-	"uniquelocal",
-]);
-
-/**
- * 代理信任的一项回显成什么：只由 IP、网段用得到的字符（数字、十六进制字母、`:`、`.`、`/`）组成、而且至少有一个 `.`、`:` 或 `/`
- * （一串只有十六进制字母和数字的令牌不是地址的样子），或者是认得的关键字。
- */
-export function echoProxyItem(raw: string): string {
-	const text = raw.trim();
-	if (
-		text.length <= 64 &&
-		((/^[0-9A-Fa-f:./]+$/.test(text) && /[.:/]/.test(text)) ||
-			PROXY_KEYWORDS.has(text.toLowerCase()))
-	) {
-		return JSON.stringify(text);
-	}
+	if (text.length > MAX_ECHO_CHARS) return NOT_ECHOED.tooLong(text.length);
+	if (NUMBER_LIKE.test(text) || NUMBER_WORDS.test(text)) return JSON.stringify(text);
 	return NOT_ECHOED.unknown;
 }
