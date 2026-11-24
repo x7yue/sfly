@@ -172,7 +172,7 @@ describe("一轮的结局", () => {
 		});
 	});
 
-	it("模型调用到了 40 次：第 41 次之前以 limit（model_calls）结束，进程被结束；会话还能接着说", async () => {
+	it("模型调用到了 40 次：第 41 次之前以 limit（model_calls）结束，走停止的那条路（clear_queue、abort），进程留着，下一轮接着用", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "loop" });
@@ -181,9 +181,13 @@ describe("一轮的结局", () => {
 		// 决定结束之后 pi 还在吐的事件不外传。
 		const results = harness.events.of(id).filter((r) => r.event.type === "tool_result");
 		expect(results.length).toBeLessThanOrEqual(40);
-		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
+		const raw = rawEvents(harness, id).map((r) => r.type);
+		expect(raw.indexOf("fake_clear_queue")).toBeLessThan(raw.indexOf("fake_abort"));
+		const pid = harness.sessions.pid(id);
+		expect(pid).toBeDefined();
 		await harness.prompt(id, { turn: 2, text: "settle" });
 		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+		expect(harness.sessions.pid(id)).toBe(pid);
 	});
 
 	it("用时到了上限：limit（duration）", async () => {
@@ -193,8 +197,8 @@ describe("一轮的结局", () => {
 		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "limit", limit_kind: "duration" });
 	});
 
-	it("停止：先关 stdin，再 SIGTERM；都不理会的 pi 宽限期之后被 SIGKILL，这一轮以 stopped 结束", async () => {
-		const harness = await start({ killGraceMs: 300 });
+	it("停止：pi 不理 abort 时等满之后结束进程，先关 stdin，再 SIGTERM；都不理会的 pi 宽限期之后被 SIGKILL，这一轮以 stopped 结束", async () => {
+		const harness = await start({ killGraceMs: 300, abortSettleMs: 300 });
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "ignore-term" });
 		await eventually(() => expect(harness.sessions.activeProcesses).toBe(1));
@@ -214,7 +218,7 @@ describe("一轮的结局", () => {
 	});
 
 	it("停止时 pi 收到 SIGTERM 以 143 退出：照样是 stopped，不当成出错", async () => {
-		const harness = await start();
+		const harness = await start({ abortSettleMs: 300 });
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "term-143" });
 		await eventually(() =>
@@ -354,13 +358,13 @@ describe("中止带轮次：按这一轮的状态，不按时间猜", () => {
 	const piStarted = (harness: Harness, id: string) =>
 		rawEvents(harness, id).some((r) => r.type === "fake_env");
 
-	it("空闲时收到针对上一轮的中止（用户在空闲的会话上点了停止），紧接着来的下一轮照常做", async () => {
+	it("空闲时收到针对上一轮的中止（用户在空闲的会话上点了停止）：记号提到 1，紧接着来的下一轮照常做", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "settle" });
 		await harness.turnEnd(id);
 		expect((await harness.abort(id, 1)).status).toBe(202);
-		expect(harness.sessions.abortMarks).toBe(0);
+		expect(harness.sessions.abortMarks).toBe(1);
 		await harness.prompt(id, { turn: 2, text: "settle" });
 		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
 	});
@@ -411,24 +415,26 @@ describe("中止带轮次：按这一轮的状态，不按时间猜", () => {
 		expect(harness.sessions.abortMarks).toBe(1);
 		expect((await harness.prompt(id, { turn: 2, text: "settle" })).status).toBe(202);
 		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped", model_calls: 0 });
-		expect(harness.sessions.abortMarks).toBe(0);
+		// 收到 prompt 不清掉记号。
+		expect(harness.sessions.abortMarks).toBe(1);
 		await harness.prompt(id, { turn: 3, text: "settle" });
 		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
 	});
 
-	it("助手服务重启后（不知道这个会话的轮次）收到中止：记下，只和同一轮的 prompt 对得上，更大的轮次照常、记号随之清掉", async () => {
+	it("助手服务重启后（不知道这个会话的轮次）收到中止：记号提到 4，轮次不大于它的都以 stopped 结束、不起 pi，更大的照常做；记号不因 prompt 清掉", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.abort(id, 4);
 		expect(harness.sessions.abortMarks).toBe(1);
-		// 更早的轮次不受影响，记号还在。
 		await harness.prompt(id, { turn: 3, text: "settle" });
-		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
-		expect(harness.sessions.abortMarks).toBe(1);
-		// 更大的轮次照常做，记号清掉（那一轮不会再来了）。
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+		expect(piStarted(harness, id)).toBe(false);
 		await harness.prompt(id, { turn: 5, text: "settle" });
 		expect(await harness.turnEnd(id, 5)).toMatchObject({ outcome: "completed" });
-		expect(harness.sessions.abortMarks).toBe(0);
+		expect(harness.sessions.abortMarks).toBe(1);
+		// 晚到的第 4 轮（控制面已经放弃了它）：在任何先后下都不再跑。
+		await harness.prompt(id, { turn: 4, text: "settle" });
+		expect(await harness.turnEnd(id, 4)).toMatchObject({ outcome: "stopped", model_calls: 0 });
 	});
 
 	it("记号有上限：针对还没到的轮次的中止再多，留着的记号也不超过上限（满了丢最早的）", async () => {
@@ -494,20 +500,22 @@ describe("中止带轮次：按这一轮的状态，不按时间猜", () => {
 		expect(harness.sessions.abortMarks).toBe(0);
 	});
 
-	it("每个会话只留轮次最大的记号：先中止第 5 轮、再中止第 3 轮，第 3 轮照常做，第 5 轮到了被停下", async () => {
+	it("记号只增不减：先中止第 5 轮、再中止第 3 轮，记号还是 5：第 3 轮、第 5 轮到了都以 stopped 结束，第 6 轮照常（#618 固定的旧行为跟着协议改）", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
 		await harness.abort(id, 5);
 		await harness.abort(id, 3);
 		expect(harness.sessions.abortMarks).toBe(1);
 		await harness.prompt(id, { turn: 3, text: "settle" });
-		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+		expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "stopped", model_calls: 0 });
 		await harness.prompt(id, { turn: 5, text: "settle" });
 		expect(await harness.turnEnd(id, 5)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+		await harness.prompt(id, { turn: 6, text: "settle" });
+		expect(await harness.turnEnd(id, 6)).toMatchObject({ outcome: "completed" });
 	});
 
 	it("撞上记号时更早的一轮还在退出：仍回 202、这一轮以 stopped 结束，更早的那一轮退出后也有结局", async () => {
-		const harness = await start({ killGraceMs: 1_500 });
+		const harness = await start({ killGraceMs: 1_500, abortSettleMs: 300 });
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "ignore-term" });
 		await eventually(() =>
@@ -675,7 +683,7 @@ describe("审查补的守护", () => {
 	});
 
 	it("决定结束这一轮之后，pi 还在吐的事件不外传", async () => {
-		const harness = await start();
+		const harness = await start({ abortSettleMs: 300 });
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "chatty-term" });
 		await eventually(() =>

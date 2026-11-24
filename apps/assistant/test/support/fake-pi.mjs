@@ -12,6 +12,8 @@ out({
 });
 
 let pending = "";
+// 插话进了队列之后做什么（这一轮的剧本决定）。
+let onSteer;
 process.stdin.on("data", (chunk) => {
 	pending += chunk.toString("utf8");
 	let lf = pending.indexOf("\n");
@@ -38,9 +40,31 @@ process.stdin.on("end", () => {
 	if (!stubborn) process.exit(0);
 });
 
-const settle = () => {
+// 插话的队列（只有文字，和真的 pi 一样）、插话的模式；在做的这一轮收到 `abort` 时做什么（没有一轮在做时 undefined）。
+let queue = [];
+let onAbort;
+const queueUpdate = () => out({ type: "queue_update", steering: [...queue], followUp: [] });
+const respond = (command, data) =>
+	out({
+		id: command.id,
+		type: "response",
+		command: command.type,
+		success: true,
+		...(data && { data }),
+	});
+const settle = (aborted = false) => {
+	onAbort = undefined;
 	out({ type: "agent_end", messages: [], willRetry: false });
-	out({ type: "agent_settled", aborted: false });
+	out({ type: "agent_settled", aborted });
+};
+// 队列里的插话送到模型：各一条用户消息（真的 pi 一次全送时也是各一条，rpcprobe 第 15 题），然后队列变空。
+const deliver = () => {
+	if (queue.length === 0) return;
+	for (const text of queue) {
+		out({ type: "message_end", message: { role: "user", content: [{ type: "text", text }] } });
+	}
+	queue = [];
+	queueUpdate();
 };
 const assistant = (text, extra = {}) => ({
 	type: "message_end",
@@ -54,10 +78,38 @@ const assistant = (text, extra = {}) => ({
 });
 
 function handle(command) {
-	if (command.type !== "prompt") {
-		out({ id: command.id, type: "response", command: command.type, success: true });
+	if (command.type === "steer") {
+		const text = String(command.message);
+		// 以 HANDLE 开头的像被扩展的输入处理器吃掉了（rpcprobe 第 16 题），以 REFUSE 开头的回应失败。
+		if (text.startsWith("HANDLE")) return respond(command, { disposition: "handled" });
+		if (text.startsWith("REFUSE")) {
+			out({ id: command.id, type: "response", command: "steer", success: false, error: "不收" });
+			return;
+		}
+		queue.push(text);
+		queueUpdate();
+		respond(command, { disposition: "queued" });
+		onSteer?.();
 		return;
 	}
+	if (command.type === "clear_queue") {
+		const steering = queue;
+		queue = [];
+		queueUpdate();
+		out({ type: "fake_clear_queue", steering });
+		return respond(command, { steering, followUp: [] });
+	}
+	if (command.type === "abort") {
+		out({ type: "fake_abort" });
+		respond(command);
+		onAbort?.();
+		return;
+	}
+	if (command.type === "set_steering_mode") {
+		out({ type: "fake_steering_mode", mode: command.mode });
+		return respond(command);
+	}
+	if (command.type !== "prompt") return respond(command);
 	const text = String(command.message);
 	if (text.startsWith("reject")) {
 		out({ id: command.id, type: "response", command: "prompt", success: false, error: "不接受" });
@@ -72,6 +124,10 @@ function handle(command) {
 	});
 	out({ type: "agent_start" });
 	out({ type: "turn_start" });
+	out({ type: "message_end", message: { role: "user", content: [{ type: "text", text }] } });
+	onSteer = undefined;
+	// 默认：收到 abort 就停下（agent_settled，aborted）。
+	onAbort = () => settle(true);
 	if (text.startsWith("settle-slow-close")) {
 		slowClose = true;
 		out(assistant("好的"));
@@ -79,8 +135,12 @@ function handle(command) {
 	} else if (text.startsWith("settle")) {
 		out(assistant("好的"));
 		settle();
+	} else if (text.startsWith("deaf")) {
+		// 不理 abort（不报 agent_settled），SIGTERM 照常退出。
+		onAbort = () => {};
 	} else if (text.startsWith("chatty-term")) {
-		// 收到 SIGTERM 之后还在吐事件（一条新的工具调用），过一会儿才退出。
+		// 不理 abort；收到 SIGTERM 之后还在吐事件（一条新的工具调用），过一会儿才退出。
+		onAbort = () => {};
 		stubborn = true;
 		process.on("SIGTERM", () => {
 			out({
@@ -116,9 +176,32 @@ function handle(command) {
 		});
 		out(assistant("好的"));
 		settle();
+	} else if (text.startsWith("work")) {
+		// 一直在做（像一条长命令），每 30 毫秒把队列里的插话送到模型；收到 abort 才停下。
+		const timer = setInterval(deliver, 30);
+		onAbort = () => {
+			clearInterval(timer);
+			settle(true);
+		};
+	} else if (text.startsWith("settle-on-steer")) {
+		// 插话进了队列就停下（这一轮做完了），没有送到它。
+		onSteer = () => {
+			out(assistant("好的"));
+			settle();
+		};
+	} else if (text.startsWith("deliver-then-settle")) {
+		// 插话进了队列之后过一会儿一次送完，再说一句话、做完。
+		onSteer = () => {
+			onSteer = undefined;
+			setTimeout(() => {
+				deliver();
+				out(assistant("看到了"));
+				settle();
+			}, 50);
+		};
 	} else if (text.startsWith("loop")) {
 		let n = 0;
-		setInterval(() => {
+		const timer = setInterval(() => {
 			n += 1;
 			out({
 				type: "tool_execution_start",
@@ -135,13 +218,20 @@ function handle(command) {
 			});
 			out({ type: "turn_start" });
 		}, 5);
+		onAbort = () => {
+			clearInterval(timer);
+			settle(true);
+		};
 	} else if (text.startsWith("ignore-term")) {
+		// 不理 abort、不理 SIGTERM：只有 SIGKILL 结束得了它。
+		onAbort = () => {};
 		stubborn = true;
 		process.on("SIGTERM", () => out({ type: "fake_ignored_sigterm" }));
 		// stdin 关了之后事件循环里就没有别的了，不留一个定时器进程会自己退出（Linux 上比 SIGTERM 先到）。
 		setInterval(() => {}, 60_000);
 	} else if (text.startsWith("term-143")) {
-		// 照 pi 只收到 SIGTERM 时的样子：退出码 143（#539 第 8 题）。
+		// 不理 abort；照 pi 只收到 SIGTERM 时的样子：退出码 143（#539 第 8 题）。
+		onAbort = () => {};
 		stubborn = true;
 		process.on("SIGTERM", () => {
 			out({ type: "fake_exit_143" });
