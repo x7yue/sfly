@@ -257,7 +257,9 @@ test("一轮到了上限、最后一次工具调用只有调用没有结果：�
 	await expect(toolRows(page).first()).toContainText("已中止");
 });
 
-test("project_busy：同一个项目另一个会话在做时，留住写好的话，给出正在做的那个会话的链接", async ({
+// #544：同一个项目里有别的会话在做时，新的一轮不再被拒绝（409 `project_busy`），而是排队（会话变成 `queued`）。页面那一半
+// （排队中的显示、「排在第 N 位」，#544 的第 5 部分，544-C）还没有做：它做的时候把这两条换成排队中的 e2e。
+test.fixme("project_busy：同一个项目另一个会话在做时，留住写好的话，给出正在做的那个会话的链接", async ({
 	page,
 	workbench,
 }) => {
@@ -276,7 +278,7 @@ test("project_busy：同一个项目另一个会话在做时，留住写好的�
 	await expect(timeline(page).getByTestId("user-message")).toHaveText("tester：第一个会话");
 });
 
-test("接着说遇到 project_busy：同一个项目另一个会话在做时，留住写好的话，给出正在做的那个会话的链接", async ({
+test.fixme("接着说遇到 project_busy：同一个项目另一个会话在做时，留住写好的话，给出正在做的那个会话的链接", async ({
 	page,
 	assistant,
 	controlPlane,

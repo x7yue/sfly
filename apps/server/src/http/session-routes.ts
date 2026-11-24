@@ -9,7 +9,12 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { parseProjectId } from "../projects/project-id.js";
 import { FollowOverflowError } from "../sessions/follow.js";
 import type { Outcome, SessionService } from "../sessions/session-service.js";
-import { type SessionRow, type SessionStore, toListItem } from "../sessions/session-store.js";
+import {
+	SessionNotFoundError,
+	type SessionRow,
+	type SessionStore,
+	toListItem,
+} from "../sessions/session-store.js";
 import type { Sse } from "../sse/sse.js";
 import { requireActor } from "./actor.js";
 import { contractRoute, contractStream } from "./contract-route.js";
@@ -40,17 +45,23 @@ export interface SessionRouteDeps {
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
 	const { sessions, service, sse } = deps;
 
-	/** 会话的视图：列表项的字段加项目、就绪状态和在等谁；`lastOutcome` 不给时现读。 */
-	const view = async (row: SessionRow, lastOutcome?: TurnOutcome | null): Promise<SessionView> => ({
-		...toListItem(
-			row,
-			lastOutcome === undefined ? await sessions.lastOutcome(row.id) : lastOutcome,
-		),
-		project: row.projectId,
-		readiness: await service.readiness(row.projectId),
-		// 排队（#544）之前没有会话在排队，也就没有在等谁。
-		waiting_for: null,
-	});
+	/**
+	 * 会话的视图：列表项的字段加项目、就绪状态和在等谁（排队中时有排第几和在等谁）；`lastOutcome` 不给时现读
+	 * （读会话那一个接口给它：状态、事件、上一轮的结局取自同一个快照）。
+	 */
+	const view = async (row: SessionRow, lastOutcome?: TurnOutcome | null): Promise<SessionView> => {
+		const queue = await service.queueInfo(row);
+		return {
+			...toListItem(
+				row,
+				lastOutcome === undefined ? await sessions.lastOutcome(row.id) : lastOutcome,
+				queue.position,
+			),
+			project: row.projectId,
+			readiness: await service.readiness(row.projectId),
+			waiting_for: queue.waitingFor,
+		};
+	};
 
 	contractRoute(app, sessionsApi.list, async ({ params }, reply) => {
 		const project = parseProjectId(params.project);
@@ -125,8 +136,29 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (actor === undefined) return reply;
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
-		const said = await service.say(row, actor, body.text);
-		return said.ok ? said.value : refuse(reply, said);
+		// 写的时候会话被删了（新建会话没接住、等结局的那段时间删掉的）：和一开始找不到一样，404。
+		try {
+			const said = await service.say(row, actor, body.text);
+			return said.ok ? said.value : refuse(reply, said);
+		} catch (error) {
+			if (error instanceof SessionNotFoundError) return sessionNotFound(reply);
+			throw error;
+		}
+	});
+
+	contractRoute(app, sessionsApi.end, async ({ params }, reply, request) => {
+		const actor = requireActor(request, reply);
+		if (actor === undefined) return reply;
+		const row = await sessions.find(params.id);
+		if (!row) return sessionNotFound(reply);
+		try {
+			const ended = await service.end(row, actor);
+			if (!ended.ok) return refuse(reply, ended);
+		} catch (error) {
+			if (error instanceof SessionNotFoundError) return sessionNotFound(reply);
+			throw error;
+		}
+		return view((await sessions.find(row.id)) ?? row);
 	});
 
 	contractRoute(app, sessionsApi.stop, async ({ params }, reply, request) => {
@@ -134,8 +166,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (actor === undefined) return reply;
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
-		const stopped = await service.stop(row);
-		if (!stopped.ok) return refuse(reply, stopped);
+		try {
+			const stopped = await service.stop(row);
+			if (!stopped.ok) return refuse(reply, stopped);
+		} catch (error) {
+			if (error instanceof SessionNotFoundError) return sessionNotFound(reply);
+			throw error;
+		}
 		return view((await sessions.find(row.id)) ?? row);
 	});
 }

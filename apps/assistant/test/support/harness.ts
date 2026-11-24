@@ -24,6 +24,7 @@ import type { z } from "zod";
 import { buildExtension } from "../../scripts/build-extension.js";
 import { type AgentClient, type AgentOptions, connectAgent } from "../../src/agent.js";
 import { EventBus } from "../../src/bus.js";
+import type { Clock } from "../../src/clock.js";
 import { piPackage } from "../../src/launch.js";
 import { createAssistantServer } from "../../src/server.js";
 import { SessionManager, type SessionManagerOptions } from "../../src/sessions.js";
@@ -49,6 +50,11 @@ export interface HarnessOptions {
 	limits?: SessionManagerOptions["limits"];
 	maxProcesses?: number;
 	killGraceMs?: number;
+	/** 停止一轮时等 `agent_settled` 的时间、硬上限（测试里改短）。 */
+	abortSettleMs?: number;
+	stopWaitMs?: number;
+	/** 计时（手动推进的时钟，见 manual-clock.ts）。 */
+	clock?: Clock;
 	hostEnv?: NodeJS.ProcessEnv;
 	heartbeatMs?: number;
 	/** 助手服务连工作台时的期限（测试里改短）。 */
@@ -119,6 +125,9 @@ export class Harness {
 			limits: options.limits,
 			maxProcesses: options.maxProcesses,
 			killGraceMs: options.killGraceMs,
+			abortSettleMs: options.abortSettleMs,
+			stopWaitMs: options.stopWaitMs,
+			clock: options.clock,
 			tmpRoot: join(root, "tmp"),
 		});
 		const server = createAssistantServer({
@@ -178,6 +187,28 @@ export class Harness {
 			method: "POST",
 			headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },
 			body: JSON.stringify({ turn }),
+		});
+	}
+
+	/** 插话：对第 `turn` 轮说 `text`（`message_id` 不给时新生成一个）。 */
+	steer(
+		sessionId: string,
+		text: string,
+		turn = 1,
+		messageId: string = crypto.randomUUID(),
+	): Promise<Response> {
+		return fetch(`${this.url}/sessions/${sessionId}/steer`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${SECRET}`, "content-type": "application/json" },
+			body: JSON.stringify({ turn, message_id: messageId, text }),
+		});
+	}
+
+	/** 结束会话（没有请求体）。 */
+	end(sessionId: string): Promise<Response> {
+		return fetch(`${this.url}/sessions/${sessionId}/end`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${SECRET}` },
 		});
 	}
 

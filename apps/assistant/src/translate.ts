@@ -210,6 +210,7 @@ export class TurnTranslator {
 				? headAndTail(this.#redactor.redact(details.diff))
 				: undefined;
 		// pi 自己截断过（命令的输出只留末尾、读文件只给了一部分）：结果里写着全文在哪，但模型看到的、事件里的都不是全部。
+		// 命令超时时 pi 把结果包成没有 details 的错误，看不出截断过：这一种不标（协议里 ToolResultEvent 的说明写了）。
 		const truncation = details.truncation as { truncated?: unknown } | undefined;
 		const cutByPi = truncation?.truncated === true;
 		const exitCode = tool === "command" ? exitCodeOf(result) : undefined;

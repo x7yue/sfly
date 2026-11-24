@@ -70,10 +70,11 @@ const WRITE_ROUTES: Record<string, Scope | null> = {
 	"DELETE /projects/:project/tokens/:id": "manage",
 	// 上传产物（任务，写）→ 不给人和程序：只有 Agent 凭据，限派给这台 Agent 的任务
 	"PUT /tasks/:id/artifacts/*": null,
-	// 建会话、对它说话、停止它（会话，写）→ 编辑：都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）
+	// 建会话、对它说话、停止它、结束它（会话，写）→ 编辑：都是在驱动对场景的修改（ADR 0029 的范围表没有会话这一行，ADR 0027 补记）
 	"POST /projects/:project/sessions": "edit",
 	"POST /sessions/:id/messages": "edit",
 	"POST /sessions/:id/stop": "edit",
+	"POST /sessions/:id/end": "edit",
 };
 
 /**
@@ -168,7 +169,7 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 		...(creates === undefined ? {} : { creates }),
 	});
 
-	it("会话的写（建、发话、停止）、项目令牌的签发和开发 Agent 的注册只有人能做：范围表里 session、project、dev_agent 是 humanOnly，别的类别不是", () => {
+	it("会话的写（建、发话、停止、结束）、项目令牌的签发和开发 Agent 的注册只有人能做：范围表里 session、project、dev_agent 是 humanOnly，别的类别不是", () => {
 		expect(writeNeedsPerson(writeOf("session"))).toBe(true);
 		expect(writeNeedsPerson(writeOf("project"))).toBe(true);
 		expect(writeNeedsPerson(writeOf("dev_agent"))).toBe(true);
@@ -192,6 +193,7 @@ describe("只有人能做的写（范围表的 humanOnly）", () => {
 			"POST /projects/:project/dev-agents",
 			"POST /projects/:project/sessions",
 			"POST /projects/:project/tokens",
+			"POST /sessions/:id/end",
 			"POST /sessions/:id/messages",
 			"POST /sessions/:id/stop",
 		]);
@@ -305,6 +307,7 @@ describe("契约和访问检查的规则对得上", () => {
 				"GET /sessions/:id/events",
 				"POST /sessions/:id/messages",
 				"POST /sessions/:id/stop",
+				"POST /sessions/:id/end",
 			]),
 		);
 		expect(classes.get("none")).toEqual(expect.arrayContaining(["GET /health", "GET /install.sh"]));
