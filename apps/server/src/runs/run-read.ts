@@ -14,7 +14,17 @@ import {
 	type StoredOrchestrationDocument,
 	type TaskIoView,
 } from "@sfly/schema";
-import { and, asc, desc, eq, getTableColumns, inArray, isNotNull, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	getTableColumns,
+	inArray,
+	isNotNull,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 import { currentActionOfTask } from "../actions/action-summary.js";
 import { clockOffsetView } from "../agents/agent-clock.js";
 import type { AgentWait } from "../agents/queue-wait.js";
@@ -214,12 +224,22 @@ export async function readRuns(
 const bytesOf = (column: typeof tasks.inputs | typeof tasks.outputs) =>
 	sql<number | null>`octet_length(${column}::text)`;
 
-/** 这个 jsonb 列的内容：不超过 {@link RUN_VIEW_IO_VALUE_LIMIT_BYTES}（按 {@link bytesOf}）才读出来，更大的读成 NULL。 */
-const smallOnly = (column: typeof tasks.inputs | typeof tasks.outputs) =>
+/**
+ * 每个任务的输入、输出存着的大小，在一个 `lateral` 子查询里只算一次：大小要把 jsonb 转成文本才量得出（量过：60 个任务各 2 个 1 MB 的值，
+ * 一次转换 61 毫秒），判大小和带回大小各算一遍就是四次（164 毫秒）。`limit 1` 挡住数据库把子查询拉平回外面的表达式
+ * （拉平之后又是各算各的）。`tasks` 必须是外面查询的表。
+ */
+const TASK_IO_SIZES = sql.identifier("task_io_sizes");
+const taskIoSizesJoin = sql`(select ${bytesOf(tasks.inputs)} as inputs_bytes, ${bytesOf(tasks.outputs)} as outputs_bytes limit 1) as ${TASK_IO_SIZES}`;
+const inputsBytesOf = sql<number | null>`${TASK_IO_SIZES}.inputs_bytes`;
+const outputsBytesOf = sql<number | null>`${TASK_IO_SIZES}.outputs_bytes`;
+
+/** 这个 jsonb 列的内容：大小（{@link taskIoSizesJoin} 里算好的）不超过 {@link RUN_VIEW_IO_VALUE_LIMIT_BYTES} 才读出来，更大的读成 NULL。 */
+const smallOnly = (column: typeof tasks.inputs | typeof tasks.outputs, bytes: SQL<number | null>) =>
 	sql<Record<
 		string,
 		unknown
-	> | null>`case when octet_length(${column}::text) <= ${RUN_VIEW_IO_VALUE_LIMIT_BYTES} then ${column} end`;
+	> | null>`case when ${bytes} <= ${RUN_VIEW_IO_VALUE_LIMIT_BYTES} then ${column} end`;
 
 /** {@link readRuns} 的读取：`ids` 是小写、去重后的 UUID，结果按数据库里的运行 ID 作键。 */
 async function readByIds(
@@ -297,14 +317,15 @@ async function readByIds(
 			.select({
 				task: {
 					...taskColumns,
-					inputs: smallOnly(tasks.inputs),
-					outputs: smallOnly(tasks.outputs),
-					inputsBytes: bytesOf(tasks.inputs),
-					outputsBytes: bytesOf(tasks.outputs),
+					inputs: smallOnly(tasks.inputs, inputsBytesOf),
+					outputs: smallOnly(tasks.outputs, outputsBytesOf),
+					inputsBytes: inputsBytesOf,
+					outputsBytes: outputsBytesOf,
 				},
 				currentAction: taskActionSummaries.currentAction,
 			})
 			.from(tasks)
+			.crossJoinLateral(taskIoSizesJoin)
 			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
 			.where(inArray(tasks.runId, found))
 			.orderBy(asc(tasks.attempt))
