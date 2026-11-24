@@ -6,6 +6,7 @@ import { AccountDisplayName } from "../src/http/accounts.js";
 import { TokenName } from "../src/http/tokens.js";
 import {
 	codePointLabel,
+	escapeUnsafeCharacters,
 	nameProblem,
 	nameRefinement,
 	nameRule,
@@ -296,6 +297,38 @@ describe("名字里不能有的字符", () => {
 		// 三种例外不在「一个字符就拒绝」的表里，由位置规则管。
 		for (const c of [ZWNJ, ZWJ, ...Array.from({ length: 16 }, (_, i) => 0xfe00 + i)]) {
 			expect(rejected.has(c), codePointLabel(c)).toBe(false);
+		}
+	});
+
+	// 长的自由文字（给人读的说明、原因）里表里的字符写成看得见的 \\uXXXX（#670）：说明还看得懂，不整段丢。
+	it("escapeUnsafeCharacters：表里的字符写成 \\uXXXX（补充平面的写成 \\u{…}），换行和制表符默认保留，正常的文字、表情、零宽连接符原样；结果里不再有表里的字符（除了保留的）", () => {
+		expect(escapeUnsafeCharacters(`a${chars(0x1b)}[2J${chars(0x85)}${chars(0x202e)}b`)).toBe(
+			"a\\u001b[2J\\u0085\\u202eb",
+		);
+		expect(
+			escapeUnsafeCharacters(`标签${chars(0xe0067)}孤立${chars(0xd800)}盲文${chars(0x2800)}`),
+		).toBe("标签\\u{e0067}孤立\\ud800盲文\\u2800");
+		expect(escapeUnsafeCharacters("第一行\n第二行\t缩进")).toBe("第一行\n第二行\t缩进");
+		expect(escapeUnsafeCharacters(`a${chars(0xd)}b`)).toBe("a\\u000db");
+		expect(escapeUnsafeCharacters("a\nb", "")).toBe("a\\u000ab");
+		// 正常的原样：中日韩、成对的代理码元、零宽连接符的组合表情、变体选择符、波斯文。
+		for (const ok of [
+			"王小明",
+			chars(0x1f600),
+			chars(0x1f469, ZWJ, 0x1f4bb),
+			chars(0x2764, VS16),
+			`می${chars(ZWNJ)}خواهم`,
+		]) {
+			expect(escapeUnsafeCharacters(ok), ok).toBe(ok);
+		}
+		// 每个码位：结果里不再有表里的字符（保留的换行和制表符除外）。
+		for (let c = 0; c <= 0x10ffff; c++) {
+			if (c >= 0xd800 && c <= 0xdfff) continue;
+			const out = escapeUnsafeCharacters(`a${chars(c)}b`);
+			const leftover = [...out].filter(
+				(x) => REJECTED_NAME_CHARACTER.test(x) && x !== "\t" && x !== "\n",
+			);
+			expect(leftover, codePointLabel(c)).toEqual([]);
 		}
 	});
 });

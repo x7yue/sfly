@@ -11,7 +11,7 @@ import type {
 	MetricPoint,
 	PeerEndpoint,
 } from "@sfly/proto";
-import { nameProblem } from "@sfly/schema";
+import { escapeUnsafeCharacters, nameProblem } from "@sfly/schema";
 
 const NUL = "\u0000";
 const REPLACEMENT = "\uFFFD";
@@ -131,22 +131,62 @@ function eventJsonOf<M extends { eventJson: string }>(message: M): M {
 	return eventJson === message.eventJson ? message : { ...message, eventJson };
 }
 
-/** Hello 里程序版本、操作系统、CPU 架构的长度上限（字符数）。 */
-const LABEL_MAX_LENGTH = 64;
-
 /**
- * Agent 自己报的版本、系统、架构（#670）：只是显示用的附带信息，存下来之后会显示在别人的命令行和控制台里。含名字表里的字符
- * （控制字符、转义序列、双向控制字符、看不见的字符，`@sfly/schema` 的 `nameProblem`）或超过上限的，整段换成空串，不让连接失败。
+ * Agent 自己报的文字（#670）：只是显示用的附带信息，存下来之后会显示在别人的命令行和控制台里，所以写入时过一遍名字的那张表
+ * （`@sfly/schema` 的 `nameProblem`），连接不因为这些字段失败（名称除外，由网关拒绝）。分两类：
+ * - **短的标识类**（版本、系统、架构、包名、能力名、对外地址，应当是一个词的）：含表里的字符或超过上限的整段换成空串；
+ * - **长的自由文字**（给人读的说明、原因：开发包的来源、对外监听失败的原因、开发包元信息里的字符串）：不整段丢，
+ *   表里的字符写成看得见的 `\uXXXX`，超过上限的截断、末尾加「…」。
+ * 逐个字段的归类见 `docs/ARCHITECTURE.md`。
  */
-function label(value: string): string {
-	return [...value].length <= LABEL_MAX_LENGTH && nameProblem(value) === undefined ? value : "";
+const SHORT_MAX = { short: 64, name: 128, address: 255 } as const;
+/** 长的自由文字的长度上限（字符数）。 */
+const FREE_TEXT_MAX = 2048;
+
+function shortId(value: string, max: number): string {
+	return [...value].length <= max && nameProblem(value) === undefined ? value : "";
+}
+
+function freeText(value: string): string {
+	const chars = [...value];
+	const clipped =
+		chars.length > FREE_TEXT_MAX ? `${chars.slice(0, FREE_TEXT_MAX).join("")}…` : value;
+	return escapeUnsafeCharacters(clipped);
+}
+
+/** JSON 文本里的字符串（键和值）按长的自由文字处理：没有变化时原样返回；不是合法 JSON 时原样返回。 */
+function freeJson(s: string): string {
+	if (s === "") return s;
+	let value: unknown;
+	try {
+		value = JSON.parse(s);
+	} catch {
+		return s;
+	}
+	let changed = false;
+	const walk = (v: unknown): unknown => {
+		if (typeof v === "string") {
+			const cleaned = freeText(v);
+			if (cleaned !== v) changed = true;
+			return cleaned;
+		}
+		if (Array.isArray(v)) return v.map(walk);
+		if (v !== null && typeof v === "object") {
+			const out: Record<string, unknown> = {};
+			for (const [key, item] of Object.entries(v)) out[freeText(key)] = walk(item);
+			return out;
+		}
+		return v;
+	};
+	const walked = walk(value);
+	return changed ? JSON.stringify(walked) : s;
 }
 
 function hello(h: Hello): Hello {
 	const name = text(h.name);
-	const agentVersion = label(text(h.agentVersion));
-	const os = label(text(h.os));
-	const arch = label(text(h.arch));
+	const agentVersion = shortId(text(h.agentVersion), SHORT_MAX.short);
+	const os = shortId(text(h.os), SHORT_MAX.short);
+	const arch = shortId(text(h.arch), SHORT_MAX.short);
 	const installedPackages = list(h.installedPackages, installed);
 	const devPackages = list(h.devPackages, devPackage);
 	const capabilities = list(h.capabilities, capability);
@@ -177,28 +217,28 @@ function hello(h: Hello): Hello {
 }
 
 function capability(c: Capability): Capability {
-	const name = text(c.name);
+	const name = shortId(text(c.name), SHORT_MAX.short);
 	return name === c.name ? c : { ...c, name };
 }
 
 function peerEndpoint(p: PeerEndpoint): PeerEndpoint {
-	const publicAddress = text(p.publicAddress);
-	const listenError = text(p.listenError);
+	const publicAddress = shortId(text(p.publicAddress), SHORT_MAX.address);
+	const listenError = freeText(text(p.listenError));
 	return publicAddress === p.publicAddress && listenError === p.listenError
 		? p
 		: { ...p, publicAddress, listenError };
 }
 
 function installed(p: InstalledPackage): InstalledPackage {
-	const name = text(p.name);
-	const version = text(p.version);
+	const name = shortId(text(p.name), SHORT_MAX.name);
+	const version = shortId(text(p.version), SHORT_MAX.short);
 	return name === p.name && version === p.version ? p : { ...p, name, version };
 }
 
 function devPackage(p: DevPackage): DevPackage {
-	const name = text(p.name);
-	const source = text(p.source);
-	const metadataJson = json(p.metadataJson);
+	const name = shortId(text(p.name), SHORT_MAX.name);
+	const source = freeText(text(p.source));
+	const metadataJson = freeJson(json(p.metadataJson));
 	return name === p.name && source === p.source && metadataJson === p.metadataJson
 		? p
 		: { ...p, name, source, metadataJson };
