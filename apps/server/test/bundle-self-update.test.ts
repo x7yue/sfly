@@ -21,6 +21,7 @@ import type { AgentView } from "@sfly/schema";
 import { afterAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { type ControlPlane, startControlPlane } from "../src/control-plane.js";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { type BundledServer, startBundledServer } from "./support/bundled-server.js";
@@ -132,10 +133,15 @@ describe.skipIf(!bundleDir)("上一个 Release 的 Agent 在当前控制面上�
 		});
 		expect(res.status).toBe(201);
 
+		// 没有凭据的 Agent 只接受已登记过的名字（#492）：像真实的部署一样为这台 Agent 签发凭据。凭据在库里，换成打包的控制面
+		// （同一个数据库）之后照样有效；上一个 Release 的 Agent 认环境变量 SFLY_TOKEN，自更新之后（execve）环境不变。
+		const { token } = await old.agentCredentials.issue(DEFAULT_PROJECT, NAME);
+
 		// 版本覆盖只给扮演上一版本的本地构建用（--simulate）；真正的旧 Agent 不认识这个环境变量，没有影响。
 		const agent: RealAgent = await startRealAgent({
 			grpcUrl: old.grpcUrl,
 			name: NAME,
+			credential: token,
 			bin: installed,
 			venv,
 			env: { SFLY_HOME: home, SFLY_VERSION_OVERRIDE: previous.version },

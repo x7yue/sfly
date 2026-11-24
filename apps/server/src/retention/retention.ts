@@ -4,6 +4,7 @@ import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
+	apiTokens,
 	artifacts,
 	feishuMessages,
 	runs,
@@ -22,7 +23,8 @@ const BATCH = 100;
 /**
  * 日志和产物的保留期清理（#18）：运行结束超过保留期后，删除它的日志目录 `logs/<run_id>/`、
  * 产物目录 `artifacts/<run_id>/` 和产物记录，这个运行的飞书投递记录（ADR 0020），以及它的任务的动作明细、每种名称的
- * 计数和动作摘要（规格 #345），并在 `runs.purged_at` 记下清理时间。
+ * 计数和动作摘要（规格 #345），它的任务的任务凭据（`api_tokens` 里种类为 `task` 的行，任务早已结束，凭据早就无效，#492），
+ * 并在 `runs.purged_at` 记下清理时间。
  * 运行本身、任务状态和输出都保留。是否到期只按注入的时钟判断，测试推进手动时钟即可。
  */
 export class Retention {
@@ -96,6 +98,9 @@ export class Retention {
 				await tx.delete(taskActions).where(inArray(taskActions.taskId, runTasks));
 				await tx.delete(taskActionNames).where(inArray(taskActionNames.taskId, runTasks));
 				await tx.delete(taskActionSummaries).where(inArray(taskActionSummaries.taskId, runTasks));
+				await tx
+					.delete(apiTokens)
+					.where(and(eq(apiTokens.kind, "task"), inArray(apiTokens.taskId, runTasks)));
 				await tx.delete(artifacts).where(eq(artifacts.runId, id));
 				await tx.delete(feishuMessages).where(eq(feishuMessages.runId, id));
 				await tx.update(runs).set({ purgedAt: now }).where(eq(runs.id, id));

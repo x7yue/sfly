@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { agentBinary, repoRoot } from "./agent-binary.js";
+import { credentialFor } from "./fake-agent.js";
 
 /** 以子进程运行的真实 Rust Agent。标准输出是 JSON 事件流，标准错误直接透传。 */
 export interface RealAgent {
@@ -24,12 +25,23 @@ export async function startRealAgent(options: {
 	venv?: string;
 	args?: string[];
 	bin?: string;
+	/**
+	 * Agent 凭据（`SFLY_TOKEN`）。不传时向这个控制面按名字签发一个（`startTestControlPlane` 登记了签发办法，和假 Agent 一样，#492）；
+	 * 控制面是另一个进程（打包的控制面）时自己签发了传进来。`args` 里有 `--token`、`env` 里有 `SFLY_TOKEN` 的不再加。
+	 */
+	credential?: string;
 	/** 追加的环境变量（例如独立的 UV_CACHE_DIR）。 */
 	env?: Record<string, string>;
 	/** 等 welcome 的时间，默认 15 秒；包括创建 venv 和安装 SDK 运行时（它们在连上控制面之后、welcome 事件之前完成）。 */
 	welcomeTimeoutMs?: number;
 }): Promise<RealAgent> {
 	const bin = options.bin ?? agentBinary();
+	const explicitToken =
+		(options.args ?? []).some((arg) => arg === "--token" || arg.startsWith("--token=")) ||
+		options.env?.SFLY_TOKEN !== undefined;
+	const credential = explicitToken
+		? undefined
+		: (options.credential ?? (await credentialFor(options.grpcUrl, options.name)));
 	const workDir = await mkdtemp(join(tmpdir(), "sfly-agent-work-"));
 	const child = spawn(
 		bin,
@@ -55,6 +67,7 @@ export async function startRealAgent(options: {
 				...process.env,
 				SFLY_HOME: join(workDir, "sfly-home"),
 				SFLY_LISTEN_PORT: "0",
+				...(credential === undefined ? {} : { SFLY_TOKEN: credential }),
 				...options.env,
 			},
 		},

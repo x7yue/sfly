@@ -24,6 +24,8 @@ export async function startBundledServer(options: {
 	databaseUrl: string;
 	dataDir: string;
 	ports?: { http: number; grpc: number };
+	/** 额外的环境变量（例如初始管理员：Agent 凭据的签发要登录，第一个管理员要先有）。 */
+	env?: Record<string, string>;
 }): Promise<BundledServer> {
 	const child = spawn("node", ["--enable-source-maps", join(options.dir, "main.mjs")], {
 		cwd: options.dataDir,
@@ -39,6 +41,7 @@ export async function startBundledServer(options: {
 			SFLY_HTTP_PORT: String(options.ports?.http ?? 0),
 			SFLY_GRPC_HOST: "127.0.0.1",
 			SFLY_GRPC_PORT: String(options.ports?.grpc ?? 0),
+			...options.env,
 		},
 	});
 	const output: string[] = [];

@@ -14,6 +14,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { docsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { TestAccounts } from "./support/credentials.js";
@@ -209,11 +210,23 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 				);
 			}, 180_000);
 
+		/**
+		 * 没有凭据的 Agent 只接受已登记过的名字（#492）：读者按文档向平台管理员要一个 Agent 凭据，经环境变量 `SFLY_TOKEN`
+		 * 交给 Agent（文档里「用环境变量传令牌」那一段）。凭据只对签发时的那个名字有效，而 `agent.env` 里的名字随安装命令
+		 * 变（先是主机名、`--dev` 之后是 `dev-<用户名>-<主机名>`），所以每次前台启动 Agent 之前，按 `agent.env` 里此刻的名字签发一个。
+		 */
+		async function agentCredential(): Promise<string> {
+			const text = await readFile(join(home, ".sfly", "agent.env"), "utf8");
+			const name = /^SFLY_AGENT_NAME=(.+)$/m.exec(text)?.[1];
+			if (name === undefined) throw new Error(`agent.env 里没有 SFLY_AGENT_NAME：\n${text}`);
+			return (await cp.current.agentCredentials.issue(DEFAULT_PROJECT, name)).token;
+		}
+
 		async function startForeground(block: string) {
 			foregroundLog = "";
 			const child = spawn("bash", ["-c", block], {
 				cwd: home,
-				env,
+				env: { ...env, SFLY_TOKEN: await agentCredential() },
 				stdio: ["ignore", "pipe", "pipe"],
 				detached: true,
 			});
@@ -221,8 +234,16 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 				foregroundLog += chunk.toString();
 			});
 			const welcome = new Promise<void>((resolve, reject) => {
+				// 连不上（被控制面拒绝时 Agent 一直重连）不能永远等下去：写明 Agent 打出来的信息。
+				const timer = setTimeout(
+					() => reject(new Error(`Agent 5 分钟内没有连上控制面：\n${foregroundLog}`)),
+					300_000,
+				);
 				createInterface({ input: child.stdout as NodeJS.ReadableStream }).on("line", (line) => {
-					if ((JSON.parse(line) as { event?: string }).event === "welcome") resolve();
+					if ((JSON.parse(line) as { event?: string }).event === "welcome") {
+						clearTimeout(timer);
+						resolve();
+					}
 				});
 				child.once("exit", (code) =>
 					reject(new Error(`Agent 退出（${code}）：\n${foregroundLog}`)),

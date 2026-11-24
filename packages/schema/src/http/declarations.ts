@@ -54,7 +54,14 @@ export const PATH_KINDS: Readonly<Record<string, PathKind>> = {
 		kind: "package",
 		why: "节点包，以及它的版本、节点类型、归档下载、发布：路径里的 :name 是包名",
 	},
-	"/agents": { kind: "agent", why: "Agent 列表和立即更新：路径里的 :name 是 Agent 名称" },
+	"/agents": {
+		kind: "agent",
+		why: "Agent 列表、立即更新、凭据的签发和吊销、停用和恢复：路径里的 :name 是 Agent 名称",
+	},
+	"/projects/:project/dev-agents": {
+		kind: "dev_agent",
+		why: "我的开发 Agent（ADR 0029「凭据」）：在项目下新建和吊销，名字由控制面按「dev-登录名-主机」生成，只认有用户的人的凭据",
+	},
 	"/feishu-bots": {
 		kind: "feishu_bot",
 		why: "飞书机器人的登记、改、删、引用、测试消息：路径里的 :name 是机器人名称",
