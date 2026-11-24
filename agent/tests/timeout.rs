@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sfly_agent::proto::{CancelTask, ErrorKind, TaskStatus, server_message};
-use support::calls::{open_call, read_reply, referenced, request, silent_peer, socket_of};
+use support::calls::{call, open_call, read_reply, referenced, request, silent_peer, socket_of};
 use support::{
     AgentOptions, FakeControlPlane, assert_quiet_termination, capture_stderr, spawn_agent,
     stub_task, wait_until,
@@ -375,7 +375,24 @@ async fn an_agent_call_in_flight_ends_when_the_task_times_out_while_the_node_is_
         .await
         .expect("the call did not end when the task timed out")
         .unwrap();
-    assert_eq!(reply.error().0, "cancelled");
+    let (kind, message) = reply.error();
+    assert_eq!(kind, "cancelled");
+    // 消息不说原因：这个任务的结局是超时，节点里不能看到「任务已取消」。
+    assert!(!message.contains("取消"), "{message}");
+    // 超时之后新来的调用也被拒绝，同样不说原因。
+    let again = call(
+        &socket_of(&agent),
+        request(
+            "task-timeout-call",
+            "silent",
+            "files.stat",
+            json!({ "path": "/" }),
+        ),
+    )
+    .await;
+    let (kind, message) = again.error();
+    assert_eq!(kind, "cancelled");
+    assert!(!message.contains("取消"), "{message}");
     // 调用是在进程还活着的时候结束的：节点理会不了 SIGTERM，收尾时间有 60 秒。
     assert!(
         pids.iter().all(|&p| alive(p)),

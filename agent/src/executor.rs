@@ -219,7 +219,9 @@ struct Paths {
     artifacts: PathBuf,
 }
 
-/// 任务的取消请求：None 表示没有取消，`Some(false)` 优雅取消，`Some(true)` 强制取消。
+/// 任务的取消信号：None 表示没有；`Some(false)` 优雅取消，**也是超时进入收尾时间**（`run_task` 在超时时通过
+/// `Ledger::cancel` 发一次，让正在进行的能力调用放弃；只有能力调用和 `Running::time_out` 读它，任务的结局不看它）；
+/// `Some(true)` 强制取消（也是控制面放弃任务时）。
 pub type CancelSignal = watch::Receiver<Option<bool>>;
 
 /// 正在运行的执行器子进程。
