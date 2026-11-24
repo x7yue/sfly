@@ -252,7 +252,7 @@ export function createParamsCheck(): ParamsCheck {
 		}
 		return [
 			...(await checkReferencedAgents(db, project, wanted)).problems,
-			...(await checkFeishuBots(db, bots)),
+			...(await checkFeishuBots(db, project, bots)),
 			...paramInputTypeProblems(
 				plan.main,
 				chains,

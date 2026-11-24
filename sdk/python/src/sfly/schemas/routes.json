@@ -23624,7 +23624,7 @@
                 "context_overflow",
                 "other"
               ],
-              "description": "重试的原因按什么分；#548 起有值。"
+              "description": "重试的原因按什么分（#640 起有值）。"
             },
             "message_id": {
               "type": "string",
