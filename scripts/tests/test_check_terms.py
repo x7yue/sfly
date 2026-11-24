@@ -76,6 +76,21 @@ def test_allowed_lines_pass_and_stale_allow_entries_are_reported() -> None:
     assert stale[0].startswith("scripts/terms.allow：放行的")
 
 
+def test_the_same_word_twice_on_a_line_is_reported_twice() -> None:
+    found = problems({"docs/guide/x.md": "敏感参数的默认值、敏感参数的值"})
+    assert len(found) == 2
+
+
+def test_an_allow_entry_matches_a_part_of_the_line_and_only_in_its_own_file() -> None:
+    line = "这一行里有一句对时延敏感的节点的话，别的内容"
+    files = {"docs/guide/x.md": line, "docs/guide/y.md": line}
+    allow = "docs/guide/x.md | 对时延敏感的节点 | 别的意思：对时延敏感，和参数无关\n"
+    # 原文是那一行的一段话就行；只放行写了的那个文件，别的文件里同样的话照报
+    found = problems(files, allow)
+    assert len(found) == 1
+    assert found[0].startswith("docs/guide/y.md:1：")
+
+
 def test_allow_entry_needs_three_fields() -> None:
     found = problems({"a.md": "x"}, "a.md | 原文\n")
     assert len(found) == 1
