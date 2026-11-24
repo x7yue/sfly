@@ -1,8 +1,9 @@
 // 收到停止信号时关闭只做一次（#647）：重复的信号只记一句，关闭完成退出码 0，关闭出错记下来、退出码 1。
 // 用假的 emitter、`exit` 和日志，不起进程；真正的进程里的接线在 `process-stream-errors.test.ts`。
 import { EventEmitter } from "node:events";
-import { describe, expect, it } from "vitest";
-import { installShutdown } from "../src/shutdown.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SHUTDOWN_TIMEOUT_MS, installProcessGuards } from "../src/process-guards.js";
+import { installShutdown, SHUTDOWN_TIMEOUT_MS } from "../src/shutdown.js";
 
 function setup(close: () => Promise<void>, timeoutMs?: number) {
 	const emitter = new EventEmitter();
@@ -126,5 +127,42 @@ describe("收到停止信号时关闭", () => {
 		expect(s.exits).toEqual([1]);
 		expect(s.errors).toHaveLength(1);
 		expect(s.errors[0]?.[0]).toContain("还没有完成");
+	});
+});
+
+describe("停止信号的关闭和因错误的有序退出用同一个上限（默认值）", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	it("两个常量是同一个数", () => {
+		expect(DEFAULT_SHUTDOWN_TIMEOUT_MS).toBe(SHUTDOWN_TIMEOUT_MS);
+	});
+
+	it("关闭卡住不动（不传 timeoutMs）：停止信号的关闭和有序退出都在 SHUTDOWN_TIMEOUT_MS 毫秒整到时放弃，退出码 1，早一毫秒都不退", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		// 停止信号那一条。
+		const s = setup(() => new Promise(() => {}));
+		s.emitter.emit("SIGTERM");
+		// 有序退出那一条。
+		const proc = new EventEmitter();
+		const guardExits: number[] = [];
+		const guards = installProcessGuards({
+			shutdown: () => new Promise(() => {}),
+			proc: proc as unknown as NodeJS.Process,
+			exit: (code) => guardExits.push(code),
+		});
+		guards.fatal("某个致命错误");
+
+		await vi.advanceTimersByTimeAsync(SHUTDOWN_TIMEOUT_MS - 1);
+
+		expect(s.exits).toEqual([]);
+		expect(guardExits).toEqual([]);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(s.exits).toEqual([1]);
+		expect(guardExits).toEqual([1]);
+		guards.uninstall();
 	});
 });

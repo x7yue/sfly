@@ -210,4 +210,47 @@ describeWithAgent("全栈：动作摘要", () => {
 			["检查放行文件", "success"],
 		]);
 	}, 90_000);
+
+	it("secret 值正好跨在名称、字段、失败原因的上限处（#583）：真实的 SDK 不把它切成两半，控制面读出来没有任何一段", async () => {
+		const { ACTION_LIMITS, SECRET_MASK } = await import("@sfly/schema");
+		const secret = "ZEBRA-secret-token-0123456789";
+		const fragments = Array.from({ length: secret.length - 3 }, (_, i) => secret.slice(i, i + 4));
+		const api = new ApiClient(cp);
+		const id = await api.orchestrationWith({
+			default_agent: "actions-agent",
+			nodes: [
+				{ id: "entry", kind: "entry", params: [{ name: "token", type: "string", secret: true }] },
+				{
+					id: "texts",
+					kind: "package",
+					package: "sfly-stub",
+					node: "actions_with_secret_texts",
+					inputs: { token: "${{ params.token }}" },
+				},
+			],
+			edges: [{ from: "entry", to: "texts", kind: "chain" }],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+		const runId = await api.triggerOk(id, { token: secret });
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 30_000);
+		const [attempt] = (await api.node(runId, "texts")).attempts;
+		const taskId = attempt?.task_id ?? "";
+		const page = await (await cp.fetch(`/tasks/${taskId}/actions`)).text();
+		const summary = await (await cp.fetch(`/tasks/${taskId}/actions/summary`)).text();
+		for (const [what, body] of [
+			["明细", page],
+			["摘要", summary],
+		] as const) {
+			expect(
+				fragments.filter((piece) => body.includes(piece)),
+				`${what}：不能留下 secret 值的任何一段`,
+			).toEqual([]);
+			expect(body, what).toContain(SECRET_MASK);
+		}
+		const parsed = actionsApi.page.response.parse(JSON.parse(page));
+		const failed = parsed.actions.find((a) => a.kind === "action" && a.reason !== null);
+		expect(failed?.name).toBe(
+			`${"n".repeat(ACTION_LIMITS.nameChars - 10)}${SECRET_MASK}`.slice(0, ACTION_LIMITS.nameChars),
+		);
+	}, 60_000);
 });
