@@ -69,6 +69,24 @@ _DRAIN_TIMEOUT = 2.0
 #: 失败时附带的标准错误尾部的最大字节数。
 _STDERR_TAIL_BYTES = 8 * 1024
 
+
+def _split_line(line: bytes) -> list[bytes]:
+    """一行（不含换行符）超过 `_MAX_LINE_BYTES` 字节时拆开，每段不超过它，拆在字符（UTF-8）边界上
+    （与 Agent 相同，#622）；没超过的整行一段，空行也是一段。拆在哪里只取决于这一行的内容。
+    本地执行不打码，不需要 Agent 那样带上下文。"""
+    pieces: list[bytes] = []
+    start = 0
+    while len(line) - start > _MAX_LINE_BYTES:
+        cut = start + _MAX_LINE_BYTES
+        for _ in range(3):  # 一个字符最多 4 字节；连续的后续字节不是合法的 UTF-8 时不再退
+            if cut > start and (line[cut] & 0xC0) == 0x80:
+                cut -= 1
+        pieces.append(line[start:cut])
+        start = cut
+    pieces.append(line[start:])
+    return pieces
+
+
 Status = Literal["running", "success", "failed", "cancelled"]
 
 
@@ -560,8 +578,7 @@ class _Pump:
                     line = raw[:-1] if raw.endswith(b"\n") else raw
                     if line.endswith(b"\r"):
                         line = line[:-1]
-                    for start in range(0, max(len(line), 1), _MAX_LINE_BYTES):
-                        chunk = line[start : start + _MAX_LINE_BYTES]
+                    for chunk in _split_line(line):
                         text = chunk.decode("utf-8", errors="replace")
                         self._lines.put((monotonic_ms(), LogLine(_now_ms(), source, level, text)))
 
