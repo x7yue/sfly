@@ -133,3 +133,9 @@ def test_platform_arm_is_compared_with_arm_a_by_the_same_three_criteria() -> Non
     assert decide(records + [session("b", "write", False, 99)], "m", "p") == decide(
         records, "m", "p"
     )
+
+
+def test_arm_b_decision_does_not_count_platform_sessions() -> None:
+    records = [session("a", "write", True, 10)] * 5 + [session("b", "write", True, 10)] * 5
+    with_platform = records + [session("p", "write", False, 99, "平台故障")] * 5
+    assert decide(with_platform, "m", "b") == decide(records, "m", "b")

@@ -444,9 +444,13 @@ def run_plan(
             return 1
         driver = record["driver"]
         if record["invalid"]:
-            print(
-                f"{record['session']}：模型端点出了故障，这次会话作废，后面的会话不再跑", flush=True
+            fault = record.get("platform_fault") or {}
+            what = (
+                f"评测环境出了问题（{fault['reason']}）"
+                if fault.get("kind") == "environment"
+                else "模型端点出了故障"
             )
+            print(f"{record['session']}：{what}，这次会话作废，后面的会话不再跑", flush=True)
             return 1
         verdict = (
             "通过"

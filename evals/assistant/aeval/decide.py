@@ -50,6 +50,15 @@ def _arm(records: list[dict[str, Any]], model: str, arm: str) -> list[dict[str, 
     return [r for r in records if r["model"] == model and str(r.get("arm", "a")) == arm]
 
 
+def limits_of(records: list[dict[str, Any]]) -> list[str]:
+    """这些会话实际用的上限（各自 `driver.json` 里记的），去重排序。"""
+    found = set()
+    for record in records:
+        given = (record.get("driver") or {}).get("limits") or {}
+        found.add(f"{given.get('max_turns', '?')} 轮、{given.get('max_seconds', '?')} 秒")
+    return sorted(found)
+
+
 def turns_within(turns_b: float, turns_a: float) -> bool:
     """远程那一臂的轮数中位数不超过臂 A 的 1.3 倍。
     中位数是整数或 .5，乘 10 后是整数，比较是精确的。"""
@@ -93,6 +102,12 @@ def decide(records: list[dict[str, Any]], model: str, remote: str = "b") -> dict
     if balanced:
         good, bad = VERDICTS[remote]
         verdict = good if all(criteria.values()) else bad
+    limits = {"a": limits_of(a), remote: limits_of(b)}
+    platform_faults = sum(
+        1
+        for r in b
+        if not r["grade"]["passed"] and (r.get("failure") or {}).get("primary") == "平台故障"
+    )
     enough = len(tasks) >= REQUIRED_TASKS and all(n >= REQUIRED_PER_TASK for n in counts_b.values())
     return {
         "model": model,
@@ -106,6 +121,9 @@ def decide(records: list[dict[str, Any]], model: str, remote: str = "b") -> dict
         "turns_median": {"a": turns_a, remote: turns_b},
         "failures": {"a": dict(fail_a), remote: dict(fail_b)},
         "only_in_remote": only_b,
+        "limits": limits,
+        "limits_match": limits["a"] == limits[remote],
+        "platform_faults": platform_faults,
         "criteria": criteria,
         "verdict": verdict,
     }
@@ -138,7 +156,18 @@ def render_decision(result: dict[str, Any]) -> str:
     if result["verdict"] is None:
         lines.append("- 两臂每道题的有效会话数不一样，判定不成立，先补齐")
     else:
-        lines.append(f"- 按事先定下的标准：{result['verdict']}")
+        caveat = ""
+        if not result["limits_match"]:
+            caveat = (
+                f"（只作参考：两臂的上限不一样，臂 A {'、'.join(result['limits']['a'])}，"
+                f"{SHORT_NAMES[b]} {'、'.join(result['limits'][b])}，轮数和超时不可比）"
+            )
+        lines.append(f"- 按事先定下的标准：{result['verdict']}{caveat}")
+        if result["platform_faults"]:
+            lines.append(
+                f"- {SHORT_NAMES[b]}没通过的会话里有 {result['platform_faults']} 次是平台故障"
+                "（平台这一侧出的问题，逐次见上面的平台故障表）"
+            )
         if not result["enough_samples"]:
             lines.append(
                 f"- 样本不足：标准要求 {REQUIRED_TASKS} 道题、每题每臂 {REQUIRED_PER_TASK} 次，"

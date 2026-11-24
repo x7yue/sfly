@@ -1,9 +1,13 @@
-"""平台臂的会话驱动（container/platform_driver.py）：对着一个假的控制面跑，看它建会话、跟事件流、
-过了时限先停再等结局、最后总是结束会话。"""
+"""平台臂的会话驱动（container/platform_driver.py）：对着一个假的控制面跑（照真实控制面的 SSE 格式：
+`event:`、持久事件带 `id:`、每隔一会儿一条 `control-plane-time` 心跳）。每种情况再经宿主机的
+`classify_platform` 归到三类里：审查（#715）的 12 种探测各是一条用例。"""
 
 from __future__ import annotations
 
 import json
+import signal
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -11,22 +15,47 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import platform_driver
 import pytest
+from aeval.platform import ENVIRONMENT, PLATFORM, classify_platform
 from platform_driver import Client, run, sse_events
 
+DRIVER = Path(platform_driver.__file__)
 TURN_END = {"type": "turn_end", "seq": 4, "turn": 1, "outcome": "completed", "reason": "完成了"}
+STOPPED = {"type": "turn_end", "seq": 9, "turn": 1, "outcome": "stopped", "reason": "停"}
+
+
+def ev(body: dict[str, Any], name: str | None = None) -> str:
+    head = f"event: {name or body.get('type')}\n"
+    if "seq" in body:
+        head += f"id: {body['seq']}\n"
+    return head + f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+def heartbeat() -> str:
+    return ev({"time": "2026-11-25T00:00:00Z"}, "control-plane-time")
 
 
 class FakeControlPlane:
     """假的控制面。`mode`：
-    - `ok`：事件流补发三个事件和 turn_end；
-    - `silent`：事件流只发心跳，收到 stop 之后下一条事件流发 `stopped` 的 turn_end；
-    - `down`：建会话回 503。"""
+    - `ok`：补发三个事件、一个心跳和 turn_end；
+    - `not-ready`：`readiness.ready` 是 false；
+    - `create-503`、`create-no-id`、`create-not-json`：建会话出错的三种；
+    - `break-once`：第一次连事件流发两个事件就断开，重连之后从断开处接着发到 turn_end；
+    - `heartbeats`：事件流只发心跳；收到 stop 之后的下一次连接发 `stopped` 的 turn_end；
+    - `silent`：事件流发了响应头之后一个字节都不来（直到 stop）；
+    - `queued`：建会话回 `status: queued`，之后只有心跳，stop 之后也没有结局；
+    - `ephemeral-end`：先一个不带序号的 turn_end，再一个带序号的。
+    `stop_code`、`end_code`：stop、end 回什么状态码。"""
 
-    def __init__(self, mode: str) -> None:
+    def __init__(self, mode: str, stop_code: int = 202, end_code: int = 202) -> None:
         self.mode = mode
-        self.calls: list[tuple[str, str, str | None]] = []
+        self.stop_code = stop_code
+        self.end_code = end_code
+        self.calls: list[tuple[str, str]] = []
         self.stopped = threading.Event()
+        self.closing = threading.Event()
+        self.streams = 0
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -35,8 +64,8 @@ class FakeControlPlane:
             def log_message(self, *args: Any) -> None:
                 pass
 
-            def _json(self, status: int, body: Any) -> None:
-                data = json.dumps(body).encode()
+            def _json(self, status: int, body: Any, raw: bytes | None = None) -> None:
+                data = raw if raw is not None else json.dumps(body).encode()
                 self.send_response(status)
                 self.send_header("content-type", "application/json")
                 self.send_header("content-length", str(len(data)))
@@ -46,81 +75,142 @@ class FakeControlPlane:
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers.get("content-length") or 0)
                 body = self.rfile.read(length).decode() if length else None
-                owner.calls.append(("POST", self.path, self.headers.get("x-sfly-nickname")))
+                owner.calls.append(("POST", self.path))
+                mode = owner.mode
                 if self.path == "/projects/default/sessions":
-                    if owner.mode == "down":
-                        return self._json(503, {"code": "assistant_unavailable"})
                     assert json.loads(body or "{}") == {"text": "写一个节点"}
-                    return self._json(201, {"id": "s1"})
+                    if mode == "create-503":
+                        return self._json(503, {"code": "assistant_unavailable"})
+                    if mode == "create-no-id":
+                        return self._json(201, {"status": "running"})
+                    if mode == "create-not-json":
+                        return self._json(201, None, raw=b"<html>oops</html>")
+                    status = "queued" if mode == "queued" else "running"
+                    return self._json(201, {"id": "s1", "status": status})
                 if self.path.endswith("/stop"):
                     owner.stopped.set()
-                self._json(202, None)
+                    return self._json(owner.stop_code, {"code": "x"})
+                if self.path.endswith("/end"):
+                    return self._json(owner.end_code, {"code": "x"})
+                self._json(404, {})
 
             def do_GET(self) -> None:  # noqa: N802
-                owner.calls.append(("GET", self.path, self.headers.get("x-sfly-nickname")))
+                owner.calls.append(("GET", self.path))
+                if self.path == "/projects/default/sessions":
+                    ready = owner.mode != "not-ready"
+                    problems = [] if ready else [{"message": "工作台不在线"}]
+                    return self._json(200, {"readiness": {"ready": ready, "problems": problems}})
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.end_headers()
-                for chunk in owner.stream(self.path):
-                    try:
+                try:
+                    for chunk in owner.stream(self.path):
                         self.wfile.write(chunk.encode())
                         self.wfile.flush()
-                    except OSError:
-                        return
+                except OSError:
+                    return
                 self.close_connection = True
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def stream(self, path: str) -> Iterator[str]:
-        def event(body: dict[str, Any]) -> str:
-            return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
-
-        if self.mode == "ok":
-            yield event({"type": "user_message", "seq": 1})
-            yield event({"type": "turn_started", "seq": 2})
-            yield event({"type": "assistant_delta", "text": "不持久的"})
-            yield event({"type": "assistant_message", "seq": 3})
-            yield event(TURN_END)
-            return
+        self.streams += 1
+        yield "retry: 3000\n\n"
+        yield heartbeat()
         if self.stopped.is_set():
-            assert path.endswith("after=1"), path
-            end = {"type": "turn_end", "seq": 2, "turn": 1, "outcome": "stopped", "reason": "停"}
-            yield event(end)
+            if self.mode != "queued":
+                yield ev(STOPPED)
             return
-        yield event({"type": "user_message", "seq": 1})
-        for _ in range(100):
-            yield ": heartbeat\n\n"
+        mode = self.mode
+        if mode == "ok":
+            yield ev({"type": "user_message", "seq": 1})
+            yield ev({"type": "turn_started", "seq": 2})
+            yield ev({"type": "assistant_delta", "text": "不持久的"})
+            yield ev({"type": "assistant_message", "seq": 3})
+            yield ev(TURN_END)
+            return
+        if mode == "ephemeral-end":
+            yield ev({"type": "turn_end", "turn": 1, "outcome": "completed"})
+            yield ev({"type": "user_message", "seq": 1})
+            yield ev(TURN_END)
+            return
+        if mode == "break-once":
+            if self.streams == 1:
+                yield ev({"type": "user_message", "seq": 1})
+                yield ev({"type": "turn_started", "seq": 2})
+                return
+            assert path.endswith("after=2"), path
+            yield ev({"type": "assistant_message", "seq": 3})
+            yield ev(TURN_END)
+            return
+        if mode == "silent":
+            until = time.monotonic() + 8
+            while not (self.stopped.is_set() or self.closing.is_set()) and time.monotonic() < until:
+                time.sleep(0.05)
+            return
+        yield ev({"type": "user_message", "seq": 1})
+        # 最多 8 秒（驱动该在时限那一刻自己断开；没断开的话，用例按用时判出来，不一直挂着）。
+        until = time.monotonic() + 8
+        while not (self.stopped.is_set() or self.closing.is_set()) and time.monotonic() < until:
+            yield heartbeat()
             time.sleep(0.1)
 
-
-@pytest.fixture
-def said() -> list[dict[str, Any]]:
-    return []
-
-
-def test_sse_events_skip_comments_and_join_data_lines() -> None:
-    lines = [": hb\n", "\n", "id: 3\n", 'data: {"a":\n', "data: 1}\n", "\n", 'data: {"b": 2}']
-    assert list(sse_events(lines)) == [{"a": 1}, {"b": 2}]
+    def close(self) -> None:
+        self.closing.set()
+        self.server.shutdown()
 
 
-def test_waits_for_turn_end_then_ends_the_session(tmp_path: Path, said: list[Any]) -> None:
-    cp = FakeControlPlane("ok")
-    record = run(Client(cp.url, "eval"), "default", "写一个节点", 30, tmp_path, said.append)
-    assert record["session"] == "s1"
+@pytest.fixture(autouse=True)
+def quick(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(platform_driver, "READ_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(platform_driver, "STOP_WAIT_SECONDS", 1.5)
+    monkeypatch.setattr(platform_driver, "RECONNECT_PAUSE_SECONDS", 0.05)
+
+
+def drive(mode: str, tmp_path: Path, max_seconds: float = 10, **codes: int) -> dict[str, Any]:
+    cp = FakeControlPlane(mode, **codes)
+    said: list[dict[str, Any]] = []
+    try:
+        started = time.monotonic()
+        record = run(
+            Client(cp.url, "eval"), "default", "写一个节点", max_seconds, tmp_path, said.append
+        )
+        record["took"] = time.monotonic() - started
+    finally:
+        cp.close()
+    record["calls"] = cp.calls
+    # 不论怎么结束：都写了 platform.json、说了 done。
+    assert json.loads((tmp_path / "platform.json").read_text())["problems"] == record["problems"]
+    assert [s["event"] for s in said] == ["done"]
+    return record
+
+
+def kinds(record: dict[str, Any]) -> list[str]:
+    return [f"{method} {path.split('?')[0]}" for method, path in record["calls"]]
+
+
+def test_sse_events_keep_the_event_name_and_skip_comments() -> None:
+    lines = iter([": hb\n", "\n", "event: x\n", "id: 3\n", 'data: {"a":\n', "data: 1}\n", "\n"])
+    assert list(sse_events(lines)) == [("x", {"a": 1})]
+    assert list(sse_events(iter(['data: {"b": 2}']))) == [("message", {"b": 2})]
+
+
+def test_ok_checks_first_waits_for_turn_end_and_ends_the_session(tmp_path: Path) -> None:
+    record = drive("ok", tmp_path)
+    assert record["precheck"] == "ok"
     assert record["turn_end"] == TURN_END
-    assert record["problems"] == [] and record["stopped"] is False
-    assert [c[:2] for c in cp.calls] == [
-        ("POST", "/projects/default/sessions"),
-        ("GET", "/sessions/s1/events?after=0"),
-        ("POST", "/sessions/s1/end"),
+    assert record["problems"] == [] and record["stream_breaks"] == []
+    assert record["deadline_passed"] is False and record["stopped"] is False
+    assert kinds(record) == [
+        "GET /projects/default/sessions",
+        "POST /projects/default/sessions",
+        "GET /sessions/s1/events",
+        "POST /sessions/s1/end",
     ]
-    # 每个请求都带着发话人的昵称（#547 之前只要它）。
-    assert {c[2] for c in cp.calls} == {"eval"}
-    assert [s["event"] for s in said] == ["created", "done"]
-    assert said[0]["session"] == "s1"
-    # 事件流里收到的每个事件（含不持久的）原样写下；结果也写进 platform.json。
+    # 心跳不写进记录；不持久的事件照写。
     lines = (tmp_path / "platform-events.jsonl").read_text().splitlines()
     assert [json.loads(line)["type"] for line in lines] == [
         "user_message",
@@ -129,35 +219,152 @@ def test_waits_for_turn_end_then_ends_the_session(tmp_path: Path, said: list[Any
         "assistant_message",
         "turn_end",
     ]
-    assert json.loads((tmp_path / "platform.json").read_text())["turn_end"] == TURN_END
+    assert classify_platform(record) is None
 
 
-def test_past_the_deadline_with_only_heartbeats_it_stops_waits_for_the_outcome_and_ends(
-    tmp_path: Path, said: list[Any]
+def test_precheck_failure_is_an_environment_fault_and_creates_nothing(tmp_path: Path) -> None:
+    record = drive("not-ready", tmp_path)
+    assert record["precheck"] == "助手此刻不能用：工作台不在线"
+    assert kinds(record) == ["GET /projects/default/sessions"]
+    assert classify_platform(record) == (
+        ENVIRONMENT,
+        "开始前的检查没过：助手此刻不能用：工作台不在线",
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "problem"),
+    [
+        ("create-503", "返回 503"),
+        ("create-no-id", "建会话的回应里没有会话 ID"),
+        ("create-not-json", "的回应不是 JSON"),
+    ],
+)
+def test_a_rejected_or_bad_create_is_a_platform_fault(
+    mode: str, problem: str, tmp_path: Path
 ) -> None:
-    cp = FakeControlPlane("silent")
-    started = time.monotonic()
-    record = run(Client(cp.url, "eval"), "default", "写一个节点", 1.0, tmp_path, said.append)
-    # 只有心跳也停得下来：时限在每一行上检查，不等事件。
-    assert time.monotonic() - started < 8
-    assert record["stopped"] is True
-    assert record["turn_end"]["outcome"] == "stopped"
-    assert record["problems"] == ["在时限内没有等到 turn_end"]
-    assert [c[:2] for c in cp.calls] == [
-        ("POST", "/projects/default/sessions"),
-        ("GET", "/sessions/s1/events?after=0"),
-        ("POST", "/sessions/s1/stop"),
-        ("GET", "/sessions/s1/events?after=1"),
-        ("POST", "/sessions/s1/end"),
+    record = drive(mode, tmp_path)
+    assert record["session"] is None
+    assert problem in record["problems"][0]
+    assert kinds(record) == ["GET /projects/default/sessions", "POST /projects/default/sessions"]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == PLATFORM and problem in fault[1]
+
+
+def test_a_broken_stream_reconnects_from_the_last_seq_and_is_not_a_fault(tmp_path: Path) -> None:
+    record = drive("break-once", tmp_path)
+    assert record["turn_end"] == TURN_END
+    assert record["stream_breaks"] == ["事件流结束了"]
+    assert record["deadline_passed"] is False and record["problems"] == []
+    assert [p for m, p in record["calls"] if m == "GET"][1:] == [
+        "/sessions/s1/events?after=0",
+        "/sessions/s1/events?after=2",
     ]
+    assert classify_platform(record) is None
 
 
-def test_when_the_session_cannot_be_created_nothing_is_stopped_or_ended(
-    tmp_path: Path, said: list[Any]
+def test_only_heartbeats_until_the_deadline_stop_then_the_outcome_is_a_platform_fault(
+    tmp_path: Path,
 ) -> None:
-    cp = FakeControlPlane("down")
-    record = run(Client(cp.url, "eval"), "default", "写一个节点", 30, tmp_path, said.append)
-    assert record["session"] is None and record["turn_end"] is None
-    assert "返回 503" in record["problems"][0]
-    assert [c[:2] for c in cp.calls] == [("POST", "/projects/default/sessions")]
-    assert [s["event"] for s in said] == ["done"]
+    record = drive("heartbeats", tmp_path, max_seconds=1.0)
+    # 只有心跳也停得下来：计时器在时限那一刻关掉连接。
+    assert record["took"] < 1.0 + 1.5 + 1.0
+    assert record["deadline_passed"] is True and record["stopped"] is True
+    assert record["turn_end"] == STOPPED
+    assert record["problems"] == ["在时限内没有等到 turn_end"]
+    assert kinds(record)[-3:] == [
+        "POST /sessions/s1/stop",
+        "GET /sessions/s1/events",
+        "POST /sessions/s1/end",
+    ]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == PLATFORM and "评测停下了它" in fault[1]
+
+
+def test_a_connection_that_sends_nothing_times_out_reconnects_and_stays_within_the_deadline(
+    tmp_path: Path,
+) -> None:
+    record = drive("silent", tmp_path, max_seconds=1.6)
+    assert record["took"] < 1.6 + 1.5 + 1.0
+    assert record["stream_breaks"][0] == "事件流 0.5 秒没有任何字节"
+    assert len([p for m, p in record["calls"] if m == "GET"]) >= 3
+    assert record["deadline_passed"] is True
+
+
+@pytest.mark.parametrize("code", [404, 409, 500])
+def test_a_failed_stop_is_recorded_and_the_session_is_still_ended(
+    code: int, tmp_path: Path
+) -> None:
+    record = drive("heartbeats", tmp_path, max_seconds=0.6, stop_code=code)
+    assert any(f"stop 返回 {code}" in p for p in record["problems"])
+    assert kinds(record)[-1] == "POST /sessions/s1/end"
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == PLATFORM
+
+
+def test_a_failed_end_is_a_platform_fault_even_after_a_good_outcome(tmp_path: Path) -> None:
+    record = drive("ok", tmp_path, end_code=500)
+    assert record["turn_end"] == TURN_END
+    assert record["problems"][0].startswith("结束会话：POST /sessions/s1/end 返回 500")
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == PLATFORM and "end 返回 500" in fault[1]
+
+
+def test_a_queued_turn_says_so_and_no_outcome_after_stop_is_a_platform_fault(
+    tmp_path: Path,
+) -> None:
+    record = drive("queued", tmp_path, max_seconds=0.6)
+    assert record["queued"] is True and record["turn_end"] is None
+    assert record["problems"] == [
+        "在时限内没有等到 turn_end（这一轮在排队）",
+        "停止之后没有等到结局",
+    ]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == PLATFORM and "排队" in fault[1]
+
+
+def test_only_a_persistent_turn_end_ends_the_wait(tmp_path: Path) -> None:
+    record = drive("ephemeral-end", tmp_path)
+    assert record["turn_end"] == TURN_END and record["problems"] == []
+
+
+def test_an_unexpected_error_still_writes_the_record_and_ends_the_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args: Any) -> Any:
+        raise RuntimeError("意外")
+
+    monkeypatch.setattr(Client, "follow", boom)
+    record = drive("ok", tmp_path)
+    assert record["problems"] == ["会话驱动出错：RuntimeError: 意外"]
+    assert kinds(record)[-1] == "POST /sessions/s1/end"
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_ends_the_session_writes_the_record_and_is_an_environment_fault(
+    sig: signal.Signals, tmp_path: Path
+) -> None:
+    cp = FakeControlPlane("heartbeats")
+    (tmp_path / "prompt.md").write_text("写一个节点")
+    proc = subprocess.Popen(
+        [sys.executable, str(DRIVER), "--cp", cp.url, "--nickname", "eval"]
+        + ["--prompt-file", str(tmp_path / "prompt.md"), "--max-seconds", "60"]
+        + ["--out", str(tmp_path / "run")],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not any(p.startswith("/sessions/s1/events") for _, p in cp.calls):
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        proc.send_signal(sig)
+        output, _ = proc.communicate(timeout=20)
+    finally:
+        cp.close()
+    record = json.loads((tmp_path / "run" / "platform.json").read_text())
+    assert ("POST", "/sessions/s1/end") in cp.calls
+    assert json.loads(output.strip().splitlines()[-1])["event"] == "done"
+    assert record["problems"] == ["会话驱动被结束了（SIGTERM、SIGINT）"]
+    fault = classify_platform(record)
+    assert fault is not None and fault[0] == ENVIRONMENT

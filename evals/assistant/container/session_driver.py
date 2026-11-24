@@ -213,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
         "limits": {"max_turns": args.max_turns, "max_seconds": args.max_seconds},
         **usage.as_dict(),
     }
+    if summary["exit_reason"] == "turn_limit":
+        # 第 max_turns + 1 次 turn_start 时才停下，那一次模型调用没有做完：和平台臂一样记上限的值。
+        summary["turns"] = min(int(summary["turns"]), args.max_turns)
     (out / "driver.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
     print(json.dumps(summary, ensure_ascii=False))
     return 0
