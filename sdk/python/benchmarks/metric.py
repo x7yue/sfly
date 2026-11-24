@@ -18,7 +18,7 @@ sdk/python/tests；`pnpm perf` 顺带运行并汇总进报告
 - `metric`：`ctx.metric("seq", 值)`，不带标签的指标；
 - `labeled_metric`：4 个带标签（`pid`、`name`）的指标 × 50 个进程轮流上报
   （`ctx.metric("cpu_by_process", 值, labels={"pid": "1000", "name": "worker-0"})`，与标准节点
-  `process_monitor` 按进程上报时相同），每个进程的标签字典事先建好，取的是平均到每次调用的耗时；
+  `monitor_processes` 按进程上报时相同），每个进程的标签字典事先建好，取的是平均到每次调用的耗时；
 - `action`：`with ctx.action("下单", 订单="1001", 价格="10.5"): pass`，一次完整的动作：校验名称
   和字段、开始和结束各写一行事件（两行 JSON）、更新计数和摘要。每轮用新建的 `Context` 并固定
   2 万次：每种名称超过 5 万个以后 SDK 不再写明细，那时测到的是计数的开销，不是平时的开销。
