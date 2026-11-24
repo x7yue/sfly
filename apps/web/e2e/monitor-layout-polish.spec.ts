@@ -262,7 +262,10 @@ async function firstLine(page: Page) {
 		const stations = [...row.querySelectorAll("ol > li")] as HTMLElement[];
 		const count = row.lastElementChild as HTMLElement;
 		const last = stations[stations.length - 1] as HTMLElement;
+		const label = row.firstElementChild as HTMLElement;
 		return {
+			label: Math.round(label.getBoundingClientRect().width),
+			count: Math.round(count.getBoundingClientRect().width),
 			container: Math.round(container.getBoundingClientRect().width),
 			line: Math.round(ul.getBoundingClientRect().width),
 			cells: stations.map((s) => Math.round(s.getBoundingClientRect().width)),
@@ -321,6 +324,19 @@ for (const viewport of [
 				expect(m.line, `${note}：线路比容器宽`).toBeLessThanOrEqual(m.container + 0.5);
 				// 计数紧挨着最后一站。
 				expect(m.countGap, `${note}：计数离最后一站太远`).toBeLessThanOrEqual(8);
+				// 放不放得下：每一站取上限、加上链名和计数，容器放得下（留 24px 的余量，免得界限上的取整）就必须是「放得下」的样子
+				// （行尾空着），放不下就必须占满容器；界限附近两种都可以。线路的宽度规则被改坏（比如一律占满容器）时，
+				// 下面按实际排出来的样子做的断言都还成立，只有这一条抓得到。
+				const room = m.cells.length * LINE_CELL_PX + m.label + m.count;
+				if (m.container >= room + 24) {
+					expect(m.rowEnd, `${note}：容器放得下（要 ${room}px），行尾应当空着`).toBeGreaterThan(1);
+				}
+				if (m.container <= room - 24) {
+					expect(
+						m.rowEnd,
+						`${note}：容器放不下（要 ${room}px），线路应当占满容器`,
+					).toBeLessThanOrEqual(1);
+				}
 				if (m.rowEnd > 1) {
 					// 行尾空着（放得下，多出来的宽度留在行尾）：每一站的格子正好是上限（站名都不长时），再多的宽度不摊给站；
 					// 有一个很长的节点 ID 时，它的列取站名的宽度（最宽 18rem 加两侧留白），别的列仍是上限。
