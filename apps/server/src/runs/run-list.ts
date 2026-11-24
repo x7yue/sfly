@@ -4,6 +4,7 @@ import type { Db } from "../db/database.js";
 import { orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
 import { runListPreset } from "../presets/run-preset.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { sessionRefs, withSession } from "../sessions/session-ref.js";
 import { type RunChain, type RunNode, type RunRead, readRuns } from "./run-read.js";
 
 export interface RunListFilter {
@@ -79,6 +80,7 @@ export async function listAllRuns(
 				cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 				triggered_by: run.triggeredBy,
 				triggered_via: run.triggeredVia,
+				...withSession(read.session),
 				preset: runListPreset(run),
 				started_at: run.startedAt.toISOString(),
 				ended_at: run.endedAt ? run.endedAt.toISOString() : null,
@@ -143,6 +145,10 @@ export async function listRuns(
 		.where(eq(runs.orchestrationId, orchestrationId))
 		.orderBy(desc(runs.startedAt), desc(runs.id))
 		.limit(limit);
+	const refs = await sessionRefs(
+		db,
+		rows.map(({ run }) => run.sessionId),
+	);
 	return rows.map(({ run, number }) => ({
 		id: run.id,
 		orchestration_id: run.orchestrationId,
@@ -151,6 +157,7 @@ export async function listRuns(
 		cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 		triggered_by: run.triggeredBy,
 		triggered_via: run.triggeredVia,
+		...withSession(run.sessionId === null ? undefined : refs.get(run.sessionId)),
 		preset: runListPreset(run),
 		started_at: run.startedAt.toISOString(),
 		ended_at: run.endedAt ? run.endedAt.toISOString() : null,
