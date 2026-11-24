@@ -127,6 +127,36 @@ docker build -f apps/assistant/Dockerfile --build-arg NODE_MAJOR="$(cat .node-ve
 和 `selfcheck` 一样要 Docker、手动跑，不进 `pnpm test`（#552 扩成四道题、进 CI）。会话的工作目录是工作区 `/work`，
 题目的节点包在它下面：假的模型端点照 `/tmp/aeval-reference/workdir` 进节点包目录再执行参考答案。
 
+### 平台臂（`--arm p`，#552）
+
+`run` 的第三个臂：题目经控制面的会话接口交给平台内的助手，量的是产品里的那条路。要先 `up --assistant`；断网的槽位也能跑。
+
+```sh
+./aeval.sh run --model fake --arm p --task write --task fix --task orchestrate --task cross
+./aeval.sh run --fill --model <名字> --arm p --repeat 3 --task write …   # 真实模型：助手容器换成这个模型，经宿主机的转发口
+```
+
+- 每次会话：`reset`、准备题目，在镜像站容器（`mirror`，在评测网络里，助手的命令够不着它）里跑
+  `container/platform_driver.py`：
+  1. `POST /projects/default/sessions` 发题目的那句话。
+  2. 跟着 `GET /sessions/:id/events`（SSE）等到这一轮带序号的 `turn_end`；没等到（平台的上限再加 60 秒）就 `stop`，
+     再等一会儿结局。
+  3. 最后 `POST /sessions/:id/end`，助手服务关掉这个会话的 pi 进程，不靠闲置回收。
+
+  现在建会话只带昵称 `eval`（控制面不带凭据也放行）；#547、#494 强制鉴权之后改成登录、带个人令牌，
+  代码里在 `platform_driver.py` 的 `Client.request` 留了记号。
+- 记录和臂 A 的同样布局，判分、失败分类、`report` 不分臂：
+  - `events.jsonl`、`pi-session/`、`pi-stderr.log`、`context.md` 从助手容器里这个会话的目录复制出来；
+    `turn.json` 带着这一轮的环境变量，不复制。
+  - `platform-events.jsonl` 是事件流里收到的每个事件，`platform.json` 是会话 ID、结局、没等到的原因。
+  - `driver.json` 照 `turn_end` 写（模型调用次数当轮数、用时、token），工具调用次数从 pi 的原始事件里数。
+  - pi 的内存峰值由评测在助手容器里按这个会话的 pi 进程每秒读一次 `VmHWM`，不为它改产品。
+- 上限是平台自己的（每一轮 40 次模型调用、20 分钟），和评测的默认值一样；`--max-turns`、`--max-seconds` 对平台臂不起作用，
+  只提醒。
+- 模型：`--model` 和助手容器现在的模型不一样时，这次会话之前的 `reset` 把助手容器换成这个模型（假的模型端点要在 up 时起着）。
+- `report` 有平台臂时给出臂 A 对平台臂的判定，三条标准和臂 B 的一样（`aeval/decide.py`），结论是「平台臂没有明显变差」或
+  「明显变差」。
+
 ## 模型
 
 容器里的 pi 不拿密钥。它指向一个模型地址（模型配置里的 `endpoint`），凭据由宿主机上的转发口在转发时加上：
