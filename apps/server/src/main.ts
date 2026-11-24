@@ -68,10 +68,11 @@ import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
 import { parseInitialAdmin } from "./auth/bootstrap.js";
 import { runResetPassword } from "./auth/reset-password-cli.js";
 import { EnvSettingsError, readEnvSettings } from "./config/env-settings.js";
-import { startControlPlane } from "./control-plane.js";
+import { type ControlPlane, startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 import { parseCorsOrigins } from "./http/cors.js";
 import { parseTrustProxy } from "./http/trust-proxy.js";
+import { installProcessGuards } from "./process-guards.js";
 import { installShutdown } from "./shutdown.js";
 import { printError, printInfo, printWarning, terminalStreams } from "./util/output.js";
 
@@ -144,8 +145,17 @@ const { httpPort, grpcPort, ...limits } = (() => {
 })();
 const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
 if (!webDir) printWarning(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
+// 进程级的未捕获异常和未处理的拒绝、借出去的数据库连接出错：记错误日志、有序关闭、退出码 1 退出，由部署的重启策略拉起来
+// （#563，docs/ARCHITECTURE.md §6.10）。装在控制面启动之前：启动时（迁移）的连接出错也一样处理；控制面起来之前没有东西可关。
+let running: ControlPlane | undefined;
+const guards = installProcessGuards({
+	shutdown: async () => {
+		await running?.close();
+	},
+});
 // 启动失败（写库失败、端口被占……）也走统一的出口：数据库错误里的参数不会随未捕获的异常打到终端上。
 const controlPlane = await startControlPlane({
+	onFatalDatabaseError: (error) => guards.fatal("数据库连接在使用中断开", error),
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
 	http: { host: env.SFLY_HTTP_HOST ?? "0.0.0.0", port: httpPort },
@@ -180,12 +190,16 @@ printInfo(
 	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
 );
 
-// 停止信号：关闭只做一次，重复的信号只记一句（`src/shutdown.ts`）。
+running = controlPlane;
+
+// 停止信号：关闭只做一次，重复的信号只记一句（`src/shutdown.ts`）。和因错误而有序退出（`guards`）是两条都会调用 `close()`、都会退出的
+// 路径（`close()` 可以重复调用，拿到同一个结果）：**已经因为致命错误在退出时，退出码一定是 1**，停止信号的关闭先完成也一样，
+// 否则按失败才重启的部署不会把它拉起来；停止信号先到、关闭途中又出致命错误的也是 1（见 `process-guards.ts` 文件头）。
 installShutdown({
 	emitter: process,
 	signals: ["SIGINT", "SIGTERM"],
 	close: () => controlPlane.close(),
-	exit: (code) => process.exit(code),
+	exit: (code) => process.exit(guards.exiting ? 1 : code),
 	log: (message) => printInfo(message),
 	logError: (message, error) => printError(message, error),
 });
