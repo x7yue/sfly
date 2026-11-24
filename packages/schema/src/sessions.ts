@@ -672,6 +672,14 @@ export const Readiness = z
 export type Readiness = z.infer<typeof Readiness>;
 
 /**
+ * 运行、场景版本上的「经哪个会话」（ADR 0029「经 …」：会话令牌记会话，#547）：会话的 ID 和标题，页面上显示成
+ * 会话「<标题>」并链到会话页。依据是控制面收到的请求带着哪个会话的令牌，不是模型在对话里怎么说，也不是可以伪造的
+ * `x-sfly-client` 标注。不是会话做的，响应里没有这个字段。
+ */
+export const SessionRef = z.object({ id: z.string(), title: z.string() });
+export type SessionRef = z.infer<typeof SessionRef>;
+
+/**
  * 会话列表里的一项。`created_by` 是发起人的昵称；`queue_position` 只在排队中（`status` 为 `queued`）时有值，
  * 从 1 起；`last_turn_outcome` 是上一轮的结局，还没有结束过的一轮时为 null。
  */
