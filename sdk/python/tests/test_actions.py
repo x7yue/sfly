@@ -37,6 +37,7 @@ from sfly import Context, TaskInfo
 from sfly.actions import (
     MAX_NAME_CHARS,
     MAX_REASON_CHARS,
+    MAX_SUMMARY_NAMES,
     MAX_VALUE_CHARS,
     TRANSPORT_MARGIN_CHARS,
 )
@@ -561,6 +562,121 @@ def test_names_that_differ_only_after_the_limit_are_counted_as_one_name(tmp_path
     names = only(events(), "action_summary")[-1]["names"]
     assert [(n["name"], n["total"]) for n in names] == [(head + "A", 2), ("别的", 1)]
     assert len(only(events(), "action_start")) == 3
+
+
+def test_the_summary_lists_only_the_first_1000_names_and_the_names_table_stops_growing(
+    tmp_path: Path,
+) -> None:
+    """名称的种类不设上限的话，摘要（每秒一份）和 SDK 进程里记名称的表都随种类数一直涨（#694）：
+    摘要只列前 MAX_SUMMARY_NAMES 种（和控制面存下的一致），记名称的表也不再增长。"""
+    ctx, events = make_context(tmp_path)
+    count = MAX_SUMMARY_NAMES + 1500
+    tail = "名" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS - 6)  # 每种名称取传输上限的最长
+    for i in range(count):
+        ctx.mark(f"{i:05d}-{tail}")
+
+    # 记名称的表停在上限，不随种类数涨
+    assert len(ctx.action._names) == MAX_SUMMARY_NAMES
+    wait_for(lambda: only(events(), "action_summary")[-1]["total"] == count)
+    summary = only(events(), "action_summary")[-1]
+    names = summary["names"]
+    assert len(names) == MAX_SUMMARY_NAMES
+    # 按第一次出现的先后：前 MAX_SUMMARY_NAMES 种
+    assert names[0]["name"].startswith("00000-")
+    assert names[-1]["name"].startswith(f"{MAX_SUMMARY_NAMES - 1:05d}-")
+    assert all(n["total"] == 1 for n in names)
+    # 合计、标记的个数、有明细的个数照常准确；每个标记都有明细（没有超过合计的上限）
+    assert (summary["total"], summary["marks"], summary["reported"]) == (count, count, count)
+    assert len(only(events(), "mark")) == count
+    # 摘要的大小有上界：最多 MAX_SUMMARY_NAMES 种，每种最长 4160 个字符
+    line_bytes = max(
+        len(json.dumps(e, ensure_ascii=False).encode()) for e in only(events(), "action_summary")
+    )
+    assert line_bytes < 20 * 1024 * 1024
+    # 警告（名称超过文档里的上限的那一条不算）：第 101 种一次，第 1001 种一次，
+    # 写明从第几种起不进摘要
+    warnings = [
+        e["message"] for e in only(events(), "log") if e["level"] == "warn" and "种" in e["message"]
+    ]
+    assert len(warnings) == 2, warnings
+    assert "100" in warnings[0] and "字段" in warnings[0]
+    assert str(MAX_SUMMARY_NAMES) in warnings[1] and "不进摘要" in warnings[1]
+
+
+def test_names_over_the_summary_cap_still_have_details_but_no_per_name_cap_and_can_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """超过 MAX_SUMMARY_NAMES 种之后的名称共用一份计数（不进摘要）：它们的明细照常上报，不受
+    每种名称的上限（没有单独的计数可以数），只受合计的上限约束；失败的动作照常结束。"""
+    monkeypatch.setattr("sfly.actions.MAX_SUMMARY_NAMES", 3)
+    monkeypatch.setattr("sfly.actions.MAX_PER_NAME", 2)
+    ctx, events = make_context(tmp_path)
+
+    for name in ("甲", "乙", "丙"):
+        ctx.action.start(name).end()
+    for _ in range(4):  # 在表里的名称：每种名称的上限照旧（2 个）
+        ctx.action.start("甲").end()
+    for name in ("丁", "戊", "丁", "戊", "丁", "戊"):  # 超过 3 种之后的：不受每种名称的上限
+        ctx.action.start(name).end()
+    failed = ctx.action.start("己")
+    failed.fail("拒单")  # 超过 3 种之后的名称失败：结束事件照常写
+
+    wait_for(lambda: only(events(), "action_summary")[-1]["total"] == 14)
+    summary = only(events(), "action_summary")[-1]
+    assert [(n["name"], n["total"], n["reported"]) for n in summary["names"]] == [
+        ("甲", 5, 2),
+        ("乙", 1, 1),
+        ("丙", 1, 1),
+    ]
+    starts = [e["name"] for e in only(events(), "action_start")]
+    assert starts.count("甲") == 2  # 表里的名称：只上报 2 个
+    assert [n for n in starts if n in ("丁", "戊", "己")] == [
+        "丁",
+        "戊",
+        "丁",
+        "戊",
+        "丁",
+        "戊",
+        "己",
+    ]
+    ends = only(events(), "action_end")
+    assert ends[-1]["result"] == "failed" and ends[-1]["reason"] == "拒单"
+    assert [r["name"] for r in summary["recent_failed"]] == ["己"]
+
+
+def test_names_over_the_summary_cap_are_still_limited_by_the_total_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """合计的上限照旧约束它们；只计数时的警告写的是合计，不是「某种名称超过每种名称的上限」。"""
+    monkeypatch.setattr("sfly.actions.MAX_SUMMARY_NAMES", 2)
+    monkeypatch.setattr("sfly.actions.MAX_PER_NAME", 2)
+    monkeypatch.setattr("sfly.actions.MAX_TOTAL", 6)
+    ctx, events = make_context(tmp_path)
+
+    ctx.action.start("甲").end()
+    ctx.action.start("乙").end()
+    for _ in range(
+        4
+    ):  # 丙起不在表里：共用一份计数，不受每种名称的上限（2）约束，到合计的上限（6）为止
+        ctx.action.start("丙").end()
+    ctx.action.start("丁").end()  # 合计已满：只计数
+    ctx.action.start("己").fail("拒单")  # 失败的动作也只计数，不抛错
+
+    wait_for(lambda: only(events(), "action_summary")[-1]["total"] == 8)
+    summary = only(events(), "action_summary")[-1]
+    assert summary["reported"] == 6 and summary["capped_ts"] is not None
+    assert [e["name"] for e in only(events(), "action_start")] == [
+        "甲",
+        "乙",
+        "丙",
+        "丙",
+        "丙",
+        "丙",
+    ]
+    assert [r["name"] for r in summary["recent_failed"]] == ["己"]
+    warnings = [e["message"] for e in only(events(), "log") if e["level"] == "warn"]
+    assert not any("已上报 2 个" in w for w in warnings), warnings  # 没有「每种名称」的上限可言
+    assert sum("已上报 6 个" in w for w in warnings) == 1, warnings  # 合计的上限：整个任务一次
 
 
 def test_warnings_never_quote_the_cut_text(tmp_path: Path) -> None:

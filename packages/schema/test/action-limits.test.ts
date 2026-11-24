@@ -17,6 +17,7 @@ const SDK_NAME: Record<keyof typeof ACTION_LIMITS, string> = {
 	fields: "MAX_FIELDS",
 	perName: "MAX_PER_NAME",
 	total: "MAX_TOTAL",
+	summaryNames: "MAX_SUMMARY_NAMES",
 	running: "RUNNING_LIMIT",
 	recent: "RECENT_LIMIT",
 	recentFailed: "RECENT_FAILED_LIMIT",

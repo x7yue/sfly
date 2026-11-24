@@ -33,7 +33,8 @@ asyncio 任务比 with 活得久时，跳过已经结束的。`start()` 返回�
 字段值（转成字符串后）超过 256 个字符（控制面先打码再截到上限，见下面的 `TRANSPORT_MARGIN_CHARS`）、
 字段名超过 64 个字符、字段超过 8 个（多出的丢弃）。同一个句柄结束两次，第二次忽略，警告一次；
 不同名称（动作和标记合计）超过 100 种时警告一次（名称里带了订单号这类每次都不同的内容，
-变化的内容放进字段）。
+变化的内容放进字段）；超过 1000 种（`MAX_SUMMARY_NAMES`）时再警告一次，从第 1001 种起不进摘要、
+不单独计数（摘要和 SDK 里记名称的表都有上界，明细照常上报，受合计的上限约束）。
 
 上限：每种名称最多上报 50000 个明细，合计最多 100000 个，动作和标记都算；超过以后只计数，
 警告建议按批记录，每一笔动作的延迟用指标。超过每种名称的上限，每种名称警告一次，
@@ -85,8 +86,16 @@ MAX_REASON_CHARS = 4096
 #: 转义的写法可以比值本身长）的长度不超过这个余量的 secret 值，不论落在哪里都能整个认出来；
 #: 某种写法比它还长的值，跨在传输上限处时可能留下这种写法开头的一段。
 TRANSPORT_MARGIN_CHARS = 4096
-#: 不同的名称超过这么多种时警告一次（不限制）。
+#: 不同的名称超过这么多种时警告一次。
 MAX_NAMES = 100
+#: 摘要里最多列出的名称种类，按第一次出现的先后
+#: （和控制面存下的一致，`ACTION_LIMITS.summaryNames`）：
+#: 之后新出现的名称不再单独计数、不进摘要，SDK 进程里记名称的表也不再增长
+#: （每种名称最长 `MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS` 个字符，
+#: 种类不设上限的话摘要和内存都随种类数一直涨）。
+#: 它们的动作和标记照常上报明细，受全部名称合计的上限（`MAX_TOTAL`）约束，
+#: 不再有每种名称的上限（没有单独的计数可以数）；合计、其余的计数照常。
+MAX_SUMMARY_NAMES = 1000
 #: 每种名称最多上报的明细个数。
 MAX_PER_NAME = 50_000
 #: 全部名称合计最多上报的明细个数。
@@ -169,6 +178,7 @@ class _Record:
         "reason",
         "reported",
         "result",
+        "stats",
         "ts",
     )
 
@@ -189,6 +199,8 @@ class _Record:
         #: 计数用的名称：同一种名称的计数、每种名称的上限都按它（
         #: 名称的前 `MAX_NAME_CHARS` 个字符，和控制面一致）。
         self.key = name[:MAX_NAME_CHARS]
+        #: 这种名称的计数（超过 `MAX_SUMMARY_NAMES` 种之后的名称共用一份，不进摘要）；记录时才设。
+        self.stats: _NameStats | None = None
         #: 动作开始（标记发生）时给的字段；`note()` 给动作补充的放在 `notes`。
         self.fields = fields
         self.notes: dict[str, str] = {}
@@ -350,6 +362,9 @@ class Actions:
         self._lock = threading.Lock()
         self._ids = itertools.count(1)
         self._names: dict[str, _NameStats] = {}
+        #: 超过 `MAX_SUMMARY_NAMES` 种之后的名称共用的一份计数：
+        #: 不进摘要，只用来数明细和「只计数」的起点。
+        self._overflow = _NameStats("")
         self._total = 0
         #: 其中标记的个数。
         self._marks = 0
@@ -496,7 +511,17 @@ class Actions:
         with self._lock:
             key = name[:MAX_NAME_CHARS]
             stats = self._names.get(key)
-            if stats is None:
+            if stats is None and len(self._names) >= MAX_SUMMARY_NAMES:
+                stats = self._overflow
+                self._warn(
+                    "names-over-cap",
+                    "",
+                    f"动作和标记的名称已超过 {MAX_SUMMARY_NAMES} 种："
+                    f"从第 {MAX_SUMMARY_NAMES + 1} 种起不进摘要、不单独计数"
+                    "（明细照常上报，合计和别的计数仍然准确）。"
+                    "变化的内容放进字段，名称只写这是一件什么事",
+                )
+            elif stats is None:
                 stats = self._names[key] = _NameStats(name)
                 if len(self._names) == MAX_NAMES + 1:
                     self._warn(
@@ -519,7 +544,12 @@ class Actions:
                 ts,
                 mono,
             )
-            if stats.reported < MAX_PER_NAME and self._reported < MAX_TOTAL:
+            rec.stats = stats
+            # 超过 MAX_SUMMARY_NAMES 种之后的名称共用一份计数，没有「每种名称」的上限可言，
+            # 只受合计的上限约束。
+            if (stats is self._overflow or stats.reported < MAX_PER_NAME) and (
+                self._reported < MAX_TOTAL
+            ):
                 stats.reported += 1
                 self._reported += 1
                 rec.reported = True
@@ -537,7 +567,7 @@ class Actions:
         合计上限的警告两种都写。"""
         if stats.capped is None:
             stats.capped = (rec.ts, rec.mono)
-            if stats.reported >= MAX_PER_NAME:
+            if stats is not self._overflow and stats.reported >= MAX_PER_NAME:
                 if what == "动作":
                     detail = (
                         f"（失败的动作仍会补上明细，直到合计 {MAX_TOTAL} 个）。"
@@ -581,7 +611,8 @@ class Actions:
             rec.result, rec.reason, rec.end_ts, rec.end_mono = result, reason, ts, mono
             del self._running[rec.id]
             self._recent.append(rec)
-            stats = self._names[rec.key]
+            stats = rec.stats
+            assert stats is not None
             if result == "failed":
                 stats.failed += 1
                 self._recent_failed.append(rec)

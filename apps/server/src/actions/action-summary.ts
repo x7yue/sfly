@@ -31,10 +31,11 @@ import {
  */
 
 /**
- * 摘要里最多列多少种名称：SDK 不限（超过 100 种时在任务日志里警告一次），名称里带订单号这样的写法会让每秒一份的摘要
- * 越来越大，这里只存前这么多种（SDK 按第一次出现的先后列），合计和其余字段照常。
+ * 摘要里最多列多少种名称（`ACTION_LIMITS.summaryNames`）：SDK 也只列这么多种（按第一次出现的先后，之后新的名称不进摘要），
+ * 名称里带订单号这样的写法不会让每秒一份的摘要越来越大；这里是兜底（被改过的 SDK 列得更多时也只存前这么多种），
+ * 合计和其余字段照常。
  */
-export const SUMMARY_NAMES_LIMIT = 1000;
+export const SUMMARY_NAMES_LIMIT = ACTION_LIMITS.summaryNames;
 
 const Running = z.object({
 	id: z.number().int(),

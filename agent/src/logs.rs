@@ -85,9 +85,10 @@ const MAX_BATCH_ACTIONS: usize = 1000;
 /// 断线时队列里也能排下几十批；也让控制面一次处理的一批、网关一次收的一条消息有个上界（几 MiB），不随节点写得多快而变大。
 /// 再小的话批太碎（一个节点每秒写几百 MiB 时每秒上百批），再大就接近队列上限。
 ///
-/// 例外：SDK 通过事件管道写的日志（一行不限长，也不拆，原来就是这样，#674）一条就可以比这个数大；
-/// 这样的一条和前面已经攒着的合成一批发出（不是自己成一批），这一批比队列剩下的空间还大时整批被丢掉，前面攒着的也跟着丢
-/// （不经 SDK 写事件才会有这么大的一条，SDK 发不出；这里不改，#694）。
+/// 例外：SDK 通过事件管道写的日志（一行不限长，也不拆，原来就是这样，#674）一条就可以比这个数大（不经 SDK 写事件才会有
+/// 比这个数大的动作明细，SDK 发不出）：这样的一条**自己成一批**，攒着的先发出去（[`Forwarder::push_pending`]、
+/// [`Forwarder::push_action`]），前面正常的事件不受它影响；它自己比队列上限还大时只丢它，并在标准错误里写明
+/// （[`Telemetry::send`]）。
 const MAX_BATCH_BYTES: usize = 2 * 1024 * 1024;
 /// 一行日志编码之后除了文字之外大约占的字节数（序号、两个时间、来源、级别和各字段的标签）：估算一批的大小用。
 const LOG_LINE_OVERHEAD: usize = 64;
@@ -170,6 +171,14 @@ impl Telemetry {
                     | agent_message::Body::Actions(_)
             )
         );
+        if limited && size > self.limit {
+            // 这一条比整个队列还大，什么时候都排不下：只丢它（前后的消息不受影响），每次都写明，不并进下面「队列满了」的说明。
+            eprintln!(
+                "telemetry message of {size} bytes is larger than the whole queue ({} bytes): dropping this one message; the ones before and after it are not affected",
+                self.limit
+            );
+            return;
+        }
         if limited && self.queued.load(Ordering::SeqCst) + size > self.limit {
             if !self.dropping.swap(true, Ordering::SeqCst) {
                 // 不说「断线」：连接正常时也会走到这里（转发比发送快、或者一条消息比剩下的空间大），说的是队列满了。
@@ -1006,14 +1015,33 @@ impl Forwarder {
         self.poll(true);
     }
 
+    /// 排一行日志。比一批的字节上限（[`MAX_BATCH_BYTES`]）还大的一行：先把攒着的发出去，这一行自己成一批，
+    /// 不和前面的合成一批（合成一批的话，这一批比队列剩下的空间大时整批被丢掉，前面正常的行也跟着丢）。
     fn push_pending(&mut self, line: Pending) {
-        self.pending_bytes += line.size();
+        let size = line.size();
+        let alone = size > MAX_BATCH_BYTES;
+        if alone {
+            self.flush_lines();
+        }
+        self.pending_bytes += size;
         self.pending.push(line);
+        if alone {
+            self.flush_lines();
+        }
     }
 
+    /// 排一个动作明细事件，规矩同 [`Forwarder::push_pending`]。
     fn push_action(&mut self, event: ActionEvent) {
-        self.actions_bytes += event.encoded_len();
+        let size = event.encoded_len();
+        let alone = size > MAX_BATCH_BYTES;
+        if alone {
+            self.flush_actions();
+        }
+        self.actions_bytes += size;
         self.actions.push(event);
+        if alone {
+            self.flush_actions();
+        }
     }
 
     /// 一批攒满了（条数或字节数）就发出，不等下一个 [`TICK`]。
@@ -1559,7 +1587,12 @@ mod batch_tests {
 
     /// 一个 Forwarder，和一个把它发出的消息一条条收走的任务（相当于连接正常，队列不积压）。
     fn forwarder() -> (Forwarder, JoinHandle<Vec<AgentMessage>>) {
-        let (telemetry, mut rx) = telemetry(DEFAULT_TELEMETRY_QUEUE_BYTES, 1000);
+        forwarder_with_queue(DEFAULT_TELEMETRY_QUEUE_BYTES)
+    }
+
+    /// 同 [`forwarder`]，遥测队列的上限（字节）自己定。
+    fn forwarder_with_queue(queue_bytes: usize) -> (Forwarder, JoinHandle<Vec<AgentMessage>>) {
+        let (telemetry, mut rx) = telemetry(queue_bytes, 1000);
         let drain = tokio::spawn(async move {
             let mut got = Vec::new();
             while let Some(message) = rx.recv().await {
@@ -1763,6 +1796,180 @@ mod batch_tests {
     async fn the_longest_action_events_of_four_byte_characters_are_not_dropped_as_one_batch_that_is_too_big()
      {
         longest_action_events_are_all_sent('\u{20000}', 300).await;
+    }
+
+    /// 一个标记事件，名称是 `name_bytes` 个 ASCII 字符（`id` 区分）。
+    fn mark_event(id: usize, name_bytes: usize) -> Vec<u8> {
+        let line = serde_json::json!({
+            "type": "mark",
+            "id": id,
+            "depth": 0,
+            "name": "h".repeat(name_bytes),
+        });
+        let mut bytes = serde_json::to_vec(&line).unwrap();
+        bytes.push(b'\n');
+        bytes
+    }
+
+    /// 前面 5 个、后面 5 个小事件，中间一个 `huge_bytes` 字节的：每一批里的事件 ID（标记的 ID 就是它是第几个）。
+    async fn mark_batches_around_a_huge_event(
+        queue_bytes: usize,
+        huge_bytes: usize,
+    ) -> Vec<Vec<u64>> {
+        let (mut forwarder, drain) = forwarder_with_queue(queue_bytes);
+        for i in 0..11 {
+            let name_bytes = if i == 5 { huge_bytes } else { 10 };
+            let chunk = EventChunk {
+                bytes: mark_event(i, name_bytes),
+                monotonic_ms: i as i64,
+            };
+            forwarder.events(&chunk).await;
+            tokio::task::yield_now().await;
+        }
+        forwarder.poll(true);
+        drop(forwarder);
+        drain
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|m| match &m.body {
+                Some(agent_message::Body::Actions(batch)) => Some(
+                    batch
+                        .events
+                        .iter()
+                        .map(|e| match &e.kind {
+                            Some(action_event::Kind::Mark(mark)) => mark.id,
+                            _ => panic!("不是标记"),
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn an_action_event_bigger_than_a_batch_goes_out_alone_after_the_ones_before_it() {
+        // 3 MiB 的一个事件：比一批的字节上限大。前面攒着的 5 个先发出去，它自己一批，后面的接着攒。
+        let batches =
+            mark_batches_around_a_huge_event(DEFAULT_TELEMETRY_QUEUE_BYTES, 3 << 20).await;
+        assert_eq!(
+            batches,
+            vec![vec![0, 1, 2, 3, 4], vec![5], vec![6, 7, 8, 9, 10]]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_action_event_bigger_than_the_whole_queue_is_dropped_alone() {
+        // 队列上限 4 MiB，事件 5 MiB：什么时候都排不下，只丢它；前面和后面的事件都送到。
+        let batches = mark_batches_around_a_huge_event(4 << 20, 5 << 20).await;
+        assert_eq!(batches, vec![vec![0, 1, 2, 3, 4], vec![6, 7, 8, 9, 10]]);
+    }
+
+    /// 前面 5 行、后面 5 行，中间一行 `huge_bytes` 字节的：送到的日志行的序号。
+    async fn log_seqs_around_a_huge_line(queue_bytes: usize, huge_bytes: usize) -> Vec<Vec<u64>> {
+        let (mut forwarder, drain) = forwarder_with_queue(queue_bytes);
+        for i in 0..11 {
+            let mut line = full_line(i);
+            line.text = "x".repeat(if i == 5 { huge_bytes } else { 10 });
+            line.before.clear();
+            line.after.clear();
+            forwarder.lines(vec![line]).await;
+            tokio::task::yield_now().await;
+        }
+        forwarder.poll(true);
+        drop(forwarder);
+        drain
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|m| match &m.body {
+                Some(agent_message::Body::Logs(batch)) => {
+                    Some(batch.lines.iter().map(|l| l.seq).collect())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_log_line_bigger_than_a_batch_goes_out_alone_after_the_lines_before_it() {
+        let batches = log_seqs_around_a_huge_line(DEFAULT_TELEMETRY_QUEUE_BYTES, 3 << 20).await;
+        assert_eq!(
+            batches,
+            vec![vec![1, 2, 3, 4, 5], vec![6], vec![7, 8, 9, 10, 11]]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_log_line_bigger_than_the_whole_queue_is_dropped_alone_and_leaves_a_gap_in_the_sequence()
+     {
+        // 第 6 行（序号 6）被丢掉，控制面按序号看到一个缺口；前后的行都送到。
+        let batches = log_seqs_around_a_huge_line(4 << 20, 5 << 20).await;
+        assert_eq!(batches, vec![vec![1, 2, 3, 4, 5], vec![7, 8, 9, 10, 11]]);
+    }
+
+    /// 排的那一下自己就让这一行（这个事件）单独成一批，不靠调用的人接着调 `flush_full_batch`：
+    /// 前面攒着的先发出，这一个发出，后面的另起一批。
+    #[tokio::test]
+    async fn pushing_a_log_line_bigger_than_a_batch_sends_it_alone_without_the_caller_flushing() {
+        let (mut forwarder, drain) = forwarder();
+        for i in 0..5 {
+            let mut line = full_line(i);
+            line.text = if i == 2 {
+                "x".repeat(3 << 20)
+            } else {
+                "x".into()
+            };
+            line.before.clear();
+            line.after.clear();
+            forwarder.push_pending(line);
+        }
+        forwarder.poll(true);
+        drop(forwarder);
+        let batches: Vec<Vec<u64>> = drain
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|m| match &m.body {
+                Some(agent_message::Body::Logs(batch)) => {
+                    Some(batch.lines.iter().map(|l| l.seq).collect())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(batches, vec![vec![1, 2], vec![3], vec![4, 5]]);
+    }
+
+    #[tokio::test]
+    async fn pushing_an_action_event_bigger_than_a_batch_sends_it_alone_without_the_caller_flushing()
+     {
+        let (mut forwarder, drain) = forwarder();
+        for i in 0..5 {
+            let name_bytes = if i == 2 { 3 << 20 } else { 10 };
+            forwarder.event(&mark_event(i, name_bytes), i as i64);
+        }
+        forwarder.poll(true);
+        drop(forwarder);
+        let batches: Vec<Vec<u64>> = drain
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|m| match &m.body {
+                Some(agent_message::Body::Actions(batch)) => Some(
+                    batch
+                        .events
+                        .iter()
+                        .map(|e| match &e.kind {
+                            Some(action_event::Kind::Mark(mark)) => mark.id,
+                            _ => panic!("不是标记"),
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(batches, vec![vec![0, 1], vec![2], vec![3, 4]]);
     }
 
     #[tokio::test]
