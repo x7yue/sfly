@@ -10,9 +10,10 @@ import type {
 	FeishuBotScenario,
 	StoredOrchestrationDocument,
 } from "@sfly/schema";
-import { and, asc, eq, isNull, or } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/database.js";
-import { nodePackages, orchestrations, orchestrationVersions } from "../db/schema.js";
+import { orchestrations, orchestrationVersions } from "../db/schema.js";
+import { findPackageMetadata } from "../packages/package-repository.js";
 import type { ProjectId } from "../projects/project-id.js";
 
 /**
@@ -56,27 +57,13 @@ const botInputs: BotReferenceSource = async (db, project, bot) => {
 			locked.set(packageKey(name, version), { name, version });
 		}
 	}
-	const rows =
-		locked.size === 0
-			? []
-			: await db
-					.select({
-						name: nodePackages.name,
-						version: nodePackages.version,
-						metadata: nodePackages.metadata,
-					})
-					.from(nodePackages)
-					.where(
-						or(
-							...[...locked.values()].map((p) =>
-								and(eq(nodePackages.name, p.name), eq(nodePackages.version, p.version)),
-							),
-						),
-					);
-	// 开发版本和已不存在的版本没有元信息，认不出这种输入。
-	const catalog = new Map<string, readonly NodeTypeIo[]>(
-		rows.map((row) => [packageKey(row.name, row.version), row.metadata.nodes]),
-	);
+	// 节点包的元信息按这个项目的范围找（本项目的和公共项目里的）：别的项目发布的包认不出这种输入。
+	const catalog = new Map<string, readonly NodeTypeIo[]>();
+	for (const { name, version } of locked.values()) {
+		const metadata = await findPackageMetadata(db, project, name, version);
+		// 开发版本和已不存在的版本没有元信息，认不出这种输入。
+		if (metadata) catalog.set(packageKey(name, version), metadata.nodes);
+	}
 	return heads.flatMap(({ orchestrationId, document }) =>
 		document.nodes.flatMap((node) => {
 			if (node.kind !== "package") return [];
