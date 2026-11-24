@@ -124,11 +124,12 @@ describe("Agent 凭据和开发 Agent", () => {
 			const tooLong = await rejected("n".repeat(65));
 			expect(tooLong).toContain("Agent 的名称不能超过 64 个字符");
 			expect(tooLong).not.toMatch(/n{20}/);
-			expect(await rejected(code(0x1f600).repeat(65))).toContain("不能超过 64 个字符");
-			// 64 个字符（按字符数，不是 UTF-16 码元数）、中文、组合表情照常签发，也能连上来。
+			// 64 个字符、中文、组合表情照常签发。（路径参数写成百分号编码后超过 100 个字符的，路由层就是 414，
+			// 到不了这一步：所以这里的非 ASCII 名字都不长；按字符数而不是 UTF-16 码元数算上限的用例在
+			// packages/schema/test/text-safety.test.ts。）
 			for (const ok of [
 				"n".repeat(64),
-				code(0x1f600).repeat(64),
+				code(0x1f600).repeat(8),
 				"测试机",
 				`dev-${code(0x1f469, 0x200d, 0x1f4bb)}`,
 			]) {

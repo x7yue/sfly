@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AccountDisplayName } from "../src/http/accounts.js";
+import { agentsApi } from "../src/http/agents.js";
 import { TokenName } from "../src/http/tokens.js";
 import {
 	codePointLabel,
@@ -400,5 +401,38 @@ describe("位置规则的对照用例", () => {
 		expect(wrong).toEqual([]);
 		// 文件里的就是这里生成的那一批：改了规则要重新生成，不能留着旧的。
 		expect(fixture.cases.map((c) => c.t).sort()).toEqual(names().sort());
+	});
+});
+
+describe("签发 Agent 凭据的名称（agentsApi.issueCredential 的路径参数，#670）", () => {
+	const params = agentsApi.issueCredential.params;
+	const parse = (name: string) => params?.safeParse({ name });
+	const messageOf = (name: string): string =>
+		parse(name)
+			?.error?.issues.map((issue) => issue.message)
+			.join("\n") ?? "";
+
+	it("和 Hello 里的名称同一个规则：表里的字符、看起来是空的不合格，说第几个字符、哪个码位，不回显名称", () => {
+		for (const [bad, expected] of [
+			[`a${chars(0x1b)}[2Jb`, "Agent 的名称的第 2 个字符是 U+001B"],
+			[`a${chars(0x202e)}b`, "Agent 的名称的第 2 个字符是 U+202E"],
+			[`${chars(ZWJ)}a`, "Agent 的名称的第 1 个字符是 U+200D"],
+			["   ", "Agent 的名称里没有看得见的字符"],
+		] as const) {
+			expect(parse(bad)?.success, JSON.stringify(bad)).toBe(false);
+			expect(messageOf(bad), JSON.stringify(bad)).toContain(expected);
+			expect(messageOf(bad), JSON.stringify(bad)).not.toContain(bad);
+		}
+	});
+
+	it("上限 64 个字符，按字符数（一个 emoji 是一个字符，不是两个 UTF-16 码元）；正好 64 个通过", () => {
+		for (const ok of ["n".repeat(64), chars(0x1f600).repeat(64), "测".repeat(64)]) {
+			expect(parse(ok)?.success, ok.slice(0, 8)).toBe(true);
+		}
+		for (const long of ["n".repeat(65), chars(0x1f600).repeat(65), "测".repeat(65)]) {
+			expect(parse(long)?.success, long.slice(0, 8)).toBe(false);
+			expect(messageOf(long)).toContain("Agent 的名称不能超过 64 个字符");
+			expect(messageOf(long)).not.toContain(long.slice(0, 20));
+		}
 	});
 });
