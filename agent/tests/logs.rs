@@ -440,3 +440,71 @@ async fn stdout_written_faster_than_it_is_forwarded_makes_the_node_wait_instead_
     );
     assert!(size("stdout.log.2").is_none());
 }
+
+/// 标准输出一行超过 64 KiB 被拆开时，每一段带着前后的上下文（`before` / `after`，只用来打码）：一个值正好跨在拆分处时，
+/// 任何一段单独都看不到整个值，但「这一段加上它的上下文」里有整个值（#622）。
+#[tokio::test]
+async fn a_long_line_is_split_with_context_so_a_value_across_the_split_is_whole_in_one_piece() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-long-line"));
+    cp.hello(0).await;
+
+    // 65536 字节处正好落在值的中间：65526 个 a、21 个字符的值、70000 个 b。
+    let value = "FAKE-VALUE-ABCDEFGHIJ";
+    cp.assign(stub_task(
+        "task-long",
+        "long_line",
+        json!({ "head": 65526, "value": value, "tail": 70000 }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-long").await;
+    assert_eq!(
+        result.status(),
+        sfly_agent::proto::TaskStatus::Success,
+        "{result:?}"
+    );
+
+    let lines: Vec<LogLine> = log_lines(&cp.received_with_session(), "task-long")
+        .into_iter()
+        .map(|(_, l)| l)
+        .filter(|l| l.source() == LogSource::Stdout)
+        .collect();
+    let original = format!("{}{value}{}", "a".repeat(65526), "b".repeat(70000));
+    let joined: String = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(joined, original);
+    assert!(lines.len() >= 2, "没有拆开：{} 行", lines.len());
+    assert!(lines.iter().all(|l| l.text.len() <= 64 * 1024));
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.before.len() <= 16 * 1024 && l.after.len() <= 16 * 1024)
+    );
+    // 值被拆在两段里：任何一段的文字单独都没有整个值
+    assert!(lines.iter().all(|l| !l.text.contains(value)));
+    // 第一段没有 before，最后一段没有 after；第一段加上它的 after、第二段加上它的 before，各自有整个值
+    assert_eq!(lines[0].before, "");
+    assert_eq!(lines[lines.len() - 1].after, "");
+    assert!(format!("{}{}", lines[0].text, lines[0].after).contains(value));
+    assert!(format!("{}{}", lines[1].before, lines[1].text).contains(value));
+    // 序号连续
+    let seqs: Vec<u64> = lines.iter().map(|l| l.seq).collect();
+    assert!(seqs.windows(2).all(|w| w[1] == w[0] + 1));
+}
+
+/// 没有拆开的行（和事件管道里的行）不带上下文。
+#[tokio::test]
+async fn lines_that_are_not_split_carry_no_context() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-no-context"));
+    cp.hello(0).await;
+    cp.assign(stub_task("task-chatter", "chatter", json!({})))
+        .await;
+    let _ = cp.result_at("task-chatter").await;
+    let lines = log_lines(&cp.received_with_session(), "task-chatter");
+    assert!(!lines.is_empty());
+    assert!(
+        lines
+            .iter()
+            .all(|(_, l)| l.before.is_empty() && l.after.is_empty())
+    );
+}

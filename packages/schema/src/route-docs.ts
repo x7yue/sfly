@@ -1,4 +1,5 @@
-import { harvestDocs } from "./client-docs.js";
+import { checkMembers, harvestDocs } from "./client-docs.js";
+import { MEMBER } from "./client-emit.js";
 import type { FieldDocs, RouteDocPart } from "./field-docs.js";
 import type { RouteDef } from "./http/contract.js";
 
@@ -15,6 +16,10 @@ import type { RouteDef } from "./http/contract.js";
 /** 响应和事件只读到顶层字段；请求读到第三层（请求体里 `params[].keep` 这样的嵌套字段），再深的是场景文档这样的大结构。 */
 const RESPONSE_DEPTH = 1;
 const REQUEST_DEPTH = 3;
+
+/** 这个 root 最多读到第几层字段。 */
+const depthLimit = (root: string): number =>
+	/\.(response|event:.*)$/.test(root) ? RESPONSE_DEPTH : REQUEST_DEPTH;
 
 const rootKey = (domain: string, name: string, part: RouteDocPart) =>
 	`${domain}.${name}.${typeof part === "string" ? part : `event:${part.event}`}`;
@@ -57,12 +62,32 @@ export function harvestRouteDocs(apis: Record<string, Record<string, RouteDef>>)
 	const docs = harvestDocs({
 		roots,
 		stopAt: new Set(),
-		maxDepth: (root) => (/\.(response|event:.*)$/.test(root) ? RESPONSE_DEPTH : REQUEST_DEPTH),
+		maxDepth: depthLimit,
 	});
-	return (route, part, path) => {
+	const field: FieldDocs = (route, part, path) => {
 		const owner = owners.get(route);
 		if (!owner) return undefined;
 		const text = docs.field(rootKey(owner.domain, owner.name, part), path);
 		return text === undefined ? undefined : plain(text);
 	};
+	// 核对联合的成员：写进清单的一边认出的成员（`annotateSchema` 走遍整个 JSON Schema），只看读注释读到的层数以内的（响应、事件
+	// 只读顶层，请求读到第三层：成员所在的联合在第几层，不算成员那一段），再深的读注释一边没有读，不用核对。
+	field.checkMembers = (route, part, emitted) => {
+		const owner = owners.get(route);
+		if (!owner) return;
+		const root = rootKey(owner.domain, owner.name, part);
+		const limit = depthLimit(root);
+		const within = [...emitted].filter(
+			(member) => member.split(".").filter((segment) => !segment.startsWith(MEMBER)).length < limit,
+		);
+		checkMembers(
+			`${route.method} ${route.path} 的${describePart(part)}`,
+			docs.members(root),
+			within,
+		);
+	};
+	return field;
 }
+
+const describePart = (part: RouteDocPart): string =>
+	typeof part === "string" ? ` ${part}` : `事件 ${part.event}`;

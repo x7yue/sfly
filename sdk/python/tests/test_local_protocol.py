@@ -471,3 +471,23 @@ def test_every_written_line_has_a_case_and_every_event_type_but_the_summary_is_w
         for line in next(c for c in EVENT_CASES if c["name"] == name)["events"]
     }
     assert written == set(FILE["event_types"]) - NOT_WRITTEN
+
+
+def test_a_long_line_is_split_on_character_boundaries_like_the_agent_does() -> None:
+    """超过 max_line_bytes 的一行拆开：每段不超过它，拆在字符边界上，接起来就是原来的行（#622）。"""
+    limit = local._MAX_LINE_BYTES
+    assert local._split_line(b"") == [b""]
+    assert local._split_line(b"x" * limit) == [b"x" * limit]
+    assert local._split_line(b"x" * (limit + 1)) == [b"x" * limit, b"x"]
+    for char in ("中", "😀", "é"):
+        line = ("z" + char * (limit // 2)).encode()
+        pieces = local._split_line(line)
+        assert len(pieces) >= 2
+        assert b"".join(pieces) == line
+        for piece in pieces:
+            assert len(piece) <= limit
+            piece.decode("utf-8")  # 不在字符中间拆：每段都是合法的 UTF-8
+    # 连续的后续字节（不是合法的 UTF-8）：不会退到头，每段仍不超过上限
+    broken = b"\x80" * (3 * limit)
+    assert all(len(p) <= limit for p in local._split_line(broken))
+    assert b"".join(local._split_line(broken)) == broken
