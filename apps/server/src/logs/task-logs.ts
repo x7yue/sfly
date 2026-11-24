@@ -186,6 +186,11 @@ interface TaskState {
 	/** 相对数据目录。 */
 	path: string;
 	bytes: number;
+	/**
+	 * 数据库记下的已写入的字节数（`tasks.log_bytes`）：文件不会比它短（写入是先追加文件、再更新数据库，每一批都是整行），
+	 * 比它短就是文件被删了或截短了（保留期清理、人为）。读文件时用它认出「文件不见了、变短了」（#669）。
+	 */
+	recordedBytes: number;
 	/** 文件里最后一行的序号。 */
 	seq: number;
 	/** 已写入的最大 Agent 序号。 */
@@ -219,6 +224,11 @@ export interface TaskLogInfo {
 	file: string;
 	/** 列出任务那一刻已写入的字节数：按运行读取时每个任务只读到这里。 */
 	bytes: number;
+	/**
+	 * 数据库记下的已写入的字节数：文件不会比它短，比它短（或者不存在）说明文件被删了或截短了；有行写入过（`seq > 0`）而文件不存在
+	 * 也是这样。下载用它认出日志已经不全了（#669）。
+	 */
+	recordedBytes: number;
 	/** 最后一行的序号（与 bytes 是同一刻的）。 */
 	seq: number;
 	truncated: boolean;
@@ -300,6 +310,7 @@ export class TaskLogs {
 			order: state.order,
 			file: join(this.deps.dataDir, state.path),
 			bytes: state.bytes,
+			recordedBytes: state.recordedBytes,
 			seq: state.seq,
 			truncated: state.truncated,
 		};
@@ -460,6 +471,7 @@ export class TaskLogs {
 				...(issuesChanged && { logIssues: issues }),
 			})
 			.where(eq(tasks.id, taskId));
+		state.recordedBytes = state.bytes;
 		const chunk = { task_id: taskId, lines, offset };
 		this.lines.publish(taskId, chunk);
 		this.runLines.publish(state.runId, chunk);
@@ -638,6 +650,7 @@ export class TaskLogs {
 			agentName: task.agentName,
 			path,
 			bytes,
+			recordedBytes: task.logBytes,
 			seq: task.logSeq,
 			agentSeq: task.logAgentSeq,
 			// 第一次写入时才读（读分页、下载不需要它）。

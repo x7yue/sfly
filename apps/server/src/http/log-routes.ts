@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { pipeline, Readable, Transform, type TransformCallback } from "node:stream";
 import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
+import { LogFilesGoneError, logFileProblem } from "../logs/log-files.js";
 import type { LogMask } from "../logs/log-mask.js";
 import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
 import {
@@ -19,6 +20,12 @@ import { attachment } from "./content-disposition.js";
 import { contractDownload, contractRoute, contractStream } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
+/** 下载时日志文件已经不全了（#669）：410 `expired`，和保留期清理之后同一个状态码、错误码，说明写明是文件不见了或者变短了。 */
+const GONE_TASK =
+	"the log file of this task is gone or shorter than recorded (removed after retention, or deleted or truncated)";
+const GONE_RUN =
+	"a log file of this run is gone or shorter than recorded (removed after retention, or deleted or truncated)";
+
 /**
  * 任务日志（契约见 @sfly/schema 的 logsApi）。实时推送（#10）：`GET /tasks/:id/logs/events`，事件 `logs`，data 为 {@link LogChunk}，id 为最后一行的序号。
  *
@@ -32,6 +39,11 @@ import { sendError } from "./errors.js";
  *   `at`（#347）：按控制面时间定位，返回包含那一刻的一页和 `locate`（那一刻的位置、正好对应的行）。
  * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（升级之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
+ * - **下载不能悄悄少了内容**（#669）：有行写入过的任务，日志文件不见了或者比数据库记的短（保留期清理删到一半、人为删除、截短）：
+ *   响应开始之前认出来的是 410 `expired`（说明里写明是文件不见了或变短了）；读的过程中被截短的（任务日志读到的字节数不到请求开始时的大小、
+ *   按运行下载时某个任务的文件下一批读不到了），响应已经开始，**错误落到响应流上、连接被断开**：下载的是 JSONL，给读它的程序和命令行
+ *   看，响应里插一行平台写的说明会和日志行混在一起（每一行都是日志），断开连接每一种 HTTP 客户端都看得出没下完。
+ *   读的过程中文件被删除（还开着的文件不受影响）任务日志照常读完。从没有日志的任务（没有行写入过）下载是空的。
  *
  * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取（`before` / `after` 游标，#223），
  * 见 run-log-pages.ts 与 run-log-cursor.ts；游标不是这里返回的格式时 400 `invalid_request`。
@@ -85,9 +97,14 @@ export function registerLogRoutes(
 	});
 
 	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply) => {
-		const batches = isUuid(params.id)
-			? await deps.runLogs.readAll(params.id, query.nodes)
-			: undefined;
+		let batches: Awaited<ReturnType<typeof deps.runLogs.readAll>>;
+		try {
+			batches = isUuid(params.id) ? await deps.runLogs.readAll(params.id, query.nodes) : undefined;
+		} catch (error) {
+			// 范围内有任务的日志文件不见了、变短了（保留期清理、被删除、被截短）：不能照常 200 给一份缺内容的下载（#669）。
+			if (error instanceof LogFilesGoneError) return sendError(reply, 410, "expired", GONE_RUN);
+			throw error;
+		}
 		if (!batches) return sendError(reply, 404, "not_found", "run not found");
 		if (await deps.isPurged(params.id)) {
 			return sendError(reply, 410, "expired", "logs of this run were removed after retention");
@@ -181,6 +198,11 @@ export function registerLogRoutes(
 			(s) => s.size,
 			() => undefined,
 		);
+		// 有行写入过、文件却不见了或者比记录的短（被删除、截短，保留期清理删到一半）：410，不是 200 加空正文或缺了一截的正文（#669）。
+		// 从没有日志的任务（没有行写入过）没有文件，下载是空的，不在这里。
+		if (logFileProblem(info, size) !== undefined) {
+			return sendError(reply, 410, "expired", GONE_TASK);
+		}
 		reply
 			.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
 			.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
@@ -188,8 +210,9 @@ export function registerLogRoutes(
 		// 只发送此刻的内容（文件可能还在追加）。每行都带两种时间：升级之前写入的行在这里补齐，
 		// 所以长度事先不知道，不带 content-length。
 		const mask = await deps.logs.logMask(info.runId);
+		// 读的过程中文件被截短（读到的字节数不到 `size`）：错误落到响应流上，响应已经开始时连接被断开，客户端看得出没下完（#669）。
 		return reply.send(
-			normalizeLogStream(createReadStream(info.file, { start: 0, end: size - 1 }), mask),
+			normalizeLogStream(createReadStream(info.file, { start: 0, end: size - 1 }), mask, size),
 		);
 	});
 
@@ -260,8 +283,13 @@ async function* jsonRows(batches: AsyncIterable<RunLogLine[]>): AsyncGenerator<s
  * 整个控制面进程退出（#647）；`pipeline` 出错时把两头一起销毁、错误落到返回的流上，由 Fastify 按响应开始发送了没有处理：
  * 还没开始是 500，已经开始是断开连接并记一条日志。别的请求不受影响。
  */
-export function normalizeLogStream(source: Readable, mask: LogMask): Readable {
-	const normalized = new LogRowNormalizer(mask);
+export function normalizeLogStream(
+	source: Readable,
+	mask: LogMask,
+	/** 源应该给出的字节数：源读完时不到这么多（文件在读的过程中被截短），错误落到返回的流上（#669）；不给不检查。 */
+	expectedBytes?: number,
+): Readable {
+	const normalized = new LogRowNormalizer(mask, expectedBytes);
 	// 回调不用：错误已经落在 `normalized` 上，`pipeline` 给两头各接了一个 error 监听，不会有没人接的 `error` 事件。
 	pipeline(source, normalized, () => {});
 	return normalized;
@@ -275,11 +303,18 @@ class LogRowNormalizer extends Transform {
 	/** 上一块末尾还没读到换行的半行。 */
 	#partial: Buffer = Buffer.alloc(0);
 
-	constructor(private readonly mask: LogMask) {
+	/** 已经读到的源的字节数。 */
+	#received = 0;
+
+	constructor(
+		private readonly mask: LogMask,
+		private readonly expectedBytes?: number,
+	) {
 		super();
 	}
 
 	override _transform(chunk: Buffer, _encoding: BufferEncoding, done: TransformCallback): void {
+		this.#received += chunk.length;
 		// 每一块一份新的预算（完整的出现的段数）：不会因为前面的块用掉了预算，让后面的行都被整行盖住；块与块之间回到事件循环（文件是一块一块异步读出来的）。
 		const mask = this.mask.fresh();
 		const bytes = this.#partial.length ? Buffer.concat([this.#partial, chunk]) : chunk;
@@ -302,6 +337,14 @@ class LogRowNormalizer extends Transform {
 	}
 
 	override _flush(done: TransformCallback): void {
+		if (this.expectedBytes !== undefined && this.#received < this.expectedBytes) {
+			done(
+				new Error(
+					`日志文件在下载时被截短：读到 ${this.#received} 字节，请求开始时有 ${this.expectedBytes} 字节`,
+				),
+			);
+			return;
+		}
 		// 还在写入的最后半行原样发出（与直接发送文件时一样）。
 		if (this.#partial.length) this.push(this.#partial);
 		done();

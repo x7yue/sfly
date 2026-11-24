@@ -14,10 +14,11 @@ import argparse
 import json
 import shlex
 import urllib.parse
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from http.client import HTTPException, IncompleteRead
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from sfly.cli.client import Client, segment
 from sfly.cli.errors import CliError
@@ -400,8 +401,37 @@ def _download_all(session: Session, args: argparse.Namespace, selection: Selecti
     else:
         path = f"/runs/{segment(args.run)}/logs/download"
         with session.client.open("GET", path, query={"nodes": selection.scope}) as response:
-            lines = _write_download(response, target, selection)
+            lines = _write_download(_complete_lines(response, args), target, selection)
     session.out.emit({"path": str(target), "lines": lines}, f"已下载 {lines} 行日志到 {target}")
+
+
+# 一次读多少字节。
+_READ_BLOCK = 64 * 1024
+
+
+def _complete_lines(response: BinaryIO, args: argparse.Namespace) -> Iterator[bytes]:
+    """下载的响应一行一行读出来；**没下完就报错**（#669）：控制面发现日志文件在下载时被删除、截短了，
+    响应已经开始，会断开连接。分块的响应在两块之间断开时，直接按行迭代响应不报错、悄悄当作读完了
+    （只有断在一块当中才报 `IncompleteRead`），所以这里按块读（`read`）：断开了就抛 `CliError`，
+    调用方的临时文件随之删掉，不留半个文件。"""
+    pending = b""
+    try:
+        while block := response.read(_READ_BLOCK):
+            *rows, pending = (pending + block).split(b"\n")
+            for row in rows:
+                yield row + b"\n"
+        # 有声明长度的响应读到的比声明的少（连接断了）：`read` 不报错、返回空，要自己看还差多少。
+        if getattr(response, "length", None):
+            raise IncompleteRead(b"")
+    except (HTTPException, OSError) as error:
+        raise CliError(
+            "download_incomplete",
+            "日志没有下载完：连接在下载中途断开了（控制面发现日志文件在下载时被删除或截短了，或者网络断了）。"
+            f"没有写出文件（{error.__class__.__name__}）",
+            next=f"重新下载：sfly run logs {args.run} --all {args.all}",
+        ) from None
+    if pending:
+        yield pending
 
 
 def _write_download(rows: Iterable[bytes], target: Path, selection: Selection) -> int:
