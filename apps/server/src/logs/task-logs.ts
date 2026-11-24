@@ -362,14 +362,17 @@ export class TaskLogs {
 		const secrets = await this.runSecrets(state.runId);
 		// 这次运行的值集合大到认不出每一处出现，所有文字都整段盖住（SecretSet.oversize）：在这个任务的日志里留一行平台写的说明
 		// （不含值），用户才知道为什么全是掩码。写在「值集合变大之后这个任务第一次写日志」的那一批的最前面，每个任务一次，
-		// 时间取这一批第一行的时间（不比后面的行晚）；打码时只有它原样放行。在那之前写下的行、从不写日志的任务没有这一行。
-		const notice = secrets.oversize && !state.oversizeNoted;
+		// 时间取这一批里第一行**真正写入**的行的时间（Agent 序号不大于已写入的最大序号的是重发的旧行，会被丢掉，不算；
+		// 取了旧行的时间，说明这一行的时间会倒退）；这一批没有要写入的行（全是重发的旧行）就等下一批。打码时只有它原样放行。
+		// 在那之前写下的行、从不写日志的任务没有这一行。
+		const firstWritten = written.find((e) => e.agentSeq === null || e.agentSeq > state.agentSeq);
+		const notice = secrets.oversize && !state.oversizeNoted && firstWritten !== undefined;
 		let entries = written;
 		if (notice) {
 			entries = [
 				{
 					agentSeq: null,
-					timeMs: written[0]?.timeMs ?? this.deps.clock.now().getTime(),
+					timeMs: firstWritten.timeMs,
 					agent_time: null,
 					source: "system",
 					level: "warn",
