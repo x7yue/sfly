@@ -120,6 +120,16 @@ git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
 
 `check.sh`、`mutants.sh` 重新跑过，结果和上面一致。
 
+### #492 的 Agent 一侧（被控制面拒绝之后不退出）的核对
+
+`agent/src/lib.rs` `run()` 循环里 `connect` 失败的分支改了：握手被明确拒绝（`Unauthenticated`、`PermissionDenied`）以前直接退出进程（systemd 5 秒后拉起，台账随进程丢失，手上的任务到控制面那边按 `agent_lost` 处理），现在不退出，按 30 秒起、5 分钟封顶的退避重试（`Rejections`），台账留在内存里。逐项对照模型，**没有改模型，也没有移动同步提交**：
+
+- 被拒绝的连接在模型里就是「没有连上」：`AgentConnect` 之前，没有 Hello 被处理，控制面一侧没有任何状态变化（`attach` 在认身份时就拒绝了）。Agent 一侧在连不上之后无限次重连、台账跨断线保留，正是模型里 `Disconnect` 之后的状态；少的是一条「进程退出、台账清空」的路径，它在模型外，结果是下一次 Hello 里没有这些任务，由 `AgentConnect` 如实列出覆盖。
+- `Trial::end` 多了一种结果（`Attempt::Rejected`，处理同 `Unreachable`：撤回这一次尝试），只影响自更新的回滚计数，不在模型里，也不碰任务和租约。
+- 环境变量 `SFLY_TASK_TOKEN`、下载归档带 Agent 凭据：不碰派发、结果、心跳、租约、重试。
+
+`check.sh`、`mutants.sh` 重新跑过，结果和上面一致（Safe 327997、LateHeartbeats 5410113、SlowDelivery 6596137 个不同状态，七个变异体都被抓到）。
+
 ## 读结果
 
 模型检查的结果请用户运行 pstack 的 `/statechart` 来读（它只能由用户手动启动）。违例时它把最短反例讲成白话步骤，通过时画出状态之间怎么迁移。自己读原始输出时：TLC 打印 `Error: Invariant X is violated.`，后面是 `State 1 … State N`，每个状态前写着动作名（如 `<Dispatch(1) …>`），对照上面的覆盖表翻译成代码里的步骤。
