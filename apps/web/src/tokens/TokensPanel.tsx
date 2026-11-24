@@ -105,9 +105,21 @@ const NAME_COLUMN = "min-w-44";
  * 三个时间列（创建、最后使用、过期，带年份的「2026-01-01 08:00」）：面板窄于 1060px（名称列最窄、别的列都不折行时表格的宽度，
  * 加两像素的边框）时日期和时间折成两行，每列从 136px 缩到 96px。不折的话 1280 宽（面板 991px）下只要有一个用过的令牌、
  * 有过期时间，表格就比面板宽 62px，「操作」列和「吊销」被推到右边看不到。折行靠 `whitespace-normal`：列是 `w-px`（按内容收紧），
- * 取最小内容宽度，空格处断开。
+ * 取最小内容宽度。**只允许在日期和时间之间的空格处断开**：日期（`2026-01-01`）和时间（`08:00`）各包一个不换行的元素（{@link DateTime}）；
+ * 不包的话浏览器在连字符后面也能断行，三列被收到 72px，一格折成「2026-」「01-01」「08:00」三行，年份后面就断开了。
  */
 const DATE_CELL = "font-mono text-xs text-fg-3 @max-[1060px]:whitespace-normal";
+
+/** 「2026-01-01 08:00」：日期和时间各不换行，中间是普通的空格（窄的时候只在这里折成两行，见 {@link DATE_CELL}）。 */
+function DateTime({ value }: { value: string }) {
+	const [date, time] = formatDateTimeWithYear(value).split(" ");
+	return (
+		<>
+			<span className="whitespace-nowrap">{date}</span>{" "}
+			<span className="whitespace-nowrap">{time}</span>
+		</>
+	);
+}
 
 const STATE_KIND = { active: "ok", expired: "warn", revoked: "stopped" } as const;
 
@@ -188,18 +200,18 @@ function TokenRow({
 				</TableCell>
 			)}
 			<TableCell width="fit" className={DATE_CELL}>
-				{formatDateTimeWithYear(token.created_at)}
+				<DateTime value={token.created_at} />
 			</TableCell>
 			<TableCell width="fit" className={DATE_CELL}>
 				{token.last_used_at ? (
-					formatDateTimeWithYear(token.last_used_at)
+					<DateTime value={token.last_used_at} />
 				) : (
 					<span className="font-sans">从未使用</span>
 				)}
 			</TableCell>
 			<TableCell width="fit" className={DATE_CELL}>
 				{token.expires_at ? (
-					formatDateTimeWithYear(token.expires_at)
+					<DateTime value={token.expires_at} />
 				) : (
 					<span className="font-sans">不过期</span>
 				)}

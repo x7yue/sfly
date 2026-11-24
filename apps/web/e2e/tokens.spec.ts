@@ -317,17 +317,46 @@ test.describe("项目令牌页", () => {
 				}
 				lines[lines.length - 1] += unit.textContent ?? "";
 			}
-			// 「吊销」按钮：右边缘在面板里面（不被推到面板外面看不到）；三个时间格：日期和时间折成了两行。
+			// 「吊销」按钮：右边缘在面板里面（不被推到面板外面看不到）；三个时间格：按文字排出来的行（每个字符的矩形分行）数，
+			// 不按格子的高度猜：每格最多两行，第一行是完整的日期，第二行（有的话）是时间，不能在日期里面断开。
 			const revoke = document.querySelector(`[data-token="${name}"] button`) as HTMLElement;
-			const dates = [...document.querySelectorAll(`[data-token="${name}"] td`)]
-				.filter((td) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(td.textContent ?? ""))
-				.map((td) => Math.round((td as HTMLElement).getBoundingClientRect().height));
+			const rowCells = [...document.querySelectorAll(`[data-token="${name}"] td`)] as HTMLElement[];
+			const dateCells = rowCells.filter((td) =>
+				/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(td.textContent ?? ""),
+			);
+			const linesOf = (cell: HTMLElement) => {
+				const out: string[] = [];
+				let top = Number.NaN;
+				const range = document.createRange();
+				const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+					const text = node.textContent ?? "";
+					for (let i = 0; i < text.length; i++) {
+						range.setStart(node, i);
+						range.setEnd(node, i + 1);
+						const rect = range.getClientRects()[0];
+						// 断行处的空格没有宽度：不算在哪一行里。
+						if (!rect || rect.width === 0) continue;
+						const at = Math.round(rect.top);
+						if (at !== top) {
+							out.push("");
+							top = at;
+						}
+						out[out.length - 1] = `${out[out.length - 1]}${text[i]}`;
+					}
+				}
+				return out.map((line) => line.trim());
+			};
+			const dates = dateCells.map((td) => ({
+				lines: linesOf(td),
+				width: Math.round(td.getBoundingClientRect().width * 10) / 10,
+				height: Math.round(td.getBoundingClientRect().height),
+			}));
 			return {
 				lines,
 				revokeRight: Math.round(revoke.getBoundingClientRect().right),
 				fenceRight: Math.round(fence.getBoundingClientRect().right),
-				dateCells: dates.length,
-				dateHeight: Math.min(...dates),
+				dates,
 				name: Math.round((head as HTMLElement).getBoundingClientRect().width),
 				scopeLines: Math.round(
 					(scopes as HTMLElement).getBoundingClientRect().height /
@@ -346,9 +375,14 @@ test.describe("项目令牌页", () => {
 			"读、运行、编辑、",
 			"会话构建、发布、管理",
 		]);
-		// 创建、最后使用、过期三个时间都有，每个都折成了两行（比一行高）；「吊销」在面板里面、点得到。
-		expect(measured.dateCells, JSON.stringify(measured)).toBe(3);
-		expect(measured.dateHeight, JSON.stringify(measured)).toBeGreaterThan(40);
+		// 创建、最后使用、过期三个时间都有：每格最多两行，第一行是完整的日期、第二行是时间（只在日期和时间之间的空格处折行，
+		// 不在日期里面断开：浏览器在连字符后面也能断行，那样一格会折成「2026-」「01-03」「10:02」三行）。
+		expect(measured.dates, JSON.stringify(measured)).toHaveLength(3);
+		for (const { lines } of measured.dates) {
+			expect(lines.length, JSON.stringify(measured)).toBe(2);
+			expect(lines[0] ?? "", JSON.stringify(measured)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+			expect(lines[1] ?? "", JSON.stringify(measured)).toMatch(/^\d{2}:\d{2}$/);
+		}
 		expect(measured.revokeRight, JSON.stringify(measured)).toBeLessThanOrEqual(measured.fenceRight);
 		await expect(tokenRow.getByRole("button", { name: "吊销" })).toBeInViewport({ ratio: 1 });
 	});
