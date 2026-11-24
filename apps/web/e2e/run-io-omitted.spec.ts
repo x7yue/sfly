@@ -72,15 +72,16 @@ test("输入输出：加载中显示「加载中…」，失败写原因并可�
 		{ id: "a", attempts: [{ outputs: { text: BIG } }] },
 	]);
 	let calls = 0;
+	let failing = true;
 	let release: () => void = () => {};
 	const gate = new Promise<void>((resolve) => {
 		release = resolve;
 	});
 	await page.route("**/api/tasks/*/io", async (route) => {
 		calls++;
-		// 第一次：等放行之后失败；第二次：照常。
-		if (calls === 1) {
-			await gate;
+		// 第一个请求等放行；失败期间每个请求都回 500（5xx 前端自动再试两次，间隔 1 秒），不再失败之后照常。
+		if (calls === 1) await gate;
+		if (failing) {
 			await route.fulfill({
 				status: 500,
 				contentType: "application/json",
@@ -99,9 +100,10 @@ test("输入输出：加载中显示「加载中…」，失败写原因并可�
 
 	await expect(io.getByRole("alert")).toContainText("无法加载：");
 	await expect(io.getByRole("button", { name: "重试" })).toBeVisible();
+	failing = false;
 	await io.getByRole("button", { name: "重试" }).click();
 	await expect(io).toContainText('"text": "BBBBBBBB');
-	expect(calls).toBe(2);
+	await expect(io.getByRole("alert")).toHaveCount(0);
 });
 
 test("输入输出：运行还在变时已经加载的全文不丢（事件流推来新的运行视图）", async ({
