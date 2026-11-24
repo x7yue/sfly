@@ -171,6 +171,29 @@ for (const key of KEYS) {
 		await expect(notice(page)).toBeVisible();
 	});
 
+	for (const viewport of [
+		{ width: 1440, height: 900 },
+		{ width: 1280, height: 800 },
+	]) {
+		test(`用 ?node= 的链接刚打开编辑器、什么都没点（焦点在 body）：${key} 删除选中的节点，这是有意的（${viewport.width}×${viewport.height}）`, async ({
+			page,
+			controlPlane,
+		}) => {
+			await page.setViewportSize(viewport);
+			const id = await createEditorScenario(controlPlane);
+			await page.goto(`/orchestrations/${id}?node=ping`);
+			await expect(nodeCard(page, "ping")).toHaveAttribute("aria-pressed", "true");
+			await expect(dock(page)).toBeVisible();
+			// 页面上没有焦点：canvasOnly 把这种情况算作画布，和方向键等画布键一致。
+			expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+			await page.keyboard.press(key);
+			await expect(nodeCard(page, "ping")).toHaveCount(0);
+			await expect(notice(page)).toBeVisible();
+			await notice(page).getByRole("button", { name: "撤销" }).click();
+			await expect(nodeCard(page, "ping")).toBeVisible();
+		});
+	}
+
 	test(`焦点在画布上：选中节点按 ${key} 照常删除，带「撤销」的通知把它恢复`, async ({
 		page,
 		controlPlane,
