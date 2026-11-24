@@ -302,6 +302,20 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 			await rm(place, { force: true });
 		}, 60_000);
 
+		it("sweepUploadTemp：目录不存在时返回 0、不抛错；有几个就清掉几个、返回个数，目录也没了", async () => {
+			const dir = join(cp.dataDir, "artifacts", ".uploading");
+			await rm(dir, { recursive: true, force: true });
+			const store = storeWith();
+
+			await expect(store.sweepUploadTemp()).resolves.toBe(0);
+
+			await mkdir(dir, { recursive: true });
+			await writeFile(join(dir, ".upload-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), "");
+			await writeFile(join(dir, ".upload-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), "x");
+			await expect(store.sweepUploadTemp()).resolves.toBe(2);
+			expect((await readdir(join(cp.dataDir, "artifacts"))).includes(".uploading")).toBe(false);
+		}, 60_000);
+
 		it("没有临时目录（第一次启动、或者已经清干净了）：启动照常", async () => {
 			await cp.restart();
 
