@@ -178,3 +178,114 @@ it("会话令牌组合外键的迁移（#547）：项目和所属会话对不上
 		await upgradeDb.drop();
 	}
 }, 120_000);
+
+it("排队时间的迁移（0040，#544）：从 0039 带着数据升级——排队中而没有排队时间的行补上最近活动的时间，别的状态的行不受影响，之后约束在", async () => {
+	const upgradeDb = await createTestDatabase("sfly_migrate_queued");
+	try {
+		const { entries } = await readJournal(defaultMigrationsDir);
+		const target = entries.find((entry) => entry.tag === "0040_session_queued_at");
+		expect(target, "找不到 0040_session_queued_at：迁移改了编号，这条测试跟着改").toBeDefined();
+		const before = (target as JournalEntry).idx - 1;
+		const partial = join(workDir, "before-0040");
+		await cp(defaultMigrationsDir, partial, { recursive: true });
+		const journal = await readJournal(partial);
+		journal.entries = journal.entries.filter((entry) => entry.idx <= before);
+		await writeFile(join(partial, "meta", "_journal.json"), JSON.stringify(journal));
+		const run = async (dir: string) => {
+			const db = openDatabase(
+				upgradeDb.url,
+				(error) => {
+					throw error;
+				},
+				dir,
+			);
+			try {
+				await db.migrate();
+			} finally {
+				await db.close();
+			}
+		};
+		await run(partial);
+
+		const rows = {
+			idle: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+			running: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+			queued: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
+			queuedLater: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+			ended: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
+		};
+		const client = new pg.Client({ connectionString: upgradeDb.url });
+		await client.connect();
+		try {
+			// 这一列在 0039 里还不存在：升级之前的库里没有「有排队时间」的行，只有「排队中」的状态（0035 的状态约束允许 `queued`）。
+			for (const project of ["p-idle", "p-running", "p-queued", "p-ended"]) {
+				await client.query(
+					"insert into projects (id, display_name, created_at) values ($1, $1, now())",
+					[project],
+				);
+			}
+			const add = (id: string, project: string, status: string, activity: string) =>
+				client.query(
+					`insert into sessions (id, project_id, title, status, created_by, created_at, last_activity_at, current_turn)
+					values ($1, $2, 's', $3, 'alice', '2026-01-01T00:00:00Z', $4, 1)`,
+					[id, project, status, activity],
+				);
+			await add(rows.idle, "p-idle", "idle", "2026-01-01T00:01:00Z");
+			await add(rows.running, "p-running", "running", "2026-01-01T00:02:00Z");
+			await add(rows.queued, "p-queued", "queued", "2026-01-01T00:03:00Z");
+			await add(rows.queuedLater, "p-queued", "queued", "2026-01-01T00:04:00Z");
+			await add(rows.ended, "p-ended", "ended", "2026-01-01T00:05:00Z");
+		} finally {
+			await client.end();
+		}
+
+		await run(defaultMigrationsDir);
+
+		const after = new pg.Client({ connectionString: upgradeDb.url });
+		await after.connect();
+		try {
+			const read = await after.query<{
+				id: string;
+				status: string;
+				queued_at: Date | null;
+				at: Date;
+			}>("select id, status, queued_at, last_activity_at as at from sessions order by id");
+			const byId = new Map(read.rows.map((r) => [r.id, r]));
+			// 排队中的补上最近活动的时间（先后不变），别的状态没有。
+			expect(byId.get(rows.queued)?.queued_at?.toISOString()).toBe("2026-01-01T00:03:00.000Z");
+			expect(byId.get(rows.queuedLater)?.queued_at?.toISOString()).toBe("2026-01-01T00:04:00.000Z");
+			for (const id of [rows.idle, rows.running, rows.ended]) {
+				expect(byId.get(id)?.queued_at, id).toBeNull();
+			}
+			// 数据原样：状态没变。
+			expect(read.rows.map((r) => r.status)).toEqual(
+				read.rows.map(
+					(r) =>
+						({
+							[rows.idle]: "idle",
+							[rows.running]: "running",
+							[rows.queued]: "queued",
+							[rows.queuedLater]: "queued",
+							[rows.ended]: "ended",
+						})[r.id],
+				),
+			);
+			// 约束在：空闲、已结束的不能有，排队中的一定有，在做的可以有。
+			await expect(
+				after.query("update sessions set queued_at = now() where id = $1", [rows.idle]),
+			).rejects.toThrow(/sessions_queued_at/);
+			await expect(
+				after.query("update sessions set queued_at = null where id = $1", [rows.queued]),
+			).rejects.toThrow(/sessions_queued_at/);
+			await after.query("update sessions set queued_at = now() where id = $1", [rows.running]);
+			const index = await after.query(
+				"select 1 from pg_indexes where indexname = 'sessions_project_queue'",
+			);
+			expect(index.rowCount).toBe(1);
+		} finally {
+			await after.end();
+		}
+	} finally {
+		await upgradeDb.drop();
+	}
+}, 120_000);

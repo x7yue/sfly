@@ -886,9 +886,24 @@ export const sessions = pgTable(
 		 * `turn_started`」在同一个事务里加一；助手服务发来的事件要带这个轮次才收，控制面结束一轮时也按它核对。
 		 */
 		currentTurn: integer("current_turn").notNull().default(0),
+		/**
+		 * 开始排队的时间（#544）：排队中（`queued`）的会话一定有；在做（`running`）的会话在**这一轮正在停止时用户又说了话**
+		 * 的话也有（这句话排在这一轮后面，这一轮的结局写下之后会话改成 `queued`、保留这个时间）；其余为 null。同一个项目里
+		 * 排队的会话按它先后轮流开始（最早的先开始，同一时刻的按 ID，按说话的时刻排，不插队），控制面记的时间，不是助手服务盖的。
+		 */
+		queuedAt: timestamptz("queued_at"),
 	},
 	(t) => [
 		check("sessions_current_turn", sql`${t.currentTurn} >= 0`),
+		// 排队中的会话一定有排队时间；有排队时间的只有排队中的和在做的（停止途中说了话），空闲、已结束的没有。
+		check(
+			"sessions_queued_at",
+			sql`(${t.queuedAt} is null and ${t.status} <> 'queued') or (${t.queuedAt} is not null and ${t.status} in ('queued', 'running'))`,
+		),
+		// 一个项目里排队的会话，最早的在前（轮到谁开始、排第几）。
+		index("sessions_project_queue")
+			.on(t.projectId, t.queuedAt, t.id)
+			.where(sql`${t.queuedAt} is not null`),
 		// 会话令牌的组合外键（`api_tokens(session_id, project_id)`）指向它：令牌的项目恒等于它所属会话的项目。
 		unique("sessions_id_project").on(t.id, t.projectId),
 		// 一个项目的会话列表，最近活动在前。

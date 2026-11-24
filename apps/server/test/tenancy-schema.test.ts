@@ -28,13 +28,30 @@ const hex = () => randomUUID().replaceAll("-", "").repeat(2);
 
 /** 项目里的一个会话（`sessions`）；返回会话 ID。 */
 async function addSession(
-	fields: { project?: string; status?: string; user?: string | null } = {},
+	fields: {
+		project?: string;
+		status?: string;
+		user?: string | null;
+		/**
+		 * 排队时间：排队中（queued）的会话一定有；在做（running）的会话停止途中又说了话、排在这一轮后面时也有；空闲和已结束的没有
+		 * （库里的约束 `sessions_queued_at`）；默认只有排队中的有。
+		 */
+		queuedAt?: string | null;
+	} = {},
 ): Promise<string> {
 	const id = randomUUID();
+	const status = fields.status ?? "idle";
 	await client.query(
-		`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at)
-		values ($1, $2, '会话', $3, '昵称', $4, $5, $5)`,
-		[id, fields.project ?? "default", fields.status ?? "idle", fields.user ?? null, AT],
+		`insert into sessions (id, project_id, title, status, created_by, created_by_user_id, created_at, last_activity_at, queued_at)
+		values ($1, $2, '会话', $3, '昵称', $4, $5, $5, $6)`,
+		[
+			id,
+			fields.project ?? "default",
+			status,
+			fields.user ?? null,
+			AT,
+			fields.queuedAt === undefined ? (status === "queued" ? AT : null) : fields.queuedAt,
+		],
 	);
 	return id;
 }
@@ -522,6 +539,27 @@ describe("助手会话和它的事件（ADR 0027）", () => {
 		await expect(addSession({ project: "no-such-project" })).rejects.toThrow(
 			/sessions_project_id_projects_id_fk/,
 		);
+	});
+
+	it("排队时间：排队中（queued）的会话要有；在做（running）的可以有（停止途中说了话，排在这一轮后面）；空闲、已结束的不能有（#544，sessions_queued_at）", async () => {
+		const project = await addProject("queued-at");
+		await expect(addSession({ project, status: "queued", queuedAt: null })).rejects.toThrow(
+			/sessions_queued_at/,
+		);
+		for (const status of ["idle", "ended"]) {
+			await expect(
+				addSession({ project: await addProject(`qa-${status}`), status, queuedAt: AT }),
+				status,
+			).rejects.toThrow(/sessions_queued_at/);
+		}
+		await expect(addSession({ project, status: "queued" })).resolves.toBeTypeOf("string");
+		// 在做的：有没有排队时间都行。
+		await expect(
+			addSession({ project: await addProject("qa-running"), status: "running", queuedAt: AT }),
+		).resolves.toBeTypeOf("string");
+		await expect(
+			addSession({ project: await addProject("qa-running-plain"), status: "running" }),
+		).resolves.toBeTypeOf("string");
 	});
 
 	it("发起人的用户可以为空（#494 之前的请求没有用户），有的话要是存在的用户", async () => {

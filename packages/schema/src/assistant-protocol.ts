@@ -147,6 +147,11 @@ import {
  * **控制面发出 `abort` 之后、这一轮的结局写下之前，用户又说的话，是新的一轮的开头，不是插话**：控制面把它排在这一轮后面（用项目里已有的
  * 排队），这一轮的结局（助手服务带回的，或者控制面自己补的）写下之后才为它发 `prompt`。所以「在停止 × `prompt`」那一格只有控制面等不到结局、
  * 自己补了结局之后才会走到。页面（544-C）照此显示：这句话在排队，不是插话。
+ * **这句话按说话的时刻排进项目里已有的队列，不插队：项目里已经有别的会话在排的话，它排在它们后面，页面显示的「排在第几位」照这个算。**
+ *
+ * **用户点停止，是这个会话在做的一轮停掉、排着的话移出队列**（停止途中说了话、又点一次停止，就是撤掉那句话）。
+ *
+ * **不同轮次的 `turn_end` 不保证先后**（比如在停止的第 m 轮、等着的第 k 轮被中止，k 的 `turn_end` 立即发出，可能排在 m 的前面），读的一方按轮次认事件，不按先后。
  *
  * **前提和备选**：第 3 步里「`abort` 之后 pi 进程留着接着用」，依赖「模型输出到一半时 `abort`，之后同一个进程再发一轮照常做」。
  * #539 测过 `abort` 本身和 `abort` 之后再发一轮，没有测过**输出到一半时**的 `abort`：544-B 在写助手服务之前先补测这一条。
@@ -245,17 +250,17 @@ import {
  * 3. 然后发 `end`。`end` 是尽力而为的收拾：发不出去（连不上、超时、5xx）时会话照样已经结束。这时助手服务那边这个会话的 pi 进程由什么收掉，照 dev 上实际的：
  *    进程数到了上限时关掉最久没有用的空闲进程（#545 会加空闲回收），除此之外留到助手服务重启（**标给 544-B / #545**：没有收到 `end` 的会话，进程留着不影响正确性，只占一个进程槽位）。
  *
- * ## 各部分的进度（#544 拆成几个 PR；助手服务那一栏是 544-B 合入之后的实现，控制面那一栏的「dev 上现在」是 #618 合入之后的实现）
+ * ## 各部分的进度（#544 拆成几个 PR：助手服务那一栏是 544-B 的实现，控制面那一栏是 #625 的实现，都已做）
  *
  * | 说明 | 助手服务（#544 的助手服务那一半） | 控制面（#544 的控制面那一半） |
  * |---|---|---|
- * | 状态和命令的回应 | 已做（544-B）：按「一轮的状态」的表，用例逐格对着它（`apps/assistant/test/interrupt.test.ts`） | 假助手服务（`apps/server/test/support/fake-assistant.ts`）现在先判 409、后看记号，和助手服务相反；要做：照表，包括「旧的一轮过一会儿才结束」 |
- * | `steer` | 已做（544-B）：接受、留着、按顺序认送到、`steer_queue`、`steer_dropped`、`no_turn_running`；起 pi 时设成一次全送 | dev 上现在在做时发话回 409 `turn_running`。要做：写 `user_message`（`steer: true`）、转发（带 `turn`）、没有送到时的 `steer_dropped` |
- * | `end` | 已做（544-B） | 要做：`POST /sessions/:id/end` 和「结束会话」里的先后（先停止并等到结局、再写 `session_ended`、再发 `end`）。dev 上没有 |
- * | 停止 | 已做（544-B）：按「停止一轮」（`clear_queue`、`abort`、等 `agent_settled`、不行才结束进程，硬上限 {@link ASSISTANT_STOP_WAIT_MS}；到了上限、结束会话走同一条路；进程留着时下一轮之前 `clear_queue`）。依赖 pi 的几条是 rpcprobe 第 11 到 17 题测过的（`evals/assistant/README.md`） | dev 上现在等结局的时间是 `STOP_GRACE_MS`（13 秒：{@link ASSISTANT_PROCESS_KILL_GRACE_MS} 加控制面自己的 `STOP_MARGIN_MS`，数和协议里的 {@link ASSISTANT_STOP_MARGIN_MS} 不是同一个常量），从 `abort` 命令返回（收到 202，或者超时、连接断开这类结果未知）之后起算。要做：换成 {@link ASSISTANT_STOP_WAIT_MS}（23 秒）、从发出 `abort` 起算；自己补结局时补 `steer_dropped` |
- * | 中止记号 | 已做（544-B）：只增不减，轮次不大于记号的 `prompt` 都挡住、不取走记号，`abort` 一律提到 N（过期、总数上限不变）；#618 固定旧行为的那条测试跟着改了 | 假助手服务要和这里一致 |
- * | 旧的一轮还在停止时来了新的一轮 | 已做（544-B）：登记、202、等旧的一轮结束再起，等不到以 `failed` 结束 | 不用为此多等 |
- * | 排队 | 不知道项目，不排队 | 要做：同一个项目一次只把一轮交给助手服务，其余在控制面排队 |
+ * | 状态和命令的回应 | 已做（544-B）：按「一轮的状态」的表，用例逐格对着它（`apps/assistant/test/interrupt.test.ts`） | 已做（#625）：假助手服务（`apps/server/test/support/fake-assistant.ts`）照表，包括「旧的一轮过一会儿才结束」 |
+ * | `steer` | 已做（544-B）：接受、留着、按顺序认送到、`steer_queue`、`steer_dropped`、`no_turn_running`；起 pi 时设成一次全送 | 已做（#625）：写 `user_message`（`steer: true`）、转发（带 `turn`）、没有送到时的 `steer_dropped` |
+ * | `end` | 已做（544-B） | 已做（#625）：`POST /sessions/:id/end` 和「结束会话」里的先后（先停止并等到结局、再写 `session_ended`、再发 `end`） |
+ * | 停止 | 已做（544-B）：按「停止一轮」（`clear_queue`、`abort`、等 `agent_settled`、不行才结束进程，硬上限 {@link ASSISTANT_STOP_WAIT_MS}；到了上限、结束会话走同一条路；进程留着时下一轮之前 `clear_queue`）。依赖 pi 的几条是 rpcprobe 第 11 到 17 题测过的（`evals/assistant/README.md`） | 已做（#625）：等结局的时间是 {@link ASSISTANT_STOP_WAIT_MS}（23 秒）、从发出 `abort` 起算（`abort` 没得到 202 也等到期限）；自己补结局时补 `steer_dropped` |
+ * | 中止记号 | 已做（544-B）：只增不减，轮次不大于记号的 `prompt` 都挡住、不取走记号，`abort` 一律提到 N（过期、总数上限不变）；#618 固定旧行为的那条测试跟着改了 | 已做（#625）：假助手服务和这里一致 |
+ * | 旧的一轮还在停止时来了新的一轮 | 已做（544-B）：登记、202、等旧的一轮结束再起，等不到以 `failed` 结束 | 已做（#625）：不用为此多等 |
+ * | 排队 | 不知道项目，不排队 | 已做（#625）：同一个项目一次只把一轮交给助手服务，其余在控制面排队 |
  */
 
 /**
@@ -263,7 +268,7 @@ import {
  * 这一轮的 `turn_end` 在进程退出**之后**才发。#544 之前停止一轮就是直接走这一步，收到 `abort` 之后结局最晚在这么久
  * （外加命令往返）之后带回；#544 起停止先用 pi 的 `abort`，等 {@link ASSISTANT_ABORT_SETTLE_MS} 没有结果才走这一步
  * （最晚的时间见 {@link ASSISTANT_STOP_WAIT_MS}）。助手服务用它结束进程；控制面等结局的时间经 {@link ASSISTANT_STOP_WAIT_MS}
- * 引用它（dev 上现在控制面的 `STOP_GRACE_MS` 还直接引用它，见「各部分的进度」）。
+ * 引用它。
  */
 export const ASSISTANT_PROCESS_KILL_GRACE_MS = 10_000;
 
@@ -307,8 +312,7 @@ export const ASSISTANT_SECRET_MIN_LENGTH = 32;
  * - 400 `invalid_request`：请求体或路径不合 schema；
  * - 409 `turn_running`：开始一轮时这个会话有一轮「在做」（「一轮的状态」），而且 `prompt` 带的轮次比中止记号大；旧的一轮在停止时
  *   不是，那种情况回 202；轮次不大于记号的 `prompt` 也不是，回 202、以 `stopped` 结束；
- *   409 `no_turn_running`：插话时 `steer` 带的那一轮没有在做（没有一轮、在停止、已经结束、轮次对不上）。
- *   这两条和 dev 上现在的差别见「各部分的进度」；
+ *   409 `no_turn_running`：插话时 `steer` 带的那一轮没有在做（没有一轮、在停止、已经结束、轮次对不上）；
  * - 503 `model_not_configured`、`model_unreachable`：模型没有配置或连不上，起不了（#548）；
  * - 503 `process_limit`：活着的 pi 进程数到了上限（#545）；
  * - 503 `start_failed`：其他原因，**登记之前**就知道起不了 pi 进程（比如启动命令不存在），`message` 写原因。
