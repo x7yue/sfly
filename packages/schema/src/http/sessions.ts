@@ -20,7 +20,7 @@ import { endpoint, stream } from "./contract.js";
  *
  * 错误码（`ApiErrorBody.error.code`，取值见 `SessionErrorCode`）：写接口在助手没有配置时返回 503 `assistant_not_configured`
  * （读接口照常，就绪状态里写明原因）；助手服务连不上 503 `assistant_unavailable`；发话时会话在排队中 409
- * `session_queued`，已结束 409 `session_ended`（在做时发话是插话，不再是 409；同一个项目另一个会话在做时这个会话排队，
+ * `session_queued`，已结束或者正在结束 409 `session_ended`（在做时发话是插话，不再是 409；同一个项目另一个会话在做时这个会话排队，
  * 不再是 409 `project_busy`，#544）。项目或会话不存在（或属于别的项目）一律 404。
  */
 
@@ -96,7 +96,7 @@ export const sessionsApi = {
 	 * 这句话轮到它时才交给助手服务）；**在做时是插话**（`user_message` 的 `steer` 为 true，交给助手服务的 `steer`，在当前这一步
 	 * 的工具调用做完之后、下一次调用模型之前送到；响应类型不变）；**但控制面已经发出了中止、这一轮的结局还没有写下时（正在停止）
 	 * 不是插话**：这句话是新的一轮的开头（`steer` 为 false），按说话的时刻排进项目里已有的队列、不插队，会话仍是在做、
-	 * `queue_position` 有值，这一轮的结局写下之后开始它；排队中（包括这种）再说话 409 `session_queued`；已结束 409 `session_ended`。
+	 * `queue_position` 有值，这一轮的结局写下之后开始它；排队中（包括这种）再说话 409 `session_queued`；已结束或者正在结束 409 `session_ended`。
 	 */
 	message: endpoint({
 		method: "POST",

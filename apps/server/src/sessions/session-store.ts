@@ -184,6 +184,13 @@ export function isLockTimeout(error: unknown): boolean {
 	return false;
 }
 
+/** 新建会话没接住时，还算「没被碰过」的事件类型（控制面自己写的）：用户的话、一轮的开始和结局。 */
+const CONTROL_PLANE_ONLY_EVENTS: ReadonlySet<string> = new Set([
+	"user_message",
+	"turn_started",
+	"turn_end",
+]);
+
 /** 写事件时会话不存在。 */
 export class SessionNotFoundError extends Error {
 	constructor(readonly sessionId: string) {
@@ -999,9 +1006,12 @@ export class SessionStore {
 	/**
 	 * 建会话时助手服务没接住第一轮：不留下会话——**但只在会话没有被碰过时才删**，核对和删在锁着会话那一行的同一个事务里：
 	 * 会话是空闲（失败的这一轮已经有结局）、没有话排着、这一轮是它的第一轮、事件里只有最初的一句话（没有别人又说的话）、
-	 * 最后一条事件就是这一轮的 `turn_end`。等结局的那段时间（最长一个期限）会话是在做的、列表里看得见，别人对它说的话回了 200、排在
-	 * 后面，结局写下之后这句话已经被开始（会话在做第 2 轮）：这时删掉会话，说过的话没了，还会空出项目的位置、让助手服务那边同一个项目
-	 * 有两轮同时在做。不满足就留下（它带着一条失败的第一轮，照常能用）。会话已经不在时返回 false。返回有没有删。
+	 * 最后一条事件就是这一轮的 `turn_end`，**而且事件里只有控制面自己写的那几种（用户的话、`turn_started`、`turn_end`）**：这一轮里
+	 * 有一条来自助手服务的事件（助手的消息、工具调用……）就是助手服务其实收下了这一轮、做了事，工作区里的改动留着，会话记录不能没。
+	 * 助手服务带回的 `turn_end` 和控制面补的长得一样，分不出来，由调用方判断（{@link SessionService}：结局是助手服务带回的就不调用）。
+	 * 等结局的那段时间（最长一个期限）会话是在做的、列表里看得见，别人对它说的话回了 200、排在后面，结局写下之后这句话已经被开始
+	 * （会话在做第 2 轮）：这时删掉会话，说过的话没了，还会空出项目的位置、让助手服务那边同一个项目有两轮同时在做。不满足就留下
+	 * （它带着一条失败的第一轮，照常能用）。会话已经不在时返回 false。返回有没有删。
 	 */
 	async deleteUntouched(sessionId: string, failedTurn: number): Promise<boolean> {
 		return this.#serial(sessionId, async () => {
@@ -1031,6 +1041,8 @@ export class SessionStore {
 						last?.type === "turn_end" && (last.payload as { turn?: number }).turn === failedTurn;
 					const said = events.filter((event) => event.type === "user_message").length;
 					if (!lastTurnEnd || said !== 1) return false;
+					// 只有控制面自己写的那几种：别的（助手服务的事件、提示、平台记录）都算碰过。
+					if (events.some((event) => !CONTROL_PLANE_ONLY_EVENTS.has(event.type))) return false;
 					await tx.delete(sessions).where(eq(sessions.id, sessionId));
 					return true;
 				})

@@ -1352,7 +1352,7 @@ export interface Api {
 		 * 这句话轮到它时才交给助手服务）；**在做时是插话**（`user_message` 的 `steer` 为 true，交给助手服务的 `steer`，在当前这一步
 		 * 的工具调用做完之后、下一次调用模型之前送到；响应类型不变）；**但控制面已经发出了中止、这一轮的结局还没有写下时（正在停止）
 		 * 不是插话**：这句话是新的一轮的开头（`steer` 为 false），按说话的时刻排进项目里已有的队列、不插队，会话仍是在做、
-		 * `queue_position` 有值，这一轮的结局写下之后开始它；排队中（包括这种）再说话 409 `session_queued`；已结束 409 `session_ended`。
+		 * `queue_position` 有值，这一轮的结局写下之后开始它；排队中（包括这种）再说话 409 `session_queued`；已结束或者正在结束 409 `session_ended`。
 		 */
 		message: Endpoint<
 			{

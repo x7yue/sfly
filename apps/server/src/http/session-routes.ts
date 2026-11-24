@@ -9,7 +9,12 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { parseProjectId } from "../projects/project-id.js";
 import { FollowOverflowError } from "../sessions/follow.js";
 import type { Outcome, SessionService } from "../sessions/session-service.js";
-import { type SessionRow, type SessionStore, toListItem } from "../sessions/session-store.js";
+import {
+	SessionNotFoundError,
+	type SessionRow,
+	type SessionStore,
+	toListItem,
+} from "../sessions/session-store.js";
 import type { Sse } from "../sse/sse.js";
 import { requireActor } from "./actor.js";
 import { contractRoute, contractStream } from "./contract-route.js";
@@ -131,8 +136,14 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (actor === undefined) return reply;
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
-		const said = await service.say(row, actor, body.text);
-		return said.ok ? said.value : refuse(reply, said);
+		// 写的时候会话被删了（新建会话没接住、等结局的那段时间删掉的）：和一开始找不到一样，404。
+		try {
+			const said = await service.say(row, actor, body.text);
+			return said.ok ? said.value : refuse(reply, said);
+		} catch (error) {
+			if (error instanceof SessionNotFoundError) return sessionNotFound(reply);
+			throw error;
+		}
 	});
 
 	contractRoute(app, sessionsApi.end, async ({ params }, reply, request) => {
@@ -140,8 +151,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (actor === undefined) return reply;
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
-		const ended = await service.end(row, actor);
-		if (!ended.ok) return refuse(reply, ended);
+		try {
+			const ended = await service.end(row, actor);
+			if (!ended.ok) return refuse(reply, ended);
+		} catch (error) {
+			if (error instanceof SessionNotFoundError) return sessionNotFound(reply);
+			throw error;
+		}
 		return view((await sessions.find(row.id)) ?? row);
 	});
 
@@ -150,8 +166,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
 		if (actor === undefined) return reply;
 		const row = await sessions.find(params.id);
 		if (!row) return sessionNotFound(reply);
-		const stopped = await service.stop(row);
-		if (!stopped.ok) return refuse(reply, stopped);
+		try {
+			const stopped = await service.stop(row);
+			if (!stopped.ok) return refuse(reply, stopped);
+		} catch (error) {
+			if (error instanceof SessionNotFoundError) return sessionNotFound(reply);
+			throw error;
+		}
 		return view((await sessions.find(row.id)) ?? row);
 	});
 }

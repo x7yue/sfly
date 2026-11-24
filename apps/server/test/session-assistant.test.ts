@@ -152,6 +152,7 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 		assistant.ends.length = 0;
 		assistant.endedByAbort.length = 0;
 		assistant.strictTurns = true;
+		assistant.stopSettleMs = 0;
 		assistant.promptReply = () => undefined;
 		assistant.abortReply = () => undefined;
 		assistant.health = () => assistant.healthy();
@@ -638,16 +639,14 @@ describe("助手服务接上了：建会话、发话、停止、收回事件", (
 	});
 
 	it("停止之后助手服务晚到的同一轮的结局不再记：只有控制面补的那一条，也不会把下一轮改回空闲", async () => {
-		// 助手服务拒绝了中止、这一轮其实还在做，而新的一轮的 `prompt` 照样被收下：严格的假助手服务会回 409 `turn_running`，
-		// 这一条要的是另一种情形，用非严格的。
-		assistant.strictTurns = false;
+		// 助手服务收下中止，停一轮要 800 毫秒（比控制面的期限 300 毫秒长）：控制面先补一条 `stopped`；这时用户又说一句，新一轮的
+		// `prompt` 在助手服务那边登记着、等第 1 轮停完（协议）；第 1 轮的 `turn_end` 在 800 毫秒时才由假助手服务发出（晚到）。
+		assistant.stopSettleMs = 800;
 		const view = await json<SessionView>(await create());
-		assistant.abortReply = () => ({ status: 503, code: "start_failed", message: "没回话" });
 		await api.post(`/sessions/${view.id}/stop`, {});
-		assistant.abortReply = () => undefined;
 		// 同一个会话开始第 2 轮；这时助手服务晚到了第 1 轮的结局。
 		expect((await api.post(`/sessions/${view.id}/messages`, { text: "再来" })).status).toBe(200);
-		assistant.emit(view.id, 1, turnEnd(1, "stopped", "晚到的结局"));
+		await eventually(() => expect(assistant.stoppingTurn(view.id)).toBeUndefined(), 5_000);
 		await new Promise((resolve) => setTimeout(resolve, 150));
 		const ends = (await events(view.id)).filter((e) => e.type === "turn_end");
 		expect(ends.map((e) => (e as { turn: number }).turn)).toEqual([1]);
@@ -1660,6 +1659,69 @@ describe("助手服务接了请求却不回话：prompt 超时的结果是未知
 		}
 	});
 
+	it("新建会话 prompt 结果未知、助手服务其实收下了这一轮、做了事、结局也是它带回的：会话不删（工作区里的改动留着，会话记录不能没）", async () => {
+		// 期限放长、助手服务收下中止之后 400 毫秒才结束这一轮：这段时间里它的事件照常记，结局是它带回的。
+		setStopGrace(cp, 5_000);
+		assistant.stopSettleMs = 400;
+		assistant.promptAcceptedThenReply = () => ({
+			status: 500,
+			code: "start_failed",
+			message: "回应出错了",
+		});
+		const res = await api.post("/projects/default/sessions", { text: "做点事" });
+		expect(res.status).toBe(503);
+		const id = assistant.prompts.at(-1)?.sessionId as string;
+		assistant.emit(id, 1, assistantMessage("做了一点"));
+		await eventually(async () =>
+			expect((await eventsOf(api, id)).map((e) => e.type)).toContain("assistant_message"),
+		);
+		await settled();
+		expect(await sessionCount(cp)).toBe(1);
+		expect((await eventsOf(api, id)).map((e) => e.type)).toEqual([
+			"user_message",
+			"turn_started",
+			"assistant_message",
+			"turn_end",
+		]);
+		expect((await sessionRow(cp, id))?.status).toBe("idle");
+	});
+
+	it("新建会话 prompt 结果未知、助手服务做了事但没有带回结局（控制面到期自己补）：会话也不删，这一轮里有助手服务的事件就算碰过", async () => {
+		// 非严格：助手服务收下中止却不带回结局，到期由控制面补；期限放长一点，让助手服务的事件在期限之内到。
+		assistant.strictTurns = false;
+		setStopGrace(cp, 1_000);
+		assistant.promptReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
+		const res = await api.post("/projects/default/sessions", { text: "做点事" });
+		expect(res.status).toBe(503);
+		const id = assistant.prompts.at(-1)?.sessionId as string;
+		assistant.emit(id, 1, assistantMessage("做了一点"));
+		await settled();
+		expect(await sessionCount(cp)).toBe(1);
+		const events = await eventsOf(api, id);
+		expect(events.map((e) => e.type)).toEqual([
+			"user_message",
+			"turn_started",
+			"assistant_message",
+			"turn_end",
+		]);
+		expect(String((events.at(-1) as { reason: string }).reason)).toContain("没有及时带回");
+	});
+
+	it("新建会话 prompt 结果未知、等结局期间有人结束它：会话不被删（让结束做完），/end 回 200，助手服务收到 end", async () => {
+		// 非严格：控制面到期（300 毫秒）自己补结局，结束和这条结局后面的「删没被碰过的会话」撞在一起。
+		assistant.strictTurns = false;
+		assistant.promptReply = () => ({ status: 500, code: "start_failed", message: "出错了" });
+		const res = await api.post("/projects/default/sessions", { text: "甲" });
+		expect(res.status).toBe(503);
+		const id = assistant.prompts.at(-1)?.sessionId as string;
+		assistant.promptReply = () => undefined;
+		const ended = await api.post(`/sessions/${id}/end`, {}, "bob");
+		await settled();
+		expect(ended.status).toBe(200);
+		expect((await sessionRow(cp, id))?.status).toBe("ended");
+		expect(assistant.ends).toContain(id);
+	});
+
 	it("prompt 回 500（不是 503 的 5xx，结果未知）：和超时一个口径，补发中止、等到期再补；回 503 是确定没开始，马上补、不发中止", async () => {
 		const view = await json<SessionView>(
 			await api.post("/projects/default/sessions", { text: "第一句" }),
@@ -1987,8 +2049,10 @@ describe("停止时中止的命令超时（结果未知）：照样等助手服�
 		const view = await json<SessionView>(
 			await api.post("/projects/default/sessions", { text: "第一句" }),
 		);
-		// 中止 400 毫秒才回应（超过命令的 150 毫秒），助手服务收下中止就带回这一轮的结局（假助手服务按协议：处理在先、回应在后）。
+		// 中止 400 毫秒才回应（超过命令的 150 毫秒），助手服务收下中止之后 300 毫秒带回这一轮的结局（假助手服务按协议：处理在先、回应在后；
+		// 结局落在命令超时之后、期限（1.5 秒）之内：中止命令超时就马上自己补结局的话，这条会红）。
 		assistant.abortDelayMs = 400;
+		assistant.stopSettleMs = 300;
 		try {
 			const stopped = await api.post(`/sessions/${view.id}/stop`, {});
 			expect(stopped.status).toBe(200);
@@ -2001,6 +2065,7 @@ describe("停止时中止的命令超时（结果未知）：照样等助手服�
 			});
 		} finally {
 			assistant.abortDelayMs = 0;
+			assistant.stopSettleMs = 0;
 		}
 	});
 

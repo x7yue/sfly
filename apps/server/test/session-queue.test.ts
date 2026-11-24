@@ -283,6 +283,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("控制面自己补结局（助手服务收下了中止、却没有带回结局）：这一轮里没有确认送到、也没有 steer_dropped 的插话各补一条，排在补的 turn_end 前面；确认送到的不补", async () => {
+			// 非严格：要助手服务收下中止却一直不带回结局（控制面等到期自己补）；严格的假助手服务收下中止就带回结局。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			for (const text of ["甲", "乙", "丙", "丁"])
@@ -319,6 +320,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("已经有 steer_dropped 的插话（助手服务回 409 时控制面写过，或者助手服务发过）不再补第二条", async () => {
+			// 非严格：这条自己 `emit` 助手服务的 `steer_dropped`，之后要控制面等到期补结局（助手服务不带回）；严格的假助手服务收下中止就带回结局。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			assistant.steerReply = () => ({ status: 409, code: "no_turn_running", message: "刚好结束" });
@@ -350,6 +352,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("补结局只管这一轮的插话：更早的一轮里确认送到的插话，下一轮由控制面补结局时不会被补成没有送到", async () => {
+			// 非严格：自己 `emit` 助手服务的 `steer_queue` 和第 1 轮的结局，第 2 轮要控制面等到期补结局（助手服务不带回）。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			expect((await say(first.id, "第一轮的插话")).status).toBe(200);
@@ -373,6 +376,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("插话命令的回应晚到、而且是失败：这句话其实已经确认送到、这一轮已经有助手服务带回的 turn_end，这时也不写 steer_dropped（不是「已经有 steer_dropped」挡住的，是这一轮已经有结局）", async () => {
+			// 非严格：自己 `emit` 助手服务的 `steer_queue` 和结局，造「插话命令的回应晚到」的先后；严格的假助手服务自己发 `steer_queue`，会和手发的混在一起。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			assistant.steerDelayMs = 500;
@@ -396,6 +400,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("控制面写更早一轮的重复结局，不清掉当前这一轮「确认送到」的记录：之后由控制面补当前这一轮的结局时，已经确认送到的话不会被补成没有确认送到", async () => {
+			// 非严格：自己 `emit` 助手服务的 `steer_queue`，第 2 轮要控制面等到期补结局（助手服务不带回）。
 			assistant.strictTurns = false;
 			const first = await idleSession();
 			expect((await say(first.id, "接着做")).status).toBe(200); // 第 2 轮
@@ -424,6 +429,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("同一个会话上同时点两次停止，助手服务都没有带回结局：每句没有确认送到的插话只有一条 steer_dropped，结局只有一条", async () => {
+			// 非严格：助手服务收下中止却一直不带回结局，两次停止都等到期由控制面补。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			expect((await say(first.id, "没人理的话")).status).toBe(200);
@@ -519,6 +525,7 @@ describe("停止、插话、结束会话、排队", () => {
 		});
 
 		it("一轮的 turn_end 写下之后不再为这一轮的插话写 steer_dropped：控制面补完结局之后，还在路上的插话命令失败了也不写（不会落在 turn_end 后面，更不会落进下一轮）", async () => {
+			// 非严格：助手服务收下中止却一直不带回结局，等到期由控制面补；严格的假助手服务收下中止就带回结局。
 			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
 			assistant.steerDelayMs = 700;
@@ -548,13 +555,13 @@ describe("停止、插话、结束会话、排队", () => {
 
 	describe("停止的等待从发出 abort 起算", () => {
 		it("助手服务过了宽限才带回结局，但从收到回应算还在宽限之内：控制面已经按发出 abort 起算到点，自己补结局；晚到的 turn_end 丢掉", async () => {
-			assistant.strictTurns = false;
 			const first = await json<SessionView>(await create("做第一件事"));
-			// 测试里的宽限是 300 毫秒：abort 的回应 400 毫秒才到（已经过了宽限），助手服务在回应之后 100 毫秒才带回结局。
+			// 测试里的宽限是 300 毫秒：abort 的回应 400 毫秒才到（已经过了宽限），助手服务在收下中止之后 450 毫秒才带回结局（晚于宽限，
+			// 但从收到回应算还在宽限之内）。
 			assistant.abortDelayMs = 400;
+			assistant.stopSettleMs = 450;
 			try {
 				const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
-				setTimeout(() => assistant.emit(first.id, 1, turnEnd(1, "stopped")), 500);
 				expect((await stopping).status).toBe(200);
 				await new Promise((resolve) => setTimeout(resolve, 300));
 			} finally {
@@ -562,20 +569,19 @@ describe("停止、插话、结束会话、排队", () => {
 			}
 			const ends = (await detail(first.id)).events.filter((e) => e.type === "turn_end");
 			expect(ends).toHaveLength(1);
-			// 是控制面补的，不是助手服务带回的（助手服务的 reason 是「测试」）。
+			// 是控制面补的，不是助手服务带回的（助手服务的 reason 是「助手服务按中止结束了这一轮」）。
 			expect((ends[0] as { reason: string }).reason).toContain("没有及时带回");
 			expect(await statusOf(cp, first.id)).toBe("idle");
 		});
 
 		it("助手服务在宽限之内带回结局：不补，用助手服务的", async () => {
-			assistant.strictTurns = false;
+			assistant.stopSettleMs = 100; // 助手服务收下中止之后 100 毫秒带回结局
 			const first = await json<SessionView>(await create("做第一件事"));
 			const stopping = api.postEmpty(`/sessions/${first.id}/stop`);
-			setTimeout(() => assistant.emit(first.id, 1, turnEnd(1, "stopped")), 100);
 			expect((await stopping).status).toBe(200);
 			const ends = (await detail(first.id)).events.filter((e) => e.type === "turn_end");
 			expect(ends).toHaveLength(1);
-			expect((ends[0] as { reason: string }).reason).toBe("测试");
+			expect((ends[0] as { reason: string }).reason).toBe("助手服务按中止结束了这一轮");
 		});
 	});
 
@@ -846,6 +852,104 @@ describe("停止、插话、结束会话、排队", () => {
 			expect(await statusOf(cp, first.id)).toBe("idle");
 			expect((await say(first.id, "还能说")).status).toBe(200);
 			expect(assistant.prompts.at(-1)?.body).toMatchObject({ turn: 2, text: "还能说" });
+		});
+
+		it("两次 /end 重叠（第一次还在等结局）：第二次等第一次的结果，两次都 200；session_ended 一条、end 命令一次、abort 一次；等的期间说话 409", async () => {
+			stopGrace(5_000);
+			assistant.stopSettleMs = 1_000;
+			const first = await json<SessionView>(await create("甲"));
+			const e1 = api.post(`/sessions/${first.id}/end`, {}, "alice");
+			await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
+			const e2 = api.post(`/sessions/${first.id}/end`, {}, "bob");
+			const said = await say(first.id, "等结局时说的话", "carol");
+			expect(said.status).toBe(409);
+			expect((await json<{ error: { code: string } }>(said)).error.code).toBe("session_ended");
+			expect([(await e1).status, (await e2).status]).toEqual([200, 200]);
+			expect((await types(first.id)).filter((t) => t === "session_ended")).toHaveLength(1);
+			expect(assistant.ends).toHaveLength(1);
+			expect(assistant.aborts).toEqual([first.id]);
+			expect(assistant.prompts).toHaveLength(1);
+		});
+
+		it("两次 /end 重叠、结束没做成（写 session_ended 时出错）：第二次得到的是同一个结果（两次都 500），记号摘掉，之后说话照常；不是第二次自己再做一遍、做成了而第一次的记号被它摘掉", async () => {
+			stopGrace(5_000);
+			assistant.stopSettleMs = 800;
+			const first = await json<SessionView>(await create("甲"));
+			const store = cp.current.sessions;
+			const spy = vi.spyOn(store, "end").mockRejectedValueOnce(new Error("库挂了"));
+			try {
+				const e1 = api.post(`/sessions/${first.id}/end`, {}, "alice");
+				await eventually(async () => expect(assistant.aborts).toEqual([first.id]));
+				const e2 = api.post(`/sessions/${first.id}/end`, {}, "bob");
+				expect([(await e1).status, (await e2).status]).toEqual([500, 500]);
+			} finally {
+				spy.mockRestore();
+			}
+			expect(await statusOf(cp, first.id)).toBe("idle");
+			expect(assistant.ends).toHaveLength(0);
+			expect((await say(first.id, "还能说")).status).toBe(200);
+			expect(assistant.prompts.at(-1)?.body).toMatchObject({ turn: 2, text: "还能说" });
+		});
+
+		it("排队的会话刚开始（turn_started 已提交）、prompt 还没发出去时结束它：不发 prompt，这一轮照停止结束（没有交给助手服务），再写 session_ended", async () => {
+			stopGrace(5_000);
+			const a = await json<SessionView>(await create("甲", "alice"));
+			const b = await json<SessionView>(await create("乙", "bob"));
+			const store = cp.current.sessions;
+			const real = store.queueOrder.bind(store);
+			// 乙变成在做之后、`prompt` 发出去之前，推排位的查询慢：这个窗口里结束乙。
+			const spy = vi.spyOn(store, "queueOrder").mockImplementation(async (project) => {
+				await new Promise((resolve) => setTimeout(resolve, 500));
+				return real(project);
+			});
+			try {
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(async () => expect(await statusOf(cp, b.id)).toBe("running"));
+				expect((await api.post(`/sessions/${b.id}/end`, {}, "bob")).status).toBe(200);
+			} finally {
+				spy.mockRestore();
+			}
+			await cp.current.sessionService.idle();
+			// 助手服务从没收到过乙的 prompt（中止和结束命令照发）。
+			expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id]);
+			expect(assistant.log.filter((entry) => entry.endsWith(b.id))).not.toContain(`prompt:${b.id}`);
+			expect(await statusOf(cp, b.id)).toBe("ended");
+			const events = (await detail(b.id)).events;
+			expect(events.map((e) => e.type)).toEqual([
+				"user_message",
+				"turn_started",
+				"turn_end",
+				"session_ended",
+			]);
+			expect(events[2]).toMatchObject({ outcome: "stopped" });
+			expect(String((events[2] as { reason: string }).reason)).toContain("没有交给助手服务");
+		});
+
+		it("说话、结束撞上会话被删（新建会话没接住、等结局的那段时间删掉的）：404，不是 500", async () => {
+			const first = await idleSession();
+			const store = cp.current.sessions;
+			const beginTurn = store.beginTurn.bind(store);
+			// 路由读到会话、写之前，会话被删了。
+			const spyBegin = vi.spyOn(store, "beginTurn").mockImplementationOnce(async (...args) => {
+				await database_query(cp, "delete from sessions where id = $1", [first.id]);
+				return beginTurn(...args);
+			});
+			try {
+				expect((await say(first.id, "撞上删除")).status).toBe(404);
+			} finally {
+				spyBegin.mockRestore();
+			}
+			const other = await idleSession("另一个");
+			const end = store.end.bind(store);
+			const spyEnd = vi.spyOn(store, "end").mockImplementationOnce(async (...args) => {
+				await database_query(cp, "delete from sessions where id = $1", [other.id]);
+				return end(...args);
+			});
+			try {
+				expect((await api.post(`/sessions/${other.id}/end`, {})).status).toBe(404);
+			} finally {
+				spyEnd.mockRestore();
+			}
 		});
 
 		it("排队中的会话正在结束（排着的话还没移出队列）：前面那个会话的结局这时写下，后台开始排队的不开始它；它之后照样结束、没有开始过任何一轮", async () => {
@@ -1214,14 +1318,14 @@ describe("停止、插话、结束会话、排队", () => {
 			}
 		}, 30_000);
 
-		describe("助手服务不能用时，排队的留在队里", () => {
+		describe("助手服务不能用时，排队的留在队里；队首没开始成，后面的不跟着失败", () => {
 			it("助手服务连不上：停止之后两个排队的仍然排着、没有 turn_end（不一个个失败）；助手服务回来之后兜底按先后开始它们", async () => {
 				const a = await json<SessionView>(await create("甲", "alice"));
 				const b = await json<SessionView>(await create("乙", "bob"));
 				const c = await json<SessionView>(await create("丙", "carol"));
+				// 刚问过 `/health`（读会话视图时就会问，结果缓存 5 秒）：开始排队的会话之前问的是此刻的，不用这份缓存。
+				await view(a.id);
 				await assistant.stop();
-				// `/health` 的结果缓存 5 秒（测试的时钟）：建会话时问过的结果已经过期，控制面这时才会发现助手服务连不上。
-				(cp.clock as ManualClock).advance(6_000);
 				try {
 					// 助手服务连不上：中止没有送到，等到期（测试里 300 毫秒）控制面补甲的结局，甲的位置空出来，排队的想开始但助手服务不能用。
 					expect((await api.postEmpty(`/sessions/${a.id}/stop`)).status).toBe(200);
@@ -1238,8 +1342,7 @@ describe("停止、插话、结束会话、排队", () => {
 					await assistant.resume();
 					await assistant.connected();
 				}
-				// 兜底（每分钟一次）：助手服务的 /health 的缓存按测试的时钟（5 秒）。
-				(cp.clock as ManualClock).advance(6_000);
+				// 兜底（每分钟一次）：助手服务回来了，开始排队最早的那个。
 				await cp.current.sessionService.startWaiting();
 				await cp.current.sessionService.idle();
 				await eventually(() =>
@@ -1254,24 +1357,95 @@ describe("停止、插话、结束会话、排队", () => {
 				);
 			});
 
-			it("助手服务的进程数到了上限：排队的留着，上限放开之后开始", async () => {
+			it("`/health` 报进程数到了上限（空闲常驻的 pi 进程也算在里面）：不拦，排队的照样开始（助手服务到了上限会先关掉空闲的，全都在做才回 503）", async () => {
 				const a = await json<SessionView>(await create("甲", "alice"));
 				const b = await json<SessionView>(await create("乙", "bob"));
 				assistant.health = () => ({ ...assistant.healthy(), processes: { active: 4, limit: 4 } });
-				// `/health` 的结果缓存 5 秒（测试的时钟）：让建会话时问过的结果过期，这一次问到的才是上限。
-				(cp.clock as ManualClock).advance(6_000);
 				expect((await api.postEmpty(`/sessions/${a.id}/stop`)).status).toBe(200);
-				await cp.current.sessionService.idle();
-				expect(await statusOf(cp, a.id)).toBe("idle");
-				expect(await view(b.id)).toMatchObject({ status: "queued", queue_position: 1 });
-				expect(assistant.prompts).toHaveLength(1);
-				// 没到上限（limit 为 null 或者 active 小于 limit）：开始。
-				assistant.health = () => ({ ...assistant.healthy(), processes: { active: 3, limit: 4 } });
-				(cp.clock as ManualClock).advance(6_000);
-				await cp.current.sessionService.startWaiting();
 				await eventually(() =>
 					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]),
 				);
+				expect(await statusOf(cp, b.id)).toBe("running");
+			});
+
+			it("队首的 prompt 回 503（助手服务全都在做、进程数到了上限）：只失败队首一个，这个项目不接着开始下一个，后面的留在队里；这期间 `/health` 问的是此刻的；兜底再开始下一个", async () => {
+				const a = await json<SessionView>(await create("甲", "alice"));
+				const b = await json<SessionView>(await create("乙", "bob"));
+				const c = await json<SessionView>(await create("丙", "carol"));
+				const d = await json<SessionView>(await create("丁", "dave"));
+				// 建会话时问过的 `/health` 还在缓存里（测试的时钟只走了几秒）；此后进程数才到上限：`prompt` 回 503 `process_limit`。
+				let healthCalls = 0;
+				assistant.health = () => {
+					healthCalls++;
+					return assistant.healthy();
+				};
+				assistant.promptReply = () => ({
+					status: 503,
+					code: "process_limit",
+					message: "进程数到了上限",
+				});
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(async () => expect(await statusOf(cp, b.id)).toBe("idle"));
+				await cp.current.sessionService.idle();
+				// 开始排队的会话之前问了此刻的 `/health`（不是缓存）；队首失败了，后面的没有跟着开始、没有失败。
+				expect(healthCalls).toBeGreaterThanOrEqual(1);
+				expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]);
+				expect((await detail(b.id)).events.at(-1)).toMatchObject({
+					type: "turn_end",
+					outcome: "failed",
+				});
+				expect(await view(c.id)).toMatchObject({ status: "queued", queue_position: 1 });
+				expect(await view(d.id)).toMatchObject({ status: "queued", queue_position: 2 });
+				for (const id of [c.id, d.id]) {
+					expect((await types(id)).filter((t) => t !== "user_message")).toEqual([]);
+				}
+				// 兜底：助手服务收得下了，开始排队最早的那个（一个）；丁接着排。
+				assistant.promptReply = () => undefined;
+				await cp.current.sessionService.startWaiting();
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id, c.id]),
+				);
+				expect(await view(d.id)).toMatchObject({ status: "queued", queue_position: 1 });
+				// 丙的这一轮结束，丁接着开始。
+				assistant.emit(c.id, 1, turnEnd(1));
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id, c.id, d.id]),
+				);
+			});
+
+			it("队首的 prompt 被明确拒绝（409，只是这一个会话的事）：队首失败，下一个照常开始", async () => {
+				const a = await json<SessionView>(await create("甲", "alice"));
+				const b = await json<SessionView>(await create("乙", "bob"));
+				const c = await json<SessionView>(await create("丙", "carol"));
+				let n = 0;
+				assistant.promptReply = () =>
+					++n === 1 ? { status: 409, code: "turn_running", message: "还有一轮在做" } : undefined;
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id, c.id]),
+				);
+				expect(await statusOf(cp, b.id)).toBe("idle");
+				expect(await statusOf(cp, c.id)).toBe("running");
+			});
+
+			it("暂停之后这个项目里有人说话（助手服务能用）：再试一次开始排队的", async () => {
+				const a = await json<SessionView>(await create("甲", "alice"));
+				const b = await json<SessionView>(await create("乙", "bob"));
+				const c = await json<SessionView>(await create("丙", "carol"));
+				let n = 0;
+				assistant.promptReply = () =>
+					++n === 1 ? { status: 503, code: "process_limit", message: "进程数到了上限" } : undefined;
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(async () => expect(await statusOf(cp, b.id)).toBe("idle"));
+				await cp.current.sessionService.idle();
+				expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id]);
+				expect(await statusOf(cp, c.id)).toBe("queued");
+				// 乙又说话：丙在排队，乙排在丙后面；这次说话让这个项目再试一次，丙开始。
+				expect((await say(b.id, "乙再说一句", "bob")).status).toBe(200);
+				await eventually(() =>
+					expect(assistant.prompts.map((p) => p.sessionId)).toEqual([a.id, b.id, c.id]),
+				);
+				expect(await view(b.id)).toMatchObject({ status: "queued", queue_position: 1 });
 			});
 		});
 
@@ -1405,6 +1579,8 @@ describe("停止、插话、结束会话、排队", () => {
 				const started = Date.now();
 				expect((await waitApi.postEmpty(`/sessions/${first.id}/stop`)).status).toBe(200);
 				expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+				// 结局写下时叫醒等的人：1 秒的这一轮结束之后马上返回，不等满期限（这个控制面的期限是 10 秒；生产里是 23 秒）。
+				expect(Date.now() - started).toBeLessThan(3_000);
 				// 每 25 毫秒查一次的话这里要四十多次。
 				expect(find.mock.calls.length).toBeLessThan(12);
 				find.mockRestore();
@@ -1450,6 +1626,7 @@ describe("停止、插话、结束会话、排队", () => {
 				expect(res.status).toBe(503);
 				await eventually(() => expect(assistant.aborts.length).toBeGreaterThan(0));
 				const ended = vi.spyOn(closeCp.current.sessions, "appendTurnEnd");
+				const deleted = vi.spyOn(closeCp.current.sessions, "deleteUntouched");
 				// 关闭：后台的等待放弃了（叫醒它们、它们看到在关闭就走，不补结局），不是等到 23 秒：之后后台没有在做的事。
 				const service = closeCp.current.sessionService;
 				await service.close();
@@ -1462,9 +1639,58 @@ describe("停止、插话、结束会话、排队", () => {
 				await closeCp.close();
 				expect(Date.now() - started).toBeLessThan(5_000);
 				expect(ended).not.toHaveBeenCalled();
+				// 关闭之后也不去删那个新建的会话（连接池已经关了）。
+				await new Promise((resolve) => setTimeout(resolve, 300));
+				expect(deleted).not.toHaveBeenCalled();
 			} finally {
 				assistant.promptDelayMs = 0;
 				assistant.abortReply = () => undefined;
+				await closeWorkbench.disconnect();
+			}
+		}, 30_000);
+
+		it("控制面关闭时，在路上的 prompt（从队里开始的一轮）关闭之后才回来（503）：不再写失败的结局、不写插话的提示，连接池关了以后不碰库", async () => {
+			const closeCp = await startTestControlPlane({
+				assistantUrl: assistant.url,
+				assistantSecret: assistant.secret,
+				workbenchAgent: "workbench-close2",
+				assistantReconnectMs: { min: 20, max: 100 },
+				assistantCommandTimeoutMs: 5_000,
+			});
+			const closeWorkbench = await FakeAgent.connect(
+				closeCp.grpcUrl,
+				{ name: "workbench-close2", peer: { port: 7007, publicAddress: "10.0.0.11" } },
+				{ clock: closeCp.clock },
+			);
+			try {
+				await assistant.connected(2);
+				const closeApi = new ApiClient(closeCp);
+				const a = await json<SessionView>(
+					await closeApi.post("/projects/default/sessions", { text: "甲" }, "alice"),
+				);
+				(closeCp.clock as ManualClock).advance(1_000);
+				const b = await json<SessionView>(
+					await closeApi.post("/projects/default/sessions", { text: "乙" }, "bob"),
+				);
+				expect(b.status).toBe("queued");
+				// 甲的这一轮结束，乙开始；乙的 prompt 1.5 秒之后才回 503。
+				assistant.promptDelayMs = 1_500;
+				assistant.promptReply = () => ({ status: 503, code: "start_failed", message: "起不了" });
+				assistant.emit(a.id, 1, turnEnd(1));
+				await eventually(() => expect(assistant.prompts.map((p) => p.sessionId)).toContain(b.id));
+				const store = closeCp.current.sessions;
+				const writes = [
+					vi.spyOn(store, "appendTurnEnd"),
+					vi.spyOn(store, "appendSteerDropped"),
+					vi.spyOn(store, "deleteUntouched"),
+				];
+				await closeCp.close();
+				// prompt 的回应现在才到：关闭了，不碰库。
+				await new Promise((resolve) => setTimeout(resolve, 2_000));
+				for (const write of writes) expect(write).not.toHaveBeenCalled();
+			} finally {
+				assistant.promptDelayMs = 0;
+				assistant.promptReply = () => undefined;
 				await closeWorkbench.disconnect();
 			}
 		}, 30_000);
