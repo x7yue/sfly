@@ -8,10 +8,12 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { cn } from "cn";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { apiQuery, callApi } from "#/lib/api";
 import { FEISHU_BOT_SETUP, INSPECTOR_PAGE, TERM } from "#/lib/copy";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -304,7 +306,7 @@ function BotReferences({ bot, enabled }: { bot: FeishuBotView; enabled: boolean 
 						<Link
 							to="/orchestrations/$id"
 							params={{ id: s.orchestration_id }}
-							className="w-fit text-fg-1 underline underline-offset-2"
+							className={cn("w-fit", INLINE_LINK)}
 						>
 							{s.name}
 						</Link>

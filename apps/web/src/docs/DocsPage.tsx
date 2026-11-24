@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, QueryView } from "#/components/feedback/states"
 import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery, apiTextQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Markdown } from "./Markdown";
 
@@ -86,7 +87,7 @@ function DocArticle({ slug, title }: { slug: string; title: string }) {
 				<Markdown source={doc.data} />
 				<p className="mt-8 mb-0 border-t border-border-soft pt-3 text-xs text-fg-3">
 					Markdown 原文：
-					<a href={`/docs/${slug}.md`} className="font-mono text-fg-2 underline underline-offset-2">
+					<a href={`/docs/${slug}.md`} className={cn("font-mono", INLINE_LINK)}>
 						/docs/{slug}.md
 					</a>
 				</p>

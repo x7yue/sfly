@@ -7,7 +7,7 @@ describe("随异步任务节点一起新建的子流程", () => {
 			node: {
 				id: "subflow_1",
 				type: "subflow_entry",
-				position: { x: 834, y: 204 },
+				position: { x: 834, y: 226 },
 				data: { node: { id: "subflow_1", kind: "subflow_entry", name: "压测", params: [] } },
 				deletable: true,
 			},
@@ -17,9 +17,9 @@ describe("随异步任务节点一起新建的子流程", () => {
 
 	it("ID 不与已有节点重复；落点压住已有节点时错开", () => {
 		const made = companionSubflow({ id: "async_2", position: { x: 0, y: 0 } }, "监控", [
-			{ id: "subflow_1", position: { x: 234, y: 204 } },
+			{ id: "subflow_1", position: { x: 234, y: 226 } },
 		]);
 		expect(made.node.id).toBe("subflow_2");
-		expect(made.node.position).toEqual({ x: 298, y: 268 });
+		expect(made.node.position).toEqual({ x: 298, y: 290 });
 	});
 });

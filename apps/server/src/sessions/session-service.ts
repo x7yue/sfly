@@ -462,6 +462,7 @@ export class SessionService {
 			via: null,
 			userId: message.author_user_id,
 			token: null,
+			sessionId: null,
 		};
 		// 没接住时 `#handOver` 自己补了失败的结局（让下一个排队的开始）。
 		await this.#handOver(

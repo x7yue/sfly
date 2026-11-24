@@ -304,9 +304,18 @@ export const orchestrationVersions = pgTable(
 		authorVia: text("author_via"),
 		/** 经哪个令牌保存（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 保存的为空。是可信的，和上面不经校验的标注分开记。 */
 		authorToken: text("author_token"),
+		/**
+		 * 经哪个会话保存（ADR 0027、0029「经 …」）：依据是请求带的会话令牌，不是模型在对话里怎么说，
+		 * 也不是可以伪造的 `x-sfly-client` 标注。不是会话保存的为空。
+		 */
+		sessionId: uuid("session_id").references(() => sessions.id, { onDelete: "set null" }),
 		createdAt: timestamptz("created_at").notNull(),
 	},
-	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
+	(t) => [
+		unique("orchestration_versions_number").on(t.orchestrationId, t.number),
+		// 删会话时数据库按它找引用它的版本（置空）：没有索引就要顺序扫整张表。
+		index("orchestration_versions_session").on(t.sessionId).where(sql`${t.sessionId} is not null`),
+	],
 );
 
 export type RunStatus = "running" | "success" | "failed" | "cancelled";
@@ -385,6 +394,11 @@ export const runs = pgTable(
 		triggeredVia: text("triggered_via"),
 		/** 经哪个令牌触发（令牌的名称，ADR 0029「经 …」）；用登录 Cookie 触发的为空。 */
 		triggeredToken: text("triggered_token"),
+		/**
+		 * 经哪个会话触发（ADR 0027、0029「经 …」）：依据是请求带的会话令牌，不是模型在对话里怎么说；
+		 * 会话只能取消自己触发的运行，会话页的成果栏也只认它。不是会话触发的为空。会话删除时置空：运行不随会话删除。
+		 */
+		sessionId: uuid("session_id").references(() => sessions.id, { onDelete: "set null" }),
 		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
 		/**
 		 * 触发时选用的运行预设：ID（不是外键，预设删除后仍保留）、触发时的名称、预设参数的名单。
@@ -437,6 +451,8 @@ export const runs = pgTable(
 		index("runs_ended_at").on(t.endedAt),
 		// 按项目的运行列表：项目内按开始时间从新到旧（倒序扫描这条索引）。
 		index("runs_project_started").on(t.projectId, t.startedAt, t.id),
+		// 删会话时数据库按它找引用它的运行（置空）：没有索引就要顺序扫整张表。
+		index("runs_session").on(t.sessionId).where(sql`${t.sessionId} is not null`),
 	],
 );
 
@@ -888,6 +904,8 @@ export const sessions = pgTable(
 		index("sessions_project_queue")
 			.on(t.projectId, t.queuedAt, t.id)
 			.where(sql`${t.queuedAt} is not null`),
+		// 会话令牌的组合外键（`api_tokens(session_id, project_id)`）指向它：令牌的项目恒等于它所属会话的项目。
+		unique("sessions_id_project").on(t.id, t.projectId),
 		// 一个项目的会话列表，最近活动在前。
 		index("sessions_project_activity").on(t.projectId, t.lastActivityAt),
 		uniqueIndex("sessions_one_running_per_project")
@@ -956,7 +974,7 @@ export const apiTokens = pgTable(
 		projectId: text("project_id")
 			.$type<ProjectId>()
 			.references(() => projects.id),
-		sessionId: uuid("session_id").references(() => sessions.id),
+		sessionId: uuid("session_id"),
 		taskId: uuid("task_id"),
 		/**
 		 * 签发人（项目令牌记它，个人令牌的签发人就是所属用户，不另记）：项目令牌是项目的服务账号，**不随签发人失效**
@@ -972,6 +990,13 @@ export const apiTokens = pgTable(
 	},
 	(t) => [
 		unique("api_tokens_hash").on(t.tokenHash),
+		// 会话令牌属于一个会话，并且和它在同一个项目里：令牌的项目恒等于会话的项目（组合外键，#547）。会话删除时令牌随它删除。
+		// 两列任一为空时不检查（别的种类的令牌没有会话）；会话令牌的两列都不为空由下面的 `api_tokens_shape` 保证。
+		foreignKey({
+			name: "api_tokens_session_project_fk",
+			columns: [t.sessionId, t.projectId],
+			foreignColumns: [sessions.id, sessions.projectId],
+		}).onDelete("cascade"),
 		// 列出一个用户自己的令牌、一个项目的项目令牌。
 		index("api_tokens_user").on(t.userId),
 		index("api_tokens_project").on(t.projectId),

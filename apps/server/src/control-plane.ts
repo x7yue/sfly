@@ -209,6 +209,8 @@ export interface ControlPlaneOptions {
 	passwordGate?: PasswordGateOptions;
 	/** 打开着的事件流多久重新检查一次它的凭据（毫秒，src/http/api.ts），默认 30 秒；测试里调小。 */
 	streamRecheckMs?: number;
+	/** 会话令牌的写（触发、保存、恢复、复制）的事务里等行锁最多等多久（毫秒，src/sessions/session-store.ts），默认 5 秒；测试里调小。 */
+	sessionWriteLockTimeoutMs?: number;
 }
 
 export interface ControlPlane {
@@ -293,7 +295,16 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
-	const orchestrations = new OrchestrationStore({ db: database.db, clock });
+	// 会话令牌触发的运行、保存的场景版本，在同一个事务里给会话写平台记录（#547）：引擎和场景存储都用它。
+	const sessions = new SessionStore({
+		db: database.db,
+		clock,
+		onError: (what, error) => logError(`sfly: ${what}`, error),
+		...(options.sessionWriteLockTimeoutMs !== undefined && {
+			writeLockTimeoutMs: options.sessionWriteLockTimeoutMs,
+		}),
+	});
+	const orchestrations = new OrchestrationStore({ db: database.db, clock, sessions });
 	let publicHttpUrl = "";
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
@@ -343,6 +354,7 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		clock,
 		mutex,
 		hub,
+		sessions,
 		assignContent: createAssignContent({
 			packageArchiveUrl: (name, version) =>
 				`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
@@ -432,7 +444,6 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 		throw error;
 	}
 	const publicUrl = options.publicHttpUrl?.replace(/\/+$/, "");
-	const sessions = new SessionStore({ db: database.db, clock });
 	// 助手默认关闭：没配好时写明原因（日志里一行，就绪状态里也写）。
 	const assistant = assistantSetup({ url: options.assistantUrl, secret: options.assistantSecret });
 	if (!assistant.configured && logger) printInfo(`sfly: 助手没有开启：${assistant.reason}`);

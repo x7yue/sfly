@@ -3,6 +3,7 @@ import { cn } from "cn";
 import { XIcon } from "lucide-react";
 import type * as React from "react";
 import { createContext, useContext, useEffect, useState } from "react";
+import { INLINE_LINK_CHILDREN } from "#/lib/inline-link";
 import { Button } from "@/components/ui/button";
 import { BACKDROP_MOTION, POPUP_MOTION } from "@/components/ui/overlay";
 
@@ -197,10 +198,7 @@ function DialogDescription({ className, ...props }: DialogPrimitive.Description.
 	return (
 		<DialogPrimitive.Description
 			data-slot="dialog-description"
-			className={cn(
-				"text-sm text-pretty text-fg-2 *:[a]:underline *:[a]:underline-offset-2 *:[a]:hover:text-fg-1",
-				className,
-			)}
+			className={cn("text-sm text-pretty text-fg-2", INLINE_LINK_CHILDREN, className)}
 			{...props}
 		/>
 	);

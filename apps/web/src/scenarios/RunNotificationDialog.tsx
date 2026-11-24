@@ -15,6 +15,7 @@ import { notify } from "#/components/feedback/notify";
 import { FeishuBotSelect } from "#/editor/inspector/FeishuBotSelect";
 import { apiQuery, callApi } from "#/lib/api";
 import { DOC_PAGE, PAGE, TERM } from "#/lib/copy";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -120,7 +121,7 @@ export function RunNotificationDialog({
 								{TERM.feishuBot}「{settings.bot}
 								」已被删除，满足触发条件的运行不会发送通知，运行抽屉里记为「未发送」。
 								可以换一个机器人，或者到
-								<Link to="/feishu-bots" className="underline underline-offset-2">
+								<Link to="/feishu-bots" className={INLINE_LINK}>
 									{PAGE.feishuBots}
 								</Link>
 								重新登记同名的机器人。

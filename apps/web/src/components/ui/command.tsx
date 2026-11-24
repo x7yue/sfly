@@ -3,6 +3,7 @@ import { cn } from "cn";
 import { SearchIcon } from "lucide-react";
 import type * as React from "react";
 import { useCallback, useRef } from "react";
+import { MORE_BELOW_FADE, trackMoreBelow } from "#/lib/scroll-more";
 import {
 	Dialog,
 	DialogContent,
@@ -106,9 +107,13 @@ function CommandList({
 	return (
 		<CommandPrimitive.List
 			data-slot="command-list"
+			ref={trackMoreBelow}
 			label={label}
 			className={cn(
-				"max-h-[380px] scroll-py-1.5 overflow-x-hidden overflow-y-auto p-1.5 outline-none",
+				// 下面还有内容时（trackMoreBelow 加 data-more-below）底边渐隐，切在行中间的那一行不再像被盖住；
+				// 用方向键选中的项滚到渐隐区上面（scroll-pb-9 比渐隐区高 4px）。
+				"max-h-[380px] scroll-pt-1.5 scroll-pb-9 overflow-x-hidden overflow-y-auto p-1.5 outline-none",
+				MORE_BELOW_FADE,
 				className,
 			)}
 			{...props}

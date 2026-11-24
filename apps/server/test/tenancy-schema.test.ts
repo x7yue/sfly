@@ -212,7 +212,20 @@ describe("令牌", () => {
 		// 会话令牌指向的会话要存在（外键）。
 		await expect(
 			insert({ kind: "session", user: owner, project: "default", session: randomUUID() }),
-		).rejects.toThrow(/api_tokens_session_id_sessions_id_fk/);
+		).rejects.toThrow(/api_tokens_session_project_fk/);
+		// 会话在别的项目里：令牌的项目恒等于会话的项目（组合外键，#547）。
+		await client.query(
+			"insert into projects (id, display_name, created_at) values ('beta', 'beta', $1) on conflict do nothing",
+			[AT],
+		);
+		await expect(
+			insert({
+				kind: "session",
+				user: owner,
+				project: "default",
+				session: await addSession({ project: "beta" }),
+			}),
+		).rejects.toThrow(/api_tokens_session_project_fk/);
 		await expect(insert({ kind: "session", user: owner, project: "default" })).rejects.toThrow(
 			/api_tokens_shape/,
 		);
@@ -428,6 +441,7 @@ describe("运行的项目恒等于它的场景的项目", () => {
 			"runs_cancel_requested_by_user_id_users_id_fk",
 			"runs_orchestration_project_fk",
 			"runs_orchestration_version_id_orchestration_versions_id_fk",
+			"runs_session_id_sessions_id_fk",
 			"runs_triggered_by_user_id_users_id_fk",
 		]);
 	});

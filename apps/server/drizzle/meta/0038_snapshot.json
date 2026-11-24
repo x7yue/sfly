@@ -1,5 +1,5 @@
 {
-  "id": "298f08a5-7060-4cac-8458-53dc1aaa15a1",
+  "id": "b20c2ee1-51ca-4dcb-a4c7-fa8d1e20d32c",
   "prevId": "1b4d1b14-d376-44df-832c-751bb22eeb74",
   "version": "7",
   "dialect": "postgresql",
@@ -405,19 +405,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "api_tokens_session_id_sessions_id_fk": {
-          "name": "api_tokens_session_id_sessions_id_fk",
-          "tableFrom": "api_tokens",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "api_tokens_issued_by_user_id_users_id_fk": {
           "name": "api_tokens_issued_by_user_id_users_id_fk",
           "tableFrom": "api_tokens",
@@ -429,6 +416,21 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "api_tokens_session_project_fk": {
+          "name": "api_tokens_session_project_fk",
+          "tableFrom": "api_tokens",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id",
+            "project_id"
+          ],
+          "columnsTo": [
+            "id",
+            "project_id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -1298,6 +1300,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1305,7 +1313,24 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "orchestration_versions_session": {
+          "name": "orchestration_versions_session",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"orchestration_versions\".\"session_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "orchestration_versions_orchestration_id_orchestrations_id_fk": {
           "name": "orchestration_versions_orchestration_id_orchestrations_id_fk",
@@ -1331,6 +1356,19 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "orchestration_versions_session_id_sessions_id_fk": {
+          "name": "orchestration_versions_session_id_sessions_id_fk",
+          "tableFrom": "orchestration_versions",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -1886,6 +1924,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "params": {
           "name": "params",
           "type": "jsonb",
@@ -2058,6 +2102,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "runs_session": {
+          "name": "runs_session",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"runs\".\"session_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2085,6 +2145,19 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "runs_session_id_sessions_id_fk": {
+          "name": "runs_session_id_sessions_id_fk",
+          "tableFrom": "runs",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "runs_cancel_requested_by_user_id_users_id_fk": {
@@ -2273,43 +2346,9 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
-        },
-        "queued_at": {
-          "name": "queued_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "sessions_project_queue": {
-          "name": "sessions_project_queue",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "queued_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"sessions\".\"queued_at\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "sessions_project_activity": {
           "name": "sessions_project_activity",
           "columns": [
@@ -2377,16 +2416,21 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "sessions_id_project": {
+          "name": "sessions_id_project",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "project_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "sessions_current_turn": {
           "name": "sessions_current_turn",
           "value": "\"sessions\".\"current_turn\" >= 0"
-        },
-        "sessions_queued_at": {
-          "name": "sessions_queued_at",
-          "value": "(\"sessions\".\"queued_at\" is null and \"sessions\".\"status\" <> 'queued') or (\"sessions\".\"queued_at\" is not null and \"sessions\".\"status\" in ('queued', 'running'))"
         },
         "sessions_status": {
           "name": "sessions_status",
