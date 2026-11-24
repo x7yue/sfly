@@ -30,8 +30,8 @@ asyncio 任务比 with 活得久时，跳过已经结束的。`start()` 返回�
 校验：名称为空（或只有空白）抛 `ValueError`，不是字符串抛 `TypeError`，调用时立即报错。
 下面这些不报错，每种原因写一条 warn 日志（只写长度和上限，不写名称、字段值的内容）：
 名称超过 64 个字符、
-字段值（转成字符串后）超过 256 个字符（控制面先打码再截到上限，见上面的 `TRANSPORT_MARGIN_CHARS`）、
-字段超过 8 个（多出的丢弃）。同一个句柄结束两次，第二次忽略，警告一次；
+字段值（转成字符串后）超过 256 个字符（控制面先打码再截到上限，见下面的 `TRANSPORT_MARGIN_CHARS`）、
+字段名超过 64 个字符、字段超过 8 个（多出的丢弃）。同一个句柄结束两次，第二次忽略，警告一次；
 不同名称（动作和标记合计）超过 100 种时警告一次（名称里带了订单号这类每次都不同的内容，
 变化的内容放进字段）。
 
@@ -68,8 +68,8 @@ from sfly.context import ActionResult, Cancelled, _EventWriter, _now_ms, monoton
 # 名称、字段值、失败原因的上限由控制面执行：它先把 secret 值打码、
 # 再截到上限。SDK 不知道哪些值是 secret，
 # 也不知道节点开始之后才成为 secret 的值，在这里截断会把一个正好跨在截断处的 secret 值切成两半，
-# 控制面只收到前半截，认不出来。所以 SDK 只在比上限多 `TRANSPORT_MARGIN_CHARS` 个字符处截断（
-# 传输的保护），
+# 控制面只收到前半截，认不出来。所以 SDK 只在比上限多 `TRANSPORT_MARGIN_CHARS` 个字符处截断
+# （传输的保护），
 # 本地执行（`sfly.local`）记下的是和控制面一样截到上限之后的样子。
 
 #: 名称最长的字符数，超过的截断。
@@ -80,8 +80,10 @@ MAX_FIELDS = 8
 MAX_VALUE_CHARS = 256
 #: 失败原因最长的字符数，超过的截断：原因随摘要每秒发一次，不能无限长。
 MAX_REASON_CHARS = 4096
-#: SDK 发出的名称、字段值、失败原因最多比上面的上限多这么多个字符（更长的才由 SDK 截断）：
-#: 控制面先打码再截到上限，所以长度不超过这个余量的 secret 值，不论落在哪里都能整个认出来。
+#: SDK 发出的名称、字段的键和值、失败原因最多比上面的上限多这么多个字符（更长的才由 SDK 截断）：
+#: 控制面按原文的位置截到上限（先打码），所以每种写法（控制面认的原文、转义等，
+#: 转义的写法可以比值本身长）的长度不超过这个余量的 secret 值，不论落在哪里都能整个认出来；
+#: 某种写法比它还长的值，跨在传输上限处时可能留下这种写法开头的一段。
 TRANSPORT_MARGIN_CHARS = 4096
 #: 不同的名称超过这么多种时警告一次（不限制）。
 MAX_NAMES = 100
@@ -119,10 +121,13 @@ def _reason(message: object) -> str:
     return text
 
 
-def _label(name: str) -> str:
-    """警告日志里引用的名称：不超过上限的原样（完整的 secret 值由控制面打码），更长的只写长度，
+def _label(name: str, noun: str = "名称") -> str:
+    """警告日志里引用的名称（`noun` 是它的叫法：名称、字段名）：不超过上限的原样
+    （完整的 secret 值由控制面打码），更长的只写长度，
     不写截断后的内容（截断会把 secret 值切成两半，前半截认不出来）。"""
-    return repr(name) if len(name) <= MAX_NAME_CHARS else f"（{len(name)} 个字符的名称）"
+    if len(name) <= MAX_NAME_CHARS:
+        return repr(name)
+    return f"（{len(name)} 个字符的{noun}）"
 
 
 def _exception_reason(exc_type: type[BaseException], exc: BaseException | None) -> str:
@@ -423,6 +428,16 @@ class Actions:
             return clean
         keys = set(taken)
         for key, value in fields.items():
+            if len(key) > MAX_NAME_CHARS:
+                # 字段的键和名称一个做法：控制面先打码再按名称的上限截，
+                # SDK 只在多出余量处截断；警告只写长度。
+                self._warn(
+                    "key-too-long",
+                    "",
+                    f"{what}的字段名有 {len(key)} 个字符，"
+                    f"超过 {MAX_NAME_CHARS} 个字符的部分会被截断",
+                )
+                key = key[:_SENT_NAME_CHARS]
             if key not in keys:
                 if len(keys) >= MAX_FIELDS:
                     self._warn(
@@ -440,7 +455,7 @@ class Actions:
                     "",
                     f"{what}的字段值有 {len(text)} 个字符，"
                     f"超过 {MAX_VALUE_CHARS} 个字符的部分会被截断"
-                    f"（字段 {_label(key)}）",
+                    f"（字段 {_label(key, '字段名')}）",
                 )
                 text = text[:_SENT_VALUE_CHARS]
             clean[key] = text

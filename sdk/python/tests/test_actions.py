@@ -23,6 +23,7 @@ from action_nodes import (
     invalid_name,
     invalid_parent,
     leave_unfinished,
+    long_texts,
     many_names,
     nesting,
     outcomes,
@@ -585,6 +586,59 @@ def test_warnings_never_quote_the_cut_text(tmp_path: Path) -> None:
     # 写的是长度和上限
     assert any(str(len(long_name)) in w and str(MAX_NAME_CHARS) in w for w in warnings), warnings
     assert any(str(len(long_value)) in w and str(MAX_VALUE_CHARS) in w for w in warnings), warnings
+
+
+def test_the_summary_carries_the_full_name_not_the_one_used_for_counting(tmp_path: Path) -> None:
+    """摘要里正在做的、最近结束的、最近失败的动作，名称是发出去的完整的那个（控制面按它先打码再截到上限）；
+    计数用的前 MAX_NAME_CHARS 个字符只在 SDK 内部。"""
+    ctx, events = make_context(tmp_path)
+    name = "名" * (MAX_NAME_CHARS + 30)
+    running = ctx.action.start(name + "-进行中")
+    ctx.action.start(name + "-结束").end()
+    ctx.action.start(name + "-失败").fail("原因")
+    wait_for(lambda: bool(only(events(), "action_summary")))
+    running.end()
+    last = only(events(), "action_summary")[-1]
+    entries = [*last["running"], *last["recent"], *last["recent_failed"]]
+    assert entries, last
+    for entry in entries:
+        assert len(entry["name"]) == MAX_NAME_CHARS + 30 + len("-进行中"), entry["name"][-8:]
+    assert last["names"][0]["name"] == name + "-进行中"
+
+
+def test_a_field_key_is_cut_only_at_the_transport_limit_and_the_warning_does_not_quote_it(
+    tmp_path: Path,
+) -> None:
+    ctx, events = make_context(tmp_path)
+    key = "键" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS + 50)
+    secret_key = "k" * (MAX_NAME_CHARS - 10) + SECRET
+
+    ctx.action.start("动作", **{key: "值", secret_key: "值"}).end()
+
+    [start] = only(events(), "action_start")
+    assert "键" * (MAX_NAME_CHARS + TRANSPORT_MARGIN_CHARS) in start["fields"]
+    assert secret_key in start["fields"]  # 比上限长但没有到传输上限：整个发出去
+    warnings = [e["message"] for e in only(events(), "log") if e["level"] == "warn"]
+    assert len(warnings) == 1 and "字段名" in warnings[0], warnings  # 同一种原因只警告一次
+    assert not any(piece in warnings[0] for piece in fragments(SECRET)), warnings[0]
+    assert str(len(key)) in warnings[0] or str(len(secret_key)) in warnings[0], warnings[0]
+
+
+def test_local_execution_records_the_texts_cut_at_the_limits_like_the_control_plane() -> None:
+    result = run_node(long_texts)
+
+    assert result.status == "success", result.error
+    [action] = result.actions
+    assert action.name == "名" * MAX_NAME_CHARS
+    assert action.fields == {"键" * MAX_NAME_CHARS: "值" * MAX_VALUE_CHARS}
+    assert action.reason == "因" * (MAX_REASON_CHARS - 1) + "…"
+    summary = result.action_summary
+    assert summary is not None
+    for entry in [*summary.running, *summary.recent, *summary.recent_failed]:
+        assert len(entry.name) <= MAX_NAME_CHARS
+        assert all(len(k) <= MAX_NAME_CHARS for k in entry.fields)
+        assert all(len(v) <= MAX_VALUE_CHARS for v in entry.fields.values())
+        assert entry.reason is None or len(entry.reason) <= MAX_REASON_CHARS
 
 
 def test_a_warning_about_a_short_name_still_quotes_it(tmp_path: Path) -> None:

@@ -200,3 +200,10 @@ def leave_unfinished(ctx: Context) -> None:
     ctx.action.start("从不结束", 订单="1001")
     with ctx.action("正常结束"):
         pass
+
+
+@node(outputs=[])
+def long_texts(ctx: Context) -> None:
+    """名称、字段的键和值、失败原因都比上限长（本地执行记下的是截到上限之后的样子）。"""
+    action = ctx.action.start("名" * 200, **{"键" * 200: "值" * 500})
+    action.fail("因" * 9000)

@@ -467,6 +467,29 @@ export function maskedByAutomaton(text: string, count: number, mask: string): st
 }
 
 /**
+ * 把 {@link scanSpans}（或 {@link mergeSpans}）刚找到的 `count` 段里起点在 `cut`（原文的位置）之前的换成 `mask`，只输出原文
+ * `[0, cut)` 的部分：一段的终点在 `cut` 之后（跨在 `cut` 上）时整段换成一个掩码，`cut` 及之后的一律不输出。输出只取决于
+ * 完整的出现和 `cut`（同步，紧接着扫描用）。
+ */
+export function maskedPrefixByAutomaton(
+	text: string,
+	count: number,
+	cut: number,
+	mask: string,
+): string {
+	let out = "";
+	let cursor = 0;
+	for (let k = 0; k < count; k++) {
+		const start = spanStarts[k] as number;
+		if (start >= cut) break;
+		out += text.slice(cursor, start) + mask;
+		cursor = spanEnds[k] as number;
+	}
+	// 最后一段跨在 `cut` 上（或正好在 `cut` 结束）时 `cursor >= cut`，这里取到空串：`cut` 之后的不输出
+	return out + text.slice(cursor, cut);
+}
+
+/**
  * 扫一遍 `text` 走了多少步：前进（含查表）和沿失败链退回各算一步。只给测试用：线性是构造保证的（退回的步数不超过前进的步数，
  * 所以不超过 2 × 长度），测试在最坏的值集合上数出来，不看耗时。和 {@link scanSpans} 走的是同一条路。
  */

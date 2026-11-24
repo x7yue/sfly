@@ -422,8 +422,8 @@ def _name(value: Any) -> str:
 
 
 def _fields(value: Any) -> dict[str, str]:
-    """动作的字段：值和控制面一样截到上限。"""
-    return {str(k): str(v)[:MAX_VALUE_CHARS] for k, v in (value or {}).items()}
+    """动作的字段：键和值和控制面一样截到上限（键和名称一个上限）。"""
+    return {str(k)[:MAX_NAME_CHARS]: str(v)[:MAX_VALUE_CHARS] for k, v in (value or {}).items()}
 
 
 def _reason(value: Any) -> str | None:
