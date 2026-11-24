@@ -28,6 +28,12 @@ const NUMBER_LIKE = /^[\d.,_+\-eE ]+[A-Za-z%天小时分钟秒]{0,6}$|^[+-]?0[xX
 /** 认得的几个词。 */
 const NUMBER_WORDS = /^[+-]?(?:infinity|inf|nan)$/i;
 
+/**
+ * {@link echoNumber} 的结果是不是回显了填的值（而不是一句说明）。**没回显的值，说明里就不能再用别的写法把它带出来**：
+ * 换算后的数（MB 乘 1048576）除以 1048576 就是填的数，写出来等于绕过了字符数的上限（#642 的复核）。
+ */
+export const wasEchoed = (shown: string): boolean => shown.startsWith('"');
+
 /** 数值类的值回显成什么：像一个数（或认得的词）、而且不超过 {@link MAX_ECHO_CHARS} 个字符才回显（带引号），否则写说明。 */
 export function echoNumber(raw: string): string {
 	const text = raw.trim();

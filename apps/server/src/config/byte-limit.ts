@@ -1,5 +1,5 @@
 import { decimalOf, isUnset } from "./decimal.js";
-import { echoNumber } from "./echo.js";
+import { echoNumber, wasEchoed } from "./echo.js";
 
 export const MB = 1024 * 1024;
 
@@ -36,7 +36,11 @@ export function byteLimitBytesFromMb(
 	}
 	const bytes = Math.floor(mb * MB);
 	if (!isByteLimit(bytes)) {
-		throw new Error(`${byteLimitMessage(name, what, echoNumber(raw))}（换算后 ${bytes} 字节）`);
+		// 换算后的字节数只在填的值已经回显时才写：值没回显（太长、不像数）时，换算后的数除以 1048576 就是填的数，写出来等于把它带出来。
+		const shown = echoNumber(raw);
+		throw new Error(
+			`${byteLimitMessage(name, what, shown)}${wasEchoed(shown) ? `（换算后 ${bytes} 字节）` : ""}`,
+		);
 	}
 	return bytes;
 }
