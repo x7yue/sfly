@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { type E2eFixtures, expect, test } from "./fixtures";
-import { createScenario, publishPackage } from "./support";
+import { createScenario, publishPackage, scenarioUsing } from "./support";
 
 // 保密值太多的运行（#657）：运行视图（`GET /runs/:id`）带 `secrets_oversize: true` 时，运行抽屉的摘要里写明
 // 为什么这次运行里的内容全是掩码；`false` 或没有这个键（绝大多数运行）时不出现。
@@ -24,7 +24,7 @@ async function summaryWith(
 ) {
 	const agent = await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);
-	await createScenario(controlPlane, "巡检");
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
 	let rewritten = 0;
 	await page.route(/\/api\/runs\/[^/?]+(\?.*)?$/, async (route) => {
 		if (route.request().method() !== "GET") return route.continue();
