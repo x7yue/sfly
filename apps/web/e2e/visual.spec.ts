@@ -2087,7 +2087,13 @@ const STEER_C = "c0000000-0000-4000-8000-00000000000c";
 test("会话页：插话的三种状态（等待送达、已送到、没有送到）和排在这一轮后面的话", async ({
 	page,
 }) => {
-	const view = sessionView({ status: "running", title: "给 http_check 加一个超时参数" });
+	// 有话排在这一轮后面时，会话视图里有排位（在等的是它自己正在停止的这一轮）。
+	const view = sessionView({
+		status: "running",
+		title: "给 http_check 加一个超时参数",
+		queue_position: 1,
+		waiting_for: WAITING_FOR,
+	});
 	await installSessionStream(page);
 	await stubSessionDetail(page, view, [
 		userMessage(1, "给 http_check 加一个超时参数"),

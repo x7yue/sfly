@@ -443,13 +443,15 @@ test("结束会话：确认之后助手服务收到 end，会话页写会话已�
 	await expect(page.getByTestId("list-status")).toHaveText("已结束");
 });
 
-test("会话已经没有了：结束时控制面回 404，回到列表，写一句", async ({
+test("会话已经没有了：会话在库里被删掉（新建会话等第一轮结局期间点了停止的结果），结束时控制面回 404，回到列表，写一句", async ({
 	page,
 	controlPlane,
 	workbench,
 }) => {
 	void workbench;
 	const id = await startSession(page, "做第一件事");
+	// 页面读完会话再删（删得早了，页面读历史就是 404，是「无法加载这个会话」）。
+	await expect(statusText(page)).toHaveText("在做");
 	await deleteSession(controlPlane.database.url, id);
 	await page.getByRole("button", { name: "结束会话" }).click();
 	await page

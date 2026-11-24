@@ -909,7 +909,7 @@ test("停止途中说的话：不是插话，标「排在这一轮后面」，�
 	await expect(composer(page)).toBeDisabled();
 	await expect(composer(page)).toHaveAttribute("placeholder", "这一轮正在停止，暂时不能说话");
 	await expect(page.getByTestId("composer-blocked")).toHaveText(
-		"这一轮正在停止，你说的话排在第 1 位；再点一次停止，撤掉它",
+		"这一轮正在停止，有话排在它后面（第 1 位）；再点一次停止，撤掉排着的话",
 	);
 	await expect(page.getByTestId("session-status")).toHaveText("在做");
 	// 再点一次停止（请求在路上也可点）：撤掉那句话。
@@ -1021,6 +1021,22 @@ test("会话已经没有了（新建会话等第一轮结局期间点了停止�
 		apiError(route, 404, "not_found", "session not found"),
 	);
 	await page.getByRole("button", { name: "停止" }).click();
+	await expect(page).toHaveURL(/\/sessions\/?$/);
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
+	).toBeVisible();
+});
+
+test("会话已经没有了：结束遇到 404 回到列表，确认框关掉，写一句", async ({ page }) => {
+	const view = await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+	await page.route(new RegExp(`/api/sessions/${view.id}/end$`), (route) =>
+		apiError(route, 404, "not_found", "session not found"),
+	);
+	await page.getByRole("button", { name: "结束会话" }).click();
+	await page
+		.getByRole("dialog", { name: "结束这个会话？" })
+		.getByRole("button", { name: "结束会话" })
+		.click();
 	await expect(page).toHaveURL(/\/sessions\/?$/);
 	await expect(
 		page.locator("[data-sonner-toast]").filter({ hasText: "这个会话已经没有了" }),
