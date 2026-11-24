@@ -4,7 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Truncate } from "../components/ui/truncate";
 import { UntrustedText } from "../components/untrusted-text";
-import { hasHidden, type UntrustedMode, untrustedPlain, untrustedSegments } from "./untrusted-text";
+import {
+	hasHidden,
+	isPlainText,
+	type UntrustedMode,
+	untrustedPlain,
+	untrustedSegments,
+} from "./untrusted-text";
 
 // 显示不可信的文字（#699）：字符表是 @sfly/schema 的 text-safety.ts 里那一张；改变方向的控制字符、零宽字符、转义字符写出来，
 // 三种例外（零宽连接符、零宽不连字符、变体选择符）照位置规则；正常的中文、表情、从右到左的文字不变。
@@ -251,13 +257,115 @@ describe("和命令行、名字校验是同一套规则：text-safety.ts 的 nam
 	});
 });
 
+describe("isPlainText：普通的文字不包一层（没有要写出来的字符、没有从右到左的字母）", () => {
+	it("中文、英文、数字、符号、表情、带零宽连接符的组合表情、表情的呈现方式：是普通文字", () => {
+		for (const text of [
+			"正常的名字",
+			"worker-7 处理第 12 批，耗时 31ms（成功率 99.1%）",
+			"日本語のテキスト 한국어",
+			"🎉 🚀 👨‍👩‍👧 🏳️‍🌈 ❤️‍🔥 👩\u200D💻",
+			"café — naïve",
+			"a\u200Cb",
+			"",
+			"第一行\n第二行\t缩进",
+		]) {
+			expect(isPlainText(text, "text"), JSON.stringify(text)).toBe(true);
+		}
+	});
+
+	it("从右到左书写的字母（希伯来文、阿拉伯文、波斯文、叙利亚文、塔纳文、恩科文）：不是普通文字，要隔离", () => {
+		for (const text of [
+			"שלום",
+			"مرحبا",
+			"می\u200Cخواهم",
+			"ܫܠܡܐ",
+			"ދިވެހި",
+			"ߒߞߏ",
+			"abc שלום def",
+			"\uFB1D\u05D0",
+			"\uFE70\uFE71",
+			"\u{10800}",
+			"\u{1E900}",
+		]) {
+			expect(isPlainText(text), JSON.stringify(text)).toBe(false);
+		}
+	});
+
+	it("有要写出来的字符（方向控制字符、零宽字符、转义字符）、位置不对的例外字符：不是普通文字", () => {
+		for (const text of [
+			"a\u202Eb",
+			"a\u200Bb",
+			"a\u200Fb",
+			"a\u001Bb",
+			"\u200Dab",
+			"a \u200Db",
+			"a\uFE0F\uFE0Fb",
+		]) {
+			expect(isPlainText(text), JSON.stringify(text)).toBe(false);
+		}
+		// 多行（text）里：换行和制表符是排版，单独的回车不是
+		expect(isPlainText("a\r\nb", "text")).toBe(true);
+		expect(isPlainText("a\rb", "text")).toBe(false);
+	});
+
+	it("和切段一致：是普通文字 ⇔ 一段原样的文字（没有写出来的）且没有从右到左的字母；抽样 4000 个伪随机字符串里不出入", () => {
+		let seed = 7;
+		const next = () => {
+			seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+			return seed;
+		};
+		const pool = [
+			"a",
+			"中",
+			"🎉",
+			" ",
+			"\u200D",
+			"\u200C",
+			"\uFE0F",
+			"\u202E",
+			"\u200B",
+			"ש",
+			"م",
+			"\n",
+			"\t",
+			"\r",
+			"1",
+		];
+		for (let i = 0; i < 4000; i++) {
+			const text = Array.from({ length: 1 + (next() % 8) }, () => pool[next() % pool.length]).join(
+				"",
+			);
+			for (const mode of ["line", "text"] as const) {
+				const rtl = /[\u0590-\u08FF]/.test(text);
+				expect(isPlainText(text, mode), JSON.stringify([text, mode])).toBe(
+					!rtl && !hasHidden(text, mode),
+				);
+			}
+		}
+	});
+});
+
 describe("UntrustedText 组件", () => {
 	const render = (text: string, mode?: UntrustedMode) =>
 		renderToStaticMarkup(createElement(UntrustedText, { text, ...(mode ? { mode } : {}) }));
 
-	it("没有要写出来的字符：只是一个 <bdi>（方向隔离），文字原样", () => {
-		expect(render("正常的名字")).toBe("<bdi>正常的名字</bdi>");
-		expect(render("مرحبا بالعالم")).toBe("<bdi>مرحبا بالعالم</bdi>");
+	it("普通的文字（没有要写出来的字符、没有从右到左的字母）不包一层：直接是文字，和不经过组件时一样", () => {
+		expect(render("正常的名字")).toBe("正常的名字");
+		expect(render("worker-7 处理第 12 批 🎉")).toBe("worker-7 处理第 12 批 🎉");
+		expect(render("👩\u200D💻 和 ❤\uFE0F\u200D🔥")).toBe("👩\u200D💻 和 ❤\uFE0F\u200D🔥");
+	});
+
+	it("从右到左书写的文字：包一个 <bdi dir=ltr>，基准方向是从左到右，它自己成一段，不影响旁边", () => {
+		expect(render("مرحبا بالعالم")).toBe('<bdi dir="ltr">مرحبا بالعالم</bdi>');
+		expect(render("שלום עולם")).toBe('<bdi dir="ltr">שלום עולם</bdi>');
+		expect(render("می\u200Cخواهم")).toBe('<bdi dir="ltr">می\u200Cخواهم</bdi>');
+	});
+
+	it("以希伯来文开头、后面是中文和表情的混排文字：还是 <bdi dir=ltr>，文字原样（整行不按第一个字母翻过来）", () => {
+		const html = render("שלום 世界 🎉");
+		expect(html).toBe('<bdi dir="ltr">שלום 世界 🎉</bdi>');
+		expect(html).not.toContain('dir="auto"');
+		expect(html).not.toContain('dir="rtl"');
 	});
 
 	it("改变方向的控制字符和零宽字符：写成一小块，旁边的文字原样，输出里没有那两个字符", () => {
@@ -269,7 +377,7 @@ describe("UntrustedText 组件", () => {
 		expect(html).toContain("gpj.exe");
 		expect(html).not.toContain("\u202E");
 		expect(html).not.toContain("\u200B");
-		expect(html).toMatch(/^<bdi>/);
+		expect(html).toMatch(/^<bdi dir="ltr">/);
 	});
 
 	it("写出来的那一小块自己是从左到右的，并带说明", () => {
@@ -278,15 +386,21 @@ describe("UntrustedText 组件", () => {
 		expect(html).toContain("文字方向控制字符");
 	});
 
-	it('dir="ltr"（一整句里夹着控制台自己的文案时）：整句按从左到右排，名字里从右到左的字母自己成一段', () => {
-		const html = renderToStaticMarkup(
-			createElement(UntrustedText, { text: "Agent مرحبا 不在线", dir: "ltr" }),
-		);
-		expect(html).toBe('<bdi dir="ltr">Agent مرحبا 不在线</bdi>');
+	it("写出来的那一小块选中复制出去是带尖括号的 ⟨U+202E⟩（和属性里 untrustedPlain 的写法一致），不和原文里本来就写着的「U+202E」混；括号只给复制用（sr-only）", () => {
+		const html = render("a\u202Eb");
+		expect(html).toContain('<span class="sr-only">⟨</span>U+202E<span class="sr-only">⟩</span>');
+		// 去掉标签就是复制出去的文字
+		expect(html.replace(/<[^>]*>/g, "")).toBe("a⟨U+202E⟩b");
+		expect(render("原文就写着 U+202E")).toBe("原文就写着 U+202E");
 	});
 
-	it("多行（text）：换行原样留在文字里", () => {
-		expect(render("第一行\n第二行", "text")).toBe("<bdi>第一行\n第二行</bdi>");
+	it("一整句里夹着从右到左的字母：整句是一个 <bdi dir=ltr>，从右到左的字母自己成一段", () => {
+		expect(render("Agent مرحبا 不在线")).toBe('<bdi dir="ltr">Agent مرحبا 不在线</bdi>');
+	});
+
+	it("多行（text）：换行原样留在文字里，普通的文字不包一层", () => {
+		expect(render("第一行\n第二行", "text")).toBe("第一行\n第二行");
+		expect(render("第一行\nשלום", "text")).toBe('<bdi dir="ltr">第一行\nשלום</bdi>');
 	});
 });
 
@@ -294,11 +408,13 @@ describe("Truncate 的 untrusted 选项", () => {
 	const render = (text: string, props: Record<string, unknown> = {}) =>
 		renderToStaticMarkup(createElement(Truncate, { untrusted: true, ...props } as never, text));
 
-	it("文字里没有要写出来的字符：原样，方向隔离（dir=auto 加 unicode-bidi: isolate）", () => {
+	it("文字里没有要写出来的字符：原样，方向隔离（dir=ltr 加 unicode-bidi: isolate；不用 auto：以从右到左的字母开头的混排文字不能整行翻过来）", () => {
 		const html = render("my-agent");
 		expect(html).toContain("my-agent");
-		expect(html).toContain('dir="auto"');
+		expect(html).toContain('dir="ltr"');
+		expect(html).not.toContain('dir="auto"');
 		expect(html).toContain("[unicode-bidi:isolate]");
+		expect(render("שלום 世界 🎉")).not.toContain('dir="auto"');
 	});
 
 	it("方向控制字符和零宽字符写成一小块，输出里没有那两个字符", () => {

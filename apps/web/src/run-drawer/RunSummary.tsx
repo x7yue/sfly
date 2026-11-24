@@ -174,7 +174,7 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 				{view.label}
 			</StatusPill>
 			<span className="min-w-48 flex-1 text-fg-2">
-				<UntrustedText dir="ltr" text={text} />
+				<UntrustedText text={text} />
 			</span>
 		</fieldset>
 	);
@@ -311,7 +311,7 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	if (logs.error) {
 		return (
 			<p className="m-0 text-xs text-danger-fg">
-				{MESSAGE.loadFailed("日志")}：{logs.error}
+				{MESSAGE.loadFailed("日志")}：<UntrustedText text={logs.error} mode="text" />
 			</p>
 		);
 	}

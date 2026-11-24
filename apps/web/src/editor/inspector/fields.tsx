@@ -41,13 +41,13 @@ function Breakable({ text }: { text: string }) {
 	});
 }
 
-/** 名称可能是节点包的输入键（别人写的）：先写出看不见的字符再拆，方向隔离在 `<bdi>` 里，不影响旁边的星号和类型。 */
+/** 名称可能是节点包的输入键（别人写的）：先写出看不见的字符再拆，方向隔离在 `<bdi dir="ltr">` 里（基准方向一律从左到右，和 `UntrustedText` 一样），不影响旁边的星号和类型。 */
 function LabelText({ text, required }: { text: string; required: boolean | undefined }) {
 	const safe = untrustedPlain(text);
 	const head = safe.slice(0, -CHARS_KEPT_WITH_STAR);
 	const tail = safe.slice(-CHARS_KEPT_WITH_STAR);
 	return (
-		<bdi>
+		<bdi dir="ltr">
 			<Breakable text={head} />
 			<span className="whitespace-nowrap">
 				{tail}

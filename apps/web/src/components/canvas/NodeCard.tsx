@@ -215,13 +215,14 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				<div className={cn("absolute right-5 bottom-[calc(100%-1px)] flex gap-1", LOD_HIDDEN)}>
 					{tags.map((tag) => (
 						<span
-							key={tag}
+							// Agent 名和控制台自己的标签可以同名（Agent 叫 always）。
+							key={`${tag.untrusted ? "agent" : "own"}:${tag.text}`}
 							className={cn(
 								"rounded-md border border-border-strong bg-raised-2 px-1.5 leading-[1.4] text-fg-2",
 								ZOOM_TEXT_12,
 							)}
 						>
-							{tag}
+							{tag.untrusted ? <UntrustedText text={tag.text} /> : tag.text}
 						</span>
 					))}
 				</div>

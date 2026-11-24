@@ -125,7 +125,7 @@ export function Attention({
 									)}
 								</p>
 								<p className="m-0 mt-0.5 wrap-anywhere text-fg-2">
-									<UntrustedText dir="ltr" text={why} mode="text" />
+									<UntrustedText text={why} mode="text" />
 								</p>
 							</div>
 							<Button size="sm" onClick={() => onOpen(target)}>
@@ -208,7 +208,7 @@ export function OtherWarnings({
 			</div>
 			{logs.error ? (
 				<p className="m-0 text-xs text-danger-fg">
-					{MESSAGE.loadFailed("日志")}：{logs.error}
+					{MESSAGE.loadFailed("日志")}：<UntrustedText text={logs.error} mode="text" />
 				</p>
 			) : !logs.loaded ? (
 				<Skeleton className="h-10 w-full" />

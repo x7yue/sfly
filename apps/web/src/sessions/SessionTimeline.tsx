@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { Elapsed } from "#/components/elapsed";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { StatusDot } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
 import { SESSION } from "#/lib/copy";
@@ -37,7 +38,7 @@ export function SessionTimeline({
 					</Button>
 					{olderError && (
 						<span role="alert" className="text-xs text-danger-fg">
-							{SESSION.page.loadOlderFailed}：{olderError.message}
+							{SESSION.page.loadOlderFailed}：<ErrorMessage error={olderError} />
 						</span>
 					)}
 				</div>
@@ -113,7 +114,7 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 							tone === "danger" && "text-danger-fg",
 						)}
 					>
-						<UntrustedText dir="ltr" text={turnEndText(item)} />
+						<UntrustedText text={turnEndText(item)} />
 					</span>
 					<span aria-hidden className="h-px flex-1 bg-border-soft" />
 				</li>

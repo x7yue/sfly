@@ -1,6 +1,6 @@
 import { bucketStartMs } from "@sfly/schema";
 import { cn } from "cn";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, type ReactNode, useCallback, useMemo, useState } from "react";
 import { UntrustedText } from "#/components/untrusted-text";
 import { formatClock, formatMetric } from "#/lib/format";
 import { untrustedPlain } from "#/lib/untrusted-text";
@@ -102,7 +102,7 @@ export function MetricChart({
 	/** 横轴；null 时显示 empty。 */
 	window: TimeRange | null;
 	/** 没有数据时的说明。 */
-	empty: string;
+	empty: ReactNode;
 	dense: boolean;
 	truncated?: boolean;
 	/** 标题旁的其他提示（例如「序列超限」），排在「已截断」之后。 */

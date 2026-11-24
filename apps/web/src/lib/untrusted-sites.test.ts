@@ -77,7 +77,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			},
 			"dashboard/RunBlock.tsx": { wrapped: ["activeDetail(node, now)"] },
 			"agents/TaskSlot.tsx": { truncate: 2 },
-			"components/slot-cell.tsx": { wrapped: ["summary"] },
+			"components/slot-cell.tsx": { wrapped: ["summary"], truncate: 1 },
 			"components/canvas/ActivityLine.tsx": {
 				wrapped: [
 					'activity.kind === "action" ? activity.name : activity.message',
@@ -89,6 +89,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 					"text",
 					'[node.agent, since ? formatElapsed(now - Date.parse(since)) : null] .filter(Boolean) .join(" · ")',
 					"progress.message",
+					"logs.error",
 					"line.text",
 				],
 			},
@@ -96,6 +97,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 				wrapped: [
 					"withoutErrorClass(reason) || NODE_STATUS.failed.label",
 					"withoutErrorClass(reason)",
+					"nodeCardText(node, info).title",
 					"view.agent",
 					"activity.message",
 					"view.error.kind",
@@ -103,6 +105,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 					"view.error.location",
 					"reason",
 					"reason",
+					'state.error.message, "text"',
 				],
 			},
 			"monitor/Attention.tsx": {
@@ -110,6 +113,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 					"item.title",
 					"readingValue(item)",
 					"why",
+					"logs.error",
 					"line.text",
 					"`${item.title}，${anomalyText(item, focus.generated_at)}`",
 				],
@@ -134,6 +138,7 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			"monitor/LogList.tsx": { wrapped: ["line.text"] },
 			"monitor/BottomPanel.tsx": {
 				wrapped: [
+					"logs.error",
 					'a.agent ?? "控制面"',
 					"ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind",
 					"a.error.kind",
@@ -173,30 +178,49 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			},
 			"components/canvas/NodeCard.tsx": {
 				wrapped: [
-					"nodeDefaultTitle(node, info)",
+					"tag.text",
 					"title",
 					"shownSlot.text",
 					"shownCaption",
 					"title",
 					"caption",
 					"title",
+					"nodeDefaultTitle(node, info)",
 				],
 			},
 			"editor/inspector/Inspector.tsx": {
 				wrapped: [
-					"nodeDefaultTitle(node, info)",
+					"w.message",
+					"nodeCardText(node, info).title",
 					"`${node.package}/${node.node}`",
 					'`@${version ?? "未锁定"}`',
+					"fieldLabel(node, e.field)",
 					"paragraph",
 					"`${node.package}/${node.node}`",
-					"nodeCardText(node, info).title",
+					"fieldLabel(node, e.field)",
+					"nodeDefaultTitle(node, info)",
 				],
 			},
 			"editor/OutlinePanel.tsx": { wrapped: ["n.title"], truncate: 1 },
 			"editor/inspector/NodeOutputs.tsx": { wrapped: ["name", "description"] },
-			"editor/inspector/node-forms.tsx": { wrapped: ["name"] },
+			"editor/inspector/node-forms.tsx": {
+				wrapped: [
+					"formNote",
+					"name",
+					"name",
+					"problem",
+					"name",
+					'problems.join("；")',
+					'problems.join("；")',
+					"latest",
+					'defaultAgent ?? "未设置"',
+					"name",
+					"v",
+					"locked",
+				],
+			},
 			"editor/inspector/value-fields.tsx": {
-				wrapped: ["name", "JSON.stringify(schema.default)", "JSON.stringify(c)"],
+				wrapped: ["m", "name", "JSON.stringify(schema.default)", "JSON.stringify(c)"],
 			},
 			"editor/inspector/fields.tsx": { wrapped: ["type", "help", "text"] },
 			"editor/inspector/ReferenceList.tsx": {
@@ -261,7 +285,14 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			},
 			"focus/FocusChart.tsx": { wrapped: ["item.title", "FOCUS.chartMissing(item.chart)"] },
 			"focus/FocusList.tsx": {
-				wrapped: ["removed.name", "reason", "focusName(item)", "announcement", "item.chart"],
+				wrapped: [
+					"edit.summary",
+					"removed.name",
+					"reason",
+					"focusName(item)",
+					"announcement",
+					"item.chart",
+				],
 				truncate: 1,
 			},
 			"focus/FocusPlot.tsx": { wrapped: ["focusSeriesName({ metrics }, s)", "label"] },
@@ -295,6 +326,19 @@ const INVENTORY: { area: string; files: Record<string, Entry> }[] = [
 			"components/page.tsx": { wrapped: ["title"] },
 		},
 	},
+	{
+		area: "接口的错误信息（弹窗的 FormAlert、加载失败的 ErrorState）、编辑器的检查警告、卡片的警告徽标、引用选择器、版本对比、飞书机器人的删除对话框、图表标题的读屏名称",
+		files: {
+			"components/canvas/CardFocus.tsx": { wrapped: ["item.chart"] },
+			"components/canvas/WarningBadge.tsx": { wrapped: ["w.message"] },
+			"components/feedback/states.tsx": { wrapped: ["message", "errorSummary(error)"] },
+			"components/ui/form-field.tsx": { wrapped: ["child"] },
+			"editor/inspector/ReferencePicker.tsx": { wrapped: ["value", "value"] },
+			"editor/inspector/ZoomEditor.tsx": { wrapped: ["name"] },
+			"feishu-bots/dialogs.tsx": { wrapped: ["reference.input"] },
+			"versions/DocumentDiffView.tsx": { wrapped: ["text", "tail", "tail"] },
+		},
+	},
 ];
 
 const SRC = join(import.meta.dirname, "..");
@@ -302,6 +346,7 @@ const SRC = join(import.meta.dirname, "..");
 const IMPLEMENTATION = new Set([
 	"components/untrusted-text.tsx",
 	"components/ui/truncate.tsx",
+	"components/feedback/error-message.tsx",
 	"lib/untrusted-text.ts",
 ]);
 
@@ -391,6 +436,26 @@ describe("别人写的文字经 UntrustedText 显示：清单", () => {
 			unlisted,
 			"这些文件用了 UntrustedText / untrustedPlain / Truncate untrusted，请记进清单",
 		).toEqual([]);
+	});
+
+	it("接口的错误信息写在页面上一律经组件：JSX 里没有裸的 `{…error.message}`（弹窗里的错误用 FormAlert、通知用 notify，它们自己处理字符串）", () => {
+		// 控制面拼出来的句子里常嵌着 Agent 报的原文（Agent 名、更新失败的原因），不逐条判断哪一条里有别人的文字。
+		// 只查最常见的写法（`{query.error.message}`、`{error.message}`）；别的写法（先赋给变量再显示）发现不了，新写的地方用 `ErrorMessage`。
+		const raw = /\{[^{}]*\b(?:error|err)\??\.message\s*\}/;
+		const offenders = sourceFiles(SRC)
+			.map((path) => relative(SRC, path))
+			.filter((file) => file !== "components/feedback/error-message.tsx")
+			.flatMap((file) =>
+				readFileSync(join(SRC, file), "utf8")
+					.split("\n")
+					.flatMap((line, index) =>
+						// 通知的 `description:` 里是字符串，`notify` 自己处理；注释里写的例子不算。
+						raw.test(line) && !/description:|^\s*(?:\*|\/\/)/.test(line)
+							? [`${file}:${index + 1}`]
+							: [],
+					),
+			);
+		expect(offenders, "页面上显示的错误信息请用 <ErrorMessage error={…} />").toEqual([]);
 	});
 
 	it("清单里的文件都存在", () => {

@@ -16,7 +16,7 @@ export function ReadinessLine({ readiness }: { readiness: Readiness }) {
 		return (
 			<p id={READINESS_ID} data-testid="readiness" data-ready="true" className="m-0 text-sm">
 				<StatusPill kind="ok" className="text-sm">
-					<UntrustedText dir="ltr" text={SESSION.ready(readiness.workbench)} />
+					<UntrustedText text={SESSION.ready(readiness.workbench)} />
 				</StatusPill>
 			</p>
 		);
@@ -29,7 +29,7 @@ export function ReadinessLine({ readiness }: { readiness: Readiness }) {
 			<ul className="m-0 mt-1 flex list-none flex-col gap-0.5 p-0 pl-3.5 text-fg-2">
 				{readinessProblems(readiness).map((problem) => (
 					<li key={problem}>
-						<UntrustedText dir="ltr" text={problem} />
+						<UntrustedText text={problem} />
 					</li>
 				))}
 			</ul>

@@ -71,7 +71,8 @@ export function Truncate(props: TruncateProps) {
 
 /**
  * 截断的那一层：`data-truncate-clip` 让外层的交互元素找到它、量它有没有被截断。`untrusted`：别人写的文字，方向隔离
- * （`dir="auto"` 加 `unicode-bidi: isolate`：从右到左的文字自己按自己的方向排，省略号也在它的末尾）；
+ * （`dir="ltr"` 加 `unicode-bidi: isolate`：**基准方向一律是从左到右**，和整个控制台一样；不用 `dir="auto"`，那样以从右到左的字母开头的
+ * 混排文字会整行翻过来，省略号也跑到另一头，和不经过这里时的显示不一样）；
  * 不带 `keepEnd` 时 `children` 可以是组件（`UntrustedText`），带 `keepEnd` 时必须是字符串（按字符数拆成两段）。
  */
 function Clipped({
@@ -85,7 +86,7 @@ function Clipped({
 	clipRef?: Ref<HTMLSpanElement>;
 	untrusted?: boolean;
 }) {
-	const isolate = untrusted ? { dir: "auto" as const, className: "[unicode-bidi:isolate]" } : {};
+	const isolate = untrusted ? { dir: "ltr" as const, className: "[unicode-bidi:isolate]" } : {};
 	const split = keepEnd > 0 && typeof children === "string" && keepEnd < children.length;
 	// 拆成两段画时读屏会在两段之间读出一个停顿（「sub _ping」）：看得见的两段对读屏隐藏，读屏读完整的一段。
 	return split ? (

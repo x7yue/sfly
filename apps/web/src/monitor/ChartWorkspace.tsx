@@ -14,6 +14,7 @@ import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
 import { BarChart3Icon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
@@ -879,11 +880,16 @@ function PlatformGroup({
 	const window = data
 		? chartWindow({ started_at: data.from, ended_at: run.ended_at }, range, now)
 		: null;
-	const empty = data
-		? MESSAGE.noDataInRange
-		: error
-			? `无法加载：${error.message}`
-			: MESSAGE.loading;
+	const empty = data ? (
+		MESSAGE.noDataInRange
+	) : error ? (
+		<>
+			无法加载：
+			<ErrorMessage error={error} />
+		</>
+	) : (
+		MESSAGE.loading
+	);
 	return (
 		<GroupShell
 			groupKey={PLATFORM_KEY}

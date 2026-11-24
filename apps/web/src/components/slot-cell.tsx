@@ -83,7 +83,9 @@ export function SlotCell({
 			<div className="mt-0.5 flex min-w-0 text-xs text-fg-3">
 				<Truncate>{`${taskChainLabel(task)} · ${attemptLabel(task.attempt)}`}</Truncate>
 				<span className="flex-none whitespace-pre"> · </span>
-				<Truncate className="font-mono">{task.node_type}</Truncate>
+				<Truncate untrusted className="font-mono">
+					{task.node_type}
+				</Truncate>
 			</div>
 			{children}
 		</li>

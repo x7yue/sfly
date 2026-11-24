@@ -16,6 +16,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
 import { actionCount } from "#/actions/action-table";
 import { useActionSummary } from "#/actions/use-task-actions";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
@@ -632,7 +633,8 @@ function LogsView<L extends LogLineView>({
 			)}
 			{logs.error && (
 				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
-					读取日志失败：{logs.error}
+					读取日志失败：
+					<UntrustedText text={logs.error} mode="text" />
 				</p>
 			)}
 			{lines.length === 0 && !logs.hasOlder && !logs.hasNewer ? (
@@ -907,7 +909,13 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 	const { refetch } = query;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 状态变化时重新获取
 	useEffect(() => void refetch(), [attempt.status, refetch]);
-	if (query.error) return <Hint>无法加载产物：{query.error.message}</Hint>;
+	if (query.error)
+		return (
+			<Hint>
+				无法加载产物：
+				<ErrorMessage error={query.error} />
+			</Hint>
+		);
 	if (!query.data) return <Hint>{MESSAGE.loading}</Hint>;
 	if (query.data.expired) return <Hint>这次运行的产物已超过保留期，已被清理。</Hint>;
 	if (query.data.artifacts.length === 0) return <Hint>这次尝试没有产物。</Hint>;

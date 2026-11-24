@@ -71,40 +71,87 @@ export type NameProblem =
 type Previous = "start" | "base" | "joiner" | "variation_of_base";
 
 /**
- * 名字里第一个不合格的地方；没有问题时为 undefined。名字不含任何字符（空串）时没有问题（「不能为空」由各处自己的长度检查说）。
- * 先看每个字符在不在拒绝表里（{@link REJECTED_NAME_CHARACTER}），再看三种例外的位置，最后看有没有看得见的字符。
+ * 一个字符怎么判：`ok` 合格；`rejected` 在拒绝表里（{@link REJECTED_NAME_CHARACTER}）；`misplaced` 是三种例外之一但位置不对。
+ * `visible`：它是一个看得见的字符（不是空白、不是三种例外、没有被拒绝）：名字里要有至少一个。
  */
-export function nameProblem(text: string): NameProblem | undefined {
-	let position = 0;
+export interface ScannedCharacter {
+	character: string;
+	codePoint: number;
+	verdict: "ok" | "rejected" | "misplaced";
+	visible: boolean;
+}
+
+/**
+ * **位置规则只有这一份**：先看每个字符在不在拒绝表里，再看三种例外的位置（紧跟在一个看得见的字符后面）。名字的检查（{@link nameProblem}）
+ * 和控制台显示别人写的文字时哪些字符要写出来（`apps/web/src/lib/untrusted-text.ts`）用的都是它，不各抄一份。
+ * 逐个字符给出判断（按码位，不是 UTF-16 的个数），调用方可以在第一个不合格的地方停下。
+ *
+ * `layout`：换行（`\n`）、制表符（`\t`）和换行前的回车（`\r\n` 里的 `\r`）是排版，合格，状态回到「开头」，不算看得见的字符；
+ * 只给可以多行的正文用（控制台的失败原因、日志、输出），名字不传。
+ */
+export function* scanCharacters(
+	text: string,
+	options: { layout?: boolean } = {},
+): Generator<ScannedCharacter, void, undefined> {
+	const characters = options.layout ? Array.from(text) : undefined;
 	let previous: Previous = "start";
-	let visible = false;
+	let index = 0;
 	for (const character of text) {
-		position++;
 		const codePoint = character.codePointAt(0) as number;
-		if (REJECTED_NAME_CHARACTER.test(character)) {
-			return { kind: "rejected", position, codePoint };
+		const next = characters?.[++index];
+		if (
+			options.layout &&
+			(codePoint === 0x0a || codePoint === 0x09 || (codePoint === 0x0d && next === "\n"))
+		) {
+			previous = "start";
+			yield { character, codePoint, verdict: "ok", visible: false };
+			continue;
 		}
-		if (isJoiner(codePoint)) {
+		if (REJECTED_NAME_CHARACTER.test(character)) {
+			previous = "start";
+			yield { character, codePoint, verdict: "rejected", visible: false };
+		} else if (isJoiner(codePoint)) {
 			// 前面是一个看得见的字符；零宽连接符前面也可以是紧跟在字符后面的一个变体选择符（❤️‍🔥），零宽不连字符不行。
 			// 不能在开头，不能连着出现，不能接在空白后面。**结尾的零宽连接符照旧放行**：有的文字的词尾要用它。
 			const afterVariation = previous === "variation_of_base" && codePoint === ZERO_WIDTH_JOINER;
 			if (previous !== "base" && !afterVariation) {
-				return { kind: "misplaced", position, codePoint };
+				previous = "start";
+				yield { character, codePoint, verdict: "misplaced", visible: false };
+			} else {
+				previous = "joiner";
+				yield { character, codePoint, verdict: "ok", visible: false };
 			}
-			previous = "joiner";
 		} else if (isVariationSelector(codePoint)) {
 			// 紧跟在一个字符后面，一个字符后面最多一个。
-			if (previous !== "base") return { kind: "misplaced", position, codePoint };
-			previous = "variation_of_base";
+			if (previous !== "base") {
+				previous = "start";
+				yield { character, codePoint, verdict: "misplaced", visible: false };
+			} else {
+				previous = "variation_of_base";
+				yield { character, codePoint, verdict: "ok", visible: false };
+			}
 		} else {
 			// 空白之后的状态和开头一样：例外不能挂在空白上。
-			if (WHITE_SPACE.test(character)) {
-				previous = "start";
-			} else {
-				previous = "base";
-				visible = true;
-			}
+			const space = WHITE_SPACE.test(character);
+			previous = space ? "start" : "base";
+			yield { character, codePoint, verdict: "ok", visible: !space };
 		}
+	}
+}
+
+/**
+ * 名字里第一个不合格的地方；没有问题时为 undefined。名字不含任何字符（空串）时没有问题（「不能为空」由各处自己的长度检查说）。
+ * 判断见 {@link scanCharacters}，最后看有没有看得见的字符。
+ */
+export function nameProblem(text: string): NameProblem | undefined {
+	let position = 0;
+	let visible = false;
+	for (const scanned of scanCharacters(text)) {
+		position++;
+		if (scanned.verdict !== "ok") {
+			return { kind: scanned.verdict, position, codePoint: scanned.codePoint };
+		}
+		if (scanned.visible) visible = true;
 	}
 	if (position > 0 && !visible) return { kind: "no_visible" };
 	return undefined;

@@ -14,6 +14,7 @@ import { cn } from "cn";
 import { AlertTriangleIcon, CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Banner } from "#/components/feedback/banner";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { UntrustedText } from "#/components/untrusted-text";
@@ -348,11 +349,11 @@ function CheckItem({ row, onLocate }: { row: CheckRow; onLocate?: (nodeId: strin
 			</span>
 			<div className="min-w-0 flex-1">
 				<div>
-					<UntrustedText dir="ltr" text={row.title} />
+					<UntrustedText text={row.title} />
 				</div>
 				{row.detail && (
 					<div className="text-xs text-fg-3">
-						<UntrustedText dir="ltr" text={row.detail} />
+						<UntrustedText text={row.detail} />
 					</div>
 				)}
 				{row.problems.length > 0 && <ProblemList problems={row.problems} onLocate={onLocate} />}
@@ -373,7 +374,7 @@ function ProblemList({
 			{problems.map((p) => (
 				<li key={`${p.code}:${p.node_id ?? ""}:${p.message}`} className="flex items-baseline gap-2">
 					<span className="min-w-0 flex-1">
-						<UntrustedText dir="ltr" text={p.message} />
+						<UntrustedText text={p.message} />
 					</span>
 					{p.node_id && onLocate && (
 						<Button
@@ -403,7 +404,7 @@ function TriggerError({ error, onLocate }: { error: Error; onLocate?: (nodeId: s
 			role="alert"
 			className="mb-3.5 rounded-lg border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-fg"
 		>
-			触发失败：{problems ? "预检没有通过（场景刚刚被修改过）" : error.message}
+			触发失败：{problems ? "预检没有通过（场景刚刚被修改过）" : <ErrorMessage error={error} />}
 			{problems && <ProblemList problems={problems} onLocate={onLocate} />}
 		</div>
 	);

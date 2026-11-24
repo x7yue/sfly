@@ -215,7 +215,10 @@ function WarningList({
 						key={`${annotationId ?? ""}:${nodeId ?? ""}:${w.message}`}
 						className="flex items-start gap-2 rounded-md border border-warn-line bg-warn-soft px-2.5 py-1.5 text-xs text-warn-fg"
 					>
-						<span className="min-w-0 flex-1">{w.message}</span>
+						{/* 整句是控制面拼好的（里面有输入键、Agent 名、包名），拆不开：整句按别人写的文字显示。 */}
+						<span className="min-w-0 flex-1">
+							<UntrustedText text={w.message} />
+						</span>
 						{locate && (
 							<button
 								type="button"
@@ -287,7 +290,7 @@ function NodeInspector({
 		<>
 			<Header
 				onCollapse={onCollapse}
-				title={untrustedPlain(nodeCardText(node, info).title)}
+				title={<UntrustedText text={nodeCardText(node, info).title} />}
 				row={
 					<>
 						<span className="font-mono text-fg-2">{id}</span>
@@ -439,7 +442,8 @@ function NodeInspector({
 								tabIndex={-1}
 								className="m-0 mt-2 text-xs text-danger-fg outline-offset-2"
 							>
-								{fieldLabel(node, e.field)}：{e.message}
+								{/* 位置里拼着输入键、包名（别人写的），整句按别人写的文字显示。 */}
+								<UntrustedText text={fieldLabel(node, e.field)} />：{e.message}
 							</p>
 						))}
 				</TabsContent>
@@ -686,9 +690,12 @@ function ScenarioOverview({ context }: { context: InspectorContext }) {
 										<code className="font-mono">{node ? nodeNameWithId(node) : nodeId}</code>
 									)}
 									{annotationId && <>注释框 {nameWithId(annotationId, annotation?.title)}</>}{" "}
-									{annotationId
-										? (ANNOTATION_FIELD_LABEL[e.field] ?? e.field)
-										: fieldLabel(node, e.field)}
+									{annotationId ? (
+										(ANNOTATION_FIELD_LABEL[e.field] ?? e.field)
+									) : (
+										// 位置里拼着输入键、包名（别人写的），整句按别人写的文字显示。
+										<UntrustedText text={fieldLabel(node, e.field)} />
+									)}
 									：{e.message}
 								</span>
 								{(nodeId || annotationId) && (

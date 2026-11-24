@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { NodeNameInline } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
@@ -304,7 +305,10 @@ function RunSwitcher({ run }: { run: RunView }) {
 					<DropdownMenuLabel>本场景的运行</DropdownMenuLabel>
 					{runs.isPending && <p className="m-0 px-1.5 py-1 text-xs text-fg-3">{MESSAGE.loading}</p>}
 					{runs.error && (
-						<p className="m-0 px-1.5 py-1 text-xs text-danger-fg">无法加载：{runs.error.message}</p>
+						<p className="m-0 px-1.5 py-1 text-xs text-danger-fg">
+							无法加载：
+							<ErrorMessage error={runs.error} />
+						</p>
 					)}
 					{runs.data?.runs.map((r) => {
 						const s = runStatusView(r.status, { cancelling: r.cancelling });

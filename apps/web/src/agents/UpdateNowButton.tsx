@@ -10,6 +10,7 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
 import { NodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
@@ -127,7 +128,12 @@ export function UpdateNowButton({
 								</ul>
 							</div>
 						)}
-						{update.isError && <FormAlert>立即更新失败：{update.error.message}</FormAlert>}
+						{update.isError && (
+							<FormAlert>
+								立即更新失败：
+								<ErrorMessage error={update.error} />
+							</FormAlert>
+						)}
 					</DialogBody>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => setOpen(false)}>

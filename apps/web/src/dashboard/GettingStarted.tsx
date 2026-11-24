@@ -230,7 +230,7 @@ function StepRow({ step, index, next }: { step: Step; index: number; next: boole
 				<h3 className={cn("m-0 text-base font-semibold", !next && "text-fg-2")}>{step.title}</h3>
 				{step.done ? (
 					<p className="m-0 mt-0.5 text-fg-1">
-						<UntrustedText dir="ltr" text={step.fact} />
+						<UntrustedText text={step.fact} />
 					</p>
 				) : (
 					<>

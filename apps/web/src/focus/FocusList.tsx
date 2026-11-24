@@ -163,7 +163,9 @@ export function FocusListPage({
 				{edit && (
 					<p className="m-0 text-fg-2">
 						{TERM.lastEdited} <b className="font-medium text-fg-1">{edit.updated_by}</b> ·{" "}
-						{formatDateTime(edit.updated_at)}，{edit.summary}
+						{formatDateTime(edit.updated_at)}，
+						{/* 控制面拼的句子，里面带着图表标题（节点包声明的、没起名时的显示名）：整句当别人写的文字。 */}
+						<UntrustedText text={edit.summary} />
 					</p>
 				)}
 			</div>
@@ -248,7 +250,7 @@ export function FocusListPage({
 										</div>
 										{reason && (
 											<div className="px-2.25 text-xs text-fg-3">
-												<UntrustedText dir="ltr" text={reason} />
+												<UntrustedText text={reason} />
 											</div>
 										)}
 									</div>

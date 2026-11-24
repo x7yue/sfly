@@ -1,36 +1,24 @@
-import { cn } from "cn";
 import { Fragment } from "react";
-import { type UntrustedMode, untrustedSegments } from "#/lib/untrusted-text";
+import { isPlainText, type UntrustedMode, untrustedSegments } from "#/lib/untrusted-text";
 
 /**
  * 显示「别人写的、平台不保证内容」的文字的公共组件（docs/DESIGN-SYSTEM.md「不可信的文字」，#699）：Agent 报的名称和版本、节点写的
- * 说明和输出、失败原因和出错位置、日志、动作的名称和字段、产物的名称、节点包的元信息……**这一类文字只经它显示**：
+ * 说明和输出、失败原因和出错位置、日志、动作的名称和字段、产物的名称、节点包的元信息、接口的错误信息……**这一类文字只经它显示**：
  *
- * - **文字方向隔离在自己的范围里**（`<bdi>`：隔离、方向跟着文字自己的字母走）：从右到左书写的文字照常显示，不影响旁边的文字；
- * - **看不见的字符和控制字符写成看得见的样子**（`U+202E` 一小块，悬停和读屏有一句说明）：改变文字方向的控制字符、零宽字符、
- *   终端的转义字符都不再生效，也藏不了内容。字符表是 `@sfly/schema` 的 `text-safety.ts` 里那一张（见 `lib/untrusted-text`）。
+ * - **文字方向隔离在自己的范围里，基准方向一律是从左到右**（`<bdi dir="ltr">`）：从右到左书写的文字自己成一段，不影响旁边的文字，
+ *   也不会因为它在开头就把整行翻过来；整个控制台就是从左到右的基准方向，所以任何文字的显示都和不经它时一样，只是影响不到旁边了；
+ * - **看不见的字符和控制字符写成看得见的样子**（`U+202E` 一小块，悬停和读屏有一句说明，选中复制出去是 `⟨U+202E⟩`）：改变文字方向的
+ *   控制字符、零宽字符、终端的转义字符都不再生效，也藏不了内容。字符表和位置规则是 `@sfly/schema` 的 `text-safety.ts` 里那一份（见 `lib/untrusted-text`）；
+ * - **普通的文字不包一层**：没有要写出来的字符、也没有从右到左书写的字母时，直接是文字节点（页面上的节点数和原来一样）。
  *
  * `mode`：`line`（默认）单行的名字，所有控制字符都写出来；`text` 可以多行的正文（失败原因、日志、输出），换行和制表符照常。
- * `dir`：默认 `auto`（方向跟着文字自己的字母走：整段都是别人写的文字时用）；一整句里夹着控制台自己的文案和别人写的名字时
- * （「Agent 某某 不在线」）传 `ltr`：整句按控制台的方向排，名字里从右到左的字母自己成一段，不把整句的顺序带反。
  * 属性里（`title`、`aria-label`）和按文字截断的地方放不了组件：用 `lib/untrusted-text` 的 `untrustedPlain`，或 `Truncate` 的 `untrusted`。
- * 没有要写出来的字符时只多一个 `<bdi>`，一行日志多一次正则匹配。
  */
-export function UntrustedText({
-	text,
-	mode = "line",
-	dir = "auto",
-	className,
-}: {
-	text: string;
-	mode?: UntrustedMode;
-	dir?: "auto" | "ltr";
-	className?: string;
-}) {
-	const segments = untrustedSegments(text, mode);
+export function UntrustedText({ text, mode = "line" }: { text: string; mode?: UntrustedMode }) {
+	if (isPlainText(text, mode)) return text;
 	return (
-		<bdi dir={dir === "ltr" ? "ltr" : undefined} className={className}>
-			{segments.map((segment, index) =>
+		<bdi dir="ltr">
+			{untrustedSegments(text, mode).map((segment, index) =>
 				segment.kind === "text" ? (
 					// biome-ignore lint/suspicious/noArrayIndexKey: 段按顺序切出来，文字变了整个重排
 					<Fragment key={index}>{segment.text}</Fragment>
@@ -47,7 +35,10 @@ export function UntrustedText({
 	);
 }
 
-/** 一个被写出来的字符：自己是从左到右的一小块，不被周围文字的方向带乱。 */
+/**
+ * 一个被写出来的字符：自己是从左到右的一小块，不被周围文字的方向带乱。选中复制出去的文字带尖括号（`⟨U+202E⟩`，
+ * 和属性里 `untrustedPlain` 的写法一致）：不带的话，和原文里本来就写着「U+202E」的分不开。括号只给复制用（`sr-only`），显示不变。
+ */
 function HiddenCharacter({ label, name }: { label: string; name: string }) {
 	return (
 		<span
@@ -56,11 +47,11 @@ function HiddenCharacter({ label, name }: { label: string; name: string }) {
 			title={name}
 			role="img"
 			aria-label={name}
-			className={cn(
-				"mx-px inline-block rounded-sm border border-border-strong bg-raised px-1 align-baseline font-mono text-[0.85em] leading-none whitespace-nowrap text-fg-2 not-italic [unicode-bidi:isolate]",
-			)}
+			className="mx-px inline-block rounded-sm border border-border-strong bg-raised px-1 align-baseline font-mono text-[0.85em] leading-none whitespace-nowrap text-fg-2 not-italic [unicode-bidi:isolate]"
 		>
+			<span className="sr-only">⟨</span>
 			{label}
+			<span className="sr-only">⟩</span>
 		</span>
 	);
 }

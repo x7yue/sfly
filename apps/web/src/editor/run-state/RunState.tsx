@@ -28,6 +28,7 @@ import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
 import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { runNodeName } from "#/components/node-name";
 import { SectionHeading } from "#/components/page";
 import { nodeStatusView, StatusPill } from "#/components/status";
@@ -282,7 +283,7 @@ export function RunStateBadge({ state }: { state: CanvasRun }) {
 	return (
 		<span
 			data-testid="canvas-run"
-			title={state.status === "error" ? state.error.message : undefined}
+			title={state.status === "error" ? untrustedPlain(state.error.message, "text") : undefined}
 			className="flex items-center gap-1.5 px-1.5"
 		>
 			{body}
@@ -368,7 +369,15 @@ export const RunStateInspector = forwardRef<
 	);
 });
 
-function Header({ row, title, onCollapse }: { row: ReactNode; title: string; onCollapse(): void }) {
+function Header({
+	row,
+	title,
+	onCollapse,
+}: {
+	row: ReactNode;
+	title: ReactNode;
+	onCollapse(): void;
+}) {
 	return (
 		<div className="flex-none border-b border-border-soft px-3.5 pt-3 pb-2.5">
 			<div className="flex items-center gap-1.75 text-xs text-fg-3">
@@ -463,7 +472,7 @@ function NodeRunInspector({
 						</span>
 					</>
 				}
-				title={nodeCardText(node, info).title}
+				title={<UntrustedText text={nodeCardText(node, info).title} />}
 				onCollapse={onCollapse}
 			/>
 			<div
@@ -558,7 +567,7 @@ function NodeRunInspector({
 				)}
 				{actions.error && !actionSummary && (
 					<p role="alert" className="m-0 mt-3 text-xs text-danger-fg">
-						{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
+						{MESSAGE.loadFailed(TERM.action)}：<ErrorMessage error={actions.error} />
 					</p>
 				)}
 				<p className="m-0 mt-3.5 mb-2.5 text-xs text-fg-3">{HINT}</p>
@@ -645,7 +654,7 @@ function RunOverview({
 		case "error":
 			body = (
 				<p role="alert" className="m-0 text-xs text-danger-fg">
-					{MESSAGE.loadFailed(TERM.run)}：{state.error.message}
+					{MESSAGE.loadFailed(TERM.run)}：<ErrorMessage error={state.error} />
 				</p>
 			);
 			break;

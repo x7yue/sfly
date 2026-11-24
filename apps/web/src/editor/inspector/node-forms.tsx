@@ -18,6 +18,7 @@ import {
 } from "@sfly/schema";
 import { useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
+import { UntrustedText } from "#/components/untrusted-text";
 import { MESSAGE, subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { untrustedPlain } from "#/lib/untrusted-text";
@@ -117,7 +118,12 @@ export function PackageParams({
 					找不到这个节点类型的元信息，不能生成参数表单。
 				</p>
 			)}
-			{formNote && <p className="m-0 mb-3 text-xs text-fg-3">{formNote}</p>}
+			{formNote && (
+				// 整句里拼着 Agent 名，拆不开：整句按别人写的文字显示。
+				<p className="m-0 mb-3 text-xs text-fg-3">
+					<UntrustedText text={formNote} />
+				</p>
+			)}
 			{type && properties.length === 0 && (
 				<p className="m-0 mb-3 text-xs text-fg-3">这个节点类型没有输入。</p>
 			)}
@@ -140,8 +146,11 @@ export function PackageParams({
 			{unchecked.map((name) => (
 				<div key={name} className="mb-3 flex items-center gap-2 text-xs text-fg-3">
 					<span className="min-w-0 flex-1">
-						输入 <code className="font-mono">{name}</code>：节点派发到的 Agent
-						的声明查不到，没有检查
+						输入{" "}
+						<code className="font-mono">
+							<UntrustedText text={name} />
+						</code>
+						：节点派发到的 Agent 的声明查不到，没有检查
 					</span>
 					<Button size="sm" variant="ghost" onClick={() => set(name, undefined)}>
 						移除
@@ -151,7 +160,11 @@ export function PackageParams({
 			{undeclared.map((name) => (
 				<div key={name} className="mb-3 flex items-center gap-2 text-xs text-warn-fg">
 					<span className="min-w-0 flex-1">
-						输入 <code className="font-mono">{name}</code> 没有在节点类型中声明
+						输入{" "}
+						<code className="font-mono">
+							<UntrustedText text={name} />
+						</code>{" "}
+						没有在节点类型中声明
 					</span>
 					<Button size="sm" variant="ghost" onClick={() => set(name, undefined)}>
 						移除
@@ -170,7 +183,7 @@ export function PackageParams({
 						label="节点 Agent"
 						value={node.agent}
 						agents={agents}
-						emptyLabel={`跟随默认（${defaultAgent ?? "未设置"}）`}
+						emptyLabel={`跟随默认（${untrustedPlain(defaultAgent ?? "未设置")}）`}
 						onChange={(agent) => {
 							const { agent: _old, ...rest } = node;
 							onChange(agent ? { ...rest, agent } : rest);
@@ -300,11 +313,13 @@ function SettingField({
 		},
 		onChange,
 	});
+	const problem = problems[0];
 	return (
 		<Field
 			label={setting.label}
 			fieldKey={fieldKey}
-			error={field.error ?? problems[0]}
+			// 警告整句是控制面拼好的（里面有节点名、包名），拆不开：整句按别人写的文字显示。
+			error={field.error ?? (problem === undefined ? undefined : <UntrustedText text={problem} />)}
 			help={setting.help}
 		>
 			{(control) => (
@@ -386,7 +401,10 @@ export function AsyncMapping({
 			{extra.map((name) => (
 				<div key={name} className="mb-3 flex items-center gap-2 text-xs text-warn-fg">
 					<span className="min-w-0 flex-1">
-						映射了子流程没有声明的参数 <code className="font-mono">{name}</code>
+						映射了子流程没有声明的参数{" "}
+						<code className="font-mono">
+							<UntrustedText text={name} />
+						</code>
 					</span>
 					<Button size="sm" variant="ghost" onClick={() => setParam(name, undefined)}>
 						移除
@@ -495,7 +513,7 @@ export function SubflowNameField({
 		<Field
 			label="子流程名称"
 			required
-			error={problems.length > 0 ? problems.join("；") : undefined}
+			error={problems.length > 0 ? <UntrustedText text={problems.join("；")} /> : undefined}
 			help="场景内唯一；停止子流程节点按名称选择子流程，改名不影响引用"
 		>
 			{(control) => (
@@ -546,7 +564,7 @@ export function StopSubflowField({
 			<Field
 				label="要停止的子流程"
 				required
-				error={problems.length > 0 ? problems.join("；") : undefined}
+				error={problems.length > 0 ? <UntrustedText text={problems.join("；")} /> : undefined}
 				help="只列出本链在这个节点之前触发的子流程（含它们触发的子流程）；改名不影响引用"
 			>
 				{(control) => (
@@ -648,12 +666,12 @@ export function PackageVersionField({
 				{locked === undefined && <NativeSelectOption value="">未锁定</NativeSelectOption>}
 				{published.map((v) => (
 					<NativeSelectOption key={v} value={v}>
-						{v}
+						{untrustedPlain(v)}
 						{v === latest ? "（最新）" : ""}
 					</NativeSelectOption>
 				))}
 				{locked !== undefined && !isDev && !published.includes(locked) && (
-					<NativeSelectOption value={locked}>{locked}（未发布）</NativeSelectOption>
+					<NativeSelectOption value={locked}>{untrustedPlain(locked)}（未发布）</NativeSelectOption>
 				)}
 				{(devAgents.length > 0 || isDev) && (
 					<NativeSelectOption value={DEV_VERSION}>dev（开发版本）</NativeSelectOption>
@@ -661,7 +679,8 @@ export function PackageVersionField({
 			</NativeSelect>
 			{latest && latest !== locked && (
 				<Button size="sm" variant="ghost" onClick={() => onLock(name, latest)}>
-					{locked && !isDev ? `升级到 ${latest}` : `锁定到 ${latest}`}
+					{locked && !isDev ? "升级到 " : "锁定到 "}
+					<UntrustedText text={latest} />
 				</Button>
 			)}
 		</div>

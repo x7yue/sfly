@@ -247,7 +247,6 @@ function ChainSection({ run }: { run: RunView }) {
 									) : (
 										<span className="whitespace-nowrap text-fg-3">
 											<UntrustedText
-												dir="ltr"
 												text={activeDetail({ ...attempt, status: node.status }, now)}
 											/>
 										</span>

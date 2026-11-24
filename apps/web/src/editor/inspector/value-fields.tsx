@@ -2,6 +2,7 @@
 import { describeSchema, isWholeRunState, RUN_STATE_REFERENCE } from "@sfly/orchestration";
 import type { AgentView, FeishuBotView } from "@sfly/schema";
 import { useEffect, useId, useRef } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { untrustedPlain } from "#/lib/untrusted-text";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -329,13 +330,14 @@ function TypedValue({
 	);
 }
 
+/** 字段下面的问题：静态检查的警告整句是控制面拼好的（里面有输入键、Agent 名、包名），拆不开，整句按别人写的文字显示。 */
 export function Problems({ problems }: { problems: string[] }) {
 	if (problems.length === 0) return null;
 	return (
 		<>
 			{problems.map((m) => (
 				<span key={m} className="block">
-					{m}
+					<UntrustedText text={m} />
 				</span>
 			))}
 		</>
