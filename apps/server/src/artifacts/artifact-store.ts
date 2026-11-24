@@ -6,6 +6,12 @@ import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { and, eq, ne, sum } from "drizzle-orm";
 import type { Clock } from "../clock.js";
+import {
+	byteLimitBytesFromMb,
+	byteLimitMessage,
+	isByteLimit,
+	MAX_BYTE_LIMIT,
+} from "../config/byte-limit.js";
 import type { Db } from "../db/database.js";
 import { artifacts, runs, tasks } from "../db/schema.js";
 
@@ -17,18 +23,14 @@ export const DEFAULT_ARTIFACT_LIMIT_BYTES = 1024 * 1024 * 1024;
  * 而且 `Infinity` 和超过 uint64 的值下发给 Agent 时会让派发出错（`BigInt(Infinity)` 抛异常；序列化 `AssignTask` 时
  * `invalid uint64` 让 gRPC 流断开，#477 的审查），所以启动时就拒绝，不留到派发时。
  */
-export const MAX_ARTIFACT_LIMIT_BYTES = Number.MAX_SAFE_INTEGER;
+export const MAX_ARTIFACT_LIMIT_BYTES = MAX_BYTE_LIMIT;
 
 /** 上限（字节）合不合格：1 到 {@link MAX_ARTIFACT_LIMIT_BYTES} 之间的整数。 */
-export const isArtifactLimitBytes = (value: unknown): value is number =>
-	typeof value === "number" &&
-	Number.isInteger(value) &&
-	value >= 1 &&
-	value <= MAX_ARTIFACT_LIMIT_BYTES;
+export const isArtifactLimitBytes = isByteLimit;
 
 /** 上限不合格的说明；`source` 是它的来源（环境变量名、选项名），`actual` 是写的值。 */
 export const artifactLimitMessage = (source: string, actual: unknown): string =>
-	`${source} 不合法：产物合计的上限换算成字节后必须是 1 到 ${MAX_ARTIFACT_LIMIT_BYTES} 之间的整数，实际是 ${String(actual)}`;
+	byteLimitMessage(source, "产物合计的上限", actual);
 
 /**
  * 把 `SFLY_ARTIFACT_LIMIT_MB` 的原文（MB，可以带小数）换算成字节。没设置（或空串）时是 undefined（用默认值）；
@@ -38,12 +40,7 @@ export function artifactLimitBytesFromMb(
 	raw: string | undefined,
 	name = "SFLY_ARTIFACT_LIMIT_MB",
 ): number | undefined {
-	if (raw === undefined || raw === "") return undefined;
-	const bytes = Math.floor(Number(raw) * 1024 * 1024);
-	if (!isArtifactLimitBytes(bytes)) {
-		throw new Error(`${artifactLimitMessage(name, JSON.stringify(raw))}（换算后 ${bytes} 字节）`);
-	}
-	return bytes;
+	return byteLimitBytesFromMb(name, "产物合计的上限", raw);
 }
 
 /**
@@ -65,6 +62,13 @@ export function artifactLimitForWire(limit: number): bigint {
 /** 名称（产物目录内的相对路径）的最大长度。 */
 const MAX_NAME_LENGTH = 1024;
 
+/**
+ * 上传读请求体时，这么久没有收到任何数据就以明确的错误结束（408 `upload_idle_timeout`，不存、不留临时文件、放开这个任务的队列）：
+ * 60 秒。一份上传卡住（连着、不发数据，网络断了而断开的信号没传到）时，同一个任务别的上传排在它后面；没有这个时限，Agent
+ * 自己的重试就排在后面永远没有响应，任务收不了尾（#588）。是常量，不做成配置；排队的不另设时限：轮到哪一份，哪一份开始计时。
+ */
+export const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
+
 export interface ArtifactRow {
 	taskId: string;
 	name: string;
@@ -82,8 +86,13 @@ export type SaveOutcome =
 	| { ok: true; artifact: ArtifactRow }
 	| {
 			ok: false;
-			status: 400 | 404 | 409 | 413;
-			code: "invalid_artifact_name" | "not_found" | "task_not_running" | "artifact_too_large";
+			status: 400 | 404 | 408 | 409 | 413;
+			code:
+				| "invalid_artifact_name"
+				| "not_found"
+				| "task_not_running"
+				| "artifact_too_large"
+				| "upload_idle_timeout";
 			message: string;
 			/** 请求体一个字节也没读就拒绝了（按声明的长度）：调用方不用也不该把它读完，回响应后关掉连接。 */
 			unread?: true;
@@ -100,11 +109,35 @@ export type SaveOutcome =
  *   在读请求体之前就拒绝，没带长度时读到超过为止。上限随任务下发给 Agent（AssignTask.artifact_limit_bytes，#477）。
  * - 文件在 Agent 上的修改时间（Agent 时间，ADR 0018）原样保存，不做范围检查，也不参与任何判断；可以为空。
  * - 文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`，按运行分目录，保留期清理整目录删除（src/retention）。
+ * - **同一个任务的上传一个接一个做**（#588）：「这个任务的合计还剩多少」的检查和写入、记账在同一段互斥里，并发上传时合计不会
+ *   超过上限，超出的那一份得到和顺序上传时同样的拒绝。互斥在进程里：控制面是单进程设计（同一个数据库只能运行一个实例）。
+ *   **任务状态也是轮到时才查**：同一个任务排在别的上传后面的那一份，轮到它时任务已经成功或失败结束了，被拒绝（409），和任务
+ *   结束之后才到的上传一样；取消的任务（已经开始执行）仍然收下。真实的 Agent 先传完再报结果，碰不到。
+ *   不同任务互不影响；中途断开的上传出错结束，轮到下一份，它没有记账，不占额度。**请求体发完了、没等响应就断开的上传**，
+ *   以前会存下来，现在轮到它时请求已经断开、不存（客户端已经不要结果了）。
+ * - **卡住的上传有空闲时限**（{@link UPLOAD_IDLE_TIMEOUT_MS}，60 秒）：读请求体时这么久没有收到任何数据，以 408
+ *   `upload_idle_timeout` 结束（不存、不留临时文件），放开这个任务的队列；排在后面的不另设时限，轮到哪一份、哪一份开始计时。
+ *   一直在慢慢发数据的上传（每次间隔小于时限）不受影响。没有它，同一个任务排在卡住的那份后面的 Agent 重试永远没有响应。
  */
 export class ArtifactStore {
+	/** 每个任务一条队列：队尾是最后一份排队的上传结束时才完成的 promise；队列空了就删掉。 */
+	readonly #queues = new Map<string, Promise<void>>();
+
 	constructor(
-		private readonly deps: { db: Db; clock: Clock; dataDir: string; limitBytes?: number },
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			dataDir: string;
+			limitBytes?: number;
+			/** 上传的空闲时限（毫秒），默认 {@link UPLOAD_IDLE_TIMEOUT_MS}；部署者不能改，只有测试和嵌入时给。 */
+			uploadIdleMs?: number;
+		},
 	) {}
+
+	/** 现在有几个任务的上传在做或者排队（队列用完就删，空闲时是 0）：给测试看队列的条目有没有删干净。 */
+	get pendingTasks(): number {
+		return this.#queues.size;
+	}
 
 	/** 校验产物名称；合法时返回 undefined，否则返回原因。 */
 	static invalidName(name: string): string | undefined {
@@ -138,6 +171,36 @@ export class ArtifactStore {
 	): Promise<SaveOutcome> {
 		const invalid = ArtifactStore.invalidName(name);
 		if (invalid) return { ok: false, status: 400, code: "invalid_artifact_name", message: invalid };
+		return this.#exclusive(taskId, () =>
+			this.#save(taskId, name, body, agentModifiedAt, declaredBytes),
+		);
+	}
+
+	/** 同一个任务的 `fn` 一个接一个做（按调用的顺序）；`fn` 抛出也轮到下一个。 */
+	async #exclusive<T>(taskId: string, fn: () => Promise<T>): Promise<T> {
+		const previous = this.#queues.get(taskId) ?? Promise.resolve();
+		let release: () => void = () => {};
+		const mine = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const tail = previous.then(() => mine);
+		this.#queues.set(taskId, tail);
+		await previous;
+		try {
+			return await fn();
+		} finally {
+			release();
+			if (this.#queues.get(taskId) === tail) this.#queues.delete(taskId);
+		}
+	}
+
+	async #save(
+		taskId: string,
+		name: string,
+		body: Readable,
+		agentModifiedAt: Date | null,
+		declaredBytes: number | undefined,
+	): Promise<SaveOutcome> {
 		const [task] = await this.deps.db
 			.select({
 				runId: tasks.runId,
@@ -189,19 +252,43 @@ export class ArtifactStore {
 		const hash = createHash("sha256");
 		let size = 0;
 		let tooLarge = false;
+		let idle = false;
+		const idleMs = this.deps.uploadIdleMs ?? UPLOAD_IDLE_TIMEOUT_MS;
 		try {
 			await mkdir(dirname(tmp), { recursive: true });
 			await pipeline(
 				body,
 				async function* (source: AsyncIterable<Buffer>) {
-					for await (const chunk of source) {
-						size += chunk.length;
-						if (size > allowed) {
-							tooLarge = true;
-							throw new Error("artifact too large");
+					// 每读一块之前起一个计时器：idleMs 毫秒还没有数据就以空闲超时结束；写盘的时间不算（计时器只在等客户端发数据时开着）。
+					// `source` 可以是流（异步可迭代），也可以是 Fastify 的文本解析器（Content-Type: text/plain）读成的字符串（同步可迭代）：
+					// 包一层异步生成器，两种都能按同一个办法一块一块读。
+					const iterator = (async function* () {
+						yield* source;
+					})();
+					let timer: NodeJS.Timeout | undefined;
+					try {
+						for (;;) {
+							const timeout = new Promise<"idle">((resolve) => {
+								timer = setTimeout(() => resolve("idle"), idleMs);
+							});
+							const next = await Promise.race([iterator.next(), timeout]);
+							clearTimeout(timer);
+							if (next === "idle") {
+								idle = true;
+								throw new Error("upload idle timeout");
+							}
+							if (next.done) return;
+							const chunk = next.value as Buffer;
+							size += chunk.length;
+							if (size > allowed) {
+								tooLarge = true;
+								throw new Error("artifact too large");
+							}
+							hash.update(chunk);
+							yield chunk;
 						}
-						hash.update(chunk);
-						yield chunk;
+					} finally {
+						clearTimeout(timer);
 					}
 				},
 				createWriteStream(tmp),
@@ -210,6 +297,15 @@ export class ArtifactStore {
 			await rename(tmp, file);
 		} catch (error) {
 			await rm(tmp, { force: true });
+			if (idle) {
+				return {
+					ok: false,
+					status: 408,
+					code: "upload_idle_timeout",
+					message: `产物 ${name} 的上传 ${idleMs / 1000} 秒没有收到数据，已经放弃（没有存）；重新上传`,
+					unread: true,
+				};
+			}
 			if (tooLarge) {
 				return {
 					ok: false,

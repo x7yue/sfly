@@ -1,8 +1,11 @@
-import { OrchestrationDocument } from "@sfly/schema";
+import { OrchestrationDocument, type StoredNode } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	declaredOutputs,
 	documentWarnings,
 	type NodeTypeIo,
+	type NodeTypeLookup,
+	nodeTypeLookup,
 	type PackageCatalog,
 	packageKey,
 	referenceOptions,
@@ -113,6 +116,44 @@ describe("引用补全", () => {
 		// 运行状态不依赖节点类型的元信息：包节点总是可以引用。
 		expect(referenceOptions(d, "b", new Map()).map((o) => o.expression)).toEqual(["run.state"]);
 		expect(referenceOptions(d, "lost", catalog)).toEqual([]);
+	});
+});
+
+describe("引用补全：按节点查节点类型（NodeTypeLookup）", () => {
+	// 同一个包、同一个节点类型的 a、b 各有自己的声明（例如派发到不同的 Agent），不能并成目录里的一份。
+	const own: Record<string, NodeTypeIo> = {
+		a: { name: "fetch", inputs: { type: "object", properties: {} }, outputs: outputs("body") },
+		b: { name: "fetch", inputs: { type: "object", properties: {} }, outputs: outputs("status") },
+	};
+	function outputs(...keys: string[]): NodeTypeIo["outputs"] {
+		return { type: "object", properties: Object.fromEntries(keys.map((k) => [k, {}])) };
+	}
+	const d = doc({
+		nodes: [{ id: "entry", kind: "entry" }, pkg("a"), pkg("b"), pkg("c")],
+		edges: chain("entry", "a", "b", "c"),
+	});
+	const lookup: NodeTypeLookup = (node) => own[(node as { id?: string }).id ?? ""] ?? null;
+
+	it("每个上游节点用自己的声明列输出，不看目录", () => {
+		expect(referenceOptions(d, "c", lookup).map((o) => o.expression)).toEqual([
+			"run.state",
+			"nodes.a.outputs.body",
+			"nodes.b.outputs.status",
+		]);
+	});
+
+	it("declaredOutputs 也按节点查；查不到（undefined / null）不提供输出键", () => {
+		const [, a, b] = d.nodes as StoredNode[];
+		expect(declaredOutputs(d, a as StoredNode, lookup)).toEqual(["body"]);
+		expect(declaredOutputs(d, b as StoredNode, lookup)).toEqual(["status"]);
+		expect(declaredOutputs(d, a as StoredNode, () => undefined)).toBeUndefined();
+		expect(declaredOutputs(d, a as StoredNode, () => null)).toBeUndefined();
+	});
+
+	it("目录和按节点查的函数给同样的类型时，结果一样", () => {
+		const viaCatalog = referenceOptions(d, "c", catalog).map((o) => o.expression);
+		const viaLookup = referenceOptions(d, "c", nodeTypeLookup(d, catalog)).map((o) => o.expression);
+		expect(viaLookup).toEqual(viaCatalog);
 	});
 });
 
@@ -266,6 +307,75 @@ describe("节点包版本锁定", () => {
 		expect(documentWarnings(lockDoc({ demo: "1.0.0" }, "gone"), catalog)[0]?.message).toBe(
 			"节点包 demo@1.0.0 中没有节点类型 gone",
 		);
+	});
+
+	it("标准节点包 0.4.0 删掉的节点：警告指向替换办法；其他找不到的节点类型照旧", () => {
+		const std = (node: string) =>
+			doc({
+				packages: { "sfly-std": "0.4.0" },
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "a", kind: "package", package: "sfly-std", node, inputs: {} },
+				],
+				edges: chain("entry", "a"),
+			});
+		const stdCatalog: PackageCatalog = new Map([
+			[
+				packageKey("sfly-std", "0.4.0"),
+				[
+					{
+						name: "shell",
+						inputs: { type: "object", properties: {} },
+						outputs: { type: "object", properties: {} },
+					},
+				],
+			],
+		]);
+
+		expect(documentWarnings(std("assert"), stdCatalog)[0]?.message).toBe(
+			"节点包 sfly-std@0.4.0 中没有节点类型 assert（0.4.0 起删除了：替换办法见开发文档「标准节点」页的「从 0.3.0 升级」一节）",
+		);
+		// 删掉的节点之外的名字、别的包里的同名节点：没有这句话。
+		expect(documentWarnings(std("gone"), stdCatalog)[0]?.message).toBe(
+			"节点包 sfly-std@0.4.0 中没有节点类型 gone",
+		);
+		expect(documentWarnings(lockDoc({ demo: "1.0.0" }, "assert"), catalog)[0]?.message).toBe(
+			"节点包 demo@1.0.0 中没有节点类型 assert",
+		);
+		expect(documentWarnings(std("shell"), stdCatalog)).toEqual([]);
+	});
+
+	it("标准节点包 0.4.0 删掉的 14 个节点：每一个都带替换办法的指引（名单不看源码里的那份，少一个名字就红）", () => {
+		const removed = [
+			"system_monitor",
+			"process_monitor",
+			"wait_port",
+			"wait_file",
+			"wait_log_line",
+			"follow_log",
+			"collect_artifacts",
+			"pull_files",
+			"watch_files",
+			"http_request",
+			"assert",
+			"file_assert",
+			"process_assert",
+			"port_assert",
+		];
+		const emptyStd: PackageCatalog = new Map([[packageKey("sfly-std", "0.4.0"), []]]);
+		for (const name of removed) {
+			const d = doc({
+				packages: { "sfly-std": "0.4.0" },
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "a", kind: "package", package: "sfly-std", node: name, inputs: {} },
+				],
+				edges: chain("entry", "a"),
+			});
+			expect(documentWarnings(d, emptyStd)[0]?.message, name).toBe(
+				`节点包 sfly-std@0.4.0 中没有节点类型 ${name}（0.4.0 起删除了：替换办法见开发文档「标准节点」页的「从 0.3.0 升级」一节）`,
+			);
+		}
 	});
 
 	it("结构警告排在前面，然后是包版本和引用的警告", () => {

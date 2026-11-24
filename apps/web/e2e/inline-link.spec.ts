@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 import type { Locator } from "@playwright/test";
 import { IDS, seedRemovedKindScenario } from "../../server/test/support/removed-kind-scenario.js";
+import { seedSession } from "../../server/test/support/sessions.js";
+import { apiError, fulfillJson, READY } from "./assistant-support";
 import { createEditorScenario, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor, runningScenario } from "./monitor-scenario";
@@ -219,6 +221,52 @@ test("运行监控底部面板：输入输出里的产物引用是行内链接�
 	await expectInlineLink(page.getByRole("link", { name: /artifacts\/report\.html/ }), {
 		dimmerAround: false,
 	});
+});
+
+test("助手页：开始时遇到 project_busy，「打开正在做的会话」是行内链接的样式", async ({
+	page,
+	controlPlane,
+}) => {
+	const running = await seedSession(controlPlane.database.url, {
+		title: "别人在做的事",
+		createdBy: "bob",
+		status: "running",
+	});
+	await page.route("**/api/projects/*/sessions", async (route) => {
+		if (route.request().method() === "POST") {
+			await apiError(route, 409, "project_busy", "同一个项目里另一个会话正在做");
+			return;
+		}
+		const response = await route.fetch();
+		const body = (await response.json()) as { readiness: unknown };
+		await fulfillJson(route, 200, { ...body, readiness: READY });
+	});
+	await page.goto("/sessions");
+	await page.getByRole("textbox", { name: "要做什么？" }).fill("想让助手做的事");
+	await page.getByRole("button", { name: "开始" }).click();
+	const alert = page.getByRole("alert").filter({ hasText: "另一个会话正在做" });
+	const link = alert.getByRole("link", { name: "打开正在做的会话" });
+	await expect(link).toHaveAttribute("href", `/sessions/${running}`);
+	await expectInlineLink(link);
+});
+
+test("会话页：接着说遇到 project_busy，「打开正在做的会话」是行内链接的样式", async ({
+	page,
+	controlPlane,
+}) => {
+	const db = controlPlane.database.url;
+	const idle = await seedSession(db, { title: "空闲的这个", status: "idle", events: [] });
+	const running = await seedSession(db, { title: "正在做的那个", status: "running", events: [] });
+	await page.route(/\/api\/sessions\/[^/]+\/messages$/, (route) =>
+		apiError(route, 409, "project_busy", "这个项目里的会话「正在做的那个」正在做"),
+	);
+	await page.goto(`/sessions/${idle}`);
+	await page.getByRole("textbox", { name: "接着说" }).fill("再加一个重试次数");
+	await page.getByRole("button", { name: "发送" }).click();
+	const alert = page.getByRole("alert").filter({ hasText: "另一个会话正在做" });
+	const link = alert.getByRole("link", { name: "打开正在做的会话" });
+	await expect(link).toHaveAttribute("href", `/sessions/${running}`);
+	await expectInlineLink(link);
 });
 
 test.describe("令牌页", () => {

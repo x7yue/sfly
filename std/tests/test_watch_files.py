@@ -20,10 +20,10 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from helper_nodes import watch_files
 
 from sfly import Agent, AgentError, AgentUnreachable, Context, FileId, FileInfo
 from sfly.testing import Execution, run_node
-from sfly_std.watch_files import watch_files
 
 #: 真的在本机监听来源目录的用例：本地调试时的 files.watch 用 inotify，只支持 Linux。
 local_watch = pytest.mark.skipif(
@@ -439,7 +439,7 @@ def run_on_agent(work: Path, agent: Path, **inputs: Any) -> tuple[dict[str, Any]
     task = {
         "task_id": "t-1",
         "attempt": 1,
-        "entry": "sfly_std.watch_files:watch_files",
+        "entry": "helper_nodes:watch_files",
         "inputs": {
             "source": SOURCE,
             "directory": LOGS,
@@ -455,6 +455,8 @@ def run_on_agent(work: Path, agent: Path, **inputs: Any) -> tuple[dict[str, Any]
         SFLY_EVENTS=str(work / "events.jsonl"),
         SFLY_CANCEL=str(work / "cancel"),
         SFLY_AGENT_SOCKET=str(agent),
+        # 测试用的节点外壳 helper_nodes 在这个目录里。
+        PYTHONPATH=os.pathsep.join([str(Path(__file__).parent), os.environ.get("PYTHONPATH", "")]),
     )
     subprocess.run([sys.executable, "-m", "sfly.runner"], cwd=work, env=env, timeout=60)
     output = json.loads((work / "output.json").read_text(encoding="utf-8"))

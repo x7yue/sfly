@@ -59,16 +59,34 @@ export function nodeTypeOf(
 	return types?.find((t) => t.name === node.node) ?? null;
 }
 
+/**
+ * 按节点查节点类型（返回值的含义同 {@link nodeTypeOf}）。目录只能按「包 + 版本」一份：同一个开发版本的包，几个节点派发到
+ * 不同的 Agent 时各自的声明可能不同，画布上的引用补全要按每个节点自己的声明列输出，传这个，不要把它们并成目录里的一份。
+ */
+export type NodeTypeLookup = (node: {
+	package: string;
+	node: string;
+	agent?: string | undefined;
+}) => NodeTypeIo | null | undefined;
+
+/** 目录或按节点查的函数 → 按节点查的函数（目录按编排锁定的版本查，{@link nodeTypeOf}）。 */
+export function nodeTypeLookup(
+	doc: Pick<StoredOrchestrationDocument, "packages">,
+	types: PackageCatalog | NodeTypeLookup,
+): NodeTypeLookup {
+	return typeof types === "function" ? types : (node) => nodeTypeOf(doc, node, types);
+}
+
 /** 节点已声明的输出键；节点类型未知时为 undefined（不能补全，也不检查）。 */
 export function declaredOutputs(
 	doc: StoredOrchestrationDocument,
 	node: StoredNode,
-	catalog: PackageCatalog,
+	catalog: PackageCatalog | NodeTypeLookup,
 ): string[] | undefined {
 	// 已移除种类的节点不知道有哪些输出：不检查对它的引用，节点本身有 node_kind_removed 警告。
 	if (isRemovedNodeKind(node.kind)) return undefined;
 	if (node.kind !== "package") return BUILTIN_OUTPUTS[node.kind];
-	const type = nodeTypeOf(doc, node, catalog);
+	const type = nodeTypeLookup(doc, catalog)(node);
 	return type ? Object.keys(type.outputs.properties) : undefined;
 }
 
@@ -124,7 +142,7 @@ export const referenceText = (expression: string) => `\${{ ${expression} }}`;
 export function referenceOptions(
 	doc: StoredOrchestrationDocument,
 	nodeId: string,
-	catalog: PackageCatalog,
+	catalog: PackageCatalog | NodeTypeLookup,
 ): ReferenceOption[] {
 	const { start, earlier } = referenceScope(doc, nodeId);
 	if (!start) return [];
@@ -290,6 +308,31 @@ export function referenceWarnings(
 	return warnings;
 }
 
+/** 标准节点包 `sfly-std` 0.4.0 删除的 14 个节点（ADR 0030）：场景里还引用它们时，警告指向替换办法。 */
+const REMOVED_STD_NODES: ReadonlySet<string> = new Set([
+	"system_monitor",
+	"process_monitor",
+	"wait_port",
+	"wait_file",
+	"wait_log_line",
+	"follow_log",
+	"collect_artifacts",
+	"pull_files",
+	"watch_files",
+	"http_request",
+	"assert",
+	"file_assert",
+	"process_assert",
+	"port_assert",
+]);
+
+/**
+ * 警告里指向替换办法的那半句。开发文档「标准节点」页和 sfly-std 0.4.0 的发布说明里各抄了一份原文：
+ * `std/tests/test_package.py` 逐字比对，改措辞时两处文档要一起改。
+ */
+const REMOVED_STD_NODE_HINT =
+	"（0.4.0 起删除了：替换办法见开发文档「标准节点」页的「从 0.3.0 升级」一节）";
+
 /** 包版本锁定检查：每个包节点都锁定到一个存在的版本，且该版本里有这个节点类型。 */
 export function packageWarnings(
 	doc: StoredOrchestrationDocument,
@@ -317,7 +360,11 @@ export function packageWarnings(
 		} else if (types && !types.some((t) => t.name === node.node)) {
 			warnings.push({
 				code: "unknown_node_type",
-				message: `节点包 ${node.package}@${version} 中没有节点类型 ${node.node}`,
+				message:
+					`节点包 ${node.package}@${version} 中没有节点类型 ${node.node}` +
+					(node.package === "sfly-std" && REMOVED_STD_NODES.has(node.node)
+						? REMOVED_STD_NODE_HINT
+						: ""),
 				node_id: node.id,
 			});
 		}
