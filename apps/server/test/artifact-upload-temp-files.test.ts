@@ -224,6 +224,26 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 		}, 60_000);
 	});
 
+	it("上传进行中：临时文件在 artifacts/.uploading/ 里，不在任务的产物目录里；传完改名成产物，临时文件没了", async () => {
+		const store = storeWith();
+		const body = new PassThrough();
+		body.write(Buffer.alloc(10, 1));
+
+		const saving = store.save(taskId, "inflight.bin", body);
+		let paths: string[] = [];
+		for (let i = 0; i < 150 && paths.length === 0; i++) {
+			await sleep(20);
+			paths = await leftovers();
+		}
+
+		expect(paths.map((path) => path.split("/").slice(0, -1).join("/"))).toEqual([
+			"artifacts/.uploading",
+		]);
+		body.end();
+		expect(await saving).toMatchObject({ ok: true, artifact: { name: "inflight.bin", size: 10 } });
+		expect(await leftovers()).toEqual([]);
+	}, 60_000);
+
 	it("任务已经结束（409）：不读请求体，也没有临时文件", async () => {
 		slowOpen.ms = OPEN_MS;
 		const store = storeWith();
@@ -268,6 +288,18 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 			const same = await cp.fetch(`/tasks/${taskId}/artifacts/${lookalike}`);
 			expect(same.status).toBe(200);
 			expect((await same.arrayBuffer()).byteLength).toBe(30);
+		}, 60_000);
+
+		it("临时目录的位置上是个文件（读不了、清不掉）：只记日志，启动照常，不挡住", async () => {
+			const place = join(cp.dataDir, "artifacts", ".uploading");
+			await rm(place, { recursive: true, force: true });
+			await mkdir(join(cp.dataDir, "artifacts"), { recursive: true });
+			await writeFile(place, "不是目录");
+
+			await cp.restart();
+
+			expect((await cp.fetch(`/tasks/${taskId}/artifacts`)).status).toBe(200);
+			await rm(place, { force: true });
 		}, 60_000);
 
 		it("没有临时目录（第一次启动、或者已经清干净了）：启动照常", async () => {
