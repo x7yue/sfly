@@ -5,7 +5,10 @@
 对不上就在命令行里报错（并列出最接近的路由），不用发出去才知道。
 清单只覆盖 JSON Schema 表达得了的约束，自定义校验和转换后的约束由控制面校验，
 控制面的错误响应会原样带回来。
-请求带公共的昵称和 `x-sfly-client` 请求头（见 `client.py`），响应原样写到 stdout。
+请求带公共的昵称和 `x-sfly-client` 请求头（见 `client.py`），响应原样写到 stdout；
+stdout 是终端时先过一遍（`safe_text.py`，#670）：JSON（响应正文，事件流里 `data:` 的内容）
+只转义不该到终端的字符、不删任何东西，解析回来和原文相等；不是 JSON 的按普通文字处理，
+去掉颜色这类转义序列、别的不该到终端的字符写成 `\\uXXXX`。重定向到文件或管道时原样。
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from sfly.cli.input_source import read_source
 from sfly.cli.output import dump_json, format_table
 from sfly.cli.route_describe import describe_route, effect_brief
 from sfly.cli.routes import KIND_LABELS, Resolution, Route, closest, load_routes, resolve
+from sfly.cli.safe_text import json_text_safe, printable
 from sfly.cli.session import Session, command, common_options
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -451,21 +455,63 @@ def _with_details(error: ApiError) -> ApiError:
     return error.replace(message=message)
 
 
+def _is_terminal(stream: Any) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    return bool(isatty and isatty())
+
+
+def _terminal_json(text: str, content_type: str) -> str | None:
+    """终端上要显示的正文是 JSON 时，写成安全的 JSON（只转义，不删任何东西，见 `json_text_safe`）；
+    不是 JSON（内容类型不是 JSON 又不像 JSON，或者解析不了）返回 None。"""
+    if content_type != "application/json" and not text.lstrip().startswith(("{", "[")):
+        return None
+    safe = json_text_safe(text)
+    if safe is None:
+        return None
+    return safe + "\n" if text.endswith("\n") else safe
+
+
+def _terminal_stream_line(text: str) -> str:
+    """事件流的一行在终端上：`data:` 后面是 JSON 的走 JSON 的转义（不删任何东西），
+    别的行按普通文字处理。"""
+    if text.startswith("data:"):
+        payload = text[len("data:") :].removesuffix("\n")
+        space = " " if payload.startswith(" ") else ""
+        safe = json_text_safe(payload[len(space) :])
+        if safe is not None:
+            return f"data:{space}{safe}" + ("\n" if text.endswith("\n") else "")
+    return printable(text)
+
+
 def _copy_body(session: Session, response: Any) -> int:
     """响应体原样写到 stdout（二进制写 buffer，没有 buffer 时按 UTF-8 解码）；
     JSON 响应没有结尾换行时补一个。"""
     stdout = session.out.stdout
     buffer = getattr(stdout, "buffer", None)
+    terminal = _is_terminal(stdout)
     last = b""
     stdout.flush()
-    while chunk := response.read(READ_CHUNK):
+    if terminal:
+        # 终端：整段读完解码、过一遍再写（转义序列可能被分块切开，不能按块处理）。
+        # 累加用 bytearray：`bytes +=` 每次都复制整段，40 MB 的正文要四秒多（平方级）。
+        body = bytearray()
+        while chunk := response.read(READ_CHUNK):
+            body += chunk
+        last = bytes(body[-1:])
+        text = bytes(body).decode("utf-8", "replace")
+        # JSON 是一行，记录之间没有换行：任何「整段去掉」都能删掉夹在中间的别人的记录（#691 复审），
+        # 所以 JSON 只转义；不是 JSON 的才按普通文字处理。
+        safe = _terminal_json(text, response.headers.get_content_type())
+        stdout.write(safe if safe is not None else printable(text))
+    else:
+        while chunk := response.read(READ_CHUNK):
+            if buffer is not None:
+                buffer.write(chunk)
+            else:
+                stdout.write(chunk.decode("utf-8", "replace"))
+            last = chunk
         if buffer is not None:
-            buffer.write(chunk)
-        else:
-            stdout.write(chunk.decode("utf-8", "replace"))
-        last = chunk
-    if buffer is not None:
-        buffer.flush()
+            buffer.flush()
     if (
         last
         and not last.endswith(b"\n")
@@ -477,8 +523,10 @@ def _copy_body(session: Session, response: Any) -> int:
 
 
 def _copy_stream(session: Session, response: Any, timeout: float) -> int:
-    """SSE 一行一行原样写到 stdout，读到连接结束或 `timeout` 秒为止。"""
+    """SSE 一行一行原样写到 stdout（终端上 `data:` 是 JSON 的只转义，别的行按普通文字处理），
+    读到连接结束或 `timeout` 秒为止。"""
     stdout = session.out.stdout
+    terminal = _is_terminal(stdout)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -487,7 +535,8 @@ def _copy_stream(session: Session, response: Any, timeout: float) -> int:
             break
         if not line:
             return 0
-        stdout.write(line.decode("utf-8", "replace"))
+        text = line.decode("utf-8", "replace")
+        stdout.write(_terminal_stream_line(text) if terminal else text)
         stdout.flush()
     print(
         f"已读取 {timeout:g} 秒，到 --timeout 的时间，停止读取（事件流还在继续）",

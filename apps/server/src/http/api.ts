@@ -1,4 +1,5 @@
 import {
+	AGENT_NAME_MAX_LENGTH,
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
 	httpContract,
@@ -143,6 +144,12 @@ export interface HttpApiDeps {
 }
 
 /** 流式下载的路由在读文件之前为这个文件设好的头：出错时要去掉（见错误处理）。 */
+/**
+ * 路径参数（解码之后，UTF-16 码元数）的长度上限：Agent 名称最长 {@link AGENT_NAME_MAX_LENGTH} 个字符，补充平面的字符
+ * （emoji）一个算两个码元，所以是它的两倍；Fastify 默认的 100 放不下 64 个 emoji 的名称。
+ */
+const MAX_PATH_PARAM_LENGTH = AGENT_NAME_MAX_LENGTH * 2;
+
 const FILE_RESPONSE_HEADERS = [
 	"content-type",
 	"content-length",
@@ -220,6 +227,10 @@ export function buildHttpApi({
 					},
 		rewriteUrl: (req) => stripApiPrefix(req.url ?? "/"),
 		trustProxy: trustProxy ?? false,
+		// 路径参数的长度上限，比的是**解码之后**的长度（UTF-16 码元数，补充平面的字符算两个）：默认的 100 放不下 64 个补充平面的
+		// 字符（128 个码元）的 Agent 名称，而 `/agents/:name/…`（签发凭据、停用……）用名称做路径参数；再长的在进访问检查之前
+		// 就是 414。
+		routerOptions: { maxParamLength: MAX_PATH_PARAM_LENGTH },
 	});
 	// app.close() 只在开始时关掉当时空闲的 keep-alive 连接。当时还没发完的响应（例如产物下载）发完后，连接留在
 	// keep-alive 里，要等客户端或服务端的 keep-alive 超时（约 70 秒）才断开，app.close() 一直等它。
