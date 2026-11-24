@@ -358,9 +358,9 @@ mod tests {
         let mut lines = Lines::new("[T] ".into());
         let mut items = Vec::new();
         // 还不够一段加上后面的上下文：没有换行，什么都不发
-        items.extend(lines.push(OutputStream::Stdout, original[..max + 100].as_bytes()));
+        items.extend(lines.push(OutputStream::Stdout, &original.as_bytes()[..max + 100]));
         assert!(items.is_empty());
-        items.extend(lines.push(OutputStream::Stdout, original[max + 100..].as_bytes()));
+        items.extend(lines.push(OutputStream::Stdout, &original.as_bytes()[max + 100..]));
         assert!(
             !items.is_empty(),
             "读到的比一段加上上下文还长，前面的段发出"
