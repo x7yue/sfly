@@ -12,7 +12,7 @@ import {
 } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { eventually } from "./support/eventually.js";
-import { Harness, type HarnessOptions } from "./support/harness.js";
+import { Harness, type HarnessOptions, SECRET } from "./support/harness.js";
 import { ManualClock } from "./support/manual-clock.js";
 
 const FAKE_PI = [process.execPath, join(import.meta.dirname, "support", "fake-pi.mjs")];
@@ -56,6 +56,36 @@ const started = (harness: Harness, id: string, count = 1) =>
 
 const kinds = (events: AssistantEvent[]) =>
 	events.map((e) => (e.type === "notice" ? `notice:${e.kind}` : e.type));
+
+describe("命令的请求体", () => {
+	it("steer 的请求体要有 turn、message_id、text：不对时 400；end 没有请求体", async () => {
+		const harness = await start();
+		const send = (path: string, body?: string) =>
+			fetch(`${harness.url}/sessions/${crypto.randomUUID()}/${path}`, {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${SECRET}`,
+					...(body === undefined ? {} : { "content-type": "application/json" }),
+				},
+				body,
+			});
+		for (const body of [
+			undefined,
+			"{}",
+			'{"turn":1,"text":"x"}',
+			`{"turn":0,"message_id":"${crypto.randomUUID()}","text":"x"}`,
+			`{"turn":1,"message_id":"not-a-uuid","text":"x"}`,
+		]) {
+			expect((await send("steer", body)).status, String(body)).toBe(400);
+		}
+		expect((await send("end")).status).toBe(202);
+		const bad = await fetch(`${harness.url}/sessions/not-a-uuid/end`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${SECRET}` },
+		});
+		expect(bad.status).toBe(400);
+	});
+});
 
 describe("没有一轮", () => {
 	it("steer：409 no_turn_running", async () => {

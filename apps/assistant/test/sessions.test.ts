@@ -138,13 +138,17 @@ describe("拉起 pi", () => {
 
 describe("一轮的结局", () => {
 	it("一轮开头写 skill 用的工作台连接用完就关；写不成时也关", async () => {
+		// 写文件的期限放宽：机器忙的时候 300 毫秒写不完镜像里的 skill（不回话的端口卡在 mkdir 那一步，用不上它）。
 		const harness = await start({
-			agentDeadlines: { replySlackMs: 200, fileDeadlineMs: 300, probeDeadlineMs: 300 },
+			agentDeadlines: { replySlackMs: 200, fileDeadlineMs: 3_000, probeDeadlineMs: 300 },
 		});
 		const id = crypto.randomUUID();
 		await harness.prompt(id, { text: "settle" });
-		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+		const first = await harness.turnEnd(id);
+		expect(first, first.reason).toMatchObject({ outcome: "completed" });
 		expect(harness.connections).toEqual({ opened: 1, closed: 1 });
+		// 不只数 close() 被调用的次数：假工作台上的连接真的关了（#618 审查）。
+		await eventually(() => expect(harness.workbench.openConnections).toBe(0));
 		const port = await silentPort();
 		try {
 			const other = crypto.randomUUID();
