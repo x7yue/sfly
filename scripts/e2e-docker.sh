@@ -4,7 +4,8 @@
 #   pnpm test:e2e:docker                       # 比对
 #   pnpm test:e2e:docker --update-snapshots    # 更新视觉基线
 # 需要 docker；容器使用宿主网络访问 DATABASE_URL 指向的 PostgreSQL。macOS 上（Docker Desktop）`--network host` 指的是它的虚拟机、
-# 不是这台电脑，数据库地址里的 127.0.0.1 / localhost 连不上本机的 PostgreSQL，所以在那里换成 host.docker.internal（Docker Desktop 提供的本机地址）。
+# 不是这台电脑，数据库地址里的 127.0.0.1 / localhost / [::1] 连不上本机的 PostgreSQL，所以在那里换成 host.docker.internal（Docker Desktop 提供的本机地址，
+# 换法见 docker-host-url.sh）。
 # SFLY_VISUAL=0 只跑功能用例（默认 1，含视觉回归）；E2E_DOCKER_FLAGS 给 docker run 加参数（例如 --cpus=2，`pnpm test:e2e:stress` 用）。
 # 设置 CI=1，让 playwright.config.ts 采用与 CI 相同的 worker 数、forbidOnly 和报告格式。
 set -euo pipefail
@@ -15,7 +16,7 @@ version=$(node -p "require('$root/apps/web/node_modules/@playwright/test/package
 pnpm --dir "$root" --filter @sfly/client --filter @sfly/web build
 database_url="${DATABASE_URL:-postgres://sfly:sfly@127.0.0.1:5432/sfly}"
 if [[ $(uname) == Darwin ]]; then
-	database_url=$(printf '%s' "$database_url" | sed -E 's#@(127\.0\.0\.1|localhost)([:/]|$)#@host.docker.internal\2#')
+	database_url=$(bash "$root/scripts/docker-host-url.sh" "$database_url")
 fi
 # E2E_DOCKER_FLAGS 按空白拆成多个参数，所以不加引号。
 # shellcheck disable=SC2086

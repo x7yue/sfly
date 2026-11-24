@@ -235,12 +235,13 @@ export function RunLines({
 					// 站名那几列：每列最宽 18rem、各取自己站名的宽度（`auto`），放不下时按各列缺的宽度均分：短站名让出的宽度给长站名，
 					// 长节点 ID 的站名（常常正好是失败的那个节点）不再和短站名平分同样的宽度。
 					// 宽度有两种情形，分界是「每一站取 `--line-cell`、加上链名和计数，这一块放不放得下」（`--line-room`）：
-					// ① 放不下（或刚好）：`min-width` 取整行，站名那几列分掉整行剩下的宽度（auto 的列在 `justify-content: normal` 下平均拉伸），
-					//    短链（2–4 站）不再挤在左边一两百像素；
-					// ② 放得下：线路只占它要的宽度（`w-fit`），每一站的格子是 `--line-cell`（站格里有一个这么宽的垫片撑着，
-					//    站名更长的列取站名的宽度），多出来的宽度留在行尾，不再把两三站平分成几百像素一格。
+					// ① 放不下（或刚好）：`min-width` 是整行（容器宽度，台阶：容器不比 `--line-room` 宽就是整行，宽了就是 0），
+					//    站名那几列分掉整行剩下的宽度（auto 的列在 `justify-content: normal` 下平均拉伸），短链（2–4 站）不再挤在左边一两百像素；
+					// ② 放得下：线路只占它要的宽度（`w-fit`、`min-width` 为 0），除最后一列外每一站的格子是 `--line-cell`（站格里有一个这么宽的垫片
+					//    撑着，站名更长的列取站名的宽度），**最后一列取站名的宽度**：计数紧跟在末站的站名后面，多出来的宽度只留在计数之后
+					//    （最后一站也是 192px 的话，末站名后面先空一百多像素才是计数，看起来像少了一站）。
 					// 计数那一列是 `max-content`（不是 auto，不跟着拉伸），链名那一列也是。
-					"m-0 grid w-fit max-w-full min-w-[min(100%,var(--line-room))] list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,auto))_max-content] gap-y-1.5 p-0",
+					"m-0 grid w-fit max-w-full min-w-[clamp(0px,calc((var(--line-room)-100cqw)*1000),100cqw)] list-none grid-cols-[var(--line-label,max-content)_repeat(var(--line-columns),minmax(0,auto))_max-content] gap-y-1.5 p-0",
 				)}
 			>
 				{rows.map((row, r) => (
@@ -260,6 +261,7 @@ export function RunLines({
 									key={station.kind === "node" ? station.node.node_id : `fold-${station.start}`}
 									station={station}
 									column={row.column + k}
+									capped={row.column + k < columns - 1}
 									next={row.stations[k + 1]}
 									branchUp={k === 0 && row.parent !== null ? r - row.parent : 0}
 								/>
@@ -294,11 +296,14 @@ const BRANCH_LINE =
 function StationCell({
 	station,
 	column,
+	capped,
 	next,
 	branchUp,
 }: {
 	station: Station;
 	column: number;
+	/** 不是最后一列：放得下时格子撑到 `--line-cell`（垫片）；最后一列取站名的宽度，计数紧跟在后面。 */
+	capped: boolean;
 	next: Station | undefined;
 	/** 分支竖线往上画几行（0 是不画）。 */
 	branchUp: number;
@@ -349,12 +354,14 @@ function StationCell({
 				</Truncate>
 				{status && <span className="sr-only">（{status.label}）</span>}
 			</span>
-			{/* 垫片：放得下时（容器宽度够 `--line-room`）把这一列撑到 `--line-cell`，放不下时宽度为 0，列按站名的宽度分整行。
+			{/* 垫片（最后一列没有）：放得下时（容器宽度够 `--line-room`）把这一列撑到 `--line-cell`，放不下时宽度为 0，列按站名的宽度分整行。
 			    宽度是个「台阶」：容器宽出 `--line-room` 1px 以上就是满的，不足就是 0（差值乘 1000 再夹到 0 到 `--line-cell` 之间）。 */}
-			<span
-				aria-hidden
-				className="block h-0 w-[clamp(0px,calc((100cqw-var(--line-room))*1000),var(--line-cell))] max-w-full"
-			/>
+			{capped && (
+				<span
+					aria-hidden
+					className="block h-0 w-[clamp(0px,calc((100cqw-var(--line-room))*1000),var(--line-cell))] max-w-full"
+				/>
+			)}
 		</li>
 	);
 }

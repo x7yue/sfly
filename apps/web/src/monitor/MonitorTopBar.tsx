@@ -76,8 +76,10 @@ function FocusFreshness({ run }: { run: RunView }) {
  * 页面里已经有失败区域（概览）或失败横幅（详情）时不重复，只在它们看不到的地方出现，同一屏上同一件事只说一次）、各链状态、
  * 在画布中打开、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。失败摘要只用别的内容占完之后剩下的宽度
- * （全文在悬停提示里）：显示失败摘要时，各链状态放得下摘要旁边（摘要始终有它的最窄宽度，各链状态排成一行要的宽度放得进剩下的）才显示，放不下整个收起（失败的节点和各链的状态在概览、时间线里都有，顶栏把宽度先让给失败原因；界限按实际放不放得下定，见 `useChainsFit`，不写死窗口宽度），
- * 摘要最窄 96px、1280 及以上最窄 {@link SUMMARY_MIN}（288–320px，够写出异常类型和原因的开头，不只剩「TimeoutErr…」），
+ * （全文在悬停提示里）：显示失败摘要时，失败的原因比各链的徽标要紧，所以摘要放得下全文（不被截成省略号）、各链状态也排得下一行
+ * 才一起显示，放不下整个收起（摘要单独也放不下全文时各链状态一定收起；失败的节点和各链的状态在概览、时间线里都有；
+ * 界限按实际放不放得下定，见 `useChainsFit`，不写死窗口宽度），
+ * 摘要最窄 96px、1280 及以上最窄 {@link SUMMARY_MIN}（288–320px，全文放不下、各链状态收起时，够写出异常类型和原因的开头，不只剩「TimeoutErr…」），
  * 预设名、场景名和耗时在宽的窗口里原样显示，窄的窗口里才按预设名、场景名与触发信息的顺序让位；耗时、状态、视图标签页和按钮不让位。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
  */
@@ -108,8 +110,13 @@ export function MonitorTopBar({
 	const elapsed = (run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at);
 	const summaryShown = failure !== null && !failureShown;
 	const bar = useRef<HTMLElement>(null);
-	// 显示失败摘要时，各链状态放得下才显示（量出来的，不是按窗口宽度）；没有摘要时照常显示。
-	const chainsFit = useChainsFit(bar, summaryShown, chains.map((c) => c.id).join());
+	// 显示失败摘要时，摘要放得下全文、各链状态也放得下才显示各链状态（量出来的，不是按窗口宽度）；没有摘要时照常显示。
+	// 摘要的文字变了（换了第一个失败的节点、异常）它要的宽度跟着变，也重新量。
+	const chainsFit = useChainsFit(
+		bar,
+		summaryShown,
+		`${chains.map((c) => c.id).join()}|${failure ? failureSummary(failure) : ""}`,
+	);
 
 	return (
 		<header
@@ -190,6 +197,9 @@ export function MonitorTopBar({
 					</li>
 				)}
 			</ul>
+			{/* 空白占位：几乎只拿摘要放下全文之后剩的宽度。摘要的伸展系数是 100000、占位是 1：摘要没到它的全文宽度时，占位只分到十万分之一的
+			    富余（摘要 100 对占位 1 的话，摘要放下全文前就被分走 1%，几个像素，截成省略号，而各链状态已经显示着）。占位的系数不能
+			    取成小数：伸展系数加起来不到 1 时，浏览器只分出这个和那么多的富余（没有失败摘要时占位是唯一能伸展的，右边的按钮就推不到右边了）。 */}
 			<span data-fit-spacer className="min-w-0 flex-1" />
 			{(live || paused) && (
 				<Button
@@ -265,7 +275,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 					data-fit-summary
 					onClick={() => actions.report({ type: "failure", node: failure.ref })}
 					className={cn(
-						"block h-6.5 min-w-24 max-w-max flex-[100_1_0%] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1",
+						"block h-6.5 min-w-24 max-w-max flex-[100000_1_0%] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1",
 						SUMMARY_MIN,
 					)}
 				/>

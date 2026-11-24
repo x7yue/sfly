@@ -277,23 +277,30 @@ test.describe("项目令牌页", () => {
 		await expect(page.getByRole("button", { name: "签发令牌" })).toBeFocused();
 	});
 
-	test("1280×800：有六个范围都勾上的令牌、名称很长时，名称列不被挤没（不窄于 11rem），表格不超出面板，范围折成两行、只在顿号处换行", async ({
+	test("1280×800：令牌用过、有过期时间、六个范围都勾上、名称很长，这几样同时成立时：表格不超出面板、「吊销」看得见，名称列不窄于 11rem，范围折成两行、只在顿号处换行，三个时间折成两行", async ({
 		page,
 	}) => {
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await signIn(page);
 		const longName = "夜间批量回归和发布前检查用的自动化脚本-第二套环境";
-		await page.evaluate(async (name) => {
-			await fetch("/api/account/tokens", {
+		const issued = await page.evaluate(async (name) => {
+			const response = await fetch("/api/account/tokens", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name, project: "default", expires_in_days: 90 }),
 			});
+			return (await response.json()) as { token: string };
 		}, longName);
+		// 用过：用它自己请求一次接口，「最后使用」成了一个时间（没用过时只是「从未使用」，列窄得多）。
+		const used = await page.request.get("/api/account/tokens", {
+			headers: { authorization: `Bearer ${issued.token}` },
+		});
+		expect(used.ok()).toBe(true);
 		await page.goto("/account/tokens");
 		const tokenRow = row(page, longName);
 		await expect(tokenRow).toBeVisible();
 		await expect(tokenRow).toContainText("读、运行、编辑、会话构建、发布、管理");
+		await expect(tokenRow).not.toContainText("从未使用");
 		const measured = await page.evaluate((name) => {
 			const table = document.querySelector("table") as HTMLElement;
 			const head = [...table.querySelectorAll("th")].find((th) => th.textContent === "名称");
@@ -310,8 +317,17 @@ test.describe("项目令牌页", () => {
 				}
 				lines[lines.length - 1] += unit.textContent ?? "";
 			}
+			// 「吊销」按钮：右边缘在面板里面（不被推到面板外面看不到）；三个时间格：日期和时间折成了两行。
+			const revoke = document.querySelector(`[data-token="${name}"] button`) as HTMLElement;
+			const dates = [...document.querySelectorAll(`[data-token="${name}"] td`)]
+				.filter((td) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(td.textContent ?? ""))
+				.map((td) => Math.round((td as HTMLElement).getBoundingClientRect().height));
 			return {
 				lines,
+				revokeRight: Math.round(revoke.getBoundingClientRect().right),
+				fenceRight: Math.round(fence.getBoundingClientRect().right),
+				dateCells: dates.length,
+				dateHeight: Math.min(...dates),
 				name: Math.round((head as HTMLElement).getBoundingClientRect().width),
 				scopeLines: Math.round(
 					(scopes as HTMLElement).getBoundingClientRect().height /
@@ -320,6 +336,7 @@ test.describe("项目令牌页", () => {
 				overflow: Math.round(table.getBoundingClientRect().width - fence.clientWidth),
 			};
 		}, longName);
+		console.log(`令牌页 1280×800：${JSON.stringify(measured)}`);
 		// 名称列不窄于 11rem（176px，已含内边距）；表格没有比面板宽（1280 宽下其他列加起来要给名称留够这 176px）；
 		// 六个范围写不下一行（7.5rem 的上限），折成两行，换行只在顿号处（不在词中间断开）。
 		expect(measured.name, JSON.stringify(measured)).toBeGreaterThanOrEqual(176);
@@ -329,6 +346,11 @@ test.describe("项目令牌页", () => {
 			"读、运行、编辑、",
 			"会话构建、发布、管理",
 		]);
+		// 创建、最后使用、过期三个时间都有，每个都折成了两行（比一行高）；「吊销」在面板里面、点得到。
+		expect(measured.dateCells, JSON.stringify(measured)).toBe(3);
+		expect(measured.dateHeight, JSON.stringify(measured)).toBeGreaterThan(40);
+		expect(measured.revokeRight, JSON.stringify(measured)).toBeLessThanOrEqual(measured.fenceRight);
+		await expect(tokenRow.getByRole("button", { name: "吊销" })).toBeInViewport({ ratio: 1 });
 	});
 
 	test("按路径里的项目显示：签发的范围里没有「管理」；列表、吊销；个人令牌页指向它", async ({

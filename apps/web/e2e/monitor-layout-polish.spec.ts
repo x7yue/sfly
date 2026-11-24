@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { failedRun } from "./monitor-failure-scenario";
+import { failedRun, LONG_FAILURE_MESSAGE } from "./monitor-failure-scenario";
 import { rectOf } from "./monitor-layout-support";
 import { metricPackage, openMonitor, runningScenario } from "./monitor-scenario";
 import { openOverview } from "./overview-support";
@@ -83,22 +83,26 @@ test("选中节点时，它那一组的第一张图表露出大半：选中靠�
 		.toBeGreaterThanOrEqual(height * 0.75);
 });
 
-// 选中节点时底部面板的高度，和图表区预留的改动（#686，只在窄于 1280 的窗口里加高预留）之前一样：1440×900 里 237px、
-// 1280×800 里 190px（`PANEL_FLOOR`；这时图表区正好是预留的 300px）。数是在 #686 之前的 `dev`（0214f433）和之后（dd42c6c0）
-// 各量了一遍，完全一样（日志、动作、尝试三个页签都是）。预留的高度如果误加到 1280 及以上的窗口，这里的面板会被压矮。
+// 选中节点时底部面板、图表区、时间线的高度，和图表区预留的改动（#686，只在窄于 1280 的窗口里加高预留）之前一样：
+// 1440×900 里面板 237px、图表区 301px、时间线 310px，1280×800 里 190px（`PANEL_FLOOR`）、300px、258px（这时图表区正好是预留的 300px）。
+// 数是在 #686 之前的 `dev`（0214f433）和之后（dd42c6c0）各量了一遍，完全一样（日志、动作、尝试三个页签都是）。
+// 选的节点是 verify：它那一组的摘要在第一张图表上面，把图表推下去，预留的高度才会因为图表的位置而变；预留误加到 1280 及以上的窗口时
+// （第一张图表上沿加 120px 比 300px 大），1440×900 里面板被压矮到 218px，1280×800 里面板已经在下限、压不矮，
+// 变的是图表区（320px）和时间线（238px）。所以三个高度都断言：只看面板的话 1280×800 里守不住。
+// fetch 那一组的摘要短，图表上沿加 120px 不到 300px，预留怎么改都不变，守不住这条，所以不用它。
 // 以后底部面板的默认高度、时间线的高度有意改了，这几个数跟着改（改之前量一遍，写在 PR 里）。
-const PANEL_HEIGHT = { "1440×900": 237, "1280×800": 190 } as const;
+const HEIGHTS = {
+	"1440×900": { panel: 237, workspace: 301, timeline: 310 },
+	"1280×800": { panel: 190, workspace: 300, timeline: 258 },
+} as const;
 
 for (const viewport of [
 	{ width: 1440, height: 900 },
 	{ width: 1280, height: 800 },
 ] as const) {
-	const size = `${viewport.width}×${viewport.height}` as keyof typeof PANEL_HEIGHT;
-	for (const [node, tab] of [
-		["fetch", "logs"],
-		["verify", "actions"],
-	] as const) {
-		test(`选中节点时底部面板的高度和 #686 之前一样：${PANEL_HEIGHT[size]}px（${node} 的${tab === "logs" ? "日志" : "动作"}页签，${size}）`, async ({
+	const size = `${viewport.width}×${viewport.height}` as keyof typeof HEIGHTS;
+	for (const tab of ["logs", "actions"] as const) {
+		test(`选中节点时底部面板、图表区、时间线的高度和 #686 之前一样：${HEIGHTS[size].panel} / ${HEIGHTS[size].workspace} / ${HEIGHTS[size].timeline}px（verify 的${tab === "logs" ? "日志" : "动作"}页签，${size}）`, async ({
 			page,
 			controlPlane,
 			connectAgent,
@@ -106,23 +110,36 @@ for (const viewport of [
 		}) => {
 			await page.setViewportSize(viewport);
 			const { runId } = await runningScenario(controlPlane, connectAgent, clock);
-			await openMonitor(page, clock, runId, node, tab);
+			await openMonitor(page, clock, runId, "verify", tab);
 			const panel = page.getByRole("region", { name: "底部面板" });
 			await expect(panel).toBeVisible();
 			await expect(workspace(page).locator("[data-group]").first()).toBeVisible();
-			// 版面稳定之后（图表工作区和时间线排完）量；允许 1px 的亚像素。
-			let seen = 0;
+			const timeline = page.getByRole("region", { name: "链路时间线" });
+			const want = { ...HEIGHTS[size] };
+			// 版面稳定之后（图表工作区和时间线排完）量；允许 1px 的亚像素（差不超过 1px 的当作一样，失败时报出实际量到的数）。
 			await expect
 				.poll(
 					async () => {
-						seen = Math.round((await rectOf(panel)).height);
-						return Math.abs(seen - PANEL_HEIGHT[size]) <= 1;
+						const measured = {
+							panel: Math.round((await rectOf(panel)).height),
+							workspace: Math.round((await rectOf(workspace(page))).height),
+							timeline: Math.round((await rectOf(timeline)).height),
+						};
+						return {
+							panel: Math.abs(measured.panel - want.panel) <= 1 ? want.panel : measured.panel,
+							workspace:
+								Math.abs(measured.workspace - want.workspace) <= 1
+									? want.workspace
+									: measured.workspace,
+							timeline:
+								Math.abs(measured.timeline - want.timeline) <= 1
+									? want.timeline
+									: measured.timeline,
+						};
 					},
-					{ message: `${size}：底部面板 ${seen}px，应是 ${PANEL_HEIGHT[size]}px` },
+					{ message: `${size}：面板、图表区、时间线的高度` },
 				)
-				.toBe(true);
-			// 图表区没有被面板挤到预留的高度以下（300px）。
-			expect((await rectOf(workspace(page))).height).toBeGreaterThanOrEqual(299);
+				.toEqual(want);
 		});
 	}
 }
@@ -131,49 +148,114 @@ for (const viewport of [
 const summaryLeast = (width: number) => (width >= 1400 ? 320 : 288);
 
 /**
- * 顶栏现在的样子：各链状态显示着还是收起了、摘要多宽、顶栏有没有被撑出屏幕。各链状态收起着时，强行把它显示出来量一下
- * （和 `useChainsFit` 不共用代码）：被裁了才说明收起是对的；显示着时看它有没有被裁。
+ * 顶栏现在的样子：各链状态显示着还是收起了、摘要多宽、顶栏有没有被撑出屏幕，以及放不放得下：
+ * `cut` 是失败摘要的全文比它的框宽多出来的宽度（被截成省略号的那一截），`clip` 是各链状态比它的框宽多出来的宽度（被裁掉的那一截），
+ * 都是带小数的（`scrollWidth` 和 `clientWidth` 是取了整的，差 1px 分不清是取整还是真的被截）。各链状态收起着时，
+ * 强行把它显示出来再量（和显示着时同样的样式，量完立刻还原，同一帧里不会被页面重新渲染）：`slack` 是这时空白占位剩的宽度。
+ * 显示着时这两样都不该有；收起着时强行显示会截摘要或裁各链状态（或者剩的宽度不到 1px，差在取整上），才说明收起是对的。
  */
 async function topBarState(page: Page) {
 	return header(page).evaluate((bar) => {
 		const summary = bar.querySelector('[data-testid="run-failure"]') as HTMLElement | null;
 		const chains = bar.querySelector('ul[aria-label="各链状态"]') as HTMLElement | null;
-		if (!summary || !chains) throw new Error("顶栏里没有失败摘要或各链状态");
+		const spacer = bar.querySelector("[data-fit-spacer]") as HTMLElement | null;
+		if (!summary || !chains || !spacer) throw new Error("顶栏里没有失败摘要、各链状态或空白占位");
 		const shown = chains.getAttribute("aria-hidden") !== "true";
-		const clipped = () => chains.scrollWidth - chains.clientWidth > 0.5;
-		let wouldClip = clipped();
+		const measure = () => {
+			const range = document.createRange();
+			range.selectNodeContents(summary);
+			const style = getComputedStyle(summary);
+			const full =
+				range.getBoundingClientRect().width +
+				Number.parseFloat(style.paddingLeft) +
+				Number.parseFloat(style.paddingRight);
+			const last = chains.lastElementChild as HTMLElement;
+			return {
+				cut: Math.max(0, full - summary.getBoundingClientRect().width),
+				clip: Math.max(
+					0,
+					last.getBoundingClientRect().right - chains.getBoundingClientRect().right,
+				),
+				slack: spacer.getBoundingClientRect().width,
+			};
+		};
+		let at = measure();
 		if (!shown) {
-			// 强行显示（和显示着时同样的样式）：量完立刻还原，同一帧里不会被页面重新渲染。
 			const style = chains.style.cssText;
 			chains.removeAttribute("aria-hidden");
 			chains.style.cssText = "visibility: visible; width: auto; margin-left: 0; flex-shrink: 1000";
-			wouldClip = clipped();
+			at = measure();
 			chains.style.cssText = style;
 			chains.setAttribute("aria-hidden", "true");
 		}
 		return {
 			shown,
-			wouldClip,
+			...at,
 			summary: Math.round(summary.getBoundingClientRect().width),
 			overflow: bar.scrollWidth - bar.clientWidth,
 		};
 	});
 }
 
-test("顶栏：失败摘要和各链状态放得下就一起显示，放不下各链状态整个收起；界限是量出来的，不是写死的窗口宽度", async ({
+/** 摘要被截、各链状态被裁，差不到这么多（px）不算（布局取整的误差）。 */
+const FIT_TOLERANCE = 0.5;
+
+/**
+ * 把窗口调到这个宽度，量顶栏，返回各链状态是不是显示着；顺便断言这一档里该满足的几条：顶栏不被撑出屏幕、摘要不低于最窄宽度、
+ * 显示着的各链状态没有被裁且摘要放得下全文（没有省略号），收起着的强行显示出来确实放不下（各链状态被裁或摘要被截，或者剩下的宽度不到 1px）。
+ */
+async function shownAtWidth(page: Page, width: number): Promise<boolean> {
+	await page.setViewportSize({ width, height: 1080 });
+	let state = await topBarState(page);
+	await expect
+		.poll(
+			async () => {
+				state = await topBarState(page);
+				const numbers = `摘要被截 ${state.cut.toFixed(2)}px、各链状态被裁 ${state.clip.toFixed(2)}px、空白占位 ${state.slack.toFixed(2)}px`;
+				if (state.overflow > 0) return `顶栏比窗口宽出 ${state.overflow}px`;
+				if (state.summary < summaryLeast(width)) return `摘要只有 ${state.summary}px`;
+				if (state.shown && state.clip > FIT_TOLERANCE)
+					return `显示着，但各链状态被裁掉了（${numbers}）`;
+				if (state.shown && state.cut > FIT_TOLERANCE)
+					return `显示着，但摘要被截成了省略号（${numbers}）`;
+				if (!state.shown && state.clip <= 0.05 && state.cut <= 0.05 && state.slack >= 1)
+					return `收起了，但其实两样都放得下（${numbers}）`;
+				return "";
+			},
+			{ message: `${width}px 宽的窗口` },
+		)
+		.toBe("");
+	return state.shown;
+}
+
+/** 每一档量一遍顶栏（逐档的断言见 {@link shownAtWidth}），返回每一档里各链状态是不是显示着。 */
+async function sweepTopBar(page: Page, widths: number[]) {
+	const shownAt: boolean[] = [];
+	for (const width of widths) shownAt.push(await shownAtWidth(page, width));
+	return shownAt;
+}
+
+const TOP_BAR_WIDTHS = [1280, 1344, 1408, 1472, 1536, 1600, 1664, 1728, 1792, 1856, 1920];
+
+test("顶栏：失败摘要放得下全文、各链状态也放得下才一起显示，放不下各链状态整个收起；界限是量出来的，不是写死的窗口宽度", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
+	// 要量上百个宽度（扫一遍、反着扫一遍、界限附近两个方向各走一遍），一个宽度几百毫秒。
+	test.slow();
 	await page.setViewportSize({ width: 1920, height: 1080 });
 	// 运行还在进行、已有节点失败：详情里没有失败横幅，失败摘要在顶栏。
-	const { runId } = await failedRun(controlPlane, connectAgent, clock, { cleanupDone: false });
+	const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+		cleanupDone: false,
+		message: "TimeoutError: 延迟超过阈值",
+	});
 	await openMonitor(page, clock, runId);
 	const bar = header(page);
 	await expect(bar.getByTestId("run-failure")).toBeVisible();
 	const chains = bar.getByRole("list", { name: "各链状态" });
-	// 宽屏：两样一起显示，每个状态徽标都完整露出（没有被 overflow 裁掉）。
+	// 宽屏：两样一起显示，每个状态徽标都完整露出（没有被 overflow 裁掉），摘要是全文、没有省略号。
 	await expect(chains).toBeVisible();
 	const badges = chains.getByRole("listitem");
 	expect(await badges.count()).toBeGreaterThan(0);
@@ -183,40 +265,71 @@ test("顶栏：失败摘要和各链状态放得下就一起显示，放不下�
 		expect(box.x + box.width).toBeLessThanOrEqual(listBox.x + listBox.width + 0.5);
 		expect(box.width).toBeGreaterThan(0);
 	}
-	// 从 1280 到 1920 每隔一段量一遍：显示着的没有被裁，收起着的强行显示出来确实被裁（放不下），摘要不低于最窄宽度，
-	// 顶栏不被撑出屏幕；越宽越放得下（显示的宽度是连在一起的一段，不来回跳）。
-	const widths = [1280, 1344, 1408, 1472, 1536, 1600, 1664, 1728, 1792, 1856, 1920];
-	const shownAt: boolean[] = [];
-	for (const width of widths) {
-		await page.setViewportSize({ width, height: 1080 });
-		let state = await topBarState(page);
-		await expect
-			.poll(
-				async () => {
-					state = await topBarState(page);
-					if (state.overflow > 0) return `顶栏比窗口宽出 ${state.overflow}px`;
-					if (state.summary < summaryLeast(width)) return `摘要只有 ${state.summary}px`;
-					if (state.shown && state.wouldClip) return "显示着，但被裁掉了";
-					if (!state.shown && !state.wouldClip) return "收起了，但其实放得下";
-					return "";
-				},
-				{ message: `${width}px 宽的窗口` },
-			)
-			.toBe("");
-		shownAt.push(state.shown);
-	}
+	// 每一档：显示着的各链状态没有被裁、摘要放得下全文；收起着的强行显示出来，各链状态被裁或者摘要被截（确实放不下）；
+	// 摘要不低于最窄宽度，顶栏不被撑出屏幕；越宽越放得下（显示的宽度是连在一起的一段，不来回跳）。
+	const shownAt = await sweepTopBar(page, TOP_BAR_WIDTHS);
 	const firstShown = shownAt.indexOf(true);
 	expect(
 		firstShown,
-		`显示情况（${widths.join("、")}）：${shownAt.join("、")}`,
+		`显示情况（${TOP_BAR_WIDTHS.join("、")}）：${shownAt.join("、")}`,
 	).toBeGreaterThanOrEqual(0);
 	expect(shownAt.slice(firstShown).every(Boolean), `显示情况：${shownAt.join("、")}`).toBe(true);
-	// 最宽的显示着；1280 这一档（顶栏已经很挤）收起着：规则真的在起作用，不是一直显示或一直收起。
+	// 最宽的显示着；最窄的一档（顶栏已经很挤）收起着：规则真的在起作用，不是一直显示或一直收起。
 	expect(shownAt[0], "1280 宽").toBe(false);
 	expect(shownAt[shownAt.length - 1], "1920 宽").toBe(true);
-	console.log(
-		`各链状态从 ${widths[firstShown]}px 宽起显示（前一档 ${widths[firstShown - 1]}px 收起）`,
+	// 从宽往窄再量一遍：每一档的结果和从窄往宽时一样（显示还是收起只看这时的宽度，不看是从哪边过来的，不来回跳）。
+	const reversed = (await sweepTopBar(page, [...TOP_BAR_WIDTHS].reverse())).reverse();
+	expect(reversed, "从宽往窄的显示情况").toEqual(shownAt);
+	// 界限精确到 1px，而且显示还是收起只看这时的宽度、不看是从哪边走过来的：把窗口先放到最窄（各链状态收起）或最宽（显示），
+	// 再跳到界限附近的每一个宽度（界限往窄 16px 到往宽 4px），逐个量。从窄的一边走过来，显示的时机早了（放不下就显示、
+	// 显示之后各链状态被裁或摘要被截）、晚了都会在这里露出来；两边走到的界限最多差 1px（取整）。
+	// 每一个宽度上的断言（显示着的不被裁不被截、收起着的确实放不下）见 {@link shownAtWidth}。
+	let lo = TOP_BAR_WIDTHS[firstShown - 1] as number;
+	let hi = TOP_BAR_WIDTHS[firstShown] as number;
+	while (hi - lo > 1) {
+		const mid = Math.floor((lo + hi) / 2);
+		if (await shownAtWidth(page, mid)) hi = mid;
+		else lo = mid;
+	}
+	const near: number[] = [];
+	for (let width = hi - 16; width <= hi + 4; width++) near.push(width);
+	const fromNarrow: boolean[] = [];
+	const fromWide: boolean[] = [];
+	for (const width of near) {
+		await shownAtWidth(page, TOP_BAR_WIDTHS[0] as number);
+		fromNarrow.push(await shownAtWidth(page, width));
+		await shownAtWidth(page, TOP_BAR_WIDTHS[TOP_BAR_WIDTHS.length - 1] as number);
+		fromWide.push(await shownAtWidth(page, width));
+	}
+	const first = (shown: boolean[]) => near[shown.indexOf(true)] as number;
+	const settled = (shown: boolean[]) => shown.slice(shown.indexOf(true)).every(Boolean);
+	const detail = `从窄走过来：${first(fromNarrow)}px 起显示；从宽走过来：${first(fromWide)}px 起显示`;
+	expect(settled(fromNarrow) && settled(fromWide), `显示的宽度不是连在一起的一段：${detail}`).toBe(
+		true,
 	);
+	expect(Math.abs(first(fromNarrow) - first(fromWide)), detail).toBeLessThanOrEqual(1);
+	console.log(`各链状态：${detail}`);
+});
+
+test("顶栏：失败摘要单独也放不下全文时，各链状态收起，摘要拿全部剩下的宽度；窗口再宽也不为了各链状态截摘要", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await page.setViewportSize({ width: 1920, height: 1080 });
+	// 病态的失败原因（几千字的单行）：摘要永远放不下全文。
+	const { runId } = await failedRun(controlPlane, connectAgent, clock, {
+		cleanupDone: false,
+		message: LONG_FAILURE_MESSAGE,
+	});
+	await openMonitor(page, clock, runId);
+	await expect(header(page).getByTestId("run-failure")).toBeVisible();
+	const shownAt = await sweepTopBar(page, TOP_BAR_WIDTHS);
+	expect(shownAt, `显示情况：${shownAt.join("、")}`).toEqual(TOP_BAR_WIDTHS.map(() => false));
+	// 收起之后各链状态不占宽度（摘要才拿得到）：宽屏里摘要比最窄宽度宽得多。
+	const state = await topBarState(page);
+	expect(state.summary).toBeGreaterThan(summaryLeast(1920) + 200);
 });
 
 // 线路里站的格子有上限宽度（`LINE_CELL`，12rem）：站少时不平分整行、多出来的宽度留在行尾，放不下时才平分整行；
@@ -338,11 +451,12 @@ for (const viewport of [
 					).toBeLessThanOrEqual(1);
 				}
 				if (m.rowEnd > 1) {
-					// 行尾空着（放得下，多出来的宽度留在行尾）：每一站的格子正好是上限（站名都不长时），再多的宽度不摊给站；
-					// 有一个很长的节点 ID 时，它的列取站名的宽度（最宽 18rem 加两侧留白），别的列仍是上限。
-					const widest = Math.max(...m.cells);
-					const others = longId ? m.cells.filter((c) => c !== widest) : m.cells;
-					for (const cell of others) {
+					// 放得下（行尾空着）：除最后一站外，每一站的格子正好是上限（再多的宽度不摊给站）；最后一站取它站名的宽度，
+					// 计数紧跟在后面（上面的 `countGap`），多出来的宽度只留在计数之后：最后一站也是上限那么宽的话，
+					// 末站的名字后面先空一百多像素才是计数，看起来像少了一站。最后一站的站名很长（节点 ID）时取站名的宽度，最宽 18rem 加两侧留白。
+					const rest = m.cells.slice(0, -1);
+					const last = m.cells[m.cells.length - 1] as number;
+					for (const cell of rest) {
 						expect(cell, `${note}：行尾空着，站的格子超过了上限`).toBeLessThanOrEqual(
 							LINE_CELL_PX + CELL_SLACK,
 						);
@@ -350,7 +464,8 @@ for (const viewport of [
 							LINE_CELL_PX - 1,
 						);
 					}
-					if (longId) expect(widest, `${note}：长 ID 的列`).toBeLessThanOrEqual(288 + 14 + 1);
+					if (longId) expect(last, `${note}：最后一站（长 ID）`).toBeLessThanOrEqual(288 + 14 + 1);
+					else expect(last, `${note}：最后一站应取站名的宽度，不是上限`).toBeLessThan(LINE_CELL_PX);
 				} else {
 					// 放不下：线路占满容器、按站名的宽度分整行（站名长的列比上限宽、短的窄），没有行尾的空白。
 					expect(m.line, `${note}：放不下时线路占满容器`).toBeGreaterThanOrEqual(m.container - 1);

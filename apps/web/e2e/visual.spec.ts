@@ -1942,6 +1942,19 @@ test.describe("账号与登录", () => {
 			await expect(page).toHaveScreenshot("tokens.png", { mask: [tokenPrefixes(page)] });
 		});
 
+		test("令牌页：1280 宽（用过的令牌、过期时间、六个范围：时间折成两行，表格不超出面板）", async ({
+			page,
+			clock,
+		}) => {
+			await page.setViewportSize({ width: 1280, height: 800 });
+			await signIn(page);
+			await seedTokens(page, clock);
+			await page.goto("/account/tokens");
+			await expect(page.locator('[data-token="laptop"]')).toBeVisible();
+			await expect(page.locator('[data-token="laptop"]')).not.toContainText("从未使用");
+			await expect(page).toHaveScreenshot("tokens-1280.png", { mask: [tokenPrefixes(page)] });
+		});
+
 		test("令牌页：空状态", async ({ page }) => {
 			await signIn(page);
 			await page.goto("/account/tokens");
