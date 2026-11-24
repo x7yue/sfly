@@ -4,8 +4,9 @@ import { z } from "zod";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { tasks } from "../db/schema.js";
+import { runs, tasks } from "../db/schema.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import type { ProjectId } from "../projects/project-id.js";
 import { isUuid } from "../util/uuid.js";
 import { feishuBotGone, registeredBots } from "./bot-checks.js";
 import type { FeishuDelivery } from "./feishu-delivery.js";
@@ -63,13 +64,15 @@ export class TaskNotifications {
 		const [task] = await this.deps.db
 			.select({
 				runId: tasks.runId,
+				project: runs.projectId,
 				agentName: tasks.agentName,
 				bots: tasks.referencedFeishuBots,
 			})
 			.from(tasks)
+			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(eq(tasks.id, notification.taskId));
 		if (task?.agentName !== conn.name) return;
-		const problem = await this.#enqueue(notification, task.runId, task.bots);
+		const problem = await this.#enqueue(notification, task.runId, task.project, task.bots);
 		if (problem === undefined) this.deps.delivery.wake();
 		else
 			await this.deps.logs.appendSystem(
@@ -83,6 +86,7 @@ export class TaskNotifications {
 	async #enqueue(
 		notification: Notification,
 		runId: string,
+		project: ProjectId,
 		referenced: readonly string[],
 	): Promise<string | undefined> {
 		const event = parseEvent(notification.eventJson);
@@ -96,7 +100,9 @@ export class TaskNotifications {
 				: { body: textMessage(event.text, event.at_all) };
 		if ("problem" in message) return message.problem;
 		return this.deps.db.transaction(async (tx) => {
-			if (!(await registeredBots(tx, [event.bot])).has(event.bot)) return feishuBotGone(event.bot);
+			if (!(await registeredBots(tx, project, [event.bot])).has(event.bot)) {
+				return feishuBotGone(event.bot);
+			}
 			await enqueueFeishuMessage(tx, {
 				botName: event.bot,
 				source: "notify",
