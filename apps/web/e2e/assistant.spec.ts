@@ -835,6 +835,8 @@ test("排队中：顶栏写排第几，输入框不可用并写「排在第 N �
 	]);
 	await expect(page.getByTestId("session-status")).toHaveText("排队中 · 排在第 2 位");
 	await expect(composer(page)).toBeDisabled();
+	// 不可用的输入框里也写原因（它看起来和可用的差不多）。
+	await expect(composer(page)).toHaveAttribute("placeholder", "排队中，轮到它之后才能说话");
 	const note = page.getByTestId("composer-blocked");
 	await expect(note).toHaveText("排在第 2 位：别人在做的事（bob）正在做");
 	await expect(note.getByRole("link", { name: "别人在做的事" })).toHaveAttribute(
@@ -905,6 +907,7 @@ test("停止途中说的话：不是插话，标「排在这一轮后面」，�
 	);
 	await expect(row(page, "停下来之后的话").getByTestId("message-delivery")).toHaveCount(0);
 	await expect(composer(page)).toBeDisabled();
+	await expect(composer(page)).toHaveAttribute("placeholder", "这一轮正在停止，暂时不能说话");
 	await expect(page.getByTestId("composer-blocked")).toHaveText(
 		"这一轮正在停止，你说的话排在第 1 位；再点一次停止，撤掉它",
 	);
@@ -950,7 +953,12 @@ test("结束会话：点「结束会话」先确认，写明后果；取消不�
 	});
 	await page.getByRole("button", { name: "结束会话" }).click();
 	const dialog = page.getByRole("dialog", { name: "结束这个会话？" });
-	await expect(dialog).toContainText("在做的一轮会停下，排着的话会撤掉；结束之后不能再说话");
+	// 三件后果一件一行写全。
+	await expect(dialog.getByTestId("end-effects").getByRole("listitem")).toHaveText([
+		"在做的一轮会停下",
+		"排着的话会撤掉",
+		"结束之后不能再说话",
+	]);
 	await expect(dialog).toContainText("工作区、提交、场景版本和运行都留着，不删除任何东西");
 	await dialog.getByRole("button", { name: "取消" }).click();
 	await expect(dialog).toHaveCount(0);
@@ -991,7 +999,11 @@ test("结束会话：请求在路上（最长等到这一轮停下）时按钮�
 	await page.getByRole("button", { name: "结束会话" }).click();
 	const dialog = page.getByRole("dialog", { name: "结束这个会话？" });
 	await dialog.getByRole("button", { name: "结束会话" }).click();
-	await expect(dialog.getByRole("button", { name: "正在结束…" })).toBeDisabled();
+	const ending = dialog.getByRole("button", { name: "正在结束…" });
+	await expect(ending).toBeDisabled();
+	// 结束进行中再点一次不再发请求。
+	await ending.click({ force: true });
+	expect(calls).toBe(1);
 	release();
 	await expect(dialog.getByRole("alert")).toContainText("无法结束会话");
 	await expect(dialog.getByRole("alert")).toContainText("会话又开始了一轮，先停止再结束");

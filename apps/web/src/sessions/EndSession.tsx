@@ -56,8 +56,17 @@ export function EndSession({ id, onGone }: { id: string; onGone: (error: unknown
 				<DialogContent className="w-[460px]" showCloseButton={!end.isPending}>
 					<DialogHeader>
 						<DialogTitle>{SESSION.page.endDialogTitle}</DialogTitle>
-						<DialogDescription>{SESSION.page.endDialogBody}</DialogDescription>
+						<DialogDescription>{SESSION.page.endDialogLead}</DialogDescription>
 					</DialogHeader>
+					<ul
+						data-testid="end-effects"
+						className="m-0 flex list-disc flex-col gap-1 pl-5 text-sm text-fg-1"
+					>
+						{SESSION.page.endDialogEffects.map((effect) => (
+							<li key={effect}>{effect}</li>
+						))}
+					</ul>
+					<p className="m-0 text-sm text-fg-2">{SESSION.page.endDialogKept}</p>
 					{end.isError && (
 						<FormAlert>{`${SESSION.page.endFailed}：${errorText(end.error)}`}</FormAlert>
 					)}
@@ -65,7 +74,12 @@ export function EndSession({ id, onGone }: { id: string; onGone: (error: unknown
 						<Button variant="ghost" disabled={end.isPending} onClick={() => setOpen(false)}>
 							{SESSION.page.endCancel}
 						</Button>
-						<Button variant="danger-solid" disabled={end.isPending} onClick={() => end.mutate()}>
+						{/* 请求在路上时不可点：再点一次不再发请求。 */}
+						<Button
+							variant="danger-solid"
+							disabled={end.isPending}
+							onClick={() => !end.isPending && end.mutate()}
+						>
 							{end.isPending ? SESSION.page.ending2 : SESSION.page.endConfirm}
 						</Button>
 					</DialogFooter>

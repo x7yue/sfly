@@ -266,7 +266,15 @@ function Composer({
 				aria-label={SESSION.page.sendLabel}
 				aria-describedby={note === null ? undefined : noteId}
 				placeholder={
-					mode.kind === "steer" ? SESSION.page.steerPlaceholder : SESSION.page.sendPlaceholder
+					ending
+						? SESSION.page.endingPlaceholder
+						: mode.kind === "steer"
+							? SESSION.page.steerPlaceholder
+							: mode.kind === "queued"
+								? SESSION.page.queuedPlaceholder
+								: mode.kind === "behind"
+									? SESSION.page.behindPlaceholder
+									: SESSION.page.sendPlaceholder
 				}
 				value={text}
 				disabled={!canWrite}

@@ -313,6 +313,10 @@ export const SESSION = {
 		steerPlaceholder: "插话：助手在当前这一步做完后会看到",
 		sendSteer: "发送插话",
 		steerHint: "插话在当前这一步做完后送到；要马上停下用停止",
+		/** 输入框不可用时，原因也写在输入框里（不可用的输入框看起来和可用的差不多）。 */
+		queuedPlaceholder: "排队中，轮到它之后才能说话",
+		behindPlaceholder: "这一轮正在停止，暂时不能说话",
+		endingPlaceholder: "正在结束…",
 		/** 排队中：排在第几位、在等谁（会话的标题和发起人是别人写的文字）。 */
 		queuedBefore: (position: number) => `排在第 ${position} 位：`,
 		queuedWaitingFor: (author: string) => `（${author}）正在做`,
@@ -334,8 +338,10 @@ export const SESSION = {
 		end: "结束会话",
 		endTitle: "结束这个会话：之后不能再说话",
 		endDialogTitle: "结束这个会话？",
-		endDialogBody:
-			"在做的一轮会停下，排着的话会撤掉；结束之后不能再说话。工作区、提交、场景版本和运行都留着，不删除任何东西。",
+		endDialogLead: "结束会话之后：",
+		/** 结束会话的三件后果，一件一行。 */
+		endDialogEffects: ["在做的一轮会停下", "排着的话会撤掉", "结束之后不能再说话"] as const,
+		endDialogKept: "工作区、提交、场景版本和运行都留着，不删除任何东西。",
 		endCancel: "取消",
 		endConfirm: "结束会话",
 		ending2: "正在结束…",

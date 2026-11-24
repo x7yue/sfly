@@ -26,10 +26,13 @@ function AssistantPage() {
 	const sessions = useQuery({
 		...apiQuery(sessionsApi.list, { params: { project: SESSION_PROJECT } }),
 		refetchOnWindowFocus: true,
+		// 有会话在做或排队时每 5 秒重新查询；标签页在后台时不查（`refetchIntervalInBackground` 默认就是 false，写明白）；
+		// 没有在做或排队的会话时不轮询，只在获得焦点和建会话之后刷新。
 		refetchInterval: (query) =>
 			query.state.data?.sessions.some((s) => s.status === "running" || s.status === "queued")
 				? STATUS_POLL_MS
 				: false,
+		refetchIntervalInBackground: false,
 	});
 	useListNavigation();
 	return (
