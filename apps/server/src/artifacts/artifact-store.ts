@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { and, eq, ne, sum } from "drizzle-orm";
 import type { Clock } from "../clock.js";
@@ -61,6 +61,21 @@ export function artifactLimitForWire(limit: number): bigint {
 
 /** 名称（产物目录内的相对路径）的最大长度。 */
 const MAX_NAME_LENGTH = 1024;
+
+/**
+ * 上传的临时文件放在 `<数据目录>/artifacts/.uploading/`（#649）：产物在 `artifacts/<运行 ID>/…` 下，运行 ID 是 UUID，
+ * 不会和这个名字重名；和产物在同一个文件系统里，写完用 `rename` 挪过去。临时文件不放在任务的产物目录里：产物的名字可以是
+ * 任何合规矩的相对路径，包括 `.upload-…`，启动时清理临时文件不能把它们当成临时文件删掉。
+ */
+const UPLOAD_TEMP_DIR = ".uploading";
+
+/** 写入流关闭了（文件描述符已经还给系统，文件如果要建已经建出来了）；已经关闭的立即返回。 */
+function closed(stream: Writable): Promise<void> {
+	// destroy 可以重复调用；管道出错时已经销毁了它，这里是没有销毁的情况（出错不在管道里）也保证能关上。
+	stream.destroy();
+	if (stream.closed) return Promise.resolve();
+	return new Promise((resolve) => stream.once("close", () => resolve()));
+}
 
 /**
  * 上传读请求体时，这么久没有收到任何数据就以明确的错误结束（408 `upload_idle_timeout`，不存、不留临时文件、放开这个任务的队列）：
@@ -137,6 +152,22 @@ export class ArtifactStore {
 	/** 现在有几个任务的上传在做或者排队（队列用完就删，空闲时是 0）：给测试看队列的条目有没有删干净。 */
 	get pendingTasks(): number {
 		return this.#queues.size;
+	}
+
+	/**
+	 * 清掉上次进程留下的上传临时文件（被杀、断电时来不及删），返回清掉了几个。只在控制面开始监听之前调用：这时没有上传在做，
+	 * 目录里的都是上一次留下的（构造函数里不做：测试里几个 `ArtifactStore` 共用一个数据目录）。
+	 * 在升级之前留在任务产物目录里的（`artifacts/<运行>/<任务>/.upload-…`）不在这里找：那要走遍每个任务的目录，而且产物的名字
+	 * 也可以是 `.upload-…`；它们随所属运行的保留期清理一起删除。
+	 */
+	async sweepUploadTemp(): Promise<number> {
+		const dir = join(this.deps.dataDir, "artifacts", UPLOAD_TEMP_DIR);
+		const names = await readdir(dir).catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return [] as string[];
+			throw error;
+		});
+		await rm(dir, { recursive: true, force: true });
+		return names.length;
 	}
 
 	/** 校验产物名称；合法时返回 undefined，否则返回原因。 */
@@ -248,7 +279,8 @@ export class ArtifactStore {
 
 		const relative = join("artifacts", task.runId, taskId, ...name.split("/"));
 		const file = join(this.deps.dataDir, relative);
-		const tmp = join(this.deps.dataDir, "artifacts", task.runId, taskId, `.upload-${randomUUID()}`);
+		const tmp = join(this.deps.dataDir, "artifacts", UPLOAD_TEMP_DIR, `.upload-${randomUUID()}`);
+		let out: Writable | undefined;
 		const hash = createHash("sha256");
 		let size = 0;
 		let tooLarge = false;
@@ -256,6 +288,7 @@ export class ArtifactStore {
 		const idleMs = this.deps.uploadIdleMs ?? UPLOAD_IDLE_TIMEOUT_MS;
 		try {
 			await mkdir(dirname(tmp), { recursive: true });
+			out = createWriteStream(tmp);
 			await pipeline(
 				body,
 				async function* (source: AsyncIterable<Buffer>) {
@@ -292,11 +325,14 @@ export class ArtifactStore {
 						clearTimeout(timer);
 					}
 				},
-				createWriteStream(tmp),
+				out,
 			);
 			await mkdir(dirname(file), { recursive: true });
 			await rename(tmp, file);
 		} catch (error) {
+			// 先等写入流关闭、再删临时文件（#649）：文件是写入流异步 open 出来的，出错得早（第一块就超限、空闲超时）时流被销毁了它
+			// 还没建出文件，这时先删就删了个不存在的文件，open 随后完成、文件才出现，留下一个零字节的临时文件。
+			if (out) await closed(out);
 			await rm(tmp, { force: true });
 			if (idle) {
 				return {
