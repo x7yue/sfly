@@ -214,6 +214,23 @@ describe("在做", () => {
 		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
 	});
 
+	it("prompt 先看记号、再看在做：第 2 轮在做时晚到的第 1 轮（轮次不大于记号）回 202、以 stopped 结束，不回 409，第 2 轮不受影响", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		// 控制面放弃了第 1 轮（abort 1），之后开始了第 2 轮；第 1 轮的 prompt 这时才到。
+		await harness.abort(id, 1);
+		await harness.prompt(id, { turn: 2, text: "hang" });
+		await started(harness, id);
+		const late = await harness.prompt(id, { turn: 1, text: "settle" });
+		expect(late.status).toBe(202);
+		expect(await harness.turnEnd(id, 1)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+		// 轮次比记号大的才看在做：409。
+		expect((await harness.prompt(id, { turn: 3, text: "settle" })).status).toBe(409);
+		expect(eventsOf(harness, id, 2).some((e) => e.type === "turn_end")).toBe(false);
+		await harness.abort(id, 2);
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "stopped" });
+	});
+
 	it("新起的 pi 先把插话设成一次全送，再交 prompt", async () => {
 		const harness = await start();
 		const id = crypto.randomUUID();
