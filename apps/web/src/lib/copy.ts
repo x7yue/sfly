@@ -258,8 +258,6 @@ export const SESSION = {
 		workbench === null ? "可以用" : `可以用 · 工作台 ${workbench} 在线`,
 	notReady: "现在不能用：",
 	workbenchOffline: (workbench: string) => `工作台 ${workbench} 不在线`,
-	/** 「开始」不可用时按钮旁边写的原因的开头。 */
-	cannotStart: "助手现在不能用，不能开始会话",
 	input: {
 		label: "要做什么？",
 		placeholder: "要做什么？例如：给 http_check 加一个超时参数",

@@ -494,6 +494,8 @@ export class SessionManager {
 		});
 		session.startedFor = startedFor;
 		session.tmpDir = launch.tmpDir;
+		// pi 原始事件的副本（打过码，排查用）：异步写，`turn_end` 不等它落盘（#684）。它不在协议里、没有谁据它做决定，
+		// 等它会让每一轮的结局多一次磁盘往返、多一种失败；要读它的（测试、排查）等它写完再读。
 		const raw = createWriteStream(join(session.dir, "events.jsonl"), { flags: "a", mode: 0o600 });
 		raw.on("error", (error) =>
 			this.options.log(`会话 ${session.id}：写 events.jsonl 失败：${error.message}`),

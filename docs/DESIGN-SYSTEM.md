@@ -177,7 +177,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `app-shell/AppShell` | 外壳：侧边栏（导航来自 `navigation.ts`，可折叠，状态存 localStorage；项右侧平时是计数，悬停或键盘聚焦时在同一位置换成跳转快捷键 `Keys`，折叠后不显示）、顶栏（面包屑来自路由 `staticData.crumb`、Ctrl K 搜索入口、昵称） |
 | `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().open("run-scenario")`（只列「运行场景」一组的命令面板，控制台的「运行场景」按钮用它）、`useOverlays().runScenario(场景)` |
 | `app-shell/CommandPalette` | 「当前页面」「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」六组。「当前页面」是当前页面已绑定、并在注册表里带 `palette` 的快捷键（取消运行、保存……），名称与按键取自注册表，页面状态变了（运行结束、没有失败节点）就自动出现或消失，为空时整组不渲染；其余命令加在 `commands` 里。`scope="run-scenario"` 时只列「运行场景」一组，在里面按 Ctrl K 切成完整的命令面板 |
-| `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`PageHeader` 固定一个控件高（有没有右侧按钮标题都在同一位置），标题 h1 可以被程序聚焦（焦点去向的兜底，见 §7）；`Panel` 用 `overflow: clip` 裁圆角，不是滚动容器（里面的表头才能吸顶）；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
+| `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`PageHeader` 固定一个控件高（有没有右侧按钮标题都在同一位置；标题旁的数量缺省是三级文字，是页面要读的信息时用 `countClassName` 亮一档，令牌页的数量和项目名这样做），标题 h1 可以被程序聚焦（焦点去向的兜底，见 §7）；`Panel` 用 `overflow: clip` 裁圆角，不是滚动容器（里面的表头才能吸顶）；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
 | `doc-page-link`：`DocPageLink` | 指向开发文档某一页的链接，界面里去开发文档都用它：`page` 是 `DOC_PAGE` 里的 slug，链接文字缺省是页名；`look` 是 `inline`（正文里的行内链接，缺省，样式是 2.4 的 `INLINE_LINK`）或 `button`（ghost 小按钮，同 `PanelLink`：控制台「开始使用」的标题行和步骤） |
 | `#/dashboard/DashboardPanel`：`DashboardPanel` | 控制台的面板：标题行（标题、计数、右侧操作）加内容，以标题作区域名称；「开始使用」和实况墙的最近结束、Agent、场景共用 |
 | `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`（```prompt 代码块是给人读、复制给 AI 编程助手的提示词，自动换行、正文字体；其余代码块不换行），表格用 `ui/table`，`<slug>.md` 链接换成文档页 |

@@ -44,12 +44,13 @@ describe("main.ts 读 SFLY_ARTIFACT_LIMIT_MB", () => {
 		"-5",
 		"1e14",
 		"0.0000001",
-	])("%s：启动时就报错退出，信息写着环境变量的名字、填的原文和合法的范围", async (value) => {
+	])("%s：启动时就报错退出，信息写着环境变量的名字、认得的填的值和合法的范围", async (value) => {
 		const result = await startMain(value);
 
 		expect(result.code, result.output).not.toBe(0);
 		expect(result.output).toContain("SFLY_ARTIFACT_LIMIT_MB 不合法");
-		expect(result.output).toContain(`"${value}"`);
+		// 像数的原样回显；`abc` 这样不像数的不回显，只说认不出（src/config/echo.ts：认得的才回显）。
+		expect(result.output).toContain(value === "abc" ? "（认不出，没有回显）" : `"${value}"`);
 		expect(result.output).toContain("之间的整数");
 	}, 90_000);
 
