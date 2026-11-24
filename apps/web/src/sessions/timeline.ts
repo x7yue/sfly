@@ -6,6 +6,7 @@ import type {
 	SessionTool,
 	TurnLimit,
 	TurnOutcome,
+	WaitingFor,
 } from "@sfly/schema";
 
 /**
@@ -17,9 +18,19 @@ import type {
  * - `tool_call` 之后同一个 `call_id` 的 `tool_result` 落在同一行；一轮结束时还没有结果的行不再算在做；
  * - `thinking` 只留一个「在思考」的标记，有文字或工具出来就去掉（思考的内容不显示）；一轮不在进行时（`turn_end` 之后、
  *   会话已结束）才到的 `thinking` 和 `assistant_delta` 是迟到的，不处理，「思考中」不会挂着；
- * - 用户的话按 `message_id` 去重，不靠文字；
- * - 这一版不渲染的类型（`turn_queued`、`tool_output`、`steer_queue`、`platform`、`snapshot`）和不认识的类型原样放过，不抛错。
- *   其中 `turn_started`、`session_ended` 只用来算会话的状态。
+ * - 用户的话按 `message_id` 去重，不靠文字；用户的话分三种（{@link UserRole}）：开一轮的话；**插话**（`steer` 为 true，在做时说的）；
+ *   **排在这一轮后面的话**（`steer` 为 false、却是在一轮进行中说的：控制面发出中止之后、结局写下之前说的话，协议「停止一轮」，
+ *   是新的一轮的开头，不是插话），这一轮的结局写下之后会话是排队中，轮到它时 `turn_started` 把它变成开一轮的话；停止再点一次、
+ *   会话被停止时它被撤掉（`queue_cancelled`）；
+ * - **插话送到了没有**（{@link SteerDelivery}）：`steer_queue` 是还没送到的完整列表，在最近一份里是「等待送达」，之前在某份里、
+ *   之后不在了是「已送到」；`steer_dropped` 通知带着这句话的 `message_id`，按它对上，是「没有送到」（同一句话的通知只显示一次）；
+ *   一轮结束时还没有 `steer_dropped` 的都算送到（协议「不变式」）；刷新后读到的历史里没有 `steer_queue`（不持久），在做的一轮里的插话在
+ *   下一份 `steer_queue` 到之前不知道；
+ * - **补发的次序**（#544 评论 8）：补发（打开页面、重连）期间到的不持久的事件在补发完之后才放出来，会排在比它晚的持久事件后面。
+ *   所以 `steer_queue` 只在一轮在做时才算，`turn_queued` 只在排队时才算，别的时候是晚到的、按「这一轮已经过去」丢掉；「已送到」只由
+ *   「之前出现过、现在不在了」推出来，不因为一句话不在列表里就算送到；
+ * - `turn_queued`（排第几、在等谁）记在 {@link TimelineState.queue}；`session_ended` 一行写会话已结束；
+ * - 这一版不渲染的类型（`tool_output`、`platform`、`snapshot`）和不认识的类型原样放过，不抛错。
  */
 
 export interface ToolResultInfo {
@@ -42,6 +53,13 @@ export type TimelineItem =
 			messageId: string;
 			author: string;
 			text: string;
+			role: UserRole;
+			/** 插话（`role` 为 `steer`）送到了没有；别的话是 null。 */
+			delivery: SteerDelivery | null;
+			/** `delivery` 为 `dropped` 时，`steer_dropped` 通知给的那句说明（里面写着是没有送到还是没有确认送到）。 */
+			droppedNote: string | null;
+			/** 在某一份 `steer_queue` 里出现过（推出「已送到」用，不显示）。 */
+			queuedSeen: boolean;
 	  }
 	| {
 			kind: "assistant";
@@ -71,6 +89,8 @@ export type TimelineItem =
 			seq: number;
 			noticeKind: NoticeKind;
 			message: string;
+			/** `steer_dropped`、`queue_cancelled` 带的那句话的 ID；别的提示是 null。 */
+			messageId: string | null;
 	  }
 	| {
 			kind: "turn_end";
@@ -85,7 +105,30 @@ export type TimelineItem =
 			durationMs: number;
 			limitKind: TurnLimit | undefined;
 			errorClass: ErrorClass | undefined;
+	  }
+	| {
+			kind: "session_ended";
+			key: string;
+			seq: number;
+			at: string;
+			/** 结束它的人的昵称。 */
+			by: string;
 	  };
+
+/**
+ * 用户的一句话是什么：`turn` 开一轮的话；`steer` 插话（在做时说的）；`behind` 排在这一轮后面的话（停止途中说的，这一轮的结局写下之后
+ * 开始它）；`cancelled` 排着的话被撤掉了（`queue_cancelled`）。
+ */
+export type UserRole = "turn" | "steer" | "behind" | "cancelled";
+
+/** 插话送到了没有：`waiting` 等待送达，`delivered` 已送到，`dropped` 没有送到，`unknown` 不知道（刷新后读到在做的一轮里的插话）。 */
+export type SteerDelivery = "waiting" | "delivered" | "dropped" | "unknown";
+
+/** 排队的会话排第几、在等谁（`turn_queued`，或打开页面时会话视图里的）。 */
+export interface TimelineQueue {
+	position: number;
+	waitingFor: WaitingFor | null;
+}
 
 export interface TimelineState {
 	items: TimelineItem[];
@@ -103,9 +146,24 @@ export interface TimelineState {
 	streamingKey: string | null;
 	/** 逐字出现的助手的话的编号（给还没有序号的条目起 key）。 */
 	streams: number;
+	/** 有一轮在进行（`turn_started` 之后、`turn_end` 之前，按事件算）：这时说的不是插话的话，是排在这一轮后面的话。 */
+	turnOpen: boolean;
+	/**
+	 * 有一句开一轮的话还没有等到它的 `turn_started`（会话空闲时说的话，项目里别的会话在做就排队）：只有这时一条 `turn_queued` 才让会话
+	 * 变成排队中；补发完才放出来的、属于已经开始过的那一轮的 `turn_queued` 不算（它之后已经有了 `turn_started`）。
+	 */
+	awaitingStart: boolean;
+	/** 最近一份 `steer_queue` 里的 `message_id`（还没送到的插话）；一轮开始、结束时清空。 */
+	steerQueue: readonly string[];
+	/** 排队中的位置和在等谁；不在排队时为 null。 */
+	queue: TimelineQueue | null;
 }
 
-export function emptyTimeline(status: SessionStatus): TimelineState {
+export function emptyTimeline(
+	status: SessionStatus,
+	queue: TimelineQueue | null = null,
+	turnOpen = false,
+): TimelineState {
 	return {
 		items: [],
 		status,
@@ -115,6 +173,10 @@ export function emptyTimeline(status: SessionStatus): TimelineState {
 		hasMore: false,
 		streamingKey: null,
 		streams: 0,
+		turnOpen,
+		awaitingStart: status === "queued",
+		steerQueue: [],
+		queue,
 	};
 }
 
@@ -158,6 +220,47 @@ export function applyEvent(state: TimelineState, event: SessionEvent): TimelineS
 	};
 }
 
+/**
+ * 读到的这一段事件开头，有没有一轮已经在进行（它的 `turn_started` 在更早的一页里）：这一段里先出现的是 `turn_end`，就是有；先出现的是
+ * `turn_started`，就没有；两个都没有（整段都在同一轮里）时问 `fallback`。用来分清这一段开头的话是开一轮的话，还是排在这一轮后面的话。
+ */
+function startsInTurn(events: readonly SessionEvent[], fallback: boolean): boolean {
+	for (const event of events) {
+		if (event.type === "turn_end") return true;
+		if (event.type === "turn_started") return false;
+	}
+	return fallback;
+}
+
+/** 有话排在这一轮后面（停止途中说的，还没有开始）。 */
+export const hasBehind = (items: readonly TimelineItem[]): boolean =>
+	items.some((item) => item.kind === "user" && item.role === "behind");
+
+/**
+ * 由读到的一段历史（持久事件）重新判断插话的送达：有 `steer_dropped` 的是没有送到；它之后这一轮已经有了结局的（没有 `steer_dropped`）是
+ * 送到了；其余（读到在做的一轮里的插话）在下一份 `steer_queue` 到之前不知道。读历史（打开、往前翻页）之后调用，每条事件落在哪一页都一样。
+ */
+function resolveSteers(items: readonly TimelineItem[]): TimelineItem[] {
+	const dropped = new Map<string, string>();
+	for (const item of items) {
+		if (item.kind === "notice" && item.noticeKind === "steer_dropped" && item.messageId !== null) {
+			if (!dropped.has(item.messageId)) dropped.set(item.messageId, item.message);
+		}
+	}
+	let lastEnd = -1;
+	items.forEach((item, index) => {
+		if (item.kind === "turn_end") lastEnd = index;
+	});
+	return items.map((item, index): TimelineItem => {
+		if (item.kind !== "user" || item.role !== "steer") return item;
+		const note = dropped.get(item.messageId);
+		if (note !== undefined)
+			return { ...item, delivery: "dropped", droppedNote: item.droppedNote ?? note };
+		if (item.delivery === "dropped" || item.delivery === "delivered") return item;
+		return { ...item, delivery: index < lastEnd ? "delivered" : "unknown" };
+	});
+}
+
 /** 有一轮在进行：思考和文字增量只在这时有意义（它们不持久，一轮结束之后才到的是迟到的）。 */
 const inTurn = (state: TimelineState): boolean =>
 	state.status === "running" || state.status === "queued";
@@ -172,6 +275,7 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 			return {
 				...state,
 				thinking: false,
+				awaitingStart: state.awaitingStart || (!event.steer && !state.turnOpen),
 				items: [
 					...state.items,
 					{
@@ -182,11 +286,29 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 						messageId: event.message_id,
 						author: event.author,
 						text: event.text,
+						// 在做时说的：`steer` 为 true 是插话；为 false、却有一轮在进行的是排在这一轮后面的话（停止途中说的）。
+						role: event.steer ? "steer" : state.turnOpen ? "behind" : "turn",
+						delivery: event.steer ? "waiting" : null,
+						droppedNote: null,
+						// 这句话的 `steer_queue` 比它的 `user_message` 先到（补发的次序）：已经在队列里了。
+						queuedSeen: event.steer && state.steerQueue.includes(event.message_id),
 					},
 				],
 			};
 		case "turn_started":
-			return { ...state, status: "running" };
+			// 排在后面的话轮到了：它就是这一轮的开头。
+			return {
+				...state,
+				status: "running",
+				turnOpen: true,
+				awaitingStart: false,
+				steerQueue: [],
+				queue: null,
+				items: state.items.map(
+					(item): TimelineItem =>
+						item.kind === "user" && item.role === "behind" ? { ...item, role: "turn" } : item,
+				),
+			};
 		case "thinking":
 			// 一轮已经结束（或会话已结束）之后才到的思考（补发历史期间到达的、乱序的）不让「思考中」挂着。
 			if (!inTurn(state)) return state;
@@ -317,20 +439,93 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				],
 			};
 		}
-		case "notice":
+		case "notice": {
+			const messageId = event.message_id ?? null;
+			// 按 `message_id` 对上那句话：`steer_dropped` 是插话没有送到，`queue_cancelled` 是排着的话被撤掉了。
+			let items = state.items;
+			if (messageId !== null && event.kind === "steer_dropped") {
+				items = items.map(
+					(item): TimelineItem =>
+						item.kind === "user" && item.role === "steer" && item.messageId === messageId
+							? { ...item, delivery: "dropped", droppedNote: item.droppedNote ?? event.message }
+							: item,
+				);
+			}
+			let status: SessionStatus = state.status;
+			let queue = state.queue;
+			if (messageId !== null && event.kind === "queue_cancelled") {
+				items = items.map(
+					(item): TimelineItem =>
+						item.kind === "user" &&
+						(item.role === "behind" || item.role === "turn") &&
+						item.messageId === messageId
+							? { ...item, role: "cancelled" }
+							: item,
+				);
+				// 排队的会话被停止：回到空闲；排在这一轮后面的话被撤掉：不再有排位。
+				if (status === "queued") status = "idle";
+				if (!hasBehind(items)) queue = null;
+			}
+			const cancelledAwait = event.kind === "queue_cancelled" && !hasBehind(items);
+			// 同一句话的同一种提示只显示一次（`steer_dropped` 可能有两条：控制面写了「没有确认送到」，助手服务之后又确认没送到）。
+			const shown =
+				messageId !== null &&
+				state.items.some(
+					(item) =>
+						item.kind === "notice" &&
+						item.noticeKind === event.kind &&
+						item.messageId === messageId,
+				);
 			return {
 				...state,
-				items: [
-					...state.items,
-					{
-						kind: "notice",
-						key: `e${event.seq}`,
-						seq: event.seq,
-						noticeKind: event.kind,
-						message: event.message,
-					},
-				],
+				status,
+				queue,
+				awaitingStart: cancelledAwait ? false : state.awaitingStart,
+				items: shown
+					? items
+					: [
+							...items,
+							{
+								kind: "notice",
+								key: `e${event.seq}`,
+								seq: event.seq,
+								noticeKind: event.kind,
+								message: event.message,
+								messageId,
+							},
+						],
 			};
+		}
+		case "steer_queue": {
+			// 这一轮不在做：晚到的（补发完才放出来的、属于已经过去的一轮的队列），不算。
+			if (state.status !== "running") return state;
+			const listed = new Set(event.messages.map((entry) => entry.message_id));
+			return {
+				...state,
+				steerQueue: [...listed],
+				items: state.items.map((item): TimelineItem => {
+					if (item.kind !== "user" || item.role !== "steer") return item;
+					if (item.delivery === "delivered" || item.delivery === "dropped") return item;
+					if (listed.has(item.messageId)) return { ...item, delivery: "waiting", queuedSeen: true };
+					// 不在列表里了：之前出现过的，或者读历史时不知道的（那时已经在助手服务手上），送到了（没送到的先有 `steer_dropped`）。
+					// 没在任何一份列表里出现过的不算：晚到的旧队列里本来就没有它。
+					return item.queuedSeen || item.delivery === "unknown"
+						? { ...item, delivery: "delivered" }
+						: item;
+				}),
+			};
+		}
+		case "turn_queued": {
+			const queue = { position: event.position, waitingFor: event.waiting_for };
+			// 空闲的会话说的话排队了（还在等它的 `turn_started`）：会话变成排队中。
+			if ((state.status === "idle" || state.status === "queued") && state.awaitingStart) {
+				return { ...state, status: "queued", queue };
+			}
+			// 排在这一轮后面的话（会话仍在做）：位置前进了。
+			if (state.status === "running" && hasBehind(state.items)) return { ...state, queue };
+			// 其余是晚到的（补发的次序，属于已经过去的一轮）：不算。
+			return state;
+		}
 		case "turn_end": {
 			// 同一轮只有一个结局（控制面只记第一条，后到的不记、不发布）：这一轮的结局已经画过，后来的（旧版本留下的、
 			// 重复的）不再画一行；下一轮在做时，上一轮迟到的重复结局也不能把会话改回空闲。
@@ -338,17 +533,30 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 				return state;
 			}
 			const settled = finishStreaming(state);
+			// 一轮结束时还没有 `steer_dropped` 的插话都送到了（协议「不变式」）；排着话的会话这时是排队中，轮到它时 `turn_started` 开始它。
+			const finished = settled.items.map((item): TimelineItem => {
+				if (item.kind === "tool" && item.result === null) return { ...item, abandoned: true };
+				if (
+					item.kind === "user" &&
+					item.role === "steer" &&
+					(item.delivery === "waiting" || item.delivery === "unknown")
+				) {
+					return { ...item, delivery: "delivered" };
+				}
+				return item;
+			});
 			return {
 				...state,
 				...settled,
 				thinking: false,
+				turnOpen: false,
+				awaitingStart: hasBehind(finished),
+				steerQueue: [],
 				// 会话已经结束就保持结束（`session_ended` 比这一轮的 `turn_end` 晚到的情况不存在，稳妥起见）。
-				status: state.status === "ended" ? "ended" : "idle",
+				status: state.status === "ended" ? "ended" : hasBehind(finished) ? "queued" : "idle",
+				queue: hasBehind(finished) ? state.queue : null,
 				items: [
-					...settled.items.map(
-						(item): TimelineItem =>
-							item.kind === "tool" && item.result === null ? { ...item, abandoned: true } : item,
-					),
+					...finished,
 					{
 						kind: "turn_end",
 						key: `e${event.seq}`,
@@ -367,9 +575,27 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 			};
 		}
 		case "session_ended":
-			return { ...state, status: "ended", thinking: false };
+			return {
+				...state,
+				status: "ended",
+				thinking: false,
+				turnOpen: false,
+				awaitingStart: false,
+				steerQueue: [],
+				queue: null,
+				items: [
+					...state.items,
+					{
+						kind: "session_ended",
+						key: `e${event.seq}`,
+						seq: event.seq,
+						at: event.at,
+						by: event.by,
+					},
+				],
+			};
 		default:
-			// turn_queued、tool_output、steer_queue、platform、snapshot，以及以后才有的类型：这一版不渲染。
+			// tool_output、platform、snapshot，以及以后才有的类型：这一版不渲染。
 			return state;
 	}
 }
@@ -382,9 +608,24 @@ export function initialTimeline(
 	status: SessionStatus,
 	events: readonly SessionEvent[],
 	hasMore: boolean,
+	queue: TimelineQueue | null = null,
 ): TimelineState {
-	const built = events.reduce(applyEvent, emptyTimeline(status));
-	return { ...built, status, thinking: false, hasMore };
+	const built = events.reduce(
+		applyEvent,
+		emptyTimeline(status, null, startsInTurn(events, status === "running")),
+	);
+	return {
+		...built,
+		status,
+		thinking: false,
+		hasMore,
+		// 有一轮在进行取自会话视图（读取这一刻的），不由这一页历史推出来；排位和在等谁也取自视图。
+		turnOpen: status === "running",
+		awaitingStart: status === "queued" || (status === "running" && hasBehind(built.items)),
+		steerQueue: [],
+		queue,
+		items: resolveSteers(built.items),
+	};
 }
 
 /**
@@ -396,7 +637,10 @@ export function prependHistory(
 	events: readonly SessionEvent[],
 	hasMore: boolean,
 ): TimelineState {
-	const older = events.reduce(applyEvent, emptyTimeline(state.status));
+	const older = events.reduce(
+		applyEvent,
+		emptyTimeline(state.status, null, startsInTurn(events, false)),
+	);
 	// 这一页里没有结果的调用：结果在后面一页里（已经读进来了，是只有结果的那一行）就合上，否则不再算在做。
 	const orphans = new Map(
 		state.items.flatMap((item) =>
@@ -420,7 +664,7 @@ export function prependHistory(
 	);
 	return {
 		...state,
-		items: [...merged, ...rest],
+		items: resolveSteers([...merged, ...rest]),
 		oldestSeq:
 			older.oldestSeq === null
 				? state.oldestSeq
