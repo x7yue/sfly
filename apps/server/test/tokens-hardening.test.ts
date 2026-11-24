@@ -206,6 +206,10 @@ describe("令牌的几处收紧", () => {
 				"\u200dabc",
 				"a\u200d\u200db",
 				"a\u3164b",
+				// 孤立的代理码元（不是合法的文字）、盲文空白（看起来是空的）。
+				`带${String.fromCharCode(0xd800)}孤立`,
+				`带${String.fromCodePoint(0x2800)}盲文`,
+				String.fromCodePoint(0x2800),
 				"   ",
 			]) {
 				const personal = await call(loginCookie(adminCookie), "POST", "/account/tokens", { name });
@@ -250,6 +254,8 @@ describe("令牌的几处收紧", () => {
 				"带\u0000NUL",
 				"带\u{e0067}标签",
 				"\u200d开头",
+				`带${String.fromCharCode(0xdc00)}孤立`,
+				`带${String.fromCodePoint(0x2800)}盲文`,
 			]) {
 				const res = await call(loginCookie(adminCookie), "POST", "/users", {
 					login_name: "someone",

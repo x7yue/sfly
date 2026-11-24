@@ -9,6 +9,8 @@
  * - C0 控制字符（U+0000–U+001F：NUL、制表、换行、回车、转义序列 ESC……）、DEL（U+007F）、C1 控制字符（U+0080–U+009F）：
  *   会把终端和日志弄乱；
  * - 行分隔符、段分隔符（U+2028、U+2029）：换行；
+ * - **孤立的代理码元**（U+D800–U+DFFF，不成对的）：不是合法的文字，进了数据库和 JSON 之后各处的表现不一致；
+ * - **盲文空白 U+2800**：看起来是空的，只由它组成的名字和空名字一样；
  * - **默认可忽略的码位**（Unicode 的 `Default_Ignorable_Code_Point`，含其中未分配的）：渲染时看不见，包括零宽空格（U+200B）、
  *   词连接符和不可见的运算符（U+2060–U+2064）、软连字符（U+00AD）、字节顺序标记（U+FEFF）、双向文字的控制字符（嵌入和覆盖
  *   U+202A–U+202E、隔离 U+2066–U+2069、方向标记 U+200E、U+200F、U+061C：让名字倒着显示）、各种填充符（U+115F、U+1160、
@@ -32,12 +34,12 @@
  * 一个字符就拒绝的那张表：`\p{Cc}` 是 C0（U+0000–U+001F）、DEL（U+007F）、C1（U+0080–U+009F）；其余是行分隔符、段分隔符，
  * 和 `Default_Ignorable_Code_Point` 去掉三种例外（U+200C、U+200D、U+FE00–U+FE0F）：
  * U+00AD、U+034F、U+061C、U+115F–U+1160、U+17B4–U+17B5、U+180B–U+180F、U+200B、U+200E–U+200F、U+202A–U+202E、
- * U+2060–U+206F（含未分配的 U+2065）、U+3164、U+FEFF、U+FFA0、U+FFF0–U+FFF8（未分配）、U+1BCA0–U+1BCA3、
- * U+1D173–U+1D17A、U+E0000–U+E0FFF（标签字符、补充的变体选择符和中间未分配的）。
+ * U+2060–U+206F（含未分配的 U+2065）、U+2800（盲文空白）、U+3164、U+FEFF、U+FFA0、U+FFF0–U+FFF8（未分配）、U+1BCA0–U+1BCA3、
+ * U+1D173–U+1D17A、U+E0000–U+E0FFF（标签字符、补充的变体选择符和中间未分配的）、U+D800–U+DFFF（孤立的代理码元；成对的在 `for…of` 里是一个字符，不算）。
  */
 export const REJECTED_NAME_CHARACTER =
 	// biome-ignore lint/suspicious/noMisleadingCharacterClass: 表里是一个一个的码位（含组合用的 U+034F），每个单独就拒绝，不是想匹配「字符加组合符」
-	/[\p{Cc}\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F\u200B\u200E-\u200F\u2028-\u2029\u202A-\u202E\u2060-\u206F\u3164\uFEFF\uFFA0\uFFF0-\uFFF8\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}]/u;
+	/[\p{Cc}\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F\u200B\u200E-\u200F\u2028-\u2029\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0\uFFF0-\uFFF8\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}\uD800-\uDFFF]/u;
 
 const ZERO_WIDTH_JOINER = 0x200d;
 const ZERO_WIDTH_NON_JOINER = 0x200c;

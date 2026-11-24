@@ -85,6 +85,13 @@ const REJECTED: ReadonlyArray<readonly [string, string]> = [
 	["变体选择符连着出现（一个字符后面最多一个）", `a${chars(VS16, VS16)}`],
 	["变体选择符接在零宽连接符后面", `a${chars(ZWJ, VS16)}b`],
 	["名字只由例外组成", chars(ZWJ, ZWNJ, VS16)],
+	// 孤立的代理码元（不是合法的文字）、盲文空白（看起来是空的）
+	["孤立的高代理码元（U+D800）", `a${chars(0xd800)}b`],
+	["孤立的低代理码元（U+DC00）", `a${chars(0xdc00)}b`],
+	["孤立的高代理码元在末尾", `a${chars(0xdbff)}`],
+	["顺序反了的一对代理码元（低在前、高在后）", `a${chars(0xdc00, 0xd800)}b`],
+	["盲文空白 U+2800", `a${chars(0x2800)}b`],
+	["只由盲文空白组成（看起来是空的）", chars(0x2800, 0x2800)],
 	// 没有看得见的字符
 	["只有空白", "   "],
 	["空白和零宽不连字符（看起来是空的）", ` ${chars(ZWNJ)}`],
@@ -120,6 +127,7 @@ const ALLOWED: ReadonlyArray<readonly [string, string]> = [
 	["不换行空格（看得见的字符之间）", `a${chars(0xa0)}b`],
 	// 看起来一样的名字不在这个检查里：不承诺「看起来一样的不能并存」。
 	["西里尔字母 а 冒充拉丁字母 a", "аdmin"],
+	["成对的代理码元（emoji）不是孤立的", `a${chars(0x1f600)}b`],
 	["名字前后的空白不算（别处会去掉）", "  admin  "],
 ];
 
@@ -165,6 +173,15 @@ describe("名字里不能有的字符", () => {
 		);
 		// 没有看得见的字符。
 		expect(unsafeNameProblem("昵称", ` ${chars(ZWNJ)}`)).toBe("昵称里没有看得见的字符");
+		// 孤立的代理码元、盲文空白：同样说出第几个字符、哪个码位（成对的代理码元算一个字符）。
+		expect(unsafeNameProblem("昵称", `${chars(0x1f600)}${chars(0xd800)}`)).toBe(
+			"昵称的第 2 个字符是 U+D800：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符",
+		);
+		expect(nameProblem(`ab${chars(0x2800)}`)).toEqual({
+			kind: "rejected",
+			position: 3,
+			codePoint: 0x2800,
+		});
 		expect(codePointLabel(0x1f600)).toBe("U+1F600");
 		expect(codePointLabel(0x41)).toBe("U+0041");
 	});
@@ -198,6 +215,8 @@ describe("名字里不能有的字符", () => {
 		addRange(0x00, 0x1f);
 		addRange(0x7f, 0x9f);
 		addRange(0x2028, 0x2029);
+		// 孤立的代理码元（成对的在遍历字符时是一个字符，不会单独出现）。
+		addRange(0xd800, 0xdfff);
 		// 默认可忽略的码位（Unicode 的 Default_Ignorable_Code_Point，含未分配的），去掉三种例外（U+200C、U+200D、U+FE00–U+FE0F）。
 		for (const [lo, hi] of [
 			[0xad, 0xad],
@@ -210,6 +229,8 @@ describe("名字里不能有的字符", () => {
 			[0x200e, 0x200f],
 			[0x202a, 0x202e],
 			[0x2060, 0x206f],
+			// 盲文空白：不是默认可忽略的码位，但看起来是空的。
+			[0x2800, 0x2800],
 			[0x3164, 0x3164],
 			[0xfeff, 0xfeff],
 			[0xffa0, 0xffa0],
@@ -225,8 +246,6 @@ describe("名字里不能有的字符", () => {
 		const exceptions = (c: number) => c === ZWNJ || c === ZWJ || (c >= 0xfe00 && c <= VS16);
 		const missing: string[] = [];
 		for (let c = 0; c <= 0x10ffff; c++) {
-			// 代理对码位单独不是合法的字符：跳过。
-			if (c >= 0xd800 && c <= 0xdfff) continue;
 			const character = String.fromCodePoint(c);
 			const isRejected = REJECTED_NAME_CHARACTER.test(character);
 			if (isRejected) rejected.add(c);

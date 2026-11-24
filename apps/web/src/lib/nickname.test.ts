@@ -30,6 +30,13 @@ describe("昵称填得不合格的原因", () => {
 		expect(nicknameProblem(` ${chars(0x200c)}`)).toContain("昵称的第 1 个字符是 U+200C");
 	});
 
+	it("孤立的代理码元、盲文空白：说出第几个字符、哪个码位（盲文空白不是空白，trim 去不掉）", () => {
+		expect(nicknameProblem(`小${chars(0xd800)}明`)).toContain("昵称的第 2 个字符是 U+D800");
+		expect(nicknameProblem(`小${chars(0x2800)}明`)).toContain("昵称的第 2 个字符是 U+2800");
+		// 只由盲文空白组成的昵称看起来是空的，但 trim 去不掉它：说它是哪个字符，不说「填写昵称」。
+		expect(nicknameProblem(chars(0x2800))).toContain("昵称的第 1 个字符是 U+2800");
+	});
+
 	it("先去首尾空白再查表，和控制面一致：开头是 BOM、结尾是制表符的昵称，弹窗和控制面都放行", () => {
 		expect(nicknameProblem(`${chars(0xfeff)}小明\t`)).toBeUndefined();
 		// 里面的不行。
