@@ -495,8 +495,10 @@ test("从右到左的文字（希伯来文开头的混排、纯希伯来文、�
 		// 进度说明那一格：文字所在的截断层（`data-truncate-clip`）。
 		const clip = page.locator("[data-truncate-clip]", { hasText: text }).first();
 		await expect(clip).toBeVisible();
+		// 截断层自己是从左到右的隔离元素：基准方向写明是 ltr，不是按文字定（不用 auto：以希伯来文开头的混排文字会整行翻过来）。
+		expect(await clip.getAttribute("dir"), `「${text}」的截断层的 dir`).toBe("ltr");
 		const withIsolation = await clip.screenshot({ animations: "disabled" });
-		// 去掉方向隔离（拆开 <bdi>、截断层的 dir 和 unicode-bidi）：剩下的就是没有这个功能时的 DOM。
+		// 去掉方向隔离（截断层的 dir 和 unicode-bidi；有 <bdi> 的话也拆开）：剩下的就是没有这个功能时的 DOM。
 		await clip.evaluate((element) => {
 			for (const bdi of element.querySelectorAll("bdi")) bdi.replaceWith(...bdi.childNodes);
 			element.removeAttribute("dir");
@@ -507,5 +509,64 @@ test("从右到左的文字（希伯来文开头的混排、纯希伯来文、�
 			Buffer.compare(withIsolation, without),
 			`「${text}」经过方向隔离之后和不隔离时的显示不一样`,
 		).toBe(0);
+	}
+});
+
+test("日志里从右到左的文字（希伯来文开头的混排、纯希伯来文、纯阿拉伯文）：和不经过方向隔离时逐像素一样", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane, metricPackage());
+	const scenarioId = await createScenario(controlPlane, "日志里从右到左", {
+		default_agent: "agent-a",
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			{ id: "probe", kind: "package", package: "demo-checks", node: "ping", inputs: { host: "p" } },
+		],
+		edges: [{ from: "entry", to: "probe", kind: "chain" }],
+		packages: { "demo-checks": "1.2.0" },
+	});
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const probe = await agent.nextAssign({ start: false });
+	clock.advance(2000);
+	await agent.started(probe);
+	const samples = [
+		"שלום עולם 拉取完成 👩‍💻 🎉",
+		"שלום עולם",
+		"مرحبا بالعالم",
+		"Result: مرحبا (تم) — done 100%",
+	];
+	agent.logs(
+		probe,
+		samples.map((text, index) => logLine(clock, index + 1, text)),
+	);
+	await agent.sync();
+	clock.advance(1000);
+	await openMonitor(page, clock, runId, "probe", "logs");
+	const logs = page.getByRole("region", { name: "底部面板" });
+	for (const text of samples) {
+		// 一行日志里文字所在的那个 <span>：里面有 <bdi dir="ltr">（有从右到左的字母，要隔离）。
+		const bdi = logs.locator("bdi", { hasText: text }).first();
+		await expect(bdi, `「${text}」应当在 <bdi> 里`).toBeVisible();
+		expect(await bdi.getAttribute("dir"), `「${text}」的 <bdi> 的 dir`).toBe("ltr");
+		const line = bdi.locator("xpath=..");
+		const withIsolation = await line.screenshot({ animations: "disabled" });
+		await line.evaluate((element) => {
+			for (const inner of element.querySelectorAll("bdi")) inner.replaceWith(...inner.childNodes);
+		});
+		const without = await line.screenshot({ animations: "disabled" });
+		expect(
+			Buffer.compare(withIsolation, without),
+			`「${text}」在日志里经过方向隔离之后和不隔离时的显示不一样`,
+		).toBe(0);
+		await page.reload();
+		await expect(logs).toBeVisible();
 	}
 });

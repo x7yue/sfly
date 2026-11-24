@@ -394,6 +394,15 @@ describe("UntrustedText 组件", () => {
 		expect(render("原文就写着 U+202E")).toBe("原文就写着 U+202E");
 	});
 
+	it("isolated（外面已经是从左到右的隔离元素）：不包 <bdi>，要写出来的字符照样是一小块", () => {
+		const isolated = (text: string) =>
+			renderToStaticMarkup(createElement(UntrustedText, { text, isolated: true }));
+		expect(isolated("שלום עולם")).toBe("שלום עולם");
+		const html = isolated("a\u202Eb");
+		expect(html).not.toContain("<bdi");
+		expect(html).toContain('data-slot="hidden-character"');
+	});
+
 	it("一整句里夹着从右到左的字母：整句是一个 <bdi dir=ltr>，从右到左的字母自己成一段", () => {
 		expect(render("Agent مرحبا 不在线")).toBe('<bdi dir="ltr">Agent مرحبا 不在线</bdi>');
 	});
@@ -415,6 +424,17 @@ describe("Truncate 的 untrusted 选项", () => {
 		expect(html).not.toContain('dir="auto"');
 		expect(html).toContain("[unicode-bidi:isolate]");
 		expect(render("שלום 世界 🎉")).not.toContain('dir="auto"');
+	});
+
+	it("截断层自己就是从左到右的隔离元素，里面不再包 <bdi>：从右到左的文字直接放在截断层里（截断层的 dir 是起作用的，不是被里面的 <bdi> 挡住的）", () => {
+		const html = render("שלום 世界 🎉");
+		expect(html).toContain('dir="ltr"');
+		expect(html).toContain("שלום 世界 🎉");
+		expect(html).not.toContain("<bdi");
+		// 要写出来的字符照样是一小块，也不包 <bdi>
+		const hidden = render("a\u202Eb");
+		expect(hidden).toContain('data-slot="hidden-character"');
+		expect(hidden).not.toContain("<bdi");
 	});
 
 	it("方向控制字符和零宽字符写成一小块，输出里没有那两个字符", () => {

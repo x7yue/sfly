@@ -166,7 +166,9 @@ function TextTruncate({
 
 /** 别人写的文字在 `Truncate` 里的样子：不拆开的是组件（一小块写出来的字符），按字符数拆开的是纯文字。 */
 function untrustedShown(text: string, keepEnd: number): ReactNode {
-	return keepEnd > 0 ? untrustedPlain(text) : <UntrustedText text={text} />;
+	// 截断层自己就是从左到右的隔离元素（`dir="ltr"`、`unicode-bidi: isolate`），里面不再包 `<bdi>`：文字直接放在截断层里，
+	// 和不经过组件时的 DOM 只差这两个属性（截断层的方向因此是起作用的，不是被里面的 `<bdi>` 挡住的）。
+	return keepEnd > 0 ? untrustedPlain(text) : <UntrustedText text={text} isolated />;
 }
 
 /** 在交互元素里面：只截断，和单独的 Truncate 一样的版面，没有提示、不能聚焦。 */

@@ -14,25 +14,31 @@ import { isPlainText, type UntrustedMode, untrustedSegments } from "#/lib/untrus
  * `mode`：`line`（默认）单行的名字，所有控制字符都写出来；`text` 可以多行的正文（失败原因、日志、输出），换行和制表符照常。
  * 属性里（`title`、`aria-label`）和按文字截断的地方放不了组件：用 `lib/untrusted-text` 的 `untrustedPlain`，或 `Truncate` 的 `untrusted`。
  */
-export function UntrustedText({ text, mode = "line" }: { text: string; mode?: UntrustedMode }) {
+export function UntrustedText({
+	text,
+	mode = "line",
+	isolated = false,
+}: {
+	text: string;
+	mode?: UntrustedMode;
+	/** 外面已经是一个从左到右、隔离的元素（`Truncate untrusted` 的截断层：`dir="ltr"` 加 `unicode-bidi: isolate`）：不再包 `<bdi>`。 */
+	isolated?: boolean;
+}) {
 	if (isPlainText(text, mode)) return text;
-	return (
-		<bdi dir="ltr">
-			{untrustedSegments(text, mode).map((segment, index) =>
-				segment.kind === "text" ? (
-					// biome-ignore lint/suspicious/noArrayIndexKey: 段按顺序切出来，文字变了整个重排
-					<Fragment key={index}>{segment.text}</Fragment>
-				) : (
-					<HiddenCharacter
-						// biome-ignore lint/suspicious/noArrayIndexKey: 同上
-						key={index}
-						label={segment.label}
-						name={segment.name}
-					/>
-				),
-			)}
-		</bdi>
+	const parts = untrustedSegments(text, mode).map((segment, index) =>
+		segment.kind === "text" ? (
+			// biome-ignore lint/suspicious/noArrayIndexKey: 段按顺序切出来，文字变了整个重排
+			<Fragment key={index}>{segment.text}</Fragment>
+		) : (
+			<HiddenCharacter
+				// biome-ignore lint/suspicious/noArrayIndexKey: 同上
+				key={index}
+				label={segment.label}
+				name={segment.name}
+			/>
+		),
 	);
+	return isolated ? <>{parts}</> : <bdi dir="ltr">{parts}</bdi>;
 }
 
 /**
