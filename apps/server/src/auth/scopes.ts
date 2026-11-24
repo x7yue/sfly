@@ -18,6 +18,12 @@ export const ROLE_SCOPES = {
  */
 export const PROJECT_TOKEN_SCOPES: readonly Scope[] = SCOPES.filter((scope) => scope !== "manage");
 
+/**
+ * 会话令牌能带的范围：读、运行、编辑、会话构建（ADR 0029 范围表的会话令牌一列）。发布要人批准（#496 之前一律拒绝），
+ * 管理不能；令牌行里写了这两个也不认（签发的地方只签这四个，这里是第二道防线）。
+ */
+export const SESSION_TOKEN_SCOPES: readonly Scope[] = ["read", "run", "edit", "session_build"];
+
 /** 平台管理员在每个项目里都有项目管理员的权限。 */
 export const PLATFORM_ADMIN_SCOPES: readonly Scope[] = ROLE_SCOPES.project_admin;
 

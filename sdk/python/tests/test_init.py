@@ -278,11 +278,11 @@ def test_uv_add_sfly_std_in_a_generated_project_resolves_it_from_the_control_pla
     assert add.returncode == 0, add.stderr
     dependencies = pyproject(project)["project"]["dependencies"]
     assert [d for d in dependencies if d.startswith("sfly-std")], dependencies
-    # sfly-std 来自控制面的包索引，它的依赖（httpx、psutil）来自 PyPI 镜像；
+    # sfly-std 来自控制面的包索引，它的依赖（psutil）来自 PyPI 镜像；
     # PyPI 镜像上没有它，也没有去找它。
     assert "/simple/sfly-std/" in control_plane.requests
     assert "/pypi/simple/sfly-std/" not in pypi_mirror.requests
-    assert "/pypi/simple/httpx/" in pypi_mirror.requests
+    assert "/pypi/simple/psutil/" in pypi_mirror.requests
     assert "pypi.org" not in (project / "uv.lock").read_text()
     imported = run_in(project, "python", "-c", "import sfly_std; print(sfly_std.__file__)")
     assert imported.returncode == 0, imported.stderr

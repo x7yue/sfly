@@ -6,8 +6,9 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from helper_nodes import wait_log_line
+
 from sfly.testing import Execution, run_node
-from sfly_std.wait_log_line import wait_log_line
 
 
 def once_waiting(action: Callable[[], object]) -> Callable[[Execution], bool]:

@@ -62,3 +62,48 @@ test("Agent 在线、槽位占满：写明占着槽位的任务，运行编号�
 	await note.getByRole("link", { name: `运行 ${short}` }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${holderRunId}`));
 });
+
+for (const viewport of [
+	{ width: 1440, height: 900 },
+	{ width: 1280, height: 800 },
+]) {
+	test(`槽位占满那一句在运行块里换行：不溢出运行块，「排队 10s」不断在中间，页面没有横向滚动（${viewport.width}×${viewport.height}）`, async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		await page.setViewportSize(viewport);
+		await queuedSlotsFull(controlPlane, connectAgent, clock);
+		await openDashboard(page, clock);
+		const note = page.getByTestId("queue-wait");
+		await expect(note).toHaveCount(1);
+		const run = page
+			.getByRole("region", { name: "正在运行" })
+			.getByRole("region")
+			.filter({ has: note });
+		const lines = await note.evaluate((el) => {
+			const range = document.createRange();
+			range.selectNodeContents(el);
+			const rects = Array.from(range.getClientRects());
+			const tops = new Set(rects.map((r) => Math.round(r.top)));
+			const timing = el.querySelector("span.whitespace-nowrap");
+			return {
+				lines: tops.size,
+				right: Math.max(...rects.map((r) => r.right)),
+				timingRects: timing ? timing.getClientRects().length : 0,
+				timingText: timing?.textContent ?? "",
+			};
+		});
+		const box = await run.boundingBox();
+		expect(box).not.toBeNull();
+		// 每一行都在运行块里。
+		expect(lines.right).toBeLessThanOrEqual((box?.x ?? 0) + (box?.width ?? 0) + 1);
+		// 「排队 10s」是一个整体：不在它中间换行。
+		expect(lines.timingText).toContain("排队 10s");
+		expect(lines.timingRects).toBe(1);
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+		).toBe(true);
+	});
+}
