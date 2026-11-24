@@ -259,7 +259,7 @@ async fn progress_is_merged_to_at_most_once_per_second_and_the_last_value_preced
         (last.current, last.total, last.message.as_str()),
         (30.0, Some(30.0), "第 30 步")
     );
-    assert_eq!(progress[0].2.current, 1.0, "第一次进度立即上报");
+    // 第一次上报的不一定是第 1 步：同 tests/action_summary.rs（#706），「第一份不等间隔」在 src/logs.rs 的 latest_tests 里断言。
 }
 
 #[tokio::test]
