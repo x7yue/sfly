@@ -24,7 +24,8 @@ def load_records(results: Path) -> list[dict[str, Any]]:
     return records
 
 
-ARM_NAMES = {"a": "A 本地", "b": "B 远程", "p": "平台"}
+# 以前的结果目录里还有臂 B（#552 删掉的原型）的会话：照样列在表里，不再给它判定。
+ARM_NAMES = {"a": "A 本地", "b": "B 远程（原型，已删）", "p": "平台"}
 REMOTE_ARMS = [arm for arm in DECIDE_ARM_NAMES if arm != "a"]
 
 

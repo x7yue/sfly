@@ -1,7 +1,9 @@
 """工具自检：用假的模型端点照固定剧本（container/toolcheck.json）调用读、写、编辑、命令四个工具，
-臂 A（本地执行）和臂 B（经能力端口在开发环境里执行）各跑一遍，逐步对比工具结果。不花模型的钱。
+臂 A（原版 pi，工具在本地执行）和平台臂（平台内的助手，工具经工作台 Agent 的能力端口执行）各跑一遍，
+逐步对比工具结果。不花模型的钱。要 `up --assistant`（假的模型端点）。
 
-对比表就是「远程工具和本地工具的语义差别」的实测部分；每一步还核对臂 B 的结果是否符合预期。
+对比表就是「远程工具和本地工具的语义差别」（docs/ARCHITECTURE.md 讲助手服务的那一节）的实测部分；
+每一步还核对平台臂的结果是否符合预期。工作目录是工作区 `/work`：平台的会话就在这个目录下。
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from aeval.models import load_models
 from aeval.session import run_session
 from aeval.tasks import Check, Task, put_file
 
-WORKSPACE = "/work/tc"
+WORKSPACE = "/work"
 SKILL = """---
 name: demo
 description: 工具自检用的 skill，确认 skill 来自开发环境。
@@ -71,8 +73,8 @@ def step_results(session_dir: Path) -> list[dict[str, Any]]:
     return results
 
 
-# 臂 B 每一步应该得到的结果：（应不应该报错，结果里应该包含的文字）。
-EXPECT_B: dict[str, tuple[bool, str]] = {
+# 平台臂每一步应该得到的结果：（应不应该报错，结果里应该包含的文字）。
+EXPECT_P: dict[str, tuple[bool, str]] = {
     "write_new_dir": (False, "Successfully wrote"),
     "read_back": (False, "hello"),
     "edit": (False, "Successfully replaced"),
@@ -84,8 +86,17 @@ EXPECT_B: dict[str, tuple[bool, str]] = {
     "bash_truncated": (False, "Full output:"),
     "read_full_output": (False, "5000"),
     "read_missing": (True, "ENOENT"),
-    "read_skill": (False, "这份 skill 只在开发环境里"),
 }
+
+# 系统提示里的东西：臂 A 的 pi 加载工作目录里的 skill 和 AGENTS.md；平台的 pi 只加载平台自带的 skill
+# （`--no-skills --skill`）和平台说明（`--no-context-files`），工作台上的 AGENTS.md 由模型自己读。
+# 这是有意的差别：两臂各自应当有的，列在对比表里。
+PROMPT_EXPECT: list[tuple[str, str, dict[str, bool]]] = [
+    ("工作目录里的 skill（demo）", "<name>demo</name>", {"a": True, "p": False}),
+    ("工作目录里的 AGENTS.md", "AGENTS-MARKER", {"a": True, "p": False}),
+    ("平台自带的 skill", "<name>sfly-", {"a": False, "p": True}),
+]
+ARMS = ("a", "p")
 
 
 def _short(text: str) -> str:
@@ -100,48 +111,41 @@ def run(stack: Stack, results: Path, evals_dir: Path) -> int:
     model = load_models()["fake"]
     task = ToolCheck()
     outcome: dict[str, list[dict[str, Any]]] = {}
-    for arm in ("a", "b"):
+    for arm in ARMS:
         record = run_session(stack, task, model, results, session_id=f"toolcheck-{arm}", arm=arm)
         outcome[arm] = step_results(results / record["session"])
         verdict = "通过" if record["grade"]["passed"] else "不通过"
-        print(f"臂 {arm.upper()}：{len(outcome[arm])} 个工具结果，文件内容检查{verdict}")
+        print(f"臂 {arm}：{len(outcome[arm])} 个工具结果，文件内容检查{verdict}")
     rows = [
-        "| 步骤 | 工具 | 臂 A（本地） | 臂 B（远程） | 臂 B 符合预期 |",
+        "| 步骤 | 工具 | 臂 A（本地） | 平台臂（远程） | 平台臂符合预期 |",
         "|---|---|---|---|---|",
     ]
     failed = 0
     for index, step in enumerate(steps):
         cells = []
-        for arm in ("a", "b"):
+        for arm in ARMS:
             got = outcome[arm][index] if index < len(outcome[arm]) else None
             mark = "✗ " if got and got["error"] else ""
             cells.append("（没有结果）" if got is None else f"{mark}{_short(got['text'])}")
-        expect = EXPECT_B.get(step["id"])
-        got_b = outcome["b"][index] if index < len(outcome["b"]) else None
+        expect = EXPECT_P.get(step["id"])
+        got_p = outcome["p"][index] if index < len(outcome["p"]) else None
         if expect is None:
             verdict = "只记录"
         else:
-            ok = got_b is not None and got_b["error"] == expect[0] and expect[1] in got_b["text"]
+            ok = got_p is not None and got_p["error"] == expect[0] and expect[1] in got_p["text"]
             failed += not ok
             verdict = "是" if ok else "否"
         rows.append(f"| {step['id']} | {step['tool']} | {cells[0]} | {cells[1]} | {verdict} |")
-    # 两臂的系统提示里都要有开发环境里的 skill 和 AGENTS.md（臂 B 由扩展从开发环境取来）。
-    prompt_rows = ["| 系统提示里有 | 臂 A | 臂 B |", "|---|---|---|"]
-    for label, text in (
-        ("开发环境里的 skill（demo）", "<name>demo</name>"),
-        ("开发环境里的 AGENTS.md", "AGENTS-MARKER"),
-    ):
-        found = {arm: system_prompt_has(results / f"toolcheck-{arm}", text) for arm in ("a", "b")}
-        failed += not all(found.values())
+    prompt_rows = ["| 系统提示里有 | 臂 A | 平台臂 | 符合预期 |", "|---|---|---|---|"]
+    for label, text, want in PROMPT_EXPECT:
+        found = {arm: system_prompt_has(results / f"toolcheck-{arm}", text) for arm in ARMS}
+        ok = found == want
+        failed += not ok
         prompt_rows.append(
-            f"| {label} | {'是' if found['a'] else '否'} | {'是' if found['b'] else '否'} |"
+            f"| {label} | {'是' if found['a'] else '否'} | {'是' if found['p'] else '否'} "
+            f"| {'是' if ok else '否'} |"
         )
-    rows += ["", *prompt_rows]
-    remote_log = results / "toolcheck-b" / "remote-tools.jsonl"
-    notes = remote_log.read_text().strip().splitlines() if remote_log.exists() else []
-    report = (
-        "\n".join(rows) + "\n\n扩展记下的适配：\n\n" + "\n".join(f"- `{n}`" for n in notes) + "\n"
-    )
+    report = "\n".join([*rows, "", *prompt_rows]) + "\n"
     (results / "toolcheck.md").write_text(report)
     print(report)
     return 1 if failed else 0

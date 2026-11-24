@@ -21,7 +21,7 @@ from aeval import docker as d
 from aeval.classify import tool_result_text
 from aeval.env import Stack
 from aeval.models import FAKE, Model
-from aeval.toolcheck import EXPECT_B, ToolCheck
+from aeval.toolcheck import EXPECT_P, ToolCheck
 
 PROBE_DIR = "/opt/aeval-probe"
 ROOT = "/root/rpcprobe"
@@ -123,7 +123,7 @@ def judge_q1(raw: dict[str, Any]) -> Verdict:
     ]
     unexpected = []
     for i, step in enumerate(steps):
-        expect = EXPECT_B.get(step["id"])
+        expect = EXPECT_P.get(step["id"])
         got = b[i] if i < len(b) else None
         if expect and not (got and got["error"] == expect[0] and expect[1] in got["text"]):
             unexpected.append(step["id"])
