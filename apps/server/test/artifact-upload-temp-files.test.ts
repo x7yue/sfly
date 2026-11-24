@@ -211,6 +211,9 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 				"请求体中途断开（发了一块，然后出错）",
 				(store) => {
 					const body = new PassThrough();
+					// 机器忙时数据库查询比 20 毫秒慢，管道还没接上请求体、它就出错了：这时没人接 error 事件会算成未处理的错误
+					// （真实的请求体 IncomingMessage 没有监听时不发 error）；管道接上之后看到的是一个已经出错的流，照样拒绝。
+					body.on("error", () => {});
 					body.write(Buffer.alloc(100, 1));
 					setTimeout(() => body.destroy(new Error("aborted")), 20);
 					return store.save(taskId, "c.bin", body);
