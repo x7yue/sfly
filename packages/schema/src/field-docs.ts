@@ -7,12 +7,15 @@ import type { RouteDef } from "./http/contract.js";
  */
 export type RouteDocPart = "params" | "query" | "body" | "response" | { event: string };
 
-/** 某个接口的某个部分里，一个字段（`path`：字段名，数组元素 `[]`，字典的值 `{}`）的说明。 */
-export type FieldDocs = (
-	route: RouteDef,
-	part: RouteDocPart,
-	path: readonly string[],
-) => string | undefined;
+/**
+ * 某个接口的某个部分里，一个字段（`path`：字段名，数组元素 `[]`，字典的值 `{}`，联合的成员多一段 `|…`）的说明。
+ * `checkMembers` 是核对：写进 JSON Schema 时认出的联合成员（`annotateSchema` 的 `onMember`）要和读注释时认出的一致，
+ * 不一致就抛错（说明会悄悄丢掉或者挂错）；测试里手写的说明函数没有它。
+ */
+export interface FieldDocs {
+	(route: RouteDef, part: RouteDocPart, path: readonly string[]): string | undefined;
+	checkMembers?(route: RouteDef, part: RouteDocPart, emitted: ReadonlySet<string>): void;
+}
 
 /**
  * 把字段说明写进导出的 JSON Schema：每个字段没有自己的 `description` 时用注释。
@@ -23,6 +26,7 @@ export type FieldDocs = (
 export function annotateSchema(
 	schema: Record<string, unknown>,
 	docFor: (path: readonly string[]) => string | undefined,
+	onMember?: (path: readonly string[]) => void,
 ): void {
 	const visit = (node: unknown, path: readonly string[]): void => {
 		if (typeof node !== "object" || node === null || Array.isArray(node)) return;
@@ -45,7 +49,12 @@ export function annotateSchema(
 		const branches = [json.anyOf, json.oneOf].find(Array.isArray);
 		if (branches) {
 			for (const { member, segment } of unionMembers(branches)) {
-				visit(member, segment === undefined ? path : [...path, segment]);
+				if (segment === undefined) {
+					visit(member, path);
+					continue;
+				}
+				onMember?.([...path, segment]);
+				visit(member, [...path, segment]);
 			}
 		}
 		if (Array.isArray(json.allOf)) for (const branch of json.allOf) visit(branch, path);

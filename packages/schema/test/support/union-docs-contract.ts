@@ -138,4 +138,61 @@ export const Nested = z.object({
 	]),
 });
 
+/** 有自己的 root、成员是内联对象的联合（生成的类型里是 `$ref`）：被别处引用时加 `.nullable()`、`.optional()`、和别的对象并成联合、放进数组。 */
+export const Rooted = z.discriminatedUnion("type", [
+	z.object({
+		type: z.literal("r1"),
+		/** R1 的 id。 */
+		id: z.string(),
+	}),
+	z.object({
+		type: z.literal("r2"),
+		/** R2 的 id。 */
+		id: z.string(),
+	}),
+]);
+export const OtherObject = z.object({
+	kind: z.literal("o"),
+	/** 另一个对象的 id。 */
+	id: z.string(),
+});
+export const UsesRooted = z.object({
+	nullable: Rooted.nullable(),
+	optional: Rooted.optional(),
+	both: Rooted.nullable().optional(),
+	merged: z.union([Rooted, OtherObject]),
+	list: z.array(Rooted).optional(),
+});
+
+const ObjectA = z.object({
+	type: z.literal("a"),
+	/** A 的 id。 */
+	id: z.string(),
+});
+const ObjectB = z.object({
+	type: z.literal("b"),
+	/** B 的 id。 */
+	id: z.string(),
+});
+/** 生成器不支持的写法一：用枚举做键的 record 里放联合。 */
+export const EnumKeyed = z.object({
+	byKind: z.record(z.enum(["x", "y"]), z.union([ObjectA, ObjectB])),
+});
+/** 生成器不支持的写法二：联合里有带品牌的对象成员。 */
+export const Branded = z.object({ v: z.union([ObjectA.brand<"A">(), ObjectB]) });
+/** 取值固定的字段完全相同的两个成员，同名字段的说明不同：认不出是哪个成员的。 */
+export const SameFixed = z.union([
+	z.object({
+		type: z.literal("s"),
+		/** 第一个的 id。 */
+		id: z.string(),
+	}),
+	z.object({
+		type: z.literal("s"),
+		/** 第二个的 id。 */
+		id: z.string(),
+		other: z.number(),
+	}),
+]);
+
 export const httpApis = {};

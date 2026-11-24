@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { checkMembers, harvestDocs } from "../src/client-docs.js";
@@ -5,7 +8,14 @@ import { ITEM, typeText } from "../src/client-emit.js";
 import { buildClientExport } from "../src/client-export.js";
 import { annotateSchema } from "../src/field-docs.js";
 import * as contract from "../src/index.js";
-import { Holder, Nested } from "./support/union-docs-contract.js";
+import {
+	Branded,
+	EnumKeyed,
+	Holder,
+	Nested,
+	Rooted,
+	UsesRooted,
+} from "./support/union-docs-contract.js";
 
 // 联合里同名的字段说明各是各的（#636、#662）：生成的类型、导出的 JSON Schema 里，联合每个成员的字段用自己的说明；
 // 一个成员有说明、另一个没有时，没有的不借；认不出是哪个成员的（说明不一样）就生成失败，不悄悄选一个。
@@ -187,6 +197,132 @@ describe("生成类型和导出的 JSON Schema：每个成员的字段用自己�
 	});
 }, 60_000);
 
+describe("有自己的 root 的联合被引用：加了 nullable、optional、并成联合、放进数组，也能生成（`$ref` 不是内联的成员）", () => {
+	const registry = z.registry<{ id: string }>();
+	registry.add(Rooted, { id: "Rooted" });
+	/** 两个 root：`UsesRooted` 引用 `Rooted`（生成的类型里是 `$ref`），`Rooted` 自己的成员在它自己的 root 里读。 */
+	const docs = harvestDocs({
+		contract: FIXTURE,
+		roots: new Map([
+			["UsesRooted", "z.output<typeof C.UsesRooted>"],
+			["Rooted", "z.output<typeof C.Rooted>"],
+		]),
+		stopAt: new Set(["Rooted"]),
+	});
+
+	for (const io of ["output", "input"] as const) {
+		it(`${io}：五种写法两边认出的成员一致（都没有），内联的那一个对象的字段说明照常读到`, () => {
+			// `$defs` 里是 `Rooted` 自己的定义（它自己的 root 生成），这里只生成引用它的那个
+			const { $defs: _defs, ...json } = z.toJSONSchema(UsesRooted, {
+				io,
+				target: "draft-2020-12",
+				metadata: registry,
+			}) as Record<string, unknown>;
+			const seen = new Set<string>();
+			const text = typeText(json, {
+				refName: (id) => id,
+				doc: (path) => docs.field("UsesRooted", path),
+				member: (path) => seen.add(path.join(".")),
+			});
+			// 五个字段里引用 `Rooted` 的写成 `Rooted`（`$ref`），不是内联的对象
+			expect(text).toContain("nullable: Rooted | null;");
+			expect(text).toContain("list?: Rooted[];");
+			expect([...seen]).toEqual([]);
+			expect([...docs.members("UsesRooted")]).toEqual([]);
+			checkMembers("UsesRooted", docs.members("UsesRooted"), seen);
+			// 并成联合的另一个对象是联合里唯一内联的对象：路径不加一段，说明读得到
+			expect(text).toContain("/** 另一个对象的 id。 */");
+		});
+	}
+
+	it("`Rooted` 自己的成员在它自己的 root 里：各取各的", () => {
+		expect(docs.field("Rooted", ['|type="r1"', "id"])).toBe("R1 的 id。");
+		expect(docs.field("Rooted", ['|type="r2"', "id"])).toBe("R2 的 id。");
+	});
+});
+
+describe("生成器不支持的写法：生成失败，说清是生成器不支持，不让人以为是字段说明写冲突了", () => {
+	const reads = (name: string) => harvest(name);
+	const emits = (schema: z.ZodType) => {
+		const seen = new Set<string>();
+		typeText(z.toJSONSchema(schema, { io: "output", target: "draft-2020-12" }), {
+			refName: (id) => id,
+			member: (path) => seen.add(path.join(".")),
+		});
+		return seen;
+	};
+
+	it("用枚举做键的 record 里放联合", () => {
+		expect(() =>
+			checkMembers("EnumKeyed", reads("EnumKeyed").members("EnumKeyed"), emits(EnumKeyed)),
+		).toThrow(/生成器不支持这种写法/);
+	});
+
+	it("联合里有带品牌的对象成员", () => {
+		expect(() =>
+			checkMembers("Branded", reads("Branded").members("Branded"), emits(Branded)),
+		).toThrow(/生成器不支持这种写法.*不是契约里字段说明写冲突了/s);
+	});
+
+	it("报错只列两边不一样的成员，并说怎么办", () => {
+		const message = (() => {
+			try {
+				checkMembers("R", [A, B], [A]);
+			} catch (error) {
+				return (error as Error).message;
+			}
+			return "";
+		})();
+		expect(message).toContain(`只有读契约注释的一边认出：${B}`);
+		expect(message).not.toContain(`type="a"`);
+		expect(message).not.toContain("只有生成类型的一边认出");
+		expect(message).toContain("改契约的写法，或者让生成器");
+	});
+
+	it("取值固定的字段完全相同的成员、同名字段说明不同：提示让取值不同，不再叫人加取值固定的字段", () => {
+		const attempt = () => harvest("SameFixed");
+		expect(attempt).toThrow(/取值固定的字段（type="s"）完全相同/);
+		expect(attempt).not.toThrow(/给每个成员一个取值固定的字段/);
+	});
+}, 60_000);
+
+/** 契约源码里 `const <object> = { … }` 里属性 `property` 上方的注释（去掉注释符号，行之间用换行连）；没有注释时是 undefined。 */
+function sourceDoc(file: string, object: string, property: string): string | undefined {
+	const path = fileURLToPath(new URL(`../src/${file}`, import.meta.url));
+	const text = readFileSync(path, "utf8");
+	const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+	let found: ts.PropertyAssignment | undefined;
+	const visit = (node: ts.Node): void => {
+		if (
+			ts.isVariableDeclaration(node) &&
+			node.name.getText() === object &&
+			node.initializer !== undefined &&
+			ts.isObjectLiteralExpression(node.initializer)
+		) {
+			found = node.initializer.properties.find(
+				(p): p is ts.PropertyAssignment =>
+					ts.isPropertyAssignment(p) && p.name.getText() === property,
+			);
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	if (found === undefined) throw new Error(`${file} 里没有 ${object}.${property}`);
+	const ranges = ts.getLeadingCommentRanges(text, found.getFullStart()) ?? [];
+	const last = ranges[ranges.length - 1];
+	if (last === undefined) return undefined;
+	return text
+		.slice(last.pos, last.end)
+		.replace(/^\/\*\*?|\*\/$/g, "")
+		.split("\n")
+		.map((line) => line.replace(/^\s*\*? ?/, "").trimEnd())
+		.join("\n")
+		.trim();
+}
+
+/** 比较文字时不看空白、注释符号和反引号（生成的注释把 `{@link X}` 写成 `X`，换行和 ` * ` 的写法也不同）。 */
+const squash = (text: string) => text.replace(/[\s*/`]+/g, "");
+
 describe("真正的契约：会话事件里联合成员各自的说明（#636 里 `user_message.message_id`、`turn_end.error_class` 挂着 `notice` 的说明）", () => {
 	const types = buildClientExport(contract.httpApis, contract)["src/generated/types.ts"];
 	/** 生成的 `PersistedSessionEvent` 里 `type: "<type>"` 的成员的文字。 */
@@ -197,24 +333,42 @@ describe("真正的契约：会话事件里联合成员各自的说明（#636 �
 		if (found === undefined) throw new Error(`没有 ${type} 这个成员`);
 		return found;
 	};
+	// `notice` 成员的两个字段在契约源码里自己有注释（`noticeFields`）；`user_message` 的 `message_id`、`turn_end` 的 `error_class`
+	// 在源码里没有自己的注释：生成的类型里就不该有注释，更不该是 `notice` 的。断言都从源码读，不写死文字。
+	const noticeMessageId = sourceDoc("sessions.ts", "noticeFields", "message_id");
+	const noticeErrorClass = sourceDoc("sessions.ts", "noticeFields", "error_class");
+
+	it("notice 的两个字段在源码里有注释（下面的断言靠它）", () => {
+		expect(noticeMessageId).toBeTruthy();
+		expect(noticeErrorClass).toBeTruthy();
+	});
 
 	it("user_message 的 message_id 不带 notice 的说明", () => {
 		const member = memberOf("user_message");
 		expect(member).toContain("message_id: string;");
-		expect(member).not.toContain("没有送到的那句话");
+		expect(squash(member)).not.toContain(squash(noticeMessageId as string));
+		expect(member).not.toContain("/**");
 	});
 
 	it("turn_end 的 error_class 不带 notice 的说明", () => {
 		const member = memberOf("turn_end");
 		expect(member).toContain("error_class?: ErrorClass;");
-		expect(member).not.toContain("重试的原因");
+		expect(squash(member)).not.toContain(squash(noticeErrorClass as string));
+		expect(member).not.toContain("/**");
 	});
 
-	it("notice 自己的 message_id、error_class 说明还在", () => {
+	it("notice 自己的 message_id、error_class 的说明就是源码里它们自己的注释", () => {
 		const member = memberOf("notice");
-		expect(member).toMatch(/没有送到的那句话[\s\S]*\*\/\n\tmessage_id\?: string;/);
-		expect(member).toContain(
-			"/** 重试的原因按什么分；#548 起有值。 */\n\terror_class?: ErrorClass;",
-		);
+		const lines = member.split("\n");
+		/** 字段 `name` 上方的注释（生成的类型里紧挨着字段的那一段）。 */
+		const docAbove = (name: string) => {
+			const at = lines.findIndex((l) => new RegExp(`^\\t${name}\\??:`).test(l));
+			if (!(lines[at - 1] ?? "").trimEnd().endsWith("*/")) return "";
+			let start = at - 1;
+			while (start > 0 && !(lines[start] ?? "").trimStart().startsWith("/**")) start--;
+			return lines.slice(start, at).join("\n");
+		};
+		expect(squash(docAbove("message_id"))).toBe(squash(noticeMessageId as string));
+		expect(squash(docAbove("error_class"))).toBe(squash(noticeErrorClass as string));
 	});
 }, 60_000);

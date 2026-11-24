@@ -5,7 +5,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { ITEM, memberSegment, VALUE } from "./client-emit.js";
+import { ITEM, MEMBER, memberSegment, VALUE } from "./client-emit.js";
 
 const schemaDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -14,7 +14,7 @@ export interface DocRequest {
 	contract?: string;
 	roots: ReadonlyMap<string, string>;
 	stopAt: ReadonlySet<string>;
-	/** 某个 root 最多读到第几层字段（路径长度）；不给就读到底。路由清单只要响应的顶层字段，不用把整份文档类型走一遍。 */
+	/** 某个 root 最多读到第几层字段（联合成员的那一段不算一层）；不给就读到底。路由清单只要响应的顶层字段，不用把整份文档类型走一遍。 */
 	maxDepth?: (root: string) => number | undefined;
 }
 
@@ -31,21 +31,29 @@ export interface Docs {
 }
 
 /**
- * 核对一个 root 里联合的成员：生成的一边（JSON Schema）和读注释的一边（TypeScript 的类型）各自认出的成员路径要一样。
- * 不一样时字段的说明会按错的路径查，悄悄丢掉或者挂错（比如一边把可选的字面量字段算作取值固定、另一边不算）。
+ * 核对一个 root（`where` 说明是哪里：类型名，或者接口的哪一部分）里联合的成员：生成的一边（JSON Schema）和读注释的一边
+ * （TypeScript 的类型）各自认出的成员路径要一样。不一样时字段的说明会按错的路径查，悄悄丢掉或者挂错。
+ * 报错只列不一样的那几个，并说明这是生成器不支持的写法，不是契约的字段说明写冲突了。
  */
 export function checkMembers(
-	root: string,
+	where: string,
 	read: Iterable<string>,
 	emitted: Iterable<string>,
 ): void {
-	const a = [...new Set(read)].sort();
-	const b = [...new Set(emitted)].sort();
-	if (JSON.stringify(a) !== JSON.stringify(b)) {
-		throw new Error(
-			`${root}：联合的成员，读到的注释和生成的类型认出的不一致（读注释：${a.join(" ")}；生成：${b.join(" ")}）`,
-		);
-	}
+	const a = new Set(read);
+	const b = new Set(emitted);
+	const onlyRead = [...a].filter((m) => !b.has(m)).sort();
+	const onlyEmitted = [...b].filter((m) => !a.has(m)).sort();
+	if (onlyRead.length === 0 && onlyEmitted.length === 0) return;
+	const lines = [
+		...(onlyRead.length > 0 ? [`只有读契约注释的一边认出：${onlyRead.join("、")}`] : []),
+		...(onlyEmitted.length > 0 ? [`只有生成类型的一边认出：${onlyEmitted.join("、")}`] : []),
+	];
+	throw new Error(
+		`${where}：联合的成员两边认得不一致（${lines.join("；")}）。生成器不支持这种写法` +
+			"（比如用枚举做键的 record 里放联合、带品牌的对象成员），不是契约里字段说明写冲突了：" +
+			"改契约的写法，或者让生成器（packages/schema/src/client-docs.ts、client-emit.ts）支持它",
+	);
 }
 
 export function harvestDocs(request: DocRequest): Docs {
@@ -119,6 +127,20 @@ export function harvestDocs(request: DocRequest): Docs {
 		}
 		return fixed;
 	};
+	/**
+	 * 有自己的 root 的联合类型（生成的类型里是 `$ref`）。它被放进别的联合（`.nullable()`、`.optional()`、和别的对象并成联合）时，
+	 * TypeScript 把成员摊平成一个新的联合，这个联合本身不再是其中一员，认不出它是引用：成员全在当前联合里的，
+	 * 把这些成员当引用（不读，也不算内联的对象）。
+	 */
+	const stopUnions = [...stopAt].filter((t) => t.isUnion()) as ts.UnionType[];
+	const coveredBy = (union: ts.UnionType): ReadonlySet<ts.Type> => {
+		const covered = new Set<ts.Type>();
+		for (const root of stopUnions) {
+			if (root === union || !root.types.every((t) => union.types.includes(t))) continue;
+			for (const t of root.types) covered.add(t);
+		}
+		return covered;
+	};
 	/** 联合里内联的对象成员（`$ref` 指向的、有自己的 root 的类型不算；数组、元组不算）。 */
 	const isInlineObject = (type: ts.Type) =>
 		(type.flags & ts.TypeFlags.Object) !== 0 &&
@@ -134,9 +156,10 @@ export function harvestDocs(request: DocRequest): Docs {
 		if (depth > 0 && stopAt.has(type)) return;
 		if (type.isUnion()) {
 			// 内联的对象成员不止一个才各多一段路径（和 client-emit.ts 的 `unionMembers` 一致）；有自己的 root 的成员不在这里读
-			const several = type.types.filter(isInlineObject).length >= 2;
+			const covered = coveredBy(type);
+			const several = type.types.filter((t) => !covered.has(t) && isInlineObject(t)).length >= 2;
 			for (const member of type.types) {
-				if (stopAt.has(member)) continue;
+				if (stopAt.has(member) || covered.has(member)) continue;
 				if (!several || !isInlineObject(member)) {
 					walk(root, member, path, depth);
 					continue;
@@ -161,8 +184,12 @@ export function harvestDocs(request: DocRequest): Docs {
 			const text = comment(property);
 			// 同一个位置读到两份不同的说明（联合里认不出的成员，或者不同成员的数组元素）：不选一个，生成失败，让契约里写清楚
 			if (fields.has(key) && fields.get(key) !== text) {
+				const member = [...at].reverse().find((segment) => segment.startsWith(MEMBER));
+				const fixed = member === undefined ? "" : member.slice(MEMBER.length);
 				throw new Error(
-					`${root} 的 ${at.join(".")}：联合的几个成员在同一个位置有不同的字段说明，生成的类型认不出是哪个成员的；给成员一个取值固定的字段（如 type: z.literal("…")）`,
+					fixed === ""
+						? `${root} 的 ${at.join(".")}：联合的几个成员在同一个位置有不同的字段说明，生成的类型认不出是哪个成员的：给每个成员一个取值固定的字段（如 type: z.literal("…")）`
+						: `${root} 的 ${at.join(".")}：联合里取值固定的字段（${fixed}）完全相同的几个成员，同名字段的说明不同，生成的类型认不出是哪个成员的：让它们取值固定的字段取值不同，或者让这个字段的说明一样`,
 				);
 			}
 			fields.set(key, text);
