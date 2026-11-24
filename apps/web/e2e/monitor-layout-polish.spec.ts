@@ -6,7 +6,7 @@ import { openMonitor, runningScenario } from "./monitor-scenario";
 import { openOverview } from "./overview-support";
 
 // 运行监控版面的几处（#595 第 6 到 10 条，从 #586 的审查里挪来的）：1024×768 里图表区的预留、选中节点时图表的定位、
-// 时间线自动滚动对齐到行、顶栏在宽屏里失败摘要和各链状态一起显示、短链的线路铺满整行。读元素排版后的实际位置，不比像素。
+// 顶栏在宽屏里失败摘要和各链状态一起显示、短链的线路铺满整行。读元素排版后的实际位置，不比像素。
 
 const workspace = (page: Page) => page.getByRole("region", { name: "图表工作区" });
 const header = (page: Page) => page.getByRole("banner");
@@ -36,7 +36,7 @@ for (const viewport of [
 ]) {
 	const size = `${viewport.width}×${viewport.height}`;
 
-	test(`详情：第一张图表露出能看清曲线的高度，工具栏折成几行时预留的高度跟着加（${size}）`, async ({
+	test(`详情：第一张图表露出能看清曲线的高度：窄窗口里工具栏折行、节点摘要折行把图表推下去时，预留的高度跟着加（${size}）`, async ({
 		page,
 		controlPlane,
 		connectAgent,
@@ -81,33 +81,6 @@ test("选中节点时，它那一组的第一张图表露出大半：选中靠�
 		.toBeGreaterThanOrEqual(height * 0.75);
 });
 
-test("时间线选中最后一行的节点后，自动滚动停在行的上沿：没有哪一行被吸顶的刻度行压住一半", async ({
-	page,
-	controlPlane,
-	connectAgent,
-	clock,
-}) => {
-	await page.setViewportSize({ width: 1440, height: 900 });
-	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
-	await openMonitor(page, clock, runId, "probe");
-	const line = page.getByRole("region", { name: "链路时间线" });
-	await expect(line.locator("[data-node-item]").last()).toBeVisible();
-	await expect
-		.poll(
-			() =>
-				line.evaluate((section) => {
-					const axis = section.querySelector("[data-axis-track]")?.parentElement;
-					if (!axis) throw new Error("没有刻度行");
-					const edge = axis.getBoundingClientRect().bottom;
-					return [...section.querySelectorAll("[data-chain-row], [data-node-item]")]
-						.map((row) => row.getBoundingClientRect())
-						.filter((r) => r.top < edge - 0.5 && r.bottom > edge + 0.5).length;
-				}),
-			{ message: "被刻度行压住一半的行数" },
-		)
-		.toBe(0);
-});
-
 test("顶栏：宽屏（1920×1080）里失败摘要和各链状态一起显示，没有哪个被挤没了、顶栏不被撑出屏幕", async ({
 	page,
 	controlPlane,
@@ -142,7 +115,7 @@ for (const viewport of [
 ]) {
 	const size = `${viewport.width}×${viewport.height}`;
 
-	test(`概览：站放得下时每条链的各站平分整行（短链不挤在左边一两百像素），放不下时不溢出（${size}）`, async ({
+	test(`概览：站放得下时主链的各站平分整行（站少的链不挤在左边一两百像素），放不下时不溢出（${size}）`, async ({
 		page,
 		controlPlane,
 		connectAgent,
@@ -153,22 +126,21 @@ for (const viewport of [
 		await openOverview(page, clock, runId);
 		const rows = page.getByRole("list", { name: "各链进度" }).locator(":scope > li");
 		await expect(rows).toHaveCount(2);
-		for (const row of await rows.all()) {
-			const measured = await row.evaluate((li) => {
-				const stations = [...li.querySelectorAll("ol > li")].map((s) => s.getBoundingClientRect());
-				const count =
-					li.querySelector("[data-skipped-count]")?.parentElement ?? li.lastElementChild;
-				if (!count || stations.length === 0) throw new Error("没有站或计数");
-				const last = stations[stations.length - 1] as DOMRect;
-				return {
-					gap: count.getBoundingClientRect().left - last.right,
-					overflow: li.scrollWidth - li.clientWidth,
-					widths: stations.map((s) => Math.round(s.width)),
-				};
-			});
-			// 最后一站的格子一直铺到计数那一列（站名那几列分掉了整行剩下的宽度，没有一整块空白）。
-			expect(measured.gap, `${size}：${JSON.stringify(measured)}`).toBeLessThanOrEqual(8);
-			expect(measured.overflow, `${size}：${JSON.stringify(measured)}`).toBeLessThanOrEqual(0);
-		}
+		// 主链：它的站占满所有的站列；子流程从触发它的节点那一列开始，后面本来就空着。
+		const row = rows.first();
+		const measured = await row.evaluate((li) => {
+			const stations = [...li.querySelectorAll("ol > li")].map((s) => s.getBoundingClientRect());
+			const count = li.querySelector("[data-skipped-count]")?.parentElement ?? li.lastElementChild;
+			if (!count || stations.length === 0) throw new Error("没有站或计数");
+			const last = stations[stations.length - 1] as DOMRect;
+			return {
+				gap: count.getBoundingClientRect().left - last.right,
+				overflow: li.scrollWidth - li.clientWidth,
+				widths: stations.map((s) => Math.round(s.width)),
+			};
+		});
+		// 最后一站的格子一直铺到计数那一列（站名那几列分掉了整行剩下的宽度，没有一整块空白）。
+		expect(measured.gap, `${size}：${JSON.stringify(measured)}`).toBeLessThanOrEqual(8);
+		expect(measured.overflow, `${size}：${JSON.stringify(measured)}`).toBeLessThanOrEqual(0);
 	});
 }

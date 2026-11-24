@@ -468,30 +468,14 @@ function useRevealScope({
 	};
 }
 
-/**
- * 把 `el` 滚进 `box` 看得见的部分（刻度行下面）；放不下时对齐上沿。滚到的位置对齐到行：停在某一行的中间时，那一行上半被吸顶的
- * 刻度行压住，看着像被切掉（`monitor-actions.png` 里第一行「主链」）——往下滚到下一行的上沿，不超过目标行。
- */
+/** 把 `el` 滚进 `box` 看得见的部分（刻度行下面）；放不下时对齐上沿。 */
 function revealIn(box: HTMLElement, el: HTMLElement) {
-	const boxTop = box.getBoundingClientRect().top;
-	const topOf = (node: Element) => node.getBoundingClientRect().top - boxTop + box.scrollTop;
-	const top = topOf(el);
+	const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
 	const bottom = top + el.offsetHeight;
-	let next: number;
-	if (top < box.scrollTop + AXIS_HEIGHT) next = top - AXIS_HEIGHT;
+	if (top < box.scrollTop + AXIS_HEIGHT) box.scrollTop = top - AXIS_HEIGHT;
 	else if (bottom > box.scrollTop + box.clientHeight) {
-		next = Math.min(top - AXIS_HEIGHT, bottom - box.clientHeight);
-	} else return;
-	const limit = top - AXIS_HEIGHT;
-	let aligned = next;
-	if (next > 0 && next < limit) {
-		// 行的上沿（链的汇总行和节点行）：第一个不在 next 之上的，且目标行仍然看得见。
-		const edges = [...box.querySelectorAll("[data-chain-row], [data-node-item]")]
-			.map((row) => topOf(row) - AXIS_HEIGHT)
-			.filter((edge) => edge >= next - 0.5 && edge <= limit + 0.5);
-		if (edges.length > 0) aligned = Math.min(...edges);
+		box.scrollTop = Math.min(top - AXIS_HEIGHT, bottom - box.clientHeight);
 	}
-	box.scrollTop = aligned;
 }
 
 /** 时间轴刻度（吸顶）。`trackRef` 挂在轨道区域上，量它的宽度。 */

@@ -201,21 +201,21 @@ function DetailView({
 }) {
 	const catalog = useMetricCatalog(run.id, attemptsSignature(run));
 	const compact = chartsCompact(run, catalog.data);
-	// 图表工作区内容排出来的高度：留给它的是预留的高度（`chartsReservedHeight`：一行工具栏时 300px，窄窗口里工具栏折成几行时
-	// 加上多出来的高度）和内容高度里小的那个（内容少时不留空白）。
-	const [charts, setCharts] = useState({ content: 0, toolbarExtra: 0 });
+	// 图表工作区内容排出来的高度：留给它的是预留的高度（`chartsReservedHeight`：宽窗口里 300px，窄窗口里第一张图表被推下去时
+	// 跟着加）和内容高度里小的那个（内容少时不留空白）。
+	const [charts, setCharts] = useState({ content: 0, firstChartTop: 0 });
 	const setChartsHeights = useCallback(
-		(content: number, toolbarExtra: number) =>
+		(content: number, firstChartTop: number) =>
 			setCharts((was) =>
-				was.content === content && was.toolbarExtra === toolbarExtra
+				was.content === content && was.firstChartTop === firstChartTop
 					? was
-					: { content, toolbarExtra },
+					: { content, firstChartTop },
 			),
 		[],
 	);
 	const chartsReserved = Math.max(
 		CHARTS_MIN_HEIGHT,
-		Math.min(chartsReservedHeight(charts.toolbarExtra), charts.content),
+		Math.min(chartsReservedHeight(charts.firstChartTop), charts.content),
 	);
 	// 详情的可用高度（失败横幅以下，时间线、图表工作区、底部面板共用）：窗口矮的时候时间线主体最高是剩下的高度，
 	// 图表和底部面板的位置才留得出来（`timelineBodyMax`）；窗口高时它比视口的 30% 大，不起作用。

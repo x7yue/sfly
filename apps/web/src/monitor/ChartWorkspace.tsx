@@ -77,30 +77,24 @@ export const CHARTS_MIN_HEIGHT = 48;
  */
 export const CHARTS_RESERVED_HEIGHT = 300;
 
-/**
- * 图表工作区要预留的高度（px）：{@link CHARTS_RESERVED_HEIGHT} 是工具栏一行时的数（窗口宽到放得下一行）；窄窗口里工具栏折成
- * 几行，多出来的高度一并预留，第一个图表组的图表才和一行时露出一样多（1024×768 里原来只露出 70/136px）。
- */
-export const chartsReservedHeight = (toolbarExtra: number): number =>
-	CHARTS_RESERVED_HEIGHT + toolbarExtra;
+/** 能看清曲线的图表高度（px）：一张图表（绘图区 136px 高）的绘图区至少露出这么多。 */
+export const CHARTS_VISIBLE_FIGURE = 120;
 
-/** 工具栏比一行时多出来的高度（px）：整个工具栏的高度减去内边距、下描边和第一行（和第一个控件同一行的控件里最高的）的高度。 */
-function toolbarExtraHeight(bar: HTMLElement | null): number {
-	const first = bar?.firstElementChild;
-	if (!bar || !(first instanceof HTMLElement)) return 0;
-	const style = getComputedStyle(bar);
-	const chrome =
-		Number.parseFloat(style.paddingTop) +
-		Number.parseFloat(style.paddingBottom) +
-		Number.parseFloat(style.borderBottomWidth);
-	const row = Math.max(
-		...[...bar.children]
-			.filter(
-				(el): el is HTMLElement => el instanceof HTMLElement && el.offsetTop === first.offsetTop,
-			)
-			.map((el) => el.offsetHeight),
+/**
+ * 图表工作区要预留的高度（px）：{@link CHARTS_RESERVED_HEIGHT} 是宽窗口里的数；窄窗口里工具栏折成几行、节点摘要折行，
+ * 第一张图表的上沿被推下去，300px 里只露出一小截（1024×768 里露出 72/136px），所以预留的高度至少是
+ * 第一张图表的上沿加 {@link CHARTS_VISIBLE_FIGURE}：第一张图表在哪里都露出能看清曲线的高度。宽窗口里这个数不超过 300px，不变。
+ */
+export const chartsReservedHeight = (firstChartTop: number): number =>
+	Math.max(CHARTS_RESERVED_HEIGHT, firstChartTop + CHARTS_VISIBLE_FIGURE);
+
+/** 第一张图表的上沿离内容顶部（滚动区域的内边距上沿）的距离（px）；没有图表时为 0。 */
+function firstChartTop(inner: HTMLElement, outer: HTMLElement): number {
+	const chart = inner.querySelector<HTMLElement>("[data-chart]");
+	if (!chart) return 0;
+	return Math.ceil(
+		chart.getBoundingClientRect().top - outer.getBoundingClientRect().top + outer.scrollTop,
 	);
-	return Math.max(0, Math.ceil(bar.offsetHeight - chrome - row));
 }
 
 /** 分组内外的水平留白（px）：工作区 12×2、分组 10×2、描边。 */
@@ -128,10 +122,10 @@ export function ChartWorkspace({
 	catalog: ReturnType<typeof useMetricCatalog>;
 	compact: boolean;
 	/**
-	 * 报告内容（含工作区自己的内边距）排出来的高度（px），和工具栏比一行时多出来的高度（px，工具栏在窄窗口里折成几行时才有）：
+	 * 报告内容（含工作区自己的内边距）排出来的高度（px），和第一张图表的上沿离内容顶部有多远（px，没有图表时为 0）：
 	 * 底部面板据此留出图表需要的那一截，见 {@link CHARTS_RESERVED_HEIGHT}、{@link chartsReservedHeight}。
 	 */
-	onContentHeight?: (height: number, toolbarExtra: number) => void;
+	onContentHeight?: (height: number, firstChartTop: number) => void;
 }) {
 	const { range, live, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
@@ -172,7 +166,7 @@ export function ChartWorkspace({
 		const report = () => {
 			const style = getComputedStyle(outer);
 			const padding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
-			onContentHeight(Math.ceil(inner.offsetHeight + padding), toolbarExtraHeight(toolbar.current));
+			onContentHeight(Math.ceil(inner.offsetHeight + padding), firstChartTop(inner, outer));
 		};
 		report();
 		const observer = new ResizeObserver(report);
