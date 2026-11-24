@@ -205,6 +205,48 @@ describe("sfly run logs / artifacts → 控制面", () => {
 		});
 	});
 
+	// 没有结尾的串序列（一行里单个的 U+009D 或 `ESC ]` 这样的开头）不能把后面别的日志行删掉（#670 复审，真的命令行读日志时复现过：
+	// 第二行放一个这样的字符，文本输出里第三、四行都没了）。每一种开头单独出现在一行中间，后面的行都在，开头写成 \\uXXXX。
+	describe("run logs：没有结尾的串序列不删后面的日志行", () => {
+		const c = (...points: number[]) => String.fromCodePoint(...points);
+		const openers: Array<[string, string, string]> = [
+			["U+009D（8 位的 OSC）", c(0x9d), "\\u009d"],
+			["ESC ]（OSC）", `${c(0x1b)}]`, "\\u001b]"],
+			["U+0090（8 位的 DCS）", c(0x90), "\\u0090"],
+			["ESC P（DCS）", `${c(0x1b)}P`, "\\u001bP"],
+			["ESC _（APC）", `${c(0x1b)}_`, "\\u001b_"],
+			["U+009F（8 位的 APC）", c(0x9f), "\\u009f"],
+		];
+
+		it("每一种开头：文本输出里后面的日志行（含 ERROR 那一行）和继续读的提示都在；JSON 输出里每一行也都在", async () => {
+			const { a, runId } = await setup();
+			const z = await a.nextAssign();
+			const lines = openers.flatMap(([, opener], i) => [
+				`第 ${i} 组第一行`,
+				`第 ${i} 组中间${opener}标题`,
+				`第 ${i} 组第三行`,
+			]);
+			a.logs(
+				z,
+				lines.map((text, i) =>
+					line(a, i + 1, 1_000 + 10 * (i + 1), text, i === 2 ? LogLevel.ERROR : LogLevel.INFO),
+				),
+			);
+			await settled(runId, lines.length);
+			const text = await cli("run", "logs", runId);
+			expect(text.code, text.stderr).toBe(0);
+			for (const [i, [label, , written]] of openers.entries()) {
+				expect(text.stdout, label).toContain(`第 ${i} 组第一行`);
+				expect(text.stdout, label).toContain(`第 ${i} 组中间${written}标题`);
+				expect(text.stdout, label).toContain(`第 ${i} 组第三行`);
+			}
+			expect(text.stdout.split("\n").filter((l) => l.includes("组")).length).toBe(lines.length);
+			const json = await cli("run", "logs", runId, "--json");
+			expect(json.code, json.stderr).toBe(0);
+			expect(json.stdout.trim().split("\n")).toHaveLength(lines.length);
+		});
+	});
+
 	describe("run logs：条数、截断提示、游标", () => {
 		it("默认最后 200 行，前面还有日志时最后一行写明用 --before 继续读，翻到开头就不再提示", async () => {
 			const { runId } = await longLog(230);

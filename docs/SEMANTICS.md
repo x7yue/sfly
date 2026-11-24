@@ -169,14 +169,17 @@ Agent 在 Hello 里报的文字存下来之后会显示在别人的命令行和�
 | 字段（Hello） | 类别 | 处理 |
 |---|---|---|
 | `name`（Agent 的名称） | 身份 | 和令牌的名称、显示名同一个检查，不合格的连接被拒（`InvalidArgument`，说第几个字符、哪个码位） |
+| `name`（Agent 的名称）的长度 | 身份 | 上限 64 个字符，超过的拒绝连接（和令牌的名称一样）；名称的检查在凭据检查之前，不合格的名称不进任何报错和日志 |
 | `agent_version`、`os`、`arch` | 短的标识类（上限 64 个字符） | 含表里的字符或超长：整段换成空串 |
 | `installed_packages[].name`、`dev_packages[].name` | 短的标识类（上限 128） | 同上 |
 | `installed_packages[].version`、`capabilities[].name` | 短的标识类（上限 64） | 同上 |
 | `peer.public_address` | 短的标识类（上限 255） | 同上 |
 | `dev_packages[].source`（来源）、`peer.listen_error`（监听失败的原因） | 长的自由文字（上限 2048 个字符） | 不整段丢：表里的字符写成看得见的 `\uXXXX`（补充平面的写成 `\u{XXXXX}`，换行和制表符保留），超长截断、末尾加「…」 |
-| `dev_packages[].metadata_json`（开发包的元信息，JSON 文本） | 长的自由文字（逐个字符串，键和值都算） | 解析后每个字符串同上处理再写回；没有变化、不是合法 JSON 时原样 |
+| `dev_packages[].metadata_json`（开发包的元信息，JSON 文本） | 长的自由文字（逐个字符串，**键和值都算**，键有问题、值都正常时也重新写） | 解析后每个字符串同上处理再写回；没有变化、不是合法 JSON 时原样；嵌套超过 64 层的整个记成空（不递归到栈溢出、不让连接连不上） |
 
-`InstalledPackage`、`DevPackage` 这些结构也出现在 `InstallStatus` 里，同一个处理。已经存下的旧值不迁移：显示时由命令行（`safe_text.py`）和控制台各自再处理一遍。`x-sfly-client` 里 `agent/<名称>` 的名称不在这里：只收字母、数字和 `. _ + -`、最多 64 个字符，不合格的当没有，见 `docs/ARCHITECTURE.md`。
+安装状态（`InstallStatus`）和心跳里的自报文字同一个处理：`InstallStatus` 的 `package`、`version`、`task_id` 是短的标识类（包名 128、版本和任务 ID 64），已安装包和开发包这些结构（`InstalledPackage`、`DevPackage`）和 Hello 里的一样；心跳里更新失败的原因（`Heartbeat.update.reason`）是长的自由文字，和监听失败的原因同一类。
+
+**已经存下的旧值不迁移，显示时怎么处理**：命令行（`safe_text.py`）打印服务端的任何文字之前都过一遍，所以旧值在命令行里也是处理过的；**控制台只处理了「经 …」**（`viaLabel`，不合格的显示「未知」），别的旧值（升级前存下的版本、系统、包名、监听失败的原因、名称）在 Agent 列表里原样显示，一直到那台 Agent 下次连上来、被新值换掉；控制台怎么显示不可信的文字（隔离双向文字、把看不见的字符写出来）是另外的事，不在这里。**「经 …」写入时**：请求头里有 `agent/` 但名称不合格（不是只有字母、数字和 `. _ + -`、最多 64 个字符）时存固定的值 `unknown`，控制台和命令行都显示「未知」，和库里旧的不合格值一样；请求头里没有 `agent/` 的没有标注；见 `docs/ARCHITECTURE.md`。
 
 ### 2.6 输出里的数值
 

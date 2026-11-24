@@ -1,6 +1,7 @@
 // 名字里能有哪些字符（src/text-safety.ts，#606）：令牌的名称、用户的显示名、写操作的昵称、初始管理员的显示名共用一个函数。
 // 目标：名字不能在控制台和终端里倒着显示、藏字（往 AI 助手的上下文里塞看不见的话）、换行；不是「看起来一样的名字不能并存」。
 // 字符都用码位造出来，不把看不见的字符直接写在源码里。
+import { readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AccountDisplayName } from "../src/http/accounts.js";
 import { TokenName } from "../src/http/tokens.js";
@@ -339,5 +340,65 @@ describe("名字里不能有的字符", () => {
 		expect(leftover).toEqual([]);
 		// 不在表里的字符一个都没动：去掉所有写出来的转义之后，长度只多不少（表里的码位变长，别的不变）。
 		expect([...escaped].length).toBeGreaterThan([...everything].length);
+	});
+});
+
+// 三个例外字符（零宽连接符、零宽不连字符、变体选择符）的位置规则，两头对照：这里的 `nameProblem` 是出处，`name-position-cases.json`
+// 里是它对一批名字（全部短组合加几条表情序列）得出的结果；命令行（Python 的 `safe_text.py`）的测试读同一个文件，两头的规则不会各改各的。
+// 重新生成：`UPDATE_NAME_POSITION_CASES=1 pnpm --filter @sfly/schema exec vitest run test/text-safety.test.ts`。
+describe("位置规则的对照用例", () => {
+	const fixtureUrl = new URL("./name-position-cases.json", import.meta.url);
+	const legend: Record<string, number> = {
+		a: 0x61,
+		s: 0x20,
+		b: 0xa0,
+		i: 0x3000,
+		J: 0x200d,
+		N: 0x200c,
+		V: 0xfe0f,
+		T: 0xfe0e,
+		W: 0xfe00,
+		E: 0x1f600,
+		c: 0x301,
+	};
+	const decode = (symbols: string): string =>
+		chars(...[...symbols].map((symbol) => legend[symbol] as number));
+	const product = (alphabet: string[], length: number): string[] => {
+		let out = [""];
+		for (let i = 0; i < length; i++) out = out.flatMap((prefix) => alphabet.map((a) => prefix + a));
+		return out;
+	};
+	const names = (): string[] => {
+		const all = Object.keys(legend);
+		const list: string[] = [];
+		for (let n = 0; n <= 3; n++) list.push(...product(all, n));
+		list.push(...product(["a", "s", "J", "N", "V", "E"], 4));
+		list.push(
+			...["EJE", "EVJE", "aVJVa", "aEVJE", "aVJJ", "asVJ", "aJ", "aV", "aVJ", "aJV", "aNV", "aVN"],
+			...["abJ", `${"a".repeat(30)}JJ`, "NaN", "sJ", "bJ", "iVJ"],
+		);
+		return [...new Set(list)];
+	};
+	const firstMisplaced = (symbols: string): number | null => {
+		const problem = nameProblem(decode(symbols));
+		return problem?.kind === "misplaced" ? problem.position : null;
+	};
+
+	it("`name-position-cases.json` 里每一条：第一个位置不对的字符的序号和 nameProblem 现在的结果一样", () => {
+		if (process.env.UPDATE_NAME_POSITION_CASES) {
+			const previous = JSON.parse(readFileSync(fixtureUrl, "utf8")) as { about: string };
+			const cases = names().map((t) => ({ t, m: firstMisplaced(t) }));
+			writeFileSync(fixtureUrl, `${JSON.stringify({ about: previous.about, legend, cases })}\n`);
+		}
+		const fixture = JSON.parse(readFileSync(fixtureUrl, "utf8")) as {
+			legend: Record<string, number>;
+			cases: Array<{ t: string; m: number | null }>;
+		};
+		expect(fixture.legend).toEqual(legend);
+		expect(fixture.cases.length).toBeGreaterThan(2000);
+		const wrong = fixture.cases.filter((c) => firstMisplaced(c.t) !== c.m).map((c) => c.t);
+		expect(wrong).toEqual([]);
+		// 文件里的就是这里生成的那一批：改了规则要重新生成，不能留着旧的。
+		expect(fixture.cases.map((c) => c.t).sort()).toEqual(names().sort());
 	});
 });

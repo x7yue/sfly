@@ -57,6 +57,15 @@ export const REJECTED_NAME_CHARACTER =
  */
 export const VIA_NAME_PATTERN = /^[A-Za-z0-9._+-]{1,64}$/;
 
+/**
+ * 请求头里有 `agent/` 但名称不合格时，控制面存下的固定值：控制台和命令行都显示「未知」，和库里升级之前存下的不合格旧值的显示
+ * 一样（新旧一致）；请求头里没有 `agent/` 的照旧没有标注（null）。
+ */
+export const VIA_UNKNOWN = "unknown";
+
+/** Agent 的名称的长度上限（字符数）：和令牌的名称一样；Hello 里的名称和给 Agent 签发凭据时的名称都用它。 */
+export const AGENT_NAME_MAX_LENGTH = 64;
+
 const ZERO_WIDTH_JOINER = 0x200d;
 const ZERO_WIDTH_NON_JOINER = 0x200c;
 const isVariationSelector = (codePoint: number): boolean =>

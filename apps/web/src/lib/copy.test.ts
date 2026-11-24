@@ -8,6 +8,11 @@ describe("viaLabel", () => {
 		expect(viaLabel("my-assistant")).toBe("经 my-assistant");
 	});
 
+	it("请求头里有 agent/ 但名称不合格时控制面存的固定值 unknown，和库里旧的不合格值一样显示「未知」（新旧一致）", () => {
+		expect(viaLabel("unknown")).toBe("经 未知");
+		expect(viaLabel("co\u202edex")).toBe("经 未知");
+	});
+
 	it("名称恰好是对象自带的属性名时也原样显示", () => {
 		expect(viaLabel("constructor")).toBe("经 constructor");
 		expect(viaLabel("toString")).toBe("经 toString");

@@ -468,11 +468,12 @@ def _copy_body(session: Session, response: Any) -> int:
     stdout.flush()
     if terminal:
         # 终端：整段读完解码、过一遍再写（转义序列可能被分块切开，不能按块处理）。
-        body = b""
+        # 累加用 bytearray：`bytes +=` 每次都复制整段，40 MB 的正文要四秒多（平方级）。
+        body = bytearray()
         while chunk := response.read(READ_CHUNK):
             body += chunk
-        last = body
-        stdout.write(printable(body.decode("utf-8", "replace")))
+        last = bytes(body[-1:])
+        stdout.write(printable(bytes(body).decode("utf-8", "replace")))
     else:
         while chunk := response.read(READ_CHUNK):
             if buffer is not None:

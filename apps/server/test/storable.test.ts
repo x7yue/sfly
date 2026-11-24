@@ -233,4 +233,120 @@ describe("storable", () => {
 			expect(storable(invalid)).toBe(invalid);
 		});
 	});
+
+	describe("安装状态和心跳里的自报文字（#670）", () => {
+		const code = (...points: number[]) => String.fromCodePoint(...points);
+		const BAD = `x${code(0x9b)}2J${code(0x202e)}`;
+
+		it("安装状态：包名、版本、任务 ID 是短的标识类（含表里的字符或超长整段换成空串），开发包和已安装包同一个处理；正常的原样不复制", () => {
+			const cleaned = storable(
+				message({
+					case: "install",
+					value: {
+						package: BAD,
+						version: BAD,
+						taskId: BAD,
+						state: 1,
+						output: "",
+						installedPackages: [{ name: BAD, version: "1.0.0" }],
+						devPackages: [{ name: BAD, source: `/src${code(0x202e)}`, metadataJson: "{}" }],
+					},
+				} as never),
+			);
+			if (cleaned.body.case !== "install") throw new Error("not install");
+			const status = cleaned.body.value;
+			expect([status.package, status.version, status.taskId]).toEqual(["", "", ""]);
+			expect(status.installedPackages[0]?.name).toBe("");
+			expect(status.devPackages[0]?.name).toBe("");
+			expect(status.devPackages[0]?.source).toBe("/src\\u202e");
+			// 任务 ID 超过 64 个字符也整段换成空串；正常的原样。
+			const long = storable(
+				message({ case: "install", value: { taskId: "t".repeat(65) } } as never),
+			);
+			expect(long.body.case === "install" && long.body.value.taskId).toBe("");
+			const ok = message({
+				case: "install",
+				value: {
+					package: "pkg-ok",
+					version: "1.0.0",
+					taskId: "0b3f6b66-2b2c-4a56-9d7a-0d1f0c0e5a11",
+				},
+			} as never);
+			expect(storable(ok)).toBe(ok);
+		});
+
+		it("心跳里更新失败的原因：长的自由文字（表里的字符写成 \\uXXXX，换行保留，超长截断），和监听失败的原因同一类", () => {
+			const cleaned = storable(
+				message({
+					case: "heartbeat",
+					value: { update: { reason: `下载失败${code(0x1b)}[2J${code(0x202e)}\n第二行` } },
+				} as never),
+			);
+			if (cleaned.body.case !== "heartbeat") throw new Error("not heartbeat");
+			expect(cleaned.body.value.update?.reason).toBe("下载失败\\u001b[2J\\u202e\n第二行");
+			const long = storable(
+				message({ case: "heartbeat", value: { update: { reason: "错".repeat(3000) } } } as never),
+			);
+			expect(long.body.case === "heartbeat" && long.body.value.update?.reason).toBe(
+				`${"错".repeat(2048)}…`,
+			);
+			const ok = message({
+				case: "heartbeat",
+				value: { update: { reason: "正常的原因" } },
+			} as never);
+			expect(storable(ok)).toBe(ok);
+		});
+	});
+
+	describe("开发包元信息（JSON 文本）的几处边角（#670 复审）", () => {
+		const code = (...points: number[]) => String.fromCodePoint(...points);
+		const metadataOf = (metadataJson: string): string => {
+			const cleaned = storable(
+				message({
+					case: "hello",
+					value: { name: "agent-a", devPackages: [{ name: "p", source: "/s", metadataJson }] },
+				} as never),
+			);
+			if (cleaned.body.case !== "hello") throw new Error("not hello");
+			return cleaned.body.value.devPackages[0]?.metadataJson ?? "";
+		};
+
+		it("只有键带表里的字符、值都正常时，键也要处理（以前只有值变了才算变过，键原样存下）", () => {
+			const out = JSON.parse(
+				metadataOf(JSON.stringify({ [`字段${code(0x202e)}名`]: "正常的值", ok: { 内层: 1 } })),
+			) as Record<string, unknown>;
+			expect(out).toEqual({ "字段\\u202e名": "正常的值", ok: { 内层: 1 } });
+			// 嵌套里的键也一样。
+			const nested = JSON.parse(
+				metadataOf(JSON.stringify({ a: [{ [`k${code(0x1b)}`]: 1 }] })),
+			) as Record<string, unknown>;
+			expect(nested).toEqual({ a: [{ "k\\u001b": 1 }] });
+		});
+
+		it("`__proto__` 这个键有别的字段变化时也不丢（用 Object.fromEntries 建对象）", () => {
+			const text = `{"__proto__":{"x":1},"d":"x${code(0x202e)}y"}`;
+			const out = JSON.parse(metadataOf(text)) as Record<string, unknown>;
+			expect(Object.hasOwn(out, "__proto__")).toBe(true);
+			expect(out.d).toBe("x\\u202ey");
+			expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+		});
+
+		it("嵌套很深（5000 层）：不抛错、不让连接连不上，元信息整个记成空；正常的嵌套（64 层以内）照常处理", () => {
+			const deep = `${"[".repeat(5000)}${"]".repeat(5000)}`;
+			expect(() => metadataOf(deep)).not.toThrow();
+			expect(metadataOf(deep)).toBe("");
+			const deepObject = `${'{"a":'.repeat(5000)}1${"}".repeat(5000)}`;
+			expect(metadataOf(deepObject)).toBe("");
+			// 带转义的 NUL 又这么深：json() 也不能递归到栈溢出。
+			expect(metadataOf(`${'{"a":"\\u0000",'.repeat(10)}"b":${deep}${"}".repeat(10)}`)).toBe("");
+			// 字符串里的括号不算层数。
+			const inString = JSON.stringify({ d: "[".repeat(1000) });
+			expect(metadataOf(inString)).toBe(inString);
+			// 64 层以内照常处理。
+			const ok = `${"[".repeat(60)}"x${code(0x202e)}"${"]".repeat(60)}`;
+			expect((JSON.parse(metadataOf(ok)) as unknown[]).flat(Number.POSITIVE_INFINITY)).toEqual([
+				"x\\u202e",
+			]);
+		});
+	});
 });

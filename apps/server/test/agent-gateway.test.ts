@@ -36,6 +36,25 @@ describe("Agent 网关", () => {
 			).rejects.toThrow(expected);
 		}
 		// 孤立的代理码元到不了这里：protobuf 的字符串编成 UTF-8 时把它换成 U+FFFD（看得见的字符），这一层不会收到（storable.test.ts 直接测）。
+		// 名称长度上限 64 个字符（按字符数）：65 个被拒绝，说上限，不回显名称。
+		await expect(FakeAgent.connect(cp.grpcUrl, { name: "n".repeat(65) })).rejects.toThrow(
+			"Agent 的名称不能超过 64 个字符",
+		);
+		await expect(FakeAgent.connect(cp.grpcUrl, { name: "n".repeat(65) })).rejects.not.toThrow(
+			/n{20}/,
+		);
+		for (const exact of ["n".repeat(64), code(0x1f600).repeat(64)]) {
+			const agent = await FakeAgent.connect(cp.grpcUrl, { name: exact });
+			await agent.disconnect();
+		}
+		// 名称不合格时的报错不带出原样的名称。
+		for (const bad of [`a${code(0x1b)}[2Jb`, `a${code(0x202e)}b`]) {
+			const error = await FakeAgent.connect(cp.grpcUrl, { name: bad }).then(
+				() => undefined,
+				(caught: unknown) => caught as Error,
+			);
+			expect(String(error?.message), JSON.stringify(bad)).not.toContain(bad);
+		}
 		// 正常的名字（含中文、组合表情）照常连。
 		for (const ok of ["agent-ok", "测试机", `dev-${code(0x1f469, 0x200d, 0x1f4bb)}`]) {
 			const agent = await FakeAgent.connect(cp.grpcUrl, { name: ok });

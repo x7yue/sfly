@@ -13,6 +13,8 @@ import type {
 } from "@sfly/proto";
 import { escapeUnsafeCharacters, nameProblem } from "@sfly/schema";
 
+// Agent 自报的文字怎么过表（逐个字段的归类、旧值怎么显示）：docs/SEMANTICS.md §2.5.1。
+
 const NUL = "\u0000";
 const REPLACEMENT = "\uFFFD";
 /** JSON 文本里 NUL 的写法（JSON 不允许原样的控制字符）。 */
@@ -58,7 +60,8 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 		case "heartbeat": {
 			const { update } = body.value;
 			if (!update) return body;
-			const reason = text(update.reason);
+			// 更新失败的原因：长的自由文字（给人读的原因），和监听失败的原因同一类（docs/SEMANTICS.md §2.5.1）。
+			const reason = freeText(text(update.reason));
 			if (reason === update.reason) return body;
 			return { ...body, value: { ...body.value, update: { ...update, reason } } };
 		}
@@ -87,13 +90,16 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 		}
 		case "install": {
 			const status = body.value;
-			const pkg = text(status.package);
-			const version = text(status.version);
+			// 包名、版本、任务 ID：短的标识类（docs/SEMANTICS.md §2.5.1）。
+			const pkg = shortId(text(status.package), SHORT_MAX.name);
+			const version = shortId(text(status.version), SHORT_MAX.short);
+			const taskId = shortId(text(status.taskId), SHORT_MAX.short);
 			const installedPackages = list(status.installedPackages, installed);
 			const devPackages = list(status.devPackages, devPackage);
 			if (
 				pkg === status.package &&
 				version === status.version &&
+				taskId === status.taskId &&
 				installedPackages === status.installedPackages &&
 				devPackages === status.devPackages
 			) {
@@ -101,7 +107,7 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 			}
 			return {
 				...body,
-				value: { ...status, package: pkg, version, installedPackages, devPackages },
+				value: { ...status, package: pkg, version, taskId, installedPackages, devPackages },
 			};
 		}
 		case "metrics":
@@ -137,7 +143,7 @@ function eventJsonOf<M extends { eventJson: string }>(message: M): M {
  * - **短的标识类**（版本、系统、架构、包名、能力名、对外地址，应当是一个词的）：含表里的字符或超过上限的整段换成空串；
  * - **长的自由文字**（给人读的说明、原因：开发包的来源、对外监听失败的原因、开发包元信息里的字符串）：不整段丢，
  *   表里的字符写成看得见的 `\uXXXX`，超过上限的截断、末尾加「…」。
- * 逐个字段的归类见 `docs/ARCHITECTURE.md`。
+ * 逐个字段的归类见 docs/SEMANTICS.md §2.5.1。
  */
 const SHORT_MAX = { short: 64, name: 128, address: 255 } as const;
 /** 长的自由文字的长度上限（字符数）。 */
@@ -154,9 +160,39 @@ function freeText(value: string): string {
 	return escapeUnsafeCharacters(clipped);
 }
 
-/** JSON 文本里的字符串（键和值）按长的自由文字处理：没有变化时原样返回；不是合法 JSON 时原样返回。 */
+/** 开发包元信息（JSON 文本）嵌套的层数上限：超过的整个按不合法处理（记成空），不递归到栈溢出、也不让连接因此连不上。 */
+const METADATA_MAX_DEPTH = 64;
+
+/** JSON 文本嵌套的层数（数括号，不递归；字符串里的括号不算）。 */
+function jsonDepth(s: string): number {
+	let depth = 0;
+	let deepest = 0;
+	let inString = false;
+	for (let i = 0; i < s.length; i++) {
+		const c = s[i];
+		if (inString) {
+			if (c === "\\") i++;
+			else if (c === '"') inString = false;
+		} else if (c === '"') {
+			inString = true;
+		} else if (c === "{" || c === "[") {
+			depth++;
+			if (depth > deepest) deepest = depth;
+		} else if (c === "}" || c === "]") {
+			depth--;
+		}
+	}
+	return deepest;
+}
+
+/**
+ * 开发包元信息（JSON 文本）里的字符串（键和值）按长的自由文字处理：键或值任何一个变了都重新序列化（只有键有问题、
+ * 值都正常时也算）；没有变化、不是合法 JSON 时原样返回；嵌套超过 {@link METADATA_MAX_DEPTH} 层的记成空。
+ * `__proto__` 这样的键也原样留着（用 `Object.fromEntries` 建对象，写 `out[key]` 会把它当成原型丢掉）。
+ */
 function freeJson(s: string): string {
 	if (s === "") return s;
+	if (jsonDepth(s) > METADATA_MAX_DEPTH) return "";
 	let value: unknown;
 	try {
 		value = JSON.parse(s);
@@ -172,9 +208,13 @@ function freeJson(s: string): string {
 		}
 		if (Array.isArray(v)) return v.map(walk);
 		if (v !== null && typeof v === "object") {
-			const out: Record<string, unknown> = {};
-			for (const [key, item] of Object.entries(v)) out[freeText(key)] = walk(item);
-			return out;
+			return Object.fromEntries(
+				Object.entries(v).map(([key, item]) => {
+					const cleanedKey = freeText(key);
+					if (cleanedKey !== key) changed = true;
+					return [cleanedKey, walk(item)];
+				}),
+			);
 		}
 		return v;
 	};
@@ -238,7 +278,9 @@ function installed(p: InstalledPackage): InstalledPackage {
 function devPackage(p: DevPackage): DevPackage {
 	const name = shortId(text(p.name), SHORT_MAX.name);
 	const source = freeText(text(p.source));
-	const metadataJson = freeJson(json(p.metadataJson));
+	// 嵌套太深的先记成空：后面的 json()（换掉转义的 NUL）和 freeJson 都要递归。
+	const metadataJson =
+		jsonDepth(p.metadataJson) > METADATA_MAX_DEPTH ? "" : freeJson(json(p.metadataJson));
 	return name === p.name && source === p.source && metadataJson === p.metadataJson
 		? p
 		: { ...p, name, source, metadataJson };

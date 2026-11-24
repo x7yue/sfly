@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import re
+from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -16,9 +17,18 @@ from typing import Any, cast
 import pytest
 
 from sfly.cli import api
+from sfly.cli.client import Client
 from sfly.cli.errors import CliError
-from sfly.cli.output import Output, actor_label, dump_json
-from sfly.cli.safe_text import UNSAFE_RANGES, json_safe, printable
+from sfly.cli.output import Output, actor_label, dump_json, via_label
+from sfly.cli.run_exec import _progress
+from sfly.cli.run_logs import print_notes
+from sfly.cli.safe_text import (
+    UNSAFE_RANGES,
+    dump_json_safe,
+    json_safe,
+    misplaced_exceptions,
+    printable,
+)
 from sfly.cli.session import Session
 
 ESC = chr(0x1B)
@@ -39,6 +49,34 @@ def _unsafe_in(text: str) -> list[str]:
     return [hex(ord(c)) for c in text if ord(c) in _UNSAFE_CODES and c not in "\t\n"]
 
 
+_TOKEN = re.compile(
+    r"\\p\{Cc\}"
+    r"|\\u\{([0-9A-Fa-f]+)\}(?:-\\u\{([0-9A-Fa-f]+)\})?"
+    r"|\\u([0-9A-Fa-f]{4})(?:-\\u([0-9A-Fa-f]{4}))?"
+)
+
+
+def _parse_rejected_class(content: str) -> set[int]:
+    """TypeScript 里那个正则字符类的内容解析成码位集合。整个字符类都要解析完：有不认识的写法
+    （比如以后加一个 `\\p{Cf}`）就失败，不能悄悄跳过让两头的表分道扬镳。"""
+    codes: set[int] = set()
+    position = 0
+    while position < len(content):
+        token = _TOKEN.match(content, position)
+        assert token, (
+            f"text-safety.ts 的字符类里有这里不认识的写法：{content[position : position + 20]!r}"
+        )
+        position = token.end()
+        if token.group(0) == r"\p{Cc}":
+            codes.update(range(0x00, 0x20))
+            codes.update(range(0x7F, 0xA0))
+            continue
+        lo_text = token.group(1) or token.group(3)
+        hi_text = token.group(2) or token.group(4) or lo_text
+        codes.update(range(int(lo_text, 16), int(hi_text, 16) + 1))
+    return codes
+
+
 def test_table_is_the_one_the_control_plane_rejects_names_with() -> None:
     """表从 TypeScript 的源码里读出来逐个码位对照：写入时拒绝的和打印时转义的不会各改各的。"""
     source = (Path(__file__).resolve().parents[3] / "packages/schema/src/text-safety.ts").read_text(
@@ -46,20 +84,18 @@ def test_table_is_the_one_the_control_plane_rejects_names_with() -> None:
     )
     match = re.search(r"REJECTED_NAME_CHARACTER =\s*(?://[^\n]*\n\s*)*/\[(.+?)\]/u;", source, re.S)
     assert match, "text-safety.ts 里找不到 REJECTED_NAME_CHARACTER"
-    expected: set[int] = set()
-    for token in re.finditer(
-        r"\\p\{Cc\}|\\u\{([0-9A-Fa-f]+)\}(?:-\\u\{([0-9A-Fa-f]+)\})?|\\u([0-9A-Fa-f]{4})(?:-\\u([0-9A-Fa-f]{4}))?",
-        match.group(1),
-    ):
-        if token.group(0) == r"\p{Cc}":
-            expected.update(range(0x00, 0x20))
-            expected.update(range(0x7F, 0xA0))
-            continue
-        lo_text = token.group(1) or token.group(3)
-        hi_text = token.group(2) or token.group(4) or lo_text
-        expected.update(range(int(lo_text, 16), int(hi_text, 16) + 1))
+    expected = _parse_rejected_class(match.group(1))
     assert expected, "没有从 text-safety.ts 里读出任何码位"
     assert _UNSAFE_CODES == expected
+
+
+def test_table_parser_fails_on_a_notation_it_does_not_know() -> None:
+    """对照测试自己的保险：字符类里有不认识的写法时失败，不是悄悄跳过。"""
+    with pytest.raises(AssertionError, match="不认识的写法"):
+        _parse_rejected_class(r"\p{Cc}\u00AD\p{Cf}")
+    with pytest.raises(AssertionError, match="不认识的写法"):
+        _parse_rejected_class(r"\u00AD[a-z]")
+    assert _parse_rejected_class(r"\p{Cc}\u00AD\u{E0000}-\u{E0FFF}\uD800-\uDFFF") >= {0xAD, 0xE0001}
 
 
 @pytest.mark.parametrize(
@@ -74,8 +110,23 @@ def test_table_is_the_one_the_control_plane_rejects_names_with() -> None:
         (f"{CSI8}31m红{CSI8}0m", "红"),
         (f"{ESC}P1$r{ESC}\\正文", "正文"),
         (f"{ESC}c正文", "正文"),
-        # 没有结尾的：被它吃掉。
-        (f"正文{ESC}]0;一直不结束", "正文"),
+        # 8 位的 ST 结尾、8 位的 OSC 和 DCS 开头。
+        (f"{ESC}]0;标题{ST8}正文", "正文"),
+        (f"{chr(0x9D)}0;标题{BEL}正文", "正文"),
+        (f"{chr(0x9D)}0;标题{ST8}正文", "正文"),
+        (f"{chr(0x90)}1$r{ST8}正文", "正文"),
+        (f"{chr(0x90)}1$r{ESC}\\正文", "正文"),
+        # 没有结尾的串序列不删（不然后面的文字都没了）：开头写成看得见的转义，正文照常显示。
+        (f"正文{ESC}]0;一直不结束", "正文\\u001b]0;一直不结束"),
+        (f"前{chr(0x9D)}后", "前\\u009d后"),
+        (f"前{ESC}P后", "前\\u001bP后"),
+        (f"前{chr(0x90)}后", "前\\u0090后"),
+        (f"前{ESC}X后", "前\\u001bX后"),
+        (f"前{chr(0x98)}后", "前\\u0098后"),
+        (f"前{ESC}^后", "前\\u001b^后"),
+        (f"前{chr(0x9E)}后", "前\\u009e后"),
+        (f"前{ESC}_后", "前\\u001b_后"),
+        (f"前{chr(0x9F)}后", "前\\u009f后"),
         # 剩下的控制字符写成看得见的转义：不悄悄吞掉。
         (f"响铃{BEL}退格{chr(8)}", "响铃\\u0007退格\\u0008"),
         (f"NUL{chr(0)}DEL{chr(0x7F)}", "NUL\\u0000DEL\\u007f"),
@@ -167,7 +218,8 @@ def test_json_output_and_errors_are_escaped_and_parse_back_unchanged() -> None:
 def test_actor_label_with_hostile_via_is_printable_through_output() -> None:
     output, out, _ = _output(json_mode=False)
     output.emit({}, actor_label("小明", f"codex{ESC}[2J{RLO}"))
-    assert "小明 经 codex\\u202e" in out.getvalue()
+    # 不合格的「经 …」名称显示成「未知」（控制面写入时也不收，旧值同样处理）。
+    assert "小明 经 未知" in out.getvalue()
 
 
 class _Response:
@@ -214,3 +266,187 @@ def test_api_event_stream_on_a_terminal_is_filtered_line_by_line() -> None:
         timeout=5,
     )
     assert terminal.getvalue() == "data: x\\u0085\ndata: ok\n"
+
+
+def test_unterminated_string_sequences_keep_the_text_after_them() -> None:
+    """没有结尾的 OSC、DCS 等一直吃到文字末尾，后面别的日志行都没了（#670 复审）：现在每一种
+    开头单独出现在一行中间、后面隔几行才有结尾，后面的行都在。"""
+    openers = [
+        f"{ESC}]",
+        chr(0x9D),
+        f"{ESC}P",
+        chr(0x90),
+        f"{ESC}X",
+        chr(0x98),
+        f"{ESC}^",
+        chr(0x9E),
+        f"{ESC}_",
+        chr(0x9F),
+    ]
+    for opener in openers:
+        for terminator in (BEL, ST8, f"{ESC}\\"):
+            text = (
+                f"第一行\n中间{opener}标题\n第三行 ERROR\n第四行{terminator}\n"
+                "第五行\n继续读：sfly run logs"
+            )
+            out = printable(text)
+            for kept in (
+                "第一行",
+                "中间",
+                "标题",
+                "第三行 ERROR",
+                "第四行",
+                "第五行",
+                "继续读：sfly run logs",
+            ):
+                assert kept in out, (opener, terminator, kept)
+            assert out.count("\n") == 5, (opener, terminator)
+            assert _unsafe_in(out) == [] and ESC not in out
+
+
+def test_a_terminated_string_sequence_must_not_span_a_line() -> None:
+    """有结尾也不能跨行：正文里有换行的不算一个序列，开头写成转义，每一行都在。"""
+    out = printable(f"a{ESC}]标题\n第二行{BEL}\n第三行")
+    assert out == "a\\u001b]标题\n第二行\\u0007\n第三行"
+
+
+def test_printing_many_unterminated_openers_is_linear() -> None:
+    """没有结尾的开头只吃到下一个引导字符为止，不会每个都扫到文字末尾（平方级）。"""
+    out = printable(chr(0x9D) * 200_000 + "x")
+    assert out.endswith("x") and "\\u009d" in out
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 表情、波斯文、印地文：位置对的原样。
+        (chr(0x1F469) + chr(0x200D) + chr(0x1F4BB), chr(0x1F469) + chr(0x200D) + chr(0x1F4BB)),
+        (
+            chr(0x1F3F3) + chr(0xFE0F) + chr(0x200D) + chr(0x1F308),
+            chr(0x1F3F3) + chr(0xFE0F) + chr(0x200D) + chr(0x1F308),
+        ),
+        # 位置不对的写成转义：开头、连着出现、空白后面、变体选择符后面接零宽不连字符。
+        (f"{chr(0x200D)}abc", "\\u200dabc"),
+        (f"a{chr(0x200D)}{chr(0x200D)}b", f"a{chr(0x200D)}\\u200db"),
+        (f"a {chr(0xFE0F)}", "a \\ufe0f"),
+        (f"a{chr(0xFE0F)}{chr(0x200C)}b", f"a{chr(0xFE0F)}\\u200cb"),
+        (f"a{chr(0xFE0F)}{chr(0xFE0F)}", f"a{chr(0xFE0F)}\\ufe0f"),
+        # 结尾的零宽连接符照旧放行。
+        (f"a{chr(0x200D)}", f"a{chr(0x200D)}"),
+    ],
+)
+def test_exception_characters_follow_the_name_position_rule(text: str, expected: str) -> None:
+    assert printable(text) == expected
+
+
+def test_zero_width_characters_do_not_carry_a_binary_payload() -> None:
+    """零宽字符不限位置、不限个数时能把一段二进制原样带出去（#670 复审）：
+    连着的只留紧跟在看得见字符后面的那些。"""
+    payload = "a" + "".join(
+        chr(0x200D) if bit else chr(0x200C) for bit in [1, 0, 1, 1, 0, 0, 1, 0] * 10
+    )
+    out = printable(payload)
+    invisible = [c for c in out if c in (chr(0x200C), chr(0x200D))]
+    assert len(invisible) <= 1
+
+
+def _fixture_cases() -> tuple[dict[str, int], list[dict[str, Any]]]:
+    path = Path(__file__).resolve().parents[3] / "packages/schema/test/name-position-cases.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    return fixture["legend"], fixture["cases"]
+
+
+def test_position_rule_matches_the_typescript_name_problem_on_every_fixture_case() -> None:
+    """`nameProblem`（TypeScript，出处）对 2000 多个名字得出的结果在 name-position-cases.json 里：
+    这里照同一条规则得出的第一个位置不对的字符必须一样。两头的规则不会各改各的。"""
+    legend, cases = _fixture_cases()
+    assert len(cases) > 2000
+    wrong = []
+    for case in cases:
+        text = "".join(chr(legend[symbol]) for symbol in case["t"])
+        bad = misplaced_exceptions(text)
+        first = bad[0] + 1 if bad else None
+        if first != case["m"]:
+            wrong.append((case["t"], first, case["m"]))
+    assert wrong == []
+
+
+def test_json_output_escapes_misplaced_exceptions_and_parses_back_unchanged() -> None:
+    value = {
+        "开头": chr(0x200D) + "abc",
+        "表情": chr(0x1F469) + chr(0x200D) + chr(0x1F4BB),
+        "空白后面": "a " + chr(0xFE0F),
+        "列表": [chr(0x200C) + "x", "ok"],
+        chr(0x200D) + "键": 1,
+    }
+    text = dump_json(value)
+    assert json.loads(text) == value
+    assert "\\u200dabc" in text and "\\ufe0f" in text and "\\u200c" in text
+    # 位置对的原样（表情序列没有被转义）。
+    assert chr(0x1F469) + chr(0x200D) + chr(0x1F4BB) in text
+    assert "\n" not in text and _unsafe_in(text) == []
+
+
+def test_json_output_keeps_chinese_and_emoji_unescaped() -> None:
+    """`--json` 里中文和表情不被转义（精简、好读）。"""
+    value = {
+        "名称": "王小明",
+        "标签": chr(0x1F600),
+        "组合": chr(0x1F469) + chr(0x200D) + chr(0x1F4BB),
+    }
+    text = dump_json(value)
+    assert text == dump_json_safe(value)
+    assert "王小明" in text and chr(0x1F600) in text and "\\u" not in text
+    assert json.loads(text) == value
+
+
+def test_json_slow_path_agrees_with_the_standard_library_on_plain_values() -> None:
+    """有零宽连接符这类时自己写 JSON：除了该转义的字符，和标准库写出来的一样。"""
+    value = {"a": [1, 2.5, True, False, None, 'x\ny\t"z\\'], "b": {"c": chr(0x200D) + "d"}}
+    standard = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    ours = dump_json(value)
+    assert ours == standard.replace(chr(0x200D), "\\u200d")
+
+
+def test_progress_line_is_filtered() -> None:
+    """`sfly run` 的进度行里有服务端的文字（节点名）：过一遍。"""
+    out, err = io.StringIO(), io.StringIO()
+    session = cast(Session, SimpleNamespace(out=SimpleNamespace(stdout=out, stderr=err)))
+    _progress(session, f"节点 a{ESC}[2J{NEL}{RLO} 进行中")
+    assert err.getvalue() == "节点 a\\u0085\\u202e 进行中\n"
+
+
+def test_version_mismatch_warning_is_filtered() -> None:
+    """版本不一致的警告里有控制面回的版本号（服务端的文字）：过一遍。"""
+    err = io.StringIO()
+    client = Client("http://127.0.0.1:1", "小明", stderr=err)
+    headers = Message()
+    headers["x-sfly-version"] = "9.9.9"  # 请求头只能是 latin-1：8 位的控制字符能到这里
+    headers.replace_header("x-sfly-version", "9.9.9" + chr(0x85) + chr(0xAD))
+    client._observe(headers)  # noqa: SLF001
+    text = err.getvalue()
+    assert "警告：sfly 命令行" in text
+    assert _unsafe_in(text) == [] and ESC not in text
+    assert "\\u0085\\u00ad" in text
+
+
+def test_run_logs_json_notes_are_filtered() -> None:
+    """`run logs --json` 的提示写到 stderr，里面有节点名（服务端的文字）：过一遍。"""
+    out, err = io.StringIO(), io.StringIO()
+    print_notes(
+        Output(json_mode=True, stdout=out, stderr=err), [f"节点 x{ESC}]0;t{BEL}y{NEL}", "第二条"]
+    )
+    assert err.getvalue() == "节点 xy\\u0085\n第二条\n"
+    assert out.getvalue() == ""
+
+
+def test_via_label_shows_unknown_for_the_placeholder_and_bad_values() -> None:
+    """请求头里有 agent/ 但名称不合格时控制面存 `unknown`，库里升级之前存下的不合格旧值
+    也有：都显示「未知」。"""
+    assert via_label("unknown") == "未知"
+    assert via_label("claude-code") == "Claude Code"
+    assert via_label("my_tool-1.2+b") == "my_tool-1.2+b"
+    for bad in (f"codex{ESC}[2J", f"co{RLO}dex", "a" * 65, "<b>x</b>", "", chr(0xE9)):
+        assert via_label(bad) == "未知", bad
+    assert via_label(None) is None
+    assert actor_label("小明", f"x{ESC}[31m") == "小明 经 未知"

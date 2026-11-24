@@ -22,7 +22,7 @@ from typing import Any
 from sfly.cli.client import Client, segment
 from sfly.cli.errors import CliError
 from sfly.cli.files import part_file
-from sfly.cli.output import candidate_list, dump_json, positive_int
+from sfly.cli.output import Output, candidate_list, dump_json, positive_int
 from sfly.cli.run_view import (
     RUN_HELP,
     NodeRef,
@@ -382,8 +382,7 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
     if out.json_mode:
         for line in read.lines:
             print(dump_json(line), file=out.stdout)
-        for note in notes:
-            print(printable(note), file=out.stderr)
+        print_notes(out, notes)
         return
     rendered = [format_line(index, line) for line in read.lines]
     if not rendered and not notes:
@@ -393,6 +392,13 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------- 下载
+
+
+def print_notes(out: Output, notes: Sequence[str]) -> None:
+    """`--json` 时的提示写到 stderr（stdout 保持纯 JSON）；提示里有节点名（服务端的文字），
+    过一遍。"""
+    for note in notes:
+        print(printable(note), file=out.stderr)
 
 
 def _download_all(session: Session, args: argparse.Namespace, selection: Selection) -> None:

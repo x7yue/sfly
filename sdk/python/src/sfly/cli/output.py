@@ -9,14 +9,14 @@
 from __future__ import annotations
 
 import argparse
-import json
+import re
 import sys
 import unicodedata
 from collections.abc import Sequence
 from typing import IO, Any, TypeVar
 
 from sfly.cli.errors import CliError
-from sfly.cli.safe_text import json_safe, printable
+from sfly.cli.safe_text import dump_json_safe, printable
 
 T = TypeVar("T")
 
@@ -68,17 +68,23 @@ class Output:
 def dump_json(value: Any) -> str:
     """精简 JSON：一行，不转义中文；不该到终端的字符（C1 控制字符、双向控制字符、看不见的字符、
     孤立的代理码元）写成 JSON 的转义，解析回来不变（#670，见 safe_text.py）。"""
-    return json_safe(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    return dump_json_safe(value)
 
 
-_VIA_LABELS = {"claude-code": "Claude Code", "codex": "Codex"}
+_VIA_LABELS = {"claude-code": "Claude Code", "codex": "Codex", "unknown": "未知"}
+# 「经 …」的名称合格的写法（和 `packages/schema/src/text-safety.ts` 的 `VIA_NAME_PATTERN` 一样）：
+# 控制面写入时只收这样的名称，库里升级之前存下的旧值不合格的显示成「未知」。
+_VIA_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
 
 
 def via_label(name: str | None) -> str | None:
-    """「经哪个 AI 编程助手」的显示名：`claude-code` → Claude Code，`codex` → Codex，其他原样；
-    没有（None）时为 None。界面上的显示和这里一致。"""
+    """「经哪个 AI 编程助手」的显示名：`claude-code` → Claude Code，`codex` → Codex，
+    `unknown`（请求头里有 agent/ 但名称不合格，控制面存下的固定值）和不合格的旧值 → 未知，
+    其他合格的原样；没有（None）时为 None。界面上的显示和这里一致。"""
     if name is None:
         return None
+    if _VIA_NAME.fullmatch(name) is None:
+        return _VIA_LABELS["unknown"]
     return _VIA_LABELS.get(name, name)
 
 

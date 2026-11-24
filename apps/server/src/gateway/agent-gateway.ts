@@ -16,7 +16,7 @@ import {
 	type ServerMessage,
 	ServerMessageSchema,
 } from "@sfly/proto";
-import { describeNameProblem, nameProblem } from "@sfly/schema";
+import { AGENT_NAME_MAX_LENGTH, describeNameProblem, nameProblem } from "@sfly/schema";
 import { agentClockReading } from "../agents/agent-clock.js";
 import { sourceAddress } from "../agents/agent-endpoint.js";
 import {
@@ -106,6 +106,12 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			if (nameIssue !== undefined) {
 				throw new ConnectError(
 					`Hello.name 不合格：${describeNameProblem("Agent 的名称", nameIssue)}`,
+					Code.InvalidArgument,
+				);
+			}
+			if ([...hello.name].length > AGENT_NAME_MAX_LENGTH) {
+				throw new ConnectError(
+					`Hello.name 不合格：Agent 的名称不能超过 ${AGENT_NAME_MAX_LENGTH} 个字符`,
 					Code.InvalidArgument,
 				);
 			}
