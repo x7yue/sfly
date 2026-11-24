@@ -591,6 +591,112 @@ describe("数值类的说明里回显什么（echo.ts：像数的、不超过 12
 	});
 });
 
+describe("SFLY_HTTP_HOST、SFLY_GRPC_HOST：只认 IP 地址或主机名（#651）", () => {
+	const HOSTS = [
+		["SFLY_HTTP_HOST", "SFLY_HTTP_PORT"],
+		["SFLY_GRPC_HOST", "SFLY_GRPC_PORT"],
+	] as const;
+
+	it("没设置、空串、只有空白：监听所有网卡（0.0.0.0）", () => {
+		expect(readEnvSettings({})).toMatchObject({ httpHost: "0.0.0.0", grpcHost: "0.0.0.0" });
+		expect(readEnvSettings({ SFLY_HTTP_HOST: "", SFLY_GRPC_HOST: "   " })).toMatchObject({
+			httpHost: "0.0.0.0",
+			grpcHost: "0.0.0.0",
+		});
+	});
+
+	it.each([
+		"0.0.0.0",
+		"127.0.0.1",
+		"192.168.1.10",
+		"::",
+		"::1",
+		"fe80::1",
+		"localhost",
+		"sfly",
+		"sfly-app",
+		"sfly_app",
+		"db.internal",
+		"a.b.c.example.com",
+		"sfly.example.com.",
+		"1234",
+	])("合法：%s（去掉前后空白原样交给控制面）", (host) => {
+		expect(readEnvSettings({ SFLY_HTTP_HOST: `  ${host}  `, SFLY_GRPC_HOST: host })).toMatchObject({
+			httpHost: host,
+			grpcHost: host,
+		});
+	});
+
+	it.each(
+		HOSTS.flatMap(([name, port]) =>
+			[
+				["带用户名密码的地址", `https://admin:${SECRET}@sfly.example.com`],
+				["别的变量的值（数据库地址）", `postgres://sfly:${SECRET}@db.internal:5432/sfly`],
+				["用户名密码加主机", `admin:${SECRET}@sfly.example.com`],
+				["全角的 ＠", `admin:${SECRET}＠sfly.example.com`],
+				["带端口", `sfly.example.com:${SECRET}`],
+				["带路径", `sfly.example.com/${SECRET}`],
+				["IPv6 带方括号", `[::1]:${SECRET}`],
+				["带空格", `sfly example.com ${SECRET}`],
+				["带感叹号", `sfly.example.com!${SECRET}`],
+				["一段是空的", `sfly..example.com${SECRET}`],
+				["一段以连字符开头", `-sfly.example.com${SECRET}`],
+				[
+					"太长（254 个字符）",
+					`${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(63)}.e`,
+				],
+			].map(([label, value]) => [name, port, label, value] as const),
+		),
+	)("%s（端口用 %s）不合法：%s：说明有变量名、要求和端口变量，不回显填的值", (name, port, _, value) => {
+		const message = oneProblem({ [name]: value as string });
+
+		expect(message).toContain(name);
+		expect(message).toContain("IP 地址");
+		expect(message).toContain("主机名");
+		expect(message).toContain(port);
+		expect(message).not.toContain(SECRET);
+		expect(message).not.toContain("admin");
+		expect(message).not.toContain((value as string).slice(0, 12));
+	});
+
+	it("两个都写错：各一条，一次报完", () => {
+		const problems = problemsOf({
+			SFLY_HTTP_HOST: `postgres://u:${SECRET}@db/x`,
+			SFLY_GRPC_HOST: `u:${SECRET}@db`,
+		});
+
+		expect(problems).toHaveLength(2);
+		expect(problems.join("\n")).not.toContain(SECRET);
+	});
+});
+
+describe("SFLY_DATA_DIR：没设置用 ./data，写成地址不合法（#651）", () => {
+	it("没设置、空串、只有空白：./data；别的去掉前后空白，原样用（不改写）", () => {
+		expect(readEnvSettings({}).dataDir).toBe("./data");
+		expect(readEnvSettings({ SFLY_DATA_DIR: "" }).dataDir).toBe("./data");
+		expect(readEnvSettings({ SFLY_DATA_DIR: "   " }).dataDir).toBe("./data");
+		expect(readEnvSettings({ SFLY_DATA_DIR: "  /var/lib/sfly  " }).dataDir).toBe("/var/lib/sfly");
+		expect(readEnvSettings({ SFLY_DATA_DIR: "relative/dir" }).dataDir).toBe("relative/dir");
+		// 带 @ 和 : 的路径也是合法的路径（不是地址）。
+		expect(readEnvSettings({ SFLY_DATA_DIR: "/mnt/a:b@c/data" }).dataDir).toBe("/mnt/a:b@c/data");
+	});
+
+	it.each([
+		`postgres://sfly:${SECRET}@db.internal:5432/sfly`,
+		`https://admin:${SECRET}@sfly.example.com/data`,
+		`s3://${SECRET}/bucket`,
+		`file://host/${SECRET}`,
+	])("写成地址（带 ://）：不合法，说明是固定的文字，不回显填的值（%s）", (value) => {
+		const message = oneProblem({ SFLY_DATA_DIR: value });
+
+		expect(message).toContain("SFLY_DATA_DIR");
+		expect(message).toContain("目录的路径");
+		expect(message).toContain("没有回显填的值");
+		expect(message).not.toContain(SECRET);
+		expect(message).not.toContain("postgres");
+	});
+});
+
 describe("三个 MB 上限：说明里不能经过运算把没回显的值带出来（#642 的复核）", () => {
 	const MB = 1_048_576;
 	const LIMITS = ["SFLY_LOG_LIMIT_MB", "SFLY_ARTIFACT_LIMIT_MB", "SFLY_METRIC_LIMIT_MB"] as const;
