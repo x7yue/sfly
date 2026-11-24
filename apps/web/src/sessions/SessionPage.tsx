@@ -125,8 +125,10 @@ function StopButton({ id }: { id: string }) {
 }
 
 /**
- * 底部的输入框：空闲时「接着说」；在做时照常可以写下一句、只是不能发（「发送」不可用并写明原因，Ctrl/⌘+Enter 同样不发），
- * 和助手页的输入框一致；Ctrl/⌘+Enter 只在输入框里发送；点「停止」的按钮随这一轮消失时焦点交给输入框（`data-focus-successor`，不落在 body 上）；已结束时不显示。
+ * 底部的输入框：空闲时「接着说」；在做时照常可以写下一句、只是不能发（「发送」不可用，Ctrl/⌘+Enter 同样不发；原因写在按钮旁边，
+ * 输入框用 `aria-describedby` 指向它）。「输入框照常可以写」和助手页一致；原因的写法不同：助手页的原因是就绪状态里逐条的缺什么，
+ * 只在页面上方写一处（按钮和输入框都指向那里，旁边不重复），这里的原因只有「在做」「排队中」一句，就写在「发送」旁边。
+ * Ctrl/⌘+Enter 只在输入框里发送；点「停止」的按钮随这一轮消失时焦点交给输入框（`data-focus-successor`，不落在 body 上）；已结束时不显示。
  */
 function Composer({ id, status }: { id: string; status: SessionStatus }) {
 	const client = useQueryClient();

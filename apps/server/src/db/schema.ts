@@ -862,7 +862,7 @@ export const projectMembers = pgTable(
  * 助手会话（GLOSSARY「会话」，ADR 0027）：用户和助手围绕一件事的一次对话，属于一个项目（竖切里都是 `default`）。
  * `status` 一次写全（`idle` 空闲、`running` 在做、`queued` 排队中、`ended` 已结束），骨架的竖切只用前两个；
  * 同一个项目同一时刻只跑一轮：每个项目至多一个 `running` 的会话（`sessions_one_running_per_project`），
- * 并发的两个「开始一轮」只有一个能写成功。`title` 是第一句话的前 60 个字；`created_by` 是发起人的昵称，
+ * 并发的两个「开始一轮」只有一个能写成功。`title` 是第一句话的前 60 个字（看起来的字，超过时末尾加「…」，截法见 `titleOf`；之前创建的会话不迁移）；`created_by` 是发起人的昵称，
  * `created_by_user_id` 是发起人的用户（#494 之前的请求可能没有用户，#547 起建会话要有用户）。
  * `last_activity_at` 是最近一次活动（新建、发话、事件落库）。
  */
