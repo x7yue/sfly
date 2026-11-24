@@ -132,6 +132,38 @@ describe("经哪个 AI 编程助手", () => {
 		expect((await trigger(scenario, "agent/codex sfly-cli/0.5.0")).triggered_via).toBe("codex");
 	});
 
+	// 客户端自己报的、存下来之后显示在别人的命令行和控制台里（#670）：只留字母、数字和 . _ + -，最多 64 个字符；
+	// 别的整段丢掉（和没有这个请求头一样），请求照常成功。HTTP 请求头的值里能到服务端的是可见的 ASCII 和 U+0080–U+00FF
+	// （8 位的控制序列 U+009B、下一行 U+0085、软连字符 U+00AD 都在里面）。字符都用码位造出来。
+	it("名称里有 8 位的控制序列、软连字符、符号、空格以外的字符，或超过 64 个字符：不记（经哪个助手为空），请求照常成功；合格的照常记", async () => {
+		const scenario = await api.orchestrationWith(DOCUMENT);
+		const c = (...points: number[]) => String.fromCodePoint(...points);
+		for (const bad of [
+			`sfly-cli/0.5.0 agent/codex${c(0x9b)}2J`,
+			`sfly-cli/0.5.0 agent/${c(0x85)}codex`,
+			`sfly-cli/0.5.0 agent/co${c(0xad)}dex`,
+			"sfly-cli/0.5.0 agent/<b>codex</b>",
+			"sfly-cli/0.5.0 agent/a:b",
+			`sfly-cli/0.5.0 agent/${"a".repeat(65)}`,
+			`sfly-cli/0.5.0 agent/${c(0xe9)}`,
+		]) {
+			const run = await trigger(scenario, bad);
+			expect(run.triggered_via, JSON.stringify(bad)).toBeNull();
+			expect(await api.run(run.id), JSON.stringify(bad)).toMatchObject({ triggered_via: null });
+			const version = await save(scenario, await api.headVersion(scenario), bad);
+			expect(version.author_via, JSON.stringify(bad)).toBeNull();
+		}
+		// 正好 64 个、各种允许的符号：照常记。
+		for (const good of ["a".repeat(64), "my_assistant-1.2+beta", "Claude-Code"]) {
+			const run = await trigger(scenario, `sfly-cli/0.5.0 agent/${good}`);
+			expect(run.triggered_via, good).toBe(good);
+		}
+		// 第一个 agent/ 不合格、后面还有合格的：用后面的。
+		expect(
+			(await trigger(scenario, `agent/bad${c(0x9b)} agent/codex sfly-cli/0.5.0`)).triggered_via,
+		).toBe("codex");
+	});
+
 	it("保存场景版本：保存的响应、版本列表、版本详情和编辑起点都返回作者经哪个助手", async () => {
 		const scenario = await api.orchestrationWith(DOCUMENT);
 		const byBrowser = await save(scenario, 1);

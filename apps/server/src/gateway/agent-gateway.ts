@@ -16,6 +16,7 @@ import {
 	type ServerMessage,
 	ServerMessageSchema,
 } from "@sfly/proto";
+import { describeNameProblem, nameProblem } from "@sfly/schema";
 import { agentClockReading } from "../agents/agent-clock.js";
 import { sourceAddress } from "../agents/agent-endpoint.js";
 import {
@@ -100,6 +101,14 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			const helloReceivedAt = options.hub.now();
 			const hello = greeting.body.value;
 			if (!hello.name) throw new ConnectError("Hello.name is required", Code.InvalidArgument);
+			// Agent 的名称是身份，显示在命令行、控制台和场景里：和令牌的名称、显示名同一个检查（#670），不合格的连接不让上来。
+			const nameIssue = nameProblem(hello.name);
+			if (nameIssue !== undefined) {
+				throw new ConnectError(
+					`Hello.name 不合格：${describeNameProblem("Agent 的名称", nameIssue)}`,
+					Code.InvalidArgument,
+				);
+			}
 			if (!agentTokenMatches(options.agentToken, hello.token)) {
 				throw new ConnectError("invalid agent token", Code.Unauthenticated);
 			}

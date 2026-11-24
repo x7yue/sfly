@@ -32,6 +32,7 @@ from sfly.cli.run_view import (
     format_log_line,
     resolve_run,
 )
+from sfly.cli.safe_text import printable
 from sfly.cli.session import Session, command, common_options
 
 DEFAULT_TAIL = 200
@@ -382,12 +383,13 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
         for line in read.lines:
             print(dump_json(line), file=out.stdout)
         for note in notes:
-            print(note, file=out.stderr)
+            print(printable(note), file=out.stderr)
         return
     rendered = [format_line(index, line) for line in read.lines]
     if not rendered and not notes:
         rendered = ["没有日志" if not args.level else "没有符合条件的日志"]
-    print("\n".join([*rendered, *notes]), file=out.stdout)
+    # 日志是节点写的、没有人看过的文字：转义序列和不该到终端的字符过一遍（#670）。
+    print(printable("\n".join([*rendered, *notes])), file=out.stdout)
 
 
 # ---------------------------------------------------------------- 下载

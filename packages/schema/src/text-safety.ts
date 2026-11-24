@@ -50,6 +50,13 @@ export const REJECTED_NAME_CHARACTER =
 	// biome-ignore lint/suspicious/noMisleadingCharacterClass: 表里是一个一个的码位（含组合用的 U+034F），每个单独就拒绝，不是想匹配「字符加组合符」
 	/[\p{Cc}\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F\u200B\u200E-\u200F\u2028-\u2029\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0\uFFF0-\uFFFB\u{13430}-\u{1343F}\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}\uD800-\uDFFF]/u;
 
+/**
+ * `x-sfly-client` 里 `agent/<名称>` 的名称（经哪个 AI 编程助手）：客户端自己报的、存下来、之后显示给别人（命令行、控制台）的标注，
+ * 所以只留字母、数字和 `.` `_` `+` `-`，最多 64 个字符；别的不存（整段丢掉，不让请求失败）。库里已有的旧值显示时也按它判断。
+ * 比名字的那张表更严：它是工具的名字，不是人写的话，不需要中日韩的文字。
+ */
+export const VIA_NAME_PATTERN = /^[A-Za-z0-9._+-]{1,64}$/;
+
 const ZERO_WIDTH_JOINER = 0x200d;
 const ZERO_WIDTH_NON_JOINER = 0x200c;
 const isVariationSelector = (codePoint: number): boolean =>

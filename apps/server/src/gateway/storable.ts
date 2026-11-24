@@ -11,6 +11,7 @@ import type {
 	MetricPoint,
 	PeerEndpoint,
 } from "@sfly/proto";
+import { nameProblem } from "@sfly/schema";
 
 const NUL = "\u0000";
 const REPLACEMENT = "\uFFFD";
@@ -130,11 +131,22 @@ function eventJsonOf<M extends { eventJson: string }>(message: M): M {
 	return eventJson === message.eventJson ? message : { ...message, eventJson };
 }
 
+/** Hello 里程序版本、操作系统、CPU 架构的长度上限（字符数）。 */
+const LABEL_MAX_LENGTH = 64;
+
+/**
+ * Agent 自己报的版本、系统、架构（#670）：只是显示用的附带信息，存下来之后会显示在别人的命令行和控制台里。含名字表里的字符
+ * （控制字符、转义序列、双向控制字符、看不见的字符，`@sfly/schema` 的 `nameProblem`）或超过上限的，整段换成空串，不让连接失败。
+ */
+function label(value: string): string {
+	return [...value].length <= LABEL_MAX_LENGTH && nameProblem(value) === undefined ? value : "";
+}
+
 function hello(h: Hello): Hello {
 	const name = text(h.name);
-	const agentVersion = text(h.agentVersion);
-	const os = text(h.os);
-	const arch = text(h.arch);
+	const agentVersion = label(text(h.agentVersion));
+	const os = label(text(h.os));
+	const arch = label(text(h.arch));
 	const installedPackages = list(h.installedPackages, installed);
 	const devPackages = list(h.devPackages, devPackage);
 	const capabilities = list(h.capabilities, capability);

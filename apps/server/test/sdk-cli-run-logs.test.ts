@@ -164,6 +164,47 @@ describe("sfly run logs / artifacts → 控制面", () => {
 	const zRows = (from: number, to: number) =>
 		Array.from({ length: to - from + 1 }, (_, i) => zRow(from + i));
 
+	// 日志是节点写的、没有人看过的文字：转义序列和不该到终端的字符不能原样打到终端上（#670）。字符都用码位造出来。
+	describe("run logs：日志里的转义序列和不该到终端的字符", () => {
+		const c = (...points: number[]) => String.fromCodePoint(...points);
+		const hostile = [
+			`红色${c(0x1b)}[31m文字${c(0x1b)}[0m`,
+			`改标题${c(0x1b)}]0;被改的标题${c(0x07)}正文`,
+			`清屏${c(0x9b)}2J八位的`,
+			`下一行${c(0x85)}倒着${c(0x202e)}显示${c(0x200b)}零宽`,
+		];
+		const unsafe = new RegExp(
+			`[${c(0x00)}-${c(0x08)}${c(0x0b)}-${c(0x1f)}${c(0x7f)}-${c(0x9f)}${c(0x202e)}${c(0x200b)}]`,
+		);
+
+		it("文本输出：转义序列去掉，别的不该到终端的字符写成 \\uXXXX；JSON 输出：写成 JSON 的转义，解析回来和原来一样", async () => {
+			const { a, runId } = await setup();
+			const z = await a.nextAssign();
+			a.logs(
+				z,
+				hostile.map((text, i) => line(a, i + 1, 1_000 + 10 * (i + 1), text)),
+			);
+			await settled(runId, hostile.length);
+
+			const text = await cli("run", "logs", runId);
+			expect(text.code, text.stderr).toBe(0);
+			expect(text.stdout).not.toMatch(unsafe);
+			expect(text.stdout).toContain("红色文字");
+			expect(text.stdout).toContain("改标题正文");
+			expect(text.stdout).toContain("清屏八位的");
+			expect(text.stdout).toContain("下一行\\u0085倒着\\u202e显示\\u200b零宽");
+
+			const json = await cli("run", "logs", runId, "--json");
+			expect(json.code, json.stderr).toBe(0);
+			expect(json.stdout).not.toMatch(unsafe);
+			const parsed = json.stdout
+				.trim()
+				.split("\n")
+				.map((l) => JSON.parse(l) as { text: string });
+			expect(parsed.map((l) => l.text)).toEqual(hostile);
+		});
+	});
+
 	describe("run logs：条数、截断提示、游标", () => {
 		it("默认最后 200 行，前面还有日志时最后一行写明用 --before 继续读，翻到开头就不再提示", async () => {
 			const { runId } = await longLog(230);

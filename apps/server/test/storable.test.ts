@@ -67,4 +67,52 @@ describe("storable", () => {
 		const invalid = result('{"v":"\\u0000"');
 		expect(outputsOf(storable(invalid))).toBe('{"v":"\\u0000"');
 	});
+
+	describe("Hello 里 Agent 自己报的版本、系统、架构（#670）", () => {
+		const hello = (fields: { agentVersion?: string; os?: string; arch?: string; name?: string }) =>
+			message({ case: "hello", value: { name: "agent-a", ...fields } });
+		const fieldsOf = (m: ReturnType<typeof message>) =>
+			m.body.case === "hello"
+				? { agentVersion: m.body.value.agentVersion, os: m.body.value.os, arch: m.body.value.arch }
+				: undefined;
+		// 字符都用码位造出来，不把看不见的字符直接写在源码里。
+		const code = (...points: number[]) => String.fromCodePoint(...points);
+
+		it("正常的值原样返回，不复制", () => {
+			const ok = hello({ agentVersion: "0.5.0", os: "linux", arch: "x86_64" });
+			expect(storable(ok)).toBe(ok);
+		});
+
+		it("含控制字符、8 位的控制序列、双向控制字符、零宽空格、标签字符、孤立的代理码元的，整段换成空串；别的字段不受牵连", () => {
+			for (const bad of [
+				`0.5.0${code(0x1b)}[2J`,
+				`0.5.0${code(0x9b)}2J`,
+				`0.5.0${code(0x85)}`,
+				`0.5.0${code(0x202e)}`,
+				`0.5.0${code(0x200b)}`,
+				`0.5.0${code(0xe0067)}`,
+				`0.5.0${code(0xd800)}`,
+				`0.5.0${code(0x2800)}`,
+				"0.5.0\n下一行",
+			]) {
+				expect(
+					fieldsOf(storable(hello({ agentVersion: bad, os: "linux", arch: bad }))),
+					JSON.stringify(bad),
+				).toEqual({ agentVersion: "", os: "linux", arch: "" });
+			}
+		});
+
+		it("超过 64 个字符的整段换成空串，正好 64 个的保留", () => {
+			expect(fieldsOf(storable(hello({ os: "a".repeat(64) })))?.os).toBe("a".repeat(64));
+			expect(fieldsOf(storable(hello({ os: "a".repeat(65) })))?.os).toBe("");
+			// 按字符数算：64 个补充平面的字符（每个两个 UTF-16 码元）也是 64 个。
+			const emoji = code(0x1f600).repeat(64);
+			expect(fieldsOf(storable(hello({ os: emoji })))?.os).toBe(emoji);
+		});
+
+		it("正常的非 ASCII 文字和带零宽连接符的组合表情不受影响", () => {
+			const ok = hello({ agentVersion: "0.5.0 测试版", os: code(0x1f469, 0x200d, 0x1f4bb) });
+			expect(storable(ok)).toBe(ok);
+		});
+	});
 });
