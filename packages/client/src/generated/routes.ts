@@ -81,6 +81,7 @@ import type {
 	SnapshotEvent,
 	SteerQueueEvent,
 	StoredOrchestrationDocument,
+	TaskIoView,
 	ThinkingEvent,
 	Timestamp,
 	TokenUsage,
@@ -1118,6 +1119,20 @@ export interface Api {
 			RunView
 		>;
 		/**
+		 * `GET /tasks/:id/io`
+		 *
+		 * 一次尝试的输入和输出的全文（打码之后）：运行视图里被省略的那些在这里取（每一次尝试的，不只是最后一次；节点层被省略的
+		 * 输出取最后一次尝试的）。单个输入、输出本来就不超过 1 MiB，响应不超过 2 MiB 多一点。任务不存在、不在自己的项目里是 404。
+		 */
+		taskIo: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			TaskIoView
+		>;
+		/**
 		 * `GET /runs/:id`
 		 *
 		 * 运行视图；实时更新见 `runs.events`。
@@ -1496,6 +1511,7 @@ export const routes = {
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },
 		listForOrchestration: { method: "GET", path: "/orchestrations/:id/runs", kind: "endpoint" },
 		trigger: { method: "POST", path: "/orchestrations/:id/runs", kind: "endpoint" },
+		taskIo: { method: "GET", path: "/tasks/:id/io", kind: "endpoint" },
 		get: { method: "GET", path: "/runs/:id", kind: "endpoint" },
 		cancel: { method: "POST", path: "/runs/:id/cancel", kind: "endpoint" },
 		events: { method: "GET", path: "/runs/:id/events", kind: "stream" },

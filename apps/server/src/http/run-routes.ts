@@ -12,7 +12,7 @@ import { entryParams } from "../presets/preset-validity.js";
 import { DEFAULT_PROJECT } from "../projects/project-id.js";
 import { type Preflight, preflightWarnings } from "../runs/preflight.js";
 import { listRuns } from "../runs/run-list.js";
-import { getRunView } from "../runs/run-read.js";
+import { getRunView, readTaskIo } from "../runs/run-read.js";
 import { secretLeafWarnings } from "../runs/secret-leaf-warnings.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
@@ -41,6 +41,13 @@ export function registerRunRoutes(
 	/** 输出给客户端的运行视图：排队中的尝试带上它在等什么（Agent 此刻的状态来自注册表）。 */
 	const viewOf = (runId: string) =>
 		getRunView(deps.db, runId, (names, project) => agentWaits(deps.db, deps.hub, names, project));
+
+	// 一次尝试的输入和输出的全文（运行视图里大的只给大小，在这里取）：访问检查按任务所在的项目，和任务的日志、产物是同一套。
+	contractRoute(app, runsApi.taskIo, async ({ params }, reply) => {
+		return (
+			(await readTaskIo(deps.db, params.id)) ?? sendError(reply, 404, "not_found", "task not found")
+		);
+	});
 
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent，
 	// 以及场景的运行预设（对照这次检查用的最新版本）。

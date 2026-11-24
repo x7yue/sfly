@@ -7,6 +7,7 @@ import {
 	type NodeRunView,
 	type RunLogLine,
 	type RunView,
+	runsApi,
 	type StoredOrchestrationDocument,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
@@ -74,6 +75,7 @@ import {
 	secretInputKeys,
 	secretParams,
 	stoppedSubflowLabel,
+	stopSubflowTarget,
 } from "./run-model";
 import type { LoadedLine } from "./task-log-reader";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
@@ -364,7 +366,7 @@ export function BottomPanel({
 								<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的动作。"}</Hint>
 							))}
 						{tab === "attempts" && (
-							<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
+							<AttemptsTab run={run} node={node} selected={selected} filter={filter} doc={doc} />
 						)}
 						{tab === "io" && <IoTab node={node} attempt={attempt} doc={doc} />}
 						{tab === "artifacts" &&
@@ -680,11 +682,13 @@ function AttemptsTab({
 	node,
 	selected,
 	filter,
+	doc,
 }: {
 	run: RunView;
 	node: NodeRunView | undefined;
 	selected: NodeRef | null;
 	filter: ReadonlySet<string> | null;
+	doc: StoredOrchestrationDocument | undefined;
 }) {
 	const { now } = useTimeAxis();
 	// 没选节点时列出有重试或失败的节点（有节点筛选时只列筛选中的）。
@@ -756,10 +760,12 @@ function AttemptsTab({
 									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.start)}）</span>
 								)}
 							</dd>
-							{n.kind === "stop_subflow" && typeof a.inputs?.subflow === "string" && (
+							{n.kind === "stop_subflow" && stopSubflowTarget(doc, n.node_id) !== undefined && (
 								<>
 									<dt>停止</dt>
-									<dd className="m-0 font-sans">{stoppedSubflowLabel(run, a.inputs.subflow)}</dd>
+									<dd className="m-0 font-sans">
+										{stoppedSubflowLabel(run, stopSubflowTarget(doc, n.node_id) as string)}
+									</dd>
 								</>
 							)}
 							<dt>结束</dt>
@@ -842,6 +848,42 @@ function JsonBlock({ value }: { value: unknown }) {
 	);
 }
 
+/** 运行视图里被省略的输入、输出的大小（向上取整到 KiB 的字节数）：「约 17 KB」。 */
+const omittedSize = (bytes: number) =>
+	bytes >= 1024 * 1024
+		? `约 ${(bytes / 1024 / 1024).toFixed(1)} MB`
+		: `约 ${Math.round(bytes / 1024)} KB`;
+
+/**
+ * 运行视图里被省略的大输入或输出（#633）：写明大小，点「加载」才取全文；加载中、加载失败（可以重试）各有自己的样子。
+ * 运行视图只给大小，不给内容：打开页面不会因为几十个大输出把响应撑到几十 MB。
+ */
+function OmittedValue({
+	bytes,
+	loading,
+	error,
+	onLoad,
+}: {
+	bytes: number;
+	loading: boolean;
+	error: string | null;
+	onLoad: () => void;
+}) {
+	return (
+		<div data-testid="io-omitted" className="flex flex-wrap items-center gap-2 text-xs text-fg-3">
+			<span>内容较大（{omittedSize(bytes)}），没有随运行视图一起返回。</span>
+			<Button size="sm" disabled={loading} onClick={onLoad}>
+				{loading ? "加载中…" : error ? "重试" : "加载"}
+			</Button>
+			{error && (
+				<span role="alert" className="text-danger-fg">
+					无法加载：{error}
+				</span>
+			)}
+		</div>
+	);
+}
+
 function IoTab({
 	node,
 	attempt,
@@ -856,18 +898,44 @@ function IoTab({
 			node ? secretInputKeys(documentNodes(doc).get(node.node_id), secretParams(doc)) : new Set(),
 		[node, doc],
 	);
+	// 被省略的大输入、输出：点「加载」才取这次尝试的全文（输入和输出一起来）。取回的按任务缓在查询缓存里，
+	// 运行还在变（事件流推来新的视图）、切到别的尝试再回来，已经加载的都不丢。
+	const [requested, setRequested] = useState<string | null>(null);
+	const taskId = attempt?.task_id;
+	const full = useQuery({
+		...apiQuery(runsApi.taskIo, { params: { id: taskId ?? "" } }),
+		enabled: taskId !== undefined && requested === taskId,
+		// 一次尝试的输入输出写下就不再变。
+		staleTime: Number.POSITIVE_INFINITY,
+	});
 	if (!node) return <Hint>在时间线上选中一个节点，查看它已解析的输入和输出。</Hint>;
 	if (!attempt) return <Hint>{noAttempt(node)}</Hint>;
+	const load = () => {
+		if (requested === attempt.task_id) void full.refetch();
+		else setRequested(attempt.task_id);
+	};
+	const loading = requested === attempt.task_id && full.isFetching;
+	const error = !full.data && full.isError ? full.error.message : null;
+	const placeholder = (bytes: number) => (
+		<OmittedValue bytes={bytes} loading={loading} error={error} onLoad={load} />
+	);
+	// 被省略的内容取到之后用全文；没取到之前是占位。
+	const rawInputs =
+		attempt.inputs_omitted_bytes === null ? attempt.inputs : (full.data?.inputs ?? null);
+	const outputs =
+		attempt.outputs_omitted_bytes === null ? attempt.outputs : (full.data?.outputs ?? null);
 	const inputs =
-		attempt.inputs &&
+		rawInputs &&
 		Object.fromEntries(
-			Object.entries(attempt.inputs).map(([k, v]) => [k, secretKeys.has(k) ? MASK : v]),
+			Object.entries(rawInputs).map(([k, v]) => [k, secretKeys.has(k) ? MASK : v]),
 		);
 	return (
 		<div className="grid h-full grid-cols-2 gap-2.5 overflow-auto p-3">
 			<div className="min-w-0">
 				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">输入（已解析，敏感值已打码）</h3>
-				{inputs ? (
+				{attempt.inputs_omitted_bytes !== null && !full.data ? (
+					placeholder(attempt.inputs_omitted_bytes)
+				) : inputs ? (
 					<JsonBlock value={inputs} />
 				) : (
 					<p className="m-0 text-xs text-fg-3">派发时才解析输入。</p>
@@ -875,8 +943,10 @@ function IoTab({
 			</div>
 			<div className="min-w-0">
 				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">输出</h3>
-				{attempt.outputs ? (
-					<JsonBlock value={attempt.outputs} />
+				{attempt.outputs_omitted_bytes !== null && !full.data ? (
+					placeholder(attempt.outputs_omitted_bytes)
+				) : outputs ? (
+					<JsonBlock value={outputs} />
 				) : (
 					<p className="m-0 text-xs text-fg-3">
 						{attempt.ended_at ? "没有输出。" : "节点尚未结束。"}

@@ -26,7 +26,9 @@ function attempt(overrides: Partial<AttemptView>): AttemptView {
 		status: "success",
 		agent: "agent-a",
 		inputs: {},
+		inputs_omitted_bytes: null,
 		outputs: null,
+		outputs_omitted_bytes: null,
 		error: null,
 		queued_at: at(0),
 		started_at: null,
@@ -47,6 +49,7 @@ function node(kind: NodeRunView["kind"], attempts: AttemptView[]): NodeRunView {
 		status: attempts.at(-1)?.status ?? "pending",
 		agent: null,
 		outputs: null,
+		outputs_omitted_bytes: null,
 		error: null,
 		attempts,
 	};

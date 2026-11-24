@@ -128,14 +128,40 @@ export const QueueWaitView = z.object({
 	other_project_holders: z.number().int(),
 });
 
+/**
+ * 运行视图里一个输入或输出（一个名字到值的映射）最多内联多少字节：按数据库里存着的 JSON 文本算（打码之前），
+ * 大于它的只给大小（{@link AttemptView} 的 `inputs_omitted_bytes`、`outputs_omitted_bytes`），全文用 `GET /tasks/:id/io` 取。
+ * 刚好等于它的仍然内联。阈值是按打码之前的大小判的：大小在阈值附近时，看得出「大于还是不大于」这一点，不给别的。
+ */
+export const RUN_VIEW_IO_VALUE_LIMIT_BYTES = 16 * 1024;
+
+/**
+ * 整份运行视图（`GET /runs/:id`、运行的事件流里的每一条 `run`、触发和取消的响应）里内联的输入和输出合计最多多少字节：
+ * 按实际写进响应的字节算（打码之后的 JSON，节点层的 `outputs` 那一份也算），按固定的顺序用——链的顺序、链上节点的顺序、
+ * 节点里各次尝试的顺序（每次尝试先输入、后输出），最后是这个节点的节点层 `outputs`。某一份放不下就只给大小，
+ * 之后的一律只给大小（哪怕再短），所以响应的大小和任务数无关。
+ */
+export const RUN_VIEW_IO_TOTAL_LIMIT_BYTES = 1024 * 1024;
+
 export const AttemptView = z.object({
 	task_id: z.string(),
 	attempt: z.number().int(),
 	status: TaskStatus,
 	agent: z.string().nullable(),
-	/** 已解析的输入；派发前为 null。 */
+	/**
+	 * 已解析的输入；派发前为 null。**内容被省略时也是 null**（单个大于 {@link RUN_VIEW_IO_VALUE_LIMIT_BYTES}，或者整份视图合计已经用完
+	 * {@link RUN_VIEW_IO_TOTAL_LIMIT_BYTES}）：判断是不是被省略了只看 `inputs_omitted_bytes`，不要假定「小的一定内联」。
+	 */
 	inputs: z.record(z.string(), z.unknown()).nullable(),
+	/**
+	 * 输入被省略时，存着的大小（打码之前的字节数）**向上取整到 KiB（1024 的倍数）**，不给精确值：读取时要打码，精确的大小和打码之后的内容
+	 * 一减就露出保密值的长度。**只在内容被省略时不是 null**（内容内联着、或者本来就没有输入时都是 null）。全文用 `GET /tasks/:id/io` 取。
+	 */
+	inputs_omitted_bytes: z.number().int().nullable(),
+	/** 输出；没有输出（还没结束、失败、被跳过）为 null，**内容被省略时也是 null**，规矩同 `inputs`。 */
 	outputs: z.record(z.string(), z.unknown()).nullable(),
+	/** 输出被省略时存着的大小，向上取整到 KiB；只在内容被省略时不是 null，规矩同 `inputs_omitted_bytes`。 */
+	outputs_omitted_bytes: z.number().int().nullable(),
 	error: ErrorView.nullable(),
 	queued_at: Timestamp,
 	/** 执行器启动的时间；排队、准备中为 null。 */
@@ -168,7 +194,16 @@ export const NodeRunView = z.object({
 	status: NodeStatus,
 	/** 包节点派发到的 Agent；内置节点为 null。 */
 	agent: z.string().nullable(),
+	/**
+	 * 节点的输出：最后一次尝试的输出（同那次尝试的 `outputs`）；没有输出时为 null，**被省略时也是 null**（这一份也算整份视图的合计），
+	 * 判断只看 `outputs_omitted_bytes`。
+	 */
 	outputs: z.record(z.string(), z.unknown()).nullable(),
+	/**
+	 * 节点的输出被省略时，存着的大小（最后一次尝试输出的大小，打码之前）向上取整到 KiB；只在被省略时不是 null。
+	 * 全文用 `GET /tasks/:id/io` 取，任务是 `attempts` 里最后一次尝试（`task_id`）。
+	 */
+	outputs_omitted_bytes: z.number().int().nullable(),
 	error: ErrorView.nullable(),
 	attempts: z.array(AttemptView),
 });
@@ -302,6 +337,13 @@ export const PreflightProblem = z.object({
 	node_id: z.string().optional(),
 });
 
+/** 一次尝试的输入和输出的全文（`GET /tasks/:id/io`）：同运行视图里的 `inputs`、`outputs`，不省略；没有的为 null。 */
+export const TaskIoView = z.object({
+	task_id: z.string(),
+	inputs: z.record(z.string(), z.unknown()).nullable(),
+	outputs: z.record(z.string(), z.unknown()).nullable(),
+});
+
 export const runsApi = {
 	/**
 	 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、
@@ -375,6 +417,21 @@ export const runsApi = {
 			})
 			.default({ params: {} }),
 		response: RunView,
+	}),
+	/**
+	 * 一次尝试的输入和输出的全文（打码之后）：运行视图里被省略的那些在这里取（每一次尝试的，不只是最后一次；节点层被省略的
+	 * 输出取最后一次尝试的）。单个输入、输出本来就不超过 1 MiB，响应不超过 2 MiB 多一点。任务不存在、不在自己的项目里是 404。
+	 */
+	taskIo: endpoint({
+		method: "GET",
+		path: "/tasks/:id/io",
+		summary: "读一次尝试的输入和输出的全文（运行视图里被省略的大输入、输出在这里取）",
+		effect: "read",
+		resource: { kind: "task", target: { params: "id" } },
+		client: true,
+		key: ["runs", "taskIo"],
+		params: IdParams,
+		response: TaskIoView,
 	}),
 	/** 运行视图；实时更新见 {@link runsApi.events}。 */
 	get: endpoint({
@@ -828,6 +885,7 @@ export type TaskProgressView = z.infer<typeof TaskProgressView>;
 export type SlotHolderView = z.infer<typeof SlotHolderView>;
 export type QueueWaitView = z.infer<typeof QueueWaitView>;
 export type AttemptView = z.infer<typeof AttemptView>;
+export type TaskIoView = z.infer<typeof TaskIoView>;
 export type NodeRunView = z.infer<typeof NodeRunView>;
 export type ChainRunView = z.infer<typeof ChainRunView>;
 export type RunNotificationState = z.infer<typeof RunNotificationState>;
