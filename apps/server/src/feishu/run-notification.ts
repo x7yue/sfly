@@ -119,7 +119,7 @@ function runNotificationCard(facts: RunNotificationFacts) {
 /**
  * 运行里第一个失败的节点（和控制台、运行监控、运行记录的「第一个失败的节点」相同：运行读取的 `failures` 的第一项），
  * 连同它的失败原因和出错位置。在写入运行最终状态的事务里读（`step.tx`）：运行读取用轻量的那一种（`board`），
- * 失败原因再用一条查询读这个节点的任务行（{@link readNodeError}，打码用同一次读取的 `maskText`），
+ * 失败原因再用一条查询读这个节点的任务行（{@link readNodeError}，打码用同一次读取的 `secrets`），
  * 不读整个运行的输入和输出。
  */
 async function firstFailure(step: Step, run: RunRow): Promise<FirstFailure | undefined> {
@@ -131,7 +131,8 @@ async function firstFailure(step: Step, run: RunRow): Promise<FirstFailure | und
 		runId: run.id,
 		chainInstanceId: chain.id,
 		nodeId: node.node_id,
-		maskText: read.maskText,
+		// 包一层：`secrets.mask` 依赖 `this`，直接传出去会抛错；这一步的错误会被保存点接住，结果是卡片悄悄不发。
+		maskText: (text) => read.secrets.mask(text),
 	});
 	return {
 		chain: chainLabel(

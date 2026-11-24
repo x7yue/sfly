@@ -52,6 +52,7 @@
 		"./biome-plugins/no-raw-table.grit",
 		"./biome-plugins/tx-callback-pool.grit",
 		"./biome-plugins/raw-version-document.grit",
-		"./biome-plugins/pi-only-in-assistant.grit"
+		"./biome-plugins/pi-only-in-assistant.grit",
+		"./biome-plugins/no-direct-output.grit"
 	]
 }
