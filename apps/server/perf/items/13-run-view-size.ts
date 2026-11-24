@@ -40,6 +40,7 @@ async function seedRun(databaseUrl: string, tasks: number, chars: number): Promi
 		})),
 	];
 	const document = {
+		default_agent: "agent-a",
 		nodes,
 		edges: nodes
 			.slice(1)
@@ -136,21 +137,25 @@ export default definePerfItem({
 			stalls.push(Math.max(...probes));
 		}
 
-		// 事件流里的第一条 `run`：连上时推送一整份视图。
+		// 事件流里的第一条 `run`：连上时推送一整份视图（前面可能有 `retry:` 之类的行，按空行分块，找 `event: run` 的那一块）。
 		const stream = await server.fetch(`/runs/${big}/events`, {
 			headers: { accept: "text/event-stream" },
 		});
-		let streamed = "";
 		const reader = (stream.body as ReadableStream<Uint8Array>).getReader();
 		const decoder = new TextDecoder();
 		const deadline = Date.now() + 30_000;
-		while (Date.now() < deadline && !/\n\n/.test(streamed)) {
+		let streamed = "";
+		let firstEvent = "";
+		while (Date.now() < deadline && !firstEvent) {
 			const { value, done } = await reader.read();
 			if (done) break;
 			streamed += decoder.decode(value, { stream: true });
+			const blocks = streamed.split("\n\n");
+			blocks.pop(); // 最后一块还没有读完
+			firstEvent = blocks.find((block) => /^event: run$/m.test(block)) ?? "";
 		}
 		await reader.cancel();
-		const firstEvent = streamed.slice(0, streamed.indexOf("\n\n") + 2);
+		if (!firstEvent) throw new Error("事件流里没有读到 run 事件");
 
 		// 被省略的内容取回来和种进去的一样（第一个、最后一个任务）。
 		const view = (await (await server.fetch(`/runs/${big}`)).json()) as {
@@ -165,6 +170,12 @@ export default definePerfItem({
 			}>;
 		};
 		const attempts = (view.chains[0]?.nodes ?? []).flatMap((n) => n.attempts);
+		// 种的运行读不出任务（场景文档不合规矩时视图里没有节点）：硬性断言会白白通过，所以先确认读到了种进去的任务。
+		if (attempts.length !== TASKS) {
+			throw new Error(
+				`运行视图里有 ${attempts.length} 个任务，种进去的是 ${TASKS} 个：种的场景文档读不出链`,
+			);
+		}
 		const omitted = attempts.filter((a) => a.outputs_omitted_bytes !== null);
 		let mismatched = 0;
 		for (const attempt of [omitted[0], omitted.at(-1)]) {
@@ -194,7 +205,7 @@ export default definePerfItem({
 			{
 				id: "first_event_bytes",
 				label: "事件流连上时的第一条 run 事件",
-				value: Buffer.byteLength(firstEvent),
+				value: Buffer.byteLength(`${firstEvent}\n\n`),
 				unit: "B",
 				check: hard("<=", MAX_BODY_BYTES),
 			},
