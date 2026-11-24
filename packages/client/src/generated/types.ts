@@ -899,11 +899,20 @@ export interface EntryNodeInput {
 }
 
 /**
- * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`），规则照评测集
- * `evals/assistant/aeval/classify.py` 的 `_INFRA`，#540 起写 `turn_end.error_class`（模型不可用时，先写 `other`），
- * #548 按这套规则分细，重试的 `notice.error_class` 也从 #548 起有值：
- * `unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝（401、403），`quota` 额度不足（402），
- * `rate_limit` 限流（429），`upstream` 对方出错（5xx），`context_overflow` 上下文超长，`other` 其他。
+ * 模型一类的故障按什么分（`notice.error_class`、`turn_end.error_class`）。#640 起助手服务按上游的错误分好再写（`turn_end`
+ * 模型不可用时、重试的 `notice`），上游的错误原文不进事件，只进助手服务的日志。落库之后改不了，所以宁可分到 `other`，
+ * 不能分错：
+ * - 状态码只从结构上取：pi 只给一句话，只认这句话开头的固定写法（`502: …`、`<提供方> API error (502): …`、SDK 的
+ *   `502 …`），不在全文里找；取不到就是没有状态码。
+ * - 有状态码时由它定类别，正文里的词只能在这个范围里细分：401、403 是 `auth`（正文说额度时是 `quota`）；402 是 `quota`；
+ *   429 是 `rate_limit`（正文说额度时是 `quota`）；408、504 是 `timeout`；其余 5xx 是 `upstream`；其余 4xx 是 `other`
+ *   （上游拒绝了这次请求；正文说上下文超长时是 `context_overflow`）。
+ * - 没有状态码时只按连接层的失败分：连不上、连接断开、证书验不过是 `unreachable`，超时是 `timeout`（认 Node 的错误码、
+ *   SDK 固定的那一句），别的都是 `other`；不看正文里的词。
+ * - 边界（按写法认，不看意思）：以登记过的状态码加空格开头的消息按 SDK 的写法取状态码，所以正文恰好以这样的数字开头的错误
+ *   （`404 packages were …`）会被认成那个状态码；没有状态码时，以括号里的连接层错误码结尾的消息（`… (ECONNRESET)`）算连不上。
+ * 各项：`unreachable` 连不上或连接断开，`timeout` 超时，`auth` 密钥被拒绝，`quota` 额度不足，`rate_limit` 限流，
+ * `upstream` 对方出错，`context_overflow` 上下文超长，`other` 其他。
  */
 export type ErrorClass = "unreachable" | "timeout" | "auth" | "quota" | "rate_limit" | "upstream" | "context_overflow" | "other";
 
@@ -1788,7 +1797,7 @@ export type PersistedSessionEvent = {
 	max_attempts?: number;
 	/** 多久（毫秒）之后重试；只有 `retry`。 */
 	retry_delay_ms?: number;
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	/**
 	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
@@ -1808,7 +1817,7 @@ export type PersistedSessionEvent = {
 	duration_ms: number;
 	usage?: TokenUsage;
 	limit_kind?: TurnLimit;
-	/** 重试的原因按什么分；#548 起有值。 */
+	/** 重试的原因按什么分（#640 起有值）。 */
 	error_class?: ErrorClass;
 	seq: number;
 	at: Timestamp;
@@ -3197,7 +3206,7 @@ export type TurnLimit = "model_calls" | "duration";
  * - `stopped` 已停止：用户停止；
  * - `limit` 到了上限：一轮的模型调用次数或用时用完（哪一种见 `turn_end.limit_kind`，`TurnLimit`；默认 40 次模型调用、
  *   20 分钟，#540）；
- * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#540 起就写，先写 `other`，#548 分细）；
+ * - `model_unavailable` 模型不可用：模型没有配置或连不上，带 `error_class`（#640 起按下面 `ErrorClass` 的规则分）；
  * - `interrupted` 中断：pi 进程在这一轮里退出了；助手服务重启了，由控制面补一条（#545）；
  * - `failed` 其他错误。
  * 产生：助手服务从 #540 起产生全部六种；控制面也会写：补的 `interrupted`（助手服务重启了，#545）和 `failed`
