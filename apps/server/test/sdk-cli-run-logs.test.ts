@@ -18,7 +18,7 @@ import {
 } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
-import { sfly } from "./support/sfly-cli.js";
+import { sfly, sflyInTerminal } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 主链 entry → spawn → z（失败时重试 1 次）→ a；spawn 派发子流程「回放」sub → s（在 agent-b 上执行）。 */
@@ -163,6 +163,144 @@ describe("sfly run logs / artifacts → 控制面", () => {
 		);
 	const zRows = (from: number, to: number) =>
 		Array.from({ length: to - from + 1 }, (_, i) => zRow(from + i));
+
+	// 日志是节点写的、没有人看过的文字：转义序列和不该到终端的字符不能原样打到终端上（#670）。字符都用码位造出来。
+	describe("run logs：日志里的转义序列和不该到终端的字符", () => {
+		const c = (...points: number[]) => String.fromCodePoint(...points);
+		const hostile = [
+			`红色${c(0x1b)}[31m文字${c(0x1b)}[0m`,
+			`改标题${c(0x1b)}]0;被改的标题${c(0x07)}正文`,
+			`清屏${c(0x9b)}2J八位的`,
+			`下一行${c(0x85)}倒着${c(0x202e)}显示${c(0x200b)}零宽`,
+		];
+		const unsafe = new RegExp(
+			`[${c(0x00)}-${c(0x08)}${c(0x0b)}-${c(0x1f)}${c(0x7f)}-${c(0x9f)}${c(0x202e)}${c(0x200b)}]`,
+		);
+
+		it("文本输出：转义序列去掉，别的不该到终端的字符写成 \\uXXXX；JSON 输出：写成 JSON 的转义，解析回来和原来一样", async () => {
+			const { a, runId } = await setup();
+			const z = await a.nextAssign();
+			a.logs(
+				z,
+				hostile.map((text, i) => line(a, i + 1, 1_000 + 10 * (i + 1), text)),
+			);
+			await settled(runId, hostile.length);
+
+			const text = await cli("run", "logs", runId);
+			expect(text.code, text.stderr).toBe(0);
+			expect(text.stdout).not.toMatch(unsafe);
+			expect(text.stdout).toContain("红色文字");
+			// 串序列（OSC）不整段去掉：开头和结尾写成转义，标题的文字留着（整段去掉能删别人的记录，#691 复审）。
+			expect(text.stdout).toContain("改标题\\u001b]0;被改的标题\\u0007正文");
+			expect(text.stdout).toContain("清屏八位的");
+			expect(text.stdout).toContain("下一行\\u0085倒着\\u202e显示\\u200b零宽");
+
+			const json = await cli("run", "logs", runId, "--json");
+			expect(json.code, json.stderr).toBe(0);
+			expect(json.stdout).not.toMatch(unsafe);
+			const parsed = json.stdout
+				.trim()
+				.split("\n")
+				.map((l) => JSON.parse(l) as { text: string });
+			expect(parsed.map((l) => l.text)).toEqual(hostile);
+		});
+	});
+
+	// 没有结尾的串序列（一行里单个的 U+009D 或 `ESC ]` 这样的开头）不能把后面别的日志行删掉（#670 复审，真的命令行读日志时复现过：
+	// 第二行放一个这样的字符，文本输出里第三、四行都没了）。每一种开头单独出现在一行中间，后面的行都在，开头写成 \\uXXXX。
+	describe("run logs：没有结尾的串序列不删后面的日志行", () => {
+		const c = (...points: number[]) => String.fromCodePoint(...points);
+		const openers: Array<[string, string, string]> = [
+			["U+009D（8 位的 OSC）", c(0x9d), "\\u009d"],
+			["ESC ]（OSC）", `${c(0x1b)}]`, "\\u001b]"],
+			["U+0090（8 位的 DCS）", c(0x90), "\\u0090"],
+			["ESC P（DCS）", `${c(0x1b)}P`, "\\u001bP"],
+			["ESC _（APC）", `${c(0x1b)}_`, "\\u001b_"],
+			["U+009F（8 位的 APC）", c(0x9f), "\\u009f"],
+		];
+
+		it("每一种开头：文本输出里后面的日志行（含 ERROR 那一行）和继续读的提示都在；JSON 输出里每一行也都在", async () => {
+			const { a, runId } = await setup();
+			const z = await a.nextAssign();
+			const lines = openers.flatMap(([, opener], i) => [
+				`第 ${i} 组第一行`,
+				`第 ${i} 组中间${opener}标题`,
+				`第 ${i} 组第三行`,
+			]);
+			a.logs(
+				z,
+				lines.map((text, i) =>
+					line(a, i + 1, 1_000 + 10 * (i + 1), text, i === 2 ? LogLevel.ERROR : LogLevel.INFO),
+				),
+			);
+			await settled(runId, lines.length);
+			const text = await cli("run", "logs", runId);
+			expect(text.code, text.stderr).toBe(0);
+			for (const [i, [label, , written]] of openers.entries()) {
+				expect(text.stdout, label).toContain(`第 ${i} 组第一行`);
+				expect(text.stdout, label).toContain(`第 ${i} 组中间${written}标题`);
+				expect(text.stdout, label).toContain(`第 ${i} 组第三行`);
+			}
+			expect(text.stdout.split("\n").filter((l) => l.includes("组")).length).toBe(lines.length);
+			const json = await cli("run", "logs", runId, "--json");
+			expect(json.code, json.stderr).toBe(0);
+			expect(json.stdout.trim().split("\n")).toHaveLength(lines.length);
+		});
+	});
+
+	// `sfly api` 在终端上显示控制面回的 JSON：一行，记录之间没有换行，JSON 不转义 C1 字符。一条日志里有串序列的开头
+	// （U+009D）、后面另一条里有结尾（U+009C）时，夹在中间的别人的日志不能被删掉（#691 复审，真的命令行在伪终端里复现过：
+	// 5 行只剩 3 行，JSON 仍然合法）。管道里原样。
+	describe("sfly api：终端上的 JSON 只转义，不删夹在中间的记录", () => {
+		const c = (...points: number[]) => String.fromCodePoint(...points);
+		const texts = [
+			"第一行",
+			`第二行${c(0x9d)}标题`,
+			"第三行 别的节点的 ERROR 设备 3 校准失败",
+			`第四行${c(0x9c)}尾巴`,
+			// 补充平面的表里的字符（标签字符）：JSON 的写法是代理对，`printable` 的写法 \\U000e0067 不是合法的 JSON，
+			// 所以这一行能看出终端上走的是 JSON 的那条路。
+			`第五行${c(0xe0067)}`,
+		];
+
+		it("GET /runs/<id>/logs：伪终端里五条日志都在、文字和原来一样；管道里原样（带着原来的 C1 字符）", async () => {
+			const { a, runId } = await setup();
+			const z = await a.nextAssign();
+			a.logs(
+				z,
+				texts.map((t, i) =>
+					line(a, i + 1, 1_000 + 10 * (i + 1), t, i === 2 ? LogLevel.ERROR : LogLevel.INFO),
+				),
+			);
+			await settled(runId, texts.length);
+
+			const terminal = await sflyInTerminal([
+				"api",
+				"GET",
+				`/runs/${runId}/logs`,
+				"--server",
+				cp.httpUrl,
+			]);
+			expect(terminal.code, terminal.stderr).toBe(0);
+			const shown = terminal.stdout.split(/\r?\n/).filter((l) => l !== "");
+			expect(shown, terminal.stdout).toHaveLength(1);
+			const page = JSON.parse(shown[0] as string) as { lines: Array<{ text: string }> };
+			expect(page.lines.map((l) => l.text)).toEqual(texts);
+			// 屏幕上没有表里的字符：C1 字符写成了 JSON 的转义。
+			expect(terminal.stdout).not.toMatch(
+				new RegExp(
+					`[${c(0x00)}-${c(0x08)}${c(0x0b)}-${c(0x0c)}${c(0x0e)}-${c(0x1f)}${c(0x7f)}-${c(0x9f)}]`,
+				),
+			);
+			expect(terminal.stdout).toContain("第三行 别的节点的 ERROR 设备 3 校准失败");
+
+			const piped = await cli("api", "GET", `/runs/${runId}/logs`);
+			expect(piped.code, piped.stderr).toBe(0);
+			expect(piped.stdout).toContain(c(0x9d));
+			expect(piped.stdout).toContain(c(0x9c));
+			expect(piped.stdout).toContain("第三行");
+		});
+	});
 
 	describe("run logs：条数、截断提示、游标", () => {
 		it("默认最后 200 行，前面还有日志时最后一行写明用 --before 继续读，翻到开头就不再提示", async () => {

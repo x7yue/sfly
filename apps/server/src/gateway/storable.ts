@@ -11,6 +11,9 @@ import type {
 	MetricPoint,
 	PeerEndpoint,
 } from "@sfly/proto";
+import { escapeUnsafeCharacters, nameProblem } from "@sfly/schema";
+
+// Agent 自报的文字怎么过表（逐个字段的归类、旧值怎么显示）：docs/SEMANTICS.md §2.5.1。
 
 const NUL = "\u0000";
 const REPLACEMENT = "\uFFFD";
@@ -57,7 +60,8 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 		case "heartbeat": {
 			const { update } = body.value;
 			if (!update) return body;
-			const reason = text(update.reason);
+			// 更新失败的原因：长的自由文字（给人读的原因），和监听失败的原因同一类（docs/SEMANTICS.md §2.5.1）。
+			const reason = freeText(text(update.reason));
 			if (reason === update.reason) return body;
 			return { ...body, value: { ...body.value, update: { ...update, reason } } };
 		}
@@ -86,13 +90,16 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 		}
 		case "install": {
 			const status = body.value;
-			const pkg = text(status.package);
-			const version = text(status.version);
+			// 包名、版本、任务 ID：短的标识类（docs/SEMANTICS.md §2.5.1）。
+			const pkg = shortId(text(status.package), SHORT_MAX.name);
+			const version = shortId(text(status.version), SHORT_MAX.short);
+			const taskId = shortId(text(status.taskId), SHORT_MAX.short);
 			const installedPackages = list(status.installedPackages, installed);
 			const devPackages = list(status.devPackages, devPackage);
 			if (
 				pkg === status.package &&
 				version === status.version &&
+				taskId === status.taskId &&
 				installedPackages === status.installedPackages &&
 				devPackages === status.devPackages
 			) {
@@ -100,7 +107,7 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 			}
 			return {
 				...body,
-				value: { ...status, package: pkg, version, installedPackages, devPackages },
+				value: { ...status, package: pkg, version, taskId, installedPackages, devPackages },
 			};
 		}
 		case "metrics":
@@ -130,11 +137,100 @@ function eventJsonOf<M extends { eventJson: string }>(message: M): M {
 	return eventJson === message.eventJson ? message : { ...message, eventJson };
 }
 
+/**
+ * Agent 自己报的文字（#670）：只是显示用的附带信息，存下来之后会显示在别人的命令行和控制台里，所以写入时过一遍名字的那张表
+ * （`@sfly/schema` 的 `nameProblem`），连接不因为这些字段失败（名称除外，由网关拒绝）。分两类：
+ * - **短的标识类**（版本、系统、架构、包名、能力名、对外地址，应当是一个词的）：含表里的字符或超过上限的整段换成空串；
+ * - **长的自由文字**（给人读的说明、原因：开发包的来源、对外监听失败的原因、开发包元信息里的字符串）：不整段丢，
+ *   表里的字符写成看得见的 `\uXXXX`，超过上限的截断、末尾加「…」。
+ * 逐个字段的归类见 docs/SEMANTICS.md §2.5.1。
+ */
+const SHORT_MAX = { short: 64, name: 128, address: 255 } as const;
+/** 长的自由文字的长度上限（字符数）。 */
+const FREE_TEXT_MAX = 2048;
+
+function shortId(value: string, max: number): string {
+	return [...value].length <= max && nameProblem(value) === undefined ? value : "";
+}
+
+function freeText(value: string): string {
+	const chars = [...value];
+	const clipped =
+		chars.length > FREE_TEXT_MAX ? `${chars.slice(0, FREE_TEXT_MAX).join("")}…` : value;
+	return escapeUnsafeCharacters(clipped);
+}
+
+/** 开发包元信息（JSON 文本）嵌套的层数上限：超过的整个按不合法处理（记成空），不递归到栈溢出、也不让连接因此连不上。 */
+const METADATA_MAX_DEPTH = 64;
+
+/** JSON 文本嵌套的层数（数括号，不递归；字符串里的括号不算）。 */
+function jsonDepth(s: string): number {
+	let depth = 0;
+	let deepest = 0;
+	let inString = false;
+	for (let i = 0; i < s.length; i++) {
+		const c = s[i];
+		if (inString) {
+			if (c === "\\") i++;
+			else if (c === '"') inString = false;
+		} else if (c === '"') {
+			inString = true;
+		} else if (c === "{" || c === "[") {
+			depth++;
+			if (depth > deepest) deepest = depth;
+		} else if (c === "}" || c === "]") {
+			depth--;
+		}
+	}
+	return deepest;
+}
+
+/**
+ * 开发包元信息（JSON 文本）里的字符串（键和值）按长的自由文字处理：键或值任何一个变了都重新序列化（只有键有问题、
+ * 值都正常时也算）；没有变化、不是合法 JSON 时原样返回。递归处理，嵌套的层数由调用方（{@link metadata}）先限制。
+ * `__proto__` 这样的键也原样留着（用 `Object.fromEntries` 建对象，写 `out[key]` 会把它当成原型丢掉）。
+ */
+function freeJson(s: string): string {
+	if (s === "") return s;
+	let value: unknown;
+	try {
+		value = JSON.parse(s);
+	} catch {
+		return s;
+	}
+	let changed = false;
+	const walk = (v: unknown): unknown => {
+		if (typeof v === "string") {
+			const cleaned = freeText(v);
+			if (cleaned !== v) changed = true;
+			return cleaned;
+		}
+		if (Array.isArray(v)) return v.map(walk);
+		if (v !== null && typeof v === "object") {
+			return Object.fromEntries(
+				Object.entries(v).map(([key, item]) => {
+					const cleanedKey = freeText(key);
+					if (cleanedKey !== key) changed = true;
+					return [cleanedKey, walk(item)];
+				}),
+			);
+		}
+		return v;
+	};
+	const walked = walk(value);
+	return changed ? JSON.stringify(walked) : s;
+}
+
+/** 开发包元信息：嵌套超过 {@link METADATA_MAX_DEPTH} 层的记成空（后面的 `json()` 换掉转义的 NUL 和 `freeJson` 都要递归），其余照常处理。 */
+function metadata(s: string): string {
+	return jsonDepth(s) > METADATA_MAX_DEPTH ? "" : freeJson(json(s));
+}
+
 function hello(h: Hello): Hello {
 	const name = text(h.name);
-	const agentVersion = text(h.agentVersion);
-	const os = text(h.os);
-	const arch = text(h.arch);
+	const agentVersion = shortId(text(h.agentVersion), SHORT_MAX.short);
+	const os = shortId(text(h.os), SHORT_MAX.short);
+	const arch = shortId(text(h.arch), SHORT_MAX.short);
 	const installedPackages = list(h.installedPackages, installed);
 	const devPackages = list(h.devPackages, devPackage);
 	const capabilities = list(h.capabilities, capability);
@@ -165,28 +261,28 @@ function hello(h: Hello): Hello {
 }
 
 function capability(c: Capability): Capability {
-	const name = text(c.name);
+	const name = shortId(text(c.name), SHORT_MAX.short);
 	return name === c.name ? c : { ...c, name };
 }
 
 function peerEndpoint(p: PeerEndpoint): PeerEndpoint {
-	const publicAddress = text(p.publicAddress);
-	const listenError = text(p.listenError);
+	const publicAddress = shortId(text(p.publicAddress), SHORT_MAX.address);
+	const listenError = freeText(text(p.listenError));
 	return publicAddress === p.publicAddress && listenError === p.listenError
 		? p
 		: { ...p, publicAddress, listenError };
 }
 
 function installed(p: InstalledPackage): InstalledPackage {
-	const name = text(p.name);
-	const version = text(p.version);
+	const name = shortId(text(p.name), SHORT_MAX.name);
+	const version = shortId(text(p.version), SHORT_MAX.short);
 	return name === p.name && version === p.version ? p : { ...p, name, version };
 }
 
 function devPackage(p: DevPackage): DevPackage {
-	const name = text(p.name);
-	const source = text(p.source);
-	const metadataJson = json(p.metadataJson);
+	const name = shortId(text(p.name), SHORT_MAX.name);
+	const source = freeText(text(p.source));
+	const metadataJson = metadata(p.metadataJson);
 	return name === p.name && source === p.source && metadataJson === p.metadataJson
 		? p
 		: { ...p, name, source, metadataJson };

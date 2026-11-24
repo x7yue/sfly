@@ -26,6 +26,7 @@ from sfly.cli import (
     scenario,
 )
 from sfly.cli.home import DEFAULT_SERVER, control_plane_url, dev_socket
+from sfly.cli.safe_text import printable
 
 
 def _init(args: argparse.Namespace) -> int:
@@ -70,10 +71,16 @@ def _publish(args: argparse.Namespace) -> int:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1
     except (PublishError, OSError) as error:
-        print(f"发布失败：{error}", file=sys.stderr)
+        # 控制面的错误信息是服务端的文字，打到终端之前过一遍（#670）。
+        print(printable(f"发布失败：{error}"), file=sys.stderr)
         return 1
     where = f" 到项目 {args.project}" if args.project else ""
-    print(f"已发布 {result['name']}@{result['version']}{where}（sha256 {result['sha256']}）")
+    # 包名、版本是控制面回的（服务端的文字）：同样过一遍。
+    print(
+        printable(
+            f"已发布 {result['name']}@{result['version']}{where}（sha256 {result['sha256']}）"
+        )
+    )
     return 0
 
 
