@@ -667,8 +667,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        IndexAnswer, conflict_note, index_args, index_check_failure, requirement_name,
-        std_project_url, wheel_requires, wheel_version,
+        IndexAnswer, canonical_name, conflict_note, index_args, index_check_failure,
+        requirement_name, std_project_url, version_requirement, wheel_requires, wheel_version,
     };
 
     fn args(pypi: Option<&str>, package_index: Option<&str>) -> Vec<String> {
