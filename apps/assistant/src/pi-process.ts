@@ -44,6 +44,14 @@ export interface PiProcessOptions {
 	onStderrError?: (error: Error) => void;
 }
 
+/** 进程没了（已经退出，或者写不进去）时 {@link PiProcess.request} 的回应。 */
+export const GONE: Record<string, unknown> = Object.freeze({
+	type: "response",
+	success: false,
+	error: "pi 进程已退出",
+	gone: true,
+});
+
 export class PiProcess {
 	readonly #child: ChildProcess;
 	readonly #stderr: WriteStream;
@@ -101,9 +109,7 @@ export class PiProcess {
 				const tail = splitter.end();
 				if (tail !== undefined) handle(tail);
 				this.#exit = { code, signal };
-				for (const resolveWaiting of this.#waiting.values()) {
-					resolveWaiting({ type: "response", success: false, error: "pi 进程已退出" });
-				}
+				for (const resolveWaiting of this.#waiting.values()) resolveWaiting(GONE);
 				this.#waiting.clear();
 				this.#stderr.end(filter ? filter.push(decoder.end()) + filter.flush() : "");
 				options.onExit(code, signal);
@@ -135,13 +141,22 @@ export class PiProcess {
 		}
 	}
 
-	/** 写一条命令并等它的回应（`response`，按 ID 对应）。进程先退出时回应是失败。 */
+	/**
+	 * 写一条命令并等它的回应（`response`，按 ID 对应）。**不会拒绝**：进程先退出、或者写不进去（pi 刚退出、助手服务还没收到
+	 * 它退出的那一小段，写会同步抛错或者碰上管道已断）时，回应是失败、带 `gone: true`（#677 审查：没人接的拒绝会带走整个
+	 * 助手服务）。这一轮怎么收尾由进程退出的那条路定（{@link PiProcessOptions.onExit}）。
+	 */
 	async request(command: Record<string, unknown>): Promise<Record<string, unknown>> {
 		const id = `sfly-${++this.#nextId}`;
 		const response = new Promise<Record<string, unknown>>((resolve) =>
 			this.#waiting.set(id, resolve),
 		);
-		await this.send({ ...command, id });
+		try {
+			await this.send({ ...command, id });
+		} catch {
+			this.#waiting.delete(id);
+			return GONE;
+		}
 		return response;
 	}
 

@@ -496,3 +496,206 @@ describe("停止的时间（手动推进的时钟，从决定结束的那一刻 
 		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
 	});
 });
+
+describe("#677 审查补的", () => {
+	/** pi 原始事件里的用户消息的文字（pi 实际放进对话的）。 */
+	const userTexts = (harness: Harness, id: string): string[] =>
+		rawEvents(harness, id).flatMap((r) => {
+			const m = r.message as { role?: string; content?: Array<{ text?: string }> } | undefined;
+			return r.type === "message_end" && m?.role === "user"
+				? [(m.content ?? []).map((c) => c.text ?? "").join("")]
+				: [];
+		});
+	const droppedIds = (events: AssistantEvent[]) =>
+		events.flatMap((e) =>
+			e.type === "notice" && e.kind === "steer_dropped" ? [e.message_id] : [],
+		);
+
+	it("两句插话：第一句在 pi 的队列里被 clear_queue 取走，第二句清空之后才进队列、收尾时进了对话：第一句有 steer_dropped，第二句算送到（clear_queue 回了 k 条，前 k 句没有送到）", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "race2" });
+		await started(harness, id);
+		const a = crypto.randomUUID();
+		const b = crypto.randomUUID();
+		expect((await harness.steer(id, "A 第一句", 1, a)).status).toBe(202);
+		await eventually(() => expect(rawTypes(harness, id)).toContain("queue_update"));
+		expect((await harness.steer(id, "SLOW B 第二句", 1, b)).status).toBe(202);
+		expect((await harness.abort(id)).status).toBe(202);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+		await eventually(() => expect(rawTypes(harness, id)).toContain("agent_settled"));
+		// 实情：A 被 clear_queue 取走，B 进了对话。
+		expect(rawEvents(harness, id).find((r) => r.type === "fake_clear_queue")).toMatchObject({
+			steering: ["A 第一句"],
+		});
+		expect(userTexts(harness, id)).toContain("SLOW B 第二句");
+		expect(userTexts(harness, id)).not.toContain("A 第一句");
+		const events = eventsOf(harness, id, 1);
+		expect(droppedIds(events)).toEqual([a]);
+	});
+
+	it("上一轮正常做完、插话还留在 pi 的队列里（已经写了没有送到）：下一轮交 prompt 之前清掉，它不会被送给模型", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "done-on-steer" });
+		await started(harness, id);
+		const steer = crypto.randomUUID();
+		await harness.steer(id, "留在队列里的插话", 1, steer);
+		await harness.turnEnd(id);
+		expect(droppedIds(eventsOf(harness, id, 1))).toEqual([steer]);
+		// 下一轮一开始就会把队列里还有的插话送到模型（像真的 pi 那样）：先清过了，就没有可送的。
+		await harness.prompt(id, { turn: 2, text: "flush-settle" });
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+		await eventually(() =>
+			expect(rawEvents(harness, id).filter((r) => r.type === "agent_settled")).toHaveLength(2),
+		);
+		expect(
+			rawEvents(harness, id)
+				.filter((r) => r.type === "fake_clear_queue")
+				.at(-1),
+		).toMatchObject({
+			steering: ["留在队列里的插话"],
+		});
+		expect(userTexts(harness, id)).not.toContain("留在队列里的插话");
+	});
+
+	it("在停止（pi 会停下、进程本来留着）时收到 end：这一轮的 turn_end 之后关闭 pi 进程", async () => {
+		const harness = await start();
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "slow-abort" });
+		await started(harness, id);
+		expect((await harness.abort(id)).status).toBe(202);
+		expect((await harness.end(id)).status).toBe(202);
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+		await eventually(() => expect(harness.sessions.activeProcesses).toBe(0));
+		expect(rawTypes(harness, id)).toContain("fake_stdin_closed");
+	});
+
+	it("中止记号十分钟没有被提高就过期：不提高的 abort 不续期，提高的续期", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		harness.sessions.abort(id, 5);
+		clock.advance(9 * 60_000);
+		harness.sessions.abort(id, 3); // 不提高
+		clock.advance(60_000 + 1_000);
+		await harness.prompt(id, { turn: 4, text: "settle" });
+		expect(await harness.turnEnd(id, 4)).toMatchObject({ outcome: "completed" });
+		const other = crypto.randomUUID();
+		harness.sessions.abort(other, 5);
+		clock.advance(9 * 60_000);
+		harness.sessions.abort(other, 6); // 提高
+		clock.advance(2 * 60_000);
+		await harness.prompt(other, { turn: 6, text: "settle" });
+		expect(await harness.turnEnd(other, 6)).toMatchObject({ outcome: "stopped", model_calls: 0 });
+	});
+
+	it("进程数到了上限：在停止的一轮的进程不算空闲、不被关掉，新会话 503", async () => {
+		const harness = await start({ maxProcesses: 1, abortSettleMs: 1_500, killGraceMs: 300 });
+		const a = crypto.randomUUID();
+		await harness.prompt(a, { text: "deaf" });
+		await started(harness, a);
+		await harness.abort(a);
+		const res = await harness.prompt(crypto.randomUUID(), { text: "settle" });
+		expect(res.status).toBe(503);
+		expect(await res.json()).toMatchObject({ code: "process_limit" });
+		expect(await harness.turnEnd(a)).toMatchObject({ outcome: "stopped" });
+	});
+
+	describe("往刚退出的 pi 写命令（pi 退出了、助手服务还没收到它退出）：助手服务不退出，这一轮按进程退出收尾", () => {
+		/** 等假 pi 关掉自己（它的子进程还拿着标准输出，助手服务还没发现）。 */
+		const destroyed = (harness: Harness, id: string) =>
+			eventually(() => expect(rawTypes(harness, id)).toContain("fake_stdin_destroyed"));
+
+		it("steer：202，这句话之后写「没有确认送到」，这一轮 interrupted", async () => {
+			const harness = await start();
+			const id = crypto.randomUUID();
+			await harness.prompt(id, { text: "close-stdin" });
+			await destroyed(harness, id);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(harness.sessions.pid(id)).toBeDefined();
+			const steer = crypto.randomUUID();
+			expect((await harness.steer(id, "写不进去的插话", 1, steer)).status).toBe(202);
+			const end = await harness.turnEnd(id, 1, 15_000);
+			expect(end).toMatchObject({ outcome: "interrupted" });
+			expect(eventsOf(harness, id, 1).at(-2)).toMatchObject({
+				message_id: steer,
+				message: "插话「写不进去的插话」没有确认送到",
+			});
+		});
+
+		it("abort（写 clear_queue、abort）：202，这一轮 stopped", async () => {
+			const harness = await start({ abortSettleMs: 300, killGraceMs: 300 });
+			const id = crypto.randomUUID();
+			await harness.prompt(id, { text: "close-stdin" });
+			await destroyed(harness, id);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect((await harness.abort(id)).status).toBe(202);
+			expect(await harness.turnEnd(id, 1, 15_000)).toMatchObject({ outcome: "stopped" });
+		});
+
+		it("下一轮交 prompt 之前的 clear_queue：202，这一轮 interrupted", async () => {
+			const harness = await start();
+			const id = crypto.randomUUID();
+			await harness.prompt(id, { text: "settle-then-die" });
+			expect(await harness.turnEnd(id)).toMatchObject({ outcome: "completed" });
+			await destroyed(harness, id);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(harness.sessions.pid(id)).toBeDefined();
+			expect((await harness.prompt(id, { turn: 2, text: "settle" })).status).toBe(202);
+			expect(await harness.turnEnd(id, 2, 15_000)).toMatchObject({ outcome: "interrupted" });
+			// 进程退出之后，会话还能接着说。
+			await harness.prompt(id, { turn: 3, text: "settle" });
+			expect(await harness.turnEnd(id, 3)).toMatchObject({ outcome: "completed" });
+		});
+	});
+
+	it("停止时 pi 恰好拒绝了这句话：不等 agent_settled、不结束进程，直接以 stopped 结束", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "reject-slow" });
+		await eventually(() => expect(rawTypes(harness, id)).toContain("fake_prompt_received"));
+		const pid = harness.sessions.pid(id);
+		await harness.abort(id);
+		// 时钟不动：不靠 10 秒的等待。
+		expect(await harness.turnEnd(id)).toMatchObject({ outcome: "stopped" });
+		expect(harness.sessions.pid(id)).toBe(pid);
+	});
+
+	it("硬上限到了、SIGKILL 之后还没退出的旧进程不复用：再来一轮等它退出，起新的进程做完", async () => {
+		const clock = new ManualClock();
+		const harness = await start({ clock });
+		const id = crypto.randomUUID();
+		await harness.prompt(id, { text: "ignore-term" });
+		await started(harness, id);
+		const old = harness.sessions.pid(id);
+		await harness.abort(id);
+		clock.advance(ASSISTANT_ABORT_SETTLE_MS);
+		await eventually(() => expect(rawTypes(harness, id)).toContain("fake_ignored_sigterm"));
+		clock.advance(ASSISTANT_STOP_WAIT_MS - ASSISTANT_ABORT_SETTLE_MS);
+		// 同一个时刻（旧进程的退出还在事件循环里，没轮到）就来了第 2 轮：不能复用它。
+		const result = harness.sessions.prompt(id, {
+			turn: 2,
+			message_id: crypto.randomUUID(),
+			text: "settle",
+			session: { title: "测试", created_by: "tester" },
+			workbench: {
+				name: "fake-workbench",
+				address: harness.workbench.address,
+				workdir: harness.workdir,
+			},
+			env: {},
+			secret_env: {},
+		});
+		expect(result).toEqual({ ok: true });
+		expect(await harness.turnEnd(id, 1)).toMatchObject({ outcome: "stopped" });
+		expect(await harness.turnEnd(id, 2)).toMatchObject({ outcome: "completed" });
+		const now = harness.sessions.pid(id);
+		expect(now).toBeDefined();
+		expect(now).not.toBe(old);
+		// 第 2 轮的 prompt 交给了新的进程（旧的那个只拿到过第 1 轮的）。
+		const starts = rawEvents(harness, id).filter((r) => r.type === "fake_env");
+		expect(starts).toHaveLength(2);
+	});
+});

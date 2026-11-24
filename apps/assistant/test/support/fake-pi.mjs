@@ -1,5 +1,6 @@
 // 照 RPC 协议说话的假 pi（pi docs/rpc.md）：读 stdin 的命令，按 prompt 的文字决定这一轮怎么走。
 // 一起动先把自己的环境写成一条记录（测试看助手服务给了它哪些环境变量）；stdin 被关时写一条记录再退出。
+import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 
 const out = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -78,6 +79,17 @@ const assistant = (text, extra = {}) => ({
 });
 
 function handle(command) {
+	// 「SLOW」开头的插话像真的 pi 那样先过一遍输入处理：40 毫秒之后才进队列、才回应（rpcprobe 第 13 题的竞争）。
+	if (command.type === "steer" && String(command.message).startsWith("SLOW")) {
+		const text = String(command.message);
+		setTimeout(() => {
+			queue.push(text);
+			queueUpdate();
+			respond(command, { disposition: "queued" });
+			onSteer?.();
+		}, 40);
+		return;
+	}
 	if (command.type === "steer") {
 		const text = String(command.message);
 		// 以 HANDLE 开头的像被扩展的输入处理器吃掉了（rpcprobe 第 16 题），以 REFUSE 开头的回应失败。
@@ -111,6 +123,22 @@ function handle(command) {
 	}
 	if (command.type !== "prompt") return respond(command);
 	const text = String(command.message);
+	if (text.startsWith("reject-slow")) {
+		// 收下这句话 300 毫秒之后才拒绝（这中间可以停止）。
+		out({ type: "fake_prompt_received" });
+		setTimeout(
+			() =>
+				out({
+					id: command.id,
+					type: "response",
+					command: "prompt",
+					success: false,
+					error: "不接受",
+				}),
+			300,
+		);
+		return;
+	}
 	if (text.startsWith("reject")) {
 		out({ id: command.id, type: "response", command: "prompt", success: false, error: "不接受" });
 		return;
@@ -128,7 +156,40 @@ function handle(command) {
 	onSteer = undefined;
 	// 默认：收到 abort 就停下（agent_settled，aborted）。
 	onAbort = () => settle(true);
-	if (text.startsWith("settle-stubborn")) {
+	if (text.startsWith("race2")) {
+		// 命令执行中；收到 abort 之后 80 毫秒才收尾，收尾时把队列里的插话放进对话（各一条用户消息）再 agent_settled
+		// （rpcprobe 第 13 题「命令执行中、同一次写」时真的 pi 就是这样）。
+		onAbort = () => {
+			setTimeout(() => {
+				deliver();
+				settle(true);
+			}, 80);
+		};
+	} else if (text.startsWith("slow-abort")) {
+		// 收到 abort 之后 150 毫秒才停下（agent_settled），进程留着。
+		onAbort = () => setTimeout(() => settle(true), 150);
+	} else if (text.startsWith("flush-settle")) {
+		// 一开始就把队列里还有的插话送到模型（上一轮留下的），再做完。
+		deliver();
+		out(assistant("好的"));
+		settle();
+	} else if (text.startsWith("settle-then-die")) {
+		// 做完这一轮，之后退出，留下一个子进程拿着标准输出（同上）。
+		out(assistant("好的"));
+		settle();
+		setTimeout(() => {
+			spawn("sleep", ["3"], { stdio: ["ignore", "inherit", "ignore"] }).unref();
+			out({ type: "fake_stdin_destroyed" });
+			setTimeout(() => process.exit(0), 20);
+		}, 50);
+	} else if (text.startsWith("close-stdin")) {
+		// 收下 prompt 之后退出，留下一个子进程拿着标准输出：助手服务要等标准输出也关了才知道它退出，这 3 秒里往它的 stdin 写会出错。
+		setTimeout(() => {
+			spawn("sleep", ["3"], { stdio: ["ignore", "inherit", "ignore"] }).unref();
+			out({ type: "fake_stdin_destroyed" });
+			setTimeout(() => process.exit(0), 20);
+		}, 50);
+	} else if (text.startsWith("settle-stubborn")) {
 		// 做完这一轮；之后 stdin 被关也不退出（只有 SIGKILL 结束得了它）。
 		stubborn = true;
 		setInterval(() => {}, 60_000);

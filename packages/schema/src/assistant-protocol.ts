@@ -123,8 +123,9 @@ import {
  *    之后还没有退出就 SIGKILL，进程退出之后进入第 5 步。pi 中止正在跑的命令、工作台上命令的进程树随连接断开结束，
  *    #539 第 6 题的实测：`abort` 0.04 到 0.08 秒回应，工作台上的命令 0.1 秒内消失。
  * 4. 没有送到的插话以**助手服务自己的记录**为准（见「插话」）：已经送到的不算，其余的（交给了 pi 但没有送到的，和助手服务自己留着、
- *    没有交给 pi 的）各发一条 `steer_dropped`。pi 的队列里只有文字、没有 `message_id`，`clear_queue` 的回应也是这样，所以它只用来
- *    核对条数（和助手服务认为还在 pi 队列里的条数对不上时记日志，仍以助手服务自己的记录为准）。`message_id` 是这句话的 ID，`message` 写明
+ *    没有交给 pi 的）各发一条 `steer_dropped`。pi 的队列里只有文字、没有 `message_id`，`clear_queue` 的回应也是这样，所以它只给出
+ *    条数：**回了 k 条，就把交出去、还没送到的前 k 句记成没有送到**（pi 的队列先进先出，在队列里的一定比还没被 pi 收下的早），之后出现的
+ *    用户消息从第 k+1 句开始对（「怎么认『送到』」）；交出去还没送到的不到 k 句时记日志。`message_id` 是这句话的 ID，`message` 写明
  *    是哪句（引用原文，太长的截断）和「没有送到」；发 `turn_end` 时 `clear_queue` 还没有回应的，这些话可能其实已经送到了，写
  *    「没有确认送到」。
  * 5. 按收到的顺序发完每句没送到的插话的 `steer_dropped`，再发这一轮的 `turn_end`（结局是 `stopped`、`limit`，或者结束会话时的 `stopped`）。
@@ -132,7 +133,7 @@ import {
  * **最晚的时间**：正常的路径，从 T0 到发出 `turn_end` 最晚是 {@link ASSISTANT_ABORT_SETTLE_MS} 加 {@link ASSISTANT_PROCESS_KILL_GRACE_MS}
  * （SIGKILL 一发出进程就没了），再加助手服务内部的命令往返，余量是 {@link ASSISTANT_STOP_MARGIN_MS}。**硬上限是从 T0 起
  * {@link ASSISTANT_STOP_WAIT_MS}**：SIGKILL 之后进程仍然没有退出（不该发生）时，到了这个时间也照样发这一轮的 `turn_end`
- * （`steer_dropped` 写「没有确认送到」），不再等进程退出；这个进程没有退出之前一直算在活着的进程里，等在它后面的新一轮（上面「`prompt` 的判断」
+ * （`clear_queue` 回应过的那几句写「没有送到」，没有回应的写「没有确认送到」，同第 4 步），不再等进程退出；这个进程没有退出之前一直算在活着的进程里，等在它后面的新一轮（上面「`prompt` 的判断」
  * 第 3 条）在同一时刻以 `failed` 结束。
  *
  * **控制面这一侧**：控制面从**发出 `abort` 的那一刻**（不是收到 202 的那一刻）起，等这一轮的 `turn_end` 最多 {@link ASSISTANT_STOP_WAIT_MS}
@@ -184,6 +185,7 @@ import {
  *
  * **怎么认「送到」**：助手服务把交给 pi 的每句话按交出的顺序记成一个队列；pi 每出现一条用户消息（`message_end`，`role` 是 `user`），
  * 队首那一句就算送到了，**按顺序对，不比较文字**（pi 会把 skill 命令和提示模板展开，用户消息的文字可能和插话原文不一样）；
+ * 停止时被 `clear_queue` 取走的那几句（「停止一轮」第 4 步：交出去、还没送到的前 k 句）不在这个队列里，之后的用户消息从下一句开始对；
  * **这一轮自己的 `prompt` 产生的那条用户消息（这一轮的第一条）不算**；不看 `queue_update` 的 `steering` 变空（`clear_queue` 之后它也会变空，
  * 两件事分不清）。pi 对 `steer` 的回应里 `disposition` 是 `handled` 的（这句话被扩展的输入处理器吃掉了，不进队列，也不会有用户消息）：
  * **当作没送到**：马上发一条 `steer_dropped`（`message` 写这句话被扩展处理了、没有送到模型），**之后**再发不含它的 `steer_queue`。现在没有扩展这样做，
@@ -207,8 +209,8 @@ import {
  *   `steer_queue`；`agent_settled` 时还有话没送到、pi 进程退出、连不上工作台这些结局也一样，不能先发一份不含它的 `steer_queue`。
  * - **一轮的 `turn_end` 到的时候，最后一份 `steer_queue` 里还列着、又没有 `steer_dropped` 的话，算送到**：它是在决定结束之后才送到的，可能在 pi 处理
  *   `clear_queue` 之前，也可能在之后：`steer` 的回应还没回来时 `clear_queue` 已经写出，这句话在清空之后才进 pi 的队列，pi 在 `abort` 收尾时把它放进
- *   了对话（一条用户消息，在 `agent_settled` 之前，没有再请求模型；rpcprobe 第 13 题，命令执行中时是这样）。这两种都按「怎么认『送到』」的顺序记成送到
- *   （助手服务自己的记录照常更新，只是不再对外发 `steer_queue`），所以既没有 `steer_dropped`，也没有一份不含它的 `steer_queue`。读的一方（控制面、页面）
+ *   了对话（一条用户消息，在 `agent_settled` 之前，没有再请求模型；rpcprobe 第 13 题，命令执行中时是这样）。这两种都记成送到：按「怎么认『送到』」的顺序对，
+ *   被 `clear_queue` 取走的前 k 句不参与（第 4 步），清空之后才进队列的那句对上的是它自己（助手服务自己的记录照常更新，只是不再对外发 `steer_queue`），所以既没有 `steer_dropped`，也没有一份不含它的 `steer_queue`。读的一方（控制面、页面）
  *   照此显示；刷新之后读库（`steer_queue` 不持久，只剩 `user_message` 和有没有 `steer_dropped`）得到的是同一个结果。没送到的话都已经有 `steer_dropped`。
  *   控制面自己补结局时这一条不适用：那时没有确认送到的话都补了 `steer_dropped`。
  * - **由控制面补这一轮的结局时**（助手服务没有回话、到点没有 `turn_end`、重启了……，不论补的是 `stopped`、`interrupted` 还是 `failed`）：

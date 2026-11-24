@@ -6,6 +6,7 @@ import { EventBus } from "./bus.js";
 import { ASSISTANT_PORT, ConfigError, readConfig } from "./config.js";
 import { piPackage } from "./launch.js";
 import { checkModelsFile } from "./models.js";
+import { forLog } from "./redact.js";
 import { createAssistantServer } from "./server.js";
 import { SessionManager } from "./sessions.js";
 
@@ -16,6 +17,15 @@ import { SessionManager } from "./sessions.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const log = (message: string) => process.stderr.write(`${new Date().toISOString()} ${message}\n`);
+
+/**
+ * 兜底：一个没人接的拒绝不该带走所有会话在做的轮（Node 默认结束进程）。记下来、照常跑。这不是修法：往 pi 写命令的地方
+ * 都接住了失败（`PiProcess.request` 不拒绝，#677 审查），碰到这一行说明又有一处漏了。
+ */
+process.on("unhandledRejection", (reason) => {
+	const text = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+	log(`没人接的拒绝（已兜住，助手服务照常运行）：${forLog(text, [])}`);
+});
 
 function main(): void {
 	let config: ReturnType<typeof readConfig>;

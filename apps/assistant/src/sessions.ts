@@ -169,6 +169,8 @@ interface Session {
 	startedFor: { workbench: string; workdir: string } | undefined;
 	/** 被关掉的进程退出之前：新进程等它。 */
 	closing: Promise<void> | undefined;
+	/** SIGKILL 之后还没退出、不再复用的旧进程（硬上限到了的那一轮的）：之后的一轮等它退出再起新的。 */
+	stuck: PiProcess | undefined;
 	/** 现在这个 pi 进程的临时目录（`TMPDIR`）。 */
 	tmpDir: string | undefined;
 	/** 「在做」的一轮（协议「一轮的状态」）；{@link stopping} 也在时它是「在等」的第 k 轮，还没开始。 */
@@ -477,6 +479,7 @@ export class SessionManager {
 				tmpDir: undefined,
 				turn: undefined,
 				stopping: undefined,
+				stuck: undefined,
 				lastActive: this.#clock.now(),
 			};
 			this.#sessions.set(id, session);
@@ -530,7 +533,27 @@ export class SessionManager {
 				// 换了工作台或工作区：工具和系统提示里的路径是启动时定的，空闲的进程关掉重起。
 				this.#close(session);
 			}
-			// 被关掉的进程退出之前不起新的：两个 pi 不同时写同一个会话文件。
+			// 被关掉的进程退出之前不起新的：两个 pi 不同时写同一个会话文件。SIGKILL 之后还没退出的旧进程最多等
+			// ASSISTANT_STOP_WAIT_MS，等不到这一轮以 failed 结束（和在停止的一轮后面等的那一轮同一个说法）。
+			const stuck = session.stuck;
+			if (stuck && !stuck.exited) {
+				let timer: Timer | undefined;
+				const gaveUp = await Promise.race([
+					stuck.wait().then(() => false),
+					new Promise<boolean>((resolve) => {
+						timer = this.#clock.setTimeout(() => resolve(true), this.#stopWaitMs);
+					}),
+				]);
+				this.#clock.clearTimeout(timer);
+				if (turn.ended || turn.stop) return;
+				if (gaveUp) {
+					this.#end(session, turn, {
+						outcome: "failed",
+						reason: "上一轮的 pi 进程没有退出，所以这一轮没有开始",
+					});
+					return;
+				}
+			}
 			await session.closing;
 			if (turn.ended || turn.stop) return;
 			if (!session.process || session.process.exited) {
@@ -556,7 +579,9 @@ export class SessionManager {
 				// 连着发的几句插话一次送完（协议「插话」，rpcprobe 第 14 题）。
 				const mode = await session.process?.request({ type: "set_steering_mode", mode: "all" });
 				if (mode && mode.success !== true) {
-					this.options.log(`会话 ${session.id}：设插话的模式失败：${String(mode.error ?? "")}`);
+					this.options.log(
+						`会话 ${session.id}：设插话的模式失败：${this.#forLog(session, String(mode.error ?? ""))}`,
+					);
 				}
 			} else {
 				const cleared = await session.process.request({ type: "clear_queue" });
@@ -577,9 +602,14 @@ export class SessionManager {
 					`会话 ${session.id} 第 ${turn.number} 轮：新起的 pi 接受了这句话，冷启动 ${this.#clock.now() - turn.startedAt} 毫秒`,
 				);
 			}
-			if (turn.ended) return;
+			// 进程没了（写不进去、已经退出）：这一轮按进程退出的那条路收尾（interrupted）。
+			if (turn.ended || response.gone === true) return;
 			if (response.success !== true) {
-				if (turn.stop) return;
+				// 停止时 pi 恰好拒绝了这句话：pi 是空闲的，不用等 agent_settled、更不用结束进程，直接发结局。
+				if (turn.stop) {
+					this.#finish(session, turn);
+					return;
+				}
 				this.#end(session, turn, {
 					outcome: "failed",
 					reason: `pi 没有接受这句话：${session.redactor.redact(String(response.error ?? ""))}`,
@@ -682,7 +712,8 @@ export class SessionManager {
 		steer: Steer,
 		response: Record<string, unknown>,
 	): void {
-		if (turn.ended) return;
+		// 进程没了（写不进去、已经退出）：这一轮按进程退出的那条路收尾，这句话在那里写「没有确认送到」。
+		if (turn.ended || response.gone === true) return;
 		const disposition = (response.data as { disposition?: unknown } | undefined)?.disposition;
 		if (response.success === true && disposition === "queued") return;
 		const dropped = turn.steers.drop(steer.messageId);
@@ -869,11 +900,12 @@ export class SessionManager {
 		void process.request({ type: "clear_queue" }).then((response) => {
 			if (response.success !== true) return;
 			stop.cleared = true;
+			// 取回了 k 句：交出去、还没送到的前 k 句没有送到（pi 的队列先进先出），之后的用户消息从第 k+1 句开始对。
 			const left = queued(response);
-			if (left !== turn.steers.inPi) {
-				// 只用来核对：以自己的记录为准（pi 的队列里只有文字）。
+			const marked = turn.steers.clearFirst(left);
+			if (marked !== left) {
 				this.options.log(
-					`会话 ${session.id} 第 ${turn.number} 轮：clear_queue 取回 ${left} 句，按记录还在 pi 队列里的是 ${turn.steers.inPi} 句`,
+					`会话 ${session.id} 第 ${turn.number} 轮：clear_queue 取回 ${left} 句，按记录交出去还没送到的只有 ${marked} 句`,
 				);
 			}
 		});
@@ -910,6 +942,16 @@ export class SessionManager {
 				`会话 ${session.id} 第 ${turn.number} 轮：SIGKILL 之后 pi 进程还没有退出，到了 ${this.#stopWaitMs} 毫秒照样结束这一轮`,
 			);
 		}
+		if (stuck && session.process) {
+			// SIGKILL 之后还没退出的进程不再复用：挪到「正在关」里，算进上限；之后的一轮等它退出（#start）。
+			const process = session.process;
+			session.process = undefined;
+			this.#closing.add(process);
+			session.stuck = process;
+			session.closing = process.wait().finally(() => {
+				if (session.stuck === process) session.stuck = undefined;
+			});
+		}
 		this.#end(session, turn, stop.ending);
 		if (stop.closeAfter && !stuck) this.#close(session);
 		const next = session.turn;
@@ -933,7 +975,7 @@ export class SessionManager {
 		// 交给了 pi、pi 停下或者清过队列之后还没送到的是确定没送到；进程没了、结局之前没等到的只能说没有确认送到。
 		const sure = turn.settledByPi || turn.stop?.cleared === true;
 		for (const steer of turn.steers.dropRest()) {
-			const confirmed = steer.state === "held" || sure;
+			const confirmed = steer.state === "held" || steer.state === "cleared" || sure;
 			this.#emitDropped(session, turn, steer, confirmed ? "没有送到" : "没有确认送到");
 		}
 		const t = turn.translator;
