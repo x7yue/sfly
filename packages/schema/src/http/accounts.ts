@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { hasUnsafeNameCharacter, unsafeNameMessage } from "../text-safety.js";
+import { nameProblem, nameRefinement } from "../text-safety.js";
 import { endpoint, Timestamp } from "./contract.js";
 
 /**
@@ -39,7 +39,7 @@ export const AccountDisplayName = z
 	.trim()
 	.min(1, "显示名不能为空")
 	.max(DISPLAY_NAME_MAX_LENGTH, `显示名不能超过 ${DISPLAY_NAME_MAX_LENGTH} 个字符`)
-	.refine((name) => !hasUnsafeNameCharacter(name), unsafeNameMessage("显示名"));
+	.refine((name) => nameProblem(name) === undefined, nameRefinement("显示名"));
 
 /** 当前登录的用户。 */
 export const CurrentUser = z.object({

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { hasUnsafeNameCharacter, unsafeNameMessage } from "../text-safety.js";
+import { nameProblem, nameRefinement } from "../text-safety.js";
 import { CurrentUser, PASSWORD_MAX_LENGTH } from "./accounts.js";
 import { endpoint, Timestamp } from "./contract.js";
 
@@ -41,7 +41,7 @@ export const TokenName = z
 	.trim()
 	.min(1, "令牌的名称不能为空")
 	.max(TOKEN_NAME_MAX_LENGTH, `令牌的名称不能超过 ${TOKEN_NAME_MAX_LENGTH} 个字符`)
-	.refine((name) => !hasUnsafeNameCharacter(name), unsafeNameMessage("令牌的名称"));
+	.refine((name) => nameProblem(name) === undefined, nameRefinement("令牌的名称"));
 
 /** 过期时间：从签发起算的天数；不写表示不过期。 */
 export const TOKEN_MAX_EXPIRY_DAYS = 3650;

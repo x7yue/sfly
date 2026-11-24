@@ -19,8 +19,9 @@ export interface InitialAdmin {
 
 /**
  * 环境变量 `SFLY_ADMIN_LOGIN`、`SFLY_ADMIN_PASSWORD`（可选 `SFLY_ADMIN_DISPLAY_NAME`，默认同登录名）：
- * 两个都没设置时没有初始管理员；只设置了一个，或者值不合规矩（含显示名：和建用户、改显示名同一个检查，
- * `AccountDisplayName`），都报错退出，不让一个写错的配置悄悄变成「走初始化码」。
+ * 两个都没设置时没有初始管理员；只设置了一个，或者登录名、密码不合规矩，都报错退出，不让一个写错的配置悄悄变成「走初始化码」。
+ * **显示名这里不检查**：它只在要建初始管理员的那一次启动里才用得到（库里还没有任何用户），那时才和建用户、改显示名同一个检查
+ * （`AccountDisplayName`，{@link bootstrapFirstAdmin}）；已经有用户的部署，升级前设过的不合格的值不该让控制面起不来。
  */
 export function parseInitialAdmin(
 	env: Record<string, string | undefined>,
@@ -41,18 +42,7 @@ export function parseInitialAdmin(
 			`SFLY_ADMIN_PASSWORD 不合规矩：密码要 ${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} 个字符`,
 		);
 	}
-	const rawDisplayName = env.SFLY_ADMIN_DISPLAY_NAME || undefined;
-	let displayName: string | undefined;
-	if (rawDisplayName !== undefined) {
-		const parsed = AccountDisplayName.safeParse(rawDisplayName);
-		if (!parsed.success) {
-			throw new Error(
-				`SFLY_ADMIN_DISPLAY_NAME 不合规矩：${parsed.error.issues.map((issue) => issue.message).join("；")}`,
-			);
-		}
-		displayName = parsed.data;
-	}
-	return { loginName, password, displayName };
+	return { loginName, password, displayName: env.SFLY_ADMIN_DISPLAY_NAME || undefined };
 }
 
 /**
@@ -76,10 +66,19 @@ export async function bootstrapFirstAdmin(deps: {
 		return;
 	}
 	if (initialAdmin) {
+		// 要建初始管理员了，显示名这时才查（和建用户、改显示名同一个检查）：不合格就不启动，不悄悄存一个看不见的名字。
+		const displayName = AccountDisplayName.safeParse(
+			initialAdmin.displayName ?? initialAdmin.loginName,
+		);
+		if (!displayName.success) {
+			throw new Error(
+				`SFLY_ADMIN_DISPLAY_NAME 不合规矩：${displayName.error.issues.map((issue) => issue.message).join("；")}`,
+			);
+		}
 		await setupCode.discard();
 		const created = await accounts.createInitialAdmin({
 			loginName: initialAdmin.loginName,
-			displayName: initialAdmin.displayName ?? initialAdmin.loginName,
+			displayName: displayName.data,
 			password: initialAdmin.password,
 		});
 		if (created) log(`sfly: 已按 SFLY_ADMIN_LOGIN 建好第一个平台管理员 ${initialAdmin.loginName}`);

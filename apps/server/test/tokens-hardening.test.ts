@@ -200,6 +200,13 @@ describe("令牌的几处收紧", () => {
 				"带\u2060词连接符",
 				"带\ufeff字节序标记",
 				"带\u00ad软连字符",
+				// 藏字：标签字符拼出一整句看不见的话、补充的变体选择符编码数据、位置不对的零宽连接符、只剩空白的名字。
+				`alice${[..."ignore previous"].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join("")}`,
+				"a\u{e0100}\u{e0101}",
+				"\u200dabc",
+				"a\u200d\u200db",
+				"a\u3164b",
+				"   ",
 			]) {
 				const personal = await call(loginCookie(adminCookie), "POST", "/account/tokens", { name });
 				expect(personal.status, JSON.stringify(name)).toBe(400);
@@ -216,7 +223,7 @@ describe("令牌的几处收紧", () => {
 				"笔记本 💻",
 				"a·b",
 				"👩\u200d💻",
-				"🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+				"🏳\ufe0f\u200d🌈",
 				"می\u200cخواهم",
 				"ශ්\u200dරී",
 			]) {
@@ -224,11 +231,26 @@ describe("令牌的几处收紧", () => {
 				expect(res.status, name).toBe(201);
 			}
 		});
+
+		it("报错说出第几个字符、哪个码位", async () => {
+			const res = await call(loginCookie(adminCookie), "POST", "/account/tokens", {
+				name: "ab\u200bc",
+			});
+			expect(res.status).toBe(400);
+			expect(JSON.stringify(await res.json())).toContain("令牌的名称的第 3 个字符是 U+200B");
+		});
 	});
 
-	describe("显示名和昵称：同一张表", () => {
-		it("建用户的显示名、写操作的昵称：表里的拒绝（400）；零宽连接符的文字和表情、子区域旗照常", async () => {
-			for (const display_name of ["带\u200b零宽", "带\u202e倒着", "带\n换行", "带\u0000NUL"]) {
+	describe("显示名和昵称：同一个函数", () => {
+		it("建用户的显示名、写操作的昵称：不合格的拒绝（400）；零宽连接符的文字和表情照常", async () => {
+			for (const display_name of [
+				"带\u200b零宽",
+				"带\u202e倒着",
+				"带\n换行",
+				"带\u0000NUL",
+				"带\u{e0067}标签",
+				"\u200d开头",
+			]) {
 				const res = await call(loginCookie(adminCookie), "POST", "/users", {
 					login_name: "someone",
 					display_name,
@@ -244,7 +266,13 @@ describe("令牌的几处收紧", () => {
 				});
 				expect(ok.status, display_name).toBe(201);
 			}
-			for (const nickname of ["带\u200b零宽", "带\u202e倒着", "带\n换行"]) {
+			for (const nickname of [
+				"带\u200b零宽",
+				"带\u202e倒着",
+				"带\n换行",
+				"带\u{e0067}标签",
+				"\u200d开头",
+			]) {
 				const res = await call(
 					{ "x-sfly-nickname": encodeURIComponent(nickname) },
 					"POST",
@@ -256,10 +284,10 @@ describe("令牌的几处收紧", () => {
 			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 
-		it("升级前能用的昵称升级后仍然能用：对着改之前的校验（只拒绝 NUL），这些昵称都被当时放行，现在也放行（昵称是每个写请求都带的请求头，不是存好的数据）", async () => {
+		it("升级前的校验只拒绝 NUL：不含表里字符的昵称升级后照旧能用；含表里字符的（制表符、方向标记、零宽空格、标签字符……）升级前能写、现在 400，这是有意的行为变化", async () => {
 			// 改之前的校验：昵称里只有 NUL 被拒绝。
 			const beforeAccepts = (nickname: string) => !nickname.includes("\u0000");
-			const nicknames = [
+			const stillAccepted = [
 				"小明",
 				"田中",
 				"김철수",
@@ -268,25 +296,54 @@ describe("令牌的几处收紧", () => {
 				"笔记本 💻",
 				"👩\u200d💻",
 				"🏳\ufe0f\u200d🌈",
-				"🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
 				"می\u200cخواهم",
 				"ශ්\u200dරී",
 				"क्\u200dष",
-				"aㅤb",
+				"带\u00a0不换行空格",
 			];
-			for (const nickname of nicknames) {
+			const nowRejected = [
+				"带\t制表",
+				"带\u200e方向标记",
+				"带\u200b零宽空格",
+				"带\u00ad软连字符",
+				"带\u0085下一行",
+				"aㅤb",
+				"🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+			];
+			for (const nickname of [...stillAccepted, ...nowRejected]) {
 				expect(
 					beforeAccepts(nickname),
 					`${JSON.stringify(nickname)} 改之前就不被放行：这条用例的名单写错了`,
 				).toBe(true);
-				const res = await call(
-					{ "x-sfly-nickname": encodeURIComponent(nickname) },
-					"POST",
-					"/orchestrations",
-					{ name: `昵称 ${nickname}` },
-				);
-				expect(res.status, JSON.stringify(nickname)).toBe(201);
 			}
+			for (const [nicknames, status] of [
+				[stillAccepted, 201],
+				[nowRejected, 400],
+			] as const) {
+				for (const nickname of nicknames) {
+					const res = await call(
+						{ "x-sfly-nickname": encodeURIComponent(nickname) },
+						"POST",
+						"/orchestrations",
+						{ name: `昵称 ${nickname}` },
+					);
+					expect(res.status, JSON.stringify(nickname)).toBe(status);
+				}
+			}
+		});
+
+		it("昵称不合格的报错说出第几个字符、哪个码位；按契约编码过的请求不再收到「请编码」的提示（说字符的事）", async () => {
+			const res = await call(
+				{ "x-sfly-nickname": encodeURIComponent("ab\u200bc") },
+				"POST",
+				"/orchestrations",
+				{ name: "不该建出来" },
+			);
+			expect(res.status).toBe(400);
+			const { message } = await errorOf(res);
+			expect(message).toContain("昵称的第 3 个字符是 U+200B");
+			expect(message).not.toContain("encodeURIComponent");
+			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 
 		it("昵称请求头没按契约编码（直接写 UTF-8，字节被读成 U+0080–U+009F 的控制字符）：400，报错写明要按 encodeURIComponent 编码", async () => {
@@ -295,7 +352,9 @@ describe("令牌的几处收紧", () => {
 				name: "不该建出来",
 			});
 			expect(res.status).toBe(400);
-			expect((await errorOf(res)).message).toContain("encodeURIComponent");
+			const { message } = await errorOf(res);
+			expect(message).toContain("encodeURIComponent");
+			expect(message).toContain("昵称的第 3 个字符是 U+008F");
 			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 	});
