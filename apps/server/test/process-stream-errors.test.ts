@@ -89,7 +89,8 @@ describe("真实的控制面进程", () => {
 		expect((res as Response).status).toBe(500);
 		expect(await (res as Response).json()).toMatchObject({ error: { code: "internal_error" } });
 		// 错误记在了控制面的日志里（读不了的是哪个文件）。
-		expect(cp.output.join("\n")).toContain("EISDIR");
+		// （子进程的输出经管道到测试，和响应不在同一条连接上，先后没有保证：等到出现。）
+		await eventually(() => expect(cp.output.join("\n")).toContain("EISDIR"));
 		// 别的请求不受影响。
 		const health = await cp.fetch("/health");
 		expect(health.status).toBe(200);
@@ -157,7 +158,9 @@ describe("真实的控制面进程", () => {
 			const startedAt = Date.now();
 			cp.child.kill("SIGTERM");
 			await new Promise((resolve) => setTimeout(resolve, 1000));
+			// 两个 SIGINT 隔开发：同一个信号连着发会被系统合成一次递送。
 			cp.child.kill("SIGINT");
+			await new Promise((resolve) => setTimeout(resolve, 300));
 			cp.child.kill("SIGINT");
 			// 关闭卡住：几秒之后进程还在。
 			await new Promise((resolve) => setTimeout(resolve, 3000));
