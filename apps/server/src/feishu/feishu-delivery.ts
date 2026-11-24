@@ -249,7 +249,10 @@ export class FeishuDelivery {
 				.where(and(eq(feishuMessages.seq, message.seq), eq(feishuMessages.status, "queued")))
 				.returning({ seq: feishuMessages.seq });
 			if (!updated) return false;
-			// 按名字回写：投递前已经按运行所在的项目取到了这个机器人，名字现在全局唯一；改成项目内唯一时（#502）带上项目。
+			// 按名字回写，不会写到别的机器人上，靠的是两件事：上面只在消息还在排队时才改（没改到行就返回）；
+			// `FeishuBots.remove()` 在同一个事务里把这个名字排队的消息记为已丢弃。机器人在请求在途时被删除、同名的在别的
+			// 项目重新登记之后，这条消息已经是已丢弃，回写不会落到新机器人上。不是靠「名字全局唯一」：名字唯一挡不住
+			// 删了再登记。改成项目内唯一时（#502）带上项目。
 			await tx
 				.update(feishuBots)
 				.set({
