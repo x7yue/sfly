@@ -7,6 +7,7 @@ import type {
 	OrchestrationView,
 	RunNotificationChanges,
 	SecretDefaultProblem,
+	SessionRef,
 	StoredOrchestrationDocument,
 	VersionCheckView,
 } from "@sfly/schema";
@@ -20,6 +21,8 @@ import type { FocusRejection } from "../focus/focus-list.js";
 import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-settings.js";
 import { copyPresets } from "../presets/preset-store.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { sessionRefs, withSession } from "../sessions/session-ref.js";
+import type { SessionStore } from "../sessions/session-store.js";
 import { maskSecretDefaults, restoreSecretDefaults } from "./secret-defaults.js";
 import { newWarnings, versionCheck } from "./version-check.js";
 
@@ -152,7 +155,10 @@ async function conflict(
 	orchestration: OrchestrationRow,
 ): Promise<{ kind: "conflict"; head: VersionSummary | null }> {
 	const head = await versionRow(db, orchestration.id, orchestration.headVersion);
-	return { kind: "conflict", head: head ? toSummary(head) : null };
+	return {
+		kind: "conflict",
+		head: head ? toSummary(head, await sessionOfVersion(db, head)) : null,
+	};
 }
 
 /** 场景的基本信息（场景列表用）；场景视图在它之上加了对照最新版本才能得出的关注项，见 {@link OrchestrationStore}。 */
@@ -181,30 +187,76 @@ const runNotifyColumns = (settings: RunNotificationChanges) => ({
 
 const toSummary = (
 	row: Pick<VersionRow, "number" | "author" | "authorVia" | "createdAt">,
+	session?: SessionRef,
 ): VersionSummary => ({
 	number: row.number,
 	author: row.author,
 	author_via: row.authorVia,
+	...withSession(session),
 	created_at: row.createdAt.toISOString(),
 });
 
-export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
+export const toVersionView = (row: VersionRow, session?: SessionRef): OrchestrationVersionView => ({
 	id: row.id,
 	orchestration_id: row.orchestrationId,
 	number: row.number,
 	author: row.author,
 	author_via: row.authorVia,
+	...withSession(session),
 	created_at: row.createdAt.toISOString(),
 	document: maskSecretDefaults(row.document),
 });
+
+/** 一个版本上记的会话（会话令牌保存的版本）：会话的 ID 和标题；不是会话保存的为 undefined。 */
+async function sessionOfVersion(db: Db | Tx, row: VersionRow): Promise<SessionRef | undefined> {
+	if (row.sessionId === null) return undefined;
+	return (await sessionRefs(db, [row.sessionId])).get(row.sessionId);
+}
 
 /**
  * 编排与编排版本的存取。版本只追加、不修改。每个场景属于一个项目（ADR 0029）：新建要传项目，按项目取（`getInProject`）
  * 和列最新版本文档（`rawHeadDocuments`）要传项目。按场景 ID 的其余方法不传项目：ID 全库唯一，项目从场景本身得出
  * （契约路由的检查，#489），场景属于哪个项目由检查负责。
  */
+/** 会话令牌的写在提交之后要做的：发布平台记录（交给会话的链，不等它）。 */
+interface AfterCommit {
+	announce: Array<() => void>;
+}
+
 export class OrchestrationStore {
-	constructor(private readonly deps: { db: Db; clock: Clock }) {}
+	constructor(private readonly deps: { db: Db; clock: Clock; sessions: SessionStore }) {}
+
+	/**
+	 * 会话令牌的写（保存、恢复、复制）：事务里等行锁有上限（超时回滚、HTTP 503），不让没想到的等待变成永远卡住。
+	 * 放在事务的第一条语句。不是会话令牌的写什么都不做。
+	 */
+	async #limitLockWait(tx: Tx, actor: Actor): Promise<void> {
+		if (actor.sessionId !== null) await this.deps.sessions.limitWriteLockWait(tx);
+	}
+
+	/**
+	 * 会话令牌保存的版本：在记下版本的同一个事务里给会话写一条平台记录（`scenario_version`，#547）。**要放在事务的最后**：
+	 * 先做慢的（场景那一行的锁、版本的写入），最后才给会话那一行加锁、分配序号、写记录，然后提交；事务里不等任何进程里的锁
+	 * （{@link SessionStore.recordPlatform}）。`after.announce` 里放的收尾在事务提交之后调用（推送，不等它）；
+	 * 不是会话保存的什么都不做。
+	 */
+	async #recordForSession(
+		tx: Tx,
+		actor: Actor,
+		scenario: { id: string; name: string },
+		version: number,
+		after: AfterCommit,
+	): Promise<void> {
+		const { sessionId } = actor;
+		if (sessionId === null) return;
+		const event = await this.deps.sessions.recordPlatform(tx, sessionId, {
+			kind: "scenario_version",
+			scenario_id: scenario.id,
+			name: scenario.name,
+			version,
+		});
+		after.announce.push(() => this.deps.sessions.announce(sessionId, event));
+	}
 
 	/**
 	 * 场景视图：基本信息，加上关注项和它们在最新版本里的状态（{@link focusFields}）。
@@ -340,7 +392,9 @@ export class OrchestrationStore {
 	 * 关注项的最后修改记为复制的人（{@link copiedFocus}）。源编排不存在时返回 undefined。
 	 */
 	async copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
+		const pending: AfterCommit = { announce: [] };
 		const copied = await this.deps.db.transaction(async (tx) => {
+			await this.#limitLockWait(tx, actor);
 			const [source] = await tx
 				.select()
 				.from(orchestrations)
@@ -385,12 +439,16 @@ export class OrchestrationStore {
 					authorUserId: actor.userId,
 					authorVia: actor.via,
 					authorToken: actor.token,
+					sessionId: actor.sessionId,
 					createdAt: now,
 				});
 			}
 			await copyPresets(tx, sourceId, id, actor, now);
+			// 平台记录放在事务的最后（会话那一行的锁是最后拿的一把）。
+			if (head) await this.#recordForSession(tx, actor, { id, name }, 1, pending);
 			return row as OrchestrationRow;
 		});
+		for (const announce of pending.announce) announce();
 		return copied && this.#view(copied, this.deps.db);
 	}
 
@@ -451,14 +509,16 @@ export class OrchestrationStore {
 	 * 上一个版本就是 base_version，在冲突检查通过之后、同一个行锁内读取。
 	 * `strict`：这次改动新带进来了警告时不保存（{@link versionCheck}，同一个事务里判断），返回 `strict_rejected`。
 	 */
-	saveVersion(
+	async saveVersion(
 		orchestrationId: string,
 		document: OrchestrationDocument,
 		actor: Actor,
 		baseVersion: number,
 		options: { strict?: boolean } = {},
 	): Promise<SaveVersionResult> {
-		return this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
+		const pending: AfterCommit = { announce: [] };
+		const result = await this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
+			await this.#limitLockWait(tx, actor);
 			const [orchestration] = await tx
 				.select()
 				.from(orchestrations)
@@ -491,10 +551,12 @@ export class OrchestrationStore {
 			}
 			return {
 				kind: "saved",
-				version: await this.#append(tx, orchestration, prepared.document, actor),
+				version: await this.#append(tx, orchestration, prepared.document, actor, pending),
 				previous: masked,
 			};
 		});
+		for (const announce of pending.announce) announce();
+		return result;
 	}
 
 	/**
@@ -544,19 +606,26 @@ export class OrchestrationStore {
 				number: orchestrationVersions.number,
 				author: orchestrationVersions.author,
 				authorVia: orchestrationVersions.authorVia,
+				sessionId: orchestrationVersions.sessionId,
 				createdAt: orchestrationVersions.createdAt,
 			})
 			.from(orchestrationVersions)
 			.where(eq(orchestrationVersions.orchestrationId, orchestrationId))
 			.orderBy(desc(orchestrationVersions.number));
-		return rows.map(toSummary);
+		const refs = await sessionRefs(
+			this.deps.db,
+			rows.map((row) => row.sessionId),
+		);
+		return rows.map((row) =>
+			toSummary(row, row.sessionId === null ? undefined : refs.get(row.sessionId)),
+		);
 	}
 
 	/**
 	 * 恢复历史版本：用该版本的内容追加一个新版本（作者为恢复的人），不改写历史。
 	 * 编排或版本不存在时返回 undefined。
 	 */
-	restoreVersion(
+	async restoreVersion(
 		orchestrationId: string,
 		number: number,
 		actor: Actor,
@@ -564,7 +633,9 @@ export class OrchestrationStore {
 		| { version: OrchestrationVersionView; previous: StoredOrchestrationDocument | undefined }
 		| undefined
 	> {
-		return this.deps.db.transaction(async (tx) => {
+		const pending: AfterCommit = { announce: [] };
+		const result = await this.deps.db.transaction(async (tx) => {
+			await this.#limitLockWait(tx, actor);
 			const [orchestration] = await tx
 				.select()
 				.from(orchestrations)
@@ -575,10 +646,12 @@ export class OrchestrationStore {
 			if (!source) return undefined;
 			const previous = await versionRow(tx, orchestrationId, orchestration.headVersion);
 			return {
-				version: await this.#append(tx, orchestration, source.document, actor),
+				version: await this.#append(tx, orchestration, source.document, actor, pending),
 				previous: previous && maskSecretDefaults(previous.document),
 			};
 		});
+		for (const announce of pending.announce) announce();
+		return result;
 	}
 
 	/** 在已加行锁的编排上追加下一个版本，并更新最新版本号。 */
@@ -587,6 +660,7 @@ export class OrchestrationStore {
 		orchestration: OrchestrationRow,
 		document: StoredOrchestrationDocument,
 		actor: Actor,
+		pending: AfterCommit,
 	): Promise<OrchestrationVersionView> {
 		const number = orchestration.headVersion + 1;
 		const [row] = await tx
@@ -600,6 +674,7 @@ export class OrchestrationStore {
 				authorUserId: actor.userId,
 				authorVia: actor.via,
 				authorToken: actor.token,
+				sessionId: actor.sessionId,
 				createdAt: this.deps.clock.now(),
 			})
 			.returning();
@@ -607,7 +682,10 @@ export class OrchestrationStore {
 			.update(orchestrations)
 			.set({ headVersion: number })
 			.where(eq(orchestrations.id, orchestration.id));
-		return toVersionView(row as VersionRow);
+		const view = toVersionView(row as VersionRow, await sessionOfVersion(tx, row as VersionRow));
+		// 平台记录放在事务的最后（会话那一行的锁是最后拿的一把）。
+		await this.#recordForSession(tx, actor, orchestration, number, pending);
+		return view;
 	}
 
 	async getVersion(
@@ -615,6 +693,6 @@ export class OrchestrationStore {
 		number: number,
 	): Promise<OrchestrationVersionView | undefined> {
 		const row = await versionRow(this.deps.db, orchestrationId, number);
-		return row && toVersionView(row);
+		return row && toVersionView(row, await sessionOfVersion(this.deps.db, row));
 	}
 }
