@@ -211,6 +211,11 @@ export interface ControlPlane {
 	readonly grpcUrl: string;
 	/** 助手会话和它的事件（src/sessions/）：测试往里写事件、推事件，和助手服务的连接（之后）也经它落库、发布。 */
 	readonly sessions: SessionStore;
+	/**
+	 * 关闭控制面。**可以重复调用，第二次起拿到的是同一个 promise**（和第一次同时落定，不会比它先完成）：只关一次，不再去关已经关了的东西
+	 * （第二次关连接池会拒绝）。调用方不止一个（停止信号、致命错误之后的有序退出），谁先谁后都是同一个结果，不会有一方在另一方还没关完时
+	 * 就当作「关完了」去退出进程。
+	 */
 	close(): Promise<void>;
 }
 
@@ -615,27 +620,34 @@ async function start(options: ControlPlaneOptions): Promise<ControlPlane> {
 	// 重启前还在排队的消息接着投递。
 	feishuDelivery.wake();
 
+	/** 关闭只做一次：重复调用（收到几个停止信号）拿到同一个结果，不再去关已经关了的东西（第二次关连接池会拒绝）。 */
+	let closing: Promise<void> | undefined;
+	const close = async (): Promise<void> => {
+		await assistantConnection?.close();
+		await Promise.all(sweeps.map((s) => s.stop()));
+		await retention.idle();
+		await metricRetention.idle();
+		hub.closeAll();
+		await gateway.close();
+		// 正常关闭时写入内存里尚未写库的指标。
+		await metrics.close().catch(fail("metric flush"));
+		// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
+		await mutex.run(async () => {});
+		// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
+		feishuDelivery.close();
+		await feishu.close();
+		await feishuDelivery.idle();
+		await api.close();
+		await database.close();
+	};
+
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
 		sessions,
-		async close() {
-			await assistantConnection?.close();
-			await Promise.all(sweeps.map((s) => s.stop()));
-			await retention.idle();
-			await metricRetention.idle();
-			hub.closeAll();
-			await gateway.close();
-			// 正常关闭时写入内存里尚未写库的指标。
-			await metrics.close().catch(fail("metric flush"));
-			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
-			await mutex.run(async () => {});
-			// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
-			feishuDelivery.close();
-			await feishu.close();
-			await feishuDelivery.idle();
-			await api.close();
-			await database.close();
+		close: () => {
+			closing ??= close();
+			return closing;
 		},
 	};
 }
