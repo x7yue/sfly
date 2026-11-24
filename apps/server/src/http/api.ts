@@ -11,6 +11,7 @@ import Fastify, {
 } from "fastify";
 import type { TaskActions } from "../actions/task-actions.js";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
+import type { AgentCredentialService } from "../agents/agent-credentials.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import { AccessGuard } from "../auth/access-guard.js";
@@ -118,6 +119,8 @@ export interface HttpApiDeps {
 	accounts: AccountService;
 	/** 个人令牌和项目令牌（src/auth/tokens.ts）。 */
 	tokens: TokenService;
+	/** Agent 凭据和开发 Agent（src/agents/agent-credentials.ts，#492）。 */
+	agentCredentials: AgentCredentialService;
 	/** 登录的空闲期限（毫秒）；默认 12 小时，要和 `accounts` 里的一致（下发和续期 Cookie 用它）。 */
 	loginIdleMs?: number;
 	/** 哪些来源算同源（登录 Cookie 的跨站检查，src/auth/cross-site.ts）。 */
@@ -188,6 +191,7 @@ export function buildHttpApi({
 	corsOrigins,
 	accounts,
 	tokens,
+	agentCredentials,
 	loginIdleMs,
 	origins,
 	publicHttps,
@@ -327,7 +331,13 @@ export function buildHttpApi({
 
 	registerAccountRoutes(app, { accounts, publicHttps, publicUrl });
 	registerTokenRoutes(app, { tokens, accounts });
-	registerAgentRoutes(app, { hub, engine, orchestrations });
+	registerAgentRoutes(app, {
+		hub,
+		engine,
+		orchestrations,
+		credentials: agentCredentials,
+		accounts,
+	});
 	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations });

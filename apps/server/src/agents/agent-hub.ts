@@ -15,6 +15,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
+	type AgentAuthKind,
 	type AgentInfo,
 	type AgentStatus,
 	type AgentUpdateInfo,
@@ -27,9 +28,10 @@ import {
 	tasks,
 } from "../db/schema.js";
 import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
-import type { ProjectId } from "../projects/project-id.js";
+import { DEFAULT_PROJECT, type ProjectId } from "../projects/project-id.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
+import { type AgentAuth, notRegisteredHere } from "./agent-auth.js";
 import {
 	type AgentClockReading,
 	ConnectionClock,
@@ -85,6 +87,16 @@ type ConnectionPhase =
 	| { readonly name: "ready" };
 
 /** 一个已完成握手的 Agent 连接。 */
+/** 这次连接不被允许：同名连接的顶掉规则，或者登记之前再看一遍时凭据已被吊销、用户或 Agent 已被停用。 */
+export class AgentConnectionRefused extends Error {
+	constructor(
+		message: string,
+		readonly code: "unauthenticated" | "permission_denied" = "permission_denied",
+	) {
+		super(message);
+	}
+}
+
 export class AgentConnection {
 	constructor(
 		readonly name: string,
@@ -92,7 +104,23 @@ export class AgentConnection {
 		readonly outbox: AsyncQueue<ServerMessage>,
 		/** 这次连接的「单调时钟读数 → 控制面时间」对应关系（ADR 0018）：日志、进度、指标、任务事件共用。 */
 		readonly clock: ConnectionClock,
+		/**
+		 * 这条连接是怎么认的身份（#492）：带 Agent 凭据，还是「以旧方式连接」（共享令牌、没有凭据）。#494 的 HTTP 过渡规则、
+		 * 同名连接的顶掉规则（{@link AgentHub.attach}）和凭据吊销时断开连接都看它。
+		 */
+		readonly auth: AgentAuth = { kind: "none" },
+		/**
+		 * 这条连接所在的项目：Agent 凭据的项目，以旧方式连接的是默认项目。**派发以它为准**（只派发这个项目的运行的任务），
+		 * 不看库里登记记录的项目：两个项目的凭据可能同时连同一个还没登记的名字，连接表里活着的是哪一条要和登记一致
+		 * （{@link AgentHub.attach} 在锁里核对），派发前再比较一次连接的项目。
+		 */
+		readonly project: ProjectId = DEFAULT_PROJECT,
 	) {}
+
+	/** 这条连接用的 Agent 凭据（`agent_credentials.id`）；以旧方式连接的为 null。 */
+	get credentialId(): string | null {
+		return this.auth.kind === "agent" ? this.auth.credentialId : null;
+	}
 
 	#phase: ConnectionPhase = { name: "registered" };
 
@@ -175,6 +203,10 @@ export interface AgentView {
 	capabilities: CapabilityInfo[];
 	/** 其它 Agent 连接这台 Agent 用的地址（ADR 0019）。 */
 	endpoint: AgentEndpointView;
+	/** 最近一次连接用的凭据（#492）；记下之前连接的为 null。 */
+	auth_kind: AgentAuthKind | null;
+	/** 停用这台 Agent 的时间（#492）；没有停用为 null。 */
+	disabled_at: string | null;
 }
 
 /**
@@ -227,8 +259,7 @@ export class AgentHub {
 	 * 注册一个新连接：替换同名旧连接，记录为在线。`helloClock` 是 Hello 里的时钟读数（旧版本 Agent 没有），
 	 * `receivedAt` 是收到 Hello 的控制面时间：据此建立这次连接的折算关系并测一次时钟偏差；
 	 * 没有读数时时钟偏差记为未知。第一次连上时 Agent 登记在 `project` 里（ADR 0029）；之后重连只更新信息，
-	 * 不改它所属的项目：名字第一步仍然全局唯一，另一个项目已经登记了这个名字时，连接照旧接上、记录仍属于原来的项目
-	 * （项目来自凭据之后，由 #492、#502 处理）。
+	 * 不改它所属的项目：名字全局唯一，另一个项目已经登记了这个名字时拒绝这条连接（在锁里核对，见下面），连接记下它的项目。
 	 */
 	attach(
 		project: ProjectId,
@@ -237,11 +268,35 @@ export class AgentHub {
 		outbox: AsyncQueue<ServerMessage>,
 		helloClock?: AgentClockReading,
 		receivedAt: Date = this.deps.clock.now(),
+		auth: AgentAuth = { kind: "none" },
+		/** 登记之前、在锁里再看一遍这次连接还有没有资格（认身份和登记之间凭据、用户、Agent 可能变了）；返回原因表示拒绝。 */
+		verify?: () => Promise<
+			{ code: "unauthenticated" | "permission_denied"; message: string } | undefined
+		>,
 	): Promise<AgentConnection> {
 		return this.deps.mutex.run(async () => {
+			const refusal = await verify?.();
+			if (refusal !== undefined) throw new AgentConnectionRefused(refusal.message, refusal.code);
+			// 连接的项目必须等于这个名字登记的项目（名字全局唯一，登记只在第一次连上时写、之后不改）：认身份时名字还没有登记，
+			// 两个项目的凭据可以同时通过，登记留在先到的那个，后到的在这里被拒绝，连接表里不会有「登记在甲、活着的却是乙的连接」。
+			// 这条不变式在登记表自己这里守着，不靠调用方的 `verify`。
+			const [registered] = await this.deps.db
+				.select({ projectId: agents.projectId })
+				.from(agents)
+				.where(eq(agents.name, name));
+			if (registered !== undefined && registered.projectId !== project) {
+				throw new AgentConnectionRefused(notRegisteredHere(name), "unauthenticated");
+			}
 			const clock = new ConnectionClock(this.deps.clock, helloClock, receivedAt);
-			const conn = new AgentConnection(name, info, outbox, clock);
+			const conn = new AgentConnection(name, info, outbox, clock, auth, project);
 			const old = this.#connections.get(name);
+			// 同名的新连接顶掉旧连接（让断电、断网后重启的 Agent 马上连得上，旧连接要等传输层发现才结束）。例外：
+			// 以旧方式连接（共享令牌、没有凭据）的，不能顶掉还活着的带 Agent 凭据的连接（ADR 0029「迁移与过渡」）。
+			if (old && !old.closed && old.credentialId !== null && auth.kind !== "agent") {
+				throw new AgentConnectionRefused(
+					`Agent「${name}」已经带着 Agent 凭据连着：以旧方式连接（共享令牌或没有凭据）的不能顶掉它`,
+				);
+			}
 			this.#connections.set(name, conn);
 			old?.close();
 			const now = this.deps.clock.now();
@@ -259,11 +314,18 @@ export class AgentHub {
 					status: "online",
 					registeredAt: now,
 					lastSeenAt: now,
+					lastAuthKind: auth.kind,
 					...clockOffset,
 				})
 				.onConflictDoUpdate({
 					target: agents.name,
-					set: { info, status: "online", lastSeenAt: now, ...clockOffset },
+					set: {
+						info,
+						status: "online",
+						lastSeenAt: now,
+						lastAuthKind: auth.kind,
+						...clockOffset,
+					},
 				});
 			return conn;
 		});
@@ -410,8 +472,48 @@ export class AgentHub {
 				update: update ?? NO_UPDATE,
 				capabilities: capabilities ?? [],
 				endpoint: agentEndpoint({ peer, source_address }),
+				auth_kind: row.lastAuthKind,
+				disabled_at: row.disabledAt?.toISOString() ?? null,
 			}),
 		);
+	}
+
+	/**
+	 * 凭据被吊销（或所属用户被停用）：断开用它连着的 Agent 连接（Agent 手上的任务走失联处理：租约到期后 `agent_lost`）。
+	 * 在引擎的锁里做，和 {@link attach} 的再确认（`verify`）互斥：吊销的写库在先，所以要么新连接的再确认看到已吊销，
+	 * 要么它已经登记、这里把它断开。
+	 */
+	closeByCredentials(credentialIds: readonly string[]): Promise<void> {
+		return this.deps.mutex.run(async () => {
+			for (const conn of this.#connections.values()) {
+				if (conn.credentialId !== null && credentialIds.includes(conn.credentialId)) conn.close();
+			}
+		});
+	}
+
+	/**
+	 * 停用或恢复一台 Agent（ADR 0029「迁移与过渡」）：停用的立即断开连接，不能连接、不参与派发；恢复清空时间。
+	 * 返回：`not_found` 没有这台 Agent，`unchanged` 已经是这个状态，`ok` 改了。
+	 */
+	setDisabled(
+		project: ProjectId,
+		name: string,
+		disabled: boolean,
+	): Promise<"ok" | "unchanged" | "not_found"> {
+		return this.deps.mutex.run(async () => {
+			const [row] = await this.deps.db
+				.select({ disabledAt: agents.disabledAt })
+				.from(agents)
+				.where(and(eq(agents.name, name), eq(agents.projectId, project)));
+			if (!row) return "not_found";
+			if ((row.disabledAt !== null) === disabled) return "unchanged";
+			await this.deps.db
+				.update(agents)
+				.set({ disabledAt: disabled ? this.deps.clock.now() : null })
+				.where(eq(agents.name, name));
+			if (disabled) this.#connections.get(name)?.close();
+			return "ok";
+		});
 	}
 
 	/** 控制面启动时：库里残留的在线状态来自上一个进程，一律改为离线，等 Agent 重新连接。 */

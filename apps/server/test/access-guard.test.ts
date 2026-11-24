@@ -14,7 +14,8 @@ import {
 	AGENT_CREDENTIAL_ROUTES,
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
-	REQUIRES_CREDENTIAL,
+	REQUIRES_CREDENTIAL_ROUTES,
+	requiresCredential,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "../src/auth/access-rules.js";
@@ -115,6 +116,8 @@ describe("契约路由的访问检查", () => {
 			projectId: null,
 			scopes: [...SCOPES],
 			sessionId: fields.kind === "session" ? MY_SESSION : null,
+			// 任务凭据默认是「这次任务尝试还在 Agent 手上」。
+			taskActive: fields.kind === "task" ? true : null,
 			// 会话令牌所属的会话：和令牌的项目、发起人对得上、没有结束（联表读出的，#547）；个别用例改它。
 			session:
 				fields.kind === "session" && fields.projectId && fields.user
@@ -171,7 +174,7 @@ describe("契约路由的访问检查", () => {
 	});
 	const SYSTEM = httpContract.filter((def) => locatorOf(def)?.from === "none");
 	/** 现在就要求凭据的接口（项目的管理面）：不走「不带凭据照旧放行」的过渡。 */
-	const needsCredential = (def: RouteDef) => REQUIRES_CREDENTIAL.has(def.resource.kind);
+	const needsCredential = (def: RouteDef) => requiresCredential(def);
 	/** 只认人的登录的接口：令牌（含带管理范围的个人令牌）是 403。 */
 	const loginOnly = (def: RouteDef) => routeKey(def) in LOGIN_ONLY_ROUTES;
 	const route = (key: string): RouteDef => {
@@ -191,7 +194,7 @@ describe("契约路由的访问检查", () => {
 			expect(store.reads).toBe(0);
 		});
 
-		it("项目的管理面（项目令牌）是新接口，没有「照旧」可言：不带凭据是 401，带共享令牌是 403，不读库", async () => {
+		it("项目的管理面（项目令牌）和 Agent 凭据的签发、列出、吊销、Agent 的停用、恢复是新这一套信任的根，没有「照旧」可言：不带凭据是 401，带共享令牌是 403，不读库", async () => {
 			store.agentCredentials.set(hashCredential("shared-secret"), {
 				kind: "shared",
 				projectId: DEFAULT,
@@ -205,6 +208,13 @@ describe("契约路由的访问检查", () => {
 					"GET /projects/:project/tokens",
 					"POST /projects/:project/tokens",
 					"DELETE /projects/:project/tokens/:id",
+					// 不带任何凭据的请求能给任意名字签发 Agent 凭据、再用它连上来顶掉用共享令牌连着的那一台（#638 审查）。
+					"GET /agents/:name/credentials",
+					"POST /agents/:name/credentials",
+					"DELETE /agents/:name/credentials/:id",
+					"POST /agents/:name/disable",
+					"POST /agents/:name/enable",
+					...REQUIRES_CREDENTIAL_ROUTES,
 				]),
 			);
 			for (const def of covered) {

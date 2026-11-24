@@ -31,6 +31,7 @@ const PACKAGE_CODES = new Set([
 ]);
 const AGENT_CODES = new Set([
 	"agent_not_registered",
+	"agent_disabled",
 	"agent_input_not_registered",
 	"sdk_version_unsatisfied",
 	"agent_version_unsatisfied",

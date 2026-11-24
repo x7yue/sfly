@@ -10,6 +10,7 @@
 // 真实控制面和数据库，假的飞书 Webhook 服务；HTTP 接口现在还只认默认项目（#488），别的项目的资源用库里的一条 `update` 造出来。
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { ProjectId } from "../src/projects/project-id.js";
 import { ApiClient } from "./support/api-client.js";
 import { TestAccounts } from "./support/credentials.js";
 import { eventually } from "./support/eventually.js";
@@ -384,8 +385,12 @@ describe("飞书机器人按项目隔离：整份响应、反方向、发送队�
 	});
 
 	it("反方向：项目 alpha 里的场景和运行只认 alpha 的机器人，默认项目的机器人和没有登记过的一样（触发时的参数检查、ctx.notify、运行通知）", async () => {
-		const agent = await entryAgent();
-		await sql.query("update agents set project_id = 'alpha' where name = $1", [agent.name]);
+		// 项目 alpha 里的 Agent：用 alpha 签发的 Agent 凭据连接（派发看的是连接的项目，不是库里登记记录的项目，#492：
+		// 连上之后把登记记录改成 alpha，连接还是默认项目的，运行派不过去）。
+		const name = `iso-alpha-${++entries}`;
+		const credential = (await cp.current.agentCredentials.issue("alpha" as ProjectId, name)).token;
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name, token: credential });
+		agents.push(agent);
 		const alphaScenario = async (doc: unknown, name: string) => {
 			const id = await api.createOrchestration(name);
 			await sql.query("update orchestrations set project_id = 'alpha' where id = $1", [id]);
