@@ -50,7 +50,8 @@ async fn only_the_latest_summary_is_forwarded_at_most_once_per_second_and_the_la
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
     let summaries = summaries_of(&cp.received_with_session(), "task-summary-rate");
     let totals: Vec<&Value> = summaries.iter().map(|(_, _, s)| &s["total"]).collect();
-    assert_eq!(totals[0], &json!(1), "第一份立即转发：{totals:?}");
+    // 第一份转发的不一定是第 1 份：转发只在 Agent 每 100 毫秒的检查点上发生，节点也是每 0.1 秒写一份，机器忙时第一次转发之前
+    // 节点已经写了第 2 份，转发的就是第 2 份（#706）。「第一份不等间隔」在 src/logs.rs 的 latest_tests 里按状态断言。
     // 节点从写第 1 份到写第 30 份用了 written 毫秒（SDK 写的单调时钟读数）。Agent 两次转发至少隔 1 秒，
     // 只有任务结束时补发的最后一份不受限制：最多 ceil(written / 1000) + 2 份。不合并的话会转发 30 份。
     let mono = |s: &Value| s["mono"].as_i64().unwrap();

@@ -223,10 +223,6 @@ const controlPlane = await startControlPlane({
 	else printError("sfly: 控制面没有启动：", error);
 	process.exit(1);
 });
-printInfo(
-	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
-);
-
 running = controlPlane;
 
 // 停止信号：关闭只做一次，重复的信号只记一句（`src/shutdown.ts`）。和因错误而有序退出（`guards`）是两条都会调用 `close()`、都会退出的
@@ -240,3 +236,9 @@ installShutdown({
 	log: (message) => printInfo(message),
 	logError: (message, error) => printError(message, error),
 });
+// 启动行放在装好停止信号的处理**之后**：看到这一行（测试、部署脚本、`docker logs`），就表示这个进程收到停止信号会有序关闭。
+// 放在前面时，行写出去和处理装上之间有一小段（同一个同步的片段，但进程在这里被调度走了，外面的信号就到得了）：信号按系统默认的
+// 动作直接结束进程（#710）。控制面起来之前（迁移、监听端口）收到停止信号仍然是按默认的动作直接结束：那时没有东西可关。
+printInfo(
+	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
+);
