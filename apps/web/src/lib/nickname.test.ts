@@ -37,6 +37,20 @@ describe("昵称填得不合格的原因", () => {
 		expect(nicknameProblem(chars(0x2800))).toContain("昵称的第 1 个字符是 U+2800");
 	});
 
+	it("位置规则：变体选择符后面接零宽不连字符、空白后面接例外、不占位置的格式控制字符：说出第几个字符、哪个码位", () => {
+		expect(nicknameProblem(`小${chars(0xfe0f, 0x200c)}明`)).toContain("昵称的第 3 个字符是 U+200C");
+		expect(nicknameProblem(`小明 ${chars(0xfe0f)}`)).toContain("昵称的第 4 个字符是 U+FE0F");
+		expect(nicknameProblem(`小明 ${chars(0x200d)}`)).toContain("昵称的第 4 个字符是 U+200D");
+		expect(nicknameProblem(`小${chars(0xfff9)}明`)).toContain("昵称的第 2 个字符是 U+FFF9");
+		expect(nicknameProblem(`小${chars(0x13430)}明`)).toContain("昵称的第 2 个字符是 U+13430");
+		// 报错说明第几个字符怎么数。
+		expect(nicknameProblem(`小${chars(0xfff9)}明`)).toContain(
+			"按码位数，从去掉首尾空白之后的第一个算起",
+		);
+		// 结尾的零宽连接符照旧放行。
+		expect(nicknameProblem(`小明${chars(0x200d)}`)).toBeUndefined();
+	});
+
 	it("先去首尾空白再查表，和控制面一致：开头是 BOM、结尾是制表符的昵称，弹窗和控制面都放行", () => {
 		expect(nicknameProblem(`${chars(0xfeff)}小明\t`)).toBeUndefined();
 		// 里面的不行。

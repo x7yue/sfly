@@ -16,6 +16,8 @@ import {
 /** 用码位造字符串。 */
 const chars = (...codePoints: number[]): string => String.fromCodePoint(...codePoints);
 const ZWSP = 0x200b;
+/** 报错里「第几个字符」怎么数的说明，跟在每一条说出位置的报错后面。 */
+const POSITION_NOTE = "（第几个字符按码位数，从去掉首尾空白之后的第一个算起）";
 const ZWNJ = 0x200c;
 const ZWJ = 0x200d;
 const VS16 = 0xfe0f;
@@ -85,6 +87,24 @@ const REJECTED: ReadonlyArray<readonly [string, string]> = [
 	["变体选择符连着出现（一个字符后面最多一个）", `a${chars(VS16, VS16)}`],
 	["变体选择符接在零宽连接符后面", `a${chars(ZWJ, VS16)}b`],
 	["名字只由例外组成", chars(ZWJ, ZWNJ, VS16)],
+	// 变体选择符后面只许接零宽连接符
+	["变体选择符后面接零宽不连字符", `a${chars(VS16, ZWNJ)}b`],
+	["变体选择符后面接零宽不连字符（名字结尾）", `a${chars(VS16, ZWNJ)}`],
+	// 空白不能当例外的载体：空白之后的状态和名字开头一样
+	["空格后面接变体选择符", `ab ${chars(VS16)}`],
+	["空格后面接零宽连接符", `ab ${chars(ZWJ)}`],
+	["空格后面接零宽不连字符", `ab ${chars(ZWNJ)}`],
+	["不换行空格后面接零宽连接符", `ab${chars(0xa0, ZWJ)}`],
+	["全角空格后面接变体选择符再接零宽连接符", `ab${chars(0x3000, VS16, ZWJ)}`],
+	["名字后面挂一串「空格 + 例外」", `ab${` ${chars(VS16)} ${chars(ZWJ)}`.repeat(10)}`],
+	["空白后面的例外，后面还有看得见的字符", `a ${chars(ZWJ)}b`],
+	// 两组格式控制字符（不是默认可忽略的码位，但不占位置）
+	["行间注释的锚点 U+FFF9", `a${chars(0xfff9)}b`],
+	["行间注释的分隔符 U+FFFA", `a${chars(0xfffa)}b`],
+	["行间注释的结束符 U+FFFB", `a${chars(0xfffb)}b`],
+	["埃及象形文字的格式控制 U+13430", `a${chars(0x13430)}b`],
+	["埃及象形文字的格式控制 U+1343F", `a${chars(0x1343f)}b`],
+	["只由行间注释的锚点组成", chars(0xfff9, 0xfffa, 0xfffb)],
 	// 孤立的代理码元（不是合法的文字）、盲文空白（看起来是空的）
 	["孤立的高代理码元（U+D800）", `a${chars(0xd800)}b`],
 	["孤立的低代理码元（U+DC00）", `a${chars(0xdc00)}b`],
@@ -94,7 +114,7 @@ const REJECTED: ReadonlyArray<readonly [string, string]> = [
 	["只由盲文空白组成（看起来是空的）", chars(0x2800, 0x2800)],
 	// 没有看得见的字符
 	["只有空白", "   "],
-	["空白和零宽不连字符（看起来是空的）", ` ${chars(ZWNJ)}`],
+	["空白和零宽不连字符（空白之后的例外位置不对）", ` ${chars(ZWNJ)}`],
 	["只有不换行空格", chars(0xa0, 0xa0)],
 ];
 
@@ -125,6 +145,11 @@ const ALLOWED: ReadonlyArray<readonly [string, string]> = [
 	["僧伽罗文（零宽连接符）", `ශ${chars(0xdca, ZWJ)}රී`],
 	["汉字加变体选择符 U+FE00", `葛${chars(0xfe00)}`],
 	["不换行空格（看得见的字符之间）", `a${chars(0xa0)}b`],
+	["结尾的零宽连接符（有的文字的词尾要用）", `क${chars(0x94d, ZWJ)}`],
+	["空格后面的看得见的字符再接零宽连接符", `a b${chars(ZWJ)}c`],
+	["数字前面的符号 U+0600（正常显示，不在表里）", `a${chars(0x600)}1`],
+	["埃及象形文字本身 U+13000", chars(0x13000)],
+	["对象替换符 U+FFFC", `a${chars(0xfffc)}b`],
 	// 看起来一样的名字不在这个检查里：不承诺「看起来一样的不能并存」。
 	["西里尔字母 а 冒充拉丁字母 a", "аdmin"],
 	["成对的代理码元（emoji）不是孤立的", `a${chars(0x1f600)}b`],
@@ -150,7 +175,7 @@ describe("名字里不能有的字符", () => {
 	it("报错说出第几个字符、哪个码位（被拒的几乎都看不见，使用者才知道要删什么），四处同一句，称呼不同", () => {
 		const name = `ab${chars(ZWSP)}c`;
 		expect(unsafeNameProblem("昵称", name)).toBe(
-			"昵称的第 3 个字符是 U+200B：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符",
+			`昵称的第 3 个字符是 U+200B：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符${POSITION_NOTE}`,
 		);
 		for (const [schema, what] of [
 			[TokenName, "令牌的名称"],
@@ -169,13 +194,22 @@ describe("名字里不能有的字符", () => {
 		});
 		// 位置不对的零宽连接符：同样说出第几个字符、哪个码位。
 		expect(unsafeNameProblem("显示名", `x${chars(ZWJ, ZWJ)}`)).toBe(
-			"显示名的第 3 个字符是 U+200D：零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面（不能在名字开头，不能连着出现）",
+			`显示名的第 3 个字符是 U+200D：零宽连接符、零宽不连字符和变体选择符只能紧跟在一个看得见的字符后面（不能在名字开头，不能连着出现，不能接在空白后面；变体选择符后面只能接零宽连接符）${POSITION_NOTE}`,
 		);
-		// 没有看得见的字符。
-		expect(unsafeNameProblem("昵称", ` ${chars(ZWNJ)}`)).toBe("昵称里没有看得见的字符");
+		// 空白之后的例外：位置不对，说第几个字符（空格加零宽不连字符不再是「没有看得见的字符」）。
+		expect(unsafeNameProblem("昵称", ` ${chars(ZWNJ)}`)).toContain("昵称的第 2 个字符是 U+200C");
+		// 没有看得见的字符：只有空白（直接调用，不经 trim）。
+		expect(unsafeNameProblem("昵称", "   ")).toBe("昵称里没有看得见的字符");
+		// 一个带零宽连接符的表情算成好几个字符：按码位数，后面的位置跟着往后。
+		expect(nameProblem(`${chars(0x1f469, ZWJ, 0x1f4bb)}${chars(0x85)}`)).toMatchObject({
+			position: 4,
+			codePoint: 0x85,
+		});
+		// 「第几个字符」的说明写在报错里。
+		expect(unsafeNameProblem("昵称", name)).toContain("按码位数，从去掉首尾空白之后的第一个算起");
 		// 孤立的代理码元、盲文空白：同样说出第几个字符、哪个码位（成对的代理码元算一个字符）。
 		expect(unsafeNameProblem("昵称", `${chars(0x1f600)}${chars(0xd800)}`)).toBe(
-			"昵称的第 2 个字符是 U+D800：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符",
+			`昵称的第 2 个字符是 U+D800：名字里不能有控制字符、双向文字的控制字符和零宽空格这类看不见的字符${POSITION_NOTE}`,
 		);
 		expect(nameProblem(`ab${chars(0x2800)}`)).toEqual({
 			kind: "rejected",
@@ -235,6 +269,9 @@ describe("名字里不能有的字符", () => {
 			[0xfeff, 0xfeff],
 			[0xffa0, 0xffa0],
 			[0xfff0, 0xfff8],
+			// 不是默认可忽略的码位，但是不占位置的格式控制：行间注释的锚点（U+FFF9–U+FFFB）、埃及象形文字的格式控制。
+			[0xfff9, 0xfffb],
+			[0x13430, 0x1343f],
 			[0x1bca0, 0x1bca3],
 			[0x1d173, 0x1d17a],
 			[0xe0000, 0xe0fff],
