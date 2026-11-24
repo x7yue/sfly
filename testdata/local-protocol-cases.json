@@ -11,7 +11,7 @@
 	],
 	"rule": [
 		"事件管道：每行一个 JSON 对象，type 是 event_types 之一，读成对应的日志、进度、指标、通知、动作或动作摘要；其余内容（不是 JSON、不是对象、没有 type、类型不认识、字段缺少或类型不对）原样记成一行来源 sdk、级别 info 的日志，时间是读到它的时间。空行跳过。事件管道的一行不限长度。`NaN`、`Infinity`、`-Infinity` 不是合法的 JSON（Python 的 `json.loads` 默认接受，读取端要拒绝）：含它们的一行当作不是 JSON。",
-		"标准输出 / 标准错误：每行一条日志，来源 stdout / stderr，级别 info / error；行尾的 \\r 去掉，最后一行没有换行也记下，空行也是一行。一行超过 max_line_bytes 时拆开；Agent 一端拆在哪里取决于一次读到多少字节，所以用例里不断言。",
+		"标准输出 / 标准错误：每行一条日志，来源 stdout / stderr，级别 info / error；行尾的 \\r 去掉，最后一行没有换行也记下，空行也是一行。一行超过 max_line_bytes 时拆开，每段不超过它，拆在字符（UTF-8）边界上（不超过的字节数里最后一个完整的字符），拆在哪里只取决于这一行的内容，和每次读到多少字节无关，两端一样，见下面的用例（Agent 一端每段另带只用来打码的上下文，不在读出的日志里）。",
 		"结果：output.json 是 success 且退出码是 0 时成功，输出取 outputs；output.json 是 failed 时失败（不看退出码），上报 error.message，有 traceback 时在后面空一行接上去掉末尾空白的 traceback；失败的位置取 error.location（节点代码里出错的那一行，「模块.函数 第 N 行」）：不是字符串、是空串、没有这个键都是没有位置，失败照常上报；失败的类型取 error.kind：是 config_error 时是配置错误（执行器在调用节点前就拒绝了输入），是 env_error 时是环境错误（节点没接住产物超限，不重试），没有或是别的值时是节点出错 node_error；其余情况（没有 output.json、不是 JSON（含 `NaN`、`Infinity`）、不是对象、status 不认识、success 但退出码不是 0）是执行器异常退出，上报「执行器异常退出（<退出状态>），没有写出结果」，空一行后接标准错误最后 stderr_tail_bytes 字节（去掉末尾空白）。退出状态的写法两端不同（Agent 是 exit status: 3，本地调试是 退出码 3），用例不比较，只比较 abnormal_exit.stderr_tail。",
 		"同一批内的日志按读到的先后（单调时钟）排，不按事件里的 ts：系统时间往回跳时，跳变之后的行不会排到之前的行前面。",
 		"constants：max_line_bytes 是标准输出 / 标准错误一行的最大字节数；drain_timeout_ms 是执行器退出后等仍持有管道的后台子进程关闭管道的最长时间；stderr_tail_bytes 是失败时附带的标准错误尾部的最大字节数；terminate_grace_ms 是取消时从 SIGTERM 到强制杀掉进程树的默认宽限期。两端各抄了一份，值要一样。"
@@ -970,6 +970,122 @@
 						"source": "stdout",
 						"level": "info",
 						"message": "b"
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：超过 max_line_bytes 的一行拆成几段，每段不超过它，接起来就是原来的行",
+			"stdout": {
+				"$repeat": "x",
+				"times": 65636,
+				"suffix": "\n"
+			},
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "x",
+							"times": 65536
+						}
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "x",
+							"times": 100
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：一行被拆开时，拆在字符边界上（3 字节的字符，上限正好落在字符开头）",
+			"stdout": {
+				"$repeat": "中",
+				"times": 30000,
+				"prefix": "z",
+				"suffix": "\n"
+			},
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "中",
+							"times": 21845,
+							"prefix": "z"
+						}
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "中",
+							"times": 8155
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：一行被拆开时，拆在字符边界上（3 字节的字符，上限落在字符中间，往回退到字符开头）",
+			"stdout": {
+				"$repeat": "中",
+				"times": 30000,
+				"prefix": "zz",
+				"suffix": "\n"
+			},
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "中",
+							"times": 21844,
+							"prefix": "zz"
+						}
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "中",
+							"times": 8156
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "标准输出：一行被拆开时，行尾的 \\r 不进任何一段，也不影响拆在哪里",
+			"stdout": {
+				"$repeat": "q",
+				"times": 81919,
+				"suffix": "\r\n"
+			},
+			"expect": {
+				"logs": [
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "q",
+							"times": 65536
+						}
+					},
+					{
+						"source": "stdout",
+						"level": "info",
+						"message": {
+							"$repeat": "q",
+							"times": 16383
+						}
 					}
 				]
 			}

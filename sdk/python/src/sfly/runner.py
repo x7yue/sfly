@@ -520,6 +520,7 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
     try:
         fn = load_entry(str(task["entry"]))
         importing = False
+        _install_thread_hook(str(task.get("entry") or ""), task.get("package"))
         return 0, _encode(invoke(fn, task.get("inputs") or {}))
     except InputError as error:
         # 配置错误：不是节点出错，没有堆栈可看，错误信息就是原因，不往标准错误写（ERROR 级的日志）。
@@ -568,6 +569,29 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
             failure_error["kind"] = "env_error"
         failure = {"status": "failed", "error": failure_error}
         return 1, json.dumps(failure, ensure_ascii=False)
+
+
+def _install_thread_hook(entry: str, package: str | None) -> None:
+    """后台线程里没接住的 `Cancelled` 和主线程一样是正常终止（见 `run`）：只在事件管道里留一行
+    INFO，不让线程的默认处理往标准错误写 ERROR 级的堆栈（约 20 行）。别的异常照旧。
+
+    只在节点已经导入了 `threading` 时装（节点要开线程，就一定导入了它）：启动路径上不为这个
+    多导入一个模块（#76，`test_startup_path_does_not_import_deferred_modules`）。节点在运行中
+    才第一次导入 `threading` 的话没有这一行，线程里没接住的 `Cancelled` 照旧写堆栈。"""
+    threading: Any = sys.modules.get("threading")
+    if threading is None:
+        return
+    default = threading.excepthook
+
+    def hook(args: Any) -> None:
+        error = args.exc_value
+        if isinstance(error, Cancelled):
+            name = args.thread.name if args.thread is not None else "?"
+            _info(f"后台线程 {name}：{_termination_message(error, entry, package)}")
+            return
+        default(args)
+
+    threading.excepthook = hook
 
 
 def main() -> int:
