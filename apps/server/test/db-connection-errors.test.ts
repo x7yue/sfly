@@ -409,7 +409,11 @@ describe("没有借出去的连接出错：进程不退出（以前也不退出�
 		await cp.request("GET", "/orchestrations");
 		await new Promise((resolve) => setTimeout(resolve, 300));
 
-		expect(await terminateIdle(database.url)).toBeGreaterThanOrEqual(1);
+		// 机器忙的时候（CI 上整套测试一起跑）这一刻控制面唯一的连接可能正在执行别的语句、不是空闲的：等到有空闲的再结束
+		// （CI 上失败过一次，`terminateIdle` 找到 0 个；本机连跑 8 遍没有复现）。
+		await eventually(async () => {
+			expect(await terminateIdle(database.url)).toBeGreaterThanOrEqual(1);
+		}, 10_000);
 		await eventually(async () => expect(cp.log).toContain("postgres connection error"), 10_000);
 
 		await expectAlive();
