@@ -6,7 +6,7 @@ import { useRef, useState } from "react";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
-import { scopesText, TOKEN_STATE_LABEL } from "#/lib/copy";
+import { SCOPE_SEPARATOR, scopeLabels, TOKEN_STATE_LABEL } from "#/lib/copy";
 import { formatDateTimeWithYear } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { Button } from "@/components/ui/button";
@@ -61,7 +61,7 @@ export function TokensPage({
 				actions={list && list.length > 0 && issueButton}
 			/>
 			<p className="mt-0 mb-3 max-w-[72ch] text-sm text-fg-2">{intro}</p>
-			<Panel>
+			<Panel className="@container">
 				<QueryView
 					query={tokens}
 					loading={<TableSkeleton columns={8} />}
@@ -94,8 +94,32 @@ export function TokensPage({
 	);
 }
 
-/** 名称列最窄 11rem（十来个汉字）：名称是认令牌的主要依据，其他列放不下时让它们折行，不压名称。 */
+/**
+ * 名称列最窄 11rem（十来个汉字）：名称是认令牌的主要依据，不让别的列把它挤没。**只在窄于 1280 的窗口里起作用**：
+ * 1280 宽下其他列加起来给名称留的宽度本来就不窄于它（范围列限宽折行、三个时间列折成两行，见下面），不靠这个下限；更窄的窗口里其他列放不下时表格
+ * 横向滚动、名称仍不窄于它。更窄宽度没有用例：「窄窗口要横向滚动」不是定下来的行为，只是名称不被挤没的代价。
+ */
 const NAME_COLUMN = "min-w-44";
+
+/**
+ * 三个时间列（创建、最后使用、过期，带年份的「2026-01-01 08:00」）：面板窄于 1060px（名称列最窄、别的列都不折行时表格的宽度，
+ * 加两像素的边框）时日期和时间折成两行，每列从 136px 缩到 96px。不折的话 1280 宽（面板 991px）下只要有一个用过的令牌、
+ * 有过期时间，表格就比面板宽 62px，「操作」列和「吊销」被推到右边看不到。折行靠 `whitespace-normal`：列是 `w-px`（按内容收紧），
+ * 取最小内容宽度。**只允许在日期和时间之间的空格处断开**：日期（`2026-01-01`）和时间（`08:00`）各包一个不换行的元素（{@link DateTime}）；
+ * 不包的话浏览器在连字符后面也能断行，三列被收到 72px，一格折成「2026-」「01-01」「08:00」三行，年份后面就断开了。
+ */
+const DATE_CELL = "font-mono text-xs text-fg-3 @max-[1060px]:whitespace-normal";
+
+/** 「2026-01-01 08:00」：日期和时间各不换行，中间是普通的空格（窄的时候只在这里折成两行，见 {@link DATE_CELL}）。 */
+function DateTime({ value }: { value: string }) {
+	const [date, time] = formatDateTimeWithYear(value).split(" ");
+	return (
+		<>
+			<span className="whitespace-nowrap">{date}</span>{" "}
+			<span className="whitespace-nowrap">{time}</span>
+		</>
+	);
+}
 
 const STATE_KIND = { active: "ok", expired: "warn", revoked: "stopped" } as const;
 
@@ -153,9 +177,15 @@ function TokenRow({
 				{token.prefix}…
 			</TableCell>
 			<TableCell width="fit" className={cn("text-xs", live ? "text-fg-1" : "text-fg-3")}>
-				{/* 范围最宽 7rem：写得长（六个范围）时折成两行，不靠挤名称来放（1280 宽下名称列原来只剩七八十像素；名称列要 176px，其他列加起来不能让表格比面板宽）。 */}
-				<span className="inline-block w-max max-w-28 whitespace-normal align-middle">
-					{scopesText(token.scopes)}
+				{/* 范围最宽 7.5rem：写得长（六个范围）时折成两行，不靠挤名称来放（1280 宽下名称列原来只剩七八十像素）；
+				    换行只在顿号处：每个范围连着它后面的顿号是一个不拆开的单位（不在词中间断开）。7.5rem 是六个范围排成
+				    「读、运行、编辑、」「会话构建、发布、管理」两行里较长那一行的宽度（等宽 12px 的 10 个字），再窄就变三行。 */}
+				<span className="inline-block w-max max-w-30 whitespace-normal align-middle">
+					{scopeLabels(token.scopes).map((label, i, all) => (
+						<span key={label} className="inline-block whitespace-nowrap">
+							{i < all.length - 1 ? `${label}${SCOPE_SEPARATOR}` : label}
+						</span>
+					))}
 				</span>
 			</TableCell>
 			{owner.kind === "personal" && (
@@ -169,19 +199,19 @@ function TokenRow({
 					{token.issued_by ?? <span className="text-fg-3">未记录</span>}
 				</TableCell>
 			)}
-			<TableCell width="fit" className="font-mono text-xs text-fg-3">
-				{formatDateTimeWithYear(token.created_at)}
+			<TableCell width="fit" className={DATE_CELL}>
+				<DateTime value={token.created_at} />
 			</TableCell>
-			<TableCell width="fit" className="font-mono text-xs text-fg-3">
+			<TableCell width="fit" className={DATE_CELL}>
 				{token.last_used_at ? (
-					formatDateTimeWithYear(token.last_used_at)
+					<DateTime value={token.last_used_at} />
 				) : (
 					<span className="font-sans">从未使用</span>
 				)}
 			</TableCell>
-			<TableCell width="fit" className="font-mono text-xs text-fg-3">
+			<TableCell width="fit" className={DATE_CELL}>
 				{token.expires_at ? (
-					formatDateTimeWithYear(token.expires_at)
+					<DateTime value={token.expires_at} />
 				) : (
 					<span className="font-sans">不过期</span>
 				)}
