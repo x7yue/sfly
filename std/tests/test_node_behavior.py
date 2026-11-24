@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from node_behavior import run_cases
+from node_behavior import ERROR_PREFIXES, run_cases
 
 GOLDEN = Path(__file__).with_name("node_behavior.json")
 EXPECTED: dict[str, dict[str, Any]] = json.loads(GOLDEN.read_text(encoding="utf-8"))
@@ -33,7 +33,13 @@ def test_the_node_behaves_exactly_as_before(behavior: dict[str, dict[str, Any]],
     if name not in behavior:
         pytest.skip("这个用例只在 Linux 上跑（监听文件要 inotify）")
 
-    assert behavior[name] == EXPECTED[name]
+    expected = dict(EXPECTED[name])
+    message = expected["error_message"]
+    if isinstance(message, str):
+        for node_module, helper_module in ERROR_PREFIXES.items():
+            message = message.replace(node_module, helper_module)
+        expected["error_message"] = message
+    assert behavior[name] == expected
 
 
 def test_the_fixture_covers_every_node_and_the_kinds_of_outcome() -> None:

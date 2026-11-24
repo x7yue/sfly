@@ -11,6 +11,7 @@ import {
 	type ShortcutDef,
 	ShortcutMatcher,
 	shortcutKeys,
+	shortcutRows,
 	shortcutText,
 } from "./shortcuts";
 
@@ -157,6 +158,26 @@ describe("快捷键注册表", () => {
 	it("同一分组内的键不重复（不同页面分组之间可以重复：它们是互斥的路由）", () => {
 		for (const group of new Set(live.map((s) => s.group))) {
 			expect(clashes(live.filter((s) => s.group === group))).toEqual([]);
+		}
+	});
+});
+
+describe("快捷键面板的行", () => {
+	it("名称相同的登记（一个键一条）合成一行：名称一次，按键按注册表顺序；其余每条自成一行", () => {
+		const rows = shortcutRows("编排画布");
+		const remove = rows.filter((row) => row.label === "删除节点 / 断开连线");
+		expect(remove).toEqual([
+			{ label: "删除节点 / 断开连线", ids: ["canvas-delete", "canvas-delete-backspace"] },
+		]);
+		expect(rows.flatMap((row) => row.ids)).toEqual(
+			SHORTCUTS.filter((s) => s.group === "编排画布").map((s) => s.id),
+		);
+	});
+
+	it("每个分组里没有两行同名", () => {
+		for (const group of new Set(SHORTCUTS.map((s) => s.group))) {
+			const labels = shortcutRows(group).map((row) => row.label);
+			expect(new Set(labels).size, group).toBe(labels.length);
 		}
 	});
 });

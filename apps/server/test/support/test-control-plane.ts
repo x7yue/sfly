@@ -61,12 +61,18 @@ export async function startTestControlPlane(
 		agentToken?: string;
 		/** 停止之后等助手服务带回结局的宽限：默认 300 毫秒；`"production"` 是不传值、用控制面自己的默认（`STOP_GRACE_MS`）。 */
 		sessionStopGraceMs?: number | "production";
+		/**
+		 * 从这个模板库（{@link createMigratedTemplate}）复制出测试库，不用每个控制面都把迁移从头跑一遍（#613）。
+		 * 模板是按源码里的迁移目录迁移好的，不能和 `migrationsDir` 一起给（老迁移目录对着新结构的库没有意义）。
+		 */
+		template?: string;
 	} & Pick<
 		ControlPlaneOptions,
 		| "logLimitBytes"
 		| "logScanBytes"
 		| "metricLimitBytes"
 		| "artifactLimitBytes"
+		| "artifactUploadIdleMs"
 		| "retentionDays"
 		| "metricRetentionDays"
 		| "leaseMs"
@@ -100,11 +106,15 @@ export async function startTestControlPlane(
 		| "passwordGate"
 		| "trustProxy"
 		| "streamRecheckMs"
+		| "sessionWriteLockTimeoutMs"
 	> = {},
 ): Promise<TestControlPlane> {
+	if (options.template !== undefined && options.migrationsDir !== undefined) {
+		throw new Error("template 和 migrationsDir 不能一起给：模板库已经按源码里的迁移目录迁移好了");
+	}
 	let migrationsDir = options.migrationsDir;
 	const clock = options.clock ?? new ManualClock();
-	const database = await createTestDatabase();
+	const database = await createTestDatabase("sfly_test", { template: options.template });
 	const dataDir = await mkdtemp(join(tmpdir(), "sfly-test-"));
 	const start = (ports = { http: 0, grpc: 0 }) =>
 		startControlPlane({
@@ -118,6 +128,7 @@ export async function startTestControlPlane(
 			// 指标写入扫描（#29）同样调快。
 			metricFlushIntervalMs: 20,
 			artifactLimitBytes: options.artifactLimitBytes,
+			artifactUploadIdleMs: options.artifactUploadIdleMs,
 			retentionDays: options.retentionDays,
 			metricRetentionDays: options.metricRetentionDays,
 			leaseMs: options.leaseMs,
@@ -159,6 +170,7 @@ export async function startTestControlPlane(
 			passwordGate: options.passwordGate,
 			trustProxy: options.trustProxy,
 			streamRecheckMs: options.streamRecheckMs,
+			sessionWriteLockTimeoutMs: options.sessionWriteLockTimeoutMs,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 飞书发送队列的周期扫描同样调快。

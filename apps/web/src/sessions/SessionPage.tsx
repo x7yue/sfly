@@ -16,6 +16,7 @@ import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
 import { errorText } from "#/lib/format";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { shortcutText } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
@@ -225,11 +226,7 @@ function ProjectBusy({ sessionId }: { sessionId: string }) {
 			{busy && (
 				<>
 					{"："}
-					<Link
-						to="/sessions/$id"
-						params={{ id: busy.id }}
-						className="text-fg-1 underline underline-offset-2"
-					>
+					<Link to="/sessions/$id" params={{ id: busy.id }} className={INLINE_LINK}>
 						{SESSION.busyLink}
 					</Link>
 				</>

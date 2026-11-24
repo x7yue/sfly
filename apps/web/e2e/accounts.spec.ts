@@ -336,6 +336,39 @@ test.describe("登录失效之后回到登录页", () => {
 		await expect(page).toHaveURL(/\/runs\?status=failed$/);
 	});
 
+	test("拿到 401 但登录其实还有效（公开地址和浏览器地址不一致时，请求被当作没登录）：不回登录页，留在原页面（#578）", async ({
+		page,
+	}) => {
+		await page.goto("/login");
+		await login(page);
+		await expect(accountMenu(page)).toBeVisible();
+
+		// 运行列表的轮询请求一律拿到 401，而 GET /auth/me 仍然说登录有效：和「登录真的失效」的区别只在后一个问题的回答。
+		const events: string[] = [];
+		await page.route(/\/api\/runs(\?|$)/, (route) => {
+			events.push("401");
+			return route.fulfill({
+				status: 401,
+				contentType: "application/json",
+				body: JSON.stringify({ error: { code: "unauthorized", message: "凭据无效" } }),
+			});
+		});
+		page.on("response", (response) => {
+			if (response.url().includes("/api/auth/me")) events.push(`me:${response.status()}`);
+		});
+		await page.goto("/runs");
+		// 轮询每 2 秒一次：至少两个 401，每一个之后都问过 GET /auth/me，回答是登录有效。
+		await expect
+			.poll(() => events.filter((event) => event === "401").length, { timeout: 15_000 })
+			.toBeGreaterThanOrEqual(2);
+		await expect.poll(() => events.filter((event) => event === "me:200").length).toBeGreaterThan(1);
+		expect(events).not.toContain("me:401");
+		// 没有被带回登录页，顶栏还是登录着的账号，也没有「登录已失效」。
+		await expect(page).toHaveURL(/\/runs$/);
+		await expect(accountMenu(page)).toBeVisible();
+		await expect(page.getByText("登录已失效")).toBeHidden();
+	});
+
 	test.describe("从没登录过的人（昵称模式）", () => {
 		test.use({ nickname: "tester" });
 

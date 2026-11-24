@@ -1028,7 +1028,7 @@ def test_count_lines(tmp_path: Path) -> None:
 
 `ts` 是 Unix 毫秒时间戳。
 
-断言节点要发的通知：`notifications` 里每一项是机器人名称和完整的请求体，不用起任何服务。
+要发通知的节点（汇总节点等）：`notifications` 里每一项是机器人名称和完整的请求体，不用起任何服务。
 
 ```python
 from pathlib import Path

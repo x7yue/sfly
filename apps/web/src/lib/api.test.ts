@@ -83,9 +83,10 @@ describe("请求拿到 401：登录着的人回到登录页", () => {
 		await expect(callApi(agentsApi.list)).rejects.toMatchObject({ status: 401 });
 		expect(expired).not.toHaveBeenCalled();
 
+		// 本来登录着：这个 401 之后问一次 GET /auth/me，也是 401（登录真的失效了）才通知。
 		setCurrentUser(USER);
 		await expect(callApi(agentsApi.list)).rejects.toMatchObject({ status: 401 });
-		expect(expired).toHaveBeenCalledTimes(1);
+		await vi.waitFor(() => expect(expired).toHaveBeenCalledTimes(1));
 	});
 
 	it("事件流重连拿到 401（登录失效之后控制面关掉了流）：同样通知，订阅随后停止", async () => {
@@ -100,7 +101,8 @@ describe("请求拿到 401：登录着的人回到登录页", () => {
 		const close = openEventSource(logsApi.events, { params: { id: "t1" }, query: {} }, {});
 		await vi.waitFor(() => expect(expired).toHaveBeenCalledTimes(1));
 		close();
-		expect(calls).toBe(1);
+		// 事件流重连一次 + 问 GET /auth/me 一次；订阅随后停止，不再重连。
+		expect(calls).toBe(2);
 	});
 
 	it("登录页上登录失败的 401 不通知（还没登录）", async () => {

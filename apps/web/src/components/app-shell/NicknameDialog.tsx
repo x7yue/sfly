@@ -1,7 +1,9 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { cn } from "cn";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { useIdentity } from "#/lib/identity";
+import { INLINE_LINK } from "#/lib/inline-link";
 import { setNickname, useNickname } from "#/lib/nickname";
 import { Button } from "@/components/ui/button";
 import {
@@ -101,7 +103,7 @@ export function NicknameDialog({
 						{identity.status === "anonymous" && (
 							<Link
 								to="/login"
-								className="mr-auto text-sm text-fg-2 underline underline-offset-2 hover:text-fg-1"
+								className={cn("mr-auto text-sm", INLINE_LINK)}
 								onClick={() => onOpenChange(false)}
 							>
 								已有账号，去登录

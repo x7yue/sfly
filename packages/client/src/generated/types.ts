@@ -682,6 +682,8 @@ export interface DashboardRunningRun {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（与运行列表的 `session` 相同）。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
@@ -1478,9 +1480,11 @@ export interface NodeTypeView {
 
 /**
  * 提示（`notice`）的种类。助手服务产生的：`retry` 正在重试、`retry_end` 重试结束、`compaction` 压缩了上下文、
- * `steer_dropped` 插话因停止没有送到、`context_reset` 接不上之前的上下文，换成了一段摘要；
- * 控制面产生的：`queue_cancelled` 排队中的话因停止没有交给助手、`events_lost` 控制面和助手服务断开太久，
- * 这一段过程没有记下。
+ * `steer_dropped` 插话没有送到模型（停止、到了上限、结束会话时还没送到，或者这一轮因为别的原因结束了；每句各一条，**必须带**这句话的
+ * `message_id`；插话命令回 409 或者没有得到 202、控制面自己补这一轮的结局时，没有确认送到的话的 `steer_dropped` 由控制面写，规则见
+ * 助手服务协议「插话」一节）、`context_reset` 接不上之前的上下文，换成了一段摘要；
+ * 控制面产生的：`queue_cancelled` 排队中的话因停止没有交给助手（**必须带**这句话的 `message_id`；`message` 固定写「这句话排队时被取消了，
+ * 没有交给助手」）、`events_lost` 控制面和助手服务断开太久，这一段过程没有记下。
  * 产生：`retry`、`retry_end`、`compaction` #540；`steer_dropped`、`queue_cancelled` #544；
  * `events_lost`、`context_reset` #545。
  */
@@ -1565,6 +1569,8 @@ export interface OrchestrationVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 }
@@ -1730,6 +1736,11 @@ export type ParamType = "string" | "number" | "boolean" | "json";
 /** 一个持久的会话事件：`PERSISTED_SESSION_EVENT_TYPES` 里的类型，带 `seq` 和 `at`（历史接口返回它）。 */
 export type PersistedSessionEvent = {
 	type: "user_message";
+	/**
+	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
+	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
+	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
+	 */
 	message_id: string;
 	text: string;
 	steer: boolean;
@@ -1779,6 +1790,12 @@ export type PersistedSessionEvent = {
 	retry_delay_ms?: number;
 	/** 重试的原因按什么分；#548 起有值。 */
 	error_class?: ErrorClass;
+	/**
+	 * 没有送到的那句话（`user_message.message_id`）：`steer_dropped`（插话没有送到模型）和 `queue_cancelled`（排队中的话因停止没有交给助手）
+	 * **必须带**，其余种类不能带。页面据此把这一行和那句话对上，不靠 `message` 里引用的文字；同一句话可能有两条 `steer_dropped`
+	 * （控制面写了「没有确认送到」、助手服务之后又确认没送到），按它认，显示一次。#544 起。
+	 */
+	message_id?: string;
 	seq: number;
 	at: Timestamp;
 } | {
@@ -2241,6 +2258,8 @@ export interface RunListItem {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunListPreset | null;
 	started_at: Timestamp;
@@ -2509,6 +2528,11 @@ export interface RunReport {
 	truncated: boolean;
 	/** 运行里已经创建的全部链实例，按层数、开始时间排序；还没被触发的子流程不在里面，看触发它的异步任务节点的状态。 */
 	chains: RunStateChain[];
+	/**
+	 * 经哪个会话触发（会话令牌的请求，#547）：会话的 ID 和此刻的标题；不是会话触发的没有这个字段（和运行视图的 `session` 相同）。
+	 * 只在运行摘要里：`RunState` 也是节点里 `${{ run.state }}` 看到的东西，不带它。
+	 */
+	session?: SessionRef;
 	/** 耗时（毫秒，控制面时间）；运行还没结束时为 null。 */
 	duration_ms: number | null;
 	/**
@@ -2711,6 +2735,8 @@ export interface RunSummary {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
@@ -2728,6 +2754,8 @@ export interface RunView {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
+	/** 经哪个会话触发（会话令牌触发的，#547）；不是会话触发的没有这个字段。 */
+	session?: SessionRef;
 	params: Record<string, unknown>;
 	/** 触发时选用的运行预设；没有用预设时为 null。 */
 	preset: RunPresetView | null;
@@ -2812,6 +2840,8 @@ export interface SavedVersionView {
 	/** 保存这个版本的人的昵称。 */
 	author: string;
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 	document: StoredOrchestrationDocument;
 	/** 保存时的静态检查警告：只提示，不阻止保存。 */
@@ -2894,6 +2924,16 @@ export interface SessionListResponse {
 
 /** 会话里的一句话：新建会话的第一句、发话、插话。非空（不能只有空白），不超过 `SESSION_MESSAGE_MAX_CHARS` 个字符。 */
 export type SessionMessageText = string;
+
+/**
+ * 运行、场景版本上的「经哪个会话」（ADR 0029「经 …」：会话令牌记会话，#547）：会话的 ID 和标题，页面上显示成
+ * 会话「<标题>」并链到会话页。依据是控制面收到的请求带着哪个会话的令牌，不是模型在对话里怎么说，也不是可以伪造的
+ * `x-sfly-client` 标注。不是会话做的，响应里没有这个字段。
+ */
+export interface SessionRef {
+	id: string;
+	title: string;
+}
 
 /**
  * 会话的状态：`idle` 空闲、`running` 在做（有一轮在进行）、`queued` 排队中（同一个项目另一个会话在做，#544）、
@@ -3178,6 +3218,8 @@ export interface VersionSummaryView {
 	author: string;
 	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	author_via: string | null;
+	/** 经哪个会话保存（会话令牌保存的，#547）；不是会话保存的没有这个字段。 */
+	session?: SessionRef;
 	created_at: Timestamp;
 }
 
