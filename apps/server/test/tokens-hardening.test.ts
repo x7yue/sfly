@@ -332,17 +332,24 @@ describe("令牌的几处收紧", () => {
 			}
 		});
 
-		it("昵称不合格的报错说出第几个字符、哪个码位；按契约编码过的请求不再收到「请编码」的提示（说字符的事）", async () => {
-			const res = await call(
-				{ "x-sfly-nickname": encodeURIComponent("ab\u200bc") },
-				"POST",
-				"/orchestrations",
-				{ name: "不该建出来" },
-			);
-			expect(res.status).toBe(400);
-			const { message } = await errorOf(res);
-			expect(message).toContain("昵称的第 3 个字符是 U+200B");
-			expect(message).not.toContain("encodeURIComponent");
+		it("昵称不合格的报错说出第几个字符、哪个码位；按契约编码过的请求不再收到「请编码」的提示（说字符的事），不管被拒的字符是不是 U+0080–U+00FF 的", async () => {
+			for (const [nickname, expected] of [
+				["ab\u200bc", "昵称的第 3 个字符是 U+200B"],
+				// 软连字符、下一行（NEL）在 U+0080–U+00FF 里：编码过的请求同样不提示。
+				["ab\u00adc", "昵称的第 3 个字符是 U+00AD"],
+				["ab\u0085c", "昵称的第 3 个字符是 U+0085"],
+			] as const) {
+				const res = await call(
+					{ "x-sfly-nickname": encodeURIComponent(nickname) },
+					"POST",
+					"/orchestrations",
+					{ name: "不该建出来" },
+				);
+				expect(res.status, JSON.stringify(nickname)).toBe(400);
+				const { message } = await errorOf(res);
+				expect(message, JSON.stringify(nickname)).toContain(expected);
+				expect(message, JSON.stringify(nickname)).not.toContain("encodeURIComponent");
+			}
 			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 
@@ -355,6 +362,28 @@ describe("令牌的几处收紧", () => {
 			const { message } = await errorOf(res);
 			expect(message).toContain("encodeURIComponent");
 			expect(message).toContain("昵称的第 3 个字符是 U+008F");
+			// 值里带不合法的 %（解码不了）也算没编码：同样提示。
+			const withPercent = await call(
+				{ "x-sfly-nickname": `50%${raw}` },
+				"POST",
+				"/orchestrations",
+				{ name: "不该建出来" },
+			);
+			expect(withPercent.status).toBe(400);
+			const percent = (await errorOf(withPercent)).message;
+			expect(percent).toContain("encodeURIComponent");
+			expect(percent).toContain("昵称的第 6 个字符是 U+008F");
+			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
+		});
+
+		it("没编码、但被拒的是 ASCII 的字符（直接写的制表符）：编码了一样被拒，不提示编码，只说字符", async () => {
+			const res = await call({ "x-sfly-nickname": "a\tb" }, "POST", "/orchestrations", {
+				name: "不该建出来",
+			});
+			expect(res.status).toBe(400);
+			const { message } = await errorOf(res);
+			expect(message).toContain("昵称的第 2 个字符是 U+0009");
+			expect(message).not.toContain("encodeURIComponent");
 			expect((await db.query("select count(*)::int as n from orchestrations")).rows[0].n).toBe(0);
 		});
 	});
