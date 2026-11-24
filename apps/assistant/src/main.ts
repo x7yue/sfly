@@ -6,6 +6,7 @@ import { EventBus } from "./bus.js";
 import { ASSISTANT_PORT, ConfigError, readConfig } from "./config.js";
 import { piPackage } from "./launch.js";
 import { checkModelsFile } from "./models.js";
+import { printError, writeLog, writeRawLog } from "./output.js";
 import { createAssistantServer } from "./server.js";
 import { SessionManager } from "./sessions.js";
 
@@ -15,7 +16,7 @@ import { SessionManager } from "./sessions.js";
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
-const log = (message: string) => process.stderr.write(`${new Date().toISOString()} ${message}\n`);
+const log = writeLog;
 
 function main(): void {
 	let config: ReturnType<typeof readConfig>;
@@ -24,7 +25,7 @@ function main(): void {
 		for (const warning of checkModelsFile(config.modelsFile, process.env)) log(`提醒：${warning}`);
 	} catch (error) {
 		if (error instanceof ConfigError) {
-			log(`拒绝启动：${error.message}`);
+			printError("拒绝启动", error);
 			process.exit(1);
 		}
 		throw error;
@@ -46,7 +47,8 @@ function main(): void {
 			: join(appDir, "..", "..", "docs", "guide", "skills"),
 		hostEnv: process.env,
 		bus,
-		connect: (address, agentLog = log) => connectAgent(address, { log: agentLog }),
+		// 会话以外用到的工作台客户端（探一下工作台）没有会话可以按值打码：按形状打码、截到上限。
+		connect: (address, agentLog = writeRawLog) => connectAgent(address, { log: agentLog }),
 		log,
 	});
 	const version = (

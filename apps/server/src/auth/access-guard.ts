@@ -24,8 +24,8 @@ import {
 	LOGIN_ONLY_ROUTES,
 	locatorOf,
 	type ProjectLocator,
-	REQUIRES_CREDENTIAL,
 	REVOKE_OWN_ROUTES,
+	requiresCredential,
 	routeKey,
 	TASK_CREDENTIAL_ROUTES,
 } from "./access-rules.js";
@@ -300,7 +300,7 @@ export class AccessGuard {
 		if (presented === undefined) {
 			// 不带凭据照旧放行（到 #494），公共项目除外：只有平台管理员能写它，没有凭据就没有平台管理员。
 			if (publicWrite) return denied(401, "unauthorized", PUBLIC_WRITE_DENIED);
-			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+			return requiresCredential(request.route)
 				? denied(401, "unauthorized", "需要登录或令牌")
 				: { ok: true, access: null };
 		}
@@ -321,7 +321,7 @@ export class AccessGuard {
 		}
 		if (principal.kind === "shared") {
 			if (publicWrite) return denied(403, "forbidden", PUBLIC_WRITE_DENIED);
-			return REQUIRES_CREDENTIAL.has(request.route.resource.kind)
+			return requiresCredential(request.route)
 				? denied(403, "forbidden", "共享令牌不能调用这个接口：它只给 Agent 用")
 				: { ok: true, access: null };
 		}
@@ -704,6 +704,15 @@ export class AccessGuard {
 					: `${who}不能做这件事：它只有人能做（登录的用户或个人令牌）`,
 			);
 		}
+		// 其余只有人能做的写（我的开发 Agent：开发 Agent 的凭据记在这个用户名下，名字里带着他的登录名）：会话令牌也不行，
+		// 它是代用户干活的，不能替他注册；会话这一类上面已经单独说了。
+		if (principal.kind === "session" && writeNeedsPerson(route)) {
+			return denied(
+				403,
+				"forbidden",
+				"这个接口只认有用户的人的凭据（登录、个人令牌）：会话令牌和项目令牌不能用它",
+			);
+		}
 		if (principal.kind === "session" && route.effect === "write") {
 			// 会话令牌的勾选（可以改的场景、可以用的 Agent、可以发消息的机器人）和待批准的操作在 #495、#496 接进来；
 			// 在那之前，会话能改项目里的任何场景、往任何 Agent 派任务（骨架不对真实用户开放）。
@@ -871,7 +880,8 @@ function tokenPrincipal(
 						project: token.projectId,
 					};
 		case "task":
-			return token.projectId === null
+			// 任务凭据只在这次任务尝试还在 Agent 手上的时候有效（结束、取消、租约过期之后失效）。
+			return token.projectId === null || token.taskActive !== true
 				? undefined
 				: { kind: "task", tokenId: token.id, name: token.name, project: token.projectId };
 	}

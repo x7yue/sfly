@@ -967,6 +967,15 @@ export const apiTokens = pgTable(
 		 * 空：不是项目令牌，或者是这一列加进来之前签发的。
 		 */
 		issuedByUserId: uuid("issued_by_user_id").references(() => users.id),
+		/**
+		 * 任务凭据派发时这条连接用的那一个 Agent 凭据（#492）：任务凭据只在**它**没被吊销时有效，不看「这个名字此刻有没有别的
+		 * 有效凭据」（全部吊销之后再给同名的 Agent 签发一个新的，旧连接上发出去的任务凭据不能因此又被认）。空：不是任务凭据，
+		 * 或者连接用的是旧方式（共享令牌、没有凭据）的，或者是这一列加进来之前派发的；这几种只看这台 Agent 有没有停用。
+		 * 凭据行删除时任务凭据随它删除（不认）。
+		 */
+		agentCredentialId: uuid("agent_credential_id").references(() => agentCredentials.id, {
+			onDelete: "cascade",
+		}),
 		scopes: text("scopes").array().notNull(),
 		createdAt: timestamptz("created_at").notNull(),
 		expiresAt: timestamptz("expires_at"),
@@ -988,6 +997,10 @@ export const apiTokens = pgTable(
 		// 任务结束时吊销它的凭据。
 		index("api_tokens_task").on(t.taskId).where(sql`${t.taskId} is not null`),
 		check("api_tokens_kind", sql`${t.kind} in ('personal', 'project', 'session', 'task')`),
+		check(
+			"api_tokens_agent_credential_task",
+			sql`${t.agentCredentialId} is null or ${t.kind} = 'task'`,
+		),
 		check(
 			"api_tokens_shape",
 			sql`(${t.kind} = 'personal' and ${t.userId} is not null and ${t.sessionId} is null and ${t.taskId} is null)

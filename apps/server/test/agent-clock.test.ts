@@ -1,12 +1,19 @@
 import { type AgentView, agentsApi } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { AgentAuthenticator } from "../src/agents/agent-auth.js";
+import { AgentCredentialService } from "../src/agents/agent-credentials.js";
 import { AgentHub } from "../src/agents/agent-hub.js";
 import { openDatabase } from "../src/db/database.js";
 import { type AgentGatewayServer, startAgentGateway } from "../src/gateway/agent-gateway.js";
 import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { Mutex } from "../src/util/mutex.js";
 import { eventually } from "./support/eventually.js";
-import { agentClock, FakeAgent, type HelloInit } from "./support/fake-agent.js";
+import {
+	agentClock,
+	FakeAgent,
+	type HelloInit,
+	registerCredentialIssuer,
+} from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
@@ -135,19 +142,31 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 	let database: ReturnType<typeof openDatabase>;
 	let hub: AgentHub;
 	let gateway: AgentGatewayServer;
+	let unregister: () => void = () => {};
 	const agents: FakeAgent[] = [];
 	beforeAll(async () => {
 		testDb = await createTestDatabase();
 		database = openDatabase(testDb.url, () => {});
 		await database.migrate();
 		hub = new AgentHub({ db: database.db, clock, mutex: new Mutex(), version: "1.0.0" });
-		gateway = await startAgentGateway({ host: "127.0.0.1", port: 0, hub });
+		gateway = await startAgentGateway({
+			host: "127.0.0.1",
+			port: 0,
+			hub,
+			authenticator: new AgentAuthenticator({ db: database.db, clock }),
+		});
+		// 假 Agent 用 Agent 凭据连接（#492）。
+		const credentials = new AgentCredentialService({ db: database.db, clock });
+		unregister = registerCredentialIssuer(gateway.url, async (name) => {
+			return (await credentials.issue(DEFAULT_PROJECT, name)).token;
+		});
 	});
 	afterEach(async () => {
 		await Promise.all(agents.splice(0).map((a) => a.disconnect()));
 		clock.set(START);
 	});
 	afterAll(async () => {
+		unregister();
 		await gateway.close();
 		await database.close();
 		await testDb.drop();

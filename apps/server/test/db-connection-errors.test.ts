@@ -23,6 +23,16 @@ const startProcess = (
 	options: { dataDir?: string; ports?: { http: number; grpc: number } } = {},
 ) => startSourceServer({ databaseUrl, env, admin: true, production: true, ...options });
 
+/**
+ * 经控制面的接口给一台 Agent 签发凭据（初始管理员 root 已登录）：Agent 要带凭据才能连（#492）。凭据在库里，控制面按同一个库
+ * 重启之后照样有效，不用在每次重新起进程时再传。
+ */
+const issueAgentCredential = async (target: SourceServer, name: string): Promise<string> => {
+	const res = await target.request("POST", `/agents/${name}/credentials`, {});
+	expect(res.status, await res.clone().text()).toBe(201);
+	return ((await res.json()) as { token: string }).token;
+};
+
 const ENTRY_ONLY = { nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} };
 const node = (id: string) => ({ id, kind: "package", package: "stub", node: "echo", inputs: {} });
 const TWO_NODES = {
@@ -48,11 +58,13 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 	let cp: SourceServer;
 	let restarted: SourceServer | undefined;
 	let agents: FakeAgent[];
+	let agentToken: string;
 
 	beforeEach(async () => {
 		database = await createTestDatabase("sfly_dbconn");
 		proxy = await PgProxy.start(database.url);
 		cp = await startProcess(proxy.urlFor(database.url));
+		agentToken = await issueAgentCredential(cp, "agent-a");
 		agents = [];
 	}, 90_000);
 	afterEach(async () => {
@@ -70,6 +82,7 @@ describe("借出去的连接（事务里）出错：有序退出，由重启恢�
 	) => {
 		const agent = await FakeAgent.connect(target.grpcUrl, {
 			name: "agent-a",
+			token: agentToken,
 			runningTasks: held.map((t) => ({ taskId: t.taskId, attempt: t.attempt, started: true })),
 		});
 		agents.push(agent);

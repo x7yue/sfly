@@ -3,9 +3,11 @@
 import { randomUUID } from "node:crypto";
 import type { SessionStatus } from "@sfly/schema";
 import { and, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { taskIsActive } from "../agents/task-credentials.js";
 import type { Db } from "../db/database.js";
 import {
 	agentCredentials,
+	agents,
 	apiTokens,
 	logins,
 	orchestrations,
@@ -45,6 +47,11 @@ export interface StoredToken {
 	lastUsedAt: Date | null;
 	/** 会话令牌属于的会话（库里的约束要求会话令牌有会话）；其余令牌为 null。 */
 	sessionId: string | null;
+	/**
+	 * 任务凭据：这次任务尝试此刻还在 Agent 手上（派发中、执行中）才为 true，结束、取消、租约过期之后为 false，
+	 * 凭据随之失效（src/agents/task-credentials.ts）；其余令牌为 null。
+	 */
+	taskActive: boolean | null;
 	/**
 	 * 会话令牌所属的会话（取令牌时联表读出）：所在的项目、发起人、状态。访问检查核对令牌行上的项目、发起人和它们对得上、
 	 * 会话没有结束（对不上、已结束的当作不认识的令牌）。不是会话令牌，或者会话不存在（库里的外键不让这样）为 null。
@@ -155,6 +162,11 @@ export class DbAccessStore implements AccessStore {
 				revokedAt: apiTokens.revokedAt,
 				lastUsedAt: apiTokens.lastUsedAt,
 				sessionId: apiTokens.sessionId,
+				taskStatus: tasks.status,
+				taskAgentDisabledAt: agents.disabledAt,
+				// 任务凭据派发时这条连接用的那个 Agent 凭据（任务凭据跟着它：它被吊销之后立刻不认；
+				// 不看这个名字有没有别的有效凭据，那样重新签发一个就让它又被认了）。
+				taskCredentialRevokedAt: agentCredentials.revokedAt,
 				sessionProjectId: sessions.projectId,
 				sessionCreatedBy: sessions.createdByUserId,
 				sessionStatus: sessions.status,
@@ -162,6 +174,9 @@ export class DbAccessStore implements AccessStore {
 			})
 			.from(apiTokens)
 			.leftJoin(users, eq(users.id, apiTokens.userId))
+			.leftJoin(tasks, eq(tasks.id, apiTokens.taskId))
+			.leftJoin(agents, eq(agents.name, tasks.agentName))
+			.leftJoin(agentCredentials, eq(agentCredentials.id, apiTokens.agentCredentialId))
 			.leftJoin(sessions, eq(sessions.id, apiTokens.sessionId))
 			.where(eq(apiTokens.tokenHash, hash));
 		return (
@@ -176,6 +191,13 @@ export class DbAccessStore implements AccessStore {
 				revokedAt: row.revokedAt,
 				lastUsedAt: row.lastUsedAt,
 				sessionId: row.sessionId,
+				taskActive:
+					row.taskStatus === null
+						? null
+						: taskIsActive(row.taskStatus, {
+								agentDisabled: row.taskAgentDisabledAt !== null,
+								credentialRevoked: row.taskCredentialRevokedAt !== null,
+							}),
 				session:
 					row.sessionProjectId === null || row.sessionStatus === null
 						? null
