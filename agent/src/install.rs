@@ -1911,6 +1911,12 @@ mod tests {
                 .flat_map(|h| h.join().unwrap())
                 .collect()
         });
+        eprintln!(
+            "uv 对照：{} 对要求里 {} 对判断成冲突，uv 都解不出来（错的 {} 对）",
+            LIMITS.len() * (LIMITS.len() - 1) / 2,
+            reported.len(),
+            wrong.len()
+        );
         assert_eq!(wrong, [], "判断成冲突、uv 却解得出来");
         // 对照：uv 解得出来的、我们也说能满足的两条（这张表是通的，不是 uv 什么都解不出来）。
         assert!(uv_solves("sanity-compatible", ">=0.25", ">=0.20"));
