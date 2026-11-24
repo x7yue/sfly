@@ -6,7 +6,10 @@
 //
 // 「写入流还没建出文件」靠把 `createWriteStream` 的 open 换成慢的（`fs` 选项）做出来：open 要 150 毫秒，请求体的出错在几毫秒之内，
 // 删除一定先于 open 完成，不靠碰运气。自然的写法（不换 open、顺序传 11 次超限的）另有一条。
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,6 +63,57 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** 一个真的产物，名字长得像临时文件：它不是临时文件，不能被当成「留下的」，启动时清理也不能动它。 */
 const LOOKALIKE = `.upload-${"0".repeat(8)}-0000-4000-8000-${"0".repeat(12)}`;
 
+const exists = (path: string) =>
+	lstat(path).then(
+		() => true,
+		() => false,
+	);
+const canConnect = (port: number) =>
+	new Promise<boolean>((resolve) => {
+		const socket = connect(port, "127.0.0.1");
+		socket.once("connect", () => {
+			socket.destroy();
+			resolve(true);
+		});
+		socket.once("error", () => resolve(false));
+	});
+
+/**
+ * 用 HTTP PUT 传一个产物（分块）；`abortAfterMs` 给了就是发完第一块之后过这么久客户端自己断开（返回 `"aborted"`）。
+ */
+function put(
+	url: string,
+	chunks: Buffer[],
+	options: { abortAfterMs?: number } = {},
+): Promise<{ status: number; body: string } | "aborted"> {
+	return new Promise((resolve) => {
+		const req = httpRequest(
+			url,
+			{ method: "PUT", headers: { "transfer-encoding": "chunked" } },
+			(res) => {
+				let body = "";
+				res.setEncoding("utf8");
+				res.on("data", (chunk: string) => {
+					body += chunk;
+				});
+				res.on("error", () => {});
+				res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+			},
+		);
+		req.on("error", () => resolve("aborted"));
+		if (options.abortAfterMs !== undefined) {
+			req.write(chunks[0]);
+			setTimeout(() => {
+				req.destroy();
+				resolve("aborted");
+			}, options.abortAfterMs);
+			return;
+		}
+		for (const chunk of chunks) req.write(chunk);
+		req.end();
+	});
+}
+
 type Setup = {
 	cp: Awaited<ReturnType<typeof startTestControlPlane>>;
 	agent: Awaited<ReturnType<typeof FakeAgent.connect>>;
@@ -72,14 +126,18 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 	let agent: Setup["agent"];
 	let database: Setup["database"];
 	let taskId: string;
+	let taskId2: string;
 
 	beforeAll(async () => {
 		cp = await startTestControlPlane({ artifactLimitBytes: LIMIT });
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
 		const api = new ApiClient(cp);
-		await api.triggerOk(await api.orchestrationWith(DOC));
+		const scenario = await api.orchestrationWith(DOC);
+		await api.triggerOk(scenario);
 		taskId = (await agent.nextAssign()).taskId;
+		await api.triggerOk(scenario);
+		taskId2 = (await agent.nextAssign()).taskId;
 		database = openDatabase(cp.database.url, () => {});
 	}, 60_000);
 	afterAll(async () => {
@@ -252,6 +310,55 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 		expect(await leftovers()).toEqual([]);
 	}, 60_000);
 
+	it("HTTP 客户端中途取消（分块、open 要 150 毫秒）：不留临时文件，同一个任务的下一份照常 201（审查的 P1）", async () => {
+		slowOpen.ms = OPEN_MS;
+		const url = (name: string) => `${cp.httpUrl}/tasks/${taskId}/artifacts/${name}`;
+
+		const aborted = await put(url("abort.bin"), [Buffer.alloc(100, 1)], { abortAfterMs: 20 });
+		await sleep(OPEN_MS * 3);
+
+		expect(aborted).toBe("aborted");
+		expect(await leftovers()).toEqual([]);
+		expect(await put(url("after-abort.bin"), [Buffer.alloc(10, 2)])).toMatchObject({
+			status: 201,
+		});
+		await sleep(OPEN_MS * 3);
+		expect(await leftovers()).toEqual([]);
+	}, 60_000);
+
+	it("两个任务同时上传同名产物（分块交错到达）：各自的内容和哈希都对（临时文件名不能固定）", async () => {
+		const store = storeWith();
+		const body = (byte: number) => {
+			const stream = new PassThrough();
+			let sent = 0;
+			const tick = () => {
+				if (sent === 3) return void stream.end();
+				sent += 1;
+				stream.write(Buffer.alloc(100, byte));
+				setTimeout(tick, 30);
+			};
+			tick();
+			return stream;
+		};
+
+		const [first, second] = await Promise.all([
+			store.save(taskId, "same-name.bin", body(1)),
+			store.save(taskId2, "same-name.bin", body(2)),
+		]);
+
+		for (const [outcome, byte] of [
+			[first, 1],
+			[second, 2],
+		] as const) {
+			expect(outcome.ok).toBe(true);
+			if (!outcome.ok) continue;
+			const bytes = await readFile(outcome.artifact.file);
+			expect(bytes.equals(Buffer.alloc(300, byte))).toBe(true);
+			expect(createHash("sha256").update(bytes).digest("hex")).toBe(outcome.artifact.sha256);
+		}
+		expect(await leftovers()).toEqual([]);
+	}, 60_000);
+
 	it("任务已经结束（409）：不读请求体，也没有临时文件", async () => {
 		slowOpen.ms = OPEN_MS;
 		const store = storeWith();
@@ -298,7 +405,7 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 			expect((await same.arrayBuffer()).byteLength).toBe(30);
 		}, 60_000);
 
-		it("临时目录的位置上是个文件（读不了、清不掉）：只记日志，启动照常，不挡住", async () => {
+		it("临时目录的位置上是个文件（读不了）：启动时照样把这个路径删掉，启动照常，之后的上传成功（不是每次 500）", async () => {
 			const place = join(cp.dataDir, "artifacts", ".uploading");
 			await rm(place, { recursive: true, force: true });
 			await mkdir(join(cp.dataDir, "artifacts"), { recursive: true });
@@ -307,8 +414,79 @@ describe("上传被拒绝或出错之后不留临时文件", () => {
 			await cp.restart();
 
 			expect((await cp.fetch(`/tasks/${taskId}/artifacts`)).status).toBe(200);
-			await rm(place, { force: true });
+			expect(await exists(place)).toBe(false);
+			const uploaded = await put(`${cp.httpUrl}/tasks/${taskId}/artifacts/after-file.bin`, [
+				Buffer.alloc(10, 2),
+			]);
+			expect(uploaded).toMatchObject({ status: 201 });
+			expect(await leftovers()).toEqual([]);
 		}, 60_000);
+
+		it("sweepUploadTemp：这个位置上是个文件时返回 0、把它删掉", async () => {
+			const place = join(cp.dataDir, "artifacts", ".uploading");
+			await rm(place, { recursive: true, force: true });
+			await writeFile(place, "不是目录");
+
+			await expect(storeWith().sweepUploadTemp()).resolves.toBe(0);
+
+			expect(await exists(place)).toBe(false);
+		}, 60_000);
+
+		it("清理：临时目录里有指向外面的目录、文件的符号链接，只删链接本身，外面的东西不动（审查的 P9）", async () => {
+			const outside = join(cp.dataDir, "..", `outside-${process.pid}-${Date.now()}`);
+			await mkdir(join(outside, "sub"), { recursive: true });
+			await writeFile(join(outside, "keep.txt"), "keep");
+			await writeFile(join(outside, "sub", "deep.txt"), "deep");
+			const dir = join(cp.dataDir, "artifacts", ".uploading");
+			await mkdir(dir, { recursive: true });
+			await symlink(outside, join(dir, ".upload-link-dir"));
+			await symlink(join(outside, "keep.txt"), join(dir, ".upload-link-file"));
+			try {
+				const swept = await storeWith().sweepUploadTemp();
+
+				expect(swept).toBe(2);
+				expect(await exists(dir)).toBe(false);
+				expect(await readFile(join(outside, "keep.txt"), "utf8")).toBe("keep");
+				expect(await readFile(join(outside, "sub", "deep.txt"), "utf8")).toBe("deep");
+			} finally {
+				await rm(outside, { recursive: true, force: true });
+			}
+		}, 60_000);
+
+		it("清理在开始监听之前做：清理的那一刻 HTTP 端口还连不上（这时没有上传在做，清理不会碰到正在写的临时文件）（审查的 P10）", async () => {
+			const original = ArtifactStore.prototype.sweepUploadTemp;
+			const listening: boolean[] = [];
+			const port = Number(new URL(cp.httpUrl).port);
+			ArtifactStore.prototype.sweepUploadTemp = async function (
+				this: InstanceType<typeof ArtifactStore>,
+			) {
+				listening.push(await canConnect(port));
+				return original.call(this);
+			};
+			try {
+				await cp.restart();
+			} finally {
+				ArtifactStore.prototype.sweepUploadTemp = original;
+			}
+
+			expect(listening).toEqual([false]);
+		}, 60_000);
+
+		it("控制面关闭时正在进行的上传（open 要 150 毫秒、客户端发了一块就停）：关闭之后不留临时文件，重启后上传照常（审查的 P12）", async () => {
+			slowOpen.ms = OPEN_MS;
+			const url = (name: string) => `${cp.httpUrl}/tasks/${taskId}/artifacts/${name}`;
+			const pending = put(url("during-close.bin"), [Buffer.alloc(10, 1)], { abortAfterMs: 1_500 });
+			await sleep(300);
+
+			await cp.restart();
+			await pending;
+
+			expect(await leftovers()).toEqual([]);
+			slowOpen.ms = 0;
+			expect(await put(url("after-close.bin"), [Buffer.alloc(10, 2)])).toMatchObject({
+				status: 201,
+			});
+		}, 90_000);
 
 		it("sweepUploadTemp：目录不存在时返回 0、不抛错；有几个就清掉几个、返回个数，目录也没了", async () => {
 			const dir = join(cp.dataDir, "artifacts", ".uploading");
