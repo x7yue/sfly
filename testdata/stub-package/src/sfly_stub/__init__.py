@@ -645,9 +645,10 @@ def big_exception(ctx: Context, size: int) -> None:
 def raw_output(
     ctx: Context, kind: str, size: int, traceback_size: int = 0, char: str = "m"
 ) -> None:
-    """Agent 自己判断输出大小的测试用（#723）：绕过执行器的检查（也是旧版本的执行器的写法：说明和堆栈都不限长），
-    直接写 output.json 然后退出。kind 是 success（outputs 里一个 size 个字符的文字）或 failed（message 是 size 个
-    `char`，traceback 是 traceback_size 个 `char`）。"""
+    """Agent 自己判断输出大小的测试用（#723）：绕过执行器的检查（也是旧版本的执行器的写法：
+    说明和堆栈都不限长），直接写 output.json 然后退出。kind 是 success（outputs 里一个
+    size 个字符的文字）或 failed（message 是 size 个 `char`，traceback 是 traceback_size 个
+    `char`）。"""
     if kind == "success":
         doc: dict[str, Any] = {"status": "success", "outputs": {"text": "x" * size}}
     else:
