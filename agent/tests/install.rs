@@ -10,7 +10,9 @@ use sfly_agent::proto::{ErrorKind, InstallState, InstalledPackage, TaskResult, T
 use support::packages::{
     HttpFixture, dependency_wheel, fresh_venv, package_task, publish, venv_of,
 };
-use support::{AgentOptions, AgentProcess, FakeControlPlane, spawn_agent, stub_task};
+use support::{
+    AgentOptions, AgentProcess, FakeControlPlane, credential_logging_uv, spawn_agent, stub_task,
+};
 
 fn outputs(result: &TaskResult) -> Value {
     serde_json::from_str(&result.outputs_json).expect("outputs_json is JSON")
@@ -62,29 +64,6 @@ fn agent_with_credential(
     options.args = vec!["--index-url".into(), fixture.index_url()];
     options.env = vec![("UV_CACHE_DIR", &cache), ("SFLY_TOKEN", credential)];
     spawn_agent(options)
-}
-
-/// 记录环境里 `SFLY_TOKEN` 的 uv：每次调用把「`SFLY_TOKEN` 的值（没有时写 unset） 参数」写进 `log` 一行，然后转给
-/// 测试机的 uv。
-fn credential_logging_uv(dir: &std::path::Path, log: &std::path::Path) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt as _;
-    let host = std::process::Command::new("sh")
-        .args(["-c", "command -v uv"])
-        .output()
-        .unwrap();
-    let host = String::from_utf8(host.stdout).unwrap();
-    let path = dir.join("credential-logging-uv");
-    std::fs::write(
-        &path,
-        format!(
-            "#!/bin/sh\necho \"${{SFLY_TOKEN-unset}} $*\" >> '{}'\nexec '{}' \"$@\"\n",
-            log.display(),
-            host.trim()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    path
 }
 
 const ARCHIVE_PATH: &str = "/packages/sfly-demo/versions/1.0.0/archive";

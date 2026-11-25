@@ -859,3 +859,26 @@ pub const NUMBERS: [f64; 12] = [
     5e-324,
     1.7976931348623157e308,
 ];
+
+/// 记录环境里 `SFLY_TOKEN` 的 uv：每次调用把「`SFLY_TOKEN` 的值（没有时写 unset） 参数」写进 `log` 一行，然后转给
+/// 测试机的 uv。
+pub fn credential_logging_uv(dir: &Path, log: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let host = std::process::Command::new("sh")
+        .args(["-c", "command -v uv"])
+        .output()
+        .unwrap();
+    let host = String::from_utf8(host.stdout).unwrap();
+    let path = dir.join("credential-logging-uv");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"${{SFLY_TOKEN-unset}} $*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            host.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
