@@ -493,16 +493,25 @@ def test_a_signal_ends_the_session_writes_the_record_and_is_an_environment_fault
     assert fault is not None and fault[0] == ENVIRONMENT
 
 
-def test_a_deadline_that_passes_before_the_connection_is_up_still_cuts_it(
+def test_a_deadline_that_passes_while_connecting_still_cuts_the_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(platform_driver, "READ_TIMEOUT_SECONDS", 5.0)
-    cp = FakeControlPlane("silent")
+    import http.client
+
+    real_request = http.client.HTTPConnection.request
+
+    def slow_request(self: Any, *args: Any, **kwargs: Any) -> None:
+        time.sleep(0.5)  # 时限在发请求的时候就到了
+        real_request(self, *args, **kwargs)
+
+    monkeypatch.setattr(http.client.HTTPConnection, "request", slow_request)
+    cp = FakeControlPlane("heartbeats")  # 心跳每 0.1 秒一条：读一直有字节，读的超时到不了
     try:
         started = time.monotonic()
         with (tmp_path / "events.jsonl").open("w") as sink:
-            why = Client(cp.url, "eval").stream_once("s1", 0, time.monotonic(), sink, [])
+            client = Client(cp.url, "eval")
+            why = client.stream_once("s1", 0, time.monotonic() + 0.3, sink, [])
         took = time.monotonic() - started
     finally:
         cp.close()
-    assert why is not None and took < 1.0, (why, took)
+    assert why is not None and took < 1.5, (why, took)

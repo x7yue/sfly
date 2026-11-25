@@ -188,8 +188,6 @@ def run_session(
         driver_summary = json.loads((out / "driver.json").read_text())
     if timed_out:
         driver_summary["exit_reason"] = "time_limit"
-    # 会话驱动被宿主机超时结束、没写 driver.json 时，上限照这次给它的记（判定按上限核对两臂）。
-    driver_summary.setdefault("limits", {"max_turns": max_turns, "max_seconds": max_seconds})
     return finish_record(
         stack,
         task,
