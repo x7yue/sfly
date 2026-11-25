@@ -314,6 +314,22 @@ test("检查器：字符串参数只有一个输入框，输入 $ 或点「插�
 		/params\.biz_date\s*string/,
 		/params\.api_token\s*string · secret/,
 	]);
+	// 名字比类型说明重要：名字被截短只会是因为它比整行还长，不会是类型说明（比如「string · secret」）占了地方。
+	const names = await list.getByRole("option").evaluateAll((options) =>
+		options.map((option) => {
+			const name = option.firstElementChild as HTMLElement;
+			const row = option.getBoundingClientRect().width - 16; // 左右各 8 px 的内边距
+			return {
+				text: name.textContent,
+				truncated: name.scrollWidth > name.clientWidth,
+				fillsRow: name.getBoundingClientRect().width >= row - 1,
+			};
+		}),
+	);
+	expect(names.length).toBeGreaterThan(0);
+	for (const name of names) {
+		if (name.truncated) expect(name.fillsRow, `${name.text} 被类型说明挤短了`).toBe(true);
+	}
 	await expect(list.getByRole("group", { name: "运行状态" }).getByRole("option")).toHaveText([
 		/run\.state\s*object · 这次运行/,
 	]);
