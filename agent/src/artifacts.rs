@@ -19,6 +19,7 @@ use std::time::Duration;
 use crate::clock;
 use crate::executor;
 use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
+use crate::secret::Secret;
 
 /// 网络错误 / 5xx 时的上传尝试次数。
 const ATTEMPTS: u32 = 3;
@@ -120,7 +121,7 @@ fn plan(files: Vec<Found>, limit: u64) -> (Vec<Found>, Option<OverLimit>) {
 
 pub struct Uploader {
     pub http: reqwest::Client,
-    pub token: Option<String>,
+    pub token: Option<Secret>,
 }
 
 impl Uploader {
@@ -236,7 +237,7 @@ impl Uploader {
             request = request.header(MODIFIED_MS_HEADER, modified);
         }
         if let Some(token) = &self.token {
-            request = request.bearer_auth(token);
+            request = request.bearer_auth(token.expose());
         }
         let response = request
             .send()

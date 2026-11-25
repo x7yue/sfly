@@ -27,7 +27,9 @@ pub mod peer;
 pub mod process_tree;
 pub mod retention;
 pub mod sdk;
+pub mod secret;
 mod socket;
+pub mod subprocess;
 pub mod time_jump;
 pub mod update;
 pub mod venv;
@@ -46,6 +48,8 @@ use tonic::Streaming;
 pub mod proto {
     tonic::include_proto!("sfly.agent.v1");
 }
+// 带凭据的消息（`AssignTask`、`Hello`）的 `Debug`：凭据的位置写 `<redacted>`。
+mod proto_debug;
 
 use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
 use environment::{Mirrors, Setup};
@@ -72,6 +76,12 @@ pub const DEFAULT_TERMINATE_GRACE: Duration = Duration::from_secs(10);
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(10);
 
+/// 控制面明确拒绝了这条连接（凭据无效或被吊销、名字和凭据不一致、Agent 被停用……）之后的重试等待：从 MIN 开始翻倍，
+/// 最多 MAX，连上一次就重置（[`Config::rejected_retry_min`]、[`Config::rejected_retry_max`] 默认取这两个值，测试里改短）。
+/// 比普通的重连慢得多：被拒绝不是网络问题，要管理员在控制面改好才会变，快速重试只会刷屏、白白占用控制面。
+pub const REJECTED_RETRY_MIN: Duration = Duration::from_secs(30);
+pub const REJECTED_RETRY_MAX: Duration = Duration::from_secs(300);
+
 /// Welcome 没有给出心跳间隔时的默认值（控制面默认租约 30 秒的三分之一）。
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -82,8 +92,14 @@ pub struct Config {
     pub server: String,
     /// Agent 名称，全局唯一。
     pub name: String,
-    /// 可选的共享注册令牌。
-    pub token: Option<String>,
+    /// Agent 凭据（`sfly_agt_` 开头，按台签发，管理员在控制台或命令行签发）；过渡期里也可以是共享注册令牌或没有。
+    /// 用 [`secret::Secret`] 包着：配置被 `{:?}` 打印时不会把它写出去。
+    pub token: Option<secret::Secret>,
+    /// 被控制面拒绝之后的重试等待的起点和封顶（[`REJECTED_RETRY_MIN`]、[`REJECTED_RETRY_MAX`]），
+    /// 以及加不加抖动（默认加：每次等待取算出来的时长的一半到全部）。
+    pub rejected_retry_min: Duration,
+    pub rejected_retry_max: Duration,
+    pub rejected_retry_jitter: bool,
     /// 并发槽位数（随 Hello 上报，控制面按它限制派发）。
     pub slots: u32,
     /// 共享 venv 路径。
@@ -146,6 +162,9 @@ impl Config {
             server: server.into(),
             name: name.into(),
             token: None,
+            rejected_retry_min: REJECTED_RETRY_MIN,
+            rejected_retry_max: REJECTED_RETRY_MAX,
+            rejected_retry_jitter: true,
             slots: DEFAULT_SLOTS,
             venv: PathBuf::from("venv"),
             work_dir: PathBuf::from("work"),
@@ -206,7 +225,12 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
     } = content;
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
-        .with_context(|| format!("connect to control plane at {}", config.server))?;
+        .with_context(|| {
+            format!(
+                "connect to control plane at {}",
+                secret::without_userinfo(&config.server)
+            )
+        })?;
 
     let (outbound, rx) = mpsc::channel(64);
     let now = clock::Reading::now();
@@ -214,7 +238,11 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
         .send(AgentMessage {
             body: Some(agent_message::Body::Hello(Hello {
                 name: config.name.clone(),
-                token: config.token.clone().unwrap_or_default(),
+                token: config
+                    .token
+                    .as_ref()
+                    .map(|token| token.expose().to_string())
+                    .unwrap_or_default(),
                 agent_version: config.version.clone(),
                 os: std::env::consts::OS.to_string(),
                 arch: std::env::consts::ARCH.to_string(),
@@ -649,7 +677,9 @@ impl Runtime {
 }
 
 /// Agent 主循环：连接控制面并执行任务；连接失败或断开后按退避时间自动重连。
-/// 只有不可恢复的错误（例如令牌被拒绝、环境准备失败 [`environment::EnvironmentError`]）才会返回。
+/// 只有不可恢复的错误（例如环境准备失败 [`environment::EnvironmentError`]）才会返回。控制面拒绝这台 Agent 的连接
+/// （凭据无效或被吊销、名字和凭据不一致、被停用……）**不退出**：按 [`REJECTED_RETRY_MIN`] 起的退避重试，管理员在
+/// 控制面改好之后它自己连上（[`Rejections`]）。
 ///
 /// 任务结果在收到控制面的 Ack 之前一直保留，每次重新连接后再次上报（控制面按 task_id + attempt 幂等处理）。
 pub async fn run(config: Config) -> anyhow::Result<()> {
@@ -709,6 +739,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             package_index: std::sync::Mutex::new(None),
             uv: config.uv.clone(),
             http: http.clone(),
+            token: config.token.clone(),
         },
         work_dir: work_dir.clone(),
         procs_dir,
@@ -737,6 +768,11 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     // 端口监听不了时照常运行，只是能力不能被其它 Agent 调用（原因随 Hello 上报）。
     let endpoint = peer::serve(config.listen_port, config.public_address.clone(), host).await;
     let mut delay = RECONNECT_MIN;
+    let mut rejections = Rejections::new(
+        config.rejected_retry_min,
+        config.rejected_retry_max,
+        config.rejected_retry_jitter,
+    );
     // 启动时扫描一次工作目录，之后每隔 task_dir_sweep_interval 一次（断线重连期间也照常进行）。
     let mut sweep = Sweep {
         next: tokio::time::Instant::now(),
@@ -778,11 +814,17 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         match &connected {
             Ok(_) => {}
             Err(error) if unreachable(error) => config.trial.end(update::Attempt::Unreachable),
+            // 被控制面拒绝（凭据、停用……）也在这里：试用中的新版本一启动就被拒绝，多半是它自己的毛病
+            // （握手写错了、没带上凭据）；算作失败，连续失败后回滚到旧版本，回滚之后的旧版本被拒绝时照旧
+            // 不退出（下面）。不算的话它永远不回滚，也收不到修好的下一个版本。
             Err(_) => config.trial.end(update::Attempt::Failed),
         }
         match connected {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
+                if rejections.accepted() {
+                    eprintln!("控制面接受了这台 Agent 的连接（之前被拒绝）");
+                }
                 // uv 和共享 venv 在收到 Welcome 之后才准备：控制面在 Welcome 里下发镜像配置（ADR 0012）。
                 // 准备失败时 Agent 退出，不带着坏环境继续连接。
                 // 本机的覆盖优先。节点包依赖（`uv pip install`）是 Agent 唯一访问 PyPI 的 uv 调用：
@@ -830,10 +872,22 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                 }
             }
             Err(error) => {
-                if let Some(status) = error.downcast_ref::<tonic::Status>()
-                    && status.code() == tonic::Code::Unauthenticated
-                {
-                    return Err(error);
+                // 控制面明确拒绝了这条连接：不退出（退出了 systemd 每 5 秒拉起一次，等于快速重试），退避重试；
+                // 原因只在第一次和变了的时候打一行，不带凭据的任何部分（只有控制面回的说明）。
+                if let Some(status) = rejection(&error) {
+                    let (wait, report) = rejections.rejected(status);
+                    if report {
+                        eprintln!(
+                            "控制面拒绝了这台 Agent 的连接（{:?}）：{}。Agent 不会退出，等管理员在控制面处理好之后自己连上；\
+                             重试的间隔从 {} 秒翻倍到最长 {} 秒，原因不变时不再重复提示",
+                            status.code(),
+                            status.message(),
+                            config.rejected_retry_min.as_secs_f64(),
+                            config.rejected_retry_max.as_secs_f64(),
+                        );
+                    }
+                    tokio::time::sleep(wait).await;
+                    continue;
                 }
                 eprintln!("cannot connect: {error:#}");
             }
@@ -859,6 +913,72 @@ impl Sweep {
         self.next = now + self.interval;
         true
     }
+}
+
+/// 控制面明确拒绝了这条连接（握手时回 `Unauthenticated` 或 `PermissionDenied`）：凭据无效、被吊销、名字和凭据不一致、
+/// Agent 被停用、旧方式的连接顶不掉带凭据的同名连接……返回控制面的状态（里面是它写的原因）。
+fn rejection(error: &anyhow::Error) -> Option<&tonic::Status> {
+    error
+        .chain()
+        .find_map(|e| e.downcast_ref::<tonic::Status>())
+        .filter(|status| {
+            matches!(
+                status.code(),
+                tonic::Code::Unauthenticated | tonic::Code::PermissionDenied
+            )
+        })
+}
+
+/// 被控制面拒绝之后的重试：下一次等多久，和上一次打印过的原因。
+///
+/// 等待从 `min` 开始每次翻倍、最多 `max`，连上一次就重置；加抖动时每次实际等的是算出来的时长的一半到全部
+/// （[`jittered`]）：管理员一次吊销、停用很多台 Agent 之后，它们不按同一个节奏一起重试。原因（状态码加说明）和上一次
+/// 打印的不同才再打一行，同一个原因反复被拒绝时不刷屏。
+struct Rejections {
+    min: Duration,
+    max: Duration,
+    jitter: bool,
+    next: Duration,
+    reported: Option<(tonic::Code, String)>,
+}
+
+impl Rejections {
+    fn new(min: Duration, max: Duration, jitter: bool) -> Self {
+        Self {
+            min,
+            max,
+            jitter,
+            next: min,
+            reported: None,
+        }
+    }
+
+    /// 又被拒绝了一次：返回这次要等多久，和要不要打印原因（第一次，或原因和上一次打印的不同）。
+    fn rejected(&mut self, status: &tonic::Status) -> (Duration, bool) {
+        let reason = (status.code(), status.message().to_string());
+        let report = self.reported.as_ref() != Some(&reason);
+        if report {
+            self.reported = Some(reason);
+        }
+        let wait = self.next;
+        self.next = (self.next * 2).min(self.max);
+        (if self.jitter { jittered(wait) } else { wait }, report)
+    }
+
+    /// 连上了：重置等待；之前被拒绝过时返回 true。
+    fn accepted(&mut self) -> bool {
+        self.next = self.min;
+        self.reported.take().is_some()
+    }
+}
+
+/// `wait` 的一半到全部之间的一个随机时长（上限不变，所以「最长 5 分钟」仍然成立）。
+/// 随机数取自标准库的 `RandomState`（每个进程的种子由系统随机给出），不为这一处多引入一个依赖。
+fn jittered(wait: Duration) -> Duration {
+    use std::hash::BuildHasher as _;
+    let half = wait / 2;
+    let span = u64::try_from(half.as_nanos()).unwrap_or(u64::MAX).max(1);
+    half + Duration::from_nanos(std::collections::hash_map::RandomState::new().hash_one(0u8) % span)
 }
 
 /// 连不上控制面（建立连接失败，或 gRPC 报告不可用）：与「连上了却握手失败」区分，前者不算新版本的失败。
@@ -1061,5 +1181,83 @@ async fn serve(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(code: tonic::Code, message: &str) -> tonic::Status {
+        tonic::Status::new(code, message)
+    }
+
+    #[test]
+    fn only_unauthenticated_and_permission_denied_are_rejections() {
+        for code in [tonic::Code::Unauthenticated, tonic::Code::PermissionDenied] {
+            let error = anyhow::Error::new(status(code, "no")).context("wait for welcome");
+            assert!(rejection(&error).is_some(), "{code:?}");
+        }
+        for code in [
+            tonic::Code::Unavailable,
+            tonic::Code::InvalidArgument,
+            tonic::Code::Internal,
+            tonic::Code::Unknown,
+        ] {
+            let error = anyhow::Error::new(status(code, "no")).context("open agent stream");
+            assert!(rejection(&error).is_none(), "{code:?}");
+        }
+        assert!(rejection(&anyhow::anyhow!("connect refused")).is_none());
+    }
+
+    #[test]
+    fn the_wait_doubles_up_to_the_cap_and_resets_after_a_connection() {
+        let mut rejections =
+            Rejections::new(Duration::from_secs(30), Duration::from_secs(300), false);
+        let rejected = status(tonic::Code::Unauthenticated, "吊销了");
+        let waits: Vec<u64> = (0..7)
+            .map(|_| rejections.rejected(&rejected).0.as_secs())
+            .collect();
+        assert_eq!(waits, [30, 60, 120, 240, 300, 300, 300]);
+        assert!(rejections.accepted(), "之前被拒绝过");
+        assert!(!rejections.accepted(), "没有被拒绝过的不再提示");
+        assert_eq!(rejections.rejected(&rejected).0.as_secs(), 30);
+    }
+
+    #[test]
+    fn with_jitter_every_wait_is_between_half_and_all_of_the_backoff_and_they_differ() {
+        let rejected = status(tonic::Code::Unauthenticated, "吊销了");
+        let mut distinct = std::collections::HashSet::new();
+        for _ in 0..200 {
+            let mut rejections =
+                Rejections::new(Duration::from_secs(30), Duration::from_secs(300), true);
+            for base in [30, 60, 120, 240, 300, 300] {
+                let wait = rejections.rejected(&rejected).0;
+                assert!(
+                    wait >= Duration::from_secs(base) / 2 && wait <= Duration::from_secs(base),
+                    "{wait:?} 不在 {base} 秒的一半到全部之间"
+                );
+                if base == 30 {
+                    distinct.insert(wait);
+                }
+            }
+        }
+        // 第一次重试的等待在 15 到 30 秒之间随机：200 次里不会只有几个值（没有抖动时恰好是 30 秒一个值）。
+        assert!(distinct.len() > 100, "只有 {} 个不同的值", distinct.len());
+    }
+
+    #[test]
+    fn a_reason_is_reported_the_first_time_and_when_it_changes() {
+        let mut rejections = Rejections::new(Duration::from_secs(1), Duration::from_secs(8), false);
+        let revoked = status(tonic::Code::Unauthenticated, "吊销了");
+        let disabled = status(tonic::Code::PermissionDenied, "停用了");
+        let reports: Vec<bool> = [&revoked, &revoked, &revoked, &disabled, &disabled, &revoked]
+            .into_iter()
+            .map(|s| rejections.rejected(s).1)
+            .collect();
+        assert_eq!(reports, [true, false, false, true, false, true]);
+        // 说明一样、状态码不一样也是不同的原因。
+        let same_text = status(tonic::Code::PermissionDenied, "吊销了");
+        assert!(rejections.rejected(&same_text).1);
     }
 }

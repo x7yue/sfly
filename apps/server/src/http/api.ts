@@ -372,6 +372,7 @@ export function buildHttpApi({
 		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),
 		sse,
 		isPurged: (runId) => retention.isPurged(runId),
+		isPurgedAfterWait: (runId) => retention.isPurgedAfterWait(runId),
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerActionRoutes(app, { actions, sse });
