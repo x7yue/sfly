@@ -43,7 +43,7 @@ _LOG_LEVELS = "WARN / ERROR"
 
 def run_url(client: Client, run_id: str) -> str:
     """控制台里这次运行的页面。"""
-    return f"{client.server}/runs/{segment(run_id)}"
+    return f"{client.shown_server}/runs/{segment(run_id)}"
 
 
 class SummaryUnavailable(CliError):

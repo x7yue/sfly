@@ -223,9 +223,8 @@ def _issue(session: Session, args: argparse.Namespace) -> None:
             file=session.out.stderr,
         )
         return
-    install = (
-        f"curl -fsSL {session.client.url('/install.sh')} | sh -s -- --name {_quote(args.name)}"
-    )
+    script = session.client.shown_url("/install.sh")
+    install = f"curl -fsSL {script} | sh -s -- --name {_quote(args.name)}"
     text = "\n".join(
         [
             f"已为 {args.name} 签发凭据 {issued['credential']['prefix']}…",
