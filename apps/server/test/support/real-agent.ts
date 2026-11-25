@@ -14,6 +14,8 @@ export interface RealAgent {
 	readonly workDir: string;
 	/** 已收到的标准输出事件。 */
 	readonly events: Array<Record<string, unknown>>;
+	/** Agent 写到标准错误的全部内容（原样，没有经过控制面的打码）；只有 `captureStderr` 时才收集。 */
+	stderr(): string;
 	close(): Promise<void>;
 }
 
@@ -32,6 +34,8 @@ export async function startRealAgent(options: {
 	credential?: string;
 	/** 追加的环境变量（例如独立的 UV_CACHE_DIR）。 */
 	env?: Record<string, string>;
+	/** 收集 Agent 的标准错误（[`RealAgent.stderr`]），同时照常透传到测试进程的标准错误。默认不收集。 */
+	captureStderr?: boolean;
 	/** 等 welcome 的时间，默认 15 秒；包括创建 venv 和安装 SDK 运行时（它们在连上控制面之后、welcome 事件之前完成）。 */
 	welcomeTimeoutMs?: number;
 }): Promise<RealAgent> {
@@ -60,7 +64,7 @@ export async function startRealAgent(options: {
 			...(options.args ?? []),
 		],
 		{
-			stdio: ["ignore", "pipe", "inherit"],
+			stdio: ["ignore", "pipe", options.captureStderr ? "pipe" : "inherit"],
 			// 独立的 SFLY_HOME：不读开发者自己的 ~/.sfly/agent.env。供其它 Agent 连接的端口由系统分配，
 			// 并行的测试不抢默认端口 50052（不认识这个变量的旧版本 Agent 忽略它）。
 			env: {
@@ -73,6 +77,11 @@ export async function startRealAgent(options: {
 		},
 	);
 	const events: Array<Record<string, unknown>> = [];
+	let stderr = "";
+	child.stderr?.on("data", (chunk: Buffer) => {
+		stderr += chunk.toString();
+		process.stderr.write(chunk);
+	});
 	const lines = createInterface({ input: child.stdout as NodeJS.ReadableStream });
 	const close = async () => {
 		if (child.exitCode === null && child.signalCode === null) {
@@ -102,7 +111,7 @@ export async function startRealAgent(options: {
 		await close();
 		throw error;
 	}
-	return { child, workDir, events, close };
+	return { child, workDir, events, stderr: () => stderr, close };
 }
 
 /**

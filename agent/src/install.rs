@@ -17,6 +17,7 @@ use pep440_rs::{Operator, Version, VersionSpecifiers};
 use sha2::{Digest, Sha256};
 
 use crate::proto::AssignTask;
+use crate::secret::Secret;
 use crate::venv::SharedVenv;
 
 /// 安装失败；`message` 是给任务详情看的完整说明（包含 uv 输出），`output` 是 uv 输出本身。
@@ -45,6 +46,9 @@ pub struct Installer {
     pub package_index: std::sync::Mutex<Option<String>>,
     pub uv: PathBuf,
     pub http: reqwest::Client,
+    /// Agent 凭据：下载节点包归档时放进 `Authorization: Bearer`（控制面按它检查归档属于这台 Agent 的项目或公共项目）。
+    /// 只对控制面下发的 `package_url` 带；重定向到别的主机时 reqwest 会去掉它（`tests/install.rs` 钉着）。
+    pub token: Option<Secret>,
 }
 
 impl Installer {
@@ -77,9 +81,11 @@ impl Installer {
 
     async fn download(&self, task: &AssignTask, label: &str) -> Result<Vec<u8>, InstallError> {
         let fail = |e: String| InstallError::new(format!("下载节点包 {label} 失败：{e}"));
-        let response = self
-            .http
-            .get(&task.package_url)
+        let mut request = self.http.get(&task.package_url);
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token.expose());
+        }
+        let response = request
             .send()
             .await
             .map_err(|e| fail(format!("{} ({e})", task.package_url)))?;
@@ -176,7 +182,7 @@ impl Installer {
         if let Some(index) = &package_index {
             self.check_package_index(index, label).await?;
         }
-        let mut command = tokio::process::Command::new(&self.uv);
+        let mut command = crate::subprocess::command(&self.uv);
         command
             .args(["pip", "install", "--no-progress", "--color", "never"])
             .arg("--python")
