@@ -71,7 +71,7 @@ async function startHttp10Proxy(upstream: string, strip: string[] = []) {
 			`${req.method} ${req.url} HTTP/1.0\r\nhost: ${target.host}\r\n${forwarded.join("\r\n")}\r\n\r\n`,
 		);
 		const chunks: Buffer[] = [];
-		socket.on("data", (chunk) => chunks.push(chunk));
+		socket.on("data", (chunk: Buffer) => chunks.push(chunk));
 		socket.on("error", () => {});
 		socket.on("close", () => {
 			const raw = Buffer.concat(chunks);

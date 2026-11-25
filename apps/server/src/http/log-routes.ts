@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { pipeline, Readable, Transform, type TransformCallback } from "node:stream";
 import {
+	LOG_EXPECT_HEADER,
 	LOG_FILE_PROBLEMS_LIMIT,
 	type LogLineView,
 	logsApi,
@@ -10,7 +11,12 @@ import {
 	type RunLogLine,
 } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { LOG_FILE_GONE_CAUSES, LogFilesGoneError, logFileProblem } from "../logs/log-files.js";
+import {
+	formatLogExpect,
+	LOG_FILE_GONE_CAUSES,
+	LogFilesGoneError,
+	logFileProblem,
+} from "../logs/log-files.js";
 import type { LogMask } from "../logs/log-mask.js";
 import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
 import {
@@ -131,12 +137,14 @@ export function registerLogRoutes(
 	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply, request) => {
 		let rows: AsyncGenerator<string> | undefined;
 		let first: IteratorResult<string> | undefined;
+		let expect = "";
 		try {
-			const batches = isUuid(params.id)
+			const read = isUuid(params.id)
 				? await deps.runLogs.readAll(params.id, query.nodes)
 				: undefined;
-			if (!batches) return sendError(reply, 404, "not_found", "run not found");
-			rows = jsonRows(batches);
+			if (!read) return sendError(reply, 404, "not_found", "run not found");
+			expect = formatLogExpect(read.expect);
+			rows = jsonRows(read.batches);
 			// 第一批在响应开始之前读：检查通过之后、读第一批之前文件被删了，也是 410，不是响应还没开始就报错的 500（#669）。
 			first = await rows.next();
 		} catch (error) {
@@ -151,6 +159,7 @@ export function registerLogRoutes(
 		return reply
 			.header("content-type", `${logsApi.runDownload.contentType}; charset=utf-8`)
 			.header("content-disposition", attachment(`run-${params.id}.log.jsonl`))
+			.header(LOG_EXPECT_HEADER, expect)
 			.send(Readable.from(resumed(first, rows)));
 	});
 
@@ -271,7 +280,12 @@ export function registerLogRoutes(
 		const headers = () =>
 			reply
 				.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
-				.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
+				.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`))
+				// 应当到的最后一个序号（#721）：数据库记的；任务还在写时读到的可以更多，不会更少。
+				.header(
+					LOG_EXPECT_HEADER,
+					formatLogExpect({ tasks: info.seq > 0 ? 1 : 0, lastSeqSum: info.seq }),
+				);
 		if (size === undefined || size === 0) {
 			headers();
 			return reply.send("");

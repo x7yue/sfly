@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import urllib.parse
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -488,32 +489,95 @@ def _download_all(session: Session, args: argparse.Namespace, selection: Selecti
 _READ_BLOCK = 64 * 1024
 
 
+# 下载的响应头（#721）：`tasks=<m>; last_seq_sum=<S>`：
+# 范围内有日志的任务数、各任务最后一个序号之和。
+EXPECT_HEADER = "x-sfly-log-expect"
+_EXPECT = re.compile(r"\s*tasks=(\d+);\s*last_seq_sum=(\d+)\s*")
+
+
+def _expected(response: Any) -> tuple[int, int] | None:
+    """响应头里说应当到的位置：（任务数，各任务最后一个序号之和）。
+
+    旧的控制面没有这个头，头读不懂时也一样：返回 None，不核对。"""
+    headers = getattr(response, "headers", None)
+    value = headers.get(EXPECT_HEADER) if headers is not None else None
+    match = _EXPECT.fullmatch(value) if value else None
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def _incomplete(args: argparse.Namespace, reason: str) -> CliError:
+    """日志没有下载完：不留文件，提示带着原来的范围选项和路径。
+
+    只带 --all 重下，下到的是整个运行，还写进同一个文件。"""
+    flags = _flags(args, with_level=False)
+    return CliError(
+        "download_incomplete",
+        f"日志没有下载完：{reason}没有写出文件",
+        next="重新下载：sfly run logs "
+        f"{shlex.quote(args.run)}{' ' + flags if flags else ''} --all {shlex.quote(args.all)}",
+    )
+
+
 def _complete_lines(response: BinaryIO, args: argparse.Namespace) -> Iterator[bytes]:
-    """下载的响应一行一行读出来；**没下完就报错**（#669）：控制面发现日志文件在下载时被删除、截短了，
-    响应已经开始，会断开连接。分块的响应在两块之间断开时，直接按行迭代响应不报错、悄悄当作读完了
-    （只有断在一块当中才报 `IncompleteRead`），所以这里按块读（`read`）：断开了就抛 `CliError`，
-    调用方的临时文件随之删掉，不留半个文件。"""
+    """下载的响应一行一行读出来；**没下完就报错**（#669、#721）：
+
+    - 控制面发现日志文件在下载时被删除、截短了，响应已经开始，会断开连接。分块的响应在两块
+      之间断开时，直接按行迭代响应不报错、悄悄当作读完了（只有断在一块当中才报
+      `IncompleteRead`），所以这里按块读（`read`）：断开了就抛 `CliError`，调用方的临时文件
+      随之删掉，不留半个文件。
+    - 反向代理用 HTTP/1.0 连控制面时断开看不出来，代理把半截的响应当完整的转出来：响应头
+      `x-sfly-log-expect` 说了应当到的位置，读完后按任务记下读到的最大序号，任务数或合计
+      比头里的少就是没下完。没有这个头（旧的控制面）时不核对。
+    """
+    expected = _expected(response)
+    reached: dict[str, int] = {}
     pending = b""
     try:
         while block := response.read(_READ_BLOCK):
             *rows, pending = (pending + block).split(b"\n")
             for row in rows:
+                if expected is not None and not _reach(reached, row):
+                    raise _incomplete(args, "有一行读不懂，下载的内容被切断了。")
                 yield row + b"\n"
         # 有声明长度的响应读到的比声明的少（连接断了）：`read` 不报错、返回空，要自己看还差多少。
         if getattr(response, "length", None):
             raise IncompleteRead(b"")
     except (HTTPException, OSError) as error:
-        flags = _flags(args, with_level=False)
-        raise CliError(
-            "download_incomplete",
-            "日志没有下载完：连接在下载中途断开了（控制面发现日志文件在下载时被删除或截短了，或者网络断了）。"
-            f"没有写出文件（{error.__class__.__name__}）",
-            # 带着原来的范围选项和路径：只带 --all 重下，下到的是整个运行，还写进同一个文件。
-            next="重新下载：sfly run logs "
-            f"{shlex.quote(args.run)}{' ' + flags if flags else ''} --all {shlex.quote(args.all)}",
+        raise _incomplete(
+            args,
+            "连接在下载中途断开了（控制面发现日志文件在下载时被删除或截短了，或者网络断了）。"
+            f"（{error.__class__.__name__}）",
         ) from None
     if pending:
+        if expected is not None:
+            raise _incomplete(args, "最后一行没有写完，下载的内容被切断了。")
         yield pending
+    if expected is not None:
+        tasks, last_seq_sum = expected
+        got = sum(reached.values())
+        if len(reached) < tasks or got < last_seq_sum:
+            raise _incomplete(
+                args,
+                f"下到 {len(reached)} 个任务、各任务最后一个序号合计 {got}，"
+                f"控制面说应当有 {tasks} 个、合计 {last_seq_sum}：连接中途断开了，"
+                "但代理没有让它看出来"
+                "（反向代理用 HTTP/1.0 连控制面时就是这样，要配 proxy_http_version 1.1，"
+                "见 README「反向代理」）。",
+            )
+
+
+def _reach(reached: dict[str, int], row: bytes) -> bool:
+    """记下这一行所属任务读到的最大序号；读不懂（不是日志行）时返回 False。"""
+    try:
+        entry = json.loads(row)
+        task, seq = entry["task_id"], entry["seq"]
+    except (ValueError, KeyError, TypeError):
+        return False
+    if not isinstance(task, str) or not isinstance(seq, int):
+        return False
+    if seq > reached.get(task, 0):
+        reached[task] = seq
+    return True
 
 
 def _write_download(rows: Iterable[bytes], target: Path, selection: Selection) -> int:
