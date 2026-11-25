@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { useHostKeyboardFocus } from "#/lib/host-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -32,7 +33,10 @@ export function WarningBadge({
 				<ul className="m-0 flex list-none flex-col gap-1 p-0">
 					{warnings.map((w, i) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: 同一节点可能有文字相同的两条警告，列表只读不重排
-						<li key={i}>{w.message}</li>
+						<li key={i}>
+							{/* 整句是控制面拼好的，里面有输入键、输出键、Agent 名、包名这些别人写的值，拆不开：整句按别人写的文字显示。 */}
+							<UntrustedText text={w.message} />
+						</li>
 					))}
 				</ul>
 			</TooltipContent>

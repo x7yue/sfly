@@ -5,6 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { HistoryIcon, PencilRulerIcon, RotateCcwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
 import { EmptyState, ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
@@ -373,7 +374,8 @@ function RestoreDialog({
 								)}
 								{restore.error && (
 									<p role="alert" className="m-0 text-sm text-danger-fg">
-										恢复失败：{restore.error.message}
+										恢复失败：
+										<ErrorMessage error={restore.error} />
 									</p>
 								)}
 							</DialogBody>

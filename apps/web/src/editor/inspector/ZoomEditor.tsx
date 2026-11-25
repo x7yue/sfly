@@ -1,5 +1,6 @@
 import { Maximize2Icon } from "lucide-react";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -24,7 +25,7 @@ import type { ReferenceChoice } from "./reference-completion";
  * 所以没有「保存 / 放弃」，关闭后检查器里已经是同一个值。
  */
 interface ZoomEditorProps {
-	/** 字段名：用在按钮的无障碍名称和弹窗标题里。 */
+	/** 字段名：用在按钮的无障碍名称和弹窗标题里。节点包的输入名由调用方先写成纯文字（`untrustedPlain`），标题里再隔离方向。 */
 	name: string;
 	/** 检查器里这个输入框的无障碍名称；弹窗里的输入框在后面加「（放大编辑）」。 */
 	label: string;
@@ -82,7 +83,10 @@ export function ZoomEditor({
 				>
 					<DialogHeader>
 						<DialogTitle>
-							编辑 <span className="font-mono">{name}</span>
+							编辑{" "}
+							<span className="font-mono">
+								<UntrustedText text={name} />
+							</span>
 						</DialogTitle>
 						<DialogDescription>
 							修改立即生效，可以撤销。

@@ -1,7 +1,9 @@
 import { cn } from "cn";
 import { BracesIcon, XIcon } from "lucide-react";
 import { useId, useMemo, useState } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ACTION } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import type { FieldControl } from "./fields";
 import { ReferenceList } from "./ReferenceList";
@@ -118,8 +120,12 @@ export function ReferenceChip({
 				"flex h-7.5 min-w-0 items-center gap-1 rounded-md border border-border-strong bg-raised-2 pr-0.5 pl-2 data-invalid:border-danger",
 			)}
 		>
-			<span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-1" title={value}>
-				{value}
+			{/* 引用里有前序节点的输出键（节点包里别人写的）。 */}
+			<span
+				className="min-w-0 flex-1 truncate font-mono text-xs text-fg-1"
+				title={untrustedPlain(value)}
+			>
+				<UntrustedText text={value} />
 			</span>
 			<Button
 				ref={ref}

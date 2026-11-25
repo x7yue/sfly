@@ -1,6 +1,7 @@
 import type { QueueWaitView } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { agentAnchor } from "#/agents/agent-anchor";
+import { UntrustedText } from "#/components/untrusted-text";
 import { QUEUE_WAIT } from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { holderNodeLabel, holdersRest, queueWaitParts } from "./queue-wait";
@@ -33,7 +34,7 @@ export function QueueWaitNote({
 				hash={agentAnchor(wait.agent)}
 				className="font-mono text-fg-1 underline decoration-border-strong underline-offset-2 hover:decoration-fg-2"
 			>
-				{wait.agent}
+				<UntrustedText text={wait.agent} />
 			</Link>
 			（{situation}）· <span className="whitespace-nowrap">{timing}</span>
 			{(holders.length > 0 || rest !== "") && (
@@ -42,14 +43,14 @@ export function QueueWaitNote({
 					{holders.map((holder, i) => (
 						<span key={`${holder.run_id}/${holder.node_id}/${holder.attempt}`}>
 							{i > 0 && "、"}
-							{holder.orchestration_name}（
+							<UntrustedText text={holder.orchestration_name} />（
 							<Link
 								{...runMonitorLink(holder.run_id, { node: holder.node_id })}
 								className="font-mono text-fg-1 underline decoration-border-strong underline-offset-2 hover:decoration-fg-2"
 							>
 								{QUEUE_WAIT.holderRun(shortId(holder.run_id))}
 							</Link>
-							）的 {holderNodeLabel(holder)}
+							）的 <UntrustedText text={holderNodeLabel(holder)} />
 						</span>
 					))}
 					{holders.length > 0 && rest !== "" && "，"}

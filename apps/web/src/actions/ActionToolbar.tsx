@@ -4,6 +4,7 @@ import type { Ref } from "react";
 import { StatusDot } from "#/components/status";
 import { ACTION_PAGE } from "#/lib/copy";
 import { formatInteger } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { LOG_TIME_KINDS, type LogTimeKind } from "#/monitor/log-time-kind";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -57,7 +58,7 @@ export function ActionToolbar({
 					<NativeSelectOption value="">{ACTION_PAGE.allNames}</NativeSelectOption>
 					{summary.names.map((n) => (
 						<NativeSelectOption key={n.name} value={n.name}>
-							{n.name}
+							{untrustedPlain(n.name)}
 						</NativeSelectOption>
 					))}
 				</NativeSelect>
@@ -125,14 +126,16 @@ function CountButton({
 	danger?: boolean;
 	onClick: () => void;
 }) {
+	const plain = untrustedPlain(label);
+	const full = count === undefined ? plain : `${plain} ${count}`;
 	return (
 		<Truncate
-			label={count === undefined ? label : `${label} ${count}`}
+			label={full}
 			render={
 				<button
 					type="button"
 					aria-pressed={pressed}
-					aria-label={count === undefined ? undefined : `${label} ${count}`}
+					aria-label={count === undefined ? undefined : full}
 					onClick={onClick}
 					className={cn(
 						"inline-flex h-6 max-w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md border border-transparent px-2 text-xs whitespace-nowrap transition-colors hover:bg-raised aria-pressed:border-border-strong aria-pressed:bg-raised-2",
@@ -141,7 +144,7 @@ function CountButton({
 				/>
 			}
 		>
-			<Truncate>{label}</Truncate>
+			<Truncate untrusted>{label}</Truncate>
 			{count !== undefined && <span className="flex-none font-mono text-fg-1">{count}</span>}
 		</Truncate>
 	);

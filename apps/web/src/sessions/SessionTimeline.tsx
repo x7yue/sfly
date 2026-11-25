@@ -2,8 +2,11 @@ import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { Elapsed } from "#/components/elapsed";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { SESSION } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
 import { toolLine, toolResultSummary, turnEndText, turnEndTone } from "./session-text";
@@ -35,7 +38,7 @@ export function SessionTimeline({
 					</Button>
 					{olderError && (
 						<span role="alert" className="text-xs text-danger-fg">
-							{SESSION.page.loadOlderFailed}：{olderError.message}
+							{SESSION.page.loadOlderFailed}：<ErrorMessage error={olderError} />
 						</span>
 					)}
 				</div>
@@ -68,7 +71,9 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 					className="rounded-lg border border-border-soft bg-raised px-3 py-2 text-sm wrap-anywhere whitespace-pre-wrap text-fg-1"
 				>
 					<span className="text-fg-3">{item.author}：</span>
-					<span>{item.text}</span>
+					<span>
+						<UntrustedText text={item.text} mode="text" />
+					</span>
 				</li>
 			);
 		case "assistant":
@@ -78,7 +83,7 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 					data-streaming={item.streaming || undefined}
 					className="px-1 text-sm leading-relaxed wrap-anywhere whitespace-pre-wrap text-fg-1"
 				>
-					{item.text}
+					<UntrustedText text={item.text} mode="text" />
 				</li>
 			);
 		case "tool":
@@ -90,7 +95,7 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 					data-kind={item.noticeKind}
 					className="px-1 text-xs wrap-anywhere text-fg-3"
 				>
-					{item.message}
+					<UntrustedText text={item.message} />
 				</li>
 			);
 		case "turn_end": {
@@ -109,7 +114,7 @@ function TimelineRow({ item }: { item: TimelineItem }) {
 							tone === "danger" && "text-danger-fg",
 						)}
 					>
-						{turnEndText(item)}
+						<UntrustedText text={turnEndText(item)} />
 					</span>
 					<span aria-hidden className="h-px flex-1 bg-border-soft" />
 				</li>
@@ -139,7 +144,7 @@ function ToolRow({ item }: { item: ToolItem }) {
 			className="overflow-hidden rounded-lg border border-border-soft bg-surface"
 		>
 			<Truncate
-				label={line}
+				label={untrustedPlain(line, "text")}
 				render={
 					<button
 						type="button"
@@ -155,7 +160,9 @@ function ToolRow({ item }: { item: ToolItem }) {
 					className="size-3.5 flex-none text-fg-3 transition-[rotate] duration-(--motion-base) ease-(--motion-ease-out) motion-reduce:transition-none"
 					style={{ rotate: open ? "90deg" : "0deg" }}
 				/>
-				<Truncate className="flex-1 font-mono text-fg-1">{line}</Truncate>
+				<Truncate untrusted className="flex-1 font-mono text-fg-1">
+					{line}
+				</Truncate>
 				{running ? (
 					<span className="flex flex-none items-center gap-1.5 text-fg-3">
 						<StatusDot kind="running" pulse />
@@ -188,7 +195,7 @@ function ToolRow({ item }: { item: ToolItem }) {
 						data-testid="tool-command"
 						className="m-0 px-3 py-2 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-1"
 					>
-						{line}
+						<UntrustedText text={line} mode="text" />
 					</pre>
 					{result && (
 						<pre
@@ -198,7 +205,11 @@ function ToolRow({ item }: { item: ToolItem }) {
 								result.isError ? "text-danger-fg" : "text-fg-2",
 							)}
 						>
-							{result.text === "" ? SESSION.tool.noOutput : result.text}
+							{result.text === "" ? (
+								SESSION.tool.noOutput
+							) : (
+								<UntrustedText text={result.text} mode="text" />
+							)}
 						</pre>
 					)}
 				</div>
