@@ -653,13 +653,13 @@ function LogsView<L extends LogLineView>({
 				</p>
 			)}
 			{fileProblem && (
-				<p
-					role="status"
+				// `<output>` 的隐含角色就是 status：实时流晚到时读屏会念（biome 的 a11y 规则要求用它，不写 role 属性）。
+				<output
 					data-testid="logs-file-problem"
-					className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-warn-fg"
+					className="m-0 block flex-none border-b border-border-soft px-3 py-1 text-xs text-warn-fg"
 				>
 					{fileProblem}
-				</p>
+				</output>
 			)}
 			{unlocatable > 0 && (
 				<p

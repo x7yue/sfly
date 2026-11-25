@@ -41,7 +41,9 @@ test("单个任务：日志文件不见了，面板说明原因，不显示成�
 	// 说明读者现在能做什么：这里没有内容、下载会失败、只能从备份恢复；实时流晚到时读屏会念。
 	await expect(notice).toContainText("下载这份日志也会失败");
 	await expect(notice).toContainText("从备份恢复数据目录");
-	await expect(notice).toHaveAttribute("role", "status");
+	await expect(
+		panel(page).getByRole("status").filter({ hasText: "下载这份日志也会失败" }),
+	).toBeVisible();
 	// 空态说的是文件的问题，不是「没有日志输出」；种类上面那一行已经说了，这里用中性的一句。
 	await expect(panel(page).getByText("这次尝试没有日志输出")).toHaveCount(0);
 	await expect(panel(page).getByRole("tabpanel")).toContainText("没有可显示的日志。");
