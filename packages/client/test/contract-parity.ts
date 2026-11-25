@@ -135,6 +135,8 @@ export type ContractParity = [
 	Expect<Within<NonNullable<Api["runs"]["trigger"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["trigger"]["params"]>>>>,
 	Expect<Within<NonNullable<Api["runs"]["trigger"]["input"]["body"]>, NonNullable<z.input<Apis["runs"]["trigger"]["body"]>>>>,
 	Expect<Equal<Api["runs"]["trigger"]["output"], z.output<Apis["runs"]["trigger"]["response"]>>>,
+	Expect<Within<NonNullable<Api["runs"]["taskIo"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["taskIo"]["params"]>>>>,
+	Expect<Equal<Api["runs"]["taskIo"]["output"], z.output<Apis["runs"]["taskIo"]["response"]>>>,
 	Expect<Within<NonNullable<Api["runs"]["get"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["get"]["params"]>>>>,
 	Expect<Equal<Api["runs"]["get"]["output"], z.output<Apis["runs"]["get"]["response"]>>>,
 	Expect<Within<NonNullable<Api["runs"]["cancel"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["cancel"]["params"]>>>>,

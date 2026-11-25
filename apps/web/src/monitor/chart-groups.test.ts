@@ -37,6 +37,7 @@ const run: RunView = {
 					status: "failed",
 					agent: "agent-a",
 					outputs: null,
+					outputs_omitted_bytes: null,
 					error: null,
 					attempts: [],
 				},
