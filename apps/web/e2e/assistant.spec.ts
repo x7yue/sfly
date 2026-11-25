@@ -1140,7 +1140,8 @@ test("别人写的文字都经公共的不可信文字组件：页头的标题�
 	const rowOfSession = page.locator(`[data-session="${view.id}"]`);
 	await expect(rowOfSession).toBeVisible();
 	const cells = rowOfSession.locator("td");
-	expect(await isolated(cells.nth(0).locator("bdi").first())).toBe(true);
+	// 标题那一格是按文字截断的（`Truncate untrusted`）：截断层自己是从左到右、隔离的（`dir="ltr"`），里面不再包 `<bdi>`。
+	await expect(cells.nth(0).locator('[data-truncate-clip][dir="ltr"]')).toBeVisible();
 	expect(await isolated(cells.nth(1).locator("bdi").first())).toBe(true);
 });
 
