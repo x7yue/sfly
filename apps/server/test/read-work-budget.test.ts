@@ -7,6 +7,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { ACTION_LIMITS, SECRET_MASK as MASK } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { MAX_AUTOMATON_CHARS } from "../src/logs/aho-corasick.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
@@ -207,7 +208,10 @@ describe("读取的预算和值集合的大小：每个读取出口都有上限�
 	/** 触发之后，sa 在跑，b 结束，子流程 subB 创建，`values` 才成为 secret 值。 */
 	const startLateRun = async (values: unknown[]) => {
 		const id = await api.orchestrationWith(lateDoc());
-		const runId = await api.triggerOk(id, { cfg: values });
+		// 触发时值集合已经太大会被拒绝（#632）：用真实的上限触发，之后（调小的上限下）值集合才在运行中变大
+		const runId = await withSecretLimits({ automatonChars: MAX_AUTOMATON_CHARS }, () =>
+			api.triggerOk(id, { cfg: values }),
+		);
 		const first = await agent.nextAssign();
 		const second = await agent.nextAssign();
 		const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
