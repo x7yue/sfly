@@ -25,7 +25,8 @@ import type {
  * - **插话送到了没有**（{@link SteerDelivery}）：`steer_queue` 是还没送到的完整列表，在最近一份里是「等待送达」，之前在某份里、
  *   之后不在了是「已送到」；`steer_dropped` 通知带着这句话的 `message_id`，按它对上，是「没有送到」（同一句话的通知只显示一次）；
  *   一轮结束时还没有 `steer_dropped` 的都算送到（协议「不变式」）；刷新后读到的历史里没有 `steer_queue`（不持久），在做的一轮里的插话在
- *   下一份 `steer_queue` 到之前不知道；
+ *   下一份 `steer_queue` 到之前不知道，**也不因为后来的一份列表里没有它就算送到**（它可能还没到助手服务手上）：在一份列表里见到它才变成
+ *   等待送达，这一轮结束时照 `steer_dropped` 的有无定；往前翻页不动在做的一轮里已经有的插话；
  * - **补发的次序**（#544 评论 8）：补发（打开页面、重连）期间到的不持久的事件在补发完之后才放出来，会排在比它晚的持久事件后面。
  *   所以 `steer_queue` 只在一轮在做时才算，`turn_queued` 只在排队时才算，别的时候是晚到的、按「这一轮已经过去」丢掉；「已送到」只由
  *   「之前出现过、现在不在了」推出来，不因为一句话不在列表里就算送到；
@@ -251,8 +252,9 @@ export const hasBehind = (items: readonly TimelineItem[]): boolean =>
 /**
  * 由读到的一段历史（持久事件）重新判断插话的送达：有 `steer_dropped` 的是没有送到；它之后这一轮已经有了结局的（没有 `steer_dropped`）是
  * 送到了；其余（读到在做的一轮里的插话）在下一份 `steer_queue` 到之前不知道。读历史（打开、往前翻页）之后调用，每条事件落在哪一页都一样。
+ * `upTo` 之后的不动：往前翻页只重判新读进来的那一段，在做的一轮里已经有的插话（等待送达、不知道）保持原样。
  */
-function resolveSteers(items: readonly TimelineItem[]): TimelineItem[] {
+function resolveSteers(items: readonly TimelineItem[], upTo = items.length): TimelineItem[] {
 	const dropped = new Map<string, string>();
 	for (const item of items) {
 		if (item.kind === "notice" && item.noticeKind === "steer_dropped" && item.messageId !== null) {
@@ -264,7 +266,8 @@ function resolveSteers(items: readonly TimelineItem[]): TimelineItem[] {
 		if (item.kind === "turn_end") lastEnd = index;
 	});
 	return items.map((item, index): TimelineItem => {
-		if (item.kind !== "user" || item.role !== "steer") return item;
+		// `upTo` 之后的不动（往前翻页只重判新读进来的那一段，在做的一轮里已经有的插话保持原样）。
+		if (index >= upTo || item.kind !== "user" || item.role !== "steer") return item;
 		const note = dropped.get(item.messageId);
 		if (note !== undefined)
 			return { ...item, delivery: "dropped", droppedNote: item.droppedNote ?? note };
@@ -519,11 +522,11 @@ function apply(state: TimelineState, event: SessionEvent): TimelineState {
 					if (item.kind !== "user" || item.role !== "steer") return item;
 					if (item.delivery === "delivered" || item.delivery === "dropped") return item;
 					if (listed.has(item.messageId)) return { ...item, delivery: "waiting", queuedSeen: true };
-					// 不在列表里了：之前出现过的，或者读历史时不知道的（那时已经在助手服务手上），送到了（没送到的先有 `steer_dropped`）。
-					// 没在任何一份列表里出现过的不算：晚到的旧队列里本来就没有它。
-					return item.queuedSeen || item.delivery === "unknown"
-						? { ...item, delivery: "delivered" }
-						: item;
+					// 不在列表里了：**只有之前在某一份列表里见过的**才算送到了（没送到的先有 `steer_dropped`）。没见过的不算：晚到的
+					// 旧队列里本来就没有它；刷新后读到的（`unknown`）也不算——它可能还没到助手服务手上（这一轮的 `prompt` 还没得到
+					// 回应、转发还在路上），这时另一句送到了，列表里没有它不等于它送到了。它留着不知道，在一份列表里见到了才变成
+					// 等待送达，这一轮结束时照 `steer_dropped` 的有无定。
+					return item.queuedSeen ? { ...item, delivery: "delivered" } : item;
 				}),
 			};
 		}
@@ -642,6 +645,16 @@ export function initialTimeline(
 }
 
 /**
+ * 说话的响应（会话视图）说这个会话在排队（`status` 为 `queued`、有排位）：空闲的会话说的话排上了队、项目里没有会话在做时控制面不推
+ * `turn_queued`（要等这一刻开始才推；暂停着的项目要等兜底），页面自己从响应里得知。只对空闲或排队中的有效：已经在做、已经结束的
+ * （开始的事件比响应先到）不改。
+ */
+export function applyQueuedView(state: TimelineState, queue: TimelineQueue): TimelineState {
+	if (state.status !== "idle" && state.status !== "queued") return state;
+	return { ...state, status: "queued", awaitingStart: true, queue };
+}
+
+/**
  * 往前翻页：把更早的一页持久事件（序号升序）放到已有的前面。状态、逐字出现的话和 `lastSeq` 不变；
  * 只有结果、没有对上调用的行（调用在这一页里）和这一页里一直没有结果的调用行会接上。
  */
@@ -674,7 +687,8 @@ export function prependHistory(
 	);
 	return {
 		...state,
-		items: resolveSteers([...merged, ...rest]),
+		// 只重判新读进来的这一段：在做的一轮里已经有的插话（等待送达、不知道）不能被这次读历史改掉。
+		items: resolveSteers([...merged, ...rest], merged.length),
 		oldestSeq:
 			older.oldestSeq === null
 				? state.oldestSeq

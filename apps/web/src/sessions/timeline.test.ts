@@ -2,6 +2,7 @@ import type { SessionEvent } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	applyEvent,
+	applyQueuedView,
 	emptyTimeline,
 	initialTimeline,
 	prependHistory,
@@ -554,11 +555,73 @@ describe("插话：在做时说的话", () => {
 		const state = initialTimeline("running", events, false);
 		expect(byId(state, ID_A)?.delivery).toBe("delivered");
 		expect(byId(state, ID_C)?.delivery).toBe("unknown");
-		// 下一份 steer_queue 不含它：它在助手服务手上，已经送到。
+		// 下一份 steer_queue 不含它：不能就此算送到（它可能还没到助手服务手上），仍是不知道；在一份列表里见到它才是等待送达。
 		const next = applyEvent(state, steerQueue());
-		expect(byId(next, ID_C)?.delivery).toBe("delivered");
+		expect(byId(next, ID_C)?.delivery).toBe("unknown");
 		const listed = applyEvent(state, steerQueue(ID_C));
-		expect(byId(listed, ID_C)?.delivery).toBe("waiting");
+		expect(byId(listed, ID_C)).toMatchObject({ delivery: "waiting", queuedSeen: true });
+		// 见到了之后又不在了：送到了。
+		expect(byId(applyEvent(listed, steerQueue()), ID_C)?.delivery).toBe("delivered");
+	});
+
+	it("刷新后不知道的插话：一份不含它的列表不算送到，之后含它的列表也不被改回；这一轮结束时没有 steer_dropped 才算送到，有就是没有送到", () => {
+		// 审查 A1：刷新时这句话（乙）还没到助手服务手上；另一句（甲）送到了，列表变化发了一份不含乙的。
+		const loaded = initialTimeline(
+			"running",
+			[user(1), started(2), steerMsg(3, ID_A, "甲"), steerMsg(4, ID_B, "乙")],
+			false,
+		);
+		expect([byId(loaded, ID_A)?.delivery, byId(loaded, ID_B)?.delivery]).toEqual([
+			"unknown",
+			"unknown",
+		]);
+		const emptied = applyEvent(loaded, steerQueue());
+		expect([byId(emptied, ID_A)?.delivery, byId(emptied, ID_B)?.delivery]).toEqual([
+			"unknown",
+			"unknown",
+		]);
+		// 助手服务收下乙：列表里有它——等待送达，不是已送到。
+		const listed = applyEvent(emptied, steerQueue(ID_B));
+		expect(byId(listed, ID_B)).toMatchObject({ delivery: "waiting", queuedSeen: true });
+		expect(byId(listed, ID_A)?.delivery).toBe("unknown");
+		// 这一轮结束：没有 steer_dropped 的都算送到。
+		const finished = applyEvent(listed, end(5, "completed"));
+		expect([byId(finished, ID_A)?.delivery, byId(finished, ID_B)?.delivery]).toEqual([
+			"delivered",
+			"delivered",
+		]);
+		// 有 steer_dropped 的是没有送到。
+		const lost = applyEvent(applyEvent(emptied, dropped(5, ID_B)), end(6, "completed"));
+		expect([byId(lost, ID_A)?.delivery, byId(lost, ID_B)?.delivery]).toEqual([
+			"delivered",
+			"dropped",
+		]);
+	});
+
+	it("往前翻页不动在做的这一轮里已经有的插话：等待送达仍是等待送达，不知道仍是不知道；之后一份不含它的列表也不算送到", () => {
+		// 审查 A2：在做的一轮里甲等待送达（在列表里见过一次，页面一直开着）。
+		let state = initialTimeline("running", [user(51), started(52)], true);
+		state = run([steerMsg(53, ID_A, "甲"), steerQueue(ID_A)], state);
+		expect(byId(state, ID_A)).toMatchObject({ delivery: "waiting", queuedSeen: true });
+		const older = [user(1, "很早的话"), started(2), end(3, "completed")];
+		const turned = prependHistory(state, older, false);
+		expect(byId(turned, ID_A)).toMatchObject({ delivery: "waiting", queuedSeen: true });
+		// 之后甲真的送到了（见过又不在了）：已送到。
+		expect(byId(applyEvent(turned, steerQueue()), ID_A)?.delivery).toBe("delivered");
+		// 往前翻页读进来的更早的一轮里的插话照读历史判断：这一轮已经结束了，送到了。
+		const withSteer = prependHistory(
+			state,
+			[user(1, "很早的话"), started(2), steerMsg(3, ID_B, "乙"), end(4, "completed")],
+			false,
+		);
+		expect(byId(withSteer, ID_B)?.delivery).toBe("delivered");
+		expect(byId(withSteer, ID_A)).toMatchObject({ delivery: "waiting", queuedSeen: true });
+
+		// 刷新后不知道的，翻页之后仍是不知道，不会因为一份不含它的列表就算送到。
+		let reloaded = initialTimeline("running", [steerMsg(53, ID_A, "甲")], true);
+		reloaded = prependHistory(reloaded, older, false);
+		expect(byId(reloaded, ID_A)?.delivery).toBe("unknown");
+		expect(byId(applyEvent(reloaded, steerQueue()), ID_A)?.delivery).toBe("unknown");
 	});
 
 	it("补发的次序：steer_queue 比它之后才落库的 turn_end 先到、却排在后面放出——这一轮已经结束，晚到的队列不改任何一句的状态", () => {
@@ -703,5 +766,32 @@ describe("结束会话", () => {
 		state = applyEvent(state, { type: "session_ended", seq: 6, at: at(), by: "alice" });
 		expect(state.status).toBe("ended");
 		expect(byId(state, ID_A)?.role).toBe("cancelled");
+	});
+});
+
+describe("说话之后核对一次状态：排上了队、控制面没有推 turn_queued", () => {
+	it("空闲的会话说了话（user_message 到了、状态仍是空闲）：视图说在排队，就是排队中，输入框不可用；之后开始就是在做", () => {
+		let state = run([plainMsg(1, ID_A, "接着做")], emptyTimeline("idle"));
+		expect(state.status).toBe("idle");
+		state = applyQueuedView(state, { position: 1, waitingFor: null });
+		expect(state).toMatchObject({ status: "queued", queue: { position: 1, waitingFor: null } });
+		state = applyEvent(state, started(2, 2));
+		expect(state.status).toBe("running");
+	});
+
+	it("响应比 user_message 先到也一样；已经在做、已经结束的（开始的事件比响应先到）不改", () => {
+		const before = applyQueuedView(emptyTimeline("idle"), { position: 2, waitingFor: WAITING_FOR });
+		expect(before.status).toBe("queued");
+		const after = applyEvent(before, plainMsg(1, ID_A, "接着做"));
+		expect(after.status).toBe("queued");
+		const running = run([plainMsg(1, ID_A, "接着做"), started(2, 2)], emptyTimeline("idle"));
+		expect(applyQueuedView(running, { position: 1, waitingFor: null })).toBe(running);
+		const finished = applyEvent(emptyTimeline("running"), {
+			type: "session_ended",
+			seq: 9,
+			at: at(),
+			by: "bob",
+		});
+		expect(applyQueuedView(finished, { position: 1, waitingFor: null })).toBe(finished);
 	});
 });
