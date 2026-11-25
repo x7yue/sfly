@@ -2,7 +2,13 @@ import { once } from "node:events";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { pipeline, Readable, Transform, type TransformCallback } from "node:stream";
-import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
+import {
+	LOG_FILE_PROBLEMS_LIMIT,
+	type LogLineView,
+	logsApi,
+	RunLogDownloadRow,
+	type RunLogLine,
+} from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { LOG_FILE_GONE_CAUSES, LogFilesGoneError, logFileProblem } from "../logs/log-files.js";
 import type { LogMask } from "../logs/log-mask.js";
@@ -13,7 +19,7 @@ import {
 	encodeRunLogCursor,
 	encodeRunLogLiveCursor,
 } from "../logs/run-log-cursor.js";
-import type { RunLogs } from "../logs/run-log-pages.js";
+import type { FileProblem, RunLogs } from "../logs/run-log-pages.js";
 import { type LogChunk, normalizeLogRow, type TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
 import { isUuid } from "../util/uuid.js";
@@ -98,6 +104,8 @@ export function registerLogRoutes(
 		// 清理之后文件已经不在，读出来本来就是空的；判断放在读取之后，读取期间被清理也不会返回半页。
 		const expired = await deps.isPurged(params.id);
 		const start = new Map<number, number>();
+		// 日志文件不在了、变短了（#721）：页里说明，不当成「没有日志」；已过保留期的运行文件本来就被清理了，`expired` 已经说了。
+		const problems = expired ? [] : page.fileProblems;
 		return {
 			run_id: params.id,
 			lines: expired ? [] : page.lines,
@@ -108,6 +116,8 @@ export function registerLogRoutes(
 			live_after: encodeRunLogLiveCursor(expired ? start : page.live),
 			truncated_tasks: expired ? [] : page.truncatedTasks,
 			expired,
+			file_problems: listedProblems(problems),
+			file_problems_total: problems.length,
 		};
 	});
 
@@ -151,8 +161,16 @@ export function registerLogRoutes(
 				return sendError(reply, 404, "not_found", "run not found");
 			}
 			const purged = await deps.isPurged(runId);
+			// 连上时说一次范围内有哪些任务的日志文件有问题（#721）。
+			const problems = purged ? [] : ((await deps.runLogs.fileProblems(runId, query.nodes)) ?? []);
 			open((stream) => {
 				if (purged) return undefined;
+				if (problems.length > 0) {
+					stream.send("file_problems", {
+						file_problems: listedProblems(problems),
+						file_problems_total: problems.length,
+					});
+				}
 				const from = new Map(after);
 				const resumed = stream.lastEventId && decodeRunLogLiveCursor(stream.lastEventId);
 				for (const [order, seq] of resumed || []) {
@@ -196,6 +214,8 @@ export function registerLogRoutes(
 					? { direction: "forward", after, limit, filter, mask }
 					: { direction: "backward", before, limit, filter, mask },
 			));
+		// 文件不在了、变短了（#721）：页里说明，不当成「没有日志」；已过保留期的运行文件本来就被清理了，`expired` 已经说了。
+		const expired = await deps.isPurged(info.runId);
 		return {
 			task_id: params.id,
 			lines: page.lines,
@@ -204,7 +224,8 @@ export function registerLogRoutes(
 			size: page.size,
 			last_seq: info.seq,
 			truncated: info.truncated,
-			expired: await deps.isPurged(info.runId),
+			expired,
+			file_problem: expired ? null : await taskFileProblem(info),
 			locate: located ? { at_offset: located.atOffset, exact_seq: located.exactSeq } : null,
 		};
 	});
@@ -257,7 +278,11 @@ export function registerLogRoutes(
 		if (!isUuid(taskId) || !(await deps.logs.exists(taskId))) {
 			return sendError(reply, 404, "not_found", "task not found");
 		}
+		// 连上时说一次日志文件有没有问题（#721）；已过保留期的运行不说，连着期间才出的问题也不报。
+		const info = await deps.logs.describe(taskId);
+		const problem = info && !(await deps.isPurged(info.runId)) ? await taskFileProblem(info) : null;
 		open((stream) => {
+			if (problem) stream.send("file_problem", { file_problem: problem });
 			const resume = Number(stream.lastEventId);
 			const known = Number(query.after_seq);
 			let sent = Math.max(
@@ -298,6 +323,17 @@ export function registerLogRoutes(
 		return undefined;
 	});
 }
+
+/** 这个任务日志文件的问题（#721）：不见了、比数据库记的短；没有问题时为 null。和下载是同一个判断。 */
+async function taskFileProblem(
+	info: Parameters<typeof logFileProblem>[0] & { file: string },
+): Promise<"missing" | "short" | null> {
+	return logFileProblem(info, await stat(info.file).catch(() => undefined)) ?? null;
+}
+
+/** 页里和事件里列出的有问题的任务：最多 {@link LOG_FILE_PROBLEMS_LIMIT} 个，总数另给。 */
+const listedProblems = (problems: readonly FileProblem[]) =>
+	problems.slice(0, LOG_FILE_PROBLEMS_LIMIT).map(({ origin, problem }) => ({ ...origin, problem }));
 
 /** 按级别筛选（不给 `level` 是不筛选）：按运行的分页与实时推送共用。 */
 const levelFilter = ({ level }: { level?: LogLineView["level"][] | undefined }): LogFilter => ({

@@ -14,7 +14,12 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { runs } from "../db/schema.js";
 import { getRunView } from "../runs/run-read.js";
-import { type GoneTask, LogFilesGoneError, logFileProblem } from "./log-files.js";
+import {
+	type GoneTask,
+	type LogFileProblemKind,
+	LogFilesGoneError,
+	logFileProblem,
+} from "./log-files.js";
 import type { LogMask } from "./log-mask.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
@@ -72,6 +77,14 @@ export interface RunLogPageResult {
 	truncatedTasks: LogOrigin[];
 	/** 实时流起点：读这一页那一刻每个任务已写入的最大序号。 */
 	live: TaskSeqs;
+	/** 范围内日志文件有问题的任务（#721），按运行视图里的顺序；全部，由路由截断到契约里的个数。 */
+	fileProblems: FileProblem[];
+}
+
+/** 日志文件有问题的任务（页里和实时流说明）：它的来源，和是不见了还是比数据库记的短。 */
+export interface FileProblem {
+	origin: LogOrigin;
+	problem: LogFileProblemKind;
 }
 
 export interface RunLogFollow {
@@ -166,7 +179,27 @@ export class RunLogs {
 			reachedEnd: lanes.every((lane) => after(lane) >= lane.until),
 			truncatedTasks: streams.filter((s) => s.log.truncated).map((s) => s.task.origin),
 			live: new Map(streams.map((s) => [s.log.order, s.log.seq])),
+			fileProblems: (await problemsOf(streams)).map(({ task, reason }) => ({
+				origin: task.origin,
+				problem: reason,
+			})),
 		};
+	}
+
+	/**
+	 * 范围内日志文件有问题的任务（#721：分页和实时流连上时说明；和下载是同一个判断，{@link logFileProblem}），按运行视图里的顺序；
+	 * 运行不存在时为 undefined。
+	 */
+	async fileProblems(
+		runId: string,
+		scope: RunLogScope | undefined,
+	): Promise<FileProblem[] | undefined> {
+		const streams = await this.#streams(runId, scope);
+		if (!streams) return undefined;
+		return (await problemsOf(streams)).map(({ task, reason }) => ({
+			origin: task.origin,
+			problem: reason,
+		}));
 	}
 
 	/**
@@ -184,14 +217,7 @@ export class RunLogs {
 	): Promise<AsyncGenerator<RunLogLine[], void> | undefined> {
 		const streams = await this.#streams(runId, scope);
 		if (!streams) return undefined;
-		const found = await mapOpenFiles(
-			streams,
-			async ({ task, log }): Promise<GoneTask | undefined> => {
-				const reason = logFileProblem(log, await stat(log.file).catch(() => undefined));
-				return reason === undefined ? undefined : goneTask(task, reason);
-			},
-		);
-		const gone = found.filter((g): g is GoneTask => g !== undefined);
+		const gone = (await problemsOf(streams)).map(({ task, reason }) => goneTask(task, reason));
 		if (gone.length > 0) throw new LogFilesGoneError(gone);
 		return this.#batches(streams, await this.deps.logs.logMask(runId));
 	}
@@ -314,6 +340,19 @@ export class RunLogs {
 			return log ? [{ task, log }] : [];
 		});
 	}
+}
+
+/** 这些任务里日志文件有问题的（不见了、比数据库记的短），按给定的顺序；每个文件 stat 一次。 */
+async function problemsOf(
+	streams: TaskStream[],
+): Promise<Array<{ task: RunLogTask; reason: LogFileProblemKind }>> {
+	const found = await mapOpenFiles(streams, async ({ task, log }) => {
+		const reason = logFileProblem(log, await stat(log.file).catch(() => undefined));
+		return reason === undefined ? undefined : { task, reason };
+	});
+	return found.filter(
+		(p): p is { task: RunLogTask; reason: LogFileProblemKind } => p !== undefined,
+	);
 }
 
 const runLogLine = (stream: TaskStream, line: LogLineView): RunLogLine => ({

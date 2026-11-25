@@ -242,6 +242,10 @@ class LogRead:
     reached_end: bool
     expired: bool
     truncated_tasks: list[dict[str, Any]]
+    # 日志文件不在了、变短了的任务（#721）：控制面在页里说的，同一个任务只算一次；
+    # 控制面每次最多列出一部分，总数是 `file_problems_total`。
+    file_problems: list[dict[str, Any]] = field(default_factory=list)
+    file_problems_total: int = 0
 
 
 def read_logs(
@@ -264,6 +268,7 @@ def read_logs(
     result = LogRead([], "", "", False, False, False, [])
     first = True
     truncated: dict[str, dict[str, Any]] = {}
+    problems: dict[str, dict[str, Any]] = {}
     for _ in range(_MAX_PAGES):
         query: dict[str, Any] = {
             "limit": min(tail - have, _MAX_PAGE_LINES),
@@ -282,6 +287,11 @@ def read_logs(
             result.before, result.reached_start = page["before"], page["reached_start"]
         for task in page["truncated_tasks"]:
             truncated.setdefault(task["task_id"], task)
+        for problem in page.get("file_problems", []):  # 旧控制面的页里没有这个字段
+            problems.setdefault(problem["task_id"], problem)
+        result.file_problems_total = max(
+            result.file_problems_total, page.get("file_problems_total", 0)
+        )
         if page["expired"]:
             result.expired = True
             break
@@ -296,6 +306,8 @@ def read_logs(
     ordered = chunks if forward else list(reversed(chunks))
     result.lines = [line for chunk in ordered for line in chunk]
     result.truncated_tasks = list(truncated.values())
+    result.file_problems = list(problems.values())
+    result.file_problems_total = max(result.file_problems_total, len(problems))
     return result
 
 
@@ -335,6 +347,39 @@ def _truncated_note(index: RunIndex, tasks: Sequence[Mapping[str, Any]]) -> str 
         return None
     labels = [index.ref_of(task).format(retried=True) for task in tasks]
     return f"这些任务的日志超过大小上限，被截断了：{', '.join(labels)}"
+
+
+_FILE_PROBLEM_TEXT = {"missing": "文件不在了", "short": "文件比记录的短"}
+
+
+def _file_problems_note(index: RunIndex, problems: Sequence[Mapping[str, Any]], total: int) -> str:
+    """日志文件不在了、变短了的任务（#721）：哪几个、各是什么情况，和可能的来路。"""
+    labels = [
+        index.ref_of(p).format(retried=True)
+        + f"（{_FILE_PROBLEM_TEXT.get(p['problem'], p['problem'])}）"
+        for p in problems
+    ]
+    more = f"，等共 {total} 个" if total > len(problems) else ""
+    return (
+        f"注意：{total} 个任务的日志文件有问题：{'、'.join(labels)}{more}。"
+        "可能被删除、截短、主机掉电（追加的文件不落盘、数据库落盘），或数据库和数据目录分开恢复；"
+        "这些任务只有剩下的日志，下面不是它们完整的输出。"
+    )
+
+
+def _report_file_problems(out: Output, index: RunIndex, read: LogRead) -> None:
+    """说明写到标准错误（标准输出里只有日志行），退出码不变；`--json` 时标准错误里是一行 JSON。"""
+    if not read.file_problems:
+        return
+    if out.json_mode:
+        value = {
+            "file_problems": read.file_problems,
+            "file_problems_total": read.file_problems_total,
+        }
+        print(dump_json(value), file=out.stderr)
+        return
+    note = _file_problems_note(index, read.file_problems, read.file_problems_total)
+    print(printable(note), file=out.stderr)
 
 
 def _logs(session: Session, args: argparse.Namespace) -> None:
@@ -384,9 +429,13 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
         for line in read.lines:
             print(dump_json(line), file=out.stdout)
         print_notes(out, notes)
+        _report_file_problems(out, index, read)
         return
     rendered = [format_line(index, line) for line in read.lines]
+    _report_file_problems(out, index, read)
     if not rendered and not notes:
+        if read.file_problems:
+            return  # 不是没有日志：日志文件有问题，上面已经说了
         rendered = ["没有日志" if not args.level else "没有符合条件的日志"]
     # 日志是节点写的、没有人看过的文字：转义序列和不该到终端的字符过一遍（#670）。
     print(printable("\n".join([*rendered, *notes])), file=out.stdout)

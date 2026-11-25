@@ -493,6 +493,13 @@ function TaskLogsTab({
 			reveal={reveal}
 			lineKey={seqKey}
 			truncated={logs.truncated ? MESSAGE.logTruncated : null}
+			fileProblem={
+				logs.fileProblem === "missing"
+					? MESSAGE.logFileMissing
+					: logs.fileProblem === "short"
+						? MESSAGE.logFileShort
+						: null
+			}
 			filtered={filtered}
 			noOutput={attempt.ended_at !== null ? "这次尝试没有日志输出。" : MESSAGE.logOutputPending}
 			timeKind={timeKind}
@@ -527,6 +534,8 @@ function RunLogsTab({
 }) {
 	const origin = useCallback((line: RunLogLine) => logOrigin(run, line), [run]);
 	const truncated = logs.truncatedTasks.map((t) => logOrigin(run, t)).join("、");
+	// 节点名是别人写的文字：和上面截断的提示一样先直接显示；#707 合入后经它的公共组件显示（逐处换上）。
+	const gone = logs.fileProblems.map((t) => logOrigin(run, t)).join("、");
 	return (
 		<LogsView
 			logs={logs}
@@ -534,6 +543,11 @@ function RunLogsTab({
 			origin={origin}
 			onOrigin={onOrigin}
 			truncated={truncated ? `${truncated} 的${MESSAGE.logTruncated}` : null}
+			fileProblem={
+				gone
+					? MESSAGE.logFilesProblem(gone, logs.fileProblemsTotal, logs.fileProblems.length)
+					: null
+			}
 			filtered={filtered}
 			scoped={filter !== null}
 			noOutput={run.ended_at !== null ? "这次运行没有日志输出。" : MESSAGE.logOutputPending}
@@ -551,6 +565,7 @@ function LogsView<L extends LogLineView>({
 	origin,
 	onOrigin,
 	truncated,
+	fileProblem,
 	filtered,
 	scoped = false,
 	noOutput,
@@ -572,6 +587,8 @@ function LogsView<L extends LogLineView>({
 	onOrigin?: (line: L) => void;
 	/** 截断提示；没有截断时为 null。 */
 	truncated: string | null;
+	/** 日志文件不在了、变短了的说明（#721）；没有问题时为 null。有问题又没有行时，空态说的是文件的问题，不是「没有日志输出」。 */
+	fileProblem: string | null;
 	/** 筛选了级别：没有日志时，说明文字是没有符合条件的日志。面板要不要自动收起不在这里判断，见 `hasNoLogs`。 */
 	filtered: boolean;
 	/** 只看筛选出的节点：这些节点里没有日志时，说明文字也是没有符合条件的日志。 */
@@ -618,6 +635,14 @@ function LogsView<L extends LogLineView>({
 					{truncated}
 				</p>
 			)}
+			{fileProblem && (
+				<p
+					data-testid="logs-file-problem"
+					className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-warn-fg"
+				>
+					{fileProblem}
+				</p>
+			)}
 			{unlocatable > 0 && (
 				<p
 					data-testid="logs-unlocatable"
@@ -637,9 +662,11 @@ function LogsView<L extends LogLineView>({
 				<Hint>
 					{logs.expired
 						? MESSAGE.logsExpired
-						: filtered || scoped || zoom
-							? `${MESSAGE.noMatch("日志")}。`
-							: noOutput}
+						: fileProblem
+							? MESSAGE.logFileGoneEmpty
+							: filtered || scoped || zoom
+								? `${MESSAGE.noMatch("日志")}。`
+								: noOutput}
 				</Hint>
 			) : (
 				<div className="min-h-0 flex-1">
