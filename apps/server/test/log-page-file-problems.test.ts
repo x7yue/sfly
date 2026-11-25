@@ -329,6 +329,73 @@ describe("分页读取和实时流里的日志文件问题（#721）", () => {
 			}
 		}, 60_000);
 
+		it("运行流事件里的总数是全部有问题的任务，不只数列出来的（超过 20 个）", async () => {
+			const runId = await api.triggerOk(many);
+			const files: string[] = [];
+			for (let i = 0; i < MANY; i++) {
+				const task = await agent.nextAssign();
+				await write(task, 1);
+				await agent.succeed(task, { text: "ok" });
+				files.push(fileOf(runId, task.taskId));
+			}
+			for (const file of files) unlinkSync(file);
+			const live = (await runPage(runId)).live_after;
+
+			const stream = await SseClient.open(
+				cp,
+				`/runs/${runId}/logs/events?after=${encodeURIComponent(live)}`,
+			);
+			try {
+				const event = await stream.next<{
+					file_problems: unknown[];
+					file_problems_total: number;
+				}>("file_problems");
+
+				expect(event.data.file_problems).toHaveLength(LIMIT);
+				expect(event.data.file_problems_total).toBe(MANY);
+			} finally {
+				stream.close();
+			}
+		}, 180_000);
+
+		it("连上之后再写几批日志：事件仍只有一条，不在每一批 logs 之前再发（任务流、运行流）", async () => {
+			const bad = await newTwoTaskRun(2);
+			unlinkSync(bad.bFile);
+			const live = (await runPage(bad.runId)).live_after;
+			const task = await newTask(2);
+			unlinkSync(task.file);
+
+			const taskStream = await SseClient.open(cp, `/tasks/${task.task.taskId}/logs/events`);
+			const runStream = await SseClient.open(
+				cp,
+				`/runs/${bad.runId}/logs/events?after=${encodeURIComponent(live)}`,
+			);
+			try {
+				await taskStream.next("file_problem");
+				await runStream.next("file_problems");
+				// 连上之后 b 还在写：几批新的日志（任务 b 的文件已经被删了，行照常推送）。
+				for (let batch = 0; batch < 3; batch++) {
+					agent.logs(bad.b, [[3 + batch, `连上之后的第 ${batch + 1} 批`]]);
+					agent.logs(task.task, [[3 + batch, `连上之后的第 ${batch + 1} 批`]]);
+					await new Promise((resolve) => setTimeout(resolve, 150));
+				}
+				await new Promise((resolve) => setTimeout(resolve, 500));
+
+				const runEvents = runStream.received.map((e) => e.event).filter((e) => e !== "time");
+				const taskEvents = taskStream.received.map((e) => e.event).filter((e) => e !== "time");
+				expect(runEvents.filter((e) => e === "file_problems")).toHaveLength(1);
+				expect(taskEvents.filter((e) => e === "file_problem")).toHaveLength(1);
+				// 事件在第一批 logs 之前。
+				expect(runEvents[0]).toBe("file_problems");
+				expect(taskEvents[0]).toBe("file_problem");
+				expect(runEvents.filter((e) => e === "logs").length).toBeGreaterThan(0);
+				expect(taskEvents.filter((e) => e === "logs").length).toBeGreaterThan(0);
+			} finally {
+				taskStream.close();
+				runStream.close();
+			}
+		}, 60_000);
+
 		it("运行流：有问题就先发一条 file_problems 事件，内容同页里的字段；没有问题就不发", async () => {
 			const bad = await newTwoTaskRun(3);
 			unlinkSync(bad.bFile);
