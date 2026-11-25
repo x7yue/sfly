@@ -1,7 +1,9 @@
 // 全栈（#18）：真实的控制面、Rust Agent 和 SDK 执行器。节点用 ctx.artifacts 保存产物，Agent 在上报结果前上传，
 // 输出里的产物引用交给后续节点，并且可以从控制面下载；完整日志可以分页读取和下载。
+import { readdir, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
@@ -20,7 +22,13 @@ describeWithAgent("全栈：产物与完整日志", () => {
 		const bin = agentBinary();
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv()]);
 		await publishStubPackage(cp);
-		agent = await startRealAgent({ grpcUrl: cp.grpcUrl, name: "art-agent", venv: venv.path, bin });
+		agent = await startRealAgent({
+			grpcUrl: cp.grpcUrl,
+			name: "art-agent",
+			venv: venv.path,
+			bin,
+			captureStderr: true,
+		});
 	}, 600_000);
 
 	afterAll(async () => {
@@ -154,9 +162,18 @@ describeWithAgent("全栈：产物与完整日志", () => {
 				headers: { authorization: `Bearer ${token}` },
 			});
 			expect(afterwards.status).toBe(401);
-			// 凭据不在日志里（节点输出里有，是节点自己写的）。
-			const logs = await (await cp.fetch(`/runs/${runId}/logs?limit=1000`)).text();
-			expect(logs).not.toContain(token);
+			// 凭据不在日志里。控制面会把长得像令牌的值盖成 ******，读它的日志什么也证明不了：读 Agent 这一侧的原始内容——
+			// Agent 的标准错误，和 Agent 工作目录里的全部文件（每个任务的 task.json、stdout.log、stderr.log、产物……；
+			// 节点的输出里是倒过来写的，原值不在）。
+			expect(agent.stderr()).not.toContain(token);
+			const leaked: string[] = [];
+			for (const entry of await readdir(agent.workDir, { recursive: true, withFileTypes: true })) {
+				// 只读普通文件：任务目录里的 events.fifo 是命名管道，读它会一直等下去。
+				if (!entry.isFile()) continue;
+				const path = join(entry.parentPath, entry.name);
+				if ((await readFile(path, "utf8")).includes(token)) leaked.push(path);
+			}
+			expect(leaked).toEqual([]);
 		} finally {
 			await new Promise<void>((resolve) => elsewhere.close(() => resolve()));
 		}
