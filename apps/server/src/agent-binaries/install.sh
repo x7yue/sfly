@@ -153,6 +153,10 @@ path_hint() {
 parse_args() {
 	name=
 	token=${SFLY_TOKEN:-}
+	api_token=${SFLY_API_TOKEN:-}
+	# 凭据只留在这两个 shell 变量里：环境里的拷贝去掉，之后起的子进程（下载、uv 和它的安装脚本、装 sfly CLI 的 uv、
+	# systemctl）都看不到它们。注册开发 Agent 时，个人令牌只交给 sfly CLI 那一个进程（register_dev_agent）。
+	unset SFLY_TOKEN SFLY_API_TOKEN
 	slots=
 	listen_port=
 	public_address=
@@ -442,7 +446,12 @@ register_dev_agent() {
 	while :; do
 		status=0
 		if [ -n "$dev_host" ]; then set -- --host "$dev_host"; else set --; fi
-		registered=$(SFLY_HOME=$SFLY_HOME "$sfly" agent register-dev --server "$SFLY_URL" "$@" --env) || status=$?
+		# 个人令牌（SFLY_API_TOKEN）只放进这一个进程的环境：不经过命令行参数。
+		if [ -n "$api_token" ]; then
+			registered=$(SFLY_API_TOKEN=$api_token SFLY_HOME=$SFLY_HOME "$sfly" agent register-dev --server "$SFLY_URL" "$@" --env) || status=$?
+		else
+			registered=$(SFLY_HOME=$SFLY_HOME "$sfly" agent register-dev --server "$SFLY_URL" "$@" --env) || status=$?
+		fi
 		[ "$status" != 0 ] || break
 		if [ "$status" = 5 ] && [ "$attempt" = 1 ] && have_terminal; then
 			# 没有登录：有终端就让他登录（sfly login 问登录名和密码，从终端读），再注册一次。

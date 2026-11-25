@@ -45,7 +45,11 @@ describe("install.sh", () => {
 		await mkdir(home, { recursive: true });
 		await mkdir(stubs);
 		// systemctl 的桩：记录参数。
-		await stub("systemctl", `echo "$*" >> '${join(dir, "systemctl.log")}'`);
+		// 同时记下它看到的环境（凭据不该在里面）。
+		await stub(
+			"systemctl",
+			`echo "$*" >> '${join(dir, "systemctl.log")}'; env >> '${join(dir, "systemctl-env.log")}'`,
+		);
 		// 默认是 x86_64 Linux 上的普通用户，与跑测试的机器无关（比如在 aarch64 上或以 root 跑测试）；
 		// 要别的架构或 root 的用例自己覆盖。
 		await stub(
@@ -201,6 +205,25 @@ describe("install.sh", () => {
 		expect(await readFile(env, "utf8")).toContain("SFLY_TOKEN=from-arg\n");
 	});
 
+	it("凭据只在安装脚本自己的变量里：起的子进程（systemctl）的环境里没有 SFLY_TOKEN 和 SFLY_API_TOKEN", async () => {
+		const run = await install(["--name", "lab-06"], {
+			SFLY_TOKEN: "sfly_agt_envcredential",
+			SFLY_API_TOKEN: "sfly_pat_personalenv",
+			SFLY_SYSTEMD_DIR: join(dir, "units"),
+		});
+		expect(run.code, run.stderr).toBe(0);
+		// 写进 agent.env 的照写；子进程看不到。
+		expect(await readFile(join(home, ".sfly", "agent.env"), "utf8")).toContain(
+			"SFLY_TOKEN=sfly_agt_envcredential\n",
+		);
+		const seen = await readFile(join(dir, "systemctl-env.log"), "utf8");
+		expect(seen).toContain("HOME=");
+		expect(seen).not.toMatch(/^SFLY_(API_)?TOKEN=/m);
+		expect(seen).not.toContain("sfly_agt_envcredential");
+		expect(seen).not.toContain("sfly_pat_personalenv");
+		expect(run.stdout + run.stderr).not.toContain("sfly_agt_envcredential");
+	});
+
 	it("下载被截断的脚本什么也不执行", async () => {
 		const script = await (await cp.fetch("/install.sh")).text();
 		const lines = script.split("\n");
@@ -323,7 +346,7 @@ describe("install.sh", () => {
 			// 开发用的 uv：记录参数；`tool dir --bin` 给出 sfly 所在的目录（下面的桩放在那里）。
 			await stub(
 				"uv",
-				`echo "$*" >> '${join(dir, "uv.log")}'; [ "$1 $2" = 'tool dir' ] && echo '${join(home, ".local/bin")}'; exit 0`,
+				`echo "$*" >> '${join(dir, "uv.log")}'; env >> '${join(dir, "uv-env.log")}'; [ "$1 $2" = 'tool dir' ] && echo '${join(home, ".local/bin")}'; exit 0`,
 			);
 			await mkdir(join(home, ".local/bin"), { recursive: true });
 			const sfly = join(home, ".local/bin/sfly");
@@ -333,6 +356,8 @@ describe("install.sh", () => {
 echo "$*" >> '${sflyLog}'
 case "$1 $2" in
 "agent register-dev")
+	echo "api_token=\${SFLY_API_TOKEN:-}" >> '${join(dir, "sfly-env.log")}'
+	echo "agent_token=\${SFLY_TOKEN:-}" >> '${join(dir, "sfly-env.log")}'
 	if [ -z "\${SFLY_API_TOKEN:-}" ] && [ ! -f "$SFLY_HOME/credentials.json" ]; then
 		echo "错误：没有登录凭据" >&2
 		exit 5
@@ -404,6 +429,39 @@ esac
 			expect(run.stdout + run.stderr).not.toContain(TOKEN);
 			expect(run.stdout).toContain("已注册开发 Agent dev-alice-lab");
 			expect((await stat(join(sflyHome, "agent.env"))).mode & 0o777).toBe(0o600);
+		});
+
+		it("个人令牌只交给 sfly CLI 的 register-dev 那一个进程；uv（装 sfly CLI 的）和 systemctl 的环境里没有 SFLY_API_TOKEN、SFLY_TOKEN", async () => {
+			const run = await install(["--dev"], {
+				SFLY_HOME: sflyHome,
+				SFLY_API_TOKEN: "sfly_pat_personalenv",
+				SFLY_SYSTEMD_DIR: join(dir, "units"),
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(await readFile(join(dir, "sfly-env.log"), "utf8")).toBe(
+				"api_token=sfly_pat_personalenv\nagent_token=\n",
+			);
+			for (const file of ["uv-env.log", "systemctl-env.log"]) {
+				const seen = await readFile(join(dir, file), "utf8");
+				expect(seen, file).toContain("HOME=");
+				expect(seen, file).not.toMatch(/^SFLY_(API_)?TOKEN=/m);
+				expect(seen, file).not.toContain("sfly_pat_personalenv");
+				expect(seen, file).not.toContain(TOKEN);
+			}
+			expect(run.stdout + run.stderr).not.toContain("sfly_pat_personalenv");
+		});
+
+		it("--dev 用环境变量 SFLY_TOKEN 传管理员签发的 Agent 凭据：装 sfly CLI 的 uv 的环境里没有它，agent.env 里有", async () => {
+			const run = await install(["--dev", "--name", "bench-2", "--no-service"], {
+				SFLY_HOME: sflyHome,
+				SFLY_TOKEN: "sfly_agt_issuedenv",
+			});
+			expect(run.code, run.stderr).toBe(0);
+			expect(await agentEnv()).toContain("SFLY_TOKEN=sfly_agt_issuedenv\n");
+			const seen = await readFile(join(dir, "uv-env.log"), "utf8");
+			expect(seen).toContain("HOME=");
+			expect(seen).not.toMatch(/^SFLY_(API_)?TOKEN=/m);
+			expect(seen).not.toContain("sfly_agt_issuedenv");
 		});
 
 		it("没有登录也没有终端：直接失败并写明怎么办，不登录、不等输入；Agent 二进制和 sfly CLI 已经装好，没有写 agent.env", async () => {
