@@ -19,9 +19,11 @@ import { findPackageVersion } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 import type { ProjectId } from "../projects/project-id.js";
+import { asStoredJson } from "../util/jsonb.js";
 import { checkDevPackagesLoaded } from "./dev-package-loaded.js";
 import { knownParams, resolved, secretTexts } from "./known-params.js";
 import { type ParamOrigins, paramInputTypeProblems } from "./param-input-type.js";
+import { fixedSecretSizeProblem, secretSizeProblem } from "./secret-size.js";
 import { subflowParamNotPassedWarnings } from "./subflow-param-not-passed.js";
 
 /**
@@ -36,6 +38,8 @@ export interface PreflightProblem {
 	code: string;
 	message: string;
 	node_id?: string;
+	/** `secret_params_too_large` 的警告说的是哪一组值：默认值，或某个运行预设（触发表单只显示和当前选择有关的那一条）。 */
+	origin?: { kind: "defaults"; preset_ids: string[] } | { kind: "preset"; preset_id: string };
 }
 
 /**
@@ -219,7 +223,9 @@ export function createParamsCheck(): ParamsCheck {
 		const locked = await lockedPackages(db, project, doc);
 		const wanted: AgentReference[] = [];
 		const bots: BotToCheck[] = [];
-		const chains = knownParams(plan, params);
+		// 触发时请求体里的值是请求体的样子，运行里从库里读回来的是 jsonb 的样子（对象的键重新排过）：算大小之前先变成库里读回来的样子，
+		// 触发时算的和运行里算的才是同一份值（#632）。预设、默认值、常量本来就是从库里读的。
+		const chains = knownParams(plan, asStoredJson(params) as Record<string, unknown>);
 		// 问题的说明里写出的值取自 secret 参数时打码（调用方给的值同样）：触发时的报错不回显 secret 的值。
 		const secrets = secretTexts(chains);
 		const shownOf = (value: string) => secrets.mask(value);
@@ -264,6 +270,10 @@ export function createParamsCheck(): ParamsCheck {
 				}
 			}
 		}
+		// 触发时改不了的值（子流程里的常量、子流程自己的默认值）自己就超限：怎么触发都被拒，说明里指出要改场景；
+		// 否则看这次触发的全部值。
+		const tooLarge =
+			fixedSecretSizeProblem(plan) ?? secretSizeProblem(chains, { kind: "trigger" }, secrets);
 		return [
 			...(await checkReferencedAgents(db, project, wanted)).problems,
 			...(await checkFeishuBots(db, project, bots)),
@@ -273,6 +283,7 @@ export function createParamsCheck(): ParamsCheck {
 				await withDevNodeTypes(db, project, doc, locked),
 				origins,
 			),
+			...(tooLarge ? [tooLarge] : []),
 		];
 	};
 }

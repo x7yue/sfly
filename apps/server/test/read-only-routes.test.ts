@@ -124,6 +124,10 @@ const UNVERIFIED_ARRAYS: Record<string, string> = {
 	"GET /runs/:id/logs response file_problems[]":
 		"seed 里没有日志文件不在了、变短了的任务：只读接口里读日志文件的（下载）在这样的任务上是 410、不是成功的路径，所以不造它；" +
 		"元素由 log-page-file-problems.test.ts 用契约的 schema 对照",
+	"GET /orchestrations/:id/preflight response warnings[].origin.preset_ids[]":
+		"secret 参数的值合计超过上限（真实的上限是 100 多万个字符）的默认值才有这一项，这里的 seed 用真实的上限，不会出现；元素的 schema 由 secret-params-too-large.test.ts 用调小的上限对过（响应按契约解析，列出了没有改 secret 值的预设）",
+	"GET /orchestrations/:id/preflight response problems[].origin.preset_ids[]":
+		"同一个问题的结构：`origin` 只有警告里的默认值那一条带它，阻断项里没有；schema 同上",
 };
 
 /** 接口用哪些数据调用：定位到场景、运行、任务的，每种状态各一遍；其余（列表、系统）一遍。 */
