@@ -71,6 +71,7 @@ import type { PanelTab } from "./run-link";
 import { runLineKey } from "./run-log-reader";
 import {
 	documentNodes,
+	logFileProblemsNote,
 	logOrigin,
 	logScope,
 	MASK,
@@ -553,8 +554,9 @@ function RunLogsTab({
 }) {
 	const origin = useCallback((line: RunLogLine) => logOrigin(run, line), [run]);
 	const truncated = logs.truncatedTasks.map((t) => logOrigin(run, t)).join("、");
-	// 节点名是别人写的文字：和上面截断的提示一样先直接显示；#707 合入后经它的公共组件显示（逐处换上）。
-	const gone = logs.fileProblems.map((t) => logOrigin(run, t)).join("、");
+	// 节点名、子流程名是成员写的文字：和紧挨着的「输出太长」那一行（`truncated`）一样现在直接显示，没有经 `UntrustedText`——
+	// 两行不要一个经、一个不经；那一行连同这一行一起换，归 #714。
+	const gone = logFileProblemsNote(run, logs.fileProblems, logs.fileProblemsTotal);
 	return (
 		<LogsView
 			logs={logs}
@@ -562,11 +564,7 @@ function RunLogsTab({
 			origin={origin}
 			onOrigin={onOrigin}
 			truncated={truncated ? `${truncated} 的${MESSAGE.logTruncated}` : null}
-			fileProblem={
-				gone
-					? MESSAGE.logFilesProblem(gone, logs.fileProblemsTotal, logs.fileProblems.length)
-					: null
-			}
+			fileProblem={gone}
 			filtered={filtered}
 			scoped={filter !== null}
 			noOutput={run.ended_at !== null ? "这次运行没有日志输出。" : MESSAGE.logOutputPending}
@@ -656,6 +654,7 @@ function LogsView<L extends LogLineView>({
 			)}
 			{fileProblem && (
 				<p
+					role="status"
 					data-testid="logs-file-problem"
 					className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-warn-fg"
 				>
@@ -682,10 +681,10 @@ function LogsView<L extends LogLineView>({
 				<Hint>
 					{logs.expired
 						? MESSAGE.logsExpired
-						: fileProblem
-							? MESSAGE.logFileGoneEmpty
-							: filtered || scoped || zoom
-								? `${MESSAGE.noMatch("日志")}。`
+						: filtered || scoped || zoom
+							? `${MESSAGE.noMatch("日志")}。`
+							: fileProblem
+								? MESSAGE.logFileGoneEmpty
 								: noOutput}
 				</Hint>
 			) : (
