@@ -18379,6 +18379,45 @@
                 },
                 "node_id": {
                   "type": "string"
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "defaults"
+                        },
+                        "preset_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_ids"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "preset"
+                        },
+                        "preset_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_id"
+                      ]
+                    }
+                  ]
                 }
               },
               "required": [
@@ -18401,6 +18440,45 @@
                 },
                 "node_id": {
                   "type": "string"
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "defaults"
+                        },
+                        "preset_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_ids"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "preset"
+                        },
+                        "preset_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "preset_id"
+                      ]
+                    }
+                  ]
                 }
               },
               "required": [

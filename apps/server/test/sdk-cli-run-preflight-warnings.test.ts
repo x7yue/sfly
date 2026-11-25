@@ -8,6 +8,7 @@ import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, param, spawn } from "./support/chains.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
+import { withSecretLimits } from "./support/secret-limits.js";
 import { sfly } from "./support/sfly-cli.js";
 import { type SflyProcess, spawnSfly } from "./support/sfly-process.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -221,6 +222,107 @@ describe("sfly run start 的预检警告 → 控制面", { timeout: 60_000 }, ()
 			const whole = await cli("run", "start", name, "--param", "n=8.0");
 			expect(whole.code, whole.stderr).toBe(0);
 			expect(await runsOf(id)).toHaveLength(1);
+		});
+
+		it("secret 参数的值合计太大（#632）：说明按「原因、占得最多的、怎么办」分行原样给出，不再列参数的声明，不回显值，不触发运行；--json 的错误对象带 details；下一步是换一个更短的值触发；值小一点就照常触发", async () => {
+			const name = `大 secret 值场景-${++scenes}`;
+			const id = await api.orchestrationWith(
+				{
+					default_agent: "agent-a",
+					nodes: [
+						{
+							id: "entry",
+							kind: "entry",
+							params: [param("token", { secret: true, required: true })],
+						},
+						echo("t"),
+					],
+					edges: [{ from: "entry", to: "t", kind: "chain" }],
+					packages: { stub: "1.0.0" },
+				},
+				name,
+			);
+
+			await withSecretLimits({ automatonChars: 30_000 }, async () => {
+				const big = "QWXZJKVq#%&7".repeat(3_334);
+				const bad = await cli("run", "start", name, "--param", `token=${big}`);
+				expect(bad.code).toBe(2);
+				const [reason, largest, advice] = bad.stderr
+					.split("\n")
+					.filter((line) => /^(错误：|占得最多的|怎么办)/.test(line));
+				expect(reason).toContain(
+					"错误：这次触发的 secret 参数的值太多或太长：所有写法合计约 41000 个字符",
+				);
+				expect(reason).toContain("超过上限 30000 个字符");
+				expect(largest).toBe("占得最多的是 参数 token（约 41000 个字符）。");
+				expect(advice).toContain("怎么办：缩短这些值");
+				// 问题不在参数的声明：不报「入口参数不对」、不列声明的参数，也不回显值
+				expect(bad.stderr).not.toContain("入口参数不对");
+				expect(bad.stderr).not.toMatch(/参数\s+类型\s+说明/);
+				expect(bad.stderr).not.toContain(big.slice(0, 40));
+				expect(bad.stderr).toContain(`下一步：sfly run start ${id} --param <名称>=<更短的值>`);
+				expect(await runsOf(id)).toEqual([]);
+
+				// --json：错误对象带 details，程序读得到 code
+				const json = await cli("run", "start", name, "--param", `token=${big}`, "--json");
+				expect(json.code).toBe(2);
+				const error = JSON.parse(json.stderr).error;
+				expect(error.code).toBe("invalid_params");
+				expect(error.details.map((d: { code: string }) => d.code)).toEqual([
+					"secret_params_too_large",
+				]);
+				expect(JSON.stringify(error)).not.toContain(big.slice(0, 40));
+
+				const ok = await cli("run", "start", name, "--param", "token=QWXZ#7");
+				expect(ok.code, ok.stderr).toBe(0);
+				expect(await runsOf(id)).toHaveLength(1);
+			});
+		});
+
+		it("触发时改不了的值（子流程的常量）超限：预检的阻断项，命令行列出问题（说明缩进对齐），退出码 2，--json 带 details，下一步是下载场景", async () => {
+			const name = `写死的大值场景-${++scenes}`;
+			const id = await api.orchestrationWith(
+				orchestration(
+					[
+						[
+							{ id: "entry", kind: "entry", params: [] },
+							spawn("spawn", { report: "QWXZ#7".repeat(7_000) }),
+						],
+						[
+							{
+								id: "sub",
+								kind: "subflow_entry",
+								name: "汇报",
+								params: [param("report", { secret: true })],
+							},
+							echo("clean"),
+						],
+					],
+					[["spawn", "sub"]],
+				),
+				name,
+			);
+
+			await withSecretLimits({ automatonChars: 30_000 }, async () => {
+				const bad = await cli("run", "start", name);
+				expect(bad.code).toBe(2);
+				expect(bad.stderr).toContain(`场景「${name}」现在不能触发，有 1 个问题：`);
+				expect(bad.stderr).toContain("  - secret_params_too_large：场景里写死的 secret 值");
+				expect(bad.stderr).toContain(
+					"    占得最多的是 子流程 汇报（sub） 的参数 report（约 42000 个字符）。",
+				);
+				expect(bad.stderr).toContain("    怎么办：改场景：");
+				expect(bad.stderr).toContain(`下一步：sfly scenario pull ${id}`);
+				expect(await runsOf(id)).toEqual([]);
+
+				const json = await cli("run", "start", name, "--json");
+				expect(json.code).toBe(2);
+				const error = JSON.parse(json.stderr).error;
+				expect(error.code).toBe("invalid_orchestration");
+				expect(error.details.map((d: { code: string }) => d.code)).toEqual([
+					"secret_params_too_large",
+				]);
+			});
 		});
 	});
 });
