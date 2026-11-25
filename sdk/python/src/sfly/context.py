@@ -508,7 +508,8 @@ class Artifacts:
         from pathlib import Path
 
         self._limit = limit_bytes
-        # 任务凭据（`SFLY_TASK_TOKEN`，#492）：下载产物时只对控制面的地址（下载地址前缀 `url`）带。
+        # 任务凭据（`SFLY_TASK_TOKEN`，#492）：下载产物时只对控制面给的前缀（`url` 去掉结尾的
+        # `tasks/<任务 ID>/artifacts/`）之下、后面接着 `tasks/` 的地址带，规则见 `download.py`。
         self._task_token = task_token or None
         self._dir = Path(directory) if directory is not None else None
         self._url = url or None
