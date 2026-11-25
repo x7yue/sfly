@@ -1116,7 +1116,7 @@ test("排队说明：标题是阿拉伯文、昵称是希伯来文，「正在�
 	expect(places.suffixLeft as number).toBeGreaterThanOrEqual((places.nicknameRight as number) - 1);
 });
 
-test("别人写的文字都隔离方向：页头的标题、列表里的标题和发起人、通知里引用的话", async ({
+test("别人写的文字都经公共的不可信文字组件：页头的标题、列表里的标题和发起人、通知里引用的话、结束会话的人，方向隔离（基准方向从左到右）", async ({
 	page,
 }) => {
 	const title = "عنوان الجلسة";
@@ -1126,29 +1126,22 @@ test("别人写的文字都隔离方向：页头的标题、列表里的标题�
 		turnStarted(2),
 		steerMessage(3, A, "كلام المستخدم", author),
 		steerDropped(4, A, "这句插话没有送到：「كلام المستخدم」"),
+		sessionEnded(5, author),
 	]);
-	const direction = (locator: Locator) =>
-		locator.evaluate((element) => {
-			// 方向跟着文字走：自己是 `bdi`，或者自己（单元格）带 dir="auto"，或者里面的 `bdi` 里放着全部的文字。
-			const isolated = element.closest("bdi, [dir=auto]") ?? element.querySelector("bdi");
-			return { isolated: isolated !== null, direction: getComputedStyle(element).direction };
-		});
-	expect(await direction(page.getByRole("heading", { level: 1 }).locator("bdi"))).toMatchObject({
-		isolated: true,
-		direction: "rtl",
-	});
-	expect(await direction(page.getByTestId("notice").locator("bdi"))).toMatchObject({
-		isolated: true,
-	});
+	// 每一处别人写的文字都在自己的 `<bdi dir="ltr">` 里：从右到左的文字自己成一段，不把旁边控制台的字带反。
+	const isolated = (locator: Locator) =>
+		locator.evaluate((el) => el.closest('bdi[dir="ltr"]') !== null);
+	expect(await isolated(page.getByRole("heading", { level: 1 }).locator("bdi"))).toBe(true);
+	expect(await isolated(page.getByTestId("notice").locator("bdi"))).toBe(true);
+	expect(await isolated(page.getByTestId("session-ended").locator("bdi"))).toBe(true);
+	expect(await isolated(row(page, "كلام المستخدم").locator("bdi").first())).toBe(true);
 	await stubSessionList(page, READY, [{ ...view, status: "running" }]);
 	await page.goto("/sessions");
 	const rowOfSession = page.locator(`[data-session="${view.id}"]`);
 	await expect(rowOfSession).toBeVisible();
 	const cells = rowOfSession.locator("td");
-	await expect(cells.nth(0)).toHaveAttribute("dir", "auto");
-	await expect(cells.nth(1)).toHaveAttribute("dir", "auto");
-	expect(await direction(cells.nth(0).getByRole("link"))).toMatchObject({ direction: "rtl" });
-	expect(await direction(cells.nth(1))).toMatchObject({ direction: "rtl" });
+	expect(await isolated(cells.nth(0).locator("bdi").first())).toBe(true);
+	expect(await isolated(cells.nth(1).locator("bdi").first())).toBe(true);
 });
 
 test("读屏：排到了、插话没有送到、会话被别人结束各播一句（页面里已有的播报区）", async ({

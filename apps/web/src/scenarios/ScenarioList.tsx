@@ -16,9 +16,11 @@ import {
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
 import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { controlPlaneNow } from "#/lib/control-plane-time";
 import { ACTION, AGENT_STATUS_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import { formatDateTime, formatSpan } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +64,7 @@ function AgentChips({
 		return (
 			<span
 				key={a.name}
-				title={`${a.name}${a.default ? "（默认 Agent）" : ""} · ${state}`}
+				title={`${untrustedPlain(a.name)}${a.default ? "（默认 Agent）" : ""} · ${state}`}
 				className={cn(
 					"inline-flex h-5.5 items-center gap-1.25 rounded-md border border-border-soft bg-raised px-1.75 font-mono text-2xs whitespace-nowrap",
 					a.default ? "text-fg-1" : "text-fg-2",
@@ -70,7 +72,7 @@ function AgentChips({
 				)}
 			>
 				<StatusDot kind={a.status === "online" ? "ok" : "pending"} />
-				{a.name}
+				<UntrustedText text={a.name} />
 				<span className="sr-only">
 					（{a.default ? "默认 Agent，" : ""}
 					{state}）

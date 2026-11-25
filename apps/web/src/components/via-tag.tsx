@@ -1,4 +1,5 @@
 import { cn } from "cn";
+import { UntrustedText } from "#/components/untrusted-text";
 import { viaLabel } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 
@@ -10,7 +11,9 @@ export function ViaTag({ via, className }: { via: string | null; className?: str
 	if (!via) return null;
 	return (
 		<span data-slot="via" className={cn(className)}>
-			{` ${viaLabel(via)}`}
+			{" "}
+			{/* 请求头里的名称不可信：viaLabel 已把看不见的字符写成文字，这里再把文字方向隔离在自己的范围里。 */}
+			<UntrustedText text={viaLabel(via)} />
 		</span>
 	);
 }

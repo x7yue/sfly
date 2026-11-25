@@ -4,6 +4,7 @@ import { FlagIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Elapsed } from "#/components/elapsed";
 import { STATUS, StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ACTION_PAGE, DURATION_LABEL, MESSAGE, NODE_ACTIONS } from "#/lib/copy";
 import {
 	formatClock,
@@ -411,7 +412,7 @@ function ItemRow({
 					colSpan={COLUMNS}
 					className="border-b border-border-soft bg-[repeating-linear-gradient(135deg,var(--border-soft)_0_6px,transparent_6px_12px)] px-3 py-1.5 text-fg-3"
 				>
-					{countOnlyText(row, timeKind, format.periodTime)}
+					<UntrustedText text={countOnlyText(row, timeKind, format.periodTime)} />
 					{!row.failedGap && (
 						<>
 							{" "}
@@ -459,11 +460,11 @@ function ItemRow({
 					style={{ paddingLeft: 12 + row.indent * INDENT_PX }}
 				>
 					{row.kind === "mark" && <FlagIcon aria-hidden className="size-3 flex-none text-fg-3" />}
-					<Truncate>{row.name}</Truncate>
+					<Truncate untrusted>{row.name}</Truncate>
 				</span>
 			</td>
 			<td className="px-3 py-1 align-top font-mono text-fg-3">
-				{fields && <Truncate>{fields}</Truncate>}
+				{fields && <Truncate untrusted>{fields}</Truncate>}
 			</td>
 			<td className="px-3 py-1 text-right align-top font-mono whitespace-nowrap text-fg-2">
 				{row.kind === "mark" ? (
@@ -531,7 +532,7 @@ function Result({ row }: { row: Exclude<ActionRow, { kind: "count-only" }> }) {
 						) : (
 							<>
 								<span className="sr-only">{NODE_ACTIONS.results.failed}：</span>
-								{outcome.reason}
+								<UntrustedText text={outcome.reason} mode="text" />
 							</>
 						)}
 					</span>

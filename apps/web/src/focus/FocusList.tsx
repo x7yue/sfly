@@ -10,8 +10,10 @@ import { cn } from "cn";
 import { ChevronDownIcon, ChevronUpIcon, GripVerticalIcon, XIcon } from "lucide-react";
 import { type DragEvent, useEffect, useRef, useState } from "react";
 import { NodeName, runNodeName } from "#/components/node-name";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ACTION, CHART_TYPE_LABEL, FOCUS, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -161,14 +163,18 @@ export function FocusListPage({
 				{edit && (
 					<p className="m-0 text-fg-2">
 						{TERM.lastEdited} <b className="font-medium text-fg-1">{edit.updated_by}</b> ·{" "}
-						{formatDateTime(edit.updated_at)}，{edit.summary}
+						{formatDateTime(edit.updated_at)}，
+						{/* 控制面拼的句子，里面带着图表标题（节点包声明的、没起名时的显示名）：整句当别人写的文字。 */}
+						<UntrustedText text={edit.summary} />
 					</p>
 				)}
 			</div>
 			{undoable && (
 				<div className="flex items-center gap-2 rounded-md border border-border bg-raised px-2.5 py-2 text-xs text-fg-2">
 					<span className="min-w-0 flex-1">
-						已移除「{removed.name}」，正在跑的运行也去掉了这一项。
+						已移除「
+						<UntrustedText text={removed.name} />
+						」，正在跑的运行也去掉了这一项。
 					</span>
 					<Button size="sm" data-focus-id="undo" onClick={undo}>
 						{ACTION.undo}
@@ -194,7 +200,8 @@ export function FocusListPage({
 							const key = focusKey(item);
 							const reason = invalidReason(item, focus.headVersion);
 							const line = dropLine(index);
-							const name = focusName(item);
+							// 只用在可访问名称里：名称是作者起的（或图表标题），先写出看不见的字符。
+							const name = untrustedPlain(focusName(item));
 							const node = {
 								node_id: item.node_id,
 								display_name:
@@ -239,9 +246,13 @@ export function FocusListPage({
 										<div className="flex px-2.25 text-xs text-fg-3">
 											<NodeName node={node} className="min-w-0" />
 											<span className="flex-none whitespace-pre"> · </span>
-											<Truncate>{`${TERM.chart} ${item.chart}`}</Truncate>
+											<Truncate untrusted>{`${TERM.chart} ${item.chart}`}</Truncate>
 										</div>
-										{reason && <div className="px-2.25 text-xs text-fg-3">{reason}</div>}
+										{reason && (
+											<div className="px-2.25 text-xs text-fg-3">
+												<UntrustedText text={reason} />
+											</div>
+										)}
 									</div>
 									<div className="flex h-7.5 flex-none items-center gap-0.5">
 										<span className="mr-1 flex w-12 flex-none justify-end">
@@ -285,7 +296,7 @@ export function FocusListPage({
 				{INSPECTOR_PAGE.docWithMetrics}」里对
 				{TERM.chart}点「{ACTION.focus}」。
 			</p>
-			<output className="sr-only">{announcement}</output>
+			<output className="sr-only">{untrustedPlain(announcement)}</output>
 		</div>
 	);
 }
@@ -314,7 +325,7 @@ function NameField({
 	};
 	return (
 		<Input
-			aria-label={FOCUS.nameField(node, item.chart)}
+			aria-label={FOCUS.nameField(node, untrustedPlain(item.chart))}
 			data-focus-id={focusId}
 			maxLength={FOCUS_ITEM_TITLE_MAX}
 			value={typed ?? focusName(item)}

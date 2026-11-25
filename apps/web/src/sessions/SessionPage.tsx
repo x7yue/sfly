@@ -7,21 +7,22 @@ import {
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { notify } from "#/components/feedback/notify";
 import { QueryView } from "#/components/feedback/states";
 import { Page, PageHeader } from "#/components/page";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { SESSION } from "#/lib/copy";
-import { errorText } from "#/lib/format";
 import { INLINE_LINK } from "#/lib/inline-link";
 import { isShortcut, shortcutText } from "#/lib/shortcuts";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-field";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EndSession, endMutationKey } from "./EndSession";
-import { PeerText } from "./peer-text";
 import { SessionTimeline } from "./SessionTimeline";
 import {
 	announcement,
@@ -98,8 +99,9 @@ function LiveSession({ detail }: { detail: SessionDetailResponse }) {
 	return (
 		<div className="mx-auto flex w-full max-w-208 flex-col">
 			<PageHeader
-				// 会话的标题是第一句话：别人写的文字，方向隔离。
-				title={<PeerText>{detail.title}</PeerText>}
+				// 会话的标题是第一句话：别人写的文字（公共的不可信文字组件处理）。
+				title={detail.title}
+				untrustedTitle
 				actions={
 					<>
 						<StatusPill kind={status.kind} pulse className="text-sm">
@@ -151,7 +153,11 @@ function useAnnouncement(state: TimelineState): string {
 	useEffect(() => {
 		const next = announcement(previous.current, state);
 		previous.current = state;
-		if (next !== null) setSaid((current) => (current === next ? `${next}\u200b` : next));
+		// 播报里有别人写的文字（助手写的结局原因、结束会话的人的昵称）：经 `untrustedPlain`，看不见的字符写出来。
+		if (next !== null) {
+			const plain = untrustedPlain(next);
+			setSaid((current) => (current === plain ? `${plain}\u200b` : plain));
+		}
 	}, [state]);
 	return said;
 }
@@ -431,11 +437,11 @@ function QueuedNote({
 						className={INLINE_LINK}
 						title={SESSION.page.queuedOpen}
 					>
-						<PeerText>{waitingFor.title}</PeerText>
+						<UntrustedText text={waitingFor.title} />
 					</Link>
 					{/* 控制台自己的字（括号、「正在做」）在隔离之外：昵称是从右到左的文字时，它们不能被带到昵称的另一边。 */}
 					{SESSION.page.queuedWaitingFor.prefix}
-					<PeerText>{waitingFor.created_by}</PeerText>
+					<UntrustedText text={waitingFor.created_by} />
 					{SESSION.page.queuedWaitingFor.suffix}
 				</>
 			)}
@@ -448,9 +454,20 @@ function QueuedNote({
  * 或者正在结束（`session_ended`）；其余（包括助手没有开启、连不上的 503）写接口给的那句话。
  */
 function SendError({ error }: { error: Error }) {
-	if (!(error instanceof ApiError)) return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
+	// 接口的错误信息一律经组件（里面可能拼着 Agent 报的原文）：`FormAlert` 只处理直接放进去的字符串。
+	if (!(error instanceof ApiError)) {
+		return (
+			<>
+				{SESSION.page.sendFailed}：<ErrorMessage error={error} />
+			</>
+		);
+	}
 	if (error.code === "turn_running") return <>{SESSION.page.turnRunning}</>;
 	if (error.code === "session_queued") return <>{SESSION.page.sessionQueued}</>;
 	if (error.code === "session_ended") return <>{SESSION.page.sessionEnded}</>;
-	return <>{`${SESSION.page.sendFailed}：${errorText(error)}`}</>;
+	return (
+		<>
+			{SESSION.page.sendFailed}：<ErrorMessage error={error} />
+		</>
+	);
 }

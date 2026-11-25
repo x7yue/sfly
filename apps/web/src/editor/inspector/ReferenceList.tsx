@@ -1,4 +1,6 @@
 import { cn } from "cn";
+import { UntrustedText } from "#/components/untrusted-text";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import type { completionGroups, ReferenceChoice } from "./reference-completion";
 
 /**
@@ -61,16 +63,21 @@ export function ReferenceList({
 											onClick={() => onChoose(c)}
 											onKeyDown={() => {}}
 										>
-											<span className="min-w-0 flex-1 truncate font-mono" title={c.expression}>
-												{c.expression}
+											<span
+												className="min-w-0 flex-1 truncate font-mono"
+												title={untrustedPlain(c.expression)}
+											>
+												<UntrustedText text={c.expression} />
 											</span>
-											<span className="text-xs text-fg-3">{c.detail}</span>
+											<span className="text-xs text-fg-3">
+												<UntrustedText text={c.detail} />
+											</span>
 											{c.description && (
 												<span
 													className="col-span-2 mt-0.5 line-clamp-2 text-xs text-fg-3"
-													title={c.description}
+													title={untrustedPlain(c.description, "text")}
 												>
-													{c.description}
+													<UntrustedText text={c.description} mode="text" />
 												</span>
 											)}
 										</div>

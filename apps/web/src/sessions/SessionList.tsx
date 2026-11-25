@@ -4,6 +4,7 @@ import { MessageSquareIcon } from "lucide-react";
 import { EmptyState } from "#/components/feedback/states";
 import { Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { SESSION } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import {
@@ -15,7 +16,6 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Truncate } from "@/components/ui/truncate";
-import { peerBlockProps } from "./peer-text";
 import { SESSION_STATUS, statusWithQueue } from "./session-text";
 
 /**
@@ -64,8 +64,9 @@ export function SessionList({
 							const status = SESSION_STATUS[session.status];
 							return (
 								<TableRow key={session.id} data-list-item="" data-session={session.id}>
-									<TableCell width="grow" {...peerBlockProps}>
+									<TableCell width="grow">
 										<Truncate
+											untrusted
 											render={
 												<Link
 													to="/sessions/$id"
@@ -78,8 +79,8 @@ export function SessionList({
 											{session.title}
 										</Truncate>
 									</TableCell>
-									<TableCell width="fit" className="text-fg-2" {...peerBlockProps}>
-										{session.created_by}
+									<TableCell width="fit" className="text-fg-2">
+										<UntrustedText text={session.created_by} />
 									</TableCell>
 									<TableCell width="fit">
 										<StatusPill kind={status.kind}>

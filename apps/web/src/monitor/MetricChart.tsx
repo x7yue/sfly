@@ -1,7 +1,9 @@
 import { bucketStartMs } from "@sfly/schema";
 import { cn } from "cn";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, type ReactNode, useCallback, useMemo, useState } from "react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { formatClock, formatMetric } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Badge } from "@/components/ui/badge";
 import {
 	bucketAt,
@@ -100,7 +102,7 @@ export function MetricChart({
 	/** 横轴；null 时显示 empty。 */
 	window: TimeRange | null;
 	/** 没有数据时的说明。 */
-	empty: string;
+	empty: ReactNode;
 	dense: boolean;
 	truncated?: boolean;
 	/** 标题旁的其他提示（例如「序列超限」），排在「已截断」之后。 */
@@ -149,7 +151,7 @@ export function MetricChart({
 
 	return (
 		<figure
-			aria-label={title}
+			aria-label={untrustedPlain(title)}
 			data-chart={title}
 			className={cn(
 				"relative m-0 min-w-0 rounded-lg border border-border-soft bg-bg px-2.5 pt-2 pb-1.5",
@@ -157,7 +159,9 @@ export function MetricChart({
 			)}
 		>
 			<figcaption className="flex items-baseline gap-2 text-xs whitespace-nowrap">
-				<span className="min-w-0 truncate text-fg-2">{title}</span>
+				<span className="min-w-0 truncate text-fg-2">
+					<UntrustedText text={title} />
+				</span>
 				{truncated && (
 					<Badge
 						variant="warn"
@@ -180,7 +184,9 @@ export function MetricChart({
 					) : (
 						<span className="ml-auto font-mono text-sm font-semibold text-fg-1" data-latest>
 							{latest === undefined ? "—" : formatMetric(latest)}
-							<small className="ml-0.5 text-xs font-normal text-fg-3">{unit}</small>
+							<small className="ml-0.5 text-xs font-normal text-fg-3">
+								<UntrustedText text={unit} />
+							</small>
 						</span>
 					))}
 			</figcaption>
@@ -197,7 +203,9 @@ export function MetricChart({
 				<>
 					<div className="mt-1.5 mb-0.5 font-mono text-lg font-semibold" data-latest>
 						{latest === undefined ? "—" : formatMetric(latest)}
-						<small className="ml-1 text-xs font-normal text-fg-3">{unit}</small>
+						<small className="ml-1 text-xs font-normal text-fg-3">
+							<UntrustedText text={unit} />
+						</small>
 					</div>
 					<Plot
 						type="area"
@@ -233,7 +241,7 @@ export function MetricChart({
 										className="inline-flex items-center gap-1 rounded-sm hover:text-fg-1 aria-[pressed=false]:opacity-45"
 									>
 										<SeriesSwatch color={isShown(l.key) ? l.color : "var(--fg-3)"} dash={l.dash} />
-										{l.name}
+										<UntrustedText text={l.name} />
 									</button>
 								))}
 							</div>
@@ -496,7 +504,9 @@ function HoverValues({
 			{values.map(({ line, bucket }) => (
 				<span key={line.key} data-hover-value className="flex items-center gap-1.5">
 					<SeriesSwatch color={line.color} dash={line.dash} />
-					<span className="min-w-0 truncate text-fg-2">{line.name}</span>
+					<span className="min-w-0 truncate text-fg-2">
+						<UntrustedText text={line.name} />
+					</span>
 					<span className="ml-auto pl-2 font-mono text-fg-1">{formatReading(bucket)}</span>
 				</span>
 			))}
