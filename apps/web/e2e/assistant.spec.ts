@@ -932,6 +932,32 @@ test("停止途中说的话：不是插话，标「排在这一轮后面」，�
 	await expect(page.getByTestId("session-status")).toHaveText("空闲");
 });
 
+test("撤掉排着的话失败：提示写「没能撤掉排着的话」，不写「无法停止这一轮」；按钮和说明不变，可以再点", async ({
+	page,
+}) => {
+	const view = await openSession(
+		page,
+		{ status: "running", queue_position: 1, waiting_for: { ...WAITING_FOR, title: "自己" } },
+		[userMessage(1), turnStarted(2), userMessage(3, "停下来之后的话", { message_id: A })],
+	);
+	let calls = 0;
+	await page.route(new RegExp(`/api/sessions/${view.id}/stop$`), (route) => {
+		calls += 1;
+		return apiError(route, 503, "assistant_unavailable", "助手服务连不上");
+	});
+	const cancel = page.getByRole("button", { name: "撤掉排着的话" });
+	await cancel.click();
+	const toast = page.locator("[data-sonner-toast]").filter({ hasText: "没能撤掉排着的话" });
+	await expect(toast).toContainText("助手服务连不上");
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "无法停止这一轮" }),
+	).toHaveCount(0);
+	await expect(cancel).toBeEnabled();
+	await expect(row(page, "停下来之后的话")).toHaveAttribute("data-role", "behind");
+	await cancel.click();
+	await expect.poll(() => calls).toBe(2);
+});
+
 test("停止途中说的话没有被撤掉：这一轮结束之后会话是排队中，轮到它时那句话成了开一轮的话", async ({
 	page,
 }) => {

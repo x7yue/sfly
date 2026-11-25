@@ -181,16 +181,17 @@ function StopButton({
 	behind: boolean;
 	onGone: (error: unknown) => boolean;
 }) {
-	const request = {
+	const request = (failed: string) => ({
 		mutationFn: () => callApi(sessionsApi.stop, { params: { id } }),
 		onError: (error: Error) => {
 			if (onGone(error)) return;
-			notify.error(SESSION.page.stopFailed, { description: error.message });
+			notify.error(failed, { description: error.message });
 		},
-	};
-	// 两个请求各自的在路上：停止的请求还没回来时有话排到了后面，这时点「撤掉排着的话」是另一个请求，不被前一个挡住。
-	const stop = useMutation(request);
-	const cancel = useMutation(request);
+	});
+	// 两个请求各自的在路上：停止的请求还没回来时有话排到了后面，这时点「撤掉排着的话」是另一个请求，不被前一个挡住；
+	// 失败的提示也各写各的（撤掉没有成功时这一轮其实还在停止，不能写「无法停止这一轮」）。
+	const stop = useMutation(request(SESSION.page.stopFailed));
+	const cancel = useMutation(request(SESSION.page.cancelFailed));
 	const action = behind ? cancel : stop;
 	return (
 		<Button

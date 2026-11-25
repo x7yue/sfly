@@ -304,6 +304,8 @@ export const SESSION = {
 		cancelBehind: "撤掉排着的话",
 		cancelBehindTitle: "撤掉排在这一轮后面的话，不开始新的一轮",
 		stopFailed: "无法停止这一轮",
+		/** 撤掉排着的话没有成功（这一轮其实还在停止）。 */
+		cancelFailed: "没能撤掉排着的话",
 		thinking: "思考中",
 		sendLabel: "接着说",
 		sendPlaceholder: "接着说",
