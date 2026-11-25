@@ -32,12 +32,14 @@ import {
 	soleNode,
 } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FocusListPage } from "#/focus/FocusList";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
 import { ACTION, ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE } from "#/lib/copy";
 import { INLINE_LINK } from "#/lib/inline-link";
 import { descriptionParagraphs } from "#/lib/node-description";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -213,7 +215,10 @@ function WarningList({
 						key={`${annotationId ?? ""}:${nodeId ?? ""}:${w.message}`}
 						className="flex items-start gap-2 rounded-md border border-warn-line bg-warn-soft px-2.5 py-1.5 text-xs text-warn-fg"
 					>
-						<span className="min-w-0 flex-1">{w.message}</span>
+						{/* 整句是控制面拼好的（里面有输入键、Agent 名、包名），拆不开：整句按别人写的文字显示。 */}
+						<span className="min-w-0 flex-1">
+							<UntrustedText text={w.message} />
+						</span>
 						{locate && (
 							<button
 								type="button"
@@ -285,7 +290,7 @@ function NodeInspector({
 		<>
 			<Header
 				onCollapse={onCollapse}
-				title={nodeCardText(node, info).title}
+				title={<UntrustedText text={nodeCardText(node, info).title} />}
 				row={
 					<>
 						<span className="font-mono text-fg-2">{id}</span>
@@ -295,12 +300,14 @@ function NodeInspector({
 								{node.kind === "package" && (
 									<span className="font-mono">
 										{" "}
-										· {node.package}/{node.node}
+										· <UntrustedText text={`${node.package}/${node.node}`} />
 									</span>
 								)}
 							</span>
 							{node.kind === "package" && (
-								<span className="flex-none font-mono">@{version ?? "未锁定"}</span>
+								<span className="flex-none font-mono">
+									<UntrustedText text={`@${version ?? "未锁定"}`} />
+								</span>
 							)}
 						</span>
 					</>
@@ -324,7 +331,7 @@ function NodeInspector({
 						<DisplayNameField
 							id={id}
 							node={node}
-							placeholder={nodeDefaultTitle(node, info)}
+							placeholder={untrustedPlain(nodeDefaultTitle(node, info))}
 							error={displayNameError}
 							onChange={change}
 						/>
@@ -435,7 +442,8 @@ function NodeInspector({
 								tabIndex={-1}
 								className="m-0 mt-2 text-xs text-danger-fg outline-offset-2"
 							>
-								{fieldLabel(node, e.field)}：{e.message}
+								{/* 位置里拼着输入键、包名（别人写的），整句按别人写的文字显示。 */}
+								<UntrustedText text={fieldLabel(node, e.field)} />：{e.message}
 							</p>
 						))}
 				</TabsContent>
@@ -488,7 +496,7 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 				).map((paragraph, i) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: 静态文本，同一段话可能重复，只能按位置区分
 					<p key={i} className="m-0">
-						{paragraph}
+						<UntrustedText text={paragraph} />
 					</p>
 				))}
 			</div>
@@ -499,7 +507,7 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 					<>
 						<dt className="text-fg-3">节点类型</dt>
 						<dd className="m-0 min-w-0 truncate font-mono">
-							{node.package}/{node.node}
+							<UntrustedText text={`${node.package}/${node.node}`} />
 						</dd>
 						<dt className="pt-1.5 text-fg-3">版本</dt>
 						<dd className="m-0 min-w-0">
@@ -682,9 +690,12 @@ function ScenarioOverview({ context }: { context: InspectorContext }) {
 										<code className="font-mono">{node ? nodeNameWithId(node) : nodeId}</code>
 									)}
 									{annotationId && <>注释框 {nameWithId(annotationId, annotation?.title)}</>}{" "}
-									{annotationId
-										? (ANNOTATION_FIELD_LABEL[e.field] ?? e.field)
-										: fieldLabel(node, e.field)}
+									{annotationId ? (
+										(ANNOTATION_FIELD_LABEL[e.field] ?? e.field)
+									) : (
+										// 位置里拼着输入键、包名（别人写的），整句按别人写的文字显示。
+										<UntrustedText text={fieldLabel(node, e.field)} />
+									)}
 									：{e.message}
 								</span>
 								{(nodeId || annotationId) && (

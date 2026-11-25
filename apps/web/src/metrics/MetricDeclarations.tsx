@@ -1,7 +1,9 @@
 import { isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
 import type { FocusItems } from "#/focus/use-focus-items";
 import { CHART_TYPE_LABEL, FOCUS, MESSAGE, TERM } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -17,8 +19,9 @@ const KIND_LABEL: Record<MetricDeclaration["kind"], string> = {
 	counter: "累计值",
 };
 
+/** `title` 提示里的文字：指标的名称和说明是节点包写的，先写出看不见的字符。 */
 const metricTitle = (m: MetricDeclaration) =>
-	`${m.name}（${KIND_LABEL[m.kind]}）${m.description ? `：${m.description}` : ""}`;
+	`${untrustedPlain(m.name)}（${KIND_LABEL[m.kind]}）${m.description ? `：${untrustedPlain(m.description)}` : ""}`;
 
 const metricsOf = (info: NodeMetricsInfo) => (Array.isArray(info.metrics) ? info.metrics : []);
 const chartsOf = (info: NodeMetricsInfo) => (Array.isArray(info.charts) ? info.charts : []);
@@ -35,8 +38,13 @@ export function MetricsCell({ info }: { info: NodeMetricsInfo }) {
 				<span key={m.name}>
 					{i > 0 && " · "}
 					<span title={metricTitle(m)}>
-						{m.name}
-						{m.unit && <span className="text-fg-3"> {m.unit}</span>}
+						<UntrustedText text={m.name} />
+						{m.unit && (
+							<span className="text-fg-3">
+								{" "}
+								<UntrustedText text={m.unit} />
+							</span>
+						)}
 					</span>
 				</span>
 			))}
@@ -52,9 +60,9 @@ export function LabelKeysCell({ info }: { info: NodeMetricsInfo }) {
 		<ul aria-label="标签键" className="m-0 list-none p-0 font-mono text-xs text-fg-2">
 			{labeled.map((m) => (
 				<li key={m.name}>
-					{m.name}
+					<UntrustedText text={m.name} />
 					<span className="text-fg-3">：</span>
-					{m.labels?.join(" · ")}
+					{m.labels && <UntrustedText text={m.labels.join(" · ")} />}
 				</li>
 			))}
 		</ul>
@@ -75,15 +83,20 @@ export function ChartsCell({ info }: { info: NodeMetricsInfo }) {
 				{info.primary_metric && (
 					<>
 						{" · 主指标 "}
-						<span className="font-mono">{info.primary_metric}</span>
+						<span className="font-mono">
+							<UntrustedText text={info.primary_metric} />
+						</span>
 					</>
 				)}
 			</div>
 			<div className="text-fg-3">
 				{charts.map((c, i) => (
-					<span key={c.title} title={`${CHART_TYPE_LABEL[c.type]}：${c.metrics.join("、")}`}>
+					<span
+						key={c.title}
+						title={`${CHART_TYPE_LABEL[c.type]}：${untrustedPlain(c.metrics.join("、"))}`}
+					>
 						{i > 0 && " · "}
-						{c.title}
+						<UntrustedText text={c.title} />
 						{c.default && " 默认"}
 					</span>
 				))}
@@ -130,12 +143,22 @@ export function MetricDeclarations({
 				{metrics.map((m) => (
 					<li key={m.name} className="text-xs">
 						<div className="flex items-center gap-1.5">
-							<span className="font-mono text-sm">{m.name}</span>
-							{m.unit && <span className="text-fg-3">{m.unit}</span>}
+							<span className="font-mono text-sm">
+								<UntrustedText text={m.name} />
+							</span>
+							{m.unit && (
+								<span className="text-fg-3">
+									<UntrustedText text={m.unit} />
+								</span>
+							)}
 							<span className="text-fg-3">· {KIND_LABEL[m.kind]}</span>
 							{m.name === info.primary_metric && <Badge className="ml-auto">主指标</Badge>}
 						</div>
-						{m.description && <div className="text-fg-3">{m.description}</div>}
+						{m.description && (
+							<div className="text-fg-3">
+								<UntrustedText text={m.description} />
+							</div>
+						)}
 					</li>
 				))}
 			</ul>
@@ -144,9 +167,13 @@ export function MetricDeclarations({
 			<ul aria-label={TERM.chart} className="m-0 flex list-none flex-col gap-1 p-0">
 				{charts.map((c) => (
 					<li key={c.title} className="flex items-center gap-1.5 text-xs">
-						<span className="min-w-0 truncate">{c.title}</span>
+						<span className="min-w-0 truncate">
+							<UntrustedText text={c.title} />
+						</span>
 						<span className="flex-none text-fg-3">{CHART_TYPE_LABEL[c.type]}</span>
-						<span className="min-w-0 truncate font-mono text-fg-3">{c.metrics.join(" · ")}</span>
+						<span className="min-w-0 truncate font-mono text-fg-3">
+							<UntrustedText text={c.metrics.join(" · ")} />
+						</span>
 						<span className="ml-auto flex flex-none items-center gap-1.5">
 							{c.default && <Badge title="没被任何图表引用的指标，由平台生成默认图表">默认</Badge>}
 							{focus && (

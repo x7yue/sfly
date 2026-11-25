@@ -135,7 +135,8 @@ export function packageGroups(
 				package: name,
 				version,
 				node: n.name,
-				title: n.title ?? n.name,
+				// Agent 上报的元信息没有校验过 title：不是字符串时按没写处理。
+				title: typeof n.title === "string" ? n.title : n.name,
 				...(n.description !== undefined && { description: n.description }),
 				...(n.runStateInputs !== undefined && { runStateInputs: n.runStateInputs }),
 			})),

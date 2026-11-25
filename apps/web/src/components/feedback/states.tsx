@@ -1,6 +1,7 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import { cn } from "cn";
 import { CopyIcon, RotateCwIcon } from "lucide-react";
+import { UntrustedText } from "#/components/untrusted-text";
 import { ApiError } from "#/lib/api";
 import { ACTION, MESSAGE } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
@@ -160,8 +161,13 @@ export function ErrorState({
 			)}
 		>
 			<h3 className="m-0 mb-1.5 text-base font-semibold text-danger-fg">{title}</h3>
-			<p className="m-0 mb-2.5 text-sm text-fg-2">{message}</p>
-			<code className="block font-mono text-xs break-all text-fg-2">{errorSummary(error)}</code>
+			{/* 错误信息一律经 `UntrustedText`（#699）：里面可能拼着 Agent 报的原文。 */}
+			<p className="m-0 mb-2.5 text-sm text-fg-2">
+				<UntrustedText text={message} mode="text" />
+			</p>
+			<code className="block font-mono text-xs break-all text-fg-2">
+				<UntrustedText text={errorSummary(error)} mode="text" />
+			</code>
 			<div className="mt-3 flex gap-2">
 				{onRetry && (
 					<Button onClick={onRetry}>

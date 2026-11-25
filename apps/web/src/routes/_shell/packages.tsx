@@ -15,11 +15,13 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { useListNavigation } from "#/components/list-navigation";
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
+import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery } from "#/lib/api";
 import { MESSAGE, PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { firstParagraph } from "#/lib/node-description";
 import { compareVersions } from "#/lib/package-versions";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import {
 	ChartsCell,
 	declaresNoCharts,
@@ -131,8 +133,14 @@ function PackageListItem({ pkg, selected }: { pkg: PackageSummary; selected: boo
 			)}
 		>
 			<span className="flex items-center gap-2">
-				<span className="font-mono font-medium">{pkg.name}</span>
-				{latest && <Badge className="ml-auto font-mono">{latest.version}</Badge>}
+				<span className="font-mono font-medium">
+					<UntrustedText text={pkg.name} />
+				</span>
+				{latest && (
+					<Badge className="ml-auto font-mono">
+						<UntrustedText text={latest.version} />
+					</Badge>
+				)}
 			</span>
 			<span className="block text-xs text-fg-3">
 				{latest?.nodes.length ?? 0} 个节点类型
@@ -156,11 +164,13 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 	if (!current) return null;
 
 	return (
-		<Panel aria-label={`${pkg.name} 详情`} className="px-4.5 py-4">
+		<Panel aria-label={`${untrustedPlain(pkg.name)} 详情`} className="px-4.5 py-4">
 			<div className="flex flex-wrap items-center gap-2.5">
-				<h2 className="m-0 font-mono text-base font-semibold">{pkg.name}</h2>
+				<h2 className="m-0 font-mono text-base font-semibold">
+					<UntrustedText text={pkg.name} />
+				</h2>
 				<Badge className="font-mono">
-					{current.version}
+					<UntrustedText text={current.version} />
 					{current === latest && " 最新"}
 				</Badge>
 				<span className="text-xs text-fg-3">
@@ -207,7 +217,7 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 									aria-current={v === current ? "true" : undefined}
 									className="text-fg-1 underline-offset-2 hover:underline"
 								>
-									{v.version}
+									<UntrustedText text={v.version} />
 								</Link>
 							</TableCell>
 							<TableCell width="fit" className="font-mono text-xs text-fg-2">
@@ -244,7 +254,7 @@ function ioKeys(
 
 /** 有说明的名字：悬停或键盘聚焦显示说明（只有 `title` 的话键盘和触屏拿不到）；没有说明的名字就是文字。 */
 function IoName({ name, description }: { name: string; description: string | undefined }) {
-	if (description === undefined) return name;
+	if (description === undefined) return <UntrustedText text={name} />;
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -256,10 +266,10 @@ function IoName({ name, description }: { name: string; description: string | und
 					/>
 				}
 			>
-				{name}
+				<UntrustedText text={name} />
 			</TooltipTrigger>
 			<TooltipContent className="max-w-md whitespace-pre-line wrap-anywhere">
-				{description}
+				<UntrustedText text={description} mode="text" />
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -314,10 +324,16 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 						return (
 							<TableRow key={node.name}>
 								<TableCell width="fit">
-									<span className="font-mono">{node.name}</span>
-									<div className="text-xs text-fg-3">{node.title}</div>
+									<span className="font-mono">
+										<UntrustedText text={node.name} />
+									</span>
+									<div className="text-xs text-fg-3">
+										<UntrustedText text={node.title} />
+									</div>
 									{summary && (
-										<p className="m-0 mt-1 w-72 whitespace-normal text-xs text-fg-2">{summary}</p>
+										<p className="m-0 mt-1 w-72 whitespace-normal text-xs text-fg-2">
+											<UntrustedText text={summary} />
+										</p>
 									)}
 								</TableCell>
 								<TableCell>

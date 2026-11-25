@@ -2,8 +2,10 @@ import { cn } from "cn";
 import { FlagIcon } from "lucide-react";
 import { useMemo } from "react";
 import { STATUS } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { NODE_ACTIONS, TERM } from "#/lib/copy";
 import { formatClock, formatClockMs, formatDuration, formatInteger } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import {
 	type BandRun,
 	layoutTracks,
@@ -143,7 +145,9 @@ function Track({ layout, width }: { layout: TrackLayout; width: number }) {
 					style={place(b.from, b.to)}
 				>
 					{(b.to - b.from) * width >= LABEL_PX && (
-						<span className="block truncate px-1.5 text-xs/3 text-fg-1">{b.item.name}</span>
+						<span className="block truncate px-1.5 text-xs/3 text-fg-1">
+							<UntrustedText text={b.item.name} />
+						</span>
 					)}
 				</span>
 			))}
@@ -180,9 +184,9 @@ const TICK: Record<TrackTick["tone"], string> = {
 	rare: "top-1.5 h-3.5 min-w-0.75 bg-fg-1",
 };
 
-/** 悬停提示：「下单 · 09:12:47.031 · 12ms · 失败」。 */
+/** 悬停提示：「下单 · 09:12:47.031 · 12ms · 失败」。`title` 和 SVG 的 `<title>` 都是纯文字：动作的名称先过 `untrustedPlain`。 */
 function itemTitle(item: TrackItem): string {
-	const parts = [item.name, formatClockMs(item.start)];
+	const parts = [untrustedPlain(item.name), formatClockMs(item.start)];
 	if (item.kind === "mark") return [...parts, TERM.mark].join(" · ");
 	if (item.end === null) return [...parts, NODE_ACTIONS.results.running].join(" · ");
 	const result = item.result ? NODE_ACTIONS.results[item.result] : NODE_ACTIONS.results.success;
@@ -192,7 +196,7 @@ function itemTitle(item: TrackItem): string {
 const quoted = (names: readonly string[], most: number) =>
 	names
 		.slice(0, most)
-		.map((n) => `「${n}」`)
+		.map((n) => `「${untrustedPlain(n)}」`)
 		.join("") + (names.length > most ? ` 等 ${names.length} 种` : "");
 
 /**
@@ -203,7 +207,9 @@ export function tracksLabel(name: string, o: TrackOverview): string {
 	const parts: string[] = [];
 	if (o.running.length > 0) parts.push(`${NODE_ACTIONS.doing}${quoted(o.running, 3)}`);
 	for (const c of o.countOnly.slice(0, 3)) {
-		parts.push(`「${c.name}」从 ${formatClock(c.from)} 起${NODE_ACTIONS.countOnly}`);
+		parts.push(
+			`「${untrustedPlain(c.name)}」从 ${formatClock(c.from)} 起${NODE_ACTIONS.countOnly}`,
+		);
 	}
 	if (o.failed > 0) parts.push(`${formatInteger(o.failed)} 个${FAILED}`);
 	if (o.rare.length > 0) parts.push(`${RARE}${quoted(o.rare, 5)}`);

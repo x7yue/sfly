@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { idParts, KIND_META, nodeSlot } from "./node-display";
+import type { DocNode } from "./flow";
+import { idParts, KIND_META, nodeSlot, nodeTags } from "./node-display";
 
 // 卡片上节点 ID 的两段（开头放不下时截断，结尾整段始终显示）：结尾按分隔符保留整段，不把单词切开。
 describe("节点 ID 保留结尾", () => {
@@ -62,5 +63,30 @@ describe("停止子流程节点的卡片摘要", () => {
 			text: "未选择子流程",
 			empty: true,
 		});
+	});
+});
+
+// 卡片右上角的标签：Agent 名是别人写的（显示时经 UntrustedText），重试次数、always 是控制台自己的写法。
+describe("节点卡片的标签", () => {
+	const pkg = (patch: Partial<Extract<DocNode, { kind: "package" }>>): DocNode => ({
+		id: "load",
+		kind: "package",
+		package: "demo",
+		node: "load",
+		inputs: {},
+		always: false,
+		...patch,
+	});
+
+	it("另选的 Agent 标成别人写的文字，其余不标", () => {
+		expect(nodeTags(pkg({ agent: "worker-1", retries: 3, always: true }))).toEqual([
+			{ text: "重试 3" },
+			{ text: "worker-1", untrusted: true },
+			{ text: "always" },
+		]);
+	});
+
+	it("没有另选 Agent、重试次数是默认值时没有标签", () => {
+		expect(nodeTags(pkg({}))).toEqual([]);
 	});
 });

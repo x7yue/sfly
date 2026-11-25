@@ -12,6 +12,7 @@ import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
 import { IdleSlots, idleSlotCount, taskChainLabel } from "#/components/slot-cell";
 import { nodeStatusView, StatusDot, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { attemptLabel, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import { formatClockOffset, formatDateTime, formatFullDateTime, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
@@ -55,7 +56,7 @@ export function AgentRack({
 			<header className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 border-b border-border-soft px-4 py-3">
 				<RackStatus agent={agent} />
 				<h2 id={headingId} className="m-0 font-mono text-base font-semibold">
-					{agent.name}
+					<UntrustedText text={agent.name} />
 				</h2>
 				<RackFacts agent={agent} controlPlaneVersion={controlPlaneVersion} />
 				<span className="flex-1" />
@@ -137,12 +138,12 @@ function RackStatus({ agent }: { agent: AgentView }) {
 			{online && agent.preparing_since && <PreparingBadge since={agent.preparing_since} />}
 			{update?.detail && (
 				<span className={cn("text-xs", update.kind === "failed" ? "text-danger-fg" : "text-fg-3")}>
-					{update.detail}
+					<UntrustedText text={update.detail} />
 				</span>
 			)}
 			{!update && installing && agent.install && (
 				<span className="font-mono text-2xs text-fg-3">
-					{agent.install.package}@{agent.install.version}
+					<UntrustedText text={`${agent.install.package}@${agent.install.version}`} />
 				</span>
 			)}
 			{clockOffset && (
@@ -156,12 +157,15 @@ function RackStatus({ agent }: { agent: AgentView }) {
 			{unavailable !== null && (
 				<span className="text-xs">
 					<span className="text-warn-fg">不能被其它 Agent 调用</span>
-					<span className="text-fg-3"> · {unavailable}</span>
+					<span className="text-fg-3">
+						{" "}
+						· <UntrustedText text={unavailable} />
+					</span>
 				</span>
 			)}
 			{failed && agent.install && (
 				<span className="text-xs text-danger-fg">
-					安装 {agent.install.package}@{agent.install.version} 失败
+					安装 <UntrustedText text={`${agent.install.package}@${agent.install.version}`} /> 失败
 				</span>
 			)}
 		</div>
@@ -179,13 +183,18 @@ function RackFacts({
 	const online = agent.status === "online";
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-0.5 text-xs text-fg-3">
-			<span className="font-mono text-fg-2">{agent.info.agent_version || "—"}</span>
+			<span className="font-mono text-fg-2">
+				<UntrustedText text={agent.info.agent_version || "—"} />
+			</span>
 			{online && agent.version_mismatch && <span>控制面 {controlPlaneVersion}</span>}
 			<span className="font-mono text-fg-2">
-				{agent.info.os || "?"}/{agent.info.arch || "?"}
+				<UntrustedText text={`${agent.info.os || "?"}/${agent.info.arch || "?"}`} />
 			</span>
 			<span>
-				对外地址 <span className="font-mono text-fg-2">{endpointLabel(agent.endpoint) || "—"}</span>
+				对外地址{" "}
+				<span className="font-mono text-fg-2">
+					<UntrustedText text={endpointLabel(agent.endpoint) || "—"} />
+				</span>
 				{agent.endpoint.address_source === "configured" && " · 安装时配置"}
 			</span>
 			<span>
@@ -235,7 +244,7 @@ function IdentifierList({ items }: { items: readonly string[] }) {
 		<span className="font-mono">
 			{items.map((item, i) => (
 				<span key={item} className="whitespace-nowrap">
-					{item}
+					<UntrustedText text={item} />
 					{i < items.length - 1 && "、"}
 				</span>
 			))}

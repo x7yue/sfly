@@ -1,5 +1,6 @@
 import { focusLatestSeriesName, focusValueText, type RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
+import { UntrustedText } from "#/components/untrusted-text";
 
 /** 这一项的值已经不新了：控制面给了 `stale_since`（没有新数据，和报哪一种异常无关）。值退成次要文字色都按它判断。 */
 export const isStaleValue = (item: { stale_since?: RunFocusItem["stale_since"] | undefined }) =>
@@ -28,9 +29,17 @@ export function FocusValue({
 				className,
 			)}
 		>
-			{series && <span className="mr-1 text-xs font-normal text-fg-3">{series}</span>}
+			{series && (
+				<span className="mr-1 text-xs font-normal text-fg-3">
+					<UntrustedText text={series} />
+				</span>
+			)}
 			{focusValueText(item)}
-			{item.unit && <small className="ml-0.75 text-xs font-normal text-fg-3">{item.unit}</small>}
+			{item.unit && (
+				<small className="ml-0.75 text-xs font-normal text-fg-3">
+					<UntrustedText text={item.unit} />
+				</small>
+			)}
 		</span>
 	);
 }
