@@ -1175,6 +1175,86 @@ test("会话被别人结束时写了一半的话留在页面上：只读、可�
 	// 没有写过话的会话：没有这一块。
 });
 
+const liveRegion = (page: Page) => page.locator("output[aria-live=polite]");
+
+test("读屏：打开一个历史里已经有结局和没送到的插话的会话，播报区是空的（打开页面不播）", async ({
+	page,
+}) => {
+	await openSession(page, { status: "idle" }, [
+		userMessage(1),
+		turnStarted(2),
+		steerMessage(3, A, "先别改测试"),
+		steerDropped(4, A, "这句插话没有送到"),
+		turnEnd(5, "completed"),
+	]);
+	// 打开页面（`openSession` 已经等到事件流订阅上了，页面的副作用都跑过了）：历史里的事不是刚发生的。
+	await expect(row(page, "先别改测试").getByTestId("message-delivery")).toHaveText("没有送到");
+	await expect(liveRegion(page)).toHaveText("");
+});
+
+test("读屏：往前翻页读进来的更早的一页里有结局和没送到的插话，播报区不变", async ({ page }) => {
+	const view = sessionView({ status: "running" });
+	const latest: SessionEvent[] = [userMessage(51, "现在的话"), turnStarted(52)];
+	const older: SessionEvent[] = [
+		userMessage(1, "很早的话"),
+		turnStarted(2),
+		steerMessage(3, A, "先别改测试"),
+		steerDropped(4, A, "这句插话没有送到"),
+		turnEnd(5, "completed"),
+	];
+	await installSessionStream(page);
+	await page.route(new RegExp(`/api/sessions/${view.id}(\\?.*)?$`), (route) => {
+		if (route.request().method() !== "GET") return route.fallback();
+		const paging = new URL(route.request().url()).searchParams.has("before");
+		return fulfillJson(route, 200, {
+			...view,
+			events: paging ? older : latest,
+			has_more: !paging,
+		});
+	});
+	await page.goto(`/sessions/${view.id}`);
+	await expect.poll(async () => (await streamOpens(page)).opened).toBe(1);
+	await expect(liveRegion(page)).toHaveText("");
+	await page.getByRole("button", { name: "加载更早的" }).click();
+	// 更早的一页读进来了（里面的结局和没送到的插话在时间线上），播报区仍是空的：它们不是刚发生的。
+	await expect(page.getByTestId("turn-end")).toHaveCount(1);
+	await expect(row(page, "先别改测试").getByTestId("message-delivery")).toHaveText("没有送到");
+	await expect(liveRegion(page)).toHaveText("");
+});
+
+test("读屏：连着两个「已停止」都播（同一句话再播一次，读屏才会再读）", async ({ page }) => {
+	await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
+	// 记下播报区每一次的文字变化（文字没有变化就不会有变化记录）。
+	await page.evaluate(() => {
+		const said: string[] = [];
+		(window as unknown as { __said: string[] }).__said = said;
+		const region = document.querySelector("output[aria-live=polite]") as Element;
+		new MutationObserver(() => said.push(region.textContent ?? "")).observe(region, {
+			childList: true,
+			characterData: true,
+			subtree: true,
+		});
+	});
+	const stopped = (seq: number, turn: number): SessionEvent => ({
+		...turnEnd(seq, "stopped"),
+		turn,
+	});
+	await pushEvent(page, stopped(3, 1));
+	await expect(liveRegion(page)).toHaveText("已停止");
+	await pushEvent(page, userMessage(4, "再来一轮"));
+	await pushEvent(page, { ...turnStarted(5), turn: 2 });
+	await pushEvent(page, stopped(6, 2));
+	await expect
+		.poll(() =>
+			page.evaluate(() =>
+				(window as unknown as { __said: string[] }).__said.map((text) =>
+					text.replace(/\u200b/g, ""),
+				),
+			),
+		)
+		.toEqual(["已停止", "已停止"]);
+});
+
 test("会话已结束、输入框里没有话：只有一句「已经结束」，没有只读的块", async ({ page }) => {
 	await openSession(page, { status: "running" }, [userMessage(1), turnStarted(2)]);
 	await pushEvent(page, sessionEnded(3, "bob"));

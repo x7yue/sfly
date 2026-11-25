@@ -200,27 +200,30 @@ export const queueOf = (
 /**
  * 读屏要播报的一句：状态变了、看得见却听不到的几件事——这个会话轮到了、有一句插话没有送到、这一轮结束了、会话被结束了（可能是别人结束的）。
  * 两份状态之间没有这些变化时返回 `null`。页面用它填「一轮结束」那块 `aria-live` 的区域（时间线是逐字更新的，不整个播报）。
+ *
+ * **只看新到的事件**：序号大于之前最大序号（`before.lastSeq`）的那几行。往前翻页（`prependHistory`）把更早的行放到前面，最大序号不变，
+ * 所以读进来的旧事件永远不播；打开页面时前后是同一份状态，也不播。一次到了好几条（重连之后补发，被合成一次渲染）时，播的是这一批的
+ * 事实：一句「有一句插话没有送到」、**最近的一个结局**一句，不把过去几轮逐条念一遍。
  */
 export function announcement(
-	before: Pick<TimelineState, "status" | "items">,
-	after: Pick<TimelineState, "status" | "items">,
+	before: Pick<TimelineState, "status" | "items" | "lastSeq">,
+	after: Pick<TimelineState, "status" | "items" | "lastSeq">,
 ): string | null {
 	const lines: string[] = [];
-	const dropped = (state: Pick<TimelineState, "items">) =>
-		state.items.filter((item) => item.kind === "user" && item.delivery === "dropped").length;
-	const ends = (state: Pick<TimelineState, "items">) =>
-		state.items.filter((item) => item.kind === "turn_end");
-	if (dropped(after) > dropped(before)) lines.push(SESSION.page.announce.steerDropped);
-	if (before.status === "queued" && after.status === "running")
-		lines.push(SESSION.page.announce.started);
-	const endsAfter = ends(after);
-	const lastEnd = endsAfter.at(-1);
-	if (lastEnd?.kind === "turn_end" && endsAfter.length > ends(before).length) {
-		lines.push(turnEndText(lastEnd));
+	const fresh = after.items.filter(
+		(item) => "seq" in item && item.seq !== null && item.seq > before.lastSeq,
+	);
+	if (fresh.some((item) => item.kind === "notice" && item.noticeKind === "steer_dropped")) {
+		lines.push(SESSION.page.announce.steerDropped);
 	}
+	if (before.status === "queued" && after.status === "running") {
+		lines.push(SESSION.page.announce.started);
+	}
+	const lastEnd = fresh.filter((item) => item.kind === "turn_end").at(-1);
+	if (lastEnd?.kind === "turn_end") lines.push(turnEndText(lastEnd));
 	if (after.status === "ended" && before.status !== "ended") {
-		const by = after.items.find((item) => item.kind === "session_ended")?.by ?? "";
-		lines.push(SESSION.page.announce.ended(by));
+		const ended = fresh.filter((item) => item.kind === "session_ended").at(-1);
+		lines.push(SESSION.page.announce.ended(ended?.kind === "session_ended" ? ended.by : ""));
 	}
 	return lines.length === 0 ? null : lines.join("。");
 }

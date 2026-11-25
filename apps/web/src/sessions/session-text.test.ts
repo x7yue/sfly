@@ -18,6 +18,7 @@ import {
 	applyEvent,
 	emptyTimeline,
 	initialTimeline,
+	prependHistory,
 	type TimelineItem,
 	type TimelineState,
 } from "./timeline";
@@ -282,6 +283,61 @@ describe("读屏的播报", () => {
 		const byBob = step(ended.state, { type: "session_ended", ...base(3), by: "bob" });
 		expect(byBob.state.status).toBe("ended");
 		expect(byBob.said).toBe("这个会话已经结束（bob）");
+	});
+
+	it("往前翻页：读进来的更早的一页里有结局、没送到的插话，也不播（只看比之前最大序号更新的事件）", () => {
+		// 审查的复现：在做的一轮在页面上，更早的一页（has_more）里有一轮的结局和一句没送到的插话。
+		const state = initialTimeline("running", [started(51)], true);
+		const older: SessionEvent[] = [
+			{
+				type: "user_message",
+				...base(1),
+				message_id: ID,
+				text: "很早的话",
+				steer: false,
+				author: "alice",
+				author_user_id: null,
+			},
+			started(2),
+			steer(3),
+			{ type: "notice", ...base(4), kind: "steer_dropped", message: "没有送到", message_id: ID },
+			{
+				type: "turn_end",
+				...base(5),
+				turn: 1,
+				outcome: "completed",
+				reason: "",
+				duration_ms: 84_000,
+			},
+		];
+		const turned = prependHistory(state, older, false);
+		expect(turned.items.some((item) => item.kind === "turn_end")).toBe(true);
+		expect(turned.items.some((item) => item.kind === "notice")).toBe(true);
+		expect(announcement(state, turned)).toBeNull();
+		// 翻到更早的几页也一样：每一页都不播。
+		expect(announcement(turned, prependHistory(turned, [started(0)], false))).toBeNull();
+	});
+
+	it("一次到了好几条（重连之后补发，合成一次渲染）：播这一批的事实——插话没送到一句、最近的一个结局，不把过去几轮逐条念一遍", () => {
+		let state = emptyTimeline("running");
+		state = applyEvent(state, started(1));
+		const turnEnd = (n: number, turn: number, outcome: "stopped" | "completed"): SessionEvent => ({
+			type: "turn_end",
+			...base(n),
+			turn,
+			outcome,
+			reason: "",
+			duration_ms: 1000,
+		});
+		let after = state;
+		for (const event of [turnEnd(2, 1, "completed"), started(3), turnEnd(4, 2, "stopped")]) {
+			after = applyEvent(after, event);
+		}
+		const said = announcement(state, after);
+		expect(said).toBe(
+			turnEndText(after.items.filter((item) => item.kind === "turn_end").at(-1) as never),
+		);
+		expect(said?.split("。")).toHaveLength(1);
 	});
 
 	it("打开页面时（前后是同一份状态）什么也不播", () => {
