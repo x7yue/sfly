@@ -12,6 +12,7 @@ import {
 	WHOLE_REFERENCE,
 } from "@sfly/orchestration";
 import type { StoredOrchestrationDocument } from "@sfly/schema";
+import { TERM } from "#/lib/copy";
 
 /**
  * 引用补全的纯逻辑（检查器的 ReferenceEditor、ReferencePicker 使用，单测覆盖）：可引用的值与来源说明、
