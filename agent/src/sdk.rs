@@ -69,7 +69,7 @@ pub async fn install(
     tokio::fs::create_dir_all(&dir).await?;
     let wheel = dir.join(name);
     tokio::fs::write(&wheel, &bytes).await?;
-    let output = tokio::process::Command::new(uv)
+    let output = crate::subprocess::command(uv)
         .args([
             "pip",
             "install",
