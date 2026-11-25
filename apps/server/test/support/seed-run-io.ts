@@ -26,7 +26,11 @@ export interface SeedNode {
 export async function seedRunIo(
 	cp: TestControlPlane,
 	nodes: SeedNode[],
-	options: { secretParam?: { name: string; value: string } } = {},
+	options: {
+		secretParam?: { name: string; value: string };
+		/** 子流程实例上声明的 secret 参数（入口之外的 secret：读取时的打码要把它也算进去）。 */
+		subflowSecret?: { name: string; value: string };
+	} = {},
 ): Promise<{ run: string; tasks: Record<string, string[]> }> {
 	const api = new ApiClient(cp);
 	const params = options.secretParam
@@ -41,6 +45,16 @@ export async function seedRunIo(
 					? { id: n.id, kind: "stop_subflow", subflow: n.stopSubflow }
 					: { id: n.id, kind: "package", package: "stub", node: "echo" },
 			),
+			...(options.subflowSecret
+				? [
+						{
+							id: "secret_sub",
+							kind: "subflow_entry",
+							name: "有秘密的子流程",
+							params: [{ name: options.subflowSecret.name, type: "string", secret: true }],
+						},
+					]
+				: []),
 			// 「停止子流程」节点要停止的子流程（没有节点的空子流程）。
 			...[...new Set(nodes.flatMap((n) => (n.stopSubflow ? [n.stopSubflow] : [])))].map((id) => ({
 				id,
@@ -84,6 +98,20 @@ export async function seedRunIo(
 			values ($1, $2, 'entry', 0, $4::jsonb, 'success', $3, $3)`,
 			[chain, run, at, JSON.stringify(chainParams)],
 		);
+		if (options.subflowSecret) {
+			// 主链派发出来的子流程实例：它的参数里有 secret 值，但它的节点一个也没有（要的是读取时认得出这个值）。
+			await client.query(
+				`insert into chain_instances (id, run_id, chain_id, depth, params, status, started_at, ended_at, parent_chain_instance_id, async_node_id)
+				values ($1, $2, 'secret_sub', 1, $4::jsonb, 'success', $3, $3, $5, 'entry')`,
+				[
+					randomUUID(),
+					run,
+					at,
+					JSON.stringify({ [options.subflowSecret.name]: options.subflowSecret.value }),
+					chain,
+				],
+			);
+		}
 		for (const node of nodes) {
 			taskIds[node.id] = [];
 			for (const [i, attempt] of node.attempts.entries()) {

@@ -442,4 +442,33 @@ describe("运行视图里的输入和输出：大的只给大小，合计有上�
 		expect(JSON.stringify(full.body)).not.toContain(secret);
 		expect((full.body.outputs as { text: string }).text).toBe(`${filler}******`);
 	});
+
+	it("子流程实例上声明的 secret 参数的值：内联的输出里是掩码，取全文的路由也打码（不只认主链的 secret）", async () => {
+		const secret = "subsecret-ABCDEFGH-42";
+		const filler = "y".repeat(17_000);
+		const { run, tasks } = await seedRunIo(
+			cp,
+			[
+				{ id: "small", attempts: [{ outputs: { echo: `got ${secret}` } }] },
+				{
+					id: "big",
+					attempts: [{ inputs: { echo: secret }, outputs: { text: `${filler}${secret}` } }],
+				},
+			],
+			{ subflowSecret: { name: "skey", value: secret } },
+		);
+
+		const { body, view } = await runJson(run);
+
+		// 运行视图：小的内联的打了码，大的只给大小。
+		expect(body).not.toContain(secret);
+		expect(nodeOf(view, "small").attempts[0]?.outputs).toEqual({ echo: "got ******" });
+		// 取全文：和视图是同一条打码的路，子流程的 secret 也在名单里。
+		const big = await ioOf(tasks.big?.[0] as string);
+		expect(JSON.stringify(big.body)).not.toContain(secret);
+		expect(big.body.inputs).toEqual({ echo: "******" });
+		expect((big.body.outputs as { text: string }).text).toBe(`${filler}******`);
+		const small = await ioOf(tasks.small?.[0] as string);
+		expect(small.body.outputs).toEqual({ echo: "got ******" });
+	});
 });

@@ -45,7 +45,7 @@ test("输入输出：大的输出只写大小，点「加载」才取全文；�
 	const io = panel(page).getByRole("tabpanel");
 	// 小的输入照常显示；大的输出只写大小（40012 个字节向上取整到 40 KB），没有发取全文的请求。
 	await expect(io).toContainText('"url": "https://example.test/a"');
-	await expect(io.getByTestId("io-omitted")).toContainText("内容较大（约 40 KB）");
+	await expect(io.getByTestId("io-omitted")).toContainText("没有随运行一起返回（约 40 KB）");
 	await expect(io).not.toContainText("BBBBBBBB");
 	expect(requests).toEqual([]);
 
@@ -185,4 +185,76 @@ test("「停止子流程」节点：合计用完之后它的输入也只给大�
 	await openMonitor(page, clock, run, "stop", "attempts");
 
 	await expect(panel(page).locator("dt", { hasText: "停止" })).toBeVisible();
+});
+
+/** 一个节点 a：输入是 40 000 个字符的字面量（运行视图里输入只给大小），输出由 Agent 上报时决定。 */
+async function bigInputRun(controlPlane: Parameters<typeof publishPackage>[0]) {
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "大输入", {
+		default_agent: "agent-a",
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			{ id: "a", kind: "package", package: "demo-checks", node: "ping", inputs: { host: BIG } },
+		],
+		edges: [{ from: "entry", to: "a", kind: "chain" }],
+		packages: { "demo-checks": "1.2.0" },
+	});
+	return triggerRun(controlPlane, scenario);
+}
+
+test("输入输出：执行中加载过全文，这次尝试结束、输出也很大：输出一栏是「约 N KB / 加载」，点了取得到（不是「没有输出。」）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 2,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	const runId = await bigInputRun(controlPlane);
+	const task = await agent.nextAssign();
+	await openMonitor(page, clock, runId, "a", "io");
+	const io = panel(page).getByRole("tabpanel");
+	// 执行中：输入被省略（输入在派发时写下），输出还没有。
+	await expect(io.getByTestId("io-omitted")).toContainText("约 40 KB");
+	await expect(io).toContainText("节点尚未结束。");
+	await io.getByRole("button", { name: "加载" }).click();
+	await expect(io).toContainText('"host": "BBBBBBBB');
+
+	// 这次尝试结束、输出也很大：取到的全文是执行中取的（输出那时是 null），不能当作输出为空。
+	await agent.succeed(task, { alive: true, text: BIG });
+
+	await expect(io.getByTestId("io-omitted")).toContainText("约 40 KB");
+	await expect(io).not.toContainText("没有输出。");
+	await io.getByRole("button", { name: "加载" }).click();
+	await expect(io).toContainText('"text": "BBBBBBBB');
+	await expect(io.getByTestId("io-omitted")).toHaveCount(0);
+});
+
+test("输入输出：用键盘按「加载」，焦点留在这一栏里（不落到页面上）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 2,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	const runId = await bigInputRun(controlPlane);
+	const task = await agent.nextAssign();
+	await agent.succeed(task, { alive: true });
+	await openMonitor(page, clock, runId, "a", "io");
+	const io = panel(page).getByRole("tabpanel");
+	const load = io.getByRole("button", { name: "加载" });
+	await load.focus();
+
+	await page.keyboard.press("Enter");
+
+	await expect(io).toContainText('"host": "BBBBBBBB');
+	// 焦点在这一栏里（加载出来的内容上），不在 body 上：键盘用户不必从页面开头重新 Tab 过来。
+	await expect.poll(() => io.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 });
