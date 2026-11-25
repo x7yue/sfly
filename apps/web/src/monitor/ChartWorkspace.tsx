@@ -14,10 +14,12 @@ import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
 import { BarChart3Icon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import {
 	attemptLabel,
 	ERROR_LOCATION_LABEL,
@@ -26,6 +28,7 @@ import {
 	PROGRESS_LABEL,
 } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { useElementWidth } from "#/lib/use-element-width";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -634,7 +637,9 @@ function NodeGroup({
 			note={note && <NoteIcon note={note} className="flex-none text-sm" />}
 			header={
 				<>
-					<span className="min-w-0 truncate font-mono text-fg-2">{title}</span>
+					<span className="min-w-0 truncate font-mono text-fg-2">
+						<UntrustedText text={title} />
+					</span>
 					{group.chainName && (
 						<span className="flex-none text-xs text-fg-3" title={chainLabel(chain)}>
 							{group.chainName}
@@ -649,7 +654,9 @@ function NodeGroup({
 					<span className="flex-1" />
 					<DataLossBadges loss={loss} />
 					<span className={GROUP_COUNT}>{charts.length} 张图表</span>
-					<span className={GROUP_AGENT}>{node.agent ?? ""}</span>
+					<span className={GROUP_AGENT}>
+						<UntrustedText text={node.agent ?? ""} />
+					</span>
 				</>
 			}
 			attempts={
@@ -796,8 +803,8 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 	return (
 		<div data-testid="node-summary" className="flex flex-wrap items-center gap-6 px-1 py-1">
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
-			{item("节点类型", `${entry.package}/${entry.node}@${entry.version}`)}
-			{item("Agent", node.agent ?? "—")}
+			{item("节点类型", <UntrustedText text={`${entry.package}/${entry.node}@${entry.version}`} />)}
+			{item("Agent", <UntrustedText text={node.agent ?? "—"} />)}
 			{item(
 				NODE_TOTAL_LABEL,
 				timing.total === null ? "—" : formatDuration(timing.total),
@@ -812,7 +819,9 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 						{progress.current}
 						{progress.total === null ? "" : ` / ${progress.total}`}
 						{progress.message && (
-							<span className="ml-2 font-sans text-fg-2">{progress.message}</span>
+							<span className="ml-2 font-sans text-fg-2">
+								<UntrustedText text={progress.message} />
+							</span>
 						)}
 					</div>
 				</div>
@@ -821,16 +830,20 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 				<div className="min-w-0">
 					<div className="text-xs text-fg-3">错误</div>
 					<div className="flex items-center gap-1.5 text-xs">
-						<Badge variant="danger">{node.error.kind}</Badge>
-						<span className="truncate text-danger-fg">{errorHeadline(node.error.message)}</span>
+						<Badge variant="danger">
+							<UntrustedText text={node.error.kind} />
+						</Badge>
+						<span className="truncate text-danger-fg">
+							<UntrustedText text={errorHeadline(node.error.message)} />
+						</span>
 					</div>
 					{node.error.location && (
 						<div
 							data-testid="node-error-location"
-							title={node.error.location}
+							title={untrustedPlain(node.error.location)}
 							className="mt-0.5 truncate font-mono text-xs text-fg-2"
 						>
-							{ERROR_LOCATION_LABEL}：{node.error.location}
+							{ERROR_LOCATION_LABEL}：<UntrustedText text={node.error.location} />
 						</div>
 					)}
 				</div>
@@ -876,11 +889,16 @@ function PlatformGroup({
 	const window = data
 		? chartWindow({ started_at: data.from, ended_at: run.ended_at }, range, now)
 		: null;
-	const empty = data
-		? MESSAGE.noDataInRange
-		: error
-			? `无法加载：${error.message}`
-			: MESSAGE.loading;
+	const empty = data ? (
+		MESSAGE.noDataInRange
+	) : error ? (
+		<>
+			无法加载：
+			<ErrorMessage error={error} />
+		</>
+	) : (
+		MESSAGE.loading
+	);
 	return (
 		<GroupShell
 			groupKey={PLATFORM_KEY}

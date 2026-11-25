@@ -16,6 +16,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { RunLines } from "#/components/run-lines";
 import { nodeStatusView, StatusDot } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { FocusChart } from "#/focus/FocusChart";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
@@ -252,7 +253,9 @@ function ChainSection({ run }: { run: RunView }) {
 										</span>
 									) : (
 										<span className="whitespace-nowrap text-fg-3">
-											{activeDetail({ ...attempt, status: node.status }, now)}
+											<UntrustedText
+												text={activeDetail({ ...attempt, status: node.status }, now)}
+											/>
 										</span>
 									)}
 									<ExecutingActivity activity={currentActivity(attempt)} />
@@ -277,10 +280,15 @@ function ExecutingActivity({ activity }: { activity: CurrentActivity | null }) {
 			<span aria-hidden>·</span>
 			{activity.kind === "action" ? (
 				<span className="flex min-w-0 items-baseline gap-1">
-					{NODE_ACTIONS.doingNow} <Truncate className="text-fg-1">{activity.name}</Truncate>
+					{NODE_ACTIONS.doingNow}{" "}
+					<Truncate untrusted className="text-fg-1">
+						{activity.name}
+					</Truncate>
 				</span>
 			) : (
-				<Truncate className="text-fg-2">{activity.message}</Truncate>
+				<Truncate untrusted className="text-fg-2">
+					{activity.message}
+				</Truncate>
 			)}
 		</span>
 	);

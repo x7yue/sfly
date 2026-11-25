@@ -9,6 +9,7 @@ import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
 import { type LineChain, RunLines, RunLineThumb } from "#/components/run-lines";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { TriggeredAt } from "#/components/via-tag";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
@@ -289,7 +290,9 @@ function ActiveNodes({
 									<QueueWaitNote wait={waiting} queuedAt={node.queued_at} now={now} />
 								</span>
 							) : (
-								<span className="whitespace-nowrap text-fg-3">{activeDetail(node, now)}</span>
+								<span className="whitespace-nowrap text-fg-3">
+									<UntrustedText text={activeDetail(node, now)} />
+								</span>
 							)}
 						</li>
 					);

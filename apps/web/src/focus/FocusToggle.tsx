@@ -1,6 +1,7 @@
 import type { ChartView } from "@sfly/schema";
 import { EyeIcon } from "lucide-react";
 import { ACTION, FOCUS, INSPECTOR_PAGE, TERM } from "#/lib/copy";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Button } from "@/components/ui/button";
 import { type FocusItems, isFocused } from "./use-focus-items";
 
@@ -28,7 +29,7 @@ export function FocusToggle({
 		<Button
 			size="sm"
 			aria-pressed={pressed}
-			aria-label={`把 ${chart} 设为${TERM.focusItem}`}
+			aria-label={`把 ${untrustedPlain(chart)} 设为${TERM.focusItem}`}
 			disabled={!pressed && (focus.full || !enabled)}
 			onClick={() => focus.toggle(nodeId, chart, chartType, !pressed)}
 			className="aria-pressed:bg-raised-2 aria-pressed:text-fg-1 aria-pressed:shadow-[inset_0_0_0_1px_var(--border-strong)]"

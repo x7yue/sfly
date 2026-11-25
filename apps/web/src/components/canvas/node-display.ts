@@ -96,15 +96,21 @@ export function idParts(id: string): { head: string; tail: string } {
 	return cut(last);
 }
 
+/** 卡片右上角的一个标签。`untrusted`：文字是别人写的（Agent 名），显示时要经 `UntrustedText`；其余是控制台自己的写法。 */
+export interface NodeTag {
+	text: string;
+	untrusted?: true;
+}
+
 /** 卡片右上角的标签：always、另选的 Agent、重试次数。 */
-export function nodeTags(node: DocNode): string[] {
-	const tags: string[] = [];
+export function nodeTags(node: DocNode): NodeTag[] {
+	const tags: NodeTag[] = [];
 	if (node.kind === "package") {
 		if (node.retries !== undefined && node.retries !== NODE_DEFAULTS.retries) {
-			tags.push(`重试 ${node.retries}`);
+			tags.push({ text: `重试 ${node.retries}` });
 		}
-		if (node.agent) tags.push(node.agent);
+		if (node.agent) tags.push({ text: node.agent, untrusted: true });
 	}
-	if ("always" in node && node.always) tags.push("always");
+	if ("always" in node && node.always) tags.push({ text: "always" });
 	return tags;
 }

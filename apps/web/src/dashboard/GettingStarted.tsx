@@ -6,6 +6,7 @@ import { useOverlays } from "#/components/app-shell/overlays";
 import { DocPageLink } from "#/components/doc-page-link";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
+import { UntrustedText } from "#/components/untrusted-text";
 import { DashboardPanel } from "#/dashboard/DashboardPanel";
 import { PanelLink } from "#/dashboard/panel-link";
 import {
@@ -228,7 +229,9 @@ function StepRow({ step, index, next }: { step: Step; index: number; next: boole
 			<div className="min-w-0">
 				<h3 className={cn("m-0 text-base font-semibold", !next && "text-fg-2")}>{step.title}</h3>
 				{step.done ? (
-					<p className="m-0 mt-0.5 text-fg-1">{step.fact}</p>
+					<p className="m-0 mt-0.5 text-fg-1">
+						<UntrustedText text={step.fact} />
+					</p>
 				) : (
 					<>
 						<p className="m-0 mt-0.5 text-fg-2">{step.body}</p>

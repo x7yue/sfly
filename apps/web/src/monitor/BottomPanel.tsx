@@ -16,10 +16,12 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
 import { actionCount } from "#/actions/action-table";
 import { useActionSummary } from "#/actions/use-task-actions";
+import { ErrorMessage } from "#/components/feedback/error-message";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
+import { UntrustedText } from "#/components/untrusted-text";
 import { apiQuery, apiUrl } from "#/lib/api";
 import {
 	ACTION,
@@ -42,6 +44,7 @@ import { INLINE_LINK } from "#/lib/inline-link";
 import { NODE_STATUS } from "#/lib/node-status";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { shortcutText } from "#/lib/shortcuts";
+import { untrustedPlain } from "#/lib/untrusted-text";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -630,7 +633,8 @@ function LogsView<L extends LogLineView>({
 			)}
 			{logs.error && (
 				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
-					读取日志失败：{logs.error}
+					读取日志失败：
+					<UntrustedText text={logs.error} mode="text" />
 				</p>
 			)}
 			{lines.length === 0 && !logs.hasOlder && !logs.hasNewer ? (
@@ -725,7 +729,8 @@ function AttemptsTab({
 							<b className="flex-none font-semibold">{attemptLabel(a.attempt)}</b>
 							<StatusPill kind={status.kind}>{status.label}</StatusPill>
 							<span className="ml-auto flex-none font-mono text-2xs text-fg-3">
-								{a.agent ?? "控制面"} · {a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}
+								<UntrustedText text={a.agent ?? "控制面"} /> ·{" "}
+								{a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}
 								{a.started_at ? formatDuration(end - Date.parse(a.started_at)) : "—"}
 							</span>
 						</header>
@@ -773,23 +778,27 @@ function AttemptsTab({
 						{a.error && error && (
 							<div className="mt-2">
 								<div className="flex items-center gap-2">
-									<Badge variant="danger" title={a.error.kind}>
-										{ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind}
-										<code className="font-mono">{a.error.kind}</code>
+									<Badge variant="danger" title={untrustedPlain(a.error.kind)}>
+										<UntrustedText text={ERROR_KIND_LABEL[a.error.kind] ?? a.error.kind} />
+										<code className="font-mono">
+											<UntrustedText text={a.error.kind} />
+										</code>
 									</Badge>
 								</div>
-								<p className="m-0 mt-1 text-danger-fg">{error.message || "（没有错误信息）"}</p>
+								<p className="m-0 mt-1 text-danger-fg">
+									<UntrustedText mode="text" text={error.message || "（没有错误信息）"} />
+								</p>
 								{a.error.location && (
 									<p
 										data-testid="attempt-error-location"
 										className="m-0 mt-1 font-mono text-xs text-fg-2"
 									>
-										{ERROR_LOCATION_LABEL}：{a.error.location}
+										{ERROR_LOCATION_LABEL}：<UntrustedText text={a.error.location} />
 									</p>
 								)}
 								{error.stack && (
 									<pre className="m-0 mt-1.5 max-h-80 overflow-auto rounded-md bg-sunk p-2 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-2">
-										{error.stack}
+										<UntrustedText mode="text" text={error.stack} />
 									</pre>
 								)}
 							</div>
@@ -818,19 +827,26 @@ const artifactRefPath = (value: string) => {
 export const artifactDownloadPath = (taskId: string, name: string) =>
 	apiUrl(artifactsApi.download, { params: { id: taskId, "*": name } });
 
-/** JSON 展示；字符串值是产物引用时显示为下载链接。 */
+/**
+ * JSON 展示；字符串值是产物引用时显示为下载链接。字符串（键和值）是别人写的：`JSON.stringify` 只转义 U+0020 以下的控制字符，
+ * 行分隔符、改变文字方向的字符、零宽字符都留在里面，所以每个字符串各自过 `UntrustedText`（方向隔离在这个字符串里，
+ * 不带乱外面的括号和缩进）；字符串之外只有括号、冒号、逗号、数字、空白，原样显示。
+ */
 function JsonBlock({ value }: { value: unknown }) {
 	const text = JSON.stringify(value, null, 2) ?? "";
 	const parts: ReactNode[] = [];
 	let last = 0;
 	for (const m of text.matchAll(/"(?:[^"\\]|\\.)*"/g)) {
-		const path = artifactRefPath(JSON.parse(m[0]) as string);
-		if (!path) continue;
 		parts.push(text.slice(last, m.index));
+		const path = artifactRefPath(JSON.parse(m[0]) as string);
 		parts.push(
-			<a key={m.index} href={path} download className={INLINE_LINK} title="下载产物">
-				{m[0]}
-			</a>,
+			path ? (
+				<a key={m.index} href={path} download className={INLINE_LINK} title="下载产物">
+					<UntrustedText mode="text" text={m[0]} />
+				</a>
+			) : (
+				<UntrustedText key={m.index} mode="text" text={m[0]} />
+			),
 		);
 		last = m.index + m[0].length;
 	}
@@ -893,7 +909,13 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 	const { refetch } = query;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 状态变化时重新获取
 	useEffect(() => void refetch(), [attempt.status, refetch]);
-	if (query.error) return <Hint>无法加载产物：{query.error.message}</Hint>;
+	if (query.error)
+		return (
+			<Hint>
+				无法加载产物：
+				<ErrorMessage error={query.error} />
+			</Hint>
+		);
 	if (!query.data) return <Hint>{MESSAGE.loading}</Hint>;
 	if (query.data.expired) return <Hint>这次运行的产物已超过保留期，已被清理。</Hint>;
 	if (query.data.artifacts.length === 0) return <Hint>这次尝试没有产物。</Hint>;
@@ -905,7 +927,9 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 					className="mb-1.5 flex items-center gap-3 rounded-lg border border-border-soft bg-bg px-3 py-2"
 				>
 					<div className="min-w-0 flex-1">
-						<div className="truncate text-sm">{a.name}</div>
+						<div className="truncate text-sm">
+							<UntrustedText text={a.name} />
+						</div>
 						<div className="truncate font-mono text-2xs text-fg-3" title={a.sha256}>
 							{formatBytes(a.size)} · sha256 {a.sha256.slice(0, 12)}
 						</div>
@@ -928,7 +952,7 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 						className={buttonVariants({ size: "sm" })}
 						href={artifactDownloadPath(attempt.task_id, a.name)}
 						download
-						aria-label={`下载 ${a.name}`}
+						aria-label={`下载 ${untrustedPlain(a.name)}`}
 					>
 						<DownloadIcon />
 						下载
