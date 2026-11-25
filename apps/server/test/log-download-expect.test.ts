@@ -305,7 +305,10 @@ describe("下载带上可以核对的结尾信息，命令行读完核对（#721
 				// 前提：代理确实把半截的响应当完整的转了出去（直连看得出的断开，这里看不出）。
 				expect(hooks.open).toBeUndefined();
 				expect(result.code).toBe(2);
-				expect(result.stderr).toContain("download_incomplete");
+				expect(result.stderr).toContain("日志没有下载完");
+				// 说明写明是代理没让断开看出来，提示带着原来的路径。
+				expect(result.stderr).toContain("代理没有让它看出来");
+				expect(result.stderr).toContain(`--all ${target}`);
 				await expect(readFile(target)).rejects.toThrow();
 			} finally {
 				await proxy.close();

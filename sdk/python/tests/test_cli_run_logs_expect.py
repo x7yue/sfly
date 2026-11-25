@@ -139,7 +139,8 @@ def test_more_than_expected_is_fine_a_task_download_may_have_grown(tmp_path: Pat
 
 
 def test_a_last_line_without_its_newline_is_incomplete(tmp_path: Path) -> None:
-    body = _row("a", 1) + _row("a", 2)[:-12]  # 最后一行被切在当中
+    # 合计已经到了（序号 2），但后面还拖着一行被切在当中的：完整的下载不会以半行结尾。
+    body = _row("a", 1) + _row("a", 2) + _row("a", 3)[:-12]
 
     _incomplete(body, "tasks=1; last_seq_sum=2", tmp_path / "logs.jsonl")
 
