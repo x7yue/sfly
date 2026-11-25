@@ -243,8 +243,8 @@ function Composer({
 	mode: ComposerMode;
 	items: readonly TimelineItem[];
 	lastSeq: number;
-	/** 空闲的会话说完话之后：核对一次状态（排上了队时控制面可能没有推 `turn_queued`）。 */
-	onSent: () => void;
+	/** 空闲的会话说完话之后：核对一次状态（排上了队时控制面可能没有推 `turn_queued`）；参数是发出这句话时页面上最大的序号。 */
+	onSent: (after: number) => void;
 	onGone: (error: unknown) => boolean;
 }) {
 	const client = useQueryClient();
@@ -260,7 +260,7 @@ function Composer({
 		mutationFn: (message: string) =>
 			callApi(sessionsApi.message, { params: { id }, body: { text: message } }),
 		onSuccess: (_result, message) => {
-			if (mode.kind === "send") onSent();
+			if (mode.kind === "send") onSent(sentAfter.current);
 			// 只去掉发出去的那一句：请求在路上时输入框还能写（焦点就在里面），这时接着写的字不能一起清掉。输入框里开头已经
 			// 不是发出去的那一句（用户改过它）时不动：宁可留着，也不删用户的字。
 			setText((current) =>

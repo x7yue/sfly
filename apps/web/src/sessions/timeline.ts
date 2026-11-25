@@ -645,12 +645,27 @@ export function initialTimeline(
 }
 
 /**
- * 说话的响应（会话视图）说这个会话在排队（`status` 为 `queued`、有排位）：空闲的会话说的话排上了队、项目里没有会话在做时控制面不推
- * `turn_queued`（要等这一刻开始才推；暂停着的项目要等兜底），页面自己从响应里得知。只对空闲或排队中的有效：已经在做、已经结束的
- * （开始的事件比响应先到）不改。
+ * 说话之后核对的会话视图说这个会话在排队（`status` 为 `queued`、有排位）：空闲的会话说的话排上了队、项目里没有会话在做时控制面不推
+ * `turn_queued`（要等这一刻开始才推；暂停着的项目要等兜底），页面自己从视图里得知。`after` 是**发出这句话时**页面上最大的序号：
+ * 视图是在控制面取的，回应到浏览器之前这句话可能已经开始又结束了（`turn_end`），或者被移出了队列（`queue_cancelled`），这些事件比视图新，
+ * **以事件为准，不用这份视图**（序号大于 `after` 的结局或撤掉）。只对空闲或排队中的有效：已经在做、已经结束的（开始的事件比响应先到）不改。
+ * 这句话自己的 `user_message` 比视图先到是常态（序号也大于 `after`），不算。
  */
-export function applyQueuedView(state: TimelineState, queue: TimelineQueue): TimelineState {
+export function applyQueuedView(
+	state: TimelineState,
+	queue: TimelineQueue,
+	after: number,
+): TimelineState {
 	if (state.status !== "idle" && state.status !== "queued") return state;
+	const settled = state.items.some(
+		(item) =>
+			"seq" in item &&
+			item.seq !== null &&
+			item.seq > after &&
+			(item.kind === "turn_end" ||
+				(item.kind === "notice" && item.noticeKind === "queue_cancelled")),
+	);
+	if (settled) return state;
 	return { ...state, status: "queued", awaitingStart: true, queue };
 }
 

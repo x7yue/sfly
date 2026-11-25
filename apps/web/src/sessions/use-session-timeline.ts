@@ -20,7 +20,7 @@ import {
 type Action =
 	| { type: "event"; event: SessionEvent }
 	| { type: "older"; events: readonly SessionEvent[]; hasMore: boolean }
-	| { type: "queued"; queue: TimelineQueue };
+	| { type: "queued"; queue: TimelineQueue; after: number };
 
 function reduce(state: TimelineState, action: Action): TimelineState {
 	switch (action.type) {
@@ -29,7 +29,7 @@ function reduce(state: TimelineState, action: Action): TimelineState {
 		case "older":
 			return prependHistory(state, action.events, action.hasMore);
 		case "queued":
-			return applyQueuedView(state, action.queue);
+			return applyQueuedView(state, action.queue, action.after);
 	}
 }
 
@@ -110,15 +110,18 @@ export function useSessionTimeline(detail: SessionDetailResponse) {
 	 * （没有「在等谁」可写），页面从会话视图里得知排位。取的是 `before: 1`（比第 1 条还早的事件：没有），只要视图。读不到就算了：
 	 * 只是核对一次，事件流照常推进。
 	 */
-	const syncQueue = useCallback(async () => {
-		try {
-			const view = await callApi(sessionsApi.get, { params: { id }, query: { before: 1 } });
-			const queue = queueOf(view.queue_position, view.waiting_for);
-			if (view.status === "queued" && queue !== null) dispatch({ type: "queued", queue });
-		} catch {
-			// 事件流照常推进。
-		}
-	}, [id]);
+	const syncQueue = useCallback(
+		async (after: number) => {
+			try {
+				const view = await callApi(sessionsApi.get, { params: { id }, query: { before: 1 } });
+				const queue = queueOf(view.queue_position, view.waiting_for);
+				if (view.status === "queued" && queue !== null) dispatch({ type: "queued", queue, after });
+			} catch {
+				// 事件流照常推进。
+			}
+		},
+		[id],
+	);
 
 	return { state, loadOlder, loadingOlder, olderError, gone, syncQueue };
 }

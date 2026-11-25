@@ -770,28 +770,51 @@ describe("结束会话", () => {
 });
 
 describe("说话之后核对一次状态：排上了队、控制面没有推 turn_queued", () => {
+	const idleAfterTurn = () =>
+		run([user(1), started(2), end(3, "completed")], emptyTimeline("idle"));
+	const queue = { position: 1, waitingFor: null };
+
 	it("空闲的会话说了话（user_message 到了、状态仍是空闲）：视图说在排队，就是排队中，输入框不可用；之后开始就是在做", () => {
-		let state = run([plainMsg(1, ID_A, "接着做")], emptyTimeline("idle"));
+		let state = run([plainMsg(4, ID_A, "接着做")], idleAfterTurn());
 		expect(state.status).toBe("idle");
-		state = applyQueuedView(state, { position: 1, waitingFor: null });
+		state = applyQueuedView(state, queue, 3);
 		expect(state).toMatchObject({ status: "queued", queue: { position: 1, waitingFor: null } });
-		state = applyEvent(state, started(2, 2));
+		state = applyEvent(state, started(5, 2));
 		expect(state.status).toBe("running");
 	});
 
-	it("响应比 user_message 先到也一样；已经在做、已经结束的（开始的事件比响应先到）不改", () => {
-		const before = applyQueuedView(emptyTimeline("idle"), { position: 2, waitingFor: WAITING_FOR });
+	it("视图比这句话的 user_message 先到也一样；已经在做、已经结束的（开始的事件比视图先到）不改", () => {
+		const before = applyQueuedView(idleAfterTurn(), { position: 2, waitingFor: WAITING_FOR }, 3);
 		expect(before.status).toBe("queued");
-		const after = applyEvent(before, plainMsg(1, ID_A, "接着做"));
+		const after = applyEvent(before, plainMsg(4, ID_A, "接着做"));
 		expect(after.status).toBe("queued");
-		const running = run([plainMsg(1, ID_A, "接着做"), started(2, 2)], emptyTimeline("idle"));
-		expect(applyQueuedView(running, { position: 1, waitingFor: null })).toBe(running);
+		const running = run([plainMsg(4, ID_A, "接着做"), started(5, 2)], idleAfterTurn());
+		expect(applyQueuedView(running, queue, 3)).toBe(running);
 		const finished = applyEvent(emptyTimeline("running"), {
 			type: "session_ended",
 			seq: 9,
 			at: at(),
 			by: "bob",
 		});
-		expect(applyQueuedView(finished, { position: 1, waitingFor: null })).toBe(finished);
+		expect(applyQueuedView(finished, queue, 3)).toBe(finished);
+	});
+
+	it("审查的 B2：视图在事件之前取、回应在事件之后到——这句话已经开始又结束了，或者被移出了队列：以事件为准，不把会话改回排队中", () => {
+		// (a) 回应到之前，这句话的一轮已经开始又结束了（马上失败）。
+		const started_ = run(
+			[plainMsg(4, ID_A, "第二句"), started(5, 2), end(6, "failed", { turn: 2 })],
+			idleAfterTurn(),
+		);
+		expect(started_.status).toBe("idle");
+		expect(applyQueuedView(started_, queue, 3)).toBe(started_);
+		// (b) 回应到之前，别人把它移出了队列（queue_cancelled）。
+		const cancelledBefore = run([plainMsg(4, ID_A, "第二句"), cancelled(5, ID_A)], idleAfterTurn());
+		expect(cancelledBefore.status).toBe("idle");
+		expect(applyQueuedView(cancelledBefore, queue, 3)).toBe(cancelledBefore);
+		// 这句话自己的 user_message 比视图先到是常态（序号大于 after，不算「之后已经结束」）：照常是排队中。
+		const onlyMessage = run([plainMsg(4, ID_A, "第二句")], idleAfterTurn());
+		expect(applyQueuedView(onlyMessage, queue, 3).status).toBe("queued");
+		// 更早的结局（序号不大于发出这句话时的最大序号）不算。
+		expect(applyQueuedView(idleAfterTurn(), queue, 3).status).toBe("queued");
 	});
 });
