@@ -212,8 +212,7 @@ def test_a_malformed_address_is_still_requested_but_without_the_token(
 def test_a_reference_that_goes_through_a_proxy_in_another_spelling_carries_no_token(
     control_plane: _Server, elsewhere: _Server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """经 HTTP 代理时，带用户名段或反斜杠的写法绕过 `no_proxy`（urllib 认的主机串不是控制面）、
-    被送到代理：其中的凭据会被按别的规则解析主机的代理转给别人。这两种写法不带。"""
+    """经 HTTP 代理时（`http_proxy`、`no_proxy`），这两种写法的请求里不带任务凭据。"""
     proxy = elsewhere
     monkeypatch.setenv("http_proxy", proxy.url)
     monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
