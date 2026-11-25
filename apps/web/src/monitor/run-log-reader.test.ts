@@ -1,7 +1,7 @@
 import { compareRunLogKeys, type RunLogLine, runLogKey } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { settled } from "#/lib/fake-ports";
-import { FakeRunLog, runLine, runPage } from "./fake-run-log";
+import { FakeRunLog, fileProblem, runLine, runPage } from "./fake-run-log";
 import {
 	createRunLogReader,
 	emptyRunLogs,
@@ -479,3 +479,55 @@ function subsequence(small: readonly string[], big: readonly string[]): boolean 
 	for (const item of big) if (item === small[next]) next++;
 	return next === small.length;
 }
+
+describe("日志文件的问题（#721）", () => {
+	it("页里说有任务的文件不见了、变短了：状态里有（来源 + problem）和总数；没有问题时是空的", async () => {
+		const log = new FakeRunLog(run("a", 1, 3), { pageSize: 5 });
+		log.fileProblems = [fileProblem("b", "missing"), fileProblem("c", "short")];
+		log.fileProblemsTotal = 7;
+
+		const reader = await open(log);
+
+		expect(reader.get().fileProblems).toEqual([
+			fileProblem("b", "missing"),
+			fileProblem("c", "short"),
+		]);
+		expect(reader.get().fileProblemsTotal).toBe(7);
+		const healthy = await open(new FakeRunLog(run("a", 1, 3), { pageSize: 5 }));
+		expect(healthy.get()).toMatchObject({ fileProblems: [], fileProblemsTotal: 0 });
+		expect(emptyRunLogs).toMatchObject({ fileProblems: [], fileProblemsTotal: 0 });
+	});
+
+	it("实时推送连上时的事件也认；同一个任务不重复，总数取大的", async () => {
+		const log = new FakeRunLog(run("a", 1, 3), { pageSize: 5 });
+		log.fileProblems = [fileProblem("b", "missing")];
+		const reader = await open(log);
+
+		log.emitFileProblems([fileProblem("b", "missing"), fileProblem("c", "short")], 2);
+
+		expect(reader.get().fileProblems.map((p) => p.task_id)).toEqual(["b", "c"]);
+		expect(reader.get().fileProblemsTotal).toBe(2);
+	});
+
+	it("已经说过的不会因为后来的页没带而消失（往前翻页、重新读最新一页）", async () => {
+		const log = new FakeRunLog(run("a", 1, 6), { pageSize: 2 });
+		log.fileProblems = [fileProblem("b", "missing")];
+		const reader = await open(log);
+
+		log.fileProblems = [];
+		await older(reader);
+
+		expect(reader.get().fileProblems.map((p) => p.task_id)).toEqual(["b"]);
+		expect(reader.get().fileProblemsTotal).toBe(1);
+	});
+
+	it("没有行、只有文件的问题：已读到、没有行，状态里有问题（面板据此显示，不显示成没有日志）", async () => {
+		const log = new FakeRunLog([], { pageSize: 5 });
+		log.fileProblems = [fileProblem("a", "missing")];
+
+		const reader = await open(log);
+
+		expect(reader.get()).toMatchObject({ loaded: true, lines: [], expired: false });
+		expect(reader.get().fileProblems).toHaveLength(1);
+	});
+});
