@@ -1375,9 +1375,10 @@ test("编排画布：引用补全里输出的说明", async ({ page, controlPlan
 	const list = page.getByRole("listbox", { name: "可引用的值" });
 	await expect(list).toBeVisible();
 	// 列表有最大高度，前面的入口参数（secret 参数那一行类型说明换行，更高）会把输出挤到可见区以下：
-	// 先把要拍的输出滚进可见区，并断言它的说明在视口里看得见，不然这张图拍不到它要守的东西。
+	// 先把要拍的输出（fetch 的 status 和它后面的 report，各有一条说明）滚进可见区，并断言两条说明在视口里看得见，
+	// 不然这张图拍不到它要守的东西。
 	await list
-		.getByRole("option", { name: /nodes\.fetch\.outputs\.report/ })
+		.getByRole("option", { name: /nodes\.fetch\.outputs\.status/ })
 		.scrollIntoViewIfNeeded();
 	await expect(list.getByText("检查报告的文字，包含每一步的耗时")).toBeInViewport({ ratio: 1 });
 	await expect(list.getByText("HTTP 状态码")).toBeInViewport({ ratio: 1 });
