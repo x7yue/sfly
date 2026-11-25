@@ -14,6 +14,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { docsApi } from "@sfly/schema";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { DEFAULT_PROJECT } from "../src/projects/project-id.js";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { TestAccounts } from "./support/credentials.js";
@@ -221,12 +222,28 @@ describeWithAgent("全栈：开发文档里的命令", () => {
 				);
 			}, 180_000);
 
+		/**
+		 * 前台启动 Agent 用的环境（#492）。没有凭据的 Agent 只接受已登记过的名字：`--dev` 注册开发 Agent 之前，`agent.env`
+		 * 里是安装命令给的主机名，读者按文档向平台管理员要一个 Agent 凭据，经环境变量 `SFLY_TOKEN` 交给 Agent（文档里
+		 * 「用环境变量传凭据」那一段）：凭据只对签发时的名字有效，所以按 `agent.env` 里此刻的名字签发一个。`--dev` 注册之后，
+		 * 名字和凭据都在 `agent.env` 里，不再从环境变量给。
+		 */
+		async function agentEnv(): Promise<NodeJS.ProcessEnv> {
+			const text = await readFile(join(home, ".sfly", "agent.env"), "utf8");
+			if (/^SFLY_TOKEN=\S/m.test(text)) return env;
+			const name = /^SFLY_AGENT_NAME=(.+)$/m.exec(text)?.[1];
+			if (name === undefined) throw new Error(`agent.env 里没有 SFLY_AGENT_NAME：\n${text}`);
+			return {
+				...env,
+				SFLY_TOKEN: (await cp.current.agentCredentials.issue(DEFAULT_PROJECT, name)).token,
+			};
+		}
+
 		async function startForeground(block: string) {
 			foregroundLog = "";
 			const child = spawn("bash", ["-c", block], {
 				cwd: home,
-				// Agent 的凭据在 agent.env 里：`install.sh --dev` 注册开发 Agent 时写进去的（#492）。
-				env,
+				env: await agentEnv(),
 				stdio: ["ignore", "pipe", "pipe"],
 				detached: true,
 			});
