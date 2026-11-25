@@ -233,7 +233,7 @@ test("输入输出：执行中加载过全文，这次尝试结束、输出也�
 	await expect(io.getByTestId("io-omitted")).toHaveCount(0);
 });
 
-test("输入输出：用键盘按「加载」，焦点留在这一栏里（不落到页面上）", async ({
+test("输入输出：用键盘按「加载」，焦点留在这一栏里：加载中还在按钮上，加载完在内容上，不落到页面上", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -247,14 +247,27 @@ test("输入输出：用键盘按「加载」，焦点留在这一栏里（不�
 	const runId = await bigInputRun(controlPlane);
 	const task = await agent.nextAssign();
 	await agent.succeed(task, { alive: true });
+	// 取全文的请求扣住，看加载中的样子。
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route("**/api/tasks/*/io", async (route) => {
+		await gate;
+		await route.continue();
+	});
 	await openMonitor(page, clock, runId, "a", "io");
 	const io = panel(page).getByRole("tabpanel");
-	const load = io.getByRole("button", { name: "加载" });
-	await load.focus();
+	await io.getByRole("button", { name: "加载" }).focus();
 
 	await page.keyboard.press("Enter");
 
+	// 加载中：按钮写「加载中…」、不能再按，焦点还在它上面（用 disabled 的话焦点会掉到页面上）。
+	const loading = io.getByRole("button", { name: "加载中…" });
+	await expect(loading).toBeVisible();
+	await expect(loading).toBeFocused();
+	release();
 	await expect(io).toContainText('"host": "BBBBBBBB');
-	// 焦点在这一栏里（加载出来的内容上），不在 body 上：键盘用户不必从页面开头重新 Tab 过来。
+	// 加载完：焦点在这一栏里（加载出来的内容上），不在 body 上：键盘用户不必从页面开头重新 Tab 过来。
 	await expect.poll(() => io.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 });
