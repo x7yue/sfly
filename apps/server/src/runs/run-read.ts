@@ -739,7 +739,7 @@ class IoBudget {
 	/**
 	 * 放一份内容：`bytes` 是数据库里存着的大小（打码之前，没有内容时为 null）。没有内容：null、没有大小；单个太大
 	 * （SQL 里就没有读出来，`value` 是 null）：只给大小；合计放不下：只给大小；否则内联。大小向上取整到 KiB：精确的值和打码之后的
-	 * 内容一减，就露出保密值的长度。
+	 * 内容一减，就露出 secret 值的长度。
 	 */
 	place(value: Record<string, unknown> | null, bytes: number | null): IoPlaced {
 		if (bytes === null) return { value: null, omittedBytes: null };

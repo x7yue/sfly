@@ -958,7 +958,9 @@ function IoTab({
 	return (
 		<div className="grid h-full grid-cols-2 gap-2.5 overflow-auto p-3">
 			<div ref={inputsBox} tabIndex={-1} className="min-w-0">
-				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">输入（已解析，敏感值已打码）</h3>
+				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">
+					输入（已解析，secret 值已打码）
+				</h3>
 				{inputsMissing ? (
 					placeholder(attempt.inputs_omitted_bytes as number, "inputs")
 				) : inputs ? (

@@ -414,7 +414,7 @@ describe("运行视图里的输入和输出：大的只给大小，合计有上�
 	});
 
 	it("入口的 secret 参数的值：内联的输出里是掩码，被省略的全文里也是；被省略的大小同样不随它变", async () => {
-		const secret = "hunter2-很长的保密值-0123456789";
+		const secret = "hunter2-很长的secret值-0123456789";
 		const filler = "y".repeat(17_000);
 		const { run, tasks } = await seedRunIo(
 			cp,
