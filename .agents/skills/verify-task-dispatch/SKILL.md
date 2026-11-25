@@ -130,7 +130,7 @@ git diff --stat f44b09d802296f4f2b14954671995eb7828bf54a -- \
 - 执行器、装依赖和准备环境的进程的环境里去掉 `SFLY_TOKEN`：只改子进程的环境，不碰派发、结果、心跳、租约、重试。
 - 环境变量 `SFLY_TASK_TOKEN`、下载归档带 Agent 凭据：不碰派发、结果、心跳、租约、重试。
 
-`check.sh`、`mutants.sh` 重新跑过，结果和上面一致（Safe 327997、LateHeartbeats 5410113、SlowDelivery 6596137 个不同状态，七个变异体都被抓到）。
+`check.sh`、`mutants.sh` 重新跑过（审查之后试用中被拒绝改成算失败，又跑了一次），结果和上面一致（Safe 327997、LateHeartbeats 5410113、SlowDelivery 6596137 个不同状态，七个变异体都被抓到）。
 
 ## 读结果
 
