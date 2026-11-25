@@ -12,6 +12,7 @@ import {
 	type RunStatus,
 	SCOPE_LABELS,
 	type Scope,
+	VIA_NAME_PATTERN,
 } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
@@ -417,9 +418,16 @@ export const TOKEN_EXPIRY_OPTIONS = [
 ] as const;
 export const TOKEN_DEFAULT_EXPIRY = "90";
 
+/** 范围之间的分隔：顿号。 */
+export const SCOPE_SEPARATOR = "、";
+
+/** 每个范围的中文名，按给的顺序（令牌列表的范围列按范围分段排，换行只在顿号处）。 */
+export const scopeLabels = (scopes: readonly string[]): string[] =>
+	scopes.map((scope) => SCOPE_LABELS[scope as Scope] ?? scope);
+
 /** 列表里范围的写法：「读、运行、编辑」。 */
 export const scopesText = (scopes: readonly string[]): string =>
-	scopes.map((scope) => SCOPE_LABELS[scope as Scope] ?? scope).join("、");
+	scopeLabels(scopes).join(SCOPE_SEPARATOR);
 
 /** 开发文档里被界面引用的页：slug → 页名（docs/guide/pages.json 里的标题，有单测对着它检查）。 */
 export const DOC_PAGE = {
@@ -512,7 +520,8 @@ const ASSISTANT_NAME = new Map([
 ]);
 
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
-export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
+export const viaLabel = (via: string) =>
+	`经 ${ASSISTANT_NAME.get(via) ?? (VIA_NAME_PATTERN.test(via) ? via : "未知")}`;
 
 /** 「已新建场景「巡检」」：新建弹窗成功后的提示，控制台「开始使用」里做完的那一步也写这一句。 */
 export const scenarioCreatedLabel = (name: string) => `已新建场景「${name}」`;

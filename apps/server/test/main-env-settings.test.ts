@@ -3,6 +3,8 @@
 // 信息写着环境变量的名字和范围（数值类的回显填的值，最多 12 个字符；别的不回显），几个变量都不合法时一次报完。逐个变量的取值范围在 env-settings.test.ts，
 // 这里守的是 `main.ts` 的接线：每个变量都经过检查，把任何一个改回原来的读法（`positive()`、`Number(...)`），对应那一行就红；
 // 还有报错回显的总表（每个变量 × 带凭据的各种形状，走真的 main.ts，输出全文里没有凭据）、检查过的设置真的传给了控制面。
+// 总表里的形状都是检查不认的（数据库地址连不上，走不到监听）；两个监听地址里检查认、监听时才失败的写法（令牌像主机名、IPv6 的区域标识）
+// 要连真的数据库才走得到监听那一步，在 main-startup-with-database.test.ts（输出全文里没有填的值的任何一段）。
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -367,6 +369,23 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 		`${H}!`,
 		`${U}:${H}`,
 	],
+	// 监听地址（只认 IP 或主机名，#651）：误填成带凭据的地址、带端口、带路径、带空格的写法（都不合法）；标记在主机、端口的位置。
+	SFLY_HTTP_HOST: hostShapes(),
+	SFLY_GRPC_HOST: hostShapes(),
+	// 数据目录：写成地址（带 ://）不合法（别的写法都是合法的路径，哪怕里面带 @ 和 :）；标记在用户名、密码、主机、端口、路径的位置。
+	SFLY_DATA_DIR: [
+		`postgres://${U}:${M}@db.internal:5432/sfly`,
+		`https://${U}:${M}@host.example.com/p`,
+		`postgres://${U}:${M}@${H}/sfly?sslcert=/x`,
+		`ftp://${U}:${M}@${H}:2121/${M}`,
+		`file://${H}/${M}`,
+		`s3://${M}/${H}`,
+		`postgres://${H}:${M}/sfly`,
+		`http://${H}`,
+		`https://host.example.com/${M}?token=${M}`,
+		`socket://${U}:${M}@${H}`,
+		`postgres+ssl://${U}:${M}@${H}`,
+	],
 	SFLY_ADMIN_PASSWORD: [M],
 	SFLY_ADMIN_DISPLAY_NAME: [M],
 	// 数值类：填成别的变量的值（地址、令牌、带凭据的写法）。
@@ -379,6 +398,24 @@ const SHAPES: Record<EnvName, readonly string[]> = {
 	SFLY_HTTP_PORT: numberShapes(),
 	SFLY_GRPC_PORT: numberShapes(),
 };
+
+/** 监听地址填的形状：都不是 IP 或主机名。 */
+function hostShapes(): string[] {
+	return [
+		`https://${U}:${M}@host.example.com`,
+		`${U}:${M}@host.example.com`,
+		`${U}:${M}＠host.example.com`,
+		`host.example.com:${M}`,
+		`host.example.com/${M}`,
+		`${H}:8080`,
+		`[::1]:${M}`,
+		`postgres://${U}:${M}@${H}:5432/sfly`,
+		`${H} ${M}`,
+		`${H}!`,
+		`${M}@${H}`,
+		`${U}:${M}@${H}:99999/sfly?x=${M}`,
+	];
+}
 
 /** 数值类变量填的形状：不是数，带着别的变量的值。 */
 function numberShapes(): string[] {
@@ -475,6 +512,7 @@ describe("main.ts：报错回显的总表（每个变量 × 带凭据的各种�
 			"SFLY_GRPC_PORT",
 			"SFLY_PUBLIC_URL",
 			"SFLY_PUBLIC_GRPC_URL",
+			"SFLY_DATA_DIR",
 			"SFLY_RETENTION_DAYS",
 			"SFLY_METRIC_RETENTION_DAYS",
 			"SFLY_LOG_LIMIT_MB",
@@ -482,6 +520,8 @@ describe("main.ts：报错回显的总表（每个变量 × 带凭据的各种�
 			"SFLY_METRIC_LIMIT_MB",
 			"SFLY_LOGIN_IDLE_HOURS",
 			"SFLY_HTTP_PORT",
+			"SFLY_HTTP_HOST",
+			"SFLY_GRPC_HOST",
 			"DATABASE_URL",
 			"SFLY_TRUST_PROXY",
 			"SFLY_CORS_ORIGINS",
@@ -518,6 +558,9 @@ describe("main.ts：报错回显的总表（每个变量 × 带凭据的各种�
 			"SFLY_DEV_ORIGINS",
 			"SFLY_TRUST_PROXY",
 			"DATABASE_URL",
+			"SFLY_HTTP_HOST",
+			"SFLY_GRPC_HOST",
+			"SFLY_DATA_DIR",
 		] as const;
 		for (const name of hostPosition) {
 			expect(
@@ -685,6 +728,28 @@ describe("main.ts：合法的值真的传给了控制面", () => {
 			await cp.stop();
 		}
 	}, 120_000);
+
+	it("SFLY_HTTP_HOST、SFLY_GRPC_HOST（带前后空白）去掉空白之后用它监听；空串当作没设置（#651）", async () => {
+		const padded = await spawnControlPlane({
+			SFLY_HTTP_HOST: "  127.0.0.1  ",
+			SFLY_GRPC_HOST: "  127.0.0.1  ",
+		});
+		try {
+			expect(padded.httpUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+		} finally {
+			await padded.stop();
+		}
+		const empty = await spawnControlPlane({ SFLY_HTTP_HOST: "", SFLY_GRPC_HOST: "   " });
+		try {
+			// 没设置：监听所有网卡（0.0.0.0），照常启动。
+			expect(
+				(await fetch(`${empty.httpUrl}/tasks/00000000-0000-4000-8000-000000000000/artifacts`))
+					.status,
+			).toBeLessThan(500);
+		} finally {
+			await empty.stop();
+		}
+	}, 180_000);
 
 	// 值都带前后空白：检查过的（去掉空白的）设置真的传进去了，没有被 main.ts 里别处的旧读法（原样的环境变量）盖掉。
 	it("字符串类：对外地址、网关地址、镜像、跨域名单、代理信任都生效（安装脚本里的地址、预检的响应头、日志里的来源地址）；值带前后空白", async () => {

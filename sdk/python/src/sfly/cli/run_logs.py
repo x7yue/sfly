@@ -14,15 +14,16 @@ import argparse
 import json
 import shlex
 import urllib.parse
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from http.client import HTTPException, IncompleteRead
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from sfly.cli.client import Client, segment
 from sfly.cli.errors import CliError
 from sfly.cli.files import part_file
-from sfly.cli.output import candidate_list, dump_json, positive_int
+from sfly.cli.output import Output, candidate_list, dump_json, positive_int
 from sfly.cli.run_view import (
     RUN_HELP,
     NodeRef,
@@ -32,6 +33,7 @@ from sfly.cli.run_view import (
     format_log_line,
     resolve_run,
 )
+from sfly.cli.safe_text import printable
 from sfly.cli.session import Session, command, common_options
 
 DEFAULT_TAIL = 200
@@ -381,16 +383,23 @@ def _logs(session: Session, args: argparse.Namespace) -> None:
     if out.json_mode:
         for line in read.lines:
             print(dump_json(line), file=out.stdout)
-        for note in notes:
-            print(note, file=out.stderr)
+        print_notes(out, notes)
         return
     rendered = [format_line(index, line) for line in read.lines]
     if not rendered and not notes:
         rendered = ["没有日志" if not args.level else "没有符合条件的日志"]
-    print("\n".join([*rendered, *notes]), file=out.stdout)
+    # 日志是节点写的、没有人看过的文字：转义序列和不该到终端的字符过一遍（#670）。
+    print(printable("\n".join([*rendered, *notes])), file=out.stdout)
 
 
 # ---------------------------------------------------------------- 下载
+
+
+def print_notes(out: Output, notes: Sequence[str]) -> None:
+    """`--json` 时的提示写到 stderr（stdout 保持纯 JSON）；提示里有节点名（服务端的文字），
+    过一遍。"""
+    for note in notes:
+        print(printable(note), file=out.stderr)
 
 
 def _download_all(session: Session, args: argparse.Namespace, selection: Selection) -> None:
@@ -400,8 +409,40 @@ def _download_all(session: Session, args: argparse.Namespace, selection: Selecti
     else:
         path = f"/runs/{segment(args.run)}/logs/download"
         with session.client.open("GET", path, query={"nodes": selection.scope}) as response:
-            lines = _write_download(response, target, selection)
+            lines = _write_download(_complete_lines(response, args), target, selection)
     session.out.emit({"path": str(target), "lines": lines}, f"已下载 {lines} 行日志到 {target}")
+
+
+# 一次读多少字节。
+_READ_BLOCK = 64 * 1024
+
+
+def _complete_lines(response: BinaryIO, args: argparse.Namespace) -> Iterator[bytes]:
+    """下载的响应一行一行读出来；**没下完就报错**（#669）：控制面发现日志文件在下载时被删除、截短了，
+    响应已经开始，会断开连接。分块的响应在两块之间断开时，直接按行迭代响应不报错、悄悄当作读完了
+    （只有断在一块当中才报 `IncompleteRead`），所以这里按块读（`read`）：断开了就抛 `CliError`，
+    调用方的临时文件随之删掉，不留半个文件。"""
+    pending = b""
+    try:
+        while block := response.read(_READ_BLOCK):
+            *rows, pending = (pending + block).split(b"\n")
+            for row in rows:
+                yield row + b"\n"
+        # 有声明长度的响应读到的比声明的少（连接断了）：`read` 不报错、返回空，要自己看还差多少。
+        if getattr(response, "length", None):
+            raise IncompleteRead(b"")
+    except (HTTPException, OSError) as error:
+        flags = _flags(args, with_level=False)
+        raise CliError(
+            "download_incomplete",
+            "日志没有下载完：连接在下载中途断开了（控制面发现日志文件在下载时被删除或截短了，或者网络断了）。"
+            f"没有写出文件（{error.__class__.__name__}）",
+            # 带着原来的范围选项和路径：只带 --all 重下，下到的是整个运行，还写进同一个文件。
+            next="重新下载：sfly run logs "
+            f"{shlex.quote(args.run)}{' ' + flags if flags else ''} --all {shlex.quote(args.all)}",
+        ) from None
+    if pending:
+        yield pending
 
 
 def _write_download(rows: Iterable[bytes], target: Path, selection: Selection) -> int:

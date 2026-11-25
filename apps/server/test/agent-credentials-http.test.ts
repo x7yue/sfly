@@ -103,6 +103,45 @@ describe("Agent 凭据和开发 Agent", () => {
 			expect(JSON.stringify(row)).not.toContain(issued.token);
 		});
 
+		it("名称和 Agent 在 Hello 里报的名称同一个规则（#670）：表里的字符、看起来是空的、超过 64 个字符都拒绝，说第几个字符、哪个码位或上限，不回显名称，库里没有凭据；64 个字符、中文、组合表情照常签发", async () => {
+			const code = (...points: number[]) => String.fromCodePoint(...points);
+			const rejected = async (name: string): Promise<string> => {
+				const res = await issue(encodeURIComponent(name));
+				const text = await res.text();
+				expect(res.status, JSON.stringify(name)).toBe(400);
+				// 原样的名称不出现在报错里（控制字符、转义序列不回显）。
+				expect(text, JSON.stringify(name)).not.toContain(name);
+				expect(await rows(name), JSON.stringify(name)).toEqual([]);
+				return text;
+			};
+			expect(await rejected(`a${code(0x1b)}[2Jb`)).toContain("Agent 的名称的第 2 个字符是 U+001B");
+			expect(await rejected(`a${code(0x9b)}b`)).toContain("Agent 的名称的第 2 个字符是 U+009B");
+			expect(await rejected(`a${code(0x202e)}b`)).toContain("Agent 的名称的第 2 个字符是 U+202E");
+			expect(await rejected(`a${code(0x200b)}b`)).toContain("Agent 的名称的第 2 个字符是 U+200B");
+			expect(await rejected(`${code(0x200d)}a`)).toContain("Agent 的名称的第 1 个字符是 U+200D");
+			expect(await rejected(code(0x2800))).toContain("Agent 的名称的第 1 个字符是 U+2800");
+			expect(await rejected("   ")).toContain("Agent 的名称里没有看得见的字符");
+			const tooLong = await rejected("n".repeat(65));
+			expect(tooLong).toContain("Agent 的名称不能超过 64 个字符");
+			expect(tooLong).not.toMatch(/n{20}/);
+			// 64 个字符照常签发，不论是几个码元：64 个 emoji 是 128 个 UTF-16 码元，路由的路径参数上限是 128
+			// （解码之后的长度，默认的 100 放不下它，#691 复审）；汉字、组合表情也一样。
+			for (const ok of [
+				"n".repeat(64),
+				code(0x1f600).repeat(64),
+				"测".repeat(64),
+				"测试机",
+				`dev-${code(0x1f469, 0x200d, 0x1f4bb)}`,
+			]) {
+				await json<Issued>(await issue(encodeURIComponent(ok)), 201);
+				expect((await rows(ok)).length, ok).toBe(1);
+			}
+			// 65 个 emoji（130 个码元）：超过路径参数的上限，在进校验之前就是 414，不签发。
+			const tooManyEmoji = code(0x1f600).repeat(65);
+			expect((await issue(encodeURIComponent(tooManyEmoji))).status).toBe(414);
+			expect(await rows(tooManyEmoji)).toEqual([]);
+		});
+
 		it("同一台 Agent 可以有几个有效的凭据（轮换）；列出带状态、不带原值，从新到旧", async () => {
 			const first = await json<Issued>(await issue("worker-1"), 201);
 			// 列表按签发时间从新到旧：控制面用手动时钟，两次签发之间推进它，顺序才是确定的。

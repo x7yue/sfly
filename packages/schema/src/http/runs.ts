@@ -682,7 +682,12 @@ export const logsApi = {
 		}),
 		events: { logs: LogChunk },
 	}),
-	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
+	/**
+	 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`（说明是「保留期清理」）；有行写入过的任务日志文件
+	 * 不见了或者比数据库记的短（被删除、截短，主机掉电，数据库和数据目录分开恢复）时同样 410 `expired`，错误的 `details` 是
+	 * `{ tasks: [{ task_id, node_id, attempt, reason: "missing" | "short" }], total }`（#669）；下载进行中文件被截短时响应已经开始，
+	 * 连接被断开：直连或者代理用 HTTP/1.1 时客户端看得出没下完，代理用 HTTP/1.0 连控制面时看不出来（见 README「反向代理」）。
+	 */
 	download: download({
 		path: "/tasks/:id/logs/download",
 		summary: "下载一个任务的完整日志（文件）",
@@ -707,7 +712,9 @@ export const logsApi = {
 	}),
 	/**
 	 * 下载一次运行（范围内）合并后的日志：JSONL，每行是 {@link RunLogDownloadRow}，顺序与合并视图相同，
-	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`，运行不存在时 404。
+	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`（说明是「保留期清理」），运行不存在时 404；范围内有任务的
+	 * 日志文件不见了或者比数据库记的短时同样 410 `expired`，错误的 `details` 同上（列出是哪几个任务）；下载进行中出现这种情况时响应
+	 * 已经开始，连接被断开（#669；看不看得出没下完同上）。
 	 */
 	runDownload: download({
 		path: "/runs/:id/logs/download",
